@@ -47,7 +47,9 @@ A VMware Workstation VM runs the same `run-test.ps1` headless, so tests no longe
 need the host's desktop. VMware's own SVGA 3D device does the Direct3D (Windows
 Sandbox's GPU paravirtualisation is what bugchecks). On this Hyper-V host
 VMware runs on the Windows Hypervisor Platform, which is already enabled
-(`HypervisorPlatform` feature, CBS selection 1).
+(`HypervisorPlatform` feature, CBS selection 1): vmware.log says `Monitor Mode: ULM`,
+and the 3D renderer is `ISBRenderer (VKRenderer)` on the host GPU. Installed:
+Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Workstation`.
 
 - **VM:** `C:\VMs\dsfforza-test\dsfforza-test.vmx`: 4 vCPU, 8 GB, 80 GB growable
   SATA disk, BIOS firmware (no TPM or Secure Boot; a vTPM needs VM encryption,
@@ -64,7 +66,9 @@ VMware runs on the Windows Hypervisor Platform, which is already enabled
   MicroWin bakes into the image. The account is created in specialize and put
   in Administrators by SID (S-1-5-32-544), because the Russian image names
   the group "Администраторы". First logon installs the VC++ x86 runtime and
-  VMware Tools (`setup64.exe /S /v"/qn REBOOT=R ADDLOCAL=ALL"`).
+  VMware Tools (`setup.exe /S /v"/qn REBOOT=R ADDLOCAL=ALL"`; Tools 13 has only a 64-bit
+  `setup.exe`, no `setup64.exe`). The whole build takes about 35 minutes
+  (Install about 30, Provision about 1, copying 5.9 GB of game).
 - **Shared folders** (vmx `sharedFolderN`), linked to the sandbox's paths so
   `run-test.ps1` runs with its defaults: `C:\Repo` (repo, read-only),
   `C:\Output` (`%LOCALAPPDATA%\Temp\dsfforza-wsb`, read-write), `C:\Profile`
@@ -74,7 +78,7 @@ VMware runs on the Windows Hypervisor Platform, which is already enabled
   created ones dropped. Re-run `setup-vm.ps1 -Phase Game` (through `vm.ps1
   Exec`) after changing the host install.
 - **Runs:** `run-series.ps1 -Vm` starts the VM if needed (`vmrun -T ws start
-  ... nogui`, `vmware-vmx` at BelowNormal), copies the host profile into the
+  ... nogui`), copies the host profile into the
   guest as a 1280x720 window, then runs `run-test.ps1` in the guest's desktop
   session (`vmrun runProgramInGuest -interactive`, through a wrapper script
   copied into `C:\dsf`, started hidden) with `-RunDir
@@ -88,6 +92,61 @@ VMware runs on the Windows Hypervisor Platform, which is already enabled
   Driver profile aren't touched.
 - **Control:** `tools\wsb\vm.ps1 Start|Status|Exec|Stop|Revert`. Revert goes
   back to the snapshot `clean` (powered off, right after provisioning).
+  `tools\wsb\guest\fps.ps1` (through `vm.ps1 Exec`, next to a run) records 30 s
+  of presents with Intel PresentMon (`C:\Output\vm\PresentMon-2.6.0-x64.exe`).
+
+### VM results (2026-10-24)
+
+- Stock smoke test `vm-20261024-015247` (stock archive, ID 147): finished in
+  81 s, Story world ready after 3 Enter presses at 23 s (the host took 32 s
+  in `host-20261023-174440`), `keysSkipped` 0. The shots show the textured
+  city, traffic, HUD and Shift-view flares: real 3D, not black.
+  `story.png` (8 s after "ready") still shows the loading screen.
+- Ported cars `vm-20261024-020159` and `vm-20261024-020519`
+  (`out\testdrive7\dngvehicles.sp`, `ported.lua` from `testdrive7`, IDs 147,1,2):
+  both finished, every car driven, cockpit and chase views for each. ID 1
+  (BMW M3 E30) and ID 2 (Supra) render with bodies, lamps and cockpits, gauges
+  included. The HUD names are wrong (Jaguar E-Type / Nissan Skyline), as on
+  the host.
+- One run (`vm-20261024-015830`, same arguments) hit DriverNGHook's fatal
+  error dialog while the world loaded, with no minidump. The next two
+  identical runs passed, and host runs of this archive have died the same way
+  (`host-20261023-174440`, exit -1), so it isn't VM-specific. Driver.exe stayed
+  near 1.17 GB virtual and 0.96 GB private, far from the 32-bit limit.
+- Frame rate (PresentMon, 30 s of `vm-20261024-020519` from 35 s after
+  launch, Shift zoom and driving, host CPU loaded by port_batch builds): mean
+  45 fps, median 46.8, 1 % low 28.1. Present mode "Composed: Copy with GPU GDI".
+  dsf_enhanced's TrafficDiag reports `fps=0.0` in the VM as on the host.
+- Host desktop: a window watcher (EnumWindows and the foreground window, once a
+  second) ran from 01:49 to 02:07 (VM start, all runs, guest scripts). The only
+  new windows were HWiNFO64's own overlays, and the foreground never changed.
+
+### VM limitations and gotchas
+
+- **Priority:** vmware-vmx is started by the vmware-authd service; a normal
+  process can't change its priority or read its command line (access
+  denied). The vmx can only ask for normal or Idle (`priority.ungrabbed =
+  "low"`; a headless VM never "grabs"). Idle starved the install while
+  port_batch used every core: CD reads took 2.4 s each and the disk stayed
+  at 10 MB for 10 minutes. So the VM runs at normal priority, and
+  `Set-VmPriority` (BelowNormal) only takes effect from an elevated shell.
+- **Workstation 26 vmrun:** `checkToolsState` says "installed" even while
+  Tools runs, and `listProcessesInGuest` shows no arguments (no `-n
+  vmusr`). Right after logon, `runProgramInGuest -interactive` fails for a
+  while with "must be logged in interactively"; `vm-common.ps1` retries for
+  3 minutes.
+- **Read-only copies:** files copied from the read-only `C:\Repo` share keep
+  the ReadOnly flag. `run-test.ps1` clears it in the run folder and before
+  deleting (run `vm-20261024-015718` failed on `clonetest.lua`).
+- **Debugging a headless install:** `vm-build.ps1 -Step Create -VncPort 5971`
+  turns on VMware's VNC server on 127.0.0.1 (no password). `python -I
+  tools\wsb\vm\vncshot.py 127.0.0.1 5971 shot.png` grabs a frame. Over VNC,
+  special keys get through but letters don't (keysyms are probably mapped
+  through the Russian host keymap), so `vnckeys.py` is of little use. A
+  powered-off guest disk can be read with 7-Zip: `7z e dsfforza-test.vmdk
+  1.ntfs` (85 GB, mostly zeros), then `7z e 1.ntfs <path>`.
+- Windows isn't activated (generic Pro key, no network). No watermark is
+  in the shots.
 
 ## Result: a cloned vehicle works (confirmed-runtime)
 

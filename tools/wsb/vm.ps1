@@ -4,8 +4,9 @@ Runs the dsfforza test VM (VMware Workstation) headless for in-game tests.
 
 .DESCRIPTION
   Start    power the VM on with no window (vmrun ... nogui) unless it is running,
-           drop vmware-vmx to BelowNormal priority, wait until the autologon session
-           is up, then set up the session (display size, muted audio).
+           wait until the autologon session is up, then set up the session (display
+           size, muted audio). vmware-vmx runs at normal priority: lowering it needs an
+           elevated shell, and the vmx's only lower setting (Idle) starves the VM under load.
   Status   print whether the VM runs, the Tools state and whether the session answers.
   Exec     run a guest PowerShell script in the logged-in user's desktop session
            (vmrun runProgramInGuest -interactive), hidden, and wait for it.
@@ -42,7 +43,7 @@ $ErrorActionPreference = 'Stop'
 switch ($Action) {
     'Status' {
         if (-not (Test-VmRunning)) { 'dsfforza VM not running'; return }
-        $tools = (Invoke-Vmrun checkToolsState $VmVmx -Quiet).Out.Trim()
+        $tools = (Invoke-Vmrun @('checkToolsState', $VmVmx) -Quiet).Out.Trim()
         "VM running ($VmVmx); tools: $tools; session answers: $(Test-VmSession); $(Get-VmPriority)"
     }
     'Stop' {
@@ -53,7 +54,7 @@ switch ($Action) {
         $lifecycle = Enter-VmLifecycle
         try {
             Stop-Vm | Out-Null
-            Invoke-Vmrun revertToSnapshot $VmVmx clean | Out-Null
+            Invoke-Vmrun @('revertToSnapshot', $VmVmx, 'clean') | Out-Null
             'reverted to snapshot clean'
         } finally { $lifecycle.ReleaseMutex() }
     }
@@ -72,7 +73,7 @@ switch ($Action) {
         if (-not (Test-VmRunning)) { throw 'the dsfforza VM is not running; run Start first' }
         if ($HostScript) {
             $guestCopy = "C:\dsf\$([IO.Path]::GetFileName($HostScript))"
-            Invoke-Vmrun -Guest copyFileFromHostToGuest $VmVmx (Resolve-Path $HostScript).Path $guestCopy | Out-Null
+            Invoke-Vmrun @('copyFileFromHostToGuest', $VmVmx, (Resolve-Path $HostScript).Path, $guestCopy) -Guest | Out-Null
             $Script = $guestCopy
         }
         if (-not $Script) { throw '-Script (a guest path such as C:\Repo\tools\wsb\guest\run-test.ps1) or -HostScript is required' }

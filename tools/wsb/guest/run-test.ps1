@@ -226,7 +226,17 @@ function Remove-RunTree([string]$Path) {
             if ($item.PSIsContainer) { [IO.Directory]::Delete($item.FullName) } else { [IO.File]::Delete($item.FullName) }
         }
         elseif ($item.PSIsContainer) { Remove-RunTree $item.FullName; [IO.Directory]::Delete($item.FullName) }
-        else { [IO.File]::Delete($item.FullName) }
+        else { [IO.File]::SetAttributes($item.FullName, 'Normal'); [IO.File]::Delete($item.FullName) }
+    }
+}
+
+function Clear-ReadOnly([string]$Path) {
+    # Copies from a read-only source (the VM's C:\Repo shared folder) keep the ReadOnly flag;
+    # the harness rewrites some of them (lightsync.lua). Links are not followed.
+    foreach ($item in Get-ChildItem -LiteralPath $Path -Force) {
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+        if ($item.PSIsContainer) { Clear-ReadOnly $item.FullName }
+        elseif ($item.IsReadOnly) { $item.IsReadOnly = $false }
     }
 }
 
@@ -435,6 +445,7 @@ try {
             default { Add-LinkTree $dir.FullName $target $dir.Name.ToLower() }
         }
     }
+    Clear-ReadOnly $run
     $result.archiveSize = (Get-Item $Archive).Length
     Note 'run folder built'
 

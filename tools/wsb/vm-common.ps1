@@ -60,10 +60,15 @@ function Test-VmRunning {
 }
 
 function Test-VmSession {
-    # Tools running and the autologon desktop up (explorer and the user-session vmtoolsd).
-    if ((Invoke-Vmrun @('checkToolsState', $VmVmx) -Quiet -Timeout 60).Out -notmatch 'running') { return $false }
+    # Tools answering and the autologon desktop up: explorer and a vmtoolsd owned by the user
+    # (the session instance runProgramInGuest -interactive needs). Workstation 26's
+    # checkToolsState says "installed" even while Tools runs, and the process list shows no
+    # command-line arguments, so both are matched loosely.
+    if ((Invoke-Vmrun @('checkToolsState', $VmVmx) -Quiet -Timeout 60).Out -notmatch 'running|installed') { return $false }
     $procs = Invoke-Vmrun @('listProcessesInGuest', $VmVmx) -Guest -Quiet -Timeout 60
-    return $procs.Exit -eq 0 -and $procs.Out -match '(?i)explorer\.exe' -and $procs.Out -match '(?i)vmtoolsd\.exe"?\s+-n\s+vmusr'
+    $user = [regex]::Escape($VmUser)
+    return $procs.Exit -eq 0 -and $procs.Out -match "(?im)owner=[^,]*\\$user, cmd=.*explorer\.exe" -and
+        $procs.Out -match "(?im)owner=[^,]*\\$user, cmd=.*vmtoolsd\.exe"
 }
 
 function Enter-VmLifecycle {
@@ -130,8 +135,15 @@ function Invoke-VmScript([string]$GuestScript, [string[]]$GuestArguments = @(), 
     ) | Set-Content -LiteralPath $wrapper -Encoding UTF8
     try {
         Invoke-Vmrun @('copyFileFromHostToGuest', $VmVmx, $wrapper, $guestWrapper) -Guest | Out-Null
-        $r = Invoke-Vmrun @('runProgramInGuest', $VmVmx, '-interactive', 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe',
-            '-WindowStyle', 'Hidden', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $guestWrapper) -Guest -Quiet -Timeout $Timeout
+        # Right after logon the session's vmtoolsd runs before VMware counts the user as logged in
+        # interactively; that error is retried for up to 3 minutes.
+        $retryUntil = (Get-Date).AddMinutes(3)
+        do {
+            $r = Invoke-Vmrun @('runProgramInGuest', $VmVmx, '-interactive', 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe',
+                '-WindowStyle', 'Hidden', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $guestWrapper) -Guest -Quiet -Timeout $Timeout
+            $notYet = $r.Out -match 'must be logged in interactively'
+            if ($notYet) { Start-Sleep -Seconds 10 }
+        } while ($notYet -and (Get-Date) -lt $retryUntil)
         Invoke-Vmrun @('deleteFileInGuest', $VmVmx, $guestWrapper) -Guest -Quiet -Timeout 60 | Out-Null
         if ($r.Exit -ne 0 -or $r.Out -match 'non-zero exit code') { throw "guest command failed ($($r.Out)): $commandLine" }
         return $r.Out

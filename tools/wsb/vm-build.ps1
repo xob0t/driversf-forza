@@ -31,6 +31,8 @@ param(
     [int]$MemoryMB = 8192,
     [int]$DiskGB = 80,
     [int]$InstallMinutes = 120,
+    [int]$VncPort = 0,             # Create: VNC on 127.0.0.1:<port> (no password) to watch a headless install;
+                                   # grab a frame with: python -I tools\wsb\vm\vncshot.py 127.0.0.1 <port> shot.png
     [switch]$Force                 # Create: replace an existing VM
 )
 
@@ -140,6 +142,7 @@ function Step-Create {
         'priority.grabbed' = 'normal'; 'priority.ungrabbed' = 'normal'
         'powerType.powerOff' = 'soft'; 'powerType.reset' = 'soft'; 'powerType.suspend' = 'soft'
     }
+    if ($VncPort) { $vmx['RemoteDisplay.vnc.enabled'] = 'TRUE'; $vmx['RemoteDisplay.vnc.ip'] = '127.0.0.1'; $vmx['RemoteDisplay.vnc.port'] = "$VncPort" }
     for ($i = 0; $i -lt $shared.Count; $i++) {
         $name, $path, $write = $shared[$i]
         $vmx["sharedFolder$i.present"] = 'TRUE'; $vmx["sharedFolder$i.enabled"] = 'TRUE'
@@ -158,9 +161,11 @@ function Step-Create {
 }
 
 function Step-Install {
-    if (Test-VmRunning) { throw 'the VM is already running' }
-    Say 'starting the Windows install (no window)'
-    Invoke-Vmrun @('start', $VmVmx, 'nogui') | Out-Null
+    if (Test-VmRunning) { Say 'the VM is running: waiting for the install to finish' }
+    else {
+        Say 'starting the Windows install (no window)'
+        Invoke-Vmrun @('start', $VmVmx, 'nogui') | Out-Null
+    }
     Set-VmPriority
     $deadline = (Get-Date).AddMinutes($InstallMinutes)
     $last = ''
@@ -170,7 +175,7 @@ function Step-Install {
         Set-VmPriority
         $tools = (Invoke-Vmrun @('checkToolsState', $VmVmx) -Quiet -Timeout 60).Out.Trim()
         $done = $false
-        if ($tools -match 'running') {
+        if ($tools -match 'running|installed') {
             $marker = Invoke-Vmrun @('fileExistsInGuest', $VmVmx, 'C:\dsf\first-logon.done') -Guest -Quiet -Timeout 60
             $done = $marker.Exit -eq 0 -and $marker.Out -match 'exists' -and $marker.Out -notmatch 'not exist'
         }

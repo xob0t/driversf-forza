@@ -95,8 +95,13 @@ if ($redist -and (Test-Path $redist)) {
 }
 
 # VMware Tools (SVGA 3D driver, vmrun guest operations, shared folders).
-$tools = Get-PSDrive -PSProvider FileSystem | ForEach-Object { Join-Path $_.Root 'setup64.exe' } |
-    Where-Object { Test-Path $_ } | Select-Object -First 1
+# Tools 12 has setup64.exe; Tools 13 (Workstation 26) only a 64-bit setup.exe next to
+# VMwareToolsUpgrader.exe.
+$tools = Get-PSDrive -PSProvider FileSystem | ForEach-Object {
+    $root = $_.Root
+    if (Test-Path (Join-Path $root 'setup64.exe')) { Join-Path $root 'setup64.exe' }
+    elseif ((Test-Path (Join-Path $root 'VMwareToolsUpgrader.exe')) -and (Test-Path (Join-Path $root 'setup.exe'))) { Join-Path $root 'setup.exe' }
+} | Select-Object -First 1
 if ($tools) {
     "VMware Tools from $tools"
     $p = Start-Process $tools -ArgumentList '/S', '/v"/qn REBOOT=R ADDLOCAL=ALL"' -Wait -PassThru
