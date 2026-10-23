@@ -165,6 +165,8 @@ PAINT_THROUGH_ALPHA, PAINT_THROUGH_MIN_RGB = 16, 200
 
 def _paint_through(family: str, r: int, g: int, b: int, a: int) -> bool:
     return family == fm.NODAMAGE and a < PAINT_THROUGH_ALPHA and min(r, g, b) > PAINT_THROUGH_MIN_RGB
+
+
 # Rear lamp lenses (Texturing.is_lens): a lamp-cover glass subsection behind
 # this Forza z (front is -z; the 40 testdrive cars' rear lenses sit at +1.5 to
 # +2.5) whose mean texel is this much redder than green and blue, and this
