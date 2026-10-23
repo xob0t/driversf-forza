@@ -529,6 +529,12 @@ try {
         W = @(0x57, 0x11, $false); A = @(0x41, 0x1E, $false); S = @(0x53, 0x1F, $false); D = @(0x44, 0x20, $false)
         Enter = @(0x0D, 0x1C, $false); Esc = @(0x1B, 0x01, $false); Tab = @(0x09, 0x0F, $false)
         Q = @(0x51, 0x10, $false); E = @(0x45, 0x12, $false) }
+    # A name missing here would be sent as key code 0, i.e. nothing, for the whole run.
+    $keyNames = @($MenuKeys -split ',' | ForEach-Object { ($_ -split ':')[0] }) +
+        @($DynoKeys -split '[;,]' | ForEach-Object { ($_ -split ':')[0] -split '\+' })
+    foreach ($name in ($keyNames | Where-Object { $_ -and $_ -ne 'None' })) {
+        if (-not $keyCodes.ContainsKey($name)) { throw "unknown key '$name' in -MenuKeys/-DynoKeys (known: $(($keyCodes.Keys | Sort-Object) -join ' '))" }
+    }
     # -DynoKeys: one schedule per run, steps 'Key+Key:seconds'. A key is pressed when a
     # step needs it and released when the next step doesn't (no re-pressing in between),
     # so step boundaries are as sharp as keybd_event allows (about 0.15 s per key change).

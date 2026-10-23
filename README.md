@@ -315,22 +315,14 @@ of a power drift with counter-steer.
 
 ### In-game test on the real install
 
-`tools/game/dsf-test.ps1` installs and removes test files, each step
-reversible. It backs up the stock archive once (verified by hash) and only
-deletes files it installed itself.
+Install a build with `tools/install.ps1` (above; `-Uninstall` puts every
+file back). The probe and its options run through `run-series.ps1` instead,
+which never changes the game folder. While the game runs, two read-only
+scripts look into it:
 
 ```powershell
-.\tools\game\dsf-test.ps1 InstallArchive -Archive out\dngvehicles.clone.sp
-.\tools\game\dsf-test.ps1 InstallHook     # DriverNGHook 0.7.2, from _ref/downloads
-.\tools\game\dsf-test.ps1 InstallProbe    # Lua: spool and spawn ID 304 in front of you
-# Play: drive any car; [dsfforza] lines appear in <game>\Driver.log.
-# While the game runs, optionally:
 .\tools\game\dump-handling-defaults.ps1   # writes research/handling-defaults.tsv
-# Afterwards:
-.\tools\game\dsf-test.ps1 RemoveProbe
-.\tools\game\dsf-test.ps1 RemoveHook
-.\tools\game\dsf-test.ps1 RestoreArchive
-.\tools\game\dsf-test.ps1 Status
+.\tools\game\dump-spool-limits.ps1 -Every 5
 ```
 
 The hook download lives in `_ref/downloads/dnghook-0.7.2/` (from

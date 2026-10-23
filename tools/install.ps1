@@ -257,13 +257,13 @@ function Install-File([string]$Source, [string]$Relative) {
         }
         $entry.action = 'replaced'
         $entry.backup = $Relative
-        # Recorded before the game file changes, so an interruption here can be undone.
-        [void]$script:Entries.Add($entry)
-        if ($script:Manifest) { Write-Manifest $script:Manifest }
     } else {
         New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
-        [void]$script:Entries.Add($entry)
     }
+    # Recorded before the game file changes, so an interruption here can be undone (a created
+    # file with no installed hash yet is removed by -Uninstall).
+    [void]$script:Entries.Add($entry)
+    if ($script:Manifest) { Write-Manifest $script:Manifest }
     Copy-Item -LiteralPath $Source -Destination $target -Force
     $entry.installed_sha256 = Get-Sha256 $target
     if ($entry.installed_sha256 -ne (Get-Sha256 $Source)) { Fail "copy of $Relative failed (hash mismatch)" }

@@ -21,6 +21,11 @@ run script (`run-test.ps1 -OnHost`); what differs:
   series, then restored file by file and compared by hash (the folder itself
   can be held briefly by a scanner, so it is never deleted);
 - the default speakers are muted for the series and their state restored;
+  profile and speakers come back while `out\wsb-pause` holds the runs, and
+  a series that is killed (which once left the profile windowed and the
+  speakers muted) is undone by a watcher process once its game has closed
+  (`tools\wsb\host-session.ps1`, checked by `test-host-session.ps1` on a
+  fake profile); by hand: `.\tools\wsb\host-session.ps1 Restore`;
 - keys only go to the game: a press is dropped (`keysSkipped` in
   result.json) unless the game window is in the foreground, so nothing types
   into the user's apps;
