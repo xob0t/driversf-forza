@@ -81,6 +81,54 @@ LAMP_CURVES = {"red": (_LAMP_X_RED, _LAMP_Y_RED), "white": (_LAMP_X_WHITE, _LAMP
                "amber": (_LAMP_X_WHITE, _LAMP_Y_AMBER)}
 
 
+# "matched" also darkens red lamp lenses to stock's brightness: Forza's red lamp texels
+# are brighter (brightest channel median 144, M3 E30 199, DMC-12 158) than stock's
+# (103), so its lenses looked lit in daylight before any lamp was on. Brightest channel
+# x -> at most y (quantile match like the alpha curves; red hue only, never brighter).
+_LENS_X_RED = (0, 98, 106, 128, 144, 158, 172, 189, 222, 249, 255)
+_LENS_Y_RED = (0, 73, 82, 93, 103, 114, 123, 139, 161, 180, 218)
+
+
+def _interp(s: float, xs, ys) -> float:
+    if s >= xs[-1]:
+        return float(ys[-1])
+    for i in range(1, len(xs)):
+        if s < xs[i]:
+            return ys[i - 1] + (s - xs[i - 1]) / (xs[i] - xs[i - 1]) * (ys[i] - ys[i - 1])
+    return float(ys[-1])
+
+
+# Stock red lamp alpha at the percentiles LAMP_PERCENTILES (= _LAMP_Y_RED).
+LAMP_PERCENTILES = (0, 5, 10, 20, 30, 40, 50, 60, 70, 80, 85, 90, 93, 95, 97, 98, 99, 99.5, 100)
+
+
+def red_lamp_curve(scores: list[float]):
+    """One car's red lamp curve: its own red texel scores' percentiles -> stock's red
+    alpha percentiles, so every car's red lamps land on stock's distribution (with one
+    curve for all cars a dim Forza mask gave the S2000 a tail median of 2 and the
+    Challenger 73; in game the S2000's and S5S's lamps barely lit, run
+    20261024-002212). None with too few texels (the shared curve is used)."""
+    if len(scores) < 200:
+        return None
+    ordered = sorted(scores)
+    xs = []
+    for q in LAMP_PERCENTILES:
+        x = ordered[min(len(ordered) - 1, int(q / 100 * (len(ordered) - 1) + 0.5))]
+        xs.append(max(x, xs[-1] + 1e-4) if xs else x)
+    return tuple(xs), _LAMP_Y_RED
+
+
+def matched_lamp_texel(r: int, g: int, b: int, a: int, red_curve=None) -> tuple[int, int, int, int]:
+    """Stock-like lamp texel (LIGHTS_ALPHA "matched"): alpha from the curves, red
+    lenses darkened to stock's brightness."""
+    alpha = matched_lamp_alpha(r, g, b, a, red_curve)
+    if lamp_hue(r, g, b) == "red":
+        v = max(r, g, b)
+        k = min(1.0, _interp(v, _LENS_X_RED, _LENS_Y_RED) / v) if v else 1.0
+        r, g, b = (int(c * k + 0.5) for c in (r, g, b))
+    return r, g, b, alpha
+
+
 def lamp_hue(r: int, g: int, b: int) -> str:
     """Lamp texel colour class for the "matched" curves."""
     if r > 1.6 * g and r > 1.6 * b:
@@ -90,10 +138,17 @@ def lamp_hue(r: int, g: int, b: int) -> str:
     return "white"
 
 
-def matched_lamp_alpha(r: int, g: int, b: int, a: int) -> int:
-    """Stock-like lamp alpha from a Forza lamp texel (LIGHTS_ALPHA "matched")."""
-    xs, ys = LAMP_CURVES[lamp_hue(r, g, b)]
-    s = (a / 255) * (0.6 + 0.4 * max(r, g, b) / 255)
+def lamp_score(r: int, g: int, b: int, a: int) -> float:
+    """The "matched" ranking: Forza's glow mask, weighted a little by brightness."""
+    return (a / 255) * (0.6 + 0.4 * max(r, g, b) / 255)
+
+
+def matched_lamp_alpha(r: int, g: int, b: int, a: int, red_curve=None) -> int:
+    """Stock-like lamp alpha from a Forza lamp texel (LIGHTS_ALPHA "matched");
+    red_curve: this car's own (score knots, alpha knots) for red texels."""
+    hue = lamp_hue(r, g, b)
+    xs, ys = red_curve if hue == "red" and red_curve else LAMP_CURVES[hue]
+    s = lamp_score(r, g, b, a)
     if s >= xs[-1]:
         return ys[-1]
     for i in range(1, len(xs)):
@@ -650,6 +705,28 @@ class Texturing:
         return mapped, (m.family, n)
 
     # -- rendering --
+    def _red_lamp_curve(self):
+        """This car's red lamp curve (red_lamp_curve) from the red texels inside its
+        lights regions; None until the regions are known."""
+        if getattr(self, "_red_curve_done", False):
+            return self._red_curve
+        regions = self.regions.get(fm.LIGHTS) if self.regions else None
+        if not regions or self.atlases is None:
+            return None
+        sw, sh, src = self.atlases.get(fm.LIGHTS)
+        area = sum((r.src[2] - r.src[0]) * (r.src[3] - r.src[1]) for r in regions)
+        step = max(1, int((area / 40000) ** 0.5))
+        scores = []
+        for reg in regions:
+            for y in range(reg.src[1], min(sh, reg.src[3]), step):
+                for x in range(reg.src[0], min(sw, reg.src[2]), step):
+                    o = (y * sw + x) * 4
+                    r, g, b, a = src[o], src[o + 1], src[o + 2], src[o + 3]
+                    if lamp_hue(r, g, b) == "red":
+                        scores.append(lamp_score(r, g, b, a))
+        self._red_curve, self._red_curve_done = red_lamp_curve(scores), True
+        return self._red_curve
+
     def _convert_texel(self, family: str, r: int, g: int, b: int, a: int) -> tuple[int, int, int, int]:
         """Forza texel -> DSF conventions (alpha = specular / glow mask)."""
         floor = self.lift.get(family)
@@ -664,7 +741,7 @@ class Texturing:
             if LIGHTS_ALPHA == "raw":  # analysis only: Forza's alpha as is
                 return r, g, b, a
             if LIGHTS_ALPHA == "matched":
-                return r, g, b, matched_lamp_alpha(r, g, b, a)
+                return matched_lamp_texel(r, g, b, a, self._red_lamp_curve())
             if LIGHTS_ALPHA in ("value", "luma"):
                 # Stock lamp texels: alpha median 0 to 76, following brightness
                 # (Desanne headlamp lum 124 -> 63, reverse 133 -> 76); Forza's glow

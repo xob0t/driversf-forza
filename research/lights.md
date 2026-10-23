@@ -187,7 +187,8 @@ Since 2026-10-23 the mode does more per car (`lightstest.lua`, driven by
    `0idle`, `6throttle` (rolling, lamps off), `1brake`, `2brake`,
    `3reverse`, `4brakeup`, `5idle`. The Lua logs the distance moved per
    update and `isReversing`. With traffic on, a drive can hit a traffic car
-   and break lamps (370Z in run 124438).
+   and break lamps (370Z in run 124438). `-LightsDriveOnly` skips the
+   `setLights` phases (`lights = { phases = false }`).
 3. Phases 1 to 18 as before, on the player's car and both copies.
 4. No traffic phase. Two tries in `lightstest.lua` (sync 92 to 94, no
    longer sent): `Spawn.Spawn` plus `civilianTraffic.AddVehicleToCarrier`
@@ -394,6 +395,42 @@ Challenger 95), stop lamps 10 to 124, reverse 36 to 97, indicators 29 to
 132, headlamps 25 to 135, inside or at the edge of stock's per-vehicle
 range (the Challenger's stop lamp, 124, is above stock's 111).
 
+In game with one shared curve (`out/lamps/matched`, runs
+host-20261024-001505 and -002212) the lens structure showed, but the
+S2000's and S5S Raptor's lamps barely lit: a dim Forza mask stays dim
+through a shared curve (S2000 tail median 2). Two changes
+(`out/lamps/matched3`):
+
+- **Red curve per car** (`red_lamp_curve`, `Texturing._red_lamp_curve`):
+  the knots for red texels come from this car's own red texels inside its
+  lights regions (percentiles of their scores -> stock's red alpha
+  percentiles), so every car's red lamps land on stock's distribution in
+  their own order. White and amber keep the shared curves.
+- **Red lenses darkened to stock's brightness** (`matched_lamp_texel`,
+  `_LENS_X_RED`/`_LENS_Y_RED`): Forza's red lamp texels are brighter than
+  stock's (brightest channel median 144 against 103; M3 E30 199, DMC-12
+  158), so the lenses looked lit before braking. Their brightest channel is
+  mapped down by a quantile curve (never brightened); alpha is scored on
+  the original texel.
+
+Per car now (`lamptex.py`): tail + stop means 370Z 41, M3 E30 69, DMC-12
+34, S2000 44, S5S 91, Challenger 36 (stock per-vehicle 23 to 81, max 128);
+stop lamps 370Z 57, S2000 35, Challenger 65 (stock up to 111); red lens
+brightness DMC-12 129 (was 169), M3 E30 149 (181).
+
+In game (runs host-20261024-003943, -004749, -005601, drive-only:
+`-Lights -LightsDriveOnly`; sheet `out/lamps/lamps-stock-value-matched.png`,
+stock / "value" / "matched", braking under the dark mood and in daylight;
+per run `out/lamps/r003943-zoom.png`, `r004749-zoom.png`,
+`r005601-zoom.png`): the converted lamps now light along their lens
+pattern, the 370Z's tails along their inner edge with the high stop bar,
+the S2000's round tails from a hot centre, the M3 E30's and DMC-12's
+cells unevenly instead of as flat blocks, the Challenger's strip in
+segments, and no brighter than the stock cars beside them (stock 370Z 227,
+DeLorean 171, Desanne 266, Sports Car 07 278, Challenger-like 173). Lamps
+whose Forza lens has no structure (the DMC-12's grid cells) still glow
+cell by cell, more evenly than the stock DeLorean's dots.
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and
@@ -410,9 +447,11 @@ range (the Challenger's stop lamp, 124, is above stock's 111).
    same `swapWithModel` that crashed run 123840 (there on the nearest
    traffic car ahead, to the player's own model 227), so try it only in a
    throwaway run.
-5. Converted lenses with a bright texture (DMC-12, M3 E30) look lit in
-   daylight even when off; stock lenses are darker red (lum about 45 to
-   55) and light up by emission.
+5. Converted white and amber lenses keep Forza's brightness (white median
+   182 against stock's 126); only red lenses are darkened. The S5S Raptor's
+   tails (mean 91) sit above stock's per-vehicle p90 (81).
+6. In a run, cars after the fifth sometimes don't spool ("NOT spooled after
+   40 ticks", run host-20261024-003943); keep lamp runs to five IDs.
 
 ## Paint
 
