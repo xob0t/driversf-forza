@@ -131,6 +131,27 @@ function Stop-Vm {
     return 'stopped'
 }
 
+function Set-VmRepoShare([string]$Path) {
+    # The guest's C:\Repo is the shared folder "Repo", which vm-build.ps1 points at the checkout it
+    # ran from. A series from another checkout (a git worktree) must see that one: its out\ builds
+    # and its harness scripts. A marker file proves the guest sees $Path.
+    $Path = (Resolve-Path -LiteralPath $Path).Path
+    Invoke-Vmrun @('setSharedFolderState', $VmVmx, 'Repo', $Path, 'readonly') | Out-Null
+    $name = "vm-share-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+    $marker = Join-Path $Path "out\$name"
+    New-Item -ItemType Directory -Force -Path (Split-Path $marker) | Out-Null
+    Set-Content -LiteralPath $marker $Path
+    try {
+        $seen = $false
+        for ($try = 1; $try -le 10 -and -not $seen; $try++) {
+            $r = Invoke-Vmrun @('fileExistsInGuest', $VmVmx, "C:\Repo\out\$name") -Guest -Quiet -Timeout 60
+            $seen = $r.Exit -eq 0 -and $r.Out -match 'exists' -and $r.Out -notmatch 'not exist'
+            if (-not $seen) { Start-Sleep -Seconds 2 }
+        }
+        if (-not $seen) { throw "the VM's C:\Repo does not show $Path after setSharedFolderState" }
+    } finally { Remove-Item -LiteralPath $marker -ErrorAction SilentlyContinue }
+}
+
 function Invoke-VmScript([string]$GuestScript, [string[]]$GuestArguments = @(), [int]$Timeout = 3600) {
     # The command line goes into a wrapper script copied into the guest, so no quoting passes
     # through vmrun; the wrapper starts the real script hidden in the user's desktop session

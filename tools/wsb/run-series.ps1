@@ -187,9 +187,11 @@ function ConvertTo-ArgList($values, [switch]$CommandLine) {
 }
 
 function Confirm-Vm {
-    # Start the VM headless if needed (also sets the guest display and mutes it), then copy
-    # the host's Driver profile into it as a -Resolution window.
+    # Start the VM headless if needed (also sets the guest display and mutes it), point its
+    # C:\Repo at this checkout (a git worktree's builds and scripts, not the main checkout's),
+    # then copy the host's Driver profile into it as a -Resolution window.
     & $vmScript Start | Out-Null
+    & $vmScript Share -RepoPath $repo | Out-Null
     & $vmScript Exec -Script C:\Repo\tools\wsb\guest\setup-vm.ps1 -Arguments @('-Phase', 'Profile', '-Resolution', $Resolution) -TimeoutSeconds 300 | Out-Null
 }
 
@@ -255,5 +257,15 @@ try {
         if ($speeds.Count) { "  $($speeds.Count) speed samples in cockpit view, top $(($speeds | Measure-Object -Maximum).Maximum) mph" }
     }
 } finally {
-    try { Exit-HostSession } finally { Exit-RunMutex }
+    try {
+        Exit-HostSession
+        if ($Vm) {
+            # Back to the main checkout (the first worktree), which series from there expect.
+            $main = ((git -C $repo worktree list --porcelain) | Where-Object { $_ -like 'worktree *' } |
+                Select-Object -First 1).Substring(9) -replace '/', '\'
+            if ($main -and (Resolve-Path $main).Path -ne $repo) {
+                try { & $vmScript Share -RepoPath $main | Out-Null } catch { "  C:\Repo not pointed back at ${main}: $($_.Exception.Message)" }
+            }
+        }
+    } finally { Exit-RunMutex }
 }

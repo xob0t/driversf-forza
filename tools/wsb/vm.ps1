@@ -12,6 +12,8 @@ Runs the dsfforza test VM (VMware Workstation) headless for in-game tests.
            (vmrun runProgramInGuest -interactive), hidden, and wait for it.
            -Script is a guest path (C:\Repo\tools\wsb\guest\run-test.ps1); -HostScript
            a host file that is copied into the guest (C:\dsf) first.
+  Share    point the guest's C:\Repo at another checkout (-RepoPath, e.g. a git worktree):
+           run-series.ps1 -Vm does for its series, then points it back at the main checkout.
   Stop     shut the guest down (hard power-off if it doesn't go within 2 min).
   Revert   go back to the "clean" snapshot (the VM is stopped first).
 
@@ -20,20 +22,21 @@ VM has no window, and every vmrun call runs without a console window.
 
 Guest paths (as in the sandbox, so run-test.ps1 runs with its defaults):
   C:\Game      local stock copy of D:\Games\Driver San Francisco (vm-build.ps1 Provision)
-  C:\Repo      -> \\vmware-host\Shared Folders\Repo     this repository     (read-only)
+  C:\Repo      -> \\vmware-host\Shared Folders\Repo     this repository     (read-only; see Share)
   C:\Output    -> \\vmware-host\Shared Folders\Output   %LOCALAPPDATA%\Temp\dsfforza-wsb (read-write)
   C:\Profile   -> \\vmware-host\Shared Folders\Profile  Documents\Ubisoft\Driver San Francisco (read-only)
   C:\Run       the run folder run-test.ps1 builds
 #>
 param(
     [Parameter(Mandatory, Position = 0)]
-    [ValidateSet('Start', 'Status', 'Exec', 'Stop', 'Revert')]
+    [ValidateSet('Start', 'Status', 'Exec', 'Share', 'Stop', 'Revert')]
     [string]$Action,
     [string]$Script,
     [string]$HostScript,
     [string[]]$Arguments = @(),
     [int]$TimeoutSeconds = 3600,
     [string]$DisplaySize = '1600x900',   # Start: the guest desktop size
+    [string]$RepoPath,                   # Share: the checkout C:\Repo shows
     [switch]$NoSession   # Start: skip the session setup (vm-build.ps1 before provisioning)
 )
 
@@ -69,6 +72,12 @@ switch ($Action) {
             }
             "VM ready; host output: $VmOutputHost"
         } finally { $lifecycle.ReleaseMutex() }
+    }
+    'Share' {
+        if (-not (Test-VmRunning)) { throw 'the dsfforza VM is not running; run Start first' }
+        if (-not $RepoPath) { throw '-RepoPath is required' }
+        Set-VmRepoShare $RepoPath
+        "C:\Repo -> $RepoPath"
     }
     'Exec' {
         if (-not (Test-VmRunning)) { throw 'the dsfforza VM is not running; run Start first' }

@@ -94,7 +94,12 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
   from `C:\Repo` into `C:\Run` instead of linking them across the shared
   folder. Mutex `Local\dsfforza-vm-run`, separate from the sandbox and host
   series. Keys go to the game inside the guest only; the host's speakers and
-  Driver profile aren't touched.
+  Driver profile aren't touched. The share `Repo` is the checkout the VM was
+  built from (the main one); each series points it at its own checkout
+  (`vm.ps1 Share`, checked with a marker file) and back at the end, so a series
+  from a git worktree tests that worktree's builds and scripts. Before that
+  change a worktree's `-Vm` series ran the main checkout's `run-test.ps1` on
+  the main checkout's copy of its archive path (missing, or stale).
 - **Control:** `tools\wsb\vm.ps1 Start|Status|Exec|Stop|Revert`. Revert goes
   back to the snapshot `clean` (powered off, right after provisioning).
   `tools\wsb\guest\fps.ps1` (through `vm.ps1 Exec`, next to a run) records 30 s
