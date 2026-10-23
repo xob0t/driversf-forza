@@ -51,10 +51,9 @@ const FopenFn game_fopen = (FopenFn)0x00C2CC9A;
 typedef void* (__cdecl* MemcpyFn)(void*, const void*, size_t);
 const MemcpyFn game_memcpy = (MemcpyFn)0x00C28820;
 
-// Profile manager ([engine+0x36c]) offsets.
-const uint32_t kProfFlagList = 0x14C;     // object; list of {id, flags} at +0x38 (304 slots)
+// Profile manager ([engine+0x36c]) offsets of the bit arrays (relative to the
+// stats object at +0x1BA8, as the setters see them: 0x4E0, 0x508, 0x530, 0x558).
 const uint32_t kProfBits[4] = {0x2088, 0x20B0, 0x20D8, 0x2100};  // unlocked-ever, driven, ?, take-a-ride
-const uint32_t kStatsBitOff[4] = {0x4E0, 0x508, 0x530, 0x558};   // same arrays relative to +0x1BA8
 
 // ---- extended profile data ------------------------------------------------
 struct Slot {
@@ -74,7 +73,6 @@ bool g_saved_valid = false, g_loaded_valid = false;
 Slot g_dummy_slot = {-1, 0};
 int32_t g_dummy_owned = -1;
 char g_side_name[64] = "dsfforza-garage.dat";
-bool g_side_enabled = true;
 
 // Garage list.
 int32_t g_sortkey[kExtMax];
@@ -83,7 +81,6 @@ int g_max_groups = kStockGroups;
 uint32_t g_groups_off = 0x20FC;  // groups table offset in the garage object
 uint32_t g_count_rel = kStockGroups * kGroupSize;  // count offset from the table
 int32_t* g_maker_index = nullptr;  // menu maker -> group index (index 1..groups)
-int g_dropped_cars = 0, g_dropped_groups = 0;
 bool g_garage_active = false, g_save_active = false;
 
 struct Lock {
@@ -544,7 +541,7 @@ void* __cdecl m_clear_stats(void* dst, const void* src, size_t n)  // ClearStati
 FILE* __cdecl f_write(const char* path, const char* mode)
 {
     FILE* f = game_fopen(path, mode);
-    if (f && g_side_enabled) {
+    if (f) {
         Lock lock;
         side_write(path, g_saved_valid ? g_saved : g_ext);
     }
@@ -554,7 +551,7 @@ FILE* __cdecl f_write(const char* path, const char* mode)
 FILE* __cdecl f_read(const char* path, const char* mode)
 {
     FILE* f = game_fopen(path, mode);
-    if (f && g_side_enabled) {
+    if (f) {
         Lock lock;
         side_read(path, g_loaded);
         g_loaded_valid = true;
@@ -576,7 +573,6 @@ __declspec(naked) void s_group_add_car()
         push 0x006C5745
         ret
     full:
-        inc g_dropped_cars
         ret 8
     }
 }
@@ -594,7 +590,6 @@ __declspec(naked) void s_group_insert()
         push 0x006C7BB9
         ret
     full:
-        inc g_dropped_groups
         ret 0xC
     }
 }
@@ -627,7 +622,6 @@ struct GrownList {
 };
 GrownList g_grown[16];
 int g_grown_n = 0;
-int g_menu_null_skips = 0;
 
 int16_t& list_len(void* l) { return *(int16_t*)((char*)l + 0x0C); }
 void**& list_data(void* l) { return *(void***)((char*)l + 0x10); }
@@ -725,7 +719,6 @@ __declspec(naked) void s_menu_set_string()
         mov eax, 0x00ACE110
         jmp eax
     missing:
-        inc g_menu_null_skips
         ret 8
     }
 }
@@ -750,16 +743,33 @@ Edit edit_u32(uint32_t va, const uint8_t* prefix, uint8_t plen, uint32_t old_val
     return e;
 }
 
-bool apply_edits(const char* what, const Edit* edits, int n)
+// A patch set is checked as a whole (*_match) before any of it is written;
+// apply_* write it and, should a write still fail, undo what they wrote.
+bool edits_match(const char* what, const Edit* edits, int n)
 {
     for (int i = 0; i < n; i++) {
-        if (!bytes_equal(edits[i].va, edits[i].old, edits[i].n)) {
-            patch_bytes(edits[i].va, edits[i].neu, edits[i].n, edits[i].old);  // logs the mismatch
+        if (!check_bytes(edits[i].va, edits[i].old, edits[i].n)) {
             dsf_log("garage: %s not applied (site %08X differs)", what, edits[i].va);
             return false;
         }
     }
-    for (int i = 0; i < n; i++) patch_bytes(edits[i].va, edits[i].neu, edits[i].n);
+    return true;
+}
+
+void undo_edits(const Edit* edits, int n)
+{
+    for (int i = 0; i < n; i++) patch_bytes(edits[i].va, edits[i].old, edits[i].n);
+}
+
+bool apply_edits(const char* what, const Edit* edits, int n)
+{
+    for (int i = 0; i < n; i++) {
+        if (!patch_bytes(edits[i].va, edits[i].neu, edits[i].n)) {
+            undo_edits(edits, i);
+            dsf_log("garage: %s not applied (writing %08X failed)", what, edits[i].va);
+            return false;
+        }
+    }
     return true;
 }
 
@@ -771,22 +781,35 @@ struct Hook {
     bool call;
 };
 
-bool apply_hooks(const char* what, const Hook* hooks, int n)
+bool hooks_match(const char* what, const Hook* hooks, int n)
 {
     for (int i = 0; i < n; i++) {
-        if (!bytes_equal(hooks[i].va, hooks[i].old, hooks[i].len)) {
-            patch_bytes(hooks[i].va, hooks[i].old, hooks[i].len, hooks[i].old);  // logs the mismatch
+        if (!check_bytes(hooks[i].va, hooks[i].old, hooks[i].len)) {
             dsf_log("garage: %s not applied (site %08X differs)", what, hooks[i].va);
             return false;
         }
     }
+    return true;
+}
+
+void undo_hooks(const Hook* hooks, int n)
+{
+    for (int i = 0; i < n; i++) patch_bytes(hooks[i].va, hooks[i].old, hooks[i].len);
+}
+
+bool apply_hooks(const char* what, const Hook* hooks, int n)
+{
     for (int i = 0; i < n; i++) {
         uint8_t buf[40];
         memset(buf, 0x90, hooks[i].len);
         buf[0] = hooks[i].call ? 0xE8 : 0xE9;
         int32_t rel = (int32_t)((uint32_t)hooks[i].target - (hooks[i].va + 5));
         memcpy(buf + 1, &rel, 4);
-        if (!patch_bytes(hooks[i].va, buf, hooks[i].len)) return false;
+        if (!patch_bytes(hooks[i].va, buf, hooks[i].len)) {
+            undo_hooks(hooks, i);
+            dsf_log("garage: %s not applied (writing %08X failed)", what, hooks[i].va);
+            return false;
+        }
     }
     return true;
 }
@@ -856,12 +879,13 @@ bool install_save()
     call_bytes(calls[nsites + 1].old, 0x0085354A, (uint32_t)game_fopen);
 
     // Verify everything before changing anything: the hooks only work as a set.
-    for (const Hook& h : hooks)
-        if (!bytes_equal(h.va, h.old, h.len)) return apply_hooks("save hooks", &h, 1);  // logs the site
-    for (const Hook& h : calls)
-        if (!bytes_equal(h.va, h.old, h.len)) return apply_hooks("save lifecycle", &h, 1);
+    const int nhooks = sizeof hooks / sizeof hooks[0];
+    if (!hooks_match("save hooks", hooks, nhooks) || !hooks_match("save lifecycle", calls, nsites + 2)) return false;
     if (!apply_hooks("save lifecycle", calls, nsites + 2)) return false;
-    if (!apply_hooks("save hooks", hooks, sizeof hooks / sizeof hooks[0])) return false;
+    if (!apply_hooks("save hooks", hooks, nhooks)) {
+        undo_hooks(calls, nsites + 2);
+        return false;
+    }
     dsf_log("garage: save hooks on: flags of IDs %d..%d kept in %s next to autosave.dat", kExtFirst, kExtMax - 1,
             g_side_name);
     return true;
@@ -886,12 +910,12 @@ bool install_list()
         {0x006C5740, (void*)s_group_add_car, 5, {0x53, 0x8B, 0x5C, 0x24, 0x0C}},
         {0x006C7BB0, (void*)s_group_insert, 9, {0x56, 0x8B, 0xF1, 0x8B, 0x86, 0xE0, 0x10, 0x00, 0x00}},
     };
-    for (const Edit& e : edits)
-        if (!bytes_equal(e.va, e.old, e.n)) return apply_edits("garage list", &e, 1);  // logs the site
-    for (const Hook& h : caps)
-        if (!bytes_equal(h.va, h.old, h.len)) return apply_hooks("garage caps", &h, 1);
+    if (!edits_match("garage list", edits, 6) || !hooks_match("garage caps", caps, 2)) return false;
     if (!apply_hooks("garage caps", caps, 2)) return false;
-    if (!apply_edits("garage list", edits, 6)) return false;
+    if (!apply_edits("garage list", edits, 6)) {
+        undo_hooks(caps, 2);
+        return false;
+    }
     dsf_log("garage: maker list walks model IDs 0..%d (stock 0..303); at most %d cars per group", g_max_id - 1,
             kGroupCars);
     return true;
@@ -959,7 +983,11 @@ bool install_groups(int groups)
         call_bytes(e.old, va, 0x00ACE110);
         call_bytes(e.neu, va, (uint32_t)s_menu_set_string);
     }
-    if (!apply_edits("maker groups", edits, n + 5)) return false;
+    if (!edits_match("maker groups", edits, n + 5) || !apply_edits("maker groups", edits, n + 5)) {
+        VirtualFree(g_maker_index, 0, MEM_RELEASE);
+        g_maker_index = nullptr;
+        return false;
+    }
     g_groups_off = off;
     g_count_rel = rel;
     g_max_groups = groups;
@@ -976,7 +1004,6 @@ void mod_garage_init()
     char name[64];
     cfg_str("garage", "side_file", "dsfforza-garage.dat", name, sizeof name);
     if (name[0] && !strpbrk(name, "\\/:")) strcpy_s(g_side_name, name);
-    g_side_enabled = cfg_bool("garage", "side_file_enabled", true);
 
     if (cfg_bool("garage", "save", true)) g_save_active = install_save();
     else dsf_log("garage: [garage] save=0, save hooks off");

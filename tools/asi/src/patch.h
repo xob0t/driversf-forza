@@ -46,30 +46,13 @@ bool patch_jmp(uint32_t va, void* target, size_t len = 5, const void* expect = n
 // E8 rel32 call at va to target (5 bytes). expect (5 bytes) as in patch_bytes.
 bool patch_call(uint32_t va, void* target, const void* expect = nullptr);
 
-// Writes a 32-bit value at va (e.g. an immediate or a pointer operand).
-// expect_old, when non-null, must match the current value.
-bool patch_u32(uint32_t va, uint32_t value, const uint32_t* expect_old = nullptr);
-
 // True when the n bytes at va equal bytes.
 bool bytes_equal(uint32_t va, const void* bytes, size_t n);
+// bytes_equal that logs the current and the expected bytes when they differ.
+bool check_bytes(uint32_t va, const void* bytes, size_t n);
 
 // Executable, zeroed memory that lives for the whole process (never freed).
 void* alloc_exec(size_t n);
 
-// ---- function hooks (system DLL exports, COM vtables) --------------------
-// Inline hook: overwrites the first instructions of `target` with a jump to
-// `detour` and returns a trampoline that runs the original (nullptr when the
-// prologue can't be relocated; logged). Handles the usual system prologues
-// (mov edi,edi / push ebp / mov ebp,esp, jmp [import], an existing E9 hook).
-void* hook_code(void* target, void* detour, const char* what);
-// hook_code on GetProcAddress(GetModuleHandle(dll), name). The DLL must
-// already be loaded (no LoadLibrary: this runs from DllMain).
-void* hook_export(const char* dll, const char* name, void* detour);
-// Replaces vtbl[index] with detour; returns the previous entry (or nullptr).
-void* patch_vtable(void** vtbl, int index, void* detour);
-
 // Shown in the log header; bump when patches change.
 #define DSF_VERSION "0.1"
-
-// Helper for "jump back" addresses in naked hooks.
-#define DSF_VA(x) ((uint32_t)(x))

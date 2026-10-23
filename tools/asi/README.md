@@ -1,7 +1,8 @@
 # dsfforza.asi
 
 One native plugin for the runtime code patches this project needs in
-`Driver.exe` 1.04. The ASI loader (`winmm.dll`) loads it from
+`Driver.exe` 1.04. An ASI loader (one already in the game folder, or the
+Ultimate ASI Loader `dinput8.dll` that `tools\install.ps1` adds) loads it from
 `<game>\plugins\`. Nothing on disk is edited: every patch is applied in memory
 when the plugin loads.
 
@@ -17,6 +18,9 @@ it: it maps `Driver.exe`'s image at 0x00400000 in a child process (the range
 is reserved before the child starts), runs each module's init against it and
 exercises the hooks that need no game state. A changed byte at any patch site
 shows up there, and in `out\asi\dsfforza.log`, without starting the game.
+Another child first changes one byte in three all-or-nothing patch sets
+(archive readers, maker groups, card emblem) and checks that nothing of each
+set is written.
 
 `tools\install.ps1` copies both into `<game>\plugins\` and removes them on
 `-Uninstall`. Design notes and the patch list live in `research/asi.md`.
@@ -54,8 +58,8 @@ All addresses are VAs of `Driver.exe` 1.04 (image base 0x00400000, no ASLR).
 | `patch_bytes(va, bytes, n, expect = nullptr)` | Write `n` bytes. With `expect`, the current bytes must match or nothing is written (logged, returns false) |
 | `patch_jmp(va, target, len = 5, expect = nullptr)` | `E9 rel32` to `target`, NOP-padded to `len` |
 | `patch_call(va, target, expect = nullptr)` | `E8 rel32` to `target` |
-| `patch_u32(va, value, expect_old = nullptr)` | Write one dword (an immediate, a pointer operand) |
 | `bytes_equal(va, bytes, n)` | Compare without writing |
+| `check_bytes(va, bytes, n)` | `bytes_equal` that logs the current and the expected bytes on a mismatch |
 | `alloc_exec(n)` | RWX memory for trampolines and relocated tables; never freed |
 | `dsf_exe_ok()` | The exe check result (see below) |
 | `dsf_plugin_dir()`, `dsf_ini_path()` | Paths |
@@ -66,8 +70,9 @@ Rules for modules:
   `DriverNGHook.asi` patch the same exe; a mismatch must leave the game
   alone instead of corrupting code.
 - Check every return value. If a module's patches only work together, apply
-  none of them when the first check fails (check with `bytes_equal` first,
-  then patch).
+  none of them when the first check fails (check every site with
+  `bytes_equal` or `check_bytes` first, then patch), and undo the ones
+  already written if a later write fails.
 - Module init runs inside `DllMain`: no `LoadLibrary`, no waiting on threads.
   Allocate and patch only.
 - Log one line per patch applied, and the reason when one is skipped.

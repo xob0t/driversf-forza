@@ -56,11 +56,26 @@ def read_block(path: Path) -> dict:
     return out
 
 
+def fnv1a(data: bytes) -> int:
+    h = 2166136261
+    for b in data:
+        h = ((h ^ b) * 16777619) & 0xFFFFFFFF
+    return h
+
+
 def read_side(path: Path) -> dict:
+    """The side file as the plugin's side_read accepts it (else problems)."""
     data = path.read_bytes()
+    if len(data) < 16:
+        return {"problems": [f"{len(data)} bytes, shorter than the header"]}
     magic, version, count, digest = struct.unpack_from("<4sIII", data)
     if magic != b"DSFG" or version != 1:
         return {"problems": [f"not a version 1 side file ({magic!r}, {version})"]}
+    body = data[16:16 + 8 * count]
+    if count > 1000 or len(body) != 8 * count:
+        return {"problems": [f"{count} entries, {len(data) - 16} bytes of them: damaged (the plugin ignores it)"]}
+    if fnv1a(body) != digest:
+        return {"problems": ["hash differs: damaged (the plugin ignores it)"]}
     entries = {}
     for i in range(count):
         vid, what, flags = struct.unpack_from("<HHI", data, 16 + 8 * i)

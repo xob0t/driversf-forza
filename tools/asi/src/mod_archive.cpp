@@ -488,23 +488,24 @@ uint32_t __fastcall h_poll(Reader* r, void*)
             }
         } else {
             log_big(r, count, "opens", _AddressOfReturnAddress());
-            for (uint32_t j = r->ptr_count; j < kInline; j++) r->ptrs[j] = nullptr;
-            r->count = count;
-            r->ptr_count = count;
             if (g_big_hdr_size < need) {
                 if (g_big_hdr) HeapFree(GetProcessHeap(), 0, g_big_hdr);
                 g_big_hdr = (uint8_t*)HeapAlloc(GetProcessHeap(), 0, need);
                 g_big_hdr_size = g_big_hdr ? need : 0;
             }
             if (!g_big_hdr) {
+                // count and ptr_count are still the old ones and the side table
+                // (just grown) still covers them, so a later close stays in bounds.
                 dsf_log("archive: out of memory for a %u-byte CHNK header", need);
-                ext_drop(r);
                 result = 0;
                 r->state = 0;
                 *g_busy = nullptr;
                 r->ok = 0;
                 break;
             }
+            for (uint32_t j = r->ptr_count; j < kInline; j++) r->ptrs[j] = nullptr;
+            r->count = count;
+            r->ptr_count = count;
             g_big_hdr_owner = r;
             h_seek(r, nullptr, 0);
             chain_read(r, nullptr, g_big_hdr, need);
@@ -603,28 +604,37 @@ const Site kSites[] = {
 
 }  // namespace
 
+// All or nothing: the replacements only work together.
+static void patch_readers()
+{
+    for (const Site& s : kSites) {
+        if (!bytes_equal(s.va, s.expect, s.n)) {
+            dsf_log("archive: %08X (%s) is not the stock code (another plugin?); CHNK readers stay at %u entries",
+                    s.va, s.what, kInline);
+            return;
+        }
+    }
+    const int nsites = (int)(sizeof kSites / sizeof kSites[0]);
+    for (int i = 0; i < nsites; i++) {
+        const Site& s = kSites[i];
+        if (!patch_jmp(s.va, s.target, 5, s.expect)) {
+            for (int j = 0; j < i; j++) patch_bytes(kSites[j].va, kSites[j].expect, 5);
+            dsf_log("archive: patching %08X failed after the check passed; the %d sites before it are undone, "
+                    "no reader patches", s.va, i);
+            return;
+        }
+        dsf_log("archive: %08X %s -> %p", s.va, s.what, s.target);
+    }
+    dsf_log("archive: CHNK readers hold up to %u entries (stock %u)", g_max_entries, kInline);
+}
+
 void mod_archive_init()
 {
     int max_entries = cfg_int("archive", "max_entries", 16384);
     if (max_entries < (int)kInline) max_entries = kInline;
     if (max_entries > 1 << 20) max_entries = 1 << 20;
     g_max_entries = (uint32_t)max_entries;
-
-    // All or nothing: the replacements only work together.
-    for (const Site& s : kSites) {
-        if (!bytes_equal(s.va, s.expect, s.n)) {
-            dsf_log("archive: %08X (%s) is not the stock code (another plugin?); no archive patches", s.va, s.what);
-            return;
-        }
-    }
-    for (const Site& s : kSites) {
-        if (!patch_jmp(s.va, s.target, 5, s.expect)) {
-            dsf_log("archive: patching %08X failed after the check passed; the reader may be inconsistent", s.va);
-            return;
-        }
-        dsf_log("archive: %08X %s -> %p", s.va, s.what, s.target);
-    }
-    dsf_log("archive: CHNK readers hold up to %u entries (stock %u)", g_max_entries, kInline);
+    patch_readers();
 
     // Files past 2 GiB. The file layer's seek (0x0085A970) clamps a position
     // with the sign bit set to 0 (`CMP [ECX+0x30],0; JGE`), so every entry of

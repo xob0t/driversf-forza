@@ -352,7 +352,6 @@ struct Disc {
 struct Card {
     Disc disc[kPagesMax];
     int discs;
-    bool forza;       // shows a GarageEmblem car (set by the last fill)
 };
 static Card g_cards[kCards];
 static void* g_spare = nullptr;        // spare's registry entry while it is dressed as the Forza emblem
@@ -501,7 +500,6 @@ static void card_emblem_body(uint8_t* screen, int id, int index, int cars)
     card.discs = n;
     g_step = 4;
     void* spare = want ? spare_entry(reg, card.disc[0].orig) : nullptr;
-    card.forza = want && spare;
     g_step = 5;
     for (int k = 0; k < n; k++) {
         uint8_t* obj = card.disc[k].obj;
@@ -572,7 +570,6 @@ static void restore_all_cards(const char* why)
             ((SetResourceFn)kSetResource)(obj, nullptr, 0, orig, *(uint8_t*)(obj + 0x34));
             restored++;
         }
-        c.forza = false;
     }
     static int logs = 0;
     if (restored && logs++ < 8) {
@@ -640,12 +637,22 @@ static void card_emblem_init()
         dsf_log("hud: car list itemState write at %08X differs; garage card emblem stays stock", kCardSite);
         return;
     }
-    for (uint32_t va : kSlotSites)   // the first two are the challenge browser's
-        patch_call(va, va < 0x00711000 ? (void*)slot_stub_challenges : (void*)slot_stub_cars);
+    const int nslots = (int)(sizeof kSlotSites / sizeof kSlotSites[0]);
+    uint8_t orig[nslots][5];
+    int done = 0;
+    for (; done < nslots; done++) {   // the first two are the challenge browser's
+        uint32_t va = kSlotSites[done];
+        memcpy(orig[done], (const void*)va, 5);
+        if (!patch_call(va, va < 0x00711000 ? (void*)slot_stub_challenges : (void*)slot_stub_cars)) break;
+    }
     uint8_t code[8] = {0xE8, 0, 0, 0, 0, 0x90, 0x90, 0x90};
     int32_t rel = (int32_t)((uint32_t)(void*)card_stub - (kCardSite + 5));
     memcpy(code + 1, &rel, 4);
-    patch_bytes(kCardSite, code, sizeof code, kCardSiteBytes);
+    if (done < nslots || !patch_bytes(kCardSite, code, sizeof code, kCardSiteBytes)) {
+        for (int i = 0; i < done; i++) patch_bytes(kSlotSites[i], orig[i], 5);
+        dsf_log("hud: writing the card emblem hooks failed (undone); garage card emblem stays stock");
+        return;
+    }
     g_card_emblem = true;
     dsf_log("hud: card emblem hook at %08X, picture-slot checks at %08X %08X %08X %08X "
             "(GarageEmblem = 1 -> %s with the SF UVs and texture %08X%08X)",
