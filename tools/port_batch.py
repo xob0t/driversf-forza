@@ -41,8 +41,12 @@ leaves unused, then --first-id up; cars that won't fit a maker group get a note.
 
 Outputs in --out DIR: dngvehicles.sp, dngvehicles.json (port_car's manifest
 format, plus "batch": failures and timings), dngvehicles.lua (the
-dsfforza\\ported.lua for register.lua), batch-report.json and, with --gui,
-gui/ (gui.sp, Fonts.fchunk, hud.lua from tools/gui_assets.py). Every
+dsfforza\\ported.lua for register.lua), batch-report.json (per car its
+engine sound: Forza source banks, loops used, pitch ranges, SBAK size, or why
+it kept the host's), sound/<media>/ (sweep_new.wav and sweep_template.wav
+previews, wav/ loops, report.json; tools/engine_sound.py) and, with --gui,
+gui/ (gui.sp, Fonts.fchunk, hud.lua from tools/gui_assets.py). A car whose
+sound step crashes is retried once with --no-forza-sound. Every
 port_car option is accepted inside --port "..." (e.g. --damage, --host 266,
 --mdxn-limit 0x2C0000).
 
@@ -88,7 +92,7 @@ DEFAULT_PORT_OPTIONS = "--mdxn-limit 0x2C0000 --damage"
 def game_from_dsf(dsf: Path) -> Path:
     game = dsf.resolve().parent.parent
     # <game>/dsfforza-backup/Install/dngvehicles.sp (tools/game_paths.py): the game is one up.
-    if game == game_paths.REPO_STOCK:  # the repo's stock copy: the game folder is the real one
+    if game == game_paths.REPO_STOCK.resolve():  # the repo's stock copy (a junction in a worktree): the real game
         return Path(os.environ.get("DSF_GAME_DIR") or DEFAULT_GAME)
     return game.parent if game.name == game_paths.BACKUP else game
 
@@ -477,6 +481,8 @@ def fallback_for(report: dict, options: list[str]) -> tuple[list[str], str] | No
         return out, "without --damage (tools/damage.py failed)"
     if ("cockpit" in text.lower()) and "--no-cockpit" not in options:
         return options + ["--no-cockpit"], "with the host's interior (--no-cockpit; the Forza cockpit failed)"
+    if ("engine_sound.py" in text or "forza_audio.py" in text) and "--no-forza-sound" not in options:
+        return options + ["--no-forza-sound"], "with the host's sound (--no-forza-sound; the Forza sound failed)"
     return None
 
 
@@ -527,8 +533,13 @@ def worker(job_path: Path) -> int:
             names = {s: entries[i].name for s, i, k in clone_vehicle.sslp_records(stream, entries) if k == 0}
             log(f"--- {job['media']} ({source.game}, {source.where}) -> spool ID {job['spool_id']}, host {host} "
                 f"({names[host]})")
+            if job.get("sound_dir"):
+                args.forza_sound_dir = Path(job["sound_dir"])
+            plan, plan_report = port_car.forza_sound_plan(
+                args, stream, entries, job["media"], source.game, folder, gamedb, isos,
+                args.sound_host if isinstance(args.sound_host, int) else None, job["spool_id"], log)
             clones, built = port_car.build_car(stream, entries, host, job["spool_id"], car, dims, args,
-                                               nonr_limit, mdxn_max, log, gamedb, sound)
+                                               nonr_limit, mdxn_max, log, gamedb, sound, plan, plan_report)
             built["host_choice"] = choice
             temp = out_chunk.with_suffix(".tmp")
             with temp.open("wb") as out:
@@ -815,11 +826,15 @@ def cmd_build(args) -> None:
     if port_args.handling == "dsf" and not port_args.no_handling:
         import handling_dsf
         handling_dsf.load_fleet(dsf)
+    if not port_args.no_forza_sound:
+        import engine_sound
+        engine_sound.stock_index(dsf)    # templates and reserved Wwise IDs (out/cache/sound/stock-banks.json)
     timings["plan"] = round(time.time() - started, 1)
 
     jobs = [{"media": p.media, "game": p.game, "year": p.year, "games": p.games, "source": p.source,
              "spool_id": p.spool_id, "dsf": str(dsf), "game_dir": str(game_from_dsf(dsf)),
              "cache": str(args.cache), "isos": [str(i) for i in isos], "port_options": port_options,
+             "sound_dir": str(out_dir / "sound"),
              "chunk": str(work / f"{p.media}.chnk"), "report": str(work / f"{p.media}.json")} for p in picks]
     reused = {}
     for job in jobs:   # results of an earlier run: reuse (--resume) or drop
@@ -939,19 +954,24 @@ def sha256(path: Path) -> str:
 
 def write_report(out_dir: Path, archive: Path, cars: list[dict], failed: list[dict], timings: dict,
                  started: float, args, results: dict | None = None) -> None:
+    import engine_sound
     timings["total"] = round(time.time() - started, 1)
     causes: dict[str, list[str]] = {}
     for f in failed:
         causes.setdefault(f.get("cause") or "?", []).append(f["media"])
+    sounds = {c["media"]: engine_sound.summary(c.get("forza_sound") or {}) for c in cars}
     report = {
         "archive": str(archive), "archive_bytes": archive.stat().st_size if archive.exists() else None,
         "jobs": args.jobs, "timings_s": timings,
         "ok": [{"spool_id": c["spool_id"], "media": c["media"], "game": c["game"], "host": c["host"],
                 "host_name": c["host_name"], "lint": c.get("lint"), "fallback": c.get("batch_fallback"),
                 "seconds": (results or {}).get(c["media"], {}).get("seconds"),
-                "lods": c.get("lods"), "sizes": c.get("sizes")} for c in cars],
+                "lods": c.get("lods"), "sizes": c.get("sizes"), "sound": sounds[c["media"]]} for c in cars],
         "failed": [{k: f.get(k) for k in ("media", "spool_id", "cause", "error")} for f in failed],
         "failed_by_cause": causes,
+        "forza_sound": {"cars": sum(s["forza"] for s in sounds.values()),
+                        "host_sound": {m: s["reason"] for m, s in sounds.items() if not s["forza"]},
+                        "previews": str(out_dir / "sound")},
         "fallbacks": {c["media"]: {"fallback": c.get("batch_fallback"),
                                    "first_cause": (results or {}).get(c["media"], {}).get("first_cause")}
                       for c in cars if c.get("batch_fallback")},
@@ -963,6 +983,10 @@ def write_report(out_dir: Path, archive: Path, cars: list[dict], failed: list[di
         print(f"  {cause}: {', '.join(names)}")
     for media, f in report["fallbacks"].items():
         print(f"  built {f['fallback']}: {media} (first try: {f['first_cause']})")
+    if cars:
+        print(f"  Forza engine sound: {report['forza_sound']['cars']} of {len(cars)} cars")
+        for media, reason in report["forza_sound"]["host_sound"].items():
+            print(f"  host sound: {media} ({reason})")
     if archive.exists():
         print(f"archive {archive} ({archive.stat().st_size / 2**20:.0f} MiB), report {out_dir / 'batch-report.json'}")
 

@@ -388,6 +388,15 @@ def cmd_lint(args: argparse.Namespace) -> None:
         # texture, or the damage states draw cracks and holes across the window.
         import glass
         glass_rows = glass.check(stream, kinds)
+        # Engine sound: bank round trip, VSVH events, Wwise IDs across the archive (tools/engine_sound.py).
+        sound_rows = []
+        if not args.no_sound:
+            import engine_sound
+            spool = args.id if args.id is not None else next(
+                sid for sid, index, kind in parse_sslp(payload(stream, find(find(find(
+                    root.entries, "SSIC").children, "NONR").children, "SSLP"))) if index == args.vehc and kind == 0)
+            reserved = engine_sound.stock_index(args.stock)["reserved"] if args.stock else None
+            sound_rows = engine_sound.lint(stream, root.entries, spool, reserved)
 
     report(True, f"UPVH layout parses ({len(h.records)} records)")
     if cross is not None:
@@ -448,6 +457,8 @@ def cmd_lint(args: argparse.Namespace) -> None:
                         f"uses ({len(refs)} referenced, unresolved {bad[:3]})")
     for ok, message in glass_rows:
         report(ok, message)
+    for ok, message in sound_rows:
+        report(ok, message)
     print(f"{problems} problem(s)")
     if problems:
         sys.exit(1)
@@ -469,6 +480,8 @@ def main(argv: list[str] | None = None) -> None:
             p.add_argument("--stock", type=Path, help="stock archive, to check what the interior and "
                                                       "exterior borrow from the full entry")
             p.add_argument("--source", type=int, default=266, help="host's stock spool ID (default 266)")
+            p.add_argument("--no-sound", action="store_true",
+                           help="skip the engine sound checks (Wwise bank round trip, VSVH events, IDs)")
             p.add_argument("--allow-shared", action="store_true",
                            help="skip the cross-vehicle UID check (clones made without --new-uids "
                                 "share the host's UIDs on purpose)")

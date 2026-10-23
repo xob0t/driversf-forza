@@ -31,6 +31,16 @@ For each --car NAME[@fh1|@fm4]:
    steering hinge, gauges and head camera moved (tools/cockpit.py; not yet
    tested in game; --no-cockpit keeps the host's interior). If that interior
    can't fit, the host's is kept.
+5. Engine sound (tools/engine_sound.py, research/engine-sound.md; untested in
+   game): the car's own Forza engine loops (its ET/HT files, EngAmb loops for
+   set A, Exh for set B) go into a stock template bank with the 370Z layout,
+   the best engine match first, with retuned pitch and crossfade curves,
+   VSVH+4C from the cylinder count and fresh Wwise IDs in the car's spool-ID
+   namespace. Templates and shorter loops are tried until the NONR fits.
+   When the car's Forza audio can't be resolved or nothing fits, the host's
+   (or --sound-host's) sound stays, and the reason is logged and reported.
+   Previews: <out>-sound/<media>/ (sweep_new.wav, sweep_template.wav, wav/).
+   --no-forza-sound turns the step off.
 
 Then the archive is written and every car is checked: no resource or MODL part
 UID it defines is defined by another vehicle (before writing), and
@@ -277,11 +287,70 @@ def clamp_lods(text: str, available: set[int]) -> dict[int, int]:
     return {mask: near(lod) for mask, lod in forza2dsf.parse_lods(text).items()}
 
 
+def forza_sound_plan(args, stream, entries, media: str, game: str, folder: Path, gamedb: Path | None, isos,
+                     sound: int | None, spool_id: int, log):
+    """(engine_sound.Plan or None, report) for the car's own Forza engine sound
+    (tools/engine_sound.py, research/engine-sound.md): its Forza loops, its engine
+    type and the stock template banks to try, best engine match first (an explicit
+    --sound-host before them). None, with the reason, when it is disabled or the
+    car's Forza audio can't be resolved; the car then keeps the host's sound."""
+    if getattr(args, "no_forza_sound", False):
+        return None, {"ok": False, "reason": "disabled (--no-forza-sound)"}
+    import engine_sound
+    import host_select
+    try:
+        index = engine_sound.stock_index(args.dsf)
+        db = gamedb or extract_gamedb(isos, game, args.cache)
+        info = host_select.forza_info(media, {game: db} if db else None, game, folder)
+        ranking = host_select.rank(info, host_select.survey(args.dsf), allow_special=True, mode="sound")
+        templates = engine_sound.template_order(index, [r.id for r in ranking],
+                                                [sound] if isinstance(sound, int) else [])
+        forza = engine_sound.forza_engine(media, game, isos, args.cache / "sound")
+        engine_sound.pick_emissions(forza)
+    except (LookupError, ValueError, OSError, RuntimeError, sqlite3.Error, SystemExit) as error:
+        reason = f"{type(error).__name__}: {error}" if not isinstance(error, (LookupError, SystemExit)) else \
+            str(error).strip("'\"")
+        log(f"  forza sound: {media}: {reason}; keeping the host's sound")
+        return None, {"ok": False, "reason": reason}
+    etype = engine_sound.engine_type(info.engine.cylinders, info.engine.layout)
+    log(f"  forza sound: idle {forza['idle']:g}, redline {forza['redline']:g}, "
+        + ", ".join(f"{e} {v['bank']} ({len(v['loops'])} loops)" for e, v in forza["emissions"].items())
+        + f"; {info.engine.text()} -> engine type {engine_sound.ENGINE_TYPES.get(etype, 'template')}"
+        + f"; templates {templates}")
+    plan = engine_sound.Plan(stream, entries, media, game, spool_id, forza, templates, index["reserved"],
+                             etype, info.engine.text(), log)
+    return plan, {"ok": False, "reason": "not built"}
+
+
+def fit_forza_sound(stream, full, plan, nonr_limit, mdxn_max, log) -> dict:
+    """Install the plan's first candidate (template, loop length) under which the
+    full entry's NONR fits its SSLP buffer; keep the clone's own VSRT when none does."""
+    import engine_sound
+    nonr = child(full, "NONR")
+    at = next(n for n, c in enumerate(nonr.children) if c.tag == "VSRT")
+    original = nonr.children[at]
+    over = []
+    for candidate in plan.candidates():
+        dropped = engine_sound.install(full, candidate.sbak, candidate.vsvh, stream)
+        _, problems = check_entry(full, 0, nonr_limit, mdxn_max)
+        nonr_over = [p for p in problems if p.startswith("NONR")]
+        if not nonr_over:
+            return {"ok": True, **dropped, **candidate.report, "_sound": candidate}
+        over.append(f"template {candidate.report['template']} at {candidate.report['max_seconds']} s: {nonr_over[0]}")
+        log(f"  forza sound: {over[-1]}")
+        nonr.children[at] = original
+    nonr.children[at] = original
+    reason = "; ".join(plan.failures + over) or "no usable template"
+    log(f"  forza sound: none fits ({reason}); keeping the host's sound")
+    return {"ok": False, "reason": reason}
+
+
 def build_car(stream, entries, host: int, spool_id: int, car: forza2dsf.ForzaCar, dims, args,
               nonr_limit, mdxn_max, log, gamedb: Path | None = None,
-              sound: int | None = None) -> tuple[list, dict]:
+              sound: int | None = None, forza_sound=None, forza_sound_report: dict | None = None) -> tuple[list, dict]:
     """Clone + convert, stepping down LODs until every entry fits. Returns the
-    three VEHC entries (not yet registered) and a report."""
+    three VEHC entries (not yet registered) and a report. forza_sound (an
+    engine_sound.Plan from forza_sound_plan) replaces the clone's engine sound."""
     available = {sub.lod for s in car.body for sub in s.subsections if sub.lod > 0}
     full_ladder = [args.lods] if args.lods else list(FULL_LADDER)
     ext_ladder = [args.exterior_lod] if args.exterior_lod else list(EXTERIOR_LADDER)
@@ -313,6 +382,9 @@ def build_car(stream, entries, host: int, spool_id: int, car: forza2dsf.ForzaCar
         if not args.no_handling:
             report["handling"] = apply_handling(stream, clones[0], spool_id, car.name, gamedb, log,
                                                 host=host, mode=args.handling)
+        forza_report = dict(forza_sound_report or {"ok": False, "reason": "disabled (--no-forza-sound)"})
+        if forza_sound is not None:
+            forza_report = fit_forza_sound(stream, clones[0], forza_sound, nonr_limit, mdxn_max, log)
         checks = {kind: check_entry(clones[kind], kind, nonr_limit, mdxn_max) for kind in (0, 1, 2)}
         attempts.append({"lods": {str(m): v for m, v in lods.items()}, "exterior_lod": exterior_lod,
                          "problems": {k: p for k, (_, p) in checks.items() if p}})
@@ -336,9 +408,21 @@ def build_car(stream, entries, host: int, spool_id: int, car: forza2dsf.ForzaCar
         if not stepped:
             raise SystemExit(f"{car.name}: over the size limits at the coarsest LODs; see the log above")
         log(f"{car.name}: over the limits, retrying with coarser LODs")
+    chosen = forza_report.pop("_sound", None)
+    if chosen is not None:
+        r = chosen.report
+        log(f"  forza sound: template {r['template']}, bank {r['bank_id']}, SBAK {r['sbak_bytes']:#x}, "
+            + ", ".join(f"set {k} {s['emission']} {s['bank']} {len(s['loops'])}/{s['available']} loops "
+                        f"pitch {r['pitch'][k]['pitch']}" for k, s in r["sets"].items())
+            + f", engine type {r['engine_type']['state']}")
+        out = getattr(args, "forza_sound_dir", None)
+        if out:
+            chosen.write(Path(out) / car.name)
+            forza_report["previews"] = str(Path(out) / car.name)
     report.update({
         "lods": {"full": {str(m): v for m, v in lods.items()}, "shadow": shadow, "exterior": exterior_lod},
         "attempts": attempts, "renewed_uid_count": renewed, "sound": sound_report or {"sound_host": host},
+        "forza_sound": forza_report,
         "sizes": {str(kind): {t: v for t, v in sizes.items()} for kind, (sizes, _) in checks.items()},
     })
     return clones, report
@@ -509,6 +593,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--sound-host", type=host_arg,
                         help="take the engine sound (NONR/VSRT) from this stock car instead of the host: "
                              "a base spool ID, or auto (best engine match); default: the host's (untested in game)")
+    parser.add_argument("--no-forza-sound", action="store_true",
+                        help="keep the host's (or --sound-host's) engine sound; default: the car's own Forza "
+                             "engine loops in a stock template bank (tools/engine_sound.py; untested in game)")
+    parser.add_argument("--forza-sound-dir", type=Path,
+                        help="where each car's sound previews go (<dir>/<media>/sweep_new.wav ...; default "
+                             "<out>-sound next to the archive)")
     parser.add_argument("--allow-special-hosts", action="store_true",
                         help="with --host auto: also consider cop, taxi, emergency and other special entries")
     parser.add_argument("--first-id", type=int, default=304, help="first base spool ID to try (default 304)")
@@ -559,6 +649,8 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.out.resolve() == args.dsf.resolve():
         raise SystemExit("refusing to overwrite the stock archive")
+    if args.forza_sound_dir is None:
+        args.forza_sound_dir = args.out.with_name(args.out.stem + "-sound")
     if args.share_host_uids and len(args.car) > 1 and args.textures != "none":
         print("warning: --share-host-uids with several textured cars: they share one texture UID",
               file=sys.stderr)
@@ -583,7 +675,7 @@ def main(argv: list[str] | None = None) -> None:
         if (not args.no_cockpit or not args.no_handling) and gamedb is None:  # eye point, handling
             gamedb = extract_gamedb(isos, source.game, args.cache)
         host, sound, choice = pick_hosts(args, rcar.name, source.game, folder, gamedb, isos, log)
-        picked.append((rcar, source, car, dims, gamedb, host, sound, choice))
+        picked.append((rcar, source, car, dims, gamedb, host, sound, choice, folder))
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     temp = args.out.with_name(args.out.name + ".tmp")
@@ -606,7 +698,7 @@ def main(argv: list[str] | None = None) -> None:
         taken = clone_vehicle.taken_ids(stream, entries)
         next_id = args.first_id
         built = []
-        for rcar, source, car, dims, gamedb, host, sound, choice in picked:
+        for rcar, source, car, dims, gamedb, host, sound, choice, folder in picked:
             while next_id in taken:
                 next_id += 1
             if next_id >= 1000:
@@ -615,8 +707,11 @@ def main(argv: list[str] | None = None) -> None:
             taken.add(spool_id)
             log(f"--- {rcar.name} ({source.game}, {source.where}) -> spool ID {spool_id}, host {host} "
                 f"({names[host]})" + (f", sound from {sound} ({names[sound]})" if sound not in (None, host) else ""))
+            plan, plan_report = forza_sound_plan(args, stream, entries, rcar.name, source.game, folder, gamedb,
+                                                 isos, args.sound_host if isinstance(args.sound_host, int) else None,
+                                                 spool_id, log)
             clones, report = build_car(stream, entries, host, spool_id, car, dims, args,
-                                       nonr_limit, mdxn_max, log, gamedb, sound)
+                                       nonr_limit, mdxn_max, log, gamedb, sound, plan, plan_report)
             report["host_choice"] = choice
             built.append((rcar, source, car, spool_id, clones, report, host))
         for rcar, source, car, spool_id, clones, report, host in built:
@@ -668,7 +763,8 @@ def main(argv: list[str] | None = None) -> None:
     for c in manifest["cars"]:
         log(f"  {c['spool_id']}  {c['media']:28} {c['game']}  host {c['host']}  full LOD {c['lods']['full']} "
             f"exterior LOD {c['lods']['exterior']}  placement {c['placement']['source']}"
-            + (f"  cockpit eye {c['cockpit']['eye']}" if "cockpit" in c else "  host interior"))
+            + (f"  cockpit eye {c['cockpit']['eye']}" if "cockpit" in c else "  host interior")
+            + ("  forza sound" if c.get("forza_sound", {}).get("ok") else "  host sound"))
     if failed:
         raise SystemExit(f"{failed} car(s) failed lint")
 
