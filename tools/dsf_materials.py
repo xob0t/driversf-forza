@@ -54,14 +54,55 @@ DEFAULT_MIPS = 4
 # texels centred here). UV0 elsewhere draws the paint black or grey
 # (research/lights.md, "Paint").
 PAINT_TEXEL_UV = (0.8481, 0.7119)  # forza2dsf.PAINT_UV (0.835, 0.703) is inside the same block
-# Lamp texel alpha (the Lights shader adds lamp colour x brightness x texel alpha):
-# "value" (max(r, g, b) - 40) * 0.8 times Forza's glow mask; "luma" the same on
-# (r + g + b) / 3, which left red and amber lamps with almost no alpha (370Z: high
-# stop lamp mean 2, tails 10, against stock red lamps' 20; dark in game, run
-# 20261023-110543, research/lights.md); "gamma" the earlier Forza alpha ** 2.
-# Module-level so an A/B build can switch it (out/lights/build_ab.py).
-LIGHTS_ALPHA = "value"
+# Lamp texel alpha (the Lights shader adds lamp colour x brightness x texel alpha,
+# research/lights.md). "matched" (default): a score s = Forza glow mask x (0.6 + 0.4 x
+# brightest channel), all 0..1, mapped through a curve per texel hue (red, amber, white) that
+# puts the converted texels on stock DSF's lamp alpha distribution (quantile match of
+# six FH1/FM4 cars against 146 stock vehicles, out/lamps/scripts/fit_lut.py). It keeps
+# the order of the texels, so hot spots, reflector cells and dark edges stay where
+# Forza has them, and a near-black lens only glows where its glow mask is bright.
+# "value" (max(r, g, b) - 40) * 0.8 with a floor of 64, times the mask, made whole
+# lenses one bright red patch (user report on out/testdrive7); "luma" the same on
+# (r + g + b) / 3 left red lamps dark; "gamma" the earlier mask ** 2; "raw" Forza's
+# alpha as is (analysis). Module-level so an A/B build can switch it
+# (out/lights/build_ab.py); DSFFORZA_LIGHTS_ALPHA overrides it for port_batch workers.
+LIGHTS_ALPHA = __import__("os").environ.get("DSFFORZA_LIGHTS_ALPHA", "matched")
 LIGHTS_ALPHA_FLOOR = 64.0  # "value": lowest level (of 255) times Forza's glow mask
+# "matched" curves: score knots -> stock alpha knots (stock percentiles 0, 5, 10, 20,
+# ..., 90, 93, 95, 97, 98, 99, 99.5 of red lamps, of amber and of white lamps).
+_LAMP_X_RED = (0.0, 0.199, 0.313, 0.458, 0.529, 0.586, 0.627, 0.672, 0.715, 0.768, 0.785, 0.798, 0.815,
+               0.831, 0.853, 0.87, 0.896, 0.922, 0.961)
+_LAMP_Y_RED = (0, 0, 0, 3, 8, 14, 21, 30, 43, 63, 78, 106, 130, 153, 187, 211, 239, 252, 255)
+_LAMP_X_WHITE = (0.0, 0.117, 0.135, 0.177, 0.373, 0.557, 0.677, 0.755, 0.813, 0.898, 0.922, 0.936, 0.947,
+                 0.951, 0.961, 0.97, 0.975)
+_LAMP_Y_WHITE = (0, 0, 1, 9, 18, 29, 43, 60, 84, 119, 142, 173, 197, 216, 237, 248, 255)
+_LAMP_Y_AMBER = (0, 0, 1, 7, 14, 22, 31, 44, 61, 84, 100, 124, 145, 167, 196, 217, 242)
+LAMP_CURVES = {"red": (_LAMP_X_RED, _LAMP_Y_RED), "white": (_LAMP_X_WHITE, _LAMP_Y_WHITE),
+               "amber": (_LAMP_X_WHITE, _LAMP_Y_AMBER)}
+
+
+def lamp_hue(r: int, g: int, b: int) -> str:
+    """Lamp texel colour class for the "matched" curves."""
+    if r > 1.6 * g and r > 1.6 * b:
+        return "red"
+    if r > 1.2 * b + 20 and g > 0.35 * r and g > 1.2 * b:
+        return "amber"
+    return "white"
+
+
+def matched_lamp_alpha(r: int, g: int, b: int, a: int) -> int:
+    """Stock-like lamp alpha from a Forza lamp texel (LIGHTS_ALPHA "matched")."""
+    xs, ys = LAMP_CURVES[lamp_hue(r, g, b)]
+    s = (a / 255) * (0.6 + 0.4 * max(r, g, b) / 255)
+    if s >= xs[-1]:
+        return ys[-1]
+    for i in range(1, len(xs)):
+        if s < xs[i]:
+            t = (s - xs[i - 1]) / (xs[i] - xs[i - 1])
+            return int(ys[i - 1] + t * (ys[i] - ys[i - 1]) + 0.5)
+    return ys[-1]
+
+
 DEFAULT_PLAIN = (74, 72, 74, 15)
 # Rear lamp lenses (Texturing.is_lens): a lamp-cover glass subsection behind
 # this Forza z (front is -z; the 40 testdrive cars' rear lenses sit at +1.5 to
@@ -622,6 +663,8 @@ class Texturing:
         if family == fm.LIGHTS:
             if LIGHTS_ALPHA == "raw":  # analysis only: Forza's alpha as is
                 return r, g, b, a
+            if LIGHTS_ALPHA == "matched":
+                return r, g, b, matched_lamp_alpha(r, g, b, a)
             if LIGHTS_ALPHA in ("value", "luma"):
                 # Stock lamp texels: alpha median 0 to 76, following brightness
                 # (Desanne headlamp lum 124 -> 63, reverse 133 -> 76); Forza's glow

@@ -1005,6 +1005,7 @@ class DamagePlan:
         self._seam: dict = {}           # quantised position -> rigid panels sharing it (current LOD)
         self._seam_written: set = set()  # (field, position) given a shared crushed position
         self._seam_rep: dict = {}        # quantised position -> its near-coincident group's position
+        self._seam_paint: set = set()    # quantised positions on body paint (the outer skin)
         self._pins: dict = {}            # pair -> Grid of its pinned seam positions (current LOD)
         self._motion: dict = {}          # id(HostField) -> {frozenset of roles: median host border crush}
         self.report: dict = {"panels": {}}
@@ -1244,19 +1245,25 @@ class DamagePlan:
     def _seam_map(self, sections, lod: int, assign: dict) -> dict:
         """Quantised position (int16 x3, as encoded) -> the rigid panels whose
         triangles use it, for positions on more than one."""
+        import forza_materials as fm
         users = defaultdict(set)
+        self._seam_paint = set()
         for section in sections:
             for sub in section.subsections:
                 if sub.lod != lod:
                     continue
                 pool = section.vertices_for(sub)
+                paint = fm.classify(sub.material)[0] == fm.PAINT
                 for k, t in enumerate(sub.triangles()):
                     pair = assign.get((id(sub), k))
                     if pair is None or not self._rigid(pair):
                         continue
                     for i in t:
                         p = self.place.point(pool[i].position)
-                        users[tuple(max(-32768, min(32767, round(c * 4096))) for c in p)].add(pair)
+                        key = tuple(max(-32768, min(32767, round(c * 4096))) for c in p)
+                        users[key].add(pair)
+                        if paint:
+                            self._seam_paint.add(key)
         # Near-coincident positions of different panels (separate Forza shells
         # that touch) are seams too: such positions are grouped, and every
         # member takes the group's panels and its first position's crush.
@@ -1282,14 +1289,18 @@ class DamagePlan:
                                 if a != b:
                                     parent[max(a, b)] = min(a, b)
         groups = defaultdict(set)
-        for key in parent:
-            groups[find(key)].add(key)
+        for key in list(parent):
+            root = find(key)
+            groups[root].update((key, root))
         self._seam_rep = {}
         for root, members in groups.items():
             pairs = set().union(*(users[k] for k in members))
+            paint = any(k in self._seam_paint for k in members)
             for k in members:
                 users[k] = pairs
                 self._seam_rep[k] = root
+                if paint:
+                    self._seam_paint.add(k)
         return {k: tuple(sorted(v)) for k, v in users.items() if len(v) > 1}
 
     # Seams that stay shut whatever the damage amounts (testdrive7: the S5S
@@ -1300,10 +1311,13 @@ class DamagePlan:
     # when both panels get the same f, which fullVisualDamage does and a real
     # impact doesn't. Only d = 0 keeps it shut for any f. Stock cars do that:
     # the vertices where doors, wings, sills and the chassis meet barely move
-    # (median 0-3 mm on 147, 163, 227), while their middles dent. So seams
-    # between rigid panels whose host borders stay still are pinned (d = 0)
-    # and the crush fades in over SEAM_REACH; borders the host moves (wings
-    # against the front structure under the bonnet) keep the shared d.
+    # (median 0-3 mm on 147, 163, 227), while their middles dent; where they
+    # move (wings against the front structure, 0.2-0.3 m on 163), the seam is
+    # under the bonnet and backed by structure. Forza skins have no backing,
+    # so seams between rigid panels on body paint are always pinned (d = 0;
+    # 163's wing/front-structure border sits on the S5S Raptor's arch flare),
+    # trim seams where the host's border stays still too, and the crush
+    # fades in over SEAM_REACH. Other trim seams keep the shared d.
 
     def _border_motion(self, f: HostField) -> dict:
         """{frozenset of the two roles: median crush (m) of the host's vertices
@@ -1349,7 +1363,8 @@ class DamagePlan:
         pins = defaultdict(lambda: defaultdict(list))
         count = 0
         for key, pairs in self._seam.items():
-            if not any(self._pinned(a, b, motion) for a in pairs for b in pairs if a < b):
+            if key not in self._seam_paint and not any(self._pinned(a, b, motion)
+                                                       for a in pairs for b in pairs if a < b):
                 continue
             p = tuple(c / 4096 for c in key)
             ck = tuple(int(math.floor(c / SEAM_REACH)) for c in p)
@@ -1489,7 +1504,10 @@ class DamagePlan:
                 else:
                     disp = self._disp(f, pair, p)
                 if rigid:
-                    w = self._pin_weight(pair, p)
+                    # Every copy of a seam position takes the same weight (the
+                    # smallest of its panels'), so unpinned seams stay shut too.
+                    w = (min(self._pin_weight(q, at_p) for q in others) if others and pair in others
+                         else self._pin_weight(pair, p))
                     disp = tuple(w * c for c in disp)
                 q = tuple(p[a] + disp[a] for a in range(3))
                 dmg[v] = q

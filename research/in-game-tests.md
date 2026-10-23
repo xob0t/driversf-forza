@@ -41,6 +41,54 @@ run script (`run-test.ps1 -OnHost`); what differs:
   the harness now moves the game window to the primary screen's top-left
   corner then, clear of the centred prompt (`run-test.ps1`, `$targetScreen`).
 
+## VM runs (`run-series.ps1 -Vm`, from 2026-10-23)
+
+A VMware Workstation VM runs the same `run-test.ps1` headless, so tests no longer
+need the host's desktop. VMware's own SVGA 3D device does the Direct3D (Windows
+Sandbox's GPU paravirtualisation is what bugchecks). On this Hyper-V host
+VMware runs on the Windows Hypervisor Platform, which is already enabled
+(`HypervisorPlatform` feature, CBS selection 1).
+
+- **VM:** `C:\VMs\dsfforza-test\dsfforza-test.vmx`: 4 vCPU, 8 GB, 80 GB growable
+  SATA disk, BIOS firmware (no TPM or Secure Boot; a vTPM needs VM encryption,
+  which vmrun can't start headless), SVGA 3D with 2 GB graphics memory, no
+  network adapter, no USB, an HD audio card muted inside the guest. Guest:
+  `D:\windows_microwin_ru.iso` (Windows 11 Pro 25H2, build 26200, ru-RU,
+  MicroWin-debloated), local admin `dsf` / `dsfforza`, autologon, UAC off,
+  no sleep, lock or screensaver, Windows Update off, Defender exclusions for
+  `C:\Game`, `C:\Run`, `C:\Repo`, `C:\Output`, a silent firewall with rules for
+  `C:\Run\Driver.exe`, desktop 1600x900, the game in a 1280x720 window.
+- **Build:** `tools\wsb\vm-build.ps1` (Iso, Create, Install, Provision,
+  Snapshot). `tools\wsb\vm\autounattend.xml` and `first-logon.ps1` go on a
+  small ISO built with IMAPI2FS. The media answer file replaces the one
+  MicroWin bakes into the image. The account is created in specialize and put
+  in Administrators by SID (S-1-5-32-544), because the Russian image names
+  the group "Администраторы". First logon installs the VC++ x86 runtime and
+  VMware Tools (`setup64.exe /S /v"/qn REBOOT=R ADDLOCAL=ALL"`).
+- **Shared folders** (vmx `sharedFolderN`), linked to the sandbox's paths so
+  `run-test.ps1` runs with its defaults: `C:\Repo` (repo, read-only),
+  `C:\Output` (`%LOCALAPPDATA%\Temp\dsfforza-wsb`, read-write), `C:\Profile`
+  (Documents\Ubisoft\Driver San Francisco, read-only). `C:\Game` is a local
+  copy of the game folder (share `Game`, read-only), put back to stock from
+  `dsfforza-backup\install.json`: replaced files restored and hash-checked,
+  created ones dropped. Re-run `setup-vm.ps1 -Phase Game` (through `vm.ps1
+  Exec`) after changing the host install.
+- **Runs:** `run-series.ps1 -Vm` starts the VM if needed (`vmrun -T ws start
+  ... nogui`, `vmware-vmx` at BelowNormal), copies the host profile into the
+  guest as a 1280x720 window, then runs `run-test.ps1` in the guest's desktop
+  session (`vmrun runProgramInGuest -interactive`, through a wrapper script
+  copied into `C:\dsf`, started hidden) with `-RunDir
+  C:\Output\runs\vm-<stamp>`. Results land in
+  `%LOCALAPPDATA%\Temp\dsfforza-wsb\runs\vm-<stamp>\` and `runs\latest.txt`
+  points at that folder, so `events.json`, `sheet.py` and the rest work
+  unchanged. `-CopyRepoFiles` makes `run-test.ps1` copy archives and overrides
+  from `C:\Repo` into `C:\Run` instead of linking them across the shared
+  folder. Mutex `Local\dsfforza-vm-run`, separate from the sandbox and host
+  series. Keys go to the game inside the guest only; the host's speakers and
+  Driver profile aren't touched.
+- **Control:** `tools\wsb\vm.ps1 Start|Status|Exec|Stop|Revert`. Revert goes
+  back to the snapshot `clean` (powered off, right after provisioning).
+
 ## Result: a cloned vehicle works (confirmed-runtime)
 
 `out/dngvehicles.clone.sp` (`clone_vehicle.py --source 266 --id 304`) loads
@@ -343,6 +391,16 @@ Cockpit camera too low: stock head cameras see the steering rim's top 7.9°
 below eye level (median of 146, `out/eye/wheel_view.py`); ours were 6.5°
 (370Z), 3.3° (M5), 1.9° (Skyline), so the wheel filled half the screen.
 `cockpit.camera_eye` now raises the camera only; to confirm in game.
+
+### Static needles in testdrive7 (run `host-20261023-174440`, confirmed-runtime)
+
+`out/testdrive7` with `-HoldMph '30,60,90'`, IDs 147, 22, 1, 32 (the game
+exited during ID 1). At 30 and 60 mph the Saleen S5S Raptor (22) shows its dial faces
+but no speedometer or tachometer needle (`img/gauges-static-testdrive7-22.png`).
+Cause: `damage.interior_uv1` overwrote the needles' gauge ids (`cockpit.md`,
+"Static needles in the 40-car build"). The fixed build `out/gauges/build`
+(1 S5S Raptor, 2 M3 E30, 3 370Z, 4 Charger Daytona, 5 M5) has not run yet:
+host runs were paused.
 
 ### Gauges (runs `20261022-035058`, `20261022-035518`, confirmed-runtime)
 

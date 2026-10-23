@@ -185,7 +185,8 @@ Offline check of the rebuilt cars (`out/gauges/build`: S5S Raptor, M3 E30,
 Raptor, Supra, Huayra): ids intact, and `cockpit.render_gauges` at 0/0,
 30/2000, 60/4000, 90/6000 (`out/gaugefix/offbig-*.png`, `img/gauges-offline-charger-fixed.png`,
 `offbig2-*.png`, `img/gauges-offline-golfr.png`) puts the Charger's and S5S Raptor's needles on the
-matching marks.
+matching marks. Not yet confirmed in game: the run on `out/gauges/build`
+(IDs 1 to 5, `-HoldMph '30,60,90'`) was stopped when host runs were paused.
 
 Calibration across the 40 cars (`out/gaugefix/calib_survey.py`: DSF's
 linear needle against Forza's tick table interpolated linearly):

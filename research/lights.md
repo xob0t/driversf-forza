@@ -129,11 +129,15 @@ on a shorter or longer car).
 6. `add_geometry` sets byte 2 of semantic 9 on every lamp triangle (full and
    exterior entries, all LODs and the shadow LOD), keeping bytes 0 and 1.
 
-Lamp texel alpha in the atlas (`dsf_materials.LIGHTS_ALPHA`): "value" (the
-default since 2026-10-23) is `max(64, (max(r, g, b) - 40) * 0.8) * Forza
-alpha / 255` (`LIGHTS_ALPHA_FLOOR` = 64); "luma" (before) used
-`(r + g + b) / 3` and no floor, which left red lamps dark (below); "gamma"
-(before that) was Forza's glow mask squared, medians 96 to 253.
+Lamp texel alpha in the atlas (`dsf_materials.LIGHTS_ALPHA`): "matched"
+(the default since the evening of 2026-10-23, "Stock lamp alpha" below)
+maps `Forza alpha x (0.6 + 0.4 x max(r, g, b))` through a curve per texel
+hue onto stock's lamp alpha distribution; "value" (briefly the default,
+`out/testdrive7`) was `max(64, (max(r, g, b) - 40) * 0.8) * Forza alpha /
+255` and made lenses glow as one bright red patch; "luma" used
+`(r + g + b) / 3` and no floor, which left red lamps dark; "gamma" was
+Forza's glow mask squared; "raw" keeps Forza's alpha (analysis builds,
+`DSFFORZA_LIGHTS_ALPHA=raw`).
 
 Result on `out/lights/build/ported-lights.sp` (`verify.py`): the 370Z gets 16
 lamps on the Desanne's 15 entries (2 headlamps, 2 position, 4 indicators with
@@ -328,6 +332,13 @@ runs:
   when braking and reversing like stock 266; the 370Z hit a traffic car in
   its drive and its broken lamps stayed dark (as stock lamps do when
   broken).
+- **Then too bright and flat** (user report on `out/testdrive7`: "braking
+  lights on custom cars are too bright, they are uniformly red"). Under
+  "value" the red lamp means were 19 to 97 against stock's 9 to 58, and the
+  floor and the saturation of Forza's mostly-high mask (below) gave whole
+  lenses the same alpha, so a braking lamp lit as one red patch where
+  stock lamps light along their lens pattern. Fixed by "matched" (next
+  section).
 - **Converted cars as traffic: not seen.** `-TrafficIds` with eight ports
   (run 125721): `RequestTrafficVehicles` returned nil and none appeared in
   about 90 traffic cars over 80 s; the two tries at making one traffic car
@@ -336,6 +347,52 @@ runs:
   ...)` -> the lamp component and its table types), which the runs above
   show working on converted cars, so converted traffic should brake-light
   like stock (hypothesis until a converted car is seen in traffic).
+
+### Stock lamp alpha and the "matched" rule (offline-checked)
+
+Stock lamp texels, all texels under lamp triangles (UV0 rasterised, full
+entry LOD 4) of 146 stock vehicles (`out/lamps/scripts/fleet_tex.py`,
+samples `out/lamps/stock_tex.npy`):
+
+| Lamps | Colour | Mean alpha | p10 / 25 / 50 / 75 / 90 / 99 | > 128 | Per-vehicle mean p10 / 50 / 90 / max |
+| --- | --- | ---: | --- | ---: | --- |
+| tail + stop (0x18..0x1C) | red | 49 | 2 / 11 / 30 / 66 / 127 / 247 | 10% | 23 / 43 / 81 / 128 |
+| stop (0x02) | red | 33 | 0 / 3 / 18 / 44 / 85 / 218 | 5% | 13 / 30 / 62 / 111 |
+| tail (0x03 red) | red | 22 | 0 / 0 / 7 / 22 / 59 / 213 | 4% | |
+| stop + indicator (0x06, 0x07) | red | 30 | 0 / 3 / 20 / 35 / 64 / 251 | 5% | |
+| indicators | amber | 50 | 1 / 11 / 32 / 72 / 125 / 242 | 9% | 23 / 46 / 84 / 153 |
+| reverse | white | 58 | 1 / 11 / 36 / 82 / 156 / 253 | 14% | 24 / 53 / 108 / 150 |
+| headlamps | white | 71 | 3 / 16 / 49 / 108 / 180 / 255 | 20% | 41 / 70 / 110 / 161 |
+
+So stock alpha is an authored glow mask: low over most of a lens, with LED
+dots, bulb hot spots and lit strips near 255 (Desanne tail: a dot grid over
+the red part, two bright strips in the reverse part; headlamps a radial
+hot centre; `out/lamps/tex-266-stock.png`). It follows the texel's
+brightness only loosely (correlation +0.2 to +0.4).
+
+Forza's lamp alpha (raw build of the 370Z, M3 E30, DMC-12, S2000, S5S
+Raptor and Challenger SRT8, `out/lamps/raw6.sp`, samples
+`out/lamps/raw_tex.npy`) is high almost everywhere: tail + stop mean 187,
+median 195, 85% above 128; the lens body sits at 0.6 to 0.8 with the bulb
+glows at 1.0 (`out/lamps/forza/NIS_370Z_10_rgb_a.png`). Indicator lenses
+are mostly clear (80% of their texels white-hued; the amber comes from the
+lamp colour). Any rule that scales this mask (luma, value) keeps the lens
+body near one level, hence the flat patch.
+
+"matched" (`dsf_materials.matched_lamp_alpha`): score `s = a x (0.6 + 0.4
+v)` (a = Forza alpha, v = brightest channel, both 0..1: the glow mask leads,
+so a near-black lens glows only where its mask is bright, and darker cells
+and edges of a lens glow less), then a piecewise-linear curve per texel hue
+(`lamp_hue`: red, amber, white) from quantile matching the six cars' scores
+to the stock distribution of that colour (`fit_lut.py`; knots in
+`LAMP_CURVES`, stock percentiles 0, 5, 10, 20 ... 90, 93, 95, 97, 98, 99,
+99.5). The curve is monotonic, so each lens keeps Forza's order of texels:
+hot spots near 255, the body low (`out/lamps/forza/*_value_vs_matched.png`:
+Forza RGB, "value", "matched"). Per car and lamp on the six cars: tail +
+stop means 18 to 95 (370Z 25, S2000 18, DMC-12 38, S5S 37, M3 E30 75,
+Challenger 95), stop lamps 10 to 124, reverse 36 to 97, indicators 29 to
+132, headlamps 25 to 135, inside or at the edge of stock's per-vehicle
+range (the Challenger's stop lamp, 124, is above stock's 111).
 
 ### Open
 

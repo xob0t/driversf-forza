@@ -1127,11 +1127,12 @@ class GlassSight:
     eye. glass.InteriorGlass starts crack lines and places rim shards where
     the driver can see them; a Forza windscreen runs well below the dash."""
 
-    def __init__(self, sections: list[carbin.Section], eye, place, resolution: int = 128):
+    def __init__(self, sections: list[carbin.Section], eye, place, resolution: int = 128, triangles=None):
+        """`triangles` (Forza-space point triples) instead of `sections`: any opaque mesh."""
         self.eye, self.place, self.res = eye, place, resolution
         self.faces = {}
         half = resolution / 2
-        tris = []
+        tris = [[tuple(p[a] - eye[a] for a in range(3)) for p in t] for t in (triangles or [])]
         for s in sections:
             pool = s.lod0_vertices
             for sub in s.subsections:

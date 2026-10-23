@@ -284,7 +284,7 @@ class _Pane:
         self.cells: dict[tuple[int, int], list[int]] = defaultdict(list)
         if not self.tris:
             self.s0 = self.t0 = 0.0
-            self.area, self.rim = 0.0, []
+            self.area, self.rim, self.filled = 0.0, [], set()
             return
         self.s0 = min(x for q, _, _ in self.tris for x, _ in q) - 2 * CELL
         self.t0 = min(y for q, _, _ in self.tris for _, y in q) - 2 * CELL
@@ -296,15 +296,28 @@ class _Pane:
                     w = _bary(q, self._centre(i, j))
                     if w and min(w) >= -1e-6:
                         self.cells[(i, j)].append(k)
-        self.area = len(self.cells) * CELL * CELL
+        # Outside = empty cells reachable from the grid's border; gaps inside the
+        # pane (cracks between Forza triangles, cut-outs) count as glass, so
+        # neither rim shards nor crack stops appear in the middle of a window.
+        ni = max(i for i, _ in self.cells) + 3
+        nj = max(j for _, j in self.cells) + 3
+        outside, todo = set(), [(0, 0)]
+        while todo:
+            c = todo.pop()
+            if c in outside or c in self.cells or not (-1 <= c[0] <= ni and -1 <= c[1] <= nj):
+                continue
+            outside.add(c)
+            todo += [(c[0] + 1, c[1]), (c[0] - 1, c[1]), (c[0], c[1] + 1), (c[0], c[1] - 1)]
+        self.filled = {(i, j) for i in range(ni + 1) for j in range(nj + 1) if (i, j) not in outside}
+        self.area = len(self.filled) * CELL * CELL
         self.rim = []  # (cell centre, unit direction into the window)
-        for (i, j) in self.cells:
-            if all((i + di, j + dj) in self.cells for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1))):
+        for (i, j) in self.filled:
+            if all((i + di, j + dj) in self.filled for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1))):
                 continue
             ds = dt = 0.0
             for di in range(-4, 5):
                 for dj in range(-4, 5):
-                    if (i + di, j + dj) in self.cells:
+                    if (i + di, j + dj) in self.filled:
                         ds, dt = ds + di, dt + dj
             length = math.hypot(ds, dt)
             if length > 1e-6:
@@ -321,7 +334,7 @@ class _Pane:
         return (self.s0 + (i + 0.5) * CELL, self.t0 + (j + 0.5) * CELL)
 
     def inside(self, p) -> bool:
-        return (self._i(p[0]), self._j(p[1])) in self.cells
+        return (self._i(p[0]), self._j(p[1])) in self.filled
 
     def lift(self, p):
         """(position, normal) on the glass under plane point p, LIFT inside it;

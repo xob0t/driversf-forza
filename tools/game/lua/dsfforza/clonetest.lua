@@ -25,6 +25,7 @@ local DRIVE_SECONDS = 0       -- config.drive (run-test -DriveSeconds): the harn
 local HOLD_MPH = {}           -- config.hold_mph: speeds forced in turn during the cockpit view
 local DAMAGE = false          -- config.damage (run-test -Damage): full visual damage in chase view
 local DAMAGE_PANELS = false   -- config.damage_panels (run-test -DamagePanels): then open and remove the panels
+local DAMAGE_SIDE = false     -- config.damage_side (run-test -DamageSide): localised hits on the -x front corner and door
 local GLASS_LADDER = false    -- config.glass_ladder (run-test -GlassLadder): damage in steps during the cockpit
                               -- view, so the cockpit glass shows each crack state (research/cockpit.md)
 local DYNO = nil              -- config.dyno (run-test -Dyno): the dyno.lua module, acceleration and braking runs
@@ -40,6 +41,7 @@ do
 		if type(config.hold_mph) == "table" then HOLD_MPH = config.hold_mph end
 		if config.damage then DAMAGE = true end
 		if config.damage_panels then DAMAGE_PANELS = true end
+		if config.damage_side then DAMAGE_SIDE = true end
 		if config.glass_ladder then GLASS_LADDER = true end
 		if config.dyno then
 			local loaded, module = user_open("dsfforza\\dyno.lua")
@@ -352,9 +354,27 @@ local function panelStage(id, car, name)
 	log(string.format("id %d: %s %s", id, name, ok and "ok" or tostring(err)))
 end
 
+-- config.damage_side: GameVehicleResource.applyDamage at points on the car's -x side (its right; the
+-- front wing, then the door), so panels get different damage amounts as in a real side impact
+-- (fullVisualDamage crushes every panel alike; research/damage.md, seam gaps).
+local SIDE_STAGES = {
+	[4] = { 1.0, -1.0, 0.4, 1.3 },
+	[8] = { 1.0, -1.0, 0.4, 0.3 },
+	[12] = { 1.0, -1.0, 0.4, 1.0 },
+}
+local function sideHit(id, car, hit)
+	local ok, err = pcall(GameVehicleResource.applyDamage, { gameVehicle = car, damage = hit[1],
+		location = vec.vector(hit[2], hit[3], hit[4], 1), overridePlayerOnlyDamage = true })
+	log(string.format("id %d: applyDamage %.2f at (%.1f, %.1f, %.1f) t%d %s", id, hit[1], hit[2], hit[3], hit[4],
+		state.ticks, ok and "ok" or tostring(err)))
+end
+
 local function step()
 	local id = TEST_IDS[state.index]
 	state.ticks = state.ticks + 1
+	if DAMAGE_SIDE and id ~= nil and state.phase == "chase_view" and SIDE_STAGES[state.ticks] then
+		sideHit(id, state.spawned, SIDE_STAGES[state.ticks])
+	end
 	if DAMAGE and id ~= nil and state.phase == "chase_view" and state.ticks == DAMAGE_TICK then
 		damageCar(id, state.spawned)
 	end

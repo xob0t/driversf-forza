@@ -45,7 +45,9 @@ param(
     [string]$HoldMph,    # comma-separated mph, forced in turn in cockpit view
     [switch]$Damage,     # probe: GameVehicleResource.fullVisualDamage on each car in chase view (research/damage.md)
     [switch]$DamagePanels, # with -Damage: then forceOpenPanels (~6 s) and removeAllPanels (~9 s) in the same view
+    [switch]$DamageSide, # probe: applyDamage hits on each car's -x front wing and door in chase view (~2, 4, 6 s)
     [switch]$GlassLadder, # probe: damage in steps during each cockpit view (clonetest.lua GLASS_STEPS, ~21 s)
+    [switch]$LightsDriveOnly, # with -Lights: only the day and dark drives, no setLights phases
     [switch]$Lights,     # probe: lamp phases per car (dsfforza\lightstest.lua, research/lights.md); the harness
                          # picks each phase through dsfforza\lightsync.lua and saves lights-<id>-<k>a/b.png
     [switch]$Dyno,       # probe: standing-start runs on a straight (dsfforza\dyno.lua); per run the harness holds
@@ -62,6 +64,8 @@ param(
                          # [[engine+0x754]] case scaled alike) is read from a new float instead (research/draw-distance.md, plan A).
                          # Operands only: above 360 m 0x7723A0's 21-cell list overflows; use DSF Enhanced's TrafficSpawnRadius.
     [switch]$OnHost,
+    [switch]$CopyRepoFiles, # copy files from -RepoDir into the run folder instead of linking them (the VM's C:\Repo is a
+                         # VMware shared folder; tools\wsb\run-series.ps1 -Vm)
     [string]$GameDir = 'C:\Game',
     [string]$RepoDir = 'C:\Repo',
     [string]$OutputDir = 'C:\Output',
@@ -85,8 +89,10 @@ if ($Detach) {
     if ($HoldMph) { $forward += '-HoldMph', "`"$HoldMph`"" }
     if ($Damage) { $forward += '-Damage' }
     if ($DamagePanels) { $forward += '-DamagePanels' }
+    if ($DamageSide) { $forward += '-DamageSide' }
     if ($GlassLadder) { $forward += '-GlassLadder' }
     if ($Lights) { $forward += '-Lights' }
+    if ($LightsDriveOnly) { $forward += '-LightsDriveOnly' }
     if ($Dyno) { $forward += '-Dyno', '-BrakeSeconds', $BrakeSeconds, '-DynoRuns', $DynoRuns }
     if ($DynoStart) { $forward += '-DynoStart', "`"$DynoStart`"" }
     if ($DynoKeep) { $forward += '-DynoKeep', "`"$DynoKeep`"" }
@@ -98,6 +104,7 @@ if ($Detach) {
     if ($LuaFiles) { $forward += '-LuaFiles', "`"$LuaFiles`"" }
     if ($Probe) { $forward += '-Probe' }
     if ($OnHost) { $forward += '-OnHost' }
+    if ($CopyRepoFiles) { $forward += '-CopyRepoFiles' }
     $forward += '-GameDir', "`"$GameDir`"", '-RepoDir', "`"$RepoDir`"", '-OutputDir', "`"$OutputDir`"", '-RunPath', "`"$RunPath`""
     if ($KeepRunning) { $forward += '-KeepRunning' }
     Start-Process powershell.exe -ArgumentList $forward -WindowStyle Hidden
@@ -335,6 +342,7 @@ try {
     # A file link: a symlink, else (no symlink privilege on the host) a hard link on the
     # same volume, else a copy.
     function New-FileLink([string]$path, [string]$from) {
+        if ($CopyRepoFiles -and $from.StartsWith("$RepoDir\", [StringComparison]::OrdinalIgnoreCase)) { Copy-Item $from $path; return }
         try { New-Item -ItemType SymbolicLink -Path $path -Target $from -ErrorAction Stop | Out-Null; return } catch { }
         if ([IO.Path]::GetPathRoot((Resolve-Path $from).Path) -eq [IO.Path]::GetPathRoot($path)) {
             try { New-Item -ItemType HardLink -Path $path -Target $from -ErrorAction Stop | Out-Null; return } catch { }
@@ -394,9 +402,10 @@ try {
                     if ($HoldMph) { $fields += "hold_mph = { $(& $luaList $HoldMph) }" }
                     if ($Damage) { $fields += "damage = true" }
                     if ($DamagePanels) { $fields += "damage_panels = true" }
+                    if ($DamageSide) { $fields += "damage_side = true" }
                     if ($GlassLadder) { $fields += "glass_ladder = true" }
                     if ($Lights) {
-                        $fields += "lights = { dark = true }"
+                        $fields += $(if ($LightsDriveOnly) { "lights = { dark = true, phases = false }" } else { "lights = { dark = true }" })
                         # Reset every run: a lightsync.lua left at an old phase (-1) would end the
                         # Lua's first car at once.
                         [IO.File]::WriteAllText((Join-Path $userLua.FullName 'dsfforza\lightsync.lua'), "return { phase = 0 }`r`n")

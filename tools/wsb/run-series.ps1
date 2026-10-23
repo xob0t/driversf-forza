@@ -10,9 +10,17 @@ volume so files can be hard links. For the series, the Driver profile in Documen
 is backed up and switched to a -Resolution window, and the default speakers are
 muted; both are restored afterwards (and on the next call if a series died).
 
+-Vm runs the game in the headless VMware test VM (tools\wsb\vm.ps1; built by
+vm-build.ps1): nothing shows on the host desktop and the host profile and speakers
+are left alone. The VM is started (no window) if it isn't running, the host's Driver
+profile is copied into it as a -Resolution window, and each run lands in
+runs\vm-<stamp> with runs\latest.txt pointing at it. It holds its own mutex
+(Local\dsfforza-vm-run), so VM series don't wait for sandbox or host series.
+
 .EXAMPLE
 .\tools\wsb\run-series.ps1 -Archives out\a.sp,out\b.sp -ProbeIds 304
 .\tools\wsb\run-series.ps1 -OnHost -Archives out\a.sp -ProbeIds 304
+.\tools\wsb\run-series.ps1 -Vm -Archives out\a.sp -ProbeIds 304
 #>
 param(
     [Parameter(Mandatory)] [string[]]$Archives,
@@ -31,7 +39,9 @@ param(
     [string]$HoldMph,             # e.g. '30,60,90': speeds forced in turn in each cockpit view
     [switch]$Damage,              # probe applies full visual damage 3 s into each chase view
     [switch]$DamagePanels,        # with -Damage: then opens (~6 s) and removes (~9 s) every panel
+    [switch]$DamageSide,          # probe applies localised hits on each car's -x front wing and door
     [switch]$GlassLadder,         # probe damages each car in steps during its cockpit view (~21 s; glass crack states)
+    [switch]$LightsDriveOnly,     # with -Lights: only the day and dark drives (no setLights phases)
     [switch]$Lights,              # lamp phases per car, two shots each (dsfforza\lightstest.lua); allow ~120 s per car
     [switch]$Dyno,                # standing-start runs (dsfforza\dyno.lua); analyse with tools/dyno.py
     [int]$BrakeSeconds = 6,
@@ -43,6 +53,7 @@ param(
     [string]$MenuTrigger,
     [double]$TrafficRadius = 0,   # traffic road radius in metres, patched in memory once the world is up (350 stock)
     [switch]$OnHost,
+    [switch]$Vm,
     [string]$GamePath = 'D:\Games\Driver San Francisco',
     [string]$HostRunPath = 'D:\dsfforza-run',
     [string]$Resolution = '1280x720'
@@ -52,17 +63,35 @@ $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $outputHost = Join-Path $env:LOCALAPPDATA 'Temp\dsfforza-wsb'
 $sandbox = Join-Path $PSScriptRoot 'sandbox.ps1'
+$vmScript = Join-Path $PSScriptRoot 'vm.ps1'
+if ($OnHost -and $Vm) { throw '-OnHost and -Vm exclude each other' }
 
 # One series at a time: the guest runs one game and runs\latest.txt names the
 # newest run, so concurrent series would read each other's results. Callers
 # queue here (Windows releases the mutex if its owner dies, so it can't go stale).
-$runMutex = New-Object System.Threading.Mutex($false, 'Local\dsfforza-wsb-run')
+# The VM is a separate machine, so -Vm series queue on their own mutex.
+# (Two series of different kinds can still both write runs\latest.txt; each reads
+# back its own run folder right after starting it.)
+$mutexName = if ($Vm) { 'Local\dsfforza-vm-run' } else { 'Local\dsfforza-wsb-run' }
+$runMutex = New-Object System.Threading.Mutex($false, $mutexName)
 try {
     if (-not $runMutex.WaitOne(0)) {
-        "waiting for another sandbox series to finish..."
+        "waiting for another $(if ($Vm) { 'VM' } else { 'sandbox' }) series to finish..."
         if (-not $runMutex.WaitOne([TimeSpan]::FromHours(3))) { throw 'timed out waiting for the sandbox' }
     }
 } catch [System.Threading.AbandonedMutexException] { }
+
+# Host runs take over the user's screen: while out\wsb-pause exists (the user is on the PC),
+# wait without holding the mutex, then take it again. Delete the file to let runs go.
+if ($OnHost) {
+    $pauseFlag = Join-Path $repo 'out\wsb-pause'
+    while (Test-Path $pauseFlag) {
+        $runMutex.ReleaseMutex()
+        "host runs paused ($pauseFlag exists); waiting..."
+        while (Test-Path $pauseFlag) { Start-Sleep -Seconds 15 }
+        try { [void]$runMutex.WaitOne() } catch [System.Threading.AbandonedMutexException] { }
+    }
+}
 
 Add-Type -TypeDefinition @'
 using System;
@@ -153,8 +182,15 @@ function Get-SeenPath([string]$path) {
     "$repoSeen\$($full.Substring($repo.Length).TrimStart('\'))"
 }
 
+function Confirm-Vm {
+    # Start the VM headless if needed (also sets the guest display and mutes it), then copy
+    # the host's Driver profile into it as a -Resolution window.
+    & $vmScript Start | Out-Null
+    & $vmScript Exec -Script C:\Repo\tools\wsb\guest\setup-vm.ps1 -Arguments @('-Phase', 'Profile', '-Resolution', $Resolution) -TimeoutSeconds 300 | Out-Null
+}
+
 try {
-if ($OnHost) { Enter-HostSession } else { Confirm-Sandbox }
+if ($OnHost) { Enter-HostSession } elseif ($Vm) { Confirm-Vm } else { Confirm-Sandbox }
 foreach ($archive in $Archives) {
     $guestArchive = Get-SeenPath $archive
     $guestArgs = @('-Archive', $guestArchive, '-Hook', '-Probe', '-ProbeIds', $ProbeIds,
@@ -166,8 +202,10 @@ foreach ($archive in $Archives) {
     if ($HoldMph) { $guestArgs += '-HoldMph', $HoldMph }   # -File passes '30,60,90' as one string, like -ProbeIds
     if ($Damage) { $guestArgs += '-Damage' }
     if ($DamagePanels) { $guestArgs += '-DamagePanels' }
+    if ($DamageSide) { $guestArgs += '-DamageSide' }
     if ($GlassLadder) { $guestArgs += '-GlassLadder' }
     if ($Lights) { $guestArgs += '-Lights' }
+    if ($LightsDriveOnly) { $guestArgs += '-LightsDriveOnly' }
     if ($Dyno) { $guestArgs += '-Dyno', '-BrakeSeconds', $BrakeSeconds, '-DynoRuns', $DynoRuns }
     if ($DynoStart) { $guestArgs += '-DynoStart', $DynoStart }
     if ($DynoKeep) { $guestArgs += '-DynoKeep', $DynoKeep }
@@ -202,6 +240,27 @@ foreach ($archive in $Archives) {
         $hostArgs = $hostArgs | ForEach-Object { "$_" -replace '^"(.*)"$', '$1' }
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$repo\tools\wsb\guest\run-test.ps1" @hostArgs *>> (Join-Path $runDir 'host.log')
     }
+    elseif ($Vm) {
+        # Same script in the VM's desktop session, waited for; the guest writes straight into
+        # this run folder through C:\Output (a shared folder). Repo files are copied into the
+        # run folder rather than linked across the shared folder.
+        $stamp = "vm-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+        $runDir = Join-Path $outputHost "runs\$stamp"
+        New-Item -ItemType Directory -Force -Path $runDir | Out-Null
+        Set-Content (Join-Path $outputHost 'runs\latest.txt') $runDir
+        $vmArgs = @($guestArgs | Where-Object { $_ -ne '-Detach' }) + @('-RunDir', "C:\Output\runs\$stamp", '-CopyRepoFiles')
+        $timeout = [math]::Max(600, $WaitSeconds + 420) + 300
+        try { & $vmScript Exec -Script C:\Repo\tools\wsb\guest\run-test.ps1 -Arguments $vmArgs -TimeoutSeconds $timeout | Out-Null }
+        catch {
+            if (Test-Path (Join-Path $runDir 'result.json')) { "  vm exec: $($_.Exception.Message)" }
+            else {
+                # The VM died or was stopped: bring it up again and retry once.
+                "  vm exec failed ($($_.Exception.Message)); restarting the VM"
+                Confirm-Vm
+                & $vmScript Exec -Script C:\Repo\tools\wsb\guest\run-test.ps1 -Arguments $vmArgs -TimeoutSeconds $timeout | Out-Null
+            }
+        }
+    }
     else { try { & $sandbox Exec -Script C:\Repo\tools\wsb\guest\run-test.ps1 -Arguments $guestArgs | Out-Null }
     catch {
         # The sandbox died since the last run: bring up a new one and retry once.
@@ -209,7 +268,7 @@ foreach ($archive in $Archives) {
         Confirm-Sandbox
         & $sandbox Exec -Script C:\Repo\tools\wsb\guest\run-test.ps1 -Arguments $guestArgs | Out-Null
     } }
-    $runDir = (Get-Content (Join-Path $outputHost 'runs\latest.txt')).Trim() -replace '^C:\\Output', $outputHost
+    if (-not $Vm) { $runDir = (Get-Content (Join-Path $outputHost 'runs\latest.txt')).Trim() -replace '^C:\\Output', $outputHost }
     $result = Join-Path $runDir 'result.json'
     $deadline = (Get-Date).AddSeconds([math]::Max(600, $WaitSeconds + 420))
     while (-not (Test-Path $result) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 3 }

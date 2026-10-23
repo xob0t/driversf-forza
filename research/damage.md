@@ -222,9 +222,15 @@ empty. With the option:
    vertices (normalised coordinates), scaled per axis by the car size
    ratio. A position that triangles of two or more never-swinging panels
    share (a seam inside one Forza surface: chassis, front structure, doors,
-   wings, sills) gets the mean of those panels' displacements on every
-   copy, so the seam stays shut when the panels crush alike (`_seam_map`). The full entry uses the host's full-entry field, the exterior its
-   exterior field.
+   wings, sills), or that lies within 3 mm of another rigid panel's
+   vertex, gets the mean of those panels' displacements on every copy
+   (`_seam_map`). Since 2026-10-23 the seam is also pinned: on body paint
+   always, on trim where the host's own border of those two roles stays
+   still, the displacement is 0 at the seam and fades in over 0.2 m
+   (`_pin_map`, `_pin_weight`), so the seam stays shut whatever damage
+   amounts the two panels get. See "Seam gaps after side hits" below. The
+   full entry uses the host's full-entry field, the exterior its exterior
+   field.
 3. **Normal deltas** (s5 bytes 2, 3) from how each vertex's area-weighted
    face normal turns between the intact and crushed mesh.
 4. **Parts.** Each panel's triangles go into the panel's own MODL part
@@ -588,16 +594,117 @@ gaps you see the boot zone, now on the tub picture instead of the black
 texel. The lid's crush and hinge come from the host's field (147), not
 from this fix.
 
+## Seam gaps after side hits (testdrive7, 2026-10-23)
+
+User report on `out/testdrive7`: "saleen has those body gaps that I earlier
+told you about, on bmw". After a crash into the S5S Raptor's (ID 22, host
+163) front corner, wide, jagged black slits opened in front of the door
+and through the rear quarter, from the window down to the sill (user
+screenshot, crop `out/seams/user-crop.png`). Scratch: `out/seams/`
+(`border.py`, `stockside.py`, `dview.py`, `panelview.py`, `comps.py`,
+`survey.py`, `zoom.py`, `summary.py`).
+
+### Cause (confirmed-static)
+
+- The slits are panel borders, not the Forza shut lines. The S5S Raptor's
+  `body` is one connected surface: body, both bumper skins and the door
+  share edge positions, and the door's shut line is a groove in that
+  surface (`comps.py`: 15,402 of 21,880 LOD-1 triangles in one
+  component). The panel vote follows the host's layout, so the "door
+  front -x" patch runs past the real door into the rear quarter's intake
+  and ends in a sawtooth of Forza triangle edges in front of the door and
+  behind the intake (`sal-td7-panels-crop.png`; green = door).
+- A vertex is drawn at p + f·d, f being its panel's damage amount
+  (`data.x - offset * x`, unclamped). The testdrive3 fix gave both copies
+  of a seam vertex the same d, which keeps a seam shut only while both
+  panels get the same f. `fullVisualDamage` does that (every probe so far
+  used it, so seams looked shut: `sal-td7-full-crop.png`); a real impact
+  damages the door and wing more than the chassis, and each seam opens by
+  |fA - fB|·|d|. Behind it is the unlit inside of a single-skinned body.
+  With the door and wing at 1, bumper 0.8, front structure 0.7 and chassis
+  0.15 (`dview.py --scenario side-x`) the offline render shows the same
+  jagged slits as the screenshot (`z-sal-cmp-side-x.png`, top).
+- Positions of two rigid panels 0.5-3 mm apart (separate Forza shells
+  touching) were not seams at all and opened even at uniform damage
+  (S5S Raptor: up to 0.29 m, chassis against front structure).
+
+Stock cars (`border.py`, `stockside.py`, exterior part 0 of 147, 163, 205,
+227, 229, 274): door, wing, sill and chassis vertices where two panels
+meet barely move (median 0-3 mm; p90 up to 30 mm, max 77 mm), the dents
+are in the panels' middles. Wings against the front structure move
+0.14-0.33 m, but that border is under the bonnet. Stock borders still part
+by up to 5-8 cm with uneven damage; they are real shut lines with jambs and
+inner panels behind them, so no hole shows.
+
+### Fix (`tools/damage.py`)
+
+- `_seam_map`: positions of different rigid panels within 3 mm
+  (`SEAM_NEAR`) join one seam group (union-find); every copy takes the
+  group's panels and the crush computed at the group's first position.
+- `_border_motion`: per role pair, the host's median crush at its own
+  borders (rigid host vertices within 15 mm of another rigid panel's).
+- `_pin_map`, `_pin_weight`: a seam group on body paint (the Forza skin
+  has no backing), or on trim where the host's border of those two roles
+  moves less than 3 cm (`SEAM_STILL`), is pinned. Every rigid-panel vertex
+  scales its crush by smoothstep(distance to the nearest pinned seam of its
+  panel / 0.2 m) (`SEAM_REACH`); copies of one seam position use the
+  smallest weight of their panels, so unpinned seams also stay shut at
+  equal damage. Pinned seams have d = 0 and stay shut for any damage
+  amounts.
+- Swinging and detaching panels (bonnet, boot, bumpers, lamps, mirrors)
+  are not rigid and are untouched: their seams open by hinge and crush as
+  before (the M5's boot lid above), and they still detach from their own
+  MODL parts. The exposed-surface work (step 6) is unchanged; the test
+  build logs the same exposed counts as testdrive7.
+
+### Survey (40 testdrive cars, exterior LOD 1; `out/seams/survey-testdrive7.txt`)
+
+`survey.py` runs `DamagePlan` and the exterior build on the stock host
+without a full conversion, once with the testdrive7 rules and once with
+the fix, and measures every pair of rigid-panel vertices within 3 mm:
+separation at uniform damage, worst differential (one panel at 1, the
+other at 0) and both side scenarios.
+
+| | Before (testdrive7) | After |
+| --- | --- | --- |
+| Paint seams, side scenarios: max separation per car | 12-475 mm (S5S Raptor 211, M5 173, Cuda 475, Mustang 444) | 0.4-3.5 mm (the vertices' own 3 mm offset) |
+| Paint seams, worst differential, max per car | 12-678 mm | 0.5-3.5 mm |
+| Paint seam positions opening > 1 cm (both side scenarios, all cars) | 15,394 | 0 |
+| All rigid seams at uniform damage, max per car | up to 551 mm (S5S Raptor 293) | 2-4 mm (Veyron 15 mm, trim) |
+| Trim seams, side scenarios | up to 514 mm | under 4 mm on 18 cars; on 22 cars 11-336 mm, all between a wing and the front structure (inner arches, under the bonnet; the host's own border moves 0.1-0.3 m there), plus the Express van's rear cargo-door trims (91 mm) |
+| Mean crush of rigid-panel vertices | | 72% of before (median), 41-100% |
+| Front 10% median dz/L | | unchanged on 33 cars; 250 GTO -0.045 to -0.019, Express -0.020 to -0.002, Mustang -0.106 to -0.079 (no bumper sections: the nose is wing/front-structure paint, now pinned at its seams) |
+
+Renders (shaded, magenta background, -x side, side scenario): built
+archives `out/seams/archive-before-after-side-x.png` (exterior),
+`archive-full-before-after-side-x.png` (full entry LOD 3),
+`archive-before-after-wing-x.png` (wing and door hit only: the arch flare
+no longer peels off the front structure).
+
+### Test build `out/seams/build`
+
+`port_batch.py build --car SAL_S5SRaptor_10 --car BMW_M5_12 --car
+SUB_WRXSTi_11 --out out/seams/build` (IDs 1-3, hosts 163, 147, 136): lint
+and `damage.py check` pass on all three. `run-series.ps1 -DamageSide`
+(new; `clonetest.lua` `SIDE_STAGES`) calls `GameVehicleResource.applyDamage`
+(damage 1.0, `overridePlayerOnlyDamage`) at (-1.0, 0.4, 1.3), (-1.0, 0.4,
+0.3) and (-1.0, 0.4, 1.0) at chase-view ticks 4, 8 and 12 instead of
+`fullVisualDamage`, so panels get uneven damage amounts.
+
 ## Risks and open questions
 
 1. Nothing here is confirmed in game yet. If the engine expects something
    else of the panel parts (for example that only some panels have
    geometry), a converted car could misdraw once a panel detaches.
 2. Body triangles are assigned whole, so door and wing borders follow the
-   Forza mesh's triangles (jagged at LOD 3 to 5). Doors and wings never
-   swing (limit 0); seams between them and the chassis share crushed
-   positions, so they open only when the panels' damage amounts differ.
-   Forza's `interior` section (door cards included) stays on the chassis,
+   Forza mesh's triangles (jagged at LOD 3 to 5), and they follow the
+   host's panel layout, not the Forza car's shut lines (the S5S Raptor's
+   "door" covers the rear quarter's intake). Doors and wings never swing
+   (limit 0); seams between rigid panels on paint are pinned, so they don't
+   open, but a door dent stops short of the borders, and the crush near
+   them is lost (mean rigid-panel crush down by a median 28%, at most 59%). Trim seams the host
+   moves (wing against front structure on 163) still open with differing
+   damage amounts, as stock under-bonnet borders do. Forza's `interior` section (door cards included) stays on the chassis,
    while stock door cards are on the door: a deep door dent can push the
    skin through the card.
 7. Exposed geometry is found by geometry (under a cover, behind a bumper

@@ -262,6 +262,21 @@ presses Enter until Story loads and Up to leave the Shift overview, then
 collects `Driver.log`, screenshots and the Lua API dump. Results so far are in
 `research/in-game-tests.md`.
 
+### VM tests (headless)
+
+On Windows builds where the sandbox guest crashes on its first DirectX use,
+`run-series.ps1 -Vm` runs the same tests in a VMware Workstation VM with no
+window on the host. Build the VM once with `tools/wsb/vm-build.ps1` (about an
+hour, unattended). Manage it with `tools/wsb/vm.ps1 Start|Status|Exec|Stop|Revert`.
+Results land in `%LOCALAPPDATA%\Temp\dsfforza-wsb\runs\vm-<stamp>` like any
+other run. Details are in `research/in-game-tests.md` (VM runs).
+
+```powershell
+.\tools\wsb\run-series.ps1 -Vm -Archives out\testdrive7\dngvehicles.sp `
+    -LuaFiles 'dsfforza\ported.lua=out\testdrive7\dngvehicles.lua' -ProbeIds '147,1,2' -WaitSeconds 600 -ShotSeconds 3
+.\tools\wsb\vm.ps1 Stop
+```
+
 `run-series.ps1` runs it once per archive. To see the gauges move,
 `-DriveSeconds N` holds the throttle (the Up arrow, DSF's default
 accelerate key; `-DriveKey W` otherwise) for N seconds each time the probe

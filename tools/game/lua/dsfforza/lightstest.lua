@@ -43,6 +43,7 @@ local OPTIONS = {
 	copy = true,            -- spawn the facing copy
 	syncTimeout = 40,       -- updates without a sync change before advancing alone (about 20 s)
 	brightness = nil,       -- e.g. 3: setLightTypeBrightness for every type
+	phases = true,          -- false: only the day and dark drives, no setLights phases
 }
 
 local function log(message)
@@ -58,6 +59,7 @@ end
 -- The phase list run in order: daylight, then dark.
 local function schedule()
 	local list = {}
+	if OPTIONS.phases == false then return list end -- drives only (run-test -LightsDriveOnly)
 	for _, p in ipairs(PHASES) do table.insert(list, { name = "day " .. p.name, set = p.set, dark = false }) end
 	if OPTIONS.dark then
 		for _, p in ipairs(PHASES) do table.insert(list, { name = "dark " .. p.name, set = p.set, dark = true }) end

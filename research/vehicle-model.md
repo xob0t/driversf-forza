@@ -276,7 +276,9 @@ frames), then emitted in the stock layout on each window's own s9:
   0.25), state 2 lengthening most state-1 cracks first;
 - shards: teeth 1.2–3.5 cm wide and 0.5–2.5 cm deep every 3.5 cm along the
   rim, deeper round a few cluster points, 60% on `SHARD_BRIGHT`, the rest
-  one `SHARD_DULL` texel each.
+  one `SHARD_DULL` texel each. The rim is the border of the window's 1 cm
+  occupancy grid with the outside (flood fill from the grid edge), so gaps
+  between Forza triangles never sprout shards mid-window.
 
 `cockpit.GlassSight` (a 128² depth cube of the opaque cockpit from the head
 camera) restricts crack starts and shards to rim the driver can see: a
