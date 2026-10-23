@@ -413,7 +413,8 @@ def build_car(stream, entries, host: int, spool_id: int, car: forza2dsf.ForzaCar
         r = chosen.report
         log(f"  forza sound: template {r['template']}, bank {r['bank_id']}, SBAK {r['sbak_bytes']:#x}, "
             + ", ".join(f"set {k} {s['emission']} {s['bank']} {len(s['loops'])}/{s['available']} loops "
-                        f"pitch {r['pitch'][k]['pitch']}" for k, s in r["sets"].items())
+                        f"pitch {r['pitch'][k]['pitch']} (loudest loop {r['pitch'][k]['pitch_main']})"
+                        for k, s in r["sets"].items())
             + f", engine type {r['engine_type']['state']}")
         out = getattr(args, "forza_sound_dir", None)
         if out:

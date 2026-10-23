@@ -36,6 +36,13 @@ Across the 150 stock banks:
 - Yet an ID never has different content in two banks.
 - There are only 46 distinct engine media sets. For example, the Stratos 217 and the 370Z 299 carry the 227 370Z's objects and media under their own bank IDs.
 
+"Same content" holds byte for byte once three things are masked: references
+to the bank's own ID (a Sound's file ID, a Play action's bank), a Sound's
+media offset in its bank file, and an ActorMixer's children list (each bank
+lists only its own children of a shared mixer). With those masked, 0 of the
+fleet's shared IDs differ (data; `engine_sound._content`, the lint's rule for
+banks that are not ours).
+
 This is ordinary Wwise: objects and media are indexed by ID across all loaded banks. So a modified bank must not reuse its host's IDs. If the host car's bank loads first, its objects and media would be the ones played (hypothesis based on the SDK's behaviour; the stock data is consistent with it).
 
 ### Media (confirmed-static, data)
@@ -71,11 +78,41 @@ Run `wwise_bank.py tree out/sound/stock/227/SBAK.bin --curves`. The bank holds 1
 | +0C / +10 | play / stop of set B, on emitter B |
 | +14..+2C | throttle-hysteresis events (threshold 0.1) |
 | +3C / +40 | gear up / down |
-| +4C | engine type → global switch `0x24B047F7` (v6, v8, v10, v12, vr6, h4, h6, il4, il5) |
+| +4C | engine type → global switch `0x24B047F7` `sw_engine_type` (below) |
 | +60..+74, +84..+90 | backfire / pop events and their timer |
 | +94 / +98 | the bank's rpm range |
 
 All event IDs live in the vehicle's own bank, so a VSVH must stay paired with its SBAK.
+On all 150 stock cars every non-zero value at +04, +08, +0C, +10, +14, +1C,
++24, +28, +2C, +34..+48, +54..+5C and +68..+78 is an Event of the car's own
+bank, and no other field ever is (data; `engine_sound.EVENT_FIELDS`, checked
+by the lint).
+
+**Engine type, VSVH+4C (confirmed-static, data).** `0x550300` reads +4C,
+subtracts 1 and indexes a 10-entry jump table; anything out of range
+(including 0) gives v8:
+
+| +4C | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | other |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| state | v6 | v8 | v10 | v12 | vr6 | h4 | h6 | il4 | il5 | il5 (not il6) | v8 |
+
+Stock values (engine from `vehicleStats`): 2 on 67 V8s, 9 V12s, 4 I6s, 3
+V10s and a W12; 1 on 9 V6s and 4 I6s; 8 on 11 I4s; 10 on 6 I6s (which
+therefore get il5); 3, 5, 6, 9 on a few cars each; 0 on 23 (granular and
+silent ones included). Reflections' own values are loose. The switch is
+used only by four Switch containers in the `HUD` bank of `WWiseDefault.pck`
+(none in any vehicle bank). Each picks one of three plugin-source Sounds
+(tone generators) whose frequency follows `vehicle_rpm` linearly up to
+200, 250 or 300 Hz at 12000 rpm, with volume on `vehicle_engineload`:
+
+- 200 Hz (1 × crank frequency): v8, h4, il4;
+- 250 Hz (1.25 ×): il5, v10;
+- 300 Hz (1.5 ×): v6, vr6, h6, v12, il6.
+
+That is half the firing frequency of a 4-, 5- and 6-cylinder engine: a
+low rumble tone matched to the cylinder count. The granular engine has its
+own copy of the table at `0x547B00` (index 0..9 = v8, h4, h6, il4, il5, il6,
+v10, v12, v6, vr6). Effect in game not heard yet.
 
 **rpm path:**
 1. The game shapes the rpm: rpm + p596·(rpm²/p42 − rpm), with ±10% noise.

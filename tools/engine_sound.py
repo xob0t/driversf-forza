@@ -703,14 +703,17 @@ def slot_curves(bank: wb.Bank, vsvh: bytes) -> dict[str, list[tuple[Slot, list, 
 
 def pitch_ranges(bank: wb.Bank, vsvh: bytes) -> dict[str, dict]:
     """Per set, over the bank's rpm range VSVH+94..+98: the pitch ratio each loop is
-    played at while its crossfade gain is above -40 dB (min, max), and the overall range."""
+    played at while its crossfade gain is above -40 dB (min, max), the overall
+    range ("pitch") and the range of the loudest loop at each rpm ("pitch_main")."""
     lo, hi = struct.unpack_from("<II", vsvh, 0x94)
     grid = np.linspace(lo, hi, 401)
     out = {}
     for name, rows in slot_curves(bank, vsvh).items():
         loops, all_ratios = [], []
-        for s, pitch, xf in rows:
-            gain = np.array([curve_at(xf, g) / 255 for g in grid]) if xf else np.ones(len(grid))
+        gains = np.array([[curve_at(xf, g) / 255 for g in grid] if xf else [1.0] * len(grid) for _, _, xf in rows])
+        cents = np.array([[curve_at(pitch, g) for g in grid] for _, pitch, _ in rows])
+        main = 2 ** (cents[gains.argmax(axis=0), np.arange(len(grid))] / 1200)
+        for (s, pitch, xf), gain in zip(rows, gains):
             live = grid[gain > 0.01]
             if not len(live):
                 loops.append({"rpm": round(s.rpm), "pitch": None})
@@ -720,7 +723,7 @@ def pitch_ranges(bank: wb.Bank, vsvh: bytes) -> dict[str, dict]:
             loops.append({"rpm": round(s.rpm), "pitch": [round(min(ratios), 3), round(max(ratios), 3)],
                           "rpm_range": [int(round(live[0])), int(round(live[-1]))]})
         out[name] = {"pitch": [round(min(all_ratios), 3), round(max(all_ratios), 3)] if all_ratios else None,
-                     "loops": loops}
+                     "pitch_main": [round(float(main.min()), 3), round(float(main.max()), 3)], "loops": loops}
     return out
 
 
@@ -1000,7 +1003,8 @@ def summary(report: dict) -> dict:
             **{f"set_{k}": {"emission": s["emission"], "bank": s["bank"], "loops_used": len(s["loops"]),
                             "loops_available": s["available"],
                             "rpms": [row["rpm"] for row in s["loops"]],
-                            "pitch": report["pitch"][k]["pitch"]}
+                            "pitch": report["pitch"][k]["pitch"],
+                            "pitch_main": report["pitch"][k].get("pitch_main")}
                for k, s in report["sets"].items()}}
 
 
