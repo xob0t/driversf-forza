@@ -267,6 +267,30 @@ Build-time checks on top: `same_structure` against the template under the
 ID map, `Bank.validate`, and the event check above, before a candidate is
 accepted.
 
+### The 40-car test build (offline)
+
+`python tools/port_batch.py build --dsf out/stock/Install/dngvehicles.sp
+--list tools/batches/testdrive.txt --gui --out out/testdrive8 --jobs 10`
+(30 min; one car rebuilt with `--resume` after the idle-grain rule, below):
+
+- All 40 cars got their Forza sound, none fell back; all 40 pass lint,
+  including the archive-wide ID check.
+- 28 different templates; on 18 cars the template is the visual host's own
+  bank. The 1.1 s loop cap fits everywhere: NONR 0x4DBC0..0x5D570 (limit
+  0x6D000), SBAK 0x4648C..0x54FE0.
+- The lint did its job once: the M3 E30's first build used template 126,
+  whose set B also holds seven 0.13 s idle grains; the "no media but the rpm
+  loops" check failed it, which led to excluding such templates (5 banks).
+- The loudest loop at each rpm is pitched 0.65..1.5× on most cars. Outliers
+  come from gaps in Forza's own loop tables: 0.41× near idle on the cars
+  using `8N3_PanozGTLM_EngAmb` (Cuda, Charger Daytona, S5S Raptor, Agera:
+  its lowest loop is far above idle), 0.45× with `8N3_PanozGTLM_Exh` (300C,
+  Jeep), 0.36× on the M5 (`5T3_TurboHeavyAmb`), up to 1.97× on the TT RS
+  and Focus RS500 (`10N2_SRT10_EngAmb` jumps from 529 to 1633 rpm). Worth a
+  listen first.
+- Per car: `batch-report.json` → `ok[].sound`; previews in
+  `out/testdrive8/sound/<media>/`.
+
 ### Option: mixing the intake loops
 
 Not done; documented as an option. Forza plays three loop sets at once

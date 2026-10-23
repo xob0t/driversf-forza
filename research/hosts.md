@@ -13,7 +13,7 @@ sounds and behaves. Until now every port used 266 (ASYM Desanne, a V6 saloon).
 
 | Data | Where | Converter |
 | --- | --- | --- |
-| Engine sound | NONR/VSRT | kept (or `--sound-host`) |
+| Engine sound | NONR/VSRT | replaced by the car's own Forza loops in a stock template bank (`engine-sound.md`); kept (or `--sound-host`) with `--no-forza-sound` or when that fails |
 | Hierarchy: parts, doors, hinges, collision (PDL), lights, damage | NONR/UPVH | hubs, steering, gauges, seats moved; the rest kept |
 | Handling base: steering, assists, tyre curves, cameras | NONR/VO3D | `handling.py` replaces about 33 parameters, scales grip, springs and dampers by mass |
 | Paint sets | NONR/SPSR | kept |
