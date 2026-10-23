@@ -74,12 +74,25 @@ function Enter-VmLifecycle {
     return $mutex
 }
 
+function Get-VmProcesses {
+    # vmware-vmx is started by the vmware-authd service; a normal process can't read its
+    # command line, so when that is hidden every vmware-vmx counts (this is the only VM).
+    @(Get-CimInstance Win32_Process -Filter "Name='vmware-vmx.exe'" |
+        Where-Object { -not $_.CommandLine -or $_.CommandLine -like "*$VmVmx*" })
+}
+
 function Set-VmPriority([string]$Priority = 'BelowNormal') {
-    # The VM's vmware-vmx process yields to whatever the user runs.
-    foreach ($p in @(Get-CimInstance Win32_Process -Filter "Name='vmware-vmx.exe'" | Where-Object { $_.CommandLine -like "*$VmVmx*" })) {
-        try { (Get-Process -Id $p.ProcessId).PriorityClass = $Priority }
-        catch { Write-Warning "could not set vmware-vmx ($($p.ProcessId)) priority: $($_.Exception.Message)" }
+    # The VM yields to whatever the user runs. The vmx asks for this itself
+    # (priority.ungrabbed = "low", vm-build.ps1); setting it from here needs admin rights
+    # (vmware-authd's token), so a refusal is expected and ignored.
+    foreach ($p in Get-VmProcesses) {
+        try { (Get-Process -Id $p.ProcessId).PriorityClass = $Priority } catch { }
     }
+}
+
+function Get-VmPriority {
+    # WMI base priority: 8 normal, 6 below normal, 4 idle.
+    (Get-VmProcesses | ForEach-Object { "vmware-vmx $($_.ProcessId) base priority $($_.Priority)" }) -join '; '
 }
 
 function Wait-VmSession([int]$Seconds = 600) {

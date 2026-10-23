@@ -43,7 +43,7 @@ switch ($Action) {
     'Status' {
         if (-not (Test-VmRunning)) { 'dsfforza VM not running'; return }
         $tools = (Invoke-Vmrun checkToolsState $VmVmx -Quiet).Out.Trim()
-        "VM running ($VmVmx); tools: $tools; session answers: $(Test-VmSession)"
+        "VM running ($VmVmx); tools: $tools; session answers: $(Test-VmSession); $(Get-VmPriority)"
     }
     'Stop' {
         $lifecycle = Enter-VmLifecycle

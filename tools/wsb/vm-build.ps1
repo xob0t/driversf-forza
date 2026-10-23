@@ -135,7 +135,7 @@ function Step-Create {
         'isolation.tools.hgfs.disable' = 'FALSE'; 'isolation.tools.copy.disable' = 'TRUE'; 'isolation.tools.paste.disable' = 'TRUE'
         'isolation.tools.dnd.disable' = 'TRUE'
         'sharedFolder.maxNum' = "$($shared.Count)"; 'hgfs.mapRootShare' = 'TRUE'; 'hgfs.linkRootShare' = 'TRUE'
-        'priority.grabbed' = 'normal'; 'priority.ungrabbed' = 'normal'
+        'priority.grabbed' = 'normal'; 'priority.ungrabbed' = 'low'   # headless = never grabbed: below-normal vmware-vmx
         'powerType.powerOff' = 'soft'; 'powerType.reset' = 'soft'; 'powerType.suspend' = 'soft'
     }
     for ($i = 0; $i -lt $shared.Count; $i++) {
@@ -181,6 +181,7 @@ function Step-Install {
     Set-VmxValues @{
         'sata0:1.present' = 'FALSE'; 'sata0:2.present' = 'FALSE'; 'sata0:3.present' = 'FALSE'
         'sound.present' = 'TRUE'; 'sound.virtualDev' = 'hdaudio'; 'sound.fileName' = '-1'; 'sound.autodetect' = 'TRUE'
+        'priority.ungrabbed' = 'low'
     }
     Say 'powered off; CDs detached, sound card added'
 }
