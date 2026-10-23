@@ -56,7 +56,6 @@ from __future__ import annotations
 import argparse
 import copy
 import math
-import struct
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
@@ -118,22 +117,8 @@ def host_plates(stream, vehc) -> HostPlates:
     """Plates of a stock vehicle's full entry (MODL part 0, mask 4): triangles on
     a shared-atlas material whose UV0 centroid is on the plate."""
     import vehicle_mesh as vm
-    from vehicle_mesh import child, payload
-    drsp = child(child(vehc, "MDXN"), "DRSP")
-    mesh = vm.Mesh()
-    for e in drsp.children:
-        if e.tag == "VXCK":
-            hd = payload(stream, child(e, "VXHD"))
-            mesh.vertex_buffers[hd[:8]] = vm.VertexBuffer(hd[:8], *struct.unpack_from("<II", hd, 8),
-                                                          vm.parse_vdcl(payload(stream, child(e, "VDCL"))),
-                                                          payload(stream, child(e, "VXDT")))
-        elif e.tag == "IXCK":
-            mesh.index_buffers[payload(stream, child(e, "IXHD"))[:8]] = payload(stream, child(e, "IXDT"))
-        elif e.tag == "SBMC":
-            d = payload(stream, child(e, "SBBH"))
-            mesh.submodels.append(vm.SubModel(d[0:8], d[8:16], d[16:24], struct.unpack_from("<I", d, 0x20)[0],
-                                              d[0x30:0x38], *struct.unpack_from("<II", d, 0x38)))
-    mesh.parts = vm.parse_modl(payload(stream, child(child(vehc, "NONR"), "MODL")), mesh.submodels)
+    from damage import load_mesh
+    mesh = load_mesh(stream, vehc)
     u0, v0, u1, v1 = PLATE_UV
     ends: dict[str, list] = {}
     ys = []
@@ -473,6 +458,8 @@ def plan_end(tris, end: str, host: HostPlate, prior_y: float, ground: float, hal
             key = (round(cover, 1), -(gap + 0.1 * abs(float(dy))))
             if best is None or key > best[0]:
                 best = (key, y)
+        if best is None:  # the host's height maps outside the depth map (plan() skips the end)
+            raise ValueError(f"{end} plate: no body surface near y {prior_y:.2f}")
         cy = best[1]
     # Final plane over the plate's own cells: tilt from the fit, then out to the
     # nearest surface so no cell pokes through.
@@ -592,15 +579,6 @@ def to_forza(section: carbin.Section, place) -> carbin.Section:
         verts.append(carbin.Vertex((-x, y - place.dy, -(z - place.dz)), v.uv0, v.uv1, (-nx, ny, -nz), v.extra))
     out.lod_vertices = out.lod0_vertices = verts
     return out
-
-
-def is_plate_section(name: str) -> bool:
-    return name.endswith(SECTION_SUFFIX + "front") or name.endswith(SECTION_SUFFIX + "rear")
-
-
-def surface_of(name: str) -> str:
-    """The Forza section a plate section sits on (for tools/damage.py)."""
-    return name.rsplit(SECTION_SUFFIX, 1)[0]
 
 
 def without_forza_plates(sections) -> list:

@@ -194,6 +194,7 @@ def _tri_geometry(pts, normals):
 
 LENS_COLOUR = {"detail_glass_red": RED, "detail_glass_amber": AMBER, "linred": RED, "rinred": RED}
 CLUSTER_GAP = 0.2  # metres between triangle centres that still belong to one lamp
+CLEAR_LENS_REACH = 0.35  # m: a clear lens lights with the nearest lamp this close
 
 
 @dataclass
@@ -351,9 +352,9 @@ class LampPlan:
 
     def _place_clear(self, clear) -> None:
         """Clear lenses light with the nearest lamp at the same end (within
-        0.35 m), else stay unlit."""
+        CLEAR_LENS_REACH), else stay unlit."""
         for r in clear:
-            best, best_d = None, 0.35
+            best, best_d = None, CLEAR_LENS_REACH
             for lamp in self.lamps.values():
                 if lamp.front != r.front or not lamp.area:
                     continue
@@ -461,7 +462,7 @@ def read_table(upvh: bytes) -> list[dict]:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("plan", help="classify a Forza car's lamps (host: the stock Desanne)")
+    p = sub.add_parser("plan", help="classify a Forza car's lamps on a stock host (default the Desanne)")
     p.add_argument("car", type=Path)
     p.add_argument("--dsf", type=Path, default=Path("D:/Games/Driver San Francisco/Install/dngvehicles.sp"))
     p.add_argument("--host", type=int, default=266)
@@ -481,6 +482,7 @@ def main(argv: list[str] | None = None) -> None:
         root = read_chunk(stream, 0)
         full = uv.entries_for(stream, root.entries, spool, None)[0]
         upvh = vm.payload(stream, vm.child(vm.child(full, "NONR"), "UPVH"))
+        modl = vm.payload(stream, vm.child(vm.child(full, "NONR"), "MODL"))
     if args.cmd == "table":
         for e in read_table(upvh):
             print(f"{e['index']:2} id {e['id']:2} flags {e['flags']:#010x} {e['lua']:28} "
@@ -490,8 +492,11 @@ def main(argv: list[str] | None = None) -> None:
     import forza2dsf
     car = forza2dsf.load_car(args.car, args.car.name)
     dims = forza2dsf.car_dims(car)
-    place = forza2dsf.Placement(dy=forza2dsf.HOST_HUB_Y - dims.radius + dims.ride_height, dz=0.1155 + dims.mid_z)
-    plan = LampPlan.build(car.body, place, 0.1155).assign(upvh)
+    # Placed on the host's own wheels, as forza2dsf.convert does (this used the
+    # Desanne's hub height and axle midpoint whatever --host was).
+    hw = forza2dsf.host_wheels(upvh, modl)
+    place = forza2dsf.Placement(dy=hw.hub_y - dims.radius + dims.ride_height, dz=hw.axle_mid + dims.mid_z)
+    plan = LampPlan.build(car.body, place, hw.axle_mid).assign(upvh)
     import json
     print(json.dumps(plan.report(), indent=1))
 

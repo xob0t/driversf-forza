@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import copy
 import math
+import os
 import struct
 import sys
 from dataclasses import dataclass, field
@@ -61,13 +62,13 @@ PAINT_TEXEL_UV = (0.8481, 0.7119)  # forza2dsf.PAINT_UV (0.835, 0.703) is inside
 # six FH1/FM4 cars against 146 stock vehicles, out/lamps/scripts/fit_lut.py). It keeps
 # the order of the texels, so hot spots, reflector cells and dark edges stay where
 # Forza has them, and a near-black lens only glows where its glow mask is bright.
-# "value" (max(r, g, b) - 40) * 0.8 with a floor of 64, times the mask, made whole
-# lenses one bright red patch (user report on out/testdrive7); "luma" the same on
-# (r + g + b) / 3 left red lamps dark; "gamma" the earlier mask ** 2; "raw" Forza's
-# alpha as is (analysis). Module-level so an A/B build can switch it
-# (out/lights/build_ab.py); DSFFORZA_LIGHTS_ALPHA overrides it for port_batch workers.
-LIGHTS_ALPHA = __import__("os").environ.get("DSFFORZA_LIGHTS_ALPHA", "matched")
-LIGHTS_ALPHA_FLOOR = 64.0  # "value": lowest level (of 255) times Forza's glow mask
+# "raw": Forza's alpha as is (analysis builds). The earlier modes ("value", "luma",
+# "gamma") are described in research/lights.md. Module-level so an A/B build can
+# switch it; DSFFORZA_LIGHTS_ALPHA overrides it for port_batch workers.
+LIGHTS_ALPHA_MODES = ("matched", "raw")
+LIGHTS_ALPHA = os.environ.get("DSFFORZA_LIGHTS_ALPHA", "matched")
+if LIGHTS_ALPHA not in LIGHTS_ALPHA_MODES:
+    raise ValueError(f"DSFFORZA_LIGHTS_ALPHA={LIGHTS_ALPHA!r}: one of {', '.join(LIGHTS_ALPHA_MODES)}")
 # "matched" curves: score knots -> stock alpha knots (stock percentiles 0, 5, 10, 20,
 # ..., 90, 93, 95, 97, 98, 99, 99.5 of red lamps, of amber and of white lamps).
 _LAMP_X_RED = (0.0, 0.199, 0.313, 0.458, 0.529, 0.586, 0.627, 0.672, 0.715, 0.768, 0.785, 0.798, 0.815,
@@ -100,6 +101,8 @@ def _interp(s: float, xs, ys) -> float:
 
 # Stock red lamp alpha at the percentiles LAMP_PERCENTILES (= _LAMP_Y_RED).
 LAMP_PERCENTILES = (0, 5, 10, 20, 30, 40, 50, 60, 70, 80, 85, 90, 93, 95, 97, 98, 99, 99.5, 100)
+RED_CURVE_MIN_TEXELS = 200      # fewer red lamp texels: the shared red curve
+RED_CURVE_SAMPLES = 40000       # about this many texels sampled over a car's lights regions
 
 
 def red_lamp_curve(scores: list[float]):
@@ -108,7 +111,7 @@ def red_lamp_curve(scores: list[float]):
     curve for all cars a dim Forza mask gave the S2000 a tail median of 2 and the
     Challenger 73; in game the S2000's and S5S's lamps barely lit, run
     20261024-002212). None with too few texels (the shared curve is used)."""
-    if len(scores) < 200:
+    if len(scores) < RED_CURVE_MIN_TEXELS:
         return None
     ordered = sorted(scores)
     xs = []
@@ -148,17 +151,20 @@ def matched_lamp_alpha(r: int, g: int, b: int, a: int, red_curve=None) -> int:
     red_curve: this car's own (score knots, alpha knots) for red texels."""
     hue = lamp_hue(r, g, b)
     xs, ys = red_curve if hue == "red" and red_curve else LAMP_CURVES[hue]
-    s = lamp_score(r, g, b, a)
-    if s >= xs[-1]:
-        return ys[-1]
-    for i in range(1, len(xs)):
-        if s < xs[i]:
-            t = (s - xs[i - 1]) / (xs[i] - xs[i - 1])
-            return int(ys[i - 1] + t * (ys[i] - ys[i - 1]) + 0.5)
-    return ys[-1]
+    return int(_interp(lamp_score(r, g, b, a), xs, ys) + 0.5)
 
 
 DEFAULT_PLAIN = (74, 72, 74, 15)
+# Chassis texels (not lamps): alpha follows luminance, as on stock chassis
+# textures (module docstring): (lum - CHASSIS_ALPHA_LUM) x CHASSIS_ALPHA_GAIN.
+CHASSIS_ALPHA_LUM, CHASSIS_ALPHA_GAIN = 45, 0.55
+# nodamage texels this transparent and this bright are the paint-through body
+# area (white, alpha 0): they get the plain texel, and no cockpit tone.
+PAINT_THROUGH_ALPHA, PAINT_THROUGH_MIN_RGB = 16, 200
+
+
+def _paint_through(family: str, r: int, g: int, b: int, a: int) -> bool:
+    return family == fm.NODAMAGE and a < PAINT_THROUGH_ALPHA and min(r, g, b) > PAINT_THROUGH_MIN_RGB
 # Rear lamp lenses (Texturing.is_lens): a lamp-cover glass subsection behind
 # this Forza z (front is -z; the 40 testdrive cars' rear lenses sit at +1.5 to
 # +2.5) whose mean texel is this much redder than green and blue, and this
@@ -482,7 +488,6 @@ class Texturing:
     swatch_trims: bool = False    # give swatch trims (black, frame...) their Forza colour
     plain: tuple[int, int, int, int] = DEFAULT_PLAIN
     weights: dict[str, float] = field(default_factory=lambda: {fm.NODAMAGE: 1.0, fm.LIGHTS: 1.0, fm.INTERIOR: 1.0})
-    lights_alpha_gamma: float = 2.0
     # Cockpit carbins (tools/cockpit.py): the _LOD0 atlases, fm.classify_cockpit,
     # and interior_LOD0 as a third family.
     lod0: bool = False
@@ -501,7 +506,7 @@ class Texturing:
     # test (label decals on light backgrounds otherwise show as plates).
     cutout_colour: tuple | None = None
     # Opt-in (cockpit): family -> RGB written over source texels with alpha
-    # below 16 before anything samples the atlas (alpha kept, so alpha tests
+    # below PAINT_THROUGH_ALPHA before anything samples the atlas (alpha kept, so alpha tests
     # still see them as transparent). nodamage_LOD0's alpha-0 texels are
     # paint-through filler (white on most cars, a grey badge background on
     # the Jeep GC SRT8), not trim colour (research/cockpit.md, "Light cockpit
@@ -528,7 +533,7 @@ class Texturing:
         self.atlases = fm.AtlasCache(self.car_dir, lod0=self.lod0)
         for family, rgb in self.filler.items():
             if family in self.families:
-                fm.fill_transparent(self.atlases.get(family), rgb)
+                fm.fill_transparent(self.atlases.get(family), rgb, below=PAINT_THROUGH_ALPHA)
         tris: dict[str, list] = {f: [] for f in self.families}
         keys: dict[str, list] = {f: [] for f in self.families}
         tested: dict[str, list] = {f: [] for f in self.families}
@@ -555,6 +560,21 @@ class Texturing:
                         self.cutout.add(id(sub))
                 elif self._uses_atlas(m) and m.kind == "swatch":
                     swatches.append((sub, m))
+        for family in self.families:
+            w, h, _ = self.atlases.get(family)
+            self.src_sizes[family] = (w, h)
+            rects, owner = find_regions(tris[family], (w, h)) if tris[family] else ([], [])
+            self.regions[family] = [Region(family, r) for r in rects]
+            for key, n in zip(keys[family], owner):
+                self.owners[key] = n
+            mixed = {n for n, t in zip(owner, tested[family]) if not t}
+            self.alpha_only |= {(family, n) for n in set(owner) - mixed}
+        # Swatch cells only once the regions are known: a red lamp swatch's
+        # alpha comes from the car's own red curve (_red_lamp_curve, sampled
+        # over the lights regions), and triangle_uvs converts the colour again
+        # to find its cell. Converted before the regions, the swatch got the
+        # shared curve here and the car's curve there: KeyError for the FH1
+        # M5's and Gallardo's red tail lamp swatches.
         fm.sample_colours([m for _, m in swatches], self.atlases)
         for sub, m in swatches:
             if m.technique in fm.ALPHA_TESTED and m.colour[3] < 128:
@@ -569,15 +589,6 @@ class Texturing:
         self.solid_colours[("paint",)] = self.plain
         for key, colour in (extra_solids or {}).items():
             self.solid_colours[key] = tuple(colour)
-        for family in self.families:
-            w, h, _ = self.atlases.get(family)
-            self.src_sizes[family] = (w, h)
-            rects, owner = find_regions(tris[family], (w, h)) if tris[family] else ([], [])
-            self.regions[family] = [Region(family, r) for r in rects]
-            for key, n in zip(keys[family], owner):
-                self.owners[key] = n
-            mixed = {n for n, t in zip(owner, tested[family]) if not t}
-            self.alpha_only |= {(family, n) for n in set(owner) - mixed}
         self._pack()
         return self
 
@@ -715,7 +726,7 @@ class Texturing:
             return None
         sw, sh, src = self.atlases.get(fm.LIGHTS)
         area = sum((r.src[2] - r.src[0]) * (r.src[3] - r.src[1]) for r in regions)
-        step = max(1, int((area / 40000) ** 0.5))
+        step = max(1, int((area / RED_CURVE_SAMPLES) ** 0.5))
         scores = []
         for reg in regions:
             for y in range(reg.src[1], min(sh, reg.src[3]), step):
@@ -733,34 +744,18 @@ class Texturing:
         if floor:
             r, g, b = (int(floor + c * (255 - floor) / 255) for c in (r, g, b))
         tone = self.tone.get(family)
-        if tone and not (family == fm.NODAMAGE and a < 16 and min(r, g, b) > 200):
+        if tone and not _paint_through(family, r, g, b, a):
             k, sat = tone
             grey = (r + g + b) / 3
             r, g, b = (max(0, min(255, int((grey + (c - grey) * sat) * k))) for c in (r, g, b))
         if family == fm.LIGHTS:
             if LIGHTS_ALPHA == "raw":  # analysis only: Forza's alpha as is
                 return r, g, b, a
-            if LIGHTS_ALPHA == "matched":
-                return matched_lamp_texel(r, g, b, a, self._red_lamp_curve())
-            if LIGHTS_ALPHA in ("value", "luma"):
-                # Stock lamp texels: alpha median 0 to 76, following brightness
-                # (Desanne headlamp lum 124 -> 63, reverse 133 -> 76); Forza's glow
-                # mask (alpha 96 to 253 after gamma 2) drew lamps flat and saturated,
-                # apparently always lit (run 20261022-111857). Brightness is the
-                # brightest channel: a red lens's mean is a third of its red.
-                # Some lenses are near black where Forza lights them by its glow
-                # mask alone (S2000 and Durango high stop lamps (31, 2, 2), (19, 0, 0)):
-                # keep at least a quarter of the mask there.
-                if LIGHTS_ALPHA == "value":
-                    level = max(LIGHTS_ALPHA_FLOOR, min(255.0, (max(r, g, b) - 40) * 0.8))
-                else:
-                    level = max(0.0, min(255.0, ((r + g + b) / 3 - 40) * 0.8))
-                return r, g, b, int(level * a / 255 + 0.5)
-            return r, g, b, int(255 * (a / 255) ** self.lights_alpha_gamma + 0.5)
-        if family == fm.NODAMAGE and a < 16 and min(r, g, b) > 200:
+            return matched_lamp_texel(r, g, b, a, self._red_lamp_curve())
+        if _paint_through(family, r, g, b, a):
             return self.plain  # paint-through body texel
         lum = (r + g + b) / 3
-        return r, g, b, max(0, min(255, int((lum - 45) * 0.55)))
+        return r, g, b, max(0, min(255, int((lum - CHASSIS_ALPHA_LUM) * CHASSIS_ALPHA_GAIN)))
 
     def render(self) -> bytearray:
         """The atlas as RGBA8 (plain paint colour where nothing is placed)."""
@@ -980,7 +975,7 @@ def install_exterior(stream, drsp: Entry, full: Installed, mode: str = "replace"
 
 
 def host_texture(stream, drsp: Entry) -> bytes | None:
-    """The DDS the host's Chassis material samples (for header and plain texel)."""
+    """The DDS the host's Chassis material samples (its header, size and mip count)."""
     found = host_materials(stream, drsp)
     if CHASSIS not in found:
         return None
@@ -991,25 +986,11 @@ def host_texture(stream, drsp: Entry) -> bytes | None:
     return None
 
 
-def texel(dds: bytes, uv: tuple[float, float]) -> tuple[int, int, int, int]:
-    """One texel of a DXT DDS's top level (decodes just that block)."""
-    import xds
-    height, width = struct.unpack_from("<II", dds, 12)
-    x, y = min(width - 1, int(uv[0] * width)), min(height - 1, int(uv[1] * height))
-    size = 8 if dds[84:88] == b"DXT1" else 16
-    blocks_w = (width + 3) // 4
-    o = DDS_HEADER_SIZE + ((y // 4) * blocks_w + x // 4) * size
-    rgba = xds.decode_rgba(dds[o:o + size], 4, 4, dds[84:88])
-    k = ((y % 4) * 4 + x % 4) * 4
-    return tuple(rgba[k:k + 4])
-
-
 @dataclass
 class Binding:
     """Texturing bound to one entry's materials: what add_geometry needs."""
     texturing: Texturing
     installed: Installed
-    mode: str = "replace"
 
     def material(self, section, sub, shared: dict[str, bytes | None]) -> bytes | None:
         """DSF material UID for a subsection; `shared` maps the roles paint,
@@ -1063,7 +1044,7 @@ def prepare(stream, full_vehc: Entry, exterior_vehc: Entry | None, car_dir: Path
         ext = install_exterior(stream, child(child(exterior_vehc, "MDXN"), "DRSP"), full, mode, fallback=fallback)
     log(f"{t.summary()}; {mode}: texture {full.texture.hex()}, DDS {len(dds):#x} bytes "
         f"(host {len(host) if host else 0:#x})")
-    return Binding(t, full, mode), (Binding(t, ext, mode) if ext else None)
+    return Binding(t, full), (Binding(t, ext) if ext else None)
 
 
 # --- textured preview ---------------------------------------------------------------

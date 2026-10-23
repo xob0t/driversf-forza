@@ -364,8 +364,7 @@ def main(argv: list[str] | None = None) -> None:
                       f"c3 {tuple(round(x, 3) for x in q['g_vec3TintColour3'][:3])} power {q['g_fresnelpower']:.2f}")
         return
     with args.dsf.open("rb") as stream:
-        root = read_chunk(stream, 0)
-        stock = stock_paints(stream)
+        stock = stock_paints(stream, read_chunk(stream, 0).entries)
     for colour in pick_colours(forza_colours(args.gamedb, args.media)):
         q = shade(colour, stock)
         print(f"{colour.sequence:2} #{'%02x%02x%02x' % colour.rgb} {'metallic' if colour.metallic else 'solid   '} "

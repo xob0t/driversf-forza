@@ -90,7 +90,9 @@ SEAM_NEAR = 0.003      # m; positions of two rigid panels this close form a seam
 SEAM_BORDER = 0.015    # m; host vertices of two rigid panels this close are a host panel border
 SEAM_STILL = 0.03      # m; host borders of a role pair whose median crush is below this are pinned
 SEAM_REACH = 0.2       # m; crush fades in over this distance from a pinned seam
-DASHBOARD_INSTRUMENT = 0x75FAD367  # VDCL name hash of the needle buffers' semantic 8 (u, v, gauge id, 0)
+# Vertex positions are int16 in 1/4096 m (forza2dsf.POSITION_SCALE); the w
+# component (baked sky term) uses the same scale, 4096 = 1.
+POSITION_UNITS = 4096
 
 
 def role_name(role: int) -> str:
@@ -290,7 +292,7 @@ class Uv1Field:
 
     @staticmethod
     def read(stream, vehc, mask: int, local_materials: set) -> "Uv1Field | None":
-        mesh = _load_mesh(stream, vehc)
+        mesh = load_mesh(stream, vehc)
         raw = []
         for lod in mesh.parts[0].lods:
             if lod.mask != mask:
@@ -298,7 +300,7 @@ class Uv1Field:
             for n in lod.submodels:
                 sub = mesh.submodels[n]
                 for vb, tri in vm.triangles(mesh, sub):
-                    e8, e9 = vb.element(8), vb.element(9)
+                    e8 = vb.element(8)
                     if e8 is None or e8.components != 4:
                         continue
                     pts = [vm.position(vb, i) for i in tri]
@@ -396,24 +398,11 @@ class HostField:
         return tuple((p[a] - c[a]) / (s[a] / 2) for a in range(3))
 
 
-def read_part0(stream, vehc, mask: int) -> list[tuple]:
+def read_part0(stream, vehc, mask: int, mesh: vm.Mesh | None = None) -> list[tuple]:
     """(position, s12 - position, (s9 byte 0, byte 1)) for every vertex in the
-    entry's MODL part 0 at `mask` that has semantic 12."""
-    drsp = child(child(vehc, "MDXN"), "DRSP")
-    mesh = vm.Mesh()
-    for e in drsp.children:
-        if e.tag == "VXCK":
-            hd = payload(stream, child(e, "VXHD"))
-            mesh.vertex_buffers[hd[:8]] = vm.VertexBuffer(hd[:8], *struct.unpack_from("<II", hd, 8),
-                                                          vm.parse_vdcl(payload(stream, child(e, "VDCL"))),
-                                                          payload(stream, child(e, "VXDT")))
-        elif e.tag == "IXCK":
-            mesh.index_buffers[payload(stream, child(e, "IXHD"))[:8]] = payload(stream, child(e, "IXDT"))
-        elif e.tag == "SBMC":
-            d = payload(stream, child(e, "SBBH"))
-            mesh.submodels.append(vm.SubModel(d[0:8], d[8:16], d[16:24], struct.unpack_from("<I", d, 0x20)[0],
-                                              d[0x30:0x38], *struct.unpack_from("<II", d, 0x38)))
-    mesh.parts = vm.parse_modl(payload(stream, child(child(vehc, "NONR"), "MODL")), mesh.submodels)
+    entry's MODL part 0 at `mask` that has semantic 12 (`mesh`: the entry's,
+    if already loaded)."""
+    mesh = load_mesh(stream, vehc) if mesh is None else mesh
     seen = {}
     for lod in mesh.parts[0].lods:
         if lod.mask != mask:
@@ -433,7 +422,8 @@ def read_part0(stream, vehc, mask: int) -> list[tuple]:
 
 
 def host_field(stream, vehc, mask: int) -> HostField:
-    rows = read_part0(stream, vehc, mask)
+    mesh = load_mesh(stream, vehc)
+    rows = read_part0(stream, vehc, mask, mesh)
     if not rows:
         raise ValueError(f"{vehc.name}: no semantic-12 vertices in MODL part 0 mask {mask}")
     f = HostField([r[0] for r in rows], [r[1] for r in rows], [r[2] for r in rows], Box.of(r[0] for r in rows))
@@ -443,7 +433,6 @@ def host_field(stream, vehc, mask: int) -> HostField:
     for pair, ns in groups.items():
         f.by_pair[pair] = Grid([f.normalise(f.points[n]) for n in ns], ns)
     f.all_grid = Grid([f.normalise(p) for p in f.points], list(range(len(f.points))))
-    mesh = _load_mesh(stream, vehc)
     for lod in mesh.parts[0].lods:
         if lod.mask != mask:
             continue
@@ -636,12 +625,16 @@ def engine_placement(name: str, gamedbs=(), folder=None) -> str | None:
             continue
         try:
             con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        except sqlite3.Error:
+            continue
+        try:
             row = con.execute("SELECT p.EnginePlacement FROM Data_Car c JOIN List_EnginePlacement p "
                               "ON p.ID = c.EnginePlacementID WHERE c.MediaName = ? COLLATE NOCASE",
                               (name,)).fetchone()
-            con.close()
         except sqlite3.Error:
-            continue
+            continue  # a gamedb without these tables (the connection used to stay open)
+        finally:
+            con.close()
         if row and row[0]:
             return str(row[0]).lower()
     return None
@@ -1260,14 +1253,14 @@ class DamagePlan:
                         continue
                     for i in t:
                         p = self.place.point(pool[i].position)
-                        key = tuple(max(-32768, min(32767, round(c * 4096))) for c in p)
+                        key = tuple(max(-32768, min(32767, round(c * POSITION_UNITS))) for c in p)
                         users[key].add(pair)
                         if paint:
                             self._seam_paint.add(key)
         # Near-coincident positions of different panels (separate Forza shells
         # that touch) are seams too: such positions are grouped, and every
         # member takes the group's panels and its first position's crush.
-        near = SEAM_NEAR * 4096
+        near = SEAM_NEAR * POSITION_UNITS
         cell = defaultdict(list)
         for key in users:
             cell[tuple(int(c // near) for c in key)].append(key)
@@ -1366,7 +1359,7 @@ class DamagePlan:
             if key not in self._seam_paint and not any(self._pinned(a, b, motion)
                                                        for a in pairs for b in pairs if a < b):
                 continue
-            p = tuple(c / 4096 for c in key)
+            p = tuple(c / POSITION_UNITS for c in key)
             ck = tuple(int(math.floor(c / SEAM_REACH)) for c in p)
             for pair in pairs:
                 pins[pair][ck].append(p)
@@ -1438,7 +1431,7 @@ class DamagePlan:
             tag = tags.get(bytes(buf[at + 8:at + 12]))
             if tag is None:
                 continue
-            p = tuple(c / 4096 for c in struct.unpack_from("<3h", buf, at))
+            p = tuple(c / POSITION_UNITS for c in struct.unpack_from("<3h", buf, at))
             box = self._exposed_box(tag, pair, p)
             rect, au, av = EXPOSED_MAP[tag]
             if box is None:
@@ -1450,7 +1443,7 @@ class DamagePlan:
                       rect[3] - t[1] * (rect[3] - rect[2]) if av == 1 else rect[2] + t[1] * (rect[3] - rect[2]))
             struct.pack_into("<2e", buf, at + 8, *uv)
             sky = exposed_sky(tag, stored_normal(buf, at + LAYOUT[stride][1]))
-            struct.pack_into("<h", buf, at + 6, round(sky * 4096))
+            struct.pack_into("<h", buf, at + 6, round(sky * POSITION_UNITS))
             stats[_kind_of(tag) + " vertices"] += 1
 
     def _is_local(self, f: HostField, material: bytes) -> bool:
@@ -1490,14 +1483,14 @@ class DamagePlan:
             for v in verts:
                 at = v * stride
                 raw = struct.unpack_from("<3h", buf, at)
-                p = tuple(c / 4096 for c in raw)
+                p = tuple(c / POSITION_UNITS for c in raw)
                 pos[v] = p
                 # A position shared with other never-swinging panels (a seam inside
                 # one Forza surface) gets the same crushed position on each, so the
                 # seam stays shut when the panels crush alike.
                 others = self._seam.get(raw) if rigid else None
                 if others and pair in others:
-                    at_p = tuple(c / 4096 for c in self._seam_rep.get(raw, raw))
+                    at_p = tuple(c / POSITION_UNITS for c in self._seam_rep.get(raw, raw))
                     ds = [self._disp(f, q, at_p) for q in others]
                     disp = tuple(sum(d[a] for d in ds) / len(ds) for a in range(3))
                     self._seam_written.add((id(f), raw))
@@ -1644,6 +1637,7 @@ class DamagePlan:
         outer shell's paint: the bonnet seen from the cockpit), from the host
         interior's shell by nearest triangle of the same material class, any
         panel. Call after the interior is rebuilt. Returns vertices written."""
+        from cockpit import DASHBOARD_INSTRUMENT
         if self.int_uv1 is None:
             return 0
         f = HostField([], [], [], self.int_uv1.box, uv1=self.int_uv1, local=self.int_local)
@@ -1682,7 +1676,7 @@ class DamagePlan:
             buf = bytearray(payload(stream, vxdt))
             for v, material in users[uid].items():
                 at = v * stride
-                p = tuple(c / 4096 for c in struct.unpack_from("<3h", buf, at))
+                p = tuple(c / POSITION_UNITS for c in struct.unpack_from("<3h", buf, at))
                 normal = stored_normal(buf, at + o5) if o5 is not None else None
                 hit = self._uv1(f, p, (0, 0), material, any_panel=True, normal=normal)
                 if hit is not None:
@@ -1883,7 +1877,9 @@ def cmd_panels(args) -> None:
               f"max crush {crush:.3f}  {hinge}")
 
 
-def _load_mesh(stream, vehc) -> vm.Mesh:
+def load_mesh(stream, vehc) -> vm.Mesh:
+    """One VEHC entry's mesh (its DRSP buffers and submodels, its MODL parts),
+    read from `stream` (vehicle_mesh.load opens an archive by entry index)."""
     mesh = vm.Mesh()
     for e in child(child(vehc, "MDXN"), "DRSP").children:
         if e.tag == "VXCK":
@@ -2013,7 +2009,7 @@ def cmd_render(args) -> None:
     stream, root, kinds = _entries(args.archive, args.id)
     with stream:
         vehc = kinds[args.kind]
-        mesh = _load_mesh(stream, vehc)
+        mesh = load_mesh(stream, vehc)
     mask = args.mask or {0: 4, 1: 64, 2: 2}[args.kind]
     only = {int(x) for x in args.parts.split(",")} if args.parts else None
     skip = {int(x) for x in args.skip.split(",")} if args.skip else set()
@@ -2028,7 +2024,7 @@ def cmd_render(args) -> None:
                 continue
             for n in lod.submodels:
                 for vb, tri in vm.triangles(mesh, mesh.submodels[n]):
-                    e12, e9 = vb.element(12), vb.element(9)
+                    e12 = vb.element(12)
                     pts = []
                     for i in tri:
                         q = vm.position(vb, i)
@@ -2093,7 +2089,7 @@ def cmd_check(args) -> None:
         full = kinds[0]
         nonr = child(full, "NONR")
         panels = host_panels(payload(stream, child(nonr, "UPVH")), payload(stream, child(nonr, "MODL")))
-        meshes = {k: _load_mesh(stream, kinds[k]) for k in (0, 2) if k in kinds}
+        meshes = {k: load_mesh(stream, kinds[k]) for k in (0, 2) if k in kinds}
     known = set(panels)
     for kind, mesh in meshes.items():
         mask = 4 if kind == 0 else 2
@@ -2105,7 +2101,7 @@ def cmd_check(args) -> None:
                 continue
             for n in lod.submodels:
                 for vb, tri in vm.triangles(mesh, mesh.submodels[n]):
-                    e12, e9 = vb.element(12), vb.element(9)
+                    e12 = vb.element(12)
                     part0.add((vb.uid,) + tuple(sorted(tri)))
                     for i in tri:
                         pairs[s9_pair(vb, i)] += 1

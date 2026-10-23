@@ -200,7 +200,7 @@ class SubMaterial:
     """What one subsection samples.
 
     role:       paint / glass / trim / tyre / textured / skip
-    family:     nodamage / lights / None (atlas baseSampler reads)
+    family:     nodamage / lights / interior (cockpit) / None (atlas baseSampler reads)
     kind:       "textured", "swatch", "tiling" or "none" (no UVs used)
     uv_transform: (x_off, x_scale, y_off, y_scale) for UV0
     bounds:     (u0, v0, u1, v1) of the transformed UVs over the triangles used
@@ -218,11 +218,6 @@ class SubMaterial:
     def uv(self, raw: tuple[float, float]) -> tuple[float, float]:
         x_off, x_scale, y_off, y_scale = self.uv_transform
         return raw[0] * x_scale + x_off, raw[1] * y_scale + y_off
-
-    @property
-    def is_textured(self) -> bool:
-        """Needs the car's own atlas on the DSF side (lamps, badges, interior)."""
-        return self.role == TEXTURED and self.kind in ("textured", "swatch")
 
 
 def resolve(section: carbin.Section, sub: carbin.SubSection, classifier=classify) -> SubMaterial:

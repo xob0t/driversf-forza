@@ -225,6 +225,7 @@ INTERIOR_REGIONS = {"surface": SMEAR_RECT, "crack_light": CRACK_LIGHT, "crack_he
 # The windscreen surface is kept only outside this box (normalised s across,
 # t down the glass from the top): the stock frame of smear, open centre.
 WINDSCREEN_OPEN = (0.06, 0.94, 0.22)
+WINDSCREEN_OPEN_AREA = 0.3   # m2: smaller windscreens keep their whole surface
 CRACK_BUDGET = {"windscreen": (1.0, 0.8), "rear": (0.5, 0.4),   # m of crack per sqrt(m2) of window:
                 "side_front": (0.3, 0.25), "side_rear": (0.3, 0.25)}  # (state 1, added in state 2)
 CRACK_LENGTH = {"windscreen": (0.15, 0.40), "rear": (0.10, 0.25), "side_front": (0.06, 0.16),
@@ -296,6 +297,12 @@ class _Pane:
                     w = _bary(q, self._centre(i, j))
                     if w and min(w) >= -1e-6:
                         self.cells[(i, j)].append(k)
+        if not self.cells:
+            # Every triangle too small to cover a cell centre (a sliver of lamp
+            # glass): no area, so the window gets its surface only (max() over
+            # the empty grid used to raise).
+            self.area, self.rim, self.filled = 0.0, [], set()
+            return
         # Outside = empty cells reachable from the grid's border; gaps inside the
         # pane (cracks between Forza triangles, cut-outs) count as glass, so
         # neither rim shards nor crack stops appear in the middle of a window.
@@ -423,7 +430,7 @@ class InteriorGlass:
         lamp = "/lamp/" in group
         pane = _Pane(items, a_axis, b_axis, outward)
         s9 = Counter(it[3] for it in items).most_common(1)[0][0]
-        cut = slot == "windscreen" and not lamp and pane.area >= 0.3
+        cut = slot == "windscreen" and not lamp and pane.area >= WINDSCREEN_OPEN_AREA
         lo, hi, top = WINDSCREEN_OPEN
         cuts = [lambda p: (_dot(p, a_axis) - s0) / ws - lo, lambda p: hi - (_dot(p, a_axis) - s0) / ws,
                 lambda p: (_dot(p, b_axis) - t0) / wt - top]
@@ -603,23 +610,10 @@ def _which_slot(u: float, v: float, tol: float = 0.004) -> str | None:
 def _glass_triangles(stream, vehc, masks, materials=EXTERIOR_GLASS):
     """(uvs, s9 pairs, points) per glass triangle (`materials`) in part 0 of the given masks."""
     import vehicle_mesh as vm
-    from vehicle_mesh import child, payload
-    drsp = child(child(vehc, "MDXN"), "DRSP")
-    buffers, index_buffers, subs = {}, {}, []
-    for e in drsp.children:
-        if e.tag == "VXCK":
-            hd = payload(stream, child(e, "VXHD"))
-            buffers[hd[:8]] = vm.VertexBuffer(hd[:8], *struct.unpack_from("<II", hd, 8),
-                                              vm.parse_vdcl(payload(stream, child(e, "VDCL"))),
-                                              payload(stream, child(e, "VXDT")))
-        elif e.tag == "IXCK":
-            index_buffers[payload(stream, child(e, "IXHD"))[:8]] = payload(stream, child(e, "IXDT"))
-        elif e.tag == "SBMC":
-            d = payload(stream, child(e, "SBBH"))
-            subs.append(vm.SubModel(d[0:8], d[8:16], d[16:24], struct.unpack_from("<I", d, 0x20)[0], d[0x30:0x38],
-                                    *struct.unpack_from("<II", d, 0x38)))
-    parts = vm.parse_modl(payload(stream, child(child(vehc, "NONR"), "MODL")), subs)
-    chosen = {k for lod in parts[0].lods if lod.mask in masks for k in lod.submodels}
+    from damage import load_mesh
+    mesh = load_mesh(stream, vehc)
+    buffers, index_buffers, subs = mesh.vertex_buffers, mesh.index_buffers, mesh.submodels
+    chosen = {k for lod in mesh.parts[0].lods if lod.mask in masks for k in lod.submodels}
     for k in sorted(chosen):
         sub = subs[k]
         vb = buffers.get(sub.vertex_buffer)
