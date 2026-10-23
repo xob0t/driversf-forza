@@ -99,7 +99,7 @@ GAME_ISOS = {"fh1": ["Forza.Horizon.XBOX360.iso"],
 EMISSION_GROUP = {"Exhaust": "ExhaustL", "EngineAmbient": "EngineAmbient", "EngineIntake": "EngineIntake"}
 # Emission per set, first one the car has (race cars often lack one).
 SET_EMISSIONS = {"A": ("EngineAmbient", "EngineIntake", "Exhaust"), "B": ("Exhaust", "EngineAmbient", "EngineIntake")}
-STOCK_INDEX_VERSION = 1
+STOCK_INDEX_VERSION = 2
 
 
 def fnv1(text: str) -> int:
@@ -182,6 +182,17 @@ def loop_sets(bank: wb.Bank, vsvh: bytes) -> dict[str, list[Slot]]:
         taken |= set(slots)
         sets[name] = sorted(slots.values(), key=lambda s: s.rpm)
     return sets
+
+
+def set_media(bank: wb.Bank, vsvh: bytes) -> set[int]:
+    """Every embedded media a Sound under set A's or set B's play event uses."""
+    media = {m for m, _ in bank.media}
+    out = set()
+    for off in VSVH_EVENTS:
+        target = play_target(bank, struct.unpack_from("<I", vsvh, off)[0])
+        out |= {o.info["source"] for o in (subtree(bank, target) if target else [])
+                if o.type == 2 and o.info["source"] in media}
+    return out
 
 
 def set_of_objects(bank: wb.Bank, vsvh: bytes) -> dict[int, str]:
@@ -316,7 +327,9 @@ def stock_index(dsf: Path = DEFAULT_DSF, cache: Path = CACHE / "stock-banks.json
                    "vsrt": vsrt.size, "bank_id": bank.bank_id, "rpm": list(struct.unpack_from("<II", vsvh, 0x94)),
                    "engine_type": struct.unpack_from("<I", vsvh, ENGINE_TYPE_FIELD)[0], "sets": {}, "why": ""}
             try:
-                row["sets"] = {k: [round(s.rpm) for s in v] for k, v in loop_sets(bank, vsvh).items()}
+                sets = loop_sets(bank, vsvh)
+                row["sets"] = {k: [round(s.rpm) for s in v] for k, v in sets.items()}
+                row["other_media"] = len(set_media(bank, vsvh) - {s.media for v in sets.values() for s in v})
             except ValueError as error:
                 row["why"] = str(error)
             if not row["why"]:
@@ -327,6 +340,10 @@ def stock_index(dsf: Path = DEFAULT_DSF, cache: Path = CACHE / "stock-banks.json
                     row["why"] = "no sample loop sets"
                 elif not all(c in TEMPLATE_SLOTS for c in counts):
                     row["why"] = f"{counts[0]}+{counts[1]} loops (not the 370Z layout)"
+                elif row["other_media"]:
+                    # e.g. 126/129/184/178/302: a random container of 0.13 s idle grains
+                    # pitched on its parent; they would keep playing the template's engine
+                    row["why"] = f"{row['other_media']} more embedded media in the loop sets (idle grains)"
             banks[sid] = row
     if pck:
         reserved |= pck_ids(pck)
@@ -829,6 +846,8 @@ def build_sound(sbak: bytes, vsvh: bytes, forza: dict, *, namespace: int, reserv
     sets = loop_sets(bank, vsvh)
     if not sets["A"] or not sets["B"]:
         raise ValueError("template has no sample loop sets (granular or silent)")
+    if set_media(bank, vsvh) - {s.media for v in sets.values() for s in v}:
+        raise ValueError("template's loop sets play more media than their rpm loops (idle grains)")
     lo_old, hi_old = struct.unpack_from("<II", vsvh, 0x94)
     host_wavs = {m: np.array(wb.Wem.parse(w).pcm()[0], dtype=np.float64) / 32768 for m, w in bank.media}
     idle, redline = forza["idle"], forza["redline"]
@@ -1130,6 +1149,9 @@ def lint(stream, root_entries, spool_id: int, reserved: set[int] | None = None) 
         sets = loop_sets(bank, vsvh)
         rows.append((all(sets.values()), "sound: both loop sets hold embedded loops "
                      f"({len(sets['A'])}+{len(sets['B'])})"))
+        extra = set_media(bank, vsvh) - {s.media for v in sets.values() for s in v}
+        rows.append((not extra, "sound: the loop sets play no media but the rpm loops (no template idle grains)"
+                     + (f" ({len(extra)} more)" if extra else "")))
         rows.append((not clashes, "sound: Forza bank IDs are unique in the archive"
                      + (f" (clashes: {', '.join(clashes[:4])})" if clashes else f" ({len(mine)} IDs)")))
         if reserved is not None:
