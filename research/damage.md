@@ -681,15 +681,47 @@ archives `out/seams/archive-before-after-side-x.png` (exterior),
 `archive-before-after-wing-x.png` (wing and door hit only: the arch flare
 no longer peels off the front structure).
 
-### Test build `out/seams/build`
+### Test build `out/seams/build` and in-game result (confirmed-runtime)
 
 `port_batch.py build --car SAL_S5SRaptor_10 --car BMW_M5_12 --car
 SUB_WRXSTi_11 --out out/seams/build` (IDs 1-3, hosts 163, 147, 136): lint
-and `damage.py check` pass on all three. `run-series.ps1 -DamageSide`
-(new; `clonetest.lua` `SIDE_STAGES`) calls `GameVehicleResource.applyDamage`
-(damage 1.0, `overridePlayerOnlyDamage`) at (-1.0, 0.4, 1.3), (-1.0, 0.4,
-0.3) and (-1.0, 0.4, 1.0) at chase-view ticks 4, 8 and 12 instead of
-`fullVisualDamage`, so panels get uneven damage amounts.
+and `damage.py check` pass on all three.
+
+New probe option `run-series.ps1 -DamageSide` (`clonetest.lua`
+`SIDE_COPY`): the chase camera sees only the car's back, so 2 ticks into
+the chase view the probe parks a copy of the model (`GameVehicleResource.create`,
+no occupants) 9 m ahead and 3 m to the left, turned a quarter turn so one
+side faces the camera, holds the player's car still, and calls
+`GameVehicleResource.applyDamage` (damage 1.0, `overridePlayerOnlyDamage`)
+on the copy at car-space (1.0, 0.4, 1.3), (1.0, 0.4, 0.2) and (1.0, 0.4,
+-0.8) (front wing, door, rear quarter) at ticks 4, 8 and 12. Found on the
+way: `applyDamage`'s location is in car space (world points beside the copy,
+run `host-20261024-002829`, barely marked it); hitting the player's own car
+sent the game to the Shift view for most chase shots (`host-20261024-001258`,
+`-002016`); a car spawned in front of a moving one keeps rolling and the
+camera leaves the copy behind (`host-20261024-003745`).
+
+- Run `host-20261024-005404` (`-DamageSide`, probe `147,1,2,3`, 2 s shots;
+  sheet `out/seams/ingame-side8-sheet.png`, crops
+  `out/seams/ingame-side-copies.png`; also `host-20261024-003238`): the hits
+  crush each copy's near front corner, pop the bonnet, knock the front
+  bumper off and dent the doors and rear quarter, so the panels get
+  uneven damage, as in the user's crash. The S5S Raptor (observe-03, -04),
+  M5 (observe-10, -11) and WRX STI (observe-16, -17) copies show dented,
+  scratched doors with their shut lines closed: no jagged black slits in
+  front of or behind the doors, no hole along the S5S Raptor's intake. The
+  M5's rear quarter, crushed into the wheel, shows the darker shut line
+  behind the rear door.
+- Run `host-20261024-010046` (`-Damage`, uniform `fullVisualDamage`; sheet
+  `out/seams/ingame-full-sheet.png`, rear crops `ingame-full-rear.png`):
+  no crash, all phases ok; cockpit views clean. The WRX's boot lid crumples
+  and parts from the rear quarters (a swinging panel; not pinned, as
+  stock). In observe-03 a grey plate stands up through the S5S Raptor's
+  tail, not there in observe-02 (debris or a detached panel in flight;
+  not traced).
+- Host starts are flaky at present: two runs of this build and one of
+  another agent's (`out/steering/exp`) stopped at "Story world not ready"
+  (`host-20261023-235029`, `-235409`); the next starts worked.
 
 ## Risks and open questions
 

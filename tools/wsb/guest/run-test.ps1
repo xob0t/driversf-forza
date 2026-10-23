@@ -45,7 +45,7 @@ param(
     [string]$HoldMph,    # comma-separated mph, forced in turn in cockpit view
     [switch]$Damage,     # probe: GameVehicleResource.fullVisualDamage on each car in chase view (research/damage.md)
     [switch]$DamagePanels, # with -Damage: then forceOpenPanels (~6 s) and removeAllPanels (~9 s) in the same view
-    [switch]$DamageSide, # probe: applyDamage hits on each car's -x front wing and door in chase view (~2, 4, 6 s)
+    [switch]$DamageSide, # probe: a parked side-on copy of each car takes applyDamage hits (wing, door, quarter) in chase view
     [switch]$GlassLadder, # probe: damage in steps during each cockpit view (clonetest.lua GLASS_STEPS, ~21 s)
     [switch]$LightsDriveOnly, # with -Lights: only the day and dark drives, no setLights phases
     [switch]$Lights,     # probe: lamp phases per car (dsfforza\lightstest.lua, research/lights.md); the harness

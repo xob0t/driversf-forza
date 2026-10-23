@@ -39,7 +39,7 @@ param(
     [string]$HoldMph,             # e.g. '30,60,90': speeds forced in turn in each cockpit view
     [switch]$Damage,              # probe applies full visual damage 3 s into each chase view
     [switch]$DamagePanels,        # with -Damage: then opens (~6 s) and removes (~9 s) every panel
-    [switch]$DamageSide,          # probe applies localised hits on each car's -x front wing and door
+    [switch]$DamageSide,          # probe hits a parked side-on copy of each car (wing, door, quarter; clonetest.lua SIDE_COPY)
     [switch]$GlassLadder,         # probe damages each car in steps during its cockpit view (~21 s; glass crack states)
     [switch]$LightsDriveOnly,     # with -Lights: only the day and dark drives (no setLights phases)
     [switch]$Lights,              # lamp phases per car, two shots each (dsfforza\lightstest.lua); allow ~120 s per car

@@ -356,24 +356,88 @@ end
 
 -- config.damage_side: GameVehicleResource.applyDamage at points on the car's -x side (its right; the
 -- front wing, then the door), so panels get different damage amounts as in a real side impact
--- (fullVisualDamage crushes every panel alike; research/damage.md, seam gaps).
+-- (fullVisualDamage crushes every panel alike; research/damage.md, seam gaps). The chase camera
+-- only sees the car's back, so a parked copy of the model is placed SIDE_AHEAD m ahead and
+-- SIDE_LATERAL m to the side (it lands on the left), turned a quarter turn so one side faces the
+-- camera, and the hits go to the copy's camera-facing side (SIDE_COPY). Hitting the player's car
+-- as well sent the game to the Shift view for most of the chase shots.
 local SIDE_STAGES = {
 	[4] = { 1.0, -1.0, 0.4, 1.3 },
 	[8] = { 1.0, -1.0, 0.4, 0.3 },
 	[12] = { 1.0, -1.0, 0.4, 1.0 },
 }
-local function sideHit(id, car, hit)
+local SIDE_AHEAD, SIDE_LATERAL = 9.0, 3.0
+-- Hits on the copy, in car space on its camera-facing (+x) side: front wing, door, rear quarter.
+-- applyDamage's location is car space: world points beside the copy (run host-20261024-002829)
+-- barely marked it, car-space points crushed the near front corner (host-20261024-002016).
+local SIDE_COPY = { [4] = { 1.0, 1.0, 0.4, 1.3 }, [8] = { 1.0, 1.0, 0.4, 0.2 }, [12] = { 1.0, 1.0, 0.4, -0.8 } }
+local sideCopy = nil
+local function sideHit(id, car, hit, what)
 	local ok, err = pcall(GameVehicleResource.applyDamage, { gameVehicle = car, damage = hit[1],
 		location = vec.vector(hit[2], hit[3], hit[4], 1), overridePlayerOnlyDamage = true })
-	log(string.format("id %d: applyDamage %.2f at (%.1f, %.1f, %.1f) t%d %s", id, hit[1], hit[2], hit[3], hit[4],
-		state.ticks, ok and "ok" or tostring(err)))
+	log(string.format("id %d: applyDamage %.2f at (%.1f, %.1f, %.1f) on the %s t%d %s", id, hit[1], hit[2], hit[3],
+		hit[4], what, state.ticks, ok and "ok" or tostring(err)))
+end
+
+local function spawnSideCopy(id, car)
+	local ok, copy = pcall(function()
+		local m0 = car.matrix
+		local h = math.atan2(m0[2].x, m0[2].z)
+		local fx, fz = math.sin(h), math.cos(h)
+		local rx, rz = math.cos(h), -math.sin(h)
+		local p = m0[3]
+		local hc = h + math.pi / 2  -- the copy's right (-x) then points back at the camera
+		local pos = vec.vector(p.x + fx * SIDE_AHEAD + rx * SIDE_LATERAL, p.y + 0.5,
+			p.z + fz * SIDE_AHEAD + rz * SIDE_LATERAL, 1)
+		local c = GameVehicleResource.create({
+			SnapToTerrain = true, Model_Id = id, NoOccupants = true, InitialVelocity = 0,
+			Position = pos, Heading = vec.vector(math.sin(hc), 0, math.cos(hc), 0),
+		})
+		pcall(function()
+			local m = setYRotation(hc)
+			m[3] = pos
+			c.matrix = m
+			c.velocity = vec.vector(0, 0, 0, 0)
+		end)
+		return c
+	end)
+	log(string.format("id %d: side copy %s", id, ok and describe(copy) or tostring(copy)))
+	return ok and copy or nil
+end
+
+local function removeSideCopy()
+	if sideCopy ~= nil then
+		pcall(function() sideCopy:delete() end)
+		pcall(GameVehicleResource.destroy, sideCopy)
+		sideCopy = nil
+	end
 end
 
 local function step()
 	local id = TEST_IDS[state.index]
 	state.ticks = state.ticks + 1
-	if DAMAGE_SIDE and id ~= nil and state.phase == "chase_view" and SIDE_STAGES[state.ticks] then
-		sideHit(id, state.spawned, SIDE_STAGES[state.ticks])
+	if DAMAGE_SIDE and id ~= nil and state.phase == "chase_view" then
+		-- Hold the player's car still (a car spawned in front of a moving one keeps rolling and
+		-- the chase camera leaves the copy behind, run host-20261024-003745).
+		pcall(function() state.spawned.velocity = vec.vector(0, 0, 0, 0) end)
+		if state.ticks == 2 then
+			removeSideCopy()
+			sideCopy = spawnSideCopy(id, state.spawned)
+		end
+		if SIDE_COPY[state.ticks] then
+			if sideCopy ~= nil then
+				sideHit(id, sideCopy, SIDE_COPY[state.ticks], "copy")
+				local ok, p = pcall(function() return sideCopy.matrix[3] end)
+				local okc, q = pcall(function() return state.spawned.matrix[3] end)
+				if ok and okc then
+					log(string.format("id %d: copy at (%.1f, %.1f, %.1f), car at (%.1f, %.1f, %.1f)", id, p.x, p.y, p.z,
+						q.x, q.y, q.z))
+				end
+			else
+				-- No copy: hit the player's car (the chase camera then sees only its back).
+				sideHit(id, state.spawned, SIDE_STAGES[state.ticks], "car")
+			end
+		end
 	end
 	if DAMAGE and id ~= nil and state.phase == "chase_view" and state.ticks == DAMAGE_TICK then
 		damageCar(id, state.spawned)
@@ -501,6 +565,7 @@ local function step()
 		end)
 		log(string.format("id %d: cockpit view %s (cameraMode %s)", id, ok and "on" or ("failed: " .. tostring(err)),
 			tostring(localPlayer.cameraMode)))
+		removeSideCopy()
 		state.phase, state.ticks = "cockpit_view", 0
 	elseif state.phase == "cockpit_view" and state.ticks < cockpitTicks() then
 		if GLASS_LADDER and GLASS_STEPS[state.ticks] then
