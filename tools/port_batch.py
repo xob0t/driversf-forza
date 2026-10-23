@@ -600,8 +600,9 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print) -> dict[
             retry = None if report.get("ok") or job.get("fallback") else fallback_for(report, job["port_options"])
             if retry:
                 options, why = retry
-                (work / f"{media}.json").replace(work / f"{media}.first-try.json")
-                (work / f"{media}.log").replace(work / f"{media}.first-try.log")
+                for ext in ("json", "log"):  # a crashed worker leaves no report
+                    if (work / f"{media}.{ext}").exists():
+                        (work / f"{media}.{ext}").replace(work / f"{media}.first-try.{ext}")
                 job = {**job, "port_options": options, "fallback": why, "first_error": report.get("error"),
                        "first_cause": report.get("cause"), "seconds_before": report["seconds"]}
                 jobs_by_media[media] = job

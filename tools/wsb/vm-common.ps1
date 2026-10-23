@@ -82,9 +82,9 @@ function Get-VmProcesses {
 }
 
 function Set-VmPriority([string]$Priority = 'BelowNormal') {
-    # The VM yields to whatever the user runs. The vmx asks for this itself
-    # (priority.ungrabbed = "low", vm-build.ps1); setting it from here needs admin rights
-    # (vmware-authd's token), so a refusal is expected and ignored.
+    # The VM yields to whatever the user runs. vmware-vmx is started by vmware-authd, so this needs
+    # admin rights and is normally refused (ignored). The vmx can only ask for normal or Idle
+    # (priority.ungrabbed = "low"), and Idle starved the VM under host builds; vm-build.ps1 uses normal.
     foreach ($p in Get-VmProcesses) {
         try { (Get-Process -Id $p.ProcessId).PriorityClass = $Priority } catch { }
     }

@@ -455,12 +455,45 @@ a tick (30 frames) took 0.2 s and each step about 1.6 s (observe times in
   (observe-30), as it did for the M5 after fullVisualDamage (observe-13).
 - No crash, no white streaks, no glass missing in the clean state.
 
-Not yet seen in game: the tuned shard sizes (teeth 1.2–3.5 cm every 3.5 cm,
-after this run; the run's build used 1.5–4 cm every 2.5 cm, which read as a
-continuous fringe on the 370Z's top edge where stock 227 shows a corner
-cluster). Stock 147's cockpit ladder ran before the first screenshot.
-Next run: the same ladder with `-ShotSeconds 1` (or more ticks per step),
-stock first.
+Run 1's build drew shards 1.5–4 cm wide every 2.5 cm, a near-continuous
+fringe on the 370Z's top edge where stock 227 shows a corner cluster; they
+are now 1.2–3.5 cm every 3.5 cm, and gaps inside a window no longer count as
+rim.
+
+**Run `host-20261024-000609`** (final `out/cockpitglass/build`, same IDs,
+`-GlassLadder -ShotSeconds 1`; 85 shots, 7–8 per cockpit ladder; strips
+`out/cockpitglass/run2-ladder.png`, zooms `run2-cracks-zoom.png`,
+`run2-227-370z.png`): no crash. M5: clean, then two crack lines from the
+windscreen's top edge after 0.25 (observe-29 against -27). 370Z port: faint
+cracks after 0.25, smear gone and shards along the top edge after 0.5 and
+1.0 (observe-61, -63). Stock 227 at the same steps shows no clear shards in
+view this time (run 1 showed its top-left cluster at 0.5), so the crack
+state per hit varies between spawns. The M5 and Challenger dropped to the
+Shift view after the 1.0 step, as in run 1. Stock 147's ladder again ran
+before the first shot (the zoom phase); the first shot of a series comes
+after `-ZoomPresses`.
+
+**40-car survey** (`out/cockpitglass/testdrive`, `tools/batches/testdrive.txt`,
+`out/cockpitglass/survey.py` against `out/testdrive7`;
+`survey-testdrive.txt`): 40 built, all lint ok, no extra interior
+decimation. Every car has a windscreen frame of 0.10–0.28 m² with
+0.83–1.15 m of state-1 and 0.67–0.95 m of state-2 cracks; shards seen from
+the eye 16–115 per windscreen (fewest where the dash hides most of the rim:
+Cuda 0.13 of the rim seen, Firebird 0.15, Mustang 0.30, 205 T16 0.31). Up to
+eight cars (the first in list order) were built before gaps inside a window
+stopped counting as rim; the rest with the final code. A replay on all 40 `out/testdrive7` interiors
+(`fastsurvey.py`, windows grouped by record and position because section
+names are gone) puts every triangle in its region; its stray mid-window
+shards on the 250 GTO, 300SL and 2000GT came from that grouping, not the
+converter (real builds `out/cockpitglass/outliers`, `300sl-states.png`,
+`oldcars-states.png`).
+
+The Express worker died once in a gentle-mode batch (no traceback, not a
+timeout; log ends after the full entry); it built cleanly standalone and in
+the 8-job batch (800 s), so it was outside the converter. The crash exposed a
+`port_batch` bug: the retry (triggered because the log tail says "stub
+cockpit carbin") renamed a report the dead worker never wrote and took the
+whole batch down; `run_workers` now renames only files that exist.
 
 ## Shared-trim garbage in cockpits (2026-10-22, fixed offline)
 
