@@ -607,9 +607,77 @@ def host_cockpit(upvh_data: bytes) -> HostCockpit:
                        parent_hinge, list(range(h.counts["mirrors"])))
 
 
+# --- driver's hands -------------------------------------------------------------------
+# The cockpit hands are one rig for every car (research/cockpit.md, "Driver's hands").
+# In game (run 20261024-000936) the hands sit at A + H and the skinned wheel at
+# A + (v - hinge), where A = steering marker (role 47) + (0, VO3D p538, p559)
+# (FUN_005743E0) and H is fixed. When the car steers, both turn about A, about the
+# marker's column (FUN_005756E0 -> FUN_00514150). So the marker and p538/p559
+# move the wheel and the hands together. Only the hinge, the point of the wheel
+# mesh drawn at A, moves the hands against the wheel. The marker's quaternion
+# leaves both alone at rest. The rig fits the stock wheel: in every stock car the
+# hinge is the centre of the same wheel mesh, rim radius 0.176 m (fleet median of
+# the fit_wheel measure; quartiles 0.174 to 0.180), column 24 deg up. The hands
+# grip it about 45 deg either side of the top.
+HAND_PARAMS = (538, 559)
+STOCK_RIM_RADIUS = 0.176
+STOCK_COLUMN = (0.0, 0.410, -0.912)     # DSF model space, towards the driver
+HAND_GRIP_DEG = 45.0
+MAX_HAND_SHIFT = 0.06
+
+
+def _rim_nearest(p, centre, axis, radius):
+    d = _sub(p, centre)
+    d = _sub(d, _scale(axis, _dot(d, axis)))
+    return _add(centre, _scale(_norm(d), radius))
+
+
+def hand_grips(pivot) -> list[tuple]:
+    """Where the stock hand rig grips when the steering pivot (hinge = marker,
+    p538/p559 zero) is at `pivot` (DSF model space)."""
+    a = _norm(STOCK_COLUMN)
+    up = _norm(_sub((0.0, 1.0, 0.0), _scale(a, a[1])))
+    t = math.radians(HAND_GRIP_DEG)
+    return [_add(pivot, _add(_scale((1.0, 0.0, 0.0), s * STOCK_RIM_RADIUS * math.sin(t)),
+                             _scale(up, STOCK_RIM_RADIUS * math.cos(t)))) for s in (1, -1)]
+
+
+def hand_shift(centre, axis, radius) -> tuple[float, float, float]:
+    """Offset from the Forza wheel centre for the steering hinge and marker that
+    puts the stock hand grips on the Forza rim (least squares, translation only).
+    The wheel then turns about centre + shift: the part along the column costs
+    nothing, the part in the wheel plane makes the hub circle by up to
+    2 |shift| sin(angle / 2) while steering. No x: the grips are symmetric."""
+    axis = _norm(axis)
+    grips = hand_grips(centre)
+    shift = (0.0, 0.0, 0.0)
+    for _ in range(8):
+        moves = [_sub(_rim_nearest(_add(g, shift), centre, axis, radius), _add(g, shift)) for g in grips]
+        shift = _add(shift, _mean(moves))
+        shift = (0.0, shift[1], shift[2])
+    n = math.sqrt(_dot(shift, shift))
+    if n > MAX_HAND_SHIFT:
+        shift = _scale(shift, MAX_HAND_SHIFT / n)
+    return shift
+
+
+def hand_grip_error(pivot, centre, axis, radius) -> float:
+    """Largest distance (m) from a stock grip to the Forza rim."""
+    return max(math.dist(g, _rim_nearest(g, centre, _norm(axis), radius)) for g in hand_grips(pivot))
+
+
+def hand_params() -> dict[int, float]:
+    """VO3D p538/p559 (the hand rig's offset from the marker) to zero: they move
+    the wheel with the hands, away from where Forza puts it (Cuda host:
+    -4 cm y, +7.5 cm z)."""
+    return {p: 0.0 for p in HAND_PARAMS}
+
+
 def patch_hierarchy(upvh_data: bytes, host: HostCockpit, place, cf: CockpitFit) -> tuple[bytes, dict]:
     """Move the steering hinge and marker, the gauges and the mirrors to the
-    Forza cockpit (all in DSF model space through `place`)."""
+    Forza cockpit (all in DSF model space through `place`). The hinge and
+    marker sit at the wheel centre plus hand_shift, so the stock hands grip
+    the Forza rim (with hand_params in VO3D)."""
     import upvh
     h = upvh.parse(upvh_data)
     data = bytearray(upvh_data)
@@ -620,16 +688,24 @@ def patch_hierarchy(upvh_data: bytes, host: HostCockpit, place, cf: CockpitFit) 
     old_axis = struct.unpack_from("<3f", data, hinge_at + 0x10)
     if _dot(axis, old_axis) < 0:
         axis = _scale(axis, -1)
-    struct.pack_into("<3f", data, hinge_at, *centre)
+    shift = hand_shift(centre, axis, cf.wheel.radius)
+    pivot = _add(centre, shift)
+    struct.pack_into("<3f", data, hinge_at, *pivot)
     struct.pack_into("<3f", data, hinge_at + 0x10, *axis)
-    # The stock marker quaternion turns (0, 0, -1) onto the column (Desanne: 24.4 deg about x).
+    # The stock marker quaternion turns (0, 0, -1) onto the column (Desanne: 24.4 deg about x);
+    # the engine turns the wheel and hands about it.
     q = quat_from_to((0, 0, -1), axis)
     marker_at = h.offsets["markers"] + host.wheel_marker * 0x20
-    struct.pack_into("<3f", data, marker_at, *centre)
+    struct.pack_into("<3f", data, marker_at, *pivot)
     struct.pack_into("<4f", data, marker_at + 0x10, *q)
+    along = _dot(shift, axis)
     report["steering"] = {"record": host.wheel_record, "hinge": host.wheel_hinge, "marker": host.wheel_marker,
                           "centre": [round(c, 4) for c in centre], "axis": [round(c, 4) for c in axis],
-                          "radius": round(cf.wheel.radius, 4), "skin": list(host.wheel_skin)}
+                          "radius": round(cf.wheel.radius, 4), "skin": list(host.wheel_skin),
+                          "hands": {"shift": [round(c, 4) for c in shift], "along_column": round(along, 4),
+                                    "in_plane": round(math.sqrt(max(0.0, _dot(shift, shift) - along * along)), 4),
+                                    "grip_error": [round(hand_grip_error(centre, centre, axis, cf.wheel.radius), 4),
+                                                   round(hand_grip_error(pivot, centre, axis, cf.wheel.radius), 4)]}}
     moved = []
     for family, gid in GAUGE_IDS.items():
         g = cf.gauges.get(family)

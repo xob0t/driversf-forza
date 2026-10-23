@@ -304,7 +304,8 @@ no camera.
    vertex-clusters the cockpit with growing cells (4 to 30 mm), then moves
    the shell to its coarsest LOD. None of the three test cars needed it.
 5. Patches the full entry's UPVH: the steering hinge pivot and axis, the
-   role-47 marker (position and quaternion), the speed and tach gauge
+   role-47 marker (position and quaternion; hinge and marker at the wheel
+   centre plus the hand shift, VO3D p538/p559 zeroed: "Driver's hands"), the speed and tach gauge
    entries (pivot, dial quaternion, sweep from the tick table), the gauge cluster hinge pivot (mean
    of the gauges), the mirrors table, and the driver/passenger seat markers
    (roles 10/11: under the eye, host's eye-to-seat offset).
@@ -789,6 +790,106 @@ composes it the same way (`out/whitetrim/charger-forza-top-rear.png`,
 nodamage blended over a red test paint): body colour on the deck, black
 from the boot lid back. The brown is the car's dark bronze factory paint on
 the most sky-facing panel; roof and sides read darker at that angle.
+
+## Driver's hands and the steering wheel (2026-10-24, confirmed-runtime)
+
+User reports: the S5S Raptor's hands float above the rim ("some cars' wheels
+do not line up with the hands, some are spot on"); the WRX STI's wheel looks
+upside down.
+
+**What places the hands.** The cockpit hands are one rig for every car. The
+game builds its pose in a per-player driver object of 0xD8 bytes
+(`FUN_005743E0`, pool at `FUN_00573110`), from the steering marker read by
+the UPVH parser (`FUN_0088E310`, role 0x2F: position to spec+0x37E0, a
+direction from its quaternion to spec+0x37F0):
+
+- anchor A = marker position + (0, VO3D p538, VO3D p559) (spec+0x34D8 and
+  spec+0x352C are p538/p559, `spec + 0x2C70 + 4 * id`);
+- the steering angle comes from the driver animation state (`FUN_005756E0`;
+  some states use fixed angles of ±1.7456 rad, the hand-over-hand pose at
+  full lock). `FUN_00514150` turns by that angle about the marker's
+  direction through A (the same helper as the gauge needles), and
+  `FUN_00573E10` copies the matrix to the driver.
+
+The in-game experiment (`out/steering/make_exp.py` patches one value per car in a
+copy of testdrive7; run `host-20261024-000936`, crops and sheets in
+`out/steering/exp-*.png`) shows what each value moves:
+
+| Change (car) | Hands | Wheel |
+| --- | --- | --- |
+| marker y -10 cm (Silvia, 5) | down 10 cm | down 10 cm, hands still on the rim |
+| hinge y -10 cm (370Z, 32) | stay | up 10 cm, hands below the rim |
+| marker quaternion +20° about x (M3, 1) | no visible change at rest | no visible change |
+| hinge axis +20° (stock 136) | no visible change at rest | no visible change |
+| p538 -0.04 to +0.10 (300SL, 24) | up | up, hands still on the rim |
+| p559 +0.075 to -0.15 (Cuda, 7) | back and down | back and down |
+
+So the hands sit at A + H and the skinned wheel at A + (v - hinge), with H
+fixed. Only the hinge, the point of the wheel mesh that is drawn at A, moves
+the hands against the wheel. When the car steers, both turn about A.
+Stock cars make this work by construction. In all 146 with a
+steering marker, the hinge and the marker are the centre of the same wheel mesh:
+fit_wheel radius 0.176 m (median; quartiles 0.174 to 0.180; trucks 0.19).
+The column is 24° up in the seat marker's frame, and the hinge sits at (0,
+0.469, 0.428) from the driver seat marker in its frame (`out/steering/seat_frame.py`,
+`stock_rim.py`). The hands grip about 45° either side of the top (stock 147
+in game against an offline render). Stock p538/p559 (-0.1 to 0.1 m; buses
+p559 to -0.3) move the wheel with the hands, relative to the driver's body.
+
+**Why converted cars missed.** The converter put the hinge and marker on the
+Forza wheel centre, so the rig gripped a 0.176 m rim at a 24° column. Forza
+rims run 0.146 (S2000) to 0.203 m (Charger Daytona), and columns 10° (S5S
+Raptor) to 30°. The grips missed the rim by up to 4.3 cm (Raptor; S2000 3.5,
+RX-7 2.9, 370Z 2.8, Agera 3.0, Firebird 2.8). The host's p538/p559 also
+moved the converted wheel away from its Forza place (Cuda 8.5 cm, FOR
+SVT Raptor 13 cm, M3 E30 4 cm).
+
+Forza's own data has no hand target beyond the wheel centre:
+`CarAttribs.xml` `DriverHandsOffset` is the wheel centre + (0, -0.41, +0.42)
+on every car checked (WRX, 370Z, M5, TT RS, GT-R), with `DriverHandsScale`
+1 and `Use10_2Animations` 0. The arm animation is Forza's own rig, so it is
+not used.
+
+**Fix** (`cockpit.hand_shift`, `patch_hierarchy`, `hand_params`): the hinge
+and marker go to the Forza wheel centre + shift, where shift is the least-squares
+translation that puts the stock grips on the Forza rim (y and z only;
+capped at 6 cm). p538 and p559 are written as 0, so the wheel is drawn
+exactly where Forza puts it. The marker quaternion still follows the Forza
+column. The wheel then turns about centre + shift. The part of the shift along the
+column costs nothing. The part in the wheel plane (up to 4.4 cm, S2000; 3.7
+Raptor; most cars under 2.5 cm) makes the hub circle by 2·shift·sin(angle/2)
+while steering. With a fixed rig the alternative would be to rescale the
+Forza wheel. The converter report has `steering.hands` (shift, in-plane and
+along-column parts, grip error before/after).
+
+Verified: offline, `out/steering/grip_survey.py` on `out/steering/build`
+(WRX, S5S Raptor, Silvia, S2000, 370Z, Cuda, M3 E30) puts the grips within
+0.3 cm of the rim (before: 1.1 to 4.3 cm). In game: run `host-20261024-003455`
+at rest, every car's hands on the rim. Before/after (Raptor, Silvia, WRX):
+`img/steering-hands-before-after.png`. With Left held (run
+`host-20261024-004448`) every car turns the same way, hand over hand, the
+right arm crossing to the left.
+
+40-car survey of the installed test drive (`out/steering/before/delta40.txt`):
+largest grip miss before, then the hinge shift in the wheel plane (all fall
+under 0.5 cm after):
+
+| Cars | Miss before | In-plane shift |
+| --- | --- | --- |
+| S5S Raptor, S2000 | 3.9, 3.7 cm | 3.7, 4.4 cm |
+| RX-7, Charger Daytona, Agera, 2000GT, 370Z, Firebird, Veyron, Cuda | 2.5 to 3.1 cm | 1.0 to 3.9 cm |
+| Express, DMC-12, Silvia, Huayra, Supra | 2.0 to 2.4 cm | 1.3 to 3.0 cm |
+| 21 cars from the TT RS to the Mito | 1.1 to 1.9 cm | 0.4 to 2.3 cm |
+| Civic R, M5, Jeep, Range Rover, LFA, 300SL, 300C | 0.4 to 0.9 cm | 0.0 to 1.3 cm |
+
+**WRX "upside down".** Not reproduced. Offline the cockpit and main-carbin
+wheels are upright (STI badge readable; `out/steering/before/6-wheel.png`,
+`full-entry-wheels.png`). In game it sits like every other car at rest
+(`host-20261024-000936` shots 31/32 at ID 6, `host-20261024-003455` at ID 1),
+and its hierarchy is the same as the others' (axis, quaternion, skin
+binding). At full lock with the car standing (DSF's hand-over-hand pose) the wheel
+turns well past 90° on every car, which may be what was seen. Open: a
+user screenshot of the moment.
 
 ## Risks and open questions
 
