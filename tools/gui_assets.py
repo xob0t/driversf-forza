@@ -28,10 +28,10 @@ Thumbnails/Thumbnail_<Data_Car.Id>.xds (768 x 288, 32-bit, one per FH1 car)
 and UI4/Logos/Manufacturer_Logos*/L_MAN_<Make>_Logo.xds. Without a thumbnail,
 `render_picture` draws the converted model with a small software renderer.
 
-    python tools/gui_assets.py list [--gui gui.sp]
-    python tools/gui_assets.py extract <name> out/pic.png
-    python tools/gui_assets.py picture NIS_370Z_10 out/pic.png [--name nissan_370z_fz]
-    python tools/gui_assets.py build out/gui/gui.sp --car NIS_370Z_10=forza_nissan_370z ...
+    python tools/gui_assets.py build out/ported.json --out out/gui [--name MEDIA=TEXT] [--wide-glyphs]
+    python tools/gui_assets.py extract <name> out/pic.png [--gui gui.sp]
+    python tools/gui_assets.py glyphtest --ids 1,2,3 [--out out/hud/glyphtest]
+    python tools/gui_assets.py strings <regex>
 """
 
 from __future__ import annotations
@@ -66,11 +66,8 @@ PICTURE_SIZE = (512, 256)
 # --- names ------------------------------------------------------------------------
 
 def name_hash(name: str) -> int:
-    from lua_scripts import CRC_TABLE
-    value = 0xFFFFFFFF
-    for char in name.lower():
-        value = (value >> 8) ^ CRC_TABLE[(ord(char) ^ value) & 0xFF]
-    return value
+    from lua_scripts import crc
+    return crc(name.lower())
 
 
 # --- gui.sp ---------------------------------------------------------------------------
@@ -1185,7 +1182,7 @@ def read_strings(path: Path = GLOBAL_STRINGS) -> dict[int, str]:
     for i in range(len(lookup) // 8):
         offset, sid = struct.unpack_from("<II", lookup, 8 * i)
         end = offset
-        while text[end:end + 2] != b"\0\0":
+        while end + 1 < len(text) and text[end:end + 2] != b"\0\0":   # bounded: the last string may lack its 0
             end += 2
         out[sid] = text[offset:end].decode("utf-16-le")
     return out

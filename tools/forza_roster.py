@@ -30,8 +30,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from stfs import Stfs, StfsError  # noqa: E402
-from xiso import SECTOR, XIso  # noqa: E402
+from stfs import StfsError, in_image  # noqa: E402
+from xiso import XIso  # noqa: E402
 
 TITLES = {0x4D530910: "FM4", 0x4D5309C9: "FH1"}
 XEX_EXECUTION_INFO = 0x00040006
@@ -104,8 +104,11 @@ def model_years(image: XIso) -> dict[str, int]:
         except KeyError:
             continue
         db = sqlite3.connect(":memory:")
-        db.deserialize(image.read(entry))
-        return {m.lower(): y for m, y in db.execute("SELECT MediaName, Year FROM Data_Car") if m}
+        try:
+            db.deserialize(image.read(entry))
+            return {m.lower(): y for m, y in db.execute("SELECT MediaName, Year FROM Data_Car") if m}
+        finally:
+            db.close()
     return {}
 
 
@@ -131,7 +134,7 @@ def scan_packages(image: XIso, game: str, where: str) -> list[Source]:
         if image.read(entry, 0, 4) not in (b"CON ", b"LIVE", b"PIRS"):
             continue
         try:
-            package = Stfs(image.stream, image.base + entry.sector * SECTOR, entry.size)
+            package = in_image(image, entry)
         except StfsError as error:
             print(f"warning: {entry.path}: {error}", file=sys.stderr)
             continue

@@ -73,9 +73,12 @@ def main(argv: list[str] | None = None) -> None:
     if EXCEPTION not in streams:
         raise SystemExit("no exception stream")
     _, rva = streams[EXCEPTION]
+    # MINIDUMP_EXCEPTION_STREAM: u32 ThreadId, u32 align, MINIDUMP_EXCEPTION (u32 code, u32 flags,
+    # u64 record, u64 address, u32 NumberParameters, u32 align, u64 ExceptionInformation[15]),
+    # then the context's location descriptor.
     thread_id, = struct.unpack_from("<I", data, rva)
     code, flags, _record, address, nparams = struct.unpack_from("<IIQQI", data, rva + 8)
-    params = struct.unpack_from("<15Q", data, rva + 8 + 32 + 4)[:nparams]
+    params = struct.unpack_from("<15Q", data, rva + 8 + 32)[:nparams]
     ctx_size, ctx_rva = struct.unpack_from("<II", data, rva + 8 + 152)
     print(f"exception {code:#010x} at {address:#010x} ({where(address)}), thread {thread_id}")
     if code == 0xC0000005 and len(params) >= 2:

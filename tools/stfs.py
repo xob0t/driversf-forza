@@ -237,29 +237,30 @@ class Stfs:
     # -- file table -------------------------------------------------------
 
     def _read_file_table(self) -> list[StfsEntry]:
-        raw = []
+        # An entry's index is its slot in the table, empty slots included: that
+        # is what the parent field refers to.
+        entries = []
+        slot = 0
         for block in self.chain(self.file_table_start, self.file_table_blocks, False):
             data = self.read_block(block)
             for i in range(0, BLOCK, 0x40):
                 e = data[i:i + 0x40]
-                if e[0x28] & 0x3F == 0:
-                    continue
-                raw.append(e)
-        entries = []
-        for index, e in enumerate(raw):
-            flags = e[0x28]
-            name = e[:flags & 0x3F].decode("latin-1")
-            parent, size = struct.unpack_from(">hI", e, 0x32)
-            entries.append(StfsEntry(index, name, flags, int.from_bytes(e[0x29:0x2C], "little"),
-                                     int.from_bytes(e[0x2C:0x2F], "little"),
-                                     int.from_bytes(e[0x2F:0x32], "little"), parent, size))
-        names = [entry.path for entry in entries]
+                flags = e[0x28]
+                if flags & 0x3F:
+                    name = e[:flags & 0x3F].decode("latin-1")
+                    parent, size = struct.unpack_from(">hI", e, 0x32)
+                    entries.append(StfsEntry(slot, name, flags, int.from_bytes(e[0x29:0x2C], "little"),
+                                             int.from_bytes(e[0x2C:0x2F], "little"),
+                                             int.from_bytes(e[0x2F:0x32], "little"), parent, size))
+                slot += 1
+        by_slot = {entry.index: entry for entry in entries}
+        names = {entry.index: entry.path for entry in entries}
         for entry in entries:  # resolve full paths
             parts, seen, p = [entry.path], set(), entry.parent
-            while p != -1 and 0 <= p < len(entries) and p not in seen:
+            while p in by_slot and p not in seen:
                 seen.add(p)
                 parts.append(names[p])
-                p = entries[p].parent
+                p = by_slot[p].parent
             entry.path = "/".join(reversed(parts))
         return entries
 
@@ -343,7 +344,8 @@ class _StfsFile(io.RawIOBase):
         # read up to the end of this run of physically contiguous blocks
         start = self.pkg.block_offset(self.blocks[index]) + within
         span = BLOCK - within
-        while span < size and index + 1 < len(self.blocks) and                 self.pkg.block_offset(self.blocks[index + 1]) == self.pkg.block_offset(self.blocks[index]) + BLOCK:
+        while (span < size and index + 1 < len(self.blocks) and
+               self.pkg.block_offset(self.blocks[index + 1]) == self.pkg.block_offset(self.blocks[index]) + BLOCK):
             index += 1
             span += BLOCK
         size = min(size, span)
@@ -352,15 +354,21 @@ class _StfsFile(io.RawIOBase):
         return size
 
 
+def in_image(image, entry) -> Stfs:
+    """The package stored as file `entry` of an xiso.XIso disc image, read in place."""
+    sys.path.insert(0, str(Path(__file__).parent))
+    from xiso import SECTOR
+    return Stfs(image.stream, image.base + entry.sector * SECTOR, entry.size)
+
+
 def open_package(spec: str) -> Stfs:
     """Open "pkg" or "image.iso::path/in/image" (an XDVDFS disc image)."""
     if "::" in spec:
         image_path, inner = spec.split("::", 1)
         sys.path.insert(0, str(Path(__file__).parent))
-        from xiso import SECTOR, XIso
+        from xiso import XIso
         image = XIso(image_path)
-        entry = image.find(inner)
-        return Stfs(image.stream, image.base + entry.sector * SECTOR, entry.size)
+        return in_image(image, image.find(inner))
     return Stfs(open(spec, "rb"))
 
 

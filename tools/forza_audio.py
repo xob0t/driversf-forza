@@ -59,8 +59,8 @@ from typing import BinaryIO, Callable
 
 sys.path.insert(0, str(Path(__file__).parent))
 from forzazip import ForzaZip  # noqa: E402
-from stfs import Stfs, StfsError  # noqa: E402
-from xiso import SECTOR, XIso  # noqa: E402
+from stfs import StfsError, in_image  # noqa: E402
+from xiso import XIso  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_VGMSTREAM = ROOT / "out" / "tools-dl" / "vgmstream" / "vgmstream-cli.exe"
@@ -220,7 +220,7 @@ class Source:
 
     def _add_package(self, image: XIso, entry, label: str) -> None:
         try:
-            package = Stfs(image.stream, image.base + entry.sector * SECTOR, entry.size)
+            package = in_image(image, entry)
         except StfsError as error:
             print(f"warning: {entry.path}: {error}", file=sys.stderr)
             return

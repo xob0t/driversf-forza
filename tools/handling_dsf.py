@@ -197,6 +197,16 @@ def _solve(a: list[list[float]], b: list[float]) -> list[float]:
     return [m[i][n] / m[i][i] if abs(m[i][i]) > 1e-12 else 0.0 for i in range(n)]
 
 
+def ridge_fit(xs: list[list[float]], ys: list[float], ridge: float) -> list[float]:
+    """Least squares of ys on xs (x[0] = 1, the intercept), `ridge` x n added to the
+    diagonal of every slope."""
+    k = len(xs[0])
+    a = [[sum(x[i] * x[j] for x in xs) + (ridge * len(xs) if i == j and i > 0 else 0) for j in range(k)]
+         for i in range(k)]
+    b = [sum(x[i] * y for x, y in zip(xs, ys)) for i in range(k)]
+    return _solve(a, b)
+
+
 # Largest log change rule F may make (the fleet fit's year term moved a 1969 Charger's
 # tyre stiffness 30% below its host in run 20261022-071526).
 F_LIMIT = 0.22
@@ -215,24 +225,14 @@ class FleetModel:
             log = all(y > 0 for y in ys)
             if log:
                 ys = [math.log(y) for y in ys]
-            xs = [r["x"] for r in self.rows]
-            k = len(xs[0])
-            a = [[sum(x[i] * x[j] for x in xs) + (1e-2 * len(xs) if i == j and i > 0 else 0) for j in range(k)]
-                 for i in range(k)]
-            b = [sum(x[i] * y for x, y in zip(xs, ys)) for i in range(k)]
-            self.cache[pid] = (log, _solve(a, b))
+            self.cache[pid] = (log, ridge_fit([r["x"] for r in self.rows], ys, 1e-2))
         return self.cache[pid]
 
     def predict_target(self, key: str, fn, specs: Specs) -> float:
         """Least-squares prediction of fn(params) (any per-car quantity) from specs."""
         if key not in self.cache:
             ys = [fn(r["params"]) for r in self.rows]
-            xs = [r["x"] for r in self.rows]
-            k = len(xs[0])
-            a = [[sum(x[i] * x[j] for x in xs) + (1e-2 * len(xs) if i == j and i > 0 else 0) for j in range(k)]
-                 for i in range(k)]
-            b = [sum(x[i] * y for x, y in zip(xs, ys)) for i in range(k)]
-            self.cache[key] = (False, _solve(a, b))
+            self.cache[key] = (False, ridge_fit([r["x"] for r in self.rows], ys, 1e-2))
         return sum(b * x for b, x in zip(self.cache[key][1], specs.x()))
 
     def predict(self, pid: int, specs: Specs) -> float:
