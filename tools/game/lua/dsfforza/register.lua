@@ -12,9 +12,7 @@
 --           panels read this table through getVehicleStats(id).
 --   traffic adds the ID to the chapter's "interesting vehicle" regions
 --           (spooling.interestingVehicles), which the engine spools and
---           spawns into traffic. Optional, experimental: swap a nearby
---           traffic car's model (swapTraffic) or spawn the car and hand it
---           to the traffic carriers (carrier).
+--           spawns into traffic.
 --   garage  Selectable/Tier/Price in vehicleStats, for IDs below 304 (below
 --           1000 with dsfforza.asi) while the garage's maker list has room
 --           (garageGroup); with writeProfile it also marks the car unlocked
@@ -24,7 +22,7 @@
 --           save can't hold (research/batch.md); with dsfforza.asi it lets
 --           them through (the plugin keeps them in dsfforza-garage.dat).
 --
--- Player defaults: no probes, no save writes, no experimental traffic paths.
+-- Player defaults: no probes, no save writes.
 -- The test harness (a config.lua with `ids`) turns the probe on.
 --
 -- Output goes to Driver.log as "[dsfforza.register] ...".
@@ -54,9 +52,6 @@ local OPTIONS = {
 	interesting = true,   -- (1) traffic via InterestingVehicleManager regions
 	missionPot = false,   -- keep the car resident: add it to spooling.missionSpecificVehiclePots["All chapters"]
 	                      -- (what Felony Rework does for cop car 267; uses one of 18 mission spool slots)
-	swapTraffic = false,  -- (1b) experimental: GameVehicleResource.swapWithModel on a traffic car
-	swapMax = 1,          --      at most this many swapped cars of each ID nearby
-	carrier = false,      -- (1c) experimental: Spawn.Spawn + civilianTraffic.AddVehicleToCarrier
 	regionCars = 24,      -- (1) at most about this many added cars per region; more cars are spread
 	                      --     over the 17 regions so stock interesting vehicles keep their share
 	garage = true,        -- (2) Selectable = true in vehicleStats (IDs below 304, below 1000 with dsfforza.asi,
@@ -67,7 +62,7 @@ local OPTIONS = {
 	                      --     with dsfforza.asi's save hooks only IDs above 999)
 	probe = false,        -- log what the game sees (vehiclesAvailable, profile flags, traffic counts);
 	                      -- on by default in test sessions (config.lua with `ids`)
-	probeTicks = 360,     -- probe/swap updates (every 30 frames), about 3 minutes
+	probeTicks = 360,     -- probe updates (every 30 frames), about 3 minutes
 }
 
 -- Garage maker list (confirmed-static, research/batch.md): at most 40 maker
@@ -508,10 +503,8 @@ local function addToMissionPot()
 end
 
 ---------------------------------------------------------------------------
--- (1b, 1c) Experimental traffic paths
+-- Nearby traffic (probe)
 ---------------------------------------------------------------------------
-
-local work = vec and vec.vector and vec.vector() or nil
 
 local function playerGameVehicle()
 	if type(localPlayer) == "table" and type(localPlayer.currentVehicle) == "table" then
@@ -538,67 +531,6 @@ local function countModel(list, id)
 		if ok and model == id then n = n + 1 end
 	end
 	return n
-end
-
--- Swap the model of one civilian traffic car 70..200 m away (out of sight
--- most of the time). The ID must be resident: request it as a mission
--- vehicle first.
-local function trySwap(id)
-	if not TrafficSpooler.IsMissionVehicleLoaded(id) then
-		TrafficSpooler.RequestMissionVehicle(id)
-		return "spooling"
-	end
-	local list = nearbyTraffic(200)
-	if countModel(list, id) >= OPTIONS.swapMax then
-		return "enough"
-	end
-	local player = playerGameVehicle()
-	for _, gv in ipairs(list) do
-		local okTraffic, isTraffic = pcall(GameVehicleResource.isTrafficVehicle, gv)
-		local okModel, model = pcall(function() return gv.model_id end)
-		local distance = 0
-		if work and player then
-			pcall(function() distance = work:sub(gv.position, player.position):length() end)
-		end
-		local okType, emergency = pcall(GameVehicleResource.getEmergencyType, gv)
-		if okTraffic and isTraffic and okModel and model ~= id and distance > 70
-			and okType and emergency == 0 then
-			local ok, err = pcall(GameVehicleResource.swapWithModel, gv, id)
-			return string.format("swap %s -> %d at %.0f m: %s %s", tostring(model), id, distance,
-				tostring(ok), tostring(err))
-		end
-	end
-	return "no candidate"
-end
-
--- Spawn the car on a lane ahead and give it to the traffic carriers, as the
--- Exposition "Taxi wander" actors do (expositionpart3zaplogic.lua).
-local function tryCarrier(id)
-	if not TrafficSpooler.IsMissionVehicleLoaded(id) then
-		TrafficSpooler.RequestMissionVehicle(id)
-		return "spooling"
-	end
-	local player = playerGameVehicle()
-	if player == nil then
-		return "no player vehicle"
-	end
-	if countModel(nearbyTraffic(250), id) >= OPTIONS.swapMax then
-		return "enough"
-	end
-	local ok, spawned = pcall(Spawn.Spawn, {
-		type = "InFrontOfVehicle", distanceInFront = 120, vehicle = player,
-		direction = "with", position = "randomLane", heading = player.heading,
-		desiredSpeed = 12, vehicles = { { modelID = id } },
-	})
-	local gv = ok and type(spawned) == "table" and spawned[1] or nil
-	if gv == nil then
-		return "spawn failed: " .. tostring(spawned)
-	end
-	local okAdd, err = pcall(civilianTraffic.AddVehicleToCarrier, gv, function(vehicle, reason)
-		log(string.format("carrier released id %d (reason %s)", id, tostring(reason)))
-	end)
-	return string.format("spawned, AddVehicleToCarrier: %s %s, isTrafficVehicle now %s",
-		tostring(okAdd), tostring(err), try(GameVehicleResource.isTrafficVehicle, gv))
 end
 
 ---------------------------------------------------------------------------
@@ -644,12 +576,6 @@ local function update()
 			table.concat(parts, " "), try(InterestingVehicleManager.IsEnabled),
 			try(InterestingVehicleManager.GetDesiredSlotCount), try(TrafficSpooler.Busy)))
 	end
-	if probe.ticks % 10 == 0 then
-		for id in pairs(CARS) do
-			if OPTIONS.swapTraffic then log("swap: " .. trySwap(id)) end
-			if OPTIONS.carrier then log("carrier: " .. tryCarrier(id)) end
-		end
-	end
 	if probe.ticks >= OPTIONS.probeTicks then
 		removeUserUpdateFunction("dsfforza_register")
 		log("probe done")
@@ -681,7 +607,7 @@ function M.apply()
 		M.probeOnce()
 	end
 	M.unlockInProfile()
-	if OPTIONS.probe or OPTIONS.swapTraffic or OPTIONS.carrier then
+	if OPTIONS.probe then
 		probe.ticks = 0
 		addUserUpdateFunction("dsfforza_register", update, 30)
 	end

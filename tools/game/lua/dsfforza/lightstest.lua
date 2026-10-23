@@ -217,9 +217,8 @@ local function spotMatrix(along, lateral, flip)
 	return m
 end
 
--- Traffic stays on (the traffic phase needs cars on the road: with traffic off
--- the probe counted 0 cars and no car to swap, run 20261023-121707); the spot is
--- cleared of vehicles when the car is first placed there instead.
+-- Traffic stays on, as in normal play; the spot is cleared of vehicles when the car
+-- is first placed there instead. (There is no traffic phase: research/lights.md.)
 local function clearSpot()
 	pcall(function() ParkedVehicles.SetEnabled(false) end)
 	pcall(GameVehicleResource.ClearAreaOfVehicles, vec.vector(SPOT.x, SPOT.y, SPOT.z, 1), 80)
@@ -314,59 +313,6 @@ local function apply(k)
 		log(string.format("id %d: drive %s", state.id, k == 91 and "dark" or "day"))
 		return
 	end
-	-- Not sent by the harness any more: swapWithModel on a live traffic car crashed the
-	-- game (run host-20261023-123840).
-	-- 92: the car as traffic: spawned 25 m ahead in the player's direction and handed to
-	-- the traffic carriers (civilianTraffic.AddVehicleToCarrier, as Exposition's "Taxi
-	-- wander" actors), traffic back on; the traffic AI drives it and sets its lamps
-	-- (Driver.exe 0x779960 -> 0x8D0470(3, Brakes...)). 93: lockEmergencyBrakes on it
-	-- (full braking), 94: release. Daylight.
-	if k == 92 then
-		setDark(false)
-		setLights(state.car, { All = false })
-		for _, copy in ipairs({ state.rear, state.front }) do
-			pcall(function() copy:delete() end)
-			pcall(GameVehicleResource.destroy, copy)
-		end
-		state.rear, state.front = nil, nil
-		-- AddVehicleToCarrier on a Spawn.Spawn car returned false and the car stayed
-		-- parked (run 20261023-115652). Instead turn the nearest civilian traffic car
-		-- ahead into this model (swapWithModel keeps it in traffic, register.lua's
-		-- swapTraffic), so the traffic AI drives it and sets its lamps.
-		local best, bestD = nil, 1000
-		pcall(function()
-			local p, f = state.car.position, state.car.matrix[2]
-			for _, gv in pairs(vehicleManager.findVehiclesInTraffic(p, state.car.heading, 120, {}, 150) or {}) do
-				local q = gv.position
-				local dx, dz = q.x - p.x, q.z - p.z
-				local along = dx * f.x + dz * f.z
-				local d = math.sqrt(dx * dx + dz * dz)
-				local okT, isT = pcall(GameVehicleResource.isTrafficVehicle, gv)
-				local okE, em = pcall(GameVehicleResource.getEmergencyType, gv)
-				if gv ~= state.car and okT and isT and okE and em == 0 and along > 8 and d < bestD then
-					best, bestD = gv, d
-				end
-			end
-		end)
-		local swapped = "no traffic car ahead"
-		if best then
-			local okS, err = pcall(GameVehicleResource.swapWithModel, best, state.id)
-			state.ai = (okS and type(err) == "userdata") and err or best
-			swapped = string.format("swapped a traffic car %.0f m ahead: %s %s, model now %s, traffic %s", bestD,
-				tostring(okS), tostring(err), tostring(select(2, pcall(function() return best.model_id end))),
-				tostring(select(2, pcall(GameVehicleResource.isTrafficVehicle, best))))
-		end
-		log(string.format("id %d: traffic copy: %s", state.id, swapped))
-		return
-	end
-	if k == 93 or k == 94 then
-		local fn = k == 93 and GameVehicleResource.lockEmergencyBrakes or GameVehicleResource.unlockEmergencyBrakes
-		local ok, err = pcall(fn, state.ai)
-		local okS, speed = pcall(function() return state.ai.speed end)
-		log(string.format("id %d: traffic copy %s: %s %s (speed %s)", state.id,
-			k == 93 and "lockEmergencyBrakes" or "unlockEmergencyBrakes", tostring(ok), tostring(err), tostring(speed)))
-		return
-	end
 	local phase = state.list[k]
 	if phase == nil then return end
 	if state.index < 1 or k == 1 then placeAll() end
@@ -395,9 +341,7 @@ local function finish()
 		pcall(function() copy:delete() end)
 		pcall(GameVehicleResource.destroy, copy)
 	end
-	-- The swapped traffic car stays with traffic (destroying it under the vehicle
-	-- manager's feet is riskier); just let go of its brakes.
-	if state.ai then pcall(GameVehicleResource.unlockEmergencyBrakes, state.ai) end
+
 	log(string.format("id %d: done", state.id))
 end
 

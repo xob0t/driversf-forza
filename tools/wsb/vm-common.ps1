@@ -1,4 +1,4 @@
-# Shared by tools\wsb\vm.ps1, vm-build.ps1 and run-series.ps1 -Vm (dot-sourced).
+# Shared by tools\wsb\vm.ps1 and vm-build.ps1 (dot-sourced; sandbox.ps1 uses Copy-HostDlls).
 # The test VM's location, its guest account, and vmrun helpers that never open a window.
 
 $VmDir = 'C:\VMs\dsfforza-test'
@@ -6,6 +6,16 @@ $VmVmx = Join-Path $VmDir 'dsfforza-test.vmx'
 $VmUser = 'dsf'
 $VmPassword = 'dsfforza'          # local account of an offline test VM (tools\wsb\vm\autounattend.xml)
 $VmOutputHost = Join-Path $env:LOCALAPPDATA 'Temp\dsfforza-wsb'
+
+function Copy-HostDlls {
+    # 32-bit runtime pieces the guests (sandbox and VM) lack; run-test.ps1 copies them next to the
+    # run copy of Driver.exe from C:\Output\HostDll: DirectX 9 extras for the game, the VC++ 2015+
+    # runtime for DriverNGHook.asi.
+    $dlls = Join-Path $VmOutputHost 'HostDll'
+    New-Item -ItemType Directory -Force -Path $dlls | Out-Null
+    Copy-Item C:\Windows\SysWOW64\d3dx9_36.dll, C:\Windows\SysWOW64\xinput1_3.dll,
+        C:\Windows\SysWOW64\msvcp140.dll, C:\Windows\SysWOW64\vcruntime140.dll -Destination $dlls -Force
+}
 
 function Get-VmwareDir {
     foreach ($key in 'HKLM:\SOFTWARE\WOW6432Node\VMware, Inc.\VMware Workstation', 'HKLM:\SOFTWARE\VMware, Inc.\VMware Workstation') {

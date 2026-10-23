@@ -190,8 +190,8 @@ Since 2026-10-23 the mode does more per car (`lightstest.lua`, driven by
    and break lamps (370Z in run 124438). `-LightsDriveOnly` skips the
    `setLights` phases (`lights = { phases = false }`).
 3. Phases 1 to 18 as before, on the player's car and both copies.
-4. No traffic phase. Two tries in `lightstest.lua` (sync 92 to 94, no
-   longer sent): `Spawn.Spawn` plus `civilianTraffic.AddVehicleToCarrier`
+4. No traffic phase. Two tries in `lightstest.lua` (sync 92 to 94, since
+   removed): `Spawn.Spawn` plus `civilianTraffic.AddVehicleToCarrier`
    returned false and the car stayed parked (run 20261023-115652);
    `GameVehicleResource.swapWithModel` on the nearest live traffic car
    crashed the game (run 20261023-123840). Traffic is left on (switched
@@ -443,10 +443,10 @@ cell by cell, more evenly than the stock DeLorean's dots.
 3. Lamps under detachable parts: converted lamps are chassis-bound, but the
    light records still hang under the host's bumper and boot records (a
    lamp breaks when its record's part is damaged, `0x8E84A0`).
-4. Converted cars in traffic (above). register.lua's swapTraffic uses the
-   same `swapWithModel` that crashed run 123840 (there on the nearest
-   traffic car ahead, to the player's own model 227), so try it only in a
-   throwaway run.
+4. Converted cars in traffic (above). `swapWithModel` on a live traffic car
+   crashed run 123840 (the nearest traffic car ahead, to the player's own
+   model 227); register.lua's experimental `swapTraffic` and `carrier` paths
+   were removed for that reason (they were off by default).
 5. Converted white and amber lenses keep Forza's brightness (white median
    182 against stock's 126); only red lenses are darkened. The S5S Raptor's
    tails (mean 91) sit above stock's per-vehicle p90 (81).

@@ -79,34 +79,15 @@ if ($Detach) {
     $RunDir = "$OutputDir\runs\$stamp"
     New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
     Set-Content "$OutputDir\runs\latest.txt" $RunDir
-    $forward = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath,
-        '-Archive', "`"$Archive`"", '-WaitSeconds', $WaitSeconds, '-ZoomPresses', $ZoomPresses, '-ShotSeconds', $ShotSeconds, '-RunDir', $RunDir)
-    if ($Override) { $forward += '-Override', "`"$Override`"" }
-    if ($ProbeIds) { $forward += '-ProbeIds', $ProbeIds }
-    if ($TrafficIds) { $forward += '-TrafficIds', $TrafficIds }
-    if ($AheadIds) { $forward += '-AheadIds', $AheadIds }
-    if ($DriveSeconds) { $forward += '-DriveSeconds', $DriveSeconds, '-DriveKey', $DriveKey }
-    if ($HoldMph) { $forward += '-HoldMph', "`"$HoldMph`"" }
-    if ($Damage) { $forward += '-Damage' }
-    if ($DamagePanels) { $forward += '-DamagePanels' }
-    if ($DamageSide) { $forward += '-DamageSide' }
-    if ($GlassLadder) { $forward += '-GlassLadder' }
-    if ($Lights) { $forward += '-Lights' }
-    if ($LightsDriveOnly) { $forward += '-LightsDriveOnly' }
-    if ($Dyno) { $forward += '-Dyno', '-BrakeSeconds', $BrakeSeconds, '-DynoRuns', $DynoRuns }
-    if ($DynoStart) { $forward += '-DynoStart', "`"$DynoStart`"" }
-    if ($DynoKeep) { $forward += '-DynoKeep', "`"$DynoKeep`"" }
-    if ($DynoKeys) { $forward += '-DynoKeys', "`"$DynoKeys`"" }
-    if ($MenuKeys) { $forward += '-MenuKeys', "`"$MenuKeys`"", '-MenuTrigger', "`"$MenuTrigger`"" }
-    if ($TrafficRadius) { $forward += '-TrafficRadius', $TrafficRadius }
-    if ($Hook) { $forward += '-Hook' }
-    if ($Asi) { $forward += '-Asi', "`"$Asi`"" }
-    if ($LuaFiles) { $forward += '-LuaFiles', "`"$LuaFiles`"" }
-    if ($Probe) { $forward += '-Probe' }
-    if ($OnHost) { $forward += '-OnHost' }
-    if ($CopyRepoFiles) { $forward += '-CopyRepoFiles' }
-    $forward += '-GameDir', "`"$GameDir`"", '-RepoDir', "`"$RepoDir`"", '-OutputDir', "`"$OutputDir`"", '-RunPath', "`"$RunPath`""
-    if ($KeepRunning) { $forward += '-KeepRunning' }
+    # The same arguments again (unbound ones take the same defaults there), quoted for the
+    # command line Start-Process joins with spaces.
+    $forward = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-RunDir', "`"$RunDir`"")
+    foreach ($name in $PSBoundParameters.Keys) {
+        $value = $PSBoundParameters[$name]
+        if ($name -in 'Detach', 'RunDir') { continue }
+        if ($value -is [switch]) { if ($value) { $forward += "-$name" }; continue }
+        $forward += "-$name", ('"' + ("$value" -replace '(\\+)$', '$1$1') + '"')
+    }
     Start-Process powershell.exe -ArgumentList $forward -WindowStyle Hidden
     "started $RunDir"
     return
@@ -692,7 +673,7 @@ try {
             Save-Shot ("lights-{0}-{1:D2}b.png" -f $id, $k)
             Note "lights: id $id phase $k of $count"
         }
-        # No traffic phase (lightstest.lua 92..94): swapWithModel on a live traffic car
+        # No traffic phase (removed from lightstest.lua): swapWithModel on a live traffic car
         # crashed the game (run host-20261023-123840) and AddVehicleToCarrier on a spawned
         # car returned false (run 20261023-115652). Check converted traffic with
         # -TrafficIds instead (research/lights.md).

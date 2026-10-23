@@ -62,6 +62,7 @@ switch ($Action) {
         $lifecycle = Enter-VmLifecycle
         try {
             Start-VmHeadless
+            Copy-HostDlls   # C:\Output\HostDll for run-test.ps1 (made by the sandbox's Start before)
             if (-not $NoSession) {
                 Invoke-VmScript -GuestScript 'C:\Repo\tools\wsb\guest\setup-vm.ps1' `
                     -GuestArguments @('-Phase', 'Session', '-DisplaySize', $DisplaySize) -Timeout 300 | Out-Null

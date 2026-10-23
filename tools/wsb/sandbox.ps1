@@ -13,8 +13,7 @@ Runs one persistent Windows Sandbox for in-game tests without stealing focus.
   Stop     shut the sandbox down.
 
 Start and Stop take a named mutex, so concurrent callers queue instead of
-failing; tools\wsb
-un-series.ps1 also holds a run mutex for its whole run and
+failing; tools\wsb\run-series.ps1 also holds a run mutex for its whole run and
 starts the sandbox itself when none is running.
 
 Game launches all happen inside the guest, so after Start nothing new appears
@@ -38,6 +37,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'vm-common.ps1')   # Copy-HostDlls
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $OutputHost = Join-Path $env:LOCALAPPDATA 'Temp\dsfforza-wsb'
 $stateFile = Join-Path $OutputHost 'sandbox.json'
@@ -218,12 +218,7 @@ switch ($Action) {
         Remove-Item -LiteralPath (Join-Path $OutputHost 'setup-system.json'), (Join-Path $OutputHost 'setup-user.json') -ErrorAction SilentlyContinue
 
         New-Item -ItemType Directory -Force -Path $OutputHost | Out-Null
-        # 32-bit runtime pieces the sandbox image lacks: DirectX 9 extras for
-        # the game, the VC++ 2015+ runtime for DriverNGHook.asi.
-        $dlls = Join-Path $OutputHost 'HostDll'
-        New-Item -ItemType Directory -Force -Path $dlls | Out-Null
-        Copy-Item C:\Windows\SysWOW64\d3dx9_36.dll, C:\Windows\SysWOW64\xinput1_3.dll,
-            C:\Windows\SysWOW64\msvcp140.dll, C:\Windows\SysWOW64\vcruntime140.dll -Destination $dlls -Force
+        Copy-HostDlls
 
         if (-not $id) {
             $before = @(Get-RunningIds)

@@ -53,10 +53,9 @@ No (confirmed-static from the game's Lua):
 - **Shift** possesses cars that are already loaded.
 
 Only the test probe (`clonetest.lua`, `dyno.lua`) and `register.lua`'s
-optional `missionPot`, `swapTraffic` and `carrier` paths use
-`RequestMissionVehicle`. The mission pots already hold about 8 resident
-models (5 in "All chapters" plus the chapter's own), so `missionPot` is only
-for one or two cars.
+optional `missionPot` use `RequestMissionVehicle`. The mission pots already
+hold about 8 resident models (5 in "All chapters" plus the chapter's own), so
+`missionPot` is only for one or two cars.
 
 ## ID policy
 
@@ -131,7 +130,7 @@ The defaults are player-safe:
 | `garage` | true | `Selectable` for IDs below 304 (below 1000 with `dsfforza.asi`), subject to the group caps |
 | `regionCars` | 24 | With more added cars than this, car k (in ID order) goes to every m-th region, offset by k (m = ceil(cars / 24)), so each region gets about 24 of them. Stock region lists hold 9 to 110 IDs. |
 | `interesting` | true | the interesting-vehicle wrapper (traffic) |
-| `missionPot`, `swapTraffic`, `carrier` | false | experimental test paths |
+| `missionPot` | false | experimental: keep the cars resident in the "All chapters" mission pot |
 
 At start `register.lua` asks whether `dsfforza.asi`'s garage module is
 active (`ProfileSettings.GetVehicleUnlocked(8000000 + k)`, research/asi.md)
