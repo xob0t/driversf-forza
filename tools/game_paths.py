@@ -18,7 +18,9 @@ import sys
 from pathlib import Path
 
 BACKUP = "dsfforza-backup"
-REPO_STOCK = Path(__file__).resolve().parent.parent / "out" / "stock"
+# Resolved: in a git worktree out/stock is a junction to the main checkout's
+# (tools/worktree-setup.ps1), and the paths compared with it are resolved too.
+REPO_STOCK = (Path(__file__).resolve().parent.parent / "out" / "stock").resolve()
 
 
 def game_dir_of(path: Path) -> Path | None:
