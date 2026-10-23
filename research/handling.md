@@ -172,7 +172,8 @@ Data: p1 and p2 run a median 1.4 and 1.7 per kg of mass. Their interquartile ran
 | 300..305, 327..329, 337..342, 394..396, 535..537, 549..554 | camera mounts, a vec3 per camera index 0x10..0x1C | `FUN_0088DF80`, `FUN_0088E230` |
 | 430, 431, 432 | camera 0x14 offset from hierarchy marker 0x2F | `FUN_0088DF80` |
 | 571..582, 585..594 | unknown blocks of small offsets | `FUN_00874B00`, `FUN_0088F630` |
-| 605, 606 | read with p40 and p42 (probably engine audio) | `FUN_00891670` |
+| 605, 606 | speedometer range in mph (`research/cockpit.md`), read with p40 and p42 by the gauge code, not audio | `FUN_00891670` |
+| 596, 597 | engine audio: the rpm sent to Wwise is rpm + p596 x (rpm^2/p42 - rpm); p597 scales throttle under wheel slip (`research/engine-sound.md`) | `FUN_008B2370` |
 
 The appendix lists every ID with stock statistics, the default and the
 functions that read it. About 40 stock IDs have no reader in the vehicle

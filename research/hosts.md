@@ -45,9 +45,11 @@ the same operation (`clone_vehicle.copy_sound`, `port_car.py --sound-host
 N|auto`, `clone_vehicle.py --sound-host N`). The clone then shares the bank
 ID with the sound host, just as every clone already shares it with its host
 (266 and its clone were loaded together without trouble, sound not
-checked). Untested in game: whether the swapped sound plays, and whether
-VO3D p40/p42 (idle, redline, read by the audio code with p605/p606) need to
-match the sound host.
+checked). Untested in game: whether the swapped sound plays. VO3D p40/p42
+need not match the sound host: the game normalises the car's own rpm and
+maps it onto the bank's range at VSVH+94/+98 (p605/p606 are the speedometer,
+not audio). The bank and object IDs being global, and giving a port the
+Forza car's own engine: `research/engine-sound.md`.
 
 NONR budget: VSRT is most of the NONR (Desanne 0x63C10 of 0x6C8D0; the
 kind-0 limit is 0x6D000). A large sound on a host with a large UPVH can
