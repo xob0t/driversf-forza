@@ -1,0 +1,41 @@
+# First real batch (tools/port_batch.py build --list tools/batches/first.txt).
+# Diverse classes, mostly cars Driver: San Francisco has no same-model car for.
+# Order decides which cars get the garage IDs 1..61 (all of these fit).
+# sports
+BMW_M3E30_91
+TOY_SupraRZ_98
+MAZ_RX7_97          # rotary engine
+HON_S2000_03
+NIS_SilviaSpecR_00
+SUB_WRXSTi_11
+# muscle
+CHR_Cuda426_71
+DOD_ChallengerSRT8392_12
+PON_FirebirdTransAm_77
+DOD_ChargerDaytona_69@fm4
+# saloons
+MER_S65AMG_12
+LEX_ISF_09
+CHR_300C_08@fm4
+BMW_M5E28_88@fm4
+# hatches
+VW_GolfR_10
+FIA_500AbarthSS_10
+HON_CivicR_04
+PEU_205T16_84
+# SUVs, pickups, vans
+DOD_Durango_99
+CHR_JeepGCSRT8_12
+LR_RangeRover_12
+SAL_S5SRaptor_10
+CHE_Express2500Cargo_05   # van: host selection edge case
+# classics
+MER_300SL_54
+FER_250GTO_64
+TOY_2000GT_69@fm4
+DEL_DMC12_82@fm4
+# exotics
+BUG_VeyronSS_11
+KOE_Agera_11
+LEX_LFA_10
+PAG_Huayra_12

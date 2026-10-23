@@ -1,0 +1,151 @@
+vehc	spool_id	class	model
+0	130	Old 01	AMC_Pacer_1980
+3	266	Saloon 15	ASYM_Desanne_2007_cop|ASYM_Desanne_2007_taxi|ASYM_Desanne_2007_Civ
+6	267	Cop Car 01	ASYM_Desanne_2007_cop|ASYM_Desanne_2007_taxi|ASYM_Desanne_2007_Civ
+9	268	Taxi 01	ASYM_Desanne_2007_cop|ASYM_Desanne_2007_taxi|ASYM_Desanne_2007_Civ
+12	124	Saloon 02	Alfa_Romeo_159_Ti_2009
+15	125	Sports Car 01	Alfa_Romeo_8C_2007
+18	126	Classic 06	Alfa_Romeo_Giulietta_2010|Alfa_Romeo_Giulia_TZ2_1965
+21	127	Mini Car 07	Alfa_Romeo_Giulietta_2010|Alfa_Romeo_Giulia_TZ2_1965
+24	128	Mini Car 01	Alfa_Romeo_Mito_2009
+27	129	Classic 01	Alfa_Romeo_Spider_Duetto_1966
+30	249	Mini Car 05	Aston_Martin_Cygnet_2010
+33	132	Classic 02	Aston_Martin_DB5_1964
+36	133	Sports Coupe 01	Aston_Martin_DB9_Volante_2010
+39	134	Luxury Saloon 04	Aston_Martin_Rapide_2010
+42	135	Sports Coupe 03	Aston_Martin_V12_Vantage_2010
+45	136	Saloon 01	Audi_A4_2010
+48	138	SUV 08	Audi_Q7_2010
+51	139	Sports Car 02	Audi_R8_V10_2010
+54	255	Saloon 04	Audi_RS6_Avant_2008
+57	119	Sports Coupe 04	Audi_S5_2010
+60	142	Rally 01	Audi_Sport_Quattro_S1_1985
+63	143	Sports Coupe 06	Audi_TT_RS_2010
+66	300	Luxury Saloon 03	Bentley_Arnage_T_2005
+69	279	Sports Coupe 05	Bentley_Continental_SuperSports_2010
+72	292	Buggy 02	Buggy_Baja
+75	293	Buggy 01	Buggy_Boxy
+78	147	Saloon 03	Cadillac_CTS_V_2010
+81	148	Saloon 12	Cadillac_DTS_2010
+84	149	Classic 03	Cadillac_Eldorado_1959
+87	150	SUV 02	Cadillac_Escalade_2007_civ|Cadillac_Escalade_2007_cop
+90	280	Cop Car 03	Cadillac_Escalade_2007_civ|Cadillac_Escalade_2007_cop
+93	151	Sports Coupe 10	Cadillac_XLR_V_2009
+96	152	Truck 03	Cement_Truck
+99	153	Classic 04	Chevrolet_Bel_Air_1957
+102	154	SUV 03	Chevrolet_Blazer_2001
+105	276	Van 06	Chevrolet_Box_Van_1989_Ambulance
+108	156	Pick Up 06	Chevrolet_C10_1965_TowTruck|Chevrolet_C10_1965_Civ
+111	287	Pick Up 07	Chevrolet_C10_1965_TowTruck|Chevrolet_C10_1965_Civ
+114	146	70's Muscle 06	Chevrolet_Camaro_SS_1968|Chevrolet_Camaro_SS_2010|Chevrolet_Camaro_Z28_1986
+117	158	Modern Muscle 02	Chevrolet_Camaro_SS_1968|Chevrolet_Camaro_SS_2010|Chevrolet_Camaro_Z28_1986
+120	159	70's Muscle 01	Chevrolet_Camaro_SS_1968|Chevrolet_Camaro_SS_2010|Chevrolet_Camaro_Z28_1986
+123	160	70's Muscle 03	Chevrolet_Chevelle_SS_1970
+126	161	Classic 10	Chevrolet_Corvette_1960|Chevrolet_Corvette_Z06_2009|Chevrolet_Corvette_ZR1_2010_cop|Chevrolet_Corvette_ZR1_2010_Civ
+129	162	DriftCar 01	Chevrolet_Corvette_1960|Chevrolet_Corvette_Z06_2009|Chevrolet_Corvette_ZR1_2010_cop|Chevrolet_Corvette_ZR1_2010_Civ
+132	163	Modern Muscle 01	Chevrolet_Corvette_1960|Chevrolet_Corvette_Z06_2009|Chevrolet_Corvette_ZR1_2010_cop|Chevrolet_Corvette_ZR1_2010_Civ
+135	265	Cop Car 05	Chevrolet_Corvette_1960|Chevrolet_Corvette_Z06_2009|Chevrolet_Corvette_ZR1_2010_cop|Chevrolet_Corvette_ZR1_2010_Civ
+138	164	Old 06	Chevrolet_El_Camino_1973
+141	165	Saloon 16	Chevrolet_Impala_2006_taxi|Chevrolet_Impala_2006_Civ
+144	282	Taxi 04	Chevrolet_Impala_2006_taxi|Chevrolet_Impala_2006_Civ
+147	250	Saloon 13	Chevrolet_Volt_2011
+150	167	Bus 02	City_Transit_Bus_2010
+153	170	Van 02	Courier_2009
+156	171	Classic 05	DMC_DeLorean_DMC_12_1981
+159	172	70's Muscle 04	Dodge_Challenger_SRT8_2009|Dodge_Challenger_RT_1970
+162	173	Modern Muscle 03	Dodge_Challenger_SRT8_2009|Dodge_Challenger_RT_1970
+165	175	70's Muscle 05	Dodge_Charger_RT_1969|Dodge_Charger_RT_1969_Challenge
+168	303	70s Muscle 16	Dodge_Charger_RT_1969|Dodge_Charger_RT_1969_Challenge
+171	176	Modern Muscle 05	Dodge_Charger_SRT_8_2009_civ|Dodge_Charger_SRT_8_2009_cop
+174	269	Cop Car 04	Dodge_Charger_SRT_8_2009_civ|Dodge_Charger_SRT_8_2009_cop
+177	281	SUV 05	Dodge_Grand_Caravan_2009_taxi|Dodge_Grand_Caravan_2009_civ
+180	270	Taxi 02	Dodge_Grand_Caravan_2009_taxi|Dodge_Grand_Caravan_2009_civ
+183	178	Old 02	Dodge_Monaco_1974|Dodge_Monaco_1974_Cop
+186	302	Cop Car 06	Dodge_Monaco_1974|Dodge_Monaco_1974_Cop
+189	179	Saloon 07	Dodge_Neon_2002
+192	180	Pick Up 01	Dodge_Ram_3500_Laramie_2010
+195	181	Pick Up 02	Dodge_Ram_SRT10_2006
+198	182	Modern Muscle 04	Dodge_Viper_SRT_10_ACR_2009
+201	183	Mini Car 04	Fiat_500_Abarth_1971|Fiat_500_Abarth_2009
+204	184	Mini Car 03	Fiat_500_Abarth_1971|Fiat_500_Abarth_2009
+207	185	Truck 05	Fire_Truck
+210	186	Truck 01	Fire_Truck_Airport_Style
+213	187	Saloon 08	Ford_Crown_Victoria_1999_cop|Ford_Crown_Victoria_1999_taxi|Ford_Crown_Victoria_1999
+216	271	Cop Car 02	Ford_Crown_Victoria_1999_cop|Ford_Crown_Victoria_1999_taxi|Ford_Crown_Victoria_1999
+219	272	Taxi 03	Ford_Crown_Victoria_1999_cop|Ford_Crown_Victoria_1999_taxi|Ford_Crown_Victoria_1999
+222	251	Pick Up 05	Ford_F150_Supercrew_2010
+225	252	Pick Up 04	Ford_F350_SuperDuty_2008
+228	189	Super Car 01	Ford_GT_2006
+231	188	70's Muscle 07	Ford_Gran_Torino_1974
+234	190	Saloon 09	Ford_Mustang_Convertible_2008
+237	191	70's Muscle 08	Ford_Mustang_Fastback_GT390_1968
+240	192	70's Muscle 09	Ford_Mustang_Mach_1_1973
+243	193	70's Muscle 10	Ford_Mustang_Shelby_GT500_1967|Ford_Mustang_Shelby_GT500_2010
+246	194	Modern Muscle 06	Ford_Mustang_Shelby_GT500_1967|Ford_Mustang_Shelby_GT500_2010
+249	195	Rally 03	Ford_RS200_1985
+252	196	Saloon 10	Ford_Taurus_SHO_2010
+255	197	Van 07	GMC_C5500_2008
+258	198	Van 03	GMC_Savana_2005
+261	199	Pick Up 03	GMC_Sierra_1998
+264	288	Pick Up 08	GMC_Sierra_1998_JackedUp
+267	200	Van 04	GMC_Vandura_1983
+270	284	Truck 06	Garbage_Truck
+273	202	Classic 15	Hudson_Hornet_1951
+276	203	SUV 06	Hummer_H3_H3X_2009
+279	205	Classic 11	Jaguar_E_Type_1966
+282	206	Saloon 05	Jaguar_XF_R_2010
+285	207	Sports Coupe 08	Jaguar_XK_R_2010
+288	208	SUV 07	Jeep_Wrangler_1988
+291	210	Super Car 08	Lamborghini_Countach_LP400S_1980
+294	211	Super Car 02	Lamborghini_Diablo_VT_1994
+297	212	Super Car 09	Lamborghini_Gallardo_LP560_2009
+300	213	Classic 07	Lamborghini_Jalpa_1986
+303	214	Super Car 06	Lamborghini_LP670_4_SV_2009
+306	215	Classic 13	Lamborghini_Miura_1972
+309	216	Super Car 10	Lamborghini_Murcielago_LP640_2009
+312	217	Rally 04	Lancia_Stratos_1974
+315	144	Luxury Saloon 02	Lincoln_Town_Car_Extended_2010
+318	221	Sports Coupe 09	Maserati_GranTurismo_2009
+321	224	Super Car 03	McLaren_F1_1997
+324	225	Super Car 05	McLaren_MP4_12C_2010
+327	226	Super Car 11	Mercedes_McLaren_SLR_2008
+330	286	Truck 11	Modern_Rig
+333	227	Sports Car 06	Nissan_370Z_2009_Civ|Nissan_370Z_2009_Drift
+336	299	DriftCar 05	Nissan_370Z_2009_Civ|Nissan_370Z_2009_Drift
+339	228	Sports Coupe 02	Nissan_GT_R_2010
+342	229	DriftCar 03	Nissan_Skyline_R33_1998
+345	285	Truck 08	Old_Rig
+348	230	70's Muscle 11	Oldsmobile_Cutlass_442_1970
+351	231	Old 03	Oldsmobile_Vista_Cruiser_1972
+354	232	Super Car 12	Pagani_Zonda_Cinque_2009
+357	233	70's Muscle 12	Pontiac_GTO_The_Judge_1970
+360	234	70's Muscle 13	Pontiac_Lemans_1971
+363	278	Sports Car 07	Pontiac_Solstice_GXP_2009_drift|Pontiac_Solstice_GXP_2009_civ
+366	273	DriftCar 04	Pontiac_Solstice_GXP_2009_drift|Pontiac_Solstice_GXP_2009_civ
+369	237	70's Muscle 14	Pontiac_Trans_Am_1975|Pontiac_Trans_Am_1977|Pontiac_Trans_Am_1980
+372	238	70's Muscle 15	Pontiac_Trans_Am_1975|Pontiac_Trans_Am_1977|Pontiac_Trans_Am_1980
+375	236	70's Muscle 02	Pontiac_Trans_Am_1975|Pontiac_Trans_Am_1977|Pontiac_Trans_Am_1980
+378	118	Prison Van 01	Prison_Van
+381	277	Prison Van 02	Prison_Van_Fast
+384	240	Super Car 04	RUF_CTR3_2010
+387	241	Classic 14	RUF_CTR_YellowBird_1987
+390	244	Sports Car 10	RUF_RK_Coupe_2010
+393	242	Sports Car 09	RUF_RK_Spyder_2009
+396	243	Sports Car 08	RUF_RT12_2010
+399	298	Truck 15	Ramp_Truck
+402	239	SUV 01	Range_Rover_Sport_2010
+405	246	Bus 01	School_Bus_2009
+408	301	Security Van	Security_Van
+411	248	Classic 08	Shelby_Cobra_427_1966
+414	290	Truck 07	Stake_Truck
+417	291	Truck 10	Tanker_Truck
+420	62	Tanner	Tanner
+423	201	Bus 03	Tour_Bus_2003
+426	123	Truck 09	Trailer_Flatbed
+429	131	Truck 02	Trailer_Tanker
+432	289	Truck 12	Trailer_Transporter
+435	257	Classic 16	VW_Beetle_1963
+438	258	Mini Car 06	VW_Beetle_Convertible_2009
+441	259	Old 05	VW_Camper_1965
+444	274	Mini Car 08	VW_Scirocco_2010_rally|VW_Scirocco_2010_Civ
+447	275	Rally 02	VW_Scirocco_2010_rally|VW_Scirocco_2010_Civ

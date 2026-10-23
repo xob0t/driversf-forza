@@ -1,0 +1,1795 @@
+﻿kind	library	name	docs
+function	errorhandler	reporterror	PARAM<1,String,Error message>Raises an error in the game and causes an abort to occur with an error message.
+function	errorhandler	assert	PARAM<1,bool,Assert condition>PARAM<2,String,Error message>Raises an error in the game and causes an abort to occur with an error message.
+function	errorhandler	screenshot	Causes a screenshot to be taken and send via the exception handler to the metrics server and attached to the associated log
+function	errorhandler	dumpcallstack	Dumps a callstack to the metrics server
+library	UserData		
+function	Renderer	SetNumVSyncs	PARAM<1,int,Number of VSyncs>Sets the number of vertical syncs that the renderer will wait for before continuing
+library	UserData		
+function	NetworkLog	Write	PARAM<1,String,String to write to log file>
+function	NetworkLog	WriteDetail	PARAM<1,String,String to write to log file>
+library	UserData		
+function	GameTracking	GameStart	[TODO]
+function	GameTracking	GameStop	[TODO]
+function	GameTracking	LevelStart	[TODO]
+function	GameTracking	LevelStop	[TODO]
+function	GameTracking	AwardUnlock	[TODO]
+function	GameTracking	PlayerDeath	[TODO]
+function	GameTracking	ServerSessionStart	[TODO]
+function	GameTracking	ServerSessionStop	[TODO]
+function	GameTracking	ServerMatchStart	[TODO]
+function	GameTracking	ServerMatchStop	[TODO]
+function	GameTracking	FPSClientStart	[TODO]
+function	GameTracking	FPSClientStop	[TODO]
+library	UserData		
+function	simulation	pause	[TODO]
+function	simulation	start	[TODO]
+function	simulation	resetLevel	Reset level related data (props, particles, fragments)
+function	simulation	setSpeed	[TODO]
+function	simulation	getSpeed	[TODO]
+function	simulation	DumpProfileData	[TODO]
+function	simulation	ActivateProfile	[TODO]
+function	simulation	DeActivateProfile	[TODO]
+function	simulation	ActivateProfiler	[TODO]
+function	simulation	DeActivateProfiler	[TODO]
+function	simulation	SetProfileOutputStep	[TODO]
+function	simulation	DrawPhysics	[TODO]
+function	simulation	DrawPhysicsOff	[TODO]
+function	simulation	DrawSpoolInfo	[TODO]
+function	simulation	DrawSpoolInfoOff	[TODO]
+function	simulation	EnableFPSCounter	[TODO]
+function	simulation	DisableFPSCounter	[TODO]
+function	simulation	enableZapInfo	[TODO]
+function	simulation	disableZapInfo	[TODO]
+function	simulation	FPSCounterIsEnabled	[TODO]
+function	simulation	EnableMemoryDisplay	[TODO]
+function	simulation	DisableMemoryDisplay	[TODO]
+function	simulation	EnableLuaMemoryDisplay	[TODO]
+function	simulation	DisableLuaMemoryDisplay	[TODO]
+function	simulation	EnableRegionDisplay	[TODO]
+function	simulation	disablePlayerCollisions	
+function	simulation	EnableTerrainHack	enable/disable filling missing terrain samples
+function	simulation	EnableWillpowerBreakdown	[TODO]
+function	simulation	DisableWillpowerBreakdown	[TODO]
+function	simulation	EnableTrafficCarriersDisplay	[TODO]
+function	simulation	DisableTrafficCarriersDisplay	[TODO]
+function	simulation	luaStackDump	
+library	UserData		
+function	objectpicker	CreateObjectPicker	Creates an instance of the ObjectPicker
+function	objectpicker	DestroyObjectPicker	Destroys the instance of the created ObjectPicker
+function	objectpicker	PrintObjectInfo	Sets - the ObjectPicker printInfo to true (set back to false internally)
+function	objectpicker	GetNumObjects	Returns - Number of picked objects
+function	objectpicker	GetObject	Returns - UID(string) of the given object in the picked list
+property	objectpicker	enabled	Boolean - Enables or disables the ObjectPicker game side
+property	objectpicker	identifyobjects	Boolean - Identifys the current picked instance
+property	objectpicker	drawbounds	Boolean - Draws the bounds for the current picked instance
+property	objectpicker	pickerradius	Number - radius of the picker used for intersections
+property	objectpicker	pickercentre	MAv4 - world space centre of the picker
+property	objectpicker	pickedobject	DriveUID - current picked object in the object list
+property	objectpicker	highlight	String - rendermethod for highlighted objects
+library	UserData		
+function	graphics	SampleLightmap	Takes a sample from the terrain lightmap at the specified world position. Returns an ambient and directional sample value
+library	UserData		
+function	performance	GameLauncherConnect	Game-launcher internal use only
+function	performance	ResetToDefaults	Reset to default performance settings
+function	performance	SetEnableHighFPS	[TODO]
+function	performance	GetEnableHighFPS	[TODO]
+function	performance	GetCityDrawTimeAverage	Get the average time it is currently taking to draw the city
+function	performance	GetTerrainHeight	Get the terrain height at a specific position
+function	performance	ResetCityBuffers	Reset city profile buffers
+function	performance	AreCityBuffersFull	Check city profile buffers full
+function	performance	ActivateHighFPS	[TODO]
+function	performance	DeactivateHighFPS	[TODO]
+function	performance	SetEnableCharacters	Set state of character stepping
+function	performance	GetEnableCharacters	Get state of character stepping
+function	performance	SetEnablePVS	Set state of PVS use
+function	performance	GetEnablePVS	Get state of PVS use
+function	performance	SetLODThreshold	Set LOD thresholds for Static/Vehicle/Ped/Driver (4x5 array)
+function	performance	GetLODThreshold	Get LOD thresholds for Static/Vehicle/Ped/Driver (4x5 array)
+function	performance	GetProfilerMode	Get the current profiling mode
+function	performance	SetProfilerMode	Set the current profiling mode<PARAM,string,[off,gpu,cpu]>
+function	performance	GetRenderMethod	Get the current render method
+function	performance	SetRenderMethod	Set the current render methood <PARAM,string,[Default, DEBUG_PixelHeat, DEBUG_OverDraw, DEBUG_Normals, DEBUG_UVs, DEBUG_Wireframe, DEBUG_HighPrecision, DEBUG_AnisoFiltering]>
+function	performance	GetMinimumFPS	Get the current minimum FPS
+function	performance	SetMinimumFPS	Set the current minimum FPS
+function	performance	SetEnableShaderLOD	Enables/disables shader LOD.
+function	performance	GetEnableShaderLOD	Gets the state of shader LOD.
+function	performance	SetEnableCarDamage	Enables/disables vehicle damage (both morph and decal) shader-wise.
+function	performance	GetEnableCarDamage	Gets the state of vehicle damage (both morph and decal) shader-wise.
+function	performance	SetEnablePVODebug	Enables/disables PVO debugging
+function	performance	GetEnablePVODebug	Gets the state of PVO debugging
+function	performance	SetDebugPVOFilterEnabled	Enables/disables the given type in the scene filter
+function	performance	GetDebugPVOFilterEnabled	Gets the state the given type in the scene filter
+function	performance	SetDebugShowTerrainHoles	Enables/disables Debug Terrain Holes feature
+function	performance	GetDebugShowTerrainHoles	Gets the state of Debug Terrain Holes feature
+function	performance	SetDebugAlwaysDrawMegaMesh	Enables/disables Debug Always Draw MegaMesh
+function	performance	GetDebugAlwaysDrawMegaMesh	Gets the state of Debug Always Draw MegaMesh
+function	performance	SetEnableStaticDetail	Enables/disables static detail
+function	performance	GetEnableStaticDetail	Gets the state of static detail drawing.
+function	performance	SetEnableStaticRoot	Enables/disables root object (not terrain)
+function	performance	GetEnableStaticRoot	Gets the state of root object drawing (not terrain).
+function	performance	SetEnableLightMeter	Enables/disables the PP light meter
+function	performance	GetEnableLightMeter	Gets the state of PP light meter
+function	performance	SetEnableDrawListBatching	Enables/disables the batching of draw lists
+function	performance	GetEnableDrawListBatching	Gets the state of batching of draw lists
+function	performance	SetImposterDistance	Sets the distance at which imposters draw
+function	performance	GetImposterDistance	Gets the distance at which imposters draw
+library	UserData		
+function	movie	Open	Opens the specified in-game movie
+function	movie	Play	Plays the opened in-game movie
+function	movie	Skip	Skips the playing movie
+library	UserData		
+function	framework	quit	Quits the game
+function	framework	seed	Read system time & use it to seed Random Num Generator
+function	framework	random	Return random value in range min->max
+function	framework	getPlatform	Return the platform ID
+function	framework	disableBloomberg	Turn off Bloomberg
+library	UserData		
+function	AbilityController	startAbility	Starts an ability. 1- abilityType, 2- callback
+function	AbilityController	stopAbility	Stops an ability.  1- abilityType
+function	AbilityController	cancelAbility	Cancels an ability. 1- abilityType
+function	AbilityController	isAbilityActive	Checks whether an ability is active or not. 1- abilityType
+function	AbilityController	getAbilitySettings	Gets settings for an ability. 1- abilityType
+function	AbilityController	abilityStickInput	gets the total input for ability use.
+function	AbilityController	ramAbilityInput	gets the input for the ram ability
+function	AbilityController	boostAbilityInput	gets the input for the boost ability
+function	AbilityController	noAbilityPoints	reports that there are not enough points to use the ability. 1- abilityType, 2- player index
+function	AbilityController	stopChargingRamBoost	Stops vehicle acceleration while charging ram
+library	UserData		
+function	CameraSystem	AddScene	Add scene data see. add link to wiki page for more info
+function	CameraSystem	ClearScene	remove any scene data
+function	CameraSystem	ContinueScene	continue to the next action when in an infinite action
+function	CameraSystem	GetCamera	retruns the camera
+function	CameraSystem	SceneDebugGraphics	Show or hide the scene debug graphics
+function	CameraSystem	SetAttachmentLookAtOffset	set the attachment offset look at offset of the current action
+function	CameraSystem	SetAttachmentLookFromOffset	set the attachment offset look from offset of the current action
+function	CameraSystem	SetClippingPlanesForKidnappedBootShot	set the camera clipping planes for the kidnapped boot shot
+function	CameraSystem	CreateCamera	Creates a camera
+function	CameraSystem	SetCollisionCam	Sets collision cam
+function	CameraSystem	SetHillCam	Sets hill cam
+function	CameraSystem	SetDriftCam	Sets drift cam
+function	CameraSystem	SetLuaUpdateRate	Sets number of simulations steps per Lua update call
+function	CameraSystem	EnableLuaDebugCameras	Enable lua debug camera stepping - off by default
+function	CameraSystem	EnableOrthoProyection	Enables/disables the ortho projection of the cameras, bool, width, height, near, far
+library	UserData		
+property	CameraSystem	matrix	Gets the camera matrix
+property	CameraSystem	prev_matrix	Gets the camera previous matrix
+property	CameraSystem	viewport	Gets the camera viewport
+property	CameraSystem	fov	Gets the camera POV
+property	CameraSystem	aspect_ratio	Gets the camera aspect ratio
+property	CameraSystem	viewport_rect	Gets the camera viewpoert rect
+property	CameraSystem	viewport_sprite	Gets the camera viewport sprite
+property	CameraSystem	nearz	Gets the camera near z
+property	CameraSystem	farz	Gets the camera far z
+property	CameraSystem	stepType	Sets the camera step type
+function	minimap	UnderTrailerArrowsSetModelRadius	Set the under-trailer vehicle model UID and radius
+function	minimap	UnderTrailerArrowsExcludeGameVehicle	exclude a specific game vehile from showing under trailer arrows
+function	minimap	AddHighlightedVehicleModelUID	Add a vehicle model UID to the list of vehicles to be highlighted
+function	minimap	AddHighlightedVehicleModelUIDs	Add an array of vehicle model UIDs to the list of vehicles to be highlighted
+function	minimap	RemoveHighlightedVehicleModelUID	Remove a vehicle model UID from the list of vehicles to be highlighted
+function	minimap	RemoveHighlightedVehicleModelUIDs	Remove an array of vehicle model UIDs from the list of vehicles to be highlighted
+function	minimap	RemoveAllHighlightedVehicleModelUIDs	Remove all vehicle model UIDs from the list of vehicles to be highlighted
+function	minimap	AddVehicleToExcludeFromHighlights	Add a gamevehicle to the list of vehicles to be excluded from highlighting
+function	minimap	RemoveVehicleToExcludeFromHighlights	Remove a gamevehicle from the list of vehicles to be excluded from highlighting
+function	minimap	RemoveAllExcludedFromHighlights	Remove all gamevehicles from the list of vehicles to be excluded from highlighting
+function	minimap	cameraRanges	Sets camera pitch, height and distance behind values for expanded and unexpanded minimap
+function	minimap	EnableLocationPrompts	Enables/Disables region location messages
+function	minimap	SetOn	Turn the minimap on/off
+function	minimap	GetOn	Get the minimap on/off state
+function	minimap	SetRotationState	Turn minimap rotation on/off
+function	minimap	GetRotationState	Get minimap rotation state
+function	minimap	SetRotationDampeningState	Dampens the minimap rotation to reduce eye bleeding
+function	minimap	GetRotationDampeningState	Get minimap rotation dampening state
+function	minimap	SetRotationDampeningFactor	Degree to which minimap dampening is applied
+function	minimap	GetRotationDampeningFactor	Get degree to which minimap dampening is applied
+function	minimap	SetCarWidth	Set width of cars on minimap (Note that the minimap is scaled 1:1 with the city)
+function	minimap	GetCarWidth	Get width of cars on minimap (Note that the minimap is scaled 1:1 with the city)
+function	minimap	SetCarLength	Set length of cars on the minimap (Note that the minimap is scaled 1:1 with the city)
+function	minimap	GetCarLength	Get length of cars on the minimap (Note that the minimap is scaled 1:1 with the city)
+function	minimap	SetCarClumpDistance	Set proximity of cars on the minimap at which they are clumped into a larger model to show vehicle density
+function	minimap	GetCarClumpDistance	Get proximity of cars on the minimap at which they are clumped into a larger model to show vehicle density
+function	minimap	SetCarScaleFactor	Set factor to scale clumped cars by
+function	minimap	GetCarScaleFactor	Get factor to scale clumped cars by
+function	minimap	SetViewportAspectRatio	Set aspect Ratio of the minimap viewport
+function	minimap	GetViewportAspectRatio	Get aspect Ratio of the minimap viewport
+function	minimap	SetViewportFOV	Set minimap viewport FOV
+function	minimap	GetViewportFOV	Get minimap viewport FOV
+function	minimap	SetCameraHeight	Set height of the minimap camera
+function	minimap	GetCameraHeight	Get height of the minimap camera
+function	minimap	SetCameraDistanceBehind	Set distance behind the player at which to place the minimap camera
+function	minimap	GetCameraDistanceBehind	Get distance behind the player at which to place the minimap camera
+function	minimap	SetCameraHeightUnexpanded	Height of the minimap camera when minimap unexpanded
+function	minimap	GetCameraHeightUnexpanded	Height of the minimap camera when minimap unexpanded
+function	minimap	SetCameraHeightExpanded	Height of the minimap camera when minimap expanded 
+function	minimap	GetCameraHeightExpanded	Height of the minimap camera when minimap expanded 
+function	minimap	SetCameraDistanceBehind	Distance behind the player at which to place the minimap camera
+function	minimap	GetCameraDistanceBehind	Distance behind the player at which to place the minimap camera
+function	minimap	SetCameraDistanceBehindUnexpanded	Distance behind the player at which to place the minimap camera when minimap unexpanded
+function	minimap	GetCameraDistanceBehindUnexpanded	Distance behind the player at which to place the minimap camera when minimap unexpanded
+function	minimap	SetCameraDistanceBehindExpanded	Distance behind the player at which to place the minimap camera when minimap expanded
+function	minimap	GetCameraDistanceBehindExpanded	Distance behind the player at which to place the minimap camera when minimap expanded
+function	minimap	SetCameraPitch	Pitch of the minimap camera
+function	minimap	GetCameraPitch	Pitch of the minimap camera
+function	minimap	SetCameraPitchUnexpanded	Pitch of the minimap camera when minimap unexpanded
+function	minimap	GetCameraPitchUnexpanded	Pitch of the minimap camera when minimap unexpanded
+function	minimap	SetCameraPitchExpanded	Pitch of the minimap camera when minimap expanded 
+function	minimap	GetCameraPitchExpanded	Pitch of the minimap camera when minimap expanded 
+function	minimap	SetSpriteWidth	Width of the minimap Sprite
+function	minimap	GetSpriteWidth	Width of the minimap Sprite
+function	minimap	SetSpriteHeight	Height of the minimap Sprite
+function	minimap	GetSpriteHeight	Height of the minimap Sprite
+function	minimap	SetSpriteYPosition	Screen Y Position of the minimap sprite
+function	minimap	GetSpriteYPosition	Screen Y Position of the minimap sprite
+function	minimap	SetLaneWidth	Width of lanes on the minimap roads (minimap road models are created at init time, so changing this value will have no effect during gameplay)
+function	minimap	GetLaneWidth	Width of lanes on the minimap roads (minimap road models are created at init time, so changing this value will have no effect during gameplay)
+function	minimap	SetRoadDensityColoursEnabled	Enable the use of colours to display road densities (road colours / densities are taken from the road AI data)
+function	minimap	GetRoadDensityColoursEnabled	Enable the use of colours to display road densities (road colours / densities are taken from the road AI data)
+function	minimap	SetRoadColour	Default Road colour
+function	minimap	GetRoadColour	Default Road colour
+function	minimap	SetRoadOutlinesEnabled	Enable outlines on the road models for visual clarity
+function	minimap	GetRoadOutlinesEnabled	Enable outlines on the road models for visual clarity
+function	minimap	SetRoadOutlineWidthInLanes	Width of the road outlines in lane multiples (may be a fraction)
+function	minimap	GetRoadOutlineWidthInLanes	Width of the road outlines in lane multiples (may be a fraction)
+function	minimap	SetRoadOutlineColour	Colour of the road outlines
+function	minimap	GetRoadOutlineColour	Colour of the road outlines
+function	minimap	SetDensityColourRoadMultiplier	Multiplier which determines the blending between the road density colour and the default colour
+function	minimap	GetDensityColourRoadMultiplier	Multiplier which determines the blending between the road density colour and the default colour
+function	minimap	SetAtlasModelMode	Type of minimap atlas model to create
+function	minimap	GetAtlasModelMode	Type of minimap atlas model to create
+function	minimap	SetVehicles	Enable / Disable vehicles drawing on the minimap
+function	minimap	GetVehicles	Enable / Disable vehicles drawing on the minimap
+function	minimap	SetVehicleColour	Get / Set the colour of standard vehicles on the minimap
+function	minimap	GetVehicleColour	Get / Set the colour of standard vehicles on the minimap
+function	minimap	SetHighlightedVehicles	Enable / Disable highlighted vehicles types (highlights specific vehicle models in a different colour, scale)
+function	minimap	GetHighlightedVehicles	Enable / Disable highlighted vehicles types (highlights specific vehicle models in a different colour, scale)
+function	minimap	SetHighlightedVehicleColour	Get / Set the highlighted vehicle colour
+function	minimap	GetHighlightedVehicleColour	Get / Set the highlighted vehicle colour
+function	minimap	SetHighlightedVehicleMarkerIconScale	Set the highlighted vehicle marker icon scale
+function	minimap	SetHighlightedVehicleMarkerIconYOffset	Set the highlighted vehicle marker y offset
+function	minimap	SetHighlightedVehicleGadgetID	Set the highlighted vehicle gadget ID / Marker model id
+function	minimap	SetHighlightedVehicleModelUID	Specify a vehicle model to highlight
+function	minimap	GetHighlightedVehicleModelUID	Specify a vehicle model to highlight
+function	minimap	SetHighlightedVehicleScaleFactor	Scale factor of highlighted vehicles
+function	minimap	GetHighlightedVehicleScaleFactor	Scale factor of highlighted vehicles
+function	minimap	SetHighlightedAnimDuration	Pulse animation duration for spotted highlight vehicles
+function	minimap	GetHighlightedAnimDuration	Pulse animation duration for spotted highlight vehicles
+function	minimap	SetHighlightedAnimStepLength	Pulse animation step length for spotted highlight vehicles
+function	minimap	GetHighlightedAnimStepLength	Pulse animation step length for spotted highlight vehicles
+function	minimap	SetCameraToWorldTransformation	Get the camera to world transformation
+function	minimap	GetCameraToWorldTransformation	Get the camera to world transformation
+function	minimap	SetPointOfInterest	Get / Set the minimap point of interest (look at position)
+function	minimap	GetPointOfInterest	Get / Set the minimap point of interest (look at position)
+function	minimap	SetPlayerMarkerSize	Size (In pixels) of the player icon / marker on the minimap
+function	minimap	GetPlayerMarkerSize	Size (In pixels) of the player icon / marker on the minimap
+function	minimap	SetPlayerMarkerColour	Colour of the player marker
+function	minimap	GetPlayerMarkerColour	Colour of the player marker
+function	minimap	SetDrawJunctionExitDensityIndicator	Enable / Disable drawing of densities on junctions
+function	minimap	GetDrawJunctionExitDensityIndicator	Enable / Disable drawing of densities on junctions
+function	minimap	SetMarkerFadeDistance	Set the distance from the edge of the viewable area on the minimap at which markers fade out
+function	minimap	GetMarkerFadeDistance	Set the distance from the edge of the viewable area on the minimap at which markers fade out
+function	minimap	SetMarkerFadeAlphaValue	Alpha value to fade markers out to
+function	minimap	GetMarkerFadeAlphaValue	Alpha value to fade markers out to
+library	UserData		
+function	Menu	ShowMenu	Shows/hides a given menu Menu.ShowMenu( string _strMenuName, int _iShowMenu )
+function	Menu	HideZapPreview	Sets the hint string
+function	Menu	SetLifeData	Set the text associated with a life into the relevant strings in MM
+function	Menu	EnterPauseMode	Pause Menus Master
+function	Menu	ExitPauseMode	Unpause Menus Master
+function	Menu	GoToShopMenu	A tutorial has completed after viewing in shop
+function	Menu	MAIN_StartMenuDone	ToDo
+function	Menu	GetMarkerFilter	Gets the minimap markerfilter used in the pause map
+function	Menu	AddCityUnlocks	Add City Unlock data into List
+function	Menu	AddGadgetUnlocks	Add Gadget Unlock data into List
+function	Menu	AddProgressBar	Add progress bar data into List
+function	Menu	DisplayUnlockPanel	Safe To Display Unlock Panels and progress bar or not
+function	Menu	AddDare	Add a Dare to the Dare List
+function	Menu	RemoveDare	Remove a Dare from the Dare List
+function	Menu	UpdateDare	Update a Dare Score
+function	Menu	SetDareData	Set Dare Data to map for Dare menu
+function	Menu	GetUnlockedDareSlots	Get the number of unlocked dare slots in the Dare list
+function	Menu	SetUnlockedDareSlots	Set the number of unlocked dare slots in the Dare list
+function	Menu	SetChallengeLeaderboardEntry	Sets the challenge leaderboard index from the master list supplied by script
+function	Menu	AddCreditsLine	Add an entry to the credits list
+function	Menu	RemoveCreditsLine	Remove an entry from the credits list
+function	Menu	ClearCreditsList	Clear the credits list (only works if the list is currently disabled)
+function	Menu	UpdateCreditsLine	Update the willpower for an entry on the credits list
+function	Menu	AddVariable	Add a variable and return a handle to it
+function	Menu	SetVariable	Set a menus master variable
+function	Menu	GetVariable	Get a menus master variable
+function	Menu	SetFloatVariable	Set a menus master variable
+function	Menu	GetFloatVariable	Get a menus master variable
+function	Menu	GetSceneStatus	Get a menus master scene status -1:Scene not found, 0: Active, 1:Paused, 2:Inactive
+function	Menu	GetSceneFrame	Get the current frame of a menus master scene
+function	Menu	FireEvent	Trigger a menus master event
+function	Menu	ResetPage	ToDo
+function	Menu	ChangePage	Display a new page
+function	Menu	ChangePageSafe	Display a new page safely, at the cost of a string compare
+function	Menu	GoBackPage	Go back a given number of pages or to a certain page
+function	Menu	SetTextVariable	Set a menus master string
+function	Menu	SetTextVariableIcon	Set a menus master string with an icon
+function	Menu	GetLocalized	Get the contents of the specified localised string
+function	Menu	getControllerPreset	Get the current controller configuration
+function	Menu	ShowMenuElement	Toggles the visibility of a set of menu elements
+function	Menu	SetMenuElementColour	Sets the Colour of a menu element
+function	Menu	GetMenuElementColour	Gets the Colour of a menu element
+function	Menu	SetTickerText	Sets the news ticker string
+function	Menu	SetHintText	Sets the hint string
+function	Menu	ShowMusicPlayer	Displays the current track/artist
+function	Menu	ShowLowercaseWarning	Prints a warning to the gamelauncher if lowercase strings are set
+function	Menu	ShowMenuDebugInfo	Prints the details of any Menu variables which are set by lua while active
+function	Menu	SetPlayerColour	Set the colour of a player
+function	Menu	ResetPlayerColour	Reset the colour of a player
+function	Menu	SetMissionFocusStrings	Initalises the strings to be displayed at different points of focus in the mission
+function	Menu	DisplayCurrentFocusString	Show the string for the current focus of the mission
+function	Menu	NextFocusString	Increment the current focus of the game
+function	Menu	SetCurrentFocusString	Set the current focus string using it's index
+function	Menu	AddMultiPlayerEvent	Adds a multiplayer event to the log on the rights of the screen
+function	Menu	SetMultiplayerEventFadeTime	Sets the time it takes for the multiplayer events to fade out
+function	Menu	AddMultiPlayerSessionAlert	Makes a session alert appear in the multiplayer hud
+function	Menu	AddMultiPlayerAlert	Makes an alert appear in the centre of the screen in the multiplayer hud
+function	Menu	InitialiseTAR	Initialises Take A Ride parameters
+function	Menu	LoadMissionRewardImage	Loads the given mission image in the reward screen
+function	Menu	LoadChallengeRewardImage	Loads the given challenge image in the reward screen
+function	Menu	LoadAbilityRewardImage	Loads the given spoolable image in the reward screen
+function	Menu	LoadMPVehicleImage	Loads the specified MP vehicle image
+function	Menu	LoadMPUnlockImage	Loads the specified MP vehicle image
+function	Menu	UnloadMPImages	Unloads the all MP vehicle & unlock images
+function	Menu	DisplayMPVehicleUnlock	Displays the specified vehicle image in the MP unlock screen
+function	Menu	DisplayMPUnlock	Displays the specified unlock image in the MP unlock screen
+function	Menu	StopDisplayingMPVehicleUnlock	Stops displaying vehicle images in the MP unlock screen
+function	Menu	StopDisplayingMPUnlock	Stops displaying unlock images in the MP unlock screen
+function	Menu	SetPauseMarkerScales	Sets the scales for the pause map icons
+function	Menu	InputFFBReset	Reset ForceFeedback for current input device
+function	Menu	InputCtrReset	Reset ActionMaps for current user device
+function	Menu	GetAssignedButton	Returns button assigned to given action
+function	Menu	GetAssignedButtonIcon	Returns icon id for button assigned to given action
+property	Menu	ShowHUD	HUD Menu display flag 1 - displayed, 0 not displayed
+property	Menu	ShowMaster	HUD Menu display flag 1 - displayed, 0 not displayed
+property	Menu	ShowZap	Zap Menu display flag 1 - displayed, 0 not displayed
+property	Menu	ShowOnline	Online Menu display flag 1 - displayed, 0 not displayed
+property	Menu	ShowMain	Main Menu display flag 1 - displayed, 0 not displayed
+property	Menu	HideUI	Menus Master rendering flag 1 -rendering is disabled, 0 - enabled
+property	Menu	DisplayZAPInScript	ToDo
+property	Menu	Paradigm	Set paridigm name
+property	Menu	OverrideZap	ToDo
+property	Menu	ShowGoogleMap	Google Map display flag 1 - displayed, 0 not displayed
+property	Menu	CreditCompleteWaitTime	The length of time completed credit list entries will wait for before animating off
+property	Menu	CreditCompleteAnimationTime	The length of time it takes for completed credit list entries to animate off
+property	Menu	CreditBankOutroWaitTime	The length of time the credit bank will wait for before animating off
+property	Menu	CreditsListEnabled	Show / hide the credits list
+library	UserData		
+function	Marker	create	Create a marker
+function	Marker	delete	destroy a marker
+function	Marker	deleteAllMarkers	Remove all 2D and 3D markers
+function	Marker	deleteMinimapMarkers	Remove all 2D markers
+function	Marker	deleteWorldMarkers	Remove all 3D markers
+function	Marker	deleteTargetMarkers	Remove all Target markers
+function	Marker	attach	attaches a marker to a vehicle
+function	Marker	detach	detaches a marker from a vehicle
+function	Marker	setZapIconSizes	Sets the sizes of Icons (in pixels) as viewed in high levels of zap
+function	Marker	setAnimationLength	Sets the length of the specified marker animation
+function	Marker	LinkMinimapAnimationToTarget	Copy the animation of the target marker to the minimap
+function	Marker	ApplyMarkerFilters	Apply Minimap Marker Filter
+property	Marker	TargetShowDistance	Set the distance after which target markers always display
+property	Marker	TargetHideDistance	Set the distance within which the target markers never display
+property	Marker	TargetHideBehindDistance	Set the distance behind within which the target markers never display
+property	Marker	TargetOpponentShowBehindDistance	Set the distance behind within which target markers never display
+property	Marker	TargetFlashDistance	Set the distance at which the target markers begin to flash
+property	Marker	TargetPriorityFadeAlpha	Get / set the alpha value of the low priority target markers
+property	Marker	TargetPriorityEnabled	Get / set the State of the prioritising of the most significant target marker
+property	Marker	showWillpowerNumbers	flag to draw willpower digits on markers
+property	Marker	scaleClosestMPObjectiveMarker	flag scale the closest Multiplayer Objective Marker
+property	Marker	TargetRapidShiftIcon	Set the icon to be displayed to indicate the rapid shift target
+library	UserData		
+property	Marker	radius	Get/Set the radius of an existing marker
+property	Marker	heading	Get/Set the heading of an existing marker
+property	Marker	colour	Get/Set the colour of an existing marker
+property	Marker	position	Get/Set the position of an existing marker
+property	Marker	gameVehicle	Set the game vehicle / object pointer of a an existing marker
+property	Marker	visible	Get/Set the visibility of an existing marker
+property	Marker	flash	Get/Set the flash enabled state of a an existing marker
+property	Marker	animationType	Get/Set the animation type of a an existing marker, and duration
+property	Marker	scale	Get/Set the scale of an existing marker
+property	Marker	offset	Get/Set the offset of an existing marker
+property	Marker	screenOffset	Get/Set the screen offset of an existing marker
+property	Marker	uValue	Get/Set the u offset of an existing marker
+property	Marker	vValue	Get/Set the v offset of an existing marker
+property	Marker	willpower	Get/Set the willpower of an existing marker
+property	Marker	modelUID	Get/Set the model uid of an existing marker
+property	Marker	distance	Get/Set whether a target marker displays distance
+property	Marker	zapBackPrompt	Get/Set whether a target marker displays the zap back prompt
+property	Marker	zapBackPromptAboveCar	Get/Set the visibility of a zap back button above the target car
+property	Marker	text	Get/Set an attached text of a an existing marker
+property	Marker	bufferSteps	Get/Set target marker buffer steps
+function	gamerTag	setTagProperties	sets the gamertag properties
+function	gamerTag	setPlayerMarkerModel	sets the Marker Model for a specifc player's gamertag
+function	gamerTag	setPlayerObjectiveMarker	sets a specifc player's Marker to be the objective
+function	gamerTag	setplayerTagEnabled	Set the enabled status of a player's GamerTag
+function	gamerTag	setPlayerGamerTagsEnabled	Set the enabled status of a player's GamerTag
+property	gamerTag	enabled	Get / set the enabled status of the GamerTags
+property	gamerTag	minSize	Get / set the minimum size of the GamerTags
+property	gamerTag	maxSize	Get / set the maximum size of the GamerTags
+property	gamerTag	maxDist	Get / set the maximum distance at which the GamerTags are visible
+property	gamerTag	maxOffCamDist	Get / set the maximum distance at which the GamerTags are visible when off camera
+property	gamerTag	scaleDist	Get / set the distance at which GamerTags scale to their minimum size
+property	gamerTag	maxAlpha	Get / set the maximum alpha of the GamerTags
+property	gamerTag	markerFadeBeginDist	Get / set the distance at which the GamerTag markers begin to fade out
+property	gamerTag	markerFadeEndDist	Get / set the distance at which the GamerTag markers finish fading out
+property	gamerTag	minMarkerAlpha	Get / set the minimum alpha of the GamerTag markers
+property	gamerTag	maxMarkerAlpha	Get / set the maximum alpha of the GamerTag markers
+property	gamerTag	minHeightOffset	Get / set the minimum height offset of the GamerTags
+property	gamerTag	maxHeightOffset	Get / set the maximum height offset of the GamerTags
+property	gamerTag	offsetScaleBeginDist	Get / set the distance at which the GamerTags height offset begins to scale up
+property	gamerTag	offsetScaleEndDist	Get / set the distance at which the GamerTags height offset finishes scaling up
+property	gamerTag	standardIconScale	Get / set the scale of the GamerTag icon
+property	gamerTag	objectiveIconScale	Get / set the scale of the GamerTag objective icon
+library	UserData		
+function	scoreprompt	set	Put a score prompt
+function	scoreprompt	removeScorePrompts	Remove score prompts
+library	UserData		
+function	Party	createParty	Creates an online party session
+function	Party	giveOwnership	
+library	UserData		
+function	PartyBusManager	SetPartyBusActive	Sets Whether the party bus is active
+function	PartyBusManager	SetInPartyBus	Sets that you are in the party bus
+function	PartyBusManager	IsInPartyBus	Whether you are in the party bus
+function	PartyBusManager	EnterMenu	Enter the party bus menu
+function	PartyBusManager	LeaveMenu	Leave the party bus menu
+function	PartyBusManager	OnWelcomeMessageClose	Script calls this when the player has closed the welcome msg
+function	PartyBusManager	OnNatMessageClose	Script calls this when the player has closed the NAT msg
+function	PartyBusManager	OnTutorialMessageClose	Script calls this when the player has closed the tutorial unlocked msg
+function	PartyBusManager	OnBecomeLeaderMessageClose	Script calls this when the player has closed the become leader msg
+function	PartyBusManager	DeactivateLoadingScreen	Turns off the loading screen, required when zapping into bus
+function	PartyBusManager	SetManageProfileAvailability	Sets whether the manage profile should be available
+function	PartyBusManager	Launch	Launches the currently selected playlist
+library	UserData		
+function	Presence	setPresence	Set the current Presence, param = presenceID
+library	UserData		
+function	ActiveVehicles	setVehicles	Sets the current active vehicles selected and infroms other players
+function	ActiveVehicles	changeActive	Change the selected active vehicle param1: slot (1|2), param2: modelID, param3 colour
+function	ActiveVehicles	enableWaitingForPlayers	
+function	ActiveVehicles	setActiveVehicleSlot	Set which slot the local player has active for the spawn swap ability
+function	ActiveVehicles	resetSystem	Resets the active vehicle system befor new phase cycle begins
+function	ActiveVehicles	enableSystem	Enables the super high active vehicle selection
+function	ActiveVehicles	setUnlockedSlots	Sets the number of currently unlocked slots 0,1,2
+function	ActiveVehicles	isActiveVehicle	Takes a model ID returns true if its currently spooled by the active vehicle manager
+function	ActiveVehicles	getActiveVehicleSlot	
+function	ActiveVehicles	reloadAll	Called after the traffic set has been changed, as active vehicles may have been unloaded
+function	ActiveVehicles	allLoaded	Returns whether all active vehicles are loaded
+library	UserData		
+function	Imposters	Enable	PARAM<1,string,isystem>PARAM<2,bool,State>Enables/disables imposters.
+function	Imposters	KeepUpdating	PARAM<1,string,isystem>PARAM<2,bool,State>Enables/disables forced updates each frame.
+function	Imposters	StopUpdates	PARAM<1,string,isystem>PARAM<2,bool,State>Enables/disables updates of the imposters.
+function	Imposters	FixedCamera	PARAM<1,string,isystem>PARAM<2,bool,State>Enables/disables camera updates.
+function	Imposters	SetDistance	PARAM<1,string,isystem>PARAM<2,int,ssystem>PARAM<3,float,Distance>Sets the distance in which the imposters start to appear.
+function	Imposters	DrawStats	PARAM<1,string,isystem>PARAM<2,bool,State>Enables/disables displaying of the imposter stats on the screen. Note: needs a special build to work.
+function	Imposters	DrawBBox	PARAM<1,string,isystem>PARAM<2,int,ssystem>PARAM<3,int,ImposterIndex>Enables drawing of a bounding box of a chosen imposter. Set index to -1 to draw none, -2 to active.
+function	Imposters	TintImposter	PARAM<1,string,isystem>PARAM<2,int,ssystem>PARAM<3,int,ImposterIndex>Choose which imposter to tint (when tinting enabled). Set to -1 to tint all.
+function	Imposters	SetOverlapping	PARAM<1,string,isystem>PARAM<2,int,ssystem>PARAM<3,float,Multiplier>Defines the scale factor for the basic imposter width. This enables the imposters to overlap.
+function	Imposters	SetFramesPerUpdate	PARAM<1,string,isystem>PARAM<2,int,ssystem>PARAM<3,int,fullupdate>PARAM<4,int,visible>Defines number of frames it takes to update the full system or its visible part, respectively.
+function	Imposters	GetISystems	Gets the imposter systems names.
+function	Imposters	GetISystemConfig	PARAM<1,string,isystem>Gets the config of a given imposter system in one go.
+function	Imposters	GetSSystemConfig	PARAM<1,string,isystem>PARAM<2,int,ssystem>Gets the config of a given split system in one go.
+library	UserData		
+function	Explosion	Init	PARAM<1,string,fileName>Initialises the player with the given bink video file.
+function	Explosion	Play	Start playing.
+function	Explosion	Stop	Stop playing.
+function	Explosion	SetPosition	PARAM<1,vector,position>Places the effect into the world.
+function	Explosion	SetSize	PARAM<1,float,width>PARAM<2,float,height>Define the size of the effect in world space.
+library	UserData		
+function	GameVehicleResource	slamTheBrakes	Executes a dramatic slowdown.
+function	GameVehicleResource	lockEmergencyBrakes	Stops the vehicle by an artificially assisted full braking, with an optional timeout.
+function	GameVehicleResource	unlockEmergencyBrakes	Unlocks the stop
+function	GameVehicleResource	setVehicleOccupantDraw	set Vehicle Occupant Drawing to on or off
+function	GameVehicleResource	setVehicleOccupantFrozen	set Vehicle Occupant freezing to on or off
+function	GameVehicleResource	position	
+function	GameVehicleResource	transform	
+function	GameVehicleResource	getHeadingSpeedDamage	
+function	GameVehicleResource	swapWithModel	Swaps the passed game vehicle model with the passed model
+function	GameVehicleResource	getSnappedPredictedPosition	Gets the predicted position at a time in seconds and snaps it to the ground
+function	GameVehicleResource	create	Create a game vehicle
+function	GameVehicleResource	destroy	Destroy a game vehicle
+function	GameVehicleResource	fullVisualDamage	damage a car to full visual level
+function	GameVehicleResource	vehiclesInArea	
+function	GameVehicleResource	getLane	Get Lane vehicle is in
+function	GameVehicleResource	selfRight	PARAM<1,Table, gameVehicle >Sets the vehicle to be upright
+function	GameVehicleResource	setTrail	PARAM<1,Table, gameVehicle Colour (Vector) Length (float) Style (ETrailStyle) Collidable (bool) Type (ETrailType)>Adds a trail to the specified vehicle
+function	GameVehicleResource	clearTrail	PARAM<1,Table, gameVehicle Type (ETrailType)>Removes a trail type from the specified vehicle
+function	GameVehicleResource	clearAllTrails	PARAM<1,Table,gameVehicle>Removes all trails from the specified vehicle
+function	GameVehicleResource	applyImpulseAtPoint	PARAM<1,Table, gameVehicle Impulse (Vector) Point (Verctor)>Applies an impulse at a point to the vehicle, vectors in vehicle space, the W of both vectors should be 0
+function	GameVehicleResource	setLights	PARAM<1,Table, gameVehicle LightType State (bool) >Sets the state of a light
+function	GameVehicleResource	setSiren	Sets vehicle sirens if available
+function	GameVehicleResource	setCharacterSpoolingEntityIndex	PARAM<1,Table, gameVehicle Occupant position (int) (0-3) Spooling index (int) >Sets the vehicle occupants spooling data index. Pass an index of -1 to reset to defaults
+function	GameVehicleResource	getCharacterSpoolingEntityIndex	PARAM<1,Table, gameVehicle Occupant position (int) (0-3) >Gets the vehicle occupants spooling data index.
+function	GameVehicleResource	interceptingTrailCount	Gets the number of trails currently being intercepted by the player
+function	GameVehicleResource	setTrailColour	Sets the colour of the trail type.
+function	GameVehicleResource	setTrailLength	Sets the length of the trail type.
+function	GameVehicleResource	setInterceptedTrailColour	Sets colour of trails that are intercepted by player.
+function	GameVehicleResource	upgradeOccupants	Requests the characters for this vehicle to be spooled in and upgrades characters straight away if the data is already present.
+function	GameVehicleResource	downgradeOccupants	Downgrades the characters in this vehicle then unspools their data
+function	GameVehicleResource	spoolOccupants	Requests the characters for this vehicle to be spooled in. 
+function	GameVehicleResource	unspoolOccupants	Unspools the characters in this vehicle.
+function	GameVehicleResource	attachVehicle	PARAM<1,Table, LeadGameVehicle TowedGameVehicle Instant >Hooks up the towed vehicle to the lead vehicle, either instantly or smoothly.
+function	GameVehicleResource	detachVehicle	PARAM<1,Table, LeadGameVehicle TowedGameVehicle >Unhooks the towed vehicle from the lead vehicle.
+function	GameVehicleResource	createTrailerAndHookup	PARAM<1,Table, gameVehicle trailerId panelSet shaderParams >Creates a trailer and hooks it up to the provided GameVehicle.
+function	GameVehicleResource	getEmergencyType	Get emergency type, int; 0 - Civilian, 1 - Fire, 2 - Police, 3 - Ambulance
+function	GameVehicleResource	getAIEvadeType	Get AI evade type, int; 0 - QuickArrest, 1 - ShortEvade, 2 - LongEvade
+function	GameVehicleResource	registerAttachedVehicleCallback	Registers a callback function for attached vehicle (not trailer hookups) events.
+function	GameVehicleResource	unregisterAttachedVehicleCallback	Unregisters a callback function for attached vehicle (not trailer hookups) events.
+function	GameVehicleResource	registerAttachedVehicleDeleteRequestFn	Registers a function for attached vehicle to request deletion.
+function	GameVehicleResource	unregisterAttachedVehicleDeleteRequestFn	Unregisters a callback function for attached vehicle to request deletion.
+function	GameVehicleResource	setVehicleCollisionZoneScalars	Set Vehicle-Vehicle Collision Zone Scalars - Front, Back and Side, -1.0 sets to default (defaults are 1.75, 2.0, 2.0)
+function	GameVehicleResource	setVehicleCollisionMassEqualiser	Set Vehicle-Vehicle Collision Mass Equaliser - max difference of mass used for damage calc - large is real, small allows small cars to damage trucks (-1.0 sets to default of 4000.0)
+function	GameVehicleResource	setDamageLinearQuadTransitionScale	Set point at which we switch from linear to quadratic damage function of velocity of impact (-1.0 sets to default of 1.0)
+function	GameVehicleResource	setOverallDamageScalar	Set overall damage scalar for all collisions (-1.0 sets to default of 0.05)
+function	GameVehicleResource	explode	PARAM<1,Table, gameVehicle  offset (vector) range (float) strength (float)DisableVisual (bool) >Explodes the specified vehicle
+function	GameVehicleResource	applyDamage	PARAM<1,Table, gameVehicle  damage (float) location (vector) overridePlayerOnlyDamage (bool) >Apply damage to the vehicle
+function	GameVehicleResource	applyScratchDamage	PARAM<1,Table, gameVehicle  damage (float) location (vector) >Apply scratch damage to the vehicle
+function	GameVehicleResource	resetDamage	PARAM<1,Table, gameVehicle  >Reset damage on vehicle
+function	GameVehicleResource	setDirtValue	PARAM<1,Table, gameVehicle  dirt (float) >Apply dirt to the vehicle
+function	GameVehicleResource	forceOpenPanels	PARAM<1,Table, gameVehicle  >Open all panels on a vehicle
+function	GameVehicleResource	removeAllPanels	PARAM<1,Table, gameVehicle  >Remove all panels from a vehicle
+function	GameVehicleResource	removePanel	PARAM<1,Table, gameVehicle  panelID  >Remove all panels from a vehicle
+function	GameVehicleResource	playerOnlyTakedown	PARAM<1,Table, gameVehicle  enabled  maxNonPlayerDamage  >Vehicle can only be killed by a player.
+function	GameVehicleResource	detachWheel	Detach all wheels from a vehicle - PARAMS: gameVehicle, noFragments (bool)
+function	GameVehicleResource	setInfiniteMass	Enables or disables infinite mass for the vehicle.
+function	GameVehicleResource	setNoVisDamageOnRear	Enables or disables no visual damage on rear of vehicle.
+function	GameVehicleResource	setCanCaptureCars	Enables or disables capture cars for the vehicle.
+function	GameVehicleResource	setVehicleIsGhost	EEnables or disables ghost collision on a vehicle..
+function	GameVehicleResource	setGunTarget	Sets a target and offset for a gun/hose.
+function	GameVehicleResource	getGunTarget	Gets a target of a gun/hose.
+function	GameVehicleResource	setBurntOut	Set car to be burnt out.
+function	GameVehicleResource	setDisableAllDamage	Set car to have all damage disabled (for mission preview, etc).
+function	GameVehicleResource	setShaderParamSet	Set the shader param set for a vehicle
+function	GameVehicleResource	getShaderParamSet	Get the shader param set for a vehicle
+function	GameVehicleResource	isTrafficVehicle	Is this vehicle part of traffic system?
+function	GameVehicleResource	isAIControlled	Is this vehicle controlled by an AI?
+function	GameVehicleResource	setHiddenFromAIs	Set this vehicle to be ignored by all AIs with the personality trait that allows it
+function	GameVehicleResource	SetCivilianPot	Set the name of the current civilian pot (string of pot name).
+function	GameVehicleResource	ClearAreaOfVehicles	clears a specified position, radius of any non-essential vehicles
+function	GameVehicleResource	zapFlash	Flash the vehicle because of zap
+function	GameVehicleResource	setFlashColour	Flash the vehicle
+function	GameVehicleResource	getLightTypeBrightness	Get the global brightness setting for a particular type of light
+function	GameVehicleResource	setLightTypeBrightness	Set the global brightness setting for a particular type of light
+function	GameVehicleResource	setBombVisible	Set any attached bomb to be visible
+function	GameVehicleResource	setAttachedBombState	Set any attached bomb state (currently just sets the lights)
+function	GameVehicleResource	addVehicleSimulationArea	Add this vehicle as a simulation area to the game vehicle lod switcher
+function	GameVehicleResource	removeVehicleSimulationArea	Remove this vehicle as a simulation area to the game vehicle lod switcher
+function	GameVehicleResource	clearVehicleSimulationArea	Remove all vehicle simulation areas from the game vehicle  lod switcher
+function	GameVehicleResource	addPropSimulationArea	Add this prop as a simulation area to the game vehicle lod switcher
+function	GameVehicleResource	removePropSimulationArea	Remove this prop as a simulation area to the game vehicle lod switcher
+function	GameVehicleResource	clearPropSimulationArea	Remove all prop simulation areas from the game vehicle  lod switcher
+function	GameVehicleResource	RegisterDeletionCallback	RegisterDeletionCallback
+function	GameVehicleResource	UnRegisterDeletionCallback	UnRegisterDeletionCallback
+function	GameVehicleResource	isReversing	Is the car going backwards?
+function	GameVehicleResource	setHornActivation	Trigger horns activation on/off
+function	GameVehicleResource	setAlarmActivation	Trigger alarm activation on/off
+function	GameVehicleResource	setActivationParams	Set horns/alarm activation parameters : (float)radius, (uint)mod, (float)threshold
+function	GameVehicleResource	registerAttachCallback	Registers a callback function for attach events.
+function	GameVehicleResource	unregisterAttachCallback	Unregisters a callback function for attach events.
+function	GameVehicleResource	registerDetachCallback	Registers a callback function for detach events.
+function	GameVehicleResource	unregisterDetachCallback	Unregisters a callback function for detach events.
+function	GameVehicleResource	registerParentPreDeletionCallback	Registers a callback function for attach events.
+function	GameVehicleResource	unregisterParentPreDeletionCallback	Unregisters a callback function for attach events.
+function	GameVehicleResource	addRuntimeProp	DEPRECIATED - PLEASE USE addPropSimulationArea INSTEAD!Add this runtime prop to the force high lod list
+function	GameVehicleResource	removeRuntimeProp	DEPRECIATED - PLEASE USE removePropSimulationArea INSTEAD!Remove this runtime prop from the force high lod list
+function	GameVehicleResource	clearRuntimeProps	DEPRECIATED - PLEASE USE clearPropSimulationArea INSTEAD!clear the force high lod list
+function	GameVehicleResource	setPropProximity	DEPRECIATED - set the distance from props to lod switch
+function	GameVehicleResource	forceHighLODNearVehicle	DEPRECIATED - PLEASE USE AddVehicleSimulationArea INSTEAD! Add this vehicle to the force high lod list
+function	GameVehicleResource	removeForceHighLODVehicle	DEPRECIATED - PLEASE USE RemoveVehicleSimulationArea INSTEAD! Remove this vehicle from the force high lod list
+function	GameVehicleResource	clearForceHighLODVehicles	DEPRECIATED - PLEASE USE clearVehicleSimulationArea INSTEAD!clear the force high lod list
+function	GameVehicleResource	setHighLODVehicleProximity	DEPRECIATED - set the distance from vehicle to lod switch
+function	GameVehicleResource	withinRadius	Returns true if agent is within a certain radius (metres) of target
+function	GameVehicleResource	withinSweptRadius	Returns true if agent is within a certain radius (metres) of target (swept-radius version)
+function	GameVehicleResource	RegisterCollisionCallback	Collision callback with filters
+function	GameVehicleResource	UnRegisterCollisionCallback	Unregister collision callback with filters
+library	UserData		
+function	selfRightVehicleList	addTableOfVehicles	Accepts a table of "GameVehicle"'s and adds them to the list.
+function	selfRightVehicleList	removeTableOfVehicles	Accepts a table of "GameVehicle"'s and removes them from the list. Use clear over remove where appropriate.
+function	selfRightVehicleList	clear	Removes all "GameVehicle"'s from the list.
+function	selfRightVehicleList	setTiming	
+library	UserData		
+function	damageFakerVehicleList	addTableOfAttackerVehicles	Add one two three ... attackers as a table of vehicles.
+function	damageFakerVehicleList	addTableOfVictimVehicles	Same as attackers but for victims.
+function	damageFakerVehicleList	removeTableOfVehicles	Remove vehicles from the attacker and victim lists.
+function	damageFakerVehicleList	clear	Clear all the lists.
+property	damageFakerVehicleList	damageFactor	Get/Set the damage factor.
+library	UserData		
+function	Mood	new	[TODO]
+function	Mood	blend	[TODO]
+function	Mood	Reset	Removes all moods except the default from the MoodBlender
+function	Mood	addMoodUserDefined	Adds an user defined Mood to the MoodBlender params Userdata, Name, ActivationValue (0->1), ActivationTime, Callback  
+function	Mood	addMoodUserDefinedOverrideZap	Adds an user defined Mood to the MoodBlender params Userdata, Name, ActivationValue (0->1), ActivationTime, Callback  
+function	Mood	addMoodCutscene	Adds a cutscene Mood to the MoodBlender params Userdata, Name, ActivationValue (0->1)
+function	Mood	addMoodPosition	Adds a position Mood to the MoodBlender params UserData, Name, Position, ActivationValueAtCenter (0->1), Radius
+function	Mood	addMoodZapLevel	Adds a ZapLevel Mood to the MoodBlender params UserData, Name, ZapLevel, ActivationValue (0->1), Callback
+function	Mood	addMoodPauseMenu	Adds a Pause Menu mood to the MoodBlender params UserData, Name, ActivationValue (0->1), ActivationTime
+function	Mood	addMoodInCar	Adds a In Car mood to the MoodBlender params UserData, Name, ActivationValue (0->1), ActivationTime
+function	Mood	removeMood	Removes a Mood from the MoodBlender params Name, optional BlendOutTime(s), optional LuaCallback (if you have a callback, you must also have a BlendOutTime
+function	Mood	getMood	Gets a Mood from the blender
+function	Mood	containsMood	Tells if the MoodBlender contains a mood
+function	Mood	describeMood	Describes a named mood
+function	Mood	listMoods	Lists in Lua output the moods
+function	Mood	hideZapMoods	Disables zap mood blending
+function	Mood	useMultiBlending	Sets the multiBlending flag
+function	Mood	getVignetteInnerRadius	Gets the vignette inner radius for a named mood
+function	Mood	getVignetteOuterRadius	Gets the vignette outer radius for a named mood
+function	Mood	setVignetteRadiusParameters	Sets the vignette radius paramaters for a named mood
+library	UserData		
+property	Mood	Category_Light	[TODO]
+property	Mood	Category_SpecularLighting	[TODO]
+property	Mood	Category_HDRGLOBALS	[TODO]
+property	Mood	Category_HDR	[TODO]
+property	Mood	Category_PartialHDR	[TODO]
+property	Mood	Category_Sky	[TODO]
+property	Mood	Category_Fog	[TODO]
+property	Mood	Category_Water	[TODO]
+property	Mood	Category_Bloom	[TODO]
+property	Mood	Category_Saturation	[TODO]
+property	Mood	Category_Vignette	[TODO]
+property	Mood	Category_GodRays	[TODO]
+property	Mood	Category_Progression	[TODO]
+property	Mood	Category_VehicleLighting	[TODO]
+property	Mood	secondspeculargloss	[TODO]
+property	Mood	secondspecularmultiplier	[TODO]
+property	Mood	speculargloss	[TODO]
+property	Mood	difftextureintensity	[TODO]
+property	Mood	difftextureoffset	[TODO]
+property	Mood	specularmaskcontrast	[TODO]
+property	Mood	ambientlowerlimit	[TODO]
+property	Mood	envmapmultiplier	[TODO]
+property	Mood	middlegrey	[TODO]
+property	Mood	maxluminance	[TODO]
+property	Mood	lumadaptionrate	[TODO]
+property	Mood	cutsceneEffectBlend	[TODO]
+property	Mood	PostProcessParameters_HDRTonemapOffset	[TODO]
+property	Mood	PostProcessParameters_HDRTonemapClampMax	[TODO]
+property	Mood	PostProcessParameters_HDRTonemapClampMin	[TODO]
+property	Mood	SkyParameters_fBlendingLevel	[TODO]
+property	Mood	SkyParameters_fDbgExposureControl	[TODO]
+property	Mood	fogNearDistance	[TODO]
+property	Mood	fogFarDistance	[TODO]
+property	Mood	fogFarValue	[TODO]
+property	Mood	fogPower	[TODO]
+property	Mood	waterDiffuseTilingMult	[TODO]
+property	Mood	waterTilingMult1	[TODO]
+property	Mood	waterTilingMult2	[TODO]
+property	Mood	waterYAxisBias	[TODO]
+property	Mood	waterReflectionAmount	[TODO]
+property	Mood	waterDynReflectionAmount	[TODO]
+property	Mood	bloomThreshold	[TODO]
+property	Mood	contrastAmount	[TODO]
+property	Mood	saturationAmount	[TODO]
+property	Mood	saturationDesatThreshold	[TODO]
+property	Mood	saturationDesatScale	[TODO]
+property	Mood	ppeFilmGrain	[TODO]
+property	Mood	ppeFilmGrainThreshold	[TODO]
+property	Mood	ppeEdgeVignette	[TODO]
+property	Mood	ppeEdgeVignetteBorder	[TODO]
+property	Mood	ppeEdgeVignetteSoften	[TODO]
+property	Mood	vignetteInnerRadius	[TODO]
+property	Mood	vignetteOutterRadius	[TODO]
+property	Mood	vignetteCentreX	[TODO]
+property	Mood	vignetteCentreY	[TODO]
+property	Mood	godRaysIntensity	[TODO]
+property	Mood	godRaysStretchReduction	[TODO]
+property	Mood	godRaysBlurWidth	[TODO]
+property	Mood	vehSpeculargloss	[TODO]
+property	Mood	vehSecondspeculargloss	[TODO]
+property	Mood	vehSecondspecularmultiplier	[TODO]
+property	Mood	vehEnvmapmultiplier	[TODO]
+property	Mood	ambientColourLowerBound	[TODO]
+property	Mood	ambientColourUpperBound	[TODO]
+property	Mood	directionalLightColour	[TODO]
+property	Mood	directionalLightDirection	[TODO]
+property	Mood	emissiveColMod	[TODO]
+property	Mood	specularLightDirection	[TODO]
+property	Mood	specularLightColour	[TODO]
+property	Mood	cutsceneEffectGreyscale	[TODO]
+property	Mood	SkyParameters_vBlendingTargetColour	[TODO]
+property	Mood	fogColour	[TODO]
+property	Mood	waterWaveSpeedUv1	[TODO]
+property	Mood	waterWaveSpeedUv2	[TODO]
+property	Mood	bloomTintColour	[TODO]
+property	Mood	vignetteColour	[TODO]
+property	Mood	godRaysLightSourcePos	[TODO]
+property	Mood	godRaysColour	[TODO]
+property	Mood	ProgressionLockedZoneCol	[TODO]
+property	Mood	vehSpecularLightDirection	[TODO]
+property	Mood	vehSpecularLightColour	[TODO]
+property	Mood	vehColourBoost	[TODO]
+property	Mood	tonemappingalgorithm	[TODO]
+property	Mood	idColourGrading	[TODO]
+function	BillboardManager	Enable	Enable billboard proximity triggering.
+function	BillboardManager	Disable	Disable billboard proximity triggering.
+function	BillboardManager	Clear	Clear active billboards.
+function	BillboardManager	SetInRangeCallback	Set script callback for when a billboard comes into range of the camera.
+function	BillboardManager	SetOutOfRangeCallback	Set script callback for when a billboard goes out of range of the camera.
+function	BillboardManager	SetCallbackRange	Set callback range in m
+function	BillboardManager	DareAccepted	Instruct the birds to fly away
+function	BillboardManager	BlendBillBoardIn	Start a fade from the normal billboard texture to the dare texture.
+function	BillboardManager	BlendBillBoardOut	Start a fade from the dare texture to the normal billboard texture.
+function	BillboardManager	GetBillboardPosition	Get position of billboard from ID
+function	BillboardManager	LoadNarrativeBillboard	PARAM<1,String,Name of texture>Loads a narrative billboard texture
+library	UserData		
+function	PlayerGamePlay	getPlayerName	To get the name of a player
+function	PlayerGamePlay	getPlayerSNV	To get the SNVID of a player
+function	PlayerGamePlay	getPlayerZapLevel	To get the zap level of a player
+function	PlayerGamePlay	getPlayerTeam	To get the team of a player
+function	PlayerGamePlay	toggleLocalRequestTeamSwitch	Toggles whether the local player wishes to change team
+function	PlayerGamePlay	isPlayerRequestingTeamSwitch	Returns whether the specified player wishes to switch teams
+function	PlayerGamePlay	setIsTeamGame	Sets whether the current mode is a team mode
+function	PlayerGamePlay	allowTeamShuffling	Sets whether existing teams can be reshuffled when a party is joining the public match
+function	PlayerGamePlay	initiateTeamSwitching	Allows team switching
+function	PlayerGamePlay	endTeamSwitching	Disallows team switching and resets players request team switch flag
+function	PlayerGamePlay	rebalanceTeams	To rebalance teams
+function	PlayerGamePlay	getNumPlayersInTeam	Returns the number of players in the specified team
+function	PlayerGamePlay	isPartyJoiningOurMatch	Returns whether another party is joining our match
+function	PlayerGamePlay	sendMessage	To send a message to a remote player
+function	PlayerGamePlay	broadcastMessage	To send a message to all remote players
+function	PlayerGamePlay	showGamerCard	Opens the system profile screen for the specified player
+function	PlayerGamePlay	setPlayerListIconPosition	Updates the player icon manager with which icon to update for the specified player
+function	PlayerGamePlay	setPlayerNotifIcon	Sets the player notification icon to the specified player's
+library	UserData		
+function	Statistics	updateStat	Update a given statistic
+function	Statistics	readStat	Read a statistic
+function	Statistics	dispatchWrite	Dispatch the stats to write
+function	Statistics	dispatchRead	Dispatch the stats to read
+function	Statistics	isBusy	Returns whether the stats service is busy
+library	UserData		
+function	PlayerCoreStats	updateLocalIcon	Update the local core stat: Icon
+function	PlayerCoreStats	updateLocalZapSpawnCars	Update the local core stat: ZapSpawnCars
+function	PlayerCoreStats	updateLocalTotalXP	Update the local core stat: TotalXP
+function	PlayerCoreStats	updateLocalTutorialFlag	Update the local core stat: tutorial flags
+function	PlayerCoreStats	updateOfflineSplitScreenScore	Update the local offline SplitScreen score
+function	PlayerCoreStats	getPlayerIcon	Get a player core stat: Icon
+function	PlayerCoreStats	getPlayerZapSpawnCars	Get a player core stat: ZapSpawnCars
+function	PlayerCoreStats	getPlayerTotalXP	Get a player core stat: TotalXP
+function	PlayerCoreStats	getTutorialFlag	Get the local players core stat: Tutorial flag
+library	UserData		
+function	SplitScreen	getPlayerName	Get a player name
+function	SplitScreen	getControllerConnected	Get a ControllerConnected
+function	SplitScreen	getIsDisconnectPopupShowing	Get IsDisconnectPopupShowing
+library	UserData		
+function	GameModeManager	startGameMode	tell the code that a new game mode is starting
+function	GameModeManager	SetSplitScreenMissionMode	tell the code that it is the end of a split screen private match or coop mode
+function	GameModeManager	GetSplitScreenMissionMode	read from code whether it is the end of a split screen private match or coop mode
+function	GameModeManager	startCleanupPhase	tell the code to start the cleanup phase (orphan + nte deletion)
+function	GameModeManager	stopCleanupPhase	tell the code to stop the cleanup phase
+library	UserData		
+function	Documentation	collectLuaDocumentation	If active in game this will instruct the game to send all documentation to the game Launcher
+library	UserData		
+function	zapcontroller	ZapSettings	modifies zap settings for a certain level.  Parameters: 1- Table of settings (See Gameplay team for a list of these settings)
+function	zapcontroller	setZapIconSizes	Sets the sizes of Icons (in pixels) as viewed in high levels of zap
+function	zapcontroller	setZapCameraLocks	
+function	zapcontroller	setZapCameraHeights	
+function	zapcontroller	setZapCameraVelocities	
+function	zapcontroller	setZapCameraFakedVelocities	
+function	zapcontroller	EnableZapInput	Used to activate / disable zap input
+function	zapcontroller	DisableZapAutoSelection	Used to activate / disable vehicle selection in zap
+function	zapcontroller	ZapInPressed	whether the zap in button is pressed or not for local player supplied.
+function	zapcontroller	setZapSelectionColour	
+function	zapcontroller	SetSelectionBias	Sets the selection Bias 
+function	zapcontroller	setHighlightVehiclesForZap	PARAM<1,bool,on/off>Switch highlighting of non-zappable vehicles.
+function	zapcontroller	setZapLockedBrilliance	PARAM<1,real,Brilliance Value>Set brilliance for highlight of non-zappable vehicles.
+function	zapcontroller	setUIDZapResistance	
+function	zapcontroller	setPlayerZapResistance	
+function	zapcontroller	AddChallengeVehicles	
+function	zapcontroller	RemoveChallengeVehicles	
+function	zapcontroller	AddChallengeVehicle	
+function	zapcontroller	RemoveChallengeVehicle	
+function	zapcontroller	IsChallengeVehicle	
+function	zapcontroller	IsSwappingVehicle	
+function	zapcontroller	AddLockedVehicles	Add gamevehicles to the list of locked vehicles
+function	zapcontroller	RemoveLockedVehicles	Remove gamevehicles from the list of locked vehicles
+function	zapcontroller	AddLockedVehicle	Add a gamevehicle to the list of locked vehicles
+function	zapcontroller	RemoveLockedVehicle	Remove a gamevehicle from the list of locked vehicles
+function	zapcontroller	IsLockedVehicle	
+function	zapcontroller	AddUnlockedVehicle	Add a gamevehicle to the list of unlocked vehicles
+function	zapcontroller	RemoveUnlockedVehicle	Remove a gamevehicle from the list of unlocked vehicles
+function	zapcontroller	IsUnlockedVehicle	Is a vehicle in the unlocked list
+function	zapcontroller	SetAllVehiclesLockedByDefault	Lock all vehicles that aren't in the unlocked list
+function	zapcontroller	SetZapSelectionRadiusHigherZap	Set the radias of the cars to be considered for highlighting( indicating zapability)
+function	zapcontroller	SetDistanceToTriggerAudioPreview	Sets the distance for the audio Preview
+function	zapcontroller	SetLastVehicleUnlockingTime	Sets the time the last vehicle driven by tht player is locked to zab into it
+function	zapcontroller	ShowPrompts	Flag to enable/disable menus master prompts
+function	zapcontroller	FPPShowZapFlare	PARAM<1,bool,on/off>PARAM<2,real,AngleInRadians>Enable disable zap flare effect and set its rotation
+function	zapcontroller	HideFlare	Hides the flare
+function	zapcontroller	OverrideZAPCoronaType	Overrides the corona type
+function	zapcontroller	ResetCoronaOverride	Reset the override type
+function	zapcontroller	GetTargetedGameVehicle	Returns gameVehicle intersected by current zapController ray, or nil
+function	zapcontroller	GetZapAttackVehicle	Returns the game vehicle that is currently found by the zap attack module
+function	zapcontroller	ZapAttackShoot	Shoot the zap attack - when we run out of ability
+function	zapcontroller	ZapAttackCancel	Clean up zap attack, used to stop it being fired after a round
+function	zapcontroller	ZapAttackLowAbilityWarning	Tell the zap attack we are running out of ability
+function	zapcontroller	getZapLevel	Returns the current zap level
+function	zapcontroller	getTargetZapLevel	Returns the target zap level
+function	zapcontroller	getClosestCameraZapLevel	Returns the closest zap level to the zap camera as a float
+function	zapcontroller	ZapCameraSetTargetPos	Vector - Will snap the TargetPos (cursor) to the given position - top level zap only.
+function	zapcontroller	ZapCameraGetTargetPos	Will return the position (Vector) of the Zap target.
+function	zapcontroller	ZapCameraGetTargetHeading	Will return the heading of the Zap target.
+function	zapcontroller	ZapCameraGetTargetMatrix	Will return the matrix of the Zap target.
+function	zapcontroller	ZapCameraSetCatchupFactor	Zap Camera position catch-up speed.
+function	zapcontroller	GetZapCameraThetaFromHeading	Will return the theta for the Zap camera for a given heading.
+function	zapcontroller	exitZapCB	When the script is calling exitZap
+function	zapcontroller	carSwap	Swaps current vehicle with active vehicle, MP only
+function	zapcontroller	getSpoolerAttached	Get whether spool centre updates are on/off
+function	zapcontroller	setSpoolerAttached	Turn on/off spool centre updates
+function	zapcontroller	zapFromIntoVehicle	Zaps from/into vehicle
+function	zapcontroller	zapTransitionToPointTracking	Zap camera transition to a target point
+function	zapcontroller	setZapTargetingBackToInput	Hands control of the autotargeting back to userinput
+function	zapcontroller	setZapTransitionTargetVehicle	Updates the target vehicle for the active zap camera transition
+function	zapcontroller	setZapTransitionTargetPoint	Updates the target point for the active zap camera transition
+function	zapcontroller	stopZapLoadFlashOnNextVehicle	Cancels the zap load flash effect on the next vehicle
+function	zapcontroller	getZapSlowMotionMultiplier	Gets the slow motion multiplier
+function	zapcontroller	setZapSlowMotionMultiplier	Sets the slow motion multiplier
+function	zapcontroller	setEnableZapTimeControl	Sets the slow motion multiplier time opverride
+function	zapcontroller	setZapTransitionSpeed	transitions
+function	zapcontroller	DrawLevelText	debug: draw level controller text
+function	zapcontroller	setZapActionTrackVehicle	Sets the zap action to track a vehicle 
+function	zapcontroller	setZapActionTeleport	Sets the zap action teleport to position
+function	zapcontroller	setMomentumTransferToVehicle	Sets the momentum transfered to the vehicle
+function	zapcontroller	setRenderTarget	Sets the flag to render the target or not
+function	zapcontroller	setCameraSize	Sets the camera size
+function	zapcontroller	setActionPoinTracking	enables point tracking
+function	zapcontroller	DBGsetMaxVehicleBoostPercentage	Set the max percentage of the current vehicle speed that the zap boost can apply
+function	zapcontroller	DBGsetCameraSpeedMultiplier	Set the multiplier applied on the camera speed to compute the zap boost
+function	zapcontroller	DBGsetCameraBottomAngleLimit	Set the camera bottom angle limit (default value is cos(50))
+function	zapcontroller	DBGsetCameraTopAngleLimit	Set the camera bottom angle limit (default value is 1/(cos(30) - cos(50)))
+function	zapcontroller	IsVehicleZappable	Tells is a vehicle is zappable
+function	zapcontroller	OnZapInFailed	Event of zap in failling
+function	zapcontroller	ZapAttackZoomSmooth	The smoothing sigmoid effect applied to the camera
+function	zapcontroller	ClearZapAttackGlow	The ClearZapAttackGlow
+function	zapcontroller	SetZapAttackGlow	This function is used to set the zap attack glow on the target vehicle
+function	zapcontroller	EnableOnlineControllers	Enables and disables online specific zap controllers (Zap attack/zap spawn).
+function	zapcontroller	ShowZapInLockedIcon	Shows/Hides the zap in locked icon
+function	zapcontroller	GetZapSelectionRadius	Set the radias of the cars to be considered for highlighting( indicating zapability)
+function	zapcontroller	GetZapSelectionReleaseRadius	Set the radias of the cars to be considered for highlighting( indicating zapability)
+function	zapcontroller	GetZapSelectionRadiusHigherZap	Set the radias of the cars to be considered for highlighting( indicating zapability)
+function	zapcontroller	GetZapSelectionReleaseRadiusHigherZap	Set the radias of the cars to be considered for highlighting( indicating zapability)
+function	zapcontroller	GetZapSelectionRadiusMajor	ToDo
+function	zapcontroller	GetZapSelectionRadiusMinor	ToDo
+function	zapcontroller	GetZapSelectionHeightOffset	Relative offset of the disc from the centre of the vehicle.
+function	zapcontroller	GetZapSelectionMissileZapScale	Multiplier for the size of the zap selection disc in Missile Zap level.
+function	zapcontroller	GetZapSelectionAerialLowScale	Multiplier for the size of the zap selection disc in Aerial Low level.
+function	zapcontroller	GetZapSelectionAerialMidScale	Multiplier for the size of the zap selection disc in Aerial Mid level.
+function	zapcontroller	GetZapFlareZoomStart	Size of the lens flare
+function	zapcontroller	GetZapFlareZoomRange	How much the lens flare grows and shrinks with forward/backward movement
+function	zapcontroller	GetZapFlareBrightness	How strong the effect is
+function	zapcontroller	GetZapFlareMaskScrollU	Sideways mask scrolling
+function	zapcontroller	GetZapFlareMaskScrollV	Vertical mask scrolling
+function	zapcontroller	GetZapAttackAllow	Allow the use of zap attack
+function	zapcontroller	IsZapSpawnInProcess	Is the zap spawn in process
+function	zapcontroller	SetZapSelectionRadius	Set the radias of the cars to be considered for highlighting( indicating zapability)
+function	zapcontroller	SetZapSelectionReleaseRadius	Set the radias of the cars to be considered for highlighting( indicating zapability)
+function	zapcontroller	SetZapSelectionRadiusHigherZap	Set the radias of the cars to be considered for highlighting( indicating zapability)
+function	zapcontroller	SetZapSelectionReleaseRadiusHigherZap	Set the radias of the cars to be considered for highlighting( indicating zapability)
+function	zapcontroller	SetZapSelectionRadiusMajor	ToDo
+function	zapcontroller	SetZapSelectionRadiusMinor	ToDo
+function	zapcontroller	SetZapSelectionHeightOffset	Relative offset of the disc from the centre of the vehicle.
+function	zapcontroller	SetZapSelectionMissileZapScale	Multiplier for the size of the zap selection disc in Missile Zap level.
+function	zapcontroller	SetZapSelectionAerialLowScale	Multiplier for the size of the zap selection disc in Aerial Low level.
+function	zapcontroller	SetZapSelectionAerialMidScale	Multiplier for the size of the zap selection disc in Aerial Mid level.
+function	zapcontroller	SetZapFlareZoomStart	Size of the lens flare
+function	zapcontroller	SetZapFlareZoomRange	How much the lens flare grows and shrinks with forward/backward movement
+function	zapcontroller	SetZapFlareBrightness	How strong the effect is
+function	zapcontroller	SetZapFlareMaskScrollU	Sideways mask scrolling
+function	zapcontroller	SetZapFlareMaskScrollV	Vertical mask scrolling
+function	zapcontroller	SetZapAttackAllow	Allow the use of zap attack
+function	zapcontroller	setZapWallColour	FunctionObliterated
+function	zapcontroller	limitZap	FunctionObliterated
+function	zapcontroller	setZapRadius	FunctionObliterated
+function	zapcontroller	setZapDrawDistances	
+property	zapcontroller	AutoZap	Float - Turn on/off random auto zap
+property	zapcontroller	ZapCameraLookAhead	PropertyNeverCalled
+property	zapcontroller	ZapCameraClosest	PropertyNeverCalled
+property	zapcontroller	ZapCameraInputDamping	PropertyNeverCalled
+property	zapcontroller	ZapCameraFollowFactor	PropertyNeverCalled
+property	zapcontroller	ZapCameraBackwardsFollowFactor	PropertyNeverCalled
+property	zapcontroller	ZapCameraFollowDamping	PropertyNeverCalled
+property	zapcontroller	ZapCameraBackwardsFollowDamping	PropertyNeverCalled
+property	zapcontroller	ZapCameraDirAdjustFactor	PropertyNeverCalled
+property	zapcontroller	ZapCameraBackwardsXInputFactor	PropertyNeverCalled
+property	zapcontroller	ZapCameraBackwardsYInputFactor	PropertyNeverCalled
+property	zapcontroller	ZapCameraTargetHover	PropertyNeverCalled
+property	zapcontroller	ZapCameraUpScale	PropertyNeverCalled
+property	zapcontroller	ZapCameraDefaultLookAhead	PropertyNeverCalled
+property	zapcontroller	ZapCameraRollDamping	PropertyNeverCalled
+property	zapcontroller	ZapCameraTerrainAdjustFactor	PropertyNeverCalled
+property	zapcontroller	ZapCameraCollisionDamping	PropertyNeverCalled
+property	zapcontroller	ZapCameraCylinderRadius	PropertyNeverCalled
+property	zapcontroller	ZapCameraCylinderHeight	PropertyNeverCalled
+property	zapcontroller	ZapCameraCylinderOffset	PropertyNeverCalled
+property	zapcontroller	ZapCameraStartDelay	How many steps to wait before the user can control zap when first zapping out of a vehicle
+property	zapcontroller	ZapCameraLimitZapMinVelocityMultiplier	Float - The minimum camera velocity multiplier when nearing the limit zap area.
+property	zapcontroller	ZapCameraLimitZapDistanceToEdgeForSlowdown	Float - The distance to the limit zap area before starting to slow down.
+property	zapcontroller	ZapPromptDelay	ToDo
+property	zapcontroller	ZapFlareZoomDamping	ToDo
+property	zapcontroller	ZapFlareRollDamping	ToDo
+property	zapcontroller	ZapFlareFadeSpeed	ToDo
+property	zapcontroller	ZapAttackFlareRoll	The roll added to the flare when in zap attack
+property	zapcontroller	ZapAttackMaxFovZoom	The max value the camera will zoom
+property	zapcontroller	ZapAttackMomentumMultiplier	The momentum override when using zap attack
+property	zapcontroller	ZapAttackRotationSpeed	The rotation override when using zap attack
+property	zapcontroller	ZapAttackMaxRingZoom	The max value the flare ring will zoom
+property	zapcontroller	ZapAttackPreCommitStepCount	How long do I hold the button before commiting to the zap attack
+property	zapcontroller	ZapAttackChargeStepCount	How long do I hold the button before we are fully charged
+property	zapcontroller	ZapAttackOverloadShakeFactor	How much should the camera shake when in the overload state
+property	zapcontroller	ZapAttackGeometryExpansion	How much should I add to the geometry when testing for collisions
+property	zapcontroller	ZapAttackShootSpeed	How Fast to shoot the camera in must be between 0.0 and 1.0
+property	zapcontroller	ZapAttackInputMuliplier	Input multiplier
+property	zapcontroller	ZapAttackVelocityIncrease	Percentage increase in maximum velocity during zap attack
+property	zapcontroller	ZapAttackLowAbilityWarningPulseScale	The scale of the low ability warning zap flare pulse
+property	zapcontroller	ZapAttackLowAbilityWarningPulseModulus	The rate of the low ability warning zap flare pulse
+property	zapcontroller	ZapAttackUnderAttackWarningRadiusPulseScale	The scale of the warning flash of the vehicle under attack ( Only really used in network )
+property	zapcontroller	ZapAttackUnderAttackWarningRadiusPulseModulus	The rate of the warning flash of the vehicle under attack ( Only really used in network )
+property	zapcontroller	ZapAttackUnderAttackWarningRadius	The radius of the warning are for flashing the vehicle under attack ( Only really used in network )
+property	zapcontroller	ZapAttackFullyChargeRequired	Do we need to change the zap attack fully before it can fire
+property	zapcontroller	ZapAttackUnderAttackMaxGlowIntensity	If you are being focused by a zap attack, this is the maximum intensity the glow will reach
+property	zapcontroller	ZapAttackMaxGlowIntensity	The maximum intensity a vehicle can glow if you are targetting it with a zap attack
+property	zapcontroller	ZapPushGlowIntensity	The maximum intensity a vehicle can glow if you are targetting it with a zap attack
+property	zapcontroller	ZapAttackGlowDropoff	The percentage of glow to drop off a step
+property	zapcontroller	ZapPushGlowDuration	The duration of a push glow in seconds
+property	zapcontroller	ZapAttackZapInnerRadius	The inner radius of the zap attack
+property	zapcontroller	ZapAttackZapOuterRadius	The outer radius of the zap attack
+property	zapcontroller	ZapAttackDrivingInnerRadius	The inner radius of the zap attack
+property	zapcontroller	ZapAttackDrivingOuterRadius	The outer radius of the zap attack
+property	zapcontroller	AutoZapVehicle	GameVehicle - The game vehicle to auto zap to
+property	zapcontroller	AutoZapVehicleType	int - The vehicle type to auto zap to
+library	UserData		
+function	ZapRays	SetConfig	
+library	UserData		
+function	IntelligentCamera	SetVisibility	Set visibility of the Intelligent Camera
+function	IntelligentCamera	SetShotTypePreference	Set one of the shottype preferences for the Intelligent Camera
+function	IntelligentCamera	SetFinderPreference	Set one of the finder preferences for the Intelligent Camera
+function	IntelligentCamera	SetFinderRulesPreference	Set one of the finder rules preferences for the Intelligent Camera
+function	IntelligentCamera	SetObstructorPreference	Set one of the obstructor preferences for the Intelligent Camera
+function	IntelligentCamera	SetTimingPreference	Set one of the timing preferences for the Intelligent Camera
+function	IntelligentCamera	SetFramingPreference	Set one of the Framing preferences for the Intelligent Camera
+function	IntelligentCamera	SetScreenOffsetPreference	Set one of the ScreenOffset preferences for the Intelligent Camera
+function	IntelligentCamera	SetAngleYawPreference	Set one of the AngleYaw preferences for the Intelligent Camera
+function	IntelligentCamera	SetAngleRollPreference	Set one of the AngleRoll preferences for the Intelligent Camera
+function	IntelligentCamera	SetAnglePitchPreference	Set one of the AnglePitch preferences for the Intelligent Camera
+function	IntelligentCamera	SetConventionPreference	Set one of the Convention preferences for the Intelligent Camera
+function	IntelligentCamera	SetEffectPreference	Set one of the Effect preferences for the Intelligent Camera
+function	IntelligentCamera	SetCameraShakeRotationPreference	Set one of the CameraShakeRotation preferences for the Intelligent Camera
+function	IntelligentCamera	SetCameraShakeMotionPreference	Set one of the CameraShakeMotion preferences for the Intelligent Camera
+function	IntelligentCamera	SetCameraShakeVibrationPreference	Set one of the CameraShakeVibration preferences for the Intelligent Camera
+function	IntelligentCamera	SetCameraShakeScreenOffsetPreference	Set one of the CameraShakeScreenOffset preferences for the Intelligent Camera
+function	IntelligentCamera	SetPresetPreferences	Set all of the preferences for a preset Intelligent Camera Preference Set
+function	IntelligentCamera	ShotAdvance	Force a shot advance of the Intelligent Camera
+function	IntelligentCamera	ForceCrashEvent	Force a Crash event to occur
+function	IntelligentCamera	ForceFlyToEvent	Force a FlyTo event to occur
+function	IntelligentCamera	SetFakeForeground	Set the ICam into fake foreground mode
+function	IntelligentCamera	SetFlyToWait	Set the FlyTo event to wait at the end/resume after wait
+function	IntelligentCamera	SetDuration	Set the Duration which the Intelligent Camera should be active
+function	IntelligentCamera	SetCallback	Set the function which will be called once the camera is deactivated
+function	IntelligentCamera	SetMode	Set mode of the Intelligent Camera
+function	IntelligentCamera	SetName	Set name associated with this run of the ICam
+function	IntelligentCamera	AddVehicleTarget	Add a Vehicle to the Target list of the Intelligent Camera
+function	IntelligentCamera	AddPositionTarget	Add a target position for the ICam to target
+function	IntelligentCamera	ClearTargets	Remove all the Vehicle's from the Intelligent Camera
+function	IntelligentCamera	AddFixedCameraPosition	Add a fixed camera position
+function	IntelligentCamera	SendConfig	Send config to editor
+function	IntelligentCamera	SendStrings	Send registered strings to editor
+function	IntelligentCamera	AddPlayerVehicle	Add the player's Vehicle to the Intelligent Camera
+function	IntelligentCamera	Create	Create the Intelligent Camera
+function	IntelligentCamera	Destroy	Destroy the Intelligent Camera
+function	IntelligentCamera	Activate	Activate the Intelligent Camera
+function	IntelligentCamera	Deactivate	Deactivate the Intelligent Camera
+function	IntelligentCamera	SetZoomPreference	Set one of the zoom preferences for the Intelligent Camera
+function	IntelligentCamera	SetPriority	Set Priority of the Intelligent Camera
+library	UserData		
+function	ActiveLifeAI	createActiveLife	Creates an active life that will control the vehicle with the gameVehicle provided
+function	ActiveLifeAI	stopActiveLife	Stops the active life controlling the vehicle with the gameVehicle provided
+function	ActiveLifeAI	setPersonalityTraits	Changes the personality traits for the the active life controlling the vehicle with the gameVehicle provided. Also receives a table of traits
+function	ActiveLifeAI	setBehaviour	Sets a new behaviour
+function	ActiveLifeAI	addVehicleToAvoid	Add a vehicle to avoid to an active life: 1 - GameVehicle being controlled by the active life, 2 - GameVehicle to add
+function	ActiveLifeAI	removeVehicleToAvoid	Remove a vehicle to avoid from an active life: 1 - GameVehicle being controlled by the active life, 2 - GameVehicle to remove
+function	ActiveLifeAI	isVehicleToAvoid	Check to see if a vehicle is a vehicle to avoid: 1 - 'Active Life' GameVehicle, 2 - Potential GameVehicle to avoid
+function	ActiveLifeAI	setGroupBehaviour	Sets a new group behaviour. 1- gamevehicle being controlled by the active life, 2 - behaviour to set (string Follow/Takedown)
+function	ActiveLifeAI	isWandering	Checks whether an active life is wandering. 1- gamevehicle being controlled by the active life
+function	ActiveLifeAI	setRouteLoop	Sets a loop to a scripted route. The vehicle must be on a GetToPosition behaviour using a scripted route for it to work. 
+function	ActiveLifeAI	appendRoute	Appends a scripted route to the current one. The vehicle must be on a GetToPosition behaviour using a scripted route for it to work. 
+function	ActiveLifeAI	setGroupTakedownParameters	
+function	ActiveLifeAI	setGroupFollowParameters	
+function	ActiveLifeAI	setDynamicPathOverrideMode	Sets a dynamic path override mode (this will enable special behaviours, such as ramToKill. Possible values ramToKill, board
+function	ActiveLifeAI	enableCheapDebugger	Enables low cost ActiveLife AI debugging for teststation builds
+function	ActiveLifeAI	toggleAICounter	Toggles a counter of active AI's
+function	ActiveLifeAI	ToggleAISystemsCounter	Toggles a counter for each system with active AIs
+function	ActiveLifeAI	getVehicleDestination	Returns the vehicle that is this AIs destination, if any
+function	ActiveLifeAI	setPlayerRBGameVehicle	Sets a vehicle to be used by player rubber banding
+function	ActiveLifeAI	setWanderType	Sets a wander type for the AI controlling the gameVehicle provided
+function	ActiveLifeAI	setGetawayRouteGenerationPreset	Sets a new present to be used by the route generator
+function	ActiveLifeAI	setGetawayRouteGenerationComponentDistance	Sets the minimum distance a component will be used for
+library	UserData		
+function	Credits	request	Sets the 'request' flag in the credits
+function	Credits	areRequested	Checks whether the credits have been requested
+function	Credits	show	Starts showing the credits
+function	Credits	stop	Stops the credits
+function	Credits	setSpeed	Sets a new speed for the credits - Receives a multiplier (i.e., passing 1.0 means 'normal speed', 2.0 'double speed'...
+library	UserData		
+function	AlleyChaser	setChaser	Set the chaser. Accepts one game vehicle.
+function	AlleyChaser	GetGameVehicle	Return the Alley Chaser game vehicle.
+function	AlleyChaser	SetControl	PARAM<1,bool > Turns the Alley Chaser on or off.
+function	AlleyChaser	AlleyChaserTweak	Not working (disabled). Allows you to tweak the values used to generate the path. Use with caution
+function	AlleyChaser	SetMaxInitDistanceToPlayer	Sets the max distnace to the player in start up
+library	UserData		
+function	Orphanage	createOrphan	PARAM<1,userData,GameVehicle> PARAM<2,string,managementType(optional)>Adds a vehicle to the list of orphans to be dealt with.
+function	Orphanage	deleteAll	Empties the orphanage, returns how many were deleted.
+function	Orphanage	orphans	Returns the list of orphans
+function	Orphanage	allowCarrierChasing	Allows orphans to try and get back to their carriers
+function	Orphanage	getSNVID	PARAM<1,userData,GameVehicle> returns SNVID if matching GameVehicle found, or nil otherwise
+library	UserData		
+function	PropSystem	AddWatch	Add watch callback for static props matching the filter
+function	PropSystem	RemoveWatch	Remove a watch callback (with the given context or all)
+function	PropSystem	AddChildPropCreateWatch	Add watch callback for when child props are created
+function	PropSystem	RemoveChildPropCreateWatch	Remove watch callback for when child props are created
+function	PropSystem	FindStaticProps	Find static props matching the filter
+function	PropSystem	StartTrackingProps	Find static props and track them as we stream in and out
+function	PropSystem	StopTrackingProps	Stop tracking props
+function	PropSystem	DisablePropTypes	Disable props of a certain UID types
+function	PropSystem	ClearDisablePropTypes	Clear all disabled props
+function	PropSystem	ApplyParticleEffectToProp	As the name says
+function	PropSystem	SmashProp	As the name says
+function	PropSystem	SmashRuntimeProp	As the name says
+function	PropSystem	SmashStaticProp	As the name says
+function	PropSystem	ResetStaticProp	not yet implemented
+function	PropSystem	GetStaticPropState	OBSOLETE (0 if untouched, 1 if smashed)
+function	PropSystem	IsValidStaticProp	true if untouched, false if smashed
+function	PropSystem	LoadLookupTable	Loads table containing prop UIDs.
+function	PropSystem	CreateRuntimeProps	Input: a table of creation data; returns a table of handles for manipulation/deletion
+function	PropSystem	DeleteRuntimeProp	Input: one handle or a table of handles
+function	PropSystem	DeleteRuntimeProps	Input: one handle or a table of handles
+function	PropSystem	UpdateRuntimeProp	Set transform, velocity, angular velocity
+function	PropSystem	IsValidRuntimeProp	Check if it (still) exists
+function	PropSystem	GetRuntimePropTransform	Get transform
+function	PropSystem	GetRuntimePropID	Get a numerical ID from a handle
+function	PropSystem	GetRuntimeProp	Get a handle from a numerical ID
+function	PropSystem	AttachRuntimeProp	Attach prop to a vehicle
+function	PropSystem	DetachRuntimeProp	Detach prop from a vehicle
+function	PropSystem	DetachRuntimePropWithImpulse	Detach prop from a vehicle, with additional impulse
+function	PropSystem	ClearRuntimeProps	Delete all runtime props
+function	PropSystem	FindRuntimeProps	Find runtime props matching the filter
+function	PropSystem	FindAttachedProps	Find props attached to a car
+function	PropSystem	GetEffectiveNoOfAttachedProps	If a prop is essential a set of props report whole number.
+function	PropSystem	SetPropIndestructible	Set runtime prop to be indestructible
+function	PropSystem	SetPropSmashByPlayerOnly	Set runtime prop to be smashable only by the player
+function	PropSystem	SetPropBreakThreshold	Set runtime prop break threshold 0 = strong, 1 = weak
+function	PropSystem	GetModelID	Get the model ID for this prop
+function	PropSystem	RemoveAllFragments	Remove All Fragments
+function	PropSystem	RemoveOverlappingFragments	Remove Overlapping Fragments
+property	PropSystem	ImpulseLimitSmall	Get/set threshold to trigger particle effect small
+property	PropSystem	ImpulseLimitMedium	Get/set threshold to trigger particle effect medium
+property	PropSystem	ImpulseLimitLarge	Get/set threshold to trigger particle effect large
+library	UserData		
+function	transitions	fadeto	PARAM<1,vector,target colour>PARAM<2,float,target audio volume (specify -1 to not fade audio)>PARAM<3,float,duration in seconds>PARAM<4,function,completion callback (default is nil)>PARAM<5,bool,fade behind menus (default is false)>PARAM<6,bool,use real time (default is false)>PARAM<7,string,what audio channels to fade (sfx/music/vocals/everything but vocals/all - default is all)>
+function	transitions	isInTransition	Returns true if a fade is active
+function	transitions	isScreenFaded	Returns true if a fade is being drawn, not just checks that it is in transition.
+library	UserData		
+function	CVehicleSFX	clearSkidmarks	Removes all skidmarks from system.
+property	CVehicleSFX	collisionImpulseFragmentSmall	set/get the value for the collision impulse magnitude required to emit small collision particles -! unknown scaling value
+property	CVehicleSFX	collisionImpulseFragmentMedium	set/get the value for the collision impulse magnitude required to emit small collision particles -! unknown scaling value
+property	CVehicleSFX	collisionFragEmitConstant	set/get the value for the collision fragment emission constant value
+property	CVehicleSFX	collisionFragEmitLinear	set/get the value for the collision fragment emission linear scaling value
+property	CVehicleSFX	collisionDustEmitConstant	set/get the value for the collision dust emission constant value
+property	CVehicleSFX	collisionDustEmitLinear	set/get the value for the collision dust emission linear scaling value
+property	CVehicleSFX	burnoutMainTempThreshold	set/get the value for the temperature required to begin emitting burnout particles
+property	CVehicleSFX	burnoutArchTempThreshold	set/get the value for the temperature required to begin emitting burnout arch particles
+property	CVehicleSFX	burnoutSpeedFadeMinSpeed	set/get the value for the speed with unaffected transparency
+property	CVehicleSFX	burnoutSpeedFadeMaxSpeed	set/get the value for the speed with minimal transparency
+property	CVehicleSFX	burnoutSpeedFadeMinAlpha	set/get the minimum value of transparency coefficient
+property	CVehicleSFX	landingImpactSpeedThreshold	set/get minimum speed at contact point ( direction of collision plane normal )
+property	CVehicleSFX	landingVelocityCoef	set/get scales the vehicle speed to move effect with the vehicle properly
+property	CVehicleSFX	landingTimeout	set/get maximum time before the effect is canceled
+library	UserData		
+function	pvsdiagnostics	GameLauncherConnect	Game-launcher internal use only
+function	pvsdiagnostics	GameLauncherDisconnect	Game-launcher internal use only
+function	pvsdiagnostics	GetWorldInfo	Print info about PVS system
+function	pvsdiagnostics	GetRegionList	Print a list of loaded regions
+function	pvsdiagnostics	GetQuadtree	Dump the quadtree for a specific region
+function	pvsdiagnostics	SetPVSEnable	Enable or Disable the PVS system
+function	pvsdiagnostics	TogglePVS	Toggle the enablement of the PVS system
+library	UserData		
+function	VehicleCameraDev	cyclePosition	Iterates through each of the position limit extents states
+function	VehicleCameraDev	toggleRoll	Iterates through each of the roll rotation limit extents states
+function	VehicleCameraDev	toggleYaw	Iterates through each of the yaw rotation limit extents states
+function	VehicleCameraDev	togglePitch	Iterates through each of the pitch rotation limit extents states
+function	VehicleCameraDev	reset	Resets the state to the initial unlimited state
+library	UserData		
+function	VEdit	GetVehicleCount	Sends number of all vehicle types available in game. Usage: VEdit.GetNumVehicles()
+function	VEdit	GetVehicleTypes	Sends all vehicle types available in game. Usage: VEdit.GetVehicleTypes()
+function	VEdit	GetAllParameters	Sends all parameters to VEdit. Usage: VEdit.GetAllParameters(modelUID)
+function	VEdit	GetParameter	Sends parameter to VEdit. Usage: VEdit.GetParameter(modelUID,parameterIndex)
+function	VEdit	SetParameter	Sets parameter in VEdit. Usage: VEdit.SetParameter(modelUID,parameterIndex,parameterValue)
+function	VEdit	GetVehicleInformation	Sends data to VEdit: 1. connection status, 2. model uid, 3. vehicle damage. Usage: VEdit.GetVehicleInformation()
+function	VEdit	GetReadOnlyInformation	Model specific read-only information. Defined in CVehicleSpecification. Usage: VEdit.GetReadOnlyInformation(modelUID)
+function	VEdit	GetGameDefaults	Default values of handling parameters defined in game code. Usage: VEdit.GetGameDefaults()
+function	VEdit	ResetVehicleDamage	Repairs the vehicle player is currently attached to. Usage: VEdit.ResetVehicleDamage()
+library	UserData		
+function	CityLockManager	InsideLockedArea	Is the position inside the locked area
+function	CityLockManager	WallColour	Set the R G B values of the back wall model. Send us a vector. Jonathan Wing
+function	CityLockManager	StripeColour	Set the R G B values of the two stripe models. Send us a vector. Jonathan Wing
+function	CityLockManager	WallScale	Models scale multipliers. Send us a vector. Jonathan Wing
+function	CityLockManager	StripeScale	Models scale multipliers. Send us a vector. Jonathan Wing
+function	CityLockManager	UsePhysics	Set whether to use a physics barrier for the wall.
+function	CityLockManager	CachedTeleport	DO NOT USE, callback function for city locking
+function	CityLockManager	SetDrawTextureWhilstDriving	Set wether the projected locking texture should be drawn whilst driving PARAM = bool
+property	CityLockManager	CityLockActive	Bool - Turns on/off the city progression.
+property	CityLockManager	HideProjectedTexture	Bool - Turns on/off the projected texture, leaving all other feedback as normal
+property	CityLockManager	MinZapCameraVelocityMultiplier	Float - The minimum camera velocity multiplier when leaving the area.
+property	CityLockManager	MaxDistanceAllowedOutsideOfArea	Float - The maximum distance the player is alowed outside the area.
+property	CityLockManager	CityLockState	Int - The current city locked level.
+property	CityLockManager	ProgressionWallVisibility	Int - Progression Wall Visibility 1 2 3 4. Jonathan Wing
+property	CityLockManager	AlphaDistance	Alpha distance. Bigger = solid sooner. Jonathan Wing
+property	CityLockManager	FadeInDistance	Fade in distance. Jonathan Wing
+property	CityLockManager	FadeOutDistance	Fade out distance. Jonathan Wing
+property	CityLockManager	StripeYHeight	Set wall height. Jonathan Wing
+library	UserData		
+function	VehicleLodSpooler	RequestVehicle	PARAM<1,Vehicle ID,ID of the vehicle to load LODs for>
+function	VehicleLodSpooler	IsVehicleLoaded	PARAM<1,Vehicle ID,ID of the vehicle to query>
+function	VehicleLodSpooler	IsInteriorLoaded	PARAM<1,Vehicle ID,ID of the vehicle to query>
+function	VehicleLodSpooler	IsExteriorLoaded	PARAM<1,Vehicle ID,ID of the vehicle to query>
+function	VehicleLodSpooler	LockVehicle	PARAM<1,Vehicle ID,ID of the vehicle to query>PARAM<2,Boolean lock value>
+library	UserData		
+function	RadiusCallback	AddCallback	Add a radius callback
+function	RadiusCallback	RemoveCallback	Remove a radius callback
+function	RadiusCallback	AddVehicle	Add a target vehicle to radius callback
+function	RadiusCallback	RemoveVehicle	Remove a target vehicle from a radius callback
+function	RadiusCallback	SetRadius	Sets the radius for a radius callback
+function	RadiusCallback	SetOutsideTimer	Sets the outside timer for a radius callback
+library	UserData		
+function	RouteArrowsManager	AddArrows	Add checkpoint arrows
+function	RouteArrowsManager	ClearArrows	Clear the current arrows
+function	RouteArrowsManager	HideArrows	Hide the current arrows
+function	RouteArrowsManager	SetActiveArrowColour	SetActiveArrowColour - sets the colour of the active directional arrows
+function	RouteArrowsManager	SetInactiveArrowColour	SetInactiveArrowColour - sets the colour of the inactive directional arrows
+function	RouteArrowsManager	SetTarget	SetTarget - sets the object to draw arrows for either a game vehicle or player id- Note this MUST be part of a race / or the player 
+function	RouteArrowsManager	SetArrowScale	SetArrowScale - sets the scale of the directional arrows
+function	RouteArrowsManager	SetSimpleDrawMode	SetSimpleDrawMode - turn on/off simple closest distance based drawing
+function	RouteArrowsManager	SetDistanceToShowArrowsInFront	SetDistanceToShowArrowsInFront - sets the distance infront of the target to show arrows
+function	RouteArrowsManager	SetDistanceToShowArrowsBehind	SetDistanceToShowArrowsBehind - sets the distance behind the target to show arrows
+library	UserData		
+function	RaceManager	CreateRace	Creates a race
+function	RaceManager	RemoveRace	Removes a race
+function	RaceManager	AddRoute	Add the race route
+function	RaceManager	AddCheckpoints	Add the checkpoints of the race
+function	RaceManager	SetLapCount	Set the number of laps for the race
+function	RaceManager	SetStartCheckpointIndex	Set the start checkpoint index
+function	RaceManager	GetStartCheckpointIndex	Get the start checkpoint index
+function	RaceManager	AddRacer	Add a racer to the race
+function	RaceManager	RemoveRacer	Remove a racer from the race
+function	RaceManager	SwapRacer	Swap a racers gamevehicle in the race
+function	RaceManager	GetRacerPosition	Get the racers position in the race
+function	RaceManager	FreezeRacer	Freeze the racer so they no longer update there positions
+function	RaceManager	SetWrongWayTimer	Set the time in seconds, before the wrong way callback is triggered
+function	RaceManager	SetOffRouteTimer	Set the time in seconds, before the off route callback is triggered
+function	RaceManager	EnableWrongWay	Enable/disable the wrong way test
+function	RaceManager	SetRaceProgressPerformanceBoostThreshold	Set the normalised distance along the race the player must be for fellow racers performance boost to be curtailed
+function	RaceManager	SetRaceMaxSpeedReductionAfterPlayerHasBeenLeadingInSecondPart	Set the reduction in rubber-banding max speed that will be applied if the player reaches 1st or 2nd in the second part of the race
+function	RaceManager	EnableOffRoute	Enable/disable the off route test
+function	RaceManager	RacerCrossedFinishLine	Called when a racer crosses the finish line
+library	UserData		
+function	OnlineRaceManager	AddRoute	Add the race route
+function	OnlineRaceManager	AddCheckpoints	Add the checkpoints of the race
+function	OnlineRaceManager	AddPlayer	Add a player to the race
+function	OnlineRaceManager	RemovePlayer	Remove a player from the race
+function	OnlineRaceManager	SetCurrentCheckpoint	Sets a players current checkpoint index
+function	OnlineRaceManager	SetCurrentVehicle	Sets a players current vehicle - nil if in zap
+function	OnlineRaceManager	SetLocalPlayer	Set if the player is local - The player index must already be part of the race
+function	OnlineRaceManager	GetPlayerRank	Get the player rank in the race
+function	OnlineRaceManager	Clear	Clear - clean up
+function	OnlineRaceManager	SetWrongWayTimer	Set the time in seconds, before the wrong way callback is triggered
+function	OnlineRaceManager	SetOffRouteTimer	Set the time in seconds, before the off route callback is triggered
+function	OnlineRaceManager	PlayerCrossedFinishLine	Called when a player crosses the finish line and locks it to the given rank
+library	UserData		
+function	CheckpointTracker	AddCheckpoints	Add a table of checkpoints, params checkpointID, roadName, heading, position, ID
+function	CheckpointTracker	RemoveCheckpoint	remove a checkpoint by ID
+function	CheckpointTracker	RemoveAllCheckpoints	remove all checkpoints
+function	CheckpointTracker	RegisterTrackerVehicle	Register a trackerID to a game vehicle (which can be NULL)
+function	CheckpointTracker	UnregisterTracker	Unregister a trackerID
+function	CheckpointTracker	UnregisterAllTrackers	Unregister all trackers
+library	UserData		
+function	ChaseManager	AddChaser	Add a chaser to a chase
+function	ChaseManager	AddActiveChaser	Add a chaser to a chase that is initialy active and the evader can't lose them until they have been spotted first
+function	ChaseManager	AddEvader	Add an evader
+function	ChaseManager	RemoveChaser	Remove a chaser from a chase
+function	ChaseManager	InternalRemoveEvader	only called from ChaseManager.lua
+function	ChaseManager	ChaserVehicles	Return a table of the chase vehicles involved in this chase
+function	ChaseManager	SetMaxChasers	Sets the max number of chasers
+function	ChaseManager	SetInitialChasers	Sets the initial number of chasers
+function	ChaseManager	SetTimeToReachMaxChasers	Sets time to reach max chasers
+function	ChaseManager	SetMaxSpawners	Sets the max number of spawners
+function	ChaseManager	AddVehicleSpawnType	Adds a vehicle spawn type
+function	ChaseManager	ClearVehicleSpawnTypes	Clear all registered vehicle spawn types
+function	ChaseManager	SetMinSpawnTime	Sets the min spawn time
+function	ChaseManager	SetMaxSpawnTime	Sets the max spawn time
+function	ChaseManager	SetMinTimeActiveBeforeReSpawn	Sets the min active time of a chaser before it can respawn
+function	ChaseManager	SetMinDistanceBeforeReSpawn	Sets the min distance before a chaser respawns
+function	ChaseManager	SetSearchingTimer	Sets the searching timer
+function	ChaseManager	SetSwitchingToSearchingTimer	Sets the time before a chaser switches to the searching behaviour if it is out from the redius
+function	ChaseManager	SetActiveChaserTimer	Sets the active chaser timer
+function	ChaseManager	SetVisionConeColour	DEPRECIATED - Sets the vision cone minimap colour
+function	ChaseManager	SetShowVisionCones	DEPRECIATED - Sets the vision cone visible state
+function	ChaseManager	SetVisionConeTurnDamping	DEPRECIATED - Sets the vision cone damping value
+function	ChaseManager	SetVisionConeFOV	DEPRECIATED - Sets the vision cone fov
+function	ChaseManager	SetVisionConeMiniRadius	DEPRECIATED - Sets the vision cone mini radius
+function	ChaseManager	SetVisionConeOutSideTimer	DEPRECIATED - Sets the vision cone outside timer
+function	ChaseManager	SetChaseVisionConeLength	DEPRECIATED - Sets the vision cone length for the chase state
+function	ChaseManager	SetSearchingVisionConeLength	DEPRECIATED - Sets the vision cone length for the searching state
+function	ChaseManager	SetIdleVisionConeLength	DEPRECIATED - Sets the vision cone length for the idle state
+function	ChaseManager	SetRadiusOutSideTimer	Sets the radius outside timer
+function	ChaseManager	SetRadius	Sets the radius
+function	ChaseManager	SetBustedTimer	Sets the busted timer
+function	ChaseManager	SetBustedMinSpeed	Sets the busted min speed
+function	ChaseManager	SetBustedMinDistance	Sets the busted min distance
+function	ChaseManager	IsBeingChased	Is this vehicle actively chased
+function	ChaseManager	NumberOfChasers	The current number of active chasers
+function	ChaseManager	NumberOfChasersInsideRadius	The current number of active chasers inside the triggering radius
+function	ChaseManager	CanAddChaser	Can we add another chaser
+function	ChaseManager	SetCanCompleteChase	Sets whether we can complete this chase or not.
+function	ChaseManager	CanCompleteChase	Can we complete this chase
+function	ChaseManager	SetSpawningForwardPercentage	Sets the percentage of the forward spawning
+function	ChaseManager	SetSpawningSidePercentage	Sets the percentage of the side spawning
+function	ChaseManager	SetSpawningBackwardPercentage	Sets the percentage of the Backward spawning
+library	UserData		
+function	InterestingVehicleManager	Enable	Turn on/off
+function	InterestingVehicleManager	IsEnabled	Are interesting vehicles enabled?
+function	InterestingVehicleManager	ChooseDesiredSlotCount	Sets the desired slot count to the number of available spool slots
+function	InterestingVehicleManager	SetDesiredSlotCount	Sets the desired number of interesting vehicle slots
+function	InterestingVehicleManager	GetDesiredSlotCount	Gets the desired number of interesting vehicle slots
+function	InterestingVehicleManager	SetMinSpawnDistance	Set the min distance to spawn in
+function	InterestingVehicleManager	SetMaxSpawnDistance	Set the max distance to spawn in
+function	InterestingVehicleManager	ClearVehicles	Clear existing interesting vehicles
+function	InterestingVehicleManager	SetInterestingVehicleRegions	Define interesting vehicle regions
+function	InterestingVehicleManager	ExcludeVehicles	Defines a list of vehicles to exclude from interesting vehicle selection (an empty list clears any previously set vehicles)
+function	InterestingVehicleManager	SetDrawMarkers	Turn on/off the (debug) markers
+library	UserData		
+function	Shop	SetAbilities	Tell the game about the price of all the abilities
+function	Shop	SetVehicles	Tell the game about the price of all the vehicles
+function	Shop	SetChallenges	Tell the game about the price of all the challenges
+library	UserData		
+function	GameplayTracking	OnSessionExit	called when the game session ends
+function	GameplayTracking	OnLevelStop	called when the game session ends
+function	GameplayTracking	OnMissionStart	call for gameplay data collector to start collecting mission-specific data. 1- mission name, 2- list of enemy vehicles
+function	GameplayTracking	OnMissionComplete	call for gameplay data collector when player successfully completes a mission
+function	GameplayTracking	OnMissionAbandon	call for gameplay data collector when player abandons a mission
+function	GameplayTracking	OnMissionFail	call for gameplay data collector when player fails a mission (with potential to retry)
+function	GameplayTracking	OnFaceOffComplete	called when the player finishes a faceoff
+function	GameplayTracking	SetEnemyVehicleList	set the list of vehicles to ignore in collision tracking
+function	GameplayTracking	OnChapterStart	called when a ew chapter begins.
+function	GameplayTracking	OnZapOut	called when the player zaps out / is zapped out
+function	GameplayTracking	OnZapOutFail	called when player tries to zap out but cant
+function	GameplayTracking	OnOptionalContentStart	called when the user starts a dare, activity or challenge
+function	GameplayTracking	OnObjectiveStop	called when the user starts a dare, activity or challenge
+function	GameplayTracking	OnObjectiveStart	called whenever a mission,dare,activity or challenge is started
+function	GameplayTracking	OnGameComplete	called when the game completes
+library	UserData		
+function	BackSeatDriver	AddLeadVehicle	Add the lead vehicle to the back seat driver
+function	BackSeatDriver	AddChaseVehicle	Add the chase vehicle to the back seat driver
+function	BackSeatDriver	Clear	Clear the back seat driver
+function	BackSeatDriver	SetDistanceFromLeader	Set the distance from the leader
+function	BackSeatDriver	SetPathTimeOffset	Set the path time offset from the leader
+function	BackSeatDriver	Enable	Enables the system
+library	UserData		
+function	HeliCam	Start	Start the HeliCam
+function	HeliCam	Stop	Stop the HeliCam
+function	HeliCam	SetCursorAccelerationMultiplier	Set the cursor acceleration multiplier. HeliCam.SetCursorAccelerationMultiplier(50.0f)
+function	HeliCam	SetCursorFrictionCoEfficient	Set the cursor friction co efficient. HeliCam.SetCursorFrictionCoEfficient(0.001)
+function	HeliCam	SetCursorMaxVelocity	Set the cursor maximum velocity. HeliCam.SetCursorMaxVelocity(0.1)
+function	HeliCam	SetScanSpeedMultipler	Set the scan speed multipler
+function	HeliCam	SetMaxTimeInVehicle	Set the max time in a vehicle
+function	HeliCam	SetMaxTimeBeforeLosingVehicle	Set the max time before losing a vehicle
+function	HeliCam	ZapBackToCamera	Zap back to the helicam
+function	HeliCam	SetCameraCatchupFactor	sets the laziness of the camera (default 0.05f)
+function	HeliCam	SoundStarted	Auto zap will be delayed until sound has stopped.
+function	HeliCam	SoundStopped	Auto zap will is free to engage.
+function	HeliCam	HideHUD	Hide the helicam HUD.
+function	HeliCam	ShowHUD	Show the helicam HUD.
+function	HeliCam	ShowCursor	Show/Hides the cursor.
+function	HeliCam	BlockScan	Blocks/unblocks the scan.
+function	HeliCam	DisableHelicamUserControl	Disable the retacule and helicam intput.
+function	HeliCam	SetCameraWobbleMax	Sets the max distance the camera can wobble from the start point
+library	UserData		
+function	E3Demo	StartGameVehiclePathFollowing	Start the gameVehicle following the path
+function	E3Demo	StopGameVehiclePathFollowing	Stop the gameVehicle following the path
+function	E3Demo	ResetClock	Reset the main clock so that the traffic is always in the same place
+library	UserData		
+function	ZapAIPresence	StartTransition	starts a transition from one vehicle to another. PARAMS: Current vehicle, Target Vehicle
+function	ZapAIPresence	Settings	
+function	ZapAIPresence	SetCallback	
+function	ZapAIPresence	TargetVehicle	
+library	UserData		
+function	VehicleLauncher	Settings	table consisting of: float TravelTime, float Angle, float PrelaunchTime, bool SurvivalMode, bool bUseAngle
+function	VehicleLauncher	VehicleToPoint	throws passed vehicle to the point provided
+function	VehicleLauncher	VehicleToVehicle	throws passed vehicle to the vehicle provided, taking velocity into account.
+function	VehicleLauncher	DeleteAll	deletes all post & pre launch vehicles
+library	UserData		
+function	VehiclePossessor	SetAttackTarget	set/change/clear the attack target GameVehicle
+function	VehiclePossessor	PossessVehicle	set a game vehicle to be possessed ( GameVehicle, LifeSpan, RangeFromTarget)
+function	VehiclePossessor	OrphanAllPossessed	orphan all the possessed vehicles
+function	VehiclePossessor	DeleteAllPossessed	delete all the possessed vehicles
+library	UserData		
+function	GhostCar	Start	starts ghost ability. PARAMS: int callback
+function	GhostCar	Stop	stops ghost ability.  PARAMS: none
+function	GhostCar	IsActive	whether ghost is active or not.
+function	GhostCar	AddGhostVehicle	Force add a vehicle to the ghost list. takes an option if we want to delete the vehicle or not
+function	GhostCar	Settings	table of settings for ghostCar. PARAMS: table
+function	GhostCar	SetActiveVehicle	Overwrites the ghost creator vehicle
+function	GhostCar	AddCandidateVehicleToOverriddenLogicList	Adds a vehicle to the overridden list
+function	GhostCar	ClearCandidateVehicleToOverriddenLogicList	clears the overriden affected vehicle list
+function	GhostCar	OverriddeAffectedVehicleLogic	enables the overriden logic
+library	UserData		
+function	ParticleEditor	Reload	TODO
+function	ParticleEditor	SetVariable	TODO
+function	ParticleEditor	TriggerDebugEvent	TODO
+function	ParticleEditor	StopDebugEvents	TODO
+function	ParticleEditor	GetDebugEventPosition	TODO
+function	ParticleEditor	SetPlaybackSpeed	TODO
+function	ParticleEditor	TriggerEvent	TODO
+function	ParticleEditor	ModifyEvent	TODO
+function	ParticleEditor	AttachEvent	TODO
+function	ParticleEditor	StopEvent	TODO
+function	ParticleEditor	DetachEvent	TODO
+library	UserData		
+function	ProfileSettings	DisplayInMPH	Query if the display is MPH or not
+function	ProfileSettings	GetChapter	Get the chapter completed
+function	ProfileSettings	SetChapter	PARAM<1,chapter>Set the chapter completed
+function	ProfileSettings	GetProgression	Get the current progression
+function	ProfileSettings	SetProgression	PARAM<1,progression>Set the current progression
+function	ProfileSettings	GetWillpower	Get willpower
+function	ProfileSettings	SetWillpower	PARAM<1,willpower>Set willpower
+function	ProfileSettings	GetFMVWatched	PARAM<1,FMV index (0-31)>
+function	ProfileSettings	SetFMVWatched	PARAM<1,FMV index (0-31)>
+function	ProfileSettings	GetStoryModeComplete	Gets whether story mode was completed or not
+function	ProfileSettings	SetStoryModeComplete	Sets story mode completed
+function	ProfileSettings	GetEBoardState	Get the evidence board state
+function	ProfileSettings	SetEBoardState	PARAM<1,state>Set the evidence board state
+function	ProfileSettings	SetToolTipShown	Param<1, ID>Set the tooltip as having been shown
+function	ProfileSettings	GetToolTipShown	Param<1, ID>Get whether the tooltip has been shown
+function	ProfileSettings	SetUserControlledShiftUnlocked	Param<1, bool>Sets whether the user has control of shift yet
+function	ProfileSettings	GetVehicleUnlocked	PARAM<1,VehicleUID>Get whether a vehicle is unlocked or not
+function	ProfileSettings	SetVehicleUnlocked	PARAM<1,VehicleUID>Set vehicle unlocked (also marks as new if not already unlocked)
+function	ProfileSettings	GetVehicleOwned	PARAM<1,VehicleUID>Get whether a vehicle is owned or not
+function	ProfileSettings	SetVehicleOwned	PARAM<1,VehicleUID>Set vehicle owned
+function	ProfileSettings	GetVehicleNew	PARAM<1,VehicleUID>Get whether a vehicle is new or not
+function	ProfileSettings	ClearVehicleNew	PARAM<1,VehicleUID>Clears the newness of a vehicle
+function	ProfileSettings	GetGarageUnlocked	PARAM<1,GarageID>Get whether a garage is unlocked or not
+function	ProfileSettings	SetGarageUnlocked	PARAM<1,GarageID>Set garage unlocked (also marks as new if not already unlocked)
+function	ProfileSettings	GetGarageOwned	PARAM<1,GarageID>Get whether a garage is owned or not
+function	ProfileSettings	SetGarageOwned	PARAM<1,GarageID>Set garage owned
+function	ProfileSettings	SetGarageBought	PARAM<1,GarageID>Set garage bought
+function	ProfileSettings	GetGarageNew	PARAM<1,GarageID>Get whether a garage is new or not
+function	ProfileSettings	ClearGarageNew	PARAM<1,GarageID>Clears the newness of a garage
+function	ProfileSettings	SetGarageTutorialPlayed	PARAM<1,Bool>Sets whether the garage tutorial has been played
+function	ProfileSettings	GetGarageTutorialPlayed	Get whether the garage tutorial has been played
+function	ProfileSettings	SetGarageWillpowerTutorialPlayed	PARAM<1,Bool>Sets whether the garage willpower reward tutorial has been played
+function	ProfileSettings	GetGarageWillpowerTutorialPlayed	Get whether the garage willpower reward tutorial has been played
+function	ProfileSettings	SetGarageVehicle	PARAM<1,VehucleUID>Set the vehicle you left the garage in
+function	ProfileSettings	GetGarageVehicle	Returns the vehicle ID (or -1) stored when leaving a garage
+function	ProfileSettings	GetAbilityUnlocked	PARAM<1,AbilityID>PARAM<2,AbilityLevel>Get whether an ability has been unlocked or not
+function	ProfileSettings	SetAbilityUnlocked	PARAM<1,AbilityID>PARAM<2,AbilityLevel>Set ability unlocked (also marks as new if not already unlocked)
+function	ProfileSettings	GetAbilityOwned	PARAM<1,AbilityID>PARAM<2,AbilityLevel>Get whether an ability is owned or not
+function	ProfileSettings	SetAbilityOwned	PARAM<1,AbilityID>PARAM<2,AbilityLevel>Set ability owned
+function	ProfileSettings	GetAbilityNew	PARAM<1,AbilityID>PARAM<2,AbilityLevel>Get whether an ability is new or not
+function	ProfileSettings	ClearAbilityNew	PARAM<1,AbilityID>PARAM<2,AbilityLevel>Clear the newness of an ability
+function	ProfileSettings	GetNumRamHits	Gets the number of times the player has hit with ram
+function	ProfileSettings	GetMissionUnlocked	PARAM<1,MissionID>Get whether a mission has been unlocked or not
+function	ProfileSettings	SetMissionUnlocked	PARAM<1,MissionID>Set mission unlocked (also marks as new if not already unlocked)
+function	ProfileSettings	GetMissionOwned	PARAM<1,MissionID>Get whether a mission is owned or not
+function	ProfileSettings	SetMissionOwned	PARAM<1,MissionID>Set mission owned
+function	ProfileSettings	GetMissionAttempted	PARAM<1,MissionID>Get whether a mission has been attempted or not
+function	ProfileSettings	SetMissionAttempted	PARAM<1,MissionID>Set mission attempted
+function	ProfileSettings	GetMissionCompleted	PARAM<1,MissionID>Get whether a mission has been completed or not
+function	ProfileSettings	SetMissionCompleted	PARAM<1,MissionID>Set mission completed
+function	ProfileSettings	GetMissionNew	PARAM<1,MissionID>Get whether a mission is new or not
+function	ProfileSettings	ClearMissionNew	PARAM<1,MissionID>Clears the newness of a mission
+function	ProfileSettings	GetDareUnlocked	PARAM<1,DareID>Get whether a dare has been unlocked or not
+function	ProfileSettings	SetDareUnlocked	PARAM<1,DareID>Set dare unlocked (also marks as new if not already unlocked)
+function	ProfileSettings	GetDareCompleted	PARAM<1,DareID>Get whether a dare has been completed or not
+function	ProfileSettings	SetDareCompleted	PARAM<1,DareID>Set dare completed
+function	ProfileSettings	GetDareNew	PARAM<1,DareID>Get whether a dare is new or not
+function	ProfileSettings	ClearDareNew	PARAM<1,DareID>Clear the newness of a dare
+function	ProfileSettings	GetChallengeUnlocked	PARAM<1,ChallengeID>Get whether a challenge has been unlocked
+function	ProfileSettings	SetChallengeUnlocked	PARAM<3,ChallengeID,bool Activity, bool Movie>Set challenge unlocked (also marks as new if not already unlocked)
+function	ProfileSettings	GetChallengeOwned	PARAM<1,ChallengeID>Get whether a challenge has been owned
+function	ProfileSettings	SetChallengeOwned	PARAM<1,ChallengeID>Set challenge owned
+function	ProfileSettings	GetChallengeAttempted	PARAM<1,ChallengeID>Get whether a challenge has been attempted or not
+function	ProfileSettings	SetChallengeAttempted	PARAM<1,ChallengeID>Set challenge attempted
+function	ProfileSettings	GetChallengeCompleted	PARAM<1,ChallengeID>Get whether a challenge has been completed
+function	ProfileSettings	SetChallengeCompleted	PARAM<1,ChallengeID>Set challenge completed
+function	ProfileSettings	GetChallengeNew	PARAM<1,ChallengeID>Get whether a challenge is new or not
+function	ProfileSettings	ClearChallengeNew	PARAM<1,ChallengeID>Clear the newness of a challenge
+function	ProfileSettings	GetCollectableUnlocked	PARAM<1,CollectableID>Gets whether a collectable is unlocked or not
+function	ProfileSettings	SetCollectableUnlocked	PARAM<1,CollectableID>Sets a collectable as unlocked
+function	ProfileSettings	GetCollectableOwned	PARAM<1,CollectableID>Gets whether a collectable is owned or not
+function	ProfileSettings	SetCollectableOwned	PARAM<1,CollectableID>Sets a collectable as owned
+function	ProfileSettings	IsTakedownUnlocked	Returns true or false
+function	ProfileSettings	SetTakedownUnlocked	Sets Takedown to be unlocked
+function	ProfileSettings	TriggerAutoSave	Triggers an autosave (if enabled)
+function	ProfileSettings	ClearProgression	Clears all progression data from the profile
+function	ProfileSettings	ClearStatistics	Clears all statistics data from the profile
+function	ProfileSettings	GetTotalNumMissionAttempts	Get the total number of mission attempts
+function	ProfileSettings	SetTotalNumMissionAttempts	PARAM<1,num>Set the total number of mission attempts
+function	ProfileSettings	GetTotalMissionsCompleted	PARAM<1,num>Get the total number of mission completed
+function	ProfileSettings	GetChallengeTotalTime	PARAM<1,statID>Gets the total time of a challenge
+function	ProfileSettings	SetChallengeTotalTime	PARAM<1,statID>PARAM<2,time>Sets the total time of a challengePARAM<3,bUpdate> whether we should use this stat to update the server
+function	ProfileSettings	GetChallengeSplitTime	PARAM<1,statID>Gets the split time of a challenge
+function	ProfileSettings	SetChallengeSplitTime	PARAM<1,statID>PARAM<2,time>Sets the split time of a challenge<3,bUpdate> whether we should use this stat to update the server
+function	ProfileSettings	GetVehicleDriven	PARAM<1,VehicleUID>Get whether a vehicle has been driven
+function	ProfileSettings	SetVehicleDriven	PARAM<1,VehicleUID>Set vehicle driven
+function	ProfileSettings	GetDistanceTravelled	Get distance travelled
+function	ProfileSettings	SetDistanceTravelled	PARAM<1,distance>Set distance travelled
+function	ProfileSettings	GetNumVehiclesDrivenTakeARide	Get number of vehicles driven in take a ride
+function	ProfileSettings	SetVehicleDrivenInTakeARide	PARAM<1,VehicleUID>Set vehicle driven in take a ride
+function	ProfileSettings	GetNumZaps	Param<1,NumZaps> Get the number of successful zaps
+function	ProfileSettings	SetNumZaps	Param<1,num>Set Number of user controlled zaps
+function	ProfileSettings	SetNumberPropsSmashed	Param<1,num>Set Number of Props smashed
+function	ProfileSettings	GetNumZapReturns	Gets the number of times zap return has been used
+function	ProfileSettings	GetTotalNumDrifts	Get the number of drifts performed
+function	ProfileSettings	SetTotalNumDrifts	PARAM<1,num>Get the number of drifts performed
+function	ProfileSettings	GetTotalDriftDistance	Get lifetime distance drifting
+function	ProfileSettings	SetTotalDriftDistance	PARAM<1,distance>Set lifetime distance drifting
+function	ProfileSettings	GetLongestSingleDriftDistance	Get longest single drift distance
+function	ProfileSettings	SetLongestSingleDriftDistance	PARAM<1,distance>Set longest single drift distance
+function	ProfileSettings	GetNumOvertakes	Get the total number of overtakes (with traffic flow)
+function	ProfileSettings	SetNumOvertakes	PARAM<1,num>Set the total number of overtakes (with traffic flow)
+function	ProfileSettings	GetNumOncomingOvertakes	Get the total number of overtakes (against traffic flow)
+function	ProfileSettings	SetNumOncomingOvertakes	PARAM<1,num>Set the total number of overtakes (against traffic flow)
+function	ProfileSettings	GetNumNearMisses	Get the total number of near-misses
+function	ProfileSettings	SetNumNearMisses	PARAM<1,num>Set the total number of near-misses
+function	ProfileSettings	GetLongestOvertakeChain	Get the most vehicles overtaken within a small time period
+function	ProfileSettings	SetLongestOvertakeChain	PARAM<1,num>Set the most vehicles overtaken within a small time period
+function	ProfileSettings	GetNumVehiclesTowed	Get the number of vehicles the player has towed
+function	ProfileSettings	SetNumVehiclesTowed	PARAM<1,num>Set the number of vehicles the player has towed
+function	ProfileSettings	GetNumberOfJumps	Get the number of jumps the player has experienced
+function	ProfileSettings	SetNumberOfJumps	PARAM<1,num>Set the number of jumps the player has experienced
+function	ProfileSettings	GetTotalJumpDistance	Get the total jump distance
+function	ProfileSettings	SetTotalJumpDistance	PARAM<1,distance>Set the total jump distance
+function	ProfileSettings	GetLongestJumpDistance	Get the longest jump distance performed
+function	ProfileSettings	SetLongestJumpDistance	PARAM<1,distance>Set the longest jump distance performed
+function	ProfileSettings	GetNumVehiclesJumpedOver	Get the number of vehicle jumps performed
+function	ProfileSettings	SetNumVehiclesJumpedOver	PARAM<1,num>Set the number of vehicle jumps performed
+function	ProfileSettings	GetNumRampTruckJumps	Get the amount of ramp trucks jumped over
+function	ProfileSettings	SetNumRampTruckJumps	PARAM<1,num>Set the amount of ramp trucks jumped over
+function	ProfileSettings	GetLongestBoostDuration	Get the longest time in boost
+function	ProfileSettings	SetLongestBoostDuration	PARAM<1,time>Set the longest time in boost
+function	ProfileSettings	GetNumTimesBoostTriggered	Get the number of times boost was triggered
+function	ProfileSettings	SetNumTimesBoostTriggered	PARAM<1,num>Set the number of times boost was triggered
+function	ProfileSettings	GetTotalBoostTime	Gets the total time boost has been used by the player
+function	ProfileSettings	SetTotalBoostTime	PARAM<1,num>Set the total time boost has been used
+function	ProfileSettings	GetFreeDriveFelonyTutorialPlayed	Get whether the player has played a freedrive felony
+function	ProfileSettings	SetFreeDriveFelonyTutorialPlayed	PARAM<1,bool>Set whether the player has played a freedrive felony
+function	ProfileSettings	GetMultiplayerProgressionLevel	Get the player's MP progression level (may differ from live online data!)
+function	ProfileSettings	GetNumMultiplayerGamesWon	Get the total number of multiplayer rounds won
+function	ProfileSettings	GetNumFaceOffsWon	Get the number of face off rounds won
+function	ProfileSettings	GetNumFaceOffPlays	Get the number of face off rounds played
+function	ProfileSettings	GetNumTugOfWarWins	Get the number of tug of war rounds won
+function	ProfileSettings	GetNumTugOfWarPlays	Get the number of tug of war rounds won
+function	ProfileSettings	GetNumBurningRubberWins	Get the number of burning rubber rounds won
+function	ProfileSettings	GetNumBurningRubberPlays	Get the number of burning rubber rounds won
+function	ProfileSettings	GetNumRushdownWins	Get the number of rushdown rounds won
+function	ProfileSettings	GetNumRushdownPlays	Get the number of rushdown rounds won
+function	ProfileSettings	GetNumTagWins	Get the number of tag rounds won
+function	ProfileSettings	GetNumTagPlays	Get the number of tag rounds won
+function	ProfileSettings	GetNumTakedownWins	Get the number of takedown rounds won
+function	ProfileSettings	GetNumTakedownPlays	Get the number of takedown rounds won
+function	ProfileSettings	GetNumTrailBlazerWins	Get the number of trail blazer rounds won
+function	ProfileSettings	GetNumTrailBlazerPlays	Get the number of trail blazer rounds won
+function	ProfileSettings	GetNumPureRacerWins	Get the number of pure racer rounds won
+function	ProfileSettings	GetNumPureRacePlays	Get the number of pure racer rounds won
+function	ProfileSettings	GetNumSprintRacerWins	Get the number of sprint racer rounds won
+function	ProfileSettings	GetNumSprintRacePlays	Get the number of sprint racer rounds won
+function	ProfileSettings	GetNumCircuitRacerWins	Get the number of circuit racer rounds won
+function	ProfileSettings	GetNumCircuitRacePlays	Get the number of circuit racer rounds won
+function	ProfileSettings	GetNumTeamCircuitRacerWins	Get the number of team circuit racer rounds won
+function	ProfileSettings	GetNumTeamCircuitRacePlays	Get the number of team circuit racer rounds won
+function	ProfileSettings	GetNumCheckpointRushWins	Get the number of checkpoint rush rounds won
+function	ProfileSettings	GetNumCheckpointRushPlays	Get the number of checkpoint rush rounds played
+function	ProfileSettings	GetNumCoopDarePlays	Get the number of coop dare rounds played
+function	ProfileSettings	GetNumCoopDraftRacePlays	Get the number of coop draft race rounds played
+function	ProfileSettings	GetNumCoopTeamRacePlays	Get the number of coop team race rounds played
+function	ProfileSettings	GetNumCarSwaps	Get the number of car swaps the player has done
+function	ProfileSettings	GetIsSidebarCollapsed	Gets whether the sidebar should be collapsed or not
+function	ProfileSettings	SplitscreenRetryMission	Activate Splitscreen Retry
+function	ProfileSettings	SetSplitScreenCompetitveWinner	Set Splitscreen Competitive mode game Winner
+function	ProfileSettings	GetSplitScreenCoopHighScore	Gets splitscreen coop high score
+function	ProfileSettings	SetSplitScreenCoopHighScore	Sets splitscreen coop high score
+function	ProfileSettings	GetNumSuccessfulZapAttacks	Get the number of zap attacks the player has done
+function	ProfileSettings	SetNumSuccessfulZapAttacks	Set the number of zap attacks the player has done
+function	ProfileSettings	GetNumSuccessfulPublicZapAttacks	Get the number of zap attacks the player has done
+function	ProfileSettings	SetNumSuccessfulPublicZapAttacks	Set the number of zap attacks the player has done
+function	ProfileSettings	GetNumPureRaceTopThree	Get the number of times the player has placed in the top three in pure race
+function	ProfileSettings	SetNumPureRaceTopThree	Set the number of times the player has placed in the top three in pure race
+function	ProfileSettings	GetNumSprintRaceTopThree	Get the number of times the player has placed in the top three in sprint race
+function	ProfileSettings	SetNumSprintRaceTopThree	Set the number of times the player has placed in the top three in sprint race
+function	ProfileSettings	GetNumCircuitRaceTopThree	Get the number of times the player has placed in the top three in circuit race
+function	ProfileSettings	SetNumCircuitRaceTopThree	Set the number of times the player has placed in the top three in circuit race
+function	ProfileSettings	GetNumTakedownDropOffsReached	Get the number of times the player has reached the takedown dropoff
+function	ProfileSettings	SetNumTakedownDropOffsReached	Set the number of times the player has reached the takedown dropoff
+function	ProfileSettings	GetNumTimesTagged	Get the number of times the player has been tagged
+function	ProfileSettings	SetNumTimesTagged	Set the number of times the player has been tagged
+function	ProfileSettings	GetNumTimesRushdownCaptures	Get the number of times the player has captured the rushdown base
+function	ProfileSettings	SetNumTimesRushdownCaptures	Set the number of times the player has captured the rushdown base
+function	ProfileSettings	GetNumTorchCarries	Get the number of times the player has taken the torch
+function	ProfileSettings	SetNumTorchCarries	Set the number of times the player has taken the torch
+function	ProfileSettings	GetNumTugOfWarCaptures	Get the number of tug of wars captures
+function	ProfileSettings	SetNumTugOfWarCaptures	Set the number of tug of wars captures
+function	ProfileSettings	SetSwapModel	Sets a new swap model if it hasnt allready been allocated
+function	ProfileSettings	GetNumUniqueSwapModel	Gets the number of unique models used for the swap ability
+function	ProfileSettings	SetMultiplayerProgressionLevel	PARAM<1,num>Set the player's current MP progression level
+function	ProfileSettings	SetNumMultiplayerGamesWon	PARAM<1,num>Set the total number of multiplayer rounds won
+function	ProfileSettings	SetNumFaceOffsWon	PARAM<1,num>Set the number of face off rounds won
+function	ProfileSettings	SetNumFaceOffPlays	PARAM<1,num>Set the number of face off rounds won
+function	ProfileSettings	SetNumTugOfWarWins	PARAM<1,num>Set the number of tug of war rounds won
+function	ProfileSettings	SetNumTugOfWarPlays	PARAM<1,num>Set the number of tug of war rounds won
+function	ProfileSettings	SetNumBurningRubberWins	PARAM<1,num>Set the number of burning rubber rounds won
+function	ProfileSettings	SetNumBurningRubberPlays	PARAM<1,num>Set the number of burning rubber rounds won
+function	ProfileSettings	SetNumRushdownWins	PARAM<1,num>Set the number of rushdown rounds won
+function	ProfileSettings	SetNumRushdownPlays	PARAM<1,num>Set the number of rushdown rounds won
+function	ProfileSettings	SetNumTagWins	PARAM<1,num>Set the number of tag rounds won
+function	ProfileSettings	SetNumTagPlays	PARAM<1,num>Set the number of tag rounds won
+function	ProfileSettings	SetNumTakedownWins	PARAM<1,num>Set the number of takedown rounds won
+function	ProfileSettings	SetNumTakedownPlays	PARAM<1,num>Set the number of takedown rounds won
+function	ProfileSettings	SetNumTrailBlazerWins	PARAM<1,num>Set the number of trail blazer rounds won
+function	ProfileSettings	SetNumTrailBlazerPlays	PARAM<1,num>Set the number of trail blazer rounds won
+function	ProfileSettings	SetNumPureRacerWins	PARAM<1,num>Set the number of pure racer rounds won
+function	ProfileSettings	SetNumPureRacePlays	PARAM<1,num>Set the number of pure racer rounds won
+function	ProfileSettings	SetNumSprintRacerWins	PARAM<1,num>Set the number of sprint racer rounds won
+function	ProfileSettings	SetNumSprintRacePlays	PARAM<1,num>Set the number of sprint racer rounds won
+function	ProfileSettings	SetNumCircuitRacerWins	PARAM<1,num>Set the number of circuit racer rounds won
+function	ProfileSettings	SetNumCircuitRacePlays	PARAM<1,num>Set the number of circuit racer rounds played
+function	ProfileSettings	SetNumTeamCircuitRacerWins	PARAM<1,num>Set the number of team circuit racer rounds won
+function	ProfileSettings	SetNumTeamCircuitRacePlays	PARAM<1,num>Set the number of team circuit racer rounds won
+function	ProfileSettings	SetNumCheckpointRushWins	PARAM<1,num>Set the number of checkpoint rush rounds won
+function	ProfileSettings	SetNumCheckpointRushPlays	PARAM<1,num>Set the number of checkpoint rush rounds played
+function	ProfileSettings	SetNumCoopDarePlays	Set the number of coop dare rounds played
+function	ProfileSettings	SetNumCoopDraftRacePlays	Set the number of coop draft race rounds played
+function	ProfileSettings	SetNumCoopTeamRacePlays	Set the number of coop team race rounds played
+function	ProfileSettings	SetNumCarSwaps	PARAM<1,num>Set the number of car swaps the player has done
+function	ProfileSettings	SetIsSidebarCollapsed	Sets whether the sidebar should be collapsed or not
+function	ProfileSettings	GetNumGatesCrossed	PARAM<1,num>Gets the number of Gates crossed
+function	ProfileSettings	SetNumGatesCrossed	PARAM<1,num>Sets the number of Gates crossed
+library	UserData		
+function	Unlockables	SetUplayActionComplete	tell the code that the player has completed an Action
+function	Unlockables	IsUnlocked	Query whether a certain feature is unlocked
+function	Unlockables	RoyalPurpleOverride	Unlock royal purple shader set override
+library	UserData		
+function	SocialNetworks	PostToFacebook	Posts to facebook,5 parameteres Message,Text,URL,Caption,Description.
+function	SocialNetworks	PostToTwitter	Posts to Twitter,1 Param the message to post.
+function	SocialNetworks	PostToTwitterLocalized	Posts localized strings to Twitter,1 Param the message to post.
+function	SocialNetworks	PostToFacebookLocalized	Posts localized strings to  facebook,5 parameteres Message,Text,URL,Caption,Description.
+library	UserData		
+function	OnlineGameConfigLua	GetStringConfig	Gets the string value of a certain key from the config file.
+function	OnlineGameConfigLua	GetIntConfig	Gets the integer value of a certain key from the config file.
+function	OnlineGameConfigLua	GetFloatConfig	Gets the float value of a certain key from the config file.
+library	UserData		
+function	OnlinePass	checkUplayPassportActivation	check if the Uplay Passport has been activated
+function	OnlinePass	redeem	redeem
+function	OnlinePass	purchase	purchase
+library	UserData		
+function	Achievements	UnlockAchievement	Unlocks achievement or trophy for current user.
+function	Achievements	IsAchievementUnlocked	checks if achievement or trophy for current user is unlocked.
+function	Achievements	UnlockAllAchievements	Unlocks all the achievements or trophies for current user
+library	UserData		
+function	GuiSpooler	RequestTexture	PARAM<1,UID(High),Upper 32-bits of texture UID>PARAM<UID(Low),Lower 32-bits of texture UID>
+function	GuiSpooler	IsTextureLoaded	PARAM<1,UID(High),Upper 32-bits of texture UID>PARAM<UID(Low),Lower 32-bits of texture UID>
+function	GuiSpooler	ReleaseTexture	PARAM<1,UID(High),Upper 32-bits of texture UID>PARAM<UID(Low),Lower 32-bits of texture UID>
+library	UserData		
+function	UniqueSessionID	GenereateNewSessionID	Fires on the task that generates a new unique session id. One parameter the name of the callback when it finishes.
+library	UserData		
+function	TerrainMarker	Update	Create or update a terrain marker
+function	TerrainMarker	Delete	Delete a terrain marker
+library	UserData		
+function	TrafficEventsManager	SetEnable	Surprisingly sets the enable flag
+function	TrafficEventsManager	SetSpawnerEnable	sets the enable flag for the specified spawner
+function	TrafficEventsManager	SetAllSpawnerEnable	sets the enable flag for all of the spawners
+function	TrafficEventsManager	AddDynamicEventSpawner	Surprisingly adds a dynamic event spawner
+function	TrafficEventsManager	SetDynamicEventsGlobalProbability	Surprisingly sets the global probability
+function	TrafficEventsManager	SetSystemTimeSleepingBetweenEvents	Sets teh time the system will sleep between events
+function	TrafficEventsManager	AddDeliveryVan	Adds a delivery van point
+function	TrafficEventsManager	AddAccident	Adds an accident at the player position
+function	TrafficEventsManager	AddDeliveryVanAtLocation	Adds a delivery van
+function	TrafficEventsManager	SetLightTrails	Enables Disables the lightTRaisl of the events
+function	TrafficEventsManager	SetRacersDesiredSpeed	Sets the desired speed for racers
+library	UserData		
+function	AssistManager	Enable	Turn on/off
+function	AssistManager	IsEnabled	Are AI assists enabled?
+function	AssistManager	EnableDevGfx	Turn debug graphics on/off
+function	AssistManager	GetSettings	Get assist settings
+function	AssistManager	ChangeSettings	Modify assist settings
+library	UserData		
+function	AbandonedVehicles	Spawn	Spawns some vehicles and props, expects a table
+function	AbandonedVehicles	Clear	Clears all abandoned vehicles
+library	UserData		
+function	PlayerAnalysis	ToggleDebugGraphics	Toggles the debug graphics
+function	PlayerAnalysis	AddWeight	Add a weight to a metric
+function	PlayerAnalysis	SetDecay	Sets the decay rate
+function	PlayerAnalysis	SetNoScoreDecay	Sets the harsh decay
+function	PlayerAnalysis	SetAboveSoftCapDecay	Sets the above soft cap decay
+function	PlayerAnalysis	SetEnable	-DEBUG- Enables/disables a scoring system
+function	PlayerAnalysis	Reset	Reset the specified score
+function	PlayerAnalysis	ResetAll	Resets all scores
+library	UserData		
+function	Garages	SetEnabled	Enables/Disables the garage system
+function	Garages	AddGarage	Adds the garage with the given id
+function	Garages	UnlockGarage	Unlock the garage with the given id
+function	Garages	PurchaseGarage	Purchase the garage with the given id
+function	Garages	SpoolVehicleModel	Spool the vehicle model with the given id
+function	Garages	SetEnterGarageTime	Set the time threshold for the enter garage prompt to appear
+function	Garages	SetRepairCooldownTime	Set the repair cooldown time
+function	Garages	SetRewards	Set the willpower gain settings (time interval, reward per garage and vehicle)
+function	Garages	SetMoneyBags	Set the money bags multipliers
+function	Garages	GarageEntryRangeCallback	Called whenever a player enters/exits the garage hotspot
+function	Garages	GarageRepairRangeCallback	Called whenever a player enters/exits the garage repair range
+property	Garages	earnWillpower	Earning willpower from garages and vehicles enabled?
+library	UserData		
+function	ParkedVehicles	SetEnabled	Enables/Disables the parked vehicle system
+library	UserData		
+function	Getaway	Start	Start a new getaway
+function	Getaway	Stop	Stop a getaway
+function	Getaway	StopAll	Stop all active getaway
+function	Getaway	AddChaser	Add a chaser to a getaway
+function	Getaway	IsBeingChased	Is the vehicle being chased
+function	Getaway	IsAGetawayActive	Is a getaway active
+function	Getaway	NumberOfChasers	The current number of active chasers
+function	Getaway	NumberOfChasersShownOnTheHud	The current number of chasers shown on the HUD
+function	Getaway	IsAChaser	Is the vehicle a chaser chasing a getaway
+function	Getaway	IsRoomToAddAChaser	Is there room to add a new chaser to the getaway
+function	Getaway	SetSettings	Setup the settings
+function	Getaway	EnableHud	Turn on/off HUD
+library	UserData		
+function	Chase	Start	Start a new chase
+function	Chase	Stop	Stop a chase
+function	Chase	StopAll	Stop all active chases
+function	Chase	AddChaser	Add a chaser to a chase
+function	Chase	OKToOwnVehicle	Tell the chase that it is ok to own this vehicle
+function	Chase	IsAChaser	Is the vehicle a chaser chasing a getaway
+function	Chase	IsAChaseActive	Is a chase active
+function	Chase	GetZapReturnChaser	Return the closest chaser to the getaway that is not the current player vehicle
+function	Chase	SetSettings	Set the settings for the specifed chase
+function	Chase	EnableHud	Turn on/off HUD
+library	UserData		
+function	PatrollingVehicleManager	SetVehicleToWatch	Set the vehicle to watch
+function	PatrollingVehicleManager	GetVehicleBeingWatched	Get the vehicle being watched
+function	PatrollingVehicleManager	Enable	Turn on/off
+function	PatrollingVehicleManager	IsEnabled	Is the patrolling manager enabled
+function	PatrollingVehicleManager	EnableSpawning	Turn on/off spawning
+function	PatrollingVehicleManager	IsSpawningEnabled	Is the patrolling manager spawning enabled
+function	PatrollingVehicleManager	SetRequiredVehicleCount	Sets the required vehicle count
+function	PatrollingVehicleManager	RemovePatrollingVehicle	Remove a patrolling vehicle
+function	PatrollingVehicleManager	EnableHud	Turn on/off patrolling vehicle HUD
+library	UserData		
+function	SuspiciousVehicleManager	SetVehicleToWatch	Set the vehicle to watch
+function	SuspiciousVehicleManager	GetVehicleBeingWatched	Get the vehicle being watched
+function	SuspiciousVehicleManager	Enable	Turn on/off
+function	SuspiciousVehicleManager	IsEnabled	Is the suspicious vehicle manager enabled
+function	SuspiciousVehicleManager	SetCopModelUID	Set the cop model UID of the cop vehicle we are in
+function	SuspiciousVehicleManager	GetCopModelUID	Get the cop model UID of the cop vehicle we are in
+function	SuspiciousVehicleManager	SetDamageLimit	Set the damage level that a vehicle must be below to be included in the list
+library	UserData		
+function	FelonyVehicleSpawnManager	AddModelType	Add a model type to spawn in
+function	FelonyVehicleSpawnManager	ClearModelTypes	Add a model type to spawn in
+function	FelonyVehicleSpawnManager	SetExclusionZone	Excludes a radius zone from cop spawning
+library	UserData		
+function	localPlayerManagerReflection	addPlayer	Adds a player
+function	localPlayerManagerReflection	removePlayer	Removes a player
+function	localPlayerManagerReflection	setCurrentVehicle	Sets the player's current vehicle
+function	localPlayerManagerReflection	setPreviousVehicle	Sets the player's previous vehicle
+function	localPlayerManagerReflection	setPrimaryFelony	Sets the player's primary evader vehicle
+function	localPlayerManagerReflection	setInZap	Sets the inZap flag for the player
+function	localPlayerManagerReflection	setBlockDamageBarUpdate	Sets the blockDamageBarUpdate flag for the player
+function	localPlayerManagerReflection	setBlockWagglePrompt	Sets the blockWagglePrompt flag for the player
+function	localPlayerManagerReflection	setBlockAutoZap	Sets the blockAutoZap flag for the player
+function	localPlayerManagerReflection	setCurentControllerPreset	Reflect feedbackSystem.menusMaster.currentControllerPreset flag for each player
+function	localPlayerManagerReflection	setWaggleStickPrompt	Sets the wagglestickPrompt flag for the player
+function	localPlayerManagerReflection	setWreckAutoZapEnabled	Sets the wreckAutoZapEnabled flag for the player
+function	localPlayerManagerReflection	setWreckedAutoZap	Sets the wreckedAutoZap flag for the player
+function	localPlayerManagerReflection	setSelfRighting	Sets the selfRighting flag for the player
+function	localPlayerManagerReflection	setShowingEndScreen	Sets the showingEndScreen flag for the player
+function	localPlayerManagerReflection	setTutorialActive	Reflect the 'CutsceneFiles.tutorials.tutorialActive' flag
+function	localPlayerManagerReflection	setTaskObject	Sets the bHasTaskObject flag for the player
+function	localPlayerManagerReflection	update	Executes localPlayerManager:update() in C++
+function	localPlayerManagerReflection	debugCheckReflection	Check the reflected C++ variables are the same as Lua
+library	UserData		
+function	vehicleManagerCoreReflection	update	Main update loop, called from Lua.
+function	vehicleManagerCoreReflection	registerVehicle	Registers a vehicle.
+function	vehicleManagerCoreReflection	unregisterVehicle	Unregisters a vehicle.
+function	vehicleManagerCoreReflection	registerChaserWithChased	Registers a chasing vehicle with the chased.
+function	vehicleManagerCoreReflection	unregisterChaser	Unregisters a chasing vehicle from the chased.
+function	vehicleManagerCoreReflection	setDebugRequiredVehicles	Reflects the vehicleManagerTemplate:debugRequiredVehicles flag.
+function	vehicleManagerCoreReflection	setHasAIDelay	Reflects the vehicleManagerTemplate:hasAIDelay flag.
+function	vehicleManagerCoreReflection	setIsLocal	Reflects the vehicleManagerTemplate:isLocal flag.
+function	vehicleManagerCoreReflection	synchNetworkVars	Reflects all networkVars upon receiving a remote update.
+function	vehicleManagerCoreReflection	debugWhyNoOrphan	Why can't this vehicle become an orphan?.
+library	UserData		
+function	previewVehicleManagerReflection	setPreviewVehicle	Sets the current preview vehicle
+library	UserData		
+function	progressionSystemReflection	setActivityGameVehicle	Sets the current activity game vehicle
+library	UserData		
+function	gameStatusReflection	setSimulationPaused	Reflect gameStatus.simulationPaused
+library	UserData		
+function	Sfx	EmergencyFlareScale	
+function	Sfx	EmergencyFlareTransparency	
+function	Sfx	EmergencyFlareBrightness	
+function	Sfx	DRLFlareScale	
+function	Sfx	DRLFlareTransparency	
+function	Sfx	DRLFlareBrightness	
+function	Sfx	DumpEmergencyFlareData	
+function	Sfx	DumpDRLFlareData	
+function	Sfx	SetBlastCloud	
+function	Sfx	SetJerichoCityLightning	
+library	UserData		
+function	InteractiveIconsManager	addIcon	Adds an icon to the list
+function	InteractiveIconsManager	enable	Enables/disables the system
+function	InteractiveIconsManager	removeIcon	Removes an icon from the list
+function	InteractiveIconsManager	setDrawDistance	Sets the draw distance for all icons
+function	InteractiveIconsManager	setIconProximity	Sets the proximity distances for a type of icon
+function	InteractiveIconsManager	enableIconType	Enables/disables an icon type
+function	InteractiveIconsManager	clearBuffer	Clears the buffer of drawable icons
+library	UserData		
+function	LocalisationSpooler	RequestText	PARAM<1,Chapter,Which chapter to load>
+function	LocalisationSpooler	IsTextLoaded	PARAM<1,Chapter,Which chapter to query>
+library	UserData		
+function	Atlas	ClosestRoadIndexAndDistanceAlong	Returns the closest road index and distance along for the given position
+function	Atlas	AverageRoadWidth	Returns the average road width for the given road index
+function	Atlas	RoadTransformationAtDistanceAlongAndDistanceAcross	Returns the transformation for the given road index , distance along and distance across
+function	Atlas	IsRoadAnAlleyway	Returns a bool to say if given road index is an alleyway
+function	Atlas	DoesRoadHaveDrivingLanes	returns a bool to say if given road index has at least 1 normal lane
+function	Atlas	IsRoadAHighway	Returns a bool to say if given road index is a highway i.e. more than 3 lanes in either direction
+function	Atlas	RoadLength	Returns the length of the given road index
+function	Atlas	RoadName	Returns the name of the given road index
+function	Atlas	RoadPositionAtDistanceAlong	Returns the road position for the given road index and distance along
+function	Atlas	TableOfExitsAtExtremityOfRoadIndex	Fills a table of connected road indices and extremities for the given road index and extremity
+function	Atlas	NumberOfDrivingLanes	Returns the number of driving lanes for the given road index and direction
+function	Atlas	GetGroundInfo	Returns surface height and nomal at a given point
+function	Atlas	JerichoAlleyWayActive	Activate / Deactive the Jericho Alleyway
+library	UserData		
+function	Spawn	Spawn	See the Spawn lua page on the wiki for the params
+function	Spawn	ClearConeBehindVehicle	Delete traffic vehicles in a cone behind vehicle.
+library	UserData		
+function	spoolsystem	RequestRequiredEntity	PARAM<1,String,Package Name>PARAM<2,int,Entity ID>Requests that the spool system loads the specified entity from the specified package
+function	spoolsystem	RequestPreferredEntity	PARAM<1,String,Package Name>PARAM<2,int,Entity ID>Requests that the spool system loads the specified entity from the specified package
+function	spoolsystem	UnrequestEntity	Requests that the spool system unloads the specified entity from the specified package
+function	spoolsystem	IsEntityLoaded	Returns 'true' if the specified entity is loaded, and 'false' otherwise
+function	spoolsystem	IsEntityPresent	Returns 'true' if the specified entity is present, and 'false' otherwise
+function	spoolsystem	IsPackageReadyForRequests	Returns 'true' if the specified package is ready for new load requests, and 'false' otherwise
+function	spoolsystem	EnableCameraTracking	Follow Camera
+function	spoolsystem	DisableCameraTracking	Don't Follow Camera
+function	spoolsystem	IsStalled	Query if the spool system is stalled
+function	spoolsystem	IsLocationResident	<PARAM<1,vector position>Query if a location in the city is resident or not. Returns a boolean value.
+function	spoolsystem	RemoveSpoolCentre	PARAM<1,ID,Which spool centre>PARAM<2,Vector,Position>Remove a spool centre
+function	spoolsystem	AddSpoolCentre	PARAM<1,Vector,Position>PARAM2<2,Bool,True for non-sim centre (Optional)>Add a spool centre
+function	spoolsystem	UpdateSpoolCentre	PARAM<1,ID,Which spool centre>PARAM<2,Vector,Position>Update a spool centre
+function	spoolsystem	SetSpoolCentreAttachment	PARAM<1,ID,Which spool centre>PARAM<2,Vehicle>Spool centre attachement
+function	spoolsystem	SetNonSimSpoolCentre	PARAM<1,ID,Which spool centre>PARAM<2,Bool,True for non-sim centre>Sets the spool centre simulation state - if true, the game won't stall if the area around the spool centre isn't loaded
+function	spoolsystem	GetRegionCentre	PARAM<1,ID,Region number>Returns the region centre (X,Z)
+property	spoolsystem	position	Spool centre position
+library	UserData		
+function	TrafficSpooler	GetMaxSpooledVehicles	Returns the maximum number of vehicles that can be spooled at any one time
+function	TrafficSpooler	CanRequestVehicles	Returns bool. Determines if this player is allowed to request vehicles. Only the session host is allowed to do this
+function	TrafficSpooler	Busy	Returns bool, Determines if the traffic spooler is currently busy processing vehicles
+function	TrafficSpooler	RequestTrafficVehicles	PARAM<1,Table of Vehicle UIDs>Requests these vehicle are loaded for the traffic system to use
+function	TrafficSpooler	AllTrafficVehiclesLoaded	Returns TRUE if all requested traffic vehicles are loaded, FALSE otherwise
+function	TrafficSpooler	RequestMissionVehicle	PARAM<1,Vehicle UID,Vehicle to be loaded>Requests a specific vehicle resource is loaded
+function	TrafficSpooler	ReleaseMissionVehicle	PARAM<1,Vehicle UID,Vehicle to be unloaded>Requests a specific vehicle resource is unloaded
+function	TrafficSpooler	IsMissionVehicleLoaded	PARAM<1,Vehicle UID,Vehicle to be checked>Returns TRUE if the requested mission vehicle is loaded, FALSE otherwise
+function	TrafficSpooler	SetAsPlayerVehicle	PARAM<1,Vehicle UID>Flags the vehicle as the player's. This means it will remain resident even if it is unloaded in another way. Also loads the vehicle if it isn't loaded already
+function	TrafficSpooler	IsPlayerVehicleLoaded	Determine if the current player vehicle is loaded or not. If no player vehicle has been set it will return false
+function	TrafficSpooler	SetEncounterProbabilityTable	[TODO]
+function	TrafficSpooler	ExcludeTrailerModel	Excludes a certain model of trailers from traffic
+function	TrafficSpooler	ClearExcludedTrailerModelList	Clears the lsit of excluded models
+function	TrafficSpooler	SetIdleCallback	Sets the callback send when the traffic spooler goes idle
+function	TrafficSpooler	ClearIdleCallback	Clears the callback send when the traffic spooler goes idle
+function	TrafficSpooler	SetBusyCallback	Sets the callback send when the traffic spooler goes busy
+function	TrafficSpooler	ClearBusyCallback	Clears the callback send when the traffic spooler goes busy
+library	UserData		
+function	ReplaySystem	StartRecording	Switch to recording mode (or clear current replay and start a new one if we're already recording)
+function	ReplaySystem	PauseRecording	Temporarily pause recording
+function	ReplaySystem	UnPauseRecording	Resume recording after pausing
+function	ReplaySystem	IsRecording	Returns 'true' if the replay system is currently recording, and 'false' otherwise
+function	ReplaySystem	IsPlayingBack	Returns 'true' if the replay system is currently playing back, and 'false' otherwise
+function	ReplaySystem	StartScriptedCamera	Begins a period where the original game camera will be forced during playback rather than other camera types
+function	ReplaySystem	StopScriptedCamera	Ends a scripted camera previously started using StartScriptedCamera
+function	ReplaySystem	SetCameraSlowMo	Overrides the slow-motion value for the current camera being recorded
+library	UserData		

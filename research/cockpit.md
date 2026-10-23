@@ -1,0 +1,819 @@
+# Cockpit view: interior entry, steering wheel, gauges, head camera
+
+Updated: 2026-10-23
+
+How DSF draws the cockpit view, where Forza keeps the same data, and what
+`tools/cockpit.py` (`--cockpit` in `forza2dsf.py`, on by default in
+`port_car.py`) builds from it. Host: Saloon 15 (ASYM Desanne, spool 266,
+VEHC 3/4/5). Evidence levels follow `dngvehicles.md`. First in-game run
+and the fixes that followed: see "First in-game test and fixes" below.
+
+## What DSF draws (confirmed-static unless marked)
+
+**The interior entry (N+1000, kind 1) is the whole cockpit model.** Its
+MODL has four parts, all with one mask-64 LOD:
+
+| Part | Desanne contents | LOD link |
+| --- | --- | --- |
+| 0 | 7 submodels: cabin, seats, dashboard, steering wheel, door cards, roof lining, glass, and a low-detail copy of the outer body (hood, fenders, rear deck; one paint submodel spans z -2.48..2.38) | 0, chassis record |
+| 1, 2 | empty | 5 and 2 (rear and front bumper records) |
+| 3 | the gauge needles, one stride-20 submodel (Dials material) | 1, the gauge-cluster record |
+
+The full entry (kind 0) has no mask-64 LOD anywhere (all 32 parts checked),
+so the cockpit view takes nothing from it. Because the interior carries its
+own outer body for the window views, I take the cockpit view to draw the
+interior entry alone (hypothesis; the exterior entry would z-fight with
+the interior's copy of the hood).
+
+Interior materials (Desanne): two local MACOs, `_Interior` (stride 28,
+MODL value 5) and `_Dials` (stride 20, MODL value 1,
+`g_hAlphaTestRefValue` 0.5), both sampling the interior's own TEXC (512²
+DXT5, 10 mips). Shared engine materials: `10122b9653b14e2a` (paint, stride
+32; its UVs point at the plain texel of the vehicle chassis texture, like
+the exterior's paint), `0012cc8576953429` (glass, MODL value 7), TRIM
+`0012833b12fe1027`, `00128338d7fd1027`. One submodel uses the full entry's
+Chassis material. Eight stock interiors ship DXT1 textures, so DXT1 is
+accepted in kind-1 TEXCs.
+
+**The steering wheel is skinned, not a part.** Vertex semantic 9 (4 x u8,
+undecoded until now) is a hierarchy binding: `(record +0x34, record +0x2A,
+light index, 1)`. Pairs seen on the Desanne match UPVH records exactly,
+for example (20, 23) is record 68 (slot 20, model 23), (8, 9) record 36, a
+rear door. Chassis vertices carry (0, 0, 0, 1). The steering wheel's
+vertices in all three entries carry (1, 1, 0, 1): record 11, kind-0 part 30,
+hinge 0. Hinge 0's pivot is the wheel hub and its axis the steering column
+((0, 0.413, -0.911), 24.4° up from horizontal). The marker with role 0x2F
+(47) sits on the hub, its quaternion turns (0, 0, -1) onto the column.
+
+Fleet check (`out/cockpit/skin_survey.py`): for every stock car, take the
+hinge whose pivot is within 5 cm of the role-47 marker, build
+`(+0x34, +0x2A, 0, 1)` from its record, and compare it with the most common
+semantic-9 value among the interior's vertices on the wheel rim. 146 of 146
+match; 4 vehicles (123, 131, 243, 289) have no role-47 marker or no hinge
+there.
+
+**The UPVH "seat" table is the gauge table.** Each 0x30 entry is the needle
+pivot (vec4), the dial-plane quaternion (turns (0, 0, 1) onto the dial
+normal, which points into the dash), a u32 gauge id (1 tachometer, 2
+speedometer), a u32 sweep (degrees per 5000 rpm or per 80 mph; Desanne
+speedometer 95, tachometer 137) and a byte flag at +0x28. The needle
+submodel's semantic 8 (the vertex declaration calls it
+`DashboardInstrument`) is (u, v, gauge id, 0), so one submodel holds both
+needles and the engine rotates each about its own pivot. The table's
+records (type 18) are children of the record with role 185, whose hinge
+sits on the cluster. How the engine turns the needles: "Gauges" below.
+
+## Gauges (confirmed-static; confirmed-runtime 2026-10-22)
+
+The chain, traced in Ghidra (`out/ghidra/gauges*`):
+
+1. `FUN_008902C0` (UPVH parse) keeps a pointer to the gauge table at
+   spec+0x487C (count: header byte 0x2C, entries 0x30).
+   `FUN_0088E310` stores, per gauge record (type 18), the record index at
+   spec+0x47D4 + seat*4, and only for gauge ids below 8 (others get seat
+   -1). `FUN_00876770`/`FUN_00874700` copy the table pointer to the
+   render object (+0xABC) and the seven record indices to +0x104.
+2. Inputs, `FUN_00891670` (per player, an object of 0x98 bytes at
+   `[mgr+4] + 0x2251C`, `FUN_00887D70`), for gauge id = index + 1:
+   - id 1: engine rpm (`FUN_008C27D0`), moved at most 150 rpm per update,
+     clamped to [p40, p42] (idle, redline), times 0.0002 (`DAT_00E39EE0`);
+   - id 2: |speed| x 2.23704 (m/s to mph, `DAT_00DE2EB4`), clamped to
+     [p606, p605], times 0.0125 (`DAT_00DDB93C`). VO3D p605 defaults to 255
+     and p606 to 0; 46 stock cars set p605 (DeLorean 88, Eldorado 120:
+     their speedometers' last marks), one sets p606 (15);
+   - ids 3 to 7 get no input (always 0); cases 5 and 6 write other shader
+     constants, not gauge inputs.
+   `FUN_0087A8E0` copies the seven inputs into the render snapshot
+   (+0x944) along with a byte (+0x9D0) set when the lights are off.
+3. `FUN_008A4660` (and `FUN_008A4970`) build `g_InstrumentTransforms`
+   (shader constant, name hash 0xF8B7F22A in `DAT_00F400F8`; 8 matrices):
+   for each gauge record, `FUN_008A2610(entry, input, out)` makes the
+   matrix from the entry's quaternion and pivot and turns it by
+   `sweep x pi/180 x input` radians about the quaternion's z axis through
+   the pivot (`FUN_00514150`, D3DX convention: right-handed, so with the
+   normal pointing into the dash a positive angle is clockwise for the
+   driver). If the entry's +0x28 byte is set and the snapshot byte is
+   clear, the matrix is zeroed (the needle disappears); no stock car sets it.
+
+So the needle mesh's rest pose is 0 rpm / 0 mph, the u32 is needle degrees
+per 5000 rpm (tachometer) or per 80 mph (speedometer), and a
+counter-clockwise needle needs the dial normal flipped (the Pacer's
+tachometer and the Aston Martins' do exactly that: their quaternions turn
+(0, 0, 1) onto a normal pointing out of the dash). The tachometer never
+shows less than idle or more than p42; the speedometer stops at p605.
+
+Data check (`out/gauges/dump.py`, all stock cars in `out/gauges/stock.txt`):
+the stock 370Z (227) has 100 (speedometer) and 127 (tachometer); its dial
+runs 0 to 180 mph and 0 to 9000 rpm, which at these rates is 225 and 229
+degrees, and the Forza 370Z's needle poses sweep 226.6 and 230.4 degrees
+over the same marks. `cockpit.py gauges` (below) on stock 227 puts the
+needles on 0, 60 and 120 mph and 0.65, 3 and 6 thousand rpm at those
+readings (`img/gauges-stock-227.png`).
+
+### What the converter does with them
+
+`cockpit.gauge_ticks` reads `CarAttribs.xml` `<Gauges>`: per family
+(`Speed`, `Tach`, `Fuel`, ...) tick marks `(Param, Value)`, Param 0..1 from
+the min to the max needle pose, speed values in m/s, tach in rpm.
+`calibrate_gauge` takes angle = Param x the fitted min-to-max sweep and fits
+angle = a + b x value (mph or rpm) over the ticks, then:
+
+- gauge-table u32 = round(|b| x 80) or round(|b| x 5000);
+- b < 0 (a counter-clockwise needle): the dial normal is flipped;
+- the needle's min pose is turned by a about its pivot so it sits on 0
+  (370Z -0.4 and -0.2 degrees, M5 -2.1 and 0, Skyline -3.1 and -2.2);
+- VO3D p605 = the last speed mark in mph (370Z 180, M5 205 = 330 km/h,
+  Skyline 113 = 182 km/h), p606 = 0.
+
+Without a tick table the sweep is taken as 0 to 160 mph or 0 to 8000 rpm.
+DSF's needle is linear; Forza dials whose marks are not evenly spaced are
+fitted (worst tick off: 370Z 0.8 degrees, M5 4.2, Skyline 3.8, FH1 Raptor
+speedometer 12.9). Kilometre dials need nothing special: the fit is in mph.
+
+| Car | Speedometer (deg / 80 mph, host's) | Tachometer (deg / 5000 rpm, host's) | p605 |
+| --- | ---: | ---: | ---: |
+| NIS_370Z_10 (host 227) | 101 (100) | 128 (127) | 180 |
+| BMW_M5_12 (host 147) | 92 (88) | 146 (137) | 205 |
+| NIS_SkylineGTR_93 (host 229) | 170 (102) | 120 (130) | 113 |
+
+The host has two gauge entries (ids 2 and 1); fuel, temperature and other
+needles can't get a gauge without new UPVH records, and would get no input
+anyway (ids 3 to 7 stay at 0). They stay static: fuel, oil, water,
+temperature and voltage at their mid pose, boost and others at rest
+(`PARK_MID`). Forza's `digital_gauge` subsections (370Z 56 triangles, M5
+24, Raptor 4) draw digits with a shader; their static UVs land on unrelated
+parts of the dial texture (labels, a white block on the M5), so they are
+drawn as a blank near-black display (`DISPLAY_COLOUR`). A car whose
+cockpit has no speed or tach needle (a digital speedometer) simply has no
+vertices with that gauge id; the host's entry then draws nothing.
+
+`python tools/cockpit.py gauges <archive> --id N --png out.png --at 0,0 --at 60,4000`
+renders the cluster from the head camera with the needles turned exactly
+as the engine would at each (mph, rpm), clamps included (works on stock
+cars). Offline renders of the three test cars at 0/0, 40/2000, 60/5000
+and 100/8000: `img/gauges-offline-370z.png`, `img/gauges-offline-m5.png`,
+`img/gauges-offline-skyline.png`; every needle sits on the matching mark.
+
+In game (`in-game-tests.md`, "Gauges"): both needles move on all three
+cars and read within about a minor mark of the HUD speed
+(`img/gauges-ingame-clusters.png`).
+
+### Static needles in the 40-car build (2026-10-23)
+
+User report on `out/testdrive7`: no converted car's needles move. Cause
+(confirmed-static): `damage.DamagePlan.interior_uv1`, which writes decal
+UV1 into the rebuilt interior's 32-byte vertices, picked buffers by "semantic
+8 is four halves" from the VDCL. The needle buffers (stride 20) match that
+too, and their semantic 8 is DashboardInstrument (u, v, gauge id, 0), so
+the gauge id became a decal UV (0.15 to 0.98). In `out/testdrive7` all 34
+cars with needles had no vertex with id 1 or 2 (`out/gaugefix/needle_ids.py`);
+the other six have no needles (S2000, Agera, LFA and Range Rover clusters
+are digital; Durango and Express are stub cockpits). Every testdrive build
+from the first (`out/testdrive`, 2026-10-22 15:10) had it; `out/r7`
+(04:02 that day) did not, matching the earlier in-game confirmation. In game
+the needles of the Saleen S5S Raptor (ID 22) don't show at all at 30 and
+60 mph (run `host-20261023-174440`, `img/gauges-static-testdrive7-22.png`).
+
+Fix: `interior_uv1` skips semantic 8 with VDCL name hash 0x75FAD367
+(`DASHBOARD_INSTRUMENT`; every stock needle buffer, stride 20 or 16, has
+it, and no other interior buffer does). `cockpit.needle_gauge_ids` counts
+the ids in the finished interior, and `forza2dsf` raises if any is not 1
+or 2 and puts the counts in the report (`cockpit.interior.needle_ids`).
+
+Offline check of the rebuilt cars (`out/gauges/build`: S5S Raptor, M3 E30,
+370Z, Charger Daytona, M5; `out/gaugefix/build2`: Golf R, TT RS, SVT
+Raptor, Supra, Huayra): ids intact, and `cockpit.render_gauges` at 0/0,
+30/2000, 60/4000, 90/6000 (`out/gaugefix/offbig-*.png`, `img/gauges-offline-charger-fixed.png`,
+`offbig2-*.png`, `img/gauges-offline-golfr.png`) puts the Charger's and S5S Raptor's needles on the
+matching marks.
+
+Calibration across the 40 cars (`out/gaugefix/calib_survey.py`: DSF's
+linear needle against Forza's tick table interpolated linearly):
+
+- Within about 5 degrees from 20 mph up on most cars. Dials with
+  very uneven marks can't be matched by one linear needle: Golf R (+31
+  degrees at standstill, -19 at 60 mph; its km/h face has 0 to 20 spread
+  out) and TT RS (+20, -29 at 60 mph) read about 20 km/h when parked; SVT
+  Raptor +6 at 0 and -13 at 90 mph; Supra +12 at 60 mph, Charger tach +10
+  at 6000 rpm, S65 tach +18 at 6000 rpm.
+- Negative rest turns (M3 E30, RX-7, DMC-12 -14 degrees; Civic -10; 250
+  GTO tach -16) put the needle a little below the first mark at
+  standstill. On these dials the first mark is above 0 (a stop pin at 20
+  km/h or 20 mph).
+- No speedometer needle in the Forza cockpit: S65 AMG (digital) and 250
+  GTO (no speedometer); their host speed entries draw nothing.
+
+**Head camera.** FUN_0088DF80 case 0x14 (disassembled with capstone,
+`out/cockpit/88df80.asm`) calls FUN_0088D3B0 to find the first record of
+type 3 with role 0x2F and returns `(p430 - marker.x, p431, p432)`. Camera
+vectors are in a frame turned 180° about y: chase-camera z values are
+positive, and across the fleet `p432 ≈ 0.5 - marker.z` (bus: marker z 5.31,
+p432 -4.78; Desanne: 0.49, 0.03). So in model space:
+
+    eye = (marker47.x - p430, p431, -p432)
+
+Stock eyes sit 0.25 to 0.37 m above and about 0.5 m behind the steering
+marker. Only one stock car sets p430. `cockpit.head_camera()` computes this
+from an archive.
+
+The mirrors table (two vec4) holds the side mirror positions (records 37
+and 42, the mirror parts).
+
+## Forza side (confirmed-static)
+
+`<car>_cockpit.carbin` parses with `tools/carbin.py` unchanged, in both
+games (FH1 370Z; FM4 370Z, F40, Countach, F1, Golf R). LOD 0 only. Sections
+on the 370Z: `interior` (24,192 vertices), `a_pillar`, `seatL/R`,
+`steering_wheel`, `mirrorL/R`, `glassF/LF/RF`, `hooda`, `headlightL/R`,
+`cagerace` (an upgrade), and needles `speed_min/mid/max`,
+`tach_min/mid/max` (FM4 cars add `fuel_*`, `boost_*`). A section's offset
+is its bounding-box centre, not a pivot.
+
+The main carbin's `interior`, `seatL/R` and `steering_wheel` sections (LOD
+1 to 4) are part of `stock_sections`, so they go into the full and exterior
+bodies. That is right: the stock exterior also carries a low-detail cabin
+with a skinned steering wheel.
+
+Textures, by sampling each technique's UV triangles in every candidate
+(`out/cockpit/atlas_probe.py`):
+
+| Techniques | Texture |
+| --- | --- |
+| `gauge*`, `z_gauge_emissive_alpha`, `digital_gauge`, `badge` | `interior_LOD0.xds` (512²: dial faces, switch labels; alpha is the label cut-out mask). The needle swatch is red-orange (252, 45, 8) |
+| cabin sections' `leather`, `plastic`, `metal`, `headliner`, `bump_*`, `reflector`, ... | `interior_LOD0.xds` too: the cabin's leather, plastic and metal artwork and its colour swatches (corrected 2026-10-23, see "Cabin trims sample interior_LOD0"; this row used to say the strips along the bottom of `nodamage_LOD0`) |
+| outside sections (`a_pillar`, `hood*`, `mirrorL/R`): `chrome`, `black`, `plastic2`, ... | `nodamage_LOD0.xds` (2048²) |
+| lamps | `lights_LOD0.xds` |
+| `mirrorLeft/Middle/Right` | render targets in Forza |
+
+`forza_materials.classify_cockpit` encodes this.
+
+**Eye point.** `gamedb.slt` table `CameraOverrides` (FH1 167 rows, FM4 503)
+has `CamCockpitOffsetX/Y/Z`. It is the eye relative to the steering wheel
+centre with +z forward, so in Forza space (front at -z):
+
+    eye = wheel centre + (x, y, -z)
+
+On the 370Z (0.05, 0.22, -0.43) this puts the eye 0.28 m ahead of the
+headrest and 0.17 m under the headliner; the Countach, F1 (centre seat,
+x ≈ 0) and others land just as plausibly. The other z sign would put the
+eye ahead of the wheel. A third of the rows are all zero ("no override");
+for those the converter uses the median of the non-zero rows, (0, 0.21,
+-0.46). `CarAttribs.xml` has `DriverHandsOffset` and gauge tick tables but
+no camera.
+
+## What the converter does
+
+`cockpit.fit()` measures the Forza cockpit:
+
+- steering wheel: axis = least-spread direction of its vertices; rim = points
+  at 75% of the largest radius or more; centre = middle of the rim's extent
+  in the wheel plane (a vertex mean is biased by uneven tessellation);
+- needles: the min, mid and max poses are one mesh rotated about the pivot.
+  The dial normal is the least-spread direction of the displacements, and
+  each step is a 2D rotation whose fixed point is the pivot. Sweeps come out
+  clockwise, 230° to 290°;
+- side mirror glass centres; eye from `CameraOverrides`.
+
+`forza2dsf.convert(..., interior=)` with `ConvertOptions.cockpit`:
+
+1. Skins the main carbin's `steering_wheel` in the full and exterior entries
+   to the host's wheel record (semantic 9 = (1, 1, 0, 1) on the Desanne).
+2. Rebuilds the interior entry with `Placement`: the cockpit sections minus
+   `cagerace` and the headlights, needles without a DSF gauge as static
+   geometry (fuel and temperatures at mid, others at min; see "Gauges"), and the main carbin's remaining
+   body sections at LOD 5 as the outer shell. The steering wheel gets the
+   same skinning. Textured subsections use the host's `_Interior` material
+   through a new atlas in the interior's TEXC (DXT1, the host's size;
+   cabin sections from `interior_LOD0` at 4x the weight of `nodamage_LOD0`,
+   which only the outside sections use; there, alpha-0 fill is made near
+   black first and trim texels are lifted to a floor of 40, see "Light
+   cockpit trims"; label regions get a dark neutral where alpha is below
+   half). Paint,
+   glass and trim use the host interior's own shared materials. Speed and
+   tach needles (min pose) go into the host's needle part on `_Dials`, with
+   the gauge id in semantic 8 and an opaque solid cell of the Forza needle
+   colour.
+3. Drops triangles never seen from the head: an ID buffer per cube-map face
+   (256²) from the final head camera and a head-movement volume around it
+   (`CULL_OFFSETS`: 12 cm either side, 8 cm up, 6 cm down, 8 cm forward and
+   back) plus the Forza eye, glass transparent, everything within 25 cm
+   kept, plus one ring of neighbours (see "Holes in converted interiors").
+   On the IS F, 43,824 of 65,314 triangles stay.
+4. If the MDXN is over the limit (the largest stock interior, 0x12D000), it
+   vertex-clusters the cockpit with growing cells (4 to 30 mm), then moves
+   the shell to its coarsest LOD. None of the three test cars needed it.
+5. Patches the full entry's UPVH: the steering hinge pivot and axis, the
+   role-47 marker (position and quaternion), the speed and tach gauge
+   entries (pivot, dial quaternion, sweep from the tick table), the gauge cluster hinge pivot (mean
+   of the gauges), the mirrors table, and the driver/passenger seat markers
+   (roles 10/11: under the eye, host's eye-to-seat offset).
+6. Writes VO3D 430 to 432 from the eye: `p430 = marker.x - eye.x`,
+   `p431 = eye.y`, `p432 = -eye.z`.
+
+## Test archive
+
+`out/cockpit/ported-cockpit.sp` (`port_car.py`, host 266, defaults), lint
+clean, `chnk.py rebuild --verify` identical:
+
+| Car | Spool IDs (VEHC) | Interior MDXN | Triangles kept | Eye (DSF) | VO3D 430 / 431 / 432 | Eye source |
+| --- | --- | ---: | ---: | --- | --- | --- |
+| NIS_370Z_10 (FH1) | 304 / 1304 / 2304 (450-452) | 0x120000 | 33,364 of 62,522 | (0.337, 0.217, -0.172) | 0.050 / 0.217 / 0.172 | CameraOverrides |
+| BMW_M5_12 (FH1) | 305 / 1305 / 2305 (453-455) | 0x10C800 | 27,919 of 68,012 | (0.398, 0.218, -0.068) | 0 / 0.218 / 0.068 | zero row: median |
+| NIS_SkylineGTR_93 (FM4, RHD) | 306 / 1306 / 2306 (456-458) | 0x11B800 | 29,983 of 82,240 | (-0.396, 0.136, -0.096) | 0 / 0.136 / 0.096 | zero row: median |
+
+No clustering was needed (cell 0 mm). The Desanne's own values are 0 / 0.49
+/ 0.03 with the marker at (0.425, 0.164, 0.495). Interior atlas scales:
+370Z nodamage_LOD0 0.234x and interior_LOD0 0.469x, M5 0.176x / 0.352x,
+Skyline 0.369x / 0.738x. At the M5's scale, small white button icons blur
+into blobs.
+
+Renders in `out/cockpit/`: `<car>-kind1.png` (`vehicle_mesh.py --lod 64`),
+`<car>-combined.png` (top row interior entry, bottom row exterior plus
+interior; cutaways at the driver's plane, above the eye and behind it;
+yellow eye, cyan steering marker, magenta gauge pivots) and `<car>-eye.png`
+(perspective from the head camera, glass left out).
+
+## First in-game test and fixes (2026-10-22)
+
+Run `20261022-015851` (`out/cockpit/ported-cockpit.sp`): the cockpit camera
+switches to the converted interior, the head camera sits at the Forza eye,
+the steering wheel turns with the hands on it. Three defects, all found and
+fixed offline (game testing paused before a confirming run):
+
+1. **Nearly black cockpit** (`img/cockpit-v1-a.png`, `img/cockpit-v1-skyline.png`):
+   only the two needle pivots were visible. Cause (confirmed-static): the
+   fourth position component is a baked sky-light term (`vehicle-model.md`)
+   and every converted vertex had 0 except the needles (4096). Stock
+   interiors have median 0.21. Fix: `forza2dsf.vertex_sky` from Forza's
+   baked AO; converted interiors now have median 0.20 to 0.25. The same
+   zero made the converted bodies' paint black. Semantic 9's third byte
+   ("light") is 0 on every vertex of the Desanne's interior and glass, so it
+   isn't the cause.
+2. **Cracked windscreen**: glass UVs outside the clean band; see
+   `vehicle-model.md`. Interior glass is fixed the same way.
+3. **Driver's head through the roof** in chase view
+   (`img/skyline-chase-v1.png`, `img/fh1-370z-v2-textured.png`): the driver
+   model sits on the UPVH driver-seat marker (role 10, `upvh.md`), which kept
+   the Desanne's position (y -0.306, its eye 0.796 above), while the eye and
+   roofs moved down. Fix: `cockpit.patch_seats` puts the role-10 marker
+   under the new eye with the host's eye-to-seat offset, and role 11
+   (passenger) at the mirrored x. Offline check (`out/glassdbg/verify.py`,
+   head top taken as eye + 0.12 m): in the tested archive the Desanne seat
+   puts the head top at y 0.61 against roofs at 0.38 to 0.55 over the eye (through by 0.06 to
+   0.23 m, matching the screenshots); with the moved seat roof - eye is
+   0.23 / 0.33 / 0.25 m (stock: median 0.25, minimum 0.15). Part of the low
+   eye came from a placement bug: Forza bodies sat 0.14 to 0.23 m too low
+   on their wheels (`forza-sources.md`), now fixed, which lifts eye, roof
+   and seat together.
+
+## M5 windscreen streaks (2026-10-22)
+
+The M5's windscreen showed broad white streaks from the inside in fix2 and
+fix3 (`img/fix2-m5-cockpit.png`, `img/fix3-m5-cockpit.png`); the stock
+Desanne cockpit glass is clean (`img/fix3-desanne-stock-cockpit.png`).
+Ruled out offline: a second windscreen layer (the shell skips every section
+the cockpit carbin has, so the main carbin's glassF never lands in the
+interior), flipped or noisy normals (vertex normal within 1-2° of the face
+normal, median, on all three cars), the sky term (0.6-0.7, like the
+Desanne's interior glass), semantic 5's last two bytes (128/127 on stock
+glass too).
+
+Cause (confirmed-static; fix confirmed-runtime in run `20261022-030613`,
+`img/fix5-m5-cockpit.png`): the interior glass
+material `GLOBAL_Glass_LOD5` samples the same texture as the exterior glass,
+and the part of its clean band that stock interiors use is not uniform: a
+grey smear texture with long horizontal streaks at u 0-0.12, v 0-0.06,
+flat black below it (`vehicle-model.md`, "The glass texture"). Two thirds
+of stock interior glass triangles sit in the black block u 0.06-0.12,
+v 0.125-0.25. Converted interiors spread their glass over the whole clean
+band, so the smear rows landed on the windscreen. Fix4 squashed u into the
+0-0.12 strip but kept v 0-0.25, and the M5 then showed thinner diagonal
+streaks along the iso-lines of v (`img/fix4-m5-cockpit-streaks.png`). Fix5
+maps interior glass into the black block only
+(`forza2dsf.INTERIOR_GLASS_RECT`). The 370Z and Skyline showed fewer streaks
+because less of their windscreen area mapped onto the smear rows; the M5's
+glassF UVs run diagonally across the glass.
+
+Superseded (2026-10-23): the black block is discarded by the glass pixel
+shader (blue 0), so fix5 removed interior glass altogether, and in the
+shattered band it showed stretched shard streaks. The flat smear patch that
+followed never showed cracks; interior glass is now laid out like stock
+(next section).
+
+## Cockpit glass damage (2026-10-23, confirmed-runtime)
+
+User report on `out/testdrive7`: from the cockpit camera converted cars'
+windows never crack or shatter, while the exterior glass does. Cause and
+fix: `vehicle-model.md`, "Interior glass". In short, stock interior windows
+draw damage with their own geometry: crack-line slivers on rows of the
+glass texture that only show in states 1–2, and rim shards that only show in
+state 3, over a smear surface that shows in states 0–2 (on the windscreen
+only a frame round an open centre). Converted interiors had one uniform
+smear patch. `glass.InteriorGlass` now builds the three layers on every
+converted window, on that window's panel record.
+
+The stock layout also supports the hypothesis above that the cockpit view
+draws the interior entry alone: a stock interior windscreen is open in the
+middle and carries its own crack lines, which would be pointless over the
+exterior glass. In run `host-20261023-174148` the stock 227's windscreen
+centre stayed clear until shattered.
+
+**In-game test** (run `host-20261023-174148`, `out/cockpitglass/build`:
+IDs 1 M5 (host 147), 2 RX-7 (278), 3 370Z (227), 4 Challenger (173);
+probe IDs 147, 227, 1–4; `run-series.ps1 -GlassLadder -ShotSeconds 3`).
+`-GlassLadder` (new; `clonetest.lua` `GLASS_STEPS`) switches to the cockpit
+view on a clean car, then calls `GameVehicleResource.applyDamage
+{gameVehicle, damage = 0.25 / 0.5 / 1.0, location = (0, 1, 2), override}`
+at cockpit ticks 8, 16 and 24, then `fullVisualDamage` at 32, logging each
+step. Glass has no Lua call of its own (`lua-api.tsv`); `applyDamage`
+raises the glass panels' crack states. The game ran at about 150 fps, so
+a tick (30 frames) took 0.2 s and each step about 1.6 s (observe times in
+`events.json`): 2–3 cockpit shots per car. Results (`out/cockpitglass/run1-sheet.png`,
+`run1-m5-zoom.png`, `run1-227-vs-370z.png`, `run1-rx7-challenger.png`):
+
+- M5: crack lines across the windscreen's left half and the left door glass
+  after 0.25 (observe-11); after 0.5 smear gone and jagged shards along
+  both edges of the A-pillar (observe-12, state 3).
+- 370Z: faint top/left frame when clean (observe-22), a crack line after
+  0.25 (observe-23), shards along the windscreen's top edge after 1.0 and
+  fullVisualDamage (observe-24, -25). Stock 227 at 0.5: its top-left shard
+  cluster (observe-06).
+- RX-7 and Challenger: shards along the windscreen top after 1.0 (RX-7
+  observe-18, -19); the Challenger's clean and 0.5 shots show the frame
+  (observe-28, -29); after 1.0 the game dropped to the Shift view
+  (observe-30), as it did for the M5 after fullVisualDamage (observe-13).
+- No crash, no white streaks, no glass missing in the clean state.
+
+Not yet seen in game: the tuned shard sizes (teeth 1.2–3.5 cm every 3.5 cm,
+after this run; the run's build used 1.5–4 cm every 2.5 cm, which read as a
+continuous fringe on the 370Z's top edge where stock 227 shows a corner
+cluster). Stock 147's cockpit ladder ran before the first screenshot.
+Next run: the same ladder with `-ShotSeconds 1` (or more ticks per step),
+stock first.
+
+## Shared-trim garbage in cockpits (2026-10-22, fixed offline)
+
+Runs `20261022-040320` / `-040545` (`out/r7/ported-r7.sp`): the Mustang's
+wood steering rim and dash panel showed a scrambled pattern of white blocks
+and labels (`img/r7-mustang-cockpit-damaged.png`), the rear-view mirrors of
+the Mustang and Raptor and the Skyline's side mirror showed unrelated
+texture cells, a speckled band ran under the M5's cluster, and the
+Raptor's wheel top had white smears.
+
+Cause (confirmed-static): subsections the cockpit atlas can't hold went to
+the host interior's "trim" material with Forza's own UVs: mirror glass
+(`mirrorLeft/Middle/Right`, a render target in Forza) and tiling detail
+textures (the Mustang's `wood`, UVs beyond 0..1). `host_interior` picks
+that trim by stride and MODL flag, and on hosts without the usual trim it
+picked something else (Mustang host 193: its Chassis_LOD1 material, 4,231
+triangles; Raptor host 251: `10122b9753b14e2a`, 1,754), so the Forza UVs
+landed on arbitrary parts of those textures. The offline renderer draws
+shared materials flat, which hid it. Thin-strip and noise detail
+techniques (`bump_stitching`, `mottled`) smeared into neighbouring cells at
+the atlas's 0.2x scale. The UPVH mirror table only places the side
+mirrors; no stock interior material is a mirror (the shared material at
+stock mirror positions, `10122b9753b14e2a`, is also on grilles and rear
+details of 116 interiors), so mirrors are drawn flat.
+
+Fix (`cockpit.CockpitBinding`): those subsections use the interior's own
+material with one flat atlas cell: mirrors (46, 50, 56), wood (84, 48, 26),
+chrome/metal (150, 150, 155), else (34, 34, 36); `FORCE_FLAT` sends
+stitching and mottled there too. No converted interior uses a shared trim
+material any more (`out/cockpit2/shared_count.py`: only paint, glass and
+the local Interior/Dials). The Mustang's interior swatches are pure
+(249, 0, 0) at full alpha; nodamage texels now get brightness 0.85 and
+saturation 0.55 after the trim lift (`CockpitOptions.trim_tone`,
+`dsf_materials.Texturing.tone`), which turns that red into (148, 31, 31).
+Interior paint: `host_interior` took the largest stride-32 shared material as
+paint. On host 193 that is GLOBAL_LOD_Chrome (`a012f01306d57a2a`, 3,700
+triangles against 2,179 of paint), so the Mustang's shell and painted
+interior parts drew with chrome (the white-speckled bonnet from the
+cockpit, the red A-pillar on a black car). Every stock host checked (227,
+147, 229, 193, 251, 266) paints its interior with `10122b9653b14e2a`; the
+converter now always uses it (`cockpit.INTERIOR_PAINT`) and the engine
+trim `0012833b12fe1027` (193 has none; the old pick took its
+Chassis_LOD1). Only 193 was affected. Offline: `img/cockpit2-mustang-raptor-before-after.png` (left r7, right
+the fix), `img/cockpit2-offline-eyes.png` (all five). Not yet run in game.
+
+## Cars without a usable cockpit carbin (2026-10-22, offline)
+
+The 31-car batch fell back to the host interior for the FH1 Dodge Durango
+and Chevrolet Express: `cockpit.fit` stopped on "no steering_wheel section".
+Their `<car>_cockpit.carbin` is a placeholder: every section (interior,
+seats, needles, mirrors) is a 17-vertex box about 0.2 m wide, and the
+`_LOD0` atlases next to it hold another car's leftovers (the Durango's
+`nodamage_LOD0` shows Prius badges). The Ford Taurus SHO's has 8 triangles
+per section; three FH1 cars (Explorer, F350 Super Duty, Focus ZX4) have no
+cockpit carbin at all.
+
+`tools/cockpit_survey.py` runs `cockpit.fit` over every car on the discs
+(573 in `research/forza-roster.tsv`), reading the cockpit carbin, main
+carbin and CarAttribs straight from the ISOs, and writes
+`out/cockpit-survey/survey.tsv`. Before the fixes: 554 fitted, 13 stub
+cockpits and 3 without one failed, 2 stubs that passed the size test lacked
+a steering wheel (Taurus SHO, Kenworth T440), and the FM4 CTS-V and others
+lost their needles because the min/mid/max poses are welded differently
+(136/135/137 vertices).
+
+What `fit` does now (`main_sections` = the main carbin):
+
+- **Stub or missing cockpit carbin** (`is_stub`: under 1000 triangles, an
+  `interior` section under 100, or under 0.5 m across): the cabin comes
+  from the main carbin's `interior`, `seatL/R` and `steering_wheel` at their
+  finest LOD (`promote_lod`), textured from the main atlases
+  (`CockpitFit.lod0_atlases = False`). The driver's seat is left out of the
+  cabin and of the shell (`shell_skip`): in these main carbins it carries a
+  baked low-poly driver (Durango seatL 574 triangles, legs to the pedals,
+  against seatR's 54), whose head sat at the eye. No needles (the main
+  carbin has none); the dials are painted on the dash texture.
+- **Cockpit without a steering wheel**: the main carbin's wheel at its
+  finest LOD, drawn flat (its UVs don't fit the `_LOD0` atlases).
+- **Needle poses welded differently**: matched by triangle corners.
+- **Shell closing the windscreen**: some main carbins (Durango, Express,
+  F350, Beetle 04) close the window openings at LOD 5, so the interior's
+  outer shell blocked the view (`shell_blocks_view`: a 3 x 3 fan of rays
+  from the eye, 0 to 11 degrees up; blocked if two thirds stop within
+  2.5 m). `convert_interior` steps to finer shell LODs until it's open
+  (LOD 4 for all of them). Single rays gave false alarms on the windscreen
+  frit or sun strip (`black_glass`) of 40 cars.
+- `forza2dsf.convert` keeps the host interior only if `fit` still fails.
+
+Offline renders of the fallback cars (`out/cockpit4/fallbacks.sp`, IDs 304
+Durango, 305 Express, 306 F350, 307 Taurus SHO, 308 FM4 CTS-V):
+`img/cockpit-fallback-eyes.png`. The cabins are the main carbin's LOD 1:
+low detail but closed, with the steering wheel on the host's hinge and the
+eye from CameraOverrides or the fleet median.
+
+Survey after the fixes (`out/cockpit-survey/survey.tsv`, 573 cars): no
+failures. 555 fit their own cockpit (one needed shell LOD 4), 18 FH1 cars
+get the main carbin's cabin: A4 Avant 04, tour bus, Express 2500, PT
+Cruiser, Durango 99, Explorer 10, F350 Super Duty, Focus ZX4, Taurus SHO,
+Yukon XL, Kenworth T440, Leaf, Camry 07, Corolla DX 95, Prius 11, RAV4
+Sport 04, XC70 12, Beetle 04. A main-carbin wheel may use a `blur_*`
+technique, which the converter drops as wheel motion blur (Taurus SHO);
+`promote_lod` renames it to a dark trim. Warnings, not errors: 165 cars
+lack a speed or tach needle (84 race cars, digital clusters such as the
+458, MP4-12C, LFA, S65, and the 18 fallbacks; those simply get no
+needle), 20 race-car wheels under 12 cm radius, 12 near-vertical columns,
+the FM4 MC12 GT1 race car keeps a closed windscreen at every shell LOD,
+and the FH1 Fiat 595's main carbin doesn't parse (`carbin.py`: "no
+parsable sections found"; that car can't be ported at all, cockpit or
+not).
+
+## Holes in converted interiors (2026-10-22, fixed offline)
+
+Driving `out/testdrive` (40 cars), the user saw holes in the Lexus IS F
+(ID 12) and BMW M3 E30 (ID 1) interiors. No decimation ran (cell 0 mm on
+all 40) and the interior materials draw both faces (`rs_cullmode` 1, which
+is D3DCULL_NONE, on every host interior material checked), so the cull was
+the cause. Three faults in `visible_triangles` (confirmed-static, measured
+with `out/fixes/cull_check.py`):
+
+1. It culled from the Forza eye and 8 cm either side, but `camera_eye`
+   raises the head camera to see the wheel rim 7.9 degrees down: 3.4 cm on
+   the M3, 2.8 cm on the IS F, up to 8 cm (Raptor; Charger Daytona 7.1)
+   on the 40 test-drive cars. DSF's cockpit camera also bobs and turns
+   with the car.
+2. A triangle with a vertex behind a cube face's plane was skipped for that
+   face instead of clipped, so large dash, cluster-hood and floor
+   triangles next to the head never registered and were dropped unless a
+   neighbour saved them.
+3. Triangles smaller than a pixel at 256² covered no pixel centre and were
+   dropped even where visible.
+
+Fix: the cull runs from the final camera (`CockpitFit.camera`, set by
+`forza2dsf` from `camera_eye`) plus `CULL_OFFSETS` (12 cm either side, 8 cm
+up, 6 cm down, 8 cm forward and back) and the Forza eye; triangles crossing
+a face's near plane are clipped; triangles that cover no pixel centre count
+as seen when their depth is within 3% of what the pixel shows.
+
+Check: `cull_check.py` renders depth from 24 head poses (the camera, 10 cm
+either side, 5 cm up and 4 cm forward; ahead, 45 degrees left and right,
+down, both doors) of the full Forza cockpit and the culled one and counts
+pixels where the culled one shows something more than 2 cm farther (a
+hole). M3: 1,497 hole pixels before, 3 after (the clipping alone: 378);
+IS F: 1,960 before, 1 after. All 40 test-drive cars had holes under the
+old cull (median 1,497 hole pixels of 384,000; worst Charger Daytona 69
+5,748, Cuda 3,803, Challenger 2,854, S65 2,510, M5 E28 2,455; the two
+main-carbin fallbacks 95 and 25) and at most 23 after (300SL; edge
+noise). `out/fixes/cull_check_all.log`. Kept triangles grow by about half (IS F
+30,907 to 44,778; interior MDXN 0x123000 to 0x18B800; the batch's
+`--mdxn-limit 0x2C0000` covers it; under the stock 0x12D000 limit the
+decimation ladder would start). `python tools/cockpit.py holes <archive>
+--id N --png out.png` renders 4 head positions x 6 directions with glass
+drawn and empty pixels magenta (`img/holes-isf-head-views.png`); before and
+after: `img/holes-isf-before-after.png` (the cluster hood behind the wheel
+was missing in the left-look view), `img/holes-m3-before-after.png`.
+Remaining magenta in the M3's door views is a gap the Forza cockpit itself
+leaves under the seat.
+
+## Light cockpit trims (2026-10-22, fixed offline)
+
+Superseded 2026-10-23: the cabin trims never sampled `nodamage_LOD0`; see
+"Cabin trims sample interior_LOD0". The filler below now only affects the
+outside sections (A-pillars, mirrors, bonnet).
+
+Run `20261022-203317` (`out/glassfix/dngvehicles.sp`, ID 307): the FH1 Jeep
+Grand Cherokee SRT8's dashboard top, door cards and steering wheel drew
+light grey, while the real car's interior is black and the M5, S65 and Supra
+in the same run were dark (`img/jeep-light-cockpit-ingame.png`). The offline
+head-camera view (`cockpit.render`) of the same archive shows it too.
+
+Cause (confirmed-static): `nodamage_LOD0` is shared by the exterior
+`_lod0.carbin` and the cockpit. Its alpha-0 texels are the exterior's
+paint-through area, and their RGB is arbitrary fill. Most cockpit carbins
+point the bulk of their cabin trims at that fill anyway, not at the opaque
+trim strips (the 370Z is the exception), as `out/jeepfix/alpha_survey.py`
+shows by sampling every cabin vertex's texel:
+
+| Car | Cabin vertex texels with alpha < 16 | RGB there |
+| --- | ---: | --- |
+| NIS_370Z_10 | 3% | white |
+| BMW_M5_12 | 71% (dash `plastic` 99%, wheel `bump_leather` 100%) | white (254-255) |
+| CHR_JeepGCSRT8_12 | 68% (wheel `bump_*` 85-100%) | grey 163-197: the background of a "GRAND CHEROKEE" badge plate |
+| PEU_205T16_84 | 76% | grey 123 with red livery lines |
+
+The converter turned only white alpha-0 texels into the dark plain colour
+(`_convert_texel`: `a < 16 and min(r, g, b) > 200`, a rule meant for the
+exterior's white paint-through). That made the M5 right by luck. The Jeep's
+and the 205's grey fill passed through, and the trim lift (40) brightened
+it further: the Jeep's dash `plastic` came out at 89 on average, `bump_leather`
+at 151 and the wheel's swatches at 150. Forza draws these cabins dark whatever
+the fill (the M5's fill is white and its interior black), so the fill's RGB
+is not what the cockpit shaders show. They bind `CockpitInteriorHiSampler`,
+`CockpitAOSampler` and `PaintColor` (strings in
+`out/fh1/shaders/cockpit_bump_leather.fxobj`), but the exact colour path is
+undecoded.
+
+Fix (`CockpitOptions.filler`, `dsf_materials.Texturing.filler`,
+`forza_materials.fill_transparent`): before the cockpit atlas is planned,
+every `nodamage_LOD0` texel with alpha below 16 gets the RGB (10, 10, 12),
+near black like Forza's own trim strips (the Jeep's opaque plastic is
+(10, 12, 10)). After the lift and tone that is about (40, 40, 41), the colour
+white fill already became. Alpha is kept, so alpha-tested techniques still
+drop those texels. A swatch whose footprint is mostly fill (mean alpha
+below 128) takes the fill colour outright. The Jeep's wheel leather is a
+4-texel footprint about a third on badge letters, which would otherwise
+average to 72. Region edges where fill meets opaque strips no longer blend
+into grey seams either.
+
+Offline (`out/jeepfix/atlas_check.py`, triangle-weighted output colour):
+Jeep dash `plastic` 89 to 41, `bump_leather` 151 to 41, seats `leather` 111
+to 41, wheel `bump_plastic3`/`bump_leather`/`plastic` 150/141/61 to 41. Only
+opaque artwork (badges, the brake disc, the dial faces from interior_LOD0)
+keeps its colour (`img/jeep-cockpit-atlas-before-after.png`).
+
+Affected cars in `tools/batches/testdrive.txt` (cabin triangles on non-white
+fill): Peugeot 205 T16 76%, Jeep GC SRT8 44%, Ford SVT Raptor 1.4% (leather
+and stitching patches at 170-190), LFA 0.8% (windscreen `black_glass` frit
+at 176), Agera 1.3% (`black` at 62, barely lighter). The other 35 put their
+cabins on white fill or opaque strips; for them the change is invisible
+(plain (40, 40, 42) becomes (40, 40, 41)).
+
+Test build `out/jeepfix/dngvehicles.sp` (`port_batch.py build --id-policy
+high`, lint clean): 304 M5 (control), 305 Jeep, 306 205 T16, 307 Raptor,
+308 LFA. Head-camera views before and after
+(`img/jeep-cockpit-before-after.png`, rows Jeep, 205, Raptor, LFA, M5;
+before = `out/glassfix` for the Jeep and M5 and `out/testdrive2` for the
+others): the Jeep's wheel, dash and door cards and the 205's whole cabin
+go from light grey to dark, the Raptor and LFA change only in small trims,
+and the M5 is unchanged. Not yet run in game.
+
+## Cabin trims sample interior_LOD0 (2026-10-23, fixed offline)
+
+Runs `host-20261023-080616` and `-081503` (`out/testdrive4`): the FH1
+Challenger SRT8 392 (ID 8) drew its dashboard top, steering wheel and door
+cards white to light grey, and the FH1 Range Rover's (ID 21) steering-wheel
+rim and hub were pure white. Run `host-20261023-082633`: the FH1 Mustang Boss
+429 (ID 37) had a saturated red dash and red mirror frame. Forza draws all
+three cabins dark.
+
+Cause (confirmed-static): the converter read the cockpit's cabin trims from
+the wrong texture. The table under "Forza side" put `leather`, `plastic`,
+`metal`, `bump_*` and the rest on `nodamage_LOD0`, from luminance statistics
+(`out/cockpit/atlas_probe.py`) rather than artwork. Drawing each technique's
+UV triangles over both candidates (`out/whitetrim/uv_overlay.py`) settles it:
+in `interior_LOD0` the islands land on matching artwork, in `nodamage_LOD0`
+on unrelated content.
+
+| Car | interior_LOD0 (match) | nodamage_LOD0 (what the converter took) |
+| --- | --- | --- |
+| BMW_M5_12 | dial bezel rings, the pedal plate, the blue stitch strip, the swatch palette | white alpha-0 filler |
+| NIS_370Z_10 | the seat leather band at v 0.94-0.99 (the islands have its exact extent) | a Nissan emblem on black |
+| LR_RangeRover_12 | the analogue clock face, harman/kardon badge, AIRBAG label, speaker grille | badge artwork and white filler (the wheel's swatch sits on white (235)) |
+| DOD_ChallengerSRT8392_12 | a dark swatch palette (13, 13, 13) | a brushed brake-disc picture (160, 160, 168), which the lift raised to about 150 |
+| FOR_MustangBOSS429_70 | dark plastic and leather (34-52) | the red badge swatch (249, 0, 0) |
+| DOD_ChargerDaytona_69 (FM4) | wood-grain panel, steering-wheel hub and horn logo, clock | white filler |
+
+The shader library agrees. Every technique in the cabin sections
+(`interior`, `seatL/R`, `steering_wheel`, the needle sections) has a
+`cockpit_<name>` variant in `shaders_v16.fxobj` / `CustomCarShaders.xml`
+(`cockpit_plastic`, `cockpit_bump_leather`, `cockpit_headliner`,
+`cockpit_reflector`, ...; 79 names), and those bind
+`CockpitInteriorHiSampler`. On all 38 non-stub test-drive cars, no cabin-section technique outside
+`cagerace` lacks a variant (`out/whitetrim/cab_plain.py`). The outside
+sections seen through the windows (`a_pillar`, `hood*`, `mirrorL/R`) do not
+follow this: their `chrome`, `black`, `plastic2` UVs hit the exterior
+swatches of `nodamage_LOD0` (M5 A-pillar chrome on the white chrome swatch,
+where `interior_LOD0` has black; Mustang mirror chrome 220 vs 46), so they
+keep the exterior techniques and `nodamage_LOD0`. The M5, Jeep and 205 only
+looked right after "Light cockpit trims" because the filler turned
+everything into the same dark grey: the old output was luminance 40 to 46 for
+nearly every car's cabin, whatever its real colours.
+
+Fix:
+
+- `forza_materials.classify_cockpit(name, section)`: in cabin sections
+  (anything not matching `COCKPIT_EXTERIOR_SECTIONS`, `^(a_pillar|hood|mirror|glass|headlight|taillight)`)
+  every trim or textured technique maps to `interior_LOD0`; outside
+  sections keep `nodamage_LOD0`; `resolve` passes the section name to
+  classifiers marked `section_aware`. Stub cockpits (main-carbin cabin,
+  main atlases) keep the old technique-only mapping.
+- `CockpitOptions.atlas_weights` interior 2 to 4, and
+  `dsf_materials.Texturing` caps each family at 1:1. The cabin is now
+  almost all `interior_LOD0`, so it gets most of the atlas: 0.48x to 0.98x
+  on the six rebuilt cars, against 0.32x to 0.57x before.
+- `trim_lift`, `trim_tone` and `filler` stay on `nodamage_LOD0`, so they now
+  only touch the outside sections. `interior_LOD0` texels pass unchanged.
+  Dark cabins come out at luminance 25 to 60 (the Desanne's interior
+  texels: median 44).
+
+Survey (`out/whitetrim/atlas_check.py`, `atlas_check.txt`; mean output
+luminance of the cabin's atlas texels, triangle-weighted, old to new; the
+atlas images are in `out/whitetrim/atlas/`): every car with its own
+cockpit changes (38 of 40; the Durango and Express stubs don't). Groups:
+
+- Light or coloured cabins that should be dark, now fixed: Challenger SRT8 392
+  (dash 143 to 34, wheel 146 to 45, seats 140 to 21), Range Rover wheel (125
+  to 40), Mustang Boss 429 (red dash, wheel 100 to 54; the remaining 90 mean
+  is real chrome and brushed-metal trim), 300C (63-70 to 45-57).
+- Flat ~41 grey that now carries real artwork and colour: the rest. Most
+  stay dark (M3, Supra, S2000, WRX, Cuda, Firebird, 500 Abarth, Civic, 205,
+  Jeep, Veyron, GT-R, M5, M5 E28 dash, Skyline, DMC-12, Charger wheel and seats).
+  Some come out lighter because Forza's cabin is light or has much
+  bright metal: Range Rover seats and headliner (cream, 149), 300SL dash (151,
+  its painted and chrome dash), Agera (177, a brushed-aluminium console band),
+  Huayra (140-150), S5S Raptor (99-107), 2000GT (115), IS F wheel and seats
+  (~97), 250 GTO wheel (187, aluminium spokes), Charger interior (94, chrome
+  window and door trim).
+
+Offline evidence: `out/whitetrim/eye-before-after.png` (head camera,
+`cockpit.render`; left `out/testdrive4`, right `out/whitetrim/build`; rows
+Challenger, Range Rover, Mustang 429, Agera, 300SL, Charger Daytona),
+`out/whitetrim/m5-uv-interior.png`, `rr-uv-interior.png`,
+`charger-uv-interior.png`, `agera-uv-interior.png` (UV islands over
+nodamage_LOD0 left and interior_LOD0 right).
+
+Test build `out/whitetrim/build/dngvehicles.sp` (`port_batch.py build --car
+... --gui`, lint clean): 1 Challenger SRT8 392, 2 Range Rover, 3 Mustang Boss
+429, 4 Agera, 5 300SL, 6 Charger Daytona (FM4).
+
+In game (run `host-20261023-084652`, IDs 147, 1-6; partly confirmed-runtime):
+all six load and switch to the cockpit view. A Windows Firewall prompt for
+Driver.exe covered the middle of every screenshot, steering wheels
+included. Around it: the Challenger's dash top, vents and door trims are
+dark (observe-04/05; they were white-grey), the Range Rover's dash is dark
+(observe-08/09), the Mustang's dash and mirror frame are dark instead of red
+(observe-13/14), the Agera shows its silver vent rings (observe-18/19), and
+the Charger has chrome gauge bezels and window frames (observe-27/28). The
+HUD badges are stock ones (RAM 3500, Range Rover Sport...) because the run
+loads no gui.sp. Steering-wheel rims still need a run without the prompt.
+
+**Charger Daytona rear deck (not a converter bug).** In run
+`host-20261023-080616` (observe-15 to -17) the deck between the rear window
+and the boot lid showed as a brown trapezoid. Those triangles are `body`
+over alpha-0 texels in `nodamage` (paint shows), while the boot lid and tail
+panel are `body` over opaque black texels: the Daytona's black tail. Forza
+composes it the same way (`out/whitetrim/charger-forza-top-rear.png`,
+nodamage blended over a red test paint): body colour on the deck, black
+from the boot lid back. The brown is the car's dark bronze factory paint on
+the most sky-facing panel; roof and sides read darker at that angle.
+
+## Risks and open questions
+
+1. Whether the cockpit view draws only the interior entry (hypothesis). If
+   it also draws the exterior, the outer shell in the interior will z-fight.
+2. Gauges: DSF needles are linear in speed and rpm, so Forza dials with
+   unevenly spaced marks are only fitted (worst tick a few degrees off on
+   the test cars). The sweep is a whole number of degrees per 80 mph or 5000
+   rpm (under half a degree off at full scale). Only two gauges exist per
+   car; fuel and temperature needles are parked. The tachometer reads at
+   least idle (p40) even with the engine stopped, as on stock cars.
+   Taking angle = Param x sweep assumes Forza moves its needle linearly
+   from the min to the max pose; the mid pose isn't always half-way (FH1
+   Raptor speedometer 118 of 201 degrees), so Forza may run piecewise
+   through it, which would move some marks by a few degrees.
+3. The interior atlas is DXT1. Stock interiors use DXT1 textures, but none
+   for the `_Interior` material; it loses the alpha specular mask.
+4. Visibility culling assumes the camera stays near the eye. Looking back or
+   a head-bob larger than 8 cm sideways may show holes in hidden areas
+   (under the dash, behind the seats).
+5. Paint in the interior samples the chassis texture's plain cell, as stock
+   interiors do. Untested.
+6. Right-hand-drive Forza cars (the 1993 Skyline) put the wheel, marker and
+   eye on the right. The stock fleet has no right-hand-drive car, so the
+   head-camera code has never seen a negative marker x.
+7. Door cards don't follow the doors (stock door-card vertices are skinned
+   to the door records; the converter leaves them on the chassis).
+8. The trim lift (40) and the label cut-out colour are by eye from renders,
+   not from in-game lighting.

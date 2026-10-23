@@ -1,0 +1,151 @@
+id	class	model	category_name	body	doors	wheels	wheelbase	track	length	height	mass	gauges	engine	drive	year	granular	usable
+62	Tanner	Tanner	Tanner	muscle	2	4	2.7939	1.5506	4.853	1.172	1724.0	1,2	V8 291 kW	RWD	1970	0	yes
+118	Prison Van 01	Prison_Van	cop	van	4	4	3.5214	1.8999	6.103	2.574	4600.0	1,2	I6 diesel 260 kW	RWD	2010	0	yes
+119	Sports Coupe 04	Audi_S5_2010	sports car	coupe	2	4	2.7513	1.578	4.64	1.281	0.0	1,2	V8 260 kW	AWD	2010	0	yes
+123	Truck 09	Trailer_Flatbed	trailer	truck	0	4	1.2982	2.1322	13.604	2.738	8000.0		??			0	cockpit: no steering marker (record type 3, role 0x2F) in the hierarchy; interior: host interior has no _Interior material
+124	Saloon 02	Alfa_Romeo_159_Ti_2009	saloon	sedan	4	4	2.6943	1.5492	4.658	1.426	1680.0	1,2	V6 191 kW	FWD	2009	0	yes
+125	Sports Car 01	Alfa_Romeo_8C_2007	sports car	coupe	2	4	2.6469	1.5885	4.398	1.218	1600.0	1,2	V8 331 kW	RWD	2007	0	yes
+126	Classic 06	Alfa_Romeo_Giulia_TZ2_1965	classic	coupe	2	4	2.1818	1.334	3.731	0.97	650.0	1,2	I4 125 kW	RWD	1965	0	yes
+127	Mini Car 07	Alfa_Romeo_Giulietta_2010	mini car	hatch	4	4	2.6333	1.5254	4.359	1.539	1470.0	1,2	I4 turbo 173 kW	FWD	2010	0	yes
+128	Mini Car 01	Alfa_Romeo_Mito_2009	mini car	hatch	2	4	2.5101	1.472	4.065	1.412	1100.0	1,2	I4 turbo 88 kW	FWD	2009	0	yes
+129	Classic 01	Alfa_Romeo_Spider_Duetto_1966	classic	convertible	2	4	2.2654	1.3232	4.268	1.126	1000.0	1,2	I4 81 kW	RWD	1966	0	yes
+130	Old 01	AMC_Pacer_1980	classic	hatch	2	4	2.5406	1.595	4.383	1.266	1400.0	1,2	I6 67 kW	RWD	1980	1	yes
+131	Truck 02	Trailer_Tanker	trailer	truck	0	4	1.297	2.2498	12.646	2.994	8000.0		??			0	cockpit: no steering marker (record type 3, role 0x2F) in the hierarchy; interior: host interior has no _Interior material
+132	Classic 02	Aston_Martin_DB5_1964	classic	coupe	2	4	2.5057	1.4131	4.537	1.148	1500.0	1,2	I6 210 kW	RWD	1963	0	yes
+133	Sports Coupe 01	Aston_Martin_DB9_Volante_2010	sports car	convertible	2	4	2.7457	1.571	4.711	1.197	1750.0	1,2	V12 356 kW	RWD	2010	0	yes
+134	Luxury Saloon 04	Aston_Martin_Rapide_2010	sports car	sedan	4	4	2.9878	1.5882	4.995	1.293	2000.0	1,2	V12 350 kW	RWD	2010	0	yes
+135	Sports Coupe 03	Aston_Martin_V12_Vantage_2010	sports car	coupe	2	4	2.6001	1.518	4.359	1.133	1680.0	1,2	V12 380 kW	RWD	2010	0	yes
+136	Saloon 01	Audi_A4_2010	saloon	sedan	4	4	2.8147	1.5093	4.708	1.344	1500.0	1,2	I4 turbo 155 kW	FWD	2010	0	yes
+138	SUV 08	Audi_Q7_2010	SUV	suv	4	4	2.9911	1.622	5.076	1.619	2400.0	1,2	V8 261 kW	AWD	2010	0	yes
+139	Sports Car 02	Audi_R8_V10_2010	sports car	coupe	2	4	2.6487	1.6071	4.436	1.194	1650.0	1,2	V10 391 kW	AWD	2010	0	yes
+142	Rally 01	Audi_Sport_Quattro_S1_1985	rally/buggy	coupe	2	4	2.224	1.6148	4.406	1.789	1120.0	1,2	I5 turbo 350 kW	4WD	1985	0	yes
+143	Sports Coupe 06	Audi_TT_RS_2010	sports car	coupe	2	4	2.4516	1.5583	4.18	1.301	1450.0	1,2	I5 turbo 250 kW	AWD	2010	0	yes
+144	Luxury Saloon 02	Lincoln_Town_Car_Extended_2010	limousine	sedan	4	4	3.1419	1.6169	5.615	1.342	2000.0	1,2	V8 178 kW	RWD	2010	0	yes
+146	70's Muscle 06	Chevrolet_Camaro_SS_1968	70s muscle	muscle	2	4	2.7568	1.5261	4.657	1.143	1800.0	2	V8 220 kW	RWD	1968	0	yes
+147	Saloon 03	Cadillac_CTS_V_2010	saloon	sedan	4	4	2.8915	1.5332	4.871	1.353	1950.0	1,2	V8 sc 415 kW	RWD	2010	0	yes
+148	Saloon 12	Cadillac_DTS_2010	saloon	sedan	4	4	2.936	1.5809	5.275	1.346	1900.0	1,2	V8 218 kW	FWD	2010	0	yes
+149	Classic 03	Cadillac_Eldorado_1959	classic	coupe	2	4	3.2978	1.5266	5.673	1.217	2250.0	2	V8 257 kW	RWD	1959	0	yes
+150	SUV 02	Cadillac_Escalade_2007_civ	SUV	suv	4	4	2.9469	1.728	5.133	1.741	2600.0	1,2	V8 301 kW	RWD	2007	0	yes
+151	Sports Coupe 10	Cadillac_XLR_V_2009	sports car	coupe	2	4	2.669	1.582	4.521	1.163	1800.0	1,2	V8 sc 330 kW	RWD	2009	0	yes
+152	Truck 03	Cement_Truck	truck	truck	2	6			9.365	3.812	18000.0	1,2	V8 diesel 280 kW	RWD	2005	0	6 wheels
+153	Classic 04	Chevrolet_Bel_Air_1957	classic	coupe	2	4	2.9215	1.482	5.011	1.342	1500.0	2	V8 164 kW	RWD	1957	0	yes
+154	SUV 03	Chevrolet_Blazer_2001	SUV	suv	2	4	2.5559	1.3726	4.482	1.544	1800.0	1,2	V6 142 kW	4WD	2001	0	yes
+156	Pick Up 06	Chevrolet_C10_1965_Civ	pickup	pickup	2	4	2.9227	1.6409	4.789	1.533	1800.0	2	I6 123 kW	RWD	1965	0	yes
+158	Modern Muscle 02	Chevrolet_Camaro_SS_2010	modern muscle	muscle	2	4	2.8535	1.6003	4.843	1.23	1900.0	1,2	V8 318 kW	RWD	2010	0	yes
+159	70's Muscle 01	Chevrolet_Camaro_Z28_1986	70s muscle	muscle	2	4	2.5759	1.4867	4.897	1.173	1500.0	1,2	V8 142 kW	RWD	1986	0	yes
+160	70's Muscle 03	Chevrolet_Chevelle_SS_1970	70s muscle	muscle	2	4	2.8452	1.5581	4.981	1.205	1800.0	1,2	V8 336 kW	RWD	1970	0	yes
+161	Classic 10	Chevrolet_Corvette_1960	classic	coupe	2	4	2.6159	1.554	4.487	1.209	1450.0	1,2	V8 201 kW	RWD	1960	0	yes
+162	DriftCar 01	Chevrolet_Corvette_Z06_2009	drift car	supercar	2	4	2.685	1.6022	4.472	1.162	1550.0	1,2	V8 377 kW	RWD	2009	0	yes
+163	Modern Muscle 01	Chevrolet_Corvette_ZR1_2010_Civ	sports car	supercar	2	4	2.6851	1.612	4.514	1.161	1550.0	1,2	V8 sc 476 kW	RWD	2010	0	yes
+164	Old 06	Chevrolet_El_Camino_1973	70s muscle	pickup	2	4	2.943	1.4189	5.398	1.258	1800.0	1,2	V8 205 kW	RWD	1973	0	yes
+165	Saloon 16	Chevrolet_Impala_2006_Civ	saloon	sedan	4	4	2.807	1.5852	5.082	1.368	0.0	1,2	V6 157 kW	FWD	2006	0	yes
+167	Bus 02	City_Transit_Bus_2010	bus	bus	4	4	6.709	1.919	12.354	3.264	13500.0	1,2	I6 diesel 181 kW	RWD	2002	0	yes
+170	Van 02	Courier_2009	van	van	2	4	4.194	1.744	6.652	2.856	5700.0	1,2	I6 diesel 144 kW	RWD	2009	0	yes
+171	Classic 05	DMC_DeLorean_DMC_12_1981	70s muscle	coupe	2	4	2.4083	1.5915	4.223	1.051	1300.0	1,2	V6 101 kW	RWD	1983	0	yes
+172	70's Muscle 04	Dodge_Challenger_RT_1970	70s muscle	muscle	2	4	2.7939	1.5506	4.852	1.165	1724.0	1,2	V8 291 kW	RWD	1970	0	yes
+173	Modern Muscle 03	Dodge_Challenger_SRT8_2009	modern muscle	muscle	2	4	2.9454	1.588	5.048	1.334	1900.0	1,2	V8 317 kW	RWD	2009	0	yes
+175	70's Muscle 05	Dodge_Charger_RT_1969	70s muscle	muscle	2	4	2.9718	1.5223	5.28	1.253	1800.0	1,2	V8 246 kW	RWD	1969	0	yes
+176	Modern Muscle 05	Dodge_Charger_SRT_8_2009_civ	modern muscle	sedan	4	4	3.0481	1.6029	5.087	1.512	1900.0	1,2	V8 317 kW	RWD	2009	0	yes
+178	Old 02	Dodge_Monaco_1974	70s muscle	sedan	4	4	3.098	1.5867	5.604	1.467	2100.0	2	V8 172 kW	RWD	1974	0	yes
+179	Saloon 07	Dodge_Neon_2002	saloon	sedan	4	4	2.667	1.4146	4.43	1.357	1200.0	1,2	I4 98 kW	FWD	2002	0	yes
+180	Pick Up 01	Dodge_Ram_3500_Laramie_2010	pickup	pickup	4	4	4.0476	1.8699	6.277	1.781	3600.0	1,2	I6 diesel 261 kW	4WD	2010	0	yes
+181	Pick Up 02	Dodge_Ram_SRT10_2006	pickup	pickup	2	4	3.061	1.7027	5.358	1.717	2350.0	1,2	V10 373 kW	RWD	2006	0	yes
+182	Modern Muscle 04	Dodge_Viper_SRT_10_ACR_2009	sports car	supercar	2	4	2.5106	1.5566	4.48	1.141	1550.0	1,2	V10 447 kW	RWD	2009	0	yes
+183	Mini Car 04	Fiat_500_Abarth_1971	classic	hatch	2	4	1.837	1.203	2.953	1.249	550.0	1,2	I2 28 kW	RWD	1970	0	yes
+184	Mini Car 03	Fiat_500_Abarth_1971	mini car	hatch	2	4	2.2979	1.4261	3.669	1.524	1035.0	1,2	I4 turbo 99 kW	FWD	2008	0	yes
+185	Truck 05	Fire_Truck	fire truck	truck	4	4	5.0868	1.8822	9.491	2.576	15000.0	1,2	I6 diesel 266 kW	RWD	2007	0	yes
+186	Truck 01	Fire_Truck_Airport_Style	fire truck	truck	4	6			11.053	3.286	18000.0	1,2	I6 diesel 207 kW	RWD	1997	0	6 wheels
+187	Saloon 08	Ford_Crown_Victoria_1999	saloon	sedan	4	4	2.913	1.6203	5.402	1.357	1800.0	2	V8 150 kW	RWD	1999	0	yes
+188	70's Muscle 07	Ford_Gran_Torino_1974	70s muscle	muscle	2	4	2.8986	1.7035	5.348	1.205	1800.0	1,2	V8 164 kW	RWD	1974	0	yes
+189	Super Car 01	Ford_GT_2006	super car	supercar	2	4	2.7097	1.6381	4.635	1.087	1580.0	1,2	V8 sc 410 kW	RWD	2006	0	yes
+190	Saloon 09	Ford_Mustang_Convertible_2008	saloon	convertible	2	4	2.7384	1.554	4.796	1.512	1600.0	1,2	V6 157 kW	RWD	2008	0	yes
+191	70's Muscle 08	Ford_Mustang_Fastback_GT390_1968	70s muscle	muscle	2	4	2.743	1.5347	4.639	1.294	1800.0	2	V8 250 kW	RWD	1968	0	yes
+192	70's Muscle 09	Ford_Mustang_Mach_1_1973	70s muscle	muscle	2	4	2.769	1.5789	4.898	1.308	1800.0	1,2	V8 198 kW	RWD	1973	0	yes
+193	70's Muscle 10	Ford_Mustang_Shelby_GT500_1967	70s muscle	muscle	2	4	2.7437	1.453	4.746	1.183	1800.0	1,2	V8 265 kW	RWD	1967	0	yes
+194	Modern Muscle 06	Ford_Mustang_Shelby_GT500_2010	modern muscle	muscle	2	4	2.7461	1.5688	4.772	1.265	1800.0	1,2	V8 sc 403 kW	RWD	2010	0	yes
+195	Rally 03	Ford_RS200_1985	rally/buggy	coupe	2	4	2.5241	1.4892	4.03	1.249	1180.0	1,2	I4 turbo 433 kW	4WD	1985	0	yes
+196	Saloon 10	Ford_Taurus_SHO_2010	saloon	sedan	4	4	2.8791	1.6815	5.153	1.457	1900.0	1,2	V6 turbo 272 kW	AWD	2010	0	yes
+197	Van 07	GMC_C5500_2008	truck	truck	2	4	4.9269	2.2204	8.391	3.464	7000.0	1,2	V8 diesel 246 kW	RWD	2008	0	yes
+198	Van 03	GMC_Savana_2005	van	van	4	4	3.4323	1.7634	5.706	2.753	2400.0	2	V8 213 kW	RWD	2005	0	yes
+199	Pick Up 03	GMC_Sierra_1998	pickup	pickup	3	4	3.5744	1.5772	5.541	1.808	2100.0	1,2	V8 190 kW	4WD	1998	0	yes
+200	Van 04	GMC_Vandura_1983	van	van	4	4	3.1781	1.92	5.2	2.072	2200.0	2	V8 172 kW	RWD	1983	0	yes
+201	Bus 03	Tour_Bus_2003	bus	bus	1	6			14.04	3.423	16000.0	1,2	I6 diesel 207 kW	RWD	2003	0	6 wheels
+202	Classic 15	Hudson_Hornet_1951	classic	coupe	2	4	3.1438	1.5128	5.283	1.401	0.0	2	I6 127 kW	RWD	1951	0	yes
+203	SUV 06	Hummer_H3_H3X_2009	SUV	suv	4	4	2.8401	1.585	4.816	2.037	2200.0	1,2	I5 178 kW	4WD	2009	0	yes
+205	Classic 11	Jaguar_E_Type_1966	classic	coupe	2	4	2.4228	1.3401	4.475	1.072	1300.0	1,2	I6 198 kW	RWD	1966	0	yes
+206	Saloon 05	Jaguar_XF_R_2010	saloon	sedan	4	4	2.9379	1.4959	4.947	1.355	1900.0	1,2	V8 sc 380 kW	RWD	2010	0	yes
+207	Sports Coupe 08	Jaguar_XK_R_2010	sports car	coupe	2	4	2.752	1.5269	4.8	1.238	1800.0	1,2	V8 sc 380 kW	RWD	2010	0	yes
+208	SUV 07	Jeep_Wrangler_1988	off-roader	suv	3	4	2.3721	1.3982	3.923	1.646	1400.0	1,2	I6 84 kW	4WD	1988	0	yes
+210	Super Car 08	Lamborghini_Countach_LP400S_1980	super car	supercar	2	4	2.45	1.5054	4.247	0.99	1300.0	1,2	V12 263 kW	RWD	1978	0	yes
+211	Super Car 02	Lamborghini_Diablo_VT_1994	super car	supercar	2	4	2.6731	1.6198	4.459	1.019	1650.0	1,2	V12 367 kW	4WD	1994	0	yes
+212	Super Car 09	Lamborghini_Gallardo_LP560_2009	super car	supercar	2	4	2.56	1.6144	4.354	1.128	1550.0	1,2	V10 412 kW	AWD	2009	0	yes
+213	Classic 07	Lamborghini_Jalpa_1986	sports car	supercar	2	4	2.4507	1.5593	4.326	1.071	1550.0	1,2	V8 190 kW	RWD	1986	0	yes
+214	Super Car 06	Lamborghini_LP670_4_SV_2009	super car	supercar	2	4	2.6591	1.6671	4.733	1.066	1600.0	1,2	V12 500 kW	AWD	2009	0	yes
+215	Classic 13	Lamborghini_Miura_1972	sports car	supercar	2	4	2.4918	1.465	4.342	0.958	1300.0	1,2	V12 287 kW	RWD	1972	1	yes
+216	Super Car 10	Lamborghini_Murcielago_LP640_2009	super car	supercar	2	4	2.6498	1.6623	4.592	1.038	1600.0	1,2	V12 477 kW	AWD	2007	0	yes
+217	Rally 04	Lancia_Stratos_1974	rally/buggy	coupe	2	4	2.1799	1.4673	3.748	1.061	980.0	1,2	V6 142 kW	RWD	1974	0	yes
+221	Sports Coupe 09	Maserati_GranTurismo_2009	sports car	coupe	2	4	2.9414	1.5271	4.893	1.271	1900.0	1,2	V8 323 kW	RWD	2008	0	yes
+224	Super Car 03	McLaren_F1_1997	super car	supercar	2	4	2.7179	1.5006	4.286	1.112	1140.0	1,2	V12 461 kW	RWD	1997	0	yes
+225	Super Car 05	McLaren_MP4_12C_2010	super car	supercar	2	4	2.668	1.6046	4.497	1.16	1400.0	1	V8 turbo 441 kW	RWD	2011	1	yes
+226	Super Car 11	Mercedes_McLaren_SLR_2008	super car	supercar	2	4	2.6999	1.6068	4.663	1.184	0.0	1,2	V8 sc 460 kW	RWD	2008	0	yes
+227	Sports Car 06	Nissan_370Z_2009_Civ	sports car	coupe	2	4	2.5501	1.5705	4.245	1.234	1500.0	1,2	V6 248 kW	RWD	2009	0	yes
+228	Sports Coupe 02	Nissan_GT_R_2010	sports car	coupe	2	4	2.7806	1.5808	4.628	1.26	1750.0	1,2	V6 turbo 362 kW	AWD	2010	0	yes
+229	DriftCar 03	Nissan_Skyline_R33_1998	drift car	coupe	2	4	2.7242	1.4801	4.66	1.274	1550.0	1,2	I6 turbo 206 kW	AWD	1998	0	yes
+230	70's Muscle 11	Oldsmobile_Cutlass_442_1970	70s muscle	muscle	2	4	2.845	1.5804	5.14	1.23	1800.0	2	V8 276 kW	RWD	1970	0	yes
+231	Old 03	Oldsmobile_Vista_Cruiser_1972	70s muscle	wagon	4	4	3.046	1.6	5.475	1.408	2000.0	2	V8 224 kW	RWD	1972	0	yes
+232	Super Car 12	Pagani_Zonda_Cinque_2009	super car	supercar	2	4	2.7349	1.7113	4.493	1.169	1100.0	1,2	V12 506 kW	RWD	2009	0	yes
+233	70's Muscle 12	Pontiac_GTO_The_Judge_1970	70s muscle	muscle	2	4	2.8434	1.5948	5.152	1.222	1800.0	1,2	V8 273 kW	RWD	1970	0	yes
+234	70's Muscle 13	Pontiac_Lemans_1971	70s muscle	muscle	2	4	2.9471	1.5402	5.144	1.234	1800.0	1,2	V8 224 kW	RWD	1971	0	yes
+236	70's Muscle 02	Pontiac_Trans_Am_1980	70s muscle	muscle	2	4	2.7502	1.518	4.922	1.153	1800.0	1,2	V8 turbo 157 kW	RWD	1980	0	yes
+237	70's Muscle 14	Pontiac_Trans_Am_1975	70s muscle	muscle	2	4	2.75	1.5222	4.879	1.153	1800.0	1,2	V8 149 kW	RWD	1975	0	yes
+238	70's Muscle 15	Pontiac_Trans_Am_1977	70s muscle	muscle	2	4	2.746	1.5661	5.019	1.148	1800.0	1,2	V8 138 kW	RWD	1977	0	yes
+239	SUV 01	Range_Rover_Sport_2010	SUV	suv	4	4	2.7436	1.5526	4.758	1.641	2650.0	1,2	V8 sc 375 kW	4WD	2010	0	yes
+240	Super Car 04	RUF_CTR3_2010	super car	supercar	2	4	2.6255	1.5591	4.451	1.15	1400.0	1,2	F6 turbo 515 kW	RWD	2010	1	yes
+241	Classic 14	RUF_CTR_YellowBird_1987	sports car	coupe	2	4	2.2878	1.4478	4.238	1.195	1170.0	1,2	F6 turbo 345 kW	RWD	1987	1	yes
+242	Sports Car 09	RUF_RK_Spyder_2009	sports car	convertible	2	4	2.4149	1.4649	4.382	1.035	1400.0	1,2	F6 sc 324 kW	RWD	2009	1	yes
+243	Sports Car 08	RUF_RT12_2010	super car	coupe	2	4	2.3448	1.5009	4.463	1.258	1500.0		F6 turbo 478 kW	RWD	2010	1	cockpit: no hinge at the steering marker
+244	Sports Car 10	RUF_RK_Coupe_2010	sports car	coupe	2	4	2.4028	1.4446	4.378	1.149	1400.0	1,2	F6 sc 324 kW	RWD	2010	1	yes
+246	Bus 01	School_Bus_2009	bus	bus	3	4	6.5074	1.9005	9.993	2.976	11000.0	1,2	V8 diesel 153 kW	RWD	2009	0	yes
+248	Classic 08	Shelby_Cobra_427_1966	70s muscle	convertible	2	4	2.2859	1.3704	3.972	1.073	1070.0	1,2	V8 317 kW	RWD	1966	0	yes
+249	Mini Car 05	Aston_Martin_Cygnet_2010	mini car	hatch	2	4	1.9992	1.4623	3.076	1.379	1000.0	2	I4 73 kW	FWD	2011	0	yes
+250	Saloon 13	Chevrolet_Volt_2011	saloon	hatch	4	4	2.6655	1.5288	4.453	1.553	1600.0		electric	FWD	2011	0	yes
+251	Pick Up 05	Ford_F150_Supercrew_2010	pickup	pickup	4	4	3.6759	1.7042	5.865	1.704	2400.0	1,2	V8 231 kW	4WD	2010	0	yes
+252	Pick Up 04	Ford_F350_SuperDuty_2008	pickup	pickup	4	4	4.0501	1.648	6.284	1.869	2900.0	1,2	V8 224 kW	4WD	2008	0	yes
+255	Saloon 04	Audi_RS6_Avant_2008	saloon	wagon	4	4	2.8338	1.6192	4.934	1.355	2000.0	1,2	V10 turbo 426 kW	AWD	2008	0	yes
+257	Classic 16	VW_Beetle_1963	classic	hatch	2	4	2.4968	1.4796	4.335	1.393	800.0	2	F4 20 kW	RWD	1963	1	yes
+258	Mini Car 06	VW_Beetle_Convertible_2009	mini car	convertible	2	4	2.4979	1.4811	4.123	1.328	1500.0	1,2	I5 110 kW	FWD	2009	0	yes
+259	Old 05	VW_Camper_1965	classic	van	4	4	2.3999	1.4327	4.28	1.872	1450.0	2	F4 40 kW	RWD	1965	1	yes
+265	Cop Car 05	Chevrolet_Corvette_ZR1_2010_cop	cop	supercar	2	4	2.6851	1.612	4.52	1.331	1550.0	1,2	V8 sc 476 kW	RWD	2010	0	yes
+266	Saloon 15	ASYM_Desanne_2007_Civ	saloon	sedan	4	4	2.9356	1.6957	5.145	1.345	1800.0	1,2	V6 turbo 173 kW	RWD	2007	1	yes
+267	Cop Car 01	ASYM_Desanne_2007_cop	cop	sedan	4	4	2.9367	1.6956	5.268	1.501	1800.0	1,2	V6 turbo 201 kW	RWD	2007	0	yes
+268	Taxi 01	ASYM_Desanne_2007_taxi	taxi	sedan	4	4	2.9367	1.6956	5.145	1.69	1800.0	1,2	V6 turbo 173 kW	RWD	2007	1	yes
+269	Cop Car 04	Dodge_Charger_SRT_8_2009_cop	cop	sedan	4	4	3.0481	1.6029	5.177	1.515	1900.0	1,2	V8 317 kW	RWD	2009	0	yes
+270	Taxi 02	Dodge_Grand_Caravan_2009_taxi	taxi	van	4	4	3.0586	1.6055	5.104	1.975	2000.0	1,2	V6 130 kW	FWD	2009	1	yes
+271	Cop Car 02	Ford_Crown_Victoria_1999_cop	cop	sedan	4	4	2.913	1.6203	5.501	1.468	1800.0	2	V8 150 kW	RWD	1999	0	yes
+272	Taxi 03	Ford_Crown_Victoria_1999_taxi	taxi	sedan	4	4	2.913	1.6203	5.402	1.634	1800.0	2	V8 150 kW	RWD	1999	0	yes
+273	DriftCar 04	Pontiac_Solstice_GXP_2009_drift	drift car	convertible	2	4	2.415	1.5489	4.059	1.176	1337.0	1,2	I4 turbo 194 kW	RWD	2009	1	yes
+274	Mini Car 08	VW_Scirocco_2010_Civ	saloon	hatch	2	4	2.5795	1.5505	4.262	1.317	1400.0	1,2	I4 turbo 191 kW	FWD	2009	0	yes
+275	Rally 02	VW_Scirocco_2010_rally	rally/buggy	coupe	2	4	2.5795	1.5472	4.262	1.309	1400.0	1,2	I4 turbo 205 kW	FWD	2009	0	yes
+276	Van 06	Chevrolet_Box_Van_1989_Ambulance	ambulance	van	2	4	4.58	2.2197	7.648	3.016	4400.0	1,2	V8 diesel 246 kW	RWD	2008	0	yes
+277	Prison Van 02	Prison_Van_Fast	cop	van	4	4	3.5214	1.8999	6.103	2.574	3470.0	1,2	??			0	yes
+278	Sports Car 07	Pontiac_Solstice_GXP_2009_civ	sports car	convertible	2	4	2.415	1.5489	4.017	1.17	1337.0	1,2	I4 turbo 194 kW	RWD	2009	1	yes
+279	Sports Coupe 05	Bentley_Continental_SuperSports_2010	sports car	coupe	2	4	2.7448	1.6156	4.792	1.265	2250.0	1,2	W12 turbo 463 kW	AWD	2010	0	yes
+280	Cop Car 03	Cadillac_Escalade_2007_cop	cop	suv	4	4	2.9469	1.728	5.302	2.048	2600.0	1,2	V8 301 kW	RWD	2007	0	yes
+281	SUV 05	Dodge_Grand_Caravan_2009_civ	SUV	van	4	4	3.0586	1.6055	5.104	1.634	2000.0	1,2	V6 130 kW	FWD	2009	1	yes
+282	Taxi 04	Chevrolet_Impala_2006_taxi	taxi	sedan	4	4	2.807	1.5852	5.082	1.688	0.0	1,2	V6 157 kW	FWD	2006	0	yes
+284	Truck 06	Garbage_Truck	truck	truck	2	6			9.98	2.88	18000.0	1,2	I6 diesel 147 kW	RWD	1992	0	6 wheels
+285	Truck 08	Old_Rig	rig	truck	2	6			6.582	4.251	10885.0	1,2	V12 diesel 218 kW	RWD	1978	1	6 wheels
+286	Truck 11	Modern_Rig	rig	truck	2	6			9.084	3.767	10885.0	1,2	V8 diesel 280 kW	RWD	2007	0	6 wheels
+287	Pick Up 07	Chevrolet_C10_1965_TowTruck	tow truck	pickup	2	4	3.4301	1.6464	5.48	2.043	3900.0	2	I6 123 kW	RWD	1965	0	yes
+288	Pick Up 08	GMC_Sierra_1998_JackedUp	pickup	pickup	3	4	3.5553	1.449	5.653	2.148	2100.0	1,2	V8 190 kW	4WD	1998	0	yes
+289	Truck 12	Trailer_Transporter	trailer	truck	0	6			13.407	2.693	8000.0		??			0	6 wheels; cockpit: no steering marker (record type 3, role 0x2F) in the hierarchy; interior: host interior has no _Interior material
+290	Truck 07	Stake_Truck	truck	truck	2	6			8.809	2.958	16000.0	1,2	V8 diesel 280 kW	RWD	2005	0	6 wheels
+291	Truck 10	Tanker_Truck	truck	truck	2	6			9.075	3.039	17000.0	1,2	V8 diesel 280 kW	RWD	2005	0	6 wheels
+292	Buggy 02	Buggy_Baja	rally/buggy	buggy	2	4	2.4996	1.6683	4.004	1.446	800.0	1,2	F4 84 kW	RWD	1963	1	yes
+293	Buggy 01	Buggy_Boxy	rally/buggy	buggy	0	4	2.6036	1.7966	3.752	1.664	800.0		V8 221 kW	RWD	1984	0	yes
+298	Truck 15	Ramp_Truck	truck	truck	2	6			11.645	3.141	15000.0	1,2	V8 diesel 280 kW	RWD	2005	0	6 wheels
+299	DriftCar 05	Nissan_370Z_2009_Drift	drift car	coupe	2	4	2.5501	1.5915	4.316	1.246	1500.0	1,2	V6 248 kW	RWD	2009	0	yes
+300	Luxury Saloon 03	Bentley_Arnage_T_2005	saloon	sedan	4	4	3.0698	1.5961	5.333	1.364	2600.0	1,2	V8 turbo 336 kW	RWD	2005	0	yes
+301	Security Van	Security_Van	security van	van	4	4	3.5214	1.8999	6.066	2.573	4600.0	1,2	I6 diesel 260 kW	RWD	2010	1	yes
+302	Cop Car 06	Dodge_Monaco_1974_Cop	cop	sedan	4	4	3.098	1.5867	5.726	1.532	2100.0	2	V8 172 kW	RWD	1974	0	yes
+303	70s Muscle 16	Dodge_Charger_RT_1969	70s muscle	muscle	2	4	2.9718	1.5223	5.28	1.253	1800.0	1,2	V8 246 kW	RWD	1969	0	yes

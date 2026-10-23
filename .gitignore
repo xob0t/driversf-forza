@@ -1,0 +1,6 @@
+_ref/
+out/
+__pycache__/
+assets/*.iso
+tools/game/lua/dsfforza/ported.lua
+tools/game/lua/dsfforza/hud.lua
