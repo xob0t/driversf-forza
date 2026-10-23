@@ -392,15 +392,16 @@ below eye level (median of 146, `out/eye/wheel_view.py`); ours were 6.5°
 (370Z), 3.3° (M5), 1.9° (Skyline), so the wheel filled half the screen.
 `cockpit.camera_eye` now raises the camera only; to confirm in game.
 
-### Static needles in testdrive7 (run `host-20261023-174440`, confirmed-runtime)
+### Static needles in testdrive7 and the fix (runs `host-20261023-174440`, `-234741`, confirmed-runtime)
 
 `out/testdrive7` with `-HoldMph '30,60,90'`, IDs 147, 22, 1, 32 (the game
 exited during ID 1). At 30 and 60 mph the Saleen S5S Raptor (22) shows its dial faces
 but no speedometer or tachometer needle (`img/gauges-static-testdrive7-22.png`).
 Cause: `damage.interior_uv1` overwrote the needles' gauge ids (`cockpit.md`,
 "Static needles in the 40-car build"). The fixed build `out/gauges/build`
-(1 S5S Raptor, 2 M3 E30, 3 370Z, 4 Charger Daytona, 5 M5) has not run yet:
-host runs were paused.
+(1 S5S Raptor, 2 M3 E30, 3 370Z, 4 Charger Daytona, 5 M5), run
+`host-20261023-234741`: needles draw and move on all five, tracking the
+forced 30/60/90 mph (`img/gauges-ingame-fixed.png`).
 
 ### Gauges (runs `20261022-035058`, `20261022-035518`, confirmed-runtime)
 

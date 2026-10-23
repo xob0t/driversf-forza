@@ -185,8 +185,18 @@ Offline check of the rebuilt cars (`out/gauges/build`: S5S Raptor, M3 E30,
 Raptor, Supra, Huayra): ids intact, and `cockpit.render_gauges` at 0/0,
 30/2000, 60/4000, 90/6000 (`out/gaugefix/offbig-*.png`, `img/gauges-offline-charger-fixed.png`,
 `offbig2-*.png`, `img/gauges-offline-golfr.png`) puts the Charger's and S5S Raptor's needles on the
-matching marks. Not yet confirmed in game: the run on `out/gauges/build`
-(IDs 1 to 5, `-HoldMph '30,60,90'`) was stopped when host runs were paused.
+matching marks.
+
+In game (run `host-20261023-234741`, confirmed-runtime): `out/gauges/build`
+with `-HoldMph '30,60,90'`, IDs 147, 1 to 5. Every car's speedometer and
+tachometer needles now draw and turn with speed and rpm
+(`img/gauges-ingame-fixed.png`; HUD readings in the labels). S5S Raptor
+near 30 at 29 mph, then about 60 and 90 on its 0 to 240 face; 370Z near
+30 and 95 at 29 and 94 mph; the M5's km/h dial low at 29 mph and near the
+top of the arc at 84; Charger and M3 E30 needles move too (partly hidden
+by the rim and hands). The tachometers rise with each forced speed. The
+HUD and the shots lag each other by a frame or two, so this is a
+plausibility check, not a tick-by-tick one.
 
 Calibration across the 40 cars (`out/gaugefix/calib_survey.py`: DSF's
 linear needle against Forza's tick table interpolated linearly):
