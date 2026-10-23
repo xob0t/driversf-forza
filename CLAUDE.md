@@ -25,8 +25,9 @@ Research notes are in `research/` (read the ones for your area first).
   Idle priority on two cores; keep `--jobs` low then.
 - In-game tests go through `tools\wsb\run-series.ps1` (read it and
   `tools\wsb\guest\run-test.ps1`). Runs are serialised by a mutex; never kill
-  `Driver.exe` or another run's processes. Host runs (`-OnHost`) take over the
-  screen; use them only when the user allows. While `out\wsb-pause` exists,
-  host runs wait.
+  `Driver.exe` or another run's processes. Prefer `-Vm` (headless VMware
+  guest, never touches the user's screen; its own mutex). Host runs
+  (`-OnHost`) take over the screen; use them only when the user allows.
+  While `out\wsb-pause` exists, host runs wait.
 - Never modify the installed game, `D:\Games\Driver San Francisco`, except
   through `tools\install.ps1` when asked.
