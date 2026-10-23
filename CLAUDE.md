@@ -10,7 +10,9 @@ Research notes are in `research/` (read the ones for your area first).
   (`fix/cockpit-glass`, `feat/engine-sound`, ...), never in the main checkout.
 - In a new worktree run `.\tools\worktree-setup.ps1` once. It links the
   untracked inputs from the main checkout: `assets\*.iso`, `out\stock`,
-  `out\cache`, `_ref`.
+  `out\cache`, `_ref`. Before the worktree is removed, run
+  `.\tools\worktree-setup.ps1 -Unlink`: some delete tools follow junctions
+  and would empty the main checkout's folders.
 - Commit at checkpoints with clear messages. When the task is done, push the
   branch and open a PR against `master` with `gh pr create`: what changed,
   why, how it was verified (run folders, screenshots), what is open. Report
