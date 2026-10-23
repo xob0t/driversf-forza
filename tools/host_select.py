@@ -266,13 +266,18 @@ def survey(dsf: Path = DEFAULT_DSF, lua: Path | None = DEFAULT_LUA, cache: Path 
     key = f"{SURVEY_VERSION}:{dsf.resolve()}:{stat.st_size}:{int(stat.st_mtime)}:" + (
         f"{lua.stat().st_size}" if lua and lua.exists() else "-")
     if cache and cache.exists() and not refresh:
-        data = json.loads(cache.read_text())
+        try:
+            data = json.loads(cache.read_text())
+        except (OSError, ValueError):   # cut short: survey again
+            data = {}
         if data.get("key") == key:
             return data["hosts"]
     hosts = _survey(dsf, lua if lua and lua.exists() else None)
     if cache:
+        # Atomic: port_batch workers (and other builds sharing out/cache) read it meanwhile.
+        from port_car import write_atomic
         cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps({"key": key, "hosts": hosts}, indent=0))
+        write_atomic(cache, json.dumps({"key": key, "hosts": hosts}, indent=0).encode())
     return hosts
 
 
@@ -435,13 +440,12 @@ class ForzaInfo:
     notes: list[str] = field(default_factory=list)
 
 
-def forza_info(media: str, gamedbs: dict[str, Path] | list[Path] | None = None, game: str | None = None,
+def forza_info(media: str, gamedbs: dict[str, Path] | None = None, game: str | None = None,
                folder: Path | None = None) -> ForzaInfo:
-    """What host selection needs about a Forza car, from gamedb.slt (the game the car is
-    taken from first). `folder`: the extracted car, for a door-count hint from the carbin's
-    glass sections."""
-    dbs = gamedbs if isinstance(gamedbs, dict) else {None: p for p in (gamedbs or [])} if gamedbs else dict(
-        DEFAULT_GAMEDBS)
+    """What host selection needs about a Forza car, from gamedb.slt ({game: path}, the
+    game the car is taken from first; None: out/db). `folder`: the extracted car, for a
+    door-count hint from the carbin's glass sections."""
+    dbs = gamedbs if isinstance(gamedbs, dict) else dict(DEFAULT_GAMEDBS)
     order = sorted(dbs.items(), key=lambda kv: (kv[0] != game,))
     row = body = None
     used = None
