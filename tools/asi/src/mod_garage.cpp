@@ -965,6 +965,37 @@ int window_move(int* index)
 
 void debug_resolve(uint8_t* screen);
 
+int g_last_index = 0;
+int g_shift_mode = 0;   // [garage] debug_shift: how a window move tells the script its new index
+
+// thiscall [screen+4]->vfunc 0x18(name, value): what the car list uses to set
+// script variables ("itemStateChanged", "vehicleStats_Top").
+void script_set(uint8_t* screen, const char* name, int value)
+{
+    void* ctl = *(void**)(screen + 4);
+    if (!ctl) return;
+    typedef void(__fastcall * SetFn)(void*, void*, const char*, int);
+    ((SetFn)(*(void***)ctl)[0x18 / 4])(ctl, nullptr, name, value);
+}
+
+void set_index(uint8_t* screen, int* index, int value)
+{
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        void* ctl = *(void**)(screen + 4);
+        dsf_log("garage: screen controller %p vtable %08X, set %08X (shift mode %d)", ctl,
+                ctl ? *(uint32_t*)ctl : 0, ctl ? (*(uint32_t**)ctl)[0x18 / 4] : 0, g_shift_mode);
+    }
+    if (g_shift_mode == 2 || g_shift_mode == 3) script_set(screen, "itemBrowserIndex", value);
+    else *index = value;
+    if (g_shift_mode == 1) {
+        int* sort = menu_var(screen, "sortCardsNow");
+        if (sort) *sort = 1;
+    }
+    if (g_shift_mode == 3) script_set(screen, "sortCardsNow", 1);
+}
+
 void carlist_pre(uint8_t* screen)
 {
     g_view.in_list = false;
@@ -993,7 +1024,19 @@ void carlist_pre(uint8_t* screen)
     bool window = g_window_on && listed > kGroupCars;
     g_view.limit = window ? kWindowCards : kGroupCars;
     int before = *index, from = g_view.first;
-    int moved = window ? window_move(index) : 0;
+    // A jump of more than one card is the script resetting the browser (entering
+    // it, or back to the maker list): the window starts over.
+    if (g_view.first > 0 && (before - g_last_index > 1 || g_last_index - before > 1)) {
+        g_view.first = 0;
+        g_view.stopped = false;
+    }
+    int moved = 0;
+    if (window) {
+        int idx = before;
+        moved = window_move(&idx);
+        if (moved) set_index(screen, index, idx);
+    }
+    g_last_index = *index;
     if (g_menu_debug || moved)
         dsf_log("garage: car list: maker %d group %d, %d cars (%d listed), index %d%s, window from car %d%s", cat, g,
                 cars, listed, before, moved ? " -> moved" : "", g_view.first, moved ? "" : " (unchanged)");
@@ -1422,6 +1465,7 @@ void mod_garage_init()
         g_max_cars = cars < kGroupCars ? kGroupCars : (cars > kExtMax ? kExtMax : cars);
         g_menu_debug = cfg_bool("garage", "menu_debug", false);
         g_numlist_mode = cfg_int("garage", "debug_numlist", 1);
+        g_shift_mode = cfg_int("garage", "debug_shift", 0);
         g_margin_back = cfg_int("garage", "window_back", 2);
         g_margin_ahead = cfg_int("garage", "window_ahead", 8);
         if (g_margin_back < 0) g_margin_back = 0;

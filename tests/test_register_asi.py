@@ -6,7 +6,9 @@ tools/worktree-setup.ps1 and port_batch run).
 
 Fakes 600 added cars (IDs 304..903, 70 makes) and checks: the magic-ID
 detection, how many cars become Selectable, the group caps, and which
-ProfileSettings setter calls guardProfile lets through.
+ProfileSettings setter calls guardProfile lets through. A plugin with the car
+list window answers the cars-per-group query (k = 0x3000 + n), so a make keeps
+all its cars in one group; one without it (cars=None) keeps groups at 20.
 """
 
 from __future__ import annotations
@@ -38,7 +40,14 @@ def ported(n: int = 600, makes: int = 70) -> str:
     return "return { cars = {\n" + "\n".join(rows) + "\n} }"
 
 
-def run(asi: bool, groups: int = 120, max_id: int = 999, cars: str | None = None, hud: str | None = None):
+def run(
+    asi: bool,
+    groups: int = 120,
+    max_id: int = 999,
+    cars: str | None = None,
+    hud: str | None = None,
+    per_group: int | None = 1000,
+):
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
     g = lua.globals()
     out: list[str] = []
@@ -56,7 +65,7 @@ def run(asi: bool, groups: int = 120, max_id: int = 999, cars: str | None = None
     def unlocked(i):
         i = int(i)
         k = i - MAGIC
-        if not asi or not 0 <= k < 0x3000:
+        if not asi or not 0 <= k < 0x4000:
             return False
         if k in (0, 1):
             return True
@@ -64,6 +73,8 @@ def run(asi: bool, groups: int = 120, max_id: int = 999, cars: str | None = None
             return k - 0x1000 <= groups
         if 0x2000 <= k < 0x3000:
             return k - 0x2000 <= max_id
+        if 0x3000 <= k < 0x4000:
+            return per_group is not None and k - 0x3000 <= per_group
         return False
 
     g.user_open = user_open
@@ -91,8 +102,8 @@ def run(asi: bool, groups: int = 120, max_id: int = 999, cars: str | None = None
     return lua, out
 
 
-def check(asi: bool) -> list[str]:
-    lua, out = run(asi)
+def check(asi: bool, per_group: int | None = 1000) -> list[str]:
+    lua, out = run(asi, per_group=per_group)
     stats = lua.globals().vehicleStats
     groups = Counter()
     selectable_added = 0
@@ -107,8 +118,11 @@ def check(asi: bool) -> list[str]:
     limit = 120 if asi else 40
     if len(groups) > limit:
         errors.append(f"{len(groups)} groups > {limit}")
-    if max(groups.values()) > 20:
-        errors.append(f"a group has {max(groups.values())} cars")
+    cap = per_group if asi and per_group else 20
+    if max(groups.values()) > cap:
+        errors.append(f"a group has {max(groups.values())} cars (cap {cap})")
+    if "FORZA" in groups and asi and per_group and per_group > 20:
+        errors.append("a FORZA group although the plugin's groups have no 20-car cap")
     if asi and selectable_added < 500:
         errors.append(f"only {selectable_added} added cars selectable")
     if not asi and selectable_added:
@@ -116,7 +130,7 @@ def check(asi: bool) -> list[str]:
     if (500 in calls) != asi:
         errors.append(f"SetVehicleUnlocked(500) passed={500 in calls} with asi={asi}")
     print(
-        f"asi={asi}: {selectable_added} of 600 added cars selectable, {len(groups)} groups "
+        f"asi={asi} per_group={per_group}: {selectable_added} of 600 added cars selectable, {len(groups)} groups "
         f"(largest {max(groups.values())}), setter calls {calls}"
     )
     print("  " + "\n  ".join(line for line in out if "dsfforza.asi" in line))
@@ -124,34 +138,34 @@ def check(asi: bool) -> list[str]:
 
 
 def test_register_asi():
-    problems = check(False) + check(True)
+    problems = check(False) + check(True) + check(True, per_group=None)
     assert not problems, problems
 
 
-def continuation_groups() -> Counter:
-    """55 added cars of one make whose hud.lua names two extra groups: they fill the
-    make's group, then "<make> 2" and "<make> 3", not the mixed FORZA groups."""
+def big_group(per_group: int | None) -> Counter:
+    """55 added cars of one make: one group with a plugin whose groups have no 20-car cap,
+    else 20 in the make's group and the rest in the shared FORZA groups."""
     n = 55
     cars = "return { cars = {\n" + "\n".join(
         f'[{304 + i}] = {{ host = 266, media = "B{i}", name = "Big B{i}", make = "Big", model = "B{i}", year = "2010" }},'
         for i in range(n)
     )
     cars += "\n} }"
-    hud = "return {\n" + "\n".join(f'[{304 + i}] = {{ ManufacturerName = "ID:900001" }},' for i in range(n))
-    hud += '\n_groups = { ["ID:900001"] = { "ID:900002", "ID:900003" } },\n}'
-    lua, _ = run(True, cars=cars, hud=hud)
+    hud = "return {\n" + "\n".join(f'[{304 + i}] = {{ ManufacturerName = "ID:900001" }},' for i in range(n)) + "\n}"
+    lua, _ = run(True, cars=cars, hud=hud, per_group=per_group)
     stats = lua.globals().vehicleStats
     return Counter(str(stats[304 + i].ManufacturerName) for i in range(n) if stats[304 + i].Selectable)
 
 
-def test_continuation_groups():
-    groups = continuation_groups()
-    assert groups == Counter({"ID:900001": 20, "ID:900002": 20, "ID:900003": 15}), groups
+def test_big_group():
+    assert big_group(1000) == Counter({"ID:900001": 55})
+    old = big_group(None)
+    assert old == Counter({"ID:900001": 20, "FORZA": 20, "FORZA 2": 15}), old
 
 
 if __name__ == "__main__":
-    print("continuation groups:", dict(continuation_groups()))
-    problems = check(False) + check(True)
+    print("one make, 55 cars:", dict(big_group(1000)), "without the window:", dict(big_group(None)))
+    problems = check(False) + check(True) + check(True, per_group=None)
     for p in problems:
         print("FAIL", p)
     sys.exit(1 if problems else 0)

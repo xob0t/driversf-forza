@@ -1,6 +1,6 @@
-"""Garage maker groups past 20 cars: gui_assets.continuation_groups labels and
-port_batch.garage_group's rule (register.lua's is in tests/test_register_asi.py).
-continuation_groups reads the stock vehicleStats from out/lua-src (worktree-setup).
+"""Garage maker groups: port_batch.garage_group's rule (register.lua's is in
+tests/test_register_asi.py). With dsfforza.asi (ASI_GROUP_CAP) a maker keeps all its
+cars in one group; with the stock 20-car cap the rest go to the shared FORZA groups.
 
     uv run python tests/test_garage_groups.py     # or every test: uv run python -m tests
 """
@@ -8,24 +8,21 @@ continuation_groups reads the stock vehicleStats from out/lua-src (worktree-setu
 from __future__ import annotations
 
 from dsfforza.build import port_batch
-from dsfforza.game import gui_assets
 
 
-def test_continuation_labels_new_maker():
-    hud = {i: {"ManufacturerName": "ID:700001"} for i in range(1, 46)}  # 45 cars of a new maker
-    hud.update({i: {"ManufacturerName": "ID:700002"} for i in range(100, 110)})  # 10: fits one group
-    labels = gui_assets.continuation_groups(hud, {700001: "Testmake", 700002: "Small"}, 700100)
-    assert labels == {"ID:700001": {700100: "Testmake 2", 700101: "Testmake 3"}}
+def test_garage_group_asi_one_group():
+    counts = {"ID:1": 45}
+    assert port_batch.garage_group("ID:1", "ID:1", counts, port_batch.ASI_GROUP_CAP, 119) == "ID:1"
 
 
-def test_garage_group_continuation():
+def test_garage_group_stock_cap():
     counts = {"ID:1": 19}
-    assert port_batch.garage_group("ID:1", "ID:1", counts, 19, 119) == "ID:1 #2"
-    counts["ID:1 #2"] = 19
-    assert port_batch.garage_group("ID:1", "ID:1", counts, 19, 119) == "ID:1 #3"
-    # no group left for a continuation: the shared FORZA group, as before
-    full = {f"M{i}": 1 for i in range(117)} | {"ID:1": 19}
-    assert port_batch.garage_group("ID:1", "ID:1", full, 19, 119) == "FORZA"
+    assert port_batch.garage_group("ID:1", "ID:1", counts, 19, 119) == "FORZA"
+    counts["FORZA"] = 19
+    assert port_batch.garage_group("ID:1", "ID:1", counts, 19, 119) == "FORZA 2"
+    # no group left: not listed
+    full = {f"M{i}": 1 for i in range(118)} | {"ID:1": 19, "FORZA": 19}
+    assert port_batch.garage_group("ID:1", "ID:1", full, 19, 119) is None
 
 
 if __name__ == "__main__":

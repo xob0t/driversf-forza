@@ -98,10 +98,11 @@ local ASI = { save = asiQuery(0), garage = asiQuery(1) }
 if ASI.garage then
 	ASI.groups = asiLimit(0x1000, 40, 4000)   -- k = 0x1000 + n: n <= max groups
 	ASI.maxId = asiLimit(0x2000, 303, 4000)   -- k = 0x2000 + id: id is listed
+	ASI.cars = asiLimit(0x3000, 20, 4000)     -- k = 0x3000 + n: n <= cars per maker group (nil: 20)
 end
 
 local GARAGE_MAX_GROUPS = ASI.garage and ASI.groups or 40
-local GARAGE_MAX_PER_GROUP = 20
+local GARAGE_MAX_PER_GROUP = ASI.garage and ASI.cars or 20
 local GARAGE_MAX_ID = ASI.garage and ASI.maxId or 303
 local SAVE_MAX_ID = ASI.save and 999 or 303   -- highest ID whose save flags are safe to set
 local OVERFLOW_GROUP = "FORZA"   -- makes without a group of their own share FORZA, FORZA 2, ...
@@ -294,33 +295,16 @@ local function groupKey(name)
 	return string.sub(string.upper(tostring(name or "")), 1, 15)
 end
 
--- Extra groups of makers with more than 20 cars, from dsff gui_assets build
--- (hud.lua _groups): {ManufacturerName = {"ID:n" of "<maker> 2", "<maker> 3", ...}}.
-local CONTINUATION = HUD and type(HUD._groups) == "table" and HUD._groups or {}
-
--- Returns the ManufacturerName to use (the car's own, the maker's next group
--- "<maker> 2"... when its own is full, or a shared FORZA group when the maker
--- has no room), or nil when the car can't be listed. Same rule as
--- src/dsfforza/build/port_batch.py garage_group; one group slot is kept for FORZA.
+-- Returns the ManufacturerName to use (the car's own, or a shared FORZA group
+-- when its make has no room), or nil when the car can't be listed. Same rule
+-- as src/dsfforza/build/port_batch.py garage_group; one group slot is kept for FORZA.
 local function garageGroup(name, counts)
 	local key = groupKey(name)
 	local groups = 0
 	for _ in pairs(counts) do groups = groups + 1 end
-	local reserve = counts[OVERFLOW_GROUP] and 0 or 1
 	if counts[key] then
 		if counts[key] < GARAGE_MAX_PER_GROUP then return name end
-		local more = CONTINUATION[name]
-		if type(more) == "table" then
-			for _, label in ipairs(more) do
-				local k = groupKey(label)
-				if counts[k] then
-					if counts[k] < GARAGE_MAX_PER_GROUP then return label end
-				elseif groups + reserve < GARAGE_MAX_GROUPS then
-					return label
-				end
-			end
-		end
-	elseif groups + reserve < GARAGE_MAX_GROUPS then
+	elseif groups + (counts[OVERFLOW_GROUP] and 0 or 1) < GARAGE_MAX_GROUPS then
 		return name
 	end
 	local n = 1
