@@ -288,6 +288,27 @@ def open_car_zip(source: Source) -> tuple[XIso, ForzaZip, str]:
     return image, ForzaZip(image.open(image.find(source.path))), ""
 
 
+def colour_variants(names: set[str], written: set[str]) -> dict[str, str]:
+    """{canonical name: variant file} for a car whose zip has no nodamage.xds, only
+    colour variants of it (CHE_CamaroZ28_79: nodamage_blue/_gold/...; PON_TransAm_73:
+    nodamagegreen/red/white...). The variant that sorts first is taken, its _lod0
+    with it. `names`: the car folder's files, lower case; `written`: those extracted."""
+    if "nodamage.xds" in written:
+        return {}
+    stems = sorted(
+        n[: -len(".xds")]
+        for n in names
+        if n.startswith("nodamage") and n.endswith(".xds") and "/" not in n and not n.endswith("_lod0.xds")
+    )
+    if not stems:
+        return {}
+    stem = stems[0]
+    out = {"nodamage.xds": f"{stem}.xds"}
+    if "nodamage_lod0.xds" not in written and f"{stem}_lod0.xds" in names:
+        out["nodamage_lod0.xds"] = f"{stem}_lod0.xds"
+    return out
+
+
 def extract_car(source: Source, media: str, cache: Path, log=print) -> Path:
     """Extract the files the conversion needs into cache/<game>/<media>/."""
     folder = cache / source.game.lower() / media
@@ -296,24 +317,34 @@ def extract_car(source: Source, media: str, cache: Path, log=print) -> Path:
         old = json.loads(stamp.read_text())
     except (OSError, ValueError):  # none yet, or cut short: extract again
         old = {}
-    # Re-extract when WANTED grew since the cache was made (e.g. the cockpit files).
-    if old.get("path") == source.path and old.get("wanted") == list(WANTED):
+    # Re-extract when WANTED grew since the cache was made (e.g. the cockpit files),
+    # and once for a cache made before colour variants were taken (no nodamage.xds).
+    if (
+        old.get("path") == source.path
+        and old.get("wanted") == list(WANTED)
+        and ("variants" in old or "nodamage.xds" in {f.lower() for f in old.get("files", [])})
+    ):
         return folder
     image, archive, prefix = open_car_zip(source)
     try:
         wanted = {w.format(name=media).lower() for w in WANTED}
-        written = []
+        written, infos = [], {}
         for info in archive.entries():
             name = info.filename.replace("\\", "/")
             if info.is_dir() or not name.lower().startswith(prefix):
                 continue
             relative = name[len(prefix) :]
+            infos[relative.lower()] = info
             if relative.lower() not in wanted:
                 continue
             target = folder / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             write_atomic(target, archive.read(info))
             written.append(relative)
+        variants = colour_variants(set(infos), {w.lower() for w in written})
+        for canonical, variant in variants.items():
+            write_atomic(folder / canonical, archive.read(infos[variant]))
+            written.append(canonical)
     finally:
         image.close()
     if f"{media}.carbin".lower() not in {w.lower() for w in written}:
@@ -329,11 +360,14 @@ def extract_car(source: Source, media: str, cache: Path, log=print) -> Path:
                 "path": source.path,
                 "files": sorted(written),
                 "wanted": list(WANTED),
+                "variants": variants,
             },
             indent=1,
         ).encode(),
     )
     log(f"{media}: extracted {len(written)} files from {source.where} to {folder}")
+    for canonical, variant in variants.items():
+        log(f"{media}: no {canonical}; using the colour variant {variant}")
     return folder
 
 
