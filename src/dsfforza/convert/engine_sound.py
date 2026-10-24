@@ -874,16 +874,20 @@ def render_sweep(bank: wb.Bank, vsvh: bytes, seconds=(1.0, 6.0, 1.0, 4.0, 1.0)) 
         for s, pitch, xf in rows:
             cents = np.interp(bank_rpm, grid, curve_at_many(pitch, grid))
             gain = np.interp(bank_rpm, grid, curve_at_many(xf, grid) / 255) if xf else np.ones(n)
-            src = media[s.media]
-            # A sum of positive steps: fmod is `%` there (and quicker), and i0 is below len(src).
-            pos = np.fmod(np.cumsum(2 ** (cents / 1200)), len(src))
-            i0 = pos.astype(int)
-            frac = pos - i0
-            i1 = i0 + 1
-            i1[i1 == len(src)] = 0
-            out += gain * (src[i0] * (1 - frac) + src[i1] * frac)
+            out += gain * _play(media[s.media], cents)
     peak = np.abs(out).max() or 1
     return out / peak * 0.9
+
+
+def _play(src: np.ndarray, cents: np.ndarray) -> np.ndarray:
+    """The loop `src` played at `cents` per output sample, linearly interpolated."""
+    # A running sum of positive steps: np.fmod is `%` there (and quicker), and i0 < len(src).
+    pos = np.fmod(np.cumsum(2 ** (cents / 1200)), len(src))
+    i0 = pos.astype(int)
+    frac = pos - i0
+    i1 = i0 + 1
+    i1[i1 == len(src)] = 0
+    return src[i0] * (1 - frac) + src[i1] * frac
 
 
 def write_wav(path: Path, x: np.ndarray, rate: int = RATE) -> None:
