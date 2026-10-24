@@ -53,7 +53,7 @@ class Camera:
     distance: float
 
 
-STOCK_CAMERA = Camera(yaw=36.0, pitch=13.0, distance=1.2)  # median of 19 stock pictures (gui-assets.md, "Camera")
+STOCK_CAMERA = Camera(yaw=36.5, pitch=13.0, distance=1.3)  # median of 24 stock pictures (gui-assets.md, "Camera")
 
 
 @dataclass
@@ -112,7 +112,7 @@ class Material:
 @dataclass
 class Scene:
     """Triangles (T): positions (T, 3, 3), normals (T, 3, 3), UV0 (T, 3, 2),
-    sky / AO term (T, 3), material index (T,), glass flag (T,)."""
+    sky / AO term (T, 3), material index (T,); inside (T,): from the interior entry."""
 
     pos: np.ndarray
     nrm: np.ndarray
@@ -120,6 +120,7 @@ class Scene:
     ao: np.ndarray
     mat: np.ndarray
     materials: list[Material]
+    inside: np.ndarray | None = None
 
     @property
     def glass(self) -> np.ndarray:
@@ -251,86 +252,86 @@ def _load_scene(archive: Path, stream, spool_id: int, entries, interior: bool) -
     from dsfforza.formats import vehicle_mesh as vm
     from dsfforza.game.gui_assets import _root_entries
 
-    if True:
-        entries = entries if entries is not None else _root_entries(archive, stream)
-        kinds = uv.entries_for(stream, entries, spool_id, None)
-        index = {k: entries.index(v) for k, v in kinds.items()}
-        shared_mats, shared_tex, decoded = _shared(archive, stream, entries)
-        textures, infos = {}, {}
-        for k in kinds:
-            for e in child(child(kinds[k], "MDXN"), "DRSP").children:
-                if e.tag == "TEXC":
-                    textures[payload(stream, child(e, "UIDC"))[:8]] = _decode_texture(stream, e)
-                elif e.tag == "MACO":
-                    info = dm.material_info(stream, e)
-                    infos[info["uid"]] = info
+    entries = entries if entries is not None else _root_entries(archive, stream)
+    kinds = uv.entries_for(stream, entries, spool_id, None)
+    index = {k: entries.index(v) for k, v in kinds.items()}
+    shared_mats, shared_tex, decoded = _shared(archive, stream, entries)
+    textures, infos = {}, {}
+    for k in kinds:
+        for e in child(child(kinds[k], "MDXN"), "DRSP").children:
+            if e.tag == "TEXC":
+                textures[payload(stream, child(e, "UIDC"))[:8]] = _decode_texture(stream, e)
+            elif e.tag == "MACO":
+                info = dm.material_info(stream, e)
+                infos[info["uid"]] = info
 
-        def texture_of(uid: bytes):
-            info = infos.get(uid) or shared_mats.get(uid)
-            if not info or not info["textures"]:
-                return None, False
-            t = next(iter(info["textures"]))
-            if t in textures:
-                return textures[t], False
-            if t in shared_tex:
-                if t not in decoded:
-                    decoded[t] = _decode_texture(stream, shared_tex[t])
-                return decoded[t], True
+    def texture_of(uid: bytes):
+        info = infos.get(uid) or shared_mats.get(uid)
+        if not info or not info["textures"]:
             return None, False
+        t = next(iter(info["textures"]))
+        if t in textures:
+            return textures[t], False
+        if t in shared_tex:
+            if t not in decoded:
+                decoded[t] = _decode_texture(stream, shared_tex[t])
+            return decoded[t], True
+        return None, False
 
-        colour, metallic = paint_colour(stream, kinds[0])
-        h = uv.parse(payload(stream, child(child(kinds[0], "NONR"), "UPVH")))
-        hubs = []
-        for i in range(h.counts["wheels"]):
-            o = h.offsets["wheels"] + i * 0x20
-            hubs.append(
-                (np.array(struct.unpack_from("<3f", h.data, o), np.float32), struct.unpack_from("<4f", h.data, o + 16))
-            )
-        paint_lin = np.array([_srgb_to_linear(c / 255) for c in colour], np.float32)
+    colour, metallic = paint_colour(stream, kinds[0])
+    h = uv.parse(payload(stream, child(child(kinds[0], "NONR"), "UPVH")))
+    hubs = []
+    for i in range(h.counts["wheels"]):
+        o = h.offsets["wheels"] + i * 0x20
+        hubs.append(
+            (np.array(struct.unpack_from("<3f", h.data, o), np.float32), struct.unpack_from("<4f", h.data, o + 16))
+        )
+    paint_lin = np.array([_srgb_to_linear(c / 255) for c in colour], np.float32)
 
-        materials: list[Material] = []
-        mat_index: dict = {}
+    materials: list[Material] = []
+    mat_index: dict = {}
 
-        def material(uid: bytes, inside: bool, wheel: bool) -> int:
-            info = infos.get(uid) or shared_mats.get(uid) or {"path": ""}
-            name = info["path"].lower().replace("\\", "/").rsplit("/", 1)[-1]
-            tex, packed = texture_of(uid)
-            if uid in PAINT_UIDS:
-                kind = "metallic" if metallic else "paint"
-            elif uid in GLASS_UIDS or uid in INTERIOR_GLASS_UIDS:
-                kind, tex = "glass", None
-            elif uid in TRIM_UIDS:
-                kind = "trim"
-            elif uid in TYRE_UIDS:
-                kind = "tyre"
-            elif uid in CHROME_UIDS:
-                kind, tex = "chrome", None
-            elif inside:
-                kind = "interior"
-            elif "_lights" in name:
-                kind = "lights"
-            elif wheel:
-                kind = "wheel"
-            else:
-                kind = "textured"
-            key = (uid, kind)
-            if key not in mat_index:
-                base = {
-                    "paint": paint_lin,
-                    "metallic": paint_lin,
-                    "trim": np.array([0.02, 0.02, 0.022]),
-                    "tyre": np.array([0.018, 0.018, 0.018]),
-                    "chrome": np.array([0.85, 0.86, 0.88]),
-                }.get(kind, np.array([0.3, 0.3, 0.3]))
-                mat_index[key] = len(materials)
-                materials.append(Material(kind, tex, np.asarray(base, np.float32), packed))
-            return mat_index[key]
+    def material(uid: bytes, inside: bool, wheel: bool) -> int:
+        info = infos.get(uid) or shared_mats.get(uid) or {"path": ""}
+        name = info["path"].lower().replace("\\", "/").rsplit("/", 1)[-1]
+        tex, packed = texture_of(uid)
+        if uid in PAINT_UIDS:
+            kind = "metallic" if metallic else "paint"
+        elif uid in GLASS_UIDS or uid in INTERIOR_GLASS_UIDS:
+            kind, tex = "glass", None
+        elif uid in TRIM_UIDS:
+            kind = "trim"
+        elif uid in TYRE_UIDS:
+            kind = "tyre"
+        elif uid in CHROME_UIDS:
+            kind, tex = "chrome", None
+        elif inside:
+            kind = "interior"
+        elif "_lights" in name:
+            kind = "lights"
+        elif wheel:
+            kind = "wheel"
+        else:
+            kind = "textured"
+        key = (uid, kind)
+        if key not in mat_index:
+            base = {
+                "paint": paint_lin,
+                "metallic": paint_lin,
+                "trim": np.array([0.02, 0.02, 0.022]),
+                "tyre": np.array([0.018, 0.018, 0.018]),
+                "chrome": np.array([0.85, 0.86, 0.88]),
+            }.get(kind, np.array([0.3, 0.3, 0.3]))
+            mat_index[key] = len(materials)
+            materials.append(Material(kind, tex, np.asarray(base, np.float32), packed))
+        return mat_index[key]
 
-    parts_pos, parts_nrm, parts_uv, parts_ao, parts_mat = [], [], [], [], []
+    parts_pos, parts_nrm, parts_uv, parts_ao, parts_mat, parts_in = [], [], [], [], [], []
 
-    def add(pos, nrm, uvs, ao, m):
+    def add(pos, nrm, uvs, ao, m, inside=False):
         if not len(pos):
             return
+        parts_in.append(np.full(len(pos), inside))
         parts_pos.append(pos)
         parts_nrm.append(nrm if nrm is not None else _face_normals(pos))
         parts_uv.append(uvs)
@@ -363,7 +364,7 @@ def _load_scene(archive: Path, stream, spool_id: int, entries, interior: bool) -
                         r = _quat_matrix(q)
                         add(pos @ r.T + hub, None if nrm is None else nrm @ r.T, uvs, ao, m)
                 else:
-                    add(pos, nrm, uvs, ao, m)
+                    add(pos, nrm, uvs, ao, m, kind == 1)
     return Scene(
         np.concatenate(parts_pos).astype(np.float32),
         np.concatenate(parts_nrm).astype(np.float32),
@@ -371,6 +372,7 @@ def _load_scene(archive: Path, stream, spool_id: int, entries, interior: bool) -
         np.concatenate(parts_ao).astype(np.float32),
         np.concatenate(parts_mat),
         materials,
+        np.concatenate(parts_in),
     )
 
 
@@ -387,6 +389,8 @@ def _linear_to_srgb(c):
 # --- rasteriser ----------------------------------------------------------------------
 
 TILE = 16  # largest tile side, pixels
+BACK_FACE_BIAS = 4e-4  # relative depth: about 2 mm at the camera's distance
+INTERIOR_BIAS = (2e-3, 3e-2)  # behind glass, elsewhere: about 1.3 cm and 20 cm
 
 
 def _fragments(sx, sy, sw, width: int, height: int, chunk: int = 1 << 18):
@@ -673,6 +677,23 @@ def render(scene: Scene, camera: Camera = STOCK_CAMERA, width: int = 900, height
     opaque_t = np.flatnonzero(ok & ~glass)
     glass_t = np.flatnonzero(ok & glass)
     k, w, t = _fragments(sx[opaque_t], sy[opaque_t], sw[opaque_t], width, height)
+    gk, gw, gt = _fragments(sx[glass_t], sy[glass_t], sw[glass_t], width, height)
+    gt = glass_t[gt]
+    # Surfaces are drawn from both sides, but a back face loses a tie: a panel's
+    # underside (paint, on the engine-bay picture: damage.md) lies on the panel itself
+    # and the game culls it.
+    centre = scene.pos.mean(axis=1)
+    back = np.einsum("ni,ni->n", scene.nrm.mean(axis=1), centre - view.eye) > 0
+    w = np.where(back[opaque_t[t]], w * (1 - BACK_FACE_BIAS), w)
+    # The interior entry holds the cockpit's own copy of the body shell, close to the
+    # exterior and in places outside it (a dark bonnet patch on the S2000, RX-7, Cuda):
+    # interior surfaces lose to the exterior unless clearly nearer, by a little behind
+    # glass (the cabin), by a lot elsewhere (an open car's seats are).
+    if scene.inside is not None:
+        glass_w = np.full(size, -np.inf, np.float32)
+        np.maximum.at(glass_w, gk, gw)
+        bias = np.where(glass_w[k] > w, INTERIOR_BIAS[0], INTERIOR_BIAS[1])
+        w = np.where(scene.inside[opaque_t[t]], w * (1 - bias), w)
     depth, tri = _nearest(k, w, opaque_t[t], size)
     colour = np.zeros((size, 3), np.float32)
     alpha = np.zeros(size, np.float32)
@@ -688,9 +709,7 @@ def render(scene: Scene, camera: Camera = STOCK_CAMERA, width: int = 900, height
     empty = alpha == 0
     alpha[empty] = shadow[empty]
     # Glass: the nearest layer in front of the opaque surface, then one behind it.
-    if len(glass_t):
-        gk, gw, gt = _fragments(sx[glass_t], sy[glass_t], sw[glass_t], width, height)
-        gt = glass_t[gt]
+    if len(gk):
         front = gw > depth[gk]
         gk, gw, gt = gk[front], gw[front], gt[front]
         layers = []

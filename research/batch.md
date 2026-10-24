@@ -189,8 +189,8 @@ How a build runs:
   `archive` module) and UID clashes, and writes the archive.
 - Every car is linted, in `--jobs` (at most 4) `upvh lint-many` processes
   that each read the archive once for their share of the cars.
-- With `--gui` the build also runs `gui_assets.build`; the cars without an
-  FH1 thumbnail are rendered in `--jobs` processes.
+- With `--gui` the build also runs `gui_assets.build`; every car's garage
+  picture is rendered, in `--jobs` processes.
 
 ### Conversion speed
 
