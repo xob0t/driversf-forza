@@ -342,6 +342,15 @@ def test_xds_untile_places_blocks() -> None:
             assert struct.unpack_from("<HH", blocks, (y * 32 + x) * 8) == (x, y)
 
 
+def test_xds_dds_header() -> None:
+    import dsf_materials
+    blocks = bytes(range(8)) * 4                 # 8 x 8 texels, DXT1
+    dds = xds.dds_bytes(blocks, 8, 8, b"DXT1")
+    assert len(dds) == dsf_materials.DDS_HEADER_SIZE + len(blocks)
+    assert dds[84:88] == b"DXT1" and struct.unpack_from("<I", dds, 4)[0] == 124
+    assert dsf_materials.decode_dds(dds) == (8, 8, xds.decode_rgba(blocks, 8, 8, b"DXT1"))
+
+
 def _wem(samples: list[int]) -> bytes:
     data = wb.encode_ima(samples)
     fmt = struct.pack("<HHIIHH", 2, 1, 24000, 24000 * wb.BLOCK // wb.BLOCK_SAMPLES, wb.BLOCK, 4)

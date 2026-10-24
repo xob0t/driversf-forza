@@ -94,8 +94,11 @@ def untile(data: bytes) -> tuple[bytes, int, int, bytes]:
 
 def dds_bytes(blocks: bytes, width: int, height: int, fourcc: bytes) -> bytes:
     flags = 0x1 | 0x2 | 0x4 | 0x1000 | 0x80000  # caps, height, width, pixelformat, linearsize
-    header = struct.pack("<4sIIIIIII44sIII4sIIIIIIIIII", b"DDS ", 124, flags, height, width,
-                         len(blocks), 0, 1, bytes(44), 32, 0x4, 0, fourcc, 0, 0, 0, 0, 0,
+    # "DDS ", DDS_HEADER (124 bytes): size, flags, height, width, linear size, depth,
+    # mip count, 11 reserved; pixel format {size 32, flags FOURCC, fourcc, bit count,
+    # 4 masks}; caps (TEXTURE), caps2..4, reserved.
+    header = struct.pack("<4s7I44s2I4s5I5I", b"DDS ", 124, flags, height, width,
+                         len(blocks), 0, 1, bytes(44), 32, 0x4, fourcc, 0, 0, 0, 0, 0,
                          0x1000, 0, 0, 0, 0)
     return header + blocks
 
