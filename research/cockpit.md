@@ -995,6 +995,16 @@ head-camera views, before and after (`out/cc/faces-before-after.png`, build
 the LFA its central dial, the 370Z its LCDs; the Challenger, 500 and Civic
 displays change little (dark or the white dial face around them).
 
+In game (VM, confirmed-runtime): run `vm-20261024-061707`
+(`out/cockpitfaces/build`, IDs 147, 1 S2000, 2 LFA, 3 370Z, `-ShotSeconds
+3`) against `vm-20261024-063218` (`out/testdrive10`, IDs 147, 4, 30, 32,
+same settings): the S2000's tachometer arc, scale and the temperature and
+fuel marks now show behind the wheel (observe-05), the LFA's central dial
+with N and its scale (observe-10), the 370Z's LCD panels under the HUD
+(observe-15); `img/cockpit-digital-faces-ingame.jpg`. Run
+`vm-20261024-060338` (IDs 147, 1-5) finished too. Offline:
+`img/cockpit-digital-faces-offline.png` (S2000, LFA, 370Z; left before).
+
 **Still without a readable cluster, and why.**
 
 - Agera (182 triangles) and Range Rover (12): the cluster is drawn at run
