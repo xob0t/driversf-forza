@@ -1146,30 +1146,67 @@ def _tri_samples(pts, step: float):
             yield tuple(pts[0][k] * (1 - a - b) + pts[1][k] * a + pts[2][k] * b for k in range(3))
 
 
+def _samples_of(tris, step: float) -> tuple[np.ndarray, np.ndarray]:
+    """_tri_samples of many triangles (three placed corners each) at once: the
+    points as an (m, 3) array, triangle by triangle in _tri_samples' order, with
+    its float operations; and each triangle's number of points."""
+    ns = [
+        max(1, min(40, int(math.ceil(max(math.dist(pts[a], pts[b]) for a, b in ((0, 1), (1, 2), (2, 0))) / step))))
+        for pts in tris
+    ]
+    corners = np.array(tris, dtype=np.float64).reshape(-1, 3, 3)
+    ns = np.array(ns, dtype=np.int64)
+    counts = (ns + 1) * (ns + 2) // 2
+    start = np.cumsum(counts) - counts
+    out = np.empty((int(counts.sum()), 3), dtype=np.float64)
+    for n in np.unique(ns).tolist():
+        ij = [(i, j) for i in range(n + 1) for j in range(n + 1 - i)]
+        a = np.array([i / n for i, _ in ij])[None, :, None]
+        b = np.array([j / n for _, j in ij])[None, :, None]
+        sel = np.flatnonzero(ns == n)
+        c = corners[sel]
+        pts = c[:, 0, None, :] * (1 - a - b) + c[:, 1, None, :] * a + c[:, 2, None, :] * b
+        out[(start[sel][:, None] + np.arange(len(ij))[None, :]).reshape(-1)] = pts.reshape(-1, 3)
+    return out, counts
+
+
+def _cell_codes(kx, ky) -> np.ndarray:
+    """A zone map's (x, y) cell keys as one int64 each."""
+    return (np.asarray(kx, dtype=np.int64) + (1 << 30)) * (1 << 31) + (np.asarray(ky, dtype=np.int64) + (1 << 30))
+
+
 def zone_maps(body, place, lods, zones=EXPOSED_ZONES) -> dict:
     """Per (LOD, EXPOSED_ZONES kind): the panel sections' map over BAY_CELL
     cells across the zone's axis (inward coordinate of the panel's innermost or
-    outermost point per cell)."""
+    outermost point per cell). The points are _tri_samples (BAY_CELL / 2) of
+    the sections' triangles; per cell the first innermost or outermost of them
+    in that order, as a running max() or min() keeps it."""
     maps = {}
     for kind, is_panel, axis, sign, which, _ in zones:
         across = [a for a in range(3) if a != axis]
-        pick = max if which == "inner" else min
         secs = [s for s in body if is_panel(s.name.lower())]
         for lod in lods:
-            cells: dict = {}
+            tris = []
             for s in secs:
                 for sub in s.subsections:
                     if sub.lod != lod:
                         continue
                     pool = s.vertices_for(sub)
-                    for t in sub.triangles():
-                        for p in _tri_samples([place.point(pool[i].position) for i in t], BAY_CELL / 2):
-                            key = (math.floor(p[across[0]] / BAY_CELL), math.floor(p[across[1]] / BAY_CELL))
-                            d = sign * p[axis]
-                            old = cells.get(key)
-                            cells[key] = d if old is None else pick(old, d)
-            if cells:
-                maps[(lod, kind)] = cells
+                    tris += ([place.point(pool[i].position) for i in t] for t in sub.triangles())
+            if not tris:
+                continue
+            pts, _ = _samples_of(tris, BAY_CELL / 2)
+            if not np.isfinite(pts).all():
+                raise ValueError(f"zone_maps: a {kind} panel point is not finite")
+            kx = np.floor(pts[:, across[0]] / BAY_CELL).astype(np.int64)
+            ky = np.floor(pts[:, across[1]] / BAY_CELL).astype(np.int64)
+            d = sign * pts[:, axis]
+            o = np.lexsort((np.arange(len(d)), -d if which == "inner" else d, ky, kx))
+            code = _cell_codes(kx[o], ky[o])
+            first = o[np.flatnonzero(np.r_[True, code[1:] != code[:-1]])]
+            maps[(lod, kind)] = dict(
+                zip(zip(kx[first].tolist(), ky[first].tolist(), strict=True), d[first].tolist(), strict=True)
+            )
     return maps
 
 
@@ -1207,6 +1244,59 @@ def zone_vote(maps: dict, lod: int, pts, zones=EXPOSED_ZONES) -> str | None:
         return None
     kind, n = votes.most_common(1)[0]
     return kind if n >= ZONE_SHARE * len(samples) else None
+
+
+def zone_votes(maps: dict, lod: int, tris, zones=EXPOSED_ZONES) -> list:
+    """zone_vote for many triangles at once, with the same result for each: the
+    samples (centroid as sum() / 3 makes it, then _samples_of) at once, each
+    sample's zone as zone_of finds it (the first zone kind whose map cell hides
+    it), and per triangle the zone with the most samples, the one met first
+    among equals (Counter.most_common keeps insertion order)."""
+    if not tris:
+        return []
+    corners = np.array(tris, dtype=np.float64).reshape(-1, 3, 3)
+    centroid = (((0.0 + corners[:, 0]) + corners[:, 1]) + corners[:, 2]) / 3
+    rest, counts = _samples_of(tris, ZONE_STEP)
+    total = counts + 1
+    start = np.cumsum(total) - total
+    pts = np.empty((int(total.sum()), 3), dtype=np.float64)
+    rest_at = np.ones(len(pts), dtype=bool)
+    rest_at[start] = False
+    pts[start], pts[rest_at] = centroid, rest
+    if not np.isfinite(pts).all():
+        raise ValueError("zone_votes: a triangle point is not finite")
+    zone = np.full(len(pts), -1, dtype=np.int64)
+    for z, (kind, _, axis, sign, which, reach) in enumerate(zones):
+        cells = maps.get((lod, kind))
+        if not cells:
+            continue
+        across = [a for a in range(3) if a != axis]
+        keys = np.array(list(cells), dtype=np.int64).reshape(-1, 2)
+        code = _cell_codes(keys[:, 0], keys[:, 1])
+        order = np.argsort(code)
+        code, d0 = code[order], np.array(list(cells.values()), dtype=np.float64)[order]
+        mine = np.flatnonzero(zone < 0)
+        p = pts[mine]
+        qk = _cell_codes(np.floor(p[:, across[0]] / BAY_CELL), np.floor(p[:, across[1]] / BAY_CELL))
+        at = np.minimum(np.searchsorted(code, qk), len(code) - 1)
+        d = sign * p[:, axis] - d0[at]
+        hit = (code[at] == qk) & (d > (BAY_CLEARANCE if which == "inner" else BUMPER_CLEARANCE))
+        if reach is not None:
+            hit &= d < reach
+        zone[mine[hit]] = z
+    owner = np.repeat(np.arange(len(tris)), total)
+    voted = np.flatnonzero(zone >= 0)
+    out: list = [None] * len(tris)
+    if not len(voted):
+        return out
+    key, at, cnt = np.unique(owner[voted] * len(zones) + zone[voted], return_index=True, return_counts=True)
+    tri, z = key // len(zones), key % len(zones)
+    o = np.lexsort((voted[at], -cnt, tri))
+    best = o[np.flatnonzero(np.r_[True, tri[o][1:] != tri[o][:-1]])]
+    for t, k, n in zip(tri[best].tolist(), z[best].tolist(), cnt[best].tolist(), strict=True):
+        if n >= ZONE_SHARE * int(total[t]):
+            out[t] = zones[k][0]
+    return out
 
 
 def split_exposed(body, place, log=None, engine: str | None = None) -> tuple[list, dict]:
@@ -1252,10 +1342,17 @@ def split_exposed(body, place, log=None, engine: str | None = None) -> tuple[lis
                             normals.append(nrm)
                 paint_grid[sub.lod] = Grid(cents, normals, cell=0.1)
             groups = defaultdict(list)
-            for t in sub.triangles():
-                pts = [place.point(pool[i].position) for i in t]
+            tris = list(sub.triangles())
+            placed = [[place.point(pool[i].position) for i in t] for t in tris]
+            normals = [_norm(_cross(_sub(pts[1], pts[0]), _sub(pts[2], pts[0]))) for pts in placed]
+            # The zone votes of the trim triangles at once (zone_votes).
+            votes = iter(
+                []
+                if panel
+                else zone_votes(maps, sub.lod, [pts for pts, nrm in zip(placed, normals) if nrm is not None], zones)
+            )
+            for t, pts, nrm in zip(tris, placed, normals, strict=True):
                 c = tuple(sum(p[k] for p in pts) / 3 for k in range(3))
-                nrm = _norm(_cross(_sub(pts[1], pts[0]), _sub(pts[2], pts[0])))
                 tag = None
                 if panel and nrm is not None:
                     grid = paint_grid[sub.lod]
@@ -1263,7 +1360,7 @@ def split_exposed(body, place, log=None, engine: str | None = None) -> tuple[lis
                     if hits and hits[0][0] < INNER_REACH and _dot(nrm, grid.values[hits[0][1]]) < -0.3:
                         tag = _axis_tag("inner", nrm)
                 elif not panel and nrm is not None:
-                    kind = zone_vote(maps, sub.lod, pts, zones)
+                    kind = next(votes)
                     # Bumper parts and exhausts (they leave with their panel or are
                     # their own) keep their trim outside the bay, as before.
                     if kind is not None and (kind == "bay" or zone_ok):
