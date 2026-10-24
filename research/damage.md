@@ -816,6 +816,18 @@ hinge or body centred only if the Forza panel spans the centre line too
 (the RX-7's one-sided pipe on 278's centred exhaust record left the body
 0.43 m from the pipe).
 
+In game (VM, `-Damage -DamagePanels`, testdrive10 against the fix build
+`out/dmg5/all40`, same IDs): with `forceOpenPanels` the S5S Raptor's and
+250 GTO's door and wing patches no longer swing out (runs
+`vm-20261024-061315` observe-10, -17 against `vm-20261024-062957`
+observe-11, -18; `img/damage-forceopen-s5s-250gto.jpg`), and the S2000 and
+RX-7 keep a mirror on each door where testdrive10 lost the left one (runs
+`vm-20261024-063859` observe-07, -20 against `vm-20261024-064047`
+observe-06, -19; `img/damage-forceopen-mirrors-s2000-rx7.jpg`). No crash in
+these runs; one start of the fix build crashed while the story world
+loaded, before any converted car was requested (`vm-20261024-061516`), and
+the same archive ran clean three times around it.
+
 Survey (detachable panels of the full entry: geometry on both sides where
 the host's isn't, or the rigid body more than 0.15 m from the panel's
 geometry): testdrive10 8 cars (RX-7 and S2000 mirrors, RX-7 exhaust body,
