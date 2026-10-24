@@ -140,6 +140,18 @@ def display_name(media: str, year: int | None) -> str:
     return f"{make} {model}".strip() + (f" ({year})" if year else "")
 
 
+def car_entry(media: str, year: int | None, games: str, source: Source, cache: Path, spool_id: int,
+              host: int, host_name: str, report: dict) -> dict:
+    """One car's record in the manifest's "cars" (port_car and port_batch)."""
+    return {"media": media, "name": display_name(media, year), "year": year, "game": source.game,
+            "games_available": games,
+            "source": {"iso": Path(source.iso).name, "where": source.where, "package": source.package,
+                       "path": source.path},
+            "cache": str(Path(cache) / source.game.lower() / media),
+            "spool_id": spool_id, "interior_id": spool_id + 1000, "exterior_id": spool_id + 2000,
+            "host": host, "host_name": host_name, **report}
+
+
 # --- finding and extracting cars --------------------------------------------------
 
 @dataclass
@@ -182,11 +194,13 @@ def extract_car(source: Source, media: str, cache: Path, log=print) -> Path:
     """Extract the files the conversion needs into cache/<game>/<media>/."""
     folder = cache / source.game.lower() / media
     stamp = folder / "source.json"
-    if stamp.exists():
+    try:
         old = json.loads(stamp.read_text())
-        # Re-extract when WANTED grew since the cache was made (e.g. the cockpit files).
-        if old.get("path") == source.path and old.get("wanted") == list(WANTED):
-            return folder
+    except (OSError, ValueError):   # none yet, or cut short: extract again
+        old = {}
+    # Re-extract when WANTED grew since the cache was made (e.g. the cockpit files).
+    if old.get("path") == source.path and old.get("wanted") == list(WANTED):
+        return folder
     image, archive, prefix = open_car_zip(source)
     try:
         wanted = {w.format(name=media).lower() for w in WANTED}
@@ -200,15 +214,15 @@ def extract_car(source: Source, media: str, cache: Path, log=print) -> Path:
                 continue
             target = folder / relative
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(archive.read(info))
+            write_atomic(target, archive.read(info))
             written.append(relative)
     finally:
         image.close()
     if f"{media}.carbin".lower() not in {w.lower() for w in written}:
         raise SystemExit(f"{media}: no main carbin in {source.path}")
-    stamp.write_text(json.dumps({"game": source.game, "where": source.where, "iso": source.iso,
-                                 "package": source.package, "path": source.path, "files": sorted(written),
-                                 "wanted": list(WANTED)}, indent=1))
+    write_atomic(stamp, json.dumps({"game": source.game, "where": source.where, "iso": source.iso,
+                                    "package": source.package, "path": source.path, "files": sorted(written),
+                                    "wanted": list(WANTED)}, indent=1).encode())
     log(f"{media}: extracted {len(written)} files from {source.where} to {folder}")
     return folder
 
@@ -228,12 +242,37 @@ def extract_gamedb(isos: list[Path], game: str, cache: Path) -> Path | None:
                 entry = image.find("Media/db/gamedb.slt")
             except KeyError:
                 continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            image.extract(entry, target)
+            # Under a temporary name: a cut-short copy must not pass for the database later.
+            temp = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+            try:
+                image.extract(entry, temp)
+                os.replace(temp, target)
+            except PermissionError:   # another process has it open, so it is already there
+                if not target.exists():
+                    raise
+            finally:
+                temp.unlink(missing_ok=True)
             return target
         finally:
             image.close()
     return None
+
+
+def write_atomic(path: Path, data: bytes) -> None:
+    """Write a cache file under a temporary name, then rename it into place, so a
+    reader in another process (parallel builds share out/cache) never sees half of
+    it. If the file is open elsewhere (Windows can't replace it then) the existing
+    copy, from the same source, stays."""
+    temp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        temp.write_bytes(data)
+        try:
+            os.replace(temp, path)
+        except PermissionError:
+            if not path.exists():
+                raise
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 # --- building ---------------------------------------------------------------------
@@ -717,14 +756,8 @@ def main(argv: list[str] | None = None) -> None:
             built.append((rcar, source, car, spool_id, clones, report, host))
         for rcar, source, car, spool_id, clones, report, host in built:
             clone_vehicle.register_clones(stream, entries, clones, host, spool_id)
-            manifest["cars"].append({
-                "media": rcar.name, "name": display_name(rcar.name, rcar.year), "year": rcar.year,
-                "game": source.game, "games_available": rcar.games,
-                "source": {"iso": Path(source.iso).name, "where": source.where, "package": source.package,
-                           "path": source.path},
-                "cache": str(args.cache / source.game.lower() / rcar.name),
-                "spool_id": spool_id, "interior_id": spool_id + 1000, "exterior_id": spool_id + 2000,
-                "host": host, "host_name": names[host], **report})
+            manifest["cars"].append(car_entry(rcar.name, rcar.year, rcar.games, source, args.cache, spool_id,
+                                              host, names[host], report))
         # Root indices shift as clones are inserted; look them up once all are in.
         records = {s: i for s, i, _ in clone_vehicle.sslp_records(stream, entries)}
         for c in manifest["cars"]:
@@ -736,8 +769,12 @@ def main(argv: list[str] | None = None) -> None:
         clashes = uid_clashes(stream, entries, {i for c in manifest["cars"] for i in c["vehc"]})
         if clashes and not args.share_host_uids:
             raise SystemExit(f"resource UID clashes: {clashes}")
-        with temp.open("wb") as out:
-            write_chunk(out, stream, entries, root.version)
+        try:
+            with temp.open("wb") as out:
+                write_chunk(out, stream, entries, root.version)
+        except BaseException:
+            temp.unlink(missing_ok=True)   # no partial archive copy left behind
+            raise
     os.replace(temp, args.out)
     log(f"wrote {args.out} ({args.out.stat().st_size:#x} bytes), {len(manifest['cars'])} cars")
 

@@ -92,7 +92,7 @@ def read_sets(path: Path) -> tuple[int, list[dict], list[int], int]:
             "hash": fields[0],
             "index": fields[11],
             "record_offset": base + offset + i * RECORD.size,
-            "lists": [ids[s:s + c] for s, c in zip(starts, counts) if c],
+            "lists": [ids[s:s + c] for s, c in zip(starts, counts)],   # one per frequency, maybe empty
             "starts": starts,
             "counts": counts,
         })
@@ -138,6 +138,8 @@ def main() -> int:
         name = by_hash.get(s["hash"], f"?{s['hash']:08X}")
         print(f"[{s['index']:2}] {name!r} hash {s['hash']:08X} record @{s['record_offset']:#x}")
         for freq, lst in enumerate(s["lists"]):
+            if not lst:
+                continue
             shown = [f"{v}:{models.get(v, '?')}" for v in lst] if models else lst
             print(f"     freq {freq} ({len(lst)}): {shown}")
             rows.append(f"{s['index']}\t{name}\t{s['hash']:08X}\t{freq}\t{len(lst)}\t{','.join(map(str, lst))}")

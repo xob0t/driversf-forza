@@ -22,8 +22,9 @@ a report. The merge then registers them into one copy of the stock archive
 150 stock cars plus at most 215 new ones; dsfforza.asi's archive module lifts
 it, research/spool-limits.md) and UID clashes, writes the archive, and lints every car.
 A car that fails in tools/damage.py is retried once without --damage, one
-that fails in the cockpit step once with --no-cockpit (the host's interior);
-a car that still fails is left out and listed with its cause (the innermost
+that fails in the cockpit step once with --no-cockpit (the host's interior),
+and a worker that times out or dies without a report is not retried; a car
+that still fails is left out and listed with its cause (the innermost
 tools module and exception), and the rest still ship. Extractions are cached
 in out/cache/<game>/<media>/ (port_car), and --resume reuses every car an
 earlier run in the same --out built with the same ID and options.
@@ -64,6 +65,7 @@ import hashlib
 import json
 import os
 import shlex
+import struct
 import subprocess
 import sys
 import time
@@ -465,7 +467,11 @@ def cause_of(text: str) -> str:
 def fallback_for(report: dict, options: list[str]) -> tuple[list[str], str] | None:
     """Options for one retry after a failure that a lesser build avoids: without
     --damage when tools/damage.py failed, with --no-cockpit (the host's interior)
-    when tools/cockpit.py or the cockpit carbin failed. None: no retry."""
+    when tools/cockpit.py or the cockpit carbin failed. None: no retry, also for a
+    worker that timed out or died without a report (its "error" is the log tail,
+    which names every step the car got through, so it says nothing about the cause)."""
+    if report.get("cause") in WORKER_DEATHS:
+        return None
     text = (report.get("traceback") or "") + (report.get("error") or "")
     if "damage.py" in text and "--damage" in options:
         out, skip = [], False
@@ -547,13 +553,8 @@ def worker(job_path: Path) -> int:
             os.replace(temp, out_chunk)
         report.update({
             "ok": True, "host": host, "host_name": names[host], "sound": sound,
-            "entry": {"media": job["media"], "name": port_car.display_name(job["media"], job["year"]),
-                      "year": job["year"], "game": source.game, "games_available": job["games"],
-                      "source": {"iso": Path(source.iso).name, "where": source.where, "package": source.package,
-                                 "path": source.path},
-                      "cache": str(Path(args.cache) / source.game.lower() / job["media"]),
-                      "spool_id": job["spool_id"], "interior_id": job["spool_id"] + 1000,
-                      "exterior_id": job["spool_id"] + 2000, "host": host, "host_name": names[host], **built,
+            "entry": {**port_car.car_entry(job["media"], job["year"], job["games"], source, args.cache,
+                                           job["spool_id"], host, names[host], built),
                       **({"batch_fallback": job["fallback"]} if job.get("fallback") else {})},
             "port_args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}})
     except BaseException as error:  # SystemExit from port_car included
@@ -562,71 +563,106 @@ def worker(job_path: Path) -> int:
                        "traceback": traceback.format_exc()[-4000:]})
         log(text)
     report["seconds"] = round(time.time() - started, 1)
-    out_report.write_text(json.dumps(report, indent=1, default=str) + "\n", encoding="utf-8")
+    # Atomic: a worker killed while writing (timeout) must not leave half a report.
+    temp = out_report.with_suffix(".json.tmp")
+    temp.write_text(json.dumps(report, indent=1, default=str) + "\n", encoding="utf-8")
+    os.replace(temp, out_report)
     return 0 if report["ok"] else 1
 
 
 # --- the pool ---------------------------------------------------------------------------------
 
+WORKER_DEATHS = ("timeout", "worker crash")
+
+
+def worker_report(work: Path, media: str, code: int | None) -> dict:
+    """The report the worker wrote, or a failure with its log tail when it timed out
+    (code None) or died without writing one (or left one that doesn't parse)."""
+    report_path = work / f"{media}.json"
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        if isinstance(report, dict) and "ok" in report:
+            return report
+    except (OSError, ValueError):
+        pass
+    report_path.unlink(missing_ok=True)
+    try:
+        tail = (work / f"{media}.log").read_text(encoding="utf-8", errors="replace")[-1500:]
+    except OSError:
+        tail = ""
+    return {"media": media, "ok": False, "cause": "timeout" if code is None else "worker crash",
+            "error": f"exit code {code}; log tail: {tail}"}
+
+
 def run_workers(jobs: list[dict], work: Path, parallel: int, log=print) -> dict[str, dict]:
-    """Run one worker process per job, at most `parallel` at once, Below Normal priority."""
+    """Run one worker process per job, at most `parallel` at once, Below Normal priority.
+    A worker that can't start, times out or dies is a failed car, not a failed batch;
+    workers still running when this exits early (an error, Ctrl+C) are stopped."""
     pending = list(jobs)
     jobs_by_media = {j["media"]: j for j in jobs}
     running: dict[str, tuple[subprocess.Popen, float, object]] = {}
     results: dict[str, dict] = {}
     flags = gentle.creation_flags(BELOW_NORMAL if os.name == "nt" else 0)
-    while pending or running:
-        while pending and len(running) < parallel:
-            ram = free_ram()
-            if running and ram is not None and ram < FREE_RAM_FOR_WORKER:
-                break
-            job = pending.pop(0)
-            job_path = work / f"{job['media']}.job.json"
-            job_path.write_text(json.dumps(job, indent=1), encoding="utf-8")
-            log_file = (work / f"{job['media']}.log").open("w", encoding="utf-8")
-            proc = subprocess.Popen([sys.executable, str(TOOLS / "port_batch.py"), "_worker", str(job_path)],
-                                    stdout=log_file, stderr=subprocess.STDOUT, creationflags=flags,
-                                    cwd=str(REPO), env={**os.environ, "PYTHONUNBUFFERED": "1"})
-            running[job["media"]] = (proc, time.time(), log_file)
-            log(f"  start {job['media']} (ID {job['spool_id']}); {len(running)} running, {len(pending)} queued")
-        time.sleep(1.0)
-        for media, (proc, started, log_file) in list(running.items()):
-            code = proc.poll()
-            if code is None and time.time() - started < WORKER_TIMEOUT:
-                continue
-            if code is None:
-                proc.kill()
-                proc.wait()
+    try:
+        while pending or running:
+            while pending and len(running) < parallel:
+                ram = free_ram()
+                if running and ram is not None and ram < FREE_RAM_FOR_WORKER:
+                    break
+                job = pending.pop(0)
+                job_path = work / f"{job['media']}.job.json"
+                job_path.write_text(json.dumps(job, indent=1), encoding="utf-8")
+                log_file = (work / f"{job['media']}.log").open("w", encoding="utf-8")
+                try:
+                    proc = subprocess.Popen([sys.executable, str(TOOLS / "port_batch.py"), "_worker", str(job_path)],
+                                            stdout=log_file, stderr=subprocess.STDOUT, creationflags=flags,
+                                            cwd=str(REPO), env={**os.environ, "PYTHONUNBUFFERED": "1"})
+                except OSError as error:
+                    log_file.close()
+                    results[job["media"]] = {"media": job["media"], "spool_id": job["spool_id"], "ok": False,
+                                             "cause": "worker crash", "error": f"could not start: {error}"}
+                    log(f"  FAILED to start {job['media']}: {error}")
+                    continue
+                running[job["media"]] = (proc, time.time(), log_file)
+                log(f"  start {job['media']} (ID {job['spool_id']}); {len(running)} running, {len(pending)} queued")
+            time.sleep(1.0)
+            for media, (proc, started, log_file) in list(running.items()):
+                code = proc.poll()
+                if code is None and time.time() - started < WORKER_TIMEOUT:
+                    continue
+                if code is None:
+                    proc.kill()
+                    proc.wait()
+                log_file.close()
+                del running[media]
+                report = worker_report(work, media, code)
+                report.setdefault("spool_id", jobs_by_media[media]["spool_id"])
+                report["seconds"] = round(time.time() - started, 1) + jobs_by_media[media].get("seconds_before", 0)
+                job = jobs_by_media[media]
+                retry = None if report.get("ok") or job.get("fallback") else fallback_for(report, job["port_options"])
+                if retry:
+                    options, why = retry
+                    for ext in ("json", "log"):  # a crashed worker leaves no report
+                        if (work / f"{media}.{ext}").exists():
+                            (work / f"{media}.{ext}").replace(work / f"{media}.first-try.{ext}")
+                    job = {**job, "port_options": options, "fallback": why, "first_error": report.get("error"),
+                           "first_cause": report.get("cause"), "seconds_before": report["seconds"]}
+                    jobs_by_media[media] = job
+                    pending.append(job)
+                    log(f"  retry {media} {why}")
+                    continue
+                if job.get("fallback"):
+                    report.update({"fallback": job["fallback"], "first_error": job.get("first_error"),
+                                   "first_cause": job.get("first_cause")})
+                results[media] = report
+                state = "ok" if report.get("ok") else f"FAILED ({report.get('cause')}: {report.get('error', '')[:160]})"
+                log(f"  done  {media} in {report['seconds']:.0f} s: {state}"
+                    + (f" ({job['fallback']})" if job.get("fallback") else ""))
+    finally:
+        for proc, _, log_file in running.values():   # only when leaving early
+            proc.kill()
+            proc.wait()
             log_file.close()
-            del running[media]
-            report_path = work / f"{media}.json"
-            if report_path.exists():
-                report = json.loads(report_path.read_text(encoding="utf-8"))
-            else:
-                tail = (work / f"{media}.log").read_text(encoding="utf-8", errors="replace")[-1500:]
-                report = {"media": media, "ok": False, "cause": "timeout" if code is None else "worker crash",
-                          "error": f"exit code {code}; log tail: {tail}"}
-            report["seconds"] = round(time.time() - started, 1) + jobs_by_media[media].get("seconds_before", 0)
-            job = jobs_by_media[media]
-            retry = None if report.get("ok") or job.get("fallback") else fallback_for(report, job["port_options"])
-            if retry:
-                options, why = retry
-                for ext in ("json", "log"):  # a crashed worker leaves no report
-                    if (work / f"{media}.{ext}").exists():
-                        (work / f"{media}.{ext}").replace(work / f"{media}.first-try.{ext}")
-                job = {**job, "port_options": options, "fallback": why, "first_error": report.get("error"),
-                       "first_cause": report.get("cause"), "seconds_before": report["seconds"]}
-                jobs_by_media[media] = job
-                pending.append(job)
-                log(f"  retry {media} {why}")
-                continue
-            if job.get("fallback"):
-                report.update({"fallback": job["fallback"], "first_error": job.get("first_error"),
-                               "first_cause": job.get("first_cause")})
-            results[media] = report
-            state = "ok" if report.get("ok") else f"FAILED ({report.get('cause')}: {report.get('error', '')[:160]})"
-            log(f"  done  {media} in {report['seconds']:.0f} s: {state}"
-                + (f" ({job['fallback']})" if job.get("fallback") else ""))
     return results
 
 
@@ -692,7 +728,11 @@ def merge(dsf: Path, out: Path, results: list[dict], work: Path, log=print,
                 failed.append({**r, "ok": False, "cause": "merge", "error": f"{chunk_path.name} missing"})
                 continue
             base = stream.add(chunk_path)
-            clones = read_chunk(stream, base).entries
+            try:
+                clones = read_chunk(stream, base).entries
+            except (ValueError, struct.error) as error:
+                failed.append({**r, "ok": False, "cause": "merge", "error": f"{chunk_path.name}: {error}"})
+                continue
             if len(clones) != 3 or any(c.tag != "VEHC" for c in clones):
                 failed.append({**r, "ok": False, "cause": "merge", "error": "car chunk is not three VEHC entries"})
                 continue
@@ -719,9 +759,12 @@ def merge(dsf: Path, out: Path, results: list[dict], work: Path, log=print,
             raise SystemExit(f"resource UID clashes: {sorted(bad)}")
         out.parent.mkdir(parents=True, exist_ok=True)
         temp = out.with_name(out.name + ".tmp")
-        with temp.open("wb") as handle:
-            write_chunk(handle, stream, entries, root.version)
-        os.replace(temp, out)
+        try:
+            with temp.open("wb") as handle:
+                write_chunk(handle, stream, entries, root.version)
+            os.replace(temp, out)
+        finally:
+            temp.unlink(missing_ok=True)   # a failed write leaves no 1-2 GB partial copy behind
         size = out.stat().st_size
         if size >= 1 << 31:
             # The stock file layer clamps seek positions of 2 GiB and up to 0 (spool-limits.md).
@@ -813,10 +856,11 @@ def cmd_build(args) -> None:
     from chnk import read_chunk
     import clone_vehicle
     with dsf.open("rb") as stream:
-        taken = clone_vehicle.taken_ids(stream, read_chunk(stream, 0).entries)
+        stock_entries = read_chunk(stream, 0).entries
+        taken = clone_vehicle.taken_ids(stream, stock_entries)
     assign_ids(picks, taken, args.id_policy, args.first_id)
     root_limit = root_limit_of(args)
-    room = (root_limit - 453) // 3
+    room = (root_limit - len(stock_entries)) // 3   # 453 root entries in the stock archive
     if len(picks) > room:
         raise SystemExit(f"{len(picks)} cars: the archive root holds at most {room} new ones "
                          f"(--root-limit {root_limit})")
@@ -841,15 +885,19 @@ def cmd_build(args) -> None:
     for job in jobs:   # results of an earlier run: reuse (--resume) or drop
         old_job, old_report = work / f"{job['media']}.job.json", Path(job["report"])
         if args.resume and old_job.exists() and old_report.exists() and Path(job["chunk"]).exists():
-            before = json.loads(old_job.read_text(encoding="utf-8"))
-            report = json.loads(old_report.read_text(encoding="utf-8"))
+            try:
+                before = json.loads(old_job.read_text(encoding="utf-8"))
+                report = json.loads(old_report.read_text(encoding="utf-8"))
+            except ValueError:   # cut short by an earlier crash: build the car again
+                before, report = {}, {}
             same = all(before.get(k) == job[k] for k in ("spool_id", "game", "dsf")) and \
                 before.get("requested_options", before.get("port_options")) == job["port_options"]
             if same and report.get("ok"):
                 reused[job["media"]] = report
                 continue
-        for path in (Path(job["chunk"]), Path(job["report"])):
-            path.unlink(missing_ok=True)
+        # Everything an earlier run left for this car, so nothing stale is read as this run's.
+        for name in ("chnk", "json", "first-try.json", "first-try.log", "tmp", "json.tmp"):
+            (work / f"{job['media']}.{name}").unlink(missing_ok=True)
     for job in jobs:
         job["requested_options"] = list(job["port_options"])
     t = time.time()
