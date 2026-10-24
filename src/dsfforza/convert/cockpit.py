@@ -68,8 +68,8 @@ GAUGE_IDS = {"speed": 2, "tach": 1}  # Forza needle family -> DSF gauge id (FUN_
 # for the tachometer and mph x 0.0125 for the speedometer (FUN_00891670), so
 # the u32 is degrees per GAUGE_UNITS[family] (rpm or mph).
 GAUGE_UNITS = {"tach": 5000.0, "speed": 80.0}
-MPH_PER_MS = 2.23704             # DAT_00DE2EB4: the speedometer's m/s -> mph
-SPEED_DIAL_PARAM, SPEED_FLOOR_PARAM = 605, 606   # VO3D: speedometer clamp (mph), default 255 / 0
+MPH_PER_MS = 2.23704  # DAT_00DE2EB4: the speedometer's m/s -> mph
+SPEED_DIAL_PARAM, SPEED_FLOOR_PARAM = 605, 606  # VO3D: speedometer clamp (mph), default 255 / 0
 # Without a CarAttribs tick table, the needle's sweep is taken to span these.
 FALLBACK_DIAL_MAX = {"speed": 160.0, "tach": 8000.0}
 # Needles with no DSF gauge stay static: half-way for level and temperature
@@ -84,7 +84,7 @@ PARK_MID = re.compile(r"^(fuel|oil|water|temp|volt)", re.I)
 # drawn textured (DISPLAY_FACE); the rest as a blank display.
 DIGITAL_TECHNIQUES = {"digital_gauge"}
 DISPLAY_COLOUR = (12, 14, 16, 255)
-DISPLAY_FACE = "digital_gauge_face"   # renamed subsection: classify_cockpit -> textured, interior_LOD0
+DISPLAY_FACE = "digital_gauge_face"  # renamed subsection: classify_cockpit -> textured, interior_LOD0
 # A face mapping is a real picture of the display when it is undistorted
 # (median ratio of the UV map's singular values) and at least as dense as a
 # coarse cabin texture (UV units per metre; cabins run 3 to 9). Elsewhere the
@@ -96,9 +96,11 @@ FACE_MIN_DENSITY = 1.0
 # (mirror glass, a render target in Forza; tiling detail textures such as the
 # Mustang's wood rim and dash) sample DSF's trim texture with Forza UVs, which
 # shows unrelated texture cells. They get one flat cell of the interior atlas.
-FLAT_COCKPIT = [(re.compile(r"^mirror", re.I), (46, 50, 56, 255)),
-                (re.compile(r"wood", re.I), (84, 48, 26, 255)),
-                (re.compile(r"chrome|metal", re.I), (150, 150, 155, 255))]
+FLAT_COCKPIT = [
+    (re.compile(r"^mirror", re.I), (46, 50, 56, 255)),
+    (re.compile(r"wood", re.I), (84, 48, 26, 255)),
+    (re.compile(r"chrome|metal", re.I), (150, 150, 155, 255)),
+]
 FLAT_DEFAULT = (34, 34, 36, 255)
 # The engine's interior paint material: used by every stock interior that has
 # painted parts (227, 147, 229, 193, 251, 266 checked; out/cockpit2/host_shared.py).
@@ -113,6 +115,8 @@ DASHBOARD_INSTRUMENT = 0x75FAD367  # VDCL name hash of the needle buffers' seman
 
 def flat_colour(technique: str) -> tuple[int, int, int, int]:
     return next((c for pattern, c in FLAT_COCKPIT if pattern.search(technique)), FLAT_DEFAULT)
+
+
 # Cockpit sections that are not drawn in DSF's cockpit view by default.
 SKIP_SECTIONS = {"cagerace"}
 LIGHT_SECTIONS = re.compile(r"(head|tail)light", re.I)
@@ -122,6 +126,7 @@ SHELL_SKIP = re.compile(r"^(wheel|undercarriage|cagerace|blur|.*_plate_(front|re
 
 
 # --- small vector helpers -----------------------------------------------------------
+
 
 def _sub(a, b):
     return tuple(x - y for x, y in zip(a, b))
@@ -202,8 +207,10 @@ def quat_rotate(q, v):
 
 # --- Forza cockpit geometry -----------------------------------------------------------
 
+
 def load_cockpit(folder: Path, name: str) -> list[carbin.Section] | None:
     from dsfforza.convert import forza2dsf
+
     path = forza2dsf.find_file(folder, f"{name}_cockpit.carbin")
     if path is None:
         return None
@@ -226,8 +233,8 @@ def section_points(section: carbin.Section, materials: set[str] | None = None) -
 
 @dataclass
 class Wheel:
-    centre: tuple   # Forza space
-    axis: tuple     # unit, Forza space, pointing from the wheel towards the driver
+    centre: tuple  # Forza space
+    axis: tuple  # unit, Forza space, pointing from the wheel towards the driver
     radius: float
 
 
@@ -264,7 +271,7 @@ def fit_wheel_points(pts: list[tuple]) -> Wheel:
     return Wheel(centre, axis, r)
 
 
-MAIN_WHEEL_RADIUS = (0.08, 0.30)   # a plausible main-carbin wheel fit (FH1 Mustang Boss 429's: 0.013)
+MAIN_WHEEL_RADIUS = (0.08, 0.30)  # a plausible main-carbin wheel fit (FH1 Mustang Boss 429's: 0.013)
 MAIN_WHEEL_MAX_MOVE = 0.5
 
 
@@ -293,13 +300,17 @@ def align_main_wheel(section: carbin.Section, target: Wheel) -> tuple[carbin.Sec
     wheel can't be fitted."""
     import copy
     import dataclasses
+
     main = fit_main_wheel(section, target)
     if main is None:
         return None, {"kept": "no LOD"}
-    report = {"main_centre": [round(c, 4) for c in main.centre], "main_radius": round(main.radius, 4),
-              "move": round(math.dist(main.centre, target.centre), 4),
-              "turn_deg": round(math.degrees(math.acos(max(-1.0, min(1.0, _dot(main.axis, target.axis))))), 2),
-              "scale": round(target.radius / main.radius, 4) if main.radius else None}
+    report = {
+        "main_centre": [round(c, 4) for c in main.centre],
+        "main_radius": round(main.radius, 4),
+        "move": round(math.dist(main.centre, target.centre), 4),
+        "turn_deg": round(math.degrees(math.acos(max(-1.0, min(1.0, _dot(main.axis, target.axis))))), 2),
+        "scale": round(target.radius / main.radius, 4) if main.radius else None,
+    }
     if not MAIN_WHEEL_RADIUS[0] <= main.radius <= MAIN_WHEEL_RADIUS[1] or report["move"] > MAIN_WHEEL_MAX_MOVE:
         report["kept"] = "implausible main-carbin wheel fit"
         return None, report
@@ -309,6 +320,7 @@ def align_main_wheel(section: carbin.Section, target: Wheel) -> tuple[carbin.Sec
     def move(v):
         p = quat_rotate(q, _scale(_sub(v.position, main.centre), k))
         return dataclasses.replace(v, position=_add(target.centre, p), normal=quat_rotate(q, v.normal))
+
     out = copy.copy(section)
     out.lod_vertices = [move(v) for v in section.lod_vertices]
     out.lod0_vertices = [move(v) for v in section.lod0_vertices]
@@ -317,11 +329,11 @@ def align_main_wheel(section: carbin.Section, target: Wheel) -> tuple[carbin.Sec
 
 @dataclass
 class Gauge:
-    family: str              # "speed", "tach", ...
-    pivot: tuple             # Forza space
-    normal: tuple            # unit, Forza space, pointing into the dash (forward, -z)
-    sweep_deg: float         # min -> max pose, positive = clockwise seen by the driver
-    rest: carbin.Section     # the pose drawn (min)
+    family: str  # "speed", "tach", ...
+    pivot: tuple  # Forza space
+    normal: tuple  # unit, Forza space, pointing into the dash (forward, -z)
+    sweep_deg: float  # min -> max pose, positive = clockwise seen by the driver
+    rest: carbin.Section  # the pose drawn (min)
 
 
 def _plane_rotation(xs, ys, normal):
@@ -388,6 +400,7 @@ def gauge_ticks(folder: Path | None) -> dict[str, list[tuple[float, float]]]:
     [(param, value)]. Param 0..1 runs from the needle's min to its max pose;
     speed values are m/s, tach values rpm."""
     import xml.etree.ElementTree as ET
+
     if folder is None or not Path(folder).is_dir():
         return {}
     path = next((p for p in Path(folder).iterdir() if p.name.lower() == "carattribs.xml"), None)
@@ -400,8 +413,11 @@ def gauge_ticks(folder: Path | None) -> dict[str, list[tuple[float, float]]]:
     out = {}
     for gauge in root.iter("Gauges"):
         for family in gauge:
-            ticks = [(float(t.get("Param")), float(t.get("Value"))) for t in family.iter("TickMark")
-                     if t.get("Param") is not None and t.get("Value") is not None]
+            ticks = [
+                (float(t.get("Param")), float(t.get("Value")))
+                for t in family.iter("TickMark")
+                if t.get("Param") is not None and t.get("Value") is not None
+            ]
             if ticks:
                 out[family.tag.lower()] = ticks
     return out
@@ -410,13 +426,14 @@ def gauge_ticks(folder: Path | None) -> dict[str, list[tuple[float, float]]]:
 @dataclass
 class GaugeCalibration:
     """What the DSF gauge table needs for one Forza needle."""
+
     family: str
     gauge_id: int
-    sweep: int                # u32: needle degrees per GAUGE_UNITS[family] (rpm or mph)
-    reverse: bool             # needle turns counter-clockwise: the dial normal is flipped
-    rest_deg: float           # turn of the min pose (about the Forza normal) to put it on 0
-    dial_max: float           # last mark (mph or rpm)
-    residual_deg: float       # worst tick off the linear fit
+    sweep: int  # u32: needle degrees per GAUGE_UNITS[family] (rpm or mph)
+    reverse: bool  # needle turns counter-clockwise: the dial normal is flipped
+    rest_deg: float  # turn of the min pose (about the Forza normal) to put it on 0
+    dial_max: float  # last mark (mph or rpm)
+    residual_deg: float  # worst tick off the linear fit
     source: str
 
     @property
@@ -446,8 +463,16 @@ def calibrate_gauge(g: Gauge, ticks: list[tuple[float, float]] | None) -> GaugeC
         dial_max = FALLBACK_DIAL_MAX[g.family]
         a, b, residual = 0.0, g.sweep_deg / dial_max, 0.0
         source = f"no tick table: sweep taken as 0..{dial_max:g}"
-    return GaugeCalibration(g.family, GAUGE_IDS[g.family], max(1, round(abs(b) * unit)), b < 0, a,
-                            round(dial_max, 1), round(residual, 2), source)
+    return GaugeCalibration(
+        g.family,
+        GAUGE_IDS[g.family],
+        max(1, round(abs(b) * unit)),
+        b < 0,
+        a,
+        round(dial_max, 1),
+        round(residual, 2),
+        source,
+    )
 
 
 def rotate_about(p, pivot, axis, deg: float):
@@ -478,9 +503,12 @@ def eye_offset(name: str, gamedbs: list[Path]) -> tuple[tuple[float, float, floa
             continue
         con = sqlite3.connect(f"file:{Path(db).as_posix()}?mode=ro", uri=True)
         try:
-            row = con.execute("SELECT o.CamCockpitOffsetX, o.CamCockpitOffsetY, o.CamCockpitOffsetZ "
-                              "FROM CameraOverrides o JOIN Data_Car c ON c.Id = o.CarId "
-                              "WHERE lower(c.MediaName) = lower(?)", (name,)).fetchone()
+            row = con.execute(
+                "SELECT o.CamCockpitOffsetX, o.CamCockpitOffsetY, o.CamCockpitOffsetZ "
+                "FROM CameraOverrides o JOIN Data_Car c ON c.Id = o.CarId "
+                "WHERE lower(c.MediaName) = lower(?)",
+                (name,),
+            ).fetchone()
         except sqlite3.Error:
             row = None
         finally:
@@ -504,22 +532,22 @@ class CockpitFit:
     eye: tuple
     offset: tuple
     offset_source: str
-    mirrors: dict[str, tuple]   # "left"/"right" (driver's view, Forza -x = left) -> glass centre
+    mirrors: dict[str, tuple]  # "left"/"right" (driver's view, Forza -x = left) -> glass centre
     static: dict
     needles: dict
-    calibration: dict = field(default_factory=dict)   # family -> GaugeCalibration (speed, tach)
-    digital: int = 0            # digital_gauge triangles (drawn as a blank display)
-    source: str = "cockpit"     # "cockpit", or why the main carbin's cabin stands in
+    calibration: dict = field(default_factory=dict)  # family -> GaugeCalibration (speed, tach)
+    digital: int = 0  # digital_gauge triangles (drawn as a blank display)
+    source: str = "cockpit"  # "cockpit", or why the main carbin's cabin stands in
     wheel_source: str = "cockpit"
-    lod0_atlases: bool = True   # cockpit carbins sample the _LOD0 atlases, the main carbin doesn't
-    shell_skip: set = field(default_factory=set)   # main-carbin sections kept out of the shell too
+    lod0_atlases: bool = True  # cockpit carbins sample the _LOD0 atlases, the main carbin doesn't
+    shell_skip: set = field(default_factory=set)  # main-carbin sections kept out of the shell too
     camera: tuple | None = None  # final head camera (Forza space), set by forza2dsf after camera_eye
-    display_faces: int = 0       # digital_gauge triangles drawn textured (display_face)
+    display_faces: int = 0  # digital_gauge triangles drawn textured (display_face)
 
 
 # Main-carbin sections that make a cockpit when the cockpit carbin is a stub.
 MAIN_CABIN = ("interior", "seatL", "seatR", "steering_wheel")
-STUB_EXTENT = 0.5   # m: a real cockpit spans the cabin; stubs are a 0.2 m box per section
+STUB_EXTENT = 0.5  # m: a real cockpit spans the cabin; stubs are a 0.2 m box per section
 STUB_TRIANGLES = 1000  # real cockpits have tens of thousands (370Z 62,522)
 
 
@@ -527,6 +555,7 @@ def promote_lod(section: carbin.Section, lod: int | None = None) -> carbin.Secti
     """A copy of a main-carbin section whose finest LOD (or `lod`) poses as
     LOD 0, so the cockpit code (LOD-0 only) can use it."""
     import copy
+
     lods = sorted({sub.lod for sub in section.subsections if sub.lod > 0})
     if not lods:
         return None
@@ -589,6 +618,7 @@ def display_face(section: carbin.Section, sub: carbin.SubSection) -> carbin.SubS
     FACE_MAX_ANISOTROPY), as a textured copy (DISPLAY_FACE, that transform
     first); None for blank displays."""
     import copy
+
     if sub.material.lower() not in DIGITAL_TECHNIQUES or len(sub.uv_transform) < 8:
         return None
     face = tuple(sub.uv_transform[4:8])
@@ -605,6 +635,7 @@ def with_display_faces(section: carbin.Section) -> tuple[carbin.Section, int]:
     """The section with its textured display faces (display_face) swapped in,
     and how many triangles they hold."""
     import copy
+
     subs, faces = [], 0
     for sub in section.subsections:
         face = display_face(section, sub) if sub.lod == 0 else None
@@ -629,8 +660,13 @@ def is_stub(sections: list[carbin.Section]) -> bool:
     return max(max(p[i] for p in pts) - min(p[i] for p in pts) for i in range(3)) < STUB_EXTENT
 
 
-def fit(sections: list[carbin.Section], name: str, gamedbs: list[Path], folder: Path | None = None,
-        main_sections: list[carbin.Section] | None = None) -> CockpitFit:
+def fit(
+    sections: list[carbin.Section],
+    name: str,
+    gamedbs: list[Path],
+    folder: Path | None = None,
+    main_sections: list[carbin.Section] | None = None,
+) -> CockpitFit:
     """Measure the cockpit; `folder` (the extracted car) supplies the
     CarAttribs.xml tick tables for the gauge calibration. `main_sections`
     (the main carbin) stands in when the cockpit carbin is a stub (its
@@ -649,8 +685,9 @@ def fit(sections: list[carbin.Section], name: str, gamedbs: list[Path], folder: 
         wheel_at = next((c for c in cabin if c.name.lower() == "steering_wheel"), None)
         if wheel_at is not None:
             wx = _mean(section_points(wheel_at))[0]
-            dropped = {c.name for c in cabin if c.name.lower().startswith("seat")
-                       and _mean(section_points(c))[0] * wx > 0}
+            dropped = {
+                c.name for c in cabin if c.name.lower().startswith("seat") and _mean(section_points(c))[0] * wx > 0
+            }
             cabin = [c for c in cabin if c.name not in dropped]
         # forza2dsf passes [] when the car has no cockpit carbin at all.
         source = ("stub" if sections else "no") + " cockpit carbin: main carbin cabin"
@@ -684,14 +721,33 @@ def fit(sections: list[carbin.Section], name: str, gamedbs: list[Path], folder: 
     ticks = gauge_ticks(folder)
     calibration = {f: calibrate_gauge(g, ticks.get(f)) for f, g in gauges.items() if f in GAUGE_IDS}
     faces = 0
-    if lod0:   # the face maps into interior_LOD0; main-carbin cabins have no digital_gauge
+    if lod0:  # the face maps into interior_LOD0; main-carbin cabins have no digital_gauge
         for n, s in static.items():
             static[n], k = with_display_faces(s)
             faces += k
-    digital = sum(len(sub.triangles()) for s in static.values() for sub in s.subsections
-                  if sub.lod == 0 and sub.material.lower() in DIGITAL_TECHNIQUES)
-    return CockpitFit(wheel, gauges, eye_point(wheel, offset), offset, eye_source, mirrors, static, needles,
-                      calibration, digital, source, wheel_source, lod0, dropped, display_faces=faces)
+    digital = sum(
+        len(sub.triangles())
+        for s in static.values()
+        for sub in s.subsections
+        if sub.lod == 0 and sub.material.lower() in DIGITAL_TECHNIQUES
+    )
+    return CockpitFit(
+        wheel,
+        gauges,
+        eye_point(wheel, offset),
+        offset,
+        eye_source,
+        mirrors,
+        static,
+        needles,
+        calibration,
+        digital,
+        source,
+        wheel_source,
+        lod0,
+        dropped,
+        display_faces=faces,
+    )
 
 
 def gauge_params(cf: CockpitFit) -> dict[int, float]:
@@ -702,14 +758,16 @@ def gauge_params(cf: CockpitFit) -> dict[int, float]:
 
 # --- DSF hierarchy and camera --------------------------------------------------------
 
+
 @dataclass
 class HostCockpit:
     """Where the host keeps its cockpit animation (from the full entry's UPVH)."""
+
     wheel_record: int
     wheel_hinge: int
     wheel_marker: int
-    wheel_skin: bytes              # vertex semantic 9 for steering-wheel vertices
-    gauge_slots: dict[int, int]    # gauge id -> gauge ("seat") table index
+    wheel_skin: bytes  # vertex semantic 9 for steering-wheel vertices
+    gauge_slots: dict[int, int]  # gauge id -> gauge ("seat") table index
     gauge_parent_hinge: int | None
     mirror_slots: list[int]
 
@@ -723,6 +781,7 @@ def parent_of(h, index: int) -> int | None:
 
 def host_cockpit(upvh_data: bytes) -> HostCockpit:
     from dsfforza.formats import upvh
+
     h = upvh.parse(upvh_data)
     markers = [r for r in h.records if r.type == 3 and r.role == STEERING_MARKER_ROLE and r.marker >= 0]
     if not markers:
@@ -750,8 +809,15 @@ def host_cockpit(upvh_data: bytes) -> HostCockpit:
             p = parent_of(h, r.index)
             if p is not None and h.records[p].hinge >= 0:
                 parent_hinge = h.records[p].hinge
-    return HostCockpit(rec.index, rec.hinge, marker, bytes((slot & 0xFF, model & 0xFF, 0, 1)), gauge_slots,
-                       parent_hinge, list(range(h.counts["mirrors"])))
+    return HostCockpit(
+        rec.index,
+        rec.hinge,
+        marker,
+        bytes((slot & 0xFF, model & 0xFF, 0, 1)),
+        gauge_slots,
+        parent_hinge,
+        list(range(h.counts["mirrors"])),
+    )
 
 
 # --- driver's hands -------------------------------------------------------------------
@@ -768,7 +834,7 @@ def host_cockpit(upvh_data: bytes) -> HostCockpit:
 # grip it about 45 deg either side of the top.
 HAND_PARAMS = (538, 559)
 STOCK_RIM_RADIUS = 0.176
-STOCK_COLUMN = (0.0, 0.410, -0.912)     # DSF model space, towards the driver
+STOCK_COLUMN = (0.0, 0.410, -0.912)  # DSF model space, towards the driver
 HAND_GRIP_DEG = 45.0
 MAX_HAND_SHIFT = 0.06
 
@@ -785,8 +851,15 @@ def hand_grips(pivot) -> list[tuple]:
     a = _norm(STOCK_COLUMN)
     up = _norm(_sub((0.0, 1.0, 0.0), _scale(a, a[1])))
     t = math.radians(HAND_GRIP_DEG)
-    return [_add(pivot, _add(_scale((1.0, 0.0, 0.0), s * STOCK_RIM_RADIUS * math.sin(t)),
-                             _scale(up, STOCK_RIM_RADIUS * math.cos(t)))) for s in (1, -1)]
+    return [
+        _add(
+            pivot,
+            _add(
+                _scale((1.0, 0.0, 0.0), s * STOCK_RIM_RADIUS * math.sin(t)), _scale(up, STOCK_RIM_RADIUS * math.cos(t))
+            ),
+        )
+        for s in (1, -1)
+    ]
 
 
 def hand_shift(centre, axis, radius) -> tuple[float, float, float]:
@@ -826,6 +899,7 @@ def patch_hierarchy(upvh_data: bytes, host: HostCockpit, place, cf: CockpitFit) 
     marker sit at the wheel centre plus hand_shift, so the stock hands grip
     the Forza rim (with hand_params in VO3D)."""
     from dsfforza.formats import upvh
+
     h = upvh.parse(upvh_data)
     data = bytearray(upvh_data)
     report = {}
@@ -846,13 +920,24 @@ def patch_hierarchy(upvh_data: bytes, host: HostCockpit, place, cf: CockpitFit) 
     struct.pack_into("<3f", data, marker_at, *pivot)
     struct.pack_into("<4f", data, marker_at + 0x10, *q)
     along = _dot(shift, axis)
-    report["steering"] = {"record": host.wheel_record, "hinge": host.wheel_hinge, "marker": host.wheel_marker,
-                          "centre": [round(c, 4) for c in centre], "axis": [round(c, 4) for c in axis],
-                          "radius": round(cf.wheel.radius, 4), "skin": list(host.wheel_skin),
-                          "hands": {"shift": [round(c, 4) for c in shift], "along_column": round(along, 4),
-                                    "in_plane": round(math.sqrt(max(0.0, _dot(shift, shift) - along * along)), 4),
-                                    "grip_error": [round(hand_grip_error(centre, centre, axis, cf.wheel.radius), 4),
-                                                   round(hand_grip_error(pivot, centre, axis, cf.wheel.radius), 4)]}}
+    report["steering"] = {
+        "record": host.wheel_record,
+        "hinge": host.wheel_hinge,
+        "marker": host.wheel_marker,
+        "centre": [round(c, 4) for c in centre],
+        "axis": [round(c, 4) for c in axis],
+        "radius": round(cf.wheel.radius, 4),
+        "skin": list(host.wheel_skin),
+        "hands": {
+            "shift": [round(c, 4) for c in shift],
+            "along_column": round(along, 4),
+            "in_plane": round(math.sqrt(max(0.0, _dot(shift, shift) - along * along)), 4),
+            "grip_error": [
+                round(hand_grip_error(centre, centre, axis, cf.wheel.radius), 4),
+                round(hand_grip_error(pivot, centre, axis, cf.wheel.radius), 4),
+            ],
+        },
+    }
     moved = []
     for family, gid in GAUGE_IDS.items():
         g = cf.gauges.get(family)
@@ -872,12 +957,25 @@ def patch_hierarchy(upvh_data: bytes, host: HostCockpit, place, cf: CockpitFit) 
         if cal is not None:
             struct.pack_into("<I", data, at + 0x24, cal.sweep)
         moved.append(pivot)
-        entry = {"id": gid, "pivot": [round(c, 4) for c in pivot], "normal": [round(c, 4) for c in normal],
-                 "forza_sweep_deg": round(g.sweep_deg, 1), "host_sweep": old_sweep}
+        entry = {
+            "id": gid,
+            "pivot": [round(c, 4) for c in pivot],
+            "normal": [round(c, 4) for c in normal],
+            "forza_sweep_deg": round(g.sweep_deg, 1),
+            "host_sweep": old_sweep,
+        }
         if cal is not None:
-            entry.update({"sweep": cal.sweep, "unit": GAUGE_UNITS[family], "reverse": cal.reverse,
-                          "rest_deg": round(cal.rest_deg, 2), "dial_max": cal.dial_max,
-                          "residual_deg": cal.residual_deg, "source": cal.source})
+            entry.update(
+                {
+                    "sweep": cal.sweep,
+                    "unit": GAUGE_UNITS[family],
+                    "reverse": cal.reverse,
+                    "rest_deg": round(cal.rest_deg, 2),
+                    "dial_max": cal.dial_max,
+                    "residual_deg": cal.residual_deg,
+                    "source": cal.source,
+                }
+            )
         report.setdefault("gauges", {})[family] = entry
     if moved and host.gauge_parent_hinge is not None:
         at = h.offsets["hinges"] + host.gauge_parent_hinge * 0x30
@@ -901,6 +999,7 @@ FLEET_EYE_ABOVE_SEAT = (0.0, 0.737, -0.080)
 def seat_markers(upvh_data: bytes) -> dict[int, int]:
     """Role (10 driver, 11 passenger) -> marker table index."""
     from dsfforza.formats import upvh
+
     h = upvh.parse(upvh_data)
     out = {}
     for r in h.records:
@@ -912,6 +1011,7 @@ def seat_markers(upvh_data: bytes) -> dict[int, int]:
 def host_eye_above_seat(upvh_data: bytes, vo3d_data: bytes) -> tuple[float, float, float]:
     """eye - driver seat marker in the host (Desanne: (0, 0.796, -0.097)), or the fleet median."""
     from dsfforza.formats import upvh
+
     slots = seat_markers(upvh_data)
     if DRIVER_SEAT_ROLE not in slots:
         return FLEET_EYE_ABOVE_SEAT
@@ -926,6 +1026,7 @@ def patch_seats(upvh_data: bytes, eye_dsf, eye_above_seat) -> tuple[bytes, dict]
     passenger's (role 11) to the mirrored x at the same height and depth. The
     marker quaternions (seat tilt) stay the host's."""
     from dsfforza.formats import upvh
+
     h = upvh.parse(upvh_data)
     slots = seat_markers(upvh_data)
     data = bytearray(upvh_data)
@@ -936,7 +1037,9 @@ def patch_seats(upvh_data: bytes, eye_dsf, eye_above_seat) -> tuple[bytes, dict]
         if role in slots:
             at = h.offsets["markers"] + slots[role] * 0x20
             report["driver" if role == DRIVER_SEAT_ROLE else "passenger"] = {
-                "from": [round(c, 4) for c in struct.unpack_from("<3f", data, at)], "to": [round(c, 4) for c in pos]}
+                "from": [round(c, 4) for c in struct.unpack_from("<3f", data, at)],
+                "to": [round(c, 4) for c in pos],
+            }
             struct.pack_into("<3f", data, at, *pos)
     report["eye_above_seat"] = [round(c, 4) for c in eye_above_seat]
     return bytes(data), report
@@ -967,6 +1070,7 @@ def camera_params(eye_dsf, marker_x: float) -> dict[int, float]:
 
 def patch_vo3d(vo3d_data: bytes, params: dict[int, float]) -> bytes:
     from dsfforza.build import handling
+
     v = handling.VO3D.parse(vo3d_data)
     v.params.update(params)
     return v.build()
@@ -976,6 +1080,7 @@ def head_camera(upvh_data: bytes, vo3d_data: bytes) -> tuple[tuple, tuple]:
     """(eye, steering marker) in DSF model space, as the engine computes them."""
     from dsfforza.build import handling
     from dsfforza.formats import upvh
+
     h = upvh.parse(upvh_data)
     marker = next(r for r in h.records if r.type == 3 and r.role == STEERING_MARKER_ROLE and r.marker >= 0)
     m = struct.unpack_from("<3f", h.table("markers")[marker.marker])
@@ -985,13 +1090,14 @@ def head_camera(upvh_data: bytes, vo3d_data: bytes) -> tuple[tuple, tuple]:
 
 # --- the interior entry ---------------------------------------------------------------
 
+
 @dataclass
 class InteriorMaterials:
-    textured: bytes        # local "Interior" material (samples the interior TEXC)
+    textured: bytes  # local "Interior" material (samples the interior TEXC)
     needles: bytes | None  # local "Dials" material, stride 20, alpha-tested
-    texture: bytes         # interior TEXC UID
-    shared: dict           # role -> material UID (paint, glass, trim)
-    layout: dict           # material -> (stride, MODL flag), from the host
+    texture: bytes  # interior TEXC UID
+    shared: dict  # role -> material UID (paint, glass, trim)
+    layout: dict  # material -> (stride, MODL flag), from the host
     needle_part: int | None
     cabin_part: int
 
@@ -1003,14 +1109,18 @@ def host_interior(stream, interior, known: dict | None = None) -> InteriorMateri
     from dsfforza.convert import dsf_materials as dm
     from dsfforza.convert import forza2dsf
     from dsfforza.formats.vehicle_mesh import child
+
     drsp = child(child(interior, "MDXN"), "DRSP")
     local, texc = {}, {}
     for e in drsp.children:
         if e.tag == "MACO":
             info = dm.material_info(stream, e)
             base = info["path"].lower().replace("\\", "/").rsplit("/", 1)[-1]
-            kind = "dials" if "_dials" in base or "g_hAlphaTestRefValue" in info["params"] else (
-                "interior" if "_interior" in base else None)
+            kind = (
+                "dials"
+                if "_dials" in base or "g_hAlphaTestRefValue" in info["params"]
+                else ("interior" if "_interior" in base else None)
+            )
             if kind and kind not in local:
                 local[kind] = info
         elif e.tag == "TEXC":
@@ -1034,7 +1144,7 @@ def host_interior(stream, interior, known: dict | None = None) -> InteriorMateri
         for k in range(count):
             _mask, n, uid_off, extra_off = struct.unpack_from("<4I", modl, offset + k * 16)
             for i in range(n):
-                uid = modl[uid_off + i * 8:uid_off + i * 8 + 8]
+                uid = modl[uid_off + i * 8 : uid_off + i * 8 + 8]
                 flag = struct.unpack_from("<I", modl, extra_off + i * 4)[0]
                 mat, vb, indices = subs[uid]
                 layout.setdefault(mat, (strides[vb], flag))
@@ -1060,14 +1170,21 @@ def host_interior(stream, interior, known: dict | None = None) -> InteriorMateri
     tex = next(iter(local["interior"]["textures"]))
     if tex not in texc:
         raise ValueError(f"interior texture {tex.hex()} is not in the interior entry")
-    return InteriorMaterials(local["interior"]["uid"], local["dials"]["uid"] if "dials" in local else None,
-                             tex, {"paint": paint, "glass": glass, "trim": trim, "tyre": None, "skip": None},
-                             layout, needle_part, cabin_part)
+    return InteriorMaterials(
+        local["interior"]["uid"],
+        local["dials"]["uid"] if "dials" in local else None,
+        tex,
+        {"paint": paint, "glass": glass, "trim": trim, "tyre": None, "skip": None},
+        layout,
+        needle_part,
+        cabin_part,
+    )
 
 
 def _needle_vertex(pos, uv, gauge_id: int, normal) -> bytes:
     """Host needle layout (stride 20): s0 4 x i16, s8 4 x f16 (u, v, gauge id, 0), s5 4 x u8."""
     from dsfforza.convert import forza2dsf
+
     q = [max(-32768, min(32767, round(c * forza2dsf.POSITION_SCALE))) for c in pos]
     p0, p1 = forza2dsf.spherical(normal)
     return struct.pack("<4h4e4B", q[0], q[1], q[2], 4096, uv[0], uv[1], float(gauge_id), 0.0, p0, p1, 128, 128)
@@ -1081,9 +1198,9 @@ INTERIOR_MDXN_LIMIT = 0x12D000
 
 @dataclass
 class CockpitOptions:
-    shell_lod: int = 5            # main-carbin LOD for the outer body seen through the windows
+    shell_lod: int = 5  # main-carbin LOD for the outer body seen through the windows
     shell: bool = True
-    headlights: bool = False      # the cockpit carbin's headlight sections (lights_LOD0)
+    headlights: bool = False  # the cockpit carbin's headlight sections (lights_LOD0)
     atlas_size: tuple[int, int] | None = None
     # DXT1 halves the atlas (stock interiors ship DXT1 textures too); the
     # Interior material then loses its alpha specular mask, and needle cells
@@ -1108,9 +1225,9 @@ class CockpitOptions:
     # tone: paint-through filler (white on most cars, a badge plate's grey on
     # the Jeep GC SRT8), not trim colour; near black like Forza's swatches.
     filler: tuple | None = (10, 10, 12)
-    decimate: float = 0.0        # fixed vertex-cluster cell (m); 0 = step through DECIMATE_LADDER
-    cull: bool = True             # drop triangles never seen from the head
-    cull_resolution: int = 256    # cube-map face size for the visibility pass
+    decimate: float = 0.0  # fixed vertex-cluster cell (m); 0 = step through DECIMATE_LADDER
+    cull: bool = True  # drop triangles never seen from the head
+    cull_resolution: int = 256  # cube-map face size for the visibility pass
     mdxn_limit: int = INTERIOR_MDXN_LIMIT
 
 
@@ -1131,6 +1248,7 @@ class CockpitBinding:
 
     def material(self, section, sub, shared):
         from dsfforza.convert import dsf_materials as dm
+
         if sub.material.lower() in DIGITAL_TECHNIQUES:
             return self.materials.textured
         if FORCE_FLAT.match(sub.material) or self._flat(section, sub):
@@ -1144,8 +1262,11 @@ class CockpitBinding:
         if sub.material.lower() in DIGITAL_TECHNIQUES:
             key = ("display",) + DISPLAY_COLOUR
             return [self.texturing.solid_uv(key)] * len(raw_uvs), key
-        if (FORCE_FLAT.match(sub.material) or self._flat(section, sub)
-                or self.texturing.material(section, sub) == fm.TRIM):
+        if (
+            FORCE_FLAT.match(sub.material)
+            or self._flat(section, sub)
+            or self.texturing.material(section, sub) == fm.TRIM
+        ):
             key = ("flat",) + flat_colour(sub.material)
             return [self.texturing.solid_uv(key)] * len(raw_uvs), key
         return self.texturing.triangle_uvs(section, sub, triangle_index, raw_uvs)
@@ -1160,6 +1281,7 @@ def decimate_section(section: carbin.Section, cell: float) -> carbin.Section:
     material, rounded normal), keep one representative each, drop collapsed
     triangles. Crude, but keeps UVs per material."""
     import copy
+
     if cell <= 0:
         return section
     out = copy.copy(section)
@@ -1191,7 +1313,13 @@ def decimate_section(section: carbin.Section, cell: float) -> carbin.Section:
 
 
 CUBE_FACES = [  # (axis, sign): view direction of each cube-map face
-    (0, 1), (0, -1), (1, 1), (1, -1), (2, 1), (2, -1)]
+    (0, 1),
+    (0, -1),
+    (1, 1),
+    (1, -1),
+    (2, 1),
+    (2, -1),
+]
 
 
 def _ray_hit(origin, direction, tri) -> float | None:
@@ -1226,19 +1354,32 @@ def shell_blocks_view(shell: list[carbin.Section], lod: int, eye, reach: float =
     from the eye stopped within `reach`)? Some main carbins close the window
     openings at their coarsest LOD (FH1 Dodge Durango, Chevrolet Express:
     LOD 5 body)."""
-    tris = [[s.vertices_for(sub)[i].position for i in t] for s in shell for sub in s.subsections
-            if sub.lod == lod and fm.classify(sub.material)[0] != fm.GLASS for t in sub.triangles()]
-    stopped = sum(1 for ray in WINDSCREEN_RAYS
-                  if any((d := _ray_hit(eye, ray, tri)) is not None and d < reach for tri in tris))
+    tris = [
+        [s.vertices_for(sub)[i].position for i in t]
+        for s in shell
+        for sub in s.subsections
+        if sub.lod == lod and fm.classify(sub.material)[0] != fm.GLASS
+        for t in sub.triangles()
+    ]
+    stopped = sum(
+        1 for ray in WINDSCREEN_RAYS if any((d := _ray_hit(eye, ray, tri)) is not None and d < reach for tri in tris)
+    )
     return stopped * 3 >= len(WINDSCREEN_RAYS) * 2
 
 
-NEAR_PLANE = 0.01   # m, cube-face near plane for the visibility pass
+NEAR_PLANE = 0.01  # m, cube-face near plane for the visibility pass
 # Head-movement volume for the visibility pass (Forza space, m): DSF's cockpit
 # camera bobs, leans and looks around (holes in the IS F and M3 when only
 # the Forza eye and 8 cm either side were used, below the raised camera).
-CULL_OFFSETS = [(0.0, 0.0, 0.0), (0.12, 0.0, 0.0), (-0.12, 0.0, 0.0), (0.0, 0.08, 0.0), (0.0, -0.06, 0.0),
-                (0.0, 0.0, 0.08), (0.0, 0.0, -0.08)]
+CULL_OFFSETS = [
+    (0.0, 0.0, 0.0),
+    (0.12, 0.0, 0.0),
+    (-0.12, 0.0, 0.0),
+    (0.0, 0.08, 0.0),
+    (0.0, -0.06, 0.0),
+    (0.0, 0.0, 0.08),
+    (0.0, 0.0, -0.08),
+]
 
 
 def _clip_near(poly: list[tuple], near: float = NEAR_PLANE) -> list[tuple]:
@@ -1271,8 +1412,13 @@ def _face_parts(r, axis: int, sign: int, half: float) -> list[list[tuple]]:
     return [[(half + half * u / z, half - half * v / z, 1 / z) for u, v, z in part] for part in parts]
 
 
-def visible_triangles(sections: list[carbin.Section], eyes: list[tuple], resolution: int = 256,
-                      near_keep: float = 0.25, tiny_slack: float = 0.03) -> dict[tuple[int, int], set[int]]:
+def visible_triangles(
+    sections: list[carbin.Section],
+    eyes: list[tuple],
+    resolution: int = 256,
+    near_keep: float = 0.25,
+    tiny_slack: float = 0.03,
+) -> dict[tuple[int, int], set[int]]:
     """Triangles of the LOD-0 subsections that are seen from any of `eyes`:
     an ID buffer per cube-map face (no back-face culling), plus every
     triangle with a vertex within `near_keep` of an eye, plus one ring of
@@ -1414,6 +1560,7 @@ class GlassSight:
 def cull_sections(sections: list[carbin.Section], kept: dict[tuple[int, int], set[int]]) -> list[carbin.Section]:
     """Copies of `sections` whose LOD-0 subsections hold only the kept triangles."""
     import copy
+
     out = []
     for si, s in enumerate(sections):
         s2 = copy.copy(s)
@@ -1446,9 +1593,21 @@ def _needle_colour(atlases, section, sub) -> tuple[int, int, int, int]:
     return (200, 200, 200, 255)
 
 
-def convert_interior(stream, interior, car, cf: CockpitFit, place, seed: bytes, paint_uv,
-                     opts: CockpitOptions, wheel_skin: bytes, log=print, glass_links: dict | None = None,
-                     glass_skin: dict | None = None, layout: dict | None = None) -> dict:
+def convert_interior(
+    stream,
+    interior,
+    car,
+    cf: CockpitFit,
+    place,
+    seed: bytes,
+    paint_uv,
+    opts: CockpitOptions,
+    wheel_skin: bytes,
+    log=print,
+    glass_links: dict | None = None,
+    glass_skin: dict | None = None,
+    layout: dict | None = None,
+) -> dict:
     """Rebuild the interior entry (kind 1) from the Forza cockpit, in place.
 
     Cockpit sections (LOD 0) minus the race cage and, by default, the
@@ -1468,15 +1627,20 @@ def convert_interior(stream, interior, car, cf: CockpitFit, place, seed: bytes, 
     mdxn = child(interior, "MDXN")
     drsp = child(mdxn, "DRSP")
     original_children = list(drsp.children)
-    texc = next(e for e in drsp.children if e.tag == "TEXC" and dm.current(stream, child(e, "UIDC"))[:8] == mats.texture)
+    texc = next(
+        e for e in drsp.children if e.tag == "TEXC" and dm.current(stream, child(e, "UIDC"))[:8] == mats.texture
+    )
     host_dds = dm.current(stream, child(texc, "DXTC"))
     height, width = struct.unpack_from("<II", host_dds, 12)
     mips = struct.unpack_from("<I", host_dds, 28)[0] or dm.DEFAULT_MIPS
     modl = child(child(interior, "NONR"), "MODL")
     host_modl = dm.current(stream, modl)
 
-    static = {n: s for n, s in cf.static.items() if n not in SKIP_SECTIONS
-              and (opts.headlights or not LIGHT_SECTIONS.search(n))}
+    static = {
+        n: s
+        for n, s in cf.static.items()
+        if n not in SKIP_SECTIONS and (opts.headlights or not LIGHT_SECTIONS.search(n))
+    }
     animated = {f: g for f, g in cf.gauges.items() if f in GAUGE_IDS and mats.needles is not None}
     # Needles without a DSF gauge stay as static geometry (level and temperature
     # gauges at half, others at rest).
@@ -1500,8 +1664,12 @@ def convert_interior(stream, interior, car, cf: CockpitFit, place, seed: bytes, 
         log(f"cockpit visibility: {after} of {before} triangles seen from the head")
 
     atlases = fm.AtlasCache(car.folder, lod0=cf.lod0_atlases)
-    needle_colours = {("needle",) + c: c for g in animated.values() for sub in g.rest.subsections
-                      for c in [_needle_colour(atlases, g.rest, sub)]}
+    needle_colours = {
+        ("needle",) + c: c
+        for g in animated.values()
+        for sub in g.rest.subsections
+        for c in [_needle_colour(atlases, g.rest, sub)]
+    }
     needle_colours[("display",) + DISPLAY_COLOUR] = DISPLAY_COLOUR
     for colour in {c for _, c in FLAT_COCKPIT} | {FLAT_DEFAULT}:
         needle_colours[("flat",) + colour] = colour
@@ -1516,10 +1684,14 @@ def convert_interior(stream, interior, car, cf: CockpitFit, place, seed: bytes, 
         def classifier(name):
             role, family = fm.classify_cockpit(name)
             return role, fm.NODAMAGE if family == fm.INTERIOR else family
+
     shell = []
     if opts.shell:
-        skip = ({n.lower() for n in cf.static} | {n.lower() for n in cf.shell_skip}
-                | {p.name.lower() for poses in cf.needles.values() for p in poses.values()})
+        skip = (
+            {n.lower() for n in cf.static}
+            | {n.lower() for n in cf.shell_skip}
+            | {p.name.lower() for poses in cf.needles.values() for p in poses.values()}
+        )
         shell = [s for s in car.body if s.name.lower() not in skip and not SHELL_SKIP.match(s.name)]
     shell_lods = sorted({sub.lod for s in shell for sub in s.subsections if sub.lod > 0})
 
@@ -1527,8 +1699,11 @@ def convert_interior(stream, interior, car, cf: CockpitFit, place, seed: bytes, 
     sight = GlassSight(sections, cf.camera or cf.eye, place)
     shell_lod = opts.shell_lod
     # Step to finer shell LODs while the shell closes the windscreen.
-    while shell and shell_lod > 1 and shell_blocks_view(shell, max((l for l in shell_lods if l <= shell_lod),
-                                                                  default=shell_lod), cf.eye):
+    while (
+        shell
+        and shell_lod > 1
+        and shell_blocks_view(shell, max((l for l in shell_lods if l <= shell_lod), default=shell_lod), cf.eye)
+    ):
         log(f"cockpit shell: LOD {shell_lod} closes the windscreen; trying LOD {shell_lod - 1}")
         shell_lod -= 1
     ladder = [(cell, shell_lod) for cell in ([opts.decimate] if opts.decimate else DECIMATE_LADDER)]
@@ -1538,27 +1713,55 @@ def convert_interior(stream, interior, car, cf: CockpitFit, place, seed: bytes, 
     for cell, shell_lod in ladder:
         drsp.children = list(original_children)
         current = [decimate_section(s, cell) for s in sections] if cell > 0 else sections
-        t = dm.Texturing(car.folder, size=opts.atlas_size or (width, height), mips=mips, plain=(40, 40, 42, 0),
-                         lod0=cf.lod0_atlases, classifier=classifier, families=families,
-                         weights=dict(opts.atlas_weights), fourcc=opts.atlas_format.encode(),
-                         lift={fm.NODAMAGE: opts.trim_lift} if opts.trim_lift else {},
-                         tone={fm.NODAMAGE: opts.trim_tone} if opts.trim_tone else {},
-                         filler={fm.NODAMAGE: opts.filler} if opts.filler else {},
-                         cutout_colour=(34, 34, 36, 0))
+        t = dm.Texturing(
+            car.folder,
+            size=opts.atlas_size or (width, height),
+            mips=mips,
+            plain=(40, 40, 42, 0),
+            lod0=cf.lod0_atlases,
+            classifier=classifier,
+            families=families,
+            weights=dict(opts.atlas_weights),
+            fourcc=opts.atlas_format.encode(),
+            lift={fm.NODAMAGE: opts.trim_lift} if opts.trim_lift else {},
+            tone={fm.NODAMAGE: opts.trim_tone} if opts.trim_tone else {},
+            filler={fm.NODAMAGE: opts.filler} if opts.filler else {},
+            cutout_colour=(34, 34, 36, 0),
+        )
         t.plan(current, {0}, extra_solids=needle_colours)
         child(texc, "DXTC").payload = t.dds(template=host_dds)
         binding = CockpitBinding(t, mats, paint_uv)
         builder = forza2dsf.Builder(seed[:3] + bytes([seed[3] ^ 0x55]), layout=layout)
-        cabin = forza2dsf.add_geometry(builder, current, 0, place, wheel=False, textures=binding, merge=True,
-                                       shared=mats.shared, skin={**(glass_skin or {}), "steering_wheel": wheel_skin},
-                                       glass_links=glass_links, glass_rect=forza2dsf.INTERIOR_GLASS_RECT,
-                                       glass_sight=sight)
+        cabin = forza2dsf.add_geometry(
+            builder,
+            current,
+            0,
+            place,
+            wheel=False,
+            textures=binding,
+            merge=True,
+            shared=mats.shared,
+            skin={**(glass_skin or {}), "steering_wheel": wheel_skin},
+            glass_links=glass_links,
+            glass_rect=forza2dsf.INTERIOR_GLASS_RECT,
+            glass_sight=sight,
+        )
         lod = max((l for l in shell_lods if l <= shell_lod), default=shell_lods[0] if shell_lods else 0)
         if shell:
-            cabin += forza2dsf.add_geometry(builder, shell, lod, place, wheel=False, textures=binding,
-                                            merge=True, shared=mats.shared, glass_links=glass_links,
-                                            glass_rect=forza2dsf.INTERIOR_GLASS_RECT, skin=glass_skin,
-                                            glass_sight=sight)
+            cabin += forza2dsf.add_geometry(
+                builder,
+                shell,
+                lod,
+                place,
+                wheel=False,
+                textures=binding,
+                merge=True,
+                shared=mats.shared,
+                glass_links=glass_links,
+                glass_rect=forza2dsf.INTERIOR_GLASS_RECT,
+                skin=glass_skin,
+                glass_sight=sight,
+            )
         needle_subs = []
         for family, g in animated.items():
             verts, tris, remap = [], [], {}
@@ -1578,8 +1781,7 @@ def convert_interior(stream, interior, car, cf: CockpitFit, place, seed: bytes, 
                             if turn:
                                 pos = rotate_about(pos, g.pivot, g.normal, turn)
                                 nrm = rotate_about(nrm, (0.0, 0.0, 0.0), g.normal, turn)
-                            verts.append(_needle_vertex(place.point(pos), uv, GAUGE_IDS[family],
-                                                        place.normal(nrm)))
+                            verts.append(_needle_vertex(place.point(pos), uv, GAUGE_IDS[family], place.normal(nrm)))
                         out.append(remap[(i, uv)])
                     tris.append(tuple(out))
             if tris:
@@ -1594,24 +1796,41 @@ def convert_interior(stream, interior, car, cf: CockpitFit, place, seed: bytes, 
         size = entry_size(mdxn)
         attempts.append({"decimate": cell, "shell_lod": lod if shell else None, "mdxn": size})
         vertex_bytes = sum(len(b) for b in builder.buffers.values())
-        log(f"interior entry: {len(builder.subs)} submodels ({len(current)} cockpit sections, {len(shell)} shell "
+        log(
+            f"interior entry: {len(builder.subs)} submodels ({len(current)} cockpit sections, {len(shell)} shell "
             f"sections at LOD {lod}, {len(needle_subs)} needles), {vertex_bytes // 1024} KiB vertices, "
             f"{len(builder.indices)} indices, cluster cell {cell * 1000:.0f} mm: MDXN {size:#x}"
-            + ("" if size <= opts.mdxn_limit else f" > {opts.mdxn_limit:#x}, retrying"))
+            + ("" if size <= opts.mdxn_limit else f" > {opts.mdxn_limit:#x}, retrying")
+        )
         if size <= opts.mdxn_limit:
             break
     log(f"interior atlas: {t.summary()}")
     glass_windows = getattr(builder, "interior_glass", {})
-    log("interior glass: " + ", ".join(
-        f"{g} s9 {w['s9']} {w['surface_m2']} m2" + (f", cracks {w['crack_m']} m, {w['shard_triangles']} shards"
-                                                     if "crack_m" in w else "")
-        for g, w in sorted(glass_windows.items())))
-    return {"glass_windows": glass_windows, "submodels": len(builder.subs), "vertex_bytes": vertex_bytes, "indices": len(builder.indices),
-            "cockpit_sections": names, "shell_sections": len(shell), "needles": sorted(animated),
-            "parked_needles": sorted(f for f in cf.needles if f not in animated), "digital_triangles": cf.digital,
-            "display_face_triangles": cf.display_faces,
-            "atlas": t.summary(), "visibility": culled_report, "attempts": attempts,
-            "decimate": attempts[-1]["decimate"], "shell_lod": attempts[-1]["shell_lod"]}
+    log(
+        "interior glass: "
+        + ", ".join(
+            f"{g} s9 {w['s9']} {w['surface_m2']} m2"
+            + (f", cracks {w['crack_m']} m, {w['shard_triangles']} shards" if "crack_m" in w else "")
+            for g, w in sorted(glass_windows.items())
+        )
+    )
+    return {
+        "glass_windows": glass_windows,
+        "submodels": len(builder.subs),
+        "vertex_bytes": vertex_bytes,
+        "indices": len(builder.indices),
+        "cockpit_sections": names,
+        "shell_sections": len(shell),
+        "needles": sorted(animated),
+        "parked_needles": sorted(f for f in cf.needles if f not in animated),
+        "digital_triangles": cf.digital,
+        "display_face_triangles": cf.display_faces,
+        "atlas": t.summary(),
+        "visibility": culled_report,
+        "attempts": attempts,
+        "decimate": attempts[-1]["decimate"],
+        "shell_lod": attempts[-1]["shell_lod"],
+    }
 
 
 # --- previews -------------------------------------------------------------------------
@@ -1619,8 +1838,15 @@ def convert_interior(stream, interior, car, cf: CockpitFit, place, seed: bytes, 
 GLASS_FLAG = 7  # MODL per-submodel value of glass submodels (stock interiors and exteriors)
 
 
-def _entry_triangles(archive: Path, vehc_index: int, mask: int | None, textured: bool, flat=None,
-                     skip_glass: bool = False, instruments: dict | None = None):
+def _entry_triangles(
+    archive: Path,
+    vehc_index: int,
+    mask: int | None,
+    textured: bool,
+    flat=None,
+    skip_glass: bool = False,
+    instruments: dict | None = None,
+):
     """[(pts, uvs, tex, colour)] for one VEHC entry, as dsf_materials._render wants.
     skip_glass leaves out submodels whose MODL value is GLASS_FLAG (the
     previews have no transparency). instruments: gauge id -> (pivot, axis,
@@ -1630,6 +1856,7 @@ def _entry_triangles(archive: Path, vehc_index: int, mask: int | None, textured:
     from dsfforza.formats import vehicle_mesh as vm
     from dsfforza.formats.chnk import read_chunk
     from dsfforza.formats.vehicle_mesh import child, payload
+
     _, mesh = vm.load(archive, vehc_index)
     textures, materials = {}, {}
     if textured:
@@ -1640,7 +1867,9 @@ def _entry_triangles(archive: Path, vehc_index: int, mask: int | None, textured:
                     continue
                 for e in child(child(root.entries[i], "MDXN"), "DRSP").children:
                     if e.tag == "TEXC":
-                        textures[payload(stream, child(e, "UIDC"))[:8]] = dm.decode_dds(payload(stream, child(e, "DXTC")))
+                        textures[payload(stream, child(e, "UIDC"))[:8]] = dm.decode_dds(
+                            payload(stream, child(e, "DXTC"))
+                        )
                     elif e.tag == "MACO":
                         info = dm.material_info(stream, e)
                         materials[info["uid"]] = info
@@ -1678,6 +1907,7 @@ def needle_gauge_ids(stream, interior) -> dict[float, int]:
     these buffers (damage.interior_uv1 did) silently breaks the gauges."""
     from dsfforza.formats import vehicle_mesh as vm
     from dsfforza.formats.vehicle_mesh import child, payload
+
     counts: dict[float, int] = {}
     for e in child(child(interior, "MDXN"), "DRSP").children:
         if e.tag != "VXCK":
@@ -1699,6 +1929,7 @@ def gauge_pose(upvh_data: bytes, vo3d_data: bytes, mph: float, rpm: float) -> di
     this speed and engine speed (FUN_00891670 inputs, FUN_008A2610 turn)."""
     from dsfforza.build import handling
     from dsfforza.formats import upvh
+
     h = upvh.parse(upvh_data)
     v = handling.VO3D.parse(vo3d_data)
     lo, hi = v.params.get(SPEED_FLOOR_PARAM, 0.0), v.params.get(SPEED_DIAL_PARAM, 255.0)
@@ -1712,13 +1943,20 @@ def gauge_pose(upvh_data: bytes, vo3d_data: bytes, mph: float, rpm: float) -> di
     return out
 
 
-def render_gauges(archive: Path, spool_id: int, png: Path, readings: list[tuple[float, float]],
-                  fov_deg: float = 28, size: tuple[int, int] = (480, 300)) -> dict:
+def render_gauges(
+    archive: Path,
+    spool_id: int,
+    png: Path,
+    readings: list[tuple[float, float]],
+    fov_deg: float = 28,
+    size: tuple[int, int] = (480, 300),
+) -> dict:
     """The gauge cluster from the head camera, one tile per (mph, rpm), with
     the needles turned as the engine turns them. Tiles go left to right."""
     from dsfforza.formats import upvh
     from dsfforza.formats.chnk import read_chunk
     from dsfforza.formats.vehicle_mesh import child, payload
+
     with archive.open("rb") as stream:
         root = read_chunk(stream, 0)
         kinds = upvh.entries_for(stream, root.entries, spool_id, None)
@@ -1755,9 +1993,19 @@ def _marker_tris(centre, size: float, colour) -> list:
     return tris
 
 
-def render_eye_view(tris, eye, path: Path | None, width: int = 640, height: int = 400, fov_deg: float = 75,
-                    pitch_deg: float = -8, look=(0.0, 0.0, 1.0), mark_empty=None, unshaded: bool = False,
-                    alpha_test: bool = False):
+def render_eye_view(
+    tris,
+    eye,
+    path: Path | None,
+    width: int = 640,
+    height: int = 400,
+    fov_deg: float = 75,
+    pitch_deg: float = -8,
+    look=(0.0, 0.0, 1.0),
+    mark_empty=None,
+    unshaded: bool = False,
+    alpha_test: bool = False,
+):
     """Perspective view from `eye` looking along +z (DSF forward), z-buffered,
     textured where a texture is given; no back-face culling. With
     `mark_empty` (an RGB), pixels nothing covers get that colour; returns
@@ -1766,6 +2014,7 @@ def render_eye_view(tris, eye, path: Path | None, width: int = 640, height: int 
     skips texels with blue < 3 (no depth write), like the glass pixel
     shaders' texkill."""
     from dsfforza.formats import vehicle_mesh as vm
+
     f = 0.5 * width / math.tan(math.radians(fov_deg) / 2)
     cp, sp = math.cos(math.radians(pitch_deg)), math.sin(math.radians(pitch_deg))
     fwd = _norm((look[0], look[1] * cp + sp, look[2] * cp))
@@ -1812,19 +2061,19 @@ def render_eye_view(tris, eye, path: Path | None, width: int = 640, height: int 
                     u = a * uvs[0][0] + b * uvs[1][0] + c * uvs[2][0]
                     v = a * uvs[0][1] + b * uvs[1][1] + c * uvs[2][1]
                     o = (min(th - 1, max(0, int(v * th))) * tw + min(tw - 1, max(0, int(u * tw)))) * 4
-                    col = trgba[o:o + 3]
+                    col = trgba[o : o + 3]
                     if alpha_test and col[2] < 3:
                         continue
                 else:
                     col = colour
                 depth[k] = z
                 o = k * 3
-                pixels[o:o + 3] = bytes(min(255, int(ch * shade)) for ch in col)
+                pixels[o : o + 3] = bytes(min(255, int(ch * shade)) for ch in col)
     empty = sum(1 for d in depth if d == math.inf)
     if mark_empty is not None:
         for k, d in enumerate(depth):
             if d == math.inf:
-                pixels[k * 3:k * 3 + 3] = bytes(mark_empty)
+                pixels[k * 3 : k * 3 + 3] = bytes(mark_empty)
     if path is not None:
         vm.write_png(path, width, height, pixels)
     return pixels, empty
@@ -1843,6 +2092,7 @@ def render(archive: Path, spool_id: int, png: Path | None, eye_png: Path | None,
     from dsfforza.formats import upvh
     from dsfforza.formats.chnk import read_chunk
     from dsfforza.formats.vehicle_mesh import child, payload
+
     with archive.open("rb") as stream:
         root = read_chunk(stream, 0)
         kinds = upvh.entries_for(stream, root.entries, spool_id, None)
@@ -1852,17 +2102,25 @@ def render(archive: Path, spool_id: int, png: Path | None, eye_png: Path | None,
         eye, marker = head_camera(upvh_data, payload(stream, child(nonr, "VO3D")))
     h = upvh.parse(upvh_data)
     gauges = [struct.unpack_from("<3f", e) for e in h.table("seats")]
-    info = {"eye": [round(c, 4) for c in eye], "steering_marker": [round(c, 4) for c in marker],
-            "gauges": [[round(c, 4) for c in g] for g in gauges]}
+    info = {
+        "eye": [round(c, 4) for c in eye],
+        "steering_marker": [round(c, 4) for c in marker],
+        "gauges": [[round(c, 4) for c in g] for g in gauges],
+    }
     interior = _entry_triangles(archive, index[1], INTERIOR_MASK, textured=True, skip_glass=True)
-    marks = (_marker_tris(eye, 0.05, (255, 230, 0)) + _marker_tris(marker, 0.035, (0, 220, 255))
-             + [t for g in gauges for t in _marker_tris(g, 0.02, (255, 0, 255))])
+    marks = (
+        _marker_tris(eye, 0.05, (255, 230, 0))
+        + _marker_tris(marker, 0.035, (0, 220, 255))
+        + [t for g in gauges for t in _marker_tris(g, 0.02, (255, 0, 255))]
+    )
     if png:
         exterior = _entry_triangles(archive, index[2], 2, textured=False, flat=(70, 80, 110), skip_glass=True)
         # (view, keep(centroid)) per column; DSF +x is the driver's left, +z forward.
-        cuts = [(dm.VIEWS["side"], lambda c: c[0] >= eye[0] - 0.02),
-                (dm.VIEWS["top"], lambda c: c[1] <= eye[1] - 0.02),
-                (dm.VIEWS["front"], lambda c: c[2] >= eye[2] + 0.02)]
+        cuts = [
+            (dm.VIEWS["side"], lambda c: c[0] >= eye[0] - 0.02),
+            (dm.VIEWS["top"], lambda c: c[1] <= eye[1] - 0.02),
+            (dm.VIEWS["front"], lambda c: c[2] >= eye[2] + 0.02),
+        ]
         tiles = []
         for row in (interior, exterior + interior):
             line = []
@@ -1887,13 +2145,20 @@ def render(archive: Path, spool_id: int, png: Path | None, eye_png: Path | None,
 # driver's left, +z forward) and look directions for the hole check. DSF's
 # cockpit camera bobs and looks left and right.
 HEAD_OFFSETS = [(0.0, 0.0, 0.0), (0.10, 0.0, 0.0), (-0.10, 0.0, 0.0), (0.0, 0.06, -0.06)]
-HEAD_LOOKS = [("ahead", (0.0, 0.0, 1.0), -8), ("left", (0.7, 0.0, 0.7), -10), ("right", (-0.7, 0.0, 0.7), -10),
-              ("down", (0.0, 0.0, 1.0), -40), ("door-l", (1.0, 0.0, 0.25), -15), ("door-r", (-1.0, 0.0, 0.25), -15)]
+HEAD_LOOKS = [
+    ("ahead", (0.0, 0.0, 1.0), -8),
+    ("left", (0.7, 0.0, 0.7), -10),
+    ("right", (-0.7, 0.0, 0.7), -10),
+    ("down", (0.0, 0.0, 1.0), -40),
+    ("door-l", (1.0, 0.0, 0.25), -15),
+    ("door-r", (-1.0, 0.0, 0.25), -15),
+]
 HOLE_COLOUR = (255, 0, 255)
 
 
-def check_holes(archive: Path, spool_id: int, png: Path | None, size: tuple[int, int] = (240, 150),
-                fov_deg: float = 90) -> dict:
+def check_holes(
+    archive: Path, spool_id: int, png: Path | None, size: tuple[int, int] = (240, 150), fov_deg: float = 90
+) -> dict:
     """Render the interior (glass included, flat) from HEAD_OFFSETS x
     HEAD_LOOKS around the head camera; pixels nothing covers are holes (or
     open windows on open cars) and turn magenta. Returns the empty-pixel
@@ -1902,6 +2167,7 @@ def check_holes(archive: Path, spool_id: int, png: Path | None, size: tuple[int,
     from dsfforza.formats import vehicle_mesh as vm
     from dsfforza.formats.chnk import read_chunk
     from dsfforza.formats.vehicle_mesh import child, payload
+
     with archive.open("rb") as stream:
         root = read_chunk(stream, 0)
         kinds = upvh.entries_for(stream, root.entries, spool_id, None)
@@ -1914,8 +2180,9 @@ def check_holes(archive: Path, spool_id: int, png: Path | None, size: tuple[int,
     for offset in HEAD_OFFSETS:
         line = []
         for name, look, pitch in HEAD_LOOKS:
-            pixels, empty = render_eye_view(tris, _add(eye, offset), None, w, h, fov_deg, pitch, look,
-                                            mark_empty=HOLE_COLOUR)
+            pixels, empty = render_eye_view(
+                tris, _add(eye, offset), None, w, h, fov_deg, pitch, look, mark_empty=HOLE_COLOUR
+            )
             views[f"{name}@{','.join(f'{c:+.2f}' for c in offset)}"] = round(empty / (w * h), 4)
             line.append(pixels)
         rows.append(line)
@@ -1924,7 +2191,7 @@ def check_holes(archive: Path, spool_id: int, png: Path | None, size: tuple[int,
         for line in rows:
             for y in range(h):
                 for pixels in line:
-                    out += pixels[y * w * 3:(y + 1) * w * 3]
+                    out += pixels[y * w * 3 : (y + 1) * w * 3]
         vm.write_png(png, w * len(HEAD_LOOKS), h * len(HEAD_OFFSETS), out)
     worst = max(views, key=views.get)
     return {"eye": [round(c, 4) for c in eye], "views": views, "worst": worst, "worst_share": views[worst]}
@@ -1933,22 +2200,24 @@ def check_holes(archive: Path, spool_id: int, png: Path | None, size: tuple[int,
 def _read_png_rows(path: Path) -> tuple[int, list[bytes]]:
     """(width, RGB rows) of a PNG written by vehicle_mesh.write_png."""
     import zlib
+
     data = path.read_bytes()
     w, h = struct.unpack(">II", data[16:24])
     pos, idat = 8, b""
     while pos < len(data):
-        n = struct.unpack(">I", data[pos:pos + 4])[0]
-        if data[pos + 4:pos + 8] == b"IDAT":
-            idat += data[pos + 8:pos + 8 + n]
+        n = struct.unpack(">I", data[pos : pos + 4])[0]
+        if data[pos + 4 : pos + 8] == b"IDAT":
+            idat += data[pos + 8 : pos + 8 + n]
         pos += 12 + n
     raw = zlib.decompress(idat)
     stride = w * 3 + 1
-    return w, [raw[y * stride + 1:(y + 1) * stride] for y in range(h)]
+    return w, [raw[y * stride + 1 : (y + 1) * stride] for y in range(h)]
 
 
 def _compose(grid: list[list[Path]], out: Path) -> None:
     """Join PNG tiles (same size) into one image, row by row."""
     from dsfforza.formats import vehicle_mesh as vm
+
     rows, width = [], 0
     for line in grid:
         tiles = [_read_png_rows(p) for p in line]
@@ -1959,6 +2228,7 @@ def _compose(grid: list[list[Path]], out: Path) -> None:
 
 
 # --- CLI -----------------------------------------------------------------------------
+
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -1977,8 +2247,13 @@ def main(argv: list[str] | None = None) -> None:
     gp.add_argument("archive", type=Path)
     gp.add_argument("--id", type=int, required=True)
     gp.add_argument("--png", type=Path, required=True)
-    gp.add_argument("--at", action="append", default=[], metavar="MPH,RPM",
-                    help="one tile per reading (default 0,0 30,2000 60,4000 100,6000)")
+    gp.add_argument(
+        "--at",
+        action="append",
+        default=[],
+        metavar="MPH,RPM",
+        help="one tile per reading (default 0,0 30,2000 60,4000 100,6000)",
+    )
     gp.add_argument("--fov", type=float, default=28)
     hp = sub.add_parser("holes", help="interior from several head positions and directions; empty pixels magenta")
     hp.add_argument("archive", type=Path)
@@ -1989,12 +2264,19 @@ def main(argv: list[str] | None = None) -> None:
         for spool_id in args.id:
             png = args.png.with_name(f"{args.png.stem}-{spool_id}.png") if args.png else None
             r = check_holes(args.archive, spool_id, png)
-            print(spool_id, f"worst {r['worst']} {r['worst_share']:.2%}",
-                  " ".join(f"{k}={v:.1%}" for k, v in r["views"].items() if v > 0.002))
+            print(
+                spool_id,
+                f"worst {r['worst']} {r['worst_share']:.2%}",
+                " ".join(f"{k}={v:.1%}" for k, v in r["views"].items() if v > 0.002),
+            )
         return
     if args.cmd == "gauges":
-        readings = [tuple(float(x) for x in a.split(",")) for a in args.at] or [(0, 0), (30, 2000), (60, 4000),
-                                                                               (100, 6000)]
+        readings = [tuple(float(x) for x in a.split(",")) for a in args.at] or [
+            (0, 0),
+            (30, 2000),
+            (60, 4000),
+            (100, 6000),
+        ]
         print(render_gauges(args.archive, args.id, args.png, readings, args.fov))
         return
     if args.cmd == "fit":
@@ -2011,10 +2293,12 @@ def main(argv: list[str] | None = None) -> None:
             print(f"gauge {g.family}: pivot {r3(g.pivot)} normal {r3(g.normal)} sweep {g.sweep_deg:.1f} deg")
             cal = cf.calibration.get(g.family)
             if cal:
-                print(f"  DSF id {cal.gauge_id}: {cal.sweep} deg per {GAUGE_UNITS[g.family]:g} "
-                      f"{'mph' if g.family == 'speed' else 'rpm'}{' (reversed)' if cal.reverse else ''}, "
-                      f"rest turned {cal.rest_deg:+.1f} deg, dial to {cal.dial_max:g}, "
-                      f"worst tick {cal.residual_deg:.1f} deg off ({cal.source})")
+                print(
+                    f"  DSF id {cal.gauge_id}: {cal.sweep} deg per {GAUGE_UNITS[g.family]:g} "
+                    f"{'mph' if g.family == 'speed' else 'rpm'}{' (reversed)' if cal.reverse else ''}, "
+                    f"rest turned {cal.rest_deg:+.1f} deg, dial to {cal.dial_max:g}, "
+                    f"worst tick {cal.residual_deg:.1f} deg off ({cal.source})"
+                )
         if cf.display_faces:
             print(f"digital displays: {cf.display_faces} triangles drawn with their face texture")
         if cf.digital:

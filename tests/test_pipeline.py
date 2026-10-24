@@ -20,7 +20,7 @@ def test_worker_report_survives_a_cut_short_report():
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         (work / "CAR.log").write_text("step 1\ncockpit: eye (0, 1, 2)\n", encoding="utf-8")
-        (work / "CAR.json").write_text('{"media": "CAR", "ok": tr', encoding="utf-8")   # killed mid-write
+        (work / "CAR.json").write_text('{"media": "CAR", "ok": tr', encoding="utf-8")  # killed mid-write
         report = port_batch.worker_report(work, "CAR", 1)
         assert report["ok"] is False and report["cause"] == "worker crash"
         assert "cockpit: eye" in report["error"]
@@ -33,13 +33,23 @@ def test_worker_report_survives_a_cut_short_report():
 
 def test_no_option_fallback_for_a_dead_worker():
     # The log tail of a timed-out worker names every step it got through.
-    tail = {"ok": False, "cause": "timeout", "error": "exit code None; log tail: cockpit: ... src/dsfforza/convert/damage.py"}
+    tail = {
+        "ok": False,
+        "cause": "timeout",
+        "error": "exit code None; log tail: cockpit: ... src/dsfforza/convert/damage.py",
+    }
     assert port_batch.fallback_for(tail, ["--damage", "panels"]) is None
     assert port_batch.fallback_for({**tail, "cause": "worker crash"}, []) is None
-    failed = {"ok": False, "cause": "damage.py: ValueError",
-              "traceback": 'File "src/dsfforza/convert/damage.py", line 1\nValueError: x', "error": "ValueError: x"}
+    failed = {
+        "ok": False,
+        "cause": "damage.py: ValueError",
+        "traceback": 'File "src/dsfforza/convert/damage.py", line 1\nValueError: x',
+        "error": "ValueError: x",
+    }
     assert port_batch.fallback_for(failed, ["--mdxn-limit", "1", "--damage", "panels"]) == (
-        ["--mdxn-limit", "1"], "without --damage (src/dsfforza/convert/damage.py failed)")
+        ["--mdxn-limit", "1"],
+        "without --damage (src/dsfforza/convert/damage.py failed)",
+    )
 
 
 def test_a_worker_that_dies_is_a_failed_car():
@@ -53,7 +63,7 @@ def test_a_worker_that_dies_is_a_failed_car():
         assert results["DEAD"]["cause"] == "worker crash"
         assert results["DEAD"]["spool_id"] == 7
         assert "KeyError" in results["DEAD"]["error"]
-        assert not (work / "DEAD.first-try.log").exists()   # no option fallback was tried
+        assert not (work / "DEAD.first-try.log").exists()  # no option fallback was tried
 
 
 def test_merge_leaves_out_cars_with_uid_clashes():
@@ -66,6 +76,7 @@ def test_merge_leaves_out_cars_with_uid_clashes():
         if "B" in media:
             return [{"media": m} for m in media], [], {"B": ["aa", "bb"]}
         return [{"media": m} for m in media], [], {}
+
     real = port_batch.register_cars
     port_batch.register_cars = register
     try:
@@ -82,6 +93,7 @@ def test_builders_keep_their_own_material_layouts():
     """forza2dsf.MATERIAL_LAYOUT is read only; each conversion's host materials live
     in its builders' layout (a second car in the same process saw the first's)."""
     from dsfforza.convert import forza2dsf
+
     before = dict(forza2dsf.MATERIAL_LAYOUT)
     a, b = forza2dsf.Builder(b"\0\0\0\1"), forza2dsf.Builder(b"\0\0\0\2")
     a.layout[b"hostmat1"] = (32, 5)

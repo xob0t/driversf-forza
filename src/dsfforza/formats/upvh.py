@@ -56,8 +56,18 @@ NONE_UID = b"\xff" * 8
 RECORD_TYPES = {1: "part", 2: "wheel", 3: "marker", 4: "root", 5: "chassis", 17: "light", 18: "seat"}
 
 # (name, entry size) in file order; counts come from the header.
-TABLES = [("hinges", 0x30), ("bodies", 0xB0), ("markers", 0x20), ("seats", 0x30), ("mirrors", 0x10),
-          ("anim", 0x14), ("lights", 0x40), ("lod_links", 0x10), ("attachments", 0x20), ("wheels", 0x20)]
+TABLES = [
+    ("hinges", 0x30),
+    ("bodies", 0xB0),
+    ("markers", 0x20),
+    ("seats", 0x30),
+    ("mirrors", 0x10),
+    ("anim", 0x14),
+    ("lights", 0x40),
+    ("lod_links", 0x10),
+    ("attachments", 0x20),
+    ("wheels", 0x20),
+]
 
 
 def swap_uid(uid: bytes) -> bytes:
@@ -106,7 +116,7 @@ class Hierarchy:
     def table(self, name: str) -> list[bytes]:
         size = dict(TABLES)[name]
         start = self.offsets[name]
-        return [self.data[start + i * size:start + (i + 1) * size] for i in range(self.counts[name])]
+        return [self.data[start + i * size : start + (i + 1) * size] for i in range(self.counts[name])]
 
     def vec4s(self, name: str, at: int = 0) -> list[tuple[float, ...]]:
         return [struct.unpack_from("<4f", entry, at) for entry in self.table(name)]
@@ -131,9 +141,11 @@ def parse(data: bytes) -> Hierarchy:
     word1, word2, type_, count, hierarchy_id, pdl_size = struct.unpack_from("<6I", data, 4)
     model_uid = struct.pack("<II", word2, word1)
     counts = {
-        "hinges": data[0x2A], "bodies": data[0x2B],
+        "hinges": data[0x2A],
+        "bodies": data[0x2B],
         "markers": struct.unpack_from("<H", data, 0x28)[0],
-        "seats": data[0x2C], "mirrors": data[0x2D],
+        "seats": data[0x2C],
+        "mirrors": data[0x2D],
         "anim": struct.unpack_from("<H", data, 0x26)[0],
         "lights": struct.unpack_from("<H", data, 0x32)[0],
         "lod_links": struct.unpack_from("<H", data, 0x36)[0],
@@ -149,25 +161,41 @@ def parse(data: bytes) -> Hierarchy:
     h = Hierarchy(model_uid, word1 & 0xFF, type_, hierarchy_id, pdl_size, counts, offsets, data=data)
     for i in range(count):
         r = HEADER_SIZE + i * RECORD_SIZE
-        raw = data[r:r + RECORD_SIZE]
+        raw = data[r : r + RECORD_SIZE]
+
         def i16(off, raw=raw):
             return struct.unpack_from("<h", raw, off)[0]
 
         def i8(off, raw=raw):
             return struct.unpack_from("<b", raw, off)[0]
 
-        h.records.append(Record(
-            index=i, uid=None if raw[:8] == NONE_UID else swap_uid(raw[:8]),
-            type=struct.unpack_from("<H", raw, 0x08)[0], role=struct.unpack_from("<H", raw, 0x0A)[0],
-            subtree=struct.unpack_from("<H", raw, 0x14)[0],
-            marker=i16(0x1A), hinge=i16(0x1C), body=i16(0x1E),
-            collision=struct.unpack_from("<i", raw, 0x20)[0],
-            seat=i8(0x26), mirror=i8(0x27), model=i16(0x2A), light=i16(0x30), slot=i16(0x34),
-            lod_link=i16(0x3E), attachment=i16(0x40), wheel=i16(0x42), raw=raw))
+        h.records.append(
+            Record(
+                index=i,
+                uid=None if raw[:8] == NONE_UID else swap_uid(raw[:8]),
+                type=struct.unpack_from("<H", raw, 0x08)[0],
+                role=struct.unpack_from("<H", raw, 0x0A)[0],
+                subtree=struct.unpack_from("<H", raw, 0x14)[0],
+                marker=i16(0x1A),
+                hinge=i16(0x1C),
+                body=i16(0x1E),
+                collision=struct.unpack_from("<i", raw, 0x20)[0],
+                seat=i8(0x26),
+                mirror=i8(0x27),
+                model=i16(0x2A),
+                light=i16(0x30),
+                slot=i16(0x34),
+                lod_link=i16(0x3E),
+                attachment=i16(0x40),
+                wheel=i16(0x42),
+                raw=raw,
+            )
+        )
     return h
 
 
 # --- archive access -------------------------------------------------------------
+
 
 def entries_for(stream, root_entries: list[Entry], spool_id: int | None, vehc: int | None) -> dict[int, Entry]:
     """Kind -> VEHC entry for a vehicle, from its spool ID (or the full entry's VEHC index)."""
@@ -176,13 +204,12 @@ def entries_for(stream, root_entries: list[Entry], spool_id: int | None, vehc: i
     if spool_id is None:
         spool_id = next(sid for sid, index, kind in records if index == vehc and kind == 0)
     by_id = {sid: index for sid, index, _ in records}
-    return {kind: root_entries[by_id[spool_id + kind * 1000]] for kind in (0, 1, 2)
-            if spool_id + kind * 1000 in by_id}
+    return {kind: root_entries[by_id[spool_id + kind * 1000]] for kind in (0, 1, 2) if spool_id + kind * 1000 in by_id}
 
 
 def modl_part_uids(data: bytes) -> list[bytes]:
     count = struct.unpack_from("<I", data)[0]
-    return [data[0x10 + p * 0x60 + 0x40:0x10 + p * 0x60 + 0x48] for p in range(count)]
+    return [data[0x10 + p * 0x60 + 0x40 : 0x10 + p * 0x60 + 0x48] for p in range(count)]
 
 
 def drsp_uids(stream, vehc: Entry) -> list[tuple[str, int, str, bytes]]:
@@ -196,8 +223,11 @@ def drsp_uids(stream, vehc: Entry) -> list[tuple[str, int, str, bytes]]:
         d = sub.payload if sub.payload is not None else payload(stream, sub)
         out.append((c.tag, n, "uid", d[:8]))
         if c.tag == "SBMC":
-            out += [(c.tag, n, "material", d[8:16]), (c.tag, n, "vertex_buffer", d[16:24]),
-                    (c.tag, n, "index_buffer", d[0x30:0x38])]
+            out += [
+                (c.tag, n, "material", d[8:16]),
+                (c.tag, n, "vertex_buffer", d[16:24]),
+                (c.tag, n, "index_buffer", d[0x30:0x38]),
+            ]
         if c.tag == "MACO":
             # MARP: {char name[32], u8 value[16], u32 type}; type 9 holds a texture UID.
             for marc in (m for m in c.children if m.tag == "MARC"):
@@ -205,13 +235,14 @@ def drsp_uids(stream, vehc: Entry) -> list[tuple[str, int, str, bytes]]:
                     p = marp.payload if marp.payload is not None else payload(stream, marp)
                     for k in range(0, len(p) - 51, 52):
                         if struct.unpack_from("<I", p, k + 48)[0] == 9:
-                            out.append((c.tag, n, "texture", p[k + 32:k + 40]))
+                            out.append((c.tag, n, "texture", p[k + 32 : k + 40]))
     return out
 
 
 def shared_uids(stream, root_entries: list[Entry]) -> set[bytes]:
     """Material (MAHE) and texture (UIDC) UIDs the archive's shared chunk SSIC defines."""
     from dsfforza.formats.chnk import walk
+
     out = set()
     for e in root_entries:
         if e.tag == "SSIC":
@@ -243,28 +274,31 @@ def references(stream, kinds: dict[int, Entry]) -> list[tuple[str, bytes]]:
         for c in drsp.children:
             if c.tag == "MDID":
                 d = _leaf(stream, c)
-                out += [(f"kind {kind} MDID", d[i:i + 8]) for i in range(0, len(d) - 7, 8)]
+                out += [(f"kind {kind} MDID", d[i : i + 8]) for i in range(0, len(d) - 7, 8)]
             elif c.tag in ("VXCK", "IXCK"):
                 dep = next(k for k in c.children if k.tag in ("VXDP", "IXDP"))
                 d = _leaf(stream, dep)
                 # VXDP: n UIDs then n zero bytes; IXDP: n UIDs (stock layout)
                 n = len(d) // 9 if dep.tag == "VXDP" else len(d) // 8
-                out += [(f"kind {kind} {dep.tag}", d[i * 8:i * 8 + 8]) for i in range(n)]
+                out += [(f"kind {kind} {dep.tag}", d[i * 8 : i * 8 + 8]) for i in range(n)]
         modl = _leaf(stream, child(child(vehc, "NONR"), "MODL"))
         part_count = struct.unpack_from("<I", modl)[0]
         for p in range(part_count):
             count, offset = struct.unpack_from("<II", modl, 0x10 + p * 0x60 + 0x48)
             for k in range(count):
                 mask, n, uid_offset, _ = struct.unpack_from("<4I", modl, offset + k * 16)
-                out += [(f"kind {kind} MODL part {p} mask {mask}", modl[uid_offset + i * 8:uid_offset + i * 8 + 8])
-                        for i in range(n)]
+                out += [
+                    (f"kind {kind} MODL part {p} mask {mask}", modl[uid_offset + i * 8 : uid_offset + i * 8 + 8])
+                    for i in range(n)
+                ]
     if 0 in kinds:
         h = parse(_leaf(stream, child(child(kinds[0], "NONR"), "UPVH")))
         out.append(("UPVH model UID", h.model_uid))
         out += [(f"UPVH record {r.index}", r.uid) for r in h.records if r.uid]
         for n, (interior, exterior) in enumerate(h.lod_links()):
-            out += [(f"UPVH lod_link {n} {which}", u) for which, u in (("interior", interior), ("exterior", exterior))
-                    if u]
+            out += [
+                (f"UPVH lod_link {n} {which}", u) for which, u in (("interior", interior), ("exterior", exterior)) if u
+            ]
         for n, a in enumerate(h.table("attachments")):
             out.append((f"UPVH attachment {n}", swap_uid(a[0x10:0x18])))
     return [(where, u) for where, u in out if u not in (bytes(8), NONE_UID)]
@@ -303,7 +337,8 @@ def foreign_uids(stream, root_entries: list[Entry], kinds: dict[int, Entry]) -> 
     for where, u in references(stream, kinds):
         if u in others and u not in own_res and u not in own_parts:
             foreign.setdefault(where.split(" ", 2)[0] + " " + where.split(" ", 2)[1], []).append(
-                f"{where}: {u.hex()} ({others[u]})")
+                f"{where}: {u.hex()} ({others[u]})"
+            )
     for group, items in foreign.items():
         problems.append(f"{len(items)} references only another vehicle defines ({group}), e.g. {items[:2]}")
     return problems
@@ -317,12 +352,12 @@ def borrowed_from_full(stream, kinds: dict[int, Entry]) -> set[bytes]:
     out = set()
     for kind in (1, 2):
         local = {u for _, _, f, u in uids.get(kind, []) if f == "uid"}
-        out |= {u for _, _, f, u in uids.get(kind, []) if f in ("material", "texture")
-                and u not in local and u in full}
+        out |= {u for _, _, f, u in uids.get(kind, []) if f in ("material", "texture") and u not in local and u in full}
     return out
 
 
 # --- commands -----------------------------------------------------------------
+
 
 def _part_submodels(modl: bytes, p: int) -> int:
     count, offset = struct.unpack_from("<II", modl, 0x10 + p * 0x60 + 0x48)
@@ -340,29 +375,39 @@ def cmd_summary(args: argparse.Namespace) -> None:
         full = kinds[0]
         h = parse(payload(stream, child(child(full, "NONR"), "UPVH")))
         modl = modl_part_uids(payload(stream, child(child(full, "NONR"), "MODL")))
-    print(f"UPVH '{full.name}': model {h.model_uid.hex()}, type {h.type}, {len(h.records)} records, "
-          f"hierarchy ID {h.hierarchy_id}, PDL {h.pdl_size:#x} at {h.pdl_offset:#x}")
+    print(
+        f"UPVH '{full.name}': model {h.model_uid.hex()}, type {h.type}, {len(h.records)} records, "
+        f"hierarchy ID {h.hierarchy_id}, PDL {h.pdl_size:#x} at {h.pdl_offset:#x}"
+    )
     for name, _ in TABLES:
         print(f"  {name:12s} {h.counts[name]:3d} at {h.offsets[name]:#06x}")
     print("  rec  off   type     role sub  uid               modl  mk hg bd  coll   st mr mdl lt slot ll at wh")
     for r in h.records:
         part = modl.index(r.uid) if r.uid in modl else None
-        print(f"  {r.index:3d} {HEADER_SIZE + r.index * RECORD_SIZE:#06x} {r.type_name:8s} {r.role:4d} {r.subtree:3d}  "
-              f"{r.uid.hex() if r.uid else '-':16s}  {'-' if part is None else part:>4}  "
-              + " ".join(f"{fmt_index(v):>2}" for v in (r.marker, r.hinge, r.body))
-              + f" {r.collision if r.collision >= 0 else '-':>5}  "
-              + " ".join(f"{fmt_index(v):>2}" for v in (r.seat, r.mirror, r.model, r.light, r.slot,
-                                                         r.lod_link, r.attachment, r.wheel)))
+        print(
+            f"  {r.index:3d} {HEADER_SIZE + r.index * RECORD_SIZE:#06x} {r.type_name:8s} {r.role:4d} {r.subtree:3d}  "
+            f"{r.uid.hex() if r.uid else '-':16s}  {'-' if part is None else part:>4}  "
+            + " ".join(f"{fmt_index(v):>2}" for v in (r.marker, r.hinge, r.body))
+            + f" {r.collision if r.collision >= 0 else '-':>5}  "
+            + " ".join(
+                f"{fmt_index(v):>2}"
+                for v in (r.seat, r.mirror, r.model, r.light, r.slot, r.lod_link, r.attachment, r.wheel)
+            )
+        )
     if args.tables:
         for i, (pivot, axis) in enumerate(zip(h.vec4s("hinges"), h.vec4s("hinges", 0x10))):
             limit, param = struct.unpack_from("<2f", h.table("hinges")[i], 0x20)
-            print(f"  hinge {i:2d} at {h.offsets['hinges'] + i * 0x30:#06x}: pivot {fmt3(pivot)} "
-                  f"axis {fmt3(axis)} limit {limit:.4f} param {param:g}")
+            print(
+                f"  hinge {i:2d} at {h.offsets['hinges'] + i * 0x30:#06x}: pivot {fmt3(pivot)} "
+                f"axis {fmt3(axis)} limit {limit:.4f} param {param:g}"
+            )
         for i, pos in enumerate(h.vec4s("wheels")):
             print(f"  wheel {i} at {h.offsets['wheels'] + i * 0x20:#06x}: hub {fmt3(pos)}")
         for i, (interior, exterior) in enumerate(h.lod_links()):
-            print(f"  lod_link {i}: interior {interior.hex() if interior else '-'} "
-                  f"exterior {exterior.hex() if exterior else '-'}")
+            print(
+                f"  lod_link {i}: interior {interior.hex() if interior else '-'} "
+                f"exterior {exterior.hex() if exterior else '-'}"
+            )
 
 
 def fmt3(v) -> str:
@@ -391,27 +436,40 @@ def cmd_lint(args: argparse.Namespace) -> None:
         # Converted glass must sit in its window's slot of the shared glass
         # texture, or the damage states draw cracks and holes across the window.
         from dsfforza.convert import glass
+
         glass_rows = glass.check(stream, kinds)
         # Engine sound: bank round trip, VSVH events, Wwise IDs across the archive (src/dsfforza/convert/engine_sound.py).
         sound_rows = []
         if not args.no_sound:
             from dsfforza.convert import engine_sound
-            spool = args.id if args.id is not None else next(
-                sid for sid, index, kind in parse_sslp(payload(stream, find(find(find(
-                    root.entries, "SSIC").children, "NONR").children, "SSLP"))) if index == args.vehc and kind == 0)
+
+            spool = (
+                args.id
+                if args.id is not None
+                else next(
+                    sid
+                    for sid, index, kind in parse_sslp(
+                        payload(stream, find(find(find(root.entries, "SSIC").children, "NONR").children, "SSLP"))
+                    )
+                    if index == args.vehc and kind == 0
+                )
+            )
             reserved = engine_sound.stock_index(args.stock)["reserved"] if args.stock else None
             sound_rows = engine_sound.lint(stream, root.entries, spool, reserved)
 
     report(True, f"UPVH layout parses ({len(h.records)} records)")
     if cross is not None:
-        report(not cross, "no UID shared with, or only defined by, another vehicle"
-                          + ("" if not cross else ": " + "; ".join(cross)))
+        report(
+            not cross,
+            "no UID shared with, or only defined by, another vehicle" + ("" if not cross else ": " + "; ".join(cross)),
+        )
     report(h.model_uid == parts[0][0], f"AWHF model UID {h.model_uid.hex()} is MODL part 0")
     missing = [r.index for r in h.records if r.uid and r.uid not in parts[0]]
     report(not missing, f"every record UID is a MODL part of the full entry (missing: records {missing})")
     # Hosts with several chassis records (172: roles 257 and 256) draw a variant
     # part; an empty one made the body invisible (src/dsfforza/convert/chassis_variants.py).
     from dsfforza.convert import chassis_variants
+
     for kind, plist in chassis_variants.variant_parts(h.data, modls).items():
         empty = [p for p in plist if not _part_submodels(modls[kind], p)]
         if plist and _part_submodels(modls[kind], 0):
@@ -443,8 +501,11 @@ def cmd_lint(args: argparse.Namespace) -> None:
         host_defined = {u for _, _, f, u in host_uids if f == "uid"}
         engine = {u for _, _, f, u in host_uids if f in ("material", "texture") and u not in host_defined} | shared
         if needed <= defined.get(0, set()):
-            report(True, f"the {len(needed)} materials/textures the stock interior/exterior take from "
-                         f"the full entry are still defined there")
+            report(
+                True,
+                f"the {len(needed)} materials/textures the stock interior/exterior take from "
+                f"the full entry are still defined there",
+            )
         else:
             # Renewed UIDs (clone_vehicle --new-uids): check the car's own borrowing instead.
             # Most stock exteriors use _LOD1 materials their interior or full entry defines
@@ -453,12 +514,18 @@ def cmd_lint(args: argparse.Namespace) -> None:
             for kind in (1, 2):
                 refs = {u for _, _, f, u in uids.get(kind, []) if f in ("material", "texture")}
                 bad = sorted(u.hex() for u in refs - own - engine)
-                report(not bad, f"kind {kind}: every material/texture is defined by one of the car's entries "
-                                f"or is a shared engine material ({len(refs)} referenced, unresolved {bad[:3]})")
+                report(
+                    not bad,
+                    f"kind {kind}: every material/texture is defined by one of the car's entries "
+                    f"or is a shared engine material ({len(refs)} referenced, unresolved {bad[:3]})",
+                )
         refs = {u for _, _, f, u in uids.get(0, []) if f in ("material", "texture")}
         bad = sorted(u.hex() for u in refs - defined.get(0, set()) - engine)
-        report(not bad, f"kind 0: every material/texture is local or a shared engine material the host "
-                        f"uses ({len(refs)} referenced, unresolved {bad[:3]})")
+        report(
+            not bad,
+            f"kind 0: every material/texture is local or a shared engine material the host "
+            f"uses ({len(refs)} referenced, unresolved {bad[:3]})",
+        )
     for ok, message in glass_rows:
         report(ok, message)
     for ok, message in sound_rows:
@@ -471,8 +538,10 @@ def cmd_lint(args: argparse.Namespace) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
-    for name, help_text in (("summary", "print the header, tables and records"),
-                            ("lint", "check a (converted) vehicle's UPVH and UID rules")):
+    for name, help_text in (
+        ("summary", "print the header, tables and records"),
+        ("lint", "check a (converted) vehicle's UPVH and UID rules"),
+    ):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("archive", type=Path)
         p.add_argument("vehc", type=int, nargs="?", help="VEHC index of the full entry")
@@ -481,14 +550,23 @@ def main(argv: list[str] | None = None) -> None:
             p.add_argument("--tables", action="store_true", help="also print hinges, wheels and LOD links")
         else:
             p.add_argument("--verbose", "-v", action="store_true", help="print passing checks too")
-            p.add_argument("--stock", type=Path, help="stock archive, to check what the interior and "
-                                                      "exterior borrow from the full entry")
+            p.add_argument(
+                "--stock",
+                type=Path,
+                help="stock archive, to check what the interior and exterior borrow from the full entry",
+            )
             p.add_argument("--source", type=int, default=266, help="host's stock spool ID (default 266)")
-            p.add_argument("--no-sound", action="store_true",
-                           help="skip the engine sound checks (Wwise bank round trip, VSVH events, IDs)")
-            p.add_argument("--allow-shared", action="store_true",
-                           help="skip the cross-vehicle UID check (clones made without --new-uids "
-                                "share the host's UIDs on purpose)")
+            p.add_argument(
+                "--no-sound",
+                action="store_true",
+                help="skip the engine sound checks (Wwise bank round trip, VSVH events, IDs)",
+            )
+            p.add_argument(
+                "--allow-shared",
+                action="store_true",
+                help="skip the cross-vehicle UID check (clones made without --new-uids "
+                "share the host's UIDs on purpose)",
+            )
     args = parser.parse_args(argv)
     if args.id is None and args.vehc is None:
         parser.error("give a VEHC index or --id")

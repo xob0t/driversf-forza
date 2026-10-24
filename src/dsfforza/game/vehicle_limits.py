@@ -35,11 +35,27 @@ def read(stream, entry, size=None):
 
 def measure(stream, vehc) -> dict:
     mdxn, nonr = child(vehc, "MDXN"), child(vehc, "NONR")
-    m = {"vehc": vehc.size, "mdxn": mdxn.size if mdxn else 0, "nonr": nonr.size if nonr else 0,
-         "vb": 0, "vb_max_verts": 0, "verts": 0, "ib": 0, "indices": 0, "sbmc": 0, "maco": 0,
-         "marc": 0, "texc": 0, "tex_bytes": 0, "parts": 0, "lod_max_subs": 0, "modl": 0, "upvh": 0}
+    m = {
+        "vehc": vehc.size,
+        "mdxn": mdxn.size if mdxn else 0,
+        "nonr": nonr.size if nonr else 0,
+        "vb": 0,
+        "vb_max_verts": 0,
+        "verts": 0,
+        "ib": 0,
+        "indices": 0,
+        "sbmc": 0,
+        "maco": 0,
+        "marc": 0,
+        "texc": 0,
+        "tex_bytes": 0,
+        "parts": 0,
+        "lod_max_subs": 0,
+        "modl": 0,
+        "upvh": 0,
+    }
     drsp = child(mdxn, "DRSP") if mdxn else None
-    for e in (drsp.children if drsp else []):
+    for e in drsp.children if drsp else []:
         if e.tag == "VXCK":
             _, count, _ = struct.unpack("<QII", read(stream, child(e, "VXHD"), 16))
             m["vb"] += 1
@@ -62,7 +78,7 @@ def measure(stream, vehc) -> dict:
     if modl:
         data = read(stream, modl)
         m["modl"] = modl.size
-        parts, = struct.unpack_from("<I", data)
+        (parts,) = struct.unpack_from("<I", data)
         m["parts"] = parts
         for p in range(parts):
             lod_count, lod_offset = struct.unpack_from("<II", data, 0x10 + p * 0x60 + 0x48)
@@ -90,8 +106,10 @@ def main(argv=None) -> None:
         header = sslp_header(stream, root)
         nonr_limit = struct.unpack_from("<4I", header, 8)
         slots = header[0x18:0x1C]
-        print(f"SSLP: +0x04 {struct.unpack_from('<I', header, 4)[0]:#x}, NONR buffers per kind "
-              f"{[hex(x) for x in nonr_limit]}, slots {list(slots)}")
+        print(
+            f"SSLP: +0x04 {struct.unpack_from('<I', header, 4)[0]:#x}, NONR buffers per kind "
+            f"{[hex(x) for x in nonr_limit]}, slots {list(slots)}"
+        )
         vehcs = [(i, e) for i, e in enumerate(root.entries) if e.tag == "VEHC"]
         kind_of = {}
         sslp = child(child(next(e for e in root.entries if e.tag == "SSIC"), "NONR"), "SSLP")
@@ -108,9 +126,13 @@ def main(argv=None) -> None:
                     flags.append(f"NONR {m['nonr']:#x} > buffer {nonr_limit[kind]:#x} (heap overflow)")
                 if m["vehc"] > STATIC_SPOOL_BUFFER:
                     flags.append("VEHC > 0x280000: read into a heap buffer")
-                print(f"VEHC {index} kind {kind}: " + ", ".join(
-                    f"{k} {v:#x}" if k in ("vehc", "mdxn", "nonr", "modl", "upvh", "tex_bytes") else f"{k} {v}"
-                    for k, v in m.items()))
+                print(
+                    f"VEHC {index} kind {kind}: "
+                    + ", ".join(
+                        f"{k} {v:#x}" if k in ("vehc", "mdxn", "nonr", "modl", "upvh", "tex_bytes") else f"{k} {v}"
+                        for k, v in m.items()
+                    )
+                )
                 for flag in flags:
                     print("   ! " + flag)
             return

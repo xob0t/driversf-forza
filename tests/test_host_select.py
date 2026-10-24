@@ -1,6 +1,6 @@
 """Checks for src/dsfforza/build/host_select.py that need no game files.
 
-    uv run python tests/test_host_select.py     # or: uv run python -m tests host_select
+uv run python tests/test_host_select.py     # or: uv run python -m tests host_select
 """
 
 from __future__ import annotations
@@ -9,13 +9,32 @@ from dsfforza.build import host_select as hs
 
 
 def _host(model, picture, year, body, wheelbase, length):
-    return {"model": model, "body": body, "wheelbase": wheelbase, "length": length,
-            "stats": {"Picture1": picture, "Year": year}}
+    return {
+        "model": model,
+        "body": body,
+        "wheelbase": wheelbase,
+        "length": length,
+        "stats": {"Picture1": picture, "Year": year},
+    }
 
 
 def _car(media, make, model, year, body, wheelbase, length):
-    return hs.ForzaInfo(media, "FH1", year, make, model, hs.Engine(8, "V", "na", 200.0), "RWD", body, 4,
-                        2000.0, wheelbase, 1.8, length, 1.8)
+    return hs.ForzaInfo(
+        media,
+        "FH1",
+        year,
+        make,
+        model,
+        hs.Engine(8, "V", "na", 200.0),
+        "RWD",
+        body,
+        4,
+        2000.0,
+        wheelbase,
+        1.8,
+        length,
+        1.8,
+    )
 
 
 # Stock hosts and Forza cars as the survey and gamedb.slt give them.

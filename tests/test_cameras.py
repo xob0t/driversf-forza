@@ -51,12 +51,15 @@ def test_bonnet_params_round_trip():
     assert abs(params[536] - 0.91) < 1e-9 and params[537] == 0.87
     vo3d = handling.VO3D(304, {0: 1500.0}).build()
     patched = vc.patch_vo3d(vo3d, params)
-    assert vc.bonnet_camera(patched, ground) == (0.0, 0.48 + 0.0, 0.87) or \
-        max(abs(a - b) for a, b in zip(vc.bonnet_camera(patched, ground), cam)) < 1e-6
+    assert (
+        vc.bonnet_camera(patched, ground) == (0.0, 0.48 + 0.0, 0.87)
+        or max(abs(a - b) for a, b in zip(vc.bonnet_camera(patched, ground), cam)) < 1e-6
+    )
 
 
 def test_host_ground_from_highest_hub():
     from dsfforza.formats import upvh
+
     hubs = [(0.8, -0.402, 1.3), (-0.8, -0.402, 1.3), (0.8, -0.391, -1.3), (-0.8, -0.391, -1.3)]
 
     class Fake:
@@ -77,6 +80,7 @@ def ring_section(centre, axis_tilt_deg: float, radius: float, lod: int = 1):
     """A steering-wheel rim (main-carbin style: LOD >= 1) about `centre`, its axis
     (towards the driver, Forza +z) tilted up by axis_tilt_deg."""
     from dsfforza.formats import carbin
+
     t = math.radians(axis_tilt_deg)
     axis = (0.0, math.sin(t), math.cos(t))
     u = (1.0, 0.0, 0.0)
@@ -97,8 +101,9 @@ def ring_section(centre, axis_tilt_deg: float, radius: float, lod: int = 1):
 
 def test_main_wheel_aligned_onto_the_cockpit_wheel():
     from dsfforza.convert import cockpit
+
     target = cockpit.Wheel((-0.38, 0.63, -0.37), cockpit._norm((0.0, 0.41, 0.91)), 0.163)
-    main = ring_section((-0.37, 0.65, -0.52), 10.0, 0.158)   # 15 cm ahead, flatter column (S5S Raptor-like)
+    main = ring_section((-0.37, 0.65, -0.52), 10.0, 0.158)  # 15 cm ahead, flatter column (S5S Raptor-like)
     aligned, report = cockpit.align_main_wheel(main, target)
     assert aligned is not None and abs(report["move"] - 0.15) < 0.01
     w = cockpit.fit_wheel(cockpit.promote_lod(aligned))

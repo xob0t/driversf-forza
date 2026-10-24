@@ -66,51 +66,55 @@ import numpy as np
 from dsfforza.formats import carbin
 
 PLATE_TECHNIQUE = "dsf_plate"
-SECTION_SUFFIX = "_plate_"            # <surface>_plate_front / _plate_rear
+SECTION_SUFFIX = "_plate_"  # <surface>_plate_front / _plate_rear
 # The plate in the shared paint atlas 00122b73d1fa1227: u0, v0, u1, v1 (stock 227's quads).
 PLATE_UV = (0.4929, 0.8867, 0.5986, 0.9971)
-SHARED_ATLAS_MATERIALS = {bytes.fromhex(h) for h in (
-    "001283358afd1027",   # GLOBAL_Chassis (paint)
-    "10122b9653b14e2a",   # GLOBAL_Chassis_LOD1
-    "0012833b12fe1027",   # GLOBAL_Chassis_Simple (trim)
-    "10122b9753b14e2a",   # GLOBAL_Chassis_Simple_LOD1
-    "00128338d7fd1027",   # GLOBAL_Chassis_Chrome
-    "a012f01306d57a2a",   # GLOBAL_LOD_Chrome
-)}
-DEFAULT_SIZE = (0.26, 0.122)          # stock median quad
+SHARED_ATLAS_MATERIALS = {
+    bytes.fromhex(h)
+    for h in (
+        "001283358afd1027",  # GLOBAL_Chassis (paint)
+        "10122b9653b14e2a",  # GLOBAL_Chassis_LOD1
+        "0012833b12fe1027",  # GLOBAL_Chassis_Simple (trim)
+        "10122b9753b14e2a",  # GLOBAL_Chassis_Simple_LOD1
+        "00128338d7fd1027",  # GLOBAL_Chassis_Chrome
+        "a012f01306d57a2a",  # GLOBAL_LOD_Chrome
+    )
+}
+DEFAULT_SIZE = (0.26, 0.122)  # stock median quad
 FORZA_PLATE_TECHNIQUES = ("numberplate",)
-PX = 0.01                             # depth-map cell (m)
-FLAT_RMS = 0.003                      # plane-fit RMS of a usable mounting face
-COPLANAR = 0.004                      # recess region: within this of the plane
-PROUD = 0.003                         # plate in front of the face
-RECESS_STEP = 0.004                   # border cells this much nearer than the plane: recess wall
-MAX_TILT = 0.8                        # |dz/dy| of the plate (about 39 degrees)
-BRACKET_TILT = 0.25                   # |dz/dy| of a fallback plate on a bracket (about 14 degrees)
-PRIOR_BAND = 0.3                      # recesses searched within this of the host's plate height (m)
-FLAT_BAND = 0.15                      # plain flat faces (no recess walls) only within this
-MIN_FIT = 0.7                         # smallest plate scale when fitting a small recess
-LOD_PUSH_LIMIT = 0.08                 # coarser LODs move the plate out by at most this
+PX = 0.01  # depth-map cell (m)
+FLAT_RMS = 0.003  # plane-fit RMS of a usable mounting face
+COPLANAR = 0.004  # recess region: within this of the plane
+PROUD = 0.003  # plate in front of the face
+RECESS_STEP = 0.004  # border cells this much nearer than the plane: recess wall
+MAX_TILT = 0.8  # |dz/dy| of the plate (about 39 degrees)
+BRACKET_TILT = 0.25  # |dz/dy| of a fallback plate on a bracket (about 14 degrees)
+PRIOR_BAND = 0.3  # recesses searched within this of the host's plate height (m)
+FLAT_BAND = 0.15  # plain flat faces (no recess walls) only within this
+MIN_FIT = 0.7  # smallest plate scale when fitting a small recess
+LOD_PUSH_LIMIT = 0.08  # coarser LODs move the plate out by at most this
 # Baked AO bytes for the plate vertices (forza2dsf.vertex_sky): an open,
 # vertical face, sky term ~0.48 against stock plates' ~0.5.
 PLATE_AO = (95, 96, 97, 96)
-SURFACE_CLASSES = (1, 2)              # paint, trim (depth-map classes below)
+SURFACE_CLASSES = (1, 2)  # paint, trim (depth-map classes below)
 
 
 # --- the host's plates ------------------------------------------------------------------
 
+
 @dataclass
 class HostPlate:
-    end: str                          # "front" / "rear"
+    end: str  # "front" / "rear"
     centre: tuple[float, float, float]
-    size: tuple[float, float]         # width (x), height (y)
-    pair: tuple[int, int]             # s9 bytes 0, 1 (panel)
+    size: tuple[float, float]  # width (x), height (y)
+    pair: tuple[int, int]  # s9 bytes 0, 1 (panel)
     triangles: int
 
 
 @dataclass
 class HostPlates:
-    plates: dict                      # end -> HostPlate
-    body_y: tuple[float, float]       # host part-0 vertex y range (body box)
+    plates: dict  # end -> HostPlate
+    body_y: tuple[float, float]  # host part-0 vertex y range (body box)
 
 
 def host_plates(stream, vehc) -> HostPlates:
@@ -118,6 +122,7 @@ def host_plates(stream, vehc) -> HostPlates:
     a shared-atlas material whose UV0 centroid is on the plate."""
     from dsfforza.convert.damage import load_mesh
     from dsfforza.formats import vehicle_mesh as vm
+
     mesh = load_mesh(stream, vehc)
     u0, v0, u1, v1 = PLATE_UV
     ends: dict[str, list] = {}
@@ -147,8 +152,9 @@ def host_plates(stream, vehc) -> HostPlates:
         lo = [min(p[a] for p in pts) for a in range(3)]
         hi = [max(p[a] for p in pts) for a in range(3)]
         pair = Counter(s9 for _, s9 in tris).most_common(1)[0][0]
-        plates[end] = HostPlate(end, tuple((lo[a] + hi[a]) / 2 for a in range(3)),
-                                (hi[0] - lo[0], hi[1] - lo[1]), pair, len(tris))
+        plates[end] = HostPlate(
+            end, tuple((lo[a] + hi[a]) / 2 for a in range(3)), (hi[0] - lo[0], hi[1] - lo[1]), pair, len(tris)
+        )
     return HostPlates(plates, (min(ys), max(ys)) if ys else (0.0, 1.0))
 
 
@@ -160,6 +166,7 @@ CLASS = {"paint": 1, "trim": 2, "glass": 3, "textured": 4, "tyre": 5}
 def body_triangles(sections, lod: int, place) -> list:
     """(DSF points, class, section name) for every body triangle at `lod`."""
     from dsfforza.convert import forza_materials as fm
+
     out = []
     for s in sections:
         for sub in s.subsections:
@@ -180,6 +187,7 @@ class DepthMap:
     viewer's right coordinate s = s0 + (j + 0.5) PX (rear: s = -x, front: s = x);
     row i is y = y1 - (i + 0.5) PX; depth d = z at the rear, -z at the front
     (smaller is nearer the viewer)."""
+
     end: str
     s0: float
     y1: float
@@ -203,7 +211,7 @@ class DepthMap:
 
 def view_coords(end: str, p) -> tuple[float, float, float]:
     """(s, y, d) of a DSF point seen from `end`."""
-    return ((-p[0], p[1], p[2]) if end == "rear" else (p[0], p[1], -p[2]))
+    return (-p[0], p[1], p[2]) if end == "rear" else (p[0], p[1], -p[2])
 
 
 def depth_map(tris, end: str, s_range, y_range) -> DepthMap:
@@ -259,21 +267,22 @@ def fit_plane(dm: DepthMap, rows: slice, cols: slice, mask=None):
     a = np.c_[y, np.ones(len(y))]
     (b, c), *_ = np.linalg.lstsq(a, win[ok], rcond=None)
     res = win[ok] - (b * y + c)
-    return float(b), float(c), float(math.sqrt(float((res ** 2).mean()))), res
+    return float(b), float(c), float(math.sqrt(float((res**2).mean()))), res
 
 
 # --- planning ----------------------------------------------------------------------------
 
+
 @dataclass
 class Plate:
     end: str
-    centre: tuple[float, float]       # (s, y): viewer-right coordinate and height
+    centre: tuple[float, float]  # (s, y): viewer-right coordinate and height
     size: tuple[float, float]
-    tilt: float                       # dd/dy
-    depth: float                      # d at the centre (plate surface)
-    source: str                       # forza-mesh / recess / flat / host
-    surface: str                      # Forza section under the plate
-    lod_depth: dict = field(default_factory=dict)   # lod -> plate d at the centre
+    tilt: float  # dd/dy
+    depth: float  # d at the centre (plate surface)
+    source: str  # forza-mesh / recess / flat / host
+    surface: str  # Forza section under the plate
+    lod_depth: dict = field(default_factory=dict)  # lod -> plate d at the centre
     note: str = ""
 
     def corners(self, lod: int | None = None):
@@ -292,11 +301,16 @@ class Plate:
         return (0.0, self.tilt / n, (-1.0 if self.end == "rear" else 1.0) / n)
 
     def report(self) -> dict:
-        return {"source": self.source, "surface": self.surface,
-                "centre_s_y": [round(c, 4) for c in self.centre], "size": [round(c, 4) for c in self.size],
-                "tilt": round(self.tilt, 3), "depth": round(self.depth, 4),
-                "lod_depth": {str(k): round(v, 4) for k, v in sorted(self.lod_depth.items())},
-                **({"note": self.note} if self.note else {})}
+        return {
+            "source": self.source,
+            "surface": self.surface,
+            "centre_s_y": [round(c, 4) for c in self.centre],
+            "size": [round(c, 4) for c in self.size],
+            "tilt": round(self.tilt, 3),
+            "depth": round(self.depth, 4),
+            "lod_depth": {str(k): round(v, 4) for k, v in sorted(self.lod_depth.items())},
+            **({"note": self.note} if self.note else {}),
+        }
 
 
 def _fit_size(base: tuple[float, float], room: tuple[float | None, float | None], allow_up: bool = False):
@@ -330,8 +344,9 @@ def _forza_mesh(sections, end: str, place, z_mid: float):
     return best
 
 
-def plan_end(tris, end: str, host: HostPlate, prior_y: float, ground: float, half_width: float,
-             forza_mesh=None) -> Plate:
+def plan_end(
+    tris, end: str, host: HostPlate, prior_y: float, ground: float, half_width: float, forza_mesh=None
+) -> Plate:
     base = host.size if host.size[0] > 0.15 else DEFAULT_SIZE
     if base[0] > 0.45:  # a stock oddity (Super Car 01's front: 0.99 m, several pieces)
         base = DEFAULT_SIZE
@@ -400,14 +415,16 @@ def plan_end(tris, end: str, host: HostPlate, prior_y: float, ground: float, hal
             if not (0 <= i < height and 0 <= j < width):
                 return False
             d = dm.depth[i, j]
-            return (np.isfinite(d) and dm.cls[i, j] in SURFACE_CLASSES
-                    and abs(d - (b * float(dm.y_of(i)) + c)) < COPLANAR)
+            return (
+                np.isfinite(d) and dm.cls[i, j] in SURFACE_CLASSES and abs(d - (b * float(dm.y_of(i)) + c)) < COPLANAR
+            )
 
         def walk(di, dj, limit):
             n = 0
             while n < limit and on(ci + di * (n + 1), cj + dj * (n + 1)):
                 n += 1
             return n, n < limit
+
         left, lb = walk(0, -1, 45)
         right, rb = walk(0, 1, 45)
         up, ub = walk(-1, 0, 25)
@@ -425,8 +442,10 @@ def plan_end(tris, end: str, host: HostPlate, prior_y: float, ground: float, hal
         if room_h is not None:
             cy = float(dm.y_of(ci + (down - up) / 2))
         size = _fit_size(base, (room_w, room_h))
-        note = f"window rms {rms * 1000:.1f} mm, recess border {proud:.2f}, room " \
-               f"{'-' if room_w is None else f'{room_w:.2f}'} x {'-' if room_h is None else f'{room_h:.2f}'}"
+        note = (
+            f"window rms {rms * 1000:.1f} mm, recess border {proud:.2f}, room "
+            f"{'-' if room_w is None else f'{room_w:.2f}'} x {'-' if room_h is None else f'{room_h:.2f}'}"
+        )
     else:
         # No face: near the host's height (within 0.3 m), where the plate covers
         # the car's face and hugs it best once pushed out to its nearest point
@@ -474,8 +493,9 @@ def plan_end(tris, end: str, host: HostPlate, prior_y: float, ground: float, hal
     ok = np.isfinite(win)
     depth = float(np.min(win[ok] - b * (dm.y_of(ii[ok]) - cy))) - PROUD
     surface_idx = Counter(dm.sec[rows, cols][ok].ravel().tolist()).most_common(1)[0][0]
-    return Plate(end, (cs, cy), size, b, depth, source, dm.names[surface_idx] if surface_idx >= 0 else "body",
-                 note=note)
+    return Plate(
+        end, (cs, cy), size, b, depth, source, dm.names[surface_idx] if surface_idx >= 0 else "body", note=note
+    )
 
 
 def lod_depths(plate: Plate, sections, lods, place) -> None:
@@ -484,8 +504,11 @@ def lod_depths(plate: Plate, sections, lods, place) -> None:
     s, y = plate.centre
     w, h = plate.size
     for lod in lods:
-        tris = [t for t in body_triangles(sections, lod, place)
-                if any(abs(view_coords(plate.end, p)[0] - s) < w and abs(p[1] - y) < h for p in t[0])]
+        tris = [
+            t
+            for t in body_triangles(sections, lod, place)
+            if any(abs(view_coords(plate.end, p)[0] - s) < w and abs(p[1] - y) < h for p in t[0])
+        ]
         dm = depth_map(tris, plate.end, (s - w / 2, s + w / 2), (y - h / 2, y + h / 2))
         ok = np.isfinite(dm.depth)
         d = plate.depth
@@ -500,7 +523,7 @@ def lod_depths(plate: Plate, sections, lods, place) -> None:
 @dataclass
 class PlatePlan:
     plates: list
-    dropped: list                     # Forza numberplate sections/techniques replaced
+    dropped: list  # Forza numberplate sections/techniques replaced
     report: dict
 
     def sections(self, template_version: int, lods) -> list:
@@ -518,8 +541,10 @@ def plan(car_body, place, ground: float, host: HostPlates, lods, log=print) -> P
     xs = [abs(p[0]) for p in pts]
     z_mid = (max(zs) + min(zs)) / 2
     half_width = min(0.9, max(xs) + 0.02)
-    by_end = {"front": [t for t in tris if sum(p[2] for p in t[0]) / 3 > z_mid],
-              "rear": [t for t in tris if sum(p[2] for p in t[0]) / 3 <= z_mid]}
+    by_end = {
+        "front": [t for t in tris if sum(p[2] for p in t[0]) / 3 > z_mid],
+        "rear": [t for t in tris if sum(p[2] for p in t[0]) / 3 <= z_mid],
+    }
     plates, report = [], {}
     hy0, hy1 = host.body_y
     for end in ("rear", "front"):
@@ -538,14 +563,21 @@ def plan(car_body, place, ground: float, host: HostPlates, lods, log=print) -> P
             continue
         lod_depths(p, car_body, sorted(lods), place)
         plates.append(p)
-        report[end] = {**p.report(), "host": {"centre": [round(c, 3) for c in hp.centre],
-                                              "size": [round(c, 3) for c in hp.size], "pair": list(hp.pair)},
-                       "prior_y": round(prior_y, 3)}
+        report[end] = {
+            **p.report(),
+            "host": {
+                "centre": [round(c, 3) for c in hp.centre],
+                "size": [round(c, 3) for c in hp.size],
+                "pair": list(hp.pair),
+            },
+            "prior_y": round(prior_y, 3),
+        }
     dropped = sorted({s.name for s in car_body for sub in s.subsections if sub.material in FORZA_PLATE_TECHNIQUES})
     return PlatePlan(plates, dropped, {"plates": report, "dropped_forza_plates": dropped})
 
 
 # --- the synthetic section ------------------------------------------------------------------
+
 
 def plate_section(p: Plate, version: int, lods) -> carbin.Section:
     """A Forza-space section holding the plate quad on every LOD. Placement is
@@ -558,13 +590,20 @@ def plate_section(p: Plate, version: int, lods) -> carbin.Section:
     for lod in sorted(lods):
         base = len(pool)
         for k, (corner, uv) in enumerate(zip(p.corners(lod), uvs)):
-            pool.append(carbin.Vertex(corner, uv, (0.0, 0.0), n,
-                                      bytes([PLATE_AO[k]]) + bytes(extra_len - 1)))
+            pool.append(carbin.Vertex(corner, uv, (0.0, 0.0), n, bytes([PLATE_AO[k]]) + bytes(extra_len - 1)))
         # Outward winding: (tl, bl, br), (tl, br, tr) seen from the viewer.
         idx = [base, base + 3, base + 2, base, base + 2, base + 1]
         subs.append(carbin.SubSection(PLATE_TECHNIQUE, lod, 4, (0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0), idx))
-    section = carbin.Section(f"{p.surface}{SECTION_SUFFIX}{p.end}", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0),
-                             (0.0, 0.0, 0.0), pool, pool, subs, version)
+    section = carbin.Section(
+        f"{p.surface}{SECTION_SUFFIX}{p.end}",
+        (0.0, 0.0, 0.0),
+        (0.0, 0.0, 0.0),
+        (0.0, 0.0, 0.0),
+        pool,
+        pool,
+        subs,
+        version,
+    )
     return section
 
 
@@ -600,15 +639,19 @@ def apply(car, place, ground: float, host: HostPlates, log=print):
     new = [to_forza(s, place) for s in pp.sections(version, lods)]
     body = (without_forza_plates(car.body) if pp.plates else list(car.body)) + new
     for p in pp.plates:
-        log(f"plates: {p.end} {p.source} on {p.surface}, {p.size[0]:.3f} x {p.size[1]:.3f} m at "
-            f"s {p.centre[0]:+.3f} y {p.centre[1]:+.3f}, tilt {p.tilt:+.2f}" + (f" ({p.note})" if p.note else ""))
+        log(
+            f"plates: {p.end} {p.source} on {p.surface}, {p.size[0]:.3f} x {p.size[1]:.3f} m at "
+            f"s {p.centre[0]:+.3f} y {p.centre[1]:+.3f}, tilt {p.tilt:+.2f}" + (f" ({p.note})" if p.note else "")
+        )
     return body, pp
 
 
 # --- CLI ------------------------------------------------------------------------------------
 
+
 def _debug_png(car_body, place, ground, pp: PlatePlan, path: Path) -> None:
     from dsfforza.formats import vehicle_mesh as vm
+
     tris = body_triangles(car_body, 1, place)
     xs = [abs(p[0]) for t, _, _ in tris for p in t]
     hw = min(0.9, max(xs) + 0.02)
@@ -634,8 +677,8 @@ def _debug_png(car_body, place, ground, pp: PlatePlan, path: Path) -> None:
                 continue
             r0, r1 = int(dm.row(p.centre[1] + p.size[1] / 2)), int(dm.row(p.centre[1] - p.size[1] / 2))
             c0, c1 = int(dm.col(p.centre[0] - p.size[0] / 2)), int(dm.col(p.centre[0] + p.size[0] / 2))
-            rgb[max(r0, 0):r1 + 1, max(c0, 0):c1 + 1] = (0.95, 0.6, 0.15)
-            rgb[max(r0, 0), max(c0, 0):c1 + 1] = rgb[r1, max(c0, 0):c1 + 1] = (0, 1, 0)
+            rgb[max(r0, 0) : r1 + 1, max(c0, 0) : c1 + 1] = (0.95, 0.6, 0.15)
+            rgb[max(r0, 0), max(c0, 0) : c1 + 1] = rgb[r1, max(c0, 0) : c1 + 1] = (0, 1, 0)
         tiles.append((np.clip(rgb, 0, 1) * 255).astype(np.uint8))
     img = np.kron(np.concatenate(tiles, axis=1), np.ones((2, 2, 1), np.uint8))
     vm.write_png(path, img.shape[1], img.shape[0], bytearray(img.tobytes()))
@@ -656,17 +699,29 @@ def main(argv: list[str] | None = None) -> None:
     from dsfforza.formats import upvh as upvh_mod
     from dsfforza.formats.chnk import read_chunk
     from dsfforza.game import game_paths
+
     if args.cmd == "host":
         path = game_paths.stock(args.archive, quiet=True)
         with path.open("rb") as stream:
             root = read_chunk(stream, 0)
             for spool_id in args.id:
                 hp = host_plates(stream, upvh_mod.entries_for(stream, root.entries, spool_id, None)[0])
-                print(spool_id, {e: (tuple(round(c, 3) for c in q.centre), tuple(round(c, 3) for c in q.size),
-                                     q.pair, q.triangles) for e, q in hp.plates.items()})
+                print(
+                    spool_id,
+                    {
+                        e: (
+                            tuple(round(c, 3) for c in q.centre),
+                            tuple(round(c, 3) for c in q.size),
+                            q.pair,
+                            q.triangles,
+                        )
+                        for e, q in hp.plates.items()
+                    },
+                )
         return
     from dsfforza.convert import forza2dsf
     from dsfforza.formats.vehicle_mesh import child, payload
+
     car = forza2dsf.load_car(args.car, args.car.name)
     dims = forza2dsf.car_dims(car)
     path = game_paths.stock(args.dsf, quiet=True)
@@ -674,14 +729,17 @@ def main(argv: list[str] | None = None) -> None:
         root = read_chunk(stream, 0)
         kinds = upvh_mod.entries_for(stream, root.entries, args.host, None)
         full, exterior = kinds[0], kinds[2]
-        hw = forza2dsf.host_wheels(payload(stream, child(child(full, "NONR"), "UPVH")),
-                                   payload(stream, child(child(full, "NONR"), "MODL")),
-                                   payload(stream, child(child(exterior, "NONR"), "MODL")))
+        hw = forza2dsf.host_wheels(
+            payload(stream, child(child(full, "NONR"), "UPVH")),
+            payload(stream, child(child(full, "NONR"), "MODL")),
+            payload(stream, child(child(exterior, "NONR"), "MODL")),
+        )
         hp = host_plates(stream, full)
     place = forza2dsf.Placement(dy=hw.hub_y - dims.radius + dims.ride_height, dz=hw.axle_mid + dims.mid_z)
     ground = hw.hub_y - dims.radius
     _body, pp = apply(car, place, ground, hp)
     import json
+
     print(json.dumps(pp.report, indent=1))
     if args.png:
         _debug_png(car.body, place, ground, pp, args.png)

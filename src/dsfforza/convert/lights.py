@@ -47,13 +47,62 @@ from dsfforza.game import game_paths
 # indicator, 6/7 Brakes+Left/Right, 8 Reverse, 0x0C Fog, 0x14/0x15
 # DRL+Left/Right, 0x18 DRL+Brakes (tail and stop), 0x19/0x1A DRL+Brakes+L/R.
 WHITE, XENON, AMBER, RED = 8, 9, 4, 6
-LIGHT_TYPE_MASK = [0x0, 0x1, 0x2, 0x4, 0x8, 0x10, 0xA, 0x12, 0x20, 0x40, 0x80, 0x41, 0x100, 0x40, 0x40, 0x40,
-                   0x800, 0x1000, 0x4, 0x44, 0xC, 0x14, 0xC, 0x14, 0x6, 0xE, 0x16, 0xE, 0x16, 0x5]
-MASK_NAMES = {1: "Headlights", 2: "Brakes", 4: "DaytimeRunning", 8: "LeftIndicator", 16: "RightIndicator",
-              32: "Reverse", 64: "Siren", 128: "DippedHeadlights", 256: "FogLights"}
+LIGHT_TYPE_MASK = [
+    0x0,
+    0x1,
+    0x2,
+    0x4,
+    0x8,
+    0x10,
+    0xA,
+    0x12,
+    0x20,
+    0x40,
+    0x80,
+    0x41,
+    0x100,
+    0x40,
+    0x40,
+    0x40,
+    0x800,
+    0x1000,
+    0x4,
+    0x44,
+    0xC,
+    0x14,
+    0xC,
+    0x14,
+    0x6,
+    0xE,
+    0x16,
+    0xE,
+    0x16,
+    0x5,
+]
+MASK_NAMES = {
+    1: "Headlights",
+    2: "Brakes",
+    4: "DaytimeRunning",
+    8: "LeftIndicator",
+    16: "RightIndicator",
+    32: "Reverse",
+    64: "Siren",
+    128: "DippedHeadlights",
+    256: "FogLights",
+}
 
 HEAD, POSITION, TAIL, BRAKE, REVERSE, INDICATOR, FOG, BRAKE_IND, DRL_IND, LENS = (
-    "head", "position", "tail", "brake", "reverse", "indicator", "fog", "brake_ind", "drl_ind", "lens")
+    "head",
+    "position",
+    "tail",
+    "brake",
+    "reverse",
+    "indicator",
+    "fog",
+    "brake_ind",
+    "drl_ind",
+    "lens",
+)
 
 # Forza technique -> lamp function. Side-specific names carry the side.
 TECHNIQUE_FUNCTION: dict[str, tuple[str, str | None]] = {}
@@ -66,8 +115,11 @@ def _add(function: str, names: str, side: str | None = None) -> None:
 
 _add(HEAD, "head_light head_light2 hidhead xenonhead oldhead fullbeam lights_gls_hidhead lights_gls_oldhead")
 _add(POSITION, "drlwhite drlwhiteswitch drlred drlorange slorange")
-_add(TAIL, "tail_light tail_light_lod0 tail_light_on tail_light2 taillightst taillight2S drlbrakered "
-           "drlbrakeorange lights_gls_tail_light lights_gls_taillightst lights_gls_taillight2S")
+_add(
+    TAIL,
+    "tail_light tail_light_lod0 tail_light_on tail_light2 taillightst taillight2S drlbrakered "
+    "drlbrakeorange lights_gls_tail_light lights_gls_taillightst lights_gls_taillight2S",
+)
 _add(BRAKE, "white_brake")
 _add(REVERSE, "reverse_light reverse_light_lod0 brkreverse lights_gls_reverse_light")
 _add(INDICATOR, "indicator_left slinlorange lights_gls_indicator_left", "L")
@@ -82,13 +134,34 @@ _add(FOG, "fogwhite fogred")
 _add(LENS, "detail_glass_red detail_glass_amber detail_glass_clear linred rinred")
 
 # Default colour per function (lenses and fog lamps use the technique's own).
-FUNCTION_COLOUR = {HEAD: WHITE, POSITION: WHITE, TAIL: RED, BRAKE: RED, REVERSE: WHITE, INDICATOR: AMBER,
-                   FOG: WHITE, BRAKE_IND: RED, DRL_IND: AMBER}
-TECHNIQUE_COLOUR = {"hidhead": XENON, "xenonhead": XENON, "drlred": RED, "drlorange": AMBER, "slorange": AMBER,
-                    "fogred": RED, "drlinlred": RED, "drlinrred": RED, "lindtailside": RED, "rindtailside": RED,
-                    "drlbrakeorange": AMBER, "drlinlwhite": WHITE, "drlinrwhite": WHITE}
+FUNCTION_COLOUR = {
+    HEAD: WHITE,
+    POSITION: WHITE,
+    TAIL: RED,
+    BRAKE: RED,
+    REVERSE: WHITE,
+    INDICATOR: AMBER,
+    FOG: WHITE,
+    BRAKE_IND: RED,
+    DRL_IND: AMBER,
+}
+TECHNIQUE_COLOUR = {
+    "hidhead": XENON,
+    "xenonhead": XENON,
+    "drlred": RED,
+    "drlorange": AMBER,
+    "slorange": AMBER,
+    "fogred": RED,
+    "drlinlred": RED,
+    "drlinrred": RED,
+    "lindtailside": RED,
+    "rindtailside": RED,
+    "drlbrakeorange": AMBER,
+    "drlinlwhite": WHITE,
+    "drlinrwhite": WHITE,
+}
 
-CENTRE_X = 0.3        # a lamp group whose |x| stays below this is a centre lamp
+CENTRE_X = 0.3  # a lamp group whose |x| stays below this is a centre lamp
 HIGH_BRAKE_RISE = 0.08  # a centre tail lamp this far above the side tails is the high brake lamp
 
 # Group priority when the host has fewer light entries than the car has lamps;
@@ -131,13 +204,14 @@ def variant_byte(function: str) -> int:
 class Lamp:
     """One lamp: the triangles of one function on one side at one end.
     Position and direction come from the finest Forza LOD that has it."""
+
     function: str
-    side: str          # "L" (DSF +x, the car's left), "R" or "C"
+    side: str  # "L" (DSF +x, the car's left), "R" or "C"
     front: bool
     colour: int
-    per_lod: dict = field(default_factory=dict)   # lod -> [area, centre sum xyz, normal sum xyz, triangles]
-    light_id: int | None = None   # host light entry id; vertices get id + 1
-    cluster: int = 0              # 0 = the largest lamp of its function, side and end
+    per_lod: dict = field(default_factory=dict)  # lod -> [area, centre sum xyz, normal sum xyz, triangles]
+    light_id: int | None = None  # host light entry id; vertices get id + 1
+    cluster: int = 0  # 0 = the largest lamp of its function, side and end
 
     def measure(self, lod: int, area: float, centre, normal) -> None:
         acc = self.per_lod.setdefault(lod, [0.0, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], 0])
@@ -224,6 +298,7 @@ def _single_link(points, gap: float) -> list[list[int]]:
             parent[i] = parent[parent[i]]
             i = parent[i]
         return i
+
     for (cx, cy, cz), members in cells.items():
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
@@ -241,10 +316,12 @@ def _single_link(points, gap: float) -> list[list[int]]:
 def _high_brake(records) -> None:
     """A centre tail lamp above the side tail lamps (or the only tail lamp in
     the middle) is the high-mounted stop lamp: brakes only."""
+
     def mean_y(rs):
         finest = min(r.lod for r in rs)
         rs = [r for r in rs if r.lod == finest]
         return sum(r.centre[1] * r.area for r in rs) / (sum(r.area for r in rs) or 1.0)
+
     centre = [r for r in records if r.function == TAIL and r.side == "C" and not r.front]
     sides = [r for r in records if r.function == TAIL and r.side != "C" and not r.front]
     if centre and sides and mean_y(centre) > mean_y(sides) + HIGH_BRAKE_RISE:
@@ -259,10 +336,11 @@ class LampPlan:
     Build with `LampPlan.build(sections, place, mid_z)`, then `assign(upvh)`.
     `s9(sub, k, s9)` gives a triangle's vertex semantic-9 bytes with the light
     byte set; `patch_upvh(upvh)` rewrites the light table."""
-    lamps: dict = field(default_factory=dict)       # key -> Lamp
-    tri_lamp: dict = field(default_factory=dict)    # (id(sub), triangle index) -> lamp key
-    unlit: list = field(default_factory=list)       # lamp keys that got no entry
-    slots: list = field(default_factory=list)       # per host light entry: (offset, id, Lamp | None)
+
+    lamps: dict = field(default_factory=dict)  # key -> Lamp
+    tri_lamp: dict = field(default_factory=dict)  # (id(sub), triangle index) -> lamp key
+    unlit: list = field(default_factory=list)  # lamp keys that got no entry
+    slots: list = field(default_factory=list)  # per host light entry: (offset, id, Lamp | None)
 
     @classmethod
     def build(cls, sections, place, mid_z: float, lenses=frozenset()) -> LampPlan:
@@ -371,14 +449,17 @@ class LampPlan:
         left over share an entry of the same function and side if there is
         one (their geometry lights with it), else stay unlit."""
         from dsfforza.formats import upvh as uv
+
         h = uv.parse(upvh)
         base = h.offsets["lights"]
         entries = []
         for i in range(h.counts["lights"]):
             o = base + i * 0x40
             entries.append((o, struct.unpack_from("<I", h.data, o + 40)[0]))
-        order = sorted((l for l in self.lamps.values() if l.area),
-                       key=lambda l: (PRIORITY.get(l.function, 9) + 10 * min(l.cluster, 1), not l.front, l.side))
+        order = sorted(
+            (l for l in self.lamps.values() if l.area),
+            key=lambda l: (PRIORITY.get(l.function, 9) + 10 * min(l.cluster, 1), not l.front, l.side),
+        )
         free = list(entries)
         taken = {}
         for lamp in order:
@@ -388,8 +469,14 @@ class LampPlan:
                 taken[(o, lid)] = lamp
         for lamp in order:
             if lamp.light_id is None:
-                twin = next((l for l in order if l.light_id is not None and l.function == lamp.function
-                             and l.side == lamp.side), None)
+                twin = next(
+                    (
+                        l
+                        for l in order
+                        if l.light_id is not None and l.function == lamp.function and l.side == lamp.side
+                    ),
+                    None,
+                )
                 if twin is not None:
                     lamp.light_id = twin.light_id
                 else:
@@ -436,16 +523,28 @@ class LampPlan:
         lamps = []
         for lamp in sorted(self.lamps.values(), key=lambda l: (not l.front, l.function, l.side)):
             mask = LIGHT_TYPE_MASK[type_byte(lamp.function, lamp.side)]
-            lamps.append({"function": lamp.function, "side": lamp.side, "front": lamp.front,
-                          "light_id": lamp.light_id, "flags": f"{lamp.flags:#010x}",
-                          "lua": "+".join(n for b, n in MASK_NAMES.items() if mask & b),
-                          "position": [round(c, 3) for c in lamp.position], "triangles": lamp.triangles})
-        return {"lamps": lamps, "unlit": [list(k) for k in self.unlit],
-                "spare_entries": sum(1 for _, _, l in self.slots if l is None)}
+            lamps.append(
+                {
+                    "function": lamp.function,
+                    "side": lamp.side,
+                    "front": lamp.front,
+                    "light_id": lamp.light_id,
+                    "flags": f"{lamp.flags:#010x}",
+                    "lua": "+".join(n for b, n in MASK_NAMES.items() if mask & b),
+                    "position": [round(c, 3) for c in lamp.position],
+                    "triangles": lamp.triangles,
+                }
+            )
+        return {
+            "lamps": lamps,
+            "unlit": [list(k) for k in self.unlit],
+            "spare_entries": sum(1 for _, _, l in self.slots if l is None),
+        }
 
 
 def read_table(upvh: bytes) -> list[dict]:
     from dsfforza.formats import upvh as uv
+
     h = uv.parse(upvh)
     out = []
     for i in range(h.counts["lights"]):
@@ -455,8 +554,16 @@ def read_table(upvh: bytes) -> list[dict]:
         lid, flags = struct.unpack_from("<2I", h.data, o + 40)
         t = flags >> 24
         mask = LIGHT_TYPE_MASK[t] if t < len(LIGHT_TYPE_MASK) else None
-        out.append({"index": i, "id": lid, "flags": flags, "position": pos, "direction": direction,
-                    "lua": "+".join(n for b, n in MASK_NAMES.items() if mask and mask & b) or "-"})
+        out.append(
+            {
+                "index": i,
+                "id": lid,
+                "flags": flags,
+                "position": pos,
+                "direction": direction,
+                "lua": "+".join(n for b, n in MASK_NAMES.items() if mask and mask & b) or "-",
+            }
+        )
     return out
 
 
@@ -471,12 +578,13 @@ def main(argv: list[str] | None = None) -> None:
     t.add_argument("archive", type=Path)
     t.add_argument("--id", type=int, required=True)
     args = parser.parse_args(argv)
-    if getattr(args, 'dsf', None):
+    if getattr(args, "dsf", None):
         args.dsf = game_paths.stock(args.dsf)  # the original when a dsfforza install replaced it
 
     from dsfforza.formats import upvh as uv
     from dsfforza.formats import vehicle_mesh as vm
     from dsfforza.formats.chnk import read_chunk
+
     archive = args.dsf if args.cmd == "plan" else args.archive
     spool = args.host if args.cmd == "plan" else args.id
     with archive.open("rb") as stream:
@@ -486,11 +594,14 @@ def main(argv: list[str] | None = None) -> None:
         modl = vm.payload(stream, vm.child(vm.child(full, "NONR"), "MODL"))
     if args.cmd == "table":
         for e in read_table(upvh):
-            print(f"{e['index']:2} id {e['id']:2} flags {e['flags']:#010x} {e['lua']:28} "
-                  f"pos ({', '.join(f'{c:+.2f}' for c in e['position'])}) "
-                  f"dir ({', '.join(f'{c:+.2f}' for c in e['direction'])})")
+            print(
+                f"{e['index']:2} id {e['id']:2} flags {e['flags']:#010x} {e['lua']:28} "
+                f"pos ({', '.join(f'{c:+.2f}' for c in e['position'])}) "
+                f"dir ({', '.join(f'{c:+.2f}' for c in e['direction'])})"
+            )
         return
     from dsfforza.convert import forza2dsf
+
     car = forza2dsf.load_car(args.car, args.car.name)
     dims = forza2dsf.car_dims(car)
     # Placed on the host's own wheels, as forza2dsf.convert does (this used the
@@ -499,6 +610,7 @@ def main(argv: list[str] | None = None) -> None:
     place = forza2dsf.Placement(dy=hw.hub_y - dims.radius + dims.ride_height, dz=hw.axle_mid + dims.mid_z)
     plan = LampPlan.build(car.body, place, hw.axle_mid).assign(upvh)
     import json
+
     print(json.dumps(plan.report(), indent=1))
 
 

@@ -73,8 +73,8 @@ def script_path(source: str, hash_: int) -> str | None:
     """Package-relative path from a chunk's source name, or None."""
     name = source.lstrip("@=")
     root = name.find("\\\\")
-    if root != -1 and com_hash(name[root + 2:]) == hash_:
-        return name[root + 2:]
+    if root != -1 and com_hash(name[root + 2 :]) == hash_:
+        return name[root + 2 :]
     # No root marker: try ever longer suffixes against the hash.
     parts = [p for p in name.replace("/", "\\").split("\\") if p]
     for count in range(1, len(parts) + 1):
@@ -82,7 +82,7 @@ def script_path(source: str, hash_: int) -> str | None:
         if com_hash(candidate) == hash_:
             return candidate
     # Packaged under another name (filelist.lua for competitivefilelist.lua).
-    return name[root + 2:] if root != -1 else None
+    return name[root + 2 :] if root != -1 else None
 
 
 def read_package(path: Path) -> list[dict]:
@@ -101,20 +101,22 @@ def read_package(path: Path) -> list[dict]:
     scripts = []
     bounds = [offset for offset, _, _ in lookup] + [len(blob)]
     for i, (offset, hash_, _) in enumerate(lookup):
-        data = blob[offset:bounds[i + 1]]
+        data = blob[offset : bounds[i + 1]]
         source = None
         if len(data) >= 16 and data[:4] == b"\x1bLua":
             (length,) = struct.unpack_from("<I", data, 12)
             if length:
-                source = data[16:16 + length - 1].decode("latin-1")
-        scripts.append({
-            "hash": hash_,
-            "data": data,
-            "header": data[:12],
-            "source": source,
-            "path": script_path(source, hash_) if source else None,
-            "flags": flags,
-        })
+                source = data[16 : 16 + length - 1].decode("latin-1")
+        scripts.append(
+            {
+                "hash": hash_,
+                "data": data,
+                "header": data[:12],
+                "source": source,
+                "path": script_path(source, hash_) if source else None,
+                "flags": flags,
+            }
+        )
     return scripts
 
 

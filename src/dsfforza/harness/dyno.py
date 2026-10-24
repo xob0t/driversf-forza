@@ -31,8 +31,10 @@ from pathlib import Path
 MPH = 2.23694
 QUARTER_MILE = 402.336
 G = 9.81
-LINE = re.compile(r"\[dsfforza\] dy (\d+) (\d+) (\d+) ([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+)"
-                  r"(?: ([-\d.]+))?(?: ([-\d.]+))?(?: ([-\d.]+))?")
+LINE = re.compile(
+    r"\[dsfforza\] dy (\d+) (\d+) (\d+) ([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+)"
+    r"(?: ([-\d.]+))?(?: ([-\d.]+))?(?: ([-\d.]+))?"
+)
 END = re.compile(r"\[dsfforza\] dyno (\d+) r(\d+) end (\S+)")
 INFO = re.compile(r"\[dsfforza\] dyno (\d+): (topSpeed=.*)")
 
@@ -117,7 +119,7 @@ def analyse(r: Run) -> dict:
     t = [(k - n[0]) * period for k in n]
     # t = 0 where a straight line through the first samples between 1 and 5 m/s
     # reaches the speed the car had before the throttle (normally 0).
-    rest = min(v[:go - first + 1])
+    rest = min(v[: go - first + 1])
     launch = [(t[i], v[i]) for i in range(len(v)) if 1.0 <= v[i] <= 5.0 and i < len(v) // 2]
     if len(launch) >= 3:
         mt = statistics.mean(x for x, _ in launch)
@@ -137,7 +139,7 @@ def analyse(r: Run) -> dict:
     peak = max(range(len(v)), key=v.__getitem__)
     out = {"car": r.car, "run": r.run, "end": r.end, "period": period}
     for target in (30, 60, 100):
-        out[f"0-{target}"] = _cross(t[:peak + 1], mph[:peak + 1], target)
+        out[f"0-{target}"] = _cross(t[: peak + 1], mph[: peak + 1], target)
     tq = _cross(t, dist, QUARTER_MILE)
     out["qm_time"] = tq
     out["qm_mph"] = None
@@ -163,13 +165,30 @@ def analyse(r: Run) -> dict:
             out["brake_s"] = t[stop] - tb
             out["brake_g"] = brake_from / MPH / (t[stop] - tb) / G
     # How well the lane keeper held the line, and the height change (should be ~0).
-    out["max_lat"] = max(abs(x) for x in r.lateral[first:first + peak + 1]) if r.lateral else None
+    out["max_lat"] = max(abs(x) for x in r.lateral[first : first + peak + 1]) if r.lateral else None
     out["climb_m"] = pos[peak][1] - pos[0][1]
     return out
 
 
-COLUMNS = ["car", "run", "0-30", "0-60", "0-100", "qm_time", "qm_mph", "mph@10s", "mph@20s", "top_mph",
-           "top_at_s", "brake_from", "brake_m", "brake_g", "max_lat", "period", "end"]
+COLUMNS = [
+    "car",
+    "run",
+    "0-30",
+    "0-60",
+    "0-100",
+    "qm_time",
+    "qm_mph",
+    "mph@10s",
+    "mph@20s",
+    "top_mph",
+    "top_at_s",
+    "brake_from",
+    "brake_m",
+    "brake_g",
+    "max_lat",
+    "period",
+    "end",
+]
 
 
 def fmt(value) -> str:
@@ -220,8 +239,14 @@ def manoeuvre(r: Run, period: float = 0.008, window: float = 3.0) -> dict | None
     start = next((i for i in range(step * 2, n) if r.v[i] > 15 and abs(rate[i]) > math.radians(8.6)), None)
     if start is None:
         return None
-    end = next((i for i in range(start, n) if (r.n[i] - r.n[start]) * period >= window
-                or (r.lateral and abs(r.lateral[i]) > 12)), n - 1)  # 12 m: before the kerbs
+    end = next(
+        (
+            i
+            for i in range(start, n)
+            if (r.n[i] - r.n[start]) * period >= window or (r.lateral and abs(r.lateral[i]) > 12)
+        ),
+        n - 1,
+    )  # 12 m: before the kerbs
     seg = range(start, end + 1)
     peak = max(seg, key=lambda i: abs(rate[i]))
     slip = [abs(_wrap(r.yaw[i] - vel_dir[i])) for i in seg]
@@ -230,8 +255,9 @@ def manoeuvre(r: Run, period: float = 0.008, window: float = 3.0) -> dict | None
         if i - step >= start:
             dt = (r.n[i] - r.n[i - step]) * period
             lat.append(abs(_wrap(vel_dir[i] - vel_dir[i - step]) / dt * r.v[i]))
-    settle = next(((r.n[i] - r.n[start]) * period for i in range(peak, end + 1)
-                   if abs(rate[i]) < 0.1 * abs(rate[peak])), None)
+    settle = next(
+        ((r.n[i] - r.n[start]) * period for i in range(peak, end + 1) if abs(rate[i]) < 0.1 * abs(rate[peak])), None
+    )
     # Step steer: the yaw rate and lateral acceleration held 0.4 to 0.9 s into the input.
     # Lane change: the largest yaw rate of the opposite sign (the counter-steer and any
     # overshoot), as a share of the first peak.
@@ -249,8 +275,10 @@ def manoeuvre(r: Run, period: float = 0.008, window: float = 3.0) -> dict | None
     # (deg s). None when the car never got sideways or went 20 m off its line first (the
     # four lanes and the pavement; recovery runs flick briefly and counter-steer at once).
     recover = slip_area = None
-    far = next((i for i in range(start, n) if (r.n[i] - r.n[start]) * period >= 8.0
-                or (r.lateral and abs(r.lateral[i]) > 20)), n - 1)
+    far = next(
+        (i for i in range(start, n) if (r.n[i] - r.n[start]) * period >= 8.0 or (r.lateral and abs(r.lateral[i]) > 20)),
+        n - 1,
+    )
     rslip = [abs(_wrap(r.yaw[i] - vel_dir[i])) for i in range(start, far + 1)]
     if rslip and max(rslip) > math.radians(15):
         top = start + rslip.index(max(rslip))
@@ -262,28 +290,52 @@ def manoeuvre(r: Run, period: float = 0.008, window: float = 3.0) -> dict | None
                 recover = (r.n[calm] - r.n[start]) * period
                 break
         slip_area = sum(math.degrees(s) for s in rslip) * (r.n[far] - r.n[start]) * period / len(rslip)
-    return {"car": r.car, "run": r.run, "v0_mph": r.v[start] * MPH,
-            "peak_yaw_rate": math.degrees(abs(rate[peak])), "t_peak": (r.n[peak] - r.n[start]) * period,
-            "yaw_rate_steady": math.degrees(statistics.mean(abs(rate[i]) for i in steady)) if steady else None,
-            "lat_acc_steady": statistics.mean(lat_steady) / 9.81 if lat_steady else None,
-            "reverse_ratio": max(reverse, 0.0) / abs(rate[peak]) if rate[peak] else None,
-            "yaw_change": math.degrees(abs(_wrap(r.yaw[end] - r.yaw[start]))),
-            "path_change": math.degrees(abs(_wrap(vel_dir[end] - vel_dir[start]))),
-            "peak_slip": math.degrees(max(slip)), "peak_lat_acc": max(lat) if lat else None,
-            "speed_loss_mph": (r.v[start] - r.v[end]) * MPH, "settle_s": settle,
-            "recover_s": recover, "slip_area": slip_area}
+    return {
+        "car": r.car,
+        "run": r.run,
+        "v0_mph": r.v[start] * MPH,
+        "peak_yaw_rate": math.degrees(abs(rate[peak])),
+        "t_peak": (r.n[peak] - r.n[start]) * period,
+        "yaw_rate_steady": math.degrees(statistics.mean(abs(rate[i]) for i in steady)) if steady else None,
+        "lat_acc_steady": statistics.mean(lat_steady) / 9.81 if lat_steady else None,
+        "reverse_ratio": max(reverse, 0.0) / abs(rate[peak]) if rate[peak] else None,
+        "yaw_change": math.degrees(abs(_wrap(r.yaw[end] - r.yaw[start]))),
+        "path_change": math.degrees(abs(_wrap(vel_dir[end] - vel_dir[start]))),
+        "peak_slip": math.degrees(max(slip)),
+        "peak_lat_acc": max(lat) if lat else None,
+        "speed_loss_mph": (r.v[start] - r.v[end]) * MPH,
+        "settle_s": settle,
+        "recover_s": recover,
+        "slip_area": slip_area,
+    }
 
 
-MAN_COLUMNS = ["car", "run", "v0_mph", "peak_yaw_rate", "t_peak", "yaw_change", "path_change", "peak_slip",
-               "peak_lat_acc", "yaw_rate_steady", "lat_acc_steady", "reverse_ratio", "speed_loss_mph", "settle_s",
-               "recover_s", "slip_area"]
+MAN_COLUMNS = [
+    "car",
+    "run",
+    "v0_mph",
+    "peak_yaw_rate",
+    "t_peak",
+    "yaw_change",
+    "path_change",
+    "peak_slip",
+    "peak_lat_acc",
+    "yaw_rate_steady",
+    "lat_acc_steady",
+    "reverse_ratio",
+    "speed_loss_mph",
+    "settle_s",
+    "recover_s",
+    "slip_area",
+]
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("logs", type=Path, nargs="+", help="Driver.log files or run folders")
-    parser.add_argument("--labels", type=Path, action="append", default=[],
-                        help="port_car manifest (out/x.json) to name the ported IDs")
+    parser.add_argument(
+        "--labels", type=Path, action="append", default=[], help="port_car manifest (out/x.json) to name the ported IDs"
+    )
     parser.add_argument("--csv", type=Path, help="write every run's figures here")
     parser.add_argument("--json", type=Path, help="write per-car means here")
     parser.add_argument("--trace", type=int, help="print the speed trace of this car (t, mph, distance)")

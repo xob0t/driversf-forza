@@ -33,7 +33,7 @@ def read_car(source, media: str) -> dict[str, bytes]:
             name = info.filename.replace("\\", "/")
             if info.is_dir() or not name.lower().startswith(prefix):
                 continue
-            rel = name[len(prefix):].lower()
+            rel = name[len(prefix) :].lower()
             if rel in wanted:
                 out[rel] = archive.read(info)
     finally:
@@ -42,8 +42,15 @@ def read_car(source, media: str) -> dict[str, bytes]:
 
 
 def survey_one(source, media: str, work: Path, dbs: list[Path]) -> dict:
-    row = {"media": media, "game": source.game, "status": "ok", "cause": "", "wheel": "", "gauges": "",
-           "eye_source": ""}
+    row = {
+        "media": media,
+        "game": source.game,
+        "status": "ok",
+        "cause": "",
+        "wheel": "",
+        "gauges": "",
+        "eye_source": "",
+    }
     files = read_car(source, media)
     folder = work / source.game.lower() / media
     folder.mkdir(parents=True, exist_ok=True)
@@ -83,8 +90,12 @@ def survey_one(source, media: str, work: Path, dbs: list[Path]) -> dict:
     if not {"speed", "tach"} <= set(cf.gauges):
         warnings.append("missing " + "/".join(f for f in ("speed", "tach") if f not in cf.gauges) + " needle")
     if main:
-        stock = [x for x in main if not cockpit.SHELL_SKIP.match(x.name)
-                 and x.name.lower() not in {n.lower() for n in cf.static} | {n.lower() for n in cf.shell_skip}]
+        stock = [
+            x
+            for x in main
+            if not cockpit.SHELL_SKIP.match(x.name)
+            and x.name.lower() not in {n.lower() for n in cf.static} | {n.lower() for n in cf.shell_skip}
+        ]
         lods = sorted({sub.lod for x in stock for sub in x.subsections if sub.lod > 0})
         lod = min(lods[-1], 5) if lods else 0
         while lod >= 1 and cockpit.shell_blocks_view(stock, lod, cf.eye):
@@ -112,8 +123,10 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if os.name == "nt":
         import ctypes
+
         ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x4000)  # BelowNormal
     from dsfforza.build.forza_roster import roster
+
     isos = sorted((REPO / "assets").glob("*.iso"))
     cars, _ = roster(isos)
     dbs = {g: port_car.extract_gamedb(isos, g, args.cache) for g in ("FH1", "FM4")}
@@ -121,7 +134,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.car:
         names = [n.lower() for n in args.car]
     if args.limit:
-        names = names[:args.limit]
+        names = names[: args.limit]
     args.work.mkdir(parents=True, exist_ok=True)
     rows = []
     for n, key in enumerate(names):
@@ -132,19 +145,38 @@ def main(argv: list[str] | None = None) -> None:
         except SystemExit as error:
             row = {"media": car.name, "game": "", "status": "fail", "cause": f"source: {error}"}
         except Exception as error:
-            row = {"media": car.name, "game": "", "status": "fail",
-                   "cause": f"{type(error).__name__}: {error}".splitlines()[0][:160]}
+            row = {
+                "media": car.name,
+                "game": "",
+                "status": "fail",
+                "cause": f"{type(error).__name__}: {error}".splitlines()[0][:160],
+            }
             traceback.print_exc()
         rows.append(row)
-        print(f"{n + 1}/{len(names)} {row['media']} {row['status']} {row.get('cause', '')} {row.get('warnings', '')}",
-              flush=True)
-    cols = ["media", "game", "status", "cause", "wheel", "gauges", "radius", "column_deg", "shell_lod", "warnings", "eye_source"]
+        print(
+            f"{n + 1}/{len(names)} {row['media']} {row['status']} {row.get('cause', '')} {row.get('warnings', '')}",
+            flush=True,
+        )
+    cols = [
+        "media",
+        "game",
+        "status",
+        "cause",
+        "wheel",
+        "gauges",
+        "radius",
+        "column_deg",
+        "shell_lod",
+        "warnings",
+        "eye_source",
+    ]
     with (args.work / "survey.tsv").open("w", encoding="utf-8") as fh:
         fh.write("\t".join(cols) + "\n")
         for r in rows:
             fh.write("\t".join(str(r.get(c, "")) for c in cols) + "\n")
-    by = collections.Counter((r["status"], r["cause"].split(":")[0] if r["status"] == "fail" else r["cause"])
-                             for r in rows)
+    by = collections.Counter(
+        (r["status"], r["cause"].split(":")[0] if r["status"] == "fail" else r["cause"]) for r in rows
+    )
     print("\nsummary:")
     for (status, cause), count in by.most_common():
         print(f"  {count:4}  {status:8} {cause}")

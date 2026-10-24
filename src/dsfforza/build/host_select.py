@@ -60,11 +60,31 @@ SURVEY_VERSION = 7
 # VSCT record, last byte: vehicle category (research/hosts.md). Not a bit mask:
 # the Desanne's three entries are 0x10 civilian saloon, 0x02 cop, 0x04 taxi.
 CATEGORIES = {
-    0x00: "security van", 0x01: "fire truck", 0x02: "cop", 0x03: "ambulance", 0x04: "taxi", 0x05: "rig",
-    0x06: "trailer", 0x07: "truck", 0x08: "tow truck", 0x09: "limousine", 0x0A: "bus", 0x0B: "pickup",
-    0x0C: "70s muscle", 0x0D: "modern muscle", 0x0E: "van", 0x0F: "SUV", 0x10: "saloon", 0x11: "mini car",
-    0x12: "super car", 0x13: "sports car", 0x14: "drift car", 0x15: "rally/buggy", 0x16: "classic",
-    0x17: "off-roader", 0x18: "Tanner",
+    0x00: "security van",
+    0x01: "fire truck",
+    0x02: "cop",
+    0x03: "ambulance",
+    0x04: "taxi",
+    0x05: "rig",
+    0x06: "trailer",
+    0x07: "truck",
+    0x08: "tow truck",
+    0x09: "limousine",
+    0x0A: "bus",
+    0x0B: "pickup",
+    0x0C: "70s muscle",
+    0x0D: "modern muscle",
+    0x0E: "van",
+    0x0F: "SUV",
+    0x10: "saloon",
+    0x11: "mini car",
+    0x12: "super car",
+    0x13: "sports car",
+    0x14: "drift car",
+    0x15: "rally/buggy",
+    0x16: "classic",
+    0x17: "off-roader",
+    0x18: "Tanner",
 }
 SPECIAL_CATEGORIES = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x08, 0x18}
 HEAVY_CATEGORIES = {0x07, 0x0A}
@@ -74,61 +94,245 @@ REAR_DOOR_ROLES = {52, 53, 54, 55}
 
 # Forza make code -> name as it appears in DSF model names / vehicleStats pictures.
 MAKE_NAMES = {
-    "ACU": "acura", "ALF": "alfa_romeo", "AMC": "amc", "AST": "aston_martin", "AUD": "audi", "BEN": "bentley",
-    "BMW": "bmw", "BUG": "bugatti", "BUI": "buick", "CAD": "cadillac", "CHE": "chevrolet", "CHR": "chrysler",
-    "DOD": "dodge", "DEL": "dmc", "FER": "ferrari", "FIA": "fiat", "FOR": "ford", "GMC": "gmc", "HUM": "hummer",
-    "JAG": "jaguar", "JEE": "jeep", "LAM": "lamborghini", "LAN": "lancia", "LR": "range_rover",
-    "MAS": "maserati", "MCL": "mclaren", "MER": "mercedes", "NIS": "nissan", "OLD": "oldsmobile",
-    "PAG": "pagani", "PLY": "plymouth", "PON": "pontiac", "RUF": "ruf", "SHE": "shelby", "VIP": "dodge",
-    "VW": "volkswagen", "LIN": "lincoln", "HUD": "hudson",
+    "ACU": "acura",
+    "ALF": "alfa_romeo",
+    "AMC": "amc",
+    "AST": "aston_martin",
+    "AUD": "audi",
+    "BEN": "bentley",
+    "BMW": "bmw",
+    "BUG": "bugatti",
+    "BUI": "buick",
+    "CAD": "cadillac",
+    "CHE": "chevrolet",
+    "CHR": "chrysler",
+    "DOD": "dodge",
+    "DEL": "dmc",
+    "FER": "ferrari",
+    "FIA": "fiat",
+    "FOR": "ford",
+    "GMC": "gmc",
+    "HUM": "hummer",
+    "JAG": "jaguar",
+    "JEE": "jeep",
+    "LAM": "lamborghini",
+    "LAN": "lancia",
+    "LR": "range_rover",
+    "MAS": "maserati",
+    "MCL": "mclaren",
+    "MER": "mercedes",
+    "NIS": "nissan",
+    "OLD": "oldsmobile",
+    "PAG": "pagani",
+    "PLY": "plymouth",
+    "PON": "pontiac",
+    "RUF": "ruf",
+    "SHE": "shelby",
+    "VIP": "dodge",
+    "VW": "volkswagen",
+    "LIN": "lincoln",
+    "HUD": "hudson",
 }
-MAKE_ALIASES = {"mercades": "mercedes", "land_rover": "range_rover", "amc_hudson": "hudson",
-                "chrysler": "dodge", "plymouth": "dodge", "shelby": "ford"}  # same-group sounds
+MAKE_ALIASES = {
+    "mercades": "mercedes",
+    "land_rover": "range_rover",
+    "amc_hudson": "hudson",
+    "chrysler": "dodge",
+    "plymouth": "dodge",
+    "shelby": "ford",
+}  # same-group sounds
 # Model-name aliases (normalised, lowercase alphanumerics), applied to both sides.
-MODEL_ALIASES = {"challanger": "challenger", "sirocco": "scirocco", "svtraptor": "f150raptor",
-                 "raptor": "f150raptor", "f150supercrew": "f150", "gtr": "gtr", "skylinegtr": "skyline",
-                 "corvettezr1": "corvette", "corvettez06": "corvette", "transam": "firebird",
-                 "firebirdtransam": "firebird", "cuda426": "barracuda", "cuda": "barracuda"}
+MODEL_ALIASES = {
+    "challanger": "challenger",
+    "sirocco": "scirocco",
+    "svtraptor": "f150raptor",
+    "raptor": "f150raptor",
+    "f150supercrew": "f150",
+    "gtr": "gtr",
+    "skylinegtr": "skyline",
+    "corvettezr1": "corvette",
+    "corvettez06": "corvette",
+    "transam": "firebird",
+    "firebirdtransam": "firebird",
+    "cuda426": "barracuda",
+    "cuda": "barracuda",
+}
 
-MUSCLE_WORDS = ("camaro", "mustang", "challenger", "charger", "firebird", "transam", "gto", "chevelle",
-                "cuda", "barracuda", "torino", "cutlass", "superbee", "roadrunner", "nova", "boss", "mach1")
+MUSCLE_WORDS = (
+    "camaro",
+    "mustang",
+    "challenger",
+    "charger",
+    "firebird",
+    "transam",
+    "gto",
+    "chevelle",
+    "cuda",
+    "barracuda",
+    "torino",
+    "cutlass",
+    "superbee",
+    "roadrunner",
+    "nova",
+    "boss",
+    "mach1",
+)
 # Pickups: model-name prefixes (normalised), plus a few words anywhere. "raptor" alone is not one:
 # SAL_S5SRaptor_10 is the Saleen S5S Raptor supercar; only Ford's SVT Raptor is an F-150.
-PICKUP_PREFIXES = ("ram", "f150", "f250", "f350", "svtraptor", "syclone", "elcamino", "silverado",
-                   "tacoma", "tundra", "c10", "ranchero", "s331", "hilux")
+PICKUP_PREFIXES = (
+    "ram",
+    "f150",
+    "f250",
+    "f350",
+    "svtraptor",
+    "syclone",
+    "elcamino",
+    "silverado",
+    "tacoma",
+    "tundra",
+    "c10",
+    "ranchero",
+    "s331",
+    "hilux",
+)
 PICKUP_WORDS = ("supercab", "supercrew", "pickup", "superduty")
-VAN_PREFIXES = ("express", "savana", "vandura", "transit", "econoline", "caravan", "odyssey",
-                "sienna", "microbus", "camper", "type2", "kombi", "multivan", "eurovan")
+VAN_PREFIXES = (
+    "express",
+    "savana",
+    "vandura",
+    "transit",
+    "econoline",
+    "caravan",
+    "odyssey",
+    "sienna",
+    "microbus",
+    "camper",
+    "type2",
+    "kombi",
+    "multivan",
+    "eurovan",
+)
 VAN_CODES = {"MER": ("sprinter",), "DOD": ("sprinter",)}
 VAN_WORDS = ("cargo",)
-WAGON_WORDS = ("avant", "wagon", "estate", "touring", "sportwagon", "xc70", "allroad", "vistacruiser",
-               "shootingbrake", "variant")
+WAGON_WORDS = (
+    "avant",
+    "wagon",
+    "estate",
+    "touring",
+    "sportwagon",
+    "xc70",
+    "allroad",
+    "vistacruiser",
+    "shootingbrake",
+    "variant",
+)
 HEAVY_MAKES = ("BUS", "KEN", "PET", "MAC", "FRE", "INT")  # Forza's bus and truck "makes" (FH1 BUS_TOUR, KEN_T440)
-SUV_WORDS = ("rangerover", "escalade", "touareg", "jeep", "wrangler", "hummer", "blazer", "cayenne",
-             "grandcherokee", "rav4", "explorer", "durango", "yukon", "tahoe", "suburban", "4runner",
-             "landcruiser", "pathfinder", "xc70", "xc90", "h1alpha", "h3")
-SUV_CODES = {"BMW": ("x5", "x6"), "AUD": ("q5", "q7"), "MER": ("ml", "gl"), "POR": ("cayenne",),
-             "VOL": ("xc",), "HON": ("crv",)}  # make -> model prefixes
+SUV_WORDS = (
+    "rangerover",
+    "escalade",
+    "touareg",
+    "jeep",
+    "wrangler",
+    "hummer",
+    "blazer",
+    "cayenne",
+    "grandcherokee",
+    "rav4",
+    "explorer",
+    "durango",
+    "yukon",
+    "tahoe",
+    "suburban",
+    "4runner",
+    "landcruiser",
+    "pathfinder",
+    "xc70",
+    "xc90",
+    "h1alpha",
+    "h3",
+)
+SUV_CODES = {
+    "BMW": ("x5", "x6"),
+    "AUD": ("q5", "q7"),
+    "MER": ("ml", "gl"),
+    "POR": ("cayenne",),
+    "VOL": ("xc",),
+    "HON": ("crv",),
+}  # make -> model prefixes
 CONVERTIBLE_WORDS = ("convertible", "volante", "spyder", "spider", "roadster", "cabrio", "speedster")
-HATCH_WORDS = ("golf", "beetle", "mini", "cooper", "fiesta", "civic", "scirocco", "mito", "giulietta",
-               "cygnet", "volt", "pacer", "abarth", "500", "focus", "megane", "clio", "polo", "fit", "yaris")
+HATCH_WORDS = (
+    "golf",
+    "beetle",
+    "mini",
+    "cooper",
+    "fiesta",
+    "civic",
+    "scirocco",
+    "mito",
+    "giulietta",
+    "cygnet",
+    "volt",
+    "pacer",
+    "abarth",
+    "500",
+    "focus",
+    "megane",
+    "clio",
+    "polo",
+    "fit",
+    "yaris",
+)
 
 # Forza Data_Car.FamilyBodyID -> body class (labels are string IDs; classes read off the cars in
 # each family, research/hosts.md). 12+ are race cars. FH1's family 1 is a catch-all (Corolla,
 # Camry, A4 Avant, RAV4, F-350, Express van, tour bus, Kenworth truck): no class, decided by
 # name and size (_forza_body).
-FORZA_FAMILY = {2: "hatch", 3: "hatch", 4: "hatch", 5: "hatch", 6: "suv", 7: "sedan", 8: "convertible",
-                9: "convertible", 10: "coupe", 11: "supercar", 12: "race", 13: "race", 14: "race",
-                15: "race", 16: "race", 17: "race", 18: "race", 19: "race", 20: "race", 21: "race", 22: "race"}
+FORZA_FAMILY = {
+    2: "hatch",
+    3: "hatch",
+    4: "hatch",
+    5: "hatch",
+    6: "suv",
+    7: "sedan",
+    8: "convertible",
+    9: "convertible",
+    10: "coupe",
+    11: "supercar",
+    12: "race",
+    13: "race",
+    14: "race",
+    15: "race",
+    16: "race",
+    17: "race",
+    18: "race",
+    19: "race",
+    20: "race",
+    21: "race",
+    22: "race",
+}
 
 # Body class similarity (symmetric; 1 on the diagonal).
 BODY_SIMILAR = {
-    ("coupe", "muscle"): 0.6, ("coupe", "supercar"): 0.5, ("coupe", "convertible"): 0.6,
-    ("coupe", "sedan"): 0.35, ("coupe", "hatch"): 0.35, ("coupe", "race"): 0.5, ("supercar", "race"): 0.7,
-    ("sedan", "wagon"): 0.7, ("sedan", "hatch"): 0.4, ("sedan", "muscle"): 0.3, ("hatch", "wagon"): 0.4,
-    ("muscle", "convertible"): 0.35, ("supercar", "convertible"): 0.35, ("suv", "pickup"): 0.5,
-    ("suv", "van"): 0.4, ("suv", "wagon"): 0.3, ("pickup", "van"): 0.3, ("van", "truck"): 0.4,
-    ("van", "bus"): 0.3, ("bus", "truck"): 0.4,
+    ("coupe", "muscle"): 0.6,
+    ("coupe", "supercar"): 0.5,
+    ("coupe", "convertible"): 0.6,
+    ("coupe", "sedan"): 0.35,
+    ("coupe", "hatch"): 0.35,
+    ("coupe", "race"): 0.5,
+    ("supercar", "race"): 0.7,
+    ("sedan", "wagon"): 0.7,
+    ("sedan", "hatch"): 0.4,
+    ("sedan", "muscle"): 0.3,
+    ("hatch", "wagon"): 0.4,
+    ("muscle", "convertible"): 0.35,
+    ("supercar", "convertible"): 0.35,
+    ("suv", "pickup"): 0.5,
+    ("suv", "van"): 0.4,
+    ("suv", "wagon"): 0.3,
+    ("pickup", "van"): 0.3,
+    ("van", "truck"): 0.4,
+    ("van", "bus"): 0.3,
+    ("bus", "truck"): 0.4,
 }
 
 
@@ -144,19 +348,23 @@ def body_similarity(a: str, b: str) -> float:
 
 # --- engine descriptions ---------------------------------------------------------------
 
+
 @dataclass
 class Engine:
-    cylinders: int | None   # 0 = electric
-    layout: str | None      # V, I, F (flat), W, R (rotary), E (electric)
-    aspiration: str         # na, turbo, sc, diesel, electric
+    cylinders: int | None  # 0 = electric
+    layout: str | None  # V, I, F (flat), W, R (rotary), E (electric)
+    aspiration: str  # na, turbo, sc, diesel, electric
     power_kw: float | None
 
     def text(self) -> str:
         if self.layout == "E":
             return "electric"
         cyl = f"{self.layout or '?'}{self.cylinders or '?'}"
-        return cyl + ("" if self.aspiration == "na" else f" {self.aspiration}") + (
-            f" {self.power_kw:.0f} kW" if self.power_kw else "")
+        return (
+            cyl
+            + ("" if self.aspiration == "na" else f" {self.aspiration}")
+            + (f" {self.power_kw:.0f} kW" if self.power_kw else "")
+        )
 
 
 def dsf_engine(stats: dict) -> Engine:
@@ -223,6 +431,7 @@ def engine_score(host: Engine, car: Engine) -> tuple[float, list[str]]:
 
 # --- the stock fleet ----------------------------------------------------------------
 
+
 def _dsf_body(cls: str, model: str) -> str:
     n = norm(model)
     if any(w in n for w in ("elcamino",)):
@@ -233,14 +442,39 @@ def _dsf_body(cls: str, model: str) -> str:
         return "wagon"
     if any(w in n for w in CONVERTIBLE_WORDS) or "cobra427" in n or "solstice" in n:
         return "convertible"
-    body = next((b for prefix, b in (("Luxury Saloon", "sedan"), ("Saloon", "sedan"), ("Sports Coupe", "coupe"),
-                         ("Sports Car", "coupe"), ("Super Car", "supercar"), ("70's Muscle", "muscle"),
-                         ("70s Muscle", "muscle"), ("Modern Muscle", "muscle"), ("Tanner", "muscle"),
-                         ("Mini Car", "hatch"), ("SUV", "suv"), ("Pick Up", "pickup"), ("Van", "van"),
-                         ("Prison Van", "van"), ("Security Van", "van"), ("Truck", "truck"), ("Bus", "bus"),
-                         ("Buggy", "buggy"), ("Rally", "coupe"), ("DriftCar", "coupe"), ("Classic", "coupe"),
-                         ("Old", "sedan"), ("Cop Car", "sedan"), ("Taxi", "sedan"))
-                 if cls.startswith(prefix)), "sedan")
+    body = next(
+        (
+            b
+            for prefix, b in (
+                ("Luxury Saloon", "sedan"),
+                ("Saloon", "sedan"),
+                ("Sports Coupe", "coupe"),
+                ("Sports Car", "coupe"),
+                ("Super Car", "supercar"),
+                ("70's Muscle", "muscle"),
+                ("70s Muscle", "muscle"),
+                ("Modern Muscle", "muscle"),
+                ("Tanner", "muscle"),
+                ("Mini Car", "hatch"),
+                ("SUV", "suv"),
+                ("Pick Up", "pickup"),
+                ("Van", "van"),
+                ("Prison Van", "van"),
+                ("Security Van", "van"),
+                ("Truck", "truck"),
+                ("Bus", "bus"),
+                ("Buggy", "buggy"),
+                ("Rally", "coupe"),
+                ("DriftCar", "coupe"),
+                ("Classic", "coupe"),
+                ("Old", "sedan"),
+                ("Cop Car", "sedan"),
+                ("Taxi", "sedan"),
+            )
+            if cls.startswith(prefix)
+        ),
+        "sedan",
+    )
     if any(w in n for w in SUV_WORDS):
         return "suv"
     if body in ("coupe", "sedan") and any(w in n for w in ("pacer", "beetle", "volt")):
@@ -250,19 +484,21 @@ def _dsf_body(cls: str, model: str) -> str:
     return body
 
 
-def survey(dsf: Path | None = None, lua: Path | None = DEFAULT_LUA, cache: Path | None = SURVEY_CACHE,
-           refresh: bool = False) -> list[dict]:
+def survey(
+    dsf: Path | None = None, lua: Path | None = DEFAULT_LUA, cache: Path | None = SURVEY_CACHE, refresh: bool = False
+) -> list[dict]:
     """One record per stock base vehicle: identity, category, engine (vehicleStats),
     hierarchy facts (UPVH), size, VO3D mass, sound (VSRT), and what the converter
     needs (problems: why it can't be a host). Cached by archive size and mtime."""
     dsf = game_paths.stock(Path(dsf) if dsf else None, quiet=True)  # not an installed dsfforza archive (its ports)
     stat = dsf.stat()
     key = f"{SURVEY_VERSION}:{dsf.resolve()}:{stat.st_size}:{int(stat.st_mtime)}:" + (
-        f"{lua.stat().st_size}" if lua and lua.exists() else "-")
+        f"{lua.stat().st_size}" if lua and lua.exists() else "-"
+    )
     if cache and cache.exists() and not refresh:
         try:
             data = json.loads(cache.read_text())
-        except (OSError, ValueError):   # cut short: survey again
+        except (OSError, ValueError):  # cut short: survey again
             data = {}
         if data.get("key") == key:
             return data["hosts"]
@@ -270,6 +506,7 @@ def survey(dsf: Path | None = None, lua: Path | None = DEFAULT_LUA, cache: Path 
     if cache:
         # Atomic: port_batch workers (and other builds sharing out/cache) read it meanwhile.
         from dsfforza.build.port_car import write_atomic
+
         cache.parent.mkdir(parents=True, exist_ok=True)
         write_atomic(cache, json.dumps({"key": key, "hosts": hosts}, indent=0).encode())
     return hosts
@@ -302,13 +539,32 @@ def _survey(dsf: Path, lua: Path | None) -> list[dict]:
             name, fields = vsct.get(sid, ("?", ()))
             model = _pick_model(expand(name, binf), stats.get(sid, {}))
             st = stats.get(sid, {})
-            rec = {"id": sid, "vehc": vehc, "class": entries[index].name, "model": model,
-                   "vsct": list(fields), "category": fields[-1] if fields else None,
-                   "stats": {k: st[k] for k in ("Year", "Cylinders", "Drivetrain", "PowerMetric", "WeightMetric",
-                                               "Picture1", "Manufacturer", "Model") if k in st},
-                   "problems": []}
-            rec["category_name"] = CATEGORIES.get(rec["category"], f"{rec['category']:#x}" if rec["category"]
-                                                  is not None else "?")
+            rec = {
+                "id": sid,
+                "vehc": vehc,
+                "class": entries[index].name,
+                "model": model,
+                "vsct": list(fields),
+                "category": fields[-1] if fields else None,
+                "stats": {
+                    k: st[k]
+                    for k in (
+                        "Year",
+                        "Cylinders",
+                        "Drivetrain",
+                        "PowerMetric",
+                        "WeightMetric",
+                        "Picture1",
+                        "Manufacturer",
+                        "Model",
+                    )
+                    if k in st
+                },
+                "problems": [],
+            }
+            rec["category_name"] = CATEGORIES.get(
+                rec["category"], f"{rec['category']:#x}" if rec["category"] is not None else "?"
+            )
             rec["body"] = _dsf_body(rec["class"], model + " " + st.get("Picture1", ""))
             if rec["category"] in HEAVY_CATEGORIES:  # GMC C5500 is "Van 07" but a medium truck
                 rec["body"] = "bus" if rec["category"] == 0x0A else "truck"
@@ -358,7 +614,7 @@ def _survey(dsf: Path, lua: Path | None) -> list[dict]:
             rec["ext_parts"] = struct.unpack_from("<I", ext_modl)[0]
             # Size: MODL part 0 box of the clean exterior (origin + three axis vectors).
             box = struct.unpack_from("<16f", ext_modl, 0x10)
-            axes = [math.dist((0, 0, 0), box[i:i + 3]) for i in (4, 8, 12)]
+            axes = [math.dist((0, 0, 0), box[i : i + 3]) for i in (4, 8, 12)]
             rec["length"], rec["width"], rec["height"] = (round(a, 3) for a in axes)
             # Handling
             vo3d = handling.VO3D.parse(payload(stream, tags["VO3D"]))
@@ -367,10 +623,12 @@ def _survey(dsf: Path, lua: Path | None) -> list[dict]:
             # Sound: a Wwise bank (SBAK; BKHD +0x0C is the bank ID), plus a granular bank on 18 cars.
             vsrt = {c.tag: c for c in tags["VSRT"].children}
             sbak = payload(stream, vsrt["SBAK"])
-            rec["sound"] = {"vsrt_size": tags["VSRT"].size, "bank_id": f"{struct.unpack_from('<I', sbak, 12)[0]:08x}",
-                            "granular": "GRBK" in vsrt,
-                            "granular_md5": hashlib.md5(payload(stream, vsrt["GRBK"])).hexdigest()[:8]
-                            if "GRBK" in vsrt else None}
+            rec["sound"] = {
+                "vsrt_size": tags["VSRT"].size,
+                "bank_id": f"{struct.unpack_from('<I', sbak, 12)[0]:08x}",
+                "granular": "GRBK" in vsrt,
+                "granular_md5": hashlib.md5(payload(stream, vsrt["GRBK"])).hexdigest()[:8] if "GRBK" in vsrt else None,
+            }
             rec["nonr_size"] = fnonr.size
             # Materials and vertex layouts the converter writes into.
             interior_drsp = child(child(interior, "MDXN"), "DRSP")
@@ -383,8 +641,13 @@ def _survey(dsf: Path, lua: Path | None) -> list[dict]:
                             found.setdefault(kind, value)
                 if set(found) != {dm.CHASSIS, dm.LIGHTS_MAT}:
                     problems.append(f"{label}: Chassis/Lights materials {sorted(found)}")
-                strides = sorted({struct.unpack_from("<I", payload(stream, child(e, "VXHD")), 12)[0]
-                                  for e in drsp.children if e.tag == "VXCK"})
+                strides = sorted(
+                    {
+                        struct.unpack_from("<I", payload(stream, child(e, "VXHD")), 12)[0]
+                        for e in drsp.children
+                        if e.tag == "VXCK"
+                    }
+                )
                 rec[f"{label}_strides"] = strides
                 missing = {20, 28, 32} - set(strides)
                 if missing:
@@ -409,10 +672,12 @@ def _pick_model(candidates: str, stats: dict) -> str:
         n = norm(option)
         role = next((r for r in ("cop", "taxi", "drift", "rally", "tow", "ambulance") if r in picture), "civ")
         return (year and year in option, role in n.lower(), -len(n))
+
     return max(options, key=fit)
 
 
 # --- the Forza car ---------------------------------------------------------------------
+
 
 @dataclass
 class ForzaInfo:
@@ -420,7 +685,7 @@ class ForzaInfo:
     game: str
     year: int | None
     make: str
-    model: str            # normalised model part of the media name
+    model: str  # normalised model part of the media name
     engine: Engine
     drive: str | None
     body: str
@@ -433,8 +698,9 @@ class ForzaInfo:
     notes: list[str] = field(default_factory=list)
 
 
-def forza_info(media: str, gamedbs: dict[str, Path] | None = None, game: str | None = None,
-               folder: Path | None = None) -> ForzaInfo:
+def forza_info(
+    media: str, gamedbs: dict[str, Path] | None = None, game: str | None = None, folder: Path | None = None
+) -> ForzaInfo:
     """What host selection needs about a Forza car, from gamedb.slt ({game: path}, the
     game the car is taken from first; None: out/db). `folder`: the extracted car, for a
     door-count hint from the carbin's glass sections."""
@@ -448,9 +714,12 @@ def forza_info(media: str, gamedbs: dict[str, Path] | None = None, game: str | N
         con = sqlite3.connect(f"file:{Path(path).as_posix()}?mode=ro", uri=True)
         con.row_factory = sqlite3.Row
         try:
-            row = con.execute("SELECT c.*, cy.Number AS CylNumber, cy.Rotors AS CylRotors FROM Data_Car c "
-                              "LEFT JOIN List_Cylinders cy ON cy.CylinderID = c.CylinderID "
-                              "WHERE lower(c.MediaName) = lower(?)", (media,)).fetchone()
+            row = con.execute(
+                "SELECT c.*, cy.Number AS CylNumber, cy.Rotors AS CylRotors FROM Data_Car c "
+                "LEFT JOIN List_Cylinders cy ON cy.CylinderID = c.CylinderID "
+                "WHERE lower(c.MediaName) = lower(?)",
+                (media,),
+            ).fetchone()
             if row is not None:
                 body = con.execute("SELECT * FROM Data_CarBody WHERE Id = ?", (row["Id"] * 1000,)).fetchone()
                 used = name or Path(path).name
@@ -464,20 +733,36 @@ def forza_info(media: str, gamedbs: dict[str, Path] | None = None, game: str | N
     make = MAKE_NAMES.get(make_code, make_code.lower())
     if row is None:
         b = _forza_body(None, model, None, make_code=make_code)
-        return ForzaInfo(media, game or "?", None, make, model, Engine(None, None, "na", None), None,
-                         b, DEFAULT_DOORS.get(b), None, None, None, None, None,
-                         ["not in gamedb.slt: identity only"])
+        return ForzaInfo(
+            media,
+            game or "?",
+            None,
+            make,
+            model,
+            Engine(None, None, "na", None),
+            None,
+            b,
+            DEFAULT_DOORS.get(b),
+            None,
+            None,
+            None,
+            None,
+            None,
+            ["not in gamedb.slt: identity only"],
+        )
     config = {1: "V", 2: "W", 3: "I", 4: "R", 5: "F", 6: "E"}.get(row.get("EngineConfigID"))
     cylinders = row.get("CylNumber")
     if config == "E":
         engine = Engine(0, "E", "electric", None)
     else:
         aspiration = {1: "na", 2: "turbo", 3: "turbo", 4: "turbo", 5: "sc", 6: "sc", 7: "turbo"}.get(
-            row.get("AspirationTypeId"), "na")
+            row.get("AspirationTypeId"), "na"
+        )
         if "diesel" in media.lower() or "tdi" in media.lower():
             aspiration = "diesel"
-        engine = Engine(cylinders, config, aspiration,
-                        row["SimPeakPower"] / 10 if row.get("SimPeakPower") else None)  # 100 W -> kW
+        engine = Engine(
+            cylinders, config, aspiration, row["SimPeakPower"] / 10 if row.get("SimPeakPower") else None
+        )  # 100 W -> kW
     drive = {1: "FWD", 2: "RWD", 3: "AWD"}.get(row.get("DriveTypeID"))
     mass = row["CurbWeight"] * 100 if row.get("CurbWeight") else None
     year = row.get("Year")
@@ -498,26 +783,40 @@ def forza_info(media: str, gamedbs: dict[str, Path] | None = None, game: str | N
         notes.append(f"{doors} doors from the carbin's side glass")
     else:
         doors = DEFAULT_DOORS.get(b)
-    return ForzaInfo(media, str(used), year, make, model, engine, drive, b, doors, mass, wheelbase,
-                     track, length, height, notes)
+    return ForzaInfo(
+        media, str(used), year, make, model, engine, drive, b, doors, mass, wheelbase, track, length, height, notes
+    )
 
 
 # Door count when the carbin can't tell (None: don't score doors).
-DEFAULT_DOORS = {"sedan": 4, "suv": 4, "wagon": 4, "coupe": 2, "convertible": 2, "supercar": 2, "muscle": 2,
-                 "race": 2}
+DEFAULT_DOORS = {"sedan": 4, "suv": 4, "wagon": 4, "coupe": 2, "convertible": 2, "supercar": 2, "muscle": 2, "race": 2}
 
 
-def _forza_body(family, model: str, engine: Engine | None, make_code: str = "", year=None,
-                mass: float | None = None, length: float | None = None, height: float | None = None) -> str:
+def _forza_body(
+    family,
+    model: str,
+    engine: Engine | None,
+    make_code: str = "",
+    year=None,
+    mass: float | None = None,
+    length: float | None = None,
+    height: float | None = None,
+) -> str:
     """Body class from the media name, gamedb FamilyBodyID and the body's size (Data_Car
     CurbWeight, Data_CarBody pristine bounding box)."""
     if make_code in HEAVY_MAKES or (mass and mass >= 4500) or (length and length >= 7.0):
         return "bus" if make_code == "BUS" or "bus" in model else "truck"
-    if (model.startswith(VAN_PREFIXES) or any(w in model for w in VAN_WORDS)
-            or model.startswith(VAN_CODES.get(make_code, ("\0",)))):
+    if (
+        model.startswith(VAN_PREFIXES)
+        or any(w in model for w in VAN_WORDS)
+        or model.startswith(VAN_CODES.get(make_code, ("\0",)))
+    ):
         return "van"
-    if (model.startswith(PICKUP_PREFIXES) or any(w in model for w in PICKUP_WORDS)
-            or (make_code == "GMC" and model.startswith("sierra"))):
+    if (
+        model.startswith(PICKUP_PREFIXES)
+        or any(w in model for w in PICKUP_WORDS)
+        or (make_code == "GMC" and model.startswith("sierra"))
+    ):
         return "pickup"
     if any(w in model for w in SUV_WORDS) or model.startswith(SUV_CODES.get(make_code, ("\0",))):
         return "suv"
@@ -552,8 +851,10 @@ def _carbin_doors(folder: Path, media: str, body: str | None = None) -> int | No
     saloon and SUV there -> 4 doors, but only for bodies that can have rear doors
     (a coupe's quarter window looks the same: Charger R/T 1969)."""
     import re as _re
+
     try:
         from dsfforza.convert import forza2dsf
+
         car = forza2dsf.load_car(Path(folder), media)
         dims = forza2dsf.car_dims(car)
     except (OSError, ValueError):
@@ -567,8 +868,13 @@ def _carbin_doors(folder: Path, media: str, body: str | None = None) -> int | No
             continue
         lod = min(sub.lod for sub in subs)
         # Forza's front is -z; measure backwards from the wheelbase midpoint.
-        zs = [s.vertices_for(sub)[i].position[2] - dims.mid_z for sub in subs if sub.lod == lod
-              for tri in sub.triangles() for i in tri]
+        zs = [
+            s.vertices_for(sub)[i].position[2] - dims.mid_z
+            for sub in subs
+            if sub.lod == lod
+            for tri in sub.triangles()
+            for i in tri
+        ]
         if zs:
             panes.append((min(zs), max(zs)))
     if not panes:
@@ -590,6 +896,7 @@ def _carbin_doors(folder: Path, media: str, body: str | None = None) -> int | No
 
 # --- scoring ------------------------------------------------------------------------
 
+
 def _model_parts(host: dict) -> tuple[str, str, int | None, str]:
     """(make, normalised model, year, model family) of a stock host, from vehicleStats
     Picture1 ("ford_mustang_shelby_gt500_old": ford, mustangshelbygt500, 1967, mustang)."""
@@ -599,7 +906,7 @@ def _model_parts(host: dict) -> tuple[str, str, int | None, str]:
     make = ""
     for name in sorted(set(MAKE_NAMES.values()) | set(MAKE_ALIASES), key=len, reverse=True):
         if pic.startswith(name + "_"):
-            make, pic = MAKE_ALIASES.get(name, name), pic[len(name) + 1:]
+            make, pic = MAKE_ALIASES.get(name, name), pic[len(name) + 1 :]
             break
     year = _float(host["stats"].get("Year"))
     if year is None:
@@ -624,7 +931,8 @@ def identity_score(host: dict, car: ForzaInfo) -> tuple[float, str | None]:
         return 60.0, f"same model ({host['model']})"
     # Families are words of 3+ letters (skyline, mustang) or short names with a digit (a4, q7, r8).
     if (len(family) >= 3 or (len(family) == 2 and any(c.isdigit() for c in family))) and (
-            b.startswith(family) or car.model.startswith(family)):
+        b.startswith(family) or car.model.startswith(family)
+    ):
         return 30.0, f"same model family ({host['model']})"
     if a and b and (a in b or b in a) and min(len(a), len(b)) >= 3:
         return 30.0, f"same model family ({host['model']})"
@@ -635,8 +943,19 @@ def identity_score(host: dict, car: ForzaInfo) -> tuple[float, str | None]:
 # badge-engineered twins share one body and cabin (Chevrolet Express / GMC Savana,
 # Silverado / Sierra, Tahoe / Yukon, Ford / Mercury).
 MAKE_GROUPS = {
-    "gm": ("chevrolet", "gmc", "pontiac", "buick", "cadillac", "oldsmobile", "hummer", "holden", "vauxhall",
-           "opel", "saturn"),
+    "gm": (
+        "chevrolet",
+        "gmc",
+        "pontiac",
+        "buick",
+        "cadillac",
+        "oldsmobile",
+        "hummer",
+        "holden",
+        "vauxhall",
+        "opel",
+        "saturn",
+    ),
     "chrysler": ("dodge", "chrysler", "plymouth", "jeep"),
     "ford": ("ford", "mercury", "lincoln", "shelby"),
     "vw": ("volkswagen", "audi", "seat", "skoda"),
@@ -647,9 +966,9 @@ MAKE_GROUPS = {
 # A host is the same vehicle as the Forza car (same model, or a badge twin) only
 # with the same body class, model years this close and these dimensions.
 SAME_VEHICLE_YEARS = 4
-SAME_VEHICLE_WHEELBASE = 0.025   # relative
-SAME_VEHICLE_LENGTH = 0.04       # relative
-TWIN_WHEELBASE = 0.01            # relative, badge twins (two makes)
+SAME_VEHICLE_WHEELBASE = 0.025  # relative
+SAME_VEHICLE_LENGTH = 0.04  # relative
+TWIN_WHEELBASE = 0.01  # relative, badge twins (two makes)
 TWIN_LENGTH = 0.01
 
 
@@ -688,15 +1007,27 @@ def same_vehicle(host: dict, car: ForzaInfo) -> str | None:
     raw = make_parts_raw(host)
     if raw == car.make or make_group(raw) != make_group(car.make) or make_group(raw) not in MAKE_GROUPS:
         return None
-    if wb > TWIN_WHEELBASE or not (car.length and host.get("length")) or (
-            abs(car.length - host["length"]) / host["length"] > TWIN_LENGTH):
+    if (
+        wb > TWIN_WHEELBASE
+        or not (car.length and host.get("length"))
+        or (abs(car.length - host["length"]) / host["length"] > TWIN_LENGTH)
+    ):
         return None
-    return f"badge twin ({host['model']}, {make_group(raw).upper()} group); {size}, length "            f"{host['length']:.3f} vs {car.length:.3f} m"
+    return (
+        f"badge twin ({host['model']}, {make_group(raw).upper()} group); {size}, length "
+        f"{host['length']:.3f} vs {car.length:.3f} m"
+    )
 
 
-def same_vehicle_for(media: str, host_id: int, dsf: Path | None = None, game: str | None = None,
-                     folder: Path | None = None, gamedbs: dict[str, Path] | None = None,
-                     lua: Path | None = DEFAULT_LUA) -> str | None:
+def same_vehicle_for(
+    media: str,
+    host_id: int,
+    dsf: Path | None = None,
+    game: str | None = None,
+    folder: Path | None = None,
+    gamedbs: dict[str, Path] | None = None,
+    lua: Path | None = DEFAULT_LUA,
+) -> str | None:
     """same_vehicle for a Forza car on a stock host given by spool ID."""
     host = next((h for h in survey(dsf, lua) if h["id"] == host_id), None)
     return same_vehicle(host, forza_info(media, gamedbs, game, folder)) if host else None
@@ -794,9 +1125,16 @@ def rank(car: ForzaInfo, hosts: list[dict], allow_special: bool = False, mode: s
     return out
 
 
-def choose(media: str, dsf: Path | None = None, game: str | None = None, folder: Path | None = None,
-           gamedbs: dict[str, Path] | None = None, lua: Path | None = DEFAULT_LUA, allow_special: bool = False,
-           mode: str = "host") -> tuple[int, list[Ranked], ForzaInfo]:
+def choose(
+    media: str,
+    dsf: Path | None = None,
+    game: str | None = None,
+    folder: Path | None = None,
+    gamedbs: dict[str, Path] | None = None,
+    lua: Path | None = DEFAULT_LUA,
+    allow_special: bool = False,
+    mode: str = "host",
+) -> tuple[int, list[Ranked], ForzaInfo]:
     """The best host for one Forza car: (spool ID, ranking, car info)."""
     hosts = survey(dsf, lua)
     car = forza_info(media, gamedbs, game, folder)
@@ -807,20 +1145,40 @@ def choose(media: str, dsf: Path | None = None, game: str | None = None, folder:
 
 
 def describe(car: ForzaInfo) -> str:
-    return (f"{car.media} ({car.game}): {car.year} {car.make} {car.model}, {car.engine.text()}, {car.drive}, "
-            f"{car.body}, {car.doors or '?'} doors, {car.mass or 0:.0f} kg, wheelbase {car.wheelbase or 0:.2f}")
+    return (
+        f"{car.media} ({car.game}): {car.year} {car.make} {car.model}, {car.engine.text()}, {car.drive}, "
+        f"{car.body}, {car.doors or '?'} doors, {car.mass or 0:.0f} kg, wheelbase {car.wheelbase or 0:.2f}"
+    )
 
 
 def host_line(r: Ranked) -> str:
     h = r.host
-    return (f"{r.id:4} {r.score:6.1f}  {h['class'][:17]:17} {h['model'][:30]:30} "
-            + ("EXCLUDED: " + r.excluded if r.excluded else "; ".join(r.reasons)))
+    return f"{r.id:4} {r.score:6.1f}  {h['class'][:17]:17} {h['model'][:30]:30} " + (
+        "EXCLUDED: " + r.excluded if r.excluded else "; ".join(r.reasons)
+    )
 
 
 # --- whole roster -----------------------------------------------------------------------
 
-ROSTER_COLUMNS = ["media", "game", "year", "body", "doors", "engine", "drive", "mass", "host", "host_model",
-                  "host_class", "host_body", "score", "next", "margin", "flags", "reasons"]
+ROSTER_COLUMNS = [
+    "media",
+    "game",
+    "year",
+    "body",
+    "doors",
+    "engine",
+    "drive",
+    "mass",
+    "host",
+    "host_model",
+    "host_class",
+    "host_body",
+    "score",
+    "next",
+    "margin",
+    "flags",
+    "reasons",
+]
 
 
 def roster_flags(car: ForzaInfo, best: Ranked, runner: Ranked | None) -> list[str]:
@@ -834,13 +1192,15 @@ def roster_flags(car: ForzaInfo, best: Ranked, runner: Ranked | None) -> list[st
         flags.append(f"{car.doors} doors on {host['doors']}")
     if best.score < 45:
         flags.append("low score")
-    if car.engine.cylinders and dsf_engine(host["stats"]).cylinders and abs(
-            car.engine.cylinders - dsf_engine(host["stats"]).cylinders) > 2:
+    if (
+        car.engine.cylinders
+        and dsf_engine(host["stats"]).cylinders
+        and abs(car.engine.cylinders - dsf_engine(host["stats"]).cylinders) > 2
+    ):
         flags.append(f"{car.engine.cylinders} cyl on {dsf_engine(host['stats']).cylinders}")
     if car.wheelbase and host.get("wheelbase") and abs(car.wheelbase - host["wheelbase"]) > 0.6:
         flags.append(f"wheelbase {car.wheelbase:.2f} on {host['wheelbase']:.2f}")
-    if runner is not None and best.score - runner.score < 1 and (
-            body_similarity(runner.host["body"], car.body) > sim):
+    if runner is not None and best.score - runner.score < 1 and (body_similarity(runner.host["body"], car.body) > sim):
         flags.append(f"close call with {runner.id} ({runner.host['body']})")
     if car.notes and car.notes[0].startswith("not in gamedb"):
         flags.append("no gamedb row")
@@ -851,6 +1211,7 @@ def roster_table(hosts: list[dict], roster: Path, cache: Path, out: Path | None)
     """host_select over every car in the Forza roster (FH1 first, as port_car picks), one row
     per car with the pick, the runner-up, and flags for picks that look wrong."""
     import csv
+
     rows = []
     with roster.open(encoding="utf-8") as f:
         cars = [r for r in csv.DictReader(f, delimiter="\t") if r["kind"] == "car"]
@@ -862,13 +1223,27 @@ def roster_table(hosts: list[dict], roster: Path, cache: Path, out: Path | None)
         ranking = [x for x in rank(car, hosts) if not x.excluded]
         best, runner = ranking[0], (ranking[1] if len(ranking) > 1 else None)
         flags = roster_flags(car, best, runner)
-        rows.append({"media": car.media, "game": game, "year": car.year or "", "body": car.body,
-                     "doors": car.doors or "", "engine": car.engine.text(), "drive": car.drive or "",
-                     "mass": round(car.mass or 0), "host": best.id, "host_model": best.host["model"],
-                     "host_class": best.host["class"], "host_body": best.host["body"], "score": best.score,
-                     "next": f"{runner.id} {runner.host['model']}" if runner else "",
-                     "margin": round(best.score - runner.score, 1) if runner else "",
-                     "flags": "; ".join(flags), "reasons": "; ".join(best.reasons)})
+        rows.append(
+            {
+                "media": car.media,
+                "game": game,
+                "year": car.year or "",
+                "body": car.body,
+                "doors": car.doors or "",
+                "engine": car.engine.text(),
+                "drive": car.drive or "",
+                "mass": round(car.mass or 0),
+                "host": best.id,
+                "host_model": best.host["model"],
+                "host_class": best.host["class"],
+                "host_body": best.host["body"],
+                "score": best.score,
+                "next": f"{runner.id} {runner.host['model']}" if runner else "",
+                "margin": round(best.score - runner.score, 1) if runner else "",
+                "flags": "; ".join(flags),
+                "reasons": "; ".join(best.reasons),
+            }
+        )
     lines = ["\t".join(ROSTER_COLUMNS)] + ["\t".join(str(row[c]) for c in ROSTER_COLUMNS) for row in rows]
     text = "\n".join(lines) + "\n"
     if out:
@@ -881,9 +1256,11 @@ def roster_table(hosts: list[dict], roster: Path, cache: Path, out: Path | None)
 
 # --- CLI ------------------------------------------------------------------------------
 
+
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0],
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0], formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--dsf", type=Path, default=None, help="stock dngvehicles.sp (default: from $DSF_GAME_DIR)")
     parser.add_argument("--lua", type=Path, default=DEFAULT_LUA, help="decompiled vehiclestats.lua")
     parser.add_argument("--refresh", action="store_true", help="re-read the archive instead of the cache")
@@ -905,14 +1282,37 @@ def main(argv: list[str] | None = None) -> None:
 
     hosts = survey(args.dsf, args.lua, refresh=args.refresh)
     if args.cmd == "survey":
-        cols = ["id", "class", "model", "category_name", "body", "doors", "wheels", "wheelbase", "track",
-                "length", "height", "mass", "gauges", "engine", "drive", "year", "granular", "usable"]
+        cols = [
+            "id",
+            "class",
+            "model",
+            "category_name",
+            "body",
+            "doors",
+            "wheels",
+            "wheelbase",
+            "track",
+            "length",
+            "height",
+            "mass",
+            "gauges",
+            "engine",
+            "drive",
+            "year",
+            "granular",
+            "usable",
+        ]
         lines = ["\t".join(cols)]
         for h in hosts:
-            row = dict(h, engine=dsf_engine(h["stats"]).text(), drive=h["stats"].get("Drivetrain", ""),
-                       year=h["stats"].get("Year", ""), granular=int(h.get("sound", {}).get("granular", False)),
-                       usable="yes" if not h["problems"] else "; ".join(h["problems"]),
-                       gauges=",".join(map(str, h.get("gauges", []))))
+            row = dict(
+                h,
+                engine=dsf_engine(h["stats"]).text(),
+                drive=h["stats"].get("Drivetrain", ""),
+                year=h["stats"].get("Year", ""),
+                granular=int(h.get("sound", {}).get("granular", False)),
+                usable="yes" if not h["problems"] else "; ".join(h["problems"]),
+                gauges=",".join(map(str, h.get("gauges", []))),
+            )
             lines.append("\t".join(str(row.get(c, "")) for c in cols))
         text = "\n".join(lines) + "\n"
         if args.tsv:
@@ -928,7 +1328,7 @@ def main(argv: list[str] | None = None) -> None:
         media, _, game = text.partition("@")
         game = game.upper() or None
         folder = None
-        for g in ([game] if game else ["FH1", "FM4"]):
+        for g in [game] if game else ["FH1", "FM4"]:
             candidate = args.cache / g.lower() / media
             if candidate.exists():
                 folder, game = candidate, g
@@ -936,7 +1336,7 @@ def main(argv: list[str] | None = None) -> None:
         car = forza_info(media, None, game, folder)
         print(describe(car))
         ranking = rank(car, hosts, args.allow_special, "sound" if args.sound else "host")
-        for r in ranking[:args.top]:
+        for r in ranking[: args.top]:
             print("  " + host_line(r))
         print()
 

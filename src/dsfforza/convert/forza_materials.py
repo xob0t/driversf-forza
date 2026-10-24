@@ -82,30 +82,46 @@ def _add(role: str, family: str | None, names: str) -> None:
 
 _add(PAINT, NODAMAGE, "body body_2 body_3 body_traffic cockpit_body headlight_paint numberplate_body")
 _add(PAINT, LIGHTS, "lights_body")
-_add(GLASS, NODAMAGE, "window window_2 window_traffic window_traffic_dark frontwindow frontwindow_2 "
-                      "inside_window cockpit_glass glass_2 red_glass")
+_add(
+    GLASS,
+    NODAMAGE,
+    "window window_2 window_traffic window_traffic_dark frontwindow frontwindow_2 "
+    "inside_window cockpit_glass glass_2 red_glass",
+)
 # `glass` on FH1 cars is the clear headlight cover; its UVs land on the Lights atlas.
 _add(GLASS, LIGHTS, "glass lights_glass lights_gls_noemit")
-_add(TRIM, NODAMAGE, "black frame bottom bottom_2 undercarriage misc engine cage rubber_trim rubber_trim_2 "
-                     "weatherstrip plastic plastic2 dullplastic embossed_plastic embossed_plastic2 mottled "
-                     "cloth cloth2 smooth_metal rubber matte matte_colors matte_colors2 bumper_frame "
-                     "black_glass black_glass_breakable race_kit_red chrome chrome_2 chrome_3 chrome_bump "
-                     "carbon_fiber carbon_fiber2 carbon_fiber3 carbon_fiber_aniso grille1 grille1_alpha "
-                     "grille2 grille2_alpha defrost_lines mirrorLeft mirrorMiddle mirrorRight "
-                     "caliper rotor hub numberplate numplate scaling_text")
+_add(
+    TRIM,
+    NODAMAGE,
+    "black frame bottom bottom_2 undercarriage misc engine cage rubber_trim rubber_trim_2 "
+    "weatherstrip plastic plastic2 dullplastic embossed_plastic embossed_plastic2 mottled "
+    "cloth cloth2 smooth_metal rubber matte matte_colors matte_colors2 bumper_frame "
+    "black_glass black_glass_breakable race_kit_red chrome chrome_2 chrome_3 chrome_bump "
+    "carbon_fiber carbon_fiber2 carbon_fiber3 carbon_fiber_aniso grille1 grille1_alpha "
+    "grille2 grille2_alpha defrost_lines mirrorLeft mirrorMiddle mirrorRight "
+    "caliper rotor hub numberplate numplate scaling_text",
+)
 _add(TRIM, LIGHTS, "lights_chrome")
-_add(TEXTURED, NODAMAGE, "interior interior_banner badge badge2 badge_chrome stripe_badge "
-                         "cockpit_badge emblem brake_badge gauge_red gauge_needle gauge_emissive "
-                         "gauge_emissive_unshadowed")
-_add(TEXTURED, LIGHTS, "head_light head_light2 tail_light tail_light_lod0 tail_light_on tail_light2 "
-                       "reverse_light reverse_light_lod0 white_brake textured_reflector reflector xenonhead "
-                       "hidhead oldhead fullbeam fogwhite fogred taillightst taillight2S brkreverse linred "
-                       "rinred indicator_left indicator_right drlwhite drlwhiteswitch drlred drlorange "
-                       "drlbrakered drlbrakeorange drlinlorange drlinrorange drlinlred drlinrred drlinlwhite "
-                       "drlinrwhite brinl brinr lindtailside rindtailside slorange slinlorange slinrorange "
-                       "detail_glass_red detail_glass_clear detail_glass_amber lights_gls_tail_light "
-                       "lights_gls_reverse_light lights_gls_indicator_left lights_gls_indicator_right "
-                       "lights_gls_hidhead lights_gls_oldhead lights_gls_taillightst lights_gls_taillight2S")
+_add(
+    TEXTURED,
+    NODAMAGE,
+    "interior interior_banner badge badge2 badge_chrome stripe_badge "
+    "cockpit_badge emblem brake_badge gauge_red gauge_needle gauge_emissive "
+    "gauge_emissive_unshadowed",
+)
+_add(
+    TEXTURED,
+    LIGHTS,
+    "head_light head_light2 tail_light tail_light_lod0 tail_light_on tail_light2 "
+    "reverse_light reverse_light_lod0 white_brake textured_reflector reflector xenonhead "
+    "hidhead oldhead fullbeam fogwhite fogred taillightst taillight2S brkreverse linred "
+    "rinred indicator_left indicator_right drlwhite drlwhiteswitch drlred drlorange "
+    "drlbrakered drlbrakeorange drlinlorange drlinrorange drlinlred drlinrred drlinlwhite "
+    "drlinrwhite brinl brinr lindtailside rindtailside slorange slinlorange slinrorange "
+    "detail_glass_red detail_glass_clear detail_glass_amber lights_gls_tail_light "
+    "lights_gls_reverse_light lights_gls_indicator_left lights_gls_indicator_right "
+    "lights_gls_hidhead lights_gls_oldhead lights_gls_taillightst lights_gls_taillight2S",
+)
 # Synthetic plate sections (src/dsfforza/convert/plates.py): paint material, UVs on the
 # shared atlas's plate (not a Forza technique).
 _add(PAINT, None, "dsf_plate dsf_inner")  # dsf_inner: damage.split_exposed (panel undersides)
@@ -117,13 +133,31 @@ _add(PAINT, None, "dsf_plate dsf_inner")  # dsf_inner: damage.split_exposed (pan
 # the atlas they showed as bright yellow/blue streaks on the dashboard and blue patches
 # behind the windscreen (user report on out/testdrive9). No livery: nothing to draw.
 _add(SKIP, None, "liveryBadge")
-_add(TYRE, None, "tire tire_V2 wheel_black tread sidewall rim rim_V2 chrome_rim chrome_rim_V2 outer_rim "
-                 "inner_rim inner_rim_V2 wheel_emblem wheel_emblem_V2 rim_bump_metal rim_bump_metal2")
+_add(
+    TYRE,
+    None,
+    "tire tire_V2 wheel_black tread sidewall rim rim_V2 chrome_rim chrome_rim_V2 outer_rim "
+    "inner_rim inner_rim_V2 wheel_emblem wheel_emblem_V2 rim_bump_metal rim_bump_metal2",
+)
 
 
 # Techniques that cut out texels with alpha below one half (badge plates are
 # drawn entirely from alpha-0 texels: only the emblem's letters show).
-ALPHA_TESTED = {"emblem", "badge", "badge2", "badge_chrome", "stripe_badge", "liveryBadge", "cockpit_badge", "brake_badge", "wheel_emblem", "wheel_emblem_V2", "grille1_alpha", "grille2_alpha", "z_gauge_emissive_alpha"}
+ALPHA_TESTED = {
+    "emblem",
+    "badge",
+    "badge2",
+    "badge_chrome",
+    "stripe_badge",
+    "liveryBadge",
+    "cockpit_badge",
+    "brake_badge",
+    "wheel_emblem",
+    "wheel_emblem_V2",
+    "grille1_alpha",
+    "grille2_alpha",
+    "z_gauge_emissive_alpha",
+}
 
 
 def triangle_max_alpha(atlas: tuple[int, int, bytearray], uvs) -> int:
@@ -133,7 +167,7 @@ def triangle_max_alpha(atlas: tuple[int, int, bytearray], uvs) -> int:
     ys = [min(height - 1, max(0, int(v * height))) for _, v in uvs]
     best = 0
     for y in range(min(ys), max(ys) + 1):
-        row = rgba[(y * width + min(xs)) * 4 + 3:(y * width + max(xs) + 1) * 4:4]
+        row = rgba[(y * width + min(xs)) * 4 + 3 : (y * width + max(xs) + 1) * 4 : 4]
         best = max(best, *row)
     return best
 
@@ -155,6 +189,7 @@ def triangle_alpha_cut(atlas: tuple[int, int, bytearray], uvs) -> bool:
     triangle_max_alpha does, kept long thin decal triangles next to opaque
     artwork: the Raptor's hidden stripe came out as black patches.)"""
     import numpy as np
+
     width, height, rgba = atlas
     alpha = np.frombuffer(rgba, dtype=np.uint8)[3::4].reshape(height, width)
     xs = [u * width for u, _ in uvs]
@@ -172,8 +207,7 @@ def triangle_alpha_cut(atlas: tuple[int, int, bytearray], uvs) -> bool:
             inside = alpha[y0:y1, x0:x1][mask]
     if inside is None:
         points = list(zip(xs, ys)) + [(sum(xs) / 3, sum(ys) / 3)]
-        inside = np.array([alpha[min(height - 1, max(0, int(y))), min(width - 1, max(0, int(x)))]
-                           for x, y in points])
+        inside = np.array([alpha[min(height - 1, max(0, int(y))), min(width - 1, max(0, int(x)))] for x, y in points])
     passed = int((inside >= 128).sum())
     return passed < max(1, ALPHA_KEEP_SHARE * len(inside))
 
@@ -275,9 +309,9 @@ def classify_wheel(name: str) -> tuple[str, str | None]:
 
 # --- per-subsection resolution -------------------------------------------------
 
-SWATCH_TEXELS = 4.0     # footprint below this many texels (both axes): one flat colour
-TILING_LIMIT = 1.05     # UVs beyond [-0.05, 1.05]: a tiling texture, not the atlas
-REFERENCE_SIZE = 1024   # atlas size used to measure footprints (nodamage.xds)
+SWATCH_TEXELS = 4.0  # footprint below this many texels (both axes): one flat colour
+TILING_LIMIT = 1.05  # UVs beyond [-0.05, 1.05]: a tiling texture, not the atlas
+REFERENCE_SIZE = 1024  # atlas size used to measure footprints (nodamage.xds)
 
 
 @dataclass
@@ -292,6 +326,7 @@ class SubMaterial:
     colour:     RGBA averaged over the footprint (swatches; filled by
                 `sample_colours`)
     """
+
     technique: str
     role: str
     family: str | None
@@ -323,8 +358,9 @@ def resolve(section: carbin.Section, sub: carbin.SubSection, classifier=classify
         kind = "swatch"  # every vertex samples one point
     elif min(bounds) < -(TILING_LIMIT - 1) or max(bounds) > TILING_LIMIT:
         kind = "tiling"
-    elif ((bounds[2] - bounds[0]) * REFERENCE_SIZE < SWATCH_TEXELS
-          and (bounds[3] - bounds[1]) * REFERENCE_SIZE < SWATCH_TEXELS):
+    elif (bounds[2] - bounds[0]) * REFERENCE_SIZE < SWATCH_TEXELS and (
+        bounds[3] - bounds[1]
+    ) * REFERENCE_SIZE < SWATCH_TEXELS:
         kind = "swatch"
     else:
         kind = "textured"
@@ -358,6 +394,7 @@ class AtlasCache:
     def get(self, family: str) -> tuple[int, int, bytearray]:
         if family not in self._cache:
             from dsfforza.formats import xds
+
             blocks, width, height, fourcc = xds.untile(texture_path(self.car_dir, family, self.lod0).read_bytes())
             self._cache[family] = (width, height, xds.decode_rgba(blocks, width, height, fourcc))
         return self._cache[family]
@@ -372,7 +409,7 @@ def footprint_colour(atlas: tuple[int, int, bytearray], bounds) -> tuple[int, in
     y1 = max(y0 + 1, min(height, int(bounds[3] * height + 0.999)))
     total, count = [0, 0, 0, 0], 0
     for y in range(y0, y1):
-        row = rgba[(y * width + x0) * 4:(y * width + x1) * 4]
+        row = rgba[(y * width + x0) * 4 : (y * width + x1) * 4]
         for c in range(4):
             total[c] += sum(row[c::4])
         count += x1 - x0
@@ -383,6 +420,7 @@ def fill_transparent(atlas: tuple[int, int, bytearray], rgb, below: int = 16) ->
     """Overwrite, in place, the RGB of texels whose alpha is under `below`
     (alpha kept). Returns how many texels changed."""
     import numpy as np
+
     _, _, rgba = atlas
     px = np.frombuffer(rgba, dtype=np.uint8).reshape(-1, 4)
     mask = px[:, 3] < below
@@ -419,13 +457,19 @@ def main(argv: list[str] | None = None) -> None:
         kinds = {}
         for m in ms:
             kinds[m.kind] = kinds.get(m.kind, 0) + 1
-        b = [min(m.bounds[0] for m in ms), min(m.bounds[1] for m in ms),
-             max(m.bounds[2] for m in ms), max(m.bounds[3] for m in ms)]
+        b = [
+            min(m.bounds[0] for m in ms),
+            min(m.bounds[1] for m in ms),
+            max(m.bounds[2] for m in ms),
+            max(m.bounds[3] for m in ms),
+        ]
         colours = sorted({m.colour for m in ms if m.colour})
         kind_text = " ".join(f"{k}:{v}" for k, v in sorted(kinds.items()))
         extra = f"  swatch {colours[:3]}" if colours else ""
-        print(f"{technique:22} {ms[0].role:9} {ms[0].family or '-':9} {len(ms):4}  {kind_text:26} "
-              f"[{b[0]:.3f},{b[1]:.3f}]-[{b[2]:.3f},{b[3]:.3f}]{extra}")
+        print(
+            f"{technique:22} {ms[0].role:9} {ms[0].family or '-':9} {len(ms):4}  {kind_text:26} "
+            f"[{b[0]:.3f},{b[1]:.3f}]-[{b[2]:.3f},{b[3]:.3f}]{extra}"
+        )
 
 
 if __name__ == "__main__":

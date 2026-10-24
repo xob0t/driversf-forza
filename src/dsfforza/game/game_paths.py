@@ -30,8 +30,10 @@ def game_dir() -> Path:
     """The game folder (the one with Driver.exe), from $DSF_GAME_DIR."""
     value = os.environ.get("DSF_GAME_DIR")
     if not value:
-        raise SystemExit("Set DSF_GAME_DIR to your Driver: San Francisco folder (the one with "
-                         "Driver.exe), or pass the game file on the command line.")
+        raise SystemExit(
+            "Set DSF_GAME_DIR to your Driver: San Francisco folder (the one with "
+            "Driver.exe), or pass the game file on the command line."
+        )
     return Path(value)
 
 
@@ -62,7 +64,8 @@ def stock(path: Path | None, quiet: bool = False) -> Path:
     for original in (REPO_STOCK / relative, game / BACKUP / relative):
         if original.is_file():
             if not quiet:
-                print(f"note: {path} is replaced by a dsfforza install; reading the original {original}",
-                      file=sys.stderr)
+                print(
+                    f"note: {path} is replaced by a dsfforza install; reading the original {original}", file=sys.stderr
+                )
             return original
     return path

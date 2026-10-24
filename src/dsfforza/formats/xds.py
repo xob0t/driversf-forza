@@ -49,7 +49,7 @@ def tiled_x(offset: int, width: int, texel_pitch: int) -> int:
     offset_t = ((offset_b & ~4095) >> 3) + ((offset_b & 1792) >> 2) + (offset_b & 63)
     offset_m = offset_t >> (7 + log_bpp)
     macro_x = (offset_m % (aligned_width >> 5)) << 2
-    tile = ((((offset_t >> (5 + log_bpp)) & 2) + (offset_b >> 6)) & 3)
+    tile = (((offset_t >> (5 + log_bpp)) & 2) + (offset_b >> 6)) & 3
     macro = (macro_x + tile) << 3
     micro = ((((offset_t >> 1) & ~15) + (offset_t & 15)) & ((texel_pitch << 3) - 1)) >> log_bpp
     return macro + micro
@@ -64,7 +64,7 @@ def tiled_y(offset: int, width: int, texel_pitch: int) -> int:
     macro_y = (offset_m // (aligned_width >> 5)) << 2
     tile = ((offset_t >> (6 + log_bpp)) & 1) + ((offset_b & 2048) >> 10)
     macro = (macro_y + tile) << 3
-    micro = ((((offset_t & (((texel_pitch << 6) - 1) & ~31)) + ((offset_t & 15) << 1)) >> (3 + log_bpp)) & ~1)
+    micro = (((offset_t & (((texel_pitch << 6) - 1) & ~31)) + ((offset_t & 15) << 1)) >> (3 + log_bpp)) & ~1
     return macro + micro + ((offset_t & 16) >> 4)
 
 
@@ -85,10 +85,10 @@ def untile(data: bytes) -> tuple[bytes, int, int, bytes]:
         x, y = tiled_x(n, blocks_w, block_size), tiled_y(n, blocks_w, block_size)
         if x >= blocks_w or y >= blocks_h:
             continue
-        block = bytearray(payload[src:src + block_size])
+        block = bytearray(payload[src : src + block_size])
         block[0::2], block[1::2] = block[1::2], block[0::2]  # 16-bit byte swap
         dst = (y * blocks_w + x) * block_size
-        out[dst:dst + block_size] = block
+        out[dst : dst + block_size] = block
     return bytes(out), width, height, fourcc
 
 
@@ -97,9 +97,31 @@ def dds_bytes(blocks: bytes, width: int, height: int, fourcc: bytes) -> bytes:
     # "DDS ", DDS_HEADER (124 bytes): size, flags, height, width, linear size, depth,
     # mip count, 11 reserved; pixel format {size 32, flags FOURCC, fourcc, bit count,
     # 4 masks}; caps (TEXTURE), caps2..4, reserved.
-    header = struct.pack("<4s7I44s2I4s5I5I", b"DDS ", 124, flags, height, width,
-                         len(blocks), 0, 1, bytes(44), 32, 0x4, fourcc, 0, 0, 0, 0, 0,
-                         0x1000, 0, 0, 0, 0)
+    header = struct.pack(
+        "<4s7I44s2I4s5I5I",
+        b"DDS ",
+        124,
+        flags,
+        height,
+        width,
+        len(blocks),
+        0,
+        1,
+        bytes(44),
+        32,
+        0x4,
+        fourcc,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x1000,
+        0,
+        0,
+        0,
+        0,
+    )
     return header + blocks
 
 
@@ -114,39 +136,50 @@ def decode_rgba(blocks: bytes, width: int, height: int, fourcc: bytes) -> bytear
     out = bytearray(width * height * 4)
     for by in range(blocks_h):
         for bx in range(blocks_w):
-            b = blocks[(by * blocks_w + bx) * block_size:(by * blocks_w + bx + 1) * block_size]
+            b = blocks[(by * blocks_w + bx) * block_size : (by * blocks_w + bx + 1) * block_size]
             alpha = [255] * 16
             if block_size == 16:
                 a0, a1 = b[0], b[1]
-                table = [a0, a1] + ([((6 - i) * a0 + (i + 1) * a1) // 7 for i in range(6)] if a0 > a1
-                                    else [((4 - i) * a0 + (i + 1) * a1) // 5 for i in range(4)] + [0, 255])
+                table = [a0, a1] + (
+                    [((6 - i) * a0 + (i + 1) * a1) // 7 for i in range(6)]
+                    if a0 > a1
+                    else [((4 - i) * a0 + (i + 1) * a1) // 5 for i in range(4)] + [0, 255]
+                )
                 bits = int.from_bytes(b[2:8], "little")
                 alpha = [table[(bits >> (3 * i)) & 7] for i in range(16)]
                 b = b[8:]
             c0, c1, idx = struct.unpack_from("<HHI", b)
             p0, p1 = _rgb565(c0), _rgb565(c1)
             if c0 > c1 or block_size == 16:
-                colours = [p0, p1, tuple((2 * x + y) // 3 for x, y in zip(p0, p1)),
-                           tuple((x + 2 * y) // 3 for x, y in zip(p0, p1))]
+                colours = [
+                    p0,
+                    p1,
+                    tuple((2 * x + y) // 3 for x, y in zip(p0, p1)),
+                    tuple((x + 2 * y) // 3 for x, y in zip(p0, p1)),
+                ]
             else:
                 colours = [p0, p1, tuple((x + y) // 2 for x, y in zip(p0, p1)), (0, 0, 0)]
             for i in range(16):
                 x, y = bx * 4 + i % 4, by * 4 + i // 4
                 if x < width and y < height:
                     o = (y * width + x) * 4
-                    out[o:o + 3] = bytes(colours[(idx >> (2 * i)) & 3])
+                    out[o : o + 3] = bytes(colours[(idx >> (2 * i)) & 3])
                     out[o + 3] = alpha[i]
     return out
 
 
 def write_png(path: Path, width: int, height: int, rgba: bytearray) -> None:
-    rows = b"".join(b"\0" + bytes(rgba[y * width * 4:(y + 1) * width * 4]) for y in range(height))
+    rows = b"".join(b"\0" + bytes(rgba[y * width * 4 : (y + 1) * width * 4]) for y in range(height))
 
     def chunk(tag: bytes, data: bytes) -> bytes:
         return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
 
-    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
-                     + chunk(b"IDAT", zlib.compress(rows, 6)) + chunk(b"IEND", b""))
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(rows, 6))
+        + chunk(b"IEND", b"")
+    )
 
 
 def main(argv: list[str] | None = None) -> None:

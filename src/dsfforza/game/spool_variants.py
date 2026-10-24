@@ -94,8 +94,8 @@ def main(argv=None) -> None:
                 struct.pack_into("<I", data, 8 + 4 * kind, size)
                 print(f"SSLP NONR buffer kind {kind}: {old:#x} -> {size:#x}")
             if args.sslp_slots:
-                old = list(data[0x18:0x18 + len(args.sslp_slots)])
-                data[0x18:0x18 + len(args.sslp_slots)] = bytes(args.sslp_slots)
+                old = list(data[0x18 : 0x18 + len(args.sslp_slots)])
+                data[0x18 : 0x18 + len(args.sslp_slots)] = bytes(args.sslp_slots)
                 print(f"SSLP slots: {old} -> {args.sslp_slots}")
             sslp.payload = bytes(data)
         with args.out.open("wb") as output:

@@ -99,11 +99,11 @@ def _remap(data: bytes, mapping: dict[bytes, bytes]) -> bytes:
     out = bytearray(data)
     i, end = 0, len(data) - 7
     while i < end:
-        new = mapping.get(data[i:i + 8])
+        new = mapping.get(data[i : i + 8])
         if new is None:
             i += 1
         else:
-            out[i:i + 8] = new
+            out[i : i + 8] = new
             i += 8
     return bytes(out)
 
@@ -111,6 +111,7 @@ def _remap(data: bytes, mapping: dict[bytes, bytes]) -> bytes:
 def part_uids(stream, vehc: Entry) -> list[bytes]:
     """UIDs of the MODL part records of one VEHC (MODL byte order)."""
     from dsfforza.formats.upvh import modl_part_uids
+
     modl = next(c for c in next(c for c in vehc.children if c.tag == "NONR").children if c.tag == "MODL")
     return modl_part_uids(read_leaf(stream, modl))
 
@@ -161,13 +162,14 @@ def remap_upvh_parts(data: bytes, mapping: dict[bytes, bytes]) -> bytes:
     of an attachment is exporter junk, so only values in `mapping` change).
     These are all the places the stock Desanne's UPVH holds its 41 part UIDs."""
     from dsfforza.formats import upvh
+
     h = upvh.parse(data)
     out = bytearray(data)
 
     def fix(offset: int) -> None:
-        new = mapping.get(upvh.swap_uid(bytes(out[offset:offset + 8])))
+        new = mapping.get(upvh.swap_uid(bytes(out[offset : offset + 8])))
         if new is not None:
-            out[offset:offset + 8] = upvh.swap_uid(new)
+            out[offset : offset + 8] = upvh.swap_uid(new)
 
     fix(0x04)
     for r in range(len(h.records)):
@@ -189,7 +191,7 @@ def _check_no_old_parts(stream, vehcs: list[Entry], old: set[bytes]) -> None:
                 continue
             data = read_leaf(stream, entry)
             for i in range(0, len(data) - 7, 4):
-                word = data[i:i + 8]
+                word = data[i : i + 8]
                 if word in old or word in swapped:
                     raise ValueError(f"{entry.tag}+{i:#x} still holds the host's part UID {word.hex()}")
 
@@ -286,15 +288,14 @@ def register_clones(stream, entries: list[Entry], clones: list[Entry], source_id
     # VSCT: three copies of the source record under the new ID.
     version, vsct_count = struct.unpack_from("<HH", vsct_data, 4)
     source_records = [
-        vsct_data[8 + i * VSCT_RECORD.size: 8 + (i + 1) * VSCT_RECORD.size]
+        vsct_data[8 + i * VSCT_RECORD.size : 8 + (i + 1) * VSCT_RECORD.size]
         for i in range(vsct_count)
         if struct.unpack_from("<H", vsct_data, 8 + i * VSCT_RECORD.size)[0] == source_id
     ]
     if len(source_records) != 3:
         raise ValueError(f"expected 3 VSCT records for {source_id}, found {len(source_records)}")
     added = b"".join(struct.pack("<H", new_id) + record[2:] for record in source_records)
-    vsct_entry.payload = (vsct_data[:4] + struct.pack("<HH", version, vsct_count + 3)
-                          + vsct_data[8:] + added)
+    vsct_entry.payload = vsct_data[:4] + struct.pack("<HH", version, vsct_count + 3) + vsct_data[8:] + added
     return new_indices
 
 
@@ -302,8 +303,10 @@ def check_root(entries: list[Entry], root_limit: int = ENTRY_LIMIT) -> None:
     """The game reads at most root_limit root entries (1100 unless dsfforza.asi's
     archive module is installed); more corrupts the reader."""
     if len(entries) > root_limit:
-        raise SystemExit(f"{len(entries)} root entries (> {root_limit}); pass --root-limit N "
-                         f"for an install with dsfforza.asi [archive]")
+        raise SystemExit(
+            f"{len(entries)} root entries (> {root_limit}); pass --root-limit N "
+            f"for an install with dsfforza.asi [archive]"
+        )
 
 
 def parse_ids(text: str) -> list[int]:
@@ -318,8 +321,16 @@ def parse_ids(text: str) -> list[int]:
     return ids
 
 
-def clone(archive: Path, out: Path, source_id: int | list[int], new_id: int | list[int], name: str | None,
-          new_uids: bool = False, sound_id: int | None = None, root_limit: int = ENTRY_LIMIT) -> None:
+def clone(
+    archive: Path,
+    out: Path,
+    source_id: int | list[int],
+    new_id: int | list[int],
+    name: str | None,
+    new_uids: bool = False,
+    sound_id: int | None = None,
+    root_limit: int = ENTRY_LIMIT,
+) -> None:
     """One clone, or many: new_id may be a list, and source_id a list the new IDs
     cycle through (limit tests: src/dsfforza/build/clone_vehicle.py ... --source 248,293 --id 1-61,304-999)."""
     sources = source_id if isinstance(source_id, list) else [source_id]
@@ -341,11 +352,15 @@ def clone(archive: Path, out: Path, source_id: int | list[int], new_id: int | li
                     print(f"engine sound from {sound_id}: {report}")
             new_indices = register_clones(stream, entries, clones, sid, nid)
             if len(new_ids) == 1:
-                print(f"cloned {sid} as {nid} (variants {nid}, {nid + 1000}, {nid + 2000})"
-                      f" at VEHC {new_indices.start}..{new_indices.stop - 1}")
+                print(
+                    f"cloned {sid} as {nid} (variants {nid}, {nid + 1000}, {nid + 2000})"
+                    f" at VEHC {new_indices.start}..{new_indices.stop - 1}"
+                )
         if len(new_ids) > 1:
-            print(f"cloned {len(new_ids)} vehicles ({new_ids[0]}..{new_ids[-1]}) from {sources}; "
-                  f"{len(entries)} root entries")
+            print(
+                f"cloned {len(new_ids)} vehicles ({new_ids[0]}..{new_ids[-1]}) from {sources}; "
+                f"{len(entries)} root entries"
+            )
         check_root(entries, root_limit)
         with out.open("wb") as output:
             write_chunk(output, stream, entries, root.version)
@@ -356,22 +371,39 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("archive", type=Path, help="path to Install/dngvehicles.sp (read only)")
     parser.add_argument("out", type=Path, help="where to write the new archive")
-    parser.add_argument("--source", required=True,
-                        help="base spool ID to copy, e.g. 266; a comma list is cycled through with several --id")
+    parser.add_argument(
+        "--source",
+        required=True,
+        help="base spool ID to copy, e.g. 266; a comma list is cycled through with several --id",
+    )
     parser.add_argument("--id", required=True, help="new base spool ID, or a list/ranges such as 1-61,304-999")
     parser.add_argument("--name", help="VEHC display class for the clone (default: the source's)")
-    parser.add_argument("--new-uids", action="store_true",
-                        help="give the clone's submodels, buffers, textures, materials and MODL parts "
-                             "fresh UIDs")
+    parser.add_argument(
+        "--new-uids",
+        action="store_true",
+        help="give the clone's submodels, buffers, textures, materials and MODL parts fresh UIDs",
+    )
     parser.add_argument("--sound-host", type=int, help="take the engine sound (NONR/VSRT) from this stock vehicle")
-    parser.add_argument("--root-limit", type=int, default=ENTRY_LIMIT,
-                        help=f"root entries allowed (default {ENTRY_LIMIT}; more needs dsfforza.asi [archive])")
+    parser.add_argument(
+        "--root-limit",
+        type=int,
+        default=ENTRY_LIMIT,
+        help=f"root entries allowed (default {ENTRY_LIMIT}; more needs dsfforza.asi [archive])",
+    )
     args = parser.parse_args(argv)
     if args.out.resolve() == args.archive.resolve():
         raise SystemExit("refusing to overwrite the source archive")
     sources, ids = parse_ids(args.source), parse_ids(args.id)
-    clone(args.archive, args.out, sources if len(sources) > 1 else sources[0], ids if len(ids) > 1 else ids[0],
-          args.name, args.new_uids, args.sound_host, args.root_limit)
+    clone(
+        args.archive,
+        args.out,
+        sources if len(sources) > 1 else sources[0],
+        ids if len(ids) > 1 else ids[0],
+        args.name,
+        args.new_uids,
+        args.sound_host,
+        args.root_limit,
+    )
 
 
 if __name__ == "__main__":

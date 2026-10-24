@@ -40,18 +40,23 @@ def load(path: Path) -> unittest.TestSuite:
         spec.loader.exec_module(module)
     except ModuleNotFoundError as error:
         if (error.name or "").split(".")[0] == "dsfforza":
-            raise   # a repo module: a real failure
+            raise  # a repo module: a real failure
         reason = f"{path.name}: needs {error.name} (uv sync --group test)"
 
         class Skipped(unittest.TestCase):
             def test_file(self):
                 self.skipTest(reason)
+
         Skipped.__qualname__ = Skipped.__name__ = path.stem
         return unittest.defaultTestLoader.loadTestsFromTestCase(Skipped)
     suite = unittest.defaultTestLoader.loadTestsFromModule(module)
     for attr, value in vars(module).items():
-        if attr.startswith("test_") and callable(value) and not isinstance(value, type) \
-                and getattr(value, "__module__", None) == name:
+        if (
+            attr.startswith("test_")
+            and callable(value)
+            and not isinstance(value, type)
+            and getattr(value, "__module__", None) == name
+        ):
             case = unittest.FunctionTestCase(value, description=f"{path.stem}.{attr}")
             suite.addTest(case)
     return suite

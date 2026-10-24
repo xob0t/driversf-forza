@@ -89,8 +89,9 @@ def read_chunk(stream: BinaryIO, base: int = 0, depth: int | None = None) -> Chu
             stream.seek(start + size)
             name_raw = stream.read(name_len)
         name = name_raw.split(b"\0", 1)[0].decode("latin-1") if name_len else None
-        entries.append(Entry(tag.decode("latin-1"), start, size, ver, align, name,
-                             name_raw=name_raw, reserved=reserved))
+        entries.append(
+            Entry(tag.decode("latin-1"), start, size, ver, align, name, name_raw=name_raw, reserved=reserved)
+        )
     for entry in entries:
         if depth == 0 or entry.size < HEADER.size:
             continue
@@ -142,8 +143,17 @@ def write_chunk(out: BinaryIO, source: BinaryIO | None, entries: list[Entry], ve
     total, offsets, sizes = layout(entries)
     out.write(HEADER.pack(MAGIC, total, len(entries), version))
     for entry, offset, size in zip(entries, offsets, sizes):
-        out.write(ENTRY.pack(entry.tag.encode("latin-1"), offset, entry.version, len(entry.name_raw),
-                             entry.align_log2, entry.reserved, size))
+        out.write(
+            ENTRY.pack(
+                entry.tag.encode("latin-1"),
+                offset,
+                entry.version,
+                len(entry.name_raw),
+                entry.align_log2,
+                entry.reserved,
+                size,
+            )
+        )
     position = HEADER.size + ENTRY.size * len(entries)
     for entry, offset, size in zip(entries, offsets, sizes):
         _fill(out, position, offset)
@@ -183,8 +193,11 @@ def walk_collapsed(entries: list[Entry], path: tuple[int, ...] = ()) -> Iterator
     while index < len(entries):
         entry = entries[index]
         run = 1
-        while (index + run < len(entries) and entries[index + run].tag == entry.tag
-               and entries[index + run].name == entry.name):
+        while (
+            index + run < len(entries)
+            and entries[index + run].tag == entry.tag
+            and entries[index + run].name == entry.name
+        ):
             run += 1
         here = path + (index,)
         yield here, entry, run
@@ -215,8 +228,10 @@ def describe(entry: Entry) -> str:
 def cmd_tree(args: argparse.Namespace) -> None:
     with Path(args.file).open("rb") as stream:
         root = read_chunk(stream, 0, None if args.path or args.depth is None else args.depth)
-        print(f"CHNK v{root.version} entries={len(root.entries)} size={root.total_size:#x}"
-              f"{' LZW' if root.compressed else ''}")
+        print(
+            f"CHNK v{root.version} entries={len(root.entries)} size={root.total_size:#x}"
+            f"{' LZW' if root.compressed else ''}"
+        )
         entries = root.entries
         if args.path:
             entry = resolve(entries, args.path)
@@ -293,8 +308,9 @@ def main(argv: list[str] | None = None) -> None:
     tree.add_argument("file")
     tree.add_argument("path", nargs="?", help="dotted index path to start from, e.g. 0.2")
     tree.add_argument("--depth", type=int, default=None, help="levels to descend (default: all)")
-    tree.add_argument("--full", action="store_true",
-                      help="print every sibling instead of collapsing runs with the same tag and name")
+    tree.add_argument(
+        "--full", action="store_true", help="print every sibling instead of collapsing runs with the same tag and name"
+    )
     tree.set_defaults(func=cmd_tree)
 
     lst = sub.add_parser("list", help="list top-level entries as TSV")

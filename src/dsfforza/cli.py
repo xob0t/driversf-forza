@@ -48,7 +48,7 @@ def main(argv: list[str] | None = None) -> int | None:
         print(f"dsff: unknown tool {argv[0]!r}\n\n{usage()}", file=sys.stderr)
         return 2
     module = importlib.import_module(TOOLS[name])
-    sys.argv = [f"dsff {name}", *argv[1:]]   # argparse's prog and the tool's own argv
+    sys.argv = [f"dsff {name}", *argv[1:]]  # argparse's prog and the tool's own argv
     return module.main()
 
 

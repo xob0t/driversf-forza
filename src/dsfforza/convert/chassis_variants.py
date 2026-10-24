@@ -66,8 +66,13 @@ def _parts_lods(modl: bytes) -> list[list[tuple[int, list[bytes], list[int]]]]:
         lods = []
         for k in range(count):
             mask, n, uid_off, extra_off = struct.unpack_from("<4I", modl, offset + k * 16)
-            lods.append((mask, [modl[uid_off + i * 8:uid_off + i * 8 + 8] for i in range(n)],
-                         list(struct.unpack_from(f"<{n}I", modl, extra_off)) if n else []))
+            lods.append(
+                (
+                    mask,
+                    [modl[uid_off + i * 8 : uid_off + i * 8 + 8] for i in range(n)],
+                    list(struct.unpack_from(f"<{n}I", modl, extra_off)) if n else [],
+                )
+            )
         parts.append(lods)
     return parts
 
@@ -134,7 +139,7 @@ def fill_entry(stream, vehc: Entry, parts_to_fill: list[int], new_uid) -> int:
         ib_users.setdefault(d[0x30:0x38], []).append(fresh)
     # Insert the new SBMCs after the last SBMC (DRSP order doesn't matter to the loader).
     last = max(i for i, e in enumerate(drsp.children) if e.tag == "SBMC")
-    drsp.children = drsp.children[:last + 1] + new_children + drsp.children[last + 1:]
+    drsp.children = drsp.children[: last + 1] + new_children + drsp.children[last + 1 :]
     for e in drsp.children:
         if e.tag == "VXCK":
             uid = _leaf(stream, child(e, "VXHD"))[:8]
@@ -142,7 +147,7 @@ def fill_entry(stream, vehc: Entry, parts_to_fill: list[int], new_uid) -> int:
                 dp = child(e, "VXDP")
                 d = _leaf(stream, dp)
                 n = len(d) // 9
-                users = [d[i * 8:i * 8 + 8] for i in range(n)] + vb_users[uid]
+                users = [d[i * 8 : i * 8 + 8] for i in range(n)] + vb_users[uid]
                 dp.payload = b"".join(users) + bytes(len(users))
         elif e.tag == "IXCK":
             uid = _leaf(stream, child(e, "IXHD"))[:8]
@@ -151,7 +156,7 @@ def fill_entry(stream, vehc: Entry, parts_to_fill: list[int], new_uid) -> int:
                 dp.payload = _leaf(stream, dp) + b"".join(ib_users[uid])
     mdid = next(e for e in drsp.children if e.tag == "MDID")
     old = _leaf(stream, mdid)
-    ids = [old[i:i + 8] for i in range(0, len(old), 8)]
+    ids = [old[i : i + 8] for i in range(0, len(old), 8)]
     sub_positions = [i for i, u in enumerate(ids) if u in sbmc]
     at = (max(sub_positions) + 1) if sub_positions else len(ids)
     ids = ids[:at] + [f for f, _ in added] + ids[at:]
@@ -160,13 +165,21 @@ def fill_entry(stream, vehc: Entry, parts_to_fill: list[int], new_uid) -> int:
     return len(added)
 
 
-def fill(stream, full: Entry, interior: Entry | None, exterior: Entry | None, seed: bytes, log=print,
-         full_rebuilt: bool = True) -> dict:
+def fill(
+    stream,
+    full: Entry,
+    interior: Entry | None,
+    exterior: Entry | None,
+    seed: bytes,
+    log=print,
+    full_rebuilt: bool = True,
+) -> dict:
     """Fill the extra chassis parts of the full, interior and exterior entries
     (call after they are rebuilt; pass None for an entry that kept the host's
     geometry, and full_rebuilt=False if the full entry did). Returns {kind:
     parts and submodels added}."""
     from dsfforza.build.clone_vehicle import stock_like_uid
+
     nonr = child(full, "NONR")
     entries = {0: full if full_rebuilt else None, 1: interior, 2: exterior}
     modl = {k: _leaf(stream, child(child(e, "NONR"), "MODL")) for k, e in entries.items() if e is not None}
@@ -196,6 +209,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--ids", help="comma-separated spool IDs (default: every vehicle)")
     args = parser.parse_args(argv)
     from dsfforza.formats.vehicles import find, parse_sslp
+
     with args.archive.open("rb") as stream:
         root = read_chunk(stream, 0)
         records = parse_sslp(payload(stream, find(find(find(root.entries, "SSIC").children, "NONR").children, "SSLP")))

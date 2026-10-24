@@ -54,8 +54,8 @@ from pathlib import Path
 from typing import BinaryIO
 
 BLOCK = 0x1000
-PER_TABLE = 0xAA                 # entries per hash table
-PER_L1 = PER_TABLE * PER_TABLE   # 0x70E4 blocks covered by one level-1 table
+PER_TABLE = 0xAA  # entries per hash table
+PER_L1 = PER_TABLE * PER_TABLE  # 0x70E4 blocks covered by one level-1 table
 MAGICS = (b"CON ", b"LIVE", b"PIRS")
 END_OF_CHAIN = 0xFFFFFF
 
@@ -118,7 +118,7 @@ class Stfs:
         self.display_name = _utf16(head[0x411:0x491])
         self.description = _utf16(head[0xD11:0xD91])
         self.title_name = _utf16(head[0x1691:0x1711])
-        vd = head[0x379:0x379 + 0x24]
+        vd = head[0x379 : 0x379 + 0x24]
         if vd[0] != 0x24:
             raise StfsError(f"volume descriptor size {vd[0]:#x}, expected 0x24 (SVOD packages are not supported)")
         self.vd_flags = vd[2]
@@ -184,7 +184,7 @@ class Stfs:
         return offset
 
     def _entry_offset(self, block: int, level: int) -> int:
-        slot = (block // (PER_TABLE ** level)) % PER_TABLE
+        slot = (block // (PER_TABLE**level)) % PER_TABLE
         return self._table_offset(block, level) + slot * 0x18
 
     def hash_entry(self, block: int) -> tuple[bytes, int, int]:
@@ -245,14 +245,23 @@ class Stfs:
         for block in self.chain(self.file_table_start, self.file_table_blocks, False):
             data = self.read_block(block)
             for i in range(0, BLOCK, 0x40):
-                e = data[i:i + 0x40]
+                e = data[i : i + 0x40]
                 flags = e[0x28]
                 if flags & 0x3F:
-                    name = e[:flags & 0x3F].decode("latin-1")
+                    name = e[: flags & 0x3F].decode("latin-1")
                     parent, size = struct.unpack_from(">hI", e, 0x32)
-                    entries.append(StfsEntry(slot, name, flags, int.from_bytes(e[0x29:0x2C], "little"),
-                                             int.from_bytes(e[0x2C:0x2F], "little"),
-                                             int.from_bytes(e[0x2F:0x32], "little"), parent, size))
+                    entries.append(
+                        StfsEntry(
+                            slot,
+                            name,
+                            flags,
+                            int.from_bytes(e[0x29:0x2C], "little"),
+                            int.from_bytes(e[0x2C:0x2F], "little"),
+                            int.from_bytes(e[0x2F:0x32], "little"),
+                            parent,
+                            size,
+                        )
+                    )
                 slot += 1
         by_slot = {entry.index: entry for entry in entries}
         names = {entry.index: entry.path for entry in entries}
@@ -284,13 +293,16 @@ class Stfs:
         remaining, i = entry.size, 0
         while i < len(blocks):
             j = i + 1
-            while (j < len(blocks) and j - i < 256 and
-                   self.block_offset(blocks[j]) == self.block_offset(blocks[j - 1]) + BLOCK):
+            while (
+                j < len(blocks)
+                and j - i < 256
+                and self.block_offset(blocks[j]) == self.block_offset(blocks[j - 1]) + BLOCK
+            ):
                 j += 1
             data = self.src.read(self.block_offset(blocks[i]), (j - i) * BLOCK)
             if verify:
                 for k in range(i, j):
-                    chunk = data[(k - i) * BLOCK:(k - i + 1) * BLOCK]
+                    chunk = data[(k - i) * BLOCK : (k - i + 1) * BLOCK]
                     if hashlib.sha1(chunk).digest() != self.hash_entry(blocks[k])[0]:
                         raise StfsError(f"{entry.path}: block {blocks[k]} SHA-1 mismatch")
             piece = data[:remaining]
@@ -345,8 +357,11 @@ class _StfsFile(io.RawIOBase):
         # read up to the end of this run of physically contiguous blocks
         start = self.pkg.block_offset(self.blocks[index]) + within
         span = BLOCK - within
-        while (span < size and index + 1 < len(self.blocks) and
-               self.pkg.block_offset(self.blocks[index + 1]) == self.pkg.block_offset(self.blocks[index]) + BLOCK):
+        while (
+            span < size
+            and index + 1 < len(self.blocks)
+            and self.pkg.block_offset(self.blocks[index + 1]) == self.pkg.block_offset(self.blocks[index]) + BLOCK
+        ):
             index += 1
             span += BLOCK
         size = min(size, span)
@@ -358,6 +373,7 @@ class _StfsFile(io.RawIOBase):
 def in_image(image, entry) -> Stfs:
     """The package stored as file `entry` of an xiso.XIso disc image, read in place."""
     from dsfforza.formats.xiso import SECTOR
+
     return Stfs(image.stream, image.base + entry.sector * SECTOR, entry.size)
 
 
@@ -366,6 +382,7 @@ def open_package(spec: str) -> Stfs:
     if "::" in spec:
         image_path, inner = spec.split("::", 1)
         from dsfforza.formats.xiso import XIso
+
         image = XIso(image_path)
         return in_image(image, image.find(inner))
     return Stfs(Path(spec).open("rb"))
@@ -397,11 +414,15 @@ def main(argv: list[str] | None = None) -> None:
         print(f"description    {pkg.description}")
         print(f"content type   {pkg.content_type:#010x}, content size {pkg.content_size}")
         print(f"header size    {pkg.header_size:#x}, first block at {pkg.first_table:#x}")
-        print(f"layout         {'female (single hash tables)' if pkg.sex == 0 else 'male (paired hash tables)'}, "
-              f"top hash level {pkg.top_level}")
+        print(
+            f"layout         {'female (single hash tables)' if pkg.sex == 0 else 'male (paired hash tables)'}, "
+            f"top hash level {pkg.top_level}"
+        )
         print(f"blocks         {pkg.allocated_blocks} allocated, {pkg.unallocated_blocks} free")
-        print(f"file table     {pkg.file_table_blocks} block(s) from block {pkg.file_table_start}, "
-              f"{len(pkg.entries)} entries")
+        print(
+            f"file table     {pkg.file_table_blocks} block(s) from block {pkg.file_table_start}, "
+            f"{len(pkg.entries)} entries"
+        )
         return
     if args.command == "verify":
         tables, blocks = pkg.verify_tree(args.data)

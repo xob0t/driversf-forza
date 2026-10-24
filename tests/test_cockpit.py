@@ -1,6 +1,6 @@
 """Checks for src/dsfforza/convert/cockpit.py that need no game files (a fraction of a second).
 
-    uv run python tests/test_cockpit.py     # or every test: uv run python -m tests cockpit
+uv run python tests/test_cockpit.py     # or every test: uv run python -m tests cockpit
 """
 
 from __future__ import annotations
@@ -14,8 +14,7 @@ def _display(transform: tuple, width: float = 0.25, height: float = 0.08) -> car
     """A flat digital_gauge panel (width x height m, two triangles) with UV0 0..1
     across it, like the S2000's cluster face."""
     corners = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)]
-    verts = [carbin.Vertex((u * width, (1 - v) * height, 0.0), (u, v), (0.0, 0.0), (0.0, 0.0, 1.0))
-             for u, v in corners]
+    verts = [carbin.Vertex((u * width, (1 - v) * height, 0.0), (u, v), (0.0, 0.0), (0.0, 0.0, 1.0)) for u, v in corners]
     sub = carbin.SubSection("digital_gauge", 0, 4, transform, [0, 1, 2, 2, 1, 3])
     return carbin.Section("interior", (0, 0, 0), (0, 0, 0), (0, 0, 0), lod0_vertices=verts, subsections=[sub])
 
@@ -31,7 +30,7 @@ def test_display_face_uses_the_second_transform():
     assert faces == 2
     sub = out.subsections[0]
     assert sub.material == cockpit.DISPLAY_FACE and tuple(sub.uv_transform[:4]) == face
-    assert section.subsections[0].material == "digital_gauge"   # the source is left alone
+    assert section.subsections[0].material == "digital_gauge"  # the source is left alone
     assert fm.classify_cockpit(sub.material, "interior") == (fm.TEXTURED, fm.INTERIOR)
     m = fm.resolve(out, sub, fm.classify_cockpit)
     assert m.kind == "textured" and abs(m.bounds[2] - 0.793) < 1e-3
@@ -56,7 +55,7 @@ def test_badges_follow_their_section():
         assert fm.classify_cockpit("stripe_badge", section) == (fm.TEXTURED, fm.NODAMAGE)
         assert fm.classify_cockpit("gauge_emissive", section) == (fm.TEXTURED, fm.INTERIOR)
     assert fm.classify_cockpit("liveryBadge", "hooda")[0] == fm.SKIP
-    assert fm.classify_cockpit("badge") == (fm.TEXTURED, fm.INTERIOR)   # role-only callers
+    assert fm.classify_cockpit("badge") == (fm.TEXTURED, fm.INTERIOR)  # role-only callers
 
 
 if __name__ == "__main__":

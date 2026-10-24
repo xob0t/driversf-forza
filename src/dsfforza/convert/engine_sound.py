@@ -79,23 +79,45 @@ CACHE = REPO / "out" / "cache" / "sound"
 RPM = 0x9C4D0121
 RATE = 32000
 VSVH_SIZE = 0x9C
-VSVH_EVENTS = (0x04, 0x0C)            # Play events of set A and set B
+VSVH_EVENTS = (0x04, 0x0C)  # Play events of set A and set B
 # VSVH fields holding event IDs of the vehicle's own bank: on all 150 stock cars
 # every non-zero value at these offsets is an Event in the car's bank, and no
 # other field ever is (research/engine-sound.md).
-EVENT_FIELDS = (0x04, 0x08, 0x0C, 0x10, 0x14, 0x1C, 0x24, 0x28, 0x2C, 0x34, 0x38, 0x3C, 0x40, 0x44, 0x48,
-                0x54, 0x58, 0x5C, 0x68, 0x6C, 0x70, 0x74, 0x78)
+EVENT_FIELDS = (
+    0x04,
+    0x08,
+    0x0C,
+    0x10,
+    0x14,
+    0x1C,
+    0x24,
+    0x28,
+    0x2C,
+    0x34,
+    0x38,
+    0x3C,
+    0x40,
+    0x44,
+    0x48,
+    0x54,
+    0x58,
+    0x5C,
+    0x68,
+    0x6C,
+    0x70,
+    0x74,
+    0x78,
+)
 ENGINE_TYPE_FIELD = 0x4C
 # VSVH+4C -> sw_engine_type state (Driver.exe 0x550300: value - 1 indexes a table, out of range = v8;
 # 10 maps to il5, not il6). The states pick one of three rpm-following tone generators in the
 # HUD bank of WWiseDefault.pck: 200 Hz at 12000 rpm (v8, h4, il4), 250 Hz (il5, v10), 300 Hz
 # (v6, vr6, h6, v12, il6), i.e. 1, 1.25 and 1.5 times the crank frequency.
 ENGINE_TYPES = {1: "v6", 2: "v8", 3: "v10", 4: "v12", 5: "vr6", 6: "h4", 7: "h6", 8: "il4", 9: "il5", 10: "il5"}
-TEMPLATE_SLOTS = range(6, 9)          # loops per set of a usable template ("370Z layout")
+TEMPLATE_SLOTS = range(6, 9)  # loops per set of a usable template ("370Z layout")
 ID_NAMESPACE_BITS = 22
-MAX_SECONDS = (1.1, 0.8, 0.6)         # loop lengths tried in turn against the NONR budget
-GAME_ISOS = {"fh1": ["Forza.Horizon.XBOX360.iso"],
-             "fm4": ["Forza 4 [NTSCU][DVD1].iso", "Forza 4 [NTSCU][DVD2].iso"]}
+MAX_SECONDS = (1.1, 0.8, 0.6)  # loop lengths tried in turn against the NONR budget
+GAME_ISOS = {"fh1": ["Forza.Horizon.XBOX360.iso"], "fm4": ["Forza 4 [NTSCU][DVD1].iso", "Forza 4 [NTSCU][DVD2].iso"]}
 EMISSION_GROUP = {"Exhaust": "ExhaustL", "EngineAmbient": "EngineAmbient", "EngineIntake": "EngineIntake"}
 # Emission per set, first one the car has (race cars often lack one).
 SET_EMISSIONS = {"A": ("EngineAmbient", "EngineIntake", "Exhaust"), "B": ("Exhaust", "EngineAmbient", "EngineIntake")}
@@ -116,11 +138,12 @@ def write_atomic(path: Path, data: bytes) -> None:
     temp.write_bytes(data)
     try:
         Path(temp).replace(path)
-    except OSError:          # another process holds the target; its copy is as good
+    except OSError:  # another process holds the target; its copy is as good
         temp.unlink(missing_ok=True)
 
 
 # --------------------------------------------------------------------------- template side
+
 
 @dataclass
 class Slot:
@@ -133,6 +156,7 @@ def stock_sound(dsf: Path, spool: int) -> tuple[bytes, bytes]:
     """(SBAK, VSVH) of a stock vehicle's kind-0 entry."""
     from dsfforza.build import clone_vehicle as cv
     from dsfforza.formats.vehicles import find
+
     with dsf.open("rb") as s:
         entries = read_chunk(s, 0).entries
         for sid, index, kind in cv.sslp_records(s, entries):
@@ -190,8 +214,11 @@ def set_media(bank: wb.Bank, vsvh: bytes) -> set[int]:
     out = set()
     for off in VSVH_EVENTS:
         target = play_target(bank, struct.unpack_from("<I", vsvh, off)[0])
-        out |= {o.info["source"] for o in (subtree(bank, target) if target else [])
-                if o.type == 2 and o.info["source"] in media}
+        out |= {
+            o.info["source"]
+            for o in (subtree(bank, target) if target else [])
+            if o.type == 2 and o.info["source"] in media
+        }
     return out
 
 
@@ -206,15 +233,18 @@ def set_of_objects(bank: wb.Bank, vsvh: bytes) -> dict[int, str]:
 
 # --------------------------------------------------------------------------- stock index
 
+
 def game_dir(dsf: Path | None = None) -> Path:
     if os.environ.get("DSF_GAME_DIR"):
         return Path(os.environ["DSF_GAME_DIR"])
     if dsf is not None:
         from dsfforza.game import game_paths
+
         found = game_paths.game_dir_of(dsf)
         if found is not None and found.resolve() != game_paths.REPO_STOCK.resolve():
             return found.parent if found.name == game_paths.BACKUP else found
     from dsfforza.game import game_paths
+
     return game_paths.game_dir()
 
 
@@ -246,10 +276,10 @@ def pck_ids(path: Path) -> set[int]:
                 if at != 0x18 + lang:
                     continue
                 q = start * block
-                if m[q:q + 4] != b"BKHD":
+                if m[q : q + 4] != b"BKHD":
                     continue
-                while m[q:q + 4] in (b"BKHD", b"DIDX", b"DATA", b"HIRC", b"STID", b"STMG", b"ENVS", b"FXPR"):
-                    tag, n = m[q:q + 4], struct.unpack_from("<I", m, q + 4)[0]
+                while m[q : q + 4] in (b"BKHD", b"DIDX", b"DATA", b"HIRC", b"STID", b"STMG", b"ENVS", b"FXPR"):
+                    tag, n = m[q : q + 4], struct.unpack_from("<I", m, q + 4)[0]
                     body = q + 8
                     if tag == b"DIDX":
                         out.update(struct.unpack_from("<I", m, body + i)[0] for i in range(0, n, 12))
@@ -309,6 +339,7 @@ def stock_index(dsf: Path = DEFAULT_DSF, cache: Path = CACHE / "stock-banks.json
             pass
     from dsfforza.build import clone_vehicle as cv
     from dsfforza.formats.vehicles import find
+
     reserved = set(wb.KNOWN_IDS)
     banks = {}
     with dsf.open("rb") as s:
@@ -324,9 +355,17 @@ def stock_index(dsf: Path = DEFAULT_DSF, cache: Path = CACHE / "stock-banks.json
             bank = wb.Bank.parse(parts["SBAK"])
             reserved |= bank_ids(bank)
             vsvh = parts["VSVH"]
-            row = {"name": entries[index].name, "sbak": len(parts["SBAK"]), "grbk": "GRBK" in parts,
-                   "vsrt": vsrt.size, "bank_id": bank.bank_id, "rpm": list(struct.unpack_from("<II", vsvh, 0x94)),
-                   "engine_type": struct.unpack_from("<I", vsvh, ENGINE_TYPE_FIELD)[0], "sets": {}, "why": ""}
+            row = {
+                "name": entries[index].name,
+                "sbak": len(parts["SBAK"]),
+                "grbk": "GRBK" in parts,
+                "vsrt": vsrt.size,
+                "bank_id": bank.bank_id,
+                "rpm": list(struct.unpack_from("<II", vsvh, 0x94)),
+                "engine_type": struct.unpack_from("<I", vsvh, ENGINE_TYPE_FIELD)[0],
+                "sets": {},
+                "why": "",
+            }
             try:
                 sets = loop_sets(bank, vsvh)
                 row["sets"] = {k: [round(s.rpm) for s in v] for k, v in sets.items()}
@@ -382,7 +421,7 @@ def engine_type(cylinders: int | None, layout: str | None) -> int | None:
     is mapped to il5 by Driver.exe."""
     if not cylinders or layout == "E":
         return None
-    if layout == "R":                      # rotors fire once per eccentric shaft turn
+    if layout == "R":  # rotors fire once per eccentric shaft turn
         return 8 if cylinders <= 2 else 1
     if layout == "F":
         return 6 if cylinders <= 4 else 7
@@ -391,11 +430,12 @@ def engine_type(cylinders: int | None, layout: str | None) -> int | None:
     if cylinders == 5:
         return 9
     if cylinders == 6:
-        return 5 if layout == "W" else 1     # Forza files the VR6 as W
+        return 5 if layout == "W" else 1  # Forza files the VR6 as W
     return {8: 2, 10: 3, 12: 4, 16: 2}.get(cylinders, 2)
 
 
 # --------------------------------------------------------------------------- Forza side
+
 
 @dataclass
 class ForzaLoop:
@@ -405,7 +445,7 @@ class ForzaLoop:
     rpm_max: int
     volume: float
     rate: int
-    pcm: np.ndarray       # float, channel 0, -1..1
+    pcm: np.ndarray  # float, channel 0, -1..1
 
 
 def read_wav(path: Path) -> tuple[np.ndarray, int]:
@@ -427,6 +467,7 @@ def isos_for(game: str, isos: list[Path]) -> list[Path]:
         return named
     from dsfforza.build.forza_roster import TITLES, xex_title
     from dsfforza.formats.xiso import XIso
+
     out = []
     for p in isos:
         key = str(Path(p).resolve())
@@ -447,6 +488,7 @@ def _decoded(fsb_path: Path, fsb, folder: Path, vgm: Path) -> list[Path]:
     """The FSB's subsongs as WAVs in folder (decoded once; workers racing on the
     same bank each decode to their own folder and the first rename wins)."""
     from dsfforza.formats import forza_audio as fa
+
     wavs = sorted(folder.glob("*.wav")) if folder.is_dir() else []
     if len(wavs) == len(fsb.subsongs):
         return wavs
@@ -454,7 +496,7 @@ def _decoded(fsb_path: Path, fsb, folder: Path, vgm: Path) -> list[Path]:
     shutil.rmtree(temp, ignore_errors=True)
     fa.decode_bank(fsb_path, fsb, temp, vgm)
     if folder.is_dir() and len(list(folder.glob("*.wav"))) != len(fsb.subsongs):
-        shutil.rmtree(folder, ignore_errors=True)      # a broken earlier decode
+        shutil.rmtree(folder, ignore_errors=True)  # a broken earlier decode
     try:
         Path(temp).replace(folder)
     except OSError:
@@ -465,12 +507,14 @@ def _decoded(fsb_path: Path, fsb, folder: Path, vgm: Path) -> list[Path]:
     return wavs
 
 
-def forza_engine(car: str, game: str, isos: list[Path], cache: Path, emissions: list[str] | None = None,
-                 vgmstream: str | None = None) -> dict:
+def forza_engine(
+    car: str, game: str, isos: list[Path], cache: Path, emissions: list[str] | None = None, vgmstream: str | None = None
+) -> dict:
     """Idle, redline and the decoded L0 loops of a Forza car's emissions (default:
     every emission its ET file names). Raises LookupError when the car's audio
     can't be resolved."""
     from dsfforza.formats import forza_audio as fa
+
     game = game.lower()
     discs = isos_for(game, [Path(p) for p in isos])
     if not discs:
@@ -482,9 +526,13 @@ def forza_engine(car: str, game: str, isos: list[Path], cache: Path, emissions: 
             et = tuning.engine(car)
         except KeyError as error:
             raise LookupError(str(error).strip("'\"")) from None
-        out = {"idle": float(et.settings.get("audio_rpm_idle", 0)),
-               "redline": float(et.settings.get("audio_rpm_redline", 0)),
-               "et": et.file, "emissions": {}, "missing": {}}
+        out = {
+            "idle": float(et.settings.get("audio_rpm_idle", 0)),
+            "redline": float(et.settings.get("audio_rpm_redline", 0)),
+            "et": et.file,
+            "emissions": {},
+            "missing": {},
+        }
         try:
             vgm = fa.vgmstream_path(vgmstream)
         except SystemExit as error:
@@ -515,13 +563,13 @@ def forza_engine(car: str, game: str, isos: list[Path], cache: Path, emissions: 
                 if lp.group != group or lp.index not in by_index:
                     continue
                 pcm, rate = read_wav(by_index[lp.index])
-                loops.append(ForzaLoop(fsb.subsongs[lp.index].name, lp.rpm_sample, lp.rpm_min, lp.rpm_max,
-                                       lp.volume, rate, pcm))
+                loops.append(
+                    ForzaLoop(fsb.subsongs[lp.index].name, lp.rpm_sample, lp.rpm_min, lp.rpm_max, lp.volume, rate, pcm)
+                )
             if not loops:
                 out["missing"][emission] = f"{ht_name}: no {group} loops"
                 continue
-            out["emissions"][emission] = {"ht": ht_name, "bank": ht.bank,
-                                          "loops": sorted(loops, key=lambda l: l.rpm)}
+            out["emissions"][emission] = {"ht": ht_name, "bank": ht.bank, "loops": sorted(loops, key=lambda l: l.rpm)}
         return out
     finally:
         for s in sources:
@@ -535,8 +583,9 @@ def pick_emissions(forza: dict, wanted: dict[str, str] | None = None) -> dict[st
     out = {}
     for name in "AB":
         order = ([wanted[name]] if wanted and wanted.get(name) else []) + list(SET_EMISSIONS[name])
-        choice = next((e for e in order if e in have and e not in out.values()), None) or \
-            next((e for e in order if e in have), None)
+        choice = next((e for e in order if e in have and e not in out.values()), None) or next(
+            (e for e in order if e in have), None
+        )
         if choice is None:
             raise LookupError("no usable emission: " + "; ".join(forza["missing"].values()))
         out[name] = choice
@@ -551,6 +600,7 @@ def pick_loops(loops: list[ForzaLoop], n: int, redline: float) -> list[ForzaLoop
     in turn by a copy of its lower loop pitched to the gap's geometric middle
     (periodic resample: the loop plays faster, as the game would pitch it)."""
     from itertools import combinations
+
     usable = [l for l in loops if l.rpm <= redline * 1.1] or loops
     if len(usable) < n:
         out = sorted(usable, key=lambda l: l.rpm)
@@ -561,8 +611,9 @@ def pick_loops(loops: list[ForzaLoop], n: int, redline: float) -> list[ForzaLoop
                 k = max(range(len(out) - 1), key=lambda j: out[j + 1].rpm / out[j].rpm)
                 low, rpm = out[k], math.sqrt(out[k].rpm * out[k + 1].rpm)
             pcm = periodic_resample(low.pcm, max(64, round(len(low.pcm) * low.rpm / rpm)))
-            out.append(ForzaLoop(f"{low.name}@{round(rpm)}", round(rpm), low.rpm_min, low.rpm_max, low.volume,
-                                 low.rate, pcm))
+            out.append(
+                ForzaLoop(f"{low.name}@{round(rpm)}", round(rpm), low.rpm_min, low.rpm_max, low.volume, low.rate, pcm)
+            )
             out.sort(key=lambda l: l.rpm)
         return out
     if len(usable) == n:
@@ -580,6 +631,7 @@ def pick_loops(loops: list[ForzaLoop], n: int, redline: float) -> list[ForzaLoop
 
 # --------------------------------------------------------------------------- audio
 
+
 def seamless(x: np.ndarray, rate: int, max_seconds: float, fade: float = 0.06) -> np.ndarray:
     """A loop of at most max_seconds from a whole-sample loop x: keep x if short
     enough, else cut a segment whose tail crossfades into the material just
@@ -589,16 +641,16 @@ def seamless(x: np.ndarray, rate: int, max_seconds: float, fade: float = 0.06) -
         return x
     xf = int(fade * rate)
     target = int(max_seconds * rate)
-    tail_ref = x[n - xf:]
+    tail_ref = x[n - xf :]
     best, best_len = -2.0, target
     for length in range(max(xf * 2, target - rate // 10), target + 1):
-        seg = x[length - xf:length]
+        seg = x[length - xf : length]
         c = float(np.dot(seg, tail_ref) / (np.linalg.norm(seg) * np.linalg.norm(tail_ref) + 1e-12))
         if c > best:
             best, best_len = c, length
     y = x[:best_len].copy()
     w = np.sin(np.linspace(0, math.pi / 2, xf)) ** 2
-    y[best_len - xf:] = y[best_len - xf:] * (1 - w) + tail_ref * w
+    y[best_len - xf :] = y[best_len - xf :] * (1 - w) + tail_ref * w
     return y
 
 
@@ -625,6 +677,7 @@ def rms(x: np.ndarray) -> float:
 
 # --------------------------------------------------------------------------- curves
 
+
 def warp(points: list[tuple[float, float]], x: float) -> float:
     for (x0, y0), (x1, y1) in itertools.pairwise(points):
         if x <= x1:
@@ -635,18 +688,27 @@ def warp(points: list[tuple[float, float]], x: float) -> float:
 def warp_map(old: list[float], new: list[float], top: float = 12000.0) -> list[tuple[float, float]]:
     pts = [(0.0, 0.0)] + list(zip(old, new)) + [(top, max(top, new[-1] * 1.05))]
     out = []
-    for p in pts:   # keep it strictly increasing
+    for p in pts:  # keep it strictly increasing
         if not out or (p[0] > out[-1][0] and p[1] > out[-1][1]):
             out.append(p)
     return out
 
 
-def retune(bank: wb.Bank, vsvh: bytes, sets: dict[str, list[Slot]], new_rpm: dict[int, float],
-           lo_hi_old: tuple[float, float], lo_hi_new: tuple[float, float]) -> dict:
+def retune(
+    bank: wb.Bank,
+    vsvh: bytes,
+    sets: dict[str, list[Slot]],
+    new_rpm: dict[int, float],
+    lo_hi_old: tuple[float, float],
+    lo_hi_new: tuple[float, float],
+) -> dict:
     """Pitch curves from the new recording rpms; every other vehicle_rpm curve
     and layer crossfade warped from the old rpm points to the new ones."""
-    maps = {name: warp_map([s.rpm for s in slots], [new_rpm[s.media] for s in slots])
-            for name, slots in sets.items() if slots}
+    maps = {
+        name: warp_map([s.rpm for s in slots], [new_rpm[s.media] for s in slots])
+        for name, slots in sets.items()
+        if slots
+    }
     other = warp_map(list(lo_hi_old), list(lo_hi_new))
     owner = set_of_objects(bank, vsvh)
     sound_media = {}
@@ -669,8 +731,10 @@ def retune(bank: wb.Bank, vsvh: bytes, sets: dict[str, list[Slot]], new_rpm: dic
                     k = min(inner, key=lambda j: abs(math.log(max(xs[j], 1) / r)))
                     if xs[k - 1] < r < xs[k + 1]:
                         xs[k] = r
-                pts = [(x, -4800.0 if x <= 0 else max(-4800.0, min(4800.0, 1200 * math.log2(x / r))), p[2])
-                       for x, p in zip(xs, rt["points"])]
+                pts = [
+                    (x, -4800.0 if x <= 0 else max(-4800.0, min(4800.0, 1200 * math.log2(x / r))), p[2])
+                    for x, p in zip(xs, rt["points"])
+                ]
                 counts["pitch"] += 1
             else:
                 pts = [(warp(m, x), y, i) for x, y, i in rt["points"]]
@@ -691,6 +755,7 @@ def retune(bank: wb.Bank, vsvh: bytes, sets: dict[str, list[Slot]], new_rpm: dic
 
 
 # --------------------------------------------------------------------------- preview
+
 
 def curve_at(points, x: float) -> float:
     return warp([(p[0], p[1]) for p in points], x)
@@ -738,10 +803,18 @@ def pitch_ranges(bank: wb.Bank, vsvh: bytes) -> dict[str, dict]:
                 continue
             ratios = [float(2 ** (curve_at(pitch, g) / 1200)) for g in (live[0], live[-1])]
             all_ratios += ratios
-            loops.append({"rpm": round(s.rpm), "pitch": [round(min(ratios), 3), round(max(ratios), 3)],
-                          "rpm_range": [int(round(live[0])), int(round(live[-1]))]})
-        out[name] = {"pitch": [round(min(all_ratios), 3), round(max(all_ratios), 3)] if all_ratios else None,
-                     "pitch_main": [round(float(main.min()), 3), round(float(main.max()), 3)], "loops": loops}
+            loops.append(
+                {
+                    "rpm": round(s.rpm),
+                    "pitch": [round(min(ratios), 3), round(max(ratios), 3)],
+                    "rpm_range": [int(round(live[0])), int(round(live[-1]))],
+                }
+            )
+        out[name] = {
+            "pitch": [round(min(all_ratios), 3), round(max(all_ratios), 3)] if all_ratios else None,
+            "pitch_main": [round(float(main.min()), 3), round(float(main.max()), 3)],
+            "loops": loops,
+        }
     return out
 
 
@@ -804,23 +877,26 @@ def same_structure(host: wb.Bank, new: wb.Bank, mapping: dict[int, int], old_ban
         new_layers = [{**l, "assoc": [(c, None, None) for c, _, _ in l["assoc"]]} for l in b.info.get("layers", [])]
         if norm(info) != norm({k: v for k, v in b.info.items() if k != "layers"}) or norm(layers) != norm(new_layers):
             problems.append(f"{a.kind} {a.id:08x}: fields differ")
-    if [len(w) > 0 for _, w in host.media] != [len(w) > 0 for _, w in new.media] or \
-            [m.get(i, i) for i, _ in host.media] != [i for i, _ in new.media]:
+    if [len(w) > 0 for _, w in host.media] != [len(w) > 0 for _, w in new.media] or [
+        m.get(i, i) for i, _ in host.media
+    ] != [i for i, _ in new.media]:
         problems.append("media list differs")
     return problems
 
 
 # --------------------------------------------------------------------------- build
 
+
 @dataclass
 class Sound:
     """A converted engine sound: the new SBAK and VSVH and what went into them."""
+
     sbak: bytes
     vsvh: bytes
     report: dict
     template_sbak: bytes
     template_vsvh: bytes
-    decoded: list = field(default_factory=list)    # (wav name, float pcm) per new loop
+    decoded: list = field(default_factory=list)  # (wav name, float pcm) per new loop
 
     def write(self, out: Path) -> None:
         """SBAK.bin, VSVH.bin, report.json, wav/ and the two sweeps."""
@@ -837,9 +913,19 @@ class Sound:
         (out / "report.json").write_text(json.dumps(self.report, indent=1))
 
 
-def build_sound(sbak: bytes, vsvh: bytes, forza: dict, *, namespace: int, reserved: set[int], tag: str,
-                emissions: dict[str, str] | None = None, max_seconds: float = MAX_SECONDS[0],
-                engine: int | None = None, bank_name: str | None = None) -> Sound:
+def build_sound(
+    sbak: bytes,
+    vsvh: bytes,
+    forza: dict,
+    *,
+    namespace: int,
+    reserved: set[int],
+    tag: str,
+    emissions: dict[str, str] | None = None,
+    max_seconds: float = MAX_SECONDS[0],
+    engine: int | None = None,
+    bank_name: str | None = None,
+) -> Sound:
     """The template bank (sbak, vsvh) with the Forza loops of `forza` (forza_engine)."""
     bank = wb.Bank.parse(sbak)
     template_vsvh = bytes(vsvh)
@@ -856,8 +942,14 @@ def build_sound(sbak: bytes, vsvh: bytes, forza: dict, *, namespace: int, reserv
         raise ValueError(f"idle/redline {idle:g}/{redline:g} outside the VSVH+94/+98 rules")
     emissions = pick_emissions(forza, emissions)
 
-    report = {"idle": idle, "redline": redline, "et": forza["et"], "template_rpm_range": [lo_old, hi_old],
-              "max_seconds": max_seconds, "sets": {}}
+    report = {
+        "idle": idle,
+        "redline": redline,
+        "et": forza["et"],
+        "template_rpm_range": [lo_old, hi_old],
+        "max_seconds": max_seconds,
+        "sets": {},
+    }
     new_media, new_rpm, decoded = {}, {}, []
     template = wb.Wem.parse(bank.media[0][1])
     for name, slots in sets.items():
@@ -879,14 +971,32 @@ def build_sound(sbak: bytes, vsvh: bytes, forza: dict, *, namespace: int, reserv
             wem = template.with_data(wb.encode_ima(list(pcm)), RATE).build()
             new_media[slot.media] = wem
             new_rpm[slot.media] = float(loop.rpm)
-            decoded.append((f"{name}{k}_{loop.rpm:05d}rpm_{loop.name}.wav",
-                            np.array(wb.Wem.parse(wem).pcm()[0], dtype=np.float64) / 32768))
-            rows.append({"slot": k, "template_media": f"{slot.media:08x}", "template_rpm": round(slot.rpm),
-                         "forza": loop.name, "rpm": loop.rpm, "volume": loop.volume,
-                         "seconds": round(len(pcm) / RATE, 3), "bytes": len(wem)})
-        report["sets"][name] = {"emission": emission, "bank": forza["emissions"][emission]["bank"],
-                                "ht": forza["emissions"][emission]["ht"], "available": len(loops),
-                                "gain": round(gain, 3), "loops": rows}
+            decoded.append(
+                (
+                    f"{name}{k}_{loop.rpm:05d}rpm_{loop.name}.wav",
+                    np.array(wb.Wem.parse(wem).pcm()[0], dtype=np.float64) / 32768,
+                )
+            )
+            rows.append(
+                {
+                    "slot": k,
+                    "template_media": f"{slot.media:08x}",
+                    "template_rpm": round(slot.rpm),
+                    "forza": loop.name,
+                    "rpm": loop.rpm,
+                    "volume": loop.volume,
+                    "seconds": round(len(pcm) / RATE, 3),
+                    "bytes": len(wem),
+                }
+            )
+        report["sets"][name] = {
+            "emission": emission,
+            "bank": forza["emissions"][emission]["bank"],
+            "ht": forza["emissions"][emission]["ht"],
+            "available": len(loops),
+            "gain": round(gain, 3),
+            "loops": rows,
+        }
 
     bank.replace_media(new_media)
     report["curves"] = retune(bank, bytes(vsvh), sets, new_rpm, (lo_old, hi_old), (idle, redline))
@@ -917,14 +1027,22 @@ def build_sound(sbak: bytes, vsvh: bytes, forza: dict, *, namespace: int, reserv
     if problems:
         raise RuntimeError("rebuilt bank invalid: " + "; ".join(problems[:5]))
     new = wb.Bank.parse(raw)
-    report.update(bank_id=f"{new_bank:08x}", template_bank_id=f"{old_bank:08x}", id_namespace=namespace,
-                  ids_remapped=len(mapping) + 1, vsvh_fields_remapped=patched, sbak_bytes=len(raw),
-                  template_sbak_bytes=len(sbak), vsvh_rpm_range=[int(round(idle)), int(round(redline))],
-                  pitch=pitch_ranges(new, bytes(vsvh)))
+    report.update(
+        bank_id=f"{new_bank:08x}",
+        template_bank_id=f"{old_bank:08x}",
+        id_namespace=namespace,
+        ids_remapped=len(mapping) + 1,
+        vsvh_fields_remapped=patched,
+        sbak_bytes=len(raw),
+        template_sbak_bytes=len(sbak),
+        vsvh_rpm_range=[int(round(idle)), int(round(redline))],
+        pitch=pitch_ranges(new, bytes(vsvh)),
+    )
     return Sound(raw, bytes(vsvh), report, sbak, template_vsvh, decoded)
 
 
 # --------------------------------------------------------------------------- port_car step
+
 
 def template_order(index: dict, ranking: list[int], first: list[int] | None = None, limit: int = 3) -> list[int]:
     """Usable templates (stock_index "why" empty) in preference order: `first`
@@ -946,8 +1064,20 @@ class Plan:
     """The Forza sound of one car, built lazily per (template, loop length) in
     preference order; port_car.build_car installs candidates until the NONR fits."""
 
-    def __init__(self, stream, entries, media: str, game: str, spool_id: int, forza: dict,
-                 templates: list[int], reserved: set[int], engine: int | None, engine_text: str, log=print):
+    def __init__(
+        self,
+        stream,
+        entries,
+        media: str,
+        game: str,
+        spool_id: int,
+        forza: dict,
+        templates: list[int],
+        reserved: set[int],
+        engine: int | None,
+        engine_text: str,
+        log=print,
+    ):
         self.stream, self.entries = stream, entries
         self.media, self.game, self.spool_id = media, game.lower(), spool_id
         self.forza, self.templates, self.reserved = forza, templates, reserved
@@ -970,21 +1100,29 @@ class Plan:
             self._next += 1
             try:
                 sbak, vsvh = self.template(template)
-                sound = build_sound(sbak, vsvh, self.forza, namespace=self.spool_id, reserved=self.reserved,
-                                    tag=f"dsfforza:{template}", max_seconds=seconds, engine=self.engine,
-                                    bank_name=f"dsfforza_{self.game}_{self.media}")
+                sound = build_sound(
+                    sbak,
+                    vsvh,
+                    self.forza,
+                    namespace=self.spool_id,
+                    reserved=self.reserved,
+                    tag=f"dsfforza:{template}",
+                    max_seconds=seconds,
+                    engine=self.engine,
+                    bank_name=f"dsfforza_{self.game}_{self.media}",
+                )
             except (ValueError, RuntimeError, LookupError, KeyError) as error:
                 self.failures.append(f"template {template}: {error}")
                 self.log(f"  forza sound: template {template} failed: {error}")
                 self._order = [o for o in self._order if o[0] != template]
                 continue
-            sound.report.update(template=template, media=self.media, game=self.game,
-                                engine=self.engine_text)
+            sound.report.update(template=template, media=self.media, game=self.game, engine=self.engine_text)
             self.built.append(sound)
 
     def template(self, sid: int) -> tuple[bytes, bytes]:
         from dsfforza.build import clone_vehicle as cv
         from dsfforza.formats.vehicles import find
+
         for s, index, kind in cv.sslp_records(self.stream, self.entries):
             if s == sid and kind == 0:
                 vsrt = find(find(self.entries[index].children, "NONR").children, "VSRT")
@@ -998,6 +1136,7 @@ def install(full, sbak: bytes, vsvh: bytes, stream=None) -> dict:
     with the entry's own ID at +0, and no GRBK. Returns what was replaced."""
     from dsfforza.build import clone_vehicle as cv
     from dsfforza.formats.vehicles import find
+
     nonr = find(full.children, "NONR")
     at = next(n for n, c in enumerate(nonr.children) if c.tag == "VSRT")
     vsrt = copy.deepcopy(nonr.children[at])
@@ -1017,18 +1156,31 @@ def summary(report: dict) -> dict:
     """The batch report's per-car sound line."""
     if not report.get("ok"):
         return {"forza": False, "reason": report.get("reason")}
-    return {"forza": True, "template": report["template"], "bank_id": report["bank_id"],
-            "sbak_bytes": report["sbak_bytes"], "max_seconds": report["max_seconds"],
-            "idle_redline": report["vsvh_rpm_range"], "engine_type": report["engine_type"]["state"],
-            **{f"set_{k}": {"emission": s["emission"], "bank": s["bank"], "loops_used": len(s["loops"]),
-                            "loops_available": s["available"],
-                            "rpms": [row["rpm"] for row in s["loops"]],
-                            "pitch": report["pitch"][k]["pitch"],
-                            "pitch_main": report["pitch"][k].get("pitch_main")}
-               for k, s in report["sets"].items()}}
+    return {
+        "forza": True,
+        "template": report["template"],
+        "bank_id": report["bank_id"],
+        "sbak_bytes": report["sbak_bytes"],
+        "max_seconds": report["max_seconds"],
+        "idle_redline": report["vsvh_rpm_range"],
+        "engine_type": report["engine_type"]["state"],
+        **{
+            f"set_{k}": {
+                "emission": s["emission"],
+                "bank": s["bank"],
+                "loops_used": len(s["loops"]),
+                "loops_available": s["available"],
+                "rpms": [row["rpm"] for row in s["loops"]],
+                "pitch": report["pitch"][k]["pitch"],
+                "pitch_main": report["pitch"][k].get("pitch_main"),
+            }
+            for k, s in report["sets"].items()
+        },
+    }
 
 
 # --------------------------------------------------------------------------- lint
+
 
 def lint_bank(bank: wb.Bank, vsvh: bytes) -> list[str]:
     """Problems of a vehicle bank with its VSVH: every event field resolves to an
@@ -1067,12 +1219,12 @@ def _content(bank: wb.Bank) -> dict[int, bytes]:
     for o in bank.objects:
         body = bytearray(o.body)
         for at in o.info["refs"]:
-            if body[at:at + 4] == own:
-                body[at:at + 4] = b"\0\0\0\0"
+            if body[at : at + 4] == own:
+                body[at : at + 4] = b"\0\0\0\0"
         if "offset_at" in o.info:
-            body[o.info["offset_at"]:o.info["offset_at"] + 4] = b"\0\0\0\0"
+            body[o.info["offset_at"] : o.info["offset_at"] + 4] = b"\0\0\0\0"
         if o.type == 7:
-            body = body[:len(body) - 4 - 4 * len(o.info["children"])]
+            body = body[: len(body) - 4 - 4 * len(o.info["children"])]
         out[o.id] = hashlib.sha1(bytes([o.type]) + bytes(body)).digest()
         for layer in o.info.get("layers", []):
             out[layer["id"]] = out[o.id]
@@ -1096,6 +1248,7 @@ def lint(stream, root_entries, spool_id: int, reserved: set[int] | None = None) 
     template's bank, as stock cars do)."""
     from dsfforza.build import clone_vehicle as cv
     from dsfforza.formats.vehicles import find
+
     rows: list[tuple[bool, str]] = []
     banks: dict[int, tuple[wb.Bank, bytes]] = {}
     own = None
@@ -1117,21 +1270,40 @@ def lint(stream, root_entries, spool_id: int, reserved: set[int] | None = None) 
     if own is None:
         return [(False, f"sound: no kind-0 entry for spool {spool_id}")]
     vsvh = own.get("VSVH", b"")
-    rows.append((len(vsvh) == VSVH_SIZE and struct.unpack_from("<I", vsvh, 0)[0] == spool_id,
-                 f"sound: VSVH is {VSVH_SIZE:#x} bytes with the spool ID at +0"))
+    rows.append(
+        (
+            len(vsvh) == VSVH_SIZE and struct.unpack_from("<I", vsvh, 0)[0] == spool_id,
+            f"sound: VSVH is {VSVH_SIZE:#x} bytes with the spool ID at +0",
+        )
+    )
     try:
         bank = wb.Bank.parse(own["SBAK"])
     except (ValueError, KeyError, struct.error) as error:
         rows.append((False, f"sound: SBAK does not parse or rebuild byte-identically ({error})"))
         return rows
-    rows.append((True, f"sound: bank {bank.bank_id:08x} parses (v{bank.header[0]}, {len(bank.objects)} objects, "
-                       f"{len(bank.media)} media) and rebuilds byte-identically"))
+    rows.append(
+        (
+            True,
+            f"sound: bank {bank.bank_id:08x} parses (v{bank.header[0]}, {len(bank.objects)} objects, "
+            f"{len(bank.media)} media) and rebuilds byte-identically",
+        )
+    )
     problems = bank.validate()
-    rows.append((not problems, "sound: every Sound's offset/size points at its media, whole ADPCM blocks"
-                 + (": " + "; ".join(problems[:3]) if problems else "")))
+    rows.append(
+        (
+            not problems,
+            "sound: every Sound's offset/size points at its media, whole ADPCM blocks"
+            + (": " + "; ".join(problems[:3]) if problems else ""),
+        )
+    )
     problems = lint_bank(bank, vsvh) if len(vsvh) == VSVH_SIZE else ["short VSVH"]
-    rows.append((not problems, "sound: VSVH event fields resolve to Events of the bank"
-                 + (": " + "; ".join(problems[:3]) if problems else "")))
+    rows.append(
+        (
+            not problems,
+            "sound: VSVH event fields resolve to Events of the bank"
+            + (": " + "; ".join(problems[:3]) if problems else ""),
+        )
+    )
     forza = is_forza_bank(bank)
     mine = _content(bank)
     clashes, shared = [], set()
@@ -1146,30 +1318,53 @@ def lint(stream, root_entries, spool_id: int, reserved: set[int] | None = None) 
         lo, hi = struct.unpack_from("<II", vsvh, 0x94)
         rows.append((0 < lo < 5000 and lo < hi < 15000, f"sound: rpm range {lo}..{hi} within the VSVH+94/+98 rules"))
         sets = loop_sets(bank, vsvh)
-        rows.append((all(sets.values()), "sound: both loop sets hold embedded loops "
-                     f"({len(sets['A'])}+{len(sets['B'])})"))
+        rows.append(
+            (all(sets.values()), f"sound: both loop sets hold embedded loops ({len(sets['A'])}+{len(sets['B'])})")
+        )
         extra = set_media(bank, vsvh) - {s.media for v in sets.values() for s in v}
-        rows.append((not extra, "sound: the loop sets play no media but the rpm loops (no template idle grains)"
-                     + (f" ({len(extra)} more)" if extra else "")))
-        rows.append((not clashes, "sound: Forza bank IDs are unique in the archive"
-                     + (f" (clashes: {', '.join(clashes[:4])})" if clashes else f" ({len(mine)} IDs)")))
+        rows.append(
+            (
+                not extra,
+                "sound: the loop sets play no media but the rpm loops (no template idle grains)"
+                + (f" ({len(extra)} more)" if extra else ""),
+            )
+        )
+        rows.append(
+            (
+                not clashes,
+                "sound: Forza bank IDs are unique in the archive"
+                + (f" (clashes: {', '.join(clashes[:4])})" if clashes else f" ({len(mine)} IDs)"),
+            )
+        )
         if reserved is not None:
             hit = sorted(i for i in mine if i in reserved)
-            rows.append((not hit, "sound: no Forza bank ID is a stock or WWiseDefault.pck ID"
-                         + (f" ({', '.join(f'{i:08x}' for i in hit[:4])})" if hit else "")))
+            rows.append(
+                (
+                    not hit,
+                    "sound: no Forza bank ID is a stock or WWiseDefault.pck ID"
+                    + (f" ({', '.join(f'{i:08x}' for i in hit[:4])})" if hit else ""),
+                )
+            )
     else:
-        rows.append((not clashes, "sound: IDs shared with other vehicles' banks have the same content"
-                     + (f" (shared with {sorted(shared)[:6]})" if shared and not clashes else "")
-                     + (f" (differ: {', '.join(clashes[:4])})" if clashes else "")))
+        rows.append(
+            (
+                not clashes,
+                "sound: IDs shared with other vehicles' banks have the same content"
+                + (f" (shared with {sorted(shared)[:6]})" if shared and not clashes else "")
+                + (f" (differ: {', '.join(clashes[:4])})" if clashes else ""),
+            )
+        )
     return rows
 
 
 # --------------------------------------------------------------------------- apply (CLI)
 
+
 def apply(archive: Path, target: Path, spool: int, sound: Path) -> dict:
     from dsfforza.build import clone_vehicle as cv
     from dsfforza.build import port_car
     from dsfforza.formats.vehicles import find
+
     sbak = (sound / "SBAK.bin").read_bytes()
     vsvh_new = (sound / "VSVH.bin").read_bytes()
     with archive.open("rb") as s:
@@ -1187,8 +1382,9 @@ def apply(archive: Path, target: Path, spool: int, sound: Path) -> dict:
             sizes, problems = port_car.check_entry(vehc, kind, nonr_limit, mdxn_max)
             if problems:
                 raise SystemExit(f"spool {sid} kind {kind}: " + "; ".join(problems))
-            done.append({"spool": sid, "kind": kind, "nonr": hex(sizes["NONR"]),
-                         "nonr_limit": hex(nonr_limit[kind]), **result})
+            done.append(
+                {"spool": sid, "kind": kind, "nonr": hex(sizes["NONR"]), "nonr_limit": hex(nonr_limit[kind]), **result}
+            )
         if not done:
             raise SystemExit(f"no VEHC with a VSRT for spool {spool}")
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1209,10 +1405,16 @@ def main(argv: list[str] | None = None) -> None:
     c.add_argument("--dsf", type=Path, default=DEFAULT_DSF)
     c.add_argument("--iso", type=Path, action="append")
     c.add_argument("--cache", type=Path, default=CACHE)
-    c.add_argument("--set-a", choices=sorted(EMISSION_GROUP),
-                   help="emission for set A (VSVH+04, emitter A at the engine marker; default EngineAmbient)")
-    c.add_argument("--set-b", choices=sorted(EMISSION_GROUP),
-                   help="emission for set B (VSVH+0C, emitter B at the exhaust marker; default Exhaust)")
+    c.add_argument(
+        "--set-a",
+        choices=sorted(EMISSION_GROUP),
+        help="emission for set A (VSVH+04, emitter A at the engine marker; default EngineAmbient)",
+    )
+    c.add_argument(
+        "--set-b",
+        choices=sorted(EMISSION_GROUP),
+        help="emission for set B (VSVH+0C, emitter B at the exhaust marker; default Exhaust)",
+    )
     c.add_argument("--max-seconds", type=float, default=MAX_SECONDS[0], help="longest loop kept (NONR budget)")
     c.add_argument("--engine-type", type=int, help="VSVH+4C value (default: the template's)")
     a = sub.add_parser("apply")
@@ -1236,21 +1438,34 @@ def main(argv: list[str] | None = None) -> None:
         isos = args.iso or [REPO / "assets" / n for n in GAME_ISOS[args.game]]
         forza = forza_engine(args.car, args.game, isos, args.cache)
         reserved = stock_index(args.dsf)["reserved"]
-        sound = build_sound(sbak, vsvh, forza, namespace=args.spool, reserved=reserved,
-                            tag=f"dsfforza:{args.host}", emissions={"A": args.set_a, "B": args.set_b},
-                            max_seconds=args.max_seconds, engine=args.engine_type,
-                            bank_name=f"dsfforza_{args.game}_{args.car}")
+        sound = build_sound(
+            sbak,
+            vsvh,
+            forza,
+            namespace=args.spool,
+            reserved=reserved,
+            tag=f"dsfforza:{args.host}",
+            emissions={"A": args.set_a, "B": args.set_b},
+            max_seconds=args.max_seconds,
+            engine=args.engine_type,
+            bank_name=f"dsfforza_{args.game}_{args.car}",
+        )
         sound.report.update(car=args.car, game=args.game, template=args.host)
         sound.write(args.out)
         r = sound.report
         for name, st in r["sets"].items():
-            print(f"set {name}: {st['emission']} from {st['bank']} (gain {st['gain']}, "
-                  f"pitch {r['pitch'][name]['pitch']})")
+            print(
+                f"set {name}: {st['emission']} from {st['bank']} (gain {st['gain']}, pitch {r['pitch'][name]['pitch']})"
+            )
             for row in st["loops"]:
-                print(f"  slot {row['slot']} template {row['template_rpm']:>5} rpm -> {row['forza']:>12} "
-                      f"{row['rpm']:>5} rpm {row['seconds']:.2f}s {row['bytes']:#x} B")
-        print(f"SBAK {r['sbak_bytes']:#x} (template {r['template_sbak_bytes']:#x}), bank {r['bank_id']}, "
-              f"VSVH rpm {r['vsvh_rpm_range']}, curves {r['curves']}, ids {r['ids_remapped']} -> {args.out}")
+                print(
+                    f"  slot {row['slot']} template {row['template_rpm']:>5} rpm -> {row['forza']:>12} "
+                    f"{row['rpm']:>5} rpm {row['seconds']:.2f}s {row['bytes']:#x} B"
+                )
+        print(
+            f"SBAK {r['sbak_bytes']:#x} (template {r['template_sbak_bytes']:#x}), bank {r['bank_id']}, "
+            f"VSVH rpm {r['vsvh_rpm_range']}, curves {r['curves']}, ids {r['ids_remapped']} -> {args.out}"
+        )
     elif args.cmd == "apply":
         print(json.dumps(apply(args.archive, args.target, args.spool, args.sound), indent=1))
     elif args.cmd == "templates":
@@ -1258,8 +1473,10 @@ def main(argv: list[str] | None = None) -> None:
         print(f"{len(index['reserved'])} reserved IDs (pck: {index['pck']})")
         for sid, row in sorted(index["banks"].items()):
             sets = "+".join(str(len(row["sets"].get(k, []))) for k in "AB")
-            print(f"{sid:4} {row['name'][:24]:24} {sets:6} SBAK {row['sbak']:#8x} rpm {row['rpm']} "
-                  f"type {ENGINE_TYPES.get(row['engine_type'], row['engine_type'])}  {row['why'] or 'template'}")
+            print(
+                f"{sid:4} {row['name'][:24]:24} {sets:6} SBAK {row['sbak']:#8x} rpm {row['rpm']} "
+                f"type {ENGINE_TYPES.get(row['engine_type'], row['engine_type'])}  {row['why'] or 'template'}"
+            )
     elif args.cmd == "lint":
         reserved = stock_index(args.stock)["reserved"] if args.stock else None
         bad = 0

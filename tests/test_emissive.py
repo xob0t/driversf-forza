@@ -11,10 +11,17 @@ from dsfforza.convert import paint
 
 
 def _entry(c2, c3, power, bias=0.01, metallic=True):
-    return {"g_vec4TintColour1_Alpha": (0.0, 1.0 if metallic else 0.0, 0.0, 1.0),
-            "g_vec3TintColour2": tuple(c2) + (1.0,), "g_vec3TintColour3": tuple(c3) + (1.0,),
-            "g_fresnelpower": power, "g_fresnelbias": bias, "g_hCustomFresnelPower": 1.0,
-            "g_hCustomReflectionAmount": 0.1, "g_hSecondSpecularIntensity": 1.0, "g_hSecondSpecularPower": 100.0}
+    return {
+        "g_vec4TintColour1_Alpha": (0.0, 1.0 if metallic else 0.0, 0.0, 1.0),
+        "g_vec3TintColour2": tuple(c2) + (1.0,),
+        "g_vec3TintColour3": tuple(c3) + (1.0,),
+        "g_fresnelpower": power,
+        "g_fresnelbias": bias,
+        "g_hCustomFresnelPower": 1.0,
+        "g_hCustomReflectionAmount": 0.1,
+        "g_hSecondSpecularIntensity": 1.0,
+        "g_hSecondSpecularPower": 100.0,
+    }
 
 
 # A small stock set: the security van's yellow (the S5S Raptor's template), a flat grey
@@ -29,7 +36,7 @@ STOCK = [
 class PaintBrightness(unittest.TestCase):
     def test_too_bright_colour_is_dimmed_to_stock(self):
         # FH1 S5S Raptor: #ffbf19 metallic, linear (1.0, 0.52, 0.01) on the van's yellow.
-        q = paint.shade(paint.ForzaColour(1, (0xff, 0xbf, 0x19), True, "Yellow"), STOCK)
+        q = paint.shade(paint.ForzaColour(1, (0xFF, 0xBF, 0x19), True, "Yellow"), STOCK)
         self.assertEqual(q["_template"], 301)
         self.assertLess(q["_dimmed"], 0.8)
         cap = paint.brightness_cap(STOCK)
@@ -37,12 +44,12 @@ class PaintBrightness(unittest.TestCase):
             self.assertLessEqual(got, limit + 1e-6)
         # hue kept: both colours scaled alike
         c2 = q["g_vec3TintColour2"]
-        self.assertAlmostEqual(c2[1] / c2[0], paint.srgb_to_linear(0xbf / 255), places=3)
+        self.assertAlmostEqual(c2[1] / c2[0], paint.srgb_to_linear(0xBF / 255), places=3)
 
     def test_ordinary_colour_untouched(self):
-        q = paint.shade(paint.ForzaColour(1, (0xf5, 0xf5, 0xf5), True, "White"), STOCK)
+        q = paint.shade(paint.ForzaColour(1, (0xF5, 0xF5, 0xF5), True, "White"), STOCK)
         self.assertEqual(q["_dimmed"], 1.0)
-        self.assertAlmostEqual(q["g_vec3TintColour2"][0], paint.srgb_to_linear(0xf5 / 255), places=4)
+        self.assertAlmostEqual(q["g_vec3TintColour2"][0], paint.srgb_to_linear(0xF5 / 255), places=4)
 
 
 class LiveryDecals(unittest.TestCase):
@@ -56,30 +63,31 @@ class LiveryDecals(unittest.TestCase):
         self.assertEqual(fm.classify_cockpit("badge", "interior"), (fm.TEXTURED, fm.INTERIOR))
 
 
-
 class RedLensScale(unittest.TestCase):
     """A car whose visible red lamp surface is brighter than stock's visible median is
     darkened to it; darker ones are left alone (never brightened)."""
 
     def test_bright_flat_lens_darkened(self):
         from dsfforza.convert import dsf_materials as dm
-        k = dm.red_lens_scale([177] * 1000)          # the TT RS's tail lens
+
+        k = dm.red_lens_scale([177] * 1000)  # the TT RS's tail lens
         self.assertAlmostEqual(dm._shared_lens(177) * k, dm.VISIBLE_RED_STOCK_MEDIAN, places=3)
         r, _g, _b, _ = dm.matched_lamp_texel(177, 0, 0, 200, None, k)
         self.assertEqual(r, dm.VISIBLE_RED_STOCK_MEDIAN)
 
     def test_dark_lens_untouched(self):
         from dsfforza.convert import dsf_materials as dm
+
         self.assertEqual(dm.red_lens_scale([100] * 1000), 1.0)
         self.assertIsNone(dm.red_lens_scale([177] * 10))  # too few samples
-        self.assertEqual(dm.matched_lamp_texel(100, 0, 0, 200, None, 1.0),
-                         dm.matched_lamp_texel(100, 0, 0, 200))
+        self.assertEqual(dm.matched_lamp_texel(100, 0, 0, 200, None, 1.0), dm.matched_lamp_texel(100, 0, 0, 200))
 
     def test_visible_red_sees_the_outer_lens(self):
         """Two stacked quads behind the car: only the outer one (larger Forza z) counts."""
         from unittest import mock
 
         from dsfforza.convert import dsf_materials as dm
+
         size = 8
         img = bytearray()
         for _ in range(size):
@@ -113,8 +121,13 @@ class RedLensScale(unittest.TestCase):
                 return self.vertices
 
         def quad(z, u0, u1):
-            return [V((0.0, 0.0, z), (u0, 0.1)), V((0.3, 0.0, z), (u1, 0.1)),
-                    V((0.3, 0.2, z), (u1, 0.9)), V((0.0, 0.2, z), (u0, 0.9))]
+            return [
+                V((0.0, 0.0, z), (u0, 0.1)),
+                V((0.3, 0.0, z), (u1, 0.1)),
+                V((0.3, 0.2, z), (u1, 0.9)),
+                V((0.0, 0.2, z), (u0, 0.9)),
+            ]
+
         outer = Section("taillightL", quad(2.0, 0.55, 0.95), [Sub("tail_light", [(0, 1, 2), (0, 2, 3)])])
         inner = Section("taillightL2", quad(1.9, 0.05, 0.45), [Sub("reflector", [(0, 1, 2), (0, 2, 3)])])
         with mock.patch.object(fm, "AtlasCache", FakeAtlases):

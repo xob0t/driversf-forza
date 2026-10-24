@@ -40,13 +40,13 @@ XEX_EXECUTION_INFO = 0x00040006
 @dataclass
 class Source:
     game: str
-    where: str        # e.g. "FM4 disc 1", "FM4 disc 2 / 1950-2000 Model Year Car Pack"
-    path: str         # path of the zip or folder
-    size: int         # bytes as stored (compressed)
+    where: str  # e.g. "FM4 disc 1", "FM4 disc 2 / 1950-2000 Model Year Car Pack"
+    path: str  # path of the zip or folder
+    size: int  # bytes as stored (compressed)
     files: int
-    kind: str         # car | autovista | placeholder | other
-    iso: str = ""     # disc image the source is on
-    package: str = "" # STFS package path on the disc (disc 2 car packs), else ""
+    kind: str  # car | autovista | placeholder | other
+    iso: str = ""  # disc image the source is on
+    package: str = ""  # STFS package path on the disc (disc 2 car packs), else ""
 
 
 @dataclass
@@ -91,8 +91,12 @@ def classify(name: str, files: list[str]) -> str:
         return "car"
     if any(c.endswith("_s_lod0.carbin") for c in carbins):
         return "autovista"
-    if any(not c.startswith("stripped_") and "_" in c and
-           not any(t in c for t in ("_lod0", "_cockpit", "caliper", "rotor")) for c in carbins):
+    if any(
+        not c.startswith("stripped_")
+        and "_" in c
+        and not any(t in c for t in ("_lod0", "_cockpit", "caliper", "rotor"))
+        for c in carbins
+    ):
         return "car"  # main carbin named differently from the zip
     return "other"
 
@@ -116,8 +120,13 @@ def scan_disc_zips(image: XIso, game: str, where: str) -> list[Source]:
     sources = []
     for entry in image.files():
         parts = entry.path.split("/")
-        if entry.is_dir or len(parts) != 3 or parts[0].lower() != "media" or parts[1].lower() != "cars" \
-                or not parts[2].lower().endswith(".zip"):
+        if (
+            entry.is_dir
+            or len(parts) != 3
+            or parts[0].lower() != "media"
+            or parts[1].lower() != "cars"
+            or not parts[2].lower().endswith(".zip")
+        ):
             continue
         name = parts[2][:-4]
         with zipfile.ZipFile(image.open(entry)) as archive:
@@ -150,9 +159,17 @@ def scan_packages(image: XIso, game: str, where: str) -> list[Source]:
                         groups[p[2]].append(info)
             for name, infos in groups.items():
                 files = ["/".join(i.filename.split("/")[3:]) for i in infos]
-                sources.append(Source(game, label, f"{inner.path}::media/cars/{name}/",
-                                      sum(i.compress_size for i in infos), len(infos), classify(name, files),
-                                      package=entry.path))
+                sources.append(
+                    Source(
+                        game,
+                        label,
+                        f"{inner.path}::media/cars/{name}/",
+                        sum(i.compress_size for i in infos),
+                        len(infos),
+                        classify(name, files),
+                        package=entry.path,
+                    )
+                )
     return sources
 
 
@@ -170,9 +187,11 @@ def roster(isos: list[Path]) -> tuple[dict[str, Car], list[str]]:
             for source in found:
                 source.iso = str(iso)
             years.setdefault(game, {}).update(model_years(image))
-            notes.append(f"{iso.name}: {where}, {sum(s.kind == 'car' for s in found)} cars, "
-                         f"{sum(s.kind == 'autovista' for s in found)} Autovista models, "
-                         f"{sum(s.kind not in ('car', 'autovista') for s in found)} other")
+            notes.append(
+                f"{iso.name}: {where}, {sum(s.kind == 'car' for s in found)} cars, "
+                f"{sum(s.kind == 'autovista' for s in found)} Autovista models, "
+                f"{sum(s.kind not in ('car', 'autovista') for s in found)} other"
+            )
         finally:
             image.close()
         for source in found:
@@ -196,8 +215,9 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     isos = args.isos or sorted((REPO / "assets").glob("*.iso"))
     cars, notes = roster(isos)
-    shown = sorted((c for c in cars.values() if args.all or c.kind in ("car", "autovista")),
-                   key=lambda c: c.name.lower())
+    shown = sorted(
+        (c for c in cars.values() if args.all or c.kind in ("car", "autovista")), key=lambda c: c.name.lower()
+    )
 
     rows = []
     for car in shown:
@@ -220,8 +240,11 @@ def main(argv: list[str] | None = None) -> None:
     by_games = defaultdict(int)
     for c in real:
         by_games[c.games] += 1
-    print(f"unique cars: {len(real)} ({', '.join(f'{g}: {n}' for g, n in sorted(by_games.items()))}); "
-          f"Autovista models: {len(auto)}", file=sys.stderr)
+    print(
+        f"unique cars: {len(real)} ({', '.join(f'{g}: {n}' for g, n in sorted(by_games.items()))}); "
+        f"Autovista models: {len(auto)}",
+        file=sys.stderr,
+    )
     per_source = defaultdict(int)
     for c in real:
         for s in c.sources:

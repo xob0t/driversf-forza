@@ -138,17 +138,51 @@ PARAMS: dict[int, Param] = {
 }
 
 # Camera mounts (FUN_0088DF80 / FUN_0088E230: vec3 per camera index). Scaled with body size.
-CAMERA_VECTORS = [(300, 301, 302), (303, 304, 305), (327, 328, 329), (337, 338, 339), (340, 341, 342),
-                  (394, 395, 396), (535, 536, 537), (549, 550, 551), (552, 553, 554)]
-CAMERA_DEFAULTS = {301: 1.05, 302: 6.7, 304: 0.2, 305: -2, 328: 0.48, 329: -0.75, 338: 0.6, 339: -2.2, 395: 0.6,
-                   396: 0.2, 536: 0.9, 537: 0.8, 550: 4.5, 551: 14, 553: 1, 554: -5}
+CAMERA_VECTORS = [
+    (300, 301, 302),
+    (303, 304, 305),
+    (327, 328, 329),
+    (337, 338, 339),
+    (340, 341, 342),
+    (394, 395, 396),
+    (535, 536, 537),
+    (549, 550, 551),
+    (552, 553, 554),
+]
+CAMERA_DEFAULTS = {
+    301: 1.05,
+    302: 6.7,
+    304: 0.2,
+    305: -2,
+    328: 0.48,
+    329: -0.75,
+    338: 0.6,
+    339: -2.2,
+    395: 0.6,
+    396: 0.2,
+    536: 0.9,
+    537: 0.8,
+    550: 4.5,
+    551: 14,
+    553: 1,
+    554: -5,
+}
 for _i, _ids in enumerate(CAMERA_VECTORS):
     for _axis, _pid in zip("xyz", _ids):
-        PARAMS.setdefault(_pid, Param(f"camera{_i}_{_axis}", "m", CAMERA_DEFAULTS.get(_pid, 0),
-                                      "S: camera mount vec3 by camera index (FUN_0088DF80, FUN_0088E230)"))
+        PARAMS.setdefault(
+            _pid,
+            Param(
+                f"camera{_i}_{_axis}",
+                "m",
+                CAMERA_DEFAULTS.get(_pid, 0),
+                "S: camera mount vec3 by camera index (FUN_0088DF80, FUN_0088E230)",
+            ),
+        )
 for _axis, _pid, _default in zip("xyz", (430, 431, 432), (0, 0.3, 0.19)):
-    PARAMS.setdefault(_pid, Param(f"camera_head_{_axis}", "m", _default,
-                                  "S: camera 0x14 offset from hierarchy marker 0x2F (FUN_0088DF80)"))
+    PARAMS.setdefault(
+        _pid,
+        Param(f"camera_head_{_axis}", "m", _default, "S: camera 0x14 offset from hierarchy marker 0x2F (FUN_0088DF80)"),
+    )
 
 
 def name(pid: int) -> str:
@@ -156,6 +190,7 @@ def name(pid: int) -> str:
 
 
 # --- VO3D ------------------------------------------------------------------------------
+
 
 @dataclass
 class VO3D:
@@ -192,6 +227,7 @@ class VO3D:
 
 # --- host vehicle ----------------------------------------------------------------------
 
+
 @dataclass
 class Host:
     spool_id: int
@@ -225,8 +261,12 @@ def hub_geometry(upvh_data: bytes) -> tuple[float, float, float, float]:
 
     wheels = [w[:3] for w in upvh.parse(upvh_data).vec4s("wheels")]
     zs = [w[2] for w in wheels]
-    return (max(zs) - min(zs), 2 * statistics.mean(abs(w[0]) for w in wheels),
-            statistics.mean(w[1] for w in wheels), (max(zs) + min(zs)) / 2)
+    return (
+        max(zs) - min(zs),
+        2 * statistics.mean(abs(w[0]) for w in wheels),
+        statistics.mean(w[1] for w in wheels),
+        (max(zs) + min(zs)) / 2,
+    )
 
 
 def lua_stats(path: Path | None) -> dict[int, dict[str, str]]:
@@ -234,6 +274,7 @@ def lua_stats(path: Path | None) -> dict[int, dict[str, str]]:
     if path is None:
         return {}
     from dsfforza.game import game_data
+
     return game_data.read_vehiclestats(path)
 
 
@@ -293,8 +334,7 @@ class ForzaCar:
     @property
     def peak_power(self) -> tuple[float, float]:
         """(kW, rpm)."""
-        return max((t * r * math.pi / 30 / 1000, r) for r, t in zip(self.curve_rpm, self.curve_nm)
-                   if r <= self.redline)
+        return max((t * r * math.pi / 30 / 1000, r) for r, t in zip(self.curve_rpm, self.curve_nm) if r <= self.redline)
 
     def torque_at(self, rpm: float) -> float:
         rpms, nms = self.curve_rpm, self.curve_nm
@@ -343,17 +383,20 @@ def _read_car(con, car: sqlite3.Row, db: Path) -> ForzaCar:
     cid = car["Id"]
     body_id = _one(con, "SELECT CarBodyID FROM List_UpgradeCarBody WHERE Ordinal = ? AND IsStock = 1", cid)[0]
     body = _one(con, "SELECT * FROM Data_CarBody WHERE Id = ?", body_id)
-    weight = con.execute("SELECT * FROM List_UpgradeCarBodyWeight WHERE CarBodyId = ? AND IsStock = 1",
-                         (body_id,)).fetchone()
-    drivetrain_id = _one(con, "SELECT DrivetrainID FROM List_UpgradeDrivetrain WHERE Ordinal = ? AND IsStock = 1",
-                         cid)[0]
-    drive = DRIVE_TYPES[_one(con, "SELECT DrivetypeID FROM Data_Drivetrain WHERE DrivetrainID = ?",
-                             drivetrain_id)[0]]
-    gearbox = _one(con, "SELECT * FROM List_UpgradeDrivetrainTransmission WHERE DrivetrainID = ? AND IsStock = 1",
-                   drivetrain_id)
+    weight = con.execute(
+        "SELECT * FROM List_UpgradeCarBodyWeight WHERE CarBodyId = ? AND IsStock = 1", (body_id,)
+    ).fetchone()
+    drivetrain_id = _one(con, "SELECT DrivetrainID FROM List_UpgradeDrivetrain WHERE Ordinal = ? AND IsStock = 1", cid)[
+        0
+    ]
+    drive = DRIVE_TYPES[_one(con, "SELECT DrivetypeID FROM Data_Drivetrain WHERE DrivetrainID = ?", drivetrain_id)[0]]
+    gearbox = _one(
+        con, "SELECT * FROM List_UpgradeDrivetrainTransmission WHERE DrivetrainID = ? AND IsStock = 1", drivetrain_id
+    )
     ratios = [gearbox[f"GearRatio{i}"] for i in range(gearbox["NumGears"])]
-    diff = con.execute("SELECT * FROM List_UpgradeDrivetrainDifferential WHERE DrivetrainID = ? AND IsStock = 1",
-                       (drivetrain_id,)).fetchone()
+    diff = con.execute(
+        "SELECT * FROM List_UpgradeDrivetrainDifferential WHERE DrivetrainID = ? AND IsStock = 1", (drivetrain_id,)
+    ).fetchone()
     engine_id = _one(con, "SELECT EngineID FROM List_UpgradeEngine WHERE Ordinal = ? AND IsStock = 1", cid)[0]
     cam = _one(con, "SELECT * FROM List_UpgradeEngineCamshaft WHERE EngineID = ? AND IsStock = 1", engine_id)
     curve = _one(con, "SELECT * FROM List_TorqueCurve WHERE TorqueCurveID = ?", cam["TorqueCurveFullThrottleID"])
@@ -372,32 +415,47 @@ def _read_car(con, car: sqlite3.Row, db: Path) -> ForzaCar:
     curve_peak = max(t for r, t in zip(rpms, nms) if r <= cam["RedlineRPM"])
     if sim_peak > 0 and curve_peak > 0:
         nms = [t * sim_peak / curve_peak for t in nms]
-    springs = con.execute("SELECT FrontSpringDamperPhysicsID, RearSpringDamperPhysicsID FROM List_UpgradeSpringDamper"
-                          " WHERE Ordinal = ? AND IsStock = 1", (cid,)).fetchone()
+    springs = con.execute(
+        "SELECT FrontSpringDamperPhysicsID, RearSpringDamperPhysicsID FROM List_UpgradeSpringDamper"
+        " WHERE Ordinal = ? AND IsStock = 1",
+        (cid,),
+    ).fetchone()
     rates = []
-    for spring_id in (springs or (None, None)):
-        row = con.execute("SELECT DefSpringRate FROM List_SpringDamperPhysics WHERE SpringDamperPhysicsID = ?",
-                          (spring_id,)).fetchone()
+    for spring_id in springs or (None, None):
+        row = con.execute(
+            "SELECT DefSpringRate FROM List_SpringDamperPhysics WHERE SpringDamperPhysicsID = ?", (spring_id,)
+        ).fetchone()
         rates.append(row[0] if row else 0.0)
     return ForzaCar(
-        media=car["MediaName"], source=str(db),
+        media=car["MediaName"],
+        source=str(db),
         mass=weight["Mass"] if weight else car["CurbWeight"] * 100,
         front_weight=weight["CMBackFront"] if weight else car["WeightDistribution"],
         cm_height=weight["CMHeight"] if weight else 0.5,
         block=(weight["BlockDimX"], weight["BlockDimY"], weight["BlockDimZ"]) if weight else (0, 0, 0),
-        wheelbase=body["ModelWheelbase"], track_front=body["ModelFrontTrackOuter"],
+        wheelbase=body["ModelWheelbase"],
+        track_front=body["ModelFrontTrackOuter"],
         track_rear=body["ModelRearTrackOuter"],
         bbox_min=(body["PristineBoundingBoxMinX"], body["PristineBoundingBoxMinY"], body["PristineBoundingBoxMinZ"]),
         bbox_max=(body["PristineBoundingBoxMaxX"], body["PristineBoundingBoxMaxY"], body["PristineBoundingBoxMaxZ"]),
         tyre_radius_front=_tyre_radius(car["FrontTireWidthMM"], car["FrontTireAspect"], car["FrontWheelDiameterIN"]),
         tyre_radius_rear=_tyre_radius(car["RearTireWidthMM"], car["RearTireAspect"], car["RearWheelDiameterIN"]),
-        drive=drive, rear_split=diff["RearToqueSplit"] if diff else 0.5,
-        final_drive=gearbox["FinalDriveRatio"], gears=[r for r in ratios[1:] if r > 0],
-        reverse=ratios[0] if ratios and ratios[0] < 0 else -3.5, shift_time=gearbox["GearShiftTime"],
-        redline=cam["RedlineRPM"], stall=cam["StallRPM"], curve_rpm=rpms, curve_nm=nms,
-        top_speed_mph=car["TopSpeed-mph"], steer_max_angle=car["SteerMaxAngle"],
+        drive=drive,
+        rear_split=diff["RearToqueSplit"] if diff else 0.5,
+        final_drive=gearbox["FinalDriveRatio"],
+        gears=[r for r in ratios[1:] if r > 0],
+        reverse=ratios[0] if ratios and ratios[0] < 0 else -3.5,
+        shift_time=gearbox["GearShiftTime"],
+        redline=cam["RedlineRPM"],
+        stall=cam["StallRPM"],
+        curve_rpm=rpms,
+        curve_nm=nms,
+        top_speed_mph=car["TopSpeed-mph"],
+        steer_max_angle=car["SteerMaxAngle"],
         drag=car["BodyAeroLongitudinalDrag"] * (car["GameDragScale"] or 1.0),
-        spring_front=rates[0], spring_rear=rates[1])
+        spring_front=rates[0],
+        spring_rear=rates[1],
+    )
 
 
 # --- mapping ---------------------------------------------------------------------------
@@ -453,13 +511,14 @@ def gear_set(car: ForzaCar, top_speed_mph: float) -> tuple[list[float], float, f
     if len(rel) > anchor + 1 and rel[-1] > target_rel > rel[anchor]:
         base = rel[anchor]
         alpha = math.log(target_rel / base) / math.log(rel[-1] / base)
-        rel = rel[:anchor + 1] + [base * (r / base) ** alpha for r in rel[anchor + 1:]]
+        rel = rel[: anchor + 1] + [base * (r / base) ** alpha for r in rel[anchor + 1 :]]
     p160 = min(top_speed_mph, rel[-1] * unit_mph)
     return rel, reference / car.reverse, p361, p160
 
 
-def build_vo3d(host: Host, car: ForzaCar, torque_scale: float | None = None,
-               scale_cameras: bool = False) -> tuple[VO3D, list[Change]]:
+def build_vo3d(
+    host: Host, car: ForzaCar, torque_scale: float | None = None, scale_cameras: bool = False
+) -> tuple[VO3D, list[Change]]:
     """Host VO3D with the parameters derivable from the Forza car replaced."""
     base = host.vo3d
     out: dict[int, float] = dict(base.params)
@@ -477,7 +536,7 @@ def build_vo3d(host: Host, car: ForzaCar, torque_scale: float | None = None,
         put(pid, base.get(pid) * mass_ratio, f"host x mass ratio {mass_ratio:.3f}")
     width, height, length = car.block
     if width and height and length:
-        boxes = (height ** 2 + length ** 2, width ** 2 + length ** 2, width ** 2 + height ** 2)
+        boxes = (height**2 + length**2, width**2 + length**2, width**2 + height**2)
         for pid, k, box in zip((15, 16, 17), INERTIA_K, boxes):
             put(pid, k * car.mass * box / 12, f"{k} x box inertia ({width:.2f} x {height:.2f} x {length:.2f} m)")
 
@@ -494,10 +553,16 @@ def build_vo3d(host: Host, car: ForzaCar, torque_scale: float | None = None,
     idle, redline = base.get(40), car.redline
     span = redline - idle
     put(524, _clamp((peak_rpm - idle) / span, CLAMP[524]), f"Forza torque peak at {peak_rpm:.0f} rpm")
-    put(522, _clamp(car.torque_at(idle) / peak_nm * CURVE_SCALE[0], CLAMP[522]),
-        f"{CURVE_SCALE[0]} x Forza torque at {idle:.0f} rpm / peak")
-    put(523, _clamp(car.torque_at(redline) / peak_nm * CURVE_SCALE[1], CLAMP[523]),
-        f"{CURVE_SCALE[1]} x Forza torque at redline / peak")
+    put(
+        522,
+        _clamp(car.torque_at(idle) / peak_nm * CURVE_SCALE[0], CLAMP[522]),
+        f"{CURVE_SCALE[0]} x Forza torque at {idle:.0f} rpm / peak",
+    )
+    put(
+        523,
+        _clamp(car.torque_at(redline) / peak_nm * CURVE_SCALE[1], CLAMP[523]),
+        f"{CURVE_SCALE[1]} x Forza torque at redline / peak",
+    )
 
     # Gearbox and top speed.
     target = min(TOP_SPEED_FIT[0] + TOP_SPEED_FIT[1] * car.top_speed_mph, TOP_SPEED_CAP)
@@ -537,6 +602,7 @@ def build_vo3d(host: Host, car: ForzaCar, torque_scale: float | None = None,
 
 # --- archive I/O -----------------------------------------------------------------------
 
+
 def replace_vo3ds(archive: Path, out_path: Path, vo3ds: dict[int, VO3D]) -> None:
     """Write a copy of `archive` with the VO3D of each spool ID in `vo3ds` replaced."""
     if out_path.resolve() == archive.resolve():
@@ -549,13 +615,15 @@ def replace_vo3ds(archive: Path, out_path: Path, vo3ds: dict[int, VO3D]) -> None
             nonr = full_nonr(stream, root.entries, spool_id)
             child(nonr, "VO3D").payload = vo3d.build()
             if entry_size(nonr) > NONR_LIMIT:
-                raise SystemExit(f"{spool_id}: NONR would be {entry_size(nonr):#x} bytes, "
-                                 f"over the {NONR_LIMIT:#x} spool slot")
+                raise SystemExit(
+                    f"{spool_id}: NONR would be {entry_size(nonr):#x} bytes, over the {NONR_LIMIT:#x} spool slot"
+                )
         with out_path.open("wb") as out:
             write_chunk(out, stream, root.entries, root.version)
 
 
 # --- CLI -------------------------------------------------------------------------------
+
 
 def fmt(value: float | None) -> str:
     return "-" if value is None else f"{value:.6g}"
@@ -564,15 +632,19 @@ def fmt(value: float | None) -> str:
 def cmd_dump(args: argparse.Namespace) -> None:
     host = load_host(args.archive, args.id)
     v = host.vo3d
-    print(f"# spool {v.spool_id}, VO3D v{v.version}, {len(v.params)} parameters; "
-          f"hubs: wheelbase {host.wheelbase:.3f}, track {host.track:.3f}, axle mid z {host.axle_mid:.3f}")
+    print(
+        f"# spool {v.spool_id}, VO3D v{v.version}, {len(v.params)} parameters; "
+        f"hubs: wheelbase {host.wheelbase:.3f}, track {host.track:.3f}, axle mid z {host.axle_mid:.3f}"
+    )
     ids = sorted(set(v.params) | (set(PARAMS) if args.all else set()))
     print("id\tname\tvalue\tdefault\tunit")
     for pid in ids:
         p = PARAMS.get(pid)
         value = v.params.get(pid)
-        print(f"{pid}\t{name(pid)}\t{fmt(value) if value is not None else '(default)'}\t"
-              f"{fmt(p.default) if p else '?'}\t{p.unit if p else ''}")
+        print(
+            f"{pid}\t{name(pid)}\t{fmt(value) if value is not None else '(default)'}\t"
+            f"{fmt(p.default) if p else '?'}\t{p.unit if p else ''}"
+        )
 
 
 def _build(args: argparse.Namespace) -> tuple[Host, ForzaCar, VO3D, list[Change]]:
@@ -581,16 +653,25 @@ def _build(args: argparse.Namespace) -> tuple[Host, ForzaCar, VO3D, list[Change]
     vo3d, changes = build_vo3d(host, car, args.torque_scale, args.scale_cameras)
     peak_nm, peak_rpm = car.peak_torque
     kw, kw_rpm = car.peak_power
-    print(f"# {car.media} ({Path(car.source).name}): {car.mass:.0f} kg, {car.drive}, {peak_nm:.0f} Nm @ "
-          f"{peak_rpm:.0f}, {kw:.0f} kW @ {kw_rpm:.0f}, redline {car.redline:.0f}, {len(car.gears)} gears, "
-          f"top {car.top_speed_mph:.0f} mph, wheelbase {car.wheelbase:.3f}", file=sys.stderr)
+    print(
+        f"# {car.media} ({Path(car.source).name}): {car.mass:.0f} kg, {car.drive}, {peak_nm:.0f} Nm @ "
+        f"{peak_rpm:.0f}, {kw:.0f} kW @ {kw_rpm:.0f}, redline {car.redline:.0f}, {len(car.gears)} gears, "
+        f"top {car.top_speed_mph:.0f} mph, wheelbase {car.wheelbase:.3f}",
+        file=sys.stderr,
+    )
     if host.stats:
         s = host.stats
-        print(f"# host {host.spool_id}: Lua {s.get('WeightMetric')} kg, {s.get('TorqueMetric')} Nm, "
-              f"{s.get('PowerMetric')} kW, {s.get('Drivetrain')}", file=sys.stderr)
+        print(
+            f"# host {host.spool_id}: Lua {s.get('WeightMetric')} kg, {s.get('TorqueMetric')} Nm, "
+            f"{s.get('PowerMetric')} kW, {s.get('Drivetrain')}",
+            file=sys.stderr,
+        )
     if abs(host.wheelbase - car.wheelbase) > 0.02:
-        print(f"# note: the archive's hub wheelbase is {host.wheelbase:.3f} m; run forza2dsf (hub patch) "
-              "first so geometry and handling agree", file=sys.stderr)
+        print(
+            f"# note: the archive's hub wheelbase is {host.wheelbase:.3f} m; run forza2dsf (hub patch) "
+            "first so geometry and handling agree",
+            file=sys.stderr,
+        )
     print("id\tname\thost\tnew\trule", file=sys.stderr)
     for c in changes:
         print(f"{c.pid}\t{name(c.pid)}\t{fmt(c.old)}\t{fmt(c.new)}\t{c.rule}", file=sys.stderr)
@@ -620,21 +701,34 @@ def main(argv: list[str] | None = None) -> None:
     dump.add_argument("--all", action="store_true", help="also list named parameters the VO3D leaves at default")
     dump.set_defaults(func=cmd_dump)
 
-    for command, func, help_text in (("build", cmd_build, "derive a VO3D for a Forza car (report, optional .bin)"),
-                                     ("apply", cmd_apply, "derive a VO3D and write it into a copy of the archive")):
+    for command, func, help_text in (
+        ("build", cmd_build, "derive a VO3D for a Forza car (report, optional .bin)"),
+        ("apply", cmd_apply, "derive a VO3D and write it into a copy of the archive"),
+    ):
         p = sub.add_parser(command, help=help_text)
         p.add_argument("archive", type=Path, help="archive holding the host vehicle at --id")
         if command == "apply":
             p.add_argument("out", type=Path)
         p.add_argument("--id", type=int, required=True, help="base spool ID of the host vehicle")
         p.add_argument("--car", required=True, help="Forza media name, e.g. NIS_370Z_10")
-        p.add_argument("--db", type=Path, action="append", required=True,
-                       help="gamedb.slt (FH1 and/or FM4); the first that has the car is used")
+        p.add_argument(
+            "--db",
+            type=Path,
+            action="append",
+            required=True,
+            help="gamedb.slt (FH1 and/or FM4); the first that has the car is used",
+        )
         p.add_argument("--lua", type=Path, help="vehiclestats.lua (optional, only for reporting the host)")
-        p.add_argument("--torque-scale", type=float,
-                       help="p18 = scale x Forza peak Nm instead of the fleet fit (stock median 1.38)")
-        p.add_argument("--scale-cameras", action="store_true",
-                       help="scale the host's camera mounts fore/aft by the wheelbase ratio")
+        p.add_argument(
+            "--torque-scale",
+            type=float,
+            help="p18 = scale x Forza peak Nm instead of the fleet fit (stock median 1.38)",
+        )
+        p.add_argument(
+            "--scale-cameras",
+            action="store_true",
+            help="scale the host's camera mounts fore/aft by the wheelbase ratio",
+        )
         if command == "build":
             p.add_argument("--out", type=Path, help="write the VO3D payload here")
         p.set_defaults(func=func)

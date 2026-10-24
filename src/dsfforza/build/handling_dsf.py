@@ -46,31 +46,70 @@ from dsfforza.formats.vehicle_mesh import payload
 
 FLEET_CACHE = REPO / "out" / "cache" / "dsf-fleet.json"
 FLEET_VERSION = 1
-PAIRS = {227: "NIS_370Z_10", 125: "ALF_8C_08", 128: "ALF_MITO_09", 134: "AST_RAPIDE_10",
-         135: "AST_V12VANTAGE_10", 139: "AUD_R8V10_10", 255: "AUD_RS6_09", 119: "AUD_S5_DLC",
-         143: "AUD_TTRS_10", 138: "AUD_Q7_09", 279: "BEN_CONTINENTALSS_10", 147: "CAD_CTSV_09",
-         146: "CHE_CAMAROSS_69", 161: "CHE_CORVETTE_60", 160: "CHE_CHEVELLE_70", 250: "CHE_VOLT_11",
-         172: "DOD_CHALLENGERSRT8_09", 175: "DOD_CHARGERRT_69", 181: "DOD_RAMSRT10_06",
-         182: "DOD_VIPERSRT10ACR_08", 252: "FOR_F350SUPERDUTY_08", 189: "FOR_GT_05", 196: "FOR_TAURUSSHO_10",
-         205: "JAG_ETYPE_61", 206: "JAG_XFR_10", 207: "JAG_33_XKR_10", 210: "LAM_COUNTACH_88",
-         211: "LAM_DIABLOSV_97", 212: "LAM_GALLARDOLP570_11", 214: "LAM_LP6704SV_10", 215: "LAM_MIURAP400_67",
-         216: "LAM_MURCIELAGOLP640_07", 217: "LAN_STRATOS_74", 221: "MAS_GRANTURISMOS_10", 224: "MCL_F1_93",
-         225: "MCL_MP412C_11", 226: "MER_SLR_05", 228: "NIS_GTR_12", 232: "PAG_ZONDACINQUE_09",
-         233: "PON_GTOJUDGE_69", 278: "PON_SOLSTICEGXP_09", 241: "RUF_YELLOWBIRD_87", 243: "RUF_RT12S_11",
-         248: "SHE_COBRA427_65", 257: "VW_BEETLE_68", 275: "VW_SCIROCCOR_11", 195: "FOR_RS200EVOLUTION_87",
-         142: "AUD_SPORTQUATTRO_83"}
+PAIRS = {
+    227: "NIS_370Z_10",
+    125: "ALF_8C_08",
+    128: "ALF_MITO_09",
+    134: "AST_RAPIDE_10",
+    135: "AST_V12VANTAGE_10",
+    139: "AUD_R8V10_10",
+    255: "AUD_RS6_09",
+    119: "AUD_S5_DLC",
+    143: "AUD_TTRS_10",
+    138: "AUD_Q7_09",
+    279: "BEN_CONTINENTALSS_10",
+    147: "CAD_CTSV_09",
+    146: "CHE_CAMAROSS_69",
+    161: "CHE_CORVETTE_60",
+    160: "CHE_CHEVELLE_70",
+    250: "CHE_VOLT_11",
+    172: "DOD_CHALLENGERSRT8_09",
+    175: "DOD_CHARGERRT_69",
+    181: "DOD_RAMSRT10_06",
+    182: "DOD_VIPERSRT10ACR_08",
+    252: "FOR_F350SUPERDUTY_08",
+    189: "FOR_GT_05",
+    196: "FOR_TAURUSSHO_10",
+    205: "JAG_ETYPE_61",
+    206: "JAG_XFR_10",
+    207: "JAG_33_XKR_10",
+    210: "LAM_COUNTACH_88",
+    211: "LAM_DIABLOSV_97",
+    212: "LAM_GALLARDOLP570_11",
+    214: "LAM_LP6704SV_10",
+    215: "LAM_MIURAP400_67",
+    216: "LAM_MURCIELAGOLP640_07",
+    217: "LAN_STRATOS_74",
+    221: "MAS_GRANTURISMOS_10",
+    224: "MCL_F1_93",
+    225: "MCL_MP412C_11",
+    226: "MER_SLR_05",
+    228: "NIS_GTR_12",
+    232: "PAG_ZONDACINQUE_09",
+    233: "PON_GTOJUDGE_69",
+    278: "PON_SOLSTICEGXP_09",
+    241: "RUF_YELLOWBIRD_87",
+    243: "RUF_RT12S_11",
+    248: "SHE_COBRA427_65",
+    257: "VW_BEETLE_68",
+    275: "VW_SCIROCCOR_11",
+    195: "FOR_RS200EVOLUTION_87",
+    142: "AUD_SPORTQUATTRO_83",
+}
 DBS = [REPO / "out" / "db" / "fh1_gamedb.slt", REPO / "out" / "db" / "fm4_gamedb.slt"]
 
 # Parameters set by other steps or tied to the body geometry and the converter.
-NOT_HANDLING = set(range(300, 306)) | set(range(327, 343)) | {394, 395, 396, 430, 431, 432, 535, 536, 537,
-                                                              549, 550, 551, 552, 553, 554, 605, 606}
+NOT_HANDLING = (
+    set(range(300, 306))
+    | set(range(327, 343))
+    | {394, 395, 396, 430, 431, 432, 535, 536, 537, 549, 550, 551, 552, 553, 554, 605, 606}
+)
 GEAR_PIDS = (275, 276, 277, 278, 279, 280, 281, 282, 361)
 # Feel weights for the LOO score (grip, slides, steering, assists, power, gearing, mass).
 GROUPS = {
     "tyres": ((367, 368, 369, 376, 377, 378, 497, 517, 519, 520, 521, 525, 526, 529, 530, 531), 1.0),
     "steering": ((298, 379, 380, 381, 382, 383, 384, 385, 386, 387, 388, 389, 390, 391, 470), 1.0),
-    "assists": ((24, 166, 239, 344, 345, 351, 352, 353, 354, 365, 366, 373, 374, 375, 393, 411, 496, 510, 511),
-                1.0),
+    "assists": ((24, 166, 239, 344, 345, 351, 352, 353, 354, 365, 366, 373, 374, 375, 393, 411, 496, 510, 511), 1.0),
     "suspension": ((1, 2, 3, 4, 25, 188, 292, 505, 506, 508), 1.0),
     "engine": ((18, 40, 42, 160, 183, 184, 186, 355, 356, 357, 358, 362, 516, 522, 523, 524, 569, 371), 1.0),
     "gearing": ((275, 276, 277, 278, 279, 280, 281, 282, 360, 361), 1.0),
@@ -83,17 +122,25 @@ MISC_WEIGHT = 0.5
 
 # --- specs ----------------------------------------------------------------------------
 
+
 @dataclass
 class Specs:
     weight: float  # kg
-    power: float   # kW
+    power: float  # kW
     torque: float  # Nm
-    drive: str     # FWD / RWD / AWD
+    drive: str  # FWD / RWD / AWD
     year: float
 
     def x(self) -> list[float]:
-        return [1.0, math.log(self.weight), math.log(self.power), math.log(self.torque),
-                (self.year - 2000) / 10, 1.0 if self.drive == "FWD" else 0.0, 1.0 if self.drive == "AWD" else 0.0]
+        return [
+            1.0,
+            math.log(self.weight),
+            math.log(self.power),
+            math.log(self.torque),
+            (self.year - 2000) / 10,
+            1.0 if self.drive == "FWD" else 0.0,
+            1.0 if self.drive == "AWD" else 0.0,
+        ]
 
 
 def specs_from_stats(stats: dict) -> Specs | None:
@@ -113,18 +160,21 @@ def specs_from_forza(media: str, car: H.ForzaCar, dbs: list[Path] = DBS) -> Spec
     SimPeakTorque (100 Nm), the stock body mass and year."""
     for db in dbs:
         con = sqlite3.connect(f"file:{Path(db).as_posix()}?mode=ro", uri=True)
-        row = con.execute("SELECT SimPeakPower, SimPeakTorque, Year FROM Data_Car WHERE MediaName = ? COLLATE NOCASE",
-                          (media,)).fetchone()
+        row = con.execute(
+            "SELECT SimPeakPower, SimPeakTorque, Year FROM Data_Car WHERE MediaName = ? COLLATE NOCASE", (media,)
+        ).fetchone()
         con.close()
         if row:
             peak_nm, _ = car.peak_torque
             kw, _ = car.peak_power
-            return Specs(car.mass, row[0] / 10 if row[0] else kw, row[1] * 100 if row[1] else peak_nm, car.drive,
-                         row[2] or 2000)
+            return Specs(
+                car.mass, row[0] / 10 if row[0] else kw, row[1] * 100 if row[1] else peak_nm, car.drive, row[2] or 2000
+            )
     raise SystemExit(f"{media}: not in {dbs}")
 
 
 # --- the stock fleet --------------------------------------------------------------------
+
 
 def load_fleet(dsf: Path | None = None, lua: Path = HS.DEFAULT_LUA, refresh: bool = False) -> dict[int, dict]:
     """Every stock base vehicle: VO3D, vehicleStats, hub geometry and host facts."""
@@ -137,7 +187,7 @@ def load_fleet(dsf: Path | None = None, lua: Path = HS.DEFAULT_LUA, refresh: boo
     if FLEET_CACHE.exists() and not refresh:
         try:
             data = json.loads(FLEET_CACHE.read_text())
-        except (OSError, ValueError):   # cut short (written in place before): build it again
+        except (OSError, ValueError):  # cut short (written in place before): build it again
             data = {}
         if data.get("key") == key:
             return {int(k): _thaw(v) for k, v in data["fleet"].items()}
@@ -152,12 +202,22 @@ def load_fleet(dsf: Path | None = None, lua: Path = HS.DEFAULT_LUA, refresh: boo
                 wheelbase, track, hub_y, mid = H.hub_geometry(payload(stream, upvh_entry))
             except (ValueError, statistics.StatisticsError):
                 wheelbase, track, hub_y, mid = 0.0, 0.0, 0.0, 0.0
-            fleet[h["id"]] = {"id": h["id"], "params": params, "stats": stats.get(h["id"], h["stats"]),
-                              "wheelbase": wheelbase, "track": track, "hub_y": hub_y, "axle_mid": mid,
-                              "wheels": h["wheels"], "category": h["category"], "model": h["model"],
-                              "problems": h["problems"]}
+            fleet[h["id"]] = {
+                "id": h["id"],
+                "params": params,
+                "stats": stats.get(h["id"], h["stats"]),
+                "wheelbase": wheelbase,
+                "track": track,
+                "hub_y": hub_y,
+                "axle_mid": mid,
+                "wheels": h["wheels"],
+                "category": h["category"],
+                "model": h["model"],
+                "problems": h["problems"],
+            }
     # Atomic: out/cache is shared by every worktree's builds and port_batch workers read it.
     from dsfforza.build.port_car import write_atomic
+
     FLEET_CACHE.parent.mkdir(parents=True, exist_ok=True)
     write_atomic(FLEET_CACHE, json.dumps({"key": key, "fleet": fleet}).encode())
     return fleet
@@ -206,8 +266,10 @@ def ridge_fit(xs: list[list[float]], ys: list[float], ridge: float) -> list[floa
     """Least squares of ys on xs (x[0] = 1, the intercept), `ridge` x n added to the
     diagonal of every slope."""
     k = len(xs[0])
-    a = [[sum(x[i] * x[j] for x in xs) + (ridge * len(xs) if i == j and i > 0 else 0) for j in range(k)]
-         for i in range(k)]
+    a = [
+        [sum(x[i] * x[j] for x in xs) + (ridge * len(xs) if i == j and i > 0 else 0) for j in range(k)]
+        for i in range(k)
+    ]
     b = [sum(x[i] * y for x, y in zip(xs, ys)) for i in range(k)]
     return _solve(a, b)
 
@@ -264,9 +326,28 @@ class FleetModel:
 # among them every steering, assist, tyre-falloff and suspension-geometry value, keep
 # the host's (H).
 RULES: dict[int, str] = {
-    0: "Z", 1: "M", 2: "M", 13: "F", 15: "Z", 16: "Z", 17: "Z", 18: "TP", 42: "Z", 160: "Z", 360: "Z",
-    366: "A", 367: "A", 368: "M", 369: "F", 516: "A", 509: "M", 361: "GX", 32: "CZ", 30: "CY",
-    345: "W", 505: "W",
+    0: "Z",
+    1: "M",
+    2: "M",
+    13: "F",
+    15: "Z",
+    16: "Z",
+    17: "Z",
+    18: "TP",
+    42: "Z",
+    160: "Z",
+    360: "Z",
+    366: "A",
+    367: "A",
+    368: "M",
+    369: "F",
+    516: "A",
+    509: "M",
+    361: "GX",
+    32: "CZ",
+    30: "CY",
+    345: "W",
+    505: "W",
 }
 # CoG height (rule CY): p30 = hub height + Forza CMHeight - drive tyre radius + 0.052 m;
 # on the 48 pairs |error| 0.030 m against 0.054 for the fleet median offset. The CoG is
@@ -292,8 +373,8 @@ def torque_power_rule(car: H.ForzaCar) -> float:
 # car), fitted over the 137 stock cars that have them. Leave-one-out mean absolute
 # error 0.042, 0.041 and 0.127 (bar spread 0.24, 0.18, 0.28). P/W in kW per kg.
 BAR_FITS = {
-    "Speed": (-0.6525, 0.0101, 0.0587),        # + p160 (mph), + ln(P/W)
-    "Strength": (-2.1427, 0.3429),             # + ln(p0)
+    "Speed": (-0.6525, 0.0101, 0.0587),  # + p160 (mph), + ln(P/W)
+    "Strength": (-2.1427, 0.3429),  # + ln(p0)
     "Drift": (1.2138, 0.2739, -0.3692, -0.1497),  # + ln(P/W), FWD, AWD
 }
 
@@ -303,9 +384,11 @@ def stat_bars(params: dict[int, float], specs: Specs) -> dict[str, float]:
     s = BAR_FITS["Speed"]
     t = BAR_FITS["Strength"]
     d = BAR_FITS["Drift"]
-    raw = {"Speed": s[0] + s[1] * value(params, 160) + s[2] * pw,
-           "Strength": t[0] + t[1] * math.log(value(params, 0)),
-           "Drift": d[0] + d[1] * pw + d[2] * (specs.drive == "FWD") + d[3] * (specs.drive == "AWD")}
+    raw = {
+        "Speed": s[0] + s[1] * value(params, 160) + s[2] * pw,
+        "Strength": t[0] + t[1] * math.log(value(params, 0)),
+        "Drift": d[0] + d[1] * pw + d[2] * (specs.drive == "FWD") + d[3] * (specs.drive == "AWD"),
+    }
     return {k: round(min(1.0, max(0.05, v)), 2) for k, v in raw.items()}
 
 
@@ -332,16 +415,16 @@ def _mph_at_redline(rel: float, p361: float, p360: float, p42: float) -> float:
 
 @dataclass
 class Context:
-    host: dict                 # fleet record of the host (its stock VO3D and geometry)
+    host: dict  # fleet record of the host (its stock VO3D and geometry)
     host_specs: Specs
     car: H.ForzaCar
     specs: Specs
     model: FleetModel
-    neighbors: list[dict]      # fleet records of the next-best hosts (incl. the host)
-    base: dict[int, float]     # the clone's current VO3D (host values plus earlier edits)
+    neighbors: list[dict]  # fleet records of the next-best hosts (incl. the host)
+    base: dict[int, float]  # the clone's current VO3D (host values plus earlier edits)
     scales: dict[int, float] | None = None  # fleet spread per parameter (for the feel medoid)
-    same_model: bool = False   # the host is a stock version of this car
-    family: bool = False       # the host is of the car's model family (host_select identity >= 30)
+    same_model: bool = False  # the host is a stock version of this car
+    family: bool = False  # the host is of the car's model family (host_select identity >= 30)
     drive_donor: dict | None = None  # best-ranked host with the car's drivetrain
 
 
@@ -372,8 +455,9 @@ def candidates(ctx: Context, pid: int, new: dict[int, float]) -> dict[str, float
         out["W"] = a + b_ * fw
     if pid in TORQUE_SCALED and value(ctx.base, 18) > 0:
         # R: the fleet's median ratio to p18 (log p355 vs log p18: r = 0.78), times the new p18.
-        ratios = sorted(value(r["params"], pid) / value(r["params"], 18) for r in ctx.model.rows
-                        if value(r["params"], 18) > 0)
+        ratios = sorted(
+            value(r["params"], pid) / value(r["params"], 18) for r in ctx.model.rows if value(r["params"], 18) > 0
+        )
         out["R"] = statistics.median(ratios) * new.get(18, value(ctx.base, 18))
     out["A"] = ctx.model.predict(pid, ctx.specs)
     if ctx.neighbors:
@@ -384,8 +468,14 @@ def candidates(ctx: Context, pid: int, new: dict[int, float]) -> dict[str, float
 def forza_values(ctx: Context) -> dict[int, float]:
     """The old mapping (src/dsfforza/build/handling.py) on this host, as rule Z: only the parameters
     it derives."""
-    host = H.Host(ctx.host["id"], H.VO3D(ctx.host["id"], dict(ctx.base)), ctx.car.wheelbase,
-                  ctx.host["track"], ctx.host["hub_y"], ctx.host["axle_mid"])
+    host = H.Host(
+        ctx.host["id"],
+        H.VO3D(ctx.host["id"], dict(ctx.base)),
+        ctx.car.wheelbase,
+        ctx.host["track"],
+        ctx.host["hub_y"],
+        ctx.host["axle_mid"],
+    )
     vo3d, changes = H.build_vo3d(host, ctx.car)
     return {c.pid: vo3d.params[c.pid] for c in changes}
 
@@ -405,8 +495,16 @@ def gear_rule(ctx: Context, rule: str, p160: float, p42: float, p360: float, z: 
         # interquartile range 1.00..1.07 (a tall overdrive host made the Mito slow).
         top_mph = min(max(host_top / value(b, 160), TOP_RATIO[0]), TOP_RATIO[1]) * p160
         car = ctx.car
-        first_mph = (car.redline * math.pi / 30 * 2.23694 * car.drive_radius / (car.gears[0] * car.final_drive)
-                     * p42 / car.redline)
+        first_mph = (
+            car.redline
+            * math.pi
+            / 30
+            * 2.23694
+            * car.drive_radius
+            / (car.gears[0] * car.final_drive)
+            * p42
+            / car.redline
+        )
         first_mph = min(first_mph, top_mph)
         unit = _mph_at_redline(1.0, 1.0, p360, p42)
         host_rels = [value(b, 276 + i) / value(b, 276 + n - 1) for i in range(n)]
@@ -415,7 +513,7 @@ def gear_rule(ctx: Context, rule: str, p160: float, p42: float, p360: float, z: 
         else:
             # The host's spacing (log ratios relative to top gear), stretched to the new first gear.
             k = math.log(first_mph / top_mph) / math.log(host_rels[0])
-            rels = [r ** k for r in host_rels]
+            rels = [r**k for r in host_rels]
         out = {361: top_mph / unit}
         out.update({276 + i: r for i, r in enumerate(rels)})
         return out
@@ -462,11 +560,18 @@ def feel_donor(ctx: Context, pids: tuple[int, ...]) -> dict:
 
     def dist(a: dict, b: dict) -> float:
         return sum(abs(value(a["params"], p) - value(b["params"], p)) / ctx.scales.get(p, 1.0) for p in pids)
+
     return min(cands, key=lambda c: (sum(dist(c, o) for o in cands), c["id"] != ctx.host["id"]))
 
 
-def build(ctx: Context, rules: dict[int, str] | None = None, feel: str = "host",
-          drive_set: bool = True, drift: str = "none", engine_scale: bool = True) -> tuple[dict[int, float], list[tuple[int, float, float, str]]]:
+def build(
+    ctx: Context,
+    rules: dict[int, str] | None = None,
+    feel: str = "host",
+    drive_set: bool = True,
+    drift: str = "none",
+    engine_scale: bool = True,
+) -> tuple[dict[int, float], list[tuple[int, float, float, str]]]:
     """The new VO3D parameters and the changes (pid, old, new, rule). feel: "host" keeps
     the host's steering, assists, tyre falloff and suspension geometry; "medoid" takes
     each set from the most typical of the three best hosts (FEEL_GROUPS)."""
@@ -528,8 +633,11 @@ def build(ctx: Context, rules: dict[int, str] | None = None, feel: str = "host",
         donor = ctx.drive_donor or ctx.host
         p18_new, p18_donor = new.get(18, value(b, 18)), value(donor["params"], 18)
         if p18_donor > 0:
-            put(358, value(donor["params"], 358) * p18_new / p18_donor,
-                f"engine set from {donor['id']} x p18 {p18_new:.0f}/{p18_donor:.0f}")
+            put(
+                358,
+                value(donor["params"], 358) * p18_new / p18_donor,
+                f"engine set from {donor['id']} x p18 {p18_new:.0f}/{p18_donor:.0f}",
+            )
     drive_group = DRIVE_GROUP if drive_set else ()
     donor = ctx.drive_donor
     if drive_group and donor is not None and donor["id"] != ctx.host["id"]:
@@ -570,8 +678,11 @@ def build(ctx: Context, rules: dict[int, str] | None = None, feel: str = "host",
         merged.update(new)
         target = ctx.model.predict_target("drift_index", drift_index, ctx.specs)
         if drift == "rel":
-            target = drift_index(ctx.host["params"]) + target - ctx.model.predict_target(
-                "drift_index", drift_index, ctx.host_specs)
+            target = (
+                drift_index(ctx.host["params"])
+                + target
+                - ctx.model.predict_target("drift_index", drift_index, ctx.host_specs)
+            )
         now = drift_index(merged)
         k = value(merged, 369)
         want = k + (target - now) * value(merged, 0) / DRIFT_FIT[1]
@@ -580,15 +691,24 @@ def build(ctx: Context, rules: dict[int, str] | None = None, feel: str = "host",
     return new, changes
 
 
-def context(host_id: int, media: str, fleet: dict[int, dict], ranking_ids: list[int] | None = None,
-            exclude: set[int] = frozenset(), base: dict[int, float] | None = None,
-            car: H.ForzaCar | None = None, dbs: list[Path] | None = None, same_model: bool = False) -> Context:
+def context(
+    host_id: int,
+    media: str,
+    fleet: dict[int, dict],
+    ranking_ids: list[int] | None = None,
+    exclude: set[int] = frozenset(),
+    base: dict[int, float] | None = None,
+    car: H.ForzaCar | None = None,
+    dbs: list[Path] | None = None,
+    same_model: bool = False,
+) -> Context:
     dbs = dbs or DBS
     car = car or H.load_forza(media, dbs)
     specs = specs_from_forza(media, car, dbs)
     host = fleet[host_id]
     host_specs = specs_from_stats(host["stats"]) or specs
     model = FleetModel(fit_set(fleet), exclude)
+
     # Set donors: the host and the next best-ranked hosts of the car's drivetrain and era
     # (within 10 years); the Mito's second-best host, a 1971 Fiat 500, gave it a launch
     # 3 s slower than its host's (run 20261022-095156), and the Huayra (2012) took the 1997
@@ -597,6 +717,7 @@ def context(host_id: int, media: str, fleet: dict[int, dict], ranking_ids: list[
     def fits(i: int) -> bool:
         st = specs_from_stats(fleet[i]["stats"])
         return st is not None and st.drive == specs.drive and abs(st.year - specs.year) <= 10
+
     ids = ranking_ids or [host_id]
     neighbors = [fleet[host_id]] + [fleet[i] for i in ids if i != host_id and fits(i)][:2]
     rows = fit_set(fleet)
@@ -605,17 +726,29 @@ def context(host_id: int, media: str, fleet: dict[int, dict], ranking_ids: list[
     hrec = next((h for h in HS.survey() if h["id"] == host_id), None)
     family = bool(hrec) and HS.identity_score(hrec, info)[0] >= 30
     drive_donor = None
-    for i in (ranking_ids or [host_id]):
+    for i in ranking_ids or [host_id]:
         donor_specs = specs_from_stats(fleet[i]["stats"]) if i in fleet else None
         if (i == host_id and host_specs.drive == specs.drive) or (donor_specs and donor_specs.drive == specs.drive):
             drive_donor = fleet[i]
             break
-    return Context(host, host_specs, car, specs, model, neighbors, dict(base if base is not None else host["params"]),
-                   scales, same_model, family, drive_donor)
+    return Context(
+        host,
+        host_specs,
+        car,
+        specs,
+        model,
+        neighbors,
+        dict(base if base is not None else host["params"]),
+        scales,
+        same_model,
+        family,
+        drive_donor,
+    )
 
 
-def apply(base: dict[int, float], host_id: int, media: str, dbs: list[Path], feel: str = "medoid",
-          log=print) -> tuple[dict[int, float], dict]:
+def apply(
+    base: dict[int, float], host_id: int, media: str, dbs: list[Path], feel: str = "medoid", log=print
+) -> tuple[dict[int, float], dict]:
     """port_car's entry point: the clone's VO3D (host values plus earlier edits) in, the
     DSF-first VO3D out, with a report."""
     fleet = load_fleet()
@@ -626,8 +759,17 @@ def apply(base: dict[int, float], host_id: int, media: str, dbs: list[Path], fee
     # fits without it.
     loo = os.environ.get("DSF_HANDLING_LOO") == "1"
     ranking = [host_id] + [i for i in order if i != host_id and not (loo and i in same)]
-    ctx = context(host_id, media, fleet, ranking, base=base, car=car, dbs=dbs,
-                  exclude=same if loo else frozenset(), same_model=host_id in same and not loo)
+    ctx = context(
+        host_id,
+        media,
+        fleet,
+        ranking,
+        base=base,
+        car=car,
+        dbs=dbs,
+        exclude=same if loo else frozenset(),
+        same_model=host_id in same and not loo,
+    )
     new, changes = build(ctx, feel=feel)
     out = dict(base)
     out.update(new)
@@ -648,15 +790,24 @@ def apply(base: dict[int, float], host_id: int, media: str, dbs: list[Path], fee
                 tuned[int(key)] = out[int(key)]
             log(f"  handling (dsf): in-game tuned values {tuned} from {tune_cache.name}")
     donors = sorted({rule.split(" from ")[1] for _, _, _, rule in changes if " from " in rule})
-    log(f"  handling (dsf): {len(changes)} parameters changed on host {host_id}"
+    log(
+        f"  handling (dsf): {len(changes)} parameters changed on host {host_id}"
         + (" (same model: stock values kept)" if ctx.same_model else "")
         + (f", feel sets from {', '.join(donors)}" if donors else "")
-        + f"; {car.mass:.0f} kg, {car.drive}, {ctx.specs.power:.0f} kW, {ctx.specs.torque:.0f} Nm")
+        + f"; {car.mass:.0f} kg, {car.drive}, {ctx.specs.power:.0f} kW, {ctx.specs.torque:.0f} Nm"
+    )
     bars = stat_bars(out, ctx.specs)
     log(f"  handling (dsf): stat bars Speed {bars['Speed']}, Strength {bars['Strength']}, Drift {bars['Drift']}")
-    return out, {"source": "dsf", "host": host_id, "same_model": ctx.same_model, "changed": len(changes), "bars": bars,
-                 "tuned": tuned,
-                 "feel_donors": donors, "changes": [[pid, old, val, rule] for pid, old, val, rule in changes]}
+    return out, {
+        "source": "dsf",
+        "host": host_id,
+        "same_model": ctx.same_model,
+        "changed": len(changes),
+        "bars": bars,
+        "tuned": tuned,
+        "feel_donors": donors,
+        "changes": [[pid, old, val, rule] for pid, old, val, rule in changes],
+    }
 
 
 def ranked_hosts(media: str, fleet: dict[int, dict], exclude_model_of: int | None = None) -> tuple[list[int], set[int]]:
@@ -672,8 +823,12 @@ def ranked_hosts(media: str, fleet: dict[int, dict], exclude_model_of: int | Non
 
 # --- leave-one-out ----------------------------------------------------------------------
 
-GEAR_METRICS = {1001: "gear1_mph_at_redline", 1002: "gear2_mph_at_redline", 1003: "top_gear_redline_over_p160",
-                1004: "gear_count"}
+GEAR_METRICS = {
+    1001: "gear1_mph_at_redline",
+    1002: "gear2_mph_at_redline",
+    1003: "top_gear_redline_over_p160",
+    1004: "gear_count",
+}
 
 
 def gear_metrics(params: dict[int, float]) -> dict[int, float]:
@@ -681,10 +836,14 @@ def gear_metrics(params: dict[int, float]) -> dict[int, float]:
     redline relative to the top speed limit, gear count."""
     n = max(1, int(value(params, 282)))
     unit = value(params, 361) * value(params, 360) * value(params, 42) * math.pi / 30 * 2.23694
-    out = {1001: value(params, 276) * unit, 1004: float(n),
-           1003: value(params, 276 + n - 1) * unit / max(value(params, 160), 1.0)}
+    out = {
+        1001: value(params, 276) * unit,
+        1004: float(n),
+        1003: value(params, 276 + n - 1) * unit / max(value(params, 160), 1.0),
+    }
     out[1002] = value(params, 277) * unit if n > 1 else out[1001]
     return out
+
 
 def _scale(rows: list[dict], pid: int) -> float:
     vals = sorted(value(r["params"], pid) for r in rows)
@@ -695,8 +854,11 @@ def _scale(rows: list[dict], pid: int) -> float:
     return mad if mad > 1e-9 else max(abs(med), 1.0)
 
 
-def loo(rules_to_try: tuple[str, ...] = ("H", "M", "F", "A", "N", "Z", "R", "W"), csv_path: Path | None = None,
-        verbose: bool = False) -> None:
+def loo(
+    rules_to_try: tuple[str, ...] = ("H", "M", "F", "A", "N", "Z", "R", "W"),
+    csv_path: Path | None = None,
+    verbose: bool = False,
+) -> None:
     fleet = load_fleet()
     rows = fit_set(fleet)
     pids = sorted({pid for car in fleet.values() for pid in car["params"]} - NOT_HANDLING)
@@ -751,27 +913,41 @@ def loo(rules_to_try: tuple[str, ...] = ("H", "M", "F", "A", "N", "Z", "R", "W")
             built, _ = build(ctx, feel="medoid", drift=mode)
             drift_variants[mode] = dict(ctx.base)
             drift_variants[mode].update(built)
-        for name, params in (("medoid", full_med), ("drift_rel", drift_variants["rel"]),
-                             ("drift_abs", drift_variants["abs"])):
+        for name, params in (
+            ("medoid", full_med),
+            ("drift_rel", drift_variants["rel"]),
+            ("drift_abs", drift_variants["abs"]),
+        ):
             drift_err.setdefault(name, []).append(abs(drift_index(params) - drift_index(truth)))
         full_forza = dict(ctx.base)
         full_forza.update(z)
         full_host = dict(ctx.base)
-        for name, params in (("dsf", full_dsf), ("medoid", full_med), ("nodrive", full_nod), ("forza", full_forza),
-                             ("host", full_host)):
+        for name, params in (
+            ("dsf", full_dsf),
+            ("medoid", full_med),
+            ("nodrive", full_nod),
+            ("forza", full_forza),
+            ("host", full_host),
+        ):
             variants[name] = {pid: value(params, pid) for pid in pids}
             variants[name][32] = value(params, 32) - ctx.host["axle_mid"] + fleet[sid]["axle_mid"]
         for rule in ("GH", "GZ", "GX"):
             p160 = full_dsf.get(160, value(ctx.base, 160))
-            g = gear_rule(ctx, rule, p160, full_dsf.get(42, value(ctx.base, 42)),
-                          full_dsf.get(360, value(ctx.base, 360)), z)
+            g = gear_rule(
+                ctx, rule, p160, full_dsf.get(42, value(ctx.base, 42)), full_dsf.get(360, value(ctx.base, 360)), z
+            )
             merged = dict(ctx.base)
             merged.update({k: full_dsf[k] for k in (42, 160, 360) if k in full_dsf})
             merged.update(g)
             variants[rule] = {pid: value(merged, pid) for pid in GEAR_PIDS}
             variants[rule].update(gear_metrics(merged))
-        for name, params in (("dsf", full_dsf), ("medoid", full_med), ("nodrive", full_nod), ("forza", full_forza),
-                             ("host", full_host)):
+        for name, params in (
+            ("dsf", full_dsf),
+            ("medoid", full_med),
+            ("nodrive", full_nod),
+            ("forza", full_forza),
+            ("host", full_host),
+        ):
             variants[name].update(gear_metrics(params))
         truth = dict(truth)
         truth_metrics = gear_metrics(truth)
@@ -806,9 +982,19 @@ def loo(rules_to_try: tuple[str, ...] = ("H", "M", "F", "A", "N", "Z", "R", "W")
         return statistics.mean(e) if e else None
 
     print(f"# leave-one-out over {len(hosts_used)} pairs; error = |value - Reflections'| / fleet MAD")
-    print("pid\tname\tweight\t" + "\t".join(rules_to_try + ("GH", "GZ", "GX", "CH", "CZ", "CY")) + "\tbest\tdsf\tforza\thost\tmedoid")
-    totals = {"dsf": [0.0, 0.0], "medoid": [0.0, 0.0], "nodrive": [0.0, 0.0], "forza": [0.0, 0.0], "host": [0.0, 0.0],
-              "best": [0.0, 0.0]}
+    print(
+        "pid\tname\tweight\t"
+        + "\t".join(rules_to_try + ("GH", "GZ", "GX", "CH", "CZ", "CY"))
+        + "\tbest\tdsf\tforza\thost\tmedoid"
+    )
+    totals = {
+        "dsf": [0.0, 0.0],
+        "medoid": [0.0, 0.0],
+        "nodrive": [0.0, 0.0],
+        "forza": [0.0, 0.0],
+        "host": [0.0, 0.0],
+        "best": [0.0, 0.0],
+    }
     lines = []
     for pid in pids_and_metrics:
         w = WEIGHT.get(pid, 1.0 if pid in GEAR_METRICS else MISC_WEIGHT)
@@ -819,12 +1005,22 @@ def loo(rules_to_try: tuple[str, ...] = ("H", "M", "F", "A", "N", "Z", "R", "W")
         best = min(named, key=named.get)
         d, f, h, md = mean("dsf", pid), mean("forza", pid), mean("host", pid), mean("medoid", pid)
         nd = mean("nodrive", pid)
-        for name, val in (("dsf", d), ("medoid", md), ("nodrive", nd), ("forza", f), ("host", h), ("best", named[best])):
+        for name, val in (
+            ("dsf", d),
+            ("medoid", md),
+            ("nodrive", nd),
+            ("forza", f),
+            ("host", h),
+            ("best", named[best]),
+        ):
             if val is not None:
                 totals[name][0] += w * val
                 totals[name][1] += w
-        line = f"{pid}\t{GEAR_METRICS.get(pid) or H.name(pid)}\t{w}\t" + "\t".join("-" if c is None else f"{c:.2f}" for c in cells) + \
-            f"\t{best}\t{'-' if d is None else f'{d:.2f}'}\t{'-' if f is None else f'{f:.2f}'}\t{'-' if h is None else f'{h:.2f}'}\t{'-' if md is None else f'{md:.2f}'}"
+        line = (
+            f"{pid}\t{GEAR_METRICS.get(pid) or H.name(pid)}\t{w}\t"
+            + "\t".join("-" if c is None else f"{c:.2f}" for c in cells)
+            + f"\t{best}\t{'-' if d is None else f'{d:.2f}'}\t{'-' if f is None else f'{f:.2f}'}\t{'-' if h is None else f'{h:.2f}'}\t{'-' if md is None else f'{md:.2f}'}"
+        )
         lines.append(line)
         print(line)
     print("# weighted mean error: " + ", ".join(f"{k} {v[0] / v[1]:.3f}" for k, v in totals.items() if v[1]))
@@ -836,16 +1032,26 @@ def loo(rules_to_try: tuple[str, ...] = ("H", "M", "F", "A", "N", "Z", "R", "W")
                 parts.append(f"{name} {statistics.mean(vals):.3f}")
         print(f"#   {group}: " + ", ".join(parts))
     print("# hosts: " + ", ".join(f"{sid}->{h}" for sid, _, h in hosts_used))
-    print("# drift index |error| (deg of handbrake rotation): " + ", ".join(
-        f"{k} mean {statistics.mean(v):.1f} median {statistics.median(v):.1f}" for k, v in drift_err.items()))
+    print(
+        "# drift index |error| (deg of handbrake rotation): "
+        + ", ".join(
+            f"{k} mean {statistics.mean(v):.1f} median {statistics.median(v):.1f}" for k, v in drift_err.items()
+        )
+    )
     print("# per car (weighted mean error): id media host medoid forza host")
     for (sid, media, host_id), acc in per_car.items():
-        print("#   " + "	".join([str(sid), media, str(host_id)] + [f"{acc[k][0] / acc[k][1]:.3f}" for k in
-                                                                      ("medoid", "forza", "host")]))
+        print(
+            "#   "
+            + "	".join(
+                [str(sid), media, str(host_id)] + [f"{acc[k][0] / acc[k][1]:.3f}" for k in ("medoid", "forza", "host")]
+            )
+        )
     for k in ("medoid", "forza", "host"):
         vals = sorted(acc[k][0] / acc[k][1] for acc in per_car.values())
-        print(f"# {k}: median {statistics.median(vals):.3f}, worst {vals[-1]:.3f}, "
-              f"better than forza on {sum(1 for a in per_car.values() if a[k][0] / a[k][1] < a['forza'][0] / a['forza'][1] - 1e-9)}")
+        print(
+            f"# {k}: median {statistics.median(vals):.3f}, worst {vals[-1]:.3f}, "
+            f"better than forza on {sum(1 for a in per_car.values() if a[k][0] / a[k][1] < a['forza'][0] / a['forza'][1] - 1e-9)}"
+        )
     if csv_path:
         csv_path.write_text("\n".join(lines))
 
@@ -873,8 +1079,14 @@ def main(argv: list[str] | None = None) -> None:
         if args.exclude_self:
             order = [i for i in order if i not in same]
         host = args.host or order[0]
-        ctx = context(host, args.car, fleet, [host] + [i for i in order if i != host],
-                      exclude=same if args.exclude_self else set(), same_model=host in same)
+        ctx = context(
+            host,
+            args.car,
+            fleet,
+            [host] + [i for i in order if i != host],
+            exclude=same if args.exclude_self else set(),
+            same_model=host in same,
+        )
         _, changes = build(ctx, feel=args.feel)
         print(f"# {args.car} on {host} ({fleet[host]['model']}); specs {ctx.specs}")
         for pid, old, new, rule in changes:

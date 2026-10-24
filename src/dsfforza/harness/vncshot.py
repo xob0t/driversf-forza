@@ -1,5 +1,6 @@
 """Grab one frame from a VNC server (RFB 3.8, no auth, raw encoding) and save it as PNG.
 Usage: uv run dsff vncshot host port out.png"""
+
 import socket
 import struct
 import sys
@@ -21,6 +22,7 @@ def write_png(path, w, h, rgb_rows):
     def chunk(kind, data):
         c = kind + data
         return struct.pack(">I", len(data)) + c + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
+
     raw = b"".join(b"\x00" + row for row in rgb_rows)
     png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
     png += chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b"")
@@ -63,16 +65,16 @@ def main():
                 raise SystemExit(f"unexpected encoding {enc}")
             data = recv_exact(s, rw * rh * 4)
             for row in range(rh):
-                src = data[row * rw * 4:(row + 1) * rw * 4]
+                src = data[row * rw * 4 : (row + 1) * rw * 4]
                 dst = ((y + row) * w + x) * 3
                 line = bytearray(rw * 3)
                 line[0::3] = src[2::4]
                 line[1::3] = src[1::4]
                 line[2::3] = src[0::4]
-                fb[dst:dst + rw * 3] = line
+                fb[dst : dst + rw * 3] = line
             got += rw * rh
     s.close()
-    write_png(out, w, h, [bytes(fb[r * w * 3:(r + 1) * w * 3]) for r in range(h)])
+    write_png(out, w, h, [bytes(fb[r * w * 3 : (r + 1) * w * 3]) for r in range(h)])
     print(f"{out} {w}x{h}")
 
 

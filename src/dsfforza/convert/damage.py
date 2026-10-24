@@ -59,18 +59,43 @@ from dsfforza.formats.vehicle_mesh import child, payload
 # stock vehicles (MODL part box centres; research/damage.md). "+x" is the car's
 # left (DSF: +z forward, +y up, right-handed); stock names don't say which.
 ROLES = {
-    38: "chassis", 37: "front structure", 8: "glass", 1: "steering wheel", 185: "gauges",
-    32: "door front -x", 31: "door front +x", 55: "door rear -x", 54: "door rear +x",
-    4: "bonnet", 5: "boot", 124: "hatch/spoiler", 35: "front bumper", 36: "rear bumper",
-    34: "wing front -x", 33: "wing front +x", 51: "headlight -x", 50: "headlight +x",
-    41: "mirror -x", 40: "mirror +x", 188: "front suspension", 190: "rear suspension",
-    156: "front hub -x", 155: "front hub +x", 136: "exhaust -x", 15: "exhaust +x",
-    53: "sill -x", 52: "sill +x", 0: "misc",
+    38: "chassis",
+    37: "front structure",
+    8: "glass",
+    1: "steering wheel",
+    185: "gauges",
+    32: "door front -x",
+    31: "door front +x",
+    55: "door rear -x",
+    54: "door rear +x",
+    4: "bonnet",
+    5: "boot",
+    124: "hatch/spoiler",
+    35: "front bumper",
+    36: "rear bumper",
+    34: "wing front -x",
+    33: "wing front +x",
+    51: "headlight -x",
+    50: "headlight +x",
+    41: "mirror -x",
+    40: "mirror +x",
+    188: "front suspension",
+    190: "rear suspension",
+    156: "front hub -x",
+    155: "front hub +x",
+    136: "exhaust -x",
+    15: "exhaust +x",
+    53: "sill -x",
+    52: "sill +x",
+    0: "misc",
 }
 DOORS = (31, 32, 54, 55)
 # Roles that come in +x/-x pairs.
-SIDE_PARTNER = {a: b for x, y in ((31, 32), (54, 55), (33, 34), (50, 51), (40, 41), (15, 136), (52, 53), (155, 156))
-                for a, b in ((x, y), (y, x))}
+SIDE_PARTNER = {
+    a: b
+    for x, y in ((31, 32), (54, 55), (33, 34), (50, 51), (40, 41), (15, 136), (52, 53), (155, 156))
+    for a, b in ((x, y), (y, x))
+}
 BODY = (38, 37, 33, 34, 52, 53) + DOORS
 # Records whose hinges/bodies other code owns or that have no Forza geometry.
 NOT_MOVED = {1, 185, 188, 190, 155, 156}
@@ -78,21 +103,21 @@ NOT_MOVED = {1, 185, 188, 190, 155, 156}
 # Vertex layout of the converter's damage-capable strides: offsets of s9, s5, s12.
 LAYOUT = {32: (16, 20, 24), 28: (12, 16, 20)}
 K_NEAREST = 6
-VOTES = 7          # host vertices voting on a body triangle's panel
+VOTES = 7  # host vertices voting on a body triangle's panel
 COLLISION_SCALE = (0.67, 1.5)  # clamp for a panel's collision box scale
 DEGENERATE_UV = 0.004  # host UV1 triangles smaller than this are hidden faces
-FACING_WEIGHT = 0.15   # normalised-distance penalty per unit of normal mismatch (UV1 lookup)
+FACING_WEIGHT = 0.15  # normalised-distance penalty per unit of normal mismatch (UV1 lookup)
 MAX_HINGE_MOVE = 0.35  # m; a panel hinge mapped further than this keeps the host's
-PANEL_FACING = 0.15    # normalised-distance penalty per unit of normal mismatch (panel vote)
-PAINT_REACH = 0.12     # normalised score within which a host paint triangle decides a paint triangle's panel
+PANEL_FACING = 0.15  # normalised-distance penalty per unit of normal mismatch (panel vote)
+PAINT_REACH = 0.12  # normalised score within which a host paint triangle decides a paint triangle's panel
 PAINT_MATERIALS = {bytes.fromhex("001283358afd1027"), bytes.fromhex("10122b9653b14e2a")}  # GLOBAL_Chassis(_LOD1)
-ISLAND_AREA = 0.08     # m2; smaller connected patches of one panel inside another are merged into it
-ISLAND_TRIANGLES = 3   # patches of this many triangles or fewer too (below ISLAND_AREA_MAX)
+ISLAND_AREA = 0.08  # m2; smaller connected patches of one panel inside another are merged into it
+ISLAND_TRIANGLES = 3  # patches of this many triangles or fewer too (below ISLAND_AREA_MAX)
 ISLAND_AREA_MAX = 0.3  # m2
-SEAM_NEAR = 0.003      # m; positions of two rigid panels this close form a seam too (not only identical ones)
-SEAM_BORDER = 0.015    # m; host vertices of two rigid panels this close are a host panel border
-SEAM_STILL = 0.03      # m; host borders of a role pair whose median crush is below this are pinned
-SEAM_REACH = 0.2       # m; crush fades in over this distance from a pinned seam
+SEAM_NEAR = 0.003  # m; positions of two rigid panels this close form a seam too (not only identical ones)
+SEAM_BORDER = 0.015  # m; host vertices of two rigid panels this close are a host panel border
+SEAM_STILL = 0.03  # m; host borders of a role pair whose median crush is below this are pinned
+SEAM_REACH = 0.2  # m; crush fades in over this distance from a pinned seam
 # Vertex positions are int16 in 1/4096 m (forza2dsf.POSITION_SCALE); the w
 # component (baked sky term) uses the same scale, 4096 = 1.
 POSITION_UNITS = 4096
@@ -103,6 +128,7 @@ def role_name(role: int) -> str:
 
 
 # --- small vector helpers ---------------------------------------------------------
+
 
 def _sub(a, b):
     return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
@@ -131,8 +157,9 @@ class Box:
         points = list(points)
         if not points:
             return None
-        return Box(tuple(min(p[a] for p in points) for a in range(3)),
-                   tuple(max(p[a] for p in points) for a in range(3)))
+        return Box(
+            tuple(min(p[a] for p in points) for a in range(3)), tuple(max(p[a] for p in points) for a in range(3))
+        )
 
     @property
     def centre(self):
@@ -209,6 +236,7 @@ class Grid:
 # vertex onto the nearest host triangle of the same panel and material and
 # interpolates the host's UV1 there.
 
+
 def closest_on_triangle(p, a, b, c):
     """Closest point to p on triangle abc: (squared distance, barycentric (u, v, w))."""
     ab, ac, ap = _sub(b, a), _sub(c, a), _sub(p, a)
@@ -278,6 +306,7 @@ class Uv1Field:
                 parent[n] = parent[parent[n]]
                 n = parent[n]
             return n
+
         owner = {}
         for n, t in enumerate(tris):
             for p, uv in zip(t[0], t[1]):
@@ -290,8 +319,9 @@ class Uv1Field:
         for n in keys[("all",)]:
             keys[("chart", self.chart[n])].append(n)
         for key, ns in keys.items():
-            self.groups[key] = Grid([tuple(sum(v[a] for v in tris[n][0]) / 3 for a in range(3)) for n in ns], ns,
-                                    cell=0.06)
+            self.groups[key] = Grid(
+                [tuple(sum(v[a] for v in tris[n][0]) / 3 for a in range(3)) for n in ns], ns, cell=0.06
+            )
 
     @staticmethod
     def read(stream, vehc, mask: int, local_materials: set) -> Uv1Field | None:
@@ -311,8 +341,7 @@ class Uv1Field:
                     normal = _norm(_cross(_sub(pts[1], pts[0]), _sub(pts[2], pts[0])))
                     if normal is None:
                         continue
-                    raw.append((pts, uvs, s9_pair(vb, tri[0]), sub.material,
-                                sub.material in local_materials, normal))
+                    raw.append((pts, uvs, s9_pair(vb, tri[0]), sub.material, sub.material in local_materials, normal))
         if not raw:
             return None
         box = Box.of(p for t in raw for p in t[0])
@@ -323,14 +352,17 @@ class Uv1Field:
 
         return Uv1Field([(tuple(norm(p) for p in t[0]),) + t[1:] for t in raw], box)
 
-    def lookup(self, q, pair, material: bytes, local: bool, any_panel: bool = False, normal=None,
-               chart: int | None = None):
+    def lookup(
+        self, q, pair, material: bytes, local: bool, any_panel: bool = False, normal=None, chart: int | None = None
+    ):
         """(UV1, chart) at normalised point q from the nearest host triangle
         facing the same way (`normal`, car space): same panel and material, else
         same panel and material class, else same class; only `chart` if given."""
-        keys = (([("chart", chart)] if chart is not None else [])
-                + ([] if any_panel else [("pm", pair, material), ("pc", pair, local)])
-                + [("c", local), ("all",), ("degenerate",), ("tiled",)])
+        keys = (
+            ([("chart", chart)] if chart is not None else [])
+            + ([] if any_panel else [("pm", pair, material), ("pc", pair, local)])
+            + [("c", local), ("all",), ("degenerate",), ("tiled",)]
+        )
         for key in keys:
             grid = self.groups.get(key)
             if grid is None:
@@ -344,8 +376,10 @@ class Uv1Field:
                     best = (score, bary, t[1], self.chart[grid.values[n]])
             if best is not None:
                 bary, uvs = best[1], best[2]
-                return ((sum(bary[k] * uvs[k][0] for k in range(3)), sum(bary[k] * uvs[k][1] for k in range(3))),
-                        best[3])
+                return (
+                    (sum(bary[k] * uvs[k][0] for k in range(3)), sum(bary[k] * uvs[k][1] for k in range(3))),
+                    best[3],
+                )
         return None
 
 
@@ -368,17 +402,19 @@ def stored_normal(buf, at: int):
 
 def local_materials(stream, vehc) -> set:
     """Material UIDs an entry's own DRSP defines (the rest are SSIC shared ones)."""
-    return {payload(stream, child(e, "MAHE"))[:8] for e in child(child(vehc, "MDXN"), "DRSP").children
-            if e.tag == "MACO"}
+    return {
+        payload(stream, child(e, "MAHE"))[:8] for e in child(child(vehc, "MDXN"), "DRSP").children if e.tag == "MACO"
+    }
 
 
 # --- the host's panels ------------------------------------------------------------
 
+
 @dataclass
 class Panel:
-    pair: tuple[int, int]           # s9 bytes 0, 1
-    records: list                   # upvh.Record(s) with this pair (normally one)
-    part: int | None                # full-entry MODL part of the record
+    pair: tuple[int, int]  # s9 bytes 0, 1
+    records: list  # upvh.Record(s) with this pair (normally one)
+    part: int | None  # full-entry MODL part of the record
     role: int
 
     @property
@@ -389,15 +425,16 @@ class Panel:
 @dataclass
 class HostField:
     """Stock vertices of one entry's part 0: position, s12 - position, panel pair."""
+
     points: list
     disp: list
     pairs: list
     box: Box
     by_pair: dict = field(default_factory=dict)  # pair -> Grid (normalised coordinates)
     all_grid: Grid | None = None
-    uv1: Uv1Field | None = None                # decal-atlas UVs (32-byte vertices)
-    local: set = field(default_factory=set)       # material UIDs the entry defines itself
-    tris: list = field(default_factory=list)      # (normalised corners, pair, unit face normal, paint), part 0
+    uv1: Uv1Field | None = None  # decal-atlas UVs (32-byte vertices)
+    local: set = field(default_factory=set)  # material UIDs the entry defines itself
+    tris: list = field(default_factory=list)  # (normalised corners, pair, unit face normal, paint), part 0
 
     def normalise(self, p):
         c, s = self.box.centre, self.box.size
@@ -449,8 +486,14 @@ def host_field(stream, vehc, mask: int) -> HostField:
                 pts = [vm.position(vb, i) for i in tri]
                 normal = _norm(_cross(_sub(pts[1], pts[0]), _sub(pts[2], pts[0])))
                 if normal is not None:
-                    f.tris.append((tuple(f.normalise(p) for p in pts), s9_pair(vb, tri[0]), normal,
-                                   mesh.submodels[n].material in PAINT_MATERIALS))
+                    f.tris.append(
+                        (
+                            tuple(f.normalise(p) for p in pts),
+                            s9_pair(vb, tri[0]),
+                            normal,
+                            mesh.submodels[n].material in PAINT_MATERIALS,
+                        )
+                    )
     return f
 
 
@@ -473,6 +516,7 @@ def host_panels(upvh_data: bytes, modl_data: bytes) -> dict[tuple, Panel]:
 
 
 # --- section rules ----------------------------------------------------------------
+
 
 def section_rule(name: str) -> tuple[str, tuple]:
     """How a Forza main-carbin section is put on host panels:
@@ -570,16 +614,27 @@ def mirror_key(name: str) -> str:
 # triangles over 1.65 m2), so copying the host's UVs per vertex stretched its
 # pictures into streaks; a projection keeps them continuous.
 
-INNER_TECHNIQUE = "dsf_inner"   # forza_materials: paint role
-BAY_CELL = 0.05                 # m; panel height/depth maps
-BAY_CLEARANCE = 0.01            # m below the hood surface
-BAY_DEPTH = 0.55                # m below the hood's lowest point that the bay box spans
-BOOT_DEPTH = 0.55               # m below the boot lid's lowest point that the boot box spans
-BUMPER_CLEARANCE = 0.02         # m inward of a bumper skin's outer surface
-BUMPER_DEPTH = 0.6              # m inward of it that counts as behind the bumper
-INNER_REACH = 0.2               # m; trim triangle to the nearest paint triangle of its panel
-BAY_SKIP = ("hood", "headlight", "taillight", "glass", "window", "mirror", "steering", "interior", "seat",
-            "wheel", "trunk")
+INNER_TECHNIQUE = "dsf_inner"  # forza_materials: paint role
+BAY_CELL = 0.05  # m; panel height/depth maps
+BAY_CLEARANCE = 0.01  # m below the hood surface
+BAY_DEPTH = 0.55  # m below the hood's lowest point that the bay box spans
+BOOT_DEPTH = 0.55  # m below the boot lid's lowest point that the boot box spans
+BUMPER_CLEARANCE = 0.02  # m inward of a bumper skin's outer surface
+BUMPER_DEPTH = 0.6  # m inward of it that counts as behind the bumper
+INNER_REACH = 0.2  # m; trim triangle to the nearest paint triangle of its panel
+BAY_SKIP = (
+    "hood",
+    "headlight",
+    "taillight",
+    "glass",
+    "window",
+    "mirror",
+    "steering",
+    "interior",
+    "seat",
+    "wheel",
+    "trunk",
+)
 ZONE_SKIP = BAY_SKIP + ("bumper", "exhaust", "numplate", "numberplate")
 
 
@@ -608,10 +663,12 @@ def exposed_zones(engine: str | None = None) -> tuple:
     (Forza Data_Car.EnginePlacementID; engine_placement), whose bonnet then
     covers a luggage well ("boot")."""
     front, rear = (_hood, _trunk) if engine not in ("mid", "rear") else (_trunk, _hood)
-    return (("bay", front, 1, -1, "inner", None),
-            ("boot", rear, 1, -1, "inner", None),
-            ("rear", _rear_bumper, 2, +1, "outer", BUMPER_DEPTH),
-            ("front", _front_bumper, 2, -1, "outer", BUMPER_DEPTH))
+    return (
+        ("bay", front, 1, -1, "inner", None),
+        ("boot", rear, 1, -1, "inner", None),
+        ("rear", _rear_bumper, 2, +1, "outer", BUMPER_DEPTH),
+        ("front", _front_bumper, 2, -1, "outer", BUMPER_DEPTH),
+    )
 
 
 EXPOSED_ZONES = exposed_zones()
@@ -623,6 +680,7 @@ def engine_placement(name: str, gamedbs=(), folder=None) -> str | None:
     the car's folder) that lists it; None if unknown."""
     import sqlite3
     from pathlib import Path
+
     dbs = [Path(g) for g in gamedbs or () if g]
     if folder is not None:
         dbs.append(Path(folder).parent / "gamedb.slt")
@@ -634,9 +692,11 @@ def engine_placement(name: str, gamedbs=(), folder=None) -> str | None:
         except sqlite3.Error:
             continue
         try:
-            row = con.execute("SELECT p.EnginePlacement FROM Data_Car c JOIN List_EnginePlacement p "
-                              "ON p.ID = c.EnginePlacementID WHERE c.MediaName = ? COLLATE NOCASE",
-                              (name,)).fetchone()
+            row = con.execute(
+                "SELECT p.EnginePlacement FROM Data_Car c JOIN List_EnginePlacement p "
+                "ON p.ID = c.EnginePlacementID WHERE c.MediaName = ? COLLATE NOCASE",
+                (name,),
+            ).fetchone()
         except sqlite3.Error:
             continue  # a gamedb without these tables (the connection used to stay open)
         finally:
@@ -644,47 +704,51 @@ def engine_placement(name: str, gamedbs=(), folder=None) -> str | None:
         if row and row[0]:
             return str(row[0]).lower()
     return None
+
+
 # tag -> (picture in the shared chassis texture (u0, u1, v0, v1), axis along u, axis along v);
 # an axis "y" runs up the picture. Pictures read off out/dmgfix/trimtex-grid-*.png and
 # out/underside/atlas-boot.png.
-_TUB = (0.420, 0.495, 0.170, 0.300)         # boot tub panels, the part stock boot wells use (147: R ~48)
-_BEAM = (0.310, 0.500, 0.365, 0.530)        # rear panel and crash beam (stock 147/229 behind the bumper)
-_SUBFRAME = (0.495, 0.598, 0.560, 0.875)    # subframe from below
+_TUB = (0.420, 0.495, 0.170, 0.300)  # boot tub panels, the part stock boot wells use (147: R ~48)
+_BEAM = (0.310, 0.500, 0.365, 0.530)  # rear panel and crash beam (stock 147/229 behind the bumper)
+_SUBFRAME = (0.495, 0.598, 0.560, 0.875)  # subframe from below
 _INNER_WING = (0.095, 0.172, 0.100, 0.550)  # inner wing, strut tower
 _RADIATOR = (0.207, 0.300, 0.005, 0.135)
 EXPOSED_MAP = {
-    "bay+y": ((0.216, 0.312, 0.356, 0.534), 2, 0),     # floor: engine and wiring, from above
-    "bay-y": (_SUBFRAME, 0, 2),                        # underside: subframe from below
-    "bay x": (_INNER_WING, 1, 2),                      # side walls: inner wing, strut tower
-    "bay+z": ((0.315, 0.495, 0.030, 0.330), 0, 1),     # facing forward: bulkhead panelling
-    "bay-z": (_RADIATOR, 0, 1),                        # facing back: radiator
-    "inner y": ((0.354, 0.487, 0.562, 0.746), 0, 2),   # bonnet/boot lid undersides: inner frame (paint)
-    "inner z": ((0.354, 0.487, 0.562, 0.746), 0, 1),   # hatch inner faces
+    "bay+y": ((0.216, 0.312, 0.356, 0.534), 2, 0),  # floor: engine and wiring, from above
+    "bay-y": (_SUBFRAME, 0, 2),  # underside: subframe from below
+    "bay x": (_INNER_WING, 1, 2),  # side walls: inner wing, strut tower
+    "bay+z": ((0.315, 0.495, 0.030, 0.330), 0, 1),  # facing forward: bulkhead panelling
+    "bay-z": (_RADIATOR, 0, 1),  # facing back: radiator
+    "inner y": ((0.354, 0.487, 0.562, 0.746), 0, 2),  # bonnet/boot lid undersides: inner frame (paint)
+    "inner z": ((0.354, 0.487, 0.562, 0.746), 0, 1),  # hatch inner faces
     "inner x": ((0.354, 0.487, 0.562, 0.746), 2, 1),
-    "boot+y": (_TUB, 0, 2),                            # boot floor
-    "boot-y": (_SUBFRAME, 0, 2),                       # under the boot floor
-    "boot x": (_TUB, 2, 1),                            # boot side walls
-    "boot+z": (_TUB, 0, 1),                            # boot rear wall (faces forward)
-    "boot-z": (_TUB, 0, 1),                            # boot front wall (seat back side)
+    "boot+y": (_TUB, 0, 2),  # boot floor
+    "boot-y": (_SUBFRAME, 0, 2),  # under the boot floor
+    "boot x": (_TUB, 2, 1),  # boot side walls
+    "boot+z": (_TUB, 0, 1),  # boot rear wall (faces forward)
+    "boot-z": (_TUB, 0, 1),  # boot front wall (seat back side)
     "rear+y": (_SUBFRAME, 0, 2),
     "rear-y": (_SUBFRAME, 0, 2),
     "rear x": (_INNER_WING, 2, 1),
     "rear+z": (_BEAM, 0, 1),
-    "rear-z": (_BEAM, 0, 1),                           # rear panel / crash beam, facing back
+    "rear-z": (_BEAM, 0, 1),  # rear panel / crash beam, facing back
     "front+y": (_SUBFRAME, 0, 2),
     "front-y": (_SUBFRAME, 0, 2),
     "front x": (_INNER_WING, 2, 1),
-    "front+z": (_RADIATOR, 0, 1),                      # facing forward: radiator
+    "front+z": (_RADIATOR, 0, 1),  # facing forward: radiator
     "front-z": (_BEAM, 0, 1),
 }
 # Sentinel UV0 per tag (exact in half floats; add_geometry writes them, _expose replaces them).
 EXPOSED_SENTINEL = {tag: (-2.0, -1.0 - n) for n, tag in enumerate(EXPOSED_MAP)}
-INNER_SKY = 0.2                 # stock bonnet undersides 0.01-0.24
-BAY_SKY = (0.04, 0.35, 0.62)    # facing down, sideways, up (stock front structure)
-ZONE_SKY = {"bay": BAY_SKY,
-            "boot": (0.08, 0.28, 0.40),     # stock boot wells 0.23-0.34 (147, 227, 229, 266, 193)
-            "rear": (0.08, 0.28, 0.40),     # stock behind the bumpers 0.09-0.41
-            "front": (0.08, 0.28, 0.40)}
+INNER_SKY = 0.2  # stock bonnet undersides 0.01-0.24
+BAY_SKY = (0.04, 0.35, 0.62)  # facing down, sideways, up (stock front structure)
+ZONE_SKY = {
+    "bay": BAY_SKY,
+    "boot": (0.08, 0.28, 0.40),  # stock boot wells 0.23-0.34 (147, 227, 229, 266, 193)
+    "rear": (0.08, 0.28, 0.40),  # stock behind the bumpers 0.09-0.41
+    "front": (0.08, 0.28, 0.40),
+}
 
 
 def exposed_sky(tag: str, normal) -> float:
@@ -763,8 +827,8 @@ def zone_of(maps: dict, lod: int, c, zones=EXPOSED_ZONES) -> str | None:
     return None
 
 
-ZONE_STEP = 0.1                 # m; sample spacing over a triangle for zone_vote
-ZONE_SHARE = 0.25               # share of a triangle's samples a zone needs
+ZONE_STEP = 0.1  # m; sample spacing over a triangle for zone_vote
+ZONE_SHARE = 0.25  # share of a triangle's samples a zone needs
 
 
 def zone_vote(maps: dict, lod: int, pts, zones=EXPOSED_ZONES) -> str | None:
@@ -793,6 +857,7 @@ def split_exposed(body, place, log=None, engine: str | None = None) -> tuple[lis
     Untouched sections and subsections stay the same objects."""
     from dsfforza.convert import forza_materials as fm
     from dsfforza.formats import carbin
+
     lods = sorted({sub.lod for s in body for sub in s.subsections if sub.lod > 0})
     zones = exposed_zones(engine)
     maps = zone_maps(body, place, lods, zones)
@@ -938,9 +1003,9 @@ def smooth_labels(labels: list, areas: list, corners: list, passes: int = 2) -> 
 # mostly whole components that voted for it takes exactly those components: its
 # border is then the Forza shut line, and it can swing like stock.
 
-SWINGS = DOORS + (33, 34)   # roles that swing on stock cars (doors, front wings)
-PART_SHARE = 0.6            # share of a component's area its panel vote needs to take it whole
-PART_MIN_AREA = 0.15        # m2 of whole components a door or wing needs to be a Forza part
+SWINGS = DOORS + (33, 34)  # roles that swing on stock cars (doors, front wings)
+PART_SHARE = 0.6  # share of a component's area its panel vote needs to take it whole
+PART_MIN_AREA = 0.15  # m2 of whole components a door or wing needs to be a Forza part
 
 
 def part_components(keys: list) -> list[int]:
@@ -952,6 +1017,7 @@ def part_components(keys: list) -> list[int]:
             parent[x] = parent.get(parent[x], parent[x])
             x = parent[x]
         return x
+
     for t, ks in enumerate(keys):
         for k in ks:
             a, b = find(("t", t)), find(k)
@@ -1042,8 +1108,14 @@ def part_spans(items, parts: set) -> dict:
         tris, _, comps, _ = items[n]
         pts = [t[2] for t, cc in zip(tris, comps) if cc == c]
         side = 1.0 if sum(p[0] for p in pts) >= 0 else -1.0
-        span[lab] = (min(p[2] for p in pts), max(p[2] for p in pts), side,
-                     min(abs(p[0]) for p in pts), min(p[1] for p in pts), max(p[1] for p in pts))
+        span[lab] = (
+            min(p[2] for p in pts),
+            max(p[2] for p in pts),
+            side,
+            min(abs(p[0]) for p in pts),
+            min(p[1] for p in pts),
+            max(p[1] for p in pts),
+        )
     return span
 
 
@@ -1058,9 +1130,14 @@ def in_door_card(c, normal, span) -> bool:
     """Is an interior triangle (centroid c) the door card of the door with this
     span: within its length and height, on its side, at most CARD_DEPTH inward
     of its skin, facing into the cabin."""
-    return (span[0] <= c[2] <= span[1] and c[0] * span[2] > 0 and abs(c[0]) >= span[3] - CARD_DEPTH
-            and span[4] - PART_MARGIN <= c[1] <= span[5] + PART_MARGIN
-            and normal is not None and normal[0] * span[2] < -0.3)
+    return (
+        span[0] <= c[2] <= span[1]
+        and c[0] * span[2] > 0
+        and abs(c[0]) >= span[3] - CARD_DEPTH
+        and span[4] - PART_MARGIN <= c[1] <= span[5] + PART_MARGIN
+        and normal is not None
+        and normal[0] * span[2] < -0.3
+    )
 
 
 def part_trim(tris, areas, comps, labels, span: dict, fallback) -> list:
@@ -1076,16 +1153,18 @@ def part_trim(tris, areas, comps, labels, span: dict, fallback) -> list:
 
 # --- the plan for one car ---------------------------------------------------------
 
+
 def _set_idle_priority() -> None:
     if sys.platform == "win32":
         import ctypes
+
         k = ctypes.windll.kernel32
         k.SetPriorityClass(k.GetCurrentProcess(), 0x40)  # IDLE_PRIORITY_CLASS
 
 
 @dataclass
 class DamageOptions:
-    hull: bool = False      # also scale the root collision hull (PDL) to the Forza body
+    hull: bool = False  # also scale the root collision hull (PDL) to the Forza body
     k: int = K_NEAREST
 
 
@@ -1093,9 +1172,20 @@ class DamagePlan:
     """Everything the damage conversion needs from the host, read before the
     converter replaces the host's geometry."""
 
-    def __init__(self, stream, full, exterior, car, place, opts: DamageOptions | None = None, log=print,
-                 interior=None, engine: str | None = None):
+    def __init__(
+        self,
+        stream,
+        full,
+        exterior,
+        car,
+        place,
+        opts: DamageOptions | None = None,
+        log=print,
+        interior=None,
+        engine: str | None = None,
+    ):
         from dsfforza.convert import forza2dsf
+
         self.f2d = forza2dsf
         self.opts = opts or DamageOptions()
         self.place = place
@@ -1117,23 +1207,41 @@ class DamagePlan:
             self.int_uv1 = Uv1Field.read(stream, interior, 64, self.int_local)
         # The Forza car's box (placed), over its finest body LOD.
         lods = sorted({sub.lod for s in car.body for sub in s.subsections if sub.lod > 0})
-        pts = [place.point(v.position) for s in car.body for sub in s.subsections if sub.lod == lods[0]
-               for t in sub.triangles() for v in (s.vertices_for(sub)[i] for i in t)]
+        pts = [
+            place.point(v.position)
+            for s in car.body
+            for sub in s.subsections
+            if sub.lod == lods[0]
+            for t in sub.triangles()
+            for v in (s.vertices_for(sub)[i] for i in t)
+        ]
         self.forza_box = Box.of(pts)
         # Projection boxes for exposed inner geometry (split_exposed, _expose).
         self.exposed_boxes: dict[str, Box] = {}
         for name in ("hood", "trunk"):
-            box = Box.of(place.point(v.position) for s in car.body if s.name.lower().startswith(name)
-                         for sub in s.subsections if sub.lod == lods[0]
-                         for t in sub.triangles() for v in (s.vertices_for(sub)[i] for i in t))
+            box = Box.of(
+                place.point(v.position)
+                for s in car.body
+                if s.name.lower().startswith(name)
+                for sub in s.subsections
+                if sub.lod == lods[0]
+                for t in sub.triangles()
+                for v in (s.vertices_for(sub)[i] for i in t)
+            )
             if box is not None:
                 self.exposed_boxes[name] = box
         # Zones (exposed_zones): under a cover, its box deepened by BAY_DEPTH or
         # BOOT_DEPTH; behind a bumper, its box deepened inward by BUMPER_DEPTH.
         for kind, is_panel, axis, sign, _, reach in exposed_zones(engine):
-            box = Box.of(place.point(v.position) for s in car.body if is_panel(s.name.lower())
-                         for sub in s.subsections if sub.lod == lods[0]
-                         for t in sub.triangles() for v in (s.vertices_for(sub)[i] for i in t))
+            box = Box.of(
+                place.point(v.position)
+                for s in car.body
+                if is_panel(s.name.lower())
+                for sub in s.subsections
+                if sub.lod == lods[0]
+                for t in sub.triangles()
+                for v in (s.vertices_for(sub)[i] for i in t)
+            )
             if box is None:
                 continue
             lo, hi = list(box.lo), list(box.hi)
@@ -1149,13 +1257,13 @@ class DamagePlan:
         self._grids: dict[tuple, Grid] = {}
         self.boxes: dict[tuple, list] = defaultdict(list)  # pair -> placed points (finest LOD built)
         self._boxes_lod: int | None = None
-        self._seam: dict = {}           # quantised position -> rigid panels sharing it (current LOD)
+        self._seam: dict = {}  # quantised position -> rigid panels sharing it (current LOD)
         self._seam_written: set = set()  # (field, position) given a shared crushed position
-        self._seam_rep: dict = {}        # quantised position -> its near-coincident group's position
-        self._seam_paint: set = set()    # quantised positions on body paint (the outer skin)
-        self._pins: dict = {}            # pair -> Grid of its pinned seam positions (current LOD)
-        self._motion: dict = {}          # id(HostField) -> {frozenset of roles: median host border crush}
-        self.swinging: set = set()       # doors/wings that are Forza parts (assignment): own transform slot
+        self._seam_rep: dict = {}  # quantised position -> its near-coincident group's position
+        self._seam_paint: set = set()  # quantised positions on body paint (the outer skin)
+        self._pins: dict = {}  # pair -> Grid of its pinned seam positions (current LOD)
+        self._motion: dict = {}  # id(HostField) -> {frozenset of roles: median host border crush}
+        self.swinging: set = set()  # doors/wings that are Forza parts (assignment): own transform slot
         self.report: dict = {"panels": {}}
 
     # -- panel lookup --
@@ -1278,6 +1386,7 @@ class DamagePlan:
             def fits(p):
                 box = self._host_box(p.pair)
                 return (box.lo[0] < -reach and box.hi[0] > reach) or (box.centre[0] > 0) == (centroid[0] > 0)
+
             cands = [p for p in cands if fits(p)]
             if not cands:
                 return None
@@ -1288,9 +1397,13 @@ class DamagePlan:
         """The host's centred glass panel (role 8) in the front (z > 0) or rear
         half: windscreen or rear window. None if the host has none there (the
         stock 370Z's rear window is part of its hatch)."""
-        cands = [p for p in self.panels_with((8,)) if p.pair in self.full_field.by_pair
-                 and abs(self._host_box(p.pair).centre[0]) < 0.3
-                 and (self._host_box(p.pair).centre[2] > 0) == (which == "front")]
+        cands = [
+            p
+            for p in self.panels_with((8,))
+            if p.pair in self.full_field.by_pair
+            and abs(self._host_box(p.pair).centre[0]) < 0.3
+            and (self._host_box(p.pair).centre[2] > 0) == (which == "front")
+        ]
         if not cands:
             return None
         return (max if which == "front" else min)(cands, key=lambda p: self._host_box(p.pair).centre[2]).pair
@@ -1305,6 +1418,7 @@ class DamagePlan:
     def assignment(self, sections, lod: int) -> dict:
         """{(id(sub), triangle index): panel pair} for every body triangle at `lod`."""
         from dsfforza.convert import forza_materials as fm
+
         key = (id(sections), lod)
         if key in self._assign:
             return self._assign[key]
@@ -1317,8 +1431,8 @@ class DamagePlan:
         majority: dict[str, list] = {}
         pending = []  # "nearest" sections: (name, tris, areas, components, labels)
         door_groups = set()  # majority groups of side windows
-        keys_of = {}         # "nearest" section -> per triangle (vertex keys, position keys)
-        cabin = []           # the `interior` section: (name, tris, normals), door cards
+        keys_of = {}  # "nearest" section -> per triangle (vertex keys, position keys)
+        cabin = []  # the `interior` section: (name, tris, normals), door cards
         for section in sections:
             kind, roles = section_rule(section.name)
             tris, shape = [], []  # (sub id, index, centroid); (unit normal, area, corner keys, paint)
@@ -1331,9 +1445,15 @@ class DamagePlan:
                     pts = [self.place.point(pool[i].position) for i in t]
                     tris.append((id(sub), k, tuple(sum(p[a] for p in pts) / 3 for a in range(3))))
                     cross = _cross(_sub(pts[1], pts[0]), _sub(pts[2], pts[0]))
-                    shape.append((_norm(cross), math.sqrt(_dot(cross, cross)) / 2,
-                                  [tuple(round(c * 2000) for c in p) for p in pts], is_paint,
-                                  [(id(pool), i) for i in t]))
+                    shape.append(
+                        (
+                            _norm(cross),
+                            math.sqrt(_dot(cross, cross)) / 2,
+                            [tuple(round(c * 2000) for c in p) for p in pts],
+                            is_paint,
+                            [(id(pool), i) for i in t],
+                        )
+                    )
             if not tris:
                 continue
             centroid = tuple(sum(t[2][a] for t in tris) / len(tris) for a in range(3))
@@ -1371,15 +1491,18 @@ class DamagePlan:
                 continue
             allowed = {p.pair for p in self.panels_with(roles)} & set(f.by_pair)
             allowed = allowed or {self.chassis}
-            labels = [self._nearest_pair(c, allowed, f, shape[n][0], shape[n][3]) or self.chassis
-                      for n, (_, _, c) in enumerate(tris)]
+            labels = [
+                self._nearest_pair(c, allowed, f, shape[n][0], shape[n][3]) or self.chassis
+                for n, (_, _, c) in enumerate(tris)
+            ]
             if kind == "nearest":
                 # Panels as connected patches of the Forza surface: a seam
                 # between two panels opens when they crush differently, so
                 # stray triangles and small islands join the panel around them.
                 labels, merged = smooth_labels(labels, [s[1] for s in shape], [s[2] for s in shape])
                 self.report.setdefault("islands_merged", {})[str(lod)] = (
-                    self.report.get("islands_merged", {}).get(str(lod), 0) + merged)
+                    self.report.get("islands_merged", {}).get(str(lod), 0) + merged
+                )
                 # Doors and wings become the Forza parts they are, once every
                 # section is labelled (part_components, swinging_parts below).
                 comps = part_components([s[4] for s in shape])
@@ -1413,10 +1536,18 @@ class DamagePlan:
                 # the other side (if the host has one) is a Forza part too.
                 self.swinging = {p for p in found if self._partner(p) is None or self._partner(p) in found}
                 self.report["shut_line_parts"] = {
-                    self.label(p): {"part m2": round(stats[0][p], 3), "labelled m2": round(stats[1][p], 3),
-                                    "swings": p in self.swinging} for p in sorted(swings) if stats[1][p]}
-            relabelled = [part_relabel(labels, areas, comps, self.swinging, self.chassis)
-                          for _, _, areas, comps, labels in pending]
+                    self.label(p): {
+                        "part m2": round(stats[0][p], 3),
+                        "labelled m2": round(stats[1][p], 3),
+                        "swings": p in self.swinging,
+                    }
+                    for p in sorted(swings)
+                    if stats[1][p]
+                }
+            relabelled = [
+                part_relabel(labels, areas, comps, self.swinging, self.chassis)
+                for _, _, areas, comps, labels in pending
+            ]
             # A part's extent: its largest component. Components (and side
             # windows) that won the part but lie mostly outside its length (the
             # S5S Raptor's intake surround behind the door) stay on the body.
@@ -1467,7 +1598,8 @@ class DamagePlan:
             members[pair].add(sub_owner[sid])
         self._members[key] = members
         self.report.setdefault("sections", {})[str(lod)] = {
-            name: {self.label(p): n for p, n in votes.items()} for name, votes in per_section.items()}
+            name: {self.label(p): n for p, n in votes.items()} for name, votes in per_section.items()
+        }
         return out
 
     def label(self, pair) -> str:
@@ -1475,8 +1607,7 @@ class DamagePlan:
         return f"{pair[0]},{pair[1]} {role_name(p.role) if p else '?'}"
 
     # -- geometry --
-    def _geometry(self, builder, sections, lod, f: HostField, record_box: bool = False,
-                  **kwargs) -> dict[tuple, list]:
+    def _geometry(self, builder, sections, lod, f: HostField, record_box: bool = False, **kwargs) -> dict[tuple, list]:
         """Per panel: add_geometry over that panel's triangles, then s9, s12 and
         normal deltas written into the new vertices."""
         assign = self.assignment(sections, lod)
@@ -1494,7 +1625,7 @@ class DamagePlan:
         for pair in sorted(by_pair):
             secs = [s for s in sections if id(s) in by_pair[pair]]
             # binds this pair now, not the loop variable
-            keep = (lambda pr: (lambda section, sub, k, tri: assign.get((id(sub), k)) == pr))(pair)  # noqa: PLC3002
+            keep = (lambda pr: lambda section, sub, k, tri: assign.get((id(sub), k)) == pr)(pair)  # noqa: PLC3002
             subs = self.f2d.add_geometry(builder, secs, lod, self.place, wheel=False, keep=keep, **kwargs)
             pts = self._finish(builder, subs, pair, f)
             if record_box:
@@ -1536,6 +1667,7 @@ class DamagePlan:
         """Quantised position (int16 x3, as encoded) -> the rigid panels whose
         triangles use it, for positions on more than one."""
         from dsfforza.convert import forza_materials as fm
+
         users = defaultdict(set)
         self._seam_paint = set()
         for section in sections:
@@ -1568,6 +1700,7 @@ class DamagePlan:
                 parent[k] = parent.get(parent[k], parent[k])
                 k = parent[k]
             return k
+
         for key, pairs in users.items():
             ck = tuple(int(c // near) for c in key)
             for dx in (-1, 0, 1):
@@ -1637,8 +1770,9 @@ class DamagePlan:
                 moved[roles].append(math.sqrt(_dot(f.disp[n], f.disp[n])))
         out = {k: sorted(v)[len(v) // 2] for k, v in moved.items()}
         self._motion[key] = out
-        self.report.setdefault("host_border_motion", {
-            " | ".join(sorted(role_name(r) for r in k)): round(v, 3) for k, v in out.items()})
+        self.report.setdefault(
+            "host_border_motion", {" | ".join(sorted(role_name(r) for r in k)): round(v, 3) for k, v in out.items()}
+        )
         return out
 
     def _pinned(self, a, b, motion: dict) -> bool:
@@ -1653,8 +1787,9 @@ class DamagePlan:
         pins = defaultdict(lambda: defaultdict(list))
         count = 0
         for key, pairs in self._seam.items():
-            if key not in self._seam_paint and not any(self._pinned(a, b, motion)
-                                                       for a in pairs for b in pairs if a < b):
+            if key not in self._seam_paint and not any(
+                self._pinned(a, b, motion) for a in pairs for b in pairs if a < b
+            ):
                 continue
             p = tuple(c / POSITION_UNITS for c in key)
             ck = tuple(int(math.floor(c / SEAM_REACH)) for c in p)
@@ -1726,9 +1861,9 @@ class DamagePlan:
         tags = {struct.pack("<2e", *uv): tag for tag, uv in EXPOSED_SENTINEL.items()}
         first, count = sub.first_index, sub.index_count
         stats = self.report.setdefault("exposed", Counter())
-        for v in sorted({sub.base_vertex + i for i in builder.indices[first:first + count]}):
+        for v in sorted({sub.base_vertex + i for i in builder.indices[first : first + count]}):
             at = v * stride
-            tag = tags.get(bytes(buf[at + 8:at + 12]))
+            tag = tags.get(bytes(buf[at + 8 : at + 12]))
             if tag is None:
                 continue
             p = tuple(c / POSITION_UNITS for c in struct.unpack_from("<3h", buf, at))
@@ -1737,10 +1872,14 @@ class DamagePlan:
             if box is None:
                 uv = ((rect[0] + rect[1]) / 2, (rect[2] + rect[3]) / 2)
             else:
-                t = [min(1.0, max(0.0, (p[a] - box.lo[a]) / box.size[a])) if box.size[a] > 1e-3 else 0.5
-                     for a in (au, av)]
-                uv = (rect[0] + t[0] * (rect[1] - rect[0]),
-                      rect[3] - t[1] * (rect[3] - rect[2]) if av == 1 else rect[2] + t[1] * (rect[3] - rect[2]))
+                t = [
+                    min(1.0, max(0.0, (p[a] - box.lo[a]) / box.size[a])) if box.size[a] > 1e-3 else 0.5
+                    for a in (au, av)
+                ]
+                uv = (
+                    rect[0] + t[0] * (rect[1] - rect[0]),
+                    rect[3] - t[1] * (rect[3] - rect[2]) if av == 1 else rect[2] + t[1] * (rect[3] - rect[2]),
+                )
             struct.pack_into("<2e", buf, at + 8, *uv)
             sky = exposed_sky(tag, stored_normal(buf, at + LAYOUT[stride][1]))
             struct.pack_into("<h", buf, at + 6, round(sky * POSITION_UNITS))
@@ -1755,14 +1894,16 @@ class DamagePlan:
             shared |= {t[3] for t in f.uv1.tris if not t[4]}
         return material not in shared
 
-    def _uv1(self, f: HostField, p, pair, material: bytes, any_panel: bool = False, normal=None,
-             chart: int | None = None):
+    def _uv1(
+        self, f: HostField, p, pair, material: bytes, any_panel: bool = False, normal=None, chart: int | None = None
+    ):
         """(UV1, host chart) or None."""
         key = (id(f), pair, material, p, any_panel, normal, chart)
         cache = self.__dict__.setdefault("_uv1_cache", {})
         if key not in cache:
-            cache[key] = f.uv1.lookup(self._forza_norm(p), pair, material, self._is_local(f, material), any_panel,
-                                      normal, chart)
+            cache[key] = f.uv1.lookup(
+                self._forza_norm(p), pair, material, self._is_local(f, material), any_panel, normal, chart
+            )
         return cache[key]
 
     def _finish(self, builder, subs, pair, f: HostField) -> list:
@@ -1778,7 +1919,7 @@ class DamagePlan:
             o9, o5, o12 = LAYOUT[sub.stride]
             buf = builder.buffers[sub.stride]
             stride = sub.stride
-            idx = builder.indices[sub.first_index:sub.first_index + sub.index_count]
+            idx = builder.indices[sub.first_index : sub.first_index + sub.index_count]
             verts = sorted({sub.base_vertex + i for i in idx})
             pos, dmg, charts = {}, {}, {}
             for v in verts:
@@ -1800,8 +1941,11 @@ class DamagePlan:
                 if rigid:
                     # Every copy of a seam position takes the same weight (the
                     # smallest of its panels'), so unpinned seams stay shut too.
-                    w = (min(self._pin_weight(q, at_p) for q in others) if others and pair in others
-                         else self._pin_weight(pair, p))
+                    w = (
+                        min(self._pin_weight(q, at_p) for q in others)
+                        if others and pair in others
+                        else self._pin_weight(pair, p)
+                    )
                     disp = tuple(w * c for c in disp)
                 q = tuple(p[a] + disp[a] for a in range(3))
                 dmg[v] = q
@@ -1864,16 +2008,22 @@ class DamagePlan:
                     material = sub.material
                     if buf[v * stride + LAYOUT[stride][0] + 2] == 0 and self._is_local(f, material):
                         material = self.f2d.PAINT  # as in _finish: non-lamp Lights triangles
-                    hit = self._uv1(f, pos[v], pair, material, normal=stored_normal(buf, v * stride + o5),
-                                    chart=chart)
+                    hit = self._uv1(f, pos[v], pair, material, normal=stored_normal(buf, v * stride + o5), chart=chart)
                     new = len(buf) // stride
-                    why = ("no hit" if hit is None else "other chart" if hit[1] != chart
-                           else "16-bit range" if new - sub.base_vertex > 0xFFFF else None)
+                    why = (
+                        "no hit"
+                        if hit is None
+                        else "other chart"
+                        if hit[1] != chart
+                        else "16-bit range"
+                        if new - sub.base_vertex > 0xFFFF
+                        else None
+                    )
                     if why:
                         stats = self.report.setdefault("seam_skipped", {})
                         stats[why] = stats.get(why, 0) + 1
                     if why is None:
-                        buf += buf[v * stride:(v + 1) * stride]
+                        buf += buf[v * stride : (v + 1) * stride]
                         struct.pack_into("<2e", buf, new * stride + 12, *hit[0])
                         copies[key] = new
                         self.report["seam_vertices"] = self.report.get("seam_vertices", 0) + 1
@@ -1892,7 +2042,7 @@ class DamagePlan:
             groups, current = [], []
             lo = hi = None
             for s in sorted(subs, key=lambda s: s.base_vertex):
-                idx = builder.indices[s.first_index:s.first_index + s.index_count]
+                idx = builder.indices[s.first_index : s.first_index + s.index_count]
                 s_lo, s_hi = s.base_vertex + min(idx), s.base_vertex + max(idx)
                 if current and max(hi, s_hi) - min(lo, s_lo) > 0xFFFF:
                     groups.append((lo, current))
@@ -1905,10 +2055,17 @@ class DamagePlan:
             for base, group in groups:
                 first = len(builder.indices)
                 for s in group:
-                    for i in builder.indices[s.first_index:s.first_index + s.index_count]:
+                    for i in builder.indices[s.first_index : s.first_index + s.index_count]:
                         builder.indices.append(s.base_vertex + i - base)
-                new = self.f2d.NewSub(builder.new_uid(), material, group[0].stride, base, first,
-                                      len(builder.indices) - first, group[0].flag)
+                new = self.f2d.NewSub(
+                    builder.new_uid(),
+                    material,
+                    group[0].stride,
+                    base,
+                    first,
+                    len(builder.indices) - first,
+                    group[0].flag,
+                )
                 builder.subs.append(new)
                 merged.append(new)
         return merged
@@ -1921,8 +2078,9 @@ class DamagePlan:
             if part is not None and part != 0:
                 part_lods.setdefault(part, {}).setdefault(mask, []).extend(subs)
         part_lods.setdefault(0, {})[mask] = self._merge(builder, panel_subs)
-        self.report["panels"].setdefault(str(mask), {
-            self.label(p): sum(s.index_count // 3 for s in subs) for p, subs in panel_subs.items()})
+        self.report["panels"].setdefault(
+            str(mask), {self.label(p): sum(s.index_count // 3 for s in subs) for p, subs in panel_subs.items()}
+        )
 
     def exterior(self, builder, lod: int, **kwargs) -> list:
         """Exterior entry: the merged body only (stock exteriors have no panel parts)."""
@@ -1938,6 +2096,7 @@ class DamagePlan:
         interior's shell by nearest triangle of the same material class, any
         panel. Call after the interior is rebuilt. Returns vertices written."""
         from dsfforza.convert.cockpit import DASHBOARD_INSTRUMENT
+
         if self.int_uv1 is None:
             return 0
         f = HostField([], [], [], self.int_uv1.box, uv1=self.int_uv1, local=self.int_local)
@@ -1953,8 +2112,13 @@ class DamagePlan:
                 # Not the needle buffers: their semantic 8 is DashboardInstrument
                 # (u, v, gauge id, 0), and a UV1 there overwrites the gauge id,
                 # so the engine never turns the needles.
-                if (e8 is not None and e8.components == 4 and e8.type == 8 and elements[0].semantic == 0
-                        and e8.name_hash != DASHBOARD_INSTRUMENT):
+                if (
+                    e8 is not None
+                    and e8.components == 4
+                    and e8.type == 8
+                    and elements[0].semantic == 0
+                    and e8.name_hash != DASHBOARD_INSTRUMENT
+                ):
                     # Offsets from the VDCL, not the converter's layout: the
                     # interior may keep host-shaped buffers (some lack semantic 9).
                     buffers[hd[:8]] = (child(e, "VXDT"), stride, e8.offset + 4, e5.offset if e5 else None)
@@ -1966,7 +2130,7 @@ class DamagePlan:
             d = payload(stream, child(e, "SBBH"))
             if d[16:24] not in buffers:
                 continue
-            base, = struct.unpack_from("<I", d, 0x20)
+            (base,) = struct.unpack_from("<I", d, 0x20)
             first, count = struct.unpack_from("<II", d, 0x38)
             ib = index_buffers[d[0x30:0x38]]
             for t in range(first, first + count):
@@ -2035,9 +2199,11 @@ class DamagePlan:
                     new_pos = tuple(-sum(rows[k][a] * new_c[k] for k in range(3)) for a in range(3))
                     struct.pack_into("<3f", out, at + 0x30, *new_pos)
                     inertia = struct.unpack_from("<3f", out, at + 0x40)
-                    new_i = (inertia[0] * (scale[1] ** 2 + scale[2] ** 2) / 2,
-                             inertia[1] * (scale[0] ** 2 + scale[2] ** 2) / 2,
-                             inertia[2] * (scale[0] ** 2 + scale[1] ** 2) / 2)
+                    new_i = (
+                        inertia[0] * (scale[1] ** 2 + scale[2] ** 2) / 2,
+                        inertia[1] * (scale[0] ** 2 + scale[2] ** 2) / 2,
+                        inertia[2] * (scale[0] ** 2 + scale[1] ** 2) / 2,
+                    )
                     struct.pack_into("<3f", out, at + 0x40, *new_i)
                     entry["centre"] = [round(c, 3) for c in new_c]
                 if r.collision >= 0:
@@ -2099,7 +2265,7 @@ def compact(builder, keep: list) -> None:
     """Keep only `keep` submodels in a forza2dsf.Builder and rebuild its index list."""
     indices = []
     for s in keep:
-        seg = builder.indices[s.first_index:s.first_index + s.index_count]
+        seg = builder.indices[s.first_index : s.first_index + s.index_count]
         s.first_index = len(indices)
         indices.extend(seg)
     builder.indices = indices
@@ -2107,6 +2273,7 @@ def compact(builder, keep: list) -> None:
 
 
 # --- normals ----------------------------------------------------------------------
+
 
 def _angles_of(b0: int, b1: int) -> tuple[float, float]:
     return b0 / 255 * 2 * math.pi - math.pi, b1 / 255 * 2 * math.pi - math.pi
@@ -2148,6 +2315,7 @@ def normal_delta(b0: int, b1: int, face0, face1) -> tuple[int, int]:
 
 # --- CLI: inspection and checks ---------------------------------------------------
 
+
 def _entries(archive: Path, spool_id: int):
     stream = archive.open("rb")
     root = read_chunk(stream, 0)
@@ -2172,13 +2340,17 @@ def cmd_panels(args) -> None:
             piv = struct.unpack_from("<3f", h.table("hinges")[r.hinge])
             axis = struct.unpack_from("<3f", h.table("hinges")[r.hinge], 16)
             limit, param = struct.unpack_from("<2f", h.table("hinges")[r.hinge], 32)
-            hinge = (f"hinge {r.hinge} pivot ({piv[0]:.2f}, {piv[1]:.2f}, {piv[2]:.2f}) axis "
-                     f"({axis[0]:.0f}, {axis[1]:.0f}, {axis[2]:.0f}) limit {limit:.3f} param {param:g}")
+            hinge = (
+                f"hinge {r.hinge} pivot ({piv[0]:.2f}, {piv[1]:.2f}, {piv[2]:.2f}) axis "
+                f"({axis[0]:.0f}, {axis[1]:.0f}, {axis[2]:.0f}) limit {limit:.3f} param {param:g}"
+            )
         ns = [n for n, q in enumerate(f.pairs) if q == pair]
         crush = max((math.dist((0, 0, 0), f.disp[n]) for n in ns), default=0)
-        print(f"  s9 {pair[0]:2d},{pair[1]:2d}  rec {','.join(str(x.index) for x in p.records):6s} "
-              f"{role_name(p.role):18s} part {p.part if p.part is not None else '-':>2}  verts {counts[pair]:5d} "
-              f"max crush {crush:.3f}  {hinge}")
+        print(
+            f"  s9 {pair[0]:2d},{pair[1]:2d}  rec {','.join(str(x.index) for x in p.records):6s} "
+            f"{role_name(p.role):18s} part {p.part if p.part is not None else '-':>2}  verts {counts[pair]:5d} "
+            f"max crush {crush:.3f}  {hinge}"
+        )
 
 
 def load_mesh(stream, vehc) -> vm.Mesh:
@@ -2188,15 +2360,26 @@ def load_mesh(stream, vehc) -> vm.Mesh:
     for e in child(child(vehc, "MDXN"), "DRSP").children:
         if e.tag == "VXCK":
             hd = payload(stream, child(e, "VXHD"))
-            mesh.vertex_buffers[hd[:8]] = vm.VertexBuffer(hd[:8], *struct.unpack_from("<II", hd, 8),
-                                                          vm.parse_vdcl(payload(stream, child(e, "VDCL"))),
-                                                          payload(stream, child(e, "VXDT")))
+            mesh.vertex_buffers[hd[:8]] = vm.VertexBuffer(
+                hd[:8],
+                *struct.unpack_from("<II", hd, 8),
+                vm.parse_vdcl(payload(stream, child(e, "VDCL"))),
+                payload(stream, child(e, "VXDT")),
+            )
         elif e.tag == "IXCK":
             mesh.index_buffers[payload(stream, child(e, "IXHD"))[:8]] = payload(stream, child(e, "IXDT"))
         elif e.tag == "SBMC":
             d = payload(stream, child(e, "SBBH"))
-            mesh.submodels.append(vm.SubModel(d[0:8], d[8:16], d[16:24], struct.unpack_from("<I", d, 0x20)[0],
-                                              d[0x30:0x38], *struct.unpack_from("<II", d, 0x38)))
+            mesh.submodels.append(
+                vm.SubModel(
+                    d[0:8],
+                    d[8:16],
+                    d[16:24],
+                    struct.unpack_from("<I", d, 0x20)[0],
+                    d[0x30:0x38],
+                    *struct.unpack_from("<II", d, 0x38),
+                )
+            )
     mesh.parts = vm.parse_modl(payload(stream, child(child(vehc, "NONR"), "MODL")), mesh.submodels)
     return mesh
 
@@ -2227,8 +2410,14 @@ def render(tris, path: Path, size: int = 300) -> None:
             length = math.sqrt(_dot(n, n)) or 1
             shade = 0.3 + 0.7 * abs(_dot(n, light)) / length
             c = bytes(int(255 * shade * k) for k in col) if col is not None else None
-            pts = [(flip * (p[h] - centre[h]) / span * size + size / 2,
-                    size / 2 - (p[v] - centre[v]) / span * size, sign * (p[d] - centre[d])) for p in tri]
+            pts = [
+                (
+                    flip * (p[h] - centre[h]) / span * size + size / 2,
+                    size / 2 - (p[v] - centre[v]) / span * size,
+                    sign * (p[d] - centre[d]),
+                )
+                for p in tri
+            ]
             x0, x1 = max(int(min(p[0] for p in pts)), 0), min(int(max(p[0] for p in pts)) + 1, size)
             y0, y1 = max(int(min(p[1] for p in pts)), 0), min(int(max(p[1] for p in pts)) + 1, size)
             (px, py, pz), (qx, qy, qz), (rx, ry, rz) = pts
@@ -2251,9 +2440,9 @@ def render(tris, path: Path, size: int = 300) -> None:
                             uvs, texel = item[2], item[3]
                             u = w0 * uvs[0][0] + w1 * uvs[1][0] + w2 * uvs[2][0]
                             t = w0 * uvs[0][1] + w1 * uvs[1][1] + w2 * uvs[2][1]
-                            pixels[o:o + 3] = bytes(min(255, int(255 * (0.4 + 0.6 * shade) * k)) for k in texel(u, t))
+                            pixels[o : o + 3] = bytes(min(255, int(255 * (0.4 + 0.6 * shade) * k)) for k in texel(u, t))
                         else:
-                            pixels[o:o + 3] = c
+                            pixels[o : o + 3] = c
     vm.write_png(path, width, size, pixels)
 
 
@@ -2265,38 +2454,51 @@ def decal_texel(stream_path: Path):
     the scratch mask (alpha) is dark, tinted by the dent normal map."""
     from dsfforza.convert import dsf_materials
     from dsfforza.formats.chnk import walk
+
     with stream_path.open("rb") as stream:
         root = read_chunk(stream, 0)
         ssic = next(e for e in root.entries if e.tag == "SSIC")
-        dds = next(payload(stream, child(e, "DXTC")) for _, e in walk(ssic.children)
-                   if e.tag == "TEXC" and payload(stream, child(e, "UIDC"))[:8] == DECAL_TEXTURE)
+        dds = next(
+            payload(stream, child(e, "DXTC"))
+            for _, e in walk(ssic.children)
+            if e.tag == "TEXC" and payload(stream, child(e, "UIDC"))[:8] == DECAL_TEXTURE
+        )
     w, h, rgba = dsf_materials.decode_dds(dds)
 
     def texel(u, v):
         x = min(w - 1, max(0, int(u * w)))
         y = min(h - 1, max(0, int(v * h)))
-        r, g, _b, a = rgba[(y * w + x) * 4:(y * w + x) * 4 + 4]
+        r, g, _b, a = rgba[(y * w + x) * 4 : (y * w + x) * 4 + 4]
         scratch = 1 - a / 255
         base = (0.45 + 0.25 * (r / 255 - 0.5), 0.45 + 0.25 * (g / 255 - 0.5), 0.5)
         return tuple(base[k] * (1 - scratch) + scratch for k in range(3))
+
     return texel
 
 
 TRIM_TEXTURE = bytes.fromhex("00122b73d1fa1227")  # SSIC: GLOBAL_Chassis(_Simple) diffuse
 TRIM_MATERIALS = {bytes.fromhex("0012833b12fe1027"), bytes.fromhex("10122b9753b14e2a")}
-CLASS_COLOURS = {bytes.fromhex("001283358afd1027"): (0.75, 0.35, 0.1), bytes.fromhex("10122b9653b14e2a"): (0.75, 0.35, 0.1),
-                 bytes.fromhex("001283369afd1027"): (0.3, 0.5, 0.7), bytes.fromhex("10122b9953b14e2a"): (0.3, 0.5, 0.7)}
+CLASS_COLOURS = {
+    bytes.fromhex("001283358afd1027"): (0.75, 0.35, 0.1),
+    bytes.fromhex("10122b9653b14e2a"): (0.75, 0.35, 0.1),
+    bytes.fromhex("001283369afd1027"): (0.3, 0.5, 0.7),
+    bytes.fromhex("10122b9953b14e2a"): (0.3, 0.5, 0.7),
+}
 
 
 def shared_texel(stream_path: Path, uid: bytes):
     """uv -> grey (its red channel) of a shared SSIC texture, for --by trim."""
     from dsfforza.convert import dsf_materials
     from dsfforza.formats.chnk import walk
+
     with stream_path.open("rb") as stream:
         root = read_chunk(stream, 0)
         ssic = next(e for e in root.entries if e.tag == "SSIC")
-        dds = next(payload(stream, child(e, "DXTC")) for _, e in walk(ssic.children)
-                   if e.tag == "TEXC" and payload(stream, child(e, "UIDC"))[:8] == uid)
+        dds = next(
+            payload(stream, child(e, "DXTC"))
+            for _, e in walk(ssic.children)
+            if e.tag == "TEXC" and payload(stream, child(e, "UIDC"))[:8] == uid
+        )
     w, h, rgba = dsf_materials.decode_dds(dds)
 
     def texel(u, v):
@@ -2304,6 +2506,7 @@ def shared_texel(stream_path: Path, uid: bytes):
         y = min(h - 1, max(0, int(v % 1 * h)))
         r = rgba[(y * w + x) * 4] / 255
         return (r, r, r)
+
     return texel
 
 
@@ -2416,7 +2619,9 @@ def cmd_check(args) -> None:
                             total += 1
                             moved += math.dist(vm.position(vb, i), vb.read(e12, i)[:3]) > 0.005
         unknown = {p: c for p, c in pairs.items() if p not in known}
-        report(not unknown, f"kind {kind}: every part-0 s9 pair is a host panel ({len(pairs)} pairs, unknown {unknown})")
+        report(
+            not unknown, f"kind {kind}: every part-0 s9 pair is a host panel ({len(pairs)} pairs, unknown {unknown})"
+        )
         report(len(pairs) > 3, f"kind {kind}: part 0 uses {len(pairs)} panels")
         report(total and moved / total > 0.2, f"kind {kind}: {moved} of {total} part-0 vertex uses have a crush target")
         if kind != 0:
@@ -2434,9 +2639,11 @@ def cmd_check(args) -> None:
                         tris.add((vb.uid,) + tuple(sorted(tri)))
                         bad += any(s9_pair(vb, i) not in (pair, drawn[pair]) for i in tri)
             if tris:
-                report(not bad and tris <= part0,
-                       f"part {panel.part} ({role_name(panel.role)}): {len(tris)} triangles, all on panel {drawn[pair]} "
-                       f"({bad} not) and all in part 0 ({len(tris - part0)} not)")
+                report(
+                    not bad and tris <= part0,
+                    f"part {panel.part} ({role_name(panel.role)}): {len(tris)} triangles, all on panel {drawn[pair]} "
+                    f"({bad} not) and all in part 0 ({len(tris - part0)} not)",
+                )
     print(f"{problems} problem(s)")
     if problems:
         sys.exit(1)
@@ -2454,9 +2661,13 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--png", type=Path, required=True)
     p.add_argument("--kind", type=int, default=0, choices=(0, 1, 2))
     p.add_argument("--mask", type=int)
-    p.add_argument("--by", choices=("part", "panel", "decal", "trim"), default="part",
-                   help="decal: the shared scratch/dent decal at UV1 (white = scratch where fully damaged); "
-                        "trim: shared trim textured from the global chassis texture at UV0, paint orange, glass blue")
+    p.add_argument(
+        "--by",
+        choices=("part", "panel", "decal", "trim"),
+        default="part",
+        help="decal: the shared scratch/dent decal at UV1 (white = scratch where fully damaged); "
+        "trim: shared trim textured from the global chassis texture at UV0, paint orange, glass blue",
+    )
     p.add_argument("--damage", type=float, default=0.0, help="fDamage for every panel (0 intact, 1 crushed)")
     p.add_argument("--parts", help="only these MODL parts")
     p.add_argument("--skip", help="leave these MODL parts out")

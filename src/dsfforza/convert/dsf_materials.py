@@ -73,15 +73,54 @@ if LIGHTS_ALPHA not in LIGHTS_ALPHA_MODES:
 # "matched" curves: score knots -> stock alpha knots (stock percentiles 0, 5, 10, 20,
 # ..., 90, 93, 95, 97, 98, 99, 99.5 of amber and of white lamps; red lamps also have
 # 85 and 100, LAMP_PERCENTILES).
-_LAMP_X_RED = (0.0, 0.199, 0.313, 0.458, 0.529, 0.586, 0.627, 0.672, 0.715, 0.768, 0.785, 0.798, 0.815,
-               0.831, 0.853, 0.87, 0.896, 0.922, 0.961)
+_LAMP_X_RED = (
+    0.0,
+    0.199,
+    0.313,
+    0.458,
+    0.529,
+    0.586,
+    0.627,
+    0.672,
+    0.715,
+    0.768,
+    0.785,
+    0.798,
+    0.815,
+    0.831,
+    0.853,
+    0.87,
+    0.896,
+    0.922,
+    0.961,
+)
 _LAMP_Y_RED = (0, 0, 0, 3, 8, 14, 21, 30, 43, 63, 78, 106, 130, 153, 187, 211, 239, 252, 255)
-_LAMP_X_WHITE = (0.0, 0.117, 0.135, 0.177, 0.373, 0.557, 0.677, 0.755, 0.813, 0.898, 0.922, 0.936, 0.947,
-                 0.951, 0.961, 0.97, 0.975)
+_LAMP_X_WHITE = (
+    0.0,
+    0.117,
+    0.135,
+    0.177,
+    0.373,
+    0.557,
+    0.677,
+    0.755,
+    0.813,
+    0.898,
+    0.922,
+    0.936,
+    0.947,
+    0.951,
+    0.961,
+    0.97,
+    0.975,
+)
 _LAMP_Y_WHITE = (0, 0, 1, 9, 18, 29, 43, 60, 84, 119, 142, 173, 197, 216, 237, 248, 255)
 _LAMP_Y_AMBER = (0, 0, 1, 7, 14, 22, 31, 44, 61, 84, 100, 124, 145, 167, 196, 217, 242)
-LAMP_CURVES = {"red": (_LAMP_X_RED, _LAMP_Y_RED), "white": (_LAMP_X_WHITE, _LAMP_Y_WHITE),
-               "amber": (_LAMP_X_WHITE, _LAMP_Y_AMBER)}
+LAMP_CURVES = {
+    "red": (_LAMP_X_RED, _LAMP_Y_RED),
+    "white": (_LAMP_X_WHITE, _LAMP_Y_WHITE),
+    "amber": (_LAMP_X_WHITE, _LAMP_Y_AMBER),
+}
 
 
 # "matched" also darkens red lamp lenses to stock's brightness: Forza's red lamp texels
@@ -103,8 +142,8 @@ def _interp(s: float, xs, ys) -> float:
 
 # Stock red lamp alpha at the percentiles LAMP_PERCENTILES (= _LAMP_Y_RED).
 LAMP_PERCENTILES = (0, 5, 10, 20, 30, 40, 50, 60, 70, 80, 85, 90, 93, 95, 97, 98, 99, 99.5, 100)
-RED_CURVE_MIN_TEXELS = 200      # fewer red lamp texels: the shared red curve
-RED_CURVE_SAMPLES = 40000       # about this many texels sampled over a car's lights regions
+RED_CURVE_MIN_TEXELS = 200  # fewer red lamp texels: the shared red curve
+RED_CURVE_SAMPLES = 40000  # about this many texels sampled over a car's lights regions
 
 
 def red_lamp_curve(scores: list[float]):
@@ -128,8 +167,8 @@ def red_lamp_curve(scores: list[float]):
 # over the lamp geometry, full entries of 140 stock vehicles, pooled; out/emissive/rearlamps.py):
 # p5 35, p25 71, median 92, p75 115, p95 153.
 VISIBLE_RED_STOCK_MEDIAN = 92
-VISIBLE_RED_MIN_SAMPLES = 400     # fewer visible red lamp samples: the shared lens curve only
-VISIBLE_STEP = 0.005              # metres per sample of the rear view
+VISIBLE_RED_MIN_SAMPLES = 400  # fewer visible red lamp samples: the shared lens curve only
+VISIBLE_STEP = 0.005  # metres per sample of the rear view
 
 
 def _shared_lens(v: float) -> float:
@@ -153,8 +192,7 @@ def red_lens_scale(visible: list[int]) -> float | None:
     return min(1.0, VISIBLE_RED_STOCK_MEDIAN / median) if median > 0 else None
 
 
-def matched_lamp_texel(r: int, g: int, b: int, a: int, red_curve=None,
-                       lens_scale=None) -> tuple[int, int, int, int]:
+def matched_lamp_texel(r: int, g: int, b: int, a: int, red_curve=None, lens_scale=None) -> tuple[int, int, int, int]:
     """Stock-like lamp texel (LIGHTS_ALPHA "matched"): alpha from the curves, red
     lenses darkened to stock's brightness (the shared curve, then this car's
     red_lens_scale; never brighter). Alpha is scored on the original texel."""
@@ -224,6 +262,7 @@ DROP = "drop"  # triangle_uvs tag: leave this triangle out (alpha-tested away in
 
 # --- DXT5 ------------------------------------------------------------------------
 
+
 def _q565(r: int, g: int, b: int) -> int:
     return ((r * 31 + 127) // 255) << 11 | ((g * 63 + 127) // 255) << 5 | ((b * 31 + 127) // 255)
 
@@ -279,7 +318,7 @@ def encode_dxt5(rgba: bytes | bytearray, width: int, height: int) -> bytes:
             px, alpha = [], []
             for y in range(4):
                 o = ((by + y) * width + bx) * 4
-                row = rgba[o:o + 16]
+                row = rgba[o : o + 16]
                 for x in range(4):
                     px.append((row[x * 4], row[x * 4 + 1], row[x * 4 + 2]))
                     alpha.append(row[x * 4 + 3])
@@ -296,7 +335,7 @@ def encode_dxt1(rgba: bytes | bytearray, width: int, height: int) -> bytes:
             px = []
             for y in range(4):
                 o = ((by + y) * width + bx) * 4
-                row = rgba[o:o + 16]
+                row = rgba[o : o + 16]
                 px.extend((row[x * 4], row[x * 4 + 1], row[x * 4 + 2]) for x in range(4))
             out += _colour_block(px)
     return bytes(out)
@@ -316,15 +355,39 @@ def downsample(rgba: bytes | bytearray, width: int, height: int) -> tuple[bytear
     return out, w2, h2
 
 
-def dds_header(width: int, height: int, mips: int, template: bytes | None = None,
-               fourcc: bytes = b"DXT5") -> bytes:
+def dds_header(width: int, height: int, mips: int, template: bytes | None = None, fourcc: bytes = b"DXT5") -> bytes:
     """A DXT5 (or DXT1) DDS header; copies `template` (e.g. the host texture's)
     and patches the size fields, so flags and caps match what the game ships."""
     if template is not None and template[:4] == b"DDS " and template[84:88] in (b"DXT5", b"DXT1"):
         h = bytearray(template[:DDS_HEADER_SIZE])
     else:
-        h = bytearray(struct.pack("<4s7I44s2I4s5I5I", b"DDS ", 124, 0xA1007, 0, 0, 0, 0, 0,
-                                  bytes(44), 32, 0x4, b"DXT5", 0, 0, 0, 0, 0, 0x401008, 0, 0, 0, 0))
+        h = bytearray(
+            struct.pack(
+                "<4s7I44s2I4s5I5I",
+                b"DDS ",
+                124,
+                0xA1007,
+                0,
+                0,
+                0,
+                0,
+                0,
+                bytes(44),
+                32,
+                0x4,
+                b"DXT5",
+                0,
+                0,
+                0,
+                0,
+                0,
+                0x401008,
+                0,
+                0,
+                0,
+                0,
+            )
+        )
     linear = width * height // (2 if fourcc == b"DXT1" else 1)  # DXT1: half a byte per texel
     struct.pack_into("<IIII", h, 12, height, width, linear, 0)
     struct.pack_into("<I", h, 28, mips)
@@ -332,8 +395,14 @@ def dds_header(width: int, height: int, mips: int, template: bytes | None = None
     return bytes(h)
 
 
-def dds_file(rgba: bytes | bytearray, width: int, height: int, mips: int = DEFAULT_MIPS,
-             template: bytes | None = None, fourcc: bytes = b"DXT5") -> bytes:
+def dds_file(
+    rgba: bytes | bytearray,
+    width: int,
+    height: int,
+    mips: int = DEFAULT_MIPS,
+    template: bytes | None = None,
+    fourcc: bytes = b"DXT5",
+) -> bytes:
     """DXT5 (or DXT1) DDS with `mips` levels (top level included), box-filtered."""
     encode = encode_dxt1 if fourcc == b"DXT1" else encode_dxt5
     levels, level = [], (rgba, width, height)
@@ -353,28 +422,31 @@ def dds_size(width: int, height: int, mips: int) -> int:
 
 def decode_dds(dds: bytes) -> tuple[int, int, bytearray]:
     from dsfforza.formats import xds
+
     height, width = struct.unpack_from("<II", dds, 12)
     return width, height, xds.decode_rgba(dds[DDS_HEADER_SIZE:], width, height, dds[84:88])
 
 
 # --- atlas layout -------------------------------------------------------------------
 
-SOLID_CELL = 8     # destination texels per solid-colour cell
-PAD = 4            # destination texels of real neighbouring content around each region
-ALIGN = 4          # DXT block alignment
-MIN_GAP = 2        # source texels of empty seam needed to cut regions apart
+SOLID_CELL = 8  # destination texels per solid-colour cell
+PAD = 4  # destination texels of real neighbouring content around each region
+ALIGN = 4  # DXT block alignment
+MIN_GAP = 2  # source texels of empty seam needed to cut regions apart
 
 
 @dataclass
 class Region:
     """A rectangle of a Forza atlas copied into the DSF atlas at `scale`."""
+
     family: str
     src: tuple[int, int, int, int]  # x0, y0, x1, y1 in source texels
-    dst: tuple[int, int] = (0, 0)   # top-left of the padded block in the DSF atlas
+    dst: tuple[int, int] = (0, 0)  # top-left of the padded block in the DSF atlas
     size: tuple[int, int] = (0, 0)  # padded block size in DSF texels
 
-    def map(self, u: float, v: float, src_size: tuple[int, int], scale: float,
-            atlas: tuple[int, int]) -> tuple[float, float]:
+    def map(
+        self, u: float, v: float, src_size: tuple[int, int], scale: float, atlas: tuple[int, int]
+    ) -> tuple[float, float]:
         x = self.dst[0] + PAD + (u * src_size[0] - self.src[0]) * scale
         y = self.dst[1] + PAD + (v * src_size[1] - self.src[1]) * scale
         return x / atlas[0], y / atlas[1]
@@ -407,8 +479,12 @@ def _best_split(ids: list[int], boxes, gain: float = 0.85, min_area: int = 64 * 
     centre along x or y where the two halves' bounding boxes have the least
     total area. The halves may overlap (texels get duplicated). None unless it
     saves at least 1 - `gain` of the area."""
-    whole = (min(boxes[i][0] for i in ids), min(boxes[i][1] for i in ids),
-             max(boxes[i][2] for i in ids), max(boxes[i][3] for i in ids))
+    whole = (
+        min(boxes[i][0] for i in ids),
+        min(boxes[i][1] for i in ids),
+        max(boxes[i][2] for i in ids),
+        max(boxes[i][3] for i in ids),
+    )
     if len(ids) < 2 or _area(whole) < min_area:
         return None
     best = None
@@ -439,8 +515,14 @@ def find_regions(triangles: list, src_size: tuple[int, int]) -> tuple[list[tuple
     for tri in triangles:
         us = [min(1.0, max(0.0, u)) * width for u, _ in tri]
         vs = [min(1.0, max(0.0, v)) * height for _, v in tri]
-        boxes.append((max(0, math.floor(min(us)) - 1), max(0, math.floor(min(vs)) - 1),
-                      min(width, math.ceil(max(us)) + 1), min(height, math.ceil(max(vs)) + 1)))
+        boxes.append(
+            (
+                max(0, math.floor(min(us)) - 1),
+                max(0, math.floor(min(vs)) - 1),
+                min(width, math.ceil(max(us)) + 1),
+                min(height, math.ceil(max(vs)) + 1),
+            )
+        )
     rects, owner = [], [0] * len(boxes)
     stack = [(list(range(len(boxes))), 0)]
     while stack:
@@ -457,8 +539,12 @@ def find_regions(triangles: list, src_size: tuple[int, int]) -> tuple[list[tuple
             if halves:
                 stack.extend((g, axis) for g in halves)
                 continue
-            rect = (min(boxes[i][0] for i in ids), min(boxes[i][1] for i in ids),
-                    max(boxes[i][2] for i in ids), max(boxes[i][3] for i in ids))
+            rect = (
+                min(boxes[i][0] for i in ids),
+                min(boxes[i][1] for i in ids),
+                max(boxes[i][2] for i in ids),
+                max(boxes[i][3] for i in ids),
+            )
             for i in ids:
                 owner[i] = len(rects)
             rects.append(rect)
@@ -513,6 +599,7 @@ def skyline_pack(sizes: list[tuple[int, int]], width: int, height: int) -> list[
 
 # --- the converter-facing object ------------------------------------------------------
 
+
 @dataclass
 class Texturing:
     """Decides, for one Forza car, which DSF material and UVs each subsection
@@ -527,10 +614,11 @@ class Texturing:
       - `paint_uv` -> the plain texel paint vertices should point at;
       - `dds(template)` -> the encoded atlas.
     """
+
     car_dir: Path
     size: tuple[int, int] = DEFAULT_SIZE
     mips: int = DEFAULT_MIPS
-    swatch_trims: bool = False    # give swatch trims (black, frame...) their Forza colour
+    swatch_trims: bool = False  # give swatch trims (black, frame...) their Forza colour
     plain: tuple[int, int, int, int] = DEFAULT_PLAIN
     weights: dict[str, float] = field(default_factory=lambda: {fm.NODAMAGE: 1.0, fm.LIGHTS: 1.0, fm.INTERIOR: 1.0})
     # Cockpit carbins (src/dsfforza/convert/cockpit.py): the _LOD0 atlases, fm.classify_cockpit,
@@ -557,21 +645,21 @@ class Texturing:
     # the Jeep GC SRT8), not trim colour (research/cockpit.md, "Light cockpit
     # trims" and "Cabin trims sample interior_LOD0").
     filler: dict = field(default_factory=dict)
-    alpha_only: set = field(default_factory=set)       # (family, region index) used only by alpha-tested tris
-    resolved: dict = field(default_factory=dict)       # (id(section), id(sub)) -> SubMaterial
-    regions: dict = field(default_factory=dict)        # family -> [Region]
-    owners: dict = field(default_factory=dict)         # (id(sub), triangle index) -> region index
-    solids: dict = field(default_factory=dict)         # key -> (x, y) of a solid cell
+    alpha_only: set = field(default_factory=set)  # (family, region index) used only by alpha-tested tris
+    resolved: dict = field(default_factory=dict)  # (id(section), id(sub)) -> SubMaterial
+    regions: dict = field(default_factory=dict)  # family -> [Region]
+    owners: dict = field(default_factory=dict)  # (id(sub), triangle index) -> region index
+    solids: dict = field(default_factory=dict)  # key -> (x, y) of a solid cell
     solid_colours: dict = field(default_factory=dict)  # key -> RGBA
-    scale: dict = field(default_factory=dict)          # family -> DSF texels per source texel
+    scale: dict = field(default_factory=dict)  # family -> DSF texels per source texel
     src_sizes: dict = field(default_factory=dict)
     atlases: fm.AtlasCache | None = None
-    atlas_subs: set = field(default_factory=set)       # id(sub) with triangles in the atlas
-    dropped: set = field(default_factory=set)          # (id(sub), triangle index) cut out by alpha
-    cutout: set = field(default_factory=set)           # id(sub) entirely cut out by alpha
-    lens_subs: set = field(default_factory=set)        # id(sub): rear lamp lenses moved from glass to the atlas (is_lens)
-    lamp_tris: list = field(default_factory=list)      # (lod, positions, atlas uvs) of Lights-atlas triangles
-    wheel_ids: set = field(default_factory=set)        # id(section) of the Forza wheel model (plan(wheels=...))
+    atlas_subs: set = field(default_factory=set)  # id(sub) with triangles in the atlas
+    dropped: set = field(default_factory=set)  # (id(sub), triangle index) cut out by alpha
+    cutout: set = field(default_factory=set)  # id(sub) entirely cut out by alpha
+    lens_subs: set = field(default_factory=set)  # id(sub): rear lamp lenses moved from glass to the atlas (is_lens)
+    lamp_tris: list = field(default_factory=list)  # (lod, positions, atlas uvs) of Lights-atlas triangles
+    wheel_ids: set = field(default_factory=set)  # id(section) of the Forza wheel model (plan(wheels=...))
 
     # -- planning --
     def plan(self, sections, lods, extra_solids: dict | None = None, wheels=None) -> Texturing:
@@ -668,6 +756,7 @@ class Texturing:
         m = fm.resolve(section, sub, self.classifier or fm.classify)
         if self.classifier is None and self.is_lens(section, sub, m):
             import dataclasses
+
             m = dataclasses.replace(m, role=fm.TEXTURED)
             self.lens_subs.add(id(sub))
         return m
@@ -682,8 +771,13 @@ class Texturing:
         are opaque Lights-material texels, so such lenses go to the atlas.
         Front covers stay glass: on several FH1 cars (Challenger, S65, 300C,
         Golf R) their UVs land on red texels Forza doesn't show."""
-        if (m.role != fm.GLASS or m.family != fm.LIGHTS or m.kind != "textured" or self.atlases is None
-                or fm.LIGHTS not in self.families):
+        if (
+            m.role != fm.GLASS
+            or m.family != fm.LIGHTS
+            or m.kind != "textured"
+            or self.atlases is None
+            or fm.LIGHTS not in self.families
+        ):
             return False
         pool = section.vertices_for(sub)
         used = {i for tri in sub.triangles() for i in tri}
@@ -711,8 +805,13 @@ class Texturing:
         solid_keys = list(self.solid_colours)
 
         def attempt(s: float):
-            sizes = [(_round_up((r.src[2] - r.src[0]) * self._family_scale(s, r.family)) + 2 * PAD,
-                      _round_up((r.src[3] - r.src[1]) * self._family_scale(s, r.family)) + 2 * PAD) for r in regions]
+            sizes = [
+                (
+                    _round_up((r.src[2] - r.src[0]) * self._family_scale(s, r.family)) + 2 * PAD,
+                    _round_up((r.src[3] - r.src[1]) * self._family_scale(s, r.family)) + 2 * PAD,
+                )
+                for r in regions
+            ]
             sizes += [(SOLID_CELL, SOLID_CELL)] * len(solid_keys)
             pos = skyline_pack(sizes, width, height)
             return (s, sizes, pos) if pos is not None else None
@@ -732,7 +831,7 @@ class Texturing:
         s, sizes, pos = best
         for r, size, p in zip(regions, sizes, pos):
             r.dst, r.size = p, size
-        for key, p in zip(solid_keys, pos[len(regions):]):
+        for key, p in zip(solid_keys, pos[len(regions) :]):
             self.solids[key] = p
         self.scale = {family: self._family_scale(s, family) for family in self.families}
 
@@ -753,8 +852,9 @@ class Texturing:
         m = self.submaterial(section, sub)
         if id(sub) in self.cutout:
             return fm.SKIP
-        if self._uses_atlas(m) and ((m.kind == "textured" and id(sub) in self.atlas_subs)
-                                    or (m.kind == "swatch" and m.colour is not None)):
+        if self._uses_atlas(m) and (
+            (m.kind == "textured" and id(sub) in self.atlas_subs) or (m.kind == "swatch" and m.colour is not None)
+        ):
             return LIGHTS_MAT if m.family == fm.LIGHTS else CHASSIS
         if m.role == fm.TEXTURED:
             return fm.TRIM  # tiling/procedural lamp parts: untextured
@@ -783,8 +883,12 @@ class Texturing:
             return [self.solid_uv(key)] * len(uvs), key
         n = self.owners[(id(sub), triangle_index)]
         region = self.regions[m.family][n]
-        mapped = [region.map(min(1.0, max(0.0, u)), min(1.0, max(0.0, v)), self.src_sizes[m.family],
-                             self.scale[m.family], self.size) for u, v in uvs]
+        mapped = [
+            region.map(
+                min(1.0, max(0.0, u)), min(1.0, max(0.0, v)), self.src_sizes[m.family], self.scale[m.family], self.size
+            )
+            for u, v in uvs
+        ]
         return mapped, (m.family, n)
 
     # -- rendering --
@@ -819,10 +923,11 @@ class Texturing:
         if not self.lamp_tris or self.atlases is None:
             return []
         import numpy as np
+
         lod = min(t[0] for t in self.lamp_tris)
         tris = [t for t in self.lamp_tris if t[0] == lod]
-        P = np.array([t[1] for t in tris], float)          # (n, 3, 3)
-        U = np.array([t[2] for t in tris], float)          # (n, 3, 2)
+        P = np.array([t[1] for t in tris], float)  # (n, 3, 3)
+        U = np.array([t[2] for t in tris], float)  # (n, 3, 2)
         x0, y0 = P[..., 0].min(), P[..., 1].min()
         W = int((P[..., 0].max() - x0) / VISIBLE_STEP) + 2
         H = int((P[..., 1].max() - y0) / VISIBLE_STEP) + 2
@@ -837,8 +942,10 @@ class Texturing:
             area = (X[1] - X[0]) * (Y[2] - Y[0]) - (Y[1] - Y[0]) * (X[2] - X[0])
             if abs(area) < 1e-9:
                 continue
-            gx, gy = np.meshgrid(np.arange(int(X.min()), int(np.ceil(X.max())) + 1) + 0.5,
-                                 np.arange(int(Y.min()), int(np.ceil(Y.max())) + 1) + 0.5)
+            gx, gy = np.meshgrid(
+                np.arange(int(X.min()), int(np.ceil(X.max())) + 1) + 0.5,
+                np.arange(int(Y.min()), int(np.ceil(Y.max())) + 1) + 0.5,
+            )
             w0 = ((X[1] - gx) * (Y[2] - gy) - (Y[1] - gy) * (X[2] - gx)) / area
             w1 = ((X[2] - gx) * (Y[0] - gy) - (Y[2] - gy) * (X[0] - gx)) / area
             w2 = 1 - w0 - w1
@@ -910,7 +1017,7 @@ class Texturing:
                         acc = [0, 0, 0, 0]
                         for yy in range(y0, y1):
                             o = (yy * sw + x0) * 4
-                            row = src[o:o + (x1 - x0) * 4]
+                            row = src[o : o + (x1 - x0) * 4]
                             for c in range(4):
                                 acc[c] += sum(row[c::4])
                         n = (y1 - y0) * (x1 - x0)
@@ -918,12 +1025,12 @@ class Texturing:
                         if cut and acc[3] // n < 128:
                             texel = self.cutout_colour
                         o = (y * width + x) * 4
-                        out[o:o + 4] = bytes(texel)
+                        out[o : o + 4] = bytes(texel)
         for key, (x0, y0) in self.solids.items():
             colour = bytes(self.solid_colours[key])
             for y in range(y0, y0 + SOLID_CELL):
                 o = (y * width + x0) * 4
-                out[o:o + SOLID_CELL * 4] = colour * SOLID_CELL
+                out[o : o + SOLID_CELL * 4] = colour * SOLID_CELL
         return out
 
     def dds(self, template: bytes | None = None) -> bytes:
@@ -937,6 +1044,7 @@ class Texturing:
 
 
 # --- DSF materials and textures in a DRSP ------------------------------------------
+
 
 @dataclass
 class Param:
@@ -1016,8 +1124,9 @@ def texture_entry(stream, texc: Entry, dds: bytes, new_uid: bytes | None = None)
 @dataclass
 class Installed:
     """What a converter needs after installing the atlas in one entry."""
-    materials: dict[str, bytes]   # "chassis"/"lights" -> material UID to use in SBBH
-    texture: bytes                # TEXC UID the materials sample
+
+    materials: dict[str, bytes]  # "chassis"/"lights" -> material UID to use in SBBH
+    texture: bytes  # TEXC UID the materials sample
     layout: dict[bytes, tuple[int, int]]  # material UID -> (vertex stride, MODL flag)
 
 
@@ -1039,7 +1148,9 @@ def host_materials(stream, drsp: Entry, lod1: bool = False) -> dict[str, tuple[E
     return found
 
 
-def install_full(stream, drsp: Entry, dds: bytes, mode: str = "replace", uid_seed: bytes = b"\x00\x12\xfe\xed") -> Installed:
+def install_full(
+    stream, drsp: Entry, dds: bytes, mode: str = "replace", uid_seed: bytes = b"\x00\x12\xfe\xed"
+) -> Installed:
     """Install the atlas in a full (kind 0) entry's DRSP, in place.
 
     replace: the host TEXC that the Chassis/Lights materials sample gets the
@@ -1058,8 +1169,9 @@ def install_full(stream, drsp: Entry, dds: bytes, mode: str = "replace", uid_see
         raise ValueError(f"chassis texture {host_tex.hex()} not in this entry")
     if mode == "replace":
         child(texcs[host_tex], "DXTC").payload = dds
-        return Installed({k: v[1]["uid"] for k, v in found.items()}, host_tex,
-                         {v[1]["uid"]: STRIDES[k] for k, v in found.items()})
+        return Installed(
+            {k: v[1]["uid"] for k, v in found.items()}, host_tex, {v[1]["uid"]: STRIDES[k] for k, v in found.items()}
+        )
     if mode != "clone":
         raise ValueError(mode)
     new_tex = uid_seed + b"\x00\x00\x00\x01"
@@ -1074,8 +1186,14 @@ def install_full(stream, drsp: Entry, dds: bytes, mode: str = "replace", uid_see
     return Installed(new_mats, new_tex, {new_mats[k]: STRIDES[k] for k in new_mats})
 
 
-def install_exterior(stream, drsp: Entry, full: Installed, mode: str = "replace",
-                     uid_seed: bytes = b"\x00\x12\xfe\xee", fallback: list[Entry] | None = None) -> Installed:
+def install_exterior(
+    stream,
+    drsp: Entry,
+    full: Installed,
+    mode: str = "replace",
+    uid_seed: bytes = b"\x00\x12\xfe\xee",
+    fallback: list[Entry] | None = None,
+) -> Installed:
     """Use the clean exterior (kind 2) entry's own Chassis/Lights materials;
     they sample the full entry's TEXC by UID. In clone mode, copies pointing
     at the new texture are added.
@@ -1092,15 +1210,19 @@ def install_exterior(stream, drsp: Entry, full: Installed, mode: str = "replace"
     if set(found) != {CHASSIS, LIGHTS_MAT}:
         raise ValueError(f"exterior entry needs a Chassis and a Lights material, found {sorted(found)}")
     if mode == "replace":
-        return Installed({k: v[1]["uid"] for k, v in found.items()}, full.texture,
-                         {v[1]["uid"]: STRIDES[k] for k, v in found.items()})
+        return Installed(
+            {k: v[1]["uid"] for k, v in found.items()},
+            full.texture,
+            {v[1]["uid"]: STRIDES[k] for k, v in found.items()},
+        )
     new_mats = {CHASSIS: uid_seed + b"\x00\x00\x00\x02", LIGHTS_MAT: uid_seed + b"\x00\x00\x00\x03"}
     kids = list(drsp.children)
     last_mat = max(i for i, e in enumerate(kids) if e.tag == "MACO")
     for n, kind in enumerate((CHASSIS, LIGHTS_MAT)):
         old_tex = next(iter(found[kind][1]["textures"]))
-        kids.insert(last_mat + 1 + n, retarget_material(stream, found[kind][0], {old_tex: full.texture},
-                                                        new_mats[kind]))
+        kids.insert(
+            last_mat + 1 + n, retarget_material(stream, found[kind][0], {old_tex: full.texture}, new_mats[kind])
+        )
     drsp.children = kids
     return Installed(new_mats, full.texture, {new_mats[k]: STRIDES[k] for k in new_mats})
 
@@ -1120,6 +1242,7 @@ def host_texture(stream, drsp: Entry) -> bytes | None:
 @dataclass
 class Binding:
     """Texturing bound to one entry's materials: what add_geometry needs."""
+
     texturing: Texturing
     installed: Installed
 
@@ -1145,10 +1268,21 @@ class Binding:
         return self.installed.layout
 
 
-def prepare(stream, full_vehc: Entry, exterior_vehc: Entry | None, car_dir: Path, sections, lods,
-            mode: str = "replace", size: tuple[int, int] | None = None, mips: int | None = None,
-            swatch_trims: bool = False, log=print,
-            interior_vehc: Entry | None = None, wheels=None) -> tuple[Binding, Binding | None]:
+def prepare(
+    stream,
+    full_vehc: Entry,
+    exterior_vehc: Entry | None,
+    car_dir: Path,
+    sections,
+    lods,
+    mode: str = "replace",
+    size: tuple[int, int] | None = None,
+    mips: int | None = None,
+    swatch_trims: bool = False,
+    log=print,
+    interior_vehc: Entry | None = None,
+    wheels=None,
+) -> tuple[Binding, Binding | None]:
     """Plan and encode the car's atlas and install it in a host vehicle's full
     entry (and its clean exterior entry). Call before rebuilding the DRSPs,
     and keep the entries' TEXC/MACO (forza2dsf.rebuild_drsp with
@@ -1176,37 +1310,49 @@ def prepare(stream, full_vehc: Entry, exterior_vehc: Entry | None, car_dir: Path
     if exterior_vehc is not None:
         fallback = ([child(child(interior_vehc, "MDXN"), "DRSP")] if interior_vehc is not None else []) + [full_drsp]
         ext = install_exterior(stream, child(child(exterior_vehc, "MDXN"), "DRSP"), full, mode, fallback=fallback)
-    log(f"{t.summary()}; {mode}: texture {full.texture.hex()}, DDS {len(dds):#x} bytes "
-        f"(host {len(host) if host else 0:#x})")
+    log(
+        f"{t.summary()}; {mode}: texture {full.texture.hex()}, DDS {len(dds):#x} bytes "
+        f"(host {len(host) if host else 0:#x})"
+    )
     return Binding(t, full), (Binding(t, ext) if ext else None)
 
 
 # --- textured preview ---------------------------------------------------------------
 
 FLAT = {  # shared materials (forza2dsf constants), preview colours
-    "001283358afd1027": (150, 24, 28),   # paint
+    "001283358afd1027": (150, 24, 28),  # paint
     "001283369afd1027": (90, 110, 130),  # glass
-    "0012833b12fe1027": (40, 40, 44),    # trim
-    "00128337b2fd1027": (22, 22, 22),    # tyre
+    "0012833b12fe1027": (40, 40, 44),  # trim
+    "00128337b2fd1027": (22, 22, 22),  # tyre
 }
 
 
 VIEWS = {"side": (2, 1, 0, 1, 1), "top": (0, 2, 1, -1, 1), "front": (0, 1, 2, 1, 1), "rear": (0, 1, 2, -1, -1)}
 
 
-def preview(archive: Path, vehc_index: int, png: Path, mask: int | None = None, size: int = 400,
-            views: tuple[str, ...] = ("side", "top", "front", "rear")) -> dict:
+def preview(
+    archive: Path,
+    vehc_index: int,
+    png: Path,
+    mask: int | None = None,
+    size: int = 400,
+    views: tuple[str, ...] = ("side", "top", "front", "rear"),
+) -> dict:
     """Render side, top, front and rear views of one VEHC with its local
     materials textured (nearest texel of the top mip; textures are looked up
     by UID across the whole archive) and shared materials flat-coloured."""
     from dsfforza.formats import vehicle_mesh as vm
     from dsfforza.formats.chnk import read_chunk
+
     _, mesh = vm.load(archive, vehc_index)
     textures, materials = {}, {}
     with archive.open("rb") as stream:
         root = read_chunk(stream, 0)
-        wanted = {vehc_index} | {i for i in range(max(0, vehc_index - 2), min(len(root.entries), vehc_index + 3))
-                                 if root.entries[i].tag == "VEHC"}
+        wanted = {vehc_index} | {
+            i
+            for i in range(max(0, vehc_index - 2), min(len(root.entries), vehc_index + 3))
+            if root.entries[i].tag == "VEHC"
+        }
         for i in wanted:
             drsp = child(child(root.entries[i], "MDXN"), "DRSP")
             for e in drsp.children:
@@ -1238,7 +1384,10 @@ def preview(archive: Path, vehc_index: int, png: Path, mask: int | None = None, 
 
 def _render(tris, path: Path, size: int, views: list) -> None:
     from dsfforza.formats import vehicle_mesh as vm
-    xs = [p[0] for t in tris for p in t[0]]; ys = [p[1] for t in tris for p in t[0]]; zs = [p[2] for t in tris for p in t[0]]
+
+    xs = [p[0] for t in tris for p in t[0]]
+    ys = [p[1] for t in tris for p in t[0]]
+    zs = [p[2] for t in tris for p in t[0]]
     span = max(max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs)) * 1.05
     centre = ((max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2, (max(zs) + min(zs)) / 2)
     width = size * len(views)
@@ -1252,8 +1401,14 @@ def _render(tris, path: Path, size: int, views: list) -> None:
             nx, ny, nz = ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx
             length = math.sqrt(nx * nx + ny * ny + nz * nz) or 1
             shade = 0.35 + 0.65 * abs(nx * light[0] + ny * light[1] + nz * light[2]) / length
-            pts = [(flip * (p[h] - centre[h]) / span * size + size / 2,
-                    size / 2 - (p[v] - centre[v]) / span * size, sign * (p[d] - centre[d])) for p in pts3]
+            pts = [
+                (
+                    flip * (p[h] - centre[h]) / span * size + size / 2,
+                    size / 2 - (p[v] - centre[v]) / span * size,
+                    sign * (p[d] - centre[d]),
+                )
+                for p in pts3
+            ]
             (px, py, pz), (qx, qy, qz), (rx, ry, rz) = pts
             area = (qx - px) * (ry - py) - (qy - py) * (rx - px)
             if abs(area) < 1e-9:
@@ -1277,15 +1432,16 @@ def _render(tris, path: Path, size: int, views: list) -> None:
                         u = w0 * uvs[0][0] + w1 * uvs[1][0] + w2 * uvs[2][0]
                         t = w0 * uvs[0][1] + w1 * uvs[1][1] + w2 * uvs[2][1]
                         o = ((min(th - 1, max(0, int(t * th)))) * tw + min(tw - 1, max(0, int(u * tw)))) * 4
-                        colour = trgba[o:o + 3]
+                        colour = trgba[o : o + 3]
                     else:
                         colour = flat
                     o = (y * width + view * size + x) * 3
-                    pixels[o:o + 3] = bytes(min(255, int(c * shade)) for c in colour)
+                    pixels[o : o + 3] = bytes(min(255, int(c * shade)) for c in colour)
     vm.write_png(path, width, size, pixels)
 
 
 # --- CLI ---------------------------------------------------------------------------------
+
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -1310,6 +1466,7 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.cmd == "atlas":
         from dsfforza.formats import carbin
+
         sections = carbin.parse((args.car / (args.carbin or f"{args.car.name}.carbin")).read_bytes())
         w, h = (int(x) for x in args.size.split("x"))
         t = Texturing(args.car, size=(w, h), mips=args.mips, swatch_trims=args.swatch_trims)
@@ -1318,6 +1475,7 @@ def main(argv: list[str] | None = None) -> None:
         rgba = t.render()
         if args.png:
             from dsfforza.formats import xds
+
             opaque = bytearray(rgba)
             opaque[3::4] = b"\xff" * (w * h)
             xds.write_png(args.png, w, h, opaque)

@@ -70,21 +70,48 @@ EMISSIONS = {"EngineAmbient": "EngAmb", "EngineIntake": "Int", "Exhaust": "Exh"}
 
 # FSOUND_* sample mode bits (FMOD 3 / FSB3-4)
 MODE_BITS = {
-    0x00000001: "LOOP_OFF", 0x00000002: "LOOP_NORMAL", 0x00000004: "LOOP_BIDI",
-    0x00000008: "8BITS", 0x00000010: "16BITS", 0x00000020: "MONO", 0x00000040: "STEREO",
-    0x00000200: "MPEG", 0x00001000: "HW3D", 0x00002000: "2D", 0x00080000: "HW2D",
-    0x00100000: "3D", 0x00400000: "IMAADPCM", 0x00800000: "VAG", 0x01000000: "XMA",
-    0x02000000: "GCADPCM", 0x04000000: "MULTICHANNEL", 0x08000000: "OGG/CELT",
+    0x00000001: "LOOP_OFF",
+    0x00000002: "LOOP_NORMAL",
+    0x00000004: "LOOP_BIDI",
+    0x00000008: "8BITS",
+    0x00000010: "16BITS",
+    0x00000020: "MONO",
+    0x00000040: "STEREO",
+    0x00000200: "MPEG",
+    0x00001000: "HW3D",
+    0x00002000: "2D",
+    0x00080000: "HW2D",
+    0x00100000: "3D",
+    0x00400000: "IMAADPCM",
+    0x00800000: "VAG",
+    0x01000000: "XMA",
+    0x02000000: "GCADPCM",
+    0x04000000: "MULTICHANNEL",
+    0x08000000: "OGG/CELT",
     0x10000000: "MPEG_LAYER3",
 }
-CODECS = (("XMA", 0x01000000), ("IMAADPCM", 0x00400000), ("VAG", 0x00800000),
-          ("GCADPCM", 0x02000000), ("MPEG", 0x10000200), ("OGG/CELT", 0x08000000))
+CODECS = (
+    ("XMA", 0x01000000),
+    ("IMAADPCM", 0x00400000),
+    ("VAG", 0x00800000),
+    ("GCADPCM", 0x02000000),
+    ("MPEG", 0x10000200),
+    ("OGG/CELT", 0x08000000),
+)
 # FMOD_FSB_SOURCE_* bank flags
-BANK_FLAGS = {0x01: "FORMAT", 0x02: "BASICHEADERS", 0x04: "ENCRYPTED", 0x08: "BIGENDIANPCM",
-              0x10: "NOTINTERLEAVED", 0x20: "MPEG_PADDED", 0x40: "MPEG_PADDED4"}
+BANK_FLAGS = {
+    0x01: "FORMAT",
+    0x02: "BASICHEADERS",
+    0x04: "ENCRYPTED",
+    0x08: "BIGENDIANPCM",
+    0x10: "NOTINTERLEAVED",
+    0x20: "MPEG_PADDED",
+    0x40: "MPEG_PADDED4",
+}
 
 
 # --------------------------------------------------------------------------- FSB4
+
 
 @dataclass
 class Subsong:
@@ -113,8 +140,9 @@ class Subsong:
 
     @property
     def loop(self) -> str:
-        kind = "normal" if self.mode & 0x02 else "bidi" if self.mode & 0x04 else \
-            "off" if self.mode & 0x01 else "unflagged"
+        kind = (
+            "normal" if self.mode & 0x02 else "bidi" if self.mode & 0x04 else "off" if self.mode & 0x01 else "unflagged"
+        )
         return f"{kind} {self.loop_start}-{self.loop_end}"
 
     @property
@@ -142,14 +170,13 @@ def parse_fsb(data: bytes) -> Fsb:
     fsb = Fsb(version, flags, header_bytes, data_bytes)
     pos, offset, first = 0x30, 0x30 + header_bytes, None
     for i in range(count):
-        if flags & 0x02 and first is not None:          # basic headers: samples + bytes only
+        if flags & 0x02 and first is not None:  # basic headers: samples + bytes only
             samples, size = struct.unpack_from("<II", data, pos)
-            sub = Subsong(i, f"#{i}", samples, size, 0, samples - 1, first.mode, first.rate,
-                          first.channels, offset, 8)
+            sub = Subsong(i, f"#{i}", samples, size, 0, samples - 1, first.mode, first.rate, first.channels, offset, 8)
             pos += 8
         else:
             hsize = struct.unpack_from("<H", data, pos)[0]
-            name = data[pos + 2:pos + 32].split(b"\0")[0].decode("ascii", "replace")
+            name = data[pos + 2 : pos + 32].split(b"\0")[0].decode("ascii", "replace")
             samples, size, loop_start, loop_end, mode, rate = struct.unpack_from("<IIIIIi", data, pos + 32)
             channels = struct.unpack_from("<H", data, pos + 62)[0]
             sub = Subsong(i, name, samples, size, loop_start, loop_end, mode, rate, channels, offset, hsize)
@@ -162,22 +189,28 @@ def parse_fsb(data: bytes) -> Fsb:
 
 def print_fsb(fsb: Fsb, title: str = "") -> None:
     total = sum(s.size for s in fsb.subsongs)
-    print(f"{title}FSB4 version {fsb.version:#x}, flags {fsb.flags:#x} ({fsb.flag_names}), "
-          f"{len(fsb.subsongs)} subsongs, headers {fsb.header_bytes} B, data {fsb.data_bytes} B"
-          f"{'' if total == fsb.data_bytes else f' (sum of subsongs {total})'}")
-    print(f"  {'#':>3} {'name':24} {'codec':8} {'rate':>6} {'ch':>2} {'samples':>8} {'sec':>6} "
-          f"{'bytes':>7}  loop / mode")
+    print(
+        f"{title}FSB4 version {fsb.version:#x}, flags {fsb.flags:#x} ({fsb.flag_names}), "
+        f"{len(fsb.subsongs)} subsongs, headers {fsb.header_bytes} B, data {fsb.data_bytes} B"
+        f"{'' if total == fsb.data_bytes else f' (sum of subsongs {total})'}"
+    )
+    print(
+        f"  {'#':>3} {'name':24} {'codec':8} {'rate':>6} {'ch':>2} {'samples':>8} {'sec':>6} {'bytes':>7}  loop / mode"
+    )
     for s in fsb.subsongs:
-        print(f"  {s.index:>3} {s.name:24} {s.codec:8} {s.rate:>6} {s.channels:>2} {s.samples:>8} "
-              f"{s.seconds:6.3f} {s.size:>7}  {s.loop}  {s.mode_names}")
+        print(
+            f"  {s.index:>3} {s.name:24} {s.codec:8} {s.rate:>6} {s.channels:>2} {s.samples:>8} "
+            f"{s.seconds:6.3f} {s.size:>7}  {s.loop}  {s.mode_names}"
+        )
 
 
 # --------------------------------------------------------------------------- sources
 
+
 @dataclass
 class AudioFile:
-    where: str                         # "FM4 disc 1" style label (disc image or package)
-    path: str                          # path inside the disc or package
+    where: str  # "FM4 disc 1" style label (disc image or package)
+    path: str  # path inside the disc or package
     size: int
     opener: Callable[[], BinaryIO]
 
@@ -208,10 +241,12 @@ class Source:
                 if entry.is_dir:
                     continue
                 if "/audio/" in f"/{low}":
-                    self.files.append(AudioFile(label, entry.path, entry.size,
-                                                lambda e=entry, im=image: im.open(e)))
-                elif low.startswith("content/") and entry.size >= 0x1000 and \
-                        image.read(entry, 0, 4) in (b"CON ", b"LIVE", b"PIRS"):
+                    self.files.append(AudioFile(label, entry.path, entry.size, lambda e=entry, im=image: im.open(e)))
+                elif (
+                    low.startswith("content/")
+                    and entry.size >= 0x1000
+                    and image.read(entry, 0, 4) in (b"CON ", b"LIVE", b"PIRS")
+                ):
                     self._add_package(image, entry, label)
 
     def _image(self, path: str) -> XIso:
@@ -228,8 +263,7 @@ class Source:
         where = f"{label}::{entry.path}"
         for inner in package.files():
             if not inner.is_dir and "/audio/" in f"/{inner.path.lower()}":
-                self.files.append(AudioFile(where, inner.path, inner.size,
-                                            lambda e=inner, p=package: p.open(e)))
+                self.files.append(AudioFile(where, inner.path, inner.size, lambda e=inner, p=package: p.open(e)))
 
     def find_name(self, name: str) -> list[AudioFile]:
         low = name.lower()
@@ -258,10 +292,11 @@ def engine_banks(files: list[AudioFile]) -> list[AudioFile]:
 
 # --------------------------------------------------------------------------- tuning
 
+
 @dataclass
 class Loop:
-    group: str             # EngineAmbient / EngineIntake / ExhaustL / ExhaustR
-    index: int             # FSB subsong index (wavebankindex)
+    group: str  # EngineAmbient / EngineIntake / ExhaustL / ExhaustR
+    index: int  # FSB subsong index (wavebankindex)
     rpm_min: int
     rpm_sample: int
     rpm_max: int
@@ -282,7 +317,7 @@ class EngineTuning:
     file: str
     settings: dict[str, str]
     volumes: dict[str, str]
-    upgrades: dict[str, dict[str, str]]     # emission -> {L0: ht file, ...}
+    upgrades: dict[str, dict[str, str]]  # emission -> {L0: ht file, ...}
     xml: bytes
 
 
@@ -320,8 +355,14 @@ class Tuning:
                 upgrades[tag] = dict(node.attrib)
         settings = root.find("EngineSettings")
         volumes = root.find("VolumeAdjustments")
-        return EngineTuning(car, info.filename, dict(settings.attrib) if settings is not None else {},
-                            dict(volumes.attrib) if volumes is not None else {}, upgrades, raw)
+        return EngineTuning(
+            car,
+            info.filename,
+            dict(settings.attrib) if settings is not None else {},
+            dict(volumes.attrib) if volumes is not None else {},
+            upgrades,
+            raw,
+        )
 
     def harmonic(self, name: str) -> tuple[Harmonic, bytes]:
         key = name.lower()
@@ -334,12 +375,21 @@ class Tuning:
         for group in root:
             for node in group.findall("Loop"):
                 a = node.attrib
-                loops.append(Loop(group.tag, int(a["wavebankindex"]), int(a["rpm_min"]),
-                                  int(a["rpm_sample"]), int(a["rpm_max"]), float(a.get("volume", 1))))
+                loops.append(
+                    Loop(
+                        group.tag,
+                        int(a["wavebankindex"]),
+                        int(a["rpm_min"]),
+                        int(a["rpm_sample"]),
+                        int(a["rpm_max"]),
+                        float(a.get("volume", 1)),
+                    )
+                )
         return Harmonic(info.filename, root.get("name", ""), loops, root), raw
 
 
 # --------------------------------------------------------------------------- decoding
+
 
 def vgmstream_path(given: str | None) -> Path:
     path = Path(given) if given else DEFAULT_VGMSTREAM
@@ -358,8 +408,12 @@ def decode_bank(fsb_path: Path, fsb: Fsb, out_dir: Path, vgmstream: Path) -> lis
     written = []
     for s in fsb.subsongs:
         target = (out_dir / f"{s.index:02d}_{safe(s.name)}.wav").resolve()
-        result = subprocess.run([str(vgmstream), "-s", str(s.index + 1), "-o", str(target),
-                                 str(fsb_path.resolve())], capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            [str(vgmstream), "-s", str(s.index + 1), "-o", str(target), str(fsb_path.resolve())],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         if result.returncode or not target.is_file():
             raise RuntimeError(f"vgmstream failed on {fsb_path} #{s.index}: {result.stderr.strip()}")
         written.append(target)
@@ -375,11 +429,17 @@ def wav_stats(path: Path) -> dict[str, float]:
     first = pcm[0::ch]
     steps = sorted(abs(first[i + 1] - first[i]) for i in range(0, len(first) - 1, 7))
     median = steps[len(steps) // 2] or 1
-    return {"frames": frames, "rate": rate, "channels": ch, "peak": max(abs(x) for x in pcm) / 32768,
-            "seam": abs(first[-1] - first[0]) / median}
+    return {
+        "frames": frames,
+        "rate": rate,
+        "channels": ch,
+        "peak": max(abs(x) for x in pcm) / 32768,
+        "seam": abs(first[-1] - first[0]) / median,
+    }
 
 
 # --------------------------------------------------------------------------- FEV
+
 
 def fev_strings(data: bytes) -> list[str]:
     """Printable strings of an FMOD Designer .fev (FEV1); event, layer and parameter names."""
@@ -387,11 +447,15 @@ def fev_strings(data: bytes) -> list[str]:
         raise ValueError("not an FEV1 file")
     out = []
     pos = 0
-    while pos + 4 <= len(data):              # names are stored as u32 length + bytes (NUL included)
+    while pos + 4 <= len(data):  # names are stored as u32 length + bytes (NUL included)
         n = struct.unpack_from("<I", data, pos)[0]
-        if 2 <= n <= 256 and pos + 4 + n <= len(data) and data[pos + 3 + n] == 0 and \
-                all(32 <= b < 127 for b in data[pos + 4:pos + 3 + n]):
-            out.append(data[pos + 4:pos + 3 + n].decode())
+        if (
+            2 <= n <= 256
+            and pos + 4 + n <= len(data)
+            and data[pos + 3 + n] == 0
+            and all(32 <= b < 127 for b in data[pos + 4 : pos + 3 + n])
+        ):
+            out.append(data[pos + 4 : pos + 3 + n].decode())
             pos += 4 + n
         else:
             pos += 1
@@ -399,6 +463,7 @@ def fev_strings(data: bytes) -> list[str]:
 
 
 # --------------------------------------------------------------------------- commands
+
 
 def cmd_banks(args) -> None:
     source = Source(args.source)
@@ -413,10 +478,11 @@ def cmd_banks(args) -> None:
             engines.setdefault(key.lower(), {})[kind] = f
         for f in sorted(banks, key=lambda f: (f.where, f.path.lower())):
             print(f"{f.size:>9} {f.where}  {f.path}")
-        others = [f for f in source.files if f.path.lower().endswith((".zip", ".fev")) and
-                  "/cars/" in f.path.lower()]
-        print(f"\n{len(banks)} engine banks, {sum(f.size for f in banks) / 1e6:.1f} MB, "
-              f"{len(engines)} engine names", file=sys.stderr)
+        others = [f for f in source.files if f.path.lower().endswith((".zip", ".fev")) and "/cars/" in f.path.lower()]
+        print(
+            f"\n{len(banks)} engine banks, {sum(f.size for f in banks) / 1e6:.1f} MB, {len(engines)} engine names",
+            file=sys.stderr,
+        )
         for kind in ("EngAmb", "Exh", "Int"):
             n = sum(1 for e in engines.values() if kind in e)
             print(f"  {kind}: {n}", file=sys.stderr)
@@ -464,9 +530,11 @@ def cmd_car(args) -> None:
         tuning = Tuning(sources)
         et = tuning.engine(args.car)
         s = et.settings
-        print(f"{args.car}: {et.file}  idle {s.get('audio_rpm_idle')} rpm, redline {s.get('audio_rpm_redline')} rpm, "
-              f"num_cylinders {s.get('num_cylinders')}, EngineVolume {et.volumes.get('EngineVolume')}, "
-              f"TurboVolume {et.volumes.get('TurboVolume')}, SuperChargerVolume {et.volumes.get('SuperChargerVolume')}")
+        print(
+            f"{args.car}: {et.file}  idle {s.get('audio_rpm_idle')} rpm, redline {s.get('audio_rpm_redline')} rpm, "
+            f"num_cylinders {s.get('num_cylinders')}, EngineVolume {et.volumes.get('EngineVolume')}, "
+            f"TurboVolume {et.volumes.get('TurboVolume')}, SuperChargerVolume {et.volumes.get('SuperChargerVolume')}"
+        )
         out = Path(args.out) if args.out else None
         if out:
             out.mkdir(parents=True, exist_ok=True)
@@ -481,13 +549,16 @@ def cmd_car(args) -> None:
                 done.add(ht_name)
                 try:
                     ht, raw = tuning.harmonic(ht_name)
-                except KeyError:   # "NA.xml": no sound for this emission at this upgrade level
+                except KeyError:  # "NA.xml": no sound for this emission at this upgrade level
                     print(f"\n[{emission} {level}] {ht_name} (no such HT file)")
                     continue
                 hits = [f for src in sources for f in src.find_name(ht.bank) if BANK_DIR in f.path.lower()]
-                print(f"\n[{emission} {level}] {ht_name} -> {ht.bank}"
-                      f"  ({hits[0].where}::{hits[0].path}, {hits[0].size} B)" if hits else
-                      f"\n[{emission} {level}] {ht_name} -> {ht.bank}  (BANK NOT FOUND in given sources)")
+                print(
+                    f"\n[{emission} {level}] {ht_name} -> {ht.bank}"
+                    f"  ({hits[0].where}::{hits[0].path}, {hits[0].size} B)"
+                    if hits
+                    else f"\n[{emission} {level}] {ht_name} -> {ht.bank}  (BANK NOT FOUND in given sources)"
+                )
                 if out:
                     (out / Path(ht.file).name).write_bytes(raw)
                 if not hits:
@@ -503,8 +574,10 @@ def cmd_car(args) -> None:
                     for w in decode_bank(bank_path, fsb, Path(args.wav) / Path(ht.bank).stem, vgm):
                         wavs[int(w.name.split("_", 1)[0])] = w
                 by_index = {s.index: s for s in fsb.subsongs}
-                print(f"  {'group':13} {'#':>3} {'sample':16} {'rpm_min':>7} {'rpm':>6} {'rpm_max':>7} {'vol':>5} "
-                      f"{'codec':5} {'rate':>6} {'ch':>2} {'sec':>6}  loop" + ("   seam  peak" if wavs else ""))
+                print(
+                    f"  {'group':13} {'#':>3} {'sample':16} {'rpm_min':>7} {'rpm':>6} {'rpm_max':>7} {'vol':>5} "
+                    f"{'codec':5} {'rate':>6} {'ch':>2} {'sec':>6}  loop" + ("   seam  peak" if wavs else "")
+                )
                 count = len(fsb.subsongs)
                 for lp in ht.loops:
                     sub = by_index.get(lp.index)
@@ -512,8 +585,10 @@ def cmd_car(args) -> None:
                         # ExhaustR indices run past the bank: index - count is the stereo
                         # subsong whose right channel is the right exhaust
                         right = by_index[lp.index - count]
-                        print(f"  {lp.group:13} {lp.index:>3} = right channel of #{right.index} {right.name}"
-                              f" ({lp.rpm_min}/{lp.rpm_sample}/{lp.rpm_max}, vol {lp.volume:.2f})")
+                        print(
+                            f"  {lp.group:13} {lp.index:>3} = right channel of #{right.index} {right.name}"
+                            f" ({lp.rpm_min}/{lp.rpm_sample}/{lp.rpm_max}, vol {lp.volume:.2f})"
+                        )
                         continue
                     if sub is None:
                         print(f"  {lp.group:13} {lp.index:>3} (missing subsong)")
@@ -522,9 +597,11 @@ def cmd_car(args) -> None:
                     if lp.index in wavs:
                         st = wav_stats(wavs[lp.index])
                         extra = f"  {st['seam']:5.1f} {st['peak']:5.2f}"
-                    print(f"  {lp.group:13} {lp.index:>3} {sub.name:16} {lp.rpm_min:>7} {lp.rpm_sample:>6} "
-                          f"{lp.rpm_max:>7} {lp.volume:5.2f} {sub.codec:5} {sub.rate:>6} {sub.channels:>2} "
-                          f"{sub.seconds:6.3f}  {sub.loop}{extra}")
+                    print(
+                        f"  {lp.group:13} {lp.index:>3} {sub.name:16} {lp.rpm_min:>7} {lp.rpm_sample:>6} "
+                        f"{lp.rpm_max:>7} {lp.volume:5.2f} {sub.codec:5} {sub.rate:>6} {sub.channels:>2} "
+                        f"{sub.seconds:6.3f}  {sub.loop}{extra}"
+                    )
                 unused = sorted(set(by_index) - {lp.index for lp in ht.loops})
                 if unused:
                     print(f"  subsongs not in this HT: {[by_index[i].name for i in unused]}")
@@ -553,14 +630,21 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--vgmstream")
     p = sub.add_parser("car", help="resolve a car's engine sound: ET -> HT -> banks and rpm tables")
     p.add_argument("car")
-    p.add_argument("--iso", action="append", required=True,
-                   help="disc image or package; give FM4 disc 1 and disc 2 for pack cars")
+    p.add_argument(
+        "--iso", action="append", required=True, help="disc image or package; give FM4 disc 1 and disc 2 for pack cars"
+    )
     p.add_argument("--out", help="write the ET, HT xml and banks here")
     p.add_argument("--wav", help="decode the banks to <wav>/<bank>/ (needs --out)")
     p.add_argument("--vgmstream")
     args = parser.parse_args(argv)
-    {"banks": cmd_banks, "info": cmd_info, "fev": cmd_fev, "extract": cmd_extract,
-     "decode": cmd_decode, "car": cmd_car}[args.command](args)
+    {
+        "banks": cmd_banks,
+        "info": cmd_info,
+        "fev": cmd_fev,
+        "extract": cmd_extract,
+        "decode": cmd_decode,
+        "car": cmd_car,
+    }[args.command](args)
 
 
 if __name__ == "__main__":

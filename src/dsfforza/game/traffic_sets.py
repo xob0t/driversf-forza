@@ -45,14 +45,40 @@ RECORD = struct.Struct("<I5H5HI")
 # Every name the shipped Lua passes to setTrafficSettingsName (directly or via
 # trafficSettings = "..."), plus the online sets in onlinemissionsync.lua.
 KNOWN = [
-    "Exposition", "Exposition Drive", "Exposition Chase", "Exposition Bullrun", "Exposition Shift",
-    "Chapter 1", "Chapter 2", "Chapter 2 God", "Chapter 3", "Chapter 4", "Chapter 5", "Chapter 6",
-    "Chapter 7", "Chapter 8", "Epilogue", "Challenge traffic", "Challenge traffic heavy",
-    "Chase traffic 1", "Chase traffic 2", "Chase traffic 3", "Chase traffic 4", "Chase traffic 5",
-    "Mind Control", "DeactivatingBombs", "Cut scene traffic",
-    "Online Traffic ", "Online Traffic Easy", "Online Traffic Hard", "Online Traffic Pursuit",
-    "Online Traffic Trailblazer", "Online Traffic Jump", "Online Traffic Sprint GP",
-    "Online Traffic Takedown", "Online Traffic Survival",
+    "Exposition",
+    "Exposition Drive",
+    "Exposition Chase",
+    "Exposition Bullrun",
+    "Exposition Shift",
+    "Chapter 1",
+    "Chapter 2",
+    "Chapter 2 God",
+    "Chapter 3",
+    "Chapter 4",
+    "Chapter 5",
+    "Chapter 6",
+    "Chapter 7",
+    "Chapter 8",
+    "Epilogue",
+    "Challenge traffic",
+    "Challenge traffic heavy",
+    "Chase traffic 1",
+    "Chase traffic 2",
+    "Chase traffic 3",
+    "Chase traffic 4",
+    "Chase traffic 5",
+    "Mind Control",
+    "DeactivatingBombs",
+    "Cut scene traffic",
+    "Online Traffic ",
+    "Online Traffic Easy",
+    "Online Traffic Hard",
+    "Online Traffic Pursuit",
+    "Online Traffic Trailblazer",
+    "Online Traffic Jump",
+    "Online Traffic Sprint GP",
+    "Online Traffic Takedown",
+    "Online Traffic Survival",
 ]
 
 
@@ -85,14 +111,16 @@ def read_sets(path: Path) -> tuple[int, list[dict], list[int], int]:
     for i in range(count):
         fields = RECORD.unpack_from(data, offset + i * RECORD.size)
         starts, counts = fields[1:6], fields[6:11]
-        sets.append({
-            "hash": fields[0],
-            "index": fields[11],
-            "record_offset": base + offset + i * RECORD.size,
-            "lists": [ids[s:s + c] for s, c in zip(starts, counts)],   # one per frequency, maybe empty
-            "starts": starts,
-            "counts": counts,
-        })
+        sets.append(
+            {
+                "hash": fields[0],
+                "index": fields[11],
+                "record_offset": base + offset + i * RECORD.size,
+                "lists": [ids[s : s + c] for s, c in zip(starts, counts)],  # one per frequency, maybe empty
+                "starts": starts,
+                "counts": counts,
+            }
+        )
     return base, sets, ids, base + id_offset
 
 
@@ -109,8 +137,7 @@ def vehicle_names() -> dict[int, str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("file", nargs="?", default=None,
-                        help="san_franciscoAI.fchunk (default: from $DSF_GAME_DIR)")
+    parser.add_argument("file", nargs="?", default=None, help="san_franciscoAI.fchunk (default: from $DSF_GAME_DIR)")
     parser.add_argument("--names-from", action="append", default=[])
     parser.add_argument("--tsv", help="write one row per set and frequency")
     parser.add_argument("--models", action="store_true", help="print model names next to IDs")
@@ -119,6 +146,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.file is None:
         from dsfforza.game import game_paths
+
         args.file = game_paths.game_dir() / "media" / "san_franciscoAI.fchunk"
     if args.replace:
         return patch(Path(args.file), args.replace, args.out)
@@ -145,8 +173,9 @@ def main() -> int:
             print(f"     freq {freq} ({len(lst)}): {shown}")
             rows.append(f"{s['index']}\t{name}\t{s['hash']:08X}\t{freq}\t{len(lst)}\t{','.join(map(str, lst))}")
     if args.tsv:
-        Path(args.tsv).write_text("index\tname\thash\tfrequency\tcount\tmodel_ids\n" + "\n".join(rows) + "\n",
-                                  encoding="utf-8")
+        Path(args.tsv).write_text(
+            "index\tname\thash\tfrequency\tcount\tmodel_ids\n" + "\n".join(rows) + "\n", encoding="utf-8"
+        )
     return 0
 
 

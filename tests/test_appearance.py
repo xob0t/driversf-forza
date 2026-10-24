@@ -60,8 +60,12 @@ class RedLampSwatch(unittest.TestCase):
             def get(self, family):
                 return atlases[family]
 
-        corners = [_Vertex((0.0, 0.0, 2.0), (0.0, 0.0)), _Vertex((1.0, 0.0, 2.0), (1.0, 0.0)),
-                   _Vertex((1.0, 1.0, 2.0), (1.0, 1.0)), _Vertex((0.0, 1.0, 2.0), (0.0, 1.0))]
+        corners = [
+            _Vertex((0.0, 0.0, 2.0), (0.0, 0.0)),
+            _Vertex((1.0, 0.0, 2.0), (1.0, 0.0)),
+            _Vertex((1.0, 1.0, 2.0), (1.0, 1.0)),
+            _Vertex((0.0, 1.0, 2.0), (0.0, 1.0)),
+        ]
         lamp = _Sub("tail_light", [(0, 1, 2), (0, 2, 3)])
         swatch = _Sub("tail_light", [(0, 1, 2)], uv_transform=(0.5, 0.0, 0.5, 0.0))  # one texel
         section = _Section("taillightL", corners, [lamp, swatch])
@@ -94,8 +98,12 @@ class TinyPane(unittest.TestCase):
         return [(0.5, 1.0, 1.0), (0.5, 1.002, 1.0), (0.5, 1.0, 1.003)]  # 2-3 mm, facing +x
 
     def test_pane(self):
-        pane = glass._Pane([(self._sliver(), [(1.0, 0.0, 0.0)] * 3, (0.5,) * 3, b"\x01\x02\x00\x01")],
-                           (0.0, 0.0, -1.0), (0.0, -1.0, 0.0), (1.0, 0.0, 0.0))
+        pane = glass._Pane(
+            [(self._sliver(), [(1.0, 0.0, 0.0)] * 3, (0.5,) * 3, b"\x01\x02\x00\x01")],
+            (0.0, 0.0, -1.0),
+            (0.0, -1.0, 0.0),
+            (1.0, 0.0, 0.0),
+        )
         self.assertEqual(pane.area, 0.0)
         self.assertEqual(pane.rim, [])
         self.assertFalse(pane.inside((0.0, 0.0)))

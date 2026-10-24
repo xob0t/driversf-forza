@@ -5,6 +5,7 @@ synthetic data only (no game or Forza files needed).
 
 Each test_* function is a plain assert-based check (pytest collects them too).
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -37,6 +38,7 @@ from dsfforza.game import (
 
 # --- CHNK ---------------------------------------------------------------------------
 
+
 def _leaf(tag: str, payload: bytes, align: int = 2, name: bytes = b"") -> chnk.Entry:
     e = chnk.Entry(tag, 0, len(payload), 1, align, name.decode() or None, name_raw=name)
     e.payload = payload
@@ -49,7 +51,7 @@ def test_chnk_round_trip() -> None:
     out = io.BytesIO()
     total = chnk.write_chunk(out, None, entries)
     raw = out.getvalue()
-    assert len(raw) == total and total % 64 == 0          # rounded to the largest alignment
+    assert len(raw) == total and total % 64 == 0  # rounded to the largest alignment
     root = chnk.read_chunk(io.BytesIO(raw))
     assert [e.tag for e in root.entries] == ["SSIC", "NONR", "BINF"]
     assert root.entries[0].name == "named"
@@ -57,13 +59,14 @@ def test_chnk_round_trip() -> None:
     for e in root.entries:
         assert e.offset % (1 << e.align_log2) == 0
     nonr = root.entries[1]
-    assert nonr.size == struct.unpack_from("<I", raw, nonr.offset + 4)[0]   # nested entry size = its total_size
+    assert nonr.size == struct.unpack_from("<I", raw, nonr.offset + 4)[0]  # nested entry size = its total_size
     again = io.BytesIO()
     chnk.write_chunk(again, io.BytesIO(raw), root.entries, root.version)
     assert again.getvalue() == raw
 
 
 # --- LZX (a minimal verbatim-block encoder) -------------------------------------------
+
 
 class _BitWriter:
     """LZX bit order: 16-bit little-endian words, most significant bit first."""
@@ -90,7 +93,7 @@ def _lzx_verbatim(tokens: list, total: int) -> bytes:
     (code = symbol), no length tree. Tokens: an int (literal) or (offset,
     length) with length 2..8."""
     w = _BitWriter()
-    w.write(0, 1)                      # no E8 translation
+    w.write(0, 1)  # no E8 translation
     w.write(lzx.VERBATIM, 3)
     w.write(total >> 8, 16)
     w.write(total & 0xFF, 8)
@@ -102,9 +105,10 @@ def _lzx_verbatim(tokens: list, total: int) -> bytes:
             w.write(1 if sym == z else 0, 4)
         for _ in range(count):
             w.write(0, 1)
-    lengths(256, 7)                    # length 10
+
+    lengths(256, 7)  # length 10
     lengths(main_elements - 256, 7)
-    lengths(249, 0)                    # length tree empty
+    lengths(249, 0)  # length tree empty
     for t in tokens:
         if isinstance(t, int):
             w.write(t, 10)
@@ -140,7 +144,7 @@ def test_lzx_short_uncompressed_block() -> None:
     w.write(lzx.UNCOMPRESSED, 3)
     w.write(0, 16)
     w.write(16, 8)
-    stream = w.bytes() + struct.pack("<3I", 1, 1, 1) + b"0123456789"   # 6 of the 16 bytes missing
+    stream = w.bytes() + struct.pack("<3I", 1, 1, 1) + b"0123456789"  # 6 of the 16 bytes missing
     try:
         lzx.xmem_decompress(_xmem([(16, stream)]), 16)
     except lzx.LzxError:
@@ -154,16 +158,43 @@ def test_forzazip_lzx_entry() -> None:
     packed = _xmem([(len(content), _lzx_verbatim([97, 98, 99, (3, 6), ord("z")], len(content)))])
     name = b"media/cars/x.bin"
     crc = zlib.crc32(content)
-    local = struct.pack("<4sHHHHHIIIHH", b"PK\3\4", 20, 0, forzazip.LZX_METHOD, 0, 0, crc, len(packed),
-                        len(content), len(name), 0) + name + packed
-    central = struct.pack("<4sHHHHHHIIIHHHHHII", b"PK\1\2", 20, 20, 0, forzazip.LZX_METHOD, 0, 0, crc, len(packed),
-                          len(content), len(name), 0, 0, 0, 0, 0, 0) + name
+    local = (
+        struct.pack(
+            "<4sHHHHHIIIHH", b"PK\3\4", 20, 0, forzazip.LZX_METHOD, 0, 0, crc, len(packed), len(content), len(name), 0
+        )
+        + name
+        + packed
+    )
+    central = (
+        struct.pack(
+            "<4sHHHHHHIIIHHHHHII",
+            b"PK\1\2",
+            20,
+            20,
+            0,
+            forzazip.LZX_METHOD,
+            0,
+            0,
+            crc,
+            len(packed),
+            len(content),
+            len(name),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+        + name
+    )
     end = struct.pack("<4sHHHHIIH", b"PK\5\6", 0, 0, 1, 1, len(central), len(local), 0)
     archive = forzazip.ForzaZip(io.BytesIO(local + central + end))
     assert archive.read(name.decode()) == content
 
 
 # --- XDVDFS image holding an STFS package ----------------------------------------------
+
 
 def _stfs_package(payload: bytes) -> bytes:
     """A female (single hash table) PIRS package: block 0 the file table, block 1
@@ -177,27 +208,28 @@ def _stfs_package(payload: bytes) -> bytes:
 
     def entry(slot: int, name: bytes, flags: int, start: int, parent: int, size: int) -> None:
         e = bytearray(0x40)
-        e[:len(name)] = name
+        e[: len(name)] = name
         e[0x28] = len(name) | flags
         e[0x29:0x2C] = e[0x2C:0x2F] = (1 if size else 0).to_bytes(3, "little")
         e[0x2F:0x32] = start.to_bytes(3, "little")
         struct.pack_into(">hI", e, 0x32, parent, size)
-        table[slot * 0x40:(slot + 1) * 0x40] = e
+        table[slot * 0x40 : (slot + 1) * 0x40] = e
+
     entry(1, b"Media", 0x80, 0, -1, 0)
     entry(2, b"a.bin", 0x40, 1, 1, len(payload))
     data = payload.ljust(stfs.BLOCK, b"\0")
     hashes = bytearray(stfs.BLOCK)
     for block, content in enumerate((bytes(table), data)):
-        hashes[block * 0x18:block * 0x18 + 0x18] = hashlib.sha1(content).digest() + b"\x80" + b"\xff\xff\xff"
-    pkg[first:first + stfs.BLOCK] = hashes
-    pkg[first + stfs.BLOCK:first + 2 * stfs.BLOCK] = table
-    pkg[first + 2 * stfs.BLOCK:first + 3 * stfs.BLOCK] = data
+        hashes[block * 0x18 : block * 0x18 + 0x18] = hashlib.sha1(content).digest() + b"\x80" + b"\xff\xff\xff"
+    pkg[first : first + stfs.BLOCK] = hashes
+    pkg[first + stfs.BLOCK : first + 2 * stfs.BLOCK] = table
+    pkg[first + 2 * stfs.BLOCK : first + 3 * stfs.BLOCK] = data
     vd = bytearray(0x24)
-    vd[0], vd[2] = 0x24, 1                         # size, flags: female
-    struct.pack_into("<H", vd, 3, 1)               # file table: 1 block from block 0
+    vd[0], vd[2] = 0x24, 1  # size, flags: female
+    struct.pack_into("<H", vd, 3, 1)  # file table: 1 block from block 0
     vd[8:28] = hashlib.sha1(bytes(hashes)).digest()
     struct.pack_into(">II", vd, 0x1C, 2, 0)
-    pkg[0x379:0x379 + 0x24] = vd
+    pkg[0x379 : 0x379 + 0x24] = vd
     return bytes(pkg)
 
 
@@ -224,7 +256,7 @@ def _xiso_image(files: dict[str, bytes]) -> bytes:
         end = start * sector + len(blob)
         if len(image) < end:
             image.extend(b"\0" * (end - len(image)))
-        image[start * sector:end] = blob
+        image[start * sector : end] = blob
         data_sector += -(-len(blob) // sector) or 1
         return start
 
@@ -234,7 +266,7 @@ def _xiso_image(files: dict[str, bytes]) -> bytes:
         groups.setdefault(folder, []).append((name, place(blob), len(blob), 0x80))
     root = [(folder, *add_dir(items), xiso.DIRECTORY) for folder, items in groups.items()]
     root_sector, root_size = add_dir(root)
-    image[0x10000:0x10000 + 28] = xiso.MAGIC + struct.pack("<II", root_sector, root_size)
+    image[0x10000 : 0x10000 + 28] = xiso.MAGIC + struct.pack("<II", root_sector, root_size)
     image.extend(b"\0" * (-len(image) % sector))
     return bytes(image)
 
@@ -264,7 +296,7 @@ def test_xiso_with_package() -> None:
             readme = image.find("MEDIA/README.TXT")
             assert image.read(readme) == b"0123456789"
             assert image.read(readme, 4, 3) == b"456"
-            assert image.read(readme, 20) == b""          # past the end: nothing, not the rest of the image
+            assert image.read(readme, 20) == b""  # past the end: nothing, not the rest of the image
             pkg = stfs.in_image(image, image.find("content/pkg"))
             assert pkg.read("Media/a.bin") == payload
         finally:
@@ -276,10 +308,11 @@ def test_xiso_with_package() -> None:
 
 # --- minidump ---------------------------------------------------------------------------
 
+
 def test_minidump_access_violation() -> None:
     blob = bytearray(0x1000)
     blob[0:4] = b"MDMP"
-    struct.pack_into("<II", blob, 8, 3, 0x20)                      # 3 streams, directory at 0x20
+    struct.pack_into("<II", blob, 8, 3, 0x20)  # 3 streams, directory at 0x20
     mod, exc, mem, ctx, name, stack = 0x100, 0x200, 0x300, 0x400, 0x500, 0x600
     struct.pack_into("<III", blob, 0x20, minidump.MODULE_LIST, 4 + 108, mod)
     struct.pack_into("<III", blob, 0x2C, minidump.EXCEPTION, 168, exc)
@@ -288,11 +321,11 @@ def test_minidump_access_violation() -> None:
     struct.pack_into("<I", blob, mod + 4 + 20, name)
     text = "C:\\Game\\Driver.exe".encode("utf-16-le")
     struct.pack_into("<I", blob, name, len(text))
-    blob[name + 4:name + 4 + len(text)] = text
+    blob[name + 4 : name + 4 + len(text)] = text
     struct.pack_into("<IQII", blob, mem, 1, 0x19F000, 16, stack)
     struct.pack_into("<4I", blob, stack, 0, 0x401234, 7, 0)
     struct.pack_into("<IIIIQQI", blob, exc, 42, 0, 0xC0000005, 0, 0, 0x4CD230, 2)
-    struct.pack_into("<2Q", blob, exc + 8 + 32, 0, 0x43938357)     # read of 0x43938357
+    struct.pack_into("<2Q", blob, exc + 8 + 32, 0, 0x43938357)  # read of 0x43938357
     struct.pack_into("<II", blob, exc + 8 + 152, 0xCC, ctx)
     struct.pack_into("<11I", blob, ctx + 0x9C, 1, 2, 3, 4, 5, 6, 7, 0x4CD230, 0x23, 0x202, 0x19F000)
     with tempfile.TemporaryDirectory() as tmp:
@@ -309,6 +342,7 @@ def test_minidump_access_violation() -> None:
 
 # --- VO3D, CRC, textures, Wwise -----------------------------------------------------------
 
+
 def test_vo3d_round_trip() -> None:
     v = handling.VO3D(304, {18: 420.5, 0: 1500.0, 345: 0.51})
     raw = v.build()
@@ -321,21 +355,29 @@ def test_name_hashes_share_the_crc() -> None:
     assert gui_assets.name_hash("Nissan_370Z") == lua_scripts.crc("nissan_370z")
     assert lua_scripts.com_hash("Common\\A.lua") == lua_scripts.crc("com:luascripts\\common\\a.lua")
     assert lua_scripts.crc("") == 0xFFFFFFFF
-    assert traffic_sets.name_hash("Chapter 1") == lua_scripts.crc("Chapter 1")   # case kept
+    assert traffic_sets.name_hash("Chapter 1") == lua_scripts.crc("Chapter 1")  # case kept
 
 
 def test_vehiclestats_read_back() -> None:
     """game_data.read_vehiclestats (handling.lua_stats, gui_assets.stock_stats) on the
     layout game_data.vehiclestats_text writes."""
-    table = {62: {"Manufacturer": game_data.Num(41, 4), "Year": "1970", "Picture1": "dodge, challenger",
-                  "Price": game_data.Num(1.5, 4)},
-             63: {"Selectable": True, "Drivetrain": "RWD"}}
+    table = {
+        62: {
+            "Manufacturer": game_data.Num(41, 4),
+            "Year": "1970",
+            "Picture1": "dodge, challenger",
+            "Price": game_data.Num(1.5, 4),
+        },
+        63: {"Selectable": True, "Drivetrain": "RWD"},
+    }
     text = game_data.format_table("vehicleStats", table).replace("\n", "\r\n")
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "vehiclestats.lua"
         path.write_bytes(text.encode("utf-8"))
-        expected = {62: {"Manufacturer": "41", "Year": "1970", "Picture1": "dodge, challenger", "Price": "1.5"},
-                    63: {"Selectable": "true", "Drivetrain": "RWD"}}
+        expected = {
+            62: {"Manufacturer": "41", "Year": "1970", "Picture1": "dodge, challenger", "Price": "1.5"},
+            63: {"Selectable": "true", "Drivetrain": "RWD"},
+        }
         assert game_data.read_vehiclestats(path) == expected
         assert handling.lua_stats(path) == expected
 
@@ -347,14 +389,14 @@ def test_xds_tiling_is_a_permutation() -> None:
 
 
 def test_xds_untile_places_blocks() -> None:
-    width = height = 128                 # 32 x 32 DXT1 blocks
+    width = height = 128  # 32 x 32 DXT1 blocks
     header = bytearray(xds.HEADER_SIZE)
     struct.pack_into(">II", header, 0x20, 18, (width - 1) | ((height - 1) << 13))
     payload = bytearray(32 * 32 * 8)
     for n in range(32 * 32):
         x, y = xds.tiled_x(n, 32, 8), xds.tiled_y(n, 32, 8)
         block = struct.pack("<HH4x", x, y)
-        payload[n * 8:n * 8 + 8] = bytes(b for pair in zip(block[1::2], block[0::2]) for b in pair)
+        payload[n * 8 : n * 8 + 8] = bytes(b for pair in zip(block[1::2], block[0::2]) for b in pair)
     blocks, w, h, fourcc = xds.untile(bytes(header + payload))
     assert (w, h, fourcc) == (width, height, b"DXT1")
     for y in range(32):
@@ -364,7 +406,8 @@ def test_xds_untile_places_blocks() -> None:
 
 def test_xds_dds_header() -> None:
     from dsfforza.convert import dsf_materials
-    blocks = bytes(range(8)) * 4                 # 8 x 8 texels, DXT1
+
+    blocks = bytes(range(8)) * 4  # 8 x 8 texels, DXT1
     dds = xds.dds_bytes(blocks, 8, 8, b"DXT1")
     assert len(dds) == dsf_materials.DDS_HEADER_SIZE + len(blocks)
     assert dds[84:88] == b"DXT1" and struct.unpack_from("<I", dds, 4)[0] == 124
@@ -392,7 +435,7 @@ def test_ima_first_block_starts_at_its_step() -> None:
     from the smallest one (9 dB SNR from index 0 here)."""
     x = [int(20000 * math.sin(i / 3)) for i in range(256)]
     data = wb.encode_ima(x)
-    assert data[2] > 40   # the first block header's step index
+    assert data[2] > 40  # the first block header's step index
     y = wb.decode_ima(data)[0]
     noise = sum((a - b) ** 2 for a, b in zip(x[:64], y[:64]))
     assert 10 * math.log10(sum(a * a for a in x[:64]) / noise) > 25
@@ -406,6 +449,7 @@ def test_bank_round_trip_and_media_swap() -> None:
 
     def section(tag: bytes, payload: bytes) -> bytes:
         return tag + struct.pack("<I", len(payload)) + payload
+
     raw = section(b"BKHD", bkhd) + section(b"DIDX", didx) + section(b"DATA", data)
     bank = wb.Bank.parse(raw)
     assert bank.build() == raw and bank.bank_id == 0x1234

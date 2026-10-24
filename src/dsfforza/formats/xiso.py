@@ -79,10 +79,12 @@ class XIso:
             if offset in seen or offset + 14 > len(table):
                 continue
             seen.add(offset)
-            left, right, entry_sector, entry_size, attributes, name_length = struct.unpack_from("<HHIIBB", table, offset)
+            left, right, entry_sector, entry_size, attributes, name_length = struct.unpack_from(
+                "<HHIIBB", table, offset
+            )
             if left == 0xFFFF and right == 0xFFFF:
                 continue  # padding
-            name = table[offset + 14:offset + 14 + name_length].decode("latin-1")
+            name = table[offset + 14 : offset + 14 + name_length].decode("latin-1")
             entry = FileEntry(prefix + name, entry_sector, entry_size, attributes)
             yield entry
             if entry.is_dir:
@@ -138,7 +140,7 @@ class _EntryFile(io.RawIOBase):
 
     def readinto(self, buffer) -> int:
         data = self.image.read(self.entry, self.pos, len(buffer)) if self.pos < self.entry.size else b""
-        buffer[:len(data)] = data
+        buffer[: len(data)] = data
         self.pos += len(data)
         return len(data)
 

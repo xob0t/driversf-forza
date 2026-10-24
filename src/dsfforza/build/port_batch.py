@@ -82,7 +82,7 @@ from dsfforza.build import gentle
 from dsfforza.formats.chnk import ENTRY_LIMIT
 from dsfforza.game import game_paths
 
-GARAGE_IDS = range(1, 62)          # garage loop covers 0..303; 0 is left alone, stock starts at 62
+GARAGE_IDS = range(1, 62)  # garage loop covers 0..303; 0 is left alone, stock starts at 62
 HIGH_FIRST_ID = 304
 WORKER_TIMEOUT = 45 * 60
 FREE_RAM_FOR_WORKER = 1536 << 20
@@ -91,6 +91,7 @@ DEFAULT_PORT_OPTIONS = "--mdxn-limit 0x2C0000 --damage"
 
 
 # --- environment ------------------------------------------------------------------------
+
 
 def game_from_dsf(dsf: Path) -> Path:
     game = dsf.resolve().parent.parent
@@ -111,10 +112,18 @@ def free_ram() -> int | None:
         return None
 
     class MemoryStatus(ctypes.Structure):
-        _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong), ("total", ctypes.c_ulonglong),
-                    ("avail", ctypes.c_ulonglong), ("page_total", ctypes.c_ulonglong),
-                    ("page_avail", ctypes.c_ulonglong), ("virt_total", ctypes.c_ulonglong),
-                    ("virt_avail", ctypes.c_ulonglong), ("ext", ctypes.c_ulonglong)]
+        _fields_ = [
+            ("length", ctypes.c_ulong),
+            ("load", ctypes.c_ulong),
+            ("total", ctypes.c_ulonglong),
+            ("avail", ctypes.c_ulonglong),
+            ("page_total", ctypes.c_ulonglong),
+            ("page_avail", ctypes.c_ulonglong),
+            ("virt_total", ctypes.c_ulonglong),
+            ("virt_avail", ctypes.c_ulonglong),
+            ("ext", ctypes.c_ulonglong),
+        ]
+
     status = MemoryStatus()
     status.length = ctypes.sizeof(MemoryStatus)
     if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
@@ -139,10 +148,12 @@ def port_car_args(argv: list[str]) -> argparse.Namespace:
     """port_car.py's own options parsed from argv (so the batch takes all of them
     and their defaults)."""
     from dsfforza.build import port_car
+
     return port_car.build_parser().parse_args(argv)
 
 
 # --- the roster and selection ------------------------------------------------------------
+
 
 @dataclass
 class Pick:
@@ -158,21 +169,23 @@ class Pick:
     host: int | None = None
     host_model: str = ""
     host_score: float = 0.0
-    counterpart: int | None = None       # stock car of the same model (identity 60)
+    counterpart: int | None = None  # stock car of the same model (identity 60)
     counterpart_model: str = ""
     spool_id: int | None = None
     notes: list[str] = field(default_factory=list)
-    notes_soft: str = ""                 # informational (e.g. why no garage ID)
+    notes_soft: str = ""  # informational (e.g. why no garage ID)
 
 
 def load_roster(isos: list[Path]):
     from dsfforza.build.forza_roster import roster
+
     cars, _ = roster(isos)
     return {k: c for k, c in cars.items() if c.kind == "car"}
 
 
 def gamedbs(isos: list[Path], cache: Path) -> dict[str, Path]:
     from dsfforza.build import port_car
+
     out = {}
     for game in ("FH1", "FM4"):
         db = port_car.extract_gamedb(isos, game, cache)
@@ -186,6 +199,7 @@ def describe_cars(cars: dict, requests: list[tuple[str, str | None]], dsf: Path,
     counterpart; unknown names become picks with a note."""
     from dsfforza.build import host_select as hs
     from dsfforza.build.port_car import CarRequest, pick_source
+
     hosts = hs.survey(dsf)
     picks = []
     for media, game in requests:
@@ -207,12 +221,25 @@ def describe_cars(cars: dict, requests: list[tuple[str, str | None]], dsf: Path,
             if score >= 60 and not h["problems"]:
                 counterpart = h
                 break
-        picks.append(Pick(rcar.name, source.game, rcar.year, rcar.games, asdict(source), make=info.make,
-                          body=info.body, drive=info.drive, power_kw=info.engine.power_kw,
-                          host=None if best.excluded else best.id, host_model=best.host["model"],
-                          host_score=best.score, counterpart=counterpart["id"] if counterpart else None,
-                          counterpart_model=counterpart["model"] if counterpart else "",
-                          notes=[] if not best.excluded else [f"no usable host ({best.excluded})"]))
+        picks.append(
+            Pick(
+                rcar.name,
+                source.game,
+                rcar.year,
+                rcar.games,
+                asdict(source),
+                make=info.make,
+                body=info.body,
+                drive=info.drive,
+                power_kw=info.engine.power_kw,
+                host=None if best.excluded else best.id,
+                host_model=best.host["model"],
+                host_score=best.score,
+                counterpart=counterpart["id"] if counterpart else None,
+                counterpart_model=counterpart["model"] if counterpart else "",
+                notes=[] if not best.excluded else [f"no usable host ({best.excluded})"],
+            )
+        )
     return picks
 
 
@@ -233,9 +260,11 @@ def select(args, cars: dict, dsf: Path, dbs: dict[str, Path]) -> list[Pick]:
     if explicit:
         requests = explicit
     else:
-        requests = [(c.name, args.game.upper() if args.game else None) for c in
-                    sorted(cars.values(), key=lambda c: c.name.lower())
-                    if not args.game or args.game.upper() in c.games.split(",")]
+        requests = [
+            (c.name, args.game.upper() if args.game else None)
+            for c in sorted(cars.values(), key=lambda c: c.name.lower())
+            if not args.game or args.game.upper() in c.games.split(",")
+        ]
     picks = describe_cars(cars, requests, dsf, dbs)
     excluded = {e.lower() for e in args.exclude or []}
     makes = {m.strip().lower() for m in (args.make or "").split(",") if m.strip()}
@@ -248,7 +277,7 @@ def select(args, cars: dict, dsf: Path, dbs: dict[str, Path]) -> list[Pick]:
     for p in picks:
         if p.media.lower() in excluded:
             continue
-        if not explicit:   # filters apply to the roster; a named list is taken as given
+        if not explicit:  # filters apply to the roster; a named list is taken as given
             if p.notes:
                 continue
             if args.game and p.game != args.game.upper():
@@ -269,7 +298,7 @@ def select(args, cars: dict, dsf: Path, dbs: dict[str, Path]) -> list[Pick]:
     if args.diverse:
         out = diverse(out, args.diverse)
     if args.max:
-        out = out[:args.max]
+        out = out[: args.max]
     seen = set()
     unique = []
     for p in out:
@@ -305,13 +334,13 @@ def diverse(picks: list[Pick], count: int) -> list[Pick]:
 # register.lua checks the real table again at runtime.
 GARAGE_GROUP_CAP = 20 - 1
 GARAGE_GROUPS_CAP = 40 - 1
-ASI_GROUPS_CAP = 120 - 1   # dsfforza.asi [garage] max_groups (default 120)
+ASI_GROUPS_CAP = 120 - 1  # dsfforza.asi [garage] max_groups (default 120)
 # --id-policy asi: the low IDs first. 62..303 holds 150 stock cars (and spool IDs without
 # a vehicleStats entry: 123, 131, 277, 289); the 92 others appear in no traffic set,
 # vehicleStats key or model-ID field of the game's Lua (research/asi.md), and the
 # archive's own IDs are skipped through `taken` anyway.
 ASI_LOW_IDS = list(range(1, 304))
-RESERVED_IDS = {622, 623}   # Felony Rework's vehicleStats dummies (not models)
+RESERVED_IDS = {622, 623}  # Felony Rework's vehicleStats dummies (not models)
 
 
 def garage_groups() -> tuple[dict[str, int], dict[str, str]]:
@@ -320,6 +349,7 @@ def garage_groups() -> tuple[dict[str, int], dict[str, str]]:
     the maker key what gui_assets.dsf_make returns ("CHEVROLET")."""
     try:
         from dsfforza.game import gui_assets
+
         stats = gui_assets.stock_stats()
         makes, _ = gui_assets.stock_codes(gui_assets.read_strings())
     except (OSError, ValueError, KeyError):
@@ -337,6 +367,7 @@ def car_groups(picks: list[Pick], group_of: dict[str, str]) -> dict[str, str]:
     maker name (src/dsfforza/formats/forza_strings.py via gui_assets.car_texts) mapped by
     gui_assets.dsf_make to a stock maker's "ID:nnnnnn" string, else the plain name."""
     from dsfforza.game import gui_assets
+
     texts = gui_assets.car_texts([{"media": p.media, "game": p.game} for p in picks])
     out = {}
     for p in picks:
@@ -346,7 +377,7 @@ def car_groups(picks: list[Pick], group_of: dict[str, str]) -> dict[str, str]:
     return out
 
 
-OVERFLOW_GROUP = "FORZA"   # register.lua: makes without a garage group of their own share these
+OVERFLOW_GROUP = "FORZA"  # register.lua: makes without a garage group of their own share these
 
 
 def garage_group(make: str, group: str, counts: dict[str, int], cap: int, groups_cap: int) -> str | None:
@@ -356,7 +387,7 @@ def garage_group(make: str, group: str, counts: dict[str, int], cap: int, groups
     if group in counts:
         if counts[group] < cap:
             return group
-    elif len(counts) + (0 if OVERFLOW_GROUP in counts else 1) < groups_cap:   # keep room for FORZA
+    elif len(counts) + (0 if OVERFLOW_GROUP in counts else 1) < groups_cap:  # keep room for FORZA
         return group
     n = 1
     while True:
@@ -372,8 +403,11 @@ def root_limit_of(args) -> int:
     """--root-limit: 1100 (stock) unless the install uses dsfforza.asi's archive module."""
     limit = getattr(args, "root_limit", None) or ENTRY_LIMIT
     if limit > ENTRY_LIMIT:
-        print(f"note: root limit {limit}: the archive needs dsfforza.asi with [archive] enabled "
-              f"(the stock game reads {ENTRY_LIMIT} entries)", file=sys.stderr)
+        print(
+            f"note: root limit {limit}: the archive needs dsfforza.asi with [archive] enabled "
+            f"(the stock game reads {ENTRY_LIMIT} entries)",
+            file=sys.stderr,
+        )
     return limit
 
 
@@ -440,11 +474,12 @@ def cause_of(text: str) -> str:
     """A short failure cause: a known message, else "<dsfforza module>: <exception>"
     from the innermost frame in src/dsfforza/ of the traceback."""
     import re
+
     for needle, cause in CAUSES:
         if needle in text:
             return cause
     frames = re.findall(r'dsfforza[\\/](?:\w+[\\/])?(\w+)\.py", line \d+', text)
-    frames = [f for f in frames if f not in ("vehicle_mesh", "chnk")] or frames   # the step, not a helper
+    frames = [f for f in frames if f not in ("vehicle_mesh", "chnk")] or frames  # the step, not a helper
     error = re.findall(r"^(\w+(?:Error|Exception|Exit)):", text, re.M)
     if frames:
         return f"{frames[-1]}.py: {error[-1] if error else 'error'}"
@@ -498,10 +533,21 @@ def worker(job_path: Path) -> int:
         from dsfforza.build import clone_vehicle, port_car
         from dsfforza.build.forza_roster import Source
         from dsfforza.formats.chnk import read_chunk, write_chunk
+
         dsf = Path(job["dsf"])
-        args = port_car_args(["--dsf", str(dsf), "--out", str(out_chunk.with_suffix(".unused.sp")),
-                              "--car", f"{job['media']}@{job['game'].lower()}", "--cache", job["cache"]]
-                             + job["port_options"])
+        args = port_car_args(
+            [
+                "--dsf",
+                str(dsf),
+                "--out",
+                str(out_chunk.with_suffix(".unused.sp")),
+                "--car",
+                f"{job['media']}@{job['game'].lower()}",
+                "--cache",
+                job["cache"],
+            ]
+            + job["port_options"]
+        )
         source = Source(**job["source"])
         isos = [Path(p) for p in job["isos"]]
         prep = port_car.prepare_car(args, source, job["media"], isos, log)
@@ -513,22 +559,45 @@ def worker(job_path: Path) -> int:
             names = {s: entries[i].name for s, i, k in clone_vehicle.sslp_records(stream, entries) if k == 0}
             if job.get("sound_dir"):
                 args.forza_sound_dir = Path(job["sound_dir"])
-            clones, built = port_car.convert_car(stream, entries, prep, job["spool_id"], args, nonr_limit, mdxn_max,
-                                                 names, isos, log)
+            clones, built = port_car.convert_car(
+                stream, entries, prep, job["spool_id"], args, nonr_limit, mdxn_max, names, isos, log
+            )
             temp = out_chunk.with_suffix(".tmp")
             with temp.open("wb") as out:
                 write_chunk(out, stream, clones, root.version)
             Path(temp).replace(out_chunk)
-        report.update({
-            "ok": True, "host": host, "host_name": names[host], "sound": sound,
-            "entry": {**port_car.car_entry(job["media"], job["year"], job["games"], source, args.cache,
-                                           job["spool_id"], host, names[host], built),
-                      **({"batch_fallback": job["fallback"]} if job.get("fallback") else {})},
-            "port_args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}})
+        report.update(
+            {
+                "ok": True,
+                "host": host,
+                "host_name": names[host],
+                "sound": sound,
+                "entry": {
+                    **port_car.car_entry(
+                        job["media"],
+                        job["year"],
+                        job["games"],
+                        source,
+                        args.cache,
+                        job["spool_id"],
+                        host,
+                        names[host],
+                        built,
+                    ),
+                    **({"batch_fallback": job["fallback"]} if job.get("fallback") else {}),
+                },
+                "port_args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
+            }
+        )
     except BaseException as error:  # SystemExit from port_car included
         text = f"{type(error).__name__}: {error}"
-        report.update({"error": text, "cause": cause_of(text + "\n" + traceback.format_exc()),
-                       "traceback": traceback.format_exc()[-4000:]})
+        report.update(
+            {
+                "error": text,
+                "cause": cause_of(text + "\n" + traceback.format_exc()),
+                "traceback": traceback.format_exc()[-4000:],
+            }
+        )
         log(text)
     report["seconds"] = round(time.time() - started, 1)
     # Atomic: a worker killed while writing (timeout) must not leave half a report.
@@ -558,8 +627,12 @@ def worker_report(work: Path, media: str, code: int | None) -> dict:
         tail = (work / f"{media}.log").read_text(encoding="utf-8", errors="replace")[-1500:]
     except OSError:
         tail = ""
-    return {"media": media, "ok": False, "cause": "timeout" if code is None else "worker crash",
-            "error": f"exit code {code}; log tail: {tail}"}
+    return {
+        "media": media,
+        "ok": False,
+        "cause": "timeout" if code is None else "worker crash",
+        "error": f"exit code {code}; log tail: {tail}",
+    }
 
 
 def run_workers(jobs: list[dict], work: Path, parallel: int, log=print) -> dict[str, dict]:
@@ -582,13 +655,23 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print) -> dict[
                 job_path.write_text(json.dumps(job, indent=1), encoding="utf-8")
                 log_file = (work / f"{job['media']}.log").open("w", encoding="utf-8")
                 try:
-                    proc = subprocess.Popen([sys.executable, "-m", "dsfforza.build.port_batch", "_worker", str(job_path)],
-                                            stdout=log_file, stderr=subprocess.STDOUT, creationflags=flags,
-                                            cwd=str(REPO), env={**os.environ, "PYTHONUNBUFFERED": "1"})
+                    proc = subprocess.Popen(
+                        [sys.executable, "-m", "dsfforza.build.port_batch", "_worker", str(job_path)],
+                        stdout=log_file,
+                        stderr=subprocess.STDOUT,
+                        creationflags=flags,
+                        cwd=str(REPO),
+                        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                    )
                 except OSError as error:
                     log_file.close()
-                    results[job["media"]] = {"media": job["media"], "spool_id": job["spool_id"], "ok": False,
-                                             "cause": "worker crash", "error": f"could not start: {error}"}
+                    results[job["media"]] = {
+                        "media": job["media"],
+                        "spool_id": job["spool_id"],
+                        "ok": False,
+                        "cause": "worker crash",
+                        "error": f"could not start: {error}",
+                    }
                     log(f"  FAILED to start {job['media']}: {error}")
                     continue
                 running[job["media"]] = (proc, time.time(), log_file)
@@ -613,21 +696,34 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print) -> dict[
                     for ext in ("json", "log"):  # a crashed worker leaves no report
                         if (work / f"{media}.{ext}").exists():
                             (work / f"{media}.{ext}").replace(work / f"{media}.first-try.{ext}")
-                    job = {**job, "port_options": options, "fallback": why, "first_error": report.get("error"),
-                           "first_cause": report.get("cause"), "seconds_before": report["seconds"]}
+                    job = {
+                        **job,
+                        "port_options": options,
+                        "fallback": why,
+                        "first_error": report.get("error"),
+                        "first_cause": report.get("cause"),
+                        "seconds_before": report["seconds"],
+                    }
                     jobs_by_media[media] = job
                     pending.append(job)
                     log(f"  retry {media} {why}")
                     continue
                 if job.get("fallback"):
-                    report.update({"fallback": job["fallback"], "first_error": job.get("first_error"),
-                                   "first_cause": job.get("first_cause")})
+                    report.update(
+                        {
+                            "fallback": job["fallback"],
+                            "first_error": job.get("first_error"),
+                            "first_cause": job.get("first_cause"),
+                        }
+                    )
                 results[media] = report
                 state = "ok" if report.get("ok") else f"FAILED ({report.get('cause')}: {report.get('error', '')[:160]})"
-                log(f"  done  {media} in {report['seconds']:.0f} s: {state}"
-                    + (f" ({job['fallback']})" if job.get("fallback") else ""))
+                log(
+                    f"  done  {media} in {report['seconds']:.0f} s: {state}"
+                    + (f" ({job['fallback']})" if job.get("fallback") else "")
+                )
     finally:
-        for proc, _, log_file in running.values():   # only when leaving early
+        for proc, _, log_file in running.values():  # only when leaving early
             proc.kill()
             proc.wait()
             log_file.close()
@@ -635,6 +731,7 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print) -> dict[
 
 
 # --- merge ----------------------------------------------------------------------------------
+
 
 class MultiStream:
     """Several files read as one address space: the stock archive at 0 and each
@@ -677,8 +774,9 @@ class MultiStream:
             handle.close()
 
 
-def merge(dsf: Path, out: Path, results: list[dict], work: Path, log=print,
-          root_limit: int = ENTRY_LIMIT) -> tuple[list[dict], list[dict]]:
+def merge(
+    dsf: Path, out: Path, results: list[dict], work: Path, log=print, root_limit: int = ENTRY_LIMIT
+) -> tuple[list[dict], list[dict]]:
     """Register every built car into a copy of the stock archive. Returns (entries
     of the manifest's "cars", failures found here). Cars that define a resource or
     MODL part UID another vehicle defines too are left out (cause "UID clash") and
@@ -690,21 +788,30 @@ def merge(dsf: Path, out: Path, results: list[dict], work: Path, log=print,
         if not clashing:
             return cars, failed
         log(f"UID clashes in {sorted(clashing)}; merging again without them (rebuild those cars)")
-        failed += [{**r, "ok": False, "cause": "UID clash",
-                    "error": f"defines UIDs another vehicle defines too: {', '.join(clashing[r['media']][:4])}"}
-                   for r in results if r["media"] in clashing]
+        failed += [
+            {
+                **r,
+                "ok": False,
+                "cause": "UID clash",
+                "error": f"defines UIDs another vehicle defines too: {', '.join(clashing[r['media']][:4])}",
+            }
+            for r in results
+            if r["media"] in clashing
+        ]
         left_out = {f["media"] for f in failed}
         results = [r for r in results if r["media"] not in left_out]
         if not results:
             return [], failed
 
 
-def register_cars(dsf: Path, out: Path, results: list[dict], work: Path, log=print,
-                  root_limit: int = ENTRY_LIMIT) -> tuple[list[dict], list[dict], dict[str, list[str]]]:
+def register_cars(
+    dsf: Path, out: Path, results: list[dict], work: Path, log=print, root_limit: int = ENTRY_LIMIT
+) -> tuple[list[dict], list[dict], dict[str, list[str]]]:
     """One merge pass: (manifest "cars", failures, {media: clashing UIDs}). The
     archive is written only when no car clashes."""
     from dsfforza.build import clone_vehicle, port_car
     from dsfforza.formats.chnk import read_chunk, write_chunk
+
     stream = MultiStream(dsf)
     failed = []
     try:
@@ -729,12 +836,25 @@ def register_cars(dsf: Path, out: Path, results: list[dict], work: Path, log=pri
             if new_id != r["spool_id"]:
                 # The ID lives only in VSVH, VO3D, SPID and UPVH of the full entry (clone_vehicle).
                 clone_vehicle.patch_ids(stream, clones[0], r["spool_id"], new_id)
-                r = {**r, "spool_id": new_id, "entry": {**r["entry"], "spool_id": new_id,
-                                                         "interior_id": new_id + 1000,
-                                                         "exterior_id": new_id + 2000}}
+                r = {
+                    **r,
+                    "spool_id": new_id,
+                    "entry": {
+                        **r["entry"],
+                        "spool_id": new_id,
+                        "interior_id": new_id + 1000,
+                        "exterior_id": new_id + 2000,
+                    },
+                }
             if len(entries) + 3 > root_limit:
-                failed.append({**r, "ok": False, "cause": "root entry limit",
-                               "error": f"{len(entries)} root entries; the limit is {root_limit} (--root-limit)"})
+                failed.append(
+                    {
+                        **r,
+                        "ok": False,
+                        "cause": "root entry limit",
+                        "error": f"{len(entries)} root entries; the limit is {root_limit} (--root-limit)",
+                    }
+                )
                 continue
             clone_vehicle.register_clones(stream, entries, clones, r["host"], r["spool_id"])
             cars.append(r["entry"])
@@ -743,8 +863,15 @@ def register_cars(dsf: Path, out: Path, results: list[dict], work: Path, log=pri
             c["vehc"] = [records[c["spool_id"] + k] for k in clone_vehicle.KIND_OFFSETS]
         clashes = port_car.uid_clashes(stream, entries, {i for c in cars for i in c["vehc"]})
         if clashes:
-            return cars, failed, {c["media"]: sorted({u for i in c["vehc"] for u in clashes.get(i, [])})
-                                  for c in cars if any(i in clashes for i in c["vehc"])}
+            return (
+                cars,
+                failed,
+                {
+                    c["media"]: sorted({u for i in c["vehc"] for u in clashes.get(i, [])})
+                    for c in cars
+                    if any(i in clashes for i in c["vehc"])
+                },
+            )
         out.parent.mkdir(parents=True, exist_ok=True)
         temp = out.with_name(out.name + ".tmp")
         try:
@@ -752,12 +879,14 @@ def register_cars(dsf: Path, out: Path, results: list[dict], work: Path, log=pri
                 write_chunk(handle, stream, entries, root.version)
             Path(temp).replace(out)
         finally:
-            temp.unlink(missing_ok=True)   # a failed write leaves no 1-2 GB partial copy behind
+            temp.unlink(missing_ok=True)  # a failed write leaves no 1-2 GB partial copy behind
         size = out.stat().st_size
         if size >= 1 << 31:
             # The stock file layer clamps seek positions of 2 GiB and up to 0 (spool-limits.md).
-            log(f"note: {out.name} is {size / 2**30:.2f} GiB; past 2 GiB it needs dsfforza.asi "
-                f"[archive] large_files=1 (the default)")
+            log(
+                f"note: {out.name} is {size / 2**30:.2f} GiB; past 2 GiB it needs dsfforza.asi "
+                f"[archive] large_files=1 (the default)"
+            )
     finally:
         stream.close()
     return cars, failed, {}
@@ -769,10 +898,25 @@ def lint_all(out: Path, dsf: Path, cars: list[dict], parallel: int, log=print) -
     while pending or running:
         while pending and len(running) < parallel:
             c = pending.pop(0)
-            proc = subprocess.Popen([sys.executable, "-m", "dsfforza.formats.upvh", "lint", str(out), "--id",
-                                     str(c["spool_id"]), "--stock", str(dsf), "--source", str(c["host"])],
-                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                    creationflags=flags)
+            proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "dsfforza.formats.upvh",
+                    "lint",
+                    str(out),
+                    "--id",
+                    str(c["spool_id"]),
+                    "--stock",
+                    str(dsf),
+                    "--source",
+                    str(c["host"]),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                creationflags=flags,
+            )
             running.append((c, proc))
         c, proc = running.pop(0)
         text, _ = proc.communicate()
@@ -782,6 +926,7 @@ def lint_all(out: Path, dsf: Path, cars: list[dict], parallel: int, log=print) -
 
 # --- commands ---------------------------------------------------------------------------------
 
+
 def common(args) -> tuple[Path, list[Path], dict, dict[str, Path]]:
     set_game_env(args.dsf)
     lower_priority()
@@ -789,6 +934,7 @@ def common(args) -> tuple[Path, list[Path], dict, dict[str, Path]]:
     if not isos:
         raise SystemExit("no Forza disc images (assets/*.iso or --iso)")
     from dsfforza.game import game_data
+
     game_data.prepare(game_from_dsf(args.dsf), isos, log=lambda t: print(f"prepare: {t}"))
     cars = load_roster(isos)
     dbs = gamedbs(isos, args.cache)
@@ -800,9 +946,12 @@ def print_plan(picks: list[Pick]) -> None:
     for p in picks:
         cp = f"   stock {p.counterpart} {p.counterpart_model}" if p.counterpart else ""
         host = f"{p.host} {p.host_model[:26]} ({p.host_score:.0f})" if p.host else "-"
-        print(f"{p.spool_id or '':>4}  {p.media:30} {p.game:4} {p.year or '':4}  {p.body:11} {p.drive or '':5} "
-              f"{p.power_kw or 0:5.0f}  {host}{cp}" + (f"  !! {'; '.join(p.notes)}" if p.notes else "")
-              + (f"  ({p.notes_soft})" if p.notes_soft else ""))
+        print(
+            f"{p.spool_id or '':>4}  {p.media:30} {p.game:4} {p.year or '':4}  {p.body:11} {p.drive or '':5} "
+            f"{p.power_kw or 0:5.0f}  {host}{cp}"
+            + (f"  !! {'; '.join(p.notes)}" if p.notes else "")
+            + (f"  ({p.notes_soft})" if p.notes_soft else "")
+        )
 
 
 def cmd_plan(args) -> None:
@@ -810,16 +959,33 @@ def cmd_plan(args) -> None:
     picks = select(args, cars, dsf, dbs)
     from dsfforza.build import clone_vehicle
     from dsfforza.formats.chnk import read_chunk
+
     with dsf.open("rb") as stream:
         taken = clone_vehicle.taken_ids(stream, read_chunk(stream, 0).entries)
     assign_ids([p for p in picks if not p.notes], taken, args.id_policy, args.first_id)
     print_plan(picks)
     print(f"{len(picks)} cars")
     if args.tsv:
-        cols = ["spool_id", "media", "game", "year", "make", "body", "drive", "power_kw", "host", "host_model",
-                "host_score", "counterpart", "counterpart_model", "notes"]
-        rows = ["\t".join(cols)] + ["\t".join(str(getattr(p, c) if c != "notes" else "; ".join(p.notes))
-                                              .replace("None", "") for c in cols) for p in picks]
+        cols = [
+            "spool_id",
+            "media",
+            "game",
+            "year",
+            "make",
+            "body",
+            "drive",
+            "power_kw",
+            "host",
+            "host_model",
+            "host_score",
+            "counterpart",
+            "counterpart_model",
+            "notes",
+        ]
+        rows = ["\t".join(cols)] + [
+            "\t".join(str(getattr(p, c) if c != "notes" else "; ".join(p.notes)).replace("None", "") for c in cols)
+            for p in picks
+        ]
         args.tsv.write_text("\n".join(rows) + "\n", encoding="utf-8")
         print(f"wrote {args.tsv}")
 
@@ -843,43 +1009,64 @@ def cmd_build(args) -> None:
     picks = [p for p in picks if not p.notes]
     from dsfforza.build import clone_vehicle
     from dsfforza.formats.chnk import read_chunk
+
     with dsf.open("rb") as stream:
         stock_entries = read_chunk(stream, 0).entries
         taken = clone_vehicle.taken_ids(stream, stock_entries)
     assign_ids(picks, taken, args.id_policy, args.first_id)
     root_limit = root_limit_of(args)
-    room = (root_limit - len(stock_entries)) // 3   # 453 root entries in the stock archive
+    room = (root_limit - len(stock_entries)) // 3  # 453 root entries in the stock archive
     if len(picks) > room:
-        raise SystemExit(f"{len(picks)} cars: the archive root holds at most {room} new ones "
-                         f"(--root-limit {root_limit})")
+        raise SystemExit(
+            f"{len(picks)} cars: the archive root holds at most {room} new ones (--root-limit {root_limit})"
+        )
     print_plan(picks + skipped)
     # Warm the shared caches once so workers only read them.
     from dsfforza.build import host_select
+
     host_select.survey(dsf)
     if port_args.handling == "dsf" and not port_args.no_handling:
         from dsfforza.build import handling_dsf
+
         handling_dsf.load_fleet(dsf)
     if not port_args.no_forza_sound:
         from dsfforza.convert import engine_sound
-        engine_sound.stock_index(dsf)    # templates and reserved Wwise IDs (out/cache/sound/stock-banks.json)
+
+        engine_sound.stock_index(dsf)  # templates and reserved Wwise IDs (out/cache/sound/stock-banks.json)
     timings["plan"] = round(time.time() - started, 1)
 
-    jobs = [{"media": p.media, "game": p.game, "year": p.year, "games": p.games, "source": p.source,
-             "spool_id": p.spool_id, "dsf": str(dsf), "game_dir": str(game_from_dsf(dsf)),
-             "cache": str(args.cache), "isos": [str(i) for i in isos], "port_options": port_options,
-             "sound_dir": str(out_dir / "sound"),
-             "chunk": str(work / f"{p.media}.chnk"), "report": str(work / f"{p.media}.json")} for p in picks]
+    jobs = [
+        {
+            "media": p.media,
+            "game": p.game,
+            "year": p.year,
+            "games": p.games,
+            "source": p.source,
+            "spool_id": p.spool_id,
+            "dsf": str(dsf),
+            "game_dir": str(game_from_dsf(dsf)),
+            "cache": str(args.cache),
+            "isos": [str(i) for i in isos],
+            "port_options": port_options,
+            "sound_dir": str(out_dir / "sound"),
+            "chunk": str(work / f"{p.media}.chnk"),
+            "report": str(work / f"{p.media}.json"),
+        }
+        for p in picks
+    ]
     reused = {}
-    for job in jobs:   # results of an earlier run: reuse (--resume) or drop
+    for job in jobs:  # results of an earlier run: reuse (--resume) or drop
         old_job, old_report = work / f"{job['media']}.job.json", Path(job["report"])
         if args.resume and old_job.exists() and old_report.exists() and Path(job["chunk"]).exists():
             try:
                 before = json.loads(old_job.read_text(encoding="utf-8"))
                 report = json.loads(old_report.read_text(encoding="utf-8"))
-            except ValueError:   # cut short by an earlier crash: build the car again
+            except ValueError:  # cut short by an earlier crash: build the car again
                 before, report = {}, {}
-            same = all(before.get(k) == job[k] for k in ("spool_id", "game", "dsf")) and \
-                before.get("requested_options", before.get("port_options")) == job["port_options"]
+            same = (
+                all(before.get(k) == job[k] for k in ("spool_id", "game", "dsf"))
+                and before.get("requested_options", before.get("port_options")) == job["port_options"]
+            )
             if same and report.get("ok"):
                 reused[job["media"]] = report
                 continue
@@ -891,9 +1078,12 @@ def cmd_build(args) -> None:
     t = time.time()
     todo = [j for j in jobs if j["media"] not in reused]
     args.jobs = gentle.jobs(args.jobs)
-    print(f"building {len(todo)} cars, {args.jobs} at a time ("
-          + ("Idle priority on two CPUs: out/gentle" if gentle.enabled() else "Below Normal priority") + ")"
-          + (f"; {len(reused)} reused from the last run" if reused else ""))
+    print(
+        f"building {len(todo)} cars, {args.jobs} at a time ("
+        + ("Idle priority on two CPUs: out/gentle" if gentle.enabled() else "Below Normal priority")
+        + ")"
+        + (f"; {len(reused)} reused from the last run" if reused else "")
+    )
     results = {**reused, **run_workers(todo, work, args.jobs)}
     timings["convert"] = round(time.time() - t, 1)
 
@@ -903,8 +1093,19 @@ def cmd_build(args) -> None:
     finish(args, dsf, out_dir, work, ok, failed, port_args, port_options, timings, started, results)
 
 
-def finish(args, dsf: Path, out_dir: Path, work: Path, ok: list[dict], failed: list[dict], port_args,
-           port_options: list[str], timings: dict, started: float, results: dict) -> None:
+def finish(
+    args,
+    dsf: Path,
+    out_dir: Path,
+    work: Path,
+    ok: list[dict],
+    failed: list[dict],
+    port_args,
+    port_options: list[str],
+    timings: dict,
+    started: float,
+    results: dict,
+) -> None:
     """Merge, lint, manifest, Lua, GUI assets and the report."""
     archive = out_dir / "dngvehicles.sp"
     if not ok:
@@ -926,24 +1127,37 @@ def finish(args, dsf: Path, out_dir: Path, work: Path, ok: list[dict], failed: l
         print(f"{len(lint_failed)} car(s) failed lint; they stay in the archive but are listed as failed")
 
     from dsfforza.build import port_car
-    manifest = {"archive": str(archive), "stock": str(dsf), "stock_sha256": sha256(dsf), "host": port_args.host,
-                "sound_host": port_args.sound_host,
-                "created": datetime.datetime.now().isoformat(timespec="seconds"),
-                "textures": port_args.textures, "renewed_uids": not port_args.share_host_uids,
-                "cockpit": not port_args.no_cockpit, "cars": cars_out,
-                "probe_ids": [c["spool_id"] for c in cars_out],
-                "batch": {"id_policy": args.id_policy, "port_options": port_options,
-                          "failed": [{k: f.get(k) for k in ("media", "spool_id", "cause", "error")} for f in failed]}}
+
+    manifest = {
+        "archive": str(archive),
+        "stock": str(dsf),
+        "stock_sha256": sha256(dsf),
+        "host": port_args.host,
+        "sound_host": port_args.sound_host,
+        "created": datetime.datetime.now().isoformat(timespec="seconds"),
+        "textures": port_args.textures,
+        "renewed_uids": not port_args.share_host_uids,
+        "cockpit": not port_args.no_cockpit,
+        "cars": cars_out,
+        "probe_ids": [c["spool_id"] for c in cars_out],
+        "batch": {
+            "id_policy": args.id_policy,
+            "port_options": port_options,
+            "failed": [{k: f.get(k) for k in ("media", "spool_id", "cause", "error")} for f in failed],
+        },
+    }
     manifest_path = out_dir / "dngvehicles.json"
     manifest_path.write_text(json.dumps(manifest, indent=1, default=str) + "\n", encoding="utf-8")
     (out_dir / "dngvehicles.lua").write_text(port_car.lua_snippet(manifest), encoding="utf-8", newline="\n")
     if args.gui:
         t = time.time()
         from dsfforza.game import gui_assets
+
         try:
-            gui_assets.build(manifest_path, out_dir / "gui", archive=archive,
-                             wide_glyphs=getattr(args, "wide_glyphs", False))
-        except Exception as error:   # the archive is still usable without pictures and badges
+            gui_assets.build(
+                manifest_path, out_dir / "gui", archive=archive, wide_glyphs=getattr(args, "wide_glyphs", False)
+            )
+        except Exception as error:  # the archive is still usable without pictures and badges
             print(f"gui assets failed: {type(error).__name__}: {error}")
             timings["gui_error"] = f"{type(error).__name__}: {error}"
             # An earlier run's gui/ (or this run's half) doesn't match the new archive's IDs, and
@@ -980,6 +1194,7 @@ def cmd_remerge(args) -> None:
             ok.append(report)
     from dsfforza.build import clone_vehicle
     from dsfforza.formats.chnk import read_chunk
+
     with args.dsf.open("rb") as stream:
         taken = clone_vehicle.taken_ids(stream, read_chunk(stream, 0).entries)
     picks = [Pick(r["media"], r["game"], None, "", {}) for r in ok]
@@ -991,8 +1206,9 @@ def cmd_remerge(args) -> None:
     args.jobs = gentle.jobs(args.jobs or 4)
     args.out.mkdir(parents=True, exist_ok=True)
     failed = list(old.get("batch", {}).get("failed", []))
-    finish(args, args.dsf, args.out, work, ok, failed, port_args, port_options, {}, started,
-           {r["media"]: r for r in ok})
+    finish(
+        args, args.dsf, args.out, work, ok, failed, port_args, port_options, {}, started, {r["media"]: r for r in ok}
+    )
 
 
 def sha256(path: Path) -> str:
@@ -1003,33 +1219,65 @@ def sha256(path: Path) -> str:
     return digest.hexdigest().upper()
 
 
-def write_report(out_dir: Path, archive: Path, cars: list[dict], failed: list[dict], timings: dict,
-                 started: float, args, results: dict | None = None) -> None:
+def write_report(
+    out_dir: Path,
+    archive: Path,
+    cars: list[dict],
+    failed: list[dict],
+    timings: dict,
+    started: float,
+    args,
+    results: dict | None = None,
+) -> None:
     from dsfforza.convert import engine_sound
+
     timings["total"] = round(time.time() - started, 1)
     causes: dict[str, list[str]] = {}
     for f in failed:
         causes.setdefault(f.get("cause") or "?", []).append(f["media"])
     sounds = {c["media"]: engine_sound.summary(c.get("forza_sound") or {}) for c in cars}
     report = {
-        "archive": str(archive), "archive_bytes": archive.stat().st_size if archive.exists() else None,
-        "jobs": args.jobs, "timings_s": timings,
-        "ok": [{"spool_id": c["spool_id"], "media": c["media"], "game": c["game"], "host": c["host"],
-                "host_name": c["host_name"], "lint": c.get("lint"), "fallback": c.get("batch_fallback"),
+        "archive": str(archive),
+        "archive_bytes": archive.stat().st_size if archive.exists() else None,
+        "jobs": args.jobs,
+        "timings_s": timings,
+        "ok": [
+            {
+                "spool_id": c["spool_id"],
+                "media": c["media"],
+                "game": c["game"],
+                "host": c["host"],
+                "host_name": c["host_name"],
+                "lint": c.get("lint"),
+                "fallback": c.get("batch_fallback"),
                 "seconds": (results or {}).get(c["media"], {}).get("seconds"),
-                "lods": c.get("lods"), "sizes": c.get("sizes"), "sound": sounds[c["media"]]} for c in cars],
+                "lods": c.get("lods"),
+                "sizes": c.get("sizes"),
+                "sound": sounds[c["media"]],
+            }
+            for c in cars
+        ],
         "failed": [{k: f.get(k) for k in ("media", "spool_id", "cause", "error")} for f in failed],
         "failed_by_cause": causes,
-        "forza_sound": {"cars": sum(s["forza"] for s in sounds.values()),
-                        "host_sound": {m: s["reason"] for m, s in sounds.items() if not s["forza"]},
-                        "previews": str(out_dir / "sound")},
-        "fallbacks": {c["media"]: {"fallback": c.get("batch_fallback"),
-                                   "first_cause": (results or {}).get(c["media"], {}).get("first_cause")}
-                      for c in cars if c.get("batch_fallback")},
+        "forza_sound": {
+            "cars": sum(s["forza"] for s in sounds.values()),
+            "host_sound": {m: s["reason"] for m, s in sounds.items() if not s["forza"]},
+            "previews": str(out_dir / "sound"),
+        },
+        "fallbacks": {
+            c["media"]: {
+                "fallback": c.get("batch_fallback"),
+                "first_cause": (results or {}).get(c["media"], {}).get("first_cause"),
+            }
+            for c in cars
+            if c.get("batch_fallback")
+        },
     }
     (out_dir / "batch-report.json").write_text(json.dumps(report, indent=1, default=str) + "\n", encoding="utf-8")
-    print(f"\n{len(cars)} cars built, {len(failed)} failed; total {timings['total']:.0f} s "
-          f"({', '.join(f'{k} {v}' for k, v in timings.items() if k != 'total')})")
+    print(
+        f"\n{len(cars)} cars built, {len(failed)} failed; total {timings['total']:.0f} s "
+        f"({', '.join(f'{k} {v}' for k, v in timings.items() if k != 'total')})"
+    )
     for cause, names in sorted(causes.items()):
         print(f"  {cause}: {', '.join(names)}")
     for media, f in report["fallbacks"].items():
@@ -1048,14 +1296,19 @@ def main(argv: list[str] | None = None) -> None:
         sys.stdout.reconfigure(line_buffering=True)
     if argv[:1] == ["_worker"]:
         sys.exit(worker(Path(argv[1])))
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0],
-                                     formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0], formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
     for name in ("plan", "build"):
         p = sub.add_parser(name)
-        p.add_argument("--dsf", type=Path, default=None,
-                       help="stock Install/dngvehicles.sp (only read; default: from $DSF_GAME_DIR); "
-                            "its game folder is used for the rest")
+        p.add_argument(
+            "--dsf",
+            type=Path,
+            default=None,
+            help="stock Install/dngvehicles.sp (only read; default: from $DSF_GAME_DIR); "
+            "its game folder is used for the rest",
+        )
         p.add_argument("--iso", type=Path, action="append", help="Forza disc images (default: assets/*.iso)")
         p.add_argument("--cache", type=Path, default=REPO / "out" / "cache", help="extraction cache")
         p.add_argument("--car", action="append", metavar="NAME[@fh1|@fm4]")
@@ -1069,37 +1322,62 @@ def main(argv: list[str] | None = None) -> None:
         p.add_argument("--exclude", action="append", metavar="NAME")
         p.add_argument("--diverse", type=int, metavar="N", help="N cars spread over body classes and makes")
         p.add_argument("--max", type=int)
-        p.add_argument("--id-policy", choices=("garage", "high", "asi"), default="garage",
-                       help="garage (default): IDs 1..61 first, then --first-id up; high: --first-id up only; "
-                            "asi: every free ID from 1 (stock gaps in 62..303 too), then --first-id up, garage-listed "
-                            "through dsfforza.asi (research/asi.md)")
+        p.add_argument(
+            "--id-policy",
+            choices=("garage", "high", "asi"),
+            default="garage",
+            help="garage (default): IDs 1..61 first, then --first-id up; high: --first-id up only; "
+            "asi: every free ID from 1 (stock gaps in 62..303 too), then --first-id up, garage-listed "
+            "through dsfforza.asi (research/asi.md)",
+        )
         p.add_argument("--first-id", type=int, default=HIGH_FIRST_ID)
-        p.add_argument("--root-limit", type=int, default=ENTRY_LIMIT,
-                       help=f"root entries allowed (default {ENTRY_LIMIT}, the stock reader); "
-                            "more needs dsfforza.asi [archive], e.g. 3003 for every base ID below 1000")
+        p.add_argument(
+            "--root-limit",
+            type=int,
+            default=ENTRY_LIMIT,
+            help=f"root entries allowed (default {ENTRY_LIMIT}, the stock reader); "
+            "more needs dsfforza.asi [archive], e.g. 3003 for every base ID below 1000",
+        )
         if name == "plan":
             p.add_argument("--tsv", type=Path)
         else:
             p.add_argument("--out", type=Path, required=True, help="output folder")
-            p.add_argument("--jobs", type=int, default=max(1, min(6, (os.cpu_count() or 2) // 2)),
-                           help="worker processes (default: half the logical CPUs, at most 6)")
+            p.add_argument(
+                "--jobs",
+                type=int,
+                default=max(1, min(6, (os.cpu_count() or 2) // 2)),
+                help="worker processes (default: half the logical CPUs, at most 6)",
+            )
             p.add_argument("--port", help=f"port_car options for every car (default: {DEFAULT_PORT_OPTIONS!r})")
             p.add_argument("--gui", action="store_true", help="also build gui.sp, Fonts.fchunk and hud.lua")
-            p.add_argument("--wide-glyphs", action="store_true",
-                           help="with --gui: every car its own HUD badge/plate as 16-bit glyphs "
-                                "(needs dsfforza.asi [hud]; gui_assets.py --wide-glyphs)")
-            p.add_argument("--resume", action="store_true",
-                           help="reuse cars an earlier run in --out built with the same ID and options")
-            p.add_argument("--clean-work", action="store_true",
-                           help="delete the per-car chunk files afterwards (default: keep them for remerge)")
+            p.add_argument(
+                "--wide-glyphs",
+                action="store_true",
+                help="with --gui: every car its own HUD badge/plate as 16-bit glyphs "
+                "(needs dsfforza.asi [hud]; gui_assets.py --wide-glyphs)",
+            )
+            p.add_argument(
+                "--resume",
+                action="store_true",
+                help="reuse cars an earlier run in --out built with the same ID and options",
+            )
+            p.add_argument(
+                "--clean-work",
+                action="store_true",
+                help="delete the per-car chunk files afterwards (default: keep them for remerge)",
+            )
     r = sub.add_parser("remerge", help="re-assemble an earlier build under another ID policy (no conversion)")
     r.add_argument("source", type=Path, help="an earlier build's --out folder (with work/)")
     r.add_argument("--out", type=Path, required=True)
     r.add_argument("--dsf", type=Path, default=None, help="default: from $DSF_GAME_DIR")
     r.add_argument("--id-policy", choices=("garage", "high", "asi"), default="high")
     r.add_argument("--first-id", type=int, default=HIGH_FIRST_ID)
-    r.add_argument("--root-limit", type=int, default=ENTRY_LIMIT,
-                   help=f"root entries allowed (default {ENTRY_LIMIT}; more needs dsfforza.asi [archive])")
+    r.add_argument(
+        "--root-limit",
+        type=int,
+        default=ENTRY_LIMIT,
+        help=f"root entries allowed (default {ENTRY_LIMIT}; more needs dsfforza.asi [archive])",
+    )
     r.add_argument("--jobs", type=int, default=4)
     r.add_argument("--gui", action="store_true")
     r.add_argument("--wide-glyphs", action="store_true", help="with --gui: 16-bit HUD glyphs (dsfforza.asi [hud])")

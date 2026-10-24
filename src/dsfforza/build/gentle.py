@@ -32,6 +32,7 @@ def apply() -> bool:
     try:
         if os.name == "nt":
             from ctypes import wintypes
+
             kernel32 = ctypes.windll.kernel32
             kernel32.GetCurrentProcess.restype = wintypes.HANDLE
             kernel32.SetPriorityClass.argtypes = (wintypes.HANDLE, wintypes.DWORD)

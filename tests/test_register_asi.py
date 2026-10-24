@@ -8,6 +8,7 @@ Fakes 600 added cars (IDs 304..903, 70 makes) and checks: the magic-ID
 detection, how many cars become Selectable, the group caps, and which
 ProfileSettings setter calls guardProfile lets through.
 """
+
 from __future__ import annotations
 
 import sys
@@ -21,15 +22,19 @@ LUA_DIR = REPO / "tools" / "game" / "lua"
 STATS = REPO / "out" / "lua-src" / "LuaScripts" / "vehiclestats" / "vehiclestats.lua"
 BS = chr(92)
 MAGIC = 8000000
-LOADER = ("return function(src, name) local fn, err = loadstring(src, name) "
-          "if not fn then return false, err end return pcall(fn) end")
+LOADER = (
+    "return function(src, name) local fn, err = loadstring(src, name) "
+    "if not fn then return false, err end return pcall(fn) end"
+)
 
 
 def ported(n: int = 600, makes: int = 70) -> str:
     rows = []
     for i in range(n):
-        rows.append(f'[{304 + i}] = {{ host = 266, media = "T{i}", name = "Make{i % makes} M{i}", '
-                    f'make = "Make{i % makes}", model = "M{i}", year = "2010" }},')
+        rows.append(
+            f'[{304 + i}] = {{ host = 266, media = "T{i}", name = "Make{i % makes} M{i}", '
+            f'make = "Make{i % makes}", model = "M{i}", year = "2010" }},'
+        )
     return "return { cars = {\n" + "\n".join(rows) + "\n} }"
 
 
@@ -110,8 +115,10 @@ def check(asi: bool) -> list[str]:
         errors.append(f"{selectable_added} cars at 304+ selectable without the plugin")
     if (500 in calls) != asi:
         errors.append(f"SetVehicleUnlocked(500) passed={500 in calls} with asi={asi}")
-    print(f"asi={asi}: {selectable_added} of 600 added cars selectable, {len(groups)} groups "
-          f"(largest {max(groups.values())}), setter calls {calls}")
+    print(
+        f"asi={asi}: {selectable_added} of 600 added cars selectable, {len(groups)} groups "
+        f"(largest {max(groups.values())}), setter calls {calls}"
+    )
     print("  " + "\n  ".join(line for line in out if "dsfforza.asi" in line))
     return errors
 

@@ -49,7 +49,7 @@ class PanelBinding(unittest.TestCase):
         self.assertEqual(plan.bound((8, 9)), (0, 9))
         self.assertEqual(plan.bound((14, 16)), (0, 16))
         self.assertEqual(plan.bound((17, 19)), (17, 19))  # bonnet: swings, as stock
-        self.assertEqual(plan.bound((9, 10)), (9, 10))    # mirror: detaches, as stock
+        self.assertEqual(plan.bound((9, 10)), (9, 10))  # mirror: detaches, as stock
         # A door that is a Forza part (its border the Forza shut line) swings.
         plan.swinging = {(8, 9)}
         self.assertEqual(plan.bound((8, 9)), (8, 9))
@@ -61,10 +61,16 @@ class PanelBinding(unittest.TestCase):
         # panel (4-7) the vote calls chassis C except one triangle at the
         # border it called D. The door keeps exactly its component.
         D, C = (8, 9), (0, 0)
-        keys = [[("a", 0), ("a", 1), ("a", 2)], [("a", 1), ("a", 2), ("a", 3)], [("a", 2), ("a", 3), ("a", 4)],
-                [("a", 3), ("a", 4), ("a", 5)],
-                [("b", 0), ("b", 1), ("b", 2)], [("b", 1), ("b", 2), ("b", 3)], [("b", 2), ("b", 3), ("b", 4)],
-                [("b", 3), ("b", 4), ("b", 5)]]
+        keys = [
+            [("a", 0), ("a", 1), ("a", 2)],
+            [("a", 1), ("a", 2), ("a", 3)],
+            [("a", 2), ("a", 3), ("a", 4)],
+            [("a", 3), ("a", 4), ("a", 5)],
+            [("b", 0), ("b", 1), ("b", 2)],
+            [("b", 1), ("b", 2), ("b", 3)],
+            [("b", 2), ("b", 3), ("b", 4)],
+            [("b", 3), ("b", 4), ("b", 5)],
+        ]
         comps = damage.part_components(keys)
         self.assertEqual(len(set(comps)), 2)
         labels = [D, D, D, C, C, C, C, D]

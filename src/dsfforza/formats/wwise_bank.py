@@ -35,30 +35,145 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 VERSION = 48
-HIRC_TYPES = {1: "State", 2: "Sound", 3: "Action", 4: "Event", 5: "RanSeq", 6: "Switch",
-              7: "ActorMixer", 8: "Bus", 9: "Layer", 14: "Attenuation"}
+HIRC_TYPES = {
+    1: "State",
+    2: "Sound",
+    3: "Action",
+    4: "Event",
+    5: "RanSeq",
+    6: "Switch",
+    7: "ActorMixer",
+    8: "Bus",
+    9: "Layer",
+    14: "Attenuation",
+}
 PARAMS = {0: "Volume", 1: "LFE", 2: "Pitch", 3: "LPF", 8: "Priority"}
-ACTIONS = {0x04011: "Play", 0x01011: "Stop_E_O", 0x01010: "Stop_E", 0x60001: "SetSwitch",
-           0x61001: "SetRTPC", 0x12020: "SetState", 0x02011: "Pause_E_O", 0x03011: "Resume_E_O"}
+ACTIONS = {
+    0x04011: "Play",
+    0x01011: "Stop_E_O",
+    0x01010: "Stop_E",
+    0x60001: "SetSwitch",
+    0x61001: "SetRTPC",
+    0x12020: "SetState",
+    0x02011: "Pause_E_O",
+    0x03011: "Resume_E_O",
+}
 # Game parameter / switch IDs Driver.exe sets (research/engine-sound.md; names by FNV-1 match).
 KNOWN_IDS = {
-    0x9C4D0121: "vehicle_rpm", 0x623BCC90: "vehicle_engineload", 0x5979CECB: "vehicle_speed",
-    0x2324D4E3: "vehicle_gear", 0x70D23559: "vehicle_damage", 0xBF71C30C: "audio_mode",
-    0xD2D77B8F: "sw_front_rear", 0x4B21A032: "front", 0x99C183C7: "rear",
-    0x24B047F7: "sw_engine_type", 0xD70E7AE8: "rpm_norm", 0x453DD047: "vehicle_player_rpm",
-    0x654A9706: "vehicle_player_engineload", 0x651A92C1: "vehicle_player_speed",
-    0xB1A08B47: "vehicle_player_model", 0xBE567793: "granular_load", 0xD4E9EA67: "listener_dist",
-    0xC0DFB1CD: "approach", 0x83449B11: "distance",
+    0x9C4D0121: "vehicle_rpm",
+    0x623BCC90: "vehicle_engineload",
+    0x5979CECB: "vehicle_speed",
+    0x2324D4E3: "vehicle_gear",
+    0x70D23559: "vehicle_damage",
+    0xBF71C30C: "audio_mode",
+    0xD2D77B8F: "sw_front_rear",
+    0x4B21A032: "front",
+    0x99C183C7: "rear",
+    0x24B047F7: "sw_engine_type",
+    0xD70E7AE8: "rpm_norm",
+    0x453DD047: "vehicle_player_rpm",
+    0x654A9706: "vehicle_player_engineload",
+    0x651A92C1: "vehicle_player_speed",
+    0xB1A08B47: "vehicle_player_model",
+    0xBE567793: "granular_load",
+    0xD4E9EA67: "listener_dist",
+    0xC0DFB1CD: "approach",
+    0x83449B11: "distance",
 }
 
-STEPS = [7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66,
-         73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408,
-         449, 494, 544, 598, 658, 724, 796, 876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066,
-         2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358, 5894, 6484, 7132, 7845, 8630,
-         9493, 10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794,
-         32767]
+STEPS = [
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    16,
+    17,
+    19,
+    21,
+    23,
+    25,
+    28,
+    31,
+    34,
+    37,
+    41,
+    45,
+    50,
+    55,
+    60,
+    66,
+    73,
+    80,
+    88,
+    97,
+    107,
+    118,
+    130,
+    143,
+    157,
+    173,
+    190,
+    209,
+    230,
+    253,
+    279,
+    307,
+    337,
+    371,
+    408,
+    449,
+    494,
+    544,
+    598,
+    658,
+    724,
+    796,
+    876,
+    963,
+    1060,
+    1166,
+    1282,
+    1411,
+    1552,
+    1707,
+    1878,
+    2066,
+    2272,
+    2499,
+    2749,
+    3024,
+    3327,
+    3660,
+    4026,
+    4428,
+    4871,
+    5358,
+    5894,
+    6484,
+    7132,
+    7845,
+    8630,
+    9493,
+    10442,
+    11487,
+    12635,
+    13899,
+    15289,
+    16818,
+    18500,
+    20350,
+    22385,
+    24623,
+    27086,
+    29794,
+    32767,
+]
 INDEX_ADJ = [-1, -1, -1, -1, 2, 4, 6, 8]
-BLOCK = 0x24          # bytes per channel per block
+BLOCK = 0x24  # bytes per channel per block
 BLOCK_SAMPLES = 64
 
 
@@ -67,6 +182,7 @@ def name(x: int) -> str:
 
 
 # --------------------------------------------------------------------------- IMA ADPCM
+
 
 def _expand(nib: int, pred: int, idx: int) -> tuple[int, int]:
     # Multiply form, (2n+1)*step/8: matches vgmstream's Wwise IMA decode sample for sample
@@ -127,7 +243,7 @@ def encode_ima(samples: list[int]) -> bytes:
     out = bytearray()
     idx = None
     for b in range(0, n, BLOCK_SAMPLES):
-        x = s[b:b + BLOCK_SAMPLES]
+        x = s[b : b + BLOCK_SAMPLES]
         best = None
         near = range(89) if idx is None else sorted({max(0, min(88, idx + d)) for d in (-8, -4, -2, 0, 2, 4, 8)})
         for cand in near:
@@ -141,19 +257,27 @@ def encode_ima(samples: list[int]) -> bytes:
 
 # --------------------------------------------------------------------------- WEM (RIFF)
 
+
 @dataclass
 class Wem:
     fmt: bytes
     chunks: list[tuple[bytes, bytes]]  # every chunk, in order
 
     @property
-    def tag(self) -> int: return struct.unpack_from("<H", self.fmt)[0]
+    def tag(self) -> int:
+        return struct.unpack_from("<H", self.fmt)[0]
+
     @property
-    def channels(self) -> int: return struct.unpack_from("<H", self.fmt, 2)[0]
+    def channels(self) -> int:
+        return struct.unpack_from("<H", self.fmt, 2)[0]
+
     @property
-    def rate(self) -> int: return struct.unpack_from("<I", self.fmt, 4)[0]
+    def rate(self) -> int:
+        return struct.unpack_from("<I", self.fmt, 4)[0]
+
     @property
-    def data(self) -> bytes: return next(d for t, d in self.chunks if t == b"data")
+    def data(self) -> bytes:
+        return next(d for t, d in self.chunks if t == b"data")
 
     @classmethod
     def parse(cls, raw: bytes) -> Wem:
@@ -161,17 +285,16 @@ class Wem:
             raise ValueError("not a RIFF/WAVE wem")
         chunks, p = [], 12
         while p + 8 <= len(raw):
-            tag, size = raw[p:p + 4], struct.unpack_from("<I", raw, p + 4)[0]
+            tag, size = raw[p : p + 4], struct.unpack_from("<I", raw, p + 4)[0]
             if p + 8 + size > len(raw):
                 raise ValueError(f"wem chunk {tag!r} at {p:#x}: {size:#x} bytes, past the end")
-            chunks.append((tag, raw[p + 8:p + 8 + size]))
+            chunks.append((tag, raw[p + 8 : p + 8 + size]))
             p += 8 + size + (size & 1)
         fmt = next(d for t, d in chunks if t == b"fmt ")
         return cls(fmt, chunks)
 
     def build(self) -> bytes:
-        body = b"".join(t + struct.pack("<I", len(d)) + d + (b"\0" if len(d) & 1 else b"")
-                        for t, d in self.chunks)
+        body = b"".join(t + struct.pack("<I", len(d)) + d + (b"\0" if len(d) & 1 else b"") for t, d in self.chunks)
         return b"RIFF" + struct.pack("<I", 4 + len(body)) + b"WAVE" + body
 
     def with_data(self, data: bytes, rate: int | None = None) -> Wem:
@@ -195,16 +318,19 @@ def write_wav(path: Path, channels: list[list[int]], rate: int) -> None:
         for c in channels:
             frames += struct.pack("<h", max(-32768, min(32767, int(c[i]))))
     with wave.open(str(path), "wb") as w:
-        w.setnchannels(len(channels)); w.setsampwidth(2); w.setframerate(rate)
+        w.setnchannels(len(channels))
+        w.setsampwidth(2)
+        w.setframerate(rate)
         w.writeframes(bytes(frames))
 
 
 # --------------------------------------------------------------------------- HIRC v48
 
+
 class Reader:
     def __init__(self, data: bytes, pos: int = 0):
         self.d, self.p = data, pos
-        self.refs: list[int] = []   # body offsets of u32 object/media/bank references
+        self.refs: list[int] = []  # body offsets of u32 object/media/bank references
 
     def ref(self) -> int:
         self.refs.append(self.p)
@@ -240,8 +366,17 @@ def _rtpcs(r: Reader) -> list[dict]:
     out = []
     for _ in range(r.take("H")):
         fx, _rendered, rid, param, curve_id, scaling, n = r.take("IBIIIBH")
-        out.append({"fx": fx, "rtpc": rid, "param": param, "curve_id": curve_id, "scaling": scaling,
-                    "at": r.p, "points": r.curve(n)})
+        out.append(
+            {
+                "fx": fx,
+                "rtpc": rid,
+                "param": param,
+                "curve_id": curve_id,
+                "scaling": scaling,
+                "at": r.p,
+                "points": r.curve(n),
+            }
+        )
     return out
 
 
@@ -282,8 +417,17 @@ def _node_base(r: Reader, feedback: bool) -> dict:
     rtpcs = _rtpcs(r)
     if feedback and r.take("I"):
         r.skip(24)
-    return {"fx": nfx, "bus": bus, "parent": parent, "volume": init[0], "pitch": init[6], "lpf": init[9],
-            "positioning": pos, "states": states, "rtpcs": rtpcs}
+    return {
+        "fx": nfx,
+        "bus": bus,
+        "parent": parent,
+        "volume": init[0],
+        "pitch": init[6],
+        "lpf": init[9],
+        "positioning": pos,
+        "states": states,
+        "rtpcs": rtpcs,
+    }
 
 
 def _children(r: Reader) -> list[int]:
@@ -294,7 +438,7 @@ def _children(r: Reader) -> list[int]:
 class HircObject:
     type: int
     id: int
-    body: bytes            # the bytes after the ID
+    body: bytes  # the bytes after the ID
     info: dict = field(default_factory=dict)
 
     @property
@@ -385,10 +529,11 @@ def parse_object(obj: HircObject, feedback: bool) -> dict:
 
 # --------------------------------------------------------------------------- bank
 
+
 @dataclass
 class Bank:
-    sections: list[list]   # [tag, payload bytes], in file order; DATA/HIRC are rebuilt from the fields below
-    media: list[list]      # [id, wem bytes], in DIDX order
+    sections: list[list]  # [tag, payload bytes], in file order; DATA/HIRC are rebuilt from the fields below
+    media: list[list]  # [id, wem bytes], in DIDX order
     objects: list[HircObject]
     data_align: int = 16
 
@@ -396,10 +541,10 @@ class Bank:
     def parse(cls, raw: bytes) -> Bank:
         sections, p = [], 0
         while p + 8 <= len(raw):
-            tag, size = raw[p:p + 4].decode("latin-1"), struct.unpack_from("<I", raw, p + 4)[0]
+            tag, size = raw[p : p + 4].decode("latin-1"), struct.unpack_from("<I", raw, p + 4)[0]
             if p + 8 + size > len(raw):
                 raise ValueError(f"section {tag} at {p:#x}: {size:#x} bytes, past the end")
-            sections.append([tag, raw[p + 8:p + 8 + size]])
+            sections.append([tag, raw[p + 8 : p + 8 + size]])
             p += 8 + size
         if p != len(raw):
             raise ValueError(f"trailing bytes at {p:#x}")
@@ -413,14 +558,14 @@ class Bank:
             mid, off, size = struct.unpack_from("<III", didx, i)
             if off + size > len(data):
                 raise ValueError(f"media {mid:08x}: {off:#x}+{size:#x} outside DATA ({len(data):#x} bytes)")
-            media.append([mid, data[off:off + size]])
+            media.append([mid, data[off : off + size]])
         objects = []
         if "HIRC" in sec:
             h = sec["HIRC"]
             q = 4
             for _ in range(struct.unpack_from("<I", h)[0]):
                 t, size, oid = struct.unpack_from("<III", h, q)
-                obj = HircObject(t, oid, h[q + 12:q + 8 + size])
+                obj = HircObject(t, oid, h[q + 12 : q + 8 + size])
                 obj.info = parse_object(obj, bool(feedback))
                 objects.append(obj)
                 q += 8 + size
@@ -495,7 +640,7 @@ class Bank:
         out, p = [], 8
         for _ in range(n):
             bid, ln = struct.unpack_from("<IB", d, p)
-            out.append((bid, d[p + 5:p + 5 + ln].decode("latin-1")))
+            out.append((bid, d[p + 5 : p + 5 + ln].decode("latin-1")))
             p += 5 + ln
         return out
 
@@ -505,11 +650,14 @@ class Bank:
         self.remap_ids({old: new_id}, objects=False)
         for sec in self.sections:
             if sec[0] == "BKHD":
-                d = bytearray(sec[1]); struct.pack_into("<I", d, 4, new_id); sec[1] = bytes(d)
+                d = bytearray(sec[1])
+                struct.pack_into("<I", d, 4, new_id)
+                sec[1] = bytes(d)
             if sec[0] == "STID":
                 entries = [(new_id if b == old else b, (new_name or n) if b == old else n) for b, n in self.stid()]
                 sec[1] = struct.pack("<II", 1, len(entries)) + b"".join(
-                    struct.pack("<IB", b, len(n)) + n.encode("latin-1") for b, n in entries)
+                    struct.pack("<IB", b, len(n)) + n.encode("latin-1") for b, n in entries
+                )
 
     def remap_ids(self, mapping: dict[int, int], objects: bool = True) -> int:
         """Rewrite object IDs, media IDs and every recorded reference found in ``mapping``.
@@ -517,15 +665,18 @@ class Bank:
         changed = 0
         for m in self.media:
             if m[0] in mapping:
-                m[0] = mapping[m[0]]; changed += 1
+                m[0] = mapping[m[0]]
+                changed += 1
         for o in self.objects:
             if objects and o.id in mapping:
-                o.id = mapping[o.id]; changed += 1
+                o.id = mapping[o.id]
+                changed += 1
             body = bytearray(o.body)
             for at in o.info["refs"]:
                 v = struct.unpack_from("<I", body, at)[0]
                 if v in mapping:
-                    struct.pack_into("<I", body, at, mapping[v]); changed += 1
+                    struct.pack_into("<I", body, at, mapping[v])
+                    changed += 1
             o.body = bytes(body)
         self.reparse()
         return changed
@@ -556,7 +707,7 @@ class Bank:
                 problems.append(f"Sound {o.id:08x}: media {i['source']:08x} not in DIDX")
                 continue
             wem = didx[i["source"]]
-            if raw[i["offset"]:i["offset"] + i["size"]] != wem:
+            if raw[i["offset"] : i["offset"] + i["size"]] != wem:
                 problems.append(f"Sound {o.id:08x}: offset/size do not point at its media")
         for mid, wem in again.media:
             try:
@@ -569,6 +720,7 @@ class Bank:
 
 
 # --------------------------------------------------------------------------- reports
+
 
 def sound_rpm(o: HircObject) -> float | None:
     """Recording rpm implied by a Sound's pitch-vs-vehicle_rpm curve (0 cents point)."""
@@ -636,11 +788,18 @@ def tree(bank: Bank, curves: bool = False, out=sys.stdout) -> None:
         xf = {}
         for layer in i.get("layers", []):
             for child, pts, _ in layer["assoc"]:
-                xf[child] = (f"layer {layer['id']:08x} xfade {name(layer['xfade_rtpc'])}[" +
-                             " ".join(f"{x:g}:{y:g}" for x, y, _ in pts) + "] ")
+                xf[child] = (
+                    f"layer {layer['id']:08x} xfade {name(layer['xfade_rtpc'])}["
+                    + " ".join(f"{x:g}:{y:g}" for x, y, _ in pts)
+                    + "] "
+                )
             if layer["rtpcs"]:
-                print("  " * (depth + 1) + f"layer {layer['id']:08x} xfade {name(layer['xfade_rtpc'])} | "
-                      + describe_rtpcs(layer["rtpcs"], curves), file=out)
+                print(
+                    "  " * (depth + 1)
+                    + f"layer {layer['id']:08x} xfade {name(layer['xfade_rtpc'])} | "
+                    + describe_rtpcs(layer["rtpcs"], curves),
+                    file=out,
+                )
         for c in i.get("children", []):
             if c in objs:
                 walk(c, depth + 1, xf.get(c, ""))
@@ -655,8 +814,10 @@ def tree(bank: Bank, curves: bool = False, out=sys.stdout) -> None:
             for a in o.info["actions"]:
                 act = objs.get(a)
                 if act:
-                    acts.append(f"{ACTIONS.get(act.info['action'], hex(act.info['action']))}"
-                                f"({name(act.info['target'])}{'' if act.info['target'] in objs else ' ext'})")
+                    acts.append(
+                        f"{ACTIONS.get(act.info['action'], hex(act.info['action']))}"
+                        f"({name(act.info['target'])}{'' if act.info['target'] in objs else ' ext'})"
+                    )
             print(f"  {o.id:08x}: " + ", ".join(acts), file=out)
     print("hierarchy:", file=out)
     roots = [o.id for o in bank.objects if o.type in (2, 5, 6, 7, 9) and o.info["parent"] not in objs]
@@ -670,10 +831,16 @@ def tree(bank: Bank, curves: bool = False, out=sys.stdout) -> None:
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("info"); p.add_argument("bank", type=Path)
-    p = sub.add_parser("tree"); p.add_argument("bank", type=Path); p.add_argument("--curves", action="store_true")
-    p = sub.add_parser("wavs"); p.add_argument("bank", type=Path); p.add_argument("out", type=Path)
-    p = sub.add_parser("check"); p.add_argument("banks", type=Path, nargs="+")
+    p = sub.add_parser("info")
+    p.add_argument("bank", type=Path)
+    p = sub.add_parser("tree")
+    p.add_argument("bank", type=Path)
+    p.add_argument("--curves", action="store_true")
+    p = sub.add_parser("wavs")
+    p.add_argument("bank", type=Path)
+    p.add_argument("out", type=Path)
+    p = sub.add_parser("check")
+    p.add_argument("banks", type=Path, nargs="+")
     a = ap.parse_args(argv)
 
     if a.cmd == "check":

@@ -95,8 +95,11 @@ class WheelAtlas(unittest.TestCase):
         for _y in range(32):
             for _x in range(32):
                 wheel += bytes((200, 60, 10, 0))  # orange rim artwork (alpha: gloss mask, not a cut-out)
-        atlases = {fm.WHEEL: (32, 32, wheel), fm.NODAMAGE: (16, 16, bytearray(16 * 16 * 4)),
-                   fm.LIGHTS: (16, 16, bytearray(16 * 16 * 4))}
+        atlases = {
+            fm.WHEEL: (32, 32, wheel),
+            fm.NODAMAGE: (16, 16, bytearray(16 * 16 * 4)),
+            fm.LIGHTS: (16, 16, bytearray(16 * 16 * 4)),
+        }
 
         class FakeAtlases:
             def __init__(self, car_dir, lod0=False):
@@ -105,12 +108,18 @@ class WheelAtlas(unittest.TestCase):
             def get(self, family):
                 return atlases[family]
 
-        self.patches = [mock.patch.object(fm, "AtlasCache", FakeAtlases),
-                        mock.patch.object(dm.Texturing, "wheel_texture", lambda self: True)]
+        self.patches = [
+            mock.patch.object(fm, "AtlasCache", FakeAtlases),
+            mock.patch.object(dm.Texturing, "wheel_texture", lambda self: True),
+        ]
         for p in self.patches:
             p.start()
-        corners = [_Vertex((-0.1, 0.0, 0.0), (0.1, 0.1)), _Vertex((-0.1, 0.2, 0.0), (0.9, 0.1)),
-                   _Vertex((-0.1, 0.2, 0.2), (0.9, 0.9)), _Vertex((-0.1, 0.0, 0.2), (0.1, 0.9))]
+        corners = [
+            _Vertex((-0.1, 0.0, 0.0), (0.1, 0.1)),
+            _Vertex((-0.1, 0.2, 0.0), (0.9, 0.1)),
+            _Vertex((-0.1, 0.2, 0.2), (0.9, 0.9)),
+            _Vertex((-0.1, 0.0, 0.2), (0.1, 0.9)),
+        ]
         self.rim = _Sub("rim", [(0, 1, 2), (0, 2, 3)])
         self.tire = _Sub("tire", [(0, 1, 2)], uv_transform=(0.0, 31.0, 0.0, 1.0))
         self.blur = _Sub("blur_rim", [(0, 1, 2)])
@@ -131,7 +140,7 @@ class WheelAtlas(unittest.TestCase):
         self.assertEqual(key, (fm.WHEEL, 0))
         rgba = t.render()
         x, y = (int(c * n) for c, n in zip(uvs[2], t.size))
-        self.assertEqual(tuple(rgba[(y * t.size[0] + x) * 4:(y * t.size[0] + x) * 4 + 3]), (200, 60, 10))
+        self.assertEqual(tuple(rgba[(y * t.size[0] + x) * 4 : (y * t.size[0] + x) * 4 + 3]), (200, 60, 10))
 
     def test_wheel_material(self):
         t = dm.Texturing(Path())
@@ -153,10 +162,19 @@ class WheelSource(unittest.TestCase):
         self.assertEqual(port_car.wheel_source(disc, "FER_250GTO_64"), ("media/wheels/FER_250GTO_64.zip", ""))
         fm4 = Source("FM4", "FM4 disc 1", "Media/cars/ALF_Mito_09.zip", 0, 0, "car")
         self.assertEqual(port_car.wheel_source(fm4, "ALF_Mito_09"), ("Media/wheels/ALF_Mito_09.zip", ""))
-        pack = Source("FM4", "FM4 disc 2", "Media/DLCZips/0001_pri_65.zip::media/cars/dod_chargerdaytona_69/",
-                      0, 0, "car", package="content/x")
-        self.assertEqual(port_car.wheel_source(pack, "DOD_ChargerDaytona_69"),
-                         ("Media/DLCZips/0001_pri_65.zip", "media/wheels/dod_chargerdaytona_69/"))
+        pack = Source(
+            "FM4",
+            "FM4 disc 2",
+            "Media/DLCZips/0001_pri_65.zip::media/cars/dod_chargerdaytona_69/",
+            0,
+            0,
+            "car",
+            package="content/x",
+        )
+        self.assertEqual(
+            port_car.wheel_source(pack, "DOD_ChargerDaytona_69"),
+            ("Media/DLCZips/0001_pri_65.zip", "media/wheels/dod_chargerdaytona_69/"),
+        )
 
 
 if __name__ == "__main__":

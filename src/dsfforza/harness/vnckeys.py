@@ -3,14 +3,28 @@ VMware Tools runs. Usage:
   uv run dsff vnckeys host port STEP...
 Steps: 'text:<chars>' types ASCII text; '{enter}', '{esc}', '{tab}', '{win+r}', '{win}',
 '{alt+f4}', '{ctrl+shift+enter}' press keys; 'sleep:<seconds>' waits."""
+
 import socket
 import struct
 import sys
 import time
 
-KEYS = {"enter": 0xFF0D, "esc": 0xFF1B, "tab": 0xFF09, "win": 0xFFEB, "alt": 0xFFE9, "ctrl": 0xFFE3,
-        "shift": 0xFFE1, "f4": 0xFFC1, "up": 0xFF52, "down": 0xFF54, "left": 0xFF51, "right": 0xFF53,
-        "backspace": 0xFF08, "space": 0x20}
+KEYS = {
+    "enter": 0xFF0D,
+    "esc": 0xFF1B,
+    "tab": 0xFF09,
+    "win": 0xFFEB,
+    "alt": 0xFFE9,
+    "ctrl": 0xFFE3,
+    "shift": 0xFFE1,
+    "f4": 0xFFC1,
+    "up": 0xFF52,
+    "down": 0xFF54,
+    "left": 0xFF51,
+    "right": 0xFF53,
+    "backspace": 0xFF08,
+    "space": 0x20,
+}
 SHIFTED = '~!@#$%^&*()_+{}|:"<>?ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
 

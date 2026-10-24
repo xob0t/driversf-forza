@@ -170,9 +170,9 @@ class LzxDecoder:
                 bits.pos -= 2
             bits.buf, bits.left = 0, 0
             data = bits.data
-            self.r0 = int.from_bytes(data[bits.pos:bits.pos + 4], "little")
-            self.r1 = int.from_bytes(data[bits.pos + 4:bits.pos + 8], "little")
-            self.r2 = int.from_bytes(data[bits.pos + 8:bits.pos + 12], "little")
+            self.r0 = int.from_bytes(data[bits.pos : bits.pos + 4], "little")
+            self.r1 = int.from_bytes(data[bits.pos + 4 : bits.pos + 8], "little")
+            self.r2 = int.from_bytes(data[bits.pos + 8 : bits.pos + 12], "little")
             bits.pos += 12
         else:
             raise LzxError(f"bad block type {self.block_type}")
@@ -198,7 +198,7 @@ class LzxDecoder:
             wp = self.window_pos
 
             if self.block_type == UNCOMPRESSED:
-                chunk = data[bits.pos:bits.pos + this_run]
+                chunk = data[bits.pos : bits.pos + this_run]
                 if len(chunk) < this_run:
                     raise LzxError(f"uncompressed block: {this_run} bytes wanted, {len(chunk)} left in the chunk")
                 for b in chunk:
@@ -267,9 +267,9 @@ class LzxDecoder:
 
         self.frame_pos = (start_pos + out_len) & mask
         if start_pos + out_len <= self.window_size:
-            out = bytearray(window[start_pos:start_pos + out_len])
+            out = bytearray(window[start_pos : start_pos + out_len])
         else:
-            out = bytearray(window[start_pos:]) + window[:out_len - (self.window_size - start_pos)]
+            out = bytearray(window[start_pos:]) + window[: out_len - (self.window_size - start_pos)]
         if self.intel_filesize and self.intel_started and out_len > 10:
             self._undo_e8(out)
         self.intel_curpos += out_len
@@ -282,10 +282,10 @@ class LzxDecoder:
             if out[i] != 0xE8:
                 i += 1
                 continue
-            absolute = int.from_bytes(out[i + 1:i + 5], "little", signed=True)
+            absolute = int.from_bytes(out[i + 1 : i + 5], "little", signed=True)
             if -curpos - i <= absolute < size:
                 relative = absolute - (curpos + i) if absolute >= 0 else absolute + size
-                out[i + 1:i + 5] = (relative & 0xFFFFFFFF).to_bytes(4, "little")
+                out[i + 1 : i + 5] = (relative & 0xFFFFFFFF).to_bytes(4, "little")
             i += 5
 
 
@@ -306,7 +306,7 @@ def xmem_decompress(data: bytes, size: int, window_bits: int = 17) -> bytes:
         if chunk == 0 or frame == 0:
             break
         frame = min(frame, size - len(out))
-        out += decoder.decompress_chunk(data[pos:pos + chunk], frame)
+        out += decoder.decompress_chunk(data[pos : pos + chunk], frame)
         pos += chunk
     if len(out) != size:
         raise LzxError(f"decompressed {len(out)} bytes, expected {size}")

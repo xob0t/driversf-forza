@@ -121,7 +121,7 @@ class _Reader:
     def take(self, n: int) -> bytes:
         if self.pos + n > len(self.data):
             raise CarbinError(f"read past end at {self.pos:#x}")
-        chunk = self.data[self.pos:self.pos + n]
+        chunk = self.data[self.pos : self.pos + n]
         self.pos += n
         return chunk
 
@@ -164,9 +164,14 @@ def _decode_pool(raw: bytes, count: int, size: int, section: Section) -> list[Ve
         x, y, z, s, u0, v0, u1, v1, qx, qy, qz, qw = struct.unpack_from(">4h4H4h", raw, base)
         scale = _shortn(s)
         spos.append((_shortn(x) * scale, _shortn(y) * scale, _shortn(z) * scale))
-        rest.append(((u0 / 65535, v0 / 65535), (u1 / 65535, v1 / 65535),
-                     _quat_row0(_shortn(qx), _shortn(qy), _shortn(qz), _shortn(qw)),
-                     raw[base + 24:base + size]))
+        rest.append(
+            (
+                (u0 / 65535, v0 / 65535),
+                (u1 / 65535, v1 / 65535),
+                _quat_row0(_shortn(qx), _shortn(qy), _shortn(qz), _shortn(qw)),
+                raw[base + 24 : base + size],
+            )
+        )
     lo = [min(p[a] for p in spos) for a in range(3)]
     hi = [max(p[a] for p in spos) for a in range(3)]
     vertices = []
@@ -175,8 +180,9 @@ def _decode_pool(raw: bytes, count: int, size: int, section: Section) -> list[Ve
         for a in range(3):
             span = hi[a] - lo[a]
             t = (p[a] - lo[a]) / span if abs(span) > 1e-12 else 0.0
-            world.append(section.target_min[a] + t * (section.target_max[a] - section.target_min[a])
-                         + section.offset[a])
+            world.append(
+                section.target_min[a] + t * (section.target_max[a] - section.target_min[a]) + section.offset[a]
+            )
         vertices.append(Vertex(tuple(world), uv0, uv1, normal, extra))
     return vertices
 
@@ -196,7 +202,7 @@ def _section_header_ok(data: bytes, pos: int) -> bool:
         p = pos + 40 + 28
         p += 4 + struct.unpack_from(">I", data, p)[0] * 16 + 4
         p += 4 + struct.unpack_from(">I", data, p)[0] * 2 + 12
-        name = data[p + 1:p + 1 + data[p]]
+        name = data[p + 1 : p + 1 + data[p]]
         version = struct.unpack_from(">I", data, p + 1 + data[p])[0]
     except (struct.error, IndexError):
         return False
@@ -291,8 +297,9 @@ def _skip_tail(r: _Reader, version: int, lod0_count: int) -> None:
 def _check_type(data: bytes) -> int:
     type_id = struct.unpack_from(">I", data)[0]
     if type_id not in TYPE_IDS:
-        raise CarbinError(f"TypeId {type_id} not supported (FH1: 5, FM4: 2, either: 1; "
-                          "0 is a stripped header-only carbin)")
+        raise CarbinError(
+            f"TypeId {type_id} not supported (FH1: 5, FM4: 2, either: 1; 0 is a stripped header-only carbin)"
+        )
     return type_id
 
 
@@ -305,9 +312,9 @@ def game_of(sections: list[Section]) -> str:
 @dataclass
 class ParseResult:
     sections: list[Section]
-    start: int      # offset of the u32 part_count
-    declared: int   # part_count
-    end: int        # offset just past the last parsed section
+    start: int  # offset of the u32 part_count
+    declared: int  # part_count
+    end: int  # offset just past the last parsed section
 
     @property
     def complete(self) -> bool:
@@ -393,15 +400,19 @@ def main(argv: list[str] | None = None) -> None:
     result = parse_full(data)
     sections = result.sections
     sizes = sorted({len(v.extra) + 24 for s in sections for v in (s.lod_vertices or s.lod0_vertices)[:1]})
-    print(f"{args.carbin.name}: {result.game} TypeId {struct.unpack_from('>I', data)[0]}, "
-          f"{len(sections)}/{result.declared} sections from {result.start:#x}, "
-          f"{len(data) - result.end} trailing bytes, vertex size {sizes}")
+    print(
+        f"{args.carbin.name}: {result.game} TypeId {struct.unpack_from('>I', data)[0]}, "
+        f"{len(sections)}/{result.declared} sections from {result.start:#x}, "
+        f"{len(data) - result.end} trailing bytes, vertex size {sizes}"
+    )
     if args.summary:
         for s in sections:
             lods = sorted({sub.lod for sub in s.subsections})
             mats = sorted({sub.material for sub in s.subsections})
-            print(f"  {s.name:24} lodV {len(s.lod_vertices):6} lod0V {len(s.lod0_vertices):6} "
-                  f"subs {len(s.subsections):3} lods {lods} mats {mats}")
+            print(
+                f"  {s.name:24} lodV {len(s.lod_vertices):6} lod0V {len(s.lod0_vertices):6} "
+                f"subs {len(s.subsections):3} lods {lods} mats {mats}"
+            )
     if args.obj:
         print(f"wrote {write_obj(sections, args.obj, args.lod)} triangles to {args.obj}")
 

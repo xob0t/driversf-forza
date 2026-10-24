@@ -15,8 +15,8 @@ THREAD_LIST, MODULE_LIST, EXCEPTION, MEMORY_LIST, MEMORY64_LIST = 3, 4, 6, 5, 9
 
 
 def read_string(data: bytes, rva: int) -> str:
-    length, = struct.unpack_from("<I", data, rva)
-    return data[rva + 4:rva + 4 + length].decode("utf-16-le", "replace")
+    (length,) = struct.unpack_from("<I", data, rva)
+    return data[rva + 4 : rva + 4 + length].decode("utf-16-le", "replace")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -36,10 +36,10 @@ def main(argv: list[str] | None = None) -> None:
     modules = []
     if MODULE_LIST in streams:
         _, rva = streams[MODULE_LIST]
-        count, = struct.unpack_from("<I", data, rva)
+        (count,) = struct.unpack_from("<I", data, rva)
         for i in range(count):
             base, size = struct.unpack_from("<QI", data, rva + 4 + i * 108)
-            name_rva, = struct.unpack_from("<I", data, rva + 4 + i * 108 + 20)
+            (name_rva,) = struct.unpack_from("<I", data, rva + 4 + i * 108 + 20)
             modules.append((base, size, read_string(data, name_rva).split("\\")[-1]))
 
     def where(address: int) -> str:
@@ -51,7 +51,7 @@ def main(argv: list[str] | None = None) -> None:
     memory = []
     if MEMORY_LIST in streams:
         _, rva = streams[MEMORY_LIST]
-        count, = struct.unpack_from("<I", data, rva)
+        (count,) = struct.unpack_from("<I", data, rva)
         for i in range(count):
             start, size, mrva = struct.unpack_from("<QII", data, rva + 4 + i * 16)
             memory.append((start, size, mrva))
@@ -67,7 +67,7 @@ def main(argv: list[str] | None = None) -> None:
     def read_memory(address: int, size: int) -> bytes | None:
         for start, length, mrva in memory:
             if start <= address and address + size <= start + length:
-                return data[mrva + address - start:mrva + address - start + size]
+                return data[mrva + address - start : mrva + address - start + size]
         return None
 
     if EXCEPTION not in streams:
@@ -76,14 +76,16 @@ def main(argv: list[str] | None = None) -> None:
     # MINIDUMP_EXCEPTION_STREAM: u32 ThreadId, u32 align, MINIDUMP_EXCEPTION (u32 code, u32 flags,
     # u64 record, u64 address, u32 NumberParameters, u32 align, u64 ExceptionInformation[15]),
     # then the context's location descriptor.
-    thread_id, = struct.unpack_from("<I", data, rva)
+    (thread_id,) = struct.unpack_from("<I", data, rva)
     code, _flags, _record, address, nparams = struct.unpack_from("<IIQQI", data, rva + 8)
     params = struct.unpack_from("<15Q", data, rva + 8 + 32)[:nparams]
     _ctx_size, ctx_rva = struct.unpack_from("<II", data, rva + 8 + 152)
     print(f"exception {code:#010x} at {address:#010x} ({where(address)}), thread {thread_id}")
     if code == 0xC0000005 and len(params) >= 2:
-        print(f"  access violation: {'write' if params[0] == 1 else 'read' if params[0] == 0 else 'execute'} "
-              f"of {params[1]:#010x}")
+        print(
+            f"  access violation: {'write' if params[0] == 1 else 'read' if params[0] == 0 else 'execute'} "
+            f"of {params[1]:#010x}"
+        )
     # x86 CONTEXT: registers start at offset 0x9C (Edi, Esi, Ebx, Edx, Ecx, Eax, Ebp, Eip, SegCs, EFlags, Esp)
     names = ["edi", "esi", "ebx", "edx", "ecx", "eax", "ebp", "eip", "cs", "eflags", "esp"]
     regs = dict(zip(names, struct.unpack_from("<11I", data, ctx_rva + 0x9C)))
@@ -92,7 +94,7 @@ def main(argv: list[str] | None = None) -> None:
     if stack:
         print("  stack values inside modules (probable return addresses):")
         for i in range(len(stack) // 4):
-            value, = struct.unpack_from("<I", stack, i * 4)
+            (value,) = struct.unpack_from("<I", stack, i * 4)
             location = where(value)
             if location != "?":
                 print(f"    [esp+{i * 4:#05x}] {value:#010x} {location}")

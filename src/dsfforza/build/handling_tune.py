@@ -46,8 +46,10 @@ STOCK_DB = REPO / "out" / "cache" / "stock-dyno.json"
 RUNS = Path.home() / "AppData" / "Local" / "Temp" / "dsfforza-wsb" / "runs"
 # The test: run 1 full throttle 25 s then brake (0-60, quarter mile); runs 2 and 3 a
 # handbrake flick at 55 mph with the throttle lifted; run 4 a 1 s step steer at 45 mph.
-KEYS = ("Up:25,Down:6;Up:@55,Space+Right:0.4,None:2.5,Down:5;Up:@55,Space+Right:0.4,None:2.5,Down:5;"
-        "Up:@45,Right:1.0,None:1.5,Down:5")
+KEYS = (
+    "Up:25,Down:6;Up:@55,Space+Right:0.4,None:2.5,Down:5;Up:@55,Space+Right:0.4,None:2.5,Down:5;"
+    "Up:@45,Right:1.0,None:1.5,Down:5"
+)
 KEEP = "impulse:1,impulse:1:20,impulse:1:20,impulse:1:18"
 # Drift recovery (driving feedback: the Huayra port "can't exit the drift"): a handbrake
 # flick held into a slide, then 1.2 s of counter-steer: on the throttle (run 2), lifted
@@ -55,16 +57,19 @@ KEEP = "impulse:1,impulse:1:20,impulse:1:20,impulse:1:18"
 # from the input until slip and yaw rate are calm again. Run 20261022-165036 used a 0.3 s
 # flick with immediate counter-steer: no car got past 9 deg of slip, so no drift to leave.
 # '@62' lands near 50 mph (the step timing comes from the launch run's trace).
-RECOVERY_KEYS = ("Up:25,Down:6;Up:@62,Space+Right:0.6,Up+Right:0.6,Up+Left:1.2,Up:3,Down:5;"
-                 "Up:@62,Space+Right:0.6,Right:0.4,Left:1.2,None:3,Down:5;"
-                 "Up:@62,Space+Right:1.0,Left:1.2,None:3,Down:5")
+RECOVERY_KEYS = (
+    "Up:25,Down:6;Up:@62,Space+Right:0.6,Up+Right:0.6,Up+Left:1.2,Up:3,Down:5;"
+    "Up:@62,Space+Right:0.6,Right:0.4,Left:1.2,None:3,Down:5;"
+    "Up:@62,Space+Right:1.0,Left:1.2,None:3,Down:5"
+)
 P18_RANGE, P345_RANGE = 0.25, 0.05
-P345_SLOPE = -700.0     # deg of handbrake rotation per unit of p345 (prior)
-P18_ELASTICITY = -0.8   # d ln(0-60) / d ln(p18) (prior)
+P345_SLOPE = -700.0  # deg of handbrake rotation per unit of p345 (prior)
+P18_ELASTICITY = -0.8  # d ln(0-60) / d ln(p18) (prior)
 NOISE = {"0-60": 0.03, "hb_yaw": 8.0}  # relative / absolute dead bands
 
 
 # --- measurements --------------------------------------------------------------------
+
 
 def measure(run_dirs: list[Path]) -> dict[int, dict]:
     """Per car: 0-60, quarter mile (acceleration runs), handbrake yaw change (lifted
@@ -88,6 +93,7 @@ def measure(run_dirs: list[Path]) -> dict[int, dict]:
             rec["steer"].append(m)
     summary = {}
     for car, rec in out.items():
+
         def mean(rows, key):
             vals = [x[key] for x in rows if x.get(key) is not None]
             return statistics.mean(vals) if vals else None
@@ -95,12 +101,19 @@ def measure(run_dirs: list[Path]) -> dict[int, dict]:
         def sd(rows, key):
             vals = [x[key] for x in rows if x.get(key) is not None]
             return statistics.pstdev(vals) if len(vals) > 1 else None
-        summary[car] = {"0-60": mean(rec["acc"], "0-60"), "qm": mean(rec["acc"], "qm_time"),
-                        "hb_yaw": mean(rec["hb"], "yaw_change"), "hb_yaw_sd": sd(rec["hb"], "yaw_change"),
-                        "hb_mph": mean(rec["hb"], "v0_mph"), "hb_slip": mean(rec["hb"], "peak_slip"),
-                        "steer_rate": mean(rec["steer"], "yaw_rate_steady"),
-                        "steer_g": mean(rec["steer"], "lat_acc_steady"), "steer_mph": mean(rec["steer"], "v0_mph"),
-                        "n": [len(rec["acc"]), len(rec["hb"]), len(rec["steer"])]}
+
+        summary[car] = {
+            "0-60": mean(rec["acc"], "0-60"),
+            "qm": mean(rec["acc"], "qm_time"),
+            "hb_yaw": mean(rec["hb"], "yaw_change"),
+            "hb_yaw_sd": sd(rec["hb"], "yaw_change"),
+            "hb_mph": mean(rec["hb"], "v0_mph"),
+            "hb_slip": mean(rec["hb"], "peak_slip"),
+            "steer_rate": mean(rec["steer"], "yaw_rate_steady"),
+            "steer_g": mean(rec["steer"], "lat_acc_steady"),
+            "steer_mph": mean(rec["steer"], "v0_mph"),
+            "n": [len(rec["acc"]), len(rec["hb"]), len(rec["steer"])],
+        }
     return summary
 
 
@@ -111,11 +124,13 @@ def load_json(path: Path) -> dict:
 def save_json(path: Path, data: dict) -> None:
     """Atomic (out/cache is shared; handling_dsf.apply reads handling-tune.json in every build)."""
     from dsfforza.build.port_car import write_atomic
+
     path.parent.mkdir(parents=True, exist_ok=True)
     write_atomic(path, json.dumps(data, indent=1).encode())
 
 
 # --- targets -------------------------------------------------------------------------
+
 
 def _fit(xs: list[list[float]], ys: list[float]) -> list[float]:
     return D.ridge_fit(xs, ys, 1e-3)
@@ -132,8 +147,11 @@ class Targets:
     def __init__(self, stock: dict[str, dict], fleet: dict[int, dict]):
         self.stock = {int(k): v for k, v in stock.items()}
         self.fleet = fleet
-        rows = [(D.specs_from_stats(fleet[i]["stats"]), v["0-60"]) for i, v in self.stock.items()
-                if v.get("0-60") and i in fleet and D.specs_from_stats(fleet[i]["stats"])]
+        rows = [
+            (D.specs_from_stats(fleet[i]["stats"]), v["0-60"])
+            for i, v in self.stock.items()
+            if v.get("0-60") and i in fleet and D.specs_from_stats(fleet[i]["stats"])
+        ]
         self.beta = _fit([_x(s) for s, _ in rows], [math.log(t) for _, t in rows]) if len(rows) >= 6 else None
         self.rows = rows
 
@@ -155,16 +173,19 @@ class Targets:
         """How well the model predicts the stock cars themselves (leave one out)."""
         errs = []
         for i, (specs, t) in enumerate(self.rows):
-            rest = self.rows[:i] + self.rows[i + 1:]
+            rest = self.rows[:i] + self.rows[i + 1 :]
             beta = _fit([_x(s) for s, _ in rest], [math.log(v) for _, v in rest])
             pred = math.exp(sum(b * x for b, x in zip(beta, _x(specs))))
             errs.append(abs(math.log(pred / t)))
         if errs:
-            print(f"0-60 model, leave one out over {len(errs)} stock cars: median |log error| "
-                  f"{statistics.median(errs):.3f}, mean {statistics.mean(errs):.3f}")
+            print(
+                f"0-60 model, leave one out over {len(errs)} stock cars: median |log error| "
+                f"{statistics.median(errs):.3f}, mean {statistics.mean(errs):.3f}"
+            )
 
 
 # --- archive patching ----------------------------------------------------------------
+
 
 def ported_cars(lua: Path) -> dict[int, dict]:
     out = {}
@@ -185,19 +206,37 @@ def patch_archive(src: Path, dst: Path, overrides: dict[int, dict[int, float]]) 
     H.replace_vo3ds(src, dst, vo3ds)
 
 
-def run_session(archive: Path, lua: Path, ids: list[int], wait: int = 3600, keys: str = KEYS,
-                keep: str = KEEP) -> Path:
+def run_session(archive: Path, lua: Path, ids: list[int], wait: int = 3600, keys: str = KEYS, keep: str = KEEP) -> Path:
     shutil.copy(lua, REPO / "tools" / "game" / "lua" / "dsfforza" / "ported.lua")
     rel = archive.resolve().relative_to(REPO)
-    cmd = ["powershell", "-NoProfile", "-File", str(REPO / "tools" / "wsb" / "run-series.ps1"),
-           "-Archives", str(rel), "-ProbeIds", ",".join(map(str, ids)), "-WaitSeconds", str(wait),
-           "-ShotSeconds", "5", "-Dyno", "-DynoRuns", "4", "-DynoKeep", keep, "-DynoKeys", keys]
+    cmd = [
+        "powershell",
+        "-NoProfile",
+        "-File",
+        str(REPO / "tools" / "wsb" / "run-series.ps1"),
+        "-Archives",
+        str(rel),
+        "-ProbeIds",
+        ",".join(map(str, ids)),
+        "-WaitSeconds",
+        str(wait),
+        "-ShotSeconds",
+        "5",
+        "-Dyno",
+        "-DynoRuns",
+        "4",
+        "-DynoKeep",
+        keep,
+        "-DynoKeys",
+        keys,
+    ]
     subprocess.run(cmd, cwd=REPO, check=False)
     latest = (RUNS / "latest.txt").read_text().strip().replace("C:\\Output\\runs\\", "")
     return RUNS / latest
 
 
 # --- the loop ------------------------------------------------------------------------
+
 
 def step(points: list[tuple[float, float]], target: float, prior: float) -> float:
     """Next x for y(x) = target: secant through the last two measured points when they
@@ -228,18 +267,22 @@ def tune(args) -> None:
     state = {sid: {"x18": base[sid][18], "x345": base[sid][345], "hist": []} for sid in ids}
     work = args.archive.with_name(args.archive.stem + "-tune.sp")
     # Stock references not yet measured with this test (the stock command fills the cache).
-    refs = sorted({stock_map[s] for s in ids if s in stock_map and not (stock_db.get(str(stock_map[s])) or {}).get("hb_yaw")}
-                  - set(ids))
+    refs = sorted(
+        {stock_map[s] for s in ids if s in stock_map and not (stock_db.get(str(stock_map[s])) or {}).get("hb_yaw")}
+        - set(ids)
+    )
     for it in range(args.iterations):
         overrides = {sid: {18: st["x18"], 345: st["x345"]} for sid, st in state.items()}
-        print(f"iteration {it + 1}: " + ", ".join(f"{sid}: p18 {o[18]:.0f} p345 {o[345]:.3f}"
-                                                for sid, o in overrides.items()))
+        print(
+            f"iteration {it + 1}: "
+            + ", ".join(f"{sid}: p18 {o[18]:.0f} p345 {o[345]:.3f}" for sid, o in overrides.items())
+        )
         if args.dry_run:
             break
         patch_archive(args.archive, work, overrides)
         session_ids = (refs if it == 0 else []) + ids
         # Sessions of at most 10 cars (the mission vehicle spool limit).
-        chunks = [session_ids[i:i + 10] for i in range(0, len(session_ids), 10)]
+        chunks = [session_ids[i : i + 10] for i in range(0, len(session_ids), 10)]
         runs = [run_session(work, args.lua, chunk) for chunk in chunks]
         run = runs[-1]
         meas = measure(runs)
@@ -272,8 +315,10 @@ def tune(args) -> None:
             if thb is not None and pts345 and abs(pts345[-1][1] - thb) > NOISE["hb_yaw"]:
                 nxt = step(pts345, thb, P345_SLOPE)
                 st["x345"] = min(max(nxt, base[sid][345] - P345_RANGE), base[sid][345] + P345_RANGE)
-            print(f"  {sid} {car['media']}: 0-60 {m['0-60']} (target {t60}), handbrake {m['hb_yaw']} "
-                  f"(target {thb}) -> p18 {st['x18']:.0f}, p345 {st['x345']:.3f}")
+            print(
+                f"  {sid} {car['media']}: 0-60 {m['0-60']} (target {t60}), handbrake {m['hb_yaw']} "
+                f"(target {thb}) -> p18 {st['x18']:.0f}, p345 {st['x345']:.3f}"
+            )
         for sid, st in state.items():
             car = cars[sid]
             key = f"{car['media']}@{car['host']}"  # keeps hand-set values from driving feedback
@@ -295,7 +340,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--stock", default="", help="port=stock pairs whose stock car sets the targets")
     p.add_argument("--iterations", type=int, default=3)
     p.add_argument("--dry-run", action="store_true")
-    p = sub.add_parser("recovery", help="drift-recovery test: run a session (--archive/--lua/--ids) or read run folders")
+    p = sub.add_parser(
+        "recovery", help="drift-recovery test: run a session (--archive/--lua/--ids) or read run folders"
+    )
     p.add_argument("runs", type=Path, nargs="*")
     p.add_argument("--archive", type=Path)
     p.add_argument("--lua", type=Path)
@@ -315,22 +362,33 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "show":
         for key, v in load_json(CACHE).items():
             if "18" in v and "345" in v:
-                print(key, "p18", round(v["18"]), "p345", round(v["345"], 3), f"({len(v.get('history', []))} iterations)")
+                print(
+                    key, "p18", round(v["18"]), "p345", round(v["345"], 3), f"({len(v.get('history', []))} iterations)"
+                )
             else:
                 print(key, {k: x for k, x in v.items() if k != "history"})
     elif args.cmd == "recovery":
         runs = list(args.runs)
         if args.archive:
-            runs.append(run_session(args.archive, args.lua, [int(x) for x in args.ids.split(",")],
-                                    keys=RECOVERY_KEYS, keep="impulse:1,impulse:1:20,impulse:1:20,impulse:1:20"))
+            runs.append(
+                run_session(
+                    args.archive,
+                    args.lua,
+                    [int(x) for x in args.ids.split(",")],
+                    keys=RECOVERY_KEYS,
+                    keep="impulse:1,impulse:1:20,impulse:1:20,impulse:1:20",
+                )
+            )
         parsed, _ = dyno.parse(runs)
         print("car run  mph  peak_slip yaw_change recover_s slip_area")
         for r in parsed:
             m = dyno.manoeuvre(r) if r.run > 1 else None
             if m:
-                print(f"{m['car']:>3} {m['run']:>3} {m['v0_mph']:4.0f} {m['peak_slip']:9.0f} {m['yaw_change']:10.0f} "
-                      f"{m['recover_s'] if m['recover_s'] is None else round(m['recover_s'], 2)!s:>9} "
-                      f"{m['slip_area'] if m['slip_area'] is None else round(m['slip_area'])!s:>9}")
+                print(
+                    f"{m['car']:>3} {m['run']:>3} {m['v0_mph']:4.0f} {m['peak_slip']:9.0f} {m['yaw_change']:10.0f} "
+                    f"{m['recover_s'] if m['recover_s'] is None else round(m['recover_s'], 2)!s:>9} "
+                    f"{m['slip_area'] if m['slip_area'] is None else round(m['slip_area'])!s:>9}"
+                )
     else:
         tune(args)
 

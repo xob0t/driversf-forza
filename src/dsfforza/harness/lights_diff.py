@@ -29,7 +29,7 @@ def read_png(path: Path) -> tuple[int, int, bytearray]:
     pos, idat, width = 8, b"", 0
     while pos < len(data):
         length, kind = struct.unpack_from(">I4s", data, pos)
-        body = data[pos + 8:pos + 8 + length]
+        body = data[pos + 8 : pos + 8 + length]
         if kind == b"IHDR":
             width, height, depth, colour, _, _, interlace = struct.unpack(">IIBBBBB", body)
             if depth != 8 or colour not in (2, 6) or interlace:
@@ -45,7 +45,7 @@ def read_png(path: Path) -> tuple[int, int, bytearray]:
     o = 0
     for y in range(height):
         f = raw[o]
-        line = bytearray(raw[o + 1:o + 1 + stride])
+        line = bytearray(raw[o + 1 : o + 1 + stride])
         o += 1 + stride
         for i in range(stride):
             a = line[i - channels] if i >= channels else 0
@@ -63,7 +63,7 @@ def read_png(path: Path) -> tuple[int, int, bytearray]:
                 line[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
         prev = line
         for x in range(width):
-            out[(y * width + x) * 3:(y * width + x) * 3 + 3] = line[x * channels:x * channels + 3]
+            out[(y * width + x) * 3 : (y * width + x) * 3 + 3] = line[x * channels : x * channels + 3]
     return width, height, out
 
 
@@ -76,9 +76,9 @@ def shrink(w: int, h: int, px: bytearray, scale: int) -> tuple[int, int, bytearr
             for yy in range(y * scale, y * scale + scale):
                 o = (yy * w + x * scale) * 3
                 for c in range(3):
-                    acc[c] += sum(px[o + c:o + scale * 3:3])
+                    acc[c] += sum(px[o + c : o + scale * 3 : 3])
             n = scale * scale
-            out[(y * W + x) * 3:(y * W + x) * 3 + 3] = bytes(v // n for v in acc)
+            out[(y * W + x) * 3 : (y * W + x) * 3 + 3] = bytes(v // n for v in acc)
     return W, H, out
 
 
@@ -100,6 +100,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--gain", type=float, default=4.0, help="amplification of the brightening")
     args = parser.parse_args(argv)
     from dsfforza.formats import vehicle_mesh as vm
+
     names = phase_names(args.run)
     shots: dict[int, dict[int, list[Path]]] = {}
     for p in sorted(args.run.glob("lights-*-*.png")):
@@ -120,14 +121,14 @@ def main(argv: list[str] | None = None) -> None:
         half = total // 2 if total % 2 == 0 and total > 2 else total
         rows, scores = [], {}
         for k, (w, h, px) in sorted(frames.items()):
-            base_k = 1 if k <= half else half + 1   # the "off" phase of the same lighting
+            base_k = 1 if k <= half else half + 1  # the "off" phase of the same lighting
             _bw, _bh, base = frames.get(base_k, frames[min(frames)])
             diff = bytearray(len(px))
             score = 0
             for i in range(0, len(px), 3):
-                d = max(0, sum(px[i:i + 3]) - sum(base[i:i + 3])) / 3
+                d = max(0, sum(px[i : i + 3]) - sum(base[i : i + 3])) / 3
                 v = min(255, int(d * args.gain))
-                diff[i:i + 3] = bytes((v, v, int(v * 0.6)))
+                diff[i : i + 3] = bytes((v, v, int(v * 0.6)))
                 if i // 3 >= w * h // 3:
                     score += d
             scores[k] = round(score / max(1, w * h * 2 // 3), 2)
@@ -137,11 +138,13 @@ def main(argv: list[str] | None = None) -> None:
         sheet = bytearray()
         for px, diff in rows:
             for y in range(h):
-                sheet += px[y * w * 3:(y + 1) * w * 3] + diff[y * w * 3:(y + 1) * w * 3]
+                sheet += px[y * w * 3 : (y + 1) * w * 3] + diff[y * w * 3 : (y + 1) * w * 3]
         out = args.run / f"lights-sheet-{car}.png"
         vm.write_png(out, w * 2, h * len(rows), sheet)
-        report[car] = {"phases": {str(k): {"name": names.get((car, k)), "brightening": s} for k, s in scores.items()},
-                       "sheet": out.name}
+        report[car] = {
+            "phases": {str(k): {"name": names.get((car, k)), "brightening": s} for k, s in scores.items()},
+            "sheet": out.name,
+        }
         print(f"wrote {out}")
     (args.run / "lights-report.json").write_text(json.dumps(report, indent=1))
 

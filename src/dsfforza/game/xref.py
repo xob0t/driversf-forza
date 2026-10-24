@@ -29,7 +29,8 @@ from dsfforza import REPO
 
 CACHE = REPO / "out" / "asi" / "xref.pickle"
 EXE_CANDIDATES = [REPO / "out" / "stock" / "Driver.exe"] + (
-    [Path(os.environ["DSF_GAME_DIR"]) / "Driver.exe"] if os.environ.get("DSF_GAME_DIR") else [])
+    [Path(os.environ["DSF_GAME_DIR"]) / "Driver.exe"] if os.environ.get("DSF_GAME_DIR") else []
+)
 
 
 def load_exe() -> tuple[bytes, int, int, int]:
@@ -66,7 +67,7 @@ def idle() -> None:
 def build() -> dict:
     idle()
     data, base, raw, size = load_exe()
-    code = data[raw:raw + size]
+    code = data[raw : raw + size]
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
     md.detail = True
     disp = defaultdict(list)
@@ -75,7 +76,7 @@ def build() -> dict:
     offset = 0
     while offset < size:
         progressed = False
-        for insn in md.disasm(code[offset:offset + 0x10000], base + offset):
+        for insn in md.disasm(code[offset : offset + 0x10000], base + offset):
             progressed = True
             for op in insn.operands:
                 if op.type == x86.X86_OP_MEM and op.mem.disp:
@@ -110,7 +111,7 @@ def disasm(va: int, count: int = 40) -> list[str]:
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
     start = va - base
     lines = []
-    for insn in md.disasm(data[raw + start:raw + start + count * 16], va):
+    for insn in md.disasm(data[raw + start : raw + start + count * 16], va):
         lines.append(f"{insn.address:08x}  {insn.bytes.hex(' '):<30} {insn.mnemonic} {insn.op_str}")
         if len(lines) >= count:
             break

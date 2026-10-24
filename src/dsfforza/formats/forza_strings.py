@@ -30,8 +30,10 @@ from pathlib import Path
 from dsfforza import REPO
 
 STRING_FILES = ("Data_Car.str", "List_CarMake.str", "List_FamilyModel.str")
-ISO_PATHS = {"fh1": (REPO / "assets" / "Forza.Horizon.XBOX360.iso", "media/stringtables/EN.zip"),
-             "fm4": (REPO / "assets" / "Forza 4 [NTSCU][DVD1].iso", "Media/StringTables/EN.zip")}
+ISO_PATHS = {
+    "fh1": (REPO / "assets" / "Forza.Horizon.XBOX360.iso", "media/stringtables/EN.zip"),
+    "fm4": (REPO / "assets" / "Forza 4 [NTSCU][DVD1].iso", "Media/StringTables/EN.zip"),
+}
 
 
 def str_hash(text: str, version: int = 1, bits: int = 16) -> int:
@@ -61,7 +63,7 @@ def parse(data: bytes) -> dict[int, tuple[str, str]]:
             h, off = struct.unpack_from(e + "HI", data, table + 6 * i)
             start = p + off * 2
             end = start
-            while end + 1 < len(data) and data[end:end + 2] != b"\0\0":
+            while end + 1 < len(data) and data[end : end + 2] != b"\0\0":
                 end += 2
             texts[h] = data[start:end].decode("utf-16-be" if e == ">" else "utf-16-le", errors="replace")
     if len(offsets) > 1 and offsets[1]:
@@ -72,7 +74,7 @@ def parse(data: bytes) -> dict[int, tuple[str, str]]:
         for i in range(n):
             h, _, off = struct.unpack_from(e + "HHI", data, table + 8 * i)
             end = data.index(b"\0", p + off)
-            ids[h] = data[p + off:end].decode("latin-1")
+            ids[h] = data[p + off : end].decode("latin-1")
     return {h: (ids.get(h, ""), t) for h, t in texts.items()}
 
 
@@ -110,6 +112,7 @@ class Strings:
 def extract(game: str, folder: Path) -> None:
     from dsfforza.formats.forzazip import ForzaZip
     from dsfforza.formats.xiso import XIso
+
     iso, path = ISO_PATHS[game]
     image = XIso(iso)
     try:
@@ -125,19 +128,28 @@ def extract(game: str, folder: Path) -> None:
 def car_names(game: str, media: list[str], gamedb: Path | None = None) -> dict[str, dict]:
     """{media: {make, display, model_short, family, year}} from Data_Car, List_CarMake, List_FamilyModel."""
     import sqlite3
+
     gamedb = gamedb or REPO / "out" / "cache" / game / "gamedb.slt"
     strings = Strings(game)
     db = sqlite3.connect(f"file:{Path(gamedb).as_posix()}?mode=ro", uri=True)
     out = {}
     try:
         for name in media:
-            row = db.execute("SELECT c.DisplayName, c.ModelShort, c.Year, m.DisplayName, f.DisplayName "
-                             "FROM Data_Car c LEFT JOIN List_CarMake m ON m.ID = c.MakeID "
-                             "LEFT JOIN List_FamilyModel f ON f.Id = c.FamilyModelID "
-                             "WHERE lower(c.MediaName) = lower(?)", (name,)).fetchone()
+            row = db.execute(
+                "SELECT c.DisplayName, c.ModelShort, c.Year, m.DisplayName, f.DisplayName "
+                "FROM Data_Car c LEFT JOIN List_CarMake m ON m.ID = c.MakeID "
+                "LEFT JOIN List_FamilyModel f ON f.Id = c.FamilyModelID "
+                "WHERE lower(c.MediaName) = lower(?)",
+                (name,),
+            ).fetchone()
             if row:
-                out[name] = {"display": strings.get(row[0]), "model_short": strings.get(row[1]), "year": row[2],
-                             "make": strings.get(row[3]), "family": strings.get(row[4])}
+                out[name] = {
+                    "display": strings.get(row[0]),
+                    "model_short": strings.get(row[1]),
+                    "year": row[2],
+                    "make": strings.get(row[3]),
+                    "family": strings.get(row[4]),
+                }
     finally:
         db.close()
     return out

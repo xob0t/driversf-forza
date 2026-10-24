@@ -26,11 +26,11 @@ import math
 import struct
 
 BONNET = (535, 536, 537)
-BONNET_LIFT = 0.30                    # in game: p536 + 0.30 above the ground
-BONNET_OFFSET = (0.0, 0.058, 0.085)   # camera - windscreen centre, stock fleet median (DSF model space)
-WINDSCREEN_HEIGHT = 0.57              # the role-63 marker's place up the windscreen (stock median)
-CENTRE_BAND = 0.15                    # m either side of the centre line
-MIN_CLEARANCE = 0.09                  # m over the car below it (stock: 10th percentile 0.087, median 0.12)
+BONNET_LIFT = 0.30  # in game: p536 + 0.30 above the ground
+BONNET_OFFSET = (0.0, 0.058, 0.085)  # camera - windscreen centre, stock fleet median (DSF model space)
+WINDSCREEN_HEIGHT = 0.57  # the role-63 marker's place up the windscreen (stock median)
+CENTRE_BAND = 0.15  # m either side of the centre line
+MIN_CLEARANCE = 0.09  # m over the car below it (stock: 10th percentile 0.087, median 0.12)
 WINDSCREEN_SECTION = "glassF"
 
 
@@ -88,8 +88,11 @@ def windscreen_centre(tris) -> tuple[float, float, float] | None:
         return None
     lo, hi = min(p[1] for t in band for p in t), max(p[1] for t in band for p in t)
     front = max(p[2] for t in band for p in t) + 1.0
-    hits = [y for y in (lo + 0.01 * k for k in range(int((hi - lo) / 0.01) + 1))
-            if first_hit(band, (0.0, y, front), (0.0, 0.0, -1.0)) is not None]
+    hits = [
+        y
+        for y in (lo + 0.01 * k for k in range(int((hi - lo) / 0.01) + 1))
+        if first_hit(band, (0.0, y, front), (0.0, 0.0, -1.0)) is not None
+    ]
     if not hits:
         return None
     y = min(hits) + WINDSCREEN_HEIGHT * (max(hits) - min(hits))
@@ -147,6 +150,7 @@ def host_ground(upvh_data: bytes, vo3d_data: bytes) -> float:
     """Model y of the ground the engine counts camera heights from (the host as shipped)."""
     from dsfforza.build import handling
     from dsfforza.formats import upvh
+
     hubs = [struct.unpack_from("<3f", w)[1] for w in upvh.parse(upvh_data).table("wheels")]
     return max(hubs) - handling.VO3D.parse(vo3d_data).get(360)
 
@@ -154,6 +158,7 @@ def host_ground(upvh_data: bytes, vo3d_data: bytes) -> float:
 def bonnet_camera(vo3d_data: bytes, ground: float) -> tuple[float, float, float]:
     """Where the Bonnet camera is, in DSF model space."""
     from dsfforza.build import handling
+
     v = handling.VO3D.parse(vo3d_data)
     return (v.get(BONNET[0]), v.get(BONNET[1]) + BONNET_LIFT + ground, v.get(BONNET[2]))
 
@@ -165,6 +170,7 @@ def bonnet_params(cam, ground: float) -> dict[int, float]:
 
 def patch_vo3d(vo3d_data: bytes, params: dict[int, float]) -> bytes:
     from dsfforza.build import handling
+
     v = handling.VO3D.parse(vo3d_data)
     v.params.update(params)
     return v.build()

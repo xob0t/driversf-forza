@@ -45,7 +45,7 @@ from dsfforza.formats.vehicle_mesh import child, payload
 from dsfforza.game import game_paths
 
 COLOUR_PARAMS = ("g_vec4TintColour1_Alpha", "g_vec3TintColour2", "g_vec3TintColour3")
-MAX_COLOURS = 14   # the largest stock palette
+MAX_COLOURS = 14  # the largest stock palette
 
 # Finishes Combo_Colors can't express (it only has RGB and a metallic flag):
 # media name -> finish. Each finish is a preset built from a stock DSF palette entry.
@@ -71,8 +71,12 @@ FINISH_PRESETS = {
         "g_vec4TintColour1_Alpha": (2.3328e-05, 1.0, 0.0738278, 1.0),
         "g_vec3TintColour2": (0.267358, 0.267358, 0.267358, 1.0),
         "g_vec3TintColour3": (0.2, 0.2, 0.2, 1.0),
-        "g_fresnelpower": 0.75, "g_fresnelbias": 0.01, "g_hCustomFresnelPower": 1.0,
-        "g_hCustomReflectionAmount": 0.1, "g_hSecondSpecularIntensity": 0.3, "g_hSecondSpecularPower": 5.0,
+        "g_fresnelpower": 0.75,
+        "g_fresnelbias": 0.01,
+        "g_hCustomFresnelPower": 1.0,
+        "g_hCustomReflectionAmount": 0.1,
+        "g_hSecondSpecularIntensity": 0.3,
+        "g_hSecondSpecularPower": 5.0,
         "_template": 171,
     },
 }
@@ -81,10 +85,10 @@ FINISH_PRESETS = {
 @dataclass
 class ForzaColour:
     sequence: int
-    rgb: tuple[int, int, int]   # sRGB bytes
+    rgb: tuple[int, int, int]  # sRGB bytes
     metallic: bool
     colour_class: str
-    finish: str = ""            # a FINISH_PRESETS key, or "" for paint
+    finish: str = ""  # a FINISH_PRESETS key, or "" for paint
 
     @property
     def linear(self) -> tuple[float, float, float]:
@@ -112,9 +116,12 @@ def forza_colours(gamedb: Path, media: str) -> list[ForzaColour]:
         row = db.execute("SELECT Id FROM Data_Car WHERE lower(MediaName) = lower(?)", (media,)).fetchone()
         if row is None:
             return []
-        rows = db.execute("SELECT c.Sequence, c.RGB, c.Metallic, coalesce(k.ColorClass, '') FROM Combo_Colors c "
-                          "LEFT JOIN List_ColorClass k ON k.ColorClassId = c.ColorClassId "
-                          "WHERE c.Ordinal = ? ORDER BY c.Sequence", (row[0],)).fetchall()
+        rows = db.execute(
+            "SELECT c.Sequence, c.RGB, c.Metallic, coalesce(k.ColorClass, '') FROM Combo_Colors c "
+            "LEFT JOIN List_ColorClass k ON k.ColorClassId = c.ColorClassId "
+            "WHERE c.Ordinal = ? ORDER BY c.Sequence",
+            (row[0],),
+        ).fetchall()
     except sqlite3.Error:
         return []
     finally:
@@ -138,9 +145,11 @@ def pick_colours(colours: list[ForzaColour], limit: int = MAX_COLOURS) -> list[F
     if len(colours) <= limit:
         return list(colours)
     chosen = [0]
+
     def d(i, j):
         a, b = colours[i], colours[j]
         return sum((x - y) ** 2 for x, y in zip(a.rgb, b.rgb)) + (0 if a.metallic == b.metallic else 400)
+
     while len(chosen) < limit:
         best = max((i for i in range(len(colours)) if i not in chosen), key=lambda i: min(d(i, j) for j in chosen))
         chosen.append(best)
@@ -148,6 +157,7 @@ def pick_colours(colours: list[ForzaColour], limit: int = MAX_COLOURS) -> list[F
 
 
 # --- MARP / SPSP ------------------------------------------------------------------
+
 
 def parse_marp(data: bytes) -> tuple[str, bytes, int]:
     return data[:32].split(b"\0", 1)[0].decode("latin-1"), data[32:48], struct.unpack_from("<I", data, 48)[0]
@@ -206,14 +216,15 @@ def stock_paints(stream, entries=None) -> list[dict]:
     if key in _STOCK_CACHE:
         return _STOCK_CACHE[key]
     from dsfforza.formats import vehicles
+
     if entries is None:
         from dsfforza.formats.chnk import read_chunk
+
         position = stream.tell()
         entries = read_chunk(stream, 0).entries
         stream.seek(position)
     ssic = vehicles.find(entries, "SSIC")
-    records = vehicles.parse_sslp(payload(stream, vehicles.find(vehicles.find(ssic.children, "NONR").children,
-                                                                "SSLP")))
+    records = vehicles.parse_sslp(payload(stream, vehicles.find(vehicles.find(ssic.children, "NONR").children, "SSLP")))
     out = []
     for sid, index, kind in records:
         if kind != 0 or sid >= 304:
@@ -228,6 +239,7 @@ def stock_paints(stream, entries=None) -> list[dict]:
 
 
 # --- choosing shading for a Forza colour -------------------------------------------
+
 
 def _lum(c) -> float:
     return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
@@ -315,7 +327,7 @@ def shade(colour: ForzaColour, stock: list[dict]) -> dict:
     ratio = _lum(other) / max(_lum(main), 1e-4)
     new_main = tuple(min(1.0, c) for c in target)
     new_other = tuple(min(1.0, c * ratio) for c in target)
-    if _lum(target) < 0.01:      # near black: keep the stock sheen colour
+    if _lum(target) < 0.01:  # near black: keep the stock sheen colour
         new_other = tuple(other[:3])
     if main_is_3:
         params["g_vec3TintColour3"], params["g_vec3TintColour2"] = new_main + (c3[3],), new_other + (c2[3],)
@@ -340,8 +352,8 @@ def shade(colour: ForzaColour, stock: list[dict]) -> dict:
 
 # --- installing -----------------------------------------------------------------------
 
-def install(stream, full: Entry, colours: list[ForzaColour], stock: list[dict],
-            nonr_limit: int | None = None) -> dict:
+
+def install(stream, full: Entry, colours: list[ForzaColour], stock: list[dict], nonr_limit: int | None = None) -> dict:
     """Replace the full entry's palette with the Forza colours (up to
     MAX_COLOURS, fewer if NONR would outgrow nonr_limit). The host's first
     SPSP is the template for the chunk layout; every MARP gets an explicit
@@ -369,13 +381,26 @@ def install(stream, full: Entry, colours: list[ForzaColour], stock: list[dict],
         if nonr_limit is None or entry_size(nonr) <= nonr_limit or len(built) <= 1:
             break
         built.pop()
-    return {"installed": len(built), "host_count": host_count, "nonr": entry_size(nonr),
-            "colours": [{"sequence": c.sequence, "rgb": "#{:02x}{:02x}{:02x}".format(*c.rgb), "metallic": c.metallic,
-                         "class": c.colour_class, "finish": c.finish, "template": p["_template"],
-                         "dimmed": p.get("_dimmed", 1.0),
-                         "colour2": [round(x, 3) for x in p["g_vec3TintColour2"][:3]],
-                         "colour3": [round(x, 3) for x in p["g_vec3TintColour3"][:3]],
-                         "fresnelpower": round(p["g_fresnelpower"], 3)} for c, p, _ in built]}
+    return {
+        "installed": len(built),
+        "host_count": host_count,
+        "nonr": entry_size(nonr),
+        "colours": [
+            {
+                "sequence": c.sequence,
+                "rgb": "#{:02x}{:02x}{:02x}".format(*c.rgb),
+                "metallic": c.metallic,
+                "class": c.colour_class,
+                "finish": c.finish,
+                "template": p["_template"],
+                "dimmed": p.get("_dimmed", 1.0),
+                "colour2": [round(x, 3) for x in p["g_vec3TintColour2"][:3]],
+                "colour3": [round(x, 3) for x in p["g_vec3TintColour3"][:3]],
+                "fresnelpower": round(p["g_fresnelpower"], 3),
+            }
+            for c, p, _ in built
+        ],
+    }
 
 
 def find_gamedb(car_folder: Path) -> Path | None:
@@ -400,6 +425,7 @@ def main(argv: list[str] | None = None) -> None:
 
     from dsfforza.formats import upvh as uv
     from dsfforza.formats.chnk import read_chunk
+
     if args.cmd == "palette":
         with args.archive.open("rb") as stream:
             root = read_chunk(stream, 0)
@@ -409,18 +435,22 @@ def main(argv: list[str] | None = None) -> None:
                 q = spsp_params(stream, spsp)
                 c2 = q["g_vec3TintColour2"][:3]
                 srgb = "#{:02x}{:02x}{:02x}".format(*(round(linear_to_srgb(x) * 255) for x in c2))
-                print(f"{n:2} {srgb} metallic {is_metallic(q)!s:5} c2 {tuple(round(x, 3) for x in c2)} "
-                      f"c3 {tuple(round(x, 3) for x in q['g_vec3TintColour3'][:3])} power {q['g_fresnelpower']:.2f}")
+                print(
+                    f"{n:2} {srgb} metallic {is_metallic(q)!s:5} c2 {tuple(round(x, 3) for x in c2)} "
+                    f"c3 {tuple(round(x, 3) for x in q['g_vec3TintColour3'][:3])} power {q['g_fresnelpower']:.2f}"
+                )
         return
     with args.dsf.open("rb") as stream:
         stock = stock_paints(stream, read_chunk(stream, 0).entries)
     for colour in pick_colours(forza_colours(args.gamedb, args.media)):
         q = shade(colour, stock)
         dimmed = q.get("_dimmed", 1.0)
-        print(f"{colour.sequence:2} #{'{:02x}{:02x}{:02x}'.format(*colour.rgb)} {'metallic' if colour.metallic else 'solid   '} "
-              f"{colour.colour_class:8} {colour.finish or ''}<- stock {q['_template']} c2 {tuple(round(x, 3) for x in q['g_vec3TintColour2'][:3])} "
-              f"c3 {tuple(round(x, 3) for x in q['g_vec3TintColour3'][:3])} power {q['g_fresnelpower']:.2f}"
-              + (f" dimmed x{dimmed}" if dimmed < 1 else ""))
+        print(
+            f"{colour.sequence:2} #{'{:02x}{:02x}{:02x}'.format(*colour.rgb)} {'metallic' if colour.metallic else 'solid   '} "
+            f"{colour.colour_class:8} {colour.finish or ''}<- stock {q['_template']} c2 {tuple(round(x, 3) for x in q['g_vec3TintColour2'][:3])} "
+            f"c3 {tuple(round(x, 3) for x in q['g_vec3TintColour3'][:3])} power {q['g_fresnelpower']:.2f}"
+            + (f" dimmed x{dimmed}" if dimmed < 1 else "")
+        )
 
 
 if __name__ == "__main__":

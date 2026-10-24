@@ -65,12 +65,15 @@ PICTURE_SIZE = (512, 256)
 
 # --- names ------------------------------------------------------------------------
 
+
 def name_hash(name: str) -> int:
     from dsfforza.formats.lua_scripts import crc
+
     return crc(name.lower())
 
 
 # --- gui.sp ---------------------------------------------------------------------------
+
 
 def _texc(entry: chnk.Entry) -> chnk.Entry:
     return child(child(child(entry, "MDXN"), "DRSP"), "TEXC")
@@ -81,9 +84,9 @@ def read_tables(stream, root) -> dict:
     nonr = child(ssic, "NONR")
     uidl, spol, sslp = (payload(stream, child(nonr, t)) for t in ("UIDL", "SPOL", "SSLP"))
     n = struct.unpack_from("<I", uidl)[0]
-    names = {struct.unpack_from("<I", uidl, 4 + 12 * i)[0]: uidl[8 + 12 * i:16 + 12 * i] for i in range(n)}
+    names = {struct.unpack_from("<I", uidl, 4 + 12 * i)[0]: uidl[8 + 12 * i : 16 + 12 * i] for i in range(n)}
     m = struct.unpack_from("<I", spol)[0]
-    order = [spol[4 + 8 * i:12 + 8 * i] for i in range(m)]
+    order = [spol[4 + 8 * i : 12 + 8 * i] for i in range(m)]
     count = struct.unpack_from("<H", sslp, 2)[0]
     records = [struct.unpack_from("<HHH", sslp, 0x1C + 6 * i) for i in range(count)]
     return {"ssic": ssic, "names": names, "order": order, "records": records, "sslp_header": sslp[:0x1C]}
@@ -98,7 +101,7 @@ def find_picture(stream, root, name: str) -> bytes | None:
     index = t["order"].index(uid)
     root_index = next(r[1] for r in t["records"] if r[0] == index)
     drsp = child(child(root.entries[root_index], "MDXN"), "DRSP")
-    for texc in (c for c in drsp.children if c.tag == "TEXC"):   # several when pictures share a SPOI
+    for texc in (c for c in drsp.children if c.tag == "TEXC"):  # several when pictures share a SPOI
         if payload(stream, child(texc, "UIDC"))[:8] == uid:
             return payload(stream, child(texc, "DXTC"))
     return payload(stream, child(_texc(root.entries[root_index]), "DXTC"))
@@ -142,17 +145,22 @@ def append_patch(source: Path, data: bytearray, root, replace: dict, add: list) 
     data += chnk.FILL * (-len(data) % (1 << largest))
 
     def row(e, offset, size):
-        return chnk.ENTRY.pack(e.tag.encode("latin-1"), offset, e.version, len(e.name_raw), e.align_log2,
-                               e.reserved, size)
+        return chnk.ENTRY.pack(
+            e.tag.encode("latin-1"), offset, e.version, len(e.name_raw), e.align_log2, e.reserved, size
+        )
+
     slots = list(replace) + [count + k for k in range(len(add))]
     for slot, (e, offset, size) in zip(slots, rows):
-        data[chnk.HEADER.size + chnk.ENTRY.size * slot:chnk.HEADER.size + chnk.ENTRY.size * (slot + 1)] = row(e, offset, size)
+        data[chnk.HEADER.size + chnk.ENTRY.size * slot : chnk.HEADER.size + chnk.ENTRY.size * (slot + 1)] = row(
+            e, offset, size
+        )
     chnk.HEADER.pack_into(data, 0, magic, len(data), count + len(add), version)
     return data
 
 
-def add_pictures(source: Path, out: Path, pictures: dict[str, bytes], uid_seed: int = 0x2E5A00,
-                 root_limit: int = chnk.ENTRY_LIMIT) -> dict:
+def add_pictures(
+    source: Path, out: Path, pictures: dict[str, bytes], uid_seed: int = 0x2E5A00, root_limit: int = chnk.ENTRY_LIMIT
+) -> dict:
     """Write a copy of gui.sp with `pictures` (name -> DDS) added. Names that
     already exist get their image replaced in the copy instead (a new SPOI,
     the name pointed at it). One SPOI per picture while the root stays under
@@ -178,7 +186,7 @@ def add_pictures(source: Path, out: Path, pictures: dict[str, bytes], uid_seed: 
         texc_template = _texc(spoi)
         mdid = child(drsp, "MDID")
         texcs, uids = [], []
-        for n, (name, dds) in enumerate(items[start:start + per_item], start):
+        for n, (name, dds) in enumerate(items[start : start + per_item], start):
             uid = _new_uid(uid_seed + n, used_uids)
             used_uids.add(uid)
             texc = copy.deepcopy(texc_template)
@@ -199,8 +207,9 @@ def add_pictures(source: Path, out: Path, pictures: dict[str, bytes], uid_seed: 
     # The new SSIC: same chunk layout, tables rebuilt.
     ssic = copy.deepcopy(t["ssic"])
     nonr = child(ssic, "NONR")
-    child(nonr, "UIDL").payload = (struct.pack("<I", len(names))
-                                   + b"".join(struct.pack("<I", h) + u for h, u in names.items()))
+    child(nonr, "UIDL").payload = struct.pack("<I", len(names)) + b"".join(
+        struct.pack("<I", h) + u for h, u in names.items()
+    )
     child(nonr, "SPOL").payload = struct.pack("<I", len(order)) + b"".join(order)
     header = bytearray(t["sslp_header"])
     struct.pack_into("<H", header, 2, len(records))
@@ -224,13 +233,15 @@ def _new_uid(n: int, used: set) -> bytes:
 
 # --- Forza images -------------------------------------------------------------------
 
+
 def untile32(data: bytes) -> tuple[int, int, bytearray]:
     """An Xbox 360 32-bit (k_8_8_8_8, format 6) .xds as RGBA8."""
     from dsfforza.formats import xds
+
     fmt, width, height = xds.parse_header(data)
-    if fmt not in (6, 50):   # k_8_8_8_8 and its _AS_16_16_16_16 alias
+    if fmt not in (6, 50):  # k_8_8_8_8 and its _AS_16_16_16_16 alias
         raise ValueError(f"format {fmt}, not 32-bit")
-    src = data[xds.HEADER_SIZE:]
+    src = data[xds.HEADER_SIZE :]
     aligned_w, aligned_h = (width + 31) & ~31, (height + 31) & ~31
     out = bytearray(width * height * 4)
     for n in range(aligned_w * aligned_h):
@@ -240,14 +251,15 @@ def untile32(data: bytes) -> tuple[int, int, bytearray]:
         x, y = xds.tiled_x(n, width, 4), xds.tiled_y(n, width, 4)
         if x >= width or y >= height:
             continue
-        a, r, g, b = src[o:o + 4]   # big-endian ARGB
+        a, r, g, b = src[o : o + 4]  # big-endian ARGB
         d = (y * width + x) * 4
-        out[d:d + 4] = bytes((r, g, b, a))
+        out[d : d + 4] = bytes((r, g, b, a))
     return width, height, out
 
 
 def read_xds_rgba(data: bytes) -> tuple[int, int, bytearray]:
     from dsfforza.formats import xds
+
     fmt, _, _ = xds.parse_header(data)
     if fmt in (6, 50):
         return untile32(data)
@@ -255,8 +267,14 @@ def read_xds_rgba(data: bytes) -> tuple[int, int, bytearray]:
     return w, h, xds.decode_rgba(blocks, w, h, fourcc)
 
 
-LOGO_ALIASES = {"mercedes-benz": "Mercedes", "srt": "VIP", "hennessey": "HEN", "spada vetture sport": "Spada",
-                "citroën": "Citroen", "citroen": "Citroen"}
+LOGO_ALIASES = {
+    "mercedes-benz": "Mercedes",
+    "srt": "VIP",
+    "hennessey": "HEN",
+    "spada vetture sport": "Spada",
+    "citroën": "Citroen",
+    "citroen": "Citroen",
+}
 
 
 class ForzaUI:
@@ -265,6 +283,7 @@ class ForzaUI:
     def __init__(self, iso: Path = FH1_ISO):
         from dsfforza.formats.forzazip import ForzaZip
         from dsfforza.formats.xiso import XIso
+
         self.image = XIso(iso)
         self.zip = ForzaZip(self.image.open(self.image.find("media/ui/Textures.zip")))
         self.names = {i.filename.lower(): i for i in self.zip.entries()}
@@ -290,10 +309,12 @@ class ForzaUI:
 
 def write_png(path: Path, width: int, height: int, rgba) -> None:
     from dsfforza.formats import xds
+
     xds.write_png(path, width, height, bytearray(rgba))
 
 
 # --- RGBA image helpers (bytearray, row-major) ----------------------------------------
+
 
 class Image:
     def __init__(self, width: int, height: int, rgba=None, fill=(0, 0, 0, 0)):
@@ -303,14 +324,16 @@ class Image:
     def crop(self, x0: int, y0: int, x1: int, y1: int) -> Image:
         out = Image(x1 - x0, y1 - y0)
         for y in range(y0, y1):
-            out.px[(y - y0) * out.w * 4:(y - y0 + 1) * out.w * 4] = self.px[(y * self.w + x0) * 4:(y * self.w + x1) * 4]
+            out.px[(y - y0) * out.w * 4 : (y - y0 + 1) * out.w * 4] = self.px[
+                (y * self.w + x0) * 4 : (y * self.w + x1) * 4
+            ]
         return out
 
     def bbox(self, threshold: int = 8, region=None) -> tuple[int, int, int, int] | None:
         x0, y0, x1, y1 = region or (0, 0, self.w, self.h)
         xs, ys = [], []
         for y in range(y0, y1):
-            row = self.px[(y * self.w + x0) * 4 + 3:(y * self.w + x1) * 4:4]
+            row = self.px[(y * self.w + x0) * 4 + 3 : (y * self.w + x1) * 4 : 4]
             hits = [i for i, a in enumerate(row) if a > threshold]
             if hits:
                 ys.append(y)
@@ -322,7 +345,7 @@ class Image:
         for y in range(self.h):
             for x in range(self.w):
                 o, q = (y * self.w + x) * 4, (y * self.w + self.w - 1 - x) * 4
-                out.px[q:q + 4] = self.px[o:o + 4]
+                out.px[q : q + 4] = self.px[o : o + 4]
         return out
 
     def resize(self, width: int, height: int) -> Image:
@@ -347,7 +370,7 @@ class Image:
                         total += wgt
                 o = (y * width + x) * 4
                 if acc[3] > 0:
-                    out.px[o:o + 3] = bytes(min(255, int(c / acc[3] + 0.5)) for c in acc[:3])
+                    out.px[o : o + 3] = bytes(min(255, int(c / acc[3] + 0.5)) for c in acc[:3])
                 out.px[o + 3] = min(255, int(acc[3] / max(total, 1e-9) + 0.5))
         return out
 
@@ -415,8 +438,26 @@ STROKES = {
     "5": [[(4, 0), (0, 0), (0, 3), (3, 3), (4, 4), (4, 5), (3, 6), (0, 6)]],
     "6": [[(4, 1), (3, 0), (1, 0), (0, 1), (0, 5), (1, 6), (3, 6), (4, 5), (4, 4), (3, 3), (0, 3)]],
     "7": [[(0, 0), (4, 0), (1.5, 6)]],
-    "8": [[(1, 3), (0, 2), (0, 1), (1, 0), (3, 0), (4, 1), (4, 2), (3, 3), (1, 3), (0, 4), (0, 5), (1, 6),
-           (3, 6), (4, 5), (4, 4), (3, 3)]],
+    "8": [
+        [
+            (1, 3),
+            (0, 2),
+            (0, 1),
+            (1, 0),
+            (3, 0),
+            (4, 1),
+            (4, 2),
+            (3, 3),
+            (1, 3),
+            (0, 4),
+            (0, 5),
+            (1, 6),
+            (3, 6),
+            (4, 5),
+            (4, 4),
+            (3, 3),
+        ]
+    ],
     "9": [[(4, 3), (1, 3), (0, 2), (0, 1), (1, 0), (3, 0), (4, 1), (4, 5), (3, 6), (1, 6), (0, 5)]],
     "-": [[(0.5, 3.2), (3.5, 3.2)]],
     ".": [[(1.8, 5.8), (2.2, 5.8)]],
@@ -450,8 +491,8 @@ def text_plate(text: str, height: int = 40, italic: float = 0.22) -> Image:
 
 
 def _text_plate(text: str, height: int, italic: float) -> Image:
-    cell = height / 9.0          # grid unit in pixels
-    stroke = cell * 0.95         # half-width of a stroke
+    cell = height / 9.0  # grid unit in pixels
+    stroke = cell * 0.95  # half-width of a stroke
     outline = cell * 0.55
     advance = 5.4 * cell
     widths = [advance if ch != " " else advance * 0.6 for ch in text]
@@ -484,25 +525,25 @@ def _text_plate(text: str, height: int, italic: float) -> Image:
                         edge += 1
             if not core and not edge:
                 continue
-            t = (py - origin_y) / (6 * cell)      # 0 top .. 1 bottom of the letters
+            t = (py - origin_y) / (6 * cell)  # 0 top .. 1 bottom of the letters
             # chrome: bright top, a dark band just under the middle, bright again below
-            shade = 235 - 150 * math.exp(-((t - 0.55) / 0.18) ** 2) - 40 * max(0.0, t)
+            shade = 235 - 150 * math.exp(-(((t - 0.55) / 0.18) ** 2)) - 40 * max(0.0, t)
             c, e = core / (ss * ss), edge / (ss * ss)
             alpha = min(1.0, c + e)
             lum = max(0.0, (shade * c + 20 * e) / max(alpha, 1e-6))
             o = (py * width + px) * 4
-            img.px[o:o + 4] = bytes((int(lum), int(lum), int(min(255, lum * 1.03)), int(alpha * 255)))
+            img.px[o : o + 4] = bytes((int(lum), int(lum), int(min(255, lum * 1.03)), int(alpha * 255)))
     return img
 
 
-PLATE_RENDER_H = 76   # = 2 x the garage picture's plate height (build: nameplate(text, 124, 38))
+PLATE_RENDER_H = 76  # = 2 x the garage picture's plate height (build: nameplate(text, 124, 38))
 
 
 def nameplate(text: str, max_w: int = 98, max_h: int = 34, min_h: int = 18) -> Image:
     """A model nameplate fitted to max_w x max_h; a long name that would come
     out lower than min_h is set on two lines (split at the middle space), as
     stock plates such as BEETLE / CONVERTIBLE are."""
-    render_h = max(2 * max_h, PLATE_RENDER_H)   # one render size for picture and HUD plates (cache)
+    render_h = max(2 * max_h, PLATE_RENDER_H)  # one render size for picture and HUD plates (cache)
     one = text_plate(text, render_h).fit(max_w, max_h)
     words = text.split()
     if one.h >= min_h or len(words) < 2:
@@ -518,18 +559,18 @@ def nameplate(text: str, max_w: int = 98, max_h: int = 34, min_h: int = 18) -> I
 
 # --- the garage picture -----------------------------------------------------------------
 
-PANEL = (0, 0, 471, 198)          # opaque backdrop rectangle of stock pictures (x0, y0, x1, y1)
-CAR_BOX = (100, 14, 498, 244)     # where stock pictures put the car
+PANEL = (0, 0, 471, 198)  # opaque backdrop rectangle of stock pictures (x0, y0, x1, y1)
+CAR_BOX = (100, 14, 498, 244)  # where stock pictures put the car
 LOGO_BOX = (14, 78, 126, 140)
 PLATE_BOX = (8, 144, 132, 182)
 CACHE = REPO / "out" / "cache" / "gui"
-FOG_FROM, FOG_BLEND = 140, 40     # backdrop columns right of FOG_FROM are synthetic fog
-VEHICLE_STATS_LUA = (REPO / "out" / "lua-src" / "LuaScripts.copy"
-                     / "vehiclestats" / "vehiclestats.lua")
+FOG_FROM, FOG_BLEND = 140, 40  # backdrop columns right of FOG_FROM are synthetic fog
+VEHICLE_STATS_LUA = REPO / "out" / "lua-src" / "LuaScripts.copy" / "vehiclestats" / "vehiclestats.lua"
 
 
 def stock_picture_names() -> list[str]:
     import re
+
     if not VEHICLE_STATS_LUA.exists():
         return []
     return sorted(set(re.findall(r'Picture1 = "([^"]+)"', VEHICLE_STATS_LUA.read_text(encoding="utf-8"))))
@@ -538,6 +579,7 @@ def stock_picture_names() -> list[str]:
 def stock_pictures(gui: Path | None = None) -> list[Image]:
     gui = gui or stock_file("Install/gui.sp")
     from dsfforza.convert import dsf_materials as dm
+
     out = []
     with gui.open("rb") as stream:
         root = chnk.read_chunk(stream, 0)
@@ -562,7 +604,7 @@ def stock_backdrop(gui: Path | None = None) -> Image:
     w, h = PICTURE_SIZE
     if cached.exists():
         data = cached.read_bytes()
-        if len(data) == w * h * 4:   # else cut short (written in place before): rebuild
+        if len(data) == w * h * 4:  # else cut short (written in place before): rebuild
             return Image(w, h, data)
     pics = stock_pictures(gui)
     x0, y0, x1, y1 = PANEL
@@ -577,18 +619,27 @@ def stock_backdrop(gui: Path | None = None) -> Image:
                 if p.px[o + 3] < 250:
                     continue
                 key = (p.px[o] >> 3, p.px[o + 1] >> 3, p.px[o + 2] >> 3)
-                bins.setdefault(key, []).append(p.px[o:o + 3])
+                bins.setdefault(key, []).append(p.px[o : o + 3])
             best, best_n = None, 0
             for k in bins:
-                n = sum(len(bins.get((k[0] + a, k[1] + b, k[2] + c), ()))
-                        for a in (-1, 0, 1) for b in (-1, 0, 1) for c in (-1, 0, 1))
+                n = sum(
+                    len(bins.get((k[0] + a, k[1] + b, k[2] + c), ()))
+                    for a in (-1, 0, 1)
+                    for b in (-1, 0, 1)
+                    for c in (-1, 0, 1)
+                )
                 if n > best_n:
                     best, best_n = k, n
             if best is None or best_n < need:
                 continue
-            members = [m for a in (-1, 0, 1) for b in (-1, 0, 1) for c in (-1, 0, 1)
-                       for m in bins.get((best[0] + a, best[1] + b, best[2] + c), ())]
-            img.px[o:o + 4] = bytes([sum(m[c] for m in members) // len(members) for c in range(3)] + [255])
+            members = [
+                m
+                for a in (-1, 0, 1)
+                for b in (-1, 0, 1)
+                for c in (-1, 0, 1)
+                for m in bins.get((best[0] + a, best[1] + b, best[2] + c), ())
+            ]
+            img.px[o : o + 4] = bytes([sum(m[c] for m in members) // len(members) for c in range(3)] + [255])
             known[y * w + x] = 1
     # The logo and name area differs per car: rebuild it from the rows around it.
     lx0, ly0, lx1, ly1 = 0, LOGO_BOX[1] - 10, PLATE_BOX[2] + 6, PLATE_BOX[3] + 8
@@ -597,7 +648,9 @@ def stock_backdrop(gui: Path | None = None) -> Image:
         for y in range(ly0, ly1):
             t = (y - ly0) / max(1, ly1 - 1 - ly0)
             o = (y * w + x) * 4
-            img.px[o:o + 4] = bytes([int(img.px[top + c] * (1 - t) + img.px[bottom + c] * t) for c in range(3)] + [255])
+            img.px[o : o + 4] = bytes(
+                [int(img.px[top + c] * (1 - t) + img.px[bottom + c] * t) for c in range(3)] + [255]
+            )
             known[y * w + x] = 1
     # Right of the photo the cars cover the strip in most pictures and the most
     # common colour there is a dark car part: use the fog gradient of the
@@ -613,9 +666,10 @@ def stock_backdrop(gui: Path | None = None) -> Image:
             t = min(1.0, max(0.0, (x - (fog_x - FOG_BLEND)) / FOG_BLEND))
             if not known[y * w + x]:
                 t = 1.0
-            img.px[o:o + 4] = bytes([int(img.px[o + c] * (1 - t) + mean[c] * t) for c in range(3)] + [255])
+            img.px[o : o + 4] = bytes([int(img.px[o + c] * (1 - t) + mean[c] * t) for c in range(3)] + [255])
     # Atomic: out/cache is shared by every worktree's builds.
     from dsfforza.build.port_car import write_atomic
+
     CACHE.mkdir(parents=True, exist_ok=True)
     write_atomic(cached, bytes(img.px))
     return img
@@ -657,18 +711,19 @@ def compose_picture(car: Image, logo: Image | None, plate: Image | None, backdro
 def picture_dds(img: Image, template: bytes | None = None) -> bytes:
     """512 x 256 DXT5 without mips, header like the stock pictures'."""
     from dsfforza.convert import dsf_materials as dm
+
     dds = bytearray(dm.dds_file(img.px, img.w, img.h, 1, template))
-    struct.pack_into("<I", dds, 28, 0)   # stock pictures: mip count 0
+    struct.pack_into("<I", dds, 28, 0)  # stock pictures: mip count 0
     return bytes(dds)
 
 
 # --- software render of a converted car (for cars without a Forza thumbnail) ----------
 
 FLAT_MATERIALS = {  # forza2dsf shared materials -> (rgb, specular)
-    "001283369afd1027": ((18, 22, 30), 0.9),    # glass
-    "0012833b12fe1027": ((26, 26, 28), 0.15),   # trim
-    "00128337b2fd1027": ((16, 16, 16), 0.05),   # tyre
-    "10122b9953b14e2a": ((18, 22, 30), 0.9),    # their _LOD1 twins (converted exteriors since 2026-10-23)
+    "001283369afd1027": ((18, 22, 30), 0.9),  # glass
+    "0012833b12fe1027": ((26, 26, 28), 0.15),  # trim
+    "00128337b2fd1027": ((16, 16, 16), 0.05),  # tyre
+    "10122b9953b14e2a": ((18, 22, 30), 0.9),  # their _LOD1 twins (converted exteriors since 2026-10-23)
     "10122b9753b14e2a": ((26, 26, 28), 0.15),
     "10122b9b53b14e2a": ((16, 16, 16), 0.05),
 }
@@ -680,8 +735,9 @@ def _decode_normal(b0: int, b1: int) -> tuple[float, float, float]:
     return math.sin(polar) * math.sin(azimuth), math.cos(polar), math.sin(polar) * math.cos(azimuth)
 
 
-def render_car(archive: Path, spool_id: int, size: tuple[int, int] = (900, 480), yaw: float = 38.0,
-               pitch: float = 12.0) -> Image:
+def render_car(
+    archive: Path, spool_id: int, size: tuple[int, int] = (900, 480), yaw: float = 38.0, pitch: float = 12.0
+) -> Image:
     """A front three-quarter view (front to the right, the car's right side
     towards the camera, like DSF's pictures) of a vehicle's clean exterior
     entry: perspective, z-buffered, Lambert plus specular, paint in the
@@ -691,6 +747,7 @@ def render_car(archive: Path, spool_id: int, size: tuple[int, int] = (900, 480),
     from dsfforza.convert import paint
     from dsfforza.formats import upvh as uv
     from dsfforza.formats import vehicle_mesh as vm
+
     with archive.open("rb") as stream:
         root = chnk.read_chunk(stream, 0)
         kinds = uv.entries_for(stream, root.entries, spool_id, None)
@@ -707,8 +764,10 @@ def render_car(archive: Path, spool_id: int, size: tuple[int, int] = (900, 480),
         colour = (150, 20, 20)
         if spss is not None and spss.children:
             # The most colourful palette entry (stock pictures rarely show black or grey).
-            options = [tuple(int(255 * paint.linear_to_srgb(x)) for x in paint.apparent(paint.spsp_params(stream, e)))
-                       for e in spss.children]
+            options = [
+                tuple(int(255 * paint.linear_to_srgb(x)) for x in paint.apparent(paint.spsp_params(stream, e)))
+                for e in spss.children
+            ]
             colour = max(options, key=lambda c: (max(c) - min(c), -abs(sum(c) / 3 - 128)))
         h = uv.parse(payload(stream, child(child(kinds[0], "NONR"), "UPVH")))
         hubs = []
@@ -732,8 +791,7 @@ def render_car(archive: Path, spool_id: int, size: tuple[int, int] = (900, 480),
                         x, y, z = vm.position(vb, i)
                         x, z = (-x, -z) if turn else (x, z)
                         pts.append((hub[0] + x, hub[1] + y, hub[2] + z))
-                    tris.append((pts, None, None, None, (120, 122, 126) if rim else (14, 14, 14),
-                                 0.6 if rim else 0.1))
+                    tris.append((pts, None, None, None, (120, 122, 126) if rim else (14, 14, 14), 0.6 if rim else 0.1))
             continue
         e5, e8 = vb.element(5), vb.element(8)
         info = materials.get(sub.material)
@@ -769,8 +827,11 @@ def render_car(archive: Path, spool_id: int, size: tuple[int, int] = (900, 480),
     def project(p):
         d = tuple(p[i] - eye[i] for i in range(3))
         z = sum(d[i] * fwd[i] for i in range(3))
-        return (width / 2 + focal * sum(d[i] * right[i] for i in range(3)) / z,
-                height / 2 - focal * sum(d[i] * up[i] for i in range(3)) / z, z)
+        return (
+            width / 2 + focal * sum(d[i] * right[i] for i in range(3)) / z,
+            height / 2 - focal * sum(d[i] * up[i] for i in range(3)) / z,
+            z,
+        )
 
     img = Image(width, height)
     depth = [math.inf] * (width * height)
@@ -785,7 +846,7 @@ def render_car(archive: Path, spool_id: int, size: tuple[int, int] = (900, 480),
             r = ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2
             if r < 1:
                 o = (y * width + x) * 4
-                img.px[o:o + 4] = bytes((0, 0, 0, int(150 * (1 - r) ** 1.5)))
+                img.px[o : o + 4] = bytes((0, 0, 0, int(150 * (1 - r) ** 1.5)))
     for pts, normals, uvs, tex, flat, spec in tris:
         sp = [project(p) for p in pts]
         if min(s[2] for s in sp) <= 0.05:
@@ -816,20 +877,20 @@ def render_car(archive: Path, spool_id: int, size: tuple[int, int] = (900, 480),
                 depth[k] = z
                 n = _normalize(tuple(w0 * normals[0][i] + w1 * normals[1][i] + w2 * normals[2][i] for i in range(3)))
                 if sum(n[i] * eye_dir[i] for i in range(3)) < 0:
-                    n = tuple(-c for c in n)   # double-sided
+                    n = tuple(-c for c in n)  # double-sided
                 if tex is not None and uvs is not None:
                     tw, th, trgba = tex
                     u = w0 * uvs[0][0] + w1 * uvs[1][0] + w2 * uvs[2][0]
                     v = w0 * uvs[0][1] + w1 * uvs[1][1] + w2 * uvs[2][1]
                     o = (min(th - 1, max(0, int(v * th))) * tw + min(tw - 1, max(0, int(u * tw)))) * 4
-                    base = trgba[o:o + 3]
+                    base = trgba[o : o + 3]
                 else:
                     base = flat
                 diffuse = 0.35 + 0.75 * max(0.0, sum(n[i] * light[i] for i in range(3)))
                 fres = (1 - max(0.0, sum(n[i] * eye_dir[i] for i in range(3)))) ** 3
                 specular = spec * (max(0.0, sum(n[i] * half[i] for i in range(3))) ** 40 * 255 + 70 * fres)
                 o = k * 4
-                img.px[o:o + 4] = bytes([min(255, int(base[c] * diffuse + specular)) for c in range(3)] + [255])
+                img.px[o : o + 4] = bytes([min(255, int(base[c] * diffuse + specular)) for c in range(3)] + [255])
     # Front to the right: if the projected nose is left of the tail, mirror.
     nose, tail = project((centre[0], centre[1], max(zs))), project((centre[0], centre[1], min(zs)))
     if nose[0] < tail[0]:
@@ -861,9 +922,18 @@ def _normalize(v):
 # 88, 160, 244 and 252 exist but no vehicleStats entry uses them.
 
 VEHICLES_FONT = "vehicles_font"
-FREE_CODES = (212, 213, 245)                                  # no glyph, Latin-1 = cp1252
-SPARE_CODES = (252, 244, 88, 78, 77, 76, 75, 74)   # glyphs no vehicle uses; not 160 (0xA0, no-break space: drawn blank, M5 in out/testdrive3)
-UNTESTED_CODES = tuple(range(128, 160))                      # cp1252 differs from Latin-1 here
+FREE_CODES = (212, 213, 245)  # no glyph, Latin-1 = cp1252
+SPARE_CODES = (
+    252,
+    244,
+    88,
+    78,
+    77,
+    76,
+    75,
+    74,
+)  # glyphs no vehicle uses; not 160 (0xA0, no-break space: drawn blank, M5 in out/testdrive3)
+UNTESTED_CODES = tuple(range(128, 160))  # cp1252 differs from Latin-1 here
 CELL = 99
 
 
@@ -882,8 +952,10 @@ def read_glyphs(fntd: bytes) -> dict[int, list[int]]:
     UID, u32 width, u32 height}, then the glyph records (20 bytes, by code)."""
     pages, count = struct.unpack_from("<II", fntd, 0)
     base = 0x20 + 16 * pages
-    return {struct.unpack_from("<H", fntd, base + 20 * i)[0]:
-            list(struct.unpack_from("<10H", fntd, base + 20 * i)) for i in range(count)}
+    return {
+        struct.unpack_from("<H", fntd, base + 20 * i)[0]: list(struct.unpack_from("<10H", fntd, base + 20 * i))
+        for i in range(count)
+    }
 
 
 def glyph_images(fonts: Path | None = None) -> tuple[Image, dict]:
@@ -891,18 +963,22 @@ def glyph_images(fonts: Path | None = None) -> tuple[Image, dict]:
     """The vehicles_font texture pages stacked top to bottom (page order), and
     the glyph records (y within its page)."""
     from dsfforza.convert import dsf_materials as dm
+
     with fonts.open("rb") as stream:
         root = chnk.read_chunk(stream, 0)
         _, pk = font_package(stream, root)
         fntd = payload(stream, child(child(pk, "NONR"), "FNTD"))
-        textures = {payload(stream, child(t, "UIDC"))[:8]: payload(stream, child(t, "DXTC"))
-                    for t in child(child(pk, "MDXN"), "DRSP").children if t.tag == "TEXC"}
+        textures = {
+            payload(stream, child(t, "UIDC"))[:8]: payload(stream, child(t, "DXTC"))
+            for t in child(child(pk, "MDXN"), "DRSP").children
+            if t.tag == "TEXC"
+        }
     pages = struct.unpack_from("<I", fntd, 0)[0]
-    images = [Image(*dm.decode_dds(textures[fntd[0x20 + 16 * p:0x28 + 16 * p]])) for p in range(pages)]
+    images = [Image(*dm.decode_dds(textures[fntd[0x20 + 16 * p : 0x28 + 16 * p]])) for p in range(pages)]
     sheet = Image(max(i.w for i in images), sum(i.h for i in images))
     y = 0
     for img in images:
-        sheet.px[y * sheet.w * 4:(y + img.h) * sheet.w * 4] = img.px
+        sheet.px[y * sheet.w * 4 : (y + img.h) * sheet.w * 4] = img.px
         y += img.h
     return sheet, read_glyphs(fntd)
 
@@ -933,7 +1009,7 @@ def glyph_y(img: Image, h: int) -> int:
 # pages, the same size as page 0 (the game sizes every page from page 0's
 # FNTD entry, FUN_00729550).
 WIDE_FIRST = 0x100
-HUD_SLOT_CODES = (1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 14, 15)   # empty records the plugin rewrites (mod_hud.cpp)
+HUD_SLOT_CODES = (1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 14, 15)  # empty records the plugin rewrites (mod_hud.cpp)
 
 
 def _font_uid(n: int, used: set) -> bytes:
@@ -950,12 +1026,13 @@ def _dxt5_sparse(img: Image) -> bytes:
     """DXT5 of an image that is mostly transparent: empty 4 x 4 blocks get one
     precomputed block, the rest dsf_materials.encode_dxt5."""
     from dsfforza.convert import dsf_materials as dm
+
     empty = dm.encode_dxt5(bytes(64), 4, 4)
     out = bytearray()
     w = img.w
     for by in range(0, img.h, 4):
         for bx in range(0, w, 4):
-            rows = [img.px[((by + y) * w + bx) * 4:((by + y) * w + bx + 4) * 4] for y in range(4)]
+            rows = [img.px[((by + y) * w + bx) * 4 : ((by + y) * w + bx + 4) * 4] for y in range(4)]
             if not any(r[3::4].count(0) != 4 for r in rows):
                 out += empty
             else:
@@ -990,6 +1067,7 @@ def add_glyphs(fonts: Path, out: Path, glyphs: dict[int, Image], textures: dict[
     `textures` ({u64 UID: DDS}, e.g. the garage card emblem) ride along as
     more TEXCs in the DRSP (in MDID, not in FNTD), as add_textures does."""
     from dsfforza.convert import dsf_materials as dm
+
     with fonts.open("rb") as stream:
         root = chnk.read_chunk(stream, 0)
         index, pk = font_package(stream, root)
@@ -1002,18 +1080,24 @@ def add_glyphs(fonts: Path, out: Path, glyphs: dict[int, Image], textures: dict[
         dds = payload(stream, dxtc)
         uid0 = payload(stream, child(texc, "UIDC"))[:8]
         mdid_uids = payload(stream, child(drsp, "MDID"))
-        used_uids = {payload(stream, child(t, "UIDC"))[:8]
-                     for e in root.entries if e.tag == "PCKG"
-                     for t in child(child(e, "MDXN"), "DRSP").children if t.tag == "TEXC"}
+        used_uids = {
+            payload(stream, child(t, "UIDC"))[:8]
+            for e in root.entries
+            if e.tag == "PCKG"
+            for t in child(child(e, "MDXN"), "DRSP").children
+            if t.tag == "TEXC"
+        }
         data = bytearray(fonts.read_bytes())
     height, width = struct.unpack_from("<II", dds, 12)
     pages, count = struct.unpack_from("<II", fntd, 0)
     if pages != 1:
         raise ValueError(f"vehicles_font has {pages} pages; expected the stock single page")
     records = read_glyphs(fntd)
-    tail = bytes(fntd[0x30 + 20 * count:])   # kerning pairs (none in stock)
-    fitted = {code: (img if img.w <= CELL - 1 and img.h <= CELL - 1 else img.fit(CELL - 1, CELL - 1))
-              for code, img in glyphs.items()}
+    tail = bytes(fntd[0x30 + 20 * count :])  # kerning pairs (none in stock)
+    fitted = {
+        code: (img if img.w <= CELL - 1 and img.h <= CELL - 1 else img.fit(CELL - 1, CELL - 1))
+        for code, img in glyphs.items()
+    }
     narrow = {c: g for c, g in fitted.items() if c < WIDE_FIRST}
     wide = {c: g for c, g in fitted.items() if c >= WIDE_FIRST}
 
@@ -1025,12 +1109,22 @@ def add_glyphs(fonts: Path, out: Path, glyphs: dict[int, Image], textures: dict[
         extra = Image(width, new_height - height)
         for code, (_, gx, gy) in placed0.items():
             extra.paste(narrow[code], gx, gy - height)
-            records[code] = [code, gx, gy, narrow[code].w, narrow[code].h, (CELL - narrow[code].w) // 2,
-                             glyph_y(glyphs[code], narrow[code].h), CELL, CELL, 0]
-        new_dds = bytearray(dds[:dm.DDS_HEADER_SIZE])
+            records[code] = [
+                code,
+                gx,
+                gy,
+                narrow[code].w,
+                narrow[code].h,
+                (CELL - narrow[code].w) // 2,
+                glyph_y(glyphs[code], narrow[code].h),
+                CELL,
+                CELL,
+                0,
+            ]
+        new_dds = bytearray(dds[: dm.DDS_HEADER_SIZE])
         struct.pack_into("<I", new_dds, 12, new_height)
-        struct.pack_into("<I", new_dds, 20, width * new_height)   # linear size (DXT5: 1 byte per texel)
-        new_dds += dds[dm.DDS_HEADER_SIZE:dm.DDS_HEADER_SIZE + width * height]
+        struct.pack_into("<I", new_dds, 20, width * new_height)  # linear size (DXT5: 1 byte per texel)
+        new_dds += dds[dm.DDS_HEADER_SIZE : dm.DDS_HEADER_SIZE + width * height]
         new_dds += dm.encode_dxt5(extra.px, width, extra.h)
         dxtc.payload = bytes(new_dds)
     else:
@@ -1045,13 +1139,23 @@ def add_glyphs(fonts: Path, out: Path, glyphs: dict[int, Image], textures: dict[
         sheets = [Image(width, new_height) for _ in range(n_pages)]
         for code, (p, gx, gy) in placed_wide.items():
             sheets[p].paste(wide[code], gx, gy)
-            records[code] = [code, gx, gy, wide[code].w, wide[code].h, (CELL - wide[code].w) // 2,
-                             glyph_y(glyphs[code], wide[code].h), CELL, CELL, p + 1]
+            records[code] = [
+                code,
+                gx,
+                gy,
+                wide[code].w,
+                wide[code].h,
+                (CELL - wide[code].w) // 2,
+                glyph_y(glyphs[code], wide[code].h),
+                CELL,
+                CELL,
+                p + 1,
+            ]
         new_texcs = []
         for n, sheet in enumerate(sheets):
             uid = _font_uid(n, used_uids)
             used_uids.add(uid)
-            page_dds = bytearray(dds[:dm.DDS_HEADER_SIZE])
+            page_dds = bytearray(dds[: dm.DDS_HEADER_SIZE])
             struct.pack_into("<I", page_dds, 12, new_height)
             struct.pack_into("<I", page_dds, 20, width * new_height)
             page_dds += _dxt5_sparse(sheet)
@@ -1062,8 +1166,9 @@ def add_glyphs(fonts: Path, out: Path, glyphs: dict[int, Image], textures: dict[
             page_uids.append(uid)
         for code in HUD_SLOT_CODES:
             if code in records:
-                raise ValueError(f"glyph code {code} is a dsfforza.asi HUD slot; don't use --control-codes "
-                                 "with 16-bit glyphs")
+                raise ValueError(
+                    f"glyph code {code} is a dsfforza.asi HUD slot; don't use --control-codes with 16-bit glyphs"
+                )
             records[code] = [code, 0, 0, 0, 0, 0, 0, CELL, CELL, 0]
         mdid = child(drsp, "MDID")
         drsp.children = [c for c in drsp.children if c.tag != "MDID"] + new_texcs + [mdid]
@@ -1087,8 +1192,9 @@ def add_glyphs(fonts: Path, out: Path, glyphs: dict[int, Image], textures: dict[
     data = append_patch(fonts, data, root, {index: pk}, [])
     out.write_bytes(data)
     glyph_report = {str(c): list(placed0[c][1:]) for c in placed0}
-    glyph_report.update({str(c): [placed_wide[c][1], placed_wide[c][2], f"page {placed_wide[c][0] + 1}"]
-                         for c in placed_wide})
+    glyph_report.update(
+        {str(c): [placed_wide[c][1], placed_wide[c][2], f"page {placed_wide[c][0] + 1}"] for c in placed_wide}
+    )
     return {"glyphs": glyph_report, "height": new_height, "pages": len(page_uids), "count": len(records)}
 
 
@@ -1107,10 +1213,10 @@ def add_glyphs(fonts: Path, out: Path, glyphs: dict[int, Image], textures: dict[
 # SF rect, transparent elsewhere (a 100 x 72 texture drew at a fifth of the
 # size, a 512 x 256 one with full UVs five times too big).
 
-CARD_SF_BOX = (242, 2, 345, 75)                    # SF disc UV rect in the atlas, texels (in-game UVs x 512 / 256)
+CARD_SF_BOX = (242, 2, 345, 75)  # SF disc UV rect in the atlas, texels (in-game UVs x 512 / 256)
 CARD_ATLAS_SIZE = (512, 256)
 FORZA_LOGO_UID = bytes.fromhex("f012ef7ef05a2e2d")  # = mod_hud.cpp kLogoLo/kLogoHi
-EMBLEM_FIELD = "GarageEmblem"                      # vehicleStats field: 1 = Forza emblem
+EMBLEM_FIELD = "GarageEmblem"  # vehicleStats field: 1 = Forza emblem
 
 
 def forza_emblem_logo(ui: ForzaUI) -> Image:
@@ -1174,7 +1280,6 @@ def emblem_dds(ui: ForzaUI, template: bytes | None = None) -> tuple[bytes, Image
 # 0-terminated. "ID:242768" in Lua is string 242768 ("NISSAN").
 
 
-
 def read_strings(path: Path | None = None) -> dict[int, str]:
     path = path or stock_file("Locale/English/global.fchunk")
     with path.open("rb") as stream:
@@ -1185,7 +1290,7 @@ def read_strings(path: Path | None = None) -> dict[int, str]:
     for i in range(len(lookup) // 8):
         offset, sid = struct.unpack_from("<II", lookup, 8 * i)
         end = offset
-        while end + 1 < len(text) and text[end:end + 2] != b"\0\0":   # bounded: the last string may lack its 0
+        while end + 1 < len(text) and text[end : end + 2] != b"\0\0":  # bounded: the last string may lack its 0
             end += 2
         out[sid] = text[offset:end].decode("utf-16-le")
     return out
@@ -1231,6 +1336,7 @@ def stock_stats() -> dict[int, dict]:
     if not VEHICLE_STATS_LUA.exists():
         return {}
     from dsfforza.game import game_data
+
     return game_data.read_vehiclestats(VEHICLE_STATS_LUA)
 
 
@@ -1251,13 +1357,15 @@ def stock_codes(strings: dict[int, str]) -> tuple[dict, dict]:
 
 
 def pretty_model(model: str) -> str:
-    """"SkylineGTR" -> "SKYLINE GTR" (media names run words together)."""
+    """ "SkylineGTR" -> "SKYLINE GTR" (media names run words together)."""
     import re
+
     return re.sub(r"(?<=[a-z])(?=[A-Z0-9])|(?<=[A-Z])(?=[A-Z][a-z])", " ", model).upper().strip()
 
 
 def forza_car_id(media: str) -> int | None:
     import sqlite3
+
     db_path = REPO / "out" / "cache" / "fh1" / "gamedb.slt"
     if not db_path.exists():
         return None
@@ -1283,8 +1391,15 @@ def forza_car_id(media: str) -> int | None:
 
 CONTROL_CODES = tuple(c for c in range(1, 32) if c not in (9, 10, 13))
 # Forza maker names (List_CarMake, upper-case) that are the same badge in DSF.
-MAKE_ALIASES = {"SRT": "DODGE", "VIPER": "DODGE", "VW": "VOLKSWAGEN", "MERCEDES": "MERCEDES-BENZ",
-                "LANDROVER": "LAND ROVER", "GMC TRUCK": "GMC", "GMCTRUCK": "GMC"}
+MAKE_ALIASES = {
+    "SRT": "DODGE",
+    "VIPER": "DODGE",
+    "VW": "VOLKSWAGEN",
+    "MERCEDES": "MERCEDES-BENZ",
+    "LANDROVER": "LAND ROVER",
+    "GMC TRUCK": "GMC",
+    "GMCTRUCK": "GMC",
+}
 
 
 def dsf_make(make: str, model: str = "") -> str:
@@ -1308,6 +1423,7 @@ def car_texts(cars: list[dict]) -> dict[str, dict]:
     DisplayName, List_CarMake, List_FamilyModel via src/dsfforza/formats/forza_strings.py),
     upper-cased; media-name guesses where a game has no entry."""
     from dsfforza.build.port_car import make_model
+
     out = {}
     by_game: dict[str, list[str]] = {}
     for car in cars:
@@ -1315,8 +1431,9 @@ def car_texts(cars: list[dict]) -> dict[str, dict]:
     found: dict[str, dict] = {}
     try:
         from dsfforza.formats import forza_strings
+
         for game, media in by_game.items():
-            for other in ([game] + [g for g in ("fh1", "fm4") if g != game]):
+            for other in [game] + [g for g in ("fh1", "fm4") if g != game]:
                 missing = [m for m in media if m not in found]
                 if not missing:
                     break
@@ -1332,13 +1449,18 @@ def car_texts(cars: list[dict]) -> dict[str, dict]:
         info = found.get(media, {})
         name = (info.get("display") or pretty_model(model)).upper().strip()
         family = (info.get("family") or "").upper().strip()
-        out[media] = {"make": (info.get("make") or make).upper(), "model": name,
-                      "family": family if family and family != "NONE" else None, "year": info.get("year")}
+        out[media] = {
+            "make": (info.get("make") or make).upper(),
+            "model": name,
+            "family": family if family and family != "NONE" else None,
+            "year": info.get("year"),
+        }
     return out
 
 
-def plan_glyphs(cars: list[dict], texts: dict[str, dict], makes: dict, models: dict, free: list[int],
-                logos) -> tuple[dict, dict, dict]:
+def plan_glyphs(
+    cars: list[dict], texts: dict[str, dict], makes: dict, models: dict, free: list[int], logos
+) -> tuple[dict, dict, dict]:
     """Assign Manufacturer/Model codes. Returns ({media: entry fields},
     {code: Image}, notes). `logos(make)` gives the Forza logo Image or None.
 
@@ -1351,8 +1473,7 @@ def plan_glyphs(cars: list[dict], texts: dict[str, dict], makes: dict, models: d
     rest (the HUD then shows nothing there, rather than the host's)."""
     entries: dict[str, dict] = {car["media"]: {} for car in cars}
     glyphs: dict[int, Image] = {}
-    notes = {"badges": {}, "plates": {}, "family_plates": [], "blank_plate": [], "blank_badge": [],
-             "no_logo": []}
+    notes = {"badges": {}, "plates": {}, "family_plates": [], "blank_plate": [], "blank_badge": [], "no_logo": []}
     free = list(free)
     new_makes: dict[str, list[str]] = {}
     for car in cars:
@@ -1367,7 +1488,7 @@ def plan_glyphs(cars: list[dict], texts: dict[str, dict], makes: dict, models: d
     for key, media in new_makes.items():
         logo = logos(key) or logos(texts[media[0]]["make"])
         if logo is None:
-            notes["no_logo"].append(key)   # keeps the host's badge
+            notes["no_logo"].append(key)  # keeps the host's badge
         else:
             badge_logos[key] = logo
     want: dict[str, str] = {}
@@ -1383,6 +1504,7 @@ def plan_glyphs(cars: list[dict], texts: dict[str, dict], makes: dict, models: d
 
     def need():
         return len(badge_logos) + len(set(want.values()))
+
     if need() > len(free):
         # Family names where several cars share one (most shared first).
         fam_count: dict[str, int] = {}
@@ -1400,11 +1522,12 @@ def plan_glyphs(cars: list[dict], texts: dict[str, dict], makes: dict, models: d
     plate_cars: dict[str, list[str]] = {}
     for media, text in want.items():
         plate_cars.setdefault(text, []).append(media)
-    items = [(len(new_makes[k]), "badge", k) for k in badge_logos] + \
-            [(len(m), "plate", t) for t, m in plate_cars.items()]
+    items = [(len(new_makes[k]), "badge", k) for k in badge_logos] + [
+        (len(m), "plate", t) for t, m in plate_cars.items()
+    ]
     items.sort(key=lambda i: (-i[0], i[1], i[2]))
     room = len(free)
-    if len(items) > room:   # keep a code for each kind of blank that is needed
+    if len(items) > room:  # keep a code for each kind of blank that is needed
         room = max(0, len(free) - 1)
         if len({kind for _, kind, _ in items[room:]}) > 1:
             room = max(0, len(free) - 2)
@@ -1432,15 +1555,16 @@ def plan_glyphs(cars: list[dict], texts: dict[str, dict], makes: dict, models: d
             glyphs[blanks[kind]] = Image(1, 1)
             glyphs[blanks[kind]].kind = kind
             notes[f"blank_{kind}_code"] = blanks[kind]
-        for media in (new_makes[key] if kind == "badge" else plate_cars[key]):
+        for media in new_makes[key] if kind == "badge" else plate_cars[key]:
             entries[media]["Manufacturer" if kind == "badge" else "Model"] = blanks[kind]
             notes[f"blank_{kind}"].append(media)
     notes["codes_left"] = len(free)
     return entries, glyphs, notes
 
 
-def plan_wide_glyphs(cars: list[dict], texts: dict[str, dict], makes: dict, models: dict, logos,
-                     first: int = WIDE_FIRST) -> tuple[dict, dict, dict]:
+def plan_wide_glyphs(
+    cars: list[dict], texts: dict[str, dict], makes: dict, models: dict, logos, first: int = WIDE_FIRST
+) -> tuple[dict, dict, dict]:
     """16-bit codes for dsfforza.asi [hud]: {media: {ManufacturerGlyph,
     ModelGlyph}}, {code: Image}, notes. Run after plan_glyphs (which sets
     texts[media]["dsf_make"]). A car whose maker DSF has keeps the stock badge
@@ -1486,9 +1610,18 @@ def plan_wide_glyphs(cars: list[dict], texts: dict[str, dict], makes: dict, mode
     return entries, glyphs, notes
 
 
-def build(manifest: Path, out_dir: Path, names: dict[str, str] | None = None, archive: Path | None = None,
-          gui: Path | None = None, fonts: Path | None = None, log=print, control_codes: bool = False,
-          wide_glyphs: bool = False, root_limit: int = chnk.ENTRY_LIMIT) -> dict:
+def build(
+    manifest: Path,
+    out_dir: Path,
+    names: dict[str, str] | None = None,
+    archive: Path | None = None,
+    gui: Path | None = None,
+    fonts: Path | None = None,
+    log=print,
+    control_codes: bool = False,
+    wide_glyphs: bool = False,
+    root_limit: int = chnk.ENTRY_LIMIT,
+) -> dict:
     """Garage pictures, HUD glyphs and dsfforza\\hud.lua for the cars of a
     src/dsfforza/build/port_car.py manifest. Writes out_dir/gui.sp, out_dir/Fonts.fchunk,
     out_dir/hud.lua and a PNG preview per picture. `wide_glyphs` also gives
@@ -1510,7 +1643,7 @@ def build(manifest: Path, out_dir: Path, names: dict[str, str] | None = None, ar
             if fields.get(key, "").isdigit():
                 used_codes.add(int(fields[key]))
     pool = FREE_CODES + SPARE_CODES + UNTESTED_CODES + (CONTROL_CODES if control_codes else ())
-    if wide_glyphs:   # the plugin's slot codes must stay free
+    if wide_glyphs:  # the plugin's slot codes must stay free
         pool = tuple(c for c in pool if c not in HUD_SLOT_CODES)
     free = [c for c in pool if c not in used_codes]
     ui = ForzaUI()
@@ -1529,6 +1662,7 @@ def build(manifest: Path, out_dir: Path, names: dict[str, str] | None = None, ar
         if make not in logo_cache:
             logo_cache[make] = logo_image(ui, make.title()) or logo_image(ui, make)
         return logo_cache[make]
+
     planned, glyphs, notes = plan_glyphs(data["cars"], texts, makes, models, free, logos)
     pictures, hud, report = {}, {}, {"_codes": notes}
     if wide_glyphs:
@@ -1552,7 +1686,7 @@ def build(manifest: Path, out_dir: Path, names: dict[str, str] | None = None, ar
         name = f"dsfforza_{media.lower()}"
         pictures[name] = picture_dds(picture, template)
         entry["Picture1"] = name
-        entry[EMBLEM_FIELD] = 1   # Forza logo instead of the SF disc on the garage card (dsfforza.asi)
+        entry[EMBLEM_FIELD] = 1  # Forza logo instead of the SF disc on the garage card (dsfforza.asi)
         hud[sid] = entry
         preview = Image(picture.w, picture.h, picture.px)
         flat = bytearray(preview.px)
@@ -1566,8 +1700,10 @@ def build(manifest: Path, out_dir: Path, names: dict[str, str] | None = None, ar
         write_png(out_dir / f"{name}.png", preview.w, preview.h, flat)
         report[media] = {"spool_id": sid, "picture": name, "picture_source": source, **entry}
         wide_text = "".join(f", {k} {entry[k]:#x}" for k in ("ManufacturerGlyph", "ModelGlyph") if k in entry)
-        log(f"{sid} {media}: picture {name} ({source}), Manufacturer {entry.get('Manufacturer')}, "
-            f"Model {entry.get('Model')} ({model_text}){wide_text}")
+        log(
+            f"{sid} {media}: picture {name} ({source}), Manufacturer {entry.get('Manufacturer')}, "
+            f"Model {entry.get('Model')} ({model_text}){wide_text}"
+        )
     emblem, emblem_img = emblem_dds(ui, template)
     ui.close()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1580,8 +1716,14 @@ def build(manifest: Path, out_dir: Path, names: dict[str, str] | None = None, ar
     # Plain-text maker and model names don't show in the garage: give them new
     # string IDs in copies of every installed language's global.fchunk (the
     # English text for all of them).
-    plain = sorted({v for e in hud.values() for k, v in e.items()
-                    if k in ("ManufacturerName", "ModelName") and isinstance(v, str) and not v.startswith("ID:")})
+    plain = sorted(
+        {
+            v
+            for e in hud.values()
+            for k, v in e.items()
+            if k in ("ManufacturerName", "ModelName") and isinstance(v, str) and not v.startswith("ID:")
+        }
+    )
     string_ids = {text: FIRST_STRING_ID + n for n, text in enumerate(plain)}
     for e in hud.values():
         for k in ("ManufacturerName", "ModelName"):
@@ -1602,17 +1744,20 @@ def write_locales(out_dir: Path, texts: dict[int, str]) -> dict:
     locale = game_paths.game_dir() / "Locale"
     languages = sorted(p.name for p in locale.iterdir() if (p / "global.fchunk").exists()) if locale.exists() else []
     for lang in languages:
-        report[lang] = add_strings(stock_file(f"Locale/{lang}/global.fchunk"),
-                                   out_dir / "Locale" / lang / "global.fchunk", texts)
+        report[lang] = add_strings(
+            stock_file(f"Locale/{lang}/global.fchunk"), out_dir / "Locale" / lang / "global.fchunk", texts
+        )
     return report
 
 
 def write_hud_lua(path: Path, hud: dict[int, dict]) -> None:
-    lines = ["-- Generated by tools/gui_assets.py; vehicleStats overrides per ported car.",
-             "-- Picture1 needs the gui.sp copy, new Manufacturer/Model codes the Fonts.fchunk copy;",
-             "-- ManufacturerGlyph/ModelGlyph (16-bit codes) also need dsfforza.asi [hud];",
-             "-- GarageEmblem = 1 (Forza logo on the garage card) needs it and the Fonts.fchunk copy.",
-             "return {"]
+    lines = [
+        "-- Generated by tools/gui_assets.py; vehicleStats overrides per ported car.",
+        "-- Picture1 needs the gui.sp copy, new Manufacturer/Model codes the Fonts.fchunk copy;",
+        "-- ManufacturerGlyph/ModelGlyph (16-bit codes) also need dsfforza.asi [hud];",
+        "-- GarageEmblem = 1 (Forza logo on the garage card) needs it and the Fonts.fchunk copy.",
+        "return {",
+    ]
     for sid, entry in sorted(hud.items()):
         fields = ", ".join(f"{k} = {v!r}" if isinstance(v, int) else f'{k} = "{v}"' for k, v in entry.items())
         lines.append(f"\t[{sid}] = {{ {fields} }},")
@@ -1626,6 +1771,7 @@ def glyph_test(out_dir: Path, ids: list[int], plates: int = 400, badges: int = 4
     numbered badges ("B1".."Bn") and `plates` numbered nameplates ("P1"
     ..) on extra pages, and a hud.lua giving the cars `ids` codes spread over
     them, last ones first (so the farthest pages are used)."""
+
     def label(text: str, height: int) -> Image:
         # Per-character renders pasted side by side: hundreds of labels in seconds.
         chars = [text_plate(ch, height) if ch != " " else Image(height // 3, height) for ch in text]
@@ -1653,8 +1799,11 @@ def glyph_test(out_dir: Path, ids: list[int], plates: int = 400, badges: int = 4
     for i, sid in enumerate(ids):
         b, p = badges - 1 - (i % badges), plates - 1 - i * max(1, plates // max(1, len(ids)))
         hud[sid] = {"ManufacturerGlyph": WIDE_FIRST + b, "ModelGlyph": WIDE_FIRST + badges + p % plates}
-        report.setdefault("cars", {})[str(sid)] = {"badge": f"B{b + 1}", "plate": f"P{p % plates + 1}",
-                                                    "plate_page": records[WIDE_FIRST + badges + p % plates][9]}
+        report.setdefault("cars", {})[str(sid)] = {
+            "badge": f"B{b + 1}",
+            "plate": f"P{p % plates + 1}",
+            "plate_page": records[WIDE_FIRST + badges + p % plates][9],
+        }
     write_hud_lua(out_dir / "hud.lua", hud)
     report.pop("glyphs", None)
     (out_dir / "glyph-test.json").write_text(__import__("json").dumps(report, indent=1))
@@ -1668,19 +1817,37 @@ def main(argv: list[str] | None = None) -> None:
     b.add_argument("manifest", type=Path, help="<out>.json from src/dsfforza/build/port_car.py")
     b.add_argument("--out", type=Path, default=Path("out/gui"))
     b.add_argument("--archive", type=Path, help="the ported archive (default: manifest with .sp)")
-    b.add_argument("--install-lua", action="store_true",
-                   help="also write hud.lua to tools/game/lua/dsfforza/hud.lua (register.lua applies it; "
-                        "only with the matching gui.sp and Fonts.fchunk copies installed)")
-    b.add_argument("--control-codes", action="store_true",
-                   help="also use glyph codes 1..31 (except tab/newline/return; untested in game)")
-    b.add_argument("--name", action="append", default=[], metavar="MEDIA=TEXT",
-                   help="model name for the nameplate, e.g. NIS_SkylineGTR_93=\"SKYLINE GT-R\"")
-    b.add_argument("--wide-glyphs", action="store_true",
-                   help="every car its own badge/plate as 16-bit glyphs on extra font pages "
-                        "(ManufacturerGlyph/ModelGlyph; needs dsfforza.asi [hud], else the one-byte codes show)")
-    b.add_argument("--root-limit", type=int, default=chnk.ENTRY_LIMIT,
-                   help=f"gui.sp root entries before pictures share a SPOI (default {chnk.ENTRY_LIMIT}, the stock "
-                        "CHNK reader; dsfforza.asi [archive] lifts it, e.g. 16384: one SPOI per picture)")
+    b.add_argument(
+        "--install-lua",
+        action="store_true",
+        help="also write hud.lua to tools/game/lua/dsfforza/hud.lua (register.lua applies it; "
+        "only with the matching gui.sp and Fonts.fchunk copies installed)",
+    )
+    b.add_argument(
+        "--control-codes",
+        action="store_true",
+        help="also use glyph codes 1..31 (except tab/newline/return; untested in game)",
+    )
+    b.add_argument(
+        "--name",
+        action="append",
+        default=[],
+        metavar="MEDIA=TEXT",
+        help='model name for the nameplate, e.g. NIS_SkylineGTR_93="SKYLINE GT-R"',
+    )
+    b.add_argument(
+        "--wide-glyphs",
+        action="store_true",
+        help="every car its own badge/plate as 16-bit glyphs on extra font pages "
+        "(ManufacturerGlyph/ModelGlyph; needs dsfforza.asi [hud], else the one-byte codes show)",
+    )
+    b.add_argument(
+        "--root-limit",
+        type=int,
+        default=chnk.ENTRY_LIMIT,
+        help=f"gui.sp root entries before pictures share a SPOI (default {chnk.ENTRY_LIMIT}, the stock "
+        "CHNK reader; dsfforza.asi [archive] lifts it, e.g. 16384: one SPOI per picture)",
+    )
     t = sub.add_parser("glyphtest", help="16-bit glyph stress test: numbered badges and plates, hud.lua for IDs")
     t.add_argument("--out", type=Path, default=Path("out/hud/glyphtest"))
     t.add_argument("--ids", required=True, help="comma-separated vehicle IDs (registered ports)")
@@ -1695,8 +1862,15 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.cmd == "build":
         names = dict(n.split("=", 1) for n in args.name)
-        build(args.manifest, args.out, names, args.archive, control_codes=args.control_codes,
-              wide_glyphs=args.wide_glyphs, root_limit=args.root_limit)
+        build(
+            args.manifest,
+            args.out,
+            names,
+            args.archive,
+            control_codes=args.control_codes,
+            wide_glyphs=args.wide_glyphs,
+            root_limit=args.root_limit,
+        )
         if args.install_lua:
             target = REPO / "tools" / "game" / "lua" / "dsfforza" / "hud.lua"
             target.write_text((args.out / "hud.lua").read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
@@ -1706,6 +1880,7 @@ def main(argv: list[str] | None = None) -> None:
         print(__import__("json").dumps(report, indent=1))
     elif args.cmd == "extract":
         from dsfforza.convert import dsf_materials as dm
+
         args.gui = args.gui or stock_file("Install/gui.sp")
         with args.gui.open("rb") as stream:
             dds = find_picture(stream, chnk.read_chunk(stream, 0), args.name)
@@ -1715,6 +1890,7 @@ def main(argv: list[str] | None = None) -> None:
         write_png(args.png, w, h, px)
     else:
         import re
+
         for sid, text in read_strings().items():
             if re.search(args.pattern, text, re.I):
                 print(sid, text)

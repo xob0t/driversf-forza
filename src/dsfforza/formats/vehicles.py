@@ -102,8 +102,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.variants:
         print("vehc\tspool_id\tkind\tsize\tclass\tmodel\tvsct_fields")
         for v in variants:
-            print(f"{v.index}\t{v.spool_id}\t{v.kind}\t{v.vehc.size:#x}\t{v.vehc.name}\t{v.model}\t"
-                  f"{' '.join(f'{x:02x}' for x in v.vsct_fields)}")
+            print(
+                f"{v.index}\t{v.spool_id}\t{v.kind}\t{v.vehc.size:#x}\t{v.vehc.name}\t{v.model}\t"
+                f"{' '.join(f'{x:02x}' for x in v.vsct_fields)}"
+            )
         return
     print("vehc\tspool_id\tclass\tmodel")
     for v in variants:

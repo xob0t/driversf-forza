@@ -106,13 +106,13 @@ def parse_modl(data: bytes, submodels: list[SubModel]) -> list[Part]:
         r = 0x10 + p * 0x60
         floats = struct.unpack_from("<16f", data, r)
         box = floats[0:3] + floats[4:7] + floats[8:11] + floats[12:15]
-        uid = data[r + 0x40:r + 0x48]
+        uid = data[r + 0x40 : r + 0x48]
         lod_count, lod_offset = struct.unpack_from("<II", data, r + 0x48)
-        trailer, = struct.unpack_from("<I", data, r + 0x5C)
+        (trailer,) = struct.unpack_from("<I", data, r + 0x5C)
         lods = []
         for k in range(lod_count):
             mask, count, uid_offset, extra_offset = struct.unpack_from("<4I", data, lod_offset + k * 16)
-            subs = [by_uid[data[uid_offset + i * 8:uid_offset + i * 8 + 8]] for i in range(count)]
+            subs = [by_uid[data[uid_offset + i * 8 : uid_offset + i * 8 + 8]] for i in range(count)]
             extra = list(struct.unpack_from(f"<{count}I", data, extra_offset))
             lods.append(Lod(mask, subs, extra))
         parts.append(Part(uid, box, lods, trailer))
@@ -132,7 +132,7 @@ def child(entry: Entry, tag: str) -> Entry:
 
 
 def parse_vdcl(data: bytes) -> list[VertexElement]:
-    count, = struct.unpack_from("<I", data)
+    (count,) = struct.unpack_from("<I", data)
     elements, offset = [], 0
     for i in range(count):
         semantic, components, type_, name_hash = struct.unpack_from("<4I", data, 4 + i * 16)
@@ -156,17 +156,18 @@ def load(archive: Path, vehc_index: int) -> tuple[Entry, Mesh]:
                 elements = parse_vdcl(payload(stream, child(entry, "VDCL")))
                 if elements[-1].offset + elements[-1].components * COMPONENT_TYPES[elements[-1].type][1] != stride:
                     raise ValueError(f"VDCL doesn't add up to stride {stride}")
-                mesh.vertex_buffers[uid] = VertexBuffer(uid, count, stride, elements,
-                                                        payload(stream, child(entry, "VXDT")))
+                mesh.vertex_buffers[uid] = VertexBuffer(
+                    uid, count, stride, elements, payload(stream, child(entry, "VXDT"))
+                )
             elif entry.tag == "IXCK":
                 header = payload(stream, child(entry, "IXHD"))
                 uid, count, size = header[:8], *struct.unpack_from("<II", header, 8)
                 if size != 2:
                     raise ValueError(f"index size {size}")
-                mesh.index_buffers[uid] = payload(stream, child(entry, "IXDT"))[:count * 2]
+                mesh.index_buffers[uid] = payload(stream, child(entry, "IXDT"))[: count * 2]
             elif entry.tag == "SBMC":
                 d = payload(stream, child(entry, "SBBH"))
-                base_vertex, = struct.unpack_from("<I", d, 0x20)
+                (base_vertex,) = struct.unpack_from("<I", d, 0x20)
                 first, count = struct.unpack_from("<II", d, 0x38)
                 mesh.submodels.append(SubModel(d[0:8], d[8:16], d[16:24], base_vertex, d[0x30:0x38], first, count))
         modl = child(child(vehc, "NONR"), "MODL")
@@ -230,13 +231,17 @@ def write_obj(mesh: Mesh, path: Path, uv_semantic: int | None, submodels: list[S
 
 
 def write_png(path: Path, width: int, height: int, pixels: bytearray) -> None:
-    rows = b"".join(b"\0" + bytes(pixels[y * width * 3:(y + 1) * width * 3]) for y in range(height))
+    rows = b"".join(b"\0" + bytes(pixels[y * width * 3 : (y + 1) * width * 3]) for y in range(height))
 
     def chunk(tag, data):
         return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
 
-    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
-                     + chunk(b"IDAT", zlib.compress(rows, 6)) + chunk(b"IEND", b""))
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(rows, 6))
+        + chunk(b"IEND", b"")
+    )
 
 
 def render(mesh: Mesh, path: Path, submodels: list[SubModel], size: int = 360) -> None:
@@ -247,7 +252,9 @@ def render(mesh: Mesh, path: Path, submodels: list[SubModel], size: int = 360) -
             tris.append([position(vb, i) for i in tri])
     if not tris:
         raise ValueError("nothing to render")
-    xs = [p[0] for t in tris for p in t]; ys = [p[1] for t in tris for p in t]; zs = [p[2] for t in tris for p in t]
+    xs = [p[0] for t in tris for p in t]
+    ys = [p[1] for t in tris for p in t]
+    zs = [p[2] for t in tris for p in t]
     span = max(max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs)) * 1.05
     centre = ((max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2, (max(zs) + min(zs)) / 2)
     # (horizontal axis, vertical axis, depth axis, depth sign) per view
@@ -263,9 +270,14 @@ def render(mesh: Mesh, path: Path, submodels: list[SubModel], size: int = 360) -
             nx, ny, nz = ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx
             length = math.sqrt(nx * nx + ny * ny + nz * nz) or 1
             shade = 60 + int(180 * abs(nx * light[0] + ny * light[1] + nz * light[2]) / length)
-            pts = [((p[h] - centre[h]) / span * size + size / 2,
+            pts = [
+                (
+                    (p[h] - centre[h]) / span * size + size / 2,
                     size / 2 - (p[v] - centre[v]) / span * size,
-                    sign * (p[d] - centre[d])) for p in tri]
+                    sign * (p[d] - centre[d]),
+                )
+                for p in tri
+            ]
             x0, x1 = max(int(min(p[0] for p in pts)), 0), min(int(max(p[0] for p in pts)) + 1, size)
             y0, y1 = max(int(min(p[1] for p in pts)), 0), min(int(max(p[1] for p in pts)) + 1, size)
             (px, py, pz), (qx, qy, qz), (rx, ry, rz) = pts
@@ -284,7 +296,7 @@ def render(mesh: Mesh, path: Path, submodels: list[SubModel], size: int = 360) -
                     if z < depth[k]:
                         depth[k] = z
                         o = (y * width + view * size + x) * 3
-                        pixels[o:o + 3] = bytes((shade, shade, min(255, shade + 12)))
+                        pixels[o : o + 3] = bytes((shade, shade, min(255, shade + 12)))
     write_png(path, width, height, pixels)
 
 
@@ -301,8 +313,10 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     vehc, mesh = load(args.archive, args.vehc)
-    print(f"VEHC {args.vehc} '{vehc.name}': {len(mesh.vertex_buffers)} vertex buffers, "
-          f"{len(mesh.index_buffers)} index buffers, {len(mesh.submodels)} submodels, {len(mesh.parts)} parts")
+    print(
+        f"VEHC {args.vehc} '{vehc.name}': {len(mesh.vertex_buffers)} vertex buffers, "
+        f"{len(mesh.index_buffers)} index buffers, {len(mesh.submodels)} submodels, {len(mesh.parts)} parts"
+    )
     chosen = mesh.submodels
     if args.lod is not None:
         chosen = lod_submodels(mesh, args.lod)
@@ -310,16 +324,20 @@ def main(argv: list[str] | None = None) -> None:
         chosen = [mesh.submodels[int(n)] for n in args.submodels.split(",")]
     if args.summary:
         for p, part in enumerate(mesh.parts):
-            size = [round(math.dist((0, 0, 0), part.box[i:i + 3]), 2) for i in (3, 6, 9)]
+            size = [round(math.dist((0, 0, 0), part.box[i : i + 3]), 2) for i in (3, 6, 9)]
             lods = " ".join(f"m{lod.mask}:{len(lod.submodels)}" for lod in part.lods)
-            print(f"  part{p:02d} {part.uid.hex()} origin {tuple(round(x, 2) for x in part.box[:3])} "
-                  f"axes {size} lods [{lods}] trailer {part.trailer}")
+            print(
+                f"  part{p:02d} {part.uid.hex()} origin {tuple(round(x, 2) for x in part.box[:3])} "
+                f"axes {size} lods [{lods}] trailer {part.trailer}"
+            )
         for vb in mesh.vertex_buffers.values():
             layout = ", ".join(f"s{e.semantic}:{e.components}x t{e.type}@{e.offset}" for e in vb.elements)
             print(f"  VB {vb.uid.hex()} {vb.count} x {vb.stride}B  [{layout}]")
         for n, sub in enumerate(mesh.submodels):
-            print(f"  sub{n:03d} {sub.uid.hex()} mat {sub.material.hex()} vb {sub.vertex_buffer.hex()[:8]} "
-                  f"base {sub.base_vertex} idx {sub.first_index}+{sub.index_count}")
+            print(
+                f"  sub{n:03d} {sub.uid.hex()} mat {sub.material.hex()} vb {sub.vertex_buffer.hex()[:8]} "
+                f"base {sub.base_vertex} idx {sub.first_index}+{sub.index_count}"
+            )
     if args.obj:
         write_obj(mesh, args.obj, args.uv, chosen)
         print(f"wrote {args.obj}")
