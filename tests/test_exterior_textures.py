@@ -1,5 +1,6 @@
-"""Regression tests for the exterior textures: rim textures from the car's wheel.xds and the
-alpha test of decal triangles, on synthetic data (no game or Forza files).
+"""Regression tests for the exterior textures: rim textures from the car's wheel.xds, the
+alpha test of decal triangles and their cut-out geometry, and the wheel's baked sky term,
+on synthetic data (no game or Forza files).
 
     uv run python tests/test_exterior_textures.py     # or every test: uv run python -m tests
 """
@@ -12,9 +13,10 @@ from unittest import mock
 
 from dsfforza.build import port_car
 from dsfforza.build.forza_roster import Source
+from dsfforza.convert import cutout, forza2dsf
 from dsfforza.convert import dsf_materials as dm
-from dsfforza.convert import forza2dsf
 from dsfforza.convert import forza_materials as fm
+from dsfforza.formats import carbin
 
 
 def _atlas(size, opaque):
@@ -154,6 +156,150 @@ class WheelAtlas(unittest.TestCase):
         # no textures: everything but the blur on the shared tyre (swatches)
         self.assertEqual(forza2dsf.wheel_material(None, self.wheel, self.rim, shared), forza2dsf.TYRE_LOD1)
         self.assertIsNone(forza2dsf.wheel_material(None, self.wheel, self.blur, shared))
+
+
+def _uv_area(tris) -> float:
+    return sum(abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) / 2 for a, b, c in tris)
+
+
+class MaskTriangles(unittest.TestCase):
+    """Outlines of a mask (texel centres) triangulated: holes stay open, the area is the mask's."""
+
+    def test_square_with_hole(self):
+        mask = [[0] * 12 for _ in range(12)]
+        for y in range(1, 11):
+            for x in range(1, 11):
+                mask[y][x] = 1
+        for y in range(4, 8):
+            for x in range(4, 8):
+                mask[y][x] = 0
+        tris, fallback = cutout.mask_triangles(mask)
+        self.assertFalse(fallback)
+        self.assertAlmostEqual(_uv_area(tris), 100 - 16, delta=6)  # corners rounded by half a texel
+        hole_centre = (6.0, 6.0)
+        for t in tris:
+            self.assertFalse(
+                cutout._point_in_tri(hole_centre, *t) or cutout._point_in_tri(hole_centre, t[0], t[2], t[1])
+            )
+
+    def test_letters(self):
+        # an "O" and an "L" side by side, with a diagonal stroke through the O
+        mask = [[0] * 40 for _ in range(24)]
+        for y in range(24):
+            for x in range(40):
+                r = ((x - 10) ** 2 + (y - 12) ** 2) ** 0.5
+                if 5 <= r <= 9 and abs(x - y - 0) > 1:
+                    mask[y][x] = 1
+                if (24 <= x <= 27 and 3 <= y <= 20) or (24 <= x <= 36 and 17 <= y <= 20):
+                    mask[y][x] = 1
+        tris, fallback = cutout.mask_triangles(mask)
+        self.assertFalse(fallback)
+        self.assertAlmostEqual(_uv_area(tris), sum(map(sum, mask)), delta=0.08 * sum(map(sum, mask)))
+
+
+class CutAlphaTested(unittest.TestCase):
+    """A badge quad whose RGB is one flat colour and whose alpha holds the lettering
+    (the 205 T16's "205 turbo 16") drew as a solid bar: DSF's Chassis material has no
+    alpha test. Its triangles are replaced by pieces over the passing texels."""
+
+    SIZE = 64
+
+    def setUp(self):
+        size = self.SIZE
+
+        def opaque(x, y):  # two bars ("letters") inside the badge area x 8..56, y 8..24
+            return 8 <= y < 24 and (12 <= x < 20 or 30 <= x < 50)
+
+        self.atlas = _atlas(size, opaque)
+
+        test = self
+
+        class FakeAtlases:
+            def get(self, family):
+                return test.atlas
+
+        self.atlases = FakeAtlases()
+        corners = [
+            ((0.0, 0.0, 0.0), (8, 8)),
+            ((1.0, 0.0, 0.0), (56, 8)),
+            ((1.0, 0.25, 0.0), (56, 24)),
+            ((0.0, 0.25, 0.0), (8, 24)),
+        ]
+        verts = [
+            carbin.Vertex(p, (u / size, v / size), (0.5, 0.5), (0.0, 0.0, 1.0), bytes((100, 1, 2, 3)))
+            for p, (u, v) in corners
+        ]
+        transform = (0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0)
+        self.badge = carbin.SubSection("badge", 1, 4, transform, [0, 1, 2, 0, 2, 3])
+        self.paint = carbin.SubSection("body", 1, 4, transform, [0, 1, 2])
+        self.section = carbin.Section("trunk", (0, 0, 0), (0, 0, 0), (1, 1, 1), verts, [], [self.badge, self.paint])
+
+    def test_quad_cut_to_letters(self):
+        (out,), report = cutout.cut_alpha_tested([self.section], self.atlases)
+        badge = out.subsections[0]
+        self.assertIs(out.subsections[1], self.paint)  # other techniques untouched
+        self.assertEqual(report["trunk/badge"]["cut"], 2)
+        pool = out.vertices_for(badge)
+        tris = badge.triangles()
+        uv = [[(pool[i].uv0[0] * self.SIZE, pool[i].uv0[1] * self.SIZE) for i in t] for t in tris]
+        self.assertAlmostEqual(_uv_area(uv), 16 * 8 + 16 * 20, delta=25)  # the letters, not the 48 x 16 quad (768)
+        _, _, rgba = self.atlas
+        for t in uv:
+            cx, cy = (sum(p[0] for p in t) / 3, sum(p[1] for p in t) / 3)
+            self.assertEqual(rgba[(int(cy) * self.SIZE + int(cx)) * 4 + 3], 255)
+        for t in tris:  # same winding as the source: normals keep facing +z
+            a, b, c = (pool[i].position for i in t)
+            self.assertGreater((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]), 0)
+            for i in t:  # positions follow the UVs (x = (u - 8) / 48)
+                self.assertAlmostEqual(pool[i].position[0], (pool[i].uv0[0] * self.SIZE - 8) / 48, places=4)
+                self.assertEqual(pool[i].extra[0], 100)
+
+    def test_opaque_badge_untouched(self):
+        self.atlas = _atlas(self.SIZE, lambda x, y: True)
+        (out,), report = cutout.cut_alpha_tested([self.section], self.atlases)
+        self.assertIs(out, self.section)
+        self.assertEqual(report, {})
+
+
+class WheelSky(unittest.TestCase):
+    """Wheel vertices get a baked sky term like stock wheels (outward faces about
+    0.64, the back of the disc and the barrel's inside dark), not a flat 0.42."""
+
+    def disc(self, x, radius, normal_x, segments=24):
+        """Triangles of a flat disc at axial x (DSF wheel frame), and its centre vertex."""
+        import math
+
+        ring = [
+            (x, radius * math.sin(2 * math.pi * k / segments), radius * math.cos(2 * math.pi * k / segments))
+            for k in range(segments)
+        ]
+        return [[(x, 0.0, 0.0), ring[k], ring[(k + 1) % segments]] for k in range(segments)]
+
+    def barrel(self, x0, x1, radius, segments=24):
+        import math
+
+        out = []
+        for k in range(segments):
+            a, b = 2 * math.pi * k / segments, 2 * math.pi * (k + 1) / segments
+            p = [(x, radius * math.sin(t), radius * math.cos(t)) for x in (x0, x1) for t in (a, b)]
+            out += [[p[0], p[1], p[3]], [p[0], p[3], p[2]]]
+        return out
+
+    def test_faces_and_barrel(self):
+        tris = self.disc(0.1, 0.2, 1.0) + self.barrel(-0.1, 0.1, 0.2)
+        points = [(0.1, 0.05, 0.0), (0.1, 0.05, 0.0), (0.0, 0.199, 0.0)]
+        normals = [(1.0, 0.0, 0.0), (-1.0, 0.0, 0.0), (0.0, -1.0, 0.0)]
+        face, back, inside = forza2dsf.wheel_sky(points, normals, tris)
+        self.assertAlmostEqual(face, forza2dsf.WHEEL_SKY_OPEN, delta=0.03)  # open to the outboard side
+        self.assertLess(back, 0.03)  # faces the car
+        self.assertLess(inside, 0.1)  # closed barrel: the disc in front, the car behind
+
+    def test_open_barrel_inside(self):
+        # no disc: the barrel's inside sees out through the open outboard end
+        tris = self.barrel(-0.1, 0.1, 0.2)
+        (inside,) = forza2dsf.wheel_sky([(0.08, 0.199, 0.0)], [(0.0, -1.0, 0.0)], tris)
+        self.assertGreater(inside, 0.1)
+        self.assertLess(inside, forza2dsf.WHEEL_SKY_OPEN / 2)
 
 
 class WheelSource(unittest.TestCase):
