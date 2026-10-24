@@ -136,23 +136,9 @@ def lower_priority() -> None:
 
 def port_car_args(argv: list[str]) -> argparse.Namespace:
     """port_car.py's own options parsed from argv (so the batch takes all of them
-    and their defaults), without running port_car."""
+    and their defaults)."""
     import port_car
-
-    class Parsed(Exception):
-        pass
-    real = argparse.ArgumentParser.parse_args
-
-    def grab(self, args=None, namespace=None):
-        raise Parsed(real(self, args, namespace))
-    argparse.ArgumentParser.parse_args = grab
-    try:
-        port_car.main(argv)
-    except Parsed as parsed:
-        return parsed.args[0]
-    finally:
-        argparse.ArgumentParser.parse_args = real
-    raise RuntimeError("port_car.main did not parse its arguments")
+    return port_car.build_parser().parse_args(argv)
 
 
 # --- the roster and selection ------------------------------------------------------------
@@ -509,7 +495,6 @@ def worker(job_path: Path) -> int:
     report = {"media": job["media"], "game": job["game"], "spool_id": job["spool_id"], "ok": False}
     try:
         import clone_vehicle
-        import forza2dsf
         import port_car
         from chnk import read_chunk, write_chunk
         from forza_roster import Source
@@ -519,34 +504,17 @@ def worker(job_path: Path) -> int:
                              + job["port_options"])
         source = Source(**job["source"])
         isos = [Path(p) for p in job["isos"]]
-        folder = port_car.extract_car(source, job["media"], args.cache, log)
-        car = forza2dsf.load_car(folder, job["media"])
-        gamedb = None
-        try:
-            dims = forza2dsf.car_dims(car)
-        except ValueError:
-            gamedb = port_car.extract_gamedb(isos, source.game, args.cache)
-            dims = forza2dsf.car_dims(car, gamedb)
-        if (not args.no_cockpit or not args.no_handling) and gamedb is None:
-            gamedb = port_car.extract_gamedb(isos, source.game, args.cache)
-        host, sound, choice = port_car.pick_hosts(args, job["media"], source.game, folder, gamedb, isos, log)
+        prep = port_car.prepare_car(args, source, job["media"], isos, log)
+        host, sound = prep.host, prep.sound
         with dsf.open("rb") as stream:
             root = read_chunk(stream, 0)
             entries = root.entries
-            nonr_limit, mdxn_max = port_car.stock_limits(stream, entries)
-            if args.mdxn_limit:
-                mdxn_max = {kind: max(size, args.mdxn_limit) for kind, size in mdxn_max.items()}
+            nonr_limit, mdxn_max = port_car.stock_limits(stream, entries, args.mdxn_limit)
             names = {s: entries[i].name for s, i, k in clone_vehicle.sslp_records(stream, entries) if k == 0}
-            log(f"--- {job['media']} ({source.game}, {source.where}) -> spool ID {job['spool_id']}, host {host} "
-                f"({names[host]})")
             if job.get("sound_dir"):
                 args.forza_sound_dir = Path(job["sound_dir"])
-            plan, plan_report = port_car.forza_sound_plan(
-                args, stream, entries, job["media"], source.game, folder, gamedb, isos,
-                args.sound_host if isinstance(args.sound_host, int) else None, job["spool_id"], log)
-            clones, built = port_car.build_car(stream, entries, host, job["spool_id"], car, dims, args,
-                                               nonr_limit, mdxn_max, log, gamedb, sound, plan, plan_report)
-            built["host_choice"] = choice
+            clones, built = port_car.convert_car(stream, entries, prep, job["spool_id"], args, nonr_limit, mdxn_max,
+                                                 names, isos, log)
             temp = out_chunk.with_suffix(".tmp")
             with temp.open("wb") as out:
                 write_chunk(out, stream, clones, root.version)
