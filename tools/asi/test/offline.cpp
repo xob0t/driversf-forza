@@ -182,6 +182,35 @@ int main(int argc, char** argv)
         CHECK(copy[20] == 30 && copy[0] == 1 && strcmp((char*)copy + 0x54, "OFFLINE A") == 0);
     }
 
+    // Spool item lists past 1100 (SSIC SPOL): load through the patched 0x0059B6D0 from a
+    // fake reader whose entry 0 is the list, then find UIDs through 0x0059B5A0.
+    {
+        typedef void(__fastcall * LoadFn)(void* self, void*, void* reader, int index);
+        typedef unsigned(__fastcall * FindFn)(void* self, void*, unsigned lo, unsigned hi);
+        static unsigned reader[0x5618 / 4];
+        static unsigned list[1 + 1500 * 2];
+        static unsigned char provider[0x2600];
+        list[0] = 1500;
+        for (unsigned i = 0; i < 1500; i++) {
+            list[1 + 2 * i] = 0x1000 + i;
+            list[2 + 2 * i] = 0x2D00AA00;
+        }
+        reader[0x44CC / 4] = (unsigned)(size_t)list;   // payload pointer of entry 0
+        reader[0x55FC / 4] = 1;
+        LoadFn load = (LoadFn)0x0059B6D0;
+        FindFn find = (FindFn)0x0059B5A0;
+        load(provider, nullptr, reader, 0);
+        CHECK(*(unsigned*)(provider + 0x2260) == 1100);                        // inline part as stock sees it
+        CHECK(find(provider, nullptr, 0x1000 + 1400, 0x2D00AA00) == 1400);      // past 1100: the side list
+        CHECK(find(provider, nullptr, 0x1000 + 7, 0x2D00AA00) == 7);
+        CHECK(find(provider, nullptr, 0x9999, 0x2D00AA00) == 0xFFFF);
+        list[0] = 50;                                                           // a short list again
+        load(provider, nullptr, reader, 0);
+        CHECK(*(unsigned*)(provider + 0x2260) == 50);
+        CHECK(find(provider, nullptr, 0x1000 + 1400, 0x2D00AA00) == 0xFFFF);    // side list dropped
+        CHECK(find(provider, nullptr, 0x1000 + 49, 0x2D00AA00) == 49);
+    }
+
     // HUD: ctor hook, and the garage card emblem hook (call + 3 NOPs over the itemState write).
     CHECK(*(BYTE*)0x006C6855 == 0xE8 && *(BYTE*)0x007118A5 == 0xE8);
     CHECK(*(BYTE*)0x007118AA == 0x90 && *(BYTE*)0x007118AC == 0x90 && *(BYTE*)0x007118AD == 0x74);

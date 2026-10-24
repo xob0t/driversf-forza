@@ -246,8 +246,19 @@ With dsfforza.asi [archive] (another module: the CHNK reader keeps entries
 past 1100 in a side table, `spool-limits.md`) the root can hold one SPOI per
 picture: `gui_assets.py build --root-limit 16384` (default 1100, the stock
 reader). SSLP spool ids and root indices are u16, so 800 more pictures fit.
-Not checked in the garage yet (the stock garage lists IDs below 304 only;
-dsfforza.asi `[garage]` up to 999).
+
+**The SPOL cap (confirmed-runtime).** The game also caps the SSIC SPOL list
+at 1100 items: a longer list isn't loaded at all.
+
+- This applies with one SPOI per picture and with shared SPOIs alike, since
+  each picture has its own SPOL UID.
+- Past 177 added pictures, every garage card, stock ones included, shows the
+  lock icon instead of its picture.
+- dsfforza.asi's `[archive] spool_lists` lifts the cap (`asi.md`, "Spool
+  item lists").
+- In game, the full roster's 562 pictures show with it (run
+  `vm-20261025-000547`).
+- Without the plugin, a build must stay at 177 added pictures or fewer.
 
 ### Glyph codes without the plugin: one byte, about 70 new glyphs per install
 
