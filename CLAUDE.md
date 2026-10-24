@@ -10,7 +10,9 @@ Research notes are in `research/` (read the ones for your area first).
   (`fix/cockpit-glass`, `feat/engine-sound`, ...), never in the main checkout.
 - In a new worktree run `.\tools\worktree-setup.ps1` once. It links the
   untracked inputs from the main checkout: `assets\*.iso`, `out\stock`,
-  `out\cache`, `_ref`. Before the worktree is removed, run
+  `out\cache`, `out\tools-dl`, `_ref`, and writes the worktree's own
+  `out\lua-src` and `out\db` (`tools\game_data.py prepare`). Before the
+  worktree is removed, run
   `.\tools\worktree-setup.ps1 -Unlink`: some delete tools follow junctions
   and would empty the main checkout's folders.
 - Commit at checkpoints with clear messages. When the task is done, push the

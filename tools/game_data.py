@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 import struct
 import sys
 from pathlib import Path
@@ -231,7 +230,11 @@ def vehiclestats_text(scripts_package: Path) -> str:
 
 def prepare(game: Path, isos: list[Path], log=print, force: bool = False) -> dict:
     """Write the derived files the build tools expect under out/ (only missing
-    ones unless force). Returns {name: path}."""
+    ones unless force). Returns {name: path}. Each file is written under a
+    temporary name and renamed into place, so a build reading it meanwhile never
+    sees half of it. tools/worktree-setup.ps1 runs this in a new worktree (each
+    worktree has its own out/lua-src and out/db); port_batch runs it every build."""
+    import port_car
     done = {}
     package = game / "media" / "ScriptsLuaScripts.fchunk"
     text = None
@@ -242,19 +245,19 @@ def prepare(game: Path, isos: list[Path], log=print, force: bool = False) -> dic
             continue
         text = text or vehiclestats_text(package)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8", newline="\r\n")   # unluac's line ends
+        port_car.write_atomic(target, text.replace("\n", "\r\n").encode("utf-8"))   # unluac's line ends
         log(f"wrote {target} from {package.name}")
         done[f"vehiclestats ({variant})"] = target
-    import port_car
     for name in ("FH1", "FM4"):
         cached = port_car.extract_gamedb(isos, name, REPO / "out" / "cache")
         if cached is None:
             log(f"no {name} disc among the images; {name} cars can't be ported")
             continue
         db = REPO / "out" / "db" / f"{name.lower()}_gamedb.slt"
-        if force or not db.exists():
+        # Another size than the cache's: cut short by a copy from before these writes were atomic.
+        if force or not db.exists() or db.stat().st_size != cached.stat().st_size:
             db.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(cached, db)
+            port_car.write_atomic(db, cached.read_bytes())
             log(f"wrote {db}")
         done[f"gamedb {name}"] = db
     return done

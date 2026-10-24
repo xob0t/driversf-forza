@@ -1,5 +1,6 @@
 """register.lua with and without dsfforza.asi's garage module, against stubbed
-game APIs (lupa, Lua 5.1). Needs out/lua-src (tools/game_data.py prepare).
+game APIs (lupa, Lua 5.1). Needs out/lua-src (tools/game_data.py prepare, which
+tools/worktree-setup.ps1 and port_batch run).
 
     python tools/asi/test/test_register_asi.py     # or every test: python -m tools.tests
 
@@ -62,6 +63,8 @@ def run(asi: bool, groups: int = 120, max_id: int = 999):
 
     g.user_open = user_open
     g.py_unlocked = unlocked
+    if not STATS.exists():
+        raise FileNotFoundError(f"{STATS}: run python tools/game_data.py prepare")
     lua.execute(STATS.read_text(encoding="utf-8"))
     lua.execute("""
     calls = {}
