@@ -21,12 +21,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import chnk  # noqa: E402
 import forzazip  # noqa: E402
+import game_data  # noqa: E402
 import gui_assets  # noqa: E402
 import handling  # noqa: E402
 import lua_scripts  # noqa: E402
 import lzx  # noqa: E402
 import minidump  # noqa: E402
 import stfs  # noqa: E402
+import traffic_sets  # noqa: E402
 import wwise_bank as wb  # noqa: E402
 import xds  # noqa: E402
 import xiso  # noqa: E402
@@ -318,6 +320,23 @@ def test_name_hashes_share_the_crc() -> None:
     assert gui_assets.name_hash("Nissan_370Z") == lua_scripts.crc("nissan_370z")
     assert lua_scripts.com_hash("Common\\A.lua") == lua_scripts.crc("com:luascripts\\common\\a.lua")
     assert lua_scripts.crc("") == 0xFFFFFFFF
+    assert traffic_sets.name_hash("Chapter 1") == lua_scripts.crc("Chapter 1")   # case kept
+
+
+def test_vehiclestats_read_back() -> None:
+    """game_data.read_vehiclestats (handling.lua_stats, gui_assets.stock_stats) on the
+    layout game_data.vehiclestats_text writes."""
+    table = {62: {"Manufacturer": game_data.Num(41, 4), "Year": "1970", "Picture1": "dodge, challenger",
+                  "Price": game_data.Num(1.5, 4)},
+             63: {"Selectable": True, "Drivetrain": "RWD"}}
+    text = game_data.format_table("vehicleStats", table).replace("\n", "\r\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "vehiclestats.lua"
+        path.write_bytes(text.encode("utf-8"))
+        expected = {62: {"Manufacturer": "41", "Year": "1970", "Picture1": "dodge, challenger", "Price": "1.5"},
+                    63: {"Selectable": "true", "Drivetrain": "RWD"}}
+        assert game_data.read_vehiclestats(path) == expected
+        assert handling.lua_stats(path) == expected
 
 
 def test_xds_tiling_is_a_permutation() -> None:

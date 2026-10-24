@@ -64,7 +64,8 @@ GLASS_LOD1 = bytes.fromhex("10122b9953b14e2a")
 TRIM_LOD1 = bytes.fromhex("10122b9753b14e2a")
 TYRE_LOD1 = bytes.fromhex("10122b9b53b14e2a")
 # Vertex stride each material was used with in the Desanne, and MODL render flag
-# (the _LOD1 twins: the same in stock exteriors, e.g. 147, 171, 227).
+# (the _LOD1 twins: the same in stock exteriors, e.g. 147, 171, 227). Read only:
+# each conversion adds its host's own materials to a copy (Builder.layout).
 MATERIAL_LAYOUT = {PAINT: (32, 5), GLASS: (28, 7), TRIM: (28, 5), TYRE: (20, 5),
                    PAINT_LOD1: (32, 5), GLASS_LOD1: (28, 7), TRIM_LOD1: (28, 5), TYRE_LOD1: (20, 5)}
 
@@ -363,6 +364,9 @@ class Builder:
     buffers: dict[int, bytearray] = field(default_factory=dict)  # stride -> vertex bytes
     indices: list[int] = field(default_factory=list)
     subs: list[NewSub] = field(default_factory=list)
+    # material UID -> (vertex stride, MODL flag): MATERIAL_LAYOUT plus this conversion's
+    # host materials (convert shares one dict between its builders).
+    layout: dict[bytes, tuple[int, int]] = field(default_factory=lambda: dict(MATERIAL_LAYOUT))
 
     def new_uid(self) -> bytes:
         """A stock-looking resource UID: [counter<<4] 0x12 [counter>>4] prefix[3]
@@ -383,7 +387,7 @@ class Builder:
         return bytes([(self.counter << 4) & 0xFF, 0x12, self.counter >> 4, p[0], p[1], p[2], p[3] & 0x7F, 0x2D])
 
     def add(self, material: bytes, verts: list[bytes], tris: list[tuple[int, int, int]]) -> NewSub:
-        stride, flag = MATERIAL_LAYOUT[material]
+        stride, flag = self.layout[material]
         buf = self.buffers.setdefault(stride, bytearray())
         base = len(buf) // stride
         for v in verts:
@@ -650,7 +654,7 @@ def add_geometry(builder: Builder, sections, lod: int, place: Placement, wheel: 
     added = []
     for groups in batches:
         for material, items in groups.items():
-            stride = MATERIAL_LAYOUT[material][0]
+            stride = builder.layout[material][0]
             verts_out, remap, tris = [], {}, []
             window = None
             if interior_glass and material in glass_materials:
@@ -1217,14 +1221,15 @@ def convert(stream, full: Entry, exterior: Entry, car: ForzaCar, dims: CarDims, 
                                   "rear_hub_y": round(rear_hub_y, 4), "tyres": tyres}}
 
     tex_full = tex_ext = None
+    layout = dict(MATERIAL_LAYOUT)   # this conversion's materials (no state shared between cars)
     if opts.textures:
         import dsf_materials
         lods = set(opts.lods.values()) | {opts.shadow_lod, opts.exterior_lod}
         tex_full, tex_ext = dsf_materials.prepare(stream, full, exterior, car.folder, car.body, lods,
                                                   mode=opts.textures, size=opts.atlas_size,
                                                   swatch_trims=opts.swatch_trims, log=log, interior_vehc=interior)
-        MATERIAL_LAYOUT.update(tex_full.layout)
-        MATERIAL_LAYOUT.update(tex_ext.layout)
+        layout.update(tex_full.layout)
+        layout.update(tex_ext.layout)
 
     # Cockpit: fit the Forza cockpit and find the host's steering-wheel node first,
     # so the body's steering wheel can be skinned to it as well.
@@ -1294,7 +1299,7 @@ def convert(stream, full: Entry, exterior: Entry, car: ForzaCar, dims: CarDims, 
 
     if not opts.skip_full:
         # Full entry: part 0 gets the body per LOD, the wheel part gets the wheel.
-        builder = Builder(seed)
+        builder = Builder(seed, layout=layout)
         part_lods: dict[int, dict[int, list[NewSub]]] = {0: {}}
         for mask, lod in opts.lods.items():
             if dmg is not None:  # per-panel parts plus the merged part 0
@@ -1342,7 +1347,7 @@ def convert(stream, full: Entry, exterior: Entry, car: ForzaCar, dims: CarDims, 
     if not opts.skip_exterior:
         # Clean exterior entry: body in part 0, the wheel in the part(s) the wheel records'
         # LOD links name (the last part on the Desanne).
-        ext_builder = Builder(seed[:3] + bytes([seed[3] ^ 0xFF]))
+        ext_builder = Builder(seed[:3] + bytes([seed[3] ^ 0xFF]), layout=layout)
         ext_modl_entry = child(child(exterior, "NONR"), "MODL")
         ext_template = payload(stream, ext_modl_entry)
         ext_parts = struct.unpack_from("<I", ext_template)[0]
@@ -1388,7 +1393,7 @@ def convert(stream, full: Entry, exterior: Entry, car: ForzaCar, dims: CarDims, 
         interior_report = cockpit.convert_interior(stream, interior, car, cf, place, seed, paint_uv,
                                                    opts.cockpit_opts or cockpit.CockpitOptions(),
                                                    host_cp.wheel_skin, log=log, glass_links=links,
-                                                   glass_skin=interior_glass_skin(dmg, car, opts))
+                                                   glass_skin=interior_glass_skin(dmg, car, opts), layout=layout)
         if dmg is not None:  # the shell's paint samples the decal atlas at UV1 too
             dmg.interior_uv1(stream, interior)
         # The engine picks each needle's transform by semantic 8's gauge id; any

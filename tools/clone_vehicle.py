@@ -35,7 +35,7 @@ import struct
 import sys
 from pathlib import Path
 
-from chnk import Entry, read_chunk, walk, write_chunk
+from chnk import ENTRY_LIMIT, Entry, read_chunk, walk, write_chunk
 from vehicles import SSLP_RECORD, VSCT_RECORD, find, parse_sslp
 
 ID_FIELDS = {"VSVH": 0x00, "VO3D": 0x00, "SPID": 0x00, "UPVH": 0x14}
@@ -298,10 +298,7 @@ def register_clones(stream, entries: list[Entry], clones: list[Entry], source_id
     return new_indices
 
 
-ROOT_LIMIT = 1100  # entries the stock CHNK reader holds; dsfforza.asi [archive] lifts it (spool-limits.md)
-
-
-def check_root(entries: list[Entry], root_limit: int = ROOT_LIMIT) -> None:
+def check_root(entries: list[Entry], root_limit: int = ENTRY_LIMIT) -> None:
     """The game reads at most root_limit root entries (1100 unless dsfforza.asi's
     archive module is installed); more corrupts the reader."""
     if len(entries) > root_limit:
@@ -322,7 +319,7 @@ def parse_ids(text: str) -> list[int]:
 
 
 def clone(archive: Path, out: Path, source_id: int | list[int], new_id: int | list[int], name: str | None,
-          new_uids: bool = False, sound_id: int | None = None, root_limit: int = ROOT_LIMIT) -> None:
+          new_uids: bool = False, sound_id: int | None = None, root_limit: int = ENTRY_LIMIT) -> None:
     """One clone, or many: new_id may be a list, and source_id a list the new IDs
     cycle through (limit tests: tools/clone_vehicle.py ... --source 248,293 --id 1-61,304-999)."""
     sources = source_id if isinstance(source_id, list) else [source_id]
@@ -367,8 +364,8 @@ def main(argv: list[str] | None = None) -> None:
                         help="give the clone's submodels, buffers, textures, materials and MODL parts "
                              "fresh UIDs")
     parser.add_argument("--sound-host", type=int, help="take the engine sound (NONR/VSRT) from this stock vehicle")
-    parser.add_argument("--root-limit", type=int, default=ROOT_LIMIT,
-                        help=f"root entries allowed (default {ROOT_LIMIT}; more needs dsfforza.asi [archive])")
+    parser.add_argument("--root-limit", type=int, default=ENTRY_LIMIT,
+                        help=f"root entries allowed (default {ENTRY_LIMIT}; more needs dsfforza.asi [archive])")
     args = parser.parse_args(argv)
     if args.out.resolve() == args.archive.resolve():
         raise SystemExit("refusing to overwrite the source archive")

@@ -76,13 +76,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import game_paths  # noqa: E402
 import gentle  # noqa: E402
+from chnk import ENTRY_LIMIT  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 TOOLS = REPO / "tools"
 DEFAULT_GAME = Path("D:/Games/Driver San Francisco")
 GARAGE_IDS = range(1, 62)          # garage loop covers 0..303; 0 is left alone, stock starts at 62
 HIGH_FIRST_ID = 304
-ROOT_ENTRY_LIMIT = 1100          # stock CHNK reader; more needs dsfforza.asi [archive] (--root-limit)
 WORKER_TIMEOUT = 45 * 60
 FREE_RAM_FOR_WORKER = 1536 << 20
 BELOW_NORMAL = 0x00004000
@@ -369,10 +369,10 @@ def garage_group(make: str, group: str, counts: dict[str, int], cap: int, groups
 
 def root_limit_of(args) -> int:
     """--root-limit: 1100 (stock) unless the install uses dsfforza.asi's archive module."""
-    limit = getattr(args, "root_limit", None) or ROOT_ENTRY_LIMIT
-    if limit > ROOT_ENTRY_LIMIT:
+    limit = getattr(args, "root_limit", None) or ENTRY_LIMIT
+    if limit > ENTRY_LIMIT:
         print(f"note: root limit {limit}: the archive needs dsfforza.asi with [archive] enabled "
-              f"(the stock game reads {ROOT_ENTRY_LIMIT} entries)", file=sys.stderr)
+              f"(the stock game reads {ENTRY_LIMIT} entries)", file=sys.stderr)
     return limit
 
 
@@ -678,7 +678,7 @@ class MultiStream:
 
 
 def merge(dsf: Path, out: Path, results: list[dict], work: Path, log=print,
-          root_limit: int = ROOT_ENTRY_LIMIT) -> tuple[list[dict], list[dict]]:
+          root_limit: int = ENTRY_LIMIT) -> tuple[list[dict], list[dict]]:
     """Register every built car into a copy of the stock archive. Returns (entries
     of the manifest's "cars", failures found here)."""
     import clone_vehicle
@@ -1041,8 +1041,8 @@ def main(argv: list[str] | None = None) -> None:
                             "asi: every free ID from 1 (stock gaps in 62..303 too), then --first-id up, garage-listed "
                             "through dsfforza.asi (research/asi.md)")
         p.add_argument("--first-id", type=int, default=HIGH_FIRST_ID)
-        p.add_argument("--root-limit", type=int, default=ROOT_ENTRY_LIMIT,
-                       help=f"root entries allowed (default {ROOT_ENTRY_LIMIT}, the stock reader); "
+        p.add_argument("--root-limit", type=int, default=ENTRY_LIMIT,
+                       help=f"root entries allowed (default {ENTRY_LIMIT}, the stock reader); "
                             "more needs dsfforza.asi [archive], e.g. 3003 for every base ID below 1000")
         if name == "plan":
             p.add_argument("--tsv", type=Path)
@@ -1065,8 +1065,8 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--dsf", type=Path, default=DEFAULT_GAME / "Install" / "dngvehicles.sp")
     r.add_argument("--id-policy", choices=("garage", "high", "asi"), default="high")
     r.add_argument("--first-id", type=int, default=HIGH_FIRST_ID)
-    r.add_argument("--root-limit", type=int, default=ROOT_ENTRY_LIMIT,
-                   help=f"root entries allowed (default {ROOT_ENTRY_LIMIT}; more needs dsfforza.asi [archive])")
+    r.add_argument("--root-limit", type=int, default=ENTRY_LIMIT,
+                   help=f"root entries allowed (default {ENTRY_LIMIT}; more needs dsfforza.asi [archive])")
     r.add_argument("--jobs", type=int, default=4)
     r.add_argument("--gui", action="store_true")
     r.add_argument("--wide-glyphs", action="store_true", help="with --gui: 16-bit HUD glyphs (dsfforza.asi [hud])")

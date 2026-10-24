@@ -850,8 +850,10 @@ class InteriorMaterials:
     cabin_part: int
 
 
-def host_interior(stream, interior) -> InteriorMaterials:
-    """Read the host interior's materials, strides and MODL flags."""
+def host_interior(stream, interior, known: dict | None = None) -> InteriorMaterials:
+    """Read the host interior's materials, strides and MODL flags. known: the
+    conversion's material layouts (forza2dsf.Builder.layout; default
+    forza2dsf.MATERIAL_LAYOUT), for shared materials the interior doesn't use."""
     import dsf_materials as dm
     import forza2dsf
     from vehicle_mesh import child
@@ -908,7 +910,7 @@ def host_interior(stream, interior) -> InteriorMaterials:
     # one (193: Chassis_LOD1); keep the engine trim, MATERIAL_LAYOUT has its layout.
     trim = forza2dsf.TRIM
     for uid in (glass, paint, trim):
-        layout.setdefault(uid, forza2dsf.MATERIAL_LAYOUT.get(uid, (28, 5)))
+        layout.setdefault(uid, (forza2dsf.MATERIAL_LAYOUT if known is None else known).get(uid, (28, 5)))
     tex = next(iter(local["interior"]["textures"]))
     if tex not in texc:
         raise ValueError(f"interior texture {tex.hex()} is not in the interior entry")
@@ -1301,7 +1303,7 @@ def _needle_colour(atlases, section, sub) -> tuple[int, int, int, int]:
 
 def convert_interior(stream, interior, car, cf: CockpitFit, place, seed: bytes, paint_uv,
                      opts: CockpitOptions, wheel_skin: bytes, log=print, glass_links: dict | None = None,
-                     glass_skin: dict | None = None) -> dict:
+                     glass_skin: dict | None = None, layout: dict | None = None) -> dict:
     """Rebuild the interior entry (kind 1) from the Forza cockpit, in place.
 
     Cockpit sections (LOD 0) minus the race cage and, by default, the
@@ -1315,8 +1317,9 @@ def convert_interior(stream, interior, car, cf: CockpitFit, place, seed: bytes, 
     from chnk import entry_size
     from vehicle_mesh import child
 
-    mats = host_interior(stream, interior)
-    forza2dsf.MATERIAL_LAYOUT.update(mats.layout)
+    # layout: the conversion's material layouts (forza2dsf.convert's), plus the interior's.
+    mats = host_interior(stream, interior, layout)
+    layout = {**(forza2dsf.MATERIAL_LAYOUT if layout is None else layout), **mats.layout}
     mdxn = child(interior, "MDXN")
     drsp = child(mdxn, "DRSP")
     original_children = list(drsp.children)
@@ -1400,7 +1403,7 @@ def convert_interior(stream, interior, car, cf: CockpitFit, place, seed: bytes, 
         t.plan(current, {0}, extra_solids=needle_colours)
         child(texc, "DXTC").payload = t.dds(template=host_dds)
         binding = CockpitBinding(t, mats, paint_uv)
-        builder = forza2dsf.Builder(seed[:3] + bytes([seed[3] ^ 0x55]))
+        builder = forza2dsf.Builder(seed[:3] + bytes([seed[3] ^ 0x55]), layout=layout)
         cabin = forza2dsf.add_geometry(builder, current, 0, place, wheel=False, textures=binding, merge=True,
                                        shared=mats.shared, skin={**(glass_skin or {}), "steering_wheel": wheel_skin},
                                        glass_links=glass_links, glass_rect=forza2dsf.INTERIOR_GLASS_RECT,

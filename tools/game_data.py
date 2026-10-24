@@ -216,6 +216,18 @@ def format_table(name: str, table: dict) -> str:
     return "\n".join([f"{name} = {{"] + body(table, 1) + ["}"]) + "\n"
 
 
+def read_vehiclestats(path: Path) -> dict[int, dict[str, str]]:
+    """vehiclestats.lua as written by vehiclestats_text (unluac's layout):
+    {id: {field: value}}, every value as its text, string quotes removed."""
+    import re
+    out = {}
+    text = Path(path).read_text(encoding="utf-8")
+    for match in re.finditer(r"\[(\d+)\]\s*=\s*\{(.*?)\n\s*\}", text, re.S):
+        out[int(match.group(1))] = {key: value.strip('"') for key, value in
+                                    re.findall(r"(\w+)\s*=\s*(\"[^\"]*\"|[^,\n]+)", match.group(2))}
+    return out
+
+
 def vehiclestats_text(scripts_package: Path) -> str:
     """vehiclestats.lua as unluac prints it, from media/ScriptsLuaScripts.fchunk."""
     import lua_scripts

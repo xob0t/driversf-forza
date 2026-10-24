@@ -56,6 +56,18 @@ def test_a_worker_that_dies_is_a_failed_car():
         assert not (work / "DEAD.first-try.log").exists()   # no option fallback was tried
 
 
+def test_builders_keep_their_own_material_layouts():
+    """forza2dsf.MATERIAL_LAYOUT is read only; each conversion's host materials live
+    in its builders' layout (a second car in the same process saw the first's)."""
+    import forza2dsf
+    before = dict(forza2dsf.MATERIAL_LAYOUT)
+    a, b = forza2dsf.Builder(b"\0\0\0\1"), forza2dsf.Builder(b"\0\0\0\2")
+    a.layout[b"hostmat1"] = (32, 5)
+    assert b"hostmat1" not in b.layout and forza2dsf.MATERIAL_LAYOUT == before
+    a.add(b"hostmat1", [b"\0" * 32] * 3, [(0, 1, 2)])
+    assert a.subs[0].stride == 32
+
+
 def test_write_atomic_leaves_no_temp():
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "a.bin"

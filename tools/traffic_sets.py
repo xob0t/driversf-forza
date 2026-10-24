@@ -35,7 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import chnk  # noqa: E402
-from lua_scripts import CRC_TABLE  # noqa: E402
+from lua_scripts import crc  # noqa: E402
 
 DEFAULT = "D:/Games/Driver San Francisco/media/san_franciscoAI.fchunk"
 DIRECTORY = 0x50
@@ -58,10 +58,8 @@ KNOWN = [
 
 
 def name_hash(text: str) -> int:
-    value = 0xFFFFFFFF
-    for char in text:
-        value = (value >> 8) ^ CRC_TABLE[(ord(char) ^ value) & 0xFF]
-    return value
+    """A progression name's hash: the game's CRC of the name as given (case-sensitive)."""
+    return crc(text)
 
 
 def aiex(path: Path) -> tuple[int, bytes]:

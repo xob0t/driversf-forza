@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import math
-import re
 import sqlite3
 import statistics
 import struct
@@ -231,15 +230,11 @@ def hub_geometry(upvh_data: bytes) -> tuple[float, float, float, float]:
 
 
 def lua_stats(path: Path | None) -> dict[int, dict[str, str]]:
-    """vehicleStats from the game's vehiclestats.lua: {id: {key: value}}."""
+    """vehicleStats from the game's vehiclestats.lua: {id: {key: value}} (game_data.read_vehiclestats)."""
     if path is None:
         return {}
-    text = path.read_text(encoding="latin-1")
-    out = {}
-    for match in re.finditer(r"\[(\d+)\]\s*=\s*\{(.*?)\n\s*\}", text, re.S):
-        out[int(match.group(1))] = {k: v.strip('"') for k, v in
-                                    re.findall(r"(\w+)\s*=\s*(\"[^\"]*\"|[^,\n]+)", match.group(2))}
-    return out
+    import game_data
+    return game_data.read_vehiclestats(path)
 
 
 def load_host(archive: Path, spool_id: int, lua: Path | None = None) -> Host:

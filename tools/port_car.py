@@ -84,19 +84,18 @@ import clone_vehicle  # noqa: E402
 import cockpit  # noqa: E402
 import forza2dsf  # noqa: E402
 import handling  # noqa: E402
-from chnk import entry_size, layout, read_chunk, write_chunk  # noqa: E402
+from chnk import ENTRY_LIMIT, entry_size, layout, read_chunk, write_chunk  # noqa: E402
 from forza_roster import Source, roster  # noqa: E402
 from forzazip import ForzaZip  # noqa: E402
-from stfs import Stfs  # noqa: E402
+import stfs  # noqa: E402
 from vehicle_mesh import child  # noqa: E402
-from xiso import SECTOR, XIso  # noqa: E402
+from xiso import XIso  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 GAME_PREFERENCE = ("FH1", "FM4")
 FULL_LADDER = ("4:3,8:4,16:5", "4:4,8:4,16:5", "4:4,8:5,16:5", "4:5,8:5,16:5")
 EXTERIOR_LADDER = (1, 2, 3, 4)
 SHADOW_LOD = 5
-CHNK_ENTRY_LIMIT = 1100   # entries per CHNK the stock reader holds (spool-limits.md); dsfforza.asi [archive] lifts it
 STATIC_READ_BUFFER = 0x280000
 # Car files the conversion reads; matched case-insensitively against the car's
 # folder in the zip. The carbin is required, the rest are used when present.
@@ -184,7 +183,7 @@ def open_car_zip(source: Source) -> tuple[XIso, ForzaZip, str]:
     image = XIso(source.iso)
     if source.package:
         entry = image.find(source.package)
-        package = Stfs(image.stream, image.base + entry.sector * SECTOR, entry.size)
+        package = stfs.in_image(image, entry)
         inner, folder = source.path.split("::", 1)
         return image, ForzaZip(package.open(inner)), folder.lower()
     return image, ForzaZip(image.open(image.find(source.path))), ""
@@ -315,8 +314,8 @@ def check_entry(vehc, kind: int, nonr_limit: dict, mdxn_max: dict) -> tuple[dict
         problems.append(f"VEHC read size {read:#x} > static buffer {STATIC_READ_BUFFER:#x}")
     for mdxn in (c for c in vehc.children if c.tag == "MDXN"):
         for drsp in (c for c in mdxn.children if c.tag == "DRSP"):
-            if len(drsp.children) > CHNK_ENTRY_LIMIT:
-                problems.append(f"DRSP has {len(drsp.children)} children (> {CHNK_ENTRY_LIMIT})")
+            if len(drsp.children) > ENTRY_LIMIT:
+                problems.append(f"DRSP has {len(drsp.children)} children (> {ENTRY_LIMIT})")
     sizes["VEHC"] = total
     return sizes, problems
 
@@ -699,8 +698,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--first-id", type=int, default=304, help="first base spool ID to try (default 304)")
     parser.add_argument("--iso", type=Path, action="append", help="Forza disc images (default: assets/*.iso)")
     parser.add_argument("--cache", type=Path, default=REPO / "out" / "cache", help="extraction cache")
-    parser.add_argument("--root-limit", type=int, default=CHNK_ENTRY_LIMIT,
-                        help=f"root entries allowed in the output archive (default {CHNK_ENTRY_LIMIT}, the stock "
+    parser.add_argument("--root-limit", type=int, default=ENTRY_LIMIT,
+                        help=f"root entries allowed in the output archive (default {ENTRY_LIMIT}, the stock "
                              "reader); more needs dsfforza.asi with [archive] enabled")
     parser.add_argument("--mdxn-limit", type=lambda text: int(text, 0),
                         help="allow MDXN up to this size in every entry instead of the stock maximum "
@@ -801,10 +800,10 @@ def main(argv: list[str] | None = None) -> None:
         records = {s: i for s, i, _ in clone_vehicle.sslp_records(stream, entries)}
         for c in manifest["cars"]:
             c["vehc"] = [records[c["spool_id"] + k] for k in clone_vehicle.KIND_OFFSETS]
-        root_limit = getattr(args, "root_limit", None) or CHNK_ENTRY_LIMIT
+        root_limit = getattr(args, "root_limit", None) or ENTRY_LIMIT
         if len(entries) > root_limit:
             raise SystemExit(f"{len(entries)} root entries (> {root_limit}; --root-limit, needs dsfforza.asi "
-                             f"[archive] above {CHNK_ENTRY_LIMIT})")
+                             f"[archive] above {ENTRY_LIMIT})")
         clashes = uid_clashes(stream, entries, {i for c in manifest["cars"] for i in c["vehc"]})
         if clashes and not args.share_host_uids:
             raise SystemExit(f"resource UID clashes: {clashes}")

@@ -151,11 +151,8 @@ def append_patch(source: Path, data: bytearray, root, replace: dict, add: list) 
     return data
 
 
-ROOT_LIMIT = 1100   # entries per CHNK the game's reader holds (research/spool-limits.md)
-
-
 def add_pictures(source: Path, out: Path, pictures: dict[str, bytes], uid_seed: int = 0x2E5A00,
-                 root_limit: int = ROOT_LIMIT) -> dict:
+                 root_limit: int = chnk.ENTRY_LIMIT) -> dict:
     """Write a copy of gui.sp with `pictures` (name -> DDS) added. Names that
     already exist get their image replaced in the copy instead (a new SPOI,
     the name pointed at it). One SPOI per picture while the root stays under
@@ -562,7 +559,9 @@ def stock_backdrop(gui: Path = GUI) -> Image:
     cached = CACHE / "backdrop.rgba"
     w, h = PICTURE_SIZE
     if cached.exists():
-        return Image(w, h, cached.read_bytes())
+        data = cached.read_bytes()
+        if len(data) == w * h * 4:   # else cut short (written in place before): rebuild
+            return Image(w, h, data)
     pics = stock_pictures(gui)
     x0, y0, x1, y1 = PANEL
     img = Image(w, h)
@@ -613,8 +612,10 @@ def stock_backdrop(gui: Path = GUI) -> Image:
             if not known[y * w + x]:
                 t = 1.0
             img.px[o:o + 4] = bytes([int(img.px[o + c] * (1 - t) + mean[c] * t) for c in range(3)] + [255])
+    # Atomic: out/cache is shared by every worktree's builds.
+    from port_car import write_atomic
     CACHE.mkdir(parents=True, exist_ok=True)
-    cached.write_bytes(bytes(img.px))
+    write_atomic(cached, bytes(img.px))
     return img
 
 
@@ -1224,18 +1225,11 @@ def add_strings(source: Path, out: Path, texts: dict[int, str]) -> dict:
 
 
 def stock_stats() -> dict[int, dict]:
-    """vehicleStats.lua (decompiled stock copy) as {id: {field: value}}."""
-    import re
+    """vehicleStats.lua (decompiled stock copy) as {id: {field: value}} (game_data.read_vehiclestats)."""
     if not VEHICLE_STATS_LUA.exists():
         return {}
-    out = {}
-    src = VEHICLE_STATS_LUA.read_text(encoding="utf-8")
-    for sid, body in re.findall(r"\[(\d+)\] = \{(.*?)\n  \}", src, re.S):
-        fields = {}
-        for key, value in re.findall(r"(\w+) = (\"[^\"]*\"|[^,\n]+)", body):
-            fields[key] = value.strip('"') if value.startswith('"') else value
-        out[int(sid)] = fields
-    return out
+    import game_data
+    return game_data.read_vehiclestats(VEHICLE_STATS_LUA)
 
 
 def stock_codes(strings: dict[int, str]) -> tuple[dict, dict]:
@@ -1493,7 +1487,7 @@ def plan_wide_glyphs(cars: list[dict], texts: dict[str, dict], makes: dict, mode
 
 def build(manifest: Path, out_dir: Path, names: dict[str, str] | None = None, archive: Path | None = None,
           gui: Path = GUI, fonts: Path = FONTS, log=print, control_codes: bool = False,
-          wide_glyphs: bool = False, root_limit: int = ROOT_LIMIT) -> dict:
+          wide_glyphs: bool = False, root_limit: int = chnk.ENTRY_LIMIT) -> dict:
     """Garage pictures, HUD glyphs and dsfforza\\hud.lua for the cars of a
     tools/port_car.py manifest. Writes out_dir/gui.sp, out_dir/Fonts.fchunk,
     out_dir/hud.lua and a PNG preview per picture. `wide_glyphs` also gives
@@ -1681,8 +1675,8 @@ def main(argv: list[str] | None = None) -> None:
     b.add_argument("--wide-glyphs", action="store_true",
                    help="every car its own badge/plate as 16-bit glyphs on extra font pages "
                         "(ManufacturerGlyph/ModelGlyph; needs dsfforza.asi [hud], else the one-byte codes show)")
-    b.add_argument("--root-limit", type=int, default=ROOT_LIMIT,
-                   help=f"gui.sp root entries before pictures share a SPOI (default {ROOT_LIMIT}, the stock "
+    b.add_argument("--root-limit", type=int, default=chnk.ENTRY_LIMIT,
+                   help=f"gui.sp root entries before pictures share a SPOI (default {chnk.ENTRY_LIMIT}, the stock "
                         "CHNK reader; dsfforza.asi [archive] lifts it, e.g. 16384: one SPOI per picture)")
     t = sub.add_parser("glyphtest", help="16-bit glyph stress test: numbered badges and plates, hud.lua for IDs")
     t.add_argument("--out", type=Path, default=Path("out/hud/glyphtest"))

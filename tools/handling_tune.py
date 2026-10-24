@@ -109,8 +109,10 @@ def load_json(path: Path) -> dict:
 
 
 def save_json(path: Path, data: dict) -> None:
+    """Atomic (out/cache is shared; handling_dsf.apply reads handling-tune.json in every build)."""
+    from port_car import write_atomic
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=1))
+    write_atomic(path, json.dumps(data, indent=1).encode())
 
 
 # --- targets -------------------------------------------------------------------------
