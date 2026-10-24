@@ -473,6 +473,15 @@ M5 F10 and Mustang already sit at or below 92. Built (`out/emissive/build2`,
 DSF side): TT visible brightness 127 to 87, M3 E30 124 to 84, 370Z 74
 unchanged; alpha unchanged.
 
+In game (run `vm-20261024-060832`, `out/emissive/build2`, IDs 3 = TT, 4 = M3
+E30, next to stock 136 and 266; `research/img/emissive-ttrs-tails.jpg`): on
+the throttle in sun the TT's tails are a deeper red (red lamp pixels 201,
+was 224; stock 266 173 in the same run) and braking shows a hot centre
+instead of a flat patch; the M3 E30 measures 174 on the throttle, as stock.
+The TT still reads a little brighter than stock in direct sun with its
+texels below stock's median: its lens tilts up into the sky (lighting, not
+texture; open). The A4 control was hit by traffic in that run.
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and
@@ -710,6 +719,9 @@ scaled by the largest factor that keeps every measure at or below the stock
 maximum (computed from the stock palettes, not a constant). Only the Saleen
 changes: x0.705, colour 2 (0.705, 0.367, 0.007), a #dba314 yellow
 (`install` reports `dimmed`).
+In game (run `vm-20261024-060602`, `out/emissive/build2` ID 1;
+`research/img/emissive-saleen-chase.jpg` against `host-20261024-013435`) the
+body is a plain yellow with no halo.
 
 ### Survey of the 40 testdrive cars (`out/testdrive3`, offline)
 

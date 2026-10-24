@@ -111,7 +111,8 @@ patch of the car atlases: a 3-texel column at the edge of the seat artwork in
 `classify_cockpit` sent every "badge") the yellow and blue stitching bands.
 Drawn from the atlas they were the Agera's bright yellow and blue streaks on
 the dashboard and the blue patches seen through the windscreen (user report
-on `out/testdrive9`).
+on `out/testdrive9`). After (run `vm-20261024-060602`, ID 2): a plain dash top, no wing
+patches (`research/img/emissive-agera-cockpit.jpg`, `emissive-agera-wing-render.png`).
 
 Plates: `numberplate` (a plate quad on 2 of the 40 testdrive cars) and
 `numplate` (the plate lamp strip) stay trim; the converter replaces
