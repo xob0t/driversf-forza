@@ -46,8 +46,6 @@ param(
     [switch]$Damage,     # probe: GameVehicleResource.fullVisualDamage on each car in chase view (research/damage.md)
     [switch]$DamagePanels, # with -Damage: then forceOpenPanels (~6 s) and removeAllPanels (~9 s) in the same view
     [switch]$DamageSide, # probe: a parked side-on copy of each car takes applyDamage hits (wing, door, quarter) in chase view
-    [string]$DamageRam,  # probe: real crashes in chase view, e.g. 'side,front,rear': the player's car rams a parked copy
-                         # turned that way, then backs off so the camera sees it (clonetest.lua DAMAGE_RAM)
     [switch]$GlassLadder, # probe: damage in steps during each cockpit view (clonetest.lua GLASS_STEPS, ~21 s)
     [switch]$LightsDriveOnly, # with -Lights: only the day and dark drives, no setLights phases
     [switch]$Lights,     # probe: lamp phases per car (dsfforza\lightstest.lua, research/lights.md); the harness
@@ -396,9 +394,6 @@ try {
                     if ($Damage) { $fields += "damage = true" }
                     if ($DamagePanels) { $fields += "damage_panels = true" }
                     if ($DamageSide) { $fields += "damage_side = true" }
-                    if ($DamageRam) {
-                        $fields += "damage_ram = { " + (($DamageRam -split ',' | Where-Object { $_ } | ForEach-Object { "`"$($_.Trim())`"" }) -join ', ') + " }"
-                    }
                     if ($GlassLadder) { $fields += "glass_ladder = true" }
                     if ($Lights) {
                         $fields += $(if ($LightsDriveOnly) { "lights = { dark = true, phases = false }" } else { "lights = { dark = true }" })
