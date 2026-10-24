@@ -276,7 +276,10 @@ In game (confirmed-runtime, headless VM, chase and new `rear` probe views):
 "205 turbo 16" lettering, the Firebird's "TRANS AM" has no plate
 (`img/badges-ingame-before-after.jpg`). Full entries grow by the cut
 geometry (205: 0x10b000 to 0x129800 MDXN, Firebird 0xf6000 to 0x11c800),
-well under the 0x2C0000 limit.
+well under the 0x2C0000 limit. All 40 testdrive cars (`out/fx/td`, `--mdxn-limit
+0x2C0000 --damage`): built, 39 lint ok; the Express fails lint as in
+`out/testdrive11`. Full-entry MDXN grows by 45 KB on average, 170 KB at most;
+the largest is 0x1e0000.
 
 ## Open
 
