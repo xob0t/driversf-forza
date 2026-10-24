@@ -15,6 +15,9 @@ each other's save; garage works.
   garage  out\batch\second-high (31 ported cars at 304..334) plus 600 fake
       vehicleStats entries 360..959 in 60 makers; opens garage 1 and walks
       the maker list with menu keys (screenshots menu-NN.png)
+  biggroup  stock archive, 39 stock cars in one maker group (cfg_biggroup.lua): scrolls
+      the card window to the end and back, picks car 24 and leaves the garage
+      (Driver.log "[dsfforza.garage] player drives model 192"); not in the default set
 Each run's folder is printed; src\dsfforza\game\savecheck.py reads its save\ copy.
 
 .EXAMPLE
@@ -48,6 +51,15 @@ if ($Only -contains 'stock') {
 if ($Only -contains 'check') {
     & $series @mode -Archives $stock -ProbeIds 266 -WaitSeconds 240 -ShotSeconds 15 -Asi out\asi\dsfforza.asi `
         -LuaFiles "$boot;dsfforza\savetest_cfg.lua=$lua\cfg_check.lua"
+}
+if ($Only -contains 'biggroup') {
+    # Stock archive, Ford and Dodge filed under Chevrolet (39 cars): open it, scroll
+    # through the window to the end and back, pick car 24 and leave the garage.
+    $keys = @('Enter:3') + @(1..9 | ForEach-Object { 'Down:1' }) + @('Enter:3') + @(1..40 | ForEach-Object { 'Right:0.8' }) +
+        @(1..15 | ForEach-Object { 'Left:0.8' }) + @('Enter:5', 'Enter:8', 'Esc:5', 'Enter:15')
+    & $series @mode -Archives $stock -ProbeIds 266 -ZoomPresses 0 -WaitSeconds 360 -ShotSeconds 15 -Asi out\asi\dsfforza.asi `
+        -LuaFiles ("$boot;dsfforza\savetest_cfg.lua=$lua\cfg_biggroup.lua;dsfforza\garagetest_on.lua=$lua\garagetest_on.lua") `
+        -MenuKeys ($keys -join ',')
 }
 if ($Only -contains 'garage') {
     $b = 'out\batch\second-high'
