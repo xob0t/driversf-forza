@@ -1395,6 +1395,9 @@ def finish(
                 out_dir / "gui",
                 archive=archive,
                 wide_glyphs=getattr(args, "wide_glyphs", False),
+                # The same CHNK reader limit: with dsfforza.asi [archive] gui.sp gets one
+                # SPOI per picture too, not shared SPOIs past 177 (research/gui-assets.md).
+                root_limit=getattr(args, "root_limit", None) or ENTRY_LIMIT,
                 jobs=max(1, args.jobs),
             )
         except Exception as error:  # the archive is still usable without pictures and badges
