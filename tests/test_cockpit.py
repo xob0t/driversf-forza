@@ -5,9 +5,11 @@ uv run python tests/test_cockpit.py     # or every test: uv run python -m tests 
 
 from __future__ import annotations
 
+import struct
+
 from dsfforza.convert import cockpit
 from dsfforza.convert import forza_materials as fm
-from dsfforza.formats import carbin
+from dsfforza.formats import carbin, upvh
 
 
 def _display(transform: tuple, width: float = 0.25, height: float = 0.08) -> carbin.Section:
@@ -87,6 +89,48 @@ def test_upgrade_bonnets_left_out():
     kept = [s.name for s in forza2dsf.stock_sections(sections)]
     dropped = {"cagerace", "hoodCIrace", "hoodPSrace", "hoodb", "hoodg"}
     assert kept == [n for n in names if n not in dropped], kept
+
+
+def _hierarchy(markers: list[tuple[int, tuple, tuple]]) -> bytes:
+    """A minimal UPVH: one marker record per (role, position, quaternion), the markers
+    table and nothing else."""
+    head = bytearray(upvh.HEADER_SIZE)
+    head[:4] = b"AWHF"
+    struct.pack_into("<6I", head, 4, 0, 0, 26, len(markers), 1, 0)
+    struct.pack_into("<H", head, 0x28, len(markers))
+    records, table = bytearray(), bytearray()
+    for n, (role, pos, quat) in enumerate(markers):
+        rec = bytearray(upvh.RECORD_SIZE)
+        rec[:8] = upvh.NONE_UID
+        struct.pack_into("<HH", rec, 0x08, 3, role)
+        struct.pack_into("<hhh", rec, 0x1A, n, -1, -1)
+        records += rec
+        table += struct.pack("<3f4x4f", *pos, *quat)
+    return bytes(head + records + table)
+
+
+def test_seat_follows_the_steering_marker():
+    # The driver model holds the wheel only where stock cars have it in the seat's
+    # frame: the seat goes where that puts the marker, at the host's seat tilt
+    # (Mustang Shelby GT500 1967, 193: -5 deg; its own marker sits at (0.505, 0.385) from the seat).
+    tilt = (-0.0436, 0.0, 0.0, 0.999)
+    marker = (0.3853, 0.1646, 0.1733)
+    data = _hierarchy(
+        [(47, marker, (0.2, 0, 0, 0.98)), (10, (0.3, -0.4, -0.12), tilt), (11, (-0.3, -0.4, -0.12), tilt)]
+    )
+    out, report = cockpit.patch_seats(data, eye_dsf=(0.385, 0.391, -0.296))
+    h = upvh.parse(out)
+    seat = struct.unpack_from("<3f", h.table("markers")[1])
+    passenger = struct.unpack_from("<3f", h.table("markers")[2])
+    assert abs(seat[0] - marker[0]) < 1e-6 and passenger == (-seat[0], seat[1], seat[2])
+    assert struct.unpack_from("<4f", h.table("markers")[1], 0x10) == struct.unpack_from(
+        "<4f", upvh.parse(data).table("markers")[1], 0x10
+    )
+    # in the seat's frame the marker is the stock point; in model space the host's own offset
+    frame = cockpit.quat_rotate((-tilt[0], 0, 0, tilt[3]), tuple(m - s for m, s in zip(marker, seat)))
+    assert max(abs(a - b) for a, b in zip(frame, cockpit.STOCK_MARKER_FROM_SEAT)) < 1e-4
+    assert abs(marker[1] - seat[1] - 0.505) < 2e-3 and abs(marker[2] - seat[2] - 0.385) < 2e-3
+    assert report["driver"]["from"] == [0.3, -0.4, -0.12] and "body_eye_from_camera" in report
 
 
 if __name__ == "__main__":

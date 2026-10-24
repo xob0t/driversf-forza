@@ -19,7 +19,7 @@ TOOLS = {
     for group, names in {
         "formats": "carbin chnk forza_audio forza_strings forzazip lua_scripts minidump stfs upvh vehicle_mesh "
         "vehicles wwise_bank xds xiso",
-        "convert": "chassis_variants cockpit cockpit_survey damage dsf_materials engine_sound exp_hollow forza2dsf "
+        "convert": "chassis_variants cockpit cockpit_survey damage driver_survey dsf_materials engine_sound exp_hollow forza2dsf "
         "forza_materials glass lights paint plates",
         "build": "clone_vehicle forza_roster handling handling_dsf handling_tune host_select port_batch port_car",
         "game": "game_data gui_assets savecheck spool_variants traffic_sets vehicle_limits xref",

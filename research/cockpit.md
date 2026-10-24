@@ -326,7 +326,8 @@ no camera.
    centre plus the hand shift, VO3D p538/p559 zeroed: "Driver's hands"), the speed and tach gauge
    entries (pivot, dial quaternion, sweep from the tick table), the gauge cluster hinge pivot (mean
    of the gauges), the mirrors table, and the driver/passenger seat markers
-   (roles 10/11: under the eye, host's eye-to-seat offset).
+   (roles 10/11: where they put the steering marker at the stock point of the
+   seat's frame, "The driver's seat follows the wheel").
 6. Writes VO3D 430 to 432 from the eye: `p430 = marker.x - eye.x`,
    `p431 = eye.y`, `p432 = -eye.z`.
 
@@ -377,7 +378,8 @@ fixed offline (game testing paused before a confirming run):
    the Desanne's position (y -0.306, its eye 0.796 above), while the eye and
    roofs moved down. Fix: `cockpit.patch_seats` puts the role-10 marker
    under the new eye with the host's eye-to-seat offset, and role 11
-   (passenger) at the mirrored x. Offline check (`out/glassdbg/verify.py`,
+   (passenger) at the mirrored x (since replaced: the seat now follows the
+   steering marker, "The driver's seat follows the wheel"). Offline check (`out/glassdbg/verify.py`,
    head top taken as eye + 0.12 m): in the tested archive the Desanne seat
    puts the head top at y 0.61 against roofs at 0.38 to 0.55 over the eye (through by 0.06 to
    0.23 m, matching the screenshots); with the moved seat roof - eye is
@@ -1215,7 +1217,9 @@ hands" above.
 
 **What moves what** (stock cars, runs `vm-20261024-063440` against the
 unchanged `-064829`; fixed side cameras): the driver seat marker (role 10)
-10 cm down moved Tanner's body down with his hands still on the wheel; the
+10 cm down moved Tanner's body down with his hands still on the wheel (not
+borne out by the later runs: the hands move with the seat, see "The driver's
+seat follows the wheel"); the
 steering marker 10 cm down moved hands and wheel down together; the steering
 hinge 10 cm down moved the wheel up and left the hands. So the chase-view
 hands use the same rig as the cockpit's (marker and hinge), and only the
@@ -1251,6 +1255,96 @@ views after each chase view, about 6 s each: camera modes, and fixed cameras
 looking at the driver's seat from 2.4 m to either side or 3.4 m ahead, 1.9 m
 up (`clonetest.lua` `FIXED_VIEWS`; made like the game's debug free camera).
 Camera-mode views log the camera in the car's frame.
+
+## The driver's seat follows the wheel (2026-10-24, confirmed-runtime)
+
+User report on `out/testdrive11` (with the fix above): the Mustang Boss 429
+(ID 37, host 193) still has its hands off the wheel in the chase view; the
+cockpit view is right.
+
+**Not the wheel.** Offline, the main-carbin wheel the chase view draws is
+on the cockpit wheel (`align_main_wheel` moved it 4.7 cm), and the stock
+grips at the hinge sit within 0.4 cm of its rim at every LOD. In game (run
+`vm-20261024-125959`, fixed left view) the hands are about 10 cm ahead of
+the drawn rim.
+
+**What places the chase-view hands.** One seat marker moved per stock car,
+fixed side cameras (`vm-20261024-131412` against the unchanged stock archive
+`vm-20261024-132025`; earlier `vm-20261024-130737`): 147's seat 13 cm forward
+puts the hands through the dashboard ahead of the wheel; 136's seat 9 cm
+down puts them 9 cm lower on the wheel; 124's seat 10 cm back leaves them in
+the air 10 cm behind the rim. The driver model is one animated rig on the
+seat marker, hands included; they don't reach for the wheel. (The earlier
+note above, that the seat moved the body with the hands still on the wheel,
+was a misreading.)
+
+**The stock relation** (`uv run dsff driver_survey stock`, every stock car
+with a driver seat and a steering marker): in 138 of 147 the steering marker
+sits at (0, 0.469, 0.428) in the seat marker's frame, within 1 cm, and in all
+but 202 (0, 0.473, 0.530) and the bus 243 within 2 cm. The frame is turned by
+the seat's tilt (0 or -5 degrees), so in model space host 193's marker is at
+(0, 0.505, 0.385) from its seat.
+
+**Why converted cars missed.** `patch_seats` put the seat under the Forza
+eye with the host's eye-to-seat offset. The host's head camera isn't tied
+to its seat (eye in the seat frame: y 0.64 to 0.84, z -0.29 to 0.13 over
+the fleet), and the Forza eye isn't tied to the wheel the way DSF's seat is.
+So the seat landed up to 25 cm from where the wheel needs it. On the
+Mustang the wheel ended up 9 cm high and 13 cm close in the seat's frame
+(host 193's eye sits unusually high and far back over its seat). PR #16's
+survey measured the grips at the hinge (the cockpit rig), so it couldn't
+see this.
+
+**Fix** (`cockpit.patch_seats`, `seat_for_marker`): the driver seat goes
+where it puts the steering marker (already moved to the Forza wheel centre
+plus the hand shift) at `STOCK_MARKER_FROM_SEAT` in the seat's frame, x
+included. The seat tilt stays the host's. The passenger stays mirrored. The
+head camera (VO3D 430..432) still comes from the Forza eye, so the cockpit
+view doesn't change. The report's `hierarchy.seats` has `body_eye`, the
+driver model's eyes (seat + `FLEET_EYE_ABOVE_SEAT`, the stock median), and
+`body_eye_from_camera`.
+
+**Survey** (`uv run dsff driver_survey cars`, offline from out/cache and the
+stock hosts). It measures the grips of the driver model (the stock rig at
+the stock point of the seat) against the drawn rim (the cockpit wheel fit):
+
+| Cars | Grips off the rim, before | After |
+| --- | --- | --- |
+| 40 test-drive cars (hosts of `out/testdrive11`) | median 6.0 cm, worst 10.5 (Mustang Boss 429; Supra 9.9, M5 9.9, Skyline 9.8, LFA 9.7), 31 over 3 cm | worst 0.4 cm, none over 3 cm |
+| 562 of `all.txt` (hosts of the full-roster build; 11 had no report) | median 6.2 cm, 90th percentile 12.0, worst 24.3 (330 P4), 468 over 3 cm | median 0.0, 90th percentile 0.5, 20 over 3 cm |
+
+The 20 left over 3 cm are the cockpit's own grip error, the same in the
+cockpit view: rims far from the stock 0.176 m, where the 6 cm cap on the
+hand shift binds (five FG Falcon racers 9.1 cm, Tour bus 6.2, TT-R 5.6,
+LMP and FLM racers 3.0 to 3.5).
+
+**Head room.** The driver model's head moves with the seat, by the
+difference between the Forza eye and DSF's eye relative to the wheel. Over
+the 562 cars the seat moves up by a median 3.9 cm (10th to 90th percentile
+-0.4 to 7.5; Mustang 5.7, F-350 17) and back by a median 3.7 cm (-4.0 to
+9.9). The room from the
+driver model's eyes straight up to the Forza body (LOD 1) against the stock
+fleet's (full entry, 143 cars with a roof: median 18.1 cm, 5th percentile
+12.3, lowest 8.7):
+
+| Cars | Before: median, under 8.7 cm | After |
+| --- | --- | --- |
+| 40 test-drive cars | 21.9 cm, 1 (2000GT 8.6) | 19.0 cm, 1 (2000GT 4.9) |
+| 562 of `all.txt` | 22.3 cm, 16 | 18.1 cm, 25 |
+
+One vertical ray is a coarse measure: some cars were already near 0
+before (Prius 0.3, Challenger 1970 3.6) and look normal. In game (run
+`vm-20261024-135500`, `out/chase/roof`: NSX 2005, Apollo S, Fusion racer,
+Corvette Grand Sport, Aventador LP700-4, Challenger 1970, Regal GNX; all
+under 8 cm) no head shows through a roof from the fixed views, and the hands
+hold the wheel.
+
+In game (`out/chase/after` against `out/testdrive11`, runs
+`vm-20261024-133745`, `-140036` and `-134603`): the Mustang's, M5's and
+LFA's hands are on the drawn rim now
+(`img/chase-hands-seat-before-after.jpg`). The Fusion racer, Corvette Grand
+Sport, Aventador, Challenger 1970 and Regal GNX of `out/chase/roof` also hold
+their rims.
 
 ## Risks and open questions
 
