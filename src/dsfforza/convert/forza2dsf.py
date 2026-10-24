@@ -1337,15 +1337,32 @@ class ForzaCar:
         return carbin.game_of(self.sections)
 
 
+# The wheel archive's carbin (media/wheels/<car>), cached by port_car.extract_wheel
+# under this name: one section `wheel`, the same model as the main carbin's.
+WHEEL_CARBIN = "wheel.carbin"
+
+
 def load_car(folder: Path, name: str) -> ForzaCar:
+    """The car's main carbin. The wheel is its `wheel` section; without one, the
+    stock variant of a `wheela`/`wheelb` pair (the Minis), else the `wheel` section
+    of the wheel archive's carbin (Ferrari 360 and Dino, Gallardo 05, Esperante,
+    Corvette Grand Sport: their main carbin has no wheel)."""
     path = find_file(folder, f"{name}.carbin")
     if path is None:
         raise FileNotFoundError(f"{name}.carbin not in {folder}")
     sections = carbin.parse(path.read_bytes())
+    stock = stock_sections(sections)
     wheel = [s for s in sections if s.name == "wheel"]
     if not wheel:
-        raise ValueError(f"{name}: no wheel section")
-    return ForzaCar(name, Path(folder), sections, [s for s in stock_sections(sections) if s.name != "wheel"], wheel)
+        wheel = [s for s in stock if re.fullmatch(r"wheel[a-z]", s.name)]
+    if not wheel:
+        archive = find_file(folder, WHEEL_CARBIN)
+        if archive is not None:
+            wheel = [s for s in carbin.parse(archive.read_bytes()) if s.name == "wheel"]
+    if not wheel:
+        raise ValueError(f"{name}: no wheel section (main carbin or {WHEEL_CARBIN})")
+    taken = {id(s) for s in wheel}
+    return ForzaCar(name, Path(folder), sections, [s for s in stock if s.name != "wheel" and id(s) not in taken], wheel)
 
 
 @dataclass

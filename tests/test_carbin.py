@@ -99,6 +99,49 @@ def test_skinned_tail_between_sections():
     assert [s.name for s in result.sections] == ["wheel", "body"]
 
 
+def _load(main: list[bytes], wheel_archive: list[bytes] | None = None):
+    import tempfile
+    from pathlib import Path
+
+    from dsfforza.convert import forza2dsf
+
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        (folder / "CAR_Test_10.carbin").write_bytes(_carbin(main))
+        if wheel_archive is not None:
+            (folder / forza2dsf.WHEEL_CARBIN).write_bytes(_carbin(wheel_archive))
+        return forza2dsf.load_car(folder, "CAR_Test_10")
+
+
+def test_load_car_wheel_section():
+    car = _load([_section("body", 3, 0, BOX), _section("wheel", 4, 0, BOX)], [_section("wheel", 5, 6, BOX, True)])
+    assert [s.name for s in car.wheel] == ["wheel"] and len(car.wheel[0].lod_vertices) == 4  # the main carbin's
+    assert [s.name for s in car.body] == ["body"]
+
+
+def test_load_car_wheel_variants():
+    # AUS_MiniCooperS_65: wheela (stock) and wheelb (upgrade), no wheel
+    car = _load([_section("body", 3, 0, BOX), _section("wheela", 4, 0, BOX), _section("wheelb", 5, 0, BOX)])
+    assert [s.name for s in car.wheel] == ["wheela"]
+    assert [s.name for s in car.body] == ["body"]  # neither variant is drawn as body
+
+
+def test_load_car_wheel_archive():
+    # FER_360_99, LAM_Gallardo_05...: no wheel in the main carbin, only in the wheel archive's
+    car = _load([_section("body", 3, 0, BOX)], [_section("wheel", 5, 6, BOX, True)])
+    assert [s.name for s in car.wheel] == ["wheel"] and len(car.wheel[0].lod_vertices) == 5
+    assert [s.name for s in car.body] == ["body"]
+
+
+def test_load_car_no_wheel():
+    try:
+        _load([_section("body", 3, 0, BOX)])
+    except ValueError as error:
+        assert "no wheel section" in str(error)
+    else:
+        raise AssertionError("a car without any wheel must fail")
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
