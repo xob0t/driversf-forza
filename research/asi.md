@@ -70,6 +70,32 @@ C++ copy of the function that keeps entries 1100 and up in a side table:
 **File seek** (`[archive] large_files=1`): 0x0085A9B2 `7D 07` (`JGE`) →
 `EB 07` (`JMP`), checked against `83 79 30 00 7D 07` at 0x0085A9AE.
 
+**Spool item lists** (`[archive] spool_lists=1`, confirmed-static and in game):
+
+- How the stock code loads them: a spool package's SSIC/SPOL (u32 count,
+  count x u64 item UID) is copied by 0x0059B6D0 into an inline array of 1100
+  UIDs. The array is at +0 of the provider object (constructor 0x0059B1E0),
+  the count at +0x2260.
+- The cap: for a longer list the copy is skipped (`CMP EDX,0x44C; JA`), so the
+  list stays empty.
+- What uses it: an item's index in the list is its spool ID. 0x0059B5A0 looks
+  the UID up (linear search, 0xFFFF when absent) for the request and release
+  functions 0x0059B0B0, 0x0059B0F0, 0x0059B420 and 0x0059B4D0. Nothing else
+  reads the array (`out/ghidra/spol*`).
+- Symptom: a gui.sp with more than 1100 garage pictures (923 stock entries
+  plus more than 177 added) lost every picture, stock ones included, and
+  every card showed the lock icon:
+  - 1,098 SPOL items: pictures shown (run `vm-20261024-234833`);
+  - 1,121 items: locks (`-235436`);
+  - the full roster, 1,494 items: locks (`-224733`).
+- The patch: both functions jump to replacements. Lists longer than 1100 are
+  kept in a side table keyed by the provider object, with the first 1100
+  also inline as stock code sees them. The lookup searches the side list
+  when the object has one. Lists of at most 1100 items behave as before.
+- Result: the 562-car gui.sp shows its pictures again (run
+  `vm-20261025-000547`; the log line is "spool list at ... holds 1494
+  items").
+
 **In game** (confirmed-runtime): a 2,724-entry, 2.67 GB test archive loads,
 and IDs 1, 459 (straddles entry 1100), 460, 700 and 999 spool, spawn and
 drive (runs `20261022-220605`, `-220929`, `-221412`); the stock archive

@@ -602,6 +602,150 @@ const Site kSites[] = {
     {0x008FC400, (void*)h_load_mem, {0x83, 0xEC, 0x18, 0x53, 0x8B, 0x5C, 0x24, 0x20, 0x81, 0x3B, 0x43, 0x48, 0x4E, 0x4B}, 14, "open in memory"},
 };
 
+// ---- spoolable item UID lists ([archive] spool_lists) -----------------------
+// A spool package's SSIC/SPOL (u32 count, count x u64 item UID) is copied into
+// an inline array of 1100 UIDs (provider object, constructor 0x0059B1E0: array
+// at +0, count at +0x2260) by 0x0059B6D0, which loads nothing at all when the
+// list is longer (CMP EDX,0x44C; JA). The index of a UID in that list is the
+// item's spool ID: 0x0059B5A0 finds it (linear search, 0xFFFF when absent) for
+// the four request/release functions 0x0059B0B0, 0x0059B0F0, 0x0059B420 and
+// 0x0059B4D0, and nothing else reads the array (Ghidra scans of 0x2260 and of
+// the find's callers, out/ghidra/spol*). gui.sp's garage pictures go through
+// it: with more than 1100 pictures the list stayed empty and every garage card,
+// stock ones included, showed the lock icon (VM runs vm-20261024-235436 with
+// 1121 SPOL entries against -234833 with 1098).
+// The replacements keep lists longer than 1100 in a side table keyed by the
+// provider object (the first 1100 also inline, as far as stock code would see
+// them), and the find searches the side list when the object has one. Lists
+// of at most 1100 behave exactly as before.
+const uint32_t kSpolInline = 1100;
+const uint32_t kSpolCount = 0x2260;
+struct SpolList {
+    void* owner;
+    uint32_t count;
+    uint64_t* uids;
+};
+const int kMaxSpol = 16;
+SpolList g_spol[kMaxSpol];
+volatile LONG g_spol_used = 0;  // 0: no long list anywhere (fast path)
+SRWLOCK g_spol_lock = SRWLOCK_INIT;
+
+SpolList* spol_find_locked(void* owner)
+{
+    for (int i = 0; i < kMaxSpol; i++)
+        if (g_spol[i].owner == owner) return &g_spol[i];
+    return nullptr;
+}
+
+void spol_drop(void* self)
+{
+    if (!g_spol_used) return;
+    AcquireSRWLockExclusive(&g_spol_lock);
+    SpolList* s = spol_find_locked(self);
+    if (s) {
+        HeapFree(GetProcessHeap(), 0, s->uids);
+        s->owner = nullptr;
+        s->uids = nullptr;
+        s->count = 0;
+        InterlockedDecrement(&g_spol_used);
+    }
+    ReleaseSRWLockExclusive(&g_spol_lock);
+}
+
+// 0x0059B6D0, thiscall (reader, entry index): load the SPOL entry into self.
+void __fastcall h_spol_load(uint8_t* self, void*, Reader* reader, uint32_t index)
+{
+    uint32_t* list = (uint32_t*)h_ptr(reader, nullptr, index);
+    uint32_t n = list[0];
+    const uint64_t* uids = (const uint64_t*)(list + 1);
+    uint32_t inline_n = n <= kSpolInline ? n : kSpolInline;
+    memcpy(self, uids, inline_n * sizeof(uint64_t));
+    *(uint32_t*)(self + kSpolCount) = inline_n;
+    if (n <= kSpolInline) {
+        spol_drop(self);
+        return;
+    }
+    if (n > g_max_entries) {
+        dsf_log("archive: spool list of %u items at %p refused (max_entries %u); the first %u load", n, self,
+                g_max_entries, kSpolInline);
+        spol_drop(self);
+        return;
+    }
+    uint64_t* copy = (uint64_t*)HeapAlloc(GetProcessHeap(), 0, n * sizeof(uint64_t));
+    if (!copy) {
+        spol_drop(self);
+        return;
+    }
+    memcpy(copy, uids, n * sizeof(uint64_t));
+    AcquireSRWLockExclusive(&g_spol_lock);
+    SpolList* s = spol_find_locked(self);
+    if (!s) {
+        s = spol_find_locked(nullptr);
+        if (s) InterlockedIncrement(&g_spol_used);
+    }
+    if (s) {
+        if (s->uids) HeapFree(GetProcessHeap(), 0, s->uids);
+        s->owner = self;
+        s->count = n;
+        s->uids = copy;
+    }
+    ReleaseSRWLockExclusive(&g_spol_lock);
+    if (!s) {
+        HeapFree(GetProcessHeap(), 0, copy);
+        dsf_log("archive: no slot for the spool list of %u items at %p; the first %u load", n, self, kSpolInline);
+        return;
+    }
+    dsf_log("archive: spool list at %p holds %u items (%u past the stock %u)", self, n, n - kSpolInline,
+            kSpolInline);
+}
+
+// 0x0059B5A0, thiscall (UID low, UID high): the item's index in self's list, or 0xFFFF.
+uint32_t __fastcall h_spol_find(uint8_t* self, void*, uint32_t lo, uint32_t hi)
+{
+    const uint64_t uid = ((uint64_t)hi << 32) | lo;
+    if (g_spol_used) {
+        AcquireSRWLockShared(&g_spol_lock);
+        SpolList* s = spol_find_locked(self);
+        if (s) {
+            uint32_t found = 0xFFFF;
+            for (uint32_t i = 0; i < s->count; i++) {
+                if (s->uids[i] == uid) {
+                    found = i;
+                    break;
+                }
+            }
+            ReleaseSRWLockShared(&g_spol_lock);
+            return found;
+        }
+        ReleaseSRWLockShared(&g_spol_lock);
+    }
+    const uint64_t* uids = (const uint64_t*)self;
+    uint32_t n = *(uint32_t*)(self + kSpolCount);
+    for (uint32_t i = 0; i < n; i++)
+        if (uids[i] == uid) return i;
+    return 0xFFFF;
+}
+
+void patch_spool_lists()
+{
+    static const uint8_t load_expect[] = {0x8B, 0x44, 0x24, 0x08, 0x56};
+    static const uint8_t find_expect[] = {0x8B, 0x91, 0x60, 0x22, 0x00, 0x00};
+    static const uint8_t cap_expect[] = {0x81, 0xFA, 0x4C, 0x04, 0x00, 0x00, 0x77, 0x31};
+    if (!bytes_equal(0x0059B6D0, load_expect, sizeof load_expect) ||
+        !bytes_equal(0x0059B5A0, find_expect, sizeof find_expect) ||
+        !bytes_equal(0x0059B6ED, cap_expect, sizeof cap_expect)) {
+        dsf_log("archive: 0059B6D0/0059B5A0 are not the stock code; spool lists stay at %u items", kSpolInline);
+        return;
+    }
+    if (!patch_jmp(0x0059B5A0, (void*)h_spol_find, sizeof find_expect, find_expect)) return;
+    if (!patch_jmp(0x0059B6D0, (void*)h_spol_load, sizeof load_expect, load_expect)) {
+        patch_bytes(0x0059B5A0, find_expect, sizeof find_expect);
+        return;
+    }
+    dsf_log("archive: 0059B6D0/0059B5A0 spool item lists (SSIC SPOL) hold up to %u items (stock %u)", g_max_entries,
+            kSpolInline);
+}
+
 }  // namespace
 
 // All or nothing: the replacements only work together.
@@ -635,6 +779,7 @@ void mod_archive_init()
     if (max_entries > 1 << 20) max_entries = 1 << 20;
     g_max_entries = (uint32_t)max_entries;
     patch_readers();
+    if (cfg_bool("archive", "spool_lists", true)) patch_spool_lists();
 
     // Files past 2 GiB. The file layer's seek (0x0085A970) clamps a position
     // with the sign bit set to 0 (`CMP [ECX+0x30],0; JGE`), so every entry of
