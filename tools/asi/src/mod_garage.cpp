@@ -6,11 +6,14 @@
 //          <savegames>\dsfforza-garage.dat next to autosave.dat. The stock
 //          block keeps its layout, so the save still loads in an unmodded game.
 //   garage The maker-list builder walks IDs 0..999 instead of 0..303, with a
-//          relocated sort-key table; per-group (20) and group-count caps are
-//          enforced instead of overrunning memory; optionally the group table
-//          (stock 40) and the menu's maker index array are moved to larger
-//          storage, and the maker menu's script lists (menusmaster.sp, 40
-//          entries each) are grown when the menu is filled.
+//          relocated sort-key table; the group-count cap is enforced instead
+//          of overrunning memory; optionally the group table (stock 40) and
+//          the menu's maker index array are moved to larger storage, and the
+//          maker menu's script lists (menusmaster.sp, 40 entries each) are
+//          grown when the menu is filled. A group holds any number of cars
+//          (stock 20: IDs 21.. live here), and the vehicles screen, which
+//          has 20 cards, shows a longer group through a window of 19 cards
+//          that moves when Right/Left reach its edges.
 //   lua    ProfileSettings.GetVehicleUnlocked(8000000 + k) answers
 //          capability queries, so register.lua can tell the patch is active.
 #define WIN32_LEAN_AND_MEAN
@@ -798,7 +801,6 @@ int list_grow(void* list, int need, const char* name)
 // sizes the card browser by it. A maker of more than 20 is shown through the
 // car list's window of 19 cards, so the script is told 19 (the true count is
 // kept for the car list).
-int g_numlist_mode = 1;   // [garage] debug: 0 = leave the true count
 void numlist_window(void* list)
 {
     g_listed_n = 0;
@@ -811,7 +813,7 @@ void numlist_window(void* list)
     for (int k = 0; k < n; k++) {
         int v = type == 0x0C ? (int)(intptr_t)data[k] : (int)*(float*)&data[k];
         g_listed[k] = v;
-        if (v > kGroupCars && g_window_on && g_numlist_mode) {
+        if (v > kGroupCars && g_window_on) {
             if (type == 0x0C) data[k] = (void*)(intptr_t)kWindowCards;
             else *(float*)&data[k] = (float)kWindowCards;
             windowed++;
@@ -882,13 +884,6 @@ char* garage_object()
 
 int* screen_var(uint8_t* screen, uint32_t off) { return *(int**)(screen + off); }
 
-// A variable of the vehicles screen's menu script (MmDk menu [[screen+4]+8], variables at +0x50).
-int* menu_var(uint8_t* screen, const char* name)
-{
-    uint8_t* menu = *(uint8_t**)(screen + 4) ? *(uint8_t**)(*(uint8_t**)(screen + 4) + 8) : nullptr;
-    return menu ? find_var(menu + 0x50, nullptr, name, nullptr) : nullptr;
-}
-
 // Group index of the vehicles screen's selected maker (as 0x00711411 reads it).
 int screen_group(uint8_t* screen, int cat)
 {
@@ -958,17 +953,23 @@ const char* top_page(uint8_t* menu)
     }
 }
 
-char g_browser_page[32] = "ItemBrowser";   // [garage] browser_page
+const char* const kBrowserPage = "ItemBrowser";   // the card browser page of menusmaster.sp
 uint8_t* g_screen = nullptr;                 // the vehicles screen of the last car list
 
-// The card browser page is shared with the challenges and abilities lists; the
-// garage hub's category (DAT_00F18204, read by FUN_0070ED30) is 2 for vehicles.
-const int* const kGarageCategory = (const int*)0x00F18204;
-
+// The card browser page is shared with the abilities and challenges lists; the
+// script variable startPageSelected says which one it shows (2 or 3 vehicles,
+// as the garage hub's FUN_0070E7D0 reads it; 1 abilities, 4 challenges).
 bool browser_open()
 {
     uint8_t* menu = g_screen ? screen_menu(g_screen) : nullptr;
-    return menu && *kGarageCategory == 2 && _stricmp(top_page(menu), g_browser_page) == 0;
+    if (!menu || strcmp(top_page(menu), kBrowserPage) != 0) return false;
+    static uint8_t* var_menu = nullptr;
+    static int* page_var = nullptr;
+    if (var_menu != menu) {
+        var_menu = menu;
+        page_var = find_var(menu + 0x50, nullptr, "startPageSelected", nullptr);
+    }
+    return page_var && (*page_var == 2 || *page_var == 3);
 }
 
 // Moves the window one card: forward to the second card of the last fill, back
@@ -1005,6 +1006,7 @@ struct KeyWrap {
     bool taken;   // the press was taken here: so are its held and released states
     bool mid;     // ... or the hold, after the script had its press
     int held;
+    int down;     // frames down since the press
 };
 KeyWrap g_keys[4];
 int g_keys_n = 0;
@@ -1014,7 +1016,12 @@ bool key_take(KeyWrap& w)
     // MmDk key states (FUN_007193B0): 0xFF first frame down, 0xFE still down
     // (the script repeats on it), 1 the release frame, 0 idle.
     int state = w.key[0];
-    if (state == 0xFF) w.taken = false;   // a new press is decided afresh
+    if (state == 0xFF) {
+        w.taken = false;   // a new press is decided afresh
+        w.down = 0;
+    } else if (state == 0xFE) {
+        w.down++;
+    }
     if (w.taken) {
         if (state == 0xFE) {
             if (++w.held >= 18 && (w.held - 18) % 5 == 0 && g_screen && window_step(w.right))
@@ -1024,7 +1031,9 @@ bool key_take(KeyWrap& w)
         w.taken = false;
         return !w.mid;   // a hold taken over midway: the script saw its press, so it sees the release
     }
-    if ((state != 0xFF && state != 0xFE) || !g_screen || g_view.limit >= kGroupCars || !browser_open()) return false;
+    // Held: only once the script's own repeat runs (a tap lasts a few frames down).
+    if ((state != 0xFF && (state != 0xFE || w.down < 20)) || !g_screen || g_view.limit >= kGroupCars || !browser_open())
+        return false;
     int* index = screen_var(g_screen, 0x26C);
     if (!index) return false;
     int idx = *index;
@@ -1114,9 +1123,10 @@ void carlist_pre(uint8_t* screen)
     bool window = g_window_on && listed > kGroupCars;
     g_view.limit = window ? kWindowCards : kGroupCars;
     uint8_t* menu = screen_menu(screen);
-    bool browser = browser_open();
-    // Outside the card browser (the maker list's preview) the window starts at car 0, and so the browser.
-    if (!browser) g_view.first = 0;
+    // The maker list's preview, and so the card browser opened from it, starts at car 0 (a popup over the browser, such as
+    // the drive or buy question, keeps the window: the selection reads the card under the highlight).
+    const char* page = menu ? top_page(menu) : "";
+    if (!strcmp(page, "CategorySelect_Vehicles") || !strcmp(page, "InGarage")) g_view.first = 0;
     if (window && menu) keys_wrap(menu);
     if (g_menu_debug)
         dsf_log("garage: car list: maker %d group %d, %d cars (%d listed), index %d, window from car %d, page %s",
@@ -1544,7 +1554,6 @@ void mod_garage_init()
         int cars = cfg_int("garage", "max_cars", kExtMax);
         g_max_cars = cars < kGroupCars ? kGroupCars : (cars > kExtMax ? kExtMax : cars);
         g_menu_debug = cfg_bool("garage", "menu_debug", false);
-        g_numlist_mode = cfg_int("garage", "debug_numlist", 1);
         g_margin_back = cfg_int("garage", "window_back", 2);
         g_margin_ahead = cfg_int("garage", "window_ahead", 8);
         if (g_margin_back < 0) g_margin_back = 0;

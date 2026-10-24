@@ -30,7 +30,7 @@ The Ghidra outputs are in `out/ghidra/profile-*`; the scripts used are
 | Root entries in `dngvehicles.sp` | `archive` module: 16384 (`[archive] max_entries`). The model IDs bind first: 453 + 3 × 849 = 3000 entries. `port_batch.py` assigns 1 to 61 and 304 to 999 (at most 757 cars), or all 849 with `--id-policy asi`; pass `--root-limit` (3003 covers every ID), since the default stays 1100 for installs without the plugin. Tested in game with 2,724 entries (`spool-limits.md`, "Raising the root entry limit"). |
 | `dngvehicles.sp` file size | `archive` module (`large_files`): below 4 GiB, enough for all 849 IDs (about 3.4 GB) |
 | Garage list | model IDs 0 to 999 (`[garage] max_id`) |
-| Garage maker groups | 120 groups (`[garage] max_groups`), still 20 cars per group; a car or group that doesn't fit is left out instead of overrunning memory |
+| Garage maker groups | 120 groups (`[garage] max_groups`) of any number of cars (`[garage] max_cars`, 1000); the vehicles screen shows a group of more than 20 cars 19 cards at a time and scrolls on at the edges (`asi.md`, "Maker groups past 20 cars"); a group that doesn't fit is left out instead of overrunning memory |
 | Save flags (list, bit arrays, owned list) | IDs 304 to 999 are kept outside the stock block, in `dsfforza-garage.dat` next to `autosave.dat`; IDs of 1000 and up are dropped by the bit setters; a full stock list no longer crashes |
 | Save file | unchanged (stock-range data only), so an unmodded game still loads it |
 
@@ -85,18 +85,11 @@ hold about 8 resident models (5 in "All chapters" plus the chapter's own), so
      DSF has the make (from `hud.lua`, `src/dsfforza/game/gui_assets.py`), else a plain
      name such as "BMW".
    - A new make opens a group while fewer than 39 exist (one is kept back).
-   - When a make's group is full (20 cars), the car goes to the make's next
-     group, labelled "<maker> 2", "<maker> 3"..., while groups are left.
-     `gui_assets.continuation_groups` writes the labels to global.fchunk as
-     new string IDs and lists them in `hud.lua` `_groups`; `register.lua`
-     takes them in order.
-     - Example, the full roster: AUDI 2, CHEVROLET 2 and 3, DODGE 2, FORD 2
-       and 3, LAMBORGHINI 2, NISSAN 2, VOLKSWAGEN 2, BMW 2, FERRARI 2 and
-       TOYOTA 2.
-     - Simulated with register.lua and the stub API: 104 groups, no FORZA
-       group, all 562 cars selectable. Before this change there were 99
-       groups and 121 cars spread over seven mixed FORZA groups.
-   - Otherwise the car joins a shared "FORZA" group (then "FORZA 2" ...).
+   - With `dsfforza.asi` a make's group takes all its cars (Ford in the full
+     roster: 35 ported + 13 stock); `register.lua` reads the plugin's
+     cars-per-group limit. Without the plugin (or with `[garage] max_cars=20`)
+     a group holds 20, and a car past that joins a shared "FORZA" group (then
+     "FORZA 2" ...). The "<maker> 2" continuation groups of PR #39 are gone.
    - `port_batch.py` (`garage_group`, with a margin of one per cap) and
      `register.lua` (`garageGroup`, exact caps, run against the real
      `vehicleStats` at game start, so mods that make more stock cars
@@ -115,8 +108,8 @@ of the game's Lua names them; Felony Rework's dummies 622 and 623 are
 skipped too), then 304 and up. The plugin lists IDs up to 999 in the garage and
 saves their flags in its side file, and IDs up to 303 are listed and saved by the stock code anyway;
 `register.lua` detects the plugin and makes every car selectable while its
-maker group has room (120 groups of 20). The build notes cars that won't fit
-a group (same rule, `ASI_GROUPS_CAP`). `install.ps1 -IdPolicy asi` builds
+maker list has room (120 groups, any number of cars each). The build notes cars that
+won't fit a group (same rule, `ASI_GROUPS_CAP`, `ASI_GROUP_CAP`). `install.ps1 -IdPolicy asi` builds
 that way and refuses without the plugin. `remerge` turns an existing build into the other policy
 without converting again: only the four ID fields of each full entry (VSVH,
 VO3D, SPID, UPVH) change.
@@ -149,9 +142,10 @@ At start `register.lua` asks whether `dsfforza.asi`'s garage module is
 active (`ProfileSettings.GetVehicleUnlocked(8000000 + k)`, research/asi.md)
 and takes its limits: listed IDs, maker groups, the highest ID whose save
 flags are safe. It logs them as `dsfforza.asi: save hooks ..., garage IDs
-0..999, 120 maker groups of 20`. `tests/test_register_asi.py` runs
+0..999, 120 maker groups of 1000`. `tests/test_register_asi.py` runs
 it against stubs with and without the plugin (600 fake cars: none selectable
-at 304+ without it, all 600 with it, at most 20 per group).
+at 304+ without it, all 600 with it; 55 cars of one make stay in one group, or
+fill 20 and spill into FORZA groups with a plugin that keeps 20 per group).
 
 Without `ported.lua` (or `config.lua` `register.cars`) the car list is empty.
 The old built-in sample (304 as a Desanne copy) is gone, so nothing gets
