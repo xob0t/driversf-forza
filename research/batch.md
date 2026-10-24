@@ -332,7 +332,10 @@ Batch-level costs at full-roster scale:
   twice per render, and at 573 cars that archive is about 2.4 GB. It is
   read once now. The nameplate rasteriser is about 3 times faster, and the
   renders (about 5 s each, every car without an FH1 thumbnail) run in
-  `--jobs` processes. 4 cars: 36 s -> 15 s.
+  `--jobs` processes. 4 cars: 36 s -> 15 s. Since 2026-10-24 every car is
+  rendered (numpy `car_render.py`, about 1 s a car; `gui-assets.md`,
+  "Camera and render"): the 40 cars of out/testdrive11 85 s -> 44 s at
+  `--jobs 2`.
 - **Worker start-up** is about 3 s per car (imports, the stock archive's
   root, host survey and sound index from `out/cache`), small next to the
   conversion.

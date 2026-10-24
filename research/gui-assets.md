@@ -73,6 +73,93 @@ the photo's fog gradient), the logo is FH1's
 `UI4/Logos/Manufacturer_Logos_LG/L_MAN_<Make>_Logo.xds` (format 50, the
 32-bit `_AS_16_16_16_16` alias), the name a generated chrome nameplate.
 
+### Camera and render (offline-checked)
+
+User report on `out/testdrive11`: "some are not quite the right angle, some
+have glass rendered as opaque".
+
+**Camera (measured).** `uv run dsff gui_assets camera` renders the silhouette
+of the stock car behind each stock picture (`car_render.coverage`, exterior
+entry of the stock archive) over a grid of yaw, pitch and camera distance,
+places it like the picture's car (scaled to its height, right and bottom edges
+aligned) and keeps the camera with the best overlap right of the logo column
+(`car_render.fit_camera`, `stock_car_mask`: opaque and unlike the recovered
+backdrop). `--thumbnails <manifest>` does the same for the FH1 thumbnails of
+a build's cars against renders of the converted cars (shape of the whole car,
+both boxes scaled to one size).
+
+| Source | Cars | Yaw (median, range) | Pitch | Distance (car lengths) | Overlap |
+| --- | ---: | --- | --- | --- | --- |
+| stock garage pictures | 24 | 36.5 (33..40) | 13 (9..21) | 1.30 (1.07..2.0) | IoU 0.75..0.94 |
+| FH1 thumbnails (out/testdrive11) | 31 | 35 (30..40) | 1 (0..4) | 1.43 (1.10..2.0) | 0.81..0.93 |
+| old `render_car` | | 38 | 12 | 2.4 | |
+
+Yaw is the angle from straight ahead towards the car's right side, pitch the
+camera's height above the horizon, distance from the eye to the car's centre.
+The stock pictures share one camera within a few degrees (the Miura's 21 is
+the outlier; the lowest IoUs are cars whose dark lower body matches the dark
+backdrop). The FH1 thumbnails are taken from eye level, 12 degrees lower than
+DSF's: that is the "not quite the right angle", visible on every FH1 car next
+to stock cars. They are also mirrored to face right, so their plates,
+badges and steering wheel side are mirrored. So every picture is now a render
+from `STOCK_CAMERA` = yaw 36.5, pitch 13, distance 1.3
+(`img/garage-pictures-angle.jpg`: stock, before, after);
+`build --fh1-thumbnails` keeps the old thumbnails.
+
+**Render (`src/dsfforza/game/car_render.py`).** numpy, about 1 s a car
+(old: about 4 s plus 0.8 s composing, for the cars without a thumbnail):
+
+- Geometry: the clean exterior (kind 2), its wheel part (the MODL part with
+  the tyre or a stride-20 submodel; rim and tyre) placed on every UPVH hub by
+  the hub's quaternion (the old renderer copied only the stride-20 tyre and
+  left the rim at the origin), and the interior entry (kind 1) without its
+  glass and gauge needles. Exterior parts that list the same submodel ranges
+  (parts 0 and 1) are drawn once.
+- Raster: triangles cut into tiles of 1 to 16 pixels, every pixel centre
+  tested at once; per pixel the nearest fragment. Surfaces are drawn from both
+  sides, but back faces lose depth ties (panel undersides on the panel). The
+  interior entry holds the cockpit's own copy of the body shell, which pokes
+  through the exterior in places (dark bonnet patches on the S2000, RX-7,
+  Cuda): interior fragments win only when nearer by 0.2% of the depth behind
+  glass, 3% elsewhere (about 1 and 20 cm).
+- Glass: the exterior glass in front of the opaque surface, two layers (near
+  and far side windows), each letting through about 58% of what is behind
+  and adding the environment by Schlick's Fresnel term and a highlight; where
+  nothing is behind, the picture's alpha keeps the glass partly transparent.
+- Materials: shared ones by UID (paint, glass, trim, tyre, chrome) and local
+  ones by MATX name (`_Lights`, the wheel part, the interior). The shared SSIC
+  textures are channel-packed (red is the grey level, blue the paint mask:
+  plates, trim block, tyre sidewalls), so they are read as the paint shader
+  does (`tex.r * lerp(1, paint, tex.b)`, "What the paint shader does" in
+  `lights.md`); the local textures as colour. Paint is the palette's most
+  colourful entry, metallic when the palette entry is. Chrome reflects the
+  environment, lamps are their texture with a glossy cover.
+- Light: a studio environment (bright sky, dark horizon and floor, a soft box
+  above and beyond the car for the bonnet streak), a key light from the
+  camera's upper left, ambient by the normal's height times the baked AO
+  (vertex sky term divided by the converter's `0.25 + 0.55 (1 + n_y) / 2`),
+  and a soft floor shadow under the car's footprint.
+- Framing: rendered at 1000 x 560, cropped; the car's box without its shadow
+  is fitted into `CAR_BOX` by its right and bottom edges, as stock (median
+  right edge 496, bottom 242 in the 142 stock pictures).
+
+Checked on the stock cars against their own pictures (370Z, R8, Charger,
+159: same framing, the stock pictures' paint a little darker and glossier)
+and on the 40 cars of out/testdrive11 (`img/garage-pictures-render.jpg`:
+old and new renders of the FM4 cars). In game (confirmed-runtime, headless
+VM, out/testdrive11 with the new gui.sp, Fonts.fchunk and hud.lua,
+dsfforza.asi): runs `vm-20261024-161110` (the maker list scrolled through
+every maker, the TOYOTA browser) and `vm-20261024-162337` (the NISSAN
+browser, ported and stock cards side by side) show the new pictures on the
+cards, no crash (`img/garage-pictures-ingame.jpg`).
+
+Speed (one process, out/testdrive11): `render_car` 0.78 to 1.27 s a car
+(median 0.99), composing 0.05 s; the old renderer took 2.8 to 4.6 s (median
+3.9) plus 0.8 s composing. The GUI step of the 40 cars with `--jobs 2`: 85 s
+before (24 thumbnails, 16 renders), 44 s after (40 renders). `Image.resize`,
+`paste`, `flip_h`, `bbox` and `crop` are numpy now
+(`tests/test_garage_pictures.py` compares them with the old loops).
+
 ## Badge and model name: media/Fonts.fchunk "vehicles_font" (confirmed-static)
 
 The HUD and the garage print `Manufacturer` and `Model` as single characters
