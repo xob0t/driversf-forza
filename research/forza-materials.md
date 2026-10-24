@@ -21,6 +21,14 @@ and the game binds that to one of two per-car atlases by technique.
 | `nodamage.xds` 1024² DXT5 | `nodamage_LOD0` 2048² | `damage.xds` | interior, badges, emblems, colour swatches; body area white with alpha 0 |
 | `Lights.xds` 512² DXT5 | `lights_LOD0` 1024² | `damagelights.xds` | every lamp, lamp glass, reflector; alpha = glow mask |
 
+Many cars also ship colour or stripe variants of `nodamage` (`nodamage_nostripe`,
+`nodamageblack`, `nodamage_white`..., each with its `_LOD0`). Two cars of the
+FM4 1950-2000 pack have only variants and no plain `nodamage.xds`:
+CHE_CamaroZ28_79 (`nodamage_blue/gold/orange/yellow`) and PON_TransAm_73
+(`nodamagegreen/red/white` and their `...b` forms). `port_car.extract_car`
+then caches the variant that sorts first, with its `_LOD0`, under the plain
+names (`colour_variants`; the stamp's `variants` records which one was used).
+
 The wheel is the exception: the main carbin's `wheel` section (the same model
 as LOD 1 to 5 of the wheel archive's carbin) samples the car's own
 `wheel.xds` (256² on 36 of the 40 testdrive cars) from `media/wheels/<car>.zip`
