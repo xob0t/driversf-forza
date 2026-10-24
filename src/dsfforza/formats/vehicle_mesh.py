@@ -143,11 +143,12 @@ def parse_vdcl(data: bytes) -> list[VertexElement]:
     return elements
 
 
-def load(archive: Path, vehc_index: int) -> tuple[Entry, Mesh]:
+def load(archive: Path, vehc_index: int, entries: list[Entry] | None = None) -> tuple[Entry, Mesh]:
+    """The VEHC at root index `vehc_index` and its mesh; `entries`: the archive's root
+    entries when the caller has read them already."""
     mesh = Mesh()
     with archive.open("rb") as stream:
-        root = read_chunk(stream, 0)
-        vehc = root.entries[vehc_index]
+        vehc = (entries if entries is not None else read_chunk(stream, 0).entries)[vehc_index]
         drsp = child(child(vehc, "MDXN"), "DRSP")
         for entry in drsp.children:
             if entry.tag == "VXCK":

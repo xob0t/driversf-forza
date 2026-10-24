@@ -1165,7 +1165,11 @@ def finish(
 
         try:
             gui_assets.build(
-                manifest_path, out_dir / "gui", archive=archive, wide_glyphs=getattr(args, "wide_glyphs", False)
+                manifest_path,
+                out_dir / "gui",
+                archive=archive,
+                wide_glyphs=getattr(args, "wide_glyphs", False),
+                jobs=max(1, args.jobs),
             )
         except Exception as error:  # the archive is still usable without pictures and badges
             print(f"gui assets failed: {type(error).__name__}: {error}")

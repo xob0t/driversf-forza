@@ -618,6 +618,97 @@ def test_ima_adpcm_matches_the_sample_loops():
         assert frames == want
 
 
+# --- gui_assets: nameplate coverage -------------------------------------------------------
+
+
+def _text_plate_reference(text: str, height: int, italic: float):
+    """The original per-pixel, per-sample nameplate rasteriser."""
+    import itertools
+
+    from dsfforza.game import gui_assets as g
+
+    cell = height / 9.0
+    stroke = cell * 0.95
+    outline = cell * 0.55
+    advance = 5.4 * cell
+    widths = [advance if ch != " " else advance * 0.6 for ch in text]
+    width = int(sum(widths) + 2 * (stroke + outline) + italic * 6 * cell + 2)
+    img = g.Image(width, height)
+    origin_y = 1.5 * cell
+    segs = []
+    x = stroke + outline + 1
+    for ch, w in zip(text, widths):
+        for line in g.STROKES.get(ch, []):
+            pts = [(x + gx * cell + italic * (6 - gy) * cell, origin_y + gy * cell) for gx, gy in line]
+            segs += list(itertools.pairwise(pts))
+        x += w
+    ss = 3
+    reach = stroke + outline + 1
+    for py in range(height):
+        near = [(a, b) for a, b in segs if min(a[1], b[1]) - reach <= py + 1 and max(a[1], b[1]) + reach >= py]
+        for px in range(width):
+            local = [(a, b) for a, b in near if min(a[0], b[0]) - reach <= px + 1 and max(a[0], b[0]) + reach >= px]
+            if not local:
+                continue
+            core = edge = 0
+            for sy in range(ss):
+                for sx in range(ss):
+                    fx, fy = px + (sx + 0.5) / ss, py + (sy + 0.5) / ss
+                    d = min(g._segment_distance(fx, fy, a, b) for a, b in local)
+                    if d <= stroke:
+                        core += 1
+                    elif d <= stroke + outline:
+                        edge += 1
+            if not core and not edge:
+                continue
+            t = (py - origin_y) / (6 * cell)
+            shade = 235 - 150 * math.exp(-(((t - 0.55) / 0.18) ** 2)) - 40 * max(0.0, t)
+            c, e = core / (ss * ss), edge / (ss * ss)
+            alpha = min(1.0, c + e)
+            lum = max(0.0, (shade * c + 20 * e) / max(alpha, 1e-6))
+            o = (py * width + px) * 4
+            img.px[o : o + 4] = bytes((int(lum), int(lum), int(min(255, lum * 1.03)), int(alpha * 255)))
+    return img
+
+
+def test_text_plate_matches_the_sample_loops():
+    from dsfforza.game import gui_assets as g
+
+    for text, height in (("S5S RAPTOR", 76), ("M3", 40), ("205T16 & 9-8.7/", 50)):
+        new, old = g._text_plate(text, height, 0.22), _text_plate_reference(text, height, 0.22)
+        assert (new.w, new.h) == (old.w, old.h) and new.px == old.px
+
+
+def _untile32_reference(data: bytes):
+    from dsfforza.formats import xds
+
+    _, width, height = xds.parse_header(data)
+    src = data[xds.HEADER_SIZE :]
+    aligned_w, aligned_h = (width + 31) & ~31, (height + 31) & ~31
+    out = bytearray(width * height * 4)
+    for n in range(aligned_w * aligned_h):
+        o = n * 4
+        if o + 4 > len(src):
+            break
+        x, y = xds.tiled_x(n, width, 4), xds.tiled_y(n, width, 4)
+        if x >= width or y >= height:
+            continue
+        a, r, g, b = src[o : o + 4]
+        d = (y * width + x) * 4
+        out[d : d + 4] = bytes((r, g, b, a))
+    return width, height, out
+
+
+def test_untile32_matches_the_texel_loop():
+    from dsfforza.game import gui_assets as g
+
+    rng = random.Random(31)
+    for width, height, short in ((64, 32, 0), (40, 24, 0), (96, 64, 500)):
+        texels = ((width + 31) & ~31) * ((height + 31) & ~31) - short
+        data = _xds(6, width, height, bytes(rng.getrandbits(8) for _ in range(4 * texels)))
+        assert g.untile32(data) == _untile32_reference(data)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):
