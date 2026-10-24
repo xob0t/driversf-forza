@@ -187,6 +187,19 @@ class Box:
         return tuple((other.size[a] / self.size[a]) if self.size[a] > 1e-3 else 1.0 for a in range(3))
 
 
+# Cell offsets at Chebyshev distance 0, 1, 2 (the shells of the first rings _vote visits).
+_SHELLS = [
+    [
+        (dx, dy, dz)
+        for dx in range(-r, r + 1)
+        for dy in range(-r, r + 1)
+        for dz in range(-r, r + 1)
+        if max(abs(dx), abs(dy), abs(dz)) == r
+    ]
+    for r in range(3)
+]
+
+
 class Grid:
     """k-nearest neighbours over 3D points (a uniform hash grid)."""
 
@@ -205,36 +218,52 @@ class Grid:
         """The k nearest points as sorted (distance, index) pairs: the points of the
         cells in rings 0..r around p's cell (Chebyshev distance in cells), for the
         first ring r at which the k-th nearest of them is within r * cell (then
-        nothing outside is nearer), or all points. Only occupied cells are visited:
-        the rings in between add nothing, so the stop test is solved for them."""
+        nothing outside is nearer), or all points. Rings 0 and 1 are looked up cell
+        by cell; farther out only the occupied cells are visited (the rings in
+        between add nothing, so the stop test is solved for them)."""
         if not self.points:
             return []
+        total, want, cell = len(self.points), min(k, len(self.points)), self.cell
+        key = self._key(p)
+        found: list[tuple[float, int]] = []
+
+        def stops(lo: int, hi: float) -> bool:
+            """Does the ring loop stop at a ring t in lo..hi with the points found so far?"""
+            if len(found) < want:
+                return False
+            kth = sorted(found)[want - 1][0]
+            t = max(lo, math.ceil(kth / cell))
+            while t > lo and kth <= (t - 1) * cell:
+                t -= 1
+            while not kth <= t * cell:
+                t += 1
+            return t <= hi
+
+        for r in (0, 1):
+            for dx, dy, dz in _SHELLS[r]:
+                for n in self.cells.get((key[0] + dx, key[1] + dy, key[2] + dz), ()):
+                    found.append((math.dist(p, self.points[n]), n))
+            if stops(r, r) or len(found) == total:
+                found.sort()
+                return found[:k]
         if self._keys is None:
             self._members = list(self.cells.values())
             self._keys = np.array(list(self.cells), dtype=np.int64).reshape(-1, 3)
-        ring = np.abs(self._keys - np.array(self._key(p), dtype=np.int64)).max(axis=1)
-        order = ring.argsort(kind="stable")
-        rings, order = ring[order].tolist(), order.tolist()
-        total, want, cell = len(self.points), min(k, len(self.points)), self.cell
-        found: list[tuple[float, int]] = []
-        i, m = 0, len(order)
+        ring = np.abs(self._keys - np.array(key, dtype=np.int64)).max(axis=1)
+        far = np.flatnonzero(ring >= 2)
+        far = far[ring[far].argsort()]
+        rings, order = ring[far].tolist(), far.tolist()
+        i, m, done = 0, len(order), 1  # rings 0..done are counted
         while i < m:
             r = rings[i]
+            if stops(done + 1, r - 1):  # the empty rings before this one
+                break
             while i < m and rings[i] == r:
                 found.extend((math.dist(p, self.points[n]), n) for n in self._members[order[i]])
                 i += 1
-            if len(found) == total:
+            done = r
+            if len(found) == total or stops(r, rings[i] - 1 if i < m else math.inf):
                 break
-            if len(found) >= want:
-                kth = sorted(found)[want - 1][0]
-                # The first ring t from r on with kth <= t * cell, before the next occupied one.
-                t = max(r, math.ceil(kth / cell))
-                while t > r and kth <= (t - 1) * cell:
-                    t -= 1
-                while not kth <= t * cell:
-                    t += 1
-                if t < rings[i]:
-                    break
         found.sort()
         return found[:k]
 
@@ -292,27 +321,32 @@ def closest_on_triangles(p, corners):
     """closest_on_triangle for many triangles at once (corners: (n, 3, 3) array of
     a, b, c), with its float operations and branch order: (squared distances,
     barycentric (n, 3))."""
-    a, b, c = corners[:, 0], corners[:, 1], corners[:, 2]
-    p = np.asarray(p, dtype=np.float64)
+    corners = np.asarray(corners, dtype=np.float64)
+    d, b0, b1, b2 = _closest(p, *(np.ascontiguousarray(corners[:, i // 3, i % 3]) for i in range(9)))
+    return d, np.stack((b0, b1, b2), axis=1)
 
-    def dot(u, v):
-        return u[:, 0] * v[:, 0] + u[:, 1] * v[:, 1] + u[:, 2] * v[:, 2]
 
-    ab, ac, ap = b - a, c - a, p - a
-    d1, d2 = dot(ab, ap), dot(ac, ap)
-    bp = p - b
-    d3, d4 = dot(ab, bp), dot(ac, bp)
-    cp = p - c
-    d5, d6 = dot(ab, cp), dot(ac, cp)
+def _closest(p, ax, ay, az, bx, by, bz, cx, cy, cz):
+    """closest_on_triangle over component arrays: (squared distance, barycentric u, v, w)."""
+    px, py, pz = p
+    abx, aby, abz, acx, acy, acz = bx - ax, by - ay, bz - az, cx - ax, cy - ay, cz - az
+    apx, apy, apz = px - ax, py - ay, pz - az
+    d1 = abx * apx + aby * apy + abz * apz
+    d2 = acx * apx + acy * apy + acz * apz
+    bpx, bpy, bpz = px - bx, py - by, pz - bz
+    d3 = abx * bpx + aby * bpy + abz * bpz
+    d4 = acx * bpx + acy * bpy + acz * bpz
+    cpx, cpy, cpz = px - cx, py - cy, pz - cz
+    d5 = abx * cpx + aby * cpy + abz * cpz
+    d6 = acx * cpx + acy * cpy + acz * cpz
     vc, vb, va = d1 * d4 - d3 * d2, d5 * d2 - d1 * d6, d3 * d6 - d5 * d4
-    with np.errstate(divide="ignore", invalid="ignore"):
-        t3 = np.where(d1 != d3, d1 / (d1 - d3), 0.0)
-        t4 = np.where(d2 != d6, d2 / (d2 - d6), 0.0)
-        e, f = d4 - d3, d5 - d6
-        t5 = np.where((e + f) != 0, e / (e + f), 0.0)
-        denom = va + vb + vc
-        v = np.where(denom != 0, vb / denom, 0.0)
-        w = np.where(denom != 0, vc / denom, 0.0)
+    e, f = d4 - d3, d5 - d6
+    denom = va + vb + vc
+    t3 = np.divide(d1, d1 - d3, out=np.zeros_like(d1), where=d1 != d3)
+    t4 = np.divide(d2, d2 - d6, out=np.zeros_like(d1), where=d2 != d6)
+    t5 = np.divide(e, e + f, out=np.zeros_like(d1), where=(e + f) != 0)
+    v = np.divide(vb, denom, out=np.zeros_like(d1), where=denom != 0)
+    w = np.divide(vc, denom, out=np.zeros_like(d1), where=denom != 0)
     # The branches from the last to the first, so the first that applies wins.
     b0, b1, b2 = 1 - v - w, v, w
     for cond, (x0, x1, x2) in (
@@ -323,19 +357,26 @@ def closest_on_triangles(p, corners):
         ((d3 >= 0) & (d4 <= d3), (0.0, 1.0, 0.0)),
         ((d1 <= 0) & (d2 <= 0), (1.0, 0.0, 0.0)),
     ):
-        b0, b1, b2 = np.where(cond, x0, b0), np.where(cond, x1, b1), np.where(cond, x2, b2)
-    q = b0[:, None] * a + b1[:, None] * b + b2[:, None] * c
-    d = p - q
-    return d[:, 0] * d[:, 0] + d[:, 1] * d[:, 1] + d[:, 2] * d[:, 2], np.stack((b0, b1, b2), axis=1)
+        if cond.any():
+            b0, b1, b2 = np.where(cond, x0, b0), np.where(cond, x1, b1), np.where(cond, x2, b2)
+    dx = px - (b0 * ax + b1 * bx + b2 * cx)
+    dy = py - (b0 * ay + b1 * by + b2 * cy)
+    dz = pz - (b0 * az + b1 * bz + b2 * cz)
+    return dx * dx + dy * dy + dz * dz, b0, b1, b2
 
 
 def _tri_arrays(f) -> tuple:
-    """(corners (n, 3, 3), unit normals (n, 3)) of a HostField's triangles, made once."""
+    """(corner components ax, ay, az, bx, ..., cz, normal components nx, ny, nz) of a
+    HostField's triangles as arrays, made once."""
     cached = f.__dict__.get("_tri_arrays")
     if cached is None or cached[0] != len(f.tris):
         corners = np.array([t[0] for t in f.tris], dtype=np.float64).reshape(-1, 3, 3)
         normals = np.array([t[2] for t in f.tris], dtype=np.float64).reshape(-1, 3)
-        cached = f._tri_arrays = (len(f.tris), corners, normals)
+        cached = f._tri_arrays = (
+            len(f.tris),
+            tuple(np.ascontiguousarray(corners[:, i // 3, i % 3]) for i in range(9)),
+            tuple(np.ascontiguousarray(normals[:, i]) for i in range(3)),
+        )
     return cached[1], cached[2]
 
 
@@ -1395,20 +1436,26 @@ class DamagePlan:
         to the first ring at which the third best is within reach of the ring."""
         if index is None:
             return None
-        cell, keys, members = index
+        cell, cells, keys, members = index
         q = self._forza_norm(p_dsf)
         key = tuple(int(math.floor(q[a] / cell)) for a in range(3))
-        # The occupied cells by ring (Chebyshev distance in cells): ring r is order[at[r]:at[r + 1]].
-        ring = np.abs(keys - np.array(key, dtype=np.int64)).max(axis=1)
-        order = ring.argsort(kind="stable")
-        at = np.searchsorted(ring[order], np.arange(9)).tolist()
-        order = order[: at[8]].tolist()
+        order = at = None
         scores: dict[int, tuple] = {}  # triangle -> (score, pair)
         scored = []
         for r in range(8):
             seen = set()
-            for i in order[at[r] : at[r + 1]]:
-                seen.update(members[i])
+            if r < 3:  # the cells of the ring's shell
+                for dx, dy, dz in _SHELLS[r]:
+                    seen.update(cells.get((key[0] + dx, key[1] + dy, key[2] + dz), ()))
+            else:  # farther out: the occupied cells by ring (Chebyshev distance), order[at[r]:at[r + 1]]
+                if order is None:
+                    ring = np.abs(keys - np.array(key, dtype=np.int64)).max(axis=1)
+                    near = np.flatnonzero((ring >= 3) & (ring < 8))
+                    near = near[ring[near].argsort()]
+                    at = (np.searchsorted(ring[near], np.arange(9))).tolist()
+                    order = near.tolist()
+                for i in order[at[r] : at[r + 1]]:
+                    seen.update(members[i])
             new = [n for n in seen if n not in scores]
             if new:
                 self._score_triangles(f, q, normal, new, scores)
@@ -1436,11 +1483,12 @@ class DamagePlan:
                 out[n] = (math.sqrt(d) + (PANEL_FACING * (1 - _dot(normal, t[2])) if normal else 0.0), t[1])
             return
         corners, normals = _tri_arrays(f)
-        d, _ = closest_on_triangles(q, corners[ns])
+        index = np.array(ns, dtype=np.int64)
+        d = _closest(q, *(c[index] for c in corners))[0]
         score = np.sqrt(d)
         if normal:
-            m = normals[ns]
-            score = score + PANEL_FACING * (1 - (normal[0] * m[:, 0] + normal[1] * m[:, 1] + normal[2] * m[:, 2]))
+            nx, ny, nz = (c[index] for c in normals)
+            score = score + PANEL_FACING * (1 - (normal[0] * nx + normal[1] * ny + normal[2] * nz))
         else:
             score = score + 0.0
         for n, value in zip(ns, score.tolist(), strict=True):
@@ -1463,9 +1511,12 @@ class DamagePlan:
                     for j in range(lo[1], hi[1] + 1):
                         for k in range(lo[2], hi[2] + 1):
                             cells[(i, j, k)].append(n)
-            # (cell, the occupied cells' keys as an array, their triangle lists) for _vote
+            # (cell, cells, the occupied cells' keys as an array, their triangle lists) for _vote
+            cells = dict(cells)
             self._grids[key] = (
-                (cell, np.array(list(cells), dtype=np.int64).reshape(-1, 3), list(cells.values())) if cells else None
+                (cell, cells, np.array(list(cells), dtype=np.int64).reshape(-1, 3), list(cells.values()))
+                if cells
+                else None
             )
         return self._grids[key]
 
