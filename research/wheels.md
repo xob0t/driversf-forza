@@ -201,8 +201,19 @@ both entries: centre caps and logos from the car's chassis texture.
   material with the stock unwrap; the swatches remain the fallback when there
   is no wheel texture or `--textures none`.
 
-Atlas cost: one region per car, the whole wheel texture; the uniform scale of
-the other regions drops on cars whose atlas was full (Raptor 0.67 to 0.61).
+Atlas cost (`out/rims/atlas_scales.txt`, 40 cars against `out/testdrive10`):
+one region per car, the whole wheel texture. The uniform scale of the other
+regions stays on 15 cars (slack in the packing) and drops by 4% on average,
+16% at most (Mustang Boss 429 0.77 to 0.65, S2000 0.87 to 0.75). Entry sizes
+and the LOD choices of all 40 cars are unchanged; all 40 lint ok.
+
+Survey (`out/rims/wheels_all.png`, all 40 cars: Forza's wheel with
+`wheel.xds`, `out/testdrive10`, the fixed build `out/rims/td`, exterior wheel
+part from outside): every converted wheel now matches its Forza wheel (caps,
+logos, nuts, the Veyron's orange, the WRX's and Firebird's gold, the Agera's
+black with its rim stripes, the Focus RS500's black); before, all 40 were the
+same silver. The full entry (LOD 3, `out/rims/wheels_full.png`) the same.
+`img/rims-before-after.png`.
 
 ## Open
 
