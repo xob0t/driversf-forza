@@ -187,11 +187,19 @@ def _decode_pool(raw: bytes, count: int, size: int, section: Section) -> list[Ve
     return vertices
 
 
+# An empty section (no vertices, e.g. FIA_595_68's roof1) has the bounds of an empty
+# box: target_min FLT_MAX, target_max -FLT_MAX on every axis.
+FLT_MAX = struct.unpack(">f", b"\x7f\x7f\xff\xff")[0]
+EMPTY_BOUNDS = (FLT_MAX,) * 3 + (-FLT_MAX,) * 3
+
+
 def _looks_like_section(data: bytes, pos: int) -> bool:
     if pos + 40 > len(data) or struct.unpack_from(">I", data, pos)[0] not in (2, 5):
         return False
     values = struct.unpack_from(">9f", data, pos + 4)
-    return all(math.isfinite(v) and abs(v) < 100 for v in values)
+    if not all(math.isfinite(v) and abs(v) < 100 for v in values[:3]):
+        return False
+    return values[3:] == EMPTY_BOUNDS or all(math.isfinite(v) and abs(v) < 100 for v in values[3:])
 
 
 def _section_header_ok(data: bytes, pos: int) -> bool:
@@ -245,7 +253,10 @@ def _parse_section(r: _Reader) -> Section:
     r.skip(4)
     r.skip(r.u32() * 2)
     r.skip(12)
-    section.name = r.take(r.u8()).decode("latin-1")
+    raw_name = r.take(r.u8())
+    if not all(32 < c < 127 for c in raw_name):  # a wrong start (cf. _section_header_ok)
+        raise CarbinError(f"section name {raw_name[:24]!r} is not text at {r.pos - len(raw_name):#x}")
+    section.name = raw_name.decode("latin-1")
     version = section.version = r.u32()
     if version not in (2, 3):
         raise CarbinError(f"{section.name!r}: unsupported section version {version} at {r.pos - 4:#x}")
@@ -270,21 +281,12 @@ def _parse_section(r: _Reader) -> Section:
 def _skip_tail(r: _Reader, version: int, lod0_count: int) -> None:
     """Skip the section tail; ends where the next section (or EOF) begins."""
     if version >= 3:
-        r.skip(13)
-        a, b = r.u32(), r.u32()
-        r.skip(4)
-        r.skip(a * b)
-        r.skip(4)
-        c, d = r.u32(), r.u32()
-        r.skip(c * d)
-        base = r.pos
-        candidates = [base + extra for extra in (0, 4, 8)]
-        candidates += [base + extra + lod0_count * 4 for extra in (0, 4, 8)] if lod0_count > 0 else []
-        for pos in candidates:
-            if _section_header_ok(r.data, pos) or pos >= len(r.data) - 32:
-                r.pos = min(pos, len(r.data))
-                return
-        r.pos = base + 4
+        start = r.pos
+        try:
+            _skip_tail_v3(r, lod0_count)
+        except (CarbinError, struct.error):
+            r.pos = start
+            _skip_tail_blocks(r)
     else:
         r.skip(9)
         a, b = r.u32(), r.u32()
@@ -292,6 +294,61 @@ def _skip_tail(r: _Reader, version: int, lod0_count: int) -> None:
         r.skip(4)
         c, d = r.u32(), r.u32()
         r.skip(c * d)
+
+
+def _skip_tail_v3(r: _Reader, lod0_count: int) -> None:
+    """The FH1 tail of a main or cockpit carbin section: 13 bytes, then one
+    per-vertex record block of the LOD pool (4 bytes a vertex), then the same
+    for LOD0; the end is found by probing for the next section header."""
+    r.skip(13)
+    a, b = r.u32(), r.u32()
+    r.skip(4)
+    r.skip(a * b)
+    r.skip(4)
+    c, d = r.u32(), r.u32()
+    r.skip(c * d)
+    base = r.pos
+    candidates = [base + extra for extra in (0, 4, 8)]
+    candidates += [base + extra + lod0_count * 4 for extra in (0, 4, 8)] if lod0_count > 0 else []
+    for pos in candidates:
+        if _section_header_ok(r.data, pos) or pos >= len(r.data) - 32:
+            r.pos = min(pos, len(r.data))
+            return
+    r.pos = base + 4
+
+
+# Each per-vertex record block of an FH1 tail: u32 3, u32 count, u32 record size,
+# u32 1, count * size bytes. Skinned pools (the wheel archives' carbins, whose LOD0
+# pool has bone weights) carry 16-byte records, and their tail starts 4 bytes
+# earlier than _skip_tail_v3's fixed 13, so it reads garbage counts there.
+_TAIL_BLOCKS = b"\x01\x01\x00\x00\x00\x03"
+
+
+def _skip_tail_blocks(r: _Reader) -> None:
+    """Fallback for tails _skip_tail_v3 can't read: find the 01 01 marker in the
+    first bytes, walk the record blocks, then probe for the next section header."""
+    data = r.data
+    at = data.find(_TAIL_BLOCKS, r.pos, r.pos + 16)
+    if at < 0:
+        raise CarbinError(f"section tail not recognised at {r.pos:#x}")
+    pos = at + 2
+    while pos + 16 <= len(data):
+        if struct.unpack_from(">I", data, pos)[0] != 3:
+            # a block may be followed by one more u32 before the next block
+            if pos + 20 <= len(data) and struct.unpack_from(">I", data, pos + 4)[0] == 3:
+                pos += 4
+                continue
+            break
+        count, size = struct.unpack_from(">II", data, pos + 4)
+        end = pos + 16 + count * size
+        if (count and size not in (4, 8, 12, 16, 20, 24, 28, 32)) or end > len(data):
+            raise CarbinError(f"bad tail block {count} x {size} at {pos:#x}")
+        pos = end
+    for candidate in range(pos, min(pos + 40, len(data)) + 1, 4):
+        if _section_header_ok(data, candidate) or candidate >= len(data) - 32:
+            r.pos = min(candidate, len(data))
+            return
+    raise CarbinError(f"no section after the tail at {pos:#x}")
 
 
 def _check_type(data: bytes) -> int:
