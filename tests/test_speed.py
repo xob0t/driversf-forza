@@ -155,6 +155,135 @@ def test_panel_vote_matches_the_ring_search():
         assert plan._vote(index, f, q, normal, reach) == _vote_reference(cells, 0.08, f, q, normal, reach)
 
 
+def _vote_scene(rng: random.Random):
+    """Host triangles (f.tris rows) with the cases the batched vote must get right:
+    dense patches and a sparse spread (stops at every ring, and none by ring 7),
+    large triangles over many cells (scored once per ring they touch), exact
+    duplicates on different panels and coplanar copies (equal scores, decided by
+    the panel), and corners on cell boundaries."""
+    panels = [(0, 0), (1, 2), (3, 4), (5, 6), (1, 0)]
+    tris = []
+    for _ in range(rng.choice([40, 300, 900])):
+        c = rng.choice([(0.5, 0.2, -0.3), (-0.6, 0.1, 0.4)]) if rng.random() < 0.6 else (0, 0, 0)
+        spread = 0.08 if c != (0, 0, 0) else 0.9
+        a = tuple(c[i] + rng.uniform(-spread, spread) for i in range(3))
+        size = 0.4 if rng.random() < 0.08 else 0.05
+        corners = [a] + [tuple(a[i] + rng.uniform(-size, size) for i in range(3)) for _ in range(2)]
+        if rng.random() < 0.15:  # on cell boundaries
+            corners = [tuple(round(x / 0.08) * 0.08 for x in p) for p in corners]
+        corners = tuple(corners)
+        normal = damage._norm(damage._cross(damage._sub(corners[1], corners[0]), damage._sub(corners[2], corners[0])))
+        if normal is None:
+            continue
+        tris.append((corners, rng.choice(panels), normal, rng.random() < 0.5))
+        if rng.random() < 0.1:  # the same triangle on another panel
+            tris.append((corners, rng.choice(panels), normal, rng.random() < 0.5))
+        if rng.random() < 0.05:  # a shifted copy in its plane: equal distances off the patch
+            shift = damage._cross(normal, (0.0, 0.0, 1.0))
+            moved = tuple(tuple(p[i] + 0.01 * shift[i] for i in range(3)) for p in corners)
+            tris.append((moved, rng.choice(panels), normal, rng.random() < 0.5))
+    return damage.HostField([], [], [], damage.Box((-1, -1, -1), (1, 1, 1)), tris=tris)
+
+
+def test_batched_panel_votes_match_the_ring_search():
+    """DamagePlan._votes (all of a section's points at once, by ring counts) against
+    the original per-point ring search, over several VOTE_RINGS schedules: the
+    default, single rounds, and (1,) where most points fall back to _vote."""
+    from collections import defaultdict
+
+    rng = random.Random(31)
+    saved = damage.VOTE_RINGS, damage.VOTE_CHUNK
+    try:
+        for scene in range(6):
+            f = _vote_scene(rng)
+            plan = object.__new__(damage.DamagePlan)
+            plan._grids = {}
+            plan._forza_norm = lambda p: p
+            allowed = {(0, 0), (1, 2), (3, 4), (5, 6), (1, 0)}
+            if scene % 3 == 1:
+                allowed = {(1, 2), (3, 4)}
+            for paint in (False, True):
+                index = plan._tri_index(f, allowed, paint=paint)
+                if index is None:
+                    continue
+                cells = defaultdict(list)
+                for n, (pts, pair, _, is_paint) in enumerate(f.tris):
+                    if pair not in allowed or (paint and not is_paint):
+                        continue
+                    lo = [int(math.floor(min(p[a] for p in pts) / 0.08)) for a in range(3)]
+                    hi = [int(math.floor(max(p[a] for p in pts) / 0.08)) for a in range(3)]
+                    for i in range(lo[0], hi[0] + 1):
+                        for j in range(lo[1], hi[1] + 1):
+                            for k in range(lo[2], hi[2] + 1):
+                                cells[(i, j, k)].append(n)
+                qs, normals = [], []
+                for _ in range(80):
+                    kind = rng.random()
+                    if kind < 0.3:  # on a host triangle: a corner, or its centroid
+                        pts = rng.choice(f.tris)[0]
+                        q = (
+                            rng.choice(pts)
+                            if rng.random() < 0.5
+                            else tuple(sum(p[a] for p in pts) / 3 for a in range(3))
+                        )
+                    elif kind < 0.4:  # on a cell boundary
+                        q = tuple(rng.randint(-12, 12) * 0.08 for _ in range(3))
+                    else:
+                        q = tuple(rng.uniform(-1.3, 1.3) for _ in range(3))
+                    qs.append(q)
+                    normals.append(
+                        damage._norm(tuple(rng.uniform(-1, 1) for _ in range(3))) if rng.random() < 0.8 else None
+                    )
+                for reach in (None, 0.12):
+                    want = [_vote_reference(cells, 0.08, f, q, n, reach) for q, n in zip(qs, normals, strict=True)]
+                    for rings, chunk in (((1, 2, 3, 5, 7), 400_000), ((7,), 50), ((2, 4), 1000), ((1,), 400_000)):
+                        damage.VOTE_RINGS, damage.VOTE_CHUNK = rings, chunk
+                        assert plan._votes(index, f, qs, normals, reach) == want, (scene, paint, reach, rings)
+    finally:
+        damage.VOTE_RINGS, damage.VOTE_CHUNK = saved
+
+
+def test_batched_panel_vote_stops_on_an_exact_ring_score():
+    """The third best exactly at r * cell stops the ring loop at r (<=). Two small
+    triangles of one panel at distance exactly k * 0.08 under the point, and a
+    large one of another panel nearer that spans rings k..k+2: stopped at ring k
+    the small ones win; one ring later the large one counts twice and wins."""
+    flat = (0.0, 0.0, 1.0)
+    small = ((0.0, 0.0, 0.0), (0.03, 0.0, 0.0), (0.0, 0.03, 0.0))
+    large = ((0.0, 0.0, 0.01), (-0.3, 0.0, 0.01), (0.0, -0.3, 0.01))
+    tris = [(small, (1, 2), flat, True), (small, (1, 2), flat, True), (large, (5, 6), flat, True)]
+    f = damage.HostField([], [], [], damage.Box((-1, -1, -1), (1, 1, 1)), tris=tris)
+    plan = object.__new__(damage.DamagePlan)
+    plan._grids = {}
+    plan._forza_norm = lambda p: p
+    index = plan._tri_index(f, {(1, 2), (5, 6)})
+    cells = index[1]
+    qs = [(0.0, 0.0, k * 0.08) for k in (1, 2, 3)]
+    want = [_vote_reference(cells, 0.08, f, q, None) for q in qs]
+    assert want == [(1, 2)] * 3
+    assert plan._votes(index, f, qs, [None] * 3) == want
+
+
+def test_nearest_pairs_match_nearest_pair():
+    """The batched _nearest_pairs (paint triangles try the paint vote first) gives
+    what the per-point vote path gives."""
+    rng = random.Random(37)
+    f = _vote_scene(rng)
+    plan = object.__new__(damage.DamagePlan)
+    plan._grids = {}
+    plan._forza_norm = lambda p: p
+    allowed = {(0, 0), (1, 2), (3, 4), (5, 6), (1, 0)}
+    qs = [tuple(rng.uniform(-1, 1) for _ in range(3)) for _ in range(150)]
+    normals = [damage._norm(tuple(rng.uniform(-1, 1) for _ in range(3))) for _ in qs]
+    paints = [rng.random() < 0.5 for _ in qs]
+    want = []
+    for q, n, paint in zip(qs, normals, paints, strict=True):
+        pair = plan._vote(plan._tri_index(f, allowed, paint=True), f, q, n, damage.PAINT_REACH) if paint else None
+        want.append(pair if pair is not None else plan._vote(plan._tri_index(f, allowed), f, q, n))
+    assert plan._nearest_pairs(qs, allowed, f, normals, paints) == want
+    assert [plan._nearest_pair(q, allowed, f, n, p) for q, n, p in zip(qs, normals, paints, strict=True)] == want
+
+
 # --- cockpit.visible_triangles and GlassSight -----------------------------------------
 
 
