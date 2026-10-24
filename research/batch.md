@@ -283,6 +283,32 @@ UV1 lookups 5.0 -> 1.4 s, crush displacements 2.4 -> 0.9 s, the exposed-geometry
 split 1.7 -> 0.6 s. The 6-car build output is byte-identical
 (`tests/test_speed_damage.py` has the equivalence tests).
 
+**Cockpit cull, cockpit atlas, engine sound.** `cockpit._raster` cuts each
+part's pixel box into tiles of 1 to 8 pixels a side (the smallest power of two
+that fits) and evaluates all tiles of one size as (rows, columns, tiles) arrays,
+the tile axis innermost; the edge terms (qx - xc), (ry - yc) ... are computed per
+row and per column, the same subtractions the loop does per pixel, and tile
+pixels outside the box get NaN centres. The loop's result doesn't depend on
+pixel order (per pixel the largest 1 / z if above the depth, from the earliest
+part among equals), so np.maximum.at and np.minimum.at replace the lexsort. The
+near-plane clip and visible_triangles' bookkeeping are numpy too.
+`visible_triangles` 4.7-11 s -> 1.2-2.0 s, the cockpit step 7-14 s -> 3-5 s per
+car. An ideal early depth cull (parts behind the final depth over their whole
+box) would skip only 30% of the box pixels on the RX7, so there is none.
+`wwise_bank.encode_ima_many` guesses each block's running step index (the end
+of the block before), encodes every block's candidates of all of a car's loops
+at once, and repeats until the guesses stop changing (the first blocks are
+right from the start, the next ones a round later; 7-10 rounds); if they don't
+settle in ENCODE_ROUNDS, the original loop runs on the table. ADPCM encoding
+1.4-1.9 s -> 0.2-0.3 s. Also: the decoder (blocks in parallel), the `seamless`
+cut search (np.correlate for all cuts, the original expression for those within
+1e-9 of the best), the sweeps, the WAV writer, the region cut, summed-area tables
+per region, and decoded Forza atlases shared per process (the cockpit decoded
+interior_LOD0 twice). `tests/test_speed_cockpit.py` has the equivalence tests.
+Left in the cockpit step: `add_geometry` (per-vertex Python, about 1 s),
+`Texturing.plan` (about 1 s, mostly decoding the cockpit atlases) and the
+sweeps (about 1 s, numpy-bound).
+
 Batch-level costs at full-roster scale:
 
 - **Lint was quadratic.** Each `upvh lint` read the whole output archive,
