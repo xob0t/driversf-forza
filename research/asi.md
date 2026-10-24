@@ -456,7 +456,9 @@ lists them.
   `Header_Sprite_20` free); the maker list has no "<maker> 2" groups and ends
   at WIESMANN (`img/garage-ford-last-card-before-after.png`,
   `img/garage-maker-list-end-before-after.png`,
-  `img/garage-window-mid-group.png`). The same build with master's plugin and
+  `img/garage-window-mid-group.png`). FORD's car 31 (Ford Explorer 2010, ported,
+  model 393) selected and the garage left: the player drives it (run
+  `vm-20261024-222016`, `img/garage-ford-car31-driven.jpg`). The same build with master's plugin and
   register.lua (run `vm-20261024-220008`): FORD 20/20, SF discs on every card
   (a 20-card group needs card 20), NISSAN 2 ... TOYOTA 2 at the end of the list.
 - Makers of 20 or fewer cars look as before: the maker-list screenshots of
