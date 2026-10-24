@@ -208,7 +208,7 @@ and 147-hosted cars were placed off the usual dyno start (x 1683.8 and
 1678.7 against 1671.4), so the spawn probably knocked them. That is
 unconfirmed. The bug was the misaligned pattern, not the crack state.
 
-Every car built before the fix has the old mapping. `src/dsfforza/convert/glass.py check`
+Every car built before the fix has the old mapping. `dsff glass check`
 flags 38 of the 40 `out/testdrive2` cars: their glass triangles straddle the
 windscreen and side-front slots. The Fiat 500 and Golf R pass only because
 none of their triangles happens to cross u 0.665–0.672. `src/dsfforza/convert/glass.py

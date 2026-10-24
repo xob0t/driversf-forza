@@ -6,8 +6,8 @@ Static analysis of build 1.04. File offsets are relative to the UPVH payload
 (Saloon 15, VEHC 3, spool 266, 0x42B0 bytes, unless stated). Code addresses
 are VAs in `Driver.exe`. Evidence levels follow `dngvehicles.md`.
 
-Tools: `src/dsfforza/formats/upvh.py summary <archive> --id N [--tables]` prints the
-decoded hierarchy; `src/dsfforza/formats/upvh.py lint <archive> --id N --stock <stock.sp>`
+Tools: `dsff upvh summary <archive> --id N [--tables]` prints the
+decoded hierarchy; `dsff upvh lint <archive> --id N --stock <stock.sp>`
 checks a converted car against the rules below. Ghidra script:
 `tools/ghidra/FindScalars.java` (scalar/FourCC search, vtables, callers).
 
@@ -254,8 +254,8 @@ wheels, the driver and his hands (runs 20261022-163835, -164332, -164459,
 `src/dsfforza/convert/chassis_variants.py` copies part 0's submodels (new UIDs, same
 vertex and index ranges) into every extra chassis part after conversion, and
 `upvh.py lint` fails a car whose variant parts are empty while part 0 is
-not. 24 of the 137 usable hosts have variant parts (`python
-src/dsfforza/convert/chassis_variants.py <stock> --ids ...`). In the 40-car test drive, 8
+not. 24 of the 137 usable hosts have variant parts (`uv run
+dsff chassis_variants <stock> --ids ...`). In the 40-car test drive, 8
 cars sat on such hosts; only the 257-role ones are known to go invisible
 (the Cuda; the 250 GTO on 210 is untested); cars on 1281 hosts (M3 E30, RX-7,
 S2000, Firebird, 300SL, 2000GT) were not reported, so the game probably

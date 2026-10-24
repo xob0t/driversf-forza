@@ -186,7 +186,7 @@ Failed cars are left out, and `batch-report.json` lists each one with its
 cause. Every `port_car.py` option passes through `--port "..."`. The default
 is `--mdxn-limit 0x2C0000 --damage`, the configuration tested in game.
 
-`src/dsfforza/game/game_data.py prepare` makes the derived files the tools read on a
+`dsff game_data prepare` makes the derived files the tools read on a
 machine that has only the game and the discs:
 
 - `vehiclestats.lua`, made from `ScriptsLuaScripts.fchunk` by a small Lua 5.1

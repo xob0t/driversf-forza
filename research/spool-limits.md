@@ -509,7 +509,7 @@ headroom.
 
 ## Tools
 
-- `src/dsfforza/game/vehicle_limits.py <archive> [--vehc N ...]`: stock maxima per kind,
+- `dsff vehicle_limits <archive> [--vehc N ...]`: stock maxima per kind,
   or one entry checked against the NONR buffer and the 0x280000 threshold.
 - `src/dsfforza/game/spool_variants.py`: the archive variants above (`--pad-vehc`,
   `--pad-nonr`, `--sslp-nonr`, `--sslp-slots`).

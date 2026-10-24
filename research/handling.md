@@ -19,9 +19,9 @@ forza`).
 
 Tools:
 
-- `src/dsfforza/build/handling_dsf.py loo|build` is the DSF-first mapping and its
+- `dsff handling_dsf loo|build` is the DSF-first mapping and its
   leave-one-out check; `port_car.py --handling dsf` (default) uses it.
-- `src/dsfforza/build/handling.py dump|build|apply` reads, derives and writes VO3D (the
+- `dsff handling dump|build|apply` reads, derives and writes VO3D (the
   Forza mapping, `--handling forza`).
 - `src/dsfforza/harness/dyno.py` turns the in-game dyno logs into 0-60, 0-100, quarter
   mile, braking and steer/handbrake response figures.
@@ -186,7 +186,7 @@ steering marker, read by `FUN_005743E0` (`research/cockpit.md`, "Driver's hands"
 
 `src/dsfforza/build/handling.py` reads the stock configuration of a car from
 `media/db/gamedb.slt`, FH1 first and then FM4 (extract with
-`src/dsfforza/formats/xiso.py extract <iso> media/db/gamedb.slt out/db/fh1_gamedb.slt`).
+`dsff xiso extract <iso> media/db/gamedb.slt out/db/fh1_gamedb.slt`).
 Joins and units, checked on the 370Z:
 
 | Value | Source |
@@ -732,7 +732,7 @@ these, see "Round 4 in game".)
    sessions; the stock car itself varies that much) isn't in any one set.
 4. p18: 6% median, 10% at the 75th percentile (torque and power rule).
 
-## Forza mapping (port_car --handling forza, src/dsfforza/build/handling.py build)
+## Forza mapping (port_car --handling forza, dsff handling build)
 
 The tool starts from the host's VO3D, the clone made by `clone_vehicle.py`,
 and replaces only what it can derive. Everything else stays the host's:

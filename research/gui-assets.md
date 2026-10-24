@@ -284,7 +284,7 @@ or text + 2 (plate), look up the code, and call the element's own vtable
 against its original bytes and skipped (logged) if another plugin changed
 it; the ctor hook is applied only if at least one site was.
 
-**Data (`src/dsfforza/game/gui_assets.py --wide-glyphs`, default off).** The one-byte
+**Data (`dsff gui_assets --wide-glyphs`, default off).** The one-byte
 plan above still runs and stays in `Manufacturer`/`Model` as the fallback
 for a game without the plugin. On top, `plan_wide_glyphs` gives one code
 per maker DSF has no badge for (Forza logo) and one per model name DSF has

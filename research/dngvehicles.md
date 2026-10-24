@@ -173,7 +173,7 @@ vehicles.
 
 ## Rewriting the archive
 
-`src/dsfforza/formats/chnk.py rebuild` re-serializes an archive from its parsed tree, and
+`dsff chnk rebuild` re-serializes an archive from its parsed tree, and
 the output is byte-identical to the stock `dngvehicles.sp`. The layout rules
 are in the `chnk.py` docstring. The same rules round-trip
 `GUI_FrontEnd.fchunk`, but not `san_francisco.dngc`, `gui.sp` or
@@ -182,7 +182,7 @@ different fill pattern and nested sizes that don't match their headers.
 
 ## Clone
 
-`src/dsfforza/build/clone_vehicle.py <dngvehicles.sp> <out.sp> --source 266 --id 304` copies the three VEHC
+`dsff clone_vehicle <dngvehicles.sp> <out.sp> --source 266 --id 304` copies the three VEHC
 variants, patches the ID at VSVH+0, VO3D+0, SPID+0 and UPVH+0x14 (the only
 places variant 0 stores it in all 150 vehicles; variants 1 and 2 hold none),
 inserts the copies after the last VEHC, and appends three SSLP records and

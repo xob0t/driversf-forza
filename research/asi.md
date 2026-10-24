@@ -234,7 +234,7 @@ Why a side file:
 - **No ID is lost to the 304-slot list.** Stock cars use about 146 slots,
   the 61 low garage IDs up to 61 more; added cars use none.
 
-`src/dsfforza/game/savecheck.py <savegames folder> --ids 305,500` lists both files.
+`dsff savecheck <savegames folder> --ids 305,500` lists both files.
 
 ### Telling Lua the plugin is there
 

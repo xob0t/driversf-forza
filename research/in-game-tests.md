@@ -151,8 +151,8 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
   the ReadOnly flag. `run-test.ps1` clears it in the run folder and before
   deleting (run `vm-20261024-015718` failed on `clonetest.lua`).
 - **Debugging a headless install:** `vm-build.ps1 -Step Create -VncPort 5971`
-  turns on VMware's VNC server on 127.0.0.1 (no password). `python -I
-  src\dsfforza\harness\vncshot.py 127.0.0.1 5971 shot.png` grabs a frame. Over VNC,
+  turns on VMware's VNC server on 127.0.0.1 (no password). `uv run
+  dsff vncshot 127.0.0.1 5971 shot.png` grabs a frame. Over VNC,
   special keys get through but letters don't (keysyms are probably mapped
   through the Russian host keymap), so `vnckeys.py` is of little use. A
   powered-off guest disk can be read with 7-Zip: `7z e dsfforza-test.vmdk

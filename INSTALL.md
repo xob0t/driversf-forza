@@ -19,10 +19,12 @@ back byte for byte.
 
   The file names don't matter. A car that is only on a disc you don't have is
   skipped.
-- **Python 3.10 or newer**, from <https://www.python.org/downloads/>, with
-  numpy (`python -m pip install numpy`); the build needs it for the
-  textures and licence plates. You don't need Python if you install a
-  finished build with `-Build`.
+- **uv**, from <https://docs.astral.sh/uv/getting-started/installation/>
+  (or `winget install astral-sh.uv`; open a new PowerShell window after
+  installing it). The installer runs the build with `uv run`, and uv
+  downloads Python 3.13 and numpy for it by itself (into `.venv` in the repo
+  folder), so you don't install Python yourself. You don't need uv if you
+  install a finished build with `-Build`.
 - **Windows PowerShell 5.1**, which comes with Windows 10 and 11.
 - **The Microsoft Visual C++ 2015-2022 Redistributable, x86 (32-bit)**:
   <https://aka.ms/vs/17/release/vc_redist.x86.exe>. DriverNGHook needs it. The
@@ -58,7 +60,7 @@ Close the game first. Then, from the repository folder:
 .\tools\install.ps1 -GamePath '...' -Iso ... -List my-cars.txt
 .\tools\install.ps1 -GamePath '...' -Iso ... -Car NIS_370Z_10,BMW_M5_12,NIS_SkylineGTR_93@fm4
 
-# Install a build you already made with src\dsfforza\build\port_batch.py
+# Install a build you already made with `uv run dsff port_batch build`
 .\tools\install.ps1 -GamePath '...' -Build out\batch\first
 ```
 
@@ -212,7 +214,7 @@ option: `Documents\Ubisoft\Driver San Francisco\reloaded\savegames\autosave.dat`
   - The archive can hold at most 215 added cars. dsfforza.asi's `archive`
     module raises that to 849 (757 with the default ID policy, all 849 with
     `-IdPolicy asi`). `install.ps1 -Asi` builds with room for them; a build
-    made by hand needs `src\dsfforza\build\port_batch.py build --root-limit 3003`. Such
+    made by hand needs `uv run dsff port_batch build --root-limit 3003`. Such
     an archive works only with the plugin installed.
   - Every car takes about 4 MB in `dngvehicles.sp`.
   - The garage picture file has room for about 98 new pictures, and the HUD

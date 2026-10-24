@@ -22,8 +22,9 @@ DriverNGHook runs the Lua that registers the cars. The optional native plugin
 
 ## Setup
 
-- Windows, Python 3.10+ with numpy (`python -m pip install numpy`),
-  PowerShell 5.1.
+- Windows, PowerShell 5.1 and [uv](https://docs.astral.sh/uv/)
+  (`winget install astral-sh.uv`). uv installs Python 3.13 and the
+  dependencies (`uv.lock`) into `.venv` on the first `uv run`.
 - Forza disc images in `assets/` (`*.iso`), or pass `--iso`.
 - `DSF_GAME_DIR`: the game folder (the one with `Driver.exe`). Every tool
   reads it; there is no built-in default.
@@ -47,12 +48,13 @@ uv run dsff port_batch build --list tools/batches/testdrive.txt --gui --out out/
 ```
 
 One car into an archive: `uv run dsff port_car --out out/one.sp --car NIS_370Z_10`.
+Every tool runs as `uv run dsff <tool> ...` or `uv run python -m dsfforza.<group>.<tool> ...`.
 `--car NAME@fh1` / `@fm4` picks the game when a car is on both.
 
 ## Tests
 
 ```powershell
-uv run python -m tests                 # offline tests
+uv run python -m tests                 # ruff check, ruff format --check, offline tests
 .\tools\asi\build.ps1 -Test           # build the plugin and patch-test it
 ```
 
@@ -72,7 +74,7 @@ Options and the other modes (host, sandbox): `research/in-game-tests.md`.
 
 | Path | What |
 | --- | --- |
-| `src/dsfforza/build/port_batch.py`, `port_car.py`, `forza2dsf.py` | the converter |
+| `src/dsfforza/` | the Python tools (`uv run dsff --help` lists them): `formats/` file formats, `convert/` Forza to DSF conversion (`forza2dsf.py`), `build/` the pipeline (`port_car.py`, `port_batch.py`), `game/` the game's data, `harness/` test analysis |
 | `tools/install.ps1` | installer and uninstaller |
 | `tools/asi/` | `dsfforza.asi` plugin |
 | `tools/game/lua/` | registration Lua and in-game test probes |

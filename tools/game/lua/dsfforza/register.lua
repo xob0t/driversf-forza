@@ -144,7 +144,7 @@ local function stockMatch(car)
 	return exact, near
 end
 
--- Per-ID vehicleStats overrides from src/dsfforza/game/gui_assets.py build: Picture1,
+-- Per-ID vehicleStats overrides from dsff gui_assets build: Picture1,
 -- Manufacturer, Model (vehicles_font codes), ManufacturerName, ModelName.
 local HUD
 do
