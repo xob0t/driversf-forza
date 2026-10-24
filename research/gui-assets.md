@@ -482,7 +482,9 @@ by the last car list).
 
 `card_emblem`: the ctor hook (0x006C6855) also reads the optional
 vehicleStats field `GarageEmblem` (1 = Forza logo). For such a car, in a
-maker group of fewer than 20 cars, the spare sprite resource
+maker group of fewer than 20 cars, or one of more than 20 that the `[garage]`
+module shows 19 cards at a time (`asi.md`, "Maker groups past 20 cars"; mod_hud
+asks `garage_card_limit()`), the spare sprite resource
 `Header_Sprite_20` (card 20's picture slot, unused then) gets the SF
 resource's UVs and texture `f012ef7ef05a2e2d`, once per list fill, and card
 N's `Spr3D.unlocked<N>` in every menu page (menu = `[[screen+4]+8]`, pages
@@ -587,7 +589,7 @@ and Fonts.fchunk, `gui_assets` now reads the originals from
    dsfforza.asi [hud] re-points it for cars with `GarageEmblem = 1` (in game:
    run `host-20261023-100401`). Still open: a maker group of exactly 20 cars
    keeps the SF disc on all its cards (card 20 needs the spare; untested in
-   game); the spare's UV restore when a 20-car group or the challenge
+   game; groups of more than 20 use 19 cards and keep the emblem); the spare's UV restore when a 20-car group or the challenge
    browser's 20th card uses Header_Sprite_20 is wired but was not exercised.
 9. Answered: the crash with `[garage]` on (runs `host-20261023-080433`,
    `-080858`, `-081321`) was not the emblem patch. The garage fills its maker

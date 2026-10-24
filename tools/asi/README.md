@@ -95,4 +95,5 @@ crash_log=0 ; 1: log the first faults (eip, registers, stack return addresses)
 
 [garage]
 enabled=1   ; every module has this switch; main.cpp checks it
+max_cars=1000 ; cars per maker group (20: stock cap); longer groups get a 19-card window
 ```

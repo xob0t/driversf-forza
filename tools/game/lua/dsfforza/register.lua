@@ -70,8 +70,8 @@ local OPTIONS = {
 -- The save holds flags for IDs up to 303 only.
 --
 -- dsfforza.asi's garage module (tools/asi, research/asi.md) lifts both: the
--- garage walks IDs up to 999, holds more maker groups (and drops what doesn't
--- fit instead of overrunning memory), and flags of IDs 304..999 go to
+-- garage walks IDs up to 999, holds more maker groups of any number of cars
+-- (and drops what doesn't fit instead of overrunning memory), and flags of IDs 304..999 go to
 -- <savegames>\dsfforza-garage.dat instead of the stock save block. Lua can't
 -- call native code, so the plugin answers ProfileSettings.GetVehicleUnlocked
 -- for magic IDs 8000000 + k (the game's Lua numbers are single floats, exact
@@ -289,8 +289,9 @@ end
 -- The garage groups selectable cars of IDs 0..303 by the first 15 characters
 -- of ManufacturerName, upper-cased, into a fixed table of 40 groups of 20
 -- (FUN_006c57d0 and its inserts, no capacity check: more overruns memory).
--- With dsfforza.asi: IDs 0..GARAGE_MAX_ID, GARAGE_MAX_GROUPS groups, and a car
--- that doesn't fit is left out by the plugin.
+-- With dsfforza.asi: IDs 0..GARAGE_MAX_ID, GARAGE_MAX_GROUPS groups of
+-- GARAGE_MAX_PER_GROUP cars (the plugin's [garage] max_cars, 1000: a maker keeps
+-- all its cars in one group), and a car that doesn't fit is left out by the plugin.
 local function groupKey(name)
 	return string.sub(string.upper(tostring(name or "")), 1, 15)
 end
