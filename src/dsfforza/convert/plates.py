@@ -160,7 +160,7 @@ def host_plates(stream, vehc) -> HostPlates:
 
 # --- depth maps of the Forza body ---------------------------------------------------------
 
-CLASS = {"paint": 1, "trim": 2, "glass": 3, "textured": 4, "tyre": 5}
+CLASS = {"paint": 1, "trim": 2, "chrome": 2, "glass": 3, "textured": 4, "tyre": 5}
 
 
 def body_triangles(sections, lod: int, place) -> list:

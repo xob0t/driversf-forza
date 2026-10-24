@@ -90,7 +90,8 @@ the converter squashes the Forza window UVs into that band
 | window | nodamage | textured | glass | shared GLASS |
 | glass (headlight cover) | Lights | textured | glass | shared GLASS |
 | black_glass | nodamage | textured | trim | shared TRIM |
-| black, frame, bottom, plastic2, weatherstrip, matte_colors, misc, chrome, rubber_trim, bumper_frame, undercarriage, race_kit_red | nodamage | mostly swatch | trim | shared TRIM (`--swatch-trims`: Chassis with the swatch colour) |
+| black, frame, bottom, plastic2, weatherstrip, matte_colors, misc, rubber_trim, bumper_frame, undercarriage, race_kit_red | nodamage | mostly swatch | trim | shared TRIM (`--swatch-trims`: Chassis with the swatch colour) |
+| chrome, chrome_2, chrome_3, chrome_bump, lights_chrome | nodamage (lights) | textured or swatch | chrome | shared CHROME: GLOBAL_LOD_Chrome (full), GLOBAL_Chassis_Chrome (exterior); "Chrome trim" below |
 | carbon_fiber | global | tiling | trim | shared TRIM |
 
 Shared TRIM (`GLOBAL_Chassis_Simple`) samples DSF's global chassis texture
@@ -281,6 +282,98 @@ well under the 0x2C0000 limit. All 40 testdrive cars (`out/fx/td`, `--mdxn-limit
 `out/testdrive11`. Full-entry MDXN grows by 45 KB on average, 170 KB at most;
 the largest is 0x1e0000.
 
+## Chrome trim and the Boss 429's black parts (2026-10-24)
+
+User report on `out/testdrive11` (ID 37, FOR_MustangBOSS429_70, host 193):
+"its hood is missing color in chase cam but not in cockpit? actually most of
+its body details are plain black". Chase view: flat black bonnet scoop, rear
+spoiler and rear-window louvres, a dark lower body. Cockpit view: a
+body-colour scoop with reflections.
+
+**What Forza says, part by part (confirmed-static; `out/inv/texels.py`,
+`where.py`).** All three named parts are `matte_colors` subsections on
+opaque near-black texels of `nodamage.xds` (18, 17, 18, alpha 255):
+`hooda` 152 triangles (the scoop, x ±0.28, z -1.98..-1.33; the cockpit
+carbin's `hooda` has the same technique on the same texel, 722 triangles),
+`winga` 550 (the spoiler), `body` 596 (the louvres over the rear window).
+The car's `ShaderSettings.xml` gives `matte_colors` SpecularAmount 1 and
+SpecularPower 5: a broad matte sheen, not paint. So Forza's stock Boss 429
+has a black scoop, spoiler and louvres, as the 1970 car did (black scoop on
+1970 cars, body colour on 1969 ones; louvres and spoiler black). The
+converter's flat dark trim matches them; DSF's own black trims look the same
+(`GLOBAL_Chassis_Simple`: specular intensity 0.01, power 7.5).
+
+**The cockpit's red scoop: upgrade bonnets.** The cockpit carbin holds every
+bonnet the car can wear: `hooda` (stock) plus `hoodCIrace` (a body-colour
+cowl-induction box, 4,768 triangles) and `hoodPSrace` (6,350), and
+`cockpit.fit` kept every section but `cagerace`, so all three were drawn on
+top of each other. The race box sits higher and hid the stock scoop. The
+outside never had this: `forza2dsf.stock_sections` keeps variant `a` and
+drops `<base>race`. Fix: `cockpit.fit` applies the same rule to the cockpit
+carbin. Survey (`out/inv/trim_survey.py`, every cached car, 572 folders):
+112 cockpit carbins carry extra bonnets (`hoodb` to `hoodq`, 39
+`hoodPSrace`, 35 `hoodCIrace`), 11 of the 40 testdrive cars (Mito, Cuda,
+500 Abarth, Boss 429, Civic Type R, S2000, RX-7, Silvia, Skyline, Firebird,
+Supra). Interior entries shrink (Boss 0x1a1000 to 0x199800 MDXN, Cuda
+0x1c5000 to 0x1a8800, Firebird 0x193800 to 0x184000).
+
+**Chrome drawn as black trim (the "body details").** Forza's `chrome`
+technique (and `chrome_2`, `chrome_3`, `chrome_bump`, `lights_chrome`) had
+role trim, so the Boss's chrome bumpers, window frames, drip rails, door
+handles and tail-lamp bezels (1.85 m², 4,583 exterior vertices) drew with
+the shared trim's dark texel: black. Stock cars draw chrome with DSF's shared
+chrome materials (`out/inv/stock_mats.py` over all 150 stock vehicles):
+
+| Entry | Material | Vehicles | Triangles | Layout |
+| --- | --- | --- | --- | --- |
+| full (kind 0) | `GLOBAL_LOD_Chrome` `a012f01306d57a2a` | 96 | 374k | stride 32, MODL flag 5 |
+| full (kind 0) | `GLOBAL_Chassis_Chrome` `00128338d7fd1027` | 9 | 21k | stride 32, flag 5 |
+| exterior (kind 2) | `GLOBAL_Chassis_Chrome` | 148 | 322k | stride 32, flag 5 |
+| exterior (kind 2) | `GLOBAL_LOD_Chrome` | 8 | 12k | stride 32, flag 5 |
+
+Both sample the shared chassis texture `00122b73d1fa1227` (reflection
+amount 1, specular power 150; `GLOBAL_LOD_Chrome` adds a static cube map).
+Stock chrome UV0 lands mostly on texels 972-980 x 404-424 (grey level about
+98); UV1 is the damage-decal UV as on paint (mostly the corner texel). Host
+193, the Boss's host, has 3,074 chrome vertices in its exterior; the port had
+none.
+
+Fix: a `chrome` role (`forza_materials.CHROME`, exact names above, plus the
+prefix `chrome*` after the blur and badge rules), mapped to
+`GLOBAL_LOD_Chrome` in the full entry and `GLOBAL_Chassis_Chrome` in the
+exterior (`forza2dsf.SHARED`, `SHARED_EXTERIOR`), UV0 `forza2dsf.CHROME_UV`
+(0.9536, 0.8135), UV1 Forza's (`damage.DamagePlan` replaces it with the
+host's, as on paint). The cockpit keeps drawing chrome from its atlas
+(`classify_cockpit` treats it as trim); `damage.split_exposed` leaves chrome
+whole. Survey: Forza chrome on 571 of the 572 cached cars (478 with 0.1 m² or
+more; median 0.26 m², at most 14.8 m²), all 40 testdrive cars (0.035 to
+2.57 m²: 300SL, Charger Daytona, Boss 429, 2000GT, 300C at the top).
+
+What Forza's chrome shader does with the texel colour is unknown (the
+`.fxobj` isn't decoded): 4% of the chrome area of the 40 cars samples dark
+opaque texels (370Z exhaust, Express mirrors, IS F front bumper strip,
+Charger Daytona mirrors). They are chrome now too.
+
+**The dark lower body (confirmed-static, and in game).** Not a baked-light
+bug: the sky term (s0.w) of the Boss's paint matches its stock host's
+(`out/inv/sky_cmp.py`, exterior paint by facing and height: side 0.44 to 0.54
+against 0.39 to 0.54, downward-sloping 0.30 against 0.18 to 0.30). In the
+same fixed side camera the stock 193 (dark green) shades its lower doors as
+much (`img/lower-body-port-vs-stock.jpg`); the user's port had a dark red.
+
+In game (confirmed-runtime, headless VM, the same 4 cars built from master
+and from the fix: `out/fx/before`, `out/fx/after`, IDs 1 to 4 plus stock
+193): runs `vm-20261024-133045` (before) and `vm-20261024-134146` (after).
+The Boss's rear bumper, tail-lamp bezels, rear-window and side-window frames,
+drip rail and door handle are chrome; the scoop, spoiler and louvres stay
+black (`img/chrome-boss429-ingame-before-after.jpg`). From the cockpit the
+Boss shows its black stock scoop instead of the race box, the Firebird its
+shaker scoop instead of a box filling the windscreen
+(`img/cockpit-bonnets-before-after.jpg`). The paint colour differs between
+the runs: the spawn picks a palette entry. One "after" run hit DriverNGHook's
+fatal error dialog while the world loaded (`vm-20261024-133536`), before any
+port spawned; the rerun passed.
+
 ## Open
 
 1. In game: whether the Chassis material lights badges well (the Lights
@@ -298,4 +391,10 @@ the largest is 0x1e0000.
    --no-cockpit` keeps the host's).
 5. Damage textures (`damage`, `damagelights`) and DSF's damage decal path.
 6. Parsing the `.fxobj` effect (technique → pixel shader → sampler set)
-   would make the atlas choice authoritative for custom shaders.
+   would make the atlas choice authoritative for custom shaders. It would
+   also say whether `chrome` tints its reflection by the texel (the dark
+   chrome texels above) and whether `matte_colors` / `plastic2` (car
+   ShaderSettings give them a `PaintScale`) mix in the paint colour.
+7. The cockpit draws exterior chrome (A-pillar trim, bonnet strips) flat from
+   its atlas; stock interiors have `GLOBAL_LOD_Chrome` (host 193 uses it for
+   3,700 triangles), which the interior entry could use the same way.

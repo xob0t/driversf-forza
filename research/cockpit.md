@@ -292,7 +292,11 @@ no camera.
 1. Skins the main carbin's `steering_wheel` in the full and exterior entries
    to the host's wheel record (semantic 9 = (1, 1, 0, 1) on the Desanne).
 2. Rebuilds the interior entry with `Placement`: the cockpit sections minus
-   `cagerace` and the headlights, needles without a DSF gauge as static
+   upgrade parts (`forza2dsf.stock_sections`, as on the outside: `cagerace`
+   and the extra bonnets `hoodb`.., `hoodCIrace`, `hoodPSrace` that 112 of
+   572 cockpit carbins carry, all drawn over the stock `hooda` until
+   2026-10-24; `forza-materials.md`, "Chrome trim and the Boss 429's black
+   parts") and the headlights, needles without a DSF gauge as static
    geometry (fuel and temperatures at mid, others at min; see "Gauges"), and the main carbin's remaining
    body sections at LOD 5 as the outer shell. The steering wheel gets the
    same skinning. Textured subsections use the host's `_Interior` material
