@@ -110,6 +110,14 @@ on a shorter or longer car).
    lights with the nearest lamp behind it (0.35 m), reflectors and housings
    stay unlit. FH1's `ShaderSettings.xml` agrees: `tail_light` has a
    BrakeColor, `taillight2S` a TailLightColor.
+   A car with no headlamp technique at the front takes its front clear
+   lenses as headlamps. Without those it takes the reflectors of its
+   `headlight*`/`glass[LR]HL` sections, else their lamp-cover glass (`glass`,
+   `lights_glass`). In the full roster that applies to 10 of 562 cars:
+   CHE_CorvetteGS_10, DOD_RamSRT10_06 and FOR_MustangSVTCobraR_93, plus the
+   race cars CHE_3_CorvetteC5R_04, MCL_41_McLarenF1GTR_98, MER_CLKGTR_98,
+   MIT_HKS_06 and PEU_3_905EVO_93. The NASCARs CHE_2_MonteCarloSS_11 and
+   FOR_1_Fusion_11 have decal headlights (`badge`) and stay dark.
 2. Side from the technique (`_left/_right`) or the triangle's x; a group
    whose |x| stays under 0.3 m is a centre lamp. A centre tail lamp 8 cm or
    more above the side tails becomes a stop-only lamp (type 0x02).
