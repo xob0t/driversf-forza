@@ -331,7 +331,14 @@ class Recorder:
                 continue
             wanted = {MODULE_UNIT} | executed.get(module, set())
             wanted |= {u for u in table if u.startswith("=") and u[1:] in names}
-            wanted |= {u for u in table if not u.startswith("=") and "." not in u and u in names}  # classes, functions
+            # A class the car's code names: its body (fields, defaults) ran at import, maybe
+            # before recording started. A function merely named counts only if it ran.
+            live = sys.modules.get(module)
+            wanted |= {
+                u
+                for u in table
+                if not u.startswith("=") and "." not in u and u in names and isinstance(getattr(live, u, None), type)
+            }
             # A def inside a top-level if/try block is part of the module's top level.
             code_fp[module] = {unit: table[unit] for unit in sorted(wanted) if unit in table}
         return {

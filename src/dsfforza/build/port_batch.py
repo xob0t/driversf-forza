@@ -29,6 +29,11 @@ that still fails is left out and listed with its cause (the innermost
 tools module and exception), and the rest still ship. Extractions are cached
 in out/cache/<game>/<media>/ (port_car), and --resume reuses every car an
 earlier run in the same --out built with the same ID and options.
+--reuse DIR copies each car an earlier build made from the same job, input files
+and code (work/<media>.fp.json, src/dsfforza/build/fingerprint.py) and converts
+only the rest; --verify-reuse N (default 2) converts N of the reused cars again and
+stops the build if any differs; --rebuild-where EXPR and --trust-code let a fix
+name the cars it affects (research/batch.md, "Selective rebuild").
 
 ID policy (research/batch.md): the garage lists model IDs 0..303 only
 (research/gui-assets.md) and stock cars use 62..303, so the first cars of a
@@ -1268,7 +1273,8 @@ def cmd_build(args) -> None:
     ]
     reused = {}
     reuse = Reuse(args, work) if getattr(args, "reuse", None) else None
-    for job in jobs:  # results of an earlier run: reuse (--resume) or drop
+    t = time.time()
+    for job in jobs:  # results of an earlier run: reuse (--resume, --reuse) or drop
         old_job, old_report = work / f"{job['media']}.job.json", Path(job["report"])
         if args.resume and old_job.exists() and old_report.exists() and Path(job["chunk"]).exists():
             try:
@@ -1290,6 +1296,8 @@ def cmd_build(args) -> None:
             report = reuse.take(job)
             if report is not None:
                 reused[job["media"]] = report
+    if reuse is not None:
+        timings["reuse_check"] = round(time.time() - t, 1)
     for job in jobs:
         job["requested_options"] = list(job["port_options"])
     t = time.time()

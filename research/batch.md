@@ -266,6 +266,89 @@ Batch-level costs at full-roster scale:
   never idle). The workers are pure CPU, so SMT gives at most a few tens of
   percent more; at about 420 MB per worker, 16 workers fit in 32 GB.
 
+### Selective rebuild
+
+```sh
+uv run dsff port_batch build --out out/all2 --list roster.txt --reuse out/all --jobs 8 --gui
+uv run dsff port_batch build --out out/all2 --list roster.txt --reuse out/all \
+    --trust-code --rebuild-where "host == 198" --verify-reuse 4
+```
+
+`--reuse DIR` copies a car's output from an earlier build (`DIR/work`:
+`<media>.chnk`, the report, the log, `sound/<media>/`) when nothing that
+went into it changed, and converts only the other cars. The merge, the lint
+and the GUI step still run over every car. Files are hard-linked where the
+volume allows it, so an earlier build of 573 cars costs no second 2 GB.
+
+**What decides.** Each worker writes `work/<media>.fp.json`
+(`src/dsfforza/build/fingerprint.py`) next to the chunk:
+
+- the job: car, game, disc source, spool ID, the requested `--port`
+  options, the stock archive, cache and disc paths (links and junctions
+  resolved, so another worktree with the same `out/cache` matches);
+- Python and numpy versions;
+- every file the worker opened for reading, from an audit hook on `open`
+  and `sqlite3.connect`, with its SHA-256. Files over 64 MiB (the stock
+  archive, the disc images) get size, mtime and the SHA-256 of their first
+  and last 4 MiB. Python's own files and the package sources don't count;
+- every folder it listed (`os.listdir`, `os.scandir`), as a hash of the
+  names, so a file that appears in the car's cache folder counts too;
+- the code it ran. `sys.monitoring` reports each code object the first
+  time it runs. The car then depends on the units it ran: a function, a
+  method, a class body without its methods. It also depends on the
+  module-level assignments and imports whose names its code uses, the
+  classes it names, and the remaining top level of each package module
+  it loaded. A unit's hash is its AST without docstrings, so comments,
+  docstrings and `ruff format` don't count.
+
+A car is reused only when the job and environment match and every
+recorded file, folder and unit hashes the same now. The build prints why
+the others are built, grouped (`code dsfforza.convert.cockpit.convert_interior:
+3 (...)`, `input ...`, `job: spool_id`, `no fingerprint`). A failed car is
+never reused. A car built with a fallback is reused only if its first try's
+fingerprint is unchanged too, since a fix might make that try work.
+
+The spool ID is part of the job. The chunk's UIDs are seeded from it, so a
+car whose ID moved (a car added before it in the list) is built again. Keep
+the list order, or add new cars at the end.
+
+**What it can't see.** A file whose absence matters but that sits in a
+folder nobody listed. A `stat()` without an open. Code run in the parent
+before the workers start, except what reaches the job (spool IDs, options)
+and the shared caches the workers read (`host-survey.json`,
+`dsf-fleet.json`, `stock-banks.json`), which are recorded as files. And
+anything outside Python, numpy and the package, such as a different
+Windows build of the C runtime. `--verify-reuse` exists for these.
+
+**Declared scope.** `--rebuild-where EXPR` builds the cars whose earlier
+report matches a Python expression even when their fingerprints match.
+The expression sees `r` (the report), `entry` (its manifest entry),
+`media`, `game` and `host`. `--trust-code` drops the code from the
+comparison, so a fix that knows its cars only names them:
+`--trust-code --rebuild-where "'cockpit' in entry"`. Inputs still count.
+
+**Verification.** `--verify-reuse N` (default 2 with `--reuse`; 0 turns it
+off) converts N random reused cars again into `work/verify/` with their
+earlier effective options, and stops the build before the merge if any
+chunk differs. The seed is printed; `--verify-seed` repeats a pick.
+`batch-report.json` gets a `reuse` record: source, reused cars, rebuilt
+cars with their reasons, verification results.
+
+Tested (4 cars: MAZ_RX7_97, CHE_Express2500Cargo_05, SAL_S5SRaptor_10,
+DEL_DMC12_82@fm4, `out/perf/r*` in the perf worktree):
+
+| Run | Result |
+| --- | --- |
+| `--reuse` of an unchanged tree | 4 reused, 0 built; 2 verified identical; archive byte-identical; 67 s instead of 129 s (56 s of it the verification) |
+| a statement added to `cockpit.convert_interior` | 3 built ("code dsfforza.convert.cockpit.convert_interior"); the Express, which keeps the host's interior, reused and verified identical; archive byte-identical |
+| `SKY_FLOOR` changed in `forza2dsf`, with `--trust-code --rebuild-where "host == 198"` (a wrong claim) | the Express built, 3 reused; verification rebuilt the RX7, found it different and stopped the build (exit 1, no archive) |
+| the same change without `--trust-code` | the fingerprint check names `code dsfforza.convert.forza2dsf.SKY_FLOOR` for every car |
+
+Recording costs about 2 s per car (34.7 s instead of 32.8 s for the
+Express): mostly hashing the 10 to 30 MiB a car reads and parsing the
+package modules it loaded. Checking 573 cars hashes about 15 GB once,
+then reuses the digests of shared files.
+
 A batch archive is byte-identical to a `port_car.py` archive with the same
 cars and IDs: tested with `FOR_FocusRS500_10` at 304, SHA-256 equal.
 
