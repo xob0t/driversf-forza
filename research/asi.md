@@ -436,11 +436,46 @@ host profile into the guest at the start of every series, so `stock` and
   out (the maker menu past 40 entries and a late maker's car list are
   answered above).
 
+**Maker groups past 20 cars (confirmed-runtime, headless VM; the VM's
+dsf_enhanced at a 350 m traffic radius without full-detail traffic, which
+made world loads crash less).** Test Lua: `tools/asi/test/lua/cfg_biggroup.lua`
+(savetest.lua `merge`: Ford and Dodge filed under Chevrolet, 39 stock cars in
+one group) and, for the full roster (out/final-gui of the full-roster branch,
+573 cars, `menu_debug=1`), savetest `set` with every ported ID so the garage
+lists them.
+
+- Stock archive, CHEVROLET with 39 cars (runs `vm-20261024-203120`,
+  `-212010`): the row scrolls through all 39 to the last card (Ford RS200;
+  the right arrow goes away), the highlighted card, the side panel and the
+  "39/39 OWNED" total agree throughout, the cards ahead stay full; Left goes
+  back the same way. Card 24 (Mustang Mach 1, model 192) selected, the garage
+  left: the player drives model 192.
+- Full roster with the plugin (runs `vm-20261024-214939`, `-220940`): FORD
+  holds all 49 cars ("49/49 OWNED"), the row reaches the 49th (Sierra
+  Cosworth RS500); added cars wear the Forza emblem (the 19-card window keeps
+  `Header_Sprite_20` free); the maker list has no "<maker> 2" groups and ends
+  at WIESMANN (`img/garage-ford-last-card-before-after.png`,
+  `img/garage-maker-list-end-before-after.png`,
+  `img/garage-window-mid-group.png`). The same build with master's plugin and
+  register.lua (run `vm-20261024-220008`): FORD 20/20, SF discs on every card
+  (a 20-card group needs card 20), NISSAN 2 ... TOYOTA 2 at the end of the list.
+- Makers of 20 or fewer cars look as before: the maker-list screenshots of
+  the two full-roster runs (menu-02..13) differ in under 0.1 % of the pixels,
+  except AUDI (36 cars, 1.2 %) and DODGE (31, 0.7 %), whose preview stacks
+  changed.
+- Pictures of the full-roster build don't show in either run (lock icon on
+  every card, stock cars included); not caused by this change.
+
 ### Open
 
-- A maker group of 20 cars with `GarageEmblem` cars (card 20, see
-  gui-assets.md "Garage card emblem") together with more than 40 groups:
-  not run.
+- A maker group of exactly 20 cars with `GarageEmblem` cars (card 20, see
+  gui-assets.md "Garage card emblem") keeps the SF disc: it is shown as stock
+  (20 cards). Longer groups show the emblem (above).
+- The window after a drive: where the game restores `itemBrowserIndex` on
+  return (FUN_006CCD50 sets it from a saved value), the window starts at car 0
+  again, so in a long group the highlight would land on another car. Not run.
+- Holding Right/Left past the window's edge (the takeover of the script's own
+  key repeat) and gamepad input were not run; taps were.
 - Achievements and stats that loop over IDs 0..303 (FUN_004F9490 over the
   unlocked-ever bits) don't see added cars; only the take-a-ride count is
   extended.
