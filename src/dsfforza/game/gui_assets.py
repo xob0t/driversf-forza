@@ -25,10 +25,12 @@ before the first payload) points at them. Nothing in the stock file moves.
 
 Pictures come from the Forza disc: FH1 media/ui/Textures.zip holds
 Thumbnails/Thumbnail_<Data_Car.Id>.xds (768 x 288, 32-bit, one per FH1 car)
-and UI4/Logos/Manufacturer_Logos*/L_MAN_<Make>_Logo.xds. Without a thumbnail,
-`render_picture` draws the converted model with a small software renderer.
+and UI4/Logos/Manufacturer_Logos*/L_MAN_<Make>_Logo.xds. The car itself is a
+render of the converted model from the stock pictures' camera (car_render.py);
+FH1's thumbnails (eye level, mirrored) only with --fh1-thumbnails.
 
-    uv run dsff gui_assets build out/ported.json --out out/gui [--name MEDIA=TEXT] [--wide-glyphs]
+    uv run dsff gui_assets build out/ported.json --out out/gui [--name MEDIA=TEXT] [--wide-glyphs] [--jobs 2]
+    uv run dsff gui_assets camera [--cars nissan_370z,...] [--thumbnails out/ported.json]
     uv run dsff gui_assets extract <name> out/pic.png [--gui gui.sp]
     uv run dsff gui_assets glyphtest --ids 1,2,3 [--out out/hud/glyphtest]
     uv run dsff gui_assets strings <regex>
@@ -44,6 +46,8 @@ import math
 import struct
 import sys
 from pathlib import Path
+
+import numpy as np
 
 from dsfforza import REPO
 from dsfforza.formats import chnk
@@ -323,58 +327,44 @@ class Image:
         self.w, self.h = width, height
         self.px = bytearray(rgba) if rgba is not None else bytearray(bytes(fill) * (width * height))
 
+    @classmethod
+    def from_array(cls, rgba) -> Image:
+        """From an (h, w, 4) uint8 array."""
+        h, w = rgba.shape[:2]
+        return cls(w, h, np.ascontiguousarray(rgba, dtype=np.uint8).tobytes())
+
+    def array(self):
+        """(h, w, 4) uint8 view of the pixels (writes go to the image)."""
+        return np.frombuffer(self.px, np.uint8).reshape(self.h, self.w, 4)
+
     def crop(self, x0: int, y0: int, x1: int, y1: int) -> Image:
-        out = Image(x1 - x0, y1 - y0)
-        for y in range(y0, y1):
-            out.px[(y - y0) * out.w * 4 : (y - y0 + 1) * out.w * 4] = self.px[
-                (y * self.w + x0) * 4 : (y * self.w + x1) * 4
-            ]
-        return out
+        return Image.from_array(self.array()[y0:y1, x0:x1])
 
     def bbox(self, threshold: int = 8, region=None) -> tuple[int, int, int, int] | None:
         x0, y0, x1, y1 = region or (0, 0, self.w, self.h)
-        xs, ys = [], []
-        for y in range(y0, y1):
-            row = self.px[(y * self.w + x0) * 4 + 3 : (y * self.w + x1) * 4 : 4]
-            hits = [i for i, a in enumerate(row) if a > threshold]
-            if hits:
-                ys.append(y)
-                xs += [x0 + hits[0], x0 + hits[-1]]
-        return (min(xs), min(ys), max(xs) + 1, max(ys) + 1) if xs else None
+        hit = self.array()[y0:y1, x0:x1, 3] > threshold
+        ys, xs = np.flatnonzero(hit.any(axis=1)), np.flatnonzero(hit.any(axis=0))
+        if not len(ys):
+            return None
+        return (x0 + int(xs[0]), y0 + int(ys[0]), x0 + int(xs[-1]) + 1, y0 + int(ys[-1]) + 1)
 
     def flip_h(self) -> Image:
-        out = Image(self.w, self.h)
-        for y in range(self.h):
-            for x in range(self.w):
-                o, q = (y * self.w + x) * 4, (y * self.w + self.w - 1 - x) * 4
-                out.px[q : q + 4] = self.px[o : o + 4]
-        return out
+        return Image.from_array(self.array()[:, ::-1])
 
     def resize(self, width: int, height: int) -> Image:
-        """Area-average resample with alpha weighting (for shrinking)."""
-        out = Image(width, height)
-        sx, sy = self.w / width, self.h / height
-        for y in range(height):
-            fy0, fy1 = y * sy, (y + 1) * sy
-            for x in range(width):
-                fx0, fx1 = x * sx, (x + 1) * sx
-                acc, total = [0.0, 0.0, 0.0, 0.0], 0.0
-                for yy in range(int(fy0), min(self.h, int(math.ceil(fy1)))):
-                    wy = min(fy1, yy + 1) - max(fy0, yy)
-                    for xx in range(int(fx0), min(self.w, int(math.ceil(fx1)))):
-                        wgt = wy * (min(fx1, xx + 1) - max(fx0, xx))
-                        o = (yy * self.w + xx) * 4
-                        a = self.px[o + 3] * wgt
-                        acc[0] += self.px[o] * a
-                        acc[1] += self.px[o + 1] * a
-                        acc[2] += self.px[o + 2] * a
-                        acc[3] += a
-                        total += wgt
-                o = (y * width + x) * 4
-                if acc[3] > 0:
-                    out.px[o : o + 3] = bytes(min(255, int(c / acc[3] + 0.5)) for c in acc[:3])
-                out.px[o + 3] = min(255, int(acc[3] / max(total, 1e-9) + 0.5))
-        return out
+        """Area-average resample with alpha weighting (for shrinking): each output
+        pixel averages the source area it covers, colours weighted by alpha."""
+        wy, wx = _area_weights(self.h, height), _area_weights(self.w, width)
+        src = self.array().astype(np.float64)
+        a = src[..., 3]
+        acc_a = wy @ a @ wx.T
+        acc = np.stack([wy @ (src[..., c] * a) @ wx.T for c in range(3)], axis=-1)
+        total = wy.sum(axis=1)[:, None] * wx.sum(axis=1)[None]
+        out = np.zeros((height, width, 4), np.uint8)
+        rgb = np.minimum(255, np.floor(acc / np.where(acc_a > 0, acc_a, 1)[..., None] + 0.5))
+        out[..., :3] = np.where((acc_a > 0)[..., None], rgb, 0)
+        out[..., 3] = np.minimum(255, np.floor(acc_a / np.maximum(total, 1e-9) + 0.5))
+        return Image.from_array(out)
 
     def fit(self, max_w: int, max_h: int) -> Image:
         scale = min(max_w / self.w, max_h / self.h)
@@ -382,24 +372,28 @@ class Image:
 
     def paste(self, other: Image, left: int, top: int) -> None:
         """Alpha-composite `other` over this image (both straight alpha)."""
-        for y in range(other.h):
-            ty = top + y
-            if not 0 <= ty < self.h:
-                continue
-            for x in range(other.w):
-                tx = left + x
-                if not 0 <= tx < self.w:
-                    continue
-                o = (y * other.w + x) * 4
-                a = other.px[o + 3] / 255
-                if a <= 0:
-                    continue
-                q = (ty * self.w + tx) * 4
-                b = self.px[q + 3] / 255
-                out_a = a + b * (1 - a)
-                for c in range(3):
-                    self.px[q + c] = int((other.px[o + c] * a + self.px[q + c] * b * (1 - a)) / out_a + 0.5)
-                self.px[q + 3] = int(out_a * 255 + 0.5)
+        x0, y0 = max(0, left), max(0, top)
+        x1, y1 = min(self.w, left + other.w), min(self.h, top + other.h)
+        if x0 >= x1 or y0 >= y1:
+            return
+        src = other.array()[y0 - top : y1 - top, x0 - left : x1 - left].astype(np.float64)
+        dst = self.array()[y0:y1, x0:x1]
+        a, b = src[..., 3] / 255, dst[..., 3] / 255
+        out_a = a + b * (1 - a)
+        rgb = (src[..., :3] * a[..., None] + dst[..., :3] * (b * (1 - a))[..., None]) / np.where(out_a > 0, out_a, 1)[
+            ..., None
+        ]
+        on = a > 0
+        dst[..., :3] = np.where(on[..., None], np.floor(rgb + 0.5), dst[..., :3])
+        dst[..., 3] = np.where(on, np.floor(out_a * 255 + 0.5), dst[..., 3])
+
+
+def _area_weights(size: int, out: int):
+    """(out, size) matrix: how much of source cell j output cell i covers."""
+    edges = np.arange(out + 1) * (size / out)
+    lo, hi = edges[:-1, None], edges[1:, None]
+    j = np.arange(size)[None]
+    return np.clip(np.minimum(hi, j + 1) - np.maximum(lo, j), 0, None)
 
 
 # --- nameplates: a small stroke font ----------------------------------------------------
@@ -743,9 +737,13 @@ def logo_image(ui: ForzaUI, make: str) -> Image | None:
 def compose_picture(car: Image, logo: Image | None, plate: Image | None, backdrop: Image) -> Image:
     w, h = PICTURE_SIZE
     out = Image(w, h, backdrop.px)
+    # The car's own box (render_car: without its floor shadow) fits CAR_BOX's
+    # right and bottom edges; the rest of the image (the shadow) goes around it.
     bx0, by0, bx1, by1 = CAR_BOX
-    fitted = car.fit(bx1 - bx0, by1 - by0)
-    out.paste(fitted, bx1 - fitted.w, by1 - fitted.h)
+    sx0, sy0, sx1, sy1 = getattr(car, "solid", None) or (0, 0, car.w, car.h)
+    scale = min((bx1 - bx0) / (sx1 - sx0), (by1 - by0) / (sy1 - sy0))
+    fitted = car.resize(max(1, round(car.w * scale)), max(1, round(car.h * scale)))
+    out.paste(fitted, bx1 - round(sx1 * scale), by1 - round(sy1 * scale))
     for img, (x0, y0, x1, y1) in ((logo, LOGO_BOX), (plate, PLATE_BOX)):
         if img is not None:
             f = img.fit(x1 - x0, y1 - y0)
@@ -762,30 +760,14 @@ def picture_dds(img: Image, template: bytes | None = None) -> bytes:
     return bytes(dds)
 
 
-# --- software render of a converted car (for cars without a Forza thumbnail) ----------
-
-FLAT_MATERIALS = {  # forza2dsf shared materials -> (rgb, specular)
-    "001283369afd1027": ((18, 22, 30), 0.9),  # glass
-    "0012833b12fe1027": ((26, 26, 28), 0.15),  # trim
-    "00128337b2fd1027": ((16, 16, 16), 0.05),  # tyre
-    "10122b9953b14e2a": ((18, 22, 30), 0.9),  # their _LOD1 twins (converted exteriors since 2026-10-23)
-    "10122b9753b14e2a": ((26, 26, 28), 0.15),
-    "10122b9b53b14e2a": ((16, 16, 16), 0.05),
-}
-PAINT_UID = "001283358afd1027"
-
-
-def _decode_normal(b0: int, b1: int) -> tuple[float, float, float]:
-    polar, azimuth = (b0 - 128) / 127 * math.pi, (b1 - 128) / 128 * math.pi
-    return math.sin(polar) * math.sin(azimuth), math.cos(polar), math.sin(polar) * math.cos(azimuth)
-
+# --- software render of a converted car (car_render.py) ---------------------------------
 
 _ROOTS: dict = {}
 
 
 def _root_entries(archive: Path, stream) -> list:
     """The archive's root entries, read once per file version (render_car runs once per
-    car without a Forza thumbnail, and a batch archive is a few GB)."""
+    car, and a batch archive is a few GB)."""
     st = archive.stat()
     key = (str(archive.resolve()), st.st_size, st.st_mtime_ns)
     if key not in _ROOTS:
@@ -794,177 +776,148 @@ def _root_entries(archive: Path, stream) -> list:
     return _ROOTS[key]
 
 
-def render_car(
-    archive: Path, spool_id: int, size: tuple[int, int] = (900, 480), yaw: float = 38.0, pitch: float = 12.0
-) -> Image:
-    """A front three-quarter view (front to the right, the car's right side
-    towards the camera, like DSF's pictures) of a vehicle's clean exterior
-    entry: perspective, z-buffered, Lambert plus specular, paint in the
-    palette's first colour, textured local materials. Transparent background
-    with a soft ground shadow."""
-    from dsfforza.convert import dsf_materials as dm
-    from dsfforza.convert import paint
-    from dsfforza.formats import upvh as uv
-    from dsfforza.formats import vehicle_mesh as vm
+RENDER_SIZE = (1000, 560)  # about 2.4 x the car's size in the picture: the fit averages it down
 
-    with archive.open("rb") as stream:
-        entries = _root_entries(archive, stream)
-        kinds = uv.entries_for(stream, entries, spool_id, None)
-        index = {k: entries.index(v) for k, v in kinds.items()}
-        textures, materials = {}, {}
-        for k in (0, 2):
-            for e in child(child(kinds[k], "MDXN"), "DRSP").children:
-                if e.tag == "TEXC":
-                    textures[payload(stream, child(e, "UIDC"))[:8]] = dm.decode_dds(payload(stream, child(e, "DXTC")))
-                elif e.tag == "MACO":
-                    info = dm.material_info(stream, e)
-                    materials[info["uid"]] = info
-        spss = paint.palette_set(stream, kinds[0])
-        colour = (150, 20, 20)
-        if spss is not None and spss.children:
-            # The most colourful palette entry (stock pictures rarely show black or grey).
-            options = [
-                tuple(int(255 * paint.linear_to_srgb(x)) for x in paint.apparent(paint.spsp_params(stream, e)))
-                for e in spss.children
-            ]
-            colour = max(options, key=lambda c: (max(c) - min(c), -abs(sum(c) / 3 - 128)))
-        h = uv.parse(payload(stream, child(child(kinds[0], "NONR"), "UPVH")))
-        hubs = []
-        for i in range(h.counts["wheels"]):
-            o = h.offsets["wheels"] + i * 0x20
-            hubs.append((struct.unpack_from("<3f", h.data, o), struct.unpack_from("<4f", h.data, o + 16)))
-    _, mesh = vm.load(archive, index[2], entries)
-    tris = []
-    for sub in mesh.submodels:
-        vb = mesh.vertex_buffers[sub.vertex_buffer]
-        if vb.stride == 20:
-            # The wheel, modelled at the origin: one copy per hub; left wheels
-            # (quaternion (0, 1, 0, 0)) are turned 180 degrees about y.
-            radius = max(math.hypot(*vm.position(vb, i)[1:]) for i in range(vb.count)) or 1.0
-            for hub, q in hubs:
-                turn = abs(q[1]) > 0.5
-                for _, tri in vm.triangles(mesh, sub):
-                    rim = max(math.hypot(*vm.position(vb, i)[1:]) for i in tri) < 0.74 * radius
-                    pts = []
-                    for i in tri:
-                        x, y, z = vm.position(vb, i)
-                        x, z = (-x, -z) if turn else (x, z)
-                        pts.append((hub[0] + x, hub[1] + y, hub[2] + z))
-                    tris.append((pts, None, None, None, (120, 122, 126) if rim else (14, 14, 14), 0.6 if rim else 0.1))
-            continue
-        e5, e8 = vb.element(5), vb.element(8)
-        info = materials.get(sub.material)
-        tex = textures.get(next(iter(info["textures"]))) if info and info["textures"] else None
-        key = sub.material.hex()
-        if key == PAINT_UID or sub.material == bytes.fromhex("10122b9653b14e2a"):
-            flat, spec = colour, 0.8
-        else:
-            flat, spec = FLAT_MATERIALS.get(key, ((60, 60, 64), 0.3))
-        for _, tri in vm.triangles(mesh, sub):
-            pts = [vm.position(vb, i) for i in tri]
-            normals = [_decode_normal(*vb.read(e5, i)[:2]) for i in tri] if e5 else None
-            uvs = [vb.read(e8, i)[:2] for i in tri] if (tex and e8) else None
-            tris.append((pts, normals, uvs, tex, flat, spec))
-    xs = [p[0] for t in tris for p in t[0]]
-    ys = [p[1] for t in tris for p in t[0]]
-    zs = [p[2] for t in tris for p in t[0]]
-    centre = ((max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2, (max(zs) + min(zs)) / 2)
-    radius = max(max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs)) * 0.75
-    # Camera on the car's front right (DSF: +z forward, +x the car's left).
-    ya, pa = math.radians(yaw), math.radians(pitch)
-    eye_dir = (-math.sin(ya) * math.cos(pa), math.sin(pa), math.cos(ya) * math.cos(pa))
-    dist = radius * 3.2
-    eye = tuple(centre[i] + eye_dir[i] * dist for i in range(3))
-    fwd = tuple(-c for c in eye_dir)
-    right = _normalize(_cross(fwd, (0.0, 1.0, 0.0)))
-    up = _cross(right, fwd)
-    width, height = size
-    focal = width * 0.45 * dist / radius
-    light = _normalize((-0.35, 0.85, 0.45))
-    half = _normalize(tuple(light[i] + eye_dir[i] for i in range(3)))
 
-    def project(p):
-        d = tuple(p[i] - eye[i] for i in range(3))
-        z = sum(d[i] * fwd[i] for i in range(3))
-        return (
-            width / 2 + focal * sum(d[i] * right[i] for i in range(3)) / z,
-            height / 2 - focal * sum(d[i] * up[i] for i in range(3)) / z,
-            z,
-        )
+def render_car(archive: Path, spool_id: int, size: tuple[int, int] = RENDER_SIZE, camera=None) -> Image:
+    """The converted car as the stock garage pictures show theirs (car_render.py:
+    exterior, interior through the glass, floor shadow), cropped; `.solid` is the
+    car's own box in the image (without the shadow), which compose_picture fits."""
+    from dsfforza.game import car_render
 
-    img = Image(width, height)
-    depth = [math.inf] * (width * height)
-    # Ground shadow: an ellipse under the body, drawn first.
-    ground_y = min(ys)
-    corners = [project((x, ground_y, z)) for x in (min(xs), max(xs)) for z in (min(zs), max(zs))]
-    sx0, sx1 = min(c[0] for c in corners), max(c[0] for c in corners)
-    sy0, sy1 = min(c[1] for c in corners), max(c[1] for c in corners)
-    cx, cy, rx, ry = (sx0 + sx1) / 2, (sy0 + sy1) / 2, (sx1 - sx0) / 2 * 0.95, (sy1 - sy0) / 2 * 0.9
-    for y in range(max(0, int(cy - ry)), min(height, int(cy + ry) + 1)):
-        for x in range(max(0, int(cx - rx)), min(width, int(cx + rx) + 1)):
-            r = ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2
-            if r < 1:
-                o = (y * width + x) * 4
-                img.px[o : o + 4] = bytes((0, 0, 0, int(150 * (1 - r) ** 1.5)))
-    for pts, normals, uvs, tex, flat, spec in tris:
-        sp = [project(p) for p in pts]
-        if min(s[2] for s in sp) <= 0.05:
-            continue
-        (ax, ay, az), (bx, by, bz), (qx, qy, qz) = sp
-        area = (bx - ax) * (qy - ay) - (by - ay) * (qx - ax)
-        if abs(area) < 1e-9:
-            continue
-        x0, x1 = max(0, int(min(ax, bx, qx))), min(width - 1, int(max(ax, bx, qx)) + 1)
-        y0, y1 = max(0, int(min(ay, by, qy))), min(height - 1, int(max(ay, by, qy)) + 1)
-        if normals is None:
-            e1 = [pts[1][i] - pts[0][i] for i in range(3)]
-            e2 = [pts[2][i] - pts[0][i] for i in range(3)]
-            n = _normalize(_cross(e1, e2))
-            normals = [n, n, n]
-        for y in range(y0, y1 + 1):
-            for x in range(x0, x1 + 1):
-                px, py = x + 0.5, y + 0.5
-                w0 = ((bx - px) * (qy - py) - (by - py) * (qx - px)) / area
-                w1 = ((qx - px) * (ay - py) - (qy - py) * (ax - px)) / area
-                w2 = 1 - w0 - w1
-                if w0 < 0 or w1 < 0 or w2 < 0:
-                    continue
-                z = w0 * az + w1 * bz + w2 * qz
-                k = y * width + x
-                if z >= depth[k]:
-                    continue
-                depth[k] = z
-                n = _normalize(tuple(w0 * normals[0][i] + w1 * normals[1][i] + w2 * normals[2][i] for i in range(3)))
-                if sum(n[i] * eye_dir[i] for i in range(3)) < 0:
-                    n = tuple(-c for c in n)  # double-sided
-                if tex is not None and uvs is not None:
-                    tw, th, trgba = tex
-                    u = w0 * uvs[0][0] + w1 * uvs[1][0] + w2 * uvs[2][0]
-                    v = w0 * uvs[0][1] + w1 * uvs[1][1] + w2 * uvs[2][1]
-                    o = (min(th - 1, max(0, int(v * th))) * tw + min(tw - 1, max(0, int(u * tw)))) * 4
-                    base = trgba[o : o + 3]
-                else:
-                    base = flat
-                diffuse = 0.35 + 0.75 * max(0.0, sum(n[i] * light[i] for i in range(3)))
-                fres = (1 - max(0.0, sum(n[i] * eye_dir[i] for i in range(3)))) ** 3
-                specular = spec * (max(0.0, sum(n[i] * half[i] for i in range(3))) ** 40 * 255 + 70 * fres)
-                o = k * 4
-                img.px[o : o + 4] = bytes([min(255, int(base[c] * diffuse + specular)) for c in range(3)] + [255])
-    # Front to the right: if the projected nose is left of the tail, mirror.
-    nose, tail = project((centre[0], centre[1], max(zs))), project((centre[0], centre[1], min(zs)))
-    if nose[0] < tail[0]:
-        img = img.flip_h()
+    scene = car_render.load_scene(archive, spool_id)
+    rgba = car_render.render(scene, camera or car_render.STOCK_CAMERA, *size)
+    img = Image.from_array(rgba)
+    solid = img.bbox(250)
     box = img.bbox(4)
-    return img.crop(*box) if box else img
+    if box is None or solid is None:
+        return img
+    out = img.crop(*box)
+    out.solid = (solid[0] - box[0], solid[1] - box[1], solid[2] - box[0], solid[3] - box[1])
+    return out
 
 
-def _cross(a, b):
-    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+# --- the camera of the stock pictures and of FH1's thumbnails (`gui_assets camera`) ---------
+
+FIT_LEFT = 135  # stock pictures: the logo and name left of this, not the car
 
 
-def _normalize(v):
-    length = math.sqrt(sum(c * c for c in v)) or 1.0
-    return tuple(c / length for c in v)
+def _mask_box(mask) -> tuple[int, int, int, int] | None:
+    ys, xs = np.flatnonzero(mask.any(axis=1)), np.flatnonzero(mask.any(axis=0))
+    return (int(xs[0]), int(ys[0]), int(xs[-1]) + 1, int(ys[-1]) + 1) if len(ys) else None
+
+
+def _rescale(mask, width: int, height: int):
+    """Nearest-neighbour resize of a bool mask."""
+    ys = (np.arange(height) + 0.5) * mask.shape[0] / height
+    xs = (np.arange(width) + 0.5) * mask.shape[1] / width
+    return mask[ys.astype(int)][:, xs.astype(int)]
+
+
+def stock_car_mask(picture: Image, backdrop: Image):
+    """(256, 512) bool: where a stock picture shows its car (opaque, and outside the
+    backdrop panel or unlike the backdrop)."""
+    a = picture.array().astype(int)
+    yy, xx = np.mgrid[0 : picture.h, 0 : picture.w]
+    outside = (xx >= PANEL[2]) | (yy >= PANEL[3])
+    diff = np.abs(a[..., :3] - backdrop.array()[..., :3].astype(int)).sum(axis=2)
+    mask = (a[..., 3] >= 200) & (outside | (diff > 40))
+    mask[:, :FIT_LEFT] = False
+    return mask
+
+
+def _stock_score(target):
+    """IoU right of FIT_LEFT of a coverage mask placed like the target: scaled to its
+    height, aligned on its right and bottom edges."""
+    _, ty0, tx1, ty1 = _mask_box(target)
+
+    def score(cov) -> float:
+        box = _mask_box(cov)
+        if box is None:
+            return -1.0
+        x0, y0, x1, y1 = box
+        h = ty1 - ty0
+        w = max(1, round((x1 - x0) * h / (y1 - y0)))
+        placed = np.zeros_like(target)
+        scaled = _rescale(cov[y0:y1, x0:x1], w, h)
+        left = tx1 - w
+        placed[ty0:ty1, max(0, left) : tx1] = scaled[:, max(0, -left) :]
+        a, b = placed[:, FIT_LEFT:], target[:, FIT_LEFT:]
+        return float((a & b).sum() / max(1, (a | b).sum()))
+
+    return score
+
+
+def _shape_score(target):
+    """IoU of the two masks' boxes scaled to one size, less the log of their aspect
+    ratios' mismatch (a thumbnail shows the whole car)."""
+    x0, y0, x1, y1 = _mask_box(target)
+    t = _rescale(target[y0:y1, x0:x1], 400, 200)
+    aspect = (x1 - x0) / (y1 - y0)
+
+    def score(cov) -> float:
+        box = _mask_box(cov)
+        if box is None:
+            return -1.0
+        c = _rescale(cov[box[1] : box[3], box[0] : box[2]], 400, 200)
+        mismatch = abs(math.log((box[2] - box[0]) / (box[3] - box[1]) / aspect))
+        return float((c & t).sum() / max(1, (c | t).sum())) - mismatch
+
+    return score
+
+
+def fit_cameras(manifest: Path | None = None, names: list[str] | None = None, log=print) -> list[dict]:
+    """The camera of each stock picture (`names`, default all cars), fitted with
+    renders of the stock car's silhouette; with `manifest`, the camera of each
+    ported car's FH1 thumbnail instead, fitted with renders of the converted car."""
+    import json
+
+    from dsfforza.game import car_render
+
+    out = []
+    if manifest is None:
+        archive = game_paths.stock(None)
+        backdrop = stock_backdrop()
+        spool = {}
+        for sid, fields in stock_stats().items():
+            spool.setdefault(str(fields.get("Picture1", "")).strip('"'), sid)
+        with stock_file("Install/gui.sp").open("rb") as stream:
+            root = chnk.read_chunk(stream, 0)
+            jobs = []
+            for name in names or stock_picture_names():
+                dds = find_picture(stream, root, name)
+                if dds is not None and name in spool:
+                    from dsfforza.convert import dsf_materials as dm
+
+                    jobs.append((name, spool[name], Image(*dm.decode_dds(dds))))
+        for name, sid, picture in jobs:
+            scene = car_render.load_scene(archive, sid, interior=False)
+            score, cam = car_render.fit_camera(scene, _stock_score(stock_car_mask(picture, backdrop)))
+            out.append({"car": name, "spool_id": sid, "score": score, **cam.__dict__})
+            log(
+                f"{name} (spool {sid}): IoU {score:.3f}, yaw {cam.yaw:.0f}, pitch {cam.pitch:.0f}, distance {cam.distance:.2f}"
+            )
+    else:
+        archive = Path(manifest).with_suffix(".sp")
+        ui = ForzaUI()
+        for car in json.loads(Path(manifest).read_text())["cars"]:
+            if names and car["media"] not in names:
+                continue
+            car_id = forza_car_id(car["media"])
+            thumb = forza_car_image(ui, car_id) if car_id else None
+            if thumb is None:
+                continue
+            scene = car_render.load_scene(archive, car["spool_id"], interior=False)
+            score, cam = car_render.fit_camera(scene, _shape_score(thumb.array()[..., 3] > 128))
+            out.append({"car": car["media"], "spool_id": car["spool_id"], "score": score, **cam.__dict__})
+            log(
+                f"{car['media']}: score {score:.3f}, yaw {cam.yaw:.0f}, pitch {cam.pitch:.0f}, distance {cam.distance:.2f}"
+            )
+        ui.close()
+    if out:
+        med = {k: float(np.median([o[k] for o in out])) for k in ("yaw", "pitch", "distance")}
+        log(f"median of {len(out)}: yaw {med['yaw']:.1f}, pitch {med['pitch']:.1f}, distance {med['distance']:.2f}")
+    return out
 
 
 # --- HUD badge and model name: media/Fonts.fchunk "vehicles_font" -----------------------
@@ -1670,17 +1623,18 @@ def plan_wide_glyphs(
 
 
 class _Renders:
-    """render_car for the cars build() will render (no FH1 thumbnail), in `jobs`
-    processes a few cars ahead of the loop that uses them; with jobs 1 (or a car
-    not foreseen, e.g. an empty thumbnail) in this process when asked."""
+    """render_car for the cars build() will render (all, or with `thumbnails` those
+    without an FH1 thumbnail), in `jobs` processes a few cars ahead of the loop that
+    uses them; with jobs 1 (or a car not foreseen, e.g. an empty thumbnail) in this
+    process when asked."""
 
-    def __init__(self, archive: Path, cars: list[dict], ui: ForzaUI, jobs: int):
+    def __init__(self, archive: Path, cars: list[dict], ui: ForzaUI, jobs: int, thumbnails: bool = False):
         self.archive, self.jobs, self.futures, self.pool = archive, jobs, {}, None
         self.order = []  # (car index, spool ID) of the cars that will need a render
         if jobs > 1:
             for n, car in enumerate(cars):
                 car_id = forza_car_id(car["media"])
-                if not car_id or f"thumbnails/thumbnail_{car_id}.xds" not in ui.names:
+                if not thumbnails or not car_id or f"thumbnails/thumbnail_{car_id}.xds" not in ui.names:
                     self.order.append((n, car["spool_id"]))
         if len(self.order) > 1:
             from concurrent.futures import ProcessPoolExecutor
@@ -1716,6 +1670,7 @@ def build(
     wide_glyphs: bool = False,
     root_limit: int = chnk.ENTRY_LIMIT,
     jobs: int = 1,
+    thumbnails: bool = False,
 ) -> dict:
     """Garage pictures, HUD glyphs and dsfforza\\hud.lua for the cars of a
     src/dsfforza/build/port_car.py manifest. Writes out_dir/gui.sp, out_dir/Fonts.fchunk,
@@ -1725,8 +1680,11 @@ def build(
     Manufacturer/Model plan stays as the fallback). Every car also gets
     GarageEmblem = 1 and Fonts.fchunk the Forza emblem texture: with
     dsfforza.asi the garage card shows the Forza logo instead of the SF disc.
-    `jobs` > 1 renders the cars without a Forza thumbnail in that many processes
-    (render_car is the slow step; each render is the same either way)."""
+    Every picture is a render of the converted car from the stock pictures'
+    camera (render_car); `thumbnails` takes FH1's own thumbnail where there is one
+    instead (sharper, but at eye level and mirrored: gui-assets.md, "Camera").
+    `jobs` > 1 renders in that many processes (render_car is the slow step; each
+    render is the same either way)."""
     import json
 
     data = json.loads(Path(manifest).read_text())
@@ -1767,7 +1725,7 @@ def build(
         for media, fields in wide.items():
             planned[media].update(fields)
         glyphs.update(wide_glyph_images)
-    renders = _Renders(Path(archive), data["cars"], ui, jobs)
+    renders = _Renders(Path(archive), data["cars"], ui, jobs, thumbnails)
     for n, car in enumerate(data["cars"]):
         media, sid = car["media"], car["spool_id"]
         renders.ahead(n)
@@ -1775,8 +1733,8 @@ def build(
         model_text = t["model"]
         entry = dict(planned[media])
         logo = logos(t["dsf_make"]) or logos(t["make"])
-        # Picture: Forza's own thumbnail, else a render of the converted car.
-        car_id = forza_car_id(media)
+        # Picture: a render of the converted car (or, with 	humbnails, Forza's own).
+        car_id = forza_car_id(media) if thumbnails else None
         image = forza_car_image(ui, car_id) if car_id else None
         source = "FH1 thumbnail"
         if image is None:
@@ -1996,6 +1954,14 @@ def main(argv: list[str] | None = None) -> None:
         "CHNK reader; dsfforza.asi [archive] lifts it, e.g. 16384: one SPOI per picture)",
     )
     b.add_argument("--jobs", type=int, default=1, help="processes for the car renders (default 1)")
+    b.add_argument(
+        "--fh1-thumbnails",
+        action="store_true",
+        help="FH1's own thumbnail where there is one instead of the render (eye level, mirrored)",
+    )
+    c = sub.add_parser("camera", help="measure the stock pictures' camera (or FH1 thumbnails') against renders")
+    c.add_argument("--cars", default="", help="comma-separated stock picture names / media names (default: all)")
+    c.add_argument("--thumbnails", type=Path, metavar="MANIFEST", help="fit the FH1 thumbnails of these ported cars")
     t = sub.add_parser("glyphtest", help="16-bit glyph stress test: numbered badges and plates, hud.lua for IDs")
     t.add_argument("--out", type=Path, default=Path("out/hud/glyphtest"))
     t.add_argument("--ids", required=True, help="comma-separated vehicle IDs (registered ports)")
@@ -2019,11 +1985,14 @@ def main(argv: list[str] | None = None) -> None:
             wide_glyphs=args.wide_glyphs,
             root_limit=args.root_limit,
             jobs=args.jobs,
+            thumbnails=args.fh1_thumbnails,
         )
         if args.install_lua:
             target = REPO / "tools" / "game" / "lua" / "dsfforza" / "hud.lua"
             target.write_text((args.out / "hud.lua").read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
             print(f"installed {target}")
+    elif args.cmd == "camera":
+        fit_cameras(args.thumbnails, [c for c in args.cars.split(",") if c])
     elif args.cmd == "glyphtest":
         report = glyph_test(args.out, [int(i) for i in args.ids.split(",") if i], args.plates, args.badges)
         print(__import__("json").dumps(report, indent=1))

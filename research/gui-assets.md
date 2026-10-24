@@ -61,12 +61,12 @@ bytes stay unused. A full `chnk.py rebuild` of gui.sp is not byte-identical
 (`dngvehicles.md`), so the file is patched instead. Reading the copy back
 finds both the stock and the new pictures by name.
 
-The picture: Forza Horizon's own car thumbnail where there is one
+The picture: a software render of the converted car from the stock
+pictures' camera (`render_car`, `car_render.py`; "Camera and render" below).
+Until 2026-10-24 FH1 cars used Forza Horizon's own thumbnail instead
 (`media/ui/Textures.zip` `Thumbnails/Thumbnail_<Data_Car.Id>.xds`, 768 x 288,
 32-bit `k_8_8_8_8` tiled, 153 FH1 cars; the right third is a top view),
-cropped and mirrored to face right, else a software render of the converted
-car's exterior entry (`render_car`: perspective, z-buffer, the palette's most
-colourful paint, textured lamps and badges, wheels from the UPVH hubs). The
+cropped and mirrored to face right; `build --fh1-thumbnails` still does. The
 backdrop is recovered from the stock pictures (per pixel the most common
 colour across all 142; the right part, which cars cover in most pictures, is
 the photo's fog gradient), the logo is FH1's
