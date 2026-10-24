@@ -1000,8 +1000,16 @@ def patch_hierarchy(upvh_data: bytes, host: HostCockpit, place, cf: CockpitFit) 
 
 
 DRIVER_SEAT_ROLE, PASSENGER_SEAT_ROLE = 10, 11
-# Fleet median of eye - driver seat marker over 147 stock cars (y 0.642..0.841; out/glassdbg/seat_survey.py).
-FLEET_EYE_ABOVE_SEAT = (0.0, 0.737, -0.080)
+# The driver model in the chase views is one animated rig placed on the driver seat
+# marker (role 10), hands included: they hold the wheel only where the stock wheel is
+# in the seat's frame (research/cockpit.md, "The driver's seat follows the wheel").
+# 138 of 147 stock cars put the steering marker (role 47) at this point of the seat
+# marker's frame within 1 cm, all but two within 2 cm (the seat tilt, 0 or -5 deg,
+# turns the frame; `dsff driver_survey stock`).
+STOCK_MARKER_FROM_SEAT = (0.0, 0.469, 0.428)
+# Head-camera eye in the seat marker's frame, stock median (y 0.642..0.841, z -0.286..0.129):
+# about where the driver model's eyes are.
+FLEET_EYE_ABOVE_SEAT = (0.0, 0.738, -0.069)
 
 
 def seat_markers(upvh_data: bytes) -> dict[int, int]:
@@ -1016,31 +1024,33 @@ def seat_markers(upvh_data: bytes) -> dict[int, int]:
     return out
 
 
-def host_eye_above_seat(upvh_data: bytes, vo3d_data: bytes) -> tuple[float, float, float]:
-    """eye - driver seat marker in the host (Desanne: (0, 0.796, -0.097)), or the fleet median."""
-    from dsfforza.formats import upvh
-
-    slots = seat_markers(upvh_data)
-    if DRIVER_SEAT_ROLE not in slots:
-        return FLEET_EYE_ABOVE_SEAT
-    eye, _ = head_camera(upvh_data, vo3d_data)
-    seat = struct.unpack_from("<3f", upvh.parse(upvh_data).table("markers")[slots[DRIVER_SEAT_ROLE]])
-    return tuple(e - s for e, s in zip(eye, seat))
+def seat_for_marker(marker, seat_quat) -> tuple[float, float, float]:
+    """The driver seat position that puts the steering marker where stock cars have
+    it in the seat's frame (STOCK_MARKER_FROM_SEAT), for a seat turned by seat_quat."""
+    return _sub(marker, quat_rotate(seat_quat, STOCK_MARKER_FROM_SEAT))
 
 
-def patch_seats(upvh_data: bytes, eye_dsf, eye_above_seat) -> tuple[bytes, dict]:
+def patch_seats(upvh_data: bytes, eye_dsf=None) -> tuple[bytes, dict]:
     """Move the driver's seat marker (role 10, where the game seats the driver
-    model) under the new eye, keeping the host's eye-to-seat offset, and the
-    passenger's (role 11) to the mirrored x at the same height and depth. The
-    marker quaternions (seat tilt) stay the host's."""
+    model) so the steering marker sits where it does in stock cars, in the seat's
+    frame (STOCK_MARKER_FROM_SEAT), and the passenger's (role 11) to the mirrored
+    x at the same height and depth. Call after patch_hierarchy (the marker is read
+    from upvh_data) with VO3D p538/p559 at zero (hand_params). The marker
+    quaternions (seat tilt) stay the host's. `eye_dsf` (the head camera) only goes
+    into the report, against the driver model's eyes."""
     from dsfforza.formats import upvh
 
     h = upvh.parse(upvh_data)
     slots = seat_markers(upvh_data)
     data = bytearray(upvh_data)
-    seat = tuple(e - o for e, o in zip(eye_dsf, eye_above_seat))
-    seat = (eye_dsf[0], seat[1], seat[2])  # the seat sits straight under the eye
     report = {}
+    if DRIVER_SEAT_ROLE not in slots:
+        return bytes(data), report
+    rec = next(r for r in h.records if r.type == 3 and r.role == STEERING_MARKER_ROLE and r.marker >= 0)
+    marker = struct.unpack_from("<3f", h.table("markers")[rec.marker])
+    driver_at = h.offsets["markers"] + slots[DRIVER_SEAT_ROLE] * 0x20
+    quat = struct.unpack_from("<4f", data, driver_at + 0x10)
+    seat = seat_for_marker(marker, quat)
     for role, pos in ((DRIVER_SEAT_ROLE, seat), (PASSENGER_SEAT_ROLE, (-seat[0], seat[1], seat[2]))):
         if role in slots:
             at = h.offsets["markers"] + slots[role] * 0x20
@@ -1049,7 +1059,10 @@ def patch_seats(upvh_data: bytes, eye_dsf, eye_above_seat) -> tuple[bytes, dict]
                 "to": [round(c, 4) for c in pos],
             }
             struct.pack_into("<3f", data, at, *pos)
-    report["eye_above_seat"] = [round(c, 4) for c in eye_above_seat]
+    body_eye = _add(seat, quat_rotate(quat, FLEET_EYE_ABOVE_SEAT))
+    report["body_eye"] = [round(c, 4) for c in body_eye]
+    if eye_dsf is not None:
+        report["body_eye_from_camera"] = [round(b - e, 4) for b, e in zip(body_eye, eye_dsf)]
     return bytes(data), report
 
 
