@@ -241,10 +241,27 @@ compares on random inputs):
 - `host_select._carbin_doors` is cached per process (three calls per car,
   each parsing the main carbin).
 
-What is left: the panel votes of `DamagePlan.assignment` (about 15 s per
-car, 16,000 votes each looking at around 190 host triangles) and the
-cockpit cull (8 eyes x 6 cube faces). Both are numpy now; a faster version
-would need a different search, not a faster loop.
+What was left after that: the panel votes of `DamagePlan.assignment` (about
+15 s per car, 16,000 votes each looking at around 190 host triangles) and the
+cockpit cull (8 eyes x 6 cube faces).
+
+**Panel votes, by ring counts.** `DamagePlan._votes` takes all of a
+section's triangles at once (`_nearest_pairs`). `_vote`'s result depends only
+on the scores and on how often each triangle is counted: a triangle binned into
+a box of cells is met in the rings dmin..dmax around the point's cell, so by
+ring r it is counted max(0, min(dmax, r) - dmin + 1) times. The ring loop stops
+at the first r where at least 3 counted scores are within r * cell, and the
+three best are among those. So `_votes` scores each point's candidates (dmin <=
+rmax) in one numpy pass, finds the stop ring by counting, and sorts only the
+scores within it by (score, panel). rmax goes 1, 2, 3, 5, 7 (`VOTE_RINGS`); a
+point that doesn't stop by ring 7, or has a non-finite score, goes to `_vote`.
+Votes went from 8-20 s to 1.5-4 s per car, and the full-entry damage stage from
+11-24 s to 4-7 s. The 6-car build output is byte-identical.
+
+Left after that (a profile of the RX7): `Uv1Field.lookup` (one
+`Grid.nearest` and up to 16 `closest_on_triangle` per new vertex, about 4 s per
+car), the cockpit cull (`visible_triangles`, about 4 s), and `zone_maps` /
+`_tri_samples` (about 1 s).
 
 Batch-level costs at full-roster scale:
 
