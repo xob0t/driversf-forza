@@ -923,6 +923,134 @@ def smooth_labels(labels: list, areas: list, corners: list, passes: int = 2) -> 
     return labels, merged
 
 
+# --- Forza parts along real shut lines ------------------------------------------------
+#
+# Forza's `body` section is one surface, but its mesh is cut along the real shut
+# lines: the vertices at a door's or wing's edge are not shared with the panel
+# next to it (the M5's front and rear doors, wings and rear quarters are each a
+# component of triangles joined through shared vertex indices; the S5S Raptor's
+# door too, while its wings, sills and rear quarters are one shell). The panel
+# vote follows the host's layout, so a door patch spilled over those edges and
+# had to be held shut (DamagePlan.bound). A door or wing whose triangles are
+# mostly whole components that voted for it takes exactly those components: its
+# border is then the Forza shut line, and it can swing like stock.
+
+SWINGS = DOORS + (33, 34)   # roles that swing on stock cars (doors, front wings)
+PART_SHARE = 0.6            # share of a component's area its panel vote needs to take it whole
+PART_MIN_AREA = 0.15        # m2 of whole components a door or wing needs to be a Forza part
+
+
+def part_components(keys: list) -> list[int]:
+    """Component id per triangle: triangles joined through shared vertex keys."""
+    parent: dict = {}
+
+    def find(x):
+        while parent.get(x, x) != x:
+            parent[x] = parent.get(parent[x], parent[x])
+            x = parent[x]
+        return x
+    for t, ks in enumerate(keys):
+        for k in ks:
+            a, b = find(("t", t)), find(k)
+            if a != b:
+                parent[a] = b
+    roots = [find(("t", t)) for t in range(len(keys))]
+    ids = {}
+    return [ids.setdefault(r, len(ids)) for r in roots]
+
+
+def _component_votes(labels, areas, comps) -> dict:
+    votes = defaultdict(Counter)
+    for lab, area, c in zip(labels, areas, comps):
+        votes[c][lab] += area
+    return votes
+
+
+def part_stats(labels, areas, comps, swings) -> tuple[Counter, Counter]:
+    """Per swinging panel: area of whole components it wins with PART_SHARE,
+    and area labelled with it."""
+    clean, total = Counter(), Counter()
+    for lab, area in zip(labels, areas):
+        if lab in swings:
+            total[lab] += area
+    for c, votes in _component_votes(labels, areas, comps).items():
+        win, w = votes.most_common(1)[0]
+        if win in swings and w >= PART_SHARE * sum(votes.values()):
+            clean[win] += sum(votes.values())
+    return clean, total
+
+
+def part_relabel(labels, areas, comps, parts: set, fallback) -> list:
+    """Panels in `parts` keep exactly the components they win with PART_SHARE;
+    their other triangles take the best other panel of their component (or
+    `fallback`), and a component won by another panel takes that one whole."""
+    if not parts:
+        return list(labels)
+    votes = _component_votes(labels, areas, comps)
+    whole, other = {}, {}
+    for c, v in votes.items():
+        win, w = v.most_common(1)[0]
+        if w >= PART_SHARE * sum(v.values()) and (win in parts or any(lab in parts for lab in v)):
+            whole[c] = win
+        else:
+            others = [lab for lab, _ in v.most_common() if lab not in parts]
+            other[c] = others[0] if others else fallback
+    return [whole[c] if c in whole else other[c] if lab in parts else lab for lab, c in zip(labels, comps)]
+
+
+PART_MARGIN = 0.05  # m; along z, beyond a part's largest component, that still belongs to it
+
+
+def part_spans(items, parts: set) -> dict:
+    """Part -> (z min, z max, side): the length and side (sign of x) of its
+    largest component. items: (tris (sub id, index, centroid), areas,
+    components, labels) per section."""
+    best = {}
+    for n, (tris, areas, comps, labels) in enumerate(items):
+        size = Counter()
+        for lab, area, c in zip(labels, areas, comps):
+            if lab in parts:
+                size[(lab, n, c)] += area
+        for (lab, _, c), area in size.items():
+            if area > best.get(lab, (0, None))[0]:
+                best[lab] = (area, (n, c))
+    span = {}
+    for lab, (_, (n, c)) in best.items():
+        tris, _, comps, _ = items[n]
+        pts = [t[2] for t, cc in zip(tris, comps) if cc == c]
+        side = 1.0 if sum(p[0] for p in pts) >= 0 else -1.0
+        span[lab] = (min(p[2] for p in pts), max(p[2] for p in pts), side,
+                     min(abs(p[0]) for p in pts), min(p[1] for p in pts), max(p[1] for p in pts))
+    return span
+
+
+def within_span(c, span) -> bool:
+    return span[0] - PART_MARGIN <= c[2] <= span[1] + PART_MARGIN and c[0] * span[2] > 0
+
+
+CARD_DEPTH = 0.2  # m; inward of a door's skin that its door card (Forza `interior` triangles) may sit
+
+
+def in_door_card(c, normal, span) -> bool:
+    """Is an interior triangle (centroid c) the door card of the door with this
+    span: within its length and height, on its side, at most CARD_DEPTH inward
+    of its skin, facing into the cabin."""
+    return (span[0] <= c[2] <= span[1] and c[0] * span[2] > 0 and abs(c[0]) >= span[3] - CARD_DEPTH
+            and span[4] - PART_MARGIN <= c[1] <= span[5] + PART_MARGIN
+            and normal is not None and normal[0] * span[2] < -0.3)
+
+
+def part_trim(tris, areas, comps, labels, span: dict, fallback) -> list:
+    """Components on a part that lie mostly (by area) outside its span go to `fallback`."""
+    inside, total = Counter(), Counter()
+    for t, lab, area, c in zip(tris, labels, areas, comps):
+        if lab in span:
+            total[(lab, c)] += area
+            inside[(lab, c)] += area if within_span(t[2], span[lab]) else 0.0
+    drop = {k for k in total if inside[k] < PART_SHARE * total[k]}
+    return [fallback if (lab, c) in drop else lab for lab, c in zip(labels, comps)]
+
+
 # --- the plan for one car ---------------------------------------------------------
 
 def _set_idle_priority() -> None:
@@ -1004,6 +1132,7 @@ class DamagePlan:
         self._seam_paint: set = set()    # quantised positions on body paint (the outer skin)
         self._pins: dict = {}            # pair -> Grid of its pinned seam positions (current LOD)
         self._motion: dict = {}          # id(HostField) -> {frozenset of roles: median host border crush}
+        self.swinging: set = set()       # doors/wings that are Forza parts (assignment): own transform slot
         self.report: dict = {"panels": {}}
 
     # -- panel lookup --
@@ -1158,9 +1287,15 @@ class DamagePlan:
         if key in self._assign:
             return self._assign[key]
         f = self.full_field
+        finest = min(sub.lod for s in sections for sub in s.subsections if sub.lod > 0)
+        if lod != finest and (id(sections), finest) not in self._assign:
+            self.assignment(sections, finest)  # decides which doors and wings are Forza parts
         out = {}
         per_section = {}
         majority: dict[str, list] = {}
+        pending = []  # "nearest" sections: (name, tris, areas, components, labels)
+        door_groups = set()  # majority groups of side windows
+        cabin = []           # the `interior` section: (name, tris, normals), door cards
         for section in sections:
             kind, roles = section_rule(section.name)
             tris, shape = [], []  # (sub id, index, centroid); (unit normal, area, corner keys, paint)
@@ -1174,7 +1309,8 @@ class DamagePlan:
                     tris.append((id(sub), k, tuple(sum(p[a] for p in pts) / 3 for a in range(3))))
                     cross = _cross(_sub(pts[1], pts[0]), _sub(pts[2], pts[0]))
                     shape.append((_norm(cross), math.sqrt(_dot(cross, cross)) / 2,
-                                  [tuple(round(c * 2000) for c in p) for p in pts], is_paint))
+                                  [tuple(round(c * 2000) for c in p) for p in pts], is_paint,
+                                  [(id(pool), i) for i in t]))
             if not tris:
                 continue
             centroid = tuple(sum(t[2][a] for t in tris) / len(tris) for a in range(3))
@@ -1207,6 +1343,8 @@ class DamagePlan:
                 for sid, k, _ in tris:
                     out[(sid, k)] = pair
                 per_section[section.name] = Counter({pair: len(tris)})
+                if section.name.lower() == "interior":
+                    cabin.append((section.name, tris, [s[0] for s in shape]))
                 continue
             allowed = {p.pair for p in self.panels_with(roles)} & set(f.by_pair)
             allowed = allowed or {self.chassis}
@@ -1219,25 +1357,81 @@ class DamagePlan:
                 labels, merged = smooth_labels(labels, [s[1] for s in shape], [s[2] for s in shape])
                 self.report.setdefault("islands_merged", {})[str(lod)] = (
                     self.report.get("islands_merged", {}).get(str(lod), 0) + merged)
+                # Doors and wings become the Forza parts they are, once every
+                # section is labelled (part_components, swinging_parts below).
+                comps = part_components([s[4] for s in shape])
+                pending.append((section.name, tris, [s[1] for s in shape], comps, labels))
+                continue
             votes = Counter(labels)
-            picks = [(sid, k, pair) for (sid, k, _), pair in zip(tris, labels)]
+            picks = [(sid, k, pair, c, sh[0]) for (sid, k, c), pair, sh in zip(tris, labels, shape)]
             if kind == "majority":
                 # Centred panels (boot, chassis, bumper): a left/right pair of
                 # sections (taillightL/R) votes together, so both lamps land on
                 # the same panel.
                 group = mirror_key(section.name) if not set(roles) & set(DOORS) else section.name
+                if set(roles) & set(DOORS):
+                    door_groups.add(group)
                 majority.setdefault(group, []).append((section.name, picks, votes))
                 continue
-            for sid, k, pair in picks:
+            for sid, k, pair, _, _ in picks:
                 out[(sid, k)] = pair
             per_section[section.name] = votes
+        if pending:
+            if lod == finest:
+                swings = {p.pair for p in self.panels_with(SWINGS)}
+                stats = Counter(), Counter()
+                for _, _, areas, comps, labels in pending:
+                    clean, total = part_stats(labels, areas, comps, swings)
+                    stats[0].update(clean)
+                    stats[1].update(total)
+                found = {p for p in swings if stats[0][p] >= PART_MIN_AREA and stats[0][p] >= PART_SHARE * stats[1][p]}
+                # Left and right alike: a door swings only if its partner on
+                # the other side (if the host has one) is a Forza part too.
+                self.swinging = {p for p in found if self._partner(p) is None or self._partner(p) in found}
+                self.report["shut_line_parts"] = {
+                    self.label(p): {"part m2": round(stats[0][p], 3), "labelled m2": round(stats[1][p], 3),
+                                    "swings": p in self.swinging} for p in sorted(swings) if stats[1][p]}
+            relabelled = [part_relabel(labels, areas, comps, self.swinging, self.chassis)
+                          for _, _, areas, comps, labels in pending]
+            # A part's extent: its largest component. Components (and side
+            # windows) that won the part but lie mostly outside its length (the
+            # S5S Raptor's intake surround behind the door) stay on the body.
+            span = part_spans([(t, a, c, lab) for (_, t, a, c, _), lab in zip(pending, relabelled)], self.swinging)
+            for (name, tris, areas, comps, _), labels in zip(pending, relabelled):
+                labels = part_trim(tris, areas, comps, labels, span, self.chassis)
+                for (sid, k, _), pair in zip(tris, labels):
+                    out[(sid, k)] = pair
+                per_section[name] = Counter(labels)
+        else:
+            span = {}
+        # Door cards go with their swinging door, as stock door cards are
+        # skinned to the door records (cockpit.md): an open door shows its
+        # card, and no card is left standing in the opening.
+        doors = [d for d in span if self.panels[d].role in DOORS]
+        for name, tris, normals in cabin:
+            for (sid, k, c), normal in zip(tris, normals):
+                hit = [d for d in doors if in_door_card(c, normal, span[d])]
+                if hit:
+                    out[(sid, k)] = hit[0]
+            per_section[name] = Counter(out[(sid, k)] for sid, k, _ in tris)
         for group, members_ in majority.items():
             total = sum((v for _, _, v in members_), Counter())
             pair = total.most_common(1)[0][0]
+            # Side windows: the part of the glass within a swinging door's
+            # length goes with that door (the S5S Raptor's door window and
+            # quarter window are one Forza section), the rest stays put.
+            doors = [d for d in span if self.panels[d].role in DOORS] if group in door_groups else []
             for name, picks, _ in members_:
-                for sid, k, _ in picks:
-                    out[(sid, k)] = pair
-                per_section[name] = Counter({pair: len(picks)})
+                for sid, k, _, c, normal in picks:
+                    side = normal is not None and abs(normal[0]) >= 0.5  # not a sunroof or T-top
+                    inside = [d for d in doors if side and within_span(c, span[d])]
+                    if inside:
+                        out[(sid, k)] = inside[0]
+                    elif pair in span and not (side and within_span(c, span[pair])):
+                        out[(sid, k)] = self.chassis
+                    else:
+                        out[(sid, k)] = pair
+                per_section[name] = Counter(out[(sid, k)] for sid, k, *_ in picks)
         self._assign[key] = out
         members: dict[tuple, set] = defaultdict(set)
         sub_owner = {id(sub): id(section) for section in sections for sub in section.subsections}
@@ -1301,11 +1495,13 @@ class DamagePlan:
     # panels share a transform. So every rigid panel's vertices take the
     # chassis' transform slot (s9 byte 0) and keep their own panel-data index
     # (byte 1): they still dent with their own damage amount, and never swing.
+    # A door or wing that is a Forza part (self.swinging, assignment) has the
+    # Forza shut line as its border and keeps its own slot: it swings as stock.
 
     def bound(self, pair) -> tuple:
         """s9 bytes 0, 1 written on a panel's vertices: (transform slot, panel
-        data index). Rigid panels use the chassis' slot."""
-        return (self.chassis[0], pair[1]) if self._rigid(pair) else pair
+        data index). Rigid panels use the chassis' slot, unless they swing."""
+        return (self.chassis[0], pair[1]) if self._rigid(pair) and pair not in self.swinging else pair
 
     def _seam_map(self, sections, lod: int, assign: dict) -> dict:
         """Quantised position (int16 x3, as encoded) -> the rigid panels whose
@@ -2208,7 +2404,7 @@ def cmd_check(args) -> None:
                 for n in lod.submodels:
                     for vb, tri in vm.triangles(mesh, mesh.submodels[n]):
                         tris.add((vb.uid,) + tuple(sorted(tri)))
-                        bad += any(s9_pair(vb, i) != drawn[pair] for i in tri)
+                        bad += any(s9_pair(vb, i) not in (pair, drawn[pair]) for i in tri)
             if tris:
                 report(not bad and tris <= part0,
                        f"part {panel.part} ({role_name(panel.role)}): {len(tris)} triangles, all on panel {drawn[pair]} "
