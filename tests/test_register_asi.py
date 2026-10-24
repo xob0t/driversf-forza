@@ -38,13 +38,13 @@ def ported(n: int = 600, makes: int = 70) -> str:
     return "return { cars = {\n" + "\n".join(rows) + "\n} }"
 
 
-def run(asi: bool, groups: int = 120, max_id: int = 999):
+def run(asi: bool, groups: int = 120, max_id: int = 999, cars: str | None = None, hud: str | None = None):
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
     g = lua.globals()
     out: list[str] = []
     g.print = lambda *a: out.append(" ".join(str(x) for x in a))
     loader = lua.execute(LOADER)
-    over = {f"dsfforza{BS}ported.lua": ported(), f"dsfforza{BS}hud.lua": None, f"dsfforza{BS}config.lua": None}
+    over = {f"dsfforza{BS}ported.lua": cars or ported(), f"dsfforza{BS}hud.lua": hud, f"dsfforza{BS}config.lua": None}
 
     def user_open(name):
         name = str(name)
@@ -128,7 +128,29 @@ def test_register_asi():
     assert not problems, problems
 
 
+def continuation_groups() -> Counter:
+    """55 added cars of one make whose hud.lua names two extra groups: they fill the
+    make's group, then "<make> 2" and "<make> 3", not the mixed FORZA groups."""
+    n = 55
+    cars = "return { cars = {\n" + "\n".join(
+        f'[{304 + i}] = {{ host = 266, media = "B{i}", name = "Big B{i}", make = "Big", model = "B{i}", year = "2010" }},'
+        for i in range(n)
+    )
+    cars += "\n} }"
+    hud = "return {\n" + "\n".join(f'[{304 + i}] = {{ ManufacturerName = "ID:900001" }},' for i in range(n))
+    hud += '\n_groups = { ["ID:900001"] = { "ID:900002", "ID:900003" } },\n}'
+    lua, _ = run(True, cars=cars, hud=hud)
+    stats = lua.globals().vehicleStats
+    return Counter(str(stats[304 + i].ManufacturerName) for i in range(n) if stats[304 + i].Selectable)
+
+
+def test_continuation_groups():
+    groups = continuation_groups()
+    assert groups == Counter({"ID:900001": 20, "ID:900002": 20, "ID:900003": 15}), groups
+
+
 if __name__ == "__main__":
+    print("continuation groups:", dict(continuation_groups()))
     problems = check(False) + check(True)
     for p in problems:
         print("FAIL", p)

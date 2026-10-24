@@ -294,16 +294,33 @@ local function groupKey(name)
 	return string.sub(string.upper(tostring(name or "")), 1, 15)
 end
 
--- Returns the ManufacturerName to use (the car's own, or a shared FORZA group
--- when its make has no room), or nil when the car can't be listed. Same rule
--- as src/dsfforza/build/port_batch.py garage_group; one group slot is kept for FORZA.
+-- Extra groups of makers with more than 20 cars, from dsff gui_assets build
+-- (hud.lua _groups): {ManufacturerName = {"ID:n" of "<maker> 2", "<maker> 3", ...}}.
+local CONTINUATION = HUD and type(HUD._groups) == "table" and HUD._groups or {}
+
+-- Returns the ManufacturerName to use (the car's own, the maker's next group
+-- "<maker> 2"... when its own is full, or a shared FORZA group when the maker
+-- has no room), or nil when the car can't be listed. Same rule as
+-- src/dsfforza/build/port_batch.py garage_group; one group slot is kept for FORZA.
 local function garageGroup(name, counts)
 	local key = groupKey(name)
 	local groups = 0
 	for _ in pairs(counts) do groups = groups + 1 end
+	local reserve = counts[OVERFLOW_GROUP] and 0 or 1
 	if counts[key] then
 		if counts[key] < GARAGE_MAX_PER_GROUP then return name end
-	elseif groups + (counts[OVERFLOW_GROUP] and 0 or 1) < GARAGE_MAX_GROUPS then
+		local more = CONTINUATION[name]
+		if type(more) == "table" then
+			for _, label in ipairs(more) do
+				local k = groupKey(label)
+				if counts[k] then
+					if counts[k] < GARAGE_MAX_PER_GROUP then return label end
+				elseif groups + reserve < GARAGE_MAX_GROUPS then
+					return label
+				end
+			end
+		end
+	elseif groups + reserve < GARAGE_MAX_GROUPS then
 		return name
 	end
 	local n = 1

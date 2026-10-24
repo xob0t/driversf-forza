@@ -387,12 +387,26 @@ OVERFLOW_GROUP = "FORZA"  # register.lua: makes without a garage group of their 
 
 def garage_group(make: str, group: str, counts: dict[str, int], cap: int, groups_cap: int) -> str | None:
     """The garage maker group a car joins, or None: its own group while it has room (a new
-    make opens one while fewer than groups_cap exist), else a shared FORZA, FORZA 2 ...
-    group (the same rule as register.lua's garageGroup). One group slot is kept for FORZA."""
+    make opens one while fewer than groups_cap exist), then the maker's next groups
+    "<group> #2", "#3"... (gui_assets.continuation_groups labels them "<maker> 2"...),
+    else a shared FORZA, FORZA 2 ... group (the same rule as register.lua's garageGroup).
+    One group slot is kept for FORZA."""
+    reserve = 0 if OVERFLOW_GROUP in counts else 1  # keep room for FORZA
     if group in counts:
         if counts[group] < cap:
             return group
-    elif len(counts) + (0 if OVERFLOW_GROUP in counts else 1) < groups_cap:  # keep room for FORZA
+        k = 2
+        while True:
+            name = f"{group} #{k}"
+            if name in counts:
+                if counts[name] < cap:
+                    return name
+            elif len(counts) + reserve < groups_cap:
+                return name
+            else:
+                break
+            k += 1
+    elif len(counts) + reserve < groups_cap:
         return group
     n = 1
     while True:
