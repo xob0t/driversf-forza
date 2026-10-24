@@ -85,6 +85,17 @@ hold about 8 resident models (5 in "All chapters" plus the chapter's own), so
      DSF has the make (from `hud.lua`, `src/dsfforza/game/gui_assets.py`), else a plain
      name such as "BMW".
    - A new make opens a group while fewer than 39 exist (one is kept back).
+   - When a make's group is full (20 cars), the car goes to the make's next
+     group, labelled "<maker> 2", "<maker> 3"..., while groups are left.
+     `gui_assets.continuation_groups` writes the labels to global.fchunk as
+     new string IDs and lists them in `hud.lua` `_groups`; `register.lua`
+     takes them in order.
+     - Example, the full roster: AUDI 2, CHEVROLET 2 and 3, DODGE 2, FORD 2
+       and 3, LAMBORGHINI 2, NISSAN 2, VOLKSWAGEN 2, BMW 2, FERRARI 2 and
+       TOYOTA 2.
+     - Simulated with register.lua and the stub API: 104 groups, no FORZA
+       group, all 562 cars selectable. Before this change there were 99
+       groups and 121 cars spread over seven mixed FORZA groups.
    - Otherwise the car joins a shared "FORZA" group (then "FORZA 2" ...).
    - `port_batch.py` (`garage_group`, with a margin of one per cap) and
      `register.lua` (`garageGroup`, exact caps, run against the real
