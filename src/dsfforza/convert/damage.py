@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import colorsys
 import dataclasses
+import functools
 import math
 import re
 import struct
@@ -49,6 +50,8 @@ import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import numpy as np
 
 from dsfforza.formats import upvh as upvh_mod
 from dsfforza.formats import vehicle_mesh as vm
@@ -185,6 +188,18 @@ class Box:
         return tuple((other.size[a] / self.size[a]) if self.size[a] > 1e-3 else 1.0 for a in range(3))
 
 
+@functools.cache
+def _shell(r: int) -> tuple[tuple[int, int, int], ...]:
+    """Cell offsets at Chebyshev distance r (the cube shell of ring r)."""
+    return tuple(
+        (dx, dy, dz)
+        for dx in range(-r, r + 1)
+        for dy in range(-r, r + 1)
+        for dz in range(-r, r + 1)
+        if max(abs(dx), abs(dy), abs(dz)) == r
+    )
+
+
 class Grid:
     """k-nearest neighbours over 3D points (a uniform hash grid)."""
 
@@ -192,6 +207,7 @@ class Grid:
         self.cell = cell
         self.cells: dict[tuple, list[int]] = defaultdict(list)
         self.points, self.values = points, values
+        self._keys = None  # occupied cells as an array (nearest)
         for n, p in enumerate(points):
             self.cells[self._key(p)].append(n)
 
@@ -199,25 +215,39 @@ class Grid:
         return (int(math.floor(p[0] / self.cell)), int(math.floor(p[1] / self.cell)), int(math.floor(p[2] / self.cell)))
 
     def nearest(self, p, k: int = K_NEAREST) -> list[tuple[float, int]]:
+        """The k nearest points as sorted (distance, index) pairs: the points of the
+        cells in rings 0..r around p's cell (Chebyshev distance in cells), for the
+        first ring r at which the k-th nearest of them is within r * cell (then
+        nothing outside is nearer), or all points. Only occupied cells are visited:
+        the rings in between add nothing, so the stop test is solved for them."""
         if not self.points:
             return []
-        cx, cy, cz = self._key(p)
+        if self._keys is None:
+            self._members = list(self.cells.values())
+            self._keys = np.array(list(self.cells), dtype=np.int64).reshape(-1, 3)
+        ring = np.abs(self._keys - np.array(self._key(p), dtype=np.int64)).max(axis=1)
+        order = ring.argsort(kind="stable")
+        rings, order = ring[order].tolist(), order.tolist()
+        total, want, cell = len(self.points), min(k, len(self.points)), self.cell
         found: list[tuple[float, int]] = []
-        r = 0
-        while True:
-            for dx in range(-r, r + 1):
-                for dy in range(-r, r + 1):
-                    for dz in range(-r, r + 1):
-                        if max(abs(dx), abs(dy), abs(dz)) != r:
-                            continue
-                        for n in self.cells.get((cx + dx, cy + dy, cz + dz), ()):
-                            found.append((math.dist(p, self.points[n]), n))
-            # Everything within r * cell is complete once a ring at that radius is done.
-            if len(found) >= min(k, len(self.points)) and sorted(found)[min(k, len(found)) - 1][0] <= r * self.cell:
+        i, m = 0, len(order)
+        while i < m:
+            r = rings[i]
+            while i < m and rings[i] == r:
+                found.extend((math.dist(p, self.points[n]), n) for n in self._members[order[i]])
+                i += 1
+            if len(found) == total:
                 break
-            if len(found) == len(self.points):
-                break
-            r += 1
+            if len(found) >= want:
+                kth = sorted(found)[want - 1][0]
+                # The first ring t from r on with kth <= t * cell, before the next occupied one.
+                t = max(r, math.ceil(kth / cell))
+                while t > r and kth <= (t - 1) * cell:
+                    t -= 1
+                while not kth <= t * cell:
+                    t += 1
+                if t < rings[i]:
+                    break
         found.sort()
         return found[:k]
 
@@ -1329,12 +1359,8 @@ class DamagePlan:
         scored = []
         for r in range(8):
             seen = set()
-            for dx in range(-r, r + 1):
-                for dy in range(-r, r + 1):
-                    for dz in range(-r, r + 1):
-                        if max(abs(dx), abs(dy), abs(dz)) != r:
-                            continue
-                        seen.update(cells.get((key[0] + dx, key[1] + dy, key[2] + dz), ()))
+            for dx, dy, dz in _shell(r):
+                seen.update(cells.get((key[0] + dx, key[1] + dy, key[2] + dz), ()))
             for n in seen:
                 t = f.tris[n]
                 d, _ = closest_on_triangle(q, *t[0])
@@ -1889,10 +1915,13 @@ class DamagePlan:
         """A material of the entry itself (Chassis/Lights) rather than a shared one."""
         if material in f.local:
             return True
-        shared = set(self.f2d.SHARED.values()) | set(self.f2d.SHARED_EXTERIOR.values())
-        if f.uv1 is not None:
-            shared |= {t[3] for t in f.uv1.tris if not t[4]}
-        return material not in shared
+        cached = f.__dict__.get("_shared_materials")  # (uv1 it was made from, set)
+        if cached is None or cached[0] is not f.uv1:
+            shared = set(self.f2d.SHARED.values()) | set(self.f2d.SHARED_EXTERIOR.values())
+            if f.uv1 is not None:
+                shared |= {t[3] for t in f.uv1.tris if not t[4]}
+            cached = f._shared_materials = (f.uv1, shared)
+        return material not in cached[1]
 
     def _uv1(
         self, f: HostField, p, pair, material: bytes, any_panel: bool = False, normal=None, chart: int | None = None
