@@ -835,6 +835,86 @@ WRX, Fiat 500, Range Rover exhausts, Durango and Express headlights), fix 1
 (the Mito: host 128's own -x headlight body sits 1.65 m from its lamp,
 mass 29 kg, the same on the stock car).
 
+## Doors and wings as Forza parts (2026-10-24, follow-up)
+
+PR #14 held every converted door and wing shut. Stock doors swing ajar in
+crashes and open wide with `forceOpenPanels`, so this round finds the doors
+and wings in the Forza mesh and lets those swing. Scratch: `out/dmg6/`
+(`islands.py`, `parts.py`, `panelrender.py`, `jambrender.py`).
+
+### What Forza has (confirmed-static)
+
+FH1 and FM4 carbins have no door or wing sections (all 40 testdrive cars:
+`body`, `hood*`, `trunk`, `bumper*`, `wing*` = spoiler, `skirt*`, lamps,
+glass, `mirror*`, `interior`; `out/dmg6/names.txt`). The per-vertex tail
+table carbin-garage calls "damage / LOD remap" holds packed 10:10:10
+vectors, not part ids (`tail.py`). But `body` is modelled in pieces: its
+vertices are not shared across the real shut lines. Joining triangles
+through shared vertex indices splits the M5's paint into front wing, front
+door, rear door, rear quarter, roof and pillars, exactly along the shut
+lines (`out/dmg6/m5-idx.png`); the S5S Raptor's door is one such component,
+while its wing, sill and rear quarter are one shell (`sal-idx.png`).
+
+### Rule (`part_components`, `part_stats`, `part_relabel`, `part_spans`, `part_trim`)
+
+- After the host vote and smoothing, each component of a `nearest`-rule
+  section (triangles joined through shared vertex indices, any material) is
+  scored by the panel labels on it (area-weighted).
+- A door or wing (`SWINGS`) is a Forza part when the components it wins
+  with at least `PART_SHARE` (60%) of their area add up to `PART_MIN_AREA`
+  (0.15 m2) and to at least 60% of the area the vote gave it, and its
+  partner on the other side qualifies too.
+- A part takes exactly those whole components; its other triangles go to
+  the best other panel of their component, and a component won by another
+  panel goes to that panel whole. Components on the part that lie mostly
+  outside the length of its largest component (the S5S Raptor's intake
+  surround behind the door) go to the chassis.
+- Side-window glass within a part door's length and facing sideways goes
+  with the door (the S5S Raptor's door and quarter windows are one Forza
+  section; sunroofs and T-tops stay); `interior` triangles on the door's
+  side, within its length and height, at most 0.2 m inward of its skin and
+  facing the cabin are its door card and go with it, as stock door cards
+  are skinned to the door records.
+- Parts keep their own transform slot (`DamagePlan.bound`): they swing and
+  come off like stock. Doors and wings that are not parts keep the PR #14
+  binding (chassis slot, own damage index) and stay shut.
+
+Behind an open door is what Forza models there: the door-opening trims
+(jambs and sills, shared trim) and the cabin, seats and dashboard of the
+`interior` section (`out/dmg6/jamb.png`, the M5 and S5S Raptor without
+their doors). The door shows its card on the inside.
+
+### Survey (40 testdrive cars, LOD 1; `out/dmg6/parts2-*.jsonl`)
+
+- Swinging doors on 37 cars, swinging wings on 25. No part found (doors and
+  wings held as in PR #14): BMW M3 E30 (host 205's door vote covers little
+  of the Forza door), 300 SL (gullwing doors, no side door component), 250
+  GTO (doors and wings in one shell with the nose). Wings held while the
+  doors swing: RX-7, S2000, Charger Daytona, Durango, Express, S5S Raptor,
+  Agera, LFA and Mustang; the Silvia's, 2000GT's and Huayra's hosts have no
+  wing records.
+- Length of panel border running through a Forza surface (two triangles
+  sharing an edge on different panels, one a door or wing that swings):
+  3.9 to 30.7 m per car with the host's panel layout (testdrive10, where
+  all of them swung), 0 now on every car.
+- Pinned rigid seams under front, rear and side crush, exposed-surface
+  counts and `damage.py check` are unchanged (`out/dmg6/after-all40.txt`).
+
+### In game (VM run `vm-20261024-080153`, `-Damage -DamagePanels`)
+
+S5S Raptor (ID 1), M5 (ID 2) and S2000 (ID 3) of the test build: with
+`forceOpenPanels` the doors open wide as solid doors with dark cards inside,
+along their shut lines, like stock 266 (`host-20261023-093807` observe-16);
+testdrive10's door patches swung as thin jagged arcs and master's (#14)
+stayed shut (`img/damage-doorparts-forceopen.jpg`). `removeAllPanels`
+removes them. No crash in the run; one start before it hit the known
+world-load crash (`vm-20261024-074707`, before any converted car spawned).
+
+Offline: `img/damage-doorparts-panels.png` (panels: swinging parts in
+colour, held door/wing patches blue, M5, S5S Raptor, Grand Cherokee, 250
+GTO), `img/damage-doorparts-ajar.png` (doors 0.15 rad ajar under a side
+crush, testdrive10 left).
+
 ## Risks and open questions
 
 1. Crush, panel swing and removal (`-DamagePanels`), decals and seams have
@@ -844,8 +924,9 @@ mass 29 kg, the same on the stock car).
 2. Body triangles are assigned whole, so door and wing borders follow the
    Forza mesh's triangles (jagged at LOD 3 to 5), and they follow the
    host's panel layout, not the Forza car's shut lines (the S5S Raptor's
-   "door" covers the rear quarter's intake). Converted doors and wings are
-   drawn through the chassis transform, so they don't swing (stock ones do);
+   "door" covers the rear quarter's intake). Converted doors and wings
+   swing only where they are Forza parts ("Doors and wings as Forza parts");
+   the rest are drawn through the chassis transform and stay shut;
    seams between rigid panels on paint are pinned, so they don't
    open, but a door dent stops short of the borders, and the crush near
    them is lost (mean rigid-panel crush down by a median 28%, at most 59%). Trim seams the host
