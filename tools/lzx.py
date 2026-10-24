@@ -108,6 +108,7 @@ class LzxDecoder:
         self.window_size = 1 << window_bits
         self.window = bytearray(self.window_size)
         self.window_pos = 0
+        self.frame_pos = 0  # window position where the next frame's output starts
         self.r0 = self.r1 = self.r2 = 1
         self.main_elements = NUM_CHARS + (POSITION_SLOTS[window_bits] << 3)
         self.header_read = False
@@ -184,8 +185,10 @@ class LzxDecoder:
             self.header_read = True
 
         window, mask = self.window, self.window_size - 1
-        start_pos = self.window_pos
-        togo = out_len
+        # A match that ran past the previous frame's end already decoded the
+        # first bytes of this one.
+        start_pos = self.frame_pos
+        togo = out_len - ((self.window_pos - start_pos) & mask)
         while togo > 0:
             if self.block_remaining == 0:
                 self._read_block_header(bits)
@@ -196,6 +199,8 @@ class LzxDecoder:
 
             if self.block_type == UNCOMPRESSED:
                 chunk = data[bits.pos:bits.pos + this_run]
+                if len(chunk) < this_run:
+                    raise LzxError(f"uncompressed block: {this_run} bytes wanted, {len(chunk)} left in the chunk")
                 for b in chunk:
                     window[wp] = b
                     wp = (wp + 1) & mask
@@ -255,10 +260,12 @@ class LzxDecoder:
             self.r0, self.r1, self.r2 = r0, r1, r2
             self.window_pos = wp
             if this_run < 0:
-                # A match ran past the end of the frame; carry it into the block count.
+                # A match ran past the end of the frame: its extra bytes belong to
+                # the block and to the next frame (frame_pos, below).
                 self.block_remaining -= -this_run
                 togo += this_run
 
+        self.frame_pos = (start_pos + out_len) & mask
         if start_pos + out_len <= self.window_size:
             out = bytearray(window[start_pos:start_pos + out_len])
         else:

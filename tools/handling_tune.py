@@ -38,7 +38,7 @@ import dyno
 import handling as H
 import handling_dsf as D
 import host_select as HS
-from chnk import read_chunk, write_chunk
+from chnk import read_chunk
 
 REPO = Path(__file__).resolve().parent.parent
 CACHE = REPO / "out" / "cache" / "handling-tune.json"
@@ -116,10 +116,7 @@ def save_json(path: Path, data: dict) -> None:
 # --- targets -------------------------------------------------------------------------
 
 def _fit(xs: list[list[float]], ys: list[float]) -> list[float]:
-    k = len(xs[0])
-    a = [[sum(x[i] * x[j] for x in xs) + (1e-3 * len(xs) if i == j and i else 0) for j in range(k)] for i in range(k)]
-    b = [sum(x[i] * y for x, y in zip(xs, ys)) for i in range(k)]
-    return D._solve(a, b)
+    return D.ridge_fit(xs, ys, 1e-3)
 
 
 def _x(specs: D.Specs) -> list[float]:
@@ -175,16 +172,15 @@ def ported_cars(lua: Path) -> dict[int, dict]:
 
 
 def patch_archive(src: Path, dst: Path, overrides: dict[int, dict[int, float]]) -> None:
+    vo3ds = {}
     with src.open("rb") as stream:
         root = read_chunk(stream, 0)
         for sid, values in overrides.items():
             entry, _ = H.host_entries(stream, root.entries, sid)
-            v = H.VO3D.parse(H.payload(stream, entry))
+            v = vo3ds[sid] = H.VO3D.parse(H.payload(stream, entry))
             for pid, val in values.items():
                 v.params[int(pid)] = float(val)
-            entry.payload = v.build()
-        with dst.open("wb") as out:
-            write_chunk(out, stream, root.entries, root.version)
+    H.replace_vo3ds(src, dst, vo3ds)
 
 
 def run_session(archive: Path, lua: Path, ids: list[int], wait: int = 3600, keys: str = KEYS,

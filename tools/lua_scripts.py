@@ -58,11 +58,16 @@ def find(entries, tag):
     raise ValueError(f"no {tag}")
 
 
-def com_hash(path: str) -> int:
+def crc(text: str) -> int:
+    """The game's CRC-32 variant of `text` as given (callers lower-case where the game does)."""
     value = 0xFFFFFFFF
-    for char in ("COM:luaScripts\\" + path).lower():
+    for char in text:
         value = (value >> 8) ^ CRC_TABLE[(ord(char) ^ value) & 0xFF]
     return value
+
+
+def com_hash(path: str) -> int:
+    return crc(("COM:luaScripts\\" + path).lower())
 
 
 def script_path(source: str, hash_: int) -> str | None:

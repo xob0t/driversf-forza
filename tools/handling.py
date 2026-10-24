@@ -204,14 +204,19 @@ class Host:
     stats: dict[str, str] = field(default_factory=dict)  # Lua vehicleStats entry, if given
 
 
-def host_entries(stream, root: list[Entry], spool_id: int) -> tuple[Entry, Entry]:
-    """(NONR/VO3D, NONR/UPVH) entries of the vehicle's full entry."""
+def full_nonr(stream, root: list[Entry], spool_id: int) -> Entry:
+    """NONR of the vehicle's full entry."""
     ssic = find(root, "SSIC")
     records = parse_sslp(payload(stream, find(find(ssic.children, "NONR").children, "SSLP")))
     index = {sid: idx for sid, idx, _ in records}
     if spool_id not in index:
         raise SystemExit(f"spool ID {spool_id} is not in the archive")
-    nonr = child(root[index[spool_id]], "NONR")
+    return child(root[index[spool_id]], "NONR")
+
+
+def host_entries(stream, root: list[Entry], spool_id: int) -> tuple[Entry, Entry]:
+    """(NONR/VO3D, NONR/UPVH) entries of the vehicle's full entry."""
+    nonr = full_nonr(stream, root, spool_id)
     return child(nonr, "VO3D"), child(nonr, "UPVH")
 
 
@@ -322,10 +327,13 @@ def load_forza(media: str, databases: list[Path]) -> ForzaCar:
     """Read a car's stock physics from the first gamedb.slt (FH1 or FM4) that has it."""
     for db in databases:
         con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
-        con.row_factory = sqlite3.Row
-        car = con.execute("SELECT * FROM Data_Car WHERE MediaName = ? COLLATE NOCASE", (media,)).fetchone()
-        if car is not None:
-            return _read_car(con, car, db)
+        try:
+            con.row_factory = sqlite3.Row
+            car = con.execute("SELECT * FROM Data_Car WHERE MediaName = ? COLLATE NOCASE", (media,)).fetchone()
+            if car is not None:
+                return _read_car(con, car, db)
+        finally:
+            con.close()
     raise SystemExit(f"{media}: not in {', '.join(map(str, databases))}")
 
 
@@ -534,19 +542,20 @@ def build_vo3d(host: Host, car: ForzaCar, torque_scale: float | None = None,
 
 # --- archive I/O -----------------------------------------------------------------------
 
-def replace_vo3d(archive: Path, out_path: Path, spool_id: int, vo3d: VO3D) -> None:
+def replace_vo3ds(archive: Path, out_path: Path, vo3ds: dict[int, VO3D]) -> None:
+    """Write a copy of `archive` with the VO3D of each spool ID in `vo3ds` replaced."""
     if out_path.resolve() == archive.resolve():
         raise SystemExit("refusing to overwrite the input archive")
     from chnk import entry_size
 
     with archive.open("rb") as stream:
         root = read_chunk(stream, 0)
-        entry, _ = host_entries(stream, root.entries, spool_id)
-        entry.payload = vo3d.build()
-        nonr = next(vehc_child for vehc in root.entries if vehc.children
-                    for vehc_child in vehc.children if vehc_child.children and entry in vehc_child.children)
-        if entry_size(nonr) > NONR_LIMIT:
-            raise SystemExit(f"NONR would be {entry_size(nonr):#x} bytes, over the {NONR_LIMIT:#x} spool slot")
+        for spool_id, vo3d in vo3ds.items():
+            nonr = full_nonr(stream, root.entries, spool_id)
+            child(nonr, "VO3D").payload = vo3d.build()
+            if entry_size(nonr) > NONR_LIMIT:
+                raise SystemExit(f"{spool_id}: NONR would be {entry_size(nonr):#x} bytes, "
+                                 f"over the {NONR_LIMIT:#x} spool slot")
         with out_path.open("wb") as out:
             write_chunk(out, stream, root.entries, root.version)
 
@@ -602,7 +611,7 @@ def cmd_build(args: argparse.Namespace) -> None:
 
 def cmd_apply(args: argparse.Namespace) -> None:
     _, _, vo3d, _ = _build(args)
-    replace_vo3d(args.archive, args.out, args.id, vo3d)
+    replace_vo3ds(args.archive, args.out, {args.id: vo3d})
     print(f"wrote {args.out}", file=sys.stderr)
 
 

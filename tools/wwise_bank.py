@@ -157,6 +157,8 @@ class Wem:
         chunks, p = [], 12
         while p + 8 <= len(raw):
             tag, size = raw[p:p + 4], struct.unpack_from("<I", raw, p + 4)[0]
+            if p + 8 + size > len(raw):
+                raise ValueError(f"wem chunk {tag!r} at {p:#x}: {size:#x} bytes, past the end")
             chunks.append((tag, raw[p + 8:p + 8 + size]))
             p += 8 + size + (size & 1)
         fmt = next(d for t, d in chunks if t == b"fmt ")
@@ -390,6 +392,8 @@ class Bank:
         sections, p = [], 0
         while p + 8 <= len(raw):
             tag, size = raw[p:p + 4].decode("latin-1"), struct.unpack_from("<I", raw, p + 4)[0]
+            if p + 8 + size > len(raw):
+                raise ValueError(f"section {tag} at {p:#x}: {size:#x} bytes, past the end")
             sections.append([tag, raw[p + 8:p + 8 + size]])
             p += 8 + size
         if p != len(raw):
@@ -402,6 +406,8 @@ class Bank:
         didx, data = sec.get("DIDX", b""), sec.get("DATA", b"")
         for i in range(0, len(didx), 12):
             mid, off, size = struct.unpack_from("<III", didx, i)
+            if off + size > len(data):
+                raise ValueError(f"media {mid:08x}: {off:#x}+{size:#x} outside DATA ({len(data):#x} bytes)")
             media.append([mid, data[off:off + size]])
         objects = []
         if "HIRC" in sec:

@@ -58,6 +58,7 @@ class XIso:
                 self.root_sector, self.root_size = struct.unpack_from("<II", header, 20)
                 break
         else:
+            self.stream.close()
             raise ValueError(f"{path}: no XDVDFS volume descriptor at any known offset")
 
     def close(self) -> None:
@@ -101,7 +102,9 @@ class XIso:
         raise KeyError(path)
 
     def read(self, entry: FileEntry, offset: int = 0, size: int | None = None) -> bytes:
-        size = entry.size - offset if size is None else min(size, entry.size - offset)
+        # Clamped: past the end, stream.read(-1) would return the rest of the image
+        # and other negative sizes raise.
+        size = max(0, entry.size - offset if size is None else min(size, entry.size - offset))
         return self.read_at(entry.sector, offset, size)
 
     def open(self, entry: FileEntry) -> io.BufferedReader:

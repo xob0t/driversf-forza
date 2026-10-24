@@ -119,7 +119,6 @@ def analyse(r: Run) -> dict:
     # reaches the speed the car had before the throttle (normally 0).
     rest = min(v[:go - first + 1])
     launch = [(t[i], v[i]) for i in range(len(v)) if 1.0 <= v[i] <= 5.0 and i < len(v) // 2]
-    launch = launch[:max(3, len(launch))]
     if len(launch) >= 3:
         mt = statistics.mean(x for x, _ in launch)
         mv = statistics.mean(y for _, y in launch)
