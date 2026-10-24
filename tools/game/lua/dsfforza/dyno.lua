@@ -56,6 +56,7 @@ end
 -- "dyno scan <i> <x> <y> <z> offroad <n>" is printed: n = gameVehicle.isOffRoad, the
 -- number of wheels on an off-road surface. Used to find sand, dirt and grass to test on.
 local SCAN = nil
+local SCAN_HOLD = 12          -- step() ticks at least at each point (about 3 s: a screenshot or two)
 
 function M.configure(config)
 	if type(config) ~= "table" then return end
@@ -301,12 +302,15 @@ function M.step()
 		local resident = false
 		pcall(function() resident = spoolsystem.IsLocationResident(at) end)
 		if (resident and cur.ticks >= PLACE_MIN) or cur.ticks >= PLACE_MAX then
+			-- A car let go with zero velocity well above the ground can stay put (asleep):
+			-- start it falling.
+			pcall(function() cur.gv.velocity = vec.vector(0, -3, 0, 0) end)
 			cur.phase, cur.ticks = "scan_settle", 0
 		end
 	elseif cur.phase == "scan_settle" then
 		local speed = 0
 		pcall(function() speed = cur.gv.speed end)
-		if (cur.ticks >= SETTLE_TICKS and speed < MOVING) or cur.ticks >= SETTLE_TICKS * 4 then
+		if (cur.ticks >= SCAN_HOLD and speed < MOVING) or cur.ticks >= SETTLE_TICKS * 4 then
 			local position = cur.gv.position
 			log(string.format("dyno scan %d %.2f %.2f %.2f offroad %d speed %.2f", cur.scan, position.x, position.y,
 				position.z, offRoad(cur.gv), speed))

@@ -159,7 +159,10 @@ Data: p1 and p2 run a median 1.4 and 1.7 per kg of mass. Their interquartile ran
 | 376, 377, 378 | friction falloff | `mu = p376 * p378 / (p376 + slip speed) + p377` |
 | 517 | longitudinal stiffness scale on one axle | |
 | 529, 530, 531 | same falloff when the handbrake is on | |
-| 413, 414, 514, 515, 519..521, 525, 526 | camber limit, combined-slip shaping, surface terms | read in `FUN_008B8110`, not decoded |
+| 525 | surface grip sensitivity | `FUN_008B8110`: the force limit is scaled by `1 + (mu_surface - 1) * p525` (clamped 0..2), mu from the surface table (below). Default 1; 1.2 to 1.5 on five supercars (they lose more off road) |
+| 526 | drive feedback on soft ground | on a soft surface (table +0x10 = 1) the wheel's drive-reaction term (wheel +0x148, summed over the wheels by `FUN_008BD170`) is scaled by `soft * p526 + (1 - soft)`. Default 1; 1.2 on the off-road, SUV and pickup cars. 0 leaves the driven wheels spinning without traction (section "Off road") |
+| 519, 520, 521 | soft-ground digging force | only on soft surfaces and if p519 > 0: a force of `(p519/p521 - p519/(p521 + slip speed))` along the slip, p520 another scale. Defaults 0, 0.5, 8; 50 to 120, 0.25, 1 on the off-road cars, SUVs and pickups |
+| 413, 414, 514, 515 | camber limit, combined-slip shaping | read in `FUN_008B8110`, not decoded |
 
 ### Driver aids, steering, cameras
 
@@ -646,13 +649,14 @@ What the F1's steering set changes (`FUN_008AF860`, params at
 `f = min(1, |front slip|*p381)` and `slip` the body slip angle. p380 is the
 automatic counter-steer, the share of the slip angle the front wheels follow
 by themselves. The other supercars compared (232, 214, 225, 240, 163, 182)
-have 0.6; the F1 has 0.4 (56 of the 150 stock cars have 0.4 or less; 99
-have p390 0). The slew rate towards that
-line is `lerp(p389, p390, min(1, |slip|*p391))`: with the F1's p390 0 and
-p391 5 it reaches zero from about 11 deg of slip, so in a big slide the
-wheels stop moving towards the counter-steer line except through the
-p494/p495 override. The Zonda has p380 0.6, p390 2.5; the Veyron 0.6, 0
-(AWD, which pulls itself straight). Other differences from the host (mass
+have 0.6; the F1 has 0.4 (56 of the 150 stock cars have 0.4 or less). The
+slew rate towards that line is `lerp(p389, p390, min(1, |slip|*p391))`.
+(Correction, 2026-10-24: the F1, like 96 of the 150 stock cars, leaves p390
+out, so the engine uses its default 3; the generator read the absence as 0
+and wrote p390 0 into the Huayra, with which the rate reaches zero from about
+11 deg of slip and the wheels stop moving towards the counter-steer line in a
+big slide. The F1 itself never had that. See "Off road" below.) The Zonda
+has p380 0.6, p390 2.5; the Veyron 0.6 and no p390 (default 3). Other differences from the host (mass
 1430 kg against 1100, engine inertia p355 0.0157 against 0.009 from rule R,
 p345 0.58 against 0.55, which steadies the car) don't stand out against
 the fleet: the Veyron port runs p355 0.021 and drives well.
@@ -689,10 +693,10 @@ over up to 8 s (deg s). Lifted runs separate nothing: every car straightens
 | new rule + host's steering set | 2.7/81 |
 
 The round-3 Huayra never comes out of a power drift within 8 s; every stock
-car does. The steering set is the cause, and not p380 alone: with the F1's
-p390 0 and p391 5 the wheels stop turning towards the counter-steer line
-once the front slips more than about 11 deg. The F1 itself copes; the
-heavier, more powerful Huayra doesn't. The new rule fixes the failure most
+car does. The steering set is the cause, and not p380 alone: with p390 0
+(written by the generator, the F1 leaves it out) and p391 5 the wheels stop
+turning towards the counter-steer line once the front slips more than about
+11 deg; the same set also carried p381..p384 as 0 (defaults 2, 0.05, 10, 30). The new rule fixes the failure most
 of the time; the host's own steering set brings it to the Zonda's figures.
 So the Huayra also has a per-car entry in `out/cache/handling-tune.json`
 (`PAG_Huayra_12@232`: the host's steering set, with a note), and

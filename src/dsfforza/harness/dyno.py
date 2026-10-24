@@ -332,6 +332,83 @@ MAN_COLUMNS = [
 ]
 
 
+# Dirt test (research/handling.md, "Off road"): the off-road challenge track at
+# DIRT_START heading west, dirt until about x = DIRT_END; run 1 'Up:2,Down:5', run 2
+# 'Up:1,Up+Right:3,Down:4'. The guest's key steps are wall-clock and a loaded VM runs
+# the game slower than that, so only game-time figures are used: launch times, the
+# largest braking deceleration, the yaw response once the steer acts.
+DIRT_START = "-3908.5,36,3396.4,-1.4798"
+DIRT_KEYS = "Up:2,Down:5;Up:1,Up+Right:3,Down:4"
+DIRT_END = -3945.0
+DIRT_COLUMNS = ["car", "t10", "t20", "peak_mph", "x_peak", "brake_g", "turn_mph", "yaw_dps", "lat_g", "slip_deg"]
+
+
+def dirt_launch(r: Run, period: float = 0.008) -> dict | None:
+    """Run 1: 0-10 and 0-20 mph from the first sample over 1 m/s, the peak speed in
+    the first 6 s, the largest mean deceleration over 0.5 s after it (g)."""
+    go = next((i for i, x in enumerate(r.v) if x > 1.0), None)
+    if go is None:
+        return None
+    t = [(n - r.n[go]) * period for n in r.n]
+    end = next((i for i in range(len(t)) if t[i] > 6.0), len(t) - 1)
+    peak = max(range(go, end + 1), key=r.v.__getitem__)
+    w = round(0.5 / period)
+    dec = [
+        (r.v[i] - r.v[i + w]) / ((r.n[i + w] - r.n[i]) * period) / G
+        for i in range(peak, min(end, len(r.v) - w - 1))
+        if r.v[i] > 1.0
+    ]
+    return {
+        "t10": _cross(t, [v * MPH for v in r.v], 10, go),
+        "t20": _cross(t, [v * MPH for v in r.v], 20, go),
+        "peak_mph": r.v[peak] * MPH,
+        "x_peak": r.pos[peak][0],
+        "brake_g": max(dec) if dec else None,
+    }
+
+
+def dirt_turn(r: Run, period: float = 0.008) -> dict | None:
+    """Run 2: from the first yaw rate over 5 deg/s on the dirt, 0.5 s around the
+    largest yaw rate within 1.5 s: yaw rate, lateral acceleration (g), body slip and
+    speed. A car that never turns on the dirt gets yaw 0."""
+    n, s = len(r.v), 5
+    rate, vdir = [0.0] * n, [0.0] * n
+    for i in range(s, n):
+        dt = (r.n[i] - r.n[i - s]) * period
+        rate[i] = _wrap(r.yaw[i] - r.yaw[i - s]) / dt if dt > 0 else 0.0
+        dx, dz = r.pos[i][0] - r.pos[i - s][0], r.pos[i][2] - r.pos[i - s][2]
+        vdir[i] = math.atan2(dx, dz) if math.hypot(dx, dz) > 0.01 else vdir[i - 1]
+    go = next((i for i, x in enumerate(r.v) if x > 1.0), None)
+    if go is None:
+        return None
+    start = next((i for i in range(go + s, n) if abs(rate[i]) > math.radians(5) and r.pos[i][0] > DIRT_END), None)
+    if start is None:
+        return {"yaw_dps": 0.0}
+    win = [i for i in range(start, n) if (r.n[i] - r.n[start]) * period <= 1.5]
+    best = max(win, key=lambda i: abs(rate[i]))
+    seg = [i for i in win if abs(r.n[i] - r.n[best]) * period <= 0.25 and i >= 2 * s]
+    lat = [abs(_wrap(vdir[i] - vdir[i - s])) / ((r.n[i] - r.n[i - s]) * period) * r.v[i] for i in seg]
+    return {
+        "turn_mph": statistics.mean(r.v[i] for i in seg) * MPH,
+        "yaw_dps": math.degrees(statistics.mean(abs(rate[i]) for i in seg)),
+        "lat_g": statistics.mean(lat) / G,
+        "slip_deg": math.degrees(statistics.mean(abs(_wrap(r.yaw[i] - vdir[i])) for i in seg)),
+    }
+
+
+def dirt_table(runs: list[Run]) -> list[dict]:
+    by: dict[int, dict[int, Run]] = {}
+    for r in runs:
+        by.setdefault(r.car, {})[r.run] = r
+    rows = []
+    for car in sorted(by):
+        row = {"car": car}
+        row.update((1 in by[car] and dirt_launch(by[car][1])) or {})
+        row.update((2 in by[car] and dirt_turn(by[car][2])) or {})
+        rows.append(row)
+    return rows
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("logs", type=Path, nargs="+", help="Driver.log files or run folders")
@@ -341,7 +418,15 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--csv", type=Path, help="write every run's figures here")
     parser.add_argument("--json", type=Path, help="write per-car means here")
     parser.add_argument("--trace", type=int, help="print the speed trace of this car (t, mph, distance)")
+    parser.add_argument(
+        "--dirt", action="store_true", help=f"dirt-test figures (run-series -DynoStart {DIRT_START} -DynoKeys ...)"
+    )
     args = parser.parse_args(argv)
+    if args.dirt:
+        print("\t".join(DIRT_COLUMNS))
+        for row in dirt_table(parse(args.logs)[0]):
+            print("\t".join(fmt(row.get(c)) for c in DIRT_COLUMNS))
+        return
 
     labels: dict[int, str] = {}
     for manifest in args.labels:
