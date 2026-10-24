@@ -934,67 +934,145 @@ __declspec(naked) void loop_stub()
     }
 }
 
-// Moves the window so that itemBrowserIndex keeps `back` cards before it and
-// `ahead` cards after it where the group has them. Returns the cards moved.
-int window_move(int* index)
+// The menu (MmDk CMenu [[screen+4]+8]): page stack at +0x1C0 (8-byte entries,
+// count +0x1CC; FUN_00AB9440), each entry's first word the page, whose first
+// word is its name; key table at +0x2A8 (FUN_00ABAA30: key * 0x140 + player * 0x28;
+// +0 state: 0xFF pressed, 1 held, 0xFE released; +0x14 cdecl handler(key, ctx)).
+uint8_t* screen_menu(uint8_t* screen)
 {
-    int idx = *index, moved = 0;
-    int hi = g_view.limit - 1 - g_margin_ahead;
-    int lo = g_margin_back;
-    bool more = g_view.stopped && g_view.last_car + 1 < g_view.cars;
-    if (idx > hi && more && g_view.cards > 0) {
-        int s = idx - hi;
-        if (s >= g_view.cards) s = g_view.cards - 1;
-        if (s > 0) {
-            g_view.first = g_view.card_car[s];
-            moved = s;
-        }
-    } else if (idx < lo && g_view.first > 0) {
-        int want = lo - idx, car = g_view.first;
-        while (moved < want && car > 0) {
-            car--;
-            if (g_view.seen[car] != 0) moved++;   // a card (or not yet seen: counted as one)
-        }
-        while (car > 0 && g_view.seen[car - 1] == 0) car--;
-        g_view.first = car;
-        moved = -moved;
+    return *(uint8_t**)(screen + 4) ? *(uint8_t**)(*(uint8_t**)(screen + 4) + 8) : nullptr;
+}
+
+const char* top_page(uint8_t* menu)
+{
+    __try {
+        int depth = *(int*)(menu + 0x1CC);
+        uint8_t* stack = *(uint8_t**)(menu + 0x1C0);
+        if (depth <= 0 || depth > 64 || !stack) return "";
+        uint8_t* page = *(uint8_t**)(stack + (depth - 1) * 8);
+        const char* name = page ? *(const char**)page : nullptr;
+        if (!name || IsBadStringPtrA(name, 64)) return "";
+        return name;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return "";
     }
-    if (moved) *index = idx - moved;
-    return moved;
+}
+
+char g_browser_page[32] = "ItemBrowser";   // [garage] browser_page
+uint8_t* g_screen = nullptr;                 // the vehicles screen of the last car list
+
+bool browser_open()
+{
+    uint8_t* menu = g_screen ? screen_menu(g_screen) : nullptr;
+    return menu && _stricmp(top_page(menu), g_browser_page) == 0;
+}
+
+// Moves the window one card: forward to the second card of the last fill, back
+// to the car before the first card's (skipping cars the list doesn't show).
+bool window_step(bool forward)
+{
+    if (forward) {
+        if (!g_view.stopped || g_view.last_car + 1 >= g_view.cars || g_view.cards < 2) return false;
+        g_view.first = g_view.card_car[1];
+        return true;
+    }
+    int car = g_view.first;
+    if (car <= 0) return false;
+    do car--;
+    while (car > 0 && g_view.seen[car] == 0);
+    g_view.first = car;
+    return true;
+}
+
+typedef void(__fastcall* CarListFn)(uint8_t* screen);
+typedef void(__cdecl* KeyFn)(int32_t* key, void* ctx);
+
+// The card browser's Right/Left: the script moves its highlight one card and
+// sets itemBrowserIndex, which only it can move on screen. Where a window shows
+// part of a long group, Right past `window_ahead` cards before the window's end
+// (Left within `window_back` of its start) is taken here instead: the window
+// moves one card and the list is refilled, so the highlighted card shows the
+// next car and the cards ahead the ones after it. itemBrowserIndex stays what
+// the script shows, so the side panel and Select keep matching the card.
+struct KeyWrap {
+    int32_t* key;
+    KeyFn orig;
+    bool right;
+    bool taken;   // the press was taken here: so are its held and released states
+    bool mid;     // ... or the hold, after the script had its press
+    int held;
+};
+KeyWrap g_keys[4];
+int g_keys_n = 0;
+
+bool key_take(KeyWrap& w)
+{
+    int state = w.key[0];
+    if (w.taken) {
+        if (state == 0xFE || state == 0) {
+            w.taken = false;
+            return !w.mid;   // a hold taken over midway: the script saw its press, so it sees the release
+        }
+        if (state == 1 && ++w.held >= 18 && (w.held - 18) % 5 == 0 && g_screen && window_step(w.right))
+            ((CarListFn)0x007113A0)(g_screen);   // held: repeat
+        return true;
+    }
+    if ((state != 0xFF && state != 1) || !g_screen || g_view.limit >= kGroupCars || !browser_open()) return false;
+    int* index = screen_var(g_screen, 0x26C);
+    if (!index) return false;
+    int idx = *index;
+    bool edge = w.right ? idx >= g_view.limit - 1 - g_margin_ahead : idx <= g_margin_back;
+    if (!edge || !window_step(w.right)) return false;
+    w.taken = true;
+    w.mid = state == 1;   // the script's own key repeat reached the edge
+    w.held = 0;
+    ((CarListFn)0x007113A0)(g_screen);
+    if (g_menu_debug)
+        dsf_log("garage: %s at card %d: window from car %d", w.right ? "right" : "left", idx + 1, g_view.first);
+    return true;
+}
+
+void __cdecl key_hook(int32_t* key, void* ctx)
+{
+    for (int i = 0; i < g_keys_n; i++) {
+        if (g_keys[i].key != key) continue;
+        bool take = false;
+        __try {
+            take = key_take(g_keys[i]);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            static int noted = 0;
+            if (noted++ < 3) dsf_log("garage: fault in the card browser key hook");
+        }
+        if (!take) g_keys[i].orig(key, ctx);
+        return;
+    }
+}
+
+// Points the menu's Right/Left handlers (keys 2 and 3, players 0 and 1) at key_hook.
+void keys_wrap(uint8_t* menu)
+{
+    for (int player = 0; player < 2; player++) {
+        for (int k = 2; k <= 3; k++) {
+            int32_t* key = (int32_t*)(menu + 0x2A8 + k * 0x140 + player * 0x28);
+            uint32_t cb = (uint32_t)key[5];
+            if (cb == (uint32_t)key_hook) continue;
+            if (cb < 0x00401000 || cb >= 0x00DC9000) continue;
+            KeyWrap* w = nullptr;
+            for (int i = 0; i < g_keys_n; i++)
+                if (g_keys[i].key == key) w = &g_keys[i];
+            if (!w && g_keys_n < 4) w = &g_keys[g_keys_n++];
+            if (!w) continue;
+            w->key = key;
+            w->orig = (KeyFn)cb;
+            w->right = k == 2;
+            w->taken = false;
+            key[5] = (int32_t)key_hook;
+            dsf_log("garage: menu %p key %d player %d: handler %08X wrapped", menu, k, player, cb);
+        }
+    }
 }
 
 void debug_resolve(uint8_t* screen);
-
-int g_last_index = 0;
-int g_shift_mode = 0;   // [garage] debug_shift: how a window move tells the script its new index
-
-// thiscall [screen+4]->vfunc 0x18(name, value): what the car list uses to set
-// script variables ("itemStateChanged", "vehicleStats_Top").
-void script_set(uint8_t* screen, const char* name, int value)
-{
-    void* ctl = *(void**)(screen + 4);
-    if (!ctl) return;
-    typedef void(__fastcall * SetFn)(void*, void*, const char*, int);
-    ((SetFn)(*(void***)ctl)[0x18 / 4])(ctl, nullptr, name, value);
-}
-
-void set_index(uint8_t* screen, int* index, int value)
-{
-    static bool logged = false;
-    if (!logged) {
-        logged = true;
-        void* ctl = *(void**)(screen + 4);
-        dsf_log("garage: screen controller %p vtable %08X, set %08X (shift mode %d)", ctl,
-                ctl ? *(uint32_t*)ctl : 0, ctl ? (*(uint32_t**)ctl)[0x18 / 4] : 0, g_shift_mode);
-    }
-    if (g_shift_mode == 2 || g_shift_mode == 3) script_set(screen, "itemBrowserIndex", value);
-    else *index = value;
-    if (g_shift_mode == 1) {
-        int* sort = menu_var(screen, "sortCardsNow");
-        if (sort) *sort = 1;
-    }
-    if (g_shift_mode == 3) script_set(screen, "sortCardsNow", 1);
-}
 
 void carlist_pre(uint8_t* screen)
 {
@@ -1011,36 +1089,24 @@ void carlist_pre(uint8_t* screen)
     if (g < 0 || g >= groups) return;
     int cars = group_ptr(garage, g)[kGroupCars];
     int listed = (cat >= 1 && cat <= g_listed_n) ? g_listed[cat - 1] : cars;
+    g_screen = screen;
     if (g != g_view.group || cars != g_view.cars || listed != g_view.listed) {
         g_view.group = g;
         g_view.cars = cars;
         g_view.listed = listed;
         g_view.first = 0;
-        g_view.stopped = false;
-        g_view.cards = 0;
-        g_view.last_car = -1;
         memset(g_view.seen, -1, sizeof g_view.seen);
     }
     bool window = g_window_on && listed > kGroupCars;
     g_view.limit = window ? kWindowCards : kGroupCars;
-    int before = *index, from = g_view.first;
-    // A jump of more than one card is the script resetting the browser (entering
-    // it, or back to the maker list): the window starts over.
-    if (g_view.first > 0 && (before - g_last_index > 1 || g_last_index - before > 1)) {
-        g_view.first = 0;
-        g_view.stopped = false;
-    }
-    int moved = 0;
-    if (window) {
-        int idx = before;
-        moved = window_move(&idx);
-        if (moved) set_index(screen, index, idx);
-    }
-    g_last_index = *index;
-    if (g_menu_debug || moved)
-        dsf_log("garage: car list: maker %d group %d, %d cars (%d listed), index %d%s, window from car %d%s", cat, g,
-                cars, listed, before, moved ? " -> moved" : "", g_view.first, moved ? "" : " (unchanged)");
-    (void)from;
+    uint8_t* menu = screen_menu(screen);
+    bool browser = browser_open();
+    // Outside the card browser (the maker list's preview) the window starts at car 0, and so the browser.
+    if (!browser) g_view.first = 0;
+    if (window && menu) keys_wrap(menu);
+    if (g_menu_debug)
+        dsf_log("garage: car list: maker %d group %d, %d cars (%d listed), index %d, window from car %d, page %s",
+                cat, g, cars, listed, *index, g_view.first, menu ? top_page(menu) : "?");
     g_view.cards = 0;
     g_view.stopped = false;
     g_view.last_car = -1;
@@ -1465,7 +1531,6 @@ void mod_garage_init()
         g_max_cars = cars < kGroupCars ? kGroupCars : (cars > kExtMax ? kExtMax : cars);
         g_menu_debug = cfg_bool("garage", "menu_debug", false);
         g_numlist_mode = cfg_int("garage", "debug_numlist", 1);
-        g_shift_mode = cfg_int("garage", "debug_shift", 0);
         g_margin_back = cfg_int("garage", "window_back", 2);
         g_margin_ahead = cfg_int("garage", "window_ahead", 8);
         if (g_margin_back < 0) g_margin_back = 0;
