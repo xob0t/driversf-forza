@@ -18,6 +18,8 @@ Research notes are in `research/` (read the ones for your area first).
   why, how it was verified (run folders, screenshots), what is open. Report
   the PR URL.
 - Keep the PR to one topic. Don't reformat or touch unrelated files.
+- Tests: `python -m tools.tests` runs every Python test file (`tools/tests/`,
+  `tools/asi/test/`). New tests go in `tools/tests/test_<area>.py`.
 
 ## Machine rules
 

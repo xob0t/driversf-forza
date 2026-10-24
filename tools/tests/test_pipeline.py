@@ -1,7 +1,7 @@
 """Checks for port_batch's worker handling and the cache writes (no game files or
 disc images needed; a few seconds).
 
-    python -m pytest tools/tests/test_pipeline.py     # or: python tools/tests/test_pipeline.py
+    python tools/tests/test_pipeline.py     # or every test: python -m tools.tests
 """
 
 from __future__ import annotations

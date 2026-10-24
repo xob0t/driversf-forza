@@ -249,6 +249,16 @@ file and checks it by SHA-256. `-Status` shows the current state. With
 `tools/asi/build.ps1`): runtime patches of `Driver.exe` 1.04 that lift the
 archive, garage and save limits (`research/asi.md`).
 
+### Offline tests
+
+The Python tests run on synthetic data (the register.lua test also reads
+`out/lua-src`, written by `tools/game_data.py prepare`, and needs `lupa`).
+They live in `tools/tests/` and `tools/asi/test/`; one command runs them all:
+
+```powershell
+python -m tools.tests          # or: python -m tools.tests pipeline -v
+```
+
 ### Sandbox tests
 
 On Windows build 26300 the sandbox guest bugchecks on its first DirectX use

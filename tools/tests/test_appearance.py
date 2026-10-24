@@ -1,7 +1,7 @@
 """Regression tests for the appearance converters, on synthetic data (no game
 or Forza files).
 
-    python -m unittest discover -s tools/tests
+    python tools/tests/test_appearance.py     # or every test: python -m tools.tests
 """
 
 from __future__ import annotations

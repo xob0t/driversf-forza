@@ -1,7 +1,7 @@
 """register.lua with and without dsfforza.asi's garage module, against stubbed
 game APIs (lupa, Lua 5.1). Needs out/lua-src (tools/game_data.py prepare).
 
-    python tools/asi/test/test_register_asi.py
+    python tools/asi/test/test_register_asi.py     # or every test: python -m tools.tests
 
 Fakes 600 added cars (IDs 304..903, 70 makes) and checks: the magic-ID
 detection, how many cars become Selectable, the group caps, and which
@@ -111,6 +111,11 @@ def check(asi: bool) -> list[str]:
           f"(largest {max(groups.values())}), setter calls {calls}")
     print("  " + "\n  ".join(line for line in out if "dsfforza.asi" in line))
     return errors
+
+
+def test_register_asi():
+    problems = check(False) + check(True)
+    assert not problems, problems
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 """Round-trip and edge-case checks for the file-format modules in tools/, on
 synthetic data only (no game or Forza files needed).
 
-    python tests/test_formats.py
+    python tools/tests/test_formats.py     # or every test: python -m tools.tests
 
 Each test_* function is a plain assert-based check (pytest collects them too).
 """
@@ -17,7 +17,7 @@ import tempfile
 import zlib
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import chnk  # noqa: E402
 import forzazip  # noqa: E402
