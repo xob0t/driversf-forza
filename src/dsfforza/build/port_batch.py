@@ -29,6 +29,11 @@ that still fails is left out and listed with its cause (the innermost
 tools module and exception), and the rest still ship. Extractions are cached
 in out/cache/<game>/<media>/ (port_car), and --resume reuses every car an
 earlier run in the same --out built with the same ID and options.
+--reuse DIR copies each car an earlier build made from the same job, input files
+and code (work/<media>.fp.json, src/dsfforza/build/fingerprint.py) and converts
+only the rest; --verify-reuse N (default 2) converts N of the reused cars again and
+stops the build if any differs; --rebuild-where EXPR and --trust-code let a fix
+name the cars it affects (research/batch.md, "Selective rebuild").
 
 ID policy (research/batch.md): the garage lists model IDs 0..303 only
 (research/gui-assets.md) and stock cars use 62..303, so the first cars of a
@@ -521,6 +526,12 @@ def worker(job_path: Path) -> int:
     job = json.loads(job_path.read_text(encoding="utf-8"))
     os.environ["DSF_GAME_DIR"] = job["game_dir"]
     out_chunk, out_report = Path(job["chunk"]), Path(job["report"])
+    recorder = None
+    if job.get("fingerprint", True):  # what the car read and ran, for a later --reuse
+        from dsfforza.build import fingerprint
+
+        outputs = [out_chunk.parent] + ([Path(job["sound_dir"])] if job.get("sound_dir") else [])
+        recorder = fingerprint.Recorder(outputs).start()
     started = time.time()
     lines: list[str] = []
 
@@ -604,6 +615,14 @@ def worker(job_path: Path) -> int:
     temp = out_report.with_suffix(".json.tmp")
     temp.write_text(json.dumps(report, indent=1, default=str) + "\n", encoding="utf-8")
     Path(temp).replace(out_report)
+    if recorder is not None:
+        try:
+            fp = recorder.finish(job)
+            temp = out_chunk.with_suffix(".fp.json.tmp")
+            temp.write_text(json.dumps(fp, indent=1) + "\n", encoding="utf-8")
+            temp.replace(out_chunk.with_suffix(".fp.json"))
+        except Exception as error:  # no fingerprint: a later --reuse builds the car again
+            log(f"fingerprint: {type(error).__name__}: {error}")
     return 0 if report["ok"] else 1
 
 
@@ -690,10 +709,14 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print) -> dict[
                 report.setdefault("spool_id", jobs_by_media[media]["spool_id"])
                 report["seconds"] = round(time.time() - started, 1) + jobs_by_media[media].get("seconds_before", 0)
                 job = jobs_by_media[media]
-                retry = None if report.get("ok") or job.get("fallback") else fallback_for(report, job["port_options"])
+                retry = (
+                    None
+                    if report.get("ok") or job.get("fallback") or job.get("verify")
+                    else fallback_for(report, job["port_options"])
+                )
                 if retry:
                     options, why = retry
-                    for ext in ("json", "log"):  # a crashed worker leaves no report
+                    for ext in ("json", "log", "fp.json"):  # a crashed worker leaves no report
                         if (work / f"{media}.{ext}").exists():
                             (work / f"{media}.{ext}").replace(work / f"{media}.first-try.{ext}")
                     job = {
@@ -1000,6 +1023,190 @@ def cmd_plan(args) -> None:
         print(f"wrote {args.tsv}")
 
 
+WORK_FILES = ("chnk", "json", "job.json", "log", "fp.json", "first-try.json", "first-try.log", "first-try.fp.json")
+
+
+class Reuse:
+    """build --reuse DIR: a car whose earlier output in DIR/work was made from the same
+    job, the same input files and the same code (src/dsfforza/build/fingerprint.py) is
+    copied instead of converted. --rebuild-where builds the cars an expression over their
+    earlier report picks again anyway; --trust-code leaves the code out of the comparison
+    (the expression then names the cars a change affects). --verify-reuse N converts N
+    of the reused cars again and stops the build if any comes out different."""
+
+    def __init__(self, args, work: Path):
+        from dsfforza.build import fingerprint
+
+        self.source = Path(args.reuse)
+        self.old = self.source / "work"
+        if not self.old.is_dir():
+            raise SystemExit(f"--reuse {self.source}: no work/ folder there")
+        if self.old.resolve() == work.resolve():
+            raise SystemExit("--reuse names this build's own --out (use --resume for that)")
+        self.work = work
+        self.where = getattr(args, "rebuild_where", None)
+        self.trust_code = getattr(args, "trust_code", False)
+        self.verify_count = getattr(args, "verify_reuse", 2)
+        self.seed = getattr(args, "verify_seed", None)
+        self.checker = fingerprint.Checker()
+        self.taken: dict[str, dict] = {}
+        self.rebuilt: dict[str, str] = {}
+        self.verified: dict[str, str] = {}
+
+    def _predicate(self, report: dict, job: dict) -> bool:
+        names = {
+            "r": report,
+            "report": report,
+            "entry": report.get("entry") or {},
+            "media": job["media"],
+            "game": job["game"],
+            "host": report.get("host"),
+        }
+        safe = {
+            "any": any,
+            "all": all,
+            "len": len,
+            "str": str,
+            "int": int,
+            "float": float,
+            "set": set,
+            "sorted": sorted,
+            "min": min,
+            "max": max,
+            "abs": abs,
+            "bool": bool,
+        }
+        try:
+            return bool(eval(self.where, {"__builtins__": safe}, names))
+        except Exception as error:
+            raise SystemExit(
+                f"--rebuild-where {self.where!r} on {job['media']}: {type(error).__name__}: {error}"
+            ) from error
+
+    def decide(self, job: dict) -> tuple[dict | None, str]:
+        """(the earlier report, "") when the car can be reused, else (None, why not)."""
+        from dsfforza.build import fingerprint
+
+        media = job["media"]
+        report = fingerprint.read(self.old / f"{media}.json")
+        if not report or not report.get("ok") or not (self.old / f"{media}.chnk").exists():
+            return None, "not built there"
+        fp = fingerprint.read(self.old / f"{media}.fp.json")
+        if fp is None:
+            return None, "no fingerprint"
+        why = self.checker.check(fp, {**job, "requested_options": job["port_options"]}, code=not self.trust_code)
+        first = self.old / f"{media}.first-try.fp.json"
+        if why is None and first.exists():  # a fallback build: the first try must be unchanged too
+            why = self.checker.check(fingerprint.read(first) or {}, None, code=not self.trust_code)
+            why = why and f"first try: {why}"
+        if why is None and self.where and self._predicate(report, job):
+            why = "--rebuild-where"
+        return (report, "") if why is None else (None, why)
+
+    def take(self, job: dict) -> dict | None:
+        """Copy the car's earlier output into this build's work/ (and sound/) if it can be
+        reused; returns its report."""
+        import shutil
+
+        report, why = self.decide(job)
+        media = job["media"]
+        if report is None:
+            self.rebuilt[media] = why
+            return None
+        for name in WORK_FILES:
+            src = self.old / f"{media}.{name}"
+            if src.exists():
+                _link_or_copy(src, self.work / f"{media}.{name}")
+        sound_src = self.source / "sound" / media
+        if sound_src.is_dir():
+            dst = Path(job["sound_dir"]) / media
+            if dst.exists():
+                shutil.rmtree(dst)
+            shutil.copytree(sound_src, dst, copy_function=_link_or_copy)
+        self.taken[media] = report
+        return {**report, "reused_from": str(self.source)}
+
+    def summary(self) -> None:
+        print(f"--reuse {self.source}: {len(self.taken)} cars reused, {len(self.rebuilt)} to build")
+        reasons: dict[str, list[str]] = {}
+        for media, why in self.rebuilt.items():
+            reasons.setdefault(why, []).append(media)
+        for why, cars in sorted(reasons.items(), key=lambda kv: -len(kv[1])):
+            print(f"  {why}: {len(cars)} ({', '.join(cars[:6])}{', ...' if len(cars) > 6 else ''})")
+
+    def verify(self, jobs: list[dict], parallel: int) -> None:
+        """Convert a random few of the reused cars again into work/verify/ and require the
+        same bytes; raise SystemExit (before the merge) when any differs."""
+        import random
+
+        if not self.verify_count or not self.taken:
+            return
+        seed = self.seed if self.seed is not None else random.randrange(1 << 30)
+        sample = random.Random(seed).sample(sorted(self.taken), min(self.verify_count, len(self.taken)))
+        folder = self.work / "verify"
+        folder.mkdir(exist_ok=True)
+        by_media = {j["media"]: j for j in jobs}
+        checks = []
+        for media in sample:
+            old = json.loads((self.work / f"{media}.job.json").read_text(encoding="utf-8"))
+            for name in WORK_FILES:
+                (folder / f"{media}.{name}").unlink(missing_ok=True)
+            checks.append(
+                {
+                    **by_media[media],
+                    "port_options": old.get("port_options", by_media[media]["port_options"]),  # after a fallback
+                    "fallback": old.get("fallback"),
+                    "verify": True,
+                    "chunk": str(folder / f"{media}.chnk"),
+                    "report": str(folder / f"{media}.json"),
+                    "sound_dir": str(folder / "sound"),
+                }
+            )
+        print(f"--verify-reuse: building {len(sample)} reused cars again (seed {seed}): {', '.join(sample)}")
+        results = run_workers(checks, folder, parallel)
+        bad = []
+        for media in sample:
+            new = folder / f"{media}.chnk"
+            if not results.get(media, {}).get("ok") or not new.exists():
+                self.verified[media] = "failed: " + str(results.get(media, {}).get("error", "no output"))[:200]
+            elif new.read_bytes() != (self.work / f"{media}.chnk").read_bytes():
+                self.verified[media] = "DIFFERENT"
+            else:
+                self.verified[media] = "identical"
+            if self.verified[media] != "identical":
+                bad.append(f"{media} ({self.verified[media]})")
+        if bad:
+            raise SystemExit(
+                f"--verify-reuse (seed {seed}): {len(bad)} of {len(sample)} reused cars came out different when built "
+                f"again: {'; '.join(bad)}. Their fingerprints missed a change (research/batch.md, 'Selective "
+                f"rebuild'); build without --reuse, or with --rebuild-where covering them."
+            )
+        print(f"--verify-reuse: {len(sample)} of {len(sample)} identical")
+
+    def record(self) -> dict:
+        """For batch-report.json (timings_s.reuse)."""
+        return {
+            "from": str(self.source),
+            "reused": sorted(self.taken),
+            "rebuilt": self.rebuilt,
+            "verified": self.verified,
+            "trust_code": self.trust_code,
+            "rebuild_where": self.where,
+        }
+
+
+def _link_or_copy(src, dst) -> None:
+    """A hard link (the work files are never written in place), else a copy."""
+    import shutil
+
+    dst = Path(dst)
+    dst.unlink(missing_ok=True)
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
 def cmd_build(args) -> None:
     started = time.time()
     timings = {}
@@ -1065,7 +1272,9 @@ def cmd_build(args) -> None:
         for p in picks
     ]
     reused = {}
-    for job in jobs:  # results of an earlier run: reuse (--resume) or drop
+    reuse = Reuse(args, work) if getattr(args, "reuse", None) else None
+    t = time.time()
+    for job in jobs:  # results of an earlier run: reuse (--resume, --reuse) or drop
         old_job, old_report = work / f"{job['media']}.job.json", Path(job["report"])
         if args.resume and old_job.exists() and old_report.exists() and Path(job["chunk"]).exists():
             try:
@@ -1081,8 +1290,14 @@ def cmd_build(args) -> None:
                 reused[job["media"]] = report
                 continue
         # Everything an earlier run left for this car, so nothing stale is read as this run's.
-        for name in ("chnk", "json", "first-try.json", "first-try.log", "tmp", "json.tmp"):
+        for name in WORK_FILES + ("tmp", "json.tmp", "fp.json.tmp"):
             (work / f"{job['media']}.{name}").unlink(missing_ok=True)
+        if reuse is not None:
+            report = reuse.take(job)
+            if report is not None:
+                reused[job["media"]] = report
+    if reuse is not None:
+        timings["reuse_check"] = round(time.time() - t, 1)
     for job in jobs:
         job["requested_options"] = list(job["port_options"])
     t = time.time()
@@ -1092,10 +1307,21 @@ def cmd_build(args) -> None:
         f"building {len(todo)} cars, {args.jobs} at a time ("
         + ("Idle priority on two CPUs: out/gentle" if gentle.enabled() else "Below Normal priority")
         + ")"
-        + (f"; {len(reused)} reused from the last run" if reused else "")
+        + (
+            f"; {len(reused)} reused" + (f" from {args.reuse}" if reuse is not None else " from the last run")
+            if reused
+            else ""
+        )
     )
+    if reuse is not None:
+        reuse.summary()
     results = {**reused, **run_workers(todo, work, args.jobs)}
     timings["convert"] = round(time.time() - t, 1)
+    if reuse is not None:
+        t = time.time()
+        reuse.verify(jobs, args.jobs)  # stops the build if a rebuilt car differs from its reused output
+        timings["verify_reuse"] = round(time.time() - t, 1)
+        args.reuse_record = reuse.record()
 
     ok = [results[p.media] for p in picks if results.get(p.media, {}).get("ok")]
     failed = [results[p.media] for p in picks if not results.get(p.media, {}).get("ok")]
@@ -1287,6 +1513,8 @@ def write_report(
             if c.get("batch_fallback")
         },
     }
+    if getattr(args, "reuse_record", None):
+        report["reuse"] = args.reuse_record
     (out_dir / "batch-report.json").write_text(json.dumps(report, indent=1, default=str) + "\n", encoding="utf-8")
     print(
         f"\n{len(cars)} cars built, {len(failed)} failed; total {timings['total']:.0f} s "
@@ -1375,6 +1603,34 @@ def main(argv: list[str] | None = None) -> None:
                 action="store_true",
                 help="reuse cars an earlier run in --out built with the same ID and options",
             )
+            p.add_argument(
+                "--reuse",
+                type=Path,
+                metavar="DIR",
+                help="copy each car an earlier build in DIR made from the same job, input files and code "
+                "(work/<media>.fp.json) instead of converting it again (research/batch.md, 'Selective rebuild')",
+            )
+            p.add_argument(
+                "--rebuild-where",
+                metavar="EXPR",
+                help="with --reuse: also build the cars whose earlier report matches this Python expression "
+                "(names: r = the work/<media>.json report, entry, media, game, host), e.g. "
+                '"\'cockpit\' in entry" or "host == 198"',
+            )
+            p.add_argument(
+                "--trust-code",
+                action="store_true",
+                help="with --reuse: ignore code changes (only inputs and --rebuild-where decide); for a fix "
+                "whose affected cars --rebuild-where names",
+            )
+            p.add_argument(
+                "--verify-reuse",
+                type=int,
+                default=2,
+                metavar="N",
+                help="with --reuse: build N random reused cars again and stop if any differs (default 2; 0: off)",
+            )
+            p.add_argument("--verify-seed", type=int, help="the random seed of --verify-reuse (default: random)")
             p.add_argument(
                 "--clean-work",
                 action="store_true",

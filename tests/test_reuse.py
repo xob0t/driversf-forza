@@ -1,0 +1,183 @@
+"""port_batch build --reuse: fingerprints (src/dsfforza/build/fingerprint.py) and the
+reuse decision, without converting a car (a fraction of a second).
+
+uv run python tests/test_reuse.py     # or every test: uv run python -m tests reuse
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import tempfile
+from pathlib import Path
+
+from dsfforza.build import fingerprint, port_batch
+
+SOURCE = '''"""Module docstring."""
+import os
+from pathlib import Path
+
+LIMIT = 4
+SCALE: float = 0.5
+
+
+def area(w, h):
+    """Docstring."""
+    return w * h * SCALE
+
+
+class Box:
+    size = 3
+
+    def volume(self):
+        return self.size**3
+
+
+if os.name == "nt":
+    def windows_only():
+        return 1
+'''
+
+
+def units(source: str) -> dict:
+    return fingerprint.module_units(source)
+
+
+def test_units_ignore_comments_docstrings_and_formatting():
+    base = units(SOURCE)
+    edited = SOURCE.replace('"""Docstring."""', '"""Another docstring."""').replace(
+        "return w * h * SCALE", "return (w * h  *  SCALE)  # a comment"
+    )
+    assert units(edited) == base
+    assert {"area", "Box", "Box.volume", "=LIMIT", "=SCALE", "=os", "=Path", "<module>"} <= set(base)
+
+
+def test_a_change_moves_only_its_unit():
+    base = units(SOURCE)
+    for old, new, unit in (
+        ("return w * h * SCALE", "return w * h * SCALE + 1", "area"),
+        ("LIMIT = 4", "LIMIT = 5", "=LIMIT"),
+        ("size = 3", "size = 4", "Box"),
+        ("return self.size**3", "return self.size**2", "Box.volume"),
+        ("return 1", "return 2", "<module>"),  # a def inside a top-level if
+    ):
+        changed = {k for k, v in units(SOURCE.replace(old, new)).items() if base.get(k) != v}
+        assert changed == {unit}, (old, changed)
+    added = units(SOURCE.replace("import os\n", "import os\nimport json\n"))
+    assert {k for k, v in added.items() if base.get(k) != v} == {"=json"}
+
+
+def test_unit_of_code_objects():
+    assert fingerprint.unit_of("area") == "area"
+    assert fingerprint.unit_of("Box.volume") == "Box.volume"
+    assert fingerprint.unit_of("area.<locals>.inner") == "area"
+    assert fingerprint.unit_of("Box.volume.<locals>.<lambda>") == "Box.volume"
+    assert fingerprint.unit_of("<lambda>") == fingerprint.MODULE_UNIT
+    assert fingerprint.unit_of("<genexpr>") == fingerprint.MODULE_UNIT
+    assert fingerprint.module_name(str(fingerprint.PACKAGE / "formats" / "xds.py")) == "dsfforza.formats.xds"
+    assert fingerprint.module_name(__file__) is None
+
+
+def _job(folder: Path) -> dict:
+    return {
+        "media": "TEST_Car_10",
+        "game": "FH1",
+        "year": 2010,
+        "games": "FH1",
+        "source": {"iso": str(folder / "disc.iso"), "path": "media/cars/x.zip"},
+        "spool_id": 7,
+        "dsf": str(folder / "stock.sp"),
+        "game_dir": str(folder),
+        "cache": str(folder),
+        "isos": [],
+        "port_options": ["--damage"],
+        "sound_dir": str(folder / "out" / "sound"),
+        "chunk": str(folder / "out" / "work" / "TEST_Car_10.chnk"),
+        "report": str(folder / "out" / "work" / "TEST_Car_10.json"),
+    }
+
+
+def _record(folder: Path, job: dict) -> dict:
+    """A fingerprint of reading an input file and running a little package code."""
+    from dsfforza.formats import xds
+
+    data = folder / "car" / "input.bin"
+    recorder = fingerprint.Recorder([folder / "out"]).start()
+    try:
+        xds.parse_header(data.read_bytes())
+        (folder / "out").mkdir(exist_ok=True)
+        (folder / "out" / "written.txt").write_text("output")
+        sorted(p.name for p in (folder / "car").iterdir())
+    finally:
+        fp = recorder.finish(job)
+    return fp
+
+
+def test_fingerprint_records_inputs_and_code():
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        (folder / "car").mkdir()
+        (folder / "car" / "input.bin").write_bytes(bytes(64))
+        job = _job(folder)
+        fp = _record(folder, job)
+        files = set(fp["files"])
+        assert fingerprint.norm(folder / "car" / "input.bin") in files
+        assert not any("written.txt" in p for p in files)  # an output
+        assert fingerprint.norm(folder / "car") in fp["dirs"]
+        assert "parse_header" in fp["code"]["dsfforza.formats.xds"]
+        assert "dsfforza.build.fingerprint" not in fp["code"]
+        assert fp["complete"]
+        checker = fingerprint.Checker()
+        assert checker.check(fp, job) is None
+        assert checker.check(fp, {**job, "spool_id": 8}) == "job: spool_id"
+        assert checker.check(fp, {**job, "chunk": "elsewhere.chnk"}) is None  # where it goes doesn't count
+        (folder / "car" / "input.bin").write_bytes(bytes(65))
+        assert fingerprint.Checker().check(fp, job).startswith("input ")
+        changed = json.loads(json.dumps(fp))
+        changed["code"]["dsfforza.formats.xds"]["parse_header"] = "0" * 24
+        assert fingerprint.Checker().check(changed, job, code=False).startswith("input ")
+        (folder / "car" / "input.bin").write_bytes(bytes(64))
+        assert fingerprint.Checker().check(changed, job) == "code dsfforza.formats.xds.parse_header"
+        assert fingerprint.Checker().check(changed, job, code=False) is None
+
+
+def test_reuse_copies_unchanged_cars_and_honours_the_predicate():
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        (folder / "car").mkdir()
+        (folder / "car" / "input.bin").write_bytes(bytes(64))
+        old = folder / "old"
+        (old / "work").mkdir(parents=True)
+        (old / "sound" / "TEST_Car_10").mkdir(parents=True)
+        (old / "sound" / "TEST_Car_10" / "sweep_new.wav").write_bytes(b"wav")
+        job = _job(folder)
+        job["sound_dir"] = str(folder / "new" / "sound")
+        fp = _record(folder, job)
+        media = job["media"]
+        (old / "work" / f"{media}.fp.json").write_text(json.dumps(fp))
+        (old / "work" / f"{media}.json").write_text(json.dumps({"media": media, "ok": True, "host": 198, "entry": {}}))
+        (old / "work" / f"{media}.chnk").write_bytes(b"CHNK...")
+        (old / "work" / f"{media}.job.json").write_text(json.dumps(job))
+        work = folder / "new" / "work"
+        work.mkdir(parents=True)
+
+        def args(**kw):
+            return argparse.Namespace(reuse=old, rebuild_where=None, trust_code=False, verify_reuse=0, **kw)
+
+        reuse = port_batch.Reuse(args(), work)
+        report = reuse.take(job)
+        assert report is not None and report["reused_from"] == str(old)
+        assert (work / f"{media}.chnk").read_bytes() == b"CHNK..."
+        assert (folder / "new" / "sound" / media / "sweep_new.wav").read_bytes() == b"wav"
+        again = port_batch.Reuse(argparse.Namespace(**{**vars(args()), "rebuild_where": "host == 198"}), work)
+        assert again.take(job) is None and again.rebuilt[media] == "--rebuild-where"
+        other = port_batch.Reuse(args(), work)
+        assert other.take({**job, "port_options": ["--damage", "--no-cockpit"]}) is None
+        assert other.rebuilt[media] == "job: options"
+
+
+if __name__ == "__main__":
+    for name, fn in list(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            fn()
+            print(f"ok {name}")
