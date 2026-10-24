@@ -6,6 +6,7 @@ files needed.
 
 from __future__ import annotations
 
+import math
 import struct
 import sys
 from pathlib import Path
@@ -73,6 +74,43 @@ def test_host_ground_from_highest_hub():
     finally:
         upvh.parse = real
     assert abs(ground - (-0.391 - 0.34)) < 1e-6
+
+
+def ring_section(centre, axis_tilt_deg: float, radius: float, lod: int = 1):
+    """A steering-wheel rim (main-carbin style: LOD >= 1) about `centre`, its axis
+    (towards the driver, Forza +z) tilted up by axis_tilt_deg."""
+    import carbin
+    t = math.radians(axis_tilt_deg)
+    axis = (0.0, math.sin(t), math.cos(t))
+    u = (1.0, 0.0, 0.0)
+    v = (0.0, math.cos(t), -math.sin(t))
+    verts, idx = [], []
+    n = 48
+    for k in range(n):
+        a = 2 * math.pi * k / n
+        for depth, r in ((0.0, radius), (0.0, radius * 0.85), (0.02, radius)):
+            p = tuple(centre[i] + r * (math.cos(a) * u[i] + math.sin(a) * v[i]) + depth * axis[i] for i in range(3))
+            verts.append(carbin.Vertex(p, (0.0, 0.0), (0.0, 0.0), axis))
+    for k in range(n):
+        a, b = 3 * k, 3 * ((k + 1) % n)
+        idx += [a, b, a + 1, b, b + 1, a + 1, a, a + 2, b, b, a + 2, b + 2]
+    sub = carbin.SubSection("leather", lod, 4, (0, 1, 0, 1, 0, 1, 0, 1), idx)
+    return carbin.Section("steering_wheel", (0, 0, 0), (0, 0, 0), (0, 0, 0), lod_vertices=verts, subsections=[sub])
+
+
+def test_main_wheel_aligned_onto_the_cockpit_wheel():
+    import cockpit
+    target = cockpit.Wheel((-0.38, 0.63, -0.37), cockpit._norm((0.0, 0.41, 0.91)), 0.163)
+    main = ring_section((-0.37, 0.65, -0.52), 10.0, 0.158)   # 15 cm ahead, flatter column (S5S Raptor-like)
+    aligned, report = cockpit.align_main_wheel(main, target)
+    assert aligned is not None and abs(report["move"] - 0.15) < 0.01
+    w = cockpit.fit_wheel(cockpit.promote_lod(aligned))
+    assert math.dist(w.centre, target.centre) < 0.002
+    assert abs(w.radius - target.radius) < 0.002
+    assert cockpit._dot(w.axis, target.axis) > 0.9999
+    # An implausible fit (a wheel 1 m away) is left alone.
+    far = ring_section((0.6, 0.65, -1.4), 10.0, 0.158)
+    assert cockpit.align_main_wheel(far, target)[0] is None
 
 
 if __name__ == "__main__":

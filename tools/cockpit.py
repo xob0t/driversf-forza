@@ -236,7 +236,11 @@ def fit_wheel(section: carbin.Section) -> Wheel:
     from the centroid or more; the centre is the middle of the rim's extent
     in the wheel plane (a vertex mean is biased by uneven tessellation), at
     the rim's mean depth along the axis."""
-    pts = list({p for p in section_points(section)})
+    return fit_wheel_points(list({p for p in section_points(section)}))
+
+
+def fit_wheel_points(pts: list[tuple]) -> Wheel:
+    """fit_wheel on a list of points (Forza space)."""
     centroid = _mean(pts)
     axis = _norm(_eigen_sym3(_covariance(pts, centroid))[0][1])
     u = _norm(_cross(axis, (1, 0, 0)) if abs(axis[0]) < 0.9 else _cross(axis, (0, 1, 0)))
@@ -257,6 +261,57 @@ def fit_wheel(section: carbin.Section) -> Wheel:
     if axis[2] < 0:  # Forza: the driver sits behind the wheel, at larger z
         axis = _scale(axis, -1)
     return Wheel(centre, axis, r)
+
+
+MAIN_WHEEL_RADIUS = (0.08, 0.30)   # a plausible main-carbin wheel fit (FH1 Mustang Boss 429's: 0.013)
+MAIN_WHEEL_MAX_MOVE = 0.5
+
+
+def fit_main_wheel(section: carbin.Section, near: Wheel) -> Wheel | None:
+    """fit_wheel on a main-carbin steering wheel at its finest LOD. A column or boss
+    modelled with it spoils the fit (FH1 Mustang Boss 429: radius 0.013 m); then only
+    the points around the cockpit's wheel (`near`) are fitted."""
+    promoted = promote_lod(section)
+    if promoted is None:
+        return None
+    pts = list({p for p in section_points(promoted)})
+    main = fit_wheel_points(pts)
+    if not MAIN_WHEEL_RADIUS[0] <= main.radius <= MAIN_WHEEL_RADIUS[1]:
+        close = [p for p in pts if math.dist(p, near.centre) < 1.3 * near.radius + 0.05]
+        if len(close) >= 12:
+            main = fit_wheel_points(close)
+    return main
+
+
+def align_main_wheel(section: carbin.Section, target: Wheel) -> tuple[carbin.Section | None, dict]:
+    """The main carbin's steering wheel (drawn in the full and exterior entries, so in
+    the chase views) moved, turned and scaled onto the cockpit's (`target`), where
+    the hand rig grips (research/cockpit.md, "The driver in the chase views"). Forza
+    models the two apart: the S5S Raptor's main-carbin wheel sits 15 cm ahead of its
+    cockpit wheel, the 1993 Skyline's 17 cm. Returns (None, report) when the main
+    wheel can't be fitted."""
+    import copy
+    import dataclasses
+    main = fit_main_wheel(section, target)
+    if main is None:
+        return None, {"kept": "no LOD"}
+    report = {"main_centre": [round(c, 4) for c in main.centre], "main_radius": round(main.radius, 4),
+              "move": round(math.dist(main.centre, target.centre), 4),
+              "turn_deg": round(math.degrees(math.acos(max(-1.0, min(1.0, _dot(main.axis, target.axis))))), 2),
+              "scale": round(target.radius / main.radius, 4) if main.radius else None}
+    if not MAIN_WHEEL_RADIUS[0] <= main.radius <= MAIN_WHEEL_RADIUS[1] or report["move"] > MAIN_WHEEL_MAX_MOVE:
+        report["kept"] = "implausible main-carbin wheel fit"
+        return None, report
+    q = quat_from_to(main.axis, target.axis)
+    k = target.radius / main.radius
+
+    def move(v):
+        p = quat_rotate(q, _scale(_sub(v.position, main.centre), k))
+        return dataclasses.replace(v, position=_add(target.centre, p), normal=quat_rotate(q, v.normal))
+    out = copy.copy(section)
+    out.lod_vertices = [move(v) for v in section.lod_vertices]
+    out.lod0_vertices = [move(v) for v in section.lod0_vertices]
+    return out, report
 
 
 @dataclass

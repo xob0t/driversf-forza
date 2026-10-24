@@ -1284,6 +1284,20 @@ def convert(stream, full: Entry, exterior: Entry, car: ForzaCar, dims: CarDims, 
                     log(f"cockpit: {cf.source}")
                 host_cp = cockpit.host_cockpit(payload(stream, child(child(full, "NONR"), "UPVH")))
                 skin = {"steering_wheel": host_cp.wheel_skin}
+                # The hands grip the cockpit's wheel in every view; the chase views draw
+                # the main carbin's, which Forza models elsewhere (up to 17 cm away).
+                import dataclasses
+                body = []
+                for section in car.body:
+                    if section.name == "steering_wheel":
+                        aligned, wheel_report = cockpit.align_main_wheel(section, cf.wheel)
+                        report["main_steering_wheel"] = wheel_report
+                        log(f"main-carbin steering wheel: moved {wheel_report.get('move')} m, turned "
+                            f"{wheel_report.get('turn_deg')} deg, scaled {wheel_report.get('scale')} onto the "
+                            f"cockpit's" + (f" ({wheel_report['kept']}: kept)" if aligned is None else ""))
+                        section = aligned or section
+                    body.append(section)
+                car = dataclasses.replace(car, body=body)
 
     links = host_glass_links(stream, full) if opts.glass_links else None
     if links is not None:
