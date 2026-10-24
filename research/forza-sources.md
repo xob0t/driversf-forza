@@ -71,7 +71,8 @@ is 3.1 GB on FM4 disc 1, 2.0 GB in the disc 2 packs and 1.5 GB on FH1.
 Both games' `Media/db/gamedb.slt` are plain SQLite. `Data_Car` maps
 `MediaName` to the model year and IDs. Make and model names are string IDs
 (`_&3444160236`) that resolve through `Media/StringTables/<lang>.zip`
-(`LSB2` files, not decoded yet), so the roster lists the year only.
+(`LSB2` files, decoded by `tools/forza_strings.py`); the roster still lists
+the year only.
 
 ## STFS (tools/stfs.py)
 

@@ -19,9 +19,10 @@ back byte for byte.
 
   The file names don't matter. A car that is only on a disc you don't have is
   skipped.
-- **Python 3.10 or newer**, from <https://www.python.org/downloads/>. Only the
-  standard library is used. You don't need Python if you install a finished
-  build with `-Build`.
+- **Python 3.10 or newer**, from <https://www.python.org/downloads/>, with
+  numpy (`python -m pip install numpy`); the build needs it for the
+  textures and licence plates. You don't need Python if you install a
+  finished build with `-Build`.
 - **Windows PowerShell 5.1**, which comes with Windows 10 and 11.
 - **The Microsoft Visual C++ 2015-2022 Redistributable, x86 (32-bit)**:
   <https://aka.ms/vs/17/release/vc_redist.x86.exe>. DriverNGHook needs it. The
@@ -188,8 +189,6 @@ option: `Documents\Ubisoft\Driver San Francisco\reloaded\savegames\autosave.dat`
     is room. After that they share a group named "FORZA".
   - Cars beyond these limits get IDs from 304. They drive in traffic and you
     can Shift into them, but they are not in the garage.
-  - Nobody has confirmed in game yet that the garage lists the new cars or
-    shows their pictures.
 - **Traffic:**
   - The new cars join the game's "interesting vehicle" lists for each part of
     the city, so they appear among traffic now and then, not in every street.
@@ -210,9 +209,10 @@ option: `Documents\Ubisoft\Driver San Francisco\reloaded\savegames\autosave.dat`
   - Digital displays are blank.
 - **How many cars:**
   - The archive can hold at most 215 added cars. dsfforza.asi's `archive`
-    module raises that to 757; a build that big needs
-    `tools\port_batch.py build --root-limit 3003` and works only with the
-    plugin installed.
+    module raises that to 849 (757 with the default ID policy, all 849 with
+    `-IdPolicy asi`). `install.ps1 -Asi` builds with room for them; a build
+    made by hand needs `tools\port_batch.py build --root-limit 3003`. Such
+    an archive works only with the plugin installed.
   - Every car takes about 4 MB in `dngvehicles.sp`.
   - The garage picture file has room for about 98 new pictures, and the HUD
     font for about 44 new badges and nameplates. Cars past those limits keep

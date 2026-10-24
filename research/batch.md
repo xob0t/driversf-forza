@@ -1,6 +1,6 @@
 # Batch porting, model IDs and the installer
 
-Updated: 2026-10-22
+Updated: 2026-10-24
 
 How many Forza cars one `dngvehicles.sp` can take, which model IDs they get,
 what the save and the garage can hold, and how `tools/port_batch.py` and
@@ -27,7 +27,7 @@ The Ghidra outputs are in `out/ghidra/profile-*`; the scripts used are
 
 | Limit | With the plugin |
 | --- | --- |
-| Root entries in `dngvehicles.sp` | `archive` module: 16384 (`[archive] max_entries`). The model IDs bind first: 453 + 3 × 849 = 3000 entries. `port_batch.py` assigns 1 to 61 and 304 to 999, at most 757 cars; pass `--root-limit` (3003 covers every ID), since the default stays 1100 for installs without the plugin. Tested in game with 2,724 entries (`spool-limits.md`, "Raising the root entry limit"). |
+| Root entries in `dngvehicles.sp` | `archive` module: 16384 (`[archive] max_entries`). The model IDs bind first: 453 + 3 × 849 = 3000 entries. `port_batch.py` assigns 1 to 61 and 304 to 999 (at most 757 cars), or all 849 with `--id-policy asi`; pass `--root-limit` (3003 covers every ID), since the default stays 1100 for installs without the plugin. Tested in game with 2,724 entries (`spool-limits.md`, "Raising the root entry limit"). |
 | `dngvehicles.sp` file size | `archive` module (`large_files`): below 4 GiB, enough for all 849 IDs (about 3.4 GB) |
 | Garage list | model IDs 0 to 999 (`[garage] max_id`) |
 | Garage maker groups | 120 groups (`[garage] max_groups`), still 20 cars per group; a car or group that doesn't fit is left out instead of overrunning memory |
@@ -68,8 +68,8 @@ hold about 8 resident models (5 in "All chapters" plus the chapter's own), so
      key, but it is a likely "none" value in C code).
    - 62 is Tanner's car.
 2. **IDs 304 and up for the rest.**
-   - They load, drive and spawn in traffic (304 to 311 are confirmed in game).
-   - They never appear in the garage.
+   - They load, drive and spawn in traffic (304 to 314 are confirmed in game).
+   - They never appear in the stock garage (with dsfforza.asi they do: below).
    - The save can't hold them safely, so nothing may call
      `SetVehicleUnlocked` or `SetVehicleOwned` for them: at 320 and up it
      corrupts other bits, and many such IDs would overflow the 304-slot
@@ -110,13 +110,15 @@ that way and refuses without the plugin. `remerge` turns an existing build into 
 without converting again: only the four ID fields of each full entry (VSVH,
 VO3D, SPID, UPVH) change.
 
-**Untested in game:**
+**Since tested in game** (this list was open when the policy was written):
 
-- a car at an ID below 62 (spool, spawn, garage listing, picture);
-- the "FORZA" group label;
-- plain `ManufacturerName` strings in the garage.
-
-The static evidence says IDs 1 to 61 behave like stock IDs everywhere checked.
+- cars at IDs below 62 spool, spawn, drive and are listed in the garage
+  with their pictures (out/testdrive and testdrive3, IDs 1 to 40;
+  `in-game-tests.md`, `gui-assets.md` "Garage card emblem");
+- the "FORZA" group (12 added cars, run `host-20261023-100401`);
+- plain `ManufacturerName` strings don't render in the garage; the build
+  gives them string IDs instead (`gui-assets.md`, "Fixes after the first
+  test drive").
 
 ## register.lua for players
 
@@ -451,15 +453,19 @@ guard covers both 304 to 319 and 320 to 334.
 
 ## In-game test plan (batch 2)
 
-Run from the repo root on the host, with the sandbox started
-(`tools\wsb\sandbox.ps1 Start`).
+Run from the repo root. The plan was written for the sandbox; on this PC
+the sandbox guest bugchecks (`in-game-tests.md`), so add `-Vm` (headless VM,
+started by `run-series.ps1`) to each command.
 
 What the harness provides:
 
-- `run-test.ps1` copies `tools\game\lua\*` into the guest, so the build's
-  `ported.lua` and `hud.lua` must be in `tools\game\lua\dsfforza\` for the
-  run. Those two files are shared with other tests: back them up first.
-- `-Override` links the build's `gui.sp` and `Fonts.fchunk` over the game's.
+- `run-test.ps1` copies `tools\game\lua\*` into the guest; `-LuaFiles`
+  puts the build's `ported.lua` and `hud.lua` over the copies for one run
+  (the commands below predate it and copy them into `tools\game\lua\dsfforza\`,
+  backing up the shared files first; `-LuaFiles 'dsfforza\ported.lua=<build>\dngvehicles.lua;dsfforza\hud.lua=<build>\gui\hud.lua'`
+  does the same without touching them).
+- `-Override` links (under `-Vm`: copies) the build's `gui.sp` and
+  `Fonts.fchunk` over the game's.
 - `garagetest.lua` (loaded by the test bootstrap) logs the engine's
   `getVehicleStats` calls for ported IDs, and "garage list built" when the
   garage maker loop runs.
@@ -493,7 +499,7 @@ $ovh = 'Install\gui.sp=out\batch\second-high\gui\gui.sp;media\Fonts.fchunk=out\b
 # Run 5: garage. Car 31 is driven, then garagetest opens garage 1 (Fisherman's Wharf)
 # after about 20 s in the car, first marking IDs 1..31 unlocked and owned in the
 # sandbox's save copy (the host save is mapped read-only; the copy keeps the flags
-# until the sandbox restarts).
+# until the sandbox restarts; the VM's copy is refreshed from the host every series).
 Copy-Item out\batch\second\dngvehicles.lua tools\game\lua\dsfforza\ported.lua
 Copy-Item out\batch\second\gui\hud.lua tools\game\lua\dsfforza\hud.lua
 Set-Content tools\game\lua\dsfforza\garagetest_on.lua 'return { garage = 1, delay = 40, unlock = true }' -Encoding ASCII
@@ -508,14 +514,15 @@ Copy-Item out\scratch\hud.lua.bak tools\game\lua\dsfforza\hud.lua -ErrorAction S
 Reading the garage run (`Driver.log`, `[dsfforza.garage]` lines, screenshots):
 
 - **"opening garage 1"** then `garage.enterGarage: true`: the garage menu
-  opened. The menu has its own camera and screens; the harness doesn't
-  press menu keys, so the shots show its first screen.
+  opened. The menu has its own camera and screens; without `-MenuKeys` the
+  shots show its first screen (`-MenuKeys 'Enter:3,Down:0.5,...'` steps
+  through it once that line appears).
 - **"garage list built"**: the engine ran the maker-list loop (it asked for
   model ID 0).
   - `getVehicleStats(N) first call` lines for IDs 1 to 31 then show the
     engine read our entries, with `Selectable true` and the group name.
   - IDs 304 and up never appear here by design.
-- **To check by hand** (or with a later harness that sends menu keys):
+- **To check by hand** (or with `-MenuKeys`):
   - each maker group in the list should hold the cars in the table above;
   - the FORZA group label;
   - the `dsfforza_*` garage pictures;

@@ -2,8 +2,10 @@
 
 Updated: 2026-10-23
 
-All runs used the persistent Windows Sandbox harness in `tools/wsb/` (see the
-README): the stock game folder mapped read-only, DriverNGHook 0.7.2, the
+Runs up to 2026-10-22 used the persistent Windows Sandbox harness in
+`tools/wsb/` (see the README); later ones run on the host (`-OnHost`) or in
+the headless VM (`-Vm`), both below. All of them: the stock game folder
+mapped read-only, DriverNGHook 0.7.2, the
 probe in `tools/game/lua/`, and the player's own save. Run folders are under
 `%LOCALAPPDATA%\Temp\dsfforza-wsb\runs\`.
 
@@ -187,7 +189,8 @@ What this confirms:
 - `GameVehicleResource.create{Model_Id = 304}` builds a drivable car from the
   copied VEHC entries and the patched VSVH/VO3D/SPID/UPVH IDs;
 - sharing model and texture UIDs with the source is fine, at least when the
-  source isn't loaded at the same time (not yet tested with both spawned).
+  source isn't loaded at the same time (both spawned: "Clone and source
+  loaded together" below).
 
 ## The HUD needs a vehicleStats entry (confirmed-runtime)
 
@@ -236,7 +239,8 @@ properties in 99 libraries, with help text. Libraries most relevant here:
 
 `VehicleLodSpooler` has `IsInteriorLoaded(id)` and `IsExteriorLoaded(id)`.
 That supports reading the two smaller VEHC variants (IDs N+1000 and N+2000)
-as interior and exterior LOD models (hypothesis; which is which is open).
+as interior and exterior LOD models (which is which: "Interior and exterior
+entries" below).
 
 ## Clone and source loaded together (confirmed-runtime)
 
@@ -286,7 +290,7 @@ Converter: `tools/forza2dsf.py` (FH1 carbin → DSF VEHC), `tools/exp_hollow.py`
   runs `-002224` and `-004928` the chase camera sees the 370Z's headlights
   and grille, so the car sits backwards on its chassis (the stock Desanne
   shows its tail lights from the same camera). `forza2dsf.Placement` now
-  turns the body 180° about y; not yet confirmed in game.
+  turns the body 180° about y (confirmed in run `20261022-015851`, below).
 - **Paint UV0** samples the vehicle's chassis texture; Forza UVs on the host's
   texture gave stripes. Pinned to a plain texel for now.
 - **Full entry crash** (DriverNGHook fatal-error dialog while spooling,
@@ -296,9 +300,10 @@ Converter: `tools/forza2dsf.py` (FH1 carbin → DSF VEHC), `tools/exp_hollow.py`
   SBMC records stay in place, even "hollowed" (every host SBBH pointing at
   one degenerate triangle in a new tiny buffer, host VXCK/IXCK removed;
   runs `-001704`, `-001908`). So something needs the host submodel records
-  (count/order/UIDs), not their vertex data. Root cause under investigation.
+  (count/order/UIDs), not their vertex data. (Root cause: the UID entry
+  below.)
 - **Size**: a kind-0 MDXN of 0x29B000 crashed in the otherwise working
-  layout (run `-001224`); limits under investigation.
+  layout (run `-001224`); the limits are in `spool-limits.md`.
 - **First complete car** (`out/370z-v1.sp`, run `20261022-002224`): hollow
   full entry with FH1 LOD3/4/5, rebuilt clean exterior (LOD1), wheel hubs
   moved to the 370Z's wheelbase and track. Loads, spawns, drives, clean
@@ -323,7 +328,7 @@ Converter: `tools/forza2dsf.py` (FH1 carbin → DSF VEHC), `tools/exp_hollow.py`
 Skyline GT-R R32, host 266. All three spool, drive and face the right way;
 the cockpit camera switches to the converted interior (confirmed-runtime).
 Defects, with causes found offline (confirmed-static) and fixed in the
-converter; not yet confirmed in game, because game testing was paused:
+converter (in game: "Fix2 in game" below):
 
 | Defect | Screenshot | Cause | Fix |
 | --- | --- | --- | --- |
@@ -459,7 +464,8 @@ Manufacturer/Model fields; ManufacturerName/ModelName strings don't reach it.
 Cockpit camera too low: stock head cameras see the steering rim's top 7.9°
 below eye level (median of 146, `out/eye/wheel_view.py`); ours were 6.5°
 (370Z), 3.3° (M5), 1.9° (Skyline), so the wheel filled half the screen.
-`cockpit.camera_eye` now raises the camera only; to confirm in game.
+`cockpit.camera_eye` now raises the camera only (in game: "Head camera"
+below).
 
 ### Static needles in testdrive7 and the fix (runs `host-20261023-174440`, `-234741`, confirmed-runtime)
 
@@ -668,7 +674,8 @@ CTS-V (106 vs 84 deg in the handbrake flick).
   scene. Ported tail lamps glow at one constant level in every phase (off,
   headlights, brakes, indicators): they don't respond to `setLights`
   (`img/lamps-dark-phases.jpg`). No stock control yet, so it's open whether
-  setLights works on the player's car at all.
+  setLights works on the player's car at all (answered later: `lights.md`,
+  "Stock control and real driving").
 - Paint A/B (Forza or host palette x host or grey paint cell): identical in
   all four; 370Z black, M5 grey, Skyline black (`img/paint-ab-runs.jpg`).
   Neither palette nor cell decides the colour; cause open.
@@ -741,6 +748,8 @@ escape) stopped registration on the first attempt; fixed in
    and fix5 runs), and how converted cars deform: their bodies are one
    part, so bumpers can't hang off (`vehicle-model.md`).
 2. M5 cockpit: white button blocks, dark dials (dial faces vary with lighting).
-3. HUD name and badge for ported cars (register.lua's names don't reach it).
+3. HUD name and badge for ported cars: done (numeric `Manufacturer`/`Model`
+   fields, then `hud.lua` glyphs; `gui-assets.md`).
 4. Raising the per-vehicle size limits.
-5. Garage and vehicle-select screens with a new ID.
+5. Garage and vehicle-select screens with a new ID: done for IDs 1-40 and,
+   with dsfforza.asi, 304+ (`asi.md`, "In game").

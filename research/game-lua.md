@@ -1,6 +1,6 @@
 # The game's Lua: how vehicles are registered and used
 
-Updated: 2026-10-22
+Updated: 2026-10-24
 
 Evidence tags as elsewhere: `confirmed-static` (read in data or decompiled
 code), `confirmed-runtime`, `hypothesis`.
@@ -227,9 +227,9 @@ a 5000 price for 266-268); a full entry for 277 (prison van, copied from
 models) with `UnlockByActivity` set to two of its new activities. Its
 changelog credits this to "Klancnik's garage mod". So a `vehicleStats`
 entry with `Selectable = true` and an unlock is enough for a stock model to
-show up in the garage. Whether the engine enumerates `vehicleStats` keys or
-a fixed ID list (VSCT, or the engine-built global `vehiclesAvailable`) is
-not known; 622 and 623 are not models, which suggests it walks the table.
+show up in the garage. The engine walks a fixed ID range, not the table:
+FUN_006C57D0 loops IDs 0..303 (`gui-assets.md`, `asi.md`), so the dummies
+622 and 623 are never listed.
 
 Unlock flow, all in Lua:
 
@@ -246,8 +246,8 @@ Unlock flow, all in Lua:
   `largeVehicleList` (`garageSystem.lua`) picks the large garage cutscene.
 - `garage.locations` (`gamelogic\garages\data\data.lua`) has 10 garages;
   `starBuy` is the featured model per garage.
-- `ProfileSettings.Get/SetVehicleUnlocked/Owned` keep flags in the save. How
-  the save stores them, and whether ID 304 fits, is unknown.
+- `ProfileSettings.Get/SetVehicleUnlocked/Owned` keep flags in the save
+  (layout and the 304-slot / 320-bit limits: `asi.md`, "Garage and save").
 
 Other model ID lists, for reference: `unlockables.lua`
 (`unlockableVehiclesTable`, Uplay rewards), `onlineProgressionCarData.lua`
@@ -332,18 +332,20 @@ bootstrap, skips IDs already in a list, and re-sends
 | `regionCars` | 24 | spread more added cars than this over the regions |
 | `probe` | false (true with a test `config.lua` that has `ids`) | log `vehiclesAvailable`, `Vehicles`, profile flags, `civilianTraffic` functions and nearby traffic counts every 10 s for about 3 minutes |
 
-It runs against stubbed APIs in an embedded Lua 5.1 (lupa); nothing has run
-in game yet.
+It is tested against stubbed APIs in an embedded Lua 5.1 (lupa,
+`tools/asi/test/test_register_asi.py`) and runs in game in every harness run
+and install (e.g. run `20261022-230004`, `asi.md`).
 
 ## Open
 
 1. Whether the interesting-vehicle manager spawns a model that isn't in
    the active traffic set. The stock lists mix set members and non-members,
    so probably yes.
-2. How the garage enumerates cars, and whether the save can hold flags for
-   IDs above 303.
-3. Whether a plain string in `ModelName` shows on the HUD, or only
-   `ID:nnnnnn` strings work.
+2. Answered: the garage loops IDs 0..303 and the save holds flags for IDs
+   below 304 (320 bits); dsfforza.asi lifts both (`asi.md`).
+3. Answered: plain strings don't render; the HUD takes glyph codes from the
+   numeric `Manufacturer`/`Model` fields and the garage `ID:nnnnnn` strings
+   (`gui-assets.md`).
 4. Signatures of `civilianTraffic.SetVehicleModelOverride` and friends.
 5. Whether the engine checks `san_franciscoAI.fchunk` (size, hash) before
    loading a patched copy.

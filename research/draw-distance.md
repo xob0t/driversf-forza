@@ -475,6 +475,11 @@ Stock Lua never calls these.
 
 ## Patch plans
 
+(Written before the implementation; what shipped differs: a 500 m traffic
+radius with the cell list moved, and `VehicleFullDetail`. See
+"Implemented in DSF Enhanced" and the Summary. "DSF Enhanced's × 0.25"
+below is its old setting.)
+
 All three are for DSF Enhanced. The values are for the user's setup:
 3440×1440 with DSF Enhanced's ultrawide FOV, so K = 57.5 and
 d(T) = 7.5 + √(57.5/T) for a Desanne-sized car. On stock 16:9 at 60°,
@@ -696,13 +701,15 @@ Build of 17:45 with `TrafficSpawnRadius=700`, `VehicleFullDetail=1`, `TrafficDia
   store needs its 500 check and storage moved; per-vehicle engine limits beyond the store were
   not audited. Work stopped here at the user's request.
 - **`TrafficDiag fps=0.0`:** the `Present` hook on the device vtable (index 17) installs but
-  never counts, so the game (or DriverNGHook) presents another way. Unfixed; FPS not measured.
+  never counts, so the game (or DriverNGHook) presents another way. Unfixed; FPS not measured
+  here (the test VM can now measure it: `tools/wsb/guest/fps.ps1`, PresentMon).
 
 ## Open
 
 1. Probe numbers for the fixed radius (the user confirmed 500 m by eye: no pop-in): spawn
-   distances and counts at 500 m, and the frame-rate cost of `VehicleFullDetail` (needs a
-   working FPS counter, see the 700 m crash notes). Plan (not run; the 700 m variants now get
+   distances and counts at 500 m, and the frame-rate cost of `VehicleFullDetail` (the
+   plugin's FPS counter doesn't work, see the 700 m crash notes; `tools/wsb/guest/fps.ps1`
+   measures it in the test VM). Plan (not run; the 700 m variants now get
    clamped to 500):
 
    ```powershell

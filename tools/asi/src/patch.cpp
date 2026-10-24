@@ -128,16 +128,20 @@ static void hex(char* out, size_t out_size, const void* p, size_t n)
     if (o) out[o - 1] = 0; else out[0] = 0;
 }
 
+bool check_bytes(uint32_t va, const void* bytes, size_t n)
+{
+    if (bytes_equal(va, bytes, n)) return true;
+    char have[200], want[200];
+    hex(have, sizeof have, (const void*)va, n < 48 ? n : 48);
+    hex(want, sizeof want, bytes, n < 48 ? n : 48);
+    dsf_log("patch %08X: original bytes differ, not patched\n  have %s\n  want %s", va, have, want);
+    return false;
+}
+
 bool patch_bytes(uint32_t va, const void* bytes, size_t n, const void* expect)
 {
     void* p = (void*)va;
-    if (expect && memcmp(p, expect, n) != 0) {
-        char have[200], want[200];
-        hex(have, sizeof have, p, n < 48 ? n : 48);
-        hex(want, sizeof want, expect, n < 48 ? n : 48);
-        dsf_log("patch %08X: original bytes differ, not patched\n  have %s\n  want %s", va, have, want);
-        return false;
-    }
+    if (expect && !check_bytes(va, expect, n)) return false;
     DWORD old;
     if (!VirtualProtect(p, n, PAGE_EXECUTE_READWRITE, &old)) {
         dsf_log("patch %08X: VirtualProtect failed (%lu)", va, GetLastError());
@@ -147,11 +151,6 @@ bool patch_bytes(uint32_t va, const void* bytes, size_t n, const void* expect)
     VirtualProtect(p, n, old, &old);
     FlushInstructionCache(GetCurrentProcess(), p, n);
     return true;
-}
-
-bool patch_u32(uint32_t va, uint32_t value, const uint32_t* expect_old)
-{
-    return patch_bytes(va, &value, 4, expect_old);
 }
 
 static bool patch_rel(BYTE op, uint32_t va, void* target, size_t len, const void* expect)
@@ -183,130 +182,4 @@ void* alloc_exec(size_t n)
     void* p = VirtualAlloc(nullptr, n, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
     if (!p) dsf_log("alloc_exec(%u) failed (%lu)", (unsigned)n, GetLastError());
     return p;
-}
-
-// ---- function hooks --------------------------------------------------------
-
-// Length of one x86 instruction from the subset that system-DLL prologues
-// use; 0 for anything else, including relative branches and calls (they
-// can't be copied into a trampoline as they are).
-static size_t insn_len(const BYTE* p)
-{
-    const BYTE* s = p;
-    bool opsize = false;
-    while (*p == 0x64 || *p == 0x65 || *p == 0x66 || *p == 0x2E || *p == 0x3E || *p == 0x26 || *p == 0x36) {
-        if (*p == 0x66) opsize = true;
-        p++;
-        if (p - s > 3) return 0;
-    }
-    BYTE op = *p++;
-    if (op >= 0x50 && op <= 0x5F) return p - s;                       // push/pop r32
-    if (op == 0x90) return p - s;                                     // nop
-    if (op == 0x6A) return p - s + 1;                                 // push imm8
-    if (op == 0x68) return p - s + 4;                                 // push imm32
-    if (op >= 0xB8 && op <= 0xBF) return p - s + (opsize ? 2 : 4);   // mov r32, imm32
-    if (op >= 0xB0 && op <= 0xB7) return p - s + 1;                   // mov r8, imm8
-    if (op == 0xA1 || op == 0xA3) return p - s + 4;                   // mov eax, [abs] / mov [abs], eax
-    int imm = 0;
-    switch (op) {
-    case 0x01: case 0x03: case 0x09: case 0x0B: case 0x21: case 0x23: case 0x29: case 0x2B:
-    case 0x31: case 0x33: case 0x39: case 0x3B: case 0x85: case 0x87: case 0x89: case 0x8B: case 0x8D:
-        break;
-    case 0x83: case 0xC6: imm = 1; break;
-    case 0x81: case 0xC7: imm = opsize ? 2 : 4; break;
-    case 0xFF: {
-        BYTE reg = (*p >> 3) & 7;    // inc, dec, call, jmp, push r/m: absolute, fine to copy
-        if (reg == 3 || reg == 5 || reg == 7) return 0;
-        break;
-    }
-    default:
-        return 0;
-    }
-    BYTE m = *p++;
-    BYTE mod = m >> 6, rm = m & 7;
-    if (mod != 3 && rm == 4) {
-        BYTE sib = *p++;
-        if (mod == 0 && (sib & 7) == 5) p += 4;
-    }
-    if (mod == 1) p += 1;
-    else if (mod == 2) p += 4;
-    else if (mod == 0 && rm == 5) p += 4;
-    return p - s + imm;
-}
-
-void* hook_code(void* target, void* detour, const char* what)
-{
-    if (!target) {
-        dsf_log("hook %s: no target", what);
-        return nullptr;
-    }
-    BYTE* t = (BYTE*)target;
-    BYTE* tramp = (BYTE*)alloc_exec(64);
-    if (!tramp) return nullptr;
-    size_t n = 0;
-    if (t[0] == 0xE9 || t[0] == 0xEB) {
-        // Someone hooked it already (or it is a jump stub): the trampoline
-        // jumps where that jump went.
-        uint32_t dest = t[0] == 0xE9 ? (uint32_t)t + 5 + *(int32_t*)(t + 1) : (uint32_t)t + 2 + *(int8_t*)(t + 1);
-        n = t[0] == 0xE9 ? 5 : 2;
-        tramp[0] = 0xE9;
-        *(int32_t*)(tramp + 1) = (int32_t)(dest - ((uint32_t)tramp + 5));
-        if (n < 5) {
-            // A short jump is too small to hold ours; take the following
-            // instructions too (never executed through the trampoline).
-            while (n < 5) {
-                size_t len = insn_len(t + n);
-                if (!len) { n = 0; break; }
-                n += len;
-            }
-        }
-    } else {
-        while (n < 5) {
-            size_t len = insn_len(t + n);
-            if (!len) { n = 0; break; }
-            n += len;
-        }
-        if (n) {
-            memcpy(tramp, t, n);
-            tramp[n] = 0xE9;
-            *(int32_t*)(tramp + n + 1) = (int32_t)(((uint32_t)t + n) - ((uint32_t)tramp + n + 5));
-        }
-    }
-    if (!n) {
-        char have[64];
-        hex(have, sizeof have, t, 12);
-        dsf_log("hook %s at %p: prologue not supported (%s)", what, t, have);
-        return nullptr;
-    }
-    if (!patch_jmp((uint32_t)t, detour, n)) {
-        dsf_log("hook %s at %p: patch failed", what, t);
-        return nullptr;
-    }
-    return tramp;
-}
-
-void* hook_export(const char* dll, const char* name, void* detour)
-{
-    char what[128];
-    _snprintf_s(what, sizeof what, _TRUNCATE, "%s!%s", dll, name);
-    HMODULE m = GetModuleHandleA(dll);
-    if (!m) {
-        dsf_log("hook %s: %s not loaded", what, dll);
-        return nullptr;
-    }
-    void* target = (void*)GetProcAddress(m, name);
-    if (!target) {
-        dsf_log("hook %s: no such export", what);
-        return nullptr;
-    }
-    return hook_code(target, detour, what);
-}
-
-void* patch_vtable(void** vtbl, int index, void* detour)
-{
-    if (!vtbl) return nullptr;
-    void* old = vtbl[index];
-    if (old == detour) return nullptr;
-    if (!patch_u32((uint32_t)&vtbl[index], (uint32_t)detour)) return nullptr;
-    return old;
 }

@@ -6,21 +6,27 @@ Research and tools for adding cars to Driver: San Francisco (PC, 1.04) from
 the user's own copies of Forza Motorsport 4 and Forza Horizon 1 (Xbox 360
 ISOs). The project ships code and per-car manifests only, never game assets.
 
-Planned pieces:
+The pieces:
 
-1. **DSF side:** document the vehicle format and how `Driver.exe` registers
-   vehicles. This is where the work is now.
-2. **Converter:** read the ISO and write DSF-format models, textures and
-   handling into a mod folder.
-3. **Plugin:** an ASI hook that registers the extra vehicles at runtime.
+1. **DSF side:** the vehicle format and how `Driver.exe` registers vehicles
+   (`research/`).
+2. **Converter:** reads the ISOs and writes the cars (models, textures,
+   cockpit, lamps, damage, handling) into a patched `dngvehicles.sp`, plus
+   the garage pictures, HUD font and the Lua that registers them
+   (`tools/port_car.py`, `tools/port_batch.py`).
+3. **Plugins:** DriverNGHook runs the registration Lua; the optional native
+   plugin `dsfforza.asi` (`tools/asi`) lifts the archive, garage, save and
+   HUD limits at runtime.
 
 **Players:** `INSTALL.md` explains how to build cars from your own discs and
 install or uninstall them with `tools/install.ps1`.
 
 ## Tools
 
-Python 3.10+, standard library only. They read headers and seek, so walking a
-whole archive is fast.
+Python 3.10+. The format tools below use the standard library only and read
+headers and seek, so walking a whole archive is fast; the converter
+(`port_car.py`, `port_batch.py`) also needs numpy (`python -m pip install
+numpy`).
 
 ```sh
 # Chunk tree of one vehicle; runs of identical siblings are collapsed
@@ -135,8 +141,9 @@ car's wheel model.
 glass-panel records instead of the chassis, as stock glass is (untested in
 game; see `research/vehicle-model.md`).
 
-`--damage` makes the body damage like a stock car (`tools/damage.py`,
-untested in game): each Forza triangle goes onto one of the host's panels
+`--damage` (on by default in `port_batch.py`) makes the body damage like a
+stock car (`tools/damage.py`, confirmed in game: `research/damage.md`):
+each Forza triangle goes onto one of the host's panels
 (bumpers, bonnet, boot, doors, wings, lamps, mirrors, glass), gets a crush
 target copied from the host's, and lands in that panel's MODL part; the
 panel hinges, bodies and collision boxes move onto the Forza panels.
@@ -170,7 +177,9 @@ risks: `research/cockpit.md`.
 python tools/cockpit.py fit out/cache/fh1/NIS_370Z_10 NIS_370Z_10 --gamedb out/cache/fh1/gamedb.slt
 
 # One car into a host slot, with the cockpit (port_car does this by default)
-python tools/forza2dsf.py out/dngvehicles.clone.sp out/370z-cockpit.sp --id 304     --car out/fh1/NIS_370Z_10 --name NIS_370Z_10 --keep-host-materials --textures replace     --merge-submodels --lods 4:3,8:4,16:5 --cockpit --gamedb out/db/fh1_gamedb.slt
+python tools/forza2dsf.py out/dngvehicles.clone.sp out/370z-cockpit.sp --id 304 \
+    --car out/cache/fh1/NIS_370Z_10 --name NIS_370Z_10 --keep-host-materials --textures replace \
+    --merge-submodels --lods 4:3,8:4,16:5 --cockpit --gamedb out/cache/fh1/gamedb.slt
 
 # Check it: cutaway views with the eye marked, and the view from the head camera
 python tools/cockpit.py render out/370z-cockpit.sp --id 304 --png out/cockpit.png --eye-view out/eye.png
@@ -206,7 +215,7 @@ python tools/lights.py table out/ported.sp --id 304          # a light table wit
 python tools/paint.py colours out/cache/fh1/gamedb.slt NIS_370Z_10
 python tools/paint.py palette out/ported.sp --id 304
 python tools/gui_assets.py build out/ported.json --out out/gui --name "NIS_SkylineGTR_93=SKYLINE GT-R"
-# Lamp test in the sandbox (run-series.ps1 -Lights), then the per-phase sheets
+# Lamp test (run-series.ps1 -Vm -Lights), then the per-phase sheets
 python tools/lights_diff.py %LOCALAPPDATA%/Temp/dsfforza-wsb/runs/<stamp>
 ```
 
@@ -219,7 +228,8 @@ are retried once without that step. The tool also writes the manifest,
 `dngvehicles.lua` (the `dsfforza\ported.lua` for `register.lua`), and with
 `--gui` the `gui.sp`, `Fonts.fchunk` and `hud.lua` copies. Model IDs:
 1 to 61 go to cars that should be in the garage while the garage's maker
-list has room, and the rest get 304 and up (`research/batch.md`).
+list has room, and the rest get 304 and up; `--id-policy asi` (installs with
+dsfforza.asi) uses every free ID below 1000 (`research/batch.md`).
 
 ```sh
 python tools/port_batch.py plan --diverse 30                 # or --list FILE, --car, --body, --make, --year, --no-counterpart
@@ -239,7 +249,11 @@ file and checks it by SHA-256. `-Status` shows the current state. With
 `tools/asi/build.ps1`): runtime patches of `Driver.exe` 1.04 that lift the
 archive, garage and save limits (`research/asi.md`).
 
-### Sandbox tests (preferred)
+### Sandbox tests
+
+On Windows build 26300 the sandbox guest bugchecks on its first DirectX use
+(`research/in-game-tests.md`); there, use the VM tests below (`-Vm`), which
+take the same `run-series.ps1` arguments.
 
 `tools/wsb/sandbox.ps1` keeps one Windows Sandbox running for all tests. The
 game folder, your Driver profile and this repo are mapped read-only; results
@@ -262,7 +276,7 @@ presses Enter until Story loads and Up to leave the Shift overview, then
 collects `Driver.log`, screenshots and the Lua API dump. Results so far are in
 `research/in-game-tests.md`.
 
-### VM tests (headless)
+### VM tests (headless, preferred)
 
 On Windows builds where the sandbox guest crashes on its first DirectX use,
 `run-series.ps1 -Vm` runs the same tests in a VMware Workstation VM with no
@@ -286,9 +300,8 @@ the latest speed line. `-HoldMph '30,60,90'` makes the probe force those
 speeds in turn (`gameVehicle.speed`, every frame):
 
 ```powershell
-Copy-Item out\ported.lua tools\game\lua\dsfforza\ported.lua
-.\tools\wsb\run-series.ps1 -Archives out\ported.sp -ProbeIds '304,305,306' -WaitSeconds 300 `
-    -ShotSeconds 3 -DriveSeconds 12
+.\tools\wsb\run-series.ps1 -Vm -Archives out\ported.sp -LuaFiles 'dsfforza\ported.lua=out\ported.lua' `
+    -ProbeIds '304,305,306' -WaitSeconds 300 -ShotSeconds 3 -DriveSeconds 12
 ```
 
 `-Dyno` measures how cars drive (`tools/game/lua/dsfforza/dyno.lua`): each
@@ -301,7 +314,7 @@ the line (`-DynoKeep`). At most 10 IDs per session (mission spool slots).
 and steer/handbrake response per run and car:
 
 ```powershell
-.\tools\wsb\run-series.ps1 -Archives out\ported.sp -ProbeIds '227,304' -WaitSeconds 1200 -ShotSeconds 5 `
+.\tools\wsb\run-series.ps1 -Vm -Archives out\ported.sp -ProbeIds '227,304' -WaitSeconds 1200 -ShotSeconds 5 `
     -Dyno -DriveSeconds 25 -BrakeSeconds 6 -DynoRuns 2
 python tools\dyno.py $env:LOCALAPPDATA\Temp\dsfforza-wsb\runs\<stamp>
 ```
@@ -348,15 +361,17 @@ seconds.
 - `research/vehicles.tsv`: the 150 stock vehicles with spool IDs.
 - `research/exe-vehicles.md`: what `Driver.exe` does with the archive, and
   the `VEdit` Lua handling editor.
-- `research/in-game-tests.md`: sandbox test results, including the working
-  clone.
+- `research/in-game-tests.md`: in-game test results (sandbox, host and VM
+  runs), including the working clone.
+- `research/spool-limits.md`: the spool and archive size limits and how each
+  is raised; `research/upvh.md`: the UPVH hierarchy (parts, hinges, wheels).
 - `research/vehicle-model.md`: the vehicle geometry, part/LOD, material and
   texture formats.
 - `research/lua-api.tsv`: the game's Lua API with help text, dumped at
   runtime.
 - `research/game-lua.md`: the decompiled game scripts: traffic sets,
-  interesting-vehicle regions, `vehicleStats`, garage and unlocks, and the
-  proposed `tools/game/lua/dsfforza/register.lua`;
+  interesting-vehicle regions, `vehicleStats`, garage and unlocks, and
+  `tools/game/lua/dsfforza/register.lua`;
   `research/traffic-sets.tsv` lists every traffic set.
 - `research/damage.md`: how stock cars damage (panel transforms and damage
   per panel through vertex semantic 9, crushed positions in semantic 12,
@@ -374,7 +389,15 @@ seconds.
   colours.
 - `research/gui-assets.md`: garage pictures in `gui.sp`, the
   `vehicles_font` badge and nameplate glyphs behind `vehicleStats`
-  Manufacturer/Model, and the garage's ID limit (below 304).
+  Manufacturer/Model, and the garage's ID limit (below 304; 999 with
+  dsfforza.asi); `research/plates.md`: licence plates on ported cars.
+- `research/asi.md`: the `dsfforza.asi` plugin's patches (archive, garage
+  and save, HUD) and their in-game runs.
+- `research/handling.md`: the VO3D handling parameters and the DSF-first
+  handling generator; `research/wheels.md`: the Forza wheel model in DSF;
+  `research/draw-distance.md`: traffic spawn radius, vehicle LOD distances
+  and distant lamps; `research/engine-sound.md`: Forza engine loops in a
+  stock sound bank.
 - `research/batch.md`: how many cars fit, the model ID policy (garage IDs
   1 to 61, the rest 304 and up), what the save and the garage's maker list
   can hold, `register.lua`'s player defaults, and the batch results.

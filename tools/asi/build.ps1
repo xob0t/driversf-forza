@@ -15,7 +15,7 @@ Runs the compiler at Idle priority (out\gentle policy).
 param(
     [string]$VcVars = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars32.bat',
     [switch]$DebugBuild,
-    # Also build outsi\offline.exe (test\offline.cpp + the modules) and run it
+    # Also build out\asi\offline.exe (test\offline.cpp + the modules) and run it
     # against Driver.exe: maps the image at 0x00400000 and applies every patch.
     [switch]$Test,
     [string]$Exe = 'D:\Games\Driver San Francisco\Driver.exe'

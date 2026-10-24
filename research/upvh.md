@@ -112,8 +112,9 @@ it references (SBBH, MARP textures, MDID, VXDP/IXDP, MODL LOD lists, the
 UPVH fields above) may be one only another vehicle defines. No stock
 vehicle trips it; all three fix3 cars do (41 shared part UIDs each).
 `port_car.py` runs it on every car, and checks part UIDs as well as
-resource UIDs for clashes before writing. `--allow-shared` skips it for
-clones made without `--new-uids`.
+resource UIDs for clashes before writing. `upvh.py lint --allow-shared`
+skips it for clones made without `--new-uids` (`port_car.py
+--share-host-uids` passes it).
 
 The DRSP loader FUN_00BBB8E0 makes seven passes over DRSP in a fixed tag
 order (TEXC, GPCH, MACO, SBMC, VXCK, IXCK, MDID). Child order inside DRSP
@@ -186,9 +187,12 @@ Saloon 15's hinges, from the records that use them:
 
 The wheel hubs appear twice, as hinges 4, 6, 14 and 15 (0x1930, 0x1990,
 0x1B10, 0x1B40) and as the wheel table (0x35B0 to 0x3610).
-`forza2dsf.patch_hubs` matches by value and also moves hinges 3 and 5
-(0x1900, 0x1960, records 32 and 34, roles 156 and 155). Those pivot next to
-the front hubs, so moving them with the wheels is probably right.
+`forza2dsf.patch_hubs` takes the hubs from the host's own wheel table and
+moves every hinge pivot within 10 cm of a hub with it (on the Desanne
+hinges 3 to 6, 14 and 15; it used to match the Desanne's hub height by
+value). Hinges 3 and 5 (0x1900, 0x1960, records 32 and 34, roles 156 and
+155) pivot next to the front hubs, so moving them with the wheels is
+probably right.
 
 ### Records, 0x50 bytes, depth-first
 
@@ -208,10 +212,10 @@ the front hubs, so moving them with the wheels is probably right.
 | 0x20 | i32 | collision model offset from PDL+0x10, or -1 | confirmed-static |
 | 0x26 | i8 | seat index | confirmed-static |
 | 0x27 | i8 | mirror index | confirmed-static |
-| 0x2A | i16 | running number over part and wheel records (wheels share 0) | confirmed-static, meaning unknown |
+| 0x2A | i16 | running number over part and wheel records (wheels share 0): the panel-data index (vertex semantic 9 byte 1, `damage.md`) | confirmed-static |
 | 0x2C | u8, u8 | 1 or 3; 0 or 4 | unknown |
 | 0x30 | i16 | light index | confirmed-static |
-| 0x34 | i16 | running number over most part records | unknown |
+| 0x34 | i16 | running number over most part records: the panel-transform slot (vertex semantic 9 byte 0, `damage.md`) | confirmed-static |
 | 0x3E | i16 | LOD-link index | confirmed-static |
 | 0x40 | i16 | attachment index | confirmed-static |
 | 0x42 | i16 | wheel index | confirmed-static |
@@ -320,8 +324,9 @@ python out/upvh/uidtest.py safe|signbit out/dngvehicles.clone.sp out/uid-<mode>.
 ## Open
 
 1. The spec manager's UPVH consumer (Engine+0x778 vtable +0x48), and the
-   runtime use of record fields 0x0C to 0x18, 0x2A, 0x2C and 0x34.
-2. Light flags, attachment kinds (the gauge entry's second u32 is the
+   runtime use of record fields 0x0C to 0x18 and 0x2C (0x2A and 0x34: the
+   shader's panel indices, `damage.md`).
+2. Light flags (decoded in `lights.md` but b0), attachment kinds (the gauge entry's second u32 is the
    needle sweep: `cockpit.md`, "Gauges"). Steering hinge, role-47 marker and head camera:
    `cockpit.md`.
 3. The animation blob (13 vehicles).

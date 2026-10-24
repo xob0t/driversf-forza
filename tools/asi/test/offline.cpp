@@ -2,7 +2,8 @@
 // in this process (built at another base), runs every module's init against
 // it, and exercises the garage hooks that need no game state. Nothing of the
 // game runs, so this only proves that every expected byte matches, the
-// patches land, and the pure hooks behave.
+// patches land, and the pure hooks behave. A first child changes one byte of
+// three all-or-nothing patch sets and checks that none of each set lands.
 //
 //   tools\asi\build.ps1 -Test   ->  out\asi\offline.exe <Driver.exe>
 #define WIN32_LEAN_AND_MEAN
@@ -48,11 +49,11 @@ typedef void (__fastcall* SetFn)(void* self, void* edx, int id);
 // The process heap usually sits inside 0x00400000..0x01DC0000 by the time
 // main runs, so the test starts itself suspended and reserves the range in
 // the child first.
-static int spawn_child(const char* exe)
+static int spawn_child(const char* exe, const char* mode)
 {
-    char cmd[2 * MAX_PATH + 32], self[MAX_PATH];
+    char cmd[2 * MAX_PATH + 48], self[MAX_PATH];
     GetModuleFileNameA(nullptr, self, MAX_PATH);
-    _snprintf_s(cmd, sizeof cmd, _TRUNCATE, "\"%s\" --child \"%s\"", self, exe);
+    _snprintf_s(cmd, sizeof cmd, _TRUNCATE, "\"%s\" --child \"%s\" %s", self, exe, mode);
     STARTUPINFOA si = {sizeof si};
     PROCESS_INFORMATION pi;
     if (!CreateProcessA(self, cmd, nullptr, nullptr, FALSE, CREATE_SUSPENDED, nullptr, nullptr, &si, &pi)) {
@@ -68,13 +69,39 @@ static int spawn_child(const char* exe)
     return (int)code;
 }
 
+// All-or-nothing patch sets: one changed byte at the last site of a set must
+// leave its earlier sites as they were (as when another plugin got there first).
+static int mismatch_test()
+{
+    *(BYTE*)0x008FC400 ^= 0xFF;   // archive: last replaced function ("open in memory")
+    *(BYTE*)0x00711411 ^= 0xFF;   // garage: maker index read, late in the maker-group edits
+    *(BYTE*)0x007118A5 ^= 0xFF;   // hud: card emblem site (checked after the picture-slot calls)
+#define DSF_MODULE(name) printf("init %s (changed sites)\n", #name); mod_##name##_init();
+#include "../src/modules.h"
+#undef DSF_MODULE
+    CHECK(*(BYTE*)0x008FB340 == 0x8B && *(BYTE*)0x008FBE90 == 0x53);    // archive: no site replaced
+    CHECK(*(BYTE*)0x0085A9B2 == 0xEB);                                 // large_files is its own patch
+    CHECK(*(unsigned*)(0x006C7D90 + 1) == 0x3728);                     // garage object size stock
+    CHECK(*(unsigned*)(0x006C54C2 + 2) == 0x20FC && *(unsigned*)0x00E18B14 == 0x006C6940);
+    CHECK(*(unsigned*)(0x006C587C + 2) == 1000);                       // the list patch still applies
+    CHECK(*(int*)0x0070D72B == (int)(0x00ADA7F0 - 0x0070D72F));        // hud: picture-slot calls stock
+    CHECK(*(BYTE*)0x006C6855 == 0xE8 && *(int*)0x006C6856 != (int)(0x006C40C0 - 0x006C685A));  // text sites on
+    printf("%s (%d failures, changed sites)\n", failures ? "FAILED" : "ok", failures);
+    return failures ? 1 : 0;
+}
+
 int main(int argc, char** argv)
 {
-    if (argc < 2 || strcmp(argv[1], "--child") != 0)
-        return spawn_child(argc > 1 ? argv[1] : "D:\\Games\\Driver San Francisco\\Driver.exe");
+    if (argc < 2 || strcmp(argv[1], "--child") != 0) {
+        const char* exe = argc > 1 ? argv[1] : "D:\\Games\\Driver San Francisco\\Driver.exe";
+        int mismatch = spawn_child(exe, "mismatch");
+        int normal = spawn_child(exe, "normal");   // last, so the log left behind is the normal run's
+        return mismatch ? mismatch : normal;
+    }
     const char* exe = argv[2];
     if (!map_image(exe)) return 2;
     dsf_core_init();
+    if (argc > 3 && strcmp(argv[3], "mismatch") == 0) return mismatch_test();
 #define DSF_MODULE(name) printf("init %s\n", #name); mod_##name##_init();
 #include "../src/modules.h"
 #undef DSF_MODULE

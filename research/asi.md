@@ -1,6 +1,6 @@
 # dsfforza.asi: runtime patches of Driver.exe 1.04
 
-Updated: 2026-10-23
+Updated: 2026-10-24
 
 One native plugin, `plugins\dsfforza.asi`, patches the running
 `Driver.exe` 1.04 in memory to lift limits that block large car batches.
@@ -17,7 +17,8 @@ when `-Asi` is given. Evidence tags as in `dngvehicles.md`.
 
 Every module checks the original bytes of each site before patching and
 patches nothing of a feature when one site differs (another mod, another exe
-build). `plugins\dsfforza.log` lists what was applied. `[<module>]
+build); should a write still fail, the part already written is undone.
+`plugins\dsfforza.log` lists what was applied. `[<module>]
 enabled=0` in `dsfforza.ini` switches a module off.
 
 Crash hunts: `[dsfforza] crash_log=1` (default 0) adds a vectored exception
@@ -28,6 +29,8 @@ the stack. DriverNGHook's fatal-error dialog often leaves no minidump.
 Offline check: `tools\asi\build.ps1 -Test` maps `Driver.exe`'s image at
 0x00400000 in a test process (`tools/asi/test/offline.cpp`), runs every
 module's init against it and exercises the hooks that need no game state.
+A second test process changes one byte in three all-or-nothing sets (archive
+readers, maker groups, card emblem) and checks that nothing of each lands.
 
 ## Archive size
 
@@ -39,8 +42,9 @@ root entry limit"; this is the patch list.
 `dngvehicles.sp` stops at 365 vehicles (215 added), and the file layer's
 seek clamps positions of 2 GiB and more to 0, so an archive stops at about
 2 GiB (about 480 ported cars). With the module, the archive can hold a car
-for every base model ID below 1000 (849 added, 757 under `port_batch.py`'s
-ID policy) and grow to 4 GiB - 2 KiB.
+for every base model ID below 1000 (849 added: `port_batch.py --id-policy
+asi` uses all of them, the default `garage` policy 757) and grow to
+4 GiB - 2 KiB.
 
 **Reader patches** (all fourteen or none; `[archive] max_entries`, default
 16384, is the largest entry count accepted). Each site gets `E9 rel32` to a
@@ -328,9 +332,11 @@ bootstrap, `savetest.lua` and `out/garagefix/cfg_full.lua`), `-MenuKeys`
 Enter, Down × 110, Enter, Right, Esc, Esc, Enter, Up × 3, Esc
 (`out/garagefix/keys-full.txt`).
 
-**Pending** (the sandbox VM stopped surviving a game start after a host
-reboot on 2026-10-23; rerun `garage-tests.ps1` when it works; the host runs
-above cover `garage` and the save round trip):
+**Pending** (the sandbox stopped surviving a game start after a host
+reboot on 2026-10-23; the host runs above cover `garage` and the save round
+trip. `garage-tests.ps1 -Vm` runs in the headless VM, but the VM copies the
+host profile into the guest at the start of every series, so `stock` and
+`check` need the sandbox or a host series that keeps the save):
 
 - `stock`: the same save without the plugin loads and reaches Story, added
   IDs read false.

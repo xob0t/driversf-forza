@@ -725,9 +725,10 @@ camera leaves the copy behind (`host-20261024-003745`).
 
 ## Risks and open questions
 
-1. Nothing here is confirmed in game yet. If the engine expects something
-   else of the panel parts (for example that only some panels have
-   geometry), a converted car could misdraw once a panel detaches.
+1. Crush, panel swing and removal (`-DamagePanels`), decals and seams have
+   run in game without a crash (runs above). If the engine expects
+   something else of the panel parts (for example that only some panels
+   have geometry), a converted car could still misdraw in a case not run.
 2. Body triangles are assigned whole, so door and wing borders follow the
    Forza mesh's triangles (jagged at LOD 3 to 5), and they follow the
    host's panel layout, not the Forza car's shut lines (the S5S Raptor's
