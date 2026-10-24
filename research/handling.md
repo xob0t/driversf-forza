@@ -169,7 +169,7 @@ Data: p1 and p2 run a median 1.4 and 1.7 per kg of mass. Their interquartile ran
 | 298 | max steering angle, degrees | `FUN_008B2DF0`, `FUN_008AF860`, `FUN_008BD9B0` |
 | 379..391, 470, 494, 495 | steering response. Values lerp by yaw rate x p391 and fade with speed between p383 and p384 | `FUN_008AF860` |
 | 344..354, 372..375, 411, 412, 496, 510, 511 | stability or aligning-torque assist (speed², steering and slip terms) | `FUN_008BD9B0` |
-| 300..305, 327..329, 337..342, 394..396, 535..537, 549..554 | camera mounts, a vec3 per camera index 0x10..0x1C | `FUN_0088DF80`, `FUN_0088E230` |
+| 300..305, 327..329, 337..342, 394..396, 535..537, 549..554 | camera mounts, a vec3 per camera index 0x10..0x1C. Measured in game: 535..537 the Bonnet camera, 327..329 the Bumper camera, 300..302 the chase camera (`research/cockpit.md`, "Cameras") | `FUN_0088DF80`, `FUN_0088E230` |
 | 430, 431, 432 | camera 0x14 offset from hierarchy marker 0x2F | `FUN_0088DF80` |
 | 571..582, 585..594 | unknown blocks of small offsets | `FUN_00874B00`, `FUN_0088F630` |
 | 605, 606 | speedometer range in mph (`research/cockpit.md`), read with p40 and p42 by the gauge code, not audio | `FUN_00891670` |
