@@ -3,7 +3,7 @@
 Updated: 2026-10-23
 
 How DSF draws the cockpit view, where Forza keeps the same data, and what
-`tools/cockpit.py` (`--cockpit` in `forza2dsf.py`, on by default in
+`src/dsfforza/convert/cockpit.py` (`--cockpit` in `forza2dsf.py`, on by default in
 `port_car.py`) builds from it. Host: Saloon 15 (ASYM Desanne, spool 266,
 VEHC 3/4/5). Evidence levels follow `dngvehicles.md`. First in-game run
 and the fixes that followed: see "First in-game test and fixes" below.
@@ -149,7 +149,7 @@ display (`DISPLAY_COLOUR`). A car whose
 cockpit has no speed or tach needle (a digital speedometer) simply has no
 vertices with that gauge id; the host's entry then draws nothing.
 
-`python tools/cockpit.py gauges <archive> --id N --png out.png --at 0,0 --at 60,4000`
+`uv run dsff cockpit gauges <archive> --id N --png out.png --at 0,0 --at 60,4000`
 renders the cluster from the head camera with the needles turned exactly
 as the engine would at each (mph, rpm), clamps included (works on stock
 cars). Offline renders of the three test cars at 0/0, 40/2000, 60/5000
@@ -234,7 +234,7 @@ and 42, the mirror parts).
 
 ## Forza side (confirmed-static)
 
-`<car>_cockpit.carbin` parses with `tools/carbin.py` unchanged, in both
+`<car>_cockpit.carbin` parses with `src/dsfforza/formats/carbin.py` unchanged, in both
 games (FH1 370Z; FM4 370Z, F40, Countach, F1, Golf R). LOD 0 only. Sections
 on the 370Z: `interior` (24,192 vertices), `a_pillar`, `seatL/R`,
 `steering_wheel`, `mirrorL/R`, `glassF/LF/RF`, `hooda`, `headlightL/R`,
@@ -556,7 +556,7 @@ seats, needles, mirrors) is a 17-vertex box about 0.2 m wide, and the
 per section; three FH1 cars (Explorer, F350 Super Duty, Focus ZX4) have no
 cockpit carbin at all.
 
-`tools/cockpit_survey.py` runs `cockpit.fit` over every car on the discs
+`src/dsfforza/convert/cockpit_survey.py` runs `cockpit.fit` over every car on the discs
 (573 in `research/forza-roster.tsv`), reading the cockpit carbin, main
 carbin and CarAttribs straight from the ISOs, and writes
 `out/cockpit-survey/survey.tsv`. Before the fixes: 554 fitted, 13 stub
@@ -651,7 +651,7 @@ main-carbin fallbacks 95 and 25) and at most 23 after (300SL; edge
 noise). `out/fixes/cull_check_all.log`. Kept triangles grow by about half (IS F
 30,907 to 44,778; interior MDXN 0x123000 to 0x18B800; the batch's
 `--mdxn-limit 0x2C0000` covers it; under the stock 0x12D000 limit the
-decimation ladder would start). `python tools/cockpit.py holes <archive>
+decimation ladder would start). `uv run dsff cockpit holes <archive>
 --id N --png out.png` (writes `out-N.png`) renders 4 head positions x 6 directions with glass
 drawn and empty pixels magenta (`img/holes-isf-head-views.png`); before and
 after: `img/holes-isf-before-after.png` (the cluster hood behind the wheel
@@ -1165,7 +1165,7 @@ it changed. On a car lower than its host the camera sat inside the cabin
 behind the windscreen (Agera and S5S Raptor on host 163: 6 cm under the roof,
 the windscreen 8 cm ahead).
 
-**Fix** (`tools/vehicle_cameras.py`, called from `forza2dsf.convert`): the
+**Fix** (`src/dsfforza/convert/vehicle_cameras.py`, called from `forza2dsf.convert`): the
 windscreen centre on the Forza `glassF` (centre line, 57% up, found by rays
 from ahead) + (0, 0.058, 0.085), raised until it is 0.09 m over the body below
 it, written to p535..537 against the host's ground. The report has

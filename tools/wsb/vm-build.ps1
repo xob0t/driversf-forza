@@ -32,7 +32,7 @@ param(
     [int]$DiskGB = 80,
     [int]$InstallMinutes = 120,
     [int]$VncPort = 0,             # Create: VNC on 127.0.0.1:<port> (no password) to watch a headless install;
-                                   # grab a frame with: python -I tools\wsb\vm\vncshot.py 127.0.0.1 <port> shot.png
+                                   # grab a frame with: uv run dsff vncshot 127.0.0.1 <port> shot.png
     [switch]$Force                 # Create: replace an existing VM
 )
 

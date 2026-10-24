@@ -39,7 +39,7 @@ test vehicle IDs and spawning before writing native hooks.
 `archive/shift-map-2026-10-03`:
 
 - `tools/extract-gegl-mapping.py`: the CHNK reader this project's
-  `tools/chnk.py` grew from.
+  `src/dsfforza/formats/chnk.py` grew from.
 - `tools/ghidra/`: headless Ghidra scripts (`analyze-driver.ps1`,
   `ApplyDriverKnowledge.java`, reference and decompilation exporters).
 - `reverse_engineering/driver_sf/addresses.tsv`: 400+ named RVAs, including

@@ -1,0 +1,83 @@
+[project]
+name = "dsfforza"
+version = "0.1.0"
+description = "Ports Xbox 360 Forza (FH1/FM4) cars into Driver: San Francisco PC 1.04"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.13"
+dependencies = [
+    "numpy>=2.1",
+    "pillow>=11.0",   # glass.py survey (its texture preview); imported only there
+]
+
+[project.scripts]
+dsff = "dsfforza.cli:main"
+
+[dependency-groups]
+# Synced by a plain `uv run`; players' builds (tools/install.ps1) use --no-dev.
+dev = [
+    "ruff>=0.14",
+    { include-group = "test" },
+    { include-group = "re" },
+]
+test = ["lupa>=2.4"]       # tests/test_register_asi.py runs register.lua in Lua 5.1
+re = ["capstone>=5.0"]     # dsff xref: Driver.exe disassembly
+
+[build-system]
+requires = ["uv_build>=0.9,<0.14"]
+build-backend = "uv_build"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "UP",       # pyupgrade
+    "B",        # bugbear
+    "SIM",      # simplify
+    "RUF",      # ruff-specific
+    "PTH",      # pathlib over os.path
+    "PERF",     # performance anti-patterns
+    "C4",       # comprehensions
+    "RET",      # return statements
+    "PIE",      # misc lints
+    "PL",       # pylint
+    "N",        # pep8-naming
+]
+ignore = [
+    "PLR2004",  # magic values: binary formats are full of offsets, tags and sizes
+    "PLR0911",  # too many returns: format dispatchers
+    "PLR0912",  # too many branches: parsers and converters walk many record kinds
+    "PLR0913",  # too many arguments: conversion steps take many explicit inputs
+    "PLR0914",  # too many locals (preview): same
+    "PLR0915",  # too many statements: same
+    "PLR0917",  # too many positional arguments (preview): same
+    "PLW2901",  # loop variable overwritten: normal in record-walking loops
+    "PLC0415",  # import outside top level: lazy imports keep CLIs fast and break import cycles
+    "PLW0603",  # global statement: module-level caches
+    "N802",     # function names: keep names that mirror game/format identifiers
+    "N803",     # argument names: same (P, U, VO3D ...)
+    "N806",     # variable names in functions: matrix/vector math (M, P, R ...) and format fields
+    "N815",     # mixedCase class fields: mirror the game's Lua/format field names
+    "N816",     # mixedCase globals: same
+    "N817",     # CamelCase imported as acronym: `import handling as H`-style aliases are used repo-wide
+    "N812",     # lowercase imported as non-lowercase: same
+    "E501",     # line length: the formatter wraps code; long strings and tables stay readable
+    "E741",     # ambiguous names (l, I): used for lengths/indices in format code
+    "RUF001",   # ambiguous unicode in strings: intentional (degree, multiplication, arrows ...)
+    "RUF002",   # same, in docstrings
+    "RUF003",   # same, in comments
+    "SIM108",   # ternary instead of if/else: not always clearer
+    "RET504",   # assignment before return: often names the value being returned
+    "PERF203",  # try/except in a loop: needed for per-item error handling
+    "B905",     # zip() without strict=: would change behaviour where lengths differ
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["dsfforza"]

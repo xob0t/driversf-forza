@@ -320,7 +320,7 @@ try {
     }
     $overrides['install\dngvehicles.sp'] = $Archive
     # A dsfforza install on the host (tools\install.ps1) replaces some game files. Tests use
-    # the repo's copy of the originals (out\stock, see tools\game_paths.py) unless -Override
+    # the repo's copy of the originals (out\stock, see src\dsfforza\game\game_paths.py) unless -Override
     # names a file. Never link the install's own dsfforza-backup: a running test would hold
     # those files open and block install.ps1.
     $backup = Join-Path $RepoDir 'out\stock'

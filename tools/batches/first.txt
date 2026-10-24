@@ -1,4 +1,4 @@
-# First real batch (tools/port_batch.py build --list tools/batches/first.txt).
+# First real batch (src/dsfforza/build/port_batch.py build --list tools/batches/first.txt).
 # Diverse classes, mostly cars Driver: San Francisco has no same-model car for.
 # Order decides which cars get the garage IDs 1..61 (all of these fit).
 # sports

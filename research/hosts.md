@@ -6,7 +6,7 @@ A ported car is a clone of one stock vehicle, the host, with the Forza body,
 cockpit, wheels and handling numbers put in. Everything the converter does
 not rebuild stays the host's, so the host decides much of how the port
 sounds and behaves. Until now every port used 266 (ASYM Desanne, a V6 saloon).
-`tools/host_select.py` now picks a host per car and `port_car.py --host auto`
+`src/dsfforza/build/host_select.py` now picks a host per car and `port_car.py --host auto`
 (the default) uses it. Evidence levels follow `dngvehicles.md`.
 
 ## What comes from the host
@@ -58,7 +58,7 @@ MP4-12C sound came to 0x6BE90.
 
 ## The stock fleet as hosts
 
-`python tools/host_select.py survey --tsv research/hosts.tsv` (cached in
+`uv run dsff host_select survey --tsv research/hosts.tsv` (cached in
 `out/cache/host-survey.json`). Per vehicle: VSCT category, body class,
 door count, wheels, hub wheelbase and track, length and height (exterior
 MODL part 0 box), VO3D mass, gauge IDs, engine and year from `vehicleStats`,
@@ -186,7 +186,7 @@ RUF RT12 S can't use 243 (no steering hinge) and gets 240 (CTR3).
 
 ## The whole roster (`research/host-picks.tsv`)
 
-`python tools/host_select.py roster --tsv research/host-picks.tsv` picks a
+`uv run dsff host_select roster --tsv research/host-picks.tsv` picks a
 host for all 573 cars of `forza-roster.tsv` (FH1 first, as `port_car` does;
 the carbin door rule where the car is in `out/cache`), with the runner-up,
 the margin and flags: body similarity under 0.5, a door mismatch, score

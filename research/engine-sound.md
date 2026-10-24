@@ -15,9 +15,9 @@ Evidence levels as in `dngvehicles.md`:
 - **hypothesis**.
 
 Tools:
-- `tools/wwise_bank.py`: Wwise v48 bank parser, rebuilder and IMA ADPCM codec.
-- `tools/engine_sound.py`: Forza to DSF conversion and the archive step.
-- `tools/forza_audio.py`: Forza FSB, ET and HT access.
+- `src/dsfforza/formats/wwise_bank.py`: Wwise v48 bank parser, rebuilder and IMA ADPCM codec.
+- `src/dsfforza/convert/engine_sound.py`: Forza to DSF conversion and the archive step.
+- `src/dsfforza/formats/forza_audio.py`: Forza FSB, ET and HT access.
 - `tools/ghidra/DecompileRange.java`.
 
 ## DSF side
@@ -141,7 +141,7 @@ Layout (`FUN_00547800`):
 - version 10..50, rpm values, engine type;
 - two sets of {loops < 20, grains ≤ 600}, each grain {bytes, samples ≤ 22050, s16, u32 grain rpm, IMA ADPCM data, high nibble first}.
 
-## Forza side (confirmed-static; `tools/forza_audio.py`)
+## Forza side (confirmed-static; `src/dsfforza/formats/forza_audio.py`)
 
 **Where the banks are.** Engine banks are shared per engine recording, not per car: `media/audio/cars/Engines/Soundbanks/LOD1/<code>_<name>_{EngAmb,Exh,Int}.fsb`.
 - FH1: 943 banks, 207 MB.
@@ -190,7 +190,7 @@ Layout (`FUN_00547800`):
 
 `port_car.py` step 5 and every `port_batch.py` worker, on by default
 (`--no-forza-sound` turns it off). Per car (`port_car.forza_sound_plan`,
-`fit_forza_sound`, `tools/engine_sound.py`):
+`fit_forza_sound`, `src/dsfforza/convert/engine_sound.py`):
 
 1. **Forza audio.** `<car>_ET.xml` → HT file per emission (L0) → FSB bank,
    decoded once into `out/cache/sound/<game>/<bank>/` (each worker decodes
@@ -269,7 +269,7 @@ accepted.
 
 ### The 40-car test build (offline)
 
-`python tools/port_batch.py build --dsf out/stock/Install/dngvehicles.sp
+`uv run dsff port_batch build --dsf out/stock/Install/dngvehicles.sp
 --list tools/batches/testdrive.txt --gui --out out/testdrive8 --jobs 10`
 (30 min; one car rebuilt with `--resume` after the idle-grain rule, below):
 
@@ -314,10 +314,10 @@ without it offline is the first step.
 ## Proof of concept (offline)
 
 ```sh
-python tools/engine_sound.py convert --car MAZ_RX7_97 --game fh1 --host 227 --out out/sound/MAZ_RX7_97
-python tools/port_batch.py build --dsf out/stock/Install/dngvehicles.sp --car MAZ_RX7_97 --out out/sound/build \
+uv run dsff engine_sound convert --car MAZ_RX7_97 --game fh1 --host 227 --out out/sound/MAZ_RX7_97
+uv run dsff port_batch build --dsf out/stock/Install/dngvehicles.sp --car MAZ_RX7_97 --out out/sound/build \
     --jobs 1 --port "--mdxn-limit 0x2C0000 --damage --sound-host 227"
-python tools/engine_sound.py apply out/sound/build/dngvehicles.sp out/sound/build/dngvehicles.forza-sound.sp \
+uv run dsff engine_sound apply out/sound/build/dngvehicles.sp out/sound/build/dngvehicles.forza-sound.sp \
     --spool 1 --sound out/sound/MAZ_RX7_97
 ```
 
@@ -365,7 +365,7 @@ sound in the build"; IDs 1..40 in `tools/batches/testdrive.txt` order):
    levels against stock cars (set gains match the template's loudest loop by
    RMS), and the low rumble tone of VSVH+4C (rotary/I4 vs V6 vs V8).
 5. Earlier single-car test: the port (ID 1) of `out/sound/build/dngvehicles.forza-sound.sp`. Silence means the bank load failed (`FUN_0048f780`). Also spawn the stock 370Z (227) in the same session: each must sound like itself, which tests the fresh IDs.
-6. **Objective check (proposal):** add WASAPI loopback capture to the host harness (e.g. Python `soundcard` or ffmpeg). Record a scripted rev and compare spectrograms against `sweeps.png`: the rotary's 2nd-order harmonic structure versus the V6's 3rd order tells the swapped sound from the host's without anyone listening. Without audio capture, nothing in the repo can yet confirm that the bank ID (0x27B29A12 for the RX7) is resident: `tools/minidump.py` only reads a .dmp file written earlier (`minidump.py crash.dmp [--stack N]`) and can't inspect a running game; that would need a memory read of the running process.
+6. **Objective check (proposal):** add WASAPI loopback capture to the host harness (e.g. Python `soundcard` or ffmpeg). Record a scripted rev and compare spectrograms against `sweeps.png`: the rotary's 2nd-order harmonic structure versus the V6's 3rd order tells the swapped sound from the host's without anyone listening. Without audio capture, nothing in the repo can yet confirm that the bank ID (0x27B29A12 for the RX7) is resident: `src/dsfforza/formats/minidump.py` only reads a .dmp file written earlier (`minidump.py crash.dmp [--stack N]`) and can't inspect a running game; that would need a memory read of the running process.
 7. Then tune levels: the set gains are matched to the template's loudest loop by RMS, and Forza's per-loop HT volumes are kept.
 
 ## Open

@@ -84,7 +84,7 @@ archive must not be installed without the plugin.
 
 Module `garage` (`tools/asi/src/mod_garage.cpp`). Background in
 `batch.md` (Limits). Static analysis: `out/ghidra/garage-1..3`
-(`tools/ghidra/GarageExplore.java`) and `tools/asi/xref.py`, a capstone
+(`tools/ghidra/GarageExplore.java`) and `src/dsfforza/game/xref.py`, a capstone
 linear sweep of `.text` that lists every instruction with a given
 displacement or immediate.
 
@@ -234,7 +234,7 @@ Why a side file:
 - **No ID is lost to the 304-slot list.** Stock cars use about 146 slots,
   the 61 low garage IDs up to 61 more; added cars use none.
 
-`tools/asi/savecheck.py <savegames folder> --ids 305,500` lists both files.
+`src/dsfforza/game/savecheck.py <savegames folder> --ids 305,500` lists both files.
 
 ### Telling Lua the plugin is there
 
@@ -259,7 +259,7 @@ An unpatched game looks the number up in the flag list and returns false.
 
 Harness: `tools/asi/test/garage-tests.ps1` (four runs through
 `tools/wsb/run-series.ps1 -Asi`, test Lua in `tools/asi/test/lua`, put over the
-test bootstrap with `-LuaFiles`); `tools/asi/savecheck.py` reads the `save\`
+test bootstrap with `-LuaFiles`); `src/dsfforza/game/savecheck.py` reads the `save\`
 copy each run keeps. Offline: `tools/asi/build.ps1 -Test` (every site
 matched, hooks behave).
 

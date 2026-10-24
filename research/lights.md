@@ -3,7 +3,7 @@
 Updated: 2026-10-24
 
 How stock DSF cars light their lamps and pick a paint colour, and what the
-converter does about both. Code: `tools/lights.py` (lamps), `tools/paint.py`
+converter does about both. Code: `src/dsfforza/convert/lights.py` (lamps), `src/dsfforza/convert/paint.py`
 (palettes), `dsf_materials.PAINT_TEXEL_UV` and `LIGHTS_ALPHA`; lamps and
 palettes run inside `forza2dsf.convert` (`ConvertOptions.lights`,
 `ConvertOptions.paint`, on by default). Evidence tags as elsewhere. Survey
@@ -95,7 +95,7 @@ byte 0, so no lamp could light, brake or blink, and the light table still
 held the host's lamp positions (flares and headlamp beams in the wrong places
 on a shorter or longer car).
 
-### The converter (`tools/lights.py`, offline-checked)
+### The converter (`src/dsfforza/convert/lights.py`, offline-checked)
 
 `LampPlan.build(car.body, place, axle_mid)`:
 
@@ -145,8 +145,8 @@ the repeaters sharing, 2 tail/stop, high stop, 2 reverse, 2 rear markers; fog
 unlit); every light byte's vertices sit within 0.05 m of their entry in the
 exterior entry (the front indicators' 0.55 to 0.69 m is the shared repeater).
 
-`python tools/lights.py plan out/cache/fh1/NIS_370Z_10` prints the plan
-against the stock Desanne; `python tools/lights.py table <archive> --id 304`
+`uv run dsff lights plan out/cache/fh1/NIS_370Z_10` prints the plan
+against the stock Desanne; `uv run dsff lights table <archive> --id 304`
 prints a vehicle's light table with the Lua names.
 
 ### In-game test: the harness mode
@@ -167,7 +167,7 @@ Brakes, DaytimeRunning + Brakes, Reverse, Left, Right, All, in daylight;
 table, `addMoodUserDefinedOverrideZap`). The harness takes
 `lights-<id>-<k>a.png` and `b.png` 0.7 s apart per phase (indicators blink)
 and writes phase -1 to finish. Without the sync file the module advances
-every 20 s on its own. `python tools/lights_diff.py <run dir>` makes a sheet
+every 20 s on its own. `uv run dsff lights_diff <run dir>` makes a sheet
 per car: each phase next to its brightening against the "off" phase of the
 same lighting.
 
@@ -570,7 +570,7 @@ The FM4 DMC-12 has one colour, solid `#999999` (Gray). Its body is plain
 `nodamage.xds`), with no shader settings in the zip: Forza draws the
 stainless body as flat grey paint.
 
-### The converter (`tools/paint.py`, offline-checked)
+### The converter (`src/dsfforza/convert/paint.py`, offline-checked)
 
 For each Forza colour: pick the stock palette entry of the same finish
 (metallic: `TintColour1.y` = 1) whose apparent colour (colour 2, or colour 3
@@ -735,8 +735,8 @@ body is a plain yellow with no halo.
 
 No car has missing Combo_Colors, and none is white-only in the 40.
 
-`python tools/paint.py colours out/cache/fh1/gamedb.slt NIS_370Z_10` shows
-the result; `python tools/paint.py palette <archive> --id 304` reads a built
+`uv run dsff paint colours out/cache/fh1/gamedb.slt NIS_370Z_10` shows
+the result; `uv run dsff paint palette <archive> --id 304` reads a built
 palette back.
 
 ### Black ports (runs 20261022-061717 to -113549; cause confirmed-static)

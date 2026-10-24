@@ -13,7 +13,7 @@ Research notes are in `research/` (read the ones for your area first).
 - In a new worktree run `.\tools\worktree-setup.ps1` once. It links the
   untracked inputs from the main checkout: `assets\*.iso`, `out\stock`,
   `out\cache`, `out\tools-dl`, `_ref`, and writes the worktree's own
-  `out\lua-src` and `out\db` (`tools\game_data.py prepare`). Before the
+  `out\lua-src` and `out\db` (`src\dsfforza\game\game_data.py prepare`). Before the
   worktree is removed, run
   `.\tools\worktree-setup.ps1 -Unlink`: some delete tools follow junctions
   and would empty the main checkout's folders.
@@ -29,8 +29,8 @@ Research notes are in `research/` (read the ones for your area first).
   `https://github.com/xob0t/driversf-forza/blob/<commit-sha>/research/img/<file>?raw=true`
   with the SHA of a commit on your branch that contains the image.
 - Keep the PR to one topic. Don't reformat or touch unrelated files.
-- Tests: `python -m tools.tests` runs every Python test file (`tools/tests/`,
-  `tools/asi/test/`). New tests go in `tools/tests/test_<area>.py`.
+- Tests: `uv run python -m tests` runs every Python test file (`tests/`,
+  `tools/asi/test/`). New tests go in `tests/test_<area>.py`.
 
 ## Machine rules
 

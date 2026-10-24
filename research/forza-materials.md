@@ -2,9 +2,9 @@
 
 Updated: 2026-10-24
 
-Code: `tools/forza_materials.py` (Forza side), `tools/dsf_materials.py`
-(DSF side, atlas, preview), `--textures` in `tools/forza2dsf.py` and
-`tools/exp_hollow.py`. Checked on NIS_370Z_10 (FH1) and the Desanne host.
+Code: `src/dsfforza/convert/forza_materials.py` (Forza side), `src/dsfforza/convert/dsf_materials.py`
+(DSF side, atlas, preview), `--textures` in `src/dsfforza/convert/forza2dsf.py` and
+`src/dsfforza/convert/exp_hollow.py`. Checked on NIS_370Z_10 (FH1) and the Desanne host.
 
 ## How FH1 binds textures (confirmed-static)
 
@@ -134,7 +134,7 @@ Plates: `numberplate` (a plate quad on 2 of the 40 testdrive cars) and
 
 The full technique table, with prefix fallbacks for names not seen on this
 car, is `TECHNIQUES` / `classify()` in `forza_materials.py`.
-`python tools/forza_materials.py <car dir> --colours` prints this per car.
+`uv run dsff forza_materials <car dir> --colours` prints this per car.
 
 ## DSF side (confirmed-static; in game: `lights.md`, `in-game-tests.md`)
 

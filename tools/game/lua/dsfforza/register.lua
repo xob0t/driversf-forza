@@ -29,8 +29,8 @@
 
 local M = {}
 
--- Per-car settings, from dsfforza\ported.lua (tools/port_car.py or
--- tools/port_batch.py) or config.lua's register.cars. Empty without either, so
+-- Per-car settings, from dsfforza\ported.lua (src/dsfforza/build/port_car.py or
+-- src/dsfforza/build/port_batch.py) or config.lua's register.cars. Empty without either, so
 -- nothing is registered for cars that aren't in the installed archive.
 -- `source` is the stock model whose vehicleStats entry is copied; every other
 -- field overrides that copy. Example:
@@ -106,7 +106,7 @@ local GARAGE_MAX_ID = ASI.garage and ASI.maxId or 303
 local SAVE_MAX_ID = ASI.save and 999 or 303   -- highest ID whose save flags are safe to set
 local OVERFLOW_GROUP = "FORZA"   -- makes without a group of their own share FORZA, FORZA 2, ...
 
--- Cars built by tools/port_car.py (dsfforza\ported.lua) replace the sample
+-- Cars built by src/dsfforza/build/port_car.py (dsfforza\ported.lua) replace the sample
 -- list above. The HUD badge and name come from the numeric Manufacturer and
 -- Model fields (ManufacturerName/ModelName strings don't reach it), so each
 -- car borrows them from a stock entry, matched on Picture1 ("nissan_370z"):
@@ -144,7 +144,7 @@ local function stockMatch(car)
 	return exact, near
 end
 
--- Per-ID vehicleStats overrides from tools/gui_assets.py build: Picture1,
+-- Per-ID vehicleStats overrides from src/dsfforza/game/gui_assets.py build: Picture1,
 -- Manufacturer, Model (vehicles_font codes), ManufacturerName, ModelName.
 local HUD
 do
@@ -273,7 +273,7 @@ local function buildStats(id, car)
 	if car.drift then entry.Drift = car.drift end
 	if car.tier then entry.Tier = car.tier end
 	if car.price then entry.Price = car.price end
-	-- Garage picture, HUD badge and model glyph made by tools/gui_assets.py
+	-- Garage picture, HUD badge and model glyph made by src/dsfforza/game/gui_assets.py
 	-- (dsfforza\hud.lua; needs its gui.sp and Fonts.fchunk copies installed).
 	local hud = HUD and HUD[id]
 	if type(hud) == "table" then
@@ -296,7 +296,7 @@ end
 
 -- Returns the ManufacturerName to use (the car's own, or a shared FORZA group
 -- when its make has no room), or nil when the car can't be listed. Same rule
--- as tools/port_batch.py garage_group; one group slot is kept for FORZA.
+-- as src/dsfforza/build/port_batch.py garage_group; one group slot is kept for FORZA.
 local function garageGroup(name, counts)
 	local key = groupKey(name)
 	local groups = 0

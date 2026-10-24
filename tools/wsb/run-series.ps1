@@ -46,7 +46,7 @@ param(
     [string]$Views,               # extra views after each chase view, ~6 s each: 'Bonnet,Bumper,left,right,front' (clonetest.lua)
     [switch]$LightsDriveOnly,     # with -Lights: only the day and dark drives (no setLights phases)
     [switch]$Lights,              # lamp phases per car, two shots each (dsfforza\lightstest.lua); allow ~120 s per car
-    [switch]$Dyno,                # standing-start runs (dsfforza\dyno.lua); analyse with tools/dyno.py
+    [switch]$Dyno,                # standing-start runs (dsfforza\dyno.lua); analyse with src/dsfforza/harness/dyno.py
     [int]$BrakeSeconds = 6,
     [int]$DynoRuns = 2,
     [string]$DynoStart,           # 'x,y,z,heading'

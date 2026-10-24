@@ -3,7 +3,7 @@
 Updated: 2026-10-24
 
 How DSF shows a car's picture, maker badge and model name, and how ported
-cars get their own. Code: `tools/gui_assets.py`. Evidence tags as elsewhere;
+cars get their own. Code: `src/dsfforza/game/gui_assets.py`. Evidence tags as elsewhere;
 Ghidra output in `out/ghidra/hudnames*`.
 
 ## What reads vehicleStats (confirmed-static)
@@ -116,7 +116,7 @@ stock never uses it either (confirmed-runtime, removed from the pool).
 ## The build
 
 ```sh
-python tools/gui_assets.py build out/ported.json --out out/gui \
+uv run dsff gui_assets build out/ported.json --out out/gui \
     --name "NIS_SkylineGTR_93=SKYLINE GT-R"
 ```
 
@@ -284,7 +284,7 @@ or text + 2 (plate), look up the code, and call the element's own vtable
 against its original bytes and skipped (logged) if another plugin changed
 it; the ctor hook is applied only if at least one site was.
 
-**Data (`tools/gui_assets.py --wide-glyphs`, default off).** The one-byte
+**Data (`src/dsfforza/game/gui_assets.py --wide-glyphs`, default off).** The one-byte
 plan above still runs and stays in `Manufacturer`/`Model` as the fallback
 for a game without the plugin. On top, `plan_wide_glyphs` gives one code
 per maker DSF has no badge for (Forza logo) and one per model name DSF has
@@ -306,14 +306,14 @@ Glyph space: shelf-packing 800 plates (98 x 18..34) and 60 badges fits in
 up to 4095 (the plugin's table). Garage-shop and panel screens use the same
 calls, so they show the wide glyphs too (not yet looked at in game).
 
-`python tools/gui_assets.py glyphtest --ids 1,2,... --out out/hud/glyphtest`
+`uv run dsff gui_assets glyphtest --ids 1,2,... --out out/hud/glyphtest`
 writes a stress-test Fonts.fchunk (40 numbered badges "B1".., 400 plates
 "P1".. on pages 1..3) and a hud.lua giving the listed cars
 codes from the far end (car 1: B40 / P400 on page 3).
 
 ### Names from Forza's string tables (confirmed-static)
 
-`tools/forza_strings.py` decodes the games' LSB2 string tables
+`src/dsfforza/formats/forza_strings.py` decodes the games' LSB2 string tables
 (`media/stringtables/EN.zip`; `LOC.zip` holds id placeholders) and resolves
 gamedb's "_&N" references: N = table hash << 16 | string hash, a 16-bit
 rotate-left-7 xor hash of the lower-cased table name and string id. All 176
@@ -412,7 +412,7 @@ plugin ignores the field. All site bytes are checked first (all or
 nothing); game calls run under `__try`, a fault turns the feature off and
 is logged.
 
-**Data (`tools/gui_assets.py`).** `build` writes `GarageEmblem = 1` into every
+**Data (`src/dsfforza/game/gui_assets.py`).** `build` writes `GarageEmblem = 1` into every
 hud.lua entry and always writes Fonts.fchunk, now with one more TEXC in the
 vehicles_font package (`add_glyphs(..., textures=)`; MDID lists it, FNTD
 doesn't): `FORZA_LOGO_UID` = `f012ef7ef05a2e2d`, 512 x 256 DXT5, FH1's

@@ -152,7 +152,7 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
   deleting (run `vm-20261024-015718` failed on `clonetest.lua`).
 - **Debugging a headless install:** `vm-build.ps1 -Step Create -VncPort 5971`
   turns on VMware's VNC server on 127.0.0.1 (no password). `python -I
-  tools\wsb\vm\vncshot.py 127.0.0.1 5971 shot.png` grabs a frame. Over VNC,
+  src\dsfforza\harness\vncshot.py 127.0.0.1 5971 shot.png` grabs a frame. Over VNC,
   special keys get through but letters don't (keysyms are probably mapped
   through the Russian host keymap), so `vnckeys.py` is of little use. A
   powered-off guest disk can be read with 7-Zip: `7z e dsfforza-test.vmdk
@@ -273,7 +273,7 @@ Rework's readable `trafficspoolingdata.lua` only lists mission vehicle pots.
 
 ## Forza geometry in game (confirmed-runtime)
 
-Converter: `tools/forza2dsf.py` (FH1 carbin → DSF VEHC), `tools/exp_hollow.py`
+Converter: `src/dsfforza/convert/forza2dsf.py` (FH1 carbin → DSF VEHC), `src/dsfforza/convert/exp_hollow.py`
 (the layout that currently works for the full entry).
 
 - **Geometry writing works**: stretching the clone's vertices 1.3x in x shows
@@ -376,7 +376,7 @@ roof, tyres inside the arches.
 ### Fix3: Forza handling, stock baseline (run `20261022-024010`)
 
 `out/fix3/ported-fix3.sp` (fix2 plus Forza-derived VO3D from
-`tools/handling.py`, wired into `port_car.py`; `--no-handling` keeps the
+`src/dsfforza/build/handling.py`, wired into `port_car.py`; `--no-handling` keeps the
 host's). Probe order 266, 304, 305, 306.
 
 - All four spool, drive and switch to cockpit; the handling VO3Ds load
@@ -538,7 +538,7 @@ R32 (229 R33), 307 Mustang Boss 429 (193), 308 Raptor (251); auto hosts,
 ## Dyno: how cars drive (runs 20261022-041951 to -055824)
 
 `run-series.ps1 -Dyno` with `tools/game/lua/dsfforza/dyno.lua` (loaded by
-`clonetest.lua` when `config.dyno` is set) and `tools/dyno.py` for the
+`clonetest.lua` when `config.dyno` is set) and `src/dsfforza/harness/dyno.py` for the
 figures. Handling results and what they mean for the mapping:
 `handling.md`, "In-game validation".
 
@@ -581,7 +581,7 @@ Method (confirmed-runtime unless noted):
   7524) predicts. With it the car stays within 1 to 3 m of the line over
   1.3 km. `-DynoKeep 'impulse:1:24'` lets go for good at 24 m/s, so
   scripted steering acts on a free car.
-- **Figures** (`tools/dyno.py`): t = 0 where a line through the first
+- **Figures** (`src/dsfforza/harness/dyno.py`): t = 0 where a line through the first
   samples between 1 and 5 m/s reaches the resting speed; 0-30/60/100 mph,
   quarter mile time and trap speed, speed at 10 and 20 s, top speed reached,
   60-0 mph distance from the 60 mph crossing after the peak, and for

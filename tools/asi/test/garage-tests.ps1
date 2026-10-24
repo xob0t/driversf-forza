@@ -15,7 +15,7 @@ each other's save; garage works.
   garage  out\batch\second-high (31 ported cars at 304..334) plus 600 fake
       vehicleStats entries 360..959 in 60 makers; opens garage 1 and walks
       the maker list with menu keys (screenshots menu-NN.png)
-Each run's folder is printed; tools\asi\savecheck.py reads its save\ copy.
+Each run's folder is printed; src\dsfforza\game\savecheck.py reads its save\ copy.
 
 .EXAMPLE
 .\tools\asi\test\garage-tests.ps1                 # all four

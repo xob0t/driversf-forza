@@ -3,14 +3,14 @@
 Updated: 2026-10-23
 
 How a stock DSF car's body damages, from static analysis of the stock
-archive and the shared vehicle shaders, and what `tools/damage.py` builds
+archive and the shared vehicle shaders, and what `src/dsfforza/convert/damage.py` builds
 for converted Forza cars. Evidence levels follow `dngvehicles.md`
 (confirmed-static, confirmed-runtime, hypothesis). Hosts checked: Saloon 15
 (ASYM Desanne, 266), Sports Car 06 (stock 370Z, 227), Saloon 03 (147),
 DriftCar 03 (229), Old 01 (130), Tanner (62), plus fleet surveys of all 150.
 
 Scratch scripts: `out/damage/` (`fleet.py`, `roles.py`, `s5delta.py`,
-`gpdis.py`, `overlap.py`). Tool: `tools/damage.py` (`panels`, `render`,
+`gpdis.py`, `overlap.py`). Tool: `src/dsfforza/convert/damage.py` (`panels`, `render`,
 `check`).
 
 ## The vertex shader (confirmed-static)
@@ -45,7 +45,7 @@ So, per vertex:
 | --- | --- |
 | s9 byte 0 | panel transform index = UPVH record +0x34 ("slot"; records without one use 0, the chassis). Swinging (bonnet, boot, bumpers, doors, wings) and detached panels move through it. |
 | s9 byte 1 | panel data index = record +0x2A ("model"). Selects the panel's damage amount. |
-| s9 byte 2 | lamp: light id + 1 (`tools/lights.py`, research by the lights work). |
+| s9 byte 2 | lamp: light id + 1 (`src/dsfforza/convert/lights.py`, research by the lights work). |
 | s9 byte 3 | 1 on body vertices (wheel buffer: 0, 1, 2). |
 | s12 | the vertex's fully crushed position (car space, w = 1). |
 | s5 bytes 2, 3 | change of the normal's polar and azimuth angles at full damage; 127/128 = none. |
@@ -145,7 +145,7 @@ x/y/z normalised by the part-0 box, +z front, +x the car's left):
 (The "+x/-x" naming is ours; DSF's +x is the car's left, the driver's side
 on left-hand-drive cars.)
 
-On the Desanne (`python tools/damage.py panels <stock> --id 266`):
+On the Desanne (`uv run dsff damage panels <stock> --id 266`):
 
 - **MODL part 0 is the whole intact car**: one submodel per material holding
   every panel's triangles (8,027 vertices = the sum of all other parts but
@@ -187,10 +187,10 @@ call the two suspension parts the bumpers; renders show struts and arms
    confirmed-static: the damage-aware glass techniques (SSIC programs 47,
    50, 55) draw `v + 0.25 * floor(g_v4PerPanelData[s9 byte 1].y)`, so glass
    shows the crack state (`.y`, 0 to 3) of whatever record its vertices are
-   bound to, chassis included (`vehicle-model.md`, "Glass"; `tools/glass.py`).
+   bound to, chassis included (`vehicle-model.md`, "Glass"; `src/dsfforza/convert/glass.py`).
    What sets `.y` on the CPU side is still untraced.
 
-## What `tools/damage.py` does (ConvertOptions.damage, `port_car.py --damage`)
+## What `src/dsfforza/convert/damage.py` does (ConvertOptions.damage, `port_car.py --damage`)
 
 Converted cars used to put every body triangle on the chassis panel with
 s12 = position: no crush, no swinging or falling parts, and the panel parts
@@ -297,14 +297,14 @@ empty. With the option:
    split (a white streak along the Mustang's roof centre in the preview),
    0.1% with it (Mustang). Lights-material triangles without a lamp byte
    (s9 byte 2 = 0: badges, plate, reflector trim) take their panel's paint
-   layout, not the lamp layout, which would put them on the broken-lamp tile. `python tools/damage.py render ... --by decal`
+   layout, not the lamp layout, which would put them on the broken-lamp tile. `uv run dsff damage render ... --by decal`
    previews the scratch mask at UV1 (`img/damage-decal-305.png`
    against `img/damage-decal-stock147.png`).
 
-The lamp bytes (`tools/lights.py`) pass through: damage writes s9 bytes 0
+The lamp bytes (`src/dsfforza/convert/lights.py`) pass through: damage writes s9 bytes 0
 and 1 only.
 
-Checks (`python tools/damage.py check <archive> --id N`): every part-0 s9
+Checks (`uv run dsff damage check <archive> --id N`): every part-0 s9
 pair is a host panel, part 0 uses many panels and has crush targets, every
 panel part's triangles carry that panel's pair and are in part 0. All three
 test cars pass; `upvh.py lint` passes.
@@ -391,7 +391,7 @@ above. Fixed build: `out/damage2/ported-d2.sp` (same five cars and options).
 
 ### Host coverage
 
-The 31-car batch (`tools/port_batch.py`) crashed on hosts 173 and 184:
+The 31-car batch (`src/dsfforza/build/port_batch.py`) crashed on hosts 173 and 184:
 their interior entries have 32-byte buffers without semantic 9, and
 `Uv1Field.read` read it unconditionally. Every semantic-9 read in
 `damage.py` now goes through `s9_pair` ((0, 0), the chassis, when a buffer
@@ -534,7 +534,7 @@ stock 147's tub and beam pictures. Normals, sky (0.2-0.45) and material
 binding were fine (`view.py --mode backface`: the stored normals face the
 viewer); the surface was just one dark texel.
 
-### Fix (`tools/damage.py`, `tools/forza2dsf.py`)
+### Fix (`src/dsfforza/convert/damage.py`, `src/dsfforza/convert/forza2dsf.py`)
 
 `split_exposed` now finds four zones (`exposed_zones`, `zone_maps`,
 `zone_vote`), each from a 5 cm map of the covering panel's sections:
@@ -642,7 +642,7 @@ are in the panels' middles. Wings against the front structure move
 by up to 5-8 cm with uneven damage; they are real shut lines with jambs and
 inner panels behind them, so no hole shows.
 
-### Fix (`tools/damage.py`)
+### Fix (`src/dsfforza/convert/damage.py`)
 
 - `_seam_map`: positions of different rigid panels within 3 mm
   (`SEAM_NEAR`) join one seam group (union-find); every copy takes the

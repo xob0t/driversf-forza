@@ -58,7 +58,7 @@ Close the game first. Then, from the repository folder:
 .\tools\install.ps1 -GamePath '...' -Iso ... -List my-cars.txt
 .\tools\install.ps1 -GamePath '...' -Iso ... -Car NIS_370Z_10,BMW_M5_12,NIS_SkylineGTR_93@fm4
 
-# Install a build you already made with tools\port_batch.py
+# Install a build you already made with src\dsfforza\build\port_batch.py
 .\tools\install.ps1 -GamePath '...' -Build out\batch\first
 ```
 
@@ -71,8 +71,8 @@ the build tool (it reads the game folder from `DSF_GAME_DIR`):
 
 ```powershell
 $env:DSF_GAME_DIR = '<game folder>'
-python tools\port_batch.py plan --diverse 30 --iso ...               # a spread over body classes
-python tools\port_batch.py plan --body suv,pickup --no-counterpart --iso ...
+uv run dsff port_batch plan --diverse 30 --iso ...               # a spread over body classes
+uv run dsff port_batch plan --body suv,pickup --no-counterpart --iso ...
 ```
 
 ### What the installer changes
@@ -212,7 +212,7 @@ option: `Documents\Ubisoft\Driver San Francisco\reloaded\savegames\autosave.dat`
   - The archive can hold at most 215 added cars. dsfforza.asi's `archive`
     module raises that to 849 (757 with the default ID policy, all 849 with
     `-IdPolicy asi`). `install.ps1 -Asi` builds with room for them; a build
-    made by hand needs `tools\port_batch.py build --root-limit 3003`. Such
+    made by hand needs `src\dsfforza\build\port_batch.py build --root-limit 3003`. Such
     an archive works only with the plugin installed.
   - Every car takes about 4 MB in `dngvehicles.sp`.
   - The garage picture file has room for about 98 new pictures, and the HUD

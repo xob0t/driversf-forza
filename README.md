@@ -30,15 +30,15 @@ DriverNGHook runs the Lua that registers the cars. The optional native plugin
 
 ```powershell
 $env:DSF_GAME_DIR = 'X:\path\to\Driver San Francisco'
-python tools/game_data.py prepare      # derived data under out/ (once)
+uv run dsff game_data prepare      # derived data under out/ (once)
 ```
 
 ## Build and install
 
 ```powershell
 # Plan or build a list of cars (one car per line), with garage assets
-python tools/port_batch.py plan --list tools/batches/testdrive.txt
-python tools/port_batch.py build --list tools/batches/testdrive.txt --gui --out out/build --jobs 6
+uv run dsff port_batch plan --list tools/batches/testdrive.txt
+uv run dsff port_batch build --list tools/batches/testdrive.txt --gui --out out/build --jobs 6
 
 # Install the build (backs up every replaced file); -Asi adds the plugin
 .\tools\install.ps1 -GamePath $env:DSF_GAME_DIR -Build out\build -Asi
@@ -46,13 +46,13 @@ python tools/port_batch.py build --list tools/batches/testdrive.txt --gui --out 
 .\tools\install.ps1 -GamePath $env:DSF_GAME_DIR -Uninstall
 ```
 
-One car into an archive: `python tools/port_car.py --out out/one.sp --car NIS_370Z_10`.
+One car into an archive: `uv run dsff port_car --out out/one.sp --car NIS_370Z_10`.
 `--car NAME@fh1` / `@fm4` picks the game when a car is on both.
 
 ## Tests
 
 ```powershell
-python -m tools.tests                 # offline tests
+uv run python -m tests                 # offline tests
 .\tools\asi\build.ps1 -Test           # build the plugin and patch-test it
 ```
 
@@ -72,12 +72,12 @@ Options and the other modes (host, sandbox): `research/in-game-tests.md`.
 
 | Path | What |
 | --- | --- |
-| `tools/port_batch.py`, `port_car.py`, `forza2dsf.py` | the converter |
+| `src/dsfforza/build/port_batch.py`, `port_car.py`, `forza2dsf.py` | the converter |
 | `tools/install.ps1` | installer and uninstaller |
 | `tools/asi/` | `dsfforza.asi` plugin |
 | `tools/game/lua/` | registration Lua and in-game test probes |
 | `tools/wsb/` | in-game test harness |
-| `tools/tests/` | offline tests |
+| `tests/` | offline tests |
 | `research/` | format notes, findings and test results |
 | `out/` | build output and caches (ignored) |
 

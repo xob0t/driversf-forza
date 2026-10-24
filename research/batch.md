@@ -3,7 +3,7 @@
 Updated: 2026-10-24
 
 How many Forza cars one `dngvehicles.sp` can take, which model IDs they get,
-what the save and the garage can hold, and how `tools/port_batch.py` and
+what the save and the garage can hold, and how `src/dsfforza/build/port_batch.py` and
 `tools/install.ps1` deal with that. Evidence tags as in `dngvehicles.md`.
 The Ghidra outputs are in `out/ghidra/profile-*`; the scripts used are
 `tools/ghidra/FindStrings.java` and `tools/ghidra/DecompileContaining.java`.
@@ -82,7 +82,7 @@ hold about 8 resident models (5 in "All chapters" plus the chapter's own), so
      wrapper, and the engine itself never calls them with these IDs.
 3. **Garage IDs only while a maker group has room.**
    - A car joins its maker's group: the stock `"ID:nnnnnn"` maker string when
-     DSF has the make (from `hud.lua`, `tools/gui_assets.py`), else a plain
+     DSF has the make (from `hud.lua`, `src/dsfforza/game/gui_assets.py`), else a plain
      name such as "BMW".
    - A new make opens a group while fewer than 39 exist (one is kept back).
    - Otherwise the car joins a shared "FORZA" group (then "FORZA 2" ...).
@@ -138,7 +138,7 @@ At start `register.lua` asks whether `dsfforza.asi`'s garage module is
 active (`ProfileSettings.GetVehicleUnlocked(8000000 + k)`, research/asi.md)
 and takes its limits: listed IDs, maker groups, the highest ID whose save
 flags are safe. It logs them as `dsfforza.asi: save hooks ..., garage IDs
-0..999, 120 maker groups of 20`. `tools/asi/test/test_register_asi.py` runs
+0..999, 120 maker groups of 20`. `tests/test_register_asi.py` runs
 it against stubs with and without the plugin (600 fake cars: none selectable
 at 304+ without it, all 600 with it, at most 20 per group).
 
@@ -153,19 +153,19 @@ registered for a car that isn't in the installed archive. A stub-API run of
 - 26 IDs per region;
 - the cheat path reaching the save only for IDs up to 303.
 
-## tools/port_batch.py
+## src/dsfforza/build/port_batch.py
 
 ```sh
-python tools/port_batch.py plan --diverse 30                      # or --list / --car / filters
-python tools/port_batch.py build --out out/batch/first --list tools/batches/first.txt --jobs 6 --gui
-python tools/port_batch.py remerge out/batch/first --out out/batch/first-high --id-policy high
+uv run dsff port_batch plan --diverse 30                      # or --list / --car / filters
+uv run dsff port_batch build --out out/batch/first --list tools/batches/first.txt --jobs 6 --gui
+uv run dsff port_batch remerge out/batch/first --out out/batch/first-high --id-policy high
 ```
 
 How a build runs:
 
 - Each car runs in a worker process (`port_car.build_car`) at Below Normal
   priority.
-  While the file `out/gentle` exists (`tools/gentle.py`), builds run at
+  While the file `out/gentle` exists (`src/dsfforza/build/gentle.py`), builds run at
   Idle priority pinned to the last two logical CPUs, with at most two
   workers, so a game on the same PC keeps its CPU. Delete the file to build
   at full speed.
@@ -186,7 +186,7 @@ Failed cars are left out, and `batch-report.json` lists each one with its
 cause. Every `port_car.py` option passes through `--port "..."`. The default
 is `--mdxn-limit 0x2C0000 --damage`, the configuration tested in game.
 
-`tools/game_data.py prepare` makes the derived files the tools read on a
+`src/dsfforza/game/game_data.py prepare` makes the derived files the tools read on a
 machine that has only the game and the discs:
 
 - `vehiclestats.lua`, made from `ScriptsLuaScripts.fchunk` by a small Lua 5.1

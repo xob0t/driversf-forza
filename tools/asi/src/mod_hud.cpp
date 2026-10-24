@@ -18,7 +18,7 @@
 //
 //   1. hooks the record build (the call at 0x006C6855) to also read the
 //      optional vehicleStats fields ManufacturerGlyph / ModelGlyph (16-bit
-//      codes from 0x100, written by tools/gui_assets.py --wide-glyphs) while
+//      codes from 0x100, written by src/dsfforza/game/gui_assets.py --wide-glyphs) while
 //      the entry is still on the Lua stack, into a table by model id;
 //   2. replaces the ten SetText(+0x90 / +0x92) calls. For a car with a code,
 //      the element gets a slot code (1..15) of its own (gui_assets adds empty
