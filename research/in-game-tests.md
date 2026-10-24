@@ -160,6 +160,51 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
 - Windows isn't activated (generic Pro key, no network). No watermark is
   in the shots.
 
+### Crashes while the world loads (2026-10-24, full roster)
+
+About half of the VM runs ended at the DriverNGHook fatal-error dialog 20 to
+100 s after launch, before or right after the first probe car. With
+`[dsfforza] crash_log=1` the faults fall into two kinds.
+
+**Engine: deferred UID list (0x00BAE85A / 0x00BAE8BE / 0x00BAEBB2).**
+
+- Where: FUN_00BAE790 runs every frame from the game update (FUN_00699250).
+  It walks the resource manager's list of pending UID slots (pointers at
+  +0x127AC8, the 0x0185A6B8 list of `spool-limits.md`, count at +0x157AC8)
+  and resolves or drops each one.
+- The fault: a slot pointer in that list points at freed memory (reads of 2,
+  3 or 0xE9xxxxxx).
+- It happens with the **stock archive, without dsfforza.asi and without any
+  ported car**: 2 of 4 runs (`vm-20261024-203720` to `-204228`); with the
+  plugin, 1 of 3.
+- So it isn't caused by the ported cars or the plugin. Host runs have died
+  the same way before (`host-20261023-174440`).
+- It may be the harness's timing (zoom keys while the world spools); not
+  analysed further.
+
+**Lua VM while a big user file loads (0x005F078A / 0x005F078D / 0x005EE811).**
+
+- Where: luaV_execute reads an upvalue through a bad pointer. It runs inside
+  `user_open` (ScriptLoader.ri_dofilefromdisk → luaL_loadfile + lua_call,
+  FUN_0065A7D0 → FUN_00607800), right after a log line "loading user file
+  'dsfforza\ported.lua'". The test bootstrap loads ported.lua three times
+  (register, garagetest, clonetest).
+- When: only with the full roster's generated files (`ported.lua` 117 KB,
+  `hud.lua` 108 KB, about 2,600 and 1,900 constants in one chunk). It never
+  happened with the 40-car files.
+- Runs: 9 of the runs on the full roster before the fix (`vm-20261024-193312`
+  to `-231901`).
+- What fixed it: stopping the collector during each load (`collectgarbage("stop")`
+  / `"restart"` around `user_open`). With that, none of 10 runs had this
+  fault (`vm-20261024-232307` to `vm-20261025-001221`); 4 still hit the
+  engine fault above.
+- Likely cause: a collection step during compile or run of a big chunk frees
+  something the VM still uses, as in Lua 5.1's early parser and GC bugs. Not
+  proven.
+- Both bootstraps (`tools/game/lua/bootstrap.lua`,
+  `tools/game/lua/player/bootstrap.lua`) now wrap `user_open` that way. It is
+  read-only in DriverNGHook's `_G` metatable, so the wrapper is `rawset`.
+
 ## Result: a cloned vehicle works (confirmed-runtime)
 
 `out/dngvehicles.clone.sp` (`clone_vehicle.py --source 266 --id 304`) loads

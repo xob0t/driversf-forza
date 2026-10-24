@@ -6,6 +6,23 @@
 
 local Bootstrapper = {}
 
+-- Keep the Lua garbage collector stopped while a user file is compiled and run.
+-- The full roster's ported.lua and hud.lua (about 110 KB and 2,000 constants each)
+-- crashed the game's Lua VM in about one load in five when a collection step ran
+-- during the load (fault in the VM at 0x005F078A, research/in-game-tests.md,
+-- "Lua crashes loading big user files"); with the collector held off, none did.
+-- user_open is read-only in DriverNGHook's _G metatable, hence rawset.
+if not rawget(_G, "dsfforzaUserOpen") then
+	local original = user_open
+	rawset(_G, "dsfforzaUserOpen", original)
+	rawset(_G, "user_open", function(name, ...)
+		collectgarbage("stop")
+		local ok, value = original(name, ...)
+		collectgarbage("restart")
+		return ok, value
+	end)
+end
+
 function Bootstrapper.Init()
 end
 
