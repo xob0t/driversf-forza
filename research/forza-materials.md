@@ -229,13 +229,57 @@ camera on the Raptor's left side and front wheel): plain paint on the bed and
 doors, no patches (`img/raptor-ingame-before-after.jpg`, offline
 `img/raptor-stripe-before-after.png`).
 
+## Badge plates (2026-10-24)
+
+User report on `out/testdrive11` (ID 18, PEU_205T16_84): "red streak on its
+back", a red bar on the upper right of the tailgate.
+
+**What it is (confirmed-static).** The `trunk` section's `badge` subsection
+(24 triangles at every LOD): the "205 turbo 16" lettering. Its texels in
+`nodamage.xds` (u 0.133 to 0.183, v 0.651 to 0.995) are one flat red in RGB,
+alpha 255 on the letters and 0 between them; Forza's alpha test leaves only
+the letters (`out/inv/205_badge_crop.png`, `out/inv/frender.py` rear view with
+the test: red lettering at the same place). The converter put the quad on the
+Chassis material, which has no alpha test, so the whole quad showed.
+`triangle_alpha_cut` only drops triangles the test removes entirely.
+
+**Survey (40 testdrive cars, LOD 1, `out/inv/badge_survey.py`).** Area the
+alpha test hides on triangles the converter kept: 0 to 14 cm² on cars whose
+decals are modelled as geometry (`emblem` triangles, soft edges), 100 to 860
+cm² on cars with badge quads: 2000GT 858, Mustang Boss 429 711, DMC-12 474,
+S5S 438, Huayra 434, Firebird 381, Jeep 336, Durango 228, Civic Type R 216
+(side skirt decals), 205 T16 201, Express 198, Raptor 232, Skyline 169, Focus
+141 (seat badges), Range Rover 84. The hidden texels drew in their RGB: the
+205's red, the Firebird's cream, white alpha-0 texels as the plain dark grey
+texel (`_paint_through`).
+
+**Fix (`src/dsfforza/convert/cutout.py`, `forza2dsf.convert`).** Before the
+atlas is planned, every kept alpha-tested triangle whose texel centres the
+test hides by 20% or more (and at least 8 texels) is replaced by triangles
+over the texels that pass: the mask of passing texels within 2 texels of the
+triangle, its marching-squares outlines simplified (Douglas-Peucker, 0.75
+texel at LOD 1, 1.5 at LOD 3, 3 at LOD 5), ear-clipped with holes bridged,
+then clipped to the source triangle so neighbouring triangles' pieces meet on
+their shared edge. New vertices are the source triangle's barycentric blend
+(position, UVs, normal, AO byte); winding is kept. Outlines that cross
+themselves after simplification are tried with less of it, then as rectangles
+(no car of the 40 needed that). Over the 40 cars (`out/inv/cut_survey.txt`,
+LODs 1, 3, 5): 2384 triangles become 63119, 0.06 to 0.18 m² of hidden area
+removed per car, 0.5 to 3.3 s per car. Offline render
+(`out/inv/badges_pr.png`, `img/badges-before-after.png`): the 205's red bar
+is its lettering again, the Firebird's "TRANS AM" loses its cream plate, the
+DMC-12's rear grille strip its grey plate.
+
 ## Open
 
 1. In game: whether the Chassis material lights badges well (the Lights
    glow on Forza lamp alpha ran in game: `lights.md`).
 2. A real alpha test: the Chassis material has none. The Dials material
    (interior entry, `g_hAlphaTestRefValue`) is a candidate template for
-   cut-out emblems and grilles.
+   cut-out emblems and grilles. Exterior badges are now cut as geometry
+   ("Badge plates"), which costs triangles (the Firebird: about 7000 more in
+   the full entry, MDXN 0xf6000 to 0x11c800); a material with an alpha test
+   would cost none.
 3. Headlight glass uses shared GLASS, so the lamp internals show through it.
    Whether DSF's glass is transparent enough is unchecked.
 4. Done: the interior entry (N+1000) gets the converted

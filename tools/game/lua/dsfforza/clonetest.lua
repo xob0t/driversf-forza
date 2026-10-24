@@ -30,7 +30,8 @@ local GLASS_LADDER = false    -- config.glass_ladder (run-test -GlassLadder): da
                               -- view, so the cockpit glass shows each crack state (research/cockpit.md)
 local VIEWS = {}              -- config.views (run-test -Views): extra views between the chase and cockpit views:
                               -- camera modes ("Bonnet", "Bumper") or fixed cameras on the car ("left", "right",
-                              -- "front": the driver's seat seen through the side windows or the windscreen)
+                              -- "front": the driver's seat seen through the side windows or the windscreen;
+                              -- "rear": the tailgate; "wheels": the left side at hub height)
 local DYNO = nil              -- config.dyno (run-test -Dyno): the dyno.lua module, acceleration and braking runs
 local LIGHTS = nil            -- config.lights (run-test -Lights): the lightstest.lua module, lamp phases per car
 
@@ -425,6 +426,10 @@ local FIXED_VIEWS = {
 	left = { { 2.4, 1.9, 0.1 }, { 0.3, 0.95, 0.25 } },
 	right = { { -2.4, 1.9, 0.1 }, { -0.3, 0.95, 0.25 } },
 	front = { { 0.0, 1.6, 3.4 }, { 0.0, 0.95, 0.1 } },
+	-- The tailgate from behind and a little to the left (badges, lamps), and the car's
+	-- left side at hub height (both left wheels).
+	rear = { { 0.8, 1.5, -5.0 }, { 0.0, 0.85, -1.8 } },
+	wheels = { { 3.6, 0.6, 0.0 }, { 0.6, 0.35, 0.0 } },
 }
 local fixedCamera = nil
 

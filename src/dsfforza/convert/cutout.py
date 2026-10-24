@@ -37,7 +37,8 @@ from dsfforza.formats import carbin
 # to 15% at LOD 1), badges drawn as plain quads hide 35 to 90%.
 CUT_MIN_HIDDEN = 0.2
 CUT_MIN_TEXELS = 8
-CUT_TOLERANCE = 0.75  # texels (source atlas): outline simplification
+CUT_TOLERANCE = 0.75  # texels (source atlas): outline simplification at LOD 0 to 2,
+# x (LOD - 1) beyond (LOD 3: 1.5, LOD 5: 3; the full entry's far LODs)
 MASK_MARGIN = 2.0  # texels of the mask kept beyond a triangle's edges before clipping
 ALPHA_PASS = 128
 
@@ -252,7 +253,7 @@ def _rectangles(mask, x_off: float, y_off: float):
     return tris
 
 
-def mask_triangles(mask, x_off: float = 0.0, y_off: float = 0.0):
+def mask_triangles(mask, x_off: float = 0.0, y_off: float = 0.0, tolerance: float = CUT_TOLERANCE):
     """Triangles (texel-space points, offset by (x_off, y_off)) covering a
     boolean mask sampled at texel centres; the outlines run half-way between
     filled and empty samples. Outlines that cross themselves once simplified are
@@ -261,8 +262,8 @@ def mask_triangles(mask, x_off: float = 0.0, y_off: float = 0.0):
     # The loops are in texture space (y down); work in y-up (negate y) so that
     # filled outlines are counter-clockwise.
     flipped = [[(x, -y) for x, y in loop] for loop in _loops(mask)]
-    for tolerance in (CUT_TOLERANCE, CUT_TOLERANCE / 2, 0.0):
-        tris = _triangulate([_drop_collinear(_simplify(loop, tolerance) if tolerance else loop) for loop in flipped])
+    for tol in (tolerance, tolerance / 2, 0.0):
+        tris = _triangulate([_drop_collinear(_simplify(loop, tol) if tol else loop) for loop in flipped])
         if tris is not None:
             return [tuple((x + x_off, -y + y_off) for x, y in t) for t in tris], False
     return _rectangles(mask, x_off, y_off), True
@@ -433,7 +434,7 @@ def cut_alpha_tested(sections, atlases: fm.AtlasCache, lods=None, classifier=fm.
                 if inside < CUT_MIN_TEXELS or passed == 0 or inside - passed < CUT_MIN_HIDDEN * inside:
                     indices += list(tri)  # all passes (or too small to judge), or Texturing drops it
                     continue
-                pieces, fallback = mask_triangles(mask, x0, y0)
+                pieces, fallback = mask_triangles(mask, x0, y0, CUT_TOLERANCE * max(1, sub.lod - 1))
                 cut += 1
                 stats["cut"] += 1
                 stats["made"] += len(pieces)

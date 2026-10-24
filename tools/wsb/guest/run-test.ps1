@@ -48,7 +48,8 @@ param(
     [switch]$DamageSide, # probe: a parked side-on copy of each car takes applyDamage hits (wing, door, quarter) in chase view
     [switch]$GlassLadder, # probe: damage in steps during each cockpit view (clonetest.lua GLASS_STEPS, ~21 s)
     [string]$Views,      # probe: extra views after the chase view, ~6 s each: camera modes (Bonnet, Bumper) and fixed
-                         # cameras on the driver's seat (left, right, front), e.g. 'Bonnet,Bumper,left'
+                         # cameras on the driver's seat (left, right, front), the tailgate (rear) and the left wheels
+                         # (wheels), e.g. 'Bonnet,Bumper,left'
     [switch]$LightsDriveOnly, # with -Lights: only the day and dark drives, no setLights phases
     [switch]$Lights,     # probe: lamp phases per car (dsfforza\lightstest.lua, research/lights.md); the harness
                          # picks each phase through dsfforza\lightsync.lua and saves lights-<id>-<k>a/b.png

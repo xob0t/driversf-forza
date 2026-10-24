@@ -225,6 +225,61 @@ and redder than Forza's), the WRX's gold, the Agera's black rim with its
 yellow and blue stripes; no flicker or missing triangles, brightness next to
 the stock CTS-V's wheels alike. `img/rims-ingame-before-after.jpg`.
 
+## Wheel shading (2026-10-24)
+
+User report on `out/testdrive11` (ID 18, PEU_205T16_84 on host 274): "plain
+white wheel disks". Scripts in `out/inv/` (`wrender.py`, `wobl.py`,
+`stock_sky.py`, `stock_sky_agg.py`, `sky_check.py`).
+
+### The 205's wheel is white, and the texture is applied (confirmed-static)
+
+- `wheel.xds` (256² DXT5) is near-white everywhere: shading of the disc, the
+  12 holes, the diamond recess and the nuts. FH1's thumbnail
+  (`Thumbnails/Thumbnail_1533.xds`) shows the car on off-white wheels with
+  dark holes; the road car's are white too.
+- The converted exterior wheel part, drawn with the build's own atlas, matches
+  Forza's wheel with `wheel.xds` texel for texel (`out/inv/205_wheel_cmp.png`):
+  the UVs and the atlas region (0.551x) are right. Forza's wheel archive holds
+  no shader settings for the rim; nothing tints it.
+
+### What differed: the baked sky term (s0.w)
+
+Forza's wheel vertices have no AO byte (0 on every vertex of the 40 testdrive
+cars' wheels), so `vertex_sky` gave them `DEFAULT_AO` x the hemisphere factor
+of the wheel-local normal. Stock wheels bake their own occlusion. Exterior
+wheel parts of the 140 four-wheeled stock vehicles (median of per-vehicle
+medians), against `out/testdrive11` IDs 18, 25, 6:
+
+| Surface (DSF wheel frame) | Stock | testdrive11 | Fix (40 cars) |
+| --- | --- | --- | --- |
+| outward faces (normal +x) | 0.64 (tyre material), 0.635 (chassis caps) | 0.42 | rim 0.56, tyre 0.61 |
+| inward faces (-x: back of the disc, inner sidewall) | 0.02 | 0.42 | 0.00 |
+| facing the axle (inside of the barrel) | 0.15 | 0.42 | 0.24 |
+| tread (facing out radially) | 0.29 | 0.42 | 0.29 |
+
+With one value everywhere the inside of the wheel lit like its face: through
+the 205's holes the camera saw the white barrel, and the disc read as flat.
+In Forza the brake rotor, hub and caliper sit behind the holes
+(`<car>_rotor*_LOD0.carbin` and `_caliper*`) and the inside of the wheel is in
+shadow, so the holes are dark (`out/inv/205_wobl.png`: oblique views without
+and with the rotor and caliper).
+
+Fix (`forza2dsf.wheel_sky`, `wheel_skies`): each wheel vertex gets
+`WHEEL_SKY_OPEN` (0.64, stock's outward faces) x the share of 24
+cosine-weighted rays over its hemisphere that escape. Rays are marched through
+a 3 mm voxel grid of the wheel's own triangles at that LOD (hits closer than 3
+voxels are the vertex's own surface); rays heading inboard end on the car, and
+rays leaving past the tyre's radius count 0.5 (arch above, road below). The
+voxel march agrees with exact ray-triangle tests to 0.03 on average
+(correlation 0.97, the 205 at LOD 1) and takes about 0.4 s per wheel LOD
+instead of 10 s. The tyre texture, UVs and materials are unchanged.
+
+### Open (wheels)
+
+- The brake rotor (`<car>_rotorLF_LOD0.carbin`: disc and hub, about 1100
+  triangles on the 205) could go into the wheel part; it turns with the wheel,
+  unlike the caliper. With the barrel's inside dark it matters less.
+
 ## Open
 
 1. In game: whether wheels without blur geometry look right at speed
