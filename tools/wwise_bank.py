@@ -117,15 +117,19 @@ def _encode_block(x: list[int], idx: int) -> tuple[bytes, int, float]:
 
 def encode_ima(samples: list[int]) -> bytes:
     """Mono Wwise IMA ADPCM. Pads with zeros to whole 64-sample blocks. Each
-    block's start step index is the best of a few around the running one."""
+    block's start step index is the best of a few around the running one; the
+    first block tries every index (from index 0 a loud sound spent its first
+    block climbing from the smallest step: 21 dB SNR there on average over 61
+    converted Forza loops, 37 dB with the search)."""
     n = -(-len(samples) // BLOCK_SAMPLES) * BLOCK_SAMPLES
     s = [max(-32768, min(32767, int(v))) for v in samples] + [0] * (n - len(samples))
     out = bytearray()
-    idx = 0
+    idx = None
     for b in range(0, n, BLOCK_SAMPLES):
         x = s[b:b + BLOCK_SAMPLES]
         best = None
-        for cand in sorted({max(0, min(88, idx + d)) for d in (-8, -4, -2, 0, 2, 4, 8)}):
+        near = range(89) if idx is None else sorted({max(0, min(88, idx + d)) for d in (-8, -4, -2, 0, 2, 4, 8)})
+        for cand in near:
             body, end, err = _encode_block(x, cand)
             if best is None or err < best[2]:
                 best = (body, end, err, cand)

@@ -362,10 +362,20 @@ def test_ima_round_trip() -> None:
     w = wb.Wem.parse(_wem(x))
     y = w.pcm()[0]
     assert len(y) == 640 and w.rate == 24000
-    # From the second block on: the first starts at a small step index and lags.
-    noise = sum((a - b) ** 2 for a, b in zip(x[64:], y[64:]))
-    signal = sum(a * a for a in x[64:])
+    noise = sum((a - b) ** 2 for a, b in zip(x, y))
+    signal = sum(a * a for a in x)
     assert 10 * math.log10(signal / noise) > 30
+
+
+def test_ima_first_block_starts_at_its_step() -> None:
+    """A loud start: the first block picks its own step index instead of climbing
+    from the smallest one (9 dB SNR from index 0 here)."""
+    x = [int(20000 * math.sin(i / 3)) for i in range(256)]
+    data = wb.encode_ima(x)
+    assert data[2] > 40   # the first block header's step index
+    y = wb.decode_ima(data)[0]
+    noise = sum((a - b) ** 2 for a, b in zip(x[:64], y[:64]))
+    assert 10 * math.log10(sum(a * a for a in x[:64]) / noise) > 25
 
 
 def test_bank_round_trip_and_media_swap() -> None:
