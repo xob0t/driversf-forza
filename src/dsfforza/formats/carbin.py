@@ -253,7 +253,10 @@ def _parse_section(r: _Reader) -> Section:
     r.skip(4)
     r.skip(r.u32() * 2)
     r.skip(12)
-    section.name = r.take(r.u8()).decode("latin-1")
+    raw_name = r.take(r.u8())
+    if not all(32 < c < 127 for c in raw_name):  # a wrong start (cf. _section_header_ok)
+        raise CarbinError(f"section name {raw_name[:24]!r} is not text at {r.pos - len(raw_name):#x}")
+    section.name = raw_name.decode("latin-1")
     version = section.version = r.u32()
     if version not in (2, 3):
         raise CarbinError(f"{section.name!r}: unsupported section version {version} at {r.pos - 4:#x}")
