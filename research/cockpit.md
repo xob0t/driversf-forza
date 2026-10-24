@@ -939,6 +939,86 @@ binding). At full lock with the car standing (DSF's hand-over-hand pose) the whe
 turns well past 90° on every car, which may be what was seen. Open: a
 user screenshot of the moment.
 
+## Digital clusters (2026-10-24)
+
+User report on `out/testdrive9`: the S2000 (ID 4) shows no instrument
+cluster in the cockpit view, only a dark hood behind the wheel; the
+Express's (ID 23) dashboard is low-detail.
+
+**Survey** (`out/cc/survey_eye.py`, head-camera views of all 40 cars of
+`out/testdrive10`, `out/cc/before-1-20.png`, `before-21-40.png`): six cars
+show no readable cluster: S2000 (4), Durango (19), Range Rover (21),
+Express (23), Agera (29), LFA (30, an empty ring). The other 34 draw their
+dials.
+
+**Cause for the S2000 and LFA (confirmed-static).** Their whole cluster face
+is `digital_gauge` geometry (S2000 76 triangles, the LFA's dial 110), which
+the converter drew as a blank display. Picking from the Forza eye
+(`out/cc/pick.py`) and drawing each technique in turn
+(`out/cc/forzaeye.py --hl`) shows this; the gauge_emissive_alpha
+subsections are switch labels on the console. The UV0 of these subsections
+is a planar 0..1 map across the face. Through the subsection's first UV
+transform it lands on the label sheet (AUDIO, MODE, SRS AIRBAG on the
+S2000: what the old note called "unrelated parts"); through the second
+transform (the uv1 slot of `uv_transform`) it lands on the display's own
+artwork: the S2000's bar tachometer arc with 0 to 9, x1000 r/min, the
+temperature and fuel scales; the LFA's central dial with the gear N; the
+370Z's two LCD panels (`out/cc/dg-sheet1.png`, `dg-sheet2.png`,
+`dg-sheet3.png`: highlight, first transform, second transform per car).
+
+Over the 22 test-drive cars with `digital_gauge` (`out/cc/dganiso.py`), the
+second transform on UV0 is one of three things:
+
+| Kind | Cars | Median anisotropy | UV units per metre |
+| --- | --- | ---: | ---: |
+| a picture of the display | S2000, Challenger, 500 Abarth, Civic R, LFA, 370Z | 1.00 to 1.40 | 2.9 to 4.6 |
+| a swatch (one texel) | Silvia, WRX, IS F, 300C, Golf R, Jeep, Veyron, Agera, Huayra, GT-R, TT RS, M5, Focus | any | 0 to 0.13 |
+| a stretched strip | S65 (36.7), Range Rover (320), SVT Raptor (29.9) | 17 to 320 | |
+
+The first transform is always a dense, undistorted map (anisotropy 1.2 to
+2.2), so it can't be told apart from a face by shape; it is the digit/label
+sheet the shader composes from.
+
+**Fix** (`cockpit.display_face`, `with_display_faces`, called in `fit` for
+cockpit-carbin cabins): a `digital_gauge` subsection whose second transform
+maps UV0 with median anisotropy at most 2 (`FACE_MAX_ANISOTROPY`) and at
+least 1 UV unit per metre (`FACE_MIN_DENSITY`, about 512 texels per metre on
+the 512² interior_LOD0; cabins run 3 to 9) becomes `digital_gauge_face`
+with that transform first: textured from interior_LOD0 like any cabin
+trim. The rest stay the blank display. `CockpitFit.display_faces` and the
+interior report's `display_face_triangles` count them.
+
+Survey after (`out/cc/faces-survey.txt`): faces on S2000 76, Challenger 29,
+500 Abarth 30, Civic R 8, LFA 110, 370Z 56; no other car changes. Offline
+head-camera views, before and after (`out/cc/faces-before-after.png`, build
+`out/cockpitfaces/build`): the S2000 shows its tachometer arc and scales,
+the LFA its central dial, the 370Z its LCDs; the Challenger, 500 and Civic
+displays change little (dark or the white dial face around them).
+
+**Still without a readable cluster, and why.**
+
+- Agera (182 triangles) and Range Rover (12): the cluster is drawn at run
+  time by Forza's digital shader. Their second transform is a one-texel
+  swatch (Agera) or a stretched strip (Range Rover), and no other
+  subsection, LOD or texture holds the artwork: the Agera's
+  `interior_emissive_LOD0` has only switch icons; the Range Rover's
+  cluster is one flat 12-triangle panel (its virtual dials), it has no
+  emissive texture, and neither transform maps the panel onto the dial
+  pictures in its interior_LOD0 (the shader composes them at run time).
+  Neither car is on the FM4 discs. They keep a blank display.
+- Durango and Express: FH1 traffic cars. Their `_cockpit.carbin` and
+  `_lod0.carbin` are placeholders (17-vertex boxes; the `_LOD0` atlases
+  hold a Prius's), neither is on the FM4 discs, and no GM or Dodge sibling
+  ships a real cockpit (the FH1 Yukon XL is a stub too). The converter
+  already uses the finest Forza data, the main carbin's LOD 1 cabin
+  (Express interior 314 triangles, dash texture from nodamage.xds at 1.0x).
+  The only detailed alternative is the host's stock interior
+  (`out/cc/stubs-vs-host.png`): the Express's host 198 is the GMC Savana,
+  whose dash is the Express's; the Durango's host 138 is an Audi Q7. No
+  geometric test separated the two (rays over the dash from the eye agree
+  on 43% vs 30%; the hosts' exterior greenhouses differ from both Forza
+  bodies), so the converter keeps the Forza cabin for both.
+
 ## Risks and open questions
 
 1. Whether the cockpit view draws only the interior entry (hypothesis). If
