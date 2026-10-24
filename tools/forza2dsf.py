@@ -1382,7 +1382,8 @@ def convert(stream, full: Entry, exterior: Entry, car: ForzaCar, dims: CarDims, 
         vo3d = child(nonr, "VO3D")
         # The speedometer stops at the Forza dial's last mark (p605).
         gauge_vo3d = cockpit.gauge_params(cf)
-        vo3d.payload = cockpit.patch_vo3d(payload(stream, vo3d), {**camera, **gauge_vo3d})
+        # The hand rig's offset from the steering marker would move the wheel off its Forza place.
+        vo3d.payload = cockpit.patch_vo3d(payload(stream, vo3d), {**camera, **gauge_vo3d, **cockpit.hand_params()})
         paint_uv = tex_ext.paint_uv if tex_ext is not None else PAINT_UV
         interior_report = cockpit.convert_interior(stream, interior, car, cf, place, seed, paint_uv,
                                                    opts.cockpit_opts or cockpit.CockpitOptions(),

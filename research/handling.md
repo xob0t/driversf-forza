@@ -179,6 +179,8 @@ The appendix lists every ID with stock statistics, the default and the
 functions that read it. About 40 stock IDs have no reader in the vehicle
 code range (310, 313, 410, 433..458, 513, 538..547, 559, 583, 584, 595, 598,
 600, 601). AI, audio or effects code outside the range probably reads them.
+p538 and p559 turned out to be the cockpit hands' anchor offset from the
+steering marker, read by `FUN_005743E0` (`research/cockpit.md`, "Driver's hands").
 
 ## Forza side
 
@@ -966,7 +968,7 @@ Default is the value `FUN_0088AC20` writes. Type comes from `0x00F3E450`
 | 535 | camera6_x | 0 |  | 0 | f | 88DF80 |
 | 536 | camera6_y | 140 | 0.65 / 0.935 / 4 | 0.9 | f | 88A790, 88DF80 |
 | 537 | camera6_z | 137 | -0.09 / 0.78 / 3.71 | 0.8 | f | 88DF80 |
-| 538 |  | 71 | -0.1 / 0.02 / 0.1 | 0 | f |  |
+| 538 | hand_anchor_y (cockpit.md) | 71 | -0.1 / 0.02 / 0.1 | 0 | f |  |
 | 540 |  | 1 | 90 / 90 / 90 | 100 | f | 88A790 |
 | 542 |  | 83 | 0.125 / 0.175 / 0.275 | 0.2 | f |  |
 | 544 |  | 2 | 60 / 60 / 60 | 85 | f |  |
@@ -978,7 +980,7 @@ Default is the value `FUN_0088AC20` writes. Type comes from `0x00F3E450`
 | 552 | camera8_x | 1 | -2 / -2 / -2 | 0 | f | 88E230 |
 | 553 | camera8_y | 4 | 0.77 / 1.61 / 2.6 | 1 | f | 88E230 |
 | 554 | camera8_z | 4 | -2 / -1 / 5 | -5 | f | 88E230 |
-| 559 |  | 40 | -0.3 / -0.05 / 0.1 | 0 | f |  |
+| 559 | hand_anchor_z (cockpit.md) | 40 | -0.3 / -0.05 / 0.1 | 0 | f |  |
 | 561 |  | 144 | 0 / 0 / 1 | -1 | f |  |
 | 568 |  | 1 | 0.75 / 0.75 / 0.75 | 1 | f | 8AF6A0 |
 | 569 | clutch_stiffness | 73 | 0.15 / 0.5 / 10 | 1 | f | 8C2420 |
