@@ -70,8 +70,8 @@ local OPTIONS = {
 -- The save holds flags for IDs up to 303 only.
 --
 -- dsfforza.asi's garage module (tools/asi, research/asi.md) lifts both: the
--- garage walks IDs up to 999, holds more maker groups (and drops what doesn't
--- fit instead of overrunning memory), and flags of IDs 304..999 go to
+-- garage walks IDs up to 999, holds more maker groups of any number of cars
+-- (and drops what doesn't fit instead of overrunning memory), and flags of IDs 304..999 go to
 -- <savegames>\dsfforza-garage.dat instead of the stock save block. Lua can't
 -- call native code, so the plugin answers ProfileSettings.GetVehicleUnlocked
 -- for magic IDs 8000000 + k (the game's Lua numbers are single floats, exact
@@ -98,10 +98,11 @@ local ASI = { save = asiQuery(0), garage = asiQuery(1) }
 if ASI.garage then
 	ASI.groups = asiLimit(0x1000, 40, 4000)   -- k = 0x1000 + n: n <= max groups
 	ASI.maxId = asiLimit(0x2000, 303, 4000)   -- k = 0x2000 + id: id is listed
+	ASI.cars = asiLimit(0x3000, 20, 4000)     -- k = 0x3000 + n: n <= cars per maker group (nil: 20)
 end
 
 local GARAGE_MAX_GROUPS = ASI.garage and ASI.groups or 40
-local GARAGE_MAX_PER_GROUP = 20
+local GARAGE_MAX_PER_GROUP = ASI.garage and ASI.cars or 20
 local GARAGE_MAX_ID = ASI.garage and ASI.maxId or 303
 local SAVE_MAX_ID = ASI.save and 999 or 303   -- highest ID whose save flags are safe to set
 local OVERFLOW_GROUP = "FORZA"   -- makes without a group of their own share FORZA, FORZA 2, ...
@@ -288,39 +289,23 @@ end
 -- The garage groups selectable cars of IDs 0..303 by the first 15 characters
 -- of ManufacturerName, upper-cased, into a fixed table of 40 groups of 20
 -- (FUN_006c57d0 and its inserts, no capacity check: more overruns memory).
--- With dsfforza.asi: IDs 0..GARAGE_MAX_ID, GARAGE_MAX_GROUPS groups, and a car
--- that doesn't fit is left out by the plugin.
+-- With dsfforza.asi: IDs 0..GARAGE_MAX_ID, GARAGE_MAX_GROUPS groups of
+-- GARAGE_MAX_PER_GROUP cars (the plugin's [garage] max_cars, 1000: a maker keeps
+-- all its cars in one group), and a car that doesn't fit is left out by the plugin.
 local function groupKey(name)
 	return string.sub(string.upper(tostring(name or "")), 1, 15)
 end
 
--- Extra groups of makers with more than 20 cars, from dsff gui_assets build
--- (hud.lua _groups): {ManufacturerName = {"ID:n" of "<maker> 2", "<maker> 3", ...}}.
-local CONTINUATION = HUD and type(HUD._groups) == "table" and HUD._groups or {}
-
--- Returns the ManufacturerName to use (the car's own, the maker's next group
--- "<maker> 2"... when its own is full, or a shared FORZA group when the maker
--- has no room), or nil when the car can't be listed. Same rule as
--- src/dsfforza/build/port_batch.py garage_group; one group slot is kept for FORZA.
+-- Returns the ManufacturerName to use (the car's own, or a shared FORZA group
+-- when its make has no room), or nil when the car can't be listed. Same rule
+-- as src/dsfforza/build/port_batch.py garage_group; one group slot is kept for FORZA.
 local function garageGroup(name, counts)
 	local key = groupKey(name)
 	local groups = 0
 	for _ in pairs(counts) do groups = groups + 1 end
-	local reserve = counts[OVERFLOW_GROUP] and 0 or 1
 	if counts[key] then
 		if counts[key] < GARAGE_MAX_PER_GROUP then return name end
-		local more = CONTINUATION[name]
-		if type(more) == "table" then
-			for _, label in ipairs(more) do
-				local k = groupKey(label)
-				if counts[k] then
-					if counts[k] < GARAGE_MAX_PER_GROUP then return label end
-				elseif groups + reserve < GARAGE_MAX_GROUPS then
-					return label
-				end
-			end
-		end
-	elseif groups + reserve < GARAGE_MAX_GROUPS then
+	elseif groups + (counts[OVERFLOW_GROUP] and 0 or 1) < GARAGE_MAX_GROUPS then
 		return name
 	end
 	local n = 1

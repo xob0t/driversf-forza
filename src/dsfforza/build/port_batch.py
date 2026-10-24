@@ -340,6 +340,7 @@ def diverse(picks: list[Pick], count: int) -> list[Pick]:
 GARAGE_GROUP_CAP = 20 - 1
 GARAGE_GROUPS_CAP = 40 - 1
 ASI_GROUPS_CAP = 120 - 1  # dsfforza.asi [garage] max_groups (default 120)
+ASI_GROUP_CAP = 1000  # dsfforza.asi [garage] max_cars: a maker group holds all its cars
 # --id-policy asi: the low IDs first. 62..303 holds 150 stock cars (and spool IDs without
 # a vehicleStats entry: 123, 131, 277, 289); the 92 others appear in no traffic set,
 # vehicleStats key or model-ID field of the game's Lua (research/asi.md), and the
@@ -387,26 +388,12 @@ OVERFLOW_GROUP = "FORZA"  # register.lua: makes without a garage group of their 
 
 def garage_group(make: str, group: str, counts: dict[str, int], cap: int, groups_cap: int) -> str | None:
     """The garage maker group a car joins, or None: its own group while it has room (a new
-    make opens one while fewer than groups_cap exist), then the maker's next groups
-    "<group> #2", "#3"... (gui_assets.continuation_groups labels them "<maker> 2"...),
-    else a shared FORZA, FORZA 2 ... group (the same rule as register.lua's garageGroup).
-    One group slot is kept for FORZA."""
-    reserve = 0 if OVERFLOW_GROUP in counts else 1  # keep room for FORZA
+    make opens one while fewer than groups_cap exist), else a shared FORZA, FORZA 2 ...
+    group (the same rule as register.lua's garageGroup). One group slot is kept for FORZA."""
     if group in counts:
         if counts[group] < cap:
             return group
-        k = 2
-        while True:
-            name = f"{group} #{k}"
-            if name in counts:
-                if counts[name] < cap:
-                    return name
-            elif len(counts) + reserve < groups_cap:
-                return name
-            else:
-                break
-            k += 1
-    elif len(counts) + reserve < groups_cap:
+    elif len(counts) + (0 if OVERFLOW_GROUP in counts else 1) < groups_cap:  # keep room for FORZA
         return group
     n = 1
     while True:
@@ -435,8 +422,8 @@ def assign_ids(picks: list[Pick], taken: set[int], policy: str, first_high: int)
     for the car, else first_high and up; "high": first_high and up only; "asi"
     (installs with dsfforza.asi): every free ID below 1000 in order, 1..61, the 92
     IDs in 62..303 the stock archive doesn't use, then first_high up, each car
-    garage-listed by the plugin while its maker group (ASI_GROUPS_CAP groups) has
-    room. List order decides which cars get the garage IDs (garage) or the group
+    garage-listed by the plugin while the maker list (ASI_GROUPS_CAP groups) has
+    room; the plugin's groups take any number of cars. List order decides which cars get the garage IDs (garage) or the group
     slots (asi). IDs some mod is known to use (RESERVED_IDS) are skipped."""
     low = [i for i in GARAGE_IDS if i not in taken] if policy == "garage" else []
     asi = [i for i in ASI_LOW_IDS if i not in taken and i not in RESERVED_IDS] if policy == "asi" else []
@@ -455,7 +442,7 @@ def assign_ids(picks: list[Pick], taken: set[int], policy: str, first_high: int)
         if low:
             p.notes_soft = "no garage group left"
         if policy == "asi" and own is not None:
-            group = garage_group(own, own, counts, GARAGE_GROUP_CAP, ASI_GROUPS_CAP)
+            group = garage_group(own, own, counts, ASI_GROUP_CAP, ASI_GROUPS_CAP)
             if group is None:
                 p.notes_soft = "no garage group left (dsfforza.asi)"
             else:

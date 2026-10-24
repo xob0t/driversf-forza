@@ -6,11 +6,14 @@
 //          <savegames>\dsfforza-garage.dat next to autosave.dat. The stock
 //          block keeps its layout, so the save still loads in an unmodded game.
 //   garage The maker-list builder walks IDs 0..999 instead of 0..303, with a
-//          relocated sort-key table; per-group (20) and group-count caps are
-//          enforced instead of overrunning memory; optionally the group table
-//          (stock 40) and the menu's maker index array are moved to larger
-//          storage, and the maker menu's script lists (menusmaster.sp, 40
-//          entries each) are grown when the menu is filled.
+//          relocated sort-key table; the group-count cap is enforced instead
+//          of overrunning memory; optionally the group table (stock 40) and
+//          the menu's maker index array are moved to larger storage, and the
+//          maker menu's script lists (menusmaster.sp, 40 entries each) are
+//          grown when the menu is filled. A group holds any number of cars
+//          (stock 20: IDs 21.. live here), and the vehicles screen, which
+//          has 20 cards, shows a longer group through a window of 19 cards
+//          that moves when Right/Left reach its edges.
 //   lua    ProfileSettings.GetVehicleUnlocked(8000000 + k) answers
 //          capability queries, so register.lua can tell the patch is active.
 #define WIN32_LEAN_AND_MEAN
@@ -18,7 +21,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <intrin.h>
+
 #include "patch.h"
+#include "shared.h"
 
 namespace {
 
@@ -78,6 +84,7 @@ char g_side_name[64] = "dsfforza-garage.dat";
 int32_t g_sortkey[kExtMax];
 int g_max_id = kExtMax;          // IDs the garage walks: 0 .. g_max_id-1
 int g_max_groups = kStockGroups;
+int g_max_cars = kGroupCars;     // cars per maker group ([garage] max_cars once the car list window is in)
 uint32_t g_groups_off = 0x20FC;  // groups table offset in the garage object
 uint32_t g_count_rel = kStockGroups * kGroupSize;  // count offset from the table
 int32_t* g_maker_index = nullptr;  // menu maker -> group index (index 1..groups)
@@ -271,14 +278,14 @@ int magic_query(uint32_t q)
     if (k == 1) return g_garage_active ? 1 : 0;                // garage walks IDs beyond 303
     if (k >= 0x1000 && k < 0x2000) return (int)(k - 0x1000) <= g_max_groups;   // n <= max groups
     if (k >= 0x2000 && k < 0x3000) return (int)(k - 0x2000) < (g_garage_active ? g_max_id : kStockIds);  // id listable
-    if (k == 2) return kGroupCars;
+    if (k >= 0x3000 && k < 0x4000) return (int)(k - 0x3000) <= g_max_cars;    // n <= cars per maker group
     return 0;
 }
 
 // thiscall(list object, id, bit) -> al = flag bit set.
 uint32_t __fastcall h_flag_test(char* list, void*, int id, uint32_t bit)
 {
-    if ((uint32_t)id - kMagic < 0x3000) return magic_query((uint32_t)id);
+    if ((uint32_t)id - kMagic < 0x4000) return magic_query((uint32_t)id);
     int32_t* base = (int32_t*)(list + 0x38);
     for (int i = 0; i < kStockIds; i++)
         if (base[2 * i] == id) return (base[2 * i + 1] >> (bit & 31)) & 1;
@@ -559,23 +566,131 @@ FILE* __cdecl f_read(const char* path, const char* mode)
     return f;
 }
 
-// ---- garage list stubs ----------------------------------------------------
-// FUN_006C5740(group, id): insert a car into a maker group; stock has no
-// capacity check (the 21st car overwrites the group's count).
-__declspec(naked) void s_group_add_car()
+// ---- maker groups of more than 20 cars ------------------------------------
+// A group keeps its first 20 IDs inline (+0x00..+0x4C) and its car count at
+// +0x50, as stock; IDs 21 and up live here, keyed by the group's name (+0x54,
+// 16 bytes). The builder files cars by that name, so it is unique, and it
+// travels with the group when FUN_006C7BB0 shifts the table to insert one.
+// Every reader outside the garage object goes through vfunc 0x12C (car i of
+// group g), which the plugin replaces, with the count from vfunc 0x130.
+const uint32_t kNameOff = 0x54;
+struct Over {
+    char name[16];
+    int32_t* ids;  // IDs 21.. of the group (kExtMax - 20 entries)
+};
+Over g_over[1000];
+int g_over_n = 0;
+
+int32_t* over_ids(const int32_t* group, bool create)
 {
-    __asm {
-        mov eax, [esp + 4]
-        cmp dword ptr [eax + 0x50], 20
-        jae full
-        push ebx
-        mov ebx, [esp + 0xC]
-        push 0x006C5745
-        ret
-    full:
-        ret 8
+    const char* name = (const char*)group + kNameOff;
+    for (int i = 0; i < g_over_n; i++)
+        if (memcmp(g_over[i].name, name, 16) == 0) return g_over[i].ids;
+    if (!create || g_over_n >= (int)(sizeof g_over / sizeof g_over[0])) return nullptr;
+    int32_t* ids = (int32_t*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (kExtMax - kGroupCars) * sizeof(int32_t));
+    if (!ids) return nullptr;
+    Over& o = g_over[g_over_n++];
+    memcpy(o.name, name, 16);
+    o.ids = ids;
+    return ids;
+}
+
+int32_t& group_at(int32_t* group, int32_t* over, int i) { return i < kGroupCars ? group[i] : over[i - kGroupCars]; }
+
+// FUN_006C5740 (thiscall garage, ret 8): file `id` into `group`, before the
+// first car whose sort key is larger (stock order; stock skips IDs past the
+// walked range). Stock has no capacity check: the 21st car overwrote the count.
+void __fastcall group_add_car(char* garage, void*, int32_t* group, int id)
+{
+    (void)garage;
+    int n = group[kGroupCars];
+    if (n < 0) n = 0;
+    int32_t* over = nullptr;
+    if (n >= g_max_cars || (n >= kGroupCars && !(over = over_ids(group, true)))) {
+        static int noted = 0;
+        if (noted++ < 5) {
+            char name[17] = {};
+            memcpy(name, (const char*)group + kNameOff, 16);
+            dsf_log("garage: maker group %s is full (%d cars); model %d not listed", name, n, id);
+        }
+        return;
+    }
+    int pos = n;
+    for (int i = 0; i < n; i++) {
+        uint32_t c = (uint32_t)group_at(group, over, i);
+        if (c < (uint32_t)g_max_id && g_sortkey[c] > g_sortkey[id]) {
+            pos = i;
+            break;
+        }
+    }
+    for (int i = n; i > pos; i--) group_at(group, over, i) = group_at(group, over, i - 1);
+    group_at(group, over, pos) = id;
+    group[kGroupCars] = n + 1;
+}
+
+int32_t* group_ptr(char* garage, int g) { return (int32_t*)(garage + g_groups_off + g * kGroupSize); }
+
+// ---- vehicles screen: a window of cards over a long group ------------------
+// The screen (vtable 0xE27394) has 20 cards: per-card arrays at +0x30 (picture
+// UID), +0xD0 (model ID), +0x120 (Header_Sprite_NN), +0x170 (title), +0x1C0
+// (status text), +0x218 (itemState_N), filled by the car list FUN_007113A0
+// for the group of categorySelected ([+0x268], 1-based) with card index =
+// itemBrowserIndex ([+0x26C], 0-based). A group of more than 20 listed cars
+// is shown through a window of 19 cards (card 20's Header_Sprite_20 stays
+// free for [hud] card_emblem): the car list starts at car `first`, stops
+// after 19 cards, and the window moves when itemBrowserIndex nears its edge.
+const uint32_t kRetCarListCar = 0x00711599;    // vfunc 0x12C call in the car list
+const uint32_t kRetCarListGroup = 0x00711443;  // vfunc 0x130 call in the car list
+const uint32_t kRetUpdateGroup = 0x007112FB;   // vfunc 0x130 call in the picture update (FUN_007112A0)
+const int kWindowCards = kGroupCars - 1;
+
+struct View {
+    int group = -1;           // group shown
+    int cars = 0;             // its car count
+    int listed = 0;           // its listed cars (ManufacturerNumList as the fill wrote it)
+    int first = 0;            // car index of the window's first card
+    int limit = kGroupCars;   // cards the car list fills at most
+    bool in_list = false;     // inside the car list (vfunc hooks apply)
+    int cards = 0;            // cards filled so far / by the last fill
+    bool stopped = false;     // the last fill stopped at `limit` cards
+    int last_car = -1;        // car index of the last card filled
+    int card_car[kGroupCars]; // car index of each card of the last fill
+    int8_t seen[kExtMax];     // per car index: -1 unknown, 0 no card, 1 a card
+};
+View g_view;
+bool g_window_on = false;   // [garage] max_cars > 20 and the screen hooks applied
+int g_margin_back = 2, g_margin_ahead = 8;
+int g_listed[1000];          // listed cars per maker menu entry, as FUN_006C6940 wrote them
+int g_listed_n = 0;
+bool g_menu_debug = false;
+
+// vfunc 0x12C (FUN_006C55A0, thiscall garage, ret 8): car i of group g.
+int32_t __fastcall group_car(char* garage, void*, int g, int i)
+{
+    int32_t* group = group_ptr(garage, g);
+    if (g_view.in_list && (uint32_t)_ReturnAddress() == kRetCarListCar) i += g_view.first;
+    if ((uint32_t)i < (uint32_t)kGroupCars) return group[i];
+    int32_t* over = i < group[kGroupCars] ? over_ids(group, false) : nullptr;
+    return over ? over[i - kGroupCars] : group[0];
+}
+
+// vfunc 0x130 (FUN_006C55C0, thiscall garage, ret 8): copy of group g's 0x6C
+// bytes. The car list gets the count from the window's first car on; the
+// picture update walks its per-card arrays by this count, so it gets at most
+// the cards the car list fills.
+void __fastcall group_copy(char* garage, void*, int g, int32_t* out)
+{
+    memcpy(out, group_ptr(garage, g), kGroupSize);
+    uint32_t ret = (uint32_t)_ReturnAddress();
+    if (ret == kRetCarListGroup && g_view.in_list) {
+        out[kGroupCars] -= g_view.first;
+        if (out[kGroupCars] < 0) out[kGroupCars] = 0;
+    } else if (ret == kRetUpdateGroup && out[kGroupCars] > g_view.limit) {
+        out[kGroupCars] = g_view.limit;
     }
 }
+
+int garage_card_limit_impl() { return g_view.limit; }
 
 // FUN_006C7BB0 (vector<group>::insert): drop the group when the table is full.
 __declspec(naked) void s_group_insert()
@@ -682,6 +797,32 @@ int list_grow(void* list, int need, const char* name)
     return cap;
 }
 
+// ManufacturerNumList holds each shown maker's listed cars; the menu script
+// sizes the card browser by it. A maker of more than 20 is shown through the
+// car list's window of 19 cards, so the script is told 19 (the true count is
+// kept for the car list).
+void numlist_window(void* list)
+{
+    g_listed_n = 0;
+    if (!list) return;
+    int n = list_len(list), type = *(int*)((char*)list + 8);
+    void** data = list_data(list);
+    if (!data || n <= 0 || (type != 0x0C && type != 0x0D)) return;
+    if (n > (int)(sizeof g_listed / sizeof g_listed[0])) n = sizeof g_listed / sizeof g_listed[0];
+    int windowed = 0;
+    for (int k = 0; k < n; k++) {
+        int v = type == 0x0C ? (int)(intptr_t)data[k] : (int)*(float*)&data[k];
+        g_listed[k] = v;
+        if (v > kGroupCars && g_window_on) {
+            if (type == 0x0C) data[k] = (void*)(intptr_t)kWindowCards;
+            else *(float*)&data[k] = (float)kWindowCards;
+            windowed++;
+        }
+    }
+    g_listed_n = n;
+    if (windowed && g_menu_debug) dsf_log("garage: %d makers of more than %d cars shown through a window", windowed, kGroupCars);
+}
+
 // Replaces the garage vtable's slot 0x124 (FUN_006C6940).
 void __fastcall fill_makers(char* garage, void*, void* l1, void* l2, void* l3, void* l4)
 {
@@ -707,6 +848,7 @@ void __fastcall fill_makers(char* garage, void*, void* l1, void* l2, void* l3, v
             list_len(lists[i]) = (int16_t)caps[i];
         }
     }
+    numlist_window(l3);
 }
 
 // Call sites 0x6C6AC8/0x6C6AE2: thiscall FUN_00ACE110(element, text, n) on the
@@ -721,6 +863,362 @@ __declspec(naked) void s_menu_set_string()
     missing:
         ret 8
     }
+}
+
+// ---- the car list (FUN_007113A0) -----------------------------------------------
+typedef void(__cdecl* SprintfFn)(char* out, int size, const char* fmt, ...);
+const SprintfFn game_snprintf = (SprintfFn)0x00903E90;
+typedef void(__cdecl* SetTextIdFn)(void* menu, void* text, const char* id, int value);
+const SetTextIdFn set_text_id = (SetTextIdFn)0x006CB160;   // "ID:244203" = "%d/%d OWNED" style total
+typedef char(__fastcall* FlagTestFn)(void* list, void*, int id, int bit);
+const FlagTestFn flag_test = (FlagTestFn)0x00507D30;
+typedef int*(__fastcall* FindVarFn)(void* vars, void*, const char* name, int* info);
+const FindVarFn find_var = (FindVarFn)0x00ACBE20;
+
+char* garage_object()
+{
+    char* engine = *kEngine;
+    if (!engine) engine = Engine_Get();
+    return engine ? *(char**)(engine + 0x718) : nullptr;
+}
+
+int* screen_var(uint8_t* screen, uint32_t off) { return *(int**)(screen + off); }
+
+// Group index of the vehicles screen's selected maker (as 0x00711411 reads it).
+int screen_group(uint8_t* screen, int cat)
+{
+    if (g_maker_index) return (cat >= 0 && cat <= g_max_groups) ? g_maker_index[cat] : -1;
+    return (cat >= 0 && cat <= kStockGroups) ? *(int*)(screen + 0x270 + cat * 4) : -1;
+}
+
+// Called by loop_stub at the end of each car of the car list loop: `done` cars
+// of the window walked, `cards` filled. Returns nonzero to end the loop.
+int __cdecl loop_next(int done, int cards)
+{
+    int car = g_view.first + done - 1;
+    bool card = cards > g_view.cards;
+    if (car >= 0 && car < kExtMax) g_view.seen[car] = card ? 1 : 0;
+    if (card && cards <= kGroupCars) {
+        g_view.card_car[cards - 1] = car;
+        g_view.last_car = car;
+    }
+    g_view.cards = cards;
+    g_view.stopped = cards >= g_view.limit;
+    return g_view.stopped;
+}
+
+// Replaces `mov [esp+0x30],eax; cmp eax,[esp+0x28]` (+ 3 NOPs) at 0x007118C3;
+// a `jb` (next car) follows: CF must say "below" to go on.
+__declspec(naked) void loop_stub()
+{
+    __asm {
+        mov [esp + 0x34], eax       // [esp+0x30] at the site
+        pushad
+        push ebp                    // cards filled
+        push eax                    // cars walked
+        call loop_next
+        add esp, 8
+        test eax, eax
+        popad
+        jnz stop
+        cmp eax, [esp + 0x2C]       // [esp+0x28] at the site: cars in the window
+        ret
+    stop:
+        cmp eax, eax                // CF = 0: leave the loop
+        ret
+    }
+}
+
+// The menu (MmDk CMenu [[screen+4]+8]): page stack at +0x1C0 (8-byte entries,
+// count +0x1CC; FUN_00AB9440), each entry's first word the page, whose first
+// word is its name; key table at +0x2A8 (FUN_00ABAA30: key * 0x140 + player * 0x28;
+// +0 state: 0xFF pressed, 1 held, 0xFE released; +0x14 cdecl handler(key, ctx)).
+uint8_t* screen_menu(uint8_t* screen)
+{
+    return *(uint8_t**)(screen + 4) ? *(uint8_t**)(*(uint8_t**)(screen + 4) + 8) : nullptr;
+}
+
+const char* top_page(uint8_t* menu)
+{
+    __try {
+        int depth = *(int*)(menu + 0x1CC);
+        uint8_t* stack = *(uint8_t**)(menu + 0x1C0);
+        if (depth <= 0 || depth > 64 || !stack) return "";
+        uint8_t* page = *(uint8_t**)(stack + (depth - 1) * 8);
+        const char* name = page ? *(const char**)page : nullptr;
+        if (!name || IsBadStringPtrA(name, 64)) return "";
+        return name;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return "";
+    }
+}
+
+const char* const kBrowserPage = "ItemBrowser";   // the card browser page of menusmaster.sp
+uint8_t* g_screen = nullptr;                 // the vehicles screen of the last car list
+
+// The card browser page is shared with the abilities and challenges lists; the
+// script variable startPageSelected says which one it shows (2 or 3 vehicles,
+// as the garage hub's FUN_0070E7D0 reads it; 1 abilities, 4 challenges).
+bool browser_open()
+{
+    uint8_t* menu = g_screen ? screen_menu(g_screen) : nullptr;
+    if (!menu || strcmp(top_page(menu), kBrowserPage) != 0) return false;
+    static uint8_t* var_menu = nullptr;
+    static int* page_var = nullptr;
+    if (var_menu != menu) {
+        var_menu = menu;
+        page_var = find_var(menu + 0x50, nullptr, "startPageSelected", nullptr);
+    }
+    return page_var && (*page_var == 2 || *page_var == 3);
+}
+
+// Moves the window one card: forward to the second card of the last fill, back
+// to the car before the first card's (skipping cars the list doesn't show).
+bool window_step(bool forward)
+{
+    if (forward) {
+        if (!g_view.stopped || g_view.last_car + 1 >= g_view.cars || g_view.cards < 2) return false;
+        g_view.first = g_view.card_car[1];
+        return true;
+    }
+    int car = g_view.first;
+    if (car <= 0) return false;
+    do car--;
+    while (car > 0 && g_view.seen[car] == 0);
+    g_view.first = car;
+    return true;
+}
+
+typedef void(__fastcall* CarListFn)(uint8_t* screen);
+typedef void(__cdecl* KeyFn)(int32_t* key, void* ctx);
+
+// The card browser's Right/Left: the script moves its highlight one card and
+// sets itemBrowserIndex, which only it can move on screen. Where a window shows
+// part of a long group, Right past `window_ahead` cards before the window's end
+// (Left within `window_back` of its start) is taken here instead: the window
+// moves one card and the list is refilled, so the highlighted card shows the
+// next car and the cards ahead the ones after it. itemBrowserIndex stays what
+// the script shows, so the side panel and Select keep matching the card.
+struct KeyWrap {
+    int32_t* key;
+    KeyFn orig;
+    bool right;
+    bool taken;   // the press was taken here: so are its held and released states
+    bool mid;     // ... or the hold, after the script had its press
+    int held;
+    int down;     // frames down since the press
+};
+KeyWrap g_keys[4];
+int g_keys_n = 0;
+
+bool key_take(KeyWrap& w)
+{
+    // MmDk key states (FUN_007193B0): 0xFF first frame down, 0xFE still down
+    // (the script repeats on it), 1 the release frame, 0 idle.
+    int state = w.key[0];
+    if (state == 0xFF) {
+        w.taken = false;   // a new press is decided afresh
+        w.down = 0;
+    } else if (state == 0xFE) {
+        w.down++;
+    }
+    if (w.taken) {
+        if (state == 0xFE) {
+            if (++w.held >= 18 && (w.held - 18) % 5 == 0 && g_screen && window_step(w.right))
+                ((CarListFn)0x007113A0)(g_screen);   // held: repeat
+            return true;
+        }
+        w.taken = false;
+        return !w.mid;   // a hold taken over midway: the script saw its press, so it sees the release
+    }
+    // Held: only once the script's own repeat runs (a tap lasts a few frames down).
+    if ((state != 0xFF && (state != 0xFE || w.down < 20)) || !g_screen || g_view.limit >= kGroupCars || !browser_open())
+        return false;
+    int* index = screen_var(g_screen, 0x26C);
+    if (!index) return false;
+    int idx = *index;
+    bool edge = w.right ? idx >= g_view.limit - 1 - g_margin_ahead : idx <= g_margin_back;
+    if (!edge || !window_step(w.right)) return false;
+    w.taken = true;
+    w.mid = state == 0xFE;   // the script's own key repeat reached the edge
+    w.held = 0;
+    ((CarListFn)0x007113A0)(g_screen);
+    if (g_menu_debug)
+        dsf_log("garage: %s at card %d: window from car %d", w.right ? "right" : "left", idx + 1, g_view.first);
+    return true;
+}
+
+void __cdecl key_hook(int32_t* key, void* ctx)
+{
+    for (int i = 0; i < g_keys_n; i++) {
+        if (g_keys[i].key != key) continue;
+        bool take = false;
+        __try {
+            take = key_take(g_keys[i]);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            static int noted = 0;
+            if (noted++ < 3) dsf_log("garage: fault in the card browser key hook");
+        }
+        static int logged = 0;
+        if (g_menu_debug && logged < 600 && key[0] != 0xFE) {
+            logged++;
+            int* index = g_screen ? screen_var(g_screen, 0x26C) : nullptr;
+            dsf_log("garage: key %s state %02X index %d -> %s", g_keys[i].right ? "right" : "left", key[0] & 0xFF,
+                    index ? *index : -1, take ? "taken" : "script");
+        }
+        if (!take) g_keys[i].orig(key, ctx);
+        return;
+    }
+}
+
+// Points the menu's Right/Left handlers (keys 2 and 3, players 0 and 1) at key_hook.
+void keys_wrap(uint8_t* menu)
+{
+    for (int player = 0; player < 2; player++) {
+        for (int k = 2; k <= 3; k++) {
+            int32_t* key = (int32_t*)(menu + 0x2A8 + k * 0x140 + player * 0x28);
+            uint32_t cb = (uint32_t)key[5];
+            if (cb == (uint32_t)key_hook) continue;
+            if (cb < 0x00401000 || cb >= 0x00DC9000) continue;
+            KeyWrap* w = nullptr;
+            for (int i = 0; i < g_keys_n; i++)
+                if (g_keys[i].key == key) w = &g_keys[i];
+            if (!w && g_keys_n < 4) w = &g_keys[g_keys_n++];
+            if (!w) continue;
+            w->key = key;
+            w->orig = (KeyFn)cb;
+            w->right = k == 2;
+            w->taken = false;
+            key[5] = (int32_t)key_hook;
+            dsf_log("garage: menu %p key %d player %d: handler %08X wrapped", menu, k, player, cb);
+        }
+    }
+}
+
+void debug_resolve(uint8_t* screen);
+
+void carlist_pre(uint8_t* screen)
+{
+    g_view.in_list = false;
+    if (!screen[0x270]) return;
+    debug_resolve(screen);
+    char* garage = garage_object();
+    int* cat_var = screen_var(screen, 0x268);
+    int* index = screen_var(screen, 0x26C);
+    if (!garage || !cat_var || !index) return;
+    int cat = *cat_var;
+    int g = screen_group(screen, cat);
+    int groups = *(int32_t*)(garage + g_groups_off + g_count_rel);
+    if (g < 0 || g >= groups) return;
+    int cars = group_ptr(garage, g)[kGroupCars];
+    int listed = (cat >= 1 && cat <= g_listed_n) ? g_listed[cat - 1] : cars;
+    g_screen = screen;
+    if (g != g_view.group || cars != g_view.cars || listed != g_view.listed) {
+        g_view.group = g;
+        g_view.cars = cars;
+        g_view.listed = listed;
+        g_view.first = 0;
+        memset(g_view.seen, -1, sizeof g_view.seen);
+    }
+    bool window = g_window_on && listed > kGroupCars;
+    g_view.limit = window ? kWindowCards : kGroupCars;
+    uint8_t* menu = screen_menu(screen);
+    // The maker list's preview, and so the card browser opened from it, starts at car 0 (a popup over the browser, such as
+    // the drive or buy question, keeps the window: the selection reads the card under the highlight).
+    const char* page = menu ? top_page(menu) : "";
+    if (!strcmp(page, "CategorySelect_Vehicles") || !strcmp(page, "InGarage")) g_view.first = 0;
+    if (window && menu) keys_wrap(menu);
+    if (g_menu_debug)
+        dsf_log("garage: car list: maker %d group %d, %d cars (%d listed), index %d, window from car %d, page %s",
+                cat, g, cars, listed, *index, g_view.first, menu ? top_page(menu) : "?");
+    g_view.cards = 0;
+    g_view.stopped = false;
+    g_view.last_car = -1;
+    g_view.in_list = true;
+}
+
+// After the fill: the "owned / total" texts count the whole group, not the window.
+void carlist_post(uint8_t* screen)
+{
+    if (!g_view.in_list) return;
+    g_view.in_list = false;
+    if (g_view.limit >= kGroupCars) return;
+    char* garage = garage_object();
+    char* engine = *kEngine;
+    if (!garage || !engine) return;
+    char* list = *(char**)(engine + 0x36C) + 0x14C;
+    int owned = 0;
+    for (int i = 0; i < g_view.cars; i++)
+        if (flag_test(list, nullptr, group_car(garage, nullptr, g_view.group, i), 1)) owned++;
+    *(int*)(screen + 0x28) = owned;
+    char text[32];
+    game_snprintf(text, sizeof text, (const char*)0x00DDB758, owned);
+    void* owned_text = *(void**)(screen + 0x210);
+    if (owned_text) {
+        typedef void(__fastcall * SetTextFn)(void*, void*, const char*);
+        ((SetTextFn)(*(void***)owned_text)[0xBC / 4])(owned_text, nullptr, text);
+    }
+    set_text_id(*(void**)(screen + 4), *(void**)(screen + 0x214), "ID:244203", g_view.cars);
+}
+
+// The original car list from its second instruction (its first is `sub esp,0x208`).
+__declspec(naked) void carlist_orig()
+{
+    __asm {
+        sub esp, 0x208
+        mov eax, 0x007113A6
+        jmp eax
+    }
+}
+
+// Jumped to from 0x007113A0 (thiscall screen, plain ret).
+void __fastcall carlist_hook(uint8_t* screen)
+{
+    carlist_pre(screen);
+    __asm {
+        mov ecx, screen
+        call carlist_orig
+    }
+    carlist_post(screen);
+}
+
+// [garage] menu_debug=1: a thread logs the vehicles screen's script variables when they change.
+const char* const kDebugVars[] = {"itemBrowserIndex", "categorySelected", "currentItemNum", "NumItemsVisible",
+                                  "startPageSelected", "ItemBrowserIndex", "currentItemMenuState", "itemSelected",
+                                  "sortCardsNow", "savedCategorySelected", "categoryIndex", "selectedItemState",
+                                  "itemBrowserExitLock", "prevPageMenuIndexLevel2", "prevPageMenuIndexLevel3"};
+const int kDebugN = sizeof kDebugVars / sizeof kDebugVars[0];
+int* volatile g_debug_ptr[kDebugN];
+uint8_t* volatile g_debug_screen = nullptr;
+
+DWORD WINAPI debug_thread(void*)
+{
+    int last[kDebugN];
+    for (int i = 0; i < kDebugN; i++) last[i] = 0x7FFFFFFF;
+    for (;;) {
+        Sleep(15);
+        for (int i = 0; i < kDebugN; i++) {
+            int* p = g_debug_ptr[i];
+            if (!p) continue;
+            int v = *p;
+            if (v != last[i]) {
+                dsf_log("garage: var %s = %d (%08X)", kDebugVars[i], v, v);
+                last[i] = v;
+            }
+        }
+    }
+}
+
+void debug_resolve(uint8_t* screen)
+{
+    if (!g_menu_debug || g_debug_screen == screen) return;
+    uint8_t* page = *(uint8_t**)(screen + 4) ? *(uint8_t**)(*(uint8_t**)(screen + 4) + 8) : nullptr;
+    if (!page) return;
+    for (int i = 0; i < kDebugN; i++) {
+        g_debug_ptr[i] = find_var(page + 0x50, nullptr, kDebugVars[i], nullptr);
+        dsf_log("garage: debug var %s at %p", kDebugVars[i], g_debug_ptr[i]);
+    }
+    g_debug_screen = screen;
 }
 
 // ---- patch helpers ------------------------------------------------------------
@@ -907,7 +1405,7 @@ bool install_list()
     edits[5] = {0x006C5771, 7, {0x3B, 0xAC, 0x97, 0x64, 0x32, 0x00, 0x00}, {0x3B, 0x2C, 0x95}};
     memcpy(edits[5].neu + 3, &key, 4);
     Hook caps[] = {
-        {0x006C5740, (void*)s_group_add_car, 5, {0x53, 0x8B, 0x5C, 0x24, 0x0C}},
+        {0x006C5740, (void*)group_add_car, 5, {0x53, 0x8B, 0x5C, 0x24, 0x0C}},
         {0x006C7BB0, (void*)s_group_insert, 9, {0x56, 0x8B, 0xF1, 0x8B, 0x86, 0xE0, 0x10, 0x00, 0x00}},
     };
     if (!edits_match("garage list", edits, 6) || !hooks_match("garage caps", caps, 2)) return false;
@@ -917,7 +1415,38 @@ bool install_list()
         return false;
     }
     dsf_log("garage: maker list walks model IDs 0..%d (stock 0..303); at most %d cars per group", g_max_id - 1,
-            kGroupCars);
+            g_max_cars);
+    return true;
+}
+
+// Maker groups of more than 20 cars: vfuncs 0x12C/0x130 read the plugin's
+// storage, the car list shows such a group through a window of 19 cards (all
+// or nothing; without it a group stays at 20 cars).
+bool install_window()
+{
+    const uint8_t none[1] = {0};
+    Edit edits[5];
+    int n = 0;
+    edits[n++] = edit_u32(0x00E18B1C, none, 0, 0x006C55A0, (uint32_t)group_car);    // garage vtable slot 0x12C
+    edits[n++] = edit_u32(0x00E18B20, none, 0, 0x006C55C0, (uint32_t)group_copy);   // slot 0x130
+    // The car list: prologue `sub esp,0x208` -> jmp carlist_hook; loop end -> loop_stub.
+    Edit& pro = edits[n++];
+    pro = {0x007113A0, 6, {0x81, 0xEC, 0x08, 0x02, 0x00, 0x00}, {0xE9, 0, 0, 0, 0, 0x90}};
+    int32_t rel = (int32_t)((uint32_t)carlist_hook - (0x007113A0 + 5));
+    memcpy(pro.neu + 1, &rel, 4);
+    Edit& loop = edits[n++];
+    loop = {0x007118C3, 8, {0x89, 0x44, 0x24, 0x30, 0x3B, 0x44, 0x24, 0x28}, {0xE8, 0, 0, 0, 0, 0x90, 0x90, 0x90}};
+    rel = (int32_t)((uint32_t)loop_stub - (0x007118C3 + 5));
+    memcpy(loop.neu + 1, &rel, 4);
+    // The maker menu fill (slot 0x124) tells the script 19 for a windowed maker;
+    // install_groups has already pointed it at fill_makers when it ran.
+    if (bytes_equal(0x00E18B14, "\x40\x69\x6C\x00", 4))
+        edits[n++] = edit_u32(0x00E18B14, none, 0, 0x006C6940, (uint32_t)fill_makers);
+    if (!edits_match("big maker groups", edits, n) || !apply_edits("big maker groups", edits, n)) return false;
+    g_window_on = true;
+    dsf_log("garage: maker groups of up to %d cars; one of more than %d is shown %d cards at a time "
+            "(vfuncs 12C/130 at E18B1C, car list 7113A0, 7118C3)",
+            g_max_cars, kGroupCars, kWindowCards);
     return true;
 }
 
@@ -1022,9 +1551,29 @@ void mod_garage_init()
         // Listing IDs the save can't hold would corrupt the stock arrays.
         dsf_log("garage: save hooks are off, so the garage list stays at IDs 0..303");
     } else {
+        int cars = cfg_int("garage", "max_cars", kExtMax);
+        g_max_cars = cars < kGroupCars ? kGroupCars : (cars > kExtMax ? kExtMax : cars);
+        g_menu_debug = cfg_bool("garage", "menu_debug", false);
+        g_margin_back = cfg_int("garage", "window_back", 2);
+        g_margin_ahead = cfg_int("garage", "window_ahead", 8);
+        if (g_margin_back < 0) g_margin_back = 0;
+        if (g_margin_ahead < 0) g_margin_ahead = 0;
+        if (g_margin_back + g_margin_ahead > kWindowCards - 2) g_margin_ahead = kWindowCards - 2 - g_margin_back;
+        int max_cars = g_max_cars;
+        g_max_cars = kGroupCars;   // until the window is in
         g_garage_active = install_list();
         if (g_garage_active && groups > kStockGroups && !install_groups(groups))
             dsf_log("garage: maker groups stay at 40");
         g_count_rel = (uint32_t)g_max_groups * kGroupSize;
+        if (g_garage_active && max_cars > kGroupCars) {
+            g_max_cars = max_cars;
+            if (!install_window()) {
+                g_max_cars = kGroupCars;
+                dsf_log("garage: maker groups stay at %d cars", kGroupCars);
+            }
+        }
+        if (g_menu_debug) CreateThread(nullptr, 0, debug_thread, nullptr, 0, nullptr);
     }
 }
+
+int garage_card_limit() { return g_window_on ? garage_card_limit_impl() : 20; }

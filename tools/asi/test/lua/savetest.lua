@@ -70,6 +70,21 @@ if type(cfg.fill) == "table" and type(vehicleStats) == "table" then
 	log(string.format("fill: vehicleStats %d..%d, %d per maker", f.first or 400, (f.first or 400) + (f.count or 0) - 1, per))
 end
 
+-- merge = { into = "ID:242753", from = { "ID:242757", "ID:242755" } }: the
+-- garage files every car of the `from` makers under `into` (one big group of
+-- real, drivable stock cars: Chevrolet 16 + Ford 13 + Dodge 10 = 39).
+if type(cfg.merge) == "table" and type(vehicleStats) == "table" then
+	local from, n = {}, 0
+	for _, name in ipairs(cfg.merge.from or {}) do from[name] = true end
+	for id, e in pairs(vehicleStats) do
+		if type(e) == "table" and from[e.ManufacturerName] then
+			e.ManufacturerName = cfg.merge.into
+			n = n + 1
+		end
+	end
+	log(string.format("merge: %d entries filed under %s", n, tostring(cfg.merge.into)))
+end
+
 local inCar, done = 0, false
 removeUserUpdateFunction("dsfforza_savetest")
 addUserUpdateFunction("dsfforza_savetest", function()

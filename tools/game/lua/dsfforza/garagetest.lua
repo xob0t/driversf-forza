@@ -107,8 +107,16 @@ if options then
 				log("garage.enterGarage: " .. tostring(ok) .. " " .. tostring(err))
 				log(summary())
 			end
-		elseif ticks % 10 == 0 then
-			log(summary())
+		else
+			if ticks % 10 == 0 then log(summary()) end
+			-- The car the player drives (a car picked in the garage replaces it on the way out).
+			local gv = type(car) == "table" and car.gameVehicle
+			local ok, model = pcall(function() return gv and gv.model_id end)
+			model = ok and model or nil
+			if model ~= state.driving then
+				state.driving = model
+				log("player drives model " .. tostring(model))
+			end
 		end
 	end, 30)
 	log(string.format("armed: garage %d after %d updates in a car", garageId, delay))
