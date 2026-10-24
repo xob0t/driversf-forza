@@ -867,3 +867,21 @@ python tools/port_batch.py build --list tools/batches/all.txt --gui --wide-glyph
 - Games: 392 FM4, 170 FH1.
 - Every car got full-entry LOD steps 3/4/5 and exterior LOD 1 at the first
   attempt.
+
+### Fixes (phase 2, one PR each)
+
+| PR | Cause | Cars | Result |
+| --- | --- | ---: | --- |
+| #33 | carbin parser: empty sections (FLT_MAX bounds), skinned section tails, binary names from wrong starts | FIA_595_68 (+ 102 wheel-archive carbins) | over all 1,665 carbins of the roster: 1,561 identical, 103 newly parse, 1 changed (Miata 94's wheel archive, from a garbage start to `wheel`) |
+| #35 (on #33) | no `wheel` section in the main carbin | 8 | wheel from `wheela` (Minis) or the wheel archive's carbin (360, 360 Challenge, Dino, Gallardo 05, Esperante, Corvette GS) |
+| #32 | only colour variants of `nodamage.xds` | 2 | Camaro Z28 79, Trans Am 73 build |
+| #36 | interior glass lint: stub cockpits check the host's stock interior; lamp-only cockpits can't have cracks | 14 lint | 562 of 562 lint ok |
+| #37 | ET file on the other game's disc, or only for the base model | 6 | Forza engine sound 6 of 6 |
+| #38 | no headlamp technique (reflector under a clear lens) | 10 | 8 get headlamps; the 2 NASCARs have decal headlights |
+| #34 | `--root-limit` not passed to the GUI step | all | gui.sp 1485 entries, one SPOI per picture |
+| #39 | makers with more than 20 cars spill into mixed FORZA groups | 121 | "FORD 2", "CHEVROLET 3"...: 104 groups, no FORZA group |
+
+All PRs keep the 4-car regression archive byte-identical
+(`8459AAF9...EC5A`). Not fixed: CHE_Volt_11 and NIS_Leaf_11 keep the host's
+engine sound (Forza's bank for electric cars is `NA.fsb`, which isn't on
+either disc).
