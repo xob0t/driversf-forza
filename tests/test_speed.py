@@ -61,6 +61,100 @@ def test_grid_nearest_matches_the_ring_search():
     assert damage.Grid([], []).nearest((0.0, 0.0, 0.0)) == []
 
 
+def test_closest_on_triangles_matches_closest_on_triangle():
+    import numpy as np
+
+    rng = random.Random(11)
+    tris, points = [], []
+    for _ in range(400):
+        a = tuple(rng.uniform(-1, 1) for _ in range(3))
+        kind = rng.random()
+        if kind < 0.1:  # degenerate: a point, or a line
+            b = a if rng.random() < 0.5 else tuple(a[i] + rng.uniform(-0.2, 0.2) for i in range(3))
+            c = b
+        else:
+            b = tuple(a[i] + rng.uniform(-0.3, 0.3) for i in range(3))
+            c = tuple(a[i] + rng.uniform(-0.3, 0.3) for i in range(3))
+        tris.append((a, b, c))
+        points.append(rng.choice([a, b, c]) if rng.random() < 0.1 else tuple(rng.uniform(-1.2, 1.2) for _ in range(3)))
+    corners = np.array(tris, dtype=np.float64)
+    for p in points[:60]:
+        d, bary = damage.closest_on_triangles(p, corners)
+        for n, t in enumerate(tris):
+            want_d, want_bary = damage.closest_on_triangle(p, *t)
+            assert d[n] == want_d and tuple(bary[n].tolist()) == want_bary
+
+
+def _vote_reference(cells, cell, f, q, normal, reach=None):
+    """The original DamagePlan._vote: every cell of each ring, one closest_on_triangle per triangle."""
+    from collections import Counter
+
+    key = tuple(int(math.floor(q[a] / cell)) for a in range(3))
+    scored = []
+    for r in range(8):
+        seen = set()
+        for dx in range(-r, r + 1):
+            for dy in range(-r, r + 1):
+                for dz in range(-r, r + 1):
+                    if max(abs(dx), abs(dy), abs(dz)) != r:
+                        continue
+                    seen.update(cells.get((key[0] + dx, key[1] + dy, key[2] + dz), ()))
+        for n in seen:
+            t = f.tris[n]
+            d, _ = damage.closest_on_triangle(q, *t[0])
+            scored.append(
+                (math.sqrt(d) + (damage.PANEL_FACING * (1 - damage._dot(normal, t[2])) if normal else 0.0), t[1])
+            )
+        if len(scored) >= 3 and sorted(scored)[2][0] <= r * cell:
+            break
+    if reach is not None:
+        scored = [sc for sc in scored if sc[0] <= reach]
+    if not scored:
+        return None
+    votes = Counter()
+    for score, pair in sorted(scored)[:3]:
+        votes[pair] += 1.0 / (score + 0.005)
+    return votes.most_common(1)[0][0]
+
+
+def test_panel_vote_matches_the_ring_search():
+    from collections import defaultdict
+
+    rng = random.Random(23)
+    tris = []
+    for _ in range(900):  # dense patches and a sparse spread, four panels
+        c = rng.choice([(0.5, 0.2, -0.3), (-0.6, 0.1, 0.4)]) if rng.random() < 0.7 else (0, 0, 0)
+        spread = 0.08 if c != (0, 0, 0) else 0.9
+        a = tuple(c[i] + rng.uniform(-spread, spread) for i in range(3))
+        corners = (
+            a,
+            tuple(a[i] + rng.uniform(-0.05, 0.05) for i in range(3)),
+            tuple(a[i] + rng.uniform(-0.05, 0.05) for i in range(3)),
+        )
+        normal = damage._norm(damage._cross(damage._sub(corners[1], corners[0]), damage._sub(corners[2], corners[0])))
+        if normal is not None:
+            tris.append((corners, rng.choice([(0, 0), (1, 2), (3, 4), (5, 6)]), normal, rng.random() < 0.5))
+    f = damage.HostField([], [], [], damage.Box((-1, -1, -1), (1, 1, 1)), tris=tris)
+    plan = object.__new__(damage.DamagePlan)
+    plan._grids = {}
+    plan._forza_norm = lambda p: p
+    allowed = {(0, 0), (1, 2), (3, 4), (5, 6)}
+    index = plan._tri_index(f, allowed)
+    cells = defaultdict(list)
+    for n, (pts, _, _, _) in enumerate(tris):
+        lo = [int(math.floor(min(p[a] for p in pts) / 0.08)) for a in range(3)]
+        hi = [int(math.floor(max(p[a] for p in pts) / 0.08)) for a in range(3)]
+        for i in range(lo[0], hi[0] + 1):
+            for j in range(lo[1], hi[1] + 1):
+                for k in range(lo[2], hi[2] + 1):
+                    cells[(i, j, k)].append(n)
+    for _ in range(150):
+        q = tuple(rng.uniform(-1, 1) for _ in range(3))
+        normal = damage._norm(tuple(rng.uniform(-1, 1) for _ in range(3))) if rng.random() < 0.8 else None
+        reach = rng.choice([None, 0.12])
+        assert plan._vote(index, f, q, normal, reach) == _vote_reference(cells, 0.08, f, q, normal, reach)
+
+
 # --- cockpit.visible_triangles and GlassSight -----------------------------------------
 
 
@@ -215,6 +309,313 @@ def test_glass_sight_matches_the_pixel_loops():
     place = type("Place", (), {"dy": 0.0, "dz": 0.0})()
     sight = cockpit.GlassSight(sections, eye, place, resolution=40)
     assert sight.faces == _sight_reference(sections, eye, resolution=40)
+
+
+# --- formats.xds: untile and decode_rgba -------------------------------------------------
+
+
+def _untile_reference(data: bytes):
+    """The original block-by-block untile."""
+    from dsfforza.formats import xds
+
+    fmt, width, height = xds.parse_header(data)
+    fourcc, block_size = xds.FORMATS[fmt]
+    payload = data[xds.HEADER_SIZE :]
+    blocks_w, blocks_h = max(1, (width + 3) // 4), max(1, (height + 3) // 4)
+    aligned_w, aligned_h = (blocks_w + 31) & ~31, (blocks_h + 31) & ~31
+    out = bytearray(blocks_w * blocks_h * block_size)
+    for n in range(aligned_w * aligned_h):
+        src = n * block_size
+        if src + block_size > len(payload):
+            break
+        x, y = xds.tiled_x(n, blocks_w, block_size), xds.tiled_y(n, blocks_w, block_size)
+        if x >= blocks_w or y >= blocks_h:
+            continue
+        block = bytearray(payload[src : src + block_size])
+        block[0::2], block[1::2] = block[1::2], block[0::2]
+        dst = (y * blocks_w + x) * block_size
+        out[dst : dst + block_size] = block
+    return bytes(out), width, height, fourcc
+
+
+def _decode_reference(blocks: bytes, width: int, height: int, fourcc: bytes) -> bytearray:
+    """The original per-block, per-texel DXT decoder."""
+    import struct
+
+    def rgb565(c):
+        return ((c >> 11) & 31) * 255 // 31, ((c >> 5) & 63) * 255 // 63, (c & 31) * 255 // 31
+
+    block_size = 8 if fourcc == b"DXT1" else 16
+    blocks_w, blocks_h = max(1, (width + 3) // 4), max(1, (height + 3) // 4)
+    out = bytearray(width * height * 4)
+    for by in range(blocks_h):
+        for bx in range(blocks_w):
+            b = blocks[(by * blocks_w + bx) * block_size : (by * blocks_w + bx + 1) * block_size]
+            alpha = [255] * 16
+            if block_size == 16:
+                a0, a1 = b[0], b[1]
+                table = [a0, a1] + (
+                    [((6 - i) * a0 + (i + 1) * a1) // 7 for i in range(6)]
+                    if a0 > a1
+                    else [((4 - i) * a0 + (i + 1) * a1) // 5 for i in range(4)] + [0, 255]
+                )
+                bits = int.from_bytes(b[2:8], "little")
+                alpha = [table[(bits >> (3 * i)) & 7] for i in range(16)]
+                b = b[8:]
+            c0, c1, idx = struct.unpack_from("<HHI", b)
+            p0, p1 = rgb565(c0), rgb565(c1)
+            if c0 > c1 or block_size == 16:
+                colours = [
+                    p0,
+                    p1,
+                    tuple((2 * x + y) // 3 for x, y in zip(p0, p1)),
+                    tuple((x + 2 * y) // 3 for x, y in zip(p0, p1)),
+                ]
+            else:
+                colours = [p0, p1, tuple((x + y) // 2 for x, y in zip(p0, p1)), (0, 0, 0)]
+            for i in range(16):
+                x, y = bx * 4 + i % 4, by * 4 + i // 4
+                if x < width and y < height:
+                    o = (y * width + x) * 4
+                    out[o : o + 3] = bytes(colours[(idx >> (2 * i)) & 3])
+                    out[o + 3] = alpha[i]
+    return out
+
+
+def _xds(fmt: int, width: int, height: int, payload: bytes) -> bytes:
+    import struct
+
+    header = bytearray(52)
+    struct.pack_into(">II", header, 0x20, fmt, (width - 1) | (height - 1) << 13)
+    return bytes(header) + payload
+
+
+def test_xds_untile_and_decode_match_the_block_loops():
+    from dsfforza.formats import xds
+
+    rng = random.Random(13)
+    for fmt, width, height, short in (
+        (18, 64, 32, 0),
+        (20, 128, 64, 0),
+        (20, 20, 12, 0),
+        (19, 8, 200, 0),
+        (18, 96, 96, 300),
+    ):
+        block = xds.FORMATS[fmt][1]
+        blocks = ((max(1, (width + 3) // 4) + 31) & ~31) * ((max(1, (height + 3) // 4) + 31) & ~31)
+        payload = bytes(rng.getrandbits(8) for _ in range(blocks * block - short * block))
+        data = _xds(fmt, width, height, payload)
+        assert xds.untile(data) == _untile_reference(data)
+        linear, w, h, fourcc = xds.untile(data)
+        assert xds.decode_rgba(linear, w, h, fourcc) == _decode_reference(linear, w, h, fourcc)
+
+
+# --- dsf_materials: DXT1/DXT5 encoding and the mip filter --------------------------------
+
+
+def _colour_block_reference(px):
+    import struct
+
+    def q565(r, g, b):
+        return ((r * 31 + 127) // 255) << 11 | ((g * 63 + 127) // 255) << 5 | ((b * 31 + 127) // 255)
+
+    def x565(c):
+        r, g, b = (c >> 11) & 31, (c >> 5) & 63, c & 31
+        return (r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)
+
+    lo = [min(p[c] for p in px) for c in range(3)]
+    hi = [max(p[c] for p in px) for c in range(3)]
+    axis = max(range(3), key=lambda c: hi[c] - lo[c])
+    mean = [sum(p[c] for p in px) / 16 for c in range(3)]
+    e0, e1 = list(hi), list(lo)
+    for c in range(3):
+        if c != axis and sum((p[axis] - mean[axis]) * (p[c] - mean[c]) for p in px) < 0:
+            e0[c], e1[c] = lo[c], hi[c]
+    inset = [(e0[c] - e1[c]) / 16 for c in range(3)]
+    e0 = [max(0, min(255, round(e0[c] - inset[c]))) for c in range(3)]
+    e1 = [max(0, min(255, round(e1[c] + inset[c]))) for c in range(3)]
+    c0, c1 = q565(*e0), q565(*e1)
+    if c0 < c1:
+        c0, c1 = c1, c0
+    if c0 == c1:
+        return struct.pack("<HHI", c0, c1, 0)
+    p0, p1 = x565(c0), x565(c1)
+    pal = [p0, p1, tuple((2 * a + b) // 3 for a, b in zip(p0, p1)), tuple((a + 2 * b) // 3 for a, b in zip(p0, p1))]
+    bits = 0
+    for i, p in enumerate(px):
+        best = min(range(4), key=lambda k: sum((p[c] - pal[k][c]) ** 2 for c in range(3)))
+        bits |= best << (2 * i)
+    return struct.pack("<HHI", c0, c1, bits)
+
+
+def _alpha_block_reference(alpha):
+    a0, a1 = max(alpha), min(alpha)
+    if a0 == a1:
+        return bytes((a0, a1)) + bytes(6)
+    pal = [a0, a1] + [((7 - k) * a0 + k * a1) // 7 for k in range(1, 7)]
+    bits = 0
+    for i, a in enumerate(alpha):
+        bits |= min(range(8), key=lambda k: abs(a - pal[k])) << (3 * i)
+    return bytes((a0, a1)) + bits.to_bytes(6, "little")
+
+
+def _encode_reference(rgba, width, height, dxt1=False):
+    out = bytearray()
+    for by in range(0, height, 4):
+        for bx in range(0, width, 4):
+            px, alpha = [], []
+            for y in range(4):
+                o = ((by + y) * width + bx) * 4
+                row = rgba[o : o + 16]
+                for x in range(4):
+                    px.append((row[x * 4], row[x * 4 + 1], row[x * 4 + 2]))
+                    alpha.append(row[x * 4 + 3])
+            out += (b"" if dxt1 else _alpha_block_reference(alpha)) + _colour_block_reference(px)
+    return bytes(out)
+
+
+def _downsample_reference(rgba, width, height):
+    w2, h2 = max(1, width // 2), max(1, height // 2)
+    out = bytearray(w2 * h2 * 4)
+    for y in range(h2):
+        r0, r1 = (2 * y) * width * 4, (2 * y + 1) * width * 4
+        for x in range(w2):
+            a, b = r0 + 8 * x, r1 + 8 * x
+            o = (y * w2 + x) * 4
+            for c in range(4):
+                out[o + c] = (rgba[a + c] + rgba[a + 4 + c] + rgba[b + c] + rgba[b + 4 + c] + 2) // 4
+    return out, w2, h2
+
+
+def test_dxt_encoders_match_the_block_loops():
+    from dsfforza.convert import dsf_materials as dm
+
+    rng = random.Random(17)
+    for width, height in ((16, 8), (32, 32), (8, 4)):
+        texels = []
+        for _ in range(width * height):
+            kind = rng.random()
+            if kind < 0.3:  # flat patches: equal endpoints
+                texels.append((90, 90, 90, 255))
+            elif kind < 0.6:  # a gradient (correlated channels, rounding ties)
+                v = rng.randrange(256)
+                texels.append((v, 255 - v, v // 2, rng.choice((0, 128, 255))))
+            else:
+                texels.append(tuple(rng.randrange(256) for _ in range(4)))
+        rgba = bytes(c for t in texels for c in t)
+        assert dm.encode_dxt5(rgba, width, height) == _encode_reference(rgba, width, height)
+        assert dm.encode_dxt1(rgba, width, height) == _encode_reference(rgba, width, height, dxt1=True)
+        assert dm.downsample(rgba, width, height) == _downsample_reference(rgba, width, height)
+    odd = bytes(rng.randrange(256) for _ in range(7 * 5 * 4))
+    assert dm.downsample(odd, 7, 5) == _downsample_reference(odd, 7, 5)
+
+
+def test_atlas_render_matches_the_texel_loop():
+    from pathlib import Path
+
+    from dsfforza.convert import dsf_materials as dm
+    from dsfforza.convert import forza_materials as fm
+
+    rng = random.Random(19)
+
+    class Atlases:
+        def __init__(self):
+            self.maps = {
+                fm.NODAMAGE: (64, 32, bytearray(rng.randrange(256) for _ in range(64 * 32 * 4))),
+                fm.LIGHTS: (32, 32, bytearray(rng.choice((0, 40, 200, 255)) for _ in range(32 * 32 * 4))),
+            }
+
+        def get(self, family):
+            return self.maps[family]
+
+    t = dm.Texturing(Path(), size=(64, 64), cutout_colour=(34, 34, 36, 0), lift={fm.NODAMAGE: 30})
+    t.atlases = Atlases()
+    t.regions = {
+        fm.NODAMAGE: [
+            dm.Region(fm.NODAMAGE, (0, 0, 40, 20), (0, 0), (28, 18)),
+            dm.Region(fm.NODAMAGE, (30, 10, 64, 32), (24, 10), (40, 30)),
+        ],
+        fm.LIGHTS: [dm.Region(fm.LIGHTS, (2, 3, 30, 31), (4, 40), (22, 20))],
+    }
+    t.scale = {fm.NODAMAGE: 0.6, fm.LIGHTS: 0.75}
+    t.alpha_only = {(fm.NODAMAGE, 1)}
+    t.solids = {("paint",): (56, 56), ("swatch", 1, 2, 3, 4): (48, 56)}
+    t.solid_colours = {("paint",): t.plain, ("swatch", 1, 2, 3, 4): (1, 2, 3, 4)}
+    assert t.render() == t._render_texels()
+
+
+# --- formats.wwise_bank: IMA ADPCM and WAV previews ------------------------------------
+
+
+def _decode_ima_reference(data: bytes, channels: int = 1):
+    import struct
+
+    from dsfforza.formats import wwise_bank as wb
+
+    out = [[] for _ in range(channels)]
+    span = wb.BLOCK * channels
+    for base in range(0, len(data) - span + 1, span):
+        for ch in range(channels):
+            b = base + ch * wb.BLOCK
+            pred, idx = struct.unpack_from("<hB", data, b)
+            idx = min(idx, 88)
+            samples = [pred]
+            for i in range(1, wb.BLOCK_SAMPLES):
+                byte = data[b + 4 + (i - 1) // 2]
+                nib = (byte >> 4) if (i - 1) & 1 else byte & 0xF
+                pred, idx = wb._expand(nib, pred, idx)
+                samples.append(pred)
+            out[ch].extend(samples)
+    return out
+
+
+def _encode_block_reference(x, idx):
+    from dsfforza.formats import wwise_bank as wb
+
+    pred = x[0]
+    nibs = []
+    err = 0.0
+    for i in range(1, wb.BLOCK_SAMPLES):
+        step = wb.STEPS[idx]
+        d = x[i] - pred
+        sign = 8 if d < 0 else 0
+        mag = min(7, (abs(d) * 4) // step) if step else 0
+        nib = sign | mag
+        pred, idx = wb._expand(nib, pred, idx)
+        err += (x[i] - pred) ** 2
+        nibs.append(nib)
+    nibs.append(0)
+    body = bytes(nibs[k] | (nibs[k + 1] << 4) for k in range(0, wb.BLOCK_SAMPLES, 2))
+    return body, idx, err
+
+
+def test_ima_adpcm_matches_the_sample_loops():
+    import struct
+    import tempfile
+    import wave
+    from pathlib import Path
+
+    from dsfforza.formats import wwise_bank as wb
+
+    rng = random.Random(29)
+    signal = [int(20000 * math.sin(i / 7.0) + rng.randint(-3000, 3000)) for i in range(64 * 6)]
+    signal += [32767, -32768] * 40 + [0] * 50  # clipping and silence
+    for idx in (0, 5, 40, 88):
+        for b in range(0, len(signal) - 64, 64):
+            block = signal[b : b + 64]
+            assert wb._encode_block(block, idx) == _encode_block_reference(block, idx)
+    data = wb.encode_ima(signal)
+    assert wb.decode_ima(data) == _decode_ima_reference(data)
+    stereo = bytes(rng.getrandbits(8) for _ in range(wb.BLOCK * 2 * 5))
+    assert wb.decode_ima(stereo, 2) == _decode_ima_reference(stereo, 2)
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "x.wav"
+        channels = [[1.7, -2.9, 40000, -40000.5, 12], [3, 4, -5, 6, 7, 8]]
+        wb.write_wav(path, channels, 22050)
+        with wave.open(str(path)) as w:
+            frames = w.readframes(w.getnframes())
+        want = b"".join(struct.pack("<h", max(-32768, min(32767, int(c[i])))) for i in range(5) for c in channels)
+        assert frames == want
 
 
 if __name__ == "__main__":

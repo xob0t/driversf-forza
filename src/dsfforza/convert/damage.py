@@ -42,7 +42,6 @@ from __future__ import annotations
 import argparse
 import colorsys
 import dataclasses
-import functools
 import math
 import re
 import struct
@@ -188,18 +187,6 @@ class Box:
         return tuple((other.size[a] / self.size[a]) if self.size[a] > 1e-3 else 1.0 for a in range(3))
 
 
-@functools.cache
-def _shell(r: int) -> tuple[tuple[int, int, int], ...]:
-    """Cell offsets at Chebyshev distance r (the cube shell of ring r)."""
-    return tuple(
-        (dx, dy, dz)
-        for dx in range(-r, r + 1)
-        for dy in range(-r, r + 1)
-        for dz in range(-r, r + 1)
-        if max(abs(dx), abs(dy), abs(dz)) == r
-    )
-
-
 class Grid:
     """k-nearest neighbours over 3D points (a uniform hash grid)."""
 
@@ -299,6 +286,57 @@ def closest_on_triangle(p, a, b, c):
     q = tuple(bary[0] * a[k] + bary[1] * b[k] + bary[2] * c[k] for k in range(3))
     d = _sub(p, q)
     return _dot(d, d), bary
+
+
+def closest_on_triangles(p, corners):
+    """closest_on_triangle for many triangles at once (corners: (n, 3, 3) array of
+    a, b, c), with its float operations and branch order: (squared distances,
+    barycentric (n, 3))."""
+    a, b, c = corners[:, 0], corners[:, 1], corners[:, 2]
+    p = np.asarray(p, dtype=np.float64)
+
+    def dot(u, v):
+        return u[:, 0] * v[:, 0] + u[:, 1] * v[:, 1] + u[:, 2] * v[:, 2]
+
+    ab, ac, ap = b - a, c - a, p - a
+    d1, d2 = dot(ab, ap), dot(ac, ap)
+    bp = p - b
+    d3, d4 = dot(ab, bp), dot(ac, bp)
+    cp = p - c
+    d5, d6 = dot(ab, cp), dot(ac, cp)
+    vc, vb, va = d1 * d4 - d3 * d2, d5 * d2 - d1 * d6, d3 * d6 - d5 * d4
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t3 = np.where(d1 != d3, d1 / (d1 - d3), 0.0)
+        t4 = np.where(d2 != d6, d2 / (d2 - d6), 0.0)
+        e, f = d4 - d3, d5 - d6
+        t5 = np.where((e + f) != 0, e / (e + f), 0.0)
+        denom = va + vb + vc
+        v = np.where(denom != 0, vb / denom, 0.0)
+        w = np.where(denom != 0, vc / denom, 0.0)
+    # The branches from the last to the first, so the first that applies wins.
+    b0, b1, b2 = 1 - v - w, v, w
+    for cond, (x0, x1, x2) in (
+        ((va <= 0) & (e >= 0) & (f >= 0), (0.0, 1 - t5, t5)),
+        ((vb <= 0) & (d2 >= 0) & (d6 <= 0), (1 - t4, 0.0, t4)),
+        ((vc <= 0) & (d1 >= 0) & (d3 <= 0), (1 - t3, t3, 0.0)),
+        ((d6 >= 0) & (d5 <= d6), (0.0, 0.0, 1.0)),
+        ((d3 >= 0) & (d4 <= d3), (0.0, 1.0, 0.0)),
+        ((d1 <= 0) & (d2 <= 0), (1.0, 0.0, 0.0)),
+    ):
+        b0, b1, b2 = np.where(cond, x0, b0), np.where(cond, x1, b1), np.where(cond, x2, b2)
+    q = b0[:, None] * a + b1[:, None] * b + b2[:, None] * c
+    d = p - q
+    return d[:, 0] * d[:, 0] + d[:, 1] * d[:, 1] + d[:, 2] * d[:, 2], np.stack((b0, b1, b2), axis=1)
+
+
+def _tri_arrays(f) -> tuple:
+    """(corners (n, 3, 3), unit normals (n, 3)) of a HostField's triangles, made once."""
+    cached = f.__dict__.get("_tri_arrays")
+    if cached is None or cached[0] != len(f.tris):
+        corners = np.array([t[0] for t in f.tris], dtype=np.float64).reshape(-1, 3, 3)
+        normals = np.array([t[2] for t in f.tris], dtype=np.float64).reshape(-1, 3)
+        cached = f._tri_arrays = (len(f.tris), corners, normals)
+    return cached[1], cached[2]
 
 
 class Uv1Field:
@@ -1351,20 +1389,30 @@ class DamagePlan:
         return self._vote(self._tri_index(f, allowed), f, p_dsf, normal)
 
     def _vote(self, index, f: HostField, p_dsf, normal, reach: float | None = None) -> tuple | None:
+        """The panel of the host triangles nearest to p_dsf (normalised distance plus a
+        facing penalty), its three best scores weighted: the triangles of the grid
+        cells ring by ring around p's cell (a triangle once per ring it touches), up
+        to the first ring at which the third best is within reach of the ring."""
         if index is None:
             return None
-        cells, cell = index
+        cell, keys, members = index
         q = self._forza_norm(p_dsf)
         key = tuple(int(math.floor(q[a] / cell)) for a in range(3))
+        # The occupied cells by ring (Chebyshev distance in cells): ring r is order[at[r]:at[r + 1]].
+        ring = np.abs(keys - np.array(key, dtype=np.int64)).max(axis=1)
+        order = ring.argsort(kind="stable")
+        at = np.searchsorted(ring[order], np.arange(9)).tolist()
+        order = order[: at[8]].tolist()
+        scores: dict[int, tuple] = {}  # triangle -> (score, pair)
         scored = []
         for r in range(8):
             seen = set()
-            for dx, dy, dz in _shell(r):
-                seen.update(cells.get((key[0] + dx, key[1] + dy, key[2] + dz), ()))
-            for n in seen:
-                t = f.tris[n]
-                d, _ = closest_on_triangle(q, *t[0])
-                scored.append((math.sqrt(d) + (PANEL_FACING * (1 - _dot(normal, t[2])) if normal else 0.0), t[1]))
+            for i in order[at[r] : at[r + 1]]:
+                seen.update(members[i])
+            new = [n for n in seen if n not in scores]
+            if new:
+                self._score_triangles(f, q, normal, new, scores)
+            scored += (scores[n] for n in seen)
             # Cells within r of q's cell cover every triangle closer than r * cell.
             if len(scored) >= 3 and sorted(scored)[2][0] <= r * cell:
                 break
@@ -1376,6 +1424,27 @@ class DamagePlan:
         for score, pair in sorted(scored)[:3]:
             votes[pair] += 1.0 / (score + 0.005)
         return votes.most_common(1)[0][0]
+
+    @staticmethod
+    def _score_triangles(f: HostField, q, normal, ns: list[int], out: dict) -> None:
+        """out[n] = (distance from q to triangle n + facing penalty, its pair); a few
+        triangles one by one, more at once (closest_on_triangles, the same floats)."""
+        if len(ns) < 24:
+            for n in ns:
+                t = f.tris[n]
+                d, _ = closest_on_triangle(q, *t[0])
+                out[n] = (math.sqrt(d) + (PANEL_FACING * (1 - _dot(normal, t[2])) if normal else 0.0), t[1])
+            return
+        corners, normals = _tri_arrays(f)
+        d, _ = closest_on_triangles(q, corners[ns])
+        score = np.sqrt(d)
+        if normal:
+            m = normals[ns]
+            score = score + PANEL_FACING * (1 - (normal[0] * m[:, 0] + normal[1] * m[:, 1] + normal[2] * m[:, 2]))
+        else:
+            score = score + 0.0
+        for n, value in zip(ns, score.tolist(), strict=True):
+            out[n] = (value, f.tris[n][1])
 
     def _tri_index(self, f: HostField, allowed: set, paint: bool = False):
         """Host part-0 triangles of the allowed panels (paint: only the shared
@@ -1394,7 +1463,10 @@ class DamagePlan:
                     for j in range(lo[1], hi[1] + 1):
                         for k in range(lo[2], hi[2] + 1):
                             cells[(i, j, k)].append(n)
-            self._grids[key] = (dict(cells), cell) if cells else None
+            # (cell, the occupied cells' keys as an array, their triangle lists) for _vote
+            self._grids[key] = (
+                (cell, np.array(list(cells), dtype=np.int64).reshape(-1, 3), list(cells.values())) if cells else None
+            )
         return self._grids[key]
 
     def _side_panel(self, roles, centroid) -> tuple | None:
