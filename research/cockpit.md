@@ -586,7 +586,9 @@ What `fit` does now (`main_sections` = the main carbin):
   2.5 m). `convert_interior` steps to finer shell LODs until it's open
   (LOD 4 for all of them). Single rays gave false alarms on the windscreen
   frit or sun strip (`black_glass`) of 40 cars.
-- `forza2dsf.convert` keeps the host interior only if `fit` still fails.
+- `forza2dsf.convert` keeps the host interior if `fit` still fails, or (from
+  2026-10-24) when the cockpit is a placeholder and the host is the same
+  vehicle ("Placeholder cockpits on a same-vehicle host").
 
 Offline renders of the fallback cars (`out/cockpit4/fallbacks.sp`, IDs 304
 Durango, 305 Express, 306 F350, 307 Taurus SHO, 308 FM4 CTS-V):
@@ -1027,7 +1029,55 @@ with N and its scale (observe-10), the 370Z's LCD panels under the HUD
   whose dash is the Express's; the Durango's host 138 is an Audi Q7. No
   geometric test separated the two (rays over the dash from the eye agree
   on 43% vs 30%; the hosts' exterior greenhouses differ from both Forza
-  bodies), so the converter keeps the Forza cabin for both.
+  bodies), so the converter kept the Forza cabin for both. Superseded for
+  the Express: "Placeholder cockpits on a same-vehicle host" below tells
+  the two apart by identity, not geometry.
+
+## Placeholder cockpits on a same-vehicle host (2026-10-24)
+
+When Forza's cockpit carbin is a placeholder (`cockpit.is_stub`: the 18
+FH1 traffic cars of "Cars without a usable cockpit carbin") and the host is
+the same vehicle, the host's stock interior entry stays: cockpit, gauges,
+steering wheel and hands, head camera, interior glass. It is that
+vehicle's real cabin, where Forza only has the main carbin's LOD 1 stand-in.
+
+**Same vehicle** (`host_select.same_vehicle`; `port_car.pick_hosts` puts it
+in the host choice, `ConvertOptions.same_vehicle_host`): same body class,
+model years within 4 and wheelbase within 2.5% and length within 4%, and
+either
+
+- the same model by `identity_score` (make, model name, year within 4), or
+- a badge twin: another make of the same corporate group
+  (`MAKE_GROUPS`: GM, Chrysler, Ford, VW, Toyota, Nissan, Honda) with
+  wheelbase and length both within 1%. Platform mates share a wheelbase but
+  not the cabin, and their lengths differ more: 300C on the Charger 1.6%,
+  Cuda on the Challenger (wheelbase 2.1%), Golf R on the Scirocco (same
+  badge).
+
+A shared model family alone (A4 Avant 2004 on the A4 2010, Beetle 2004 on
+the Beetle Convertible 2009) or a platform (Yukon XL 2001 on the Escalade
+2007) is not the same vehicle.
+
+Roster check (`out/cc/samevehicle_roster.py` over `research/host-picks.tsv`,
+`out/cc/samevehicle.txt`): 27 of 573 picks are the same vehicle, 26 by
+model (370Z, TT RS, Mito, Ford GT, ...) and one badge twin (Express on the
+GMC Savana). The rule only acts where the Forza cockpit is a placeholder:
+the Express (198 GMC Savana), the F-350 Super Duty (252, its stock self)
+and the Taurus SHO (196, its stock self). The other 15 stub cars keep the
+Forza cabin (Durango on the Audi Q7, Yukon XL on the Escalade, A4 Avant on
+the A4 2010, ...). Of the 40 test-drive cars only the Express changes.
+
+What stays consistent: the host's hierarchy is not patched for the cockpit
+(steering hinge and marker, gauge table, seats, head camera VO3D 430-432
+stay stock, as with `--no-cockpit`); the Forza steering wheel in the full
+and exterior entries is not skinned (it isn't drawn from the cockpit);
+damage still moves the panel records onto the Forza panels, so the stock
+interior's door cards and glass follow the Forza doors and windows. The
+report has `cockpit_host` instead of `cockpit`.
+
+Offline (`out/stubhost/build`; before: `out/testdrive10` for the Express,
+`out/stubhost/before` built with the rule off for the F-350 and Taurus):
+`img/cockpit-stub-host-offline.png`.
 
 ## Badges seen through the windscreen (2026-10-24)
 
