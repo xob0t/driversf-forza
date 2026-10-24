@@ -1,0 +1,433 @@
+"""Per-car build fingerprints: what a port_batch worker read and which code it ran, so a
+later build can reuse the car's output when none of it changed (port_batch build
+--reuse, research/batch.md "Selective rebuild").
+
+A worker records, while it converts one car:
+
+- every file it opens for reading (an audit hook on "open" and "sqlite3.connect"),
+  except Python's own files and this package's sources, with a digest: SHA-256 for
+  files up to 64 MiB, else size, mtime and the SHA-256 of the first and last 4 MiB
+  (the stock archive, the disc images);
+- every directory it lists (os.listdir, os.scandir), as a digest of the names;
+- the code it ran (sys.monitoring PY_START, each code object once), as units of
+  the package's modules: a function or method body, a class body without its
+  methods, a module-level assignment, and the rest of a module (imports and other
+  top-level statements). A unit's hash is its AST without docstrings, so comments
+  and formatting don't count. The car depends on the units it executed, the
+  module-level names its executed code mentions (a constant used by a function the
+  car ran), and the top level of every package module it had loaded.
+
+`check` compares a stored fingerprint with the current files and sources; a car is
+reusable only when every recorded input and unit is unchanged.
+"""
+
+from __future__ import annotations
+
+import ast
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+
+import dsfforza
+
+FORMAT = 1
+BIG = 64 << 20  # files above this get a partial digest
+EDGE = 4 << 20
+PACKAGE = Path(dsfforza.__file__).resolve().parent
+MODULE_UNIT = "<module>"
+
+
+# --- digests ------------------------------------------------------------------------
+
+
+def norm(path) -> str:
+    """A path as recorded: absolute, links and junctions resolved, case-folded on Windows."""
+    return os.path.normcase(os.path.realpath(os.fspath(path)))
+
+
+def file_digest(path: str) -> str:
+    target = Path(path)
+    try:
+        size, mtime = target.stat().st_size, target.stat().st_mtime_ns
+        with target.open("rb") as handle:
+            if size <= BIG:
+                return "sha256:" + hashlib.file_digest(handle, "sha256").hexdigest()
+            h = hashlib.sha256(handle.read(EDGE))
+            handle.seek(size - EDGE)
+            h.update(handle.read(EDGE))
+            return f"big:{size}:{mtime}:{h.hexdigest()}"
+    except FileNotFoundError:
+        return "missing"
+    except IsADirectoryError:
+        return "directory"
+    except PermissionError:
+        return "directory" if target.is_dir() else "unreadable"
+    except OSError:
+        return "unreadable"
+
+
+def dir_digest(path: str) -> str:
+    try:
+        names = sorted(p.name for p in Path(path).iterdir())
+    except (FileNotFoundError, NotADirectoryError):
+        return "missing"
+    except OSError:
+        return "unreadable"
+    return "names:" + hashlib.sha256("\n".join(names).encode("utf-8", "surrogateescape")).hexdigest()
+
+
+# --- code units -----------------------------------------------------------------------
+
+
+def _strip_docstring(body: list) -> list:
+    first = body[0] if body else None
+    if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+        return body[1:]
+    return body
+
+
+def _digest(node) -> str:
+    return hashlib.sha256(ast.dump(node).encode()).hexdigest()[:24]
+
+
+def _function_unit(node) -> str:
+    copy = ast.FunctionDef if isinstance(node, ast.FunctionDef) else ast.AsyncFunctionDef
+    return _digest(
+        copy(
+            name=node.name,
+            args=node.args,
+            body=_strip_docstring(node.body),
+            decorator_list=node.decorator_list,
+            returns=node.returns,
+            type_params=getattr(node, "type_params", []),
+        )
+    )
+
+
+def _class_units(node: ast.ClassDef, prefix: str, out: dict) -> None:
+    name = prefix + node.name
+    rest = []
+    for stmt in _strip_docstring(node.body):
+        if isinstance(stmt, ast.FunctionDef | ast.AsyncFunctionDef):
+            out[f"{name}.{stmt.name}"] = _function_unit(stmt)
+            rest.append(ast.Name(id=f"def {stmt.name}"))
+        elif isinstance(stmt, ast.ClassDef):
+            _class_units(stmt, name + ".", out)
+            rest.append(ast.Name(id=f"class {stmt.name}"))
+        else:
+            rest.append(stmt)
+    out[name] = _digest(
+        ast.ClassDef(
+            name=node.name,
+            bases=node.bases,
+            keywords=node.keywords,
+            body=rest,
+            decorator_list=node.decorator_list,
+            type_params=getattr(node, "type_params", []),
+        )
+    )
+
+
+def module_units(source: str) -> dict[str, str]:
+    """{unit name: hash} of one module: "f" (function), "C" (class body without its
+    methods), "C.m" (method), "=NAME" (a module-level assignment or import of NAME),
+    "<module>" (the other top-level statements, defs inside them included)."""
+    tree = ast.parse(source)
+    out: dict[str, str] = {}
+    rest = []
+    for stmt in _strip_docstring(tree.body):
+        if isinstance(stmt, ast.FunctionDef | ast.AsyncFunctionDef):
+            out[stmt.name] = _function_unit(stmt)
+        elif isinstance(stmt, ast.ClassDef):
+            _class_units(stmt, "", out)
+        elif isinstance(stmt, ast.Import | ast.ImportFrom):
+            # One unit per bound name, so adding an import doesn't count for the cars
+            # whose code never mentions it.
+            for alias in stmt.names:
+                bound = alias.asname or alias.name.split(".")[0]
+                out["=" + bound] = _digest(
+                    ast.ImportFrom(module=getattr(stmt, "module", None), names=[alias], level=getattr(stmt, "level", 0))
+                )
+        elif isinstance(stmt, ast.Assign | ast.AnnAssign | ast.AugAssign):
+            targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+            names = [n.id for t in targets for n in ast.walk(t) if isinstance(n, ast.Name)]
+            if names:
+                for name in names:
+                    out["=" + name] = _digest(stmt)
+            else:
+                rest.append(stmt)
+        else:
+            rest.append(stmt)
+    out[MODULE_UNIT] = _digest(ast.Module(body=rest, type_ignores=[]))
+    return out
+
+
+def module_name(path: str) -> str | None:
+    """dsfforza.<group>.<module> for a source file of the package, else None."""
+    try:
+        rel = Path(path).resolve().relative_to(PACKAGE)
+    except ValueError:
+        return None
+    if rel.suffix != ".py":
+        return None
+    parts = ["dsfforza", *rel.with_suffix("").parts]
+    if parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+def unit_of(qualname: str) -> str:
+    """The unit a code object belongs to: its enclosing top-level function, method or
+    class (nested functions, lambdas and comprehensions are part of it); module-level
+    lambdas and comprehensions are the module's top level."""
+    name = qualname.split(".<locals>", 1)[0]
+    return MODULE_UNIT if name.startswith("<") else name
+
+
+class CodeUnits:
+    """The current units of every package module, read from the sources once."""
+
+    def __init__(self):
+        self._units: dict[str, dict[str, str] | None] = {}
+
+    def get(self, module: str) -> dict[str, str] | None:
+        if module not in self._units:
+            path = PACKAGE.joinpath(*module.split(".")[1:])
+            source = path / "__init__.py" if path.is_dir() else path.with_suffix(".py")
+            try:
+                self._units[module] = module_units(source.read_text(encoding="utf-8"))
+            except (OSError, SyntaxError):
+                self._units[module] = None
+        return self._units[module]
+
+
+def package_hashes() -> dict[str, str]:
+    """SHA-256 of every package source file (to notice an edit while a worker runs)."""
+    return {
+        str(p.relative_to(PACKAGE)): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in sorted(PACKAGE.rglob("*.py"))
+        if "__pycache__" not in p.parts
+    }
+
+
+# --- recording in a worker ----------------------------------------------------------------
+
+_SKIP_PREFIXES = tuple(
+    sorted({norm(p) for p in (sys.prefix, sys.base_prefix, sys.exec_prefix, PACKAGE) if p}, key=len, reverse=True)
+)
+
+
+class Recorder:
+    """Records a worker's reads and executed code from start() on."""
+
+    def __init__(self, outputs: list[Path] | None = None):
+        self.opened: list = []  # (path, mode, flags) as the audit hook saw them
+        self.listed: list = []
+        self.codes: set = set()
+        self.outputs = tuple(norm(p) for p in (outputs or []))
+        self.tool = None
+        self.tree = None
+        self.active = False
+
+    def start(self) -> Recorder:
+        self.tree = package_hashes()
+        self.active = True
+        sys.addaudithook(self._audit)
+        mon = sys.monitoring
+        mon.restart_events()  # code an earlier recorder in this process saw once (DISABLE)
+        for tool in (4, 3, mon.COVERAGE_ID):
+            if mon.get_tool(tool) is None:
+                mon.use_tool_id(tool, "dsfforza-fingerprint")
+                mon.register_callback(tool, mon.events.PY_START, self._started)
+                mon.set_events(tool, mon.events.PY_START)
+                self.tool = tool
+                break
+        return self
+
+    def _audit(self, event: str, args) -> None:
+        # Keep this cheap and free of audited calls: just remember the raw arguments.
+        if not self.active:  # an audit hook can't be removed: after finish() it ignores all
+            return
+        if event == "open":
+            self.opened.append(args)
+        elif event in ("os.listdir", "os.scandir"):
+            self.listed.append(args[0] if args else ".")
+        elif event == "sqlite3.connect":
+            self.opened.append((args[0], "sqlite", 0))
+
+    def _started(self, code, offset):
+        self.codes.add(code)
+        return sys.monitoring.DISABLE
+
+    def stop(self) -> None:
+        self.active = False
+        if self.tool is not None:
+            sys.monitoring.set_events(self.tool, 0)
+            sys.monitoring.register_callback(self.tool, sys.monitoring.events.PY_START, None)
+            sys.monitoring.free_tool_id(self.tool)
+            self.tool = None
+
+    def _inputs(self) -> tuple[set[str], set[str]]:
+        files, dirs = set(), set()
+        for path, mode, flags in self.opened:
+            if isinstance(path, int) or path is None:
+                continue  # an open file descriptor: its path was recorded when it was opened
+            if mode == "sqlite":
+                path = os.fspath(path)
+                if isinstance(path, str) and path.startswith("file:"):  # a URI: file:<path>?mode=ro
+                    path = path[5:].split("?", 1)[0]
+                if path in ("", ":memory:"):
+                    continue
+                mode = "r"
+            if mode is not None and any(c in str(mode) for c in "wax+"):
+                continue  # written: an output (or a cache entry; it is recorded when read)
+            if mode is None and flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND):
+                continue
+            try:
+                files.add(norm(path))
+            except (TypeError, ValueError, OSError):
+                continue
+        for path in self.listed:
+            if isinstance(path, int):
+                continue
+            try:
+                dirs.add(norm(path))
+            except (TypeError, ValueError, OSError):
+                continue
+
+        def keep(p: str) -> bool:
+            return (
+                not p.startswith(_SKIP_PREFIXES)
+                and not p.startswith(self.outputs)
+                and "__pycache__" not in p
+                and not p.endswith(".tmp")
+            )
+
+        return {p for p in files if keep(p)}, {p for p in dirs if keep(p)}
+
+    def finish(self, job: dict) -> dict:
+        """The fingerprint (a JSON-able dict) of everything recorded since start()."""
+        self.stop()
+        files, dirs = self._inputs()
+        modules = [sys.modules[k] for k in list(sys.modules) if k.startswith("dsfforza")]
+        names: set[str] = set()
+        executed: dict[str, set[str]] = {}
+        for code in self.codes:
+            module = module_name(code.co_filename)
+            if module is None or module == __name__:  # the recorder itself shapes no output
+                continue
+            executed.setdefault(module, set()).add(unit_of(code.co_qualname))
+            names.update(code.co_names)
+        units = CodeUnits()
+        code_fp: dict[str, dict[str, str]] = {}
+        loaded = sorted({module_name(m.__file__) for m in modules if getattr(m, "__file__", None)} - {None, __name__})
+        complete = package_hashes() == self.tree
+        for module in loaded:
+            table = units.get(module)
+            if table is None:
+                complete = False
+                continue
+            wanted = {MODULE_UNIT} | executed.get(module, set())
+            wanted |= {u for u in table if u.startswith("=") and u[1:] in names}
+            wanted |= {u for u in table if not u.startswith("=") and "." not in u and u in names}  # classes, functions
+            # A def inside a top-level if/try block is part of the module's top level.
+            code_fp[module] = {unit: table[unit] for unit in sorted(wanted) if unit in table}
+        return {
+            "format": FORMAT,
+            "complete": complete,
+            "job": job_key(job),
+            "env": environment(),
+            "files": {p: file_digest(p) for p in sorted(files)},
+            "dirs": {p: dir_digest(p) for p in sorted(dirs)},
+            "code": code_fp,
+        }
+
+
+# --- the job and environment ------------------------------------------------------------
+
+JOB_FIELDS = ("media", "game", "year", "games", "source", "spool_id")
+JOB_PATHS = ("dsf", "game_dir", "cache")
+
+
+def job_key(job: dict) -> dict:
+    """The parts of a port_batch job that decide the car's output (not where it goes)."""
+    out = {k: job.get(k) for k in JOB_FIELDS}
+    out["options"] = list(job.get("requested_options", job.get("port_options", [])))
+    for k in JOB_PATHS:
+        out[k] = norm(job[k]) if job.get(k) else None
+    out["isos"] = [norm(p) for p in job.get("isos", [])]
+    source = dict(out["source"] or {})
+    if source.get("iso"):
+        source["iso"] = norm(source["iso"])
+    out["source"] = source
+    return out
+
+
+def environment() -> dict:
+    import numpy
+
+    return {"python": sys.version, "numpy": numpy.__version__, "platform": sys.platform}
+
+
+# --- checking a stored fingerprint --------------------------------------------------------
+
+
+class Checker:
+    """Compares stored fingerprints with the current files and sources (digests and
+    module units computed once per build)."""
+
+    def __init__(self):
+        self.units = CodeUnits()
+        self._files: dict[str, str] = {}
+        self._dirs: dict[str, str] = {}
+        self.env = environment()
+
+    def file(self, path: str) -> str:
+        if path not in self._files:
+            self._files[path] = file_digest(path)
+        return self._files[path]
+
+    def dir(self, path: str) -> str:
+        if path not in self._dirs:
+            self._dirs[path] = dir_digest(path)
+        return self._dirs[path]
+
+    def check(self, fp: dict, job: dict | None, code: bool = True) -> str | None:
+        """None when nothing the fingerprint recorded changed, else the first reason.
+        job None: don't compare the job (a first try, whose options were the job's
+        before the fallback); code False: don't compare the code (--trust-code)."""
+        if fp.get("format") != FORMAT:
+            return "no fingerprint of this format"
+        if not fp.get("complete"):
+            return "fingerprint incomplete (sources changed while the car was built)"
+        if job is not None and fp.get("job") != job_key(job):
+            old, new = fp.get("job") or {}, job_key(job)
+            return "job: " + ", ".join(k for k in sorted(set(old) | set(new)) if old.get(k) != new.get(k))
+        if fp.get("env") != self.env:
+            return "Python or numpy version"
+        for path, digest in fp.get("files", {}).items():
+            if self.file(path) != digest:
+                return f"input {path}"
+        for path, digest in fp.get("dirs", {}).items():
+            if self.dir(path) != digest:
+                return f"folder {path}"
+        if code:
+            for module, units in fp.get("code", {}).items():
+                table = self.units.get(module)
+                if table is None:
+                    return f"code {module} (gone)"
+                for unit, digest in units.items():
+                    if table.get(unit) != digest:
+                        return (
+                            f"code {module}.{unit.lstrip('=')}" if unit != MODULE_UNIT else f"code {module} (top level)"
+                        )
+        return None
+
+
+def read(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
