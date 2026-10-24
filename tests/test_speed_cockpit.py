@@ -1,10 +1,11 @@
-"""The fast versions of the cockpit cull and the engine-sound steps give exactly
-what the code before them gave. Each reference below is that code (the numpy
-rasteriser, near-plane clip and triangle bookkeeping of cockpit.py, the IMA ADPCM
-encoder and decoder and the WAV writer of wwise_bank.py, the cut search of
-engine_sound.seamless), kept here only to compare against, on random inputs (a
-few seconds in all). tests/test_speed.py compares the same functions with the
-original pure-Python loops on smaller scenes.
+"""The fast versions of the cockpit cull, the atlas steps of the cockpit and the
+engine-sound steps give exactly what the code before them gave. Each reference
+below is that code (the numpy rasteriser, near-plane clip and triangle
+bookkeeping of cockpit.py, the IMA ADPCM encoder and decoder and the WAV writer
+of wwise_bank.py, the cut search of engine_sound.seamless), kept here only to
+compare against, on random inputs (a few seconds in all); the region cut and the
+atlas render are compared with the loops dsf_materials keeps. tests/test_speed.py
+compares the same functions with the original pure-Python loops on smaller scenes.
 
 uv run python tests/test_speed_cockpit.py     # or: uv run python -m tests speed_cockpit
 """
@@ -20,6 +21,8 @@ from pathlib import Path
 import numpy as np
 
 from dsfforza.convert import cockpit, engine_sound
+from dsfforza.convert import dsf_materials as dm
+from dsfforza.convert import forza_materials as fm
 from dsfforza.formats import carbin
 from dsfforza.formats import wwise_bank as wb
 
@@ -287,6 +290,148 @@ def test_glass_sight_matches_the_numpy_raster():
         sight = cockpit.GlassSight(sections, eye, place, resolution=48, triangles=triangles)
         want = _sight_reference(sections, eye, resolution=48, triangles=triangles)
         assert sight.faces == want
+
+
+# --- dsf_materials: region cut, atlas render, decoded atlases ----------------------------
+
+
+def _uv_triangles(rng: random.Random, count: int) -> list:
+    """UV triangles in islands: separated by seams, touching (no seam), an L of
+    islands (no seam, but a split that saves area), large and sliver triangles,
+    UVs past 0..1 and on texel edges."""
+    tris = []
+    islands = [(rng.uniform(-0.1, 0.9), rng.uniform(-0.1, 0.9), rng.uniform(0.01, 0.3)) for _ in range(6)]
+    islands += [(0.1, 0.1, 0.05), (0.1, 0.16, 0.05), (0.16, 0.1, 0.05)]  # an L
+    for _ in range(count):
+        u, v, size = rng.choice(islands)
+        if rng.random() < 0.1:
+            tris.append([(round(u * 64) / 64, round(v * 64) / 64)] * 2 + [(u + size, v)])
+            continue
+        tris.append([(u + rng.uniform(0, size), v + rng.uniform(0, size)) for _ in range(3)])
+    return tris
+
+
+def test_find_regions_match_the_box_loop():
+    rng = random.Random(53)
+    for count, size in ((1, (64, 64)), (40, (64, 32)), (400, (256, 256)), (3000, (1024, 512))):
+        tris = _uv_triangles(rng, count)
+        assert dm.find_regions(tris, size) == dm._find_regions_loop(tris, size)
+    # Bars with no seam between them: _best_split cuts an L and a staircase, not a cross.
+    shapes = [
+        ([(0, 0, 1, 0.2), (0, 0.2, 0.2, 1)], 2),
+        ([(0, 0, 0.3, 0.3), (0.25, 0.25, 0.55, 0.55), (0.5, 0.5, 0.8, 0.8), (0.75, 0.75, 1, 1)], 4),
+        ([(0.4, 0, 0.6, 1), (0, 0.4, 1, 0.6)], 1),
+    ]
+    for bars, regions in shapes:
+        tris = []
+        for u0, v0, u1, v1 in bars:
+            for _ in range(60):
+                tris.append([(rng.uniform(u0, u1), rng.uniform(v0, v1)) for _ in range(3)])
+            tris.append([(u0, v0), (u1, v0), (u1, v1)])
+        for size in ((256, 256), (512, 128)):
+            got = dm.find_regions(tris, size)
+            assert got == dm._find_regions_loop(tris, size) and len(got[0]) == regions
+    # Equal totals and equal sort keys: a symmetric L of grid-aligned, repeated
+    # triangles (the loop keeps the largest k, x before y, ids in input order).
+    cells = [(i, 0) for i in range(8)] + [(0, j) for j in range(1, 8)]
+    tris = [[(i / 8, j / 8), ((i + 1) / 8, j / 8), (i / 8, (j + 1) / 8)] for i, j in cells for _ in range(3)]
+    for order in (tris, tris[::-1], rng.sample(tris, len(tris))):
+        got = dm.find_regions(order, (128, 128))
+        assert got == dm._find_regions_loop(order, (128, 128)) and len(got[0]) == 2
+    # Two such Ls apart: each is a seam group first (in _groups' order), then split.
+    tris = [[(u / 2.5 + du, v / 2.5) for u, v in t] for du in (0.0, 0.55) for t in tris]
+    for order in (tris, rng.sample(tris, len(tris))):
+        got = dm.find_regions(order, (256, 256))
+        assert got == dm._find_regions_loop(order, (256, 256)) and len(got[0]) == 4
+    tris = _uv_triangles(rng, 50)
+    tris[7] = [(float("nan"), 0.5), (0.2, 0.2), (0.3, 0.3)]  # NaN: the loop (max(0.0, nan) is 0.0)
+    assert dm.find_regions(tris, (128, 128)) == dm._find_regions_loop(tris, (128, 128))
+    tris = [[(0.1, 0.1), (0.2, 0.2), (float("inf"), -float("inf"))]] + _uv_triangles(rng, 30)
+    assert dm.find_regions(tris, (128, 128)) == dm._find_regions_loop(tris, (128, 128))
+
+
+def test_region_cut_steps_match_the_loops():
+    # _groups_np and _best_split_np against _groups and _best_split, ids in any
+    # order, on integer boxes with many equal starts, ends and centres.
+    rng = random.Random(61)
+    for count in (1, 2, 5, 40, 300):
+        boxes = []
+        for _ in range(count):
+            x0, y0 = rng.randrange(0, 120, 4), rng.randrange(0, 120, 4)
+            boxes.append((x0, y0, x0 + rng.choice((1, 2, 4, 8, 30, 90)), y0 + rng.choice((1, 3, 4, 60))))
+        array = np.array(boxes, dtype=np.int64)
+        ids = rng.sample(range(count), count)
+        for axis in (0, 1):
+            want = dm._groups(ids, boxes, axis)
+            assert [g.tolist() for g in dm._groups_np(np.array(ids), array, axis)] == want
+        for min_area in (1, 64 * 64):
+            want = dm._best_split(ids, boxes, min_area=min_area)
+            got = dm._best_split_np(np.array(ids), array, min_area=min_area)
+            assert (got is None and want is None) or [h.tolist() for h in got] == want
+
+
+def test_atlas_render_matches_the_texel_loop_on_many_regions():
+    rng = random.Random(59)
+
+    class Atlases:
+        def __init__(self):
+            self.maps = {
+                fm.NODAMAGE: (96, 80, bytearray(rng.randrange(256) for _ in range(96 * 80 * 4))),
+                fm.INTERIOR: (64, 64, bytearray(rng.choice((0, 15, 128, 201, 255)) for _ in range(64 * 64 * 4))),
+            }
+
+        def get(self, family):
+            return self.maps[family]
+
+    t = dm.Texturing(
+        Path(),
+        size=(128, 128),
+        families=(fm.NODAMAGE, fm.INTERIOR),
+        cutout_colour=(34, 34, 36, 0),
+        lift={fm.NODAMAGE: 25},
+        tone={fm.INTERIOR: (1.4, 1.2)},
+    )
+    t.atlases = Atlases()
+    t.regions = {
+        fm.NODAMAGE: [
+            dm.Region(fm.NODAMAGE, (0, 0, 30, 20), (0, 0), (20, 14)),
+            dm.Region(fm.NODAMAGE, (50, 40, 96, 80), (24, 0), (40, 34)),
+            dm.Region(fm.NODAMAGE, (10, 60, 12, 61), (70, 0), (9, 9)),
+            dm.Region(fm.NODAMAGE, (90, 0, 96, 6), (80, 0), (0, 5)),  # empty
+        ],
+        fm.INTERIOR: [
+            dm.Region(fm.INTERIOR, (5, 5, 60, 40), (0, 40), (70, 45)),
+            dm.Region(fm.INTERIOR, (40, 50, 64, 64), (72, 40), (30, 18)),
+        ],
+    }
+    t.scale = {fm.NODAMAGE: 0.7, fm.INTERIOR: 1.3}
+    t.alpha_only = {(fm.INTERIOR, 1)}
+    t.solids = {("paint",): (120, 120)}
+    t.solid_colours = {("paint",): t.plain}
+    assert t.render() == t._render_texels()
+
+
+def test_decoded_atlases_are_shared_and_copied():
+    from dsfforza.formats import xds
+
+    calls = []
+    untile, decode = xds.untile, xds.decode_rgba
+    try:
+        xds.untile = lambda data: (data, 2, 1, b"DXT5")
+        xds.decode_rgba = lambda blocks, w, h, fourcc: calls.append(blocks) or bytearray(blocks)
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / fm.FAMILY_FILES[fm.NODAMAGE][0]
+            path.write_bytes(bytes(range(8)))
+            a, b = fm._decoded(path), fm._decoded(path)
+            assert a == b == (2, 1, bytes(range(8))) and len(calls) == 1
+            path.write_bytes(bytes(range(12)))  # changed (size): decoded again
+            assert fm._decoded(path)[2] == bytes(range(12)) and len(calls) == 2
+            first, second = fm.AtlasCache(Path(folder)), fm.AtlasCache(Path(folder))
+            assert fm.fill_transparent(first.get(fm.NODAMAGE), (99, 99, 99), below=255) == 3
+            assert second.get(fm.NODAMAGE)[2] == bytearray(range(12))  # its own copy
+            assert isinstance(second.get(fm.NODAMAGE)[2], bytearray) and len(calls) == 2
+    finally:
+        xds.untile, xds.decode_rgba = untile, decode
 
 
 # --- wwise_bank: the references ---------------------------------------------------------
