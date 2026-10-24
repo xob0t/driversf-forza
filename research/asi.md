@@ -465,8 +465,9 @@ lists them.
   the two full-roster runs (menu-02..13) differ in under 0.1 % of the pixels,
   except AUDI (36 cars, 1.2 %) and DODGE (31, 0.7 %), whose preview stacks
   changed.
-- Pictures of the full-roster build don't show in either run (lock icon on
-  every card, stock cars included); not caused by this change.
+- Pictures of the full-roster build (made before #41 reworked the garage
+  pictures) don't show in either run: a lock icon on every card, stock cars
+  included; not caused by this change.
 
 ### Open
 
