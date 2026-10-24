@@ -1168,6 +1168,11 @@ class ConvertOptions:
     # gauges, mirrors and head camera moved to the Forza cockpit (tools/cockpit.py).
     cockpit: bool = False
     cockpit_opts: object = None    # cockpit.CockpitOptions; defaults when None
+    # Why the host is the same vehicle as the Forza car (host_select.same_vehicle),
+    # or None. When Forza's cockpit carbin is a placeholder (cockpit.is_stub), such a
+    # host keeps its own stock interior (cockpit, gauges, wheel, hands, head camera)
+    # instead of the main carbin's low-detail cabin (research/cockpit.md).
+    same_vehicle_host: str | None = None
     gamedbs: list = field(default_factory=list)  # for CameraOverrides (eye point)
     # Bind windscreen/rear-window glass to the host's glass-panel records like
     # stock glass (host_glass_links) instead of the chassis. Off by default
@@ -1282,22 +1287,30 @@ def convert(stream, full: Entry, exterior: Entry, car: ForzaCar, dims: CarDims, 
             else:
                 if cf.source != "cockpit":
                     log(f"cockpit: {cf.source}")
-                host_cp = cockpit.host_cockpit(payload(stream, child(child(full, "NONR"), "UPVH")))
-                skin = {"steering_wheel": host_cp.wheel_skin}
-                # The hands grip the cockpit's wheel in every view; the chase views draw
-                # the main carbin's, which Forza models elsewhere (up to 17 cm away).
-                import dataclasses
-                body = []
-                for section in car.body:
-                    if section.name == "steering_wheel":
-                        aligned, wheel_report = cockpit.align_main_wheel(section, cf.wheel)
-                        report["main_steering_wheel"] = wheel_report
-                        log(f"main-carbin steering wheel: moved {wheel_report.get('move')} m, turned "
-                            f"{wheel_report.get('turn_deg')} deg, scaled {wheel_report.get('scale')} onto the "
-                            f"cockpit's" + (f" ({wheel_report['kept']}: kept)" if aligned is None else ""))
-                        section = aligned or section
-                    body.append(section)
-                car = dataclasses.replace(car, body=body)
+                if not cf.lod0_atlases and opts.same_vehicle_host:
+                    # Forza ships a placeholder cockpit; the host's stock interior is
+                    # this vehicle's (same model or badge twin) and complete.
+                    log(f"cockpit: placeholder Forza cockpit and the host is the same vehicle "
+                        f"({opts.same_vehicle_host}): the interior stays the host's")
+                    report["cockpit_host"] = {"forza": cf.source, "same_vehicle": opts.same_vehicle_host}
+                    cf = None
+                else:
+                    host_cp = cockpit.host_cockpit(payload(stream, child(child(full, "NONR"), "UPVH")))
+                    skin = {"steering_wheel": host_cp.wheel_skin}
+                    # The hands grip the cockpit's wheel in every view; the chase views draw
+                    # the main carbin's, which Forza models elsewhere (up to 17 cm away).
+                    import dataclasses
+                    body = []
+                    for section in car.body:
+                        if section.name == "steering_wheel":
+                            aligned, wheel_report = cockpit.align_main_wheel(section, cf.wheel)
+                            report["main_steering_wheel"] = wheel_report
+                            log(f"main-carbin steering wheel: moved {wheel_report.get('move')} m, turned "
+                                f"{wheel_report.get('turn_deg')} deg, scaled {wheel_report.get('scale')} onto the "
+                                f"cockpit's" + (f" ({wheel_report['kept']}: kept)" if aligned is None else ""))
+                            section = aligned or section
+                        body.append(section)
+                    car = dataclasses.replace(car, body=body)
 
     links = host_glass_links(stream, full) if opts.glass_links else None
     if links is not None:

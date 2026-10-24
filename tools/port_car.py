@@ -450,10 +450,13 @@ def fit_forza_sound(stream, full, plan, nonr_limit, mdxn_max, log) -> dict:
 
 def build_car(stream, entries, host: int, spool_id: int, car: forza2dsf.ForzaCar, dims, args,
               nonr_limit, mdxn_max, log, gamedb: Path | None = None,
-              sound: int | None = None, forza_sound=None, forza_sound_report: dict | None = None) -> tuple[list, dict]:
+              sound: int | None = None, forza_sound=None, forza_sound_report: dict | None = None,
+              same_vehicle: str | None = None) -> tuple[list, dict]:
     """Clone + convert, stepping down LODs until every entry fits. Returns the
     three VEHC entries (not yet registered) and a report. forza_sound (an
-    engine_sound.Plan from forza_sound_plan) replaces the clone's engine sound."""
+    engine_sound.Plan from forza_sound_plan) replaces the clone's engine sound.
+    same_vehicle (host_select.same_vehicle): why the host is the Forza car's own
+    vehicle; its interior then stays when the Forza cockpit is a placeholder."""
     available = {sub.lod for s in car.body for sub in s.subsections if sub.lod > 0}
     full_ladder = [args.lods] if args.lods else list(FULL_LADDER)
     ext_ladder = [args.exterior_lod] if args.exterior_lod else list(EXTERIOR_LADDER)
@@ -475,7 +478,7 @@ def build_car(stream, entries, host: int, spool_id: int, car: forza2dsf.ForzaCar
             lods=lods, shadow_lod=shadow, exterior_lod=exterior_lod, keep_host_materials=True,
             textures=None if args.textures == "none" else args.textures, merge_submodels=True,
             uid_seed=uid_prefix("geometry", car.name, spool_id), cockpit=use_cockpit,
-            gamedbs=[gamedb] if gamedb else [], glass_links=args.glass_links,
+            gamedbs=[gamedb] if gamedb else [], glass_links=args.glass_links, same_vehicle_host=same_vehicle,
             plates=not getattr(args, "no_plates", False),
             cockpit_opts=cockpit.CockpitOptions(mdxn_limit=mdxn_max[1]) if use_cockpit else None)
         if args.damage:  # tools/damage.py; untested in game
@@ -679,6 +682,12 @@ def pick_hosts(args, media: str, game: str, folder: Path, gamedb: Path | None, i
                 + "; ".join(ranking[0].reasons))
             log(f"  {host_select.describe(info)}")
             log("  next: " + ", ".join(f"{r.id} {r.host['model']} {r.score:.0f}" for r in ranking[1:4]))
+    # Is the host this very vehicle (same model or a badge twin)? The cockpit uses it.
+    db = gamedb or extract_gamedb(isos, game, args.cache)
+    same = host_select.same_vehicle_for(media, host, args.dsf, game, folder, {game: db} if db else None)
+    if same:
+        choice["same_vehicle"] = same
+        log(f"{media}: host {host} is the same vehicle: {same}")
     return host, sound, choice
 
 
@@ -729,7 +738,8 @@ def convert_car(stream, entries, prep: PreparedCar, spool_id: int, args, nonr_li
                                          args.sound_host if isinstance(args.sound_host, int) else None,
                                          spool_id, log)
     clones, report = build_car(stream, entries, host, spool_id, prep.car, prep.dims, args,
-                               nonr_limit, mdxn_max, log, prep.gamedb, sound, plan, plan_report)
+                               nonr_limit, mdxn_max, log, prep.gamedb, sound, plan, plan_report,
+                               same_vehicle=prep.choice.get("same_vehicle"))
     report["host_choice"] = prep.choice
     return clones, report
 
