@@ -48,5 +48,8 @@ if ($Unlink) { return }
 # the default, and the disc images). A failure only warns: the links are made.
 $uv = Get-Command uv -ErrorAction SilentlyContinue
 if (-not $uv) { Write-Warning "uv not found (https://docs.astral.sh/uv/); run 'uv run dsff game_data prepare' later"; return }
+# uv reports progress on stderr; under 'Stop', Windows PowerShell turns the
+# first stderr line of a native command into a terminating error.
+$ErrorActionPreference = 'Continue'
 & $uv.Source run --project $here dsff game_data prepare
 if ($LASTEXITCODE -ne 0) { Write-Warning "game_data prepare failed (exit $LASTEXITCODE); see above" }
