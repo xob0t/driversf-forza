@@ -1412,6 +1412,103 @@ def _face_parts(r, axis: int, sign: int, half: float) -> list[list[tuple]]:
     return [[(half + half * u / z, half - half * v / z, 1 / z) for u, v, z in part] for part in parts]
 
 
+def _screen_parts(rel, axis: int, sign: int, half: float, skip=None):
+    """_face_parts for many triangles at once: rel (T, 3, 3) eye-relative points.
+    Returns (parts (P, 3, 3) of screen (x, y, 1 / z), owner (P,) triangle index),
+    ordered by triangle, then part. The same float operations as _face_parts; the
+    triangles crossing the near plane go through _clip_near itself."""
+    import numpy as np
+
+    u_axis, v_axis = [a for a in range(3) if a != axis]
+    z = rel[:, :, axis] * sign
+    live = z.max(axis=1) >= NEAR_PLANE
+    if skip is not None:
+        live &= ~skip
+    crossing = live & (z.min(axis=1) < NEAR_PLANE)
+    whole = np.flatnonzero(live & ~crossing)
+    uvz = [np.stack((rel[whole, :, u_axis], rel[whole, :, v_axis], z[whole]), axis=-1)]
+    owner = [whole]
+    rank = [np.zeros(len(whole), dtype=np.int64)]
+    clipped, clip_owner, clip_rank = [], [], []
+    for n in np.flatnonzero(crossing).tolist():
+        face = [(p[u_axis], p[v_axis], sign * p[axis]) for p in rel[n].tolist()]
+        poly = _clip_near(face)
+        for i in range(1, len(poly) - 1):
+            clipped.append((poly[0], poly[i], poly[i + 1]))
+            clip_owner.append(n)
+            clip_rank.append(i)
+    if clipped:
+        uvz.append(np.array(clipped, dtype=np.float64))
+        owner.append(np.array(clip_owner, dtype=np.int64))
+        rank.append(np.array(clip_rank, dtype=np.int64))
+    uvz, owner, rank = np.concatenate(uvz), np.concatenate(owner), np.concatenate(rank)
+    order = np.lexsort((rank, owner))
+    uvz, owner = uvz[order], owner[order]
+    u, v, zz = uvz[..., 0], uvz[..., 1], uvz[..., 2]
+    return np.stack((half + half * u / zz, half - half * v / zz, 1 / zz), axis=-1), owner
+
+
+def _raster(parts, owner, resolution: int, depth, ids=None, chunk: int = 1 << 20):
+    """Rasterise screen parts (from _screen_parts) into `depth` (1 / z, larger is
+    nearer; a flat float array of resolution**2) and, if given, `ids` (the owner
+    of the nearest part), with the per-pixel loop's float operations and order: a
+    pixel centre inside a part (barycentric weights all >= 0) whose w is above the
+    pixel's depth takes it, so among equal depths the earlier part keeps it.
+    Returns (covered: the part covered a pixel centre, bbox: its pixel box isn't
+    empty), one bool per part."""
+    import numpy as np
+
+    px, py, pw = parts[:, 0, 0], parts[:, 0, 1], parts[:, 0, 2]
+    qx, qy, qw = parts[:, 1, 0], parts[:, 1, 1], parts[:, 1, 2]
+    rx, ry, rw = parts[:, 2, 0], parts[:, 2, 1], parts[:, 2, 2]
+    # int() truncates toward zero, as np.trunc does.
+    x0 = np.maximum(np.trunc(np.minimum(np.minimum(px, qx), rx)), 0).astype(np.int64)
+    x1 = np.minimum(np.trunc(np.maximum(np.maximum(px, qx), rx)) + 1, resolution).astype(np.int64)
+    y0 = np.maximum(np.trunc(np.minimum(np.minimum(py, qy), ry)), 0).astype(np.int64)
+    y1 = np.minimum(np.trunc(np.maximum(np.maximum(py, qy), ry)) + 1, resolution).astype(np.int64)
+    bbox = (x0 < x1) & (y0 < y1)
+    area = (qx - px) * (ry - py) - (qy - py) * (rx - px)
+    drawn = np.flatnonzero(bbox & ~(np.abs(area) < 1e-12))
+    covered = np.zeros(len(parts), dtype=bool)
+    width = x1 - x0
+    counts = np.where(bbox, width * (y1 - y0), 0)
+    start = 0
+    while start < len(drawn):
+        # A run of parts with at most `chunk` pixels in their boxes (at least one part).
+        total = np.cumsum(counts[drawn[start:]])
+        stop = start + max(1, int(np.searchsorted(total, chunk, side="right")))
+        idx = drawn[start:stop]
+        start = stop
+        c = counts[idx]
+        rep = np.repeat(idx, c)
+        local = np.arange(len(rep), dtype=np.int64) - np.repeat(np.cumsum(c) - c, c)
+        x = x0[rep] + local % width[rep]
+        y = y0[rep] + local // width[rep]
+        xc, yc = x + 0.5, y + 0.5
+        a = area[rep]
+        w0 = ((qx[rep] - xc) * (ry[rep] - yc) - (qy[rep] - yc) * (rx[rep] - xc)) / a
+        w1 = ((rx[rep] - xc) * (py[rep] - yc) - (ry[rep] - yc) * (px[rep] - xc)) / a
+        w2 = 1 - w0 - w1
+        inside = (w0 >= 0) & (w1 >= 0) & (w2 >= 0)
+        covered[rep[inside]] = True
+        w = w0 * pw[rep] + w1 * qw[rep] + w2 * rw[rep]
+        keep = inside & (w > 0)
+        k, w, n = (y * resolution + x)[keep], w[keep], rep[keep]
+        if not len(k):
+            continue
+        # Per pixel the nearest fragment, the earliest part among equals.
+        order = np.lexsort((n, -w, k))
+        k, w, n = k[order], w[order], n[order]
+        first = np.ones(len(k), dtype=bool)
+        first[1:] = k[1:] != k[:-1]
+        k, w, n = k[first], w[first], n[first]
+        win = w > depth[k]
+        depth[k[win]] = w[win]
+        if ids is not None:
+            ids[k[win]] = owner[n[win]]
+    return covered, bbox
+
+
 def visible_triangles(
     sections: list[carbin.Section],
     eyes: list[tuple],
@@ -1430,6 +1527,8 @@ def visible_triangles(
     centre count as seen when they are within `tiny_slack` (relative depth)
     of what the pixel shows. Returns {(section index, subsection index):
     kept triangle indices}. Forza space."""
+    import numpy as np
+
     tris = []  # (key, triangle index, (p0, p1, p2), vertex ids)
     glass = set()
     for si, s in enumerate(sections):
@@ -1444,50 +1543,34 @@ def visible_triangles(
                 tris.append(((si, ui), k, tuple(pool[i].position for i in t), tuple((si, i) for i in t)))
     seen = set(glass)
     half = resolution / 2
+    points = np.array([t[2] for t in tris], dtype=np.float64).reshape(-1, 3, 3)
+    skip = np.zeros(len(tris), dtype=bool)
+    skip[sorted(glass)] = True
     for eye in eyes:
-        rel = [tuple(tuple(p[a] - eye[a] for a in range(3)) for p in t[2]) for t in tris]
-        for n, r in enumerate(rel):
-            if min(x * x + y * y + z * z for x, y, z in r) < near_keep * near_keep:
-                seen.add(n)
+        rel = points - np.array(eye, dtype=np.float64)
+        x, y, z = rel[..., 0], rel[..., 1], rel[..., 2]
+        seen.update(np.flatnonzero((x * x + y * y + z * z).min(axis=1) < near_keep * near_keep).tolist())
         for axis, sign in CUBE_FACES:
-            ids = [-1] * (resolution * resolution)
-            depth = [0.0] * (resolution * resolution)  # 1 / z, larger is nearer
-            tiny = []  # (triangle, pixel, nearest 1/z) of triangles that covered no pixel centre
-            for n, r in enumerate(rel):
-                if n in glass:
-                    continue
-                covered, best = False, None
-                for pts in _face_parts(r, axis, sign, half):
-                    (px, py, pw), (qx, qy, qw), (rx, ry, rw) = pts
-                    x0, x1 = max(int(min(px, qx, rx)), 0), min(int(max(px, qx, rx)) + 1, resolution)
-                    y0, y1 = max(int(min(py, qy, ry)), 0), min(int(max(py, qy, ry)) + 1, resolution)
-                    if x0 >= x1 or y0 >= y1:
-                        continue
-                    area = (qx - px) * (ry - py) - (qy - py) * (rx - px)
-                    cx, cy = int((px + qx + rx) / 3), int((py + qy + ry) / 3)
-                    if 0 <= cx < resolution and 0 <= cy < resolution:
-                        best = (cy * resolution + cx, max(pw, qw, rw))
-                    if abs(area) < 1e-12:
-                        continue
-                    for y in range(y0, y1):
-                        yc = y + 0.5
-                        for x in range(x0, x1):
-                            xc = x + 0.5
-                            w0 = ((qx - xc) * (ry - yc) - (qy - yc) * (rx - xc)) / area
-                            w1 = ((rx - xc) * (py - yc) - (ry - yc) * (px - xc)) / area
-                            w2 = 1 - w0 - w1
-                            if w0 < 0 or w1 < 0 or w2 < 0:
-                                continue
-                            covered = True
-                            w = w0 * pw + w1 * qw + w2 * rw
-                            k = y * resolution + x
-                            if w > depth[k]:
-                                depth[k] = w
-                                ids[k] = n
-                if not covered and best is not None:
-                    tiny.append((n, best[0], best[1]))
-            seen.update(i for i in ids if i >= 0)
-            seen.update(n for n, k, w in tiny if w >= depth[k] * (1 - tiny_slack))
+            ids = np.full(resolution * resolution, -1, dtype=np.int64)
+            depth = np.zeros(resolution * resolution)  # 1 / z, larger is nearer
+            parts, owner = _screen_parts(rel, axis, sign, half, skip)
+            covered, bbox = _raster(parts, owner, resolution, depth, ids)
+            seen.update(ids[ids >= 0].tolist())
+            # A triangle that covered no pixel centre: the pixel under the centroid of
+            # its last part whose pixel box isn't empty, at that part's nearest 1 / z.
+            cx = np.trunc((parts[:, 0, 0] + parts[:, 1, 0] + parts[:, 2, 0]) / 3)
+            cy = np.trunc((parts[:, 0, 1] + parts[:, 1, 1] + parts[:, 2, 1]) / 3)
+            best = bbox & (cx >= 0) & (cx < resolution) & (cy >= 0) & (cy < resolution)
+            hit = set(owner[covered].tolist())
+            tiny = {}
+            for n, k, w in zip(
+                owner[best].tolist(),
+                (cy[best] * resolution + cx[best]).astype(np.int64).tolist(),
+                parts[best, :, 2].max(axis=1).tolist(),
+                strict=True,
+            ):
+                tiny[n] = (k, w)
+            seen.update(n for n, (k, w) in tiny.items() if n not in hit and w >= depth[k] * (1 - tiny_slack))
     verts = {v for n in seen - glass for v in tris[n][3]}
     kept: dict[tuple[int, int], set[int]] = {}
     for n, (key, k, _, vids) in enumerate(tris):
@@ -1516,29 +1599,14 @@ class GlassSight:
                     continue
                 for t in sub.triangles():
                     tris.append([tuple(pool[i].position[a] - eye[a] for a in range(3)) for i in t])
+        import numpy as np
+
+        rel = np.array(tris, dtype=np.float64).reshape(-1, 3, 3)
         for axis, sign in CUBE_FACES:
-            depth = [0.0] * (resolution * resolution)  # 1 / z, larger is nearer
-            for r in tris:
-                for pts in _face_parts(r, axis, sign, half):
-                    (px, py, pw), (qx, qy, qw), (rx, ry, rw) = pts
-                    x0, x1 = max(int(min(px, qx, rx)), 0), min(int(max(px, qx, rx)) + 1, resolution)
-                    y0, y1 = max(int(min(py, qy, ry)), 0), min(int(max(py, qy, ry)) + 1, resolution)
-                    area = (qx - px) * (ry - py) - (qy - py) * (rx - px)
-                    if x0 >= x1 or y0 >= y1 or abs(area) < 1e-12:
-                        continue
-                    for y in range(y0, y1):
-                        yc = y + 0.5
-                        for x in range(x0, x1):
-                            xc = x + 0.5
-                            w0 = ((qx - xc) * (ry - yc) - (qy - yc) * (rx - xc)) / area
-                            w1 = ((rx - xc) * (py - yc) - (ry - yc) * (px - xc)) / area
-                            w2 = 1 - w0 - w1
-                            if w0 < 0 or w1 < 0 or w2 < 0:
-                                continue
-                            w = w0 * pw + w1 * qw + w2 * rw
-                            k = y * resolution + x
-                            depth[k] = max(depth[k], w)
-            self.faces[(axis, sign)] = depth
+            depth = np.zeros(resolution * resolution)  # 1 / z, larger is nearer
+            parts, owner = _screen_parts(rel, axis, sign, half)
+            _raster(parts, owner, resolution, depth)
+            self.faces[(axis, sign)] = depth.tolist()
 
     def __call__(self, point_dsf, slack: float = 0.03) -> bool:
         # DSF -> Forza: Placement.point is (-x, y + dy, -z + dz), its own inverse up to the offsets
