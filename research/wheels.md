@@ -42,6 +42,18 @@ follow `dngvehicles.md`.
   textures, which are not in the car's zip. Brake rotors and calipers are
   separate carbins (`<car>_rotorLF_LOD0.carbin`, `_caliperLF_...`), not
   converted.
+- Exceptions on the discs (full-roster survey, all 573 main carbins):
+  - six main carbins have no wheel section: FER_360_99, FER_360Challenge_03,
+    FER_Dino246_69, LAM_Gallardo_05, PAN_Esperante_05 and
+    CHE_CORVETTEGSC_10. Their wheel is only in the wheel archive's carbin
+    (`media/wheels/<car>`, one section `wheel`, plus LOD 0 with a skinned
+    pool);
+  - the two 1965 Minis have `wheela` and `wheelb` instead, like upgrade
+    variants.
+
+  `forza2dsf.load_car` takes `wheel`, else the stock variant (`wheela`, which
+  is kept out of the body), else the `wheel` section of the wheel archive's
+  carbin. `port_car.extract_wheel` caches that carbin as `wheel.carbin`.
 
 ## What was wrong (all hosts)
 
