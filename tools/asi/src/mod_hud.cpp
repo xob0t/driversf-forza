@@ -30,6 +30,7 @@
 // Cars without the new fields (every stock car, installs without the wide
 // font) take the stock path unchanged.
 #include "patch.h"
+#include "shared.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -454,8 +455,11 @@ static void card_emblem_body(uint8_t* screen, int id, int index, int cars)
     if (index < 0 || index >= kCards || !screen) return;
     if (index == 0) g_fill++;
     // The spare is card 20's picture: a group of 20 cars needs it for that.
-    if (cars >= kCards && g_spare) spare_release("a group of 20 cars");
-    bool want = id >= 0 && id < kMaxId && g_emblem[id] && cars < kCards;
+    // dsfforza's garage module shows a longer group 19 cards at a time, which
+    // leaves card 20 free (`cars` then counts the cars from the window's first on).
+    bool card20 = cars >= kCards && garage_card_limit() >= kCards;
+    if (card20 && g_spare) spare_release("a group of 20 cars");
+    bool want = id >= 0 && id < kMaxId && g_emblem[id] && !card20;
     Card& card = g_cards[index];
     if (!want && !card.discs && g_emblem_logs >= 8) return;   // nothing swapped on this card yet
     uint8_t* menu = *(uint8_t**)(screen + 4) ? *(uint8_t**)(*(uint8_t**)(screen + 4) + 8) : nullptr;

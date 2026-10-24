@@ -82,7 +82,8 @@ static int mismatch_test()
     CHECK(*(BYTE*)0x008FB340 == 0x8B && *(BYTE*)0x008FBE90 == 0x53);    // archive: no site replaced
     CHECK(*(BYTE*)0x0085A9B2 == 0xEB);                                 // large_files is its own patch
     CHECK(*(unsigned*)(0x006C7D90 + 1) == 0x3728);                     // garage object size stock
-    CHECK(*(unsigned*)(0x006C54C2 + 2) == 0x20FC && *(unsigned*)0x00E18B14 == 0x006C6940);
+    CHECK(*(unsigned*)(0x006C54C2 + 2) == 0x20FC && *(unsigned*)(0x006C57F3 + 2) == 0x31DC);  // groups stock
+    CHECK(*(unsigned*)0x00E18B1C != 0x006C55A0);                       // big groups are their own set
     CHECK(*(unsigned*)(0x006C587C + 2) == 1000);                       // the list patch still applies
     CHECK(*(int*)0x0070D72B == (int)(0x00ADA7F0 - 0x0070D72F));        // hud: picture-slot calls stock
     CHECK(*(BYTE*)0x006C6855 == 0xE8 && *(int*)0x006C6856 != (int)(0x006C40C0 - 0x006C685A));  // text sites on
@@ -155,6 +156,31 @@ int main(int argc, char** argv)
     // Garage list loop bounds and sort-key table.
     CHECK(*(unsigned*)(0x006C587C + 2) == 1000 && *(unsigned*)(0x006C5A55 + 2) == 1000);
     CHECK(*(BYTE*)0x006C57FB == 0xBD);
+
+    // Maker groups past 20 cars: FUN_006C5740 files cars (equal sort keys: in
+    // order), vfunc 0x12C reads them back, vfunc 0x130 copies the count.
+    {
+        typedef void(__fastcall * AddFn)(void* garage, void*, int* group, int id);
+        typedef int(__fastcall * CarFn)(void* garage, void*, int g, int i);
+        typedef void(__fastcall * CopyFn)(void* garage, void*, int g, int* out);
+        static int garage[0x8000 / 4];
+        unsigned table = *(unsigned*)(0x006C54C2 + 2);   // relocated table offset
+        int* g0 = (int*)((char*)garage + table);
+        int* g1 = g0 + 0x6C / 4;
+        strcpy_s((char*)g0 + 0x54, 16, "OFFLINE A");
+        strcpy_s((char*)g1 + 0x54, 16, "OFFLINE B");
+        AddFn add = (AddFn)0x006C5740;
+        for (int id = 1; id <= 45; id++) add(garage, nullptr, id % 3 ? g0 : g1, id);
+        CHECK(g0[20] == 30 && g1[20] == 15);
+        CarFn car = *(CarFn*)0x00E18B1C;
+        int ok = 0;
+        for (int i = 0, id = 1; id <= 45; id++)
+            if (id % 3) ok += car(garage, nullptr, 0, i++) == id;
+        CHECK(ok == 30 && car(garage, nullptr, 1, 14) == 45);
+        int copy[0x6C / 4];
+        (*(CopyFn*)0x00E18B20)(garage, nullptr, 0, copy);
+        CHECK(copy[20] == 30 && copy[0] == 1 && strcmp((char*)copy + 0x54, "OFFLINE A") == 0);
+    }
 
     // HUD: ctor hook, and the garage card emblem hook (call + 3 NOPs over the itemState write).
     CHECK(*(BYTE*)0x006C6855 == 0xE8 && *(BYTE*)0x007118A5 == 0xE8);
