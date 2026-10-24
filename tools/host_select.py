@@ -53,8 +53,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import game_paths  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
-# The game folder: $DSF_GAME_DIR (tools/port_batch.py, tools/install.ps1), else the default install.
-DEFAULT_DSF = Path(__import__("os").environ.get("DSF_GAME_DIR") or "D:/Games/Driver San Francisco") / "Install" / "dngvehicles.sp"
 DEFAULT_LUA = REPO / "out" / "lua-src" / "LuaScripts" / "vehiclestats" / "vehiclestats.lua"
 DEFAULT_GAMEDBS = {"FH1": REPO / "out" / "db" / "fh1_gamedb.slt", "FM4": REPO / "out" / "db" / "fm4_gamedb.slt"}
 SURVEY_CACHE = REPO / "out" / "cache" / "host-survey.json"
@@ -256,12 +254,12 @@ def _dsf_body(cls: str, model: str) -> str:
     return body
 
 
-def survey(dsf: Path = DEFAULT_DSF, lua: Path | None = DEFAULT_LUA, cache: Path | None = SURVEY_CACHE,
+def survey(dsf: Path | None = None, lua: Path | None = DEFAULT_LUA, cache: Path | None = SURVEY_CACHE,
            refresh: bool = False) -> list[dict]:
     """One record per stock base vehicle: identity, category, engine (vehicleStats),
     hierarchy facts (UPVH), size, VO3D mass, sound (VSRT), and what the converter
     needs (problems: why it can't be a host). Cached by archive size and mtime."""
-    dsf = game_paths.stock(Path(dsf), quiet=True)  # not an installed dsfforza archive (its ports)
+    dsf = game_paths.stock(Path(dsf) if dsf else None, quiet=True)  # not an installed dsfforza archive (its ports)
     stat = dsf.stat()
     key = f"{SURVEY_VERSION}:{dsf.resolve()}:{stat.st_size}:{int(stat.st_mtime)}:" + (
         f"{lua.stat().st_size}" if lua and lua.exists() else "-")
@@ -722,7 +720,7 @@ def rank(car: ForzaInfo, hosts: list[dict], allow_special: bool = False, mode: s
     return out
 
 
-def choose(media: str, dsf: Path = DEFAULT_DSF, game: str | None = None, folder: Path | None = None,
+def choose(media: str, dsf: Path | None = None, game: str | None = None, folder: Path | None = None,
            gamedbs: dict[str, Path] | None = None, lua: Path | None = DEFAULT_LUA, allow_special: bool = False,
            mode: str = "host") -> tuple[int, list[Ranked], ForzaInfo]:
     """The best host for one Forza car: (spool ID, ranking, car info)."""
@@ -812,7 +810,7 @@ def roster_table(hosts: list[dict], roster: Path, cache: Path, out: Path | None)
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--dsf", type=Path, default=DEFAULT_DSF, help="stock dngvehicles.sp")
+    parser.add_argument("--dsf", type=Path, default=None, help="stock dngvehicles.sp (default: from $DSF_GAME_DIR)")
     parser.add_argument("--lua", type=Path, default=DEFAULT_LUA, help="decompiled vehiclestats.lua")
     parser.add_argument("--refresh", action="store_true", help="re-read the archive instead of the cache")
     sub = parser.add_subparsers(dest="cmd", required=True)

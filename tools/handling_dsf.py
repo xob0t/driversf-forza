@@ -126,7 +126,7 @@ def specs_from_forza(media: str, car: H.ForzaCar, dbs: list[Path] = DBS) -> Spec
 
 # --- the stock fleet --------------------------------------------------------------------
 
-def load_fleet(dsf: Path = HS.DEFAULT_DSF, lua: Path = HS.DEFAULT_LUA, refresh: bool = False) -> dict[int, dict]:
+def load_fleet(dsf: Path | None = None, lua: Path = HS.DEFAULT_LUA, refresh: bool = False) -> dict[int, dict]:
     """Every stock base vehicle: VO3D, vehicleStats, hub geometry and host facts."""
     # The original archive when a dsfforza install replaced it (the installed one carries the
     # ported cars at IDs 1..40, which leaked into the fleet on 2026-10-22).

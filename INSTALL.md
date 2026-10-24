@@ -51,7 +51,7 @@ Close the game first. Then, from the repository folder:
 
 ```powershell
 # Build the default car list (tools\batches\first.txt) and install it
-.\tools\install.ps1 -GamePath 'C:\Games\Driver San Francisco' `
+.\tools\install.ps1 -GamePath '<game folder>' `
     -Iso 'E:\isos\Forza.Horizon.XBOX360.iso','E:\isos\Forza 4 [NTSCU][DVD1].iso','E:\isos\Forza 4 [NTSCU][DVD2].iso'
 
 # Choose your own cars: a list file (one Forza media name per line), or -Car
@@ -67,9 +67,10 @@ If Windows refuses to run the script, start PowerShell with
 is under `C:\Program Files`, run PowerShell as administrator.
 
 To pick cars, see `research/forza-roster.tsv` (every car on the discs) or ask
-the build tool:
+the build tool (it reads the game folder from `DSF_GAME_DIR`):
 
 ```powershell
+$env:DSF_GAME_DIR = '<game folder>'
 python tools\port_batch.py plan --diverse 30 --iso ...               # a spread over body classes
 python tools\port_batch.py plan --body suv,pickup --no-counterpart --iso ...
 ```
@@ -116,8 +117,8 @@ yourself.
 ## Uninstall
 
 ```powershell
-.\tools\install.ps1 -GamePath 'C:\Games\Driver San Francisco' -Uninstall
-.\tools\install.ps1 -GamePath 'C:\Games\Driver San Francisco' -Status
+.\tools\install.ps1 -GamePath '<game folder>' -Uninstall
+.\tools\install.ps1 -GamePath '<game folder>' -Status
 ```
 
 `-Uninstall` puts every replaced file back from the backup and checks that its

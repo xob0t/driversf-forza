@@ -1,6 +1,6 @@
 """Port Forza cars (FH1, FM4) into Driver: San Francisco's vehicle archive.
 
-    python tools/port_car.py --dsf "D:/Games/Driver San Francisco/Install/dngvehicles.sp" \\
+    python tools/port_car.py --dsf "$DSF_GAME_DIR/Install/dngvehicles.sp" \\
         --out out/ported.sp --car NIS_370Z_10 --car BMW_M5_12@fh1 --car NIS_SkylineGTR_93@fm4
 
 For each --car NAME[@fh1|@fm4]:

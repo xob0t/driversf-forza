@@ -464,7 +464,7 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("plan", help="classify a Forza car's lamps on a stock host (default the Desanne)")
     p.add_argument("car", type=Path)
-    p.add_argument("--dsf", type=Path, default=Path("D:/Games/Driver San Francisco/Install/dngvehicles.sp"))
+    p.add_argument("--dsf", type=Path, default=None, help="stock dngvehicles.sp (default: from $DSF_GAME_DIR)")
     p.add_argument("--host", type=int, default=266)
     t = sub.add_parser("table", help="print a vehicle's light table")
     t.add_argument("archive", type=Path)

@@ -341,7 +341,7 @@ def main(argv: list[str] | None = None) -> None:
     c = sub.add_parser("colours", help="a car's factory colours and the stock shading each would get")
     c.add_argument("gamedb", type=Path)
     c.add_argument("media")
-    c.add_argument("--dsf", type=Path, default=Path("D:/Games/Driver San Francisco/Install/dngvehicles.sp"))
+    c.add_argument("--dsf", type=Path, default=None, help="stock dngvehicles.sp (default: from $DSF_GAME_DIR)")
     p = sub.add_parser("palette", help="print a vehicle's palette")
     p.add_argument("archive", type=Path)
     p.add_argument("--id", type=int, required=True)

@@ -45,20 +45,19 @@ import sys
 from pathlib import Path
 
 import chnk
+import game_paths
 from vehicle_mesh import child, payload
 
-# The game folder: $DSF_GAME_DIR (tools/port_batch.py, tools/install.ps1), else the default install.
-GAME_DIR = Path(__import__("os").environ.get("DSF_GAME_DIR") or "D:/Games/Driver San Francisco")
 
 
 def stock_file(relative: str) -> Path:
     """A stock game file: tools/install.ps1's backup copy when the game folder
     holds an installed (patched) one, else the game's own."""
-    backup = GAME_DIR / "dsfforza-backup" / relative
-    return backup if backup.exists() else GAME_DIR / relative
+    game = game_paths.game_dir()  # $DSF_GAME_DIR (tools/port_batch.py, tools/install.ps1 set it)
+    backup = game / "dsfforza-backup" / relative
+    return backup if backup.exists() else game / relative
 
 
-GUI = stock_file("Install/gui.sp")
 FH1_ISO = Path(__file__).resolve().parent.parent / "assets" / "Forza.Horizon.XBOX360.iso"
 PICTURE_SIZE = (512, 256)
 
@@ -535,7 +534,8 @@ def stock_picture_names() -> list[str]:
     return sorted(set(re.findall(r'Picture1 = "([^"]+)"', VEHICLE_STATS_LUA.read_text(encoding="utf-8"))))
 
 
-def stock_pictures(gui: Path = GUI) -> list[Image]:
+def stock_pictures(gui: Path | None = None) -> list[Image]:
+    gui = gui or stock_file("Install/gui.sp")
     import dsf_materials as dm
     out = []
     with gui.open("rb") as stream:
@@ -550,7 +550,8 @@ def stock_pictures(gui: Path = GUI) -> list[Image]:
     return out
 
 
-def stock_backdrop(gui: Path = GUI) -> Image:
+def stock_backdrop(gui: Path | None = None) -> Image:
+    gui = gui or stock_file("Install/gui.sp")
     """The photo strip every stock car picture shares, recovered per pixel as
     the most common colour across the stock pictures (the cars cover
     different parts of it). Pixels no picture shows are filled along their
@@ -858,7 +859,6 @@ def _normalize(v):
 # Codes 33..255 are used except 60, 127..159, 212, 213 and 245; glyphs 74..78,
 # 88, 160, 244 and 252 exist but no vehicleStats entry uses them.
 
-FONTS = stock_file("media/Fonts.fchunk")
 VEHICLES_FONT = "vehicles_font"
 FREE_CODES = (212, 213, 245)                                  # no glyph, Latin-1 = cp1252
 SPARE_CODES = (252, 244, 88, 78, 77, 76, 75, 74)   # glyphs no vehicle uses; not 160 (0xA0, no-break space: drawn blank, M5 in out/testdrive3)
@@ -885,7 +885,8 @@ def read_glyphs(fntd: bytes) -> dict[int, list[int]]:
             list(struct.unpack_from("<10H", fntd, base + 20 * i)) for i in range(count)}
 
 
-def glyph_images(fonts: Path = FONTS) -> tuple[Image, dict]:
+def glyph_images(fonts: Path | None = None) -> tuple[Image, dict]:
+    fonts = fonts or stock_file("media/Fonts.fchunk")
     """The vehicles_font texture pages stacked top to bottom (page order), and
     the glyph records (y within its page)."""
     import dsf_materials as dm
@@ -1171,10 +1172,10 @@ def emblem_dds(ui: "ForzaUI", template: bytes | None = None) -> tuple[bytes, Ima
 # offset into SLRS, u32 string id} (ids ascending), SLRS UTF-16 strings, each
 # 0-terminated. "ID:242768" in Lua is string 242768 ("NISSAN").
 
-GLOBAL_STRINGS = stock_file("Locale/English/global.fchunk")
 
 
-def read_strings(path: Path = GLOBAL_STRINGS) -> dict[int, str]:
+def read_strings(path: Path | None = None) -> dict[int, str]:
+    path = path or stock_file("Locale/English/global.fchunk")
     with path.open("rb") as stream:
         root = chnk.read_chunk(stream, 0)
         slrr = child(child(root.entries[0], "NONR"), "SLRR")
@@ -1486,7 +1487,7 @@ def plan_wide_glyphs(cars: list[dict], texts: dict[str, dict], makes: dict, mode
 
 
 def build(manifest: Path, out_dir: Path, names: dict[str, str] | None = None, archive: Path | None = None,
-          gui: Path = GUI, fonts: Path = FONTS, log=print, control_codes: bool = False,
+          gui: Path | None = None, fonts: Path | None = None, log=print, control_codes: bool = False,
           wide_glyphs: bool = False, root_limit: int = chnk.ENTRY_LIMIT) -> dict:
     """Garage pictures, HUD glyphs and dsfforza\\hud.lua for the cars of a
     tools/port_car.py manifest. Writes out_dir/gui.sp, out_dir/Fonts.fchunk,
@@ -1514,6 +1515,8 @@ def build(manifest: Path, out_dir: Path, names: dict[str, str] | None = None, ar
         pool = tuple(c for c in pool if c not in HUD_SLOT_CODES)
     free = [c for c in pool if c not in used_codes]
     ui = ForzaUI()
+    gui = gui or stock_file("Install/gui.sp")
+    fonts = fonts or stock_file("media/Fonts.fchunk")
     backdrop = stock_backdrop(gui)
     with gui.open("rb") as stream:
         template = find_picture(stream, chnk.read_chunk(stream, 0), "nissan_370z")
@@ -1597,7 +1600,7 @@ def write_locales(out_dir: Path, texts: dict[int, str]) -> dict:
     report = {}
     if not texts:
         return report
-    locale = GAME_DIR / "Locale"
+    locale = game_paths.game_dir() / "Locale"
     languages = sorted(p.name for p in locale.iterdir() if (p / "global.fchunk").exists()) if locale.exists() else []
     for lang in languages:
         report[lang] = add_strings(stock_file(f"Locale/{lang}/global.fchunk"),
@@ -1618,7 +1621,8 @@ def write_hud_lua(path: Path, hud: dict[int, dict]) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
-def glyph_test(out_dir: Path, ids: list[int], plates: int = 400, badges: int = 40, fonts: Path = FONTS) -> dict:
+def glyph_test(out_dir: Path, ids: list[int], plates: int = 400, badges: int = 40, fonts: Path | None = None) -> dict:
+    fonts = fonts or stock_file("media/Fonts.fchunk")
     """A stress test for 16-bit codes: a Fonts.fchunk copy with `badges`
     numbered badges ("B1".."Bn") and `plates` numbered nameplates ("P1"
     ..) on extra pages, and a hud.lua giving the cars `ids` codes spread over
@@ -1686,7 +1690,7 @@ def main(argv: list[str] | None = None) -> None:
     e = sub.add_parser("extract", help="a gui.sp picture as PNG")
     e.add_argument("name")
     e.add_argument("png", type=Path)
-    e.add_argument("--gui", type=Path, default=GUI)
+    e.add_argument("--gui", type=Path, default=None)
     s = sub.add_parser("strings", help="search Locale global.fchunk strings")
     s.add_argument("pattern")
     args = parser.parse_args(argv)
@@ -1703,6 +1707,7 @@ def main(argv: list[str] | None = None) -> None:
         print(__import__("json").dumps(report, indent=1))
     elif args.cmd == "extract":
         import dsf_materials as dm
+        args.gui = args.gui or stock_file("Install/gui.sp")
         with args.gui.open("rb") as stream:
             dds = find_picture(stream, chnk.read_chunk(stream, 0), args.name)
         if dds is None:

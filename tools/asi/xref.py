@@ -15,6 +15,7 @@ confirm it with `dis` (or Ghidra). Runs at Idle priority (tools/gentle.py).
 
 from __future__ import annotations
 
+import os
 import pickle
 import struct
 import sys
@@ -26,7 +27,8 @@ from capstone import x86
 
 REPO = Path(__file__).resolve().parents[2]
 CACHE = REPO / "out" / "asi" / "xref.pickle"
-EXE_CANDIDATES = [REPO / "out" / "stock" / "Driver.exe", Path(r"D:\Games\Driver San Francisco\Driver.exe")]
+EXE_CANDIDATES = [REPO / "out" / "stock" / "Driver.exe"] + (
+    [Path(os.environ["DSF_GAME_DIR"]) / "Driver.exe"] if os.environ.get("DSF_GAME_DIR") else [])
 
 
 def load_exe() -> tuple[bytes, int, int, int]:
