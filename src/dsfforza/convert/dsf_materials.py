@@ -557,7 +557,97 @@ def find_regions(triangles: list, src_size: tuple[int, int]) -> tuple[list[tuple
     """Recursive XY cut of the UV triangles' boxes (in source texels): split
     along empty seams until none is left, so every triangle lies inside one
     rectangle. Returns the rectangles (x0, y0, x1, y1) and each triangle's
-    rectangle index."""
+    rectangle index. With numpy (_find_regions_np) unless a UV is NaN or a box
+    is inside out; then box by box (_find_regions_loop)."""
+    width, height = src_size
+    try:
+        uv = np.asarray(triangles, dtype=np.float64)
+    except (ValueError, TypeError):
+        uv = None
+    if uv is None or uv.ndim != 3 or uv.shape[1:] != (3, 2) or np.isnan(uv).any():
+        return _find_regions_loop(triangles, src_size)
+    # The loop's min(1.0, max(0.0, u)) for non-NaN u (a -0.0 can differ, but not its floor or ceil).
+    us = np.minimum(1.0, np.maximum(0.0, uv[:, :, 0])) * width
+    vs = np.minimum(1.0, np.maximum(0.0, uv[:, :, 1])) * height
+    boxes = np.stack(
+        (
+            np.maximum(0, np.floor(us.min(axis=1)).astype(np.int64) - 1),
+            np.maximum(0, np.floor(vs.min(axis=1)).astype(np.int64) - 1),
+            np.minimum(width, np.ceil(us.max(axis=1)).astype(np.int64) + 1),
+            np.minimum(height, np.ceil(vs.max(axis=1)).astype(np.int64) + 1),
+        ),
+        axis=1,
+    )
+    if not ((boxes[:, 2] >= boxes[:, 0]).all() and (boxes[:, 3] >= boxes[:, 1]).all()):
+        return _find_regions_loop(triangles, src_size)
+    return _find_regions_np(boxes)
+
+
+def _groups_np(ids, boxes, axis: int) -> list:
+    """_groups for a box array with x1 >= x0, y1 >= y0: in the loop's sweep, the
+    running end of a group is then the running end of all boxes so far (a new
+    group starts at or past every earlier end, and its own end is past its
+    start), so the seams are where a start reaches the earlier boxes' largest
+    end + MIN_GAP."""
+    order = ids[np.argsort(boxes[ids, axis], kind="stable")]  # sorted() is stable
+    start, end = boxes[order, axis], boxes[order, axis + 2]
+    seam = np.flatnonzero(start[1:] >= np.maximum.accumulate(end)[:-1] + MIN_GAP) + 1
+    return np.split(order, seam)
+
+
+def _best_split_np(ids, boxes, gain: float = 0.85, min_area: int = 64 * 64):
+    """_best_split on a box array: prefix and suffix boxes by accumulated min /
+    max; per axis the smallest total, at the largest k among equals (the loop
+    goes down from the end and keeps the first), y only if strictly smaller."""
+    b = boxes[ids]
+    whole = (int(b[:, 0].min()), int(b[:, 1].min()), int(b[:, 2].max()), int(b[:, 3].max()))
+    if len(ids) < 2 or _area(whole) < min_area:
+        return None
+    best = None
+    for axis in (0, 1):
+        order = ids[np.argsort(b[:, axis] + b[:, axis + 2], kind="stable")]
+        s = boxes[order]
+        lo, hi = np.minimum.accumulate(s[:, :2], axis=0), np.maximum.accumulate(s[:, 2:], axis=0)
+        rlo = np.minimum.accumulate(s[::-1, :2], axis=0)[::-1]
+        rhi = np.maximum.accumulate(s[::-1, 2:], axis=0)[::-1]
+        head = (hi[:-1] - lo[:-1]).prod(axis=1)  # area of the boxes [0, k), k = 1 .. n - 1
+        tail = (rhi[1:] - rlo[1:]).prod(axis=1)  # area of the boxes [k, n)
+        total = head + tail
+        k = len(total) - int(np.argmin(total[::-1]))  # the largest k with the smallest total
+        if best is None or int(total[k - 1]) < best[0]:
+            best = (int(total[k - 1]), order[:k], order[k:])
+    if best is None or best[0] > gain * _area(whole):
+        return None
+    return [best[1], best[2]]
+
+
+def _find_regions_np(boxes) -> tuple[list[tuple[int, int, int, int]], list[int]]:
+    """find_regions' cut on a box array (_groups_np, _best_split_np): the same
+    rectangles in the same order."""
+    rects, owner = [], np.zeros(len(boxes), dtype=np.int64)
+    stack = [(np.arange(len(boxes)), 0)]
+    while stack:
+        ids, axis = stack.pop()
+        if not len(ids):
+            continue
+        for a in (axis, 1 - axis):
+            groups = _groups_np(ids, boxes, a)
+            if len(groups) > 1:
+                stack.extend((g, 1 - a) for g in groups)
+                break
+        else:
+            halves = _best_split_np(ids, boxes)
+            if halves:
+                stack.extend((g, axis) for g in halves)
+                continue
+            b = boxes[ids]
+            owner[ids] = len(rects)
+            rects.append((int(b[:, 0].min()), int(b[:, 1].min()), int(b[:, 2].max()), int(b[:, 3].max())))
+    return rects, owner.tolist()
+
+
+def _find_regions_loop(triangles: list, src_size: tuple[int, int]) -> tuple[list[tuple[int, int, int, int]], list[int]]:
+    """find_regions box by box."""
     width, height = src_size
     boxes = []
     for tri in triangles:
@@ -1065,8 +1155,7 @@ class Texturing:
             s = self.scale[family]
             if not self.regions[family]:
                 continue
-            table = np.zeros((sh + 1, sw + 1, 4), dtype=np.int64)
-            table[1:, 1:] = np.frombuffer(bytes(src), dtype=np.uint8).reshape(sh, sw, 4).cumsum(0).cumsum(1)
+            texels_in = np.frombuffer(src, dtype=np.uint8).reshape(sh, sw, 4)
             converted: dict[int, tuple] = {}  # packed RGBA average -> texel
             for n_region, r in enumerate(self.regions[family]):
                 if r.size[0] <= 0 or r.size[1] <= 0:
@@ -1082,7 +1171,12 @@ class Texturing:
                     x0 = max(0, min(sw - 1, int(math.floor(fx0))))
                     cols.append((x0, max(x0 + 1, min(sw, int(math.floor(fx0 + 1 / s))))))
                 (y0, y1), (x0, x1) = np.array(rows).T, np.array(cols).T
-                y0, y1, x0, x1 = y0[:, None], y1[:, None], x0[None, :], x1[None, :]
+                # The summed-area table of the source texels under this region only:
+                # the same integer box sums as a table of the whole atlas.
+                top, left = int(y0.min()), int(x0.min())
+                table = np.zeros((int(y1.max()) - top + 1, int(x1.max()) - left + 1, 4), dtype=np.int64)
+                table[1:, 1:] = texels_in[top : int(y1.max()), left : int(x1.max())].cumsum(0).cumsum(1)
+                y0, y1, x0, x1 = y0[:, None] - top, y1[:, None] - top, x0[None, :] - left, x1[None, :] - left
                 acc = table[y1, x1] - table[y0, x1] - table[y1, x0] + table[y0, x0]  # (h, w, 4)
                 n = ((y1 - y0) * (x1 - x0))[:, :, None]
                 mean = acc // n

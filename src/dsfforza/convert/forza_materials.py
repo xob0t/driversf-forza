@@ -399,18 +399,40 @@ def texture_path(car_dir: Path, family: str, lod0: bool = False, damaged: bool =
 
 
 class AtlasCache:
-    """Decoded Forza atlases (RGBA, top mip) for one car folder."""
+    """Decoded Forza atlases (RGBA, top mip) for one car folder. Each cache has
+    its own copy of the texels (callers change them: fill_transparent); the
+    decoding is shared by every cache of the process (_decoded)."""
 
     def __init__(self, car_dir: Path, lod0: bool = False):
         self.car_dir, self.lod0, self._cache = car_dir, lod0, {}
 
     def get(self, family: str) -> tuple[int, int, bytearray]:
         if family not in self._cache:
-            from dsfforza.formats import xds
-
-            blocks, width, height, fourcc = xds.untile(texture_path(self.car_dir, family, self.lod0).read_bytes())
-            self._cache[family] = (width, height, xds.decode_rgba(blocks, width, height, fourcc))
+            width, height, rgba = _decoded(texture_path(self.car_dir, family, self.lod0))
+            self._cache[family] = (width, height, bytearray(rgba))
         return self._cache[family]
+
+
+_DECODED: dict = {}  # (path, size, mtime) -> (width, height, RGBA bytes), most recent last
+DECODED_KEEP = 8  # textures kept decoded (a car's exterior, wheel and cockpit atlases)
+
+
+def _decoded(path: Path) -> tuple[int, int, bytes]:
+    """xds.untile + xds.decode_rgba of a texture file, decoded once per process
+    while the file is unchanged (the cockpit and the exterior read some atlases
+    two or three times)."""
+    from dsfforza.formats import xds
+
+    stat = path.stat()
+    key = (str(path.resolve()), stat.st_size, stat.st_mtime_ns)
+    if key in _DECODED:
+        _DECODED[key] = _DECODED.pop(key)
+    else:
+        blocks, width, height, fourcc = xds.untile(path.read_bytes())
+        _DECODED[key] = (width, height, bytes(xds.decode_rgba(blocks, width, height, fourcc)))
+        while len(_DECODED) > DECODED_KEEP:
+            del _DECODED[next(iter(_DECODED))]
+    return _DECODED[key]
 
 
 def footprint_colour(atlas: tuple[int, int, bytearray], bounds) -> tuple[int, int, int, int]:
