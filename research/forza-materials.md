@@ -270,6 +270,14 @@ removed per car, 0.5 to 3.3 s per car. Offline render
 is its lettering again, the Firebird's "TRANS AM" loses its cream plate, the
 DMC-12's rear grille strip its grey plate.
 
+In game (confirmed-runtime, headless VM, chase and new `rear` probe views):
+`vm-20261024-110508` (`out/testdrive11`, IDs 18, 9, 37) against
+`vm-20261024-105751` (`out/fx/b2`, IDs 1 to 3): the 205's red bar is the red
+"205 turbo 16" lettering, the Firebird's "TRANS AM" has no plate
+(`img/badges-ingame-before-after.jpg`). Full entries grow by the cut
+geometry (205: 0x10b000 to 0x129800 MDXN, Firebird 0xf6000 to 0x11c800),
+well under the 0x2C0000 limit.
+
 ## Open
 
 1. In game: whether the Chassis material lights badges well (the Lights

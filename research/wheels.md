@@ -274,6 +274,13 @@ voxel march agrees with exact ray-triangle tests to 0.03 on average
 (correlation 0.97, the 205 at LOD 1) and takes about 0.4 s per wheel LOD
 instead of 10 s. The tyre texture, UVs and materials are unchanged.
 
+In game (confirmed-runtime, headless VM, new probe view `wheels`: the car's
+left side at hub height): `vm-20261024-110508` (`out/testdrive11`, ID 18)
+against `vm-20261024-105751` (`out/fx/b2`, ID 1; stock Scirocco 274 in the
+same run). The 205's holes and the recess round the nuts now read dark, as
+through the stock Scirocco's spokes; the disc itself stays white, as Forza's
+is (`img/wheels-205-ingame-before-after.jpg`).
+
 ### Open (wheels)
 
 - The brake rotor (`<car>_rotorLF_LOD0.carbin`: disc and hub, about 1100
