@@ -56,6 +56,28 @@ def test_a_worker_that_dies_is_a_failed_car():
         assert not (work / "DEAD.first-try.log").exists()   # no option fallback was tried
 
 
+def test_merge_leaves_out_cars_with_uid_clashes():
+    """A UID clash fails the clashing cars, not the batch: the rest are merged again."""
+    calls = []
+
+    def register(dsf, out, results, work, log, root_limit):
+        media = [r["media"] for r in results]
+        calls.append(media)
+        if "B" in media:
+            return [{"media": m} for m in media], [], {"B": ["aa", "bb"]}
+        return [{"media": m} for m in media], [], {}
+    real = port_batch.register_cars
+    port_batch.register_cars = register
+    try:
+        results = [{"media": m, "spool_id": i} for i, m in enumerate("ABC", 1)]
+        cars, failed = port_batch.merge(Path("stock.sp"), Path("out.sp"), results, Path("."), log=lambda t: None)
+    finally:
+        port_batch.register_cars = real
+    assert calls == [["A", "B", "C"], ["A", "C"]]
+    assert [c["media"] for c in cars] == ["A", "C"]
+    assert [(f["media"], f["cause"]) for f in failed] == [("B", "UID clash")]
+
+
 def test_builders_keep_their_own_material_layouts():
     """forza2dsf.MATERIAL_LAYOUT is read only; each conversion's host materials live
     in its builders' layout (a second car in the same process saw the first's)."""

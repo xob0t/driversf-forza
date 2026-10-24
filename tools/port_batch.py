@@ -20,7 +20,8 @@ is free), which writes the car's three VEHC entries to work/<media>.chnk and
 a report. The merge then registers them into one copy of the stock archive
 (SSLP/VSCT records), checks the root entry limit (--root-limit, default 1100:
 150 stock cars plus at most 215 new ones; dsfforza.asi's archive module lifts
-it, research/spool-limits.md) and UID clashes, writes the archive, and lints every car.
+it, research/spool-limits.md) and UID clashes (a car that clashes is left out
+and the rest merged again), writes the archive, and lints every car.
 A car that fails in tools/damage.py is retried once without --damage, one
 that fails in the cockpit step once with --no-cockpit (the host's interior),
 and a worker that times out or dies without a report is not retried; a car
@@ -46,7 +47,9 @@ dsfforza\\ported.lua for register.lua), batch-report.json (per car its
 engine sound: Forza source banks, loops used, pitch ranges, SBAK size, or why
 it kept the host's), sound/<media>/ (sweep_new.wav and sweep_template.wav
 previews, wav/ loops, report.json; tools/engine_sound.py) and, with --gui,
-gui/ (gui.sp, Fonts.fchunk, hud.lua from tools/gui_assets.py). A car whose
+gui/ (gui.sp, Fonts.fchunk, hud.lua from tools/gui_assets.py; when that step
+fails, a gui/ already there is moved to gui-stale-<time>/, since it doesn't
+match the new archive and install.ps1 would install it). A car whose
 sound step crashes is retried once with --no-forza-sound. Every
 port_car option is accepted inside --port "..." (e.g. --damage, --host 266,
 --mdxn-limit 0x2C0000).
@@ -680,7 +683,29 @@ class MultiStream:
 def merge(dsf: Path, out: Path, results: list[dict], work: Path, log=print,
           root_limit: int = ENTRY_LIMIT) -> tuple[list[dict], list[dict]]:
     """Register every built car into a copy of the stock archive. Returns (entries
-    of the manifest's "cars", failures found here)."""
+    of the manifest's "cars", failures found here). Cars that define a resource or
+    MODL part UID another vehicle defines too are left out (cause "UID clash") and
+    the rest are registered again, so one clash doesn't fail the whole batch."""
+    failed: list[dict] = []
+    while True:
+        cars, found, clashing = register_cars(dsf, out, results, work, log, root_limit)
+        failed += found
+        if not clashing:
+            return cars, failed
+        log(f"UID clashes in {sorted(clashing)}; merging again without them (rebuild those cars)")
+        failed += [{**r, "ok": False, "cause": "UID clash",
+                    "error": f"defines UIDs another vehicle defines too: {', '.join(clashing[r['media']][:4])}"}
+                   for r in results if r["media"] in clashing]
+        left_out = {f["media"] for f in failed}
+        results = [r for r in results if r["media"] not in left_out]
+        if not results:
+            return [], failed
+
+
+def register_cars(dsf: Path, out: Path, results: list[dict], work: Path, log=print,
+                  root_limit: int = ENTRY_LIMIT) -> tuple[list[dict], list[dict], dict[str, list[str]]]:
+    """One merge pass: (manifest "cars", failures, {media: clashing UIDs}). The
+    archive is written only when no car clashes."""
     import clone_vehicle
     import port_car
     from chnk import read_chunk, write_chunk
@@ -722,9 +747,8 @@ def merge(dsf: Path, out: Path, results: list[dict], work: Path, log=print,
             c["vehc"] = [records[c["spool_id"] + k] for k in clone_vehicle.KIND_OFFSETS]
         clashes = port_car.uid_clashes(stream, entries, {i for c in cars for i in c["vehc"]})
         if clashes:
-            bad = {entries[i].name for i in clashes}
-            log(f"UID clashes in {sorted(bad)}; rebuild those cars")
-            raise SystemExit(f"resource UID clashes: {sorted(bad)}")
+            return cars, failed, {c["media"]: sorted({u for i in c["vehc"] for u in clashes.get(i, [])})
+                                  for c in cars if any(i in clashes for i in c["vehc"])}
         out.parent.mkdir(parents=True, exist_ok=True)
         temp = out.with_name(out.name + ".tmp")
         try:
@@ -740,7 +764,7 @@ def merge(dsf: Path, out: Path, results: list[dict], work: Path, log=print,
                 f"[archive] large_files=1 (the default)")
     finally:
         stream.close()
-    return cars, failed
+    return cars, failed, {}
 
 
 def lint_all(out: Path, dsf: Path, cars: list[dict], parallel: int, log=print) -> None:
@@ -895,6 +919,9 @@ def finish(args, dsf: Path, out_dir: Path, work: Path, ok: list[dict], failed: l
     cars_out, merge_failed = merge(dsf, archive, ok, work, root_limit=root_limit_of(args))
     failed += merge_failed
     timings["merge"] = round(time.time() - t, 1)
+    if not cars_out:
+        write_report(out_dir, archive, [], failed, timings, started, args, results)
+        raise SystemExit("no car could be merged")
     t = time.time()
     lint_all(archive, dsf, cars_out, max(1, min(args.jobs, 4)))
     timings["lint"] = round(time.time() - t, 1)
@@ -923,6 +950,17 @@ def finish(args, dsf: Path, out_dir: Path, work: Path, ok: list[dict], failed: l
         except Exception as error:   # the archive is still usable without pictures and badges
             print(f"gui assets failed: {type(error).__name__}: {error}")
             timings["gui_error"] = f"{type(error).__name__}: {error}"
+            # An earlier run's gui/ (or this run's half) doesn't match the new archive's IDs, and
+            # install.ps1 installs whatever gui/ holds: move it aside, nothing is deleted.
+            gui = out_dir / "gui"
+            if gui.exists():
+                stale = out_dir / f"gui-stale-{datetime.datetime.now():%Y%m%d-%H%M%S}"
+                try:
+                    gui.rename(stale)
+                    print(f"moved {gui} to {stale.name}: it doesn't match this archive")
+                    timings["gui_stale"] = str(stale)
+                except OSError as move_error:
+                    print(f"warning: {gui} doesn't match this archive and could not be moved: {move_error}")
         timings["gui"] = round(time.time() - t, 1)
     write_report(out_dir, archive, cars_out, failed, timings, started, args, results)
     if getattr(args, "clean_work", False):
