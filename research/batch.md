@@ -882,3 +882,102 @@ All PRs keep the 4-car regression archive byte-identical
 (`8459AAF9...EC5A`). Not fixed: CHE_Volt_11 and NIS_Leaf_11 keep the host's
 engine sound (Forza's bank for electric cars is `NA.fsb`, which isn't on
 either disc).
+
+Later: #42 replaced #39's "<maker> 2" groups with one group of any size
+(a moving window of cards), and #43 lifted the SPOL cap below.
+
+## Full roster, final build (out/final)
+
+Built from master 67b66f0, which has every fix above:
+
+```sh
+uv run dsff port_batch build --list tools/batches/all.txt --gui --wide-glyphs --id-policy asi --root-limit 3003 --out out/final --jobs 8
+```
+
+The GUI step was re-run on master e992b4d with
+`port_batch remerge out/final --out out/final-gui2 ...`. That rebuilt the
+archive byte-identically (SHA-256 `60288d80...a031e8`), with #41's pictures
+and #42's groups.
+
+- **573 of 573 cars built, 0 failed, all lint ok.** Conversion took 2286 s
+  and the whole build 3446 s on 8 workers (out/final has fingerprints for
+  `--reuse`).
+- **Archive:** 2,839,646,208 bytes (2.64 GiB), 2172 root entries; gui.sp
+  1485 entries (one SPOI per picture).
+- **Per car:** median 3.96 MiB, max 5.25 MiB (KOE_CCXR_09). Largest MDXN
+  0x205800 (MAS_15_MC12_05), 74% of `--mdxn-limit 0x2C0000`; it was 0x200800
+  in the first build, so chrome (#27) and badge cutouts (#23) added little.
+- **Engine sound:** Forza sound on 571 of 573 cars (the Volt and the Leaf
+  keep the host's).
+- **Badge cutouts (#23):** 44,104 quads cut. 8 cars have 1 to 4 fallback
+  quads each: AST_V12Vantage_10, BER_Mantide_10, FER_FXX_05, GMC_Syclone_92,
+  LOT_EvoraType124_10, NIS_Fairlady432Z_69, REN_Clio197_07, SUZ_SX4_11.
+- **Cockpit bonnets (#27):** no cockpit lost its bonnet against the first
+  build. 35 cockpits have no `hood*` section in either build: FH1's
+  low-detail cars and mid-engined cars.
+- **`dsff driver_survey cars`** (573 cars, 537 measured):
+  - anchor off the stock point: 0.0 cm for every car;
+  - grips off the drawn rim: median 0.0 cm, 20 cars over 3 cm (worst
+    FOR_17_FGFalcon_11, 9.1 cm);
+  - room over the driver's eyes: median 18.1 cm. 25 cars are under the
+    lowest stock car's 8.7 cm and 5 under 3 cm: BEN_7_Speed8_03 0.0 cm,
+    DOD_ChallengerHemi_70 0.5, ACU_NSX_05 2.1, GUM_ApolloS_10 2.1,
+    FOR_1_Fusion_11 2.1. Then MIT_HKS_06, BUS_TOUR_12,
+    CHE_2_MonteCarloSS_11, TOY_2000GT_69 and the FG Falcons follow, at 3.8
+    to 5.0 cm.
+
+### In game (headless VM, runs vm-20261024-205021 to vm-20261025-011752)
+
+- **Drive sample, IDs past 304** (`vm-20261024-205021`, with traffic of all
+  562 cars): spooled, driven, chase and cockpit views. The cars are 463 KEN_T440_12 (truck),
+  724 VW_TouaregR50_08, 725 WIE_GTMF5_10 (supercar; 705 to 725 are past
+  2 GiB in the archive), 382 FIA_595_68 (fixed in #33) and 705
+  VOL_242Turbo_83.
+- **Low roofs** (`vm-20261025-011752`): 26 TOY_2000GT_69, 102
+  BEN_7_Speed8_03, 333 DOD_ChallengerHemi_70, 47 ACU_NSX_05 and 222
+  BUS_TOUR_12 all drive. In the chase views no head shows through a roof.
+- **Garage:** with more than 1100 SPOL items the pictures were locks; fixed
+  by #43 (`asi.md`, "Spool item lists"). With it:
+  - every card shows its picture (`vm-20261025-000547`, `-001221`);
+  - maker groups larger than 20 scroll (TOYOTA, 21 cards, to the last).
+- **Crashes while the world loads:** two causes (`in-game-tests.md`,
+  "Crashes while the world loads").
+  - The Lua VM fault with the big generated files: fixed by #44, 0 in 15
+    runs after the fix.
+  - The engine fault in the deferred UID list: it follows **dsf_enhanced**.
+    - Stock archive, no dsfforza.asi, no added cars:
+      - with the user's dsf_enhanced.ini: 2 of 4 runs crashed;
+      - with a neutral ini (traffic radius 350, no AF, no full-detail
+        traffic, `vm-20261025-005639` to `-010158`): 4 of 4 crashed;
+      - with dsf_enhanced.asi replaced by an empty stub DLL
+        (`vm-20261025-011001` to `-011514`): 0 of 4 crashed.
+    - So it isn't the roster or dsfforza.asi. Some always-on part of
+      dsf_enhanced (D3D, Bink or startup hooks) makes the stock game fail.
+      Whether it does so on the user's PC as often as in the VM is open.
+
+### Install (not run here)
+
+From the worktree that holds the build, with dsfforza.asi built from master
+(`.\tools\asi\build.ps1`):
+
+```powershell
+.\tools\install.ps1 -GamePath $env:DSF_GAME_DIR -Build out\final-gui2 -IdPolicy asi -Asi -Force
+```
+
+- `-IdPolicy asi` and `-Asi` are required: the archive has 2172 root
+  entries and is 2.64 GiB.
+- `-Force` replaces the earlier install.
+- `-WriteProfile` is optional, and it writes the save. Through
+  `config.lua` `register.writeProfile = true`, `register.lua` then does this
+  on every game start, for every garage-listed added car (all 573 with the
+  plugin):
+  - calls `ProfileSettings.SetVehicleUnlocked` and `SetVehicleOwned`, and
+    sets the entry's `UnlockedInChapter = 1`;
+  - IDs up to 303 (153 cars) go into `autosave.dat`'s 304-slot flag and
+    owned lists, about 146 + 153 of 304 slots;
+  - IDs 304 to 999 (420 cars) go into `dsfforza-garage.dat` next to it;
+  - the game shows its "new vehicle" notice once per car;
+  - the flags stay in the save after an uninstall: no car, no garage entry.
+- Without `-WriteProfile` the cars show in the garage with their pictures
+  but as not owned, as in the VM save, where 2 of 21 Toyota cards are owned.
+  The user can still Shift into them in traffic.
