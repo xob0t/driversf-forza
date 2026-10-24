@@ -25,8 +25,9 @@ Research notes are in `research/` (read the ones for your area first).
   render): put before/after images in the PR when possible, same view and
   framing side by side, cropped to what changed. Commit them under
   `research/img/` (PNG or JPG, under ~500 KB each) and embed them in the PR
-  description with their GitHub URL
-  (`https://github.com/xob0t/driversf-forza/blob/<branch>/research/img/<file>?raw=true`).
+  description by commit SHA, not branch name (branches are deleted on merge):
+  `https://github.com/xob0t/driversf-forza/blob/<commit-sha>/research/img/<file>?raw=true`
+  with the SHA of a commit on your branch that contains the image.
 - Keep the PR to one topic. Don't reformat or touch unrelated files.
 - Tests: `python -m tools.tests` runs every Python test file (`tools/tests/`,
   `tools/asi/test/`). New tests go in `tools/tests/test_<area>.py`.
