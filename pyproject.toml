@@ -1,0 +1,75 @@
+[project]
+name = "dsfforza"
+version = "0.1.0"
+description = "Ports Xbox 360 Forza (FH1/FM4) cars into Driver: San Francisco PC 1.04"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.13"
+dependencies = [
+    "numpy>=2.1",
+    "pillow>=11.0",   # glass.py survey (its texture preview); imported only there
+]
+
+[project.scripts]
+dsff = "dsfforza.cli:main"
+
+[dependency-groups]
+# Synced by a plain `uv run`; players' builds (tools/install.ps1) use --no-dev.
+dev = [
+    "ruff>=0.17",
+    { include-group = "test" },
+    { include-group = "re" },
+]
+test = ["lupa>=2.4"]       # tests/test_register_asi.py runs register.lua in Lua 5.1
+re = ["capstone>=5.0"]     # dsff xref: Driver.exe disassembly
+
+[build-system]
+requires = ["uv_build>=0.9,<0.14"]
+build-backend = "uv_build"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "UP",       # pyupgrade
+    "B",        # bugbear
+    "SIM",      # simplify
+    "RUF",      # ruff-specific
+    "PTH",      # pathlib over os.path
+    "PERF",     # performance anti-patterns
+    "C4",       # comprehensions
+    "RET",      # return statements
+    "PIE",      # misc lints
+    "PL",       # pylint
+    "N",        # pep8-naming
+]
+ignore = [
+    "PLR2004",  # magic values: binary formats are full of offsets, tags and sizes
+    "PLR0911",  # too many returns: format and command dispatchers
+    "PLR0912",  # too many branches: parsers and converters walk many record kinds
+    "PLR0913",  # too many arguments: conversion steps take many explicit inputs
+    "PLR0915",  # too many statements: same
+    "PLR0917",  # too many positional arguments: same
+    "PLW2901",  # loop variable overwritten: normal in record-walking loops
+    "PLC0415",  # import outside top level: lazy imports keep CLIs fast and break import cycles
+    "N806",     # uppercase locals: matrix/vector math (P, U, W, H ...)
+    "N812",     # `import handling as H`-style module aliases are used repo-wide
+    "E501",     # line length: the formatter wraps code; long strings and comments stay as written
+    "E741",     # ambiguous names (l, I): lengths and indices in format code
+    "SIM108",   # ternary instead of if/else: not always clearer
+    "RET504",   # assignment before return: often names the value being returned
+    "B905",     # zip() without strict=: adding strict=True would change behaviour where lengths differ
+    "RUF005",   # [*a, b] over a + [b]: operands may be numpy arrays or bytes, where unpacking differs
+    "RUF046",   # int(round(x)): keeps a Python int when x is a numpy scalar
+    "PERF401",  # append loops over comprehensions: the loops carry conditions and comments; no hot paths
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["dsfforza"]

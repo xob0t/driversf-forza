@@ -13,7 +13,7 @@ Research notes are in `research/` (read the ones for your area first).
 - In a new worktree run `.\tools\worktree-setup.ps1` once. It links the
   untracked inputs from the main checkout: `assets\*.iso`, `out\stock`,
   `out\cache`, `out\tools-dl`, `_ref`, and writes the worktree's own
-  `out\lua-src` and `out\db` (`tools\game_data.py prepare`). Before the
+  `out\lua-src` and `out\db` (`uv run dsff game_data prepare`). Before the
   worktree is removed, run
   `.\tools\worktree-setup.ps1 -Unlink`: some delete tools follow junctions
   and would empty the main checkout's folders.
@@ -29,8 +29,19 @@ Research notes are in `research/` (read the ones for your area first).
   `https://github.com/xob0t/driversf-forza/blob/<commit-sha>/research/img/<file>?raw=true`
   with the SHA of a commit on your branch that contains the image.
 - Keep the PR to one topic. Don't reformat or touch unrelated files.
-- Tests: `python -m tools.tests` runs every Python test file (`tools/tests/`,
-  `tools/asi/test/`). New tests go in `tools/tests/test_<area>.py`.
+- Python: the package `dsfforza` in `src/dsfforza/` (`formats/`, `convert/`,
+  `build/`, `game/`, `harness/`), managed with uv on Python 3.13
+  (`pyproject.toml`, `uv.lock`). Run a tool with `uv run dsff <tool> ...`
+  (`uv run dsff --help` lists them) or `uv run python -m
+  dsfforza.<group>.<tool>`; a new CLI module also goes in `dsfforza/cli.py`'s
+  `TOOLS`. Import repo modules as `from dsfforza.<group> import <module>`,
+  repo paths from `dsfforza.REPO`. Dependencies: `uv add <pkg>` (`--group
+  dev` for tools only developers need).
+- Lint and format: ruff (config in `pyproject.toml`). Run `uv run ruff check
+  --fix` and `uv run ruff format` before committing.
+- Tests: `uv run python -m tests` runs `ruff check`, `ruff format --check` and
+  every Python test file (`tests/test_*.py`; `--no-lint` skips ruff). New
+  tests go in `tests/test_<area>.py`.
 
 ## Machine rules
 

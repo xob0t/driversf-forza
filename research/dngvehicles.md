@@ -3,8 +3,8 @@
 Updated: 2026-10-21
 
 Static analysis of build 1.04 `Install/dngvehicles.sp` (483,110,912 bytes).
-Every claim here comes from reading the file with `tools/chnk.py` and
-`tools/vehicles.py`; what the executable does with it is in
+Every claim here comes from reading the file with `src/dsfforza/formats/chnk.py` and
+`src/dsfforza/formats/vehicles.py`; what the executable does with it is in
 `exe-vehicles.md` and `spool-limits.md` (confirmed-static claims below cite
 them).
 
@@ -64,7 +64,7 @@ records. The game takes its vehicle count from this header. The records are `{u1
 16 characters (`Alfa_Romeo_Giuli`). Each base ID appears three times with
 identical contents. Only base IDs appear.
 
-`tools/vehicles.py` joins SSLP, VSCT, VEHC and BINF into a vehicle list.
+`src/dsfforza/formats/vehicles.py` joins SSLP, VSCT, VEHC and BINF into a vehicle list.
 Truncated names that match more than one BINF model print as
 `A|B|C`.
 
@@ -173,7 +173,7 @@ vehicles.
 
 ## Rewriting the archive
 
-`tools/chnk.py rebuild` re-serializes an archive from its parsed tree, and
+`dsff chnk rebuild` re-serializes an archive from its parsed tree, and
 the output is byte-identical to the stock `dngvehicles.sp`. The layout rules
 are in the `chnk.py` docstring. The same rules round-trip
 `GUI_FrontEnd.fchunk`, but not `san_francisco.dngc`, `gui.sp` or
@@ -182,11 +182,11 @@ different fill pattern and nested sizes that don't match their headers.
 
 ## Clone
 
-`tools/clone_vehicle.py <dngvehicles.sp> <out.sp> --source 266 --id 304` copies the three VEHC
+`dsff clone_vehicle <dngvehicles.sp> <out.sp> --source 266 --id 304` copies the three VEHC
 variants, patches the ID at VSVH+0, VO3D+0, SPID+0 and UPVH+0x14 (the only
 places variant 0 stores it in all 150 vehicles; variants 1 and 2 hold none),
 inserts the copies after the last VEHC, and appends three SSLP records and
-three VSCT records. Reading the result back with `tools/vehicles.py` gives
+three VSCT records. Reading the result back with `src/dsfforza/formats/vehicles.py` gives
 151 vehicles. In game the clone spools, spawns and drives
 (confirmed-runtime, `in-game-tests.md`); its HUD name and badge also need a
 Lua `vehicleStats[304]` entry.

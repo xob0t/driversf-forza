@@ -4,7 +4,7 @@ Installs (or removes) Forza cars in Driver: San Francisco (PC 1.04).
 
 .DESCRIPTION
 Install:
-  1. Builds the cars from your own Forza discs (tools\port_batch.py, Python 3.10+),
+  1. Builds the cars from your own Forza discs (`uv run dsff port_batch`; uv installs Python 3.13),
      or takes a finished build folder (-Build).
   2. Backs up every game file it replaces to <game>\dsfforza-backup\ (with SHA-256
      hashes): Install\dngvehicles.sp, Install\gui.sp, media\Fonts.fchunk,
@@ -55,7 +55,7 @@ param(
     [Parameter(ParameterSetName = 'Install')]
     [string[]]$Iso,                       # Forza disc images (FH1, FM4 disc 1 and 2); default: assets\*.iso
     [Parameter(ParameterSetName = 'Install')]
-    [string]$Build,                       # a finished tools\port_batch.py output folder; skips building
+    [string]$Build,                       # a finished port_batch build folder; skips building
     [Parameter(ParameterSetName = 'Install')]
     [string]$List,                        # car list for the build (default tools\batches\first.txt)
     [Parameter(ParameterSetName = 'Install')]
@@ -223,15 +223,9 @@ function Find-AsiLoader {
     return $null
 }
 
-function Find-Python {
-    foreach ($candidate in @(@('py', '-3'), @('python'), @('python3'))) {
-        $exe = Get-Command $candidate[0] -ErrorAction SilentlyContinue
-        if (-not $exe) { continue }
-        $pyArgs = @()
-        if ($candidate.Count -gt 1) { $pyArgs = $candidate[1..($candidate.Count - 1)] }
-        $ok = & $exe.Source @pyArgs -c 'import sys; print(int(sys.version_info >= (3, 10)))' 2>$null
-        if ($LASTEXITCODE -eq 0 -and "$ok".Trim() -eq '1') { return , (@($exe.Source) + $pyArgs) }
-    }
+function Find-Uv {
+    $exe = Get-Command uv -ErrorAction SilentlyContinue
+    if ($exe) { return $exe.Source }
     return $null
 }
 
@@ -521,14 +515,13 @@ function Get-ArchiveRootCount([string]$Path) {
 }
 
 function Invoke-Build([string]$RootLimit) {
-    $python = Find-Python
-    if (-not $python) { Fail 'Python 3.10 or newer is needed to build the cars (https://www.python.org/downloads/), or pass -Build <folder>.' }
+    $uv = Find-Uv
+    if (-not $uv) { Fail 'uv is needed to build the cars: install it from https://docs.astral.sh/uv/getting-started/installation/ (winget install astral-sh.uv), open a new PowerShell window and run this again, or pass -Build <folder>. uv installs Python 3.13 and numpy for the build by itself.' }
     $out = $BuildDir
     if (-not $out) { $out = Join-Path $Repo 'out\install-build' }
     $out = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($out)
-    $pyArgs = @()
-    if ($python.Count -gt 1) { $pyArgs = $python[1..($python.Count - 1)] }
-    $pyArgs += @((Join-Path $Repo 'tools\port_batch.py'), 'build', '--dsf', (Join-Path $Game 'Install\dngvehicles.sp'),
+    # The repo's own Python 3.13 environment (.venv, from uv.lock); --no-dev: no lint/test tools.
+    $pyArgs = @('run', '--project', $Repo, '--frozen', '--no-dev', 'dsff', 'port_batch', 'build', '--dsf', (Join-Path $Game 'Install\dngvehicles.sp'),
                  '--out', $out, '--gui', '--id-policy', $IdPolicy)
     # dsfforza.asi's archive module reads more than the stock reader's 1100 root entries.
     if ($RootLimit) { $pyArgs += @('--root-limit', $RootLimit) }
@@ -547,8 +540,8 @@ function Invoke-Build([string]$RootLimit) {
     }
     if ($Jobs -gt 0) { $pyArgs += @('--jobs', "$Jobs") }
     Say "Building the cars (this takes a while; the build runs at Below Normal priority):"
-    Say "  $($python[0]) $($pyArgs -join ' ')"
-    & $python[0] @pyArgs | Out-Host   # keep the build's output out of the function's return value
+    Say "  uv $($pyArgs -join ' ')"
+    & $uv @pyArgs | Out-Host   # keep the build's output out of the function's return value
     if ($LASTEXITCODE -ne 0) { Fail "the build failed (exit code $LASTEXITCODE); see the output above and $out\batch-report.json" }
     return $out
 }

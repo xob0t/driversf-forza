@@ -306,7 +306,7 @@ Test archive `out/lim-root-full.sp`: the stock archive plus 757 clones of
 1..61 and 304..999 (2,724 root entries, 2.67 GB):
 
 ```sh
-python tools/clone_vehicle.py out/stock/Install/dngvehicles.sp out/lim-root-full.sp \
+uv run dsff clone_vehicle out/stock/Install/dngvehicles.sp out/lim-root-full.sp \
     --source 248,293,250,266 --id 1-61,304-999 --root-limit 3003
 ```
 
@@ -330,8 +330,8 @@ HUD names are wrong because they have no `vehicleStats` entries
 
 ### Tools
 
-`--root-limit N` raises the 1100 check in `tools/port_batch.py` (`plan`,
-`build`, `remerge`), `tools/port_car.py` and `tools/clone_vehicle.py`. The
+`--root-limit N` raises the 1100 check in `src/dsfforza/build/port_batch.py` (`plan`,
+`build`, `remerge`), `src/dsfforza/build/port_car.py` and `src/dsfforza/build/clone_vehicle.py`. The
 default stays 1100, so archives for an install without the plugin stay safe;
 3003 covers every base ID below 1000. `clone_vehicle.py --id` takes a list
 or ranges and `--source` a list to cycle through (the test archive above).
@@ -412,7 +412,7 @@ deformation buffer on this path). If a vertex declaration needs conversion,
 FUN_00BAEF80 takes scratch from an arena and falls back to the raw data when
 it is full, so that is not a limit either.
 
-Stock maxima for reference (`tools/vehicle_limits.py`): kind 0 has at most
+Stock maxima for reference (`src/dsfforza/game/vehicle_limits.py`): kind 0 has at most
 3 VBs, 15,506 vertices in one buffer, 20,905 per car, 216,228 indices, 374
 submodels, 13 submodels per part LOD; kind 1 reaches 21,446 vertices in one
 buffer.
@@ -478,7 +478,7 @@ that build (counter in UID byte 7, `upvh.md`), not its size. `port_car.py
 
 All archives are in `out/`, built from `out/dngvehicles.clone.sp` (the
 confirmed working Desanne clone, ID 304 at VEHC 450..452) with
-`tools/spool_variants.py`. Each changes one thing. Spool and spawn 304 as
+`src/dsfforza/game/spool_variants.py`. Each changes one thing. Spool and spawn 304 as
 in the clone test.
 
 | Archive | Change | Expected if the hypothesis holds |
@@ -509,9 +509,9 @@ headroom.
 
 ## Tools
 
-- `tools/vehicle_limits.py <archive> [--vehc N ...]`: stock maxima per kind,
+- `dsff vehicle_limits <archive> [--vehc N ...]`: stock maxima per kind,
   or one entry checked against the NONR buffer and the 0x280000 threshold.
-- `tools/spool_variants.py`: the archive variants above (`--pad-vehc`,
+- `src/dsfforza/game/spool_variants.py`: the archive variants above (`--pad-vehc`,
   `--pad-nonr`, `--sslp-nonr`, `--sslp-slots`).
 - `tools/game/dump-spool-limits.ps1`: read-only runtime view of the budgets.
 - `tools/ghidra/SpoolExplore.java`: the Ghidra explorer used here.

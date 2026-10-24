@@ -1,0 +1,5 @@
+# Formatting-only commits. GitHub's blame skips them by itself; locally:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# ruff format of the whole package (refactor/package)
+bdbfe3299ff6486305d67eac39049f35a4d24cf3

@@ -53,7 +53,7 @@ an LOD1-4 main carbin.
 
 ## Roster
 
-`tools/forza_roster.py` reads only zip central directories, so a full run
+`src/dsfforza/build/forza_roster.py` reads only zip central directories, so a full run
 over all three images takes under a second. The result is in
 `research/forza-roster.tsv`. It has 598 rows: 573 unique cars and 25
 Autovista models.
@@ -71,10 +71,10 @@ is 3.1 GB on FM4 disc 1, 2.0 GB in the disc 2 packs and 1.5 GB on FH1.
 Both games' `Media/db/gamedb.slt` are plain SQLite. `Data_Car` maps
 `MediaName` to the model year and IDs. Make and model names are string IDs
 (`_&3444160236`) that resolve through `Media/StringTables/<lang>.zip`
-(`LSB2` files, decoded by `tools/forza_strings.py`); the roster still lists
+(`LSB2` files, decoded by `src/dsfforza/formats/forza_strings.py`); the roster still lists
 the year only.
 
-## STFS (tools/stfs.py)
+## STFS (src/dsfforza/formats/stfs.py)
 
 The three discs hold 47 STFS files, all PIRS. Besides the car packs they
 are system updates, `Database.xmplr`, `HeadPosition.xmplr`, `nxeart`,
@@ -92,7 +92,7 @@ The read-write ("male") layout, with paired tables picked by status bit
 0x40 or flag bit 1, is implemented but untested. None of the discs has such
 a package.
 
-## Carbin: FM4 vs FH1 (tools/carbin.py)
+## Carbin: FM4 vs FH1 (src/dsfforza/formats/carbin.py)
 
 The parser follows carbin-garage's docs (`FM4_CARBIN_CONDENSED.md`,
 `CARBIN_TRANSCODE.md`). These points were confirmed on the files:
@@ -127,7 +127,7 @@ still gives 46 sections. The FM4 and FH1 370Z LOD1 exports both have
 41,118 triangles, and their preview PNGs are byte-identical. Renders of all
 the cars above look right (`out/fm4/render/*.png`).
 
-## Wheel placement data (tools/forza2dsf.py car_dims)
+## Wheel placement data (src/dsfforza/convert/forza2dsf.py car_dims)
 
 FM4 cars carry the same `physics/maxdata.xml` as FH1 (lower-case path; the
 370Z's values are identical in both games): `<Misc Wheelbase
@@ -178,12 +178,12 @@ midpoint. Render with the wheels at the hubs: `damage.py render ... --wheels`
 ## Commands
 
 ```sh
-python tools/stfs.py info    "assets/Forza 4 [NTSCU][DVD2].iso::content/0000000000000000/4d530910/00000002/4d53091000000001"
-python tools/stfs.py list    <package> [pattern]
-python tools/stfs.py extract <package> out/dir [pattern] [--verify]
-python tools/stfs.py verify  <package> [--data]
-python tools/forza_roster.py [--tsv research/forza-roster.tsv] [--all]
-python tools/carbin.py out/fm4/NIS_370Z_10/nis_370z_10.carbin --lod 1 --obj out/370z.obj
+uv run dsff stfs info    "assets/Forza 4 [NTSCU][DVD2].iso::content/0000000000000000/4d530910/00000002/4d53091000000001"
+uv run dsff stfs list    <package> [pattern]
+uv run dsff stfs extract <package> out/dir [pattern] [--verify]
+uv run dsff stfs verify  <package> [--data]
+uv run dsff forza_roster [--tsv research/forza-roster.tsv] [--all]
+uv run dsff carbin out/fm4/NIS_370Z_10/nis_370z_10.carbin --lod 1 --obj out/370z.obj
 ```
 
 In Python, `Stfs.open(entry)` returns a seekable file. Pass it to

@@ -10,7 +10,7 @@
 --           A lane keeper (keepLane) pushes the car back towards the start line: with no
 --           steering input cars drift left about 20 m in 330 m here (run 20261022-041951).
 --   end     when the car has stopped again after moving, or on timeout
--- tools/dyno.py turns the samples into 0-60, 0-100, quarter mile, 60-0 and so on.
+-- src/dsfforza/harness/dyno.py turns the samples into 0-60, 0-100, quarter mile, 60-0 and so on.
 -- Time comes from the samples themselves (distance / speed), so the Lua update
 -- rate doesn't need to be known.
 

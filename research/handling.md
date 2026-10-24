@@ -12,18 +12,18 @@ The goal is not Forza-accurate physics. A ported car should drive like a
 car Reflections would have made: DSF's own arcade grip and slides, assists,
 steering and gearing, with the car placed where DSF's fleet would place it
 (fast or slow, heavy or light, RWD/AWD/FWD). So the default mapping is
-DSF-first (`tools/handling_dsf.py`, below): the host's complete VO3D, changed
+DSF-first (`src/dsfforza/build/handling_dsf.py`, below): the host's complete VO3D, changed
 only where the stock fleet's own rules say the car's real specs require it.
 The older Forza-derived mapping stays available (`port_car.py --handling
 forza`).
 
 Tools:
 
-- `tools/handling_dsf.py loo|build` is the DSF-first mapping and its
+- `dsff handling_dsf loo|build` is the DSF-first mapping and its
   leave-one-out check; `port_car.py --handling dsf` (default) uses it.
-- `tools/handling.py dump|build|apply` reads, derives and writes VO3D (the
+- `dsff handling dump|build|apply` reads, derives and writes VO3D (the
   Forza mapping, `--handling forza`).
-- `tools/dyno.py` turns the in-game dyno logs into 0-60, 0-100, quarter
+- `src/dsfforza/harness/dyno.py` turns the in-game dyno logs into 0-60, 0-100, quarter
   mile, braking and steer/handbrake response figures.
 - `tools/ghidra/ParamRefs.java` lists every instruction whose memory operand
   falls in the parameter array and decompiles the heaviest users. Usage is
@@ -184,9 +184,9 @@ steering marker, read by `FUN_005743E0` (`research/cockpit.md`, "Driver's hands"
 
 ## Forza side
 
-`tools/handling.py` reads the stock configuration of a car from
+`src/dsfforza/build/handling.py` reads the stock configuration of a car from
 `media/db/gamedb.slt`, FH1 first and then FM4 (extract with
-`tools/xiso.py extract <iso> media/db/gamedb.slt out/db/fh1_gamedb.slt`).
+`dsff xiso extract <iso> media/db/gamedb.slt out/db/fh1_gamedb.slt`).
 Joins and units, checked on the 370Z:
 
 | Value | Source |
@@ -203,7 +203,7 @@ Stock turbos and other parts rescale the torque curve. Rather than model
 each part, the tool scales the curve so its peak equals `SimPeakTorque`.
 `physicsdefinition.bin` and `MAXData.xml` aren't needed.
 
-## DSF-first mapping (default, tools/handling_dsf.py)
+## DSF-first mapping (default, src/dsfforza/build/handling_dsf.py)
 
 Start from the host's complete VO3D (the stock car `host_select.py` picks:
 same model, else same family, then engine, body, size, drivetrain, era) and
@@ -280,7 +280,7 @@ rotate least; the Mito, Drift 0.26, rotates like the 370Z).
 
 ### Leave-one-out check (data)
 
-`python tools/handling_dsf.py loo`: for each of the 48 stock cars that also
+`uv run dsff handling_dsf loo`: for each of the 48 stock cars that also
 exist in Forza, build its VO3D from its Forza data as if DSF didn't have it:
 host = the best-ranked host that is not of its own model (the 370Z goes on
 228 GT-R, the GT-R on 240 RUF CTR3, the CTS-V on 206 Jaguar XF-R ...), fleet
@@ -581,7 +581,7 @@ differences in rounds 2 and 3 were inside that. The test is now:
   input; `reverse_ratio` for lane changes);
 - two handbrake runs per car, so each figure comes with its spread.
 
-`tools/handling_tune.py` closes the loop: per car, p18 (within +-25% of the
+`src/dsfforza/build/handling_tune.py` closes the loop: per car, p18 (within +-25% of the
 rule) toward a 0-60 target and p345 (within +-0.05 of rule W) toward a
 rotation target, by secant steps from priors (d ln 0-60 / d ln p18 = -0.8;
 -7 deg per +0.01 of p345), with dead bands at the noise (3%, 8 deg). Targets:
@@ -667,7 +667,7 @@ Golf R, 205 T16, Durango, 2000GT, Huayra); the GT-R, TT RS and Raptor are
 family-hosted and keep their host's sets.
 
 In game (confirmed-runtime; runs 20261022-173553 to -183057,
-`out/huayra/huayra.sp` and `huayra2.sp`). `python tools/handling_tune.py recovery
+`out/huayra/huayra.sp` and `huayra2.sp`). `uv run dsff handling_tune recovery
 --archive ... --lua ... --ids ...` drives a launch run, then pulls the
 handbrake for 0.6 s with Right at 60 mph, steers Right 0.6 s more and
 counter-steers (Left) 1.2 s: on the throttle (run 2), lifted (run 3), after a
@@ -727,12 +727,12 @@ these, see "Round 4 in game".)
    host and the 8C donor add rotation) and the CTS-V rotates less (62 vs 83).
    Mean error over five cars: 15 deg with rule W, 20 before round 3 (see
    round 3). Round 4 calibrates p345 per car against the measured rotation
-   instead (`tools/handling_tune.py`).
+   instead (`src/dsfforza/build/handling_tune.py`).
 3. The 1969 Charger's rotation (36 to 51 deg against 51 to 69 stock across
    sessions; the stock car itself varies that much) isn't in any one set.
 4. p18: 6% median, 10% at the 75th percentile (torque and power rule).
 
-## Forza mapping (port_car --handling forza, tools/handling.py build)
+## Forza mapping (port_car --handling forza, dsff handling build)
 
 The tool starts from the host's VO3D, the clone made by `clone_vehicle.py`,
 and replaces only what it can derive. Everything else stays the host's:

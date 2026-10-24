@@ -20,7 +20,7 @@ code), `confirmed-runtime`, `hypothesis`.
 
 ## Script packages
 
-`media/Scripts*.fchunk` are CHNK files (`tools/chnk.py`):
+`media/Scripts*.fchunk` are CHNK files (`src/dsfforza/formats/chnk.py`):
 
 ```text
 SCRR  Script Package Root (nested CHNK)
@@ -33,7 +33,7 @@ BINF  UTF-16 build info ("Packaged by NCT-Robot ... Script Packager v1.8.1.0")
 The hash is a CRC-32 variant of the lowercased `COM:luaScripts\<path>`:
 the reflected 0xEDB88320 table indexed by the complemented byte, with the
 top byte of each entry flipped and no final complement (`com_hash` in
-`tools/lua_scripts.py`; it matches all 2,095 scripts). The path comes from
+`src/dsfforza/formats/lua_scripts.py`; it matches all 2,095 scripts). The path comes from
 the main function's debug source name,
 `@r:\resources\luascripts\common\\<path>`, where the doubled backslash marks
 the package root. Two scripts were packaged under a different name than
@@ -64,7 +64,7 @@ only in `unlockables.lua` (the repack also unlocks the Uplay challenges).
 ### Reproduce
 
 ```powershell
-python tools\lua_scripts.py extract-all "D:\Games\Driver San Francisco\media" out\lua
+uv run dsff lua_scripts extract-all "D:\Games\Driver San Francisco\media" out\lua
 # unluac 1.2.3.561 built from the official source mirror (MIT), JDK 21, Idle priority:
 $java = "C:\Program Files\Microsoft\jdk-21.0.12.101-hotspot\bin\java.exe"
 $p = Start-Process $java -ArgumentList '-cp','_ref\downloads\unluac\unluac.jar','tools\unluac\BatchDecompile.java','out\lua','out\lua-src' -NoNewWindow -PassThru
@@ -97,7 +97,7 @@ AIEX payload (file offset 0x1080)
   0x120   1,369 u16 model IDs; each set's lists are slices of this array
 ```
 
-`python tools/traffic_sets.py --models` prints all 59 sets, and
+`uv run dsff traffic_sets --models` prints all 59 sets, and
 `research/traffic-sets.tsv` has one row per set and frequency. 54 names
 were recovered from string constants in the decompiled scripts, Felony
 Rework and the snoopii mod menu; five hashes are still unnamed (C071E02A,
@@ -124,7 +124,7 @@ last one, so growing a list means moving AIEX sections (not attempted).
 
 ```powershell
 # Neon (179) -> 304 in every set and frequency: 21 places, 42 bytes
-python tools\traffic_sets.py --replace "*:*:179=304" --out out\san_franciscoAI.179to304.fchunk
+uv run dsff traffic_sets --replace "*:*:179=304" --out out\san_franciscoAI.179to304.fchunk
 ```
 
 ### Interesting vehicles: per district, per chapter (confirmed-static)
@@ -333,7 +333,7 @@ bootstrap, skips IDs already in a list, and re-sends
 | `probe` | false (true with a test `config.lua` that has `ids`) | log `vehiclesAvailable`, `Vehicles`, profile flags, `civilianTraffic` functions and nearby traffic counts every 10 s for about 3 minutes |
 
 It is tested against stubbed APIs in an embedded Lua 5.1 (lupa,
-`tools/asi/test/test_register_asi.py`) and runs in game in every harness run
+`tests/test_register_asi.py`) and runs in game in every harness run
 and install (e.g. run `20261022-230004`, `asi.md`).
 
 ## Open

@@ -88,7 +88,7 @@ end
 -- Give each clone a copy of its source's entry.
 local STATS_SOURCES = { [304] = 266 }
 
--- Cars built by tools/port_car.py: dsfforza\ported.lua (written with
+-- Cars built by src/dsfforza/build/port_car.py: dsfforza\ported.lua (written with
 -- --install-lua) lists each ported ID with its host. Its IDs become the test
 -- IDs unless config.lua sets them.
 do

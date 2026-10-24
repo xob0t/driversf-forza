@@ -5,7 +5,8 @@ images (assets\), the stock game copy (out\stock), the extraction cache
 (out\cache), the downloaded tools (out\tools-dl: vgmstream for the Forza
 engine sound) and the reference downloads (_ref). Then it writes the derived
 game data the tools read (out\lua-src\...\vehiclestats.lua, out\db\*.slt)
-with `python tools\game_data.py prepare`. Run once in a new worktree:
+with `uv run dsff game_data prepare` (uv makes the worktree's .venv). Run once
+in a new worktree:
 
     .\tools\worktree-setup.ps1
 
@@ -45,7 +46,7 @@ foreach ($rel in 'assets', 'out\stock', 'out\cache', 'out\tools-dl', '_ref') {
 if ($Unlink) { return }
 # Derived data (only missing files; reads the game folder, $env:DSF_GAME_DIR or
 # the default, and the disc images). A failure only warns: the links are made.
-$python = Get-Command python -ErrorAction SilentlyContinue
-if (-not $python) { Write-Warning "python not found; run 'python tools\game_data.py prepare' later"; return }
-& $python.Source (Join-Path $here 'tools\game_data.py') prepare
-if ($LASTEXITCODE -ne 0) { Write-Warning "game_data.py prepare failed (exit $LASTEXITCODE); see above" }
+$uv = Get-Command uv -ErrorAction SilentlyContinue
+if (-not $uv) { Write-Warning "uv not found (https://docs.astral.sh/uv/); run 'uv run dsff game_data prepare' later"; return }
+& $uv.Source run --project $here dsff game_data prepare
+if ($LASTEXITCODE -ne 0) { Write-Warning "game_data prepare failed (exit $LASTEXITCODE); see above" }

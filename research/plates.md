@@ -3,7 +3,7 @@
 Updated: 2026-10-22
 
 How stock DSF cars draw their plates, what the Forza cars have, and what
-`tools/plates.py` adds to converted cars (`ConvertOptions.plates`, on by
+`src/dsfforza/convert/plates.py` adds to converted cars (`ConvertOptions.plates`, on by
 default; `port_car.py --no-plates` turns it off). Evidence tags as
 elsewhere (`dngvehicles.md`). Scratch scripts: `out/plates/` (`survey.py`,
 `fleet.py`, `analyse.py`, `detail.py` for stock; `forza_survey.py`,
@@ -80,7 +80,7 @@ Forza cars mostly have no plate. In `tools/batches/testdrive.txt` (40 cars):
 - The bodies are modelled with plate recesses or mounting faces at the rear
   on almost every car, and on many at the front (US-market models).
 
-## The converter (`tools/plates.py`, offline-checked)
+## The converter (`src/dsfforza/convert/plates.py`, offline-checked)
 
 `forza2dsf.convert` calls `plates.apply` before the lamps and damage plan:
 
@@ -127,9 +127,9 @@ Forza cars mostly have no plate. In `tools/batches/testdrive.txt` (40 cars):
    deltas and decal UV1. The cockpit shell skips it (`cockpit.SHELL_SKIP`).
    The shadow LOD includes it, like stock.
 
-`python tools/plates.py plan out/cache/fh1/NIS_370Z_10 --host 227 --png x.png`
+`uv run dsff plates plan out/cache/fh1/NIS_370Z_10 --host 227 --png x.png`
 prints the plan and draws both ends' depth maps with the plates;
-`python tools/plates.py host <archive> --id 227` lists a vehicle's plates.
+`uv run dsff plates host <archive> --id 227` lists a vehicle's plates.
 The convert report has `plates` (source, surface, size, centre, tilt, depth
 per LOD, the host plate and the height prior).
 
