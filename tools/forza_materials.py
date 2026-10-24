@@ -174,6 +174,12 @@ def classify_cockpit(name: str, section: str | None = None) -> tuple[str, str | 
     - exterior sections (A-pillars, bonnets, side mirrors) keep the exterior
       techniques on nodamage_LOD0 (chrome window trim on its chrome swatch);
     - gauge faces, needles and labels sample interior_LOD0 in any section;
+      badges in the cabin too, but badges on the outside sections (the
+      Firebird's bonnet decal, the M5 E28's mirror badge, the SVT Raptor's
+      F-150 lettering, the Agera's bonnet livery) land on their artwork in
+      nodamage_LOD0 and on unrelated interior_LOD0 content, like the
+      exterior's badges (research/cockpit.md, "Badges seen through the
+      windscreen");
     - mirror glass (mirrorLeft/Middle/Right) is a render target in Forza:
       flat trim.
     Without `section` every non-gauge trim maps to nodamage_LOD0 (the old
@@ -181,7 +187,8 @@ def classify_cockpit(name: str, section: str | None = None) -> tuple[str, str | 
     n = name.lower()
     if TECHNIQUES.get(name, (None,))[0] == SKIP:
         return SKIP, None
-    if n.startswith(("gauge", "z_gauge", "digital_gauge")) or "badge" in n:
+    outside = section is not None and bool(COCKPIT_EXTERIOR_SECTIONS.match(section))
+    if n.startswith(("gauge", "z_gauge", "digital_gauge")) or ("badge" in n and not outside):
         return TEXTURED, INTERIOR
     if n.startswith("mirror"):
         return TRIM, None

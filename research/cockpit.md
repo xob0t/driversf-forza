@@ -141,9 +141,11 @@ needles can't get a gauge without new UPVH records, and would get no input
 anyway (ids 3 to 7 stay at 0). They stay static: fuel, oil, water,
 temperature and voltage at their mid pose, boost and others at rest
 (`PARK_MID`). Forza's `digital_gauge` subsections (370Z 56 triangles, M5
-24, Raptor 4) draw digits with a shader; their static UVs land on unrelated
-parts of the dial texture (labels, a white block on the M5), so they are
-drawn as a blank near-black display (`DISPLAY_COLOUR`). A car whose
+24, Raptor 4) draw digits with a shader. Through the first UV transform
+their UV0 lands on the label sheet; through the second it lands on the
+display's own face where the car has one, and those faces are now drawn
+textured ("Digital clusters" below); the rest stay a blank near-black
+display (`DISPLAY_COLOUR`). A car whose
 cockpit has no speed or tach needle (a digital speedometer) simply has no
 vertices with that gauge id; the host's entry then draws nothing.
 
@@ -250,9 +252,9 @@ Textures, by sampling each technique's UV triangles in every candidate
 
 | Techniques | Texture |
 | --- | --- |
-| `gauge*`, `z_gauge_emissive_alpha`, `digital_gauge`, `badge` | `interior_LOD0.xds` (512²: dial faces, switch labels; alpha is the label cut-out mask). The needle swatch is red-orange (252, 45, 8) |
+| `gauge*`, `z_gauge_emissive_alpha`, `digital_gauge`; `badge` in cabin sections | `interior_LOD0.xds` (512²: dial faces, switch labels; alpha is the label cut-out mask). The needle swatch is red-orange (252, 45, 8) |
 | cabin sections' `leather`, `plastic`, `metal`, `headliner`, `bump_*`, `reflector`, ... | `interior_LOD0.xds` too: the cabin's leather, plastic and metal artwork and its colour swatches (corrected 2026-10-23, see "Cabin trims sample interior_LOD0"; this row used to say the strips along the bottom of `nodamage_LOD0`) |
-| outside sections (`a_pillar`, `hood*`, `mirrorL/R`): `chrome`, `black`, `plastic2`, ... | `nodamage_LOD0.xds` (2048²) |
+| outside sections (`a_pillar`, `hood*`, `mirrorL/R`): `chrome`, `black`, `plastic2`, `badge`, ... | `nodamage_LOD0.xds` (2048²; badges there since 2026-10-24, "Badges seen through the windscreen") |
 | lamps | `lights_LOD0.xds` |
 | `mirrorLeft/Middle/Right` | render targets in Forza |
 
@@ -936,6 +938,118 @@ and its hierarchy is the same as the others' (axis, quaternion, skin
 binding). At full lock with the car standing (DSF's hand-over-hand pose) the wheel
 turns well past 90° on every car, which may be what was seen. Open: a
 user screenshot of the moment.
+
+## Digital clusters (2026-10-24)
+
+User report on `out/testdrive9`: the S2000 (ID 4) shows no instrument
+cluster in the cockpit view, only a dark hood behind the wheel; the
+Express's (ID 23) dashboard is low-detail.
+
+**Survey** (`out/cc/survey_eye.py`, head-camera views of all 40 cars of
+`out/testdrive10`, `out/cc/before-1-20.png`, `before-21-40.png`): six cars
+show no readable cluster: S2000 (4), Durango (19), Range Rover (21),
+Express (23), Agera (29), LFA (30, an empty ring). The other 34 draw their
+dials.
+
+**Cause for the S2000 and LFA (confirmed-static).** Their whole cluster face
+is `digital_gauge` geometry (S2000 76 triangles, the LFA's dial 110), which
+the converter drew as a blank display. Picking from the Forza eye
+(`out/cc/pick.py`) and drawing each technique in turn
+(`out/cc/forzaeye.py --hl`) shows this; the gauge_emissive_alpha
+subsections are switch labels on the console. The UV0 of these subsections
+is a planar 0..1 map across the face. Through the subsection's first UV
+transform it lands on the label sheet (AUDIO, MODE, SRS AIRBAG on the
+S2000: what the old note called "unrelated parts"); through the second
+transform (the uv1 slot of `uv_transform`) it lands on the display's own
+artwork: the S2000's bar tachometer arc with 0 to 9, x1000 r/min, the
+temperature and fuel scales; the LFA's central dial with the gear N; the
+370Z's two LCD panels (`out/cc/dg-sheet1.png`, `dg-sheet2.png`,
+`dg-sheet3.png`: highlight, first transform, second transform per car).
+
+Over the 22 test-drive cars with `digital_gauge` (`out/cc/dganiso.py`), the
+second transform on UV0 is one of three things:
+
+| Kind | Cars | Median anisotropy | UV units per metre |
+| --- | --- | ---: | ---: |
+| a picture of the display | S2000, Challenger, 500 Abarth, Civic R, LFA, 370Z | 1.00 to 1.40 | 2.9 to 4.6 |
+| a swatch (one texel) | Silvia, WRX, IS F, 300C, Golf R, Jeep, Veyron, Agera, Huayra, GT-R, TT RS, M5, Focus | any | 0 to 0.13 |
+| a stretched strip | S65 (36.7), Range Rover (320), SVT Raptor (29.9) | 17 to 320 | |
+
+The first transform is always a dense, undistorted map (anisotropy 1.2 to
+2.2), so it can't be told apart from a face by shape; it is the digit/label
+sheet the shader composes from.
+
+**Fix** (`cockpit.display_face`, `with_display_faces`, called in `fit` for
+cockpit-carbin cabins): a `digital_gauge` subsection whose second transform
+maps UV0 with median anisotropy at most 2 (`FACE_MAX_ANISOTROPY`) and at
+least 1 UV unit per metre (`FACE_MIN_DENSITY`, about 512 texels per metre on
+the 512² interior_LOD0; cabins run 3 to 9) becomes `digital_gauge_face`
+with that transform first: textured from interior_LOD0 like any cabin
+trim. The rest stay the blank display. `CockpitFit.display_faces` and the
+interior report's `display_face_triangles` count them.
+
+Survey after (`out/cc/faces-survey.txt`): faces on S2000 76, Challenger 29,
+500 Abarth 30, Civic R 8, LFA 110, 370Z 56; no other car changes. Offline
+head-camera views, before and after (`out/cc/faces-before-after.png`, build
+`out/cockpitfaces/build`): the S2000 shows its tachometer arc and scales,
+the LFA its central dial, the 370Z its LCDs; the Challenger, 500 and Civic
+displays change little (dark or the white dial face around them).
+
+In game (VM, confirmed-runtime): run `vm-20261024-061707`
+(`out/cockpitfaces/build`, IDs 147, 1 S2000, 2 LFA, 3 370Z, `-ShotSeconds
+3`) against `vm-20261024-063218` (`out/testdrive10`, IDs 147, 4, 30, 32,
+same settings): the S2000's tachometer arc, scale and the temperature and
+fuel marks now show behind the wheel (observe-05), the LFA's central dial
+with N and its scale (observe-10), the 370Z's LCD panels under the HUD
+(observe-15); `img/cockpit-digital-faces-ingame.jpg`. Run
+`vm-20261024-060338` (IDs 147, 1-5) finished too. Offline:
+`img/cockpit-digital-faces-offline.png` (S2000, LFA, 370Z; left before).
+
+**Still without a readable cluster, and why.**
+
+- Agera (182 triangles) and Range Rover (12): the cluster is drawn at run
+  time by Forza's digital shader. Their second transform is a one-texel
+  swatch (Agera) or a stretched strip (Range Rover), and no other
+  subsection, LOD or texture holds the artwork: the Agera's
+  `interior_emissive_LOD0` has only switch icons; the Range Rover's
+  cluster is one flat 12-triangle panel (its virtual dials), it has no
+  emissive texture, and neither transform maps the panel onto the dial
+  pictures in its interior_LOD0 (the shader composes them at run time).
+  Neither car is on the FM4 discs. They keep a blank display.
+- Durango and Express: FH1 traffic cars. Their `_cockpit.carbin` and
+  `_lod0.carbin` are placeholders (17-vertex boxes; the `_LOD0` atlases
+  hold a Prius's), neither is on the FM4 discs, and no GM or Dodge sibling
+  ships a real cockpit (the FH1 Yukon XL is a stub too). The converter
+  already uses the finest Forza data, the main carbin's LOD 1 cabin
+  (Express interior 314 triangles, dash texture from nodamage.xds at 1.0x).
+  The only detailed alternative is the host's stock interior
+  (`out/cc/stubs-vs-host.png`): the Express's host 198 is the GMC Savana,
+  whose dash is the Express's; the Durango's host 138 is an Audi Q7. No
+  geometric test separated the two (rays over the dash from the eye agree
+  on 43% vs 30%; the hosts' exterior greenhouses differ from both Forza
+  bodies), so the converter keeps the Forza cabin for both.
+
+## Badges seen through the windscreen (2026-10-24)
+
+Found during the emissive work (PR #10): `classify_cockpit` sent every
+`badge` technique to interior_LOD0, also in the outside sections
+(`a_pillar`, `hood*`, `mirror*`). Over the 40 test-drive cars
+(`out/cc/badges.py`; `img/cockpit-outside-badges-uv.png`: each subsection's
+UV outline over nodamage_LOD0 RGB and alpha, then interior_LOD0 RGB and
+alpha) these are: Firebird `hooda` and `a_pillar` `badge` (33 triangles
+each: the "6.6" decal), M5 E28 `mirrorL/R` `badge` (2: the mirror badge
+shape), S5S Raptor `a_pillar` `badge` (16), Mustang Boss 429 `hooda`
+`badge` (286: the scoop plate), SVT Raptor `hooda` `stripe_badge` (490) and
+`badge` (24: "F-150"), and the Agera's `hooda` `liveryBadge` (skipped since
+PR #10). In nodamage_LOD0 each outline sits on matching artwork and its
+alpha mask; in interior_LOD0 on unrelated content (gauge faces, labels), the
+same split as the other outside techniques. Fix: badges map to
+interior_LOD0 only in cabin sections; in outside sections they follow
+`classify` (nodamage_LOD0), alpha-tested as before. Rebuilt
+(`out/cockpitbadges/build`): the five cars' interior atlases gain one
+nodamage region each (M5 E28, Mustang, SVT Raptor; the Firebird's and
+Saleen's footprints fall inside existing regions). From the head camera the
+change is small: most of these triangles are below the cowl or culled.
 
 ## Risks and open questions
 

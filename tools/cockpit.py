@@ -74,10 +74,23 @@ FALLBACK_DIAL_MAX = {"speed": 160.0, "tach": 8000.0}
 # Needles with no DSF gauge stay static: half-way for level and temperature
 # gauges, at rest for the others.
 PARK_MID = re.compile(r"^(fuel|oil|water|temp|volt)", re.I)
-# Forza digital readouts: a shader picks the digits; the static UVs land on
-# unrelated parts of the dial texture, so they are drawn as a blank display.
+# Forza digital readouts: a shader picks the digits. UV0 through the
+# subsection's first transform lands on the label sheet the digits come from;
+# through the second transform (the uv1 slot of uv_transform) it lands on
+# the display's own face where there is one: the S2000's whole cluster (bar
+# tachometer, scale, temperature and fuel marks), the LFA's central dial, the
+# 370Z's LCD panels (research/cockpit.md, "Digital clusters"). Such faces are
+# drawn textured (DISPLAY_FACE); the rest as a blank display.
 DIGITAL_TECHNIQUES = {"digital_gauge"}
 DISPLAY_COLOUR = (12, 14, 16, 255)
+DISPLAY_FACE = "digital_gauge_face"   # renamed subsection: classify_cockpit -> textured, interior_LOD0
+# A face mapping is a real picture of the display when it is undistorted
+# (median ratio of the UV map's singular values) and at least as dense as a
+# coarse cabin texture (UV units per metre; cabins run 3 to 9). Elsewhere the
+# second transform is a swatch (under 0.15 per metre) or a stretched strip
+# (anisotropy 17 to 320).
+FACE_MAX_ANISOTROPY = 2.0
+FACE_MIN_DENSITY = 1.0
 # Cockpit subsections that would fall to the host's shared trim material
 # (mirror glass, a render target in Forza; tiling detail textures such as the
 # Mustang's wood rim and dash) sample DSF's trim texture with Forza UVs, which
@@ -445,6 +458,7 @@ class CockpitFit:
     lod0_atlases: bool = True   # cockpit carbins sample the _LOD0 atlases, the main carbin doesn't
     shell_skip: set = field(default_factory=set)   # main-carbin sections kept out of the shell too
     camera: tuple | None = None  # final head camera (Forza space), set by forza2dsf after camera_eye
+    display_faces: int = 0       # digital_gauge triangles drawn textured (display_face)
 
 
 # Main-carbin sections that make a cockpit when the cockpit carbin is a stub.
@@ -475,6 +489,77 @@ def promote_lod(section: carbin.Section, lod: int | None = None) -> carbin.Secti
             subs.append(sub2)
     out.subsections = subs
     return out
+
+
+def uv_map_stats(section: carbin.Section, sub: carbin.SubSection, transform) -> tuple[float, float]:
+    """(anisotropy, density) of UV0 through `transform` (x_off, x_scale,
+    y_off, y_scale) over the subsection's triangles, medians: the ratio of
+    the singular values of the surface-to-UV map (1 = undistorted) and the
+    square root of its determinant (UV units per metre). (inf, 0) when no
+    triangle has area in both."""
+    xo, xs, yo, ys = transform
+    pool = section.vertices_for(sub)
+    aniso, dens = [], []
+    for tri in sub.triangles():
+        p = [pool[i].position for i in tri]
+        uv = [(pool[i].uv0[0] * xs + xo, pool[i].uv0[1] * ys + yo) for i in tri]
+        e1, e2 = _sub(p[1], p[0]), _sub(p[2], p[0])
+        l1 = math.sqrt(_dot(e1, e1))
+        if l1 < 1e-9:
+            continue
+        x2 = _dot(e2, e1) / l1
+        y2 = math.sqrt(max(0.0, _dot(e2, e2) - x2 * x2))
+        if y2 < 1e-9:
+            continue
+        # Surface frame (0, 0), (l1, 0), (x2, y2) -> UV: J = [[a, b], [c, d]].
+        du1, dv1, du2, dv2 = uv[1][0] - uv[0][0], uv[1][1] - uv[0][1], uv[2][0] - uv[0][0], uv[2][1] - uv[0][1]
+        a, c = du1 / l1, dv1 / l1
+        b, d = (du2 - a * x2) / y2, (dv2 - c * x2) / y2
+        s, det = a * a + b * b + c * c + d * d, abs(a * d - b * c)
+        r = math.sqrt(max(0.0, s * s / 4 - det * det))
+        big, small = math.sqrt(s / 2 + r), math.sqrt(max(0.0, s / 2 - r))
+        aniso.append(big / small if small > 1e-12 else math.inf)
+        dens.append(math.sqrt(det))
+    if not aniso:
+        return math.inf, 0.0
+    aniso.sort()
+    dens.sort()
+    return aniso[len(aniso) // 2], dens[len(dens) // 2]
+
+
+def display_face(section: carbin.Section, sub: carbin.SubSection) -> carbin.SubSection | None:
+    """A digital_gauge subsection whose second UV transform maps UV0 onto a
+    picture of the display (undistorted and dense enough, see
+    FACE_MAX_ANISOTROPY), as a textured copy (DISPLAY_FACE, that transform
+    first); None for blank displays."""
+    import copy
+    if sub.material.lower() not in DIGITAL_TECHNIQUES or len(sub.uv_transform) < 8:
+        return None
+    face = tuple(sub.uv_transform[4:8])
+    aniso, density = uv_map_stats(section, sub, face)
+    if aniso > FACE_MAX_ANISOTROPY or density < FACE_MIN_DENSITY:
+        return None
+    out = copy.copy(sub)
+    out.material = DISPLAY_FACE
+    out.uv_transform = face + tuple(sub.uv_transform[:4]) + tuple(sub.uv_transform[8:])
+    return out
+
+
+def with_display_faces(section: carbin.Section) -> tuple[carbin.Section, int]:
+    """The section with its textured display faces (display_face) swapped in,
+    and how many triangles they hold."""
+    import copy
+    subs, faces = [], 0
+    for sub in section.subsections:
+        face = display_face(section, sub) if sub.lod == 0 else None
+        if face is not None:
+            faces += len(face.triangles())
+        subs.append(face or sub)
+    if not faces:
+        return section, 0
+    out = copy.copy(section)
+    out.subsections = subs
+    return out, faces
 
 
 def is_stub(sections: list[carbin.Section]) -> bool:
@@ -542,10 +627,15 @@ def fit(sections: list[carbin.Section], name: str, gamedbs: list[Path], folder: 
                 mirrors[side] = _mean(pts)
     ticks = gauge_ticks(folder)
     calibration = {f: calibrate_gauge(g, ticks.get(f)) for f, g in gauges.items() if f in GAUGE_IDS}
+    faces = 0
+    if lod0:   # the face maps into interior_LOD0; main-carbin cabins have no digital_gauge
+        for n, s in static.items():
+            static[n], k = with_display_faces(s)
+            faces += k
     digital = sum(len(sub.triangles()) for s in static.values() for sub in s.subsections
                   if sub.lod == 0 and sub.material.lower() in DIGITAL_TECHNIQUES)
     return CockpitFit(wheel, gauges, eye_point(wheel, offset), offset, eye_source, mirrors, static, needles,
-                      calibration, digital, source, wheel_source, lod0, dropped)
+                      calibration, digital, source, wheel_source, lod0, dropped, display_faces=faces)
 
 
 def gauge_params(cf: CockpitFit) -> dict[int, float]:
@@ -1464,6 +1554,7 @@ def convert_interior(stream, interior, car, cf: CockpitFit, place, seed: bytes, 
     return {"glass_windows": glass_windows, "submodels": len(builder.subs), "vertex_bytes": vertex_bytes, "indices": len(builder.indices),
             "cockpit_sections": names, "shell_sections": len(shell), "needles": sorted(animated),
             "parked_needles": sorted(f for f in cf.needles if f not in animated), "digital_triangles": cf.digital,
+            "display_face_triangles": cf.display_faces,
             "atlas": t.summary(), "visibility": culled_report, "attempts": attempts,
             "decimate": attempts[-1]["decimate"], "shell_lod": attempts[-1]["shell_lod"]}
 
@@ -1866,6 +1957,8 @@ def main(argv: list[str] | None = None) -> None:
                       f"{'mph' if g.family == 'speed' else 'rpm'}{' (reversed)' if cal.reverse else ''}, "
                       f"rest turned {cal.rest_deg:+.1f} deg, dial to {cal.dial_max:g}, "
                       f"worst tick {cal.residual_deg:.1f} deg off ({cal.source})")
+        if cf.display_faces:
+            print(f"digital displays: {cf.display_faces} triangles drawn with their face texture")
         if cf.digital:
             print(f"digital readouts: {cf.digital} triangles, drawn blank")
         for side, p in cf.mirrors.items():
