@@ -68,6 +68,9 @@ ROLES = {
     53: "sill -x", 52: "sill +x", 0: "misc",
 }
 DOORS = (31, 32, 54, 55)
+# Roles that come in +x/-x pairs.
+SIDE_PARTNER = {a: b for x, y in ((31, 32), (54, 55), (33, 34), (50, 51), (40, 41), (15, 136), (52, 53), (155, 156))
+                for a, b in ((x, y), (y, x))}
 BODY = (38, 37, 33, 34, 52, 53) + DOORS
 # Records whose hinges/bodies other code owns or that have no Forza geometry.
 NOT_MOVED = {1, 185, 188, 190, 155, 156}
@@ -1007,9 +1010,32 @@ class DamagePlan:
     def panels_with(self, roles) -> list[Panel]:
         return [p for p in self.panels.values() if p.role in roles]
 
+    def _partner(self, pair) -> tuple | None:
+        """The other side's panel of a sided role (mirror +x for mirror -x)."""
+        p = self.panels.get(pair)
+        role = SIDE_PARTNER.get(p.role) if p is not None else None
+        cands = sorted(q.pair for q in self.panels_with((role,))) if role is not None else []
+        return cands[0] if cands else None
+
+    def _source(self, f: HostField, pair) -> tuple[tuple | None, bool]:
+        """(the panel whose host vertices in `f` stand for `pair`, mirrored in x).
+        A sided panel the host has a record for but no vertices in this entry's
+        part 0 (278's full entry has no +x mirror; its exterior has) borrows its
+        partner's, mirrored."""
+        if pair in f.by_pair:
+            return pair, False
+        partner = self._partner(pair)
+        if partner is not None and partner in f.by_pair:
+            return partner, True
+        return None, False
+
     def _host_box(self, pair, f: HostField | None = None) -> Box | None:
         f = f or self.full_field
-        return Box.of(f.points[n] for n in f.by_pair[pair].values) if pair in f.by_pair else None
+        src, flip = self._source(f, pair)
+        if src is None:
+            return None
+        box = Box.of(f.points[n] for n in f.by_pair[src].values)
+        return Box((-box.hi[0], box.lo[1], box.lo[2]), (-box.lo[0], box.hi[1], box.hi[2])) if flip else box
 
     def _forza_norm(self, p):
         c, s = self.forza_box.centre, self.forza_box.size
@@ -1086,12 +1112,23 @@ class DamagePlan:
         return self._grids[key]
 
     def _side_panel(self, roles, centroid) -> tuple | None:
-        cands = [p for p in self.panels_with(roles) if p.pair in self.full_field.by_pair]
+        """The record of `roles` on the section's side (or a centred one: a
+        twin exhaust); None (the chassis) if the host has none there. A part
+        never goes on the other side's record: both mirrors on one panel came
+        off together, as one body centred between them (testdrive9: the S2000's
+        mirror hung in the air, host 278 has no +x mirror in its full entry)."""
+        cands = [p for p in self.panels_with(roles) if self._host_box(p.pair) is not None]
         if not cands:
             return None
         if abs(centroid[0]) > 0.1 * self.forza_box.size[0] / 2:
-            same = [p for p in cands if (self._host_box(p.pair).centre[0] > 0) == (centroid[0] > 0)]
-            cands = same or cands
+            reach = 0.1 * self.full_field.box.size[0] / 2
+
+            def fits(p):
+                box = self._host_box(p.pair)
+                return (box.lo[0] < -reach and box.hi[0] > reach) or (box.centre[0] > 0) == (centroid[0] > 0)
+            cands = [p for p in cands if fits(p)]
+            if not cands:
+                return None
         q = self._forza_norm(centroid)
         return min(cands, key=lambda p: math.dist(q, self.full_field.normalise(self._host_box(p.pair).centre))).pair
 
@@ -1150,6 +1187,21 @@ class DamagePlan:
                 pair = self._glass_panel(roles[0])
             if kind == "glass" and pair is None:
                 kind, roles = "majority", ((4, 37, 38) if roles[0] == "front" else (124, 5, 38))
+            off = 0.1 * self.forza_box.size[0] / 2
+            if kind == "side" and min(t[2][0] for t in tris) < -off and max(t[2][0] for t in tris) > off:
+                # One section with parts on both sides (a twin exhaust, both
+                # headlights in one mesh): each side's triangles take that
+                # side's record, so they come off one at a time.
+                halves = {s: [t for t in tris if (t[2][0] > 0) == s] for s in (True, False)}
+                votes = Counter()
+                for half in halves.values():
+                    c = tuple(sum(t[2][a] for t in half) / len(half) for a in range(3))
+                    p = self._side_panel(roles, c) or self.chassis
+                    for sid, k, _ in half:
+                        out[(sid, k)] = p
+                    votes[p] += len(half)
+                per_section[section.name] = votes
+                continue
             if kind in ("fixed", "side", "glass"):
                 pair = pair or self.chassis
                 for sid, k, _ in tris:
@@ -1230,10 +1282,30 @@ class DamagePlan:
         return out
 
     def _rigid(self, pair) -> bool:
-        """A panel that only crushes (chassis, front structure, doors, wings, sills:
-        hinge limit 0 or none), so its seams with others can be kept shut."""
+        """A panel that only crushes on a converted car (chassis, front
+        structure, doors, wings, sills), so its seams with others can be kept
+        shut; bound() keeps it from swinging."""
         p = self.panels.get(pair)
         return p is not None and p.role in BODY
+
+    # Doors and wings swing on stock cars. Their hinge limit is 0, but
+    # forceOpenPanels opens stock doors wide (run host-20261023-093807: 227,
+    # 266) and the converted RX-7's and Mustang's door panels too (run
+    # host-20261023-101158), and a crash knocks them ajar. A converted door or
+    # wing is a patch of the one-piece Forza skin cut along the host's panel
+    # layout, not a Forza shut line, with no jamb or door card behind it (the
+    # door cards are on the chassis): swung, its border opens into a jagged
+    # slit onto the hollow body (testdrive9: the S5S Raptor behind its door,
+    # the 250 GTO across its nose, where both wings meet with no bumper
+    # section between them). Pinned seams (_pin_map) only hold while the
+    # panels share a transform. So every rigid panel's vertices take the
+    # chassis' transform slot (s9 byte 0) and keep their own panel-data index
+    # (byte 1): they still dent with their own damage amount, and never swing.
+
+    def bound(self, pair) -> tuple:
+        """s9 bytes 0, 1 written on a panel's vertices: (transform slot, panel
+        data index). Rigid panels use the chassis' slot."""
+        return (self.chassis[0], pair[1]) if self._rigid(pair) else pair
 
     def _seam_map(self, sections, lod: int, assign: dict) -> dict:
         """Quantised position (int16 x3, as encoded) -> the rigid panels whose
@@ -1392,12 +1464,16 @@ class DamagePlan:
         key = (id(f), pair, p)
         if key not in cache:
             scale = f.box.scale_to(self.forza_box)
-            grid = f.by_pair.get(pair) or f.all_grid
-            hits = grid.nearest(self._forza_norm(p), self.opts.k)
+            src, flip = self._source(f, pair)
+            grid = f.by_pair[src] if src is not None else f.all_grid
+            q = self._forza_norm(p)
+            hits = grid.nearest((-q[0], q[1], q[2]) if flip else q, self.opts.k)
             wsum, d = 0.0, [0.0, 0.0, 0.0]
             for dist, n in hits:
                 w = 1.0 / (dist + 0.02) ** 2
                 disp = f.disp[grid.values[n]]
+                if flip:
+                    disp = (-disp[0], disp[1], disp[2])
                 for a in range(3):
                     d[a] += w * disp[a]
                 wsum += w
@@ -1470,6 +1546,7 @@ class DamagePlan:
         decal-atlas UV1 of the vertices `subs` use."""
         points = []
         rigid = self._rigid(pair)
+        bound = self.bound(pair)
         for sub in subs:
             if sub.stride not in LAYOUT:
                 continue
@@ -1504,8 +1581,7 @@ class DamagePlan:
                     disp = tuple(w * c for c in disp)
                 q = tuple(p[a] + disp[a] for a in range(3))
                 dmg[v] = q
-                buf[at + o9] = pair[0]
-                buf[at + o9 + 1] = pair[1]
+                buf[at + o9], buf[at + o9 + 1] = bound
                 struct.pack_into("<4e", buf, at + o12, q[0], q[1], q[2], 1.0)
                 if stride == 32 and f.uv1 is not None:
                     # Lights-material triangles that aren't lamps (badges, plate,
@@ -2090,7 +2166,10 @@ def cmd_check(args) -> None:
         nonr = child(full, "NONR")
         panels = host_panels(payload(stream, child(nonr, "UPVH")), payload(stream, child(nonr, "MODL")))
         meshes = {k: load_mesh(stream, kinds[k]) for k in (0, 2) if k in kinds}
-    known = set(panels)
+    # Rigid panels are drawn through the chassis' transform slot (DamagePlan.bound).
+    chassis_slot = 0 if (0, 0) in panels else min(panels)[0]
+    drawn = {pair: (chassis_slot, pair[1]) if panel.role in BODY else pair for pair, panel in panels.items()}
+    known = set(panels) | set(drawn.values())
     for kind, mesh in meshes.items():
         mask = 4 if kind == 0 else 2
         part0 = set()
@@ -2125,10 +2204,10 @@ def cmd_check(args) -> None:
                 for n in lod.submodels:
                     for vb, tri in vm.triangles(mesh, mesh.submodels[n]):
                         tris.add((vb.uid,) + tuple(sorted(tri)))
-                        bad += any(s9_pair(vb, i) != pair for i in tri)
+                        bad += any(s9_pair(vb, i) != drawn[pair] for i in tri)
             if tris:
                 report(not bad and tris <= part0,
-                       f"part {panel.part} ({role_name(panel.role)}): {len(tris)} triangles, all on panel {pair} "
+                       f"part {panel.part} ({role_name(panel.role)}): {len(tris)} triangles, all on panel {drawn[pair]} "
                        f"({bad} not) and all in part 0 ({len(tris - part0)} not)")
     print(f"{problems} problem(s)")
     if problems:

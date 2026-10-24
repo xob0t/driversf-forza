@@ -405,6 +405,92 @@ local function spawnSideCopy(id, car)
 	return ok and copy or nil
 end
 
+-- config.damage_ram: real collisions instead of applyDamage. Per variant a parked copy of the
+-- model is put RAM_AHEAD m in front of the player's car, turned so its side ("side"), its front
+-- ("front") or its back ("rear") faces the camera, and the player's car is driven into it at
+-- RAM_SPEED m/s; a few ticks later the player's car is put back RAM_BACK m so the chase camera sees
+-- the copy's crash damage (a real crash damages panels unevenly and knocks doors and wings ajar;
+-- fullVisualDamage does neither, research/damage.md).
+local RAM_TURN = { side = math.pi / 2, front = math.pi, rear = 0 }
+local RAM_AHEAD, RAM_SPEED, RAM_BACK, RAM_TICKS = 11.0, 14.0, 7.0, 12
+local DAMAGE_RAM = {}         -- config.damage_ram: variants in turn, e.g. { "side", "front" }
+do
+	local found, config = user_open("dsfforza\\config.lua")
+	if found and type(config) == "table" and type(config.damage_ram) == "table" then DAMAGE_RAM = config.damage_ram end
+end
+local ramCopy = nil
+
+local function heading(car)
+	local m0 = car.matrix
+	local h = math.atan2(m0[2].x, m0[2].z)
+	return h, math.sin(h), math.cos(h), m0[3]
+end
+
+local function spawnRamCopy(id, car, variant)
+	local ok, copy = pcall(function()
+		local h, fx, fz, p = heading(car)
+		local hc = h + (RAM_TURN[variant] or 0)
+		local pos = vec.vector(p.x + fx * RAM_AHEAD, p.y + 0.5, p.z + fz * RAM_AHEAD, 1)
+		local c = GameVehicleResource.create({
+			SnapToTerrain = true, Model_Id = id, NoOccupants = true, InitialVelocity = 0,
+			Position = pos, Heading = vec.vector(math.sin(hc), 0, math.cos(hc), 0),
+		})
+		pcall(function()
+			local m = setYRotation(hc)
+			m[3] = pos
+			c.matrix = m
+			c.velocity = vec.vector(0, 0, 0, 0)
+		end)
+		return c
+	end)
+	log(string.format("id %d: ram copy (%s) %s", id, variant, ok and describe(copy) or tostring(copy)))
+	return ok and copy or nil
+end
+
+local function removeRamCopy()
+	if ramCopy ~= nil then
+		pcall(function() ramCopy:delete() end)
+		pcall(GameVehicleResource.destroy, ramCopy)
+		ramCopy = nil
+	end
+end
+
+-- One tick of the ram sequence in chase view. Returns true while the player's car may move.
+local function ramStep(id, car)
+	local k = math.floor((state.ticks - 2) / RAM_TICKS) + 1
+	local t = (state.ticks - 2) % RAM_TICKS
+	local variant = DAMAGE_RAM[k]
+	if state.ticks < 2 or variant == nil then return false end
+	if t == 0 then
+		removeRamCopy()
+		ramCopy = spawnRamCopy(id, car, variant)
+	elseif t == 2 or t == 3 then
+		pcall(function()
+			local _, fx, fz = heading(car)
+			car.velocity = vec.vector(fx * RAM_SPEED, 0, fz * RAM_SPEED, 0)
+		end)
+		if t == 2 then log(string.format("id %d: ramming the %s copy t%d", id, variant, state.ticks)) end
+		return true
+	elseif t == 4 or t == 5 then
+		return true
+	elseif t == 6 then
+		local ok, err = pcall(function()
+			local _, fx, fz, p = heading(car)
+			local m = car.matrix
+			m[3] = vec.vector(p.x - fx * RAM_BACK, p.y, p.z - fz * RAM_BACK, 1)
+			car.matrix = m
+			car.velocity = vec.vector(0, 0, 0, 0)
+		end)
+		log(string.format("id %d: backed off from the %s copy t%d %s", id, variant, state.ticks, ok and "ok" or tostring(err)))
+	end
+	return false
+end
+
+local function chaseTicks()
+	if #DAMAGE_RAM > 0 then return math.max(VIEW_TICKS, 2 + RAM_TICKS * #DAMAGE_RAM) end
+	return VIEW_TICKS
+end
+
 local function removeSideCopy()
 	if sideCopy ~= nil then
 		pcall(function() sideCopy:delete() end)
@@ -437,6 +523,11 @@ local function step()
 				-- No copy: hit the player's car (the chase camera then sees only its back).
 				sideHit(id, state.spawned, SIDE_STAGES[state.ticks], "car")
 			end
+		end
+	end
+	if #DAMAGE_RAM > 0 and id ~= nil and state.phase == "chase_view" then
+		if not ramStep(id, state.spawned) then
+			pcall(function() state.spawned.velocity = vec.vector(0, 0, 0, 0) end)
 		end
 	end
 	if DAMAGE and id ~= nil and state.phase == "chase_view" and state.ticks == DAMAGE_TICK then
@@ -557,7 +648,7 @@ local function step()
 		if DYNO.step() then nextId() end
 	elseif state.phase == "lights" then
 		if LIGHTS.step() then nextId() end
-	elseif state.phase == "chase_view" and state.ticks >= VIEW_TICKS then
+	elseif state.phase == "chase_view" and state.ticks >= chaseTicks() then
 		-- Cockpit camera, the way challengeracelogic.lua forces it.
 		local ok, err = pcall(function()
 			localPlayer.cameraMode = "DriverEye"
@@ -566,6 +657,7 @@ local function step()
 		log(string.format("id %d: cockpit view %s (cameraMode %s)", id, ok and "on" or ("failed: " .. tostring(err)),
 			tostring(localPlayer.cameraMode)))
 		removeSideCopy()
+		removeRamCopy()
 		state.phase, state.ticks = "cockpit_view", 0
 	elseif state.phase == "cockpit_view" and state.ticks < cockpitTicks() then
 		if GLASS_LADDER and GLASS_STEPS[state.ticks] then

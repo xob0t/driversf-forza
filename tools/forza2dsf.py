@@ -322,7 +322,9 @@ def interior_glass_skin(dmg, car, opts) -> dict[str, bytes]:
     for (sid, _), pair in assign.items():
         if sid in owner:
             votes.setdefault(owner[sid], Counter())[pair] += 1
-    return {name: bytes((*c.most_common(1)[0][0], 0, 1)) for name, c in votes.items()}
+    # dmg.bound: door glass keeps the door's crack state but not its swing,
+    # like the exterior door it sits in (damage.DamagePlan.bound).
+    return {name: bytes((*dmg.bound(c.most_common(1)[0][0]), 0, 1)) for name, c in votes.items()}
 
 
 @dataclass
