@@ -1437,46 +1437,85 @@ def _screen_parts(rel, axis: int, sign: int, half: float, skip=None):
     """_face_parts for many triangles at once: rel (T, 3, 3) eye-relative points.
     Returns (parts (P, 3, 3) of screen (x, y, 1 / z), owner (P,) triangle index),
     ordered by triangle, then part. The same float operations as _face_parts; the
-    triangles crossing the near plane go through _clip_near itself."""
+    triangles crossing the near plane are clipped as _clip_near does (_clip_near_many)."""
     import numpy as np
 
     u_axis, v_axis = [a for a in range(3) if a != axis]
     z = rel[:, :, axis] * sign
-    live = z.max(axis=1) >= NEAR_PLANE
+    z0, z1, z2 = z[:, 0], z[:, 1], z[:, 2]
+    live = np.maximum(np.maximum(z0, z1), z2) >= NEAR_PLANE
     if skip is not None:
         live &= ~skip
-    crossing = live & (z.min(axis=1) < NEAR_PLANE)
+    crossing = live & (np.minimum(np.minimum(z0, z1), z2) < NEAR_PLANE)
     whole = np.flatnonzero(live & ~crossing)
     uvz = [np.stack((rel[whole, :, u_axis], rel[whole, :, v_axis], z[whole]), axis=-1)]
     owner = [whole]
-    rank = [np.zeros(len(whole), dtype=np.int64)]
-    clipped, clip_owner, clip_rank = [], [], []
-    for n in np.flatnonzero(crossing).tolist():
-        face = [(p[u_axis], p[v_axis], sign * p[axis]) for p in rel[n].tolist()]
-        poly = _clip_near(face)
-        for i in range(1, len(poly) - 1):
-            clipped.append((poly[0], poly[i], poly[i + 1]))
-            clip_owner.append(n)
-            clip_rank.append(i)
-    if clipped:
-        uvz.append(np.array(clipped, dtype=np.float64))
-        owner.append(np.array(clip_owner, dtype=np.int64))
-        rank.append(np.array(clip_rank, dtype=np.int64))
-    uvz, owner, rank = np.concatenate(uvz), np.concatenate(owner), np.concatenate(rank)
-    order = np.lexsort((rank, owner))
+    cross = np.flatnonzero(crossing)
+    if len(cross):
+        face = np.stack((rel[cross, :, u_axis], rel[cross, :, v_axis], z[cross]), axis=-1)
+        clipped, which = _clip_near_many(face)
+        uvz.append(clipped)
+        owner.append(cross[which])
+    uvz, owner = np.concatenate(uvz), np.concatenate(owner)
+    # By triangle, then part: an owner's parts are consecutive and in order.
+    order = np.argsort(owner, kind="stable")
     uvz, owner = uvz[order], owner[order]
     u, v, zz = uvz[..., 0], uvz[..., 1], uvz[..., 2]
     return np.stack((half + half * u / zz, half - half * v / zz, 1 / zz), axis=-1), owner
 
 
-def _raster(parts, owner, resolution: int, depth, ids=None, chunk: int = 1 << 20):
+def _clip_near_many(face):
+    """_clip_near and the fan of _face_parts for triangles (C, 3, 3) of (u, v, z)
+    that cross the near plane (at least one vertex either side): (parts (P, 3, 3),
+    index into `face` (P,)), ordered by triangle, then part. The same float
+    operations: per edge the start vertex if inside, then the crossing point
+    a + (b - a) * t if the edge crosses; the polygon of 3 or 4 points is fanned
+    from its first point."""
+    import numpy as np
+
+    count = len(face)
+    inside = face[:, :, 2] >= NEAR_PLANE
+    slots = np.zeros((count, 6, 3))
+    valid = np.zeros((count, 6), dtype=bool)
+    for i in range(3):
+        a, b = face[:, i], face[:, (i + 1) % 3]
+        slots[:, 2 * i] = a
+        valid[:, 2 * i] = inside[:, i]
+        crosses = np.flatnonzero(inside[:, i] != inside[:, (i + 1) % 3])
+        a, b = a[crosses], b[crosses]
+        t = (NEAR_PLANE - a[:, 2]) / (b[:, 2] - a[:, 2])
+        slots[crosses, 2 * i + 1] = a + (b - a) * t[:, None]
+        valid[crosses, 2 * i + 1] = True
+    # The valid slots in order: the polygon (3 or 4 points; pad the 3s with their last).
+    order = np.argsort(~valid, axis=1, kind="stable")[:, :4]
+    poly = np.take_along_axis(slots, order[:, :, None], axis=1)
+    parts = np.stack((poly[:, [0, 1, 2]], poly[:, [0, 2, 3]]), axis=1)  # (C, 2, 3, 3)
+    has = np.stack((np.ones(count, dtype=bool), valid.sum(axis=1) == 4), axis=1)  # (C, 2)
+    which = np.repeat(np.arange(count), 2)[has.ravel()]
+    return parts.reshape(-1, 3, 3)[has.ravel()], which
+
+
+RASTER_TILE = 8  # largest tile side of _raster, in pixels
+
+
+def _raster(parts, owner, resolution: int, depth, ids=None, chunk: int = 1 << 16):
     """Rasterise screen parts (from _screen_parts) into `depth` (1 / z, larger is
     nearer; a flat float array of resolution**2) and, if given, `ids` (the owner
-    of the nearest part), with the per-pixel loop's float operations and order: a
-    pixel centre inside a part (barycentric weights all >= 0) whose w is above the
+    of the nearest part), with the per-pixel loop's float operations: a pixel
+    centre inside a part (barycentric weights all >= 0) whose w is above the
     pixel's depth takes it, so among equal depths the earlier part keeps it.
     Returns (covered: the part covered a pixel centre, bbox: its pixel box isn't
-    empty), one bool per part."""
+    empty), one bool per part.
+
+    The loop's result doesn't depend on the order the pixels are visited in: per
+    pixel it is the largest w (if above the depth it had), from the earliest part
+    with that w. So the parts' pixel boxes are cut into tiles of 1 to RASTER_TILE
+    pixels a side (powers of two, the smallest that fit the box), and the tiles of
+    one size are evaluated together as (tiles, rows, columns) arrays; the edge
+    terms (qx - xc), (ry - yc) ... are computed per column and per row and
+    broadcast, the same subtractions the loop does per pixel. Tile pixels outside
+    the box are masked off. The largest w per pixel and the earliest part among
+    equals are then found with ufunc.at (np.maximum.at, np.minimum.at)."""
     import numpy as np
 
     px, py, pw = parts[:, 0, 0], parts[:, 0, 1], parts[:, 0, 2]
@@ -1491,42 +1530,81 @@ def _raster(parts, owner, resolution: int, depth, ids=None, chunk: int = 1 << 20
     area = (qx - px) * (ry - py) - (qy - py) * (rx - px)
     drawn = np.flatnonzero(bbox & ~(np.abs(area) < 1e-12))
     covered = np.zeros(len(parts), dtype=bool)
-    width = x1 - x0
-    counts = np.where(bbox, width * (y1 - y0), 0)
-    start = 0
-    while start < len(drawn):
-        # A run of parts with at most `chunk` pixels in their boxes (at least one part).
-        total = np.cumsum(counts[drawn[start:]])
-        stop = start + max(1, int(np.searchsorted(total, chunk, side="right")))
-        idx = drawn[start:stop]
-        start = stop
-        c = counts[idx]
-        rep = np.repeat(idx, c)
-        local = np.arange(len(rep), dtype=np.int64) - np.repeat(np.cumsum(c) - c, c)
-        x = x0[rep] + local % width[rep]
-        y = y0[rep] + local // width[rep]
-        xc, yc = x + 0.5, y + 0.5
-        a = area[rep]
-        w0 = ((qx[rep] - xc) * (ry[rep] - yc) - (qy[rep] - yc) * (rx[rep] - xc)) / a
-        w1 = ((rx[rep] - xc) * (py[rep] - yc) - (ry[rep] - yc) * (px[rep] - xc)) / a
-        w2 = 1 - w0 - w1
-        inside = (w0 >= 0) & (w1 >= 0) & (w2 >= 0)
-        covered[rep[inside]] = True
-        w = w0 * pw[rep] + w1 * qw[rep] + w2 * rw[rep]
-        keep = inside & (w > 0)
-        k, w, n = (y * resolution + x)[keep], w[keep], rep[keep]
-        if not len(k):
-            continue
-        # Per pixel the nearest fragment, the earliest part among equals.
-        order = np.lexsort((n, -w, k))
-        k, w, n = k[order], w[order], n[order]
-        first = np.ones(len(k), dtype=bool)
-        first[1:] = k[1:] != k[:-1]
-        k, w, n = k[first], w[first], n[first]
-        win = w > depth[k]
-        depth[k[win]] = w[win]
-        if ids is not None:
-            ids[k[win]] = owner[n[win]]
+    if not len(drawn):
+        return covered, bbox
+    # Tile sides per part: the smallest power of two >= the box side, at most RASTER_TILE.
+    sides = [1 << b for b in range(RASTER_TILE.bit_length())]
+    width, height = (x1 - x0)[drawn], (y1 - y0)[drawn]
+    tw, th = np.ones_like(width), np.ones_like(height)
+    for side in sides[1:]:
+        tw[width > side // 2] = side
+        th[height > side // 2] = side
+    nx, ny = -(-width // tw), -(-height // th)
+    frags_k, frags_w, frags_n = [], [], []
+    for side_w in sides:
+        for side_h in sides:
+            sel = np.flatnonzero((tw == side_w) & (th == side_h))
+            if not len(sel):
+                continue
+            # One work item per tile: (part, tile column, tile row).
+            count = nx[sel] * ny[sel]
+            item_part = np.repeat(drawn[sel], count)
+            local = np.arange(len(item_part), dtype=np.int64) - np.repeat(np.cumsum(count) - count, count)
+            item_nx = np.repeat(nx[sel], count)
+            item_x = x0[item_part] + (local % item_nx) * side_w
+            item_y = y0[item_part] + (local // item_nx) * side_h
+            step = max(1, chunk // (side_w * side_h))
+            cols, rows = np.arange(side_w, dtype=np.int64), np.arange(side_h, dtype=np.int64)
+            shift_w = side_w.bit_length() - 1
+            for start in range(0, len(item_part), step):
+                # Arrays are (rows, columns, tiles): the tile axis innermost and contiguous.
+                p = item_part[start : start + step]
+                x = cols[:, None] + item_x[start : start + step]  # (columns, tiles)
+                y = rows[:, None] + item_y[start : start + step]  # (rows, tiles)
+                xc, yc = x + 0.5, y + 0.5
+                # Tile pixels outside the box: NaN centres, never inside (NaN >= 0 is False).
+                xc[x >= x1[p]] = np.nan
+                yc[y >= y1[p]] = np.nan
+                qx_xc, rx_xc, px_xc = (qx[p] - xc)[None], (rx[p] - xc)[None], (px[p] - xc)[None]
+                ry_yc, qy_yc, py_yc = (ry[p] - yc)[:, None], (qy[p] - yc)[:, None], (py[p] - yc)[:, None]
+                a = area[p]
+                w0 = qx_xc * ry_yc
+                w0 -= qy_yc * rx_xc
+                w0 /= a
+                w1 = rx_xc * py_yc
+                w1 -= ry_yc * px_xc
+                w1 /= a
+                w2 = np.subtract(1, w0)
+                w2 -= w1
+                inside = w0 >= 0
+                inside &= w1 >= 0
+                inside &= w2 >= 0
+                f = np.flatnonzero(inside)
+                if not len(f):
+                    continue
+                rc, t = np.divmod(f, len(p))  # f = (row * side_w + column) * tiles + tile
+                n = p[t]
+                covered[n] = True
+                w = w0.ravel()[f] * pw[n] + w1.ravel()[f] * qw[n] + w2.ravel()[f] * rw[n]
+                keep = w > 0
+                rc, t, n = rc[keep], t[keep], n[keep]
+                frags_k.append(y[rc >> shift_w, t] * resolution + x[rc & (side_w - 1), t])
+                frags_w.append(w[keep])
+                frags_n.append(n)
+    if not frags_k:
+        return covered, bbox
+    k, w, n = np.concatenate(frags_k), np.concatenate(frags_w), np.concatenate(frags_n)
+    # Per pixel the nearest fragment, the earliest part among equals; it takes the
+    # pixel if it is nearer than the depth there.
+    nearest = depth.copy()
+    np.maximum.at(nearest, k, w)
+    won = nearest > depth
+    tie = (w == nearest[k]) & won[k]
+    first = np.full(len(depth), len(parts), dtype=np.int64)
+    np.minimum.at(first, k[tie], n[tie])
+    depth[won] = nearest[won]
+    if ids is not None:
+        ids[won] = owner[first[won]]
     return covered, bbox
 
 
@@ -1550,53 +1628,62 @@ def visible_triangles(
     kept triangle indices}. Forza space."""
     import numpy as np
 
-    tris = []  # (key, triangle index, (p0, p1, p2), vertex ids)
-    glass = set()
+    # Per LOD-0 subsection (in order): its key, its triangles' vertex indices into
+    # the section's pool and whether it is glass; points and vertex ids per triangle.
+    blocks, points, vertex_ids, glass = [], [], [], []
+    vertex_base = 0
     for si, s in enumerate(sections):
+        pool = None
         for ui, sub in enumerate(s.subsections):
             if sub.lod != 0:
                 continue
-            is_glass = fm.classify_cockpit(sub.material)[0] == fm.GLASS
-            pool = s.lod0_vertices
-            for k, t in enumerate(sub.triangles()):
-                if is_glass:
-                    glass.add(len(tris))
-                tris.append(((si, ui), k, tuple(pool[i].position for i in t), tuple((si, i) for i in t)))
-    seen = set(glass)
+            if pool is None:
+                pool = np.array([v.position for v in s.lod0_vertices], dtype=np.float64).reshape(-1, 3)
+            t = np.array(sub.triangles(), dtype=np.int64).reshape(-1, 3)
+            blocks.append(((si, ui), len(t)))
+            points.append(pool[t])
+            vertex_ids.append(t + vertex_base)
+            glass.append(np.full(len(t), fm.classify_cockpit(sub.material)[0] == fm.GLASS))
+        vertex_base += len(s.lod0_vertices)
+    if not blocks:
+        return {}
+    points, vertex_ids, glass = np.concatenate(points), np.concatenate(vertex_ids), np.concatenate(glass)
+    seen = glass.copy()
     half = resolution / 2
-    points = np.array([t[2] for t in tris], dtype=np.float64).reshape(-1, 3, 3)
-    skip = np.zeros(len(tris), dtype=bool)
-    skip[sorted(glass)] = True
     for eye in eyes:
         rel = points - np.array(eye, dtype=np.float64)
         x, y, z = rel[..., 0], rel[..., 1], rel[..., 2]
-        seen.update(np.flatnonzero((x * x + y * y + z * z).min(axis=1) < near_keep * near_keep).tolist())
+        seen[(x * x + y * y + z * z).min(axis=1) < near_keep * near_keep] = True
         for axis, sign in CUBE_FACES:
             ids = np.full(resolution * resolution, -1, dtype=np.int64)
             depth = np.zeros(resolution * resolution)  # 1 / z, larger is nearer
-            parts, owner = _screen_parts(rel, axis, sign, half, skip)
+            parts, owner = _screen_parts(rel, axis, sign, half, glass)
             covered, bbox = _raster(parts, owner, resolution, depth, ids)
-            seen.update(ids[ids >= 0].tolist())
+            seen[ids[ids >= 0]] = True
             # A triangle that covered no pixel centre: the pixel under the centroid of
             # its last part whose pixel box isn't empty, at that part's nearest 1 / z.
             cx = np.trunc((parts[:, 0, 0] + parts[:, 1, 0] + parts[:, 2, 0]) / 3)
             cy = np.trunc((parts[:, 0, 1] + parts[:, 1, 1] + parts[:, 2, 1]) / 3)
             best = bbox & (cx >= 0) & (cx < resolution) & (cy >= 0) & (cy < resolution)
-            hit = set(owner[covered].tolist())
-            tiny = {}
-            for n, k, w in zip(
-                owner[best].tolist(),
-                (cy[best] * resolution + cx[best]).astype(np.int64).tolist(),
-                parts[best, :, 2].max(axis=1).tolist(),
-                strict=True,
-            ):
-                tiny[n] = (k, w)
-            seen.update(n for n, (k, w) in tiny.items() if n not in hit and w >= depth[k] * (1 - tiny_slack))
-    verts = {v for n in seen - glass for v in tris[n][3]}
+            hit = np.zeros(len(points), dtype=bool)
+            hit[owner[covered]] = True
+            n = owner[best]  # ascending: parts are ordered by triangle
+            k = (cy[best] * resolution + cx[best]).astype(np.int64)
+            w = parts[best, :, 2].max(axis=1)
+            last = np.ones(len(n), dtype=bool)  # each triangle's last such part
+            last[:-1] = n[1:] != n[:-1]
+            n, k, w = n[last], k[last], w[last]
+            seen[n[~hit[n] & (w >= depth[k] * (1 - tiny_slack))]] = True
+    near = np.zeros(vertex_base, dtype=bool)
+    near[vertex_ids[seen & ~glass].ravel()] = True
+    keep = seen | near[vertex_ids].any(axis=1)
     kept: dict[tuple[int, int], set[int]] = {}
-    for n, (key, k, _, vids) in enumerate(tris):
-        if n in seen or any(v in verts for v in vids):
-            kept.setdefault(key, set()).add(k)
+    start = 0
+    for key, count in blocks:
+        local = np.flatnonzero(keep[start : start + count])
+        if len(local):
+            kept[key] = set(local.tolist())
+        start += count
     return kept
 
 
@@ -1612,17 +1699,18 @@ class GlassSight:
         self.eye, self.place, self.res = eye, place, resolution
         self.faces = {}
         half = resolution / 2
-        tris = [[tuple(p[a] - eye[a] for a in range(3)) for p in t] for t in (triangles or [])]
+        import numpy as np
+
+        tris = [np.array([[p[:3] for p in t] for t in triangles or []], dtype=np.float64).reshape(-1, 3, 3)]
         for s in sections:
-            pool = s.lod0_vertices
+            pool = None
             for sub in s.subsections:
                 if sub.lod != 0 or fm.classify_cockpit(sub.material)[0] == fm.GLASS:
                     continue
-                for t in sub.triangles():
-                    tris.append([tuple(pool[i].position[a] - eye[a] for a in range(3)) for i in t])
-        import numpy as np
-
-        rel = np.array(tris, dtype=np.float64).reshape(-1, 3, 3)
+                if pool is None:
+                    pool = np.array([v.position for v in s.lod0_vertices], dtype=np.float64).reshape(-1, 3)
+                tris.append(pool[np.array(sub.triangles(), dtype=np.int64).reshape(-1, 3)])
+        rel = np.concatenate(tris) - np.array(eye[:3], dtype=np.float64)
         for axis, sign in CUBE_FACES:
             depth = np.zeros(resolution * resolution)  # 1 / z, larger is nearer
             parts, owner = _screen_parts(rel, axis, sign, half)
