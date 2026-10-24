@@ -775,3 +775,95 @@ Reading the garage run (`Driver.log`, `[dsfforza.garage]` lines, screenshots):
   later screen. Then go into the garage by hand in a normal session (drive
   into Fisherman's Wharf, the first garage in the story) with the build
   installed.
+
+## Full roster, first build (tools/batches/all.txt, out/all)
+
+The roster is every car on the discs: the 573 `car` rows of
+`forza-roster.tsv`. The 25 Autovista models have no LOD1-4 main carbin and
+are left out. The list puts the 40 test-drive cars first, so they keep IDs
+1 to 40, and the rest follow in roster order. Built from master 92fddd4
+(before the package move, so without #21 and later) on the 5800X3D while the
+PC was in use:
+
+```sh
+python tools/port_batch.py build --list tools/batches/all.txt --gui --wide-glyphs \
+    --id-policy asi --root-limit 3003 --out out/all --jobs 8
+```
+
+`--root-limit 3003` is needed on top of `--id-policy asi`: 573 cars are
+453 + 3 x 573 = 2172 root entries, past the stock 1100.
+
+**Result: 562 of 573 converted, 11 failed, and 14 of the 562 fail lint.**
+
+- Conversion took 4 h 40 min (8 workers, about 300 s per car with the old
+  code). Merge and lint took another 30 min.
+- The GUI step was stopped part-way: the old code rendered one car at a
+  time and re-read the 2.75 GB archive for each render. #21 fixed that, so
+  the final build makes the GUI.
+- No car needed a batch fallback (no `--damage` or cockpit retry).
+
+### Capacity for 573 cars
+
+| Limit | Needed | Room | Verdict |
+| --- | --- | --- | --- |
+| Model IDs (`--id-policy asi`) | 573 IDs: 1..61, the 92 stock gaps in 62..303, then 304..725 | 849 free IDs below 1000 | fits |
+| Root entries in `dngvehicles.sp` | 2,139 (453 + 3 x 562) | 16,384 with `[archive]` (pass `--root-limit 3003`) | fits |
+| Archive size | 2,750,959,616 bytes (2.56 GiB) for 562 cars | 4 GiB with `[archive] large_files`; the stock reader stops at 2 GiB | fits, about 1.4 GiB spare |
+| Per-car size, 3 VEHC entries | median 3.89 MiB (p5 3.49, p95 4.17), max 4.69 (KOE_CCXR_09), min 1.81 (AUD_A4Avant_04); 2,156 MiB for all 562 | no per-car cap besides MDXN | No car is above 5 MiB. The 1.8 to 2 MiB cars are FH1's low-detail cars (Durango, PT Cruiser, Prius, RAV4, Leaf, tour bus...), whose Forza cockpit is only `interior`, `seatR` and `steering_wheel`. |
+| MDXN per entry | largest 0x200800 (2,099,200 bytes) | `--mdxn-limit 0x2C0000` | 73% of the cap. Recheck after #23 (badge cutouts) and #27 (chrome). |
+| Resource hash arena (45,000 nodes) | bounded by what is resident, not by the archive | free list (below) | not a limit for the roster |
+| Garage maker groups | 112 maker groups, plus 139 cars in 8 shared groups `FORZA`..`FORZA 8` (`plan`) | 120 groups of 20 (`[garage] max_groups`) | Fits. The extra cars of makers with more than 20 (Ford, Chevrolet, Nissan, Porsche...) go into the mixed FORZA groups. |
+| Garage IDs | 573 cars, all below 1000 | `[garage] max_id=1000` | fits |
+| HUD glyphs | one 16-bit badge or plate per car without a stock one | `--wide-glyphs`: codes 0x100..0xD7FF, about 800 plates in 4 pages | fits; not yet checked in game at this count |
+| gui.sp pictures | 562 pictures; gui.sp already holds 923 entries | 177 one-per-SPOI below 1100, shared SPOIs beyond | `port_batch` passes no root limit to `gui_assets.build`, so 385 pictures share SPOIs (untested in game). The fix passes the archive's root limit through. |
+
+**Resource hash arena (confirmed-static; Ghidra on the `-b` project,
+`out/ghidra/arena1..3`).**
+
+- ResourceHashPool_Acquire (0x00BAED90) takes a node from the free list at
+  owner +0x127AC0 first. It bumps the arena pointer (+0x127AC4) only when
+  that list is empty.
+- ResourceManager_ReleaseHandlePair (0x00BAECA0) drops a holder's reference
+  count. At zero it calls ResourceHashPool_Remove (0x00BAEEA0), which unlinks
+  the node and pushes it back onto the free list.
+- So the 45,000 nodes bound the resources resident at once (35 + 2 + 2
+  vehicle slots plus the world), not the number of distinct cars ever
+  spooled. Traffic that cycles through 562 cars reuses nodes.
+- The handle-ID pool next to it (0x32DF = 13,023 u16 IDs at +0x157ACC) is
+  also a free list and behaves the same way.
+
+### Failures (11)
+
+| Cause | Cars | What is wrong |
+| --- | --- | --- |
+| `forza2dsf.load_car`: "no wheel section" (8) | FER_360_99, FER_360Challenge_03, FER_Dino246_69, LAM_Gallardo_05, PAN_Esperante_05, CHE_CORVETTEGSC_10, AUS_MiniCooperS_65, AUS_ShowCaseMiniCooperS_65 | The main carbin has no `wheel` section. The first five keep it only in the wheel archive's carbin (`media/wheels/<car>`, one section `wheel`). The Minis name it `wheela`/`wheelb`, like upgrade variants, and `stock_sections` keeps `wheela` in the body, so the wheel would also be drawn as body. The Corvette Grand Sport's and the Mini's wheel-archive carbins don't parse (next row). |
+| `carbin.parse`: "no parsable sections found" (1) | FIA_595_68 | The first section (`roof1`) is empty: 0 vertices, bounds FLT_MAX / -FLT_MAX. `_looks_like_section` rejects any float of magnitude 100 or more, so it accepts no start position. From 0xDB0 all 34 sections parse. The wheel-archive carbins of the Grand Sport, the Mini and the 595 fail later, in the section tail. Their LOD0 pool is skinned, so the tail's per-vertex record is 16 bytes instead of 4 and the tail starts 4 bytes earlier. The geometry before the tail parses. |
+| `forza_materials`: "nodamage.xds not in ..." (2) | CHE_CamaroZ28_79, PON_TransAm_73 (FM4 1950-2000 pack) | No `nodamage.xds`, only colour variants: `nodamage_blue/gold/orange/yellow.xds` and their `_lod0`, plus `damage.xds`. |
+
+### Lint failures (14 of 562)
+
+| Lint check | Cars |
+| --- | --- |
+| kind 1: "interior glass has crack lines for states 1-2 and rim shards for state 3" (crack and shard counts all 0; surface triangles only) | AUD_14_R10_10, AUD_2_R10_08, AUD_2_R15TDI_09, AUD_2_R8_06, BMW_15_LMR_99, CHE_55/89/99_FLM09_10, MAZ_MX5SL_10, MER_SLRStirlingMoss_10, PAN_11_LMP_03: open race cars and roadsters, whose only interior glass is a small windscreen or wind deflector |
+| kind 1: "interior glass triangles each inside one stock interior region" (448, 611 and 460 straddle) | CHE_Express2500Cargo_05, FOR_F350SuperDuty_08, FOR_TaurusSHO_10: the three stub cockpits that keep the host's interior since #18 (the Express on the Savana, the F-350 and the Taurus on their same-model hosts) |
+
+### Other report flags (built cars, not failures)
+
+| Flag | Cars | Note |
+| --- | ---: | --- |
+| front plate at the host's position ("no flat face of plate size") | 279 | expected for cars without a front plate recess |
+| rear plate at the host's position | 82 | mostly race cars |
+| cockpit without needle gauges | 128 | race cars with digital dashes, and FH1's low-detail cockpits |
+| some lamps left unlit | 22 | e.g. LEX_ISF_09, NIS_370Z_10, BMW_1M_11, FER_F50_95 |
+| no head lamp found | 10 | Race cars (Corvette C5-R, CLK GTR, McLaren F1 GTR, 905 EVO...), but also CHE_CorvetteGS_10, DOD_RamSRT10_06 and FOR_MustangSVTCobraR_93. |
+| no tail lamp found | 2 | CHE_2_MonteCarloSS_11, FOR_1_Fusion_11 (race liveries of stock cars) |
+| dropped Forza plates | 18 | FH1 low-detail cars and stub cockpits |
+| host engine sound | 8 | CHE_Volt_11 and NIS_Leaf_11 are electric (bank `NA.fsb`, expected). AUD_Q7_09, CHE_Corvette_60, HYU_GenesisCoupe_10, MAZ_16_B09_09, sal_s281_06 and VW_IECorrado_95 have no `<car>_ET.xml` in any EngineTuning zip. |
+| host score below 50 | 9 | small city cars on the Cygnet (C1, 107, Aygo), the tour bus, the T440 truck, the Leaf, both Veyrons |
+
+- All 562 cars got DSF-first handling (`handling.source` dsf).
+- They use 85 distinct hosts. The most used are 162 Corvette Z06 (55 cars,
+  mostly race cars), 227 370Z (30) and 274 Scirocco (29).
+- Games: 392 FM4, 170 FH1.
+- Every car got full-entry LOD steps 3/4/5 and exterior LOD 1 at the first
+  attempt.
