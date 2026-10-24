@@ -12,7 +12,7 @@ things that came from earlier research steps on the developer's machine:
 - out/db/fh1_gamedb.slt, out/db/fm4_gamedb.slt and out/cache/<game>/gamedb.slt:
   each game's Media/db/gamedb.slt from its disc.
 
-    python tools/game_data.py prepare --game "C:/Games/Driver San Francisco" [--iso a.iso ...]
+    python tools/game_data.py prepare --game "<game folder>" [--iso a.iso ...]
     python tools/game_data.py vehiclestats "<game>/media/ScriptsLuaScripts.fchunk" out/vs.lua
 
 The game folder is only read. Set DSF_GAME_DIR to the same folder so the other
@@ -31,13 +31,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 REPO = Path(__file__).resolve().parent.parent
-DEFAULT_GAME = Path("D:/Games/Driver San Francisco")
 VEHICLESTATS = "vehiclestats\\vehiclestats.lua"
 
 
 def game_dir() -> Path:
-    """The game folder: $DSF_GAME_DIR, else the developer's default."""
-    return Path(os.environ.get("DSF_GAME_DIR") or DEFAULT_GAME)
+    """The game folder: $DSF_GAME_DIR."""
+    import game_paths
+    return game_paths.game_dir()
 
 
 # --- Lua 5.1 bytecode (just enough for constant tables) -------------------------------
@@ -280,7 +280,7 @@ def main(argv: list[str] | None = None) -> None:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("prepare", help="write the derived files under out/ (only missing ones)")
-    p.add_argument("--game", type=Path, default=None, help="game folder (default: $DSF_GAME_DIR or D:/Games/...)")
+    p.add_argument("--game", type=Path, default=None, help="game folder (default: $DSF_GAME_DIR)")
     p.add_argument("--iso", type=Path, action="append", help="Forza disc images (default: assets/*.iso)")
     p.add_argument("--force", action="store_true", help="rewrite files that exist")
     v = sub.add_parser("vehiclestats", help="print vehiclestats.lua from a ScriptsLuaScripts.fchunk")

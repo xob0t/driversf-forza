@@ -28,7 +28,10 @@ function Check([string]$Name, [bool]$Ok, [string]$Detail = '') {
 if (-not (Test-Path 'out\asi\dsfforza.asi')) { throw 'build out\asi\dsfforza.asi first (tools\asi\build.ps1)' }
 if (-not (Test-Path $build)) { throw "$build missing (see research/batch.md, installer tests)" }
 New-Item -ItemType Directory -Force (Split-Path $loader) | Out-Null
-if (-not (Test-Path $loader)) { Copy-Item 'D:\Games\Driver San Francisco\winmm.dll' $loader }   # read only: a stand-in ASI loader
+if (-not (Test-Path $loader)) {   # read only: the game's winmm.dll as a stand-in ASI loader
+    if (-not $env:DSF_GAME_DIR) { throw 'set DSF_GAME_DIR (a winmm.dll ASI loader is copied from it)' }
+    Copy-Item (Join-Path $env:DSF_GAME_DIR 'winmm.dll') $loader
+}
 if (Test-Path $backup) { throw "$backup exists: the fake tree is not clean" }
 $before = Snapshot
 $asiHash = (Get-FileHash 'out\asi\dsfforza.asi' -Algorithm SHA256).Hash

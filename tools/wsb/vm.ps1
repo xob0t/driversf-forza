@@ -21,7 +21,7 @@ The VM is built by tools\wsb\vm-build.ps1. Nothing appears on the host desktop: 
 VM has no window, and every vmrun call runs without a console window.
 
 Guest paths (as in the sandbox, so run-test.ps1 runs with its defaults):
-  C:\Game      local stock copy of D:\Games\Driver San Francisco (vm-build.ps1 Provision)
+  C:\Game      local stock copy of $env:DSF_GAME_DIR (vm-build.ps1 Provision)
   C:\Repo      -> \\vmware-host\Shared Folders\Repo     this repository     (read-only; see Share)
   C:\Output    -> \\vmware-host\Shared Folders\Output   %LOCALAPPDATA%\Temp\dsfforza-wsb (read-write)
   C:\Profile   -> \\vmware-host\Shared Folders\Profile  Documents\Ubisoft\Driver San Francisco (read-only)

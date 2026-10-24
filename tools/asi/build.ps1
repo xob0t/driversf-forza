@@ -18,7 +18,8 @@ param(
     # Also build out\asi\offline.exe (test\offline.cpp + the modules) and run it
     # against Driver.exe: maps the image at 0x00400000 and applies every patch.
     [switch]$Test,
-    [string]$Exe = 'D:\Games\Driver San Francisco\Driver.exe'
+    # Driver.exe 1.04 for -Test: the repo's out\stock copy, else $env:DSF_GAME_DIR's
+    [string]$Exe
 )
 
 $ErrorActionPreference = 'Stop'
@@ -68,6 +69,12 @@ $asi = Get-Item -LiteralPath (Join-Path $out 'dsfforza.asi')
 $hash = (Get-FileHash -LiteralPath $asi.FullName -Algorithm SHA256).Hash
 Write-Host ("built {0} ({1} bytes, SHA-256 {2})" -f $asi.FullName, $asi.Length, $hash)
 if ($Test) {
+    if (-not $Exe) {
+        $Exe = @((Join-Path $repo 'out\stock\Driver.exe'),
+            $(if ($env:DSF_GAME_DIR) { Join-Path $env:DSF_GAME_DIR 'Driver.exe' })) |
+            Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+        if (-not $Exe) { throw 'no Driver.exe for -Test: pass -Exe, or set DSF_GAME_DIR' }
+    }
     & (Join-Path $out 'offline.exe') $Exe
     if ($LASTEXITCODE -ne 0) { throw "offline test failed ($LASTEXITCODE)" }
 }

@@ -20,7 +20,7 @@ Game launches all happen inside the guest, so after Start nothing new appears
 on the host desktop.
 
 Mappings (guest path <- host path):
-  C:\Game      <- D:\Games\Driver San Francisco              (read-only)
+  C:\Game      <- $env:DSF_GAME_DIR                          (read-only)
   C:\Profile   <- Documents\Ubisoft\Driver San Francisco     (read-only)
   C:\Repo      <- this repository                            (read-only)
   C:\Output    <- %LOCALAPPDATA%\Temp\dsfforza-wsb           (read-write)
@@ -41,7 +41,8 @@ $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $OutputHost = Join-Path $env:LOCALAPPDATA 'Temp\dsfforza-wsb'
 $stateFile = Join-Path $OutputHost 'sandbox.json'
-$gameHost = 'D:\Games\Driver San Francisco'
+$gameHost = $env:DSF_GAME_DIR
+if (-not $gameHost -and $Action -eq 'Start') { throw 'Set DSF_GAME_DIR to your Driver: San Francisco folder.' }
 $profileHost = Join-Path $env:USERPROFILE 'Documents\Ubisoft\Driver San Francisco'
 
 Add-Type -TypeDefinition @'

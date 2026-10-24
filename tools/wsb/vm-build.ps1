@@ -24,9 +24,9 @@ Steps (default: all, in order; each can be run alone):
 #>
 param(
     [ValidateSet('All', 'Iso', 'Create', 'Install', 'Provision', 'Snapshot')] [string]$Step = 'All',
-    [string]$WindowsIso = 'D:\windows_microwin_ru.iso',
+    [string]$WindowsIso = $env:DSF_VM_ISO,   # a Windows 10/11 x64 install ISO
     [string]$VcRedist = 'C:\VMs\downloads\vcredist\vc_redist.x86.exe',
-    [string]$GamePath = 'D:\Games\Driver San Francisco',
+    [string]$GamePath = $env:DSF_GAME_DIR,
     [int]$Cpus = 4,
     [int]$MemoryMB = 8192,
     [int]$DiskGB = 80,
@@ -38,6 +38,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'vm-common.ps1')
+if (-not $GamePath) { throw 'Set DSF_GAME_DIR (or pass -GamePath) to your Driver: San Francisco folder, the one with Driver.exe.' }
+if (-not $WindowsIso) { throw 'Set DSF_VM_ISO (or pass -WindowsIso) to a Windows 10/11 x64 install ISO.' }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $profileHost = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Ubisoft\Driver San Francisco'
 $configIso = Join-Path $VmDir 'config.iso'

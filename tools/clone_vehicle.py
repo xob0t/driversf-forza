@@ -19,7 +19,7 @@ follow, so the clone's data can change without clashing with the source in
 the game's global UID tables (tools/port_car.py does this).
 
 Example:
-    python tools/clone_vehicle.py "D:/Games/Driver San Francisco/Install/dngvehicles.sp" \\
+    python tools/clone_vehicle.py "$DSF_GAME_DIR/Install/dngvehicles.sp" \\
         out/dngvehicles.clone.sp --source 266 --id 304
 
 The functions (make_clones, renew_uids, register_clones) work on an archive

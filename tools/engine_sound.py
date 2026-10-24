@@ -74,7 +74,6 @@ from chnk import read_chunk, write_chunk  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_DSF = REPO / "out" / "stock" / "Install" / "dngvehicles.sp"
-DEFAULT_GAME = Path("D:/Games/Driver San Francisco")
 CACHE = REPO / "out" / "cache" / "sound"
 RPM = 0x9C4D0121
 RATE = 32000
@@ -214,7 +213,8 @@ def game_dir(dsf: Path | None = None) -> Path:
         found = game_paths.game_dir_of(dsf)
         if found is not None and found.resolve() != game_paths.REPO_STOCK.resolve():
             return found.parent if found.name == game_paths.BACKUP else found
-    return DEFAULT_GAME
+    import game_paths
+    return game_paths.game_dir()
 
 
 def find_pck(game: Path) -> Path | None:

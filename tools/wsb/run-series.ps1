@@ -56,8 +56,8 @@ param(
     [double]$TrafficRadius = 0,   # traffic road radius in metres, patched in memory once the world is up (350 stock)
     [switch]$OnHost,
     [switch]$Vm,
-    [string]$GamePath = 'D:\Games\Driver San Francisco',
-    [string]$HostRunPath = 'D:\dsfforza-run',
+    [string]$GamePath = $env:DSF_GAME_DIR,
+    [string]$HostRunPath,          # default: <game drive>\dsfforza-run (same volume, for hard links)
     [string]$Resolution = '1280x720'
 )
 
@@ -75,6 +75,8 @@ if ($OnHost -and $Vm) { throw '-OnHost and -Vm exclude each other' }
 # run-test.ps1 options with the same name here are passed on as given, so a new option needs
 # only its two param lines. Archive, Asi, Override and LuaFiles become guest paths (Get-GuestArgs);
 # OnHost, Vm, GamePath, HostRunPath and Resolution are this script's own.
+if (-not $GamePath) { throw 'Set DSF_GAME_DIR (or pass -GamePath) to your Driver: San Francisco folder, the one with Driver.exe.' }
+if (-not $HostRunPath) { $HostRunPath = Join-Path ([IO.Path]::GetPathRoot($GamePath)) 'dsfforza-run' }
 $seriesArgs = $PSBoundParameters
 $ownParameters = $MyInvocation.MyCommand.Parameters
 $passThrough = @((Get-Command $runTest).Parameters.Keys | Where-Object {

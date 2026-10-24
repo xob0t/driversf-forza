@@ -3,8 +3,8 @@
   Unattended install of the dsfforza test VM (tools/wsb/vm-build.ps1 puts this file,
   first-logon.ps1 and the VC++ runtime on a small second ISO).
 
-  Written for D:\windows_microwin_ru.iso (Windows 11 Pro 25H2, ru-RU, one image), and
-  generic enough for any Windows 10/11 x64 ISO. This answer file replaces the one
+  Tested with a MicroWin Windows 11 Pro 25H2 image (ru-RU, one image) and generic
+  enough for any Windows 10/11 x64 ISO. This answer file replaces the one
   MicroWin bakes into the image (Windows\Panther\unattend.xml): Setup caches the media
   answer file over it. Kept from MicroWin: BypassNRO and the OOBE skips.
 

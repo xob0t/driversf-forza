@@ -39,13 +39,13 @@ still the file it installed). -Status shows what is installed.
 The game folder is only changed by Install and Uninstall; the build reads it.
 
 .EXAMPLE
-.\tools\install.ps1 -GamePath 'C:\Games\Driver San Francisco' -Iso 'D:\isos\Forza.Horizon.XBOX360.iso','D:\isos\Forza 4 [NTSCU][DVD1].iso','D:\isos\Forza 4 [NTSCU][DVD2].iso'
+.\tools\install.ps1 -GamePath '<game folder>' -Iso '<FH1.iso>','<FM4 disc 1.iso>','<FM4 disc 2.iso>'
 
 .EXAMPLE
-.\tools\install.ps1 -GamePath 'C:\Games\Driver San Francisco' -Build out\batch\first
+.\tools\install.ps1 -GamePath '<game folder>' -Build out\batch\first
 
 .EXAMPLE
-.\tools\install.ps1 -GamePath 'C:\Games\Driver San Francisco' -Uninstall
+.\tools\install.ps1 -GamePath '<game folder>' -Uninstall
 #>
 [CmdletBinding(DefaultParameterSetName = 'Install')]
 param(

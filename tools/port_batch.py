@@ -83,7 +83,6 @@ from chnk import ENTRY_LIMIT  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 TOOLS = REPO / "tools"
-DEFAULT_GAME = Path("D:/Games/Driver San Francisco")
 GARAGE_IDS = range(1, 62)          # garage loop covers 0..303; 0 is left alone, stock starts at 62
 HIGH_FIRST_ID = 304
 WORKER_TIMEOUT = 45 * 60
@@ -98,7 +97,7 @@ def game_from_dsf(dsf: Path) -> Path:
     game = dsf.resolve().parent.parent
     # <game>/dsfforza-backup/Install/dngvehicles.sp (tools/game_paths.py): the game is one up.
     if game == game_paths.REPO_STOCK.resolve():  # the repo's stock copy (a junction in a worktree): the real game
-        return Path(os.environ.get("DSF_GAME_DIR") or DEFAULT_GAME)
+        return game_paths.game_dir()
     return game.parent if game.name == game_paths.BACKUP else game
 
 
@@ -1059,8 +1058,9 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="cmd", required=True)
     for name in ("plan", "build"):
         p = sub.add_parser(name)
-        p.add_argument("--dsf", type=Path, default=DEFAULT_GAME / "Install" / "dngvehicles.sp",
-                       help="stock Install/dngvehicles.sp (only read); its game folder is used for the rest")
+        p.add_argument("--dsf", type=Path, default=None,
+                       help="stock Install/dngvehicles.sp (only read; default: from $DSF_GAME_DIR); "
+                            "its game folder is used for the rest")
         p.add_argument("--iso", type=Path, action="append", help="Forza disc images (default: assets/*.iso)")
         p.add_argument("--cache", type=Path, default=REPO / "out" / "cache", help="extraction cache")
         p.add_argument("--car", action="append", metavar="NAME[@fh1|@fm4]")
@@ -1100,7 +1100,7 @@ def main(argv: list[str] | None = None) -> None:
     r = sub.add_parser("remerge", help="re-assemble an earlier build under another ID policy (no conversion)")
     r.add_argument("source", type=Path, help="an earlier build's --out folder (with work/)")
     r.add_argument("--out", type=Path, required=True)
-    r.add_argument("--dsf", type=Path, default=DEFAULT_GAME / "Install" / "dngvehicles.sp")
+    r.add_argument("--dsf", type=Path, default=None, help="default: from $DSF_GAME_DIR")
     r.add_argument("--id-policy", choices=("garage", "high", "asi"), default="high")
     r.add_argument("--first-id", type=int, default=HIGH_FIRST_ID)
     r.add_argument("--root-limit", type=int, default=ENTRY_LIMIT,

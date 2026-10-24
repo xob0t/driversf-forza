@@ -29,7 +29,7 @@ param(
     [Parameter(Mandatory, Position = 0)] [ValidateSet('Enter', 'Restore', 'Watch')] [string]$Action,
     [string]$Resolution = '1280x720',
     [int]$SeriesId = 0,
-    [string]$RunPath = 'D:\dsfforza-run',
+    [string]$RunPath,   # the host run folder (run-series.ps1 passes it); default: any ...\dsfforza-run
     [int]$WatchMinutes = 180,   # Watch: how long to wait for the run's game to close
     [string]$ProfileDir = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Ubisoft\Driver San Francisco'),
     [string]$StateDir = (Join-Path $env:LOCALAPPDATA 'Temp\dsfforza-wsb\host-session'),
@@ -171,7 +171,8 @@ function Invoke-Watch {
     Say 'series ended with its host session still in place'
     $deadline = (Get-Date).AddMinutes($WatchMinutes)
     $runGame = { @(Get-Process Driver -ErrorAction SilentlyContinue | Where-Object {
-        try { $_.Path -like "$RunPath\*" } catch { $true } }).Count }
+        try { if ($RunPath) { $_.Path -like "$RunPath\*" } else { $_.Path -like '*\dsfforza-run\*' } }
+        catch { $true } }).Count }
     while ((& $runGame) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 5 }
     $mutex = New-Object System.Threading.Mutex($false, $MutexName)
     try { if (-not $mutex.WaitOne([TimeSpan]::FromHours(6))) { Say 'series mutex not free after 6 h; giving up'; return } }

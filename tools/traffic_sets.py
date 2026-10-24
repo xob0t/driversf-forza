@@ -37,7 +37,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import chnk  # noqa: E402
 from lua_scripts import crc  # noqa: E402
 
-DEFAULT = "D:/Games/Driver San Francisco/media/san_franciscoAI.fchunk"
 DIRECTORY = 0x50
 PROGRESSIONS = 0x118
 VEHICLE_IDS = 0x120
@@ -110,13 +109,17 @@ def vehicle_names() -> dict[int, str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("file", nargs="?", default=DEFAULT)
+    parser.add_argument("file", nargs="?", default=None,
+                        help="san_franciscoAI.fchunk (default: from $DSF_GAME_DIR)")
     parser.add_argument("--names-from", action="append", default=[])
     parser.add_argument("--tsv", help="write one row per set and frequency")
     parser.add_argument("--models", action="store_true", help="print model names next to IDs")
     parser.add_argument("--replace", action="append", default=[], metavar="NAME:FREQ:OLD=NEW")
     parser.add_argument("--out", help="patched copy to write (required with --replace)")
     args = parser.parse_args()
+    if args.file is None:
+        import game_paths
+        args.file = game_paths.game_dir() / "media" / "san_franciscoAI.fchunk"
     if args.replace:
         return patch(Path(args.file), args.replace, args.out)
 

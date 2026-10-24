@@ -650,7 +650,7 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("plan", help="where a Forza car's plates go on a host")
     p.add_argument("car", type=Path, help="extracted car folder (out/cache/<game>/<media>)")
     p.add_argument("--host", type=int, required=True)
-    p.add_argument("--dsf", type=Path, default=Path("D:/Games/Driver San Francisco/Install/dngvehicles.sp"))
+    p.add_argument("--dsf", type=Path, default=None, help="stock dngvehicles.sp (default: from $DSF_GAME_DIR)")
     p.add_argument("--png", type=Path, help="depth maps of both ends with the plates")
     args = parser.parse_args(argv)
     import game_paths

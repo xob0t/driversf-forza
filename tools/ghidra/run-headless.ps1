@@ -21,9 +21,10 @@ param(
     [Parameter(Position = 0)] [string]$Script,
     [Parameter(ValueFromRemainingArguments)] [string[]]$ScriptArgs = @(),
     [switch]$Save,
-    [string]$GhidraRoot = 'C:\Tools\Ghidra\ghidra_12.1.4_PUBLIC',
-    [string]$JavaHome = 'C:\Program Files\Microsoft\jdk-21.0.12.101-hotspot',
-    [string]$ProjectRoot = 'C:\Tools\GhidraProjects\driversf-forza',
+    [string]$GhidraRoot = $env:GHIDRA_INSTALL_DIR,
+    [string]$JavaHome = $env:JAVA_HOME,
+    # Folder with the analyzed Driver.exe project (<ProjectName>.gpr)
+    [string]$ProjectRoot = $env:DSF_GHIDRA_PROJECT,
     [string]$ProjectName = 'DriverSF',
     # Processor mask; 0xF000 = logical processors 12-15.
     [long]$Affinity = 0xF000
@@ -31,6 +32,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+if (-not $GhidraRoot) { throw 'Pass -GhidraRoot or set GHIDRA_INSTALL_DIR.' }
+if (-not $JavaHome) { throw 'Pass -JavaHome or set JAVA_HOME.' }
+if (-not $ProjectRoot) { throw 'Pass -ProjectRoot or set DSF_GHIDRA_PROJECT.' }
 $headless = Join-Path $GhidraRoot 'support\analyzeHeadless.bat'
 foreach ($path in $headless, (Join-Path $JavaHome 'bin\java.exe'), (Join-Path $ProjectRoot "$ProjectName.gpr")) {
     if (-not (Test-Path -LiteralPath $path)) { throw "Not found: $path" }
