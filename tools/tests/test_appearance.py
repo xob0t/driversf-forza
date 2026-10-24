@@ -77,7 +77,7 @@ class RedLampSwatch(unittest.TestCase):
             self.assertIn(key, t.solids)
             self.assertEqual(uvs, [t.solid_uv(key)] * 3)
             # The cell holds the colour the car's curve gives that texel.
-            texel = dm.matched_lamp_texel(200, 20, 20, 128, t._red_lamp_curve())
+            texel = dm.matched_lamp_texel(200, 20, 20, 128, t._red_lamp_curve(), t._red_lens_scale())
             self.assertEqual(key, ("swatch",) + texel)
             self.assertEqual(t.solid_colours[key], texel)
 

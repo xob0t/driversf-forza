@@ -263,6 +263,41 @@ def _distance(a, b) -> float:
     return d + 2 * (_lum(sa) - _lum(sb)) ** 2
 
 
+# How bright a palette entry looks: the paint shader mixes colour 2 toward colour 3 by
+# bias + (1 - bias) x (1 - n.v)^power, taken literally (research/lights.md, "The DMC-12 came
+# out black"). Luminance of that mix at n.v 0.9, 0.7 and 0.5 (panels facing the camera, at
+# an angle, oblique) and averaged over the projected area (n.v weighted).
+BRIGHTNESS_ANGLES = (0.9, 0.7, 0.5)
+_AREA_STEPS = 32
+
+
+def _mix(params: dict, ndv: float) -> tuple[float, float, float]:
+    c2, c3 = params["g_vec3TintColour2"][:3], params["g_vec3TintColour3"][:3]
+    power, bias = params["g_fresnelpower"], params["g_fresnelbias"]
+    f = bias + (1 - bias) * (1 - ndv) ** power
+    return tuple(a + f * (b - a) for a, b in zip(c2, c3))
+
+
+def brightness(params: dict) -> tuple[float, ...]:
+    """Luminance of an entry at BRIGHTNESS_ANGLES, then its area-weighted mean."""
+    at = tuple(_lum(_mix(params, x)) for x in BRIGHTNESS_ANGLES)
+    xs = [(k + 0.5) / _AREA_STEPS for k in range(_AREA_STEPS)]
+    area = sum(x * _lum(_mix(params, x)) for x in xs) / sum(xs)
+    return at + (area,)
+
+
+_CAP_CACHE: dict = {}
+
+
+def brightness_cap(stock: list[dict]) -> tuple[float, ...]:
+    """The brightest stock car paint, per brightness() measure."""
+    key = (id(stock), len(stock))
+    if key not in _CAP_CACHE:
+        rows = [brightness(s["params"]) for s in stock if is_template(s["params"])] or [(1.0,) * 4]
+        _CAP_CACHE[key] = tuple(max(r[k] for r in rows) for k in range(len(rows[0])))
+    return _CAP_CACHE[key]
+
+
 def shade(colour: ForzaColour, stock: list[dict]) -> dict:
     """Parameters for one Forza colour: a special finish's preset as is, else
     the most similar stock car-paint entry of the same finish (any finish if
@@ -286,7 +321,20 @@ def shade(colour: ForzaColour, stock: list[dict]) -> dict:
         params["g_vec3TintColour3"], params["g_vec3TintColour2"] = new_main + (c3[3],), new_other + (c2[3],)
     else:
         params["g_vec3TintColour2"], params["g_vec3TintColour3"] = new_main + (c2[3],), new_other + (c3[3],)
+    # Never brighter than the brightest stock car paint. Forza's swatch RGB taken as linear
+    # can be far above anything stock DSF paints: the S5S Raptor's #ffbf19 on the security
+    # van's yellow (fresnel power 1, colour 3 at 0.44 of colour 2) gave luminance 0.55
+    # facing the camera where no stock paint passes 0.39, and the body bloomed into an
+    # orange halo in daylight (user report on out/testdrive9). Both colours are scaled,
+    # so the hue and the template's shading stay.
+    cap, now = brightness_cap(stock), brightness(params)
+    k = min([1.0] + [c / v for c, v in zip(cap, now) if v > c])
+    if k < 1.0:
+        for name in ("g_vec3TintColour2", "g_vec3TintColour3"):
+            c = params[name]
+            params[name] = tuple(x * k for x in c[:3]) + tuple(c[3:])
     params["_template"] = best["sid"]
+    params["_dimmed"] = round(k, 3)
     return params
 
 
@@ -324,6 +372,7 @@ def install(stream, full: Entry, colours: list[ForzaColour], stock: list[dict],
     return {"installed": len(built), "host_count": host_count, "nonr": entry_size(nonr),
             "colours": [{"sequence": c.sequence, "rgb": "#%02x%02x%02x" % c.rgb, "metallic": c.metallic,
                          "class": c.colour_class, "finish": c.finish, "template": p["_template"],
+                         "dimmed": p.get("_dimmed", 1.0),
                          "colour2": [round(x, 3) for x in p["g_vec3TintColour2"][:3]],
                          "colour3": [round(x, 3) for x in p["g_vec3TintColour3"][:3]],
                          "fresnelpower": round(p["g_fresnelpower"], 3)} for c, p, _ in built]}
@@ -367,9 +416,11 @@ def main(argv: list[str] | None = None) -> None:
         stock = stock_paints(stream, read_chunk(stream, 0).entries)
     for colour in pick_colours(forza_colours(args.gamedb, args.media)):
         q = shade(colour, stock)
+        dimmed = q.get("_dimmed", 1.0)
         print(f"{colour.sequence:2} #{'%02x%02x%02x' % colour.rgb} {'metallic' if colour.metallic else 'solid   '} "
               f"{colour.colour_class:8} {colour.finish or ''}<- stock {q['_template']} c2 {tuple(round(x, 3) for x in q['g_vec3TintColour2'][:3])} "
-              f"c3 {tuple(round(x, 3) for x in q['g_vec3TintColour3'][:3])} power {q['g_fresnelpower']:.2f}")
+              f"c3 {tuple(round(x, 3) for x in q['g_vec3TintColour3'][:3])} power {q['g_fresnelpower']:.2f}"
+              + (f" dimmed x{dimmed}" if dimmed < 1 else ""))
 
 
 if __name__ == "__main__":

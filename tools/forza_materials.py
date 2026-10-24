@@ -82,7 +82,7 @@ _add(TRIM, NODAMAGE, "black frame bottom bottom_2 undercarriage misc engine cage
                      "grille2 grille2_alpha defrost_lines mirrorLeft mirrorMiddle mirrorRight "
                      "caliper rotor hub numberplate numplate scaling_text")
 _add(TRIM, LIGHTS, "lights_chrome")
-_add(TEXTURED, NODAMAGE, "interior interior_banner badge badge2 badge_chrome stripe_badge liveryBadge "
+_add(TEXTURED, NODAMAGE, "interior interior_banner badge badge2 badge_chrome stripe_badge "
                          "cockpit_badge emblem brake_badge gauge_red gauge_needle gauge_emissive "
                          "gauge_emissive_unshadowed")
 _add(TEXTURED, LIGHTS, "head_light head_light2 tail_light tail_light_lod0 tail_light_on tail_light2 "
@@ -97,6 +97,14 @@ _add(TEXTURED, LIGHTS, "head_light head_light2 tail_light tail_light_lod0 tail_l
 # Synthetic plate sections (tools/plates.py): paint material, UVs on the
 # shared atlas's plate (not a Forza technique).
 _add(PAINT, None, "dsf_plate dsf_inner")  # dsf_inner: damage.split_exposed (panel undersides)
+# Livery decal slots: their raw UV0 spans the whole unit square, i.e. a texture of
+# their own (the player's livery), squeezed by m_UVOffsetScale onto an arbitrary patch
+# of the car atlases. The KOE_Agera_11's rear-wing pair lands on a 3-texel column at the
+# seat artwork's edge in nodamage (blue and white, half of it opaque), its cockpit
+# carbin's dash-top strip on interior_LOD0's yellow and blue stitching bands; drawn from
+# the atlas they showed as bright yellow/blue streaks on the dashboard and blue patches
+# behind the windscreen (user report on out/testdrive9). No livery: nothing to draw.
+_add(SKIP, None, "liveryBadge")
 _add(TYRE, None, "tire tire_V2 wheel_black tread sidewall rim rim_V2 chrome_rim chrome_rim_V2 outer_rim "
                  "inner_rim inner_rim_V2 wheel_emblem wheel_emblem_V2 rim_bump_metal rim_bump_metal2")
 
@@ -171,6 +179,8 @@ def classify_cockpit(name: str, section: str | None = None) -> tuple[str, str | 
     Without `section` every non-gauge trim maps to nodamage_LOD0 (the old
     behaviour; callers that only need the role may omit it)."""
     n = name.lower()
+    if TECHNIQUES.get(name, (None,))[0] == SKIP:
+        return SKIP, None
     if n.startswith(("gauge", "z_gauge", "digital_gauge")) or "badge" in n:
         return TEXTURED, INTERIOR
     if n.startswith("mirror"):

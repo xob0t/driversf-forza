@@ -1,6 +1,6 @@
 # Lamps and paint
 
-Updated: 2026-10-23
+Updated: 2026-10-24
 
 How stock DSF cars light their lamps and pick a paint colour, and what the
 converter does about both. Code: `tools/lights.py` (lamps), `tools/paint.py`
@@ -432,6 +432,56 @@ DeLorean 171, Desanne 266, Sports Car 07 278, Challenger-like 173). Lamps
 whose Forza lens has no structure (the DMC-12's grid cells) still glow
 cell by cell, more evenly than the stock DeLorean's dots.
 
+### Red lenses too bright when unlit (user report on `out/testdrive9`, Audi TT RS)
+
+Symptom (confirmed-runtime): the TT RS's tail lamps were one flat pink-red
+patch. In run `vm-20261024-051926` (`out/testdrive10`, `-Lights
+-LightsDriveOnly`; red lamp pixels of the daylight drive frames,
+`out/emissive/redpix.py`) they measured red 224 to 229 in every step, rolling
+on the throttle with the lamps off included, against stock 159 to 178 on the
+throttle (Desanne 266, A4 136, 370Z 227) and 173 for the converted 370Z. So
+the lens itself was too bright, not its glow: the alpha of what the camera
+sees (below) is in stock's range.
+
+Measure (offline-checked, `out/emissive/rearlamps.py`): an orthographic view
+from straight behind, z-buffered over the lamp geometry (triangles with a
+light byte) of the full entry, keeping the pixels of red brake-capable lamps;
+per pixel the texel's alpha and brightest channel, so lamps count by the
+surface the player sees, not by texel count, and bulbs and reflectors behind
+an outer lens don't count. Stock, 140 vehicles with red lamps seen from
+behind: brightest channel pooled p5 35, p25 71, median 92, p75 115, p95 153
+(per-vehicle median p10 64, p50 96, p90 126); alpha per-vehicle mean p10 21,
+p50 40, p90 81. `out/testdrive10`: alpha per-vehicle mean p10 19, p50 39,
+p90 57 (in range), brightness median 112 per vehicle (TT 127, stock A4 101).
+
+Cause (confirmed-static): the shared lens curve (`_LENS_X_RED`) was fitted on
+every red lamp texel, hidden layers included. Forza lamps are layered (bulb,
+reflector, then a lens over them: the TT's `detail_glass_red` covers the
+whole lamp and is Forza 177 throughout, 128 after the curve), so the surface
+the player sees sat wherever its texels fell in that mix.
+
+Fix (`dsf_materials.red_lens_scale`, `Texturing.visible_red`): the same rear
+view on the Forza side (Lights-atlas triangles of the finest planned LOD,
+Forza's rear is +z, 5 mm steps) gives each car's visible red texels; after
+the shared curve, every red lamp texel of the car is scaled so the median of
+the visible ones is at most stock's 92 (never brightened; under 400 samples
+the shared curve only). Alpha is untouched. Survey of the 40 testdrive cars
+(`out/emissive/lenssurvey.py`): 31 are darkened, by x0.57 (205 T16, Forza
+224) to x0.97 (Charger Daytona, Golf R); TT x0.72 (128 to 92), M3 E30 x0.68;
+the RX-7, S2000, IS F, Jeep, Range Rover, S5S Raptor, Veyron, Huayra, 370Z,
+M5 F10 and Mustang already sit at or below 92. Built (`out/emissive/build2`,
+DSF side): TT visible brightness 127 to 87, M3 E30 124 to 84, 370Z 74
+unchanged; alpha unchanged.
+
+In game (run `vm-20261024-060832`, `out/emissive/build2`, IDs 3 = TT, 4 = M3
+E30, next to stock 136 and 266; `research/img/emissive-ttrs-tails.jpg`): on
+the throttle in sun the TT's tails are a deeper red (red lamp pixels 201,
+was 224; stock 266 173 in the same run) and braking shows a hot centre
+instead of a flat patch; the M3 E30 measures 174 on the throttle, as stock.
+The TT still reads a little brighter than stock in direct sun with its
+texels below stock's median: its lens tilts up into the sky (lighting, not
+texture; open). The A4 control was hit by traffic in that run.
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and
@@ -646,6 +696,32 @@ gives light steel sides like stock. Final build `out/dmc/final`
 black rear surround, next to stock 171's `observe-02` in the same run.
 The black rear surround and grey bumper are Forza's (and the real car's);
 the stock DSF model paints them.
+
+### The S5S Raptor glowed (user report on `out/testdrive9`, ID 22)
+
+Symptom (confirmed-runtime): the yellow body bloomed into an orange halo over
+the roof, the windows and the silhouette in daylight (user screenshots; also
+host run `host-20261024-013435`, `observe-06`).
+
+Cause (confirmed-static): `shade` set the main colour to the Forza swatch in
+linear RGB. The Saleen's only colour, #ffbf19 metallic, is (1.0, 0.52, 0.01);
+its template, the security van's yellow (301: (0.567, 0.302, 0.032), colour 3
+at 0.44 of colour 2, fresnel power 1), keeps colour 3 bright too. Luminance
+of the fresnel mix taken literally (`paint.brightness`: at n.v 0.9, 0.7, 0.5
+and area-weighted): 0.55, 0.49, 0.42, 0.48, where no stock car paint
+(the 906 `is_template` entries) passes 0.388, 0.388, 0.388, 0.391 (the flat
+greys with bright rims, 136 and 167). No other testdrive car passes the stock
+maximum (`out/emissive/paintsurvey.py`; next brightest the 500 Abarth's cream
+0.384 and the M5 E28's light blue 0.36).
+
+Fix (`paint.shade`, `brightness_cap`): both colours of a recoloured entry are
+scaled by the largest factor that keeps every measure at or below the stock
+maximum (computed from the stock palettes, not a constant). Only the Saleen
+changes: x0.705, colour 2 (0.705, 0.367, 0.007), a #dba314 yellow
+(`install` reports `dimmed`).
+In game (run `vm-20261024-060602`, `out/emissive/build2` ID 1;
+`research/img/emissive-saleen-chase.jpg` against `host-20261024-013435`) the
+body is a plain yellow with no halo.
 
 ### Survey of the 40 testdrive cars (`out/testdrive3`, offline)
 
