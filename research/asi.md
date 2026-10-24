@@ -12,7 +12,7 @@ when `-Asi` is given. Evidence tags as in `dngvehicles.md`.
 | Module | Lifts | Section |
 | --- | --- | --- |
 | `archive` | 1100 entries per CHNK → 16384 (`dngvehicles.sp` past 365 vehicles), archive files past 2 GiB | [Archive size](#archive-size) |
-| `garage` | garage list IDs 0..303 → 0..999, 40 → 120 maker groups, save flags for IDs 304..999 | [Garage and save](#garage-and-save) |
+| `garage` | garage list IDs 0..303 → 0..999, 40 → 120 maker groups, 20 → any number of cars per maker group (the vehicles screen's 20 cards become a moving window), save flags for IDs 304..999 | [Garage and save](#garage-and-save) |
 | `hud` | HUD/Shift/garage-shop maker badge and model plate: one-byte glyph codes → 16-bit (`ManufacturerGlyph`/`ModelGlyph`); garage card emblem: Forza logo instead of the SF disc (`GarageEmblem`) | [HUD badges and plates](#hud-badges-and-plates) |
 
 Every module checks the original bytes of each site before patching and
@@ -140,7 +140,12 @@ FUN_006C57D0 (vtable slot 0x120):
   list (FUN_007113A0) reads it back as `[menu+0x270 + selection*4]`.
 
 Every other user reads groups through the garage's vfuncs (count 0x148, group
-0x130, car 0x12C), so only the sites below touch the layout.
+0x130 = copy of the 0x6C bytes, car 0x12C = `[table + g*0x6C + i*4]`), so only
+the sites below touch the layout. Callers of 0x130/0x12C (confirmed-static,
+every `[Engine+0x718]` vfunc call in `.text`): the maker menu FUN_00711040,
+its fill FUN_006C6940 and slot 0x128 FUN_006C6B90 (count from +0x50, cars
+through 0x12C), the take-a-ride scan FUN_006FD470, and the vehicles screen
+(below), the only one with arrays sized for 20 cars.
 
 ### Patches
 
@@ -171,7 +176,7 @@ of patches is applied completely or not at all.
 | 0x6C587C, 0x6C5A55 | `cmp edi,0x130` | `cmp edi,max_id` (1000) |
 | 0x6C5762 | `cmp edx,0x12F` | `cmp edx,max_id-1` |
 | 0x6C576A, 0x6C5771 | `[edi+reg*4+0x3264]` | `[reg*4+sortkey]` (same length) |
-| 0x6C5740 | group insert prologue | `jmp`: a group with 20 cars refuses the car |
+| 0x6C5740 | group insert prologue | `jmp group_add_car`: sorted insert as stock; past 20 cars the IDs go to the plugin (below); `[garage] max_cars` refuses more |
 | 0x6C7BB0 | groups insert prologue | `jmp`: a full table refuses the group |
 
 **Maker groups** (`[garage] max_groups`, default 120): the table moves behind
@@ -208,6 +213,91 @@ entries (copies of the old pointers or values, new string elements with
 element 0's flags and their own 64-byte buffers) and remembers it, so later
 fills only restore the length; a list it can't grow (no element 0) keeps
 its length and the groups past it are not listed (logged).
+
+### Maker groups past 20 cars
+
+**What holds 20 (confirmed-static unless marked).**
+
+- The group struct: 20 inline IDs, then the count at +0x50; the insert
+  FUN_006C5740 (and FUN_006C7B40 under it) has no check, so a 21st car
+  overwrote the count.
+- The vehicles screen (object 0x318 bytes, vtable 0xE27394, ctor
+  FUN_00710BE0): per-card arrays of 20 at +0x30 (picture UID pairs), +0xD0
+  (model ID; FUN_00710D90 returns `[+0xD0 + index*4]` for Select, FUN_00710F70
+  for Buy), +0x120 (the `Header_Sprite_NN` resources), +0x170
+  (`vehicle_title<N>`), +0x1C0 (`vehicle_field_date<N>`), +0x218
+  (`itemState_<N>`), filled once in FUN_00711950. The car list FUN_007113A0
+  walks all the group's cars (count from vfunc 0x130) and advances the card
+  for each car it lists, with no bound: card 21 writes over the next array.
+  The picture update FUN_007112A0 walks the same arrays by the group count.
+- The menu script (`Install\menusmaster.sp`, SDF 'TakeARide'): 20 card objects
+  (`Spr3D.Spr<N>`, `Spr3D.unlocked<N>`, `Null3D1..20` ...) and the 20
+  `Header_Sprite_01..20` picture resources, in the compiled scene and bytecode
+  (16-byte instructions; not decoded). It sizes the card row by
+  `ManufacturerNumList[maker]` (the script variable `NumItemsVisible` takes that
+  value, confirmed-runtime).
+- Not a limit: the 9 pictures the car list loads at a time (it requests the
+  pictures of cards `itemBrowserIndex - 1 ..` + 8 and is run again on every
+  move), the maker menu and its lists (they count cars, not cards).
+
+**How the card browser runs (confirmed-runtime, `[garage] menu_debug=1`,
+runs `vm-20261024-193917` to `-211029`).** The maker list is the menu page
+`CategorySelect_Vehicles` (Up/Down; the card stack beside it is a preview of
+the highlighted maker); Enter opens the page `ItemBrowser`, a row of cards
+that Left/Right scroll; there Up/Down move the focus between the row and BACK,
+Esc goes back. On each Right/Left the script moves its highlight one card
+(with an animation), sets `itemBrowserIndex` (0-based card) and the car list
+runs again. The highlight is the script's own state: writing
+`itemBrowserIndex` from code, directly or through the screen controller's
+setter (`[screen+4]` vfunc 0x18, what the car list uses for
+`itemStateChanged`), or setting `sortCardsNow`, moves nothing on screen, so
+the side panel (the car at `itemBrowserIndex`) and the highlighted card part
+ways. The script variable `startPageSelected` is 2 for the vehicles (1
+abilities, 4 challenges, which share the `ItemBrowser` page).
+
+MmDk menu, for the hook (confirmed-static, checked in game): the menu object
+`[[screen+4]+8]` keeps a page stack at +0x1C0 (8-byte entries, count +0x1CC;
+FUN_00AB9440), an entry's first word is the page, the page's first word its
+name; script variables at +0x50 (FUN_00ACBE20 name → `int*`); the key table at
++0x2A8 (FUN_00ABAA30: key × 0x140 + player × 0x28), each key `{state, value,
+..., +0x14 cdecl handler(key, ctx)}`. Keys 0..3 are Up, Down, Right, Left
+(the arrow keys in FUN_00719650). States (FUN_007193B0): 0xFF the first frame
+down, 0xFE still down (the script repeats on it), 1 the release frame. The
+game's menu-input object (vtable 0xE280D0) fills them once a frame
+(FUN_00719940 polls the input actions, slot 3 FUN_00719B50 copies them into
+each menu and calls the handlers).
+
+**The patch (`[garage] max_cars`, default 1000; with 20 nothing below is
+installed).** All or nothing, after the list and group patches:
+
+| Site | Original | New |
+| --- | --- | --- |
+| 0x6C5740 | (see above) | `group_add_car`: IDs 21 and up of a group in a plugin array keyed by the group's name (+0x54; unique, and it moves with the group when FUN_006C7BB0 shifts the table); the count at +0x50 is the real one |
+| 0xE18B1C (garage vtable slot 0x12C) | `0x006C55A0` | `group_car`: inline IDs below 20, the plugin's array above; called from the car list (return address 0x711599) it adds the window's first car |
+| 0xE18B20 (slot 0x130) | `0x006C55C0` | `group_copy`: the copy as stock; for the car list (0x711443) the count from the window's first car on, for the picture update (0x7112FB) at most the cards the car list fills |
+| 0x7113A0 | `sub esp,0x208` | `jmp carlist_hook`: picks the window, runs the car list, then sets the "x/y OWNED" texts and `[screen+0x28]` from the whole group |
+| 0x7118C3 | `mov [esp+0x30],eax; cmp eax,[esp+0x28]` | `call loop_stub`: the loop also ends after 19 cards; records which car each card shows |
+| 0xE18B14 (slot 0x124) | `0x006C6940` | `fill_makers` (as with `max_groups`): `ManufacturerNumList` says 19 for a maker of more than 20 listed cars |
+
+A maker of up to 20 listed cars is shown as stock (20 cards, window at car
+0). A longer one gets 19 cards, so card 20's `Header_Sprite_20` stays free for
+the `[hud]` card emblem (`garage_card_limit()` in `shared.h` tells mod_hud).
+The window moves when the player does, never behind the script's back: the
+menu's Right and Left handlers (keys 2 and 3, players 0 and 1) are wrapped
+when such a maker is shown. A Right press with the highlight `window_ahead`
+(8) cards or fewer before the window's last card, while the group has more
+cars, is not passed to the script; the window moves one car and the list is
+refilled, so the highlighted card shows the next car and the cards ahead stay
+full. Left within `window_back` (2) cards of the window's start does the same
+backwards. Held down (0xFE for 18 frames), the window keeps moving every 5
+frames; a hold the script was repeating is taken over once it reaches the
+edge (after 20 frames down; a tap lasts about 6) and its release is passed on.
+`itemBrowserIndex` always stays what the script shows, so the side panel and
+Select match the highlighted card. The window starts at car 0 whenever the
+car list runs for the maker list (`CategorySelect_Vehicles`) or the garage hub
+(`InGarage`); popups over the browser (the drive or buy question) keep it.
+
+In game: below, "In game", "Maker groups past 20 cars".
 
 ### Save compatibility: the side file
 
