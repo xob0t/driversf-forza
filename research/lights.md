@@ -132,12 +132,12 @@ on a shorter or longer car).
 Lamp texel alpha in the atlas (`dsf_materials.LIGHTS_ALPHA`): "matched"
 (the default since the evening of 2026-10-23, "Stock lamp alpha" below)
 maps `Forza alpha x (0.6 + 0.4 x max(r, g, b))` through a curve per texel
-hue onto stock's lamp alpha distribution; "value" (briefly the default,
-`out/testdrive7`) was `max(64, (max(r, g, b) - 40) * 0.8) * Forza alpha /
-255` and made lenses glow as one bright red patch; "luma" used
-`(r + g + b) / 3` and no floor, which left red lamps dark; "gamma" was
-Forza's glow mask squared; "raw" keeps Forza's alpha (analysis builds,
-`DSFFORZA_LIGHTS_ALPHA=raw`).
+hue onto stock's lamp alpha distribution; "raw" keeps Forza's alpha
+(analysis builds, `DSFFORZA_LIGHTS_ALPHA=raw`). Earlier modes, since
+removed from the code: "value" (briefly the default, `out/testdrive7`) was
+`max(64, (max(r, g, b) - 40) * 0.8) * Forza alpha / 255` and made lenses
+glow as one bright red patch; "luma" used `(r + g + b) / 3` and no floor,
+which left red lamps dark; "gamma" was Forza's glow mask squared.
 
 Result on `out/lights/build/ported-lights.sp` (`verify.py`): the 370Z gets 16
 lamps on the Desanne's 15 entries (2 headlamps, 2 position, 4 indicators with

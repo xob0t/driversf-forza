@@ -511,8 +511,9 @@ def fit(sections: list[carbin.Section], name: str, gamedbs: list[Path], folder: 
             dropped = {c.name for c in cabin if c.name.lower().startswith("seat")
                        and _mean(section_points(c))[0] * wx > 0}
             cabin = [c for c in cabin if c.name not in dropped]
-        sections = cabin
+        # forza2dsf passes [] when the car has no cockpit carbin at all.
         source = ("stub" if sections else "no") + " cockpit carbin: main carbin cabin"
+        sections = cabin
         lod0 = False
     static, needles = cockpit_parts(sections)
     if "steering_wheel" not in static:
@@ -853,8 +854,7 @@ def host_interior(stream, interior) -> InteriorMaterials:
     """Read the host interior's materials, strides and MODL flags."""
     import dsf_materials as dm
     import forza2dsf
-    import vehicle_mesh as vm
-    from vehicle_mesh import child, payload
+    from vehicle_mesh import child
     drsp = child(child(interior, "MDXN"), "DRSP")
     local, texc = {}, {}
     for e in drsp.children:
@@ -1107,6 +1107,22 @@ def _clip_near(poly: list[tuple], near: float = NEAR_PLANE) -> list[tuple]:
     return out
 
 
+def _face_parts(r, axis: int, sign: int, half: float) -> list[list[tuple]]:
+    """A triangle relative to the eye, projected on the cube-map face looking
+    along `sign` x `axis`: screen triangles of (x, y, 1 / z), clipped at
+    NEAR_PLANE where it crosses it; none if it lies behind."""
+    u_axis, v_axis = [a for a in range(3) if a != axis]
+    face = [(p[u_axis], p[v_axis], sign * p[axis]) for p in r]
+    if max(z for _, _, z in face) < NEAR_PLANE:
+        return []
+    if min(z for _, _, z in face) < NEAR_PLANE:
+        poly = _clip_near(face)
+        parts = [(poly[0], poly[i], poly[i + 1]) for i in range(1, len(poly) - 1)]
+    else:
+        parts = [face]
+    return [[(half + half * u / z, half - half * v / z, 1 / z) for u, v, z in part] for part in parts]
+
+
 def visible_triangles(sections: list[carbin.Section], eyes: list[tuple], resolution: int = 256,
                       near_keep: float = 0.25, tiny_slack: float = 0.03) -> dict[tuple[int, int], set[int]]:
     """Triangles of the LOD-0 subsections that are seen from any of `eyes`:
@@ -1140,24 +1156,14 @@ def visible_triangles(sections: list[carbin.Section], eyes: list[tuple], resolut
             if min(x * x + y * y + z * z for x, y, z in r) < near_keep * near_keep:
                 seen.add(n)
         for axis, sign in CUBE_FACES:
-            u_axis, v_axis = [a for a in range(3) if a != axis]
             ids = [-1] * (resolution * resolution)
             depth = [0.0] * (resolution * resolution)  # 1 / z, larger is nearer
             tiny = []  # (triangle, pixel, nearest 1/z) of triangles that covered no pixel centre
             for n, r in enumerate(rel):
                 if n in glass:
                     continue
-                face = [(p[u_axis], p[v_axis], sign * p[axis]) for p in r]
-                if max(z for _, _, z in face) < NEAR_PLANE:
-                    continue
-                if min(z for _, _, z in face) < NEAR_PLANE:
-                    poly = _clip_near(face)
-                    parts = [(poly[0], poly[i], poly[i + 1]) for i in range(1, len(poly) - 1)]
-                else:
-                    parts = [face]
                 covered, best = False, None
-                for part in parts:
-                    pts = [(half + half * u / z, half - half * v / z, 1 / z) for u, v, z in part]
+                for pts in _face_parts(r, axis, sign, half):
                     (px, py, pw), (qx, qy, qw), (rx, ry, rw) = pts
                     x0, x1 = max(int(min(px, qx, rx)), 0), min(int(max(px, qx, rx)) + 1, resolution)
                     y0, y1 = max(int(min(py, qy, ry)), 0), min(int(max(py, qy, ry)) + 1, resolution)
@@ -1217,19 +1223,9 @@ class GlassSight:
                 for t in sub.triangles():
                     tris.append([tuple(pool[i].position[a] - eye[a] for a in range(3)) for i in t])
         for axis, sign in CUBE_FACES:
-            u_axis, v_axis = [a for a in range(3) if a != axis]
             depth = [0.0] * (resolution * resolution)  # 1 / z, larger is nearer
             for r in tris:
-                face = [(p[u_axis], p[v_axis], sign * p[axis]) for p in r]
-                if max(z for _, _, z in face) < NEAR_PLANE:
-                    continue
-                if min(z for _, _, z in face) < NEAR_PLANE:
-                    poly = _clip_near(face)
-                    parts = [(poly[0], poly[i], poly[i + 1]) for i in range(1, len(poly) - 1)]
-                else:
-                    parts = [face]
-                for part in parts:
-                    pts = [(half + half * u / z, half - half * v / z, 1 / z) for u, v, z in part]
+                for pts in _face_parts(r, axis, sign, half):
                     (px, py, pw), (qx, qy, qw), (rx, ry, rw) = pts
                     x0, x1 = max(int(min(px, qx, rx)), 0), min(int(max(px, qx, rx)) + 1, resolution)
                     y0, y1 = max(int(min(py, qy, ry)), 0), min(int(max(py, qy, ry)) + 1, resolution)
