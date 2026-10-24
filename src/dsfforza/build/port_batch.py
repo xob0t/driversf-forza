@@ -893,35 +893,45 @@ def register_cars(
 
 
 def lint_all(out: Path, dsf: Path, cars: list[dict], parallel: int, log=print) -> None:
+    """upvh lint for every car: `parallel` processes of `upvh lint-many`, each over a run
+    of the cars, so the archive and its cross-vehicle tables are read once per process
+    instead of once per car (at hundreds of cars a single lint reads the whole archive
+    for seconds). c["lint"] is "ok" or what `upvh lint --id` prints for the car."""
+    import json
+
     flags = gentle.creation_flags(BELOW_NORMAL if os.name == "nt" else 0)
-    pending, running = list(cars), []
-    while pending or running:
-        while pending and len(running) < parallel:
-            c = pending.pop(0)
-            proc = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "dsfforza.formats.upvh",
-                    "lint",
-                    str(out),
-                    "--id",
-                    str(c["spool_id"]),
-                    "--stock",
-                    str(dsf),
-                    "--source",
-                    str(c["host"]),
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                creationflags=flags,
+    size = -(-len(cars) // max(1, parallel)) if cars else 1
+    groups = [cars[k : k + size] for k in range(0, len(cars), size)]
+    procs = []
+    for group in groups:
+        command = [sys.executable, "-m", "dsfforza.formats.upvh", "lint-many", str(out), "--stock", str(dsf)]
+        for c in group:
+            command += ["--car", f"{c['spool_id']}:{c['host']}"]
+        procs.append(
+            (
+                group,
+                subprocess.Popen(
+                    command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=flags
+                ),
             )
-            running.append((c, proc))
-        c, proc = running.pop(0)
+        )
+    for group, proc in procs:
         text, _ = proc.communicate()
-        c["lint"] = "ok" if proc.returncode == 0 else text.strip()
-        log(f"  lint {c['spool_id']} {c['media']}: {'ok' if proc.returncode == 0 else 'FAILED'}")
+        rows = {}
+        for line in text.splitlines():
+            if line.startswith("{"):
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                rows[row.get("id")] = row
+        for c in group:
+            row = rows.get(c["spool_id"])
+            if row is None:  # the process died before this car
+                c["lint"] = f"lint did not run (upvh lint-many exit code {proc.returncode}): {text.strip()[-1500:]}"
+            else:
+                c["lint"] = "ok" if row["ok"] else row["text"].strip()
+            log(f"  lint {c['spool_id']} {c['media']}: {'ok' if c['lint'] == 'ok' else 'FAILED'}")
 
 
 # --- commands ---------------------------------------------------------------------------------
@@ -1155,7 +1165,11 @@ def finish(
 
         try:
             gui_assets.build(
-                manifest_path, out_dir / "gui", archive=archive, wide_glyphs=getattr(args, "wide_glyphs", False)
+                manifest_path,
+                out_dir / "gui",
+                archive=archive,
+                wide_glyphs=getattr(args, "wide_glyphs", False),
+                jobs=max(1, args.jobs),
             )
         except Exception as error:  # the archive is still usable without pictures and badges
             print(f"gui assets failed: {type(error).__name__}: {error}")

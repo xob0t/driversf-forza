@@ -1238,35 +1238,54 @@ def is_forza_bank(bank: wb.Bank) -> bool:
         return False
 
 
-def lint(stream, root_entries, spool_id: int, reserved: set[int] | None = None) -> list[tuple[bool, str]]:
-    """Checks of a vehicle's engine sound in an archive: VSRT parts, the bank's parse and
-    byte-identical rebuild, media/offset consistency, VSVH event fields, and ID
-    uniqueness across the archive. A dsfforza bank's IDs (bank, objects, layers,
-    media) must be its own: no other vehicle's bank and no reserved (stock or
-    WWiseDefault.pck) ID may equal them. Any other bank may share IDs only with
-    banks that give them the same content (clones and sound hosts share their
-    template's bank, as stock cars do)."""
+def _sound_records(stream, root_entries) -> dict:
+    """lint's per-archive tables: "records" [(spool ID, VSRT parts or None)] of every
+    kind-0 entry, "banks" {spool ID: (parsed SBAK, VSVH)} of those whose bank parses."""
     from dsfforza.build import clone_vehicle as cv
     from dsfforza.formats.vehicles import find
 
-    rows: list[tuple[bool, str]] = []
-    banks: dict[int, tuple[wb.Bank, bytes]] = {}
-    own = None
+    records, banks = [], {}
     for sid, index, kind in cv.sslp_records(stream, root_entries):
         if kind != 0:
             continue
         nonr = find(root_entries[index].children, "NONR")
         vsrt = next((c for c in nonr.children if c.tag == "VSRT"), None)
         if vsrt is None:
-            if sid == spool_id:
-                return [(False, "sound: the full entry has no NONR/VSRT")]
+            records.append((sid, None))
             continue
         parts = {c.tag: cv.read_leaf(stream, c) for c in vsrt.children}
-        if sid == spool_id:
-            own = parts
-            continue
-        with contextlib.suppress(ValueError, KeyError, struct.error):  # another car's problem; its own lint reports it
+        records.append((sid, parts))
+        with contextlib.suppress(ValueError, KeyError, struct.error):
             banks[sid] = (wb.Bank.parse(parts["SBAK"]), parts["VSVH"])
+    return {"records": records, "banks": banks}
+
+
+def lint(
+    stream, root_entries, spool_id: int, reserved: set[int] | None = None, cache: dict | None = None
+) -> list[tuple[bool, str]]:
+    """Checks of a vehicle's engine sound in an archive: VSRT parts, the bank's parse and
+    byte-identical rebuild, media/offset consistency, VSVH event fields, and ID
+    uniqueness across the archive. A dsfforza bank's IDs (bank, objects, layers,
+    media) must be its own: no other vehicle's bank and no reserved (stock or
+    WWiseDefault.pck) ID may equal them. Any other bank may share IDs only with
+    banks that give them the same content (clones and sound hosts share their
+    template's bank, as stock cars do). `cache` (a dict kept between calls for the
+    same archive): every vehicle's bank parsed once, for linting many cars."""
+    if cache is None:
+        cache = {}
+    if "records" not in cache:
+        cache.update(_sound_records(stream, root_entries))
+    rows: list[tuple[bool, str]] = []
+    own = None
+    for sid, parts in cache["records"]:
+        if sid == spool_id:
+            if parts is None:
+                return [(False, "sound: the full entry has no NONR/VSRT")]
+            own = parts
+            break
+    # Every other vehicle's bank that parses, in archive order (one that doesn't is
+    # another car's problem; its own lint reports it).
+    banks = {sid: parsed for sid, parsed in cache["banks"].items() if sid != spool_id}
     if own is None:
         return [(False, f"sound: no kind-0 entry for spool {spool_id}")]
     vsvh = own.get("VSVH", b"")
@@ -1307,8 +1326,18 @@ def lint(stream, root_entries, spool_id: int, reserved: set[int] | None = None) 
     forza = is_forza_bank(bank)
     mine = _content(bank)
     clashes, shared = [], set()
-    for sid, (other, _) in banks.items():
-        theirs = _content(other)
+    # Only banks that share an ID with this one can clash or share: the others' content
+    # once per archive, indexed by ID.
+    if "by_id" not in cache:
+        cache["content"] = {sid: _content(other) for sid, (other, _) in cache["banks"].items()}
+        by_id: dict[int, set[int]] = {}
+        for sid, content in cache["content"].items():
+            for i in content:
+                by_id.setdefault(i, set()).add(sid)
+        cache["by_id"] = by_id
+    near = set().union(*(cache["by_id"].get(i, ()) for i in mine))
+    for sid in (sid for sid in banks if sid in near):
+        theirs = cache["content"][sid]
         for i in set(mine) & set(theirs):
             if forza or mine[i] != theirs[i]:
                 clashes.append(f"{i:08x} with {sid}")

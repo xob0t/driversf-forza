@@ -75,19 +75,50 @@ class Chunk:
 
 
 def read_chunk(stream: BinaryIO, base: int = 0, depth: int | None = None) -> Chunk:
-    """Read the CHNK at ``base``; recurse ``depth`` levels (None = unlimited)."""
-    stream.seek(base)
-    magic, total_size, count, version = HEADER.unpack(stream.read(HEADER.size))
+    """Read the CHNK at ``base``; recurse ``depth`` levels (None = unlimited). A file
+    on disk is read through a memory map (a whole archive is about a million small
+    reads); other streams by seek and read."""
+    view = _mapped(stream)
+    if view is None:
+
+        def read_at(pos: int, n: int) -> bytes:
+            stream.seek(pos)
+            return stream.read(n)
+
+        return _read_chunk(read_at, base, depth)
+    try:
+        return _read_chunk(lambda pos, n: view[pos : pos + n], base, depth)
+    finally:
+        view.close()
+
+
+def _mapped(stream):
+    """A read-only memory map of the file behind `stream`, or None (not a plain file)."""
+    import io
+    import mmap
+
+    if not isinstance(stream, io.BufferedReader):
+        return None
+    try:
+        return mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ)
+    except (OSError, ValueError):  # empty file, or no file descriptor
+        return None
+
+
+def _read_chunk(read_at, base: int, depth: int | None) -> Chunk:
+    magic, total_size, count, version = HEADER.unpack(read_at(base, HEADER.size))
     if magic != MAGIC:
         raise ValueError(f"no CHNK at {base:#x}: {magic!r}")
-    raw = [ENTRY.unpack(stream.read(ENTRY.size)) for _ in range(count)]
+    table = read_at(base + HEADER.size, count * ENTRY.size)
+    if len(table) != count * ENTRY.size:  # cut short, as the entry-by-entry reads failed
+        raise struct.error(f"unpack requires a buffer of {ENTRY.size} bytes")
+    raw = list(ENTRY.iter_unpack(table))
     entries = []
     for tag, offset, ver, name_len, align, reserved, size in raw:
         start = base + offset
         name_raw = b""
         if name_len:
-            stream.seek(start + size)
-            name_raw = stream.read(name_len)
+            name_raw = read_at(start + size, name_len)
         name = name_raw.split(b"\0", 1)[0].decode("latin-1") if name_len else None
         entries.append(
             Entry(tag.decode("latin-1"), start, size, ver, align, name, name_raw=name_raw, reserved=reserved)
@@ -95,10 +126,9 @@ def read_chunk(stream: BinaryIO, base: int = 0, depth: int | None = None) -> Chu
     for entry in entries:
         if depth == 0 or entry.size < HEADER.size:
             continue
-        stream.seek(entry.offset)
-        if stream.read(4) == MAGIC:
+        if read_at(entry.offset, 4) == MAGIC:
             next_depth = None if depth is None else depth - 1
-            nested = read_chunk(stream, entry.offset, next_depth)
+            nested = _read_chunk(read_at, entry.offset, next_depth)
             entry.children = nested.entries
             entry.chunk_version = nested.version | (0x80000000 if nested.compressed else 0)
     return Chunk(base, total_size, version & 0x7FFFFFFF, bool(version & 0x80000000), entries)

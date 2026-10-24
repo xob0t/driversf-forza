@@ -241,20 +241,22 @@ def untile32(data: bytes) -> tuple[int, int, bytearray]:
     fmt, width, height = xds.parse_header(data)
     if fmt not in (6, 50):  # k_8_8_8_8 and its _AS_16_16_16_16 alias
         raise ValueError(f"format {fmt}, not 32-bit")
+    import numpy as np
+
     src = data[xds.HEADER_SIZE :]
     aligned_w, aligned_h = (width + 31) & ~31, (height + 31) & ~31
-    out = bytearray(width * height * 4)
-    for n in range(aligned_w * aligned_h):
-        o = n * 4
-        if o + 4 > len(src):
-            break
-        x, y = xds.tiled_x(n, width, 4), xds.tiled_y(n, width, 4)
-        if x >= width or y >= height:
-            continue
-        a, r, g, b = src[o : o + 4]  # big-endian ARGB
-        d = (y * width + x) * 4
-        out[d : d + 4] = bytes((r, g, b, a))
-    return width, height, out
+    out = np.zeros((width * height, 4), dtype=np.uint8)
+    # Every whole texel of the data, up to the aligned surface, as the texel loop read them.
+    count = min(aligned_w * aligned_h, len(src) // 4)
+    n = np.arange(count, dtype=np.int64)
+    x, y = xds.tiled_x(n, width, 4), xds.tiled_y(n, width, 4)
+    inside = (x < width) & (y < height)
+    argb = np.frombuffer(src, dtype=np.uint8, count=count * 4).reshape(count, 4)[inside]  # big-endian ARGB
+    dst = (y * width + x)[inside]
+    _, last = np.unique(dst[::-1], return_index=True)  # where two land on one texel, the later wins
+    keep = len(dst) - 1 - last
+    out[dst[keep]] = argb[keep][:, [1, 2, 3, 0]]
+    return width, height, bytearray(out.tobytes())
 
 
 def read_xds_rgba(data: bytes) -> tuple[int, int, bytearray]:
@@ -475,6 +477,60 @@ def _segment_distance(px, py, a, b) -> float:
     return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
 
 
+def _plate_coverage(segs, width: int, height: int, ss: int, stroke: float, outline: float, reach: float):
+    """[row][column] -> (core, edge): how many of a pixel's ss x ss samples lie within
+    `stroke` of the nearest stroke segment, and how many within the outline beyond it.
+    The distances come from numpy over the segments near each row; a sample within
+    1e-9 of either limit is measured again with _segment_distance over the pixel's
+    nearby segments (math.hypot), as the per-sample loop did, so every count is the
+    loop's. Segments farther than `reach` from a pixel never decide it either way."""
+    import numpy as np
+
+    offsets = np.array([(sx + 0.5) / ss for sx in range(ss)])
+    block = 24  # columns measured together, against the segments within reach of them
+    out = []
+    for py in range(height):
+        near = [(a, b) for a, b in segs if min(a[1], b[1]) - reach <= py + 1 and max(a[1], b[1]) + reach >= py]
+        row = [(0, 0)] * width
+        out.append(row)
+        if not near:
+            continue
+        seg = np.array([(a[0], a[1], b[0], b[1]) for a, b in near], dtype=np.float64)
+        lo, hi = np.minimum(seg[:, 0], seg[:, 2]) - reach, np.maximum(seg[:, 0], seg[:, 2]) + reach
+        for c0 in range(0, width, block):
+            c1 = min(width, c0 + block)
+            pick = np.flatnonzero((lo <= c1) & (hi >= c0))
+            if not len(pick):
+                continue
+            ax, ay, bx, by = (seg[pick, k] for k in range(4))
+            dx, dy = bx - ax, by - ay
+            length = dx * dx + dy * dy
+            # samples (column, sy, sx) along the first axis, segments along the second
+            n = c1 - c0
+            fx = (np.arange(c0, c1, dtype=np.float64)[:, None, None] + offsets[None, None, :]) * np.ones((1, ss, 1))
+            fy = np.zeros((n, ss, ss)) + (py + offsets)[None, :, None]
+            fx, fy = fx.reshape(-1, 1), fy.reshape(-1, 1)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                t = np.where(length == 0, 0.0, np.clip(((fx - ax) * dx + (fy - ay) * dy) / length, 0.0, 1.0))
+            d = np.hypot(fx - (ax + t * dx), fy - (ay + t * dy)).min(axis=1)
+            core = d <= stroke
+            edge = ~core & (d <= stroke + outline)
+            unsure = np.flatnonzero((np.abs(d - stroke) < 1e-9) | (np.abs(d - (stroke + outline)) < 1e-9))
+            for i in unsure.tolist():
+                k, rest = divmod(i, ss * ss)
+                px = c0 + k
+                sy, sx = divmod(rest, ss)
+                local = [(a, b) for a, b in near if min(a[0], b[0]) - reach <= px + 1 and max(a[0], b[0]) + reach >= px]
+                fxi, fyi = px + (sx + 0.5) / ss, py + (sy + 0.5) / ss
+                exact = min(_segment_distance(fxi, fyi, a, b) for a, b in local)
+                core[i], edge[i] = exact <= stroke, stroke < exact <= stroke + outline
+            counts = zip(
+                core.reshape(n, -1).sum(axis=1).tolist(), edge.reshape(n, -1).sum(axis=1).tolist(), strict=True
+            )
+            row[c0:c1] = list(counts)
+    return out
+
+
 _TEXT_PLATES: dict = {}
 
 
@@ -508,21 +564,10 @@ def _text_plate(text: str, height: int, italic: float) -> Image:
         x += w
     ss = 3
     reach = stroke + outline + 1
+    counts = _plate_coverage(segs, width, height, ss, stroke, outline, reach)
     for py in range(height):
-        near = [(a, b) for a, b in segs if min(a[1], b[1]) - reach <= py + 1 and max(a[1], b[1]) + reach >= py]
         for px in range(width):
-            local = [(a, b) for a, b in near if min(a[0], b[0]) - reach <= px + 1 and max(a[0], b[0]) + reach >= px]
-            if not local:
-                continue
-            core = edge = 0
-            for sy in range(ss):
-                for sx in range(ss):
-                    fx, fy = px + (sx + 0.5) / ss, py + (sy + 0.5) / ss
-                    d = min(_segment_distance(fx, fy, a, b) for a, b in local)
-                    if d <= stroke:
-                        core += 1
-                    elif d <= stroke + outline:
-                        edge += 1
+            core, edge = counts[py][px]
             if not core and not edge:
                 continue
             t = (py - origin_y) / (6 * cell)  # 0 top .. 1 bottom of the letters
@@ -735,6 +780,20 @@ def _decode_normal(b0: int, b1: int) -> tuple[float, float, float]:
     return math.sin(polar) * math.sin(azimuth), math.cos(polar), math.sin(polar) * math.cos(azimuth)
 
 
+_ROOTS: dict = {}
+
+
+def _root_entries(archive: Path, stream) -> list:
+    """The archive's root entries, read once per file version (render_car runs once per
+    car without a Forza thumbnail, and a batch archive is a few GB)."""
+    st = archive.stat()
+    key = (str(archive.resolve()), st.st_size, st.st_mtime_ns)
+    if key not in _ROOTS:
+        _ROOTS.clear()
+        _ROOTS[key] = chnk.read_chunk(stream, 0).entries
+    return _ROOTS[key]
+
+
 def render_car(
     archive: Path, spool_id: int, size: tuple[int, int] = (900, 480), yaw: float = 38.0, pitch: float = 12.0
 ) -> Image:
@@ -749,9 +808,9 @@ def render_car(
     from dsfforza.formats import vehicle_mesh as vm
 
     with archive.open("rb") as stream:
-        root = chnk.read_chunk(stream, 0)
-        kinds = uv.entries_for(stream, root.entries, spool_id, None)
-        index = {k: root.entries.index(v) for k, v in kinds.items()}
+        entries = _root_entries(archive, stream)
+        kinds = uv.entries_for(stream, entries, spool_id, None)
+        index = {k: entries.index(v) for k, v in kinds.items()}
         textures, materials = {}, {}
         for k in (0, 2):
             for e in child(child(kinds[k], "MDXN"), "DRSP").children:
@@ -774,7 +833,7 @@ def render_car(
         for i in range(h.counts["wheels"]):
             o = h.offsets["wheels"] + i * 0x20
             hubs.append((struct.unpack_from("<3f", h.data, o), struct.unpack_from("<4f", h.data, o + 16)))
-    _, mesh = vm.load(archive, index[2])
+    _, mesh = vm.load(archive, index[2], entries)
     tris = []
     for sub in mesh.submodels:
         vb = mesh.vertex_buffers[sub.vertex_buffer]
@@ -1610,6 +1669,41 @@ def plan_wide_glyphs(
     return entries, glyphs, notes
 
 
+class _Renders:
+    """render_car for the cars build() will render (no FH1 thumbnail), in `jobs`
+    processes a few cars ahead of the loop that uses them; with jobs 1 (or a car
+    not foreseen, e.g. an empty thumbnail) in this process when asked."""
+
+    def __init__(self, archive: Path, cars: list[dict], ui: ForzaUI, jobs: int):
+        self.archive, self.jobs, self.futures, self.pool = archive, jobs, {}, None
+        self.order = []  # (car index, spool ID) of the cars that will need a render
+        if jobs > 1:
+            for n, car in enumerate(cars):
+                car_id = forza_car_id(car["media"])
+                if not car_id or f"thumbnails/thumbnail_{car_id}.xds" not in ui.names:
+                    self.order.append((n, car["spool_id"]))
+        if len(self.order) > 1:
+            from concurrent.futures import ProcessPoolExecutor
+
+            self.pool = ProcessPoolExecutor(max_workers=jobs)
+
+    def ahead(self, n: int) -> None:
+        """Start the renders of the cars up to a few past car index n."""
+        if self.pool is None:
+            return
+        while self.order and self.order[0][0] <= n + 2 * self.jobs:
+            _, sid = self.order.pop(0)
+            self.futures[sid] = self.pool.submit(render_car, self.archive, sid)
+
+    def get(self, sid: int) -> Image:
+        future = self.futures.pop(sid, None)
+        return future.result() if future is not None else render_car(self.archive, sid)
+
+    def close(self) -> None:
+        if self.pool is not None:
+            self.pool.shutdown(cancel_futures=True)
+
+
 def build(
     manifest: Path,
     out_dir: Path,
@@ -1621,6 +1715,7 @@ def build(
     control_codes: bool = False,
     wide_glyphs: bool = False,
     root_limit: int = chnk.ENTRY_LIMIT,
+    jobs: int = 1,
 ) -> dict:
     """Garage pictures, HUD glyphs and dsfforza\\hud.lua for the cars of a
     src/dsfforza/build/port_car.py manifest. Writes out_dir/gui.sp, out_dir/Fonts.fchunk,
@@ -1629,7 +1724,9 @@ def build(
     (ManufacturerGlyph/ModelGlyph, drawn by dsfforza.asi [hud]; the one-byte
     Manufacturer/Model plan stays as the fallback). Every car also gets
     GarageEmblem = 1 and Fonts.fchunk the Forza emblem texture: with
-    dsfforza.asi the garage card shows the Forza logo instead of the SF disc."""
+    dsfforza.asi the garage card shows the Forza logo instead of the SF disc.
+    `jobs` > 1 renders the cars without a Forza thumbnail in that many processes
+    (render_car is the slow step; each render is the same either way)."""
     import json
 
     data = json.loads(Path(manifest).read_text())
@@ -1670,8 +1767,10 @@ def build(
         for media, fields in wide.items():
             planned[media].update(fields)
         glyphs.update(wide_glyph_images)
-    for car in data["cars"]:
+    renders = _Renders(Path(archive), data["cars"], ui, jobs)
+    for n, car in enumerate(data["cars"]):
         media, sid = car["media"], car["spool_id"]
+        renders.ahead(n)
         t = texts[media]
         model_text = t["model"]
         entry = dict(planned[media])
@@ -1681,7 +1780,7 @@ def build(
         image = forza_car_image(ui, car_id) if car_id else None
         source = "FH1 thumbnail"
         if image is None:
-            image, source = render_car(Path(archive), sid), "render"
+            image, source = renders.get(sid), "render"
         picture = compose_picture(image, logo, nameplate(model_text, 124, 38), backdrop)
         name = f"dsfforza_{media.lower()}"
         pictures[name] = picture_dds(picture, template)
@@ -1704,6 +1803,7 @@ def build(
             f"{sid} {media}: picture {name} ({source}), Manufacturer {entry.get('Manufacturer')}, "
             f"Model {entry.get('Model')} ({model_text}){wide_text}"
         )
+    renders.close()
     emblem, emblem_img = emblem_dds(ui, template)
     ui.close()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1848,6 +1948,7 @@ def main(argv: list[str] | None = None) -> None:
         help=f"gui.sp root entries before pictures share a SPOI (default {chnk.ENTRY_LIMIT}, the stock "
         "CHNK reader; dsfforza.asi [archive] lifts it, e.g. 16384: one SPOI per picture)",
     )
+    b.add_argument("--jobs", type=int, default=1, help="processes for the car renders (default 1)")
     t = sub.add_parser("glyphtest", help="16-bit glyph stress test: numbered badges and plates, hud.lua for IDs")
     t.add_argument("--out", type=Path, default=Path("out/hud/glyphtest"))
     t.add_argument("--ids", required=True, help="comma-separated vehicle IDs (registered ports)")
@@ -1870,6 +1971,7 @@ def main(argv: list[str] | None = None) -> None:
             control_codes=args.control_codes,
             wide_glyphs=args.wide_glyphs,
             root_limit=args.root_limit,
+            jobs=args.jobs,
         )
         if args.install_lua:
             target = REPO / "tools" / "game" / "lua" / "dsfforza" / "hud.lua"

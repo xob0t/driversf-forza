@@ -176,8 +176,95 @@ How a build runs:
   so nothing is copied twice. It registers the clones (SSLP, VSCT), checks
   the root entry limit (`--root-limit`, default 1100; more needs dsfforza.asi's
   `archive` module) and UID clashes, and writes the archive.
-- Every car is linted.
-- With `--gui` the build also runs `gui_assets.build`.
+- Every car is linted, in `--jobs` (at most 4) `upvh lint-many` processes
+  that each read the archive once for their share of the cars.
+- With `--gui` the build also runs `gui_assets.build`; the cars without an
+  FH1 thumbnail are rendered in `--jobs` processes.
+
+### Conversion speed
+
+Measured 2026-10-24 on the 5800X3D while another build ran 8 workers, so
+the absolute numbers are high; the ratios are what to read. Seconds per
+car, worker wall time, 2 workers (`out/perf` in the perf worktree; the
+4-car regression plus 6 more cars, all byte-identical to the master build):
+
+| Car | Game | Host | Before | After |
+| --- | --- | ---: | ---: | ---: |
+| MAZ_RX7_97 | FH1 | 278 | 165 | 56 |
+| DOD_ChargerDaytona_69 | FM4 | 175 | 166 | 58 |
+| CHE_Express2500Cargo_05 | FH1 | 198 | 461 | 36 |
+| SAL_S5SRaptor_10 | FH1 | 163 | 113 | 46 |
+| BUG_VeyronSS_11 | FH1 | 214 | 126 | 62 |
+| AST_007_DBR9_06 (race) | FM4 | 232 | 498 | 66 |
+| DEL_DMC12_82 | FM4 | 171 | 126 | 42 |
+| DOD_ChallengerSRT8392_12 | FH1 | 173 | 237 | 47 |
+| CHR_JeepGCSRT8_12 | FH1 | 138 | 155 | 42 |
+| TOY_2000GT_69 | FM4 | 205 | 176 | 55 |
+
+The slow cars were slow in one place. `damage.Grid.nearest` walked every
+cell of each ring of a 3D hash grid until it had k points, and for the
+sparse groups of `Uv1Field` (one panel and material of the host) that
+meant rings of radius 30 and more: 830 million `abs()` calls for the RX7,
+two thirds of its time. The Express van and the DBR9 spent 7 of their 8
+minutes there. It now looks at the occupied cells only and solves the
+stop test for the empty rings in between, which gives the same points in
+the same order.
+
+Where the time went, per stage (one car at a time through
+`port_batch._worker`, seconds before -> after):
+
+| Stage | RX7 | Charger Daytona | Express | Veyron | DBR9 |
+| --- | --- | --- | --- | --- | --- |
+| total | 148 -> 50 | 154 -> 53 | 455 -> 33 | 119 -> 56 | 473 -> 59 |
+| textures (`dsf_materials.prepare`) | 6.1 -> 1.3 | 5.9 -> 1.0 | 3.4 -> 0.7 | 6.0 -> 1.3 | 5.8 -> 0.9 |
+| damage, full entry LODs | 35.5 -> 15.1 | 45.8 -> 15.7 | 187 -> 17.6 | 40.1 -> 24.3 | 182 -> 19.0 |
+| damage, exterior | 32.0 -> 5.1 | 33.8 -> 6.1 | 249 -> 3.9 | 16.0 -> 5.6 | 200 -> 6.5 |
+| damage, interior UV1 | 18.3 -> 1.8 | 7.6 -> 1.6 | - | 3.8 -> 0.0 | 7.3 -> 1.5 |
+| cockpit interior | 38.3 -> 10.4 | 41.4 -> 13.0 | - (host's) | 34.5 -> 8.6 | 59.2 -> 16.6 |
+| engine sound fit | 4.2 -> 2.9 | 5.2 -> 3.3 | 5.2 -> 3.4 | 5.2 -> 3.2 | 5.3 -> 3.3 |
+
+What changed, all with the same float operations in the same order as the
+loops they replace (`tests/test_speed.py` keeps each original loop and
+compares on random inputs):
+
+- `damage.Grid.nearest` and `DamagePlan._vote`: occupied cells only past
+  the first rings; the vote scores many triangles at once
+  (`closest_on_triangles`, the branches of `closest_on_triangle` as masks).
+- `cockpit.visible_triangles` and `GlassSight`: the cube-face ID and depth
+  buffers rasterised with numpy (per pixel the nearest fragment, the
+  earliest triangle among equal depths, as the strict `>` of the loop did).
+- `xds.untile`, `xds.decode_rgba`, `gui_assets.untile32`, the DXT1/DXT5
+  encoder and the mip filter in `dsf_materials`, and `Texturing.render`
+  (box sums from a summed-area table, each distinct average converted once).
+- `wwise_bank`: ADPCM encode and decode with the step tables inlined.
+- `chnk.read_chunk`: one read per entry table, files through a memory map.
+- `host_select._carbin_doors` is cached per process (three calls per car,
+  each parsing the main carbin).
+
+What is left: the panel votes of `DamagePlan.assignment` (about 15 s per
+car, 16,000 votes each looking at around 190 host triangles) and the
+cockpit cull (8 eyes x 6 cube faces). Both are numpy now; a faster version
+would need a different search, not a faster loop.
+
+Batch-level costs at full-roster scale:
+
+- **Lint was quadratic.** Each `upvh lint` read the whole output archive,
+  every vehicle's defined UIDs and every vehicle's sound bank. At 4 cars
+  that is 6 s per lint; at 573 cars the archive holds about 2,200 VEHC
+  entries and 720 banks, so an estimated 13 to 15 s per lint, 30 to 40 min
+  at 4 at a time. `upvh lint-many` reads them once per process (6 cars:
+  3.6 s instead of 19 s of single lints) and prints the same text.
+- **GUI** is linear in the cars, but `render_car` read the whole archive
+  twice per render, and at 573 cars that archive is about 2.4 GB. It is
+  read once now. The nameplate rasteriser is about 3 times faster, and the
+  renders (about 5 s each, every car without an FH1 thumbnail) run in
+  `--jobs` processes. 4 cars: 36 s -> 15 s.
+- **Worker start-up** is about 3 s per car (imports, the stock archive's
+  root, host survey and sound index from `out/cache`), small next to the
+  conversion.
+- **`--jobs` above the physical cores**: not measured here (the machine was
+  never idle). The workers are pure CPU, so SMT gives at most a few tens of
+  percent more; at about 420 MB per worker, 16 workers fit in 32 GB.
 
 A batch archive is byte-identical to a `port_car.py` archive with the same
 cars and IDs: tested with `FOR_FocusRS500_10` at 304, SHA-256 equal.

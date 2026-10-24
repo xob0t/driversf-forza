@@ -39,6 +39,7 @@ The survey of the stock archive is cached in out/cache/host-survey.json.
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import math
@@ -839,6 +840,7 @@ def _forza_body(
 TWO_DOOR_BODIES = ("coupe", "muscle", "supercar", "convertible", "race")
 
 
+@functools.lru_cache(maxsize=32)  # forza_info asks up to three times per car (host, sound, same vehicle)
 def _carbin_doors(folder: Path, media: str, body: str | None = None) -> int | None:
     """Door count from the main carbin's left side glass (glassLF/LM/LR; not the lamp
     glass glassLHL/LTL), or None when it can't tell. Forza has no door sections, and

@@ -195,6 +195,12 @@ def _expand(nib: int, pred: int, idx: int) -> tuple[int, int]:
     return pred, idx
 
 
+# _expand (one sample) as tables: the prediction step per step index and nibble magnitude,
+# and the next step index; decode_ima and _encode_block inline them (the same integers).
+_DIFF = [[((m * 2 + 1) * step) >> 3 for m in range(8)] for step in STEPS]
+_NEXT = [[max(0, min(88, i + INDEX_ADJ[m])) for m in range(8)] for i in range(len(STEPS))]
+
+
 def decode_ima(data: bytes, channels: int = 1) -> list[list[int]]:
     """Decode Wwise IMA ADPCM; returns one sample list per channel."""
     out = [[] for _ in range(channels)]
@@ -205,12 +211,14 @@ def decode_ima(data: bytes, channels: int = 1) -> list[list[int]]:
             pred, idx = struct.unpack_from("<hB", data, b)
             idx = min(idx, 88)
             samples = [pred]
-            for i in range(1, BLOCK_SAMPLES):
-                byte = data[b + 4 + (i - 1) // 2]
-                nib = (byte >> 4) if (i - 1) & 1 else byte & 0xF
-                pred, idx = _expand(nib, pred, idx)
-                samples.append(pred)
-            out[ch].extend(samples)
+            for byte in data[b + 4 : b + 4 + BLOCK_SAMPLES // 2]:
+                for nib in (byte & 0xF, byte >> 4):
+                    m = nib & 7
+                    pred = pred - _DIFF[idx][m] if nib & 8 else pred + _DIFF[idx][m]
+                    pred = -32768 if pred < -32768 else (32767 if pred > 32767 else pred)
+                    idx = _NEXT[idx][m]
+                    samples.append(pred)
+            out[ch].extend(samples[:BLOCK_SAMPLES])
     return out
 
 
@@ -220,13 +228,18 @@ def _encode_block(x: list[int], idx: int) -> tuple[bytes, int, float]:
     err = 0.0
     for i in range(1, BLOCK_SAMPLES):
         step = STEPS[idx]
-        d = x[i] - pred
-        sign = 8 if d < 0 else 0
+        xi = x[i]
+        d = xi - pred
         mag = min(7, (abs(d) * 4) // step) if step else 0  # nearest of (2m+1)*step/8 ~ m*step/4
-        nib = sign | mag
-        pred, idx = _expand(nib, pred, idx)
-        err += (x[i] - pred) ** 2
-        nibs.append(nib)
+        if d < 0:
+            pred -= _DIFF[idx][mag]
+            nibs.append(8 | mag)
+        else:
+            pred += _DIFF[idx][mag]
+            nibs.append(mag)
+        pred = -32768 if pred < -32768 else (32767 if pred > 32767 else pred)
+        idx = _NEXT[idx][mag]
+        err += (xi - pred) ** 2
     nibs.append(0)
     body = bytes(nibs[k] | (nibs[k + 1] << 4) for k in range(0, BLOCK_SAMPLES, 2))
     return body, idx, err
@@ -313,10 +326,11 @@ class Wem:
 
 def write_wav(path: Path, channels: list[list[int]], rate: int) -> None:
     n = min(len(c) for c in channels)
-    frames = bytearray()
-    for i in range(n):
-        for c in channels:
-            frames += struct.pack("<h", max(-32768, min(32767, int(c[i]))))
+    frames = bytearray(2 * n * len(channels))
+    for k, c in enumerate(channels):  # int() then the clamp, as the samples were packed one by one
+        clipped = [max(-32768, min(32767, int(v))) for v in c[:n]]
+        frames[2 * k :: 2 * len(channels)] = bytes(v & 0xFF for v in clipped)
+        frames[2 * k + 1 :: 2 * len(channels)] = bytes((v >> 8) & 0xFF for v in clipped)
     with wave.open(str(path), "wb") as w:
         w.setnchannels(len(channels))
         w.setsampwidth(2)

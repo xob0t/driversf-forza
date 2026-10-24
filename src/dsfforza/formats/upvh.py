@@ -304,7 +304,20 @@ def references(stream, kinds: dict[int, Entry]) -> list[tuple[str, bytes]]:
     return [(where, u) for where, u in out if u not in (bytes(8), NONE_UID)]
 
 
-def foreign_uids(stream, root_entries: list[Entry], kinds: dict[int, Entry]) -> list[str]:
+def uid_owners(stream, root_entries: list[Entry]) -> dict[bytes, list[tuple[int, str]]]:
+    """UID -> (id of the entry, its name) of every VEHC entry that defines it (resource or
+    MODL part UID), in archive order: foreign_uids' table, made once per archive."""
+    out: dict[bytes, list[tuple[int, str]]] = {}
+    for e in root_entries:
+        if e.tag != "VEHC":
+            continue
+        r, p = defined_by(stream, e)
+        for u in r | p:
+            out.setdefault(u, []).append((id(e), e.name or "?"))
+    return out
+
+
+def foreign_uids(stream, root_entries: list[Entry], kinds: dict[int, Entry], owners: dict | None = None) -> list[str]:
     """Cross-vehicle UID problems for one vehicle (its three VEHC entries):
 
     - a UID it references that another vehicle defines but it doesn't (the
@@ -314,27 +327,30 @@ def foreign_uids(stream, root_entries: list[Entry], kinds: dict[int, Entry]) -> 
 
     UIDs no vehicle defines (the engine's shared materials) are fine. Stock
     vehicles never share part or resource UIDs; clones that kept the host's
-    part UIDs turned into the host in game (run 20261022-024010)."""
+    part UIDs turned into the host in game (run 20261022-024010). `owners`:
+    uid_owners of the archive (made here when not given)."""
     mine = {id(e) for e in kinds.values()}
     own_res, own_parts = set(), set()
     for e in kinds.values():
         r, p = defined_by(stream, e)
         own_res |= r
         own_parts |= p
+    if owners is None:
+        owners = uid_owners(stream, root_entries)
+    refs = references(stream, kinds)
+    # UID -> the first other vehicle entry (archive order) that defines it.
     others: dict[bytes, str] = {}
-    for e in root_entries:
-        if e.tag != "VEHC" or id(e) in mine:
-            continue
-        r, p = defined_by(stream, e)
-        for u in r | p:
-            others.setdefault(u, e.name or "?")
+    for u in {u for _, u in refs} | own_res | own_parts:
+        name = next((n for key, n in owners.get(u, ()) if key not in mine), None)
+        if name is not None:
+            others[u] = name
     problems = []
     for what, own in (("resource", own_res), ("MODL part", own_parts)):
         shared = sorted(u.hex() for u in own if u in others)
         if shared:
             problems.append(f"{len(shared)} {what} UIDs are also defined by other vehicles, e.g. {shared[:3]}")
     foreign: dict[str, list[str]] = {}
-    for where, u in references(stream, kinds):
+    for where, u in refs:
         if u in others and u not in own_res and u not in own_parts:
             foreign.setdefault(where.split(" ", 2)[0] + " " + where.split(" ", 2)[1], []).append(
                 f"{where}: {u.hex()} ({others[u]})"
@@ -414,48 +430,87 @@ def fmt3(v) -> str:
     return "({:.4f}, {:.4f}, {:.4f})".format(*v[:3])
 
 
-def cmd_lint(args: argparse.Namespace) -> None:
-    """Checks a converted vehicle against the rules in research/upvh.md."""
+class LintContext:
+    """What the lints of several cars in one archive share: the archive's root, which
+    vehicle defines each UID, the engine sound banks, and the stock archive's host
+    tables. One lint walks the whole archive for these; a batch walks it once."""
+
+    def __init__(self, stream, root_entries: list[Entry], stock: Path | None = None):
+        self.stream, self.entries, self.stock_path = stream, root_entries, stock
+        self._owners = None
+        self.sound: dict = {}  # engine_sound.lint's cache
+        self._stock = None  # (stream, root entries, shared UIDs)
+        self._hosts: dict[int, tuple] = {}
+
+    @property
+    def owners(self) -> dict:
+        if self._owners is None:
+            self._owners = uid_owners(self.stream, self.entries)
+        return self._owners
+
+    def host(self, source: int) -> tuple[set[bytes], list, set[bytes]]:
+        """(borrowed_from_full, the host's DRSP UIDs, SSIC's shared UIDs) of a stock host."""
+        if source not in self._hosts:
+            if self._stock is None:
+                stream = self.stock_path.open("rb")
+                entries = read_chunk(stream, 0).entries
+                self._stock = (stream, entries, shared_uids(stream, entries))
+            stream, entries, shared = self._stock
+            host = entries_for(stream, entries, source, None)
+            self._hosts[source] = (
+                borrowed_from_full(stream, host),
+                [item for e in host.values() for item in drsp_uids(stream, e)],
+                shared,
+            )
+        return self._hosts[source]
+
+    def close(self) -> None:
+        if self._stock is not None:
+            self._stock[0].close()
+
+
+def lint_vehicle(ctx: LintContext, spool_id: int | None, vehc: int | None, args, emit=print) -> int:
+    """The lint of one vehicle (args: source, stock, verbose, allow_shared, no_sound, as
+    the lint command takes them); emit(line) per reported check. Returns the problem count."""
     problems = 0
 
     def report(ok: bool, message: str) -> None:
         nonlocal problems
         problems += not ok
         if not ok or args.verbose:
-            print(("ok    " if ok else "FAIL  ") + message)
+            emit(("ok    " if ok else "FAIL  ") + message)
 
-    with args.archive.open("rb") as stream:
-        root = read_chunk(stream, 0)
-        kinds = entries_for(stream, root.entries, args.id, args.vehc)
-        full = kinds[0]
-        h = parse(payload(stream, child(child(full, "NONR"), "UPVH")))
-        parts = {kind: modl_part_uids(payload(stream, child(child(e, "NONR"), "MODL"))) for kind, e in kinds.items()}
-        uids = {kind: drsp_uids(stream, e) for kind, e in kinds.items()}
-        cross = None if args.allow_shared else foreign_uids(stream, root.entries, kinds)
-        modls = {kind: payload(stream, child(child(e, "NONR"), "MODL")) for kind, e in kinds.items()}
-        # Converted glass must sit in its window's slot of the shared glass
-        # texture, or the damage states draw cracks and holes across the window.
-        from dsfforza.convert import glass
+    stream, root_entries = ctx.stream, ctx.entries
+    kinds = entries_for(stream, root_entries, spool_id, vehc)
+    full = kinds[0]
+    h = parse(payload(stream, child(child(full, "NONR"), "UPVH")))
+    parts = {kind: modl_part_uids(payload(stream, child(child(e, "NONR"), "MODL"))) for kind, e in kinds.items()}
+    uids = {kind: drsp_uids(stream, e) for kind, e in kinds.items()}
+    cross = None if args.allow_shared else foreign_uids(stream, root_entries, kinds, ctx.owners)
+    modls = {kind: payload(stream, child(child(e, "NONR"), "MODL")) for kind, e in kinds.items()}
+    # Converted glass must sit in its window's slot of the shared glass
+    # texture, or the damage states draw cracks and holes across the window.
+    from dsfforza.convert import glass
 
-        glass_rows = glass.check(stream, kinds)
-        # Engine sound: bank round trip, VSVH events, Wwise IDs across the archive (src/dsfforza/convert/engine_sound.py).
-        sound_rows = []
-        if not args.no_sound:
-            from dsfforza.convert import engine_sound
+    glass_rows = glass.check(stream, kinds)
+    # Engine sound: bank round trip, VSVH events, Wwise IDs across the archive (src/dsfforza/convert/engine_sound.py).
+    sound_rows = []
+    if not args.no_sound:
+        from dsfforza.convert import engine_sound
 
-            spool = (
-                args.id
-                if args.id is not None
-                else next(
-                    sid
-                    for sid, index, kind in parse_sslp(
-                        payload(stream, find(find(find(root.entries, "SSIC").children, "NONR").children, "SSLP"))
-                    )
-                    if index == args.vehc and kind == 0
+        spool = (
+            spool_id
+            if spool_id is not None
+            else next(
+                sid
+                for sid, index, kind in parse_sslp(
+                    payload(stream, find(find(find(root_entries, "SSIC").children, "NONR").children, "SSLP"))
                 )
+                if index == vehc and kind == 0
             )
-            reserved = engine_sound.stock_index(args.stock)["reserved"] if args.stock else None
-            sound_rows = engine_sound.lint(stream, root.entries, spool, reserved)
+        )
+        reserved = engine_sound.stock_index(args.stock)["reserved"] if args.stock else None
+        sound_rows = engine_sound.lint(stream, root_entries, spool, reserved, cache=ctx.sound)
 
     report(True, f"UPVH layout parses ({len(h.records)} records)")
     if cross is not None:
@@ -489,12 +544,7 @@ def cmd_lint(args: argparse.Namespace) -> None:
         bad = sorted(u.hex() for f, u in refs if u not in defined[kind])
         report(not bad, f"kind {kind}: every SBMC buffer UID is defined in the same DRSP (unresolved {bad[:3]})")
     if args.stock:
-        with args.stock.open("rb") as stream:
-            root = read_chunk(stream, 0)
-            host = entries_for(stream, root.entries, args.source, None)
-            needed = borrowed_from_full(stream, host)
-            host_uids = [item for e in host.values() for item in drsp_uids(stream, e)]
-            shared = shared_uids(stream, root.entries)
+        needed, host_uids, shared = ctx.host(args.source)
         # Materials/textures the host uses that none of its entries define, and every
         # material/texture SSIC defines: the engine's shared vehicle materials
         # (research/vehicle-model.md).
@@ -530,8 +580,48 @@ def cmd_lint(args: argparse.Namespace) -> None:
         report(ok, message)
     for ok, message in sound_rows:
         report(ok, message)
+    return problems
+
+
+def cmd_lint(args: argparse.Namespace) -> None:
+    """Checks a converted vehicle against the rules in research/upvh.md."""
+    with args.archive.open("rb") as stream:
+        ctx = LintContext(stream, read_chunk(stream, 0).entries, args.stock)
+        try:
+            problems = lint_vehicle(ctx, args.id, args.vehc, args)
+        finally:
+            ctx.close()
     print(f"{problems} problem(s)")
     if problems:
+        sys.exit(1)
+
+
+def cmd_lint_many(args: argparse.Namespace) -> None:
+    """lint for several vehicles of one archive (--car ID:SOURCE ...), walking the
+    archive once: one JSON line per car, {"id", "ok", "text"}, where text is what
+    `lint --id ID --source SOURCE` prints. Exit code 1 if any car has problems."""
+    import json
+    import traceback
+
+    failed = 0
+    with args.archive.open("rb") as stream:
+        ctx = LintContext(stream, read_chunk(stream, 0).entries, args.stock)
+        try:
+            for car in args.car:
+                spool_id, _, source = car.partition(":")
+                one = argparse.Namespace(**{**vars(args), "source": int(source) if source else 266})
+                lines: list[str] = []
+                try:
+                    problems = lint_vehicle(ctx, int(spool_id), None, one, emit=lines.append)
+                    lines.append(f"{problems} problem(s)")
+                except Exception:  # this car's lint crashed; the others still run
+                    problems = 1
+                    lines.append(traceback.format_exc().rstrip())
+                failed += bool(problems)
+                print(json.dumps({"id": int(spool_id), "ok": not problems, "text": "\n".join(lines)}), flush=True)
+        finally:
+            ctx.close()
+    if failed:
         sys.exit(1)
 
 
@@ -567,7 +657,17 @@ def main(argv: list[str] | None = None) -> None:
                 help="skip the cross-vehicle UID check (clones made without --new-uids "
                 "share the host's UIDs on purpose)",
             )
+    many = sub.add_parser("lint-many", help="lint several vehicles of one archive (one JSON line each)")
+    many.add_argument("archive", type=Path)
+    many.add_argument("--car", action="append", required=True, metavar="ID:SOURCE", help="spool ID and stock host")
+    many.add_argument("--stock", type=Path, help="stock archive (as lint --stock)")
+    many.add_argument("--verbose", "-v", action="store_true")
+    many.add_argument("--no-sound", action="store_true")
+    many.add_argument("--allow-shared", action="store_true")
     args = parser.parse_args(argv)
+    if args.command == "lint-many":
+        cmd_lint_many(args)
+        return
     if args.id is None and args.vehc is None:
         parser.error("give a VEHC index or --id")
     {"summary": cmd_summary, "lint": cmd_lint}[args.command](args)

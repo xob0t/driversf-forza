@@ -41,6 +41,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
+
 from dsfforza.convert import forza_materials as fm
 from dsfforza.formats.chnk import Entry
 from dsfforza.formats.vehicle_mesh import child, payload
@@ -310,49 +312,95 @@ def _alpha_block(alpha: list[int]) -> bytes:
     return bytes((a0, a1)) + bits.to_bytes(6, "little")
 
 
+def _blocks(rgba: bytes | bytearray, width: int, height: int):
+    """RGBA8 (width, height multiples of 4) as (blocks, 16 texels, 4) int64, blocks row-major."""
+    px = np.frombuffer(bytes(rgba), dtype=np.uint8, count=width * height * 4).reshape(height // 4, 4, width // 4, 4, 4)
+    return px.transpose(0, 2, 1, 3, 4).reshape(-1, 16, 4).astype(np.int64)
+
+
+def _colour_blocks(px) -> np.ndarray:
+    """_colour_block for every block at once (px: (blocks, 16, 3) ints): (blocks, 8) uint8.
+    The covariance sums are exact (multiples of 1/256), so their order doesn't matter."""
+    lo, hi = px.min(axis=1), px.max(axis=1)
+    axis = (hi - lo).argmax(axis=1)  # the first widest channel, as max(range(3), key=...)
+    mean = px.sum(axis=1) / 16
+    rows = np.arange(len(px))
+    centred = px - mean[:, None, :]
+    cov = (centred[rows, :, axis][:, :, None] * centred).sum(axis=1)  # (blocks, 3)
+    flip = (cov < 0) & (np.arange(3)[None, :] != axis[:, None])
+    e0, e1 = np.where(flip, lo, hi), np.where(flip, hi, lo)
+    inset = (e0 - e1) / 16
+    e0 = np.clip(np.rint(e0 - inset), 0, 255).astype(np.int64)  # round(): half to even, as np.rint
+    e1 = np.clip(np.rint(e1 + inset), 0, 255).astype(np.int64)
+
+    def q565(e):
+        return (e[:, 0] * 31 + 127) // 255 << 11 | (e[:, 1] * 63 + 127) // 255 << 5 | (e[:, 2] * 31 + 127) // 255
+
+    def x565(c):
+        r, g, b = (c >> 11) & 31, (c >> 5) & 63, c & 31
+        return np.stack(((r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)), axis=1)
+
+    c0, c1 = q565(e0), q565(e1)
+    c0, c1 = np.maximum(c0, c1), np.minimum(c0, c1)
+    p0, p1 = x565(c0), x565(c1)
+    pal = np.stack((p0, p1, (2 * p0 + p1) // 3, (p0 + 2 * p1) // 3), axis=1)  # (blocks, 4, 3)
+    dist = ((px[:, :, None, :] - pal[:, None, :, :]) ** 2).sum(axis=3)  # (blocks, 16, 4)
+    best = dist.argmin(axis=2)  # the first nearest, as min(range(4), key=...)
+    bits = (best << (2 * np.arange(16))).sum(axis=1)
+    bits = np.where(c0 == c1, 0, bits)
+    out = np.zeros((len(px), 8), dtype=np.uint8)
+    for k, (value, size) in enumerate(((c0, 2), (c1, 2), (bits, 4))):
+        at = (0, 2, 4)[k]
+        for i in range(size):
+            out[:, at + i] = (value >> (8 * i)) & 0xFF
+    return out
+
+
+def _alpha_blocks(alpha) -> np.ndarray:
+    """_alpha_block for every block at once (alpha: (blocks, 16) ints): (blocks, 8) uint8."""
+    a0, a1 = alpha.max(axis=1), alpha.min(axis=1)
+    k = np.arange(1, 7)
+    pal = np.concatenate((a0[:, None], a1[:, None], ((7 - k) * a0[:, None] + k * a1[:, None]) // 7), axis=1)
+    best = np.abs(alpha[:, :, None] - pal[:, None, :]).argmin(axis=2)  # the first nearest
+    bits = (best << (3 * np.arange(16))).sum(axis=1)
+    bits = np.where(a0 == a1, 0, bits)
+    out = np.zeros((len(alpha), 8), dtype=np.uint8)
+    out[:, 0], out[:, 1] = a0, a1
+    for i in range(6):
+        out[:, 2 + i] = (bits >> (8 * i)) & 0xFF
+    return out
+
+
 def encode_dxt5(rgba: bytes | bytearray, width: int, height: int) -> bytes:
-    """Encode RGBA8 (width, height multiples of 4) as DXT5 blocks, row-major."""
-    out = bytearray()
-    for by in range(0, height, 4):
-        for bx in range(0, width, 4):
-            px, alpha = [], []
-            for y in range(4):
-                o = ((by + y) * width + bx) * 4
-                row = rgba[o : o + 16]
-                for x in range(4):
-                    px.append((row[x * 4], row[x * 4 + 1], row[x * 4 + 2]))
-                    alpha.append(row[x * 4 + 3])
-            out += _alpha_block(alpha) + _colour_block(px)
-    return bytes(out)
+    """Encode RGBA8 (width, height multiples of 4) as DXT5 blocks, row-major
+    (_alpha_block + _colour_block per block, computed for all blocks at once)."""
+    px = _blocks(rgba, width, height)
+    return np.concatenate((_alpha_blocks(px[:, :, 3]), _colour_blocks(px[:, :, :3])), axis=1).tobytes()
 
 
 def encode_dxt1(rgba: bytes | bytearray, width: int, height: int) -> bytes:
     """Encode RGB of RGBA8 as opaque DXT1 blocks (four-colour mode only;
     alpha is dropped). Stock interior entries ship DXT1 textures too."""
-    out = bytearray()
-    for by in range(0, height, 4):
-        for bx in range(0, width, 4):
-            px = []
-            for y in range(4):
-                o = ((by + y) * width + bx) * 4
-                row = rgba[o : o + 16]
-                px.extend((row[x * 4], row[x * 4 + 1], row[x * 4 + 2]) for x in range(4))
-            out += _colour_block(px)
-    return bytes(out)
+    return _colour_blocks(_blocks(rgba, width, height)[:, :, :3]).tobytes()
 
 
 def downsample(rgba: bytes | bytearray, width: int, height: int) -> tuple[bytearray, int, int]:
     """2x2 box filter."""
     w2, h2 = max(1, width // 2), max(1, height // 2)
-    out = bytearray(w2 * h2 * 4)
-    for y in range(h2):
-        r0, r1 = (2 * y) * width * 4, (2 * y + 1) * width * 4
-        for x in range(w2):
-            a, b = r0 + 8 * x, r1 + 8 * x
-            o = (y * w2 + x) * 4
-            for c in range(4):
-                out[o + c] = (rgba[a + c] + rgba[a + 4 + c] + rgba[b + c] + rgba[b + 4 + c] + 2) // 4
-    return out, w2, h2
+    if width < 2 or height < 2:  # a one-texel row or column: the texel loop as it was
+        out = bytearray(w2 * h2 * 4)
+        for y in range(h2):
+            r0, r1 = (2 * y) * width * 4, (2 * y + 1) * width * 4
+            for x in range(w2):
+                a, b = r0 + 8 * x, r1 + 8 * x
+                o = (y * w2 + x) * 4
+                for c in range(4):
+                    out[o + c] = (rgba[a + c] + rgba[a + 4 + c] + rgba[b + c] + rgba[b + 4 + c] + 2) // 4
+        return out, w2, h2
+    px = np.frombuffer(bytes(rgba), dtype=np.uint8, count=width * height * 4).reshape(height, width, 4)
+    px = px[: 2 * h2, : 2 * w2].astype(np.int64)
+    out = (px[0::2, 0::2] + px[0::2, 1::2] + px[1::2, 0::2] + px[1::2, 1::2] + 2) // 4
+    return bytearray(out.astype(np.uint8).tobytes()), w2, h2
 
 
 def dds_header(width: int, height: int, mips: int, template: bytes | None = None, fourcc: bytes = b"DXT5") -> bytes:
@@ -996,7 +1044,67 @@ class Texturing:
         return r, g, b, max(0, min(255, int((lum - CHASSIS_ALPHA_LUM) * CHASSIS_ALPHA_GAIN)))
 
     def render(self) -> bytearray:
-        """The atlas as RGBA8 (plain paint colour where nothing is placed)."""
+        """The atlas as RGBA8 (plain paint colour where nothing is placed). Each
+        region texel is the box average of the source texels under it, converted
+        (_convert_texel); the sums come from a summed-area table and each distinct
+        average is converted once."""
+        width, height = self.size
+        inside = all(
+            r.dst[0] >= 0 and r.dst[1] >= 0 and r.dst[0] + r.size[0] <= width and r.dst[1] + r.size[1] <= height
+            for family in self.families
+            for r in self.regions[family]
+        ) and all(
+            x >= 0 and y >= 0 and x + SOLID_CELL <= width and y + SOLID_CELL <= height for x, y in self.solids.values()
+        )
+        if not inside:  # a region past the atlas edge: the texel loop (it wraps into the next row)
+            return self._render_texels()
+        out = np.empty((height, width, 4), dtype=np.uint8)
+        out[:, :] = self.plain
+        for family in self.families:
+            sw, sh, src = self.atlases.get(family)
+            s = self.scale[family]
+            if not self.regions[family]:
+                continue
+            table = np.zeros((sh + 1, sw + 1, 4), dtype=np.int64)
+            table[1:, 1:] = np.frombuffer(bytes(src), dtype=np.uint8).reshape(sh, sw, 4).cumsum(0).cumsum(1)
+            converted: dict[int, tuple] = {}  # packed RGBA average -> texel
+            for n_region, r in enumerate(self.regions[family]):
+                if r.size[0] <= 0 or r.size[1] <= 0:
+                    continue
+                cut = self.cutout_colour is not None and (family, n_region) in self.alpha_only
+                rows, cols = [], []
+                for dy in range(r.size[1]):
+                    fy0 = r.src[1] + (dy - PAD) / s
+                    y0 = max(0, min(sh - 1, int(math.floor(fy0))))
+                    rows.append((y0, max(y0 + 1, min(sh, int(math.floor(fy0 + 1 / s))))))
+                for dx in range(r.size[0]):
+                    fx0 = r.src[0] + (dx - PAD) / s
+                    x0 = max(0, min(sw - 1, int(math.floor(fx0))))
+                    cols.append((x0, max(x0 + 1, min(sw, int(math.floor(fx0 + 1 / s))))))
+                (y0, y1), (x0, x1) = np.array(rows).T, np.array(cols).T
+                y0, y1, x0, x1 = y0[:, None], y1[:, None], x0[None, :], x1[None, :]
+                acc = table[y1, x1] - table[y0, x1] - table[y1, x0] + table[y0, x0]  # (h, w, 4)
+                n = ((y1 - y0) * (x1 - x0))[:, :, None]
+                mean = acc // n
+                packed = mean[:, :, 0] << 24 | mean[:, :, 1] << 16 | mean[:, :, 2] << 8 | mean[:, :, 3]
+                keys, index = np.unique(packed.reshape(-1), return_inverse=True)
+                texels = []
+                for key in keys.tolist():
+                    if key not in converted:
+                        converted[key] = tuple(
+                            self._convert_texel(family, key >> 24, key >> 16 & 255, key >> 8 & 255, key & 255)
+                        )
+                    texels.append(converted[key])
+                block = np.array(texels, dtype=np.uint8)[index.reshape(-1)].reshape(mean.shape)
+                if cut:
+                    block[mean[:, :, 3] < 128] = self.cutout_colour
+                out[r.dst[1] : r.dst[1] + r.size[1], r.dst[0] : r.dst[0] + r.size[0]] = block
+        for key, (x0, y0) in self.solids.items():
+            out[y0 : y0 + SOLID_CELL, x0 : x0 + SOLID_CELL] = self.solid_colours[key]
+        return bytearray(out.tobytes())
+
+    def _render_texels(self) -> bytearray:
+        """render() texel by texel (for layouts past the atlas edge)."""
         width, height = self.size
         out = bytearray(bytes(self.plain) * (width * height))
         for family in self.families:
