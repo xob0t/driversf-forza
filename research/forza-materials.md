@@ -219,7 +219,8 @@ stripe texels (RGB about 40) as random fragments of the graphic. In game
 over the 40 testdrive cars (`out/rims/alpha_cut_survey.txt`, main carbin at
 LOD 1/3/4/5 and the cockpit carbin): the Raptor's stripe loses 44/27/26
 triangles at LOD 1/3/4 (0.35 to 0.50 m²), the Agera's `liveryBadge` on its
-wing 22/9/8/5 (0.03 to 0.04 m²), the 2000GT's body `badge` 8/6/6 (up to
+wing 22/9/8/5 (0.03 to 0.04 m²; `liveryBadge` is now left out as a whole,
+PR #10), the 2000GT's body `badge` 8/6/6 (up to
 0.03 m²), the Mustang Boss 429's bonnet `badge` 4/1/1 (and 14 in the
 cockpit's bonnet, 0.02 m²); every other change is under 30 cm² (slivers at
 emblem edges): 345 LOD 1 triangles and 136 cockpit triangles in all, none
