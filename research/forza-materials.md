@@ -224,7 +224,10 @@ PR #10), the 2000GT's body `badge` 8/6/6 (up to
 0.03 m²), the Mustang Boss 429's bonnet `badge` 4/1/1 (and 14 in the
 cockpit's bonnet, 0.02 m²); every other change is under 30 cm² (slivers at
 emblem edges): 345 LOD 1 triangles and 136 cockpit triangles in all, none
-kept that were cut before.
+kept that were cut before. In game (VM run `vm-20261024-064427`, fixed
+camera on the Raptor's left side and front wheel): plain paint on the bed and
+doors, no patches (`img/raptor-ingame-before-after.jpg`, offline
+`img/raptor-stripe-before-after.png`).
 
 ## Open
 

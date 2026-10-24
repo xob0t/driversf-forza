@@ -215,6 +215,16 @@ black with its rim stripes, the Focus RS500's black); before, all 40 were the
 same silver. The full entry (LOD 3, `out/rims/wheels_full.png`) the same.
 `img/rims-before-after.png`.
 
+In game (confirmed-runtime, headless VM; fixed cameras on the car's left
+side, outside and at each wheel): `vm-20261024-065630` (`out/testdrive10`)
+against `vm-20261024-064427` (`out/rims/td`), IDs 147 (stock CTS-V for
+reference), 25, 38, 28, 6, 29. The rims draw their own artwork through the
+Chassis material: the 250 GTO's wire wheels with the knock-off cap, the
+Raptor's dark rims with the SVT cap, the Veyron's orange (a little lighter
+and redder than Forza's), the WRX's gold, the Agera's black rim with its
+yellow and blue stripes; no flicker or missing triangles, brightness next to
+the stock CTS-V's wheels alike. `img/rims-ingame-before-after.jpg`.
+
 ## Open
 
 1. In game: whether wheels without blur geometry look right at speed
