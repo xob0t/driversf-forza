@@ -1,6 +1,6 @@
 # In-game tests
 
-Updated: 2026-10-23
+Updated: 2026-10-24
 
 Runs up to 2026-10-22 used the persistent Windows Sandbox harness in
 `tools/wsb/` (see the README); later ones run on the host (`-OnHost`) or in
@@ -741,6 +741,37 @@ escape) stopped registration on the first attempt; fixed in
   archive at D:\...\Install put the 40 ports into `dsf-fleet.json` for a
   while; they had no vehicleStats, so the fleet fits and the donor choice
   ignored them.
+
+### Off-road test (runs vm-20261024-093536 to -114701)
+
+Results: `handling.md`, "Off road". Harness notes:
+
+- **Where**: the dirt start of the game's off-road challenge
+  (`Challenges/routedata/offroadroute.lua` checkpoint 2, road
+  `sutro_shortcut_15`): `-DynoStart '-3908.5,36,3396.4,-1.4798'`, heading west
+  along a dirt track between a pipe wall and a guard rail, about 35 m of dirt
+  (to x = -3945, then tarmac), slightly downhill (`img/offroad-wrx-dirt.jpg`).
+  Fast cars leave the dirt after about 2 s of throttle, so the keys are
+  `Up:2,Down:5;Up:1,Up+Right:3,Down:4` and `dyno --dirt` reports 0-10 and
+  0-20 mph, the largest braking deceleration over 0.5 s after the peak and the
+  yaw response to the steer while still on the dirt.
+- **Game time, not keys**: the guest holds keys for wall-clock seconds, and a
+  VM on a loaded host runs the game slower (in -111001 the stock A4's 2.5 s of
+  throttle acted for 1.1 s of game time). Launch times, deceleration and yaw
+  rate come from the Lua update count (0.008 s each) and stay comparable;
+  peak speeds and where the car brakes don't.
+- **Sand**: the Ocean Beach sand west of the Great Highway (x < -4480, z 1600
+  to 3000) isn't simulated: a car dropped there stays frozen in the air
+  (`-DynoScan`, runs -094437, -095453); the promenade next to it is
+  pavement. DSF's soft surfaces share one mechanism (surface table flag +0x10,
+  `handling.md`), so the dirt track stands in for sand.
+- **`gameVehicle.isOffRoad`** (logged as the last field of every `dy` line and
+  by `-DynoScan`) counts wheels off the road network for the scoring, not the
+  tyre surface: 4 on the beach promenade's pavement, 0 on the dirt track.
+- **`-DynoScan 'x,y,z;...'`**: the first car is dropped at each point and held
+  about 3 s (a screenshot with `-ZoomPresses 0 -ShotSeconds 1`), then the runs
+  start. The first shots of a session are still the map zoom, so put two dummy
+  points first.
 
 ## Open
 

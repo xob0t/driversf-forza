@@ -1,6 +1,6 @@
 # Handling (VO3D) and generating it from Forza data
 
-Updated: 2026-10-22
+Updated: 2026-10-24
 
 Static analysis of `Driver.exe` 1.04 and the stock `dngvehicles.sp`, plus
 the FH1 and FM4 `gamedb.slt` databases, and in-game measurements with the
@@ -234,6 +234,11 @@ Whole sets instead of single values (never blended parameter by parameter):
 | suspension geometry | 3, 4, 25, 188, 292, 505..508 | medoid |
 | engine dynamics | 356, 357, 359, 362, 364, 569 | medoid; then 355 (engine inertia) = the fleet's median p355/p18 x new p18 (rule R; log p355 vs log p18: r 0.78) and 358 (friction) = the drivetrain donor's x new p18 / donor p18 |
 | drivetrain | 371 split, 497, 517, 519..521, 525, 526, 529..531 (handbrake), launch/burnout block 24, 166, 239, 365, 393 | the best-ranked host with the car's own drivetrain |
+
+A set is copied as the donor has it: a parameter the donor leaves out (the
+engine's default applies, `handling.EXE_DEFAULTS`) is left out of the port
+too, or written as that default where the host sets it. Until 2026-10-24 it
+was written as 0 ("Off road" below).
 
 The drivetrain set follows the fleet: p530 (handbrake grip) is 0 on all 23
 AWD and 16 FWD stock cars with specs and 0.15..0.5 on the RWD ones; the
@@ -711,6 +716,98 @@ forward motion from where the car last stood. The '@mph' step timing now
 counts from the last standstill before the target speed, not from the first
 motion, which could be that reversing. Sessions after 20261022-175640 have
 every run aligned and the entry speeds within a few mph.
+
+### Off road: absent parameters were read as 0 (driving feedback: Subaru WRX)
+
+Feedback on testdrive11 (ID 6, SUB_WRXSTi_11 on 136 Audi A4): "just plain
+not drivable on sand. it might as well be ice."
+
+How DSF does surfaces (confirmed-static, `FUN_008B8110`, the tyre force).
+Each wheel carries a surface index (wheel +0x3C) into a table of 32-byte
+records at `0x00E3755C`; read from Driver.exe, 40 records. +0x00 is the
+grip (1.0 for most; 0.7 for records 2, 3, 4 and 7; 0.5 for 20; 2.0 for 22;
+0 for 17 and 28), +0x10 a soft-ground flag (1 on exactly records 2, 3, 4,
+7), +0x08 0 to 0.25. Three groups of VO3D terms use them:
+
+- the force limit (grip x load) is scaled by `1 + (grip - 1) * p525`,
+  clamped to 0..2: a 0.7 surface gives 70% of the grip with the default
+  p525 1, 64% and 55% on the supercars that set 1.2 and 1.5;
+- on a soft surface the wheel's drive-reaction term (wheel +0x148, which
+  `FUN_008BD170` sums over the wheels) is scaled by
+  `soft * p526 + (1 - soft)`: the default 1 leaves it, the off-road cars,
+  SUVs and pickups set 1.2, and 0 removes it;
+- on a soft surface with p519 > 0 a force `p519/p521 - p519/(p521 + slip
+  speed)` acts along the slip (p520 scales a second part): 50 to 120 on the
+  same off-road cars (defaults p519 0, p520 0.5, p521 8).
+
+The defaults are what `FUN_0088AC20` writes into the block before the
+VO3D's records (appendix); a parameter a VO3D leaves out has that value.
+`handling_dsf.value()` read a missing parameter as 0 unless `handling.PARAMS`
+named it, and the set copies (steering, assists, drivetrain set) wrote that
+0 into the port. The WRX took its drivetrain set from 196 Taurus SHO, which
+sets none of 519..526, and got p520 0, p521 0, p525 0 and p526 0, plus
+p381..p384 0 from the steering set (defaults 2, 0.05, 10, 30).
+
+Over the 40 test-drive cars (master's generator against the fixed one, same
+hosts; `out/offroad/survey40.py`) 20 cars had such values:
+
+| Parameter (default) | Written as 0 on |
+| --- | --- |
+| p526 (1), p520 (0.5), p521 (8) | 2 Supra, 5 Silvia, 6 WRX, 14 M5 E28, 15 Golf R |
+| p525 (1) | the same five and 18 205 T16 |
+| p381 (2), p383 (10), p384 (30), p382 (0.05) | 19 cars: 2..7, 11, 13..19, 21, 23..25, 39 |
+| p390 (3) | 2..5, 13, 18, 19, 21, 23, 25 |
+| p411 (10), p352/p353/p354 (assists) | 16 Abarth, 17 Civic, 21 Range Rover, 39 Focus; 20 and 21 also changed assist donor |
+
+The Huayra (31) had p381..p384 0 too, from its hand-made entry in
+`out/cache/handling-tune.json` ("the host's steering set", values read the
+same way); the entry now leaves them out. The p390 0 that the round-3
+Huayra got from the F1's set (above) was the same artefact.
+
+The fix (`handling.EXE_DEFAULTS`, all 365 defaults; `handling_dsf.value()`
+returns them; `leave_out()`: a parameter the host doesn't set and the rule
+or set donor leaves at the default stays out of the port's VO3D) changes no
+value a stock car sets. With correct defaults the feel medoid sees the fleet
+as the engine does, so a few set donors change (the WRX keeps the A4's
+steering set instead of the Taurus's; the Abarth, Jeep, Range Rover and
+300SL change assist or steering donors). Leave-one-out over the 48 pairs:
+weighted mean 0.638 -> 0.623 (tyres 0.453 -> 0.433, assists 0.481 ->
+0.455, drivetrain set 0.461 -> 0.434, steering 0.492 -> 0.521); the scores
+now also compare absent values by their defaults.
+
+In game (confirmed-runtime; dirt start of the off-road challenge, method in
+`in-game-tests.md`, "Off-road test"; `uv run dsff dyno --dirt <run>`). Launch
+times and deceleration are game time; "turn" is the yaw rate once
+Up+Right acts on the dirt (0 when the car never turns there):
+
+Before / after: run vm-20261024-104232 (the installed testdrive11 archive, keys `Up:2.5,Down:3;Up:1.2,Up+Right:2,Down:3`) and vm-20261024-113608 (the same archive with each port's VO3D as the fixed generator builds it, `out/offroad/patch_after.py`, equal to the rebuilt testdrive12; the stock 196 there has p526 0 as a check; keys as in `DIRT_KEYS`). Brake and turn figures of the same stock car scatter between sessions (A4 1.54 / 0.82 g: how long the brake acted depends on the VM's speed); the launch times repeat to 0.04 s.
+
+| Car | 0-10 mph s | 0-20 mph s | brake g | turn yaw deg/s |
+| --- | --- | --- | --- | --- |
+| 136 Audi A4 (stock, WRX host) | 0.49 / 0.49 | 1.11 / 1.11 | 1.54 / 0.82 | 46 / 50 |
+| 142 Audi Sport Quattro S1 (stock, rally) | 0.27 / 0.27 | 0.57 / 0.57 | 2.12 / 1.78 | 99 / 115 |
+| 228 Nissan GT-R (stock, AWD) | 0.23 / 0.19 | 0.50 / 0.46 | 1.75 / 1.42 | 83 / 46 |
+| 196 Ford Taurus SHO (stock, AWD; after: p526 = 0) | 0.35 / 12.10 | 0.73 / 18.66 | 1.52 / -0.01 | 51 / 0 |
+| 6 Subaru WRX STi port | 9.75 / 0.34 | 15.93 / 0.72 | 0.03 / 1.47 | 0 / 62 |
+| 15 VW Golf R port (AWD) | 11.05 / 0.26 | 16.77 / 0.61 | -0.00 / 1.40 | 0 / 63 |
+| 2 Toyota Supra port (RWD) | 0.00 / 0.50 | 0.01 / - | -0.06 / 1.27 | 0 / 95 |
+| 14 BMW M5 E28 port (RWD) | 9.21 / 0.46 | 14.82 / 1.00 | 0.05 / 1.44 | 0 / 68 |
+| 33 Nissan GT-R port (control) | 0.22 / 0.23 | 0.49 / 0.53 | 1.55 / 1.48 | 74 / 85 |
+| 38 Ford Raptor port (control) | 0.34 / 0.30 | 0.72 / 0.69 | 1.47 / 1.48 | 38 / 37 |
+
+- Before the fix the ports with p526 0 can't drive on dirt: full throttle
+  gives 0-10 mph in 9 to 11 s (the stock cars 0.2 to 0.5 s; the WRX again
+  9.8 s in run -114701), the brake doesn't slow them (they roll on down the
+  slope for 40 s), and steering doesn't turn them; the driven wheels spin
+  (the HUD showed 24 mph at 8 mph, `img/offroad-wrx-dirt.jpg`). The Supra's
+  launch assist threw it to 10 m/s in one update, after which it rolled the
+  same way. The ports without the zeros (33 GT-R, 38 Raptor) drive like the
+  stock cars.
+- The stock Taurus SHO (196) with only p526 set to 0 does the same (0-10 mph
+  in 12 s, no braking, no turn): p526 0 alone is the cause.
+- After the fix the WRX launches like the stock AWD cars (0-20 mph 0.72 s;
+  A4 1.11, GT-R 0.46 to 0.50, Sport Quattro S1 0.57), brakes at 1.47 g and
+  turns at 62 deg/s; the Golf R, M5 E28 and Supra likewise.
 
 ### Remaining gaps
 
