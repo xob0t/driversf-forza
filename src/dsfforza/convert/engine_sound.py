@@ -632,6 +632,27 @@ def pick_loops(loops: list[ForzaLoop], n: int, redline: float) -> list[ForzaLoop
 # --------------------------------------------------------------------------- audio
 
 
+CUT_SLACK = 1e-9  # far above the float error of a correlation (about 1e-12 for 3000 samples)
+
+
+def _cut_candidates(x: np.ndarray, xf: int, lengths: range, tail_ref: np.ndarray):
+    """The cut lengths of `seamless` that can have the largest correlation: every
+    correlation at once (np.correlate, windowed sums of squares; other sums than
+    np.dot's, so within float error of them), those within CUT_SLACK of the
+    largest. The loop then computes those exactly and in order. All of them if
+    the inputs aren't plain finite floats."""
+    if len(lengths) < 64 or xf < 1 or x.dtype != np.float64 or x.ndim != 1 or tail_ref.dtype != np.float64:
+        return lengths
+    lo, hi = lengths[0], lengths[-1]
+    part = x[lo - xf : hi]
+    if not (np.isfinite(part).all() and np.isfinite(tail_ref).all()):
+        return lengths
+    dots = np.correlate(part, tail_ref, "valid")  # [k]: the cut at lo + k
+    squares = np.lib.stride_tricks.sliding_window_view(part * part, xf).sum(axis=1)
+    approx = dots / (np.sqrt(squares) * np.linalg.norm(tail_ref) + 1e-12)
+    return (lo + np.flatnonzero(approx >= approx.max() - CUT_SLACK)).tolist()
+
+
 def seamless(x: np.ndarray, rate: int, max_seconds: float, fade: float = 0.06) -> np.ndarray:
     """A loop of at most max_seconds from a whole-sample loop x: keep x if short
     enough, else cut a segment whose tail crossfades into the material just
@@ -643,7 +664,7 @@ def seamless(x: np.ndarray, rate: int, max_seconds: float, fade: float = 0.06) -
     target = int(max_seconds * rate)
     tail_ref = x[n - xf :]
     best, best_len = -2.0, target
-    for length in range(max(xf * 2, target - rate // 10), target + 1):
+    for length in _cut_candidates(x, xf, range(max(xf * 2, target - rate // 10), target + 1), tail_ref):
         seg = x[length - xf : length]
         c = float(np.dot(seg, tail_ref) / (np.linalg.norm(seg) * np.linalg.norm(tail_ref) + 1e-12))
         if c > best:
@@ -683,6 +704,20 @@ def warp(points: list[tuple[float, float]], x: float) -> float:
         if x <= x1:
             return y0 if x1 == x0 else y0 + (y1 - y0) * (x - x0) / (x1 - x0)
     return points[-1][1]
+
+
+def warp_many(points: list[tuple[float, float]], xs: np.ndarray) -> np.ndarray:
+    """[warp(points, x) for x in xs] as a float array: each x takes the first
+    segment it is at or below the end of, with warp's float operations."""
+    out = np.empty(len(xs))
+    left = np.ones(len(xs), dtype=bool)
+    for (x0, y0), (x1, y1) in itertools.pairwise(points):
+        at = left & (xs <= x1)
+        out[at] = y0 if x1 == x0 else y0 + (y1 - y0) * (xs[at] - x0) / (x1 - x0)
+        left &= ~at
+    if left.any():
+        out[left] = points[-1][1]
+    return out
 
 
 def warp_map(old: list[float], new: list[float], top: float = 12000.0) -> list[tuple[float, float]]:
@@ -761,6 +796,11 @@ def curve_at(points, x: float) -> float:
     return warp([(p[0], p[1]) for p in points], x)
 
 
+def curve_at_many(points, xs: np.ndarray) -> np.ndarray:
+    """[curve_at(points, x) for x in xs] as a float array."""
+    return warp_many([(p[0], p[1]) for p in points], xs)
+
+
 def slot_curves(bank: wb.Bank, vsvh: bytes) -> dict[str, list[tuple[Slot, list, list | None]]]:
     """Set -> (slot, pitch points, crossfade points or None) per loop, from the Sound
     in the rpm layer with the most loops (the player's; AI layers hold a 4-loop
@@ -822,7 +862,7 @@ def render_sweep(bank: wb.Bank, vsvh: bytes, seconds=(1.0, 6.0, 1.0, 4.0, 1.0)) 
     """Idle, ramp to redline, hold, ramp down, idle over the bank's rpm range; both
     sets at full load, each loop pitched and crossfaded by its own curves."""
     lo, hi = struct.unpack_from("<II", vsvh, 0x94)
-    media = {m: np.array(wb.Wem.parse(w).pcm()[0], dtype=np.float64) / 32768 for m, w in bank.media}
+    media = {m: wb.Wem.parse(w).pcm_arrays()[0].astype(np.float64) / 32768 for m, w in bank.media}
     n = int(sum(seconds) * RATE)
     t = np.arange(n) / RATE
     hold0, up, hold1, down, hold2 = seconds
@@ -832,19 +872,22 @@ def render_sweep(bank: wb.Bank, vsvh: bytes, seconds=(1.0, 6.0, 1.0, 4.0, 1.0)) 
     out = np.zeros(n)
     for rows in slot_curves(bank, vsvh).values():
         for s, pitch, xf in rows:
-            cents = np.interp(bank_rpm, grid, [curve_at(pitch, g) for g in grid])
-            gain = np.interp(bank_rpm, grid, [curve_at(xf, g) / 255 for g in grid]) if xf else np.ones(n)
+            cents = np.interp(bank_rpm, grid, curve_at_many(pitch, grid))
+            gain = np.interp(bank_rpm, grid, curve_at_many(xf, grid) / 255) if xf else np.ones(n)
             src = media[s.media]
-            pos = np.cumsum(2 ** (cents / 1200)) % len(src)
+            # A sum of positive steps: fmod is `%` there (and quicker), and i0 is below len(src).
+            pos = np.fmod(np.cumsum(2 ** (cents / 1200)), len(src))
             i0 = pos.astype(int)
             frac = pos - i0
-            out += gain * (src[i0] * (1 - frac) + src[(i0 + 1) % len(src)] * frac)
+            i1 = i0 + 1
+            i1[i1 == len(src)] = 0
+            out += gain * (src[i0] * (1 - frac) + src[i1] * frac)
     peak = np.abs(out).max() or 1
     return out / peak * 0.9
 
 
 def write_wav(path: Path, x: np.ndarray, rate: int = RATE) -> None:
-    wb.write_wav(path, [list(np.clip(np.round(x * 32767), -32768, 32767).astype(int))], rate)
+    wb.write_wav(path, [np.clip(np.round(x * 32767), -32768, 32767).astype(int)], rate)
 
 
 def same_structure(host: wb.Bank, new: wb.Bank, mapping: dict[int, int], old_bank: int) -> list[str]:
@@ -936,7 +979,7 @@ def build_sound(
     if set_media(bank, vsvh) - {s.media for v in sets.values() for s in v}:
         raise ValueError("template's loop sets play more media than their rpm loops (idle grains)")
     lo_old, hi_old = struct.unpack_from("<II", vsvh, 0x94)
-    host_wavs = {m: np.array(wb.Wem.parse(w).pcm()[0], dtype=np.float64) / 32768 for m, w in bank.media}
+    host_wavs = {m: wb.Wem.parse(w).pcm_arrays()[0].astype(np.float64) / 32768 for m, w in bank.media}
     idle, redline = forza["idle"], forza["redline"]
     if not (0 < idle < 5000 and idle < redline < 15000):
         raise ValueError(f"idle/redline {idle:g}/{redline:g} outside the VSVH+94/+98 rules")
@@ -952,6 +995,7 @@ def build_sound(
     }
     new_media, new_rpm, decoded = {}, {}, []
     template = wb.Wem.parse(bank.media[0][1])
+    picked = {}  # per set: (emission, loops, chosen, gain, the 16-bit loops)
     for name, slots in sets.items():
         emission = emissions[name]
         loops = forza["emissions"][emission]["loops"]
@@ -965,16 +1009,21 @@ def build_sound(
         peak = max(np.abs(s).max() for s in scaled)
         if peak > 0.97:
             scaled = [s * 0.97 / peak for s in scaled]
+        pcms = [np.clip(np.round(x * 32767), -32768, 32767).astype(int) for _, _, x in zip(slots, chosen, scaled)]
+        picked[name] = (emission, loops, chosen, gain, pcms)
+    # Every loop of both sets in one call (the same bytes as encode_ima one by one).
+    encoded = iter(wb.encode_ima_many([pcm for *_, pcms in picked.values() for pcm in pcms]))
+    for name, slots in sets.items():
+        emission, loops, chosen, gain, pcms = picked[name]
         rows = []
-        for k, (slot, loop, x) in enumerate(zip(slots, chosen, scaled)):
-            pcm = np.clip(np.round(x * 32767), -32768, 32767).astype(int)
-            wem = template.with_data(wb.encode_ima(list(pcm)), RATE).build()
+        for k, (slot, loop, pcm) in enumerate(zip(slots, chosen, pcms)):
+            wem = template.with_data(next(encoded), RATE).build()
             new_media[slot.media] = wem
             new_rpm[slot.media] = float(loop.rpm)
             decoded.append(
                 (
                     f"{name}{k}_{loop.rpm:05d}rpm_{loop.name}.wav",
-                    np.array(wb.Wem.parse(wem).pcm()[0], dtype=np.float64) / 32768,
+                    wb.Wem.parse(wem).pcm_arrays()[0].astype(np.float64) / 32768,
                 )
             )
             rows.append(

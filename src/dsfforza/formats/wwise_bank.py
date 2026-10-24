@@ -203,23 +203,37 @@ _NEXT = [[max(0, min(88, i + INDEX_ADJ[m])) for m in range(8)] for i in range(le
 
 def decode_ima(data: bytes, channels: int = 1) -> list[list[int]]:
     """Decode Wwise IMA ADPCM; returns one sample list per channel."""
-    out = [[] for _ in range(channels)]
+    return [c.tolist() for c in decode_ima_arrays(data, channels)]
+
+
+def decode_ima_arrays(data: bytes, channels: int = 1) -> list:
+    """decode_ima as one int64 array per channel. Every block starts from its own
+    header, so all blocks are decoded at once, nibble by nibble."""
+    import numpy as np
+
     span = BLOCK * channels
-    for base in range(0, len(data) - span + 1, span):
-        for ch in range(channels):
-            b = base + ch * BLOCK
-            pred, idx = struct.unpack_from("<hB", data, b)
-            idx = min(idx, 88)
-            samples = [pred]
-            for byte in data[b + 4 : b + 4 + BLOCK_SAMPLES // 2]:
-                for nib in (byte & 0xF, byte >> 4):
-                    m = nib & 7
-                    pred = pred - _DIFF[idx][m] if nib & 8 else pred + _DIFF[idx][m]
-                    pred = -32768 if pred < -32768 else (32767 if pred > 32767 else pred)
-                    idx = _NEXT[idx][m]
-                    samples.append(pred)
-            out[ch].extend(samples[:BLOCK_SAMPLES])
-    return out
+    count = len(data) // span
+    if not count:
+        return [np.zeros(0, dtype=np.int64) for _ in range(channels)]
+    raw = np.frombuffer(data, dtype=np.uint8, count=count * span).reshape(count * channels, BLOCK)
+    pred = raw[:, :2].copy().view("<i2")[:, 0].astype(np.int64)
+    idx = np.minimum(raw[:, 2], 88).astype(np.int64)
+    body = raw[:, 4:].astype(np.int64)
+    nibs = np.empty((len(raw), BLOCK_SAMPLES), dtype=np.int64)
+    nibs[:, 0::2], nibs[:, 1::2] = body & 0xF, body >> 4
+    diff, step_next = np.array(_DIFF, dtype=np.int64), np.array(_NEXT, dtype=np.int64)
+    out = np.empty((len(raw), BLOCK_SAMPLES), dtype=np.int64)
+    out[:, 0] = pred
+    for i in range(BLOCK_SAMPLES - 1):  # the 64th nibble is unused
+        nib = nibs[:, i]
+        m = nib & 7
+        d = diff[idx, m]
+        pred = np.where(nib & 8, pred - d, pred + d)
+        np.clip(pred, -32768, 32767, out=pred)
+        idx = step_next[idx, m]
+        out[:, i + 1] = pred
+    out = out.reshape(count, channels, BLOCK_SAMPLES)
+    return [out[:, ch].ravel() for ch in range(channels)]
 
 
 def _encode_block(x: list[int], idx: int) -> tuple[bytes, int, float]:
@@ -245,27 +259,163 @@ def _encode_block(x: list[int], idx: int) -> tuple[bytes, int, float]:
     return body, idx, err
 
 
+def _encode_blocks(x, start):
+    """_encode_block for many (block, start index) lanes at once, sample by sample
+    with the same integers: x (L, 64) int64 samples, start (L,) step indices ->
+    (nibbles (L, 64) with the unused 64th 0, end step index (L,), error (L,))."""
+    import numpy as np
+
+    # STEPS has no 0, so _encode_block's `if step else 0` never applies. The
+    # magnitude (abs(d) * 4) // step is taken from a float division: for these
+    # integers (below 2**18 over 7..32767) the quotient never rounds up to the
+    # next integer, so its truncation is the floor.
+    steps = np.array(STEPS, dtype=np.float64)
+    diff, step_next = np.array(_DIFF, dtype=np.int64).ravel(), np.array(_NEXT, dtype=np.int64).ravel()
+    xt = np.ascontiguousarray(x.T)  # (64, L): one sample of every lane per row
+    pred = xt[0].copy()
+    idx = np.array(start, dtype=np.int64)
+    err = np.zeros(len(pred))
+    nibs = np.zeros((BLOCK_SAMPLES, len(pred)), dtype=np.int64)
+    for i in range(1, BLOCK_SAMPLES):
+        xi = xt[i]
+        d = xi - pred
+        mag = (np.abs(d) * 4 / steps[idx]).astype(np.int64)
+        np.minimum(mag, 7, out=mag)
+        neg = d < 0
+        cell = idx * 8 + mag
+        step = diff[cell]
+        np.negative(step, out=step, where=neg)
+        pred += step
+        np.clip(pred, -32768, 32767, out=pred)
+        nibs[i - 1] = mag
+        nibs[i - 1][neg] |= 8
+        idx = step_next[cell]
+        e = xi - pred
+        err += e * e  # int64 squares added as floats, as `err += (xi - pred) ** 2` does
+    return nibs.T, idx, err
+
+
+# The start step indices encode_ima tries after a block that ended at index i.
+_NEAR = [sorted({max(0, min(88, i + d)) for d in (-8, -4, -2, 0, 2, 4, 8)}) for i in range(len(STEPS))]
+ENCODE_ROUNDS = 24  # most guess rounds of encode_ima_many (then block by block)
+
+
+def _clip16(samples):
+    """[max(-32768, min(32767, int(v))) for v in samples] as an int64 array: at
+    once for integer arrays and lists of integers, else one by one."""
+    import numpy as np
+
+    try:
+        a = np.asarray(samples)
+    except (OverflowError, ValueError, TypeError):
+        a = None
+    if a is None or a.ndim != 1 or not (a.dtype.kind == "i" or (a.dtype.kind == "u" and a.dtype.itemsize <= 4)):
+        return np.array([max(-32768, min(32767, int(v))) for v in samples], dtype=np.int64)
+    return np.clip(a.astype(np.int64), -32768, 32767)
+
+
+def _pcm16(samples, n: int):
+    """encode_ima's samples clipped to 16 bits and zero-padded to n, as int64."""
+    import numpy as np
+
+    out = np.zeros(n, dtype=np.int64)
+    out[: len(samples)] = _clip16(samples)
+    return out
+
+
 def encode_ima(samples: list[int]) -> bytes:
     """Mono Wwise IMA ADPCM. Pads with zeros to whole 64-sample blocks. Each
     block's start step index is the best of a few around the running one; the
     first block tries every index (from index 0 a loud sound spent its first
     block climbing from the smallest step: 21 dB SNR there on average over 61
     converted Forza loops, 37 dB with the search)."""
-    n = -(-len(samples) // BLOCK_SAMPLES) * BLOCK_SAMPLES
-    s = [max(-32768, min(32767, int(v))) for v in samples] + [0] * (n - len(samples))
-    out = bytearray()
-    idx = None
-    for b in range(0, n, BLOCK_SAMPLES):
-        x = s[b : b + BLOCK_SAMPLES]
-        best = None
-        near = range(89) if idx is None else sorted({max(0, min(88, idx + d)) for d in (-8, -4, -2, 0, 2, 4, 8)})
-        for cand in near:
-            body, end, err = _encode_block(x, cand)
-            if best is None or err < best[2]:
-                best = (body, end, err, cand)
-        body, idx, _, start = best
-        out += struct.pack("<hBB", x[0], start, 0) + body
-    return bytes(out)
+    return encode_ima_many([samples])[0]
+
+
+def encode_ima_many(sounds: list) -> list[bytes]:
+    """encode_ima for each of `sounds`, with the same bytes.
+
+    The loop is sequential: a block's candidates are _NEAR[the index the best
+    candidate of the block before ended at]. But a block's best end index
+    depends little on which index it starts from, so it is guessed: every
+    block's candidates under a guessed running index are encoded at once
+    (_encode_blocks, all blocks of all sounds), each block's best end becomes the
+    next block's guess, and that repeats until the guesses stop changing (the
+    first blocks' guesses are right from the first round on, the next ones from
+    the next round, and so on). The results go in a table per block and start
+    index. Then the loop runs block by block on the table, encoding any
+    candidate the guesses missed with _encode_block, and the chosen blocks are
+    encoded once more for their nibbles."""
+    import numpy as np
+
+    lengths = [-(-len(s) // BLOCK_SAMPLES) for s in sounds]
+    if not sum(lengths):
+        return [b"" for _ in sounds]
+    x = np.concatenate([_pcm16(s, k * BLOCK_SAMPLES) for s, k in zip(sounds, lengths)]).reshape(-1, BLOCK_SAMPLES)
+    count, states = len(x), len(STEPS)
+    first = np.zeros(count, dtype=bool)
+    first[np.cumsum([0, *lengths[:-1]])[np.array(lengths) > 0]] = True
+    ends = np.full((count, states), -1, dtype=np.int64)
+    errs = np.zeros((count, states))
+
+    def fill(blocks, starts):
+        key = np.unique(blocks * states + starts)
+        blocks, starts = key // states, key % states
+        _, end, err = _encode_blocks(x[blocks], starts)
+        ends[blocks, starts], errs[blocks, starts] = end, err
+
+    heads = np.flatnonzero(first)
+    fill(np.repeat(heads, states), np.tile(np.arange(states), len(heads)))
+    starts = np.zeros(count, dtype=np.int64)
+    starts[heads] = np.argmin(errs[heads], axis=1)  # the first of the smallest, as `<` keeps it
+    rest = np.flatnonzero(~first)
+    settled = True
+    if len(rest):
+        near = np.array([c + c[-1:] * (7 - len(c)) for c in _NEAR], dtype=np.int64)  # padded with its last
+        best_end = np.zeros(count, dtype=np.int64)  # per block: its best candidate's end index
+        best_end[heads] = ends[heads, starts[heads]]
+        # First guess: every block starts where its sound's first block ended.
+        head_of = np.maximum.accumulate(np.where(first, np.arange(count), 0))
+        guess = best_end[head_of[rest]]
+        settled = False
+        for _ in range(ENCODE_ROUNDS):
+            cand = near[guess]
+            rows = np.broadcast_to(rest[:, None], cand.shape)
+            todo = ends[rows, cand] < 0
+            if todo.any():
+                fill(rows[todo], cand[todo])
+            starts[rest] = cand[np.arange(len(rest)), np.argmin(errs[rows, cand], axis=1)]
+            best_end[rest] = ends[rest, starts[rest]]
+            new = best_end[rest - 1]
+            if np.array_equal(new, guess):
+                # Every guess is the end of the block before it under its own
+                # guess, and the first blocks are exact: so all are the loop's.
+                settled = True
+                break
+            guess = new
+    if not settled:  # the loop itself, on the table
+        end_rows, err_rows, x_rows = ends.tolist(), errs.tolist(), x.tolist()
+        idx = None
+        for b in range(count):
+            if first[b]:
+                idx = None
+            best = None
+            for c in range(states) if idx is None else _NEAR[idx]:
+                end, err = end_rows[b][c], err_rows[b][c]
+                if end < 0:  # a candidate the guesses missed
+                    _, end, err = _encode_block(x_rows[b], c)
+                if best is None or err < best[1]:
+                    best = (end, err, c)
+            idx = best[0]
+            starts[b] = best[2]
+    nibs, _, _ = _encode_blocks(x, starts)
+    out = np.zeros((count, BLOCK), dtype=np.uint8)
+    out[:, :2] = x[:, :1].astype("<i2").view(np.uint8)
+    out[:, 2] = starts
+    out[:, 4:] = nibs[:, 0::2] | (nibs[:, 1::2] << 4)
+    data = out.tobytes()
+    bounds = np.cumsum([0, *lengths]) * BLOCK
+    return [data[bounds[i] : bounds[i + 1]] for i in range(len(sounds))]
 
 
 # --------------------------------------------------------------------------- WEM (RIFF)
@@ -323,19 +473,25 @@ class Wem:
             raise ValueError(f"codec {self.tag:#x} not supported")
         return decode_ima(self.data, self.channels)
 
+    def pcm_arrays(self) -> list:
+        """pcm() as one int64 array per channel."""
+        if self.tag != 2:
+            raise ValueError(f"codec {self.tag:#x} not supported")
+        return decode_ima_arrays(self.data, self.channels)
+
 
 def write_wav(path: Path, channels: list[list[int]], rate: int) -> None:
+    import numpy as np
+
     n = min(len(c) for c in channels)
-    frames = bytearray(2 * n * len(channels))
+    frames = np.zeros((n, len(channels)), dtype="<i2")
     for k, c in enumerate(channels):  # int() then the clamp, as the samples were packed one by one
-        clipped = [max(-32768, min(32767, int(v))) for v in c[:n]]
-        frames[2 * k :: 2 * len(channels)] = bytes(v & 0xFF for v in clipped)
-        frames[2 * k + 1 :: 2 * len(channels)] = bytes((v >> 8) & 0xFF for v in clipped)
+        frames[:, k] = _clip16(c[:n])
     with wave.open(str(path), "wb") as w:
         w.setnchannels(len(channels))
         w.setsampwidth(2)
         w.setframerate(rate)
-        w.writeframes(bytes(frames))
+        w.writeframes(frames.tobytes())
 
 
 # --------------------------------------------------------------------------- HIRC v48
