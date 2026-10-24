@@ -50,6 +50,7 @@ param(
     [int]$BrakeSeconds = 6,
     [int]$DynoRuns = 2,
     [string]$DynoStart,           # 'x,y,z,heading'
+    [string]$DynoScan,            # 'x,y,z;x,y,z;...': surface scan before the first car's runs (dyno.lua)
     [string]$DynoKeep,            # lane keeper mode per run, e.g. 'none,pulse:5'
     [string]$DynoKeys,            # key steps per run, e.g. 'Up:25,Down:6;Up:5,Up+Right:0.5,Down:5'
     [string]$MenuKeys,            # menu taps after -MenuTrigger appears in Driver.log, e.g. 'Enter:2,Right:1.5'

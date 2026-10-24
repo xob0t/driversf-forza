@@ -229,11 +229,19 @@ def _thaw(v: dict) -> dict:
 
 
 def value(params: dict[int, float], pid: int) -> float:
+    """The parameter as the engine sees it: the VO3D's value, else the exe default (not 0:
+    research/handling.md, "Off road")."""
     if pid in params:
         return params[pid]
-    if pid in H.PARAMS:
-        return H.PARAMS[pid].default
-    return 0.0
+    return H.exe_default(pid)
+
+
+def leave_out(base: dict[int, float], new: dict[int, float], pid: int, val: float) -> bool:
+    """True when `val` is the engine's default for a parameter that neither the base VO3D
+    nor an earlier rule sets (a set donor that leaves it out too): the VO3D then leaves it
+    out as well and the engine uses its default, as on the donor. Writing the donor's
+    absence as 0 cut the soft-ground traction (p526) of five ports to nothing."""
+    return pid not in base and pid not in new and H.same_f32(val, H.exe_default(pid))
 
 
 def fit_set(fleet: dict[int, dict]) -> list[dict]:
@@ -585,6 +593,8 @@ def build(
     changes = []
 
     def put(pid: int, val: float, rule: str) -> None:
+        if leave_out(b, new, pid, val):
+            return
         new[pid] = float(val)
         if abs(val - value(b, pid)) > 1e-9 * max(1.0, abs(val)):
             changes.append((pid, b.get(pid), float(val), rule))

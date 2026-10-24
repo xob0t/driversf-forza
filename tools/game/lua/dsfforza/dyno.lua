@@ -6,7 +6,8 @@
 --   ready   print "dyno <id> r<k> ready"; the harness then holds the throttle for
 --           DriveSeconds and the brake for BrakeSeconds (run-test.ps1 -Dyno)
 --   run     from the first motion (with the 100 updates before it), log every Lua update:
---           "dy <id> <run> <n> <speed m/s> <x> <y> <z> <lateral m> <yaw> <couple>" (n = update count)
+--           "dy <id> <run> <n> <speed m/s> <x> <y> <z> <lateral m> <yaw> <couple> <offroad>"
+--           (n = update count, offroad = wheels on an off-road surface)
 --           A lane keeper (keepLane) pushes the car back towards the start line: with no
 --           steering input cars drift left about 20 m in 330 m here (run 20261022-041951).
 --   end     when the car has stopped again after moving, or on timeout
@@ -50,10 +51,23 @@ local function log(message)
 	print("[dsfforza] " .. message)
 end
 
+-- Surface scan (config.dyno.scan = { x1, y1, z1, x2, y2, z2, ... }, run-test -DynoScan):
+-- before its runs the first car is dropped at each point in turn and, once at rest,
+-- "dyno scan <i> <x> <y> <z> offroad <n>" is printed: n = gameVehicle.isOffRoad, the
+-- number of wheels on an off-road surface. Used to find sand, dirt and grass to test on.
+local SCAN = nil
+local SCAN_HOLD = 12          -- step() ticks at least at each point (about 3 s: a screenshot or two)
+
 function M.configure(config)
 	if type(config) ~= "table" then return end
 	if type(config.start) == "table" and #config.start >= 4 then
 		START = { x = config.start[1], y = config.start[2], z = config.start[3], heading = config.start[4] }
+	end
+	if type(config.scan) == "table" and #config.scan >= 3 then
+		SCAN = {}
+		for i = 1, #config.scan - 2, 3 do
+			table.insert(SCAN, { x = config.scan[i], y = config.scan[i + 1], z = config.scan[i + 2] })
+		end
 	end
 	if type(config.runs) == "number" then RUNS = config.runs end
 	if type(config.timeout) == "number" then RUN_TIMEOUT = config.timeout end
@@ -122,8 +136,19 @@ function M.start(id, gameVehicle, previous)
 	end
 	log(string.format("dyno %d: %s", id, table.concat(parts, " ")))
 	cur = { id = id, gv = gameVehicle, run = 1, phase = "place", ticks = 0, n = 0, peak = 0, history = {} }
+	if SCAN ~= nil and #SCAN > 0 then
+		cur.phase, cur.scan = "scan_place", 1
+		log(string.format("dyno %d: scanning %d points", id, #SCAN))
+		return
+	end
 	log(string.format("dyno %d r1: placing at (%.1f, %.1f, %.1f) heading %.3f", id, START.x, START.y, START.z,
 		START.heading))
+end
+
+local function offRoad(gv)
+	local ok, value = pcall(function() return gv.isOffRoad end)
+	if ok and type(value) == "number" then return value end
+	return -1
 end
 
 local function finishRun(reason)
@@ -221,7 +246,7 @@ end
 local function sample()
 	if cur == nil then return end
 	local gv = cur.gv
-	if cur.phase == "place" then
+	if cur.phase == "place" or cur.phase == "scan_place" then
 		pcall(function()
 			gv.matrix = cur.matrix
 			gv.velocity = vec.vector(0, 0, 0, 0)
@@ -233,8 +258,9 @@ local function sample()
 	local ok, speed, position = pcall(function() return gv.speed, gv.position end)
 	if not ok or speed == nil or position == nil then return end
 	local lateral, yaw, j = keepLane(gv, position, speed)
-	local line = string.format("[dsfforza] dy %d %d %d %.3f %.3f %.3f %.3f %.2f %.4f %.1f", cur.id, cur.run, cur.n,
-		speed, position.x, position.y, position.z, lateral, yaw, j)
+	-- Last field: wheels on an off-road surface (gameVehicle.isOffRoad).
+	local line = string.format("[dsfforza] dy %d %d %d %.3f %.3f %.3f %.3f %.2f %.4f %.1f %d", cur.id, cur.run,
+		cur.n, speed, position.x, position.y, position.z, lateral, yaw, j, offRoad(gv))
 	if cur.phase == "ready" then
 		-- Forward of where the car last stood (a reversing car is left where it stops:
 		-- placing it again while the guest still holds a key cost the run in 20261022-173553).
@@ -265,7 +291,39 @@ end
 function M.step()
 	if cur == nil then return true end
 	cur.ticks = cur.ticks + 1
-	if cur.phase == "place" then
+	if cur.phase == "scan_place" then
+		local p = SCAN[cur.scan]
+		local at = vec.vector(p.x, p.y, p.z, 1)
+		if cur.ticks == 1 then
+			local m = setYRotation(START.heading)
+			m[3] = vec.vector(p.x, p.y + DROP, p.z, 1)
+			cur.matrix = m
+		end
+		local resident = false
+		pcall(function() resident = spoolsystem.IsLocationResident(at) end)
+		if (resident and cur.ticks >= PLACE_MIN) or cur.ticks >= PLACE_MAX then
+			-- A car let go with zero velocity well above the ground can stay put (asleep):
+			-- start it falling.
+			pcall(function() cur.gv.velocity = vec.vector(0, -3, 0, 0) end)
+			cur.phase, cur.ticks = "scan_settle", 0
+		end
+	elseif cur.phase == "scan_settle" then
+		local speed = 0
+		pcall(function() speed = cur.gv.speed end)
+		if (cur.ticks >= SCAN_HOLD and speed < MOVING) or cur.ticks >= SETTLE_TICKS * 4 then
+			local position = cur.gv.position
+			log(string.format("dyno scan %d %.2f %.2f %.2f offroad %d speed %.2f", cur.scan, position.x, position.y,
+				position.z, offRoad(cur.gv), speed))
+			if cur.scan < #SCAN then
+				cur.scan, cur.phase, cur.ticks = cur.scan + 1, "scan_place", 0
+			else
+				SCAN = nil
+				cur.phase, cur.ticks = "place", 0
+				log(string.format("dyno %d r1: placing at (%.1f, %.1f, %.1f) heading %.3f", cur.id, START.x, START.y,
+					START.z, START.heading))
+			end
+		end
+	elseif cur.phase == "place" then
 		if cur.ticks == 1 then
 			cur.matrix = startMatrix()
 			clearArea()
