@@ -636,6 +636,86 @@ def identity_score(host: dict, car: ForzaInfo) -> tuple[float, str | None]:
     return 6.0, "same make"
 
 
+# Corporate groups (make names as in MAKE_NAMES / vehicleStats pictures): their
+# badge-engineered twins share one body and cabin (Chevrolet Express / GMC Savana,
+# Silverado / Sierra, Tahoe / Yukon, Ford / Mercury).
+MAKE_GROUPS = {
+    "gm": ("chevrolet", "gmc", "pontiac", "buick", "cadillac", "oldsmobile", "hummer", "holden", "vauxhall",
+           "opel", "saturn"),
+    "chrysler": ("dodge", "chrysler", "plymouth", "jeep"),
+    "ford": ("ford", "mercury", "lincoln", "shelby"),
+    "vw": ("volkswagen", "audi", "seat", "skoda"),
+    "toyota": ("toyota", "lexus", "scion"),
+    "nissan": ("nissan", "infiniti"),
+    "honda": ("honda", "acura"),
+}
+# A host is the same vehicle as the Forza car (same model, or a badge twin) only
+# with the same body class, model years this close and these dimensions.
+SAME_VEHICLE_YEARS = 4
+SAME_VEHICLE_WHEELBASE = 0.025   # relative
+SAME_VEHICLE_LENGTH = 0.04       # relative
+TWIN_WHEELBASE = 0.01            # relative, badge twins (two makes)
+TWIN_LENGTH = 0.01
+
+
+def make_group(make: str) -> str:
+    make = MAKE_ALIASES.get(make, make)
+    return next((g for g, makes in MAKE_GROUPS.items() if make in makes), make)
+
+
+def same_vehicle(host: dict, car: ForzaInfo) -> str | None:
+    """Why the stock host is the same vehicle as the Forza car, or None: the same
+    model (identity_score's "same model": make, model name, year within 4) or a
+    badge-engineered twin (another make of the same group), either way with the
+    same body class, model years within SAME_VEHICLE_YEARS and wheelbase and length
+    within SAME_VEHICLE_WHEELBASE / SAME_VEHICLE_LENGTH. A host that only shares a
+    model family (A4 Avant 2004 on the A4 2010) or a platform (Yukon XL 2001 on the
+    Escalade 2007) is not the same vehicle: its cabin differs."""
+    make, _, year, _ = _model_parts(host)
+    if not make or year is None or car.year is None or abs(year - car.year) > SAME_VEHICLE_YEARS:
+        return None
+    if host["body"] != car.body:
+        return None
+    if not (car.wheelbase and host.get("wheelbase")):
+        return None
+    wb = abs(car.wheelbase - host["wheelbase"]) / host["wheelbase"]
+    if wb > SAME_VEHICLE_WHEELBASE:
+        return None
+    if car.length and host.get("length") and abs(car.length - host["length"]) / host["length"] > SAME_VEHICLE_LENGTH:
+        return None
+    size = f"{host['body']}, {year} vs {car.year}, wheelbase {host['wheelbase']:.3f} vs {car.wheelbase:.3f} m"
+    ident, text = identity_score(host, car)
+    if ident >= 60:
+        return f"{text}; {size}"
+    # Badge engineering: one vehicle sold under two makes of a group. Platform mates
+    # (300C / Charger, Cuda / Challenger, Golf / Scirocco) share a wheelbase but not
+    # the cabin; their lengths differ by 1.6% and more, or they carry the same badge.
+    raw = make_parts_raw(host)
+    if raw == car.make or make_group(raw) != make_group(car.make) or make_group(raw) not in MAKE_GROUPS:
+        return None
+    if wb > TWIN_WHEELBASE or not (car.length and host.get("length")) or (
+            abs(car.length - host["length"]) / host["length"] > TWIN_LENGTH):
+        return None
+    return f"badge twin ({host['model']}, {make_group(raw).upper()} group); {size}, length "            f"{host['length']:.3f} vs {car.length:.3f} m"
+
+
+def same_vehicle_for(media: str, host_id: int, dsf: Path | None = None, game: str | None = None,
+                     folder: Path | None = None, gamedbs: dict[str, Path] | None = None,
+                     lua: Path | None = DEFAULT_LUA) -> str | None:
+    """same_vehicle for a Forza car on a stock host given by spool ID."""
+    host = next((h for h in survey(dsf, lua) if h["id"] == host_id), None)
+    return same_vehicle(host, forza_info(media, gamedbs, game, folder)) if host else None
+
+
+def make_parts_raw(host: dict) -> str:
+    """The host's make as its vehicleStats picture names it, before MAKE_ALIASES."""
+    pic = re.sub(r"^unlicensed_", "", host["stats"].get("Picture1", "").lower())
+    for name in sorted(set(MAKE_NAMES.values()) | set(MAKE_ALIASES), key=len, reverse=True):
+        if pic.startswith(name + "_"):
+            return name
+    return ""
+
+
 def score_host(host: dict, car: ForzaInfo, mode: str = "host") -> tuple[float, list[str]]:
     """(score, reasons). mode "sound" ranks by engine alone (identity, engine, era)."""
     why: list[str] = []
