@@ -1,6 +1,6 @@
 # Forza materials and textures, and their DSF counterparts
 
-Updated: 2026-10-23
+Updated: 2026-10-24
 
 Code: `tools/forza_materials.py` (Forza side), `tools/dsf_materials.py`
 (DSF side, atlas, preview), `--textures` in `tools/forza2dsf.py` and
@@ -100,6 +100,18 @@ and panel undersides use the paint material (`damage.md`, step 6).
 | fogred | Lights | swatch | textured | host Lights, solid cell |
 | tire, rim, inner_rim | global / wheel | tiling | tyre | shared TYRE |
 | blur_rim, blur_lip | | | skip | dropped |
+
+`liveryBadge` (livery decal slots; of the 40 testdrive cars only the Agera
+has them: a strip on the rear wing in the main carbin, one on the dash top
+under the windscreen in the cockpit carbin's `hooda`) is skipped, in both
+carbins. Its raw UV0 spans the whole unit square, i.e. a texture of its own
+(the player's livery), and `m_UVOffsetScale` squeezes it onto an arbitrary
+patch of the car atlases: a 3-texel column at the edge of the seat artwork in
+`nodamage` (blue and white, half opaque), and in `interior_LOD0` (where
+`classify_cockpit` sent every "badge") the yellow and blue stitching bands.
+Drawn from the atlas they were the Agera's bright yellow and blue streaks on
+the dashboard and the blue patches seen through the windscreen (user report
+on `out/testdrive9`).
 
 Plates: `numberplate` (a plate quad on 2 of the 40 testdrive cars) and
 `numplate` (the plate lamp strip) stay trim; the converter replaces
