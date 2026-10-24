@@ -998,6 +998,26 @@ def part_relabel(labels, areas, comps, parts: set, fallback) -> list:
     return [whole[c] if c in whole else other[c] if lab in parts else lab for lab, c in zip(labels, comps)]
 
 
+def tear_length(labels, keys, swings) -> float:
+    """Length (m) of edges inside one Forza surface (two triangles sharing both
+    vertices of the edge) whose two sides are on different panels, one of them
+    in `swings`: where a swinging door or wing would tear the surface open.
+    keys: per triangle (vertex keys, position keys at 1/2000 m)."""
+    owners = defaultdict(list)
+    for t, (vk, pk) in enumerate(keys):
+        for a, b in ((0, 1), (1, 2), (2, 0)):
+            e = (min(vk[a], vk[b]), max(vk[a], vk[b]))
+            owners[e].append((t, pk[a], pk[b]))
+    total = 0.0
+    for ts in owners.values():
+        if len(ts) != 2:
+            continue
+        (t, p, q), (u, _, _) = ts
+        if labels[t] != labels[u] and (labels[t] in swings or labels[u] in swings):
+            total += math.dist(p, q) / 2000
+    return total
+
+
 PART_MARGIN = 0.05  # m; along z, beyond a part's largest component, that still belongs to it
 
 
@@ -1295,6 +1315,7 @@ class DamagePlan:
         majority: dict[str, list] = {}
         pending = []  # "nearest" sections: (name, tris, areas, components, labels)
         door_groups = set()  # majority groups of side windows
+        keys_of = {}         # "nearest" section -> per triangle (vertex keys, position keys)
         cabin = []           # the `interior` section: (name, tris, normals), door cards
         for section in sections:
             kind, roles = section_rule(section.name)
@@ -1361,6 +1382,7 @@ class DamagePlan:
                 # section is labelled (part_components, swinging_parts below).
                 comps = part_components([s[4] for s in shape])
                 pending.append((section.name, tris, [s[1] for s in shape], comps, labels))
+                keys_of[section.name] = [(s[4], s[2]) for s in shape]
                 continue
             votes = Counter(labels)
             picks = [(sid, k, pair, c, sh[0]) for (sid, k, c), pair, sh in zip(tris, labels, shape)]
@@ -1397,8 +1419,12 @@ class DamagePlan:
             # windows) that won the part but lie mostly outside its length (the
             # S5S Raptor's intake surround behind the door) stay on the body.
             span = part_spans([(t, a, c, lab) for (_, t, a, c, _), lab in zip(pending, relabelled)], self.swinging)
-            for (name, tris, areas, comps, _), labels in zip(pending, relabelled):
+            swings = {p.pair for p in self.panels_with(SWINGS)}
+            for (name, tris, areas, comps, before), labels in zip(pending, relabelled):
                 labels = part_trim(tris, areas, comps, labels, span, self.chassis)
+                tears = self.report.setdefault("door_tears_m", {}).setdefault(str(lod), [0.0, 0.0])
+                tears[0] += tear_length(before, keys_of[name], swings)
+                tears[1] += tear_length(labels, keys_of[name], self.swinging)
                 for (sid, k, _), pair in zip(tris, labels):
                     out[(sid, k)] = pair
                 per_section[name] = Counter(labels)
