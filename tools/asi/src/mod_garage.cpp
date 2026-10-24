@@ -961,10 +961,14 @@ const char* top_page(uint8_t* menu)
 char g_browser_page[32] = "ItemBrowser";   // [garage] browser_page
 uint8_t* g_screen = nullptr;                 // the vehicles screen of the last car list
 
+// The card browser page is shared with the challenges and abilities lists; the
+// garage hub's category (DAT_00F18204, read by FUN_0070ED30) is 2 for vehicles.
+const int* const kGarageCategory = (const int*)0x00F18204;
+
 bool browser_open()
 {
     uint8_t* menu = g_screen ? screen_menu(g_screen) : nullptr;
-    return menu && _stricmp(top_page(menu), g_browser_page) == 0;
+    return menu && *kGarageCategory == 2 && _stricmp(top_page(menu), g_browser_page) == 0;
 }
 
 // Moves the window one card: forward to the second card of the last fill, back
@@ -1007,24 +1011,27 @@ int g_keys_n = 0;
 
 bool key_take(KeyWrap& w)
 {
+    // MmDk key states (FUN_007193B0): 0xFF first frame down, 0xFE still down
+    // (the script repeats on it), 1 the release frame, 0 idle.
     int state = w.key[0];
+    if (state == 0xFF) w.taken = false;   // a new press is decided afresh
     if (w.taken) {
-        if (state == 0xFE || state == 0) {
-            w.taken = false;
-            return !w.mid;   // a hold taken over midway: the script saw its press, so it sees the release
+        if (state == 0xFE) {
+            if (++w.held >= 18 && (w.held - 18) % 5 == 0 && g_screen && window_step(w.right))
+                ((CarListFn)0x007113A0)(g_screen);   // held: repeat
+            return true;
         }
-        if (state == 1 && ++w.held >= 18 && (w.held - 18) % 5 == 0 && g_screen && window_step(w.right))
-            ((CarListFn)0x007113A0)(g_screen);   // held: repeat
-        return true;
+        w.taken = false;
+        return !w.mid;   // a hold taken over midway: the script saw its press, so it sees the release
     }
-    if ((state != 0xFF && state != 1) || !g_screen || g_view.limit >= kGroupCars || !browser_open()) return false;
+    if ((state != 0xFF && state != 0xFE) || !g_screen || g_view.limit >= kGroupCars || !browser_open()) return false;
     int* index = screen_var(g_screen, 0x26C);
     if (!index) return false;
     int idx = *index;
     bool edge = w.right ? idx >= g_view.limit - 1 - g_margin_ahead : idx <= g_margin_back;
     if (!edge || !window_step(w.right)) return false;
     w.taken = true;
-    w.mid = state == 1;   // the script's own key repeat reached the edge
+    w.mid = state == 0xFE;   // the script's own key repeat reached the edge
     w.held = 0;
     ((CarListFn)0x007113A0)(g_screen);
     if (g_menu_debug)
@@ -1042,6 +1049,13 @@ void __cdecl key_hook(int32_t* key, void* ctx)
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             static int noted = 0;
             if (noted++ < 3) dsf_log("garage: fault in the card browser key hook");
+        }
+        static int logged = 0;
+        if (g_menu_debug && logged < 600 && key[0] != 0xFE) {
+            logged++;
+            int* index = g_screen ? screen_var(g_screen, 0x26C) : nullptr;
+            dsf_log("garage: key %s state %02X index %d -> %s", g_keys[i].right ? "right" : "left", key[0] & 0xFF,
+                    index ? *index : -1, take ? "taken" : "script");
         }
         if (!take) g_keys[i].orig(key, ctx);
         return;
