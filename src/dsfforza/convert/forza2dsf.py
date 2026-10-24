@@ -1868,11 +1868,11 @@ def convert(
         nonr = child(full, "NONR")
         upvh = child(nonr, "UPVH")
         host_upvh = payload(stream, upvh)
-        eye_above_seat = cockpit.host_eye_above_seat(host_upvh, payload(stream, child(nonr, "VO3D")))
         upvh.payload, hier = cockpit.patch_hierarchy(host_upvh, host_cp, place, cf)
         eye = place.point(cf.eye)
-        # The driver model sits on the seat marker (role 10); keep it under the new eye.
-        upvh.payload, hier["seats"] = cockpit.patch_seats(upvh.payload, eye, eye_above_seat)
+        # The driver model sits on the seat marker (role 10) and its hands hold the wheel
+        # only where stock cars have it from the seat: the seat follows the moved marker.
+        upvh.payload, hier["seats"] = cockpit.patch_seats(upvh.payload, eye)
         camera_eye = cockpit.camera_eye(
             eye, [place.point(q) for q in cockpit.section_points(cf.static["steering_wheel"])]
         )
