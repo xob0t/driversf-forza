@@ -81,6 +81,7 @@ char g_side_name[64] = "dsfforza-garage.dat";
 int32_t g_sortkey[kExtMax];
 int g_max_id = kExtMax;          // IDs the garage walks: 0 .. g_max_id-1
 int g_max_groups = kStockGroups;
+int g_max_cars = kGroupCars;     // cars per maker group ([garage] max_cars once the car list window is in)
 uint32_t g_groups_off = 0x20FC;  // groups table offset in the garage object
 uint32_t g_count_rel = kStockGroups * kGroupSize;  // count offset from the table
 int32_t* g_maker_index = nullptr;  // menu maker -> group index (index 1..groups)
@@ -274,14 +275,14 @@ int magic_query(uint32_t q)
     if (k == 1) return g_garage_active ? 1 : 0;                // garage walks IDs beyond 303
     if (k >= 0x1000 && k < 0x2000) return (int)(k - 0x1000) <= g_max_groups;   // n <= max groups
     if (k >= 0x2000 && k < 0x3000) return (int)(k - 0x2000) < (g_garage_active ? g_max_id : kStockIds);  // id listable
-    if (k == 2) return kGroupCars;
+    if (k >= 0x3000 && k < 0x4000) return (int)(k - 0x3000) <= g_max_cars;    // n <= cars per maker group
     return 0;
 }
 
 // thiscall(list object, id, bit) -> al = flag bit set.
 uint32_t __fastcall h_flag_test(char* list, void*, int id, uint32_t bit)
 {
-    if ((uint32_t)id - kMagic < 0x3000) return magic_query((uint32_t)id);
+    if ((uint32_t)id - kMagic < 0x4000) return magic_query((uint32_t)id);
     int32_t* base = (int32_t*)(list + 0x38);
     for (int i = 0; i < kStockIds; i++)
         if (base[2 * i] == id) return (base[2 * i + 1] >> (bit & 31)) & 1;
@@ -576,7 +577,6 @@ struct Over {
 };
 Over g_over[1000];
 int g_over_n = 0;
-int g_max_cars = kGroupCars;  // [garage] max_cars
 
 int32_t* over_ids(const int32_t* group, bool create)
 {
@@ -881,6 +881,13 @@ char* garage_object()
 }
 
 int* screen_var(uint8_t* screen, uint32_t off) { return *(int**)(screen + off); }
+
+// A variable of the vehicles screen's menu script (MmDk menu [[screen+4]+8], variables at +0x50).
+int* menu_var(uint8_t* screen, const char* name)
+{
+    uint8_t* menu = *(uint8_t**)(screen + 4) ? *(uint8_t**)(*(uint8_t**)(screen + 4) + 8) : nullptr;
+    return menu ? find_var(menu + 0x50, nullptr, name, nullptr) : nullptr;
+}
 
 // Group index of the vehicles screen's selected maker (as 0x00711411 reads it).
 int screen_group(uint8_t* screen, int cat)
