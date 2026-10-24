@@ -123,8 +123,7 @@ _add(TYRE, None, "tire tire_V2 wheel_black tread sidewall rim rim_V2 chrome_rim 
 
 # Techniques that cut out texels with alpha below one half (badge plates are
 # drawn entirely from alpha-0 texels: only the emblem's letters show).
-ALPHA_TESTED = set("emblem badge badge2 badge_chrome stripe_badge liveryBadge cockpit_badge brake_badge "
-                   "wheel_emblem wheel_emblem_V2 grille1_alpha grille2_alpha z_gauge_emissive_alpha".split())
+ALPHA_TESTED = {"emblem", "badge", "badge2", "badge_chrome", "stripe_badge", "liveryBadge", "cockpit_badge", "brake_badge", "wheel_emblem", "wheel_emblem_V2", "grille1_alpha", "grille2_alpha", "z_gauge_emissive_alpha"}
 
 
 def triangle_max_alpha(atlas: tuple[int, int, bytearray], uvs) -> int:
@@ -135,7 +134,7 @@ def triangle_max_alpha(atlas: tuple[int, int, bytearray], uvs) -> int:
     best = 0
     for y in range(min(ys), max(ys) + 1):
         row = rgba[(y * width + min(xs)) * 4 + 3:(y * width + max(xs) + 1) * 4:4]
-        best = max(best, max(row))
+        best = max(best, *row)
     return best
 
 
@@ -185,9 +184,9 @@ def classify(name: str) -> tuple[str, str | None]:
     if name in TECHNIQUES:
         return TECHNIQUES[name]
     n = name.lower()
-    if n.startswith("blur") or n.startswith("chrome_blur") or "shadow" in n or n.startswith("ghost"):
+    if n.startswith(("blur", "chrome_blur", "ghost")) or "shadow" in n:
         return SKIP, None
-    if n.startswith("body") or n.endswith("_paint") or n.endswith("paint"):
+    if n.startswith("body") or n.endswith(("_paint", "paint")):
         return PAINT, NODAMAGE
     if n.startswith(("lights_gls", "detail_glass", "drl", "tail", "head", "indicator", "fog", "reverse")):
         return TEXTURED, LIGHTS

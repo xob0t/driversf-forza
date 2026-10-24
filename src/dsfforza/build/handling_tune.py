@@ -33,13 +33,13 @@ import statistics
 import subprocess
 import sys
 from pathlib import Path
-from dsfforza import REPO
 
-from dsfforza.harness import dyno
+from dsfforza import REPO
 from dsfforza.build import handling as H
 from dsfforza.build import handling_dsf as D
 from dsfforza.build import host_select as HS
 from dsfforza.formats.chnk import read_chunk
+from dsfforza.harness import dyno
 
 CACHE = REPO / "out" / "cache" / "handling-tune.json"
 STOCK_DB = REPO / "out" / "cache" / "stock-dyno.json"

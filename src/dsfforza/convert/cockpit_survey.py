@@ -14,16 +14,13 @@ import argparse
 import collections
 import math
 import os
-import sys
 import traceback
 from pathlib import Path
+
 from dsfforza import REPO
-
-
-from dsfforza.formats import carbin  # noqa: E402
-from dsfforza.convert import cockpit  # noqa: E402
-from dsfforza.build import port_car  # noqa: E402
-
+from dsfforza.build import port_car
+from dsfforza.convert import cockpit
+from dsfforza.formats import carbin
 
 
 def read_car(source, media: str) -> dict[str, bytes]:
@@ -70,7 +67,7 @@ def survey_one(source, media: str, work: Path, dbs: list[Path]) -> dict:
         main = mp.sections if mp is not None and mp.complete else None
     try:
         cf = cockpit.fit(sections, media, dbs, folder=folder, main_sections=main)
-    except Exception as error:  # noqa: BLE001 - classify every failure
+    except Exception as error:
         row.update(status="fail", cause=f"{type(error).__name__}: {error}".splitlines()[0][:160])
         return row
     row["wheel"] = cf.wheel_source
@@ -134,7 +131,7 @@ def main(argv: list[str] | None = None) -> None:
             row = survey_one(source, car.name, args.work, [p for p in (dbs.get(source.game),) if p])
         except SystemExit as error:
             row = {"media": car.name, "game": "", "status": "fail", "cause": f"source: {error}"}
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:
             row = {"media": car.name, "game": "", "status": "fail",
                    "cause": f"{type(error).__name__}: {error}".splitlines()[0][:160]}
             traceback.print_exc()

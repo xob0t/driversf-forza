@@ -21,10 +21,11 @@ import struct
 import sys
 from collections import defaultdict
 from pathlib import Path
-from dsfforza import REPO
 
 import capstone
 from capstone import x86
+
+from dsfforza import REPO
 
 CACHE = REPO / "out" / "asi" / "xref.pickle"
 EXE_CANDIDATES = [REPO / "out" / "stock" / "Driver.exe"] + (
@@ -39,17 +40,16 @@ def load_exe() -> tuple[bytes, int, int, int]:
     else:
         raise SystemExit("Driver.exe not found")
     pe = struct.unpack_from("<I", data, 0x3C)[0]
-    nsec = struct.unpack_from("<H", data, pe + 6)[0]
     opt = struct.unpack_from("<H", data, pe + 20)[0]
     sec = pe + 24 + opt
-    name, vsize, va, rsize, raw = struct.unpack_from("<8sIIII", data, sec)
+    name, vsize, va, _rsize, raw = struct.unpack_from("<8sIIII", data, sec)
     assert name.rstrip(b"\0") == b".text"
     return data, 0x400000 + va, raw, vsize
 
 
 def idle() -> None:
     try:
-        from dsfforza.build import gentle  # noqa: F401
+        from dsfforza.build import gentle
 
         if hasattr(gentle, "apply"):
             gentle.apply()
@@ -106,7 +106,7 @@ def index() -> dict:
 
 
 def disasm(va: int, count: int = 40) -> list[str]:
-    data, base, raw, size = load_exe()
+    data, base, raw, _size = load_exe()
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
     start = va - base
     lines = []

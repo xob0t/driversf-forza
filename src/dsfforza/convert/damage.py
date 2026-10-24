@@ -127,7 +127,7 @@ class Box:
     hi: tuple
 
     @staticmethod
-    def of(points) -> "Box | None":
+    def of(points) -> Box | None:
         points = list(points)
         if not points:
             return None
@@ -142,7 +142,7 @@ class Box:
     def size(self):
         return tuple(self.hi[a] - self.lo[a] for a in range(3))
 
-    def to(self, other: "Box", p):
+    def to(self, other: Box, p):
         """Map a point by its relative position in this box to `other`; a flat
         axis maps by the centre offset."""
         out = []
@@ -154,7 +154,7 @@ class Box:
                 out.append(other.lo[a] + (p[a] - self.lo[a]) / s * (other.hi[a] - other.lo[a]))
         return tuple(out)
 
-    def scale_to(self, other: "Box"):
+    def scale_to(self, other: Box):
         return tuple((other.size[a] / self.size[a]) if self.size[a] > 1e-3 else 1.0 for a in range(3))
 
 
@@ -294,7 +294,7 @@ class Uv1Field:
                                     cell=0.06)
 
     @staticmethod
-    def read(stream, vehc, mask: int, local_materials: set) -> "Uv1Field | None":
+    def read(stream, vehc, mask: int, local_materials: set) -> Uv1Field | None:
         mesh = load_mesh(stream, vehc)
         raw = []
         for lod in mesh.parts[0].lods:
@@ -317,7 +317,10 @@ class Uv1Field:
             return None
         box = Box.of(p for t in raw for p in t[0])
         c, s = box.centre, box.size
-        norm = lambda p: tuple((p[a] - c[a]) / (s[a] / 2) for a in range(3))
+
+        def norm(p):
+            return tuple((p[a] - c[a]) / (s[a] / 2) for a in range(3))
+
         return Uv1Field([(tuple(norm(p) for p in t[0]),) + t[1:] for t in raw], box)
 
     def lookup(self, q, pair, material: bytes, local: bool, any_panel: bool = False, normal=None,
@@ -392,7 +395,7 @@ class HostField:
     box: Box
     by_pair: dict = field(default_factory=dict)  # pair -> Grid (normalised coordinates)
     all_grid: Grid | None = None
-    uv1: "Uv1Field | None" = None                # decal-atlas UVs (32-byte vertices)
+    uv1: Uv1Field | None = None                # decal-atlas UVs (32-byte vertices)
     local: set = field(default_factory=set)       # material UIDs the entry defines itself
     tris: list = field(default_factory=list)      # (normalised corners, pair, unit face normal, paint), part 0
 
@@ -522,11 +525,11 @@ def section_rule(name: str) -> tuple[str, tuple]:
         return "glass", ("rear",)
     if n.startswith("taillight") or n in ("glassltl", "glassrtl"):
         return "majority", (5, 38, 36)
-    if n.startswith("glass") or n.startswith("window"):
+    if n.startswith(("glass", "window")):
         return "majority", DOORS + (38,)  # side windows: their door, or fixed glass
-    if n.startswith("wing") or n.startswith("spoiler"):
+    if n.startswith(("wing", "spoiler")):
         return "majority", (5, 124, 38)
-    if n in ("interior", "cagerace") or n.startswith("seat") or n.startswith("undercarriage"):
+    if n in ("interior", "cagerace") or n.startswith(("seat", "undercarriage")):
         return "fixed", (38,)
     return "nearest", BODY
 
@@ -788,8 +791,8 @@ def split_exposed(body, place, log=None, engine: str | None = None) -> tuple[lis
     (the tag) and `exposed_uv` (its EXPOSED_SENTINEL, which
     add_geometry(exposed=True) writes as UV0). Returns (new body, report).
     Untouched sections and subsections stay the same objects."""
-    from dsfforza.formats import carbin
     from dsfforza.convert import forza_materials as fm
+    from dsfforza.formats import carbin
     lods = sorted({sub.lod for s in body for sub in s.subsections if sub.lod > 0})
     zones = exposed_zones(engine)
     maps = zone_maps(body, place, lods, zones)
@@ -973,7 +976,7 @@ def part_stats(labels, areas, comps, swings) -> tuple[Counter, Counter]:
     for lab, area in zip(labels, areas):
         if lab in swings:
             total[lab] += area
-    for c, votes in _component_votes(labels, areas, comps).items():
+    for votes in _component_votes(labels, areas, comps).values():
         win, w = votes.most_common(1)[0]
         if win in swings and w >= PART_SHARE * sum(votes.values()):
             clean[win] += sum(votes.values())
@@ -1026,7 +1029,7 @@ def part_spans(items, parts: set) -> dict:
     largest component. items: (tris (sub id, index, centroid), areas,
     components, labels) per section."""
     best = {}
-    for n, (tris, areas, comps, labels) in enumerate(items):
+    for n, (_tris, areas, comps, labels) in enumerate(items):
         size = Counter()
         for lab, area, c in zip(labels, areas, comps):
             if lab in parts:
@@ -1216,7 +1219,7 @@ class DamagePlan:
         q = self._forza_norm(p_dsf)
         key = tuple(int(math.floor(q[a] / cell)) for a in range(3))
         scored = []
-        for r in range(0, 8):
+        for r in range(8):
             seen = set()
             for dx in range(-r, r + 1):
                 for dy in range(-r, r + 1):
@@ -1290,8 +1293,7 @@ class DamagePlan:
                  and (self._host_box(p.pair).centre[2] > 0) == (which == "front")]
         if not cands:
             return None
-        key = lambda p: self._host_box(p.pair).centre[2]
-        return (max if which == "front" else min)(cands, key=key).pair
+        return (max if which == "front" else min)(cands, key=lambda p: self._host_box(p.pair).centre[2]).pair
 
     def _first(self, roles) -> tuple | None:
         for role in roles:
@@ -1491,7 +1493,8 @@ class DamagePlan:
         kwargs["exposed"] = True  # split_exposed's subsections: UV0/sky from the host (_expose)
         for pair in sorted(by_pair):
             secs = [s for s in sections if id(s) in by_pair[pair]]
-            keep = (lambda pr: (lambda section, sub, k, tri: assign.get((id(sub), k)) == pr))(pair)
+            # binds this pair now, not the loop variable
+            keep = (lambda pr: (lambda section, sub, k, tri: assign.get((id(sub), k)) == pr))(pair)  # noqa: PLC3002
             subs = self.f2d.add_geometry(builder, secs, lod, self.place, wheel=False, keep=keep, **kwargs)
             pts = self._finish(builder, subs, pair, f)
             if record_box:
@@ -1673,8 +1676,7 @@ class DamagePlan:
                 for dz in (-1, 0, 1):
                     for q in cells.get((ck[0] + dx, ck[1] + dy, ck[2] + dz), ()):
                         d = math.dist(p, q)
-                        if d < best:
-                            best = d
+                        best = min(best, d)
         t = best / SEAM_REACH
         return t * t * (3 - 2 * t)
 
@@ -2070,7 +2072,7 @@ def robust_box(points, trim: float = 0.02) -> Box | None:
 def _scale_collision(data: bytearray, at: int, scale) -> None:
     """Scale every primitive of one PDL collision model (in its body's frame):
     translation and extents per axis, radius by the largest factor."""
-    size, nbytes, radius, n = struct.unpack_from("<IIfI", data, at)
+    _size, _nbytes, radius, n = struct.unpack_from("<IIfI", data, at)
     struct.pack_into("<f", data, at + 8, radius * max(scale))
     for k in range(n):
         p = at + 0x10 + k * 0x60
@@ -2083,7 +2085,7 @@ def _scale_collision(data: bytearray, at: int, scale) -> None:
 def _map_collision(data: bytearray, at: int, host: Box, forza: Box) -> None:
     """Root hull: primitive centres mapped host box -> Forza box, extents scaled."""
     scale = host.scale_to(forza)
-    size, nbytes, radius, n = struct.unpack_from("<IIfI", data, at)
+    _size, _nbytes, radius, n = struct.unpack_from("<IIfI", data, at)
     struct.pack_into("<f", data, at + 8, radius * max(scale))
     for k in range(n):
         p = at + 0x10 + k * 0x60
@@ -2153,7 +2155,7 @@ def _entries(archive: Path, spool_id: int):
 
 
 def cmd_panels(args) -> None:
-    stream, root, kinds = _entries(args.archive, args.id)
+    stream, _root, kinds = _entries(args.archive, args.id)
     with stream:
         full = kinds[0]
         nonr = child(full, "NONR")
@@ -2273,7 +2275,7 @@ def decal_texel(stream_path: Path):
     def texel(u, v):
         x = min(w - 1, max(0, int(u * w)))
         y = min(h - 1, max(0, int(v * h)))
-        r, g, b, a = rgba[(y * w + x) * 4:(y * w + x) * 4 + 4]
+        r, g, _b, a = rgba[(y * w + x) * 4:(y * w + x) * 4 + 4]
         scratch = 1 - a / 255
         base = (0.45 + 0.25 * (r / 255 - 0.5), 0.45 + 0.25 * (g / 255 - 0.5), 0.5)
         return tuple(base[k] * (1 - scratch) + scratch for k in range(3))
@@ -2308,7 +2310,7 @@ def shared_texel(stream_path: Path, uid: bytes):
 def cmd_render(args) -> None:
     """Colour by MODL part or by s9 panel; --damage t draws lerp(position, s12, t)
     for every panel, as the shader does with fDamage = t."""
-    stream, root, kinds = _entries(args.archive, args.id)
+    stream, _root, kinds = _entries(args.archive, args.id)
     with stream:
         vehc = kinds[args.kind]
         mesh = load_mesh(stream, vehc)
@@ -2379,7 +2381,7 @@ def cmd_render(args) -> None:
 
 def cmd_check(args) -> None:
     """Structural damage checks for one vehicle's full and exterior entries."""
-    stream, root, kinds = _entries(args.archive, args.id)
+    stream, _root, kinds = _entries(args.archive, args.id)
     problems = 0
 
     def report(ok: bool, text: str) -> None:

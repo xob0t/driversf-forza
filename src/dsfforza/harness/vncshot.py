@@ -1,6 +1,10 @@
 """Grab one frame from a VNC server (RFB 3.8, no auth, raw encoding) and save it as PNG.
-Usage: python -I vncshot.py host port out.png"""
-import socket, struct, sys, zlib
+Usage: uv run dsff vncshot host port out.png"""
+import socket
+import struct
+import sys
+import zlib
+from pathlib import Path
 
 
 def recv_exact(s, n):
@@ -20,7 +24,7 @@ def write_png(path, w, h, rgb_rows):
     raw = b"".join(b"\x00" + row for row in rgb_rows)
     png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
     png += chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b"")
-    with open(path, "wb") as f:
+    with Path(path).open("wb") as f:
         f.write(png)
 
 

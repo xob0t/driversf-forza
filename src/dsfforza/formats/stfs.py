@@ -48,9 +48,10 @@ import hashlib
 import io
 import struct
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Iterator
+from typing import BinaryIO
 
 BLOCK = 0x1000
 PER_TABLE = 0xAA                 # entries per hash table
@@ -367,7 +368,7 @@ def open_package(spec: str) -> Stfs:
         from dsfforza.formats.xiso import XIso
         image = XIso(image_path)
         return in_image(image, image.find(inner))
-    return Stfs(open(spec, "rb"))
+    return Stfs(Path(spec).open("rb"))
 
 
 def main(argv: list[str] | None = None) -> None:

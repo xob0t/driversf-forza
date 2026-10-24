@@ -8,11 +8,9 @@ from __future__ import annotations
 
 import math
 import struct
-import sys
-from pathlib import Path
 
-from dsfforza.build import handling  # noqa: E402
-from dsfforza.convert import vehicle_cameras as vc  # noqa: E402
+from dsfforza.build import handling
+from dsfforza.convert import vehicle_cameras as vc
 
 
 def quad(a, b, c, d):

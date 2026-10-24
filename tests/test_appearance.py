@@ -6,15 +6,13 @@ or Forza files).
 
 from __future__ import annotations
 
-import sys
 import unittest
 from pathlib import Path
 from unittest import mock
 
-
-from dsfforza.convert import dsf_materials as dm  # noqa: E402
-from dsfforza.convert import forza_materials as fm  # noqa: E402
-from dsfforza.convert import glass  # noqa: E402
+from dsfforza.convert import dsf_materials as dm
+from dsfforza.convert import forza_materials as fm
+from dsfforza.convert import glass
 
 
 class _Vertex:
@@ -68,7 +66,7 @@ class RedLampSwatch(unittest.TestCase):
         swatch = _Sub("tail_light", [(0, 1, 2)], uv_transform=(0.5, 0.0, 0.5, 0.0))  # one texel
         section = _Section("taillightL", corners, [lamp, swatch])
         with mock.patch.object(fm, "AtlasCache", FakeAtlases):
-            t = dm.Texturing(Path("."))
+            t = dm.Texturing(Path())
             t.plan([section], {1})
             self.assertIsNotNone(t._red_lamp_curve(), "the test needs the car's own red curve")
             self.assertEqual(t.material(section, swatch), dm.LIGHTS_MAT)

@@ -17,21 +17,23 @@ import tempfile
 import zlib
 from pathlib import Path
 
-
-from dsfforza.formats import chnk  # noqa: E402
-from dsfforza.formats import forzazip  # noqa: E402
-from dsfforza.game import game_data  # noqa: E402
-from dsfforza.game import gui_assets  # noqa: E402
-from dsfforza.build import handling  # noqa: E402
-from dsfforza.formats import lua_scripts  # noqa: E402
-from dsfforza.formats import lzx  # noqa: E402
-from dsfforza.formats import minidump  # noqa: E402
-from dsfforza.formats import stfs  # noqa: E402
-from dsfforza.game import traffic_sets  # noqa: E402
-from dsfforza.formats import wwise_bank as wb  # noqa: E402
-from dsfforza.formats import xds  # noqa: E402
-from dsfforza.formats import xiso  # noqa: E402
-
+from dsfforza.build import handling
+from dsfforza.formats import (
+    chnk,
+    forzazip,
+    lua_scripts,
+    lzx,
+    minidump,
+    stfs,
+    xds,
+    xiso,
+)
+from dsfforza.formats import wwise_bank as wb
+from dsfforza.game import (
+    game_data,
+    gui_assets,
+    traffic_sets,
+)
 
 # --- CHNK ---------------------------------------------------------------------------
 
@@ -439,7 +441,7 @@ def main() -> int:
         try:
             fn()
             print(f"ok    {name}")
-        except Exception as error:  # noqa: BLE001 - report every failure
+        except Exception as error:
             failed += 1
             print(f"FAIL  {name}: {type(error).__name__}: {error}")
     print(f"{len(tests) - failed}/{len(tests)} passed")

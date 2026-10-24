@@ -53,14 +53,15 @@ import subprocess
 import sys
 import wave
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from dsfforza import REPO
-from typing import BinaryIO, Callable
+from typing import BinaryIO
 
-from dsfforza.formats.forzazip import ForzaZip  # noqa: E402
-from dsfforza.formats.stfs import StfsError, in_image  # noqa: E402
-from dsfforza.formats.xiso import XIso  # noqa: E402
+from dsfforza import REPO
+from dsfforza.formats.forzazip import ForzaZip
+from dsfforza.formats.stfs import StfsError, in_image
+from dsfforza.formats.xiso import XIso
 
 ROOT = REPO
 DEFAULT_VGMSTREAM = ROOT / "out" / "tools-dl" / "vgmstream" / "vgmstream-cli.exe"
@@ -358,7 +359,7 @@ def decode_bank(fsb_path: Path, fsb: Fsb, out_dir: Path, vgmstream: Path) -> lis
     for s in fsb.subsongs:
         target = (out_dir / f"{s.index:02d}_{safe(s.name)}.wav").resolve()
         result = subprocess.run([str(vgmstream), "-s", str(s.index + 1), "-o", str(target),
-                                 str(fsb_path.resolve())], capture_output=True, text=True)
+                                 str(fsb_path.resolve())], capture_output=True, text=True, check=False)
         if result.returncode or not target.is_file():
             raise RuntimeError(f"vgmstream failed on {fsb_path} #{s.index}: {result.stderr.strip()}")
         written.append(target)

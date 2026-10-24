@@ -6,12 +6,9 @@ or Forza files).
 
 from __future__ import annotations
 
-import sys
 import unittest
-from pathlib import Path
 
-
-from dsfforza.convert import damage  # noqa: E402
+from dsfforza.convert import damage
 
 
 def _plan(host_points: dict, records: dict) -> damage.DamagePlan:

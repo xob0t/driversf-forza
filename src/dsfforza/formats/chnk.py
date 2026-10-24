@@ -31,9 +31,10 @@ from __future__ import annotations
 import argparse
 import struct
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import BinaryIO, Iterator
+from typing import BinaryIO
 
 MAGIC = b"CHNK"
 HEADER = struct.Struct("<4sIII")
@@ -212,7 +213,7 @@ def describe(entry: Entry) -> str:
 
 
 def cmd_tree(args: argparse.Namespace) -> None:
-    with open(args.file, "rb") as stream:
+    with Path(args.file).open("rb") as stream:
         root = read_chunk(stream, 0, None if args.path or args.depth is None else args.depth)
         print(f"CHNK v{root.version} entries={len(root.entries)} size={root.total_size:#x}"
               f"{' LZW' if root.compressed else ''}")
@@ -235,7 +236,7 @@ def cmd_tree(args: argparse.Namespace) -> None:
 
 
 def cmd_list(args: argparse.Namespace) -> None:
-    with open(args.file, "rb") as stream:
+    with Path(args.file).open("rb") as stream:
         root = read_chunk(stream, 0, 0)
         for index, entry in enumerate(root.entries):
             if args.tag and entry.tag != args.tag:
@@ -246,7 +247,7 @@ def cmd_list(args: argparse.Namespace) -> None:
 def cmd_tags(args: argparse.Namespace) -> None:
     from collections import Counter
 
-    with open(args.file, "rb") as stream:
+    with Path(args.file).open("rb") as stream:
         root = read_chunk(stream, 0, args.depth)
     counts: Counter[tuple[int, str]] = Counter()
     for path, entry in walk(root.entries):
@@ -256,7 +257,7 @@ def cmd_tags(args: argparse.Namespace) -> None:
 
 
 def cmd_extract(args: argparse.Namespace) -> None:
-    with open(args.file, "rb") as stream:
+    with Path(args.file).open("rb") as stream:
         entry = resolve(read_chunk(stream, 0).entries, args.path)
         stream.seek(entry.offset)
         data = stream.read(entry.size)
@@ -267,7 +268,7 @@ def cmd_extract(args: argparse.Namespace) -> None:
 def cmd_rebuild(args: argparse.Namespace) -> None:
     import hashlib
 
-    with open(args.file, "rb") as source, open(args.out, "w+b") as out:
+    with Path(args.file).open("rb") as source, Path(args.out).open("w+b") as out:
         root = read_chunk(source, 0)
         write_chunk(out, source, root.entries, root.version | (0x80000000 if root.compressed else 0))
         if not args.verify:

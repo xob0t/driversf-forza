@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import ctypes
 import os
-from pathlib import Path
+
 from dsfforza import REPO
 
 FLAG = REPO / "out" / "gentle"

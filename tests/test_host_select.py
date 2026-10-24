@@ -5,10 +5,7 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-from dsfforza.build import host_select as hs  # noqa: E402
+from dsfforza.build import host_select as hs
 
 
 def _host(model, picture, year, body, wheelbase, length):

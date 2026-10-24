@@ -40,7 +40,7 @@ class LzxError(ValueError):
 class _Bits:
     """16-bit little-endian words, read most significant bit first."""
 
-    __slots__ = ("data", "pos", "buf", "left")
+    __slots__ = ("buf", "data", "left", "pos")
 
     def __init__(self, data: bytes, pos: int = 0):
         self.data, self.pos, self.buf, self.left = data, pos, 0, 0

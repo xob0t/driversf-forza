@@ -28,10 +28,10 @@ import zipfile
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from dsfforza import REPO
 
-from dsfforza.formats.stfs import StfsError, in_image  # noqa: E402
-from dsfforza.formats.xiso import XIso  # noqa: E402
+from dsfforza import REPO
+from dsfforza.formats.stfs import StfsError, in_image
+from dsfforza.formats.xiso import XIso
 
 TITLES = {0x4D530910: "FM4", 0x4D5309C9: "FH1"}
 XEX_EXECUTION_INFO = 0x00040006

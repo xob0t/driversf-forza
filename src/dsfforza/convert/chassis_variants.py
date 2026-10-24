@@ -74,7 +74,7 @@ def _parts_lods(modl: bytes) -> list[list[tuple[int, list[bytes], list[int]]]]:
 
 def _write_modl(template: bytes, parts) -> bytes:
     """MODL with the template's header and part records, LOD tables from `parts`."""
-    part_count, _, lod_offset, _ = struct.unpack_from("<4I", template)
+    _part_count, _, lod_offset, _ = struct.unpack_from("<4I", template)
     out = bytearray(template[:lod_offset])
     lods = []
     for p, plods in enumerate(parts):

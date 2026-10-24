@@ -36,6 +36,7 @@ instead, so state k looks like a stock window in state k.
 from __future__ import annotations
 
 import argparse
+import itertools
 import math
 import random
 import re
@@ -43,6 +44,7 @@ import struct
 import sys
 from collections import defaultdict
 from pathlib import Path
+
 from dsfforza import REPO
 
 # Shared glass materials (SSIC): GLOBAL_Glass, _LOD1 (stock exteriors), _LOD5 (interiors).
@@ -460,7 +462,7 @@ class InteriorGlass:
             return out
         rim = pane.rim
         if self.sight is not None:
-            rim = [r for r in rim if (lambda hit: hit is not None and self.sight(hit[0]))(pane.lift(r[0]))]
+            rim = [r for r in rim if (hit := pane.lift(r[0])) is not None and self.sight(hit[0])]
             info["rim_seen"] = round(len(rim) / len(pane.rim), 2)
             if not rim:
                 return out
@@ -490,7 +492,7 @@ class InteriorGlass:
     def _strip(rng, pane, path, width, rect, s9):
         out = []
         u0, u1, v0, v1 = rect
-        for a, b in zip(path, path[1:]):
+        for a, b in itertools.pairwise(path):
             seg = math.hypot(b[0] - a[0], b[1] - a[1])
             if seg < 1e-4:
                 continue
@@ -610,8 +612,8 @@ def _which_slot(u: float, v: float, tol: float = 0.004) -> str | None:
 
 def _glass_triangles(stream, vehc, masks, materials=EXTERIOR_GLASS):
     """(uvs, s9 pairs, points) per glass triangle (`materials`) in part 0 of the given masks."""
-    from dsfforza.formats import vehicle_mesh as vm
     from dsfforza.convert.damage import load_mesh
+    from dsfforza.formats import vehicle_mesh as vm
     mesh = load_mesh(stream, vehc)
     buffers, index_buffers, subs = mesh.vertex_buffers, mesh.index_buffers, mesh.submodels
     chosen = {k for lod in mesh.parts[0].lods if lod.mask in masks for k in lod.submodels}
@@ -689,9 +691,9 @@ def _texture():
         im = Image.open(png).convert("RGBA")
         return im.width, im.height, im.tobytes()
     from dsfforza.convert import dsf_materials as dm
-    from dsfforza.game import game_paths
     from dsfforza.formats.chnk import read_chunk, walk
     from dsfforza.formats.vehicle_mesh import child, payload
+    from dsfforza.game import game_paths
     with (game_paths.REPO_STOCK / "Install" / "dngvehicles.sp").open("rb") as s:
         root = read_chunk(s, 0)
         ssic = next(e for e in root.entries if e.tag == "SSIC")

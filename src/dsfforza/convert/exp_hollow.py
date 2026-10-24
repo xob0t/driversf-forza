@@ -20,8 +20,8 @@ from pathlib import Path
 
 from dsfforza.convert import forza2dsf as F
 from dsfforza.formats.chnk import read_chunk, write_chunk
-from dsfforza.formats.vehicles import find, parse_sslp
 from dsfforza.formats.vehicle_mesh import child, payload
+from dsfforza.formats.vehicles import find, parse_sslp
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -40,8 +40,9 @@ def main(argv: list[str] | None = None) -> None:
                         help="one body submodel per material instead of per (section, material)")
     args = parser.parse_args(argv)
 
-    from dsfforza.formats import carbin
     import xml.etree.ElementTree as ET
+
+    from dsfforza.formats import carbin
     sections = carbin.parse((args.car / f"{args.name}.carbin").read_bytes())
     body = [s for s in F.stock_sections(sections) if s.name != "wheel"]
     misc = ET.parse(args.car / "Physics" / "MAXData.xml").getroot().find("Misc")
@@ -129,7 +130,7 @@ def main(argv: list[str] | None = None) -> None:
             if e.tag == "IXCK":
                 users = [u for lst in host_sub_uids.values() for u in lst]
                 child(e, "IXDP").payload = b"".join(users)
-        mdid = child_payload = next(e for e in drsp.children if e.tag == "MDID")
+        mdid = next(e for e in drsp.children if e.tag == "MDID")
         uids = [mdid.payload[i:i + 8] for i in range(0, len(mdid.payload), 8)]
         mdid.payload = b"".join(u for u in uids if u not in host_vb_uids and u not in host_ib_uids)
 

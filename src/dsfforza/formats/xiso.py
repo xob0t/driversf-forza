@@ -25,9 +25,10 @@ import fnmatch
 import io
 import struct
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Iterator
+from typing import BinaryIO
 
 SECTOR = 2048
 MAGIC = b"MICROSOFT*XBOX*MEDIA"
@@ -49,7 +50,7 @@ class FileEntry:
 
 class XIso:
     def __init__(self, path: str | Path):
-        self.stream: BinaryIO = open(path, "rb")
+        self.stream: BinaryIO = Path(path).open("rb")  # noqa: SIM115 (the reader keeps it open)
         for name, offset in PARTITION_OFFSETS.items():
             self.stream.seek(offset + 0x10000)
             header = self.stream.read(28)

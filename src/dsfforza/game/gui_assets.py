@@ -39,16 +39,16 @@ from __future__ import annotations
 import argparse
 import copy
 import io
+import itertools
 import math
 import struct
 import sys
 from pathlib import Path
+
 from dsfforza import REPO
-
 from dsfforza.formats import chnk
-from dsfforza.game import game_paths
 from dsfforza.formats.vehicle_mesh import child, payload
-
+from dsfforza.game import game_paths
 
 
 def stock_file(relative: str) -> Path:
@@ -120,7 +120,7 @@ def append_patch(source: Path, data: bytearray, root, replace: dict, add: list) 
             else:
                 buf.write(e.payload)
             blobs.append((e, buf.getvalue()))
-    magic, total, count, version = chnk.HEADER.unpack_from(data, 0)
+    magic, _total, count, version = chnk.HEADER.unpack_from(data, 0)
     table_end = chnk.HEADER.size + chnk.ENTRY.size * (count + len(add))
     first_payload = min(chnk.ENTRY.unpack_from(data, chnk.HEADER.size + chnk.ENTRY.size * i)[1] for i in range(count))
     if table_end > first_payload:
@@ -300,7 +300,7 @@ class Image:
         self.w, self.h = width, height
         self.px = bytearray(rgba) if rgba is not None else bytearray(bytes(fill) * (width * height))
 
-    def crop(self, x0: int, y0: int, x1: int, y1: int) -> "Image":
+    def crop(self, x0: int, y0: int, x1: int, y1: int) -> Image:
         out = Image(x1 - x0, y1 - y0)
         for y in range(y0, y1):
             out.px[(y - y0) * out.w * 4:(y - y0 + 1) * out.w * 4] = self.px[(y * self.w + x0) * 4:(y * self.w + x1) * 4]
@@ -317,7 +317,7 @@ class Image:
                 xs += [x0 + hits[0], x0 + hits[-1]]
         return (min(xs), min(ys), max(xs) + 1, max(ys) + 1) if xs else None
 
-    def flip_h(self) -> "Image":
+    def flip_h(self) -> Image:
         out = Image(self.w, self.h)
         for y in range(self.h):
             for x in range(self.w):
@@ -325,7 +325,7 @@ class Image:
                 out.px[q:q + 4] = self.px[o:o + 4]
         return out
 
-    def resize(self, width: int, height: int) -> "Image":
+    def resize(self, width: int, height: int) -> Image:
         """Area-average resample with alpha weighting (for shrinking)."""
         out = Image(width, height)
         sx, sy = self.w / width, self.h / height
@@ -351,11 +351,11 @@ class Image:
                 out.px[o + 3] = min(255, int(acc[3] / max(total, 1e-9) + 0.5))
         return out
 
-    def fit(self, max_w: int, max_h: int) -> "Image":
+    def fit(self, max_w: int, max_h: int) -> Image:
         scale = min(max_w / self.w, max_h / self.h)
         return self.resize(max(1, round(self.w * scale)), max(1, round(self.h * scale)))
 
-    def paste(self, other: "Image", left: int, top: int) -> None:
+    def paste(self, other: Image, left: int, top: int) -> None:
         """Alpha-composite `other` over this image (both straight alpha)."""
         for y in range(other.h):
             ty = top + y
@@ -463,7 +463,7 @@ def _text_plate(text: str, height: int, italic: float) -> Image:
     for ch, w in zip(text, widths):
         for line in STROKES.get(ch, []):
             pts = [(x + gx * cell + italic * (6 - gy) * cell, origin_y + gy * cell) for gx, gy in line]
-            segs += list(zip(pts, pts[1:]))
+            segs += list(itertools.pairwise(pts))
         x += w
     ss = 3
     reach = stroke + outline + 1
@@ -621,7 +621,7 @@ def stock_backdrop(gui: Path | None = None) -> Image:
     return img
 
 
-def forza_car_image(ui: "ForzaUI", car_id: int) -> Image | None:
+def forza_car_image(ui: ForzaUI, car_id: int) -> Image | None:
     """The car from FH1's thumbnail (left two thirds; the right third is a
     top view), cropped and mirrored to face right like DSF's pictures."""
     found = ui.thumbnail(car_id)
@@ -632,7 +632,7 @@ def forza_car_image(ui: "ForzaUI", car_id: int) -> Image | None:
     return img.crop(*box).flip_h() if box else None
 
 
-def logo_image(ui: "ForzaUI", make: str) -> Image | None:
+def logo_image(ui: ForzaUI, make: str) -> Image | None:
     found = ui.logo(make)
     if found is None:
         return None
@@ -917,7 +917,7 @@ BADGE_SIZE = 58
 PLATE_CENTRE_Y = 25
 
 
-def glyph_y(img: "Image", h: int) -> int:
+def glyph_y(img: Image, h: int) -> int:
     if getattr(img, "kind", "badge") == "plate":
         return max(0, min(CELL - h, round(PLATE_CENTRE_Y - h / 2)))
     return CELL - h
@@ -946,7 +946,7 @@ def _font_uid(n: int, used: set) -> bytes:
         n += 1
 
 
-def _dxt5_sparse(img: "Image") -> bytes:
+def _dxt5_sparse(img: Image) -> bytes:
     """DXT5 of an image that is mostly transparent: empty 4 x 4 blocks get one
     precomputed block, the rest dsf_materials.encode_dxt5."""
     from dsfforza.convert import dsf_materials as dm
@@ -963,7 +963,7 @@ def _dxt5_sparse(img: "Image") -> bytes:
     return bytes(out)
 
 
-def _shelf_pack(fitted: dict[int, "Image"], width: int, height: int | None, top: int = 1):
+def _shelf_pack(fitted: dict[int, Image], width: int, height: int | None, top: int = 1):
     """Shelf-pack glyphs 1 texel apart, tallest first. With `height`, start a new
     page when one is full: returns {code: (page, x, y)} and the y extent of the
     last row (without `height`, everything is page 0 from `top` down)."""
@@ -1113,7 +1113,7 @@ FORZA_LOGO_UID = bytes.fromhex("f012ef7ef05a2e2d")  # = mod_hud.cpp kLogoLo/kLog
 EMBLEM_FIELD = "GarageEmblem"                      # vehicleStats field: 1 = Forza emblem
 
 
-def forza_emblem_logo(ui: "ForzaUI") -> Image:
+def forza_emblem_logo(ui: ForzaUI) -> Image:
     """FH1's Forza logo with alpha (ui4/common/forza_logo3: orange and silver)."""
     found = ui.read("UI4/Common/forza_logo3.xds")
     if found is None:
@@ -1162,7 +1162,7 @@ def add_textures(fonts: Path, out: Path, textures: dict[bytes, bytes]) -> dict:
     return {"textures": [uid.hex() for uid in textures]}
 
 
-def emblem_dds(ui: "ForzaUI", template: bytes | None = None) -> tuple[bytes, Image]:
+def emblem_dds(ui: ForzaUI, template: bytes | None = None) -> tuple[bytes, Image]:
     img = forza_emblem_image(forza_emblem_logo(ui))
     return picture_dds(img, template), img
 
@@ -1498,7 +1498,7 @@ def build(manifest: Path, out_dir: Path, names: dict[str, str] | None = None, ar
     GarageEmblem = 1 and Fonts.fchunk the Forza emblem texture: with
     dsfforza.asi the garage card shows the Forza logo instead of the SF disc."""
     import json
-    from dsfforza.build.port_car import make_model
+
     data = json.loads(Path(manifest).read_text())
     archive = archive or Path(manifest).with_suffix(".sp")
     names = names or {}
@@ -1575,7 +1575,7 @@ def build(manifest: Path, out_dir: Path, names: dict[str, str] | None = None, ar
     report["_gui"] = add_pictures(gui, out_dir / "gui.sp", pictures, root_limit=root_limit)
     # Fonts.fchunk: new glyphs, plus the garage card emblem texture (always).
     report["_fonts"] = add_glyphs(fonts, out_dir / "Fonts.fchunk", glyphs, {FORZA_LOGO_UID: emblem})
-    sheet, records = glyph_images(out_dir / "Fonts.fchunk")
+    sheet, _records = glyph_images(out_dir / "Fonts.fchunk")
     write_png(out_dir / "vehicles_font.png", sheet.w, sheet.h, sheet.px)
     # Plain-text maker and model names don't show in the garage: give them new
     # string IDs in copies of every installed language's global.fchunk (the

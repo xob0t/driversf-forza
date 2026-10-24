@@ -47,6 +47,7 @@ entry's UPVH and VO3D.
 from __future__ import annotations
 
 import argparse
+import itertools
 import math
 import re
 import sqlite3
@@ -55,8 +56,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from dsfforza.formats import carbin
 from dsfforza.convert import forza_materials as fm
+from dsfforza.formats import carbin
 
 # Median non-zero CamCockpitOffset over FH1 (112 cars) and FM4 (327 cars).
 DEFAULT_EYE_OFFSET = (0.0, 0.21, -0.46)
@@ -236,7 +237,7 @@ def fit_wheel(section: carbin.Section) -> Wheel:
     from the centroid or more; the centre is the middle of the rim's extent
     in the wheel plane (a vertex mean is biased by uneven tessellation), at
     the rim's mean depth along the axis."""
-    return fit_wheel_points(list({p for p in section_points(section)}))
+    return fit_wheel_points(list(set(section_points(section))))
 
 
 def fit_wheel_points(pts: list[tuple]) -> Wheel:
@@ -274,7 +275,7 @@ def fit_main_wheel(section: carbin.Section, near: Wheel) -> Wheel | None:
     promoted = promote_lod(section)
     if promoted is None:
         return None
-    pts = list({p for p in section_points(promoted)})
+    pts = list(set(section_points(promoted)))
     main = fit_wheel_points(pts)
     if not MAIN_WHEEL_RADIUS[0] <= main.radius <= MAIN_WHEEL_RADIUS[1]:
         close = [p for p in pts if math.dist(p, near.centre) < 1.3 * near.radius + 0.05]
@@ -366,12 +367,12 @@ def fit_gauge(family: str, poses: dict[str, carbin.Section]) -> Gauge | None:
         pts = [section_points(s) for s in order]
         if not pts[0] or any(len(p) != len(pts[0]) for p in pts):
             return None
-    disp = [_sub(y, x) for a, b in zip(pts, pts[1:]) for x, y in zip(a, b)]
+    disp = [_sub(y, x) for a, b in itertools.pairwise(pts) for x, y in zip(a, b)]
     normal = _norm(_eigen_sym3(_covariance(disp))[0][1])
     if normal[2] > 0:
         normal = _scale(normal, -1)  # into the dash: forward in Forza is -z
     sweep, pivots = 0.0, []
-    for a, b in zip(pts, pts[1:]):
+    for a, b in itertools.pairwise(pts):
         theta, pivot = _plane_rotation(a, b, normal)
         sweep += theta
         if pivot is not None:
@@ -816,7 +817,7 @@ def hand_params() -> dict[int, float]:
     """VO3D p538/p559 (the hand rig's offset from the marker) to zero: they move
     the wheel with the hands, away from where Forza puts it (Cuda host:
     -4 cm y, +7.5 cm z)."""
-    return {p: 0.0 for p in HAND_PARAMS}
+    return dict.fromkeys(HAND_PARAMS, 0.0)
 
 
 def patch_hierarchy(upvh_data: bytes, host: HostCockpit, place, cf: CockpitFit) -> tuple[bytes, dict]:
@@ -1031,7 +1032,7 @@ def host_interior(stream, interior, known: dict | None = None) -> InteriorMateri
     for p in range(parts):
         count, offset = struct.unpack_from("<II", modl, 0x10 + p * 0x60 + 0x48)
         for k in range(count):
-            mask, n, uid_off, extra_off = struct.unpack_from("<4I", modl, offset + k * 16)
+            _mask, n, uid_off, extra_off = struct.unpack_from("<4I", modl, offset + k * 16)
             for i in range(n):
                 uid = modl[uid_off + i * 8:uid_off + i * 8 + 8]
                 flag = struct.unpack_from("<I", modl, extra_off + i * 4)[0]
@@ -1390,8 +1391,7 @@ class GlassSight:
                                 continue
                             w = w0 * pw + w1 * qw + w2 * rw
                             k = y * resolution + x
-                            if w > depth[k]:
-                                depth[k] = w
+                            depth[k] = max(depth[k], w)
             self.faces[(axis, sign)] = depth
 
     def __call__(self, point_dsf, slack: float = 0.03) -> bool:
@@ -2002,7 +2002,10 @@ def main(argv: list[str] | None = None) -> None:
         if sections is None:
             raise SystemExit(f"no {args.name}_cockpit.carbin in {args.car}")
         cf = fit(sections, args.name, args.gamedb, folder=args.car)
-        r3 = lambda v: "(" + ", ".join(f"{x:.3f}" for x in v) + ")"
+
+        def r3(v):
+            return "(" + ", ".join(f"{x:.3f}" for x in v) + ")"
+
         print(f"steering wheel: centre {r3(cf.wheel.centre)} axis {r3(cf.wheel.axis)} radius {cf.wheel.radius:.3f}")
         for g in cf.gauges.values():
             print(f"gauge {g.family}: pivot {r3(g.pivot)} normal {r3(g.normal)} sweep {g.sweep_deg:.1f} deg")

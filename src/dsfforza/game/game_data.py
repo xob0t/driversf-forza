@@ -23,12 +23,11 @@ tools find dngvehicles.sp, gui.sp, Fonts.fchunk and global.fchunk there
 from __future__ import annotations
 
 import argparse
-import os
 import struct
 import sys
 from pathlib import Path
-from dsfforza import REPO
 
+from dsfforza import REPO
 
 VEHICLESTATS = "vehiclestats\\vehiclestats.lua"
 

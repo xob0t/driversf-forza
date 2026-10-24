@@ -52,7 +52,7 @@ requires-dist = [
 dev = [
     { name = "capstone", specifier = ">=5.0" },
     { name = "lupa", specifier = ">=2.4" },
-    { name = "ruff", specifier = ">=0.14" },
+    { name = "ruff", specifier = ">=0.17" },
 ]
 re = [{ name = "capstone", specifier = ">=5.0" }]
 test = [{ name = "lupa", specifier = ">=2.4" }]

@@ -32,10 +32,10 @@ import re
 import struct
 import sys
 from pathlib import Path
-from dsfforza import REPO
 
-from dsfforza.formats import chnk  # noqa: E402
-from dsfforza.formats.lua_scripts import crc  # noqa: E402
+from dsfforza import REPO
+from dsfforza.formats import chnk
+from dsfforza.formats.lua_scripts import crc
 
 DIRECTORY = 0x50
 PROGRESSIONS = 0x118
@@ -153,7 +153,7 @@ def main() -> int:
 def patch(path: Path, specs: list[str], out: str | None) -> int:
     if not out:
         raise SystemExit("--replace needs --out")
-    base, sets, ids, ids_at = read_sets(path)
+    _base, sets, ids, ids_at = read_sets(path)
     by_name = {name_hash(n): n for n in KNOWN}
     data = bytearray(path.read_bytes())
     for spec in specs:

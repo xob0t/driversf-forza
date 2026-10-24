@@ -34,8 +34,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from dsfforza.formats.chnk import Entry, read_chunk, write_chunk
-from dsfforza.formats.vehicles import find, parse_sslp
 from dsfforza.formats.vehicle_mesh import child, payload
+from dsfforza.formats.vehicles import find, parse_sslp
 
 HEADER = struct.Struct("<HH4sII")
 RECORD = struct.Struct("<HHf")
@@ -165,12 +165,12 @@ class VO3D:
 
     @classmethod
     def parse(cls, data: bytes) -> VO3D:
-        spool_id, zero, tag, version, count = HEADER.unpack_from(data)
+        spool_id, _zero, tag, version, count = HEADER.unpack_from(data)
         if tag != b"VO3D":
             raise ValueError(f"not a VO3D: {tag!r}")
         params = {}
         for i in range(count):
-            pid, fill, value = RECORD.unpack_from(data, HEADER.size + i * RECORD.size)
+            pid, _fill, value = RECORD.unpack_from(data, HEADER.size + i * RECORD.size)
             params[pid] = value
         return cls(spool_id, params, version)
 

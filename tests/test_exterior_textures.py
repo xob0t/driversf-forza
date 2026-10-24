@@ -6,17 +6,15 @@ alpha test of decal triangles, on synthetic data (no game or Forza files).
 
 from __future__ import annotations
 
-import sys
 import unittest
 from pathlib import Path
 from unittest import mock
 
-
-from dsfforza.convert import dsf_materials as dm  # noqa: E402
-from dsfforza.convert import forza2dsf  # noqa: E402
-from dsfforza.convert import forza_materials as fm  # noqa: E402
-from dsfforza.build import port_car  # noqa: E402
-from dsfforza.build.forza_roster import Source  # noqa: E402
+from dsfforza.build import port_car
+from dsfforza.build.forza_roster import Source
+from dsfforza.convert import dsf_materials as dm
+from dsfforza.convert import forza2dsf
+from dsfforza.convert import forza_materials as fm
 
 
 def _atlas(size, opaque):
@@ -94,8 +92,8 @@ class WheelAtlas(unittest.TestCase):
 
     def setUp(self):
         wheel = bytearray()
-        for y in range(32):
-            for x in range(32):
+        for _y in range(32):
+            for _x in range(32):
                 wheel += bytes((200, 60, 10, 0))  # orange rim artwork (alpha: gloss mask, not a cut-out)
         atlases = {fm.WHEEL: (32, 32, wheel), fm.NODAMAGE: (16, 16, bytearray(16 * 16 * 4)),
                    fm.LIGHTS: (16, 16, bytearray(16 * 16 * 4))}
@@ -123,7 +121,7 @@ class WheelAtlas(unittest.TestCase):
             p.stop()
 
     def test_rims_on_the_atlas(self):
-        t = dm.Texturing(Path("."))
+        t = dm.Texturing(Path())
         t.plan([], {1}, wheels=([self.wheel], {1}))
         self.assertIn(fm.WHEEL, t.families)
         self.assertEqual(t.material(self.wheel, self.rim), dm.CHASSIS)
@@ -136,7 +134,7 @@ class WheelAtlas(unittest.TestCase):
         self.assertEqual(tuple(rgba[(y * t.size[0] + x) * 4:(y * t.size[0] + x) * 4 + 3]), (200, 60, 10))
 
     def test_wheel_material(self):
-        t = dm.Texturing(Path("."))
+        t = dm.Texturing(Path())
         t.plan([], {1}, wheels=([self.wheel], {1}))
         chassis, lights = b"C" * 8, b"L" * 8
         binding = dm.Binding(t, dm.Installed({dm.CHASSIS: chassis, dm.LIGHTS_MAT: lights}, b"T" * 8, {}))

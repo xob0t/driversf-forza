@@ -3,13 +3,11 @@ paint, livery decal slots drawn from the car atlases."""
 
 from __future__ import annotations
 
-import sys
 import unittest
 from pathlib import Path
 
-
-from dsfforza.convert import forza_materials as fm  # noqa: E402
-from dsfforza.convert import paint  # noqa: E402
+from dsfforza.convert import forza_materials as fm
+from dsfforza.convert import paint
 
 
 def _entry(c2, c3, power, bias=0.01, metallic=True):
@@ -67,7 +65,7 @@ class RedLensScale(unittest.TestCase):
         from dsfforza.convert import dsf_materials as dm
         k = dm.red_lens_scale([177] * 1000)          # the TT RS's tail lens
         self.assertAlmostEqual(dm._shared_lens(177) * k, dm.VISIBLE_RED_STOCK_MEDIAN, places=3)
-        r, g, b, _ = dm.matched_lamp_texel(177, 0, 0, 200, None, k)
+        r, _g, _b, _ = dm.matched_lamp_texel(177, 0, 0, 200, None, k)
         self.assertEqual(r, dm.VISIBLE_RED_STOCK_MEDIAN)
 
     def test_dark_lens_untouched(self):
@@ -79,8 +77,9 @@ class RedLensScale(unittest.TestCase):
 
     def test_visible_red_sees_the_outer_lens(self):
         """Two stacked quads behind the car: only the outer one (larger Forza z) counts."""
-        from dsfforza.convert import dsf_materials as dm
         from unittest import mock
+
+        from dsfforza.convert import dsf_materials as dm
         size = 8
         img = bytearray()
         for _ in range(size):
@@ -119,7 +118,7 @@ class RedLensScale(unittest.TestCase):
         outer = Section("taillightL", quad(2.0, 0.55, 0.95), [Sub("tail_light", [(0, 1, 2), (0, 2, 3)])])
         inner = Section("taillightL2", quad(1.9, 0.05, 0.45), [Sub("reflector", [(0, 1, 2), (0, 2, 3)])])
         with mock.patch.object(fm, "AtlasCache", FakeAtlases):
-            t = dm.Texturing(Path("."))
+            t = dm.Texturing(Path())
             t.plan([inner, outer], {1})
             seen = t.visible_red()
         self.assertGreater(len(seen), 1000)

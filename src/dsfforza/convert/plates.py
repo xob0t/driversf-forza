@@ -116,8 +116,8 @@ class HostPlates:
 def host_plates(stream, vehc) -> HostPlates:
     """Plates of a stock vehicle's full entry (MODL part 0, mask 4): triangles on
     a shared-atlas material whose UV0 centroid is on the plate."""
-    from dsfforza.formats import vehicle_mesh as vm
     from dsfforza.convert.damage import load_mesh
+    from dsfforza.formats import vehicle_mesh as vm
     mesh = load_mesh(stream, vehc)
     u0, v0, u1, v1 = PLATE_UV
     ends: dict[str, list] = {}
@@ -352,7 +352,7 @@ def plan_end(tris, end: str, host: HostPlate, prior_y: float, ground: float, hal
     centre_col = dm.col(0.0)
     height, width = dm.depth.shape
     cands = []
-    for top in range(0, height - wrows):
+    for top in range(height - wrows):
         cy = float(dm.y_of(top + (wrows - 1) / 2))
         if cy - ground < 0.15 or cy - ground > 1.45 or abs(cy - prior_y) > PRIOR_BAND:
             continue
@@ -653,9 +653,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--dsf", type=Path, default=None, help="stock dngvehicles.sp (default: from $DSF_GAME_DIR)")
     p.add_argument("--png", type=Path, help="depth maps of both ends with the plates")
     args = parser.parse_args(argv)
-    from dsfforza.game import game_paths
     from dsfforza.formats import upvh as upvh_mod
     from dsfforza.formats.chnk import read_chunk
+    from dsfforza.game import game_paths
     if args.cmd == "host":
         path = game_paths.stock(args.archive, quiet=True)
         with path.open("rb") as stream:
@@ -680,7 +680,7 @@ def main(argv: list[str] | None = None) -> None:
         hp = host_plates(stream, full)
     place = forza2dsf.Placement(dy=hw.hub_y - dims.radius + dims.ride_height, dz=hw.axle_mid + dims.mid_z)
     ground = hw.hub_y - dims.radius
-    body, pp = apply(car, place, ground, hp)
+    _body, pp = apply(car, place, ground, hp)
     import json
     print(json.dumps(pp.report, indent=1))
     if args.png:

@@ -17,7 +17,7 @@ dsff = "dsfforza.cli:main"
 [dependency-groups]
 # Synced by a plain `uv run`; players' builds (tools/install.ps1) use --no-dev.
 dev = [
-    "ruff>=0.14",
+    "ruff>=0.17",
     { include-group = "test" },
     { include-group = "re" },
 ]
@@ -52,31 +52,23 @@ select = [
 ]
 ignore = [
     "PLR2004",  # magic values: binary formats are full of offsets, tags and sizes
-    "PLR0911",  # too many returns: format dispatchers
+    "PLR0911",  # too many returns: format and command dispatchers
     "PLR0912",  # too many branches: parsers and converters walk many record kinds
     "PLR0913",  # too many arguments: conversion steps take many explicit inputs
-    "PLR0914",  # too many locals (preview): same
     "PLR0915",  # too many statements: same
-    "PLR0917",  # too many positional arguments (preview): same
+    "PLR0917",  # too many positional arguments: same
     "PLW2901",  # loop variable overwritten: normal in record-walking loops
     "PLC0415",  # import outside top level: lazy imports keep CLIs fast and break import cycles
-    "PLW0603",  # global statement: module-level caches
-    "N802",     # function names: keep names that mirror game/format identifiers
-    "N803",     # argument names: same (P, U, VO3D ...)
-    "N806",     # variable names in functions: matrix/vector math (M, P, R ...) and format fields
-    "N815",     # mixedCase class fields: mirror the game's Lua/format field names
-    "N816",     # mixedCase globals: same
-    "N817",     # CamelCase imported as acronym: `import handling as H`-style aliases are used repo-wide
-    "N812",     # lowercase imported as non-lowercase: same
-    "E501",     # line length: the formatter wraps code; long strings and tables stay readable
-    "E741",     # ambiguous names (l, I): used for lengths/indices in format code
-    "RUF001",   # ambiguous unicode in strings: intentional (degree, multiplication, arrows ...)
-    "RUF002",   # same, in docstrings
-    "RUF003",   # same, in comments
+    "N806",     # uppercase locals: matrix/vector math (P, U, W, H ...)
+    "N812",     # `import handling as H`-style module aliases are used repo-wide
+    "E501",     # line length: the formatter wraps code; long strings and comments stay as written
+    "E741",     # ambiguous names (l, I): lengths and indices in format code
     "SIM108",   # ternary instead of if/else: not always clearer
     "RET504",   # assignment before return: often names the value being returned
-    "PERF203",  # try/except in a loop: needed for per-item error handling
-    "B905",     # zip() without strict=: would change behaviour where lengths differ
+    "B905",     # zip() without strict=: adding strict=True would change behaviour where lengths differ
+    "RUF005",   # [*a, b] over a + [b]: operands may be numpy arrays or bytes, where unpacking differs
+    "RUF046",   # int(round(x)): keeps a Python int when x is a numpy scalar
+    "PERF401",  # append loops over comprehensions: the loops carry conditions and comments; no hot paths
 ]
 
 [tool.ruff.lint.isort]

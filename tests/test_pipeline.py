@@ -7,12 +7,13 @@ disc images needed; a few seconds).
 from __future__ import annotations
 
 import json
-import sys
 import tempfile
 from pathlib import Path
 
-from dsfforza.build import port_batch  # noqa: E402
-from dsfforza.build import port_car  # noqa: E402
+from dsfforza.build import (
+    port_batch,
+    port_car,
+)
 
 
 def test_worker_report_survives_a_cut_short_report():
@@ -69,7 +70,7 @@ def test_merge_leaves_out_cars_with_uid_clashes():
     port_batch.register_cars = register
     try:
         results = [{"media": m, "spool_id": i} for i, m in enumerate("ABC", 1)]
-        cars, failed = port_batch.merge(Path("stock.sp"), Path("out.sp"), results, Path("."), log=lambda t: None)
+        cars, failed = port_batch.merge(Path("stock.sp"), Path("out.sp"), results, Path(), log=lambda t: None)
     finally:
         port_batch.register_cars = real
     assert calls == [["A", "B", "C"], ["A", "C"]]
@@ -84,7 +85,7 @@ def test_builders_keep_their_own_material_layouts():
     before = dict(forza2dsf.MATERIAL_LAYOUT)
     a, b = forza2dsf.Builder(b"\0\0\0\1"), forza2dsf.Builder(b"\0\0\0\2")
     a.layout[b"hostmat1"] = (32, 5)
-    assert b"hostmat1" not in b.layout and forza2dsf.MATERIAL_LAYOUT == before
+    assert b"hostmat1" not in b.layout and before == forza2dsf.MATERIAL_LAYOUT
     a.add(b"hostmat1", [b"\0" * 32] * 3, [(0, 1, 2)])
     assert a.subs[0].stride == 32
 

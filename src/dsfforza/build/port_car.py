@@ -76,20 +76,24 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from dsfforza import REPO
 
-from dsfforza.game import game_paths  # noqa: E402
-from dsfforza.build import gentle  # noqa: E402
-from dsfforza.build import clone_vehicle  # noqa: E402
-from dsfforza.convert import cockpit  # noqa: E402
-from dsfforza.convert import forza2dsf  # noqa: E402
-from dsfforza.build import handling  # noqa: E402
-from dsfforza.formats.chnk import ENTRY_LIMIT, entry_size, layout, read_chunk, write_chunk  # noqa: E402
-from dsfforza.build.forza_roster import Source, roster  # noqa: E402
-from dsfforza.formats.forzazip import ForzaZip  # noqa: E402
-from dsfforza.formats import stfs  # noqa: E402
-from dsfforza.formats.vehicle_mesh import child  # noqa: E402
-from dsfforza.formats.xiso import XIso  # noqa: E402
+from dsfforza import REPO
+from dsfforza.build import (
+    clone_vehicle,
+    gentle,
+    handling,
+)
+from dsfforza.build.forza_roster import Source, roster
+from dsfforza.convert import (
+    cockpit,
+    forza2dsf,
+)
+from dsfforza.formats import stfs
+from dsfforza.formats.chnk import ENTRY_LIMIT, entry_size, layout, read_chunk, write_chunk
+from dsfforza.formats.forzazip import ForzaZip
+from dsfforza.formats.vehicle_mesh import child
+from dsfforza.formats.xiso import XIso
+from dsfforza.game import game_paths
 
 GAME_PREFERENCE = ("FH1", "FM4")
 FULL_LADDER = ("4:3,8:4,16:5", "4:4,8:4,16:5", "4:4,8:5,16:5", "4:5,8:5,16:5")
@@ -304,7 +308,7 @@ def extract_gamedb(isos: list[Path], game: str, cache: Path) -> Path | None:
             temp = target.with_name(f"{target.name}.{os.getpid()}.tmp")
             try:
                 image.extract(entry, temp)
-                os.replace(temp, target)
+                Path(temp).replace(target)
             except PermissionError:   # another process has it open, so it is already there
                 if not target.exists():
                     raise
@@ -325,7 +329,7 @@ def write_atomic(path: Path, data: bytes) -> None:
     try:
         temp.write_bytes(data)
         try:
-            os.replace(temp, path)
+            Path(temp).replace(path)
         except PermissionError:
             if not path.exists():
                 raise
@@ -398,8 +402,8 @@ def forza_sound_plan(args, stream, entries, media: str, game: str, folder: Path,
     car's Forza audio can't be resolved; the car then keeps the host's sound."""
     if getattr(args, "no_forza_sound", False):
         return None, {"ok": False, "reason": "disabled (--no-forza-sound)"}
-    from dsfforza.convert import engine_sound
     from dsfforza.build import host_select
+    from dsfforza.convert import engine_sound
     try:
         index = engine_sound.stock_index(args.dsf)
         db = gamedb or extract_gamedb(isos, game, args.cache)
@@ -529,7 +533,7 @@ def build_car(stream, entries, host: int, spool_id: int, car: forza2dsf.ForzaCar
         "lods": {"full": {str(m): v for m, v in lods.items()}, "shadow": shadow, "exterior": exterior_lod},
         "attempts": attempts, "renewed_uid_count": renewed, "sound": sound_report or {"sound_host": host},
         "forza_sound": forza_report,
-        "sizes": {str(kind): {t: v for t, v in sizes.items()} for kind, (sizes, _) in checks.items()},
+        "sizes": {str(kind): dict(sizes.items()) for kind, (sizes, _) in checks.items()},
     })
     return clones, report
 
@@ -649,7 +653,7 @@ def run_lint(out: Path, spool_id: int, dsf: Path, host: int, allow_shared: bool 
     result = subprocess.run([sys.executable, "-m", "dsfforza.formats.upvh", "lint", str(out), "--id",
                              str(spool_id), "--stock", str(dsf), "--source", str(host)]
                             + (["--allow-shared"] if allow_shared else []),
-                            capture_output=True, text=True)
+                            capture_output=True, text=True, check=False)
     return result.returncode == 0, (result.stdout + result.stderr).strip()
 
 
@@ -884,7 +888,7 @@ def main(argv: list[str] | None = None) -> None:
         except BaseException:
             temp.unlink(missing_ok=True)   # no partial archive copy left behind
             raise
-    os.replace(temp, args.out)
+    Path(temp).replace(args.out)
     log(f"wrote {args.out} ({args.out.stat().st_size:#x} bytes), {len(manifest['cars'])} cars")
 
     failed = 0

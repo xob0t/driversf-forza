@@ -48,9 +48,9 @@ import struct
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from dsfforza import REPO
 
-from dsfforza.game import game_paths  # noqa: E402
+from dsfforza import REPO
+from dsfforza.game import game_paths
 
 DEFAULT_LUA = REPO / "out" / "lua-src" / "LuaScripts" / "vehiclestats" / "vehiclestats.lua"
 DEFAULT_GAMEDBS = {"FH1": REPO / "out" / "db" / "fh1_gamedb.slt", "FM4": REPO / "out" / "db" / "fm4_gamedb.slt"}
@@ -171,7 +171,7 @@ def dsf_engine(stats: dict) -> Engine:
     layout = {"L": "I", "H": "F"}.get(m.group(1), m.group(1))
     rest = m.group(3).lower()
     aspiration = "na"
-    if "td" == rest.strip() or "diesel" in rest:
+    if rest.strip() == "td" or "diesel" in rest:
         aspiration = "diesel"
     elif "turbo" in rest:
         aspiration = "turbo"
@@ -233,17 +233,14 @@ def _dsf_body(cls: str, model: str) -> str:
         return "wagon"
     if any(w in n for w in CONVERTIBLE_WORDS) or "cobra427" in n or "solstice" in n:
         return "convertible"
-    for prefix, body in (("Luxury Saloon", "sedan"), ("Saloon", "sedan"), ("Sports Coupe", "coupe"),
+    body = next((b for prefix, b in (("Luxury Saloon", "sedan"), ("Saloon", "sedan"), ("Sports Coupe", "coupe"),
                          ("Sports Car", "coupe"), ("Super Car", "supercar"), ("70's Muscle", "muscle"),
                          ("70s Muscle", "muscle"), ("Modern Muscle", "muscle"), ("Tanner", "muscle"),
                          ("Mini Car", "hatch"), ("SUV", "suv"), ("Pick Up", "pickup"), ("Van", "van"),
                          ("Prison Van", "van"), ("Security Van", "van"), ("Truck", "truck"), ("Bus", "bus"),
                          ("Buggy", "buggy"), ("Rally", "coupe"), ("DriftCar", "coupe"), ("Classic", "coupe"),
-                         ("Old", "sedan"), ("Cop Car", "sedan"), ("Taxi", "sedan")):
-        if cls.startswith(prefix):
-            break
-    else:
-        body = "sedan"
+                         ("Old", "sedan"), ("Cop Car", "sedan"), ("Taxi", "sedan"))
+                 if cls.startswith(prefix)), "sedan")
     if any(w in n for w in SUV_WORDS):
         return "suv"
     if body in ("coupe", "sedan") and any(w in n for w in ("pacer", "beetle", "volt")):
@@ -280,14 +277,13 @@ def survey(dsf: Path | None = None, lua: Path | None = DEFAULT_LUA, cache: Path 
 
 def _survey(dsf: Path, lua: Path | None) -> list[dict]:
     from dsfforza.build import clone_vehicle as cv
-    from dsfforza.convert import cockpit
-    from dsfforza.convert import dsf_materials as dm
-    from dsfforza.convert import forza2dsf
     from dsfforza.build import handling
+    from dsfforza.convert import cockpit, forza2dsf
+    from dsfforza.convert import dsf_materials as dm
     from dsfforza.formats import upvh
     from dsfforza.formats.chnk import read_chunk
     from dsfforza.formats.vehicle_mesh import child, payload
-    from dsfforza.formats.vehicles import parse_binf, parse_vsct, expand
+    from dsfforza.formats.vehicles import expand, parse_binf, parse_vsct
 
     stats = handling.lua_stats(lua) if lua else {}
     out = []
@@ -624,7 +620,7 @@ def identity_score(host: dict, car: ForzaInfo) -> tuple[float, str | None]:
         return 0.0, None
     a, b = _alias(model), _alias(car.model)
     close_year = year is None or car.year is None or abs(year - car.year) <= 4
-    if a and b and (a == b or a == car.model or model == b) and close_year:
+    if a and b and (a in (b, car.model) or model == b) and close_year:
         return 60.0, f"same model ({host['model']})"
     # Families are words of 3+ letters (skyline, mustang) or short names with a digit (a4, q7, r8).
     if (len(family) >= 3 or (len(family) == 2 and any(c.isdigit() for c in family))) and (
@@ -740,10 +736,9 @@ def score_host(host: dict, car: ForzaInfo, mode: str = "host") -> tuple[float, l
     total += pts
     if pts:
         why.append(f"+{pts:.0f} body {host['body']}" + ("" if sim == 1 else f" (car {car.body})"))
-    if car.doors and host.get("doors"):
-        if car.doors == host["doors"]:
-            total += 6
-            why.append(f"+6 {host['doors']} doors")
+    if car.doors and host.get("doors") and car.doors == host["doors"]:
+        total += 6
+        why.append(f"+6 {host['doors']} doors")
     host_drive = {"4WD": "AWD"}.get(host["stats"].get("Drivetrain"), host["stats"].get("Drivetrain"))
     if car.drive and host_drive == car.drive:
         total += 4

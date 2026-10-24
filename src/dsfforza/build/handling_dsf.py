@@ -37,8 +37,8 @@ import statistics
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from dsfforza import REPO
 
+from dsfforza import REPO
 from dsfforza.build import handling as H
 from dsfforza.build import host_select as HS
 from dsfforza.formats.chnk import read_chunk
@@ -607,7 +607,7 @@ def context(host_id: int, media: str, fleet: dict[int, dict], ranking_ids: list[
     drive_donor = None
     for i in (ranking_ids or [host_id]):
         donor_specs = specs_from_stats(fleet[i]["stats"]) if i in fleet else None
-        if i == host_id and host_specs.drive == specs.drive or donor_specs and donor_specs.drive == specs.drive:
+        if (i == host_id and host_specs.drive == specs.drive) or (donor_specs and donor_specs.drive == specs.drive):
             drive_donor = fleet[i]
             break
     return Context(host, host_specs, car, specs, model, neighbors, dict(base if base is not None else host["params"]),
@@ -779,7 +779,7 @@ def loo(rules_to_try: tuple[str, ...] = ("H", "M", "F", "A", "N", "Z", "R", "W")
         for name in ("dsf", "medoid", "nodrive"):
             if name in variants and 30 in variants[name]:
                 variants[name][30] += fleet[sid]["hub_y"] - ctx.host["hub_y"]
-        for rule, rel in (("CH", None), ("CZ", None)):
+        for rule, _rel in (("CH", None), ("CZ", None)):
             hw = value(ctx.base, 392) or ctx.host["wheelbase"]
             if rule == "CH":
                 off = (value(ctx.base, 32) - ctx.host["axle_mid"]) * car.wheelbase / hw

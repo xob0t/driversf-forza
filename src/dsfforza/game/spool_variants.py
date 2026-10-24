@@ -23,10 +23,9 @@ from __future__ import annotations
 
 import argparse
 import struct
-import sys
 from pathlib import Path
 
-from dsfforza.formats.chnk import Entry, layout, read_chunk, write_chunk  # noqa: E402
+from dsfforza.formats.chnk import Entry, layout, read_chunk, write_chunk
 
 
 def number(text: str) -> int:

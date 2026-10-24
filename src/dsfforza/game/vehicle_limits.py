@@ -17,10 +17,9 @@ from __future__ import annotations
 
 import argparse
 import struct
-import sys
 from pathlib import Path
 
-from dsfforza.formats.chnk import read_chunk  # noqa: E402
+from dsfforza.formats.chnk import read_chunk
 
 STATIC_SPOOL_BUFFER = 0x280000
 

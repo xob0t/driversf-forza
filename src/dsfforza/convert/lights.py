@@ -33,13 +33,14 @@ off (function 0) and parked on the nearest lamp of the same end.
 
 from __future__ import annotations
 
-from dsfforza.game import game_paths
 import argparse
 import math
 import struct
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from dsfforza.game import game_paths
 
 # Lamp functions: (type byte, colour byte, variant byte). Type bytes index the
 # exe's table: 1 Headlights, 2 Brakes, 3 DaytimeRunning, 4/5 Left/Right
@@ -264,7 +265,7 @@ class LampPlan:
     slots: list = field(default_factory=list)       # per host light entry: (offset, id, Lamp | None)
 
     @classmethod
-    def build(cls, sections, place, mid_z: float, lenses=frozenset()) -> "LampPlan":
+    def build(cls, sections, place, mid_z: float, lenses=frozenset()) -> LampPlan:
         """sections: Forza body sections (all LODs). place: forza2dsf.Placement.
         mid_z: DSF z of the wheelbase midpoint (front lamps are ahead of it).
         lenses: id(sub) of lamp-cover glass subsections drawn as lamp texels
@@ -365,7 +366,7 @@ class LampPlan:
                 self.tri_lamp[(id(r.sub), r.k)] = best.key
 
     # -- host light entries --
-    def assign(self, upvh: bytes) -> "LampPlan":
+    def assign(self, upvh: bytes) -> LampPlan:
         """Give lamps the host's light entries, most important first. Lamps
         left over share an entry of the same function and side if there is
         one (their geometry lights with it), else stay unlit."""
@@ -415,7 +416,7 @@ class LampPlan:
         of the same end (or where they were)."""
         data = bytearray(upvh)
         used = [lamp for _, _, lamp in self.slots if lamp is not None]
-        for o, lid, lamp in self.slots:
+        for o, _lid, lamp in self.slots:
             if lamp is not None:
                 struct.pack_into("<3f", data, o, *lamp.position)
                 struct.pack_into("<3f", data, o + 16, *lamp.direction)
@@ -473,9 +474,9 @@ def main(argv: list[str] | None = None) -> None:
     if getattr(args, 'dsf', None):
         args.dsf = game_paths.stock(args.dsf)  # the original when a dsfforza install replaced it
 
+    from dsfforza.formats import upvh as uv
     from dsfforza.formats import vehicle_mesh as vm
     from dsfforza.formats.chnk import read_chunk
-    from dsfforza.formats import upvh as uv
     archive = args.dsf if args.cmd == "plan" else args.archive
     spool = args.host if args.cmd == "plan" else args.id
     with archive.open("rb") as stream:

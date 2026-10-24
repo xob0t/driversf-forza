@@ -62,6 +62,7 @@ gamedb.slt) is made by src/dsfforza/game/game_data.py prepare when missing.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import ctypes
 import datetime
 import hashlib
@@ -75,11 +76,11 @@ import time
 import traceback
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from dsfforza import REPO
 
-from dsfforza.game import game_paths  # noqa: E402
-from dsfforza.build import gentle  # noqa: E402
-from dsfforza.formats.chnk import ENTRY_LIMIT  # noqa: E402
+from dsfforza import REPO
+from dsfforza.build import gentle
+from dsfforza.formats.chnk import ENTRY_LIMIT
+from dsfforza.game import game_paths
 
 GARAGE_IDS = range(1, 62)          # garage loop covers 0..303; 0 is left alone, stock starts at 62
 HIGH_FIRST_ID = 304
@@ -331,7 +332,7 @@ def garage_groups() -> tuple[dict[str, int], dict[str, str]]:
     return counts, {make: name for make, (_, name) in makes.items()}
 
 
-def car_groups(picks: list["Pick"], group_of: dict[str, str]) -> dict[str, str]:
+def car_groups(picks: list[Pick], group_of: dict[str, str]) -> dict[str, str]:
     """{media: garage group key} as gui_assets.build will name the maker: Forza's own
     maker name (src/dsfforza/formats/forza_strings.py via gui_assets.car_texts) mapped by
     gui_assets.dsf_make to a stock maker's "ID:nnnnnn" string, else the plain name."""
@@ -494,10 +495,9 @@ def worker(job_path: Path) -> int:
 
     report = {"media": job["media"], "game": job["game"], "spool_id": job["spool_id"], "ok": False}
     try:
-        from dsfforza.build import clone_vehicle
-        from dsfforza.build import port_car
-        from dsfforza.formats.chnk import read_chunk, write_chunk
+        from dsfforza.build import clone_vehicle, port_car
         from dsfforza.build.forza_roster import Source
+        from dsfforza.formats.chnk import read_chunk, write_chunk
         dsf = Path(job["dsf"])
         args = port_car_args(["--dsf", str(dsf), "--out", str(out_chunk.with_suffix(".unused.sp")),
                               "--car", f"{job['media']}@{job['game'].lower()}", "--cache", job["cache"]]
@@ -518,7 +518,7 @@ def worker(job_path: Path) -> int:
             temp = out_chunk.with_suffix(".tmp")
             with temp.open("wb") as out:
                 write_chunk(out, stream, clones, root.version)
-            os.replace(temp, out_chunk)
+            Path(temp).replace(out_chunk)
         report.update({
             "ok": True, "host": host, "host_name": names[host], "sound": sound,
             "entry": {**port_car.car_entry(job["media"], job["year"], job["games"], source, args.cache,
@@ -534,7 +534,7 @@ def worker(job_path: Path) -> int:
     # Atomic: a worker killed while writing (timeout) must not leave half a report.
     temp = out_report.with_suffix(".json.tmp")
     temp.write_text(json.dumps(report, indent=1, default=str) + "\n", encoding="utf-8")
-    os.replace(temp, out_report)
+    Path(temp).replace(out_report)
     return 0 if report["ok"] else 1
 
 
@@ -703,8 +703,7 @@ def register_cars(dsf: Path, out: Path, results: list[dict], work: Path, log=pri
                   root_limit: int = ENTRY_LIMIT) -> tuple[list[dict], list[dict], dict[str, list[str]]]:
     """One merge pass: (manifest "cars", failures, {media: clashing UIDs}). The
     archive is written only when no car clashes."""
-    from dsfforza.build import clone_vehicle
-    from dsfforza.build import port_car
+    from dsfforza.build import clone_vehicle, port_car
     from dsfforza.formats.chnk import read_chunk, write_chunk
     stream = MultiStream(dsf)
     failed = []
@@ -751,7 +750,7 @@ def register_cars(dsf: Path, out: Path, results: list[dict], work: Path, log=pri
         try:
             with temp.open("wb") as handle:
                 write_chunk(handle, stream, entries, root.version)
-            os.replace(temp, out)
+            Path(temp).replace(out)
         finally:
             temp.unlink(missing_ok=True)   # a failed write leaves no 1-2 GB partial copy behind
         size = out.stat().st_size
@@ -807,10 +806,10 @@ def print_plan(picks: list[Pick]) -> None:
 
 
 def cmd_plan(args) -> None:
-    dsf, isos, cars, dbs = common(args)
+    dsf, _isos, cars, dbs = common(args)
     picks = select(args, cars, dsf, dbs)
-    from dsfforza.formats.chnk import read_chunk
     from dsfforza.build import clone_vehicle
+    from dsfforza.formats.chnk import read_chunk
     with dsf.open("rb") as stream:
         taken = clone_vehicle.taken_ids(stream, read_chunk(stream, 0).entries)
     assign_ids([p for p in picks if not p.notes], taken, args.id_policy, args.first_id)
@@ -842,8 +841,8 @@ def cmd_build(args) -> None:
     picks = select(args, cars, dsf, dbs)
     skipped = [p for p in picks if p.notes]
     picks = [p for p in picks if not p.notes]
-    from dsfforza.formats.chnk import read_chunk
     from dsfforza.build import clone_vehicle
+    from dsfforza.formats.chnk import read_chunk
     with dsf.open("rb") as stream:
         stock_entries = read_chunk(stream, 0).entries
         taken = clone_vehicle.taken_ids(stream, stock_entries)
@@ -979,8 +978,8 @@ def cmd_remerge(args) -> None:
         report = json.loads((work / f"{c['media']}.json").read_text(encoding="utf-8"))
         if report.get("ok"):
             ok.append(report)
-    from dsfforza.formats.chnk import read_chunk
     from dsfforza.build import clone_vehicle
+    from dsfforza.formats.chnk import read_chunk
     with args.dsf.open("rb") as stream:
         taken = clone_vehicle.taken_ids(stream, read_chunk(stream, 0).entries)
     picks = [Pick(r["media"], r["game"], None, "", {}) for r in ok]
@@ -991,7 +990,7 @@ def cmd_remerge(args) -> None:
     port_args = port_car_args(["--dsf", str(args.dsf), "--out", "x.sp", "--car", "X"] + port_options)
     args.jobs = gentle.jobs(args.jobs or 4)
     args.out.mkdir(parents=True, exist_ok=True)
-    failed = [f for f in old.get("batch", {}).get("failed", [])]
+    failed = list(old.get("batch", {}).get("failed", []))
     finish(args, args.dsf, args.out, work, ok, failed, port_args, port_options, {}, started,
            {r["media"]: r for r in ok})
 
@@ -1045,10 +1044,8 @@ def write_report(out_dir: Path, archive: Path, cars: list[dict], failed: list[di
 
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
-    try:
+    with contextlib.suppress(AttributeError, ValueError):
         sys.stdout.reconfigure(line_buffering=True)
-    except (AttributeError, ValueError):
-        pass
     if argv[:1] == ["_worker"]:
         sys.exit(worker(Path(argv[1])))
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0],

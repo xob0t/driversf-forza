@@ -27,6 +27,7 @@ Commands:
 from __future__ import annotations
 
 import argparse
+import itertools
 import struct
 import sys
 import wave
@@ -155,7 +156,7 @@ class Wem:
     def data(self) -> bytes: return next(d for t, d in self.chunks if t == b"data")
 
     @classmethod
-    def parse(cls, raw: bytes) -> "Wem":
+    def parse(cls, raw: bytes) -> Wem:
         if raw[:4] != b"RIFF" or raw[8:12] != b"WAVE":
             raise ValueError("not a RIFF/WAVE wem")
         chunks, p = [], 12
@@ -173,7 +174,7 @@ class Wem:
                         for t, d in self.chunks)
         return b"RIFF" + struct.pack("<I", 4 + len(body)) + b"WAVE" + body
 
-    def with_data(self, data: bytes, rate: int | None = None) -> "Wem":
+    def with_data(self, data: bytes, rate: int | None = None) -> Wem:
         fmt = bytearray(self.fmt)
         if rate is not None:
             struct.pack_into("<I", fmt, 4, rate)
@@ -392,7 +393,7 @@ class Bank:
     data_align: int = 16
 
     @classmethod
-    def parse(cls, raw: bytes) -> "Bank":
+    def parse(cls, raw: bytes) -> Bank:
         sections, p = [], 0
         while p + 8 <= len(raw):
             tag, size = raw[p:p + 4].decode("latin-1"), struct.unpack_from("<I", raw, p + 4)[0]
@@ -402,8 +403,8 @@ class Bank:
             p += 8 + size
         if p != len(raw):
             raise ValueError(f"trailing bytes at {p:#x}")
-        sec = dict((t, d) for t, d in sections)
-        version, bank_id, _lang, feedback = struct.unpack_from("<IIII", sec["BKHD"])
+        sec = dict(sections)
+        version, _bank_id, _lang, feedback = struct.unpack_from("<IIII", sec["BKHD"])
         if version != VERSION:
             raise ValueError(f"bank version {version}, expected {VERSION}")
         media = []
@@ -546,7 +547,7 @@ class Bank:
         problems = []
         raw = self.build()
         again = Bank.parse(raw)
-        didx = {mid: wem for mid, wem in again.media}
+        didx = dict(again.media)
         for o in again.objects:
             i = o.info
             if o.type != 2 or i["file"] != again.bank_id:
@@ -574,7 +575,7 @@ def sound_rpm(o: HircObject) -> float | None:
     for rt in o.info.get("rtpcs", []):
         if rt["rtpc"] == 0x9C4D0121 and rt["param"] == 2:
             pts = rt["points"]
-            for (x0, y0, _), (x1, y1, _) in zip(pts, pts[1:]):
+            for (x0, y0, _), (x1, y1, _) in itertools.pairwise(pts):
                 if y0 <= 0 <= y1 and y1 != y0:
                     return x0 + (x1 - x0) * (0 - y0) / (y1 - y0)
     return None
@@ -595,7 +596,7 @@ def describe_rtpcs(rtpcs: list[dict], curves: bool) -> str:
 
 def tree(bank: Bank, curves: bool = False, out=sys.stdout) -> None:
     objs = bank.by_id()
-    media = {mid: wem for mid, wem in bank.media}
+    media = dict(bank.media)
     kids: dict[int, list[int]] = {}
     for o in bank.objects:
         if "parent" in o.info and o.info["parent"] in objs:
@@ -681,7 +682,7 @@ def main(argv: list[str] | None = None) -> None:
             try:
                 b = Bank.parse(path.read_bytes())
                 problems = b.validate()
-            except Exception as e:  # noqa: BLE001 - report and continue
+            except Exception as e:
                 problems = [str(e)]
             if problems:
                 bad += 1

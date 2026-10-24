@@ -231,8 +231,10 @@ def write_obj(mesh: Mesh, path: Path, uv_semantic: int | None, submodels: list[S
 
 def write_png(path: Path, width: int, height: int, pixels: bytearray) -> None:
     rows = b"".join(b"\0" + bytes(pixels[y * width * 3:(y + 1) * width * 3]) for y in range(height))
-    chunk = lambda tag, data: (struct.pack(">I", len(data)) + tag + data
-                               + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
+
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
     path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
                      + chunk(b"IDAT", zlib.compress(rows, 6)) + chunk(b"IEND", b""))
 

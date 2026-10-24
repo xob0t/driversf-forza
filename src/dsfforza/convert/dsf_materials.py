@@ -574,7 +574,7 @@ class Texturing:
     wheel_ids: set = field(default_factory=set)        # id(section) of the Forza wheel model (plan(wheels=...))
 
     # -- planning --
-    def plan(self, sections, lods, extra_solids: dict | None = None, wheels=None) -> "Texturing":
+    def plan(self, sections, lods, extra_solids: dict | None = None, wheels=None) -> Texturing:
         """Resolve every subsection at `lods` and lay out the atlas.
         extra_solids: key -> RGBA cells to reserve as well (`solid_uv(key)`).
         wheels: (wheel sections, their LODs): the Forza wheel model, whose rims
@@ -753,8 +753,8 @@ class Texturing:
         m = self.submaterial(section, sub)
         if id(sub) in self.cutout:
             return fm.SKIP
-        if self._uses_atlas(m) and (m.kind == "textured" and id(sub) in self.atlas_subs
-                                    or m.kind == "swatch" and m.colour is not None):
+        if self._uses_atlas(m) and ((m.kind == "textured" and id(sub) in self.atlas_subs)
+                                    or (m.kind == "swatch" and m.colour is not None)):
             return LIGHTS_MAT if m.family == fm.LIGHTS else CHASSIS
         if m.role == fm.TEXTURED:
             return fm.TRIM  # tiling/procedural lamp parts: untextured
@@ -1199,8 +1199,8 @@ def preview(archive: Path, vehc_index: int, png: Path, mask: int | None = None, 
     """Render side, top, front and rear views of one VEHC with its local
     materials textured (nearest texel of the top mip; textures are looked up
     by UID across the whole archive) and shared materials flat-coloured."""
-    from dsfforza.formats.chnk import read_chunk
     from dsfforza.formats import vehicle_mesh as vm
+    from dsfforza.formats.chnk import read_chunk
     _, mesh = vm.load(archive, vehc_index)
     textures, materials = {}, {}
     with archive.open("rb") as stream:

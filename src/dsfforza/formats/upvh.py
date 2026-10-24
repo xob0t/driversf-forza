@@ -150,8 +150,12 @@ def parse(data: bytes) -> Hierarchy:
     for i in range(count):
         r = HEADER_SIZE + i * RECORD_SIZE
         raw = data[r:r + RECORD_SIZE]
-        i16 = lambda off: struct.unpack_from("<h", raw, off)[0]
-        i8 = lambda off: struct.unpack_from("<b", raw, off)[0]
+        def i16(off, raw=raw):
+            return struct.unpack_from("<h", raw, off)[0]
+
+        def i8(off, raw=raw):
+            return struct.unpack_from("<b", raw, off)[0]
+
         h.records.append(Record(
             index=i, uid=None if raw[:8] == NONE_UID else swap_uid(raw[:8]),
             type=struct.unpack_from("<H", raw, 0x08)[0], role=struct.unpack_from("<H", raw, 0x0A)[0],

@@ -44,8 +44,8 @@ from pathlib import Path
 
 from dsfforza.formats import carbin
 from dsfforza.formats.chnk import Entry, entry_size, read_chunk, write_chunk
-from dsfforza.formats.vehicles import find, parse_sslp
 from dsfforza.formats.vehicle_mesh import child, payload
+from dsfforza.formats.vehicles import find, parse_sslp
 
 # --- DSF shared materials, identified by rendering the Desanne's submodels per material.
 PAINT = bytes.fromhex("001283358afd1027")
@@ -124,9 +124,8 @@ def stock_sections(sections: list[carbin.Section]) -> list[carbin.Section]:
         if name.endswith("race") and name != "race":
             continue
         m = re.fullmatch(r"(.*?)([a-z])", name)  # FM4 goes past d: Skyline R32 bumperFa..Fg, hooda/hoodg
-        if m and m.group(1) and (m.group(1) + "a" in names or m.group(1) + "b" in names):
-            if m.group(2) != "a":
-                continue
+        if m and m.group(1) and (m.group(1) + "a" in names or m.group(1) + "b" in names) and m.group(2) != "a":
+            continue
         keep.append(s)
     return keep
 
@@ -512,7 +511,7 @@ class TyreMap:
     side_edges: list
 
     @staticmethod
-    def build(tris: list) -> "TyreMap | None":
+    def build(tris: list) -> TyreMap | None:
         pts = [p for t in tris for p in t]
         if len(tris) < 8:
             return None
@@ -685,10 +684,10 @@ def add_geometry(builder: Builder, sections, lod: int, place: Placement, wheel: 
                 from dsfforza.convert import glass
                 window = glass.InteriorGlass(seed=builder.uid_prefix.hex(), sight=glass_sight)
 
-            def flush():
-                if tris:
-                    added.append(builder.add(material, list(verts_out), list(tris)))
-                verts_out.clear(), remap.clear(), tris.clear()
+            def flush():  # called within this iteration only
+                if tris:  # noqa: B023
+                    added.append(builder.add(material, list(verts_out), list(tris)))  # noqa: B023
+                verts_out.clear(), remap.clear(), tris.clear()  # noqa: B023
 
             for section, sub in items:
                 pool = section.vertices_for(sub)
@@ -762,7 +761,7 @@ def add_geometry(builder: Builder, sections, lod: int, place: Placement, wheel: 
                         out.append(remap[key])
                     tris.append(tuple(out))
             if window is not None:
-                for corners, region in window.triangles():
+                for corners, _region in window.triangles():
                     if merge and len(verts_out) > 0xFFFF - 3:
                         flush()
                     out = []
@@ -868,7 +867,7 @@ def rebuild_modl(template: bytes, part_lods: dict[int, dict[int, list[NewSub]]],
     """Keep the part records; rewrite the LOD tables. part_lods maps part index
     -> {mask: submodels}. Other LOD entries are emptied, or keep the host's
     submodel lists when keep_other_parts."""
-    part_count, lod_count, lod_offset, _ = struct.unpack_from("<4I", template)
+    part_count, _lod_count, lod_offset, _ = struct.unpack_from("<4I", template)
     out = bytearray(template[:lod_offset])
     lods = []  # (mask, [(uid, flag)])
     for p in range(part_count):
@@ -1322,6 +1321,7 @@ def convert(stream, full: Entry, exterior: Entry, car: ForzaCar, dims: CarDims, 
         # join the body as synthetic sections, so damage, LODs and the shadow
         # treat them like Forza geometry.
         import dataclasses
+
         from dsfforza.convert import plates
         host = plates.host_plates(stream, full)
         body, plate_plan = plates.apply(car, place, hw.hub_y - dims.radius, host, log=log)
@@ -1333,6 +1333,7 @@ def convert(stream, full: Entry, exterior: Entry, car: ForzaCar, dims: CarDims, 
         # subsections (before the lamp plan, which keys on subsections), so
         # DamagePlan can texture what a missing bonnet exposes like stock.
         import dataclasses
+
         from dsfforza.convert import damage
         engine = damage.engine_placement(car.name, opts.gamedbs, car.folder)
         body, exposed = damage.split_exposed(car.body, place, log=log, engine=engine)

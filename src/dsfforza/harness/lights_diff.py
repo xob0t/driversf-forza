@@ -121,7 +121,7 @@ def main(argv: list[str] | None = None) -> None:
         rows, scores = [], {}
         for k, (w, h, px) in sorted(frames.items()):
             base_k = 1 if k <= half else half + 1   # the "off" phase of the same lighting
-            bw, bh, base = frames.get(base_k, frames[min(frames)])
+            _bw, _bh, base = frames.get(base_k, frames[min(frames)])
             diff = bytearray(len(px))
             score = 0
             for i in range(0, len(px), 3):

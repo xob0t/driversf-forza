@@ -91,7 +91,7 @@ def check(asi: bool) -> list[str]:
     stats = lua.globals().vehicleStats
     groups = Counter()
     selectable_added = 0
-    for sid in range(0, 1000):
+    for sid in range(1000):
         e = stats[sid]
         if e is not None and e.Selectable:
             groups[str(e.ManufacturerName).upper()[:15]] += 1

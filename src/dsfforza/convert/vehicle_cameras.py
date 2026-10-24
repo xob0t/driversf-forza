@@ -136,7 +136,10 @@ def bonnet_position(windscreen, body_tris) -> tuple[tuple[float, float, float], 
         below = first_hit(body_tris, cam, (0.0, -1.0, 0.0), reach=3.0)
     above = first_hit(body_tris, cam, (0.0, 1.0, 0.0), reach=2.0)
     ahead = first_hit(body_tris, cam, (0.0, 0.0, 1.0), reach=1.5)
-    r = lambda t: None if t is None else round(t, 3)
+
+    def r(t):
+        return None if t is None else round(t, 3)
+
     return cam, {"over": r(below), "raised": round(raised, 3), "above": r(above), "ahead": r(ahead)}
 
 

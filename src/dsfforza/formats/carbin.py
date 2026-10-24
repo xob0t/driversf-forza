@@ -89,7 +89,7 @@ class SubSection:
                 if i in restarts:
                     for k in range(len(run) - 2):
                         a, b, c = run[k], run[k + 1], run[k + 2]
-                        if a == b or b == c or a == c:
+                        if a in (b, c) or b == c:
                             continue
                         tris.append((a, b, c) if k % 2 == 0 else (b, a, c))
                     run = []
@@ -222,7 +222,7 @@ def _parse_subsection(r: _Reader, version: int) -> SubSection:
     size = r.i32()
     if size not in (2, 4) or not 0 <= count < 10_000_000:
         raise CarbinError(f"{name}: bad index buffer {count} x {size} at {r.pos - 8:#x}")
-    fmt = ">%d%s" % (count, "H" if size == 2 else "I")
+    fmt = f">{count:d}{'H' if size == 2 else 'I'}"
     indices = list(struct.unpack(fmt, r.take(count * size)))
     r.skip(4)
     return SubSection(name, lod, index_type, uv, indices)

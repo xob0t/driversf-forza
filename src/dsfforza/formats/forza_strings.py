@@ -26,6 +26,7 @@ import argparse
 import struct
 import sys
 from pathlib import Path
+
 from dsfforza import REPO
 
 STRING_FILES = ("Data_Car.str", "List_CarMake.str", "List_FamilyModel.str")
@@ -48,12 +49,12 @@ def parse(data: bytes) -> dict[int, tuple[str, str]]:
         raise ValueError("not an LSB string table")
     e = ">" if data[:4] == b"LSB2" and data[4] & 1 else "<"
     base = 12 if data[:4] == b"LSB2" else 4
-    header_size, count = struct.unpack_from(e + "II", data, base)
+    _header_size, count = struct.unpack_from(e + "II", data, base)
     offsets = struct.unpack_from(f"{e}{count}I", data, base + 8)
     texts, ids = {}, {}
     if offsets[0]:
         o = offsets[0]
-        size, n = struct.unpack_from(e + "II", data, o)
+        _size, n = struct.unpack_from(e + "II", data, o)
         table = o + 8
         p = table + 6 * (n + 1)
         for i in range(n + 1):
@@ -65,7 +66,7 @@ def parse(data: bytes) -> dict[int, tuple[str, str]]:
             texts[h] = data[start:end].decode("utf-16-be" if e == ">" else "utf-16-le", errors="replace")
     if len(offsets) > 1 and offsets[1]:
         o = offsets[1]
-        size, n = struct.unpack_from(e + "II", data, o)
+        _size, n = struct.unpack_from(e + "II", data, o)
         table = o + 8
         p = table + 8 * n
         for i in range(n):

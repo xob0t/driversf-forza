@@ -29,7 +29,7 @@ import struct
 import sys
 from pathlib import Path
 
-from dsfforza.formats import chnk  # noqa: E402
+from dsfforza.formats import chnk
 
 # Stock Lua 5.1 on x86 except byte 10: sizeof(lua_Number) is 4 (float, not double).
 LUA51_HEADER = b"\x1bLua\x51\x00\x01\x04\x04\x04\x04\x00"
@@ -91,7 +91,7 @@ def read_package(path: Path) -> list[dict]:
         scrr = find(root.entries, "SCRR")
         scrh, scrc, scrs = (find(scrr.children, t) for t in ("SCRH", "SCRC", "SCRS"))
         stream.seek(scrh.offset)
-        version, count, checksum, flags = struct.unpack("<4I", stream.read(16))
+        version, count, _checksum, flags = struct.unpack("<4I", stream.read(16))
         if version != 1:
             raise ValueError(f"{path}: SCRH version {version:#x} (big-endian package?)")
         stream.seek(scrc.offset)

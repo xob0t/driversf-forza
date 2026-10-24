@@ -5,12 +5,9 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-from dsfforza.formats import carbin  # noqa: E402
-from dsfforza.convert import cockpit  # noqa: E402
-from dsfforza.convert import forza_materials as fm  # noqa: E402
+from dsfforza.convert import cockpit
+from dsfforza.convert import forza_materials as fm
+from dsfforza.formats import carbin
 
 
 def _display(transform: tuple, width: float = 0.25, height: float = 0.08) -> carbin.Section:

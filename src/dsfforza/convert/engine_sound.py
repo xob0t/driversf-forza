@@ -53,8 +53,10 @@ render of an idle -> redline -> idle sweep through both sets' curves, full load)
 from __future__ import annotations
 
 import argparse
+import contextlib
 import copy
 import hashlib
+import itertools
 import json
 import math
 import mmap
@@ -65,12 +67,12 @@ import sys
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
-from dsfforza import REPO
 
 import numpy as np
 
-from dsfforza.formats import wwise_bank as wb  # noqa: E402
-from dsfforza.formats.chnk import read_chunk, write_chunk  # noqa: E402
+from dsfforza import REPO
+from dsfforza.formats import wwise_bank as wb
+from dsfforza.formats.chnk import read_chunk, write_chunk
 
 DEFAULT_DSF = REPO / "out" / "stock" / "Install" / "dngvehicles.sp"
 CACHE = REPO / "out" / "cache" / "sound"
@@ -113,7 +115,7 @@ def write_atomic(path: Path, data: bytes) -> None:
     temp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     temp.write_bytes(data)
     try:
-        os.replace(temp, path)
+        Path(temp).replace(path)
     except OSError:          # another process holds the target; its copy is as good
         temp.unlink(missing_ok=True)
 
@@ -454,7 +456,7 @@ def _decoded(fsb_path: Path, fsb, folder: Path, vgm: Path) -> list[Path]:
     if folder.is_dir() and len(list(folder.glob("*.wav"))) != len(fsb.subsongs):
         shutil.rmtree(folder, ignore_errors=True)      # a broken earlier decode
     try:
-        os.replace(temp, folder)
+        Path(temp).replace(folder)
     except OSError:
         shutil.rmtree(temp, ignore_errors=True)
     wavs = sorted(folder.glob("*.wav"))
@@ -569,7 +571,7 @@ def pick_loops(loops: list[ForzaLoop], n: int, redline: float) -> list[ForzaLoop
     best, pick = None, None
     for mid in combinations(range(1, len(usable) - 1), n - 2):
         idx = (0, *mid, len(usable) - 1)
-        gaps = [logs[b] - logs[a] for a, b in zip(idx, idx[1:])]
+        gaps = [logs[b] - logs[a] for a, b in itertools.pairwise(idx)]
         key = (round(max(gaps), 6), sum(g * g for g in gaps))
         if best is None or key < best:
             best, pick = key, idx
@@ -624,7 +626,7 @@ def rms(x: np.ndarray) -> float:
 # --------------------------------------------------------------------------- curves
 
 def warp(points: list[tuple[float, float]], x: float) -> float:
-    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+    for (x0, y0), (x1, y1) in itertools.pairwise(points):
         if x <= x1:
             return y0 if x1 == x0 else y0 + (y1 - y0) * (x - x0) / (x1 - x0)
     return points[-1][1]
@@ -729,7 +731,7 @@ def pitch_ranges(bank: wb.Bank, vsvh: bytes) -> dict[str, dict]:
         gains = np.array([[curve_at(xf, g) / 255 for g in grid] if xf else [1.0] * len(grid) for _, _, xf in rows])
         cents = np.array([[curve_at(pitch, g) for g in grid] for _, pitch, _ in rows])
         main = 2 ** (cents[gains.argmax(axis=0), np.arange(len(grid))] / 1200)
-        for (s, pitch, xf), gain in zip(rows, gains):
+        for (s, pitch, _xf), gain in zip(rows, gains):
             live = grid[gain > 0.01]
             if not len(live):
                 loops.append({"rpm": round(s.rpm), "pitch": None})
@@ -1110,10 +1112,8 @@ def lint(stream, root_entries, spool_id: int, reserved: set[int] | None = None) 
         if sid == spool_id:
             own = parts
             continue
-        try:
+        with contextlib.suppress(ValueError, KeyError, struct.error):  # another car's problem; its own lint reports it
             banks[sid] = (wb.Bank.parse(parts["SBAK"]), parts["VSVH"])
-        except (ValueError, KeyError, struct.error):
-            pass                      # another car's problem; its own lint reports it
     if own is None:
         return [(False, f"sound: no kind-0 entry for spool {spool_id}")]
     vsvh = own.get("VSVH", b"")

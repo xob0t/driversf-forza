@@ -32,7 +32,6 @@ entry's brightness ratio in the Forza colour's hue.
 
 from __future__ import annotations
 
-from dsfforza.game import game_paths
 import argparse
 import copy
 import sqlite3
@@ -43,6 +42,7 @@ from pathlib import Path
 
 from dsfforza.formats.chnk import Entry, entry_size
 from dsfforza.formats.vehicle_mesh import child, payload
+from dsfforza.game import game_paths
 
 COLOUR_PARAMS = ("g_vec4TintColour1_Alpha", "g_vec3TintColour2", "g_vec3TintColour3")
 MAX_COLOURS = 14   # the largest stock palette
@@ -154,7 +154,7 @@ def parse_marp(data: bytes) -> tuple[str, bytes, int]:
 
 
 def marp_value(data: bytes):
-    name, value, kind = parse_marp(data)
+    _name, value, kind = parse_marp(data)
     if kind == 1:
         return struct.unpack_from("<f", value)[0]
     if kind == 3:
@@ -163,7 +163,7 @@ def marp_value(data: bytes):
 
 
 def set_marp(data: bytes, value) -> bytes:
-    name, raw, kind = parse_marp(data)
+    _name, raw, kind = parse_marp(data)
     if kind == 1:
         raw = struct.pack("<f", value) + raw[4:]
     elif kind == 3:
@@ -370,7 +370,7 @@ def install(stream, full: Entry, colours: list[ForzaColour], stock: list[dict],
             break
         built.pop()
     return {"installed": len(built), "host_count": host_count, "nonr": entry_size(nonr),
-            "colours": [{"sequence": c.sequence, "rgb": "#%02x%02x%02x" % c.rgb, "metallic": c.metallic,
+            "colours": [{"sequence": c.sequence, "rgb": "#{:02x}{:02x}{:02x}".format(*c.rgb), "metallic": c.metallic,
                          "class": c.colour_class, "finish": c.finish, "template": p["_template"],
                          "dimmed": p.get("_dimmed", 1.0),
                          "colour2": [round(x, 3) for x in p["g_vec3TintColour2"][:3]],
@@ -398,8 +398,8 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "colours":
         args.dsf = game_paths.stock(args.dsf)  # the original when a dsfforza install replaced it
 
-    from dsfforza.formats.chnk import read_chunk
     from dsfforza.formats import upvh as uv
+    from dsfforza.formats.chnk import read_chunk
     if args.cmd == "palette":
         with args.archive.open("rb") as stream:
             root = read_chunk(stream, 0)
@@ -408,7 +408,7 @@ def main(argv: list[str] | None = None) -> None:
             for n, spsp in enumerate(spss.children if spss else []):
                 q = spsp_params(stream, spsp)
                 c2 = q["g_vec3TintColour2"][:3]
-                srgb = "#%02x%02x%02x" % tuple(round(linear_to_srgb(x) * 255) for x in c2)
+                srgb = "#{:02x}{:02x}{:02x}".format(*(round(linear_to_srgb(x) * 255) for x in c2))
                 print(f"{n:2} {srgb} metallic {is_metallic(q)!s:5} c2 {tuple(round(x, 3) for x in c2)} "
                       f"c3 {tuple(round(x, 3) for x in q['g_vec3TintColour3'][:3])} power {q['g_fresnelpower']:.2f}")
         return
@@ -417,7 +417,7 @@ def main(argv: list[str] | None = None) -> None:
     for colour in pick_colours(forza_colours(args.gamedb, args.media)):
         q = shade(colour, stock)
         dimmed = q.get("_dimmed", 1.0)
-        print(f"{colour.sequence:2} #{'%02x%02x%02x' % colour.rgb} {'metallic' if colour.metallic else 'solid   '} "
+        print(f"{colour.sequence:2} #{'{:02x}{:02x}{:02x}'.format(*colour.rgb)} {'metallic' if colour.metallic else 'solid   '} "
               f"{colour.colour_class:8} {colour.finish or ''}<- stock {q['_template']} c2 {tuple(round(x, 3) for x in q['g_vec3TintColour2'][:3])} "
               f"c3 {tuple(round(x, 3) for x in q['g_vec3TintColour3'][:3])} power {q['g_fresnelpower']:.2f}"
               + (f" dimmed x{dimmed}" if dimmed < 1 else ""))
