@@ -21,6 +21,9 @@ Research notes are in `research/` (read the ones for your area first).
   branch and open a PR against `master` with `gh pr create`: what changed,
   why, how it was verified (run folders, screenshots), what is open. Report
   the PR URL.
+- No AI attribution in commits or PRs: no `Co-authored-by:` trailer for an
+  assistant, no "Generated with ..." lines. PRs are squash-merged and the
+  trailers end up on `master`.
 - Visual changes (anything that changes how a car looks in game or in a
   render): put before/after images in the PR when possible, same view and
   framing side by side, cropped to what changed. Commit them under
