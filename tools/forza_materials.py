@@ -13,6 +13,10 @@ the car's two atlases depending on the technique (`damageSampler` and
     Lights.xds   (+ damagelights.xds)  every lamp technique, lamp glass,
                                        reflectors; alpha is the glow mask
 
+The main carbin's `wheel` section is the exception: its rim techniques sample
+the car's own wheel.xds from the wheel archive media/wheels/<car>
+(classify_wheel, family WHEEL).
+
 lod0/cockpit carbins use the _LOD0 versions (nodamage_LOD0, lights_LOD0). The
 cockpit carbin's cabin sections draw with the cockpit_<technique> shaders,
 which sample interior_LOD0 (CockpitInteriorHiSampler) for every trim, dial and
@@ -36,6 +40,7 @@ UVs: atlas uv = raw * scale + offset with the subsection's m_UVOffsetScale
 from __future__ import annotations
 
 import argparse
+import math
 import re
 import sys
 from dataclasses import dataclass
@@ -50,12 +55,19 @@ NODAMAGE, LIGHTS = "nodamage", "lights"
 # Cockpit carbins only: dial faces, needles, switch labels (interior_LOD0.xds;
 # its alpha is the label cut-out mask).
 INTERIOR = "interior"
+# The wheel section's rim techniques (rim, chrome_rim, inner_rim, wheel_black,
+# wheel_emblem...): the car's own wheel texture, wheel.xds in the wheel archive
+# media/wheels/<car> (not in the car's zip; port_car.extract_wheel puts it in
+# the car folder). It holds the spoke shading, centre cap logos and nuts; its
+# alpha is a gloss mask on most cars, not a cut-out (classify_wheel).
+WHEEL = "wheel"
 
 FAMILY_FILES = {
     # family: (main-carbin file, lod0/cockpit file, damaged pair)
     NODAMAGE: ("nodamage.xds", "nodamage_LOD0.xds", "damage.xds"),
     LIGHTS: ("Lights.xds", "lights_LOD0.xds", "damagelights.xds"),
     INTERIOR: ("interior_LOD0.xds", "interior_LOD0.xds", "interior_LOD0.xds"),
+    WHEEL: ("wheel.xds", "wheel_LOD0.xds", "wheel.xds"),
 }
 
 # Exact technique names -> (role, family). Family is the atlas baseSampler
@@ -125,6 +137,46 @@ def triangle_max_alpha(atlas: tuple[int, int, bytearray], uvs) -> int:
         row = rgba[(y * width + min(xs)) * 4 + 3:(y * width + max(xs) + 1) * 4:4]
         best = max(best, max(row))
     return best
+
+
+# An alpha-tested triangle stays when at least this share of the texels inside it
+# (and at least one) pass Forza's test (alpha >= 128). Emblem and label triangles
+# of the 40 testdrive cars keep 20 to 100% of theirs; the F-150 Raptor's
+# stripe_badge mud-splash triangles, which its nodamage atlas hides (alpha 0
+# under all of them; the graphic is in nodamagestripe.xds, the texture of every
+# other factory colour), have at most 1 stray texel in 280.
+ALPHA_KEEP_SHARE = 0.01
+
+
+def triangle_alpha_cut(atlas: tuple[int, int, bytearray], uvs) -> bool:
+    """True if Forza's alpha test (texel alpha < 128 discarded) removes the
+    whole UV triangle: fewer than ALPHA_KEEP_SHARE of the texels whose centres
+    lie inside it pass. A triangle too small to hold a texel centre is judged
+    by the texels under its corners and centroid. (Testing the bounding box, as
+    triangle_max_alpha does, kept long thin decal triangles next to opaque
+    artwork: the Raptor's hidden stripe came out as black patches.)"""
+    import numpy as np
+    width, height, rgba = atlas
+    alpha = np.frombuffer(rgba, dtype=np.uint8)[3::4].reshape(height, width)
+    xs = [u * width for u, _ in uvs]
+    ys = [v * height for _, v in uvs]
+    x0, x1 = max(0, int(math.floor(min(xs)))), min(width, int(math.ceil(max(xs))) + 1)
+    y0, y1 = max(0, int(math.floor(min(ys)))), min(height, int(math.ceil(max(ys))) + 1)
+    inside = None
+    area = (xs[1] - xs[0]) * (ys[2] - ys[0]) - (ys[1] - ys[0]) * (xs[2] - xs[0])
+    if x0 < x1 and y0 < y1 and abs(area) > 1e-12:
+        gy, gx = np.mgrid[y0:y1, x0:x1] + 0.5
+        w0 = ((xs[1] - gx) * (ys[2] - gy) - (ys[1] - gy) * (xs[2] - gx)) / area
+        w1 = ((xs[2] - gx) * (ys[0] - gy) - (ys[2] - gy) * (xs[0] - gx)) / area
+        mask = (w0 >= 0) & (w1 >= 0) & (w0 + w1 <= 1)
+        if mask.any():
+            inside = alpha[y0:y1, x0:x1][mask]
+    if inside is None:
+        points = list(zip(xs, ys)) + [(sum(xs) / 3, sum(ys) / 3)]
+        inside = np.array([alpha[min(height - 1, max(0, int(y))), min(width - 1, max(0, int(x)))]
+                           for x, y in points])
+    passed = int((inside >= 128).sum())
+    return passed < max(1, ALPHA_KEEP_SHARE * len(inside))
 
 
 def classify(name: str) -> tuple[str, str | None]:
@@ -203,6 +255,23 @@ def classify_cockpit(name: str, section: str | None = None) -> tuple[str, str | 
 
 
 classify_cockpit.section_aware = True
+
+
+def classify_wheel(name: str) -> tuple[str, str | None]:
+    """classify() for the main carbin's `wheel` section (research/wheels.md):
+    every rim technique (rim, chrome_rim, outer_rim, inner_rim, wheel_black,
+    wheel_emblem...) samples the car's wheel texture, wheel.xds; the tyre takes
+    DSF's shared tyre (forza2dsf.TyreMap unwraps it onto the stock tread and
+    sidewall); the spinning-blur discs, shadows and ghosts are left out.
+    Drawing the 40 testdrive cars' rim UV triangles over wheel.xds lands them on
+    matching artwork (spoke shading, the Nissan, Audi, Bugatti and SVT caps,
+    nuts); inner_rim is a swatch of it on some cars (250 GTO, S5S)."""
+    n = name.lower()
+    if "blur" in n or "shadow" in n or n.startswith("ghost"):
+        return SKIP, None
+    if n.startswith(("tire", "tyre", "tread", "sidewall")):
+        return TYRE, None
+    return TEXTURED, WHEEL
 
 
 # --- per-subsection resolution -------------------------------------------------

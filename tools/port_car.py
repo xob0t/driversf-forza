@@ -226,6 +226,66 @@ def extract_car(source: Source, media: str, cache: Path, log=print) -> Path:
     return folder
 
 
+# The car's wheel texture (forza_materials.WHEEL): every car of both games has its own
+# wheel archive next to the cars, media/wheels/<car>.zip on the discs and
+# media/wheels/<car>/ in the disc 2 packs (all 40 testdrive cars). It holds the
+# wheel carbin (the main carbin's wheel section plus LOD 0), wheel.xds (what the
+# rim techniques sample at LOD 1+), wheel_LOD0.xds and the blur discs wheel0..3.xds.
+WHEEL_FILES = ("wheel.xds",)
+WHEEL_STAMP = "wheel_source.json"
+
+
+def wheel_source(source: Source, media: str) -> tuple[str, str]:
+    """(zip path on the disc or in the package, folder prefix inside it) of a car's
+    wheel archive: media/cars/X.zip -> media/wheels/X.zip; pack cars
+    (<inner zip>::media/cars/x/) -> (<inner zip>, media/wheels/x/)."""
+    if source.package:
+        inner = source.path.split("::", 1)[0]
+        return inner, f"media/wheels/{media}/".lower()
+    base = source.path.replace("\\", "/").rsplit("/", 2)[0]  # "media" or "Media"
+    return f"{base}/wheels/{media}.zip", ""
+
+
+def extract_wheel(source: Source, media: str, cache: Path, log=print) -> list[str]:
+    """Put the car's wheel texture (WHEEL_FILES) into its cache folder, beside the
+    car files; its own stamp, so caches made before stay valid. Returns the files
+    written (cached: the stamp's list; none if the car has no wheel archive)."""
+    folder = cache / source.game.lower() / media
+    stamp = folder / WHEEL_STAMP
+    path, prefix = wheel_source(source, media)
+    try:
+        old = json.loads(stamp.read_text())
+    except (OSError, ValueError):
+        old = {}
+    if old.get("path") == path and old.get("prefix") == prefix and old.get("wanted") == list(WHEEL_FILES):
+        return old.get("files", [])
+    image = XIso(source.iso)
+    written = []
+    try:
+        if source.package:
+            archive = ForzaZip(stfs.in_image(image, image.find(source.package)).open(path))
+        else:
+            try:
+                archive = ForzaZip(image.open(image.find(path)))
+            except KeyError:
+                archive = None
+        wanted = {w.lower() for w in WHEEL_FILES}
+        for info in archive.entries() if archive is not None else []:
+            name = info.filename.replace("\\", "/")
+            if info.is_dir() or not name.lower().startswith(prefix) or name[len(prefix):].lower() not in wanted:
+                continue
+            folder.mkdir(parents=True, exist_ok=True)
+            write_atomic(folder / name[len(prefix):].lower(), archive.read(info))
+            written.append(name[len(prefix):].lower())
+    finally:
+        image.close()
+    folder.mkdir(parents=True, exist_ok=True)
+    write_atomic(stamp, json.dumps({"path": path, "prefix": prefix, "files": sorted(written),
+                                    "wanted": list(WHEEL_FILES)}, indent=1).encode())
+    log(f"{media}: wheel texture {', '.join(written) if written else 'not found'} ({path}{'::' + prefix if prefix else ''})")
+    return written
+
+
 def extract_gamedb(isos: list[Path], game: str, cache: Path) -> Path | None:
     """The game's Media/db/gamedb.slt, from the first disc of that game that has it."""
     target = cache / game.lower() / "gamedb.slt"
@@ -641,6 +701,8 @@ def prepare_car(args, source: Source, media: str, isos, log=print) -> PreparedCa
     game's gamedb.slt), get the gamedb for the cockpit eye point and the handling,
     and pick its hosts. Shared by main and every port_batch worker."""
     folder = extract_car(source, media, args.cache, log)
+    if args.textures != "none":
+        extract_wheel(source, media, args.cache, log)  # rim textures (forza_materials.WHEEL)
     car = forza2dsf.load_car(folder, media)
     gamedb = None
     try:

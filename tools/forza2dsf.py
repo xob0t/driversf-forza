@@ -417,11 +417,13 @@ ROLE_OF = {PAINT: "paint", GLASS: "glass", TRIM: "trim", TYRE: "tyre"}
 # converter used to copy the Forza wheel unturned, so all four wheels showed the back of the rim
 # outwards. Now it is turned 180 degrees about y like the body (Placement), which puts the face
 # at +x. Stock wheels use the shared tyre texture (GLOBAL_Tyre, 512x512 DXT1: red is the grey
-# level, green the gloss, blue 255), never Forza's tiling tyre/rim UVs; Forza rim textures live
-# in a shared wheel library that isn't extracted. So each rim material gets a uniform swatch of
-# that texture: the Desanne's rim grey, a dark inner-rim grey, bright chrome; the tyre is unwrapped
-# onto the texture's tread strip and sidewall ring like stock tyres (TyreMap; the "tyre" swatch is
-# only the fallback) (research/wheels.md).
+# level, green the gloss, blue 255), never Forza's tiling tyre/rim UVs; the tyre is unwrapped onto
+# the texture's tread strip and sidewall ring like stock tyres (TyreMap; the "tyre" swatch is only
+# the fallback). Forza's rims sample the car's own wheel.xds (media/wheels/<car>, port_car.
+# extract_wheel): with textures, rims go through the car's atlas on the Chassis material
+# (wheel_material, dsf_materials.Texturing.plan(wheels=...)). Without the texture each rim
+# material gets a uniform swatch of the tyre texture: the Desanne's rim grey, a dark inner-rim
+# grey, bright chrome (research/wheels.md); every rim came out plain silver that way.
 WHEEL_UV = {"tyre": (0.5, 0.0078), "rim": (0.906, 0.0078), "inner": (0.4375, 0.0547),
             "chrome": (0.117, 0.0078)}
 
@@ -439,6 +441,26 @@ def wheel_role(material: str) -> str | None:
     if "chrome" in n:
         return "chrome"
     return "rim"
+
+
+def wheel_material(textures, section, sub, shared: dict) -> bytes | None:
+    """DSF material of a Forza wheel subsection; None = leave it out. With the car's
+    wheel texture in the atlas (dsf_materials.Texturing.plan(wheels=...)), rims,
+    caps and wheel emblems use the entry's Chassis material and their own
+    artwork, as stock centre caps do (the wheel parts of 110 of the 140 four-wheeled
+    stock vehicles mix GLOBAL_Tyre with 4 to 244 triangles on the vehicle's own
+    Chassis material, in both entries); the tyre stays on the shared tyre material
+    (stride 20, like stock wheels). Without it, every part is on the shared tyre
+    with a uniform swatch per wheel_role (WHEEL_UV)."""
+    tyre = shared.get("tyre") or TYRE
+    if textures is not None:
+        import dsf_materials
+        kind = textures.texturing.material(section, sub)
+        if kind in (dsf_materials.CHASSIS, dsf_materials.LIGHTS_MAT):
+            return textures.material(section, sub, shared)
+        if kind == "skip":
+            return None
+    return None if wheel_role(sub.material) is None else tyre
 
 
 def wheel_point(p, fit=(1.0, 1.0)) -> tuple[float, float, float]:
@@ -583,9 +605,11 @@ def add_geometry(builder: Builder, sections, lod: int, place: Placement, wheel: 
     (section, material), and return the submodels.
 
     wheel: the sections are the Forza wheel model: turned into DSF's wheel frame
-    (wheel_point, scaled by wheel_fit), all on the shared tyre material, blur
-    discs left out. `lod` goes through wheel_lod; the tyre is unwrapped onto the
-    stock tread strip and sidewall ring (TyreMap), rims get a swatch per wheel_role.
+    (wheel_point, scaled by wheel_fit), blur discs left out. `lod` goes through
+    wheel_lod; the tyre is on the shared tyre material, unwrapped onto the stock
+    tread strip and sidewall ring (TyreMap). Rims sample the car's wheel texture
+    through `textures` (planned with the wheel, wheel_material), else they are on
+    the shared tyre material with a swatch per wheel_role.
 
     textures: a dsf_materials.Binding (see dsf_materials.prepare). Lamps,
     badges and interior then use the entry's Chassis/Lights materials with UVs
@@ -604,7 +628,7 @@ def add_geometry(builder: Builder, sections, lod: int, place: Placement, wheel: 
     (the interior entry), which lays each window out like stock interior glass
     (glass.InteriorGlass; per-window report in builder.interior_glass);
     glass_sight (cockpit.GlassSight) tells it which glass the driver sees."""
-    textured = textures is not None and not wheel
+    textured = textures is not None
     tyre_map = None
     if wheel:
         lod = wheel_lod(sections, lod)
@@ -623,9 +647,7 @@ def add_geometry(builder: Builder, sections, lod: int, place: Placement, wheel: 
             if sub.lod != lod:
                 continue
             if wheel:
-                if wheel_role(sub.material) is None:
-                    continue
-                material = shared.get("tyre") or TYRE  # stride 20, like stock wheels; the swatch tells the parts apart
+                material = wheel_material(textures, section, sub, shared)
             elif textured:
                 material = textures.material(section, sub, shared)
             else:
@@ -711,7 +733,7 @@ def add_geometry(builder: Builder, sections, lod: int, place: Placement, wheel: 
                             pos = wheel_point(v.position, wheel_fit) if wheel else place.point(v.position)
                             uv0 = uvs[n] if uvs else (v.uv0[0] * x_scale + x_off, v.uv0[1] * y_scale + y_off)
                             uv1 = v.uv1
-                            if wheel:
+                            if wheel and tag is None:
                                 uv0 = tyre_uv[n] if tyre_uv else WHEEL_UV[role]
                             elif sub.material == PLATE_TECHNIQUE:
                                 uv0 = v.uv0  # the plate in the shared paint atlas (tools/plates.py)
@@ -1227,9 +1249,13 @@ def convert(stream, full: Entry, exterior: Entry, car: ForzaCar, dims: CarDims, 
     if opts.textures:
         import dsf_materials
         lods = set(opts.lods.values()) | {opts.shadow_lod, opts.exterior_lod}
+        wheels = None
+        if not opts.no_wheel:  # the wheel LODs add_geometry will draw (wheel_lod)
+            wheels = (car.wheel, {wheel_lod(car.wheel, lod) for lod in [*opts.lods.values(), opts.exterior_lod]})
         tex_full, tex_ext = dsf_materials.prepare(stream, full, exterior, car.folder, car.body, lods,
                                                   mode=opts.textures, size=opts.atlas_size,
-                                                  swatch_trims=opts.swatch_trims, log=log, interior_vehc=interior)
+                                                  swatch_trims=opts.swatch_trims, log=log, interior_vehc=interior,
+                                                  wheels=wheels)
         layout.update(tex_full.layout)
         layout.update(tex_ext.layout)
 
@@ -1314,7 +1340,8 @@ def convert(stream, full: Entry, exterior: Entry, car: ForzaCar, dims: CarDims, 
             if not opts.no_wheel:
                 for wheel_part in hw.full_parts:  # Desanne: part 31; 33 hosts split front/rear
                     part_lods.setdefault(wheel_part, {})[mask] = add_geometry(
-                        builder, car.wheel, lod, place, wheel=True, wheel_fit=part_fit(0, wheel_part))
+                        builder, car.wheel, lod, place, wheel=True, wheel_fit=part_fit(0, wheel_part),
+                        textures=tex_full)
         part_lods[0][SHADOW_MASK] = add_geometry(builder, car.body, opts.shadow_lod, place, wheel=False,
                                                  textures=tex_full, merge=opts.merge_submodels, skin=skin,
                                                  glass_links=links, lamps=lamps)
@@ -1364,7 +1391,7 @@ def convert(stream, full: Entry, exterior: Entry, car: ForzaCar, dims: CarDims, 
         for wheel_part in hw.exterior_parts or [ext_parts - 1]:
             ext_lods[wheel_part] = {EXTERIOR_MASK: add_geometry(ext_builder, car.wheel, opts.exterior_lod, place,
                                                                 wheel=True, wheel_fit=part_fit(2, wheel_part),
-                                                                shared=SHARED_EXTERIOR)}
+                                                                shared=SHARED_EXTERIOR, textures=tex_ext)}
         rebuild_drsp(stream, child(child(exterior, "MDXN"), "DRSP"), ext_builder,
                      keep_host_materials=bool(opts.textures))
         ext_modl_entry.payload = rebuild_modl(ext_template, ext_lods)

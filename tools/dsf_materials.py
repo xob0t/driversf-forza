@@ -15,9 +15,10 @@ a specular / glow mask: it follows luminance on chassis texels
 
 This module:
 
-- packs the parts of the Forza atlases (nodamage, Lights) that textured
-  subsections actually use into one DSF atlas (`Texturing`), with solid
-  cells for colour swatches and for the plain paint texel;
+- packs the parts of the Forza atlases (nodamage, Lights, and the car's
+  wheel.xds for the rims) that textured subsections actually use into one
+  DSF atlas (`Texturing`), with solid cells for colour swatches and for the
+  plain paint texel;
 - encodes it as DXT5 with mips (`encode_dxt5`, `dds_file`);
 - installs it: by default it replaces the host TEXC's DDS and keeps every
   UID, so the host materials of all three entries pick it up
@@ -210,6 +211,14 @@ def _paint_through(family: str, r: int, g: int, b: int, a: int) -> bool:
 LENS_REAR_Z, LENS_MIN_RED, LENS_MIN_ALPHA = 0.5, 80, 128
 
 CHASSIS, LIGHTS_MAT = "chassis", "lights"
+# Atlas weight of the wheel texture against nodamage/Lights (DSF texels per
+# wheel.xds texel = WHEEL_WEIGHT x the atlas's uniform scale, at most 1). A
+# wheel.xds bigger than WHEEL_TEXELS (512² on the Veyron and 300C; 256² on 36 of
+# the 40 testdrive cars, 128² on two) is weighted down to that size, so one
+# detailed wheel doesn't shrink the rest of the car's atlas (the Veyron's
+# nodamage scale went from 0.59 to 0.49 without it).
+WHEEL_WEIGHT = 1.0
+WHEEL_TEXELS = 256
 DROP = "drop"  # triangle_uvs tag: leave this triangle out (alpha-tested away in Forza)
 
 
@@ -562,12 +571,26 @@ class Texturing:
     cutout: set = field(default_factory=set)           # id(sub) entirely cut out by alpha
     lens_subs: set = field(default_factory=set)        # id(sub): rear lamp lenses moved from glass to the atlas (is_lens)
     lamp_tris: list = field(default_factory=list)      # (lod, positions, atlas uvs) of Lights-atlas triangles
+    wheel_ids: set = field(default_factory=set)        # id(section) of the Forza wheel model (plan(wheels=...))
 
     # -- planning --
-    def plan(self, sections, lods, extra_solids: dict | None = None) -> "Texturing":
+    def plan(self, sections, lods, extra_solids: dict | None = None, wheels=None) -> "Texturing":
         """Resolve every subsection at `lods` and lay out the atlas.
-        extra_solids: key -> RGBA cells to reserve as well (`solid_uv(key)`)."""
+        extra_solids: key -> RGBA cells to reserve as well (`solid_uv(key)`).
+        wheels: (wheel sections, their LODs): the Forza wheel model, whose rims
+        then sample the car's wheel texture (fm.classify_wheel) through the
+        atlas, like the centre caps stock wheels draw with the Chassis material.
+        Without the wheel texture in the car folder the rims keep their
+        swatches (forza2dsf.WHEEL_UV)."""
         self.atlases = fm.AtlasCache(self.car_dir, lod0=self.lod0)
+        work = [(section, lods) for section in sections]
+        if wheels is not None and self.wheel_texture():
+            if fm.WHEEL not in self.families:
+                self.families = tuple(self.families) + (fm.WHEEL,)
+            side = max(self.atlases.get(fm.WHEEL)[:2])
+            self.weights.setdefault(fm.WHEEL, WHEEL_WEIGHT * min(1.0, WHEEL_TEXELS / side))
+            self.wheel_ids |= {id(section) for section in wheels[0]}
+            work += [(section, set(wheels[1])) for section in wheels[0]]
         for family, rgb in self.filler.items():
             if family in self.families:
                 fm.fill_transparent(self.atlases.get(family), rgb, below=PAINT_THROUGH_ALPHA)
@@ -575,9 +598,9 @@ class Texturing:
         keys: dict[str, list] = {f: [] for f in self.families}
         tested: dict[str, list] = {f: [] for f in self.families}
         swatches: list[fm.SubMaterial] = []
-        for section in sections:
+        for section, section_lods in work:
             for sub in section.subsections:
-                if sub.lod not in lods:
+                if sub.lod not in section_lods:
                     continue
                 m = self._resolve(section, sub)
                 self.resolved[(id(section), id(sub))] = m
@@ -586,7 +609,7 @@ class Texturing:
                     pool = section.vertices_for(sub)
                     for k, tri in enumerate(sub.triangles()):
                         uvs = [m.uv(pool[i].uv0) for i in tri]
-                        if alpha_tested and fm.triangle_max_alpha(self.atlases.get(m.family), uvs) < 128:
+                        if alpha_tested and fm.triangle_alpha_cut(self.atlases.get(m.family), uvs):
                             self.dropped.add((id(sub), k))
                             continue
                         tris[m.family].append(uvs)
@@ -631,7 +654,17 @@ class Texturing:
         self._pack()
         return self
 
+    def wheel_texture(self) -> bool:
+        """Whether the car folder holds the wheel texture (port_car.extract_wheel)."""
+        try:
+            fm.texture_path(self.car_dir, fm.WHEEL, self.lod0)
+        except (FileNotFoundError, OSError):
+            return False
+        return True
+
     def _resolve(self, section, sub) -> fm.SubMaterial:
+        if id(section) in self.wheel_ids:
+            return fm.resolve(section, sub, fm.classify_wheel)
         m = fm.resolve(section, sub, self.classifier or fm.classify)
         if self.classifier is None and self.is_lens(section, sub, m):
             import dataclasses
@@ -1115,12 +1148,13 @@ class Binding:
 def prepare(stream, full_vehc: Entry, exterior_vehc: Entry | None, car_dir: Path, sections, lods,
             mode: str = "replace", size: tuple[int, int] | None = None, mips: int | None = None,
             swatch_trims: bool = False, log=print,
-            interior_vehc: Entry | None = None) -> tuple[Binding, Binding | None]:
+            interior_vehc: Entry | None = None, wheels=None) -> tuple[Binding, Binding | None]:
     """Plan and encode the car's atlas and install it in a host vehicle's full
     entry (and its clean exterior entry). Call before rebuilding the DRSPs,
     and keep the entries' TEXC/MACO (forza2dsf.rebuild_drsp with
     keep_host_materials=True). Atlas size and mip count default to the host
-    chassis texture's, so replace mode leaves the entry size unchanged."""
+    chassis texture's, so replace mode leaves the entry size unchanged.
+    wheels: (wheel sections, LODs), see Texturing.plan."""
     full_drsp = child(child(full_vehc, "MDXN"), "DRSP")
     host = host_texture(stream, full_drsp)
     if host is not None:
@@ -1133,7 +1167,9 @@ def prepare(stream, full_vehc: Entry, exterior_vehc: Entry | None, car_dir: Path
     # itself samples the shared paint texture, PAINT_TEXEL_UV).
     plain = DEFAULT_PLAIN
     t = Texturing(Path(car_dir), size=size, mips=mips, swatch_trims=swatch_trims, plain=plain)
-    t.plan(sections, set(lods))
+    t.plan(sections, set(lods), wheels=wheels)
+    if wheels is not None and fm.WHEEL not in t.families:
+        log(f"no {fm.FAMILY_FILES[fm.WHEEL][0]} in {car_dir}: rims keep flat swatches")
     dds = t.dds(template=host)
     full = install_full(stream, full_drsp, dds, mode)
     ext = None

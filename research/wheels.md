@@ -141,12 +141,98 @@ In-game check, once the sandbox works:
 .\tools\wsb\run-series.ps1 -Archives out\wheels2\build\dngvehicles.sp -LuaFiles 'dsfforza\ported.lua=out\wheels2\build\dngvehicles.lua' -ProbeIds '1,2,3,4' -WaitSeconds 900 -ShotSeconds 3
 ```
 
+## Rim textures (2026-10-24)
+
+User report on `out/testdrive9`: every wheel disc is plain silver; the 250
+GTO's wire wheels, spokes and hub show no texture.
+
+### Where Forza's rim textures are (confirmed-static)
+
+Every car of both games has its own wheel archive beside the cars:
+`media/wheels/<car>.zip` on the FH1 and FM4 discs (298 and 443 zips, with
+aftermarket wheels and tyres), `media/wheels/<car>/` in the disc 2 pack zips.
+All 40 testdrive cars have one (`out/rims/wheels/index.json`). It holds:
+
+| File | What |
+| --- | --- |
+| `<car>.carbin` | the wheel model: LOD 1 to 5 identical to the main carbin's `wheel` section, plus LOD 0 |
+| `wheel.xds` | what the rim techniques sample at LOD 1+: 256² (36 cars), 512² (Veyron, 300C), 128² (Durango, Express); DXT1 or DXT5 |
+| `wheel_LOD0.xds` | the LOD 0 rim texture |
+| `wheel0..3.xds` | the spinning-blur discs (pictures of the whole wheel) |
+
+`wheel.xds` is spoke shading, the centre cap with the maker's logo (Nissan,
+Audi rings, Bugatti EB, SVT, STI, the Borrani knock-off on the 250 GTO),
+nuts and the barrel; on DXT5 textures alpha is a gloss mask (0 on most rim
+texels, 255 on chrome), not a cut-out. Drawing the 40 cars' rim UV triangles
+over it lands them on that artwork. Techniques on the `wheel` section
+(`out/rims/wheel_survey.txt`): `rim` (all 40), `inner_rim` (all; a swatch on
+the 250 GTO and S5S), `chrome_rim` (8), `wheel_emblem` (alpha-tested, 5),
+`tire` (tiling, global tread texture), `blur_rim`/`blur_lip`/`chrome_blur_*`.
+The 250 GTO's wire spokes are geometry (2445 `rim` triangles at LOD 1); no
+car's rim relies on an alpha cut.
+
+### What was wrong (all 40 cars)
+
+`wheel_role` put every rim technique on the shared tyre material with one
+texel of DSF's tyre atlas (`WHEEL_UV`: rim grey, inner dark, chrome): plain
+silver discs, no caps, logos, nuts or rim colours (the Veyron's orange, the
+WRX's gold, the Agera's black with stripes).
+
+### How stock DSF wheels are textured (confirmed-static)
+
+`out/rims/stock_wheel_mats.txt`: the wheel parts of all 140 four-wheeled
+stock vehicles use `GLOBAL_Tyre` (tyre and most of the rim, on the shared
+atlas's rim and nut pictures) and the two blur materials; 110 of them also
+have 4 to 244 triangles on the vehicle's own Chassis material (stride 28) in
+both entries: centre caps and logos from the car's chassis texture.
+
+### Fix
+
+- `port_car.extract_wheel` puts `wheel.xds` into the car's cache folder (its
+  own stamp, `wheel_source.json`).
+- `forza_materials.classify_wheel`: rim techniques are textured from the new
+  family `WHEEL`; the tyre stays `TYRE`, blur discs `SKIP`.
+- `dsf_materials.Texturing.plan(wheels=(sections, lods))` packs the used part
+  of `wheel.xds` into the car's chassis atlas next to nodamage and Lights
+  (weight 1, a 512² wheel texture weighted to 256²). Replace mode keeps the
+  host's texture size, so entry sizes don't change.
+- `forza2dsf.wheel_material`: rims, caps and emblems use the entry's Chassis
+  material (full entry) / Chassis_LOD1 (exterior), the tyre the shared tyre
+  material with the stock unwrap; the swatches remain the fallback when there
+  is no wheel texture or `--textures none`.
+
+Atlas cost (`out/rims/atlas_scales.txt`, 40 cars against `out/testdrive10`):
+one region per car, the whole wheel texture. The uniform scale of the other
+regions stays on 15 cars (slack in the packing) and drops by 4% on average,
+16% at most (Mustang Boss 429 0.77 to 0.65, S2000 0.87 to 0.75). Entry sizes
+and the LOD choices of all 40 cars are unchanged; all 40 lint ok.
+
+Survey (`out/rims/wheels_all.png`, all 40 cars: Forza's wheel with
+`wheel.xds`, `out/testdrive10`, the fixed build `out/rims/td`, exterior wheel
+part from outside): every converted wheel now matches its Forza wheel (caps,
+logos, nuts, the Veyron's orange, the WRX's and Firebird's gold, the Agera's
+black with its rim stripes, the Focus RS500's black); before, all 40 were the
+same silver. The full entry (LOD 3, `out/rims/wheels_full.png`) the same.
+`img/rims-before-after.png`.
+
+In game (confirmed-runtime, headless VM; fixed cameras on the car's left
+side, outside and at each wheel): `vm-20261024-065630` (`out/testdrive10`)
+against `vm-20261024-064427` (`out/rims/td`), IDs 147 (stock CTS-V for
+reference), 25, 38, 28, 6, 29. The rims draw their own artwork through the
+Chassis material: the 250 GTO's wire wheels with the knock-off cap, the
+Raptor's dark rims with the SVT cap, the Veyron's orange (a little lighter
+and redder than Forza's), the WRX's gold, the Agera's black rim with its
+yellow and blue stripes; no flicker or missing triangles, brightness next to
+the stock CTS-V's wheels alike. `img/rims-ingame-before-after.jpg`.
+
 ## Open
 
-1. In game: the swatch colours (rubber, rim grey, chrome) under DSF's tyre
-   shader, and whether wheels without blur geometry look right at speed
+1. In game: whether wheels without blur geometry look right at speed
    (stock wheels fade a spoke disc in; ours have none).
-2. Brake discs and calipers (Forza `_rotor*`/`_caliper*` carbins) could go
-   into the wheel part as static geometry; not done.
-3. Rim textures: Forza's shared wheel textures are on the discs outside the
-   car zips; a rim atlas would need them.
+2. Brake discs and calipers (Forza `_rotor*`/`_caliper*` carbins, LOD 0 only,
+   per corner) could go into the wheel part as static geometry; not done.
+   Stock DSF wheels have none, and a caliper in the wheel part would spin
+   with it.
+3. The Chassis material has little specular; Forza's chrome rims are
+   reflective (`wheel.xds` alpha). The Lights material reflects but adds lamp
+   glow through its alpha.
