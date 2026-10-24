@@ -252,9 +252,9 @@ Textures, by sampling each technique's UV triangles in every candidate
 
 | Techniques | Texture |
 | --- | --- |
-| `gauge*`, `z_gauge_emissive_alpha`, `digital_gauge`, `badge` | `interior_LOD0.xds` (512²: dial faces, switch labels; alpha is the label cut-out mask). The needle swatch is red-orange (252, 45, 8) |
+| `gauge*`, `z_gauge_emissive_alpha`, `digital_gauge`; `badge` in cabin sections | `interior_LOD0.xds` (512²: dial faces, switch labels; alpha is the label cut-out mask). The needle swatch is red-orange (252, 45, 8) |
 | cabin sections' `leather`, `plastic`, `metal`, `headliner`, `bump_*`, `reflector`, ... | `interior_LOD0.xds` too: the cabin's leather, plastic and metal artwork and its colour swatches (corrected 2026-10-23, see "Cabin trims sample interior_LOD0"; this row used to say the strips along the bottom of `nodamage_LOD0`) |
-| outside sections (`a_pillar`, `hood*`, `mirrorL/R`): `chrome`, `black`, `plastic2`, ... | `nodamage_LOD0.xds` (2048²) |
+| outside sections (`a_pillar`, `hood*`, `mirrorL/R`): `chrome`, `black`, `plastic2`, `badge`, ... | `nodamage_LOD0.xds` (2048²; badges there since 2026-10-24, "Badges seen through the windscreen") |
 | lamps | `lights_LOD0.xds` |
 | `mirrorLeft/Middle/Right` | render targets in Forza |
 
@@ -1018,6 +1018,28 @@ displays change little (dark or the white dial face around them).
   geometric test separated the two (rays over the dash from the eye agree
   on 43% vs 30%; the hosts' exterior greenhouses differ from both Forza
   bodies), so the converter keeps the Forza cabin for both.
+
+## Badges seen through the windscreen (2026-10-24)
+
+Found during the emissive work (PR #10): `classify_cockpit` sent every
+`badge` technique to interior_LOD0, also in the outside sections
+(`a_pillar`, `hood*`, `mirror*`). Over the 40 test-drive cars
+(`out/cc/badges.py`; `img/cockpit-outside-badges-uv.png`: each subsection's
+UV outline over nodamage_LOD0 RGB and alpha, then interior_LOD0 RGB and
+alpha) these are: Firebird `hooda` and `a_pillar` `badge` (33 triangles
+each: the "6.6" decal), M5 E28 `mirrorL/R` `badge` (2: the mirror badge
+shape), S5S Raptor `a_pillar` `badge` (16), Mustang Boss 429 `hooda`
+`badge` (286: the scoop plate), SVT Raptor `hooda` `stripe_badge` (490) and
+`badge` (24: "F-150"), and the Agera's `hooda` `liveryBadge` (skipped since
+PR #10). In nodamage_LOD0 each outline sits on matching artwork and its
+alpha mask; in interior_LOD0 on unrelated content (gauge faces, labels), the
+same split as the other outside techniques. Fix: badges map to
+interior_LOD0 only in cabin sections; in outside sections they follow
+`classify` (nodamage_LOD0), alpha-tested as before. Rebuilt
+(`out/cockpitbadges/build`): the five cars' interior atlases gain one
+nodamage region each (M5 E28, Mustang, SVT Raptor; the Firebird's and
+Saleen's footprints fall inside existing regions). From the head camera the
+change is small: most of these triangles are below the cowl or culled.
 
 ## Risks and open questions
 

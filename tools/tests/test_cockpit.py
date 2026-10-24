@@ -50,6 +50,19 @@ def test_blank_displays_stay_blank():
         assert cockpit.with_display_faces(section) == (section, 0)
 
 
+def test_badges_follow_their_section():
+    # Cabin badges (horn logo, labels) sample interior_LOD0; badges on the parts
+    # seen through the windscreen (bonnet decals, mirror badges) the exterior atlas.
+    assert fm.classify_cockpit("badge", "steering_wheel") == (fm.TEXTURED, fm.INTERIOR)
+    assert fm.classify_cockpit("badge", "interior") == (fm.TEXTURED, fm.INTERIOR)
+    for section in ("hooda", "a_pillar", "mirrorL"):
+        assert fm.classify_cockpit("badge", section) == (fm.TEXTURED, fm.NODAMAGE)
+        assert fm.classify_cockpit("stripe_badge", section) == (fm.TEXTURED, fm.NODAMAGE)
+        assert fm.classify_cockpit("gauge_emissive", section) == (fm.TEXTURED, fm.INTERIOR)
+    assert fm.classify_cockpit("liveryBadge", "hooda")[0] == fm.SKIP
+    assert fm.classify_cockpit("badge") == (fm.TEXTURED, fm.INTERIOR)   # role-only callers
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
