@@ -115,6 +115,11 @@ PANEL_FACING = 0.15  # normalised-distance penalty per unit of normal mismatch (
 VOTE_RINGS = (1, 2, 3, 5, 7)  # DamagePlan._votes: rings (at most 7) up to which points are decided in turn
 VOTE_BLOCK = 4  # DamagePlan._votes: candidates are found per block of this many cells a side
 VOTE_CHUNK = 400_000  # DamagePlan._votes: candidates scored at once
+NEAREST_RINGS = 2  # Grid.nearest_many: the rings looked in first
+NEAREST_FEW = 32  # Grid.nearest_many: fewer query points than this go to Grid.nearest one by one
+NEAREST_CUBE = 4  # Grid.nearest_many: every point instead of a cube of more than this many cells per occupied one
+NEAREST_CHUNK = 400_000  # Grid.nearest_many: candidates measured at once
+NEAREST_SLACK = 1e-9  # Grid.nearest_many: numpy distances this near a decision go to Grid.nearest
 PAINT_REACH = 0.12  # normalised score within which a host paint triangle decides a paint triangle's panel
 PAINT_MATERIALS = {bytes.fromhex("001283358afd1027"), bytes.fromhex("10122b9653b14e2a")}  # GLOBAL_Chassis(_LOD1)
 ISLAND_AREA = 0.08  # m2; smaller connected patches of one panel inside another are merged into it
@@ -212,6 +217,7 @@ class Grid:
         self.cells: dict[tuple, list[int]] = defaultdict(list)
         self.points, self.values = points, values
         self._keys = None  # occupied cells as an array (nearest)
+        self._arrays = None  # the grid as arrays (nearest_many)
         for n, p in enumerate(points):
             self.cells[self._key(p)].append(n)
 
@@ -270,6 +276,185 @@ class Grid:
                 break
         found.sort()
         return found[:k]
+
+    def nearest_many(self, ps, k: int = K_NEAREST) -> list[list[tuple[float, int]]]:
+        """nearest for many points at once, with the same result for each.
+
+        nearest's result is the k first by (distance, index) of the points in rings
+        0..R, R the first ring at which at least want = min(k, all) points are within
+        R * cell, or the ring by which every point is found. A point j counts toward
+        that from ring s_j = max(its ring, the first t with d_j <= t * cell) on, so R
+        is the want-th smallest s_j, capped by the last ring. Per query point: the
+        distances to the points within rmax rings, in numpy; R by sorting s; the k
+        nearest within ring R by sorting the distances; then their distances again
+        with math.dist and sorted by (distance, index), as nearest has them. rmax
+        runs through NEAREST_RINGS and then covers every point, each round with the
+        points the last one didn't decide. numpy's distance differs from math.dist
+        in the last bits, so a query point with a distance within NEAREST_SLACK of
+        a ring's t * cell, or with points of another position than its k-th within
+        2 * NEAREST_SLACK of the k-th's distance (ties included), goes to nearest.
+        Copies of a position (the host's split vertices) have the same distance
+        both ways and go by index."""
+        if not self.points or len(ps) < NEAREST_FEW:
+            return [self.nearest(p, k) for p in ps]
+        out: list = [None] * len(ps)
+        if self._arrays is None:
+            members = list(self.cells.values())
+            ccount = np.array([len(m) for m in members], dtype=np.int64)
+            ckeys = np.array(list(self.cells), dtype=np.int64).reshape(-1, 3)
+            corder = np.array([n for m in members for n in m], dtype=np.int64)
+            pkeys = np.empty((len(self.points), 3), dtype=np.int64)
+            pkeys[corder] = np.repeat(ckeys, ccount, axis=0)
+            pts = np.array(self.points, dtype=np.float64).reshape(-1, 3)
+            lo, hi = ckeys.min(axis=0), ckeys.max(axis=0)
+            size = hi - lo + 1
+            code = ((ckeys[:, 0] - lo[0]) * size[1] + (ckeys[:, 1] - lo[1])) * size[2] + (ckeys[:, 2] - lo[2])
+            sort = np.argsort(code)
+            self._arrays = (
+                tuple(np.ascontiguousarray(pts[:, a]) for a in range(3)),
+                tuple(np.ascontiguousarray(pkeys[:, a]) for a in range(3)),
+                (ckeys, lo, hi, size, code[sort], sort),  # occupied cells, and by code (place in their box)
+                (np.cumsum(ccount) - ccount, ccount, corder),  # their points
+            )
+        (px, py, pz), (kx, ky, kz), (ckeys, lo, hi, size, codes, sort), (cstart, ccount, corder) = self._arrays
+        cell, total, slack, big = self.cell, len(self.points), NEAREST_SLACK, np.iinfo(np.int64).max
+        want = min(k, total)
+        q = np.array(ps, dtype=np.float64).reshape(-1, 3)
+        qkey = np.floor(q / cell).astype(np.int64)
+        qx, qy, qz = (np.ascontiguousarray(q[:, a]) for a in range(3))
+        qkx, qky, qkz = (np.ascontiguousarray(qkey[:, a]) for a in range(3))
+        last = np.maximum(np.abs(lo - qkey), np.abs(hi - qkey)).max(axis=1)  # every point found by this ring
+        reach = np.full(len(ps), NEAREST_RINGS, dtype=np.int64)  # the rings to look in next
+        todo, slow = np.arange(len(ps)), []
+        while len(todo):
+            undecided = []
+            for rmax in np.unique(reach[todo]).tolist():
+                part = todo[reach[todo] == rmax]
+                every = rmax >= last[part].max()
+                if every:  # every point (a superset of the rings): decides every query point
+                    lens = np.full(len(part), total, dtype=np.int64)
+                    ustart = np.zeros(len(part), dtype=np.int64)
+                    upts = np.arange(total, dtype=np.int64)
+                    cap = int(last[part].max()) + 1
+                else:
+                    # Per query cell, the occupied cells within rmax rings (its cube
+                    # of offsets looked up by code, or for a large cube every
+                    # occupied cell's ring), then their points.
+                    ukeys, inv = np.unique(qkey[part], axis=0, return_inverse=True)
+                    inv = inv.reshape(-1)
+                    pu, pc = [], []
+                    if (2 * rmax + 1) ** 3 <= NEAREST_CUBE * len(codes):
+                        span = np.arange(-rmax, rmax + 1)
+                        offs = np.stack(np.meshgrid(span, span, span, indexing="ij"), axis=-1).reshape(-1, 3)
+                        step = max(1, NEAREST_CHUNK // len(offs))
+                        for u0 in range(0, len(ukeys), step):
+                            near = ukeys[u0 : u0 + step, None, :] + offs[None, :, :]
+                            inside = ((near >= lo) & (near <= hi)).all(axis=2)
+                            near = near - lo
+                            c = (near[:, :, 0] * size[1] + near[:, :, 1]) * size[2] + near[:, :, 2]
+                            at = np.minimum(np.searchsorted(codes, c), len(codes) - 1)
+                            ku, ko = np.nonzero(inside & (codes[at] == c))
+                            pu.append(ku + u0)
+                            pc.append(sort[at[ku, ko]])
+                    else:
+                        step = max(1, NEAREST_CHUNK // len(ckeys))
+                        for u0 in range(0, len(ukeys), step):
+                            rings = np.abs(ckeys[None, :, :] - ukeys[u0 : u0 + step, None, :]).max(axis=2)
+                            ku, kc = np.nonzero(rings <= rmax)
+                            pu.append(ku + u0)
+                            pc.append(kc)
+                    pu, pc = np.concatenate(pu), np.concatenate(pc)
+                    ucount = np.bincount(pu, weights=ccount[pc], minlength=len(ukeys)).astype(np.int64)
+                    upts = corder[_ranges(cstart[pc], ccount[pc])]  # grouped by query cell, by index in a cell
+                    ustart = (np.cumsum(ucount) - ucount)[inv]
+                    lens = ucount[inv]
+                    cap = rmax + 1
+                ends = np.searchsorted(np.cumsum(lens), np.arange(NEAREST_CHUNK, int(lens.sum()), NEAREST_CHUNK))
+                for rows in np.split(np.arange(len(part)), np.unique(ends)):
+                    if not len(rows):
+                        continue
+                    sel, n, m = part[rows], lens[rows], len(rows)
+                    g = np.repeat(np.arange(m), n)  # each candidate's query point (in sel)
+                    j = upts[_ranges(ustart[rows], n)]
+                    qg = sel[g]
+                    dx, dy, dz = qx[qg] - px[j], qy[qg] - py[j], qz[qg] - pz[j]
+                    d = np.sqrt(dx * dx + dy * dy + dz * dz)
+                    ring = np.maximum(
+                        np.maximum(np.abs(kx[j] - qkx[qg]), np.abs(ky[j] - qky[qg])), np.abs(kz[j] - qkz[qg])
+                    )
+                    # The first t with d <= t * cell, as nearest's stop test compares:
+                    # exact unless d is within slack of a t * cell (then nearest),
+                    # or 0 (a copy of the query point, 0 both ways).
+                    t = np.ceil(d / cell)
+                    bad = (
+                        ~np.isfinite(d)
+                        | ((np.abs(d - t * cell) <= slack) & ((dx != 0) | (dy != 0) | (dz != 0)))
+                        | (np.abs(d - (t - 1) * cell) <= slack)
+                    )
+                    bad = np.bincount(g, weights=bad.astype(np.float64), minlength=m) > 0
+                    t = np.where(bad[g], 0, t).astype(np.int64)
+                    slow.append(sel[bad])
+                    # The stop ring: the want-th smallest s (counted per ring up to cap).
+                    s = np.minimum(np.maximum(ring, t), cap)
+                    table = np.bincount(g * (cap + 1) + s, minlength=m * (cap + 1)).reshape(m, cap + 1)
+                    reached = table.cumsum(axis=1) >= want
+                    stop = np.where(reached.any(axis=1), reached.argmax(axis=1), big)
+                    stop = np.where(stop >= cap, big, stop)
+                    stop_ring = np.minimum(stop, last[sel])
+                    done = ~bad & (every | (stop_ring <= rmax))
+                    later = ~bad & ~done
+                    if later.any():
+                        # want points are within ring max(rmax, the want-th smallest t),
+                        # so that is where the stop ring is at the latest.
+                        tc = 4 * rmax + 4
+                        table = np.bincount(g * (tc + 1) + np.minimum(t, tc), minlength=m * (tc + 1)).reshape(m, tc + 1)
+                        reached = table.cumsum(axis=1) >= want
+                        bound = np.where(reached[:, :tc].any(axis=1), reached.argmax(axis=1), 3 * rmax)
+                        reach[sel[later]] = np.maximum(bound[later], rmax + 1)
+                        undecided.append(sel[later])
+                    # The k nearest within the stop ring (stopped by count: all within
+                    # stop_ring * cell), by distance; a cell's points are by index.
+                    limit = np.where(stop <= stop_ring, stop_ring * cell + 4 * slack, np.inf)
+                    o = np.flatnonzero(done[g] & (ring <= stop_ring[g]) & (d <= limit[g]))
+                    o = o[np.lexsort((d[o], g[o]))]
+                    gk, dk, jk = g[o], d[o], j[o]
+                    cnt = np.bincount(gk, minlength=m)
+                    at = np.cumsum(cnt) - cnt
+                    over = done & (cnt > k)
+                    tie = np.zeros(m, dtype=bool)
+                    tie[over] = dk[at[over] + k] - dk[at[over] + k - 1] <= 2 * slack
+                    if tie.any():
+                        # Copies of the k-th point (the same position: the same distance
+                        # either way) are no tie: they go by index, as in nearest.
+                        kth = np.where(tie, at + k - 1, 0)
+                        e = np.flatnonzero(tie[gk])
+                        ref = jk[kth[gk[e]]]
+                        other = (np.abs(dk[e] - dk[kth[gk[e]]]) <= 2 * slack) & (
+                            (px[jk[e]] != px[ref]) | (py[jk[e]] != py[ref]) | (pz[jk[e]] != pz[ref])
+                        )
+                        tie &= np.bincount(gk[e], weights=other.astype(np.float64), minlength=m) > 0
+                    slow.append(sel[tie])
+                    ok = np.flatnonzero(done & ~tie)
+                    take = np.minimum(cnt[ok], k)
+                    picked = jk[_ranges(at[ok], take)].tolist()
+                    pos = 0
+                    for i, c in zip(sel[ok].tolist(), take.tolist(), strict=True):
+                        p = ps[i]
+                        out[i] = sorted([(math.dist(p, self.points[n]), n) for n in picked[pos : pos + c]])
+                        pos += c
+            todo = np.concatenate(undecided) if undecided else todo[:0]
+        for i in np.concatenate(slow).tolist() if slow else ():
+            out[i] = self.nearest(ps[i], k)
+        return out
+
+
+def _ranges(starts, counts) -> np.ndarray:
+    """The concatenated ranges starts[i] .. starts[i] + counts[i] - 1."""
+    counts = np.asarray(counts, dtype=np.int64)
+    ends = np.cumsum(counts)
+    return np.arange(int(ends[-1]) if len(ends) else 0, dtype=np.int64) + np.repeat(
+        np.asarray(starts, dtype=np.int64) - (ends - counts), counts
+    )
 
 
 # --- decal / scratch UVs ------------------------------------------------------------
@@ -471,12 +656,7 @@ class Uv1Field:
         """(UV1, chart) at normalised point q from the nearest host triangle
         facing the same way (`normal`, car space): same panel and material, else
         same panel and material class, else same class; only `chart` if given."""
-        keys = (
-            ([("chart", chart)] if chart is not None else [])
-            + ([] if any_panel else [("pm", pair, material), ("pc", pair, local)])
-            + [("c", local), ("all",), ("degenerate",), ("tiled",)]
-        )
-        for key in keys:
+        for key in self._keys(pair, material, local, any_panel, chart):
             grid = self.groups.get(key)
             if grid is None:
                 continue
@@ -494,6 +674,79 @@ class Uv1Field:
                     best[3],
                 )
         return None
+
+    @staticmethod
+    def _keys(pair, material: bytes, local: bool, any_panel: bool, chart: int | None) -> list:
+        """The groups lookup tries, in order."""
+        return (
+            ([("chart", chart)] if chart is not None else [])
+            + ([] if any_panel else [("pm", pair, material), ("pc", pair, local)])
+            + [("c", local), ("all",), ("degenerate",), ("tiled",)]
+        )
+
+    def lookup_many(self, items) -> list:
+        """lookup for many (q, pair, material, local, any_panel, normal, chart) at
+        once, with the same result for each. lookup's result comes from the first
+        group it has that has points: the candidates are that group's 16 nearest
+        (Grid.nearest_many), each scored as lookup does (_closest, the same floats
+        as closest_on_triangle), and the first lowest score in nearest's order wins
+        (lookup keeps a best only on a strictly lower score). The winner's
+        barycentric coordinates and UV1 are lookup's own code. An item with a
+        non-finite score goes to lookup."""
+        out: list = [None] * len(items)
+        by_group = defaultdict(list)
+        for i, (_, pair, material, local, any_panel, _, chart) in enumerate(items):
+            for key in self._keys(pair, material, local, any_panel, chart):
+                grid = self.groups.get(key)
+                if grid is not None and grid.points:
+                    by_group[key].append(i)
+                    break
+        if not by_group:
+            return out
+        if self.__dict__.get("_arrays") is None:
+            corners = np.array([t[0] for t in self.tris], dtype=np.float64).reshape(-1, 3, 3)
+            normals = np.array([t[5] for t in self.tris], dtype=np.float64).reshape(-1, 3)
+            self._arrays = (
+                tuple(np.ascontiguousarray(corners[:, i // 3, i % 3]) for i in range(9)),
+                tuple(np.ascontiguousarray(normals[:, i]) for i in range(3)),
+            )
+        corners, tnormals = self._arrays
+        slow = []
+        for key, idx in by_group.items():
+            grid = self.groups[key]
+            hits = grid.nearest_many([items[i][0] for i in idx], 16)
+            values = grid.values
+            tri = np.array([values[n] for h in hits for _, n in h], dtype=np.int64)
+            lens = np.array([len(h) for h in hits], dtype=np.int64)
+            g = np.repeat(np.arange(len(idx)), lens)
+            q = np.array([items[i][0] for i in idx], dtype=np.float64).reshape(-1, 3)[g]
+            normals = [items[i][5] for i in idx]
+            has = np.array([bool(n) for n in normals])[g]
+            nrm = np.array([n if n else (0.0, 0.0, 0.0) for n in normals], dtype=np.float64).reshape(-1, 3)[g]
+            d = _closest((q[:, 0], q[:, 1], q[:, 2]), *(c[tri] for c in corners))[0]
+            dot = nrm[:, 0] * tnormals[0][tri] + nrm[:, 1] * tnormals[1][tri] + nrm[:, 2] * tnormals[2][tri]
+            score = np.sqrt(d) + np.where(has, FACING_WEIGHT * (1 - dot), 0.0)
+            first = np.cumsum(lens) - lens
+            bad = np.bincount(g, weights=(~np.isfinite(score)).astype(np.float64), minlength=len(idx)) > 0
+            low = np.minimum.reduceat(np.where(np.isfinite(score), score, 0.0), first)
+            at = np.flatnonzero(score == low[g])
+            _, firsts = np.unique(g[at], return_index=True)
+            win = dict(zip(g[at[firsts]].tolist(), tri[at[firsts]].tolist(), strict=True))
+            for m, i in enumerate(idx):
+                if bad[m]:
+                    slow.append(i)
+                    continue
+                n = win[m]
+                t = self.tris[n]
+                _, bary = closest_on_triangle(items[i][0], *t[0])
+                uvs = t[1]
+                out[i] = (
+                    (sum(bary[k] * uvs[k][0] for k in range(3)), sum(bary[k] * uvs[k][1] for k in range(3))),
+                    self.chart[n],
+                )
+        for i in slow:
+            out[i] = self.lookup(*items[i])
+        return out
 
 
 def s9_pair(vb, index: int) -> tuple[int, int]:
@@ -897,30 +1150,67 @@ def _tri_samples(pts, step: float):
             yield tuple(pts[0][k] * (1 - a - b) + pts[1][k] * a + pts[2][k] * b for k in range(3))
 
 
+def _samples_of(tris, step: float) -> tuple[np.ndarray, np.ndarray]:
+    """_tri_samples of many triangles (three placed corners each) at once: the
+    points as an (m, 3) array, triangle by triangle in _tri_samples' order, with
+    its float operations; and each triangle's number of points."""
+    ns = [
+        max(1, min(40, int(math.ceil(max(math.dist(pts[a], pts[b]) for a, b in ((0, 1), (1, 2), (2, 0))) / step))))
+        for pts in tris
+    ]
+    corners = np.array(tris, dtype=np.float64).reshape(-1, 3, 3)
+    ns = np.array(ns, dtype=np.int64)
+    counts = (ns + 1) * (ns + 2) // 2
+    start = np.cumsum(counts) - counts
+    out = np.empty((int(counts.sum()), 3), dtype=np.float64)
+    for n in np.unique(ns).tolist():
+        ij = [(i, j) for i in range(n + 1) for j in range(n + 1 - i)]
+        a = np.array([i / n for i, _ in ij])[None, :, None]
+        b = np.array([j / n for _, j in ij])[None, :, None]
+        sel = np.flatnonzero(ns == n)
+        c = corners[sel]
+        pts = c[:, 0, None, :] * (1 - a - b) + c[:, 1, None, :] * a + c[:, 2, None, :] * b
+        out[(start[sel][:, None] + np.arange(len(ij))[None, :]).reshape(-1)] = pts.reshape(-1, 3)
+    return out, counts
+
+
+def _cell_codes(kx, ky) -> np.ndarray:
+    """A zone map's (x, y) cell keys as one int64 each."""
+    return (np.asarray(kx, dtype=np.int64) + (1 << 30)) * (1 << 31) + (np.asarray(ky, dtype=np.int64) + (1 << 30))
+
+
 def zone_maps(body, place, lods, zones=EXPOSED_ZONES) -> dict:
     """Per (LOD, EXPOSED_ZONES kind): the panel sections' map over BAY_CELL
     cells across the zone's axis (inward coordinate of the panel's innermost or
-    outermost point per cell)."""
+    outermost point per cell). The points are _tri_samples (BAY_CELL / 2) of
+    the sections' triangles; per cell the first innermost or outermost of them
+    in that order, as a running max() or min() keeps it."""
     maps = {}
     for kind, is_panel, axis, sign, which, _ in zones:
         across = [a for a in range(3) if a != axis]
-        pick = max if which == "inner" else min
         secs = [s for s in body if is_panel(s.name.lower())]
         for lod in lods:
-            cells: dict = {}
+            tris = []
             for s in secs:
                 for sub in s.subsections:
                     if sub.lod != lod:
                         continue
                     pool = s.vertices_for(sub)
-                    for t in sub.triangles():
-                        for p in _tri_samples([place.point(pool[i].position) for i in t], BAY_CELL / 2):
-                            key = (math.floor(p[across[0]] / BAY_CELL), math.floor(p[across[1]] / BAY_CELL))
-                            d = sign * p[axis]
-                            old = cells.get(key)
-                            cells[key] = d if old is None else pick(old, d)
-            if cells:
-                maps[(lod, kind)] = cells
+                    tris += ([place.point(pool[i].position) for i in t] for t in sub.triangles())
+            if not tris:
+                continue
+            pts, _ = _samples_of(tris, BAY_CELL / 2)
+            if not np.isfinite(pts).all():
+                raise ValueError(f"zone_maps: a {kind} panel point is not finite")
+            kx = np.floor(pts[:, across[0]] / BAY_CELL).astype(np.int64)
+            ky = np.floor(pts[:, across[1]] / BAY_CELL).astype(np.int64)
+            d = sign * pts[:, axis]
+            o = np.lexsort((np.arange(len(d)), -d if which == "inner" else d, ky, kx))
+            code = _cell_codes(kx[o], ky[o])
+            first = o[np.flatnonzero(np.r_[True, code[1:] != code[:-1]])]
+            maps[(lod, kind)] = dict(
+                zip(zip(kx[first].tolist(), ky[first].tolist(), strict=True), d[first].tolist(), strict=True)
+            )
     return maps
 
 
@@ -958,6 +1248,74 @@ def zone_vote(maps: dict, lod: int, pts, zones=EXPOSED_ZONES) -> str | None:
         return None
     kind, n = votes.most_common(1)[0]
     return kind if n >= ZONE_SHARE * len(samples) else None
+
+
+def _vote_samples(tris) -> tuple[np.ndarray, np.ndarray]:
+    """zone_vote's samples of many triangles at once: per triangle its centroid
+    and then its _tri_samples (ZONE_STEP), as an (m, 3) array; and each
+    triangle's number of samples. The centroid is zone_vote's own sum() / 3
+    (Python's float sum is compensated, not left to right)."""
+    centroid = [tuple(sum(p[k] for p in pts) / 3 for k in range(3)) for pts in tris]
+    rest, counts = _samples_of(tris, ZONE_STEP)
+    total = counts + 1
+    start = np.cumsum(total) - total
+    pts = np.empty((int(total.sum()), 3), dtype=np.float64)
+    rest_at = np.ones(len(pts), dtype=bool)
+    rest_at[start] = False
+    pts[start] = np.array(centroid, dtype=np.float64).reshape(-1, 3)
+    pts[rest_at] = rest
+    return pts, total
+
+
+def _zones_at(maps: dict, lod: int, pts: np.ndarray, zones=EXPOSED_ZONES) -> np.ndarray:
+    """zone_of for many points at once: per point the index in `zones` of the
+    first zone kind whose map cell hides it, or -1."""
+    if not np.isfinite(pts).all():
+        raise ValueError("zone_votes: a triangle point is not finite")
+    zone = np.full(len(pts), -1, dtype=np.int64)
+    for z, (kind, _, axis, sign, which, reach) in enumerate(zones):
+        cells = maps.get((lod, kind))
+        if not cells:
+            continue
+        across = [a for a in range(3) if a != axis]
+        keys = np.array(list(cells), dtype=np.int64).reshape(-1, 2)
+        code = _cell_codes(keys[:, 0], keys[:, 1])
+        order = np.argsort(code)
+        code, d0 = code[order], np.array(list(cells.values()), dtype=np.float64)[order]
+        mine = np.flatnonzero(zone < 0)
+        p = pts[mine]
+        qk = _cell_codes(np.floor(p[:, across[0]] / BAY_CELL), np.floor(p[:, across[1]] / BAY_CELL))
+        at = np.minimum(np.searchsorted(code, qk), len(code) - 1)
+        d = sign * p[:, axis] - d0[at]
+        hit = (code[at] == qk) & (d > (BAY_CLEARANCE if which == "inner" else BUMPER_CLEARANCE))
+        if reach is not None:
+            hit &= d < reach
+        zone[mine[hit]] = z
+    return zone
+
+
+def zone_votes(maps: dict, lod: int, tris, zones=EXPOSED_ZONES) -> list:
+    """zone_vote for many triangles at once, with the same result for each: the
+    samples at once (_vote_samples), each one's zone as zone_of finds it
+    (_zones_at), and per triangle the zone with the most samples, the one met
+    first among equals (Counter.most_common keeps insertion order)."""
+    if not tris:
+        return []
+    pts, total = _vote_samples(tris)
+    zone = _zones_at(maps, lod, pts, zones)
+    owner = np.repeat(np.arange(len(tris)), total)
+    voted = np.flatnonzero(zone >= 0)
+    out: list = [None] * len(tris)
+    if not len(voted):
+        return out
+    key, at, cnt = np.unique(owner[voted] * len(zones) + zone[voted], return_index=True, return_counts=True)
+    tri, z = key // len(zones), key % len(zones)
+    o = np.lexsort((voted[at], -cnt, tri))
+    best = o[np.flatnonzero(np.r_[True, tri[o][1:] != tri[o][:-1]])]
+    for t, k, n in zip(tri[best].tolist(), z[best].tolist(), cnt[best].tolist(), strict=True):
+        if n >= ZONE_SHARE * int(total[t]):
+            out[t] = zones[k][0]
+    return out
 
 
 def split_exposed(body, place, log=None, engine: str | None = None) -> tuple[list, dict]:
@@ -1003,10 +1361,17 @@ def split_exposed(body, place, log=None, engine: str | None = None) -> tuple[lis
                             normals.append(nrm)
                 paint_grid[sub.lod] = Grid(cents, normals, cell=0.1)
             groups = defaultdict(list)
-            for t in sub.triangles():
-                pts = [place.point(pool[i].position) for i in t]
+            tris = list(sub.triangles())
+            placed = [[place.point(pool[i].position) for i in t] for t in tris]
+            normals = [_norm(_cross(_sub(pts[1], pts[0]), _sub(pts[2], pts[0]))) for pts in placed]
+            # The zone votes of the trim triangles at once (zone_votes).
+            votes = iter(
+                []
+                if panel
+                else zone_votes(maps, sub.lod, [pts for pts, nrm in zip(placed, normals) if nrm is not None], zones)
+            )
+            for t, pts, nrm in zip(tris, placed, normals, strict=True):
                 c = tuple(sum(p[k] for p in pts) / 3 for k in range(3))
-                nrm = _norm(_cross(_sub(pts[1], pts[0]), _sub(pts[2], pts[0])))
                 tag = None
                 if panel and nrm is not None:
                     grid = paint_grid[sub.lod]
@@ -1014,7 +1379,7 @@ def split_exposed(body, place, log=None, engine: str | None = None) -> tuple[lis
                     if hits and hits[0][0] < INNER_REACH and _dot(nrm, grid.values[hits[0][1]]) < -0.3:
                         tag = _axis_tag("inner", nrm)
                 elif not panel and nrm is not None:
-                    kind = zone_vote(maps, sub.lod, pts, zones)
+                    kind = next(votes)
                     # Bumper parts and exhausts (they leave with their panel or are
                     # their own) keep their trim outside the bay, as before.
                     if kind is not None and (kind == "bay" or zone_ok):
@@ -2117,22 +2482,45 @@ class DamagePlan:
         cache = self.__dict__.setdefault("_disp_cache", {})
         key = (id(f), pair, p)
         if key not in cache:
-            scale = f.box.scale_to(self.forza_box)
             src, flip = self._source(f, pair)
             grid = f.by_pair[src] if src is not None else f.all_grid
             q = self._forza_norm(p)
             hits = grid.nearest((-q[0], q[1], q[2]) if flip else q, self.opts.k)
-            wsum, d = 0.0, [0.0, 0.0, 0.0]
-            for dist, n in hits:
-                w = 1.0 / (dist + 0.02) ** 2
-                disp = f.disp[grid.values[n]]
-                if flip:
-                    disp = (-disp[0], disp[1], disp[2])
-                for a in range(3):
-                    d[a] += w * disp[a]
-                wsum += w
-            cache[key] = tuple(d[a] / wsum * scale[a] for a in range(3)) if wsum else (0.0, 0.0, 0.0)
+            cache[key] = self._weighted_disp(f, grid, flip, hits, f.box.scale_to(self.forza_box))
         return cache[key]
+
+    @staticmethod
+    def _weighted_disp(f: HostField, grid: Grid, flip: bool, hits, scale) -> tuple:
+        """_disp from the nearest host vertices (grid.nearest's hits)."""
+        wsum, d = 0.0, [0.0, 0.0, 0.0]
+        for dist, n in hits:
+            w = 1.0 / (dist + 0.02) ** 2
+            disp = f.disp[grid.values[n]]
+            if flip:
+                disp = (-disp[0], disp[1], disp[2])
+            for a in range(3):
+                d[a] += w * disp[a]
+            wsum += w
+        return tuple(d[a] / wsum * scale[a] for a in range(3)) if wsum else (0.0, 0.0, 0.0)
+
+    def _disp_prefetch(self, f: HostField, keys) -> None:
+        """_disp for many (pair, p) at once into its cache (Grid.nearest_many per
+        host grid; the weighting is _disp's)."""
+        cache = self.__dict__.setdefault("_disp_cache", {})
+        groups = defaultdict(dict)  # (source panel, flip) -> {p: [pairs]}
+        for pair, p in keys:
+            if (id(f), pair, p) not in cache:
+                groups[self._source(f, pair)].setdefault(p, []).append(pair)
+        scale = f.box.scale_to(self.forza_box) if groups else None
+        for (src, flip), todo in groups.items():
+            grid = f.by_pair[src] if src is not None else f.all_grid
+            ps = list(todo)
+            qs = [self._forza_norm(p) for p in ps]
+            hits = grid.nearest_many([(-q[0], q[1], q[2]) if flip else q for q in qs], self.opts.k)
+            for p, h in zip(ps, hits, strict=True):
+                value = self._weighted_disp(f, grid, flip, h, scale)
+                for pair in todo[p]:
+                    cache[(id(f), pair, p)] = value
 
     def _exposed_box(self, tag: str, pair, p) -> Box | None:
         """Projection box of an exposed vertex: the bay's, or its panel's (bonnet,
@@ -2204,12 +2592,65 @@ class DamagePlan:
             )
         return cache[key]
 
+    def _uv1_prefetch(self, f: HostField, items) -> None:
+        """_uv1 for many (p, pair, material, any_panel, normal, chart) at once into
+        its cache (Uv1Field.lookup_many)."""
+        cache = self.__dict__.setdefault("_uv1_cache", {})
+        todo = {}
+        for p, pair, material, any_panel, normal, chart in items:
+            key = (id(f), pair, material, p, any_panel, normal, chart)
+            if key not in cache and key not in todo:
+                todo[key] = (
+                    self._forza_norm(p),
+                    pair,
+                    material,
+                    self._is_local(f, material),
+                    any_panel,
+                    normal,
+                    chart,
+                )
+        if todo:
+            for key, hit in zip(todo, f.uv1.lookup_many(list(todo.values())), strict=True):
+                cache[key] = hit
+
+    def _prefetch(self, builder, subs, pair, f: HostField) -> None:
+        """Fill the _disp and _uv1 caches with what _finish asks of them, at once.
+        _finish only reads positions, s9 byte 2 and the s5 normal (bytes 0, 1)
+        before it writes them, and writes none of these."""
+        rigid = self._rigid(pair)
+        disp, uv1 = [], []
+        for sub in subs:
+            if sub.stride not in LAYOUT:
+                continue
+            o9, o5, _ = LAYOUT[sub.stride]
+            buf, stride = builder.buffers[sub.stride], sub.stride
+            idx = builder.indices[sub.first_index : sub.first_index + sub.index_count]
+            for v in sorted({sub.base_vertex + i for i in idx}):
+                at = v * stride
+                raw = struct.unpack_from("<3h", buf, at)
+                p = tuple(c / POSITION_UNITS for c in raw)
+                others = self._seam.get(raw) if rigid else None
+                if others and pair in others:
+                    at_p = tuple(c / POSITION_UNITS for c in self._seam_rep.get(raw, raw))
+                    disp += ((q, at_p) for q in others)
+                else:
+                    disp.append((pair, p))
+                if stride == 32 and f.uv1 is not None:
+                    material = sub.material
+                    if buf[at + o9 + 2] == 0 and self._is_local(f, material):
+                        material = self.f2d.PAINT
+                    uv1.append((p, pair, material, False, stored_normal(buf, at + o5), None))
+        self._disp_prefetch(f, disp)
+        if uv1:
+            self._uv1_prefetch(f, uv1)
+
     def _finish(self, builder, subs, pair, f: HostField) -> list:
         """Write s9 bytes 0-1, s12, the s5 normal delta and (32-byte vertices) the
         decal-atlas UV1 of the vertices `subs` use."""
         points = []
         rigid = self._rigid(pair)
         bound = self.bound(pair)
+        self._prefetch(builder, subs, pair, f)
         for sub in subs:
             if sub.stride not in LAYOUT:
                 continue
@@ -2290,6 +2731,23 @@ class DamagePlan:
         the other corners get a copy of their vertex with UV1 from that chart."""
         buf = builder.buffers[sub.stride]
         stride, o5 = sub.stride, LAYOUT[sub.stride][1]
+        # The lookups below at once (_uv1_prefetch): the loop only appends vertices
+        # and changes the indices of the triangle it is at.
+        asks = {}
+        for t in range(sub.first_index, sub.first_index + sub.index_count, 3):
+            tri = [sub.base_vertex + builder.indices[t + j] for j in range(3)]
+            cs = [charts.get(v) for v in tri]
+            if None in cs or cs[0] == cs[1] == cs[2]:
+                continue
+            chart = Counter(cs).most_common(1)[0][0]
+            for j, v in enumerate(tri):
+                if cs[j] != chart and (v, chart) not in asks:
+                    material = sub.material
+                    if buf[v * stride + LAYOUT[stride][0] + 2] == 0 and self._is_local(f, material):
+                        material = self.f2d.PAINT
+                    asks[(v, chart)] = (pos[v], pair, material, False, stored_normal(buf, v * stride + o5), chart)
+        if asks:
+            self._uv1_prefetch(f, list(asks.values()))
         copies: dict[tuple, int | None] = {}
         for t in range(sub.first_index, sub.first_index + sub.index_count, 3):
             tri = [sub.base_vertex + builder.indices[t + j] for j in range(3)]
@@ -2436,6 +2894,13 @@ class DamagePlan:
         written = 0
         for uid, (vxdt, stride, o_uv1, o5) in buffers.items():
             buf = bytearray(payload(stream, vxdt))
+            asks = []  # the lookups below at once (they write UV1 only, which none reads)
+            for v, material in users[uid].items():
+                at = v * stride
+                p = tuple(c / POSITION_UNITS for c in struct.unpack_from("<3h", buf, at))
+                normal = stored_normal(buf, at + o5) if o5 is not None else None
+                asks.append((p, (0, 0), material, True, normal, None))
+            self._uv1_prefetch(f, asks)
             for v, material in users[uid].items():
                 at = v * stride
                 p = tuple(c / POSITION_UNITS for c in struct.unpack_from("<3h", buf, at))

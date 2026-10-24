@@ -263,6 +263,26 @@ Left after that (a profile of the RX7): `Uv1Field.lookup` (one
 car), the cockpit cull (`visible_triangles`, about 4 s), and `zone_maps` /
 `_tri_samples` (about 1 s).
 
+**UV1 lookups, crush and zones, batched.** `DamagePlan._finish`,
+`_split_seams` and `interior_uv1` first fill the `_uv1` and `_disp` caches for
+all the vertices they will ask about (`_prefetch`), then run their loops as
+before. Both rest on `Grid.nearest_many`: nearest's result is the k first by
+(distance, index) of the points in rings 0..R, and a point counts toward the
+stop from ring max(its ring, the first t with d <= t * cell) on, so R is the
+want-th smallest of those. numpy measures the distances within rmax rings of
+each query point, finds R by counting, picks the k nearest within it, and
+math.dist sorts them as nearest does. A point that isn't decided gets a ring
+bound from what was found and goes again. A distance within 1e-9 of a ring
+boundary, or another position within 2e-9 of the k-th distance, goes to
+`Grid.nearest` (copies of a position, the host's split vertices, are no tie).
+`Uv1Field.lookup_many` scores the 16 candidates with `_closest` and takes the
+first lowest in nearest's order. `zone_maps` and `zone_votes` sample all
+triangles in numpy with `_tri_samples`' float operations; the centroid stays
+Python's `sum()`, which is compensated in 3.12+, not left to right. On the RX7:
+UV1 lookups 5.0 -> 1.4 s, crush displacements 2.4 -> 0.9 s, the exposed-geometry
+split 1.7 -> 0.6 s. The 6-car build output is byte-identical
+(`tests/test_speed_damage.py` has the equivalence tests).
+
 Batch-level costs at full-roster scale:
 
 - **Lint was quadratic.** Each `upvh lint` read the whole output archive,
