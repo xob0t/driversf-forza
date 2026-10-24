@@ -223,7 +223,7 @@ Whole sets instead of single values (never blended parameter by parameter):
 
 | Set | Parameters | Donor |
 | --- | --- | --- |
-| steering | 298, 379..391, 470 | the medoid of the host and the next two best-ranked hosts with the car's drivetrain and within 15 model years (the one closest to the other two, fleet-normalised) |
+| steering | 298, 379..391, 470 | the medoid of the host and the next two best-ranked hosts with the car's drivetrain and within 10 model years (was 15: "Rule change" under the Huayra feedback) (the one closest to the other two, fleet-normalised) |
 | assists | 344, 351..354, 373..375, 411, 496, 510, 511 | medoid (p345 follows the weight distribution, rule W) |
 | tyre falloff | 376, 377, 378 | medoid |
 | suspension geometry | 3, 4, 25, 188, 292, 505..508 | medoid |
@@ -288,6 +288,9 @@ spread (MAD), clipped at 10; weights 1 for the feel, engine, gearing and
 body groups, 0.5 for the unread blocks. Gearing is scored on what it does:
 speed at redline in first and second gear, top gear at redline / p160, gear
 count.
+
+Figures from before the 10-year donor rule (with it the default's weighted
+mean is 0.638 and steering 0.492: "Rule change" below).
 
 | Group | DSF-first (default) | DSF-first, host sets | Forza mapping | Host unchanged |
 | --- | ---: | ---: | ---: | ---: |
@@ -705,7 +708,11 @@ every run aligned and the entry speeds within a few mph.
 
 ### Remaining gaps
 
-1. FWD hatches: the Mito port now takes 4.95 s to 60 mph (8.7 s in round 2)
+(Written after round 3; round 4's calibration loop since moved several of
+these, see "Round 4 in game".)
+
+1. FWD hatches: the Mito port took 4.95 s to 60 mph after round 3 (8.7 s in
+   round 2, 4.39 s against a 4.63 s target after round 4's calibration)
    against 4.0 for the stock Mito; the rest of the gap is above 60 mph (its
    p160 is 2 mph lower and its torque curve is the Giulietta's). The
    Scirocco R is paired with DSF's Scirocco *rally* (275, extra traction
@@ -716,9 +723,9 @@ every run aligned and the entry speeds within a few mph.
    but the 370Z port now spins further than the stock 370Z (121 vs 76 deg,
    with p345 0.505 against the stock 0.500: its other values from the GT-R
    host and the 8C donor add rotation) and the CTS-V rotates less (62 vs 83).
-   Mean error over five cars: 21 deg now, 23 before round 3. A rule that
-   aims p345 at a predicted rotation would need a better rotation model than
-   the current one (cross-validated error 11 deg).
+   Mean error over five cars: 15 deg with rule W, 20 before round 3 (see
+   round 3). Round 4 calibrates p345 per car against the measured rotation
+   instead (`tools/handling_tune.py`).
 3. The 1969 Charger's rotation (36 to 51 deg against 51 to 69 stock across
    sessions; the stock car itself varies that much) isn't in any one set.
 4. p18: 6% median, 10% at the 75th percentile (torque and power rule).
@@ -779,16 +786,16 @@ them by hand: the Volt has one gear and p18 = 2500.
   built (p160 reads back), a port on its own model's host drives like the
   stock car (confirmed-runtime).
 - Medium: torque magnitude, gearing, grip and stiffness scaling, and the
-  feel sets taken from similar hosts: the leave-one-out check and three
-  cars in game agree, with errors of a few percent to 20% in acceleration
+  feel sets taken from similar hosts: the leave-one-out check and about
+  ten cars in game (rounds 1 to 4) agree, with errors of a few percent to 20% in acceleration
   and about 30% in handbrake rotation.
 - Low: what the steering, assist and unread parameters mean one by one;
   they are carried as whole sets from DSF cars instead.
 
 ## Open
 
-1. The gaps under "In-game validation": AWD launch on RWD hosts, handbrake
-   rotation, torque.
+1. The gaps under "In-game validation" ("Remaining gaps"): handbrake
+   rotation, torque (the AWD launch on a RWD host was fixed in round 2).
 2. `FUN_0086C3A0`: confirm the VO3D map key.
 3. The loose `Vehicles\Configs\vehicNNN.VO3` fallback could be a way to ship
    handling without touching the archive.

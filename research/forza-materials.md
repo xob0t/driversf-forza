@@ -110,7 +110,7 @@ The full technique table, with prefix fallbacks for names not seen on this
 car, is `TECHNIQUES` / `classify()` in `forza_materials.py`.
 `python tools/forza_materials.py <car dir> --colours` prints this per car.
 
-## DSF side (confirmed-static; not yet tested in game)
+## DSF side (confirmed-static; in game: `lights.md`, `in-game-tests.md`)
 
 - The host's full entry has one chassis TEXC (Desanne: 512² DXT5, 4 mips,
   0x55080 bytes) and two local MACOs that sample it through UV0: Chassis
@@ -122,9 +122,11 @@ car, is `TECHNIQUES` / `classify()` in `forza_materials.py`.
 - The DSF texture is plain RGBA. Alpha is a specular/glow mask: on non-lamp
   texels it tracks luminance (correlation 0.9–0.99, about
   `(lum − 45) × 0.55`); on lamps it peaks at the bulbs. The converter maps
-  Forza `Lights` alpha through gamma 2. On `nodamage` texels it uses the
-  luminance formula and turns paint-through texels into the host's plain
-  texel (74, 72, 74, 15).
+  Forza `Lights` alpha through the stock-matched per-hue curves
+  (`LIGHTS_ALPHA = "matched"`, `lights.md`; gamma 2 was the first mapping).
+  On `nodamage` texels it uses the luminance formula and turns paint-through
+  texels into the Desanne's plain texel (74, 72, 74, 15; `DEFAULT_PLAIN`,
+  whatever the host).
 - **Atlas:** only the parts that textured subsections use are copied. A
   recursive XY cut splits the UV triangles into rectangles along empty
   seams; L-shaped groups are split at the cut with the least area. The
@@ -159,17 +161,16 @@ Nissan emblems and the 370Z script, with no black badge plates.
 
 ## Open
 
-1. In game: the paint overlay with the new texture, the Lights material's
-   glow on Forza lamp alpha, and whether the Chassis material lights badges
-   well.
+1. In game: whether the Chassis material lights badges well (the Lights
+   glow on Forza lamp alpha ran in game: `lights.md`).
 2. A real alpha test: the Chassis material has none. The Dials material
    (interior entry, `g_hAlphaTestRefValue`) is a candidate template for
    cut-out emblems and grilles.
 3. Headlight glass uses shared GLASS, so the lamp internals show through it.
    Whether DSF's glass is transparent enough is unchecked.
-4. The interior entry (N+1000) still holds the Desanne cockpit, and its one
-   submodel on the full Chassis material now samples the 370Z atlas. Next:
-   convert `<car>_cockpit.carbin` with `nodamage_LOD0`, `interior_LOD0`.
+4. Done: the interior entry (N+1000) gets the converted
+   `<car>_cockpit.carbin` by default (`cockpit.md`; `port_car.py
+   --no-cockpit` keeps the host's).
 5. Damage textures (`damage`, `damagelights`) and DSF's damage decal path.
 6. Parsing the `.fxobj` effect (technique → pixel shader → sampler set)
    would make the atlas choice authoritative for custom shaders.

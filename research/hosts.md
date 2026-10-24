@@ -15,10 +15,10 @@ sounds and behaves. Until now every port used 266 (ASYM Desanne, a V6 saloon).
 | --- | --- | --- |
 | Engine sound | NONR/VSRT | kept (or `--sound-host`) |
 | Hierarchy: parts, doors, hinges, collision (PDL), lights, damage | NONR/UPVH | hubs, steering, gauges, seats moved; the rest kept |
-| Handling base: steering, assists, tyre curves, cameras | NONR/VO3D | `handling.py` replaces about 33 parameters, scales grip, springs and dampers by mass |
+| Handling base: steering, assists, tyre curves, cameras | NONR/VO3D | `handling_dsf.py` (default) keeps the host's VO3D and moves it by the fleet's rules (`handling.md`); `--handling forza` is the older `handling.py` mapping (about 33 parameters, grip, springs and dampers scaled by mass) |
 | Paint sets | NONR/SPSR | kept |
 | Category, flags | SSIC/VSCT record | copied |
-| HUD badge, name, stat bars | Lua `vehicleStats` | copied by `register.lua` |
+| HUD badge, name, stat bars | Lua `vehicleStats` | copied by `register.lua`; stat bars generated (`handling_dsf.stat_bars`) |
 
 ## The engine sound (confirmed-static)
 
@@ -105,10 +105,10 @@ Things that were already per host: `cockpit.host_cockpit` (steering record,
 hinge, marker, gauge slots from UPVH), `cockpit.host_interior` (materials,
 needle part), `handling.hub_geometry`, the shared materials PAINT, GLASS,
 TRIM and TYRE (SSIC defines them), the glass texture rectangles (SSIC
-texture). Still from the Desanne: the paint texel (0.835, 0.703) whose
-colour seeds the atlas's plain cell (`dsf_materials.PAINT_TEXEL_UV`); only
-the colour is read from the host's texture, so a non-plain texel there just
-tints the paint base.
+texture). Paint UV0 points at the shared paint atlas's paint block
+(`dsf_materials.PAINT_TEXEL_UV`, the same for every host: `lights.md`,
+"Paint"); the chassis atlas's plain cell is the Desanne's fixed texel
+(`dsf_materials.DEFAULT_PLAIN`).
 
 ## Scoring (`host_select.py`)
 
@@ -262,4 +262,4 @@ right, wheel part on the UPVH hubs: all wheels in their arches), `eyes.png`
    Desanne's hubs before).
 3. Collision (PDL) stays the host's shape; a closer host makes it fit better,
    but nothing rescales it yet.
-4. The paint texel and the host's SPSR paint sets (another agent's work).
+4. The host's SPSR paint sets (the paint texel is settled: above).
