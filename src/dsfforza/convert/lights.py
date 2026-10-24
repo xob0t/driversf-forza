@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import re
 import struct
 import sys
 from dataclasses import dataclass, field
@@ -329,6 +330,44 @@ def _high_brake(records) -> None:
             r.function = BRAKE
 
 
+REFLECTORS = ("textured_reflector", "reflector")
+LAMP_COVERS = ("glass", "lights_glass", "lights_gls_noemit")  # = glass.LAMP_MATERIALS
+
+
+def _headlight_reflectors(sections, place, mid_z: float) -> list[Tri]:
+    """Head-lamp triangles for a car without head-lamp techniques or clear front
+    lenses: the reflectors of its headlight sections (headlightL/R, glassLHL/RHL)
+    ahead of the wheelbase midpoint, else their lamp-cover glass (MIT_HKS_06,
+    PEU_3_905EVO_93). Race cars whose headlights are decals (badge) get none."""
+    lamp_sections = [s for s in sections if re.match(r"headlight|glass[lr]hl", s.name.lower())]
+    for materials in (REFLECTORS, LAMP_COVERS):
+        out = _front_tris(lamp_sections, materials, place, mid_z)
+        if out:
+            return out
+    return []
+
+
+def _front_tris(sections, materials, place, mid_z: float) -> list[Tri]:
+    out = []
+    for section in sections:
+        for sub in section.subsections:
+            if sub.material not in materials:
+                continue
+            pool = section.vertices_for(sub)
+            tris = list(sub.triangles())
+            if not tris:
+                continue
+            pts_all = [[place.point(pool[i].position) for i in t] for t in tris]
+            max_x = max(abs(p[0]) for pts in pts_all for p in pts)
+            for k, (t, pts) in enumerate(zip(tris, pts_all)):
+                area, centre, normal = _tri_geometry(pts, [place.normal(pool[i].normal) for i in t])
+                if centre[2] <= mid_z:
+                    continue
+                side = "C" if max_x < CENTRE_X else ("L" if centre[0] > 0 else "R")
+                out.append(Tri(sub, k, HEAD, side, True, WHITE, area, centre, normal, sub.lod))
+    return out
+
+
 @dataclass
 class LampPlan:
     """Lamp per Forza triangle, and the host light entries the lamps use.
@@ -394,6 +433,19 @@ class LampPlan:
                             clear.append(Tri(sub, k, LENS, side, front, c, area, centre, normal, sub.lod))
                             continue
                     records.append(Tri(sub, k, f, side, front, c, area, centre, normal, sub.lod))
+        if not any(r.function == HEAD and r.front for r in records):
+            # No head-lamp technique (CHE_CorvetteGS_10, DOD_RamSRT10_06,
+            # FOR_MustangSVTCobraR_93 and several race cars draw the lamp as a
+            # reflector under a clear lens): the clear lenses at the front are the
+            # head lamps, else the headlight sections' reflectors.
+            front_clear = [r for r in clear if r.front]
+            if front_clear:
+                clear = [r for r in clear if not r.front]
+                records += [
+                    Tri(r.sub, r.k, HEAD, r.side, True, WHITE, r.area, r.centre, r.normal, r.lod) for r in front_clear
+                ]
+            else:
+                records += _headlight_reflectors(sections, place, mid_z)
         _high_brake(records)
         plan._cluster(records)
         plan._place_clear(clear)
