@@ -69,7 +69,7 @@ def lint() -> bool:
         return True
     ok = True
     for args in (["check"], ["format", "--check"]):
-        print(f"ruff {' '.join(args)}")
+        print(f"ruff {' '.join(args)}", flush=True)
         ok &= subprocess.run([sys.executable, "-m", "ruff", *args], cwd=REPO, check=False).returncode == 0
     return ok
 
