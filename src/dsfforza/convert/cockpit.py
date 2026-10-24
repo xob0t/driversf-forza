@@ -693,6 +693,14 @@ def fit(
         source = ("stub" if sections else "no") + " cockpit carbin: main carbin cabin"
         sections = cabin
         lod0 = False
+    else:
+        # Upgrade parts, as on the outside (forza2dsf.stock_sections): the cockpit
+        # carbin holds every bonnet the car can wear (Mustang Boss 429: hooda,
+        # hoodCIrace, hoodPSrace), all drawn at once over the stock one. The
+        # Boss's body-colour race scoop hid hooda's black one from the cockpit.
+        from dsfforza.convert import forza2dsf
+
+        sections = forza2dsf.stock_sections(sections)
     static, needles = cockpit_parts(sections)
     if "steering_wheel" not in static:
         borrowed = promote_lod(main["steering_wheel"]) if "steering_wheel" in main else None

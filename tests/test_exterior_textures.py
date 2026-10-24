@@ -7,6 +7,7 @@ on synthetic data (no game or Forza files).
 
 from __future__ import annotations
 
+import struct
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -63,6 +64,64 @@ class ClassifyWheel(unittest.TestCase):
             self.assertEqual(fm.classify_wheel(name)[0], fm.TYRE, name)
         for name in ("blur_rim", "blur_lip", "chrome_blur_lip", "chrome_blur_rim"):
             self.assertEqual(fm.classify_wheel(name)[0], fm.SKIP, name)
+
+
+class ChromeTrim(unittest.TestCase):
+    """Forza's chrome techniques go to DSF's shared chrome materials (stock: GLOBAL_LOD_Chrome
+    in full entries, GLOBAL_Chassis_Chrome in clean exteriors), not the flat dark trim: the
+    Mustang Boss 429's bumpers and window frames came out black (out/testdrive11)."""
+
+    def setUp(self):
+        quad = [((0.0, 0.0, 0.0), (0.2, 0.2)), ((1.0, 0.0, 0.0), (0.4, 0.2)), ((1.0, 0.2, 0.0), (0.4, 0.3))]
+        verts = [carbin.Vertex(p, uv, (0.7, 0.1), (0.0, 0.0, 1.0), bytes((90, 0, 0, 0))) for p, uv in quad]
+        transform = (0.0, 1.0, 0.0, 1.0)
+        self.subs = {
+            name: carbin.SubSection(name, 1, 4, transform, [0, 1, 2])
+            for name in ("chrome", "chrome_2", "black", "matte_colors", "body")
+        }
+        self.section = carbin.Section("bumperFa", (0, 0, 0), (0, 0, 0), (1, 1, 1), verts, [], list(self.subs.values()))
+
+    def test_roles(self):
+        for name in ("chrome", "chrome_2", "chrome_3", "chrome_bump", "chrome_4"):
+            self.assertEqual(fm.classify(name)[0], fm.CHROME, name)
+        self.assertEqual(fm.classify("lights_chrome"), (fm.CHROME, fm.LIGHTS))
+        for name in ("chrome_rim", "chrome_blur_lip", "badge_chrome", "black", "matte_colors"):
+            self.assertNotEqual(fm.classify(name)[0], fm.CHROME, name)
+        # The interior entry draws chrome from the atlas like its other trims.
+        self.assertEqual(fm.classify_cockpit("chrome", "a_pillar"), (fm.TEXTURED, fm.NODAMAGE))
+        self.assertEqual(fm.classify_cockpit("chrome", "interior"), (fm.TEXTURED, fm.INTERIOR))
+        self.assertEqual(fm.classify_cockpit("chrome")[0], fm.TEXTURED)
+
+    def _materials(self, shared):
+        builder = forza2dsf.Builder(b"\x01\x02\x03\x04")
+        place = forza2dsf.Placement(0.0, 0.0)
+        added = forza2dsf.add_geometry(builder, [self.section], 1, place, wheel=False, shared=shared)
+        out = {}
+        for sub in added:
+            buf = builder.buffers[sub.stride]
+            v = builder.indices[sub.first_index] + sub.base_vertex
+            out[sub.material] = struct.unpack_from("<2e", buf, v * sub.stride + 8)
+        return out
+
+    def test_exterior_and_full_entry_materials(self):
+        for shared, chrome, trim in (
+            (forza2dsf.SHARED_EXTERIOR, forza2dsf.CHROME_LOD1, forza2dsf.TRIM_LOD1),
+            (forza2dsf.SHARED, forza2dsf.CHROME, forza2dsf.TRIM),
+        ):
+            mats = self._materials(shared)
+            self.assertIn(chrome, mats)
+            self.assertIn(trim, mats)  # black and matte_colors stay flat trim
+            self.assertAlmostEqual(mats[chrome][0], forza2dsf.CHROME_UV[0], places=3)
+            self.assertAlmostEqual(mats[chrome][1], forza2dsf.CHROME_UV[1], places=3)
+            self.assertEqual(forza2dsf.MATERIAL_LAYOUT[chrome], (32, 5))
+
+    def test_textured_binding_keeps_chrome_shared(self):
+        t = dm.Texturing(Path())
+        sub = self.subs["chrome"]
+        t.resolved[(id(self.section), id(sub))] = fm.resolve(self.section, sub)
+        self.assertEqual(t.material(self.section, sub), fm.CHROME)
+        binding = dm.Binding(t, dm.Installed({dm.CHASSIS: b"C" * 8, dm.LIGHTS_MAT: b"L" * 8}, b"T" * 8, {}))
+        self.assertEqual(binding.material(self.section, sub, forza2dsf.SHARED_EXTERIOR), forza2dsf.CHROME_LOD1)
 
 
 class _Vertex:

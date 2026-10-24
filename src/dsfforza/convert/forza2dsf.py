@@ -63,6 +63,14 @@ PAINT_LOD1 = bytes.fromhex("10122b9653b14e2a")
 GLASS_LOD1 = bytes.fromhex("10122b9953b14e2a")
 TRIM_LOD1 = bytes.fromhex("10122b9753b14e2a")
 TYRE_LOD1 = bytes.fromhex("10122b9b53b14e2a")
+# Chrome (Forza's chrome techniques: bumpers, window frames, drip rails). Stock
+# full entries draw their chrome with GLOBAL_LOD_Chrome (96 of 150 vehicles,
+# 374k triangles; GLOBAL_Chassis_Chrome in 9) and clean exteriors with
+# GLOBAL_Chassis_Chrome (148 of 150, 322k triangles; GLOBAL_LOD_Chrome in 8),
+# both stride 32, MODL flag 5, sampling the shared chassis texture (reflection
+# amount 1, specular power 150; the trim material has specular intensity 0.01).
+CHROME = bytes.fromhex("a012f01306d57a2a")  # GLOBAL_LOD_Chrome
+CHROME_LOD1 = bytes.fromhex("00128338d7fd1027")  # GLOBAL_Chassis_Chrome
 # Vertex stride each material was used with in the Desanne, and MODL render flag
 # (the _LOD1 twins: the same in stock exteriors, e.g. 147, 171, 227). Read only:
 # each conversion adds its host's own materials to a copy (Builder.layout).
@@ -71,10 +79,12 @@ MATERIAL_LAYOUT = {
     GLASS: (28, 7),
     TRIM: (28, 5),
     TYRE: (20, 5),
+    CHROME: (32, 5),
     PAINT_LOD1: (32, 5),
     GLASS_LOD1: (28, 7),
     TRIM_LOD1: (28, 5),
     TYRE_LOD1: (20, 5),
+    CHROME_LOD1: (32, 5),
 }
 
 DEFAULT_LODS = "4:1,8:3,16:5"  # DSF MODL mask -> Forza LOD
@@ -97,6 +107,10 @@ PAINT_UV = (0.835, 0.703)
 # chassis texture (SSIC 00122b73d1fa1227, texels ~(944-1023, 236-268), RG ~24)
 # that stock trims drawn from a single texel use most (46 hosts: 39% of that area).
 TRIM_UV = (0.969, 0.496)
+# Shared chrome UV0: the middle of the block of that texture stock chrome samples
+# most (texels 972-980 x 404-424 on both chrome materials, 150 vehicles; red,
+# the grey level, ~98). One texel: Forza's chrome UVs land on its own atlas.
+CHROME_UV = (0.9536, 0.8135)
 # Licence plates (src/dsfforza/convert/plates.py): stock plates are paint-material quads whose
 # UV0 covers the plate in the same shared atlas; the synthetic plate sections
 # carry those UVs and keep them (add_geometry).
@@ -119,6 +133,8 @@ def material_for(name: str) -> bytes | None:
         return GLASS
     if n in ("tire", "rim", "inner_rim", "tyre"):
         return TYRE
+    if n.startswith("chrome") or n == "lights_chrome":
+        return CHROME
     return TRIM
 
 
@@ -417,9 +433,16 @@ class Builder:
         return sub
 
 
-SHARED = {"paint": PAINT, "glass": GLASS, "trim": TRIM, "tyre": TYRE, "skip": None}
-SHARED_EXTERIOR = {"paint": PAINT_LOD1, "glass": GLASS_LOD1, "trim": TRIM_LOD1, "tyre": TYRE_LOD1, "skip": None}
-ROLE_OF = {PAINT: "paint", GLASS: "glass", TRIM: "trim", TYRE: "tyre"}
+SHARED = {"paint": PAINT, "glass": GLASS, "trim": TRIM, "tyre": TYRE, "chrome": CHROME, "skip": None}
+SHARED_EXTERIOR = {
+    "paint": PAINT_LOD1,
+    "glass": GLASS_LOD1,
+    "trim": TRIM_LOD1,
+    "tyre": TYRE_LOD1,
+    "chrome": CHROME_LOD1,
+    "skip": None,
+}
+ROLE_OF = {PAINT: "paint", GLASS: "glass", TRIM: "trim", TYRE: "tyre", CHROME: "chrome"}
 
 
 # --- wheels ------------------------------------------------------------------------
@@ -951,6 +974,11 @@ def add_geometry(
                                 # noise over its whole upper body). Stock flat trims use its
                                 # dark block.
                                 uv0 = TRIM_UV
+                            elif material == CHROME or material == shared.get("chrome"):
+                                # Shared chrome: a grey texel of the same texture; the
+                                # reflection does the rest. UV1 as for paint (the
+                                # damage decal; damage.DamagePlan takes the host's).
+                                uv0 = CHROME_UV
                             elif tag is not None:
                                 uv1 = uv0  # atlas-textured; the Lights material's UV1 feeds its decal map
                             if shown:

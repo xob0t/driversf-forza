@@ -50,6 +50,9 @@ from dsfforza.formats import carbin
 
 # Roles, matching the DSF side's shared materials plus "textured".
 PAINT, GLASS, TRIM, TYRE, TEXTURED, SKIP = "paint", "glass", "trim", "tyre", "textured", "skip"
+# Exterior chrome (bumpers, window frames, drip rails...): DSF's shared chrome
+# materials, as on stock cars (research/forza-materials.md, "Chrome trim").
+CHROME = "chrome"
 # Texture families (the atlas the technique's baseSampler is bound to).
 NODAMAGE, LIGHTS = "nodamage", "lights"
 # Cockpit carbins only: dial faces, needles, switch labels (interior_LOD0.xds;
@@ -96,12 +99,17 @@ _add(
     "black frame bottom bottom_2 undercarriage misc engine cage rubber_trim rubber_trim_2 "
     "weatherstrip plastic plastic2 dullplastic embossed_plastic embossed_plastic2 mottled "
     "cloth cloth2 smooth_metal rubber matte matte_colors matte_colors2 bumper_frame "
-    "black_glass black_glass_breakable race_kit_red chrome chrome_2 chrome_3 chrome_bump "
+    "black_glass black_glass_breakable race_kit_red "
     "carbon_fiber carbon_fiber2 carbon_fiber3 carbon_fiber_aniso grille1 grille1_alpha "
     "grille2 grille2_alpha defrost_lines mirrorLeft mirrorMiddle mirrorRight "
     "caliper rotor hub numberplate numplate scaling_text",
 )
-_add(TRIM, LIGHTS, "lights_chrome")
+# Forza's chrome techniques (ChromeDiffuseScale 0.1, CubeScale 2 in the cars'
+# ShaderSettings.xml: mostly cube-map reflection). As trim they drew in DSF's
+# flat dark trim colour: the Mustang Boss 429's bumpers and window frames came
+# out black (user report on out/testdrive11).
+_add(CHROME, NODAMAGE, "chrome chrome_2 chrome_3 chrome_bump")
+_add(CHROME, LIGHTS, "lights_chrome")
 _add(
     TEXTURED,
     NODAMAGE,
@@ -232,6 +240,8 @@ def classify(name: str) -> tuple[str, str | None]:
         return TYRE, None
     if n.startswith(("cockpit_", "gauge")) or "badge" in n or "emblem" in n:
         return TEXTURED, NODAMAGE
+    if n.startswith("chrome"):
+        return CHROME, NODAMAGE
     return TRIM, NODAMAGE
 
 
@@ -268,7 +278,8 @@ def classify_cockpit(name: str, section: str | None = None) -> tuple[str, str | 
     - mirror glass (mirrorLeft/Middle/Right) is a render target in Forza:
       flat trim.
     Without `section` every non-gauge trim maps to nodamage_LOD0 (the old
-    behaviour; callers that only need the role may omit it)."""
+    behaviour; callers that only need the role may omit it). Chrome counts as
+    trim here: the interior entry draws it from the atlas like the other trims."""
     n = name.lower()
     if TECHNIQUES.get(name, (None,))[0] == SKIP:
         return SKIP, None
@@ -278,6 +289,8 @@ def classify_cockpit(name: str, section: str | None = None) -> tuple[str, str | 
     if n.startswith("mirror"):
         return TRIM, None
     role, family = classify(name)
+    if role == CHROME:
+        role = TRIM
     if section is not None and not COCKPIT_EXTERIOR_SECTIONS.match(section):
         if role in (TRIM, TEXTURED) and family is not None:
             return TEXTURED, INTERIOR

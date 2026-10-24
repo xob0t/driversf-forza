@@ -58,6 +58,37 @@ def test_badges_follow_their_section():
     assert fm.classify_cockpit("badge") == (fm.TEXTURED, fm.INTERIOR)  # role-only callers
 
 
+def test_upgrade_bonnets_left_out():
+    # Cockpit carbins hold every bonnet the car can wear (11 of the 40 testdrive cars);
+    # fit() keeps the stock one, as forza2dsf.stock_sections does on the outside. The
+    # Mustang Boss 429's body-colour race scoop (hoodCIrace) hid hooda's black one.
+    from dsfforza.convert import forza2dsf
+
+    names = [
+        "seatL",
+        "steering_wheel",
+        "mirrorR",
+        "glassLF",
+        "cagerace",
+        "speed_min",
+        "speed_mid",
+        "tach_max",
+        "interior",
+        "headlightL",
+        "a_pillar",
+        "hoodCIrace",
+        "hoodPSrace",
+        "hooda",
+        "hoodb",
+        "hoodg",
+        "glassF",
+    ]
+    sections = [carbin.Section(n, (0, 0, 0), (0, 0, 0), (0, 0, 0)) for n in names]
+    kept = [s.name for s in forza2dsf.stock_sections(sections)]
+    dropped = {"cagerace", "hoodCIrace", "hoodPSrace", "hoodb", "hoodg"}
+    assert kept == [n for n in names if n not in dropped], kept
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
