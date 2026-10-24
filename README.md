@@ -83,3 +83,26 @@ Options and the other modes (host, sandbox): `research/in-game-tests.md`.
 
 Start with `research/dngvehicles.md` (archive format), `research/hosts.md`
 (how cars are built on stock hosts) and `research/in-game-tests.md`.
+
+## Acknowledgements
+
+- [DriverNGToolkit](https://github.com/ReHamster/DriverNGToolkit)
+  (SoapyMan, ReHamster): DriverNGHook, which runs the registration Lua.
+- [driver-tools](https://github.com/Fireboyd78/driver-tools) (Fireboyd78):
+  Driver chunk, model and hierarchy formats.
+- [carbin-garage](https://github.com/ItsNotPaths/carbin-garage) (ItsNotPaths):
+  the Forza carbin format description.
+- [ForzaTech-extraction-tools](https://github.com/Doliman100/ForzaTech-extraction-tools)
+  (Doliman100): Forza string table and data layouts.
+- [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader) (ThirteenAG).
+- [vgmstream](https://github.com/vgmstream/vgmstream): decoding Forza's XMA engine audio.
+- [unluac](https://sourceforge.net/projects/unluac/): decompiling the game's Lua.
+- [Ghidra](https://github.com/NationalSecurityAgency/ghidra) and
+  [Capstone](https://github.com/capstone-engine/capstone): reverse engineering `Driver.exe`.
+- Reflections and Ubisoft for Driver: San Francisco; Turn 10 and Playground
+  Games for Forza Motorsport 4 and Forza Horizon.
+
+## License
+
+[MIT](LICENSE). The game files and Forza assets are not covered and are not
+included.
