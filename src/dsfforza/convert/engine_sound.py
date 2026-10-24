@@ -507,6 +507,92 @@ def _decoded(fsb_path: Path, fsb, folder: Path, vgm: Path) -> list[Path]:
     return wavs
 
 
+def _media_parts(name: str) -> tuple[str, str, int | None]:
+    """(make, model, two-digit year) of a media name, lower case: CHE_Corvette_60 ->
+    ("che", "corvette", 60), MAZ_16_B09_09 -> ("maz", "16_b09", 9)."""
+    parts = name.lower().split("_")
+    year = int(parts[-1]) if len(parts) > 2 and parts[-1].isdigit() and len(parts[-1]) == 2 else None
+    return parts[0], "_".join(parts[1:-1] if year is not None else parts[1:]), year
+
+
+def nearest_tuning(car: str, names: list[str]) -> str | None:
+    """The EngineTuning car name (from `names`, the <car>_ET.xml stems) closest to
+    `car` when it has none of its own: the same make and model with the nearest
+    year, else the same make and a model that contains the other (IECorrado and
+    Corrado, Q7 and Q7V12TDI) with the nearest year. None if neither exists."""
+    make, model, year = _media_parts(car)
+
+    def gap(other_year):
+        if year is None or other_year is None:
+            return 50
+        return min(abs(year - other_year), 100 - abs(year - other_year))  # 99 and 01 are close
+
+    best = None
+    for name in names:
+        m, mod, y = _media_parts(name)
+        if m != make or not mod or name.lower() == car.lower():
+            continue
+        if mod == model:
+            rank = 0
+        elif len(min(mod, model, key=len)) >= 4 and (mod in model or model in mod):
+            rank = 1
+        else:
+            continue
+        key = (rank, gap(y), name.lower())
+        if best is None or key < best[0]:
+            best = (key, name)
+    return best[1] if best else None
+
+
+def _engine_tuning(car: str, game: str, isos: list[Path]):
+    """(game, sources, Tuning, EngineTuning, substitute note) for a car: its own ET
+    file on its game's discs, else on the other game's (CHE_Corvette_60 is an FM4
+    car whose ET is on the FH1 disc), else the nearest_tuning of the same make and
+    model on its game's, then the other game's discs. The sources of the chosen
+    game stay open (the caller closes them). Raises LookupError."""
+    from dsfforza.formats import forza_audio as fa
+
+    order = [game] + [g for g in ("fh1", "fm4") if g != game]
+    loaded = {}
+
+    def load(g):
+        if g not in loaded:
+            discs = isos_for(g, isos)
+            sources = [fa.Source(str(p)) for p in discs]
+            loaded[g] = (sources, fa.Tuning(sources) if sources else None)
+        return loaded[g]
+
+    choice = None
+    try:
+        for g in order:
+            _, tuning = load(g)
+            if tuning is not None and f"{car}_et.xml".lower() in tuning.et:
+                choice = (g, car, None if g == game else f"{car}_ET.xml from the {g.upper()} discs")
+                break
+        else:
+            for g in order:
+                _, tuning = load(g)
+                if tuning is None:
+                    continue
+                stems = [k[: -len("_et.xml")] for k in tuning.et if k.endswith("_et.xml")]
+                other = nearest_tuning(car, stems)
+                if other is not None:
+                    where = "" if g == game else f" from the {g.upper()} discs"
+                    choice = (g, other, f"no {car}_ET.xml: the same model's {{file}}{where}")
+                    break
+        if choice is None:
+            raise LookupError(f"no {car}_ET.xml in any EngineTuning zip")
+        g, name, note = choice
+        sources, tuning = loaded[g]
+        et = tuning.engine(name)
+        return g, sources, tuning, et, note and note.replace("{file}", et.file.rsplit("/", 1)[-1])
+    finally:
+        for g, (sources, _) in loaded.items():
+            if choice is None or g != choice[0]:
+                for s in sources:
+                    s.close()
+
+
 def forza_engine(
     car: str, game: str, isos: list[Path], cache: Path, emissions: list[str] | None = None, vgmstream: str | None = None
 ) -> dict:
@@ -516,16 +602,11 @@ def forza_engine(
     from dsfforza.formats import forza_audio as fa
 
     game = game.lower()
-    discs = isos_for(game, [Path(p) for p in isos])
-    if not discs:
+    isos = [Path(p) for p in isos]
+    if not isos_for(game, isos):
         raise LookupError(f"no {game.upper()} disc images")
-    sources = [fa.Source(str(p)) for p in discs]
+    game, sources, tuning, et, substitute = _engine_tuning(car, game, isos)
     try:
-        tuning = fa.Tuning(sources)
-        try:
-            et = tuning.engine(car)
-        except KeyError as error:
-            raise LookupError(str(error).strip("'\"")) from None
         out = {
             "idle": float(et.settings.get("audio_rpm_idle", 0)),
             "redline": float(et.settings.get("audio_rpm_redline", 0)),
@@ -533,6 +614,8 @@ def forza_engine(
             "emissions": {},
             "missing": {},
         }
+        if substitute:
+            out["et_substitute"] = substitute
         try:
             vgm = fa.vgmstream_path(vgmstream)
         except SystemExit as error:
@@ -993,6 +1076,7 @@ def build_sound(
         "idle": idle,
         "redline": redline,
         "et": forza["et"],
+        **({"et_substitute": forza["et_substitute"]} if forza.get("et_substitute") else {}),
         "template_rpm_range": [lo_old, hi_old],
         "max_seconds": max_seconds,
         "sets": {},

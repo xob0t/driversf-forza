@@ -558,6 +558,7 @@ def forza_sound_plan(
         + ", ".join(f"{e} {v['bank']} ({len(v['loops'])} loops)" for e, v in forza["emissions"].items())
         + f"; {info.engine.text()} -> engine type {engine_sound.ENGINE_TYPES.get(etype, 'template')}"
         + f"; templates {templates}"
+        + (f"; {forza['et_substitute']}" if forza.get("et_substitute") else "")
     )
     plan = engine_sound.Plan(
         stream, entries, media, game, spool_id, forza, templates, index["reserved"], etype, info.engine.text(), log
