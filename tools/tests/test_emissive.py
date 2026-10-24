@@ -59,5 +59,73 @@ class LiveryDecals(unittest.TestCase):
         self.assertEqual(fm.classify_cockpit("badge", "interior"), (fm.TEXTURED, fm.INTERIOR))
 
 
+
+class RedLensScale(unittest.TestCase):
+    """A car whose visible red lamp surface is brighter than stock's visible median is
+    darkened to it; darker ones are left alone (never brightened)."""
+
+    def test_bright_flat_lens_darkened(self):
+        import dsf_materials as dm
+        k = dm.red_lens_scale([177] * 1000)          # the TT RS's tail lens
+        self.assertAlmostEqual(dm._shared_lens(177) * k, dm.VISIBLE_RED_STOCK_MEDIAN, places=3)
+        r, g, b, _ = dm.matched_lamp_texel(177, 0, 0, 200, None, k)
+        self.assertEqual(r, dm.VISIBLE_RED_STOCK_MEDIAN)
+
+    def test_dark_lens_untouched(self):
+        import dsf_materials as dm
+        self.assertEqual(dm.red_lens_scale([100] * 1000), 1.0)
+        self.assertIsNone(dm.red_lens_scale([177] * 10))  # too few samples
+        self.assertEqual(dm.matched_lamp_texel(100, 0, 0, 200, None, 1.0),
+                         dm.matched_lamp_texel(100, 0, 0, 200))
+
+    def test_visible_red_sees_the_outer_lens(self):
+        """Two stacked quads behind the car: only the outer one (larger Forza z) counts."""
+        import dsf_materials as dm
+        from unittest import mock
+        size = 8
+        img = bytearray()
+        for _ in range(size):
+            for x in range(size):
+                img += bytes((200, 0, 0, 255) if x < size // 2 else (90, 0, 0, 255))
+        atlases = {fm.LIGHTS: (size, size, img), fm.NODAMAGE: (4, 4, bytearray(64))}
+
+        class FakeAtlases:
+            def __init__(self, car_dir, lod0=False):
+                pass
+
+            def get(self, family):
+                return atlases[family]
+
+        class V:
+            def __init__(self, p, uv):
+                self.position, self.uv0, self.normal = p, uv, (0.0, 0.0, 1.0)
+
+        class Sub:
+            def __init__(self, material, tris, lod=1):
+                self.material, self.lod, self.uv_transform, self._tris = material, lod, (0.0, 1.0, 0.0, 1.0), tris
+
+            def triangles(self):
+                return self._tris
+
+        class Section:
+            def __init__(self, name, vertices, subs):
+                self.name, self.vertices, self.subsections = name, vertices, subs
+
+            def vertices_for(self, sub):
+                return self.vertices
+
+        def quad(z, u0, u1):
+            return [V((0.0, 0.0, z), (u0, 0.1)), V((0.3, 0.0, z), (u1, 0.1)),
+                    V((0.3, 0.2, z), (u1, 0.9)), V((0.0, 0.2, z), (u0, 0.9))]
+        outer = Section("taillightL", quad(2.0, 0.55, 0.95), [Sub("tail_light", [(0, 1, 2), (0, 2, 3)])])
+        inner = Section("taillightL2", quad(1.9, 0.05, 0.45), [Sub("reflector", [(0, 1, 2), (0, 2, 3)])])
+        with mock.patch.object(fm, "AtlasCache", FakeAtlases):
+            t = dm.Texturing(Path("."))
+            t.plan([inner, outer], {1})
+            seen = t.visible_red()
+        self.assertGreater(len(seen), 1000)
+        self.assertEqual(set(seen), {90})
+
+
 if __name__ == "__main__":
     unittest.main()
