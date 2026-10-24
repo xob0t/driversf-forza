@@ -594,6 +594,133 @@ class TyreMap:
         return out
 
 
+# Baked sky term (s0.w) of the wheel model. Forza's wheel vertices carry no AO byte
+# (all 0 on the 40 testdrive cars), so vertex_sky gave every wheel vertex
+# DEFAULT_AO x the hemisphere factor of its wheel-local normal: about 0.42 on the rim
+# face, the back of the spokes and the inside of the barrel alike. Stock wheels bake
+# their own occlusion (wheel parts of the 140 four-wheeled stock vehicles, exterior
+# entry, median of per-vehicle medians): outward faces 0.64, inward faces 0.02, the
+# barrel's inside 0.15, the tread 0.29, with no up/down term (the wheel turns). With
+# the flat 0.42 the inside of a wheel lit like its face: the 205 T16's white rim read
+# as a plain disc, its holes showing the white barrel behind (research/wheels.md,
+# "Wheel shading"). wheel_sky gives each vertex WHEEL_SKY_OPEN x the share of a
+# cosine-weighted hemisphere that escapes: rays into the wheel's own triangles are
+# blocked (marched through a WHEEL_AO_VOXEL grid of them; hits closer than
+# WHEEL_AO_SKIP voxels are the vertex's own surface), rays heading inboard (-x
+# in the DSF wheel frame) end on the car, and rays leaving past the tyre's radius
+# count WHEEL_SKY_SIDE (the arch above, the road below): the tread comes out at
+# about 0.3 like stock instead of 0.45.
+WHEEL_SKY_OPEN = 0.64
+WHEEL_SKY_SIDE = 0.5
+WHEEL_AO_RAYS = 24
+WHEEL_AO_VOXEL = 0.003  # metres
+WHEEL_AO_SKIP = 3  # voxels
+
+
+def _hemisphere(count: int):
+    """Cosine-weighted unit vectors about +z (Hammersley points)."""
+    import numpy as np
+
+    k = np.arange(count)
+    u = (k + 0.5) / count
+    v = np.array([int(f"{n:016b}"[::-1], 2) / 65536.0 for n in k])
+    r, phi = np.sqrt(u), 2 * np.pi * v
+    return np.stack([r * np.cos(phi), r * np.sin(phi), np.sqrt(1 - u)], 1)
+
+
+def wheel_sky(points, normals, triangles) -> list[float]:
+    """s0.w for wheel vertices (DSF wheel frame: outboard +x): WHEEL_SKY_OPEN x the
+    unoccluded share of each vertex's hemisphere, the wheel's own `triangles`
+    ((n, 3, 3) positions) as occluders and the inboard half-space closed."""
+    import numpy as np
+
+    pts = np.asarray(points, float).reshape(-1, 3)
+    if not len(pts):
+        return []
+    nrm = np.asarray(normals, float).reshape(-1, 3)
+    nrm = nrm / np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), 1e-12)
+    tri = np.asarray(triangles, float).reshape(-1, 3, 3)
+    h = WHEEL_AO_VOXEL
+    corners = np.concatenate([tri.reshape(-1, 3), pts])
+    lo = corners.min(0) - 2 * h
+    dims = np.ceil((corners.max(0) + 2 * h - lo) / h).astype(int) + 1
+    grid = np.zeros(dims, bool)
+    if len(tri):  # each triangle sampled at half-voxel spacing
+        a, b, c = tri[:, 0], tri[:, 1], tri[:, 2]
+        longest = np.max(
+            [np.linalg.norm(b - a, axis=1), np.linalg.norm(c - b, axis=1), np.linalg.norm(a - c, axis=1)], 0
+        )
+        steps = np.maximum(1, np.ceil(longest / (0.5 * h)).astype(int))
+        for n in np.unique(steps):
+            sel = steps == n
+            i, j = np.mgrid[0 : n + 1, 0 : n + 1]
+            keep = i + j <= n
+            fu, fv = (i[keep] / n)[None, :, None], (j[keep] / n)[None, :, None]
+            s = a[sel][:, None] + fu * (b[sel] - a[sel])[:, None] + fv * (c[sel] - a[sel])[:, None]
+            q = np.floor((s.reshape(-1, 3) - lo) / h).astype(int)
+            grid[q[:, 0], q[:, 1], q[:, 2]] = True
+    hemi = _hemisphere(WHEEL_AO_RAYS)
+    helper = np.where(np.abs(nrm[:, :1]) < 0.9, [[1.0, 0.0, 0.0]], [[0.0, 1.0, 0.0]])
+    t = np.cross(nrm, helper)
+    t /= np.linalg.norm(t, axis=1, keepdims=True)
+    bt = np.cross(nrm, t)
+    dirs = (
+        hemi[None, :, :1] * t[:, None] + hemi[None, :, 1:2] * bt[:, None] + hemi[None, :, 2:] * nrm[:, None]
+    ).reshape(-1, 3)
+    pos = np.repeat(pts + nrm * h, WHEEL_AO_RAYS, 0)
+    light = np.zeros(len(dirs))  # per ray: 1 out of the wheel's face, WHEEL_SKY_SIDE out of its side
+    alive = dirs[:, 0] >= 0  # inboard: the car
+    travelled, length = 0.0, float(np.linalg.norm(dims * h))
+    while travelled < length and alive.any():
+        idx = np.nonzero(alive)[0]
+        q = np.floor((pos[idx] - lo) / h).astype(int)
+        inside = np.all((q >= 0) & (q < dims), 1)
+        gone = idx[~inside]
+        light[gone] = np.where(q[~inside, 0] >= dims[0], 1.0, WHEEL_SKY_SIDE)
+        alive[gone] = False
+        idx, q = idx[inside], q[inside]
+        if travelled >= WHEEL_AO_SKIP * h:
+            alive[idx[grid[q[:, 0], q[:, 1], q[:, 2]]]] = False  # hit the wheel
+        pos[idx] += dirs[idx] * h
+        travelled += h
+    vis = light.reshape(-1, WHEEL_AO_RAYS).mean(1)
+    return [round(float(WHEEL_SKY_OPEN * v), 4) for v in vis]
+
+
+_wheel_sky_cache: dict = {}
+
+
+def wheel_skies(sections, lod: int, fit=(1.0, 1.0)) -> dict:
+    """{(id(pool), index): s0.w} for the vertices of the wheel model's drawn
+    subsections at `lod` (wheel_sky over those triangles, in the fitted frame).
+    Cached per (sections, lod, fit): the full and exterior entries draw the same LODs."""
+    from dsfforza.convert import forza_materials as fm
+
+    key = (tuple(id(s) for s in sections), lod, tuple(fit))
+    hit = _wheel_sky_cache.get(key)
+    if hit is not None and all(a is b for a, b in zip(hit[0], sections)):
+        return hit[1]
+    tris, verts = [], {}
+    for section in sections:
+        for sub in section.subsections:
+            if sub.lod != lod or fm.classify_wheel(sub.material)[0] == fm.SKIP:
+                continue
+            pool = section.vertices_for(sub)
+            for t in sub.triangles():
+                tris.append([wheel_point(pool[i].position, fit) for i in t])
+                for i in t:
+                    verts.setdefault((id(pool), i), pool[i])
+    keys = list(verts)
+    skies = wheel_sky(
+        [wheel_point(verts[k].position, fit) for k in keys], [wheel_normal(verts[k].normal, fit) for k in keys], tris
+    )
+    out = dict(zip(keys, skies))
+    if len(_wheel_sky_cache) > 32:
+        _wheel_sky_cache.clear()
+    _wheel_sky_cache[key] = (list(sections), out)
+    return out
+
+
 def axle_tyres(name: str, gamedbs) -> dict | None:
     """{"front"|"rear": (diameter m, width m)} from gamedb.slt Data_Car tyre sizes."""
     import sqlite3
@@ -667,9 +794,10 @@ def add_geometry(
     (glass.InteriorGlass; per-window report in builder.interior_glass);
     glass_sight (cockpit.GlassSight) tells it which glass the driver sees."""
     textured = textures is not None
-    tyre_map = None
+    tyre_map = skies = None
     if wheel:
         lod = wheel_lod(sections, lod)
+        skies = wheel_skies(sections, lod, wheel_fit)
         tyre_map = TyreMap.build(
             [
                 [wheel_point(s.vertices_for(sub)[i].position, wheel_fit) for i in t]
@@ -829,9 +957,10 @@ def add_geometry(
                                 uv0 = shown
                             remap[key] = len(verts_out)
                             normal = wheel_normal(v.normal, wheel_fit) if wheel else place.normal(v.normal)
-                            verts_out.append(
-                                encode_vertex(stride, pos, uv0, uv1, normal, s9, vertex_sky(v, pool, normal))
-                            )
+                            sky = skies.get((id(pool), i)) if skies is not None else None
+                            if sky is None:
+                                sky = vertex_sky(v, pool, normal)
+                            verts_out.append(encode_vertex(stride, pos, uv0, uv1, normal, s9, sky))
                         out.append(remap[key])
                     tris.append(tuple(out))
             if window is not None:
@@ -1424,9 +1553,22 @@ def convert(
     tex_full = tex_ext = None
     layout = dict(MATERIAL_LAYOUT)  # this conversion's materials (no state shared between cars)
     if opts.textures:
-        from dsfforza.convert import dsf_materials
+        import dataclasses
+
+        from dsfforza.convert import cutout, dsf_materials
+        from dsfforza.convert import forza_materials as fm
 
         lods = set(opts.lods.values()) | {opts.shadow_lod, opts.exterior_lod}
+        # Alpha-tested badges as geometry: DSF's Chassis material has no alpha test,
+        # so a badge quad drew its whole rectangle (src/dsfforza/convert/cutout.py).
+        body, cut = cutout.cut_alpha_tested(car.body, fm.AtlasCache(car.folder), lods=lods)
+        if cut:
+            car = dataclasses.replace(car, body=body)
+            report["cutout"] = {k: {**v, "area": round(v["area"], 5)} for k, v in cut.items()}
+            log(
+                "alpha-tested decals cut to their mask: "
+                + ", ".join(f"{k} {v['cut']} -> {v['made']}" for k, v in sorted(cut.items()))
+            )
         wheels = None
         if not opts.no_wheel:  # the wheel LODs add_geometry will draw (wheel_lod)
             wheels = (car.wheel, {wheel_lod(car.wheel, lod) for lod in [*opts.lods.values(), opts.exterior_lod]})
