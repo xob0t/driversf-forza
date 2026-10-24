@@ -29,8 +29,8 @@ Interior materials (Desanne): two local MACOs, `_Interior` (stride 28,
 MODL value 5) and `_Dials` (stride 20, MODL value 1,
 `g_hAlphaTestRefValue` 0.5), both sampling the interior's own TEXC (512²
 DXT5, 10 mips). Shared engine materials: `10122b9653b14e2a` (paint, stride
-32; its UVs point at the plain texel of the vehicle chassis texture, like
-the exterior's paint), `0012cc8576953429` (glass, MODL value 7), TRIM
+32; like the exterior's paint it samples the shared paint atlas, not the
+vehicle texture: `lights.md`, "Paint"), `0012cc8576953429` (glass, MODL value 7), TRIM
 `0012833b12fe1027`, `00128338d7fd1027`. One submodel uses the full entry's
 Chassis material. Eight stock interiors ship DXT1 textures, so DXT1 is
 accepted in kind-1 TEXCs.
@@ -299,8 +299,10 @@ no camera.
    which only the outside sections use; there, alpha-0 fill is made near
    black first and trim texels are lifted to a floor of 40, see "Light
    cockpit trims"; label regions get a dark neutral where alpha is below
-   half). Paint,
-   glass and trim use the host interior's own shared materials. Speed and
+   half). Paint
+   (`INTERIOR_PAINT`) and glass use the host interior's own shared materials;
+   trims go to `_Interior` on a flat cell ("Shared-trim garbage in
+   cockpits"). Speed and
    tach needles (min pose) go into the host's needle part on `_Dials`, with
    the gauge id in semantic 8 and an opaque solid cell of the Forza needle
    colour.
@@ -534,7 +536,8 @@ triangles against 2,179 of paint), so the Mustang's shell and painted
 interior parts drew with chrome (the white-speckled bonnet from the
 cockpit, the red A-pillar on a black car). Every stock host checked (227,
 147, 229, 193, 251, 266) paints its interior with `10122b9653b14e2a`; the
-converter now always uses it (`cockpit.INTERIOR_PAINT`) and the engine
+converter now uses it whenever the host interior has it, as all checked
+hosts do (`cockpit.INTERIOR_PAINT`), and the engine
 trim `0012833b12fe1027` (193 has none; the old pick took its
 Chassis_LOD1). Only 193 was affected. Offline: `img/cockpit2-mustang-raptor-before-after.png` (left r7, right
 the fix), `img/cockpit2-offline-eyes.png` (all five). Not yet run in game.
@@ -644,7 +647,7 @@ noise). `out/fixes/cull_check_all.log`. Kept triangles grow by about half (IS F
 30,907 to 44,778; interior MDXN 0x123000 to 0x18B800; the batch's
 `--mdxn-limit 0x2C0000` covers it; under the stock 0x12D000 limit the
 decimation ladder would start). `python tools/cockpit.py holes <archive>
---id N --png out.png` renders 4 head positions x 6 directions with glass
+--id N --png out.png` (writes `out-N.png`) renders 4 head positions x 6 directions with glass
 drawn and empty pixels magenta (`img/holes-isf-head-views.png`); before and
 after: `img/holes-isf-before-after.png` (the cluster hood behind the wheel
 was missing in the left-look view), `img/holes-m3-before-after.png`.
@@ -838,8 +841,9 @@ the most sky-facing panel; roof and sides read darker at that angle.
 1. Whether the cockpit view draws only the interior entry (hypothesis). If
    it also draws the exterior, the outer shell in the interior will z-fight.
 2. Gauges: DSF needles are linear in speed and rpm, so Forza dials with
-   unevenly spaced marks are only fitted (worst tick a few degrees off on
-   the test cars). The sweep is a whole number of degrees per 80 mph or 5000
+   unevenly spaced marks are only fitted (within about 5 degrees on most
+   cars, up to about 30 on very uneven faces such as the Golf R and TT RS;
+   see the offline gauge check above). The sweep is a whole number of degrees per 80 mph or 5000
    rpm (under half a degree off at full scale). Only two gauges exist per
    car; fuel and temperature needles are parked. The tachometer reads at
    least idle (p40) even with the engine stopped, as on stock cars.
@@ -850,10 +854,11 @@ the most sky-facing panel; roof and sides read darker at that angle.
 3. The interior atlas is DXT1. Stock interiors use DXT1 textures, but none
    for the `_Interior` material; it loses the alpha specular mask.
 4. Visibility culling assumes the camera stays near the eye. Looking back or
-   a head-bob larger than 8 cm sideways may show holes in hidden areas
+   a head-bob larger than 12 cm sideways (8 cm up, 6 cm down, 8 cm fore and
+   aft; `CULL_OFFSETS`) may show holes in hidden areas
    (under the dash, behind the seats).
-5. Paint in the interior samples the chassis texture's plain cell, as stock
-   interiors do. Untested.
+5. Paint in the interior points at the shared paint block
+   (`PAINT_TEXEL_UV`), as stock interiors do (`lights.md`, "Paint").
 6. Right-hand-drive Forza cars (the 1993 Skyline) put the wheel, marker and
    eye on the right. The stock fleet has no right-hand-drive car, so the
    head-camera code has never seen a negative marker x.

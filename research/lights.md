@@ -157,8 +157,8 @@ each car, once the player drives it, to `dsfforza\lightstest.lua` (a module)
 instead of the chase/cockpit cycle. The module spawns a second copy 12 m ahead
 facing the player's car (`GameVehicleResource.create` at
 `position + matrix[2] * 12`, `Heading = -matrix[2]`; `Spawn.Spawn` "against"
-as fallback), so the chase camera sees the player's rear lamps and the
-copy's front lamps, logs `[dsfforza.lights] id N: ready 18 phases`, and then
+as fallback), meant to let the chase camera see the player's rear lamps
+and the copy's front lamps (the copy never faced the camera: Open 1), logs `[dsfforza.lights] id N: ready 18 phases`, and then
 applies whatever phase the harness writes to `dsfforza\lightsync.lua`
 (`return { phase = k }`, read with `io.open`, falling back to `user_open` on
 a modify-time change). Phases 1 to 9: off, Headlights, DaytimeRunning,
@@ -209,7 +209,8 @@ phase 10). `run-series.ps1` now passes `-TrafficIds`. Crops and comparisons:
 Run 063206 (lightstest from `bootstrap.lua`) found no dark mood (`moodList`
 is not a global; moods.lua loads into a module). In the harness runs `io.open`
 sync and the literal dark mood worked (dark phases look like night); the
-facing copy failed (`gameVehicle.heading` is a number; fixed as above);
+facing copy failed (`gameVehicle.heading` is a number; changed as above,
+but it still shows its rear: Open 1);
 `getLightTypeBrightness` returned nil for a name and for `{LightType}` (a mask
 is tried next). In the dark phases the 370Z's and Skyline's tail lamps glowed
 flat and saturated at the same level in every phase, never responding. No
@@ -387,7 +388,7 @@ and edges of a lens glow less), then a piecewise-linear curve per texel hue
 (`lamp_hue`: red, amber, white) from quantile matching the six cars' scores
 to the stock distribution of that colour (`fit_lut.py`; knots in
 `LAMP_CURVES`, stock percentiles 0, 5, 10, 20 ... 90, 93, 95, 97, 98, 99,
-99.5). The curve is monotonic, so each lens keeps Forza's order of texels:
+99.5; red also 85 and 100). The curve is monotonic, so each lens keeps Forza's order of texels:
 hot spots near 255, the body low (`out/lamps/forza/*_value_vs_matched.png`:
 Forza RGB, "value", "matched"). Per car and lamp on the six cars: tail +
 stop means 18 to 95 (370Z 25, S2000 18, DMC-12 38, S5S 37, M3 E30 75,
@@ -440,9 +441,11 @@ cell by cell, more evenly than the stock DeLorean's dots.
    or DaytimeRunning in daylight (`draw-distance.md`), so in normal play
    they stay off for stock and converted traffic alike.
 2. b0 and the pi, pi pair; whether the flare sprite uses the direction.
-3. Lamps under detachable parts: converted lamps are chassis-bound, but the
-   light records still hang under the host's bumper and boot records (a
-   lamp breaks when its record's part is damaged, `0x8E84A0`).
+3. Lamps under detachable parts: with `--damage` (the `port_batch`
+   default) lamp triangles go to their panel's record (`damage.md`;
+   headlamps to the headlight records, tails to the boot or rear bumper),
+   while the light records still hang under the host's bumper and boot
+   records (a lamp breaks when its record's part is damaged, `0x8E84A0`).
 4. Converted cars in traffic (above). register.lua's swapTraffic uses the
    same `swapWithModel` that crashed run 123840 (there on the nearest
    traffic car ahead, to the player's own model 227), so try it only in a
@@ -484,9 +487,9 @@ materials (`GLOBAL_Chassis`, `GLOBAL_Chassis_LOD1`) have `g_texDiffuseMap` =
 and colour-coded mask blocks). On every stock car checked (266, 227, 229,
 147) 57 to 91% of the paint triangles' UV0 lands in its (240, 192, 240)
 block (50 x 50 texels centred at (0.848, 0.712); `global_paint_uv.py`), the
-rest on other mask colours (panel details). UV1 of stock paint lands mostly
-on black texels of the same atlas (use unknown; ours is (0, 0), a white
-texel).
+rest on other mask colours (panel details). UV1 is the damage-decal UV
+(`damage.md`, "Scratch and dent decal: UV1"); converted cars take the
+host's.
 
 ### Forza colours (confirmed-static)
 
@@ -686,7 +689,7 @@ M5's door shuts and wing vents, the Skyline's wings), not a second colour.
 1. In game: the factory colours after the paint-UV fix (`out/lights/ab2/`).
 2. Which entry a spawn picks (deterministic per car in the runs so far) and
    whether the garage lists all entries.
-3. Paint UV1 (stock: black texels of the shared atlas; ours (0, 0)).
+3. Answered: paint UV1 is the damage-decal UV (`damage.md`).
 4. Wheel-blur colour (third set) from the Forza rim colour.
 5. A brushed grain: the paint shader has no detail or normal map of its own
    (UV0 samples one flat block of the shared atlas; UV1 the shared damage

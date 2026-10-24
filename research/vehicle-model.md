@@ -77,7 +77,9 @@ VDCL element types (sizes check against the stride in all three buffers):
 
 Semantics seen, in order: 0 (position, 4 × int16), 8 (2 or 4 × float16,
 probably UV sets), 9 (4 × uint8), 5 (4 × packed uint8), 12 (4 × float16).
-Only position is confirmed. Semantic 9 is now known: a hierarchy binding,
+Since decoded in `damage.md`: 8 is UV0 and, in the 32-byte buffers, UV1
+(the damage decal), 5 the normal's polar and azimuth angles plus their
+change at full damage, 12 the crushed position. Semantic 9 is now known: a hierarchy binding,
 (UPVH record +0x34, record +0x2A, light index, 1), with (0, 0, 0, 1) for
 the chassis; it is how the steering wheel turns (`cockpit.md`). In the
 interior's stride-20 needle buffer, semantic 8 component 2 is the gauge id.
@@ -163,7 +165,7 @@ The pixel shader (`ps` of program 46) discards texels with blue below 0.01
 light, green the reflection and specular, blue is also the alpha. What
 sets `.y` on the CPU side is not traced. `GLOBAL_Glass_LOD5` (interiors)
 does the same: programs 61 and 63 shift v by `0.25 * floor(c96[s9.y].y)`
-(`g_PanelTransforms`, the same per-panel array), 60 and 62 don't
+(`g_v4PerPanelData`, the same per-panel array), 60 and 62 don't
 (`out/cockpitglass/gp/`). In game, `GameVehicleResource.applyDamage` cracks
 the interior glass of stock and converted cars alike (run
 `host-20261023-174148`, "Interior glass" below).
@@ -304,7 +306,8 @@ empty frame with a shattered rim like stock 147
 (`out/glassfix/compare-states.png`, `jeep-compare.png`, `s65-compare.png`;
 `out/glassfix/glassrender.py` draws a state). The classifier gives every
 glass section of the 40 testdrive cars its own non-degenerate frame
-(`out/glassfix/slot_survey.py`). Not yet seen in game.
+(`out/glassfix/slot_survey.py`). In game: the clean rear windows of the
+DMC-12 runs below.
 
 Lint: `upvh.py lint` (and so `port_batch`) now runs `glass.check`. It fails
 when converted exterior glass has v outside 0–0.25 or a triangle not inside
@@ -411,13 +414,15 @@ and `g_vec4WheelBlurColour`.
 
 ## Open
 
-1. Vertex semantics 8 and 5's last two bytes (tangent?); 9 is solved in
-   `cockpit.md`, 12 is the crushed position (`damage.md`), the fourth position component is
-   baked sky light (above).
-2. What the glass shader does with damage (UV offset per damage state, per
-   glass-panel record?).
+1. Answered: semantics 8 and 5 (`damage.md`), 9 (`cockpit.md`), 12 the
+   crushed position (`damage.md`); the fourth position component is baked
+   sky light (above).
+2. Answered above ("v' = v + 0.25 * floor(...)": a UV band per crack state
+   of the record s9 byte 1 names); still open: what sets `.y` on the CPU
+   side.
 3. The per-submodel u32 list after the UID list in MODL.
 4. MARH fields besides the technique hash; which technique is which pass.
 5. How UPVH parts map onto MODL parts and their submodels: answered in
    `damage.md` (part 0 = all panels merged, one part per panel; detach untraced).
-6. Where the shared vehicle materials come from.
+6. Answered: the shared vehicle materials are defined in `SSIC/MDXN`
+   ("Shared materials" above).
