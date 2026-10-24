@@ -915,6 +915,15 @@ def register_cars(
     return cars, failed, {}
 
 
+def plain_glass(car: dict) -> bool:
+    """True when the car's converted cockpit has interior glass but no window that
+    qualified for crack lines (glass.InteriorGlass leaves lamp covers and small panes
+    as surface only: open race cars and roadsters), as its cockpit report says."""
+    interior = (car.get("cockpit") or {}).get("interior")
+    windows = interior.get("glass_windows") if isinstance(interior, dict) else None
+    return bool(windows) and not any("crack_m" in w for w in windows.values())
+
+
 def lint_all(out: Path, dsf: Path, cars: list[dict], parallel: int, log=print) -> None:
     """upvh lint for every car: `parallel` processes of `upvh lint-many`, each over a run
     of the cars, so the archive and its cross-vehicle tables are read once per process
@@ -930,6 +939,8 @@ def lint_all(out: Path, dsf: Path, cars: list[dict], parallel: int, log=print) -
         command = [sys.executable, "-m", "dsfforza.formats.upvh", "lint-many", str(out), "--stock", str(dsf)]
         for c in group:
             command += ["--car", f"{c['spool_id']}:{c['host']}"]
+            if plain_glass(c):
+                command += ["--plain-glass", str(c["spool_id"])]
         procs.append(
             (
                 group,

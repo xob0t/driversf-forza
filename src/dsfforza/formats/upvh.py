@@ -448,14 +448,22 @@ class LintContext:
             self._owners = uid_owners(self.stream, self.entries)
         return self._owners
 
+    def _open_stock(self) -> tuple:
+        if self._stock is None:
+            stream = self.stock_path.open("rb")
+            entries = read_chunk(stream, 0).entries
+            self._stock = (stream, entries, shared_uids(stream, entries))
+        return self._stock
+
+    def host_kinds(self, source: int) -> tuple:
+        """(stock archive stream, {kind: entry}) of a stock host."""
+        stream, entries, _ = self._open_stock()
+        return stream, entries_for(stream, entries, source, None)
+
     def host(self, source: int) -> tuple[set[bytes], list, set[bytes]]:
         """(borrowed_from_full, the host's DRSP UIDs, SSIC's shared UIDs) of a stock host."""
         if source not in self._hosts:
-            if self._stock is None:
-                stream = self.stock_path.open("rb")
-                entries = read_chunk(stream, 0).entries
-                self._stock = (stream, entries, shared_uids(stream, entries))
-            stream, entries, shared = self._stock
+            stream, entries, shared = self._open_stock()
             host = entries_for(stream, entries, source, None)
             self._hosts[source] = (
                 borrowed_from_full(stream, host),
@@ -492,7 +500,12 @@ def lint_vehicle(ctx: LintContext, spool_id: int | None, vehc: int | None, args,
     # texture, or the damage states draw cracks and holes across the window.
     from dsfforza.convert import glass
 
-    glass_rows = glass.check(stream, kinds)
+    glass_rows = glass.check(
+        stream,
+        kinds,
+        host=ctx.host_kinds(args.source) if args.stock else None,
+        window_cracks=False if getattr(args, "plain_glass", False) else None,
+    )
     # Engine sound: bank round trip, VSVH events, Wwise IDs across the archive (src/dsfforza/convert/engine_sound.py).
     sound_rows = []
     if not args.no_sound:
@@ -609,7 +622,13 @@ def cmd_lint_many(args: argparse.Namespace) -> None:
         try:
             for car in args.car:
                 spool_id, _, source = car.partition(":")
-                one = argparse.Namespace(**{**vars(args), "source": int(source) if source else 266})
+                one = argparse.Namespace(
+                    **{
+                        **vars(args),
+                        "source": int(source) if source else 266,
+                        "plain_glass": int(spool_id) in set(args.plain_glass or []),
+                    }
+                )
                 lines: list[str] = []
                 try:
                     problems = lint_vehicle(ctx, int(spool_id), None, one, emit=lines.append)
@@ -657,6 +676,12 @@ def main(argv: list[str] | None = None) -> None:
                 help="skip the cross-vehicle UID check (clones made without --new-uids "
                 "share the host's UIDs on purpose)",
             )
+            p.add_argument(
+                "--plain-glass",
+                action="store_true",
+                help="the cockpit has no window that gets cracks (port_car's cockpit report: only lamp "
+                "covers and small panes), so interior glass without crack lines is fine",
+            )
     many = sub.add_parser("lint-many", help="lint several vehicles of one archive (one JSON line each)")
     many.add_argument("archive", type=Path)
     many.add_argument("--car", action="append", required=True, metavar="ID:SOURCE", help="spool ID and stock host")
@@ -664,6 +689,9 @@ def main(argv: list[str] | None = None) -> None:
     many.add_argument("--verbose", "-v", action="store_true")
     many.add_argument("--no-sound", action="store_true")
     many.add_argument("--allow-shared", action="store_true")
+    many.add_argument(
+        "--plain-glass", type=int, action="append", metavar="ID", help="as lint --plain-glass, for this car"
+    )
     args = parser.parse_args(argv)
     if args.command == "lint-many":
         cmd_lint_many(args)

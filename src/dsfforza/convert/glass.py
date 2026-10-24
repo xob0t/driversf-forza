@@ -694,11 +694,23 @@ def _interior_region(uvs, tol: float = 0.002) -> str | None:
     return None
 
 
-def check(stream, kinds: dict) -> list[tuple[bool, str]]:
+def _uv_signature(tris) -> list:
+    return sorted(tuple(sorted((round(u, 4), round(v, 4)) for u, v in uvs)) for uvs, _, _ in tris)
+
+
+def check(stream, kinds: dict, host: tuple | None = None, window_cracks: bool | None = None) -> list[tuple[bool, str]]:
     """Lint rows (ok, message) for the converted vehicle's glass: exterior
     (full entry part 0 mask 4, exterior entry mask 2) in one panel slot per
     triangle; interior (mask 64) in the stock interior layout, with crack
-    lines and rim shards (InteriorGlass)."""
+    lines and rim shards (InteriorGlass).
+
+    host: (stock stream, the host's {kind: entry}). An interior whose glass is
+    the host's own (a stub cockpit keeps the host's interior, cockpit.md) is
+    stock data, not converted: its layout isn't checked (stock interiors don't
+    follow it either: the GMC Savana's straddles 448 of 1678 triangles).
+    window_cracks: False when the cockpit report says no window qualified for
+    cracks (only lamp covers and panes under MIN_WINDOW_AREA, as in open race
+    cars and roadsters); then glass without crack lines is expected."""
     rows = []
     for kind, masks in ((0, (4,)), (2, (2,))):
         if kind not in kinds:
@@ -723,6 +735,17 @@ def check(stream, kinds: dict) -> list[tuple[bool, str]]:
         )
     if 1 in kinds:
         tris = list(_glass_triangles(stream, kinds[1], (64,), {INTERIOR_GLASS}))
+        if tris and host is not None and 1 in host[1]:
+            host_tris = list(_glass_triangles(host[0], host[1][1], (64,), {INTERIOR_GLASS}))
+            if _uv_signature(tris) == _uv_signature(host_tris):
+                rows.append(
+                    (
+                        True,
+                        f"kind 1: interior glass is the host's own stock interior ({len(tris)} triangles, "
+                        "a stub cockpit keeps it; stock layout, not checked)",
+                    )
+                )
+                return rows
         regions = defaultdict(int)
         stray = 0
         for uvs, _, _ in tris:
@@ -739,7 +762,16 @@ def check(stream, kinds: dict) -> list[tuple[bool, str]]:
                 f"panel slot ({stray} of {len(tris)} straddle or miss)",
             )
         )
-        if regions.get("surface"):
+        if regions.get("surface") and window_cracks is False:
+            rows.append(
+                (
+                    True,
+                    f"kind 1: no interior window qualifies for cracks (cockpit report: lamp covers and panes "
+                    f"under {MIN_WINDOW_AREA} m2 only), so its glass is surface only "
+                    f"(surface {regions['surface']})",
+                )
+            )
+        elif regions.get("surface"):
             have = {k: regions.get(k, 0) for k in ("crack_light", "crack_heavy", "shard_dull", "shard_bright")}
             ok = have["crack_light"] > 0 and have["crack_heavy"] > 0 and have["shard_dull"] + have["shard_bright"] > 0
             rows.append(
