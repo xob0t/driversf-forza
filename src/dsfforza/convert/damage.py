@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import colorsys
 import dataclasses
+import itertools
 import math
 import re
 import struct
@@ -111,6 +112,9 @@ DEGENERATE_UV = 0.004  # host UV1 triangles smaller than this are hidden faces
 FACING_WEIGHT = 0.15  # normalised-distance penalty per unit of normal mismatch (UV1 lookup)
 MAX_HINGE_MOVE = 0.35  # m; a panel hinge mapped further than this keeps the host's
 PANEL_FACING = 0.15  # normalised-distance penalty per unit of normal mismatch (panel vote)
+VOTE_RINGS = (1, 2, 3, 5, 7)  # DamagePlan._votes: rings (at most 7) up to which points are decided in turn
+VOTE_BLOCK = 4  # DamagePlan._votes: candidates are found per block of this many cells a side
+VOTE_CHUNK = 400_000  # DamagePlan._votes: candidates scored at once
 PAINT_REACH = 0.12  # normalised score within which a host paint triangle decides a paint triangle's panel
 PAINT_MATERIALS = {bytes.fromhex("001283358afd1027"), bytes.fromhex("10122b9653b14e2a")}  # GLOBAL_Chassis(_LOD1)
 ISLAND_AREA = 0.08  # m2; smaller connected patches of one panel inside another are merged into it
@@ -1423,11 +1427,133 @@ class DamagePlan:
         shared paint, while the structure a few centimetres under them (the
         front structure under the M5's wings) is trim or the host's own
         chassis texture."""
-        if paint:
-            pair = self._vote(self._tri_index(f, allowed, paint=True), f, p_dsf, normal, PAINT_REACH)
-            if pair is not None:
-                return pair
-        return self._vote(self._tri_index(f, allowed), f, p_dsf, normal)
+        return self._nearest_pairs([p_dsf], allowed, f, [normal], [paint])[0]
+
+    def _nearest_pairs(self, points, allowed: set, f: HostField, normals, paints) -> list:
+        """_nearest_pair for many points at once (_votes)."""
+        out = [None] * len(points)
+        todo = list(range(len(points)))
+        ask = [i for i in todo if paints[i]]
+        if ask:
+            index = self._tri_index(f, allowed, paint=True)
+            got = self._votes(index, f, [points[i] for i in ask], [normals[i] for i in ask], PAINT_REACH)
+            for i, pair in zip(ask, got, strict=True):
+                out[i] = pair
+            todo = [i for i in todo if out[i] is None]
+        if todo:
+            got = self._votes(self._tri_index(f, allowed), f, [points[i] for i in todo], [normals[i] for i in todo])
+            for i, pair in zip(todo, got, strict=True):
+                out[i] = pair
+        return out
+
+    def _votes(self, index, f: HostField, points, normals, reach: float | None = None) -> list:
+        """_vote for many points at once, with the same result for each.
+
+        _vote's result depends only on the scores of the triangles it meets and on
+        the rings it meets them in. A triangle binned into the cells of a box meets
+        the rings dmin..dmax around a point's cell (the Chebyshev distances of a
+        box's cells from a cell are contiguous), so by ring r _vote has scored it
+        max(0, min(dmax, r) - dmin + 1) times. The third best is within r * cell
+        exactly when that many scores, counted so, are within r * cell; and then the
+        three best are among them. So per point: score the triangles with dmin <=
+        rmax all at once (_closest, the same floats as closest_on_triangle), find the
+        first ring r <= rmax that stops by counting, and sort only the scores within
+        r * cell by (score, panel), as _vote's tuples sort. rmax runs through
+        VOTE_RINGS, each round with the points the last one didn't stop; a point
+        that never stops (its result is all of rings 0..7), or that has a
+        non-finite score (Python's sort and numpy's differ on NaN), goes to _vote.
+        The candidates of a point's cell are found per block of cells (VOTE_BLOCK)
+        and scored VOTE_CHUNK at a time."""
+        out: list = [None] * len(points)
+        if index is None or not points:
+            return out
+        cell, _, _, _, tri_ids, lo, hi, rank, pairs = index
+        q = np.array([self._forza_norm(p) for p in points], dtype=np.float64).reshape(-1, 3)
+        has = np.array([bool(n) for n in normals])
+        nrm = np.array([n if n else (0.0, 0.0, 0.0) for n in normals], dtype=np.float64).reshape(-1, 3)
+        qkey = np.floor(q / cell).astype(np.int64)
+        corners, tnormals = _tri_arrays(f)
+        corners = tuple(c[tri_ids] for c in corners)
+        tnormals = tuple(c[tri_ids] for c in tnormals)
+        limit = np.array([r * cell for r in range(8)])  # _vote's r * cell
+        todo, slow = np.arange(len(points)), []
+        for rmax in VOTE_RINGS:
+            undecided = []
+            # The points' cells, sorted by block of VOTE_BLOCK^3 cells. Per block, the
+            # (cell, triangle) pairs with the triangle's box within rmax rings of the cell.
+            ukeys, inv = np.unique(np.hstack((qkey[todo] // VOTE_BLOCK, qkey[todo])), axis=0, return_inverse=True)
+            inv = inv.reshape(-1)
+            bounds = np.flatnonzero((ukeys[1:, :3] != ukeys[:-1, :3]).any(axis=1)) + 1
+            ukeys = ukeys[:, 3:]
+            found = []
+            for k0, k1 in itertools.pairwise([0, *bounds.tolist(), len(ukeys)]):
+                kk = ukeys[k0:k1]
+                near = np.flatnonzero(((lo <= kk.max(axis=0) + rmax) & (hi >= kk.min(axis=0) - rmax)).all(axis=1))
+                d_lo = lo[near][None, :, :] - kk[:, None, :]
+                d_hi = kk[:, None, :] - hi[near][None, :, :]
+                dmin = np.maximum(np.maximum(d_lo, d_hi), 0).max(axis=2)
+                kp, tp = np.nonzero(dmin <= rmax)  # grouped by cell
+                dmax = np.maximum(np.abs(d_lo[kp, tp]), np.abs(d_hi[kp, tp])).max(axis=1)
+                found.append((kp + k0, near[tp], dmin[kp, tp], dmax))
+            kp, ct, cdlo, cdhi = (np.concatenate(a) for a in zip(*found, strict=True))
+            cnt = np.bincount(kp, minlength=len(ukeys))
+            kstart = np.cumsum(cnt) - cnt
+            # The points by cell, in chunks of about VOTE_CHUNK candidates.
+            rows = np.argsort(inv, kind="stable")
+            lens = cnt[inv[rows]]
+            ends = np.searchsorted(np.cumsum(lens), np.arange(VOTE_CHUNK, int(lens.sum()), VOTE_CHUNK))
+            for rs in np.split(rows, np.unique(ends)):
+                if not len(rs):
+                    continue
+                sel, lk = todo[rs], inv[rs]
+                lens = cnt[lk]
+                first = np.cumsum(lens) - lens
+                g = np.repeat(np.arange(len(sel)), lens)  # each candidate's point (in sel)
+                at = np.arange(int(lens.sum())) - np.repeat(first - kstart[lk], lens)
+                t, dlo, dhi = ct[at], cdlo[at], cdhi[at]
+                pt = sel[g]
+                d = _closest((q[pt, 0], q[pt, 1], q[pt, 2]), *(c[t] for c in corners))[0]
+                dot = nrm[pt, 0] * tnormals[0][t] + nrm[pt, 1] * tnormals[1][t] + nrm[pt, 2] * tnormals[2][t]
+                score = np.sqrt(d) + np.where(has[pt], PANEL_FACING * (1 - dot), 0.0)
+                bad = np.zeros(len(sel), dtype=bool)
+                bad[g[~np.isfinite(score)]] = True
+                # The ring loop's stop: at least 3 scores within r * cell, each counted
+                # once per ring up to r that the triangle touches.
+                stop = np.full(len(sel), -1)
+                for r in range(rmax + 1):
+                    mult = np.clip(np.minimum(dhi, r) - dlo + 1, 0, None) * (score <= limit[r])
+                    stop[(stop < 0) & (np.bincount(g, weights=mult, minlength=len(sel)) >= 3)] = r
+                (undecided if rmax < VOTE_RINGS[-1] else slow).append(sel[(stop < 0) & ~bad])
+                slow.append(sel[bad])
+                # The three best at the stop ring in (score, panel) order, each as often
+                # as _vote has it, within reach.
+                ring = stop[g]
+                mult = np.clip(np.minimum(dhi, ring) - dlo + 1, 0, None)
+                pick = np.flatnonzero((ring >= 0) & ~bad[g] & (mult > 0) & (score <= limit[ring]))
+                pick = pick[np.lexsort((rank[t[pick]], score[pick], g[pick]))]
+                gp, mp, sp, tp = g[pick], mult[pick], score[pick], t[pick]
+                acc = np.cumsum(mp)
+                start = np.searchsorted(gp, gp)  # each point's first entry
+                take = np.minimum(mp, 3 - (acc - mp - (acc[start] - mp[start])))
+                keep = take > 0
+                if reach is not None:
+                    keep &= sp <= reach
+                best: dict[int, list] = defaultdict(list)
+                for j, s, n, c in zip(
+                    gp[keep].tolist(), sp[keep].tolist(), tp[keep].tolist(), take[keep].tolist(), strict=True
+                ):
+                    best[j] += [(s, pairs[n])] * c
+                for j, picks in best.items():
+                    votes = Counter()
+                    for s, pair in picks:
+                        votes[pair] += 1.0 / (s + 0.005)
+                    out[int(sel[j])] = votes.most_common(1)[0][0]
+            todo = np.concatenate(undecided) if undecided else todo[:0]
+            if not len(todo):
+                break
+        for i in np.concatenate(slow).tolist() if slow else ():
+            out[i] = self._vote(index, f, points[i], normals[i], reach)
+        return out
 
     def _vote(self, index, f: HostField, p_dsf, normal, reach: float | None = None) -> tuple | None:
         """The panel of the host triangles nearest to p_dsf (normalised distance plus a
@@ -1436,7 +1562,7 @@ class DamagePlan:
         to the first ring at which the third best is within reach of the ring."""
         if index is None:
             return None
-        cell, cells, keys, members = index
+        cell, cells, keys, members = index[:4]
         q = self._forza_norm(p_dsf)
         key = tuple(int(math.floor(q[a] / cell)) for a in range(3))
         order = at = None
@@ -1502,19 +1628,37 @@ class DamagePlan:
         if key not in self._grids:
             cell = 0.08
             cells = defaultdict(list)
+            ids, boxes = [], []
             for n, (pts, pair, _, is_paint) in enumerate(f.tris):
                 if pair not in allowed or (paint and not is_paint):
                     continue
                 lo = [int(math.floor(min(p[a] for p in pts) / cell)) for a in range(3)]
                 hi = [int(math.floor(max(p[a] for p in pts) / cell)) for a in range(3)]
+                ids.append(n)
+                boxes.append(lo + hi)
                 for i in range(lo[0], hi[0] + 1):
                     for j in range(lo[1], hi[1] + 1):
                         for k in range(lo[2], hi[2] + 1):
                             cells[(i, j, k)].append(n)
-            # (cell, cells, the occupied cells' keys as an array, their triangle lists) for _vote
+            # (cell, cells, the occupied cells' keys as an array, their triangle lists) for
+            # _vote; for _votes the triangles (f.tris indices), their cell boxes (lo, hi),
+            # the rank of their panel among the index's panels, and their panels.
             cells = dict(cells)
+            boxes = np.array(boxes, dtype=np.int64).reshape(-1, 6)
+            pairs = [f.tris[n][1] for n in ids]
+            rank = {p: i for i, p in enumerate(sorted(set(pairs)))}
             self._grids[key] = (
-                (cell, cells, np.array(list(cells), dtype=np.int64).reshape(-1, 3), list(cells.values()))
+                (
+                    cell,
+                    cells,
+                    np.array(list(cells), dtype=np.int64).reshape(-1, 3),
+                    list(cells.values()),
+                    np.array(ids, dtype=np.int64),
+                    boxes[:, :3],
+                    boxes[:, 3:],
+                    np.array([rank[p] for p in pairs], dtype=np.int64),
+                    pairs,
+                )
                 if cells
                 else None
             )
@@ -1641,8 +1785,10 @@ class DamagePlan:
             allowed = {p.pair for p in self.panels_with(roles)} & set(f.by_pair)
             allowed = allowed or {self.chassis}
             labels = [
-                self._nearest_pair(c, allowed, f, shape[n][0], shape[n][3]) or self.chassis
-                for n, (_, _, c) in enumerate(tris)
+                pair or self.chassis
+                for pair in self._nearest_pairs(
+                    [t[2] for t in tris], allowed, f, [s[0] for s in shape], [s[3] for s in shape]
+                )
             ]
             if kind == "nearest":
                 # Panels as connected patches of the Forza surface: a seam
