@@ -376,7 +376,10 @@ def extract_car(source: Source, media: str, cache: Path, log=print) -> Path:
 # media/wheels/<car>/ in the disc 2 packs (all 40 testdrive cars). It holds the
 # wheel carbin (the main carbin's wheel section plus LOD 0), wheel.xds (what the
 # rim techniques sample at LOD 1+), wheel_LOD0.xds and the blur discs wheel0..3.xds.
-WHEEL_FILES = ("wheel.xds",)
+# The archive's carbin ({name}.carbin) is cached as wheel.carbin (the main carbin has
+# the car's name too): forza2dsf.load_car takes its wheel when the main carbin has none.
+WHEEL_FILES = ("wheel.xds", "{name}.carbin")
+WHEEL_RENAME = {"{name}.carbin": forza2dsf.WHEEL_CARBIN}
 WHEEL_STAMP = "wheel_source.json"
 
 
@@ -414,14 +417,15 @@ def extract_wheel(source: Source, media: str, cache: Path, log=print) -> list[st
                 archive = ForzaZip(image.open(image.find(path)))
             except KeyError:
                 archive = None
-        wanted = {w.lower() for w in WHEEL_FILES}
+        wanted = {w.format(name=media).lower(): WHEEL_RENAME.get(w, w).lower() for w in WHEEL_FILES}
         for info in archive.entries() if archive is not None else []:
             name = info.filename.replace("\\", "/")
             if info.is_dir() or not name.lower().startswith(prefix) or name[len(prefix) :].lower() not in wanted:
                 continue
+            target = wanted[name[len(prefix) :].lower()]
             folder.mkdir(parents=True, exist_ok=True)
-            write_atomic(folder / name[len(prefix) :].lower(), archive.read(info))
-            written.append(name[len(prefix) :].lower())
+            write_atomic(folder / target, archive.read(info))
+            written.append(target)
     finally:
         image.close()
     folder.mkdir(parents=True, exist_ok=True)
@@ -957,8 +961,8 @@ def prepare_car(args, source: Source, media: str, isos, log=print) -> PreparedCa
     game's gamedb.slt), get the gamedb for the cockpit eye point and the handling,
     and pick its hosts. Shared by main and every port_batch worker."""
     folder = extract_car(source, media, args.cache, log)
-    if args.textures != "none":
-        extract_wheel(source, media, args.cache, log)  # rim textures (forza_materials.WHEEL)
+    # rim textures (forza_materials.WHEEL), and the wheel for cars whose main carbin has none
+    extract_wheel(source, media, args.cache, log)
     car = forza2dsf.load_car(folder, media)
     gamedb = None
     try:
