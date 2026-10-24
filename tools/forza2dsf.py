@@ -1208,6 +1208,10 @@ def convert(stream, full: Entry, exterior: Entry, car: ForzaCar, dims: CarDims, 
     hw = host_wheels(payload(stream, child(child(full, "NONR"), "UPVH")),
                      payload(stream, child(child(full, "NONR"), "MODL")),
                      payload(stream, child(child(exterior, "NONR"), "MODL")))
+    # The ground the engine counts camera heights from stays the host's as shipped.
+    import vehicle_cameras
+    camera_ground = vehicle_cameras.host_ground(payload(stream, child(child(full, "NONR"), "UPVH")),
+                                                payload(stream, child(child(full, "NONR"), "VO3D")))
     axle_mid = hw.axle_mid if opts.host_axle_mid is None else opts.host_axle_mid
     place = Placement(dy=hw.hub_y - dims.radius + dims.ride_height, dz=axle_mid + dims.mid_z)
     # Per-axle wheel size. The Forza wheel model is made for the front axle (its radius and width
@@ -1440,6 +1444,25 @@ def convert(stream, full: Entry, exterior: Entry, car: ForzaCar, dims: CarDims, 
                              "eye_offset": list(cf.offset), "eye_source": cf.offset_source,
                              "vo3d": {str(k): round(v, 4) for k, v in {**camera, **gauge_vo3d}.items()},
                              "hierarchy": hier, "interior": interior_report}
+    if not opts.skip_full:
+        # The Bonnet camera: in front of the Forza windscreen, where stock cars have it
+        # relative to theirs (the host's sat inside lower cars' cabins).
+        vo3d = child(child(full, "NONR"), "VO3D")
+        host_cam = vehicle_cameras.bonnet_camera(payload(stream, vo3d), camera_ground)
+        windscreen = vehicle_cameras.windscreen_centre(vehicle_cameras.forza_windscreen(car.body, place))
+        cam_report = {"ground": round(camera_ground, 4), "host": [round(c, 4) for c in host_cam]}
+        if windscreen is None:
+            cam_report["kept"] = f"no {vehicle_cameras.WINDSCREEN_SECTION} section"
+            log(f"bonnet camera: no {vehicle_cameras.WINDSCREEN_SECTION}; the host's stays")
+        else:
+            body = vehicle_cameras.section_triangles(car.body, place, opts.exterior_lod)
+            cam, rays = vehicle_cameras.bonnet_position(windscreen, body)
+            params = vehicle_cameras.bonnet_params(cam, camera_ground)
+            vo3d.payload = vehicle_cameras.patch_vo3d(payload(stream, vo3d), params)
+            cam_report.update({"windscreen": [round(c, 4) for c in windscreen], "camera": [round(c, 4) for c in cam],
+                               "rays": rays, "vo3d": {str(k): round(v, 4) for k, v in params.items()}})
+            log(f"bonnet camera: {tuple(round(c, 3) for c in cam)} (host's {tuple(round(c, 3) for c in host_cam)})")
+        report["bonnet_camera"] = cam_report
     # Hosts with more than one chassis record (172 and 38 other stock cars) draw a
     # variant part instead of part 0: give those parts the body too (tools/chassis_variants.py).
     import chassis_variants

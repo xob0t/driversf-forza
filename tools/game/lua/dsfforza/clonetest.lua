@@ -28,6 +28,9 @@ local DAMAGE_PANELS = false   -- config.damage_panels (run-test -DamagePanels): 
 local DAMAGE_SIDE = false     -- config.damage_side (run-test -DamageSide): localised hits on the -x front corner and door
 local GLASS_LADDER = false    -- config.glass_ladder (run-test -GlassLadder): damage in steps during the cockpit
                               -- view, so the cockpit glass shows each crack state (research/cockpit.md)
+local VIEWS = {}              -- config.views (run-test -Views): extra views between the chase and cockpit views:
+                              -- camera modes ("Bonnet", "Bumper") or fixed cameras on the car ("left", "right",
+                              -- "front": the driver's seat seen through the side windows or the windscreen)
 local DYNO = nil              -- config.dyno (run-test -Dyno): the dyno.lua module, acceleration and braking runs
 local LIGHTS = nil            -- config.lights (run-test -Lights): the lightstest.lua module, lamp phases per car
 
@@ -43,6 +46,7 @@ do
 		if config.damage_panels then DAMAGE_PANELS = true end
 		if config.damage_side then DAMAGE_SIDE = true end
 		if config.glass_ladder then GLASS_LADDER = true end
+		if type(config.views) == "table" then VIEWS = config.views end
 		if config.dyno then
 			local loaded, module = user_open("dsfforza\\dyno.lua")
 			if loaded and type(module) == "table" then
@@ -413,6 +417,105 @@ local function removeSideCopy()
 	end
 end
 
+-- config.views: each extra view lasts this many ticks.
+local EXTRA_VIEW_TICKS = 12
+-- Fixed cameras in the car's frame (+x its left, +y up from the ground, +z forward): from, at.
+-- They look at the driver's seat (left-hand drive at +x, right-hand drive at -x).
+local FIXED_VIEWS = {
+	left = { { 2.4, 1.9, 0.1 }, { 0.3, 0.95, 0.25 } },
+	right = { { -2.4, 1.9, 0.1 }, { -0.3, 0.95, 0.25 } },
+	front = { { 0.0, 1.6, 3.4 }, { 0.0, 0.95, 0.1 } },
+}
+local fixedCamera = nil
+
+-- A camera matrix at p looking at t (world vectors). Cameras look down -z (debug.lua's
+-- printCamLookFrom: lookAt = matrix[3] - matrix[2] * 5); rows are x, y, z, position.
+-- Built on a setYRotation matrix with its rows replaced (a vec.matrix of 16 numbers put
+-- the camera at the world origin, run vm-20261024-050134).
+local function lookMatrix(p, t)
+	local dx, dy, dz = t.x - p.x, t.y - p.y, t.z - p.z
+	local n = math.sqrt(dx * dx + dy * dy + dz * dz)
+	local zx, zy, zz = -dx / n, -dy / n, -dz / n
+	local xx, xz = zz, -zx
+	n = math.sqrt(xx * xx + xz * xz)
+	xx, xz = xx / n, xz / n
+	local m = setYRotation(math.atan2(-dx, -dz))
+	m[0] = vec.vector(xx, 0, xz, 0)
+	m[1] = vec.vector(zy * xz, zz * xx - zx * xz, -zy * xx, 0)
+	m[2] = vec.vector(zx, zy, zz, 0)
+	m[3] = p
+	return m
+end
+
+local function carPoint(m, v)
+	return m[3] + m[0] * v[1] + m[1] * v[2] + m[2] * v[3]
+end
+
+-- The game camera's position and view direction in the car's model space (rows of the
+-- car matrix are its x, y, z axes), logged so camera parameters can be checked against
+-- the model (research/cockpit.md, "Cameras").
+local function logCameraInCar(id, car, label)
+	local ok, err = pcall(function()
+		local cm, m = game_camera.matrix, car.matrix
+		local function loc(v, w)
+			local out = {}
+			for i = 0, 2 do
+				local r = m[i]
+				local n = r.x * r.x + r.y * r.y + r.z * r.z
+				out[i + 1] = (v.x * r.x + v.y * r.y + v.z * r.z) / n
+			end
+			return out
+		end
+		local d = cm[3] - m[3]
+		local p = loc(d)
+		local f = loc(cm[2] * -1)
+		log(string.format("id %d: %s camera in car (%.3f, %.3f, %.3f) looking (%.3f, %.3f, %.3f)", id, label,
+			p[1], p[2], p[3], f[1], f[2], f[3]))
+	end)
+	if not ok then log(string.format("id %d: %s camera in car: %s", id, label, tostring(err))) end
+end
+
+local function endFixedCamera()
+	if fixedCamera ~= nil then
+		pcall(function()
+			CameraSystem.EnableLuaDebugCameras(false)
+			game_camera.viewport = 0
+			fixedCamera:delete()
+		end)
+		fixedCamera = nil
+	end
+end
+
+-- Switch to extra view `name`: a camera mode, or a fixed camera made the way
+-- cameraselection.lua's createFreeCam makes the debug free camera.
+local function showView(id, car, name)
+	endFixedCamera()
+	local ok, err
+	if FIXED_VIEWS[name] then
+		ok, err = pcall(function()
+			localPlayer.cameraMode = "Normal"
+			localPlayer:resetCameraMode()
+			local m = car.matrix
+			local view = FIXED_VIEWS[name]
+			local from, at = carPoint(m, view[1]), carPoint(m, view[2])
+			fixedCamera = CameraSystem.CreateCamera()
+			fixedCamera.matrix = lookMatrix(from, at)
+			log(string.format("id %d: camera %s at (%.2f, %.2f, %.2f) towards (%.2f, %.2f, %.2f)", id, name,
+				from.x, from.y, from.z, at.x, at.y, at.z))
+			game_camera.viewport = nil
+			fixedCamera.viewport = 0
+			CameraSystem.EnableLuaDebugCameras(true)
+		end)
+	else
+		ok, err = pcall(function()
+			localPlayer.cameraMode = name
+			localPlayer:resetCameraMode()
+		end)
+	end
+	log(string.format("id %d: view %s %s (cameraMode %s)", id, name, ok and "on" or ("failed: " .. tostring(err)),
+		tostring(localPlayer.cameraMode)))
+end
+
 local function step()
 	local id = TEST_IDS[state.index]
 	state.ticks = state.ticks + 1
@@ -437,6 +540,15 @@ local function step()
 				-- No copy: hit the player's car (the chase camera then sees only its back).
 				sideHit(id, state.spawned, SIDE_STAGES[state.ticks], "car")
 			end
+		end
+	end
+	if #VIEWS > 0 and id ~= nil and state.spawned ~= nil then
+		if state.phase == "chase_view" and state.ticks == VIEW_TICKS - 1 then
+			logCameraInCar(id, state.spawned, "Normal")
+		elseif state.phase == "extra_view" and state.ticks == EXTRA_VIEW_TICKS - 1 and not FIXED_VIEWS[VIEWS[state.view]] then
+			logCameraInCar(id, state.spawned, VIEWS[state.view])
+		elseif state.phase == "cockpit_view" and state.ticks == 6 then
+			logCameraInCar(id, state.spawned, "DriverEye")
 		end
 	end
 	if DAMAGE and id ~= nil and state.phase == "chase_view" and state.ticks == DAMAGE_TICK then
@@ -557,7 +669,18 @@ local function step()
 		if DYNO.step() then nextId() end
 	elseif state.phase == "lights" then
 		if LIGHTS.step() then nextId() end
-	elseif state.phase == "chase_view" and state.ticks >= VIEW_TICKS then
+	elseif state.phase == "chase_view" and state.ticks >= VIEW_TICKS and #VIEWS > 0 then
+		removeSideCopy()
+		state.view = 1
+		showView(id, state.spawned, VIEWS[1])
+		state.phase, state.ticks = "extra_view", 0
+	elseif state.phase == "extra_view" and state.ticks >= EXTRA_VIEW_TICKS and state.view < #VIEWS then
+		state.view = state.view + 1
+		showView(id, state.spawned, VIEWS[state.view])
+		state.ticks = 0
+	elseif (state.phase == "chase_view" and state.ticks >= VIEW_TICKS)
+		or (state.phase == "extra_view" and state.ticks >= EXTRA_VIEW_TICKS) then
+		endFixedCamera()
 		-- Cockpit camera, the way challengeracelogic.lua forces it.
 		local ok, err = pcall(function()
 			localPlayer.cameraMode = "DriverEye"
