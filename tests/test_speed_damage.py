@@ -454,6 +454,21 @@ def _panel_body(rng: random.Random):
                     tris.append((base, base + 1, base + 2))
             subs.append(_Sub(lod, tris))
         body.append(_Section(name, subs, pool))
+    # A bonnet piece flat at y = 0 (corners of either sign of zero) away from the
+    # rest: its cells' innermost value is a zero, the first one met.
+    pool, subs = [], []
+    for lod in (1, 2):
+        tris = []
+        for _ in range(30):
+            a = (3.0 + rng.uniform(-0.3, 0.3), 0.0, rng.uniform(-0.3, 0.3))
+            corners = [(a[0] + rng.uniform(-0.1, 0.1), rng.choice([0.0, -0.0]), a[2] + rng.uniform(-0.1, 0.1))]
+            corners += [(c[0] + 0.05, rng.choice([0.0, -0.0]), c[2]) for c in corners]
+            corners += [(corners[0][0], rng.choice([0.0, -0.0]), corners[0][2] + 0.05)]
+            base = len(pool)
+            pool += [SimpleNamespace(position=p) for p in corners]
+            tris.append((base, base + 1, base + 2))
+        subs.append(_Sub(lod, tris))
+    body.append(_Section("hood_flat", subs, pool))
     return body
 
 
@@ -474,6 +489,8 @@ def test_zone_maps_match_the_sample_loop():
             zones = damage.exposed_zones(engine)
             want = _zone_maps_reference(body, place, [1, 2], zones)
             assert want and _same(damage.zone_maps(body, place, [1, 2], zones), want)
+            zeros = {math.copysign(1, v) for cells in want.values() for v in cells.values() if v == 0}
+            assert zeros == {1.0, -1.0}  # both signs of zero are kept values
 
 
 def test_zone_votes_match_zone_vote():
@@ -491,13 +508,58 @@ def test_zone_votes_match_zone_vote():
             pts = [a] + [tuple(a[i] + rng.uniform(-size, size) for i in range(3)) for _ in range(2)]
             if rng.random() < 0.1:
                 pts = [tuple(round(x / damage.BAY_CELL) * damage.BAY_CELL for x in p) for p in pts]
+            elif rng.random() < 0.05:  # zeros of either sign (the centroid's sum starts at 0)
+                pts = [tuple(rng.choice([0.0, -0.0]) if k != 1 else p[k] for k in range(3)) for p in pts]
             tris.append(pts)
+        # The samples, bit for bit (the centroid's sum order and sign of zero too),
+        # and each sample's zone.
+        got, total = damage._vote_samples(tris)
+        want = [
+            q
+            for pts in tris
+            for q in [tuple(sum(p[k] for p in pts) / 3 for k in range(3)), *damage._tri_samples(pts, damage.ZONE_STEP)]
+        ]
+        assert total.tolist() == [1 + len(list(damage._tri_samples(pts, damage.ZONE_STEP))) for pts in tris]
+        assert got.tobytes() == struct.pack(f"<{3 * len(want)}d", *(x for q in want for x in q))
+        for lod in (1, 2):
+            names = [damage.zone_of(maps, lod, q, zones) for q in want]
+            assert [zones[z][0] if z >= 0 else None for z in damage._zones_at(maps, lod, got, zones)] == names
         for lod in (1, 2, 3):
             want = [_zone_vote_reference(maps, lod, pts, zones) for pts in tris]
             assert want == [damage.zone_vote(maps, lod, pts, zones) for pts in tris]
             assert damage.zone_votes(maps, lod, tris, zones) == want
             assert sum(w is not None for w in want) > (10 if lod < 3 else -1)
     assert damage.zone_votes({}, 1, []) == []
+
+
+def test_zones_at_on_exact_thresholds():
+    """Points whose depth behind a map cell is exactly a zone's clearance or reach
+    (zone_of's strict > and <), a float step either side, and on cell borders."""
+    rng = random.Random(67)
+    zones = damage.exposed_zones()
+    maps, pts, exact = {}, [], 0
+    for z, (kind, _, axis, sign, which, reach) in enumerate(zones):
+        across = [a for a in range(3) if a != axis]
+        cells = maps.setdefault((1, kind), {})
+        clearance = damage.BAY_CLEARANCE if which == "inner" else damage.BUMPER_CLEARANCE
+        for _ in range(60):
+            key = (rng.randint(-20, 20) + 100 * z, rng.randint(-20, 20))
+            d0 = cells.setdefault(key, rng.uniform(-2, 2))
+            for edge in [clearance] + ([reach] if reach is not None else []):
+                c = sign * (edge + d0)
+                exact += sign * c - d0 == edge
+                for v in (c, math.nextafter(c, math.inf), math.nextafter(c, -math.inf)):
+                    p = [0.0, 0.0, 0.0]
+                    p[axis] = v
+                    for a, k in zip(across, key, strict=True):
+                        p[a] = (k + rng.choice([0.0, 0.5, 1.0])) * damage.BAY_CELL
+                    pts.append(tuple(p))
+    import numpy as np
+
+    got = damage._zones_at(maps, 1, np.array(pts), zones)
+    want = [damage.zone_of(maps, 1, p, zones) for p in pts]
+    assert [zones[z][0] if z >= 0 else None for z in got] == want
+    assert {None, *(z[0] for z in zones)} == set(want) and exact > 30
 
 
 if __name__ == "__main__":

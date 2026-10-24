@@ -382,11 +382,15 @@ class Grid:
                     ring = np.maximum(
                         np.maximum(np.abs(kx[j] - qkx[qg]), np.abs(ky[j] - qky[qg])), np.abs(kz[j] - qkz[qg])
                     )
-                    # The first t with d <= t * cell, as nearest's stop test compares.
+                    # The first t with d <= t * cell, as nearest's stop test compares:
+                    # exact unless d is within slack of a t * cell (then nearest),
+                    # or 0 (a copy of the query point, 0 both ways).
                     t = np.ceil(d / cell)
-                    t = np.where((t > 0) & (d <= (t - 1) * cell), t - 1, t)
-                    t = np.where(d > t * cell, t + 1, t)
-                    bad = ~np.isfinite(d) | (np.abs(d - t * cell) <= slack) | (np.abs(d - (t - 1) * cell) <= slack)
+                    bad = (
+                        ~np.isfinite(d)
+                        | ((np.abs(d - t * cell) <= slack) & ((dx != 0) | (dy != 0) | (dz != 0)))
+                        | (np.abs(d - (t - 1) * cell) <= slack)
+                    )
                     bad = np.bincount(g, weights=bad.astype(np.float64), minlength=m) > 0
                     t = np.where(bad[g], 0, t).astype(np.int64)
                     slow.append(sel[bad])
@@ -1246,23 +1250,26 @@ def zone_vote(maps: dict, lod: int, pts, zones=EXPOSED_ZONES) -> str | None:
     return kind if n >= ZONE_SHARE * len(samples) else None
 
 
-def zone_votes(maps: dict, lod: int, tris, zones=EXPOSED_ZONES) -> list:
-    """zone_vote for many triangles at once, with the same result for each: the
-    samples (centroid as sum() / 3 makes it, then _samples_of) at once, each
-    sample's zone as zone_of finds it (the first zone kind whose map cell hides
-    it), and per triangle the zone with the most samples, the one met first
-    among equals (Counter.most_common keeps insertion order)."""
-    if not tris:
-        return []
-    corners = np.array(tris, dtype=np.float64).reshape(-1, 3, 3)
-    centroid = (((0.0 + corners[:, 0]) + corners[:, 1]) + corners[:, 2]) / 3
+def _vote_samples(tris) -> tuple[np.ndarray, np.ndarray]:
+    """zone_vote's samples of many triangles at once: per triangle its centroid
+    and then its _tri_samples (ZONE_STEP), as an (m, 3) array; and each
+    triangle's number of samples. The centroid is zone_vote's own sum() / 3
+    (Python's float sum is compensated, not left to right)."""
+    centroid = [tuple(sum(p[k] for p in pts) / 3 for k in range(3)) for pts in tris]
     rest, counts = _samples_of(tris, ZONE_STEP)
     total = counts + 1
     start = np.cumsum(total) - total
     pts = np.empty((int(total.sum()), 3), dtype=np.float64)
     rest_at = np.ones(len(pts), dtype=bool)
     rest_at[start] = False
-    pts[start], pts[rest_at] = centroid, rest
+    pts[start] = np.array(centroid, dtype=np.float64).reshape(-1, 3)
+    pts[rest_at] = rest
+    return pts, total
+
+
+def _zones_at(maps: dict, lod: int, pts: np.ndarray, zones=EXPOSED_ZONES) -> np.ndarray:
+    """zone_of for many points at once: per point the index in `zones` of the
+    first zone kind whose map cell hides it, or -1."""
     if not np.isfinite(pts).all():
         raise ValueError("zone_votes: a triangle point is not finite")
     zone = np.full(len(pts), -1, dtype=np.int64)
@@ -1284,6 +1291,18 @@ def zone_votes(maps: dict, lod: int, tris, zones=EXPOSED_ZONES) -> list:
         if reach is not None:
             hit &= d < reach
         zone[mine[hit]] = z
+    return zone
+
+
+def zone_votes(maps: dict, lod: int, tris, zones=EXPOSED_ZONES) -> list:
+    """zone_vote for many triangles at once, with the same result for each: the
+    samples at once (_vote_samples), each one's zone as zone_of finds it
+    (_zones_at), and per triangle the zone with the most samples, the one met
+    first among equals (Counter.most_common keeps insertion order)."""
+    if not tris:
+        return []
+    pts, total = _vote_samples(tris)
+    zone = _zones_at(maps, lod, pts, zones)
     owner = np.repeat(np.arange(len(tris)), total)
     voted = np.flatnonzero(zone >= 0)
     out: list = [None] * len(tris)
@@ -2467,12 +2486,12 @@ class DamagePlan:
             grid = f.by_pair[src] if src is not None else f.all_grid
             q = self._forza_norm(p)
             hits = grid.nearest((-q[0], q[1], q[2]) if flip else q, self.opts.k)
-            cache[key] = self._weighted_disp(f, grid, flip, hits)
+            cache[key] = self._weighted_disp(f, grid, flip, hits, f.box.scale_to(self.forza_box))
         return cache[key]
 
-    def _weighted_disp(self, f: HostField, grid: Grid, flip: bool, hits) -> tuple:
+    @staticmethod
+    def _weighted_disp(f: HostField, grid: Grid, flip: bool, hits, scale) -> tuple:
         """_disp from the nearest host vertices (grid.nearest's hits)."""
-        scale = f.box.scale_to(self.forza_box)
         wsum, d = 0.0, [0.0, 0.0, 0.0]
         for dist, n in hits:
             w = 1.0 / (dist + 0.02) ** 2
@@ -2492,13 +2511,14 @@ class DamagePlan:
         for pair, p in keys:
             if (id(f), pair, p) not in cache:
                 groups[self._source(f, pair)].setdefault(p, []).append(pair)
+        scale = f.box.scale_to(self.forza_box) if groups else None
         for (src, flip), todo in groups.items():
             grid = f.by_pair[src] if src is not None else f.all_grid
             ps = list(todo)
             qs = [self._forza_norm(p) for p in ps]
             hits = grid.nearest_many([(-q[0], q[1], q[2]) if flip else q for q in qs], self.opts.k)
             for p, h in zip(ps, hits, strict=True):
-                value = self._weighted_disp(f, grid, flip, h)
+                value = self._weighted_disp(f, grid, flip, h, scale)
                 for pair in todo[p]:
                     cache[(id(f), pair, p)] = value
 
