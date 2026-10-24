@@ -21,6 +21,12 @@ and the game binds that to one of two per-car atlases by technique.
 | `nodamage.xds` 1024² DXT5 | `nodamage_LOD0` 2048² | `damage.xds` | interior, badges, emblems, colour swatches; body area white with alpha 0 |
 | `Lights.xds` 512² DXT5 | `lights_LOD0` 1024² | `damagelights.xds` | every lamp, lamp glass, reflector; alpha = glow mask |
 
+The wheel is the exception: the main carbin's `wheel` section (the same model
+as LOD 1 to 5 of the wheel archive's carbin) samples the car's own
+`wheel.xds` (256² on 36 of the 40 testdrive cars) from `media/wheels/<car>.zip`
+on the discs or `media/wheels/<car>/` in the disc 2 packs (`wheels.md`, "Rim
+textures").
+
 Cockpit carbins: the cabin sections (`interior`, `seatL/R`,
 `steering_wheel`, needles) draw with the `cockpit_<technique>` shaders,
 which sample `interior_LOD0` (`CockpitInteriorHiSampler`) for every trim,
@@ -52,7 +58,13 @@ x_scale, y_off, y_scale). There is no Y flip. Per subsection, three kinds:
 
 Alpha-tested techniques (emblem, badge…) drop texels below half alpha.
 The `badge` subsections are backing plates drawn entirely from alpha-0
-texels, so only the emblem letters show in Forza.
+texels, so only the emblem letters show in Forza. The converter has no alpha
+test on the DSF side, so it leaves out the triangles Forza's test removes
+entirely: those with fewer than 1% of the texels inside the UV triangle at
+alpha 128 or more (`forza_materials.triangle_alpha_cut`). Until 2026-10-24 it
+tested the triangle's UV bounding box, which kept long decal triangles whose
+box reached opaque artwork beside them; see "The F-150 Raptor's black
+patches" below.
 
 **Baked ambient occlusion (confirmed-static).** The first of the trailing
 vertex bytes (FH1 keeps 4, FM4 8; `carbin.Vertex.extra`) is per-vertex AO,
@@ -98,8 +110,9 @@ and panel undersides use the paint material (`damage.md`, step 6).
 | badge | nodamage | alpha 0 everywhere | textured | dropped |
 | taillight2S, tail_light, reverse_light, textured_reflector, indicator_left/right, hidhead, oldhead, slorange, drlwhite, detail_glass_red, detail_glass_clear | Lights | textured | textured | host **Lights** (stride 32, UV1 = UV0) |
 | fogred | Lights | swatch | textured | host Lights, solid cell |
-| tire, rim, inner_rim | global / wheel | tiling | tyre | shared TYRE |
-| blur_rim, blur_lip | | | skip | dropped |
+| tire | global | tiling | tyre | shared TYRE (unwrapped onto the stock tread and sidewall, `research/wheels.md`) |
+| rim, chrome_rim, outer_rim, inner_rim, wheel_black, wheel_emblem (`wheel` section) | the car's `wheel.xds` | textured (inner_rim sometimes a swatch) | textured | host **Chassis**, in the wheel MODL part (`wheels.md`, "Rim textures") |
+| blur_rim, blur_lip, chrome_blur_* | | | skip | dropped |
 
 `liveryBadge` (livery decal slots; of the 40 testdrive cars only the Agera
 has them: a strip on the rear wing in the main carbin, one on the dash top
@@ -171,6 +184,46 @@ Without `--textures` the output is byte-identical to `370z-v1.sp`.
 Decoding the archives with `dsf_materials.py preview` finds every
 texture. It shows textured tail lights, reverse lights and reflectors, the
 Nissan emblems and the 370Z script, with no black badge plates.
+
+## The F-150 Raptor's black patches (2026-10-24)
+
+User report on `out/testdrive9` (ID 38): black artifacts on the Raptor's bed
+sides and rear doors.
+
+**Forza's own look (confirmed-static).** The shapes are the Raptor's
+mud-splash graphic: one `stripe_badge` subsection on the `body` section (44
+triangles, 0.35 m² at LOD 1), alpha-tested, coloured by the technique's
+`StripeColor` (`shaders_v16.fxobj` has `StripeColor`, `StripePaintScale`;
+`ShaderSettings.xml` sets `stripe_badge` PaintScale 0.1). Whether it shows
+depends on the factory colour: gamedb `Combo_Colors` gives every Raptor colour
+twice, sequences 1, 3, 5, 7, 9 with `BaseTexture` `nodamagestripe.tga` and
+`Combo_Colors_Exceptions` HasStripe 1, ColorStripe 0x232323, and sequences 2,
+4, 6, 8, 10 with `nodamage.tga`. The car zip has both `nodamage.xds` and
+`nodamagestripe.xds`; the converter reads `nodamage.xds`, whose alpha is 0
+under every stripe triangle (one stray texel above 127 in 280 at most), so
+with that texture Forza draws no graphic. 21 FH1 cars have per-colour base
+textures; among the testdrive cars also the Challenger SRT8 392, 500 Abarth
+and Agera, and the Cuda and Charger Daytona have stripe colours on some
+factory colours. DSF has one chassis texture per car for every palette colour,
+so the converter bakes `nodamage.xds` (the colours whose `BaseTexture` is
+`nodamage.tga`) for all of them.
+
+**What the converter did.** Its alpha test took the largest alpha in each
+triangle's UV bounding box. The stripe's island sits in `nodamage` beside the
+opaque cabin artwork, so the boxes of its long triangles reached alpha-255
+texels: 44 of its triangles went on the Chassis material and drew the dark
+stripe texels (RGB about 40) as random fragments of the graphic. In game
+(user's shot): jagged black patches on the bed and the rear door bottoms.
+
+**Fix.** `triangle_alpha_cut` looks at the texels inside the triangle. Survey
+over the 40 testdrive cars (`out/rims/alpha_cut_survey.txt`, main carbin at
+LOD 1/3/4/5 and the cockpit carbin): the Raptor's stripe loses 44/27/26
+triangles at LOD 1/3/4 (0.35 to 0.50 m²), the Agera's `liveryBadge` on its
+wing 22/9/8/5 (0.03 to 0.04 m²), the 2000GT's body `badge` 8/6/6 (up to
+0.03 m²), the Mustang Boss 429's bonnet `badge` 4/1/1 (and 14 in the
+cockpit's bonnet, 0.02 m²); every other change is under 30 cm² (slivers at
+emblem edges): 345 LOD 1 triangles and 136 cockpit triangles in all, none
+kept that were cut before.
 
 ## Open
 

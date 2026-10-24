@@ -13,6 +13,10 @@ the car's two atlases depending on the technique (`damageSampler` and
     Lights.xds   (+ damagelights.xds)  every lamp technique, lamp glass,
                                        reflectors; alpha is the glow mask
 
+The main carbin's `wheel` section is the exception: its rim techniques sample
+the car's own wheel.xds from the wheel archive media/wheels/<car>
+(classify_wheel, family WHEEL).
+
 lod0/cockpit carbins use the _LOD0 versions (nodamage_LOD0, lights_LOD0). The
 cockpit carbin's cabin sections draw with the cockpit_<technique> shaders,
 which sample interior_LOD0 (CockpitInteriorHiSampler) for every trim, dial and

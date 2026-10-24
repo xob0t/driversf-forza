@@ -15,9 +15,10 @@ a specular / glow mask: it follows luminance on chassis texels
 
 This module:
 
-- packs the parts of the Forza atlases (nodamage, Lights) that textured
-  subsections actually use into one DSF atlas (`Texturing`), with solid
-  cells for colour swatches and for the plain paint texel;
+- packs the parts of the Forza atlases (nodamage, Lights, and the car's
+  wheel.xds for the rims) that textured subsections actually use into one
+  DSF atlas (`Texturing`), with solid cells for colour swatches and for the
+  plain paint texel;
 - encodes it as DXT5 with mips (`encode_dxt5`, `dds_file`);
 - installs it: by default it replaces the host TEXC's DDS and keeps every
   UID, so the host materials of all three entries pick it up
