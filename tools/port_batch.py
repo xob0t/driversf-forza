@@ -20,7 +20,8 @@ is free), which writes the car's three VEHC entries to work/<media>.chnk and
 a report. The merge then registers them into one copy of the stock archive
 (SSLP/VSCT records), checks the root entry limit (--root-limit, default 1100:
 150 stock cars plus at most 215 new ones; dsfforza.asi's archive module lifts
-it, research/spool-limits.md) and UID clashes, writes the archive, and lints every car.
+it, research/spool-limits.md) and UID clashes (a car that clashes is left out
+and the rest merged again), writes the archive, and lints every car.
 A car that fails in tools/damage.py is retried once without --damage, one
 that fails in the cockpit step once with --no-cockpit (the host's interior),
 and a worker that times out or dies without a report is not retried; a car
@@ -46,7 +47,9 @@ dsfforza\\ported.lua for register.lua), batch-report.json (per car its
 engine sound: Forza source banks, loops used, pitch ranges, SBAK size, or why
 it kept the host's), sound/<media>/ (sweep_new.wav and sweep_template.wav
 previews, wav/ loops, report.json; tools/engine_sound.py) and, with --gui,
-gui/ (gui.sp, Fonts.fchunk, hud.lua from tools/gui_assets.py). A car whose
+gui/ (gui.sp, Fonts.fchunk, hud.lua from tools/gui_assets.py; when that step
+fails, a gui/ already there is moved to gui-stale-<time>/, since it doesn't
+match the new archive and install.ps1 would install it). A car whose
 sound step crashes is retried once with --no-forza-sound. Every
 port_car option is accepted inside --port "..." (e.g. --damage, --host 266,
 --mdxn-limit 0x2C0000).
@@ -76,13 +79,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import game_paths  # noqa: E402
 import gentle  # noqa: E402
+from chnk import ENTRY_LIMIT  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 TOOLS = REPO / "tools"
 DEFAULT_GAME = Path("D:/Games/Driver San Francisco")
 GARAGE_IDS = range(1, 62)          # garage loop covers 0..303; 0 is left alone, stock starts at 62
 HIGH_FIRST_ID = 304
-ROOT_ENTRY_LIMIT = 1100          # stock CHNK reader; more needs dsfforza.asi [archive] (--root-limit)
 WORKER_TIMEOUT = 45 * 60
 FREE_RAM_FOR_WORKER = 1536 << 20
 BELOW_NORMAL = 0x00004000
@@ -136,23 +139,9 @@ def lower_priority() -> None:
 
 def port_car_args(argv: list[str]) -> argparse.Namespace:
     """port_car.py's own options parsed from argv (so the batch takes all of them
-    and their defaults), without running port_car."""
+    and their defaults)."""
     import port_car
-
-    class Parsed(Exception):
-        pass
-    real = argparse.ArgumentParser.parse_args
-
-    def grab(self, args=None, namespace=None):
-        raise Parsed(real(self, args, namespace))
-    argparse.ArgumentParser.parse_args = grab
-    try:
-        port_car.main(argv)
-    except Parsed as parsed:
-        return parsed.args[0]
-    finally:
-        argparse.ArgumentParser.parse_args = real
-    raise RuntimeError("port_car.main did not parse its arguments")
+    return port_car.build_parser().parse_args(argv)
 
 
 # --- the roster and selection ------------------------------------------------------------
@@ -383,10 +372,10 @@ def garage_group(make: str, group: str, counts: dict[str, int], cap: int, groups
 
 def root_limit_of(args) -> int:
     """--root-limit: 1100 (stock) unless the install uses dsfforza.asi's archive module."""
-    limit = getattr(args, "root_limit", None) or ROOT_ENTRY_LIMIT
-    if limit > ROOT_ENTRY_LIMIT:
+    limit = getattr(args, "root_limit", None) or ENTRY_LIMIT
+    if limit > ENTRY_LIMIT:
         print(f"note: root limit {limit}: the archive needs dsfforza.asi with [archive] enabled "
-              f"(the stock game reads {ROOT_ENTRY_LIMIT} entries)", file=sys.stderr)
+              f"(the stock game reads {ENTRY_LIMIT} entries)", file=sys.stderr)
     return limit
 
 
@@ -509,7 +498,6 @@ def worker(job_path: Path) -> int:
     report = {"media": job["media"], "game": job["game"], "spool_id": job["spool_id"], "ok": False}
     try:
         import clone_vehicle
-        import forza2dsf
         import port_car
         from chnk import read_chunk, write_chunk
         from forza_roster import Source
@@ -519,34 +507,17 @@ def worker(job_path: Path) -> int:
                              + job["port_options"])
         source = Source(**job["source"])
         isos = [Path(p) for p in job["isos"]]
-        folder = port_car.extract_car(source, job["media"], args.cache, log)
-        car = forza2dsf.load_car(folder, job["media"])
-        gamedb = None
-        try:
-            dims = forza2dsf.car_dims(car)
-        except ValueError:
-            gamedb = port_car.extract_gamedb(isos, source.game, args.cache)
-            dims = forza2dsf.car_dims(car, gamedb)
-        if (not args.no_cockpit or not args.no_handling) and gamedb is None:
-            gamedb = port_car.extract_gamedb(isos, source.game, args.cache)
-        host, sound, choice = port_car.pick_hosts(args, job["media"], source.game, folder, gamedb, isos, log)
+        prep = port_car.prepare_car(args, source, job["media"], isos, log)
+        host, sound = prep.host, prep.sound
         with dsf.open("rb") as stream:
             root = read_chunk(stream, 0)
             entries = root.entries
-            nonr_limit, mdxn_max = port_car.stock_limits(stream, entries)
-            if args.mdxn_limit:
-                mdxn_max = {kind: max(size, args.mdxn_limit) for kind, size in mdxn_max.items()}
+            nonr_limit, mdxn_max = port_car.stock_limits(stream, entries, args.mdxn_limit)
             names = {s: entries[i].name for s, i, k in clone_vehicle.sslp_records(stream, entries) if k == 0}
-            log(f"--- {job['media']} ({source.game}, {source.where}) -> spool ID {job['spool_id']}, host {host} "
-                f"({names[host]})")
             if job.get("sound_dir"):
                 args.forza_sound_dir = Path(job["sound_dir"])
-            plan, plan_report = port_car.forza_sound_plan(
-                args, stream, entries, job["media"], source.game, folder, gamedb, isos,
-                args.sound_host if isinstance(args.sound_host, int) else None, job["spool_id"], log)
-            clones, built = port_car.build_car(stream, entries, host, job["spool_id"], car, dims, args,
-                                               nonr_limit, mdxn_max, log, gamedb, sound, plan, plan_report)
-            built["host_choice"] = choice
+            clones, built = port_car.convert_car(stream, entries, prep, job["spool_id"], args, nonr_limit, mdxn_max,
+                                                 names, isos, log)
             temp = out_chunk.with_suffix(".tmp")
             with temp.open("wb") as out:
                 write_chunk(out, stream, clones, root.version)
@@ -710,9 +681,31 @@ class MultiStream:
 
 
 def merge(dsf: Path, out: Path, results: list[dict], work: Path, log=print,
-          root_limit: int = ROOT_ENTRY_LIMIT) -> tuple[list[dict], list[dict]]:
+          root_limit: int = ENTRY_LIMIT) -> tuple[list[dict], list[dict]]:
     """Register every built car into a copy of the stock archive. Returns (entries
-    of the manifest's "cars", failures found here)."""
+    of the manifest's "cars", failures found here). Cars that define a resource or
+    MODL part UID another vehicle defines too are left out (cause "UID clash") and
+    the rest are registered again, so one clash doesn't fail the whole batch."""
+    failed: list[dict] = []
+    while True:
+        cars, found, clashing = register_cars(dsf, out, results, work, log, root_limit)
+        failed += found
+        if not clashing:
+            return cars, failed
+        log(f"UID clashes in {sorted(clashing)}; merging again without them (rebuild those cars)")
+        failed += [{**r, "ok": False, "cause": "UID clash",
+                    "error": f"defines UIDs another vehicle defines too: {', '.join(clashing[r['media']][:4])}"}
+                   for r in results if r["media"] in clashing]
+        left_out = {f["media"] for f in failed}
+        results = [r for r in results if r["media"] not in left_out]
+        if not results:
+            return [], failed
+
+
+def register_cars(dsf: Path, out: Path, results: list[dict], work: Path, log=print,
+                  root_limit: int = ENTRY_LIMIT) -> tuple[list[dict], list[dict], dict[str, list[str]]]:
+    """One merge pass: (manifest "cars", failures, {media: clashing UIDs}). The
+    archive is written only when no car clashes."""
     import clone_vehicle
     import port_car
     from chnk import read_chunk, write_chunk
@@ -754,9 +747,8 @@ def merge(dsf: Path, out: Path, results: list[dict], work: Path, log=print,
             c["vehc"] = [records[c["spool_id"] + k] for k in clone_vehicle.KIND_OFFSETS]
         clashes = port_car.uid_clashes(stream, entries, {i for c in cars for i in c["vehc"]})
         if clashes:
-            bad = {entries[i].name for i in clashes}
-            log(f"UID clashes in {sorted(bad)}; rebuild those cars")
-            raise SystemExit(f"resource UID clashes: {sorted(bad)}")
+            return cars, failed, {c["media"]: sorted({u for i in c["vehc"] for u in clashes.get(i, [])})
+                                  for c in cars if any(i in clashes for i in c["vehc"])}
         out.parent.mkdir(parents=True, exist_ok=True)
         temp = out.with_name(out.name + ".tmp")
         try:
@@ -772,7 +764,7 @@ def merge(dsf: Path, out: Path, results: list[dict], work: Path, log=print,
                 f"[archive] large_files=1 (the default)")
     finally:
         stream.close()
-    return cars, failed
+    return cars, failed, {}
 
 
 def lint_all(out: Path, dsf: Path, cars: list[dict], parallel: int, log=print) -> None:
@@ -927,6 +919,9 @@ def finish(args, dsf: Path, out_dir: Path, work: Path, ok: list[dict], failed: l
     cars_out, merge_failed = merge(dsf, archive, ok, work, root_limit=root_limit_of(args))
     failed += merge_failed
     timings["merge"] = round(time.time() - t, 1)
+    if not cars_out:
+        write_report(out_dir, archive, [], failed, timings, started, args, results)
+        raise SystemExit("no car could be merged")
     t = time.time()
     lint_all(archive, dsf, cars_out, max(1, min(args.jobs, 4)))
     timings["lint"] = round(time.time() - t, 1)
@@ -955,6 +950,17 @@ def finish(args, dsf: Path, out_dir: Path, work: Path, ok: list[dict], failed: l
         except Exception as error:   # the archive is still usable without pictures and badges
             print(f"gui assets failed: {type(error).__name__}: {error}")
             timings["gui_error"] = f"{type(error).__name__}: {error}"
+            # An earlier run's gui/ (or this run's half) doesn't match the new archive's IDs, and
+            # install.ps1 installs whatever gui/ holds: move it aside, nothing is deleted.
+            gui = out_dir / "gui"
+            if gui.exists():
+                stale = out_dir / f"gui-stale-{datetime.datetime.now():%Y%m%d-%H%M%S}"
+                try:
+                    gui.rename(stale)
+                    print(f"moved {gui} to {stale.name}: it doesn't match this archive")
+                    timings["gui_stale"] = str(stale)
+                except OSError as move_error:
+                    print(f"warning: {gui} doesn't match this archive and could not be moved: {move_error}")
         timings["gui"] = round(time.time() - t, 1)
     write_report(out_dir, archive, cars_out, failed, timings, started, args, results)
     if getattr(args, "clean_work", False):
@@ -1073,8 +1079,8 @@ def main(argv: list[str] | None = None) -> None:
                             "asi: every free ID from 1 (stock gaps in 62..303 too), then --first-id up, garage-listed "
                             "through dsfforza.asi (research/asi.md)")
         p.add_argument("--first-id", type=int, default=HIGH_FIRST_ID)
-        p.add_argument("--root-limit", type=int, default=ROOT_ENTRY_LIMIT,
-                       help=f"root entries allowed (default {ROOT_ENTRY_LIMIT}, the stock reader); "
+        p.add_argument("--root-limit", type=int, default=ENTRY_LIMIT,
+                       help=f"root entries allowed (default {ENTRY_LIMIT}, the stock reader); "
                             "more needs dsfforza.asi [archive], e.g. 3003 for every base ID below 1000")
         if name == "plan":
             p.add_argument("--tsv", type=Path)
@@ -1097,8 +1103,8 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--dsf", type=Path, default=DEFAULT_GAME / "Install" / "dngvehicles.sp")
     r.add_argument("--id-policy", choices=("garage", "high", "asi"), default="high")
     r.add_argument("--first-id", type=int, default=HIGH_FIRST_ID)
-    r.add_argument("--root-limit", type=int, default=ROOT_ENTRY_LIMIT,
-                   help=f"root entries allowed (default {ROOT_ENTRY_LIMIT}; more needs dsfforza.asi [archive])")
+    r.add_argument("--root-limit", type=int, default=ENTRY_LIMIT,
+                   help=f"root entries allowed (default {ENTRY_LIMIT}; more needs dsfforza.asi [archive])")
     r.add_argument("--jobs", type=int, default=4)
     r.add_argument("--gui", action="store_true")
     r.add_argument("--wide-glyphs", action="store_true", help="with --gui: 16-bit HUD glyphs (dsfforza.asi [hud])")

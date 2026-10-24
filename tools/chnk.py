@@ -40,6 +40,9 @@ HEADER = struct.Struct("<4sIII")
 ENTRY = struct.Struct("<4sIBBBBI")
 FILL = b">"
 COPY_BLOCK = 1 << 20
+# Entries per CHNK the game's stock reader holds: root entries of an archive, children
+# of a DRSP (research/spool-limits.md). dsfforza.asi [archive] lifts it for the root.
+ENTRY_LIMIT = 1100
 
 
 @dataclass

@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 import struct
 import sys
 from pathlib import Path
@@ -217,6 +216,18 @@ def format_table(name: str, table: dict) -> str:
     return "\n".join([f"{name} = {{"] + body(table, 1) + ["}"]) + "\n"
 
 
+def read_vehiclestats(path: Path) -> dict[int, dict[str, str]]:
+    """vehiclestats.lua as written by vehiclestats_text (unluac's layout):
+    {id: {field: value}}, every value as its text, string quotes removed."""
+    import re
+    out = {}
+    text = Path(path).read_text(encoding="utf-8")
+    for match in re.finditer(r"\[(\d+)\]\s*=\s*\{(.*?)\n\s*\}", text, re.S):
+        out[int(match.group(1))] = {key: value.strip('"') for key, value in
+                                    re.findall(r"(\w+)\s*=\s*(\"[^\"]*\"|[^,\n]+)", match.group(2))}
+    return out
+
+
 def vehiclestats_text(scripts_package: Path) -> str:
     """vehiclestats.lua as unluac prints it, from media/ScriptsLuaScripts.fchunk."""
     import lua_scripts
@@ -231,7 +242,11 @@ def vehiclestats_text(scripts_package: Path) -> str:
 
 def prepare(game: Path, isos: list[Path], log=print, force: bool = False) -> dict:
     """Write the derived files the build tools expect under out/ (only missing
-    ones unless force). Returns {name: path}."""
+    ones unless force). Returns {name: path}. Each file is written under a
+    temporary name and renamed into place, so a build reading it meanwhile never
+    sees half of it. tools/worktree-setup.ps1 runs this in a new worktree (each
+    worktree has its own out/lua-src and out/db); port_batch runs it every build."""
+    import port_car
     done = {}
     package = game / "media" / "ScriptsLuaScripts.fchunk"
     text = None
@@ -242,19 +257,19 @@ def prepare(game: Path, isos: list[Path], log=print, force: bool = False) -> dic
             continue
         text = text or vehiclestats_text(package)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8", newline="\r\n")   # unluac's line ends
+        port_car.write_atomic(target, text.replace("\n", "\r\n").encode("utf-8"))   # unluac's line ends
         log(f"wrote {target} from {package.name}")
         done[f"vehiclestats ({variant})"] = target
-    import port_car
     for name in ("FH1", "FM4"):
         cached = port_car.extract_gamedb(isos, name, REPO / "out" / "cache")
         if cached is None:
             log(f"no {name} disc among the images; {name} cars can't be ported")
             continue
         db = REPO / "out" / "db" / f"{name.lower()}_gamedb.slt"
-        if force or not db.exists():
+        # Another size than the cache's: cut short by a copy from before these writes were atomic.
+        if force or not db.exists() or db.stat().st_size != cached.stat().st_size:
             db.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(cached, db)
+            port_car.write_atomic(db, cached.read_bytes())
             log(f"wrote {db}")
         done[f"gamedb {name}"] = db
     return done

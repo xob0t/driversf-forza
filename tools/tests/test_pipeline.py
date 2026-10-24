@@ -1,7 +1,7 @@
 """Checks for port_batch's worker handling and the cache writes (no game files or
 disc images needed; a few seconds).
 
-    python -m pytest tools/tests/test_pipeline.py     # or: python tools/tests/test_pipeline.py
+    python tools/tests/test_pipeline.py     # or every test: python -m tools.tests
 """
 
 from __future__ import annotations
@@ -54,6 +54,40 @@ def test_a_worker_that_dies_is_a_failed_car():
         assert results["DEAD"]["spool_id"] == 7
         assert "KeyError" in results["DEAD"]["error"]
         assert not (work / "DEAD.first-try.log").exists()   # no option fallback was tried
+
+
+def test_merge_leaves_out_cars_with_uid_clashes():
+    """A UID clash fails the clashing cars, not the batch: the rest are merged again."""
+    calls = []
+
+    def register(dsf, out, results, work, log, root_limit):
+        media = [r["media"] for r in results]
+        calls.append(media)
+        if "B" in media:
+            return [{"media": m} for m in media], [], {"B": ["aa", "bb"]}
+        return [{"media": m} for m in media], [], {}
+    real = port_batch.register_cars
+    port_batch.register_cars = register
+    try:
+        results = [{"media": m, "spool_id": i} for i, m in enumerate("ABC", 1)]
+        cars, failed = port_batch.merge(Path("stock.sp"), Path("out.sp"), results, Path("."), log=lambda t: None)
+    finally:
+        port_batch.register_cars = real
+    assert calls == [["A", "B", "C"], ["A", "C"]]
+    assert [c["media"] for c in cars] == ["A", "C"]
+    assert [(f["media"], f["cause"]) for f in failed] == [("B", "UID clash")]
+
+
+def test_builders_keep_their_own_material_layouts():
+    """forza2dsf.MATERIAL_LAYOUT is read only; each conversion's host materials live
+    in its builders' layout (a second car in the same process saw the first's)."""
+    import forza2dsf
+    before = dict(forza2dsf.MATERIAL_LAYOUT)
+    a, b = forza2dsf.Builder(b"\0\0\0\1"), forza2dsf.Builder(b"\0\0\0\2")
+    a.layout[b"hostmat1"] = (32, 5)
+    assert b"hostmat1" not in b.layout and forza2dsf.MATERIAL_LAYOUT == before
+    a.add(b"hostmat1", [b"\0" * 32] * 3, [(0, 1, 2)])
+    assert a.subs[0].stride == 32
 
 
 def test_write_atomic_leaves_no_temp():

@@ -64,7 +64,7 @@ param(
     [int]$Jobs = 0,                       # build worker processes (default: port_batch's)
     [Parameter(ParameterSetName = 'Install')]
     [ValidateSet('garage', 'high', 'asi')]
-    [string]$IdPolicy = 'garage',         # asi: every car from 304 up, garage-listed through dsfforza.asi
+    [string]$IdPolicy = 'garage',         # asi: every free ID from 1 up, garage-listed through dsfforza.asi
     [Parameter(ParameterSetName = 'Install')]
     [string]$BuildDir,                    # where to build (default out\install-build)
     [Parameter(ParameterSetName = 'Install')]

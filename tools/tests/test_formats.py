@@ -1,7 +1,7 @@
 """Round-trip and edge-case checks for the file-format modules in tools/, on
 synthetic data only (no game or Forza files needed).
 
-    python tests/test_formats.py
+    python tools/tests/test_formats.py     # or every test: python -m tools.tests
 
 Each test_* function is a plain assert-based check (pytest collects them too).
 """
@@ -17,16 +17,18 @@ import tempfile
 import zlib
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import chnk  # noqa: E402
 import forzazip  # noqa: E402
+import game_data  # noqa: E402
 import gui_assets  # noqa: E402
 import handling  # noqa: E402
 import lua_scripts  # noqa: E402
 import lzx  # noqa: E402
 import minidump  # noqa: E402
 import stfs  # noqa: E402
+import traffic_sets  # noqa: E402
 import wwise_bank as wb  # noqa: E402
 import xds  # noqa: E402
 import xiso  # noqa: E402
@@ -318,6 +320,23 @@ def test_name_hashes_share_the_crc() -> None:
     assert gui_assets.name_hash("Nissan_370Z") == lua_scripts.crc("nissan_370z")
     assert lua_scripts.com_hash("Common\\A.lua") == lua_scripts.crc("com:luascripts\\common\\a.lua")
     assert lua_scripts.crc("") == 0xFFFFFFFF
+    assert traffic_sets.name_hash("Chapter 1") == lua_scripts.crc("Chapter 1")   # case kept
+
+
+def test_vehiclestats_read_back() -> None:
+    """game_data.read_vehiclestats (handling.lua_stats, gui_assets.stock_stats) on the
+    layout game_data.vehiclestats_text writes."""
+    table = {62: {"Manufacturer": game_data.Num(41, 4), "Year": "1970", "Picture1": "dodge, challenger",
+                  "Price": game_data.Num(1.5, 4)},
+             63: {"Selectable": True, "Drivetrain": "RWD"}}
+    text = game_data.format_table("vehicleStats", table).replace("\n", "\r\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "vehiclestats.lua"
+        path.write_bytes(text.encode("utf-8"))
+        expected = {62: {"Manufacturer": "41", "Year": "1970", "Picture1": "dodge, challenger", "Price": "1.5"},
+                    63: {"Selectable": "true", "Drivetrain": "RWD"}}
+        assert game_data.read_vehiclestats(path) == expected
+        assert handling.lua_stats(path) == expected
 
 
 def test_xds_tiling_is_a_permutation() -> None:
@@ -362,10 +381,20 @@ def test_ima_round_trip() -> None:
     w = wb.Wem.parse(_wem(x))
     y = w.pcm()[0]
     assert len(y) == 640 and w.rate == 24000
-    # From the second block on: the first starts at a small step index and lags.
-    noise = sum((a - b) ** 2 for a, b in zip(x[64:], y[64:]))
-    signal = sum(a * a for a in x[64:])
+    noise = sum((a - b) ** 2 for a, b in zip(x, y))
+    signal = sum(a * a for a in x)
     assert 10 * math.log10(signal / noise) > 30
+
+
+def test_ima_first_block_starts_at_its_step() -> None:
+    """A loud start: the first block picks its own step index instead of climbing
+    from the smallest one (9 dB SNR from index 0 here)."""
+    x = [int(20000 * math.sin(i / 3)) for i in range(256)]
+    data = wb.encode_ima(x)
+    assert data[2] > 40   # the first block header's step index
+    y = wb.decode_ima(data)[0]
+    noise = sum((a - b) ** 2 for a, b in zip(x[:64], y[:64]))
+    assert 10 * math.log10(sum(a * a for a in x[:64]) / noise) > 25
 
 
 def test_bank_round_trip_and_media_swap() -> None:

@@ -135,7 +135,10 @@ def load_fleet(dsf: Path = HS.DEFAULT_DSF, lua: Path = HS.DEFAULT_LUA, refresh: 
     stat = dsf.stat()
     key = f"{FLEET_VERSION}:{dsf.resolve()}:{stat.st_size}:{int(stat.st_mtime)}"
     if FLEET_CACHE.exists() and not refresh:
-        data = json.loads(FLEET_CACHE.read_text())
+        try:
+            data = json.loads(FLEET_CACHE.read_text())
+        except (OSError, ValueError):   # cut short (written in place before): build it again
+            data = {}
         if data.get("key") == key:
             return {int(k): _thaw(v) for k, v in data["fleet"].items()}
     stats = H.lua_stats(lua) if lua and Path(lua).exists() else {}
@@ -153,8 +156,10 @@ def load_fleet(dsf: Path = HS.DEFAULT_DSF, lua: Path = HS.DEFAULT_LUA, refresh: 
                               "wheelbase": wheelbase, "track": track, "hub_y": hub_y, "axle_mid": mid,
                               "wheels": h["wheels"], "category": h["category"], "model": h["model"],
                               "problems": h["problems"]}
+    # Atomic: out/cache is shared by every worktree's builds and port_batch workers read it.
+    from port_car import write_atomic
     FLEET_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    FLEET_CACHE.write_text(json.dumps({"key": key, "fleet": fleet}))
+    write_atomic(FLEET_CACHE, json.dumps({"key": key, "fleet": fleet}).encode())
     return fleet
 
 

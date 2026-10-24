@@ -84,19 +84,18 @@ import clone_vehicle  # noqa: E402
 import cockpit  # noqa: E402
 import forza2dsf  # noqa: E402
 import handling  # noqa: E402
-from chnk import entry_size, layout, read_chunk, write_chunk  # noqa: E402
+from chnk import ENTRY_LIMIT, entry_size, layout, read_chunk, write_chunk  # noqa: E402
 from forza_roster import Source, roster  # noqa: E402
 from forzazip import ForzaZip  # noqa: E402
-from stfs import Stfs  # noqa: E402
+import stfs  # noqa: E402
 from vehicle_mesh import child  # noqa: E402
-from xiso import SECTOR, XIso  # noqa: E402
+from xiso import XIso  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 GAME_PREFERENCE = ("FH1", "FM4")
 FULL_LADDER = ("4:3,8:4,16:5", "4:4,8:4,16:5", "4:4,8:5,16:5", "4:5,8:5,16:5")
 EXTERIOR_LADDER = (1, 2, 3, 4)
 SHADOW_LOD = 5
-CHNK_ENTRY_LIMIT = 1100   # entries per CHNK the stock reader holds (spool-limits.md); dsfforza.asi [archive] lifts it
 STATIC_READ_BUFFER = 0x280000
 # Car files the conversion reads; matched case-insensitively against the car's
 # folder in the zip. The carbin is required, the rest are used when present.
@@ -184,7 +183,7 @@ def open_car_zip(source: Source) -> tuple[XIso, ForzaZip, str]:
     image = XIso(source.iso)
     if source.package:
         entry = image.find(source.package)
-        package = Stfs(image.stream, image.base + entry.sector * SECTOR, entry.size)
+        package = stfs.in_image(image, entry)
         inner, folder = source.path.split("::", 1)
         return image, ForzaZip(package.open(inner)), folder.lower()
     return image, ForzaZip(image.open(image.find(source.path))), ""
@@ -281,8 +280,9 @@ def uid_prefix(*parts) -> bytes:
     return hashlib.sha1(":".join(str(p) for p in parts).encode()).digest()[:4]
 
 
-def stock_limits(stream, entries) -> tuple[dict[int, int], dict[int, int]]:
-    """(NONR buffer per kind from the SSLP header, largest stock MDXN per kind)."""
+def stock_limits(stream, entries, mdxn_limit: int | None = None) -> tuple[dict[int, int], dict[int, int]]:
+    """(NONR buffer per kind from the SSLP header, largest stock MDXN per kind, or
+    mdxn_limit (--mdxn-limit) where that is bigger)."""
     nonr = child(next(e for e in entries if e.tag == "SSIC"), "NONR")
     header = clone_vehicle.read_leaf(stream, child(nonr, "SSLP"))
     nonr_limit = dict(enumerate(struct.unpack_from("<3I", header, 8)))
@@ -291,6 +291,10 @@ def stock_limits(stream, entries) -> tuple[dict[int, int], dict[int, int]]:
         mdxn = next((c for c in entries[index].children if c.tag == "MDXN"), None)
         if mdxn is not None:
             mdxn_max[kind] = max(mdxn_max.get(kind, 0), mdxn.size)
+    if mdxn_limit:
+        # lim-pad-over (VEHC 0x30A000, past the 0x280000 static read buffer)
+        # loads in game, so the stock maxima aren't hard limits.
+        mdxn_max = {kind: max(size, mdxn_limit) for kind, size in mdxn_max.items()}
     return nonr_limit, mdxn_max
 
 
@@ -310,8 +314,8 @@ def check_entry(vehc, kind: int, nonr_limit: dict, mdxn_max: dict) -> tuple[dict
         problems.append(f"VEHC read size {read:#x} > static buffer {STATIC_READ_BUFFER:#x}")
     for mdxn in (c for c in vehc.children if c.tag == "MDXN"):
         for drsp in (c for c in mdxn.children if c.tag == "DRSP"):
-            if len(drsp.children) > CHNK_ENTRY_LIMIT:
-                problems.append(f"DRSP has {len(drsp.children)} children (> {CHNK_ENTRY_LIMIT})")
+            if len(drsp.children) > ENTRY_LIMIT:
+                problems.append(f"DRSP has {len(drsp.children)} children (> {ENTRY_LIMIT})")
     sizes["VEHC"] = total
     return sizes, problems
 
@@ -618,8 +622,58 @@ def pick_hosts(args, media: str, game: str, folder: Path, gamedb: Path | None, i
     return host, sound, choice
 
 
-def main(argv: list[str] | None = None) -> None:
-    gentle.apply()  # out/gentle: Idle on two CPUs (tools/gentle.py)
+@dataclass
+class PreparedCar:
+    """One car ready to convert: extracted, loaded, measured, its hosts picked."""
+    media: str
+    source: Source
+    folder: Path
+    car: forza2dsf.ForzaCar
+    dims: object
+    gamedb: Path | None
+    host: int
+    sound: int | None
+    choice: dict
+
+
+def prepare_car(args, source: Source, media: str, isos, log=print) -> PreparedCar:
+    """Extract the car's files (cached), load and measure it (MAXData.xml, else the
+    game's gamedb.slt), get the gamedb for the cockpit eye point and the handling,
+    and pick its hosts. Shared by main and every port_batch worker."""
+    folder = extract_car(source, media, args.cache, log)
+    car = forza2dsf.load_car(folder, media)
+    gamedb = None
+    try:
+        dims = forza2dsf.car_dims(car)
+    except ValueError:  # no MAXData.xml: fall back to the game's gamedb.slt
+        gamedb = extract_gamedb(isos, source.game, args.cache)
+        dims = forza2dsf.car_dims(car, gamedb)
+    if (not args.no_cockpit or not args.no_handling) and gamedb is None:  # eye point, handling
+        gamedb = extract_gamedb(isos, source.game, args.cache)
+    host, sound, choice = pick_hosts(args, media, source.game, folder, gamedb, isos, log)
+    return PreparedCar(media, source, folder, car, dims, gamedb, host, sound, choice)
+
+
+def convert_car(stream, entries, prep: PreparedCar, spool_id: int, args, nonr_limit, mdxn_max,
+                names: dict[int, str], isos, log=print) -> tuple[list, dict]:
+    """The Forza sound plan and build_car for one prepared car under spool_id.
+    Returns the three VEHC entries (not yet registered) and the report. Shared by
+    main and every port_batch worker."""
+    host, sound = prep.host, prep.sound
+    log(f"--- {prep.media} ({prep.source.game}, {prep.source.where}) -> spool ID {spool_id}, host {host} "
+        f"({names[host]})" + (f", sound from {sound} ({names[sound]})" if sound not in (None, host) else ""))
+    plan, plan_report = forza_sound_plan(args, stream, entries, prep.media, prep.source.game, prep.folder,
+                                         prep.gamedb, isos,
+                                         args.sound_host if isinstance(args.sound_host, int) else None,
+                                         spool_id, log)
+    clones, report = build_car(stream, entries, host, spool_id, prep.car, prep.dims, args,
+                               nonr_limit, mdxn_max, log, prep.gamedb, sound, plan, plan_report)
+    report["host_choice"] = prep.choice
+    return clones, report
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """port_car's options (port_batch parses its --port options with it too)."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter,
                                      epilog="Details: this file's docstring and README.md.")
@@ -644,8 +698,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--first-id", type=int, default=304, help="first base spool ID to try (default 304)")
     parser.add_argument("--iso", type=Path, action="append", help="Forza disc images (default: assets/*.iso)")
     parser.add_argument("--cache", type=Path, default=REPO / "out" / "cache", help="extraction cache")
-    parser.add_argument("--root-limit", type=int, default=CHNK_ENTRY_LIMIT,
-                        help=f"root entries allowed in the output archive (default {CHNK_ENTRY_LIMIT}, the stock "
+    parser.add_argument("--root-limit", type=int, default=ENTRY_LIMIT,
+                        help=f"root entries allowed in the output archive (default {ENTRY_LIMIT}, the stock "
                              "reader); more needs dsfforza.asi with [archive] enabled")
     parser.add_argument("--mdxn-limit", type=lambda text: int(text, 0),
                         help="allow MDXN up to this size in every entry instead of the stock maximum "
@@ -684,7 +738,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--no-cockpit", action="store_true",
                         help="keep the host's interior entry, steering hinge and head camera "
                              "(default: rebuild them from <car>_cockpit.carbin, tools/cockpit.py)")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    gentle.apply()  # out/gentle: Idle on two CPUs (tools/gentle.py)
+    args = build_parser().parse_args(argv)
     args.dsf = game_paths.stock(args.dsf)  # the original when a dsfforza install replaced it
 
     if args.out.resolve() == args.dsf.resolve():
@@ -704,18 +763,7 @@ def main(argv: list[str] | None = None) -> None:
     picked = []
     for request in requests:
         rcar, source = pick_source(cars, request)
-        folder = extract_car(source, rcar.name, args.cache, log)
-        car = forza2dsf.load_car(folder, rcar.name)
-        gamedb = None
-        try:
-            dims = forza2dsf.car_dims(car)
-        except ValueError:  # no MAXData.xml: fall back to the game's gamedb.slt
-            gamedb = extract_gamedb(isos, source.game, args.cache)
-            dims = forza2dsf.car_dims(car, gamedb)
-        if (not args.no_cockpit or not args.no_handling) and gamedb is None:  # eye point, handling
-            gamedb = extract_gamedb(isos, source.game, args.cache)
-        host, sound, choice = pick_hosts(args, rcar.name, source.game, folder, gamedb, isos, log)
-        picked.append((rcar, source, car, dims, gamedb, host, sound, choice, folder))
+        picked.append((rcar, prepare_car(args, source, rcar.name, isos, log)))
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     temp = args.out.with_name(args.out.name + ".tmp")
@@ -727,45 +775,35 @@ def main(argv: list[str] | None = None) -> None:
     with args.dsf.open("rb") as stream:
         root = read_chunk(stream, 0)
         entries = root.entries
-        nonr_limit, mdxn_max = stock_limits(stream, entries)
-        if args.mdxn_limit:
-            # lim-pad-over (VEHC 0x30A000, past the 0x280000 static read buffer)
-            # loads in game, so the stock maxima aren't hard limits.
-            mdxn_max = {kind: max(size, args.mdxn_limit) for kind, size in mdxn_max.items()}
+        nonr_limit, mdxn_max = stock_limits(stream, entries, args.mdxn_limit)
         manifest["limits"] = {"nonr": {str(k): v for k, v in nonr_limit.items()},
                               "mdxn": {str(k): v for k, v in mdxn_max.items()}}
         names = {s: entries[i].name for s, i, k in clone_vehicle.sslp_records(stream, entries) if k == 0}
         taken = clone_vehicle.taken_ids(stream, entries)
         next_id = args.first_id
         built = []
-        for rcar, source, car, dims, gamedb, host, sound, choice, folder in picked:
+        for rcar, prep in picked:
             while next_id in taken:
                 next_id += 1
             if next_id >= 1000:
                 raise SystemExit("no free base spool ID below 1000")
             spool_id = next_id
             taken.add(spool_id)
-            log(f"--- {rcar.name} ({source.game}, {source.where}) -> spool ID {spool_id}, host {host} "
-                f"({names[host]})" + (f", sound from {sound} ({names[sound]})" if sound not in (None, host) else ""))
-            plan, plan_report = forza_sound_plan(args, stream, entries, rcar.name, source.game, folder, gamedb,
-                                                 isos, args.sound_host if isinstance(args.sound_host, int) else None,
-                                                 spool_id, log)
-            clones, report = build_car(stream, entries, host, spool_id, car, dims, args,
-                                       nonr_limit, mdxn_max, log, gamedb, sound, plan, plan_report)
-            report["host_choice"] = choice
-            built.append((rcar, source, car, spool_id, clones, report, host))
-        for rcar, source, car, spool_id, clones, report, host in built:
-            clone_vehicle.register_clones(stream, entries, clones, host, spool_id)
-            manifest["cars"].append(car_entry(rcar.name, rcar.year, rcar.games, source, args.cache, spool_id,
-                                              host, names[host], report))
+            clones, report = convert_car(stream, entries, prep, spool_id, args, nonr_limit, mdxn_max, names, isos,
+                                         log)
+            built.append((rcar, prep, spool_id, clones, report))
+        for rcar, prep, spool_id, clones, report in built:
+            clone_vehicle.register_clones(stream, entries, clones, prep.host, spool_id)
+            manifest["cars"].append(car_entry(rcar.name, rcar.year, rcar.games, prep.source, args.cache, spool_id,
+                                              prep.host, names[prep.host], report))
         # Root indices shift as clones are inserted; look them up once all are in.
         records = {s: i for s, i, _ in clone_vehicle.sslp_records(stream, entries)}
         for c in manifest["cars"]:
             c["vehc"] = [records[c["spool_id"] + k] for k in clone_vehicle.KIND_OFFSETS]
-        root_limit = getattr(args, "root_limit", None) or CHNK_ENTRY_LIMIT
+        root_limit = getattr(args, "root_limit", None) or ENTRY_LIMIT
         if len(entries) > root_limit:
             raise SystemExit(f"{len(entries)} root entries (> {root_limit}; --root-limit, needs dsfforza.asi "
-                             f"[archive] above {CHNK_ENTRY_LIMIT})")
+                             f"[archive] above {ENTRY_LIMIT})")
         clashes = uid_clashes(stream, entries, {i for c in manifest["cars"] for i in c["vehc"]})
         if clashes and not args.share_host_uids:
             raise SystemExit(f"resource UID clashes: {clashes}")

@@ -3,11 +3,18 @@
 Links a git worktree to the main checkout's untracked inputs: the Forza disc
 images (assets\), the stock game copy (out\stock), the extraction cache
 (out\cache), the downloaded tools (out\tools-dl: vgmstream for the Forza
-engine sound) and the reference downloads (_ref). Run once in a new worktree:
+engine sound) and the reference downloads (_ref). Then it writes the derived
+game data the tools read (out\lua-src\...\vehiclestats.lua, out\db\*.slt)
+with `python tools\game_data.py prepare`. Run once in a new worktree:
 
     .\tools\worktree-setup.ps1
 
 Junctions, so nothing is copied; the main checkout stays the only real copy.
+out\lua-src and out\db are not linked: prepare writes them, so each worktree
+gets its own (a few MB) and a `prepare --force` in one worktree can't change
+another's files while it builds. port_batch runs prepare too, so this step only
+matters for tools run on their own (host_select, handling_dsf, the tests).
+
 Before removing the worktree, run `.\tools\worktree-setup.ps1 -Unlink`: some
 delete tools (PowerShell 5.1's Remove-Item -Recurse among them) follow
 junctions and would empty the main checkout's folders.
@@ -29,10 +36,16 @@ foreach ($rel in 'assets', 'out\stock', 'out\cache', 'out\tools-dl', '_ref') {
         continue
     }
     $source = Join-Path $main $rel
-    $target = Join-Path $here $rel
     if (-not (Test-Path $source)) { "skip $rel (not in the main checkout)"; continue }
     if (Test-Path $target) { "keep $rel (exists)"; continue }
     New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
     New-Item -ItemType Junction -Path $target -Target $source | Out-Null
     "linked $rel -> $source"
 }
+if ($Unlink) { return }
+# Derived data (only missing files; reads the game folder, $env:DSF_GAME_DIR or
+# the default, and the disc images). A failure only warns: the links are made.
+$python = Get-Command python -ErrorAction SilentlyContinue
+if (-not $python) { Write-Warning "python not found; run 'python tools\game_data.py prepare' later"; return }
+& $python.Source (Join-Path $here 'tools\game_data.py') prepare
+if ($LASTEXITCODE -ne 0) { Write-Warning "game_data.py prepare failed (exit $LASTEXITCODE); see above" }

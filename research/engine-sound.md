@@ -365,7 +365,7 @@ sound in the build"; IDs 1..40 in `tools/batches/testdrive.txt` order):
    levels against stock cars (set gains match the template's loudest loop by
    RMS), and the low rumble tone of VSVH+4C (rotary/I4 vs V6 vs V8).
 5. Earlier single-car test: the port (ID 1) of `out/sound/build/dngvehicles.forza-sound.sp`. Silence means the bank load failed (`FUN_0048f780`). Also spawn the stock 370Z (227) in the same session: each must sound like itself, which tests the fresh IDs.
-6. **Objective check (proposal):** add WASAPI loopback capture to the host harness (e.g. Python `soundcard` or ffmpeg). Record a scripted rev and compare spectrograms against `sweeps.png`: the rotary's 2nd-order harmonic structure versus the V6's 3rd order tells the swapped sound from the host's without anyone listening. Without audio capture, `tools/minidump.py` on the running game can confirm that the bank ID (0x27B29A12 for the RX7) is resident.
+6. **Objective check (proposal):** add WASAPI loopback capture to the host harness (e.g. Python `soundcard` or ffmpeg). Record a scripted rev and compare spectrograms against `sweeps.png`: the rotary's 2nd-order harmonic structure versus the V6's 3rd order tells the swapped sound from the host's without anyone listening. Without audio capture, nothing in the repo can yet confirm that the bank ID (0x27B29A12 for the RX7) is resident: `tools/minidump.py` only reads a .dmp file written earlier (`minidump.py crash.dmp [--stack N]`) and can't inspect a running game; that would need a memory read of the running process.
 7. Then tune levels: the set gains are matched to the template's loudest loop by RMS, and Forza's per-loop HT volumes are kept.
 
 ## Open

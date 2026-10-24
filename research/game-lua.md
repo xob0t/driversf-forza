@@ -326,9 +326,9 @@ bootstrap, skips IDs already in a list, and re-sends
 | --- | --- | --- |
 | `interesting` | true | the wrapper above |
 | `missionPot` | false | add the IDs to `missionSpecificVehiclePots["All chapters"]` |
-| `garage` | true | `Selectable = true` for IDs below 304 while the garage maker list has room (`research/batch.md`) |
+| `garage` | true | `Selectable = true` for IDs below 304 (below 1000 with dsfforza.asi) while the garage maker list has room (`research/batch.md`) |
 | `writeProfile` | false | set unlocked and owned in the save, `UnlockedInChapter = 1` (garage-listed IDs only) |
-| `guardProfile` | true | drop Lua `SetVehicleUnlocked`/`Owned` calls for added IDs above 303 (`research/batch.md`) |
+| `guardProfile` | true | drop Lua `SetVehicleUnlocked`/`Owned` calls for added IDs above 303; with dsfforza.asi's save hooks only for IDs above 999 (`research/batch.md`) |
 | `regionCars` | 24 | spread more added cars than this over the regions |
 | `probe` | false (true with a test `config.lua` that has `ids`) | log `vehiclesAvailable`, `Vehicles`, profile flags, `civilianTraffic` functions and nearby traffic counts every 10 s for about 3 minutes |
 

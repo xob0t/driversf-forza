@@ -57,23 +57,24 @@ def main(argv: list[str] | None = None) -> None:
         drsp = child(child(full, "MDXN"), "DRSP")
 
         tex_full = tex_ext = None
+        layout = dict(F.MATERIAL_LAYOUT)
         if args.textures:
             import dsf_materials
             exterior_vehc = root.entries[{s: i for s, i, _ in records}[args.id + 2000]]
             tex_full, tex_ext = dsf_materials.prepare(
                 stream, full, exterior_vehc, args.car, body, set(lod_masks.values()) | {1},
                 mode=args.textures, swatch_trims=args.swatch_trims)
-            F.MATERIAL_LAYOUT.update(tex_full.layout)
-            F.MATERIAL_LAYOUT.update(tex_ext.layout)
+            layout.update(tex_full.layout)
+            layout.update(tex_ext.layout)
 
-        builder = F.Builder(b"\x00\x12\xde\xad")
+        builder = F.Builder(b"\x00\x12\xde\xad", layout=layout)
         part_lods = {0: {mask: F.add_geometry(builder, body, lod, place, wheel=False, textures=tex_full,
                                                merge=args.merge_submodels)
                          for mask, lod in lod_masks.items()}}
         # One degenerate triangle per stride, for the hollowed host submodels.
         stubs = {}
         for material in (F.PAINT, F.GLASS, F.TYRE):
-            stride = F.MATERIAL_LAYOUT[material][0]
+            stride = layout[material][0]
             v = F.encode_vertex(stride, (0.0, 0.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, 1.0, 0.0))
             stubs[stride] = builder.add(material, [v] * 3, [(0, 1, 2)])
 
@@ -147,7 +148,7 @@ def main(argv: list[str] | None = None) -> None:
             upvh.payload, hubs = F.patch_hubs(payload(stream, upvh), 0.1155 + wheelbase / 2,
                                               0.1155 - wheelbase / 2, track / 2, F.HOST_HUB_Y)
             exterior = root.entries[{s: i for s, i, _ in records}[args.id + 2000]]
-            ext_builder = F.Builder(b"\x00\x12\xbe\xef")
+            ext_builder = F.Builder(b"\x00\x12\xbe\xef", layout=layout)
             ext_modl = child(child(exterior, "NONR"), "MODL")
             ext_template = payload(stream, ext_modl)
             ext_parts = struct.unpack_from("<I", ext_template)[0]

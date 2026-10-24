@@ -70,7 +70,8 @@ LIGHTS_ALPHA = os.environ.get("DSFFORZA_LIGHTS_ALPHA", "matched")
 if LIGHTS_ALPHA not in LIGHTS_ALPHA_MODES:
     raise ValueError(f"DSFFORZA_LIGHTS_ALPHA={LIGHTS_ALPHA!r}: one of {', '.join(LIGHTS_ALPHA_MODES)}")
 # "matched" curves: score knots -> stock alpha knots (stock percentiles 0, 5, 10, 20,
-# ..., 90, 93, 95, 97, 98, 99, 99.5 of red lamps, of amber and of white lamps).
+# ..., 90, 93, 95, 97, 98, 99, 99.5 of amber and of white lamps; red lamps also have
+# 85 and 100, LAMP_PERCENTILES).
 _LAMP_X_RED = (0.0, 0.199, 0.313, 0.458, 0.529, 0.586, 0.627, 0.672, 0.715, 0.768, 0.785, 0.798, 0.815,
                0.831, 0.853, 0.87, 0.896, 0.922, 0.961)
 _LAMP_Y_RED = (0, 0, 0, 3, 8, 14, 21, 30, 43, 63, 78, 106, 130, 153, 187, 211, 239, 252, 255)
