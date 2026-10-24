@@ -43,6 +43,7 @@ param(
     [switch]$DamagePanels,        # with -Damage: then opens (~6 s) and removes (~9 s) every panel
     [switch]$DamageSide,          # probe hits a parked side-on copy of each car (wing, door, quarter; clonetest.lua SIDE_COPY)
     [switch]$GlassLadder,         # probe damages each car in steps during its cockpit view (~21 s; glass crack states)
+    [string]$Views,               # extra views after each chase view, ~6 s each: 'Bonnet,Bumper,left,right,front' (clonetest.lua)
     [switch]$LightsDriveOnly,     # with -Lights: only the day and dark drives (no setLights phases)
     [switch]$Lights,              # lamp phases per car, two shots each (dsfforza\lightstest.lua); allow ~120 s per car
     [switch]$Dyno,                # standing-start runs (dsfforza\dyno.lua); analyse with tools/dyno.py

@@ -47,6 +47,8 @@ param(
     [switch]$DamagePanels, # with -Damage: then forceOpenPanels (~6 s) and removeAllPanels (~9 s) in the same view
     [switch]$DamageSide, # probe: a parked side-on copy of each car takes applyDamage hits (wing, door, quarter) in chase view
     [switch]$GlassLadder, # probe: damage in steps during each cockpit view (clonetest.lua GLASS_STEPS, ~21 s)
+    [string]$Views,      # probe: extra views after the chase view, ~6 s each: camera modes (Bonnet, Bumper) and fixed
+                         # cameras on the driver's seat (left, right, front), e.g. 'Bonnet,Bumper,left'
     [switch]$LightsDriveOnly, # with -Lights: only the day and dark drives, no setLights phases
     [switch]$Lights,     # probe: lamp phases per car (dsfforza\lightstest.lua, research/lights.md); the harness
                          # picks each phase through dsfforza\lightsync.lua and saves lights-<id>-<k>a/b.png
@@ -395,6 +397,7 @@ try {
                     if ($DamagePanels) { $fields += "damage_panels = true" }
                     if ($DamageSide) { $fields += "damage_side = true" }
                     if ($GlassLadder) { $fields += "glass_ladder = true" }
+                    if ($Views) { $fields += "views = { " + (($Views -split ',' | Where-Object { $_ } | ForEach-Object { "`"$($_.Trim())`"" }) -join ', ') + " }" }
                     if ($Lights) {
                         $fields += $(if ($LightsDriveOnly) { "lights = { dark = true, phases = false }" } else { "lights = { dark = true }" })
                         # Reset every run: a lightsync.lua left at an old phase (-1) would end the

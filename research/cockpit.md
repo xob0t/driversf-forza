@@ -1051,6 +1051,136 @@ nodamage region each (M5 E28, Mustang, SVT Raptor; the Firebird's and
 Saleen's footprints fall inside existing regions). From the head camera the
 change is small: most of these triangles are below the cowl or culled.
 
+## Cameras (2026-10-24, confirmed-runtime)
+
+User report on `out/testdrive9`: the hood camera of some cars sits behind or
+inside the glass (Agera: the view is a dark band of dashboard with the road
+above it).
+
+**Camera modes.** `LuaScripts/visuals/camera/cameras/cameraselection.lua`
+cycles `Normal` (chase), `DriverEye` (cockpit), `Bonnet` and `Bumper`
+(`localPlayer.cameraMode`; Bumper hides the player's car). `Driver.exe` maps
+the names to modes 1, 4, 9 and 3 (`FUN_0065F640`). `FUN_0088DF80` returns a
+mount per camera index: 0x10 and 0x12 VO3D p327..329, 0x11 p300..302, 0x13
+p394..396, 0x14 the head camera, 0x18 p535..537, 0x19 p549..551; other indices
+read a table the UPVH parser fills from records of type 16 (no stock car has
+one).
+
+**Measured in game.** `clonetest.lua` (`run-series.ps1 -Views`, below) logs
+the game camera in the car's frame at the end of each view. That frame's
+origin is the ground under the model origin: the head camera logs at model y
++ 0.73 on 147, 266 and the converted Agera. With ground = highest hub y -
+p360 of the host as shipped (within 1 cm on 147, 266, 205, 278 and 163; the
+converted cars keep their host's), runs `vm-20261024-053821` and `-071236`:
+
+| Mode | Position over the ground, +z forward | Set by |
+| --- | --- | --- |
+| Bonnet | (p535, p536 + 0.30, p537) | 140 stock cars set p536/p537 |
+| Bumper | (p327, p328 + 0.30, z from the host + p329): 0.78 m up on every car | no stock car sets them |
+| Normal | p300..302 (147: (0, 1.89, -5.89)) | |
+| DriverEye | the head camera (above) | |
+
+Moving p327..329 of one car by (0.3, 0.5, 0.6) moved its Bumper camera by
+exactly that (run `-053821`); every Bonnet position logged matched p535..537.
+
+**Where stock cars put the Bonnet camera.** The role-63 marker sits on the
+windscreen, on the centre line 57% of the way up (median over the fleet;
+`out/cameras/m63check.py`), and the Bonnet camera sits just in front of it:
+camera - marker = (0, 0.058, 0.085) (medians; quartiles y 0.014 to 0.094, z
+0.028 to 0.154; `out/cameras/bonnet_fleet.py`). It clears the car on every
+stock car: nothing above it within 2 m or ahead within 1.5 m, 0.087 to 0.258 m
+(10th to 90th percentile, median 0.12) over what is below it, mostly the
+windscreen (`out/cameras/stock_over.py`).
+
+**Why converted cars missed.** The converter left p535..537 at the host's, so
+the camera kept the host's height over the ground while the Forza body around
+it changed. On a car lower than its host the camera sat inside the cabin
+behind the windscreen (Agera and S5S Raptor on host 163: 6 cm under the roof,
+the windscreen 8 cm ahead).
+
+**Fix** (`tools/vehicle_cameras.py`, called from `forza2dsf.convert`): the
+windscreen centre on the Forza `glassF` (centre line, 57% up, found by rays
+from ahead) + (0, 0.058, 0.085), raised until it is 0.09 m over the body below
+it, written to p535..537 against the host's ground. The report has
+`bonnet_camera` (windscreen, camera, ray clearances). Bumper and Normal stay
+the host's: Bumper is a fixed 0.78 m over the road with the car hidden, and
+the chase camera follows the car from 5 to 6.5 m behind (not changed here).
+
+40-car survey of the Bonnet camera against the converted exterior
+(`out/cameras/survey40.py` on `out/testdrive10`; inside the cabin = glass or
+body above it within 2 m, blocked = within 1.5 m ahead):
+
+| | Before (host's p535..537) | After |
+| --- | --- | --- |
+| Inside or blocked | 5: M3 E30, S65 AMG, S5S Raptor, Agera, LFA | none |
+| Height over the car below | 0.00 to 0.63 m (RX-7 0.04, Focus RS500 0.04) | 0.09 to 0.14 m |
+
+How much bonnet the view shows (`out/cameras/bonnet_line.py`: the smallest
+angle below the camera's horizon at which a ray straight ahead, on the centre
+line or 0.3 m to either side, meets the car within 6 m; DSF's Bonnet camera
+looks 2 degrees up for every car, so it can't be set per car): stock fleet
+median 16.3 degrees, 10th to 90th percentile 11.8 to 24.3 (149 cars). The
+40 converted cars after the fix: median 17.5, 12.5 to 24.1; three are past
+the stock 90th percentile, all with short or steeply falling noses: 500
+Abarth 28.3, Express 32.0 (vans in the stock fleet go that far too) and
+Agera 24.5. Moving the camera along the bonnet doesn't help there: on the
+Agera no position 6 to 12 cm over the body within 0.4 m of the chosen one
+brings it under 18.5 degrees (`bonnet_grid.py`). So the Agera looks out over
+a bonnet that drops away below the frame, as stock cars with the steepest
+noses do.
+
+In game (runs `vm-20261024-071236` and `-072757`, `out/cameras/build3` and
+`build2`): Agera, S5S Raptor, M3 E30, S65, LFA, Skyline R32, Supra, 370Z and
+TT RS look out over their bonnets like stock 147 (the Agera's bonnet drops
+away out of the frame), and the logged cameras match the converter's to the
+millimetre (S5S Raptor: model (0, 0.252, 0.953), logged (0, 0.983, 0.953) with
+ground 0.731). Before and after: `img/bonnet-camera-before-after.jpg`.
+
+## The driver in the chase views (2026-10-24, confirmed-runtime)
+
+User report: in the chase view the driver's hands are off the steering wheel
+(S5S Raptor, side view). The cockpit view had them on the rim since "Driver's
+hands" above.
+
+**What moves what** (stock cars, runs `vm-20261024-063440` against the
+unchanged `-064829`; fixed side cameras): the driver seat marker (role 10)
+10 cm down moved Tanner's body down with his hands still on the wheel; the
+steering marker 10 cm down moved hands and wheel down together; the steering
+hinge 10 cm down moved the wheel up and left the hands. So the chase-view
+hands use the same rig as the cockpit's (marker and hinge), and only the
+body follows the seat.
+
+**Why converted cars missed.** The cockpit hands grip the cockpit carbin's
+wheel, but the full and exterior entries draw the main carbin's
+`steering_wheel`, and Forza models the two apart: the S5S Raptor's main-carbin
+wheel sits 15 cm ahead of its cockpit wheel, the 1993 Skyline's 17 cm, the
+Supra's 10, the 370Z's 9, the TT RS's 8 (`out/cameras/wheel_pair.py`).
+
+**Fix** (`cockpit.align_main_wheel`): the main-carbin wheel is moved, turned
+and scaled onto the cockpit wheel fit before the body is built (a
+`main_steering_wheel` entry in the report). Where a column modelled with the
+wheel spoils the fit (FH1 Mustang Boss 429), only the points around the
+cockpit wheel are fitted. Stub cockpits use the main wheel already, so they
+don't move.
+
+40-car survey (`out/cameras/survey_hands.py` on `out/testdrive10`; the
+stock rig's grips at the archive's hinge against the rim the chase view draws):
+grips more than 3 cm off the rim on 19 cars before (S5S Raptor 15.9 cm,
+Skyline 14.8, Supra 8.8, 370Z 8.1, TT RS 7.1, Silvia 6.3, IS F 6.1, Golf R 5.9,
+M3 E30 5.8, 500 Abarth 5.5, SVT Raptor 5.1, 300SL 4.7, Range Rover 4.3,
+Mustang Boss 429 4.2, Focus RS500 4.0, S2000 3.8, 300C 3.4, RX-7 3.3, 2000GT 3.0),
+none after (at most 0.4 cm, the cockpit's own fit).
+
+In game (run `vm-20261024-071236`): the S5S Raptor's and Skyline's hands now
+hold the drawn rim like stock 147's
+(`img/chase-hands-s5s-before-after.jpg`).
+
+**Harness.** `run-series.ps1 -Views 'Bonnet,Bumper,left,right,front'` adds
+views after each chase view, about 6 s each: camera modes, and fixed cameras
+looking at the driver's seat from 2.4 m to either side or 3.4 m ahead, 1.9 m
+up (`clonetest.lua` `FIXED_VIEWS`; made like the game's debug free camera).
+Camera-mode views log the camera in the car's frame.
+
 ## Risks and open questions
 
 1. Whether the cockpit view draws only the interior entry (hypothesis). If

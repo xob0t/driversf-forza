@@ -150,7 +150,9 @@ function Invoke-Profile {
     $target = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Ubisoft\Driver San Francisco'
     if (Test-Path $target) { Remove-Item $target -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $target | Out-Null
-    Copy-Item (Join-Path $source '*') $target -Recurse -Force
+    # Not the replays: a game running on the host keeps reloaded\replays\dng.replay open.
+    & robocopy.exe $source $target /E /XD replays /R:2 /W:2 /NP /NFL /NDL /NJH | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "robocopy of the profile failed (exit $LASTEXITCODE)" }
     Get-ChildItem $target -Recurse -File | Where-Object IsReadOnly | ForEach-Object { $_.IsReadOnly = $false }
     $width, $height = $Resolution -split 'x'
     $graphics = Join-Path $target 'graphics.ini'
