@@ -1,5 +1,5 @@
-# Formatting-only commits. GitHub's blame skips them by itself; locally:
+﻿# Formatting-only commits. GitHub's blame skips them by itself; locally:
 #   git config blame.ignoreRevsFile .git-blame-ignore-revs
 
-# ruff format of the whole package (refactor/package)
-bdbfe3299ff6486305d67eac39049f35a4d24cf3
+# ruff format of the whole package (squash-merged refactor/package, #19: moves and formatting)
+6346f275bf6e5efd64a78cd6f059d11da4da7b9c
