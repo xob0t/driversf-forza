@@ -441,9 +441,14 @@ cell by cell, more evenly than the stock DeLorean's dots.
    or DaytimeRunning in daylight (`draw-distance.md`), so in normal play
    they stay off for stock and converted traffic alike.
 2. b0 and the pi, pi pair; whether the flare sprite uses the direction.
-3. Lamps under detachable parts: converted lamps are chassis-bound, but the
-   light records still hang under the host's bumper and boot records (a
-   lamp breaks when its record's part is damaged, `0x8E84A0`).
+3. Lamps under detachable parts: the light records hang under the host's
+   bumper and boot records (a lamp breaks when its record's part is damaged,
+   `0x8E84A0`). With `--damage` (the port_batch default) the lamp triangles
+   sit on their panel's record like the rest of the body (`damage.py`
+   `section_rule`: tail lights vote between boot, rear bumper and chassis);
+   without it they are chassis-bound, so the geometry stays while the lamp
+   breaks. Whether a converted lamp's glow and its panel break together is
+   unchecked in game.
 4. Converted cars in traffic (above). `swapWithModel` on a live traffic car
    crashed run 123840 (the nearest traffic car ahead, to the player's own
    model 227); register.lua's experimental `swapTraffic` and `carrier` paths

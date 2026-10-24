@@ -969,8 +969,8 @@ class CockpitOptions:
 class CockpitBinding:
     """dsf_materials.Binding-like object for add_geometry: textured cockpit
     subsections use the interior's own material through the cockpit atlas,
-    the rest the host interior's paint/glass/trim. Paint samples the vehicle
-    chassis texture (stock interiors point paint UVs at its plain texel)."""
+    the rest the host interior's paint/glass/trim. Paint samples the shared
+    paint atlas at paint_uv (the converted exterior's paint texel)."""
 
     def __init__(self, texturing, materials: InteriorMaterials, paint_uv):
         self.texturing, self.materials, self._paint_uv = texturing, materials, paint_uv
