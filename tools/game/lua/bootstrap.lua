@@ -1,5 +1,5 @@
 -- DriverNGHook user bootstrapper for dsfforza tests.
--- Installed to <game>\Common\UserLuaScripts\bootstrap.lua by tools\game\dsf-test.ps1.
+-- Copied into the run folder's Common\UserLuaScripts by tools\wsb\guest\run-test.ps1 -Probe.
 
 local Bootstrapper = {}
 

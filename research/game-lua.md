@@ -326,9 +326,6 @@ bootstrap, skips IDs already in a list, and re-sends
 | --- | --- | --- |
 | `interesting` | true | the wrapper above |
 | `missionPot` | false | add the IDs to `missionSpecificVehiclePots["All chapters"]` |
-| `swapTraffic` | false | every 5 s, swap one civilian traffic car 70-200 m away to the new model (`swapWithModel`) |
-| `carrier` | false | every 5 s, spawn the car 120 m ahead on a lane and `AddVehicleToCarrier` |
-| `swapMax` | 1 | stop swapping or spawning while this many are within 200-250 m |
 | `garage` | true | `Selectable = true` for IDs below 304 while the garage maker list has room (`research/batch.md`) |
 | `writeProfile` | false | set unlocked and owned in the save, `UnlockedInChapter = 1` (garage-listed IDs only) |
 | `guardProfile` | true | drop Lua `SetVehicleUnlocked`/`Owned` calls for added IDs above 303 (`research/batch.md`) |

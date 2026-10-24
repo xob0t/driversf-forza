@@ -21,6 +21,11 @@ run script (`run-test.ps1 -OnHost`); what differs:
   series, then restored file by file and compared by hash (the folder itself
   can be held briefly by a scanner, so it is never deleted);
 - the default speakers are muted for the series and their state restored;
+  profile and speakers come back while `out\wsb-pause` holds the runs, and
+  a series that is killed (which once left the profile windowed and the
+  speakers muted) is undone by a watcher process once its game has closed
+  (`tools\wsb\host-session.ps1`, checked by `test-host-session.ps1` on a
+  fake profile); by hand: `.\tools\wsb\host-session.ps1 Restore`;
 - keys only go to the game: a press is dropped (`keysSkipped` in
   result.json) unless the game window is in the foreground, so nothing types
   into the user's apps;
@@ -89,7 +94,12 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
   from `C:\Repo` into `C:\Run` instead of linking them across the shared
   folder. Mutex `Local\dsfforza-vm-run`, separate from the sandbox and host
   series. Keys go to the game inside the guest only; the host's speakers and
-  Driver profile aren't touched.
+  Driver profile aren't touched. The share `Repo` is the checkout the VM was
+  built from (the main one); each series points it at its own checkout
+  (`vm.ps1 Share`, checked with a marker file) and back at the end, so a series
+  from a git worktree tests that worktree's builds and scripts. Before that
+  change a worktree's `-Vm` series ran the main checkout's `run-test.ps1` on
+  the main checkout's copy of its archive path (missing, or stale).
 - **Control:** `tools\wsb\vm.ps1 Start|Status|Exec|Stop|Revert`. Revert goes
   back to the snapshot `clean` (powered off, right after provisioning).
   `tools\wsb\guest\fps.ps1` (through `vm.ps1 Exec`, next to a run) records 30 s

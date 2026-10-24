@@ -79,34 +79,15 @@ if ($Detach) {
     $RunDir = "$OutputDir\runs\$stamp"
     New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
     Set-Content "$OutputDir\runs\latest.txt" $RunDir
-    $forward = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath,
-        '-Archive', "`"$Archive`"", '-WaitSeconds', $WaitSeconds, '-ZoomPresses', $ZoomPresses, '-ShotSeconds', $ShotSeconds, '-RunDir', $RunDir)
-    if ($Override) { $forward += '-Override', "`"$Override`"" }
-    if ($ProbeIds) { $forward += '-ProbeIds', $ProbeIds }
-    if ($TrafficIds) { $forward += '-TrafficIds', $TrafficIds }
-    if ($AheadIds) { $forward += '-AheadIds', $AheadIds }
-    if ($DriveSeconds) { $forward += '-DriveSeconds', $DriveSeconds, '-DriveKey', $DriveKey }
-    if ($HoldMph) { $forward += '-HoldMph', "`"$HoldMph`"" }
-    if ($Damage) { $forward += '-Damage' }
-    if ($DamagePanels) { $forward += '-DamagePanels' }
-    if ($DamageSide) { $forward += '-DamageSide' }
-    if ($GlassLadder) { $forward += '-GlassLadder' }
-    if ($Lights) { $forward += '-Lights' }
-    if ($LightsDriveOnly) { $forward += '-LightsDriveOnly' }
-    if ($Dyno) { $forward += '-Dyno', '-BrakeSeconds', $BrakeSeconds, '-DynoRuns', $DynoRuns }
-    if ($DynoStart) { $forward += '-DynoStart', "`"$DynoStart`"" }
-    if ($DynoKeep) { $forward += '-DynoKeep', "`"$DynoKeep`"" }
-    if ($DynoKeys) { $forward += '-DynoKeys', "`"$DynoKeys`"" }
-    if ($MenuKeys) { $forward += '-MenuKeys', "`"$MenuKeys`"", '-MenuTrigger', "`"$MenuTrigger`"" }
-    if ($TrafficRadius) { $forward += '-TrafficRadius', $TrafficRadius }
-    if ($Hook) { $forward += '-Hook' }
-    if ($Asi) { $forward += '-Asi', "`"$Asi`"" }
-    if ($LuaFiles) { $forward += '-LuaFiles', "`"$LuaFiles`"" }
-    if ($Probe) { $forward += '-Probe' }
-    if ($OnHost) { $forward += '-OnHost' }
-    if ($CopyRepoFiles) { $forward += '-CopyRepoFiles' }
-    $forward += '-GameDir', "`"$GameDir`"", '-RepoDir', "`"$RepoDir`"", '-OutputDir', "`"$OutputDir`"", '-RunPath', "`"$RunPath`""
-    if ($KeepRunning) { $forward += '-KeepRunning' }
+    # The same arguments again (unbound ones take the same defaults there), quoted for the
+    # command line Start-Process joins with spaces.
+    $forward = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-RunDir', "`"$RunDir`"")
+    foreach ($name in $PSBoundParameters.Keys) {
+        $value = $PSBoundParameters[$name]
+        if ($name -in 'Detach', 'RunDir') { continue }
+        if ($value -is [switch]) { if ($value) { $forward += "-$name" }; continue }
+        $forward += "-$name", ('"' + ("$value" -replace '(\\+)$', '$1$1') + '"')
+    }
     Start-Process powershell.exe -ArgumentList $forward -WindowStyle Hidden
     "started $RunDir"
     return
@@ -548,6 +529,12 @@ try {
         W = @(0x57, 0x11, $false); A = @(0x41, 0x1E, $false); S = @(0x53, 0x1F, $false); D = @(0x44, 0x20, $false)
         Enter = @(0x0D, 0x1C, $false); Esc = @(0x1B, 0x01, $false); Tab = @(0x09, 0x0F, $false)
         Q = @(0x51, 0x10, $false); E = @(0x45, 0x12, $false) }
+    # A name missing here would be sent as key code 0, i.e. nothing, for the whole run.
+    $keyNames = @($MenuKeys -split ',' | ForEach-Object { ($_ -split ':')[0] }) +
+        @($DynoKeys -split '[;,]' | ForEach-Object { ($_ -split ':')[0] -split '\+' })
+    foreach ($name in ($keyNames | Where-Object { $_ -and $_ -ne 'None' })) {
+        if (-not $keyCodes.ContainsKey($name)) { throw "unknown key '$name' in -MenuKeys/-DynoKeys (known: $(($keyCodes.Keys | Sort-Object) -join ' '))" }
+    }
     # -DynoKeys: one schedule per run, steps 'Key+Key:seconds'. A key is pressed when a
     # step needs it and released when the next step doesn't (no re-pressing in between),
     # so step boundaries are as sharp as keybd_event allows (about 0.15 s per key change).
@@ -692,7 +679,7 @@ try {
             Save-Shot ("lights-{0}-{1:D2}b.png" -f $id, $k)
             Note "lights: id $id phase $k of $count"
         }
-        # No traffic phase (lightstest.lua 92..94): swapWithModel on a live traffic car
+        # No traffic phase (removed from lightstest.lua): swapWithModel on a live traffic car
         # crashed the game (run host-20261023-123840) and AddVehicleToCarrier on a spawned
         # car returned false (run 20261023-115652). Check converted traffic with
         # -TrafficIds instead (research/lights.md).
