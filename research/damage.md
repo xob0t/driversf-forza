@@ -43,7 +43,7 @@ So, per vertex:
 
 | Data | Meaning |
 | --- | --- |
-| s9 byte 0 | panel transform index = UPVH record +0x34 ("slot"; records without one use 0, the chassis). Swinging (bonnet, boot, bumpers) and detached panels move through it. |
+| s9 byte 0 | panel transform index = UPVH record +0x34 ("slot"; records without one use 0, the chassis). Swinging (bonnet, boot, bumpers, doors, wings) and detached panels move through it. |
 | s9 byte 1 | panel data index = record +0x2A ("model"). Selects the panel's damage amount. |
 | s9 byte 2 | lamp: light id + 1 (`tools/lights.py`, research by the lights work). |
 | s9 byte 3 | 1 on body vertices (wheel buffer: 0, 1, 2). |
@@ -179,7 +179,9 @@ call the two suspension parts the bumpers; renders show struts and arms
    panel's collision box and `g_PanelTransforms[slot]` from its hinge
    (swing within `limit`, `param` maybe a break-off strength: 4000 on
    bumpers, 24/15 on bonnet/boot) and, once detached, from the debris body.
-   Doors and wings have limit 0: they never swing, only crush.
+   Doors and wings have limit 0, but they do swing: `forceOpenPanels`
+   opens stock doors wide (confirmed-runtime, see "Doors and wings swing"
+   below), so limit 0 is not "locked"; what it means is untraced.
 2. A detached panel is drawn from its own MODL part.
 3. ~~The glass crack state follows the glass panel's damage index~~ Now
    confirmed-static: the damage-aware glass techniques (SSIC programs 47,
@@ -198,7 +200,8 @@ empty. With the option:
    `bumperF*` front bumper (35), `bumperR*` rear bumper (36), `bumperFrameF`/`R`
    their bumper, `hood*` bonnet (4), `trunk` boot (5, else 124),
    `headlight*`/`glass?HL` and `mirror*` and `exhaust*` the record of their
-   side, `glassF`/`glassR` the centred glass panel in that half (the stock
+   side (never the other side's, split per side if a section has both;
+   "One panel for both mirrors" below), `glassF`/`glassR` the centred glass panel in that half (the stock
    370Z has none at the rear: its rear window goes with the hatch), tail
    lamps and wings the majority of their nearest centred panel (left and
    right voting together), side windows their door or the chassis,
@@ -230,7 +233,10 @@ empty. With the option:
    (`_pin_map`, `_pin_weight`), so the seam stays shut whatever damage
    amounts the two panels get. See "Seam gaps after side hits" below. The
    full entry uses the host's full-entry field, the exterior its exterior
-   field.
+   field. Since 2026-10-24 rigid panels are drawn through the chassis'
+   transform slot (s9 byte 0) with their own damage index (byte 1), so
+   doors and wings never swing open along those seams ("Doors and wings
+   swing" below).
 3. **Normal deltas** (s5 bytes 2, 3) from how each vertex's area-weighted
    face normal turns between the intact and crushed mesh.
 4. **Parts.** Each panel's triangles go into the panel's own MODL part
@@ -723,6 +729,112 @@ camera leaves the copy behind (`host-20261024-003745`).
   another agent's (`out/steering/exp`) stopped at "Story world not ready"
   (`host-20261023-235029`, `-235409`); the next starts worked.
 
+## Doors and wings swing; mirrors that hang in the air (testdrive9, 2026-10-24)
+
+User report on `out/testdrive9` (same cars as `out/testdrive10`): after real
+crashes the S5S Raptor (ID 22) showed a jagged black slit behind its door,
+from the window to the sill, and the 250 GTO (ID 25) tears across its nose
+and a slit through its door; the S2000 (ID 4) had a side mirror floating in
+the air above the bonnet and none on its doors. Scratch: `out/dmg5/`
+(`asurvey.py` survey of built archives, `crashview.py` renders,
+`sections.py`, `hostpanels.py`).
+
+### Doors and wings swing (cause confirmed-runtime)
+
+The seam fix above pins seams between rigid panels: both copies of a seam
+vertex get crush 0, so the seam stays shut for any damage amounts. That
+holds only while both panels share a transform. Doors (roles 31, 32, 54,
+55) and wings (33, 34) have their own transform slot (s9 byte 0) and a
+hinge with limit 0, and limit 0 does not lock them: `forceOpenPanels`
+opens stock doors wide (run `host-20261023-093807`: 227 observe-07, 266
+observe-16), and on converted cars it swings the door and wing patches out
+as thin arcs (run `host-20261023-101158`, RX-7 and Mustang; VM run
+`vm-20261024-061315`, S5S Raptor observe-10, 250 GTO observe-17). A crash
+knocks them ajar the same way. A converted door is a patch of the
+one-piece Forza skin cut along the host's panel layout, not the Forza shut
+line (the S5S Raptor's "door" runs into the rear quarter's intake), with
+nothing behind it (door cards are on the chassis). Swung by a few degrees,
+its border opens into exactly the user's slits; on the 250 GTO, which has
+no bumper sections, both wings meet in the middle of the nose, so a wing
+swinging about the A-pillar tears the nose apart. Every probe so far used
+`fullVisualDamage` or `applyDamage` hits, which crush without swinging, so
+the earlier seam survey (no transforms) could not see it.
+
+Fix (`DamagePlan.bound`): every rigid panel's vertices take the chassis'
+transform slot and keep their own panel-data index (s9 byte 1), so they
+still dent with their own damage amount but never swing or fly off. The
+interior's door glass follows (`forza2dsf.interior_glass_skin`), and
+`damage.py check` accepts the (chassis slot, panel) pairs. Swinging and
+detaching panels (bonnet, boot, bumpers, lamps, mirrors, exhausts) keep
+their own slots; their borders are Forza section borders, real shut lines.
+
+Survey (`asurvey.py`, exterior part 0 of the built cars; "swing" = every
+door and wing record turned 0.1 rad about its hinge through its slot, as
+the shader would draw it):
+
+| | testdrive10 | fix (`out/dmg5/all40`) |
+| --- | --- | --- |
+| Cars whose paint seams open > 1 cm with doors/wings ajar | 40 of 40 | 0 |
+| Max separation per car, swing | 44-187 mm (250 GTO 187, Skyline 183, S5S Raptor 160) | 0-3 mm (the vertices' own offsets) |
+| Paint seams between rigid panels, front, rear and side crush | 0.1-3.4 mm | unchanged |
+
+Seams between a rigid and a swinging panel (bonnet against wing, bumper
+against front structure) open under uneven crush by 0-340 mm per car,
+the same range as stock hosts (147: 205-267 mm; 163: 156-268 mm; 229: up
+to 494 mm, same survey on the stock archive): those are Forza section
+borders and stock shut lines, backed by the exposed-surface texturing
+above. Renders (crush as `side-x`/`front` plus the 0.1 rad swing, magenta
+= hole): `img/damage-swing-s5s-side.png` (S5S Raptor, testdrive10 top, fix
+bottom), `img/damage-swing-250gto-front.png` (250 GTO, testdrive10 left).
+
+### One panel for both mirrors (cause confirmed-runtime)
+
+Side sections (`mirror*`, `headlight*`, `exhaust*`) take the host record on
+their side, chosen among records with vertices in the host's full-entry
+part 0. Host 278 (Sports Car 07, the S2000's and RX-7's host) has a +x
+mirror record (slot 11, model 13, body at (0.83, 0.25, 0.03)) but no +x
+mirror vertices in its full entry (its exterior has them), so both Forza
+mirrors went onto the -x mirror panel. `patch_upvh` then mapped that
+panel's rigid body from the host's left mirror into the box of both Forza
+mirrors: (0.00, 0.25, 0.07), inside the cabin. When the panel comes off, both
+mirrors leave the doors as one body that starts inside the car and ends up
+on top of the hull: VM run `vm-20261024-061315` observe-03, after
+`forceOpenPanels`, shows the S2000's mirror hanging in the air ahead of the
+car and none on the doors, as in the user's screenshot. A single section
+spanning both sides (the Durango's and Express van's headlights, the WRX's,
+Fiat 500's and Range Rover's exhaust pipes) also went onto one side's
+record whole.
+
+Fix: a side section never goes on the other side's record. A record
+without vertices in an entry borrows its partner's (the other side's role)
+vertices mirrored in x, for its side test, its crush field and its UPVH box
+(`_source`, `_host_box`, `_disp`); a section with triangles on both sides
+splits per side; a centred record (278's twin exhaust) takes either side,
+and a side with neither its own record nor a centred one goes on the
+chassis. `patch_upvh` keeps a centred
+hinge or body centred only if the Forza panel spans the centre line too
+(the RX-7's one-sided pipe on 278's centred exhaust record left the body
+0.43 m from the pipe).
+
+In game (VM, `-Damage -DamagePanels`, testdrive10 against the fix build
+`out/dmg5/all40`, same IDs): with `forceOpenPanels` the S5S Raptor's and
+250 GTO's door and wing patches no longer swing out (runs
+`vm-20261024-061315` observe-10, -17 against `vm-20261024-062957`
+observe-11, -18; `img/damage-forceopen-s5s-250gto.jpg`), and the S2000 and
+RX-7 keep a mirror on each door where testdrive10 lost the left one (runs
+`vm-20261024-063859` observe-07, -20 against `vm-20261024-064047`
+observe-06, -19; `img/damage-forceopen-mirrors-s2000-rx7.jpg`). No crash in
+these runs; one start of the fix build crashed while the story world
+loaded, before any converted car was requested (`vm-20261024-061516`), and
+the same archive ran clean three times around it.
+
+Survey (detachable panels of the full entry: geometry on both sides where
+the host's isn't, or the rigid body more than 0.15 m from the panel's
+geometry): testdrive10 8 cars (RX-7 and S2000 mirrors, RX-7 exhaust body,
+WRX, Fiat 500, Range Rover exhausts, Durango and Express headlights), fix 1
+(the Mito: host 128's own -x headlight body sits 1.65 m from its lamp,
+mass 29 kg, the same on the stock car).
+
 ## Risks and open questions
 
 1. Crush, panel swing and removal (`-DamagePanels`), decals and seams have
@@ -732,8 +844,9 @@ camera leaves the copy behind (`host-20261024-003745`).
 2. Body triangles are assigned whole, so door and wing borders follow the
    Forza mesh's triangles (jagged at LOD 3 to 5), and they follow the
    host's panel layout, not the Forza car's shut lines (the S5S Raptor's
-   "door" covers the rear quarter's intake). Doors and wings never swing
-   (limit 0); seams between rigid panels on paint are pinned, so they don't
+   "door" covers the rear quarter's intake). Converted doors and wings are
+   drawn through the chassis transform, so they don't swing (stock ones do);
+   seams between rigid panels on paint are pinned, so they don't
    open, but a door dent stops short of the borders, and the crush near
    them is lost (mean rigid-panel crush down by a median 28%, at most 59%). Trim seams the host
    moves (wing against front structure on 163) still open with differing
