@@ -141,9 +141,11 @@ needles can't get a gauge without new UPVH records, and would get no input
 anyway (ids 3 to 7 stay at 0). They stay static: fuel, oil, water,
 temperature and voltage at their mid pose, boost and others at rest
 (`PARK_MID`). Forza's `digital_gauge` subsections (370Z 56 triangles, M5
-24, Raptor 4) draw digits with a shader; their static UVs land on unrelated
-parts of the dial texture (labels, a white block on the M5), so they are
-drawn as a blank near-black display (`DISPLAY_COLOUR`). A car whose
+24, Raptor 4) draw digits with a shader. Through the first UV transform
+their UV0 lands on the label sheet; through the second it lands on the
+display's own face where the car has one, and those faces are now drawn
+textured ("Digital clusters" below); the rest stay a blank near-black
+display (`DISPLAY_COLOUR`). A car whose
 cockpit has no speed or tach needle (a digital speedometer) simply has no
 vertices with that gauge id; the host's entry then draws nothing.
 
