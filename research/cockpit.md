@@ -1115,6 +1115,20 @@ body above it within 2 m, blocked = within 1.5 m ahead):
 | Inside or blocked | 5: M3 E30, S65 AMG, S5S Raptor, Agera, LFA | none |
 | Height over the car below | 0.00 to 0.63 m (RX-7 0.04, Focus RS500 0.04) | 0.09 to 0.14 m |
 
+How much bonnet the view shows (`out/cameras/bonnet_line.py`: the smallest
+angle below the camera's horizon at which a ray straight ahead, on the centre
+line or 0.3 m to either side, meets the car within 6 m; DSF's Bonnet camera
+looks 2 degrees up for every car, so it can't be set per car): stock fleet
+median 16.3 degrees, 10th to 90th percentile 11.8 to 24.3 (149 cars). The
+40 converted cars after the fix: median 17.5, 12.5 to 24.1; three are past
+the stock 90th percentile, all with short or steeply falling noses: 500
+Abarth 28.3, Express 32.0 (vans in the stock fleet go that far too) and
+Agera 24.5. Moving the camera along the bonnet doesn't help there: on the
+Agera no position 6 to 12 cm over the body within 0.4 m of the chosen one
+brings it under 18.5 degrees (`bonnet_grid.py`). So the Agera looks out over
+a bonnet that drops away below the frame, as stock cars with the steepest
+noses do.
+
 In game (runs `vm-20261024-071236` and `-072757`, `out/cameras/build3` and
 `build2`): Agera, S5S Raptor, M3 E30, S65, LFA, Skyline R32, Supra, 370Z and
 TT RS look out over their bonnets like stock 147 (the Agera's bonnet drops
