@@ -1077,7 +1077,24 @@ report has `cockpit_host` instead of `cockpit`.
 
 Offline (`out/stubhost/build`; before: `out/testdrive10` for the Express,
 `out/stubhost/before` built with the rule off for the F-350 and Taurus):
-`img/cockpit-stub-host-offline.png`.
+`img/cockpit-stub-host-offline.png` (rows Express, F-350, Taurus; left
+before).
+
+In game (VM, confirmed-runtime): run `vm-20261024-070952`
+(`out/stubhost/build`, IDs 147, 1 Express, 2 Durango, 3 F-350, 4 Taurus)
+against `vm-20261024-075905` (`out/testdrive10`, IDs 147, 23): the
+Express's cockpit is the Savana's, with its speedometer and four gauges,
+the hands on its wheel and the head camera at the host's eye
+(`img/cockpit-stub-host-express-ingame.jpg`). Glass ladder
+`vm-20261024-081025` (IDs 147, 1, 3, 4, `-GlassLadder`): no crash; the
+Express's windscreen goes from clean to shattered with shards along the
+A-pillar (observe-11), the Taurus shows cracks after 0.5 (observe-28), the
+F-350's clean cockpit draws (observe-17) and, like other cars before, the
+game drops to the Shift view after the 1.0 step
+(`img/cockpit-stub-host-glass-ladder.jpg`). Three runs in this period got
+stuck in the Shift view or crashed while the stock warm-up car 147 loaded,
+before any converted car (the same happened on unchanged `testdrive10`
+and in other areas' runs); their reruns are the ones above.
 
 ## Badges seen through the windscreen (2026-10-24)
 
