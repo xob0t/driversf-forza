@@ -33,7 +33,7 @@ QUARTER_MILE = 402.336
 G = 9.81
 LINE = re.compile(
     r"\[dsfforza\] dy (\d+) (\d+) (\d+) ([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+)"
-    r"(?: ([-\d.]+))?(?: ([-\d.]+))?(?: ([-\d.]+))?"
+    r"(?: ([-\d.]+))?(?: ([-\d.]+))?(?: ([-\d.]+))?(?: (-?\d+))?"
 )
 END = re.compile(r"\[dsfforza\] dyno (\d+) r(\d+) end (\S+)")
 INFO = re.compile(r"\[dsfforza\] dyno (\d+): (topSpeed=.*)")
@@ -48,6 +48,7 @@ class Run:
     pos: list[tuple[float, float, float]] = field(default_factory=list)
     lateral: list[float] = field(default_factory=list)
     yaw: list[float] = field(default_factory=list)
+    offroad: list[int] = field(default_factory=list)  # wheels on an off-road surface (-1: not logged)
     end: str = ""
 
 
@@ -69,6 +70,7 @@ def parse(paths: list[Path]) -> tuple[list[Run], dict[int, str]]:
                 r.pos.append((float(m[5]), float(m[6]), float(m[7])))
                 r.lateral.append(float(m[8]) if m[8] is not None else 0.0)
                 r.yaw.append(float(m[9]) if m[9] is not None else 0.0)
+                r.offroad.append(int(m[11]) if m[11] is not None else -1)
                 continue
             m = END.search(line)
             if m and (file_index, int(m[1]), int(m[2])) in runs:

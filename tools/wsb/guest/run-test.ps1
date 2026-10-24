@@ -57,7 +57,9 @@ param(
     [int]$BrakeSeconds = 6,
     [int]$DynoRuns = 2,
     [string]$DynoStart,  # 'x,y,z,heading' of the start line (default in dyno.lua)
-    [string]$DynoKeep,   # lane keeper mode per run, e.g. 'none,pulse:5' (dyno.lua keepLane)
+    [string]$DynoScan,   # 'x,y,z;x,y,z;...': the first car is dropped at each point first and dyno.lua logs
+                         # how many wheels are off road there ("dyno scan ..."), to find sand or dirt
+    [string]$DynoKeep,  # lane keeper mode per run, e.g. 'none,pulse:5' (dyno.lua keepLane)
     [string]$DynoKeys,   # key steps per run instead of throttle/brake: 'Up:5,Up+Right:0.5,Down:5;...'
                          # (runs separated by ';', cycling; keys Up Down Left Right Space Shift W A S D)
     [string]$MenuKeys,   # menu taps after -MenuTrigger shows in Driver.log: 'Enter:2,Right:1.5,...' (key:wait s)
@@ -407,6 +409,7 @@ try {
                     if ($Dyno) {
                         $dynoFields = "runs = $DynoRuns"
                         if ($DynoStart) { $dynoFields += ", start = { $DynoStart }" }
+                        if ($DynoScan) { $dynoFields += ", scan = { " + (($DynoScan -split '[;,]' | Where-Object { $_ }) -join ', ') + " }" }
                         if ($DynoKeep) { $dynoFields += ", keep = { " + (($DynoKeep -split ',' | ForEach-Object { "`"$_`"" }) -join ', ') + " }" }
                         $fields += "dyno = { $dynoFields }"
                     }
