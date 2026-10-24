@@ -25,7 +25,7 @@ modes) against the `-b` project copy. Outputs are in `out/ghidra/spool-*`,
 | Graphics pool slot, kind 1/2 | 4 MiB, 32768 nodes | no | not needed |
 | Vertex and index buffers | exact size, D3D9 managed pool | no fixed cap; indices are always 16-bit | not needed |
 | Global UID list | 16384 entries, write-only | fills faster with more submodels | code: NOP the counter (hypothesis that it matters) |
-| Resource hash arena | 45,000 nodes, global | more buffers/textures per car use more | not patched here |
+| Resource hash arena | 45,000 nodes, global | more buffers/textures per car use more | not needed: nodes are recycled through a free list when a resource is released, so only what is resident counts ("Global lists") |
 | Slots per kind | SSLP +0x18: 35, 2, 2 | no | data plus pool table; not needed for detail |
 
 The MDXN size itself has no separate limit. The 0x29B000 MDXN crash was
@@ -447,6 +447,14 @@ and material through ResourceHashPool_Acquire (0x00BAED90), a bump arena
 with no end check (known from the driver-sf-mods terrain work). It is
 shared by everything resident, so only cars with many more buffers and
 materials than stock matter. Not patched here.
+
+The arena recycles its nodes (confirmed-static, `out/ghidra/arena1..3`).
+Acquire pops the free list at owner +0x127AC0 before it bumps +0x127AC4.
+When a resource's reference count reaches zero,
+ResourceManager_ReleaseHandlePair (0x00BAECA0) calls ResourceHashPool_Remove
+(0x00BAEEA0), which pushes the node back onto that list. So the bound is
+the number of resources resident at once, not the number of distinct cars
+in the archive or seen in a session (`batch.md`, "Full roster").
 
 **MODL part index**, 85,000 UIDs (FUN_00494390), global. Not a concern for
 a few dozen parts per car.
