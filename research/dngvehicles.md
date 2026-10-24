@@ -4,7 +4,9 @@ Updated: 2026-10-21
 
 Static analysis of build 1.04 `Install/dngvehicles.sp` (483,110,912 bytes).
 Every claim here comes from reading the file with `tools/chnk.py` and
-`tools/vehicles.py`; nothing is confirmed in the executable yet.
+`tools/vehicles.py`; what the executable does with it is in
+`exe-vehicles.md` and `spool-limits.md` (confirmed-static claims below cite
+them).
 
 Evidence levels follow the parent repo's convention:
 `confirmed-static`, `confirmed-runtime`, `hypothesis`, `disproved`.
@@ -108,8 +110,9 @@ MDXN with no texture, 2 material containers, 14 submodels, 3 vertex buffers,
 1 index buffer; NONR with only a MODL (0x2E8).
 
 Variant 0 is the complete vehicle. Variants 1 and 2 are smaller models that
-borrow everything else from variant 0. What they are (lower LODs, interior,
-wreck, or a traffic version) is an open question.
+borrow everything else from variant 0. Variant 1 (N+1000) is the interior
+and variant 2 (N+2000) a clean exterior (`vehicle-model.md`,
+`spool-limits.md`: FUN_005A7FC0 spools them as the interior and exterior).
 
 ### UPVH (confirmed-static header, hypothesis for the rest)
 
@@ -155,16 +158,18 @@ vehicles.
 
 ## Open questions
 
-1. What variants 1 and 2 are, and when the game streams each one.
+1. Answered: variants 1 and 2 are the interior and the clean exterior
+   (above).
 2. The VEHC-to-BINF mapping for ambiguous names (Camaro 1968/2010/1986, cop
    and taxi versions).
-3. SSLP header fields +0x04 to +0x13.
+3. Answered: SSLP header fields (table above, `spool-limits.md`).
 4. The VSCT byte fields other than the role mask.
 5. Whether SBMC/SBBH and the MDXN model package match DSCript's DPL/DSF
    `ModelPackage` reader closely enough to reuse its layout.
 6. Whether two vehicles may share model and texture UIDs (MDID/UIDC) while
    both are loaded. A clone sharing them works on its own (see
-   `in-game-tests.md`); both at once is untested.
+   `in-game-tests.md`), and so does the clone with its source loaded
+   (`in-game-tests.md`, "Clone and source loaded together").
 
 ## Rewriting the archive
 
@@ -177,7 +182,7 @@ different fill pattern and nested sizes that don't match their headers.
 
 ## Clone
 
-`tools/clone_vehicle.py --source 266 --id 304` copies the three VEHC
+`tools/clone_vehicle.py <dngvehicles.sp> <out.sp> --source 266 --id 304` copies the three VEHC
 variants, patches the ID at VSVH+0, VO3D+0, SPID+0 and UPVH+0x14 (the only
 places variant 0 stores it in all 150 vehicles; variants 1 and 2 hold none),
 inserts the copies after the last VEHC, and appends three SSLP records and

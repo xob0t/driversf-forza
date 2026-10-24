@@ -26,11 +26,12 @@ Relevant parts:
 
 <https://github.com/ReHamster/DriverNGToolkit>, C++, last pushed 2025-04, no
 license file. SoapyMan's DriverNGHook: Lua overrides, an in-game Lua console
-and ImGui. The local game folder has copies of `DriverNGHook.asi` inside the
-unpacked Felony Rework and snoopii mod-menu folders, but the game's own
-`plugins/` folder is empty, so it isn't active. Its scripts go in
-`<game>/plugins/DriverNGHook/scripts`. Its Lua console is a cheap way to test
-vehicle IDs and spawning before writing native hooks.
+and ImGui. When this note was written (2026-10-21) the local game folder had
+copies of `DriverNGHook.asi` only inside the unpacked Felony Rework and
+snoopii mod-menu folders; `tools/install.ps1` now installs 0.7.2. Its own
+Lua lives in `<game>/plugins/DriverNGHook/*.lua`; mod Lua goes to
+`Common/UserLuaScripts` (`game-lua.md`). Its Lua console is a cheap way to
+test vehicle IDs and spawning before writing native hooks.
 
 ## Local work
 

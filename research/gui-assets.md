@@ -1,6 +1,6 @@
 # Garage pictures, HUD badge and model name
 
-Updated: 2026-10-23
+Updated: 2026-10-24
 
 How DSF shows a car's picture, maker badge and model name, and how ported
 cars get their own. Code: `tools/gui_assets.py`. Evidence tags as elsewhere;
@@ -20,10 +20,12 @@ the Lua C API:
 
 `Picture2`/`Picture3` (`*_icon_large`, `*_icon_small`) are only read by the
 online lobby (`onlineGetVehicleLargeImage/SmallImage`); their images are not
-in gui.sp. **A car whose ID is 304 or higher never appears in the garage
-list**, whatever `vehicleStats` says (hypothesis-runtime until tested; the
-loop bound is in the code). Free IDs below 304: 0 to 61 (stock base IDs run
-62 to 303) and 123, 131, 277, 289 without `vehicleStats` entries.
+in gui.sp. **A car whose ID is 304 or higher never appears in the stock
+garage list**, whatever `vehicleStats` says (the loop bound is in the code;
+dsfforza.asi `[garage]` lists IDs up to 999, `asi.md`). Free IDs below 304:
+0 to 61 (stock base IDs run 62 to 303) and the 92 IDs in 62..303 the stock
+archive doesn't use (123, 131, 277 and 289 are in the archive but have no
+`vehicleStats` entry; `port_batch.py`, `ASI_LOW_IDS`).
 
 ## Garage pictures: Install/gui.sp (confirmed-static)
 
@@ -157,9 +159,10 @@ With dsfforza.asi [archive] (another module: the CHNK reader keeps entries
 past 1100 in a side table, `spool-limits.md`) the root can hold one SPOI per
 picture: `gui_assets.py build --root-limit 16384` (default 1100, the stock
 reader). SSLP spool ids and root indices are u16, so 800 more pictures fit.
-Not checked in the garage yet (the garage lists IDs below 304 only).
+Not checked in the garage yet (the stock garage lists IDs below 304 only;
+dsfforza.asi `[garage]` up to 999).
 
-### Glyph codes: one byte, about 70 new glyphs per install
+### Glyph codes without the plugin: one byte, about 70 new glyphs per install
 
 `Manufacturer` and `Model` reach the HUD as one character each, so the code
 space is 0..255 whatever the font texture holds (FNTD codes are u16, but
@@ -289,7 +292,8 @@ no exact plate for (the full name, no family fallback), from 0x100 up, and
 `add_glyphs` puts codes from 256 on extra texture pages (new TEXC in the
 font's DRSP, UID in MDID and in the FNTD page table, pages the size of
 page 0, empty DXT5 blocks precomputed) plus the empty slot records
-(`HUD_SLOT_CODES`; `--control-codes` leaves them out of the one-byte pool).
+(`HUD_SLOT_CODES`; `--wide-glyphs` keeps them out of the one-byte pool,
+which only contains them with `--control-codes`).
 `hud.lua` gets `ManufacturerGlyph`/`ModelGlyph`; `register.lua` already
 copies every hud.lua field onto the entry.
 `port_batch.py build|remerge --gui --wide-glyphs` passes the option on.
@@ -465,15 +469,16 @@ and Fonts.fchunk, `gui_assets` now reads the originals from
 
 ## Open
 
-1. In game: the new gui.sp and Fonts.fchunk load (both are patched copies;
-   the font texture is taller than stock), the HUD shows the BMW badge and
-   new nameplates, the garage shows `dsfforza_*` pictures.
-2. Garage listing needs IDs below 304: port with `--first-id` below 62 and
-   check the garage, unlock and save flags.
-3. Whether a plain (non-"ID:") `ManufacturerName` groups and labels BMW in
-   the garage.
-4. New localisation strings (adding SLRC/SLRS entries for "BMW", "M5") would
-   make the garage labels proper; untested.
+1. Answered: the patched gui.sp and Fonts.fchunk load, the HUD shows the new
+   badges and nameplates and the garage the `dsfforza_*` pictures (out/testdrive
+   and testdrive3 runs above; "Fixes after the first test drive").
+2. Answered: the default `--id-policy garage` gives the first cars IDs 1..61
+   (`--first-id` only moves the high range); the garage lists them (runs above,
+   `asi.md` for unlock and save flags).
+3. Answered: a plain `ManufacturerName` groups the cars but doesn't render as
+   a label ("Fixes after the first test drive").
+4. Done: `add_strings` adds the localisation strings and the build writes
+   the `global.fchunk` copies ("Fixes after the first test drive").
 5. dsfforza.asi [hud] slot-record version (the one in `mod_hud.cpp` now):
    not yet run in game. The sandbox died at "window up" on every run after
    the 2026-10-23 reboot (all agents). Pending: `glyphtest` on out/testdrive

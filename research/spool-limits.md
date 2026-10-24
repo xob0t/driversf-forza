@@ -1,6 +1,6 @@
 # Vehicle spool size limits
 
-Updated: 2026-10-22
+Updated: 2026-10-24
 
 Where `Driver.exe` 1.04 sizes the memory a spooled vehicle uses, which of
 those sizes a bigger VEHC can hit, and how to raise each one. Addresses are
@@ -18,7 +18,7 @@ modes) against the `-b` project copy. Outputs are in `out/ghidra/spool-*`,
 | Limit | Stock value | Hit by a bigger VEHC? | Raise by |
 | --- | --- | --- | --- |
 | NONR buffer per slot | SSLP +0x08/+0x0C/+0x10: 0x6D000, 0x1000, 0x1000 | yes, heap overflow if NONR is larger | data: SSLP header |
-| Shared spool read buffer | 0x280000 static, heap above that | VEHC > 0x27F000 takes a path no shipped file uses | nothing needed in theory; code if the pad test crashes |
+| Shared spool read buffer | 0x280000 static, heap above that | VEHC > 0x27F000 takes a path no shipped file uses | not needed: the pad test passed ("Test results") |
 | Entries per CHNK | 1100 | DRSP children (submodels + buffers + materials), root entries | code: `dsfforza.asi` `[archive]` (below); without it the root caps the archive at 365 vehicles |
 | File positions | below 2 GiB (signed clamp in the seek) | archives past about 480 ported cars | code: `dsfforza.asi` `[archive] large_files`, up to 4 GiB |
 | Graphics pool slot, kind 0 | 239,664 bytes, 1872 range nodes | only with far more render objects (about 1800) | code: `.data` table |
@@ -28,9 +28,10 @@ modes) against the `-b` project copy. Outputs are in `out/ghidra/spool-*`,
 | Resource hash arena | 45,000 nodes, global | more buffers/textures per car use more | not patched here |
 | Slots per kind | SSLP +0x18: 35, 2, 2 | no | data plus pool table; not needed for detail |
 
-The MDXN size itself has no separate limit. The 0x29B000 MDXN crash is
-most likely the 0x280000 read buffer path, but that is a hypothesis; the
-test in "Proposed test" separates it from geometry.
+The MDXN size itself has no separate limit. The 0x29B000 MDXN crash was
+first blamed on the 0x280000 read buffer path; the pad tests ("Test
+results") ruled that out, and the UID scheme of that build is the likely
+cause.
 
 ## Correction: FUN_005A0DE0 measures SSIC, not vehicles
 
@@ -119,8 +120,9 @@ FUN_008FC860 returns the same 0x280000 threshold. The packager evidently
 kept every read under 2.5 MiB, so the heap path is probably never exercised
 by stock data. Any code that keeps a pointer into the VEHC buffer after the
 load would read a reused static buffer in stock but a freed block here. I
-did not find such a pointer; this is the main hypothesis for the e5-big
-crash, and the pad test below checks it directly.
+did not find such a pointer; this was the main hypothesis for the e5-big
+crash, and the pad test checked it directly: it passed ("Test results"), so
+the patch below was never needed.
 
 **Raise by code, only if the pad test crashes.** Give the static path a
 bigger buffer:
@@ -168,8 +170,9 @@ next section.
 `dsfforza.asi` module `archive` (`tools/asi/src/mod_archive.cpp`) lets a
 CHNK hold up to `[archive] max_entries` entries (default 16384) and lets
 archives grow past 2 GiB. With it, `dngvehicles.sp` holds a car for every
-free base model ID: 849 added cars (IDs 1..999 minus the 150 stock ones; the
-tools assign 1..61 and 304..999, so 757). In game, a 2,724-entry archive
+free base model ID: 849 added cars (IDs 1..999 minus the 150 stock ones;
+`port_batch.py --id-policy asi` assigns all of them, the default policy
+1..61 and 304..999, so 757). In game, a 2,724-entry archive
 (757 clones, 2.67 GB) loads, and cars from both ends of the root table spool,
 spawn and drive (confirmed-runtime, runs below). Static analysis:
 `tools/ghidra/ArchiveExplore.java` (one-pass `call:`/`scalar:` scan),
@@ -289,7 +292,7 @@ tops out at about 480 added cars. With it, all 849 free IDs fit (about
 | SSIC size | measured at load (FUN_005A0DE0), so bigger SSLP and VSCT tables are fine (2,724 records: +76 KB) | no | confirmed-runtime |
 | Spool object ID lists (+0x5B44, +0x5F50, +0x6368, +0x668C, +0x6998, +0x69A4, +0x6CB0, +0x6CBC, +0x6FC8, +0x6FD4) | inline node pools of 48 or 64 nodes, sorted by u16 ID (FUN_005A1660, FUN_005A17A0, FUN_005A1D00, FUN_005A2230) | no: they hold requested and resident IDs, bounded by the 35 + 2 + 2 slots, not by the archive | confirmed-static |
 | Global UID list (16384), resource hash arena (45,000 nodes), MODL part index (85,000) | grow with resident resources | no | "Global lists" below |
-| Garage list, maker groups, save flags | IDs 0..303, 40 groups, 304 slots | for the garage and save only | `batch.md`, `asi.md` (module `garage`) |
+| Garage list, maker groups, save flags | IDs 0..303, 40 groups, 304 slots (dsfforza.asi `[garage]`: 0..999, 120 groups, flags of 304+ in a side file) | for the garage and save only | `batch.md`, `asi.md` (module `garage`) |
 | Lua `vehicleStats` | a Lua table | no | |
 
 A scan for 2000 (0x7D0) and 3000 (0xBB8) found no other code that derives a
@@ -471,7 +474,7 @@ SSLP header. The old 0x29B000 MDXN crash was most likely the UID scheme of
 that build (counter in UID byte 7, `upvh.md`), not its size. `port_car.py
 --mdxn-limit 0x2C0000` lifts the stock-maximum MDXN cap.
 
-## Proposed test
+## Test plan (run; results in "Test results" above)
 
 All archives are in `out/`, built from `out/dngvehicles.clone.sp` (the
 confirmed working Desanne clone, ID 304 at VEHC 450..452) with
