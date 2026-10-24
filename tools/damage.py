@@ -1782,11 +1782,15 @@ class DamagePlan:
                 if r.role == 38 and not self.opts.hull:
                     continue  # the chassis body/box is the car's; only with the hull option
                 entry = {"role": role_name(r.role)}
+                # Centred hinges and bodies stay centred while the Forza panel
+                # spans the centre line too; a host twin exhaust taken by the
+                # RX-7's one-sided pipe gets its body moved onto the pipe.
+                centred = fb.lo[0] < 0 < fb.hi[0]
                 if r.hinge >= 0:
                     at = h.offsets["hinges"] + r.hinge * 0x30
                     old = struct.unpack_from("<3f", out, at)
                     new = hb.to(fb, old)
-                    if abs(old[0]) < 0.02:
+                    if abs(old[0]) < 0.02 and centred:
                         new = (old[0],) + new[1:]  # keep centred hinges centred
                     if math.dist(old, new) > MAX_HINGE_MOVE:
                         entry["hinge_kept"] = round(math.dist(old, new), 3)  # implausible: keep the host's
@@ -1802,7 +1806,7 @@ class DamagePlan:
                     pos = struct.unpack_from("<3f", out, at + 0x30)
                     centre = tuple(-_dot(rows[a], pos) for a in range(3))
                     new_c = hb.to(fb, centre)
-                    if abs(centre[0]) < 0.02:
+                    if abs(centre[0]) < 0.02 and centred:
                         new_c = (centre[0],) + new_c[1:]
                     new_pos = tuple(-sum(rows[k][a] * new_c[k] for k in range(3)) for a in range(3))
                     struct.pack_into("<3f", out, at + 0x30, *new_pos)

@@ -408,11 +408,12 @@ end
 -- config.damage_ram: real collisions instead of applyDamage. Per variant a parked copy of the
 -- model is put RAM_AHEAD m in front of the player's car, turned so its side ("side"), its front
 -- ("front") or its back ("rear") faces the camera, and the player's car is driven into it at
--- RAM_SPEED m/s; a few ticks later the player's car is put back RAM_BACK m so the chase camera sees
--- the copy's crash damage (a real crash damages panels unevenly and knocks doors and wings ajar;
--- fullVisualDamage does neither, research/damage.md).
+-- RAM_SPEED m/s; a few ticks later the player's car stops and the copy is put back RAM_VIEW m in
+-- front of it, turned as before, so the chase camera sees the copy's crash damage (a real crash
+-- damages panels unevenly and knocks doors and wings ajar; fullVisualDamage does neither,
+-- research/damage.md).
 local RAM_TURN = { side = math.pi / 2, front = math.pi, rear = 0 }
-local RAM_AHEAD, RAM_SPEED, RAM_BACK, RAM_TICKS = 11.0, 14.0, 7.0, 12
+local RAM_AHEAD, RAM_SPEED, RAM_VIEW, RAM_TICKS = 11.0, 20.0, 9.0, 12
 local DAMAGE_RAM = {}         -- config.damage_ram: variants in turn, e.g. { "side", "front" }
 do
 	local found, config = user_open("dsfforza\\config.lua")
@@ -473,15 +474,26 @@ local function ramStep(id, car)
 		return true
 	elseif t == 4 or t == 5 then
 		return true
-	elseif t == 6 then
+	elseif t == 6 or t == 8 then
+		-- The crash pushes the copy away and turns it: put it back RAM_VIEW m in front of the
+		-- player's car, turned as before, so the hit faces the chase camera.
 		local ok, err = pcall(function()
-			local _, fx, fz, p = heading(car)
-			local m = car.matrix
-			m[3] = vec.vector(p.x - fx * RAM_BACK, p.y, p.z - fz * RAM_BACK, 1)
-			car.matrix = m
+			local h, fx, fz, p = heading(car)
 			car.velocity = vec.vector(0, 0, 0, 0)
+			if ramCopy ~= nil then
+				local hc = h + (RAM_TURN[variant] or 0)
+				local m = setYRotation(hc)
+				local q = ramCopy.matrix[3]
+				-- To the side as SIDE_COPY (straight ahead the player's car hides it from the camera).
+				local rx, rz = math.cos(h), -math.sin(h)
+				m[3] = vec.vector(p.x + fx * RAM_VIEW + rx * SIDE_LATERAL, q.y, p.z + fz * RAM_VIEW + rz * SIDE_LATERAL, 1)
+				ramCopy.matrix = m
+				ramCopy.velocity = vec.vector(0, 0, 0, 0)
+			end
 		end)
-		log(string.format("id %d: backed off from the %s copy t%d %s", id, variant, state.ticks, ok and "ok" or tostring(err)))
+		log(string.format("id %d: %s copy put back in view t%d %s", id, variant, state.ticks, ok and "ok" or tostring(err)))
+	elseif ramCopy ~= nil then
+		pcall(function() ramCopy.velocity = vec.vector(0, 0, 0, 0) end)
 	end
 	return false
 end
