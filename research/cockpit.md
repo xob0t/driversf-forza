@@ -27,7 +27,7 @@ the interior's copy of the hood).
 
 Interior materials (Desanne): two local MACOs, `_Interior` (stride 28,
 MODL value 5) and `_Dials` (stride 20, MODL value 1,
-`g_hAlphaTestRefValue` 0.5), both sampling the interior's own TEXC (512²
+`g_hAlphaTestRefValue` 0.5), both sampling the interior's own TEXC (512ВІ
 DXT5, 10 mips). Shared engine materials: `10122b9653b14e2a` (paint, stride
 32; like the exterior's paint it samples the shared paint atlas, not the
 vehicle texture: `lights.md`, "Paint"), `0012cc8576953429` (glass, MODL value 7), TRIM
@@ -42,7 +42,7 @@ for example (20, 23) is record 68 (slot 20, model 23), (8, 9) record 36, a
 rear door. Chassis vertices carry (0, 0, 0, 1). The steering wheel's
 vertices in all three entries carry (1, 1, 0, 1): record 11, kind-0 part 30,
 hinge 0. Hinge 0's pivot is the wheel hub and its axis the steering column
-((0, 0.413, -0.911), 24.4° up from horizontal). The marker with role 0x2F
+((0, 0.413, -0.911), 24.4В° up from horizontal). The marker with role 0x2F
 (47) sits on the hub, its quaternion turns (0, 0, -1) onto the column.
 
 Fleet check (`out/cockpit/skin_survey.py`): for every stock car, take the
@@ -219,8 +219,8 @@ linear needle against Forza's tick table interpolated linearly):
 **Head camera.** FUN_0088DF80 case 0x14 (disassembled with capstone,
 `out/cockpit/88df80.asm`) calls FUN_0088D3B0 to find the first record of
 type 3 with role 0x2F and returns `(p430 - marker.x, p431, p432)`. Camera
-vectors are in a frame turned 180° about y: chase-camera z values are
-positive, and across the fleet `p432 ≈ 0.5 - marker.z` (bus: marker z 5.31,
+vectors are in a frame turned 180В° about y: chase-camera z values are
+positive, and across the fleet `p432 в‰€ 0.5 - marker.z` (bus: marker z 5.31,
 p432 -4.78; Desanne: 0.49, 0.03). So in model space:
 
     eye = (marker47.x - p430, p431, -p432)
@@ -252,9 +252,9 @@ Textures, by sampling each technique's UV triangles in every candidate
 
 | Techniques | Texture |
 | --- | --- |
-| `gauge*`, `z_gauge_emissive_alpha`, `digital_gauge`; `badge` in cabin sections | `interior_LOD0.xds` (512²: dial faces, switch labels; alpha is the label cut-out mask). The needle swatch is red-orange (252, 45, 8) |
+| `gauge*`, `z_gauge_emissive_alpha`, `digital_gauge`; `badge` in cabin sections | `interior_LOD0.xds` (512ВІ: dial faces, switch labels; alpha is the label cut-out mask). The needle swatch is red-orange (252, 45, 8) |
 | cabin sections' `leather`, `plastic`, `metal`, `headliner`, `bump_*`, `reflector`, ... | `interior_LOD0.xds` too: the cabin's leather, plastic and metal artwork and its colour swatches (corrected 2026-10-23, see "Cabin trims sample interior_LOD0"; this row used to say the strips along the bottom of `nodamage_LOD0`) |
-| outside sections (`a_pillar`, `hood*`, `mirrorL/R`): `chrome`, `black`, `plastic2`, `badge`, ... | `nodamage_LOD0.xds` (2048²; badges there since 2026-10-24, "Badges seen through the windscreen") |
+| outside sections (`a_pillar`, `hood*`, `mirrorL/R`): `chrome`, `black`, `plastic2`, `badge`, ... | `nodamage_LOD0.xds` (2048ВІ; badges there since 2026-10-24, "Badges seen through the windscreen") |
 | lamps | `lights_LOD0.xds` |
 | `mirrorLeft/Middle/Right` | render targets in Forza |
 
@@ -268,7 +268,7 @@ centre with +z forward, so in Forza space (front at -z):
 
 On the 370Z (0.05, 0.22, -0.43) this puts the eye 0.28 m ahead of the
 headrest and 0.17 m under the headliner; the Countach, F1 (centre seat,
-x ≈ 0) and others land just as plausibly. The other z sign would put the
+x в‰€ 0) and others land just as plausibly. The other z sign would put the
 eye ahead of the wheel. A third of the rows are all zero ("no override");
 for those the converter uses the median of the non-zero rows, (0, 0.21,
 -0.46). `CarAttribs.xml` has `DriverHandsOffset` and gauge tick tables but
@@ -284,7 +284,7 @@ no camera.
 - needles: the min, mid and max poses are one mesh rotated about the pivot.
   The dial normal is the least-spread direction of the displacements, and
   each step is a 2D rotation whose fixed point is the pivot. Sweeps come out
-  clockwise, 230° to 290°;
+  clockwise, 230В° to 290В°;
 - side mirror glass centres; eye from `CameraOverrides`.
 
 `forza2dsf.convert(..., interior=)` with `ConvertOptions.cockpit`:
@@ -313,7 +313,7 @@ no camera.
    the gauge id in semantic 8 and an opaque solid cell of the Forza needle
    colour.
 3. Drops triangles never seen from the head: an ID buffer per cube-map face
-   (256²) from the final head camera and a head-movement volume around it
+   (256ВІ) from the final head camera and a head-movement volume around it
    (`CULL_OFFSETS`: 12 cm either side, 8 cm up, 6 cm down, 8 cm forward and
    back) plus the Forza eye, glass transparent, everything within 25 cm
    kept, plus one ring of neighbours (see "Holes in converted interiors").
@@ -395,7 +395,7 @@ fix3 (`img/fix2-m5-cockpit.png`, `img/fix3-m5-cockpit.png`); the stock
 Desanne cockpit glass is clean (`img/fix3-desanne-stock-cockpit.png`).
 Ruled out offline: a second windscreen layer (the shell skips every section
 the cockpit carbin has, so the main carbin's glassF never lands in the
-interior), flipped or noisy normals (vertex normal within 1-2° of the face
+interior), flipped or noisy normals (vertex normal within 1-2В° of the face
 normal, median, on all three cars), the sky term (0.6-0.7, like the
 Desanne's interior glass), semantic 5's last two bytes (128/127 on stock
 glass too).
@@ -428,8 +428,8 @@ User report on `out/testdrive7`: from the cockpit camera converted cars'
 windows never crack or shatter, while the exterior glass does. Cause and
 fix: `vehicle-model.md`, "Interior glass". In short, stock interior windows
 draw damage with their own geometry: crack-line slivers on rows of the
-glass texture that only show in states 1–2, and rim shards that only show in
-state 3, over a smear surface that shows in states 0–2 (on the windscreen
+glass texture that only show in states 1вЂ“2, and rim shards that only show in
+state 3, over a smear surface that shows in states 0вЂ“2 (on the windscreen
 only a frame round an open centre). Converted interiors had one uniform
 smear patch. `glass.InteriorGlass` now builds the three layers on every
 converted window, on that window's panel record.
@@ -442,7 +442,7 @@ centre stayed clear until shattered.
 
 **In-game test** (run `host-20261023-174148`, `out/cockpitglass/build`:
 IDs 1 M5 (host 147), 2 RX-7 (278), 3 370Z (227), 4 Challenger (173);
-probe IDs 147, 227, 1–4; `run-series.ps1 -GlassLadder -ShotSeconds 3`).
+probe IDs 147, 227, 1вЂ“4; `run-series.ps1 -GlassLadder -ShotSeconds 3`).
 `-GlassLadder` (new; `clonetest.lua` `GLASS_STEPS`) switches to the cockpit
 view on a clean car, then calls `GameVehicleResource.applyDamage
 {gameVehicle, damage = 0.25 / 0.5 / 1.0, location = (0, 1, 2), override}`
@@ -450,7 +450,7 @@ at cockpit ticks 8, 16 and 24, then `fullVisualDamage` at 32, logging each
 step. Glass has no Lua call of its own (`lua-api.tsv`); `applyDamage`
 raises the glass panels' crack states. The game ran at about 150 fps, so
 a tick (30 frames) took 0.2 s and each step about 1.6 s (observe times in
-`events.json`): 2–3 cockpit shots per car. Results (`out/cockpitglass/run1-sheet.png`,
+`events.json`): 2вЂ“3 cockpit shots per car. Results (`out/cockpitglass/run1-sheet.png`,
 `run1-m5-zoom.png`, `run1-227-vs-370z.png`, `run1-rx7-challenger.png`):
 
 - M5: crack lines across the windscreen's left half and the left door glass
@@ -466,13 +466,13 @@ a tick (30 frames) took 0.2 s and each step about 1.6 s (observe times in
   (observe-30), as it did for the M5 after fullVisualDamage (observe-13).
 - No crash, no white streaks, no glass missing in the clean state.
 
-Run 1's build drew shards 1.5–4 cm wide every 2.5 cm, a near-continuous
+Run 1's build drew shards 1.5вЂ“4 cm wide every 2.5 cm, a near-continuous
 fringe on the 370Z's top edge where stock 227 shows a corner cluster; they
-are now 1.2–3.5 cm every 3.5 cm, and gaps inside a window no longer count as
+are now 1.2вЂ“3.5 cm every 3.5 cm, and gaps inside a window no longer count as
 rim.
 
 **Run `host-20261024-000609`** (final `out/cockpitglass/build`, same IDs,
-`-GlassLadder -ShotSeconds 1`; 85 shots, 7–8 per cockpit ladder; strips
+`-GlassLadder -ShotSeconds 1`; 85 shots, 7вЂ“8 per cockpit ladder; strips
 `out/cockpitglass/run2-ladder.png`, zooms `run2-cracks-zoom.png`,
 `run2-227-370z.png`): no crash. M5: clean, then two crack lines from the
 windscreen's top edge after 0.25 (observe-29 against -27). 370Z port: faint
@@ -487,9 +487,9 @@ after `-ZoomPresses`.
 **40-car survey** (`out/cockpitglass/testdrive`, `tools/batches/testdrive.txt`,
 `out/cockpitglass/survey.py` against `out/testdrive7`;
 `survey-testdrive.txt`): 40 built, all lint ok, no extra interior
-decimation. Every car has a windscreen frame of 0.10–0.28 m² with
-0.83–1.15 m of state-1 and 0.67–0.95 m of state-2 cracks; shards seen from
-the eye 16–115 per windscreen (fewest where the dash hides most of the rim:
+decimation. Every car has a windscreen frame of 0.10вЂ“0.28 mВІ with
+0.83вЂ“1.15 m of state-1 and 0.67вЂ“0.95 m of state-2 cracks; shards seen from
+the eye 16вЂ“115 per windscreen (fewest where the dash hides most of the rim:
 Cuda 0.13 of the rim seen, Firebird 0.15, Mustang 0.30, 205 T16 0.31). Up to
 eight cars (the first in list order) were built before gaps inside a window
 stopped counting as rim; the rest with the final code. A replay on all 40 `out/testdrive7` interiors
@@ -636,7 +636,7 @@ with `out/fixes/cull_check.py`):
    face instead of clipped, so large dash, cluster-hood and floor
    triangles next to the head never registered and were dropped unless a
    neighbour saved them.
-3. Triangles smaller than a pixel at 256² covered no pixel centre and were
+3. Triangles smaller than a pixel at 256ВІ covered no pixel centre and were
    dropped even where visible.
 
 Fix: the cull runs from the final camera (`CockpitFit.camera`, set by
@@ -862,7 +862,7 @@ direction from its quaternion to spec+0x37F0):
 - anchor A = marker position + (0, VO3D p538, VO3D p559) (spec+0x34D8 and
   spec+0x352C are p538/p559, `spec + 0x2C70 + 4 * id`);
 - the steering angle comes from the driver animation state (`FUN_005756E0`;
-  some states use fixed angles of ±1.7456 rad, the hand-over-hand pose at
+  some states use fixed angles of В±1.7456 rad, the hand-over-hand pose at
   full lock). `FUN_00514150` turns by that angle about the marker's
   direction through A (the same helper as the gauge needles), and
   `FUN_00573E10` copies the matrix to the driver.
@@ -875,8 +875,8 @@ copy of testdrive7; run `host-20261024-000936`, crops and sheets in
 | --- | --- | --- |
 | marker y -10 cm (Silvia, 5) | down 10 cm | down 10 cm, hands still on the rim |
 | hinge y -10 cm (370Z, 32) | stay | up 10 cm, hands below the rim |
-| marker quaternion +20° about x (M3, 1) | no visible change at rest | no visible change |
-| hinge axis +20° (stock 136) | no visible change at rest | no visible change |
+| marker quaternion +20В° about x (M3, 1) | no visible change at rest | no visible change |
+| hinge axis +20В° (stock 136) | no visible change at rest | no visible change |
 | p538 -0.04 to +0.10 (300SL, 24) | up | up, hands still on the rim |
 | p559 +0.075 to -0.15 (Cuda, 7) | back and down | back and down |
 
@@ -886,16 +886,16 @@ the hands against the wheel. When the car steers, both turn about A.
 Stock cars make this work by construction. In all 146 with a
 steering marker, the hinge and the marker are the centre of the same wheel mesh:
 fit_wheel radius 0.176 m (median; quartiles 0.174 to 0.180; trucks 0.19).
-The column is 24° up in the seat marker's frame, and the hinge sits at (0,
+The column is 24В° up in the seat marker's frame, and the hinge sits at (0,
 0.469, 0.428) from the driver seat marker in its frame (`out/steering/seat_frame.py`,
-`stock_rim.py`). The hands grip about 45° either side of the top (stock 147
+`stock_rim.py`). The hands grip about 45В° either side of the top (stock 147
 in game against an offline render). Stock p538/p559 (-0.1 to 0.1 m; buses
 p559 to -0.3) move the wheel with the hands, relative to the driver's body.
 
 **Why converted cars missed.** The converter put the hinge and marker on the
-Forza wheel centre, so the rig gripped a 0.176 m rim at a 24° column. Forza
-rims run 0.146 (S2000) to 0.203 m (Charger Daytona), and columns 10° (S5S
-Raptor) to 30°. The grips missed the rim by up to 4.3 cm (Raptor; S2000 3.5,
+Forza wheel centre, so the rig gripped a 0.176 m rim at a 24В° column. Forza
+rims run 0.146 (S2000) to 0.203 m (Charger Daytona), and columns 10В° (S5S
+Raptor) to 30В°. The grips missed the rim by up to 4.3 cm (Raptor; S2000 3.5,
 RX-7 2.9, 370Z 2.8, Agera 3.0, Firebird 2.8). The host's p538/p559 also
 moved the converted wheel away from its Forza place (Cuda 8.5 cm, FOR
 SVT Raptor 13 cm, M3 E30 4 cm).
@@ -913,7 +913,7 @@ capped at 6 cm). p538 and p559 are written as 0, so the wheel is drawn
 exactly where Forza puts it. The marker quaternion still follows the Forza
 column. The wheel then turns about centre + shift. The part of the shift along the
 column costs nothing. The part in the wheel plane (up to 4.4 cm, S2000; 3.7
-Raptor; most cars under 2.5 cm) makes the hub circle by 2·shift·sin(angle/2)
+Raptor; most cars under 2.5 cm) makes the hub circle by 2В·shiftВ·sin(angle/2)
 while steering. With a fixed rig the alternative would be to rescale the
 Forza wheel. The converter report has `steering.hands` (shift, in-plane and
 along-column parts, grip error before/after).
@@ -944,7 +944,7 @@ wheels are upright (STI badge readable; `out/steering/before/6-wheel.png`,
 (`host-20261024-000936` shots 31/32 at ID 6, `host-20261024-003455` at ID 1),
 and its hierarchy is the same as the others' (axis, quaternion, skin
 binding). At full lock with the car standing (DSF's hand-over-hand pose) the wheel
-turns well past 90° on every car, which may be what was seen. Open: a
+turns well past 90В° on every car, which may be what was seen. Open: a
 user screenshot of the moment.
 
 ## Digital clusters (2026-10-24)
@@ -991,7 +991,7 @@ sheet the shader composes from.
 cockpit-carbin cabins): a `digital_gauge` subsection whose second transform
 maps UV0 with median anisotropy at most 2 (`FACE_MAX_ANISOTROPY`) and at
 least 1 UV unit per metre (`FACE_MIN_DENSITY`, about 512 texels per metre on
-the 512² interior_LOD0; cabins run 3 to 9) becomes `digital_gauge_face`
+the 512ВІ interior_LOD0; cabins run 3 to 9) becomes `digital_gauge_face`
 with that transform first: textured from interior_LOD0 like any cabin
 trim. The rest stay the blank display. `CockpitFit.display_faces` and the
 interior report's `display_face_triangles` count them.
@@ -1447,6 +1447,59 @@ it. The RS6's dials were cut off at the top by the cowl; now both show whole
 with the needles at the readings. `img/gauges-cowl-virtual-ingame.jpg`. All
 cars that spooled drove without a crash (IDs 8 to 10 didn't spool after
 seven cars in one session, in both runs).
+
+## Hands on small race wheels and wheels with columns (2026-10-25)
+
+PR #29's survey left 20 cars with the driver's grips over 3 cm off the
+drawn rim, in the cockpit view and the chase view alike (the seat follows
+the marker, so both use the same anchor). `uv run dsff driver_survey cars`
+on the installed build (`--hosts out/final/work`) gives the same: median 0.0
+cm, 90th percentile 0.5, worst 9.1 cm, 20 over 3 cm. They fall in three groups:
+
+| Cars | Rim (fit) | Why the hands miss |
+| --- | --- | --- |
+| five FG Falcon racers (9.1 cm) | 0.06 m, column 74 deg | the `steering_wheel` section carries its 1 m column to the bulkhead; the least-spread direction of all points is not the wheel's |
+| TT-R 2004 (5.6 cm) | 0.13 m, column 43 deg | a deep quick-release spacer behind an open-top yoke tilts the fit the same way |
+| tour bus (6.2 cm) | 0.22 m, column 70 deg | a flat bus wheel: the shift needed along the column ate the 6 cm cap |
+| ARX, FLM, B09, R15, AMR-Lola racers (3.0 to 3.5 cm; 908, R8 LMP, A4 DTM and others 2 to 3 cm) | 0.11 to 0.12 m, column 2 to 12 deg | the rig grips 0.25 m apart, 45 deg either side of the top of a 0.176 m rim: a rim narrower than that can't hold both hands for any translation |
+
+**What the cap was for.** The hand rig is rigid: it doesn't stretch its
+arms, it moves as a whole with the steering marker (cockpit view) and with
+the seat (chase view, where the seat follows the marker). What a large shift
+costs is (1) the hub's orbit while steering: the wheel and the hands turn
+about the marker, so the in-plane part of the shift makes the hub circle by
+up to 2 |shift| sin(angle / 2); (2) the driver model moves with the seat by
+the shift. The part along the column has no orbit. Moving the seat alone
+doesn't help: the chase-view hands would rest on the rim but turn about a
+point the wheel doesn't, and leave it while steering. The hand targets
+themselves (the rig's grip points) can't be moved per car.
+
+**Fixes** (`cockpit.py`):
+
+1. `fit_wheel_points` fits candidates and keeps the one whose rim is the best
+   circle (`rim_scatter`: RMS radial misfit plus spread along the axis): the
+   least-spread axis of all points (as before), the rim's own plane refitted
+   three times, and both again on the 0.22 m at the driver's end when the
+   points run deeper than 0.30 m. Over the fleet 208 fits are unchanged,
+   the median centre moves 0.1 mm (90th percentile 1.1 mm); the Falcons'
+   rim comes out at 0.164 m and 17 degrees, the TT-R's at 0.131 m and 5.
+2. `hand_shift` caps the in-plane part (the orbit) at 6 cm as before, and
+   the part along the column on its own at 12 cm.
+3. `hand_wheel_scale`: where the grips still miss the rim by more than 5 mm,
+   the Forza wheel is scaled about its centre (0.8 to 1.3) to the radius
+   the grips sit at: the cockpit wheel, and through `align_main_wheel` the
+   chase view's. 36 cars, 1.04 to 1.21 (ARX-01b 0.114 -> 0.137 m), the bus
+   0.88. The report has `steering.hands.wheel_scale`.
+
+**Survey after** (same command, this branch): grips off the drawn rim median
+0.0 cm, 90th percentile 0.2, worst 1.2 cm (Jaguar D-Type 1956; Mini 1965
+1.1), none over 3 cm (20 before). Worst cases before -> after: FG Falcon racers
+9.1 -> 0.1 cm, bus 6.2 -> 0.0, TT-R 5.6 -> 0.2, ARX-02a 3.5 -> 0.3, B09 3.4
+-> 0.2, R15 TDI 3.3 -> 0.2. Room over the driver model's eyes is unchanged
+(median 18.3 cm). Offline, the chase-view wheel from behind the seat with the
+driver's grips (`out/verify`, before: master): `img/hands-wheel-fit-scale-offline.jpg`
+(the Falcon's chase-view wheel had been aligned onto the column fit, a metre
+ahead).
 
 ## Risks and open questions
 
