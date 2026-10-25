@@ -490,7 +490,11 @@ out/final-gui2 data, the driving HUD shows the badge and plate of IDs 705
 (Focus ZX4: stock Ford badge, page 1 plate), run `vm-20261025-080159`
 (`img/hud-wide-glyphs-before-after.jpg`; before: run `-065150`, a first fix that patched only the first check); the same
 with the rebuilt out/final-gui3 (run `-084300`), and the garage card
-browser's side panel shows the ported plates (run `-083412`).
+browser's side panel shows the ported plates (run `-083412`). Run `-093537`
+(out/final-gui3): the user's Audi A4 (ID 73, "92 AUDI A4 TOURING CAR"
+under the stock rings, `img/hud-audi-a4-before-after.jpg`), the text badges
+of the tour bus (222) and the Kenworth (463), and late IDs 725 (Wiesmann)
+and 382 (Fiat 595, page 1 badge) (`img/hud-text-badges-late-ids.jpg`).
 
 ### Maker list logos (dsfforza.asi [garage] + [hud])
 
