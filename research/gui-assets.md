@@ -178,7 +178,8 @@ Result on the ported red pairs: median saturation 0.67 to 0.84 (stock 0.81
 to 0.90), white 0.2 to 0.3 % (stock 0.1 %); still a little brighter than
 stock (Volt median value 0.34 against 0.21, before 0.48; 90th percentile
 0.42 against 0.34, before 0.76). `img/garage-pictures-tone.jpg`: stock,
-before, after.
+before, after. In game the new pictures show on the garage cards (runs
+`vm-20261025-083412`, the CHEVROLET card browser, and `-092759`).
 
 Checked on the stock cars against their own pictures (370Z, R8, Charger,
 159: same framing, the stock pictures' paint a little darker and glossier)
@@ -483,6 +484,14 @@ of `kSlotCodes`) and does as stock otherwise; the slots are 1..8 and 14..17
 Offline test: `text_len`/`text_key` in `tools/asi/test/offline.cpp` run the
 patched code on "\x01", "\x10", " ", "\x0B"...
 
+In game (confirmed-runtime): with the fixed plugin and the unchanged
+out/final-gui2 data, the driving HUD shows the badge and plate of IDs 705
+(Volvo 242, page 1 badge, page 2 plate), 26 (2000GT), 1 (M3 E30) and 400
+(Focus ZX4: stock Ford badge, page 1 plate), run `vm-20261025-080159`
+(`img/hud-wide-glyphs-before-after.jpg`; before: run `-065150`, a first fix that patched only the first check); the same
+with the rebuilt out/final-gui3 (run `-084300`), and the garage card
+browser's side panel shows the ported plates (run `-083412`).
+
 ### Maker list logos (dsfforza.asi [garage] + [hud])
 
 User report on out/final-gui2: "some make garage badges are missing";
@@ -523,6 +532,23 @@ groups had no logo or a wrong one.
   KENWORTH) gets a chrome text badge of its name (`maker_badge`, the
   nameplate style, up to 98 x 30) as its HUD badge, maker list badge and
   picture logo, instead of the host's badge.
+
+The stock list's 40 string elements are external (`{text, external 1, set,
+capacity}`; FUN_00ACE220 keeps the caller's pointer and takes its length as
+capacity), the ones `list_grow` adds have their own 64-byte buffer. The
+plugin's `"ID:n"` texts live for the whole process, so both kinds take them
+(a first build that required a large enough buffer left the stock elements,
+the makers at positions 35 to 39, stock: run `vm-20261025-083412`).
+
+In game (confirmed-runtime, run `vm-20261025-092759`: out/final-gui3, the
+maker list scrolled through all 92 groups): every maker shows a logo, the 57
+new ones included (ASCARI, BERTONE, BUGATTI, BUICK, the BUS and KENWORTH text
+badges, RENAULT from FM4...); `img/garage-maker-logos-before-after.jpg`
+(before: out/final-gui2, run `vm-20261025-084543`),
+`img/garage-maker-list-all-after.jpg` (every fifth position). A few Forza
+logos are dark on the black list (Hennessey's red, Chrysler's grey).
+Counts: before, 56 of 92 groups with their own logo (35 stock, 21 new) and
+36 without or with the host's; after, 92 of 92.
 
 ### Names from Forza's string tables (confirmed-static)
 

@@ -957,6 +957,26 @@ and #42's groups.
       while the world loads"). Fixed in dsf_enhanced (`fix/world-load-crash`):
       0 of 14 runs crashed, 4 of them with the full roster.
 
+### GUI fixes after the install (2026-10-25)
+
+User reports on out/final-gui2: no HUD nameplate (and no badge for new
+makers) on most ported cars, no maker list logo for BERTONE, BUGATTI,
+BUICK..., garage pictures too glossy. Causes and fixes in gui-assets.md
+("Why the 16-bit glyphs drew nothing", "Maker list logos", "Tone"): every
+16-bit glyph (533 plates, 303 badges) drew nothing, 36 of the 92 maker
+groups had no logo or the host's, and the renderer washed the paint out.
+The archive doesn't change; only the GUI step and dsfforza.asi do. The GUI
+step alone, on the installed build's manifest and archive (11 minutes with
+4 jobs):
+
+```sh
+uv run dsff gui_assets build out/final-gui2/dngvehicles.json --out out/final-gui3/gui \
+    --archive out/final-gui2/dngvehicles.sp --wide-glyphs --root-limit 3003 --jobs 4
+```
+
+Install it with the rebuilt plugin (`.\tools\asi\build.ps1`): the HUD needs
+both, the maker list logos need the new `global.fchunk` too.
+
 ### Install (not run here)
 
 From the worktree that holds the build, with dsfforza.asi built from master
