@@ -31,7 +31,7 @@ local GLASS_LADDER = false    -- config.glass_ladder (run-test -GlassLadder): da
 local VIEWS = {}              -- config.views (run-test -Views): extra views between the chase and cockpit views:
                               -- camera modes ("Bonnet", "Bumper") or fixed cameras on the car ("left", "right",
                               -- "front": the driver's seat seen through the side windows or the windscreen;
-                              -- "rear": the tailgate; "wheels": the left side at hub height; "fq": the
+                              -- "rear": the tailgate; "exhaust": the tailpipes, low; "wheels": the left side at hub height; "fq": the
                               -- front left wheel from the front three-quarter; "lock": that wheel
                               -- from ahead, for steering in place with run-test -DriveKey Left)
 local PALETTE = nil           -- config.palette (run-test -Palette): paint palette entry of the spawned cars
@@ -434,6 +434,8 @@ local FIXED_VIEWS = {
 	-- The tailgate from behind and a little to the left (badges, lamps), and the car's
 	-- left side at hub height (both left wheels).
 	rear = { { 0.8, 1.5, -5.0 }, { 0.0, 0.85, -1.8 } },
+	-- The tailpipes from behind, low and close: exhaust smoke at idle (src/dsfforza/convert/exhaust.py).
+	exhaust = { { 0.7, 0.75, -4.4 }, { 0.0, 0.3, -2.0 } },
 	wheels = { { 3.6, 0.6, 0.0 }, { 0.6, 0.35, 0.0 } },
 	-- Wheel clearance (research/wheels.md): the front left wheel in its arch from the front
 	-- three-quarter, and from ahead at hub height (the tyre swept by the steering).

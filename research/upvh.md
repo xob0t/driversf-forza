@@ -1,6 +1,6 @@
 # UPVH vehicle hierarchy, and why converted cars crashed
 
-Updated: 2026-10-22
+Updated: 2026-10-25
 
 Static analysis of build 1.04. File offsets are relative to the UPVH payload
 (Saloon 15, VEHC 3, spool 266, 0x42B0 bytes, unless stated). Code addresses
@@ -261,6 +261,71 @@ cars sat on such hosts; only the 257-role ones are known to go invisible
 S2000, Firebird, 300SL, 2000GT) were not reported, so the game probably
 draws 257 but not 1281 by default (hypothesis). Which variant the game
 picks, and when, is not traced.
+
+### Exhaust markers (confirmed-static; fix offline, in-game check below)
+
+**Where the game reads them.** `FUN_0088E310` (the UPVH parser, decompiled
+in `out/ghidra/gauges7`) takes every marker record (type 3) with role 0x4D
+(77) as an exhaust: it copies the marker's position (+ the model offset at
+spec+0x35F0) and quaternion into a 0x2C-byte slot at spec+0x39A0, with the
+record index and the body of the nearest ancestor that has one, and counts
+the slots in the byte at spec+0x4931. The role-0x57 array starts at
+spec+0x3A50, so there is room for 4 slots and no bounds check.
+`FUN_00881DD0` builds a matrix from each slot's quaternion and position and
+emits particle effect 13 there (`FUN_00498F60`), with an intensity that falls
+with the car's speed: the smoke shows most at a standstill. The engine
+sound's emitter B sits at the first slot (`engine-sound.md`).
+
+**Stock fleet** (`out/exh/stock_markers.py`): 0, 1, 2 or 4 exhaust markers
+(13, 33, 80 and 24 cars), one per tailpipe, as children of the exhaust parts
+(role 136 at -x, 15 at +x) or of the body (38). Rear pipes carry the
+identity quaternion; the flow is the marker's local -z: Classic 06's
+right-hand side exit has (0, -0.71, 0, 0.71), which turns -z onto +x, and
+turned-down pipes tilt about x (Classic 04: (-0.27, 0, 0, 0.96)).
+
+**Why ports were wrong.** The converter left the host's markers alone, so
+smoke and backfire came out where the host's pipes were. The Focus ST
+(host 127, Giulietta) kept two markers at x ±0.49, 15 cm inside the bumper;
+its only outlet is the twin-tip trapezoid in the middle of the diffuser
+(`img/exhaust-focusst-before-after.jpg`).
+
+**Fix** (`src/dsfforza/convert/exhaust.py`, last UPVH edit in
+`forza2dsf.convert`): the Forza `exhaust*` sections of the stock variant
+give the openings: each connected piece's outermost 4 cm along its flow
+(straight back, or out of the side when the piece ends within 8 cm of the
+body's side: GT1, V8 Supercar and DTM side exits), split where the
+triangles don't connect; inner tubes, discs and brackets behind an opening
+are dropped; ends far inside the body or 15 cm ahead of the rearmost tip
+(silencers, pipe ends at the bumper corners) don't count. The host's
+markers become one per opening, up to 4: copies of the host's own marker
+records are inserted next to them (same parent, so the effect still follows
+the exhaust part's body), extras are removed (innermost first; ancestors'
+subtree sizes, the record count and later marker indices follow). A twin tip
+modelled as one piece (the Focus) takes two markers at its halves when the
+host has two. No tip: the host's markers move with the host-body-to-Forza-body
+box map of the damage plan.
+
+**Survey** over the 573 cars of `out/final` (`dsff exhaust survey`,
+`out/exh/survey5.json`), per car the worst marker's distance to the nearest
+Forza opening:
+
+| | cars | median | 90th pct | max | over 10 cm |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| before (host's markers) | 524 | 0.29 m | 1.55 m | 3.31 m | 424 |
+| after | 524 | 0.00 m | 0.00 m | 0.11 m | 1 |
+
+The remaining offsets are the two halves of twin openings (a quarter of the
+opening's width from its centre). Openings per car: 132 one, 312 two, 4
+three, 87 four, 1 ten (the 250 Testa Rossa's side pipes, 4 markers). Marker
+counts changed on 200 cars (4 -> 2: 67, 2 -> 1: 69, 2 -> 4: 44, 1 -> 2: 11,
+others 9). No tip on 37 cars: 29 have no `exhaust*` section (exhaust modelled
+in the body: F40, Viper, 360, SLR, LMPs...), 8 have one with no opening the
+rules accept (Leaf, CT200h, RAV4 Sport, R15 TDI, Sagaris, Corvette
+Stingray 67, Kenworth T440, the tour bus: a flat panel, pipes along the sills
+or far inside the body, flows other than back or sideways); 34 of the 37 get
+the box-mapped host markers. The 15 cars on hosts
+without exhaust markers (Classic 10, Bus 01, Saloon 13, Mini Car 06) stay
+without exhaust effects, as their hosts are.
 
 ### PDL (collision)
 

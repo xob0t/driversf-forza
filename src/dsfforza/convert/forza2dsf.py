@@ -1611,6 +1611,9 @@ class ConvertOptions:
     # on the Forza car's plate recess / mounting face, at each end the host has
     # a plate, on the panel under it. Forza `numberplate` quads are replaced.
     plates: bool = True
+    # Exhaust markers (src/dsfforza/convert/exhaust.py): the host's role-0x4D markers (smoke,
+    # backfire, the exhaust sound) moved onto the Forza tailpipes, one per tip, up to 4.
+    exhaust: bool = True
 
 
 def parse_lods(text: str) -> dict[int, int]:
@@ -2108,6 +2111,18 @@ def convert(
             )
             log(f"bonnet camera: {tuple(round(c, 3) for c in cam)} (host's {tuple(round(c, 3) for c in host_cam)})")
         report["bonnet_camera"] = cam_report
+    if opts.exhaust and not opts.skip_full:
+        # Smoke, backfire and the exhaust sound come out of the Forza tailpipes, not the
+        # host's (src/dsfforza/convert/exhaust.py). Last of the UPVH edits: it can add or
+        # drop marker records, which moves the record and marker indices after them.
+        from dsfforza.convert import exhaust
+
+        upvh = child(child(full, "NONR"), "UPVH")
+        tips = exhaust.find_tips(car.body, place)
+        # Without tips: the host body's box onto the Forza body's, as for the damage panels.
+        boxes = (dmg.full_field.box, dmg.forza_box) if dmg is not None else None
+        upvh.payload, report["exhaust"] = exhaust.patch_upvh(payload(stream, upvh), tips, boxes)
+        log(exhaust.describe(report["exhaust"]))
     # Hosts with more than one chassis record (172 and 38 other stock cars) draw a
     # variant part instead of part 0: give those parts the body too (src/dsfforza/convert/chassis_variants.py).
     from dsfforza.convert import chassis_variants
@@ -2158,6 +2173,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--skip-full", action="store_true", help="leave the full entry (N) as it is")
     parser.add_argument("--skip-exterior", action="store_true", help="leave the clean exterior (N+2000) as it is")
     parser.add_argument("--no-hubs", action="store_true", help="don't move the hierarchy's wheel hubs")
+    parser.add_argument("--no-exhaust", action="store_true", help="keep the host's exhaust markers")
     parser.add_argument(
         "--keep-host-materials",
         action="store_true",
@@ -2226,6 +2242,7 @@ def main(argv: list[str] | None = None) -> None:
         skip_full=args.skip_full,
         skip_exterior=args.skip_exterior,
         no_hubs=args.no_hubs,
+        exhaust=not args.no_exhaust,
         keep_host_materials=args.keep_host_materials,
         fill_empty_parts=args.fill_empty_parts,
         keep_host_geometry=args.keep_host_geometry,
