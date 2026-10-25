@@ -951,9 +951,11 @@ and #42's groups.
         traffic, `vm-20261025-005639` to `-010158`): 4 of 4 crashed;
       - with dsf_enhanced.asi replaced by an empty stub DLL
         (`vm-20261025-011001` to `-011514`): 0 of 4 crashed.
-    - So it isn't the roster or dsfforza.asi. Some always-on part of
-      dsf_enhanced (D3D, Bink or startup hooks) makes the stock game fail.
-      Whether it does so on the user's PC as often as in the VM is open.
+    - So it isn't the roster or dsfforza.asi. The trigger is dsf_enhanced's
+      legal-screen skip, which lets the loading screen empty the pending
+      list while startup files still load (`in-game-tests.md`, "Crashes
+      while the world loads"). Fixed in dsf_enhanced (`fix/world-load-crash`):
+      0 of 14 runs crashed, 4 of them with the full roster.
 
 ### Install (not run here)
 

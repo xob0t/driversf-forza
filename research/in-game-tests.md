@@ -177,10 +177,24 @@ About half of the VM runs ended at the DriverNGHook fatal-error dialog 20 to
 - It happens with the **stock archive, without dsfforza.asi and without any
   ported car**: 2 of 4 runs (`vm-20261024-203720` to `-204228`); with the
   plugin, 1 of 3.
-- So it isn't caused by the ported cars or the plugin. Host runs have died
-  the same way before (`host-20261023-174440`).
-- It may be the harness's timing (zoom keys while the world spools); not
-  analysed further.
+- So it isn't caused by the ported cars or the plugin.
+- Cause (found 2026-10-25): dsf_enhanced's `[Startup] SkipLegalScreen`. The
+  skip NOPs the legal screen's 5 s wait (0x00799C4A), so the loading-screen
+  start (FUN_004A20C0, called at 0x00799C92) runs while startup files are
+  still loading. That function empties the pending list
+  (`mov dword [0x0188A6B8],0` at 0x004A2153), so the references waiting
+  then (17 to 281 in the VM; 0 with the stock wait) are dropped, and the
+  list is corrupt by the time the world loads.
+  - Bisect, stock archive, user's ini: `SkipLegalScreen=0` 0 of 8 crashed;
+    the skip with every other dsf_enhanced feature off 2 of 4.
+  - Fix in dsf_enhanced (branch `fix/world-load-crash`): the legal screen's
+    call keeps the pending list; every other loading screen empties it as
+    stock. 0 of 10 runs crashed on the stock archive, 0 of 4 with the full
+    roster and dsfforza.asi.
+  - On a real PC it is the same race between startup loading and the first
+    menu frames, so a slow or busy disk can hit it; the slow VM disk and CPU
+    hit it in about half the runs. Notes: driver-sf-mods,
+    `reverse_engineering/driver_sf/world_load_crash.md`.
 
 **Lua VM while a big user file loads (0x005F078A / 0x005F078D / 0x005EE811).**
 
