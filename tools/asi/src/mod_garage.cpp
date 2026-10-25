@@ -870,8 +870,12 @@ __declspec(naked) void s_menu_set_string()
 // badge (mod_hud: ManufacturerGlyph with its localised string), the list gets
 // "ID:n" instead, which the renderer draws as that glyph; the one-byte code
 // can't name more than about 50 new makers. The group's first car stands for
-// it: every car of a maker shares its badge. A string element that can't hold
-// the text (capacity, or an external buffer) keeps the stock string.
+// it: every car of a maker shares its badge. The stock list's elements are
+// external ({text, external 1, set, capacity}: FUN_00ACE220 keeps the pointer
+// and takes the length as capacity), which is fine for the plugin's texts:
+// they live as long as the process. An element with its own buffer (the ones
+// list_grow adds) takes a copy, so it must be large enough, else it keeps the
+// stock string.
 typedef void(__fastcall* MenuSetStringFn)(void* elem, void*, const char* text, int n);
 
 void __fastcall menu_set_badge(uint8_t* elem, void*, const char* text, int n)
@@ -880,7 +884,7 @@ void __fastcall menu_set_badge(uint8_t* elem, void*, const char* text, int n)
     const char* logo = hud_maker_logo_text(group[0]);
     if (logo) {
         int len = (int)strlen(logo), cap = *(int16_t*)(elem + 6);
-        if (!elem[4] && len < cap) {
+        if (elem[4] || len < cap) {
             text = logo;
             n = len;
         } else {

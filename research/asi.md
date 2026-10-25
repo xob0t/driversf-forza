@@ -1,6 +1,6 @@
 # dsfforza.asi: runtime patches of Driver.exe 1.04
 
-Updated: 2026-10-24
+Updated: 2026-10-25
 
 One native plugin, `plugins\dsfforza.asi`, patches the running
 `Driver.exe` 1.04 in memory to lift limits that block large car batches.
@@ -526,10 +526,25 @@ entry is on the Lua stack; ten `element->SetText(record+0x90/+0x92)` call
 sites (driving HUD 0x006D4EA0/EB8, Shift HUD 0x006CFBDD/BF6, HUD panel
 0x006DBADD/AF6, garage shop 0x0070E361/E373, vehicle panel
 0x00711687/169F) call `hud_badge`/`hud_plate` instead, which copy the
-16-bit glyph's record over a per-element slot record (codes 1..8, 11, 12,
-14, 15) in the loaded vehicles_font and set that byte as the text. Cars
+16-bit glyph's record over a per-element slot record (codes 1..8, 14..17)
+in the loaded vehicles_font and set that byte as the text. Cars
 without the fields are untouched. The ctor hook is skipped unless its bytes
 and at least one site match.
+
+The renderer treats a text of spaces and control characters as empty (the
+OR of its bytes at most 0x20, checked at 0x007216BE and 0x0072487A), which
+made every slot text empty: until 2026-10-25 no 16-bit badge or plate drew
+(gui-assets.md, "Why the 16-bit glyphs drew nothing"). Both checks
+(`80 FA 20 77 02 33 C9`) jump to stubs that keep a lone slot code; the HUD
+sites are patched only when both checks are.
+
+**Maker list logos.** The garage maker list shows a one-byte badge per group
+(`ManufacturerLogoReferenceList`). The `[garage]` module's string set for it
+(0x006C6AE2, already wrapped for the 40-entry lists) asks mod_hud for the
+group's first car: with a `ManufacturerGlyph` whose one-character localised
+string exists (ID 900000 + code, written by gui_assets.py), the element gets
+`"ID:<n>"`, which the renderer draws as that 16-bit glyph (gui-assets.md,
+"Maker list logos").
 
 **Garage card emblem** (`[hud] card_emblem=1`; details, evidence and the
 patch table in `gui-assets.md`, "Garage card emblem"). The ctor hook also

@@ -21,7 +21,7 @@
 //      codes from 0x100, written by src/dsfforza/game/gui_assets.py --wide-glyphs) while
 //      the entry is still on the Lua stack, into a table by model id;
 //   2. replaces the ten SetText(+0x90 / +0x92) calls. For a car with a code,
-//      the element gets a slot code (1..15) of its own (gui_assets adds empty
+//      the element gets a slot code (kSlotCodes) of its own (gui_assets adds empty
 //      glyph records for them), the slot's glyph record in the loaded
 //      vehicles_font is overwritten with the 16-bit glyph's (position, size,
 //      offsets, page), and the element's text becomes that one byte. Without
