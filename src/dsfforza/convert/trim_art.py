@@ -44,6 +44,15 @@ ART_TECHNIQUE = {fm.NODAMAGE: "dsf_trim_art", fm.LIGHTS: "dsf_trim_art_lights"}
 ART_MIN_OPAQUE = 0.5  # share of the triangle's texels with alpha >= ALPHA_OPAQUE
 ART_MIN_LEVEL = 128  # brightest channel of the opaque texels' mean RGB
 ALPHA_OPAQUE = 128
+# Light artwork that is bare metal (is_metal) takes DSF's shared chrome instead of the
+# atlas, as Forza's chrome techniques do (research/forza-materials.md, "Chrome trim"):
+# on the host Chassis material (specular 0.03, no reflection) the Veyron's grey 177
+# scoops read as flat white in game.
+METAL_TECHNIQUE = "dsf_trim_metal"
+METAL_WORDS = ("metal", "alum", "steel")
+METAL_MAX_CHROMA = 24  # brightest minus darkest channel of the mean colour
+METAL_MAX_SPREAD = 12  # standard deviation of the texels' luminance
+METAL_MAX_LEVEL = 240  # white is paint
 KEEP_TRIM = frozenset({"undercarriage", "engine", "cage", "bottom", "bottom_2"})
 # black, black_glass, black_glass_breakable; mirror glass (a render target in Forza).
 KEEP_TRIM_PREFIX = ("black", "mirror")
@@ -87,6 +96,30 @@ def is_artwork(texels) -> bool:
     if len(opaque) == 0 or len(opaque) < ART_MIN_OPAQUE * len(texels):
         return False
     return float(opaque[:, :3].mean(0).max()) >= ART_MIN_LEVEL
+
+
+def is_metal(technique: str, texels) -> bool:
+    """Whether artwork texels (is_artwork) are bare metal rather than paint: a
+    technique named for metal, or one flat (luminance spread METAL_MAX_SPREAD or
+    less) neutral (chroma METAL_MAX_CHROMA or less) grey below METAL_MAX_LEVEL.
+    Forza draws its polished parts this way: the Veyron's roof scoops and engine
+    cover are `misc` triangles on one texel of grey 177, its fuel cap and
+    window frames `frame` on grey 227, the Crossfire's vent strakes `misc` on a
+    strip of (205, 200, 191). Painted artwork has colour (the quadrifoglio's
+    green), detail (lettering) or is white."""
+    n = technique.lower()
+    if any(word in n for word in METAL_WORDS):
+        return True
+    opaque = texels[texels[:, 3] >= ALPHA_OPAQUE][:, :3].astype(float)
+    if len(opaque) == 0:
+        return False
+    mean = opaque.mean(0)
+    lum = opaque @ (0.299, 0.587, 0.114)
+    return (
+        float(mean.max() - mean.min()) <= METAL_MAX_CHROMA
+        and float(lum.std()) <= METAL_MAX_SPREAD
+        and float(mean.max()) < METAL_MAX_LEVEL
+    )
 
 
 def keeps_trim(technique: str) -> bool:
@@ -201,14 +234,15 @@ def _lod_triangles(sections, lod):
 def split_trim_art(sections, atlases: fm.AtlasCache, lods=None):
     """Sections with every trim triangle that samples light opaque artwork
     (is_artwork) and is seen from outside (seen_from_outside) moved into a
-    subsection of technique ART_TECHNIQUE[family] at the same LOD with the same UV
-    transform; the other triangles keep theirs. Only textured trims of the main
-    atlases at `lods` (None: all). Unchanged sections are returned as they are.
-    Report: per section/technique, the triangles moved and their area (m2)."""
+    subsection of technique ART_TECHNIQUE[family] (METAL_TECHNIQUE for bare metal,
+    is_metal) at the same LOD with the same UV transform; the other triangles keep
+    theirs. Only textured trims of the main atlases at `lods` (None: all).
+    Unchanged sections are returned as they are. Report: per section/technique,
+    the triangles moved, how many of them as metal, and their area (m2)."""
     import numpy as np
 
     images = {}
-    # (section index, subsection index) -> (family, [triangle index], [triangle])
+    # (section index, subsection index) -> (family, [triangle index], [triangle], {metal triangle index})
     found: dict = {}
     for si, section in enumerate(sections):
         for ui, sub in enumerate(section.subsections):
@@ -233,10 +267,13 @@ def split_trim_art(sections, atlases: fm.AtlasCache, lods=None):
             pool = section.vertices_for(sub)
             for k, tri in enumerate(sub.triangles()):
                 pts = [((u := m.uv(pool[i].uv0))[0] * width, u[1] * height) for i in tri]
-                if is_artwork(triangle_texels(image, pts)):
-                    entry = found.setdefault((si, ui), (m.family, [], []))
+                texels = triangle_texels(image, pts)
+                if is_artwork(texels):
+                    entry = found.setdefault((si, ui), (m.family, [], [], set()))
                     entry[1].append(k)
                     entry[2].append([pool[i].position for i in tri])
+                    if is_metal(sub.material, texels):
+                        entry[3].add(k)
     if not found:
         return list(sections), {}
     moved: dict = {}  # (si, ui) -> set of triangle indices
@@ -262,21 +299,25 @@ def split_trim_art(sections, atlases: fm.AtlasCache, lods=None):
             if not picked:
                 subs.append(sub)
                 continue
-            keep, art, area = [], [], 0.0
+            keep, art, metal, area = [], [], [], 0.0
+            family, _, _, metallic = found[(si, ui)]
             pool = section.vertices_for(sub)
             for k, tri in enumerate(sub.triangles()):
                 if k not in picked:
                     keep += tri
                     continue
-                art += tri
+                (metal if k in metallic else art).extend(tri)
                 p = np.array([pool[i].position for i in tri])
                 area += 0.5 * float(np.linalg.norm(np.cross(p[1] - p[0], p[2] - p[0])))
             if keep:
                 subs.append(dataclasses.replace(sub, index_type=4, indices=keep))
-            family = found[(si, ui)][0]
-            subs.append(carbin.SubSection(ART_TECHNIQUE[family], sub.lod, 4, sub.uv_transform, art))
-            stats = report.setdefault(f"{section.name}/{sub.material}", {"triangles": 0, "area": 0.0})
-            stats["triangles"] += len(art) // 3
+            if art:
+                subs.append(carbin.SubSection(ART_TECHNIQUE[family], sub.lod, 4, sub.uv_transform, art))
+            if metal:
+                subs.append(carbin.SubSection(METAL_TECHNIQUE, sub.lod, 4, sub.uv_transform, metal))
+            stats = report.setdefault(f"{section.name}/{sub.material}", {"triangles": 0, "metal": 0, "area": 0.0})
+            stats["triangles"] += (len(art) + len(metal)) // 3
+            stats["metal"] += len(metal) // 3
             stats["area"] += area
         out.append(dataclasses.replace(section, subsections=subs))
     return out, report

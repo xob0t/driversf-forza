@@ -384,6 +384,16 @@ class TrimArt(unittest.TestCase):
         self.assertTrue(trim_art.is_artwork(np.array([[20, 150, 40, 255]] * 4)))  # the green cloverleaf
         self.assertFalse(trim_art.is_artwork(np.array([[20, 20, 20, 255]] * 4)))
         self.assertFalse(trim_art.is_artwork(np.array([[250, 250, 250, 0]] * 4)))  # filler
+        # bare metal: a flat neutral grey (the Veyron's scoops: one texel of 177; the
+        # Crossfire's strakes); painted artwork: colour, detail or white
+        self.assertTrue(trim_art.is_metal("misc", np.array([[177, 176, 177, 255]] * 4)))
+        self.assertTrue(trim_art.is_metal("misc", np.array([[212, 206, 198, 255], [205, 200, 191, 255]])))
+        self.assertTrue(trim_art.is_metal("smooth_metal", np.array([[20, 150, 40, 255]] * 4)))
+        self.assertFalse(trim_art.is_metal("misc", np.array([[160, 213, 175, 255]] * 4)))  # cloverleaf green
+        self.assertFalse(trim_art.is_metal("misc", np.array([[250, 250, 250, 255]] * 4)))  # white
+        self.assertFalse(
+            trim_art.is_metal("misc", np.array([[200, 200, 200, 255], [40, 40, 40, 255]] * 2))
+        )  # lettering
         image = np.zeros((8, 8, 4), np.uint8)
         none = trim_art.triangle_texels(image, [(float("inf"), 1.0), (2.0, 2.0), (1.0, 3.0)])
         self.assertEqual(len(none), 0)  # non-finite UVs (a GMC_YukonXL_01 trim)
@@ -398,12 +408,25 @@ class TrimArt(unittest.TestCase):
         misc = carbin.SubSection("misc", 1, 4, self.transform, white + dark + filler + hidden)
         black = carbin.SubSection("black", 1, 4, self.transform, list(white))
         lod3 = carbin.SubSection("misc", 3, 4, self.transform, list(white))
-        section = carbin.Section("body", (0, 0, 0), (0, 0, 0), (1, 1, 1), self.verts, [], [paint, misc, black, lod3])
+        handle = self.top(0.52, -0.45, -0.35, (4, 4, 28, 28))  # on the roof: a metal part
+        metal = carbin.SubSection("smooth_metal", 1, 4, self.transform, handle)
+        section = carbin.Section(
+            "body", (0, 0, 0), (0, 0, 0), (1, 1, 1), self.verts, [], [paint, misc, black, lod3, metal]
+        )
         (out,), report = trim_art.split_trim_art([section], self.atlases, lods={1})
-        self.assertEqual(report, {"body/misc": {"triangles": 2, "area": unittest.mock.ANY}})
+        self.assertEqual(
+            report,
+            {
+                "body/misc": {"triangles": 2, "metal": 0, "area": unittest.mock.ANY},
+                "body/smooth_metal": {"triangles": 2, "metal": 2, "area": unittest.mock.ANY},
+            },
+        )
         self.assertAlmostEqual(report["body/misc"]["area"], 0.2 * 0.2, places=6)
         names = [s.material for s in out.subsections]
-        self.assertEqual(names, ["body", "misc", trim_art.ART_TECHNIQUE[fm.NODAMAGE], "black", "misc"])
+        self.assertEqual(
+            names, ["body", "misc", trim_art.ART_TECHNIQUE[fm.NODAMAGE], "black", "misc", trim_art.METAL_TECHNIQUE]
+        )
+        self.assertEqual(fm.classify(trim_art.METAL_TECHNIQUE)[0], fm.CHROME)  # DSF's shared chrome
         self.assertIs(out.subsections[0], paint)
         self.assertIs(out.subsections[3], black)  # black* stays trim
         self.assertIs(out.subsections[4], lod3)  # not a requested LOD

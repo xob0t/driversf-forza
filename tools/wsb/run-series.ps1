@@ -44,6 +44,7 @@ param(
     [switch]$DamageSide,          # probe hits a parked side-on copy of each car (wing, door, quarter; clonetest.lua SIDE_COPY)
     [switch]$GlassLadder,         # probe damages each car in steps during its cockpit view (~21 s; glass crack states)
     [string]$Views,               # extra views after each chase view, ~6 s each: 'Bonnet,Bumper,left,right,front' (clonetest.lua)
+    [int]$Palette = -1,           # paint palette entry of every probed car (clonetest.lua shaderParams[0]); -1: the game's pick
     [switch]$LightsDriveOnly,     # with -Lights: only the day and dark drives (no setLights phases)
     [switch]$Lights,              # lamp phases per car, two shots each (dsfforza\lightstest.lua); allow ~120 s per car
     [switch]$Dyno,                # standing-start runs (dsfforza\dyno.lua); analyse with src/dsfforza/harness/dyno.py
