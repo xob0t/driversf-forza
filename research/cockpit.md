@@ -1,6 +1,6 @@
 # Cockpit view: interior entry, steering wheel, gauges, head camera
 
-Updated: 2026-10-23
+Updated: 2026-10-25
 
 How DSF draws the cockpit view, where Forza keeps the same data, and what
 `src/dsfforza/convert/cockpit.py` (`--cockpit` in `forza2dsf.py`, on by default in
@@ -1345,6 +1345,98 @@ LFA's hands are on the drawn rim now
 (`img/chase-hands-seat-before-after.jpg`). The Fusion racer, Corvette Grand
 Sport, Aventador, Challenger 1970 and Regal GNX of `out/chase/roof` also hold
 their rims.
+
+## Gauges under the cowl, and virtual dials (2026-10-25)
+
+User report on the installed full roster (`out/final-gui2`): the Mercedes
+CL65 AMG (FM4, ID 537, host 279) shows no gauges in the cockpit view.
+
+**The CL65 (confirmed-static).** Its Forza cluster has three parts: fuel and
+temperature dials on the left, the tachometer on the right (a needle and a
+`gauge_emissive` face), and in the middle a 17 x 12 cm `digital_gauge`
+display (2 triangles) on which Forza's shader draws the speedometer at run
+time. `CarAttribs.xml` has `<Speed NumTicks="0"/>` and the cockpit carbin
+no `speed_*` needle. So:
+
+- the converted car had a tachometer needle only, and the centre display
+  was a blank near-black panel (`DISPLAY_COLOUR`);
+- most of the tachometer was hidden: `camera_eye` raised the head camera
+  5.5 cm above the Forza eye to see the rim 7.9 degrees down, and from there
+  the cluster's cowl covers the top of the recessed dial (the marks from 2
+  to 6). Forza's own geometry rendered from the raised camera shows the same.
+  From the Forza eye all of the needle's sweep is in sight, from the camera
+  62%.
+
+**Survey** (`out/gaugesurvey/`, offline over the 573 cars of `out/final-gui2`:
+the manifest's `cockpit.interior.needles`, each cockpit carbin's needle
+sections and `digital_gauge` patches). 408 cars had both needles working, 3
+keep the host's stock cockpit. The 162 missing a speedometer or tachometer, by
+cause:
+
+| Cause | Cars | Fixed here |
+| --- | ---: | ---: |
+| the gauge is a blank `digital_gauge` display in the dashboard (CL65, S65, Viper 2013, Agera, Reventon, Range Rover, most GT racers) | 51 | 48 |
+| the display has its own face (PR #11: S2000, LFA, A4 DTM, FG Falcons...) | 35 | |
+| the only display is on the steering wheel (LMP, ARX, FLM racers) | 28 | |
+| placeholder cockpit carbin or none (FH1 traffic cars) | 15 | |
+| the car has no such gauge (250 GTO, GT40: no speedometer; Mini 1965, Beetle 1968: no tachometer) | 15 | |
+| small displays only (bar or digit strips, under 25 cm2: Commodore VE, Corvette C5-R...) | 15 | |
+| the needle is there but `fit_gauge` failed (Cooper S 2003, Lancer Evo IX MR, Insignia VXR) | 3 | 3 |
+
+Separately, the raised camera hid more than 5% of the needle sweep the Forza
+eye sees on 70 cars (RS6 2003 and CL65 39%, S4 2004 and Dino 246 33%, Pantera
+27%).
+
+**Fixes** (`cockpit.py`):
+
+1. *Camera under the cowl.* `camera_eye(..., sight=)` raises the camera in 5 mm
+   steps and stops before a step hides more than `GAUGE_SIGHT_LOSS` (5%) of
+   the needle-sweep samples the Forza eye sees (`GaugeSight`: rays to the
+   tip and to a point 60% out at 13 angles over each speed and tach needle's
+   sweep, against the opaque LOD-0 cockpit; glass doesn't block). The rim
+   rule still sets the most it may rise. 70 cars rise less (median 1.9 cm
+   less; CL65 5.5 -> 2.0 cm), none sees less of its needles than before, and
+   none loses more than 5% to the cowl. The report has `cockpit.gauge_sight`.
+2. *Virtual dials.* DSF's gauges are needles the engine turns (FUN_00891670,
+   ids 1 and 2); it can't draw changing digits. Where Forza has no speed or
+   tach needle, `virtual_gauges` puts a dial on the largest blank
+   `digital_gauge` patch in the dashboard (not on the steering wheel: needles
+   aren't skinned and wouldn't turn with it) that is at least 25 cm2, faces
+   the eye within 60 degrees and is half in sight. The dial: tick marks, an
+   outer arc, a red zone from the redline and seven-segment numerals as
+   flat-colour geometry (`dsf_dial_mark`, `dsf_dial_red`: interior atlas
+   cells), and a needle with a hub on the host's needle material, driven by the
+   host's gauge entry like any Forza needle. 240 degrees, or 180 where the
+   display is wide and low; two side by side (tachometer left) when both are
+   missing. The scale comes from the Forza car: speedometer to the top speed
+   + 5% in steps of 20 or 40 mph (at least 120; p605 stops the needle
+   there), tachometer to the next 1000 rpm at least 250 rpm over the redline.
+   The sweep is a whole number of degrees per 80 mph or 5000 rpm, and the
+   marks are drawn at that sweep, so the needle sits on them. Report:
+   `cockpit.interior.virtual_gauges`.
+   - A host whose gauge table has no entry for the id gets no dial
+     (`drop_virtual`): stock 250, the Volt's host and the Volt itself, has
+     no gauge entries at all, so its virtual needles would not turn.
+   - The CL65's TFT showed a virtual round speedometer in the real car;
+     the race-car LCDs showed digits. A dial there is a stand-in that reads
+     right, not what Forza draws.
+3. *Needle poses welded differently.* The min pose of three FM4 needles has
+   a few more triangles than mid and max, so `fit_gauge` found no point
+   match and dropped the needle. The matched poses now give the pivot and
+   dial normal, and the unmatched step's angle is the turn about that pivot
+   that lays one pose's points onto the other's (`_turn_onto`).
+4. *Stride-16 needles.* Hosts 250 and 293 draw their Dials material from a
+   16-byte buffer (no normal; 145 stock interiors use 20). `_needle_vertex`
+   writes the host's layout. No car on those hosts had needles before.
+
+After (offline, same survey with the new code): 459 cars with both, 111
+missing one. What is left is digital readouts the converter can't place a
+needle on (faces, steering-wheel displays, small strips, the Volt), stub
+cockpits and cars that have no such gauge.
+
+Offline renders at 60 mph and 4000 rpm (`cockpit.render_gauges`, before:
+master, after: this branch; `out/verify`): `img/gauges-cowl-virtual-offline.jpg`
+(CL65, RS6 2003, Viper 2013, Cooper S 2003).
 
 ## Risks and open questions
 
