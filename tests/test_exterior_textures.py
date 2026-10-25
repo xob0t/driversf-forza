@@ -422,6 +422,35 @@ class TrimArt(unittest.TestCase):
         self.assertIs(out, section)
         self.assertEqual(report, {})
 
+    def _plan(self, art_box):
+        """A 48 x 48 atlas for an emblem over texels (36, 4)-(60, 28) and trim artwork over art_box."""
+        emblem = carbin.SubSection("emblem", 1, 4, self.transform, self.top(0.5, 0.0, 0.2, (36, 4, 60, 28)))
+        art = carbin.SubSection(
+            trim_art.ART_TECHNIQUE[fm.NODAMAGE], 1, 4, self.transform, self.top(0.5, -0.3, -0.1, art_box)
+        )
+        section = carbin.Section("body", (0, 0, 0), (0, 0, 0), (1, 1, 1), self.verts, [], [emblem, art])
+        with mock.patch.object(fm, "AtlasCache", lambda *a, **k: self.atlases):
+            t = dm.Texturing(Path(), size=(48, 48)).plan([section], {1})
+        return t, section, art
+
+    def test_artwork_in_the_atlas(self):
+        t, section, art = self._plan((40, 8, 44, 12))  # inside the emblem's region: free
+        self.assertEqual(t.material(section, art), dm.CHASSIS)
+        self.assertEqual(t.art_flat, set())
+        _uvs, tag = t.triangle_uvs(section, art, 0, [section.lod_vertices[i].uv0 for i in art.indices[:3]])
+        self.assertEqual(tag[0], fm.NODAMAGE)  # a region, not a solid cell
+
+    def test_costly_artwork_drawn_flat(self):
+        # its own 24 x 24 region would take the atlas scale from 1 to about 0.6
+        t, section, art = self._plan((4, 4, 28, 28))
+        self.assertEqual(t.art_flat, {id(art)})
+        self.assertEqual(t.pack_scale, 1.0)
+        self.assertEqual(t.material(section, art), dm.CHASSIS)
+        uvs, tag = t.triangle_uvs(section, art, 0, [section.lod_vertices[i].uv0 for i in art.indices[:3]])
+        self.assertEqual(tag[0], "swatch")
+        self.assertEqual(tag[1:4], (240, 240, 240))  # the artwork's mean colour
+        self.assertEqual(len(set(uvs)), 1)
+
 
 class WheelSky(unittest.TestCase):
     """Wheel vertices get a baked sky term like stock wheels (outward faces about
