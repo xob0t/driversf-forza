@@ -197,7 +197,12 @@ def tyre_dims(tris: np.ndarray) -> tuple[float, float, np.ndarray]:
     wheels aren't centred on their origin (TOY_6_Supra_05: 49 mm out, 80 mm down)."""
     pts = tris.reshape(-1, 3).astype(np.float64)
     lo, hi = pts.min(axis=0), pts.max(axis=0)
-    return float((hi[1] - lo[1] + hi[2] - lo[2]) / 4), float(hi[0] - lo[0]), (lo + hi) / 2
+    centre = (lo + hi) / 2
+    radius = float((hi[1] - lo[1] + hi[2] - lo[2]) / 4)
+    # across: the tread only (a knock-off spinner sticks out past the tyre: AST_DBR1_58)
+    tread = pts[np.hypot(pts[:, 1] - centre[1], pts[:, 2] - centre[2]) > 0.85 * radius, 0]
+    centre[0] = (tread.min() + tread.max()) / 2
+    return radius, float(tread.max() - tread.min()), centre
 
 
 # --- the engine's static wheel offset -----------------------------------------------

@@ -1,6 +1,6 @@
 # Wheels: the Forza wheel model in DSF
 
-Updated: 2026-10-23
+Updated: 2026-10-25
 
 User report from driving the testdrive build (`out/testdrive`, 40 cars): the
 wheels look broken on every car, the Veyron worst. Offline investigation
@@ -298,6 +298,176 @@ is (`img/wheels-205-ingame-before-after.jpg`).
 - The brake rotor (`<car>_rotorLF_LOD0.carbin`: disc and hub, about 1100
   triangles on the 205) could go into the wheel part; it turns with the wheel,
   unlike the caliper. With the barrel's inside dark it matters less.
+
+## Wheel clearance (2026-10-25)
+
+User report on the full-roster build (`out/final-gui2`): the #2 Audi A4 DTM
+(`AUD_2_A4_11`, FM4, ID 73 on host 162) stands with its front tyres through
+the front wing flares, the rears looking off too. Tools: `dsff
+wheel_clearance` (`src/dsfforza/convert/wheel_clearance.py`), scratch
+scripts in `out/wc/` (renders with the probe's cameras, the in-game rest
+pose, variants).
+
+### How a port's wheels are placed (confirmed-static)
+
+- `forza2dsf.convert` puts the Forza body so that Forza's ground (its
+  `StockRideHeight` under `BottomCenterWheelbasePos`) is a tyre radius under
+  the host's own hub height, and moves the hub table (`patch_hubs`) to the
+  Forza wheelbase and track outer. Before this fix the radius and width were
+  the wheel model's own (`tyre_size`), the rear copy scaled to Data_Car's rear
+  tyre only on hosts with separate rear wheel parts.
+- The engine does not draw a wheel at its hub-table position. With c the
+  wheel's suspension compression, FUN_0088D620 (called from FUN_00874EA0, the
+  per-wheel draw state, on wheel+0xE4) gives the visual offset
+
+      up = clamp(c * (1 - p1 / p469) - sag - p25, p292, p188)
+
+  with sag = max(p4, 17 m / (100 p1)) from FUN_0088D750 (p140 = -17, four
+  wheels, the constant 25 at 0x00DD6970). At rest c is where FUN_008BA900's
+  spring force meets the axle's load: k = p1, times p505 on the rear axle
+  (the wheels whose flag +0x15C is 0), no force at all below p4 and a ramp to
+  full force over the next 0.1 m (0x00F3F2E8), progression p507, 5x beyond
+  p3. So a VO3D with a ride offset p25 or a dead zone p4 draws its wheels
+  higher (or lower) at rest than the hub table, and the body settles by that
+  much: on the A4 (p4 0.05 and p25 -0.02 from the Alfa 8C suspension set,
+  1050 kg on p1 2100) 39 mm at the front, 33 at the rear. Over the stock
+  fleet the offset is small (median +4 mm front, -8 mm rear), and Reflections
+  modelled each stock body around its own rest pose anyway.
+- Forza draws its single wheel model at each axle's Data_Car tyre size
+  (`FrontTireWidthMM`, aspect, rim inches): 160 of the 573 wheel models are
+  more than 5 mm off their front tyre's radius (88 bigger, up to
+  FER_F151_11's 0.393 m against 0.340; 72 smaller, down to SUZ_Liana_02's
+  0.248 against 0.298). Forza's thumbnails (`media/UI/Textures.zip`) show
+  the tyre size: the F151's tyres fit their arches, the Liana's fill them
+  (`out/wc/thumbs/`).
+- 35 wheel models sit more than 10 mm off their origin (the tyre's bounding
+  box): the five Commodore VE race cars 300 mm along z, TOY_6_Supra_05 49 mm
+  out and 80 mm down, MER_ML63AMG_09 and VW_BEETLE_68 39 mm across. The port
+  turned them about the origin, so those wheels hung off their hubs (the
+  Commodore's in front of its bumper) and wobbled as they turned.
+
+### The check (`dsff wheel_clearance`)
+
+Each wheel of a built archive is a cylinder with the drawn part's radius,
+tread width and centre; its signed distance to the clean exterior entry's
+body, over the tyre's outboard half (the liner over the inner half is hidden
+by the tyre; body points inside 0.75 R are hubs and calipers), at `design`
+(the hub table), `rest` (+ the rest offset above), `bump` (p188), `lock`
+(rest, steered p298 both ways) and the Forza reference: Data_Car's tyre at
+Forza's own static pose, and that tyre at Data_Car's `SteerMaxAngle`.
+Negative is a tyre through the body. `--as-fixed` measures an archive built
+before this fix as the converter now builds it, so the old full-roster
+archive can be surveyed without converting 573 cars again; on the ten cars
+rebuilt both ways it agrees with the rebuilt cars within 3 mm.
+
+### What was wrong (the survey, all 573 cars of `out/final-gui2`)
+
+Cars with a tyre more than 10 mm deeper in the body than Forza's own tyre is
+in the same pose (before: the build as made; after: --as-fixed):
+
+| Pose | Before | After |
+| --- | --- | --- |
+| at rest | 74 of 573 (median 20 mm, worst FER_F151_11 91, JAG_33_XKR_10 60, MAS_MC12_04 60, NOB_M600_10 57, LAM_LP7004_12 56) | 1 (NIS_3_GTR_08 15 mm, an artefact of --as-fixed: rebuilt, it matches Forza) |
+| at full lock (p298 against Forza's SteerMaxAngle) | 110 (median 20 mm, worst 77) | 41 (27 of them have a larger lock than Forza: 40 or 45 deg against 30 or 36) |
+| rest gap off Forza's by more than 10 mm either way | 372 (217 tighter, 155 looser) | 69 (6 tighter, 63 looser) |
+
+The rest offset itself, all 573 (mm, deciles): front -15 -6 1 5 10 12 15 21
+28, rear -21 -16 -10 -5 -1 0 4 11 18; 441 cars are off by more than 10 mm on
+an axle, 68 by more than 30, KEN_T440_12 (host 197, p25 -0.13) by 149. The 63
+"looser" cars that remain are on hosts with one wheel part for both axles and
+a bigger Forza rear tyre: their rear wheels are drawn at the front size (below).
+At full bump (p188) about 500 cars put a tyre in the body before and after;
+Forza's own MaxCompressHeight would too (the A4: 60 mm above its ride height
+in Forza, 36 in DSF after the fix), so that isn't counted as a fault.
+
+Ten cars rebuilt both ways (out/wc/before3 with origin/master,
+out/wc/after3; gap in mm at rest, front / rear, Forza's in brackets):
+
+| Car | Before | After |
+| --- | --- | --- |
+| AUD_2_A4_11 | -49 / -9 (-12 / 14) | -12 / 13 |
+| FER_F151_11 | -72 / -91 (41 / 41) | 41 / 41 |
+| JAG_33_XKR_10 | -67 / 7 (-7 / -8) | -7 / 50 |
+| MAS_MC12_04 | -49 / -60 (-5 / 3) | -4 / 3 |
+| NOB_M600_10 | -48 / -79 (2 / -22) | 2 / -22 |
+| LAM_LP7004_12 | -56 / -86 (3 / -52) | 3 / -52 |
+| SUZ_Liana_02 | 82 / 96 (32 / 35) | 32 / 35 |
+| TOY_6_Supra_05 | 17 / 63 (-11 / -1) | -10 / -1 |
+
+The A4 itself: the front tyres 49 mm into the body at rest against Forza's
+12 (its flares sit that close in Forza too), 56 at full lock; after the fix
+12 and 37 (Forza's own tyre at its 36 deg: 24).
+
+### Fix
+
+- `forza2dsf.axle_fits` / `convert`: each axle's wheel scaled to its
+  Data_Car tyre (radius and width, clamped 0.77..1.3 and 0.6..1.6), the front
+  tyres standing on Forza's ground, the rear hubs up or down by the radius
+  difference; a host with one wheel part for both axles draws all four at the
+  front size. The wheel model is turned about its tyre's centre
+  (`tyre_centre`, `wheel_point`'s fit carries it).
+- `forza2dsf.settle_wheels`, called by `port_car` after the handling (it
+  needs the final VO3D; `--no-settle` leaves it out): each axle's hubs (and
+  the hinges and wheel bodies on them) lowered by the rest offset, p30 and
+  p599 by the axles' mean, so the hubs keep their place against the CoG and
+  the physics is unchanged, and the VO3D camera mounts' heights (p301, p328,
+  p536, ...) raised by the same amount, since the car frame they hang from
+  follows the CoG (the head camera, a hierarchy marker, logged 40 mm higher in
+  that frame after a 36 mm drop: runs `vm-20261025-074620` and `-074146`).
+- `car_render` draws the wheels at the rest pose too (garage pictures).
+
+`img/wheel-clearance-renders.jpg` (`car_render`, at rest; before | after):
+SUZ_Liana_02's small wheels under a high body, TOY_6_Supra_05's off-centre
+wheel, a Commodore VE's wheels 300 mm off their hubs.
+
+### In game (headless VM)
+
+Runs (headless VM, the fixed dsf_enhanced from `out/scratch/wlc/v/fix`
+against the world-load crash): `vm-20261025-085610` (`out/wc/before3`,
+origin/master) and `vm-20261025-090051` (`out/wc/after3`), the fixed
+probe views `wheels` (the left side at hub height), `fq` (front left
+three-quarter) and `Bonnet`; the A4's own before shot is from
+`vm-20261025-064019` (same build and view). `img/wheel-clearance-ingame.jpg`:
+
+- AUD_2_A4_11: the front tyre through the flare before, inside it after,
+  the flare's edge clear above it as in Forza's thumbnail.
+- FER_F151_11, MAS_MC12_04, JAG_33_XKR_10, NOB_M600_10, LAM_LP7004_12: the
+  oversize tyres through the arches before (the F151's fill them, the M600's
+  and Aventador's rears cut the rear arch), at Forza's size and gap after.
+- The Bonnet camera sits where it did against the bonnet (the mounts rose with
+  the body).
+- The rest pose against the road (the probe's new `rest` line: the car
+  matrix and `Atlas.GetGroundInfo` under the car; `performance.GetTerrainHeight`
+  returns -500 on these roads): between VO3D variants of the A4 (p4, p25, p505
+  removed, `vm-20261025-073350`, against the build, `-074620`) the body
+  moved 40.7 mm at the front and 36.1 at the rear, `rest_offsets` says 41.2
+  and 34.9. The absolute height against Atlas's ground carries a car-dependent
+  12 to 40 mm more sink that the model doesn't explain, stock cars included
+  (stock 127: 19 and 18 mm; 162: 12 and 16); it doesn't show as a wheel offset
+  in the shots, so it is more likely the ground data than the wheels.
+- Handling (dyno, `vm-20261025-091055` before, `-091517` after, the
+  `handling_tune` test): A4 0-60 2.71 / 2.70 s, 0-100 6.90 / 6.90, 60-0
+  18.7 / 18.9 m, 1 s step steer at 45 mph 56.0 / 56.7 deg/s and 1.89 / 1.85 g;
+  F151 3.07 / 3.10 s, 6.64 / 6.70, 18.5 / 18.6 m, 61.3 / 60.9 deg/s. The
+  handbrake flicks (62 / 54 deg on the A4, 59 / 62 on the F151) are within
+  that test's 8 deg noise.
+
+### Open (wheel clearance)
+
+- Hosts with one wheel part for both axles draw all four wheels at the front
+  tyre's size: 63 cars with a bigger Forza rear tyre get a rear arch gap
+  larger than Forza's (JAG_33_XKR_10: 50 mm against -8). Host selection could
+  prefer split-wheel hosts for such cars, or the converter give the host a
+  second wheel part.
+- Full lock: 41 cars still put a front tyre more than 10 mm deeper into the
+  body than Forza's tyre does at Forza's own lock; 27 of them steer further in
+  DSF (p298 40 or 45 deg from the steering donor against Forza's 30 or 36:
+  the race prototypes, TOY_3_GT1_99, FOR_40_GTR_09). Capping p298 at Forza's
+  angle would cure them, but p298 also scales the steering response, so it is
+  a handling change and not made here.
+- Full bump (p188): most cars put a tyre into the body at the top of DSF's
+  visual travel, as Forza's would at its MaxCompressHeight; not changed.
+- The rest-pose sink against Atlas's ground beyond the model (above).
 
 ## Open
 
