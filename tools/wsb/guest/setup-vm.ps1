@@ -17,7 +17,8 @@ Language-neutral: no localised names or command output are parsed.
 param(
     [Parameter(Mandatory)] [ValidateSet('Provision', 'Game', 'Profile', 'Session')] [string]$Phase,
     [string]$Resolution = '1280x720',     # the game's window
-    [string]$DisplaySize = '1600x900'     # the guest desktop
+    [string]$DisplaySize = '1600x900',    # the guest desktop
+    [string]$Tag                          # the VM's name: the log goes to C:\Output\vm\<Tag>\ (VMs share C:\Output)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -179,8 +180,9 @@ finally {
     $json = $status | ConvertTo-Json -Depth 3
     Set-Content "C:\dsf\setup-$($Phase.ToLower()).json" $json
     if (Test-Path 'C:\Output') {
-        New-Item -ItemType Directory -Force -Path 'C:\Output\vm' | Out-Null
-        Set-Content "C:\Output\vm\setup-$($Phase.ToLower()).json" $json
+        $outDir = if ($Tag) { "C:\Output\vm\$Tag" } else { 'C:\Output\vm' }
+        New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+        Set-Content "$outDir\setup-$($Phase.ToLower()).json" $json
     }
 }
 if (-not $status.ok) { exit 1 }

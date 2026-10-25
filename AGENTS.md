@@ -65,7 +65,8 @@ Research notes are in `research/` (read the ones for your area first).
 - In-game tests go through `tools\wsb\run-series.ps1` (read it and
   `tools\wsb\guest\run-test.ps1`). Runs are serialised by a mutex; never kill
   `Driver.exe` or another run's processes. Prefer `-Vm` (headless VMware
-  guest, never touches the user's screen; its own mutex). Host runs
+  guests, never touch the user's screen; a series takes whichever of the two
+  VMs is free, each with its own mutex). Host runs
   (`-OnHost`) take over the screen; use them only when the user allows.
   While `out\wsb-pause` exists, host runs wait.
 - Never modify the installed game (`DSF_GAME_DIR`) except through

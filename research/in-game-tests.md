@@ -58,9 +58,12 @@ VMware runs on the Windows Hypervisor Platform, which is already enabled
 and the 3D renderer is `ISBRenderer (VKRenderer)` on the host GPU. Installed:
 Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Workstation`.
 
-- **VM:** `C:\VMs\dsfforza-test\dsfforza-test.vmx`: 4 vCPU, 8 GB, 80 GB growable
+- **VM:** `C:\VMs\dsfforza-test\dsfforza-test.vmx` (VM 1) and its linked clone
+  `C:\VMs\dsfforza-test2\dsfforza-test2.vmx` (VM 2; "VM pool" below): 4 vCPU,
+  4 GB (8 GB until 2026-10-25), 80 GB growable
   SATA disk, BIOS firmware (no TPM or Secure Boot; a vTPM needs VM encryption,
-  which vmrun can't start headless), SVGA 3D with 2 GB graphics memory, no
+  which vmrun can't start headless), SVGA 3D with 512 MB graphics memory (2 GB
+  until 2026-10-25), no
   network adapter, no USB, an HD audio card muted inside the guest. Guest:
   `D:\windows_microwin_ru.iso` (Windows 11 Pro 25H2, build 26200, ru-RU,
   MicroWin-debloated), local admin `dsf` / `dsfforza`, autologon, UAC off,
@@ -68,7 +71,7 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
   `C:\Game`, `C:\Run`, `C:\Repo`, `C:\Output`, a silent firewall with rules for
   `C:\Run\Driver.exe`, desktop 1600x900, the game in a 1280x720 window.
 - **Build:** `tools\wsb\vm-build.ps1` (Iso, Create, Install, Provision,
-  Snapshot). `tools\wsb\vm\autounattend.xml` and `first-logon.ps1` go on a
+  Snapshot; Clone for VM 2). `tools\wsb\vm\autounattend.xml` and `first-logon.ps1` go on a
   small ISO built with IMAPI2FS. The media answer file replaces the one
   MicroWin bakes into the image. The account is created in specialize and put
   in Administrators by SID (S-1-5-32-544), because the Russian image names
@@ -84,17 +87,19 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
   `dsfforza-backup\install.json`: replaced files restored and hash-checked,
   created ones dropped. Re-run `setup-vm.ps1 -Phase Game` (through `vm.ps1
   Exec`) after changing the host install.
-- **Runs:** `run-series.ps1 -Vm` starts the VM if needed (`vmrun -T ws start
+- **Runs:** `run-series.ps1 -Vm` takes a free VM of the pool ("VM pool"
+  below), starts it if needed (`vmrun -T ws start
   ... nogui`), copies the host profile into the
   guest as a 1280x720 window, then runs `run-test.ps1` in the guest's desktop
   session (`vmrun runProgramInGuest -interactive`, through a wrapper script
   copied into `C:\dsf`, started hidden) with `-RunDir
-  C:\Output\runs\vm-<stamp>`. Results land in
-  `%LOCALAPPDATA%\Temp\dsfforza-wsb\runs\vm-<stamp>\` and `runs\latest.txt`
-  points at that folder, so `events.json`, `sheet.py` and the rest work
+  C:\Output\runs\vm<id>-<stamp>`. Results land in
+  `%LOCALAPPDATA%\Temp\dsfforza-wsb\runs\vm<id>-<stamp>\` (`vm-<stamp>` before
+  2026-10-25: VM 1) and `runs\latest.txt`
+  points at the newest folder, so `events.json`, `sheet.py` and the rest work
   unchanged. `-CopyRepoFiles` makes `run-test.ps1` copy archives and overrides
   from `C:\Repo` into `C:\Run` instead of linking them across the shared
-  folder. Mutex `Local\dsfforza-vm-run`, separate from the sandbox and host
+  folder. VM mutexes are separate from the sandbox and host
   series. Keys go to the game inside the guest only; the host's speakers and
   Driver profile aren't touched. The share `Repo` is the checkout the VM was
   built from (the main one); each series points it at its own checkout
@@ -102,8 +107,10 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
   from a git worktree tests that worktree's builds and scripts. Before that
   change a worktree's `-Vm` series ran the main checkout's `run-test.ps1` on
   the main checkout's copy of its archive path (missing, or stale).
-- **Control:** `tools\wsb\vm.ps1 Start|Status|Exec|Stop|Revert`. Revert goes
-  back to the snapshot `clean` (powered off, right after provisioning).
+- **Control:** `tools\wsb\vm.ps1 Start|Status|Exec|Share|Stop|Revert|StopIdle
+  [-Vm 1|2|all]`. Revert goes
+  back to the snapshot `clean` (powered off, right after provisioning); Stop
+  and Revert wait until no series uses the VM.
   `tools\wsb\guest\fps.ps1` (through `vm.ps1 Exec`, next to a run) records 30 s
   of presents with Intel PresentMon (`C:\Output\vm\PresentMon-2.6.0-x64.exe`).
 

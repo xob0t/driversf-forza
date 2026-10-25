@@ -17,18 +17,28 @@ Steps (default: all, in order; each can be run alone):
   Provision  boots, runs guest\setup-vm.ps1 -Phase Provision (links, C:\Game, profile,
              display, mute), powers off.
   Snapshot   snapshot "clean" of the powered-off VM (vm.ps1 Revert goes back to it).
+  Clone      (not part of All) another pool VM (-Vm 2: C:\VMs\dsfforza-test2) as a linked
+             clone of VM 1's snapshot "clean": its disk is a child of VM 1's base disk,
+             about 0.1 GB. Takes VM 1's run mutex (waits for its series), gives the clone
+             the pool settings ($VmSettings in vm-common.ps1) and its own snapshot "clean".
+             VM 1's snapshot "clean" must then stay (the clones depend on it).
+
+-Vm picks the VM (default 1, C:\VMs\dsfforza-test). Memory and CPUs come from $VmSettings
+in vm-common.ps1; vm.ps1 Start re-applies them to a powered-off VM.
 
 .EXAMPLE
 .\tools\wsb\vm-build.ps1                    # everything (about an hour)
 .\tools\wsb\vm-build.ps1 -Step Provision    # re-provision an installed VM
+.\tools\wsb\vm-build.ps1 -Step Clone -Vm 2  # second VM for parallel series
 #>
 param(
-    [ValidateSet('All', 'Iso', 'Create', 'Install', 'Provision', 'Snapshot')] [string]$Step = 'All',
+    [ValidateSet('All', 'Iso', 'Create', 'Install', 'Provision', 'Snapshot', 'Clone')] [string]$Step = 'All',
+    [string]$Vm = '1',
     [string]$WindowsIso = $env:DSF_VM_ISO,   # a Windows 10/11 x64 install ISO
     [string]$VcRedist = 'C:\VMs\downloads\vcredist\vc_redist.x86.exe',
     [string]$GamePath = $env:DSF_GAME_DIR,
-    [int]$Cpus = 4,
-    [int]$MemoryMB = 8192,
+    [int]$Cpus = 0,                # 0: $VmSettings numvcpus
+    [int]$MemoryMB = 0,            # 0: $VmSettings memsize
     [int]$DiskGB = 80,
     [int]$InstallMinutes = 120,
     [int]$VncPort = 0,             # Create: VNC on 127.0.0.1:<port> (no password) to watch a headless install;
@@ -38,8 +48,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'vm-common.ps1')
+Use-Vm $Vm
+if (-not $Cpus) { $Cpus = [int]$VmSettings['numvcpus'] }
+if (-not $MemoryMB) { $MemoryMB = [int]$VmSettings['memsize'] }
 if (-not $GamePath) { throw 'Set DSF_GAME_DIR (or pass -GamePath) to your Driver: San Francisco folder, the one with Driver.exe.' }
-if (-not $WindowsIso) { throw 'Set DSF_VM_ISO (or pass -WindowsIso) to a Windows 10/11 x64 install ISO.' }
+if (-not $WindowsIso -and $Step -in 'All', 'Iso', 'Create') { throw 'Set DSF_VM_ISO (or pass -WindowsIso) to a Windows 10/11 x64 install ISO.' }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $profileHost = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Ubisoft\Driver San Francisco'
 $configIso = Join-Path $VmDir 'config.iso'
@@ -69,18 +82,6 @@ public static class DsfIso {
     [DsfIso]::Write($Path, $result.ImageStream, $result.BlockSize, $result.TotalBlocks)
 }
 
-function Set-VmxValues([hashtable]$Values) {
-    # Replace or append "key = value" lines (only while the VM is off).
-    $lines = [System.Collections.Generic.List[string]](Get-Content -LiteralPath $VmVmx)
-    foreach ($key in $Values.Keys) {
-        $line = "$key = `"$($Values[$key])`""
-        $at = -1
-        for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match "^\s*$([regex]::Escape($key))\s*=") { $at = $i; break } }
-        if ($at -ge 0) { $lines[$at] = $line } else { $lines.Add($line) }
-    }
-    [IO.File]::WriteAllLines($VmVmx, $lines)
-}
-
 function Step-Iso {
     foreach ($file in $WindowsIso, $VcRedist) { if (-not (Test-Path $file)) { throw "missing $file" } }
     if ((Get-AuthenticodeSignature $VcRedist).Status -ne 'Valid') { throw "$VcRedist is not validly signed" }
@@ -105,7 +106,7 @@ function Step-Create {
         if (Test-VmRunning) { Stop-Vm | Out-Null }
         Get-ChildItem $VmDir -Force | Where-Object { $_.Name -notin 'config.iso', 'config-iso' } | Remove-Item -Recurse -Force
     }
-    $disk = Join-Path $VmDir 'dsfforza-test.vmdk'
+    $disk = Join-Path $VmDir "$VmName.vmdk"
     $out = & (Join-Path $vmware 'vmware-vdiskmanager.exe') -c -s "${DiskGB}GB" -a lsilogic -t 0 $disk 2>&1
     if ($LASTEXITCODE -ne 0) { throw "vmware-vdiskmanager failed: $out" }
 
@@ -118,14 +119,14 @@ function Step-Create {
     New-Item -ItemType Directory -Force -Path $VmOutputHost | Out-Null
     $vmx = [ordered]@{
         '.encoding' = 'UTF-8'; 'config.version' = '8'; 'virtualHW.version' = '21'
-        'displayName' = 'dsfforza-test'; 'guestOS' = 'windows9-64'; 'firmware' = 'bios'
+        'displayName' = $VmName; 'guestOS' = 'windows9-64'; 'firmware' = 'bios'
         'numvcpus' = "$Cpus"; 'cpuid.coresPerSocket' = "$Cpus"; 'memsize' = "$MemoryMB"
         'mainMem.useNamedFile' = 'FALSE'
         'pciBridge0.present' = 'TRUE'; 'pciBridge4.present' = 'TRUE'; 'pciBridge4.virtualDev' = 'pcieRootPort'; 'pciBridge4.functions' = '8'
         'pciBridge5.present' = 'TRUE'; 'pciBridge5.virtualDev' = 'pcieRootPort'; 'pciBridge5.functions' = '8'
         'vmci0.present' = 'TRUE'; 'hpet0.present' = 'TRUE'
         'sata0.present' = 'TRUE'
-        'sata0:0.present' = 'TRUE'; 'sata0:0.fileName' = 'dsfforza-test.vmdk'
+        'sata0:0.present' = 'TRUE'; 'sata0:0.fileName' = "$VmName.vmdk"
         'sata0:1.present' = 'TRUE'; 'sata0:1.deviceType' = 'cdrom-image'; 'sata0:1.fileName' = $WindowsIso; 'sata0:1.startConnected' = 'TRUE'
         'sata0:2.present' = 'TRUE'; 'sata0:2.deviceType' = 'cdrom-image'; 'sata0:2.fileName' = $configIso; 'sata0:2.startConnected' = 'TRUE'
         'sata0:3.present' = 'TRUE'; 'sata0:3.deviceType' = 'cdrom-image'; 'sata0:3.fileName' = $toolsIso; 'sata0:3.startConnected' = 'TRUE'
@@ -133,7 +134,7 @@ function Step-Create {
         'ethernet0.present' = 'FALSE'; 'usb.present' = 'FALSE'; 'ehci.present' = 'FALSE'; 'usb_xhci.present' = 'FALSE'
         'floppy0.present' = 'FALSE'; 'serial0.present' = 'FALSE'; 'parallel0.present' = 'FALSE'
         'sound.present' = 'FALSE'
-        'svga.present' = 'TRUE'; 'mks.enable3d' = 'TRUE'; 'svga.graphicsMemoryKB' = '2097152'
+        'svga.present' = 'TRUE'; 'mks.enable3d' = 'TRUE'; 'svga.graphicsMemoryKB' = $VmSettings['svga.graphicsMemoryKB']
         'tools.syncTime' = 'TRUE'; 'tools.upgrade.policy' = 'manual'
         'msg.autoAnswer' = 'TRUE'; 'uuid.action' = 'keep'
         'isolation.tools.hgfs.disable' = 'FALSE'; 'isolation.tools.copy.disable' = 'TRUE'; 'isolation.tools.paste.disable' = 'TRUE'
@@ -173,7 +174,7 @@ function Step-Install {
     $last = ''
     while ($true) {
         Start-Sleep -Seconds 30
-        if (-not (Test-VmRunning)) { throw 'the VM powered off during the install (see C:\VMs\dsfforza-test\vmware.log)' }
+        if (-not (Test-VmRunning)) { throw "the VM powered off during the install (see $VmDir\vmware.log)" }
         Set-VmPriority
         $tools = (Invoke-Vmrun @('checkToolsState', $VmVmx) -Quiet -Timeout 60).Out.Trim()
         $done = $false
@@ -190,20 +191,34 @@ function Step-Install {
     Set-VmxValues @{
         'sata0:1.present' = 'FALSE'; 'sata0:2.present' = 'FALSE'; 'sata0:3.present' = 'FALSE'
         'sound.present' = 'TRUE'; 'sound.virtualDev' = 'hdaudio'; 'sound.fileName' = '-1'; 'sound.autodetect' = 'TRUE'
-    }
+    } | Out-Null
     Say 'powered off; CDs detached, sound card added'
 }
 
 function Step-Provision {
     Start-VmHeadless
     Say 'provisioning (copies the game: several minutes)'
-    $out = & (Join-Path $PSScriptRoot 'vm.ps1') Exec -HostScript (Join-Path $PSScriptRoot 'guest\setup-vm.ps1') -Arguments @('-Phase', 'Provision') -TimeoutSeconds 3600
-    Get-Content (Join-Path $VmOutputHost 'vm\setup-provision.json') -ErrorAction SilentlyContinue
+    $out = & (Join-Path $PSScriptRoot 'vm.ps1') Exec -Vm $VmInfo.Id -HostScript (Join-Path $PSScriptRoot 'guest\setup-vm.ps1') -Arguments @('-Phase', 'Provision', '-Tag', $VmName) -TimeoutSeconds 3600
+    Get-Content (Join-Path $VmOutputHost "vm\$VmName\setup-provision.json") -ErrorAction SilentlyContinue
     Stop-Vm | Out-Null
     Say 'provisioned; powered off'
 }
 
+function Get-LinkedClones {
+    # Pool VMs whose disk is a child of this VM's base disk (a linked clone's vmdk names its
+    # parent in the descriptor near the start of the file).
+    foreach ($other in Get-VmPool | Where-Object Vmx -ne $VmVmx) {
+        foreach ($disk in Get-ChildItem -LiteralPath $other.Dir -Filter *.vmdk -ErrorAction SilentlyContinue) {
+            $stream = [IO.File]::Open($disk.FullName, 'Open', 'Read', 'ReadWrite')
+            try { $head = New-Object byte[] 65536; $n = $stream.Read($head, 0, $head.Length) } finally { $stream.Dispose() }
+            if ([Text.Encoding]::UTF8.GetString($head, 0, $n) -match ('parentFileNameHint="' + [regex]::Escape($VmDir) + '\\')) { $other.Name; break }
+        }
+    }
+}
+
 function Step-Snapshot {
+    $clones = @(Get-LinkedClones)
+    if ($clones) { throw "$VmName's snapshot clean is the parent of linked clones ($($clones -join ', ')); delete them first (vmrun deleteVM)" }
     if (Test-VmRunning) { Stop-Vm | Out-Null }
     $list = (Invoke-Vmrun @('listSnapshots', $VmVmx) -Quiet).Out
     if ($list -split "`r?`n" | Where-Object { $_.Trim() -eq 'clean' }) { Invoke-Vmrun @('deleteSnapshot', $VmVmx, 'clean') | Out-Null }
@@ -211,9 +226,32 @@ function Step-Snapshot {
     Say 'snapshot clean taken'
 }
 
+function Step-Clone {
+    $source = Get-VmInfo $VmDefaultPool[0]
+    if ($VmVmx -eq $source.Vmx) { throw "VM 1 ($($source.Vmx)) is the clone source; pick the clone with -Vm 2 (or another id)" }
+    if (-not (Test-Path -LiteralPath $source.Vmx)) { throw "no $($source.Vmx) to clone" }
+    if ((Test-Path -LiteralPath $VmVmx) -and -not $Force) { throw "$VmVmx exists; use -Force to replace it" }
+    # VM 1's run mutexes, so no series uses it meanwhile: deleting and making a clone also
+    # write VM 1's .vmsd (snapshot0.cloneN).
+    $held = Enter-VmMutexes $source.RunMutexes ([int][TimeSpan]::FromHours(3).TotalMilliseconds)
+    if (-not $held) { throw "$($source.Name) is still in use after 3 hours" }
+    try {
+        if (Test-Path -LiteralPath $VmVmx) {
+            if (Test-VmRunning) { Stop-Vm | Out-Null }
+            Invoke-Vmrun @('deleteVM', $VmVmx) | Out-Null
+            Say "deleted the old $VmVmx"
+        }
+        Say "cloning $($source.Name) (snapshot clean) to $VmVmx, linked"
+        Invoke-Vmrun @('clone', $source.Vmx, $VmVmx, 'linked', '-snapshot=clean', "-cloneName=$VmName") | Out-Null
+    } finally { Exit-VmMutexes $held }
+    $changed = Set-VmxValues (@{ 'displayName' = $VmName } + [hashtable]$VmSettings)
+    Say "set $($changed -join ', ')"
+    Step-Snapshot
+}
+
 $lifecycle = Enter-VmLifecycle
 try {
-    foreach ($s in 'Iso', 'Create', 'Install', 'Provision', 'Snapshot') {
-        if ($Step -eq 'All' -or $Step -eq $s) { & "Step-$s" }
+    foreach ($s in 'Iso', 'Create', 'Install', 'Provision', 'Snapshot', 'Clone') {
+        if (($Step -eq 'All' -and $s -ne 'Clone') -or $Step -eq $s) { & "Step-$s" }
     }
 } finally { $lifecycle.ReleaseMutex() }
