@@ -1692,13 +1692,19 @@ def host_interior(stream, interior, known: dict | None = None) -> InteriorMateri
     )
 
 
-def _needle_vertex(pos, uv, gauge_id: int, normal) -> bytes:
-    """Host needle layout (stride 20): s0 4 x i16, s8 4 x f16 (u, v, gauge id, 0), s5 4 x u8."""
+def _needle_vertex(pos, uv, gauge_id: int, normal, stride: int = 20) -> bytes:
+    """Host needle layout: s0 4 x i16, s8 4 x f16 (u, v, gauge id, 0), then at
+    stride 20 s5 4 x u8 (the normal). Hosts 250 and 293 draw their Dials
+    material from a stride-16 buffer without the normal (145 stock interiors
+    use 20)."""
     from dsfforza.convert import forza2dsf
 
     q = [max(-32768, min(32767, round(c * forza2dsf.POSITION_SCALE))) for c in pos]
+    head = struct.pack("<4h4e", q[0], q[1], q[2], 4096, uv[0], uv[1], float(gauge_id), 0.0)
+    if stride == 16:
+        return head
     p0, p1 = forza2dsf.spherical(normal)
-    return struct.pack("<4h4e4B", q[0], q[1], q[2], 4096, uv[0], uv[1], float(gauge_id), 0.0, p0, p1, 128, 128)
+    return head + struct.pack("<4B", p0, p1, 128, 128)
 
 
 # Vertex-cluster cells (m) tried in turn until the interior MDXN fits.
@@ -2450,7 +2456,10 @@ def convert_interior(
                             if turn:
                                 pos = rotate_about(pos, g.pivot, g.normal, turn)
                                 nrm = rotate_about(nrm, (0.0, 0.0, 0.0), g.normal, turn)
-                            verts.append(_needle_vertex(place.point(pos), uv, GAUGE_IDS[family], place.normal(nrm)))
+                            stride = layout[mats.needles][0]
+                            verts.append(
+                                _needle_vertex(place.point(pos), uv, GAUGE_IDS[family], place.normal(nrm), stride)
+                            )
                         out.append(remap[(i, uv)])
                     tris.append(tuple(out))
             if tris:
@@ -2567,7 +2576,7 @@ def _entry_triangles(
 
 def vb_needle(mesh, sub) -> bool:
     vb = mesh.vertex_buffers.get(sub.vertex_buffer)
-    return bool(vb and vb.stride == 20 and vb.element(8))
+    return bool(vb and vb.stride in (16, 20) and vb.element(8))
 
 
 def needle_gauge_ids(stream, interior) -> dict[float, int]:
