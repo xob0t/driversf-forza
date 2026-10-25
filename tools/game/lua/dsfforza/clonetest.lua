@@ -31,7 +31,9 @@ local GLASS_LADDER = false    -- config.glass_ladder (run-test -GlassLadder): da
 local VIEWS = {}              -- config.views (run-test -Views): extra views between the chase and cockpit views:
                               -- camera modes ("Bonnet", "Bumper") or fixed cameras on the car ("left", "right",
                               -- "front": the driver's seat seen through the side windows or the windscreen;
-                              -- "rear": the tailgate; "wheels": the left side at hub height)
+                              -- "rear": the tailgate; "wheels": the left side at hub height; "fq": the
+                              -- front left wheel from the front three-quarter; "lock": that wheel
+                              -- from ahead, for steering in place with run-test -DriveKey Left)
 local DYNO = nil              -- config.dyno (run-test -Dyno): the dyno.lua module, acceleration and braking runs
 local LIGHTS = nil            -- config.lights (run-test -Lights): the lightstest.lua module, lamp phases per car
 
@@ -430,6 +432,10 @@ local FIXED_VIEWS = {
 	-- left side at hub height (both left wheels).
 	rear = { { 0.8, 1.5, -5.0 }, { 0.0, 0.85, -1.8 } },
 	wheels = { { 3.6, 0.6, 0.0 }, { 0.6, 0.35, 0.0 } },
+	-- Wheel clearance (research/wheels.md): the front left wheel in its arch from the front
+	-- three-quarter, and from ahead at hub height (the tyre swept by the steering).
+	fq = { { 2.9, 1.1, 3.9 }, { 0.6, 0.4, 1.1 } },
+	lock = { { 1.3, 0.55, 4.2 }, { 0.8, 0.35, 1.3 } },
 }
 local fixedCamera = nil
 
@@ -478,6 +484,71 @@ local function logCameraInCar(id, car, label)
 			p[1], p[2], p[3], f[1], f[2], f[3]))
 	end)
 	if not ok then log(string.format("id %d: %s camera in car: %s", id, label, tostring(err))) end
+end
+
+-- The car's pose against the ground (research/wheels.md, "Wheel clearance"): the car matrix
+-- (rows x, y, z, position) and the ground height under points of the car's frame
+-- (+x left, +z forward, y = 0 the frame's origin height), so the body's height over the road
+-- at rest can be compared with the hub table offline (src/dsfforza/convert/wheel_clearance.py).
+local REST_POINTS = { { 0, 0 }, { 0.8, 1.4 }, { -0.8, 1.4 }, { 0.8, -1.4 }, { -0.8, -1.4 }, { 0, 2.0 }, { 0, -2.0 } }
+-- performance.GetTerrainHeight returns -500 on the roads (run vm-20261025-064019); Atlas.GetGroundInfo
+-- "returns surface height and normal at a given point".
+local function groundAt(p)
+	local ok, h, n = pcall(function() return Atlas.GetGroundInfo(p) end)
+	if not ok then
+		ok, h, n = pcall(function() return Atlas:GetGroundInfo(p) end)
+	end
+	if ok and h ~= nil then
+		if tonumber(h) then return tonumber(h), "atlas" end
+		local okY, y = pcall(function() return h.y end)
+		if okY and tonumber(y) then return tonumber(y), "atlas.y" end
+		local okH, y2 = pcall(function() return h.height or h[1] end)
+		if okH and tonumber(y2) then return tonumber(y2), "atlas.h" end
+		return nil, "atlas " .. describe(h) .. " " .. describe(n)
+	end
+	return nil, "atlas failed (" .. tostring(h) .. ")"
+end
+
+-- GameVehicleResource.getSnappedPredictedPosition: "the predicted position at a time in seconds,
+-- snapped to the ground", for the car itself at t = 0.
+local function snappedPosition(car)
+	local tries = {
+		function() return GameVehicleResource.getSnappedPredictedPosition(car, 0) end,
+		function() return GameVehicleResource.getSnappedPredictedPosition({ gameVehicle = car, time = 0 }) end,
+		function() return car:getSnappedPredictedPosition(0) end,
+	}
+	for k, fn in ipairs(tries) do
+		local ok, p = pcall(fn)
+		if ok and p ~= nil then
+			local okY, y = pcall(function() return p.y end)
+			if okY and tonumber(y) then return string.format("form%d %.4f %.4f %.4f", k, p.x, p.y, p.z) end
+			return string.format("form%d %s", k, describe(p))
+		elseif not ok and k == #tries then
+			return "failed (" .. tostring(p) .. ")"
+		end
+	end
+	return "nil"
+end
+
+local function logRestPose(id, car, label)
+	local ok, err = pcall(function()
+		local m = car.matrix
+		local rows = {}
+		for i = 0, 3 do
+			table.insert(rows, string.format("%.4f %.4f %.4f", m[i].x, m[i].y, m[i].z))
+		end
+		local parts, how = {}, nil
+		for _, xz in ipairs(REST_POINTS) do
+			local p = m[3] + m[0] * xz[1] + m[2] * xz[2]
+			local h, kind = groundAt(vec.vector(p.x, p.y + 2.0, p.z, 1))
+			how = kind
+			table.insert(parts, string.format("%.2f,%.2f:%s", xz[1], xz[2], h and string.format("%.4f", h) or "?"))
+		end
+		log(string.format("id %d: rest %s matrix %s ground(%s) %s snapped %s speed %s", id, label,
+			table.concat(rows, " | "), tostring(how), table.concat(parts, " "), snappedPosition(car),
+			tostring(vehicleSpeed())))
+	end)
+	if not ok then log(string.format("id %d: rest %s: %s", id, label, tostring(err))) end
 end
 
 local function endFixedCamera()
@@ -546,6 +617,9 @@ local function step()
 				sideHit(id, state.spawned, SIDE_STAGES[state.ticks], "car")
 			end
 		end
+	end
+	if id ~= nil and state.spawned ~= nil and state.phase == "chase_view" and (state.ticks == 12 or state.ticks == 20) then
+		logRestPose(id, state.spawned, "t" .. state.ticks)
 	end
 	if #VIEWS > 0 and id ~= nil and state.spawned ~= nil then
 		if state.phase == "chase_view" and state.ticks == VIEW_TICKS - 1 then
