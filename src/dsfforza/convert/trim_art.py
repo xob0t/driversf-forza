@@ -63,6 +63,8 @@ def triangle_texels(image, pts):
 
     height, width = image.shape[:2]
     xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    if not all(math.isfinite(c) for c in xs + ys):  # non-finite UVs (a GMC_YukonXL_01 trim): no texels
+        return np.zeros((0, 4), dtype=int)
     x0, x1 = max(0, int(math.floor(min(xs)))), min(width, int(math.ceil(max(xs))) + 1)
     y0, y1 = max(0, int(math.floor(min(ys)))), min(height, int(math.ceil(max(ys))) + 1)
     area = (xs[1] - xs[0]) * (ys[2] - ys[0]) - (ys[1] - ys[0]) * (xs[2] - xs[0])
@@ -143,7 +145,7 @@ def seen_from_outside(occluders, candidates):
 
     if len(candidates) == 0:
         return np.zeros(0, bool)
-    surface = _surface_points(occluders, VIEW_PIXEL * 0.7)
+    surface = np.concatenate([_surface_points(occluders, VIEW_PIXEL * 0.7), candidates.reshape(-1, 3)])
     centroid = candidates.mean(1, keepdims=True)
     probes = np.concatenate([centroid, candidates + (centroid - candidates) * 0.25], axis=1)  # (n, 4, 3)
     seen = np.zeros(len(candidates), bool)

@@ -384,6 +384,10 @@ class TrimArt(unittest.TestCase):
         self.assertTrue(trim_art.is_artwork(np.array([[20, 150, 40, 255]] * 4)))  # the green cloverleaf
         self.assertFalse(trim_art.is_artwork(np.array([[20, 20, 20, 255]] * 4)))
         self.assertFalse(trim_art.is_artwork(np.array([[250, 250, 250, 0]] * 4)))  # filler
+        image = np.zeros((8, 8, 4), np.uint8)
+        none = trim_art.triangle_texels(image, [(float("inf"), 1.0), (2.0, 2.0), (1.0, 3.0)])
+        self.assertEqual(len(none), 0)  # non-finite UVs (a GMC_YukonXL_01 trim)
+        self.assertFalse(trim_art.is_artwork(none))
 
     def test_visible_artwork_moves(self):
         paint = carbin.SubSection("body", 1, 4, self.transform, self.box(0.5))
