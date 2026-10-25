@@ -133,6 +133,10 @@ _add(
 # Synthetic plate sections (src/dsfforza/convert/plates.py): paint material, UVs on the
 # shared atlas's plate (not a Forza technique).
 _add(PAINT, None, "dsf_plate dsf_inner")  # dsf_inner: damage.split_exposed (panel undersides)
+# Trim triangles on light artwork (trim_art.split_trim_art: the Alfa GTA's quadrifoglio
+# badges are `misc` triangles on white and green texels): drawn through the atlas.
+_add(TEXTURED, NODAMAGE, "dsf_trim_art")
+_add(TEXTURED, LIGHTS, "dsf_trim_art_lights")
 # Livery decal slots: their raw UV0 spans the whole unit square, i.e. a texture of
 # their own (the player's livery), squeezed by m_UVOffsetScale onto an arbitrary patch
 # of the car atlases. The KOE_Agera_11's rear-wing pair lands on a 3-texel column at the

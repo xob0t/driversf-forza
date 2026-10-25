@@ -1712,7 +1712,7 @@ def convert(
     if opts.textures:
         import dataclasses
 
-        from dsfforza.convert import cutout, dsf_materials
+        from dsfforza.convert import cutout, dsf_materials, trim_art
         from dsfforza.convert import forza_materials as fm
 
         lods = set(opts.lods.values()) | {opts.shadow_lod, opts.exterior_lod}
@@ -1725,6 +1725,16 @@ def convert(
             log(
                 "alpha-tested decals cut to their mask: "
                 + ", ".join(f"{k} {v['cut']} -> {v['made']}" for k, v in sorted(cut.items()))
+            )
+        # Trim triangles on light artwork (the Alfa GTA's quadrifoglio badges) to the
+        # atlas: the shared trim draws them black (src/dsfforza/convert/trim_art.py).
+        body, art = trim_art.split_trim_art(car.body, fm.AtlasCache(car.folder), lods=lods)
+        if art:
+            car = dataclasses.replace(car, body=body)
+            report["trim_art"] = {k: {**v, "area": round(v["area"], 5)} for k, v in art.items()}
+            log(
+                "trim artwork to the atlas: "
+                + ", ".join(f"{k} {v['triangles']} ({v['area']:.3f} m2)" for k, v in sorted(art.items()))
             )
         wheels = None
         if not opts.no_wheel:  # the wheel LODs add_geometry will draw (wheel_lod)

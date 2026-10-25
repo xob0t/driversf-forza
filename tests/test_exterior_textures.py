@@ -14,7 +14,7 @@ from unittest import mock
 
 from dsfforza.build import port_car
 from dsfforza.build.forza_roster import Source
-from dsfforza.convert import cutout, forza2dsf
+from dsfforza.convert import cutout, forza2dsf, trim_art
 from dsfforza.convert import dsf_materials as dm
 from dsfforza.convert import forza_materials as fm
 from dsfforza.formats import carbin
@@ -317,6 +317,109 @@ class CutAlphaTested(unittest.TestCase):
         self.atlas = _atlas(self.SIZE, lambda x, y: True)
         (out,), report = cutout.cut_alpha_tested([self.section], self.atlases)
         self.assertIs(out, self.section)
+        self.assertEqual(report, {})
+
+
+class TrimArt(unittest.TestCase):
+    """Trim triangles on light opaque artwork that can be seen from outside go to the atlas:
+    the Alfa GTA's quadrifoglio badges are `misc` (trim) triangles on white and green texels,
+    and the shared trim drew them as black triangles (out/final-gui2)."""
+
+    SIZE = 64
+
+    def setUp(self):
+        size = self.SIZE
+        data = bytearray()
+        for y in range(size):
+            for x in range(size):
+                if y >= 32:
+                    data += bytes((250, 250, 250, 0))  # paint-through filler: white, alpha 0
+                elif x < 32:
+                    data += bytes((240, 240, 240, 255))  # white badge artwork
+                else:
+                    data += bytes((20, 20, 20, 255))  # dark trim swatch
+        atlas = (size, size, data)
+
+        class FakeAtlases:
+            def get(self, family):
+                return atlas
+
+        self.atlases = FakeAtlases()
+        self.verts = []
+        self.transform = (0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0)
+
+    def quad(self, corners, uv_box, normal=(0.0, 1.0, 0.0)):
+        """Two triangles over four corners, UVs over uv_box (u0, v0, u1, v1) in texels."""
+        u0, v0, u1, v1 = (c / self.SIZE for c in uv_box)
+        base = len(self.verts)
+        for p, uv in zip(corners, ((u0, v0), (u1, v0), (u1, v1), (u0, v1))):
+            self.verts.append(carbin.Vertex(p, uv, (0.5, 0.5), normal, bytes((100, 0, 0, 0))))
+        return [base, base + 1, base + 2, base, base + 2, base + 3]
+
+    def box(self, half):
+        """A closed cube of paint around the origin (12 triangles)."""
+        h = half
+        c = [(x, y, z) for x in (-h, h) for y in (-h, h) for z in (-h, h)]
+        faces = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
+        out = []
+        for f in faces:
+            out += self.quad([c[i] for i in f], (0, 0, 1, 1))
+        return out
+
+    def top(self, y, x0, x1, uv_box):
+        return self.quad([(x0, y, -0.1), (x1, y, -0.1), (x1, y, 0.1), (x0, y, 0.1)], uv_box)
+
+    def test_roles(self):
+        self.assertEqual(fm.classify(trim_art.ART_TECHNIQUE[fm.NODAMAGE]), (fm.TEXTURED, fm.NODAMAGE))
+        self.assertEqual(fm.classify(trim_art.ART_TECHNIQUE[fm.LIGHTS]), (fm.TEXTURED, fm.LIGHTS))
+        for name in ("black", "black_glass", "undercarriage", "numberplate", "numplate", "mirrorLeft"):
+            self.assertTrue(trim_art.keeps_trim(name), name)
+        for name in ("misc", "frame", "matte_colors", "plastic2"):
+            self.assertFalse(trim_art.keeps_trim(name), name)
+
+    def test_is_artwork(self):
+        import numpy as np
+
+        self.assertTrue(trim_art.is_artwork(np.array([[240, 240, 240, 255]] * 4)))
+        self.assertTrue(trim_art.is_artwork(np.array([[20, 150, 40, 255]] * 4)))  # the green cloverleaf
+        self.assertFalse(trim_art.is_artwork(np.array([[20, 20, 20, 255]] * 4)))
+        self.assertFalse(trim_art.is_artwork(np.array([[250, 250, 250, 0]] * 4)))  # filler
+
+    def test_visible_artwork_moves(self):
+        paint = carbin.SubSection("body", 1, 4, self.transform, self.box(0.5))
+        white = self.top(0.52, -0.3, -0.1, (4, 4, 28, 28))  # on the roof: a white badge
+        dark = self.top(0.52, 0.1, 0.3, (36, 4, 60, 28))  # on the roof: dark trim
+        filler = self.top(0.52, 0.32, 0.45, (4, 36, 28, 60))  # white but alpha 0
+        hidden = self.top(0.0, -0.3, 0.3, (4, 4, 28, 28))  # white, inside the box
+        misc = carbin.SubSection("misc", 1, 4, self.transform, white + dark + filler + hidden)
+        black = carbin.SubSection("black", 1, 4, self.transform, list(white))
+        lod3 = carbin.SubSection("misc", 3, 4, self.transform, list(white))
+        section = carbin.Section("body", (0, 0, 0), (0, 0, 0), (1, 1, 1), self.verts, [], [paint, misc, black, lod3])
+        (out,), report = trim_art.split_trim_art([section], self.atlases, lods={1})
+        self.assertEqual(report, {"body/misc": {"triangles": 2, "area": unittest.mock.ANY}})
+        self.assertAlmostEqual(report["body/misc"]["area"], 0.2 * 0.2, places=6)
+        names = [s.material for s in out.subsections]
+        self.assertEqual(names, ["body", "misc", trim_art.ART_TECHNIQUE[fm.NODAMAGE], "black", "misc"])
+        self.assertIs(out.subsections[0], paint)
+        self.assertIs(out.subsections[3], black)  # black* stays trim
+        self.assertIs(out.subsections[4], lod3)  # not a requested LOD
+        self.assertEqual(out.subsections[1].indices, dark + filler + hidden)
+        self.assertEqual(out.subsections[2].indices, white)
+        self.assertEqual(out.subsections[2].uv_transform, self.transform)
+
+    def test_nothing_to_move(self):
+        dark = self.top(0.0, 0.1, 0.3, (36, 4, 60, 28))
+        section = carbin.Section(
+            "body",
+            (0, 0, 0),
+            (0, 0, 0),
+            (1, 1, 1),
+            self.verts,
+            [],
+            [carbin.SubSection("misc", 1, 4, self.transform, dark)],
+        )
+        (out,), report = trim_art.split_trim_art([section], self.atlases)
+        self.assertIs(out, section)
         self.assertEqual(report, {})
 
 
