@@ -1438,6 +1438,16 @@ Offline renders at 60 mph and 4000 rpm (`cockpit.render_gauges`, before:
 master, after: this branch; `out/verify`): `img/gauges-cowl-virtual-offline.jpg`
 (CL65, RS6 2003, Viper 2013, Cooper S 2003).
 
+In game (VM, confirmed-runtime; the same 10 cars at IDs 1 to 10 built from
+master and from this branch, `-HoldMph '40,90'`): runs `vm-20261025-081521`
+(before) and `vm-20261025-082011` (after). The CL65 had no gauge in sight
+(the tachometer under the cowl, the centre display black); now its virtual
+speedometer reads 40 and 90 at the held speeds, with the tachometer beside
+it. The RS6's dials were cut off at the top by the cowl; now both show whole
+with the needles at the readings. `img/gauges-cowl-virtual-ingame.jpg`. All
+cars that spooled drove without a crash (IDs 8 to 10 didn't spool after
+seven cars in one session, in both runs).
+
 ## Risks and open questions
 
 1. Whether the cockpit view draws only the interior entry (hypothesis). If
