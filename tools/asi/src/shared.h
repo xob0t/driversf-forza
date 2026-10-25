@@ -6,3 +6,8 @@
 // most for the group it shows (stock 20; 19 while a group of more than 20 cars
 // is shown through a window, which keeps card 20's Header_Sprite_20 free).
 int garage_card_limit();
+
+// mod_hud: the maker list text for model `id`'s badge: "ID:n", n the localised
+// one-character string of its 16-bit ManufacturerGlyph (gui_assets.py puts it
+// in global.fchunk), or nullptr (no glyph, no such string, or [hud] off).
+const char* hud_maker_logo_text(int id);

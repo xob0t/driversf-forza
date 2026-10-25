@@ -865,6 +865,45 @@ __declspec(naked) void s_menu_set_string()
     }
 }
 
+// Call site 0x6C6AE2 sets the badge string (group +0x64, 2 bytes) of the shown
+// group into ManufacturerLogoReferenceList. For a maker whose cars have a 16-bit
+// badge (mod_hud: ManufacturerGlyph with its localised string), the list gets
+// "ID:n" instead, which the renderer draws as that glyph; the one-byte code
+// can't name more than about 50 new makers. The group's first car stands for
+// it: every car of a maker shares its badge. A string element that can't hold
+// the text (capacity, or an external buffer) keeps the stock string.
+typedef void(__fastcall* MenuSetStringFn)(void* elem, void*, const char* text, int n);
+
+void __fastcall menu_set_badge(uint8_t* elem, void*, const char* text, int n)
+{
+    const int* group = (const int*)(text - 0x64);
+    const char* logo = hud_maker_logo_text(group[0]);
+    if (logo) {
+        int len = (int)strlen(logo), cap = *(int16_t*)(elem + 6);
+        if (!elem[4] && len < cap) {
+            text = logo;
+            n = len;
+        } else {
+            static int noted = 0;
+            if (noted++ < 4)
+                dsf_log("garage: maker logo list element %p (external %d, capacity %d) can't hold \"%s\"", elem,
+                        elem[4], cap, logo);
+        }
+    }
+    ((MenuSetStringFn)0x00ACE110)(elem, nullptr, text, n);
+}
+
+__declspec(naked) void s_menu_set_badge()
+{
+    __asm {
+        test ecx, ecx
+        jz missing
+        jmp menu_set_badge
+    missing:
+        ret 8
+    }
+}
+
 // ---- the car list (FUN_007113A0) -----------------------------------------------
 typedef void(__cdecl* SprintfFn)(char* out, int size, const char* fmt, ...);
 const SprintfFn game_snprintf = (SprintfFn)0x00903E90;
@@ -1510,7 +1549,7 @@ bool install_groups(int groups)
         Edit& e = edits[n + 3 + k];
         e = {va, 5};
         call_bytes(e.old, va, 0x00ACE110);
-        call_bytes(e.neu, va, (uint32_t)s_menu_set_string);
+        call_bytes(e.neu, va, (uint32_t)(k ? s_menu_set_badge : s_menu_set_string));
     }
     if (!edits_match("maker groups", edits, n + 5) || !apply_edits("maker groups", edits, n + 5)) {
         VirtualFree(g_maker_index, 0, MEM_RELEASE);

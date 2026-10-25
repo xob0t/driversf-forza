@@ -47,8 +47,8 @@ static const uint8_t kInfoCtorCallBytes[5] = {0xE8, 0x66, 0xD8, 0xFF, 0xFF};
 
 static const uint32_t kEngine = 0x00FE7228;        // engine singleton; +0x724 = font manager
 static const uint32_t kFontId = 0x6FFB8415;        // vehicles_font: FNTD +0x0C, font object +0x00
-// Slot codes: control characters without tab, line feed, return (gui_assets.HUD_SLOT_CODES).
-static const uint8_t kSlotCodes[] = {1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 14, 15};
+// Slot codes: control characters the narrow text layout draws as glyphs (FUN_00726320 breaks the line at 10..13 and tabs at 9; gui_assets.HUD_SLOT_CODES).
+static const uint8_t kSlotCodes[] = {1, 2, 3, 4, 5, 6, 7, 8, 14, 15, 16, 17};
 static const int kSlots = (int)sizeof kSlotCodes;
 
 static const int kMaxId = 4096;
@@ -196,6 +196,130 @@ static void __fastcall hud_plate(void* elem, void*, const char* text)
 {
     int id = *(const int*)(text + 2);
     set_text(elem, text, (id >= 0 && id < kMaxId) ? g_plate[id] : 0);
+}
+
+// ---- one-character slot texts ----------------------------------------------
+// Two places of the text renderer (confirmed-static) OR all bytes of a narrow
+// string together and treat the string as empty when the result is 0x20 or
+// less, so a string of spaces and control characters has no length: the text
+// setup FUN_007215E0 (check at 0x007216BE) and the text key FUN_00724850
+// ({text, wide text, length, hash}, check at 0x0072487A; the draw FUN_00721F80
+// returns early for a key shorter than 2). A slot code alone is such a string,
+// so the slot texts drew nothing, whatever the slot record held (runs
+// vm-20261025-063019, -063317, -065150: no badge or plate, page 0 glyphs
+// included). Both checks (`cmp dl,0x20; ja +2; xor ecx,ecx`) jump to a stub
+// that keeps the length of a one-byte string whose byte is a slot code and
+// does as stock otherwise. There ecx holds the byte count with the terminator
+// (2 for one character), esi the string, and eax is free.
+static const uint8_t kTextLenBytes[7] = {0x80, 0xFA, 0x20, 0x77, 0x02, 0x33, 0xC9};
+static const uint32_t kTextLenChecks[2] = {0x007216BE, 0x0072487A};
+static uint32_t g_slot_mask = 0;  // bit c set for every slot code c
+
+static __declspec(naked) void textlen_stub_setup()
+{
+    __asm {
+        cmp dl, 0x20
+        ja keep
+        cmp ecx, 2
+        jne empty
+        movzx eax, byte ptr [esi]
+        bt g_slot_mask, eax        // eax < 0x20 here: dl, the OR of the bytes, is at most 0x20
+        jc keep
+    empty:
+        xor ecx, ecx
+    keep:
+        mov eax, 0x007216C5
+        jmp eax
+    }
+}
+
+static __declspec(naked) void textlen_stub_key()
+{
+    __asm {
+        cmp dl, 0x20
+        ja keep
+        cmp ecx, 2
+        jne empty
+        movzx eax, byte ptr [esi]
+        bt g_slot_mask, eax
+        jc keep
+    empty:
+        xor ecx, ecx
+    keep:
+        mov eax, 0x00724881
+        jmp eax
+    }
+}
+
+static bool textlen_init()
+{
+    for (int k = 0; k < kSlots; k++) g_slot_mask |= 1u << kSlotCodes[k];
+    g_slot_mask &= ~1u;  // never the terminator
+    for (uint32_t va : kTextLenChecks)
+        if (!check_bytes(va, kTextLenBytes, sizeof kTextLenBytes)) return false;
+    if (!patch_jmp(kTextLenChecks[0], (void*)textlen_stub_setup, sizeof kTextLenBytes, kTextLenBytes)) return false;
+    if (!patch_jmp(kTextLenChecks[1], (void*)textlen_stub_key, sizeof kTextLenBytes, kTextLenBytes)) {
+        patch_bytes(kTextLenChecks[0], kTextLenBytes, sizeof kTextLenBytes);
+        return false;
+    }
+    dsf_log("hud: text length checks at %08X and %08X keep one-character slot texts (mask %08X)", kTextLenChecks[0],
+            kTextLenChecks[1], g_slot_mask);
+    return true;
+}
+
+// ---- maker list logos ---------------------------------------------------------
+// The garage maker list shows each group's badge string ("%c" of Manufacturer,
+// group +0x64) through ManufacturerLogoReferenceList, a one-byte code with no
+// room for a slot. The renderer also draws "ID:n" as localised string n
+// (FUN_007215E0 -> FUN_008352B0), and a localised string is UTF-16, so for a
+// car with a ManufacturerGlyph whose one-character string gui_assets.py put in
+// global.fchunk (ID kGlyphStringBase + code), mod_garage writes "ID:n" into the
+// list instead. Checked against the loaded string table first: without the
+// string the text would be drawn as the characters "I", "D", ":"...
+static const uint32_t kStringTable = 0x0124A794;    // [..]: localised strings, this of FUN_008352B0
+static const uint32_t kStringLookup = 0x008352B0;   // thiscall (table, id) -> const wchar_t* or 0
+static const int kGlyphStringBase = 900000;         // = gui_assets.GLYPH_STRING_BASE
+typedef const wchar_t*(__fastcall* StringLookupFn)(void* table, void*, int id);
+
+struct LogoText {
+    uint16_t code;
+    char text[14];
+};
+static LogoText g_logo_texts[512];
+static int g_logo_n = 0;
+static bool g_hud_active = false;
+
+static const wchar_t* lookup_string(int id)
+{
+    void* table = *(void**)kStringTable;
+    if (!table) return nullptr;
+    __try {
+        return ((StringLookupFn)kStringLookup)(table, nullptr, id);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
+const char* hud_maker_logo_text(int id)
+{
+    if (!g_hud_active || id < 0 || id >= kMaxId || !g_badge[id]) return nullptr;
+    uint16_t code = g_badge[id];
+    for (int i = 0; i < g_logo_n; i++)
+        if (g_logo_texts[i].code == code) return g_logo_texts[i].text;
+    const wchar_t* s = lookup_string(kGlyphStringBase + code);
+    if (!s || s[0] != code || s[1]) {
+        static int noted = 0;
+        if (noted++ < 4)
+            dsf_log("hud: maker logo: no string %d holding U+%04X (model %d); stock badge text", kGlyphStringBase + code,
+                    code, id);
+        return nullptr;
+    }
+    if (g_logo_n >= (int)(sizeof g_logo_texts / sizeof g_logo_texts[0])) return nullptr;
+    LogoText& t = g_logo_texts[g_logo_n++];
+    t.code = code;
+    _snprintf_s(t.text, sizeof t.text, _TRUNCATE, "ID:%d", kGlyphStringBase + code);
+    if (g_logo_n <= 4) dsf_log("hud: maker logo: model %d U+%04X as \"%s\"", id, code, t.text);
+    return t.text;
 }
 
 // One `element->SetText(record + 0x90 or + 0x92)` call site:
@@ -669,6 +793,11 @@ void mod_hud_init()
         dsf_log("hud: call to the vehicle info ctor at %08X differs; no HUD patches", kInfoCtorCall);
         return;
     }
+    // Without the length check a slot text draws nothing: then keep every site stock.
+    if (!textlen_init()) {
+        dsf_log("hud: a text length check differs; no HUD patches (badges stay one-byte)");
+        return;
+    }
     int sites = 0;
     for (const Site& s : kSites) {
         if (patch_site(s)) {
@@ -686,6 +815,7 @@ void mod_hud_init()
         dsf_log("hud: ctor hook failed after %d sites; badges stay one-byte", sites);
         return;
     }
+    g_hud_active = true;
     dsf_log("hud: ctor hook at %08X; %d of %d text sites; ManufacturerGlyph/ModelGlyph active",
             kInfoCtorCall, sites, (int)(sizeof kSites / sizeof kSites[0]));
     card_emblem_init();
