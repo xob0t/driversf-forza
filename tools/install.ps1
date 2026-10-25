@@ -109,6 +109,17 @@ function Say([string]$Text) { Write-Host $Text }
 function Fail([string]$Text) { throw $Text }
 function Get-Sha256([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash }
 
+# A build's dngvehicles.json has Forza part names as keys that differ only in case
+# (glassLR / glasslR), which ConvertFrom-Json rejects. JavaScriptSerializer is
+# case-sensitive: objects come back as dictionaries, arrays as object[].
+function Read-BuildManifest([string]$Path) {
+    Add-Type -AssemblyName System.Web.Extensions
+    $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+    $serializer.MaxJsonLength = [int]::MaxValue
+    $serializer.RecursionLimit = 1000
+    return $serializer.DeserializeObject([IO.File]::ReadAllText($Path))
+}
+
 if (-not (Test-Path -LiteralPath $GamePath -PathType Container)) { Fail "Game folder not found: $GamePath" }
 $Game = (Resolve-Path -LiteralPath $GamePath).Path
 if (-not (Test-Path -LiteralPath (Join-Path $Game 'Driver.exe'))) { Fail "Driver.exe not found in $Game; -GamePath must be the Driver: San Francisco folder." }
@@ -605,10 +616,10 @@ function Invoke-Install {
         Fail ("the archive has $rootEntries root entries and $([math]::Round($archiveBytes / 1MB)) MB; the stock game reads at most " +
               "1100 entries and 2 GiB. Add -Asi to install the dsfforza.asi plugin with it (tools\asi\build.ps1).")
     }
-    $buildManifest = Get-Content -LiteralPath $buildManifestPath -Raw | ConvertFrom-Json
-    if (($buildManifest.PSObject.Properties.Name -contains 'stock_sha256') -and $buildManifest.stock_sha256 -and
-        $buildManifest.stock_sha256 -ne $StockArchiveHash) { Fail 'the build was made from a different stock archive' }
-    $ids = @($buildManifest.cars | ForEach-Object { $_.spool_id })
+    $buildManifest = Read-BuildManifest $buildManifestPath
+    if ($buildManifest.ContainsKey('stock_sha256') -and $buildManifest['stock_sha256'] -and
+        $buildManifest['stock_sha256'] -ne $StockArchiveHash) { Fail 'the build was made from a different stock archive' }
+    $ids = @($buildManifest['cars'] | ForEach-Object { $_['spool_id'] })
     Say "Installing $($ids.Count) cars (IDs $($ids -join ', ')) into $Game"
 
     New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
@@ -618,7 +629,7 @@ function Invoke-Install {
     }
     $manifest = [ordered]@{
         state = 'installing'; installed = (Get-Date -Format 's'); build = $buildFolder; ids = ($ids -join ',')
-        cars = @($buildManifest.cars | ForEach-Object { $_.media })
+        cars = @($buildManifest['cars'] | ForEach-Object { $_['media'] })
         entries = $script:Entries; created_dirs = $createdDirs; runtime_files = @()
     }
     $script:Manifest = $manifest
