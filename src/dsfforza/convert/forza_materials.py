@@ -138,6 +138,9 @@ _add(PAINT, None, "dsf_plate dsf_inner")  # dsf_inner: damage.split_exposed (pan
 _add(TEXTURED, NODAMAGE, "dsf_trim_art")
 _add(TEXTURED, LIGHTS, "dsf_trim_art_lights")
 _add(CHROME, NODAMAGE, "dsf_trim_metal")  # bare-metal artwork (trim_art.is_metal): shared chrome
+# Virtual dials drawn on blank digital displays (cockpit.virtual_gauges): flat colour
+# cells of the interior atlas, no Forza texture behind them.
+_add(TRIM, None, "dsf_dial_mark dsf_dial_red dsf_needle dsf_needle_hub")
 # Livery decal slots: their raw UV0 spans the whole unit square, i.e. a texture of
 # their own (the player's livery), squeezed by m_UVOffsetScale onto an arbitrary patch
 # of the car atlases. The KOE_Agera_11's rear-wing pair lands on a 3-texel column at the

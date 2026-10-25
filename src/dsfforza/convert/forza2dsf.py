@@ -2013,9 +2013,22 @@ def convert(
         # The driver model sits on the seat marker (role 10) and its hands hold the wheel
         # only where stock cars have it from the seat: the seat follows the moved marker.
         upvh.payload, hier["seats"] = cockpit.patch_seats(upvh.payload, eye)
+        # The raise stops before the cluster's cowl hides the needles the Forza eye sees.
+        drawn = [
+            s for n, s in cf.static.items() if n not in cockpit.SKIP_SECTIONS and not cockpit.LIGHT_SECTIONS.search(n)
+        ]
+        sight = cockpit.GaugeSight(drawn, cockpit.gauge_sight_points(cf))
         camera_eye = cockpit.camera_eye(
-            eye, [place.point(q) for q in cockpit.section_points(cf.static["steering_wheel"])]
+            eye,
+            [place.point(q) for q in cockpit.section_points(cf.static["steering_wheel"])],
+            sight=lambda rise: sight((cf.eye[0], cf.eye[1] + rise, cf.eye[2])),
         )
+        rise = camera_eye[1] - eye[1]
+        gauge_sight = {
+            "camera_rise": round(rise, 4),
+            "forza_eye": round(sight(cf.eye), 3),
+            "camera": round(sight((cf.eye[0], cf.eye[1] + rise, cf.eye[2])), 3),
+        }
         camera = cockpit.camera_params(camera_eye, hier["steering"]["centre"][0])
         # The interior is culled from the final camera (Placement is its own inverse up to dy, dz).
         cf.camera = (-camera_eye[0], camera_eye[1] - place.dy, -(camera_eye[2] - place.dz))
@@ -2063,6 +2076,7 @@ def convert(
             "eye_offset": list(cf.offset),
             "eye_source": cf.offset_source,
             "vo3d": {str(k): round(v, 4) for k, v in {**camera, **gauge_vo3d}.items()},
+            "gauge_sight": gauge_sight,
             "hierarchy": hier,
             "interior": interior_report,
         }
