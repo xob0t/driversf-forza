@@ -2008,6 +2008,9 @@ def convert(
         nonr = child(full, "NONR")
         upvh = child(nonr, "UPVH")
         host_upvh = payload(stream, upvh)
+        unturned = cockpit.drop_virtual(cf, host_cp.gauge_slots)
+        if unturned:
+            log(f"cockpit: no virtual {', '.join(unturned)} dial: the host has no gauge entry for it")
         upvh.payload, hier = cockpit.patch_hierarchy(host_upvh, host_cp, place, cf)
         eye = place.point(cf.eye)
         # The driver model sits on the seat marker (role 10) and its hands hold the wheel

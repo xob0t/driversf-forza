@@ -127,6 +127,20 @@ def test_virtual_dials_on_a_blank_display():
     assert dials[0][2].pivot[0] < dials[1][2].pivot[0]  # tachometer on the left
 
 
+def test_virtual_dials_need_the_host_gauge_entry():
+    # Stock 250 (the Volt) has no gauge entries, 231 only the speedometer's: a dial
+    # whose id the host can't turn is left out.
+    panel = _display((0.5, 0.0, 0.5, 0.0) * 2, width=0.16, height=0.10)
+    dials, report = cockpit.virtual_gauges({"interior": panel}, {}, (0.08, 0.05, 0.7), _Car(), 2)
+    cf = cockpit.CockpitFit(None, {}, (0, 0, 0), (0, 0, 0), "", {}, {"interior": panel}, {}, virtual=report)
+    for needle, face, g, cal in dials:
+        cf.gauges[g.family], cf.calibration[g.family], cf.needles[g.family] = g, cal, {"min": needle}
+        cf.static[face.name] = face
+    assert cockpit.drop_virtual(cf, {2: 0}) == ["tach"]
+    assert set(cf.gauges) == {"speed"} and "dsf_dial_tach" not in cf.static and "dsf_dial_speed" in cf.static
+    assert set(cf.virtual["dials"]) == {"speed"} and cf.virtual["no_host_gauge"] == ["tach"]
+
+
 def test_no_virtual_dial_on_the_steering_wheel_or_for_needles():
     panel = _display((0.5, 0.0, 0.5, 0.0) * 2, width=0.16, height=0.10)
     eye = (0.08, 0.05, 0.7)

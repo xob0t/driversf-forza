@@ -708,6 +708,7 @@ VIRTUAL_NEEDLE_COLOURS = {
 }
 VIRTUAL_SPEED_MIN = 120.0  # mph: smallest virtual speedometer scale
 VIRTUAL_TACH_MIN = 6000.0  # rpm
+VIRTUAL_SOURCE = "virtual dial"  # GaugeCalibration.source of a virtual dial
 _SEGMENTS = {  # seven-segment digits: a top, b upper right, c lower right, d bottom, e lower left, f upper left, g middle
     "0": "abcdef",
     "1": "bc",
@@ -973,7 +974,7 @@ def virtual_dial(d: Display, cell: tuple, family: str, forza, version: int):
     needle = _dial_section(f"{family}_min", version, {"dsf_needle": [(blade, nrm)], "dsf_needle_hub": hub})
     pivot = d.point(pu, pv)
     gauge = Gauge(family, pivot, d.normal, span, needle)
-    cal = GaugeCalibration(family, GAUGE_IDS[family], sweep, False, 0.0, round(dial_max, 1), 0.0, "virtual dial")
+    cal = GaugeCalibration(family, GAUGE_IDS[family], sweep, False, 0.0, round(dial_max, 1), 0.0, VIRTUAL_SOURCE)
     report = {
         "display": d.section,
         "display_cm": [round(100 * x, 1) for x in d.size],
@@ -1014,6 +1015,22 @@ def virtual_gauges(static: dict, gauges: dict, eye, forza, version: int, sight_s
         out.append((needle, face, gauge, cal))
         report["dials"][family] = rep
     return out, report
+
+
+def drop_virtual(cf: CockpitFit, gauge_slots: dict[int, int]) -> list[str]:
+    """Take out the virtual dials whose gauge id the host's gauge table has no
+    entry for (stock 250, the Volt: none; 231: speed only). The engine would
+    leave their needles unturned. Returns the families dropped."""
+    dropped = [
+        f for f, cal in cf.calibration.items() if cal.source == VIRTUAL_SOURCE and GAUGE_IDS[f] not in gauge_slots
+    ]
+    for f in dropped:
+        del cf.calibration[f], cf.gauges[f], cf.needles[f]
+        cf.static.pop(f"dsf_dial_{f}", None)
+        cf.virtual.get("dials", {}).pop(f, None)
+    if dropped:
+        cf.virtual["no_host_gauge"] = dropped
+    return dropped
 
 
 def is_stub(sections: list[carbin.Section]) -> bool:
