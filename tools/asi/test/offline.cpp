@@ -42,6 +42,55 @@ static bool map_image(const char* path)
     return true;
 }
 
+// Runs the narrow branch's end of FUN_007215E0 (0x007216BE: the length check,
+// then the tail: store the length at [edi+0x84], [ebp+0x10] = length - 1, pop
+// edi/esi/ebp, ret 4) with the registers its loop leaves: esi the string, ecx
+// the byte count with the terminator, dl the OR of the bytes. Returns the length.
+#pragma warning(push)
+#pragma warning(disable : 4731)  // ebp is saved and restored around the jump
+static int text_len(const char* s)
+{
+    static int ctx[0x88 / 4 + 1];
+    static int frame[8];
+    int len = 0;
+    unsigned char orv = 0;
+    for (const char* p = s;; p++) {
+        len++;
+        orv |= (unsigned char)*p;
+        if (!*p) break;
+    }
+    ctx[0x84 / 4] = -1;
+    __asm {
+        push ebx
+        push 0
+        lea eax, back
+        push eax
+        push ebp
+        push esi
+        push edi
+        mov esi, s
+        mov ecx, len
+        mov dl, orv
+        lea edi, ctx
+        lea ebp, frame
+        mov eax, 0x007216BE
+        jmp eax
+    back:
+        pop ebx
+    }
+    return ctx[0x84 / 4];
+}
+#pragma warning(pop)
+
+// The text key FUN_00724850 (thiscall: key, text): {text, 0, length, hash}.
+static int text_key(const char* s)
+{
+    typedef void(__fastcall * KeyFn)(int* key, void*, const char* text);
+    int key[4] = {0, 0, -1, 0};
+    ((KeyFn)0x00724850)(key, nullptr, s);
+    return key[2];
+}
+
 typedef int* (__fastcall* SlotFn)(void* self, void* edx, int id);
 typedef unsigned (__fastcall* TestFn)(void* self, void* edx, int id, unsigned bit);
 typedef void (__fastcall* SetFn)(void* self, void* edx, int id);
@@ -215,6 +264,20 @@ int main(int argc, char** argv)
     CHECK(*(BYTE*)0x006C6855 == 0xE8 && *(BYTE*)0x007118A5 == 0xE8);
     CHECK(*(BYTE*)0x007118AA == 0x90 && *(BYTE*)0x007118AC == 0x90 && *(BYTE*)0x007118AD == 0x74);
     CHECK(*(BYTE*)0x0070D72A == 0xE8 && *(int*)0x0070D72B != (int)(0x00ADA7F0 - 0x0070D72F));
+    // The text length check of FUN_007215E0: a lone slot code keeps its length,
+    // other strings of bytes up to 0x20 are empty as stock.
+    CHECK(*(BYTE*)0x007216BE == 0xE9 && *(BYTE*)0x0072487A == 0xE9);
+    CHECK(text_len("\x01") == 2 && text_len("\x0F") == 2 && text_len("A") == 2 && text_len("AB") == 3);
+    CHECK(text_len("\x10") == 2 && text_len("\x11") == 2);
+    CHECK(text_len(" ") == 0 && text_len("\x12") == 0 && text_len("\x09") == 0 && text_len("\x0B") == 0);
+    CHECK(text_len("\x01\x02") == 0);
+    CHECK(text_key("\x01") == 2 && text_key("A") == 2 && text_key(" ") == 0 && text_key("\x0C") == 0);
+    CHECK(text_len("") == 0);
+    // The maker list's name and badge string sets (0x6C6AC8, 0x6C6AE2) go to two plugin functions.
+    {
+        unsigned name_set = 0x006C6AC8 + 5 + *(int*)0x006C6AC9, badge_set = 0x006C6AE2 + 5 + *(int*)0x006C6AE3;
+        CHECK(name_set != 0x00ACE110 && badge_set != 0x00ACE110 && name_set != badge_set);
+    }
     printf("%s (%d failures); log: %s\\dsfforza.log\n", failures ? "FAILED" : "ok", failures, dsf_plugin_dir());
     return failures ? 1 : 0;
 }

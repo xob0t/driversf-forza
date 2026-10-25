@@ -64,6 +64,7 @@ def stock_file(relative: str) -> Path:
 
 
 FH1_ISO = REPO / "assets" / "Forza.Horizon.XBOX360.iso"
+FM4_ISO = REPO / "assets" / "Forza 4 [NTSCU][DVD1].iso"
 PICTURE_SIZE = (512, 256)
 
 
@@ -273,6 +274,7 @@ def read_xds_rgba(data: bytes) -> tuple[int, int, bytearray]:
     return w, h, xds.decode_rgba(blocks, w, h, fourcc)
 
 
+LOGO_FOLDERS = ("Manufacturer_Logos_LG", "Manufacturer_Logos", "Manufacturer_Logos_I")
 LOGO_ALIASES = {
     "mercedes-benz": "Mercedes",
     "srt": "VIP",
@@ -284,33 +286,53 @@ LOGO_ALIASES = {
 
 
 class ForzaUI:
-    """FH1's media/ui/Textures.zip on the disc image."""
+    """FH1's media/ui/Textures.zip on the disc image; maker logos FH1 lacks
+    (Renault) come from FM4's (DVD 1, Media/UI/Textures.zip, same layout),
+    opened on first need."""
 
-    def __init__(self, iso: Path = FH1_ISO):
+    def __init__(self, iso: Path = FH1_ISO, fallback: Path | None = FM4_ISO):
+        self.image, self.zip, self.names = self._open(iso, "media/ui/Textures.zip")
+        self.fallback_path, self.fallback = fallback, None
+
+    @staticmethod
+    def _open(iso: Path, name: str):
         from dsfforza.formats.forzazip import ForzaZip
         from dsfforza.formats.xiso import XIso
 
-        self.image = XIso(iso)
-        self.zip = ForzaZip(self.image.open(self.image.find("media/ui/Textures.zip")))
-        self.names = {i.filename.lower(): i for i in self.zip.entries()}
+        image = XIso(iso)
+        z = ForzaZip(image.open(image.find(name)))
+        return image, z, {i.filename.lower(): i for i in z.entries()}
 
     def read(self, name: str) -> tuple[int, int, bytearray] | None:
         info = self.names.get(name.lower())
         return read_xds_rgba(self.zip.read(info)) if info else None
+
+    def _read_fallback(self, name: str):
+        if self.fallback is None:
+            if not self.fallback_path or not Path(self.fallback_path).exists():
+                return None
+            self.fallback = self._open(Path(self.fallback_path), "Media/UI/Textures.zip")
+        _, z, names = self.fallback
+        info = names.get(name.lower())
+        return read_xds_rgba(z.read(info)) if info else None
 
     def thumbnail(self, car_id: int):
         return self.read(f"Thumbnails/Thumbnail_{car_id}.xds")
 
     def logo(self, make: str):
         key = LOGO_ALIASES.get(make.lower(), make).replace(" ", "").replace("-", "")
-        for folder in ("Manufacturer_Logos_LG", "Manufacturer_Logos", "Manufacturer_Logos_I"):
-            found = self.read(f"UI4/Logos/{folder}/L_MAN_{key}_Logo.xds")
-            if found:
-                return found
+        names = [f"UI4/Logos/{f}/L_MAN_{key}_Logo.xds" for f in LOGO_FOLDERS]
+        for read in (self.read, self._read_fallback):
+            for name in names:
+                found = read(name)
+                if found:
+                    return found
         return None
 
     def close(self) -> None:
         self.image.close()
+        if self.fallback is not None:
+            self.fallback[0].close()
 
 
 def write_png(path: Path, width: int, height: int, rgba) -> None:
@@ -596,6 +618,30 @@ def nameplate(text: str, max_w: int = 98, max_h: int = 34, min_h: int = 18) -> I
     return stacked.fit(max_w, max_h)
 
 
+TEXT_BADGE_H = 30  # a text badge's height in the glyph cell (logo badges are BADGE_SIZE square)
+
+
+def maker_badge(name: str) -> Image:
+    """A chrome text badge of the maker's name, for a maker neither FH1 nor FM4
+    has a logo for (the tour bus, Kenworth). Without it the car kept the host's
+    badge: another maker's logo on the HUD and in the garage maker list."""
+    plate = nameplate(name, CELL - 1, TEXT_BADGE_H, 14)
+    badge = Image(plate.w, plate.h, plate.px)
+    badge.text_badge = True
+    return badge
+
+
+def badge_glyph(logo: Image) -> Image:
+    """The HUD / maker-list glyph of a badge: a logo fitted to BADGE_SIZE, a text
+    badge to the cell's width."""
+    if getattr(logo, "text_badge", False):
+        glyph = logo.fit(CELL - 1, TEXT_BADGE_H)
+    else:
+        glyph = logo.fit(BADGE_SIZE, BADGE_SIZE)
+    glyph.kind = "badge"
+    return glyph
+
+
 # --- the garage picture -----------------------------------------------------------------
 
 PANEL = (0, 0, 471, 198)  # opaque backdrop rectangle of stock pictures (x0, y0, x1, y1)
@@ -826,6 +872,36 @@ def stock_car_mask(picture: Image, backdrop: Image):
     return mask
 
 
+TONE_KEYS = ("V10", "V50", "V90", "V99", "S25", "S50", "S75", "white")
+
+
+def picture_tone(picture: Image, backdrop: Image) -> dict[str, float]:
+    """Tone of a garage picture's car (stock_car_mask): percentiles of the HSV
+    value (V) and saturation (S), and the share of white highlight pixels (value
+    over 0.8, saturation under 0.25). What car_render's tone is calibrated on
+    (research/gui-assets.md, "Tone")."""
+    mask = stock_car_mask(picture, backdrop)
+    px = picture.array()[..., :3][mask].astype(np.float64) / 255
+    if not len(px):
+        return dict.fromkeys(TONE_KEYS, 0.0)
+    mx, mn = px.max(axis=1), px.min(axis=1)
+    sat = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1e-6), 0)
+    out = {f"V{p}": float(np.percentile(mx, p)) for p in (10, 50, 90, 99)}
+    out.update({f"S{p}": float(np.percentile(sat, p)) for p in (25, 50, 75)})
+    out["white"] = float(((mx > 0.8) & (sat < 0.25)).mean())
+    return out
+
+
+def read_picture(gui: Path, name: str) -> Image | None:
+    from dsfforza.convert import dsf_materials as dm
+
+    with gui.open("rb") as stream:
+        dds = find_picture(stream, chnk.read_chunk(stream, 0), name)
+    if dds is None:
+        return None
+    return Image(*dm.decode_dds(dds))
+
+
 def _stock_score(target):
     """IoU right of FIT_LEFT of a coverage mask placed like the target: scaled to its
     height, aligned on its right and bottom edges."""
@@ -1021,7 +1097,7 @@ def glyph_y(img: Image, h: int) -> int:
 # pages, the same size as page 0 (the game sizes every page from page 0's
 # FNTD entry, FUN_00729550).
 WIDE_FIRST = 0x100
-HUD_SLOT_CODES = (1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 14, 15)  # empty records the plugin rewrites (mod_hud.cpp)
+HUD_SLOT_CODES = (1, 2, 3, 4, 5, 6, 7, 8, 14, 15, 16, 17)  # empty records the plugin rewrites (mod_hud.cpp)
 
 
 def _font_uid(n: int, used: set) -> bytes:
@@ -1311,6 +1387,17 @@ def read_strings(path: Path | None = None) -> dict[int, str]:
 # New strings for ported makers and models: IDs from here up (stock IDs run
 # 36190 to 249144 in global.fchunk and loc.sp), "ID:<n>" in vehicleStats.
 FIRST_STRING_ID = 700000
+# One-character strings of the 16-bit badge glyphs, GLYPH_STRING_BASE + code
+# (= mod_hud.cpp kGlyphStringBase): dsfforza.asi writes "ID:<n>" into the garage
+# maker list for a maker with a ManufacturerGlyph, and the renderer draws the
+# localised (UTF-16) string, which can hold a code past 0xFF (gui-assets.md,
+# "Maker list logos").
+GLYPH_STRING_BASE = 900000
+
+
+def glyph_strings(codes) -> dict[int, str]:
+    """{string id: the one-character text} for 16-bit glyph codes."""
+    return {GLYPH_STRING_BASE + code: chr(code) for code in codes}
 
 
 def add_strings(source: Path, out: Path, texts: dict[int, str]) -> dict:
@@ -1500,9 +1587,9 @@ def plan_glyphs(
     for key, media in new_makes.items():
         logo = logos(key) or logos(texts[media[0]]["make"])
         if logo is None:
-            notes["no_logo"].append(key)  # keeps the host's badge
-        else:
-            badge_logos[key] = logo
+            notes["no_logo"].append(key)  # a text badge of the name
+            logo = maker_badge(key)
+        badge_logos[key] = logo
     want: dict[str, str] = {}
     for car in cars:
         media, t = car["media"], texts[car["media"]]
@@ -1547,8 +1634,7 @@ def plan_glyphs(
     for _, kind, key in chosen:
         code = free.pop(0)
         if kind == "badge":
-            glyphs[code] = badge_logos[key].fit(BADGE_SIZE, BADGE_SIZE)
-            glyphs[code].kind = "badge"
+            glyphs[code] = badge_glyph(badge_logos[key])
             notes["badges"][key] = code
             for media in new_makes[key]:
                 entries[media]["Manufacturer"] = code
@@ -1601,10 +1687,9 @@ def plan_wide_glyphs(
     for key in sorted(badge_cars):
         logo = logos(key) or logos(texts[badge_cars[key][0]]["make"])
         if logo is None:
-            notes["no_logo"].append(key)
-            continue
-        glyphs[code] = logo.fit(BADGE_SIZE, BADGE_SIZE)
-        glyphs[code].kind = "badge"
+            notes["no_logo"].append(key)  # a text badge of the name
+            logo = maker_badge(key)
+        glyphs[code] = badge_glyph(logo)
         notes["badges"][key] = code
         for media in badge_cars[key]:
             entries[media]["ManufacturerGlyph"] = code
@@ -1732,7 +1817,7 @@ def build(
         t = texts[media]
         model_text = t["model"]
         entry = dict(planned[media])
-        logo = logos(t["dsf_make"]) or logos(t["make"])
+        logo = logos(t["dsf_make"]) or logos(t["make"]) or maker_badge(t["dsf_make"])
         # Picture: a render of the converted car (or, with 	humbnails, Forza's own).
         car_id = forza_car_id(media) if thumbnails else None
         image = forza_car_image(ui, car_id) if car_id else None
@@ -1787,7 +1872,10 @@ def build(
         for k in ("ManufacturerName", "ModelName"):
             if e.get(k) in string_ids:
                 e[k] = f"ID:{string_ids[e[k]]}"
-    report["_strings"] = write_locales(out_dir, {sid: text for text, sid in string_ids.items()})
+    new_strings = {sid: text for text, sid in string_ids.items()}
+    if wide_glyphs:  # the maker list's badges (dsfforza.asi): one string per 16-bit badge
+        new_strings.update(glyph_strings(report["_wide_codes"]["badges"].values()))
+    report["_strings"] = write_locales(out_dir, new_strings)
     write_hud_lua(out_dir / "hud.lua", hud)
     (out_dir / "gui-assets.json").write_text(json.dumps(report, indent=1, default=str))
     return report
@@ -1924,6 +2012,14 @@ def main(argv: list[str] | None = None) -> None:
     e.add_argument("name")
     e.add_argument("png", type=Path)
     e.add_argument("--gui", type=Path, default=None)
+    tn = sub.add_parser("tone", help="tone of garage pictures' cars: stock picture next to a built one")
+    tn.add_argument(
+        "pairs",
+        nargs="+",
+        metavar="STOCK=PORTED",
+        help="stock picture name = picture name in --gui, e.g. chevrolet_volt=dsfforza_che_volt_11",
+    )
+    tn.add_argument("--gui", type=Path, required=True, help="a built gui.sp")
     s = sub.add_parser("strings", help="search Locale global.fchunk strings")
     s.add_argument("pattern")
     args = parser.parse_args(argv)
@@ -1959,6 +2055,19 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(f"{args.name}: not in {args.gui}")
         w, h, px = dm.decode_dds(dds)
         write_png(args.png, w, h, px)
+    elif args.cmd == "tone":
+        stock_gui = stock_file("Install/gui.sp")
+        backdrop = stock_backdrop(stock_gui)
+        print(f"{'':40s} " + " ".join(f"{k:>6s}" for k in TONE_KEYS))
+        for pair in args.pairs:
+            stock_name, ported_name = pair.split("=", 1)
+            for gui, name in ((stock_gui, stock_name), (args.gui, ported_name)):
+                img = read_picture(gui, name)
+                if img is None:
+                    print(f"{name:40s} not in {gui}")
+                    continue
+                t = picture_tone(img, backdrop)
+                print(f"{name:40s} " + " ".join(f"{t[k]:6.3f}" for k in TONE_KEYS))
     else:
         import re
 

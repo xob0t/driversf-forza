@@ -68,32 +68,39 @@ class Shading:
     power: float  # key-light specular exponent
 
 
+# Tone calibrated against the stock garage pictures (research/gui-assets.md, "Tone"):
+# renders of 10 stock cars with saturated paint, from the stock archive with the
+# palette entry of the picture's hue, matched to their pictures by the brightness
+# (HSV value) and saturation percentiles and the share of white highlight pixels of
+# the car. The pictures show deep, saturated paint with soft highlights and almost
+# no environment sheen: reflections are a tenth to a third of the first renderer's,
+# key light and sky ambient a little higher.
 SHADING = {
-    "paint": Shading(1.0, 0.05, 1.0, 1.0, 1.5, 150.0),
-    "metallic": Shading(1.0, 0.08, 1.0, 1.0, 2.0, 80.0),
-    "trim": Shading(1.0, 0.03, 0.35, 0.4, 0.15, 20.0),
-    "tyre": Shading(1.0, 0.02, 0.1, 0.1, 0.05, 8.0),
+    "paint": Shading(1.0, 0.05, 0.15, 1.0, 0.45, 150.0),
+    "metallic": Shading(1.0, 0.08, 0.15, 1.0, 0.6, 80.0),
+    "trim": Shading(1.0, 0.03, 0.1, 0.4, 0.15, 20.0),
+    "tyre": Shading(1.0, 0.02, 0.03, 0.1, 0.05, 8.0),
     "chrome": Shading(0.15, 0.75, 1.0, 1.0, 2.0, 200.0),
-    "lights": Shading(1.0, 0.06, 1.0, 1.0, 2.0, 200.0),
-    "wheel": Shading(0.9, 0.2, 0.8, 0.7, 0.8, 60.0),
-    "textured": Shading(1.0, 0.04, 0.6, 0.8, 0.5, 60.0),
-    "interior": Shading(0.85, 0.02, 0.15, 0.3, 0.1, 10.0),
-    "glass": Shading(0.0, 0.06, 1.0, 1.0, 2.5, 300.0),
+    "lights": Shading(1.0, 0.06, 0.3, 1.0, 2.0, 200.0),
+    "wheel": Shading(0.9, 0.2, 0.24, 0.7, 0.8, 60.0),
+    "textured": Shading(1.0, 0.04, 0.18, 0.8, 0.5, 60.0),
+    "interior": Shading(0.85, 0.02, 0.045, 0.3, 0.1, 10.0),
+    "glass": Shading(0.0, 0.06, 0.3, 1.0, 2.5, 300.0),
 }
 GLASS_TINT = np.array([0.55, 0.6, 0.64])  # transmitted light through one glass layer (linear)
 GLASS_HAZE = np.array([0.012, 0.014, 0.018])  # glass's own colour seen on top
 
-# Studio environment, linear RGB.
-ENV_ZENITH = np.array([1.0, 1.0, 1.0])
-ENV_HORIZON = np.array([0.16, 0.17, 0.19])
+# Studio environment, linear RGB (calibrated, above: a quarter of the first renderer's).
+ENV_ZENITH = np.array([0.25, 0.25, 0.25])
+ENV_HORIZON = np.array([0.04, 0.0425, 0.0475])
 ENV_GROUND = np.array([0.015, 0.015, 0.016])
 ENV_FLOOR_FAR = np.array([0.06, 0.06, 0.065])
 SOFTBOX_DIR = np.array([0.45, 0.75, -0.5]) / np.linalg.norm([0.45, 0.75, -0.5])
 SOFTBOX_EDGE = (0.86, 0.95)  # cosines: dark outside the first, full inside the second
-SOFTBOX = 3.0
+SOFTBOX = 0.45
 KEY_LIGHT = (-0.5, 0.55, 0.55)  # towards the light, car frame before the camera turn (see _light)
-KEY_POWER = 0.8
-SKY_AMBIENT, GROUND_AMBIENT = 0.45, 0.03
+KEY_POWER = 0.96
+SKY_AMBIENT, GROUND_AMBIENT = 0.62, 0.007
 EXPOSURE = 0.85
 SHADOW_ALPHA = 0.75
 
@@ -105,8 +112,12 @@ SHADOW_ALPHA = 0.75
 class Material:
     kind: str  # a SHADING key
     texture: np.ndarray | None  # (h, w, 4) float32 0..1, sRGB as stored
-    colour: np.ndarray  # linear RGB, the base without a texture (paint: the paint colour)
+    colour: np.ndarray  # linear RGB, the base without a texture (paint: the paint's colour 2)
     packed: bool = False  # a shared SSIC texture: channel-packed, red is the grey level
+    paint: Paint | None = None  # paint kinds: the palette entry (colour by the view angle)
+
+
+PAINT_KINDS = ("paint", "metallic")
 
 
 @dataclass
@@ -220,21 +231,77 @@ def _face_normals(pos: np.ndarray) -> np.ndarray:
     return np.repeat(n[:, None], 3, axis=1).astype(np.float32)
 
 
-def paint_colour(stream, full) -> tuple[tuple[int, int, int], bool]:
-    """The palette's most colourful entry as sRGB (stock pictures rarely show
-    black or grey), and whether it is metallic."""
+@dataclass(frozen=True)
+class Paint:
+    """A palette entry as the paint shader uses it (lights.md, "What the paint
+    shader does"): colour 2 mixed toward colour 3 by bias + (1 - bias) (1 - n.v)^power,
+    linear RGB. Most stock entries are a dark colour 2 with a lighter colour 3 at
+    grazing angles only (power 5 to 15); a flat colour has colour 2 = colour 3."""
+
+    c2: tuple[float, float, float]
+    c3: tuple[float, float, float]
+    power: float = 1.0
+    bias: float = 0.0
+    metallic: bool = False
+
+    @classmethod
+    def flat(cls, srgb: tuple[int, int, int], metallic: bool = False) -> Paint:
+        lin = tuple(float(_srgb_to_linear(c / 255)) for c in srgb)
+        return cls(lin, lin, 1.0, 0.0, metallic)
+
+    def at(self, ndv: np.ndarray) -> np.ndarray:
+        """(N, 3) linear paint colour at the cosines ndv between normal and view."""
+        f = self.bias + (1 - self.bias) * (1 - np.clip(ndv, 0, 1)) ** self.power
+        c2, c3 = np.array(self.c2, np.float32), np.array(self.c3, np.float32)
+        return c2[None] + f[:, None] * (c3 - c2)[None]
+
+
+DEFAULT_PAINT_SRGB = (150, 20, 20)  # a car without a palette
+
+
+def picture_paint(c2, c3, power: float, bias: float, metallic: bool) -> Paint:
+    """The palette entry as the stock garage pictures show it. An entry with a
+    fresnel power of 1 or more (the usual dark colour 2, lighter colour 3 at the
+    edges: the Volt's red) is mixed by the view angle as the shader does; the
+    pictures show its colour 2 with lighter edges. Taken literally, an entry
+    with a low power or a high bias shows colour 3 almost everywhere, near black
+    for most of them, but the stock pictures of such colours (370Z blue, power
+    0.25; Cobra red, 0.1) show colour 2 facing the camera, darker toward the
+    edges: such an entry is drawn with the power raised to LOW_POWER_FLOOR and
+    the bias lowered to LOW_POWER_BIAS."""
+    if power < LOW_POWER_FLOOR or bias > LOW_POWER_BIAS:
+        power, bias = max(power, LOW_POWER_FLOOR), min(bias, LOW_POWER_BIAS)
+    return Paint(tuple(c2), tuple(c3), power, bias, metallic)
+
+
+LOW_POWER_FLOOR, LOW_POWER_BIAS = 2.0, 0.05
+
+
+def paint_colour(stream, full) -> Paint:
+    """The palette's most colourful entry (stock pictures rarely show black or
+    grey), chosen by the colour it mostly shows (paint.apparent)."""
     from dsfforza.convert import paint
 
     spss = paint.palette_set(stream, full)
     if spss is None or not spss.children:
-        return (150, 20, 20), False
+        return Paint.flat(DEFAULT_PAINT_SRGB)
     options = []
     for e in spss.children:
         params = paint.spsp_params(stream, e)
         colour = tuple(int(255 * paint.linear_to_srgb(x)) for x in paint.apparent(params))
         metallic = "g_vec4TintColour1_Alpha" in params and paint.is_metallic(params)
-        options.append((colour, metallic))
-    return max(options, key=lambda o: (max(o[0]) - min(o[0]), -abs(sum(o[0]) / 3 - 128)))
+        try:
+            entry = picture_paint(
+                tuple(params["g_vec3TintColour2"][:3]),
+                tuple(params["g_vec3TintColour3"][:3]),
+                float(params.get("g_fresnelpower", 1.0)),
+                float(params.get("g_fresnelbias", 0.0)),
+                metallic,
+            )
+        except (KeyError, TypeError):
+            entry = Paint.flat(colour, metallic)
+        options.append((colour, entry))
+    return max(options, key=lambda o: (max(o[0]) - min(o[0]), -abs(sum(o[0]) / 3 - 128)))[1]
 
 
 def load_scene(archive: Path, spool_id: int, entries=None, interior: bool = True) -> Scene:
@@ -278,7 +345,8 @@ def _load_scene(archive: Path, stream, spool_id: int, entries, interior: bool) -
             return decoded[t], True
         return None, False
 
-    colour, metallic = paint_colour(stream, kinds[0])
+    car_paint = paint_colour(stream, kinds[0])
+    metallic = car_paint.metallic
     h = uv.parse(payload(stream, child(child(kinds[0], "NONR"), "UPVH")))
     hubs = []
     for i in range(h.counts["wheels"]):
@@ -286,7 +354,7 @@ def _load_scene(archive: Path, stream, spool_id: int, entries, interior: bool) -
         hubs.append(
             (np.array(struct.unpack_from("<3f", h.data, o), np.float32), struct.unpack_from("<4f", h.data, o + 16))
         )
-    paint_lin = np.array([_srgb_to_linear(c / 255) for c in colour], np.float32)
+    paint_lin = np.array(car_paint.c2, np.float32)
 
     materials: list[Material] = []
     mat_index: dict = {}
@@ -323,7 +391,9 @@ def _load_scene(archive: Path, stream, spool_id: int, entries, interior: bool) -
                 "chrome": np.array([0.85, 0.86, 0.88]),
             }.get(kind, np.array([0.3, 0.3, 0.3]))
             mat_index[key] = len(materials)
-            materials.append(Material(kind, tex, np.asarray(base, np.float32), packed))
+            materials.append(
+                Material(kind, tex, np.asarray(base, np.float32), packed, car_paint if kind in PAINT_KINDS else None)
+            )
         return mat_index[key]
 
     parts_pos, parts_nrm, parts_uv, parts_ao, parts_mat, parts_in = [], [], [], [], [], []
@@ -568,18 +638,23 @@ def _shade(scene: Scene, view: _View, light, n, uv, ao, ray, mats) -> tuple[np.n
         mat = scene.materials[m]
         sh = SHADING[mat.kind]
         nn, rr = n[sel], ray[sel]
-        if mat.kind in ("paint", "metallic") and mat.texture is not None:
-            # tinted = tex.r * lerp(1, paint, tex.b) (lights.md, the paint shader): the
+        cos_v = np.clip(-np.einsum("ni,ni->n", nn, rr), 0, 1)
+        if mat.kind in PAINT_KINDS:
+            # The palette entry's colour 2 mixed toward colour 3 by the view angle, as the
+            # paint shader does; tinted = tex.r * lerp(1, paint, tex.b) (lights.md): the
             # shared atlas is channel-packed, red the grey level, blue the paint mask.
-            t = _sample(mat.texture, uv[sel])
-            base = _srgb_to_linear(t[:, 0:1]) * (1 + (mat.colour[None] - 1) * t[:, 2:3])
+            colour = mat.paint.at(cos_v) if mat.paint is not None else np.broadcast_to(mat.colour, (len(sel), 3))
+            if mat.texture is not None:
+                t = _sample(mat.texture, uv[sel])
+                base = _srgb_to_linear(t[:, 0:1]) * (1 + (colour - 1) * t[:, 2:3])
+            else:
+                base = colour
         elif mat.packed and mat.texture is not None and mat.kind != "chrome":
             base = np.repeat(_srgb_to_linear(_sample(mat.texture, uv[sel])[:, 0:1]), 3, axis=1)
         elif mat.texture is not None and mat.kind not in ("chrome",):
             base = _srgb_to_linear(_sample(mat.texture, uv[sel])[:, :3])
         else:
             base = np.broadcast_to(mat.colour, (len(sel), 3))
-        cos_v = np.clip(-np.einsum("ni,ni->n", nn, rr), 0, 1)
         f = sh.f0 + (1 - sh.f0) * (1 - cos_v) ** 5
         refl = rr - 2 * np.einsum("ni,ni->n", rr, nn)[:, None] * nn
         blur = refl * sh.gloss + nn * (1 - sh.gloss)

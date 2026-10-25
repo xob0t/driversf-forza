@@ -1,6 +1,6 @@
 # Garage pictures, HUD badge and model name
 
-Updated: 2026-10-24
+Updated: 2026-10-25
 
 How DSF shows a car's picture, maker badge and model name, and how ported
 cars get their own. Code: `src/dsfforza/game/gui_assets.py`. Evidence tags as elsewhere;
@@ -142,6 +142,44 @@ from `STOCK_CAMERA` = yaw 36.5, pitch 13, distance 1.3
 - Framing: rendered at 1000 x 560, cropped; the car's box without its shadow
   is fitted into `CAR_BOX` by its right and bottom edges, as stock (median
   right edge 496, bottom 242 in the 142 stock pictures).
+
+**Tone (calibrated, 2026-10-25).** User report on out/final-gui2: "garage
+vehicle previews look right, but are too glossy". Measured on the car of
+each picture (`stock_car_mask`; `uv run dsff gui_assets tone
+chevrolet_volt=dsfforza_che_volt_11 ... --gui <built gui.sp>`: HSV value and
+saturation percentiles, share of white highlight pixels), the ported
+pictures were lighter, washed out and shiny next to stock: for the red pairs
+(Volt, TT RS, GT-R / R33) median saturation 0.18 to 0.42 against 0.81 to
+0.90, white highlights 3 to 7 % of the car against 0.1 %. Two causes:
+
+- Paint colour. The renderer painted the palette entry's `apparent` colour,
+  which for the usual entry (dark colour 2, lighter colour 3 at a high
+  fresnel power: the Volt's red 0.076 / 0.205) is colour 3, a light pink.
+  `car_render.Paint` now mixes colour 2 toward colour 3 by the view angle as
+  the shader does (lights.md), so panels facing the camera show colour 2.
+  Taken literally, a low-power or high-bias entry would be near black (colour
+  3 almost everywhere), which the stock pictures of such colours don't show
+  (370Z blue, power 0.25; Cobra red, 0.1: colour 2, darker at the edges):
+  `picture_paint` raises the power to 2 and lowers the bias to 0.05 for those.
+- Light. Environment reflections and the soft box were about as bright as the
+  paint itself and veiled it in grey. Calibrated on 10 stock cars with
+  saturated paint (`out/stock` archive, the palette entry of the picture's
+  hue, the same geometry and camera as their pictures; 159 Ti, 8C, Giulia
+  TZ2, Spider, Q7, TT RS, XLR-V, C10, Camaro SS, Corvette) by a coordinate
+  search over ambient, key light, environment, soft box and reflection and
+  highlight strengths, scored on the value and saturation percentiles and
+  white share: the environment is a quarter of before, paint reflection 0.15
+  (was 1.0), its highlight 0.3 of before, other materials' reflections 0.3,
+  sky ambient 0.62 (0.45), key light 0.96 (0.8). Score 1.37 before, 0.27
+  after (0.21 at the search's optimum, which had no sheen left at all; the
+  chosen set keeps a soft highlight).
+
+Result on the ported red pairs: median saturation 0.67 to 0.84 (stock 0.81
+to 0.90), white 0.2 to 0.3 % (stock 0.1 %); still a little brighter than
+stock (Volt median value 0.34 against 0.21, before 0.48; 90th percentile
+0.42 against 0.34, before 0.76). `img/garage-pictures-tone.jpg`: stock,
+before, after. In game the new pictures show on the garage cards (runs
+`vm-20261025-083412`, the CHEVROLET card browser, and `-092759`).
 
 Checked on the stock cars against their own pictures (370Z, R8, Charger,
 159: same framing, the stock pictures' paint a little darker and glossier)
@@ -351,8 +389,9 @@ FUN_008352B0), and that drew a 16-bit badge ("B39", page 1) in run
 **The patch (`tools/asi/src/mod_hud.cpp`).** vehicleStats gets two optional
 fields, `ManufacturerGlyph` and `ModelGlyph` (codes 0x100 up). The text
 stays one byte, as stock: each text element that shows a car with a code
-gets a slot code of its own (1..8, 11, 12, 14, 15: control characters
-without tab, line feed, return; gui_assets writes empty records for them),
+gets a slot code of its own (1..8, 14..17: control characters the narrow
+layout draws as glyphs, "Why the 16-bit glyphs drew nothing" below;
+gui_assets writes empty records for them),
 the plugin copies the 16-bit glyph's record (x, y, w, h, offsets, advance,
 page) over the slot's record in the loaded vehicles_font, and sets the
 element's text to that byte (after an empty text when the slot's glyph
@@ -408,6 +447,112 @@ calls, so they show the wide glyphs too (not yet looked at in game).
 writes a stress-test Fonts.fchunk (40 numbered badges "B1".., 400 plates
 "P1".. on pages 1..3) and a hud.lua giving the listed cars
 codes from the far end (car 1: B40 / P400 on page 3).
+
+### Why the 16-bit glyphs drew nothing (full roster, 2026-10-25)
+
+User report on out/final-gui2 (573 cars, `--wide-glyphs`): "most of the cars
+are missing hud badges"; a ported Audi A4 showed the Audi rings but no
+nameplate. The 40-car test drives had no 16-bit glyphs at all (one page,
+one-byte codes only), so the slot path had never drawn in game.
+
+**Which cars lost what.** Every 16-bit glyph was missing, whatever its page:
+533 of the 573 cars have a `ModelGlyph` (no plate on the HUD) and 303 a
+`ManufacturerGlyph` (no badge); only the stock badges (263 cars of makers DSF
+has) and the 40 stock plates showed, and 7 cars without a Forza logo showed
+their host's badge (below). Runs `vm-20261025-063019`
+and `-063317`: no badge or plate for IDs 1 (page 1 glyphs), 26 (pages 1 and
+2) and 705, even with 705's fields pointed at stock page 0 glyphs (Nissan
+badge 54, 370Z plate 219). The plugin logged "slot 1 shows U+0134 (page 1,
+...)" for each: the records were copied.
+
+**Cause (confirmed-static, then in game).** The renderer drops a text whose
+bytes OR together to 0x20 or less (spaces and control characters only), in
+two places:
+
+| VA | Function | Check |
+| --- | --- | --- |
+| 0x007216BE | FUN_007215E0, text setup (vtable 0x00E28BD8) | `or dl,al` over the bytes; `cmp dl,0x20; ja +2; xor ecx,ecx`: length 0 |
+| 0x0072487A | FUN_00724850, text key `{text, wide text, length, hash}` | the same; FUN_00721F80 (draw) returns for a length under 2 |
+
+A slot text is one control character, so both made it empty. The narrow
+layout (FUN_00726320) also tabs at 9 and breaks the line at 10 to 13, so
+slot codes 11 and 12 could never draw either. The fix
+(`tools/asi/src/mod_hud.cpp`, `textlen_init`): both checks jump to a stub
+that keeps the length of a one-byte string whose byte is a slot code (mask
+of `kSlotCodes`) and does as stock otherwise; the slots are 1..8 and 14..17
+(`HUD_SLOT_CODES`). The [hud] sites are patched only when both checks are.
+Offline test: `text_len`/`text_key` in `tools/asi/test/offline.cpp` run the
+patched code on "\x01", "\x10", " ", "\x0B"...
+
+In game (confirmed-runtime): with the fixed plugin and the unchanged
+out/final-gui2 data, the driving HUD shows the badge and plate of IDs 705
+(Volvo 242, page 1 badge, page 2 plate), 26 (2000GT), 1 (M3 E30) and 400
+(Focus ZX4: stock Ford badge, page 1 plate), run `vm-20261025-080159`
+(`img/hud-wide-glyphs-before-after.jpg`; before: run `-065150`, a first fix that patched only the first check); the same
+with the rebuilt out/final-gui3 (run `-084300`), and the garage card
+browser's side panel shows the ported plates (run `-083412`). Run `-093537`
+(out/final-gui3): the user's Audi A4 (ID 73, "92 AUDI A4 TOURING CAR"
+under the stock rings, `img/hud-audi-a4-before-after.jpg`), the text badges
+of the tour bus (222) and the Kenworth (463), and late IDs 725 (Wiesmann)
+and 382 (Fiat 595, page 1 badge) (`img/hud-text-badges-late-ids.jpg`).
+
+### Maker list logos (dsfforza.asi [garage] + [hud])
+
+User report on out/final-gui2: "some make garage badges are missing";
+BERTONE, BUGATTI and BUICK had no logo in the maker list, BMW and BUS did.
+
+**Cause.** The maker list (FUN_006C6940, `ManufacturerLogoReferenceList`)
+shows each group's badge string, `"%c"` of the `Manufacturer` of the car that
+made the group: a one-byte code, which `ManufacturerGlyph` doesn't reach.
+The one-byte plan (`plan_glyphs`) had 44 codes for 57 new makers and about
+500 new plate names; by car count it gave 21 makers a badge code and the other 33 the
+blank badge (159): ASCARI, BERTONE, BUGATTI, BUICK, CHRYSLER, DE TOMASO,
+DEVON, EAGLE, FIAT, GUMPERT, HENNESSEY, INFINITI, JOSS, KIA, MERCURY, MORGAN,
+MOSLER, NOBLE, OPEL, PANOZ, PLYMOUTH, RADICAL, ROSSION, SAAB, SATURN, SCION,
+SPADA VETTURE SPORT, SPYKER, SSC, SUZUKI, TVR, ULTIMA, WIESMANN. Three more
+had no Forza logo in FH1 (BUS, KENWORTH, RENAULT), so their cars got no
+`Manufacturer` and showed the host's badge (the tour bus the Caisson logo,
+the Renaults and the Kenworth their hosts' makers'). So 36 of the 92 maker
+groups had no logo or a wrong one.
+
+**Fix.**
+
+- The renderer draws a narrow `"ID:n"` as localised string n, and localised
+  strings are UTF-16, so they can hold a 16-bit code. `gui_assets build
+  --wide-glyphs` adds one string per 16-bit badge to every
+  `Locale/<lang>/global.fchunk` copy: ID `GLYPH_STRING_BASE` (900000) + code,
+  the one character `chr(code)`.
+- dsfforza.asi [garage]: the badge string set at 0x006C6AE2 (FUN_00ACE110 on
+  the logo list element) goes through `menu_set_badge`. For a group whose
+  first car has a `ManufacturerGlyph` (all cars of a maker share it), the
+  element gets `"ID:<900000 + code>"` instead (mod_hud's
+  `hud_maker_logo_text`, which first checks the string table, FUN_008352B0 on
+  `[0x0124A794]`, for the one-character string: without it the text would
+  draw as the glyphs "I", "D", ":"...). An element that can't hold the text
+  keeps the stock string (logged).
+- Makers without a logo: FM4's `Media/UI/Textures.zip` (DVD 1) has the same
+  `UI4/Logos/Manufacturer_Logos*` folders and Renault; `ForzaUI.logo` reads it
+  when FH1 has none. A maker with no logo in either (the tour bus "BUS",
+  KENWORTH) gets a chrome text badge of its name (`maker_badge`, the
+  nameplate style, up to 98 x 30) as its HUD badge, maker list badge and
+  picture logo, instead of the host's badge.
+
+The stock list's 40 string elements are external (`{text, external 1, set,
+capacity}`; FUN_00ACE220 keeps the caller's pointer and takes its length as
+capacity), the ones `list_grow` adds have their own 64-byte buffer. The
+plugin's `"ID:n"` texts live for the whole process, so both kinds take them
+(a first build that required a large enough buffer left the stock elements,
+the makers at positions 35 to 39, stock: run `vm-20261025-083412`).
+
+In game (confirmed-runtime, run `vm-20261025-092759`: out/final-gui3, the
+maker list scrolled through all 92 groups): every maker shows a logo, the 57
+new ones included (ASCARI, BERTONE, BUGATTI, BUICK, the BUS and KENWORTH text
+badges, RENAULT from FM4...); `img/garage-maker-logos-before-after.jpg`
+(before: out/final-gui2, run `vm-20261025-084543`),
+`img/garage-maker-list-all-after.jpg` (every fifth position). A few Forza
+logos are dark on the black list (Hennessey's red, Chrysler's grey).
+Counts: before, 56 of 92 groups with their own logo (35 stock, 21 new) and
+36 without or with the host's; after, 92 of 92.
 
 ### Names from Forza's string tables (confirmed-static)
 
@@ -579,20 +724,19 @@ and Fonts.fchunk, `gui_assets` now reads the originals from
    a label ("Fixes after the first test drive").
 4. Done: `add_strings` adds the localisation strings and the build writes
    the `global.fchunk` copies ("Fixes after the first test drive").
-5. dsfforza.asi [hud] slot-record version (the one in `mod_hud.cpp` now):
-   not yet run in game. The sandbox died at "window up" on every run after
-   the 2026-10-23 reboot (all agents). Pending: `glyphtest` on out/testdrive
-   (IDs 1..8, codes up to page 3), the 10-car real build (`out/hud/td10`),
-   and all 40 cars of out/testdrive3 with `--wide-glyphs` (`out/hud/td3`:
-   50 wide glyphs; the one-byte fallback leaves 7 cars on the blank plate).
-   What did run: the ctor hook and site patches (10 of 10, every run), the
-   per-car field read, and a 16-bit glyph from page 1 drawn through the
-   `"ID:"` route (run `20261022-224711`, badge "B39").
+5. Answered: the slot-record version drew nothing until the renderer's two
+   blank-text checks were patched ("Why the 16-bit glyphs drew nothing").
+   With them, the driving HUD shows 16-bit badges and plates from pages 1
+   and 2 (run `vm-20261025-080159`, IDs 705, 26, 1, 400:
+   `img/hud-wide-glyphs-before-after.jpg`).
 6. Slot records are rewritten in the loaded FNTD; if an element caches the
    glyph quad and ignores the refresh, the old glyph would stay until the
-   text changes. The empty-then-slot SetText is meant to force it.
-7. Garage-shop and vehicle-panel screens (sites 0x0070E361.. and
-   0x00711687..) use the same hook; not looked at in game.
+   text changes. The empty-then-slot SetText is meant to force it. In the
+   runs above each car change showed the new car's glyphs.
+7. Answered for the vehicle panel: the card browser's side panel (sites
+   0x00711687..) shows the 16-bit plates of ported cars (run
+   `vm-20261025-083412`, CHEVROLET: "CHEVELLE SS-454", "4 CORVETTE RACING
+   C6.R"). The garage shop screen was not looked at.
 8. Garage card emblem: answered in "Garage card emblem" above. The "SF" disc
    is the sprite object `Spr3D.unlocked<N>` of each card, one shared sprite
    resource (UVs 242..345 x 2..75 into atlas `20125a7f761d9d2c`) shown or
@@ -602,6 +746,14 @@ and Fonts.fchunk, `gui_assets` now reads the originals from
    keeps the SF disc on all its cards (card 20 needs the spare; untested in
    game; groups of more than 20 use 19 cards and keep the emblem); the spare's UV restore when a 20-car group or the challenge
    browser's 20th card uses Header_Sprite_20 is wired but was not exercised.
+   New (2026-10-25): in a group of more than 20 cars the emblems sit one card
+   off once the browser has moved. CHEVROLET in run `vm-20261025-083412`
+   (menu-20, menu-30): the stock Camaro SS card wears the Forza logo and the
+   ported Cobalt SS and Chevelle SS-454 the SF disc, while the plugin logged
+   the right model per card. The user's Volt screenshot shows the same (the
+   ported Volt's picture under an SF disc, the stock Volt's under the Forza
+   logo). Not fixed here; the card list window (asi.md, "Maker groups past 20
+   cars") and the emblem hook disagree on which card object shows which car.
 9. Answered: the crash with `[garage]` on (runs `host-20261023-080433`,
    `-080858`, `-081321`) was not the emblem patch. The garage fills its maker
    menu (FUN_006C6940) into four menu-script lists of `Install\menusmaster.sp`
