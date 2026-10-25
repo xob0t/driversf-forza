@@ -18,7 +18,8 @@ Lights material) like badges. Run it before the atlas is planned.
 - Artwork: at least ART_MIN_OPAQUE of the texel centres inside the triangle's UV
   triangle (its corners and centroid if it holds none) have alpha >= 128, and the
   brightest channel of their mean colour is ART_MIN_LEVEL or more (the shared
-  trim's dark block is about 24). Alpha-0 texels are paint-through filler, not
+  trim's dark block is about 24). Mid-grey plastics stay trim (the DMC-12's and
+  the Volt's bumpers, 73 to 90). Alpha-0 texels are paint-through filler, not
   trim colour (forza-materials.md).
 - Seen: `seen_from_outside`, orthographic depth buffers of the LOD's body from
   around and above the car (glass doesn't hide anything). Light frames under the
@@ -41,7 +42,7 @@ from dsfforza.formats import carbin
 
 ART_TECHNIQUE = {fm.NODAMAGE: "dsf_trim_art", fm.LIGHTS: "dsf_trim_art_lights"}
 ART_MIN_OPAQUE = 0.5  # share of the triangle's texels with alpha >= ALPHA_OPAQUE
-ART_MIN_LEVEL = 72  # brightest channel of the opaque texels' mean RGB
+ART_MIN_LEVEL = 128  # brightest channel of the opaque texels' mean RGB
 ALPHA_OPAQUE = 128
 KEEP_TRIM = frozenset({"undercarriage", "engine", "cage", "bottom", "bottom_2"})
 # black, black_glass, black_glass_breakable; mirror glass (a render target in Forza).
