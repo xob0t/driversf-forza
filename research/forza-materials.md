@@ -467,6 +467,18 @@ door handles are light grey. The built full entry (`dsf_materials preview`
 of `out/fx/after`, ID 1) has the quadrifoglio on the Chassis material.
 Rebuilding the four test cars with the final code gave byte-identical chunks.
 
+In game (confirmed-runtime, headless VM, probe IDs 1 to 4 with the `left`,
+`wheels` and `rear` views): `vm-20261025-075152` runs the four cars' chunks
+from `out/final` (the installed build, remerged as IDs 1 to 4 with
+`port_batch remerge --id-policy garage`), `vm-20261025-075859` the same four
+built with this change (`out/fx/after`: GTA, Veyron, Monte Carlo SS,
+Crossfire). The GTA's wing and tail triangles are white with the green
+cloverleaf instead of black (`img/trim-art-gta-ingame-before-after.jpg`). The
+Veyron's roof scoops, engine cover and fuel cap are light silver instead of
+black (`img/trim-art-veyron-ingame-before-after.jpg`; the spawn picked a
+different palette colour in each run). The Crossfire drove off before its
+fixed cameras in both runs.
+
 ## Open
 
 1. In game: whether the Chassis material lights badges well (the Lights
@@ -491,3 +503,11 @@ Rebuilding the four test cars with the final code gave byte-identical chunks.
 7. The cockpit draws exterior chrome (A-pillar trim, bonnet strips) flat from
    its atlas; stock interiors have `GLOBAL_LOD_Chrome` (host 193 uses it for
    3,700 triangles), which the interior entry could use the same way.
+8. Trim artwork ("Trim artwork"): Forza's trim shaders aren't decoded, so
+   whether `matte_colors` / `plastic2` (with a `PaintScale`) or `frame` show
+   their texel as is, or tint it, is a guess; the light grey (177) of the
+   Veyron's scoops reads near white on the Chassis material in game.
+   Mid-grey trims (brightest channel under 128) and the `black*` techniques
+   still draw with the shared dark trim whatever their texels. The visibility
+   test is orthographic from around and above: artwork seen only from below
+   or through a narrow gap counts as hidden.
