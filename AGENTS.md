@@ -42,6 +42,9 @@ Research notes are in `research/` (read the ones for your area first).
   log lines, numbers, and screenshots committed under `research/img/` and
   linked by commit SHA (as for PRs). Also say what you ruled out and where you
   would start. Mention the issue numbers in your PR and in your report.
+  Only file what differs from the stock game or from Forza. Behaviour the
+  stock game has too (its layouts, its UI quirks) is not an issue; check a
+  stock car or the unmodified game before filing.
 - Python: the package `dsfforza` in `src/dsfforza/` (`formats/`, `convert/`,
   `build/`, `game/`, `harness/`), managed with uv on Python 3.13
   (`pyproject.toml`, `uv.lock`). Run a tool with `uv run dsff <tool> ...`
