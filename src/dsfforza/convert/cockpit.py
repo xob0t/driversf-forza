@@ -98,7 +98,10 @@ FACE_MIN_DENSITY = 1.0
 # shows unrelated texture cells. They get one flat cell of the interior atlas.
 FLAT_COCKPIT = [
     (re.compile(r"^dsf_dial_mark$"), (226, 226, 222, 255)),  # virtual dials (virtual_gauges)
+    (re.compile(r"^dsf_dial_mark_dark$"), (22, 22, 22, 255)),  # ... on a light display face
     (re.compile(r"^dsf_dial_red$"), (214, 32, 18, 255)),
+    (re.compile(r"^dsf_dial_display$"), DISPLAY_COLOUR),  # a virtual display's screen (pod_display)
+    (re.compile(r"^dsf_dial_bezel$"), (30, 30, 32, 255)),  # ... and its housing
     (re.compile(r"^mirror", re.I), (46, 50, 56, 255)),
     (re.compile(r"wood", re.I), (84, 48, 26, 255)),
     (re.compile(r"chrome|metal", re.I), (150, 150, 155, 255)),
@@ -111,7 +114,10 @@ INTERIOR_PAINT = bytes.fromhex("10122b9653b14e2a")
 # atlas (stitching lines, mottled plastic): at the cockpit atlas's scale they
 # smear into neighbouring cells (white blocks on the Raptor's wheel, a
 # speckled band under the M5's cluster). Drawn flat.
-FORCE_FLAT = re.compile(r"^(mottled|bump_stitching|stitching|dsf_dial_mark|dsf_dial_red)$", re.I)
+FORCE_FLAT = re.compile(
+    r"^(mottled|bump_stitching|stitching|dsf_dial_mark|dsf_dial_mark_dark|dsf_dial_red|dsf_dial_display|dsf_dial_bezel)$",
+    re.I,
+)
 DASHBOARD_INSTRUMENT = 0x75FAD367  # VDCL name hash of the needle buffers' semantic 8 (u, v, gauge id, 0)
 
 
@@ -756,7 +762,11 @@ def with_display_faces(section: carbin.Section) -> tuple[carbin.Section, int]:
 # the engine (research/cockpit.md, "Gauges"). On a blank display in the dashboard the
 # missing gauge becomes a dial: tick marks, seven-segment numerals and a red zone as
 # flat-colour geometry, and a needle driven by the host's gauge entry like any Forza
-# needle (research/cockpit.md, "Virtual dials").
+# needle (research/cockpit.md, "Virtual dials"). Where no blank display can hold one, a
+# display with its own face (a static picture of the LCD, display_face) takes it, drawn
+# flat in the face's colour under the dial; where neither can (the readout is on the
+# steering wheel, or only small strips), a virtual display on the dashboard does
+# (pod_display; research/cockpit.md, "Virtual dials on display faces and virtual displays").
 VIRTUAL_MIN_AREA = 0.0025  # m^2: the display's rectangle (25 cm^2; race LCDs are 13-16 x 5-9 cm)
 VIRTUAL_MAX_TILT_DEG = 60.0  # display normal against the direction to the eye
 VIRTUAL_MIN_SIGHT = 0.5  # share of the display the eye sees past the wheel and the cowl
@@ -771,6 +781,8 @@ VIRTUAL_NEEDLE_COLOURS = {
 VIRTUAL_SPEED_MIN = 120.0  # mph: smallest virtual speedometer scale
 VIRTUAL_TACH_MIN = 6000.0  # rpm
 VIRTUAL_SOURCE = "virtual dial"  # GaugeCalibration.source of a virtual dial
+VIRTUAL_DARK_MARKS = 100.0  # display luminance (0..255) above which the marks are dark
+FACE_FRONT_DEPTH = 0.02  # m: digital patches this near a face's plane may stand in front of it
 _SEGMENTS = {  # seven-segment digits: a top, b upper right, c lower right, d bottom, e lower left, f upper left, g middle
     "0": "abcdef",
     "1": "bc",
@@ -795,6 +807,9 @@ class Display:
     up: tuple  # unit, in the plane
     right: tuple  # unit, in the plane: the driver's right
     rect: tuple  # (u0, u1, v0, v1): extent along right and up from the centre
+    subsection: int | None = None  # index in its section's subsections
+    colour: tuple = DISPLAY_COLOUR  # what the dial is drawn on: a face's median texel
+    kind: str = "display"  # "display" (blank), "face" (display_face) or "virtual" (pod_display)
 
     @property
     def size(self) -> tuple[float, float]:
@@ -808,6 +823,11 @@ class Display:
 def _touching(tris: list[list[tuple]], cell: float = 0.01) -> list[list[tuple]]:
     """Points of each group of triangles that touch: union-find over triangles
     with a vertex in the same `cell` grid cell."""
+    return [[p for i in group for p in tris[i]] for group in _touching_groups(tris, cell)]
+
+
+def _touching_groups(tris: list[list[tuple]], cell: float = 0.01) -> list[list[int]]:
+    """Indices of each group of triangles that touch (_touching)."""
     parent = list(range(len(tris)))
 
     def find(a: int) -> int:
@@ -825,27 +845,57 @@ def _touching(tris: list[list[tuple]], cell: float = 0.01) -> list[list[tuple]]:
             else:
                 first[k] = i
     groups: dict[int, list] = {}
-    for i, t in enumerate(tris):
-        groups.setdefault(find(i), []).extend(t)
+    for i in range(len(tris)):
+        groups.setdefault(find(i), []).append(i)
     return list(groups.values())
 
 
-def blank_displays(static: dict, eye) -> list[Display]:
+def face_colour(section: carbin.Section, sub: carbin.SubSection, tris: list[int], atlas) -> tuple:
+    """Median RGBA of a display face's texels (UV0 through its first transform, the
+    face's: display_face) at the corners, edge midpoints and centre of `tris`."""
+    width, height, rgba = atlas
+    xo, xs, yo, ys = sub.uv_transform[:4]
+    pool = section.vertices_for(sub)
+    triangles = sub.triangles()
+    samples = []
+    for k in tris:
+        uv = [pool[i].uv0 for i in triangles[k]]
+        pts = uv + [((a[0] + b[0]) / 2, (a[1] + b[1]) / 2) for a, b in itertools.combinations(uv, 2)]
+        pts.append((sum(u for u, _ in uv) / 3, sum(v for _, v in uv) / 3))
+        for u, v in pts:
+            x = min(width - 1, max(0, int((u * xs + xo) % 1.0 * width)))
+            y = min(height - 1, max(0, int((v * ys + yo) % 1.0 * height)))
+            o = (y * width + x) * 4
+            samples.append(tuple(rgba[o : o + 3]))
+    if not samples:
+        return DISPLAY_COLOUR
+    return tuple(sorted(c[k] for c in samples)[len(samples) // 2] for k in range(3)) + (255,)
+
+
+def luminance(colour) -> float:
+    return 0.299 * colour[0] + 0.587 * colour[1] + 0.114 * colour[2]
+
+
+def blank_displays(static: dict, eye, faces: bool = False, atlas=None) -> list[Display]:
     """digital_gauge patches (triangles sharing a vertex position within 1 cm)
     in the cabin sections, not on the steering wheel (needles don't turn with
     it), each with its plane and rectangle. Textured faces (display_face) are
-    not digital_gauge any more and don't count."""
+    not digital_gauge any more and don't count; with `faces` they are what is
+    listed instead, each with its median colour from `atlas` (interior_LOD0)."""
     import numpy as np
 
+    techniques = {DISPLAY_FACE} if faces else DIGITAL_TECHNIQUES
     out = []
     for name, s in static.items():
         if fm.COCKPIT_EXTERIOR_SECTIONS.match(name) or name.lower() == "steering_wheel":
             continue
-        for sub in s.subsections:
-            if sub.lod or sub.material.lower() not in DIGITAL_TECHNIQUES:
+        for ui, sub in enumerate(s.subsections):
+            if sub.lod or sub.material.lower() not in techniques:
                 continue
             pool = s.vertices_for(sub)
-            for pts in _touching([[pool[i].position for i in t] for t in sub.triangles()]):
+            tris = [[pool[i].position for i in t] for t in sub.triangles()]
+            for group in _touching_groups(tris):
+                pts = [p for k in group for p in tris[k]]
                 p = np.array(pts, dtype=np.float64)
                 c = p.mean(axis=0)
                 _, vecs = np.linalg.eigh(np.cov((p - c).T))
@@ -867,6 +917,9 @@ def blank_displays(static: dict, eye) -> list[Display]:
                         up,
                         right,
                         tuple(float(x) for x in (us.min(), us.max(), vs.min(), vs.max())),
+                        ui,
+                        face_colour(s, sub, group, atlas) if faces and atlas is not None else DISPLAY_COLOUR,
+                        "face" if faces else "display",
                     )
                 )
     return out
@@ -1024,7 +1077,8 @@ def virtual_dial(d: Display, cell: tuple, family: str, forza, version: int):
                 corners = [(bx0, by0), (bx1, by0), (bx1, by1), (bx0, by1)]
                 marks.append(([d.point(x0 + x, y0 + y, VIRTUAL_MARK_LIFT) for x, y in corners], nrm))
         k += 1
-    face = _dial_section(f"dsf_dial_{family}", version, {"dsf_dial_mark": marks, "dsf_dial_red": reds})
+    mark = "dsf_dial_mark_dark" if luminance(d.colour) > VIRTUAL_DARK_MARKS else "dsf_dial_mark"
+    face = _dial_section(f"dsf_dial_{family}", version, {mark: marks, "dsf_dial_red": reds})
     # The needle at rest (0 mph / 0 rpm) and its hub; the engine turns both about the pivot.
     outline = ((-0.16 * r, -0.035 * r), (0.9 * r, -0.008 * r), (0.9 * r, 0.008 * r), (-0.16 * r, 0.035 * r))
     blade = [at(rr, start, VIRTUAL_NEEDLE_LIFT, side) for rr, side in outline]
@@ -1039,6 +1093,7 @@ def virtual_dial(d: Display, cell: tuple, family: str, forza, version: int):
     cal = GaugeCalibration(family, GAUGE_IDS[family], sweep, False, 0.0, round(dial_max, 1), 0.0, VIRTUAL_SOURCE)
     report = {
         "display": d.section,
+        "on": d.kind,
         "display_cm": [round(100 * x, 1) for x in d.size],
         "radius_cm": round(100 * r, 1),
         "span_deg": round(span, 1),
@@ -1048,21 +1103,271 @@ def virtual_dial(d: Display, cell: tuple, family: str, forza, version: int):
     return needle, face, gauge, cal, report
 
 
-def virtual_gauges(static: dict, gauges: dict, eye, forza, version: int, sight_sections=None) -> tuple[list, dict]:
+# A virtual display (pod_display): where the readout Forza draws is on the steering
+# wheel or too small for a dial, a screen in a housing on the dashboard, facing the eye,
+# where the driver sees it past the wheel at any steering angle.
+POD_SIZES = {  # dials -> display sizes (m) tried, largest first
+    2: ((0.16, 0.08), (0.14, 0.07), (0.12, 0.06), (0.10, 0.05)),
+    1: ((0.10, 0.075), (0.09, 0.0675), (0.08, 0.06), (0.07, 0.0525)),
+}
+POD_BEZEL = 0.006  # m: housing around the screen
+POD_LIFT = 0.004  # m: the housing's front in front of the nearest dash point behind it
+POD_DEPTH = 0.15  # m: the most the dashboard may fall away behind the housing (a box on the dash top)
+POD_RANGE = (0.3, 1.1)  # m from the eye along the line of sight
+POD_WHEEL_CLEAR = 0.04  # m beyond the rim: kept clear, the wheel turns and the hands hold it
+POD_GAUGE_CLEAR = 1.2  # x a Forza needle's length: its dial is kept clear
+POD_MAX_DEG = 40.0  # from the top of the rim (seen from the eye), at most
+POD_SIDE_DEG = 35.0  # to either side of the wheel's centre, at most
+POD_BELOW_EYE = -0.05  # the line of sight's y: at least 3 degrees down (the dashboard, not the roof)
+POD_RESOLUTION = 256  # pixels across the 90-degree view the search runs on
+POD_STEP = 3  # pixels between candidate centres
+
+
+def _disc_mask(rays, eye, centre, normal, radius):
+    """Rays (N, 3) from `eye` that cross the plane through `centre` (normal
+    `normal`) ahead of the eye within `radius` of the centre."""
+    import numpy as np
+
+    normal = np.array(normal, dtype=np.float64)
+    rel = np.array(centre, dtype=np.float64) - np.array(eye, dtype=np.float64)
+    denom = rays @ normal
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t = (rel @ normal) / denom
+        off = rays * t[:, None] - rel
+    return (t > 0) & ((off * off).sum(axis=1) < radius * radius)
+
+
+def pod_display(static: dict, eye, wheel: Wheel, dials: int, gauges: dict, version: int, sight_sections=None):
+    """A virtual display for `dials` (1 or 2) dials: the largest of POD_SIZES that
+    fits, nearest the point just above the steering wheel's rim, in front of the
+    dashboard and facing the eye. Every line of sight to it must reach the cabin
+    within POD_DEPTH behind it (not the windscreen, the bonnet or an A-pillar),
+    pass outside the rim (and POD_WHEEL_CLEAR) and clear of Forza's own dials,
+    digital displays and gauge faces. Found on a depth image from the eye.
+    Returns (Display, housing section, report) or (None, None, report)."""
+    import numpy as np
+
+    sections = list(sight_sections if sight_sections is not None else static.values())
+    points, flags = [], []
+    for s in sections:
+        name = s.name.lower()
+        pool = None
+        for sub in s.subsections:
+            role = fm.classify_cockpit(sub.material)[0]
+            if sub.lod != 0 or role in (fm.GLASS, fm.SKIP):
+                continue
+            if pool is None:
+                pool = np.array([v.position for v in s.lod0_vertices], dtype=np.float64).reshape(-1, 3)
+            t = np.array(sub.triangles(), dtype=np.int64).reshape(-1, 3)
+            m = sub.material.lower()
+            bad = (
+                name == "steering_wheel"
+                or bool(fm.COCKPIT_EXTERIOR_SECTIONS.match(name))
+                or m in DIGITAL_TECHNIQUES
+                or m == DISPLAY_FACE
+                or m.startswith(("gauge", "z_gauge"))
+            )
+            points.append(pool[t])
+            flags.append(np.full(len(t), bad))
+    if not points:
+        return None, None, {"virtual_display": "nothing in view"}
+    points, flags = np.concatenate(points), np.concatenate(flags)
+    res, half = POD_RESOLUTION, POD_RESOLUTION / 2
+    e = np.array(eye, dtype=np.float64)
+    depth = np.zeros(res * res)
+    ids = np.full(res * res, -1, dtype=np.int64)
+    parts, owner = _screen_parts(points - e, 2, -1, half)
+    _raster(parts, owner, res, depth, ids)
+    # Per pixel: its line of sight and what it meets (Forza looks along -z).
+    xc = (np.arange(res) + 0.5 - half) / half
+    a, b = np.meshgrid(xc, -xc)
+    rays = np.stack((a, b, -np.ones_like(a)), axis=-1).reshape(-1, 3)
+    rays /= np.linalg.norm(rays, axis=1)[:, None]
+    hit = depth > 0
+    z = np.where(hit, 1 / np.where(hit, depth, 1), np.inf)
+    hits = np.stack((a.ravel() * z, b.ravel() * z, -z), axis=-1)  # eye-relative
+    bad = ~hit | (ids < 0) | flags[np.maximum(ids, 0)]
+    bad |= np.linalg.norm(np.where(hit[:, None], hits, 0), axis=1) > POD_RANGE[1] / 0.8
+    bad |= _disc_mask(rays, eye, wheel.centre, wheel.axis, wheel.radius + POD_WHEEL_CLEAR)
+    for g in gauges.values():
+        reach = max((math.dist(p, g.pivot) for p in section_points(g.rest)), default=0.0)
+        bad |= _disc_mask(rays, eye, g.pivot, g.normal, reach * POD_GAUGE_CLEAR)
+    bad = bad.reshape(res, res)
+    hits = hits.reshape(res, res, 3)
+    report = {"virtual_display": "no room"}
+
+    def project(rel):
+        zz = -rel[:, 2]
+        return half + half * rel[:, 0] / zz, half - half * rel[:, 1] / zz, zz
+
+    def fits(n, s, w, h):
+        """(front, back) distances along n of the housing at s, or None."""
+        n = np.array(n)
+        up = _norm(_sub((0.0, 1.0, 0.0), _scale(tuple(n), n[1])))
+        right = np.array(_cross(tuple(n), up))
+        up = np.array(up)
+        for _ in range(5):
+            hw, hh = w / 2 + POD_BEZEL, h / 2 + POD_BEZEL
+            corners = np.array([n * s + right * x + up * y for x, y in ((-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh))])
+            px, py, pz = project(corners)
+            if (pz <= 0.05).any():
+                return None
+            x0, x1 = max(0, int(px.min())), min(res, int(px.max()) + 1)
+            y0, y1 = max(0, int(py.min())), min(res, int(py.max()) + 1)
+            if px.min() < 0 or py.min() < 0 or px.max() > res or py.max() > res or x0 >= x1 or y0 >= y1:
+                return None
+            gx, gy = np.meshgrid(np.arange(x0, x1) + 0.5, np.arange(y0, y1) + 0.5)
+            inside = np.ones(gx.shape, dtype=bool)
+            for k in range(4):  # the quad is convex; its corners go round one way
+                ax, ay, bx, by = px[k], py[k], px[(k + 1) % 4], py[(k + 1) % 4]
+                side = (bx - ax) * (gy - ay) - (by - ay) * (gx - ax)
+                inside &= side * ((px[1] - px[0]) * (py[2] - py[0]) - (py[1] - py[0]) * (px[2] - px[0])) >= 0
+            if not inside.any() or bad[y0:y1, x0:x1][inside].any():
+                return None
+            d = hits[y0:y1, x0:x1][inside] @ n
+            if d.min() - POD_LIFT < s - 1e-4:
+                s = float(d.min()) - POD_LIFT
+                continue
+            if d.max() - s > POD_DEPTH or not POD_RANGE[0] <= s <= POD_RANGE[1]:
+                return None
+            return s, float(d.max())
+        return None
+
+    # Candidates by how far the driver looks from the top of the rim to them, no lower
+    # than the wheel's centre and at most POD_SIDE_DEG to either side of it (not on the
+    # doors or the centre console).
+    up_w = _norm(_sub((0.0, 1.0, 0.0), _scale(wheel.axis, wheel.axis[1])))
+    top = np.array(_norm(_sub(_add(wheel.centre, _scale(up_w, wheel.radius)), eye)))
+    hub = _norm(_sub(wheel.centre, eye))
+    score = np.degrees(np.arccos(np.clip(rays @ top, -1.0, 1.0))).reshape(res, res)
+    side = np.degrees(np.arctan2(rays[:, 0], -rays[:, 2]) - math.atan2(hub[0], -hub[2])).reshape(res, res)
+    low = ((rays[:, 1] < hub[1]) | (rays[:, 1] > POD_BELOW_EYE)).reshape(res, res)  # under the eye line, the dash
+    pix = np.arange(POD_STEP // 2, res, POD_STEP)
+    scored = sorted(
+        (float(score[y, x]), int(x), int(y))
+        for y in pix
+        for x in pix
+        if not bad[y, x] and not low[y, x] and abs(side[y, x]) <= POD_SIDE_DEG and score[y, x] <= POD_MAX_DEG
+    )
+    for w, h in POD_SIZES[dials]:
+        for ang, x, y in scored:
+            n = rays[y * res + x]
+            got = fits(n, float(hits[y, x] @ n), w, h)
+            if got is None:
+                continue
+            front, back = got
+            n = tuple(float(c) for c in n)
+            up = _norm(_sub((0.0, 1.0, 0.0), _scale(n, n[1])))
+            right = _cross(n, up)
+            centre = _add(eye, _scale(n, front))
+            d = Display("dsf_dial_panel", centre, n, up, right, (-w / 2, w / 2, -h / 2, h / 2), kind="virtual")
+            housing = _housing(d, back - front, version)
+            report = {
+                "virtual_display": {
+                    "size_cm": [round(100 * w, 1), round(100 * h, 1)],
+                    "centre": [round(c, 4) for c in centre],
+                    "distance_m": round(front, 3),
+                    "depth_cm": round(100 * (back - front), 1),
+                    "from_rim_top_deg": round(ang, 1),
+                }
+            }
+            return d, housing, report
+    return None, None, report
+
+
+def _housing(d: Display, depth: float, version: int) -> carbin.Section:
+    """The virtual display's geometry: the screen over the display rectangle, a
+    bezel POD_BEZEL wider just behind it, and sides from the bezel back `depth`
+    (to the dashboard behind it)."""
+    u0, u1, v0, v1 = d.rect
+    nrm = _scale(d.normal, -1)
+    screen = [d.point(u, v) for u, v in ((u0, v0), (u1, v0), (u1, v1), (u0, v1))]
+    b = POD_BEZEL
+    rim = [(u0 - b, v0 - b), (u1 + b, v0 - b), (u1 + b, v1 + b), (u0 - b, v1 + b)]
+    bezel = [d.point(u, v, -0.0008) for u, v in rim]
+    back = [d.point(u, v, -depth - 0.005) for u, v in rim]
+    sides = []
+    for k in range(4):
+        q = [bezel[k], bezel[(k + 1) % 4], back[(k + 1) % 4], back[k]]
+        sides.append((q, _norm(_cross(_sub(q[1], q[0]), _sub(q[3], q[0])))))
+    return _dial_section(
+        "dsf_dial_panel", version, {"dsf_dial_display": [(screen, nrm)], "dsf_dial_bezel": [(bezel, nrm)] + sides}
+    )
+
+
+def _face_front(static: dict, d: Display) -> float:
+    """How far digital patches over a face's rectangle stand in front of it (the
+    LFA's round dial face 4.7 mm in front of the cluster face behind it)."""
+    front = 0.0
+    u0, u1, v0, v1 = d.rect
+    for name, s in static.items():
+        if name.lower() == "steering_wheel":
+            continue
+        for sub in s.subsections:
+            if sub.lod or not (sub.material.lower() in DIGITAL_TECHNIQUES or sub.material == DISPLAY_FACE):
+                continue
+            for p in section_points(s, {sub.material}):
+                rel = _sub(p, d.centre)
+                depth = _dot(rel, d.normal)
+                if (
+                    -FACE_FRONT_DEPTH < depth < FACE_FRONT_DEPTH
+                    and u0 <= _dot(rel, d.right) <= u1
+                    and v0 <= _dot(rel, d.up) <= v1
+                ):
+                    front = max(front, -depth)
+    return front
+
+
+def virtual_gauges(
+    static: dict, gauges: dict, eye, forza, version: int, sight_sections=None, wheel: Wheel | None = None, atlas=None
+) -> tuple[list, dict, dict]:
     """Virtual dials for the speedometer and tachometer Forza has no needle
-    for, on the largest blank display the driver can read (pick_display); two
-    side by side along its long side when both are missing (tachometer first:
-    left or top). Returns ([(needle, face, Gauge, GaugeCalibration)], report)."""
+    for, on the largest blank display the driver can read (pick_display); else
+    on the largest display face (blank_displays with faces; `atlas` gives its
+    colour, fit draws it flat in it); else, where the car has a digital
+    readout anywhere (on the steering wheel, small strips), on a virtual
+    display on the dashboard (pod_display, needs `wheel`). Two side by side
+    along the long side when both are missing (tachometer first: left or
+    top). Returns ([(needle, face, Gauge, GaugeCalibration)], report, extra
+    static sections (the virtual display's housing))."""
     missing = [f for f in ("tach", "speed") if f not in gauges]
     if not missing:
-        return [], {}
-    displays = blank_displays(static, eye)
-    if not displays:
-        return [], {}
+        return [], {}, {}
+    digital = any(
+        sub.lod == 0 and (sub.material.lower() in DIGITAL_TECHNIQUES or sub.material == DISPLAY_FACE)
+        for name, s in static.items()
+        if not fm.COCKPIT_EXTERIOR_SECTIONS.match(name)
+        for sub in s.subsections
+    )
+    if not digital:
+        return [], {}, {}
     sight = GaugeSight(list(sight_sections if sight_sections is not None else static.values()), [])
-    d, why = pick_display(displays, sight, eye)
+    report: dict = {"missing": missing}
+    extra = {}
+    displays = blank_displays(static, eye)
+    d, why = pick_display(displays, sight, eye) if displays else (None, {})
+    report.update(why)
     if d is None:
-        return [], {"missing": missing, **why}
+        faces = blank_displays(static, eye, faces=True, atlas=atlas)
+        if faces:
+            d, why = pick_display(faces, sight, eye)
+            report["faces"] = why
+            if d is not None:
+                front = _face_front(static, d)
+                d.centre = _add(d.centre, _scale(d.normal, -front))
+                report["face"] = {
+                    "section": d.section,
+                    "subsection": d.subsection,
+                    "colour": list(d.colour[:3]),
+                    "front_mm": round(1000 * front, 1),
+                }
+    if d is None and wheel is not None:
+        d, housing, why = pod_display(static, eye, wheel, len(missing), gauges, version, sight_sections)
+        report.update(why)
+        if d is not None:
+            extra[housing.name] = housing
+    if d is None:
+        return [], report, {}
     u0, u1, v0, v1 = d.rect
     w, h = d.size
     cells = []
@@ -1071,12 +1376,30 @@ def virtual_gauges(static: dict, gauges: dict, eye, forza, version: int, sight_s
             cells.append((u0 + w * k / len(missing), u0 + w * (k + 1) / len(missing), v0, v1))
         else:
             cells.append((u0, u1, v1 - h * (k + 1) / len(missing), v1 - h * k / len(missing)))
-    out, report = [], {"missing": missing, **why, "dials": {}}
+    out = []
+    report["dials"] = {}
     for family, cell in zip(missing, cells):
         needle, face, gauge, cal, rep = virtual_dial(d, cell, family, forza, version)
         out.append((needle, face, gauge, cal))
         report["dials"][family] = rep
-    return out, report
+    return out, report, extra
+
+
+def flatten_face(static: dict, face: dict) -> int:
+    """The display face a virtual dial went on (virtual_gauges' report["face"])
+    back to a blank display in the face's colour (sub.display_rgba), so its
+    static artwork (bar outlines, printed scales, "0 MPH") doesn't show through
+    the dial. Returns its triangle count."""
+    import copy
+
+    s = copy.copy(static[face["section"]])
+    s.subsections = list(s.subsections)
+    sub = copy.copy(s.subsections[face["subsection"]])
+    sub.material = next(iter(DIGITAL_TECHNIQUES))
+    sub.display_rgba = tuple(face["colour"]) + (255,)
+    s.subsections[face["subsection"]] = sub
+    static[face["section"]] = s
+    return len(sub.triangles())
 
 
 def drop_unturned(cf: CockpitFit, gauge_slots: dict[int, int]) -> list[str]:
@@ -1092,6 +1415,8 @@ def drop_unturned(cf: CockpitFit, gauge_slots: dict[int, int]) -> list[str]:
         cf.calibration.pop(f, None)
         cf.static.pop(f"dsf_dial_{f}", None)
         cf.virtual.get("dials", {}).pop(f, None)
+    if dropped and not cf.virtual.get("dials"):
+        cf.static.pop("dsf_dial_panel", None)  # a virtual display with no dial left
     if dropped:
         cf.virtual["no_host_gauge"] = dropped
     return dropped
@@ -1203,7 +1528,16 @@ def fit(
             forza = None
         version = next((s.version for s in static.values()), 3)
         drawn = [s for n, s in static.items() if n not in SKIP_SECTIONS and not LIGHT_SECTIONS.search(n)]
-        dials, virtual_report = virtual_gauges(static, gauges, eye_point(wheel, offset), forza, version, drawn)
+        try:
+            atlas = fm.AtlasCache(folder, lod0=True).get(fm.INTERIOR) if folder is not None else None
+        except FileNotFoundError:
+            atlas = None
+        dials, virtual_report, extra = virtual_gauges(
+            static, gauges, eye_point(wheel, offset), forza, version, drawn, wheel=wheel, atlas=atlas
+        )
+        if dials and "face" in virtual_report:
+            faces -= flatten_face(static, virtual_report["face"])
+        static.update(extra)
         for needle, face, g, cal in dials:
             needles[g.family] = {"min": needle}
             gauges[g.family] = g
@@ -2001,7 +2335,7 @@ class CockpitBinding:
 
     def triangle_uvs(self, section, sub, triangle_index, raw_uvs):
         if sub.material.lower() in DIGITAL_TECHNIQUES:
-            key = ("display",) + DISPLAY_COLOUR
+            key = ("display",) + getattr(sub, "display_rgba", DISPLAY_COLOUR)
             return [self.texturing.solid_uv(key)] * len(raw_uvs), key
         if (
             FORCE_FLAT.match(sub.material)
@@ -2570,6 +2904,11 @@ def convert_interior(
         for c in [_needle_colour(atlases, g.rest, sub)]
     }
     needle_colours[("display",) + DISPLAY_COLOUR] = DISPLAY_COLOUR
+    for s in sections:  # display faces under a virtual dial (flatten_face)
+        for sub in s.subsections:
+            colour = getattr(sub, "display_rgba", None)
+            if colour is not None:
+                needle_colours[("display",) + colour] = colour
     for colour in {c for _, c in FLAT_COCKPIT} | {FLAT_DEFAULT}:
         needle_colours[("flat",) + colour] = colour
     families = (fm.NODAMAGE, fm.INTERIOR) + ((fm.LIGHTS,) if opts.headlights else ())
