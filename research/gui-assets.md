@@ -654,7 +654,7 @@ row mixes the two. A disc that seems one card off is the previous card's.
 
 `card_emblem`: the ctor hook (0x006C6855) also reads the optional
 vehicleStats field `GarageEmblem` (1 = Forza logo). For such a car, in a
-maker group of fewer than 20 cars, or one of more than 20 that the `[garage]`
+maker group of fewer than 20 cars, or one of 20 or more that the `[garage]`
 module shows 19 cards at a time (`asi.md`, "Maker groups past 20 cars"; mod_hud
 asks `garage_card_limit()`), the spare sprite resource
 `Header_Sprite_20` (card 20's picture slot, unused then) gets the SF
@@ -663,7 +663,8 @@ N's `Spr3D.unlocked<N>` in every menu page (menu = `[[screen+4]+8]`, pages
 `[menu+0x1B4]`, count `[menu+0x1B0]`, as FUN_00AB83C0 walks them) is pointed at
 it (`SetResource(0, spare, flag kept)`). Every other car gets its disc's
 original resource back. The spare's own UVs are saved and restored when a
-group of 20 cars needs card 20 or a picture site reaches it. Leaving the
+group of 20 cars shown on 20 cards (only without the window, `[garage]
+max_cars=20`) needs card 20 or a picture site reaches it. Leaving the
 vehicles screen puts the SF resource back on the discs by itself (seen as
 resource sets at the exit in run `-095535`, by a probe hook on
 CObjectSprite3D's raw resource set that the final build no longer has); entering it again refills the
@@ -758,11 +759,14 @@ and Fonts.fchunk, `gui_assets` now reads the originals from
    resource (UVs 242..345 x 2..75 into atlas `20125a7f761d9d2c`) shown or
    hidden by the menu script per `itemState_<N>`; nothing per car picks it.
    dsfforza.asi [hud] re-points it for cars with `GarageEmblem = 1` (in game:
-   run `host-20261023-100401`). Still open: a maker group of exactly 20 cars
-   keeps the SF disc on all its cards (card 20 needs the spare; in game:
-   ASTON MARTIN, run `vm-20261026-120559`, issue #66; groups of more than 20
-   use 19 cards and keep the emblem); the spare's UV restore when a 20-car group or the challenge
-   browser's 20th card uses Header_Sprite_20 is wired but was not exercised.
+   run `host-20261023-100401`). A maker group of exactly 20 cars kept the SF
+   disc on all its cards (card 20 needed the spare; ASTON MARTIN, run
+   `vm-20261026-120559`, issue #66); since #66 it is shown through the
+   19-card window like a longer group and wears the emblem (run
+   `vm1-20261026-144501`, asi.md "Maker groups past 20 cars"). Still open:
+   the spare's UV restore when a 20-card group (`[garage] max_cars=20`) or
+   the challenge browser's 20th card uses Header_Sprite_20 is wired but was
+   not exercised.
    Answered (2026-10-26): the "one card off" emblems in groups of more than
    20 cars (CHEVROLET in run `vm-20261025-083412`, menu-20 and menu-30, and
    the user's Volt screenshot) are not off. Each disc was read as the card's

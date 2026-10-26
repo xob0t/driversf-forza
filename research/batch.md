@@ -30,7 +30,7 @@ The Ghidra outputs are in `out/ghidra/profile-*`; the scripts used are
 | Root entries in `dngvehicles.sp` | `archive` module: 16384 (`[archive] max_entries`). The model IDs bind first: 453 + 3 × 849 = 3000 entries. `port_batch.py` assigns 1 to 61 and 304 to 999 (at most 757 cars), or all 849 with `--id-policy asi`; pass `--root-limit` (3003 covers every ID), since the default stays 1100 for installs without the plugin. Tested in game with 2,724 entries (`spool-limits.md`, "Raising the root entry limit"). |
 | `dngvehicles.sp` file size | `archive` module (`large_files`): below 4 GiB, enough for all 849 IDs (about 3.4 GB) |
 | Garage list | model IDs 0 to 999 (`[garage] max_id`) |
-| Garage maker groups | 120 groups (`[garage] max_groups`) of any number of cars (`[garage] max_cars`, 1000); the vehicles screen shows a group of more than 20 cars 19 cards at a time and scrolls on at the edges (`asi.md`, "Maker groups past 20 cars"); a group that doesn't fit is left out instead of overrunning memory |
+| Garage maker groups | 120 groups (`[garage] max_groups`) of any number of cars (`[garage] max_cars`, 1000); the vehicles screen shows a group of 20 cars or more 19 cards at a time and scrolls on at the edges (`asi.md`, "Maker groups past 20 cars"); a group that doesn't fit is left out instead of overrunning memory |
 | Save flags (list, bit arrays, owned list) | IDs 304 to 999 are kept outside the stock block, in `dsfforza-garage.dat` next to `autosave.dat`; IDs of 1000 and up are dropped by the bit setters; a full stock list no longer crashes |
 | Save file | unchanged (stock-range data only), so an unmodded game still loads it |
 

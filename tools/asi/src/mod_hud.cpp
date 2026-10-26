@@ -421,13 +421,14 @@ static bool patch_site(const Site& s)
 //
 // For a car with vehicleStats GarageEmblem = 1 the card's sprite is pointed at
 // a spare sprite resource made to look like the SF one: Header_Sprite_20, card
-// 20's picture slot (free while the maker group has fewer than 20 cars), gets
+// 20's picture slot (free while the maker group has fewer than 20 cars, or
+// while dsfforza's garage module shows it 19 cards at a time), gets
 // the SF resource's UVs and the texture kLogo (512 x 256, the Forza logo in
 // the SF rect; gui_assets.py puts it in Fonts.fchunk so it is always loaded).
 // The sprite sizes itself from the bound texture (FUN_00B42100), so texture
 // size and UVs both have to match the SF resource's. Other cars get their
 // original resource back. The spare's own UVs come back before anything else
-// uses it: a group of 20 cars, or the challenge browser, which shares
+// uses it: a group of 20 cars shown as stock, or the challenge browser, which shares
 // Header_Sprite_01..20 and even the card objects: its texture-slot lookups are
 // wrapped and put every disc back to the SF resource. (Leaving the vehicles
 // screen sets the SF resource back on the discs too; entering it refills the
@@ -579,9 +580,11 @@ static void card_emblem_body(uint8_t* screen, int id, int index, int cars)
     g_step = 1;
     if (index < 0 || index >= kCards || !screen) return;
     if (index == 0) g_fill++;
-    // The spare is card 20's picture: a group of 20 cars needs it for that.
-    // dsfforza's garage module shows a longer group 19 cards at a time, which
-    // leaves card 20 free (`cars` then counts the cars from the window's first on).
+    // The spare is card 20's picture: a group of 20 cars shown on 20 cards needs
+    // it for that. dsfforza's garage module shows a group of 20 or more 19 cards
+    // at a time, which leaves card 20 free (`cars` then counts the cars from the
+    // window's first on); only with [garage] max_cars=20 (no window) does a
+    // group of 20 still get card 20.
     bool card20 = cars >= kCards && garage_card_limit() >= kCards;
     if (card20 && g_spare) spare_release("a group of 20 cars");
     bool want = id >= 0 && id < kMaxId && g_emblem[id] && !card20;
