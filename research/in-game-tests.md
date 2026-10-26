@@ -392,6 +392,52 @@ About half of the VM runs ended at the DriverNGHook fatal-error dialog 20 to
   `tools/game/lua/player/bootstrap.lua`) now wrap `user_open` that way. It is
   read-only in DriverNGHook's `_G` metatable, so the wrapper is `rawset`.
 
+**Lua VM after minutes of play: the Lua heap is full (issue #56, fixed).**
+
+- What happened: on the full roster the game died in the Lua VM after a few
+  minutes of garage browsing, 3 of 3 runs (`vm-20261025-094432`, `-075445`: a
+  C function called through a NULL pointer from `005F01DD`, the closure's
+  memory taken by a Proto; `-065422`: `0x005F078A`, a closure whose upvalue
+  pointer is NULL). Both are closures used after they were freed. The
+  full-roster runs also had `register.lua:578: bad argument #1 to 'concat'
+  (table contains non-strings)` from the first probe with traffic around.
+- Cause (confirmed-runtime): the game's Lua state allocates from one fixed
+  10 MB block (`asi.md`, "Lua heap"). With the full roster Lua holds about
+  5 MB after the files load and 8 to 9 MB while driving and in the garage;
+  at about 8.5 MB (allocator overhead fills the rest) the block refuses
+  requests. Lua 5.1 raises "not enough memory" at whatever allocation hit the
+  wall, the game's pcall wrapper (FUN_005E4760) drops the error, and the state
+  is left half-updated. Which half-done update frees the closure was not
+  traced. The stock roster peaks at about 6 MB (`vm1-20261026-142558`).
+- Control runs with `[lua] overflow=0` (10 MB block, failures only logged):
+  `vm2-20261026-122308`: first refused request at 12:27:43 with Lua at
+  8538 KB, four more, then the Lua VM fault at 12:28:48 (`005F7787`), while
+  driving, before the garage. `vm1-20261026-150731` (keys at 1.5 times the
+  pace): four refused requests at 15:08:37 to :44, the concat error at the
+  same time, no fault this time. The concat error comes only with refused
+  requests: no run with the fix has it, and its probes see 82 to 85 traffic
+  cars.
+- Fix: dsfforza.asi's `[lua]` module makes the block 32 MB and serves
+  anything the block still refuses from a private heap. Runs (full roster
+  unless noted; dsf_enhanced from `out\updown-off` as in the issue, menu keys
+  rebuilt from `vm-20261025-094432`'s events.json):
+
+  | Run | Build | Browse | Result |
+  | --- | --- | --- | --- |
+  | `vm1-20261026-122537` | 10 MB + overflow heap | the issue's 108 steps | 65,536+ refused requests served from the overflow heap (peak 751 KB, Lua 9.3 MB); finished, no fault |
+  | `vm1-20261026-143525` | 32 MB + overflow | the issue's 108 steps: makers 1 to 19, then 39 to 42 (BMW, BUGATTI, BUICK, BUS) | Lua peak 9 MB, nothing refused; finished (555 s), no fault |
+  | `vm1-20261026-145055` | 32 MB + overflow | 268 steps at 1.5 times the pace: 63 maker rows opened (the issue's 23, then 20 up and 20 down) | Lua peak 9 MB, nothing refused; finished (977 s), no fault |
+  | `vm1-20261026-142558` | 32 MB + overflow, stock archive | the issue's 108 steps (35 makers) | Lua peak 6 MB; finished, no fault |
+  | `vm1-20261026-152238` | the PR head (rebased build), 32 MB + overflow | the issue's 108 steps at 1.5 times the pace, same makers | Lua peak 9 MB, nothing refused; finished (559 s), no fault |
+
+- Key pace: on a busy VM an Enter that comes before the maker list is ready
+  is dropped and the next Esc leaves the garage, so a run browses less than
+  its keys say (`vm1-20261026-133949`, `-141004`: back at the garage menu
+  after maker 11 and 13). Check the makers in dsfforza.log (`menu_debug=1`,
+  `savedCategorySelected`) before trusting a run.
+- The stopped collector around `user_open` (above) is a separate fix; the
+  loads peak at about 5 MB, well inside the block.
+
 ## Result: a cloned vehicle works (confirmed-runtime)
 
 `out/dngvehicles.clone.sp` (`clone_vehicle.py --source 266 --id 304`) loads

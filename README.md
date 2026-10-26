@@ -18,7 +18,7 @@ to `Install\dngvehicles.sp` under its own ID:
 - garage pictures, HUD badges and names.
 
 DriverNGHook runs the Lua that registers the cars. The optional native plugin
-`tools/asi` (`dsfforza.asi`) lifts the archive, garage, save and HUD limits.
+`tools/asi` (`dsfforza.asi`) lifts the archive, garage, save, HUD and Lua heap limits.
 
 ## Setup
 

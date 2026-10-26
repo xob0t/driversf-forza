@@ -8,3 +8,4 @@
 DSF_MODULE(archive)
 DSF_MODULE(garage)
 DSF_MODULE(hud)
+DSF_MODULE(lua)
