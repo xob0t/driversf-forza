@@ -1047,11 +1047,28 @@ def rebuild_drsp(
     tex_mat = [e for e in old if e.tag in keep_tags]
     old_mdid = payload(stream, next(e for e in old if e.tag == "MDID")) if keep_host_geometry else b""
     sbmc_t = next(e for e in old if e.tag == "SBMC")
-    vxck_t = {}
-    for e in old:
+    vxck_t, buffers = {}, {}
+    for n, e in enumerate(old):
         if e.tag == "VXCK":
-            stride = struct.unpack_from("<I", payload(stream, child(e, "VXHD")), 12)[0]
+            hd = payload(stream, child(e, "VXHD"))
+            stride = struct.unpack_from("<I", hd, 12)[0]
             vxck_t[stride] = e
+            buffers[hd[:8]] = (stride, n)
+    # A buffer takes its vertex declaration from the host buffer its materials are
+    # drawn from, where the host has one of that stride; else from the host's last
+    # buffer of the stride. Hosts 119, 146 and 208 keep a second stride-20 layout
+    # after the needles' in the interior: the needles got it, its semantic 8 has no
+    # gauge id (DashboardInstrument), and they never turned (issue #62).
+    own = {}  # (material, stride) -> index in `old` of the host buffer it is drawn from
+    for e in old:
+        if e.tag == "SBMC":
+            d = payload(stream, child(e, "SBBH"))
+            if d[16:24] in buffers:
+                own.setdefault((d[8:16], buffers[d[16:24]][0]), buffers[d[16:24]][1])
+    template = {}
+    for stride in builder.buffers:
+        mine = [own[s.material, stride] for s in builder.subs if s.stride == stride and (s.material, stride) in own]
+        template[stride] = old[max(mine, key=mine.count)] if mine else vxck_t[stride]
     ixck_t = next(e for e in old if e.tag == "IXCK")
     mdid_t = next(e for e in old if e.tag == "MDID")
 
@@ -1075,7 +1092,7 @@ def rebuild_drsp(
         )
         new_children.append(entry_like(sbmc_t, children=[entry_like(sbmc_t.children[0], sbbh)]))
     for stride, data in builder.buffers.items():
-        t = vxck_t[stride]
+        t = template[stride]
         users = [s.uid for s in builder.subs if s.stride == stride]
         hd = vb_uid[stride] + struct.pack("<II", len(data) // stride, stride)
         dp = b"".join(users) + bytes(len(users))
@@ -2011,10 +2028,19 @@ def convert(
         nonr = child(full, "NONR")
         upvh = child(nonr, "UPVH")
         host_upvh = payload(stream, upvh)
-        unturned = cockpit.drop_virtual(cf, host_cp.gauge_slots)
+        # The engine turns a needle only through a gauge record for its id: give a
+        # one-gauge host (speedometer only, or the MP4-12C's tachometer only) the other.
+        need = {cockpit.GAUGE_IDS[f] for f in cf.gauges if f in cockpit.GAUGE_IDS}
+        host_upvh, gauges_added = cockpit.add_gauge_records(host_upvh, need)
+        if gauges_added:
+            host_cp = cockpit.host_cockpit(host_upvh)
+            log(f"cockpit: gauge records added for ids {gauges_added} (the host has no entry for them)")
+        unturned = cockpit.drop_unturned(cf, host_cp.gauge_slots)
         if unturned:
-            log(f"cockpit: no virtual {', '.join(unturned)} dial: the host has no gauge entry for it")
+            log(f"cockpit: no {', '.join(unturned)} needle: the host has no gauge record to turn it")
         upvh.payload, hier = cockpit.patch_hierarchy(host_upvh, host_cp, place, cf)
+        if gauges_added:
+            hier["gauges_added"] = gauges_added
         eye = place.point(cf.eye)
         # The driver model sits on the seat marker (role 10) and its hands hold the wheel
         # only where stock cars have it from the seat: the seat follows the moved marker.

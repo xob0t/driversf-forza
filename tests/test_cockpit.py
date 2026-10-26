@@ -127,18 +127,71 @@ def test_virtual_dials_on_a_blank_display():
     assert dials[0][2].pivot[0] < dials[1][2].pivot[0]  # tachometer on the left
 
 
-def test_virtual_dials_need_the_host_gauge_entry():
-    # Stock 250 (the Volt) has no gauge entries, 231 only the speedometer's: a dial
-    # whose id the host can't turn is left out.
+def test_needles_the_host_cannot_turn_are_dropped():
+    # Stock 250 (the Volt's host) has no gauge record, so add_gauge_records can't give
+    # it one: a needle (here a virtual dial) whose id the host can't turn is left out.
     panel = _display((0.5, 0.0, 0.5, 0.0) * 2, width=0.16, height=0.10)
     dials, report = cockpit.virtual_gauges({"interior": panel}, {}, (0.08, 0.05, 0.7), _Car(), 2)
     cf = cockpit.CockpitFit(None, {}, (0, 0, 0), (0, 0, 0), "", {}, {"interior": panel}, {}, virtual=report)
     for needle, face, g, cal in dials:
         cf.gauges[g.family], cf.calibration[g.family], cf.needles[g.family] = g, cal, {"min": needle}
         cf.static[face.name] = face
-    assert cockpit.drop_virtual(cf, {2: 0}) == ["tach"]
-    assert set(cf.gauges) == {"speed"} and "dsf_dial_tach" not in cf.static and "dsf_dial_speed" in cf.static
+    assert cockpit.drop_unturned(cf, {2: 0}) == ["tach"]
+    assert set(cf.gauges) == {"speed"} and set(cf.needles) == {"speed"}
+    assert "dsf_dial_tach" not in cf.static and "dsf_dial_speed" in cf.static
     assert set(cf.virtual["dials"]) == {"speed"} and cf.virtual["no_host_gauge"] == ["tach"]
+
+
+def _gauge_hierarchy(gauge_id: int) -> bytes:
+    """root > cluster part (role 185) > one gauge record (the stock role for its id),
+    then the steering marker: a one-gauge host like 146 (speedometer) or 225 (tachometer)."""
+    head = bytearray(upvh.HEADER_SIZE)
+    head[:4] = b"AWHF"
+    struct.pack_into("<6I", head, 4, 0, 0, 26, 4, 1, 0)
+    struct.pack_into("<H", head, 0x28, 1)
+    head[0x2C] = 1
+    records = bytearray()
+    for kind, role, subtree, marker, seat in (
+        (4, 0, 4, -1, -1),
+        (1, cockpit.CLUSTER_ROLE, 2, -1, -1),
+        (18, cockpit.GAUGE_ROLES[gauge_id], 1, -1, 0),
+        (3, cockpit.STEERING_MARKER_ROLE, 1, 0, -1),
+    ):
+        rec = bytearray(b"\xff" * upvh.RECORD_SIZE)
+        struct.pack_into("<HHHHHHHH", rec, 0x08, kind, role, 0, 0, 1, 0, subtree, 0)
+        struct.pack_into("<b", rec, 0x26, seat)
+        struct.pack_into("<h", rec, 0x1A, marker)
+        records += rec
+    markers = struct.pack("<3f4x4f", 0.3, 0.5, 0.3, 0, 0, 0, 1)
+    seats = struct.pack("<3f4x4fII", 0.3, 0.6, 0.5, 0, 0, 0, 1, gauge_id, 120) + bytes(8)
+    return bytes(head + records + markers + seats)
+
+
+def test_one_gauge_host_gets_the_other_record():
+    # 19 stock hosts have a speedometer record only, 225 (MP4-12C) a tachometer only:
+    # the engine turns a needle only through a gauge record for its id (issue #62).
+    for have, add in ((2, 1), (1, 2)):
+        data = _gauge_hierarchy(have)
+        out, added = cockpit.add_gauge_records(data, {1, 2})
+        assert added == [add]
+        h = upvh.parse(out)
+        assert len(h.records) == 5 and h.counts["seats"] == 2
+        assert [r.subtree for r in h.records] == [5, 3, 1, 1, 1]
+        gauges = cockpit.gauge_records(h)
+        # Stock order: the speedometer's record before the tachometer's, both under the cluster.
+        assert gauges == {2: 2, 1: 3}, gauges
+        for gid, index in gauges.items():
+            r = h.records[index]
+            assert r.type == 18 and r.role == cockpit.GAUGE_ROLES[gid]
+            assert struct.unpack_from("<I", h.table("seats")[r.seat], 0x20)[0] == gid
+        assert h.records[gauges[add]].seat == 1  # appended to the table
+        assert h.table("seats")[0] == upvh.parse(data).table("seats")[0]
+        # The marker after them moved down a record; its table entry is unchanged.
+        assert h.records[4].type == 3 and h.records[4].marker == 0
+        assert h.table("markers") == upvh.parse(data).table("markers")
+        # Nothing to add: the hierarchy comes back as it was.
+        assert cockpit.add_gauge_records(out, {1, 2}) == (out, [])
+        assert cockpit.add_gauge_records(data, {have}) == (data, [])
 
 
 def test_no_virtual_dial_on_the_steering_wheel_or_for_needles():

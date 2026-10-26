@@ -1079,15 +1079,17 @@ def virtual_gauges(static: dict, gauges: dict, eye, forza, version: int, sight_s
     return out, report
 
 
-def drop_virtual(cf: CockpitFit, gauge_slots: dict[int, int]) -> list[str]:
-    """Take out the virtual dials whose gauge id the host's gauge table has no
-    entry for (stock 250, the Volt: none; 231: speed only). The engine would
-    leave their needles unturned. Returns the families dropped."""
-    dropped = [
-        f for f, cal in cf.calibration.items() if cal.source == VIRTUAL_SOURCE and GAUGE_IDS[f] not in gauge_slots
-    ]
+def drop_unturned(cf: CockpitFit, gauge_slots: dict[int, int]) -> list[str]:
+    """Take out the speed and tach needles (Forza's or virtual dials) whose
+    gauge id the host's gauge table has no entry for, after add_gauge_records:
+    only hosts without any gauge record (stock 250, the Volt's, and four
+    unused ones). The engine would leave such a needle unturned, so it isn't
+    drawn at all. Returns the families dropped."""
+    dropped = [f for f in cf.gauges if f in GAUGE_IDS and GAUGE_IDS[f] not in gauge_slots]
     for f in dropped:
-        del cf.calibration[f], cf.gauges[f], cf.needles[f]
+        cf.gauges.pop(f)
+        cf.needles.pop(f, None)
+        cf.calibration.pop(f, None)
         cf.static.pop(f"dsf_dial_{f}", None)
         cf.virtual.get("dials", {}).pop(f, None)
     if dropped:
@@ -1302,6 +1304,84 @@ def host_cockpit(upvh_data: bytes) -> HostCockpit:
         parent_hinge,
         list(range(h.counts["mirrors"])),
     )
+
+
+# Stock gauge records (type 18) are leaves under the cluster part (role 185):
+# the speedometer's has role 0, the tachometer's 187, and every record field
+# but the role and the gauge-table index is the same (144 speedometers, 126
+# tachometers over the 150 stock hierarchies). FUN_0088E310 keeps, per gauge
+# table index (at most 7), the record of each type-18 record whose role isn't
+# 185 and whose entry's gauge id is below 8; the render loop turns a needle
+# through every kept record's entry (research/cockpit.md, "Gauges").
+GAUGE_RECORD_TYPE = 18
+CLUSTER_ROLE = 185
+GAUGE_ROLES = {2: 0, 1: 187}  # gauge id -> the stock record's role
+MAX_GAUGES = 7
+
+
+def gauge_records(h) -> dict[int, int]:
+    """Gauge id -> record index of the records the engine keeps (FUN_0088E310)."""
+    out = {}
+    seats = h.table("seats")
+    for r in h.records:
+        if r.type == GAUGE_RECORD_TYPE and r.role != CLUSTER_ROLE and 0 <= r.seat < len(seats):
+            gid = struct.unpack_from("<I", seats[r.seat], 0x20)[0]
+            if gid < 8:
+                out.setdefault(gid, r.index)
+    return out
+
+
+def add_gauge_records(upvh_data: bytes, ids) -> tuple[bytes, list[int]]:
+    """Give the hierarchy a gauge record and gauge-table entry for each id in
+    `ids` it lacks, so the engine turns that needle too. 19 stock hosts carry a
+    speedometer only (146 the 1968 Camaro, 230, 249...), 225 (MP4-12C) a
+    tachometer only. The new record is a copy of the host's own gauge record
+    (same parent, the cluster part; the stock role for the id), the speedometer's
+    before the tachometer's as in stock hierarchies; its entry is a copy of
+    that record's entry with the new id, appended to the table (patch_hierarchy
+    sets the pivot, dial and sweep). A host without any gauge record (250,
+    the Volt's) gets none: there is no cluster record to hang one on.
+    Returns the new hierarchy and the ids added."""
+    from dsfforza.formats import upvh
+
+    h = upvh.parse(upvh_data)
+    have = gauge_records(h)
+    missing = sorted(set(ids) - set(have), reverse=True)  # speedometer (2) first
+    if not have or not missing:
+        return upvh_data, []
+    data = upvh_data
+    added = []
+    for gid in missing:
+        h = upvh.parse(data)
+        have = gauge_records(h)
+        if h.counts["seats"] >= MAX_GAUGES or gid not in GAUGE_ROLES:
+            break
+        src = h.records[min(have.values())]
+        if src.subtree != 1:
+            break
+        seat = h.counts["seats"]
+        rec = bytearray(src.raw)
+        struct.pack_into("<H", rec, 0x0A, GAUGE_ROLES[gid])
+        struct.pack_into("<b", rec, 0x26, seat)
+        at = src.index + 1 if gid == 1 else src.index
+        records = bytearray(b"".join(r.raw for r in h.records))
+        records[at * upvh.RECORD_SIZE : at * upvh.RECORD_SIZE] = rec
+        # Every ancestor's subtree grows by one (they all come before `at`).
+        p = parent_of(h, src.index)
+        while p is not None:
+            o = p * upvh.RECORD_SIZE + 0x14
+            struct.pack_into("<H", records, o, struct.unpack_from("<H", records, o)[0] + 1)
+            p = parent_of(h, p)
+        entry = bytearray(h.table("seats")[src.seat])
+        struct.pack_into("<I", entry, 0x20, gid)
+        tables = upvh.HEADER_SIZE + len(h.records) * upvh.RECORD_SIZE
+        seats_end = h.offsets["seats"] + seat * 0x30
+        out = bytearray(data[: upvh.HEADER_SIZE] + records + data[tables:seats_end] + entry + data[seats_end:])
+        struct.pack_into("<I", out, 0x10, len(h.records) + 1)
+        out[0x2C] = seat + 1
+        data = bytes(out)
+        added.append(gid)
+    return data, added
 
 
 # --- driver's hands -------------------------------------------------------------------
@@ -2747,6 +2827,82 @@ def needle_gauge_ids(stream, interior) -> dict[float, int]:
     return counts
 
 
+def needle_check(stream, interior, h) -> tuple[list[int], int]:
+    """What would leave a needle of a built car unturned: the gauge ids its
+    interior needles carry that hierarchy `h` has no gauge record for, and the
+    vertices drawn with the interior's Dials material from a buffer whose
+    declaration has no DashboardInstrument (the engine reads no gauge id)."""
+    from dsfforza.convert import dsf_materials as dm
+    from dsfforza.formats import vehicle_mesh as vm
+    from dsfforza.formats.vehicle_mesh import child, payload
+
+    ids = needle_gauge_ids(stream, interior)
+    records = gauge_records(h)
+    unturned = sorted(int(k) for k, n in ids.items() if n and k not in records)
+    drsp = child(child(interior, "MDXN"), "DRSP").children
+    dials = None
+    for e in drsp:
+        if e.tag == "MACO" and dials is None:
+            info = dm.material_info(stream, e)  # as host_interior finds it
+            base = info["path"].lower().replace("\\", "/").rsplit("/", 1)[-1]
+            if "_dials" in base or "g_hAlphaTestRefValue" in info["params"]:
+                dials = info["uid"]
+    declared = {}
+    for e in drsp:
+        if e.tag == "VXCK":
+            e8 = next((x for x in vm.parse_vdcl(payload(stream, child(e, "VDCL"))) if x.semantic == 8), None)
+            declared[payload(stream, child(e, "VXHD"))[:8]] = e8 is not None and e8.name_hash == DASHBOARD_INSTRUMENT
+    blind = 0
+    for e in drsp:
+        if e.tag == "SBMC" and dials is not None:
+            d = payload(stream, child(e, "SBBH"))
+            if d[8:16] == dials and not declared.get(d[16:24], True):
+                blind += struct.unpack_from("<I", d, 0x3C)[0] // 3  # index count -> triangles
+    return unturned, blind
+
+
+def needle_survey(archive: Path, manifest: Path | None = None, cars: list[int] | None = None) -> list[dict]:
+    """Per ported car of a built archive: the gauge ids its interior needles
+    carry (semantic 8) and the ids its hierarchy has a gauge record for
+    (gauge_records, as FUN_0088E310 keeps them). A needle id without a record
+    is drawn and never turns (issue #62). The manifest (default: the archive's
+    .json) names the cars and gives the parked speed and tach needles (drawn
+    static because the host interior has no needle material)."""
+    import json
+
+    from dsfforza.formats import upvh
+    from dsfforza.formats.chnk import read_chunk
+    from dsfforza.formats.vehicle_mesh import child, payload
+
+    m = json.loads((manifest or archive.with_suffix(".json")).read_text(encoding="utf-8"))
+    rows = []
+    with archive.open("rb") as stream:
+        root = read_chunk(stream, 0)
+        for car in m["cars"]:
+            sid = car["spool_id"]
+            if cars and sid not in cars:
+                continue
+            kinds = upvh.entries_for(stream, root.entries, sid, None)
+            h = upvh.parse(payload(stream, child(child(kinds[0], "NONR"), "UPVH")))
+            ids = needle_gauge_ids(stream, kinds[1]) if 1 in kinds else {}
+            unturned, blind = needle_check(stream, kinds[1], h) if 1 in kinds else ([], 0)
+            interior = car.get("cockpit", {}).get("interior", {})
+            rows.append(
+                {
+                    "spool_id": sid,
+                    "media": car["media"],
+                    "host": car["host"],
+                    "needles": sorted(int(k) for k, n in ids.items() if n and k == int(k)),
+                    "gauge_records": sorted(gauge_records(h)),
+                    "unturned": unturned,
+                    "no_gauge_id_triangles": blind,
+                    "parked": [f for f in interior.get("parked_needles", []) if f in GAUGE_IDS],
+                    "added": car.get("cockpit", {}).get("hierarchy", {}).get("gauges_added", []),
+                }
+            )
+    return rows
+
+
 def gauge_pose(upvh_data: bytes, vo3d_data: bytes, mph: float, rpm: float) -> dict[int, tuple]:
     """gauge id -> (pivot, axis, degrees) as the engine draws the needles at
     this speed and engine speed (FUN_00891670 inputs, FUN_008A2610 turn)."""
@@ -3082,7 +3238,38 @@ def main(argv: list[str] | None = None) -> None:
     hp.add_argument("archive", type=Path)
     hp.add_argument("--id", type=int, action="append", required=True)
     hp.add_argument("--png", type=Path, help="per car: <png stem>-<id>.png")
+    ns = sub.add_parser("needles", help="per ported car: needle gauge ids against the hierarchy's gauge records")
+    ns.add_argument("archive", type=Path)
+    ns.add_argument("--manifest", type=Path, help="default: the archive's .json")
+    ns.add_argument("--id", type=int, action="append", default=[])
+    ns.add_argument("--tsv", type=Path)
     args = parser.parse_args(argv)
+    if args.cmd == "needles":
+        rows = needle_survey(args.archive, args.manifest, args.id)
+        if args.tsv:
+            cols = list(rows[0]) if rows else []
+            lines = ["\t".join(cols)] + [
+                "\t".join(",".join(map(str, v)) if isinstance(v, list) else str(v) for v in r.values()) for r in rows
+            ]
+            args.tsv.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        bad = [r for r in rows if r["unturned"] or r["no_gauge_id_triangles"] or r["parked"]]
+        both = sum(1 for r in rows if set(r["needles"]) >= {1, 2} and r not in bad)
+        print(
+            f"{len(rows)} cars: {both} with both needles turning, "
+            f"{sum(1 for r in rows if not r['needles'] and not r['no_gauge_id_triangles'])} without needles"
+        )
+        for r in bad:
+            print(
+                f"  {r['spool_id']:4d} {r['media']:30s} host {r['host']:3d}: needles {r['needles']}, "
+                f"gauge records {r['gauge_records']}, unturned {r['unturned']}, "
+                f"needle triangles without a gauge id {r['no_gauge_id_triangles']}, parked {r['parked']}"
+            )
+        print(f"{len(bad)} cars with a speed or tach needle that never turns")
+        added = [r for r in rows if r["added"]]
+        if added:
+            print(f"{len(added)} cars got gauge records: " + ", ".join(f"{r['media']} {r['added']}" for r in added))
+        return
+
     if args.cmd == "holes":
         for spool_id in args.id:
             png = args.png.with_name(f"{args.png.stem}-{spool_id}.png") if args.png else None

@@ -589,6 +589,17 @@ def lint_vehicle(ctx: LintContext, spool_id: int | None, vehc: int | None, args,
             f"kind 0: every material/texture is local or a shared engine material the host "
             f"uses ({len(refs)} referenced, unresolved {bad[:3]})",
         )
+    if 1 in kinds:
+        # The engine turns a needle only through a gauge record for the gauge id its
+        # vertices carry, read through a DashboardInstrument declaration (issue #62).
+        from dsfforza.convert import cockpit
+
+        unturned, blind = cockpit.needle_check(stream, kinds[1], h)
+        report(
+            not unturned and not blind,
+            f"every interior needle has a gauge record for its id (ids without one: {unturned}; "
+            f"needle triangles in a buffer without gauge ids: {blind})",
+        )
     for ok, message in glass_rows:
         report(ok, message)
     for ok, message in sound_rows:
