@@ -536,11 +536,11 @@ the scoops stays on the atlas (`img/trim-art-veyron-ingame-before-after.jpg`).
 7. The cockpit draws exterior chrome (A-pillar trim, bonnet strips) flat from
    its atlas; stock interiors have `GLOBAL_LOD_Chrome` (host 193 uses it for
    3,700 triangles), which the interior entry could use the same way.
-8. Trim artwork ("Trim artwork"): Forza's trim shaders aren't decoded, so
-   whether `matte_colors` / `plastic2` (with a `PaintScale`) or `frame` show
-   their texel as is, or tint it, is a guess; the light grey (177) of the
-   Veyron's scoops reads near white on the Chassis material in game.
-   Mid-grey trims (brightest channel under 128) and the `black*` techniques
-   still draw with the shared dark trim whatever their texels. The visibility
-   test is orthographic from around and above: artwork seen only from below
-   or through a narrow gap counts as hidden.
+8. Trim artwork ("Trim artwork"), issue #58: Forza's trim shaders aren't
+   decoded, so whether `matte_colors` / `plastic2` (with a `PaintScale`) or
+   `frame` show their texel as is, or tint it, is a guess. Mid-grey trims
+   (brightest channel under 128) and the `black*` techniques still draw with
+   the shared dark trim whatever their texels; DSF's shared chrome can't take
+   the Forza grey as a tint. The visibility test is orthographic from around
+   and above: artwork seen only from below or through a narrow gap counts as
+   hidden.
