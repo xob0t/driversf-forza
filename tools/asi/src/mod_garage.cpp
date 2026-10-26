@@ -12,8 +12,8 @@
 //          maker menu's script lists (menusmaster.sp, 40 entries each) are
 //          grown when the menu is filled. A group holds any number of cars
 //          (stock 20: IDs 21.. live here), and the vehicles screen, which
-//          has 20 cards, shows a longer group through a window of 19 cards
-//          that moves when Right/Left reach its edges.
+//          has 20 cards, shows a group of 20 or more through a window of 19
+//          cards that moves when Right/Left reach its edges.
 //   lua    ProfileSettings.GetVehicleUnlocked(8000000 + k) answers
 //          capability queries, so register.lua can tell the patch is active.
 #define WIN32_LEAN_AND_MEAN
@@ -635,14 +635,18 @@ int32_t* group_ptr(char* garage, int g) { return (int32_t*)(garage + g_groups_of
 // UID), +0xD0 (model ID), +0x120 (Header_Sprite_NN), +0x170 (title), +0x1C0
 // (status text), +0x218 (itemState_N), filled by the car list FUN_007113A0
 // for the group of categorySelected ([+0x268], 1-based) with card index =
-// itemBrowserIndex ([+0x26C], 0-based). A group of more than 20 listed cars
-// is shown through a window of 19 cards (card 20's Header_Sprite_20 stays
-// free for [hud] card_emblem): the car list starts at car `first`, stops
-// after 19 cards, and the window moves when itemBrowserIndex nears its edge.
+// itemBrowserIndex ([+0x26C], 0-based). A group of 20 or more listed cars is
+// shown through a window of 19 cards (card 20's Header_Sprite_20 stays free
+// for [hud] card_emblem; a group of exactly 20 would need card 20 for its
+// last picture): the car list starts at car `first`, stops after 19 cards,
+// and the window moves when itemBrowserIndex nears its edge.
 const uint32_t kRetCarListCar = 0x00711599;    // vfunc 0x12C call in the car list
 const uint32_t kRetCarListGroup = 0x00711443;  // vfunc 0x130 call in the car list
 const uint32_t kRetUpdateGroup = 0x007112FB;   // vfunc 0x130 call in the picture update (FUN_007112A0)
 const int kWindowCards = kGroupCars - 1;
+
+// A maker of this many listed cars (or more) is shown through the window.
+bool windowed(int listed) { return listed > kWindowCards; }
 
 struct View {
     int group = -1;           // group shown
@@ -658,7 +662,7 @@ struct View {
     int8_t seen[kExtMax];     // per car index: -1 unknown, 0 no card, 1 a card
 };
 View g_view;
-bool g_window_on = false;   // [garage] max_cars > 20 and the screen hooks applied
+bool g_window_on = false;   // [garage] max_cars > 20 and the screen hooks applied (groups of 20 or more get the window)
 int g_margin_back = 2, g_margin_ahead = 8;
 int g_listed[1000];          // listed cars per maker menu entry, as FUN_006C6940 wrote them
 int g_listed_n = 0;
@@ -798,7 +802,7 @@ int list_grow(void* list, int need, const char* name)
 }
 
 // ManufacturerNumList holds each shown maker's listed cars; the menu script
-// sizes the card browser by it. A maker of more than 20 is shown through the
+// sizes the card browser by it. A maker of 20 or more is shown through the
 // car list's window of 19 cards, so the script is told 19 (the true count is
 // kept for the car list).
 void numlist_window(void* list)
@@ -809,18 +813,18 @@ void numlist_window(void* list)
     void** data = list_data(list);
     if (!data || n <= 0 || (type != 0x0C && type != 0x0D)) return;
     if (n > (int)(sizeof g_listed / sizeof g_listed[0])) n = sizeof g_listed / sizeof g_listed[0];
-    int windowed = 0;
+    int shown = 0;
     for (int k = 0; k < n; k++) {
         int v = type == 0x0C ? (int)(intptr_t)data[k] : (int)*(float*)&data[k];
         g_listed[k] = v;
-        if (v > kGroupCars && g_window_on) {
+        if (windowed(v) && g_window_on) {
             if (type == 0x0C) data[k] = (void*)(intptr_t)kWindowCards;
             else *(float*)&data[k] = (float)kWindowCards;
-            windowed++;
+            shown++;
         }
     }
     g_listed_n = n;
-    if (windowed && g_menu_debug) dsf_log("garage: %d makers of more than %d cars shown through a window", windowed, kGroupCars);
+    if (shown && g_menu_debug) dsf_log("garage: %d makers of %d cars or more shown through a window", shown, kGroupCars);
 }
 
 // Replaces the garage vtable's slot 0x124 (FUN_006C6940).
@@ -1163,7 +1167,7 @@ void carlist_pre(uint8_t* screen)
         g_view.first = 0;
         memset(g_view.seen, -1, sizeof g_view.seen);
     }
-    bool window = g_window_on && listed > kGroupCars;
+    bool window = g_window_on && windowed(listed);
     g_view.limit = window ? kWindowCards : kGroupCars;
     uint8_t* menu = screen_menu(screen);
     // The maker list's preview, and so the card browser opened from it, starts at car 0 (a popup over the browser, such as
@@ -1463,8 +1467,8 @@ bool install_list()
 }
 
 // Maker groups of more than 20 cars: vfuncs 0x12C/0x130 read the plugin's
-// storage, the car list shows such a group through a window of 19 cards (all
-// or nothing; without it a group stays at 20 cars).
+// storage, the car list shows a group of 20 or more through a window of 19
+// cards (all or nothing; without it a group stays at 20 cars).
 bool install_window()
 {
     const uint8_t none[1] = {0};
@@ -1487,7 +1491,7 @@ bool install_window()
         edits[n++] = edit_u32(0x00E18B14, none, 0, 0x006C6940, (uint32_t)fill_makers);
     if (!edits_match("big maker groups", edits, n) || !apply_edits("big maker groups", edits, n)) return false;
     g_window_on = true;
-    dsf_log("garage: maker groups of up to %d cars; one of more than %d is shown %d cards at a time "
+    dsf_log("garage: maker groups of up to %d cars; one of %d or more is shown %d cards at a time "
             "(vfuncs 12C/130 at E18B1C, car list 7113A0, 7118C3)",
             g_max_cars, kGroupCars, kWindowCards);
     return true;
