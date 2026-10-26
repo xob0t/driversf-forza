@@ -8,7 +8,6 @@ name: release
 on:
   push:
     tags: ["v*"]
-    branches: ["feat/one-command"]  # TEMPORARY: testing before the workflow is on master
   workflow_dispatch:
 
 permissions:
