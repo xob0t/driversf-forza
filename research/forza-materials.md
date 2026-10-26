@@ -440,6 +440,28 @@ the atlas on the host Chassis material like badges. A triangle moves when:
   replaced by name in `plates.apply`, `numplate` is the plate lamp strip),
   `undercarriage`, `engine`, `cage` or `bottom`.
 
+**Bare metal to chrome (review of the first version).** On the atlas path the
+Veyron's roof scoops and engine cover came out near flat white in game
+(`vm-20261025-075859`, 210 to 244 on screen for a texel of 177). That is the
+Chassis material's ordinary gain, not a missing term: the moved triangles keep
+their section's vertices, so their baked sky (s0.w, `forza2dsf.vertex_sky`
+from the Forza AO byte) is computed like every other vertex's, and the Veyron's
+own rims (wheel.xds through the same Chassis material, texels about 191) show
+210 to 227 in the same shot. What the Chassis material lacks is a metal look:
+specular 0.03, no reflection. Forza draws these parts as flat grey swatches
+under a shiny technique (the Veyron's `ShaderSettings.xml`: `misc`
+SpecularAmount 1.1, FresnelIndex 2.3, PaintScale 0.15; `frame` SpecularAmount
+0.6, PristinePaintScale 0.3). So artwork that is bare metal goes to DSF's
+shared chrome like Forza's chrome techniques ("Chrome trim" above; technique
+`dsf_trim_metal`, role chrome, `GLOBAL_LOD_Chrome` / `GLOBAL_Chassis_Chrome`,
+`CHROME_UV`). The rule (`trim_art.is_metal`): the technique is named for
+metal (`metal`, `alum`, `steel`), or its opaque texels are one flat neutral
+grey: chroma of the mean colour 24 or less, luminance spread (standard
+deviation) 12 or less, brightest channel under 240. Painted artwork has colour
+(the quadrifoglio), detail (lettering, the Veyron's engine-cover script) or is
+white, and stays on the atlas. DSF's chrome samples the shared chassis texture,
+so the Forza grey can't tint it without a material of our own.
+
 The atlas pays for the new regions. `Texturing.plan` lays the atlas out with
 and without the artwork; if the artwork leaves less than 90% of the scale
 (`dsf_materials.ART_MIN_SCALE_SHARE`), each artwork subsection takes one flat
@@ -451,19 +473,23 @@ Results over the roster (`out/inv/atlas_cmp.py`, LODs 1, 3, 5, 512² as the
 build): 390 of 573 cars get trim artwork, 114,531 triangles and 60.3 m² at
 LOD 1 (median 0.037 m² a car; `misc` 74,272 triangles on 234 cars,
 `matte_colors` 20,484 on 154, `plastic2` 13,925 on 73, `frame` 2,048 on 83,
-`rubber_trim`, `bumper_frame`, `weatherstrip` and a few others the rest). 15
-cars use the flat fallback (Jeep GC SRT8, 2-Eleven, CCXR, Range Rover 08,
-370Z, Cooper S, Silvia, E-Type...). The atlas scale drops on 82 cars, by 2.6%
-in the median and 10% at most (Veyron 0.584 to 0.527, F40 Competizione, Reventón
-Roadster); 8 pack slightly better. The split costs about 4 s a car (18 s at
-most, the Kenworth). The GTA: 15 triangles, 0.033 m² of `misc` at LOD 1, atlas
-0.527 as before. GMC_YukonXL_01 has a trim with non-finite UVs; it samples no
-texels (it would have stopped the conversion).
+`rubber_trim`, `bumper_frame`, `weatherstrip` and a few others the rest).
+74,618 of those triangles (304 cars) are bare metal and take the chrome, the
+other 39,913 the atlas. The atlas scale drops on 75 cars, by 2.6% in the
+median and 10% at most (Veyron 0.584 to 0.527, the Viper CC, Corvette Stingray
+67, F40 Competizione); 8 pack slightly better. Before the metal rule 15 cars
+needed the flat fallback (Jeep GC SRT8, 2-Eleven, CCXR, Range Rover 08, 370Z,
+Cooper S, Silvia, E-Type...); with it, 12 of them still do. The split costs
+about 3.4 s a car (16 s at most, the Kenworth). The GTA: 15 triangles,
+0.033 m² of `misc` at LOD 1 on the atlas, and at LOD 3 20 light `rubber_trim`
+triangles around the rear window on the chrome; atlas 0.527 as before. GMC_YukonXL_01 has a trim
+with non-finite UVs; it samples no texels (it would have stopped the
+conversion).
 
 Offline (`img/trim-art-gta-offline.png`, `img/trim-art-crossfire-offline.png`;
 rows: Forza's texels on every trim, master, this change): the GTA's wing and
 tail triangles show the quadrifoglio, the Crossfire's strakes, A-pillar and
-door handles are light grey. The built full entry (`dsf_materials preview`
+door handles are chrome (drawn in a flat light grey offline). The built full entry (`dsf_materials preview`
 of `out/fx/after`, ID 1) has the quadrifoglio on the Chassis material.
 Rebuilding the four test cars with the final code gave byte-identical chunks.
 
