@@ -113,6 +113,15 @@ foreach ($target in $targets) {
             try {
                 if ($Stamp -and (& $current) -ne $Stamp) { return }
                 if (-not (Test-VmRunning)) { return }
+                # Series from older checkouts don't write the stamp (VM 1 only); their run folders
+                # (runs\vm-<stamp>) show they used it.
+                $patterns = @("vm$($VmInfo.Id)-*") + @(if ($VmInfo.Id -eq '1') { 'vm-*' })
+                $lastRun = Get-ChildItem -LiteralPath (Join-Path $VmOutputHost 'runs') -Directory -ErrorAction SilentlyContinue |
+                    Where-Object { $n = $_.Name; @($patterns | Where-Object { $n -like $_ }).Count } |
+                    Sort-Object LastWriteTime | Select-Object -Last 1
+                if ($lastRun -and $lastRun.LastWriteTime -gt (Get-Date).AddMinutes(-[math]::Max(1, $IdleMinutes))) {
+                    Say "used by $($lastRun.Name) at $($lastRun.LastWriteTime.ToString('s')); left running"; return
+                }
                 $lifecycle = Enter-VmLifecycle
                 try { Say "idle for $IdleMinutes min: $(Stop-Vm)" } finally { $lifecycle.ReleaseMutex() }
             } finally { Exit-VmMutexes $held }

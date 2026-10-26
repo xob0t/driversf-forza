@@ -1,6 +1,6 @@
 # In-game tests
 
-Updated: 2026-10-24
+Updated: 2026-10-26
 
 Runs up to 2026-10-22 used the persistent Windows Sandbox harness in
 `tools/wsb/` (see the README); later ones run on the host (`-OnHost`) or in
@@ -75,7 +75,7 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
   small ISO built with IMAPI2FS. The media answer file replaces the one
   MicroWin bakes into the image. The account is created in specialize and put
   in Administrators by SID (S-1-5-32-544), because the Russian image names
-  the group "Администраторы". First logon installs the VC++ x86 runtime and
+  the group "РђРґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂС‹". First logon installs the VC++ x86 runtime and
   VMware Tools (`setup.exe /S /v"/qn REBOOT=R ADDLOCAL=ALL"`; Tools 13 has only a 64-bit
   `setup.exe`, no `setup64.exe`). The whole build takes about 35 minutes
   (Install about 30, Provision about 1, copying 5.9 GB of game).
@@ -158,7 +158,7 @@ the missing MAC don't matter; the clone gets new UUIDs at its first power-on.
 |---|---|---|---|---|---|---|
 | 8 GB / 2 GB (old) | `vm2-20261025-083626` | 2.92 GB of 8 | 982 / 685 / 1219 MB | 9.6 GB | 13.2 GB | 171 s |
 | 4.5 GB / 1 GB | `vm2-20261025-084216`, `-084516` | 2.86 GB, 1.75 GB available | 988 / 691 / 1219 MB | 6.0 GB | 8.05 GB | 170, 160 s |
-| 4 GB / 1 GB | `vm2-20261025-090258` | 2.92 GB, 1.18 GB available | 981 / 687 / 1219 MB | | | 162 s |
+| 4 GB / 1 GB | `vm2-20261025-090258` | 2.92 GB, 1.18 GB available | 981 / 687 / 1219 MB | not sampled | not sampled | 162 s |
 | 4 GB / 512 MB (chosen) | `vm2-20261025-085007`, `-085255` | 2.92 GB, 1.17 GB available | 989 / 691 / 1229 MB | 5.5 GB | 7.03 GB | 160, 160 s |
 
 - The game needs about 1 GB private and 1.2 GB of address space, far from
@@ -189,10 +189,35 @@ the missing MAC don't matter; the clone gets new UUIDs at its first power-on.
   1 GB 35.7, 37.9, 18.6. The same within noise.
 - 3.5 GB would bring a VM to about 6.5 GB but leaves under 0.7 GB available
   in the guest at the peak; not done.
-- `.vmx` backups from before the change:
-  `C:\VMs\dsfforza-test\dsfforza-test.vmx.orig-20261025-083356` and
-  `dsfforza-test.vmsd.orig-20261025-083356` (before the clone),
-  `dsfforza-test.vmx.before-pool-<stamp>` (before the new settings).
+
+**Two series at once** (2026-10-26, after a host reboot; VM 1 reverted to
+`clean`, the new settings written, VM 2 cloned again): from 11:21, in two
+processes, a stock series (3 runs, pool, so VM 2) and a full-roster series
+(2 runs, VM 1).
+
+- Both ran side by side, 11:22 to 11:29: full roster `vm1-20261026-112227`
+  (198 s, the first after the revert) and `-112554` (163 s); stock
+  `vm2-20261026-112238` (126 s) and `-112453` (118 s) finished.
+  `vm2-20261026-112701` hit the DriverNGHook fatal error while the first
+  probe car loaded (100 s, loading-screen shots): the engine fault of
+  "Crashes while the world loads", as the stock series ran the game folder's
+  dsf_enhanced without the fix. 1.4 GB was available in the guest then.
+- Guests: peak used 2.7 to 2.9 GB of 4, at least 1.16 GB available,
+  Driver.exe 960 to 991 MB private.
+- Host: vmware-vmx working sets VM 1 at most 7.06 GB, VM 2 6.95 GB, 14.0 GB
+  together, plus 0.86 GB for both `mksSandbox.exe`; host available memory
+  never under 6.2 GB. One VM at the old settings held 12.6 to 13.6 GB, and
+  two at the old settings (VM 2 cloned at 8 GB, 2026-10-25) left 0.7 GB free,
+  so that test was stopped.
+- Run times against the old settings: full roster on VM 1 alone at 8 GB
+  106 to 131 s (`vm-20261025-025351` to `-065150`); VM 2 alone at 8 GB 171 s,
+  at 4 GB 160 s; with both VMs running games 163 to 198 s. The difference
+  is the shared host CPU and GPU, not memory (no paging in the guests).
+
+`.vmx` backups from before the change: `C:\VMs\dsfforza-test\dsfforza-test.vmx.orig-20261025-083356`
+and `dsfforza-test.vmsd.orig-20261025-083356` (before the first clone; 8 GB,
+2 GB), `dsfforza-test.vmx.before-pool-20261026-112107` (right before the
+revert and the new settings).
 
 ### VM results (2026-10-24)
 
@@ -286,8 +311,8 @@ About half of the VM runs ended at the DriverNGHook fatal-error dialog 20 to
 **Lua VM while a big user file loads (0x005F078A / 0x005F078D / 0x005EE811).**
 
 - Where: luaV_execute reads an upvalue through a bad pointer. It runs inside
-  `user_open` (ScriptLoader.ri_dofilefromdisk → luaL_loadfile + lua_call,
-  FUN_0065A7D0 → FUN_00607800), right after a log line "loading user file
+  `user_open` (ScriptLoader.ri_dofilefromdisk в†’ luaL_loadfile + lua_call,
+  FUN_0065A7D0 в†’ FUN_00607800), right after a log line "loading user file
   'dsfforza\ported.lua'". The test bootstrap loads ported.lua three times
   (register, garagetest, clonetest).
 - When: only with the full roster's generated files (`ported.lua` 117 KB,
@@ -329,7 +354,7 @@ and "Desanne" on the HUD: `img/clone-304-with-stats.jpg`. The control run
 What this confirms:
 
 - the game accepts a rebuilt `dngvehicles.sp` with 151 vehicles;
-- a new ID (304, outside the stock 62–303 range) spools through
+- a new ID (304, outside the stock 62вЂ“303 range) spools through
   `TrafficSpooler.RequestMissionVehicle`, so the SSLP/VSCT edits are enough
   for the spool system;
 - `GameVehicleResource.create{Model_Id = 304}` builds a drivable car from the
@@ -358,7 +383,7 @@ pictures and stat bars.
   `currentVehicle` is `false`). `localPlayer.position` is (0, 0, 0) there and
   zapping into a car fails until the camera is down at street level. The
   harness presses Up (extended scan code 0x48) five times; the probe waits
-  until `zapcontroller.getZapLevel()` is ≤ 1, or 120 ticks pass, then spawns.
+  until `zapcontroller.getZapLevel()` is в‰¤ 1, or 120 ticks pass, then spawns.
   The level is only logged every 4 ticks and the last logged value was 3, so
   which condition fired isn't recorded; either way the spawn and zap worked.
 - **Placement:** `zapcontroller.ZapCameraGetTargetPos()` (global table
@@ -419,7 +444,7 @@ Rework's readable `trafficspoolingdata.lua` only lists mission vehicle pots.
 
 ## Forza geometry in game (confirmed-runtime)
 
-Converter: `src/dsfforza/convert/forza2dsf.py` (FH1 carbin → DSF VEHC), `src/dsfforza/convert/exp_hollow.py`
+Converter: `src/dsfforza/convert/forza2dsf.py` (FH1 carbin в†’ DSF VEHC), `src/dsfforza/convert/exp_hollow.py`
 (the layout that currently works for the full entry).
 
 - **Geometry writing works**: stretching the clone's vertices 1.3x in x shows
@@ -436,7 +461,7 @@ Converter: `src/dsfforza/convert/forza2dsf.py` (FH1 carbin → DSF VEHC), `src/d
   runs `-002224` and `-004928` the chase camera sees the 370Z's headlights
   and grille, so the car sits backwards on its chassis (the stock Desanne
   shows its tail lights from the same camera). `forza2dsf.Placement` now
-  turns the body 180° about y (confirmed in run `20261022-015851`, below).
+  turns the body 180В° about y (confirmed in run `20261022-015851`, below).
 - **Paint UV0** samples the vehicle's chassis texture; Forza UVs on the host's
   texture gave stripes. Pinned to a plain texel for now.
 - **Full entry crash** (DriverNGHook fatal-error dialog while spooling,
@@ -607,9 +632,9 @@ stock vehicleStats entry by Picture1: the HUD shows the Nissan badge and
 Desanne's (`img/fix6-370z-hud-name.png`). The HUD reads the numeric
 Manufacturer/Model fields; ManufacturerName/ModelName strings don't reach it.
 
-Cockpit camera too low: stock head cameras see the steering rim's top 7.9°
-below eye level (median of 146, `out/eye/wheel_view.py`); ours were 6.5°
-(370Z), 3.3° (M5), 1.9° (Skyline), so the wheel filled half the screen.
+Cockpit camera too low: stock head cameras see the steering rim's top 7.9В°
+below eye level (median of 146, `out/eye/wheel_view.py`); ours were 6.5В°
+(370Z), 3.3В° (M5), 1.9В° (Skyline), so the wheel filled half the screen.
 `cockpit.camera_eye` now raises the camera only (in game: "Head camera"
 below).
 
@@ -655,9 +680,9 @@ the speed every frame) with `-ProbeIds '266,304,305,306'`.
   third of the screen with the dials above it, not across half the screen
   (`img/gauges-m5-111mph.png`, `img/gauges-skyline-50mph.png`); still a
   little higher than the stock Desanne's (`img/fix3-desanne-stock-cockpit.png`).
-  `out/eye/wheel_view.py`: rim top 6.5° (370Z), 4.6° (M5), 5.2° (Skyline)
+  `out/eye/wheel_view.py`: rim top 6.5В° (370Z), 4.6В° (M5), 5.2В° (Skyline)
   below the eye; the hosts 227, 147, 229 have 8.3, 8.3, 9.1, the Desanne
-  13.7. `camera_eye` aims for 7.9° using the rim's centre-line radius and
+  13.7. `camera_eye` aims for 7.9В° using the rim's centre-line radius and
   the wheel centre's depth, while `wheel_view.py` measures the topmost rim
   vertex (tube thickness, rim tilt toward the driver), hence the shortfall.
 - Digital readouts are blank dark panels (M5 centre display, 370Z).
@@ -669,7 +694,7 @@ the speed every frame) with `-ProbeIds '266,304,305,306'`.
 `out/r7/ported-r7.sp`: 304 370Z (host 227), 305 M5 (147 CTS-V), 306 Skyline
 R32 (229 R33), 307 Mustang Boss 429 (193), 308 Raptor (251); auto hosts,
 `--damage panels`, gauges, lights, factory paint, camera at the stock
-7.9° rim angle (all five, `out/eye/wheel_view.py`).
+7.9В° rim angle (all five, `out/eye/wheel_view.py`).
 
 - All five spool, drive (throttle held, up to 100 mph) and switch to the
   cockpit; HUD shows each host's badge and name (Nissan 370Z, Cadillac
