@@ -5,6 +5,7 @@
     uv run python -m tests formats asi     # only files whose name contains a word
     uv run python -m tests -v              # one line per test
     uv run python -m tests --no-lint       # tests only
+    uv run python -m tests --ci            # without the files tests/ci-skip.txt lists (CI has no game)
 
 Collects unittest.TestCase classes and plain module-level test_* functions
 (assert-based; pytest collects the same files too). A test file whose import
@@ -24,10 +25,26 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 TEST_DIR = REPO / "tests"
+CI_SKIP = TEST_DIR / "ci-skip.txt"  # test files that need the game, the Forza discs or out/
 
 
-def test_files(words: list[str]) -> list[Path]:
+def ci_skipped() -> dict[str, str]:
+    """{file name: why} from tests/ci-skip.txt (`test_x.py  # reason` per line)."""
+    out = {}
+    for line in CI_SKIP.read_text(encoding="utf-8").splitlines() if CI_SKIP.exists() else []:
+        name, _, why = line.partition("#")
+        if name.strip():
+            out[name.strip()] = why.strip()
+    return out
+
+
+def test_files(words: list[str], ci: bool = False) -> list[Path]:
     files = sorted(TEST_DIR.glob("test_*.py"))
+    if ci:
+        skipped = ci_skipped()
+        for name, why in skipped.items():
+            print(f"skipped on CI: {name} ({why})")
+        files = [p for p in files if p.name not in skipped]
     return [p for p in files if not words or any(w in p.stem for w in words)]
 
 
@@ -78,7 +95,7 @@ def main(argv: list[str]) -> int:
     verbose = "-v" in argv
     words = [a for a in argv if not a.startswith("-")]
     linted = lint() if "--no-lint" not in argv else True
-    files = test_files(words)
+    files = test_files(words, ci="--ci" in argv)
     if not files:
         print(f"no test files match {words}")
         return 1

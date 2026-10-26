@@ -176,6 +176,36 @@ def test_reuse_copies_unchanged_cars_and_honours_the_predicate():
         assert other.rebuilt[media] == "job: options"
 
 
+def test_reuse_takes_each_car_from_the_first_build_that_has_it():
+    """--reuse given twice (dsff install: the last build, then an interrupted one): a car
+    missing from the first is taken from the second; a car in neither is built."""
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        (folder / "car").mkdir()
+        (folder / "car" / "input.bin").write_bytes(bytes(64))
+        first, second = folder / "first", folder / "second"
+        (first / "work").mkdir(parents=True)
+        (second / "work").mkdir(parents=True)
+        job = _job(folder)
+        job["sound_dir"] = str(folder / "new" / "sound")
+        fp = _record(folder, job)
+        media = job["media"]
+        (second / "work" / f"{media}.fp.json").write_text(json.dumps(fp))
+        (second / "work" / f"{media}.json").write_text(json.dumps({"media": media, "ok": True, "host": 198}))
+        (second / "work" / f"{media}.chnk").write_bytes(b"CHNK2")
+        work = folder / "new" / "work"
+        work.mkdir(parents=True)
+        args = argparse.Namespace(reuse=[first, second], rebuild_where=None, trust_code=False, verify_reuse=0)
+        reuse = port_batch.Reuse(args, work)
+        report = reuse.take(job)
+        assert report is not None and report["reused_from"] == str(second)
+        assert (work / f"{media}.chnk").read_bytes() == b"CHNK2"
+        assert reuse.record()["sources"] == [str(first), str(second)]
+        other = port_batch.Reuse(args, work)
+        assert other.take({**job, "media": "TEST_Other_11"}) is None
+        assert other.rebuilt["TEST_Other_11"] == "not built there"
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

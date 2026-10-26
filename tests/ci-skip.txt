@@ -1,0 +1,2 @@
+# Test files `uv run python -m tests --ci` leaves out (.github/workflows/release.yml):
+# they need the game folder, the Forza disc images or files under out/.

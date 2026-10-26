@@ -6,3 +6,4 @@ tools/game/lua/dsfforza/ported.lua
 tools/game/lua/dsfforza/hud.lua
 .claude/worktrees/
 .venv/
+dist/
