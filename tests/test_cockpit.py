@@ -5,6 +5,7 @@ uv run python tests/test_cockpit.py     # or every test: uv run python -m tests 
 
 from __future__ import annotations
 
+import math
 import struct
 
 from dsfforza.convert import cockpit
@@ -89,6 +90,116 @@ def test_upgrade_bonnets_left_out():
     kept = [s.name for s in forza2dsf.stock_sections(sections)]
     dropped = {"cagerace", "hoodCIrace", "hoodPSrace", "hoodb", "hoodg"}
     assert kept == [n for n in names if n not in dropped], kept
+
+
+class _Car:
+    """handling.ForzaCar's two fields the virtual dials read."""
+
+    redline = 6800.0
+    top_speed_mph = 150.0
+
+
+def test_virtual_dials_on_a_blank_display():
+    # CL65-like: no speed or tach needle, a blank 16 x 10 cm display 0.7 m ahead of the eye.
+    panel = _display((0.5, 0.0, 0.5, 0.0) * 2, width=0.16, height=0.10)
+    eye = (0.08, 0.05, 0.7)
+    dials, report = cockpit.virtual_gauges({"interior": panel}, {}, eye, _Car(), 2)
+    assert [g.family for _, _, g, _ in dials] == ["tach", "speed"]
+    assert set(report["dials"]) == {"tach", "speed"}
+    for needle, face, g, cal in dials:
+        assert cal.source == "virtual dial" and not cal.reverse and cal.rest_deg == 0
+        assert g.normal[2] < -0.99  # into the dash
+        assert abs(g.pivot[2]) < 1e-9 and 0 < g.pivot[0] < 0.16 and 0 < g.pivot[1] < 0.10
+        # The engine turns the needle sweep x input degrees: the whole scale at the dial's end.
+        unit = cockpit.GAUGE_UNITS[g.family]
+        assert abs(cal.sweep * cal.dial_max / unit - g.sweep_deg) < 1e-6
+        assert needle.name == f"{g.family}_min" and cockpit.NEEDLE.match(needle.name)
+        # At rest the needle points at 0, half the span left of straight up (driver's view).
+        tip = max(cockpit.section_points(needle), key=lambda p: (p[0] - g.pivot[0]) ** 2 + (p[1] - g.pivot[1]) ** 2)
+        rest = math.degrees(math.atan2(tip[0] - g.pivot[0], tip[1] - g.pivot[1]))
+        assert abs(rest + g.sweep_deg / 2) < 2.0, (rest, g.sweep_deg)
+        assert all(p[2] > 0 for p in cockpit.section_points(face))  # over the display, towards the driver
+        for sub in face.subsections:
+            assert cockpit.FORCE_FLAT.match(sub.material)
+            assert fm.classify_cockpit(sub.material, "interior") == (fm.TRIM, None)
+    tach, speed = (cal for _, _, _, cal in dials)
+    assert tach.dial_max == 8000 and speed.dial_max == 160  # 250 rpm over the redline at least; 5% over the top speed
+    assert dials[0][2].pivot[0] < dials[1][2].pivot[0]  # tachometer on the left
+
+
+def test_virtual_dials_need_the_host_gauge_entry():
+    # Stock 250 (the Volt) has no gauge entries, 231 only the speedometer's: a dial
+    # whose id the host can't turn is left out.
+    panel = _display((0.5, 0.0, 0.5, 0.0) * 2, width=0.16, height=0.10)
+    dials, report = cockpit.virtual_gauges({"interior": panel}, {}, (0.08, 0.05, 0.7), _Car(), 2)
+    cf = cockpit.CockpitFit(None, {}, (0, 0, 0), (0, 0, 0), "", {}, {"interior": panel}, {}, virtual=report)
+    for needle, face, g, cal in dials:
+        cf.gauges[g.family], cf.calibration[g.family], cf.needles[g.family] = g, cal, {"min": needle}
+        cf.static[face.name] = face
+    assert cockpit.drop_virtual(cf, {2: 0}) == ["tach"]
+    assert set(cf.gauges) == {"speed"} and "dsf_dial_tach" not in cf.static and "dsf_dial_speed" in cf.static
+    assert set(cf.virtual["dials"]) == {"speed"} and cf.virtual["no_host_gauge"] == ["tach"]
+
+
+def test_no_virtual_dial_on_the_steering_wheel_or_for_needles():
+    panel = _display((0.5, 0.0, 0.5, 0.0) * 2, width=0.16, height=0.10)
+    eye = (0.08, 0.05, 0.7)
+    # Needles are drawn in the car's frame: they wouldn't turn with the wheel.
+    assert cockpit.virtual_gauges({"steering_wheel": panel}, {}, eye, _Car(), 2) == ([], {})
+    # A car with both needles keeps its display as it is.
+    both = {"speed": object(), "tach": object()}
+    assert cockpit.virtual_gauges({"interior": panel}, both, eye, _Car(), 2) == ([], {})
+    # Too small for a dial (a 4 x 2 cm gear readout).
+    small = _display((0.5, 0.0, 0.5, 0.0) * 2, width=0.04, height=0.02)
+    dials, report = cockpit.virtual_gauges({"interior": small}, {}, eye, _Car(), 2)
+    assert dials == [] and "too small" in report["rejected"][0]
+
+
+def _needle_pose(name: str, deg: float, extra: bool = False) -> carbin.Section:
+    """A needle (a thin quad from the pivot (0.3, 0.7, -0.7) up 5 cm), turned `deg`
+    clockwise for a driver looking along -z; `extra` adds a stray triangle."""
+    pivot = (0.3, 0.7, -0.7)
+    pts = [(-0.002, -0.005), (0.002, -0.005), (0.001, 0.05), (-0.001, 0.05)]
+    a = math.radians(deg)
+    verts = [
+        carbin.Vertex(
+            (pivot[0] + x * math.cos(a) + y * math.sin(a), pivot[1] - x * math.sin(a) + y * math.cos(a), pivot[2]),
+            (0.0, 0.0),
+            (0.0, 0.0),
+            (0.0, 0.0, 1.0),
+        )
+        for x, y in pts
+    ]
+    idx = [0, 1, 2, 0, 2, 3]
+    if extra:
+        verts.append(carbin.Vertex(verts[2].position, (0.0, 0.0), (0.0, 0.0), (0.0, 0.0, 1.0)))
+        idx += [1, 2, 4]
+    sub = carbin.SubSection("gauge_needle", 0, 4, (0.0, 1.0, 0.0, 1.0), idx)
+    return carbin.Section(name, (0, 0, 0), (0, 0, 0), (0, 0, 0), lod0_vertices=verts, subsections=[sub])
+
+
+def test_needle_pose_welded_differently():
+    # FM4 Mini Cooper S 2003, Lancer Evo IX MR, Insignia VXR: the min pose carries a few
+    # more triangles than mid and max, so no point-to-point match exists for min -> mid.
+    poses = {"min": _needle_pose("speed_min", -120, True), "mid": _needle_pose("speed_mid", 0)}
+    poses["max"] = _needle_pose("speed_max", 110)
+    g = cockpit.fit_gauge("speed", poses)
+    assert g is not None
+    assert abs(g.sweep_deg - 230.0) < 0.2, g.sweep_deg
+    assert math.dist(g.pivot, (0.3, 0.7, -0.7)) < 1e-3 and g.normal[2] < -0.99
+
+
+def test_camera_raise_stops_before_the_cowl_hides_the_dials():
+    wheel_top = [(0.0, 0.38, 0.35)]  # 0.5 m ahead: the rim top 7.9 deg down wants the eye 4.9 cm higher
+    eye = (0.0, 0.4, -0.15)
+    free = cockpit.camera_eye(eye, wheel_top)
+    rise = free[1] - eye[1]
+    assert rise > 0.03
+    # The cowl hides a tenth of the needle sweep from 2 cm up.
+    capped = cockpit.camera_eye(eye, wheel_top, sight=lambda r: 1.0 if r < 0.02 else 0.9)
+    assert eye[1] + 0.015 <= capped[1] < eye[1] + 0.02
+    # A raise that hides nothing goes all the way.
+    assert cockpit.camera_eye(eye, wheel_top, sight=lambda r: 1.0) == free
 
 
 def _hierarchy(markers: list[tuple[int, tuple, tuple]]) -> bytes:
