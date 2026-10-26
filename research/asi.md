@@ -14,6 +14,7 @@ when `-Asi` is given. Evidence tags as in `dngvehicles.md`.
 | `archive` | 1100 entries per CHNK → 16384 (`dngvehicles.sp` past 365 vehicles), archive files past 2 GiB | [Archive size](#archive-size) |
 | `garage` | garage list IDs 0..303 → 0..999, 40 → 120 maker groups, 20 → any number of cars per maker group (the vehicles screen's 20 cards become a moving window), save flags for IDs 304..999 | [Garage and save](#garage-and-save) |
 | `hud` | HUD/Shift/garage-shop maker badge and model plate: one-byte glyph codes → 16-bit (`ManufacturerGlyph`/`ModelGlyph`); garage card emblem: Forza logo instead of the SF disc (`GarageEmblem`) | [HUD badges and plates](#hud-badges-and-plates) |
+| `lua` | the game's Lua heap: one fixed 10 MB block → overflows into a private heap when full | [Lua heap](#lua-heap) |
 
 Every module checks the original bytes of each site before patching and
 patches nothing of a feature when one site differs (another mod, another exe
@@ -617,3 +618,61 @@ out/testdrive3 crashed (runs `host-20261023-080433`, `-080858`, `-081321`)
 in the maker menu fill, not in the emblem hook: the 40-entry menu-script
 lists (Garage and save, "The garage crash with 40 added cars"). Fixed; the
 emblem shows in the fixed runs `-103212`, `-104805` and `-105532`.
+
+## Lua heap
+
+Module `lua` (`tools/asi/src/mod_lua.cpp`). Issue #56; runs and symptoms in
+`in-game-tests.md`, "Lua VM after minutes of play".
+
+### What the stock game does (confirmed-static)
+
+- FUN_005E4BF0 creates heap 3 of the engine's heap manager (`[0x012536AC]`,
+  heap pointers by index) with `push 0xA00000` at 0x005E4C05:
+  FUN_0075A190 -> FUN_00758EE0 mallocs one 10 MB block (header at its start,
+  +4 the size) and never grows it.
+- The Lua state is `lua_newstate(FUN_005E4AB0, 0)` (`push 0x005E4AB0` at
+  0x005E7DB7, the call at 0x005E7DBC). FUN_005E4AB0 is the `lua_Alloc`:
+  allocate (FUN_0075A200), reallocate (FUN_0075A240) and free (FUN_0075A290)
+  in heap 3. When the block can't serve a request it reports "Lua heap out of
+  memory" through FUN_0086A560 (a log channel that is silent in the retail
+  game) and returns NULL.
+- Lua 5.1.2 (`$Lua: Lua 5.1.2` in the exe) raises `LUA_ERRMEM` at that
+  allocation. The game calls Lua through FUN_005E4760, a `lua_pcall` whose
+  result it ignores, so the error is never logged.
+- The collector runs with `setpause 150`, `setstepmul 1500` (0x005E6995,
+  0x005E69A8): the heap may grow to 1.5 times the live data before the next
+  cycle starts.
+
+### The patch
+
+- `arena_mb` (default 32): the size pushed at 0x005E4C05 (`68 00 00 A0 00`).
+  Driver.exe is large-address aware and uses about 1.2 GB of its 4 GB
+  (`in-game-tests.md`, VM memory), so 22 MB more doesn't matter.
+- `push <dsfforza lua_Alloc>` at 0x005E7DB7 (`68 B0 4A 5E 00`). It calls
+  FUN_005E4AB0 first. With `overflow=1` (default) a request the block refuses
+  gets memory from a private `HeapCreate` heap instead; a pointer outside the
+  block's address range is such a block and is freed and reallocated there,
+  and an arena block that can't grow moves out with its contents. With
+  `overflow=0` the refusal goes to Lua as stock, only logged.
+- Logged: the arena size, each new MB `g->totalbytes` passes, refused
+  requests (the first four, then powers of two), overflow use per 256 KB.
+- Both patches need the state and the heap not to exist yet at plugin load
+  (they don't: the ASI loader runs first); else the module does nothing.
+- Offline (`build.ps1 -Test`): both pushes, and the allocator in front of a
+  64 KB stand-in arena (the real FUN_005E4AB0 needs the game's CRT): blocks
+  from the arena until it is full, then overflow blocks, a grown arena block
+  moves out with its bytes, frees reach the right heap, the arena serves
+  again once it has room.
+
+### In game
+
+| Run | Build | Result |
+| --- | --- | --- |
+| `vm-20261025-094432`, `-075445`, `-065422` | before the module | Lua VM fault 3 of 3 (issue #56) |
+| `vm2-20261026-122308` | `overflow=0`, 10 MB | first refused request at Lua 8538 KB (12:27:43), Lua VM fault at 12:28:48 |
+| `vm1-20261026-122537` | 10 MB + overflow | 65,536+ requests served from the overflow heap (peak 751 KB, Lua 9.3 MB); the issue's browse, no fault |
+| `vm1-20261026-150731` | `overflow=0`, 10 MB | four refused requests, register.lua's concat error; no fault in this run |
+| `vm1-20261026-143525` | 32 MB + overflow | the issue's browse (makers 1 to 19, 39 to 42): Lua peak 9 MB, nothing refused, no fault |
+| `vm1-20261026-145055` | 32 MB + overflow | 63 maker rows opened: Lua peak 9 MB, nothing refused, no fault |
+| `vm1-20261026-142558` | 32 MB + overflow, stock archive | the issue's browse: Lua peak 6 MB, no fault |
+| `vm1-20261026-152238` | the same, rebased on master | the issue's browse: Lua peak 9 MB, nothing refused, no fault |

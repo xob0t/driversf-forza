@@ -95,6 +95,80 @@ typedef int* (__fastcall* SlotFn)(void* self, void* edx, int id);
 typedef unsigned (__fastcall* TestFn)(void* self, void* edx, int id, unsigned bit);
 typedef void (__fastcall* SetFn)(void* self, void* edx, int id);
 
+// Lua heap: the lua_Alloc that lua_newstate now gets (the patched push at
+// 0x005E7DB7) in front of a stand-in for the game's arena allocator (the real
+// one, FUN_005E4AB0, needs the game's CRT): a 64 KB bump arena registered as
+// heap 3 that fails when full. Blocks come from the arena until it is full,
+// then from the overflow heap; reallocs move them with their contents, frees
+// go to the owner.
+static unsigned char g_arena[0x10000];
+static unsigned g_arena_top;
+static int g_arena_frees;
+
+static void* __cdecl fake_arena_alloc(void*, void* ptr, size_t osize, size_t nsize)
+{
+    if (nsize == 0) { g_arena_frees++; return nullptr; }
+    if (ptr && nsize <= osize) return ptr;
+    if (g_arena_top + nsize > sizeof g_arena) {
+        if (osize == 0 && nsize <= 1024 && g_arena_frees >= 100) g_arena_top = 0x40;   // all freed: start over
+        else return nullptr;
+    }
+    void* p = g_arena + g_arena_top;
+    g_arena_top += (unsigned)((nsize + 15) & ~15u);
+    if (ptr) memcpy(p, ptr, osize);
+    return p;
+}
+
+static void lua_heap_test()
+{
+    typedef void*(__cdecl * AllocFn)(void* ud, void* ptr, size_t osize, size_t nsize);
+    static void* mgr[8];
+    unsigned saved_mgr = *(unsigned*)0x012536AC;
+    BYTE saved_stock[5];
+    memcpy(saved_stock, (void*)0x005E4AB0, 5);
+    *(BYTE*)0x005E4AB0 = 0xE9;   // the game's allocator -> the stand-in
+    *(int*)0x005E4AB1 = (int)((size_t)fake_arena_alloc - (0x005E4AB0 + 5));
+    *(unsigned*)(g_arena + 4) = sizeof g_arena;   // arena header: +4 size
+    g_arena_top = 0x40;
+    mgr[3] = g_arena;
+    *(unsigned*)0x012536AC = (unsigned)(size_t)mgr;
+    auto in_arena = [](void* p) { return (unsigned char*)p >= g_arena && (unsigned char*)p < g_arena + sizeof g_arena; };
+    AllocFn alloc = (AllocFn)(size_t)*(unsigned*)0x005E7DB8;
+    CHECK(*(BYTE*)0x005E7DB7 == 0x68 && (size_t)alloc != 0x005E4AB0);
+    CHECK(*(BYTE*)0x005E4C05 == 0x68 && *(unsigned*)0x005E4C06 == 32u << 20);   // arena_mb=32
+    void* blocks[160];
+    int inside = 0, outside = 0;
+    for (int i = 0; i < 160; i++) {
+        blocks[i] = alloc(nullptr, nullptr, 0, 1024);
+        CHECK(blocks[i] != nullptr);
+        if (!blocks[i]) return;
+        memset(blocks[i], i, 1024);
+        (in_arena(blocks[i]) ? inside : outside)++;
+    }
+    CHECK(inside == 63 && outside == 97 && in_arena(blocks[0]) && !in_arena(blocks[159]));
+    // An arena block that the arena can't grow moves out, with its bytes.
+    void* grown = alloc(nullptr, blocks[1], 1024, 0x8000);
+    CHECK(grown && !in_arena(grown) && ((unsigned char*)grown)[1023] == 1 && g_arena_frees == 1);
+    blocks[1] = grown;
+    void* shrunk = alloc(nullptr, blocks[159], 1024, 16);   // an overflow block shrinks where it is
+    CHECK(shrunk && !in_arena(shrunk) && ((unsigned char*)shrunk)[15] == 159);
+    blocks[159] = shrunk;
+    bool kept = true;
+    for (int i = 2; i < 159; i++) kept &= ((unsigned char*)blocks[i])[512] == (unsigned char)i;
+    CHECK(kept);
+    for (int i = 0; i < 160; i++) {
+        size_t n = i == 1 ? 0x8000 : i == 159 ? 16 : 1024;
+        CHECK(alloc(nullptr, blocks[i], n, 0) == nullptr);
+    }
+    CHECK(g_arena_frees == 1 + 62);   // the arena saw only its own blocks' frees
+    g_arena_frees = 100;
+    void* again = alloc(nullptr, nullptr, 0, 1024);   // the arena has room again
+    CHECK(again && in_arena(again));
+    alloc(nullptr, again, 1024, 0);
+    memcpy((void*)0x005E4AB0, saved_stock, 5);
+    *(unsigned*)0x012536AC = saved_mgr;
+}
+
 // The process heap usually sits inside 0x00400000..0x01DC0000 by the time
 // main runs, so the test starts itself suspended and reserves the range in
 // the child first.
@@ -278,6 +352,7 @@ int main(int argc, char** argv)
         unsigned name_set = 0x006C6AC8 + 5 + *(int*)0x006C6AC9, badge_set = 0x006C6AE2 + 5 + *(int*)0x006C6AE3;
         CHECK(name_set != 0x00ACE110 && badge_set != 0x00ACE110 && name_set != badge_set);
     }
+    lua_heap_test();
     printf("%s (%d failures); log: %s\\dsfforza.log\n", failures ? "FAILED" : "ok", failures, dsf_plugin_dir());
     return failures ? 1 : 0;
 }
