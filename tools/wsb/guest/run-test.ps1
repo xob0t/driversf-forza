@@ -108,7 +108,8 @@ New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
 $started = Get-Date
 $events = [System.Collections.Generic.List[object]]::new()
 function Note([string]$message) {
-    $events.Add([pscustomobject]@{ t = [math]::Round(((Get-Date) - $started).TotalSeconds, 1); message = $message })
+    $now = Get-Date   # wall: the guest clock, as in dsfforza.log (src/dsfforza/harness/emblem_check.py)
+    $events.Add([pscustomobject]@{ t = [math]::Round(($now - $started).TotalSeconds, 1); wall = $now.ToString('HH:mm:ss.fff'); message = $message })
     $events | ConvertTo-Json | Set-Content (Join-Path $RunDir 'events.json')
 }
 

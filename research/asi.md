@@ -499,7 +499,10 @@ lists them.
 
 - A maker group of exactly 20 cars with `GarageEmblem` cars (card 20, see
   gui-assets.md "Garage card emblem") keeps the SF disc: it is shown as stock
-  (20 cards). Longer groups show the emblem (above).
+  (20 cards). Longer groups show the emblem (above). Issue #66 (ASTON MARTIN
+  in the full roster: 15 ported cars with SF).
+- Card N's disc lies over card N+1's picture and reads as that card's once
+  Forza and SF discs mix: issue #67.
 - The window after a drive: where the game restores `itemBrowserIndex` on
   return (FUN_006CCD50 sets it from a saved value), the window starts at car 0
   again, so in a long group the highlight would land on another car. Not run.
@@ -559,6 +562,38 @@ Fonts.fchunk); other cars get the stock resource back. Four
 to SF, the car list's (0x00711537, 0x00711354) give the spare its own UVs
 back if a picture needs it. Applied only with the ctor hook. In game: run
 `host-20261023-100401`.
+
+With the card window (Maker groups past 20 cars) the hook still gets the
+right car per card. At 0x007118A5, `ebp` is the card index and `[esp+0x18]`
+the model the car list just took from vtable slot 0x12C, which is
+`group_car` with the window's first car already added; the same value goes
+to the card's model array (`+0xD0`). Card N's disc sits on card N's top
+right corner, over the next card's picture, so a disc is easily read as the
+next card's; that was the "one card off" report (gui-assets.md, "Which card
+a disc belongs to").
+
+`[hud] emblem_debug=1` logs every card's decision (`hud: emblem: fill <n>
+card <N> model <id> -> Forza logo|SF`). With `[garage] menu_debug=1` and a
+`-MenuKeys` run, `uv run dsff emblem_check <run folder> [--hud <hud.lua>]`
+checks every Right/Left shot. It classifies the discs at the highlighted
+card and its neighbours (-1, +1, +2) by colour and compares them with the
+logged decisions, and with `--hud` each decision with `GarageEmblem`.
+run-test.ps1 now notes events with the guest clock (`wall`), so shots match
+log lines by time. Older runs get the offset from votes; check those by hand.
+A shot that still shows the previous step counts as "drawn late": a busy VM
+can draw a step late, and the next shot catches up. A card shift would make
+nearly every shot of a scroll late. Shifting the shot-to-log match of run
+`-120559` by one tap gave 149 of 199 shots that differ.
+
+Runs `vm-20261026-120559` and `vm1-20261026-130246` used the full roster
+(out/final-gui2, GUI step rebuilt for #50). Each scrolled CHEVROLET (46
+cars) and FORD (49) to the end, past it and back past the start, plus GMC
+(8 cars). In 428 Right/Left shots no disc differs from its card's decision.
+Four shots of the second run were drawn late; that VM took up to 15 s
+between some 2-s steps. No decision differs from hud.lua outside 20-car
+groups. The keys:
+Enter, Down × 9, Enter, Right × 48, Left × 50, Esc, Down × 4, Enter,
+Right × 51, Left × 53, Esc, Down, Enter, Right × 6, Left × 6, Esc.
 
 **In game, [garage] with 120 groups:** opening the garage with
 out/testdrive3 crashed (runs `host-20261023-080433`, `-080858`, `-081321`)
