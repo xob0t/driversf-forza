@@ -434,6 +434,12 @@ three-quarter) and `Bonnet`; the A4's own before shot is from
 - FER_F151_11, MAS_MC12_04, JAG_33_XKR_10, NOB_M600_10, LAM_LP7004_12: the
   oversize tyres through the arches before (the F151's fill them, the M600's
   and Aventador's rears cut the rear arch), at Forza's size and gap after.
+- Full lock (`run-series -DriveKey Left -DriveSeconds 2 -Views lock,fq`:
+  Left held while the car stands, runs `vm-20261026-111023` before and
+  `-111602` after; `img/wheel-clearance-lock.jpg`): the A4's locked front tyre
+  sweeps through the wing and its flare before, after it stays inside the
+  flare but for the tyre's leading edge, as the check says (37 mm against
+  Forza's own 24 at its smaller lock); the MC12's the same.
 - The Bonnet camera sits where it did against the bonnet (the mounts rose with
   the body).
 - The rest pose against the road (the probe's new `rest` line: the car
