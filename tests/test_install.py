@@ -435,6 +435,25 @@ def test_download_checks_the_hash():
         assert not target.exists() and not target.with_name("asset.zip.part").exists()
 
 
+def test_downloads_use_the_os_certificate_check():
+    # Python's own check failed on a fresh Windows (GitHub's release host's root not in the store
+    # yet, issue #95); truststore asks Windows, which fetches missing roots.
+    import truststore
+
+    seen = {}
+
+    def urlopen(url, context=None, timeout=None):
+        seen.update(url=url, context=context, timeout=timeout)
+        return Response(b"")
+
+    assert thirdparty.download.__defaults__[-1] is thirdparty.open_url
+    assert thirdparty.fetch.__defaults__[-2] is thirdparty.open_url
+    with mock.patch.object(thirdparty.urllib.request, "urlopen", urlopen):
+        thirdparty.open_url("https://example/asset.zip")
+    assert seen["url"] == "https://example/asset.zip"
+    assert isinstance(seen["context"], truststore.SSLContext) and seen["timeout"]
+
+
 def test_fetch_unpacks_a_pinned_zip_once():
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as z:
