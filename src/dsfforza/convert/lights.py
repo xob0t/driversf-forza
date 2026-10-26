@@ -167,8 +167,13 @@ HIGH_BRAKE_RISE = 0.08  # a centre tail lamp this far above the side tails is th
 
 # Group priority when the host has fewer light entries than the car has lamps;
 # lower first. Groups that miss out share an entry of the same function and
-# side, else stay unlit.
-PRIORITY = {HEAD: 0, TAIL: 1, BRAKE: 2, INDICATOR: 3, BRAKE_IND: 3, DRL_IND: 3, REVERSE: 4, POSITION: 5, FOG: 6}
+# side (a brake-and-indicator lamp also its side's tail lamp: it still brakes),
+# else stay unlit. Brake-and-indicator lamps come after the position lamps:
+# red lenses over indicators (_red_lens_indicators) added two lamps to 58
+# cars, and on full hosts (BMW_M5_12, VIP_Viper_13 on 147, 182) they took
+# the front position lamps' entries.
+PRIORITY = {HEAD: 0, TAIL: 1, BRAKE: 2, INDICATOR: 3, DRL_IND: 3, REVERSE: 4, POSITION: 5, BRAKE_IND: 6, FOG: 7}
+FALLBACK = {BRAKE_IND: TAIL}  # an unassigned lamp of this function shares this one's entry
 
 
 def type_byte(function: str, side: str) -> int:
@@ -690,6 +695,18 @@ class LampPlan:
                     ),
                     None,
                 )
+                if twin is None and lamp.function in FALLBACK:
+                    twin = next(
+                        (
+                            l
+                            for l in order
+                            if l.light_id is not None
+                            and l.function == FALLBACK[lamp.function]
+                            and l.side == lamp.side
+                            and l.front == lamp.front
+                        ),
+                        None,
+                    )
                 if twin is not None:
                     lamp.light_id = twin.light_id
                 else:
