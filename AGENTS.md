@@ -32,6 +32,16 @@ Research notes are in `research/` (read the ones for your area first).
   `https://github.com/xob0t/driversf-forza/blob/<commit-sha>/research/img/<file>?raw=true`
   with the SHA of a commit on your branch that contains the image.
 - Keep the PR to one topic. Don't reformat or touch unrelated files.
+- Bugs outside your task, and the open items your PR leaves, go to GitHub
+  issues for later agents rather than into your PR. First search the open and
+  closed issues (`gh issue list --state all --search "<words>"`). If the bug is
+  already there, add what you found as a comment (`gh issue comment`).
+  Otherwise open one with `gh issue create --label bug` (`enhancement` for a
+  missing feature). The issue says what is wrong and on which cars (spool ids
+  or Forza names), how to reproduce it, and the evidence: the run folder,
+  log lines, numbers, and screenshots committed under `research/img/` and
+  linked by commit SHA (as for PRs). Also say what you ruled out and where you
+  would start. Mention the issue numbers in your PR and in your report.
 - Python: the package `dsfforza` in `src/dsfforza/` (`formats/`, `convert/`,
   `build/`, `game/`, `harness/`), managed with uv on Python 3.13
   (`pyproject.toml`, `uv.lock`). Run a tool with `uv run dsff <tool> ...`
