@@ -278,6 +278,64 @@ and `dsfforza-test.vmsd.orig-20261025-083356` (before the first clone; 8 GB,
 2 GB), `dsfforza-test.vmx.before-pool-20261026-112107` (right before the
 revert and the new settings).
 
+### Slow VM sessions (2026-10-26, issues #77, #78)
+
+From 12:02 on 2026-10-26 every run on VM 2 drew the cockpit view as a flat
+grey shell (no dashboard, wheel, gauges or hands) and, on the full roster,
+spooled only the first probe ID ("NOT spooled after 40 ticks"); stock cars
+too. The cause was neither the 512 MB of graphics memory nor the 4 GB guest:
+that VM 2 session was running at half speed.
+
+- **The cause:** VMware on the Windows Hypervisor Platform syncs the vCPUs'
+  TSCs while the guest boots. In VM 2's power-on at 11:57 (VM 1 was running a
+  game) the sync took 3.1, 2.1 and 1.1 ms against a 1 ms threshold, and
+  vmware.log says `Syncing WHP TSCs failed after 3 attempts. Falling back to
+  always trapping RDTSCs.` From then on every RDTSC in the guest exits to the
+  host, for the whole session. VM 1's power-on at 11:07 the same day did the
+  same (`vmware-0.log`), and its runs `vm-20261026-111023` and `-111602`
+  spooled slowly too (13 ticks, the spooler busy for 11 samples).
+- **Measured** (`guest-bench`, both VMs idle, 15:35): a PowerShell loop 0.74 s
+  on VM 2 against 0.36 s on VM 1; uncached sequential reads 200 against
+  562 MB/s, random 64 KiB reads 2.1 against 0.33 ms, write-through 95 against
+  324 MB/s. In game: "run folder built" 21 s against 6 s, the Story world
+  ready after 52 to 59 s against 27 to 51 s.
+- **What the game does with it:** `TrafficSpooler.Busy()` (logged every 20
+  ticks by `register.lua`'s probe) stayed true for the whole run in every VM 2
+  run after 12:02 (`vm2-20261026-120240` to `-151915`); in VM 1's runs it
+  clears after one sample. While the spooler is behind, the player car's
+  interior entry (N+1000, `cockpit.md`) isn't loaded, so the cockpit view
+  draws the low-detail shell (after the spawns `IsInteriorLoaded(73)` was
+  still false in `vm2-20261026-144237`), and a mission vehicle requested
+  next waits behind the traffic loads past the probe's 40 ticks (397 in that
+  run was loaded later; 73 took 19 ticks).
+- **Not the settings of #61:** VM 1 at 4 GB / 512 MB drew the same stock car
+  textured in the same hours (`vm1-20261026-124150`, `-153216`), and VM 2's
+  first session after the clone (11:21 to 11:44, same settings) did too
+  (`vm2-20261026-112238`). A new power-on of VM 2 (TSC sync 48 us) fixed both
+  issues with nothing else changed: `vm2-20261026-153830` spooled and drove
+  all six full-roster IDs (537, 397, 73, 53, 28, 372; one tick each after
+  the first) with textured cockpits. VM 2's Story-stage hangs of #70
+  (`vm2-20261026-124544`, `-130721`, `-133303`) were in the same slow
+  session.
+- **The fix:** `vm.ps1 Start` (so every `run-series.ps1 -Vm`) reads the
+  session's vmware.log once the desktop is up and, while it has that line
+  and no other series holds the VM, powers the VM off and on again (up to
+  three power-ons, about 75 s each). `vm.ps1 Status` flags such a session.
+  The probe's "NOT spooled" line now says whether the spooler was still busy.
+- **Checked** (both VMs in healthy sessions, series started together, with
+  the fix): full roster `out\final3`, dsfforza.asi with #79, IDs 537, 397, 73,
+  53, 28, 372: `vm1-20261026-154434` and `vm2-20261026-154434` each spooled
+  and drove all six (the first after 2 ticks, the rest after 1) with
+  textured cockpits; stock archive, IDs 147 and 266: `vm1-20261026-160105`,
+  `vm2-20261026-160105`, textured. The spooler was idle from the second
+  sample on. Host memory with both games running: at least 10.0 GB free,
+  vmware-vmx at most 4.4 (VM 1) and 6.9 GB (VM 2), mksSandbox 0.9 GB
+  together. Settings unchanged: 4 GB, 512 MB graphics memory, 4 vCPU.
+  Before and after: `img/vm-cockpit-147-before-after.jpg`,
+  `img/vm-cockpit-397-before-after.jpg`, `img/vm1-cockpit-537-147-after.jpg`.
+- Finding such sessions in old runs: the `spooler busy` field of the
+  `[dsfforza.register] t<n> traffic` lines in Driver.log.
+
 ### VM results (2026-10-24)
 
 - Stock smoke test `vm-20261024-015247` (stock archive, ID 147): finished in

@@ -221,7 +221,8 @@ function Confirm-Vm {
     # Start the VM headless if needed (also sets the guest display and mutes it), point its
     # C:\Repo at this checkout (a git worktree's builds and scripts, not the main checkout's),
     # then copy the host's Driver profile into it as a -Resolution window.
-    & $vmScript Start -Vm $vmTarget.Id | Out-Null
+    # Start's notes (settings written, a slow session restarted) are shown; "<name> ready" isn't.
+    & $vmScript Start -Vm $vmTarget.Id | Where-Object { $_ -notmatch ' ready; host output' }
     & $vmScript Share -Vm $vmTarget.Id -RepoPath $repo | Out-Null
     & $vmScript Exec -Vm $vmTarget.Id -Script C:\Repo\tools\wsb\guest\setup-vm.ps1 -TimeoutSeconds 300 `
         -Arguments @('-Phase', 'Profile', '-Resolution', $Resolution, '-Tag', $vmTarget.Name) | Out-Null

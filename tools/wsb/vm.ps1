@@ -12,7 +12,9 @@ Status and Stop also take -Vm all.
            size, muted audio). A powered-off VM first gets the pool's memory and CPU
            settings ($VmSettings in vm-common.ps1). vmware-vmx runs at normal priority:
            lowering it needs an elevated shell, and the vmx's only lower setting (Idle)
-           starves the VM under load.
+           starves the VM under load. A session whose vmware.log says it traps RDTSCs (the
+           TSC sync failed at power-on; the guest then runs at about half speed) is powered
+           off and on again, up to 3 power-ons, unless another series uses the VM.
   Status   print whether the VM runs, the Tools state, whether the session answers and
            the host RAM its vmware-vmx holds.
   Exec     run a guest PowerShell script in the logged-in user's desktop session
@@ -77,7 +79,8 @@ foreach ($target in $targets) {
             $free = Enter-VmMutexes $VmInfo.RunMutexes
             Exit-VmMutexes $free
             "$VmName (VM $($VmInfo.Id)) running ($VmVmx); tools: $tools; session answers: $(Test-VmSession); " +
-                "series: $(if ($free) { 'none' } else { 'running' }); $(Get-VmPriority)"
+                "series: $(if ($free) { 'none' } else { 'running' }); $(Get-VmPriority)" +
+                $(if (Test-VmTscTrapped) { '; SLOW: this session traps RDTSCs (vm.ps1 Stop, then Start)' } else { '' })
         }
         'Stop' {
             $held = Wait-VmUnused
