@@ -60,14 +60,12 @@ $targets = if ($Vm -eq 'all') { @(Get-VmPool) } else { @(Get-VmPool -Select $Vm)
 if ($Vm -eq 'all' -and $Action -notin 'Status', 'Stop') { throw "-Vm all works with Status and Stop only" }
 
 function Wait-VmUnused {
-    # The VM's run mutexes (as a series holds them), so Stop and Revert never cut a run short.
-    $held = Enter-VmMutexes $VmInfo.RunMutexes
-    if (-not $held) {
-        "  ${VmName}: waiting for its series to finish..." | Out-Host
-        $held = Enter-VmMutexes $VmInfo.RunMutexes ([int][TimeSpan]::FromHours(3).TotalMilliseconds)
-        if (-not $held) { throw "$VmName is still in use after 3 hours" }
-    }
-    return , $held
+    # The VM's run mutexes (as a series holds them), so Stop and Revert never cut a run short;
+    # queued behind the series already waiting for it (vm-common.ps1 Enter-VmPool).
+    $got = Enter-VmPool -Pool @($VmInfo) -Timeout ([TimeSpan]::FromHours(3)) -Label "vm.ps1 $Action" `
+        -Say { param($t) "  ${VmName}: $t" | Out-Host }
+    if (-not $got) { throw "$VmName is still in use after 3 hours" }
+    return , $got.Mutexes
 }
 
 foreach ($target in $targets) {
@@ -108,6 +106,7 @@ foreach ($target in $targets) {
             $current = { "$(Get-Content -LiteralPath $stampFile -ErrorAction SilentlyContinue)".Trim() }
             if ($IdleMinutes -gt 0) { Start-Sleep -Seconds (60 * $IdleMinutes) }
             if ($Stamp -and (& $current) -ne $Stamp) { return }   # a later series re-armed it
+            if (Test-VmQueued $VmName) { Say 'a series is queued for it; left running'; return }   # that series arms its own
             $held = Enter-VmMutexes $VmInfo.RunMutexes
             if (-not $held) { Say 'in use; left running'; return }   # that series arms its own
             try {

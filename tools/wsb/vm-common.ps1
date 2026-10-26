@@ -6,6 +6,7 @@
 # itself. Per VM: run mutexes (VM 1 also holds the old single-VM name Local\dsfforza-vm-run, so
 # series from older checkouts and new ones exclude each other), a lifecycle mutex for
 # Start/Stop/Revert, run folders runs\vm<id>-<stamp>, and C:\Output\vm\<name>\ for setup logs.
+# Waiters for a VM queue first come, first served (Enter-VmPool).
 # Use-Vm selects the VM the functions below work on ($VmInfo, $VmVmx, $VmDir, $VmName).
 
 $VmDefaultPool = 'C:\VMs\dsfforza-test\dsfforza-test.vmx', 'C:\VMs\dsfforza-test2\dsfforza-test2.vmx'
@@ -67,35 +68,132 @@ function Exit-VmMutexes($Held) {
     foreach ($m in @($Held)) { if ($m) { try { $m.ReleaseMutex() } catch { }; $m.Dispose() } }
 }
 
+# The wait queue (first come, first served). Each waiter for a VM writes a ticket file into
+# $VmQueueDir under the queue lock; a VM goes to the oldest live ticket whose pool has it, so a
+# later series can't take a VM an earlier one is waiting for, and a series pinned to VM 1 doesn't
+# hold up a later one that can use VM 2. Only that oldest waiter waits on the VM's mutex (kernel
+# waits of a few seconds, then it looks at the queue again); the rest poll the queue. (Waiting
+# on the mutex alone was not fair: PowerShell runs scripts on an STA thread, whose waits pump
+# messages, and a waiter woken by an APC loses its place; issue #60.) Tickets of dead processes
+# are dropped. Series from checkouts without the queue still take the mutexes directly
+# (Local\dsfforza-vm-run for VM 1), so they exclude queued series but don't queue themselves.
+# queue.log in $VmOutputHost\vm records each ticket and which VM it got.
+$VmQueueDir = Join-Path $VmOutputHost 'vm\queue'
+$VmQueueLog = Join-Path $VmOutputHost 'vm\queue.log'
+
+function Enter-VmQueueLock {
+    # Held for a few file operations only. Windows releases it if its owner dies.
+    $lock = New-Object System.Threading.Mutex($false, 'Local\dsfforza-vm-queue')
+    try { if (-not $lock.WaitOne([TimeSpan]::FromMinutes(2))) { $lock.Dispose(); throw 'the VM queue lock is held for 2 minutes' } }
+    catch [System.Threading.AbandonedMutexException] { }
+    return $lock
+}
+
+function Exit-VmQueueLock($Lock) { $Lock.ReleaseMutex(); $Lock.Dispose() }
+
+function Write-VmQueueLog([string]$Text) {
+    try { Add-Content -LiteralPath $VmQueueLog "$(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss.fff') [$PID] $Text" } catch { }
+}
+
+function Get-VmQueue {
+    # Live tickets, oldest first (call under the queue lock). A ticket whose process is gone, or
+    # whose pid now belongs to another process, is deleted.
+    New-Item -ItemType Directory -Force -Path $VmQueueDir | Out-Null
+    @(foreach ($file in Get-ChildItem -LiteralPath $VmQueueDir -Filter '*.json' -File | Sort-Object Name) {
+        $ticket = try { Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json } catch { $null }
+        $process = if ($ticket) { Get-Process -Id $ticket.pid -ErrorAction SilentlyContinue }
+        $alive = $process -and $(try { $process.StartTime.ToUniversalTime().Ticks -eq [long]$ticket.started } catch { $true })
+        if (-not $alive) {
+            Remove-Item -LiteralPath $file.FullName -ErrorAction SilentlyContinue
+            if ($ticket) { Write-VmQueueLog "dropped the ticket $($file.BaseName) of a dead process ($($ticket.pid), $($ticket.label))" }
+            continue
+        }
+        $ticket | Add-Member -NotePropertyName file -NotePropertyValue $file.FullName -PassThru
+    })
+}
+
+function Test-VmQueued([string]$Name) {
+    # Whether a series is queued for this VM (vm.ps1 StopIdle leaves such a VM running).
+    $lock = Enter-VmQueueLock
+    try { return [bool]@(Get-VmQueue | Where-Object { $_.vms -contains $Name }).Count } finally { Exit-VmQueueLock $lock }
+}
+
 function Enter-VmPool {
-    # Take a free VM of $Pool: running ones first (no boot, no extra RAM), then in pool order, each
-    # tried at once; when all are busy, wait for whichever comes free first. Returns
-    # @{ Vm; Mutexes } or $null after $Timeout. -Say gets the 'waiting' line.
-    param([object[]]$Pool, [TimeSpan]$Timeout, [scriptblock]$Say = { param($t) $t })
-    $running = (Invoke-Vmrun @('list') -Quiet).Out -split "`r?`n" | ForEach-Object { $_.Trim() }
-    $order = @($Pool | Where-Object { $running -contains $_.Vmx }) + @($Pool | Where-Object { $running -notcontains $_.Vmx })
-    foreach ($vm in $order) {
-        $held = Enter-VmMutexes $vm.RunMutexes
-        if ($held) { return @{ Vm = $vm; Mutexes = $held } }
-    }
-    & $Say "waiting for a free VM ($(($Pool | ForEach-Object Name) -join ', ') busy)..."
+    # Take a VM of $Pool, first come, first served (the queue above): of the VMs no earlier
+    # ticket waits for, a free one at once, running ones first (no boot, no extra RAM), then in
+    # pool order; else wait for the first of them to come free. Returns @{ Vm; Mutexes } or $null
+    # after $Timeout. -Say gets the 'waiting' lines; -Label names the caller in queue.log.
+    param([object[]]$Pool, [TimeSpan]$Timeout, [scriptblock]$Say = { param($t) $t | Out-Host }, [string]$Label = '')
+    $names = @($Pool | ForEach-Object Name)
+    $started = (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks
+    $lock = Enter-VmQueueLock
+    try {
+        [void](Get-VmQueue)   # creates the folder, drops dead tickets
+        # Named by time, so the folder lists in arrival order; under the lock, so names never tie.
+        $id = '{0:D19}-{1}' -f [DateTime]::UtcNow.Ticks, $PID
+        $ticketFile = Join-Path $VmQueueDir "$id.json"
+        [ordered]@{ pid = $PID; started = $started; vms = $names; label = $Label; queued = (Get-Date).ToString('s') } |
+            ConvertTo-Json -Compress | Set-Content -LiteralPath $ticketFile
+        Write-VmQueueLog "ticket $id queued for $($names -join ', ') ($Label)"
+    } finally { Exit-VmQueueLock $lock }
+
     $deadline = (Get-Date) + $Timeout
-    while ((Get-Date) -lt $deadline) {
-        $first = @($Pool | ForEach-Object { New-Object System.Threading.Mutex($false, $_.RunMutexes[0]) })
-        $left = [math]::Max(0, [int]($deadline - (Get-Date)).TotalMilliseconds)
-        try { $index = [System.Threading.WaitHandle]::WaitAny([System.Threading.WaitHandle[]]$first, $left) }
-        catch [System.Threading.AbandonedMutexException] { $index = $_.Exception.MutexIndex }
-        if ($index -eq [System.Threading.WaitHandle]::WaitTimeout) { $first | ForEach-Object { $_.Dispose() }; break }
-        $vm = $Pool[$index]
-        $held = @($first[$index])
-        for ($i = 0; $i -lt $first.Count; $i++) { if ($i -ne $index) { $first[$i].Dispose() } }
-        # VM 1's second name: only taken by holders of the first, so normally free at once.
-        $rest = if ($vm.RunMutexes.Count -gt 1) { Enter-VmMutexes $vm.RunMutexes[1..($vm.RunMutexes.Count - 1)] }
-        if ($vm.RunMutexes.Count -eq 1 -or $rest) { return @{ Vm = $vm; Mutexes = @($held + @($rest | Where-Object { $_ })) } }
-        Exit-VmMutexes $held
-        Start-Sleep -Seconds 1
+    $said = ''
+    $running = (Invoke-Vmrun @('list') -Quiet).Out -split "`r?`n" | ForEach-Object { $_.Trim() }
+    $Pool = @($Pool | Where-Object { $running -contains $_.Vmx }) + @($Pool | Where-Object { $running -notcontains $_.Vmx })
+    try {
+        while ($true) {
+            # The VMs this ticket is first in line for.
+            $lock = Enter-VmQueueLock
+            try {
+                $ahead = @(Get-VmQueue | Where-Object { [IO.Path]::GetFileName($_.file) -lt "$id.json" } |
+                    Where-Object { @($_.vms | Where-Object { $names -contains $_ }).Count })
+                $mine = @($Pool | Where-Object { $n = $_.Name; -not @($ahead | Where-Object { $_.vms -contains $n }).Count })
+                if ($mine) {
+                    foreach ($vm in $mine) {
+                        $held = Enter-VmMutexes $vm.RunMutexes
+                        if ($held) {
+                            Remove-Item -LiteralPath $ticketFile -ErrorAction SilentlyContinue; $ticketFile = $null
+                            Write-VmQueueLog "ticket $id took $($vm.Name)"
+                            return @{ Vm = $vm; Mutexes = $held }
+                        }
+                    }
+                }
+            } finally { Exit-VmQueueLock $lock }
+            if ((Get-Date) -ge $deadline) { break }
+
+            $line = if ($mine) { "waiting for a free VM ($(($mine | ForEach-Object Name) -join ', ') busy; next in line)..." }
+                    else { "waiting for a free VM ($($names -join ', ') busy; $($ahead.Count) series queued ahead)..." }
+            if ($line -ne $said) { & $Say $line; $said = $line }
+            $left = [math]::Max(0, [math]::Min(5000, [int]($deadline - (Get-Date)).TotalMilliseconds))
+            if (-not $mine) { Start-Sleep -Milliseconds ([math]::Min(2000, [math]::Max(1, $left))); continue }
+
+            # First in line: wait in the kernel for the first mutex of each such VM, a few seconds
+            # at a time, so a VM that comes free is taken at once (also against series from
+            # checkouts without the queue, which wait on the mutex directly).
+            $first = @($mine | ForEach-Object { New-Object System.Threading.Mutex($false, $_.RunMutexes[0]) })
+            try { $index = [System.Threading.WaitHandle]::WaitAny([System.Threading.WaitHandle[]]$first, $left) }
+            catch [System.Threading.AbandonedMutexException] { $index = $_.Exception.MutexIndex }
+            if ($index -eq [System.Threading.WaitHandle]::WaitTimeout) { $first | ForEach-Object { $_.Dispose() }; continue }
+            $vm = $mine[$index]
+            $held = @($first[$index])
+            for ($i = 0; $i -lt $first.Count; $i++) { if ($i -ne $index) { $first[$i].Dispose() } }
+            # VM 1's second name: only taken by holders of the first, so normally free at once.
+            $rest = if ($vm.RunMutexes.Count -gt 1) { Enter-VmMutexes $vm.RunMutexes[1..($vm.RunMutexes.Count - 1)] }
+            if ($vm.RunMutexes.Count -eq 1 -or $rest) {
+                $lock = Enter-VmQueueLock
+                try { Remove-Item -LiteralPath $ticketFile -ErrorAction SilentlyContinue; $ticketFile = $null }
+                finally { Exit-VmQueueLock $lock }
+                Write-VmQueueLog "ticket $id took $($vm.Name)"
+                return @{ Vm = $vm; Mutexes = @($held + @($rest | Where-Object { $_ })) }
+            }
+            Exit-VmMutexes $held
+        }
+        Write-VmQueueLog "ticket $id timed out"
+        return $null
+    } finally {
+        if ($ticketFile) { Remove-Item -LiteralPath $ticketFile -ErrorAction SilentlyContinue }
     }
-    return $null
 }
 
 function Copy-HostDlls {

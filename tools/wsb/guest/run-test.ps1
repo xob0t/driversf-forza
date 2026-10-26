@@ -73,6 +73,9 @@ param(
     [switch]$CopyRepoFiles, # copy files from -RepoDir into the run folder instead of linking them (the VM's C:\Repo is a
                          # VMware shared folder; tools\wsb\run-series.ps1 -Vm)
     [int]$MemorySeconds = 5, # memory.csv sample interval (0: none); peaks go into result.json "memory"
+    [string]$GameRootFrom, # folder whose files replace the game folder's root files of the same name (run-series.ps1 -Vm:
+                         # the host game folder's current dsf_enhanced.asi and .ini); -Override wins. result.json
+                         # "dsfEnhanced" records the .asi and .ini used, "gameRoot" the game folder's root file hashes.
     [string]$GameDir = 'C:\Game',
     [string]$RepoDir = 'C:\Repo',
     [string]$OutputDir = 'C:\Output',
@@ -373,9 +376,25 @@ try {
     $run = $RunPath
     Remove-RunTree $run
     New-Item -ItemType Directory -Force -Path $run | Out-Null
-    Get-ChildItem $GameDir -File | Where-Object { $_.Extension -notin '.log', '.dmp' } | Copy-Item -Destination $run
+    $result.gameRoot = [ordered]@{}   # SHA-256 of the game folder's root files (run-series.ps1 -Vm compares the host's)
+    foreach ($file in Get-ChildItem $GameDir -File | Where-Object { $_.Extension -notin '.log', '.dmp' }) {
+        Copy-Item -LiteralPath $file.FullName -Destination $run
+        $result.gameRoot[$file.Name] = (Get-FileHash -LiteralPath $file.FullName).Hash
+    }
+    # -GameRootFrom: its files replace the game folder's root files of the same name (run-series.ps1
+    # -Vm: the host game folder's current dsf_enhanced.asi and .ini; C:\Game in the VM is a copy
+    # from when it was provisioned). -Override still wins (below).
+    $rootFrom = @{}
+    if ($GameRootFrom) {
+        foreach ($file in Get-ChildItem -LiteralPath $GameRootFrom -File) {
+            Copy-Item -LiteralPath $file.FullName (Join-Path $run $file.Name) -Force
+            $rootFrom[$file.Name.ToLower()] = $file.FullName
+        }
+        Note "root files from ${GameRootFrom}: $(($rootFrom.Keys | Sort-Object) -join ', ')"
+    }
     if (-not $OnHost) { Copy-Item "$OutputDir\HostDll\*.dll" $run }
-    (Get-Content (Join-Path $GameDir 'dsf_enhanced.ini')) `
+    $iniFrom = if ($rootFrom['dsf_enhanced.ini']) { $rootFrom['dsf_enhanced.ini'] } else { Join-Path $GameDir 'dsf_enhanced.ini' }
+    (Get-Content -LiteralPath $iniFrom) `
         -replace '^TrafficSpawnDistanceScale=.*$', 'TrafficSpawnDistanceScale=1.0' `
         -replace '^LODEngineThresholdScale=.*$', 'LODEngineThresholdScale=1.0' |
         Set-Content (Join-Path $run 'dsf_enhanced.ini')
@@ -394,6 +413,14 @@ try {
         Copy-Item $overrides[$key] (Join-Path $run $key) -Force
         Note "root file $key <- $($overrides[$key])"
     }
+    # Which dsf_enhanced the run uses: the .asi's hash and source, the source .ini's hash (the
+    # run copy has TrafficSpawnDistanceScale and LODEngineThresholdScale set to 1.0 unless overridden).
+    $sourceOf = { param($name) if ($overrides[$name]) { $overrides[$name] } elseif ($rootFrom[$name]) { $rootFrom[$name] } else { Join-Path $GameDir $name } }
+    $hashOf = { param($path) if (Test-Path -LiteralPath $path) { (Get-FileHash -LiteralPath $path).Hash } }
+    $iniSource = & $sourceOf 'dsf_enhanced.ini'
+    $result.dsfEnhanced = [ordered]@{
+        asi = & $hashOf (Join-Path $run 'dsf_enhanced.asi'); asiFrom = & $sourceOf 'dsf_enhanced.asi'
+        ini = & $hashOf $iniSource; iniFrom = $iniSource; iniRewritten = -not $overrides['dsf_enhanced.ini'] }
     $overrides['install\dngvehicles.sp'] = $Archive
     # A dsfforza install on the host (tools\install.ps1) replaces some game files. Tests use
     # the repo's copy of the originals (out\stock, see src\dsfforza\game\game_paths.py) unless -Override
