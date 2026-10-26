@@ -114,6 +114,86 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
   `tools\wsb\guest\fps.ps1` (through `vm.ps1 Exec`, next to a run) records 30 s
   of presents with Intel PresentMon (`C:\Output\vm\PresentMon-2.6.0-x64.exe`).
 
+### VM pool (2026-10-25)
+
+Two VMs, so two series run at once: VM 1 `C:\VMs\dsfforza-test` and VM 2
+`C:\VMs\dsfforza-test2`, a linked clone of VM 1's snapshot `clean`
+(`vm-build.ps1 -Step Clone -Vm 2`; its disk is a 10 MB child of VM 1's base
+disk, and VM 1's `.vmsd` lists it as `snapshot0.clone0`, so that snapshot must
+stay). The guest has no network adapter, so the shared computer name, SID and
+the missing MAC don't matter; the clone gets new UUIDs at its first power-on.
+
+- **Pool:** `$env:DSF_VMS` (`;`-separated `.vmx` paths), else those of the two
+  that exist (`vm-common.ps1`). A VM's id comes from its file name
+  (`dsfforza-test` 1, `dsfforza-testN` N).
+- **Mutexes:** per VM `Local\dsfforza-vm-run-<id>`; VM 1 also holds the old
+  `Local\dsfforza-vm-run`, so a series from an older checkout (VM 1 only) and
+  a new one exclude each other. Start/Stop: `Local\dsfforza-vm-lifecycle`
+  (VM 1, the old name) and `-lifecycle-<id>`.
+- **Taking a VM:** `run-series.ps1 -Vm` tries the free VMs at once, running
+  ones first (no boot, no extra RAM), then waits for whichever comes free
+  first (`WaitHandle.WaitAny`). `-VmId 2` pins one. The series prints
+  `VM <id>: <name>` and its run folders are `runs\vm<id>-<stamp>`. Setup logs
+  go to `C:\Output\vm\<name>\`; `C:\Output\HostDll` is only rewritten when a
+  DLL changed (another VM's run may be copying it).
+- **Settings** (`$VmSettings` in `vm-common.ps1`): 4 GB, 512 MB graphics
+  memory, 4 vCPU. `vm.ps1 Start` writes them into a powered-off VM's `.vmx`
+  when they differ, so a clone or a reverted snapshot gets them too.
+- **Idle power-off:** a running VM holds its RAM whether a game runs or not
+  (see below). At the end of a series `run-series.ps1` starts a hidden
+  `vm.ps1 StopIdle`, which powers the VM off when no series has used it for
+  `$env:DSF_VM_IDLE_MINUTES` (default 15; negative: never). A series in
+  between re-arms it, and it never stops a VM whose run mutex is held. A
+  cold start to a ready desktop session takes about 75 s.
+- **`vm.ps1 Stop`** and **`Revert`** now wait for the VM's run mutex.
+- **Memory sampler:** `run-test.ps1 -MemorySeconds 5` (default) writes
+  `memory.csv` in the run folder (guest available and committed memory, hard
+  page faults per second, GPU adapter memory, and Driver.exe's private bytes,
+  working set and address space) and the peaks to `result.json` `memory`.
+
+**Memory measured** (full roster `out\final-gui2` with dsfforza.asi, IDs
+147,705,26,1,400,600, VM 2, host sampled every 5 s):
+
+| setting (guest / graphics) | runs | guest peak used | Driver.exe peak private / WS / virtual | vmware-vmx WS after boot | peak in game | run |
+|---|---|---|---|---|---|---|
+| 8 GB / 2 GB (old) | `vm2-20261025-083626` | 2.92 GB of 8 | 982 / 685 / 1219 MB | 9.6 GB | 13.2 GB | 171 s |
+| 4.5 GB / 1 GB | `vm2-20261025-084216`, `-084516` | 2.86 GB, 1.75 GB available | 988 / 691 / 1219 MB | 6.0 GB | 8.05 GB | 170, 160 s |
+| 4 GB / 1 GB | `vm2-20261025-090258` | 2.92 GB, 1.18 GB available | 981 / 687 / 1219 MB | | | 162 s |
+| 4 GB / 512 MB (chosen) | `vm2-20261025-085007`, `-085255` | 2.92 GB, 1.17 GB available | 989 / 691 / 1229 MB | 5.5 GB | 7.03 GB | 160, 160 s |
+
+- The game needs about 1 GB private and 1.2 GB of address space, far from
+  the 32-bit 4 GB. The whole guest peaks under 3 GB committed.
+- **Graphics memory is guest RAM:** the guest reports no dedicated GPU
+  memory and 300 to 340 MB shared (Driver.exe 250 MB) with any setting.
+- **Host side:** the vmware-vmx working set is the whole guest RAM within
+  about 80 s of power-on (the guest's zero-page thread touches every free
+  page, and in ULM mode on WHP there is no page sharing or trimming to give
+  pages back: vmware.log has no PShare or MemTrim lines, and the working set
+  never drops after the game exits), plus about 1.4 GB of fixed overhead,
+  plus a 3D part once the game renders: 3.0 to 3.6 GB with 2 GB graphics
+  memory, 1.8 to 2.0 GB with 1 GB, 1.2 to 1.5 GB with 512 MB. vmware.log's
+  reservations follow it (`VmxMks3d` 3.2 GB to 1.66 GB, the renderer's
+  DataChannel 1 GB to 256 MB). `mksSandbox.exe` (the Vulkan renderer) adds
+  0.3 to 0.4 GB per VM. So `MemTrimRate` and `sched.mem.pshare.enable` have
+  nothing to act on here, and `mainMem.useNamedFile = FALSE` was already set.
+- **`svga.vramSize`:** VMware sets it back to 256 MB at power-on, and the
+  boot working set stayed 5.5 GB with 16 MB asked.
+- **No paging stalls** at 4 GB: at least 1.17 GB stays available and the
+  median of hard page faults is 8 to 22 pages/s. Bursts of 1,000 to 5,000
+  pages/s come while the world loads and when a probe car spools (reads of
+  the 2.6 GiB archive, which a smaller guest file cache holds less of; at
+  4.5 GB the same, at 8 GB under 530 after the load). Run times and
+  Story-ready times (31 to 32 s) match the 8 GB VM.
+- **Frame rate** (PresentMon, 30 s from 45 s after launch, full roster, VM 1
+  busy with another series): 512 MB mean 37.9 fps, median 41.0, 1 % low 16.9;
+  1 GB 35.7, 37.9, 18.6. The same within noise.
+- 3.5 GB would bring a VM to about 6.5 GB but leaves under 0.7 GB available
+  in the guest at the peak; not done.
+- `.vmx` backups from before the change:
+  `C:\VMs\dsfforza-test\dsfforza-test.vmx.orig-20261025-083356` and
+  `dsfforza-test.vmsd.orig-20261025-083356` (before the clone),
+  `dsfforza-test.vmx.before-pool-<stamp>` (before the new settings).
+
 ### VM results (2026-10-24)
 
 - Stock smoke test `vm-20261024-015247` (stock archive, ID 147): finished in
