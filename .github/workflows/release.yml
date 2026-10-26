@@ -27,7 +27,7 @@ jobs:
         # which CI doesn't have.
         run: .\tools\asi\build.ps1 -Test -NoRun
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.2
         with:
           version: "0.13.5"
 
