@@ -169,10 +169,11 @@ HIGH_BRAKE_RISE = 0.08  # a centre tail lamp this far above the side tails is th
 # lower first. Groups that miss out share an entry of the same function and
 # side, else of their fallback() function (same side first, then any side at the
 # same end), else stay unlit. Red lenses over indicators
-# (_red_lens_indicators) add two lamps to 58 cars; on full hosts (BMW_M5_12,
-# VIP_Viper_13 on 147, 182) the front position lamps then lost their entries,
-# and they now light with the head lamps instead.
-PRIORITY = {HEAD: 0, TAIL: 1, BRAKE: 2, INDICATOR: 3, BRAKE_IND: 3, DRL_IND: 3, REVERSE: 4, POSITION: 5, FOG: 6}
+# (_red_lens_indicators) add two lamps to 58 cars; on full hosts they come
+# after the reverse lamps (AUD_RS4_06, TOY_Camry_07 lost theirs), and the
+# position lamps they push out (BMW_M5_12, VIP_Viper_13 on 147, 182) light
+# with the head or tail lamps.
+PRIORITY = {HEAD: 0, TAIL: 1, BRAKE: 2, INDICATOR: 3, DRL_IND: 3, REVERSE: 4, BRAKE_IND: 4.5, POSITION: 5, FOG: 6}
 
 
 def fallback(function: str, front: bool) -> str | None:
