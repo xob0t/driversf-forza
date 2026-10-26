@@ -181,6 +181,26 @@ the missing MAC don't matter; the clone gets new UUIDs at its first power-on.
   Game`). Retaking the snapshot wasn't needed: apart from `dsf_enhanced.asi`,
   the host files changed since then are the dsfforza install's, which
   `-Phase Game` puts back to stock anyway.
+- **Checked** (2026-10-26, host `dsf_enhanced.asi` `BF829B28...` from
+  dsf_enhanced main `e9c3ba0`; its log says "legal screen skipped; kept 17
+  pending resource references"): 12 stock runs without `-Override` (IDs
+  147,1,2), VM 2 `vm2-20261026-120240` to `-123911` and VM 1
+  `vm1-20261026-124150` to `-124751`. None hit the fatal-error dialog. 11
+  finished; `vm2-20261026-123140` ran out the 150 s Story deadline while it
+  was still loading, at about 40 % of the usual speed (VM 1 was running
+  another agent's game then; issue #70). Every `result.json` has
+  `dsfEnhanced.asi` `BF829B28...`; `gameRoot` showed the guests' own copy
+  as `1ADDEC5C...`, and no other root file differed from the host's.
+- **Queue checked** (same day): three series started 3 s apart (12:02:04,
+  :07, :10) took a VM in that order (12:02:04 VM 2, 12:11:41 VM 2, 12:30:33
+  VM 2), and one pinned to VM 1 queued at 12:20:21 behind them took VM 1 at
+  12:41:22 (`queue.log`). At 12:23 another agent's series, from a checkout
+  without the queue, took VM 2 ahead of the third series; it had been
+  waiting on the mutex itself. Fake-VM tests (no game): four
+  waiters for one VM were served in arrival order within 20 ms of each
+  release. With mixed pools (pinned to 9, either, pinned to 8, either),
+  each VM went to the oldest waiter that could take it. A killed waiter's
+  ticket was dropped.
 - **Memory sampler:** `run-test.ps1 -MemorySeconds 5` (default) writes
   `memory.csv` in the run folder (guest available and committed memory, hard
   page faults per second, GPU adapter memory, and Driver.exe's private bytes,
@@ -341,7 +361,9 @@ About half of the VM runs ended at the DriverNGHook fatal-error dialog 20 to
   - Fix in dsf_enhanced (branch `fix/world-load-crash`): the legal screen's
     call keeps the pending list; every other loading screen empties it as
     stock. 0 of 10 runs crashed on the stock archive, 0 of 4 with the full
-    roster and dsfforza.asi.
+    roster and dsfforza.asi. Merged: dsf_enhanced main `e9c3ba0`, on the
+    host since 2026-10-26; VM runs use the host's copy ("Game files in VM
+    runs" above), and 0 of 12 stock runs crashed with it.
   - On a real PC it is the same race between startup loading and the first
     menu frames, so a slow or busy disk can hit it; the slow VM disk and CPU
     hit it in about half the runs. Notes: driver-sf-mods,

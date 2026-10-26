@@ -236,9 +236,9 @@ function Step-Clone {
     # it is deleted. Queued behind the series already waiting (vm-common.ps1 Enter-VmPool).
     $held = @()
     try {
-        foreach ($vm in @($source) + @(if (Test-Path -LiteralPath $VmVmx) { $VmInfo })) {
-            $got = Enter-VmPool -Pool @($vm) -Timeout ([TimeSpan]::FromHours(3)) -Label 'vm-build.ps1 Clone' -Say { param($t) Say "$($vm.Name): $t" | Out-Host }
-            if (-not $got) { throw "$($vm.Name) is still in use after 3 hours" }
+        foreach ($one in @($source) + @(if (Test-Path -LiteralPath $VmVmx) { $VmInfo })) {
+            $got = Enter-VmPool -Pool @($one) -Timeout ([TimeSpan]::FromHours(3)) -Label 'vm-build.ps1 Clone' -Say { param($t) Say "$($one.Name): $t" | Out-Host }
+            if (-not $got) { throw "$($one.Name) is still in use after 3 hours" }
             $held += $got.Mutexes
         }
         if (Test-Path -LiteralPath $VmVmx) {
