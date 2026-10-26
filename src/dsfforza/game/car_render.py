@@ -304,6 +304,24 @@ def paint_colour(stream, full) -> Paint:
     return max(options, key=lambda o: (max(o[0]) - min(o[0]), -abs(sum(o[0]) / 3 - 128)))[1]
 
 
+def _rest_hubs(stream, full, hubs: list) -> list:
+    """The hubs where the game draws the wheels of a car at rest: each axle's above its
+    hub-table position by the engine's static offset (wheel_clearance.rest_offsets; the
+    converter lowers the table by that much, forza2dsf.settle_wheels)."""
+    from dsfforza.build import handling
+    from dsfforza.convert import wheel_clearance
+
+    if len(hubs) < 2:
+        return hubs
+    params = handling.VO3D.parse(payload(stream, child(child(full, "NONR"), "VO3D"))).params
+    zs = [float(hub[2]) for hub, _ in hubs]
+    mid = sum(zs) / len(zs)
+    front = [z for z in zs if z > mid] or [max(zs)]
+    rear = [z for z in zs if z <= mid] or [min(zs)]
+    up = wheel_clearance.rest_offsets(params, sum(front) / len(front), sum(rear) / len(rear))
+    return [(hub + np.float32([0, up["front" if hub[2] > mid else "rear"], 0]), q) for hub, q in hubs]
+
+
 def load_scene(archive: Path, spool_id: int, entries=None, interior: bool = True) -> Scene:
     """The clean exterior (kind 2) with its wheel part on every UPVH hub, and the
     interior (kind 1) without its glass and gauge needles."""
@@ -354,6 +372,7 @@ def _load_scene(archive: Path, stream, spool_id: int, entries, interior: bool) -
         hubs.append(
             (np.array(struct.unpack_from("<3f", h.data, o), np.float32), struct.unpack_from("<4f", h.data, o + 16))
         )
+    hubs = _rest_hubs(stream, kinds[0], hubs)
     paint_lin = np.array(car_paint.c2, np.float32)
 
     materials: list[Material] = []

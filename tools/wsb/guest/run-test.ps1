@@ -48,8 +48,8 @@ param(
     [switch]$DamageSide, # probe: a parked side-on copy of each car takes applyDamage hits (wing, door, quarter) in chase view
     [switch]$GlassLadder, # probe: damage in steps during each cockpit view (clonetest.lua GLASS_STEPS, ~21 s)
     [string]$Views,      # probe: extra views after the chase view, ~6 s each: camera modes (Bonnet, Bumper) and fixed
-                         # cameras on the driver's seat (left, right, front), the tailgate (rear) and the left wheels
-                         # (wheels), e.g. 'Bonnet,Bumper,left'
+                         # cameras on the driver's seat (left, right, front), the tailgate (rear), the left wheels
+                         # (wheels) and the front left wheel (fq, lock), e.g. 'Bonnet,Bumper,left'
     [switch]$LightsDriveOnly, # with -Lights: only the day and dark drives, no setLights phases
     [switch]$Lights,     # probe: lamp phases per car (dsfforza\lightstest.lua, research/lights.md); the harness
                          # picks each phase through dsfforza\lightsync.lua and saves lights-<id>-<k>a/b.png
@@ -785,15 +785,17 @@ try {
             # the player drives a new car (chase view) and stays on until DriveSeconds
             # after its cockpit view shows up in the log.
             $driving = @($lines | Where-Object { $_ -match '\[dsfforza\] id (\d+): PLAYER IS DRIVING IT' })
-            $views = @($lines | Where-Object { $_ -match '\[dsfforza\] id (\d+): cockpit view on' })
-            if ($DriveSeconds -gt 0 -and $driving.Count -gt $views.Count) {
+            # Not $views: PowerShell names are case-insensitive, and the [string] -Views parameter would
+            # turn the list into a string ("" with no match, so $views[-1] was null: run vm-20261025-070010).
+            $cockpitViews = @($lines | Where-Object { $_ -match '\[dsfforza\] id (\d+): cockpit view on' })
+            if ($DriveSeconds -gt 0 -and $driving.Count -gt $cockpitViews.Count) {
                 if (-not $holdUntil -or $holdUntil -lt [datetime]::MaxValue) { Note "throttle ($DriveKey) on: $($driving[-1].Trim())" }
                 $holdUntil = [datetime]::MaxValue
             }
-            elseif ($DriveSeconds -gt 0 -and $views.Count -gt $cockpits) {
-                $cockpits = $views.Count
+            elseif ($DriveSeconds -gt 0 -and $cockpitViews.Count -gt $cockpits) {
+                $cockpits = $cockpitViews.Count
                 $holdUntil = (Get-Date).AddSeconds($DriveSeconds)
-                Note "throttle ($DriveKey) held $DriveSeconds s more: $($views[-1].Trim())"
+                Note "throttle ($DriveKey) held $DriveSeconds s more: $($cockpitViews[-1].Trim())"
             }
             if ($holdUntil) {
                 if ((Get-Date) -lt $holdUntil) { [DsfGuest]::Hold((Get-GameWindow), $key[0], $key[1], $key[2]) }
@@ -826,8 +828,8 @@ try {
     $result.stage = 'finished'
 }
 catch {
-    $result.error = $_.Exception.Message
-    Note "error: $($_.Exception.Message)"
+    $result.error = "$($_.Exception.Message) (line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim()))"
+    Note "error: $($result.error)"
 }
 finally {
     foreach ($path in (Join-Path $RunPath 'Driver.log'), (Join-Path $RunPath 'dsf_enhanced.log')) {

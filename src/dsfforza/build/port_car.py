@@ -691,6 +691,8 @@ def build_car(
             report["handling"] = apply_handling(
                 stream, clones[0], spool_id, car.name, gamedb, log, host=host, mode=args.handling
             )
+        if not getattr(args, "no_settle", False):  # on the final VO3D
+            report["placement"]["settle"] = forza2dsf.settle_wheels(stream, clones[0], log)
         forza_report = dict(forza_sound_report or {"ok": False, "reason": "disabled (--no-forza-sound)"})
         if forza_sound is not None:
             forza_report = fit_forza_sound(stream, clones[0], forza_sound, nonr_limit, mdxn_max, log)
@@ -1163,6 +1165,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="keep the host's interior entry, steering hinge and head camera "
         "(default: rebuild them from <car>_cockpit.carbin, src/dsfforza/convert/cockpit.py)",
+    )
+    parser.add_argument(
+        "--no-settle",
+        action="store_true",
+        help="leave the hubs on Forza's static pose (default: lower them by the wheel offset the "
+        "engine draws at rest, forza2dsf.settle_wheels, research/wheels.md 'Wheel clearance')",
     )
     return parser
 

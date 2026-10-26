@@ -502,9 +502,11 @@ def wheel_material(textures, section, sub, shared: dict) -> bytes | None:
 
 
 def wheel_point(p, fit=(1.0, 1.0)) -> tuple[float, float, float]:
-    """Forza wheel frame -> DSF wheel frame: 180 degrees about y, then the axle's size
-    (fit = (axial scale, radial scale), 1 for the axle the model was made for)."""
-    return (-p[0] * fit[0], p[1] * fit[1], -p[2] * fit[1])
+    """Forza wheel frame -> DSF wheel frame: from the tyre's centre (fit[2:5], CarDims.
+    tyre_centre; the origin when not given), 180 degrees about y, then the axle's size
+    (fit[:2] = (axial scale, radial scale), 1 for the model's own size)."""
+    cx, cy, cz = fit[2:5] if len(fit) >= 5 else (0.0, 0.0, 0.0)
+    return (-(p[0] - cx) * fit[0], (p[1] - cy) * fit[1], -(p[2] - cz) * fit[1])
 
 
 def wheel_normal(n, fit=(1.0, 1.0)) -> tuple[float, float, float]:
@@ -769,6 +771,17 @@ def axle_tyres(name: str, gamedbs) -> dict | None:
                 "rear": ((rd * 25.4 + 2 * rw * ra / 100) / 1000, rw / 1000),
             }
     return None
+
+
+def axle_fits(radius: float, width: float, tyres: dict | None) -> dict[str, tuple[float, float]]:
+    """{"front"|"rear": (axial scale, radial scale)} that bring the wheel model (radius,
+    width) to each axle's Data_Car tyre (axle_tyres), as Forza draws it; (1, 1) without
+    tyre sizes. Clamped to 0.6..1.6 across and 0.77..1.3 radially."""
+    fits = {"front": (1.0, 1.0), "rear": (1.0, 1.0)}
+    for axle in ("front", "rear") if tyres else ():
+        diameter, tyre_width = tyres[axle]
+        fits[axle] = (min(1.6, max(0.6, tyre_width / width)), min(1.3, max(0.77, diameter / 2 / radius)))
+    return fits
 
 
 def add_geometry(
@@ -1307,6 +1320,76 @@ def patch_hubs(
     return bytes(data), patched
 
 
+# y of the VO3D camera mounts (a vec3 per camera index, research/handling.md "Driver aids,
+# steering, cameras"): chase 300..302, bumper 327..329, bonnet 535..537 and the unmeasured ones.
+CAMERA_MOUNT_Y = (301, 304, 328, 338, 341, 395, 536, 550, 553)
+
+
+def settle_wheels(stream, full: Entry, log=print) -> dict:
+    """Lower each axle's hubs by the wheel offset the engine draws at rest, so that at rest
+    the wheels sit where Forza has them (research/wheels.md, "Wheel clearance").
+
+    The engine draws a wheel `up` above its hub-table position at rest
+    (wheel_clearance.rest_offsets: the static compression against VO3D p25, the dead zone
+    below p4, the axle's load and spring scale), and the body settles by the same amount.
+    convert() puts the hubs on Forza's static pose, so a port sat that much low on its
+    wheels: 39 mm at the front of the #2 Audi A4 DTM, whose race-car arches leave less room
+    than that.
+
+    Runs on the final VO3D (after the handling). The CoG height p30 (and p599) comes down
+    with the hubs by the axles' mean, so the physics, which sees the hierarchy relative to
+    the CoG, is unchanged and the body rises; the VO3D camera mounts rise with it."""
+    from dsfforza.build import handling
+    from dsfforza.convert import wheel_clearance
+    from dsfforza.formats import upvh as upvh_mod
+
+    nonr = child(full, "NONR")
+    upvh_entry, vo3d_entry = child(nonr, "UPVH"), child(nonr, "VO3D")
+    data = payload(stream, upvh_entry)
+    vo3d = handling.VO3D.parse(payload(stream, vo3d_entry))
+    hubs = [w[:3] for w in upvh_mod.parse(data).vec4s("wheels")]
+    mid = sum(h[2] for h in hubs) / len(hubs)
+    front = [h for h in hubs if h[2] > mid]
+    rear = [h for h in hubs if h[2] <= mid]
+
+    def mean(values):
+        values = list(values)
+        return sum(values) / len(values)
+
+    front_z, rear_z = mean(h[2] for h in front), mean(h[2] for h in rear)
+    up = wheel_clearance.rest_offsets(vo3d.params, front_z, rear_z)
+    report = {"front_mm": round(up["front"] * 1000, 1), "rear_mm": round(up["rear"] * 1000, 1)}
+    if max(abs(up["front"]), abs(up["rear"])) < 0.001:
+        return report
+    upvh_entry.payload, patched = patch_hubs(
+        data,
+        front_z,
+        rear_z,
+        mean(abs(h[0]) for h in front),
+        mean(h[1] for h in front) - up["front"],
+        mean(abs(h[0]) for h in rear),
+        mean(h[1] for h in rear) - up["rear"],
+    )
+    drop = (up["front"] + up["rear"]) / 2
+    vo3d.params[30] = vo3d.get(30) - drop  # the engine's default when the VO3D has none
+    if 599 in vo3d.params:
+        vo3d.params[599] -= drop
+    # The car's frame (where the VO3D camera mounts are measured from) follows the physics:
+    # it sinks against the body with the CoG, so the mounts the VO3D sets go up with the body
+    # (runs vm-20261025-074146 / -074620: the head camera, a hierarchy marker, logged 40 mm
+    # higher in that frame after a 36 mm drop).
+    for pid in CAMERA_MOUNT_Y:
+        if pid in vo3d.params:
+            vo3d.params[pid] += drop
+    vo3d_entry.payload = vo3d.build()
+    report.update({"hubs_patched": patched, "cog_drop_mm": round(drop * 1000, 1)})
+    log(
+        f"  wheels settled: hubs lowered {report['front_mm']:g} mm front, {report['rear_mm']:g} mm rear "
+        f"(the engine's rest offset), CoG p30 by {report['cog_drop_mm']:g} mm"
+    )
+    return report
+
+
 # --- the Forza car --------------------------------------------------------------
 
 
@@ -1387,20 +1470,38 @@ class CarDims:
     # its wheels, tyres through the arches.
     ride_height: float = 0.0
     rear_track_outer: float | None = None  # MAXData RearTrackOuter (None: as the front)
+    # The tyre's centre in the wheel model's frame. (0, 0, 0) on nearly every car; the
+    # wheel is turned about it, not about the model's origin (tyre_centre).
+    tyre_centre: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     @property
     def track(self) -> float:
-        """Hub to hub."""
+        """Hub to hub, at the model's tyre width (convert scales the wheel to Data_Car's)."""
         return self.track_outer - self.tyre_width
+
+
+def _tyre_points(wheel_sections) -> list:
+    subs = [(s, sub) for s in wheel_sections for sub in s.subsections if sub.lod > 0]
+    tyres = [(s, sub) for s, sub in subs if sub.material in ("tire", "tyre")] or subs
+    lod = min(sub.lod for _, sub in tyres)
+    return [s.vertices_for(sub)[i].position for s, sub in tyres if sub.lod == lod for t in sub.triangles() for i in t]
 
 
 def tyre_size(wheel_sections) -> tuple[float, float]:
     """(radius, width) of the tyre in the wheel model's lowest non-zero LOD."""
-    subs = [(s, sub) for s in wheel_sections for sub in s.subsections if sub.lod > 0]
-    tyres = [(s, sub) for s, sub in subs if sub.material in ("tire", "tyre")] or subs
-    lod = min(sub.lod for _, sub in tyres)
-    pts = [s.vertices_for(sub)[i].position for s, sub in tyres if sub.lod == lod for t in sub.triangles() for i in t]
+    pts = _tyre_points(wheel_sections)
     return ((max(p[1] for p in pts) - min(p[1] for p in pts)) / 2, max(p[0] for p in pts) - min(p[0] for p in pts))
+
+
+def tyre_centre(wheel_sections) -> tuple[float, float, float]:
+    """The centre of the tyre's bounding box in the wheel model's frame: the axle the
+    wheel turns about. Within a millimetre of the origin on nearly every Forza wheel;
+    TOY_6_Supra_05's sits 49 mm out and 80 mm down (its section offset), so drawn about
+    the origin it hung 80 mm into the road and wobbled as it turned. Coordinates under
+    1 mm count as 0."""
+    pts = _tyre_points(wheel_sections)
+    centre = [(max(p[k] for p in pts) + min(p[k] for p in pts)) / 2 for k in range(3)]
+    return tuple(0.0 if abs(c) < 0.001 else c for c in centre)
 
 
 def gamedb_body(gamedb: Path, name: str) -> tuple[float, float, float, float] | None:
@@ -1433,8 +1534,9 @@ def car_dims(car: ForzaCar, gamedb: Path | None = None) -> CarDims:
        FH1's NIS_Leaf_11. FM4 cars carry the same file as FH1 (lower-case path).
     2. gamedb.slt Data_CarBody (ModelWheelbase, ModelFrontTrackOuter,
        BottomCenterWheelbasePosZ), when a gamedb is given.
-    Tyre radius and width always come from the car's own wheel model."""
+    Tyre radius, width and centre always come from the car's own wheel model."""
     radius, width = tyre_size(car.wheel)
+    centre = tyre_centre(car.wheel)
     maxdata = find_file(car.folder, "Physics/MAXData.xml")
     if maxdata is not None:
         misc = ET.parse(maxdata).getroot().find("Misc")
@@ -1448,11 +1550,13 @@ def car_dims(car: ForzaCar, gamedb: Path | None = None) -> CarDims:
             "MAXData.xml",
             sum(ride) / len(ride) if ride else 0.0,
             float(misc.get("RearTrackOuter")) if misc.get("RearTrackOuter") else None,
+            centre,
         )
     if gamedb is not None and Path(gamedb).exists():
         row = gamedb_body(gamedb, car.name)
         if row:
-            return CarDims(row[0], -row[2], row[1], radius, width, f"{Path(gamedb).name} Data_CarBody", row[3] or 0.0)
+            source = f"{Path(gamedb).name} Data_CarBody"
+            return CarDims(row[0], -row[2], row[1], radius, width, source, row[3] or 0.0, tyre_centre=centre)
     raise ValueError(f"{car.name}: no Physics/MAXData.xml and no gamedb Data_CarBody row")
 
 
@@ -1544,29 +1648,32 @@ def convert(
         payload(stream, child(child(full, "NONR"), "UPVH")), payload(stream, child(child(full, "NONR"), "VO3D"))
     )
     axle_mid = hw.axle_mid if opts.host_axle_mid is None else opts.host_axle_mid
-    place = Placement(dy=hw.hub_y - dims.radius + dims.ride_height, dz=axle_mid + dims.mid_z)
-    # Per-axle wheel size. The Forza wheel model is made for the front axle (its radius and width
-    # match Data_Car's front tyre: 370Z, Veyron, M3); Forza scales it for the rear. Hosts with
-    # separate front and rear wheel parts get a rear copy scaled the same way; with one shared
-    # part all four wheels stay front-sized. Rear hubs go to the rear track and, for a bigger
-    # rear tyre, up by the radius difference, so all four tyres stand on the same ground.
+    # Per-axle wheel size. Forza draws its one wheel model at each axle's Data_Car tyre size
+    # (research/wheels.md, "Wheel clearance"): the model matches the front tyre on most cars
+    # (370Z, Veyron SS, M3) but not on 160 of 573 (FER_F151_11's is 0.393 m against a 0.340 m
+    # tyre, SUZ_Liana_02's 0.248 against 0.298; Forza's thumbnails show the tyre size). So the
+    # front wheels are scaled to the front tyre, and a host with separate rear wheel parts gets
+    # a rear copy scaled to the rear tyre; with one shared part the rear wheels are front-sized.
+    # The hubs stand the front tyres on Forza's ground; the rear hubs go to the rear track and
+    # up or down by the radius difference, so all four tyres stand on the same ground.
     tyres = axle_tyres(car.name, opts.gamedbs)
-    fits = {"front": (1.0, 1.0), "rear": (1.0, 1.0)}
-    if tyres:
-        (fd, fw), (rd, rw) = tyres["front"], tyres["rear"]
-        fits["rear"] = (min(1.6, max(0.6, rw / fw)), min(1.3, max(0.77, rd / fd)))
+    fits = axle_fits(dims.radius, dims.tyre_width, tyres)
     split = any(axle == "rear" for axle in hw.axles.values())
-    rear_fit = fits["rear"] if split else (1.0, 1.0)
+    rear_fit = fits["rear"] if split else fits["front"]
     fits["both"] = fits["front"]
+    front_radius, front_width = dims.radius * fits["front"][1], dims.tyre_width * fits["front"][0]
+    place = Placement(dy=hw.hub_y - front_radius + dims.ride_height, dz=axle_mid + dims.mid_z)
 
-    def part_fit(kind: int, part: int) -> tuple[float, float]:
-        return fits[hw.axles.get((kind, part), "both")]
+    def part_fit(kind: int, part: int) -> tuple[float, ...]:
+        # with the tyre's centre: some wheel models sit off their origin (TOY_6_Supra_05)
+        return (*fits[hw.axles.get((kind, part), "both")], *dims.tyre_centre)
 
+    half_track = (dims.track_outer - front_width) / 2
     rear_half_track = ((dims.rear_track_outer or dims.track_outer) - dims.tyre_width * rear_fit[0]) / 2
-    rear_hub_y = hw.hub_y + dims.radius * (rear_fit[1] - 1)
+    rear_hub_y = hw.hub_y + dims.radius * rear_fit[1] - front_radius
     log(
         f"{car.name}: {len(car.body)} stock body sections, wheelbase {dims.wheelbase:.3f}, "
-        f"tyre radius {dims.radius:.3f}, track {dims.track:.3f} ({dims.source})"
+        f"tyre radius {front_radius:.3f} (model {dims.radius:.3f}), track {2 * half_track:.3f} ({dims.source})"
     )
     swapped = {lod: wheel_lod(car.wheel, lod) for lod in [*opts.lods.values(), opts.exterior_lod]}
     if any(a != b for a, b in swapped.items()):
@@ -1579,8 +1686,13 @@ def convert(
         "placement": {
             "source": dims.source,
             "wheelbase": round(dims.wheelbase, 4),
-            "track": round(dims.track, 4),
-            "tyre_radius": round(dims.radius, 4),
+            "track": round(2 * half_track, 4),
+            "track_outer": round(dims.track_outer, 4),
+            "tyre_radius": round(dims.radius, 4),  # the wheel model's
+            "tyre_width": round(dims.tyre_width, 4),
+            "tyre_centre": [round(c, 4) for c in dims.tyre_centre],
+            "front_fit": [round(c, 4) for c in fits["front"]],
+            "ground_radius": round(front_radius, 4),  # the hubs stand this far over Forza's ground
             "ride_height": round(dims.ride_height, 4),
             "mid_z": round(dims.mid_z, 4),
             "dy": round(place.dy, 4),
@@ -1698,7 +1810,7 @@ def convert(
         from dsfforza.convert import plates
 
         host = plates.host_plates(stream, full)
-        body, plate_plan = plates.apply(car, place, hw.hub_y - dims.radius, host, log=log)
+        body, plate_plan = plates.apply(car, place, hw.hub_y - front_radius, host, log=log)
         car = dataclasses.replace(car, body=body)
         report["plates"] = plate_plan.report
 
@@ -1804,7 +1916,7 @@ def convert(
                 payload(stream, upvh),
                 axle_mid + dims.wheelbase / 2,
                 axle_mid - dims.wheelbase / 2,
-                dims.track / 2,
+                half_track,
                 hw.hub_y,
                 rear_half_track,
                 rear_hub_y,
