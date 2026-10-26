@@ -1,0 +1,58 @@
+# Release: build dsfforza.asi, run the tests that need no game or Forza files, and package
+# the player zip (src/dsfforza/build/package.py).
+#   tag v*            -> a GitHub Release with the zip attached
+#   workflow_dispatch -> the zip as a workflow artifact (no release):
+#                        gh workflow run release.yml --ref <branch>
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build dsfforza.asi
+        shell: powershell
+        # MSVC from the runner's Visual Studio (build.ps1 finds vcvars32.bat through vswhere).
+        # -Test -NoRun compiles the offline patch test too; running it needs Driver.exe 1.04,
+        # which CI doesn't have.
+        run: .\tools\asi\build.ps1 -Test -NoRun
+
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          version: "0.13.5"
+
+      - name: Tests
+        # Lint, format and the tests that run without the game, the Forza discs or out/
+        # (tests/__main__.py; the rest are listed in tests/ci.txt with the reason).
+        run: uv run python -m tests --ci
+
+      - name: Package
+        shell: powershell
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
+          uv run --frozen dsff package --asi out\asi\dsfforza.asi --version $version --out dist
+          "ZIP=$((Get-ChildItem dist\*.zip).FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding ascii
+
+      - name: Upload the zip (not a tag)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v7
+        with:
+          name: driversf-forza
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - name: Release (tag)
+        if: github.ref_type == 'tag'
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create $env:GITHUB_REF_NAME $env:ZIP --title $env:GITHUB_REF_NAME --generate-notes

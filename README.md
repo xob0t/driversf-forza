@@ -1,74 +1,39 @@
 # driversf-forza
 
-Adds cars from your own Forza Horizon (FH1) and Forza Motorsport 4 (Xbox 360
-disc images) to Driver: San Francisco PC 1.04. The repo ships code only, never
-game or Forza assets.
+Adds the cars from your own Forza Horizon and Forza Motorsport 4 discs (Xbox 360)
+to Driver: San Francisco on PC. The cars are built on your PC from your discs; this
+project ships no game or Forza files.
 
-**Players:** see [INSTALL.md](INSTALL.md).
+## What you need
 
-## What it does
+- Windows 10 or 11.
+- Driver: San Francisco for PC, version 1.04, with its original game files.
+- Your Forza disc images (`.iso`): Forza Horizon, and Forza Motorsport 4 discs 1
+  and 2. A car that is only on a disc you don't have is skipped.
+- The Microsoft Visual C++ 2015-2022 Redistributable, **x86**
+  (<https://aka.ms/vs/17/release/vc_redist.x86.exe>). The installer checks for it.
+- About 20 GB of free disk space. The first build takes one to a few hours,
+  depending on the PC; it runs at low priority, so the PC stays usable.
 
-Each Forza car is converted onto a similar stock DSF car (the host) and added
-to `Install\dngvehicles.sp` under its own ID:
+## Install
 
-- body, cockpit, glass, lamps, plates, wheels and paint from Forza;
-- stock-style damage (panels, crush, detachable parts);
-- Forza's own engine sound, in a stock sound bank;
-- handling derived from the car's specs on the host's DSF tuning;
-- garage pictures, HUD badges and names.
+1. Download the latest `driversf-forza-<version>.zip` from
+   [Releases](https://github.com/xob0t/driversf-forza/releases) and unzip it.
+2. Put your Forza `.iso` files in its `assets` folder.
+3. Close the game and double-click `install.cmd`.
 
-DriverNGHook runs the Lua that registers the cars. The optional native plugin
-`tools/asi` (`dsfforza.asi`) lifts the archive, garage, save, HUD and Lua heap limits.
+The first time, it asks for your game folder (the one with `Driver.exe`) and
+remembers it. It installs [uv](https://docs.astral.sh/uv/) if you don't have it,
+builds every car, backs up your save and every game file it replaces, and
+installs the cars. Run it again after an update: only what changed is rebuilt.
 
-## Setup
+## Uninstall
 
-- Windows, PowerShell 5.1 and [uv](https://docs.astral.sh/uv/)
-  (`winget install astral-sh.uv`). uv installs Python 3.13 and the
-  dependencies (`uv.lock`) into `.venv` on the first `uv run`.
-- Forza disc images in `assets/` (`*.iso`), or pass `--iso`.
-- `DSF_GAME_DIR`: the game folder (the one with `Driver.exe`). Every tool
-  reads it; there is no built-in default.
+In a terminal in the unzipped folder, `.\install.cmd --uninstall` puts every replaced
+game file back.
 
-```powershell
-$env:DSF_GAME_DIR = 'X:\path\to\Driver San Francisco'
-uv run dsff game_data prepare      # derived data under out/ (once)
-```
-
-## Build and install
-
-```powershell
-# Plan or build a list of cars (one car per line), with garage assets
-uv run dsff port_batch plan --list tools/batches/testdrive.txt
-uv run dsff port_batch build --list tools/batches/testdrive.txt --gui --out out/build --jobs 6
-
-# Install the build (backs up every replaced file); -Asi adds the plugin
-.\tools\install.ps1 -GamePath $env:DSF_GAME_DIR -Build out\build -Asi
-.\tools\install.ps1 -GamePath $env:DSF_GAME_DIR -Status
-.\tools\install.ps1 -GamePath $env:DSF_GAME_DIR -Uninstall
-```
-
-One car into an archive: `uv run dsff port_car --out out/one.sp --car NIS_370Z_10`.
-Every tool runs as `uv run dsff <tool> ...` or `uv run python -m dsfforza.<group>.<tool> ...`.
-`--car NAME@fh1` / `@fm4` picks the game when a car is on both.
-
-## Tests
-
-```powershell
-uv run python -m tests                 # ruff check, ruff format --check, offline tests
-.\tools\asi\build.ps1 -Test           # build the plugin and patch-test it
-```
-
-In-game tests run in a headless VMware VM, so nothing appears on the desktop.
-Build the VM once with `tools/wsb/vm-build.ps1` (set `DSF_VM_ISO` to a
-Windows 10/11 ISO), then:
-
-```powershell
-.\tools\wsb\run-series.ps1 -Vm -Archives out\build\dngvehicles.sp `
-    -LuaFiles 'dsfforza\ported.lua=out\build\dngvehicles.lua' -ProbeIds '147,1,2'
-```
-
-Screenshots and logs land in `%LOCALAPPDATA%\Temp\dsfforza-wsb\runs\`.
-Options and the other modes (host, sandbox): `research/in-game-tests.md`.
+What the installer changes, your save game, and the known limits:
+[INSTALL.md](INSTALL.md).
 
 ## Acknowledgements
 
@@ -92,3 +57,5 @@ Options and the other modes (host, sandbox): `research/in-game-tests.md`.
 
 [MIT](LICENSE). The game files and Forza assets are not covered and are not
 included.
+
+Developers: see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).

@@ -1040,7 +1040,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=__doc__.splitlines()[0],
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Details: this file's docstring and README.md.",
+        epilog="Details: this file's docstring and docs/DEVELOPMENT.md.",
     )
     parser.add_argument("--dsf", type=Path, required=True, help="stock Install/dngvehicles.sp (only read)")
     parser.add_argument("--out", type=Path, required=True, help="archive to write")

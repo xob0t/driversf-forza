@@ -70,7 +70,7 @@ param(
     [Parameter(ParameterSetName = 'Install')]
     [string]$HookArchive,                 # DNGHook_072.7z (default: the repo's _ref copy, or -Download)
     [Parameter(ParameterSetName = 'Install')]
-    [string]$AsiLoader,                   # dinput8.dll or dinput-Win32.zip of the Ultimate ASI Loader
+    [string]$AsiLoader,                   # dinput8.dll of the Ultimate ASI Loader, or a zip holding it
     [Parameter(ParameterSetName = 'Install')]
     [switch]$Download,                    # fetch DriverNGHook / the ASI loader from GitHub when needed
     [Parameter(ParameterSetName = 'Install')]
@@ -98,8 +98,12 @@ Set-StrictMode -Version 2
 
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $StockArchiveHash = '0DDC885E23028F708A92A2426B643938A6934C99204C780E01755C5B7778AE35'   # Install\dngvehicles.sp 1.04
+# -Download fetches these pinned releases (the same as src/dsfforza/build/thirdparty.py) into
+# out\tools-dl and checks their SHA-256.
 $HookUrl = 'https://github.com/ReHamster/DriverNGToolkit/releases/download/0.7.2/DNGHook_072.7z'
-$AsiLoaderUrl = 'https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases/download/Win32-latest/dinput-Win32.zip'
+$HookSha256 = 'C2AE54B0A7F0FD2D00CBCFE9ED721017F8BA84D1FEC618D53FC99F4C78BC3056'
+$AsiLoaderUrl = 'https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases/download/v9.7.4/Ultimate-ASI-Loader-NoPDB.zip'
+$AsiLoaderSha256 = '14B3A1AD018899571AC9AA01482977F3C6D49E6CBA99F552D01C5ACACD1315E1'
 $VcRedistUrl = 'https://aka.ms/vs/17/release/vc_redist.x86.exe'
 # DLL names the Ultimate ASI Loader can be installed as.
 $LoaderNames = @('dinput8.dll', 'winmm.dll', 'version.dll', 'd3d9.dll', 'dsound.dll', 'xinput1_3.dll',
@@ -232,6 +236,24 @@ function Find-AsiLoader {
             $text.IndexOf('asi-loader', [StringComparison]::OrdinalIgnoreCase) -ge 0) { return $name }
     }
     return $null
+}
+
+# A pinned download into out\tools-dl\<Folder> (kept there), or the copy already there.
+function Get-PinnedDownload([string]$Url, [string]$Sha256, [string]$Folder) {
+    $target = Join-Path (Join-Path $Repo "out\tools-dl\$Folder") ($Url.Split('/')[-1])
+    if ((Test-Path -LiteralPath $target) -and (Get-Sha256 $target) -eq $Sha256) { return $target }
+    New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
+    Say "Downloading $Url"
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $part = "$target.part"
+    Invoke-WebRequest -Uri $Url -OutFile $part -UseBasicParsing
+    $hash = Get-Sha256 $part
+    if ($hash -ne $Sha256) {
+        Remove-Item -LiteralPath $part -Force
+        Fail "$Url has SHA-256 $hash, expected $Sha256; not used"
+    }
+    Move-Item -LiteralPath $part -Destination $target -Force
+    return $target
 }
 
 function Find-Uv {
@@ -475,10 +497,7 @@ function Get-HookFiles {
         $local = Join-Path $Repo '_ref\downloads\dnghook-0.7.2\DNGHook_072.7z'
         if (Test-Path -LiteralPath $local) { $archive = $local }
         elseif ($Download) {
-            $archive = Join-Path $env:TEMP 'DNGHook_072.7z'
-            Say "Downloading DriverNGHook 0.7.2 from $HookUrl"
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            Invoke-WebRequest -Uri $HookUrl -OutFile $archive -UseBasicParsing
+            $archive = Get-PinnedDownload $HookUrl $HookSha256 'dnghook-0.7.2'
         } else {
             Fail ("DriverNGHook 0.7.2 is needed. Download DNGHook_072.7z from " +
                   "https://github.com/ReHamster/DriverNGToolkit/releases/tag/0.7.2 and pass -HookArchive <path>, or add -Download.")
@@ -497,13 +516,10 @@ function Get-AsiLoaderDll {
     $source = $AsiLoader
     if (-not $source) {
         if (-not $Download) {
-            Fail ("No ASI loader in the game folder. DriverNGHook needs the Ultimate ASI Loader: download dinput-Win32.zip from " +
-                  "https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases (Win32-latest) and pass -AsiLoader <zip or dinput8.dll>, or add -Download.")
+            Fail ("No ASI loader in the game folder. DriverNGHook needs the Ultimate ASI Loader: download " +
+                  "$AsiLoaderUrl and pass -AsiLoader <zip or dinput8.dll>, or add -Download.")
         }
-        $source = Join-Path $env:TEMP 'dinput-Win32.zip'
-        Say "Downloading the Ultimate ASI Loader from $AsiLoaderUrl"
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -Uri $AsiLoaderUrl -OutFile $source -UseBasicParsing
+        $source = Get-PinnedDownload $AsiLoaderUrl $AsiLoaderSha256 'ultimate-asi-loader-v9.7.4'
     }
     if ($source -like '*.zip') {
         $out = Join-Path $env:TEMP ('dsfforza-asi-' + [guid]::NewGuid().ToString('N'))

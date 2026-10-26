@@ -9,6 +9,7 @@ requires-python = ">=3.13"
 dependencies = [
     "numpy>=2.1",
     "pillow>=11.0",   # glass.py survey (its texture preview); imported only there
+    "rich>=15.0.0",
 ]
 
 [project.scripts]

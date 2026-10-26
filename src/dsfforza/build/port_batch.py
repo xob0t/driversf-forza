@@ -31,7 +31,7 @@ in out/cache/<game>/<media>/ (port_car), and --resume reuses every car an
 earlier run in the same --out built with the same ID and options.
 --reuse DIR copies each car an earlier build made from the same job, input files
 and code (work/<media>.fp.json, src/dsfforza/build/fingerprint.py) and converts
-only the rest; --verify-reuse N (default 2) converts N of the reused cars again and
+only the rest (repeat it for several builds; the first match wins); --verify-reuse N (default 2) converts N of the reused cars again and
 stops the build if any differs; --rebuild-where EXPR and --trust-code let a fix
 name the cars it affects (research/batch.md, "Selective rebuild").
 
@@ -147,6 +147,14 @@ def lower_priority() -> None:
     except (OSError, AttributeError):
         pass
     gentle.apply()  # out/gentle: Idle on two CPUs (src/dsfforza/build/gentle.py)
+
+
+def emit(progress, event: str, **data) -> None:
+    """Report a build event to `progress` (args.progress, set by a caller such as
+    src/dsfforza/build/install.py; None from the command line). Events: plan, convert,
+    car_start, car_retry, car_done, verify, merge, lint, gui, gui_log, done."""
+    if progress is not None:
+        progress(event, **data)
 
 
 def port_car_args(argv: list[str]) -> argparse.Namespace:
@@ -655,10 +663,11 @@ def worker_report(work: Path, media: str, code: int | None) -> dict:
     }
 
 
-def run_workers(jobs: list[dict], work: Path, parallel: int, log=print) -> dict[str, dict]:
+def run_workers(jobs: list[dict], work: Path, parallel: int, log=print, progress=None) -> dict[str, dict]:
     """Run one worker process per job, at most `parallel` at once, Below Normal priority.
     A worker that can't start, times out or dies is a failed car, not a failed batch;
-    workers still running when this exits early (an error, Ctrl+C) are stopped."""
+    workers still running when this exits early (an error, Ctrl+C) are stopped.
+    `progress` gets car_start, car_retry and car_done events (emit)."""
     pending = list(jobs)
     jobs_by_media = {j["media"]: j for j in jobs}
     running: dict[str, tuple[subprocess.Popen, float, object]] = {}
@@ -693,9 +702,18 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print) -> dict[
                         "error": f"could not start: {error}",
                     }
                     log(f"  FAILED to start {job['media']}: {error}")
+                    emit(progress, "car_done", media=job["media"], report=results[job["media"]], log=None)
                     continue
                 running[job["media"]] = (proc, time.time(), log_file)
                 log(f"  start {job['media']} (ID {job['spool_id']}); {len(running)} running, {len(pending)} queued")
+                emit(
+                    progress,
+                    "car_start",
+                    media=job["media"],
+                    spool_id=job["spool_id"],
+                    fallback=job.get("fallback"),
+                    verify=bool(job.get("verify")),
+                )
             time.sleep(1.0)
             for media, (proc, started, log_file) in list(running.items()):
                 code = proc.poll()
@@ -731,6 +749,7 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print) -> dict[
                     jobs_by_media[media] = job
                     pending.append(job)
                     log(f"  retry {media} {why}")
+                    emit(progress, "car_retry", media=media, why=why, cause=report.get("cause"))
                     continue
                 if job.get("fallback"):
                     report.update(
@@ -746,6 +765,7 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print) -> dict[
                     f"  done  {media} in {report['seconds']:.0f} s: {state}"
                     + (f" ({job['fallback']})" if job.get("fallback") else "")
                 )
+                emit(progress, "car_done", media=media, report=report, log=str(work / f"{media}.log"))
     finally:
         for proc, _, log_file in running.values():  # only when leaving early
             proc.kill()
@@ -1044,17 +1064,23 @@ class Reuse:
     copied instead of converted. --rebuild-where builds the cars an expression over their
     earlier report picks again anyway; --trust-code leaves the code out of the comparison
     (the expression then names the cars a change affects). --verify-reuse N converts N
-    of the reused cars again and stops the build if any comes out different."""
+    of the reused cars again and stops the build if any comes out different.
+    --reuse may be given more than once: each car is taken from the first build that
+    has a matching copy of it (src/dsfforza/build/install.py passes the last finished
+    build and an interrupted one)."""
 
     def __init__(self, args, work: Path):
         from dsfforza.build import fingerprint
 
-        self.source = Path(args.reuse)
+        given = args.reuse if isinstance(args.reuse, list | tuple) else [args.reuse]
+        self.sources = [Path(s) for s in given]
+        for source in self.sources:
+            if not (source / "work").is_dir():
+                raise SystemExit(f"--reuse {source}: no work/ folder there")
+            if (source / "work").resolve() == work.resolve():
+                raise SystemExit("--reuse names this build's own --out (use --resume for that)")
+        self.source = self.sources[0]
         self.old = self.source / "work"
-        if not self.old.is_dir():
-            raise SystemExit(f"--reuse {self.source}: no work/ folder there")
-        if self.old.resolve() == work.resolve():
-            raise SystemExit("--reuse names this build's own --out (use --resume for that)")
         self.work = work
         self.where = getattr(args, "rebuild_where", None)
         self.trust_code = getattr(args, "trust_code", False)
@@ -1097,17 +1123,32 @@ class Reuse:
 
     def decide(self, job: dict) -> tuple[dict | None, str]:
         """(the earlier report, "") when the car can be reused, else (None, why not)."""
+        report, _source, why = self.decide_from(job)
+        return report, why
+
+    def decide_from(self, job: dict) -> tuple[dict | None, Path | None, str]:
+        """(the earlier report, the build it is in, "") for the first --reuse build that
+        has a matching copy of the car, else (None, None, why the first build's doesn't)."""
+        first_why = None
+        for source in self.sources:
+            report, why = self._decide_in(source / "work", job)
+            if report is not None:
+                return report, source, ""
+            first_why = first_why or why
+        return None, None, first_why or "not built there"
+
+    def _decide_in(self, old: Path, job: dict) -> tuple[dict | None, str]:
         from dsfforza.build import fingerprint
 
         media = job["media"]
-        report = fingerprint.read(self.old / f"{media}.json")
-        if not report or not report.get("ok") or not (self.old / f"{media}.chnk").exists():
+        report = fingerprint.read(old / f"{media}.json")
+        if not report or not report.get("ok") or not (old / f"{media}.chnk").exists():
             return None, "not built there"
-        fp = fingerprint.read(self.old / f"{media}.fp.json")
+        fp = fingerprint.read(old / f"{media}.fp.json")
         if fp is None:
             return None, "no fingerprint"
         why = self.checker.check(fp, {**job, "requested_options": job["port_options"]}, code=not self.trust_code)
-        first = self.old / f"{media}.first-try.fp.json"
+        first = old / f"{media}.first-try.fp.json"
         if why is None and first.exists():  # a fallback build: the first try must be unchanged too
             why = self.checker.check(fingerprint.read(first) or {}, None, code=not self.trust_code)
             why = why and f"first try: {why}"
@@ -1120,33 +1161,34 @@ class Reuse:
         reused; returns its report."""
         import shutil
 
-        report, why = self.decide(job)
+        report, source, why = self.decide_from(job)
         media = job["media"]
         if report is None:
             self.rebuilt[media] = why
             return None
         for name in WORK_FILES:
-            src = self.old / f"{media}.{name}"
+            src = source / "work" / f"{media}.{name}"
             if src.exists():
                 _link_or_copy(src, self.work / f"{media}.{name}")
-        sound_src = self.source / "sound" / media
+        sound_src = source / "sound" / media
         if sound_src.is_dir():
             dst = Path(job["sound_dir"]) / media
             if dst.exists():
                 shutil.rmtree(dst)
             shutil.copytree(sound_src, dst, copy_function=_link_or_copy)
         self.taken[media] = report
-        return {**report, "reused_from": str(self.source)}
+        return {**report, "reused_from": str(source)}
 
     def summary(self) -> None:
-        print(f"--reuse {self.source}: {len(self.taken)} cars reused, {len(self.rebuilt)} to build")
+        names = ", ".join(str(s) for s in self.sources)
+        print(f"--reuse {names}: {len(self.taken)} cars reused, {len(self.rebuilt)} to build")
         reasons: dict[str, list[str]] = {}
         for media, why in self.rebuilt.items():
             reasons.setdefault(why, []).append(media)
         for why, cars in sorted(reasons.items(), key=lambda kv: -len(kv[1])):
             print(f"  {why}: {len(cars)} ({', '.join(cars[:6])}{', ...' if len(cars) > 6 else ''})")
 
-    def verify(self, jobs: list[dict], parallel: int) -> None:
+    def verify(self, jobs: list[dict], parallel: int, progress=None) -> None:
         """Convert a random few of the reused cars again into work/verify/ and require the
         same bytes; raise SystemExit (before the merge) when any differs."""
         import random
@@ -1175,7 +1217,8 @@ class Reuse:
                 }
             )
         print(f"--verify-reuse: building {len(sample)} reused cars again (seed {seed}): {', '.join(sample)}")
-        results = run_workers(checks, folder, parallel)
+        emit(progress, "verify", cars=sample)
+        results = run_workers(checks, folder, parallel, progress=progress)
         bad = []
         for media in sample:
             new = folder / f"{media}.chnk"
@@ -1199,6 +1242,7 @@ class Reuse:
         """For batch-report.json (timings_s.reuse)."""
         return {
             "from": str(self.source),
+            **({"sources": [str(s) for s in self.sources]} if len(self.sources) > 1 else {}),
             "reused": sorted(self.taken),
             "rebuilt": self.rebuilt,
             "verified": self.verified,
@@ -1250,6 +1294,13 @@ def cmd_build(args) -> None:
             f"{len(picks)} cars: the archive root holds at most {room} new ones (--root-limit {root_limit})"
         )
     print_plan(picks + skipped)
+    progress = getattr(args, "progress", None)
+    emit(
+        progress,
+        "plan",
+        cars=[p.media for p in picks],
+        skipped=[{"media": p.media, "error": "; ".join(p.notes)} for p in skipped],
+    )
     # Warm the shared caches once so workers only read them.
     from dsfforza.build import host_select
 
@@ -1320,18 +1371,29 @@ def cmd_build(args) -> None:
         + ("Idle priority on two CPUs: out/gentle" if gentle.enabled() else "Below Normal priority")
         + ")"
         + (
-            f"; {len(reused)} reused" + (f" from {args.reuse}" if reuse is not None else " from the last run")
+            f"; {len(reused)} reused"
+            + (f" from {', '.join(map(str, reuse.sources))}" if reuse is not None else " from the last run")
             if reused
             else ""
         )
     )
     if reuse is not None:
         reuse.summary()
-    results = {**reused, **run_workers(todo, work, args.jobs)}
+    emit(
+        progress,
+        "convert",
+        todo=[j["media"] for j in todo],
+        reused=sorted(reused),
+        rebuilt=dict(reuse.rebuilt) if reuse is not None else {},
+        jobs=args.jobs,
+        gentle=gentle.enabled(),
+    )
+    results = {**reused, **run_workers(todo, work, args.jobs, progress=progress)}
     timings["convert"] = round(time.time() - t, 1)
     if reuse is not None:
         t = time.time()
-        reuse.verify(jobs, args.jobs)  # stops the build if a rebuilt car differs from its reused output
+        # stops the build if a rebuilt car differs from its reused output
+        reuse.verify(jobs, args.jobs, progress=progress)
         timings["verify_reuse"] = round(time.time() - t, 1)
         args.reuse_record = reuse.record()
 
@@ -1356,23 +1418,30 @@ def finish(
 ) -> None:
     """Merge, lint, manifest, Lua, GUI assets and the report."""
     archive = out_dir / "dngvehicles.sp"
+    progress = getattr(args, "progress", None)
     if not ok:
         write_report(out_dir, archive, [], failed, timings, started, args)
         raise SystemExit("no car was built")
     t = time.time()
     print(f"merging {len(ok)} cars into {archive}")
+    emit(progress, "merge", cars=len(ok))
     cars_out, merge_failed = merge(dsf, archive, ok, work, root_limit=root_limit_of(args))
     failed += merge_failed
     timings["merge"] = round(time.time() - t, 1)
+    for f in merge_failed:
+        emit(progress, "car_failed", media=f["media"], cause=f.get("cause"), error=f.get("error"))
     if not cars_out:
         write_report(out_dir, archive, [], failed, timings, started, args, results)
         raise SystemExit("no car could be merged")
     t = time.time()
+    emit(progress, "lint", cars=len(cars_out))
     lint_all(archive, dsf, cars_out, max(1, min(args.jobs, 4)))
     timings["lint"] = round(time.time() - t, 1)
     lint_failed = [c for c in cars_out if c.get("lint") != "ok"]
     if lint_failed:
         print(f"{len(lint_failed)} car(s) failed lint; they stay in the archive but are listed as failed")
+    for c in lint_failed:
+        emit(progress, "lint_failed", media=c["media"], text=c.get("lint"))
 
     from dsfforza.build import port_car
 
@@ -1401,10 +1470,17 @@ def finish(
         t = time.time()
         from dsfforza.game import gui_assets
 
+        emit(progress, "gui", cars=len(cars_out))
+
+        def gui_log(text=""):
+            print(text)
+            emit(progress, "gui_log", text=str(text))
+
         try:
             gui_assets.build(
                 manifest_path,
                 out_dir / "gui",
+                log=gui_log,
                 archive=archive,
                 wide_glyphs=getattr(args, "wide_glyphs", False),
                 # The same CHNK reader limit: with dsfforza.asi [archive] gui.sp gets one
@@ -1415,6 +1491,7 @@ def finish(
         except Exception as error:  # the archive is still usable without pictures and badges
             print(f"gui assets failed: {type(error).__name__}: {error}")
             timings["gui_error"] = f"{type(error).__name__}: {error}"
+            emit(progress, "gui_failed", error=timings["gui_error"])
             # An earlier run's gui/ (or this run's half) doesn't match the new archive's IDs, and
             # install.ps1 installs whatever gui/ holds: move it aside, nothing is deleted.
             gui = out_dir / "gui"
@@ -1428,6 +1505,7 @@ def finish(
                     print(f"warning: {gui} doesn't match this archive and could not be moved: {move_error}")
         timings["gui"] = round(time.time() - t, 1)
     write_report(out_dir, archive, cars_out, failed, timings, started, args, results)
+    emit(progress, "done", report=str(out_dir / "batch-report.json"))
     if getattr(args, "clean_work", False):
         for c in cars_out:
             (work / f"{c['media']}.chnk").unlink(missing_ok=True)
@@ -1547,12 +1625,9 @@ def write_report(
         print(f"archive {archive} ({archive.stat().st_size / 2**20:.0f} MiB), report {out_dir / 'batch-report.json'}")
 
 
-def main(argv: list[str] | None = None) -> None:
-    argv = sys.argv[1:] if argv is None else argv
-    with contextlib.suppress(AttributeError, ValueError):
-        sys.stdout.reconfigure(line_buffering=True)
-    if argv[:1] == ["_worker"]:
-        sys.exit(worker(Path(argv[1])))
+def build_parser() -> argparse.ArgumentParser:
+    """The plan / build / remerge command line (src/dsfforza/build/install.py builds its
+    port_batch arguments with it too)."""
     parser = argparse.ArgumentParser(
         description=__doc__.splitlines()[0], formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__
     )
@@ -1621,9 +1696,11 @@ def main(argv: list[str] | None = None) -> None:
             p.add_argument(
                 "--reuse",
                 type=Path,
+                action="append",
                 metavar="DIR",
                 help="copy each car an earlier build in DIR made from the same job, input files and code "
-                "(work/<media>.fp.json) instead of converting it again (research/batch.md, 'Selective rebuild')",
+                "(work/<media>.fp.json) instead of converting it again (research/batch.md, 'Selective rebuild'); "
+                "repeat to reuse from several builds (the first with a match wins)",
             )
             p.add_argument(
                 "--rebuild-where",
@@ -1666,7 +1743,16 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--jobs", type=int, default=4)
     r.add_argument("--gui", action="store_true")
     r.add_argument("--wide-glyphs", action="store_true", help="with --gui: 16-bit HUD glyphs (dsfforza.asi [hud])")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    argv = sys.argv[1:] if argv is None else argv
+    with contextlib.suppress(AttributeError, ValueError):
+        sys.stdout.reconfigure(line_buffering=True)
+    if argv[:1] == ["_worker"]:
+        sys.exit(worker(Path(argv[1])))
+    args = build_parser().parse_args(argv)
     args.dsf = game_paths.stock(args.dsf)  # the original when a dsfforza install replaced it
     {"plan": cmd_plan, "build": cmd_build, "remerge": cmd_remerge}[args.cmd](args)
 

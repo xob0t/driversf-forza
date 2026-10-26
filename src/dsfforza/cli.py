@@ -21,7 +21,7 @@ TOOLS = {
         "vehicles wwise_bank xds xiso",
         "convert": "chassis_variants cockpit cockpit_survey damage driver_survey dsf_materials engine_sound exhaust "
         "exp_hollow forza2dsf forza_materials glass lights paint plates wheel_clearance",
-        "build": "clone_vehicle forza_roster handling handling_dsf handling_tune host_select port_batch port_car",
+        "build": "clone_vehicle forza_roster handling handling_dsf handling_tune host_select install package port_batch port_car thirdparty",
         "game": "game_data gui_assets savecheck spool_variants traffic_sets vehicle_limits xref",
         "harness": "dyno emblem_check lights_diff vnckeys vncshot",
     }.items()

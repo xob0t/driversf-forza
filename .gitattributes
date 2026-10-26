@@ -1,0 +1,2 @@
+# Windows command scripts need CRLF line ends in every checkout.
+*.cmd text eol=crlf

@@ -10,6 +10,9 @@ Runs the compiler at Idle priority (out\gentle policy).
 
 .EXAMPLE
 .\tools\asi\build.ps1
+
+.EXAMPLE
+.\tools\asi\build.ps1 -Test -NoRun   # CI: compile the offline test too, without Driver.exe
 #>
 [CmdletBinding()]
 param(
@@ -18,6 +21,8 @@ param(
     # Also build out\asi\offline.exe (test\offline.cpp + the modules) and run it
     # against Driver.exe: maps the image at 0x00400000 and applies every patch.
     [switch]$Test,
+    # With -Test: build offline.exe but don't run it (CI, where there is no Driver.exe)
+    [switch]$NoRun,
     # Driver.exe 1.04 for -Test: the repo's out\stock copy, else $env:DSF_GAME_DIR's
     [string]$Exe
 )
@@ -68,7 +73,7 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'dsfforza.ini') -Destination (Jo
 $asi = Get-Item -LiteralPath (Join-Path $out 'dsfforza.asi')
 $hash = (Get-FileHash -LiteralPath $asi.FullName -Algorithm SHA256).Hash
 Write-Host ("built {0} ({1} bytes, SHA-256 {2})" -f $asi.FullName, $asi.Length, $hash)
-if ($Test) {
+if ($Test -and -not $NoRun) {
     if (-not $Exe) {
         $Exe = @((Join-Path $repo 'out\stock\Driver.exe'),
             $(if ($env:DSF_GAME_DIR) { Join-Path $env:DSF_GAME_DIR 'Driver.exe' })) |
