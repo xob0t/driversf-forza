@@ -328,6 +328,53 @@ def classify_wheel(name: str) -> tuple[str, str | None]:
     return TEXTURED, WHEEL
 
 
+# Rim shaders draw the wheel texture's colour times the technique's PaintScale
+# (research/wheels.md, "Rim brightness"). Defaults from the shared
+# media/cars/Shared.zip ShaderSettings/Normal.xml, the same on FH1 and FM4;
+# the techniques listed are the wheel ones that have the parameter (chrome_rim,
+# wheel_emblem and wheel_black have none). A car's ShaderSettings.xml
+# overrides them: FOR_FocusRS500_10's near-black rim texels (about 4) at 7.5,
+# BEN_CONTINENTALGT_11's near-white ones (213) at 0.5.
+WHEEL_PAINT_SCALE = {
+    "rim": 0.75,
+    "rim_simple": 0.5,
+    "rim_V2": 1.0,
+    "rim_bump_metal": 1.0,
+    "inner_rim": 1.0,
+    "inner_rim_V2": 1.0,
+    "outer_rim": 1.0,
+    "caliper": 1.0,
+}
+
+
+def shader_settings(car_dir: Path) -> dict[str, dict[str, float]]:
+    """The car's ShaderSettings.xml as {technique: {parameter: value}} (scalar
+    `value` parameters only; colours are left out). Read leniently: a few files
+    aren't well-formed XML. {} without the file."""
+    path = next((p for p in Path(car_dir).iterdir() if p.name.lower() == "shadersettings.xml"), None)
+    if path is None:
+        return {}
+    text = re.sub(r"</?ShaderSettings\s*>", "", path.read_text(errors="replace"), flags=re.I)
+    out: dict[str, dict[str, float]] = {}
+    for m in re.finditer(r"<([A-Za-z_0-9]+)\s*>(.*?)</\1\s*>", text, re.S):
+        params = out.setdefault(m.group(1).lower(), {})
+        for name, value in re.findall(r'<([A-Za-z_0-9]+)\s+value\s*=\s*"([^"]*)"', m.group(2)):
+            try:
+                params[name] = float(value)
+            except ValueError:
+                continue
+    return out
+
+
+def wheel_paint_scale(technique: str, settings: dict[str, dict[str, float]]) -> float:
+    """The PaintScale Forza applies to a wheel technique's texel colour: the
+    car's own setting, else WHEEL_PAINT_SCALE, else 1 (the technique has none)."""
+    default = next((v for k, v in WHEEL_PAINT_SCALE.items() if k.lower() == technique.lower()), None)
+    if default is None:
+        return 1.0
+    return settings.get(technique.lower(), {}).get("PaintScale", default)
+
+
 # --- per-subsection resolution -------------------------------------------------
 
 SWATCH_TEXELS = 4.0  # footprint below this many texels (both axes): one flat colour

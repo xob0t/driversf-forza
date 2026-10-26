@@ -254,7 +254,8 @@ white wheel disks". Scripts in `out/inv/` (`wrender.py`, `wobl.py`,
 - The converted exterior wheel part, drawn with the build's own atlas, matches
   Forza's wheel with `wheel.xds` texel for texel (`out/inv/205_wheel_cmp.png`):
   the UVs and the atlas region (0.551x) are right. Forza's wheel archive holds
-  no shader settings for the rim; nothing tints it.
+  no shader settings for the rim; nothing tints it. (Wrong: the shared
+  defaults scale every `rim` texel by 0.75, "Rim brightness" below.)
 
 ### What differed: the baked sky term (s0.w)
 
