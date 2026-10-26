@@ -1461,7 +1461,7 @@ class Run:
             if not (build / name).is_file():
                 raise StageError(
                     f"No finished build in {build} ({name} missing).",
-                    "Run `uv run dsff install` (or --build-only) first, or pass --build DIR.",
+                    f"Run `{command_name()}` (or with --build-only) first, or pass --build DIR.",
                 )
         if self.build_dir is None:
             self.read_report(build)
@@ -1522,10 +1522,14 @@ class Run:
         return f"{len(record.get('cars') or [])} cars into {game}"
 
 
+def command_name() -> str:
+    """This command as the user typed it: install.cmd (the release launcher sets DSFF_LAUNCHER) or uv."""
+    return r".\install.cmd" if os.environ.get("DSFF_LAUNCHER") else "uv run dsff install"
+
+
 def uninstall_command(game: Path | None) -> str:
-    """How to undo the install: install.cmd (the release launcher sets DSFF_LAUNCHER) or uv."""
-    command = r".\install.cmd --uninstall" if os.environ.get("DSFF_LAUNCHER") else "uv run dsff install --uninstall"
-    return command + (f' --game "{game}"' if game else "")
+    """How to undo the install."""
+    return f"{command_name()} --uninstall" + (f' --game "{game}"' if game else "")
 
 
 def rel(path: Path) -> str:
