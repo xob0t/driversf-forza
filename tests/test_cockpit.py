@@ -202,6 +202,57 @@ def test_camera_raise_stops_before_the_cowl_hides_the_dials():
     assert cockpit.camera_eye(eye, wheel_top, sight=lambda r: 1.0) == free
 
 
+def _ring(centre, radius: float, tilt_deg: float, n: int = 48) -> list[tuple]:
+    """Points of a rim (Forza space: the driver at +z), its column tilt_deg up."""
+    t = math.radians(tilt_deg)
+    up = (0.0, math.cos(t), -math.sin(t))  # in the wheel plane
+    out = []
+    for k in range(n):
+        a = 2 * math.pi * k / n
+        for r in (radius - 0.012, radius + 0.012):
+            out.append(
+                (
+                    centre[0] + r * math.sin(a),
+                    centre[1] + r * math.cos(a) * up[1],
+                    centre[2] + r * math.cos(a) * up[2],
+                )
+            )
+    return out
+
+
+def test_wheel_fit_ignores_a_modelled_column():
+    # FM4 FG Falcon racers: the steering_wheel section holds a 1 m column to the
+    # bulkhead; the fit took it for the wheel (74 deg column, 6 cm radius).
+    centre, tilt = (0.25, 0.75, -0.19), 17.0
+    rim = _ring(centre, 0.165, tilt)
+    t = math.radians(tilt)
+    column = [
+        (0.25 + dx, 0.75 - s * math.sin(t), -0.19 - s * math.cos(t))
+        for s in [i * 0.01 for i in range(100)]
+        for dx in (-0.015, 0.015)
+    ]
+    for pts in (rim, rim + column):
+        w = cockpit.fit_wheel_points(pts)
+        assert math.dist(w.centre, centre) < 0.01, w
+        assert abs(w.radius - 0.165) < 0.01 and abs(math.degrees(math.asin(w.axis[1])) - tilt) < 2, w
+
+
+def test_small_rims_are_scaled_to_the_hands():
+    # The stock hands grip 0.25 m apart: an LMP rim of 0.114 m can't be reached by a
+    # capped shift (it missed by 3 cm); the wheel is scaled until the grips sit on it.
+    side = (0.0, 0.0, 0.0)
+    axis = cockpit._norm(cockpit.STOCK_COLUMN)
+    assert cockpit.hand_wheel_scale(side, axis, cockpit.STOCK_RIM_RADIUS) == 1.0
+    assert cockpit.hand_wheel_scale(side, axis, 0.165) == 1.0  # a shift is enough
+    k = cockpit.hand_wheel_scale(side, axis, 0.114)
+    assert 1.1 < k < 1.3
+    shift = cockpit.hand_shift(side, axis, 0.114 * k)
+    assert cockpit.hand_grip_error(shift, side, axis, 0.114 * k) < 0.005
+    along = cockpit._dot(shift, axis)
+    in_plane = math.sqrt(cockpit._dot(shift, shift) - along * along)
+    assert in_plane <= cockpit.MAX_HAND_SHIFT + 1e-9 and abs(along) <= cockpit.MAX_HAND_ALONG + 1e-9
+
+
 def _hierarchy(markers: list[tuple[int, tuple, tuple]]) -> bytes:
     """A minimal UPVH: one marker record per (role, position, quaternion), the markers
     table and nothing else."""

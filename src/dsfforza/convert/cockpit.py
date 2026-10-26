@@ -245,14 +245,23 @@ def fit_wheel(section: carbin.Section) -> Wheel:
     least spread (PCA). The rim is every point at 75% of the largest radius
     from the centroid or more; the centre is the middle of the rim's extent
     in the wheel plane (a vertex mean is biased by uneven tessellation), at
-    the rim's mean depth along the axis."""
+    the rim's mean depth along the axis. The axis is then refitted to the rim
+    alone (fit_wheel_points)."""
     return fit_wheel_points(list(set(section_points(section))))
 
 
-def fit_wheel_points(pts: list[tuple]) -> Wheel:
-    """fit_wheel on a list of points (Forza space)."""
-    centroid = _mean(pts)
-    axis = _norm(_eigen_sym3(_covariance(pts, centroid))[0][1])
+# Some Forza wheels are modelled with their column (the FM4 FG Falcon racers: a
+# 1 m shaft to the bulkhead) or a deep quick-release spacer (FM4 TT-R): the
+# column pulls the least-spread direction off the wheel's own (the Falcons'
+# came out 74 deg up, radius 6 cm) and the stock hand grips missed by 9 cm.
+COLUMN_DEPTH = 0.30  # m along Forza z: a deeper section carries its column
+WHEEL_DEPTH = 0.22  # m kept at the driver's end then (a 0.2 m rim at 30 deg spans 0.13)
+RIM_REFITS = 3
+
+
+def _fit_rim(pts: list[tuple], axis, about) -> tuple[tuple, tuple, float, list]:
+    """(centre, axis, radius, rim points) for a given axis: the rim is every
+    point at 75% of the largest radius about `about` or more."""
     u = _norm(_cross(axis, (1, 0, 0)) if abs(axis[0]) < 0.9 else _cross(axis, (0, 1, 0)))
     v = _cross(axis, u)
 
@@ -261,16 +270,68 @@ def fit_wheel_points(pts: list[tuple]) -> Wheel:
         along = _dot(d, axis)
         return math.sqrt(max(0.0, _dot(d, d) - along * along))
 
-    r_max = max(radius(p, centroid) for p in pts)
-    rim = [p for p in pts if radius(p, centroid) >= 0.75 * r_max]
+    r_max = max(radius(p, about) for p in pts)
+    rim = [p for p in pts if radius(p, about) >= 0.75 * r_max]
     us, vs = [_dot(p, u) for p in rim], [_dot(p, v) for p in rim]
     cu, cv = (min(us) + max(us)) / 2, (min(vs) + max(vs)) / 2
     depth = sum(_dot(p, axis) for p in rim) / len(rim)
     centre = _add(_add(_scale(u, cu), _scale(v, cv)), _scale(axis, depth))
-    r = sum(radius(p, centre) for p in rim) / len(rim)
+    return centre, axis, sum(radius(p, centre) for p in rim) / len(rim), rim
+
+
+def _wheel(centre, axis, r) -> Wheel:
     if axis[2] < 0:  # Forza: the driver sits behind the wheel, at larger z
         axis = _scale(axis, -1)
     return Wheel(centre, axis, r)
+
+
+def _wheel_candidates(pts: list[tuple]):
+    """(name, Wheel, rim points) fits of one wheel: the least-spread axis of
+    all points ("pca"); then the rim's own plane (its points' least-spread
+    direction), the rim picked again about the new centre, RIM_REFITS times
+    ("rim"); and both again on the WHEEL_DEPTH at the driver's end (+z) when
+    the points run deeper than COLUMN_DEPTH (a modelled column)."""
+    sets = [("", pts)]
+    z_max = max(p[2] for p in pts)
+    if z_max - min(p[2] for p in pts) > COLUMN_DEPTH:
+        end = [p for p in pts if p[2] >= z_max - WHEEL_DEPTH]
+        if len(end) >= 12:
+            sets.append(("driver end ", end))
+    for prefix, ps in sets:
+        centroid = _mean(ps)
+        axis = _norm(_eigen_sym3(_covariance(ps, centroid))[0][1])
+        centre, axis, r, rim = _fit_rim(ps, axis, centroid)
+        yield prefix + "pca", _wheel(centre, axis, r), rim
+        for _ in range(RIM_REFITS):
+            if len(rim) < 3:
+                break
+            plane = _norm(_eigen_sym3(_covariance(rim, _mean(rim)))[0][1])
+            if _dot(plane, axis) < 0:
+                plane = _scale(plane, -1)
+            centre, axis, r, rim = _fit_rim(ps, plane, centre)
+        yield prefix + "rim", _wheel(centre, axis, r), rim
+
+
+def rim_scatter(w: Wheel, rim: list[tuple]) -> float:
+    """How far `rim` is from a circle: RMS of its radial misfit plus RMS of its
+    spread along the axis (m)."""
+    radial, along = [], []
+    for p in rim:
+        d = _sub(p, w.centre)
+        a = _dot(d, w.axis)
+        radial.append(math.sqrt(max(0.0, _dot(d, d) - a * a)) - w.radius)
+        along.append(a)
+    mean = sum(along) / len(along)
+    return math.sqrt(sum(x * x for x in radial) / len(radial)) + math.sqrt(
+        sum((x - mean) ** 2 for x in along) / len(along)
+    )
+
+
+def fit_wheel_points(pts: list[tuple]) -> Wheel:
+    """fit_wheel on a list of points (Forza space): of _wheel_candidates, the
+    one whose rim is the best circle (rim_scatter). A hub spacer or a column
+    modelled with the wheel no longer tilts it."""
+    return min(((rim_scatter(w, rim), n, w) for n, (_, w, rim) in enumerate(_wheel_candidates(pts))))[2]
 
 
 MAIN_WHEEL_RADIUS = (0.08, 0.30)  # a plausible main-carbin wheel fit (FH1 Mustang Boss 429's: 0.013)
@@ -581,6 +642,7 @@ class CockpitFit:
     camera: tuple | None = None  # final head camera (Forza space), set by forza2dsf after camera_eye
     display_faces: int = 0  # digital_gauge triangles drawn textured (display_face)
     virtual: dict = field(default_factory=dict)  # virtual_gauges report: dials drawn on a blank display
+    wheel_scale: float = 1.0  # the Forza wheel scaled so the stock hands reach it (hand_wheel_scale)
 
 
 # Main-carbin sections that make a cockpit when the cockpit carbin is a stub.
@@ -1101,6 +1163,15 @@ def fit(
     else:
         wheel_source = "cockpit" if lod0 else "main carbin"
     wheel = fit_wheel(static["steering_wheel"])
+    # A rim the stock hands can't reach with a capped shift is scaled to them.
+    from dsfforza.convert import forza2dsf
+
+    turn = forza2dsf.Placement(0.0, 0.0)
+    wheel_scale = hand_wheel_scale(turn.point(wheel.centre), turn.normal(wheel.axis), wheel.radius)
+    if abs(wheel_scale - 1.0) > 1e-3:
+        static["steering_wheel"], wheel = scale_wheel(static["steering_wheel"], wheel, wheel_scale)
+    else:
+        wheel_scale = 1.0
     gauges = {}
     for family, poses in needles.items():
         g = fit_gauge(family, poses)
@@ -1159,6 +1230,7 @@ def fit(
         dropped,
         display_faces=faces,
         virtual=virtual_report,
+        wheel_scale=wheel_scale,
     )
 
 
@@ -1248,7 +1320,10 @@ HAND_PARAMS = (538, 559)
 STOCK_RIM_RADIUS = 0.176
 STOCK_COLUMN = (0.0, 0.410, -0.912)  # DSF model space, towards the driver
 HAND_GRIP_DEG = 45.0
-MAX_HAND_SHIFT = 0.06
+MAX_HAND_SHIFT = 0.06  # m, in the wheel plane: the hub's orbit while steering
+MAX_HAND_ALONG = 0.12  # m, along the column (no orbit; the driver model moves with it)
+HAND_FIT_TOLERANCE = 0.005  # m: grips this close to the rim need no wheel scale
+WHEEL_SCALE_RANGE = (0.8, 1.3)
 
 
 def _rim_nearest(p, centre, axis, radius):
@@ -1279,7 +1354,9 @@ def hand_shift(centre, axis, radius) -> tuple[float, float, float]:
     puts the stock hand grips on the Forza rim (least squares, translation only).
     The wheel then turns about centre + shift: the part along the column costs
     nothing, the part in the wheel plane makes the hub circle by up to
-    2 |shift| sin(angle / 2) while steering. No x: the grips are symmetric."""
+    2 |shift| sin(angle / 2) while steering. The in-plane part is capped at
+    MAX_HAND_SHIFT, the part along the column at MAX_HAND_ALONG (it moves the
+    driver model with the seat, patch_seats). No x: the grips are symmetric."""
     axis = _norm(axis)
     grips = hand_grips(centre)
     shift = (0.0, 0.0, 0.0)
@@ -1287,10 +1364,59 @@ def hand_shift(centre, axis, radius) -> tuple[float, float, float]:
         moves = [_sub(_rim_nearest(_add(g, shift), centre, axis, radius), _add(g, shift)) for g in grips]
         shift = _add(shift, _mean(moves))
         shift = (0.0, shift[1], shift[2])
-    n = math.sqrt(_dot(shift, shift))
+    along = _scale(axis, _dot(shift, axis))
+    plane = _sub(shift, along)
+    n = math.sqrt(_dot(plane, plane))
     if n > MAX_HAND_SHIFT:
-        shift = _scale(shift, MAX_HAND_SHIFT / n)
-    return shift
+        plane = _scale(plane, MAX_HAND_SHIFT / n)
+    n = math.sqrt(_dot(along, along))
+    if n > MAX_HAND_ALONG:
+        along = _scale(along, MAX_HAND_ALONG / n)
+    shift = _add(plane, along)
+    return (0.0, shift[1], shift[2])
+
+
+def hand_wheel_scale(centre, axis, radius) -> float:
+    """Scale of the Forza wheel (about its centre) that lets the stock hand
+    grips reach its rim with a capped hand_shift (DSF orientation). The rig
+    grips 0.25 m apart, 45 deg either side of the top of a 0.176 m rim: on a
+    narrower rim (FM4 LMP and ARX racers: 0.11 to 0.12 m) no translation
+    puts both hands on it, and a smaller hub orbit leaves them floating
+    (research/cockpit.md, "Hands on small race wheels"). 1 where the shift
+    alone gets within HAND_FIT_TOLERANCE; otherwise the in-plane radius the
+    grips sit at after the shift, over the rim's, kept in WHEEL_SCALE_RANGE."""
+    axis = _norm(axis)
+    k = 1.0
+    for _ in range(6):
+        shift = hand_shift(centre, axis, radius * k)
+        pivot = _add(centre, shift)
+        if hand_grip_error(pivot, centre, axis, radius * k) <= HAND_FIT_TOLERANCE:
+            break
+        reach = []
+        for g in hand_grips(pivot):
+            d = _sub(g, centre)
+            d = _sub(d, _scale(axis, _dot(d, axis)))
+            reach.append(math.sqrt(_dot(d, d)))
+        new = min(WHEEL_SCALE_RANGE[1], max(WHEEL_SCALE_RANGE[0], sum(reach) / len(reach) / radius))
+        if abs(new - k) < 1e-4:
+            break
+        k = new
+    return k
+
+
+def scale_wheel(section: carbin.Section, wheel: Wheel, k: float) -> tuple[carbin.Section, Wheel]:
+    """The steering wheel section and its fit scaled by k about the wheel centre."""
+    import copy
+    import dataclasses
+
+    def move(v):
+        return dataclasses.replace(v, position=_add(wheel.centre, _scale(_sub(v.position, wheel.centre), k)))
+
+    out = copy.copy(section)
+    out.lod_vertices = [move(v) for v in section.lod_vertices]
+    same = section.lod0_vertices is section.lod_vertices  # promote_lod shares the pool
+    out.lod0_vertices = out.lod_vertices if same else [move(v) for v in section.lod0_vertices]
+    return out, Wheel(wheel.centre, wheel.axis, wheel.radius * k)
 
 
 def hand_grip_error(pivot, centre, axis, radius) -> float:
@@ -1341,6 +1467,7 @@ def patch_hierarchy(upvh_data: bytes, host: HostCockpit, place, cf: CockpitFit) 
         "radius": round(cf.wheel.radius, 4),
         "skin": list(host.wheel_skin),
         "hands": {
+            "wheel_scale": round(cf.wheel_scale, 3),
             "shift": [round(c, 4) for c in shift],
             "along_column": round(along, 4),
             "in_plane": round(math.sqrt(max(0.0, _dot(shift, shift) - along * along)), 4),
