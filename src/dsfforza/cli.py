@@ -23,7 +23,7 @@ TOOLS = {
         "forza_materials glass lights paint plates wheel_clearance",
         "build": "clone_vehicle forza_roster handling handling_dsf handling_tune host_select port_batch port_car",
         "game": "game_data gui_assets savecheck spool_variants traffic_sets vehicle_limits xref",
-        "harness": "dyno lights_diff vnckeys vncshot",
+        "harness": "dyno emblem_check lights_diff vnckeys vncshot",
     }.items()
     for name in names.split()
 }

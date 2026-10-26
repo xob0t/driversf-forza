@@ -628,6 +628,22 @@ with the same card objects and the same `Header_Sprite_01..20` picture
 resources (run `-094324` menu-19: challenge cards wore the Forza logos left
 by the last car list).
 
+**Which card a disc belongs to (confirmed-runtime).** Card N's disc sits on
+card N's top right corner. In the fanned row that corner lies over the left
+part of card N+1's picture, so a disc reads as if it were the next card's.
+It isn't:
+
+- The last card of a group has its disc with no card behind it. In run
+  `vm-20261026-120559`, CHEVROLET's car 46, the stock Corvette ZR1, shows SF
+  there (menu-56).
+- The first card has nothing at its top left (menu-11).
+- ABARTH (run `host-20261023-100401`) has three cards and three discs, the
+  front one on the front card's corner.
+
+`img/garage-emblem-card-ownership.jpg` marks the cards and their discs. The
+stock game draws the same SF disc on every card, so this only shows once a
+row mixes the two. A disc that seems one card off is the previous card's.
+
 **The patch (`tools/asi/src/mod_hud.cpp`, part of [hud], `card_emblem=1`).**
 
 | VA | Original | New | Why |
@@ -746,14 +762,23 @@ and Fonts.fchunk, `gui_assets` now reads the originals from
    keeps the SF disc on all its cards (card 20 needs the spare; untested in
    game; groups of more than 20 use 19 cards and keep the emblem); the spare's UV restore when a 20-car group or the challenge
    browser's 20th card uses Header_Sprite_20 is wired but was not exercised.
-   New (2026-10-25): in a group of more than 20 cars the emblems sit one card
-   off once the browser has moved. CHEVROLET in run `vm-20261025-083412`
-   (menu-20, menu-30): the stock Camaro SS card wears the Forza logo and the
-   ported Cobalt SS and Chevelle SS-454 the SF disc, while the plugin logged
-   the right model per card. The user's Volt screenshot shows the same (the
-   ported Volt's picture under an SF disc, the stock Volt's under the Forza
-   logo). Not fixed here; the card list window (asi.md, "Maker groups past 20
-   cars") and the emblem hook disagree on which card object shows which car.
+   Answered (2026-10-26): the "one card off" emblems in groups of more than
+   20 cars (CHEVROLET in run `vm-20261025-083412`, menu-20 and menu-30, and
+   the user's Volt screenshot) are not off. Each disc was read as the card's
+   whose picture it covers, but it belongs to the card before ("Which card a
+   disc belongs to" above). Read that way, those shots are right: the ported
+   Cobalt SS, Chevelle SS-454, Volt and Express 2500 van wear the Forza logo,
+   the stock Camaro SS, Bel Air and Volt the SF disc. The car list hook passes the card
+   index and the model the car list writes for that card (`ebp`, `[esp+0x18]`
+   from `group_car`, which already adds the window's first car), so the
+   window can't shift it. Checked in game over every position:
+   `dsff emblem_check` (asi.md, "Garage card emblem") found 0 discs of 214
+   Right/Left shots that differ from the plugin's per-card decision.
+   Those shots cover CHEVROLET (46 cars) and FORD (49), each scrolled to the
+   end, past it and back past the start, and an 8-car maker, in runs
+   `vm-20261026-120559` and RUN2. Each decision matches the
+   car's `GarageEmblem`, except in a 20-car group (ASTON MARTIN), which keeps SF
+   by design (issue ISSUE20).
 9. Answered: the crash with `[garage]` on (runs `host-20261023-080433`,
    `-080858`, `-081321`) was not the emblem patch. The garage fills its maker
    menu (FUN_006C6940) into four menu-script lists of `Install\menusmaster.sp`

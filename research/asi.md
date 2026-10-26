@@ -560,6 +560,29 @@ to SF, the car list's (0x00711537, 0x00711354) give the spare its own UVs
 back if a picture needs it. Applied only with the ctor hook. In game: run
 `host-20261023-100401`.
 
+With the card window (Maker groups past 20 cars) the hook still gets the
+right car per card. At 0x007118A5, `ebp` is the card index and `[esp+0x18]`
+the model the car list just took from vtable slot 0x12C, which is
+`group_car` with the window's first car already added; the same value goes
+to the card's model array (`+0xD0`). Card N's disc sits on card N's top
+right corner, over the next card's picture, so a disc is easily read as the
+next card's; that was the "one card off" report (gui-assets.md, "Which card
+a disc belongs to").
+
+`[hud] emblem_debug=1` logs every card's decision (`hud: emblem: fill <n>
+card <N> model <id> -> Forza logo|SF`). With `[garage] menu_debug=1` and a
+`-MenuKeys` run, `uv run dsff emblem_check <run folder> [--hud <hud.lua>]`
+checks every Right/Left shot. It classifies the discs at the highlighted
+card and its neighbours (-1, +1, +2) by colour and compares them with the
+logged decisions, and with `--hud` each decision with `GarageEmblem`.
+run-test.ps1 notes events with the guest clock (`wall`), so shots match log
+lines by time. Runs `vm-20261026-120559` and RUN2 (full roster
+out/final-gui2 with its GUI step rebuilt, CHEVROLET 46 cars and FORD 49 to
+the end, past it and back past the start, an 8-car maker): 0 of 214 shots
+differ, and no decision differs from hud.lua outside 20-car groups. The keys:
+Enter, Down × 9, Enter, Right × 48, Left × 50, Esc, Down × 4, Enter,
+Right × 51, Left × 53, Esc, Down, Enter, Right × 6, Left × 6, Esc.
+
 **In game, [garage] with 120 groups:** opening the garage with
 out/testdrive3 crashed (runs `host-20261023-080433`, `-080858`, `-081321`)
 in the maker menu fill, not in the emblem hook: the 40-entry menu-script

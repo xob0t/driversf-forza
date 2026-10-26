@@ -465,7 +465,8 @@ typedef bool(__fastcall* FindTextureFn)(void* mgr, void*, uint32_t lo, uint32_t 
 
 static bool g_card_emblem = false;
 static int g_emblem_logs = 0;
-static int g_step = 0;                 // last step reached in card_emblem_body (logged if it faults)
+static bool g_emblem_debug = false;    // [hud] emblem_debug=1: log every card's decision
+static int g_step = 0;                // last step reached in card_emblem_body (logged if it faults)
 
 // Card N's disc exists once per menu page that holds the cards: the maker list
 // page and the card browser page (Enter) each have their own Spr3D.unlocked<N>.
@@ -584,6 +585,8 @@ static void card_emblem_body(uint8_t* screen, int id, int index, int cars)
     bool card20 = cars >= kCards && garage_card_limit() >= kCards;
     if (card20 && g_spare) spare_release("a group of 20 cars");
     bool want = id >= 0 && id < kMaxId && g_emblem[id] && !card20;
+    if (g_emblem_debug)
+        dsf_log("hud: emblem: fill %d card %d model %d -> %s", g_fill, index + 1, id, want ? "Forza logo" : "SF");
     Card& card = g_cards[index];
     if (!want && !card.discs && g_emblem_logs >= 8) return;   // nothing swapped on this card yet
     uint8_t* menu = *(uint8_t**)(screen + 4) ? *(uint8_t**)(*(uint8_t**)(screen + 4) + 8) : nullptr;
@@ -751,6 +754,7 @@ static void card_emblem_init()
         dsf_log("hud: card_emblem=0; garage card emblem stays stock");
         return;
     }
+    g_emblem_debug = cfg_bool("hud", "emblem_debug", false);
     // Every picture-slot site first: without them the spare's UVs could leak into another screen.
     for (uint32_t va : kSlotSites) {
         uint8_t expect[5] = {0xE8};
