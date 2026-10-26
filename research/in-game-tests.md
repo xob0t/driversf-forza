@@ -209,6 +209,10 @@ processes, a stock series (3 runs, pool, so VM 2) and a full-roster series
   never under 6.2 GB. One VM at the old settings held 12.6 to 13.6 GB, and
   two at the old settings (VM 2 cloned at 8 GB, 2026-10-25) left 0.7 GB free,
   so that test was stopped.
+- Idle power-off: both series armed `StopIdle` at 11:28; at 11:44 VM 2 was
+  powered off ("idle for 15 min: stopped" in
+  `dsfforza-wsb\vm\dsfforza-test2\idle-stop.log`) and VM 1, busy with
+  another agent's series, was left running ("in use").
 - Run times against the old settings: full roster on VM 1 alone at 8 GB
   106 to 131 s (`vm-20261025-025351` to `-065150`); VM 2 alone at 8 GB 171 s,
   at 4 GB 160 s; with both VMs running games 163 to 198 s. The difference
