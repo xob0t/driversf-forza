@@ -117,7 +117,8 @@ compiled, not run, as CI has no `Driver.exe`), runs `uv run python -m tests
 --ci`, packages the zip (`uv run dsff package`, `src/dsfforza/build/package.py`)
 and attaches it to a GitHub Release. `gh workflow run release.yml --ref
 <branch>` runs the same steps and uploads the zip as a workflow artifact
-instead of releasing it.
+instead of releasing it (GitHub dispatches a workflow only once it is on
+`master`). Make a release by pushing a tag: `git tag v1.0.0; git push origin v1.0.0`.
 
 The zip holds the git-tracked files a player's install needs (the package,
 `pyproject.toml`, `uv.lock`, `tools/install.ps1`, the registration Lua, the car
