@@ -12,12 +12,18 @@ muted (tools\wsb\host-session.ps1); both are restored afterwards, while out\wsb-
 holds the runs, and, if the series is killed, by a watcher process once its game has
 closed (failing that, by the next series of any kind).
 
--Vm runs the game in the headless VMware test VM (tools\wsb\vm.ps1; built by
+-Vm runs the game in a headless VMware test VM (tools\wsb\vm.ps1; built by
 vm-build.ps1): nothing shows on the host desktop and the host profile and speakers
-are left alone. The VM is started (no window) if it isn't running, the host's Driver
-profile is copied into it as a -Resolution window, and each run lands in
-runs\vm-<stamp> with runs\latest.txt pointing at it. It holds its own mutex
-(Local\dsfforza-vm-run), so VM series don't wait for sandbox or host series.
+are left alone. The series takes a free VM of the pool (vm-common.ps1: $env:DSF_VMS,
+else C:\VMs\dsfforza-test and dsfforza-test2 if they exist; a running one first), or
+waits for the first to come free; -VmId pins one (1, 2, or a name). Each VM has its own
+mutexes (Local\dsfforza-vm-run-<id>; VM 1 also the old Local\dsfforza-vm-run), so VM
+series don't wait for sandbox or host series, nor for a series on another VM. The VM
+is started (no window) if it isn't running, the host's Driver profile is copied into
+it as a -Resolution window, and each run lands in runs\vm<id>-<stamp> with
+runs\latest.txt pointing at it. At the end the VM is left running for the next series;
+one that no series has used for $env:DSF_VM_IDLE_MINUTES (default 15; negative: never)
+is powered off.
 
 .EXAMPLE
 .\tools\wsb\run-series.ps1 -Archives out\a.sp,out\b.sp -ProbeIds 304
@@ -59,6 +65,7 @@ param(
     [double]$TrafficRadius = 0,   # traffic road radius in metres, patched in memory once the world is up (350 stock)
     [switch]$OnHost,
     [switch]$Vm,
+    [string]$VmId,                # with -Vm: this VM only (1, 2, or a name; vm-common.ps1)
     [string]$GamePath = $env:DSF_GAME_DIR,
     [string]$HostRunPath,          # default: <game drive>\dsfforza-run (same volume, for hard links)
     [string]$Resolution = '1280x720'
@@ -88,19 +95,33 @@ $passThrough = @((Get-Command $runTest).Parameters.Keys | Where-Object {
 # One series at a time: the guest runs one game and runs\latest.txt names the
 # newest run, so concurrent series would read each other's results. Callers
 # queue here (Windows releases the mutex if its owner dies, so it can't go stale).
-# The VM is a separate machine, so -Vm series queue on their own mutex.
-# (Two series of different kinds can still both write runs\latest.txt; each reads
-# back its own run folder right after starting it.)
-$mutexName = if ($Vm) { 'Local\dsfforza-vm-run' } else { 'Local\dsfforza-wsb-run' }
-$runMutex = New-Object System.Threading.Mutex($false, $mutexName)
+# Each VM is a separate machine, so -Vm series queue per VM instead: a free VM of the
+# pool, else the first to come free (vm-common.ps1 Enter-VmPool).
+# (Two series can still both write runs\latest.txt; each reads back its own run folder
+# right after starting it.)
+$runMutex = New-Object System.Threading.Mutex($false, 'Local\dsfforza-wsb-run')
 $script:ownsMutex = $false
+$script:vmHeld = $null
 function Enter-RunMutex([TimeSpan]$Timeout) {
     try { $script:ownsMutex = $runMutex.WaitOne($Timeout) } catch [System.Threading.AbandonedMutexException] { $script:ownsMutex = $true }
     return $script:ownsMutex
 }
-function Exit-RunMutex { if ($script:ownsMutex) { $runMutex.ReleaseMutex(); $script:ownsMutex = $false } }
-if (-not (Enter-RunMutex ([TimeSpan]::Zero))) {
-    "waiting for another $(if ($Vm) { 'VM' } else { 'sandbox' }) series to finish..."
+function Exit-RunMutex {
+    if ($script:ownsMutex) { $runMutex.ReleaseMutex(); $script:ownsMutex = $false }
+    if ($script:vmHeld) { Exit-VmMutexes $script:vmHeld.Mutexes; $script:vmHeld = $null }
+}
+if ($Vm) {
+    . (Join-Path $PSScriptRoot 'vm-common.ps1')
+    $pool = if ($VmId) { @(Get-VmPool -Select $VmId) } else { @(Get-VmPool) }
+    if (-not $pool) { throw 'no test VM: build one with tools\wsb\vm-build.ps1, or set DSF_VMS' }
+    $script:vmHeld = Enter-VmPool -Pool $pool -Timeout ([TimeSpan]::FromHours(3))
+    if (-not $script:vmHeld) { throw "timed out waiting for a free VM ($(($pool | ForEach-Object Name) -join ', '))" }
+    $vmTarget = $script:vmHeld.Vm
+    Use-Vm $vmTarget
+    "VM $($vmTarget.Id): $($vmTarget.Name)"
+}
+elseif (-not (Enter-RunMutex ([TimeSpan]::Zero))) {
+    'waiting for another sandbox series to finish...'
     if (-not (Enter-RunMutex ([TimeSpan]::FromHours(3)))) { throw 'timed out waiting for the sandbox' }
 }
 
@@ -195,9 +216,10 @@ function Confirm-Vm {
     # Start the VM headless if needed (also sets the guest display and mutes it), point its
     # C:\Repo at this checkout (a git worktree's builds and scripts, not the main checkout's),
     # then copy the host's Driver profile into it as a -Resolution window.
-    & $vmScript Start | Out-Null
-    & $vmScript Share -RepoPath $repo | Out-Null
-    & $vmScript Exec -Script C:\Repo\tools\wsb\guest\setup-vm.ps1 -Arguments @('-Phase', 'Profile', '-Resolution', $Resolution) -TimeoutSeconds 300 | Out-Null
+    & $vmScript Start -Vm $vmTarget.Id | Out-Null
+    & $vmScript Share -Vm $vmTarget.Id -RepoPath $repo | Out-Null
+    & $vmScript Exec -Vm $vmTarget.Id -Script C:\Repo\tools\wsb\guest\setup-vm.ps1 -TimeoutSeconds 300 `
+        -Arguments @('-Phase', 'Profile', '-Resolution', $Resolution, '-Tag', $vmTarget.Name) | Out-Null
 }
 
 $resultSeconds = [math]::Max(600, $WaitSeconds + 420)
@@ -220,20 +242,20 @@ try {
             # Same script in the VM's desktop session, waited for; the guest writes straight into
             # this run folder through C:\Output (a shared folder). Repo files are copied into the
             # run folder rather than linked across the shared folder.
-            $stamp = "vm-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+            $stamp = "vm$($vmTarget.Id)-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
             $runDir = Join-Path $outputHost "runs\$stamp"
             New-Item -ItemType Directory -Force -Path $runDir | Out-Null
             Set-Content (Join-Path $outputHost 'runs\latest.txt') $runDir
             $vmArgs = @(ConvertTo-ArgList $guestValues -CommandLine) + @('-RunDir', "C:\Output\runs\$stamp", '-CopyRepoFiles')
             $timeout = $resultSeconds + 300
-            try { & $vmScript Exec -Script C:\Repo\tools\wsb\guest\run-test.ps1 -Arguments $vmArgs -TimeoutSeconds $timeout | Out-Null }
+            try { & $vmScript Exec -Vm $vmTarget.Id -Script C:\Repo\tools\wsb\guest\run-test.ps1 -Arguments $vmArgs -TimeoutSeconds $timeout | Out-Null }
             catch {
                 if (Test-Path (Join-Path $runDir 'result.json')) { "  vm exec: $($_.Exception.Message)" }
                 else {
                     # The VM died or was stopped: bring it up again and retry once.
                     "  vm exec failed ($($_.Exception.Message)); restarting the VM"
                     Confirm-Vm
-                    & $vmScript Exec -Script C:\Repo\tools\wsb\guest\run-test.ps1 -Arguments $vmArgs -TimeoutSeconds $timeout | Out-Null
+                    & $vmScript Exec -Vm $vmTarget.Id -Script C:\Repo\tools\wsb\guest\run-test.ps1 -Arguments $vmArgs -TimeoutSeconds $timeout | Out-Null
                 }
             }
         }
@@ -269,8 +291,23 @@ try {
             $main = ((git -C $repo worktree list --porcelain) | Where-Object { $_ -like 'worktree *' } |
                 Select-Object -First 1).Substring(9) -replace '/', '\'
             if ($main -and (Resolve-Path $main).Path -ne $repo) {
-                try { & $vmScript Share -RepoPath $main | Out-Null } catch { "  C:\Repo not pointed back at ${main}: $($_.Exception.Message)" }
+                try { & $vmScript Share -Vm $vmTarget.Id -RepoPath $main | Out-Null } catch { "  C:\Repo not pointed back at ${main}: $($_.Exception.Message)" }
             }
         }
-    } finally { Exit-RunMutex }
+    } finally {
+        $idle = -1
+        if ($Vm) {
+            # Arm the idle stop: a hidden vm.ps1 StopIdle powers the VM off unless a series uses
+            # it within the idle time (that series re-arms it with a new stamp).
+            try {
+                $idle = Get-VmIdleMinutes
+                $stampFile = Join-Path $VmOutputHost "vm\$($vmTarget.Name)\last-series.txt"
+                New-Item -ItemType Directory -Force -Path (Split-Path $stampFile) | Out-Null
+                $seriesStamp = [guid]::NewGuid().ToString('N')
+                Set-Content -LiteralPath $stampFile $seriesStamp
+            } catch { $idle = -1; "  idle stop not armed: $($_.Exception.Message)" }
+        }
+        Exit-RunMutex
+        if ($idle -ge 0) { Start-Detached $vmScript "StopIdle -Vm $($vmTarget.Id) -IdleMinutes $idle -Stamp $seriesStamp" }
+    }
 }

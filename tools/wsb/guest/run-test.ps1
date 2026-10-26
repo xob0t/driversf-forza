@@ -72,6 +72,7 @@ param(
     [switch]$OnHost,
     [switch]$CopyRepoFiles, # copy files from -RepoDir into the run folder instead of linking them (the VM's C:\Repo is a
                          # VMware shared folder; tools\wsb\run-series.ps1 -Vm)
+    [int]$MemorySeconds = 5, # memory.csv sample interval (0: none); peaks go into result.json "memory"
     [string]$GameDir = 'C:\Game',
     [string]$RepoDir = 'C:\Repo',
     [string]$OutputDir = 'C:\Output',
@@ -106,6 +107,77 @@ $events = [System.Collections.Generic.List[object]]::new()
 function Note([string]$message) {
     $events.Add([pscustomobject]@{ t = [math]::Round(((Get-Date) - $started).TotalSeconds, 1); message = $message })
     $events | ConvertTo-Json | Set-Content (Join-Path $RunDir 'events.json')
+}
+
+# Memory sampler (a background runspace): every -MemorySeconds one memory.csv row with the
+# machine's available and committed memory, hard page faults (pages read from disk per second:
+# paging stalls), the GPU adapter's dedicated and shared use, and Driver.exe's private bytes,
+# working set and address space with their peaks. WMI classes, so nothing depends on the
+# Windows display language. The peaks go into result.json ("memory").
+$memory = [hashtable]::Synchronized(@{ stop = $false })
+$memoryJob = $null
+if ($MemorySeconds -gt 0) {
+    $memoryJob = [powershell]::Create()
+    [void]$memoryJob.AddScript({
+        param($csv, $seconds, $state, $started)
+        $mb = { param($bytes) [math]::Round([double]$bytes / 1MB) }
+        $state.totalMB = & $mb (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
+        $state.minAvailableMB = [double]::MaxValue
+        foreach ($k in 'maxCommitMB', 'maxPagesInPerSec', 'maxGpuDedicatedMB', 'maxGpuSharedMB', 'driverPeakPrivateMB',
+            'driverPeakWorkingSetMB', 'driverMaxVirtualMB', 'driverMaxGpuDedicatedMB', 'driverMaxGpuSharedMB', 'samples') { $state[$k] = 0 }
+        'seconds,availableMB,commitMB,cacheMB,pagesInPerSec,gpuDedicatedMB,gpuSharedMB,driverPrivateMB,driverWorkingSetMB,driverVirtualMB,driverPeakPrivateMB,driverPeakWorkingSetMB,driverGpuDedicatedMB,driverGpuSharedMB' |
+            Set-Content $csv
+        $lastPages = $null
+        while (-not $state.stop) {
+            $row = [ordered]@{ seconds = [math]::Round(((Get-Date) - $started).TotalSeconds, 1) }
+            try {
+                $m = Get-CimInstance Win32_PerfRawData_PerfOS_Memory
+                $row.availableMB = & $mb $m.AvailableBytes; $row.commitMB = & $mb $m.CommittedBytes; $row.cacheMB = & $mb $m.CacheBytes
+                $now = [pscustomobject]@{ pages = [double]$m.PagesInputPersec; t = Get-Date }
+                $row.pagesInPerSec = if ($lastPages) { [math]::Round(($now.pages - $lastPages.pages) / [math]::Max(0.1, ($now.t - $lastPages.t).TotalSeconds)) } else { 0 }
+                $lastPages = $now
+                $gpu = @(Get-CimInstance Win32_PerfRawData_GPUPerformanceCounters_GPUAdapterMemory -ErrorAction SilentlyContinue)
+                $row.gpuDedicatedMB = & $mb ($gpu | Measure-Object DedicatedUsage -Sum).Sum
+                $row.gpuSharedMB = & $mb ($gpu | Measure-Object SharedUsage -Sum).Sum
+                $driver = Get-Process Driver -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($driver) {
+                    $row.driverPrivateMB = & $mb $driver.PrivateMemorySize64; $row.driverWorkingSetMB = & $mb $driver.WorkingSet64
+                    $row.driverVirtualMB = & $mb $driver.VirtualMemorySize64
+                    $row.driverPeakPrivateMB = & $mb $driver.PeakPagedMemorySize64   # PeakPagefileUsage: peak private bytes
+                    $row.driverPeakWorkingSetMB = & $mb $driver.PeakWorkingSet64
+                    $own = @(Get-CimInstance Win32_PerfRawData_GPUPerformanceCounters_GPUProcessMemory -ErrorAction SilentlyContinue |
+                        Where-Object Name -like "pid_$($driver.Id)_*")
+                    $row.driverGpuDedicatedMB = & $mb ($own | Measure-Object DedicatedUsage -Sum).Sum
+                    $row.driverGpuSharedMB = & $mb ($own | Measure-Object SharedUsage -Sum).Sum
+                }
+                $state.samples++
+                $state.minAvailableMB = [math]::Min($state.minAvailableMB, $row.availableMB)
+                foreach ($pair in @(@('maxCommitMB', 'commitMB'), @('maxPagesInPerSec', 'pagesInPerSec'), @('maxGpuDedicatedMB', 'gpuDedicatedMB'),
+                    @('maxGpuSharedMB', 'gpuSharedMB'), @('driverPeakPrivateMB', 'driverPeakPrivateMB'), @('driverPeakWorkingSetMB', 'driverPeakWorkingSetMB'),
+                    @('driverMaxVirtualMB', 'driverVirtualMB'), @('driverMaxGpuDedicatedMB', 'driverGpuDedicatedMB'), @('driverMaxGpuSharedMB', 'driverGpuSharedMB'))) {
+                    if ($null -ne $row[$pair[1]]) { $state[$pair[0]] = [math]::Max($state[$pair[0]], $row[$pair[1]]) }
+                }
+                $state.last = $row.seconds
+            } catch { $state.error = $_.Exception.Message }
+            Add-Content $csv (($row.Values | ForEach-Object { "$_" -replace ',', '.' }) -join ',')
+            for ($i = 0; $i -lt $seconds * 4 -and -not $state.stop; $i++) { Start-Sleep -Milliseconds 250 }
+        }
+    }).AddArgument((Join-Path $RunDir 'memory.csv')).AddArgument($MemorySeconds).AddArgument($memory).AddArgument($started)
+    $memoryHandle = $memoryJob.BeginInvoke()
+}
+function Stop-MemorySampler {
+    if (-not $memoryJob) { return $null }
+    $memory.stop = $true
+    try { [void]$memoryJob.EndInvoke($memoryHandle) } catch { $memory.error = $_.Exception.Message }
+    $memoryJob.Dispose(); $script:memoryJob = $null
+    $summary = [ordered]@{}
+    foreach ($k in 'totalMB', 'minAvailableMB', 'maxCommitMB', 'maxPagesInPerSec', 'maxGpuDedicatedMB', 'maxGpuSharedMB', 'driverPeakPrivateMB',
+        'driverPeakWorkingSetMB', 'driverMaxVirtualMB', 'driverMaxGpuDedicatedMB', 'driverMaxGpuSharedMB', 'samples', 'error') {
+        if ($null -ne $memory[$k]) { $summary[$k] = $memory[$k] }
+    }
+    if ($summary.totalMB -and $summary.minAvailableMB -lt [double]::MaxValue) { $summary.peakUsedMB = $summary.totalMB - $summary.minAvailableMB }
+    else { $summary.Remove('minAvailableMB') }
+    return $summary
 }
 
 Add-Type -AssemblyName System.Drawing, System.Windows.Forms
@@ -859,6 +931,8 @@ finally {
             ForEach-Object { $_.Line.Trim() })
     }
     if (-not $KeepRunning) { Get-Process Driver -ErrorAction SilentlyContinue | Stop-Process -Force; Wait-Process -Name Driver -Timeout 15 -ErrorAction SilentlyContinue }
+    $memorySummary = Stop-MemorySampler
+    if ($memorySummary) { $result.memory = $memorySummary }
     $result.running = [bool](Get-Process Driver -ErrorAction SilentlyContinue)
     $result.keysSkipped = [DsfGuest]::Skipped   # presses dropped: the game wasn't in the foreground
     $result.lastClick = [DsfGuest]::LastClick

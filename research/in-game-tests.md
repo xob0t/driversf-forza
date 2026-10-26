@@ -1,6 +1,6 @@
 # In-game tests
 
-Updated: 2026-10-24
+Updated: 2026-10-26
 
 Runs up to 2026-10-22 used the persistent Windows Sandbox harness in
 `tools/wsb/` (see the README); later ones run on the host (`-OnHost`) or in
@@ -58,9 +58,12 @@ VMware runs on the Windows Hypervisor Platform, which is already enabled
 and the 3D renderer is `ISBRenderer (VKRenderer)` on the host GPU. Installed:
 Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Workstation`.
 
-- **VM:** `C:\VMs\dsfforza-test\dsfforza-test.vmx`: 4 vCPU, 8 GB, 80 GB growable
+- **VM:** `C:\VMs\dsfforza-test\dsfforza-test.vmx` (VM 1) and its linked clone
+  `C:\VMs\dsfforza-test2\dsfforza-test2.vmx` (VM 2; "VM pool" below): 4 vCPU,
+  4 GB (8 GB until 2026-10-25), 80 GB growable
   SATA disk, BIOS firmware (no TPM or Secure Boot; a vTPM needs VM encryption,
-  which vmrun can't start headless), SVGA 3D with 2 GB graphics memory, no
+  which vmrun can't start headless), SVGA 3D with 512 MB graphics memory (2 GB
+  until 2026-10-25), no
   network adapter, no USB, an HD audio card muted inside the guest. Guest:
   `D:\windows_microwin_ru.iso` (Windows 11 Pro 25H2, build 26200, ru-RU,
   MicroWin-debloated), local admin `dsf` / `dsfforza`, autologon, UAC off,
@@ -68,11 +71,11 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
   `C:\Game`, `C:\Run`, `C:\Repo`, `C:\Output`, a silent firewall with rules for
   `C:\Run\Driver.exe`, desktop 1600x900, the game in a 1280x720 window.
 - **Build:** `tools\wsb\vm-build.ps1` (Iso, Create, Install, Provision,
-  Snapshot). `tools\wsb\vm\autounattend.xml` and `first-logon.ps1` go on a
+  Snapshot; Clone for VM 2). `tools\wsb\vm\autounattend.xml` and `first-logon.ps1` go on a
   small ISO built with IMAPI2FS. The media answer file replaces the one
   MicroWin bakes into the image. The account is created in specialize and put
   in Administrators by SID (S-1-5-32-544), because the Russian image names
-  the group "Администраторы". First logon installs the VC++ x86 runtime and
+  the group "РђРґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂС‹". First logon installs the VC++ x86 runtime and
   VMware Tools (`setup.exe /S /v"/qn REBOOT=R ADDLOCAL=ALL"`; Tools 13 has only a 64-bit
   `setup.exe`, no `setup64.exe`). The whole build takes about 35 minutes
   (Install about 30, Provision about 1, copying 5.9 GB of game).
@@ -84,17 +87,19 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
   `dsfforza-backup\install.json`: replaced files restored and hash-checked,
   created ones dropped. Re-run `setup-vm.ps1 -Phase Game` (through `vm.ps1
   Exec`) after changing the host install.
-- **Runs:** `run-series.ps1 -Vm` starts the VM if needed (`vmrun -T ws start
+- **Runs:** `run-series.ps1 -Vm` takes a free VM of the pool ("VM pool"
+  below), starts it if needed (`vmrun -T ws start
   ... nogui`), copies the host profile into the
   guest as a 1280x720 window, then runs `run-test.ps1` in the guest's desktop
   session (`vmrun runProgramInGuest -interactive`, through a wrapper script
   copied into `C:\dsf`, started hidden) with `-RunDir
-  C:\Output\runs\vm-<stamp>`. Results land in
-  `%LOCALAPPDATA%\Temp\dsfforza-wsb\runs\vm-<stamp>\` and `runs\latest.txt`
-  points at that folder, so `events.json`, `sheet.py` and the rest work
+  C:\Output\runs\vm<id>-<stamp>`. Results land in
+  `%LOCALAPPDATA%\Temp\dsfforza-wsb\runs\vm<id>-<stamp>\` (`vm-<stamp>` before
+  2026-10-25: VM 1) and `runs\latest.txt`
+  points at the newest folder, so `events.json`, `sheet.py` and the rest work
   unchanged. `-CopyRepoFiles` makes `run-test.ps1` copy archives and overrides
   from `C:\Repo` into `C:\Run` instead of linking them across the shared
-  folder. Mutex `Local\dsfforza-vm-run`, separate from the sandbox and host
+  folder. VM mutexes are separate from the sandbox and host
   series. Keys go to the game inside the guest only; the host's speakers and
   Driver profile aren't touched. The share `Repo` is the checkout the VM was
   built from (the main one); each series points it at its own checkout
@@ -102,10 +107,121 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
   from a git worktree tests that worktree's builds and scripts. Before that
   change a worktree's `-Vm` series ran the main checkout's `run-test.ps1` on
   the main checkout's copy of its archive path (missing, or stale).
-- **Control:** `tools\wsb\vm.ps1 Start|Status|Exec|Stop|Revert`. Revert goes
-  back to the snapshot `clean` (powered off, right after provisioning).
+- **Control:** `tools\wsb\vm.ps1 Start|Status|Exec|Share|Stop|Revert|StopIdle
+  [-Vm 1|2|all]`. Revert goes
+  back to the snapshot `clean` (powered off, right after provisioning); Stop
+  and Revert wait until no series uses the VM.
   `tools\wsb\guest\fps.ps1` (through `vm.ps1 Exec`, next to a run) records 30 s
   of presents with Intel PresentMon (`C:\Output\vm\PresentMon-2.6.0-x64.exe`).
+
+### VM pool (2026-10-25)
+
+Two VMs, so two series run at once: VM 1 `C:\VMs\dsfforza-test` and VM 2
+`C:\VMs\dsfforza-test2`, a linked clone of VM 1's snapshot `clean`
+(`vm-build.ps1 -Step Clone -Vm 2`; its disk is a 10 MB child of VM 1's base
+disk, and VM 1's `.vmsd` lists it as `snapshot0.clone0`, so that snapshot must
+stay). The guest has no network adapter, so the shared computer name, SID and
+the missing MAC don't matter; the clone gets new UUIDs at its first power-on.
+
+- **Pool:** `$env:DSF_VMS` (`;`-separated `.vmx` paths), else those of the two
+  that exist (`vm-common.ps1`). A VM's id comes from its file name
+  (`dsfforza-test` 1, `dsfforza-testN` N).
+- **Mutexes:** per VM `Local\dsfforza-vm-run-<id>`; VM 1 also holds the old
+  `Local\dsfforza-vm-run`, so a series from an older checkout (VM 1 only) and
+  a new one exclude each other. Start/Stop: `Local\dsfforza-vm-lifecycle`
+  (VM 1, the old name) and `-lifecycle-<id>`.
+- **Taking a VM:** `run-series.ps1 -Vm` tries the free VMs at once, running
+  ones first (no boot, no extra RAM), then waits for whichever comes free
+  first (`WaitHandle.WaitAny`). `-VmId 2` pins one. The series prints
+  `VM <id>: <name>` and its run folders are `runs\vm<id>-<stamp>`. Setup logs
+  go to `C:\Output\vm\<name>\`; `C:\Output\HostDll` is only rewritten when a
+  DLL changed (another VM's run may be copying it).
+- **Settings** (`$VmSettings` in `vm-common.ps1`): 4 GB, 512 MB graphics
+  memory, 4 vCPU. `vm.ps1 Start` writes them into a powered-off VM's `.vmx`
+  when they differ, so a clone or a reverted snapshot gets them too.
+- **Idle power-off:** a running VM holds its RAM whether a game runs or not
+  (see below). At the end of a series `run-series.ps1` starts a hidden
+  `vm.ps1 StopIdle`, which powers the VM off when no series has used it for
+  `$env:DSF_VM_IDLE_MINUTES` (default 15; negative: never). A series in
+  between re-arms it, and it never stops a VM whose run mutex is held. A
+  cold start to a ready desktop session takes about 75 s.
+- **`vm.ps1 Stop`** and **`Revert`** now wait for the VM's run mutex.
+- **Memory sampler:** `run-test.ps1 -MemorySeconds 5` (default) writes
+  `memory.csv` in the run folder (guest available and committed memory, hard
+  page faults per second, GPU adapter memory, and Driver.exe's private bytes,
+  working set and address space) and the peaks to `result.json` `memory`.
+
+**Memory measured** (full roster `out\final-gui2` with dsfforza.asi, IDs
+147,705,26,1,400,600, VM 2, host sampled every 5 s):
+
+| setting (guest / graphics) | runs | guest peak used | Driver.exe peak private / WS / virtual | vmware-vmx WS after boot | peak in game | run |
+|---|---|---|---|---|---|---|
+| 8 GB / 2 GB (old) | `vm2-20261025-083626` | 2.92 GB of 8 | 982 / 685 / 1219 MB | 9.6 GB | 13.2 GB | 171 s |
+| 4.5 GB / 1 GB | `vm2-20261025-084216`, `-084516` | 2.86 GB, 1.75 GB available | 988 / 691 / 1219 MB | 6.0 GB | 8.05 GB | 170, 160 s |
+| 4 GB / 1 GB | `vm2-20261025-090258` | 2.92 GB, 1.18 GB available | 981 / 687 / 1219 MB | not sampled | not sampled | 162 s |
+| 4 GB / 512 MB (chosen) | `vm2-20261025-085007`, `-085255` | 2.92 GB, 1.17 GB available | 989 / 691 / 1229 MB | 5.5 GB | 7.03 GB | 160, 160 s |
+
+- The game needs about 1 GB private and 1.2 GB of address space, far from
+  the 32-bit 4 GB. The whole guest peaks under 3 GB committed.
+- **Graphics memory is guest RAM:** the guest reports no dedicated GPU
+  memory and 300 to 340 MB shared (Driver.exe 250 MB) with any setting.
+- **Host side:** the vmware-vmx working set is the whole guest RAM within
+  about 80 s of power-on (the guest's zero-page thread touches every free
+  page, and in ULM mode on WHP there is no page sharing or trimming to give
+  pages back: vmware.log has no PShare or MemTrim lines, and the working set
+  never drops after the game exits), plus about 1.4 GB of fixed overhead,
+  plus a 3D part once the game renders: 3.0 to 3.6 GB with 2 GB graphics
+  memory, 1.8 to 2.0 GB with 1 GB, 1.2 to 1.5 GB with 512 MB. vmware.log's
+  reservations follow it (`VmxMks3d` 3.2 GB to 1.66 GB, the renderer's
+  DataChannel 1 GB to 256 MB). `mksSandbox.exe` (the Vulkan renderer) adds
+  0.3 to 0.4 GB per VM. So `MemTrimRate` and `sched.mem.pshare.enable` have
+  nothing to act on here, and `mainMem.useNamedFile = FALSE` was already set.
+- **`svga.vramSize`:** VMware sets it back to 256 MB at power-on, and the
+  boot working set stayed 5.5 GB with 16 MB asked.
+- **No paging stalls** at 4 GB: at least 1.17 GB stays available and the
+  median of hard page faults is 8 to 22 pages/s. Bursts of 1,000 to 5,000
+  pages/s come while the world loads and when a probe car spools (reads of
+  the 2.6 GiB archive, which a smaller guest file cache holds less of; at
+  4.5 GB the same, at 8 GB under 530 after the load). Run times and
+  Story-ready times (31 to 32 s) match the 8 GB VM.
+- **Frame rate** (PresentMon, 30 s from 45 s after launch, full roster, VM 1
+  busy with another series): 512 MB mean 37.9 fps, median 41.0, 1 % low 16.9;
+  1 GB 35.7, 37.9, 18.6. The same within noise.
+- 3.5 GB would bring a VM to about 6.5 GB but leaves under 0.7 GB available
+  in the guest at the peak; not done.
+
+**Two series at once** (2026-10-26, after a host reboot; VM 1 reverted to
+`clean`, the new settings written, VM 2 cloned again): from 11:21, in two
+processes, a stock series (3 runs, pool, so VM 2) and a full-roster series
+(2 runs, VM 1).
+
+- Both ran side by side, 11:22 to 11:29: full roster `vm1-20261026-112227`
+  (198 s, the first after the revert) and `-112554` (163 s); stock
+  `vm2-20261026-112238` (126 s) and `-112453` (118 s) finished.
+  `vm2-20261026-112701` hit the DriverNGHook fatal error while the first
+  probe car loaded (100 s, loading-screen shots): the engine fault of
+  "Crashes while the world loads", as the stock series ran the game folder's
+  dsf_enhanced without the fix. 1.4 GB was available in the guest then.
+- Guests: peak used 2.7 to 2.9 GB of 4, at least 1.16 GB available,
+  Driver.exe 960 to 991 MB private.
+- Host: vmware-vmx working sets VM 1 at most 7.06 GB, VM 2 6.95 GB, 14.0 GB
+  together, plus 0.86 GB for both `mksSandbox.exe`; host available memory
+  never under 6.2 GB. One VM at the old settings held 12.6 to 13.6 GB, and
+  two at the old settings (VM 2 cloned at 8 GB, 2026-10-25) left 0.7 GB free,
+  so that test was stopped.
+- Idle power-off: both series armed `StopIdle` at 11:28; at 11:44 VM 2 was
+  powered off ("idle for 15 min: stopped" in
+  `dsfforza-wsb\vm\dsfforza-test2\idle-stop.log`) and VM 1, busy with
+  another agent's series, was left running ("in use").
+- Run times against the old settings: full roster on VM 1 alone at 8 GB
+  106 to 131 s (`vm-20261025-025351` to `-065150`); VM 2 alone at 8 GB 171 s,
+  at 4 GB 160 s; with both VMs running games 163 to 198 s. The difference
+  is the shared host CPU and GPU, not memory (no paging in the guests).
+
+`.vmx` backups from before the change: `C:\VMs\dsfforza-test\dsfforza-test.vmx.orig-20261025-083356`
+and `dsfforza-test.vmsd.orig-20261025-083356` (before the first clone; 8 GB,
+2 GB), `dsfforza-test.vmx.before-pool-20261026-112107` (right before the
+revert and the new settings).
 
 ### VM results (2026-10-24)
 
@@ -199,8 +315,8 @@ About half of the VM runs ended at the DriverNGHook fatal-error dialog 20 to
 **Lua VM while a big user file loads (0x005F078A / 0x005F078D / 0x005EE811).**
 
 - Where: luaV_execute reads an upvalue through a bad pointer. It runs inside
-  `user_open` (ScriptLoader.ri_dofilefromdisk → luaL_loadfile + lua_call,
-  FUN_0065A7D0 → FUN_00607800), right after a log line "loading user file
+  `user_open` (ScriptLoader.ri_dofilefromdisk в†’ luaL_loadfile + lua_call,
+  FUN_0065A7D0 в†’ FUN_00607800), right after a log line "loading user file
   'dsfforza\ported.lua'". The test bootstrap loads ported.lua three times
   (register, garagetest, clonetest).
 - When: only with the full roster's generated files (`ported.lua` 117 KB,
@@ -242,7 +358,7 @@ and "Desanne" on the HUD: `img/clone-304-with-stats.jpg`. The control run
 What this confirms:
 
 - the game accepts a rebuilt `dngvehicles.sp` with 151 vehicles;
-- a new ID (304, outside the stock 62–303 range) spools through
+- a new ID (304, outside the stock 62вЂ“303 range) spools through
   `TrafficSpooler.RequestMissionVehicle`, so the SSLP/VSCT edits are enough
   for the spool system;
 - `GameVehicleResource.create{Model_Id = 304}` builds a drivable car from the
@@ -271,7 +387,7 @@ pictures and stat bars.
   `currentVehicle` is `false`). `localPlayer.position` is (0, 0, 0) there and
   zapping into a car fails until the camera is down at street level. The
   harness presses Up (extended scan code 0x48) five times; the probe waits
-  until `zapcontroller.getZapLevel()` is ≤ 1, or 120 ticks pass, then spawns.
+  until `zapcontroller.getZapLevel()` is в‰¤ 1, or 120 ticks pass, then spawns.
   The level is only logged every 4 ticks and the last logged value was 3, so
   which condition fired isn't recorded; either way the spawn and zap worked.
 - **Placement:** `zapcontroller.ZapCameraGetTargetPos()` (global table
@@ -332,7 +448,7 @@ Rework's readable `trafficspoolingdata.lua` only lists mission vehicle pots.
 
 ## Forza geometry in game (confirmed-runtime)
 
-Converter: `src/dsfforza/convert/forza2dsf.py` (FH1 carbin → DSF VEHC), `src/dsfforza/convert/exp_hollow.py`
+Converter: `src/dsfforza/convert/forza2dsf.py` (FH1 carbin в†’ DSF VEHC), `src/dsfforza/convert/exp_hollow.py`
 (the layout that currently works for the full entry).
 
 - **Geometry writing works**: stretching the clone's vertices 1.3x in x shows
@@ -349,7 +465,7 @@ Converter: `src/dsfforza/convert/forza2dsf.py` (FH1 carbin → DSF VEHC), `src/d
   runs `-002224` and `-004928` the chase camera sees the 370Z's headlights
   and grille, so the car sits backwards on its chassis (the stock Desanne
   shows its tail lights from the same camera). `forza2dsf.Placement` now
-  turns the body 180° about y (confirmed in run `20261022-015851`, below).
+  turns the body 180В° about y (confirmed in run `20261022-015851`, below).
 - **Paint UV0** samples the vehicle's chassis texture; Forza UVs on the host's
   texture gave stripes. Pinned to a plain texel for now.
 - **Full entry crash** (DriverNGHook fatal-error dialog while spooling,
@@ -520,9 +636,9 @@ stock vehicleStats entry by Picture1: the HUD shows the Nissan badge and
 Desanne's (`img/fix6-370z-hud-name.png`). The HUD reads the numeric
 Manufacturer/Model fields; ManufacturerName/ModelName strings don't reach it.
 
-Cockpit camera too low: stock head cameras see the steering rim's top 7.9°
-below eye level (median of 146, `out/eye/wheel_view.py`); ours were 6.5°
-(370Z), 3.3° (M5), 1.9° (Skyline), so the wheel filled half the screen.
+Cockpit camera too low: stock head cameras see the steering rim's top 7.9В°
+below eye level (median of 146, `out/eye/wheel_view.py`); ours were 6.5В°
+(370Z), 3.3В° (M5), 1.9В° (Skyline), so the wheel filled half the screen.
 `cockpit.camera_eye` now raises the camera only (in game: "Head camera"
 below).
 
@@ -568,9 +684,9 @@ the speed every frame) with `-ProbeIds '266,304,305,306'`.
   third of the screen with the dials above it, not across half the screen
   (`img/gauges-m5-111mph.png`, `img/gauges-skyline-50mph.png`); still a
   little higher than the stock Desanne's (`img/fix3-desanne-stock-cockpit.png`).
-  `out/eye/wheel_view.py`: rim top 6.5° (370Z), 4.6° (M5), 5.2° (Skyline)
+  `out/eye/wheel_view.py`: rim top 6.5В° (370Z), 4.6В° (M5), 5.2В° (Skyline)
   below the eye; the hosts 227, 147, 229 have 8.3, 8.3, 9.1, the Desanne
-  13.7. `camera_eye` aims for 7.9° using the rim's centre-line radius and
+  13.7. `camera_eye` aims for 7.9В° using the rim's centre-line radius and
   the wheel centre's depth, while `wheel_view.py` measures the topmost rim
   vertex (tube thickness, rim tilt toward the driver), hence the shortfall.
 - Digital readouts are blank dark panels (M5 centre display, 370Z).
@@ -582,7 +698,7 @@ the speed every frame) with `-ProbeIds '266,304,305,306'`.
 `out/r7/ported-r7.sp`: 304 370Z (host 227), 305 M5 (147 CTS-V), 306 Skyline
 R32 (229 R33), 307 Mustang Boss 429 (193), 308 Raptor (251); auto hosts,
 `--damage panels`, gauges, lights, factory paint, camera at the stock
-7.9° rim angle (all five, `out/eye/wheel_view.py`).
+7.9В° rim angle (all five, `out/eye/wheel_view.py`).
 
 - All five spool, drive (throttle held, up to 100 mph) and switch to the
   cockpit; HUD shows each host's badge and name (Nissan 370Z, Cadillac
