@@ -262,7 +262,7 @@ S2000, Firebird, 300SL, 2000GT) were not reported, so the game probably
 draws 257 but not 1281 by default (hypothesis). Which variant the game
 picks, and when, is not traced.
 
-### Exhaust markers (confirmed-static; fix offline, in-game check below)
+### Exhaust markers (confirmed-static; fix confirmed-runtime)
 
 **Where the game reads them.** `FUN_0088E310` (the UPVH parser, decompiled
 in `out/ghidra/gauges7`) takes every marker record (type 3) with role 0x4D
@@ -325,7 +325,22 @@ Stingray 67, Kenworth T440, the tour bus: a flat panel, pipes along the sills
 or far inside the body, flows other than back or sideways); 34 of the 37 get
 the box-mapped host markers. The 15 cars on hosts
 without exhaust markers (Classic 10, Bus 01, Saloon 13, Mini Car 06) stay
-without exhaust effects, as their hosts are.
+without exhaust effects, as their hosts are (issue #64; the 37 tipless cars:
+#65).
+
+**In game** (VM, `out/exh/before` built with `--no-exhaust` against
+`out/exh/after`, IDs 1-6: Focus ST, Corsa VXR, M3 E92, 370Z, GT-R GT1,
+MX-5 Miata; `run-series.ps1 -Vm -Views exhaust`, the new fixed probe view
+low behind the tailpipes, `wheels` for the GT-R's side exits): the idle smoke
+now comes out of the Forza tips: the Focus's twin trapezoid and the Corsa's
+centre triangle instead of the bumper corners, all four M3 tips (two marker
+records added), the Miata's single right-hand pipe instead of nothing (host
+126's marker is a left side exit), the GT-R's side pipes behind the front
+wheels instead of under its diffuser (two of four records dropped). No crash
+from the changed record counts. Runs `vm-20261025-080435`/`-080641`,
+`vm-20261025-090734`, `vm-20261026-115910`/`-120124`, `-121526`, `-125136`
+(`img/exhaust-focusst-before-after.jpg`, `img/exhaust-ingame-before-after.jpg`;
+offline markers per car: `img/exhaust-offline-markers.png`).
 
 ### PDL (collision)
 
