@@ -477,7 +477,8 @@ def test_package_takes_the_player_files_and_refuses_game_data():
     ]
     files = package.select(tracked)
     assert "tools/install.ps1" in files and "src/dsfforza/build/install.py" in files and "install.cmd" in files
-    assert not any(f.startswith(("research/", "tests/", "tools/wsb/")) for f in files)
+    assert not any(f.startswith(("tests/", "tools/wsb/")) for f in files)
+    assert "research/batch.md" not in files and "research/forza-roster.tsv" in files
     assert "tools/game/lua/dsfforza/garagetest.lua" not in files
     for bad in ("src/dsfforza/x.iso", "tools/batches/dngvehicles.sp"):
         try:

@@ -39,6 +39,7 @@ FILES = (
     "tools/asi/dsfforza.ini",
     "tools/game/lua/player/bootstrap.lua",
     "tools/game/lua/dsfforza/register.lua",
+    "research/forza-roster.tsv",
 )
 FOLDERS = ("src/dsfforza/", "tools/batches/", "tools/release/")
 # Never in a release, whatever is tracked: game and Forza data, captures, binaries.
