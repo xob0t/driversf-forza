@@ -493,17 +493,24 @@ door handles are chrome (drawn in a flat light grey offline). The built full ent
 of `out/fx/after`, ID 1) has the quadrifoglio on the Chassis material.
 Rebuilding the four test cars with the final code gave byte-identical chunks.
 
-In game (confirmed-runtime, headless VM, probe IDs 1 to 4 with the `left`,
-`wheels` and `rear` views): `vm-20261025-075152` runs the four cars' chunks
-from `out/final` (the installed build, remerged as IDs 1 to 4 with
-`port_batch remerge --id-policy garage`), `vm-20261025-075859` the same four
-built with this change (`out/fx/after`: GTA, Veyron, Monte Carlo SS,
-Crossfire). The GTA's wing and tail triangles are white with the green
-cloverleaf instead of black (`img/trim-art-gta-ingame-before-after.jpg`). The
-Veyron's roof scoops, engine cover and fuel cap are light silver instead of
-black (`img/trim-art-veyron-ingame-before-after.jpg`; the spawn picked a
-different palette colour in each run). The Crossfire drove off before its
-fixed cameras in both runs.
+In game (confirmed-runtime, headless VM). First version (atlas only):
+`vm-20261025-075152` runs the four cars' chunks from `out/final` (the
+installed build, remerged as IDs 1 to 4 with `port_batch remerge --id-policy
+garage`), `vm-20261025-075859` the same four built with the change
+(`out/fx/after`). The GTA's quadrifoglio showed; the Veyron's scoops came out
+flat near white (the review above). Final version, the same palette entry in
+both runs (`run-series.ps1 -Palette 0`, new: clonetest.lua passes it to
+`Spawn.Spawn` as `shaderParams[0]`, as the game's grid spawns do; the probe
+now also holds the car still during the fixed views, after the Crossfire drove
+out of them), probe IDs 1 to 4 plus stock 126 (the GTA's host, the TZ2) with
+the `left`, `wheels` and `rear` views: before `vm-20261025-091951`
+(`out/fx/before`), after `vm-20261026-113128` (`out/fx/after3`). The GTA's
+wing and tail triangles are white with the green cloverleaf instead of black
+(`img/trim-art-gta-ingame-before-after.jpg`). The Veyron's roof scoops, door
+handles and fuel cap and the Crossfire's vent strakes are chrome instead of
+black: shaded, with the chrome's reflections (scoop on screen p10/p50/p90
+65/210/221, against 104/233/239 on the atlas path), the engine detail between
+the scoops stays on the atlas (`img/trim-art-veyron-ingame-before-after.jpg`).
 
 ## Open
 
