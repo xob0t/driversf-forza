@@ -1920,6 +1920,8 @@ def convert(
         )
         layout.update(tex_full.layout)
         layout.update(tex_ext.layout)
+        if tex_full.texturing.lens_report:
+            report["lenses"] = tex_full.texturing.lens_report
 
     # Cockpit: fit the Forza cockpit and find the host's steering-wheel node first,
     # so the body's steering wheel can be skinned to it as well.
