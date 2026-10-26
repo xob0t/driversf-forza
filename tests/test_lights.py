@@ -147,11 +147,14 @@ def test_clear_lens_on_red_texels_is_tail():
     # a rear clear lens drawn on red texels lights with the brakes, not with the reverse lamp
     car = [
         _quad("glassLTL", "detail_glass_clear", 0.6, -2.05),
-        _quad("revL", "reverse_light", 0.6, -2.0),
-        _quad("revR", "reverse_light", -0.6, -2.0),
+        _quad("revL", "reverse_light", 0.75, -2.0),
+        _quad("revR", "reverse_light", -0.75, -2.0),
     ]
     assert _functions(car, {})["glassLTL"] == lights.REVERSE
     assert _functions(car, {"glassLTL": RED_TEXEL})["glassLTL"] == lights.TAIL
+    # ...but right in front of the reverse bulb it stays the reverse lamp (PEU_207RC_07)
+    car[1] = _quad("revL", "reverse_light", 0.6, -2.0)
+    assert _functions(car, {"glassLTL": RED_TEXEL})["glassLTL"] == lights.REVERSE
 
 
 def test_red_lens_over_indicator_blinks():

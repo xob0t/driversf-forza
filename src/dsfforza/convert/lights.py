@@ -359,6 +359,7 @@ class Tri:
     centre: tuple
     normal: tuple
     lod: int
+    pts: tuple = ()  # corners (lamp-technique triangles; _red_lens_indicators)
 
 
 def _single_link(points, gap: float) -> list[list[int]]:
@@ -427,26 +428,57 @@ INDICATING = (INDICATOR, BRAKE_IND, DRL_IND)
 
 
 def _red_lens_indicators(records, from_lens: set, red_indicators: list) -> None:
-    """Red rear lens triangles that also indicate: a red lamp that brakes and
-    indicates (BRAKE_IND, types 0x19/0x1A, as on stock US-style cars).
+    """What a red rear lens triangle lights with, when the lamp behind it
+    isn't a tail lamp. Stock lamps are opaque, so a bulb behind a lens never
+    shows: the lens has to light for it.
 
-    - Over an indicator: the lamp triangle right behind the lens triangle
-      (same LOD, not a lens; nearest across the view, x and y, within
-      CLEAR_LENS_REACH along it) indicates. Stock lamps are opaque, so the
-      bulb behind a lens never shows; the lens has to blink itself
-      (FOR_GT_05's red lenses over its drlinl/drlinr lamps, MIN_Coopers_11's
-      red glass over its indicator_left/right bulbs).
+    The bulb behind a lens triangle is the nearest lamp triangle (same LOD,
+    not a lens, within CLEAR_LENS_REACH along the view) whose outline, seen
+    from behind, holds the lens triangle's centre; failing that, the nearest
+    across the view (x, y).
+
+    - A reverse bulb (outline only): a reverse lamp. Forza draws some
+      reverse sections on red lens texels (PEU_207RC_07, TOY_CelicaSSI_03,
+      CHR_300C_08); as tail lamps they hid the bulb and the car showed no
+      reverse light.
+    - An indicator: a red lamp that brakes and indicates (BRAKE_IND, types
+      0x19/0x1A, as on stock US-style cars): FOR_GT_05's red lenses over its
+      drlinl/drlinr lamps, MIN_Coopers_11's red glass over its
+      indicator_left/right bulbs.
     - A red "amber" lens on a side without any other rear indicator
-      (MIT_GTO_97: (76, 0, 0) texels, no amber at the rear)."""
+      (MIT_GTO_97: (76, 0, 0) texels, no amber at the rear) also brakes and
+      indicates."""
     import numpy as np
 
-    bulbs: dict = {}  # lod -> (centres, functions) of rear lamp triangles that are not lenses
+    bulbs: dict = {}  # lod -> [(corners, centre, function)] of rear lamp triangles that are not lenses
     for n, r in enumerate(records):
-        if n not in from_lens and not r.front:
-            bulbs.setdefault(r.lod, ([], []))
-            bulbs[r.lod][0].append(r.centre)
-            bulbs[r.lod][1].append(r.function)
-    bulbs = {lod: (np.array(c, dtype=float), f) for lod, (c, f) in bulbs.items()}
+        if n not in from_lens and not r.front and r.pts:
+            bulbs.setdefault(r.lod, []).append((r.pts, r.centre, r.function))
+    arrays = {
+        lod: (np.array([b[0] for b in bs], dtype=float), np.array([b[1] for b in bs], dtype=float), [b[2] for b in bs])
+        for lod, bs in bulbs.items()
+    }
+
+    def behind(r) -> tuple[str | None, bool]:
+        """(function of the bulb behind r, whether its outline holds r's centre)."""
+        if r.lod not in arrays:
+            return None, False
+        corners, centres, functions = arrays[r.lod]
+        x, y, z = r.centre
+        dz = np.abs(centres[:, 2] - z)
+        reach = dz < CLEAR_LENS_REACH
+        a, b, c = corners[:, 0], corners[:, 1], corners[:, 2]
+
+        def side(p, q):  # which side of edge p -> q the centre lies on, seen from behind
+            return (q[:, 0] - p[:, 0]) * (y - p[:, 1]) - (q[:, 1] - p[:, 1]) * (x - p[:, 0])
+
+        d1, d2, d3 = side(a, b), side(b, c), side(c, a)
+        inside = reach & (((d1 >= 0) & (d2 >= 0) & (d3 >= 0)) | ((d1 <= 0) & (d2 <= 0) & (d3 <= 0)))
+        if inside.any():
+            return functions[int(np.where(inside, dz, np.inf).argmin())], True
+        across = np.where(reach, np.linalg.norm(centres[:, :2] - (x, y), axis=1), np.inf)
+        i = int(across.argmin())
+        return (functions[i], False) if across[i] < CLEAR_LENS_REACH else (None, False)
 
     def indicate(r) -> None:
         r.function = BRAKE_IND
@@ -455,18 +487,16 @@ def _red_lens_indicators(records, from_lens: set, red_indicators: list) -> None:
 
     for n in from_lens:
         r = records[n]
-        if r.function != TAIL or r.lod not in bulbs:
+        if r.function != TAIL:
             continue
-        centres, functions = bulbs[r.lod]
-        # behind: nearest across the view (x, y), within reach along it
-        offset = centres - np.array(r.centre)
-        d = np.where(np.abs(offset[:, 2]) < CLEAR_LENS_REACH, np.linalg.norm(offset[:, :2], axis=1), np.inf)
-        i = int(d.argmin())
-        if d[i] < CLEAR_LENS_REACH and functions[i] in INDICATING:
+        function, outline = behind(r)
+        if function == REVERSE and outline:
+            r.function, r.colour = REVERSE, WHITE
+        elif function in INDICATING:
             indicate(r)
     indicating = {r.side for r in records if not r.front and r.function in INDICATING}
     for n in red_indicators:
-        if records[n].side not in indicating:
+        if records[n].function == TAIL and records[n].side not in indicating:
             indicate(records[n])
 
 
@@ -594,7 +624,7 @@ class LampPlan:
                             clear.append(Tri(sub, k, LENS, side, front, c, area, centre, normal, sub.lod))
                             continue
                         from_lens.add(len(records))
-                    records.append(Tri(sub, k, f, side, front, c, area, centre, normal, sub.lod))
+                    records.append(Tri(sub, k, f, side, front, c, area, centre, normal, sub.lod, tuple(pts)))
         if not any(r.function == HEAD and r.front for r in records):
             # No head-lamp technique (CHE_CorvetteGS_10, DOD_RamSRT10_06,
             # FOR_MustangSVTCobraR_93 and several race cars draw the lamp as a
