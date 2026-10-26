@@ -680,6 +680,7 @@ def build_car(
             glass_links=args.glass_links,
             same_vehicle_host=same_vehicle,
             plates=not getattr(args, "no_plates", False),
+            exhaust=not getattr(args, "no_exhaust", False),
             cockpit_opts=cockpit.CockpitOptions(mdxn_limit=mdxn_max[1]) if use_cockpit else None,
         )
         if args.damage:  # src/dsfforza/convert/damage.py; untested in game
@@ -1146,6 +1147,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="no licence plates (default: the stock DSF plate on the Forza car's plate "
         "recess at each end the host has one, src/dsfforza/convert/plates.py; untested in game)",
+    )
+    parser.add_argument(
+        "--no-exhaust",
+        action="store_true",
+        help="keep the host's exhaust markers (default: moved onto the Forza tailpipes, "
+        "src/dsfforza/convert/exhaust.py)",
     )
     parser.add_argument(
         "--handling",
