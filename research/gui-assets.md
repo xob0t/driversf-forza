@@ -238,6 +238,55 @@ in out/testdrive3 both M5s had plate 160 ("M5", glyph present, 58 x 34) and
 the HUD drew no plate (user screenshot), 0xA0 being the no-break space;
 stock never uses it either (confirmed-runtime, removed from the pool).
 
+### Accented letters on the nameplates (2026-10-26)
+
+User report on out/final4: the Reventón's card title (Locale text font) read
+"REVENTÓN", but the chrome model name on the card's lower left, in the side
+panel and on the HUD read "REVENT N". All three are pictures this repo draws,
+not a game font: the card's from the garage picture (`compose_picture`), the
+side panel's and the HUD's from the car's `vehicles_font` plate glyph
+(`ModelGlyph`). Both come from `text_plate`, a stroke font in
+`gui_assets.py`. It had A to Z, 0 to 9 and `- . / &`, and it skipped any
+other character without a word.
+
+What the stock game does: `vehicles_font` has one glyph per badge or
+nameplate, not per letter, so there is no letter to borrow in this or another
+locale (only English is installed here; `Fonts.fchunk` sits in `media/`, not
+in `Locale/`). Its plates are artwork, and four stock plates have an É drawn
+into the picture: 92 S5 COUPÉ and 94 TT RS COUPÉ (the badge only), 207
+MURCIÉLAGO LP670-4 SV and 209 MURCIÉLAGO LP640 (the accent over the É).
+
+Roster (out/final4, 573 cars, 494 new plates) names with characters the
+stroke font skipped:
+
+| Character | Names | How many |
+| --- | --- | --- |
+| É | 135I COUPÉ, JOHN COOPER WORKS COUPÉ, MURCIÉLAGO, MURCIÉLAGO LP 670-4 SV, TT COUPÉ 3.2 QUATTRO, TT COUPÉ S-LINE | 6 |
+| Ó | REVENTÓN, REVENTÓN ROADSTER | 2 |
+| `#` | the race cars' numbers (#1 PETRONAS TOM'S SC430, #46 DREAM CUBE'S ADVAN Z, ...) | 79 |
+| `'` | CEE'D, SILVIA K'S, SILVIA CLUB K'S, MINE'S R32/R34 SKYLINE GT-R, and three race cars | 8 |
+| `( ) ’` | V12 ZAGATO (VILLA D’ESTE) | 1 |
+
+No maker name drawn as a text badge has one (BUS and KENWORTH; CITROËN has
+a Forza logo).
+
+The fix draws a precomposed letter as its NFD base letter plus strokes for
+the mark (`glyph_strokes`): above (grave, acute, circumflex, tilde,
+macron, breve, dot, diaeresis, ring, double acute, caron) and below (cedilla,
+ogonek, comma, dot). Ø Æ Œ Ł Đ Ð Þ Ħ Ŧ Ŋ have their own strokes, ligatures
+(Ĳ, Ǆ, ...) are drawn as their letters, and typographic quotes and dashes as
+`'`, `"` and `-`. Every letter of Latin-1 and Latin Extended-A draws
+(`tests/test_nameplates.py`). New punctuation: `# ' " ( ) , : ! +`; the narrow
+ones advance 0.63 of a letter. The strokes are almost 2 grid units wide, so a
+mark sits 2.4 to 3.4 units above the letters' top (half a unit of outline
+between them) and a plate whose text has a mark is that much taller (below
+for cedilla and ogonek); a text without one renders byte for byte as before
+(`tests/test_speed.py`). A one-line name the width fits keeps its letter
+size; a two-line plate the height fits (REVENTÓN / ROADSTER, TT COUPÉ /
+S-LINE) comes out about 16 % smaller. `gui_assets build` warns about any
+character still without strokes and lists the names in gui-assets.json
+`_undrawn_characters`.
+
 ## The build
 
 ```sh

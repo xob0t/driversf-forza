@@ -481,7 +481,117 @@ STROKES = {
     ".": [[(1.8, 5.8), (2.2, 5.8)]],
     "/": [[(0, 6), (4, 0)]],
     "&": [[(4, 6), (1, 2), (1, 1), (2, 0), (3, 1), (3, 2), (0, 4), (0, 5), (1, 6), (2, 6), (4, 4)]],
+    "#": [[(1.4, 0), (0.6, 6)], [(3.4, 0), (2.6, 6)], [(0, 2), (4, 2)], [(0, 4), (4, 4)]],
+    "'": [[(1, 0), (1, 1.6)]],
+    '"': [[(1, 0), (1, 1.6)], [(2.6, 0), (2.6, 1.6)]],
+    "(": [[(3, 0), (2, 1), (1.6, 3), (2, 5), (3, 6)]],
+    ")": [[(1, 0), (2, 1), (2.4, 3), (2, 5), (1, 6)]],
+    ",": [[(1.3, 5.6), (0.7, 7)]],
+    ":": [[(1, 1.8), (1, 1.8)], [(1, 5.8), (1, 5.8)]],
+    "!": [[(1, 0), (1, 3.8)], [(1, 5.8), (1, 5.8)]],
+    "+": [[(0.5, 3.2), (3.5, 3.2)], [(2, 1.7), (2, 4.7)]],
+    # letters NFD does not split into a base and a mark
+    "Ø": [[(1, 0), (3, 0), (4, 1), (4, 5), (3, 6), (1, 6), (0, 5), (0, 1), (1, 0)], [(4.4, -0.6), (-0.4, 6.6)]],
+    "Æ": [[(0, 6), (0, 2), (2, 0), (4, 0)], [(2, 0), (2, 6), (4, 6)], [(0, 3.5), (3.4, 3.5)]],
+    "Œ": [[(4, 0), (1, 0), (0, 1), (0, 5), (1, 6), (4, 6)], [(2, 0), (2, 6)], [(2, 3), (3.6, 3)]],
+    "Ł": [[(0.8, 0), (0.8, 6), (4, 6)], [(-0.4, 3.8), (2.2, 2.2)]],
+    "Đ": [[(0.6, 0), (0.6, 6), (3.2, 6), (4, 5), (4, 1), (3.2, 0), (0.6, 0)], [(-0.6, 3), (2, 3)]],
+    "Þ": [[(0, 0), (0, 6)], [(0, 1.4), (3, 1.4), (4, 2.4), (4, 3.4), (3, 4.4), (0, 4.4)]],
+    "Ħ": [[(0, 0), (0, 6)], [(4, 0), (4, 6)], [(0, 3.4), (4, 3.4)], [(-0.6, 1.4), (4.6, 1.4)]],
+    "Ŧ": [[(0, 0), (4, 0)], [(2, 0), (2, 6)], [(0.8, 3), (3.2, 3)]],
+    "Ŋ": [[(0, 6), (0, 0)], [(0, 1), (1, 0), (3, 0), (4, 1), (4, 7), (3, 8), (2, 8)]],
 }
+STROKES["Ð"] = STROKES["Đ"]
+
+# Diacritics: a precomposed letter (É, Ó, Ü, Ñ, Ç, Å, Č, ...) is drawn as its
+# NFD base letter plus these strokes. The letters are bold (a stroke is
+# almost 2 units wide), so marks above sit clear of the letter's top at y 0 and
+# go up to about y -3.4, marks below go down to about y 8.6; _text_plate gives
+# the plate that much more height only when a text has such a mark.
+MARKS_ABOVE = {
+    "\N{COMBINING GRAVE ACCENT}": [[(1.0, -3.4), (2.6, -2.4)]],
+    "\N{COMBINING ACUTE ACCENT}": [[(1.4, -2.4), (3.0, -3.4)]],
+    "\N{COMBINING CIRCUMFLEX ACCENT}": [[(0.6, -2.4), (2, -3.4), (3.4, -2.4)]],
+    "\N{COMBINING TILDE}": [[(0.2, -2.5), (1.2, -3.4), (2.8, -2.5), (3.8, -3.4)]],
+    "\N{COMBINING MACRON}": [[(0.6, -2.9), (3.4, -2.9)]],
+    "\N{COMBINING BREVE}": [[(0.6, -3.4), (1.3, -2.5), (2.7, -2.5), (3.4, -3.4)]],
+    "\N{COMBINING DOT ABOVE}": [[(2, -2.9), (2, -2.9)]],
+    "\N{COMBINING DIAERESIS}": [[(0.8, -2.9), (0.8, -2.9)], [(3.2, -2.9), (3.2, -2.9)]],
+    "\N{COMBINING RING ABOVE}": [[(2, -2.2), (2.8, -3.0), (2, -3.8), (1.2, -3.0), (2, -2.2)]],
+    "\N{COMBINING DOUBLE ACUTE ACCENT}": [[(0.6, -2.4), (1.8, -3.4)], [(2.4, -2.4), (3.6, -3.4)]],
+    "\N{COMBINING CARON}": [[(0.6, -3.4), (2, -2.4), (3.4, -3.4)]],
+}
+MARKS_BELOW = {
+    "\N{COMBINING DOT BELOW}": [[(2, 8.0), (2, 8.0)]],
+    "\N{COMBINING COMMA BELOW}": [[(2.3, 7.6), (1.7, 8.6)]],
+    "\N{COMBINING CEDILLA}": [[(2, 6), (2.4, 7.4), (3.0, 7.8), (2.4, 8.6), (1.2, 8.6)]],
+    "\N{COMBINING OGONEK}": [[(3.6, 6), (2.8, 7.4), (3.4, 8.6), (4.2, 8.6)]],
+}
+# Advance of the narrow punctuation drawn at x 1 (a share of a letter's 5.4 units, a
+# space's is 0.6): 2.4 units between its stroke and the neighbours' stems either side.
+NARROW = {"'": 0.63, ",": 0.63, ":": 0.63, "!": 0.63, '"': 0.93}
+MARK_STACK = 2.2  # a second mark above another (Vietnamese) sits this much higher
+# Characters drawn as another one (typographic quotes and dashes in Forza's names).
+CHAR_FOLD = {
+    "\N{RIGHT SINGLE QUOTATION MARK}": "'",
+    "\N{LEFT SINGLE QUOTATION MARK}": "'",
+    "\N{LEFT DOUBLE QUOTATION MARK}": '"',
+    "\N{RIGHT DOUBLE QUOTATION MARK}": '"',
+    "\N{EN DASH}": "-",
+    "\N{EM DASH}": "-",
+    "\N{ACUTE ACCENT}": "'",
+    "\N{MODIFIER LETTER APOSTROPHE}": "'",  # "ŉ".upper()
+    "\N{LATIN SMALL LETTER KRA}": "K",  # no capital
+}
+# Ligatures drawn as their letters (text_plate's upper() already makes ß "SS").
+TEXT_FOLD = str.maketrans(
+    {
+        "Ĳ": "IJ",
+        "Ŀ": "L",
+        "Ǆ": "DŽ",
+        "ǅ": "DŽ",
+        "Ǉ": "LJ",
+        "ǈ": "LJ",
+        "Ǌ": "NJ",
+        "ǋ": "NJ",
+        "Ǳ": "DZ",
+        "ǲ": "DZ",
+        "ẞ": "SS",
+    }
+)
+
+
+def glyph_strokes(ch: str) -> list | None:
+    """The polylines of one (upper-case) character on the 4 x 6 grid, marks
+    included; None when the stroke font cannot draw it."""
+    ch = CHAR_FOLD.get(ch, ch)
+    if ch in STROKES:
+        return STROKES[ch]
+    if ch == " ":
+        return []
+    import unicodedata
+
+    base, *marks = unicodedata.normalize("NFD", ch)
+    if base not in STROKES or not marks:
+        return None
+    lines = list(STROKES[base])
+    above = below = 0
+    for mark in marks:
+        if mark in MARKS_ABOVE:
+            lift = -MARK_STACK * above
+            lines += [[(x, y + lift) for x, y in line] for line in MARKS_ABOVE[mark]]
+            above += 1
+        elif mark in MARKS_BELOW and not below:
+            lines += MARKS_BELOW[mark]
+            below += 1
+        else:
+            return None
+    return lines
+
+
+def missing_glyphs(text: str) -> str:
+    """The characters of `text` the nameplate stroke font cannot draw (in order, once each)."""
+    return "".join(dict.fromkeys(ch for ch in text.upper().translate(TEXT_FOLD) if glyph_strokes(ch) is None))
 
 
 def _segment_distance(px, py, a, b) -> float:
@@ -556,28 +666,39 @@ def text_plate(text: str, height: int = 40, italic: float = 0.22) -> Image:
     background. Characters without strokes are skipped. Cached (a few seconds
     of pure Python per name; the garage picture and the HUD plate of a car
     share one render): treat the result as read-only."""
-    key = (text.upper(), height, italic)
+    key = (text.upper().translate(TEXT_FOLD), height, italic)
     if key not in _TEXT_PLATES:
         _TEXT_PLATES[key] = _text_plate(*key)
     return _TEXT_PLATES[key]
 
 
 def _text_plate(text: str, height: int, italic: float) -> Image:
+    """`height` is the plate's height for letters without marks (the grid's 6
+    units plus the outline); a text with marks above or below the letters
+    (glyph_strokes) gets that much more room above or below."""
     cell = height / 9.0  # grid unit in pixels
     stroke = cell * 0.95  # half-width of a stroke
     outline = cell * 0.55
     advance = 5.4 * cell
-    widths = [advance if ch != " " else advance * 0.6 for ch in text]
+    widths = [advance * (0.6 if ch == " " else NARROW.get(CHAR_FOLD.get(ch, ch), 1)) for ch in text]
+    glyphs = [glyph_strokes(ch) or [] for ch in text]
+    ys = [y for lines in glyphs for line in lines for _, y in line]
+    above = max(0.0, -min(ys, default=0.0))  # grid units over the letters' top (y 0)
+    below = max(0.0, max(ys, default=6.0) - 6.0)
+    extra_top = math.ceil(above * cell)
+    height += extra_top + math.ceil(below * cell)
     width = int(sum(widths) + 2 * (stroke + outline) + italic * 6 * cell + 2)
-    img = Image(width, height)
-    origin_y = 1.5 * cell
+    origin_y = 1.5 * cell + extra_top
     segs = []
     x = stroke + outline + 1
-    for ch, w in zip(text, widths):
-        for line in STROKES.get(ch, []):
+    for lines, w in zip(glyphs, widths):
+        for line in lines:
             pts = [(x + gx * cell + italic * (6 - gy) * cell, origin_y + gy * cell) for gx, gy in line]
             segs += list(itertools.pairwise(pts))
         x += w
+    if above or below:  # a mark on the last letter (sheared right) may need more width
+        width = max(width, math.ceil(max(p[0] for seg in segs for p in seg) + stroke + outline + 1))
+    img = Image(width, height)
     ss = 3
     reach = stroke + outline + 1
     counts = _plate_coverage(segs, width, height, ss, stroke, outline, reach)
@@ -605,9 +726,10 @@ def nameplate(text: str, max_w: int = 98, max_h: int = 34, min_h: int = 18) -> I
     out lower than min_h is set on two lines (split at the middle space), as
     stock plates such as BEETLE / CONVERTIBLE are."""
     render_h = max(2 * max_h, PLATE_RENDER_H)  # one render size for picture and HUD plates (cache)
-    one = text_plate(text, render_h).fit(max_w, max_h)
+    plate = text_plate(text, render_h)
+    one = plate.fit(max_w, max_h)
     words = text.split()
-    if one.h >= min_h or len(words) < 2:
+    if one.h * render_h / plate.h >= min_h or len(words) < 2:  # the letters' height, without room for accents
         return one
     best = min(range(1, len(words)), key=lambda k: abs(len(" ".join(words[:k])) - len(" ".join(words[k:]))))
     lines = [text_plate(" ".join(words[:best]), render_h), text_plate(" ".join(words[best:]), render_h)]
@@ -1805,6 +1927,16 @@ def build(
 
     planned, glyphs, notes = plan_glyphs(data["cars"], texts, makes, models, free, logos)
     pictures, hud, report = {}, {}, {"_codes": notes}
+    # Names whose nameplate would lose characters (glyph_strokes has no strokes for them).
+    undrawn = {
+        text: missing
+        for t in texts.values()
+        for text in (t["model"], t.get("family") or "", t.get("dsf_make") or "")
+        if (missing := missing_glyphs(text))
+    }
+    if undrawn:
+        report["_undrawn_characters"] = undrawn
+        log(f"warning: the nameplate font has no strokes for {''.join(sorted(set(''.join(undrawn.values()))))!r}")
     if wide_glyphs:
         wide, wide_glyph_images, report["_wide_codes"] = plan_wide_glyphs(data["cars"], texts, makes, models, logos)
         for media, fields in wide.items():
