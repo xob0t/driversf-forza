@@ -618,6 +618,70 @@ pop-up or covered head lamps (MAZ_Miata_94, TOY_Sprinter_85,
 JAG_XJ220_93, CHE_CorvetteStingray_67, race cars), decal lamps (the
 NASCARs), and cars whose own position lamps sit outside the frontal view.
 
+### Lamp lenses drawn opaque (user report on `out/final4`)
+
+Symptom (confirmed-runtime, user's shots on the installed `out/final4`): the
+Lancer Evo VI's (MIT_LancerEvoVIGSR_99, ID 559, host 136) headlamps were flat
+white frosted plates, the Lotus Carlton's (LOT_Carlton_89, 495, host 229)
+white blobs, the Panoz Esperante GTLM's (PAN_51_Esperante_05, 603, host 162)
+solid yellow with no lamp inside, and the WRX STI's (SUB_WRXSTi_04, 668, host
+274) braking tail lamps a mottled, blotchy red.
+
+**What Forza draws (confirmed-static).** The lamp lenses are the
+`detail_glass_clear`, `_red` and `_amber` techniques (`detail_glass_*.fxobj`:
+a glass shader with `Glancing`, `Direct`, Fresnel terms and `DarkValues` /
+`LightValues`) on the Lights atlas, and their texel alpha is the lens's
+opacity: the Evo's covers are a fluted pattern whose alpha follows the flutes
+(about 150 on average, a third of the texels under 128), the Esperante's
+yellow lexan is alpha 163, the Subaru's red lens flat (136, 2, 2) at 216. They
+cover the reflector (`oldhead`, `head_light`, `tail_light`,
+`textured_reflector`). An offline render with the lenses alpha-blended over
+what lies behind them (`out/lens/frender.py`) shows the reflectors and the
+Evo's amber indicator through the covers, as in Forza.
+
+**Cause (confirmed-static).** `forza_materials` classes `detail_glass_*` as
+textured Lights-atlas parts, so the converter drew each lens as opaque Lights
+texels in front of its lamp: the lens texture alone, a flat plate. Survey of
+the roster (`out/lens/survey.py`, LOD 1): 502 of 573 cars have
+`detail_glass_*` lenses; on 484 of them rays straight in from the lens meet a
+lamp, reflector or housing within 0.4 m (1,413 clear, 903 red and 337 amber
+lens subsections), so their lamps were hidden.
+
+The Subaru's blotches had a second cause: the car's red curve
+(`red_lamp_curve`). 60% of its red lamp texels are that flat lens, so the
+score percentiles 30 to 60 all fell on 0.689 to 0.699 and the knots were
+forced only 1e-4 apart; the DXT noise of the flat lens (scores 0.684 to 0.70)
+became alpha 8 to 30 in blotches (`out/lens/curve.py`; atlas alpha view of
+the built car `out/lens/sub4_alpha_ba.png`), which the brake lamp's red lit
+up. 375 cars had such knots under 0.002 apart (most of them only in the
+alpha-0 knots at the bottom, which don't matter).
+
+**Fix (`src/dsfforza/convert/lenses.py`, `Texturing._bake_lenses`).** Stock
+lamps are opaque Lights texels with the lens pattern painted in, so the lens
+keeps its triangles and its texels get what Forza shows through it: before the
+atlas is planned, every texel of a `detail_glass_*` lens (finest planned LOD)
+casts a ray straight in along the lens normal, composites further lens layers
+and stops at the first opaque surface (its Forza texel, or the flat colour of
+paint, trim or chrome; a dark housing if nothing is within 0.4 m), and the
+texel becomes `a x lens + (1 - a) x behind` with a = the lens alpha (capped by
+a `GlassMaxOpacity` in the car's `ShaderSettings.xml`). One ray per 2 x 2
+texels or more (about 3,000 a lens); the lens's own pattern stays per texel.
+The baked alpha keeps the lens texel's lamp score (`lamp_score`), so the lit
+lens glows as before: blending the reflector's glow mask in as well made the
+Subaru's lens blotchy again (alpha p10/50/90 7/27/32). Texels other triangles
+also sample are left alone (11% of the lens texels over the roster). The
+`lights_gls_*` lamp glass is left as it was: its opacity is a material setting
+(`GlassMaxOpacity`) and baked with its alpha the Evo's red tail glass came out
+mostly white; so are the coloured covers `is_lens` moves to the atlas (the
+DMC-12, checked in game). `red_lamp_curve` keeps knots of different alphas at
+least 0.01 apart (`RED_CURVE_MIN_GAP`, about the score noise of a flat DXT
+texel): the Subaru's lens alpha is now 8/9/13 (p10/50/90), standard deviation
+1.9 (was 6.1). Planning a car's atlas takes 2 to 7 s longer (CCXR, 240,000
+lens texels: 7 s). Offline (`img/lenses-offline.jpg`: Forza blend, master,
+this change) the Evo's flutes lie over the reflector with the amber indicator
+inside, the Carlton's and Esperante's lamps show through their covers, the
+Subaru's lens shows its reflector faintly.
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and
@@ -644,6 +708,13 @@ NASCARs), and cars whose own position lamps sit outside the frontal view.
    tails (mean 91) sit above stock's per-vehicle p90 (81).
 6. In a run, cars after the fifth sometimes don't spool ("NOT spooled after
    40 ticks", run host-20261024-003943); keep lamp runs to five IDs.
+7. Lens bake ("Lamp lenses drawn opaque"): the view is straight in along the
+   lens normal, so the lamp inside doesn't shift with the camera (stock lamps
+   are flat textures too). `lights_gls_*` lamp glass and the lamp-cover
+   techniques (`glass`, `lights_glass`) aren't baked: covers stay DSF's clear
+   glass (the WRX STI 05's near-opaque light rear cover, (184, 161, 160) at
+   alpha 236, shows its dark reflector instead), and what Forza's
+   `DarkValues` / `LightValues` do to a lens is not decoded.
 
 ## Paint
 
