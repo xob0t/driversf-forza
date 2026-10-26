@@ -70,22 +70,6 @@ Windows 10/11 ISO), then:
 Screenshots and logs land in `%LOCALAPPDATA%\Temp\dsfforza-wsb\runs\`.
 Options and the other modes (host, sandbox): `research/in-game-tests.md`.
 
-## Layout
-
-| Path | What |
-| --- | --- |
-| `src/dsfforza/` | the Python tools (`uv run dsff --help` lists them): `formats/` file formats, `convert/` Forza to DSF conversion (`forza2dsf.py`), `build/` the pipeline (`port_car.py`, `port_batch.py`), `game/` the game's data, `harness/` test analysis |
-| `tools/install.ps1` | installer and uninstaller |
-| `tools/asi/` | `dsfforza.asi` plugin |
-| `tools/game/lua/` | registration Lua and in-game test probes |
-| `tools/wsb/` | in-game test harness |
-| `tests/` | offline tests |
-| `research/` | format notes, findings and test results |
-| `out/` | build output and caches (ignored) |
-
-Start with `research/dngvehicles.md` (archive format), `research/hosts.md`
-(how cars are built on stock hosts) and `research/in-game-tests.md`.
-
 ## Acknowledgements
 
 - [DriverNGToolkit](https://github.com/ReHamster/DriverNGToolkit)
