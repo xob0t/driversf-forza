@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import unittest
 
-from dsfforza.convert import damage
+from dsfforza.convert import damage, forza2dsf
+from dsfforza.formats import carbin
 
 
 def _plan(host_points: dict, records: dict) -> damage.DamagePlan:
@@ -107,6 +108,58 @@ class PanelBinding(unittest.TestCase):
         self.assertAlmostEqual(left[0], 0.01)
         self.assertAlmostEqual(right[0], -0.01)
         self.assertAlmostEqual(right[2], left[2])
+
+
+def _quad_section(name: str, quads: list) -> carbin.Section:
+    """A section with one subsection per (technique, four corners) quad (LOD 1)."""
+    verts, subs = [], []
+    for technique, corners in quads:
+        base = len(verts)
+        verts += [carbin.Vertex(p, (0.5, 0.5), (0.0, 0.0), (0.0, 1.0, 0.0)) for p in corners]
+        idx = [base, base + 1, base + 2, base, base + 2, base + 3]
+        subs.append(carbin.SubSection(technique, 1, 4, (0.0, 1.0, 0.0, 1.0), idx))
+    return carbin.Section(name, (0, 0, 0), (0, 0, 0), (1, 1, 1), verts, [], subs)
+
+
+class ExposedVisible(unittest.TestCase):
+    """split_exposed's zones say only that a trim lies under a cover or inward of a
+    bumper skin. FER_355Challenge_95's black tail panel lies under the rear edge of
+    its engine cover and drew the bay pictures between the tail lamps; a zone trim
+    seen from outside the intact car keeps its trim."""
+
+    def setUp(self):
+        # A closed box under a bonnet (Forza space, +y up): side walls, a low rear wall,
+        # a black panel closing the rest of the rear just inside the bonnet's edge, and
+        # a frame inside the box.
+        self.body = [
+            _quad_section("hooda", [("body", [(-1, 1, -1), (1, 1, -1), (1, 1, 1), (-1, 1, 1)])]),
+            _quad_section(
+                "body",
+                [
+                    ("body", [(-1, 0, -1), (-1, 1, -1), (-1, 1, 1), (-1, 0, 1)]),
+                    ("body", [(1, 0, -1), (1, 0, 1), (1, 1, 1), (1, 1, -1)]),
+                    ("body", [(-1, 0, -1), (1, 0, -1), (1, 1, -1), (-1, 1, -1)]),
+                    ("body", [(-1, 0, 1), (-1, 0.5, 1), (1, 0.5, 1), (1, 0, 1)]),
+                    ("black", [(-1, 0.5, 0.98), (-1, 0.99, 0.98), (1, 0.99, 0.98), (1, 0.5, 0.98)]),
+                    ("frame", [(-0.5, 0.3, -0.5), (-0.5, 0.3, 0.5), (0.5, 0.3, 0.5), (0.5, 0.3, -0.5)]),
+                ],
+            ),
+        ]
+        self.place = forza2dsf.Placement(dy=0.0, dz=0.0)
+
+    @staticmethod
+    def tags(body):
+        return {sub.material: getattr(sub, "exposed", None) for s in body if s.name == "body" for sub in s.subsections}
+
+    def test_seen_trim_keeps_its_trim(self):
+        before = self.tags(damage.split_exposed(self.body, self.place, visible=False)[0])
+        self.assertTrue(before["black"].startswith("bay"))
+        self.assertTrue(before["frame"].startswith("bay"))
+        body, report = damage.split_exposed(self.body, self.place)
+        after = self.tags(body)
+        self.assertIsNone(after["black"])  # the tail panel: seen from behind
+        self.assertEqual(after["frame"], before["frame"])  # inside the box: still the bay's
+        self.assertEqual(report["seen bay lod 1"], 2)
 
 
 if __name__ == "__main__":
