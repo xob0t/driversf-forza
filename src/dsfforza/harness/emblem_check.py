@@ -20,7 +20,7 @@ even pace leave nearly tied with one tap off; check such an offset by hand.
     uv run dsff emblem_check %LOCALAPPDATA%/Temp/dsfforza-wsb/runs/<stamp> [--hud out/x/gui/hud.lua]
 
 `--hud` also checks each logged decision against the hud.lua the run used
-(Forza logo exactly for its `GarageEmblem = 1` cars, except in a group of 20 cars). Exit code 1 on a mismatch.
+(Forza logo exactly for its `GarageEmblem = 1` cars). Exit code 1 on a mismatch.
 """
 
 from __future__ import annotations
@@ -177,8 +177,9 @@ def check(run: Path, hud: Path | None = None) -> int:
     if hud:
         text = hud.read_text(encoding="utf-8")
         forza = {int(m) for m in re.findall(r"\[(\d+)\] = \{[^\n]*GarageEmblem = 1", text)}
-        # A group of exactly 20 cars keeps the SF disc: its card 20 needs the spare sprite.
-        wrong = sorted(k for k, (e, cars) in log["decisions"].items() if (k in forza and cars != 20) != (e == "F"))
+        # Groups of 20 cars or more are shown 19 cards at a time, so card 20's spare sprite is
+        # always free for the logo (with [garage] max_cars=20, no window, a group of 20 keeps SF).
+        wrong = sorted(k for k, (e, _cars) in log["decisions"].items() if (k in forza) != (e == "F"))
         print(f"{len(log['decisions'])} models seen; decisions that differ from {hud.name}: {wrong or 'none'}")
         bad += bool(wrong)
     return 1 if bad else 0

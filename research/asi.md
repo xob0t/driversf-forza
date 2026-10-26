@@ -303,11 +303,13 @@ installed).** All or nothing, after the list and group patches:
 | 0xE18B20 (slot 0x130) | `0x006C55C0` | `group_copy`: the copy as stock; for the car list (0x711443) the count from the window's first car on, for the picture update (0x7112FB) at most the cards the car list fills |
 | 0x7113A0 | `sub esp,0x208` | `jmp carlist_hook`: picks the window, runs the car list, then sets the "x/y OWNED" texts and `[screen+0x28]` from the whole group |
 | 0x7118C3 | `mov [esp+0x30],eax; cmp eax,[esp+0x28]` | `call loop_stub`: the loop also ends after 19 cards; records which car each card shows |
-| 0xE18B14 (slot 0x124) | `0x006C6940` | `fill_makers` (as with `max_groups`): `ManufacturerNumList` says 19 for a maker of more than 20 listed cars |
+| 0xE18B14 (slot 0x124) | `0x006C6940` | `fill_makers` (as with `max_groups`): `ManufacturerNumList` says 19 for a maker of 20 or more listed cars |
 
-A maker of up to 20 listed cars is shown as stock (20 cards, window at car
-0). A longer one gets 19 cards, so card 20's `Header_Sprite_20` stays free for
-the `[hud]` card emblem (`garage_card_limit()` in `shared.h` tells mod_hud).
+A maker of up to 19 listed cars is shown as stock (window at car 0). One of
+20 or more gets 19 cards, so card 20's `Header_Sprite_20` stays free for the
+`[hud]` card emblem (`garage_card_limit()` in `shared.h` tells mod_hud). Until
+issue #66 the window started past 20, so a maker of exactly 20 used card 20
+for its last picture and every card kept the SF disc.
 The window moves when the player does, never behind the script's back: the
 menu's Right and Left handlers (keys 2 and 3, players 0 and 1) are wrapped
 when such a maker is shown. A Right press with the highlight `window_ahead`
@@ -494,13 +496,28 @@ lists them.
 - Pictures of the full-roster build (made before #41 reworked the garage
   pictures) don't show in either run: a lock icon on every card, stock cars
   included; not caused by this change.
+- A maker of exactly 20 (issue #66; out/final-gui2 with the GUI step rebuilt
+  for #50, `menu_debug=1`, `emblem_debug=1`). Before (plugin at 976abf6, run
+  `vm2-20261026-142149`): ASTON MARTIN on 20 cards, all 1460 card decisions
+  SF, its 15 ported cars included. After (window from 20 listed cars, run
+  `vm1-20261026-144501`): 19 cards; Right to car 20 and past the end, Left
+  back past the start, the window moves at card 11 and card 3 as for a
+  longer group, "20/20 OWNED" throughout, the right arrow goes at car 20.
+  `dsff emblem_check`: 71 shots, 0 discs differ, no decision differs from
+  hud.lua. dsf_enhanced's Down (AUDI) and Up in the card row bring ASTON
+  MARTIN back at car 0. Car 20 (One-77, model 65) selected, garage left: the
+  player drives model 65, as with the stock 20 cards before.
+  `img/garage-20-group-emblem-before-after.jpg`. CHEVROLET (46) and GMC (8),
+  run `vm2-20261026-144633`: 68 shots, 0 differ.
 
 ### Open
 
-- A maker group of exactly 20 cars with `GarageEmblem` cars (card 20, see
-  gui-assets.md "Garage card emblem") keeps the SF disc: it is shown as stock
-  (20 cards). Longer groups show the emblem (above). Issue #66 (ASTON MARTIN
-  in the full roster: 15 ported cars with SF).
+- With `[garage] max_cars=20` (no window) a maker group of exactly 20 cars
+  still uses card 20, so its `GarageEmblem` cars keep the SF disc.
+- A group of 20 cars or more with fewer than 20 listed (cars not yet listed
+  in a save) is shown on up to 20 cards, and mod_hud's gate counts the
+  group's cars, so its cards would all keep SF although card 20 stays empty.
+  From the code only; every run above lists all cars.
 - Card N's disc lies over card N+1's picture and reads as that card's once
   Forza and SF discs mix: issue #67.
 - The window after a drive: where the game restores `itemBrowserIndex` on

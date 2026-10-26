@@ -1294,7 +1294,7 @@ def add_glyphs(fonts: Path, out: Path, glyphs: dict[int, Image], textures: dict[
 # 20125a7f761d9d2c, 512 x 256 BGRA). For a car with vehicleStats
 # GarageEmblem = 1, dsfforza.asi [hud] (card_emblem) points that object at the
 # card picture resource Header_Sprite_20 (free while the maker group has fewer
-# than 20 cars), copies the SF resource's UVs into it and binds texture
+# than 20 cars; dsfforza.asi [garage] shows a larger one 19 cards at a time), copies the SF resource's UVs into it and binds texture
 # FORZA_LOGO_UID, which rides in the vehicles_font package of Fonts.fchunk so
 # it is always loaded. The sprite sizes itself from the bound texture, so the
 # emblem texture is laid out like the atlas: 512 x 256, the Forza logo in the
