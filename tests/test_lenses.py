@@ -60,9 +60,11 @@ def test_lens_over_lamp():
     lamp = _quad("headlightL", "textured_reflector", 1.9, 0.5, 1.0)
     atlases, report = _bake([lens, lamp], [lens])
     a = LENS[3] / 255
-    want = tuple(round(a * l + (1 - a) * b) for l, b in zip(LENS, LAMP))
+    rgb = [round(a * l + (1 - a) * b) for l, b in zip(LENS[:3], LAMP[:3])]
     got = atlases.texel(SIZE // 4, SIZE // 2)
-    assert all(abs(g - w) <= 1 for g, w in zip(got, want)), (got, want)
+    assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
+    # The glow stays the lens's: the same lamp score as the lens texel.
+    assert abs(dm.lamp_score(*got) - dm.lamp_score(*LENS)) < 0.01, (got, LENS)
     assert report["glassLHL/detail_glass_red"]["behind"] == 1.0
     assert atlases.texel(SIZE * 3 // 4, SIZE // 2) == LAMP  # the lamp's own texels stay
 

@@ -1659,7 +1659,8 @@ def prepare(
         log(
             "lenses baked over their lamps: "
             + ", ".join(
-                f"{k} {v['texels']} texels ({v['behind']:.0%} over a lamp)" for k, v in sorted(t.lens_report.items())
+                f"{k} {v['texels']} texels ({v['behind']:.0%} with something behind)"
+                for k, v in sorted(t.lens_report.items())
             )
         )
     if wheels is not None and fm.WHEEL not in t.families:

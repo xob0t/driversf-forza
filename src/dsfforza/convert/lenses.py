@@ -17,13 +17,14 @@ along the lens normal composites the lens over every lens layer behind it and th
 first opaque surface it meets (lamp, reflector, housing; their texels, or their
 flat colour), with Forza's blend:
 
-    out = a * lens + (1 - a) * behind        (RGB and the glow alpha alike)
+    out = a * lens + (1 - a) * behind
 
 a = the lens texel's alpha / 255 (capped by a GlassMaxOpacity in the car's
-ShaderSettings.xml, if the technique has one). Behind lamps keep their glow mask, so a lit lamp
-glows where its bulb is, seen through the lens. Lens texels that non-lens
-triangles also sample are left alone, and so are lenses with nothing behind them
-within RAY_DEPTH (they keep their own texel).
+ShaderSettings.xml, if the technique has one). That changes what the lens looks
+like, not how it glows: the baked texel's alpha keeps the lens texel's lamp score
+(dsf_materials.lamp_score), so the lit lens glows as before. Lens texels that
+non-lens triangles also sample are left alone, and so are rays that meet nothing
+within RAY_DEPTH (they keep the lens's own texel).
 
     bake(sections, lods, atlases, lens_ids, car_dir) -> report
 """
@@ -338,6 +339,13 @@ def bake(sections, lods, atlases: fm.AtlasCache, lens_ids: set, car_dir: Path) -
             behind[c0:c1], met[c0:c1] = _behind(surf, origins[c0:c1], dirs[c0:c1], surf.near(lo, hi))
         hit_any = met[inverse]
         baked = lens_a[:, None] * lens_rgba + (1 - lens_a[:, None]) * behind[inverse]
+        # The glow stays the lens's: the alpha is set so the converter's lamp score
+        # (dsf_materials.lamp_score: alpha x (0.6 + 0.4 x brightest channel)) is the lens
+        # texel's own. Blending in the reflector's glow mask too gave the Subaru WRX STI's
+        # flat red tail lens (85% opaque) blotches of 7 to 32 when lit: the car's red
+        # curve stretches small differences over stock's whole range.
+        weight = 0.6 + 0.4 * lens_rgba[:, :3].max(1) / 255
+        baked[:, 3] = lens_rgba[:, 3] * weight / (0.6 + 0.4 * baked[:, :3].max(1) / 255)
         entry["texels"] += int(len(ix))
         entry["behind"] += int(hit_any.sum())
         # Rays that met nothing keep the lens texel: a lens with nothing behind it in
