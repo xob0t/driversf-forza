@@ -330,14 +330,49 @@ function Wait-VmSession([int]$Seconds = 600) {
     }
 }
 
-function Start-VmHeadless([string]$Priority = 'BelowNormal') {
-    if (-not (Test-VmRunning)) {
-        $changed = Set-VmxValues $VmSettings
-        if ($changed) { "  ${VmName}: set $(($changed | ForEach-Object { "$_ = $($VmSettings[$_])" }) -join ', ')" }
-        Invoke-Vmrun @('start', $VmVmx, 'nogui') -Timeout 600 | Out-Null
+# On the Windows Hypervisor Platform, VMware syncs the vCPUs' TSCs while the guest boots. When
+# that takes over 1 ms three times in a row (the host is busy, e.g. the other VM runs a game),
+# vmware.log says this and the VM traps every RDTSC for the rest of the session: the guest runs
+# at about half speed and its disk at a third, so the game's spooler falls behind (cockpits drawn
+# without their interior, mission cars not spooled in time; research/in-game-tests.md, "Slow VM
+# sessions"). Only a new power-on clears it.
+$VmTscTrapLine = 'Falling back to always trapping RDTSCs'
+
+function Test-VmTscTrapped {
+    # Whether the selected VM's current session (vmware.log is rewritten at each power-on) traps RDTSCs.
+    $log = Join-Path $VmDir 'vmware.log'
+    if (-not (Test-Path -LiteralPath $log)) { return $false }
+    return [bool](Select-String -LiteralPath $log -SimpleMatch -Pattern $VmTscTrapLine -Quiet)
+}
+
+function Test-VmUnused {
+    # No series holds the VM's run mutexes, or this thread does (run-series.ps1 calls vm.ps1 Start
+    # in its own process while it holds them; mutexes are re-entrant for their owner).
+    $held = Enter-VmMutexes $VmInfo.RunMutexes
+    if (-not $held) { return $false }
+    Exit-VmMutexes $held
+    return $true
+}
+
+function Start-VmHeadless([string]$Priority = 'BelowNormal', [int]$Boots = 3) {
+    # Powers the VM on unless it runs, waits for the desktop session, and powers it off and on
+    # again (up to $Boots power-ons) while its session traps RDTSCs ($VmTscTrapLine) and no other
+    # series uses it.
+    for ($boot = 1; ; $boot++) {
+        if (-not (Test-VmRunning)) {
+            $changed = Set-VmxValues $VmSettings
+            if ($changed) { "  ${VmName}: set $(($changed | ForEach-Object { "$_ = $($VmSettings[$_])" }) -join ', ')" }
+            Invoke-Vmrun @('start', $VmVmx, 'nogui') -Timeout 600 | Out-Null
+        }
+        Set-VmPriority $Priority
+        Wait-VmSession
+        if (-not (Test-VmTscTrapped)) { return }
+        $why = "${VmName}: this session traps RDTSCs (vmware.log: TSC sync failed at power-on), so it runs at about half speed"
+        if ($boot -ge $Boots) { "  WARNING: $why; still so after $Boots power-ons, left running"; return }
+        if (-not (Test-VmUnused)) { "  WARNING: $why; a series is using it, left running"; return }
+        "  ${why}: powering it off and on again"
+        Stop-Vm | Out-Null
     }
-    Set-VmPriority $Priority
-    Wait-VmSession
 }
 
 function Stop-Vm {

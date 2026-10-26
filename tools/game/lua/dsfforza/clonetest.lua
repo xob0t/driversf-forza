@@ -702,7 +702,10 @@ local function step()
 			log(string.format("id %d: spooled after %d ticks", id, state.ticks))
 			state.phase, state.ticks = "wait_level", 0
 		elseif state.ticks >= SPOOL_TIMEOUT then
-			log(string.format("id %d: NOT spooled after %d ticks; skipping", id, state.ticks))
+			-- Spooler still busy: it is behind (a slow VM session, research/in-game-tests.md "Slow VM
+			-- sessions"); idle: the request itself didn't take.
+			log(string.format("id %d: NOT spooled after %d ticks; skipping (spooler busy %s)", id, state.ticks,
+				try(TrafficSpooler.Busy)))
 			nextId()
 		end
 	elseif state.phase == "wait_level" then
