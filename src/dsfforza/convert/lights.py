@@ -293,17 +293,21 @@ CLEAR_LENS_REACH = 0.35  # m: a clear lens lights with the nearest lamp this clo
 # the rear sit at -15 to +10, `detail_glass_amber` at the front mostly at 10 to
 # 35 (out/brakes/lensfleet.py).
 LENS_MIN_SATURATION = 0.35
+# Texels this transparent are glass, whatever their colour: VAU_Agila_11's
+# clear lens over its reverse lamps samples (123, 0, 0) at alpha 0, and Lights
+# alpha is the glow mask, so they never glow red anyway.
+LENS_MIN_ALPHA = 64
 LENS_RED_HUE = 10.0
 
 
 def texel_class(texel) -> str | None:
-    """ "red", "amber" or "white" (clear, grey or not red at all) for a mean
-    texel (r, g, b, a); None without one."""
+    """ "red", "amber" or "white" (clear, grey, transparent or not red at
+    all) for a mean texel (r, g, b, a); None without one."""
     if texel is None:
         return None
     r, g, b = texel[:3]
     hi, lo = max(r, g, b), min(r, g, b)
-    if hi < 8 or (hi - lo) / hi < LENS_MIN_SATURATION or r < hi:
+    if hi < 8 or (hi - lo) / hi < LENS_MIN_SATURATION or r < hi or texel[3] < LENS_MIN_ALPHA:
         return "white"
     return "red" if 60 * (g - b) / (hi - lo) < LENS_RED_HUE else "amber"
 
@@ -646,7 +650,7 @@ class LampPlan:
         _red_lens_indicators(records, from_lens, red_indicators, red_by_texel)
         _high_brake(records)
         plan._cluster(records)
-        plan._place_clear(clear, records)
+        plan._place_clear(clear, records, red_by_texel)
         return plan
 
     def _cluster(self, records) -> None:
@@ -679,33 +683,33 @@ class LampPlan:
                     lamp.measure(r.lod, r.area, r.centre, r.normal)
                 self.tri_lamp[(id(r.sub), r.k)] = lamp.key
 
-    def _place_clear(self, clear, records) -> None:
-        """Clear lenses light with the lamp nearest behind them: the lamp of
-        the nearest lamp triangle of the same LOD and end (within
-        CLEAR_LENS_REACH), else stay unlit. By lamp centre a lens over a tail
-        lamp went to the reverse lamp once the tail lamp's red lens joined it
-        and moved its centre (JAG_XFR_10)."""
-        import numpy as np
-
-        points: dict = {}  # (lod, front) -> (centres, lamp keys)
-        for r in records:
+    def _place_clear(self, clear, records, skip=frozenset()) -> None:
+        """Clear lenses light with the nearest lamp at the same end (within
+        CLEAR_LENS_REACH), else stay unlit. Lamp centres leave out the lens
+        triangles that are red by their texels (`skip`, record indices): with
+        them a tail lamp's centre moved onto its red lens and clear lenses
+        that lit with it went to the reverse lamp (JAG_XFR_10)."""
+        centres = {}  # lamp key -> [area, weighted centre sum] on the lamp's finest LOD
+        for n, r in enumerate(records):
             key = self.tri_lamp.get((id(r.sub), r.k))
-            if key is not None and self.lamps[key].area:
-                points.setdefault((r.lod, r.front), ([], []))
-                points[(r.lod, r.front)][0].append(r.centre)
-                points[(r.lod, r.front)][1].append(key)
-        arrays = {k: (np.array(c, dtype=float), keys) for k, (c, keys) in points.items()}
+            if n in skip or key is None or r.lod != min(self.lamps[key].per_lod):
+                continue
+            acc = centres.setdefault(key, [0.0, [0.0, 0.0, 0.0]])
+            acc[0] += r.area
+            for i in range(3):
+                acc[1][i] += r.centre[i] * r.area
         for r in clear:
-            near = arrays.get((r.lod, r.front))
-            if near is None:  # no lamp at this LOD: any LOD at the same end
-                cands = [v for (lod, front), v in arrays.items() if front == r.front]
-                if not cands:
+            best, best_d = None, CLEAR_LENS_REACH
+            for lamp in self.lamps.values():
+                if lamp.front != r.front or not lamp.area:
                     continue
-                near = (np.concatenate([c for c, _ in cands]), [k for _, keys in cands for k in keys])
-            d = np.linalg.norm(near[0] - np.array(r.centre), axis=1)
-            i = int(d.argmin())
-            if d[i] < CLEAR_LENS_REACH:
-                self.tri_lamp[(id(r.sub), r.k)] = near[1][i]
+                acc = centres.get(lamp.key)
+                position = tuple(c / acc[0] for c in acc[1]) if acc and acc[0] else lamp.position
+                d = math.dist(position, r.centre)
+                if d < best_d:
+                    best, best_d = lamp, d
+            if best is not None:
+                self.tri_lamp[(id(r.sub), r.k)] = best.key
 
     # -- host light entries --
     def assign(self, upvh: bytes) -> LampPlan:

@@ -174,12 +174,19 @@ def test_red_lens_over_indicator_blinks():
     assert flags == {"L": 0x19, "R": 0x1A}, flags
 
 
-def test_clear_lens_takes_the_lamp_behind_it():
-    # JAG_XFR_10: a clear lens right over the end of a long tail lamp, whose centre is
-    # farther away than the reverse lamp's, lights with the tail lamp
-    tail = _strip("tailL", "tail_light", 0.9, -2.0, 6)  # x 0.6 to 1.2, centre 0.9
-    car = [tail, _quad("revL", "reverse_light", 0.35, -2.0), _quad("glassL", "detail_glass_clear", 0.62, -2.05)]
-    assert _functions(car, {})["glassL"] == lights.TAIL
+def test_red_lens_keeps_clear_lenses_on_their_lamp():
+    # JAG_XFR_10: the tail lamp's red-texel lens joins the tail lamp; a clear lens over the
+    # tail lamp's end still lights with it, not with the reverse lamp now nearer its centre
+    tail = _quad("tailL", "tail_light", 0.75, -2.0)
+    rev = _quad("revL", "reverse_light", 0.35, -2.0)
+    red = _strip("glassRed", "detail_glass_clear", 1.2, -2.05, 6)  # x 0.9 to 1.5: pulls the tail centre out
+    clear = _quad("glassL", "detail_glass_clear", 0.62, -2.05)
+    got = _functions([tail, rev, red, clear], {"glassRed": RED_TEXEL})
+    assert got["glassRed"] == lights.TAIL and got["glassL"] == lights.TAIL, got
+
+
+def test_transparent_red_is_clear():
+    assert lights.texel_class((123, 0, 0, 0)) == "white"  # VAU_Agila_11's clear lens
 
 
 if __name__ == "__main__":
