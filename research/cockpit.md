@@ -1501,6 +1501,33 @@ driver's grips (`out/verify`, before: master): `img/hands-wheel-fit-scale-offlin
 (the Falcon's chase-view wheel had been aligned onto the column fit, a metre
 ahead).
 
+In game (VM, confirmed-runtime; `out/verify/before` from master and
+`out/verify/hands` from this branch, the same 10 cars at IDs 1 to 10; with
+`-Override dsf_enhanced.ini` with `SkipLegalScreen=0`, see "Crashes while the
+world loads" in `in-game-tests.md`): before `vm-20261025-092305`; after
+`vm-20261026-122057` (147, CL65, 279, Falcon) and `vm-20261026-123628` (147,
+TT-R, ARX-01b, bus).
+- The FG Falcon had no cockpit: the eye is placed from the wheel fit, so the
+  camera sat a metre ahead, over the bonnet. Now it shows its right-hand-drive
+  cockpit with the hands on the rim.
+- On the TT-R and the ARX-01b the 2 to 3 cm the survey measures barely shows
+  from the head camera: both before and after, the hands hold the sides of the
+  rim and the yoke's grips. `img/hands-cockpit-ingame.jpg`.
+
+**The CL65 (user report: chase-view hands off the wheel).** Not one of the 20:
+its cockpit grips miss by 0.01 cm, and the chase view's wheel (full entry,
+skinned to the steering record) sits on the cockpit fit with the stock grips on
+its rim (`out/handsurvey/drawn_wheel.py`, `grip_view.py`). Its host 279 has the
+stock seat relation. In game, the fixed side views of the CL65 against stock 279
+itself in the same session (`vm-20261026-122057`): the driver sits and holds the
+wheel the same way in both, the right hand on the top right of the rim and the
+left lower on it; from the passenger side the far hand shows high, at the
+windscreen header, on both cars (the camera looks down from 1.9 m at a hand a
+metre further away). `img/hands-cl65-vs-host279.jpg`. At rest the CL65's driver
+holds the wheel as the stock host's does. What the user saw is not reproduced;
+the open question is whether it was while steering (the hand-over-hand pose at
+full lock) or another view.
+
 ## Risks and open questions
 
 1. Whether the cockpit view draws only the interior entry (hypothesis). If
