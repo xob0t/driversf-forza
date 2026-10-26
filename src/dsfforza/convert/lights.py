@@ -414,10 +414,12 @@ def _red_lens_indicators(records, from_lens: set, red_indicators: list) -> None:
     """Red rear lens triangles that also indicate: a red lamp that brakes and
     indicates (BRAKE_IND, types 0x19/0x1A, as on stock US-style cars).
 
-    - Over an indicator: the lamp triangle nearest behind the lens triangle
-      (same LOD, not a lens) indicates. Stock lamps are opaque, so the bulb
-      behind a lens never shows; the lens has to blink itself (FOR_GT_05's
-      red lenses over its drlinl/drlinr lamps).
+    - Over an indicator: the lamp triangle right behind the lens triangle
+      (same LOD, not a lens; nearest across the view, x and y, within
+      CLEAR_LENS_REACH along it) indicates. Stock lamps are opaque, so the
+      bulb behind a lens never shows; the lens has to blink itself
+      (FOR_GT_05's red lenses over its drlinl/drlinr lamps, MIN_Coopers_11's
+      red glass over its indicator_left/right bulbs).
     - A red "amber" lens on a side without any other rear indicator
       (MIT_GTO_97: (76, 0, 0) texels, no amber at the rear)."""
     import numpy as np
@@ -440,7 +442,9 @@ def _red_lens_indicators(records, from_lens: set, red_indicators: list) -> None:
         if r.function != TAIL or r.lod not in bulbs:
             continue
         centres, functions = bulbs[r.lod]
-        d = np.linalg.norm(centres - np.array(r.centre), axis=1)
+        # behind: nearest across the view (x, y), within reach along it
+        offset = centres - np.array(r.centre)
+        d = np.where(np.abs(offset[:, 2]) < CLEAR_LENS_REACH, np.linalg.norm(offset[:, :2], axis=1), np.inf)
         i = int(d.argmin())
         if d[i] < CLEAR_LENS_REACH and functions[i] in INDICATING:
             indicate(r)
