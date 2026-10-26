@@ -681,6 +681,7 @@ def build_car(
             same_vehicle_host=same_vehicle,
             plates=not getattr(args, "no_plates", False),
             exhaust=not getattr(args, "no_exhaust", False),
+            split_rear_wheel=not getattr(args, "no_rear_wheel_part", False),
             cockpit_opts=cockpit.CockpitOptions(mdxn_limit=mdxn_max[1]) if use_cockpit else None,
         )
         if args.damage:  # src/dsfforza/convert/damage.py; untested in game
@@ -1178,6 +1179,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="leave the hubs on Forza's static pose (default: lower them by the wheel offset the "
         "engine draws at rest, forza2dsf.settle_wheels, research/wheels.md 'Wheel clearance')",
+    )
+    parser.add_argument(
+        "--no-rear-wheel-part",
+        action="store_true",
+        help="on a host with one wheel part for both axles, draw the rear wheels at the front "
+        "tyre's size (default: a rear copy of the part when the tyres differ, "
+        "forza2dsf.split_rear_wheel, research/wheels.md 'Rear wheel parts')",
     )
     return parser
 

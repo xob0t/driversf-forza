@@ -1,6 +1,6 @@
 # Wheels: the Forza wheel model in DSF
 
-Updated: 2026-10-25
+Updated: 2026-10-26
 
 User report from driving the testdrive build (`out/testdrive`, 40 cars): the
 wheels look broken on every car, the Veyron worst. Offline investigation
@@ -65,8 +65,10 @@ follow `dngvehicles.md`.
 | Veyron, Huayra, Gallardo rear wheels too small and narrow, rear track wrong | one front-sized model on all four hubs, front track for both axles | `axle_tyres` (gamedb `Data_Car` tyre sizes): on hosts with separate front/rear wheel parts the rear copy is scaled (Veyron 1.38 wide, 1.07 radial); rear hubs go to `RearTrackOuter` (`CarDims.rear_track_outer`) minus the rear tyre width, and up by the radius difference so all four tyres stand on one ground line (`patch_hubs` rear_half_track / rear_hub_y; `HostWheels.axles` maps each part to its axle) |
 | Wheels off the arches by up to 0.43 m (Cuda, Mustang, Veyron) | `BottomCenterWheelbasePos.z` sign (fixed by the damage work in `car_dims`, see `forza-sources.md`) | not part of this fix |
 
-On hosts with one wheel part for all four (most), the rear wheels stay
-front-sized; the rear hubs still go to the rear track.
+On hosts with one wheel part for all four (most), the rear wheels stayed
+front-sized; the rear hubs still went to the rear track. Since 2026-10-26 such
+a host gets a rear copy of its wheel part when the tyres differ ("Rear wheel
+parts" below).
 
 ## Test archive
 
@@ -403,8 +405,8 @@ The A4 itself: the front tyres 49 mm into the body at rest against Forza's
 - `forza2dsf.axle_fits` / `convert`: each axle's wheel scaled to its
   Data_Car tyre (radius and width, clamped 0.77..1.3 and 0.6..1.6), the front
   tyres standing on Forza's ground, the rear hubs up or down by the radius
-  difference; a host with one wheel part for both axles draws all four at the
-  front size. The wheel model is turned about its tyre's centre
+  difference; a host with one wheel part for both axles drew all four at the
+  front size (fixed since: "Rear wheel parts"). The wheel model is turned about its tyre's centre
   (`tyre_centre`, `wheel_point`'s fit carries it).
 - `forza2dsf.settle_wheels`, called by `port_car` after the handling (it
   needs the final VO3D; `--no-settle` leaves it out): each axle's hubs (and
@@ -460,11 +462,10 @@ three-quarter) and `Bonnet`; the A4's own before shot is from
 
 ### Open (wheel clearance)
 
-- Hosts with one wheel part for both axles draw all four wheels at the front
-  tyre's size: 63 cars with a bigger Forza rear tyre get a rear arch gap
-  larger than Forza's (JAG_33_XKR_10: 50 mm against -8). Host selection could
-  prefer split-wheel hosts for such cars, or the converter give the host a
-  second wheel part.
+- Fixed ("Rear wheel parts" below): hosts with one wheel part for both axles
+  drew all four wheels at the front tyre's size, so 63 cars with a bigger
+  Forza rear tyre got a rear arch gap larger than Forza's (JAG_33_XKR_10: 50
+  mm against -8).
 - Full lock: 41 cars still put a front tyre more than 10 mm deeper into the
   body than Forza's tyre does at Forza's own lock; 27 of them steer further in
   DSF (p298 40 or 45 deg from the steering donor against Forza's 30 or 36:
@@ -474,6 +475,102 @@ three-quarter) and `Bonnet`; the A4's own before shot is from
 - Full bump (p188): most cars put a tyre into the body at the top of DSF's
   visual travel, as Forza's would at its MaxCompressHeight; not changed.
 - The rest-pose sink against Atlas's ground beyond the model (above).
+
+## Rear wheel parts (2026-10-26, issue #53)
+
+107 of the 140 four-wheeled stock vehicles draw all four wheels from one MODL
+part, so a port on such a host drew its rear wheels at the front tyre's size.
+After the wheel-clearance fix that left 63 cars (of `out/final3`: 67) with a
+rear arch gap more than 10 mm larger than Forza's, up to 60 mm
+(FER_330P4_67; JAG_33_XKR_10 50 mm against Forza's -8).
+
+### How split hosts do it (confirmed-static, `out/rw/survey.py`)
+
+The 33 hosts with separate front and rear wheel parts differ from the others
+only in data the hierarchy already references by UID:
+
+- the rear wheel records' UID (record +0x00) names a second full-entry MODL
+  part (214: front 32, rear 33, both copies of the same wheel layout);
+- in all 140 vehicles the front and rear wheel records use different LOD
+  links (on 207 and 214 each wheel has its own); on split hosts the rear
+  links' exterior half names a second exterior part;
+- nothing else changes: hinges, bodies, wheel indices (+0x42), roles 27 to
+  30, the panel index (+0x2A, 0 on every wheel) and the PDL. The six
+  attachments name the rear exterior wheel part on split hosts and the shared
+  one on the others (exporter junk, `upvh.md`); no other record uses a wheel
+  part. All MODLs have the LOD table right after the part records.
+
+### Fix (`forza2dsf.split_rear_wheel`, `convert`)
+
+When the host shares its wheel part and Data_Car's rear tyre would be drawn
+more than 5 mm off in radius (`REAR_PART_RADIUS`, 10 mm of arch gap) or 10 mm
+in width (`REAR_PART_WIDTH`), `convert` first copies the shared part, box and
+LOD lists, to the end of the full entry's MODL and the exterior wheel part to
+the end of the exterior's (`add_modl_part`), each under a new stock-shaped
+part UID (`Builder` UIDs from the conversion seed, its own prefix); then
+points the rear wheel records at the full copy and their LOD links at the
+exterior copy. `host_wheels` then sees a split host, and the existing rear
+path scales the rear copy to the rear tyre, moves the rear hubs to the rear
+track and stands them on Forza's ground. Run on every stock four-wheeled
+vehicle in memory (`out/rw/check_stock.py`): the 107 shared hosts all come out
+split, the 33 split ones are left alone, the other parts' LOD lists are
+unchanged, the full MODL grows by 0x120 bytes at most. `port_car
+--no-rear-wheel-part` keeps the old behaviour. `car_render` now draws each
+exterior wheel part only on the hubs whose records name it (before, a split
+host's garage picture drew both wheel parts on all four hubs).
+
+Cost (134 cars rebuilt, against `out/final3`): the full entry's MDXN grows by
+36 KiB (median, at most 302), the exterior's by 94 KiB (at most 134); no car
+changed LODs and all 134 lint ok. The largest full MDXN among them is
+JAG_33_XKR_10's 0x198800, 58% of `--mdxn-limit`.
+
+### Survey (`dsff wheel_clearance`)
+
+Before: all 573 cars of `out/final3` as built (`out/rw/survey-before.tsv`).
+After: the 134 cars `split_rear_wheel` changes, rebuilt in `out/rw/after`
+(`port_batch build --list out/rw/after.txt`), in place of theirs
+(`out/rw/compare.py`). Cars more than 10 mm off Forza's tyre in the same pose:
+
+| | Before | After |
+| --- | --- | --- |
+| rest gap off Forza's either way | 68 (1 tighter, 67 looser; worst FER_330P4_67 60, AUD_R8LMS_09 58, JAG_33_XKR_10 58, SHE_CobraDaytona_65 56, REN_5Turbo_80 48) | 3 (KEN_T440_12 15 tighter, CHE_ImpalaSS_64 14 and FOR_Thunderbird_57 12 looser) |
+| at rest deeper in the body | 1 (KEN_T440_12) | 1 |
+| at full lock deeper | 29 | 29 |
+
+The rebuilt cars' rear wheels: |rest gap - Forza's| median 10 -> 0 mm, max
+60 -> 8. The three left have the same tyre front and rear; their offsets are
+at the front axle (Impala, Thunderbird: the nearest arch point is to the side,
+so the settle moves the gap less than the hub) or KEN_T440_12's 149 mm rest
+offset clamped by its travel, not the wheel size.
+
+| Car (host) | Rear gap at rest, before / after (Forza) | Rear tyre radius / width |
+| --- | --- | --- |
+| JAG_33_XKR_10 (207) | 50 / -8 (-8) | 0.319 / 0.282 -> 0.361 / 0.311 |
+| SHE_CobraDaytona_65 (248) | 56 / 0 (0) | 0.313 / 0.192 -> 0.350 / 0.248 |
+| AUD_R8LMS_09 (139) | 61 / 3 (3) | 0.323 / 0.264 -> 0.353 / 0.303 |
+| FER_458Spider_12 (125) | 57 / 34 (34) | 0.336 / 0.228 -> 0.357 / 0.286 |
+| REN_5Turbo_80 (184) | 74 / 26 (26) | 0.270 / 0.183 -> 0.299 / 0.212 |
+| BUG_Veyron_09 (279) | 76 / 50 (50) | 0.333 / 0.249 -> 0.358 / 0.343 |
+
+### In game (headless VM, dsfforza.asi `A2DBAE5D...`)
+
+The six cars above built both ways (`out/rw/vm-before` with
+`--no-rear-wheel-part`, `out/rw/vm-after`), IDs 1 to 6, probe views
+`wheels,fq`: `vm2-20261026-163835` before, `vm2-20261026-162523` after
+(`img/rear-wheel-part-ingame.jpg`). The rear tyres now fill their arches as
+in Forza; the fronts are unchanged. The paint differs between the runs (the
+game's palette pick).
+
+- Drive: `vm1-20261026-164334` (IDs 1, 3, 6, throttle 8 s): each car drove
+  off (top 101.5 mph), no crash. `vm1-20261026-164914` (IDs 2, 1, throttle
+  held through the fixed views): the Cobra rolls through the wheels camera
+  with its rear wheel turning (`img/rear-wheel-part-drive-damage.jpg`).
+- Damage: `vm2-20261026-164521` (IDs 1, 6, `-Damage -DamagePanels`): full
+  visual damage, panels opened and removed; both wheel parts stay on their
+  hubs.
+- LODs: the rear copy has the front part's masks (4, 8, 16 in the full
+  entry, 2 in the exterior), each with its own submodels
+  (`out/rw/lods.py`).
 
 ## Open
 
