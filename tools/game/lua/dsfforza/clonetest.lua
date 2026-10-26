@@ -33,7 +33,7 @@ local VIEWS = {}              -- config.views (run-test -Views): extra views bet
                               -- "front": the driver's seat seen through the side windows or the windscreen;
                               -- "rear": the tailgate; "exhaust": the tailpipes, low; "wheels": the left side at hub height; "fq": the
                               -- front left wheel from the front three-quarter; "lock": that wheel
-                              -- from ahead, for steering in place with run-test -DriveKey Left; "nose": the headlamps)
+                              -- from ahead, for steering in place with run-test -DriveKey Left; "nose": the headlamps; "grille": grille and bonnet)
 local PALETTE = nil           -- config.palette (run-test -Palette): paint palette entry of the spawned cars
                               -- (Spawn's shaderParams[0], as the game's grid spawns set it); nil: the game's pick
 local DYNO = nil              -- config.dyno (run-test -Dyno): the dyno.lua module, acceleration and braking runs
@@ -436,6 +436,8 @@ local FIXED_VIEWS = {
 	rear = { { 0.8, 1.5, -5.0 }, { 0.0, 0.85, -1.8 } },
 	-- The nose from ahead and a little to the left, close: headlamp lenses and what lies behind them.
 	nose = { { 1.3, 1.2, 4.4 }, { 0.1, 0.65, 1.9 } },
+	-- The front three-quarter at bonnet height, farther back: grille, bonnet scoop, front trims.
+	grille = { { 2.0, 1.3, 5.6 }, { 0.0, 0.6, 1.7 } },
 	-- The tailpipes from behind, low and close: exhaust smoke at idle (src/dsfforza/convert/exhaust.py).
 	exhaust = { { 0.7, 0.75, -4.4 }, { 0.0, 0.3, -2.0 } },
 	wheels = { { 3.6, 0.6, 0.0 }, { 0.6, 0.35, 0.0 } },

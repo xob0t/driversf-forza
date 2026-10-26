@@ -1890,16 +1890,20 @@ def convert(
                 "alpha-tested decals cut to their mask: "
                 + ", ".join(f"{k} {v['cut']} -> {v['made']}" for k, v in sorted(cut.items()))
             )
-        # Trim triangles on light artwork (the Alfa GTA's quadrifoglio badges) to the
-        # atlas, bare metal (the Veyron's scoops) to the shared chrome: the shared trim
-        # draws them black (src/dsfforza/convert/trim_art.py).
+        # Trim triangles on light artwork (the Alfa GTA's quadrifoglio badges) and dark
+        # detail (the Cougar Eliminator's grille bars) to the atlas, flat mid-grey ones to
+        # a colour cell, bare metal (the Veyron's scoops) to the shared chrome: the shared
+        # trim draws them all as one dark texel (src/dsfforza/convert/trim_art.py).
         body, art = trim_art.split_trim_art(car.body, fm.AtlasCache(car.folder), lods=lods)
         if art:
             car = dataclasses.replace(car, body=body)
             report["trim_art"] = {k: {**v, "area": round(v["area"], 5)} for k, v in art.items()}
             log(
-                "trim artwork to the atlas (to chrome): "
-                + ", ".join(f"{k} {v['triangles']} ({v['metal']}, {v['area']:.3f} m2)" for k, v in sorted(art.items()))
+                "trim artwork off the shared trim (metal/detail/grey): "
+                + ", ".join(
+                    f"{k} {v['triangles']} ({v['metal']}/{v['detail']}/{v['grey']}, {v['area']:.3f} m2)"
+                    for k, v in sorted(art.items())
+                )
             )
         wheels = None
         if not opts.no_wheel:  # the wheel LODs add_geometry will draw (wheel_lod)

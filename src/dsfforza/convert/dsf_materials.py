@@ -247,7 +247,7 @@ PAINT_THROUGH_ALPHA, PAINT_THROUGH_MIN_RGB = 16, 200
 
 
 def _paint_through(family: str, r: int, g: int, b: int, a: int) -> bool:
-    return family == fm.NODAMAGE and a < PAINT_THROUGH_ALPHA and min(r, g, b) > PAINT_THROUGH_MIN_RGB
+    return fm.base_family(family) == fm.NODAMAGE and a < PAINT_THROUGH_ALPHA and min(r, g, b) > PAINT_THROUGH_MIN_RGB
 
 
 # Rear lamp lenses (Texturing.is_lens): a lamp-cover glass subsection behind
@@ -274,7 +274,12 @@ DROP = "drop"  # triangle_uvs tag: leave this triangle out (alpha-tested away in
 # takes one flat colour. 60 tiny `misc` triangles of the Jeep GC SRT8's headlamps
 # (a 365 x 15 texel strip) took it from 0.479 to 0.324, the DB9's 4 bumper_frame
 # triangles from 0.75 to 0.63 (research/forza-materials.md, "Trim artwork").
+# Dark trim detail (trim_art.DETAIL_TECHNIQUE: the Cougar Eliminator's grille bars) goes
+# first: past the share it takes one flat colour per subsection and the artwork is tried
+# again on its own.
 ART_TECHNIQUES = ("dsf_trim_art", "dsf_trim_art_lights")  # trim_art.ART_TECHNIQUE
+DETAIL_TECHNIQUES = ("dsf_trim_detail",)  # trim_art.DETAIL_TECHNIQUE
+GREY_TECHNIQUES = ("dsf_trim_grey",)  # trim_art.GREY_TECHNIQUE: one flat colour cell
 ART_MIN_SCALE_SHARE = 0.9
 
 
@@ -845,11 +850,21 @@ class Texturing:
                 fm.fill_transparent(self.atlases.get(family), rgb, below=PAINT_THROUGH_ALPHA)
         if self.bake_lenses and self.classifier is None and fm.LIGHTS in self.families:
             self._bake_lenses(work, lods)
+        # Trims whose Forza technique scales its texels (trim_art, fm.with_scale) sample
+        # the scaled atlas, a family of its own.
+        for section, section_lods in work:
+            for sub in section.subsections:
+                if sub.lod in section_lods:
+                    family = self._resolve(section, sub).family
+                    if family and family not in self.families and fm.base_family(family) in self.families:
+                        self.families = tuple(self.families) + (family,)
+                        self.weights.setdefault(family, self.weights.get(fm.base_family(family), 1.0))
         tris: dict[str, list] = {f: [] for f in self.families}
         keys: dict[str, list] = {f: [] for f in self.families}
         tested: dict[str, list] = {f: [] for f in self.families}
         swatches: list[fm.SubMaterial] = []
-        art_subs = {}  # id(sub) -> (section, sub, SubMaterial): trim artwork (trim_art)
+        art_subs = {}  # id(sub) -> (section, sub, SubMaterial): trim artwork and detail (trim_art)
+        detail_ids = set()  # id(sub) of the detail ones
         for section, section_lods in work:
             for sub in section.subsections:
                 if sub.lod not in section_lods:
@@ -859,8 +874,11 @@ class Texturing:
                 self.resolved[(id(section), id(sub))] = m
                 alpha_tested = m.technique in fm.ALPHA_TESTED
                 if self._uses_atlas(m) and m.kind == "textured":
-                    if m.technique in ART_TECHNIQUES:
+                    technique = fm.technique_scale(m.technique)[0]
+                    if technique in ART_TECHNIQUES or technique in DETAIL_TECHNIQUES:
                         art_subs[id(sub)] = (section, sub, m)
+                    if technique in DETAIL_TECHNIQUES:
+                        detail_ids.add(id(sub))
                     pool = section.vertices_for(sub)
                     for k, tri in enumerate(sub.triangles()):
                         uvs = [m.uv(pool[i].uv0) for i in tri]
@@ -880,26 +898,37 @@ class Texturing:
         art = {key for f in self.families for key in keys[f] if key[0] in art_subs}
         self._layout(tris, keys, tested, swatches, extra_solids)
         if art:
-            # Trim artwork (trim_art) may not cost the rest of the car much resolution:
-            # past ART_MIN_SCALE_SHARE each of its subsections takes one flat colour.
-            with_art = self.pack_scale
+            # Trim artwork and detail (trim_art) may not cost the rest of the car much
+            # resolution: past ART_MIN_SCALE_SHARE the detail subsections take one flat
+            # colour each, then the artwork's too.
+            with_all = self.pack_scale
             flat = {sid: self._art_swatch(*art_subs[sid]) for sid in {k[0] for k in art}}
-            kept = {f: [n for n, key in enumerate(keys[f]) if key not in art] for f in self.families}
-            self._layout(
-                {f: [tris[f][n] for n in kept[f]] for f in self.families},
-                {f: [keys[f][n] for n in kept[f]] for f in self.families},
-                {f: [tested[f][n] for n in kept[f]] for f in self.families},
-                swatches + [(art_subs[sid][1], m) for sid, m in flat.items()],
-                extra_solids,
-            )
-            if with_art >= ART_MIN_SCALE_SHARE * self.pack_scale:
-                self._layout(tris, keys, tested, swatches, extra_solids)
+
+            def layout(flat_ids):
+                kept = {f: [n for n, key in enumerate(keys[f]) if key[0] not in flat_ids] for f in self.families}
+                self._layout(
+                    {f: [tris[f][n] for n in kept[f]] for f in self.families},
+                    {f: [keys[f][n] for n in kept[f]] for f in self.families},
+                    {f: [tested[f][n] for n in kept[f]] for f in self.families},
+                    swatches + [(art_subs[sid][1], flat[sid]) for sid in flat_ids],
+                    extra_solids,
+                )
+                return self.pack_scale
+
+            base = layout(set(flat))
+            details = set(flat) & detail_ids
+            if with_all >= ART_MIN_SCALE_SHARE * base:
+                chosen = set()
+            elif details and layout(details) >= ART_MIN_SCALE_SHARE * base:
+                chosen = details
             else:
-                for sid, m in flat.items():
-                    section, sub = art_subs[sid][:2]
-                    self.resolved[(id(section), id(sub))] = m
-                    self.atlas_subs.discard(sid)
-                self.art_flat = set(flat)
+                chosen = set(flat)
+            layout(chosen)
+            for sid in chosen:
+                section, sub = art_subs[sid][:2]
+                self.resolved[(id(section), id(sub))] = flat[sid]
+                self.atlas_subs.discard(sid)
+            self.art_flat = chosen
         return self
 
     def _wheel_paint_scale(self, sections, lods) -> dict[str, float]:
@@ -1039,6 +1068,13 @@ class Texturing:
         if id(section) in self.wheel_ids:
             return fm.resolve(section, sub, fm.classify_wheel)
         m = fm.resolve(section, sub, self.classifier or fm.classify)
+        technique, scale = fm.technique_scale(m.technique)
+        if scale != 1.0 and m.family:
+            import dataclasses
+
+            m = dataclasses.replace(m, family=fm.scaled_family(m.family, scale))
+        if technique in GREY_TECHNIQUES and self.atlases is not None and m.kind == "textured":
+            return self._art_swatch(section, sub, m)
         if self.classifier is None and self.is_lens(section, sub, m):
             import dataclasses
 
@@ -1139,12 +1175,18 @@ class Texturing:
         if id(sub) in self.cutout:
             return fm.SKIP
         if self._uses_atlas(m) and (
-            (m.kind == "textured" and id(sub) in self.atlas_subs) or (m.kind == "swatch" and m.colour is not None)
+            (m.kind == "textured" and id(sub) in self.atlas_subs) or (m.kind == "swatch" and self._has_cell(m))
         ):
             return LIGHTS_MAT if m.family == fm.LIGHTS else CHASSIS
         if m.role == fm.TEXTURED:
             return fm.TRIM  # tiling/procedural lamp parts: untextured
         return m.role
+
+    def _has_cell(self, m: fm.SubMaterial) -> bool:
+        """Whether a swatch has its colour cell: a subsection at a LOD plan() didn't lay
+        out (the cockpit's shell of exterior sections) has none; a trim_art grey cell
+        there gets a colour from _resolve all the same, and draws as shared trim."""
+        return m.colour is not None and ("swatch",) + self._convert_texel(m.family, *m.colour) in self.solids
 
     def solid_uv(self, key) -> tuple[float, float]:
         x, y = self.solids[key]
@@ -1264,10 +1306,10 @@ class Texturing:
 
     def _convert_texel(self, family: str, r: int, g: int, b: int, a: int) -> tuple[int, int, int, int]:
         """Forza texel -> DSF conventions (alpha = specular / glow mask)."""
-        floor = self.lift.get(family)
+        floor = self.lift.get(fm.base_family(family))
         if floor:
             r, g, b = (int(floor + c * (255 - floor) / 255) for c in (r, g, b))
-        tone = self.tone.get(family)
+        tone = self.tone.get(fm.base_family(family))
         if tone and not _paint_through(family, r, g, b, a):
             k, sat = tone
             grey = (r + g + b) / 3

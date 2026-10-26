@@ -9,11 +9,18 @@ each front wing, one on the tail) are `misc` triangles on opaque white and green
 texels of `nodamage.xds`; drawn as trim they were solid black triangles (user
 report on out/final-gui2, research/forza-materials.md, "Trim artwork").
 
-`split_trim_art` moves the trim triangles that sample light opaque artwork and
-can be seen from outside the car into a subsection of their own with technique
-ART_TECHNIQUE[family], which `forza_materials` classifies as textured:
-`dsf_materials.Texturing` then draws them through the atlas (host Chassis or
-Lights material) like badges. Run it before the atlas is planned.
+`split_trim_art` moves the trim triangles that can be seen from outside the car
+and that the shared trim misdraws into subsections of their own
+(classify_texels): light artwork to ART_TECHNIQUE[family] and dark detail (the
+Cougar Eliminator's grille bars, flat black on out/final4) to DETAIL_TECHNIQUE,
+both of which `forza_materials` classifies as textured, so `dsf_materials.Texturing`
+draws them through the atlas (host Chassis or Lights material) like badges; flat
+mid-grey to GREY_TECHNIQUE (one colour cell); bare metal to METAL_TECHNIQUE (the
+shared chrome). Some of Forza's shaders scale the texel (PristinePaintScale, or
+PaintScale in the ones without paint: fm.texel_scale, research/forza-materials.md
+"Forza's trim shaders and flat black grilles"), so the classes see the scaled colours and the textured
+subsections are named with the scale (fm.with_scale). Run it before the atlas is
+planned.
 
 - Artwork: at least ART_MIN_OPAQUE of the texel centres inside the triangle's UV
   triangle (its corners and centroid if it holds none) have alpha >= 128, and the
@@ -53,6 +60,26 @@ METAL_WORDS = ("metal", "alum", "steel")
 METAL_MAX_CHROMA = 24  # brightest minus darkest channel of the mean colour
 METAL_MAX_SPREAD = 12  # standard deviation of the texels' luminance
 METAL_MAX_LEVEL = 240  # white is paint
+# Dark trims that aren't one flat near-black (research/forza-materials.md, "Flat black
+# grilles"). Forza draws every trim texel times the technique's texel scale
+# (fm.texel_scale) times its lighting; the shared trim is one dark texel (about 24) for
+# all of them, which keeps the outline of a grille and loses its bars. On the texels
+# after the scale:
+# - detail: around the triangle's texels the atlas has contrast. Per texel, the
+#   luminance's maximum and minimum over a window of DETAIL_WINDOW texels
+#   (local_contrast); the median texel's maximum is DETAIL_MIN_LEVEL or more and lies
+#   DETAIL_MIN_SPREAD or more above its minimum (the Cougar Eliminator's hidden-headlamp
+#   doors: bars of 40 to 90 three texels apart on black, drawn by triangles too small
+#   to hold a bar each): through the atlas like artwork (DETAIL_TECHNIQUE);
+# - grey: one flat colour whose brightest channel is GREY_MIN_LEVEL or more (the Volt's
+#   and the DMC-12's mid-grey bumpers): a flat colour cell (GREY_TECHNIQUE);
+# - darker and flat stays on the shared trim, which looks the same.
+DETAIL_TECHNIQUE = "dsf_trim_detail"
+GREY_TECHNIQUE = "dsf_trim_grey"
+DETAIL_WINDOW = 5  # texels (odd)
+DETAIL_MIN_LEVEL = 40
+DETAIL_MIN_SPREAD = 20
+GREY_MIN_LEVEL = 48
 KEEP_TRIM = frozenset({"undercarriage", "engine", "cage", "bottom", "bottom_2"})
 # black, black_glass, black_glass_breakable; mirror glass (a render target in Forza).
 KEEP_TRIM_PREFIX = ("black", "mirror")
@@ -130,6 +157,73 @@ def is_metal(technique: str, texels) -> bool:
         and float(lum.std()) <= METAL_MAX_SPREAD
         and float(mean.max()) < METAL_MAX_LEVEL
     )
+
+
+ART, METAL, DETAIL, GREY = "art", "metal", "detail", "grey"
+
+
+def local_contrast(image):
+    """(height, width, 2) int: per texel the largest and the smallest luminance of the
+    opaque texels in the DETAIL_WINDOW square around it (transparent texels count as
+    the texel itself)."""
+    import numpy as np
+
+    lum = np.rint(image[..., :3].astype(np.float64) @ (0.299, 0.587, 0.114)).astype(np.int64)
+    opaque = image[..., 3] >= ALPHA_OPAQUE
+    r = DETAIL_WINDOW // 2
+    hi_src = np.where(opaque, lum, -1)
+    lo_src = np.where(opaque, lum, 256)
+    hi, lo = hi_src.copy(), lo_src.copy()
+    padded_hi = np.pad(hi_src, r, mode="edge")
+    padded_lo = np.pad(lo_src, r, mode="edge")
+    h, w = lum.shape
+    for dy in range(DETAIL_WINDOW):
+        for dx in range(DETAIL_WINDOW):
+            hi = np.maximum(hi, padded_hi[dy : dy + h, dx : dx + w])
+            lo = np.minimum(lo, padded_lo[dy : dy + h, dx : dx + w])
+    hi = np.where(hi < 0, lum, hi)
+    lo = np.where(lo > 255, lum, lo)
+    return np.stack((hi, lo), axis=-1)
+
+
+def with_contrast(image):
+    """The atlas (h, w, 4) with local_contrast's two channels appended: triangle_texels
+    of it gives the rows classify_texels reads."""
+    import numpy as np
+
+    return np.concatenate((image.astype(np.int64), local_contrast(image)), axis=-1)
+
+
+def classify_texels(technique: str, texels, scale: float = 1.0) -> str | None:
+    """What a trim triangle on these texels (triangle_texels) becomes: ART (light
+    artwork, the atlas), METAL (bare metal, the shared chrome), DETAIL (dark with
+    detail, the atlas), GREY (one flat mid-grey, a colour cell) or None (stays on the
+    shared trim). `scale` is the technique's texel scale (fm.texel_scale): Forza draws
+    the texels that much darker (linear light), so the classes after the metal test see
+    the scaled colours. DETAIL needs rows with local_contrast's columns (with_contrast).
+    Bare metal is judged on the texels as painted (the Veyron's 177-grey `frame`
+    parts at PristinePaintScale 0.3 with a specular: a polished metal, not a dark
+    grey)."""
+    import numpy as np
+
+    opaque = texels[texels[:, 3] >= ALPHA_OPAQUE]
+    if len(opaque) == 0 or len(opaque) < ART_MIN_OPAQUE * len(texels):
+        return None
+    if is_artwork(texels) and is_metal(technique, texels):
+        return METAL
+    rgb = fm.scale_texels(opaque[:, :3], scale)
+    level = float(rgb.mean(0).max())
+    if level >= ART_MIN_LEVEL:
+        return ART
+    if texels.shape[1] >= 6:  # with_contrast rows
+        rows = texels[texels[:, 3] >= ALPHA_OPAQUE]
+        high = fm.scale_texels(rows[:, 4], scale)
+        low = fm.scale_texels(rows[:, 5], scale)
+        if np.median(high) >= DETAIL_MIN_LEVEL and np.median(high - low) >= DETAIL_MIN_SPREAD:
+            return DETAIL
+    if level >= GREY_MIN_LEVEL:
+        return GREY
+    return None
 
 
 def keeps_trim(technique: str) -> bool:
@@ -241,18 +335,28 @@ def lod_triangles(sections, lod):
     return np.concatenate(out) if out else np.zeros((0, 3, 3))
 
 
-def split_trim_art(sections, atlases: fm.AtlasCache, lods=None):
-    """Sections with every trim triangle that samples light opaque artwork
-    (is_artwork) and is seen from outside (seen_from_outside) moved into a
-    subsection of technique ART_TECHNIQUE[family] (METAL_TECHNIQUE for bare metal,
-    is_metal) at the same LOD with the same UV transform; the other triangles keep
-    theirs. Only textured trims of the main atlases at `lods` (None: all).
-    Unchanged sections are returned as they are. Report: per section/technique,
-    the triangles moved, how many of them as metal, and their area (m2)."""
+def split_trim_art(sections, atlases: fm.AtlasCache, lods=None, settings: dict | None = None):
+    """Sections with every trim triangle that classify_texels sends off the shared
+    trim and that is seen from outside (seen_from_outside) moved into a subsection
+    of its own at the same LOD with the same UV transform: ART_TECHNIQUE[family]
+    (light artwork), METAL_TECHNIQUE (bare metal), DETAIL_TECHNIQUE (dark detail)
+    or GREY_TECHNIQUE (flat mid-grey), the textured ones named with the
+    technique's texel scale (fm.with_scale; `settings`: the car's ShaderSettings,
+    read from the atlases' folder when None). The other triangles keep theirs.
+    Only textured trims of the main atlases at `lods` (None: all); on the Lights
+    atlas only artwork, unscaled. Unchanged sections are returned as they are.
+    Report: per section/technique, the triangles moved, how many of them as
+    metal, detail and grey, and their area (m2)."""
     import numpy as np
 
+    if settings is None:
+        car_dir = getattr(atlases, "car_dir", None)
+        try:
+            settings = fm.shader_settings(car_dir) if car_dir is not None else {}
+        except OSError:
+            settings = {}
     images = {}
-    # (section index, subsection index) -> (family, [triangle index], [triangle], {metal triangle index})
+    # (section index, subsection index) -> (family, scale, [triangle index], [triangle], {triangle index: class})
     found: dict = {}
     for si, section in enumerate(sections):
         for ui, sub in enumerate(section.subsections):
@@ -269,32 +373,34 @@ def split_trim_art(sections, atlases: fm.AtlasCache, lods=None):
                 except (FileNotFoundError, OSError):
                     images[m.family] = None
                 else:
-                    images[m.family] = np.frombuffer(bytes(rgba), dtype=np.uint8).reshape(height, width, 4)
+                    image = np.frombuffer(bytes(rgba), dtype=np.uint8).reshape(height, width, 4)
+                    images[m.family] = with_contrast(image) if m.family == fm.NODAMAGE else image
             image = images[m.family]
             if image is None:
                 continue
+            scale = fm.texel_scale(settings, sub.material) if m.family == fm.NODAMAGE else 1.0
             height, width = image.shape[:2]
             pool = section.vertices_for(sub)
             for k, tri in enumerate(sub.triangles()):
                 pts = [((u := m.uv(pool[i].uv0))[0] * width, u[1] * height) for i in tri]
-                texels = triangle_texels(image, pts)
-                if is_artwork(texels):
-                    entry = found.setdefault((si, ui), (m.family, [], [], set()))
-                    entry[1].append(k)
-                    entry[2].append([pool[i].position for i in tri])
-                    if is_metal(sub.material, texels):
-                        entry[3].add(k)
+                kind = classify_texels(sub.material, triangle_texels(image, pts), scale)
+                if kind is None or (m.family != fm.NODAMAGE and kind in (DETAIL, GREY)):
+                    continue
+                entry = found.setdefault((si, ui), (m.family, scale, [], [], {}))
+                entry[2].append(k)
+                entry[3].append([pool[i].position for i in tri])
+                entry[4][k] = kind
     if not found:
         return list(sections), {}
     moved: dict = {}  # (si, ui) -> set of triangle indices
     for lod in sorted({sections[si].subsections[ui].lod for si, ui in found}):
         keys = [key for key in found if sections[key[0]].subsections[key[1]].lod == lod]
-        candidates = np.array([t for key in keys for t in found[key][2]], dtype=np.float64).reshape(-1, 3, 3)
+        candidates = np.array([t for key in keys for t in found[key][3]], dtype=np.float64).reshape(-1, 3, 3)
         seen = seen_from_outside(lod_triangles(sections, lod), candidates)
         n = 0
         for key in keys:
-            count = len(found[key][1])
-            picked = {k for k, s in zip(found[key][1], seen[n : n + count]) if s}
+            count = len(found[key][2])
+            picked = {k for k, s in zip(found[key][2], seen[n : n + count]) if s}
             n += count
             if picked:
                 moved[key] = picked
@@ -309,25 +415,34 @@ def split_trim_art(sections, atlases: fm.AtlasCache, lods=None):
             if not picked:
                 subs.append(sub)
                 continue
-            keep, art, metal, area = [], [], [], 0.0
-            family, _, _, metallic = found[(si, ui)]
+            family, scale, _, _, kinds = found[(si, ui)]
+            keep, parts, area = [], {ART: [], METAL: [], DETAIL: [], GREY: []}, 0.0
             pool = section.vertices_for(sub)
             for k, tri in enumerate(sub.triangles()):
                 if k not in picked:
                     keep += tri
                     continue
-                (metal if k in metallic else art).extend(tri)
+                parts[kinds[k]].extend(tri)
                 p = np.array([pool[i].position for i in tri])
                 area += 0.5 * float(np.linalg.norm(np.cross(p[1] - p[0], p[2] - p[0])))
             if keep:
                 subs.append(dataclasses.replace(sub, index_type=4, indices=keep))
-            if art:
-                subs.append(carbin.SubSection(ART_TECHNIQUE[family], sub.lod, 4, sub.uv_transform, art))
-            if metal:
-                subs.append(carbin.SubSection(METAL_TECHNIQUE, sub.lod, 4, sub.uv_transform, metal))
-            stats = report.setdefault(f"{section.name}/{sub.material}", {"triangles": 0, "metal": 0, "area": 0.0})
-            stats["triangles"] += (len(art) + len(metal)) // 3
-            stats["metal"] += len(metal) // 3
+            names = {
+                ART: fm.with_scale(ART_TECHNIQUE[family], scale),
+                METAL: METAL_TECHNIQUE,
+                DETAIL: fm.with_scale(DETAIL_TECHNIQUE, scale),
+                GREY: fm.with_scale(GREY_TECHNIQUE, scale),
+            }
+            for kind, indices in parts.items():
+                if indices:
+                    subs.append(carbin.SubSection(names[kind], sub.lod, 4, sub.uv_transform, indices))
+            stats = report.setdefault(
+                f"{section.name}/{sub.material}", {"triangles": 0, "metal": 0, "detail": 0, "grey": 0, "area": 0.0}
+            )
+            stats["triangles"] += sum(len(v) for v in parts.values()) // 3
+            stats["metal"] += len(parts[METAL]) // 3
+            stats["detail"] += len(parts[DETAIL]) // 3
+            stats["grey"] += len(parts[GREY]) // 3
             stats["area"] += area
         out.append(dataclasses.replace(section, subsections=subs))
     return out, report
