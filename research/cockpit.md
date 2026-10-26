@@ -1535,6 +1535,95 @@ cockpit view, in both builds. All eight cars of the after runs (373, 294, 595,
 record (and on 225 the record after it moving down one) didn't upset the
 engine.
 
+## Virtual dials on display faces and virtual displays (2026-10-26, issue #63)
+
+User report on the installed full roster (`out/final4`): the Panoz Esperante
+GTLM #51 (FM4 `PAN_51_Esperante_05`, ID 603, host 162) shows no gauges in the
+cockpit view. It is one of the 111 cars of #63, in its first group: the only
+display is a 17.5 x 7.1 cm `digital_gauge` behind the wheel whose second UV
+transform maps onto a picture (a grey LCD with a bar-tachometer outline), so
+PR #11 drew it textured, and `virtual_gauges` only looked at blank displays.
+Forza's cockpit has no needle; its shader draws the rpm bar and digits on
+that LCD at run time.
+
+**Survey** (`out/pz/survey.py`, offline over `out/final4`: per car without both
+needles, the digital patches of its Forza cockpit by section, size and kind;
+`out/pz/faces_sheet.png` draws every face head-on). Of the 573 cars, 114 lack
+a speedometer or tachometer: the 111 of #63 and the 3 that keep the host's
+cockpit. By cause, as in #63: a display face 35, the only display on the
+steering wheel 28, small or hidden blank displays 18, no such gauge 15,
+placeholder cockpit 15. The faces are mostly plain LCD backgrounds: dark teal
+(A4 DTM), olive (Viper Competition Coupe, Saleen S7), grey-green (599XX, R390,
+Impreza), some with a printed bar outline (Panoz, FG Falcons, Vipers) or scale
+(MC12, McLaren F1 GTR); a few are real artwork (the S2000's bar tachometer,
+the LFA's round dial); the 207 Super 2000's lands on a decal.
+
+**Fix** (`cockpit.py`):
+
+1. *Faces.* When no blank display can hold the dials, `virtual_gauges` takes the
+   largest display face that passes the same tests (25 cm2, facing the eye
+   within 60 degrees, half in sight). `flatten_face` turns that face back into
+   a blank display drawn in its median texel colour (`face_colour`,
+   `sub.display_rgba`), so the static outline, scale or "0 MPH" doesn't show
+   through the dial; on a face lighter than luminance 100 the marks and
+   numerals are dark (`dsf_dial_mark_dark`). Digital patches standing in front
+   of the face (the LFA's round dial, 4.7 mm) lift the dial with them
+   (`_face_front`).
+2. *Virtual displays.* When neither a blank display nor a face can hold them
+   and the car has a digital readout somewhere (on the steering wheel, small
+   strips), `pod_display` puts a screen in a housing on the dashboard
+   (`dsf_dial_panel`: `dsf_dial_display` screen, `dsf_dial_bezel` housing whose
+   sides reach back into the dash). It renders a depth and triangle-id image
+   from the eye (`_screen_parts`, `_raster`, 256 px over 90 degrees) and tries
+   centres every 3 px, nearest the top of the rim first, no lower than the
+   wheel's centre, at least 3 degrees under the eye line, at most 35 degrees
+   to either side of the wheel and 40 from the rim's top; sizes 16 x 8 cm
+   down to 10 x 5 (two dials) or 10 x 7.5 down to 7 x 5.25 (one). Every pixel
+   it covers must reach the cabin within 1.1 m (not glass, the bonnet or the
+   A-pillars), lie outside the rim plus 4 cm at any steering angle (the
+   wheel turns, the hands hold it) and clear of Forza's own needles (1.2 x
+   their length), digital displays and gauge faces; the screen faces the eye
+   4 mm in front of the nearest dash point behind it, with at most 15 cm of
+   dash falling away behind it (a box sitting on the dash top).
+   Report: `cockpit.interior.virtual_gauges.virtual_display`.
+3. A car with no digital patch at all gets nothing: it has no such gauge (250
+   GTO, GT40 and the rest).
+
+Blank displays still come first, so the 48 cars with dials from PR #49 are
+unchanged.
+
+**Survey after** (`uv run dsff cockpit needles`; before `out/final4`, after
+`out/vd/final`: `port_batch build --reuse out/final4 --trust-code
+--rebuild-where` over the 111 cars without both needles, then the same over
+the 81 of them with a digital patch after a restart): cars with both needles
+turning 461 -> 534, none lost, none with a needle that never turns. Of the 111
+of #63, 73 gain both gauges:
+
+| Cause (#63) | Cars | Now with both | Left |
+| --- | ---: | ---: | --- |
+| display face | 35 | 35 (34 on the face; the RX-8 Mazdaspeed's 2.7 x 1.9 cm face is too small: virtual display) | |
+| only display on the steering wheel | 28 | 21 (virtual display) | ARX-02a x2, R10 x2, R15 TDI, GT-R GT1 #3 and #24: open cockpits whose bodywork closes round the wheel, no dash in sight |
+| small or hidden blank displays | 18 | 17 (virtual display) | the Volt: its host has no gauge record |
+| no such gauge | 15 | | by design |
+| placeholder cockpit | 15 | | the main carbin's cabin has no digital patch |
+
+Three of them are on hosts with one gauge record and got the other one
+(`add_gauge_records`): Spark, MP4-12C, Aygo. Four unaffected cars (Fusion, Corolla DX, DB9, M5) built again with
+this code came out byte-identical to `out/final4` (the new flat cells,
+`VIRTUAL_ONLY_FLAT`, go only into atlases that draw them).
+
+Offline at 60 mph and 4000 rpm from the head camera, before and after
+(`out/pz/ba.py`, same eye and look): `img/gauges-faces-virtual-offline.jpg`
+(Panoz Esperante GTLM, Viper Competition Coupe, S2000, LFA) and
+`img/gauges-virtual-display-offline.jpg` (Corvette C6.R FLM09, DBR9, MP4-12C,
+SC430 Super GT). The needles sit on 60 and 4 on every dial.
+
+Known rough edges: the LFA's round bezel stands over the middle of its cluster
+face, so it covers the inner side of both dials; the faces of the Panoz and
+other GTs sit behind the wheel's hub, which hides the lower part of the dials
+(the camera rise keeps the needles' sweep in sight, `GaugeSight`); a virtual
+display may cover switch-panel labels (only gauges and displays are kept clear).
+
 ## Hands on small race wheels and wheels with columns (2026-10-25)
 
 PR #29's survey left 20 cars with the driver's grips over 3 cm off the
