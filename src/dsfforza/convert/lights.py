@@ -427,7 +427,7 @@ def _lens_classes(section, sub, tris, pts_all, texel, colour: int, mid_z: float)
 INDICATING = (INDICATOR, BRAKE_IND, DRL_IND)
 
 
-def _red_lens_indicators(records, from_lens: set, red_indicators: list) -> None:
+def _red_lens_indicators(records, from_lens: set, red_indicators: list, red_by_texel: set) -> None:
     """What a red rear lens triangle lights with, when the lamp behind it
     isn't a tail lamp. Stock lamps are opaque, so a bulb behind a lens never
     shows: the lens has to light for it.
@@ -437,10 +437,12 @@ def _red_lens_indicators(records, from_lens: set, red_indicators: list) -> None:
     from behind, holds the lens triangle's centre; failing that, the nearest
     across the view (x, y).
 
-    - A reverse bulb (outline only): a reverse lamp. Forza draws some
-      reverse sections on red lens texels (PEU_207RC_07, TOY_CelicaSSI_03,
+    - A reverse bulb (outline only), under a lens that is red by its texels
+      rather than its technique: a reverse lamp, as these lenses lit before
+      the texels decided. Forza draws some reverse sections on red lens
+      texels of clear or lamp-cover lenses (PEU_207RC_07, TOY_CelicaSSI_03,
       CHR_300C_08); as tail lamps they hid the bulb and the car showed no
-      reverse light.
+      reverse light. `detail_glass_red` lenses stay tail lamps, as before.
     - An indicator: a red lamp that brakes and indicates (BRAKE_IND, types
       0x19/0x1A, as on stock US-style cars): FOR_GT_05's red lenses over its
       drlinl/drlinr lamps, MIN_Coopers_11's red glass over its
@@ -490,7 +492,7 @@ def _red_lens_indicators(records, from_lens: set, red_indicators: list) -> None:
         if r.function != TAIL:
             continue
         function, outline = behind(r)
-        if function == REVERSE and outline:
+        if function == REVERSE and outline and n in red_by_texel:
             r.function, r.colour = REVERSE, WHITE
         elif function in INDICATING:
             indicate(r)
@@ -565,6 +567,7 @@ class LampPlan:
         plan = cls()
         records, clear = [], []  # clear lenses are placed after the lamps
         red_indicators = []  # records of amber-technique lens triangles on red texels
+        red_by_texel = set()  # records of lens triangles red by their texels, not their technique
         from_lens = set()  # records of lens triangles
         for section in sections:
             for sub in section.subsections:
@@ -611,6 +614,8 @@ class LampPlan:
                         if c == AMBER:
                             side = side if side != "C" else ("L" if centre[0] > 0 else "R")
                             red_indicators.append(len(records))
+                        if c != RED:
+                            red_by_texel.add(len(records))
                         c = RED
                     if f == LENS:
                         # Amber lenses are indicators, red ones at the rear tail lamps;
@@ -638,7 +643,7 @@ class LampPlan:
                 ]
             else:
                 records += _headlight_reflectors(sections, place, mid_z)
-        _red_lens_indicators(records, from_lens, red_indicators)
+        _red_lens_indicators(records, from_lens, red_indicators, red_by_texel)
         _high_brake(records)
         plan._cluster(records)
         plan._place_clear(clear, records)
