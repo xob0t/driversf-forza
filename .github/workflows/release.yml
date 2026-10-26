@@ -41,7 +41,7 @@ jobs:
         run: |
           $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
           uv run --frozen dsff package --asi out\asi\dsfforza.asi --version $version --out dist
-          "ZIP=$((Get-ChildItem dist\*.zip).FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "ZIP=$((Get-ChildItem dist\*.zip).FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding ascii
 
       - name: Upload the zip (not a tag)
         if: github.ref_type != 'tag'
