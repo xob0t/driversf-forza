@@ -107,6 +107,7 @@ FLAT_COCKPIT = [
     (re.compile(r"chrome|metal", re.I), (150, 150, 155, 255)),
 ]
 FLAT_DEFAULT = (34, 34, 36, 255)
+VIRTUAL_ONLY_FLAT = {r"^dsf_dial_mark_dark$", r"^dsf_dial_display$", r"^dsf_dial_bezel$"}
 # The engine's interior paint material: used by every stock interior that has
 # painted parts (227, 147, 229, 193, 251, 266 checked; out/cockpit2/host_shared.py).
 INTERIOR_PAINT = bytes.fromhex("10122b9653b14e2a")
@@ -3072,7 +3073,14 @@ def convert_interior(
             colour = getattr(sub, "display_rgba", None)
             if colour is not None:
                 needle_colours[("display",) + colour] = colour
-    for colour in {c for _, c in FLAT_COCKPIT} | {FLAT_DEFAULT}:
+    # The flat cells every interior's atlas has; a virtual dial's dark marks and a
+    # virtual display add theirs only where they are drawn (other cars' atlases stay
+    # as they were).
+    used = {sub.material for s in sections for sub in s.subsections}
+    flat = {
+        c for pattern, c in FLAT_COCKPIT if pattern.pattern not in VIRTUAL_ONLY_FLAT or any(pattern.search(m) for m in used)
+    }
+    for colour in flat | {FLAT_DEFAULT}:
         needle_colours[("flat",) + colour] = colour
     families = (fm.NODAMAGE, fm.INTERIOR) + ((fm.LIGHTS,) if opts.headlights else ())
     classifier = fm.classify_cockpit
