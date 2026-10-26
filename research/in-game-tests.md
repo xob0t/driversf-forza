@@ -86,7 +86,9 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
   copy of the game folder (share `Game`, read-only), put back to stock from
   `dsfforza-backup\install.json`: replaced files restored and hash-checked,
   created ones dropped. Re-run `setup-vm.ps1 -Phase Game` (through `vm.ps1
-  Exec`) after changing the host install.
+  Exec`) after changing the host install. `dsf_enhanced.asi` and `.ini` don't
+  need it: each `-Vm` run takes the host game folder's current ones ("Game
+  files in VM runs" below).
 - **Runs:** `run-series.ps1 -Vm` takes a free VM of the pool ("VM pool"
   below), starts it if needed (`vmrun -T ws start
   ... nogui`), copies the host profile into the
@@ -130,9 +132,9 @@ the missing MAC don't matter; the clone gets new UUIDs at its first power-on.
   `Local\dsfforza-vm-run`, so a series from an older checkout (VM 1 only) and
   a new one exclude each other. Start/Stop: `Local\dsfforza-vm-lifecycle`
   (VM 1, the old name) and `-lifecycle-<id>`.
-- **Taking a VM:** `run-series.ps1 -Vm` tries the free VMs at once, running
-  ones first (no boot, no extra RAM), then waits for whichever comes free
-  first (`WaitHandle.WaitAny`). `-VmId 2` pins one. The series prints
+- **Taking a VM:** `run-series.ps1 -Vm` takes a free VM at once, running
+  ones first (no boot, no extra RAM), else waits for whichever comes free
+  first, first come, first served (queue below). `-VmId 2` pins one. The series prints
   `VM <id>: <name>` and its run folders are `runs\vm<id>-<stamp>`. Setup logs
   go to `C:\Output\vm\<name>\`; `C:\Output\HostDll` is only rewritten when a
   DLL changed (another VM's run may be copying it).
@@ -143,9 +145,42 @@ the missing MAC don't matter; the clone gets new UUIDs at its first power-on.
   (see below). At the end of a series `run-series.ps1` starts a hidden
   `vm.ps1 StopIdle`, which powers the VM off when no series has used it for
   `$env:DSF_VM_IDLE_MINUTES` (default 15; negative: never). A series in
-  between re-arms it, and it never stops a VM whose run mutex is held. A
-  cold start to a ready desktop session takes about 75 s.
-- **`vm.ps1 Stop`** and **`Revert`** now wait for the VM's run mutex.
+  between re-arms it, and it never stops a VM whose run mutex is held or
+  that a series is queued for. A cold start to a ready desktop session takes
+  about 75 s.
+- **Queue** (2026-10-26, issue #60): a waiter writes a ticket
+  (`dsfforza-wsb\vm\queue\<utc ticks>-<pid>.json`: pid, process start time,
+  the VMs it can take) under the lock `Local\dsfforza-vm-queue`. A VM goes to
+  the oldest live ticket whose pool has it, so a series pinned to VM 1 doesn't
+  hold up a later one that can take VM 2. Only that oldest waiter waits on the
+  VM's mutex (5 s kernel waits between looks at the queue); the others poll
+  every 2 s. Tickets of dead processes are dropped. `dsfforza-wsb\vm\queue.log`
+  logs each ticket and the VM it took. `vm.ps1 Stop` and `Revert` and
+  `vm-build.ps1 -Step Clone` queue the same way. Clone now also waits for
+  the old clone's own series before deleting it; it used to hold only VM 1's
+  mutexes.
+  - Before, a waiter blocked on the mutex alone (`WaitHandle.WaitAny`). On
+    2026-10-25 a series queued at 07:09 was still waiting at 07:50 while
+    series started after it took VM 1. Likely cause: PowerShell runs scripts
+    on an STA thread, whose waits pump messages, and a waiter woken by an APC
+    loses its place in the mutex's queue.
+  - Series from checkouts without the queue still take the mutexes directly
+    (VM 1: `Local\dsfforza-vm-run`). They exclude queued series but don't
+    queue, so they can still get a VM ahead of an older ticket.
+- **Game files in VM runs** (2026-10-26, issue #59): `C:\Game` is the host
+  game folder as of provisioning (VM 1's snapshot `clean`, 2026-10-24 02:07),
+  so its `dsf_enhanced.asi` (SHA-256 `1ADDEC5C...`) was a build without the
+  fix for "Crashes while the world loads". Stock series without `-Override`
+  hit that crash in about half the runs (`vm2-20261026-112701`). Now each
+  `-Vm` run copies the host's current `dsf_enhanced.asi` and `.ini` into its
+  run folder (`host-game\`), and `run-test.ps1 -GameRootFrom` puts them over
+  `C:\Game`'s copies in `C:\Run`; `-Override` still wins. `result.json`
+  `dsfEnhanced` records the `.asi` hash and source, and the source `.ini`
+  hash. `gameRoot` holds the hashes of `C:\Game`'s root files; run-series
+  warns once per series if one differs from the host's (then run `-Phase
+  Game`). Retaking the snapshot wasn't needed: apart from `dsf_enhanced.asi`,
+  the host files changed since then are the dsfforza install's, which
+  `-Phase Game` puts back to stock anyway.
 - **Memory sampler:** `run-test.ps1 -MemorySeconds 5` (default) writes
   `memory.csv` in the run folder (guest available and committed memory, hard
   page faults per second, GPU adapter memory, and Driver.exe's private bytes,
