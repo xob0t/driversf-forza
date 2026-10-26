@@ -373,6 +373,15 @@ def _load_scene(archive: Path, stream, spool_id: int, entries, interior: bool) -
             (np.array(struct.unpack_from("<3f", h.data, o), np.float32), struct.unpack_from("<4f", h.data, o + 16))
         )
     hubs = _rest_hubs(stream, kinds[0], hubs)
+    # Which hubs each exterior wheel part goes on: the wheel records' LOD links (hosts with
+    # front and rear wheel parts, forza2dsf.split_rear_wheel); a part no record names, all.
+    links = h.lod_links()
+    ext_ids = uv.modl_part_uids(payload(stream, child(child(kinds[2], "NONR"), "MODL")))
+    part_hubs: dict[int, list[int]] = {}
+    for r in h.records:
+        link = links[r.lod_link][1] if 0 <= r.lod_link < len(links) else None
+        if r.type == 2 and 0 <= r.wheel < len(hubs) and link in ext_ids:
+            part_hubs.setdefault(ext_ids.index(link), []).append(r.wheel)
     paint_lin = np.array(car_paint.c2, np.float32)
 
     materials: list[Material] = []
@@ -430,11 +439,12 @@ def _load_scene(archive: Path, stream, spool_id: int, entries, interior: bool) -
     for kind in (2, 1) if interior and 1 in index else (2,):
         _, mesh = vm.load(archive, index[kind], entries)
         cache, seen = {}, set()
-        for part in mesh.parts:
+        for p, part in enumerate(mesh.parts):
             subs = [mesh.submodels[n] for lod in part.lods for n in lod.submodels]
             wheel = kind == 2 and any(
                 s.material in TYRE_UIDS or mesh.vertex_buffers[s.vertex_buffer].stride == 20 for s in subs
             )
+            on = [hubs[i] for i in sorted(set(part_hubs[p]))] if wheel and p in part_hubs else hubs
             for sub in subs:
                 key = (sub.vertex_buffer, sub.index_buffer, sub.first_index, sub.index_count, sub.base_vertex)
                 if key in seen:
@@ -449,7 +459,7 @@ def _load_scene(archive: Path, stream, spool_id: int, entries, interior: bool) -
                 pos, nrm, uvs, ao = _submodel_triangles(mesh, sub, cache)
                 m = material(sub.material, kind == 1, wheel)
                 if wheel:
-                    for hub, q in hubs:
+                    for hub, q in on:
                         r = _quat_matrix(q)
                         add(pos @ r.T + hub, None if nrm is None else nrm @ r.T, uvs, ao, m)
                 else:

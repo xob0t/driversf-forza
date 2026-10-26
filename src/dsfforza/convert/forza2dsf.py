@@ -1262,6 +1262,122 @@ def host_wheels(upvh_data: bytes, full_modl: bytes, exterior_modl: bytes | None 
     return HostWheels(hubs, sum(w[1] for w in hubs) / 4, (max(zs) + min(zs)) / 2, full_parts, ext_parts, axles)
 
 
+# A host with one wheel part for both axles gets a second, rear wheel part when the rear tyre
+# it would draw at the front size is this far off Data_Car's rear tyre (research/wheels.md,
+# "Rear wheel parts"): 5 mm of radius is 10 mm of arch gap.
+REAR_PART_RADIUS = 0.005  # m
+REAR_PART_WIDTH = 0.010  # m
+
+
+def modl_part_lods(modl: bytes, part: int) -> list[tuple[int, list[tuple[bytes, int]]]]:
+    """One MODL part's LODs: [(mask, [(submodel UID, flag)])]."""
+    count, offset = struct.unpack_from("<II", modl, 0x10 + part * 0x60 + 0x48)
+    out = []
+    for k in range(count):
+        mask, subs, uid_offset, extra_offset = struct.unpack_from("<4I", modl, offset + k * 16)
+        out.append(
+            (
+                mask,
+                [
+                    (
+                        modl[uid_offset + i * 8 : uid_offset + i * 8 + 8],
+                        struct.unpack_from("<I", modl, extra_offset + i * 4)[0],
+                    )
+                    for i in range(subs)
+                ],
+            )
+        )
+    return out
+
+
+def add_modl_part(modl: bytes, source: int, uid: bytes) -> tuple[bytes, int]:
+    """The MODL with a copy of part `source` (its box and LOD lists) appended under a new
+    part UID. Returns (MODL, the new part's index). Same layout as stock and rebuild_modl:
+    part records, the LOD table, then all submodel UID lists, then their flags."""
+    part_count, _, _, tail = struct.unpack_from("<4I", modl)
+    records = [bytearray(modl[0x10 + p * 0x60 : 0x10 + (p + 1) * 0x60]) for p in range(part_count)]
+    lods = [modl_part_lods(modl, p) for p in range(part_count)]
+    record = bytearray(records[source])
+    record[0x40:0x48] = uid
+    records.append(record)
+    lods.append([(mask, list(subs)) for mask, subs in lods[source]])
+    lod_offset = 0x10 + len(records) * 0x60
+    entries = [entry for part in lods for entry in part]
+    uid_list = lod_offset + len(entries) * 16
+    extra_list = uid_list + sum(len(subs) for _, subs in entries) * 8
+    out = bytearray(struct.pack("<4I", len(records), len(entries), lod_offset, tail))
+    n = 0
+    for record, part in zip(records, lods):
+        struct.pack_into("<II", record, 0x48, len(part), lod_offset + n * 16)
+        out += record
+        n += len(part)
+    uid_bytes, extra_bytes = bytearray(), bytearray()
+    for mask, subs in entries:
+        out += struct.pack("<4I", mask, len(subs), uid_list + len(uid_bytes), extra_list + len(extra_bytes))
+        for sub_uid, flag in subs:
+            uid_bytes += sub_uid
+            extra_bytes += struct.pack("<I", flag)
+    return bytes(out + uid_bytes + extra_bytes), len(records) - 1
+
+
+def split_rear_wheel(stream, full: Entry, exterior: Entry, uid_prefix: bytes) -> dict | None:
+    """Give a host whose four wheel records share one wheel part a separate rear wheel part,
+    as 33 stock hosts have (Lamborghinis, Corvette, GT...), so the converter can draw the rear
+    wheels at the rear tyre's size.
+
+    The shared part is copied (box and LOD lists) to the end of the full entry's MODL and the
+    exterior wheel part to the end of the exterior's, each under a new part UID; the rear wheel
+    records then point at the full copy and their LOD links (no stock vehicle shares one
+    between axles) at the exterior copy. The engine finds parts by UID (research/upvh.md), and the wheel
+    records keep their hinges, bodies and wheel indices, so spin and steering are unchanged.
+    The edited payloads are set on the entries. Returns a report, or None when the host
+    already splits its wheels or its records don't allow the copy."""
+    from dsfforza.formats import upvh as upvh_mod
+
+    nonr = child(full, "NONR")
+    upvh_entry, modl_entry = child(nonr, "UPVH"), child(nonr, "MODL")
+    ext_modl_entry = child(child(exterior, "NONR"), "MODL")
+    data = payload(stream, upvh_entry)
+    h = upvh_mod.parse(data)
+    hubs = [w[:3] for w in h.vec4s("wheels")]
+    mid = sum(w[2] for w in hubs) / len(hubs)
+    wheels = [r for r in h.records if r.type == 2 and 0 <= r.wheel < len(hubs)]
+    front = [r for r in wheels if hubs[r.wheel][2] > mid]
+    rear = [r for r in wheels if hubs[r.wheel][2] <= mid]
+    links = h.lod_links()
+    shared = {r.uid for r in front} & {r.uid for r in rear}
+    if not front or not rear or len(shared) != 1 or {r.uid for r in rear} != shared:
+        return None  # already split (or not one shared part)
+    if any(not 0 <= r.lod_link < len(links) or links[r.lod_link][1] is None for r in rear):
+        return None
+    if {r.lod_link for r in front} & {r.lod_link for r in rear}:
+        return None  # a link shared across axles: no stock host has one
+    ext_shared = {links[r.lod_link][1] for r in rear}
+    if len(ext_shared) != 1 or {links[r.lod_link][1] for r in front} != ext_shared:
+        return None
+    full_modl, ext_modl = payload(stream, modl_entry), payload(stream, ext_modl_entry)
+    full_ids, ext_ids = upvh_mod.modl_part_uids(full_modl), upvh_mod.modl_part_uids(ext_modl)
+    (full_uid,), (ext_uid,) = shared, ext_shared
+    if full_uid not in full_ids or ext_uid not in ext_ids:
+        return None
+    uids = Builder(uid_prefix)
+    new_full, new_ext = uids.new_uid(), uids.new_uid()
+    modl_entry.payload, full_part = add_modl_part(full_modl, full_ids.index(full_uid), new_full)
+    ext_modl_entry.payload, ext_part = add_modl_part(ext_modl, ext_ids.index(ext_uid), new_ext)
+    out = bytearray(data)
+    for r in rear:
+        at = upvh_mod.HEADER_SIZE + r.index * upvh_mod.RECORD_SIZE
+        out[at : at + 8] = upvh_mod.swap_uid(new_full)
+        link = h.offsets["lod_links"] + r.lod_link * 0x10 + 8
+        out[link : link + 8] = upvh_mod.swap_uid(new_ext)
+    upvh_entry.payload = bytes(out)
+    return {
+        "full": [full_ids.index(full_uid), full_part],
+        "exterior": [ext_ids.index(ext_uid), ext_part],
+        "rear_records": [r.index for r in rear],
+    }
+
+
 def patch_hubs(
     upvh: bytes,
     front_z: float,
@@ -1576,6 +1692,9 @@ class ConvertOptions:
     fill_empty_parts: bool = False
     keep_host_geometry: bool = False
     no_wheel: bool = False
+    # A host with one wheel part for both axles gets a rear wheel part (split_rear_wheel) when
+    # the rear tyre differs from the front (REAR_PART_RADIUS, REAR_PART_WIDTH).
+    split_rear_wheel: bool = True
     empty_other_parts: bool = False
     textures: str | None = None  # None, "replace" or "clone"
     atlas_size: tuple[int, int] | None = None
@@ -1635,15 +1754,49 @@ def convert(
     in place; leaves read from `stream` unless already edited. With
     opts.cockpit and the interior (kind 1) entry, the interior is rebuilt from
     the car's cockpit carbin too. Returns a report."""
+
     # The turn maps Forza z to -z, so the wheelbase midpoint (Forza z = mid_z, see
     # CarDims) lands at -mid_z + dz = axle_mid.
     # Forza ground (y = -ride_height) goes to the host's ground (hub y - tyre radius).
     # Hub height, axle midpoint and wheel parts are the host's own (host_wheels).
-    hw = host_wheels(
-        payload(stream, child(child(full, "NONR"), "UPVH")),
-        payload(stream, child(child(full, "NONR"), "MODL")),
-        payload(stream, child(child(exterior, "NONR"), "MODL")),
-    )
+    def read_wheels() -> HostWheels:
+        return host_wheels(
+            payload(stream, child(child(full, "NONR"), "UPVH")),
+            payload(stream, child(child(full, "NONR"), "MODL")),
+            payload(stream, child(child(exterior, "NONR"), "MODL")),
+        )
+
+    hw = read_wheels()
+    seed = opts.uid_seed or os.urandom(4)
+    # Per-axle wheel size. Forza draws its one wheel model at each axle's Data_Car tyre size
+    # (research/wheels.md, "Wheel clearance"): the model matches the front tyre on most cars
+    # (370Z, Veyron SS, M3) but not on 160 of 573 (FER_F151_11's is 0.393 m against a 0.340 m
+    # tyre, SUZ_Liana_02's 0.248 against 0.298; Forza's thumbnails show the tyre size). So the
+    # front wheels are scaled to the front tyre and the rear wheel part(s) to the rear tyre.
+    # A host with one wheel part for both axles gets a rear copy of it first when the tyres
+    # differ (split_rear_wheel; the Jaguar XKR's rear tyre is 42 mm taller than its front).
+    # The hubs stand the front tyres on Forza's ground; the rear hubs go to the rear track and
+    # up or down by the radius difference, so all four tyres stand on the same ground.
+    tyres = axle_tyres(car.name, opts.gamedbs)
+    fits = axle_fits(dims.radius, dims.tyre_width, tyres)
+    rear_split = None
+    if (
+        opts.split_rear_wheel
+        and not opts.no_wheel
+        and not any(axle == "rear" for axle in hw.axles.values())
+        and (
+            abs(dims.radius * (fits["rear"][1] - fits["front"][1])) > REAR_PART_RADIUS
+            or abs(dims.tyre_width * (fits["rear"][0] - fits["front"][0])) > REAR_PART_WIDTH
+        )
+    ):
+        rear_split = split_rear_wheel(stream, full, exterior, seed[:3] + bytes([seed[3] ^ 0x66]))
+        if rear_split is not None:
+            hw = read_wheels()
+            log(
+                f"rear wheel part: the host's shared wheel part copied for the rear wheels "
+                f"(full {rear_split['full'][0]} -> {rear_split['full'][1]}, exterior "
+                f"{rear_split['exterior'][0]} -> {rear_split['exterior'][1]})"
+            )
     # The ground the engine counts camera heights from stays the host's as shipped.
     from dsfforza.convert import vehicle_cameras
 
@@ -1651,16 +1804,7 @@ def convert(
         payload(stream, child(child(full, "NONR"), "UPVH")), payload(stream, child(child(full, "NONR"), "VO3D"))
     )
     axle_mid = hw.axle_mid if opts.host_axle_mid is None else opts.host_axle_mid
-    # Per-axle wheel size. Forza draws its one wheel model at each axle's Data_Car tyre size
-    # (research/wheels.md, "Wheel clearance"): the model matches the front tyre on most cars
-    # (370Z, Veyron SS, M3) but not on 160 of 573 (FER_F151_11's is 0.393 m against a 0.340 m
-    # tyre, SUZ_Liana_02's 0.248 against 0.298; Forza's thumbnails show the tyre size). So the
-    # front wheels are scaled to the front tyre, and a host with separate rear wheel parts gets
-    # a rear copy scaled to the rear tyre; with one shared part the rear wheels are front-sized.
-    # The hubs stand the front tyres on Forza's ground; the rear hubs go to the rear track and
-    # up or down by the radius difference, so all four tyres stand on the same ground.
-    tyres = axle_tyres(car.name, opts.gamedbs)
-    fits = axle_fits(dims.radius, dims.tyre_width, tyres)
+    # With one shared part (tyres alike, or no copy) the rear wheels are front-sized.
     split = any(axle == "rear" for axle in hw.axles.values())
     rear_fit = fits["rear"] if split else fits["front"]
     fits["both"] = fits["front"]
@@ -1684,7 +1828,6 @@ def convert(
             "wheel LODs without a tyre, using the nearest that has one: "
             + ", ".join(f"{a} -> {b}" for a, b in sorted(swapped.items()) if a != b)
         )
-    seed = opts.uid_seed or os.urandom(4)
     report: dict = {
         "placement": {
             "source": dims.source,
@@ -1703,6 +1846,7 @@ def convert(
             "host_hub_y": round(hw.hub_y, 4),
             "host_axle_mid": round(axle_mid, 4),
             "host_wheel_parts": {"full": hw.full_parts, "exterior": hw.exterior_parts},
+            "rear_wheel_part": rear_split,  # split_rear_wheel's copy, or None
             "rear_fit": [round(c, 4) for c in rear_fit],
             "rear_half_track": round(rear_half_track, 4),
             "rear_hub_y": round(rear_hub_y, 4),
