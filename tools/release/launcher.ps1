@@ -69,6 +69,7 @@ if (-not ($Forward -contains '--game') -and -not $help) {
 }
 
 # uv reports progress on stderr; Windows PowerShell must not treat that as an error.
+$env:DSFF_LAUNCHER = 'install.cmd'   # the summary names install.cmd --uninstall
 $ErrorActionPreference = 'Continue'
 & $uv run --project $Root --frozen --no-dev dsff install @Forward
 exit $LASTEXITCODE

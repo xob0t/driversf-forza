@@ -706,6 +706,7 @@ class Summary:
     log: Path | None = None
     notes: list = field(default_factory=list)
     installed: bool = False
+    uninstall: str = "uv run dsff install --uninstall"
 
 
 class Reporter:
@@ -841,7 +842,7 @@ def summary_lines(s: Summary) -> list[str]:
         )
         if s.save_backup:
             lines.append(f"  Save:      backed up to {s.save_backup}")
-        lines.append("  Uninstall: uv run dsff install --uninstall")
+        lines.append(f"  Uninstall: {s.uninstall}")
     lines += [f"  Note: {n}" for n in s.notes]
     if s.log:
         lines.append(f"  Log:       {s.log}")
@@ -957,7 +958,7 @@ class LiveReporter(Reporter):
             )
             if s.save_backup:
                 grid.add_row("Save backup", str(s.save_backup))
-            grid.add_row("Uninstall", "uv run dsff install --uninstall")
+            grid.add_row("Uninstall", s.uninstall)
         for n in s.notes:
             grid.add_row("[yellow]Note[/]", n)
         if s.log:
@@ -1447,7 +1448,8 @@ class Run:
             raise StageError(f"{build} was built for dsfforza.asi (--id-policy asi), but --no-plugin was given.")
         self.reporter.stage("install", "running", "backing up the save")
         self.summary.save_backup = None if args.no_save_backup else self.backup_save()
-        self.reporter.stage("install", "running", "tools/install.ps1")
+        hook, loader = self.hook_files()
+        self.reporter.stage("install", "running", "tools/install.ps1: backing up and copying the game files")
         command = [
             powershell(),
             "-NoProfile",
@@ -1464,7 +1466,6 @@ class Run:
         ]
         if self.plugin is not None:
             command += ["-Asi", "-AsiPath", str(self.plugin)]
-        hook, loader = self.hook_files()
         if hook:
             command += ["-HookArchive", str(hook)]
         if loader:
@@ -1488,9 +1489,16 @@ class Run:
         entries = [e for e in record.get("entries", []) if isinstance(e, dict)]
         s = self.summary
         s.game, s.installed = game, True
+        s.uninstall = uninstall_command(args.game)
         s.replaced = [e["path"] for e in entries if e.get("action") == "replaced"]
         s.created = [e["path"] for e in entries if e.get("action") == "created"]
         return f"{len(record.get('cars') or [])} cars into {game}"
+
+
+def uninstall_command(game: Path | None) -> str:
+    """How to undo the install: install.cmd (the release launcher sets DSFF_LAUNCHER) or uv."""
+    command = "install.cmd --uninstall" if os.environ.get("DSFF_LAUNCHER") else "uv run dsff install --uninstall"
+    return command + (f' --game "{game}"' if game else "")
 
 
 def rel(path: Path) -> str:
