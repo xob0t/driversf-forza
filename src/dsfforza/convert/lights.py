@@ -271,6 +271,64 @@ def _tri_geometry(pts, normals):
 LENS_COLOUR = {"detail_glass_red": RED, "detail_glass_amber": AMBER, "linred": RED, "rinred": RED}
 CLUSTER_GAP = 0.2  # metres between triangle centres that still belong to one lamp
 CLEAR_LENS_REACH = 0.35  # m: a clear lens lights with the nearest lamp this close
+# Lens texel colour (texel_class): saturated texels whose hue (degrees from
+# red towards yellow) is below LENS_RED_HUE are red, up to 60 amber. Fleet
+# (finest LOD, mean texel per triangle): 99% of `detail_glass_red` triangles at
+# the rear sit at -15 to +10, `detail_glass_amber` at the front mostly at 10 to
+# 35 (out/brakes/lensfleet.py).
+LENS_MIN_SATURATION = 0.35
+LENS_RED_HUE = 10.0
+
+
+def texel_class(texel) -> str | None:
+    """ "red", "amber" or "white" (clear, grey or not red at all) for a mean
+    texel (r, g, b, a); None without one."""
+    if texel is None:
+        return None
+    r, g, b = texel[:3]
+    hi, lo = max(r, g, b), min(r, g, b)
+    if hi < 8 or (hi - lo) / hi < LENS_MIN_SATURATION or r < hi:
+        return "white"
+    return "red" if 60 * (g - b) / (hi - lo) < LENS_RED_HUE else "amber"
+
+
+def texel_sampler(atlases):
+    """(section, sub, triangle) -> the mean Forza texel (r, g, b, a) under one
+    triangle of a Lights-texture subsection, else None. atlases: a
+    forza_materials.AtlasCache of the car (dsf_materials.Texturing.atlases)."""
+    from dsfforza.convert import forza_materials as fm
+    from dsfforza.convert import trim_art
+
+    images: dict = {}
+    materials: dict = {}
+
+    def sample(section, sub, tri):
+        key = id(sub)
+        if key not in materials:
+            materials[key] = fm.resolve(section, sub, fm.classify)
+        m = materials[key]
+        if m.family != fm.LIGHTS or m.kind not in ("textured", "swatch"):
+            return None
+        if fm.LIGHTS not in images:
+            try:
+                w, h, rgba = atlases.get(fm.LIGHTS)
+            except (FileNotFoundError, OSError):
+                images[fm.LIGHTS] = None
+            else:
+                import numpy as np
+
+                images[fm.LIGHTS] = np.frombuffer(bytes(rgba), dtype=np.uint8).reshape(h, w, 4)
+        image = images[fm.LIGHTS]
+        if image is None:
+            return None
+        h, w = image.shape[:2]
+        pool = section.vertices_for(sub)
+        texels = trim_art.triangle_texels(image, [((u := m.uv(pool[i].uv0))[0] * w, u[1] * h) for i in tri])
+        if not len(texels):
+            return None
+        return tuple(float(c) for c in texels.mean(0))
+
+    return sample
 
 
 @dataclass
@@ -330,6 +388,23 @@ def _high_brake(records) -> None:
             r.function = BRAKE
 
 
+def _lens_classes(section, sub, tris, pts_all, texel, colour: int, mid_z: float):
+    """Texel class per triangle of a lens subsection (texel_class), and whether
+    a rear amber-technique lens is a red one: more of its rear area on red
+    texels than on amber. The FM4 Lotus Carlton's tail lamps are one
+    `detail_glass_amber` lens on red texels (mean (140, 40, 40)) with the
+    `tail_light` bulb hidden behind it; taken by name it lit as an indicator
+    only and the car showed no brake light (user report on out/final4)."""
+    classes = [texel_class(texel(section, sub, t)) for t in tris]
+    if colour != AMBER:
+        return classes, False
+    area = {"red": 0.0, "amber": 0.0}
+    for cls, pts in zip(classes, pts_all):
+        if cls in area and sum(p[2] for p in pts) / 3 <= mid_z:
+            area[cls] += _tri_geometry(pts, [(0, 0, 0)] * 3)[0]
+    return classes, area["red"] > area["amber"]
+
+
 REFLECTORS = ("textured_reflector", "reflector")
 LAMP_COVERS = ("glass", "lights_glass", "lights_gls_noemit")  # = glass.LAMP_MATERIALS
 
@@ -382,13 +457,16 @@ class LampPlan:
     slots: list = field(default_factory=list)  # per host light entry: (offset, id, Lamp | None)
 
     @classmethod
-    def build(cls, sections, place, mid_z: float, lenses=frozenset()) -> LampPlan:
+    def build(cls, sections, place, mid_z: float, lenses=frozenset(), texel=None) -> LampPlan:
         """sections: Forza body sections (all LODs). place: forza2dsf.Placement.
         mid_z: DSF z of the wheelbase midpoint (front lamps are ahead of it).
         lenses: id(sub) of lamp-cover glass subsections drawn as lamp texels
         (dsf_materials.Texturing.lens_subs); they light like clear lenses,
         with the lamp behind each triangle (the DMC-12's grid lens: tail,
-        indicator and reverse cells over one reflector)."""
+        indicator and reverse cells over one reflector).
+        texel: (section, sub, triangle) -> mean Forza texel or None
+        (texel_sampler); rear lens triangles on red texels are tail lamps
+        whatever their technique says (_lens_classes)."""
         plan = cls()
         records, clear = [], []  # clear lenses are placed after the lamps
         for section in sections:
@@ -406,8 +484,11 @@ class LampPlan:
                 pts_all = [[place.point(pool[i].position) for i in t] for t in tris]
                 max_x = max(abs(p[0]) for pts in pts_all for p in pts)
                 colour = TECHNIQUE_COLOUR.get(sub.material, FUNCTION_COLOUR.get(function, WHITE))
+                classes, red_lens = None, False
                 if function == LENS:
                     colour = LENS_COLOUR.get(sub.material, WHITE)
+                    if texel is not None:
+                        classes, red_lens = _lens_classes(section, sub, tris, pts_all, texel, colour, mid_z)
                 for k, (t, pts) in enumerate(zip(tris, pts_all)):
                     normals = [place.normal(pool[i].normal) for i in t]
                     area, centre, normal = _tri_geometry(pts, normals)
@@ -421,6 +502,16 @@ class LampPlan:
                     f, c = function, colour
                     if f == POSITION:
                         c = WHITE if front else RED  # front parking / DRL, rear tail marker
+                    # What the player sees at the rear is the lens texture: red
+                    # texels are a tail lamp whatever the technique, and a rear
+                    # "amber" lens that is mostly red texels is a red lens.
+                    if (
+                        f == LENS
+                        and classes is not None
+                        and not front
+                        and (classes[k] == "red" or (red_lens and classes[k] != "amber"))
+                    ):
+                        c = RED
                     if f == LENS:
                         # Amber lenses are indicators, red ones at the rear tail lamps;
                         # clear ones light with the lamp behind them.
@@ -630,7 +721,7 @@ def main(argv: list[str] | None = None) -> None:
     t.add_argument("archive", type=Path)
     t.add_argument("--id", type=int, required=True)
     args = parser.parse_args(argv)
-    if getattr(args, "dsf", None):
+    if args.cmd == "plan":
         args.dsf = game_paths.stock(args.dsf)  # the original when a dsfforza install replaced it
 
     from dsfforza.formats import upvh as uv
@@ -660,7 +751,9 @@ def main(argv: list[str] | None = None) -> None:
     # Desanne's hub height and axle midpoint whatever --host was).
     hw = forza2dsf.host_wheels(upvh, modl)
     place = forza2dsf.Placement(dy=hw.hub_y - dims.radius + dims.ride_height, dz=hw.axle_mid + dims.mid_z)
-    plan = LampPlan.build(car.body, place, hw.axle_mid).assign(upvh)
+    from dsfforza.convert import forza_materials as fm
+
+    plan = LampPlan.build(car.body, place, hw.axle_mid, texel=texel_sampler(fm.AtlasCache(car.folder))).assign(upvh)
     import json
 
     print(json.dumps(plan.report(), indent=1))
