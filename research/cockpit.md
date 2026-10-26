@@ -1,6 +1,6 @@
 # Cockpit view: interior entry, steering wheel, gauges, head camera
 
-Updated: 2026-10-25
+Updated: 2026-10-26
 
 How DSF draws the cockpit view, where Forza keeps the same data, and what
 `src/dsfforza/convert/cockpit.py` (`--cockpit` in `forza2dsf.py`, on by default in
@@ -1417,6 +1417,9 @@ eye sees on 70 cars (RS6 2003 and CL65 39%, S4 2004 and Dino 246 33%, Pantera
    - A host whose gauge table has no entry for the id gets no dial
      (`drop_virtual`): stock 250, the Volt's host and the Volt itself, has
      no gauge entries at all, so its virtual needles would not turn.
+     Since #62 a one-gauge host gets the missing record instead, and only a
+     host without any gauge record drops the needle (`drop_unturned`, "One-gauge
+     hosts" below).
    - The CL65's TFT showed a virtual round speedometer in the real car;
      the race-car LCDs showed digits. A dial there is a stand-in that reads
      right, not what Forza draws.
@@ -1447,6 +1450,90 @@ it. The RS6's dials were cut off at the top by the cowl; now both show whole
 with the needles at the readings. `img/gauges-cowl-virtual-ingame.jpg`. All
 cars that spooled drove without a crash (IDs 8 to 10 didn't spool after
 seven cars in one session, in both runs).
+
+## One-gauge hosts and needle layouts (2026-10-26, issue #62)
+
+On 12 cars of the full roster (`out/final3`) a speed or tach needle was drawn
+and never turned. `uv run dsff cockpit needles <archive>` (`needle_survey`)
+lists, per ported car, the gauge ids its interior needles carry against the
+gauge records its hierarchy has, and the needle triangles in a buffer that
+declares no gauge id. `upvh lint` now checks the same per car.
+
+**Gauge records (confirmed-static).** `FUN_0088E310` keeps, per gauge-table
+index (seat byte +0x26), the index of every type-18 record whose role isn't
+185 and whose table entry has a gauge id below 8, at spec+0x47D4 + index x 4.
+The render loop (`FUN_008A4660`) goes over those 7 slots: for each kept
+record it reads the record's table entry, takes the gauge id from it, and
+writes matrix `id` of `g_InstrumentTransforms` from the entry and input `id`.
+Nothing else ties a needle to a record, and the needle vertices only name the
+id. Over the 150 stock hierarchies (`out/g62/stock_gauges.py`): 125 have both
+records, 19 a speedometer record only (146, 149, 153, 156, 178, 187, 191,
+198, 200, 202, 230, 231, 249, 257, 259, 271, 272, 287, 302), 225 (MP4-12C) a
+tachometer record only, 5 none (123, 131, 250, 289, 293). Every gauge record
+is a leaf under the cluster part (role 185); the speedometer's has role 0,
+the tachometer's role 187, and all other fields match between the two.
+
+**Needle layout (confirmed-static).** `rebuild_drsp` gave each new vertex
+buffer the declaration of the host's last buffer of the same stride. Hosts
+119, 146 and 208 have a second stride-20 layout in the interior after the
+needles' (semantic 8 two halves, then a semantic 9 skin), so the needles of
+the Audi S5 (119) and the three Camaros (146) had no DashboardInstrument
+element: the gauge id was read as a skin byte, and the needles stayed put.
+No other entry of any stock host has a material whose own buffer's
+declaration differs from that last one, apart from one exterior material of
+287 the converter doesn't use (`out/g62/vdcl_survey2.py`).
+
+| Cause | Cars (spool ID) |
+| --- | --- |
+| host 249, speedometer record only | C1 (323), Ka (404), 107 (605), Agila (698): tach |
+| host 230, speedometer record only | 442 (595): tach |
+| host 225, tachometer record only | F40 (373), Venom GT (420), Ultimate Aero (662): speed |
+| host 146: needles in the wrong layout, and a speedometer record only | Camaro SS 69 (294), Z28 69 (295), Z28 70 (296): both |
+| host 119: needles in the wrong layout | S5 (96): both |
+
+**Fix.**
+
+1. `cockpit.add_gauge_records`: for a speed or tach needle the host has no
+   record for, a copy of the host's gauge record goes in next to it (same
+   parent, the stock role for the id; the speedometer's first, as in stock
+   hierarchies), and a copy of its table entry with the new id is appended
+   to the table; `patch_hierarchy` then sets its pivot, dial and sweep like
+   any other. Record count, seat count and the ancestors' subtree sizes
+   follow. Report: `cockpit.hierarchy.gauges_added`. On all 20 one-gauge
+   hosts the result parses and `host_cockpit` finds both slots
+   (`out/g62/stock_add.py`). The host choice keeps its -3 for a host without
+   both gauges; it no longer matters for the needles.
+2. `rebuild_drsp` takes each buffer's declaration from the host buffer its
+   materials are drawn from (where the host has one of that stride), else
+   the last of the stride as before.
+3. A needle a host still can't turn (no gauge record at all: 250, the Volt's
+   host, whose Forza cockpit has no needles) is dropped, Forza's as well as
+   virtual dials (`drop_unturned`, which replaces `drop_virtual`).
+
+**Survey, before and after** (`dsff cockpit needles`; before `out/final3`,
+after `out/g62/final`: `port_batch build --reuse out/final3 --trust-code
+--rebuild-where "host in (...)"` over the 23 hosts with one or no gauge
+record or a second needle-stride layout, 35 cars built, 538 reused, lint
+clean): cars with both needles turning 449 -> 461, cars with a needle that
+never turns 12 -> 0; the 12 above and no other car changed. The other 23
+rebuilt cars (on the same hosts without the problem, and 16 whose
+fingerprint was incomplete) came out byte-identical to `out/final3`.
+
+Offline at 0/0, 40/3000 and 90/6000 (mph/rpm), same view before and after
+(`img/gauges-one-gauge-hosts-offline.jpg`): the F40's speedometer, the 442's
+and the C1's tachometers now turn; before they stayed at rest.
+
+In game (VM, confirmed-runtime; `run-series.ps1 -Vm -Asi out\asi\dsfforza.asi
+-HoldMph '40,90' -ShotSeconds 3`, before `out/final3`, after `out/g62/final`,
+same IDs): runs `vm2-20261026-164751` and `vm1-20261026-171004` (before),
+`vm1-20261026-165841` and `vm2-20261026-171113` (after). Before, the F40's
+speedometer and the C1's and 107's tachometers sat at rest at 40 and 90 mph;
+after, they turn with the speed and rpm (`img/gauges-one-gauge-hosts-ingame.jpg`).
+The Camaro's and the 442's tachometers are behind the driver's hands in the
+cockpit view, in both builds. All eight cars of the after runs (373, 294, 595,
+323, 420, 404, 662, 605) spooled and drove without a crash, so the inserted
+record (and on 225 the record after it moving down one) didn't upset the
+engine.
 
 ## Hands on small race wheels and wheels with columns (2026-10-25)
 
