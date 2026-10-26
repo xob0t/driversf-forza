@@ -16,7 +16,11 @@ closed (failing that, by the next series of any kind).
 vm-build.ps1): nothing shows on the host desktop and the host profile and speakers
 are left alone. The series takes a free VM of the pool (vm-common.ps1: $env:DSF_VMS,
 else C:\VMs\dsfforza-test and dsfforza-test2 if they exist; a running one first), or
-waits for the first to come free; -VmId pins one (1, 2, or a name). Each VM has its own
+waits for the first to come free, behind the series that were waiting before it (first
+come, first served; vm-common.ps1 Enter-VmPool); -VmId pins one (1, 2, or a name). Each
+run takes the host game folder's current dsf_enhanced.asi and .ini (copied into the run
+folder's host-game\), not the guest's C:\Game copies, unless -Override names them;
+result.json "dsfEnhanced" has their hashes. Each VM has its own
 mutexes (Local\dsfforza-vm-run-<id>; VM 1 also the old Local\dsfforza-vm-run), so VM
 series don't wait for sandbox or host series, nor for a series on another VM. The VM
 is started (no window) if it isn't running, the host's Driver profile is copied into
@@ -114,7 +118,8 @@ if ($Vm) {
     . (Join-Path $PSScriptRoot 'vm-common.ps1')
     $pool = if ($VmId) { @(Get-VmPool -Select $VmId) } else { @(Get-VmPool) }
     if (-not $pool) { throw 'no test VM: build one with tools\wsb\vm-build.ps1, or set DSF_VMS' }
-    $script:vmHeld = Enter-VmPool -Pool $pool -Timeout ([TimeSpan]::FromHours(3))
+    $script:vmHeld = Enter-VmPool -Pool $pool -Timeout ([TimeSpan]::FromHours(3)) -Say { param($t) $t | Out-Host } `
+        -Label "run-series $(Split-Path $repo -Leaf): $($Archives -join ', ')"
     if (-not $script:vmHeld) { throw "timed out waiting for a free VM ($(($pool | ForEach-Object Name) -join ', '))" }
     $vmTarget = $script:vmHeld.Vm
     Use-Vm $vmTarget
@@ -222,6 +227,39 @@ function Confirm-Vm {
         -Arguments @('-Phase', 'Profile', '-Resolution', $Resolution, '-Tag', $vmTarget.Name) | Out-Null
 }
 
+# -Vm: root files each run takes from the host game folder rather than the guest's C:\Game.
+$hostRootFiles = 'dsf_enhanced.asi', 'dsf_enhanced.ini'
+$script:hostRootHashes = $null
+$script:driftSaid = $false
+function Get-HostRootHashes {
+    # SHA-256 of the host game folder's root files, once per series: the guest's C:\Game should
+    # have the same (result.json "gameRoot").
+    if ($null -eq $script:hostRootHashes) {
+        $script:hostRootHashes = @{}
+        Get-ChildItem -LiteralPath $GamePath -File | Where-Object { $_.Extension -notin '.log', '.dmp' } |
+            ForEach-Object { $script:hostRootHashes[$_.Name.ToLower()] = (Get-FileHash -LiteralPath $_.FullName).Hash }
+    }
+    return $script:hostRootHashes
+}
+function Show-GameFiles($r) {
+    # The dsf_enhanced the run used; with -Vm, root files of the guest's C:\Game that differ from
+    # the host's (said once per series).
+    $e = $r.dsfEnhanced
+    $short = { param($hash) if ($hash) { "$hash".Substring(0, 8) } else { 'none' } }
+    if ($e) { "  dsf_enhanced.asi $(& $short $e.asi) ($($e.asiFrom)), ini $(& $short $e.ini) ($($e.iniFrom))" }
+    if (-not $Vm -or -not $r.gameRoot -or $script:driftSaid) { return }
+    $guest = @{}
+    foreach ($p in $r.gameRoot.PSObject.Properties) { $guest[$p.Name.ToLower()] = $p.Value }
+    $hostHashes = Get-HostRootHashes
+    $differ = @(@($hostHashes.Keys) + @($guest.Keys) | Sort-Object -Unique |
+        Where-Object { $_ -notin $hostRootFiles -and $hostHashes[$_] -ne $guest[$_] })
+    if ($differ) {
+        $script:driftSaid = $true
+        "  WARNING: the guest's C:\Game differs from the host game folder in $($differ -join ', '); refresh it:" +
+            " vm.ps1 Exec -Vm $($vmTarget.Id) -Script C:\Repo\tools\wsb\guest\setup-vm.ps1 -Arguments '-Phase','Game'"
+    }
+}
+
 $resultSeconds = [math]::Max(600, $WaitSeconds + 420)
 try {
     if (-not $OnHost) { Restore-DeadHostSession }
@@ -246,7 +284,16 @@ try {
             $runDir = Join-Path $outputHost "runs\$stamp"
             New-Item -ItemType Directory -Force -Path $runDir | Out-Null
             Set-Content (Join-Path $outputHost 'runs\latest.txt') $runDir
-            $vmArgs = @(ConvertTo-ArgList $guestValues -CommandLine) + @('-RunDir', "C:\Output\runs\$stamp", '-CopyRepoFiles')
+            # The host game folder's current dsf_enhanced.asi and .ini, copied into the run folder:
+            # the guest's C:\Game is a copy from when the VM was provisioned and goes stale
+            # (issue #59). -Override still wins. result.json "dsfEnhanced" has the hashes.
+            $hostGame = New-Item -ItemType Directory -Force -Path (Join-Path $runDir 'host-game')
+            foreach ($name in $hostRootFiles) {
+                $path = Join-Path $GamePath $name
+                if (Test-Path -LiteralPath $path) { Copy-Item -LiteralPath $path -Destination $hostGame.FullName }
+            }
+            $vmArgs = @(ConvertTo-ArgList $guestValues -CommandLine) + @('-RunDir', "C:\Output\runs\$stamp", '-CopyRepoFiles',
+                '-GameRootFrom', "C:\Output\runs\$stamp\host-game")
             $timeout = $resultSeconds + 300
             try { & $vmScript Exec -Vm $vmTarget.Id -Script C:\Repo\tools\wsb\guest\run-test.ps1 -Arguments $vmArgs -TimeoutSeconds $timeout | Out-Null }
             catch {
@@ -278,6 +325,7 @@ try {
         if (-not (Test-Path $result)) { "  no result after $resultSeconds s"; continue }
         $r = Get-Content $result -Raw | ConvertFrom-Json
         "  stage=$($r.stage) crashed=$([bool]$r.crashed) error=$($r.error)"
+        Show-GameFiles $r
         $r.probeLines | Where-Object { $_ -match 'id \d+:' -and $_ -notmatch 'cockpit t\d+ speed' -and $_ -notmatch '\] dy \d' } | ForEach-Object { "  $_" }
         $speeds = @($r.probeLines | Where-Object { $_ -match 'cockpit t\d+ speed ([\d.]+) m/s ([\d.]+) mph' } |
             ForEach-Object { [double]($_ -replace '.* ([\d.]+) mph.*', '$1') })

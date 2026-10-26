@@ -232,10 +232,15 @@ function Step-Clone {
     if (-not (Test-Path -LiteralPath $source.Vmx)) { throw "no $($source.Vmx) to clone" }
     if ((Test-Path -LiteralPath $VmVmx) -and -not $Force) { throw "$VmVmx exists; use -Force to replace it" }
     # VM 1's run mutexes, so no series uses it meanwhile: deleting and making a clone also
-    # write VM 1's .vmsd (snapshot0.cloneN).
-    $held = Enter-VmMutexes $source.RunMutexes ([int][TimeSpan]::FromHours(3).TotalMilliseconds)
-    if (-not $held) { throw "$($source.Name) is still in use after 3 hours" }
+    # write VM 1's .vmsd (snapshot0.cloneN). And the old clone's, so no series runs on it while
+    # it is deleted. Queued behind the series already waiting (vm-common.ps1 Enter-VmPool).
+    $held = @()
     try {
+        foreach ($vm in @($source) + @(if (Test-Path -LiteralPath $VmVmx) { $VmInfo })) {
+            $got = Enter-VmPool -Pool @($vm) -Timeout ([TimeSpan]::FromHours(3)) -Label 'vm-build.ps1 Clone' -Say { param($t) Say "$($vm.Name): $t" | Out-Host }
+            if (-not $got) { throw "$($vm.Name) is still in use after 3 hours" }
+            $held += $got.Mutexes
+        }
         if (Test-Path -LiteralPath $VmVmx) {
             if (Test-VmRunning) { Stop-Vm | Out-Null }
             Invoke-Vmrun @('deleteVM', $VmVmx) | Out-Null
