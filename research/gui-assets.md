@@ -773,11 +773,11 @@ and Fonts.fchunk, `gui_assets` now reads the originals from
    index and the model the car list writes for that card (`ebp`, `[esp+0x18]`
    from `group_car`, which already adds the window's first car), so the
    window can't shift it. Checked in game over every position:
-   `dsff emblem_check` (asi.md, "Garage card emblem") found 0 discs of 214
-   Right/Left shots that differ from the plugin's per-card decision.
+   `dsff emblem_check` (asi.md, "Garage card emblem") found no disc that
+   differs from the plugin's per-card decision in 428 Right/Left shots.
    Those shots cover CHEVROLET (46 cars) and FORD (49), each scrolled to the
-   end, past it and back past the start, and an 8-car maker, in runs
-   `vm-20261026-120559` and RUN2. Each decision matches the
+   end, past it and back past the start, and GMC (8), in runs
+   `vm-20261026-120559` and `vm1-20261026-130246`. Each decision matches the
    car's `GarageEmblem`, except in a 20-car group (ASTON MARTIN), which keeps SF
    by design (issue #66). That the disc reads as the next card's is issue #67.
 9. Answered: the crash with `[garage]` on (runs `host-20261023-080433`,

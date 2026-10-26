@@ -108,6 +108,11 @@ def clock_offset(reactions: list[float], shots: list[float]) -> tuple[float, int
     return best, score(best), score(runner)
 
 
+def matches(seen: dict[int, str], expected: dict[int, str] | None) -> bool:
+    """The discs on screen match wherever a card is expected."""
+    return expected is not None and all(seen[o] == expected[o] for o in DISCS if expected[o] != "-")
+
+
 def last_before(records: list, t: float):
     best = None
     for record in records:
@@ -140,7 +145,8 @@ def check(run: Path, hud: Path | None = None) -> int:
         offset -= 0.3
         note = f"clock offset {offset + 0.3:+.1f} s from {votes} votes (next best {runner}): check it by hand"
     print(f"{len(shots)} Right/Left shots, {len(log['presses'])} logged presses, {note}")
-    bad = checked = 0
+    bad = checked = late = 0
+    previous = None  # the last checked shot's expected discs
     for t, key, png in shots:
         at = t + offset
         listed, fill, index = (last_before(log[k], at) for k in ("lists", "fills", "indexes"))
@@ -149,16 +155,25 @@ def check(run: Path, hud: Path | None = None) -> int:
         i, cards, view = index[1], fill[1], listed[1]
         expected = {o: cards[i + o][1] if (i + o) in cards else "-" for o in DISCS}
         seen = shot_discs(run / png)
-        ok = all(seen[o] == expected[o] for o in DISCS if expected[o] != "-")
+        ok = matches(seen, expected)
+        # A busy VM can draw a step late: the shot then still shows the previous step.
+        # The next shot catches up. A card shift would show in (nearly) every shot.
+        lags = not ok and matches(seen, previous)
         checked += 1
-        bad += not ok
+        late += lags
+        bad += not ok and not lags
+        previous = expected
+        verdict = "ok" if ok else "LATE (shows the previous step)" if lags else "MISMATCH"
         print(
             f"{png} {key:5} maker {view['maker']} ({view['cars']} cars) car {view['first'] + i + 1:3} "
             f"card {i + 1:2} model {cards.get(i, ('?',))[0]}: "
             f"expected {''.join(expected[o] for o in sorted(DISCS))} "
-            f"on screen {''.join(seen[o] for o in sorted(DISCS))} {'ok' if ok else 'MISMATCH'}"
+            f"on screen {''.join(seen[o] for o in sorted(DISCS))} {verdict}"
         )
-    print(f"{checked} shots checked, {bad} with a disc that differs (offsets -1, 0, +1, +2 of the highlighted card)")
+    print(
+        f"{checked} shots checked: {bad} with a disc that differs, {late} drawn a step late "
+        "(offsets -1, 0, +1, +2 of the highlighted card)"
+    )
     if hud:
         text = hud.read_text(encoding="utf-8")
         forza = {int(m) for m in re.findall(r"\[(\d+)\] = \{[^\n]*GarageEmblem = 1", text)}

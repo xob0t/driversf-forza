@@ -578,11 +578,20 @@ card <N> model <id> -> Forza logo|SF`). With `[garage] menu_debug=1` and a
 checks every Right/Left shot. It classifies the discs at the highlighted
 card and its neighbours (-1, +1, +2) by colour and compares them with the
 logged decisions, and with `--hud` each decision with `GarageEmblem`.
-run-test.ps1 notes events with the guest clock (`wall`), so shots match log
-lines by time. Runs `vm-20261026-120559` and RUN2 (full roster
-out/final-gui2 with its GUI step rebuilt, CHEVROLET 46 cars and FORD 49 to
-the end, past it and back past the start, an 8-car maker): 0 of 214 shots
-differ, and no decision differs from hud.lua outside 20-car groups. The keys:
+run-test.ps1 now notes events with the guest clock (`wall`), so shots match
+log lines by time. Older runs get the offset from votes; check those by hand.
+A shot that still shows the previous step counts as "drawn late": a busy VM
+can draw a step late, and the next shot catches up. A card shift would make
+nearly every shot of a scroll late. Shifting the shot-to-log match of run
+`-120559` by one tap gave 149 of 199 shots that differ.
+
+Runs `vm-20261026-120559` and `vm1-20261026-130246` used the full roster
+(out/final-gui2, GUI step rebuilt for #50). Each scrolled CHEVROLET (46
+cars) and FORD (49) to the end, past it and back past the start, plus GMC
+(8 cars). In 428 Right/Left shots no disc differs from its card's decision.
+Four shots of the second run were drawn late; that VM took up to 15 s
+between some 2-s steps. No decision differs from hud.lua outside 20-car
+groups. The keys:
 Enter, Down × 9, Enter, Right × 48, Left × 50, Esc, Down × 4, Enter,
 Right × 51, Left × 53, Esc, Down, Enter, Right × 6, Left × 6, Esc.
 
