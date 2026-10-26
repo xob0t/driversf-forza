@@ -390,19 +390,64 @@ def _high_brake(records) -> None:
 
 def _lens_classes(section, sub, tris, pts_all, texel, colour: int, mid_z: float):
     """Texel class per triangle of a lens subsection (texel_class), and whether
-    a rear amber-technique lens is a red one: more of its rear area on red
-    texels than on amber. The FM4 Lotus Carlton's tail lamps are one
+    a rear amber-technique lens is a red one: more than half its rear area on
+    red texels. The FM4 Lotus Carlton's tail lamps are one
     `detail_glass_amber` lens on red texels (mean (140, 40, 40)) with the
     `tail_light` bulb hidden behind it; taken by name it lit as an indicator
     only and the car showed no brake light (user report on out/final4)."""
     classes = [texel_class(texel(section, sub, t)) for t in tris]
     if colour != AMBER:
         return classes, False
-    area = {"red": 0.0, "amber": 0.0}
+    red = total = 0.0
     for cls, pts in zip(classes, pts_all):
-        if cls in area and sum(p[2] for p in pts) / 3 <= mid_z:
-            area[cls] += _tri_geometry(pts, [(0, 0, 0)] * 3)[0]
-    return classes, area["red"] > area["amber"]
+        if sum(p[2] for p in pts) / 3 <= mid_z:
+            area = _tri_geometry(pts, [(0, 0, 0)] * 3)[0]
+            total += area
+            red += area if cls == "red" else 0.0
+    return classes, red > total / 2
+
+
+INDICATING = (INDICATOR, BRAKE_IND, DRL_IND)
+
+
+def _red_lens_indicators(records, from_lens: set, red_indicators: list) -> None:
+    """Red rear lens triangles that also indicate: a red lamp that brakes and
+    indicates (BRAKE_IND, types 0x19/0x1A, as on stock US-style cars).
+
+    - Over an indicator: the lamp triangle nearest behind the lens triangle
+      (same LOD, not a lens) indicates. Stock lamps are opaque, so the bulb
+      behind a lens never shows; the lens has to blink itself (FOR_GT_05's
+      red lenses over its drlinl/drlinr lamps).
+    - A red "amber" lens on a side without any other rear indicator
+      (MIT_GTO_97: (76, 0, 0) texels, no amber at the rear)."""
+    import numpy as np
+
+    bulbs: dict = {}  # lod -> (centres, functions) of rear lamp triangles that are not lenses
+    for n, r in enumerate(records):
+        if n not in from_lens and not r.front:
+            bulbs.setdefault(r.lod, ([], []))
+            bulbs[r.lod][0].append(r.centre)
+            bulbs[r.lod][1].append(r.function)
+    bulbs = {lod: (np.array(c, dtype=float), f) for lod, (c, f) in bulbs.items()}
+
+    def indicate(r) -> None:
+        r.function = BRAKE_IND
+        if r.side == "C":
+            r.side = "L" if r.centre[0] > 0 else "R"
+
+    for n in from_lens:
+        r = records[n]
+        if r.function != TAIL or r.lod not in bulbs:
+            continue
+        centres, functions = bulbs[r.lod]
+        d = np.linalg.norm(centres - np.array(r.centre), axis=1)
+        i = int(d.argmin())
+        if d[i] < CLEAR_LENS_REACH and functions[i] in INDICATING:
+            indicate(r)
+    indicating = {r.side for r in records if not r.front and r.function in INDICATING}
+    for n in red_indicators:
+        if records[n].side not in indicating:
+            indicate(records[n])
 
 
 REFLECTORS = ("textured_reflector", "reflector")
@@ -469,6 +514,8 @@ class LampPlan:
         whatever their technique says (_lens_classes)."""
         plan = cls()
         records, clear = [], []  # clear lenses are placed after the lamps
+        red_indicators = []  # records of amber-technique lens triangles on red texels
+        from_lens = set()  # records of lens triangles
         for section in sections:
             for sub in section.subsections:
                 entry = TECHNIQUE_FUNCTION.get(sub.material)
@@ -511,6 +558,9 @@ class LampPlan:
                         and not front
                         and (classes[k] == "red" or (red_lens and classes[k] != "amber"))
                     ):
+                        if c == AMBER:
+                            side = side if side != "C" else ("L" if centre[0] > 0 else "R")
+                            red_indicators.append(len(records))
                         c = RED
                     if f == LENS:
                         # Amber lenses are indicators, red ones at the rear tail lamps;
@@ -523,6 +573,7 @@ class LampPlan:
                         else:
                             clear.append(Tri(sub, k, LENS, side, front, c, area, centre, normal, sub.lod))
                             continue
+                        from_lens.add(len(records))
                     records.append(Tri(sub, k, f, side, front, c, area, centre, normal, sub.lod))
         if not any(r.function == HEAD and r.front for r in records):
             # No head-lamp technique (CHE_CorvetteGS_10, DOD_RamSRT10_06,
@@ -537,9 +588,10 @@ class LampPlan:
                 ]
             else:
                 records += _headlight_reflectors(sections, place, mid_z)
+        _red_lens_indicators(records, from_lens, red_indicators)
         _high_brake(records)
         plan._cluster(records)
-        plan._place_clear(clear)
+        plan._place_clear(clear, records)
         return plan
 
     def _cluster(self, records) -> None:
@@ -572,19 +624,33 @@ class LampPlan:
                     lamp.measure(r.lod, r.area, r.centre, r.normal)
                 self.tri_lamp[(id(r.sub), r.k)] = lamp.key
 
-    def _place_clear(self, clear) -> None:
-        """Clear lenses light with the nearest lamp at the same end (within
-        CLEAR_LENS_REACH), else stay unlit."""
+    def _place_clear(self, clear, records) -> None:
+        """Clear lenses light with the lamp nearest behind them: the lamp of
+        the nearest lamp triangle of the same LOD and end (within
+        CLEAR_LENS_REACH), else stay unlit. By lamp centre a lens over a tail
+        lamp went to the reverse lamp once the tail lamp's red lens joined it
+        and moved its centre (JAG_XFR_10)."""
+        import numpy as np
+
+        points: dict = {}  # (lod, front) -> (centres, lamp keys)
+        for r in records:
+            key = self.tri_lamp.get((id(r.sub), r.k))
+            if key is not None and self.lamps[key].area:
+                points.setdefault((r.lod, r.front), ([], []))
+                points[(r.lod, r.front)][0].append(r.centre)
+                points[(r.lod, r.front)][1].append(key)
+        arrays = {k: (np.array(c, dtype=float), keys) for k, (c, keys) in points.items()}
         for r in clear:
-            best, best_d = None, CLEAR_LENS_REACH
-            for lamp in self.lamps.values():
-                if lamp.front != r.front or not lamp.area:
+            near = arrays.get((r.lod, r.front))
+            if near is None:  # no lamp at this LOD: any LOD at the same end
+                cands = [v for (lod, front), v in arrays.items() if front == r.front]
+                if not cands:
                     continue
-                d = math.dist(lamp.position, r.centre)
-                if d < best_d:
-                    best, best_d = lamp, d
-            if best is not None:
-                self.tri_lamp[(id(r.sub), r.k)] = best.key
+                near = (np.concatenate([c for c, _ in cands]), [k for _, keys in cands for k in keys])
+            d = np.linalg.norm(near[0] - np.array(r.centre), axis=1)
+            i = int(d.argmin())
+            if d[i] < CLEAR_LENS_REACH:
+                self.tri_lamp[(id(r.sub), r.k)] = near[1][i]
 
     # -- host light entries --
     def assign(self, upvh: bytes) -> LampPlan:
