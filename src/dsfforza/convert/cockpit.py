@@ -3078,7 +3078,9 @@ def convert_interior(
     # as they were).
     used = {sub.material for s in sections for sub in s.subsections}
     flat = {
-        c for pattern, c in FLAT_COCKPIT if pattern.pattern not in VIRTUAL_ONLY_FLAT or any(pattern.search(m) for m in used)
+        c
+        for pattern, c in FLAT_COCKPIT
+        if pattern.pattern not in VIRTUAL_ONLY_FLAT or any(pattern.search(m) for m in used)
     }
     for colour in flat | {FLAT_DEFAULT}:
         needle_colours[("flat",) + colour] = colour
