@@ -107,8 +107,11 @@ on a shorter or longer car).
    `brinl/brinr`, `drlinl*/drlinr*`, `lindtailside` to the combined types.
    Lenses take a function from their colour: `detail_glass_amber` to
    indicator, `detail_glass_red` at the rear to tail; `detail_glass_clear`
-   lights with the nearest lamp behind it (0.35 m), reflectors and housings
-   stay unlit. FH1's `ShaderSettings.xml` agrees: `tail_light` has a
+   lights with the lamp of the nearest lamp triangle behind it (0.35 m),
+   reflectors and housings stay unlit. At the rear the lens texels decide
+   over the technique: a lens triangle on red texels is a tail lamp, and a
+   red lens over an indicator brakes and indicates (0x19/0x1A; "The Lotus
+   Carlton showed no brake light" below). FH1's `ShaderSettings.xml` agrees: `tail_light` has a
    BrakeColor, `taillight2S` a TailLightColor.
    A car with no headlamp technique at the front takes its front clear
    lenses as headlamps. Without those it takes the reflectors of its

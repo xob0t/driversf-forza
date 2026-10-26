@@ -167,13 +167,23 @@ HIGH_BRAKE_RISE = 0.08  # a centre tail lamp this far above the side tails is th
 
 # Group priority when the host has fewer light entries than the car has lamps;
 # lower first. Groups that miss out share an entry of the same function and
-# side (a brake-and-indicator lamp also its side's tail lamp: it still brakes),
-# else stay unlit. Brake-and-indicator lamps come after the position lamps:
-# red lenses over indicators (_red_lens_indicators) added two lamps to 58
-# cars, and on full hosts (BMW_M5_12, VIP_Viper_13 on 147, 182) they took
-# the front position lamps' entries.
-PRIORITY = {HEAD: 0, TAIL: 1, BRAKE: 2, INDICATOR: 3, DRL_IND: 3, REVERSE: 4, POSITION: 5, BRAKE_IND: 6, FOG: 7}
-FALLBACK = {BRAKE_IND: TAIL}  # an unassigned lamp of this function shares this one's entry
+# side, else of their fallback() function (same side first, then any side at the
+# same end), else stay unlit. Red lenses over indicators
+# (_red_lens_indicators) add two lamps to 58 cars; on full hosts (BMW_M5_12,
+# VIP_Viper_13 on 147, 182) the front position lamps then lost their entries,
+# and they now light with the head lamps instead.
+PRIORITY = {HEAD: 0, TAIL: 1, BRAKE: 2, INDICATOR: 3, BRAKE_IND: 3, DRL_IND: 3, REVERSE: 4, POSITION: 5, FOG: 6}
+
+
+def fallback(function: str, front: bool) -> str | None:
+    """The function whose entry a lamp left without one shares: a
+    brake-and-indicator lamp still brakes with the tail lamp, a position lamp
+    lights with the head lamp (front) or the tail lamp (rear)."""
+    if function == BRAKE_IND:
+        return TAIL
+    if function == POSITION:
+        return HEAD if front else TAIL
+    return None
 
 
 def type_byte(function: str, side: str) -> int:
@@ -695,18 +705,12 @@ class LampPlan:
                     ),
                     None,
                 )
-                if twin is None and lamp.function in FALLBACK:
-                    twin = next(
-                        (
-                            l
-                            for l in order
-                            if l.light_id is not None
-                            and l.function == FALLBACK[lamp.function]
-                            and l.side == lamp.side
-                            and l.front == lamp.front
-                        ),
-                        None,
-                    )
+                other = fallback(lamp.function, lamp.front)
+                if twin is None and other is not None:
+                    near = [
+                        l for l in order if l.light_id is not None and l.function == other and l.front == lamp.front
+                    ]
+                    twin = next((l for l in near if l.side == lamp.side), near[0] if near else None)
                 if twin is not None:
                     lamp.light_id = twin.light_id
                 else:
