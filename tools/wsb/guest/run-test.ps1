@@ -50,6 +50,7 @@ param(
     [string]$Views,      # probe: extra views after the chase view, ~6 s each: camera modes (Bonnet, Bumper) and fixed
                          # cameras on the driver's seat (left, right, front), the tailgate (rear), the left wheels
                          # (wheels) and the front left wheel (fq, lock), e.g. 'Bonnet,Bumper,left'
+    [int]$Palette = -1,  # probe: paint palette entry of every probed car (shaderParams[0]); -1: the game's pick
     [switch]$LightsDriveOnly, # with -Lights: only the day and dark drives, no setLights phases
     [switch]$Lights,     # probe: lamp phases per car (dsfforza\lightstest.lua, research/lights.md); the harness
                          # picks each phase through dsfforza\lightsync.lua and saves lights-<id>-<k>a/b.png
@@ -400,6 +401,7 @@ try {
                     if ($DamagePanels) { $fields += "damage_panels = true" }
                     if ($DamageSide) { $fields += "damage_side = true" }
                     if ($GlassLadder) { $fields += "glass_ladder = true" }
+                    if ($Palette -ge 0) { $fields += "palette = $Palette" }
                     if ($Views) { $fields += "views = { " + (($Views -split ',' | Where-Object { $_ } | ForEach-Object { "`"$($_.Trim())`"" }) -join ', ') + " }" }
                     if ($Lights) {
                         $fields += $(if ($LightsDriveOnly) { "lights = { dark = true, phases = false }" } else { "lights = { dark = true }" })

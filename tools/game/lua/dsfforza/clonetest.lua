@@ -34,6 +34,8 @@ local VIEWS = {}              -- config.views (run-test -Views): extra views bet
                               -- "rear": the tailgate; "wheels": the left side at hub height; "fq": the
                               -- front left wheel from the front three-quarter; "lock": that wheel
                               -- from ahead, for steering in place with run-test -DriveKey Left)
+local PALETTE = nil           -- config.palette (run-test -Palette): paint palette entry of the spawned cars
+                              -- (Spawn's shaderParams[0], as the game's grid spawns set it); nil: the game's pick
 local DYNO = nil              -- config.dyno (run-test -Dyno): the dyno.lua module, acceleration and braking runs
 local LIGHTS = nil            -- config.lights (run-test -Lights): the lightstest.lua module, lamp phases per car
 
@@ -50,6 +52,7 @@ do
 		if config.damage_side then DAMAGE_SIDE = true end
 		if config.glass_ladder then GLASS_LADDER = true end
 		if type(config.views) == "table" then VIEWS = config.views end
+		if type(config.palette) == "number" then PALETTE = config.palette end
 		if config.dyno then
 			local loaded, module = user_open("dsfforza\\dyno.lua")
 			if loaded and type(module) == "table" then
@@ -157,7 +160,7 @@ local function spawnInFront(id, playerGameVehicle)
 		position = "randomLane",
 		heading = playerGameVehicle.heading,
 		desiredSpeed = 0,
-		vehicles = { { modelID = id } },
+		vehicles = { { modelID = id, shaderParams = PALETTE and { [0] = PALETTE } or nil } },
 	})
 	return vehicles and vehicles[1]
 end
@@ -620,6 +623,11 @@ local function step()
 	end
 	if id ~= nil and state.spawned ~= nil and state.phase == "chase_view" and (state.ticks == 12 or state.ticks == 20) then
 		logRestPose(id, state.spawned, "t" .. state.ticks)
+	end
+	if #VIEWS > 0 and id ~= nil and state.spawned ~= nil and (state.phase == "chase_view" or state.phase == "extra_view") then
+		-- Hold the car still for the fixed views: a car spawned in front of a moving one keeps
+		-- rolling out of the fixed cameras (the Crossfire in runs vm-20261025-075152, -075859).
+		pcall(function() state.spawned.velocity = vec.vector(0, 0, 0, 0) end)
 	end
 	if #VIEWS > 0 and id ~= nil and state.spawned ~= nil then
 		if state.phase == "chase_view" and state.ticks == VIEW_TICKS - 1 then

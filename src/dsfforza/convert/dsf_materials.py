@@ -260,6 +260,14 @@ CHASSIS, LIGHTS_MAT = "chassis", "lights"
 WHEEL_WEIGHT = 1.0
 WHEEL_TEXELS = 256
 DROP = "drop"  # triangle_uvs tag: leave this triangle out (alpha-tested away in Forza)
+# Trim artwork (src/dsfforza/convert/trim_art.py: the Alfa GTA's quadrifoglio badges,
+# the Crossfire's vent strakes) goes through the atlas unless that leaves the car less
+# than this share of the atlas scale it has without it; then each of its subsections
+# takes one flat colour. 60 tiny `misc` triangles of the Jeep GC SRT8's headlamps
+# (a 365 x 15 texel strip) took it from 0.479 to 0.324, the DB9's 4 bumper_frame
+# triangles from 0.75 to 0.63 (research/forza-materials.md, "Trim artwork").
+ART_TECHNIQUES = ("dsf_trim_art", "dsf_trim_art_lights")  # trim_art.ART_TECHNIQUE
+ART_MIN_SCALE_SHARE = 0.9
 
 
 # --- DXT5 ------------------------------------------------------------------------
@@ -798,6 +806,8 @@ class Texturing:
     lens_subs: set = field(default_factory=set)  # id(sub): rear lamp lenses moved from glass to the atlas (is_lens)
     lamp_tris: list = field(default_factory=list)  # (lod, positions, atlas uvs) of Lights-atlas triangles
     wheel_ids: set = field(default_factory=set)  # id(section) of the Forza wheel model (plan(wheels=...))
+    art_flat: set = field(default_factory=set)  # id(sub): trim artwork drawn flat (ART_MIN_SCALE_SHARE)
+    pack_scale: float = 0.0  # the uniform scale _pack found (before family weights)
 
     # -- planning --
     def plan(self, sections, lods, extra_solids: dict | None = None, wheels=None) -> Texturing:
@@ -824,6 +834,7 @@ class Texturing:
         keys: dict[str, list] = {f: [] for f in self.families}
         tested: dict[str, list] = {f: [] for f in self.families}
         swatches: list[fm.SubMaterial] = []
+        art_subs = {}  # id(sub) -> (section, sub, SubMaterial): trim artwork (trim_art)
         for section, section_lods in work:
             for sub in section.subsections:
                 if sub.lod not in section_lods:
@@ -832,6 +843,8 @@ class Texturing:
                 self.resolved[(id(section), id(sub))] = m
                 alpha_tested = m.technique in fm.ALPHA_TESTED
                 if self._uses_atlas(m) and m.kind == "textured":
+                    if m.technique in ART_TECHNIQUES:
+                        art_subs[id(sub)] = (section, sub, m)
                     pool = section.vertices_for(sub)
                     for k, tri in enumerate(sub.triangles()):
                         uvs = [m.uv(pool[i].uv0) for i in tri]
@@ -848,6 +861,55 @@ class Texturing:
                         self.cutout.add(id(sub))
                 elif self._uses_atlas(m) and m.kind == "swatch":
                     swatches.append((sub, m))
+        art = {key for f in self.families for key in keys[f] if key[0] in art_subs}
+        self._layout(tris, keys, tested, swatches, extra_solids)
+        if art:
+            # Trim artwork (trim_art) may not cost the rest of the car much resolution:
+            # past ART_MIN_SCALE_SHARE each of its subsections takes one flat colour.
+            with_art = self.pack_scale
+            flat = {sid: self._art_swatch(*art_subs[sid]) for sid in {k[0] for k in art}}
+            kept = {f: [n for n, key in enumerate(keys[f]) if key not in art] for f in self.families}
+            self._layout(
+                {f: [tris[f][n] for n in kept[f]] for f in self.families},
+                {f: [keys[f][n] for n in kept[f]] for f in self.families},
+                {f: [tested[f][n] for n in kept[f]] for f in self.families},
+                swatches + [(art_subs[sid][1], m) for sid, m in flat.items()],
+                extra_solids,
+            )
+            if with_art >= ART_MIN_SCALE_SHARE * self.pack_scale:
+                self._layout(tris, keys, tested, swatches, extra_solids)
+            else:
+                for sid, m in flat.items():
+                    section, sub = art_subs[sid][:2]
+                    self.resolved[(id(section), id(sub))] = m
+                    self.atlas_subs.discard(sid)
+                self.art_flat = set(flat)
+        return self
+
+    def _art_swatch(self, section, sub, m: fm.SubMaterial) -> fm.SubMaterial:
+        """A trim-artwork subsection as one flat colour: the mean of the opaque
+        texels under its triangles (trim_art.triangle_texels)."""
+        import dataclasses
+
+        from dsfforza.convert import trim_art
+
+        w, h, rgba = self.atlases.get(m.family)
+        image = np.frombuffer(bytes(rgba), dtype=np.uint8).reshape(h, w, 4)
+        pool = section.vertices_for(sub)
+        texels = [
+            trim_art.triangle_texels(image, [((u := m.uv(pool[i].uv0))[0] * w, u[1] * h) for i in tri])
+            for tri in sub.triangles()
+        ]
+        texels = np.concatenate(texels)
+        opaque = texels[texels[:, 3] >= trim_art.ALPHA_OPAQUE]
+        colour = tuple(int(round(c)) for c in (opaque if len(opaque) else texels).mean(0))
+        return dataclasses.replace(m, kind="swatch", colour=colour)
+
+    def _layout(self, tris, keys, tested, swatches, extra_solids) -> None:
+        """Regions, swatch cells and packing for these atlas triangles and swatches."""
+        self.regions, self.owners, self.alpha_only = {}, {}, set()
+        self.solids, self.solid_colours, self.scale = {}, {}, {}
+        self._red_curve_done = self._lens_scale_done = False
         for family in self.families:
             w, h, _ = self.atlases.get(family)
             self.src_sizes[family] = (w, h)
@@ -863,7 +925,7 @@ class Texturing:
         # to find its cell. Converted before the regions, the swatch got the
         # shared curve here and the car's curve there: KeyError for the FH1
         # M5's and Gallardo's red tail lamp swatches.
-        fm.sample_colours([m for _, m in swatches], self.atlases)
+        fm.sample_colours([m for _, m in swatches if m.colour is None], self.atlases)  # art swatches have theirs
         for sub, m in swatches:
             if m.technique in fm.ALPHA_TESTED and m.colour[3] < 128:
                 self.cutout.add(id(sub))
@@ -878,7 +940,6 @@ class Texturing:
         for key, colour in (extra_solids or {}).items():
             self.solid_colours[key] = tuple(colour)
         self._pack()
-        return self
 
     def wheel_texture(self) -> bool:
         """Whether the car folder holds the wheel texture (port_car.extract_wheel)."""
@@ -972,6 +1033,7 @@ class Texturing:
         for key, p in zip(solid_keys, pos[len(regions) :]):
             self.solids[key] = p
         self.scale = {family: self._family_scale(s, family) for family in self.families}
+        self.pack_scale = s
 
     def _family_scale(self, s: float, family: str) -> float:
         """DSF texels per source texel for a family: the weighted uniform

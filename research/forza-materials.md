@@ -1,6 +1,6 @@
 # Forza materials and textures, and their DSF counterparts
 
-Updated: 2026-10-24
+Updated: 2026-10-25
 
 Code: `src/dsfforza/convert/forza_materials.py` (Forza side), `src/dsfforza/convert/dsf_materials.py`
 (DSF side, atlas, preview), `--textures` in `src/dsfforza/convert/forza2dsf.py` and
@@ -98,7 +98,7 @@ the converter squashes the Forza window UVs into that band
 | window | nodamage | textured | glass | shared GLASS |
 | glass (headlight cover) | Lights | textured | glass | shared GLASS |
 | black_glass | nodamage | textured | trim | shared TRIM |
-| black, frame, bottom, plastic2, weatherstrip, matte_colors, misc, rubber_trim, bumper_frame, undercarriage, race_kit_red | nodamage | mostly swatch | trim | shared TRIM (`--swatch-trims`: Chassis with the swatch colour) |
+| black, frame, bottom, plastic2, weatherstrip, matte_colors, misc, rubber_trim, bumper_frame, undercarriage, race_kit_red | nodamage | mostly swatch | trim | shared TRIM (`--swatch-trims`: Chassis with the swatch colour); triangles on light opaque artwork seen from outside: host Chassis ("Trim artwork" below) |
 | chrome, chrome_2, chrome_3, chrome_bump, lights_chrome | nodamage (lights) | textured or swatch | chrome | shared CHROME: GLOBAL_LOD_Chrome (full), GLOBAL_Chassis_Chrome (exterior); "Chrome trim" below |
 | carbon_fiber | global | tiling | trim | shared TRIM |
 
@@ -382,6 +382,136 @@ the runs: the spawn picks a palette entry. One "after" run hit DriverNGHook's
 fatal error dialog while the world loaded (`vm-20261024-133536`), before any
 port spawned; the rerun passed.
 
+## Trim artwork (2026-10-25)
+
+User report on `out/final-gui2` (ALF_GTA_65, spool ID 53, host 126): "alfa
+romeo giulia sprint gta stradale has black triangles instead of decals". On
+each front wing behind the wheel arch there was a solid black triangle; the
+real car has a white triangle with the green quadrifoglio there.
+
+**What it is (confirmed-static; `out/inv/near.py`, `badge2.py`).** Not the
+badge cutout: the wing triangle is three `misc` triangles of the `body`
+section (x ±0.79, y 0.36 to 0.44, z -0.84 to -0.81 at LOD 1), and a fourth
+group of nine on the tail panel (x 0.24, z 1.93). Their texels in
+`nodamage.xds` (u 874 to 996, v 404 to 504) are opaque (alpha 255 on every
+texel centre inside them): white (255, 255, 255) at the top and the green
+cloverleaf on white below (mean 160, 213, 175). `misc` is a trim technique
+(`forza_materials.TECHNIQUES`), and every trim drew with the shared trim
+material on its dark texel (`forza2dsf.TRIM_UV`, RG about 24), so the
+quadrifoglio came out as a black triangle. The `body/badge` cutout record
+(cut 64, made 1676) is the dark plate at the bonnet's rear edge and four
+round pieces in the nose; those cuts were right. `shaders_v16.fxobj` names
+`misc` next to `engine`, `cage`, `rubber_trim`, `weatherstrip`, `black` and
+`frame`; what its pixel shader does with the texel isn't decoded.
+
+**Survey (every car of the roster, 573, `out/inv/trim_survey.py`, LOD 1, all
+sections).** Trim triangles whose texels are opaque (half of them alpha 128
+or more) and whose mean luminance is 90 or more: 294,408 triangles on 566
+cars. Most of that can't be seen: the underbody (`undercarriage`, 189 m²),
+frames under the bonnet and in the boot (the Lancer Evo VI: 1.3 m² of
+`frame`), race-kit variants the converter drops. A quick orthographic render
+of each car's stock sections with the Forza texels on every trim
+(`out/inv/frender.py`) against the converter's trims shows the visible cases:
+light artwork drawn black. Besides the GTA's badges: the Crossfire's silver
+side-vent strakes, A-pillar trim and door handles, the Veyron's aluminium roof
+scoops, engine cover and fuel cap, the Monte Carlo SS stock car's rear spoiler,
+the Kenworth T440's red box frame.
+
+**Fix (`src/dsfforza/convert/trim_art.py`, `forza2dsf.convert`).** Before the
+atlas is planned, `split_trim_art` moves trim triangles into their own
+subsection with technique `dsf_trim_art` (`dsf_trim_art_lights` on the Lights
+atlas), which `forza_materials` classifies as textured, so they draw through
+the atlas on the host Chassis material like badges. A triangle moves when:
+
+- at least half the texel centres inside its UV triangle (its corners and
+  centroid if it holds none) are opaque, and the brightest channel of their
+  mean colour is 128 or more. Alpha-0 texels are paint-through filler, not
+  trim colour. A first try at 72 also moved mid-grey plastics (the Volt's and
+  the DMC-12's bumpers, 73 to 90), which Forza's render shows as dark grey
+  and DSF draws as its dark trim; those stay trim;
+- it can be seen from outside the car: orthographic depth buffers of the
+  LOD's body (2 cm pixels, glass doesn't hide anything) from 8 directions
+  level with the car, 8 from 35° above and one from straight above;
+  a corner pulled a quarter of the way in or the centroid within 2 cm of what
+  its pixel shows counts. Hidden frames stay trim: no atlas room for them,
+  and `damage.split_exposed` keeps projecting the engine bay when the bonnet
+  comes off;
+- its technique isn't `black*`, `mirror*`, a plate (`numberplate` quads are
+  replaced by name in `plates.apply`, `numplate` is the plate lamp strip),
+  `undercarriage`, `engine`, `cage` or `bottom`.
+
+**Bare metal to chrome (review of the first version).** On the atlas path the
+Veyron's roof scoops and engine cover came out near flat white in game
+(`vm-20261025-075859`, 210 to 244 on screen for a texel of 177). That is the
+Chassis material's ordinary gain, not a missing term: the moved triangles keep
+their section's vertices, so their baked sky (s0.w, `forza2dsf.vertex_sky`
+from the Forza AO byte) is computed like every other vertex's, and the Veyron's
+own rims (wheel.xds through the same Chassis material, texels about 191) show
+210 to 227 in the same shot. What the Chassis material lacks is a metal look:
+specular 0.03, no reflection. Forza draws these parts as flat grey swatches
+under a shiny technique (the Veyron's `ShaderSettings.xml`: `misc`
+SpecularAmount 1.1, FresnelIndex 2.3, PaintScale 0.15; `frame` SpecularAmount
+0.6, PristinePaintScale 0.3). So artwork that is bare metal goes to DSF's
+shared chrome like Forza's chrome techniques ("Chrome trim" above; technique
+`dsf_trim_metal`, role chrome, `GLOBAL_LOD_Chrome` / `GLOBAL_Chassis_Chrome`,
+`CHROME_UV`). The rule (`trim_art.is_metal`): the technique is named for
+metal (`metal`, `alum`, `steel`), or its opaque texels are one flat neutral
+grey: chroma of the mean colour 24 or less, luminance spread (standard
+deviation) 12 or less, brightest channel under 240. Painted artwork has colour
+(the quadrifoglio), detail (lettering, the Veyron's engine-cover script) or is
+white, and stays on the atlas. DSF's chrome samples the shared chassis texture,
+so the Forza grey can't tint it without a material of our own.
+
+The atlas pays for the new regions. `Texturing.plan` lays the atlas out with
+and without the artwork; if the artwork leaves less than 90% of the scale
+(`dsf_materials.ART_MIN_SCALE_SHARE`), each artwork subsection takes one flat
+colour cell instead, the mean of its opaque texels. Without that, 60 tiny
+`misc` triangles of the Jeep GC SRT8's headlamps (a 365 x 15 texel strip)
+took its atlas from 0.479 to 0.324, the Lotus 2-Eleven's from 0.562 to 0.320.
+
+Results over the roster (`out/inv/atlas_cmp.py`, LODs 1, 3, 5, 512² as the
+build): 390 of 573 cars get trim artwork, 114,531 triangles and 60.3 m² at
+LOD 1 (median 0.037 m² a car; `misc` 74,272 triangles on 234 cars,
+`matte_colors` 20,484 on 154, `plastic2` 13,925 on 73, `frame` 2,048 on 83,
+`rubber_trim`, `bumper_frame`, `weatherstrip` and a few others the rest).
+74,618 of those triangles (304 cars) are bare metal and take the chrome, the
+other 39,913 the atlas. The atlas scale drops on 75 cars, by 2.6% in the
+median and 10% at most (Veyron 0.584 to 0.527, the Viper CC, Corvette Stingray
+67, F40 Competizione); 8 pack slightly better. Before the metal rule 15 cars
+needed the flat fallback (Jeep GC SRT8, 2-Eleven, CCXR, Range Rover 08, 370Z,
+Cooper S, Silvia, E-Type...); with it, 12 of them still do. The split costs
+about 3.4 s a car (16 s at most, the Kenworth). The GTA: 15 triangles,
+0.033 m² of `misc` at LOD 1 on the atlas, and at LOD 3 20 light `rubber_trim`
+triangles around the rear window on the chrome; atlas 0.527 as before. GMC_YukonXL_01 has a trim
+with non-finite UVs; it samples no texels (it would have stopped the
+conversion).
+
+Offline (`img/trim-art-gta-offline.png`, `img/trim-art-crossfire-offline.png`;
+rows: Forza's texels on every trim, master, this change): the GTA's wing and
+tail triangles show the quadrifoglio, the Crossfire's strakes, A-pillar and
+door handles are chrome (drawn in a flat light grey offline). The built full entry (`dsf_materials preview`
+of `out/fx/after`, ID 1) has the quadrifoglio on the Chassis material.
+Rebuilding the four test cars with the final code gave byte-identical chunks.
+
+In game (confirmed-runtime, headless VM). First version (atlas only):
+`vm-20261025-075152` runs the four cars' chunks from `out/final` (the
+installed build, remerged as IDs 1 to 4 with `port_batch remerge --id-policy
+garage`), `vm-20261025-075859` the same four built with the change
+(`out/fx/after`). The GTA's quadrifoglio showed; the Veyron's scoops came out
+flat near white (the review above). Final version, the same palette entry in
+both runs (`run-series.ps1 -Palette 0`, new: clonetest.lua passes it to
+`Spawn.Spawn` as `shaderParams[0]`, as the game's grid spawns do; the probe
+now also holds the car still during the fixed views, after the Crossfire drove
+out of them), probe IDs 1 to 4 plus stock 126 (the GTA's host, the TZ2) with
+the `left`, `wheels` and `rear` views: before `vm-20261025-091951`
+(`out/fx/before`), after `vm-20261026-113128` (`out/fx/after3`). The GTA's
+wing and tail triangles are white with the green cloverleaf instead of black
+(`img/trim-art-gta-ingame-before-after.jpg`). The Veyron's roof scoops, door
+handles and fuel cap and the Crossfire's vent strakes are chrome instead of
+black: shaded, with the chrome's reflections (scoop on screen p10/p50/p90
+65/210/221, against 104/233/239 on the atlas path), the engine detail between
+the scoops stays on the atlas (`img/trim-art-veyron-ingame-before-after.jpg`).
+
 ## Open
 
 1. In game: whether the Chassis material lights badges well (the Lights
@@ -406,3 +536,11 @@ port spawned; the rerun passed.
 7. The cockpit draws exterior chrome (A-pillar trim, bonnet strips) flat from
    its atlas; stock interiors have `GLOBAL_LOD_Chrome` (host 193 uses it for
    3,700 triangles), which the interior entry could use the same way.
+8. Trim artwork ("Trim artwork"), issue #58: Forza's trim shaders aren't
+   decoded, so whether `matte_colors` / `plastic2` (with a `PaintScale`) or
+   `frame` show their texel as is, or tint it, is a guess. Mid-grey trims
+   (brightest channel under 128) and the `black*` techniques still draw with
+   the shared dark trim whatever their texels; DSF's shared chrome can't take
+   the Forza grey as a tint. The visibility test is orthographic from around
+   and above: artwork seen only from below or through a narrow gap counts as
+   hidden.

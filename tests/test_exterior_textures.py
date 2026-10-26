@@ -14,7 +14,7 @@ from unittest import mock
 
 from dsfforza.build import port_car
 from dsfforza.build.forza_roster import Source
-from dsfforza.convert import cutout, forza2dsf
+from dsfforza.convert import cutout, forza2dsf, trim_art
 from dsfforza.convert import dsf_materials as dm
 from dsfforza.convert import forza_materials as fm
 from dsfforza.formats import carbin
@@ -318,6 +318,165 @@ class CutAlphaTested(unittest.TestCase):
         (out,), report = cutout.cut_alpha_tested([self.section], self.atlases)
         self.assertIs(out, self.section)
         self.assertEqual(report, {})
+
+
+class TrimArt(unittest.TestCase):
+    """Trim triangles on light opaque artwork that can be seen from outside go to the atlas:
+    the Alfa GTA's quadrifoglio badges are `misc` (trim) triangles on white and green texels,
+    and the shared trim drew them as black triangles (out/final-gui2)."""
+
+    SIZE = 64
+
+    def setUp(self):
+        size = self.SIZE
+        data = bytearray()
+        for y in range(size):
+            for x in range(size):
+                if y >= 32:
+                    data += bytes((250, 250, 250, 0))  # paint-through filler: white, alpha 0
+                elif x < 32:
+                    data += bytes((240, 240, 240, 255))  # white badge artwork
+                else:
+                    data += bytes((20, 20, 20, 255))  # dark trim swatch
+        atlas = (size, size, data)
+
+        class FakeAtlases:
+            def get(self, family):
+                return atlas
+
+        self.atlases = FakeAtlases()
+        self.verts = []
+        self.transform = (0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0)
+
+    def quad(self, corners, uv_box, normal=(0.0, 1.0, 0.0)):
+        """Two triangles over four corners, UVs over uv_box (u0, v0, u1, v1) in texels."""
+        u0, v0, u1, v1 = (c / self.SIZE for c in uv_box)
+        base = len(self.verts)
+        for p, uv in zip(corners, ((u0, v0), (u1, v0), (u1, v1), (u0, v1))):
+            self.verts.append(carbin.Vertex(p, uv, (0.5, 0.5), normal, bytes((100, 0, 0, 0))))
+        return [base, base + 1, base + 2, base, base + 2, base + 3]
+
+    def box(self, half):
+        """A closed cube of paint around the origin (12 triangles)."""
+        h = half
+        c = [(x, y, z) for x in (-h, h) for y in (-h, h) for z in (-h, h)]
+        faces = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
+        out = []
+        for f in faces:
+            out += self.quad([c[i] for i in f], (0, 0, 1, 1))
+        return out
+
+    def top(self, y, x0, x1, uv_box):
+        return self.quad([(x0, y, -0.1), (x1, y, -0.1), (x1, y, 0.1), (x0, y, 0.1)], uv_box)
+
+    def test_roles(self):
+        self.assertEqual(fm.classify(trim_art.ART_TECHNIQUE[fm.NODAMAGE]), (fm.TEXTURED, fm.NODAMAGE))
+        self.assertEqual(fm.classify(trim_art.ART_TECHNIQUE[fm.LIGHTS]), (fm.TEXTURED, fm.LIGHTS))
+        for name in ("black", "black_glass", "undercarriage", "numberplate", "numplate", "mirrorLeft"):
+            self.assertTrue(trim_art.keeps_trim(name), name)
+        for name in ("misc", "frame", "matte_colors", "plastic2"):
+            self.assertFalse(trim_art.keeps_trim(name), name)
+
+    def test_is_artwork(self):
+        import numpy as np
+
+        self.assertTrue(trim_art.is_artwork(np.array([[240, 240, 240, 255]] * 4)))
+        self.assertTrue(trim_art.is_artwork(np.array([[20, 150, 40, 255]] * 4)))  # the green cloverleaf
+        self.assertFalse(trim_art.is_artwork(np.array([[20, 20, 20, 255]] * 4)))
+        self.assertFalse(trim_art.is_artwork(np.array([[250, 250, 250, 0]] * 4)))  # filler
+        # bare metal: a flat neutral grey (the Veyron's scoops: one texel of 177; the
+        # Crossfire's strakes); painted artwork: colour, detail or white
+        self.assertTrue(trim_art.is_metal("misc", np.array([[177, 176, 177, 255]] * 4)))
+        self.assertTrue(trim_art.is_metal("misc", np.array([[212, 206, 198, 255], [205, 200, 191, 255]])))
+        self.assertTrue(trim_art.is_metal("smooth_metal", np.array([[20, 150, 40, 255]] * 4)))
+        self.assertFalse(trim_art.is_metal("misc", np.array([[160, 213, 175, 255]] * 4)))  # cloverleaf green
+        self.assertFalse(trim_art.is_metal("misc", np.array([[250, 250, 250, 255]] * 4)))  # white
+        self.assertFalse(
+            trim_art.is_metal("misc", np.array([[200, 200, 200, 255], [40, 40, 40, 255]] * 2))
+        )  # lettering
+        image = np.zeros((8, 8, 4), np.uint8)
+        none = trim_art.triangle_texels(image, [(float("inf"), 1.0), (2.0, 2.0), (1.0, 3.0)])
+        self.assertEqual(len(none), 0)  # non-finite UVs (a GMC_YukonXL_01 trim)
+        self.assertFalse(trim_art.is_artwork(none))
+
+    def test_visible_artwork_moves(self):
+        paint = carbin.SubSection("body", 1, 4, self.transform, self.box(0.5))
+        white = self.top(0.52, -0.3, -0.1, (4, 4, 28, 28))  # on the roof: a white badge
+        dark = self.top(0.52, 0.1, 0.3, (36, 4, 60, 28))  # on the roof: dark trim
+        filler = self.top(0.52, 0.32, 0.45, (4, 36, 28, 60))  # white but alpha 0
+        hidden = self.top(0.0, -0.3, 0.3, (4, 4, 28, 28))  # white, inside the box
+        misc = carbin.SubSection("misc", 1, 4, self.transform, white + dark + filler + hidden)
+        black = carbin.SubSection("black", 1, 4, self.transform, list(white))
+        lod3 = carbin.SubSection("misc", 3, 4, self.transform, list(white))
+        handle = self.top(0.52, -0.45, -0.35, (4, 4, 28, 28))  # on the roof: a metal part
+        metal = carbin.SubSection("smooth_metal", 1, 4, self.transform, handle)
+        section = carbin.Section(
+            "body", (0, 0, 0), (0, 0, 0), (1, 1, 1), self.verts, [], [paint, misc, black, lod3, metal]
+        )
+        (out,), report = trim_art.split_trim_art([section], self.atlases, lods={1})
+        self.assertEqual(
+            report,
+            {
+                "body/misc": {"triangles": 2, "metal": 0, "area": unittest.mock.ANY},
+                "body/smooth_metal": {"triangles": 2, "metal": 2, "area": unittest.mock.ANY},
+            },
+        )
+        self.assertAlmostEqual(report["body/misc"]["area"], 0.2 * 0.2, places=6)
+        names = [s.material for s in out.subsections]
+        self.assertEqual(
+            names, ["body", "misc", trim_art.ART_TECHNIQUE[fm.NODAMAGE], "black", "misc", trim_art.METAL_TECHNIQUE]
+        )
+        self.assertEqual(fm.classify(trim_art.METAL_TECHNIQUE)[0], fm.CHROME)  # DSF's shared chrome
+        self.assertIs(out.subsections[0], paint)
+        self.assertIs(out.subsections[3], black)  # black* stays trim
+        self.assertIs(out.subsections[4], lod3)  # not a requested LOD
+        self.assertEqual(out.subsections[1].indices, dark + filler + hidden)
+        self.assertEqual(out.subsections[2].indices, white)
+        self.assertEqual(out.subsections[2].uv_transform, self.transform)
+
+    def test_nothing_to_move(self):
+        dark = self.top(0.0, 0.1, 0.3, (36, 4, 60, 28))
+        section = carbin.Section(
+            "body",
+            (0, 0, 0),
+            (0, 0, 0),
+            (1, 1, 1),
+            self.verts,
+            [],
+            [carbin.SubSection("misc", 1, 4, self.transform, dark)],
+        )
+        (out,), report = trim_art.split_trim_art([section], self.atlases)
+        self.assertIs(out, section)
+        self.assertEqual(report, {})
+
+    def _plan(self, art_box):
+        """A 48 x 48 atlas for an emblem over texels (36, 4)-(60, 28) and trim artwork over art_box."""
+        emblem = carbin.SubSection("emblem", 1, 4, self.transform, self.top(0.5, 0.0, 0.2, (36, 4, 60, 28)))
+        art = carbin.SubSection(
+            trim_art.ART_TECHNIQUE[fm.NODAMAGE], 1, 4, self.transform, self.top(0.5, -0.3, -0.1, art_box)
+        )
+        section = carbin.Section("body", (0, 0, 0), (0, 0, 0), (1, 1, 1), self.verts, [], [emblem, art])
+        with mock.patch.object(fm, "AtlasCache", lambda *a, **k: self.atlases):
+            t = dm.Texturing(Path(), size=(48, 48)).plan([section], {1})
+        return t, section, art
+
+    def test_artwork_in_the_atlas(self):
+        t, section, art = self._plan((40, 8, 44, 12))  # inside the emblem's region: free
+        self.assertEqual(t.material(section, art), dm.CHASSIS)
+        self.assertEqual(t.art_flat, set())
+        _uvs, tag = t.triangle_uvs(section, art, 0, [section.lod_vertices[i].uv0 for i in art.indices[:3]])
+        self.assertEqual(tag[0], fm.NODAMAGE)  # a region, not a solid cell
+
+    def test_costly_artwork_drawn_flat(self):
+        # its own 24 x 24 region would take the atlas scale from 1 to about 0.6
+        t, section, art = self._plan((4, 4, 28, 28))
+        self.assertEqual(t.art_flat, {id(art)})
+        self.assertEqual(t.pack_scale, 1.0)
+        self.assertEqual(t.material(section, art), dm.CHASSIS)
+        uvs, tag = t.triangle_uvs(section, art, 0, [section.lod_vertices[i].uv0 for i in art.indices[:3]])
+        self.assertEqual(tag[0], "swatch")
+        self.assertEqual(tag[1:4], (240, 240, 240))  # the artwork's mean colour
+        self.assertEqual(len(set(uvs)), 1)
 
 
 class WheelSky(unittest.TestCase):
