@@ -714,7 +714,7 @@ Subaru's lens shows its reflector faintly.
    techniques (`glass`, `lights_glass`) aren't baked: covers stay DSF's clear
    glass (the WRX STI 05's near-opaque light rear cover, (184, 161, 160) at
    alpha 236, shows its dark reflector instead), and what Forza's
-   `DarkValues` / `LightValues` do to a lens is not decoded.
+   `DarkValues` / `LightValues` do to a lens is not decoded. Issue #89.
 
 ## Paint
 
