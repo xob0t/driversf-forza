@@ -499,7 +499,10 @@ lists them.
 
 - A maker group of exactly 20 cars with `GarageEmblem` cars (card 20, see
   gui-assets.md "Garage card emblem") keeps the SF disc: it is shown as stock
-  (20 cards). Longer groups show the emblem (above).
+  (20 cards). Longer groups show the emblem (above). Issue #66 (ASTON MARTIN
+  in the full roster: 15 ported cars with SF).
+- Card N's disc lies over card N+1's picture and reads as that card's once
+  Forza and SF discs mix: issue #67.
 - The window after a drive: where the game restores `itemBrowserIndex` on
   return (FUN_006CCD50 sets it from a saved value), the window starts at car 0
   again, so in a long group the highlight would land on another car. Not run.

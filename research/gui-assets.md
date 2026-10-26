@@ -759,8 +759,9 @@ and Fonts.fchunk, `gui_assets` now reads the originals from
    hidden by the menu script per `itemState_<N>`; nothing per car picks it.
    dsfforza.asi [hud] re-points it for cars with `GarageEmblem = 1` (in game:
    run `host-20261023-100401`). Still open: a maker group of exactly 20 cars
-   keeps the SF disc on all its cards (card 20 needs the spare; untested in
-   game; groups of more than 20 use 19 cards and keep the emblem); the spare's UV restore when a 20-car group or the challenge
+   keeps the SF disc on all its cards (card 20 needs the spare; in game:
+   ASTON MARTIN, run `vm-20261026-120559`, issue #66; groups of more than 20
+   use 19 cards and keep the emblem); the spare's UV restore when a 20-car group or the challenge
    browser's 20th card uses Header_Sprite_20 is wired but was not exercised.
    Answered (2026-10-26): the "one card off" emblems in groups of more than
    20 cars (CHEVROLET in run `vm-20261025-083412`, menu-20 and menu-30, and
@@ -778,7 +779,7 @@ and Fonts.fchunk, `gui_assets` now reads the originals from
    end, past it and back past the start, and an 8-car maker, in runs
    `vm-20261026-120559` and RUN2. Each decision matches the
    car's `GarageEmblem`, except in a 20-car group (ASTON MARTIN), which keeps SF
-   by design (issue ISSUE20).
+   by design (issue #66). That the disc reads as the next card's is issue #67.
 9. Answered: the crash with `[garage]` on (runs `host-20261023-080433`,
    `-080858`, `-081321`) was not the emblem patch. The garage fills its maker
    menu (FUN_006C6940) into four menu-script lists of `Install\menusmaster.sp`
