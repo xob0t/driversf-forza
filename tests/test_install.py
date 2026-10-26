@@ -304,6 +304,27 @@ def test_preflight_no_plugin_caps_the_selection_and_other_mods_need_force():
         assert "Car list not found" in _problems(_run(missing))
 
 
+def test_a_reinstall_supplies_the_hook_and_loader_its_uninstall_removes():
+    """install.ps1 -Force uninstalls first: a DriverNGHook or ASI loader the earlier
+    dsfforza install created is gone by the time it installs, so it must be passed again;
+    ones the game had before stay."""
+    with _tmp() as tmp:
+        game = _fake_game(Path(tmp))
+        _touch(game / "plugins" / "DriverNGHook.asi")
+        _touch(game / "dinput8.dll")
+        run = _run(_args("--game", str(game), out=Path(tmp) / "b"), loader="dinput8.dll")
+        run.game = game
+        assert run.game_has_hook() and run.game_has_loader()  # no install recorded: the user's own
+        created = [
+            {"path": "dinput8.dll", "action": "created"},
+            {"path": "plugins\\DriverNGHook.asi", "action": "created"},
+        ]
+        run.record = {"state": "installed", "entries": created}
+        assert not run.game_has_hook() and not run.game_has_loader()
+        run.record = {"state": "uninstalled", "entries": created}
+        assert run.game_has_hook() and run.game_has_loader()
+
+
 # --- progress -------------------------------------------------------------------------------------------
 
 

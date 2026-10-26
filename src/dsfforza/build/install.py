@@ -1189,14 +1189,14 @@ class Run:
 
             if args.hook_archive and not Path(args.hook_archive).is_file():
                 problems.append(f"--hook-archive {args.hook_archive}: no such file.")
-            hook = (game / "plugins" / "DriverNGHook.asi").is_file() or args.hook_archive or thirdparty.ready("dnghook")
+            hook = self.game_has_hook() or args.hook_archive or thirdparty.ready("dnghook")
             if not hook and args.no_download:
                 tool = thirdparty.TOOLS["dnghook"]
                 problems.append(
                     f"DriverNGHook {tool.version} is needed: download {tool.url} and pass --hook-archive FILE "
                     "(or leave out --no-download)."
                 )
-            loader = self.probes.loader(game) or args.asi_loader or thirdparty.ready("asi-loader")
+            loader = self.game_has_loader() or args.asi_loader or thirdparty.ready("asi-loader")
             if not loader and args.no_download:
                 problems.append(
                     f"No ASI loader in the game folder: download {thirdparty.TOOLS['asi-loader'].url} and pass "
@@ -1403,20 +1403,39 @@ class Run:
 
     # 6. install ---------------------------------------------------------------------------------------
 
+    def ours(self) -> set[str]:
+        """Game files (lower case, backslashes) the recorded dsfforza install created: a
+        reinstall removes them first (install.ps1 -Force), so they don't count as there."""
+        if not installed(self.record):
+            return set()
+        return {
+            str(e.get("path", "")).lower().replace("/", "\\")
+            for e in self.record.get("entries", [])
+            if isinstance(e, dict) and e.get("action") == "created"
+        }
+
+    def game_has_hook(self) -> bool:
+        hook = self.game / "plugins" / "DriverNGHook.asi"
+        return hook.is_file() and "plugins\\DriverNGHook.asi".lower() not in self.ours()
+
+    def game_has_loader(self) -> bool:
+        name = self.probes.loader(self.game)
+        return bool(name) and name.lower() not in self.ours()
+
     def hook_files(self) -> tuple[Path | None, Path | None]:
         """(DNGHook archive, ASI loader) for install.ps1: given, else the pinned downloads
         (src/dsfforza/build/thirdparty.py) when the game doesn't have them yet."""
         from dsfforza.build import thirdparty
 
-        args, game = self.args, self.game
+        args = self.args
         if args.skip_hook:
             return None, None
         hook, loader = args.hook_archive, args.asi_loader
         try:
-            if not hook and not (game / "plugins" / "DriverNGHook.asi").is_file():
+            if not hook and not self.game_has_hook():
                 self.reporter.stage("install", "running", "DriverNGHook")
                 hook = thirdparty.fetch("dnghook", log=log)
-            if not loader and not self.probes.loader(game):
+            if not loader and not self.game_has_loader():
                 self.reporter.stage("install", "running", "Ultimate ASI Loader")
                 loader = thirdparty.fetch("asi-loader", log=log)
         except thirdparty.DownloadError as error:
@@ -1715,6 +1734,7 @@ def main(argv: list[str] | None = None) -> int:
         run = Run(args, reporter)
         run.summary.log = log_path
         log(f"dsff install {' '.join(sys.argv[1:] if argv is None else argv)}")
+        log(f"display: {'rich (live)' if isinstance(reporter, LiveReporter) else 'plain text'}")
         with reporter:
             code = execute(run)
         with contextlib.suppress(OSError, ValueError):

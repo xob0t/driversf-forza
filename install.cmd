@@ -7,6 +7,6 @@ rem   install.cmd --status        what is installed
 rem   install.cmd --help          every option
 "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\release\launcher.ps1" %*
 set DSFF_EXIT=%ERRORLEVEL%
-rem Opened by a double click: keep the window open to read the summary.
-echo %cmdcmdline% | "%SystemRoot%\System32\find.exe" /i "%~0" >nul && pause
+rem Opened by a double click (no arguments, its own window): keep the window open to read the summary.
+if "%~1"=="" echo %cmdcmdline% | "%SystemRoot%\System32\find.exe" /i "%~0" >nul && pause
 exit /b %DSFF_EXIT%
