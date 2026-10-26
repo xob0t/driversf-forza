@@ -20,7 +20,7 @@ your game and your save, and what the added cars can't do.
 
 The screen shows each step, a progress bar over the cars and the cars being
 built. Everything the tools print goes to `out\logs\install-<date-time>.log`.
-`install.cmd --help` lists the options, among them:
+`.\install.cmd --help` lists the options, among them:
 
 | Option | |
 | --- | --- |
@@ -75,7 +75,7 @@ yourself.
 
 ## Uninstall
 
-`install.cmd --uninstall` puts every replaced file back from the backup and
+`.\install.cmd --uninstall` puts every replaced file back from the backup and
 checks that its SHA-256 matches the original. It deletes every file it
 created, but only if the file is still the one it installed; a file you changed
 afterwards is left in place and reported. Then it removes `dsfforza-backup\`

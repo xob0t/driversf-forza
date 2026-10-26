@@ -20,7 +20,7 @@ project ships no game or Forza files.
 1. Download the latest `driversf-forza-<version>.zip` from
    [Releases](https://github.com/xob0t/driversf-forza/releases) and unzip it.
 2. Put your Forza `.iso` files in its `assets` folder.
-3. Close the game and run `install.cmd`.
+3. Close the game and double-click `install.cmd`.
 
 The first time, it asks for your game folder (the one with `Driver.exe`) and
 remembers it. It installs [uv](https://docs.astral.sh/uv/) if you don't have it,
@@ -29,7 +29,8 @@ installs the cars. Run it again after an update: only what changed is rebuilt.
 
 ## Uninstall
 
-`install.cmd --uninstall` puts every replaced game file back.
+In a terminal in the unzipped folder, `.\install.cmd --uninstall` puts every replaced
+game file back.
 
 What the installer changes, your save game, and the known limits:
 [INSTALL.md](INSTALL.md).

@@ -896,9 +896,10 @@ class LiveReporter(Reporter):
         from rich.progress_bar import ProgressBar
         from rich.table import Table
 
-        if self.term_fd is not None:  # follow the window's width (fd 1 is the log file now)
+        if self.term_fd is not None:  # follow the window's size (fd 1 is the log file now)
             with contextlib.suppress(OSError, ValueError):
-                self.console.width = os.get_terminal_size(self.term_fd).columns
+                size = os.get_terminal_size(self.term_fd)
+                self.console.width, self.console.height = size.columns, size.lines
         stages = Table.grid(padding=(0, 1))
         stages.add_column(width=1)
         stages.add_column(style="bold", min_width=11)
@@ -923,18 +924,25 @@ class LiveReporter(Reporter):
             stats += f" · {rate:.1f}/min" if rate else ""
             stats += f" · ETA {clock_text(t.eta())}" if t.phase == "convert" else " · checking reused cars"
             stats += f" · [red]{len(t.failures)} failed[/]" if t.failures else ""
-            bar.add_row(" Cars", ProgressBar(total=max(1, t.total), completed=t.done), stats)
+            bar.add_row(
+                " Cars",
+                ProgressBar(total=max(1, t.total), completed=t.done, complete_style="green", finished_style="green"),
+                stats,
+            )
             parts.append(bar)
             workers = Table.grid(padding=(0, 1))
             workers.add_column(width=3)
             workers.add_column(no_wrap=True)
             workers.add_column(justify="right", style="dim")
             workers.add_column(style="yellow", no_wrap=True, overflow="ellipsis")
-            for media, info in sorted(t.running.items(), key=lambda kv: kv[1]["started"]):
+            running = sorted(t.running.items(), key=lambda kv: kv[1]["started"])
+            room = max(3, self.console.height - len(STAGES) - 4)  # a small window: the oldest only
+            for media, info in running[:room]:
                 workers.add_row("  ↳", media, clock_text(now - info["started"]), info["note"])
             queued = t.todo - t.converted - sum(1 for i in t.running.values() if not i["verify"])
-            if queued > 0:
-                workers.add_row("", f"[dim]{queued} queued, {t.jobs} at a time[/]", "", "")
+            more = f"{len(running) - room} more running, " if len(running) > room else ""
+            if queued > 0 or more:
+                workers.add_row("", f"[dim]{more}{max(0, queued)} queued, {t.jobs} at a time[/]", "", "")
             parts.append(workers)
         return Group(*parts)
 
@@ -1497,7 +1505,7 @@ class Run:
 
 def uninstall_command(game: Path | None) -> str:
     """How to undo the install: install.cmd (the release launcher sets DSFF_LAUNCHER) or uv."""
-    command = "install.cmd --uninstall" if os.environ.get("DSFF_LAUNCHER") else "uv run dsff install --uninstall"
+    command = r".\install.cmd --uninstall" if os.environ.get("DSFF_LAUNCHER") else "uv run dsff install --uninstall"
     return command + (f' --game "{game}"' if game else "")
 
 
