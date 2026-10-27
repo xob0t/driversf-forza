@@ -1283,7 +1283,7 @@ class Texturing:
             return []
         r, g, b = px[:, 0], px[:, 1], px[:, 2]
         red = (r > 1.6 * g) & (r > 1.6 * b)  # lamp_hue "red"
-        return px[red].max(1).tolist()
+        return px[red, :3].max(1).tolist()
 
     def visible_white(self) -> list[int]:
         """Brightest channel of the white (lamp_hue) Lights-atlas texels a camera straight
@@ -1295,10 +1295,10 @@ class Texturing:
         r, g, b = px[:, 0], px[:, 1], px[:, 2]
         red = (r > 1.6 * g) & (r > 1.6 * b)
         amber = (r > 1.2 * b + 20) & (g > 0.35 * r) & (g > 1.2 * b)
-        return px[~red & ~amber].max(1).tolist()
+        return px[~red & ~amber, :3].max(1).tolist()
 
     def _visible_lamp_texels(self, front: bool):
-        """RGB (n, 3) of the Lights-atlas texels an orthographic camera straight behind
+        """RGBA (n, 4) of the Lights-atlas texels an orthographic camera straight behind
         (front: ahead of) the car sees, one per VISIBLE_STEP; None without lamps."""
         if not self.lamp_tris or self.atlases is None:
             return None
@@ -1346,7 +1346,7 @@ class Texturing:
         img = np.frombuffer(bytes(src), np.uint8).reshape(sh, sw, 4)
         u = (uv[hit, 0].clip(0, 1) * sw).astype(int).clip(0, sw - 1)
         v = (uv[hit, 1].clip(0, 1) * sh).astype(int).clip(0, sh - 1)
-        return img[v, u, :3].astype(int)
+        return img[v, u].astype(int)
 
     def _red_lens_scale(self):
         """This car's red lens darkening (red_lens_scale); None until planned."""
