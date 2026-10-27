@@ -88,6 +88,7 @@ def test_forza_ui_without_the_fh1_disc():
     showed another car's nameplate (issue #98). Without the discs: no logos, text badges."""
     ui = g.ForzaUI.of([])
     assert ui.logo("Ford") is None and ui.thumbnail(1) is None
+    assert g.forza_emblem_logo(ui).w > 0  # a text badge
     ui.close()
     ui = g.ForzaUI(None, REPO / "no such.iso")
     assert ui.logo("Renault") is None

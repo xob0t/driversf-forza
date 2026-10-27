@@ -1328,10 +1328,11 @@ EMBLEM_FIELD = "GarageEmblem"  # vehicleStats field: 1 = Forza emblem
 
 
 def forza_emblem_logo(ui: ForzaUI) -> Image:
-    """FH1's Forza logo with alpha (ui4/common/forza_logo3: orange and silver)."""
-    found = ui.read("UI4/Common/forza_logo3.xds")
+    """The Forza logo with alpha (ui4/common/forza_logo3: orange and silver), FH1's or
+    FM4's (the same picture); without either disc a "FORZA" text badge."""
+    found = ui.read("UI4/Common/forza_logo3.xds") or ui._read_fallback("UI4/Common/forza_logo3.xds")
     if found is None:
-        raise ValueError("forza_logo3.xds not in FH1 Textures.zip")
+        return maker_badge("FORZA")
     img = Image(*found)
     return img.crop(*img.bbox(12))
 
