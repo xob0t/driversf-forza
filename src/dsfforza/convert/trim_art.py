@@ -233,10 +233,13 @@ def classify_texels(technique: str, texels, scale: float = 1.0) -> str | None:
 
 
 def has_gloss(settings, technique: str) -> bool:
-    """Whether Forza gives this trim technique a specular or a reflection
-    (fm.gloss_params with the car's ShaderSettings)."""
+    """Whether Forza gives this trim technique a specular or a reflection that DSF's gloss
+    materials draw (fm.gloss_params with the car's ShaderSettings, dsf_materials.gloss_material):
+    `weatherstrip` (SpecularAmount 0.3, no reflection) has too little to draw and stays."""
+    from dsfforza.convert import dsf_materials
+
     g = fm.gloss_params(settings, technique)
-    return g is not None and (g.specular > 0 or g.reflection > 0)
+    return g is not None and dsf_materials.gloss_material(g, 255) is not None
 
 
 def is_opaque(texels) -> bool:

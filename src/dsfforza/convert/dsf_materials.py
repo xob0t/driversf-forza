@@ -339,15 +339,15 @@ ART_MIN_SCALE_SHARE = 0.9
 # specular unmasked like Forza's, (N.H)^p ~ (R.V)^(p/4), the reflection with Schlick's
 # Fresnel (power 5, bias F0), divided by the texel's green that masks it.
 GLOSS_PREFIX = "gloss"  # Texturing.material kinds "gloss0", "gloss1"...: GlossMaterial n
-GLOSS_SPECULAR_SCALE = float(os.environ.get("DSFFORZA_GLOSS_SPEC", "0.04"))  # DSF intensity per Forza SpecularAmount
+GLOSS_SPECULAR_SCALE = float(os.environ.get("DSFFORZA_GLOSS_SPEC", "0.01"))  # DSF intensity per Forza SpecularAmount
 GLOSS_REFLECTION_SCALE = float(os.environ.get("DSFFORZA_GLOSS_REFL", "0.5"))  # DSF reflection per Forza's
 GLOSS_POWER_RATIO = 4.0  # Forza's (N.H) power over DSF's (R.V) power for the same highlight
-GLOSS_POWER_RANGE = (1.0, 150.0)
-GLOSS_INTENSITY_MAX = 0.25  # some cars set SpecularAmount 12 (the Boss 429's plastic2)
+GLOSS_POWER_RANGE = (4.0, 150.0)  # broader lobes light whole panels in the sun
+GLOSS_INTENSITY_MAX = 0.0625  # some cars set SpecularAmount 12 (the Boss 429's plastic2)
 GLOSS_GREEN_FLOOR = 16  # texel green the reflection amount is scaled for at least: regions (texels vary)
 GLOSS_CELL_GREEN_FLOOR = 2  # ... and colour cells (one exact colour: the Cougar's scoop sides, 4)
 GLOSS_REFLECTION_MAX = 16.0
-GLOSS_MIN = 0.01  # specular intensity and reflection below this: no gloss material
+GLOSS_MIN = 0.005  # specular intensity and reflection below this: none (both: no gloss material)
 GLOSS_MAX_MATERIALS = 12  # per entry; more distinct ones merge into the nearest
 # Grid steps (ratios) of the parameters: few distinct materials, a reflection within a
 # factor of 2 of Forza's.
@@ -386,11 +386,12 @@ class GlossMaterial:
 def gloss_material(g: fm.Gloss, green: float, floor: float = GLOSS_GREEN_FLOOR) -> GlossMaterial | None:
     """The DSF material for a Forza technique's gloss `g` on texels whose green averages
     `green` (0..255, as drawn; at least `floor`); None when both terms are negligible."""
-    intensity = _q(min(GLOSS_INTENSITY_MAX, GLOSS_SPECULAR_SCALE * g.specular), GLOSS_STEPS["intensity"])
+    specular = min(GLOSS_INTENSITY_MAX, GLOSS_SPECULAR_SCALE * g.specular)
+    intensity = _q(specular, GLOSS_STEPS["intensity"]) if specular >= GLOSS_MIN else 0.0
     power = _q(min(GLOSS_POWER_RANGE[1], max(GLOSS_POWER_RANGE[0], g.power / GLOSS_POWER_RATIO)), GLOSS_STEPS["power"])
     reflection = GLOSS_REFLECTION_SCALE * g.reflection
     amount = _q(min(GLOSS_REFLECTION_MAX, reflection * 255 / max(green, floor)), GLOSS_STEPS["reflection"])
-    if intensity < GLOSS_MIN and reflection < GLOSS_MIN:
+    if not intensity and reflection < GLOSS_MIN:
         return None
     if g.fresnel_scalar is None:
         fresnel_power, bias = CHROME_FRESNEL

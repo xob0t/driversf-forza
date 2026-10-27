@@ -732,15 +732,30 @@ instead of the Chassis material:
   Forza technique, `dsf_trim_detail@0.2~misc`), badges and emblems;
 - the rims (`wheel.xds`); `chrome_rim`'s texel takes its `ChromeDiffuseScale`.
 
-The parameters (`gloss_material`): specular intensity `GLOSS_SPECULAR_SCALE x
-SpecularAmount` (at most 1, the stock Lights material's), power `SpecularPower / 4`
-(`(N.H)^p` is about `(R.V)^(p/4)`), reflection with Schlick's Fresnel (power 5, bias
-F0 of FresnelIndex; chrome: power 16, bias 1, alike at every angle) of amount
-`GLOSS_REFLECTION_SCALE x CubeScale x FresnelScalar x 255 / green`, the green the
-subsection's texels average (the reflection is masked by it; at least 16), all on a
-geometric grid so few distinct materials come out. Frame, undercarriage and `black`
-(no specular, no reflection in Forza) stay as they were, and so does what the
-cockpit draws (its own Texturing).
+The parameters (`gloss_material`): specular intensity `GLOSS_SPECULAR_SCALE` (0.04) `x
+SpecularAmount`, at most 0.25; power `SpecularPower / 4` (`(N.H)^p` is about
+`(R.V)^(p/4)`); reflection with Schlick's Fresnel (power 5, bias F0 of FresnelIndex;
+chrome: power 16, bias 1, alike at every angle) of amount `GLOSS_REFLECTION_SCALE`
+(0.5) `x CubeScale x FresnelScalar x 255 / green`, the green the subsection's texels
+average as drawn (the program masks the reflection by it; at least 16 on atlas
+regions, whose texels vary, and 2 on colour cells, which are one exact colour). Each
+on a geometric grid (`GLOSS_STEPS`: intensity x2, power x1.41, reflection x4), so a car
+needs 3 to 12 materials (median 8); past `GLOSS_MAX_MATERIALS` (12) the rarest merge
+into the nearest. Frame, undercarriage and `black` (no specular, no reflection in
+Forza) stay as they were, and so does what the cockpit draws (its own Texturing).
+
+**Calibration (in game, headless VM).** A first build with the specular at 0.25 per
+SpecularAmount and the reflection at 1 (`out/fx/after1`, run `vm1-20261027-180408`
+against master's `vm1-20261027-175157`) showed the program works on trims and in the
+wheel part (no glow from the zero lamp byte, no crash) but was far too strong: the
+Cougar's scoop (`badge`, intensity 1) and the Boss 429's (`matte_colors`) lit up cream
+from end to end when the sun's reflection came near the camera (a flat panel takes the
+same `R.V` all over), and the Focus RS500's black rims (Forza FresnelIndex 3, the
+texel green 23 compensated to an amount of 11) came out white. DSF's sun specular
+colour is far brighter than the scale suggested; 0.04 keeps a `badge` (4) at 0.125
+and the Cougar's satin `misc` (0.5) at 0.016. The stock chrome reflects
+`0.4 to 0.48 x env` (its texel green); `GLOSS_REFLECTION_SCALE` 0.5 puts a CubeScale
+1 chrome rim there.
 
 ## Open
 
