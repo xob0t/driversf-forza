@@ -1680,7 +1680,7 @@ the two gears is neutral. Stock trucks and buses (rims
 is baked into the shared driver animations, not set per car. The stock fleet
 handles larger wheels two ways: the trucks keep the hinge on the hub (0.1 to
 0.4 cm), which leaves the stock grips about 2.5 cm inside their 0.20 m rims
-(offline; in game below); the School
+(offline); the School
 Bus (0.258 m) moves its hinge 8.6 cm off the hub, the way the converter did
 for every car.
 
@@ -1732,6 +1732,20 @@ scaled (the fit on the built mesh differs slightly), grips median 1.3 cm,
 `out/final4`'s. PR #69's survey had 0.0 median: at
 rest the hands sit up to 2 cm inside or outside the rim now, the price of a
 wheel that turns about its hub without resizing Forza's wheel.
+
+**Verified.** `uv run python -m tests`. Offline, the head-camera view with the
+wheel turned the way the engine turns it (`out/axle/steer_view.py`; master
+`out/axle/before`, fix `out/axle/after`, the same 5 cars):
+`img/steering-axle-offline.jpg`. In game (VM, confirmed-runtime;
+`run-series.ps1 -Vm -DriveKey Left -DriveSeconds 10 -ShotSeconds 2`, probe
+IDs 1 to 4, 229, 152, 246): before `vm1-20261027-050904` (master), after
+`vm1-20261027-051314`. At DSF's full lock (hand over hand, standing) master's
+Regal wheel swings up and to the left off its column; with the fix it turns
+in place, and at rest both hands hold its rim
+(`img/steering-axle-ingame-regal.jpg`). All seven cars spooled and drove in
+the after run (the before run skipped the School Bus: "NOT spooled after 40
+ticks"). From the head camera the stock trucks' grips sit too low in the
+frame to judge against their rims.
 
 **Chase-view wheels not on the cockpit wheel** (issue #86, not fixed here): the
 Express and F-350 keep their same-vehicle host's cockpit while the chase view
