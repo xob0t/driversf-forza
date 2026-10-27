@@ -189,23 +189,49 @@ def test_transparent_red_is_clear():
     assert lights.texel_class((123, 0, 0, 0)) == "white"  # VAU_Agila_11's clear lens
 
 
-class _Upvh:  # what LampPlan.assign reads of a parsed UPVH: n light entries with ids 0..n-1
-    def __init__(self, n: int):
+class _Upvh:  # what LampPlan.assign reads of a parsed UPVH: light entries with ids 0..n-1
+    def __init__(self, n, places=None):
         import struct
 
-        self.offsets, self.counts = {"lights": 0}, {"lights": n}
-        self.data = b"".join(b"\0" * 40 + struct.pack("<I", i) + b"\0" * 20 for i in range(n))
+        places = places or [(0.0, 1.0)] * n  # (x, z) of each entry as shipped (default: front centre)
+        self.offsets, self.counts = {"lights": 0}, {"lights": len(places)}
+        self.data = b"".join(
+            struct.pack("<3f", x, 0.5, z) + b"\0" * 28 + struct.pack("<I", i) + b"\0" * 20
+            for i, (x, z) in enumerate(places)
+        )
+
+
+def _plan(sections, entries, places=None):
+    from dsfforza.formats import upvh as uv
+
+    parse, uv.parse = uv.parse, lambda data: _Upvh(entries, places)
+    try:
+        return lights.LampPlan.build(sections, _Place(), 0.0).assign(b"")
+    finally:
+        uv.parse = parse
 
 
 def _assigned(sections, entries: int) -> dict:
-    from dsfforza.formats import upvh as uv
-
-    parse, uv.parse = uv.parse, lambda data: _Upvh(entries)
-    try:
-        plan = lights.LampPlan.build(sections, _Place(), 0.0).assign(b"")
-    finally:
-        uv.parse = parse
+    plan = _plan(sections, entries)
     return {(l.function, l.side, l.front): l.flags >> 24 for l in plan.lamps.values()}
+
+
+def test_lamps_get_entries_at_their_own_end_and_side():
+    # Issue #132: the Citroen DS3's and Mazda 2's head lamps broke with the tail lamps. A light
+    # breaks with the panel its entry hangs under; entries were handed out in table order.
+    heads = [_quad("headlightL", "head_light", 0.6, 2.0), _quad("headlightR", "head_light", -0.6, 2.0)]
+    places = [(0.6, -2.0), (-0.6, -2.0), (-0.6, 2.0), (0.6, 2.0)]  # rear L, rear R, front R, front L
+    got = {(l.function, l.side): l.light_id for l in _plan(heads + TAILS, 4, places).lamps.values()}
+    assert got == {(lights.HEAD, "L"): 3, (lights.HEAD, "R"): 2, (lights.TAIL, "L"): 0, (lights.TAIL, "R"): 1}, got
+    # Only rear entries: the head lamps still light, on them, rather than stay dark.
+    plan = _plan(heads + TAILS, 4, [(0.6, -2.0), (-0.6, -2.0), (0.6, -2.1), (-0.6, -2.1)])
+    assert all(l.light_id is not None for l in plan.lamps.values())
+    # A rear indicator without an entry of its own doesn't share the front one's.
+    inds = [_quad("indFL", "indicator_left", 0.7, 2.0), _quad("indRL", "indicator_left", 0.7, -2.0)]
+    plan = _plan(heads + TAILS + inds, 5, [(0.6, 2.0), (-0.6, 2.0), (0.6, -2.0), (-0.6, -2.0), (0.7, 2.0)])
+    front = next(l for l in plan.lamps.values() if l.function == lights.INDICATOR and l.front)
+    rear = next(l for l in plan.lamps.values() if l.function == lights.INDICATOR and not l.front)
+    assert front.light_id == 4 and rear.light_id != 4, (front.light_id, rear.light_id)
 
 
 def test_head_lamps_light_by_day():

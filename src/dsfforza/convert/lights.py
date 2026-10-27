@@ -187,6 +187,28 @@ def fallback(function: str, front: bool) -> str | None:
     return None
 
 
+ENTRY_CENTRE_X = 0.15  # m: a host light entry this close to the centre line is a centre one
+
+
+def entry_place(upvh: bytes, offset: int) -> tuple[bool, str]:
+    """Where a host light entry sits as shipped: (front, side), front by its
+    position's z (+z forward), side "L" (+x), "R" or "C" (|x| < ENTRY_CENTRE_X).
+    The entry's record hangs under the part at that place (headlamp parts and
+    the front bumper at the front; tails under the body, boot or rear bumper)."""
+    x, _y, z = struct.unpack_from("<3f", upvh, offset)
+    return z > 0, "C" if abs(x) < ENTRY_CENTRE_X else ("L" if x > 0 else "R")
+
+
+def _best_entry(lamp, candidates, place):
+    """The candidate entry on the lamp's side (centre entries next, then any), first in table
+    order; None without candidates."""
+    for want in (lamp.side, "C", None):
+        pick = next((e for e in candidates if want is None or place[e][1] == want), None)
+        if pick is not None:
+            return pick
+    return None
+
+
 HEAD_DAYTIME = 0x1D  # Headlights + DaytimeRunning
 DAYTIME_SHARE = 0.25  # a side's own position lamps at least this share of its head lamps' area keep them 0x01
 
@@ -722,9 +744,15 @@ class LampPlan:
 
     # -- host light entries --
     def assign(self, upvh: bytes) -> LampPlan:
-        """Give lamps the host's light entries, most important first. Lamps
-        left over share an entry of the same function and side if there is
-        one (their geometry lights with it), else stay unlit."""
+        """Give lamps the host's light entries, most important first, each an
+        entry at its own end of the host and on its own side (entry_place). A
+        lamp breaks with its entry's panel: the game breaks a light when the part
+        its record hangs under is damaged, so a head lamp on an entry the host
+        used for a tail lamp broke in rear collisions and not in front ones
+        (issue #132). Lamps left over share an entry of the same function, end
+        and side if there is one (their geometry lights with it), else a
+        fallback lamp's at their end; only then a free entry at the other end;
+        else they stay unlit."""
         from dsfforza.formats import upvh as uv
 
         h = uv.parse(upvh)
@@ -733,33 +761,42 @@ class LampPlan:
         for i in range(h.counts["lights"]):
             o = base + i * 0x40
             entries.append((o, struct.unpack_from("<I", h.data, o + 40)[0]))
+        place = {e: entry_place(h.data, e[0]) for e in entries}
         order = sorted(
             (l for l in self.lamps.values() if l.area),
             key=lambda l: (PRIORITY.get(l.function, 9) + 10 * min(l.cluster, 1), not l.front, l.side),
         )
         free = list(entries)
         taken = {}
+
+        def take(lamp, entry):
+            free.remove(entry)
+            lamp.light_id = entry[1]
+            taken[entry] = lamp
+
+        def partner(lamp):
+            """A lit lamp whose entry this one can share: same function, end and side, else
+            its fallback function's at its end (same side first)."""
+            lit = [l for l in order if l.light_id is not None and l.front == lamp.front]
+            twin = next((l for l in lit if l.function == lamp.function and l.side == lamp.side), None)
+            other = fallback(lamp.function, lamp.front)
+            if twin is None and other is not None:
+                near = [l for l in lit if l.function == other]
+                twin = next((l for l in near if l.side == lamp.side), near[0] if near else None)
+            return twin
+
+        # Most important first, each an entry at its end; one with none left there takes one at
+        # the other end (lit, though it breaks with that end's panel) unless it can share a lamp's
+        # at its own end: a rear reverse lamp outranks a front fog lamp, as before.
         for lamp in order:
-            if free:
-                o, lid = free.pop(0)
-                lamp.light_id = lid
-                taken[(o, lid)] = lamp
+            pick = _best_entry(lamp, [e for e in free if place[e][0] == lamp.front], place)
+            if pick is None and partner(lamp) is None:
+                pick = _best_entry(lamp, free, place)
+            if pick is not None:
+                take(lamp, pick)
         for lamp in order:
             if lamp.light_id is None:
-                twin = next(
-                    (
-                        l
-                        for l in order
-                        if l.light_id is not None and l.function == lamp.function and l.side == lamp.side
-                    ),
-                    None,
-                )
-                other = fallback(lamp.function, lamp.front)
-                if twin is None and other is not None:
-                    near = [
-                        l for l in order if l.light_id is not None and l.function == other and l.front == lamp.front
-                    ]
-                    twin = next((l for l in near if l.side == lamp.side), near[0] if near else None)
+                twin = partner(lamp)
                 if twin is not None:
                     lamp.light_id = twin.light_id
                 else:
