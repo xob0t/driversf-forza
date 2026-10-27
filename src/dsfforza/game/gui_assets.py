@@ -63,8 +63,6 @@ def stock_file(relative: str) -> Path:
     return backup if backup.exists() else game / relative
 
 
-FH1_ISO = REPO / "assets" / "Forza.Horizon.XBOX360.iso"
-FM4_ISO = REPO / "assets" / "Forza 4 [NTSCU][DVD1].iso"
 PICTURE_SIZE = (512, 256)
 
 
@@ -289,9 +287,10 @@ class ForzaUI:
     """FH1's media/ui/Textures.zip on the disc image; maker logos FH1 lacks
     (Renault) come from FM4's (DVD 1, Media/UI/Textures.zip, same layout),
     opened on first need. Without the FH1 image FM4's alone (no thumbnails),
-    without either nothing: logo() is None, and makers get text badges."""
+    without either nothing: logo() is None, and makers get text badges. `of`
+    finds the images by their content (forza_roster.game_discs)."""
 
-    def __init__(self, iso: Path | None = FH1_ISO, fallback: Path | None = FM4_ISO):
+    def __init__(self, iso: Path | None = None, fallback: Path | None = None):
         self.image = self.zip = None
         self.names = {}
         if iso and Path(iso).exists():
@@ -300,10 +299,8 @@ class ForzaUI:
 
     @classmethod
     def of(cls, isos: list[Path] | None) -> ForzaUI:
-        """From the build's disc images (port_batch --iso), found by their title whatever
-        they are called; without a list, assets/'s default names."""
-        if isos is None:
-            return cls()
+        """From the build's disc images (port_batch --iso; None: assets/*.iso), found by
+        their title whatever they are called."""
         from dsfforza.build.forza_roster import game_discs
 
         discs = game_discs(isos)
@@ -1113,7 +1110,7 @@ def fit_cameras(manifest: Path | None = None, names: list[str] | None = None, lo
             )
     else:
         archive = Path(manifest).with_suffix(".sp")
-        ui = ForzaUI()
+        ui = ForzaUI.of(None)
         for car in json.loads(Path(manifest).read_text())["cars"]:
             if names and car["media"] not in names:
                 continue
@@ -1663,8 +1660,8 @@ def dsf_make(make: str, model: str = "") -> str:
 def car_texts(cars: list[dict], isos: list[Path] | None = None) -> dict[str, dict]:
     """{media: {make, model, family, year}}: Forza's own names (Data_Car
     DisplayName, List_CarMake, List_FamilyModel via src/dsfforza/formats/forza_strings.py,
-    from `isos`, found by title, else assets/'s default names), upper-cased;
-    media-name guesses where a game has no entry."""
+    from `isos`, else assets/*.iso, found by title whatever the files are called),
+    upper-cased; media-name guesses where a game has no entry (its disc is missing)."""
     from dsfforza.build.port_car import make_model
 
     out = {}
@@ -1672,11 +1669,6 @@ def car_texts(cars: list[dict], isos: list[Path] | None = None) -> dict[str, dic
     for car in cars:
         by_game.setdefault(str(car.get("game", "FH1")).lower(), []).append(car["media"])
     found: dict[str, dict] = {}
-    discs: dict[str, Path] = {}
-    if isos is not None:
-        from dsfforza.build.forza_roster import game_discs
-
-        discs = {game.lower(): path for game, path in game_discs(isos).items()}
     try:
         from dsfforza.formats import forza_strings
 
@@ -1686,9 +1678,12 @@ def car_texts(cars: list[dict], isos: list[Path] | None = None) -> dict[str, dic
                 if not missing:
                     break
                 try:
-                    names = forza_strings.car_names(other, missing, iso=discs.get(other))
+                    names = forza_strings.car_names(other, missing, isos=isos)
                     found.update({k: v for k, v in names.items() if v.get("display")})
-                except Exception:
+                except LookupError:  # that game's disc (or its gamedb) isn't there
+                    continue
+                except Exception as error:  # names then come from the media names
+                    print(f"warning: {other.upper()} car names: {type(error).__name__}: {error}")
                     continue
     except ImportError:
         pass
@@ -2159,6 +2154,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     b.add_argument("--jobs", type=int, default=1, help="processes for the car renders (default 1)")
     b.add_argument(
+        "--iso", type=Path, action="append", help="Forza disc images, any file names (default: assets/*.iso)"
+    )
+    b.add_argument(
         "--fh1-thumbnails",
         action="store_true",
         help="FH1's own thumbnail where there is one instead of the render (eye level, mirrored)",
@@ -2198,6 +2196,7 @@ def main(argv: list[str] | None = None) -> None:
             root_limit=args.root_limit,
             jobs=args.jobs,
             thumbnails=args.fh1_thumbnails,
+            isos=args.iso,
         )
         if args.install_lua:
             target = REPO / "tools" / "game" / "lua" / "dsfforza" / "hud.lua"

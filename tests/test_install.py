@@ -18,7 +18,7 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
-from dsfforza.build import install, package, thirdparty
+from dsfforza.build import forza_roster, install, package, thirdparty
 
 
 def _tmp():
@@ -81,6 +81,10 @@ def test_prepare_runs_only_when_its_files_are_missing_or_stale():
         (out / "db" / "fm4_gamedb.slt").write_bytes(b"cut short")
         needed, force, why = install.prepare_status(game, out)
         assert needed and not force and "fm4_gamedb.slt" in why
+        # FH1 discs only (issue #102): FM4's database can't be written, so it isn't missing.
+        (out / "db" / "fm4_gamedb.slt").unlink()
+        assert install.prepare_status(game, out, {"FH1"}) == (False, False, "up to date")
+        assert "fm4_gamedb.slt missing" in install.prepare_status(game, out, {"FH1", "FM4"})[2]
 
 
 # --- plugin ----------------------------------------------------------------------------------------
@@ -280,10 +284,16 @@ def test_preflight_build_only_skips_the_install_checks():
         text = _problems(_run(args, running=True, vc=False, loader=None))
         assert "running" not in text and "Visual C++" not in text
         assert "not the stock" in text  # the build reads the stock archive
-        with mock.patch.object(install, "STOCK_ARCHIVE_SHA256", install.sha256(game / "Install" / "dngvehicles.sp")):
+        assert "fh1.iso: not an Xbox 360 disc image" in text  # an empty file: no Forza disc at all
+        fh1 = forza_roster.Disc(iso, "FH1", 1, 1)  # what tests/test_discs.py's images are
+        with (
+            mock.patch.object(install, "STOCK_ARCHIVE_SHA256", install.sha256(game / "Install" / "dngvehicles.sp")),
+            mock.patch.object(forza_roster, "identify", return_value=fh1),
+        ):
             run = _run(args, running=True)
             info = run.preflight()
-            assert "DSF 1.04" in info and "1 disc images" in info and run.isos == [iso]
+            assert "DSF 1.04" in info and "discs FH1" in info and run.isos == [iso]
+            assert "no FM4 disc: its cars are skipped" in info
 
 
 def test_preflight_no_plugin_caps_the_selection_and_other_mods_need_force():

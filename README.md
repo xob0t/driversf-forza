@@ -8,8 +8,8 @@ project ships no game or Forza files.
 
 - Windows 10 or 11.
 - Driver: San Francisco for PC, version 1.04, with its original game files.
-- Your Forza disc images (`.iso`): Forza Horizon, and Forza Motorsport 4 discs 1
-  and 2. A car that is only on a disc you don't have is skipped.
+- Your Forza disc images (`.iso`, any file names): Forza Horizon, and Forza
+  Motorsport 4 discs 1 and 2. A car that is only on a disc you don't have is skipped.
 - The Microsoft Visual C++ 2015-2022 Redistributable, **x86**
   (<https://aka.ms/vs/17/release/vc_redist.x86.exe>). The installer checks for it.
 - About 20 GB of free disk space. The first build takes one to a few hours,

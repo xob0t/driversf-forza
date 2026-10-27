@@ -290,14 +290,18 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("prepare", help="write the derived files under out/ (only missing ones)")
     p.add_argument("--game", type=Path, default=None, help="game folder (default: $DSF_GAME_DIR)")
-    p.add_argument("--iso", type=Path, action="append", help="Forza disc images (default: assets/*.iso)")
+    p.add_argument(
+        "--iso", type=Path, action="append", help="Forza disc images, any file names (default: assets/*.iso)"
+    )
     p.add_argument("--force", action="store_true", help="rewrite files that exist")
     v = sub.add_parser("vehiclestats", help="print vehiclestats.lua from a ScriptsLuaScripts.fchunk")
     v.add_argument("package", type=Path)
     v.add_argument("out", type=Path, nargs="?")
     args = parser.parse_args(argv)
     if args.cmd == "prepare":
-        isos = args.iso or sorted((REPO / "assets").glob("*.iso"))
+        from dsfforza.build.forza_roster import default_images
+
+        isos = args.iso or default_images()
         for name, path in prepare(args.game or game_dir(), isos, force=args.force).items():
             print(f"{name}: {path}")
     else:

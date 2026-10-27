@@ -83,7 +83,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from dsfforza import REPO
-from dsfforza.build import gentle
+from dsfforza.build import forza_roster, gentle
 from dsfforza.formats.chnk import ENTRY_LIMIT
 from dsfforza.game import game_paths
 
@@ -376,13 +376,13 @@ def garage_groups() -> tuple[dict[str, int], dict[str, str]]:
     return counts, {make: name for make, (_, name) in makes.items()}
 
 
-def car_groups(picks: list[Pick], group_of: dict[str, str]) -> dict[str, str]:
+def car_groups(picks: list[Pick], group_of: dict[str, str], isos: list[Path] | None = None) -> dict[str, str]:
     """{media: garage group key} as gui_assets.build will name the maker: Forza's own
     maker name (src/dsfforza/formats/forza_strings.py via gui_assets.car_texts) mapped by
     gui_assets.dsf_make to a stock maker's "ID:nnnnnn" string, else the plain name."""
     from dsfforza.game import gui_assets
 
-    texts = gui_assets.car_texts([{"media": p.media, "game": p.game} for p in picks])
+    texts = gui_assets.car_texts([{"media": p.media, "game": p.game} for p in picks], isos)
     out = {}
     for p in picks:
         t = texts[p.media]
@@ -425,7 +425,9 @@ def root_limit_of(args) -> int:
     return limit
 
 
-def assign_ids(picks: list[Pick], taken: set[int], policy: str, first_high: int) -> None:
+def assign_ids(
+    picks: list[Pick], taken: set[int], policy: str, first_high: int, isos: list[Path] | None = None
+) -> None:
     """policy "garage": IDs 1..61 (listed in the garage) while a maker group has room
     for the car, else first_high and up; "high": first_high and up only; "asi"
     (installs with dsfforza.asi): every free ID below 1000 in order, 1..61, the 92
@@ -436,7 +438,7 @@ def assign_ids(picks: list[Pick], taken: set[int], policy: str, first_high: int)
     low = [i for i in GARAGE_IDS if i not in taken] if policy == "garage" else []
     asi = [i for i in ASI_LOW_IDS if i not in taken and i not in RESERVED_IDS] if policy == "asi" else []
     counts, group_of = garage_groups() if (low or policy == "asi") else ({}, {})
-    groups = car_groups(picks, group_of) if (low or policy == "asi") else {}
+    groups = car_groups(picks, group_of, isos) if (low or policy == "asi") else {}
     next_id = first_high
     for p in picks:
         own = groups.get(p.media)
@@ -995,9 +997,17 @@ def lint_all(out: Path, dsf: Path, cars: list[dict], parallel: int, log=print) -
 def common(args) -> tuple[Path, list[Path], dict, dict[str, Path]]:
     set_game_env(args.dsf)
     lower_priority()
-    isos = [p.resolve() for p in (args.iso or sorted((REPO / "assets").glob("*.iso")))]
+    isos = [p.resolve() for p in (args.iso or forza_roster.default_images())]
     if not isos:
         raise SystemExit("no Forza disc images (assets/*.iso or --iso)")
+    # What each image is, from its default.xex (any file names); a missing game's cars are skipped.
+    discs = forza_roster.identify_all(isos)
+    found, notes = forza_roster.disc_summary(discs)
+    if not found:
+        raise SystemExit("no Forza disc among the images: " + "; ".join(f"{d.path.name}: {d.error}" for d in discs))
+    print(f"disc images: {', '.join(found)}")
+    for note in notes:
+        print(f"  {note}")
     from dsfforza.game import game_data
 
     game_data.prepare(game_from_dsf(args.dsf), isos, log=lambda t: print(f"prepare: {t}"))
@@ -1036,14 +1046,14 @@ def print_plan(picks: list[Pick]) -> None:
 
 
 def cmd_plan(args) -> None:
-    dsf, _isos, cars, dbs = common(args)
+    dsf, isos, cars, dbs = common(args)
     picks = select(args, cars, dsf, dbs)
     from dsfforza.build import clone_vehicle
     from dsfforza.formats.chnk import read_chunk
 
     with dsf.open("rb") as stream:
         taken = clone_vehicle.taken_ids(stream, read_chunk(stream, 0).entries)
-    assign_ids([p for p in picks if not p.notes], taken, args.id_policy, args.first_id)
+    assign_ids([p for p in picks if not p.notes], taken, args.id_policy, args.first_id, isos)
     print_plan(picks)
     print(f"{len(picks)} cars")
     if args.tsv:
@@ -1304,7 +1314,7 @@ def cmd_build(args) -> None:
     with dsf.open("rb") as stream:
         stock_entries = read_chunk(stream, 0).entries
         taken = clone_vehicle.taken_ids(stream, stock_entries)
-    assign_ids(picks, taken, args.id_policy, args.first_id)
+    assign_ids(picks, taken, args.id_policy, args.first_id, isos)
     root_limit = root_limit_of(args)
     room = (root_limit - len(stock_entries)) // 3  # 453 root entries in the stock archive
     if len(picks) > room:
@@ -1506,7 +1516,7 @@ def finish(
                 root_limit=getattr(args, "root_limit", None) or ENTRY_LIMIT,
                 jobs=max(1, args.jobs),
                 # The disc images by title (logos, names): any file names, FH1 not needed.
-                isos=[Path(i) for i in (getattr(args, "iso", None) or sorted((REPO / "assets").glob("*.iso")))],
+                isos=[Path(i) for i in (getattr(args, "iso", None) or forza_roster.default_images())],
             )
         except Exception as error:  # the archive is still usable without pictures and badges
             print(f"gui assets failed: {type(error).__name__}: {error}")
@@ -1661,7 +1671,9 @@ def build_parser() -> argparse.ArgumentParser:
             help="stock Install/dngvehicles.sp (only read; default: from $DSF_GAME_DIR); "
             "its game folder is used for the rest",
         )
-        p.add_argument("--iso", type=Path, action="append", help="Forza disc images (default: assets/*.iso)")
+        p.add_argument(
+            "--iso", type=Path, action="append", help="Forza disc images, any file names (default: assets/*.iso)"
+        )
         p.add_argument("--cache", type=Path, default=REPO / "out" / "cache", help="extraction cache")
         p.add_argument("--car", action="append", metavar="NAME[@fh1|@fm4]")
         p.add_argument("--list", type=Path, action="append", help="file with one car per line")

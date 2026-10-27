@@ -117,7 +117,6 @@ ENGINE_TYPES = {1: "v6", 2: "v8", 3: "v10", 4: "v12", 5: "vr6", 6: "h4", 7: "h6"
 TEMPLATE_SLOTS = range(6, 9)  # loops per set of a usable template ("370Z layout")
 ID_NAMESPACE_BITS = 22
 MAX_SECONDS = (1.1, 0.8, 0.6)  # loop lengths tried in turn against the NONR budget
-GAME_ISOS = {"fh1": ["Forza.Horizon.XBOX360.iso"], "fm4": ["Forza 4 [NTSCU][DVD1].iso", "Forza 4 [NTSCU][DVD2].iso"]}
 EMISSION_GROUP = {"Exhaust": "ExhaustL", "EngineAmbient": "EngineAmbient", "EngineIntake": "EngineIntake"}
 # Emission per set, first one the car has (race cars often lack one).
 SET_EMISSIONS = {"A": ("EngineAmbient", "EngineIntake", "Exhaust"), "B": ("Exhaust", "EngineAmbient", "EngineIntake")}
@@ -457,33 +456,12 @@ def read_wav(path: Path) -> tuple[np.ndarray, int]:
     return x.reshape(-1, ch)[:, 0], rate
 
 
-_GAME_OF_ISO: dict[str, str | None] = {}
-
-
 def isos_for(game: str, isos: list[Path]) -> list[Path]:
-    """The given disc images that belong to game ("fh1"/"fm4"): by file name, else by
-    default.xex's title ID."""
-    game = game.lower()
-    named = [p for p in isos if p.name in GAME_ISOS[game]]
-    if named:
-        return named
-    from dsfforza.build.forza_roster import TITLES, xex_title
-    from dsfforza.formats.xiso import XIso
+    """The given disc images that belong to game ("fh1"/"fm4"), disc 1 first: by each
+    image's default.xex (forza_roster.discs_of), never by its file name."""
+    from dsfforza.build.forza_roster import discs_of
 
-    out = []
-    for p in isos:
-        key = str(Path(p).resolve())
-        if key not in _GAME_OF_ISO:
-            image = XIso(p)
-            try:
-                _GAME_OF_ISO[key] = TITLES.get(xex_title(image)[0])
-            except (ValueError, KeyError):
-                _GAME_OF_ISO[key] = None
-            finally:
-                image.close()
-        if (_GAME_OF_ISO[key] or "").lower() == game:
-            out.append(Path(p))
-    return out
+    return discs_of(isos, game)
 
 
 def _decoded(fsb_path: Path, fsb, folder: Path, vgm: Path) -> list[Path]:
@@ -1571,7 +1549,9 @@ def main(argv: list[str] | None = None) -> None:
     c.add_argument("--spool", type=int, default=1, help="spool ID the sound is for (the fresh-ID namespace)")
     c.add_argument("--out", type=Path, required=True)
     c.add_argument("--dsf", type=Path, default=DEFAULT_DSF)
-    c.add_argument("--iso", type=Path, action="append")
+    c.add_argument(
+        "--iso", type=Path, action="append", help="Forza disc images, any file names (default: assets/*.iso)"
+    )
     c.add_argument("--cache", type=Path, default=CACHE)
     c.add_argument(
         "--set-a",
@@ -1602,8 +1582,10 @@ def main(argv: list[str] | None = None) -> None:
     args = ap.parse_args(argv)
 
     if args.cmd == "convert":
+        from dsfforza.build.forza_roster import default_images
+
         sbak, vsvh = stock_sound(args.dsf, args.host)
-        isos = args.iso or [REPO / "assets" / n for n in GAME_ISOS[args.game]]
+        isos = args.iso or default_images()
         forza = forza_engine(args.car, args.game, isos, args.cache)
         reserved = stock_index(args.dsf)["reserved"]
         sound = build_sound(

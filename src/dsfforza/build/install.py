@@ -418,8 +418,10 @@ def space_needed(cars: int, reusing: bool) -> tuple[int, int]:
 # --- stage decisions -------------------------------------------------------------------------------
 
 
-def prepare_status(game: Path, out_root: Path) -> tuple[bool, bool, str]:
-    """(run game_data prepare, with --force, why) from the files it writes under out/."""
+def prepare_status(game: Path, out_root: Path, games: set[str] | None = None) -> tuple[bool, bool, str]:
+    """(run game_data prepare, with --force, why) from the files it writes under out/.
+    `games` ({"FH1", "FM4"}, those with a disc among the images): a game whose disc isn't
+    there has no database to write, so its missing one doesn't count (issue #102)."""
     package = Path(game) / "media" / "ScriptsLuaScripts.fchunk"
     for variant in ("LuaScripts", "LuaScripts.copy"):
         target = Path(out_root) / "lua-src" / variant / "vehiclestats" / "vehiclestats.lua"
@@ -431,6 +433,8 @@ def prepare_status(game: Path, out_root: Path) -> tuple[bool, bool, str]:
         db = Path(out_root) / "db" / f"{name}_gamedb.slt"
         cached = Path(out_root) / "cache" / name / "gamedb.slt"
         if not db.is_file():
+            if games is not None and name.upper() not in games:
+                continue
             return True, False, f"db/{db.name} missing"
         if cached.is_file() and cached.stat().st_size != db.stat().st_size:
             return True, False, f"db/{db.name} differs from the cache"
@@ -1164,7 +1168,9 @@ class Run:
             info.append("DSF 1.04")
         cars = None
         if self.building:
-            self.isos = [Path(p) for p in (args.iso or sorted((REPO / "assets").glob("*.iso")))]
+            from dsfforza.build import forza_roster
+
+            self.isos = [Path(p) for p in (args.iso or forza_roster.default_images())]
             missing = [p for p in self.isos if not p.is_file()]
             if not self.isos:
                 problems.append(
@@ -1174,9 +1180,17 @@ class Run:
             elif missing:
                 problems.append(f"Disc image not found: {', '.join(map(str, missing))}")
             else:
-                info.append(f"{len(self.isos)} disc images")
-                if len(self.isos) < 3:
-                    info.append("cars on a missing disc are skipped")
+                # Each image by its content (default.xex), whatever it is called.
+                discs = forza_roster.identify_all(self.isos)
+                found, notes = forza_roster.disc_summary(discs)
+                if not found:
+                    problems.append(
+                        "None of the disc images is a Forza Horizon or Forza Motorsport 4 disc: "
+                        + "; ".join(f"{d.path.name}: {d.error}" for d in discs)
+                    )
+                else:
+                    info.append("discs " + " + ".join(found))
+                    info += notes
             lists = self.lists()
             gone = [p for p in lists if not Path(p).is_file()]
             if gone:
@@ -1275,8 +1289,9 @@ class Run:
     def prepare(self) -> tuple[str, str]:
         """game_data prepare when needed, and vgmstream (Forza's engine sound) when missing."""
         from dsfforza.build import thirdparty
+        from dsfforza.build.forza_roster import game_discs
 
-        needed, force, why = prepare_status(self.game, REPO / "out")
+        needed, force, why = prepare_status(self.game, REPO / "out", set(game_discs(self.isos)))
         done = []
         if needed:
             from dsfforza.game import game_data
@@ -1706,7 +1721,9 @@ def build_parser() -> argparse.ArgumentParser:
     pick = parser.add_argument_group("cars")
     pick.add_argument("--list", type=Path, action="append", help="car list, one per line (default: all.txt)")
     pick.add_argument("--car", action="append", metavar="NAME[@fh1|@fm4]", help="a car (repeatable)")
-    pick.add_argument("--iso", type=Path, action="append", help="Forza disc images (default: assets/*.iso)")
+    pick.add_argument(
+        "--iso", type=Path, action="append", help="Forza disc images, any file names (default: assets/*.iso)"
+    )
     build = parser.add_argument_group("build")
     build.add_argument(
         "--jobs",

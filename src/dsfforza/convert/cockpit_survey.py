@@ -125,9 +125,9 @@ def main(argv: list[str] | None = None) -> None:
         import ctypes
 
         ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x4000)  # BelowNormal
-    from dsfforza.build.forza_roster import roster
+    from dsfforza.build.forza_roster import default_images, roster
 
-    isos = sorted((REPO / "assets").glob("*.iso"))
+    isos = default_images()
     cars, _ = roster(isos)
     dbs = {g: port_car.extract_gamedb(isos, g, args.cache) for g in ("FH1", "FM4")}
     names = sorted(m for m, c in cars.items() if c.kind == "car")
