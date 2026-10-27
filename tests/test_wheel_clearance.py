@@ -60,6 +60,17 @@ def test_gap_is_the_distance_to_the_arch():
     pts = wc.near_points(skin, wheel.hub, 0.6)
     assert abs(wc.gap(pts, wheel) - 0.075) < 0.004
     assert wc.gap(pts, wheel, steer_deg=40) < -0.05 or wc.gap(pts, wheel, steer_deg=-40) < -0.05
+    # a suspension arm under the car behind the hub, inboard of the tyre: at full lock
+    # the tyre's trailing inner half swings over it, hidden, and it doesn't count
+    arm = _box((0.60, -0.15, 1.12), (0.66, -0.10, 1.16))
+    pts = wc.near_points(arm, wheel.hub, 0.6)
+    assert min(wc.gap(pts, wheel, steer_deg=a) for a in (-42, 42)) > 0
+
+
+def test_forza_lock_replaces_p298():
+    car = wc.Car(1, np.zeros((0, 3, 3)), [], {298: 40.0})
+    assert wc._with_forza_lock(car, 30.0).p(298) == 30.0
+    assert wc._with_forza_lock(wc.Car(1, np.zeros((0, 3, 3)), [], {298: 40.0}), None).p(298) == 40.0
 
 
 def _hierarchy(hubs) -> bytes:

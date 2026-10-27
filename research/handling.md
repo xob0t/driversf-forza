@@ -169,7 +169,7 @@ Data: p1 and p2 run a median 1.4 and 1.7 per kg of mass. Their interquartile ran
 | IDs | Group | Reader |
 | --- | --- | --- |
 | 24, 166, 239, 365, 366, 393 | launch and burnout assist. p239 enables it, p166 is the throttle threshold, p24 the speed limit, p365 a ramp | `FUN_008BCBB0` |
-| 298 | max steering angle, degrees | `FUN_008B2DF0`, `FUN_008AF860`, `FUN_008BD9B0` |
+| 298 | max steering angle, degrees: the front wheels' lock at any speed; the ports take Forza's ("Steering lock") | `FUN_008B2DF0`, `FUN_008AF860`, `FUN_008AF790`, `FUN_008BD9B0` |
 | 379..391, 470, 494, 495 | steering response. Values lerp by yaw rate x p391 and fade with speed between p383 and p384 | `FUN_008AF860` |
 | 344..354, 372..375, 411, 412, 496, 510, 511 | stability or aligning-torque assist (speed², steering and slip terms) | `FUN_008BD9B0` |
 | 300..305, 327..329, 337..342, 394..396, 535..537, 549..554 | camera mounts, a vec3 per camera index 0x10..0x1C. Measured in game: 535..537 the Bonnet camera, 327..329 the Bumper camera, 300..302 the chase camera (`research/cockpit.md`, "Cameras") | `FUN_0088DF80`, `FUN_0088E230` |
@@ -808,6 +808,97 @@ Before / after: run vm-20261024-104232 (the installed testdrive11 archive, keys 
 - After the fix the WRX launches like the stock AWD cars (0-20 mph 0.72 s;
   A4 1.11, GT-R 0.46 to 0.50, Sport Quattro S1 0.57), brakes at 1.47 g and
   turns at 62 deg/s; the Golf R, M5 E28 and Supra likewise.
+
+### Steering lock (issue #54, 2026-10-27)
+
+Before: p298 came with the steering set (the host's, or the medoid donor's):
+40 deg on most ports, 35, 37, 45 or 50 on the rest. Forza's lock is
+`Data_Car.SteerMaxAngle`: 42 deg on 508 of the 573 roster cars, 36 on 34, 30
+on 31 (race prototypes, GT1 and DTM cars). FH1 and FM4 sometimes differ for
+the same car (FER_F50GT_96: 30 in FH1, 36 in FM4); the port takes the value
+of the game it is built from. `carattribs.xml` has no lock
+(`SteeringWheelAngleOverride` is the wheel's tilt). `SteerMaxAngleFiltered`
+(12 to 35) is presumably the pad-steering cap, not the wheels' travel; the
+arches are drawn around `SteerMaxAngle`.
+
+How DSF uses p298 (confirmed-static, `FUN_008AF860`, `FUN_008AF790`,
+`FUN_008B6F50`; Ghidra `out/ghidra/steerlock1`, `params`):
+
+- The steer angle (vehicle +0xBC, in 4096ths of a turn) heads for
+  `target = (1 - (1-f) b) x input x p298 + (1-f) b x (p379 g input + a slip +
+  ...)`, `b = clamp((speed - 1) / p470, 0, 1)` (speed in m/s; p470 is 15 to
+  26 on the stock fleet), `f = min(1, |front slip| x p381)` and `g` the tyre
+  term `p368/p367 x (p378 p376 / (v + p376) + p377)` (no p298 in it). The
+  slew rates p385..p390, p494, p495 move the angle towards it, and it is
+  clamped to +-p298 at every speed.
+- So below 1 m/s the wheels go to `input x p298`; by 1 + p470 m/s (about 58
+  mph on a p470 25 car) the steering is the speed-sensitive `p379 x g`, 9 to
+  11 deg at full input on the median stock car (at most 25, never above
+  p298, `out/steer/fleet_steer.py`). p298 matters between, in a slide (the
+  `f` term) and for the turning circle.
+- `FUN_008AF790` returns angle / p298 in -1..1; the driver rig
+  (`FUN_00574130` -> driver +0x54 -> `FUN_005756E0`) turns the steering
+  wheel and the hands by that, so they reach the same rotation at full lock
+  whatever p298 is. The AI's steering (`FUN_008DC450`, `FUN_008E1F40`) divides
+  its wanted angle by p298 the same way.
+- `FUN_008AE400` (replay or scripted input) writes input x p298 straight in;
+  `FUN_008B2DF0` copies max(p298, 0.01) deg into each tyre's record.
+
+Fix (`handling.build_vo3d` puts `Data_Car.SteerMaxAngle` in p298, so rule Z
+in `handling_dsf.RULES` and `SAME_MODEL_RULES`; the medoid's steering set no
+longer brings its own lock, and a hand-set steering set in
+`handling-tune.json`, the Huayra's, keeps Forza's lock). The rest of the
+steering set (p379..p391, p470) stays the donor's, so the speed-sensitive
+steering is unchanged.
+
+Roster (`out/final4`'s VO3Ds against Forza, `out/steer/p298_survey.py`): all
+573 change.
+
+| DSF before -> Forza | Cars | Turning radius (front axle centre, wheelbase / sin lock) |
+| --- | --- | --- |
+| 40 -> 42 | 359 | -4% |
+| 35 -> 42 | 112 | -14% |
+| 37 -> 42 | 30 | -10% |
+| 40 -> 30 | 31 | +29% (median 4.4 -> 5.7 m) |
+| 40 -> 36 | 31 | +9% |
+| 45 -> 42 | 6 | +6% |
+| 45 -> 36 | 3 | +20% |
+| 50 -> 42 | 1 (KEN_T440_12) | +14% |
+
+The lowest lock, 30 deg, is within the stock fleet's range (30 on the 1988
+Wrangler, 35 on 30 stock cars, 40 on 95, up to 55 on the buses and trucks).
+
+Leave-one-out (`dsff handling_dsf loo`, the 48 pairs): Reflections gave 39 of
+those cars 40 deg where Forza has 42 (and 35 or 37 on the other 9), so the
+p298 term's error grows (0.34 -> 0.85 in fleet-normalised units), the
+steering group 0.521 -> 0.563 and the weighted mean 0.623 -> 0.627. That's
+the cost of taking the lock from Forza's geometry rather than from DSF's
+tuning; capping at Forza's lock (min of the two) would have kept the 48 pairs
+as they were and changed 72 cars instead of 573.
+
+In game (confirmed-runtime; headless VM 1, `-Dyno -DynoRuns 4 -DynoKeys
+'Up:8,Down:6;Up:0.8,Left:8,Down:3;Up:@20,Right:1.0,None:1.5,Down:5;Up:@45,Right:1.0,None:1.5,Down:5'
+-DynoKeep 'impulse:1,none,impulse:1:8,impulse:1:18'`; the three race
+prototypes of wheels.md, "Steering lock", 40 -> 30 deg; before
+`vm1-20261027-193002`, after `vm1-20261027-193609`). The turning circle is a
+least-squares circle through the path while the car rolls at full lock
+between 1.5 and 6 m/s (`out/steer/circle.py`). The VM's slow key timing
+spoilt some runs (the 20 mph step never started; two of the six circles
+spun or rolled too fast).
+
+| Car | Turning circle (path radius, m) | Full lock at about 34 mph: steady yaw deg/s, g | 1 s step steer at 47 to 50 mph: steady yaw deg/s, g |
+| --- | --- | --- | --- |
+| ACU_66_ARX02a_09 | - / 5.05 | - | 54.1, 1.95 / 54.2, 2.02 |
+| AST_007_AMRLola_09 | 3.48 / - | - / 75.0, 2.06 | 54.0, 2.27 / 53.3, 2.25 |
+| BMW_15_LMR_99 | 3.35 / 4.56 (+36%) | 77.9, 1.90 / 79.9, 1.99 | 55.9, 2.23 / 55.0, 2.29 |
+
+The circle follows the geometry (rear axle wheelbase / tan lock: 3.34 and
+4.85 m for the LMR). At 34 mph a full-lock turn is grip-limited at 30 deg as at
+40, and the 50 mph step steer doesn't move: the cars turn and corner as before
+once moving, only the tightest low-speed turns (U-turns, parking) take more
+room, as much as they do in Forza.
+
+Clearance at full lock and in game: research/wheels.md, "Steering lock".
 
 ### Remaining gaps
 

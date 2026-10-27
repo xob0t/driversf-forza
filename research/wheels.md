@@ -467,12 +467,11 @@ three-quarter) and `Bonnet`; the A4's own before shot is from
   drew all four wheels at the front tyre's size, so 63 cars with a bigger
   Forza rear tyre got a rear arch gap larger than Forza's (JAG_33_XKR_10: 50
   mm against -8).
-- Full lock: 41 cars still put a front tyre more than 10 mm deeper into the
-  body than Forza's tyre does at Forza's own lock; 27 of them steer further in
-  DSF (p298 40 or 45 deg from the steering donor against Forza's 30 or 36:
-  the race prototypes, TOY_3_GT1_99, FOR_40_GTR_09). Capping p298 at Forza's
-  angle would cure them, but p298 also scales the steering response, so it is
-  a handling change and not made here.
+- Fixed ("Steering lock" below): full lock. 41 cars still put a front tyre
+  more than 10 mm deeper into the body than Forza's tyre does at Forza's own
+  lock; 27 of them steer further in DSF (p298 40 or 45 deg from the steering
+  donor against Forza's 30 or 36: the race prototypes, TOY_3_GT1_99,
+  FOR_40_GTR_09). Most of the depth was the check's, not the body's (below).
 - Full bump (p188): most cars put a tyre into the body at the top of DSF's
   visual travel, as Forza's would at its MaxCompressHeight; not changed.
 - The rest-pose sink against Atlas's ground beyond the model (above).
@@ -639,6 +638,62 @@ and the Legacy's rims are light grey with their spoke shading instead of flat
 white, the Continental's (PaintScale 0.5) mid grey, the Focus RS500's (7.5)
 black rims a little lighter, with the blue cap; next to stock 229's silver
 rims they now look alike (`img/rims-paintscale-ingame.jpg`).
+
+## Steering lock (2026-10-27, issue #54)
+
+The ports now steer their front wheels to Forza's lock, `Data_Car.SteerMaxAngle`
+(VO3D p298, research/handling.md, "Steering lock": how the engine uses it, the
+handling cost). Before, p298 came with the host's or the donor's steering set: 72
+cars turned further than in Forza (40 or 45 deg against 30 or 36; KEN_T440_12 50
+against 42), 501 less (35, 37 or 40 against 42).
+
+### The check was part of the problem
+
+`wheel_clearance.gap` counted every body point outboard of the turned tyre's centre
+plane. Past about 35 deg the trailing inner corner of the tyre swings over body
+points under the car, behind and below the hub and inboard of the tyre's inner wall
+(AUD_TTRS_10: a point 13 cm inboard of the hub, 18 cm behind, 12 cm down: -83 mm
+from 36 deg, 3 mm at 30). Those are suspension and liner parts hidden behind the
+tyre, and they made most of #51's "full lock" depths (TOY_3_GT1_99 -83 mm at 40
+deg, 8 without them; BMW_15_LMR_99 -42 and 6). `gap` now leaves out body points
+inboard of the unsteered tyre's inner wall (in the car's frame); at rest nothing
+changes (the outboard-half rule already left them out). `--forza-lock`
+(`survey`, `car`) measures a build from before this change at Forza's lock, as the
+converter now builds it.
+
+### Survey (`out/final4`, all 573 cars, front wheels)
+
+`out/steer/lock_survey.py`: each car's front tyres at its p298 and at Forza's lock,
+against Forza's own tyre at Forza's lock (`gap_forza_lock`). Cars with a tyre more
+than 10 mm deeper in the body than Forza's:
+
+| Check | At the build's p298 | At Forza's lock (this change) |
+| --- | --- | --- |
+| master's `gap` | 29 (28 of them with a larger lock than Forza; worst TOY_3_GT1_99 -79, ACU_66_ARX02a_09 -51, BMW_15_LMR_99 -50, AST_007_AMRLola_09 -47, KEN_T440_12 -42) | 0 |
+| `gap` without the underbody points | 10 (4 with a larger lock: the ARX-02a and AMR-Lola pairs, -51 and -47; 6 with a smaller one, VW_Beetle_04 -22 down to REN_Twingo_09 -11) | 0 |
+
+With the new `gap`: median full-lock gap 15 -> 16 mm; tyres into the body at all
+(gap < 0) 155 -> 157 cars, every one of them as deep as Forza's own tyre there
+(within 10 mm). Raising the lock to 42 deg costs the 501 raised cars at most 8 mm
+(median 0); on the 72 lowered cars the gap moves to Forza's (ACU_66_ARX02a_09 -67 ->
+-16 mm, Forza -16; AST_007_AMRLola_09 -71 -> -25, Forza -24).
+
+### In game (headless VM 1)
+
+The three test cars (IDs 1 ACU_66_ARX02a_09, 2 AST_007_AMRLola_09, 3 BMW_15_LMR_99,
+all 40 -> 30 deg) built with this change (`out/steer/after`), and the same archive
+with p298 set back to master's 40 (`out/steer/before.sp`: 6 bytes differ),
+`run-series -Vm -DriveKey Left -DriveSeconds 10 -Views lock,fq,wheels`: before
+`vm1-20261027-185802` (an earlier try, `-182035`, stuck loading the story world;
+the LMR, last in line, got no views before the time-out, so `-194209` for it alone,
+where as the first car of a run it got only the side view), after
+`vm1-20261027-182651`. `img/steer-lock-ingame.jpg`: at 40 deg the ARX-02a's and the
+AMR-Lola's locked tyres stick out of the side of the wheel fairing; at Forza's 30
+they stay inside it, as the survey says. The LMR's tyre turns less into its arch.
+From the cockpit the wheel and the hands stand at the same hand-over-hand pose at
+full lock before and after (the rig turns by angle / p298). Handling: research/
+handling.md, "Steering lock" (turning circle 3.35 -> 4.56 m on the LMR; the 50 mph
+step steer unchanged).
 
 ## Open
 

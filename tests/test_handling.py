@@ -48,6 +48,34 @@ def test_a_donor_absence_stays_an_absence():
     assert not D.leave_out(host, {526: 1.2}, 526, 1.0)
 
 
+def _forza_car(lock: float) -> H.ForzaCar:
+    """A plain RWD coupe as handling.load_forza returns it, with SteerMaxAngle `lock`."""
+    return H.ForzaCar(
+        media="TEST_Coupe_10", source="", mass=1400.0, front_weight=0.52, cm_height=0.45,
+        block=(1.8, 1.2, 4.3), wheelbase=2.6, track_front=1.55, track_rear=1.56,
+        bbox_min=(-0.9, 0.0, -2.2), bbox_max=(0.9, 1.3, 2.2), tyre_radius_front=0.32,
+        tyre_radius_rear=0.33, drive="RWD", rear_split=1.0, final_drive=3.5,
+        gears=[3.5, 2.2, 1.5, 1.2, 1.0, 0.8], reverse=3.4, shift_time=0.2, redline=7000.0,
+        stall=800.0, curve_rpm=[1000.0, 4000.0, 7000.0], curve_nm=[250.0, 400.0, 350.0],
+        top_speed_mph=170.0, steer_max_angle=lock, drag=0.3, spring_front=80.0, spring_rear=90.0,
+    )  # fmt: skip
+
+
+def test_steering_lock_is_forzas():
+    # Issue #54: a donor's larger lock put the tyres through the arches at full lock;
+    # p298 is Data_Car.SteerMaxAngle on every port, own-model hosts included.
+    host = H.Host(200, H.VO3D(200, {0: 1300.0, 298: 40.0, 379: 1.1, 470: 25.0}), 2.5, 1.5, -0.35, 0.0)
+    for lock in (30.0, 36.0, 42.0):
+        vo3d, changes = H.build_vo3d(host, _forza_car(lock))
+        assert vo3d.params[298] == lock
+        assert any(c.pid == 298 and c.new == lock for c in changes)
+        # the speed-sensitive steering stays the host's
+        assert vo3d.params[379] == 1.1 and vo3d.params[470] == 25.0
+    assert D.RULES[298] == "Z" and D.SAME_MODEL_RULES[298] == "Z"
+    # so the steering-set donor's p298 is not copied (only rule-H parameters are)
+    assert 298 in D.FEEL_GROUPS["steering"]
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

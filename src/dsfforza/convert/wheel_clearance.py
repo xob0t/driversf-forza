@@ -31,7 +31,9 @@ change in rest pose between VO3D variants of one car follows this within 1 mm
 
 `--as-fixed` measures a build made before the wheel-clearance fix as the
 converter builds it now (`as_fixed`), so a survey of the old full-roster archive
-shows the effect without converting 573 cars again.
+shows the effect without converting 573 cars again. `--forza-lock` does the same for
+the steering lock: the `lock` pose at Data_Car.SteerMaxAngle, the p298 the converter
+writes since issue #54, instead of the archive's p298.
 
 Usage:
     uv run dsff wheel_clearance survey out/final/dngvehicles.sp --manifest out/final/dngvehicles.json --out out/wc/survey.tsv
@@ -279,7 +281,8 @@ def gap(points: np.ndarray, wheel: Wheel, up: float = 0.0, steer_deg: float = 0.
     about the hub's x axis, moved up by `up` and turned by `steer_deg` about the
     vertical through the hub. Only the outboard half of the tyre counts (what shows
     from outside: arch lips, flares, wings; the wheel-well liner over the inner half
-    is hidden by the tyre), and points within TYRE_CORE of the axle are ignored."""
+    is hidden by the tyre), body points inboard of the unsteered tyre's inner wall
+    (under the car) and points within TYRE_CORE of the axle are ignored."""
     if not len(points):
         return math.inf
     d = points - (wheel.hub + [0.0, up, 0.0])
@@ -292,7 +295,12 @@ def gap(points: np.ndarray, wheel: Wheel, up: float = 0.0, steer_deg: float = 0.
     out = x if wheel.hub[0] > 0 else -x  # along the axle from the tyre's centre plane, + outboard
     q1 = r - wheel.radius
     q2 = np.abs(out) - wheel.width / 2
-    keep = (r > TYRE_CORE * wheel.radius) & (out >= 0)
+    # Not inboard of the unsteered tyre's inner wall either: steered past about 35 deg,
+    # the trailing inner corner swings over body points under the car (suspension, the
+    # liner's back), outboard of the turned tyre's centre plane but hidden behind the
+    # tyre (AUD_TTRS_10: -83 mm at 36 deg, 3 at 30; issue #54).
+    beside = (d[:, 0] - wheel.offset[0]) * (1.0 if wheel.hub[0] > 0 else -1.0)
+    keep = (r > TYRE_CORE * wheel.radius) & (out >= 0) & (beside >= -wheel.width / 2)
     if not keep.any():
         return math.inf
     q1, q2 = q1[keep], q2[keep]
@@ -458,6 +466,13 @@ def _steer(angles: dict, entry: dict | None) -> float | None:
     return angles.get((entry.get("game", ""), entry["media"].lower())) if entry else None
 
 
+def _with_forza_lock(car: Car, angle: float | None) -> Car:
+    """The car with p298 at Forza's lock (`--forza-lock`)."""
+    if angle:
+        car.params = {**car.params, 298: angle}
+    return car
+
+
 def cmd_car(args) -> None:
     manifest = _manifest(args.manifest)
     angles = forza_steer_angles()
@@ -466,6 +481,8 @@ def cmd_car(args) -> None:
         entry = manifest.get(sid)
         if args.as_fixed and entry:
             car = as_fixed(car, entry)
+        if args.forza_lock:
+            car = _with_forza_lock(car, _steer(angles, entry))
         print(
             f"id {sid}: {len(car.body)} body triangles; VO3D "
             + ", ".join(f"p{k} {car.p(k):g}" for k in (0, 1, 3, 4, 25, 32, 188, 292, 298, 505))
@@ -492,6 +509,8 @@ def cmd_survey(args) -> None:
                 car = load_car(args.archive, sid, entries, stream)
                 if args.as_fixed and entry:
                     car = as_fixed(car, entry)
+                if args.forza_lock:
+                    car = _with_forza_lock(car, _steer(angles, entry))
                 rows = measure(car, entry["media"] if entry else str(sid), entry, _steer(angles, entry))
             except Exception as error:  # one broken car must not stop a 573-car survey
                 print(f"{sid}: {error}", file=sys.stderr)
@@ -511,7 +530,9 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument("ids", type=int, nargs="+")
     a.add_argument("--manifest", type=Path)
     fixed = "measure a build from before the wheel-clearance fix as the converter builds it now (as_fixed)"
+    lock = "steer the lock pose to Forza's SteerMaxAngle, as the converter does since issue #54"
     a.add_argument("--as-fixed", action="store_true", help=fixed)
+    a.add_argument("--forza-lock", action="store_true", help=lock)
     a.set_defaults(func=cmd_car)
     a = sub.add_parser("survey", help="every car of a build manifest into a TSV")
     a.add_argument("archive", type=Path)
@@ -519,6 +540,7 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument("--ids", type=int, nargs="*")
     a.add_argument("--out", type=Path, required=True)
     a.add_argument("--as-fixed", action="store_true", help=fixed)
+    a.add_argument("--forza-lock", action="store_true", help=lock)
     a.set_defaults(func=cmd_survey)
     args = ap.parse_args(argv)
     args.func(args)
