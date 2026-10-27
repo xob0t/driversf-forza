@@ -707,6 +707,91 @@ The Carlton's head lamps, now lit by day, are bright white in daylight
 median 31, inside stock's head-lamp range (mean 71, median 49), and the bake
 keeps it as it was: issue #115.
 
+### Pop-up head lamps drawn raised and lowered at once (issue #88)
+
+Symptom (offline-checked): 27 ported cars drew their pop-up or hidden head
+lamps in both states at once, the raised pods standing over the closed lids
+(RX-7 FC, NSX, Countach, the Corvettes, the Cougar Eliminator's grille doors
+open and shut together).
+
+**What Forza has (confirmed-static).** The two states are separate stock
+sections of the main carbin: `<base>up` (raised, doors open) beside
+`<base>down` (lowered, doors shut): `headlightLup`/`headlightLdown`,
+`headlightLUp` on the two NSXs, `glassLHLup`/`glassLHLdown` on the Starion.
+On the Stratos and the Elan Sprint the lowered state is the plain
+`headlightL`/`headlightR` and only the raised one is named (`headlightRup`;
+the Stratos's `headlightLup` has no LOD 1 or 2 geometry). Nothing in
+`carattribs.xml` or `ShaderSettings.xml` names them, and the cockpit carbins
+hold only the lowered state (`headlightLdown` on the Countach and the M1,
+nothing on the others): a parked Forza car shows its lamps down. The names
+didn't end in an upgrade letter, so `stock_sections` kept both. The GTO
+Judge's `headlightL_Cover` (grille doors over the lamps) is a single state
+and stays.
+
+Survey (`out/popup/survey.py`, the 573 cars of `tools/batches/all.txt`):
+28 cars have a raised state; 27 drew both at LOD 1, the M1 only at LOD 5
+(its raised sections have no nearer LOD). Cars: DOD_ChargerDaytona_69,
+TOY_2000GT_69, ACU_NSX_97, BMW_M1_81, CHE_CamaroZ28_69,
+CHE_CorvetteGrandSport_96, CHE_CorvetteZ06_02, CHE_CorvetteZR1_70,
+DET_Pantera_71, FER_355Berlinetta_94, FER_512TR_91, HON_NSXR_92,
+JAG_XJ220_93, LAM_Countach_88, LAN_Stratos_74, LOT_ElanSprint_72,
+LOT_Esprit_02, LOT_EspritTurbo_80, MAZ_RX7_90, MAZ_RX7SpiritR_02,
+MIT_Starion_88, MRC_CougarEliminator_70, PON_TransAm_02,
+PON_TransAmGTA_87, TOY_CelicaSupra_84, TOY_MR2GT_95, TOY_MR2SC_89,
+TOY_Supra20GT_92. After the fix: 0.
+
+**What stock DSF does (confirmed-static).** Stock pop-up cars use chassis
+variants (`upvh.md`, "Chassis variants"): the Countach (210), Diablo (211)
+and Jalpa (213) have two chassis records, role 0x100 on MODL part 0 and 0x101
+on part 1. Part 0 is the body with the lamps raised (308 / 164 / 270 more
+triangles at the nose, with glass, trim and lamp materials), part 1 the same
+body with flat paint lids (24 / 48 / 88 triangles). The Stratos (217) has
+four (0x100 to 0x103: lamps up or down, with or without the centre pod). The
+other 0x1xx pairs are not lamps: the taxi signs (268, 272, 282), the
+Eldorado's, XLR's and Beetle's roofs, the Cutlass's spoiler, identical
+copies on the Challenger (172) and Tanner; 0x5xx are convertible roofs.
+`out/popup/variant_diff.py` and `chassis_records.py` list them. No stock
+car animates its lamps (the 13 UPVH animation blobs are on spoilers and
+the tow truck).
+
+In game the variant doesn't follow the lamps (confirmed-runtime, run
+`vm1-20261027-162907`, stock archive, `-Views 'nose,nose+lit,nose+night'`;
+`img/popup-stock-countach-jalpa.jpg`): the player's Countach and Jalpa show
+the raised part 0 (0x100) by day with every lamp off, and the same with
+Headlights and DaytimeRunning on, by day and under the dark mood. When the
+game draws the lowered 0x101 part (traffic, parked cars, a random pick per
+spawn?) is not traced; the Cuda on host 172 drew it as the player's car
+(`upvh.md`), so the pick is probably per vehicle or per spawn, not per lamp
+state. So DSF has no lamp-driven geometry switch to give the ports.
+
+**Fix (`forza2dsf.raised_lamp`, used by `stock_sections`).** A section
+`<base>up` (any case) is dropped when `<base>down` or `<base>` exists, so
+the exterior, cockpit, lamp plan and damage all see the lowered state only,
+as Forza shows a parked car. The lamp plan's head lamps now sit in the
+lowered pods (RX-7: 120 triangles a side, still 0x1D).
+Offline (`out/popup/frender.py`, `sheet.py`; built cars with
+`car_render`, `out/popup/arender.py`; `img/popup-headlamps-offline.jpg`,
+`img/popup-headlamps-survey.jpg`: raised red, lowered blue, plain head
+lamps green).
+
+In game (VM runs `vm1-20261027-163143` before, `vm1-20261027-163456` and
+`vm2-20261027-164542` after; `out/popup/before`, `after`: RX-7 FC, NSX,
+Countach, Cougar Eliminator, Stratos as IDs 1 to 5; `-Views
+'nose,grille,nose+night'`; `img/popup-headlamps-ingame-day.jpg`,
+`-night.jpg`): before, the RX-7's, NSX's and Countach's pods stand raised
+over their closed lids; after, the lids are shut and flush, the Cougar's
+grille doors closed. At night with the lamps on, the closed pods show no
+head-lamp glow (it is inside them); the bumper lamps still light
+(RX-7, NSX), and the Countach's nose stays dark: the price of one state
+until a switch exists (issue #122).
+
+Harness: a `-Views` entry with `+lit` (`nose+lit`) switches the car's
+Headlights and DaytimeRunning on for that view, `+night` also lays
+`lightstest.lua`'s dark mood over the scene; the next view without a suffix
+switches both off (`clonetest.lua` `setViewLamps`). Note that the shot
+labels in `events.json` come from Driver.log and can lag the screen by
+several shots.
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and

@@ -221,6 +221,29 @@ def test_head_lamps_light_by_day():
     assert got[(lights.POSITION, "L", True)] == 0x03, got
 
 
+def test_pop_up_lamps_keep_the_lowered_state():
+    # Issue #88: both states were drawn at once. RX-7 FC: up/down pairs; NSX: "Up"; Starion:
+    # glass pairs too; Stratos: headlightRup beside the lowered headlightR. A lone "...up" stays.
+    from dsfforza.convert import forza2dsf
+
+    names = [
+        "body",
+        "headlightLup",
+        "headlightLdown",
+        "headlightRUp",
+        "headlightRdown",
+        "glassLHLup",
+        "glassLHLdown",
+        "headlightL2up",
+        "headlightL2",
+        "cagerace",
+        "lonelyup",
+    ]
+    sections = [carbin.Section(n, (0, 0, 0), (0, 0, 0), (0, 0, 0)) for n in names]
+    kept = [s.name for s in forza2dsf.stock_sections(sections)]
+    assert kept == ["body", "headlightLdown", "headlightRdown", "glassLHLdown", "headlightL2", "lonelyup"], kept
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

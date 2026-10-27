@@ -380,4 +380,8 @@ function M.step()
 	return false
 end
 
+-- For clonetest's lit views ("nose+lit", "nose+night"): the lamp switch and the dark mood.
+M.setLights = setLights
+M.setDark = setDark
+
 return M
