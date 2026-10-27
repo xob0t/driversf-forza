@@ -1679,16 +1679,6 @@ def fit(
             gauges[g.family] = g
             calibration[g.family] = cal
             static[face.name] = face
-    import os
-
-    if lod0 and os.environ.get("DSF_DD_PROTO"):  # in-game test of the digital dials (digital_dash)
-        from dsfforza.convert import digital_dash
-
-        found = blank_displays(static, eye_point(wheel, offset))
-        found += blank_displays(static, eye_point(wheel, offset), faces=True)
-        if found:
-            best = max(found, key=lambda d: d.size[0] * d.size[1])
-            digital_plan = digital_dash.prototype_plan(best)
     digital = sum(
         len(sub.triangles())
         for s in static.values()
@@ -3234,33 +3224,15 @@ def convert_interior(
             drsp.children.append(
                 dm.texture_entry(stream, texc, dd.dxt5_dds(plan.width, plan.height, plan.rgba), tex_uid)
             )
-            import os
-
-            variant = os.environ.get("DSF_DD_VARIANT")  # in-game tests of the material and texture
-            if variant == "atlas":  # the digital material on the cockpit atlas
-                drsp.children.append(
-                    dm.retarget_material(stream, dd.stock_material(stream), {dd.STOCK_TEXTURE: mats.texture}, mat_uid)
-                )
-            elif variant == "dialstex":  # a copy of the host's Dials material on our texture
-                dials = next(
-                    e
-                    for e in original_children
-                    if e.tag == "MACO" and dm.material_info(stream, e)["uid"] == mats.needles
-                )
-                drsp.children.append(dm.retarget_material(stream, dials, {mats.texture: tex_uid}, mat_uid))
-            else:
-                drsp.children.append(
-                    dm.retarget_material(stream, dd.stock_material(stream), {dd.STOCK_TEXTURE: tex_uid}, mat_uid)
-                )
+            drsp.children.append(
+                dm.retarget_material(stream, dd.stock_material(stream), {dd.STOCK_TEXTURE: tex_uid}, mat_uid)
+            )
             # The digital-dials shaders are drawn from the Volt's own buffer layout (no
             # normal): a buffer of their own, stride 16 (hosts 250 and 293 draw their
             # needles from that layout too, so they share it).
             stride = dd.STOCK_STRIDE
             builder.layout[mat_uid] = (stride, dd.MODL_FLAG)
             digital_templates = {stride: dd.stock_buffer(stream)}
-            if variant == "needle":  # in-game test: the Dials material
-                mat_uid = mats.needles
-                stride = layout[mats.needles][0]
             verts, tris = dd.vertices(plan, place, stride)
             if tris:
                 needle_subs.append(builder.add(mat_uid, verts, tris))

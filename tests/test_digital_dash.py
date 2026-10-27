@@ -82,8 +82,6 @@ def test_preview_draws_the_cells_the_engine_picks():
 
 def test_texture_files():
     rgba = bytearray(range(256)) * 64  # 64 x 64 texels
-    dds = dd.rgba_dds(64, 64, rgba)
-    assert dds[:4] == b"DDS " and len(dds) == 128 + 64 * 64 * 4 and dds[128 : 128 + 4] == bytes([2, 1, 0, 3])
     dxt = dd.dxt5_dds(64, 64, rgba)
     assert dxt[84:88] == b"DXT5" and len(dxt) == 128 + 64 * 64
 

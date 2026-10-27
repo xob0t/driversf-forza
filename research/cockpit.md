@@ -990,7 +990,8 @@ second transform on UV0 is one of three things:
 
 The first transform is always a dense, undistorted map (anisotropy 1.2 to
 2.2), so it can't be told apart from a face by shape; it is the digit/label
-sheet the shader composes from.
+sheet the shader composes from. (Corrected in "Digital displays": the first transform is the
+display's window into the dash scene's render target.)
 
 **Fix** (`cockpit.display_face`, `with_display_faces`, called in `fit` for
 cockpit-carbin cabins): a `digital_gauge` subsection whose second transform
@@ -1542,6 +1543,10 @@ engine.
 
 ## Virtual dials on display faces and virtual displays (2026-10-26, issue #63)
 
+Since "Digital displays" below, these virtual dials are the fallback: where no
+dash scene can be drawn (steering-wheel displays, cars without a scene) and for a
+readout a drawn scene doesn't drive.
+
 User report on the installed full roster (`out/final4`): the Panoz Esperante
 GTLM #51 (FM4 `PAN_51_Esperante_05`, ID 603, host 162) shows no gauges in the
 cockpit view. It is one of the 111 cars of #63, in its first group: the only
@@ -1628,6 +1633,218 @@ face, so it covers the inner side of both dials; the faces of the Panoz and
 other GTs sit behind the wheel's hub, which hides the lower part of the dials
 (the camera rise keeps the needles' sweep in sight, `GaugeSight`); a virtual
 display may cover switch-panel labels (only gauges and displays are kept clear).
+
+## Digital displays: Forza's dash scenes on DSF's digital dials (2026-10-27, issue #63)
+
+User feedback on PR #92 (virtual dials on faces and pods): "better than
+nothing, but still very jank". Forza's digital displays should show what
+Forza shows, live: speed digits, rpm bar, gear, in Forza's own artwork and
+glyphs. This section does that for every display a dash scene draws, except
+on the steering wheel. #92's virtual dials (the section above) remain only
+where a scene can't be drawn: steering-wheel displays and cars without a scene.
+
+### What Forza draws (confirmed-static)
+
+**The scene.** Every car with a `digital_gauge` display has a
+`DigitalGauge/Dash_<car>.bsg/.fbf/.bgf` in its zip. It is an Anark Gameface
+UI scene: "FGBkranA" is "AnarkBGF" reversed. Formats are in
+`formats/anark.py`.
+
+- The scene is 1280 x 720, seen by an orthographic camera.
+- Its parts are layers, groups, textured quads (per-car `.xds` files, plus
+  `Media/cars/Shared.zip` `dashboards/`) and text elements. The text uses
+  Forza's vector fonts (`dg1`..`dg5_vector_aa.dt` in `Media/UI/Fonts.zip`,
+  mapped through `fontmap.xml`).
+- Behaviours drive it through a "UIContract" whose fields bind node paths:
+  - `TEXT_SPEED`, `TEXT_GEAR`, `TEXT_TACH` set text;
+  - `METER_TACH`, `METER_SPEED`, `METER_FUEL`... set a "PROGRESS" slide's time
+    to value / max. That slide animates masks, covers, needles and colours;
+  - `COCKPIT_LIGHT` switches ON/OFF slides;
+  - `SHIFT_LIGHTS` runs a progress slide, then FLASH.
+- The scene carries its own tach full scale (`TACH_MAX`: S2000 9500, LFA 10500,
+  Panoz 8500).
+- Speed is mph or km/h depending on the scene; the label is baked into it
+  (45 of 376 scenes say km/h).
+
+**How a display shows it.** The `digital_gauge` shader samples
+`digitalGaugeSampler`, the render target the scene is drawn into.
+`uv_transform[0:4]` on UV0 is the display's window into that target: the
+first transform, not a "label sheet" as earlier notes said. Overlays of a
+render on the baked face pictures line up: S2000, 370Z, LFA, Panoz
+(`out/dd-anark/r/*_overlay.png`).
+
+`dash_scene.py` renders a scene in any state: text, progress slides with
+their Bezier tracks, materials, images with UV animation. All 376 scenes on
+both games' discs decode and render with no missing texture or font
+(`out/dd-anark/survey2.py`). Two fonts with curves (dg1 arial, dg3 moire) keep
+small specks inside closed counters.
+
+### What DSF can draw live (confirmed-static; confirmed-runtime below)
+
+DSF has a digital-dashboard path of its own, used by 14 stock interiors (Volt,
+LP670, Alfa 8C, Maserati GT, MP4-12C...): materials `*_Digital_Dials.matxml`.
+
+**The vertex shader** (`Dashboard_Functions.hlsl` line 215, programs
+151/153/163/181...) adds `g_fDigiData[(id - 1) x 4 + comp]` to v. Here
+(u, v, id, comp) is the vertex's DashboardInstrument element: the needles'
+format.
+
+**What the game writes** (`FUN_00891670` into the per-player gauge object at
++0x1C; a copy goes to the render snapshot; uploaded in `FUN_008A4660` as
+`g_fDigiData`, 28 floats):
+
+| id, comp | value |
+| --- | --- |
+| 1, 0 | rpm / redline x 0.5 (p42; the rpm is clamped to [p40, p42]) |
+| 2, 0..3 | mph digits, units to thousands: (digit + 1) x 23/256, 0 for a leading blank (the speed clamped to [p606, p605]) |
+| 6, 0 | gear / 7 (0 = reverse; there is no neutral) |
+| 7, 0 | 0.5 when the gear isn't reverse |
+| 3..5 | never written (0); dsfforza.asi `[dash]` writes km/h digits on 3 |
+
+**What the shaders don't do** (in game, runs below):
+
+- *No alpha test.* The stock digital textures are fully opaque. A
+  transparent texel draws black.
+- *The Volt's own vertex layout is required.* That is stride 16: s0 position
+  4 x i16, s8 4 x f16, no normal. The same quads in the host's stride-20
+  needle buffer drew as screen-filling triangles (run `vm2-20261027-091948`).
+- *No steering-wheel display.* The digital shader uses `g_ObjectToWorld` alone,
+  so its vertices can't follow the wheel's skin.
+
+### The conversion (`convert/digital_dash.py`, `cockpit.digital_displays`)
+
+**Inputs and placement.**
+
+- `port_car` extracts the car's `DigitalGauge/` into
+  `<cache>/<game>/<car>/digitalgauge/` (own stamp, `extract_dash`). The shared
+  dashboards and fonts go to `<cache>/<game>/dash_media/`
+  (`extract_dash_media`).
+- `fit` draws the scene on every LOD-0 `digital_gauge` subsection (or its
+  #11 face) in the cabin, but not on the steering wheel.
+- `DisplayPatch` maps a render-target pixel to the display: barycentric in the
+  triangle holding its UV0, extrapolated from the nearest one outside.
+- The patches leave the cabin; the plan draws them.
+
+**One texture per car,** 512 x 512 DXT5, single mip (never dropped). The
+scene is decomposed into what `g_fDigiData` can drive:
+
+1. **Artwork.** The scene at rest is rendered at 2 px per render-target
+   pixel over the displays' windows:
+   - speed and gear text blank;
+   - readouts DSF has no value for blank too (rpm digits, laps, place, lap
+     times);
+   - fuel at 75%, temperatures mid.
+
+   The display triangles draw it on id 5 (no offset).
+2. **Speed digits.**
+   - Each of three slots (units, tens, hundreds) gets its own column of 11
+     cells, 23/256 apart: blank, then 0..9.
+   - Each cell is the artwork under that slot with Forza's glyph composited
+     over it. Cells are opaque, so each slot's column carries its own artwork.
+   - Slots sit where the text element lays out "888" with its alignment, font
+     size and tracking. A centred field therefore keeps its digits in the
+     three-digit places.
+   - The quads use id 2 (mph) or id 3 (km/h).
+3. **Gear.** One column of 7 cells, 1/7 apart: R, 1..6 (DSF has no N). The
+   quad uses id 6.
+4. **The rpm.**
+   - The scene is rendered at 40 rpm steps up to the Forza redline.
+   - Per pixel: the first step it changes at and its colour, plus a second
+     change (the LFA's ring goes white -> green -> orange).
+   - Pixels that go back to their rest colour are left at rest; a needle
+     sweeping past does that.
+   - The changed pixels of each step become rectangles (merged runs) on id 1.
+     Each rectangle samples one texture column, from the top: the rest
+     colour, from v 0.505 the first change's colour, and a later change some
+     steps further.
+   - A rectangle's v is 0.505 - 0.5 x rpm / Forza redline, so the engine's
+     rpm / p42 x 0.5 reaches its colour at the same share of DSF's redline.
+     The bar shows the rpm as a share of the redline: full at DSF's redline as
+     at Forza's. Needles stay in absolute rpm, as before.
+   - Columns are k-means colours (12) in sequences; at most 16 columns, and
+     rarer sequences fold onto the most common one with the same first
+     change.
+5. **Needles the scene turns** (LFA rpm, 7 speedometers) become DSF needles:
+   - a flat quad over the needle's rest pose, in its colour;
+   - the pivot is the fixed point of the element's pose at rest and at full
+     scale;
+   - the rate is fitted over the upper three quarters of the scale (the LFA's
+     dial is compressed below 4000 rpm);
+   - the Dials material on gauge id 1 or 2, through the gauge records as any
+     Forza needle (`cockpit.dash_needles`).
+
+**Geometry.**
+
+- Quads are double-sided, 0.8 mm over the display, needles 2.5 mm.
+- They go into a stride-16 buffer with the stock Volt's declaration
+  (`stock_buffer`, `rebuild_drsp(templates=)`).
+- The material is a copy of the Volt's (`e012cc80f0aa8829`) on the car's
+  texture, in the needle part, MODL flag 1.
+- p605 goes to 255 when a scene drives the speed and Forza has no speed needle.
+  Otherwise its clamp would stop the digits at a dial's last mark.
+
+**Report.** `cockpit.interior.digital_displays`:
+
+- `units`, `speed`, `gear` (slots placed);
+- `bar_pieces`, `bar_columns`, `needles`, `artwork`, `provides`;
+- `skipped` when nothing was drawn: no scene, no display off the wheel, or
+  an exception.
+
+**What's left to #92.**
+
+- A readout the scene doesn't drive (`provides`) still gets #92's virtual dial
+  or virtual display. The scene's displays count as a readout and are kept
+  clear (`virtual_gauges(readout=, provided=)`).
+- So do steering-wheel-only displays.
+
+### Survey
+
+Method: `out/dd/fit_survey.py`, `cockpit.fit` over the 573 roster cars,
+against the needles of `out/build` (master). A car counts as having a gauge if
+a needle turns or the scene drives that readout.
+
+Totals:
+
+- **Cars with both a working speedometer and tachometer:** 458 -> 533. None
+  lost.
+- **Displays drawn from their scene:** 300 cars.
+  - speed digits on 153 (36 of them in km/h);
+  - gear on 145;
+  - rpm pieces on 93;
+  - scene needles 10.
+- **Not drawn:**
+  - 225 cars have no `digital_gauge` display, so no scene is needed;
+  - 30 have displays on the steering wheel only.
+
+Of #63's 111:
+
+| #63 cause | Cars | Now with both | How |
+| --- | ---: | ---: | --- |
+| display face | 35 | 35 | the scene (2 with a Forza needle for the other) |
+| small or hidden blank displays | 18 | 18 | the scene (11), scene + needle (4), scene + #92 virtual display (2), #92 (1) |
+| only display on the steering wheel | 28 | 21 | #92's virtual display; 7 open cockpits have no room |
+| no such gauge | 15 | | by design |
+| placeholder cockpit | 15 | | |
+
+The Volt counts above, but its host has no gauge record, so a needle or
+virtual dial there would be dropped at the build. Its scene drives the speed
+digits and needs no record: `g_fDigiData` doesn't go through the gauge table.
+
+### In game (VM, confirmed-runtime)
+
+Runs:
+
+- first proofs: S2000 `vm2-20261027-095858`, LFA `vm2-20261027-101258`;
+- before/after, `-HoldMph '0,30,60,90'`, `-Asi`, before `out/build` (master):
+  RUNS.
+
+Findings:
+
+- The digits read the held speed, and the gear and the rpm pieces follow the
+  car.
+- The LFA's needle turns over its scene.
+- The C63 AMG's centre display reads km/h.
+- `img/digital-displays-ingame.jpg`.
 
 ## Hands on small race wheels and wheels with columns (2026-10-25)
 

@@ -25,7 +25,6 @@ and lit above it (alpha-tested away when transparent). Static artwork uses id
 from __future__ import annotations
 
 import math
-import struct
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -80,40 +79,6 @@ class DigitalPlan:
         for row in range(y0, y1):
             o = (row * self.width + x0) * 4
             self.rgba[o : o + (x1 - x0) * 4] = px * (x1 - x0)
-
-
-def rgba_dds(width: int, height: int, rgba: bytes | bytearray) -> bytes:
-    """An uncompressed single-mip DDS (A8R8G8B8: BGRA bytes) of RGBA texels.
-    DSF's DXTC loader maps 32-bit RGB DDS to D3DFMT_A8R8G8B8 and never drops
-    the top mip of a single-mip texture."""
-    head = struct.pack(
-        "<4s7I44s2I4s5I5I",
-        b"DDS ",
-        124,
-        0x100F,  # caps, height, width, pitch, pixel format
-        height,
-        width,
-        width * 4,
-        0,
-        1,
-        bytes(44),
-        32,
-        0x41,  # RGB | alpha
-        b"\0\0\0\0",
-        32,
-        0x00FF0000,
-        0x0000FF00,
-        0x000000FF,
-        0xFF000000,
-        0x1000,  # texture
-        0,
-        0,
-        0,
-        0,
-    )
-    bgra = bytearray(rgba)
-    bgra[0::4], bgra[2::4] = rgba[2::4], rgba[0::4]
-    return head + bytes(bgra)
 
 
 def dxt5_dds(width: int, height: int, rgba: bytes | bytearray, template: bytes | None = None) -> bytes:
@@ -196,76 +161,6 @@ def vertices(plan: DigitalPlan, place, stride: int) -> tuple[list[bytes], list[t
         tris += [(base, base + 1, base + 2), (base, base + 2, base + 3)]
         tris += [(base, base + 2, base + 1), (base, base + 3, base + 2)]
     return verts, tris
-
-
-def prototype_plan(display, version: int = 3) -> DigitalPlan:
-    """In-game test of the mechanism on one display (cockpit.Display): a static
-    background (id 3), three speed digits, a gear and a ten-segment rpm bar,
-    drawn with a stock font. Not Forza's artwork."""
-    from PIL import Image, ImageDraw, ImageFont
-
-    W, H = 256, 512
-    plan = DigitalPlan(W, H, bytearray(W * H * 4))
-    import os
-
-    if os.environ.get("DSF_DD_VARIANT") == "opaque":  # in-game test: every texel opaque
-        for y in range(H):
-            plan.fill(0, y, W, y + 1, (255 * y // H, 80, 255 - 255 * y // H, 255))
-    font = ImageFont.load_default(size=36)
-
-    def cell(text, w, h, colour=(255, 200, 40, 255)):
-        im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        d = ImageDraw.Draw(im)
-        if text:
-            box = d.textbbox((0, 0), text, font=font)
-            d.text(
-                ((w - (box[2] - box[0])) / 2 - box[0], (h - (box[3] - box[1])) / 2 - box[1]),
-                text,
-                font=font,
-                fill=colour,
-            )
-        return im
-
-    # Digits: column x 0..40, cells of DIGIT_PITCH * H texels (blank, 0..9).
-    pitch = DIGIT_PITCH * H
-    for k, t in enumerate([""] + [str(i) for i in range(10)]):
-        plan.blit(0, round(k * pitch), cell(t, 40, int(pitch) - 2))
-    # Gear: column x 48..88, cells R, 1..6.
-    gp = GEAR_PITCH * H
-    for k, t in enumerate("R123456"):
-        plan.blit(48, round(k * gp), cell(t, 40, int(gp) - 2, (120, 230, 255, 255)))
-    # Bar: column x 96..104 lit from BAR_LIT_FROM.
-    plan.fill(96, round(BAR_LIT_FROM * H), 104, H, (60, 255, 60, 255))
-    # Background: x 128..256, a flat dark blue.
-    plan.fill(128, 0, 256, 64, (20, 40, 70, 255))
-
-    u0, u1, v0, v1 = display.rect
-    lift = 0.0015
-
-    def rect(x0, x1, y0, y1, uvs, slot, dz):
-        corners = [display.point(x, y, dz) for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
-        plan.quads.append(Quad(corners, uvs, slot))
-
-    def tex_rect(x0, y0, x1, y1):  # texel box -> uv corners (bottom-left, bottom-right, top-right, top-left)
-        return [(x0 / W, y1 / H), (x1 / W, y1 / H), (x1 / W, y0 / H), (x0 / W, y0 / H)]
-
-    rect(u0, u1, v0, v1, tex_rect(130, 2, 254, 62), STATIC, lift)
-    w, h = u1 - u0, v1 - v0
-    dh = 0.45 * h
-    dw = dh * 40 / (pitch - 2)
-    for j in range(3):  # units on the right
-        x1 = u1 - 0.06 * w - j * dw
-        rect(x1 - dw, x1, v0 + 0.1 * h, v0 + 0.1 * h + dh, tex_rect(0, 0, 40, pitch - 2), SPEED_DIGITS[j], 2 * lift)
-    gx = u0 + 0.06 * w
-    rect(gx, gx + dw, v0 + 0.1 * h, v0 + 0.1 * h + dh, tex_rect(48, 0, 88, gp - 2), GEAR, 2 * lift)
-    seg = 0.8 * w / 10
-    for k in range(10):
-        t = min(BAR_MAX, 0.5 * (k + 1) / 10)
-        vb = (BAR_LIT_FROM - t) * H
-        x0 = u0 + 0.1 * w + k * seg
-        rect(x0, x0 + 0.8 * seg, v1 - 0.25 * h, v1 - 0.08 * h, [(100 / W, vb / H)] * 4, RPM, 2 * lift)
-    plan.report = {"prototype": True, "display": display.section}
-    return plan
 
 
 # --- Forza's dash scenes -> DSF digital dials ------------------------------------------
