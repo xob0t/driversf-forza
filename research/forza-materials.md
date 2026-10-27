@@ -549,37 +549,48 @@ mul    r1.xyzw, r6.xyzz, r1.xyzw         // times the diffuse light
 then add a specular term (`SpecularAmount`, default 4, times the directional
 light; `SpecularPower` default 128) and a cube-map reflection mixed in by a
 Fresnel term (`FresnelIndex` 1.65, `FresnelScalar` 1), and write
-`sqrt(colour)` (gamma 2). The paint-type shaders (`PaintColor`,
-`PristinePaintScale`, two-tone and metal terms) scale the texel by
-`PristinePaintScale` and add the paint colour where the texel's alpha is low;
-`PaintScale` there scales the paint. So `PaintScale` never mixes the paint
-into a trim (#58, case 3): it darkens the texel. The car's
-`ShaderSettings.xml` sets it per technique (survey of the 493 cached files:
-`misc` PaintScale on 48 cars, median 0.3; `matte_colors` on 22, median 0.3;
-`plastic2` PaintScale on 26 and PristinePaintScale on 8; `frame` and
-`weatherstrip` only PristinePaintScale). The Cougar's `misc` has PaintScale
-0.2, SpecularAmount 0.5, SpecularPower 5, FresnelScalar 0.2: its scoop sides,
-centre grille and closed headlamp doors are drawn at a fifth of their texels'
-light (in linear light) with a broad satin highlight. Which technique runs
-which shader is in the effect's own tables, which aren't decoded;
-`forza_materials.texel_scale` takes `PristinePaintScale` when a technique sets
-it, else `PaintScale`, else 1.
+`sqrt(colour)` (gamma 2). The paint shaders (`PaintColor`, two-tone and metal
+terms; the body's, 0x7a3e8) premultiply the texel by its alpha and add
+`PaintColor x PaintScale` (lerped with the stripe's) where the alpha is low:
+`base = texel x a + paint x PaintScale x (1 - a)`; the variants with
+`PristinePaintScale` (0x85a3c) multiply the texel by it first. So `PaintScale`
+never mixes the paint into an opaque trim (#58, case 3): in the trim shaders it
+darkens the texel, in the paint shaders it scales the paint behind low-alpha
+texels.
+
+**Which shader a technique has (confirmed-static).** The effect's technique
+tables aren't decoded, but every technique's parameters (and their defaults)
+are listed in the shared `media/cars/Shared.zip` `ShaderSettings/Normal.xml`
+(286 techniques; FH1 and FM4 alike for the car techniques; the car's own
+`ShaderSettings.xml` overrides them). 34 have `PaintColor`, the paint shaders:
+`misc`, `plastic`, `plastic2`, `matte`, `matte_colors`, `weatherstrip`,
+`emblem`, `engine`, `cage`, `race_kit_red`, the bodies...
+(`forza_materials.PAINT_TECHNIQUES`). 57 have `PaintScale` without
+`PaintColor`, the texel-scaling ones: the rims (#109), `badge` (0.5),
+`smooth_metal`, `rubber`, the lamps. `frame`, `black`, `rubber_trim` and
+`bumper_frame` have neither. So the trims that matter here (`misc` 0.25,
+`plastic2` 0.75 in Normal.xml; the Cougar's `misc` 0.2) are paint shaders whose
+`PaintScale` doesn't touch their opaque texels. `forza_materials.texel_scale`:
+`PristinePaintScale` for the paint shaders and the techniques without a scale
+(the cars set it on `plastic2`, `frame`, `weatherstrip`: the Veyron's `frame`
+0.3), `PaintScale` for the others, 1 otherwise. (A first version of this change
+applied `PaintScale` to `misc`, which drew the Cougar's grille at a fifth of its
+light.)
 
 So Forza draws the Cougar's scoop black (texels 2 to 7) with a satin sheen
-and reflections, and its grille as dark bars (the doors at PaintScale 0.2:
-bars of 20 to 27 on 2 to 6) with the same sheen; the end pieces and the
-open-door bars at full texel. Two things make ours dead flat: the bars are
-gone (one dark texel), and DSF's materials have almost no specular (shared
-trim `GLOBAL_Chassis_Simple` intensity 0.01 x tex.G, host Chassis 0.03 at
-power 24). Only the first is fixed here; the second is issue #87.
+(`misc` SpecularAmount 0.5, SpecularPower 5, FresnelScalar 0.2) and its grille
+with its bars at full texel (centre grille 60 to 120, the doors 40 to 90). Two
+things make ours dead flat: the bars are gone (one dark texel), and DSF's
+materials have almost no specular (shared trim `GLOBAL_Chassis_Simple`
+intensity 0.01 x tex.G, host Chassis 0.03 at power 24). Only the first is fixed
+here; the second is issue #87.
 
 **Fix (`trim_art.classify_texels`, `split_trim_art`).** Every textured trim
 triangle seen from outside (unchanged test) is classified on its texels after
 the technique's texel scale (`fm.scale_texels`: linear light):
 
-- bare metal (`is_metal`, judged on the texels as painted: the Veyron's scoops
-  at PaintScale 0.15 are a polished metal in Forza) to the shared chrome, as
-  before;
+- bare metal (`is_metal`, judged on the texels as painted) to the shared
+  chrome, as before;
 - light artwork (brightest channel of the mean 128 or more) to the atlas, as
   before;
 - **detail** (new): around the triangle's texels the atlas has contrast. Per
