@@ -30,10 +30,7 @@ from pathlib import Path
 from dsfforza import REPO
 
 STRING_FILES = ("Data_Car.str", "List_CarMake.str", "List_FamilyModel.str")
-ISO_PATHS = {
-    "fh1": (REPO / "assets" / "Forza.Horizon.XBOX360.iso", "media/stringtables/EN.zip"),
-    "fm4": (REPO / "assets" / "Forza 4 [NTSCU][DVD1].iso", "Media/StringTables/EN.zip"),
-}
+STRING_ZIP = "Media/StringTables/EN.zip"  # on FH1's disc and FM4's disc 1 (any case)
 
 
 def str_hash(text: str, version: int = 1, bits: int = 16) -> int:
@@ -109,14 +106,33 @@ class Strings:
         return entry[1] if entry else None
 
 
+def game_disc(game: str, iso: Path | None = None) -> Path:
+    """The disc image with `game`'s string tables (FH1's disc, FM4's disc 1): `iso`, checked
+    by its content, or the one of assets/*.iso whose default.xex says so, whatever the files
+    are called. LookupError when the game's disc isn't there or `iso` is another disc."""
+    from dsfforza.build import forza_roster
+
+    game = game.upper()
+    if iso is None:
+        found = forza_roster.game_discs().get(game)
+        if found is None:
+            raise LookupError(f"no {game} disc among the disc images in {REPO / 'assets'}")
+        return found
+    disc = forza_roster.identify(iso)
+    if disc.game != game or disc.disc > 1:
+        raise LookupError(f"{Path(iso).name} is {disc.where}, not the {game} disc with the string tables")
+    return Path(iso)
+
+
 def extract(game: str, folder: Path, iso: Path | None = None) -> None:
+    """The STRING_FILES of `game` into folder, from `iso` or the game's disc in assets/
+    (game_disc)."""
     from dsfforza.formats.forzazip import ForzaZip
     from dsfforza.formats.xiso import XIso
 
-    default, path = ISO_PATHS[game]
-    image = XIso(iso or default)
+    image = XIso(game_disc(game, iso))
     try:
-        z = ForzaZip(image.open(image.find(path)))
+        z = ForzaZip(image.open(image.find(STRING_ZIP)))
         folder.mkdir(parents=True, exist_ok=True)
         for info in z.entries():
             if info.filename in STRING_FILES:
@@ -127,10 +143,13 @@ def extract(game: str, folder: Path, iso: Path | None = None) -> None:
 
 def car_names(game: str, media: list[str], gamedb: Path | None = None, iso: Path | None = None) -> dict[str, dict]:
     """{media: {make, display, model_short, family, year}} from Data_Car, List_CarMake, List_FamilyModel
-    (the string tables from `iso`, the game's disc image (disc 1), default assets/)."""
+    (the string tables from `iso`, the game's disc image (disc 1), default the game's disc
+    among assets/*.iso, found by content)."""
     import sqlite3
 
     gamedb = gamedb or REPO / "out" / "cache" / game / "gamedb.slt"
+    if not Path(gamedb).is_file():  # written by the build from the game's disc (port_car.extract_gamedb)
+        raise LookupError(f"no {gamedb}")
     strings = Strings(game, iso=iso)
     db = sqlite3.connect(f"file:{Path(gamedb).as_posix()}?mode=ro", uri=True)
     out = {}

@@ -83,7 +83,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from dsfforza import REPO
-from dsfforza.build import gentle
+from dsfforza.build import forza_roster, gentle
 from dsfforza.formats.chnk import ENTRY_LIMIT
 from dsfforza.game import game_paths
 
@@ -995,9 +995,17 @@ def lint_all(out: Path, dsf: Path, cars: list[dict], parallel: int, log=print) -
 def common(args) -> tuple[Path, list[Path], dict, dict[str, Path]]:
     set_game_env(args.dsf)
     lower_priority()
-    isos = [p.resolve() for p in (args.iso or sorted((REPO / "assets").glob("*.iso")))]
+    isos = [p.resolve() for p in (args.iso or forza_roster.default_images())]
     if not isos:
         raise SystemExit("no Forza disc images (assets/*.iso or --iso)")
+    # What each image is, from its default.xex (any file names); a missing game's cars are skipped.
+    discs = forza_roster.identify_all(isos)
+    found, notes = forza_roster.disc_summary(discs)
+    if not found:
+        raise SystemExit("no Forza disc among the images: " + "; ".join(f"{d.path.name}: {d.error}" for d in discs))
+    print(f"disc images: {', '.join(found)}")
+    for note in notes:
+        print(f"  {note}")
     from dsfforza.game import game_data
 
     game_data.prepare(game_from_dsf(args.dsf), isos, log=lambda t: print(f"prepare: {t}"))
@@ -1506,7 +1514,7 @@ def finish(
                 root_limit=getattr(args, "root_limit", None) or ENTRY_LIMIT,
                 jobs=max(1, args.jobs),
                 # The disc images by title (logos, names): any file names, FH1 not needed.
-                isos=[Path(i) for i in (getattr(args, "iso", None) or sorted((REPO / "assets").glob("*.iso")))],
+                isos=[Path(i) for i in (getattr(args, "iso", None) or forza_roster.default_images())],
             )
         except Exception as error:  # the archive is still usable without pictures and badges
             print(f"gui assets failed: {type(error).__name__}: {error}")
@@ -1661,7 +1669,9 @@ def build_parser() -> argparse.ArgumentParser:
             help="stock Install/dngvehicles.sp (only read; default: from $DSF_GAME_DIR); "
             "its game folder is used for the rest",
         )
-        p.add_argument("--iso", type=Path, action="append", help="Forza disc images (default: assets/*.iso)")
+        p.add_argument(
+            "--iso", type=Path, action="append", help="Forza disc images, any file names (default: assets/*.iso)"
+        )
         p.add_argument("--cache", type=Path, default=REPO / "out" / "cache", help="extraction cache")
         p.add_argument("--car", action="append", metavar="NAME[@fh1|@fm4]")
         p.add_argument("--list", type=Path, action="append", help="file with one car per line")

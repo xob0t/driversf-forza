@@ -83,7 +83,7 @@ from dsfforza.build import (
     gentle,
     handling,
 )
-from dsfforza.build.forza_roster import Source, roster
+from dsfforza.build.forza_roster import Source, default_images, roster
 from dsfforza.convert import (
     cockpit,
     forza2dsf,
@@ -446,13 +446,11 @@ def extract_gamedb(isos: list[Path], game: str, cache: Path) -> Path | None:
     target = cache / game.lower() / "gamedb.slt"
     if target.exists():
         return target
-    from dsfforza.build.forza_roster import TITLES, xex_title
+    from dsfforza.build.forza_roster import discs_of
 
-    for iso in isos:
+    for iso in discs_of(isos, game):  # by default.xex, whatever the files are called
         image = XIso(iso)
         try:
-            if TITLES.get(xex_title(image)[0]) != game:
-                continue
             try:
                 entry = image.find("Media/db/gamedb.slt")
             except KeyError:
@@ -1082,7 +1080,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="with --host auto: also consider cop, taxi, emergency and other special entries",
     )
     parser.add_argument("--first-id", type=int, default=304, help="first base spool ID to try (default 304)")
-    parser.add_argument("--iso", type=Path, action="append", help="Forza disc images (default: assets/*.iso)")
+    parser.add_argument(
+        "--iso", type=Path, action="append", help="Forza disc images, any file names (default: assets/*.iso)"
+    )
     parser.add_argument("--cache", type=Path, default=REPO / "out" / "cache", help="extraction cache")
     parser.add_argument(
         "--root-limit",
@@ -1204,7 +1204,7 @@ def main(argv: list[str] | None = None) -> None:
     requests = [parse_car(c) for c in args.car]
     if len({r.media.lower() for r in requests}) != len(requests):
         raise SystemExit("the same car is listed twice")
-    isos = args.iso or sorted((REPO / "assets").glob("*.iso"))
+    isos = args.iso or default_images()
     log = print
 
     cars, _ = roster(isos)

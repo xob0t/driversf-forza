@@ -9,6 +9,13 @@ gives the title and disc number:
 | `Forza 4 [NTSCU][DVD1].iso` | FM4, 4D530910 | 1 of 2 |
 | `Forza 4 [NTSCU][DVD2].iso` | FM4, 4D530910 | 2 of 2 |
 
+The names are this PC's; the tools never go by them. `forza_roster.identify`
+reads each image's `default.xex` (cached by path, size and time), and every
+step asks `forza_roster.game_discs` / `discs_of` for "the FH1 disc" or "FM4
+disc 1" out of the build's images (`assets/*.iso` or `--iso`). A file that is
+no Forza disc is skipped with a note, and a game without its disc just has no
+cars (issue #113).
+
 ## Where the cars are
 
 FH1 keeps 179 zips in `media/cars`. 175 are cars. The other four are
