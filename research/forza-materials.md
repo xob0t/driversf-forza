@@ -1,6 +1,6 @@
 # Forza materials and textures, and their DSF counterparts
 
-Updated: 2026-10-25
+Updated: 2026-10-26
 
 Code: `src/dsfforza/convert/forza_materials.py` (Forza side), `src/dsfforza/convert/dsf_materials.py`
 (DSF side, atlas, preview), `--textures` in `src/dsfforza/convert/forza2dsf.py` and
@@ -98,7 +98,7 @@ the converter squashes the Forza window UVs into that band
 | window | nodamage | textured | glass | shared GLASS |
 | glass (headlight cover) | Lights | textured | glass | shared GLASS |
 | black_glass | nodamage | textured | trim | shared TRIM |
-| black, frame, bottom, plastic2, weatherstrip, matte_colors, misc, rubber_trim, bumper_frame, undercarriage, race_kit_red | nodamage | mostly swatch | trim | shared TRIM (`--swatch-trims`: Chassis with the swatch colour); triangles on light opaque artwork seen from outside: host Chassis ("Trim artwork" below) |
+| black, frame, bottom, plastic2, weatherstrip, matte_colors, misc, rubber_trim, bumper_frame, undercarriage, race_kit_red | nodamage | mostly swatch | trim | shared TRIM (`--swatch-trims`: Chassis with the swatch colour); textured triangles seen from outside on light artwork, dark detail or flat mid-grey: host Chassis, texels times the technique's PaintScale ("Trim artwork", "Forza's trim shaders and flat black grilles" below) |
 | chrome, chrome_2, chrome_3, chrome_bump, lights_chrome | nodamage (lights) | textured or swatch | chrome | shared CHROME: GLOBAL_LOD_Chrome (full), GLOBAL_Chassis_Chrome (exterior); "Chrome trim" below |
 | carbon_fiber | global | tiling | trim | shared TRIM |
 
@@ -512,6 +512,147 @@ black: shaded, with the chrome's reflections (scoop on screen p10/p50/p90
 65/210/221, against 104/233/239 on the atlas path), the engine detail between
 the scoops stays on the atlas (`img/trim-art-veyron-ingame-before-after.jpg`).
 
+## Forza's trim shaders and flat black grilles (2026-10-26)
+
+User report on `out/final4` (MRC_CougarEliminator_70, FM4, spool 565, host
+175): "some parts still pure black". The bonnet scoop and the grille drew as
+flat, featureless black. The real 1970 Eliminator has a black scoop and a
+blacked-out grille, so the question was how Forza draws them.
+
+**Which parts (confirmed-static; `out/inv/region.py`, `uvmap.py`).** The
+scoop is `hooda/badge` (54 triangles, 0.39 m², a black block of
+`nodamage.xds` whose alpha fades from 255 at the front to 0 at the back: a
+decal blended over the paint), `hooda/misc` on texels (2, 4, 2) and
+`hooda/plastic2` underneath. The grille is `hooda/misc` (the centre, a
+grille picture with bars of 60 to 120), `headlightLdown/misc` and
+`headlightLup/plastic2` (the hidden-headlamp doors, closed and open: vertical
+bars of 40 to 90 on black), `body/plastic2` (the end pieces) and `body/frame`
+(the slats, modelled, on one flat texel of 12). Every grille trim drew with
+the shared trim on its one dark texel (`TRIM_UV`, R 24), so the bars were
+gone.
+
+**Forza's trim shaders (confirmed-static; `dsff fxobj`,
+`src/dsfforza/formats/fxobj.py`).** Each shader in `shaders_v16.fxobj` is an
+Xbox 360 shader container with a big-endian D3D constant table (names,
+registers, defaults) and Xenos microcode, which `fxobj.py` disassembles. Of
+240 pixel shaders, 113 have a `PaintScale` constant (default 1.0 in all), 95
+of them without `PaintColor`: the trim shaders. In those (for example the one at
+0x86914), the base texel (tf0, lerped with the damage texture) is multiplied by
+`PaintScale` before the lighting:
+
+```text
+tfetch r6.xyz_, r0.xzz, tf0              // baseSampler
+mul    r6.xyz_, r6.xyzz, c159{PaintScale}.xxxx
+mul    r1.xyzw, r6.xyzz, r1.xyzw         // times the diffuse light
+```
+
+then add a specular term (`SpecularAmount`, default 4, times the directional
+light; `SpecularPower` default 128) and a cube-map reflection mixed in by a
+Fresnel term (`FresnelIndex` 1.65, `FresnelScalar` 1), and write
+`sqrt(colour)` (gamma 2). The paint shaders (`PaintColor`, two-tone and metal
+terms; the body's, 0x7a3e8) premultiply the texel by its alpha and add
+`PaintColor x PaintScale` (lerped with the stripe's) where the alpha is low:
+`base = texel x a + paint x PaintScale x (1 - a)`; the variants with
+`PristinePaintScale` (0x85a3c) multiply the texel by it first. So `PaintScale`
+never mixes the paint into an opaque trim (#58, case 3): in the trim shaders it
+darkens the texel, in the paint shaders it scales the paint behind low-alpha
+texels.
+
+**Which shader a technique has (confirmed-static).** The effect's technique
+tables aren't decoded, but every technique's parameters (and their defaults)
+are listed in the shared `media/cars/Shared.zip` `ShaderSettings/Normal.xml`
+(286 techniques; FH1 and FM4 alike for the car techniques; the car's own
+`ShaderSettings.xml` overrides them). 34 have `PaintColor`, the paint shaders:
+`misc`, `plastic`, `plastic2`, `matte`, `matte_colors`, `weatherstrip`,
+`emblem`, `engine`, `cage`, `race_kit_red`, the bodies...
+(`forza_materials.PAINT_TECHNIQUES`). 57 have `PaintScale` without
+`PaintColor`, the texel-scaling ones: the rims (#109), `badge` (0.5),
+`smooth_metal`, `rubber`, the lamps. `frame`, `black`, `rubber_trim` and
+`bumper_frame` have neither. So the trims that matter here (`misc` 0.25,
+`plastic2` 0.75 in Normal.xml; the Cougar's `misc` 0.2) are paint shaders whose
+`PaintScale` doesn't touch their opaque texels. `forza_materials.texel_scale`:
+`PristinePaintScale` for the paint shaders and the techniques without a scale
+(the cars set it on `plastic2`, `frame`, `weatherstrip`: the Veyron's `frame`
+0.3), `PaintScale` for the others, 1 otherwise. (A first version of this change
+applied `PaintScale` to `misc`, which drew the Cougar's grille at a fifth of its
+light.)
+
+So Forza draws the Cougar's scoop black (texels 2 to 7) with a satin sheen
+(`misc` SpecularAmount 0.5, SpecularPower 5, FresnelScalar 0.2) and its grille
+with its bars at full texel (centre grille 60 to 120, the doors 40 to 90). Two
+things make ours dead flat: the bars are gone (one dark texel), and DSF's
+materials have almost no specular (shared trim `GLOBAL_Chassis_Simple`
+intensity 0.01 x tex.G, host Chassis 0.03 at power 24). Only the first is fixed
+here; the second is issue #87.
+
+**Fix (`trim_art.classify_texels`, `split_trim_art`).** Every textured trim
+triangle seen from outside (unchanged test) is classified on its texels after
+the technique's texel scale (`fm.scale_texels`: linear light):
+
+- bare metal (`is_metal`, judged on the texels as painted) to the shared
+  chrome, as before;
+- light artwork (brightest channel of the mean 128 or more) to the atlas, as
+  before;
+- **detail** (new): around the triangle's texels the atlas has contrast. Per
+  texel, `local_contrast` takes the largest and smallest luminance of the
+  opaque texels in a 5 x 5 window; the median texel's maximum is 40 or more and
+  lies 20 or more above its minimum. A window, because grilles are drawn by
+  triangles too small to hold a bar each (most of the Cougar's door triangles
+  cover four texel samples). These go to the atlas (`dsf_trim_detail`);
+- **grey** (new): a flat colour whose brightest channel is 48 or more (the
+  Volt's and DMC-12's mid-grey bumpers, #58 case 1): one colour cell
+  (`dsf_trim_grey`, the scaled mean of its texels);
+- the rest (flat and near black) stays on the shared trim, which looks the
+  same.
+
+Textured classes are named `<technique>@<scale>` when the technique scales
+its texels; `Texturing` then samples them from the scaled atlas, a family of
+its own (`fm.scaled_family`, "nodamage*0.2": RGB scaled in linear light,
+alpha kept). The atlas budget (`ART_MIN_SCALE_SHARE`, 90% of the scale without
+any trim artwork) flattens the detail subsections first (one colour each),
+then, if that isn't enough, the artwork too.
+
+**Survey (all 573 roster cars, `out/inv/survey.py`, LODs 1, 3 and 5, atlas
+512² as the build; master's split against this one).** 553 of 573 cars
+change: 201,065 triangles at LOD 1 move off the shared trim (median 195 a car):
+129,267 as detail on 544 cars, 71,766 as grey on 397, and 32 artwork triangles
+on one car are drawn at its `PristinePaintScale`. The atlas scale drops on 190
+cars, by 3.1% in the median and 10% at most (LEX_IS300_03 0.627 to 0.565, the
+budget's limit); 13 pack slightly better. On 97 cars the detail is drawn flat
+(one colour per subsection) to keep the budget; their artwork stays on the
+atlas. The survey takes about 15 s a car for both splits and both plans (the
+converter's split alone: 3 to 5 s). The Cougar: 535 triangles (501 detail: the
+centre grille, the closed and open headlamp doors, the end pieces; 34 grey),
+atlas 0.639 to 0.660. The Range Rover 12: the mesh between its grille bars
+(the bars were chrome on master); the Cuda's grille inserts and fender gills;
+the H1 Alpha's bonnet vent and its lettering.
+
+Offline (`out/inv/frender2.py`: the car's stock sections at LOD 1 through
+`car_render`'s shading; rows Forza's texels times the texel scale, master's
+split (light artwork and metal), this change): the Cougar's centre grille
+slats, headlamp-door bars and end pieces, the Range Rover's grille mesh, the
+Cuda's grille inserts and fender gills, the H1 Alpha's bonnet vent
+(`img/black-trims-offline.jpg`).
+
+In game (confirmed-runtime, headless VM 2, the same palette entry,
+`run-series.ps1 -Views nose,front -Palette 0 -ShotSeconds 2 -ZoomPresses 8
+-WaitSeconds 600`, with a front three-quarter camera at bonnet height that is
+`grille` in clonetest.lua now (master's own `nose`, added since, is closer); IDs 1 Cuda 426, 2 Range Rover 12, 3
+Volt, 4 Cougar Eliminator, plus stock 175, the Cougar's host): before
+`vm2-20261027-083402` (`out/fx/before`, built from master 4f5057c), after
+`vm2-20261027-084411` (`out/fx/after`, this branch). The Cougar's centre grille
+shows its slats instead of one black block; its headlamp doors stay dark, their
+bars only a shade lighter at the in-game distance. The Range Rover looks the
+same at that distance (its bars were already chrome; the mesh is a few atlas
+texels). The scoop is unchanged: black without a highlight, issue #87
+(`img/black-trims-ingame.jpg`). The after run ran out of time before IDs 1 and 3;
+all four cars spooled and drove in the before run and IDs 175, 4 and 2 in the
+after run, no crash.
+
+Not changed: the scoop's `badge` decal is cut at alpha 128 (`cutout`) where
+Forza blends it into the paint; the hidden-headlamp doors are drawn open and
+closed at once (both stock sections, issue #88).
+
 ## Open
 
 1. In game: whether the Chassis material lights badges well (the Lights
@@ -530,19 +671,22 @@ the scoops stays on the atlas (`img/trim-art-veyron-ingame-before-after.jpg`).
    `<car>_cockpit.carbin` by default (`cockpit.md`; `port_car.py
    --no-cockpit` keeps the host's).
 5. Damage textures (`damage`, `damagelights`) and DSF's damage decal path.
-6. Parsing the `.fxobj` effect (technique → pixel shader → sampler set)
-   would make the atlas choice authoritative for custom shaders. It would
-   also say whether `chrome` tints its reflection by the texel (the dark
-   chrome texels above) and whether `matte_colors` / `plastic2` (car
-   ShaderSettings give them a `PaintScale`) mix in the paint colour.
+6. Parsing the `.fxobj` effect's technique tables (technique → pixel
+   shader → sampler set) would make the atlas choice authoritative for custom
+   shaders and say whether `chrome` tints its reflection by the texel (the dark
+   chrome texels above). The shaders themselves (constant tables, microcode)
+   are readable with `dsff fxobj` ("Forza's trim shaders and flat black
+   grilles").
 7. The cockpit draws exterior chrome (A-pillar trim, bonnet strips) flat from
    its atlas; stock interiors have `GLOBAL_LOD_Chrome` (host 193 uses it for
    3,700 triangles), which the interior entry could use the same way.
-8. Trim artwork ("Trim artwork"), issue #58: Forza's trim shaders aren't
-   decoded, so whether `matte_colors` / `plastic2` (with a `PaintScale`) or
-   `frame` show their texel as is, or tint it, is a guess. Mid-grey trims
-   (brightest channel under 128) and the `black*` techniques still draw with
-   the shared dark trim whatever their texels; DSF's shared chrome can't take
-   the Forza grey as a tint. The visibility test is orthographic from around
-   and above: artwork seen only from below or through a narrow gap counts as
-   hidden.
+8. Trim artwork ("Trim artwork", "Forza's trim shaders and flat black
+   grilles"), issue #58: `PaintScale` / `PristinePaintScale` are decoded
+   (they scale the texel) and mid-grey and dark detailed trims go through the
+   atlas. Open: which technique runs which shader (the effect's technique
+   tables aren't decoded; `plastic2` sets both parameters on some cars), the
+   `black*` techniques (still the shared dark trim whatever their texels),
+   the trims' specular and reflection (issue #87), DSF's shared chrome can't
+   take the Forza grey as a tint, and the visibility test is orthographic from
+   around and above: artwork seen only from below or through a narrow gap
+   counts as hidden.

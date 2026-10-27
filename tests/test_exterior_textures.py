@@ -455,8 +455,8 @@ class TrimArt(unittest.TestCase):
         self.assertEqual(
             report,
             {
-                "body/misc": {"triangles": 2, "metal": 0, "area": unittest.mock.ANY},
-                "body/smooth_metal": {"triangles": 2, "metal": 2, "area": unittest.mock.ANY},
+                "body/misc": {"triangles": 2, "metal": 0, "detail": 0, "grey": 0, "area": unittest.mock.ANY},
+                "body/smooth_metal": {"triangles": 2, "metal": 2, "detail": 0, "grey": 0, "area": unittest.mock.ANY},
             },
         )
         self.assertAlmostEqual(report["body/misc"]["area"], 0.2 * 0.2, places=6)
@@ -515,6 +515,146 @@ class TrimArt(unittest.TestCase):
         self.assertEqual(tag[0], "swatch")
         self.assertEqual(tag[1:4], (240, 240, 240))  # the artwork's mean colour
         self.assertEqual(len(set(uvs)), 1)
+
+
+class TrimTexels(unittest.TestCase):
+    """Forza's trim shaders scale the texel (PaintScale / PristinePaintScale from the car's
+    ShaderSettings.xml); dark trims with detail go to the atlas, flat mid-grey ones to a
+    colour cell, flat near-black ones stay on the shared trim (the Cougar Eliminator's
+    grille, research/forza-materials.md "Flat black grilles")."""
+
+    def test_shader_settings(self):
+        text = """<ShaderSettings>
+          <misc>
+            <SpecularAmount value="0.5" />
+            <PaintScale value="0.2" />
+            <SpecularColor r="1" g="1" b="1" a="1"/>
+          </misc>
+          <weatherstrip><PristinePaintScale value="0.05"/><PaintScale value="0.7"/></weatherstrip>
+          <badge><FresnelIndex value="1"/></BADGE>
+          <smooth_metal><PaintScale value="0.4"/></smooth_metal>
+          <rubber><PaintScale value="nan"/></rubber>
+          <frame><PristinePaintScale value="0.3"/></frame>
+        </ShaderSettings>"""
+        settings = fm.parse_shader_settings(text)
+        self.assertEqual(settings["misc"], {"SpecularAmount": 0.5, "PaintScale": 0.2})
+        self.assertEqual(settings["badge"], {"FresnelIndex": 1.0})  # mismatched close tag
+        # misc is a paint shader: PaintScale scales the paint, the texel stays
+        self.assertEqual(fm.texel_scale(settings, "misc"), 1.0)
+        self.assertEqual(fm.texel_scale(settings, "MISC"), 1.0)
+        self.assertEqual(fm.texel_scale(settings, "weatherstrip"), 0.05)  # PristinePaintScale
+        self.assertEqual(fm.texel_scale(settings, "smooth_metal"), 0.4)  # a texel-scaling shader
+        self.assertEqual(fm.texel_scale(settings, "rubber"), 1.0)  # not a number: the default
+        self.assertEqual(fm.texel_scale(settings, "frame"), 0.3)
+        self.assertEqual(fm.texel_scale(settings, "plastic2"), 1.0)
+
+    def test_scaled_names(self):
+        import numpy as np
+
+        name = fm.with_scale(trim_art.DETAIL_TECHNIQUE, 0.2)
+        self.assertEqual(fm.technique_scale(name), (trim_art.DETAIL_TECHNIQUE, 0.2))
+        self.assertEqual(fm.classify(name), (fm.TEXTURED, fm.NODAMAGE))
+        self.assertEqual(fm.with_scale("misc", 1.0), "misc")
+        family = fm.scaled_family(fm.NODAMAGE, 0.2)
+        self.assertEqual((fm.base_family(family), fm.family_scale(family)), (fm.NODAMAGE, 0.2))
+        self.assertEqual(fm.scaled_family(fm.NODAMAGE, 1.0), fm.NODAMAGE)
+        # 0.2 in linear light: sRGB 255 -> 124, 100 -> 47, 0 -> 0
+        self.assertEqual(fm.scale_texels(np.array([255, 100, 0]), 0.2).tolist(), [124, 44, 0])
+
+    def test_classes(self):
+        import numpy as np
+
+        def rows(rgb, n=8, contrast=None):
+            px = np.array([list(rgb) + [255]] * n)
+            hi, lo = contrast if contrast else (int(np.mean(rgb)), int(np.mean(rgb)))
+            return np.concatenate([px, np.array([[hi, lo]] * n)], axis=1)
+
+        self.assertIsNone(trim_art.classify_texels("misc", rows((12, 12, 12))))  # flat black: shared trim
+        self.assertEqual(trim_art.classify_texels("misc", rows((73, 73, 73))), trim_art.GREY)  # the Volt's bumpers
+        self.assertIsNone(trim_art.classify_texels("misc", rows((73, 73, 73)), 0.2))  # Forza draws it dark
+        grille = rows((20, 20, 20), contrast=(90, 5))  # bars of 90 a texel or two away
+        self.assertEqual(trim_art.classify_texels("misc", grille), trim_art.DETAIL)
+        self.assertIsNone(trim_art.classify_texels("misc", grille, 0.05))
+        self.assertEqual(trim_art.classify_texels("misc", rows((240, 240, 240))), trim_art.ART)
+        self.assertEqual(trim_art.classify_texels("misc", rows((177, 177, 177)), 0.15), trim_art.METAL)
+        self.assertIsNone(trim_art.classify_texels("misc", rows((200, 200, 200)) * [1, 1, 1, 0, 1, 1]))
+
+    def test_local_contrast(self):
+        import numpy as np
+
+        image = np.zeros((9, 9, 4), np.uint8)
+        image[..., 3] = 255
+        image[4, :, :3] = 100  # one light bar
+        image[0, 0] = (255, 255, 255, 0)  # transparent: ignored
+        c = trim_art.local_contrast(image)
+        self.assertEqual(c[2, 4].tolist(), [100, 0])  # two texels from the bar
+        self.assertEqual(c[7, 4].tolist(), [0, 0])  # three texels away
+        self.assertEqual(c[1, 1].tolist(), [0, 0])
+
+    def test_grey_and_detail_in_the_atlas(self):
+        import numpy as np
+
+        size = 48
+        px = np.zeros((size, size, 4), np.uint8)
+        px[..., 3] = 255
+        px[:24, :24, :3] = 80  # flat mid-grey
+        px[24:, :24, :3] = 10
+        px[24:, :24:3, :3] = 120  # dark with light bars
+        atlas = (size, size, bytearray(px.tobytes()))
+
+        class FakeAtlases:
+            car_dir = None
+
+            def get(self, family):
+                return atlas
+
+        atlases = FakeAtlases()
+        verts, transform = [], (0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0)
+
+        def quad(y, x0, x1, box):
+            u0, v0, u1, v1 = (c / size for c in box)
+            base = len(verts)
+            for p, uv in zip(
+                [(x0, y, -0.1), (x1, y, -0.1), (x1, y, 0.1), (x0, y, 0.1)], ((u0, v0), (u1, v0), (u1, v1), (u0, v1))
+            ):
+                verts.append(carbin.Vertex(p, uv, (0.5, 0.5), (0.0, 1.0, 0.0), bytes((100, 0, 0, 0))))
+            return [base, base + 1, base + 2, base, base + 2, base + 3]
+
+        grey = quad(0.0, -0.3, -0.1, (2, 2, 22, 22))
+        grille = quad(0.0, 0.1, 0.3, (2, 26, 22, 46))
+        section = carbin.Section(
+            "body",
+            (0, 0, 0),
+            (0, 0, 0),
+            (1, 1, 1),
+            verts,
+            [],
+            [carbin.SubSection("misc", 1, 4, transform, grey + grille)],
+        )
+        (out,), report = trim_art.split_trim_art([section], atlases, settings={"misc": {"PristinePaintScale": 0.8}})
+        names = [s.material for s in out.subsections]
+        self.assertEqual(
+            names, [fm.with_scale(trim_art.DETAIL_TECHNIQUE, 0.8), fm.with_scale(trim_art.GREY_TECHNIQUE, 0.8)]
+        )
+        self.assertEqual(report["body/misc"]["detail"], 2)
+        self.assertEqual(report["body/misc"]["grey"], 2)
+        detail, flat = out.subsections
+        cache = fm.AtlasCache(Path())
+        cache._cache[fm.NODAMAGE] = cache._cache[fm.LIGHTS] = atlas
+        with mock.patch.object(fm, "AtlasCache", lambda *a, **k: cache):
+            t = dm.Texturing(Path(), size=(64, 64)).plan([out], {1})
+        family = fm.scaled_family(fm.NODAMAGE, 0.8)
+        self.assertIn(family, t.families)
+        self.assertEqual(t.material(out, detail), dm.CHASSIS)
+        _uvs, tag = t.triangle_uvs(out, detail, 0, [verts[i].uv0 for i in detail.indices[:3]])
+        self.assertEqual(tag[0], family)  # a region of the scaled atlas
+        _uvs, tag = t.triangle_uvs(out, flat, 0, [verts[i].uv0 for i in flat.indices[:3]])
+        self.assertEqual(tag[0], "swatch")
+        self.assertEqual(tag[1:4], (72, 72, 72))  # 80 at 0.8 in linear light
+        # A grey subsection at a LOD the plan didn't lay out (the cockpit's shell) has no
+        # colour cell: shared trim, not a KeyError in triangle_uvs.
+        shell = carbin.SubSection(flat.material, 3, 4, transform, list(detail.indices))
+        self.assertEqual(t.material(out, shell), fm.TRIM)
 
 
 class WheelSky(unittest.TestCase):

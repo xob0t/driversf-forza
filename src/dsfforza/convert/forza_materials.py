@@ -138,6 +138,29 @@ _add(PAINT, None, "dsf_plate dsf_inner")  # dsf_inner: damage.split_exposed (pan
 _add(TEXTURED, NODAMAGE, "dsf_trim_art")
 _add(TEXTURED, LIGHTS, "dsf_trim_art_lights")
 _add(CHROME, NODAMAGE, "dsf_trim_metal")  # bare-metal artwork (trim_art.is_metal): shared chrome
+# Dark trims with detail (the Cougar Eliminator's grille bars) through the atlas, flat
+# mid-grey ones as one colour cell (trim_art.classify_texels).
+_add(TEXTURED, NODAMAGE, "dsf_trim_detail dsf_trim_grey")
+# trim_art names its subsections "<technique>@<scale>" when the Forza technique scales
+# its texels (texel_scale): Texturing samples them from the scaled atlas.
+SCALE_SUFFIX = "@"
+
+
+def technique_scale(name: str) -> tuple[str, float]:
+    """("dsf_trim_detail", 0.2) for "dsf_trim_detail@0.2"; (name, 1.0) without a scale."""
+    if SCALE_SUFFIX in name:
+        base, _, scale = name.partition(SCALE_SUFFIX)
+        try:
+            return base, float(scale)
+        except ValueError:
+            pass
+    return name, 1.0
+
+
+def with_scale(technique: str, scale: float) -> str:
+    return technique if scale == 1.0 else f"{technique}{SCALE_SUFFIX}{scale:.4g}"
+
+
 # Virtual dials drawn on blank digital displays (cockpit.virtual_gauges): flat colour
 # cells of the interior atlas, no Forza texture behind them.
 _add(TRIM, None, "dsf_dial_mark dsf_dial_red dsf_needle dsf_needle_hub")
@@ -233,6 +256,8 @@ def classify(name: str) -> tuple[str, str | None]:
     the prefix conventions of the technique list and CustomCarShaders.xml."""
     if name in TECHNIQUES:
         return TECHNIQUES[name]
+    if SCALE_SUFFIX in name and name.startswith("dsf_"):  # trim_art's scaled techniques
+        return classify(technique_scale(name)[0])
     n = name.lower()
     if n.startswith(("blur", "chrome_blur", "ghost")) or "shadow" in n:
         return SKIP, None
@@ -348,21 +373,44 @@ WHEEL_PAINT_SCALE = {
 
 
 def shader_settings(car_dir: Path) -> dict[str, dict[str, float]]:
-    """The car's ShaderSettings.xml as {technique: {parameter: value}} (scalar
-    `value` parameters only; colours are left out). Read leniently: a few files
-    aren't well-formed XML. {} without the file."""
+    """The car's ShaderSettings.xml as {technique (lower case): {parameter: value}}
+    (parse_shader_settings). {} without the file."""
     path = next((p for p in Path(car_dir).iterdir() if p.name.lower() == "shadersettings.xml"), None)
     if path is None:
         return {}
-    text = re.sub(r"</?ShaderSettings\s*>", "", path.read_text(errors="replace"), flags=re.I)
+    return parse_shader_settings(path.read_text(encoding="utf-8", errors="replace"))
+
+
+_SETTINGS_TOKEN = re.compile(r"<!--.*?-->|<\s*(/?)\s*([A-Za-z_][\w.]*)([^<>]*?)(/?)\s*>", re.S)
+_SETTINGS_ATTR = re.compile(r'([A-Za-z_]\w*)\s*=\s*"([^"]*)"')
+
+
+def parse_shader_settings(text: str) -> dict[str, dict[str, float]]:
+    """A ShaderSettings XML (a car's, or the shared Normal.xml) as {technique (lower
+    case): {parameter: value}}: scalar `value` parameters only (colours and
+    non-numbers are left out). Read leniently: a few cars' files don't nest their tags
+    properly (`<badge>...</BADGE>`, a stray close tag), which Forza's reader takes."""
     out: dict[str, dict[str, float]] = {}
-    for m in re.finditer(r"<([A-Za-z_0-9]+)\s*>(.*?)</\1\s*>", text, re.S):
-        params = out.setdefault(m.group(1).lower(), {})
-        for name, value in re.findall(r'<([A-Za-z_0-9]+)\s+value\s*=\s*"([^"]*)"', m.group(2)):
-            try:
-                params[name] = float(value)
-            except ValueError:
-                continue
+    stack: list[str] = []
+    for m in _SETTINGS_TOKEN.finditer(text):
+        if m.group(0).startswith("<!--"):
+            continue
+        close, name, attrs, selfclose = m.groups()
+        if close:
+            if stack and stack[-1] == name.lower():
+                stack.pop()
+            continue
+        values = dict(_SETTINGS_ATTR.findall(attrs))
+        if selfclose or values:
+            if len(stack) >= 2 and "value" in values:  # <ShaderSettings><technique><Param value=.../>
+                try:
+                    value = float(values["value"])
+                except ValueError:
+                    continue
+                if math.isfinite(value):
+                    out.setdefault(stack[-1], {})[name] = value
+            continue
+        stack.append(name.lower())
     return out
 
 
@@ -453,18 +501,142 @@ def texture_path(car_dir: Path, family: str, lod0: bool = False, damaged: bool =
     raise FileNotFoundError(f"{wanted} not in {car_dir}")
 
 
+# --- the trim shaders' texel scale -------------------------------------------------
+#
+# What Forza's car shaders do with the base texel (research/forza-materials.md,
+# "Forza's trim shaders and flat black grilles"; shaders_v16.fxobj through dsff
+# fxobj), by the parameters the technique has in the shared Shared.zip
+# ShaderSettings/Normal.xml (FH1 and FM4 alike for these):
+# - with PaintScale and no PaintColor (rim, badge, smooth_metal, rubber...): the texel
+#   times PaintScale (WHEEL_PAINT_SCALE for the wheel ones);
+# - with PaintColor (PAINT_TECHNIQUES: misc, plastic2, matte_colors, weatherstrip...):
+#   the paint shaders, texel x PristinePaintScale + paint x PaintScale where the
+#   texel's alpha is low. PaintScale there scales the paint: the Cougar Eliminator's
+#   `misc` 0.2 doesn't darken its grille;
+# - neither (frame, black, rubber_trim, bumper_frame): no scale in the shared file;
+#   some cars set PristinePaintScale on `frame` (the Veyron 0.3), taken as set.
+PAINT_TECHNIQUES = frozenset(
+    [
+        "badge2",
+        "body",
+        "body_2",
+        "body_3",
+        "body_sh",
+        "body_simple",
+        "body_traffic",
+        "cage",
+        "cloth",
+        "cloth2",
+        "cockpit_body",
+        "debugbody",
+        "debugbody_2",
+        "debugspecular2",
+        "dullplastic",
+        "emblem",
+        "embossed_plastic",
+        "embossed_plastic2",
+        "engine",
+        "engine_body",
+        "engine_reflective",
+        "headlight_paint",
+        "lights_body",
+        "liverybadge",
+        "matte",
+        "matte_colors",
+        "matte_colors2",
+        "misc",
+        "mottled",
+        "plastic",
+        "plastic2",
+        "plastic_simple",
+        "race_kit_red",
+        "weatherstrip",
+    ]
+)
+# Normal.xml's PaintScale for the trim-role techniques with no PaintColor.
+TRIM_PAINT_SCALE = {"smooth_metal": 1.0, "rubber": 1.0, "hub": 1.0, "scaling_text": 1.0}
+TEXEL_SCALE_MAX = 4.0
+
+
+def texel_scale(settings: dict[str, dict[str, float]], technique: str) -> float:
+    """The factor Forza's shader applies to this technique's opaque texels (linear
+    light), from the car's ShaderSettings (shader_settings) over the shared defaults:
+    PristinePaintScale for the paint shaders (PAINT_TECHNIQUES) and the techniques
+    without a scale, PaintScale for the others (TRIM_PAINT_SCALE, wheel_paint_scale);
+    1 when nothing applies."""
+    n = technique.lower()
+    params = settings.get(n, {})
+    if n in PAINT_TECHNIQUES or n not in TRIM_PAINT_SCALE:
+        value = params.get("PristinePaintScale", 1.0)
+    else:
+        value = params.get("PaintScale", TRIM_PAINT_SCALE[n])
+    return min(TEXEL_SCALE_MAX, max(0.0, value))
+
+
+def srgb_to_linear(c):
+    """sRGB 0..1 -> linear (numpy arrays or floats)."""
+    import numpy as np
+
+    c = np.asarray(c, dtype=np.float64)
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+
+
+def linear_to_srgb(c):
+    import numpy as np
+
+    c = np.clip(np.asarray(c, dtype=np.float64), 0, 1)
+    return np.where(c <= 0.0031308, c * 12.92, 1.055 * c ** (1 / 2.4) - 0.055)
+
+
+def scale_texels(rgb, scale: float):
+    """8-bit sRGB values (any shape, numpy) multiplied by `scale` in linear light."""
+    import numpy as np
+
+    if scale == 1.0:
+        return np.asarray(rgb)
+    return np.rint(linear_to_srgb(srgb_to_linear(np.asarray(rgb) / 255.0) * scale) * 255).astype(np.int64)
+
+
+# A family's atlas with its RGB scaled (texel_scale): "<family>*<scale>". Texturing gives
+# trims whose technique scales its texels their own regions in it (trim_art).
+SCALED_SEP = "*"
+
+
+def scaled_family(family: str, scale: float) -> str:
+    return family if scale == 1.0 else f"{family}{SCALED_SEP}{scale:.4g}"
+
+
+def base_family(family: str | None) -> str | None:
+    return family.split(SCALED_SEP, 1)[0] if family else family
+
+
+def family_scale(family: str) -> float:
+    return float(family.split(SCALED_SEP, 1)[1]) if SCALED_SEP in family else 1.0
+
+
 class AtlasCache:
     """Decoded Forza atlases (RGBA, top mip) for one car folder. Each cache has
     its own copy of the texels (callers change them: fill_transparent); the
-    decoding is shared by every cache of the process (_decoded)."""
+    decoding is shared by every cache of the process (_decoded). A scaled family
+    (scaled_family) is its base family's atlas with the RGB scaled (alpha kept)."""
 
     def __init__(self, car_dir: Path, lod0: bool = False):
         self.car_dir, self.lod0, self._cache = car_dir, lod0, {}
 
     def get(self, family: str) -> tuple[int, int, bytearray]:
         if family not in self._cache:
-            width, height, rgba = _decoded(texture_path(self.car_dir, family, self.lod0))
-            self._cache[family] = (width, height, bytearray(rgba))
+            base = base_family(family)
+            if base != family:
+                import numpy as np
+
+                width, height, rgba = self.get(base)
+                px = np.frombuffer(bytes(rgba), dtype=np.uint8).reshape(-1, 4).copy()
+                lut = scale_texels(np.arange(256), family_scale(family)).astype(np.uint8)
+                px[:, :3] = lut[px[:, :3]]
+                self._cache[family] = (width, height, bytearray(px.tobytes()))
+            else:
+                width, height, rgba = _decoded(texture_path(self.car_dir, family, self.lod0))
+                self._cache[family] = (width, height, bytearray(rgba))
         return self._cache[family]
 
 
