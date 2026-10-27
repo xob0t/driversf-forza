@@ -605,7 +605,7 @@ end
 -- "+hitfront" / "+hitrear" in a view: GameVehicleResource.applyDamage on the front or rear
 -- bumper (car space, as SIDE_COPY) before the view is shot, so lamps that break with that end's
 -- panels go dark (issue #132). The damage stays for the views after it.
-local HITS = { hitfront = { 1.0, 0.0, 0.5, 2.2 }, hitrear = { 1.0, 0.0, 0.5, -2.2 } }
+local HITS = { hitfront = { 0.3, 0.0, 0.5, 2.2 }, hitrear = { 0.3, 0.0, 0.5, -2.2 } }  -- 1.0 wrecked the car (Shift view)
 
 local function showView(id, car, name)
 	endFixedCamera()
