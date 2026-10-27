@@ -584,10 +584,13 @@ in the front survey 66 of 573 ported cars had a visible front lamp lit by
 DaytimeRunning.
 
 Fix (`LampPlan.assign`): head lamps on a front side without a position lamp
-(or DRL indicator) of its own are 0x1D. Front survey: 550 of 573 cars now
-show a DaytimeRunning lamp from the front. Of the 23 others, the NASCARs and
-MIT_HKS_06 / PEU_3_905EVO_93 have decal or cover-glass lamps; on the rest a
-position lamp of their own sits out of the frontal view.
+(or DRL indicator) of its own at least a quarter of their area are 0x1D
+(CHR_Cuda426_71's 10-triangle position lamps beside 109 head-lamp triangles
+don't count). Front survey: 554 of 573 cars show a DaytimeRunning lamp from
+the front (512 through 0x1D head lamps); 515 cars change at the front. The 19
+others: pop-up or covered head lamps (MAZ_Miata_94, TOY_Sprinter_85,
+JAG_XJ220_93, CHE_CorvetteStingray_67, race cars), decal lamps (the
+NASCARs), and cars whose own position lamps sit outside the frontal view.
 
 ### Open
 
