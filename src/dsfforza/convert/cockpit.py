@@ -643,6 +643,8 @@ class CockpitFit:
     display_faces: int = 0  # digital_gauge triangles drawn textured (display_face)
     virtual: dict = field(default_factory=dict)  # virtual_gauges report: dials drawn on a blank display
     digital_plan: object = None  # digital_dash.DigitalPlan: live digital displays (DSF's digital dials)
+    digital_displays: dict = field(default_factory=dict)  # digital_displays' report
+    digital_redline: float = 7000.0  # VO3D p42 the bar pieces' v is computed for (forza2dsf sets it)
 
 
 # Main-carbin sections that make a cockpit when the cockpit carbin is a stub.
@@ -828,6 +830,41 @@ def _touching(tris: list[list[tuple]], cell: float = 0.01) -> list[list[tuple]]:
     for i, t in enumerate(tris):
         groups.setdefault(find(i), []).extend(t)
     return list(groups.values())
+
+
+def display_patches(static: dict, eye) -> list:
+    """The digital displays a dash scene is drawn on (digital_dash.DisplayPatch): every
+    LOD-0 digital_gauge subsection (or its textured face, display_face) in the cabin,
+    not on the steering wheel (the digital dials aren't skinned to it)."""
+    from dsfforza.convert import digital_dash
+
+    out = []
+    for name, s in static.items():
+        if fm.COCKPIT_EXTERIOR_SECTIONS.match(name) or name.lower() == "steering_wheel":
+            continue
+        for ui, sub in enumerate(s.subsections):
+            m = sub.material.lower()
+            if sub.lod or not (m in DIGITAL_TECHNIQUES or sub.material == DISPLAY_FACE):
+                continue
+            # display_face swapped the transforms: the face first, the scene's window second.
+            t = tuple(sub.uv_transform[4:8] if sub.material == DISPLAY_FACE else sub.uv_transform[:4])
+            pool = s.vertices_for(sub)
+            tris = sub.triangles()
+            if not tris:
+                continue
+            pts = [[pool[i].position for i in t3] for t3 in tris]
+            uvs = [[pool[i].uv0 for i in t3] for t3 in tris]
+            n = (0.0, 0.0, 0.0)
+            for a, b, c in pts:
+                n = _add(n, _cross(_sub(b, a), _sub(c, a)))
+            if _dot(n, n) < 1e-18:
+                continue
+            n = _norm(n)
+            centre = _mean([p for tri in pts for p in tri])
+            if _dot(n, _sub(eye, centre)) < 0:
+                n = _scale(n, -1)
+            out.append(digital_dash.DisplayPatch(name, ui, t, pts, uvs, n))
+    return out
 
 
 def blank_displays(static: dict, eye, faces: bool = False) -> list[Display]:
@@ -1097,6 +1134,48 @@ def drop_unturned(cf: CockpitFit, gauge_slots: dict[int, int]) -> list[str]:
     return dropped
 
 
+def digital_displays(static: dict, eye, folder: Path, forza) -> tuple:
+    """The car's dash scene (folder/digitalgauge, formats/anark.py; shared textures and
+    fonts in <cache>/<game>/dash_media) drawn live on its digital displays
+    (digital_dash.build_plan): the displays' subsections leave the cabin (the plan draws
+    them). Returns (plan or None, report: "provides" lists the speed/tach readouts it
+    drives)."""
+    import copy
+
+    from dsfforza.convert import dash_scene, digital_dash
+
+    dash_dir = Path(folder) / "digitalgauge"
+    media = Path(folder).parent / "dash_media"
+    if not dash_dir.is_dir() or not media.is_dir():
+        return None, {"skipped": "no dash scene"}
+    stems = [p for p in dash_dir.iterdir() if p.suffix.lower() == ".bsg"]
+    own = [p for p in stems if p.stem.lower() == f"dash_{Path(folder).name}".lower()] or stems
+    if len(own) != 1:
+        return None, {"skipped": f"{len(stems)} dash scenes"}
+    patches = display_patches(static, eye)
+    if not patches:
+        return None, {"skipped": "no display off the steering wheel"}
+    try:
+        dash = dash_scene.Dash(own[0].with_suffix(""), media)
+        redline = getattr(forza, "redline", 0.0) or 7000.0
+        plan = digital_dash.build_plan(dash, patches, redline)
+    except Exception as error:  # a scene this decoder can't draw: the display stays as it was
+        return None, {"skipped": f"{type(error).__name__}: {error}"[:200]}
+    if plan is None:
+        return None, {"skipped": "no room in the texture"}
+    drawn: dict = {}
+    for p in patches:  # the plan draws these now
+        drawn.setdefault(p.section, set()).add(p.subsection)
+    for name, subs in drawn.items():
+        sec = copy.copy(static[name])
+        sec.subsections = [sub for k, sub in enumerate(sec.subsections) if k not in subs]
+        static[name] = sec
+    rep = dict(plan.report)
+    rep["provides"] = [f for f, k in (("speed", "speed"), ("tach", "bar_pieces")) if rep.get(k)]
+    rep["missing"] = sorted(dash.assets.missing)
+    return plan, rep
+
+
 def is_stub(sections: list[carbin.Section]) -> bool:
     """FH1 ships placeholder cockpit carbins for some cars (Dodge Durango,
     Chevrolet Express): every section is a 17-vertex box about 0.2 m wide."""
@@ -1187,22 +1266,29 @@ def fit(
             static[n], k = with_display_faces(s)
             faces += k
     virtual_report = {}
-    if lod0 and virtual:
+    digital_plan, digital_report = None, {}
+    forza = None
+    if lod0:
         from dsfforza.build import handling
 
         try:
             forza = handling.load_forza(name, [Path(db) for db in gamedbs if db and Path(db).exists()])
         except (SystemExit, Exception):
             forza = None
+    if lod0 and folder is not None:
+        # Forza's digital displays, live through DSF's digital dials (digital_dash).
+        digital_plan, digital_report = digital_displays(static, eye_point(wheel, offset), folder, forza)
+    provided = set(digital_report.get("provides", ()))
+    if lod0 and virtual:
         version = next((s.version for s in static.values()), 3)
         drawn = [s for n, s in static.items() if n not in SKIP_SECTIONS and not LIGHT_SECTIONS.search(n)]
-        dials, virtual_report = virtual_gauges(static, gauges, eye_point(wheel, offset), forza, version, drawn)
+        have = {**gauges, **dict.fromkeys(provided, True)}
+        dials, virtual_report = virtual_gauges(static, have, eye_point(wheel, offset), forza, version, drawn)
         for needle, face, g, cal in dials:
             needles[g.family] = {"min": needle}
             gauges[g.family] = g
             calibration[g.family] = cal
             static[face.name] = face
-    digital_plan = None
     import os
 
     if lod0 and os.environ.get("DSF_DD_PROTO"):  # in-game test of the digital dials (digital_dash)
@@ -1237,13 +1323,19 @@ def fit(
         display_faces=faces,
         virtual=virtual_report,
         digital_plan=digital_plan,
+        digital_displays=digital_report,
     )
 
 
 def gauge_params(cf: CockpitFit) -> dict[int, float]:
-    """VO3D: the speedometer stops at its last mark (p605), from 0 (p606)."""
+    """VO3D: the speedometer stops at its last mark (p605), from 0 (p606). Digital
+    speed digits read the same clamped value: without a needle they go to 255 mph."""
     cal = cf.calibration.get("speed")
-    return {SPEED_DIAL_PARAM: float(cal.dial_max), SPEED_FLOOR_PARAM: 0.0} if cal else {}
+    if cal:
+        return {SPEED_DIAL_PARAM: float(cal.dial_max), SPEED_FLOOR_PARAM: 0.0}
+    if "speed" in cf.digital_displays.get("provides", ()):
+        return {SPEED_DIAL_PARAM: 255.0, SPEED_FLOOR_PARAM: 0.0}
+    return {}
 
 
 # --- DSF hierarchy and camera --------------------------------------------------------
@@ -2733,14 +2825,28 @@ def convert_interior(
 
             plan = cf.digital_plan
             tex_uid, mat_uid = builder.new_uid(), builder.new_uid()
-            drsp.children.append(dm.texture_entry(stream, texc, dd.dxt5_dds(plan.width, plan.height, plan.rgba), tex_uid))
-            drsp.children.append(dm.retarget_material(stream, dd.stock_material(stream), {dd.STOCK_TEXTURE: tex_uid}, mat_uid))
+            drsp.children.append(
+                dm.texture_entry(stream, texc, dd.dxt5_dds(plan.width, plan.height, plan.rgba), tex_uid)
+            )
+            drsp.children.append(
+                dm.retarget_material(stream, dd.stock_material(stream), {dd.STOCK_TEXTURE: tex_uid}, mat_uid)
+            )
             stride = layout[mats.needles][0]
             builder.layout[mat_uid] = (stride, dd.MODL_FLAG)
-            verts, tris = dd.vertices(plan, place, stride)
+            import os
+
+            if os.environ.get("DSF_DD_VARIANT") == "needle":  # in-game test: the Dials material
+                mat_uid = mats.needles
+            verts, tris = dd.vertices(plan, place, stride, getattr(cf, "digital_redline", 7000.0))
             if tris:
                 needle_subs.append(builder.add(mat_uid, verts, tris))
-            digital_report = {"quads": len(plan.quads), "texture": [plan.width, plan.height], **plan.report}
+            digital_report = {
+                **cf.digital_displays,
+                "quads": len(plan.quads),
+                "texture": [plan.width, plan.height],
+                "material": mat_uid.hex(),
+                "redline": round(float(getattr(cf, "digital_redline", 7000.0)), 1),
+            }
         forza2dsf.rebuild_drsp(stream, drsp, builder, keep_host_materials=True)
         part_lods = {mats.cabin_part: {INTERIOR_MASK: cabin}}
         if mats.needle_part is not None:
