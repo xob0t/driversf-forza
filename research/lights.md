@@ -613,8 +613,8 @@ built LOD 3: 64 -> 549. In game (`vm1-20261027-051849` master,
 `vm1-20261027-052118` branch, `-Views fq`; `research/img/headlamps-day.jpg`):
 the Carlton's head lamps are dark by day on master and lit on the branch,
 like stock 198's 0x1D lamps in the same run. So the game lights DaytimeRunning
-on the player's car in daylight. The 19 cars without one (LOD 1)
-others: pop-up or covered head lamps (MAZ_Miata_94, TOY_Sprinter_85,
+on the player's car in daylight. The 19 cars without one (LOD 1):
+pop-up or covered head lamps (MAZ_Miata_94, TOY_Sprinter_85,
 JAG_XJ220_93, CHE_CorvetteStingray_67, race cars), decal lamps (the
 NASCARs), and cars whose own position lamps sit outside the frontal view.
 
