@@ -1368,6 +1368,7 @@ def virtual_gauges(
     wheel: Wheel | None = None,
     atlas=None,
     readout=(),
+    provided=(),
 ) -> tuple[list, dict, dict]:
     """Virtual dials for the speedometer and tachometer Forza has no needle
     for, on the largest blank display the driver can read (pick_display); else
@@ -1377,10 +1378,11 @@ def virtual_gauges(
     display on the dashboard (pod_display, needs `wheel`). Two side by side
     along the long side when both are missing (tachometer first: left or
     top). `readout`: the triangles of displays a dash scene is drawn on
-    (digital_displays), which count as a digital readout and stay clear. Returns
+    (digital_displays), which count as a digital readout and stay clear;
+    `provided`: the readouts that scene drives (no dial for those). Returns
     ([(needle, face, Gauge, GaugeCalibration)], report, extra static sections (the
     virtual display's housing))."""
-    missing = [f for f in ("tach", "speed") if f not in gauges]
+    missing = [f for f in ("tach", "speed") if f not in gauges and f not in provided]
     if not missing:
         return [], {}, {}
     digital = any(
@@ -1656,10 +1658,18 @@ def fit(
         except FileNotFoundError:
             atlas = None
         # Readouts the dash scene drives (digital_displays) need no virtual dial.
-        have = {**gauges, **dict.fromkeys(provided, True)}
         readout = [tri for p in getattr(digital_plan, "patches", []) for tri in p.points]
         dials, virtual_report, extra = virtual_gauges(
-            static, have, eye_point(wheel, offset), forza, version, drawn, wheel=wheel, atlas=atlas, readout=readout
+            static,
+            gauges,
+            eye_point(wheel, offset),
+            forza,
+            version,
+            drawn,
+            wheel=wheel,
+            atlas=atlas,
+            readout=readout,
+            provided=provided,
         )
         if dials and "face" in virtual_report:
             faces -= flatten_face(static, virtual_report["face"])
