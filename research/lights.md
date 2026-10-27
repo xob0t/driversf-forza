@@ -130,9 +130,12 @@ on a shorter or longer car).
    (indicators: the cluster nearest the car's end is the main one).
 4. `assign(upvh)` gives lamps the host's light entries in priority order
    (headlamps, tails, stop, indicators, reverse, position, fog; secondary
-   clusters last). Lamps left over share an entry of the same function and
-   side (their geometry still lights), else stay unlit (the 370Z's rear fog
-   lamp). The table keeps its size and ids, so the hierarchy is untouched.
+   clusters last), each an entry at its own end and side of the host
+   (`entry_place`; "Lamps broke with the wrong end" below). Lamps left over
+   share an entry of the same function, end and side (their geometry still
+   lights), else a fallback lamp's at their end, else take a free entry at
+   the other end, else stay unlit (the 370Z's rear fog lamp). The table keeps
+   its size and ids, so the hierarchy is untouched.
 5. `patch_upvh` writes each used entry's position (area-weighted centroid),
    direction (headlamps (0, 0, 1), else the area-weighted lens normal) and
    flags (type, colour 8/9/4/6, variant 2 on indicators, 1 on the stop lamp);
@@ -971,6 +974,43 @@ from the reflector's centre instead of barely; the Carlton's glow gathers in the
 middle of the lamp. At night the three light as before or brighter in the
 middle, not past stock. A traffic car hit the Evo (first branch run) and the
 Carlton (second) during their views; the shots used are before the hits.
+
+### Lamps broke with the wrong end (issue #132)
+
+Symptom (player report on v0.1.1): the Citroen DS3's and Mazda 2's head
+lamps broke in rear collisions, with the tail lamps, and not in front ones.
+
+Cause (confirmed-static): a lamp breaks when the part its type-17 record
+hangs under is damaged (`0x8E84A0`, "Open" 3), and `assign` handed out the
+host's entries in table order (`free.pop(0)`). The table lists the rear
+lamps first on many hosts, so the head lamps took rear entries: on host 128
+(both cars) entries 5 and 4, the rear DaytimeRunning and right indicator at
+z -1.67. `patch_upvh` moves an entry's position and flags, not its record.
+
+Fix (`lights.entry_place`, `LampPlan.assign`): an entry's place is where the
+host ships it, front by its z (+z forward), side by its x (centre under
+0.15 m). Each lamp, most important first, takes a free entry at its end on
+its side (centre entries next, then any side); one with none left at its end
+shares a lamp's at its end if it can (same function and side, or its
+fallback), else takes one at the other end, so a rear reverse lamp still
+outranks a front fog lamp as before. Sharing (twins, fallbacks) stays at
+the lamp's end.
+
+Survey (offline, `out/lampside/survey.py` and `summary.py` in the
+`driversf-forza-wt-lampside` worktree; the 573 cars of
+`tools/batches/all.txt` on their `research/host-picks.tsv` hosts, entry
+places from the stock tables; NIS_Leaf_11 has no car data):
+
+| | master | branch |
+| --- | ---: | ---: |
+| lamps on an entry at the other end | 3,041 on 570 cars | 85 on 52 cars |
+| of them head lamps | 964 on 465 cars | 0 |
+| same end, other side (L/R) | 1,161 on 537 cars | 25 on 25 cars |
+| lamps with an entry / unlit | 5,584 / 54 | 5,585 / 53 |
+
+The 85 left are rear reverse (45) and rear fog lamps (32) and a few
+indicators on hosts with fewer rear entries than the car has rear lamps;
+they light, and break with the front.
 
 ### Open
 
