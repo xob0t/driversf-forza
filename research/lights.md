@@ -860,7 +860,7 @@ way stock 241's and 130's round 0x1D lamps light, but the Carlton's uniform
 it was a flat blob again (luminance 236, standard deviation 10). Stock lit
 lamps keep about a quarter of the lamp at low alpha (0x1D visible p25 18 on
 average), which is where their structure comes from. The M3 E30's dim lamps
-are the open part (issue below, Open 8).
+are the open part (issue #124, Open 8).
 
 ### Open
 
@@ -896,6 +896,11 @@ are the open part (issue below, Open 8).
    glass (the WRX STI 05's near-opaque light rear cover, (184, 161, 160) at
    alpha 236, shows its dark reflector instead), and what Forza's
    `DarkValues` / `LightValues` do to a lens is not decoded. Issue #89.
+8. Head lamp glow by day follows a lens's opacity, not the lamp behind it:
+   the M3 E30's half-clear round lamps look unlit, and the roster's daytime
+   glow is spread wider than stock's (156 cars under stock's p10, 105 over
+   its p90). Blending the glow mask through the lens fixed the M3 but made
+   the Carlton a blob again. Issue #124.
 
 ## Paint
 
