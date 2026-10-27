@@ -13,11 +13,14 @@ body:
         version you have, how it was installed, your game folder's state, the disc images it
         found and the logs, so we don't have to ask. It holds no save files, disc images or game
         files, and your Windows user folder is replaced by `%USERPROFILE%`.
+
+        On v0.1.1 and earlier (no `--report` yet), attach the newest `out\logs\install-*.log`
+        from the release folder instead.
   - type: textarea
     id: report
     attributes:
       label: Report zip
-      description: Drag the driversf-forza-report-*.zip file here. If it won't attach, paste the summary the command printed.
+      description: Drag the driversf-forza-report-*.zip file here (on v0.1.1 and earlier, the newest out\logs\install-*.log). If it won't attach, paste the summary the command printed.
     validations:
       required: true
   - type: input
