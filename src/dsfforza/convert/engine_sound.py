@@ -325,7 +325,9 @@ def stock_index(dsf: Path = DEFAULT_DSF, cache: Path = CACHE / "stock-banks.json
     granular flag and whether it can be a template."""
     pck = find_pck(game or game_dir(dsf))
     stat = dsf.stat()
-    key = f"{STOCK_INDEX_VERSION}:{dsf.resolve()}:{stat.st_size}:{int(stat.st_mtime)}"
+    # Not the archive's path: it is read from the game folder or its dsfforza-backup copy
+    # (handling_dsf.load_fleet).
+    key = f"{STOCK_INDEX_VERSION}:{stat.st_size}:{int(stat.st_mtime)}"
     if pck:
         key += f":{pck}:{pck.stat().st_size}:{int(pck.stat().st_mtime)}"
     if cache.is_file():

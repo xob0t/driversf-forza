@@ -1147,10 +1147,12 @@ class Reuse:
         fp = fingerprint.read(old / f"{media}.fp.json")
         if fp is None:
             return None, "no fingerprint"
-        why = self.checker.check(fp, {**job, "requested_options": job["port_options"]}, code=not self.trust_code)
+        current = {**job, "requested_options": job["port_options"]}
+        why = self.checker.check(fp, current, code=not self.trust_code)
         first = old / f"{media}.first-try.fp.json"
         if why is None and first.exists():  # a fallback build: the first try must be unchanged too
-            why = self.checker.check(fingerprint.read(first) or {}, None, code=not self.trust_code)
+            moved = self.checker.moved(fp, current)
+            why = self.checker.check(fingerprint.read(first) or {}, None, code=not self.trust_code, moved=moved)
             why = why and f"first try: {why}"
         if why is None and self.where and self._predicate(report, job):
             why = "--rebuild-where"

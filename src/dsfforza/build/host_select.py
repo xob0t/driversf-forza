@@ -493,7 +493,9 @@ def survey(
     needs (problems: why it can't be a host). Cached by archive size and mtime."""
     dsf = game_paths.stock(Path(dsf) if dsf else None, quiet=True)  # not an installed dsfforza archive (its ports)
     stat = dsf.stat()
-    key = f"{SURVEY_VERSION}:{dsf.resolve()}:{stat.st_size}:{int(stat.st_mtime)}:" + (
+    # Not the path: the same archive is read from the game folder or its dsfforza-backup copy
+    # (handling_dsf.load_fleet).
+    key = f"{SURVEY_VERSION}:{stat.st_size}:{int(stat.st_mtime)}:" + (
         f"{lua.stat().st_size}" if lua and lua.exists() else "-"
     )
     if cache and cache.exists() and not refresh:

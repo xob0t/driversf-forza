@@ -183,7 +183,9 @@ def load_fleet(dsf: Path | None = None, lua: Path = HS.DEFAULT_LUA, refresh: boo
     dsf = HS.game_paths.stock(dsf, quiet=True)
     hosts = HS.survey(dsf, lua)
     stat = dsf.stat()
-    key = f"{FLEET_VERSION}:{dsf.resolve()}:{stat.st_size}:{int(stat.st_mtime)}"
+    # Not the path: dsff install reads the stock archive from the game folder the first time and
+    # from its backup (dsfforza-backup) after, and a rewritten cache is a changed input of every car.
+    key = f"{FLEET_VERSION}:{stat.st_size}:{int(stat.st_mtime)}"
     if FLEET_CACHE.exists() and not refresh:
         try:
             data = json.loads(FLEET_CACHE.read_text())
