@@ -287,6 +287,21 @@ S-LINE) comes out about 16 % smaller. `gui_assets build` warns about any
 character still without strokes and lists the names in gui-assets.json
 `_undrawn_characters`.
 
+In game (VM, confirmed-runtime; out/final4's archive with its own GUI step
+before, the rebuilt one after; the rebuilt hud.lua and global.fchunk are
+byte-identical, only the plate pixels differ):
+
+- HUD, chase view of IDs 481 (Reventón), 479 (Murciélago), 98 (TT Coupé 3.2
+  quattro), 489 (#1 Petronas TOM'S SC430), 107 (135i Coupé): before
+  `vm1-20261026-214328`, after `vm1-20261026-223557`
+  (`img/nameplate-accents-hud.jpg`).
+- Garage (garagetest_on, `-MenuKeys`: Enter, Down x 19 to LAMBORGHINI, Right
+  x 22, Esc, Up x 15 to AUDI, Right x 36, at 2.5 to 3 s a key; at 1 s a busy
+  VM dropped Downs): before `vm1-20261027-052405`, after
+  `vm2-20261027-052235`. The card picture and the side panel read REVENTÓN,
+  MURCIÉLAGO, TT COUPÉ / S-LINE and #02 AUDI A4 / TOURING CAR
+  (`img/nameplate-accents-garage.jpg`). No crash in any of the four runs.
+
 ## The build
 
 ```sh
