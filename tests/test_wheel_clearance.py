@@ -62,7 +62,7 @@ def test_gap_is_the_distance_to_the_arch():
     assert wc.gap(pts, wheel, steer_deg=40) < -0.05 or wc.gap(pts, wheel, steer_deg=-40) < -0.05
     # a suspension arm under the car behind the hub, inboard of the tyre: at full lock
     # the tyre's trailing inner half swings over it, hidden, and it doesn't count
-    arm = _box((0.62, -0.15, 1.12), (0.68, -0.10, 1.16))
+    arm = _box((0.60, -0.15, 1.12), (0.66, -0.10, 1.16))
     pts = wc.near_points(arm, wheel.hub, 0.6)
     assert min(wc.gap(pts, wheel, steer_deg=a) for a in (-42, 42)) > 0
 

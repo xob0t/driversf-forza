@@ -281,8 +281,8 @@ def gap(points: np.ndarray, wheel: Wheel, up: float = 0.0, steer_deg: float = 0.
     about the hub's x axis, moved up by `up` and turned by `steer_deg` about the
     vertical through the hub. Only the outboard half of the tyre counts (what shows
     from outside: arch lips, flares, wings; the wheel-well liner over the inner half
-    is hidden by the tyre), against body points outboard of the tyre's centre in the
-    car's frame as well, and points within TYRE_CORE of the axle are ignored."""
+    is hidden by the tyre), body points inboard of the unsteered tyre's inner wall
+    (under the car) and points within TYRE_CORE of the axle are ignored."""
     if not len(points):
         return math.inf
     d = points - (wheel.hub + [0.0, up, 0.0])
@@ -295,12 +295,12 @@ def gap(points: np.ndarray, wheel: Wheel, up: float = 0.0, steer_deg: float = 0.
     out = x if wheel.hub[0] > 0 else -x  # along the axle from the tyre's centre plane, + outboard
     q1 = r - wheel.radius
     q2 = np.abs(out) - wheel.width / 2
-    # Outboard in the car's frame too: steered past about 38 deg, the trailing inner
-    # half of the tyre swings across body points under the car (suspension, the
-    # liner's back), which sit outboard of the turned tyre's centre plane but are
-    # hidden behind the tyre (AUD_TTRS_10: -83 mm at 38 deg, 3 at 35).
+    # Not inboard of the unsteered tyre's inner wall either: steered past about 35 deg,
+    # the trailing inner corner swings over body points under the car (suspension, the
+    # liner's back), outboard of the turned tyre's centre plane but hidden behind the
+    # tyre (AUD_TTRS_10: -83 mm at 36 deg, 3 at 30; issue #54).
     beside = (d[:, 0] - wheel.offset[0]) * (1.0 if wheel.hub[0] > 0 else -1.0)
-    keep = (r > TYRE_CORE * wheel.radius) & (out >= 0) & (beside >= 0)
+    keep = (r > TYRE_CORE * wheel.radius) & (out >= 0) & (beside >= -wheel.width / 2)
     if not keep.any():
         return math.inf
     q1, q2 = q1[keep], q2[keep]
