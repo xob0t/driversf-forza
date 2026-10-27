@@ -653,6 +653,95 @@ Not changed: the scoop's `badge` decal is cut at alpha 128 (`cutout`) where
 Forza blends it into the paint; the hidden-headlamp doors are drawn open and
 closed at once (both stock sections, issue #88).
 
+## Gloss: Forza's specular and reflection on trims and rims (2026-10-27)
+
+Issues #87 (the Cougar Eliminator's satin-black scoop, grille and headlamp doors
+draw dead flat) and #108 (chrome rims look like flat grey paint).
+
+**What Forza adds (confirmed-static).** Besides the texel, the car shaders add
+`SpecularAmount x light x (N.H)^SpecularPower` and a cube-map reflection,
+`CubeScale x FresnelScalar x Fresnel(FresnelIndex)` in the paint and trim
+shaders, `CubeScale` alone at every angle in the chrome ones (whose texel is
+scaled by `ChromeDiffuseScale`). The defaults per technique are in the shared
+`media/cars/Shared.zip` `ShaderSettings/Normal.xml` (the car techniques; the
+file of the same name under `ShaderSettings/Tire/` holds other values for the
+wheel archives' own carbins), FH1 and FM4 alike; a technique the file gives
+none of them to has neither (`black`, `wheel_black`, `grille1`). The ones that
+matter here (`forza_materials.GLOSS_DEFAULTS`):
+
+| Technique | SpecularAmount | SpecularPower | FresnelScalar | CubeScale |
+| --- | --- | --- | --- | --- |
+| `misc` | 0.2 | 20 | 0.1 | |
+| `plastic2` | 2 | 8 | | |
+| `plastic` | 1 | 120 | | |
+| `matte_colors` | 0.75 | 20 | | |
+| `rubber_trim` | 1 | 10 | | |
+| `weatherstrip` | 0.3 | 5.5 | 0 | |
+| `bumper_frame` | 4 | 128 | | |
+| `badge` | 4 | 128 | 1 | |
+| `emblem` | 0 | 75 | 1 | 0.8 |
+| `frame`, `undercarriage` | 0 | 128 | 0 | |
+| `rim` | 0 | 1.5 | 1 | 1.5 |
+| `inner_rim` | 4 | 128 | 0 | 1.5 |
+| `outer_rim`, `rim_V2` | 4 | 128 | 1 | 1.5 |
+| `chrome_rim` (chrome) | | | | 1, ChromeDiffuseScale 0.5 |
+
+Cars override them: the Cougar's `misc` SpecularAmount 0.5, SpecularPower 5,
+FresnelScalar 0.2 (a broad satin sheen; its scoop texels are 2 to 7), the Boss
+429's `matte_colors` 1 / 5 and `plastic2` 12 / 14, the Focus RS500's `rim`
+SpecularAmount 1, FresnelIndex 3. So Forza's black trims are mostly a broad
+highlight with little reflection (FresnelScalar 0.1 to 0.2 where there is one;
+the paint's is 0.9), and its rims are mostly reflection.
+
+**What DSF offers (confirmed-static; `out/inv/ssic_mats.py`, `local_mats.py`,
+`gpdis2.py`: the materials of the stock archive and their pixel shaders, SSIC
+GPCH programs disassembled with d3dcompiler).**
+
+| Material | Where | Pixel shader (per texel `tex`) |
+| --- | --- | --- |
+| `GLOBAL_Chassis_Simple(_LOD1)` | shared trim | `light x tex.R + 0.01 x tex.G x (R.V)^7.5`; no reflection |
+| `GLOBAL_LOD_Chrome` / `GLOBAL_Chassis_Chrome` | shared chrome | `light x tex.R + tex.G x (R.V)^150 + env x tex.G x 1`; grey only, no Fresnel |
+| `GLOBAL_Tyre(_LOD1)` | tyres | `light x tex.R + tex.G x (R.V)^30 + env x tex.G x 0.5 x max(0.2, 1 - N.V)` |
+| `<car>_Chassis` (stride 28) | 143 stock full entries, `_LOD1` in exteriors | `light x tex.rgb + 0.03 x tex.a x (R.V)^24`; no reflection |
+| `<car>_Lights` (stride 32) | 148 + 149 | `light x tex.rgb + 1 x (R.V)^150 + env x tex.G x 1 x max(min, (1 - N.V)^1 - 0.5) + tex.a x lamp colour` |
+
+The shared materials sample the shared 1024 x 512 chassis texture
+(`00122b73d1fa1227`), R the grey level, G the gloss. Stock cars draw their
+trims with the shared trim (148 vehicles), 2.7% of its area on a gloss-black
+swatch of that texture (R 20, G 252; 90 vehicles: specular 0.01, still next to
+none), and their rim faces with their own Chassis material on their chassis
+texture (111 of 150 vehicles' wheel parts; texel alpha median 21: no reflection
+either). No stock material gives a dark texel a reflection except the chrome
+ones, which draw the R channel as grey and reflect alike at every angle. The
+Lights material is the only per-car one with a reflection and an unmasked
+specular; its glow is `tex.a` times the colour of the vertex's lamp (semantic 9
+byte 2; 0, no lamp: no glow), so trims and rims can use it.
+
+**Fix (`dsf_materials.GlossMaterial`, `gloss_material`, `Texturing._plan_gloss`,
+`install_full`/`install_exterior` `gloss=`; `forza_materials.gloss_params`;
+`trim_art` GLOSS).** Each entry (full and clean exterior) gets copies of its host's
+Lights material with their own parameters (`add_gloss`: UIDs from the car's seed,
+next to the host's materials), at most `GLOSS_MAX_MATERIALS` per car; the atlas
+subsections whose Forza technique has a specular or a reflection draw with them
+instead of the Chassis material:
+
+- flat near-black trims seen from outside (`trim_art.GLOSS_TECHNIQUE`, swatch
+  subsections too), which were on the shared trim's one dark texel: one colour
+  cell each, Forza's colour (times its texel scale), on a gloss material;
+- the trims already on the atlas (detail, grey, artwork: their names now carry the
+  Forza technique, `dsf_trim_detail@0.2~misc`), badges and emblems;
+- the rims (`wheel.xds`); `chrome_rim`'s texel takes its `ChromeDiffuseScale`.
+
+The parameters (`gloss_material`): specular intensity `GLOSS_SPECULAR_SCALE x
+SpecularAmount` (at most 1, the stock Lights material's), power `SpecularPower / 4`
+(`(N.H)^p` is about `(R.V)^(p/4)`), reflection with Schlick's Fresnel (power 5, bias
+F0 of FresnelIndex; chrome: power 16, bias 1, alike at every angle) of amount
+`GLOSS_REFLECTION_SCALE x CubeScale x FresnelScalar x 255 / green`, the green the
+subsection's texels average (the reflection is masked by it; at least 16), all on a
+geometric grid so few distinct materials come out. Frame, undercarriage and `black`
+(no specular, no reflection in Forza) stay as they were, and so does what the
+cockpit draws (its own Texturing).
+
 ## Open
 
 1. In game: whether the Chassis material lights badges well (the Lights

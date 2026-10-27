@@ -339,15 +339,19 @@ ART_MIN_SCALE_SHARE = 0.9
 # specular unmasked like Forza's, (N.H)^p ~ (R.V)^(p/4), the reflection with Schlick's
 # Fresnel (power 5, bias F0), divided by the texel's green that masks it.
 GLOSS_PREFIX = "gloss"  # Texturing.material kinds "gloss0", "gloss1"...: GlossMaterial n
-GLOSS_SPECULAR_SCALE = float(os.environ.get("DSFFORZA_GLOSS_SPEC", "0.25"))  # DSF intensity per Forza SpecularAmount
-GLOSS_REFLECTION_SCALE = float(os.environ.get("DSFFORZA_GLOSS_REFL", "1.0"))  # DSF reflection per Forza's
+GLOSS_SPECULAR_SCALE = float(os.environ.get("DSFFORZA_GLOSS_SPEC", "0.04"))  # DSF intensity per Forza SpecularAmount
+GLOSS_REFLECTION_SCALE = float(os.environ.get("DSFFORZA_GLOSS_REFL", "0.5"))  # DSF reflection per Forza's
 GLOSS_POWER_RATIO = 4.0  # Forza's (N.H) power over DSF's (R.V) power for the same highlight
 GLOSS_POWER_RANGE = (1.0, 150.0)
-GLOSS_INTENSITY_MAX = 1.0  # the stock Lights material's (some cars set SpecularAmount 12: the Boss 429's plastic2)
-GLOSS_GREEN_FLOOR = 16  # texel green the reflection amount is scaled for at least (near-black trims)
+GLOSS_INTENSITY_MAX = 0.25  # some cars set SpecularAmount 12 (the Boss 429's plastic2)
+GLOSS_GREEN_FLOOR = 16  # texel green the reflection amount is scaled for at least: regions (texels vary)
+GLOSS_CELL_GREEN_FLOOR = 2  # ... and colour cells (one exact colour: the Cougar's scoop sides, 4)
 GLOSS_REFLECTION_MAX = 16.0
 GLOSS_MIN = 0.01  # specular intensity and reflection below this: no gloss material
-GLOSS_MAX_MATERIALS = 8  # per entry; more distinct ones merge into the nearest
+GLOSS_MAX_MATERIALS = 12  # per entry; more distinct ones merge into the nearest
+# Grid steps (ratios) of the parameters: few distinct materials, a reflection within a
+# factor of 2 of Forza's.
+GLOSS_STEPS = {"intensity": 2.0, "power": 2**0.5, "reflection": 4.0}
 CHROME_FRESNEL = (16.0, 1.0)  # (power, bias): chrome reflects alike at every angle
 GLOSS_FRESNEL_POWER = 5.0
 
@@ -356,7 +360,7 @@ def _q(value: float, step: float = 2**0.5) -> float:
     """value rounded to a geometric grid (steps of `step`), 3 significant digits."""
     if value <= 0:
         return 0.0
-    return float(f"{step ** round(math.log(value, step)):.3g}")
+    return float(f"{step ** math.floor(math.log(value, step) + 0.5):.3g}")
 
 
 @dataclass(frozen=True, order=True)
@@ -379,13 +383,13 @@ class GlossMaterial:
         }
 
 
-def gloss_material(g: fm.Gloss, green: float) -> GlossMaterial | None:
+def gloss_material(g: fm.Gloss, green: float, floor: float = GLOSS_GREEN_FLOOR) -> GlossMaterial | None:
     """The DSF material for a Forza technique's gloss `g` on texels whose green averages
-    `green` (0..255, as drawn); None when both terms are negligible."""
-    intensity = _q(min(GLOSS_INTENSITY_MAX, GLOSS_SPECULAR_SCALE * g.specular))
-    power = _q(min(GLOSS_POWER_RANGE[1], max(GLOSS_POWER_RANGE[0], g.power / GLOSS_POWER_RATIO)))
+    `green` (0..255, as drawn; at least `floor`); None when both terms are negligible."""
+    intensity = _q(min(GLOSS_INTENSITY_MAX, GLOSS_SPECULAR_SCALE * g.specular), GLOSS_STEPS["intensity"])
+    power = _q(min(GLOSS_POWER_RANGE[1], max(GLOSS_POWER_RANGE[0], g.power / GLOSS_POWER_RATIO)), GLOSS_STEPS["power"])
     reflection = GLOSS_REFLECTION_SCALE * g.reflection
-    amount = _q(min(GLOSS_REFLECTION_MAX, reflection * 255 / max(green, GLOSS_GREEN_FLOOR)))
+    amount = _q(min(GLOSS_REFLECTION_MAX, reflection * 255 / max(green, floor)), GLOSS_STEPS["reflection"])
     if intensity < GLOSS_MIN and reflection < GLOSS_MIN:
         return None
     if g.fresnel_scalar is None:
@@ -1093,8 +1097,9 @@ class Texturing:
                 g = fm.gloss_params(settings, technique)
                 if g is None:
                     continue
+                floor = GLOSS_GREEN_FLOOR
                 if m.kind == "swatch":
-                    green = float(self._convert_texel(m.family, *m.colour)[1])
+                    green, floor = float(self._convert_texel(m.family, *m.colour)[1]), GLOSS_CELL_GREEN_FLOOR
                 else:
                     if m.family not in images:
                         w, h, rgba = self.atlases.get(m.family)
@@ -1114,7 +1119,7 @@ class Texturing:
                         opaque = texels[texels[:, 3] >= trim_art.ALPHA_OPAQUE]
                         texels = opaque if len(opaque) else texels
                     green = float(texels[:, 1].mean())
-                mat = gloss_material(g, green)
+                mat = gloss_material(g, green, floor)
                 if mat is not None:
                     picks[id(sub)] = (mat, technique, len(sub.triangles()))
         counts: dict[GlossMaterial, int] = {}
