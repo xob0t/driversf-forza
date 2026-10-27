@@ -585,15 +585,32 @@ screenshot. Over the whole roster without hud.lua, 533 of the 573 cars
 showed another model's plate (only the 40 exact stock matches their own). A car
 of a make DSF lacks kept the host's badge and plate (the Ka on the Cygnet
 would have shown ASTON MARTIN CYGNET). So the player's game had the archive
-and ported.lua but no hud.lua entry for the Ka:
+and ported.lua but no hud.lua entry for the Ka. Ways to get there:
 
-- a build without `--gui` (the old INSTALL.md's `-Build` example didn't
-  name it; out/ has two dozen such dev builds), or one whose GUI step failed
-  (port_batch moves gui/ aside and finishes; install.ps1 installed the
-  archive and ported.lua anyway);
-- a hud.lua of another build (copied by hand, or a user-edited one that
+- **The player's setup (reproduced).** The source ZIP from GitHub (no `assets\`),
+  no plugin (its build failed for want of the C++ workload), and
+  `tools\install.ps1 -Iso <...>\FM4.iso -Car <car> -Force -Download`, one car
+  at a time. The GUI step opened `assets/Forza.Horizon.XBOX360.iso` by name
+  (`ForzaUI`, for maker logos and the garage card's Forza logo), whatever
+  `--iso` said, so it failed (`FileNotFoundError`); port_batch finished
+  anyway and install.ps1 installed the archive and ported.lua without gui.sp,
+  Fonts.fchunk and hud.lua: no garage picture, no new badges, and the
+  fallback plate. Reproduced offline on a copy of the game files (master,
+  `-Iso <FM4 disc 1> -Car FOR_Ka_11 -SkipHook`, a checkout without assets/):
+  `gui assets failed: FileNotFoundError: ...ssets\Forza.Horizon.XBOX360.iso`,
+  then "Installing 1 cars (IDs 1)" with only dngvehicles.sp, bootstrap.lua,
+  register.lua and ported.lua.
+- Another build without `--gui` (the old INSTALL.md's `-Build` example
+  didn't name it; out/ has two dozen such dev builds), or whose GUI step
+  failed for another reason.
+- A hud.lua of another build (copied by hand, or a user-edited one that
   `-Uninstall` keeps): its entry at that ID is another car's, badge, plate
   and picture.
+
+A second `-Car` install over the first doesn't collide: `-Force` uninstalls
+the first (every file back to stock) and the new one-car build takes ID 1
+again, so the first car is gone rather than added to (the installer now
+says so).
 
 The other setups don't do it: a subset roster (a disc missing) shifts IDs
 and glyph codes, but the archive, ported.lua, hud.lua and Fonts.fchunk of one
@@ -617,6 +634,14 @@ draws the default glyph for codes the font lacks: '_' (95), the Bentley
   every picture so); another build's entry is logged and skipped.
 - gui_assets `plan_glyphs`: a car whose blank badge or plate got no code
   (no free code left) gets 32 instead of no field.
+- The GUI step takes port_batch's `--iso` images, found by their title
+  (`forza_roster.game_discs`), any file names; FM4's disc 1 alone gives the
+  maker logos and the Forza card logo (the same `forza_logo3`), no disc
+  gives text badges. The string tables (Forza's names) come from the given
+  images too (`port_batch.string_tables`). The player's command on the fixed
+  branch: KIA_Ceed_11 then FOR_Ka_11, both installed with gui.sp,
+  Fonts.fchunk, global.fchunk and hud.lua; the Ka is ID 1 with `Model = 212`,
+  a "KA" plate; the second install said the Kia was replaced.
 - Installer: `tools/install.ps1` (`Test-BuildGui`) and `dsff install`
   (`install.gui_problem`) refuse a build without gui/gui.sp, Fonts.fchunk and
   hud.lua, or whose hud.lua lacks a car or names another car at its ID, and
