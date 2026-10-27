@@ -510,14 +510,18 @@ The car had no visible lamp that brakes (master plan: indicator 589 + 599
 cm², reverse 176 cm², tail/stop 0).
 
 Survey (offline, `out/brakes/survey.py`): an orthographic view from behind
-(5 mm pixels, z-buffered over the finest LOD's non-glass triangles; front
-view with `FRONT=1`), each visible lamp pixel counted by the table type of
-the light entry its triangle gets, plus whether its texel is red; the 573
-cars of `tools/batches/all.txt` on their `out/final4` hosts. `compare.py`
-and `summary.py` diff two runs; `IMG=dir` writes the colour-coded views
-(`research/img/brakelights-plan.png`). On master only three cars show no
-brake-capable lamp at all: the Carlton and the two NASCARs (decal lamps),
-but 27 have less than half of their visible red lamp area braking.
+(5 mm pixels, z-buffered over the non-glass triangles of one Forza LOD;
+front view with `FRONT=1`). Each visible lamp pixel is counted by the table
+type of the light entry its triangle gets, plus whether its texel is red.
+It covers the 573 cars of `tools/batches/all.txt` on their `out/final4`
+hosts. With `BUILT=1` the LOD is the one the full entry's finest mask (4) is
+built from: Forza LOD 3 for all 573 cars in `out/final4`. Without it, it is
+the finest LOD (1). `compare.py` and `summary.py` diff two runs; `IMG=dir`
+writes the colour-coded views (`research/img/brakelights-plan.png`, LOD 1).
+On master at LOD 3, five cars show no brake-capable lamp: the Carlton (0.8
+cm²), the two NASCARs (decal lamps), FOR_EscortRSCosworth_92 and
+TOY_6_SC430_08 (below). 26 cars have less than half of their visible red
+lamp area braking.
 
 Fix (`lights.LampPlan.build(..., texel=texel_sampler(atlases))`):
 
@@ -549,21 +553,38 @@ Fix (`lights.LampPlan.build(..., texel=texel_sampler(atlases))`):
   position lamp without one shares the head lamp (front) or tail lamp
   (rear) entry instead of staying dark.
 
-Result (offline, master -> branch): 140 cars change at the rear and 10 at
-the front (143 in all). Visible brake-capable area over the fleet 343,551 ->
-359,997 cm²: up on 111 cars, down on 2 (PEU_ShowCase205T16_84 311 -> 287,
-CIT_DS3Racing_11 883 -> 879: lens triangles now indicating with their
-indicator, not dark). Visible red lamp area that can't brake never grows;
-cars with less than half of it braking 27 -> 12. The Carlton: tail/stop
-894 cm², indicator band 146 + 149, reverse 176. No car loses its brake
-lamps, its head lamps or its visible reverse lamp except FER_Dino246_69 (53
-cm² of red lens, now a tail lamp). Costs: fog lamps of 7 cars (cad_ctsvcoupe_11,
-FOR_Fiesta_09, FOR_GT_05, GMC_YukonXL_01, BMW_M6_13, FER_458Spider_12,
-SSC_UltimateAero_10) lose their entry to the new lamps on full hosts, and
-AUD_RS4_06's red lens indicators fall back to its tail entry (no rear
-indicator).
+Result (offline, master -> branch, at the built LOD 3):
 
-The 12 cars still under half: rear fog lamps (`fogred`, ASC_KZ1R_12,
+- 129 cars change at the rear.
+- Visible brake-capable area over the fleet goes from 337,268 to 352,338
+  cm². It is up on 107 cars and down on none; visible red lamp area that
+  can't brake grows on no car.
+- Cars with less than half of their red area braking: 26 -> 15.
+- The Carlton: tail/stop 0.8 -> 1,117 cm², indicator band 121 + 122,
+  reverse 12.
+- Costs:
+  - AUD_R8_08 and PEU_308GTI_11 lose their visible reverse lamps (322 and
+    321 cm² of red-texel lens, now tail lamps; at LOD 3 no reverse bulb sits
+    behind it).
+  - AUD_RS4_06's and VW_BoraVR6_03's red lens indicators share their tail
+    entries on full hosts (no blinking rear indicator).
+  - Fog lamps of 7 cars lose their entry to the new lamps:
+    cad_ctsvcoupe_11, FOR_Fiesta_09, FOR_GT_05, GMC_YukonXL_01, BMW_M6_13,
+    FER_458Spider_12, SSC_UltimateAero_10.
+- In game (`vm2-20261027-054204` master and `vm2-20261027-045417` branch,
+  `-Lights -LightsDriveOnly`, IDs 229 stock, 1 Carlton, 2 GTO, 3 Ford GT, 4
+  207 RC; `research/img/brakelights-vm-sheet.jpg`): on master the Carlton's
+  lamps stay dark when braking, day and dark. On the branch they light like
+  stock 229's, its orange band blinks, and the lower band lights white in
+  reverse. The Ford GT's round lamps dim on the throttle and light on the
+  brake. The 207 RC's side tails don't glow on master or branch: their
+  Lights texels have alpha median 0 (glow mask, #103).
+
+Two cars have no lamp at all in the full entry: FOR_EscortRSCosworth_92
+and TOY_6_SC430_08 draw their lamps at Forza LOD 3 only as `lights_glass`
+cover glass, with no lamp technique (#103).
+
+The cars still under half (LOD 1 list): rear fog lamps (`fogred`, ASC_KZ1R_12,
 LAM_Countach_88), tail-only position lamps (`drlred`, BMW_M3E92_08; stock
 uses 0x03 red tails too), `reverse_light` drawn on red texels
 (PEU_207Super2000_07, TOY_Aygo_11), and CHE_CorvetteZR1_09, whose four round
@@ -586,8 +607,13 @@ DaytimeRunning.
 Fix (`LampPlan.assign`): head lamps on a front side without a position lamp
 (or DRL indicator) of its own at least a quarter of their area are 0x1D
 (CHR_Cuda426_71's 10-triangle position lamps beside 109 head-lamp triangles
-don't count). Front survey: 554 of 573 cars show a DaytimeRunning lamp from
-the front (512 through 0x1D head lamps); 515 cars change at the front. The 19
+don't count). Front survey (LOD 1): 554 of 573 cars show a DaytimeRunning lamp from
+the front (512 through 0x1D head lamps); 515 cars change at the front. At the
+built LOD 3: 64 -> 549. In game (`vm1-20261027-051849` master,
+`vm1-20261027-052118` branch, `-Views fq`; `research/img/headlamps-day.jpg`):
+the Carlton's head lamps are dark by day on master and lit on the branch,
+like stock 198's 0x1D lamps in the same run. So the game lights DaytimeRunning
+on the player's car in daylight. The 19 cars without one (LOD 1)
 others: pop-up or covered head lamps (MAZ_Miata_94, TOY_Sprinter_85,
 JAG_XJ220_93, CHE_CorvetteStingray_67, race cars), decal lamps (the
 NASCARs), and cars whose own position lamps sit outside the frontal view.
