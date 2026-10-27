@@ -65,15 +65,16 @@ VIEW_PIXEL = 0.02  # m per depth-buffer pixel
 VIEW_SLACK = 0.02  # m: a point this far behind what its pixel shows still counts as seen
 
 
-def triangle_texels(image, pts):
-    """RGBA rows (numpy, int) of the texels whose centres lie inside a texel-space
-    triangle; its corners' and centroid's texels if it covers no centre."""
+def triangle_cells(shape, pts):
+    """(rows, columns) index arrays of the texels whose centres lie inside a
+    texel-space triangle of an image of `shape` (height, width); its corners'
+    and centroid's texels if it covers no centre; none for non-finite UVs."""
     import numpy as np
 
-    height, width = image.shape[:2]
+    height, width = shape[:2]
     xs, ys = [p[0] for p in pts], [p[1] for p in pts]
     if not all(math.isfinite(c) for c in xs + ys):  # non-finite UVs (a GMC_YukonXL_01 trim): no texels
-        return np.zeros((0, 4), dtype=int)
+        return np.zeros(0, dtype=int), np.zeros(0, dtype=int)
     x0, x1 = max(0, int(math.floor(min(xs)))), min(width, int(math.ceil(max(xs))) + 1)
     y0, y1 = max(0, int(math.floor(min(ys)))), min(height, int(math.ceil(max(ys))) + 1)
     area = (xs[1] - xs[0]) * (ys[2] - ys[0]) - (ys[1] - ys[0]) * (xs[2] - xs[0])
@@ -83,11 +84,20 @@ def triangle_texels(image, pts):
         w1 = ((xs[2] - gx) * (ys[0] - gy) - (ys[2] - gy) * (xs[0] - gx)) / area
         inside = (w0 >= 0) & (w1 >= 0) & (w0 + w1 <= 1)
         if inside.any():
-            return image[y0:y1, x0:x1][inside].astype(int)
+            iy, ix = np.nonzero(inside)
+            return iy + y0, ix + x0
     points = list(zip(xs, ys)) + [(sum(xs) / 3, sum(ys) / 3)]
-    return np.array(
-        [image[min(height - 1, max(0, int(y))), min(width - 1, max(0, int(x)))] for x, y in points], dtype=int
+    return (
+        np.array([min(height - 1, max(0, int(y))) for _, y in points], dtype=int),
+        np.array([min(width - 1, max(0, int(x))) for x, _ in points], dtype=int),
     )
+
+
+def triangle_texels(image, pts):
+    """RGBA rows (numpy, int) of the texels whose centres lie inside a texel-space
+    triangle; its corners' and centroid's texels if it covers no centre."""
+    ys, xs = triangle_cells(image.shape, pts)
+    return image[ys, xs].astype(int)
 
 
 def is_artwork(texels) -> bool:

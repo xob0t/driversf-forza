@@ -808,6 +808,7 @@ class Texturing:
     wheel_ids: set = field(default_factory=set)  # id(section) of the Forza wheel model (plan(wheels=...))
     art_flat: set = field(default_factory=set)  # id(sub): trim artwork drawn flat (ART_MIN_SCALE_SHARE)
     pack_scale: float = 0.0  # the uniform scale _pack found (before family weights)
+    wheel_paint: dict = field(default_factory=dict)  # rim technique -> PaintScale applied (_wheel_paint_scale)
 
     # -- planning --
     def plan(self, sections, lods, extra_solids: dict | None = None, wheels=None) -> Texturing:
@@ -827,6 +828,7 @@ class Texturing:
             self.weights.setdefault(fm.WHEEL, WHEEL_WEIGHT * min(1.0, WHEEL_TEXELS / side))
             self.wheel_ids |= {id(section) for section in wheels[0]}
             work += [(section, set(wheels[1])) for section in wheels[0]]
+            self.wheel_paint = self._wheel_paint_scale(wheels[0], set(wheels[1]))
         for family, rgb in self.filler.items():
             if family in self.families:
                 fm.fill_transparent(self.atlases.get(family), rgb, below=PAINT_THROUGH_ALPHA)
@@ -885,6 +887,49 @@ class Texturing:
                     self.atlas_subs.discard(sid)
                 self.art_flat = set(flat)
         return self
+
+    def _wheel_paint_scale(self, sections, lods) -> dict[str, float]:
+        """Scale, in place, the RGB of the wheel texture's texels by the PaintScale
+        of the rim technique whose UV triangles cover them (fm.wheel_paint_scale):
+        Forza's rim shaders multiply the texel by it, DSF's Chassis material draws
+        the texel as is. Texels no triangle covers take the scale that covers the
+        most texels. Without it a light grey rim texture (the Lotus Carlton's 182,
+        the median rim 156) drew near white (research/wheels.md, "Rim
+        brightness"). Returns {technique: scale} of the wheel's techniques."""
+        settings = fm.shader_settings(self.car_dir)
+        w, h, rgba = self.atlases.get(fm.WHEEL)
+        scales: dict[str, float] = {}
+        triangles: dict[float, list] = {}
+        for section in sections:
+            for sub in section.subsections:
+                if sub.lod not in lods:
+                    continue
+                m = fm.resolve(section, sub, fm.classify_wheel)
+                if m.family != fm.WHEEL or m.kind not in ("textured", "swatch"):
+                    continue
+                k = fm.wheel_paint_scale(sub.material, settings)
+                scales[sub.material] = k
+                pool = section.vertices_for(sub)
+                triangles.setdefault(k, []).extend(
+                    [(u * w, v * h) for u, v in (m.uv(pool[i].uv0) for i in t)] for t in sub.triangles()
+                )
+        if all(k == 1.0 for k in triangles):
+            return scales
+        from dsfforza.convert import trim_art
+
+        label = np.full((h, w), -1, dtype=np.int64)
+        order = sorted(triangles, key=lambda k: -len(triangles[k]))  # the fewer triangles drawn last, on top
+        for n, k in enumerate(order):
+            for pts in triangles[k]:
+                ys, xs = trim_art.triangle_cells((h, w), pts)
+                label[ys, xs] = n
+        covered = label[label >= 0]
+        base = int(np.bincount(covered).argmax()) if len(covered) else 0
+        label[label < 0] = base
+        factor = np.array(order, dtype=np.float64)[label]
+        px = np.frombuffer(rgba, dtype=np.uint8).reshape(h, w, 4)
+        px[:, :, :3] = np.clip(np.rint(px[:, :, :3] * factor[:, :, None]), 0, 255).astype(np.uint8)
+        return scales
 
     def _art_swatch(self, section, sub, m: fm.SubMaterial) -> fm.SubMaterial:
         """A trim-artwork subsection as one flat colour: the mean of the opaque
@@ -1304,6 +1349,9 @@ class Texturing:
         parts = []
         for family in self.families:
             parts.append(f"{family}: {len(self.regions[family])} regions at {self.scale[family]:.3f}x")
+        paint = {t: k for t, k in self.wheel_paint.items() if k != 1.0}
+        if paint:
+            parts.append("rim PaintScale " + ", ".join(f"{t} {round(k, 3):g}" for t, k in sorted(paint.items())))
         return f"atlas {self.size[0]}x{self.size[1]}, " + ", ".join(parts) + f", {len(self.solids)} solid cells"
 
 

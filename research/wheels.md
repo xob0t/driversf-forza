@@ -1,6 +1,6 @@
 # Wheels: the Forza wheel model in DSF
 
-Updated: 2026-10-26
+Updated: 2026-10-27
 
 User report from driving the testdrive build (`out/testdrive`, 40 cars): the
 wheels look broken on every car, the Veyron worst. Offline investigation
@@ -254,7 +254,8 @@ white wheel disks". Scripts in `out/inv/` (`wrender.py`, `wobl.py`,
 - The converted exterior wheel part, drawn with the build's own atlas, matches
   Forza's wheel with `wheel.xds` texel for texel (`out/inv/205_wheel_cmp.png`):
   the UVs and the atlas region (0.551x) are right. Forza's wheel archive holds
-  no shader settings for the rim; nothing tints it.
+  no shader settings for the rim; nothing tints it. (Wrong: the shared
+  defaults scale every `rim` texel by 0.75, "Rim brightness" below.)
 
 ### What differed: the baked sky term (s0.w)
 
@@ -571,6 +572,73 @@ game's palette pick).
 - LODs: the rear copy has the front part's masks (4, 8, 16 in the full
   entry, 2 in the exterior), each with its own submodels
   (`out/rw/lods.py`).
+
+## Rim brightness (2026-10-26)
+
+User report on `out/final4` (LOT_Carlton_89, FM4, spool 495 on host 229): "rims
+that glow bright white". In game the Carlton's five-spoke rims were flat near
+white; Forza's thumbnail (FM4 `Media/UI/Textures.zip`,
+`Thumbnails/Thumbnail_291.xds`) shows them mid to dark grey.
+
+### What Forza does with the rim texel (confirmed-static)
+
+- The Carlton's `wheel.xds` (256² DXT1) is a plain light grey gradient (157 to
+  219) with a turned centre cap and a dark square for `inner_rim`. The rim UVs
+  land where they should (`out/inv/rimuv.py`: the spoke unwrap on the
+  gradient, mean 182; `inner_rim` on the dark square, 64). The converter
+  copied those texels into the atlas as they are, and the Chassis material
+  drew them near white.
+- Forza's car shaders take per-technique parameters from the car's
+  `ShaderSettings.xml`, over defaults in `media/cars/Shared.zip`
+  `ShaderSettings/Normal.xml` (FH1 and FM4 alike for the wheel techniques).
+  `rim` has `PaintScale` 0.75 (with `CubeScale` 1.5, `FresnelIndex` 1.65,
+  `SpecularAmount` 0); `inner_rim`, `outer_rim`, `rim_V2` and `rim_bump_metal`
+  1.0, `rim_simple` 0.5; `chrome_rim`, `wheel_emblem` and `wheel_black` have no
+  `PaintScale`. The Carlton's own file sets nothing for its wheel.
+- `PaintScale` is a multiplier on the rim texel. The 19 cars that set their
+  own rim value (`out/inv/rim_survey.py`) tune it against the texture's
+  brightness: FOR_FocusRS500_10's near-black rim texels (about 4) at 7.5,
+  FOR_ShelbyGT500_13's (12) at 6.75, BEN_CONTINENTALGT_11's near-white ones
+  (213) at 0.5, CHE_Express2500Cargo_05's (183) at 0.5, VW_BEETLE_68's
+  `inner_rim` (138) at 0.043.
+
+### How many cars (every roster car, LOD 1)
+
+521 of the 573 cars have a `wheel.xds` (52 race cars have none and keep the
+flat swatches); 508 of them have a `rim` technique. The area-weighted rim
+luminance per car, texels as converted before and times `PaintScale` now:
+
+| | 10% | 25% | median | 75% | 90% | cars above 170 | above 190 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| before (texel) | 57 | 119 | 156 | 191 | 212 | 205 | 131 |
+| now (texel x PaintScale) | 43 | 90 | 117 | 145 | 160 | 21 | 3 |
+
+The brightest before: SUB_LegacyB4GT_05 253, FIA_500AbarthSS_10 246,
+MAZ_MX5SL_10 239, NIS_SkylineMinesR32_93 239; the Carlton 182 to 137. Stock
+DSF rims sample the tyre atlas's grey swatch of 131 (red channel).
+
+### Fix (`forza_materials.WHEEL_PAINT_SCALE`, `shader_settings`, `wheel_paint_scale`; `dsf_materials.Texturing._wheel_paint_scale`)
+
+When `Texturing.plan` takes the wheel, it scales the RGB of the car's
+`wheel.xds` texels by the `PaintScale` of the technique whose UV triangles
+cover them (the car's `ShaderSettings.xml`, else the shared default, else 1);
+texels no triangle covers take the scale that covers the most texels. Then the
+atlas is packed as before, so the alpha (specular mask, from luminance) follows
+the darker colour. The build log's atlas line names the scales other than 1
+(`rim PaintScale rim 0.75`). Entry sizes and atlas layouts don't change.
+
+### In game
+
+Headless VM, the same five cars built from master and from this change
+(`out/t/before`, `out/t/after`: IDs 1 LOT_Carlton_89, 2 SUB_LegacyB4GT_05, 3
+FOR_FocusRS500_10, 4 BEN_CONTINENTALGT_11, 5 FER_355Challenge_95, plus stock
+229), `-Views wheels,rear -Palette 0 -ShotSeconds 3`: runs `vm1-20261027-045825`
+(before) and `vm1-20261027-050351` (after; the Carlton's side shot is its
+`zoom-05`, the wheels view came before the first observe shot). The Carlton's
+and the Legacy's rims are light grey with their spoke shading instead of flat
+white, the Continental's (PaintScale 0.5) mid grey, the Focus RS500's (7.5)
+black rims a little lighter, with the blue cap; next to stock 229's silver
+rims they now look alike (`img/rims-paintscale-ingame.jpg`).
 
 ## Open
 
