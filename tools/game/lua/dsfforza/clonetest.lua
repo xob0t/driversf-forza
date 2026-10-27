@@ -36,7 +36,9 @@ local VIEWS = {}              -- config.views (run-test -Views): extra views bet
                               -- from ahead, for steering in place with run-test -DriveKey Left; "nose": the headlamps; "grille": grille and bonnet).
                               -- A "+lit" suffix ("nose+lit") switches the head lamps on (Headlights, DaytimeRunning) for
                               -- that view, "+night" also darkens the scene (lightstest.lua's dark mood); views
-                              -- without one switch them off again (pop-up head lamps, research/lights.md)
+                              -- without one switch them off again (pop-up head lamps, research/lights.md);
+                              -- "+hitfront" / "+hitrear" damage the front or rear bumper first (lamps that
+                              -- break with it, issue #132), e.g. "nose+night+hitrear"
 local PALETTE = nil           -- config.palette (run-test -Palette): paint palette entry of the spawned cars
                               -- (Spawn's shaderParams[0], as the game's grid spawns set it); nil: the game's pick
 local DYNO = nil              -- config.dyno (run-test -Dyno): the dyno.lua module, acceleration and braking runs
@@ -600,10 +602,25 @@ end
 
 -- Switch to extra view `name`: a camera mode, or a fixed camera made the way
 -- cameraselection.lua's createFreeCam makes the debug free camera.
+-- "+hitfront" / "+hitrear" in a view: GameVehicleResource.applyDamage on the front or rear
+-- bumper (car space, as SIDE_COPY) before the view is shot, so lamps that break with that end's
+-- panels go dark (issue #132). The damage stays for the views after it.
+local HITS = { hitfront = { 0.3, 0.0, 0.5, 2.2 }, hitrear = { 0.3, 0.0, 0.5, -2.2 } }  -- 1.0 wrecked the car (Shift view)
+
 local function showView(id, car, name)
 	endFixedCamera()
 	local mode
 	name, mode = string.match(name, "^([^+]*)%+?(.*)$")
+	for hit, where in pairs(HITS) do
+		if string.find(mode, hit, 1, true) then
+			local ok, err = pcall(GameVehicleResource.applyDamage, { gameVehicle = car, damage = where[1],
+				location = vec.vector(where[2], where[3], where[4], 1), overridePlayerOnlyDamage = true })
+			log(string.format("id %d: %s applyDamage %.1f at (%.1f, %.1f, %.1f) %s", id, hit, where[1], where[2],
+				where[3], where[4], ok and "ok" or tostring(err)))
+			mode = string.gsub(mode, "%+?" .. hit, "")
+		end
+	end
+	mode = string.gsub(mode, "^%+", "")
 	if mode == "" then mode = nil end
 	if mode ~= nil or lampMode ~= nil then setViewLamps(id, car, mode) end
 	local ok, err

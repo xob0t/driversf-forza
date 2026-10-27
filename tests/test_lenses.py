@@ -88,6 +88,25 @@ def test_texels_other_triangles_sample_stay():
     assert report["glassLHL/detail_glass_red"]["shared"] > 0
 
 
+def test_swatch_lens_keeps_its_tint():
+    # A lens stretched over a tint swatch (2 texels across a 20 cm lens, the X5 M's red tail
+    # glass, issue #141): its texels stand for lens points far apart and keep the lens's own
+    # colour instead of one random part of the lamp behind.
+    inner = _quad("glassLTL", "detail_glass_red", 2.0, 0.0, 2 / SIZE, x=0.5)
+    outer = _quad("trunk", "detail_glass_red", 2.0, 0.0, 2 / SIZE, x=0.8)
+    lamps = [_quad(f"taillight{i}", "textured_reflector", 1.9, 0.5, 1.0, x=x) for i, x in enumerate((0.5, 0.8))]
+    atlases, report = _bake([inner, outer, *lamps], [inner, outer])
+    assert atlases.texel(0, SIZE // 2) == LENS
+    assert atlases.texel(1, SIZE // 2) == LENS
+    assert report["glassLTL/detail_glass_red"]["scrambled"] > 0
+    assert report["glassLTL/detail_glass_red"]["texels"] == 0
+    # The same lens over its own texels is baked as before.
+    lens = _quad("glassLTL", "detail_glass_red", 2.0, 0.0, 0.5, x=0.5)
+    atlases, report = _bake([lens, lamps[0]], [lens])
+    assert atlases.texel(SIZE // 4, SIZE // 2) != LENS
+    assert "scrambled" not in report["glassLTL/detail_glass_red"]
+
+
 def test_lens_techniques():
     assert lenses.is_lens_technique("detail_glass_clear")
     assert lenses.is_lens_technique("detail_glass_amber")

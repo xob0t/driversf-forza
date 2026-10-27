@@ -130,9 +130,12 @@ on a shorter or longer car).
    (indicators: the cluster nearest the car's end is the main one).
 4. `assign(upvh)` gives lamps the host's light entries in priority order
    (headlamps, tails, stop, indicators, reverse, position, fog; secondary
-   clusters last). Lamps left over share an entry of the same function and
-   side (their geometry still lights), else stay unlit (the 370Z's rear fog
-   lamp). The table keeps its size and ids, so the hierarchy is untouched.
+   clusters last), each an entry at its own end and side of the host
+   (`entry_place`; "Lamps broke with the wrong end" below). Lamps left over
+   share an entry of the same function, end and side (their geometry still
+   lights), else a fallback lamp's at their end, else take a free entry at
+   the other end, else stay unlit (the 370Z's rear fog lamp). The table keeps
+   its size and ids, so the hierarchy is untouched.
 5. `patch_upvh` writes each used entry's position (area-weighted centroid),
    direction (headlamps (0, 0, 1), else the area-weighted lens normal) and
    flags (type, colour 8/9/4/6, variant 2 on indicators, 1 on the stop lamp);
@@ -971,6 +974,88 @@ from the reflector's centre instead of barely; the Carlton's glow gathers in the
 middle of the lamp. At night the three light as before or brighter in the
 middle, not past stock. A traffic car hit the Evo (first branch run) and the
 Carlton (second) during their views; the shots used are before the hits.
+
+### Lamps broke with the wrong end (issue #132)
+
+Symptom (player report on v0.1.1): the Citroen DS3's and Mazda 2's head
+lamps broke in rear collisions, with the tail lamps, and not in front ones.
+
+Cause (confirmed-static): a lamp breaks when the part its type-17 record
+hangs under is damaged (`0x8E84A0`, "Open" 3), and `assign` handed out the
+host's entries in table order (`free.pop(0)`). The table lists the rear
+lamps first on many hosts, so the head lamps took rear entries: on host 128
+(both cars) entries 5 and 4, the rear DaytimeRunning and right indicator at
+z -1.67. `patch_upvh` moves an entry's position and flags, not its record.
+
+Fix (`lights.entry_place`, `LampPlan.assign`): an entry's place is where the
+host ships it, front by its z (+z forward), side by its x (centre under
+0.15 m). Each lamp, most important first, takes a free entry at its end on
+its side (centre entries next, then any side); one with none left at its end
+shares a lamp's at its end if it can (same function and side, or its
+fallback), else takes one at the other end, so a rear reverse lamp still
+outranks a front fog lamp as before. Sharing (twins, fallbacks) stays at
+the lamp's end.
+
+Survey (offline, `out/lampside/survey.py` and `summary.py` in the
+`driversf-forza-wt-lampside` worktree; the 573 cars of
+`tools/batches/all.txt` on their `research/host-picks.tsv` hosts, entry
+places from the stock tables; NIS_Leaf_11 has no car data):
+
+| | master | branch |
+| --- | ---: | ---: |
+| lamps on an entry at the other end | 3,041 on 570 cars | 85 on 52 cars |
+| of them head lamps | 964 on 465 cars | 0 |
+| same end, other side (L/R) | 1,161 on 537 cars | 25 on 25 cars |
+| lamps with an entry / unlit | 5,584 / 54 | 5,585 / 53 |
+
+The 85 left are rear reverse (45) and rear fog lamps (32) and a few
+indicators on hosts with fewer rear entries than the car has rear lamps;
+they light, and break with the front.
+
+### Tail lamps with the broken-lamp pattern (issue #141)
+
+Symptom (user and player reports on 0.1.0 to master 18ea3c9): tail lamps showed dark
+blobs over the red on cars that looked undamaged (Veyron, X5 M, 300C, G37 one lamp);
+on the Cee'd only the third brake lamp lit when braking.
+
+Two causes, both confirmed in game (VM runs `vm1-20261027-231606` and `-233632` on
+master, `vm1-20261027-231924` on the #132 branch, `vm1-20261027-233940` on the branch
+with the lens fix; cars 304 to 308 = Veyron, X5 M, 300C, G37, Cee'd; a debug module
+logged `FUN_008A78E0`'s lamp objects, below):
+
+1. **Tail lamps on front light entries (#132's mapping).** A lamp object's broken bit
+   (flags bit 0, set only by `0x8E65B0` from the break walk `0x8E84A0`) is the colour's
+   w: the Lights shader then multiplies the lamp's diffuse and glow by the damage
+   decal's alpha at UV1 (the three-blob tile; GPCH 130's pixel shader:
+   `cmp r3.xyz, 0.005 - w, texel, texel * decal.a`), and `0x8E6760` keeps a broken lamp
+   dark. On master 659 tail and brake lamps of 317 cars hung under front records, so a
+   nose-first bump broke them: the Veyron's lamps 12 and 13 after a `+hitfront`
+   (flags 0x29F, brightness 0) while its rear lamps on rear entries stayed lit; the
+   Cee'd's tails sat on entries 13 and 14 (front), which is why only its third brake lamp
+   lit. Nothing breaks at spawn: with no hit, `0x8E84A0` is never called and every lamp
+   object's bit 0 is clear (run 231606, call 1 of each car). With the #132 assignment
+   (`LampPlan.assign`) 2 tail/brake lamps on 2 cars are left on front entries
+   (CHE_CorvetteGrandSport_96, LEX_SC430_02); in game the Veyron's tails stay lit after
+   the front hit (lamps 1, 3, 4, 6 flags 0x9E, brightness 1) and break with the rear
+   one, and its head lamps no longer break with the rear (master: lamps 5, 6 bit 0 set
+   after `+hitrear`; branch: 14, 15 clear).
+2. **A lens stretched over a tint swatch (X5 M).** Its red tail glass (`glassLTL`,
+   `glassRTL`, `trunk` `detail_glass_red`) samples a 17 x 14 texel swatch of flat red
+   (202 texels over 756 cm2, 19 mm a texel on the car). `lenses.bake` casts one ray per
+   block of texels, so each swatch texel got one random part of the lamp behind: a
+   pink-and-black mosaic, the dark blobs seen at rest (offline: `car_render` of the
+   built car shows it without any lamp state). Fix (`lenses._scrambled`): a lens whose
+   texels are coarse (over 6 mm) keeps its own texels where lens points over 3 cm apart
+   (|x|) share one, all of them when that is most of the lens. Roster (lens subsections
+   of the 573 cars at their finest LOD): 14 cars change, 2,378 texels (X5 M whole lenses;
+   Charger SRT8 12, Viper CC, Ultima GTR, MP4-12C, Scirocco and 8 more in part); the
+   X5 M's tails are Forza's flat red in game (`img/taillamps-x5m-swatch-ingame.jpg`).
+
+The user's Veyron showed the blobs on its outer round lamps: their centres are the
+reverse lamps, which master hung under host 279's wing indicator records (entries 14,
+15, x 1.06, z +0.43), so any front or side contact broke them. The 300C's and G37's
+tails look right at rest on both builds; their reports (0.1.0, 0.1.1) predate the
+current host picks and weren't reproduced.
 
 ### Open
 

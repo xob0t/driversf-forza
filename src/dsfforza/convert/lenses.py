@@ -54,6 +54,18 @@ LENS_PREFIXES = ("detail_glass",)
 RAY_DEPTH = 0.4  # m: how deep a lamp housing can be behind its lens
 SAME_LAYER = 0.004  # m: a lens hit this close to the ray's start is the lens's own other face
 MAX_LAYERS = 4  # lens layers composited before the opaque surface
+# Forza draws some lenses from a small tint swatch stretched over the whole lens (the BMW X5 M's
+# red tail glass: 202 texels over 756 cm2, 19 mm a texel). Each texel then stands for lens points
+# far apart, and the bake (one ray per block of texels) gave each a different lamp part: the
+# stretched swatch showed them as dark blobs over the red (issue #141). A coarse lens (texels
+# over COARSE_TEXEL on the car) keeps its own texels where points farther apart than
+# SCRAMBLED_SPREAD sample one (|x|: the left and right lamps folded onto one side), and all of
+# them when that is most of the lens: Forza's flat tint. Finer lenses whose texels repeat
+# (tiled flutes) keep the bake: their texels are a millimetre or two on the car, so the mix
+# reads as the lens's grain. Roster lenses: median 1.25 mm a texel, 98th percentile 5.8 mm.
+SCRAMBLED_SPREAD = 0.03  # m
+COARSE_TEXEL = 0.006  # m: sqrt(lens area / its distinct texels)
+SWATCH_SHARE = 0.5  # a coarse lens with more of its texel samples scrambled keeps all its texels
 RAY_CHUNK = 256
 RAY_CELL = 0.04  # m: rays are chunked by these cells
 RAY_STEP = 2  # texels per ray, each way, at least
@@ -493,6 +505,71 @@ def day_glow(glow: np.ndarray, view) -> np.ndarray | None:
     return out if np.isfinite(out).any() else None
 
 
+def _lens_samples(section, sub, m, w: int, h: int):
+    """A lens subsection's texel samples on the (w, h) Lights atlas: (ix, iy, position,
+    normal) arrays, one row per texel centre inside each triangle, and the size of its texels
+    on the car (m, sqrt(area / distinct texels)); None without any."""
+    pool = section.vertices_for(sub)
+    cols, rows, pos, nrm = [], [], [], []
+    area = 0.0
+    for t in sub.triangles():
+        P = np.array([pool[i].position for i in t], float)
+        N = np.array([pool[i].normal for i in t], float)
+        area += 0.5 * float(np.linalg.norm(np.cross(P[1] - P[0], P[2] - P[0])))
+        ix, iy, bary = _texels(np.array([m.uv(pool[i].uv0) for i in t]) * (w, h))
+        ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
+        ix, iy, bary = ix[ok], iy[ok], bary[ok]
+        if not len(ix):
+            continue
+        face = np.cross(P[1] - P[0], P[2] - P[0])
+        n = bary @ N
+        length = np.linalg.norm(n, axis=1)
+        fn = face / (np.linalg.norm(face) or 1.0)
+        if fn @ N.sum(0) < 0:
+            fn = -fn
+        n = np.where(length[:, None] > 1e-6, n / np.maximum(length, 1e-12)[:, None], fn)
+        cols.append(ix)
+        rows.append(iy)
+        pos.append(bary @ P)
+        nrm.append(n)
+    if not cols:
+        return None
+    ix, iy = np.concatenate(cols), np.concatenate(rows)
+    texel = math.sqrt(area / len(np.unique(iy * w + ix)))
+    return ix, iy, np.concatenate(pos), np.concatenate(nrm), texel
+
+
+def _scrambled(samples, h: int, w: int) -> np.ndarray:
+    """(h, w) mask of the texels left as the lens's own: the texels of a coarse lens (texels
+    over COARSE_TEXEL) that lens points more than SCRAMBLED_SPREAD apart sample (positions
+    with x folded to |x|, so mirrored left and right lamps on one texel agree), and all its
+    texels when they are most of it (a swatch stretched over the lens keeps its flat tint).
+    `samples`: (section, sub, m, _lens_samples or None) of every lens."""
+    lo = np.full((h * w, 3), np.inf)
+    hi = np.full((h * w, 3), -np.inf)
+    for *_, got in samples:
+        if got is None:
+            continue
+        ix, iy, pos, _, _ = got
+        folded = pos.copy()
+        folded[:, 0] = np.abs(folded[:, 0])
+        k = iy * w + ix
+        for a in range(3):
+            np.minimum.at(lo[:, a], k, folded[:, a])
+            np.maximum.at(hi[:, a], k, folded[:, a])
+    spread = np.where(np.isfinite(lo).all(1), (hi - lo).max(1), 0.0)
+    out = np.zeros(h * w, bool)
+    for *_, got in samples:
+        if got is None:
+            continue
+        ix, iy, _, _, texel = got
+        k = iy * w + ix
+        far = spread[k] > SCRAMBLED_SPREAD
+        if texel > COARSE_TEXEL and far.any():
+            out[k if far.mean() > SWATCH_SHARE else k[far]] = True
+    return out.reshape(h, w)
+
+
 def bake(
     sections,
     lods,
@@ -531,41 +608,25 @@ def bake(
     count = np.zeros((h, w))
     lit = _GlowSum(h, w, glow) if glow is not None else None
     report = {}
-    for section, sub, m in surf.lens_subs:
-        pool = section.vertices_for(sub)
-        cols, rows, pos, nrm = [], [], [], []
-        for t in sub.triangles():
-            P = np.array([pool[i].position for i in t], float)
-            N = np.array([pool[i].normal for i in t], float)
-            ix, iy, bary = _texels(np.array([m.uv(pool[i].uv0) for i in t]) * (w, h))
-            ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
-            ix, iy, bary = ix[ok], iy[ok], bary[ok]
-            if not len(ix):
-                continue
-            face = np.cross(P[1] - P[0], P[2] - P[0])
-            n = bary @ N
-            length = np.linalg.norm(n, axis=1)
-            fn = face / (np.linalg.norm(face) or 1.0)
-            if fn @ N.sum(0) < 0:
-                fn = -fn
-            n = np.where(length[:, None] > 1e-6, n / np.maximum(length, 1e-12)[:, None], fn)
-            cols.append(ix)
-            rows.append(iy)
-            pos.append(bary @ P)
-            nrm.append(n)
-        if not cols:
+    samples = [(section, sub, m, _lens_samples(section, sub, m, w, h)) for section, sub, m in surf.lens_subs]
+    scrambled = _scrambled(samples, h, w)
+    for section, sub, _m, got in samples:
+        if got is None:
             continue
-        ix, iy = np.concatenate(cols), np.concatenate(rows)
-        pos, nrm = np.concatenate(pos), np.concatenate(nrm)
-        free = ~used[iy, ix]
+        ix, iy, pos, nrm, _ = got
+        free = ~used[iy, ix] & ~scrambled[iy, ix]
         key = f"{section.name}/{sub.material}"
         entry = report.setdefault(key, {"texels": 0, "behind": 0, "shared": 0})
-        entry["shared"] += int((~free).sum())
+        entry["shared"] += int(used[iy, ix].sum())
+        mixed = scrambled[iy, ix] & ~used[iy, ix]
+        if mixed.any():
+            entry["scrambled"] = entry.get("scrambled", 0) + int(mixed.sum())
         # A front lens's glow covers its shared texels too (the AST DB5 Vantage's lens shares
-        # 95% of its texels with its reflector's coarser LODs): the same lamp.
+        # 95% of its texels with its reflector's coarser LODs): the same lamp. Not its
+        # scrambled ones: they hold no one lamp.
         front = glow is not None and pos[:, 2].mean() < GLOW_FRONT_Z
-        if not front:
-            ix, iy, pos, nrm, free = ix[free], iy[free], pos[free], nrm[free], free[free]
+        keep = ~scrambled[iy, ix] if front else free
+        ix, iy, pos, nrm, free = ix[keep], iy[keep], pos[keep], nrm[keep], free[keep]
         if not len(ix):
             continue
         lens_rgba = src[iy, ix]
@@ -641,7 +702,7 @@ def bake(
         for dy, dx in ((0, 1), (0, -1), (1, 0), (-1, 0)):
             shifted = np.roll(np.roll(grown, dy, 0), dx, 1)
             vals = np.roll(np.roll(out, dy, 0), dx, 1)
-            take = shifted & ~grown & ~used
+            take = shifted & ~grown & ~used & ~scrambled
             acc[take] += vals[take]
             n[take] += 1
             if glow is not None:
