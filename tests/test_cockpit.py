@@ -313,19 +313,25 @@ def test_grip_params_give_dsfforza_asi_the_drawn_rim():
     assert set(cockpit.hand_params()) == set(cockpit.HAND_PARAMS)  # no steering report: p538/p559 only
 
 
-def test_chase_wheel_keeps_its_size_unless_the_chase_hands_miss():
-    # dsfforza.asi moves only the cockpit arms; the chase-view driver's grips sit
-    # 0.17 m from the column, so the chase views' wheel is scaled as PR #90 scaled
-    # every wheel: only past HAND_FIT_TOLERANCE, within WHEEL_SCALE_RANGE.
+def test_chase_driver_hands_keep_their_angle_on_forza_rim():
+    # The chase views' driver grips the stock circle about the seat's anchor
+    # (seat_anchor, off the wheel's column on small or large rims); the chase-view wheel
+    # keeps Forza's size, and dsfforza.asi [hands] puts each hand on its rim at the angle
+    # the animations give it about that anchor, so the hands turn with the wheel.
+    from dsfforza.convert import steering_axle
+
     side = (0.0, 0.0, 0.0)
     axis = cockpit._norm(cockpit.STOCK_COLUMN)
-    for radius in (0.165, cockpit.STOCK_RIM_RADIUS, 0.190, 0.200):  # hatchback, stock, ..., Regal GNX
-        k = cockpit.chase_wheel_scale(side, axis, radius)
-        shift = cockpit.hand_shift(side, axis, radius * k)
-        assert cockpit.hand_grip_error(shift, side, axis, radius * k) <= cockpit.HAND_FIT_TOLERANCE + 1e-4, radius
-        assert k == 1.0 or abs(k - 1) < 0.05, (radius, k)
-    k = cockpit.chase_wheel_scale(side, axis, 0.114)  # ARX-01b
-    assert 1.2 < k <= cockpit.WHEEL_SCALE_RANGE[1]
+    for radius in (0.114, 0.200, 0.220):  # ARX-01b, Regal GNX, tour bus
+        anchor = cockpit.seat_anchor(side, axis, radius)
+        rim = (side, axis, radius)
+        drawn = {"centre": side, "axis": axis, "radius": radius}
+        err = steering_axle.grip_error(anchor, drawn, rim)
+        assert err["grip_asi"] < 1e-6 and err["asi_rim"] < 1e-9, (radius, err)
+        for g in cockpit.hand_grips(anchor):
+            t = steering_axle.asi_target(g, rim, anchor)
+            u, v = cockpit._norm(cockpit._sub(g, anchor)), cockpit._norm(cockpit._sub(t, side))
+            assert cockpit._dot(u, v) > 0.9999, radius  # the same angle, about the hub
 
 
 def test_seat_anchor_puts_the_grips_on_the_rim():

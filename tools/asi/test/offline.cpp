@@ -356,6 +356,10 @@ int main(int argc, char** argv)
     lua_heap_test();
     // Hands: the arms' pose call goes through the plugin; the IK on a synthetic arm.
     CHECK(*(BYTE*)0x005676FF == 0xE8 && *(int*)0x00567700 != (int)(0x008609C0 - 0x00567704));
+    // The occupant (chase views, AI drivers): his pose task and its two skin builds.
+    CHECK(*(BYTE*)0x005668D3 == 0xE8 && *(int*)0x005668D4 != (int)(0x005650A0 - 0x005668D8));
+    CHECK(*(BYTE*)0x005652FB == 0xE8 && *(int*)0x005652FC != (int)(0x00BCA840 - 0x00565300));
+    CHECK(*(BYTE*)0x00565910 == 0xE8 && *(int*)0x00565911 != (int)(0x00BCA840 - 0x00565915));
     CHECK(mod_hands_selftest() == 0);
     printf("%s (%d failures); log: %s\\dsfforza.log\n", failures ? "FAILED" : "ok", failures, dsf_plugin_dir());
     return failures ? 1 : 0;
