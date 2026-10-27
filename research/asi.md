@@ -16,6 +16,7 @@ when `-Asi` is given. Evidence tags as in `dngvehicles.md`.
 | `hud` | HUD/Shift/garage-shop maker badge and model plate: one-byte glyph codes → 16-bit (`ManufacturerGlyph`/`ModelGlyph`); garage card emblem: Forza logo instead of the SF disc (`GarageEmblem`) | [HUD badges and plates](#hud-badges-and-plates) |
 | `lua` | the game's Lua heap: one fixed 10 MB block → overflows into a private heap when full | [Lua heap](#lua-heap) |
 | `hands` | the cockpit arms grip DSF's 0.177 m circle → each ported car's rim (VO3D p95/p87), arm through a two-bone IK | [Hands on the rim](#hands-on-the-rim) |
+| `dash` | digital dashboards: km/h digits for converted Forza displays (the game only fills mph digits) | [Digital dashboards](#digital-dashboards) |
 
 Every module checks the original bytes of each site before patching and
 patches nothing of a feature when one site differs (another mod, another exe
@@ -733,4 +734,40 @@ Forza's rim".
   to its bind position, the inverse bind's inverse applied to the origin. For the
   occupants, one every 1.5 s: the car, seat, seat and world matrices, the rim in
   the seat frame, both fists, wrists, elbows and shoulders, and each hand's move.
+
+## Digital dashboards
+
+Module `dash` (`tools/asi/src/mod_dash.cpp`). The display conversion is in
+`cockpit.md`, "Digital displays".
+
+**Stock (confirmed-static, `out/ghidra/dd-*` in the digital-displays worktree).**
+`FUN_00888F30` is the vehicle manager's frame update. At 0x00888FE6
+(`E8 B5 89 00 00`) it calls `FUN_008919A0` with ECX pointing at the gauge input
+array. That array is one 0x98-byte object per player, at
+`[[[0xFE7228]+0x78C]+4] + 0x2251C`.
+
+| Offset | Holds |
+| --- | --- |
+| +0x00 | the seven needle inputs: id 1 is rpm / 5000, id 2 is clamp(mph, p606, p605) x 0.0125 |
+| +0x1C | `g_fDigiData`, 7 x vec4 |
+| +0x8C | the vehicle |
+
+The game writes `g_fDigiData` for these ids only:
+
+- id 1: the rpm bar;
+- id 2: mph digits, units to thousands, as (digit + 1) x 23/256, 0 for a leading blank;
+- ids 6 and 7: the gear.
+
+It never writes ids 3 to 5. A copy taken when the frame's draw lists are built
+(`FUN_0087A8E0`, `rep movsd` at 0x0087AA7F) goes to the digital-dials vertex
+shader. The shader adds `g_fDigiData[(id - 1) x 4 + comp]` to each vertex's v.
+
+**Patch.** `patch_call` at 0x00888FE6 calls the original first. Then, for each
+player with a vehicle, it writes km/h digits into id 3, comps 0..3, in the
+game's own encoding. The speed is the clamped one the game just wrote for the
+speedometer needle (id 2's input / 0.0125 x 1.609344). Scenes that label their
+speed in km/h put their digits on id 3, so without the module those digits stay
+blank. `[dash] kmh=0` turns it off.
+
+Offline (`build.ps1 -Test`): the call site checks and patches.
 

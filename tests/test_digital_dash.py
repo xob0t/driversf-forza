@@ -26,18 +26,6 @@ def test_digi_data_is_what_the_engine_writes():
     assert dd.digi_data(5, 0, 0, 7000)[(2, 1)] == 0.0  # 5 mph: the tens cell is blank
 
 
-def test_bar_pieces_light_at_their_rpm():
-    # A piece samples v = BAR_LIT_FROM - rpm / redline / 2, plus the engine's rpm / redline / 2:
-    # at or past its rpm it reaches the lit rows (v >= BAR_LIT_FROM), below them before.
-    redline = 8000.0
-    for rpm in (500.0, 4000.0, 7800.0):  # up to BAR_MAX (0.49 of 0.5 at the redline)
-        v = dd.bar_v(rpm, redline)
-        assert 0.0 <= v < dd.BAR_LIT_FROM
-        assert v + 0.5 * (rpm - 1) / redline < dd.BAR_LIT_FROM <= v + 0.5 * rpm / redline + 1e-9
-        assert v + 0.5 < 1.0  # at the redline it still samples inside the texture (no wrap)
-    assert dd.bar_v(20000.0, redline) == dd.BAR_LIT_FROM - dd.BAR_MAX  # clamped
-
-
 def test_runs_to_rects_cover_the_mask():
     rng = np.random.default_rng(1)
     mask = rng.random((40, 60)) > 0.6

@@ -1062,8 +1062,8 @@ def rebuild_drsp(
     """Replace SBMC/VXCK/IXCK/MDID in a DRSP with the builder's contents. The
     host's own textures and materials are dropped unless keep_host_materials;
     with keep_host_geometry the host's submodels and buffers stay as well and
-    the builder's are added alongside. `templates` (stride -> VXCK) gives the
-    vertex declaration of a stride the host has no buffer for."""
+    the builder's are added alongside. `templates` (stride -> VXCK) sets the
+    vertex declaration of that stride's buffer whatever the host has."""
     old = drsp.children
     keep_tags = {"TEXC", "MACO"} if keep_host_materials or keep_host_geometry else set()
     if keep_host_geometry:
@@ -1092,7 +1092,10 @@ def rebuild_drsp(
     template = {}
     for stride in builder.buffers:
         mine = [own[s.material, stride] for s in builder.subs if s.stride == stride and (s.material, stride) in own]
-        template[stride] = old[max(mine, key=mine.count)] if mine else vxck_t.get(stride) or (templates or {})[stride]
+        if stride in (templates or {}):  # a layout the caller needs (digital dials: the Volt's)
+            template[stride] = templates[stride]
+        else:
+            template[stride] = old[max(mine, key=mine.count)] if mine else vxck_t[stride]
     ixck_t = next(e for e in old if e.tag == "IXCK")
     mdid_t = next(e for e in old if e.tag == "MDID")
 

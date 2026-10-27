@@ -45,7 +45,6 @@ STATIC = (5, 0)  # never written: no offset
 DIGIT_PITCH = 23 / 256  # v between digit cells (blank, 0..9)
 GEAR_PITCH = 1 / 7  # v between gear cells (R, 1..6)
 BAR_LIT_FROM = 0.505  # bar columns: lit from this v up, transparent below
-BUILD_REDLINE = 20000.0  # rpm the bar pieces are built for (no clamp), relit for p42 by retune
 BAR_MAX = 0.49  # largest threshold (rpm at the redline gives 0.5)
 
 
@@ -66,6 +65,7 @@ class DigitalPlan:
     quads: list = field(default_factory=list)
     report: dict = field(default_factory=dict)
     needles: list = field(default_factory=list)  # _needles: needles for DSF's gauge needles
+    patches: list = field(default_factory=list)  # the DisplayPatches it is drawn on
 
     def blit(self, x: int, y: int, image) -> None:
         """Paste an RGBA PIL image at texel (x, y) (top left)."""
@@ -181,22 +181,13 @@ def stock_material(stream):
     return _STOCK[key]
 
 
-def bar_v(rpm: float, redline: float) -> float:
-    """The v of a bar piece lit from `rpm` on: the engine adds rpm / redline x 0.5."""
-    return BAR_LIT_FROM - min(BAR_MAX, 0.5 * rpm / max(1.0, redline))
-
-
-def vertices(plan: DigitalPlan, place, stride: int, redline: float) -> tuple[list[bytes], list[tuple[int, int, int]]]:
-    """Needle-layout vertices and double-sided triangles for the plan's quads (bar
-    pieces lit from their rpm with this redline, VO3D p42)."""
+def vertices(plan: DigitalPlan, place, stride: int) -> tuple[list[bytes], list[tuple[int, int, int]]]:
+    """Needle-layout vertices and double-sided triangles for the plan's quads."""
     from dsfforza.convert import cockpit
 
     verts, tris = [], []
     for q in plan.quads:
         uvs = q.uvs
-        if getattr(q, "rpm", None) is not None:  # a bar piece: lit from its rpm on
-            v = bar_v(q.rpm, redline)
-            uvs = [(u, v) for u, _ in uvs]
         a, b, c = q.corners[0], q.corners[1], q.corners[2]
         n = cockpit._norm(cockpit._cross(cockpit._sub(b, a), cockpit._sub(c, a)))
         base = len(verts)
@@ -283,12 +274,12 @@ RT_W, RT_H = 1280, 720  # the scene's presentation (render-target) size
 SCALE = 2  # render-target pixels are drawn this many texels wide before fitting
 RPM_STEPS = 40  # rpm thresholds tried for the bar pieces (0 .. the scene's tach full scale)
 LIT_DIFFERENCE = 0.06  # a pixel is lit when its colour moved this far from the rest state
+MAX_BAR_COLUMNS = 16  # bar columns at most (rarer colour sequences fold onto these)
 PALETTE = 12  # flat colours of the bar pieces (one texture column each)
 COLUMN = 4  # texels per bar colour column (a DXT block)
 CELL_MARGIN = 2  # texels kept clear round each digit/gear cell
 DIGIT_LIFT = 0.0008  # m towards the eye: digits and bars over the drawn display
-LAYERS = 3  # colour changes per pixel drawn for the rpm (rest -> lit -> warning -> redline)
-LAYER_LIFT = 0.0003  # m: each later change over the one before
+CHANGES = 2  # colour changes per pixel the rpm makes (rest -> lit -> warning)
 SPEED_SLOTS = 3  # digits laid out for the speed readout (units, tens, hundreds)
 GEAR_CHARS = "R123456"  # g_fDigiData gear: 0 = reverse, then 1..6 (no neutral in DSF)
 BLANK_TEXT = (  # readouts DSF has no value for: drawn empty
@@ -402,6 +393,10 @@ def _runs_to_rects(mask, slack: int = 2):
         open_ = still
     rects += [(r[0], r[1], r[2], r[3] + 1) for r in open_]
     return rects
+
+
+def _rgba(colour) -> tuple:
+    return (*(int(round(float(v) * 255)) for v in colour[:3]), 255)
 
 
 def _subtree(dash, root: int) -> set:
@@ -675,21 +670,21 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
             )
             columns.append(("gear", cells, cell, [cell]))
 
-    # 3. What the rpm lights up: per pixel the first step it changes at.
+    # 3. What the rpm changes: per pixel up to two changes (white -> green -> orange on
+    # the LFA's ring), the step each happens at and the colour it brings. A pixel that
+    # goes back to its rest colour (a needle sweeping past) stays at rest.
     # Texts don't change with the rpm (the rpm readout stays blank): left out, for speed.
     def keep_rpm(i):
         return keep_static(i) and dash.E[i].type != 4
 
     base1 = np.asarray(ds.render(dash, RT_W, keep=keep_rpm, view=view, ss=1), np.float32) / 255.0
-    # Per pixel up to LAYERS changes (white -> green -> orange on the LFA's ring): the
-    # step each happens at and the colour it brings. A pixel that goes back to its rest
-    # colour (a needle sweeping past) can't be drawn this way and is left at rest.
-    ev_step = np.full((LAYERS, *base1.shape[:2]), -1, np.int32)
-    ev_col = np.zeros((LAYERS, *base1.shape), np.float32)
-    count = np.zeros(base1.shape[:2], np.int32)
-    flicker = np.zeros(base1.shape[:2], bool)
-    # Up to the redline: the engine's rpm input stops there (FUN_00891670 clamps to p42),
-    # and some scenes flash past it.
+    hgt, wid = base1.shape[:2]
+    ev_step = np.full((CHANGES, hgt, wid), -1, np.int32)
+    ev_col = np.zeros((CHANGES, hgt, wid, 3), np.float32)
+    count = np.zeros((hgt, wid), np.int32)
+    flicker = np.zeros((hgt, wid), bool)
+    # Up to the Forza redline, which the bar reaches at DSF's (the engine feeds
+    # rpm / p42 x 0.5: the bar shows the rpm as a share of the redline).
     top = min(tach_max, redline)
     steps = [top * (k + 1) / RPM_STEPS for k in range(RPM_STEPS)]
     meters = [k for k in RPM_METERS if dash.bound(k) is not None]
@@ -703,37 +698,66 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
             on = np.abs(img - base1).max(-1) > LIT_DIFFERENCE
             flicker |= (count > 0) & ~on
             changed = (np.abs(img - cur).max(-1) > LIT_DIFFERENCE) & on
-            for level in range(LAYERS):
+            for level in range(CHANGES):
                 sel = changed & (count == level)
                 ev_step[level][sel] = k
                 ev_col[level][sel] = img[sel]
-            # the latest colour of a change refines it while the pixel settles (fades)
+            # while a pixel settles (fades in) its latest colour refines the change
             settle = ~changed & on & (count > 0)
-            for level in range(LAYERS):
+            for level in range(CHANGES):
                 sel = settle & (count == level + 1)
                 ev_col[level][sel] = img[sel]
-            count[changed] = np.minimum(count[changed] + 1, LAYERS)
+            count[changed] = np.minimum(count[changed] + 1, CHANGES)
             cur[changed] = img[changed]
         _rest_state(dash, tach_max)
     ev_step[:, flicker] = -1
-    lit_any = ev_step >= 0
-    report["rpm_pixels"] = int(lit_any[0].sum())
+    lit = ev_step[0] >= 0
+    report["rpm_pixels"] = int(lit.sum())
     report["flicker_pixels"] = int(flicker.sum())
 
-    # Texture: columns on the right, the artwork on the left.
+    # Texture: columns on the right, the artwork on the left. The digital dials draw
+    # opaque (no alpha test), so every cell carries the artwork under it.
     x = W
-    col_x = {}
-    for kind, _, cell, _ in columns:
+    cols = []  # (kind, slot index, x, width)
+    for kind, _, cell, slots in columns:
         pitch = int(DIGIT_PITCH * H) if kind == "speed" else int(GEAR_PITCH * H)
         aspect = (cell[1] - cell[0]) / max(1, cell[3] - cell[2])
         w = max(4, int(math.ceil((pitch - 2 * CELL_MARGIN) * aspect / 4.0)) * 4) + 2 * CELL_MARGIN
-        x -= w
-        col_x[kind] = (x, w)
-    palette, labels, bar_x = None, None, x
-    if lit_any.any():
-        palette, labels = _palette(ev_col[lit_any], PALETTE)
-        x -= COLUMN * len(palette)
+        for j in range(len(slots)):
+            x -= w
+            cols.append((kind, j, x, w))
+    # Bar columns: one per (rest, first, second colour, steps between the changes).
+    signatures, sig_img = {}, None
+    if lit.any():
+        states = [base1[lit]] + [ev_col[level][lit] for level in range(CHANGES)]
+        palette, labels = _palette(np.concatenate(states), PALETTE)
+        n = int(lit.sum())
+        lab = [labels[i * n : (i + 1) * n] for i in range(CHANGES + 1)]
+        later = [np.where(ev_step[level][lit] >= 0, lab[level + 1], -1) for level in range(1, CHANGES)]
+        gaps = [
+            np.where(ev_step[level][lit] >= 0, ev_step[level][lit] - ev_step[0][lit], -1) for level in range(1, CHANGES)
+        ]
+        keys = np.stack([lab[0], lab[1], *later, *gaps], 1)
+        uniq, inverse, freq = np.unique(keys, axis=0, return_counts=True, return_inverse=True)
+        room = max(0, min(MAX_BAR_COLUMNS, (x - 256) // COLUMN))
+        order = np.argsort(-freq)
+        keep = set(order[:room].tolist())
+        # signatures that don't fit fold onto their first change only
+        for s_idx in range(len(uniq)):
+            if s_idx in keep:
+                signatures[s_idx] = tuple(int(v) for v in uniq[s_idx])
+        fold = {}
+        for s_idx in range(len(uniq)):
+            if s_idx not in keep:  # the most common kept column with the same first change
+                same = [k for k in order[:room] if tuple(uniq[k][:2]) == tuple(uniq[s_idx][:2])]
+                fold[s_idx] = int(same[0]) if same else -1
+        inverse = np.array([fold.get(int(k), int(k)) for k in inverse.ravel()])
+        sig_img = np.full((hgt, wid), -1, np.int32)
+        sig_img[lit] = inverse
+        x -= COLUMN * len(signatures)
         bar_x = x
+        report["bar_columns"] = len(signatures)
+        report["bar_signatures"] = int(len(uniq))
     bg_w = (x // 4) * 4
     if bg_w < 64:
         return None
@@ -766,62 +790,84 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
         plan.quads[-1].rt = [(x0, y1), (x1, y1), (x1, y0), (x0, y0)]
         return plan.quads[-1]
 
-    # Digit and gear cells: cell 0 at the top, the engine adds the offset.
-    for kind, cells, cell, slots_px in columns:
-        cx, cw = col_x[kind]
+    # Digit and gear cells: cell 0 at the top (blank: the artwork), the engine adds the
+    # offset. Each slot has its own column: the artwork under it differs.
+    base_img = (np.clip(base, 0, 1) * 255 + 0.5).astype(np.uint8)
+    placed: dict = {}
+    for kind, j, cx, cw in cols:
+        _, cells, cell, slots = next(c for c in columns if c[0] == kind)
+        r = slots[j]
         pitch = DIGIT_PITCH * H if kind == "speed" else GEAR_PITCH * H
         ch = int(pitch) - 2 * CELL_MARGIN
+        under = base_img[max(0, r[2]) : r[3], max(0, r[0]) : r[1], :3].astype(np.float32)
         for n, img in enumerate(cells):
-            if img is None:
-                continue
-            sub = Image.fromarray(img).crop((cell[0], cell[2], cell[1], cell[3]))
-            plan.blit(
-                cx + CELL_MARGIN,
-                int(round(n * pitch)) + CELL_MARGIN,
-                sub.resize((cw - 2 * CELL_MARGIN, ch), Image.LANCZOS),
-            )
+            out = under.copy()
+            if img is not None:
+                g = img[cell[2] : cell[3], cell[0] : cell[1]].astype(np.float32)
+                g = g[: out.shape[0], : out.shape[1]]
+                a = g[..., 3:4] / 255.0
+                out[: g.shape[0], : g.shape[1]] = out[: g.shape[0], : g.shape[1]] * (1 - a) + g[..., :3] * a
+            tile = Image.fromarray(np.clip(out + 0.5, 0, 255).astype(np.uint8)).convert("RGBA")
+            tile = tile.resize((cw - 2 * CELL_MARGIN, ch), Image.LANCZOS)
+            y = int(round(n * pitch)) + CELL_MARGIN
+            plan.blit(cx + CELL_MARGIN, y, tile)
+            # the margins repeat the cell's edge texels: filtering at its border stays inside it
+            t = np.asarray(tile)
+            for m in range(CELL_MARGIN):
+                plan.blit(cx + CELL_MARGIN, y - 1 - m, Image.fromarray(t[:1]))
+                plan.blit(cx + CELL_MARGIN, y + ch + m, Image.fromarray(t[-1:]))
         uvbox = ((cx + CELL_MARGIN) / W, CELL_MARGIN / H, (cx + cw - CELL_MARGIN) / W, (CELL_MARGIN + ch) / H)
         digits = KMH_DIGITS if units == "kmh" else SPEED_DIGITS
-        ids = digits[:SPEED_SLOTS] if kind == "speed" else [GEAR]
-        placed = 0
-        for slot, r in zip(ids, slots_px, strict=True):
-            rr = (ux0 + r[0] / SCALE, ux0 + r[1] / SCALE, uy0 + r[2] / SCALE, uy0 + r[3] / SCALE)
-            p = patch_for((rr[0] + rr[1]) / 2, (rr[2] + rr[3]) / 2)
-            if p is not None:
-                rect_quad(p, rr, uvbox, slot, DIGIT_LIFT)
-                placed += 1
-        report[kind] = placed
+        slot = digits[j] if kind == "speed" else GEAR
+        rr = (ux0 + r[0] / SCALE, ux0 + r[1] / SCALE, uy0 + r[2] / SCALE, uy0 + r[3] / SCALE)
+        p = patch_for((rr[0] + rr[1]) / 2, (rr[2] + rr[3]) / 2)
+        if p is not None:
+            rect_quad(p, rr, uvbox, slot, DIGIT_LIFT)
+            placed[kind] = placed.get(kind, 0) + 1
+    report.update(placed)
 
-    # Bar pieces: per step and colour, rectangles over the newly lit pixels.
-    if palette is not None:
-        for j, c in enumerate(palette):
-            col = (*(int(round(float(v) * 255)) for v in c), 255)
-            plan.fill(bar_x + j * COLUMN, int(math.ceil(BAR_LIT_FROM * H)), bar_x + (j + 1) * COLUMN, H, col)
-        label_img = np.full(ev_step.shape, -1, np.int32)
-        label_img[lit_any] = labels
+    # Bar pieces: pixels with the same column and first change step, as rectangles; a
+    # piece's v puts its first change at its rpm (share of the redline), the column the
+    # later one the same number of steps on.
+    if signatures:
+        step_v = 0.5 * top / RPM_STEPS / max(1.0, redline)
+        for col, sig in enumerate(signatures.values()):
+            cx0 = bar_x + col * COLUMN
+            c0, c1 = palette[sig[0]], palette[sig[1]]
+            rows = [(0, BAR_LIT_FROM, c0), (BAR_LIT_FROM, 1.0, c1)]
+            later, gaps = sig[2 : 2 + CHANGES - 1], sig[2 + CHANGES - 1 :]
+            for lab_, gap in zip(later, gaps, strict=True):
+                if lab_ >= 0 and gap > 0:
+                    rows.append((BAR_LIT_FROM + gap * step_v, 1.0, palette[lab_]))
+            for v0, v1, c in rows:
+                plan.fill(cx0, int(math.ceil(v0 * H)), cx0 + COLUMN, int(math.ceil(v1 * H)), _rgba(c))
+        col_of = {s_idx: k for k, s_idx in enumerate(signatures)}
+        first = ev_step[0]
         pieces = 0
-        for level in range(LAYERS):
-            for k in range(RPM_STEPS):
-                at = ev_step[level] == k
-                if not at.any():
+        for k in range(RPM_STEPS):
+            at_k = first == k
+            if not at_k.any():
+                continue
+            v = BAR_LIT_FROM - min(BAR_MAX, 0.5 * steps[k] / max(1.0, redline))
+            for x0, x1, y0, y1 in _runs_to_rects(at_k):
+                sigs = sig_img[y0:y1, x0:x1][at_k[y0:y1, x0:x1]]
+                sigs = sigs[sigs >= 0]
+                if not len(sigs):
                     continue
-                for x0, x1, y0, y1 in _runs_to_rects(at):
-                    labs = label_img[level, y0:y1, x0:x1][at[y0:y1, x0:x1]]
-                    if not len(labs):
-                        continue
-                    j = int(np.bincount(labs).argmax())
-                    u = (bar_x + j * COLUMN + COLUMN / 2) / W
-                    rect = (float(ux0 + x0), float(ux0 + x1), float(uy0 + y0), float(uy0 + y1))
-                    p = patch_for((rect[0] + rect[1]) / 2, (rect[2] + rect[3]) / 2)
-                    if p is None:
-                        continue
-                    q = rect_quad(p, rect, (u, 0.0, u, 0.0), RPM, DIGIT_LIFT + level * LAYER_LIFT)
-                    q.rpm = steps[k]
-                    pieces += 1
+                s_idx = int(np.bincount(sigs).argmax())  # the rectangle's most common column
+                if s_idx not in col_of:
+                    continue
+                u = (bar_x + col_of[s_idx] * COLUMN + COLUMN / 2) / W
+                rect = (float(ux0 + x0), float(ux0 + x1), float(uy0 + y0), float(uy0 + y1))
+                p = patch_for((rect[0] + rect[1]) / 2, (rect[2] + rect[3]) / 2)
+                if p is None:
+                    continue
+                rect_quad(p, rect, (u, v, u, v), RPM, DIGIT_LIFT)
+                pieces += 1
         report["bar_pieces"] = pieces
-        report["bar_colours"] = len(palette)
     plan.report = report
     plan.needles = found
+    plan.patches = patches
     return plan
 
 
@@ -863,9 +909,6 @@ def preview(
     gx, gy = np.meshgrid(np.arange(w) + 0.5, np.arange(h) + 0.5)
     for q in plan.quads:
         uvs = q.uvs
-        if getattr(q, "rpm", None) is not None:
-            v = bar_v(q.rpm, redline)
-            uvs = [(u, v) for u, _ in uvs]
         off = digi.get(q.slot, 0.0)
         for tri in ((0, 1, 2), (0, 2, 3)):
             P = [((q.rt[i][0] - x0) * scale, (q.rt[i][1] - y0) * scale) for i in tri]
@@ -906,52 +949,3 @@ def preview(
     if label:
         ImageDraw.Draw(img).text((4, 4), f"{mph:.0f} mph {rpm:.0f} rpm gear {gear}", fill=(255, 255, 0))
     return img
-
-
-def retune(stream, interior, report: dict, redline: float) -> int:
-    """Re-light the bar pieces of a built interior for the redline the handling pass
-    set (VO3D p42; convert_interior used `report["redline"]`): each piece's v holds
-    BAR_LIT_FROM - rpm / redline x 0.5. Returns the vertices changed."""
-    from dsfforza.formats.vehicle_mesh import child, payload
-
-    old = float(report.get("redline") or 0.0)
-    if not old or abs(old - redline) < 0.5:
-        return 0
-    material = bytes.fromhex(report["material"])
-    drsp = child(child(interior, "MDXN"), "DRSP")
-    subs = []
-    for e in drsp.children:
-        if e.tag == "SBMC":
-            d = payload(stream, child(e, "SBBH"))
-            if d[8:16] == material:
-                subs.append((d[16:24], struct.unpack_from("<I", d, 32)[0], *struct.unpack_from("<II", d, 56)))
-    if not subs:
-        return 0
-    ixck = next(e for e in drsp.children if e.tag == "IXCK")
-    indices = payload(stream, child(ixck, "IXDT"))
-    changed = 0
-    for e in drsp.children:
-        if e.tag != "VXCK":
-            continue
-        hd = payload(stream, child(e, "VXHD"))
-        stride = struct.unpack_from("<I", hd, 12)[0]
-        mine = [s for s in subs if s[0] == hd[:8]]
-        if not mine:
-            continue
-        data = bytearray(payload(stream, child(e, "VXDT")))
-        seen = set()
-        for _, base, first, count in mine:
-            for k in struct.unpack_from(f"<{count}H", indices, first * 2):
-                v = base + k
-                if v in seen:
-                    continue
-                seen.add(v)
-                _, vv, gid, comp = struct.unpack_from("<4e", data, v * stride + 8)
-                if (int(gid), int(comp)) != RPM:
-                    continue
-                rpm = (BAR_LIT_FROM - vv) / 0.5 * old
-                struct.pack_into("<e", data, v * stride + 10, bar_v(rpm, redline))
-                changed += 1
-        child(e, "VXDT").payload = bytes(data)
-    report["redline"] = round(redline, 1)
-    return changed

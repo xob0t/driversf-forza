@@ -1174,7 +1174,7 @@ def _disc_mask(rays, eye, centre, normal, radius):
     return (t > 0) & ((off * off).sum(axis=1) < radius * radius)
 
 
-def pod_display(static: dict, eye, wheel: Wheel, dials: int, gauges: dict, version: int, sight_sections=None):
+def pod_display(static: dict, eye, wheel: Wheel, dials: int, gauges: dict, version: int, sight_sections=None, avoid=()):
     """A virtual display for `dials` (1 or 2) dials: the largest of POD_SIZES that
     fits, nearest the point just above the steering wheel's rim, in front of the
     dashboard and facing the eye. Every line of sight to it must reach the cabin
@@ -1206,6 +1206,9 @@ def pod_display(static: dict, eye, wheel: Wheel, dials: int, gauges: dict, versi
             )
             points.append(pool[t])
             flags.append(np.full(len(t), bad))
+    if avoid:  # displays drawn elsewhere (digital_displays): kept clear too
+        points.append(np.array(avoid, dtype=np.float64).reshape(-1, 3, 3))
+        flags.append(np.full(len(avoid), True))
     if not points:
         return None, None, {"virtual_display": "nothing in view"}
     points, flags = np.concatenate(points), np.concatenate(flags)
@@ -1356,7 +1359,15 @@ def _face_front(static: dict, d: Display) -> float:
 
 
 def virtual_gauges(
-    static: dict, gauges: dict, eye, forza, version: int, sight_sections=None, wheel: Wheel | None = None, atlas=None
+    static: dict,
+    gauges: dict,
+    eye,
+    forza,
+    version: int,
+    sight_sections=None,
+    wheel: Wheel | None = None,
+    atlas=None,
+    readout=(),
 ) -> tuple[list, dict, dict]:
     """Virtual dials for the speedometer and tachometer Forza has no needle
     for, on the largest blank display the driver can read (pick_display); else
@@ -1365,8 +1376,10 @@ def virtual_gauges(
     readout anywhere (on the steering wheel, small strips), on a virtual
     display on the dashboard (pod_display, needs `wheel`). Two side by side
     along the long side when both are missing (tachometer first: left or
-    top). Returns ([(needle, face, Gauge, GaugeCalibration)], report, extra
-    static sections (the virtual display's housing))."""
+    top). `readout`: the triangles of displays a dash scene is drawn on
+    (digital_displays), which count as a digital readout and stay clear. Returns
+    ([(needle, face, Gauge, GaugeCalibration)], report, extra static sections (the
+    virtual display's housing))."""
     missing = [f for f in ("tach", "speed") if f not in gauges]
     if not missing:
         return [], {}, {}
@@ -1376,7 +1389,7 @@ def virtual_gauges(
         if not fm.COCKPIT_EXTERIOR_SECTIONS.match(name)
         for sub in s.subsections
     )
-    if not digital:
+    if not digital and not readout:
         return [], {}, {}
     sight = GaugeSight(list(sight_sections if sight_sections is not None else static.values()), [])
     report: dict = {"missing": missing}
@@ -1399,7 +1412,9 @@ def virtual_gauges(
                     "front_mm": round(1000 * front, 1),
                 }
     if d is None and wheel is not None:
-        d, housing, why = pod_display(static, eye, wheel, len(missing), gauges, version, sight_sections)
+        d, housing, why = pod_display(
+            static, eye, wheel, len(missing), gauges, version, sight_sections, avoid=list(readout)
+        )
         report.update(why)
         if d is not None:
             extra[housing.name] = housing
@@ -1642,8 +1657,9 @@ def fit(
             atlas = None
         # Readouts the dash scene drives (digital_displays) need no virtual dial.
         have = {**gauges, **dict.fromkeys(provided, True)}
+        readout = [tri for p in getattr(digital_plan, "patches", []) for tri in p.points]
         dials, virtual_report, extra = virtual_gauges(
-            static, have, eye_point(wheel, offset), forza, version, drawn, wheel=wheel, atlas=atlas
+            static, have, eye_point(wheel, offset), forza, version, drawn, wheel=wheel, atlas=atlas, readout=readout
         )
         if dials and "face" in virtual_report:
             faces -= flatten_face(static, virtual_report["face"])
@@ -3235,9 +3251,7 @@ def convert_interior(
             if variant == "needle":  # in-game test: the Dials material
                 mat_uid = mats.needles
                 stride = layout[mats.needles][0]
-            # Bar pieces for a nominal redline; port_car relights them for the final VO3D
-            # p42 once the handling pass has set it (digital_dash.retune).
-            verts, tris = dd.vertices(plan, place, stride, dd.BUILD_REDLINE)
+            verts, tris = dd.vertices(plan, place, stride)
             if tris:
                 needle_subs.append(builder.add(mat_uid, verts, tris))
             digital_report = {
@@ -3245,7 +3259,6 @@ def convert_interior(
                 "quads": len(plan.quads),
                 "texture": [plan.width, plan.height],
                 "material": mat_uid.hex(),
-                "redline": dd.BUILD_REDLINE,
             }
         forza2dsf.rebuild_drsp(stream, drsp, builder, keep_host_materials=True, templates=digital_templates)
         part_lods = {mats.cabin_part: {INTERIOR_MASK: cabin}}

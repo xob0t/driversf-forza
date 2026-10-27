@@ -770,12 +770,6 @@ def build_car(
             report["handling"] = apply_handling(
                 stream, clones[0], spool_id, car.name, gamedb, log, host=host, mode=args.handling
             )
-        digital = report.get("cockpit", {}).get("interior", {}).get("digital_displays")
-        if digital and digital.get("material"):  # bar pieces lit for the final redline (VO3D p42)
-            from dsfforza.convert import digital_dash
-
-            p42 = handling.VO3D.parse(forza2dsf.payload(stream, child(child(clones[0], "NONR"), "VO3D"))).get(42)
-            digital["retuned"] = digital_dash.retune(stream, clones[1], digital, p42)
         if not getattr(args, "no_settle", False):  # on the final VO3D
             report["placement"]["settle"] = forza2dsf.settle_wheels(stream, clones[0], log)
         forza_report = dict(forza_sound_report or {"ok": False, "reason": "disabled (--no-forza-sound)"})
