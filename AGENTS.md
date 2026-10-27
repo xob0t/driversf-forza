@@ -17,10 +17,18 @@ Research notes are in `research/` (read the ones for your area first).
   worktree is removed, run
   `.\tools\worktree-setup.ps1 -Unlink`: some delete tools follow junctions
   and would empty the main checkout's folders.
-- Commit at checkpoints with clear messages. When the task is done, push the
-  branch and open a PR against `master` with `gh pr create`: what changed,
-  why, how it was verified (run folders, screenshots), what is open. Report
-  the PR URL.
+- Never write to the main checkout or its `out\` (builds, installs and
+  releases run there); write only under your worktree. Read-only use of an
+  existing build there (e.g. `out\build` as a "before") is fine.
+- Commit at checkpoints with clear messages. When the task is done, rebase
+  onto `origin/master` (other agents merge while you work), rerun the tests,
+  push the branch and open a PR against `master` with `gh pr create`: what
+  changed, why, how it was verified (run folders, screenshots), what is open.
+  CI runs the offline tests on the PR (`.github/workflows/tests.yml`).
+- Your final report: the PR URL; the cause; what changed and on how many
+  cars (from a roster survey, before and after); how it was verified (run
+  folders); costs and what is left open; the issues you filed or commented
+  on; the files you touched outside your task's area.
 - No AI attribution in commits or PRs: no `Co-authored-by:` trailer for an
   assistant, no "Generated with ..." lines. PRs are squash-merged and the
   trailers end up on `master`.
@@ -72,5 +80,37 @@ Research notes are in `research/` (read the ones for your area first).
   VMs is free, each with its own mutex). Host runs
   (`-OnHost`) take over the screen; use them only when the user allows.
   While `out\wsb-pause` exists, host runs wait.
+- The two VMs are shared by every agent, so series queue (first come, first
+  served). Make each run count:
+  - put several cars in one series (`-ProbeIds '1,2,3'`) and the before and
+    after archives in one call (`-Archives before.sp,after.sp`);
+  - with more than two or three probe IDs or extra `-Views`, use
+    `-ShotSeconds 3` and a longer `-WaitSeconds` (300 to 600), or the probe
+    ends before it reaches the last cars;
+  - a run that fails before the world loads (no desktop session, a hang on
+    the way to Story mode, a slow load on a busy host) is usually the VM,
+    not your change: rerun it once, on the other VM if you can, before
+    looking for a cause in your build.
+- Full-roster builds take over an hour and slow everyone's VM runs. Survey
+  offline where you can, build only the cars your change affects for the
+  in-game check, and keep `--jobs` at 4 or less while other agents run.
 - Never modify the installed game (`DSF_GAME_DIR`) except through
   `tools\install.ps1` when asked.
+
+## Coordinating agents
+
+For the session that hands tasks to worker agents (`.claude/agents/dsff-worker.md`).
+
+- At most four workers at once. More collide on the two VMs and the CPU, and
+  a usage limit stops them all together.
+- Hand out work by code area, not by symptom: one worker owns a module
+  (`convert/lights.py`, `convert/cockpit.py`, `tools/asi/src/mod_*.cpp`, ...)
+  until its PR merges. A task that needs a module another worker owns waits,
+  or goes to that worker. Name the areas other workers own in each brief.
+- The brief holds the task only (goal, cars, evidence, what's ruled out,
+  where to start). The standing rules are this file and the agent definition.
+- Merge with `.\tools\merge-pr.ps1 <number>` (unlinks the worktree, squash-
+  merges, cleans up, and pulls master unless a build runs from the main
+  checkout). After a merge, tell the workers whose areas it touched to rebase.
+- Releases: freeze on a release branch first (`docs/DEVELOPMENT.md`,
+  "Releases"); master keeps taking PRs while the release is verified.
