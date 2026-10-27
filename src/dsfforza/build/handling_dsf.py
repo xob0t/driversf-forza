@@ -358,14 +358,23 @@ RULES: dict[int, str] = {
     30: "CY",
     345: "W",
     505: "W",
+    # Steering lock (rule Z: Data_Car.SteerMaxAngle): the body's limit, not a feel value.
+    # The port has Forza's body and wheels, and Forza leaves room in the arches for its
+    # own lock only; the 72 cars whose host or steering donor had a larger one (40 or 45
+    # deg against 30 or 36) turned their tyres into the arches (issue #54). The engine
+    # steers the front wheels by p298 x the input at walking pace, blends towards the
+    # speed-sensitive angle (p379 x a tyre term) by 1 + p470 m/s and clamps at p298; the
+    # steering wheel and hands turn by angle / p298 (FUN_008AF790), the same at any lock
+    # (research/handling.md, "Steering lock").
+    298: "Z",
 }
 # CoG height (rule CY): p30 = hub height + Forza CMHeight - drive tyre radius + 0.052 m;
 # on the 48 pairs |error| 0.030 m against 0.054 for the fleet median offset. The CoG is
 # the strongest predictor of handbrake rotation in game (with p32 and the yaw inertia).
 COG_HEIGHT_OFFSET = 0.052
 # On a host of the car's own model the stock VO3D is Reflections' version of the car:
-# keep it, only follow the hubs (wheelbase, CoG offset scaled with it).
-SAME_MODEL_RULES: dict[int, str] = {361: "GH", 32: "CH"}
+# keep it, only follow the hubs (wheelbase, CoG offset scaled with it) and Forza's lock.
+SAME_MODEL_RULES: dict[int, str] = {361: "GH", 32: "CH", 298: "Z"}
 
 
 # p18 from peak torque AND power (Forza curve, Nm and kW): fitted on the 45 pairs (the
@@ -794,7 +803,9 @@ def apply(
             # Any numeric key: in-game calibration (p18, p345) or a hand-set value from
             # driving feedback ("1": 3000, ...); "scale": {"369": 1.1} multiplies.
             for key, val in entry.items():
-                if key.isdigit():
+                # p298 stays Forza's lock (rule Z, the arches' limit) under a hand-set
+                # steering set (PAG_Huayra_12@232: the host's set, with its 40 deg)
+                if key.isdigit() and not (int(key) == 298 and 298 in new):
                     out[int(key)] = float(val)
                     tuned[int(key)] = out[int(key)]
             for key, factor in (entry.get("scale") or {}).items():

@@ -645,6 +645,10 @@ def build_vo3d(
     # Geometry. forza2dsf keeps the host's axle midpoint and moves the hubs to the
     # Forza wheelbase, so the CoG goes there too.
     put(392, car.wheelbase, "Forza wheelbase (= UPVH hub wheelbase in stock data)")
+    # Steering lock: the front wheels turn as far as Forza turns them and no further,
+    # so the tyre stays where Forza's body leaves room for it (research/handling.md,
+    # "Steering lock").
+    put(298, car.steer_max_angle, "Forza SteerMaxAngle")
     front = _clamp(car.front_weight, FRONT_WEIGHT_CLAMP)
     put(32, host.axle_mid + (front - 0.5) * car.wheelbase, f"CoG at {front:.2f} front weight")
 
