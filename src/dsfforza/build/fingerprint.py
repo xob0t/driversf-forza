@@ -212,6 +212,26 @@ def package_hashes() -> dict[str, str]:
     }
 
 
+def tree_digest(tree: dict[str, str]) -> str:
+    """One digest of package_hashes()."""
+    return hashlib.sha256(json.dumps(tree, sort_keys=True).encode()).hexdigest()
+
+
+def combine(a: dict, b: dict) -> dict:
+    """One fingerprint of two made of the same sources (both checked unchanged): the
+    union of their inputs and code; complete when both are. The job is a's."""
+    code = {m: dict(u) for m, u in a.get("code", {}).items()}
+    for module, units in b.get("code", {}).items():
+        code.setdefault(module, {}).update(units)
+    return {
+        **a,
+        "complete": bool(a.get("complete")) and bool(b.get("complete")),
+        "files": dict(sorted({**a.get("files", {}), **b.get("files", {})}.items())),
+        "dirs": dict(sorted({**a.get("dirs", {}), **b.get("dirs", {})}.items())),
+        "code": {m: dict(sorted(code[m].items())) for m in sorted(code)},
+    }
+
+
 # --- recording in a worker ----------------------------------------------------------------
 
 _SKIP_PREFIXES = tuple(
@@ -269,9 +289,9 @@ class Recorder:
             sys.monitoring.free_tool_id(self.tool)
             self.tool = None
 
-    def _inputs(self) -> tuple[set[str], set[str]]:
+    def _inputs(self, opened=None, listed=None) -> tuple[set[str], set[str]]:
         files, dirs = set(), set()
-        for path, mode, flags in self.opened:
+        for path, mode, flags in self.opened if opened is None else opened:
             if isinstance(path, int) or path is None:
                 continue  # an open file descriptor: its path was recorded when it was opened
             if mode == "sqlite":
@@ -289,7 +309,7 @@ class Recorder:
                 files.add(norm(path))
             except (TypeError, ValueError, OSError):
                 continue
-        for path in self.listed:
+        for path in self.listed if listed is None else listed:
             if isinstance(path, int):
                 continue
             try:
@@ -307,24 +327,26 @@ class Recorder:
 
         return {p for p in files if keep(p)}, {p for p in dirs if keep(p)}
 
-    def finish(self, job: dict) -> dict:
-        """The fingerprint (a JSON-able dict) of everything recorded since start()."""
-        self.stop()
-        files, dirs = self._inputs()
-        modules = [sys.modules[k] for k in list(sys.modules) if k.startswith("dsfforza")]
+    def _wanted(self, units: CodeUnits, codes=None) -> tuple[dict[str, set[str]], bool]:
+        """({module: the units the recorded code depends on}, every module's source read)."""
+        # A package module run as a script (python -m dsfforza.formats.upvh) is __main__.
+        live_of = {}
+        for key, m in list(sys.modules.items()):
+            if (key.startswith("dsfforza") or key == "__main__") and getattr(m, "__file__", None):
+                name = module_name(m.__file__)
+                if name is not None and name != __name__:
+                    live_of.setdefault(name, m)
         names: set[str] = set()
         executed: dict[str, set[str]] = {}
-        for code in self.codes:
+        for code in self.codes if codes is None else codes:
             module = module_name(code.co_filename)
             if module is None or module == __name__:  # the recorder itself shapes no output
                 continue
             executed.setdefault(module, set()).add(unit_of(code.co_qualname))
             names.update(code.co_names)
-        units = CodeUnits()
-        code_fp: dict[str, dict[str, str]] = {}
-        loaded = sorted({module_name(m.__file__) for m in modules if getattr(m, "__file__", None)} - {None, __name__})
-        complete = package_hashes() == self.tree
-        for module in loaded:
+        out: dict[str, set[str]] = {}
+        complete = True
+        for module in sorted(live_of):
             table = units.get(module)
             if table is None:
                 complete = False
@@ -333,14 +355,61 @@ class Recorder:
             wanted |= {u for u in table if u.startswith("=") and u[1:] in names}
             # A class the car's code names: its body (fields, defaults) ran at import, maybe
             # before recording started. A function merely named counts only if it ran.
-            live = sys.modules.get(module)
+            live = live_of[module]
             wanted |= {
                 u
                 for u in table
                 if not u.startswith("=") and "." not in u and u in names and isinstance(getattr(live, u, None), type)
             }
             # A def inside a top-level if/try block is part of the module's top level.
-            code_fp[module] = {unit: table[unit] for unit in sorted(wanted) if unit in table}
+            out[module] = {unit for unit in wanted if unit in table}
+        return out, complete
+
+    def drain(self) -> dict:
+        """What this process recorded since start() or the last drain(), JSON-able: a
+        subprocess's share of a fingerprint its parent makes (finish(extra=...)). The
+        recording goes on; each code object is reported once."""
+        # What was recorded so far (this method's own reads and code go on being recorded).
+        opened, listed, codes = list(self.opened), list(self.listed), set(self.codes)
+        del self.opened[: len(opened)]
+        del self.listed[: len(listed)]
+        self.codes -= codes
+        files, dirs = self._inputs(opened, listed)
+        wanted, complete = self._wanted(CodeUnits(), codes)
+        return {
+            "tree": tree_digest(self.tree or {}),
+            "complete": complete and package_hashes() == self.tree,
+            "files": sorted(files),
+            "dirs": sorted(dirs),
+            "wanted": {m: sorted(u) for m, u in wanted.items()},
+        }
+
+    def finish(self, job: dict, extra: list[dict] = (), skip: tuple[str, ...] = ()) -> dict:
+        """The fingerprint (a JSON-able dict) of everything recorded since start(), plus
+        `extra`: drain() records of subprocesses that ran with the same sources. `skip`:
+        path prefixes (norm) whose files and folders are not inputs."""
+        self.stop()
+        files, dirs = self._inputs()
+        units = CodeUnits()
+        wanted, complete = self._wanted(units)
+        complete = complete and package_hashes() == self.tree
+        tree = tree_digest(self.tree or {})
+        for part in extra:
+            complete = complete and part.get("complete", False) and part.get("tree") == tree
+            files |= set(part.get("files", []))
+            dirs |= set(part.get("dirs", []))
+            for module, names in part.get("wanted", {}).items():
+                wanted.setdefault(module, set()).update(names)
+        if skip:
+            files = {p for p in files if not p.startswith(skip)}
+            dirs = {p for p in dirs if not p.startswith(skip)}
+        code_fp: dict[str, dict[str, str]] = {}
+        for module in sorted(wanted):
+            table = units.get(module)
+            if table is None:
+                complete = False
+                continue
+            code_fp[module] = {unit: table[unit] for unit in sorted(wanted[module]) if unit in table}
         return {
             "format": FORMAT,
             "complete": complete,

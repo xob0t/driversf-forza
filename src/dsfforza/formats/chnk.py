@@ -138,24 +138,31 @@ def _align(value: int, alignment: int) -> int:
     return -(-value // alignment) * alignment
 
 
-def entry_size(entry: Entry) -> int:
+def entry_size(entry: Entry, memo: dict | None = None) -> int:
     if entry.children is not None:
-        return layout(entry.children)[0]
+        return layout(entry.children, memo)[0]
     return len(entry.payload) if entry.payload is not None else entry.size
 
 
-def layout(entries: list[Entry]) -> tuple[int, list[int], list[int]]:
-    """Return (total_size, payload offsets, payload sizes) for a CHNK holding entries."""
+def layout(entries: list[Entry], memo: dict | None = None) -> tuple[int, list[int], list[int]]:
+    """Return (total_size, payload offsets, payload sizes) for a CHNK holding entries.
+    `memo` (id of a children list -> its layout, for one write_chunk call while the
+    lists don't change): each nested chunk is laid out once, not once per level above it."""
+    if memo is not None and id(entries) in memo:
+        return memo[id(entries)]
     position = HEADER.size + ENTRY.size * len(entries)
     offsets, sizes = [], []
     for entry in entries:
         position = _align(position, 1 << entry.align_log2)
-        size = entry_size(entry)
+        size = entry_size(entry, memo)
         offsets.append(position)
         sizes.append(size)
         position = _align(position + _align(size, 4) + len(entry.name_raw), 1 << entry.align_log2)
     largest = max((entry.align_log2 for entry in entries), default=0)
-    return _align(position, 1 << largest), offsets, sizes
+    out = _align(position, 1 << largest), offsets, sizes
+    if memo is not None:
+        memo[id(entries)] = out
+    return out
 
 
 def _fill(out: BinaryIO, start: int, target: int) -> None:
@@ -164,13 +171,17 @@ def _fill(out: BinaryIO, start: int, target: int) -> None:
     out.write(FILL * (target - start))
 
 
-def write_chunk(out: BinaryIO, source: BinaryIO | None, entries: list[Entry], version: int = 3) -> int:
+def write_chunk(
+    out: BinaryIO, source: BinaryIO | None, entries: list[Entry], version: int = 3, _memo: dict | None = None
+) -> int:
     """Write a CHNK holding ``entries`` at the current position of ``out``.
 
     Leaves without a ``payload`` are copied from ``source`` at their original
     offset. Returns the number of bytes written.
     """
-    total, offsets, sizes = layout(entries)
+    if _memo is None:
+        _memo = {}
+    total, offsets, sizes = layout(entries, _memo)
     out.write(HEADER.pack(MAGIC, total, len(entries), version))
     for entry, offset, size in zip(entries, offsets, sizes):
         out.write(
@@ -188,7 +199,7 @@ def write_chunk(out: BinaryIO, source: BinaryIO | None, entries: list[Entry], ve
     for entry, offset, size in zip(entries, offsets, sizes):
         _fill(out, position, offset)
         if entry.children is not None:
-            write_chunk(out, source, entry.children, entry.chunk_version)
+            write_chunk(out, source, entry.children, entry.chunk_version, _memo)
         elif entry.payload is not None:
             out.write(entry.payload)
         else:
