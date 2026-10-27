@@ -317,7 +317,9 @@ def uid_owners(stream, root_entries: list[Entry]) -> dict[bytes, list[tuple[int,
     return out
 
 
-def foreign_uids(stream, root_entries: list[Entry], kinds: dict[int, Entry], owners: dict | None = None) -> list[str]:
+def foreign_uids(
+    stream, root_entries: list[Entry], kinds: dict[int, Entry], owners: dict | None = None, facts: dict | None = None
+) -> list[str]:
     """Cross-vehicle UID problems for one vehicle (its three VEHC entries):
 
     - a UID it references that another vehicle defines but it doesn't (the
@@ -328,7 +330,10 @@ def foreign_uids(stream, root_entries: list[Entry], kinds: dict[int, Entry], own
     UIDs no vehicle defines (the engine's shared materials) are fine. Stock
     vehicles never share part or resource UIDs; clones that kept the host's
     part UIDs turned into the host in game (run 20261022-024010). `owners`:
-    uid_owners of the archive (made here when not given)."""
+    uid_owners of the archive (made here when not given). `facts` (a dict) gets
+    "refs_ext", the UIDs the vehicle references but doesn't define, and "defined"
+    (hex): what another vehicle's change must not touch for this result to hold
+    (src/dsfforza/build/pack_reuse.py)."""
     mine = {id(e) for e in kinds.values()}
     own_res, own_parts = set(), set()
     for e in kinds.values():
@@ -338,6 +343,12 @@ def foreign_uids(stream, root_entries: list[Entry], kinds: dict[int, Entry], own
     if owners is None:
         owners = uid_owners(stream, root_entries)
     refs = references(stream, kinds)
+    if facts is not None:
+        none = (bytes(8), NONE_UID)
+        facts["refs_ext"] = sorted(
+            {u.hex() for _, u in refs if u not in own_res and u not in own_parts and u not in none}
+        )
+        facts["defined"] = sorted(u.hex() for u in own_res | own_parts)
     # UID -> the first other vehicle entry (archive order) that defines it.
     others: dict[bytes, str] = {}
     for u in {u for _, u in refs} | own_res | own_parts:
@@ -477,9 +488,13 @@ class LintContext:
             self._stock[0].close()
 
 
-def lint_vehicle(ctx: LintContext, spool_id: int | None, vehc: int | None, args, emit=print) -> int:
+def lint_vehicle(
+    ctx: LintContext, spool_id: int | None, vehc: int | None, args, emit=print, facts: dict | None = None
+) -> int:
     """The lint of one vehicle (args: source, stock, verbose, allow_shared, no_sound, as
-    the lint command takes them); emit(line) per reported check. Returns the problem count."""
+    the lint command takes them); emit(line) per reported check. Returns the problem count.
+    `facts` (a dict) gets what ties the result to other vehicles: foreign_uids' "refs_ext"
+    and "defined", and "near", the spool IDs of the other banks sharing a sound ID."""
     problems = 0
 
     def report(ok: bool, message: str) -> None:
@@ -494,7 +509,7 @@ def lint_vehicle(ctx: LintContext, spool_id: int | None, vehc: int | None, args,
     h = parse(payload(stream, child(child(full, "NONR"), "UPVH")))
     parts = {kind: modl_part_uids(payload(stream, child(child(e, "NONR"), "MODL"))) for kind, e in kinds.items()}
     uids = {kind: drsp_uids(stream, e) for kind, e in kinds.items()}
-    cross = None if args.allow_shared else foreign_uids(stream, root_entries, kinds, ctx.owners)
+    cross = None if args.allow_shared else foreign_uids(stream, root_entries, kinds, ctx.owners, facts)
     modls = {kind: payload(stream, child(child(e, "NONR"), "MODL")) for kind, e in kinds.items()}
     # Converted glass must sit in its window's slot of the shared glass
     # texture, or the damage states draw cracks and holes across the window.
@@ -524,6 +539,8 @@ def lint_vehicle(ctx: LintContext, spool_id: int | None, vehc: int | None, args,
         )
         reserved = engine_sound.stock_index(args.stock)["reserved"] if args.stock else None
         sound_rows = engine_sound.lint(stream, root_entries, spool, reserved, cache=ctx.sound)
+        if facts is not None:
+            facts["near"] = ctx.sound.get("near", {}).get(spool, [])
 
     report(True, f"UPVH layout parses ({len(h.records)} records)")
     if cross is not None:
@@ -641,14 +658,20 @@ def cmd_lint_many(args: argparse.Namespace) -> None:
                     }
                 )
                 lines: list[str] = []
+                facts = {} if args.facts else None
                 try:
-                    problems = lint_vehicle(ctx, int(spool_id), None, one, emit=lines.append)
+                    problems = lint_vehicle(ctx, int(spool_id), None, one, emit=lines.append, facts=facts)
                     lines.append(f"{problems} problem(s)")
                 except Exception:  # this car's lint crashed; the others still run
                     problems = 1
                     lines.append(traceback.format_exc().rstrip())
                 failed += bool(problems)
-                print(json.dumps({"id": int(spool_id), "ok": not problems, "text": "\n".join(lines)}), flush=True)
+                row = {"id": int(spool_id), "ok": not problems, "text": "\n".join(lines)}
+                if facts is not None:
+                    if int(spool_id) not in set(args.defined or []):
+                        facts.pop("defined", None)
+                    row["facts"] = facts
+                print(json.dumps(row), flush=True)
         finally:
             ctx.close()
     if failed:
@@ -703,9 +726,33 @@ def main(argv: list[str] | None = None) -> None:
     many.add_argument(
         "--plain-glass", type=int, action="append", metavar="ID", help="as lint --plain-glass, for this car"
     )
+    many.add_argument(
+        "--facts",
+        action="store_true",
+        help="also print each car's ties to other vehicles (lint_vehicle's facts; pack_reuse.py)",
+    )
+    many.add_argument("--defined", type=int, action="append", metavar="ID", help="with --facts: and its defined UIDs")
+    many.add_argument(
+        "--record",
+        type=Path,
+        help="write the files read and the code run to this JSON file (a pack fingerprint's share: "
+        "src/dsfforza/build/pack_reuse.py)",
+    )
     args = parser.parse_args(argv)
     if args.command == "lint-many":
-        cmd_lint_many(args)
+        if args.record is None:
+            cmd_lint_many(args)
+            return
+        import json
+
+        from dsfforza.build import fingerprint
+
+        recorder = fingerprint.Recorder().start()
+        try:
+            cmd_lint_many(args)
+        finally:
+            recorder.stop()
+            args.record.write_text(json.dumps(recorder.drain()), encoding="utf-8")
         return
     if args.id is None and args.vehc is None:
         parser.error("give a VEHC index or --id")

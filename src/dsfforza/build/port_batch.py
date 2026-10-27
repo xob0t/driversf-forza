@@ -67,7 +67,9 @@ gamedb.slt) is made by src/dsfforza/game/game_data.py prepare when missing.
 from __future__ import annotations
 
 import argparse
+import bisect
 import contextlib
+import copy
 import ctypes
 import datetime
 import hashlib
@@ -785,6 +787,7 @@ class MultiStream:
 
     def __init__(self, first: Path):
         self.parts: list[tuple[int, int, object]] = []
+        self.starts: list[int] = []  # each part's start, ascending (bisect: a merge reads millions of leaves)
         self.size = 0
         self.pos = 0
         self.add(first)
@@ -794,6 +797,7 @@ class MultiStream:
         size = path.stat().st_size
         base = self.size
         self.parts.append((base, base + size, handle))
+        self.starts.append(base)
         self.size += -(-size // 0x1000) * 0x1000
         return base
 
@@ -805,15 +809,18 @@ class MultiStream:
         return self.pos
 
     def read(self, n: int = -1) -> bytes:
-        for start, end, handle in self.parts:
-            if start <= self.pos < end:
-                if n < 0:
-                    n = end - self.pos
-                handle.seek(self.pos - start)
-                data = handle.read(min(n, end - self.pos))
-                self.pos += len(data)
-                return data
-        return b""
+        k = bisect.bisect_right(self.starts, self.pos) - 1
+        if k < 0:
+            return b""
+        start, end, handle = self.parts[k]
+        if not self.pos < end:
+            return b""
+        if n < 0:
+            n = end - self.pos
+        handle.seek(self.pos - start)
+        data = handle.read(min(n, end - self.pos))
+        self.pos += len(data)
+        return data
 
     def close(self) -> None:
         for _, _, handle in self.parts:
@@ -947,32 +954,62 @@ def plain_glass(car: dict) -> bool:
     return bool(windows) and not any("crack_m" in w for w in windows.values())
 
 
-def lint_all(out: Path, dsf: Path, cars: list[dict], parallel: int, log=print) -> None:
-    """upvh lint for every car: `parallel` processes of `upvh lint-many`, each over a run
-    of the cars, so the archive and its cross-vehicle tables are read once per process
-    instead of once per car (at hundreds of cars a single lint reads the whole archive
-    for seconds). c["lint"] is "ok" or what `upvh lint --id` prints for the car."""
+LINT_GROUP = 64  # cars per lint process at least: each reads the whole archive's tables first (~20 s)
+
+
+def lint_all(
+    out: Path,
+    dsf: Path,
+    cars: list[dict],
+    parallel: int,
+    log=print,
+    facts: bool = False,
+    defined: set[int] | frozenset = frozenset(),
+    records: list | None = None,
+    record_dir: Path | None = None,
+) -> dict[str, dict]:
+    """upvh lint for every car: up to `parallel` processes of `upvh lint-many`, each over
+    a run of the cars (LINT_GROUP or more), so the archive and its cross-vehicle tables
+    are read once per process instead of once per car (at hundreds of cars a single lint
+    reads the whole archive for seconds). c["lint"] is "ok" or what `upvh lint --id`
+    prints for the car. With `facts`: returns {media: upvh.lint_vehicle's facts} (with
+    the defined UIDs of the `defined` spool IDs); with `records` (a list) and
+    `record_dir`: each process records what it read and ran (lint-many --record) and
+    the records are appended (src/dsfforza/build/pack_reuse.py)."""
     import json
 
     flags = gentle.creation_flags(BELOW_NORMAL if os.name == "nt" else 0)
-    size = -(-len(cars) // max(1, parallel)) if cars else 1
+    processes = max(1, min(parallel, -(-len(cars) // LINT_GROUP)))
+    size = -(-len(cars) // processes) if cars else 1
     groups = [cars[k : k + size] for k in range(0, len(cars), size)]
     procs = []
-    for group in groups:
+    for n, group in enumerate(groups):
         command = [sys.executable, "-m", "dsfforza.formats.upvh", "lint-many", str(out), "--stock", str(dsf)]
         for c in group:
             command += ["--car", f"{c['spool_id']}:{c['host']}"]
             if plain_glass(c):
                 command += ["--plain-glass", str(c["spool_id"])]
+            if facts and c["spool_id"] in defined:
+                command += ["--defined", str(c["spool_id"])]
+        if facts:
+            command += ["--facts"]
+        record = None
+        if records is not None and record_dir is not None:
+            record_dir.mkdir(parents=True, exist_ok=True)
+            record = record_dir / f"lint-record-{n}.json"
+            record.unlink(missing_ok=True)
+            command += ["--record", str(record)]
         procs.append(
             (
                 group,
+                record,
                 subprocess.Popen(
                     command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=flags
                 ),
             )
         )
-    for group, proc in procs:
+    found: dict[str, dict] = {}
+    for group, record, proc in procs:
         text, _ = proc.communicate()
         rows = {}
         for line in text.splitlines():
@@ -988,7 +1025,16 @@ def lint_all(out: Path, dsf: Path, cars: list[dict], parallel: int, log=print) -
                 c["lint"] = f"lint did not run (upvh lint-many exit code {proc.returncode}): {text.strip()[-1500:]}"
             else:
                 c["lint"] = "ok" if row["ok"] else row["text"].strip()
+                if "facts" in row:
+                    found[c["media"]] = row["facts"]
             log(f"  lint {c['spool_id']} {c['media']}: {'ok' if c['lint'] == 'ok' else 'FAILED'}")
+        if record is not None:
+            try:
+                records.append(json.loads(record.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                records.append({"complete": False})  # the pack record won't be reused
+            record.unlink(missing_ok=True)
+    return found
 
 
 # --- commands ---------------------------------------------------------------------------------
@@ -1428,7 +1474,18 @@ def cmd_build(args) -> None:
     ok = [results[p.media] for p in picks if results.get(p.media, {}).get("ok")]
     failed = [results[p.media] for p in picks if not results.get(p.media, {}).get("ok")]
     failed += [{"media": p.media, "ok": False, "cause": "not selected", "error": "; ".join(p.notes)} for p in skipped]
-    finish(args, dsf, out_dir, work, ok, failed, port_args, port_options, timings, started, results)
+    pack = None
+    if not getattr(args, "no_pack_reuse", False):
+        from dsfforza.build import pack_reuse
+
+        # This folder's own earlier pack (--resume, a rerun) and the --reuse builds'.
+        settings = pack_reuse.settings_of(args, dsf, root_limit, gui_isos(args))
+        pack = pack_reuse.PackReuse(out_dir, reuse.sources if reuse is not None else [], settings)
+    try:
+        finish(args, dsf, out_dir, work, ok, failed, port_args, port_options, timings, started, results, pack)
+    finally:
+        if pack is not None and pack.recorder is not None:
+            pack.recorder.stop()
 
 
 def finish(
@@ -1443,28 +1500,75 @@ def finish(
     timings: dict,
     started: float,
     results: dict,
+    pack=None,
 ) -> None:
-    """Merge, lint, manifest, Lua, GUI assets and the report."""
+    """Merge, lint, manifest, Lua, GUI assets and the report. `pack`: a
+    pack_reuse.PackReuse, to take from earlier builds what didn't change (the whole
+    pack, lint results, garage pictures) and record this pack for later ones."""
+    from dsfforza.build import pack_reuse
+
     archive = out_dir / "dngvehicles.sp"
     progress = getattr(args, "progress", None)
     if not ok:
         write_report(out_dir, archive, [], failed, timings, started, args)
         raise SystemExit("no car was built")
-    t = time.time()
-    print(f"merging {len(ok)} cars into {archive}")
-    emit(progress, "merge", cars=len(ok))
-    cars_out, merge_failed = merge(dsf, archive, ok, work, root_limit=root_limit_of(args))
-    failed += merge_failed
-    timings["merge"] = round(time.time() - t, 1)
-    for f in merge_failed:
-        emit(progress, "car_failed", media=f["media"], cause=f.get("cause"), error=f.get("error"))
-    if not cars_out:
-        write_report(out_dir, archive, [], failed, timings, started, args, results)
-        raise SystemExit("no car could be merged")
-    t = time.time()
-    emit(progress, "lint", cars=len(cars_out))
-    lint_all(archive, dsf, cars_out, max(1, min(args.jobs, 4)))
-    timings["lint"] = round(time.time() - t, 1)
+    verify = copy.deepcopy((ok, failed)) if pack is not None and getattr(args, "verify_pack", False) else None
+    reused = None
+    if pack is not None:
+        t = time.time()
+        pack.prepare(ok, work)
+        earlier = pack.whole()
+        timings["pack_check"] = round(time.time() - t, 1)
+        if earlier is not None:
+            print(f"pack: the same cars, settings, inputs and code as {earlier.folder}'s pack; reusing it")
+            emit(progress, "pack_reused", source=str(earlier.folder), cars=len(ok))
+            t = time.time()
+            reused = pack.take_whole(earlier)
+            timings["pack_reuse"] = round(time.time() - t, 1)
+        else:
+            pack.start_recording()
+    if reused is not None:
+        cars_out, merge_failed = reused
+        failed += merge_failed
+        for f in merge_failed:
+            emit(progress, "car_failed", media=f["media"], cause=f.get("cause"), error=f.get("error"))
+    else:
+        t = time.time()
+        print(f"merging {len(ok)} cars into {archive}")
+        emit(progress, "merge", cars=len(ok))
+        cars_out, merge_failed = merge(dsf, archive, ok, work, root_limit=root_limit_of(args))
+        failed += merge_failed
+        timings["merge"] = round(time.time() - t, 1)
+        for f in merge_failed:
+            emit(progress, "car_failed", media=f["media"], cause=f.get("cause"), error=f.get("error"))
+        if not cars_out:
+            if pack is not None:
+                pack.forget()
+            write_report(out_dir, archive, [], failed, timings, started, args, results)
+            raise SystemExit("no car could be merged")
+        t = time.time()
+        parallel = max(1, min(args.jobs, 4))
+        if pack is None:
+            emit(progress, "lint", cars=len(cars_out), total=len(cars_out))
+            lint_all(archive, dsf, cars_out, parallel)
+        else:
+
+            def run(cars: list[dict], defined: set[int]) -> dict:
+                print(f"lint: {len(cars)} of {len(cars_out)} cars")
+                emit(progress, "lint", cars=len(cars), total=len(cars_out))
+                return lint_all(
+                    archive,
+                    dsf,
+                    cars,
+                    parallel,
+                    facts=True,
+                    defined=defined,
+                    records=pack.records,
+                    record_dir=out_dir / pack_reuse.FOLDER,
+                )
+
+            pack.lint(cars_out, run)
+        timings["lint"] = round(time.time() - t, 1)
     lint_failed = [c for c in cars_out if c.get("lint") != "ok"]
     if lint_failed:
         print(f"{len(lint_failed)} car(s) failed lint; they stay in the archive but are listed as failed")
@@ -1494,7 +1598,7 @@ def finish(
     manifest_path = out_dir / "dngvehicles.json"
     manifest_path.write_text(json.dumps(manifest, indent=1, default=str) + "\n", encoding="utf-8")
     (out_dir / "dngvehicles.lua").write_text(port_car.lua_snippet(manifest), encoding="utf-8", newline="\n")
-    if args.gui:
+    if args.gui and reused is None:
         t = time.time()
         from dsfforza.game import gui_assets
 
@@ -1516,7 +1620,9 @@ def finish(
                 root_limit=getattr(args, "root_limit", None) or ENTRY_LIMIT,
                 jobs=max(1, args.jobs),
                 # The disc images by title (logos, names): any file names, FH1 not needed.
-                isos=[Path(i) for i in (getattr(args, "iso", None) or forza_roster.default_images())],
+                isos=gui_isos(args),
+                cache=pack.picture_cache() if pack is not None else None,
+                record=pack.records if pack is not None else None,
             )
         except Exception as error:  # the archive is still usable without pictures and badges
             print(f"gui assets failed: {type(error).__name__}: {error}")
@@ -1534,11 +1640,119 @@ def finish(
                 except OSError as move_error:
                     print(f"warning: {gui} doesn't match this archive and could not be moved: {move_error}")
         timings["gui"] = round(time.time() - t, 1)
+    if pack is not None:
+        t = time.time()
+        pack.save(
+            merge_failed,
+            pack_outputs(out_dir, cars_out, args.gui) + pack.image_outputs(),
+            timings.get("gui_error"),
+        )
+        timings["pack_record"] = round(time.time() - t, 1)
+        timings["pack_reuse_stats"] = pack.stats
+    if verify is not None:
+        t = time.time()
+        verify_pack(args, dsf, out_dir, work, verify[0], verify[1], port_args, port_options, results)
+        timings["verify_pack"] = round(time.time() - t, 1)
     write_report(out_dir, archive, cars_out, failed, timings, started, args, results)
     emit(progress, "done", report=str(out_dir / "batch-report.json"))
     if getattr(args, "clean_work", False):
         for c in cars_out:
             (work / f"{c['media']}.chnk").unlink(missing_ok=True)
+
+
+def gui_isos(args) -> list[Path]:
+    return [Path(i) for i in (getattr(args, "iso", None) or forza_roster.default_images())]
+
+
+def pack_outputs(out_dir: Path, cars: list[dict], gui: bool) -> list[str]:
+    """The files a pack of `cars` wrote, relative to out_dir (dngvehicles.json and .lua are
+    written every time): the archive, gui/ (not the previews of cars no longer in it)
+    and pack/pictures/."""
+    from dsfforza.build import pack_reuse
+
+    names = {f"dsfforza_{c['media'].lower()}" for c in cars}
+    out = ["dngvehicles.sp", "dngvehicles.json"]
+    folder = out_dir / "gui"
+    if gui and folder.is_dir():
+        for path in sorted(folder.rglob("*")):
+            if not path.is_file():
+                continue
+            if path.parent == folder and path.name.startswith("dsfforza_") and path.stem not in names:
+                continue
+            out.append(path.relative_to(out_dir).as_posix())
+    pictures = out_dir / pack_reuse.FOLDER / pack_reuse.PICTURES
+    out += [
+        f"{pack_reuse.FOLDER}/{pack_reuse.PICTURES}/{n}.dds" for n in sorted(names) if (pictures / f"{n}.dds").is_file()
+    ]
+    return out
+
+
+VERIFY_FOLDER = "pack-verify"
+
+
+def verify_pack(args, dsf, out_dir, work, ok, failed, port_args, port_options, results) -> None:
+    """--verify-pack: a full pack of the same cars into out_dir/pack-verify (nothing
+    reused) must give the same files as this one; raise SystemExit when any differs."""
+    import shutil
+
+    folder = out_dir / VERIFY_FOLDER
+    shutil.rmtree(folder, ignore_errors=True)
+    folder.mkdir(parents=True)
+    print(f"--verify-pack: a full pack into {folder} to compare")
+    check = argparse.Namespace(**{**vars(args), "progress": None, "clean_work": False, "reuse_record": None})
+    from dsfforza.game import gui_assets
+
+    gui_assets._TEXT_PLATES.clear()  # drawn again, not taken from the pack being checked
+    finish(check, dsf, folder, work, ok, failed, port_args, port_options, {}, time.time(), results, pack=None)
+    diffs = compare_packs(out_dir, folder, args.gui)
+    if diffs:
+        raise SystemExit(
+            f"--verify-pack: the pack differs from a full pack of the same cars in {len(diffs)} file(s): "
+            f"{'; '.join(diffs[:8])}. The full pack is in {folder}; build with --no-pack-reuse, and see "
+            "research/batch.md, 'Pack reuse'."
+        )
+    print("--verify-pack: identical to a full pack")
+    shutil.rmtree(folder, ignore_errors=True)
+
+
+def compare_packs(mine: Path, full: Path, gui: bool) -> list[str]:
+    """What differs between two packs of the same cars: the archive, the Lua, the manifest
+    (but its time and archive path) and every file of the full pack's gui/."""
+    from dsfforza.build import pack_reuse
+
+    diffs = []
+
+    def same(a: Path, b: Path) -> bool:
+        if not a.is_file() or not b.is_file() or a.stat().st_size != b.stat().st_size:
+            return False
+        return pack_reuse.sha256_file(a) == pack_reuse.sha256_file(b)
+
+    for rel in ("dngvehicles.sp", "dngvehicles.lua"):
+        if not same(mine / rel, full / rel):
+            diffs.append(rel)
+
+    def manifest(folder: Path) -> dict:
+        data = json.loads((folder / "dngvehicles.json").read_text(encoding="utf-8"))
+        data.pop("created", None)
+        data.pop("archive", None)
+        return data
+
+    if manifest(mine) != manifest(full):
+        diffs.append("dngvehicles.json")
+    if gui:
+        for path in sorted((full / "gui").rglob("*")):
+            if path.is_file():
+                rel = path.relative_to(full).as_posix()
+                if not same(mine / rel, path):
+                    diffs.append(rel)
+        expected = set(pack_outputs(full, json.loads((full / "dngvehicles.json").read_text())["cars"], gui))
+        extra = [
+            rel
+            for rel in pack_outputs(mine, json.loads((mine / "dngvehicles.json").read_text())["cars"], gui)
+            if rel.startswith("gui/") and rel not in expected
+        ]
+        diffs += [f"{rel} (not in the full pack)" for rel in extra]
+    return diffs
 
 
 def cmd_remerge(args) -> None:
@@ -1755,6 +1969,17 @@ def build_parser() -> argparse.ArgumentParser:
                 help="with --reuse: build N random reused cars again and stop if any differs (default 2; 0: off)",
             )
             p.add_argument("--verify-seed", type=int, help="the random seed of --verify-reuse (default: random)")
+            p.add_argument(
+                "--no-pack-reuse",
+                action="store_true",
+                help="always merge, lint and draw every car (default: take what didn't change from this "
+                "folder's and the --reuse builds' packs; src/dsfforza/build/pack_reuse.py)",
+            )
+            p.add_argument(
+                "--verify-pack",
+                action="store_true",
+                help="after the pack, make a full pack into <out>/pack-verify and stop if any file differs",
+            )
             p.add_argument(
                 "--clean-work",
                 action="store_true",

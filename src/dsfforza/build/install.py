@@ -601,6 +601,9 @@ class Tracker:
     verify: set = field(default_factory=set)
     verify_done: int = 0
     merge_cars: int = 0
+    lint_cars: int = 0
+    lint_total: int = 0
+    pack_source: str = ""
     lint_failed: int = 0
     gui_total: int = 0
     gui_done: int = 0
@@ -685,8 +688,13 @@ class Tracker:
             failure = CarFailure(data["media"], data.get("cause") or "merge", str(data.get("error") or "")[:300])
             self.failures.append(failure)
             notes.append(("error", f"{failure.media}: {failure.cause} ({failure.error[:120]})"))
+        elif event == "pack_reused":
+            self.phase = "pack_reused"
+            self.pack_source = data.get("source", "")
         elif event == "lint":
             self.phase = "lint"
+            self.lint_cars = data.get("cars", 0)
+            self.lint_total = data.get("total", self.lint_cars)
         elif event == "lint_failed":
             self.lint_failed += 1
             notes.append(("warn", f"{data['media']}: lint found problems (kept in the archive; see the log)"))
@@ -705,13 +713,31 @@ class Tracker:
     def pack_detail(self) -> str:
         if self.phase == "merge":
             return f"merging {self.merge_cars} cars into one archive"
+        if self.phase == "pack_reused":
+            return f"unchanged since {rel(Path(self.pack_source))}: reusing its archive and garage pictures"
         if self.phase == "lint":
+            if self.lint_cars < self.lint_total:
+                return f"checking {self.lint_cars} of {self.lint_total} cars (upvh lint; the rest unchanged)"
             return "checking every car (upvh lint)"
         if self.phase == "gui":
             return f"garage pictures and badges {self.gui_done}/{self.gui_total}" + (
                 f"  {self.gui_last}" if self.gui_last else ""
             )
         return ""
+
+
+def pack_text(stats: dict | None, cars: int) -> str:
+    """The pack step's detail: what it took from the last build (port_batch's
+    timings_s.pack_reuse_stats, src/dsfforza/build/pack_reuse.py)."""
+    if not stats:
+        return "garage pictures, badges"
+    if stats.get("whole"):
+        return "unchanged: the last build's pack"
+    linted = stats.get("linted")
+    made = stats.get("pictures_made", 0)
+    if linted is None or (linted >= cars and made >= cars):
+        return "garage pictures, badges"
+    return f"{linted} cars checked, {made} garage pictures drawn (the rest unchanged)"
 
 
 def reason_kind(why: str) -> str:
@@ -755,6 +781,7 @@ class Summary:
     reused: int = 0
     failed: list = field(default_factory=list)  # CarFailure
     archive_bytes: int | None = None
+    pack: str = ""  # what the pack step redid ("" before it ran)
     game: Path | None = None
     replaced: list = field(default_factory=list)
     created: list = field(default_factory=list)
@@ -872,7 +899,7 @@ class PlainReporter(Reporter):
             )
         elif event == "verify":
             self.line(f"  checking {len(t.verify)} reused cars by building them again")
-        elif event in ("merge", "lint", "gui"):
+        elif event in ("merge", "lint", "gui", "pack_reused"):
             self.line(f"  {t.pack_detail()}")
 
     def summary(self, s: Summary) -> None:
@@ -1423,6 +1450,8 @@ class Run:
         for source in sources:
             argv += ["--reuse", str(source)]
         argv += ["--jobs", str(args.jobs), "--verify-reuse", str(args.verify_reuse if sources else 0)]
+        if args.verify_pack:
+            argv += ["--verify-pack"]
         build_args = port_batch.build_parser().parse_args(argv)
         build_args.dsf = game_paths.stock(build_args.dsf, quiet=True)
         build_args.progress = self.reporter.event
@@ -1467,6 +1496,7 @@ class Run:
             )
         if (report.get("timings_s") or {}).get("gui_error"):
             s.notes.append(f"garage pictures and badges failed: {report['timings_s']['gui_error']}")
+        s.pack = pack_text((report.get("timings_s") or {}).get("pack_reuse_stats"), s.in_archive)
 
     # 6. install ---------------------------------------------------------------------------------------
 
@@ -1668,7 +1698,9 @@ def execute(run: Run) -> int:
             current = "pack"
             s = run.summary
             reporter.stage(
-                "pack", "done", f"{s.in_archive} cars, {size_text(s.archive_bytes)} archive, garage pictures, badges"
+                "pack",
+                "done",
+                f"{s.in_archive} cars, {size_text(s.archive_bytes)} archive, {s.pack or 'garage pictures, badges'}",
             )
         else:
             reporter.stage("build", "skipped", "--install-only")
@@ -1747,6 +1779,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=2,
         metavar="N",
         help="build N reused cars again and stop if one differs (default 2; 0: off)",
+    )
+    build.add_argument(
+        "--verify-pack",
+        action="store_true",
+        help="after a pack that reused the last build's, make a full pack too and stop if they differ",
     )
     build.add_argument(
         "--no-plugin",

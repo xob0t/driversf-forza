@@ -1453,6 +1453,7 @@ def lint(
                 by_id.setdefault(i, set()).add(sid)
         cache["by_id"] = by_id
     near = set().union(*(cache["by_id"].get(i, ()) for i in mine))
+    cache.setdefault("near", {})[spool_id] = sorted(sid for sid in near if sid != spool_id)
     for sid in (sid for sid in banks if sid in near):
         theirs = cache["content"][sid]
         for i in set(mine) & set(theirs):
