@@ -1022,6 +1022,10 @@ SPARE_CODES = (
     74,
 )  # glyphs no vehicle uses; not 160 (0xA0, no-break space: drawn blank, M5 in out/testdrive3)
 UNTESTED_CODES = tuple(range(128, 160))  # cp1252 differs from Latin-1 here
+# No badge or plate, in any font: the renderer drops a text whose bytes are all 0x20 or
+# less ("Why the 16-bit glyphs drew nothing", research/gui-assets.md), so " " draws
+# nothing. register.lua's BLANK_GLYPH is the same; a car never shows another's plate.
+BLANK_CODE = 32
 CELL = 99
 
 
@@ -1647,11 +1651,12 @@ def plan_glyphs(
     blanks = {}
     for _, kind, key in rest:
         if kind not in blanks:
-            if not free:
-                continue
-            blanks[kind] = free.pop(0)
-            glyphs[blanks[kind]] = Image(1, 1)
-            glyphs[blanks[kind]].kind = kind
+            if free:
+                blanks[kind] = free.pop(0)
+                glyphs[blanks[kind]] = Image(1, 1)
+                glyphs[blanks[kind]].kind = kind
+            else:  # without a field register.lua would fill in a stock one: say blank
+                blanks[kind] = BLANK_CODE
             notes[f"blank_{kind}_code"] = blanks[kind]
         for media in new_makes[key] if kind == "badge" else plate_cars[key]:
             entries[media]["Manufacturer" if kind == "badge" else "Model"] = blanks[kind]

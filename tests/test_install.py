@@ -325,6 +325,41 @@ def test_a_reinstall_supplies_the_hook_and_loader_its_uninstall_removes():
         assert run.game_has_hook() and run.game_has_loader()
 
 
+def _gui_build(root: Path, cars: dict[int, str], hud: dict[int, str] | None, files=("gui.sp", "Fonts.fchunk")):
+    cars_json = [{"spool_id": i, "media": m} for i, m in cars.items()]
+    _touch(root / "dngvehicles.json", json.dumps({"cars": cars_json}).encode())
+    for name in files:
+        _touch(root / "gui" / name)
+    if hud is not None:
+        rows = "".join(
+            f'\t[{i}] = {{ Manufacturer = 43, Model = 158, Picture1 = "dsfforza_{m.lower()}" }},\n'
+            for i, m in hud.items()
+        )
+        _touch(root / "gui" / "hud.lua", f"return {{\n{rows}}}\n".encode())
+
+
+def test_gui_problem_needs_the_builds_own_gui():
+    """The Ford Ka showed "SHELBY GT500" (a ported car without its hud.lua entry):
+    a build without gui/, or with another build's, isn't installed."""
+    ka = {404: "FOR_Ka_11", 412: "FOR_ShelbyGT500_10"}
+    with _tmp() as tmp:
+        root = Path(tmp)
+        _gui_build(root / "ok", ka, ka)
+        assert install.gui_problem(root / "ok") is None
+        _gui_build(root / "nogui", ka, None, files=())
+        _touch(root / "nogui" / "batch-report.json", json.dumps({"timings_s": {"gui_error": "OSError: x"}}).encode())
+        why = install.gui_problem(root / "nogui")
+        assert "without --gui" in why and "gui/hud.lua" in why and "OSError: x" in why
+        _gui_build(root / "nofont", ka, ka, files=("gui.sp",))
+        assert "gui/Fonts.fchunk" in install.gui_problem(root / "nofont")
+        # A subset build: the same IDs hold other cars.
+        _gui_build(root / "other", ka, {404: "FOR_ShelbyGT500_10", 412: "FOR_ShelbyGT500_13"})
+        why = install.gui_problem(root / "other")
+        assert "ID 404: for_shelbygt500_10, not FOR_Ka_11" in why and "2 hud.lua entries" in why
+        _gui_build(root / "fewer", ka, {412: "FOR_ShelbyGT500_10"})
+        assert "no hud.lua entry for 1 cars (IDs 404)" in install.gui_problem(root / "fewer")
+
+
 # --- progress -------------------------------------------------------------------------------------------
 
 

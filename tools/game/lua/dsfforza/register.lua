@@ -109,12 +109,16 @@ local OVERFLOW_GROUP = "FORZA"   -- makes without a group of their own share FOR
 
 -- Cars built by src/dsfforza/build/port_car.py (dsfforza\ported.lua) replace the sample
 -- list above. The HUD badge and name come from the numeric Manufacturer and
--- Model fields (ManufacturerName/ModelName strings don't reach it), so each
--- car borrows them from a stock entry, matched on Picture1 ("nissan_370z"):
+-- Model fields (vehicles_font glyph codes; ManufacturerName/ModelName strings
+-- don't reach it). dsfforza\hud.lua (gui_assets) gives every car its own; for a
+-- car it doesn't cover, the stock entries are matched on Picture1 ("nissan_370z"):
 --   same make and model  -> copy that stock entry (badge, name, pictures, stats)
---   same make            -> host entry with that make's badge and the model
---                           index of its closest-year stock car
---   make not in DSF      -> host entry unchanged
+--   same make            -> host entry with that make's badge and no nameplate
+--   make not in DSF      -> host entry with no badge and no nameplate
+-- Never another model's plate or name: a Ford Ka without a hud.lua entry used
+-- to take the closest-year Ford's, and showed "SHELBY GT500".
+local BLANK_GLYPH = 32   -- " ": a text of spaces and control characters draws nothing
+                         -- (the renderer drops it; research/gui-assets.md), whatever the font
 local function token(text)
 	return string.lower(tostring(text or "")):gsub("[^%w]", "")
 end
@@ -147,6 +151,8 @@ end
 
 -- Per-ID vehicleStats overrides from dsff gui_assets build: Picture1,
 -- Manufacturer, Model (vehicles_font codes), ManufacturerName, ModelName.
+-- Its Picture1 is "dsfforza_<media>": an entry made for another car (a hud.lua
+-- of another build) is not used (hudEntry).
 local HUD
 do
 	local found, hud = user_open("dsfforza\\hud.lua")
@@ -163,7 +169,7 @@ do
 		CARS = {}
 		for id, car in pairs(ported.cars) do
 			CARS[id] = {
-				source = car.host,
+				source = car.host, media = car.media,
 				make = car.make, model = car.model, yearText = car.year,
 				year = car.year ~= "" and car.year or nil,
 				speed = car.speed, strength = car.strength, drift = car.drift,  -- handling_dsf.stat_bars
@@ -241,14 +247,46 @@ local function resolvePorted()
 			if exact then
 				car.source = exact
 				car.year = nil
-			elseif near then
-				car.manufacturer = vehicleStats[near].Manufacturer
-				car.modelIndex = vehicleStats[near].Model
+			else
+				-- The host's entry under this car's own names: the make's badge if DSF
+				-- has the make, and no nameplate (hud.lua's, when it covers the car,
+				-- replaces both). Plain-text names don't show in the garage.
+				car.manufacturer = near and vehicleStats[near].Manufacturer or BLANK_GLYPH
+				car.manufacturerName = near and vehicleStats[near].ManufacturerName or string.upper(car.make)
+				car.modelIndex = BLANK_GLYPH
+				car.modelName = string.upper(tostring(car.model or ""))
 			end
 			log(string.format("id %d (%s %s): stock match %s, same make %s", id, tostring(car.make),
 				tostring(car.model), tostring(exact), tostring(near)))
 		end
 	end
+end
+
+-- hud.lua's entry for this ID, unless it was made for another car: its picture is
+-- "dsfforza_<media>" (gui_assets), so a hud.lua left from another build (other cars
+-- at these IDs) can't give a car another car's badge, plate and picture.
+local warnedHud = false
+local function hudEntry(id, car)
+	if not HUD then
+		if PORTED and not warnedHud then
+			warnedHud = true
+			log("no dsfforza\\hud.lua:ported cars get their maker's stock badge (or none) and no nameplate")
+		end
+		return nil
+	end
+	local hud = HUD[id]
+	if type(hud) ~= "table" then
+		if PORTED then log(string.format("id %d: no hud.lua entry", id)) end
+		return nil
+	end
+	local picture = hud.Picture1
+	if car.media and type(picture) == "string" and string.sub(picture, 1, 9) == "dsfforza_"
+		and picture ~= "dsfforza_" .. string.lower(car.media) then
+		log(string.format("id %d: hud.lua entry is for %s, not %s (another build's hud.lua); not used", id,
+			string.sub(picture, 10), tostring(car.media)))
+		return nil
+	end
+	return hud
 end
 
 local function buildStats(id, car)
@@ -276,8 +314,8 @@ local function buildStats(id, car)
 	if car.price then entry.Price = car.price end
 	-- Garage picture, HUD badge and model glyph made by src/dsfforza/game/gui_assets.py
 	-- (dsfforza\hud.lua; needs its gui.sp and Fonts.fchunk copies installed).
-	local hud = HUD and HUD[id]
-	if type(hud) == "table" then
+	local hud = hudEntry(id, car)
+	if hud then
 		for key, value in pairs(hud) do entry[key] = value end
 	end
 	entry.Selectable = false   -- set by registerStats (garageGroup)

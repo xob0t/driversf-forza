@@ -554,6 +554,72 @@ logos are dark on the black list (Hennessey's red, Chrysler's grey).
 Counts: before, 56 of 92 groups with their own logo (35 stock, 21 new) and
 36 without or with the host's; after, 92 of 92.
 
+### Another car's nameplate: the Ford Ka showed "SHELBY GT500" (2026-10-27)
+
+Player report (Discord, build and options unknown): the Ford Ka
+(FOR_Ka_11, host 249 Aston Martin Cygnet) showed the Ford badge and the stock
+"SHELBY GT500" plate on the driving HUD (`img/hud-ka-shelby-plate.jpg`). The
+plate is stock glyph 186, the plate of vehicleStats[194] (2010 Shelby GT500).
+Ours are the italic chrome of `nameplate`; this one is the stock lettering.
+
+**Our builds are right.** out/final4 (573 cars) has the Ka at ID 404 with
+`Manufacturer = 43` (stock Ford), `Model = 158` (the one-byte plan's blank
+plate, a 1 x 1 glyph) and `ModelGlyph = 621`, whose glyph in its Fonts.fchunk
+reads "KA"; the Shelbys (FOR_ShelbyGT500_10/_13, SHE_GT500_07) have the
+stock 186, SHE_GT500KR_68 (ID 658) its own wide plate 589 over the one-byte
+MUSTANG family plate 135. Every build under out/ with a gui/ has a hud.lua
+entry for each of its cars, made for that car (`install.gui_problem`).
+
+**Cause: register.lua's fallback for a car without a hud.lua entry.** For a
+ported car hud.lua doesn't cover, register.lua copied the host's entry and,
+when DSF has the make, took the Model (plate) of that make's closest-year
+stock car. For a 2011 Ford three stock Fords are a year off (194 Shelby
+GT500, 196 Taurus SHO, 251 F-150 SuperCrew, all 2010) and the first in
+`pairs()` order wins: in the game the Shelby, in lupa's Lua 5.1 the F-150
+(the game's numbers are single floats, so its hash order differs). A car
+of a make DSF lacks kept the host's badge and plate (the Ka on the Cygnet
+would have shown ASTON MARTIN CYGNET). So the player's game had the archive
+and ported.lua but no hud.lua entry for the Ka:
+
+- a build without `--gui` (the old INSTALL.md's `-Build` example didn't
+  name it; out/ has two dozen such dev builds), or one whose GUI step failed
+  (port_batch moves gui/ aside and finishes; install.ps1 installed the
+  archive and ported.lua anyway);
+- a hud.lua of another build (copied by hand, or a user-edited one that
+  `-Uninstall` keeps): its entry at that ID is another car's, badge, plate
+  and picture.
+
+The other setups don't do it: a subset roster (a disc missing) shifts IDs
+and glyph codes, but the archive, ported.lua, hud.lua and Fonts.fchunk of one
+build agree; without `--wide-glyphs` or without the plugin the Ka shows the
+one-byte plan's code (its own plate or the blank one); `--id-policy` only
+moves IDs. A hud.lua with the Fonts.fchunk of another build (or the stock one)
+draws the default glyph for codes the font lacks: '_' (95), the Bentley
+"CONTINENTAL SUPERSPORTS" plate.
+
+**Fix.**
+
+- register.lua: a car hud.lua doesn't cover gets its make's stock badge (or
+  none) and no plate, never another model's: `Manufacturer`/`Model` 32. A
+  one-byte text " " draws nothing in any font (the renderer's blank-text
+  check, "Why the 16-bit glyphs drew nothing"; 32 is not a slot code, so the
+  plugin's patch keeps it blank). `ModelName` is the plain model name, which
+  the garage doesn't render ("Fixes after the first test drive"), and
+  `ManufacturerName` the make's stock string or the plain make.
+- register.lua uses a hud.lua entry only if its `Picture1` is
+  `dsfforza_<media>` of the car ported.lua has at that ID (gui_assets names
+  every picture so); another build's entry is logged and skipped.
+- gui_assets `plan_glyphs`: a car whose blank badge or plate got no code
+  (no free code left) gets 32 instead of no field.
+- Installer: `tools/install.ps1` (`Test-BuildGui`) and `dsff install`
+  (`install.gui_problem`) refuse a build without gui/gui.sp, Fonts.fchunk and
+  hud.lua, or whose hud.lua lacks a car or names another car at its ID, and
+  say to rebuild with `dsff install` (or `port_batch build --gui`).
+
+Tests: `tests/test_register_hud.py` (register.lua on the stock vehicleStats:
+no hud.lua, another build's hud.lua, the build's own),
+`tests/test_install.py` (`gui_problem`), `tests/test_gui_badges.py`.
+
 ### Names from Forza's string tables (confirmed-static)
 
 `src/dsfforza/formats/forza_strings.py` decodes the games' LSB2 string tables

@@ -124,6 +124,40 @@ function Read-BuildManifest([string]$Path) {
     return $serializer.DeserializeObject([IO.File]::ReadAllText($Path))
 }
 
+# The build's gui\ goes with its cars: gui.sp (pictures), Fonts.fchunk (badges and nameplates)
+# and hud.lua (which car shows which), made for these IDs. Without it (built without --gui,
+# or its GUI step failed) the cars have no pictures, badges or nameplates of their own, and
+# another build's would show other cars' (src/dsfforza/build/install.py gui_problem).
+function Test-BuildGui([string]$Folder, $BuildManifest) {
+    $gui = Join-Path $Folder 'gui'
+    $missing = @('gui.sp', 'Fonts.fchunk', 'hud.lua' | Where-Object { -not (Test-Path -LiteralPath (Join-Path $gui $_) -PathType Leaf) })
+    if ($missing) {
+        Fail ("$Folder has no gui\$($missing -join ', gui\'): it was built without --gui or its GUI step failed " +
+              "(batch-report.json timings_s.gui_error), so the cars would have no garage pictures, badges or " +
+              "nameplates of their own. Build again with 'uv run dsff install' (or port_batch build --gui).")
+    }
+    $have = @{}
+    foreach ($line in [IO.File]::ReadAllLines((Join-Path $gui 'hud.lua'))) {
+        if ($line -match '^\s*\[(\d+)\]\s*=\s*\{(.*)\}') {
+            $id = [int]$Matches[1]
+            $have[$id] = $null
+            if ($Matches[2] -match 'Picture1\s*=\s*"([^"]*)"') { $have[$id] = $Matches[1] }
+        }
+    }
+    foreach ($car in @($BuildManifest['cars'])) {
+        $id = [int]$car['spool_id']
+        $media = [string]$car['media']
+        if (-not $have.ContainsKey($id)) {
+            Fail "$gui\hud.lua has no entry for ID $id ($media): it is another build's gui\. Build again with 'uv run dsff install'."
+        }
+        $picture = [string]$have[$id]
+        if ($picture.StartsWith('dsfforza_') -and $picture -ne ('dsfforza_' + $media.ToLowerInvariant())) {
+            Fail ("$gui\hud.lua's ID $id is $($picture.Substring(9)), not $media`: it is another build's gui\. " +
+                  "Build again with 'uv run dsff install'.")
+        }
+    }
+}
+
 if (-not (Test-Path -LiteralPath $GamePath -PathType Container)) { Fail "Game folder not found: $GamePath" }
 $Game = (Resolve-Path -LiteralPath $GamePath).Path
 if (-not (Test-Path -LiteralPath (Join-Path $Game 'Driver.exe'))) { Fail "Driver.exe not found in $Game; -GamePath must be the Driver: San Francisco folder." }
@@ -635,6 +669,7 @@ function Invoke-Install {
     $buildManifest = Read-BuildManifest $buildManifestPath
     if ($buildManifest.ContainsKey('stock_sha256') -and $buildManifest['stock_sha256'] -and
         $buildManifest['stock_sha256'] -ne $StockArchiveHash) { Fail 'the build was made from a different stock archive' }
+    Test-BuildGui $buildFolder $buildManifest
     $ids = @($buildManifest['cars'] | ForEach-Object { $_['spool_id'] })
     Say "Installing $($ids.Count) cars (IDs $($ids -join ', ')) into $Game"
 

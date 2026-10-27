@@ -58,6 +58,21 @@ def test_maker_without_a_logo_gets_a_text_badge():
     assert all("Manufacturer" in e for e in one.values())
 
 
+def test_every_car_gets_a_badge_and_plate_code_even_without_free_codes():
+    """A car without Manufacturer/Model in hud.lua would get register.lua's fallback;
+    with no code left for a blank glyph, the blank is BLANK_CODE (" " draws nothing)."""
+    cars, texts = _cars(("ZZZ_A_01", "Zed", "A"), ("YYY_B_01", "Why", "B"))
+    for free in ([], [212]):
+        entries, glyphs, notes = g.plan_glyphs(cars, texts, {}, {}, list(free), lambda make: None)
+        for e in entries.values():
+            assert "Manufacturer" in e and "Model" in e, (free, e)
+        assert {notes["blank_badge_code"], notes["blank_plate_code"]} == {g.BLANK_CODE, *free}
+        assert g.BLANK_CODE not in glyphs
+    assert g.BLANK_CODE == 32 and g.BLANK_CODE not in g.FREE_CODES + g.SPARE_CODES + g.UNTESTED_CODES
+    lua = (REPO / "tools" / "game" / "lua" / "dsfforza" / "register.lua").read_text(encoding="utf-8")
+    assert int(re.search(r"local BLANK_GLYPH = (\d+)", lua).group(1)) == g.BLANK_CODE
+
+
 def test_paint_mixes_by_view_angle():
     p = cr.Paint((0.08, 0.0, 0.0), (0.2, 0.02, 0.05), power=10.0, bias=0.01)
     facing, grazing = p.at(np.array([1.0, 0.0]))

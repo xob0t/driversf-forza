@@ -1,3 +1,4 @@
 # Test files `uv run python -m tests --ci` leaves out (.github/workflows/release.yml):
 # they need the game folder, the Forza disc images or files under out/.
 test_register_asi.py  # runs register.lua on out/lua-src/.../vehiclestats.lua, made from the game by game_data prepare
+test_register_hud.py  # runs register.lua on out/lua-src/.../vehiclestats.lua, as test_register_asi.py
