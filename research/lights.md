@@ -682,6 +682,21 @@ this change) the Evo's flutes lie over the reflector with the amber indicator
 inside, the Carlton's and Esperante's lamps show through their covers, the
 Subaru's lens shows its reflector faintly.
 
+In game (confirmed-runtime, headless VM 2, `-Views nose,rear -Palette 0
+-ShotSeconds 3 -WaitSeconds 600`): the five cars on their `out/final4` hosts,
+the `out/final4` chunks remerged as IDs 304 to 308 (`out/lens/before4`), run
+`vm2-20261027-070438`, against the same cars built with this change
+(`out/lens/after5`), run `vm2-20261027-071018`
+(`img/lenses-ingame-before-after.jpg`). The Carlton's and the Evo's headlamps
+show their reflectors through the lens instead of a white plate, the Evo its
+amber indicator in the corner; the Esperante's yellow lexan shows the lamps
+inside it; the WRX STI 04's tail lamps, braking at rest, glow an even red
+instead of blotches. Stock hosts weren't in these runs: the glow (lamp score)
+of a baked lens is the lens texel's, as before. With the default
+`-WaitSeconds 60` the probe ended before its Shift camera came down (run
+`vm1-20261027-040419`: "zap level 3" until the end), and with `-ShotSeconds 10`
+the shots missed most of the 6 s fixed views.
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and
