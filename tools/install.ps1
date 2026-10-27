@@ -611,7 +611,9 @@ function Invoke-Install {
     $existing = Read-Manifest
     if (Test-Installed $existing) {
         if (-not $Force) { Fail "dsfforza is already installed ($ManifestPath). Run -Uninstall first, or add -Force to reinstall." }
-        Say 'Removing the earlier install first (-Force):'
+        $earlier = @($existing.cars | Where-Object { $_ })
+        Say "Removing the earlier install first (-Force): its $($earlier.Count) cars ($((@($earlier | Select-Object -First 6) -join ', '))$(if ($earlier.Count -gt 6) { ', ...' })) are replaced by this build's, not added to."
+        Say '  To have several cars, install them in one build: -Car A,B,... (or uv run dsff install --car A --car B).'
         Invoke-Uninstall
     }
     Resolve-LeftoverBackup

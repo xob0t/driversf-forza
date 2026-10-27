@@ -80,3 +80,15 @@ def test_paint_mixes_by_view_angle():
     assert np.allclose(grazing, p.c3)
     flat = cr.Paint.flat((128, 128, 128))
     assert np.allclose(flat.at(np.array([0.3, 0.9])), flat.c2)
+
+
+def test_forza_ui_without_the_fh1_disc():
+    """A build from FM4 discs only (install.ps1 -Iso <FM4 disc>): the GUI step looked for
+    assets/Forza.Horizon.XBOX360.iso by name and failed, so the cars got no hud.lua and
+    showed another car's nameplate (issue #98). Without the discs: no logos, text badges."""
+    ui = g.ForzaUI.of([])
+    assert ui.logo("Ford") is None and ui.thumbnail(1) is None
+    ui.close()
+    ui = g.ForzaUI(None, REPO / "no such.iso")
+    assert ui.logo("Renault") is None
+    ui.close()

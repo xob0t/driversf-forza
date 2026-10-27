@@ -288,11 +288,26 @@ LOGO_ALIASES = {
 class ForzaUI:
     """FH1's media/ui/Textures.zip on the disc image; maker logos FH1 lacks
     (Renault) come from FM4's (DVD 1, Media/UI/Textures.zip, same layout),
-    opened on first need."""
+    opened on first need. Without the FH1 image FM4's alone (no thumbnails),
+    without either nothing: logo() is None, and makers get text badges."""
 
-    def __init__(self, iso: Path = FH1_ISO, fallback: Path | None = FM4_ISO):
-        self.image, self.zip, self.names = self._open(iso, "media/ui/Textures.zip")
+    def __init__(self, iso: Path | None = FH1_ISO, fallback: Path | None = FM4_ISO):
+        self.image = self.zip = None
+        self.names = {}
+        if iso and Path(iso).exists():
+            self.image, self.zip, self.names = self._open(iso, "media/ui/Textures.zip")
         self.fallback_path, self.fallback = fallback, None
+
+    @classmethod
+    def of(cls, isos: list[Path] | None) -> ForzaUI:
+        """From the build's disc images (port_batch --iso), found by their title whatever
+        they are called; without a list, assets/'s default names."""
+        if isos is None:
+            return cls()
+        from dsfforza.build.forza_roster import game_discs
+
+        discs = game_discs(isos)
+        return cls(discs.get("FH1"), discs.get("FM4"))
 
     @staticmethod
     def _open(iso: Path, name: str):
@@ -330,7 +345,8 @@ class ForzaUI:
         return None
 
     def close(self) -> None:
-        self.image.close()
+        if self.image is not None:
+            self.image.close()
         if self.fallback is not None:
             self.fallback[0].close()
 
@@ -1521,10 +1537,11 @@ def dsf_make(make: str, model: str = "") -> str:
     return key
 
 
-def car_texts(cars: list[dict]) -> dict[str, dict]:
+def car_texts(cars: list[dict], isos: list[Path] | None = None) -> dict[str, dict]:
     """{media: {make, model, family, year}}: Forza's own names (Data_Car
-    DisplayName, List_CarMake, List_FamilyModel via src/dsfforza/formats/forza_strings.py),
-    upper-cased; media-name guesses where a game has no entry."""
+    DisplayName, List_CarMake, List_FamilyModel via src/dsfforza/formats/forza_strings.py,
+    from `isos`, found by title, else assets/'s default names), upper-cased;
+    media-name guesses where a game has no entry."""
     from dsfforza.build.port_car import make_model
 
     out = {}
@@ -1532,6 +1549,11 @@ def car_texts(cars: list[dict]) -> dict[str, dict]:
     for car in cars:
         by_game.setdefault(str(car.get("game", "FH1")).lower(), []).append(car["media"])
     found: dict[str, dict] = {}
+    discs: dict[str, Path] = {}
+    if isos is not None:
+        from dsfforza.build.forza_roster import game_discs
+
+        discs = {game.lower(): path for game, path in game_discs(isos).items()}
     try:
         from dsfforza.formats import forza_strings
 
@@ -1541,7 +1563,8 @@ def car_texts(cars: list[dict]) -> dict[str, dict]:
                 if not missing:
                     break
                 try:
-                    found.update({k: v for k, v in forza_strings.car_names(other, missing).items() if v.get("display")})
+                    names = forza_strings.car_names(other, missing, iso=discs.get(other))
+                    found.update({k: v for k, v in names.items() if v.get("display")})
                 except Exception:
                     continue
     except ImportError:
@@ -1761,6 +1784,7 @@ def build(
     root_limit: int = chnk.ENTRY_LIMIT,
     jobs: int = 1,
     thumbnails: bool = False,
+    isos: list[Path] | None = None,
 ) -> dict:
     """Garage pictures, HUD glyphs and dsfforza\\hud.lua for the cars of a
     src/dsfforza/build/port_car.py manifest. Writes out_dir/gui.sp, out_dir/Fonts.fchunk,
@@ -1774,7 +1798,8 @@ def build(
     camera (render_car); `thumbnails` takes FH1's own thumbnail where there is one
     instead (sharper, but at eye level and mirrored: gui-assets.md, "Camera").
     `jobs` > 1 renders in that many processes (render_car is the slow step; each
-    render is the same either way)."""
+    render is the same either way). `isos`: the build's Forza disc images (logos,
+    names; found by title), default assets/'s; FH1's missing is not an error."""
     import json
 
     data = json.loads(Path(manifest).read_text())
@@ -1791,13 +1816,13 @@ def build(
     if wide_glyphs:  # the plugin's slot codes must stay free
         pool = tuple(c for c in pool if c not in HUD_SLOT_CODES)
     free = [c for c in pool if c not in used_codes]
-    ui = ForzaUI()
+    ui = ForzaUI.of(isos)
     gui = gui or stock_file("Install/gui.sp")
     fonts = fonts or stock_file("media/Fonts.fchunk")
     backdrop = stock_backdrop(gui)
     with gui.open("rb") as stream:
         template = find_picture(stream, chnk.read_chunk(stream, 0), "nissan_370z")
-    texts = car_texts(data["cars"])
+    texts = car_texts(data["cars"], isos)
     for media, text in names.items():
         if media in texts:
             texts[media]["model"] = text.upper()
