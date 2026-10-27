@@ -697,6 +697,16 @@ of a baked lens is the lens texel's, as before. With the default
 `vm1-20261027-040419`: "zap level 3" until the end), and with `-ShotSeconds 10`
 the shots missed most of the 6 s fixed views.
 
+Rebased on #104 (head lamps lit by day as 0x1D, rear lens types from the lens
+texels), run `vm2-20261027-082151` (`out/lens/after6`): the lamp plan reads the
+lens colours from Forza's own texels (`forza2dsf.convert` gives
+`lights.texel_sampler` a fresh `AtlasCache`, not the baked one), so #104's
+decisions are unchanged. The WRX STI 04's tails look as in the run above.
+The Carlton's head lamps, now lit by day, are bright white in daylight
+(`img/carlton-headlamps-by-day.jpg`). Their lens glow alpha is mean 50,
+median 31, inside stock's head-lamp range (mean 71, median 49), and the bake
+keeps it as it was: issue #115.
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and
