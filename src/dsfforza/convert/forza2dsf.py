@@ -1052,12 +1052,18 @@ def entry_like(template: Entry, payload_bytes: bytes | None = None, children: li
 
 
 def rebuild_drsp(
-    stream, drsp: Entry, builder: Builder, keep_host_materials: bool, keep_host_geometry: bool = False
+    stream,
+    drsp: Entry,
+    builder: Builder,
+    keep_host_materials: bool,
+    keep_host_geometry: bool = False,
+    templates: dict | None = None,
 ) -> None:
     """Replace SBMC/VXCK/IXCK/MDID in a DRSP with the builder's contents. The
     host's own textures and materials are dropped unless keep_host_materials;
     with keep_host_geometry the host's submodels and buffers stay as well and
-    the builder's are added alongside."""
+    the builder's are added alongside. `templates` (stride -> VXCK) sets the
+    vertex declaration of that stride's buffer whatever the host has."""
     old = drsp.children
     keep_tags = {"TEXC", "MACO"} if keep_host_materials or keep_host_geometry else set()
     if keep_host_geometry:
@@ -1086,7 +1092,10 @@ def rebuild_drsp(
     template = {}
     for stride in builder.buffers:
         mine = [own[s.material, stride] for s in builder.subs if s.stride == stride and (s.material, stride) in own]
-        template[stride] = old[max(mine, key=mine.count)] if mine else vxck_t[stride]
+        if stride in (templates or {}):  # a layout the caller needs (digital dials: the Volt's)
+            template[stride] = templates[stride]
+        else:
+            template[stride] = old[max(mine, key=mine.count)] if mine else vxck_t[stride]
     ixck_t = next(e for e in old if e.tag == "IXCK")
     mdid_t = next(e for e in old if e.tag == "MDID")
 
@@ -2271,7 +2280,11 @@ def convert(
         # The engine picks each needle's transform by semantic 8's gauge id; any
         # pass that rewrites it leaves the needles static.
         needle_ids = cockpit.needle_gauge_ids(stream, interior)
-        stray = sorted(k for k in needle_ids if k not in set(cockpit.GAUGE_IDS.values()))
+        # Digital displays (digital_dash) draw from the needle buffer with ids 1..7.
+        allowed = set(cockpit.GAUGE_IDS.values()) | (
+            set(range(1, 8)) if "digital_displays" in interior_report else set()
+        )
+        stray = sorted(k for k in needle_ids if k not in allowed)
         if stray:
             raise ValueError(
                 f"interior needle vertices with gauge ids {stray[:6]} (not in "

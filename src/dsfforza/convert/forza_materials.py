@@ -161,9 +161,11 @@ def with_scale(technique: str, scale: float) -> str:
     return technique if scale == 1.0 else f"{technique}{SCALE_SUFFIX}{scale:.4g}"
 
 
-# Virtual dials drawn on blank digital displays (cockpit.virtual_gauges): flat colour
-# cells of the interior atlas, no Forza texture behind them.
-_add(TRIM, None, "dsf_dial_mark dsf_dial_red dsf_needle dsf_needle_hub")
+# Virtual dials drawn on blank digital displays, display faces or a virtual display
+# (cockpit.virtual_gauges): flat colour cells of the interior atlas, no Forza texture
+# behind them.
+_add(TRIM, None, "dsf_dial_mark dsf_dial_mark_dark dsf_dial_red dsf_dial_display dsf_dial_bezel")
+_add(TRIM, None, "dsf_needle dsf_needle_hub")
 # Livery decal slots: their raw UV0 spans the whole unit square, i.e. a texture of
 # their own (the player's livery), squeezed by m_UVOffsetScale onto an arbitrary patch
 # of the car atlases. The KOE_Agera_11's rear-wing pair lands on a 3-texel column at the

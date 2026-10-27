@@ -441,6 +441,85 @@ def extract_wheel(source: Source, media: str, cache: Path, log=print) -> list[st
     return written
 
 
+DASH_STAMP = "dash_source.json"
+DASH_FOLDER = "digitalgauge"  # the car's Anark dash scene (cockpit digital displays)
+DASH_MEDIA = "dash_media"  # per game: shared dashboard textures and the vector fonts
+DASH_MEDIA_ZIPS = (  # (zip on the disc, member prefix, folder under DASH_MEDIA)
+    ("media/cars/shared.zip", "dashboards/", "shared/dashboards"),
+    ("media/ui/fonts.zip", "", "fonts"),
+)
+
+
+def extract_dash(source: Source, media: str, cache: Path, log=print) -> list[str]:
+    """The car's DigitalGauge/ folder (Dash_<car>.bsg/.fbf/.bgf and its textures:
+    formats/anark.py) into <cache folder>/digitalgauge/; its own stamp, so caches made
+    before stay valid. Returns the files (none if the car has no dash scene)."""
+    folder = cache / source.game.lower() / media
+    stamp = folder / DASH_STAMP
+    try:
+        old = json.loads(stamp.read_text())
+    except (OSError, ValueError):
+        old = {}
+    if old.get("path") == source.path:
+        return old.get("files", [])
+    image, archive, prefix = open_car_zip(source)
+    written = []
+    try:
+        for info in archive.entries():
+            name = info.filename.replace("\\", "/")
+            if info.is_dir() or not name.lower().startswith(prefix + "digitalgauge/"):
+                continue
+            target = folder / DASH_FOLDER / name.rsplit("/", 1)[-1]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            write_atomic(target, archive.read(info))
+            written.append(target.name)
+    finally:
+        image.close()
+    folder.mkdir(parents=True, exist_ok=True)
+    write_atomic(stamp, json.dumps({"path": source.path, "files": sorted(written)}, indent=1).encode())
+    if written:
+        log(f"{media}: dash scene, {len(written)} files")
+    return written
+
+
+def extract_dash_media(isos: list[Path], game: str, cache: Path) -> Path | None:
+    """The game's shared dashboard textures (Media/cars/Shared.zip dashboards/) and
+    vector fonts (Media/UI/Fonts.zip) under <cache>/<game>/dash_media/, from the first
+    disc of that game that has them."""
+    target = cache / game.lower() / DASH_MEDIA
+    if (target / "done").exists():
+        return target
+    from dsfforza.build.forza_roster import TITLES, xex_title
+
+    found = set()
+    for iso in isos:
+        image = XIso(iso)
+        try:
+            if TITLES.get(xex_title(image)[0]) != game:
+                continue
+            for path, member, sub in DASH_MEDIA_ZIPS:
+                if path in found:
+                    continue
+                try:
+                    archive = ForzaZip(image.open(image.find(path)))
+                except KeyError:
+                    continue
+                for info in archive.entries():
+                    name = info.filename.replace("\\", "/")
+                    if info.is_dir() or not name.lower().startswith(member):
+                        continue
+                    out = target / sub / name[len(member) :]
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    write_atomic(out, archive.read(info))
+                found.add(path)
+        finally:
+            image.close()
+    if not found:
+        return None
+    write_atomic(target / "done", json.dumps(sorted(found)).encode())
+    return target
+
+
 def extract_gamedb(isos: list[Path], game: str, cache: Path) -> Path | None:
     """The game's Media/db/gamedb.slt, from the first disc of that game that has it."""
     target = cache / game.lower() / "gamedb.slt"
@@ -966,6 +1045,8 @@ def prepare_car(args, source: Source, media: str, isos, log=print) -> PreparedCa
     folder = extract_car(source, media, args.cache, log)
     # rim textures (forza_materials.WHEEL), and the wheel for cars whose main carbin has none
     extract_wheel(source, media, args.cache, log)
+    if not args.no_cockpit and extract_dash(source, media, args.cache, log):  # cockpit digital displays
+        extract_dash_media(isos, source.game, args.cache)
     car = forza2dsf.load_car(folder, media)
     gamedb = None
     try:
