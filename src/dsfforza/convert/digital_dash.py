@@ -12,13 +12,14 @@ game fills, every frame (FUN_00891670):
                      0 for a leading blank
     id 6, comp 0: gear / 7 (0 = reverse)
     id 7, comp 0: 0.5 when the gear isn't reverse
-    ids 3..5: never written (0)
+    ids 3..5: never written (0); dsfforza.asi's dash module writes km/h digits
+              on id 3 like the mph digits on id 2 (tools/asi/src/mod_dash.cpp)
 
 So a digit is a quad over the blank cell of a strip of 11 cells (blank, 0..9,
 23/256 apart), a gear a quad over the first of 7 cells, and an rpm bar segment
 a quad whose single v samples a column that is transparent below a threshold
 and lit above it (alpha-tested away when transparent). Static artwork uses id
-3 (no offset). Everything samples one texture per car, built here.
+5 (no offset). Everything samples one texture per car, built here.
 """
 
 from __future__ import annotations
@@ -39,7 +40,8 @@ MODL_FLAG = 1
 RPM = (1, 0)  # (id, comp): rpm / redline x 0.5
 SPEED_DIGITS = [(2, k) for k in range(4)]  # units, tens, hundreds, thousands
 GEAR = (6, 0)  # gear / 7, 0 = reverse
-STATIC = (3, 0)  # never written: no offset
+KMH_DIGITS = [(3, k) for k in range(4)]  # km/h digits: dsfforza.asi [dash] writes them (mod_dash.cpp)
+STATIC = (5, 0)  # never written: no offset
 DIGIT_PITCH = 23 / 256  # v between digit cells (blank, 0..9)
 GEAR_PITCH = 1 / 7  # v between gear cells (R, 1..6)
 BAR_LIT_FROM = 0.505  # bar columns: lit from this v up, transparent below
@@ -62,6 +64,7 @@ class DigitalPlan:
     rgba: bytearray
     quads: list = field(default_factory=list)
     report: dict = field(default_factory=dict)
+    needles: list = field(default_factory=list)  # _needles: needles for DSF's gauge needles
 
     def blit(self, x: int, y: int, image) -> None:
         """Paste an RGBA PIL image at texel (x, y) (top left)."""
@@ -121,7 +124,38 @@ def dxt5_dds(width: int, height: int, rgba: bytes | bytearray, template: bytes |
     return dm.dds_file(rgba, width, height, 1, template)
 
 
+STOCK_STRIDE = 16  # the Volt's digital buffer: s0 position 4 x i16, s8 4 x f16 (u, v, id, comp)
+
 _STOCK: dict = {}
+_STOCK_VB: dict = {}
+
+
+def stock_buffer(stream):
+    """The VXCK the stock Volt draws its digital dials from: its vertex declaration
+    (no normal) is the one the digital-dials shaders are drawn with."""
+    key = id(stream)
+    if key not in _STOCK_VB:
+        from dsfforza.convert import dsf_materials as dm
+        from dsfforza.formats import chnk
+        from dsfforza.formats.vehicle_mesh import child
+
+        root = chnk.read_chunk(stream, 0)
+        vb, found = None, None
+        for e in root.entries:
+            for _, c in chnk.walk([e]):
+                if c.tag == "SBMC" and c.is_chunk:
+                    d = dm.current(stream, child(c, "SBBH"))
+                    if d[8:16] == STOCK_MATERIAL:
+                        vb = d[16:24]
+            if vb is not None:
+                for _, c in chnk.walk([e]):
+                    if c.tag == "VXCK" and c.is_chunk and dm.current(stream, child(c, "VXHD"))[:8] == vb:
+                        found = c
+                break
+        if found is None:
+            raise ValueError("the stock Volt's digital-dials buffer is not in the source archive")
+        _STOCK_VB[key] = found
+    return _STOCK_VB[key]
 
 
 def stock_material(stream):
@@ -378,6 +412,22 @@ def _subtree(dash, root: int) -> set:
     return out
 
 
+def speed_units(dash) -> str:
+    """ "kmh" when the scene labels its speed in km/h (texture names, element names,
+    texts: KMH, KM/H, KPH) and nowhere in mph, else "mph"."""
+    import re
+
+    words = []
+    for o in dash.fbf["objects"]:
+        words.append(o.name)
+        words.append(str(o.props.get("path", "")))
+        words.append(str(o.props.get("text", "")))
+    text = " ".join(words).lower()
+    kmh = re.search(r"km\s*/\s*h|kmh|km_h|kph", text) is not None
+    mph = "mph" in text
+    return "kmh" if kmh and not mph else "mph"
+
+
 def _rest_state(dash, tach_max: float) -> None:
     dash.text_override.clear()
     dash.apply_state(0.0, 0.0, "", tach_max_default=tach_max)
@@ -390,6 +440,161 @@ def _layer(dash, element: int, view, only=None):
     from dsfforza.convert import dash_scene as ds
 
     return np.asarray(ds.render(dash, RT_W * SCALE, keep=lambda i: i == element, only=only, alpha=True, view=view))
+
+
+NEEDLE_ASPECT = 4.0  # a turning element this much longer than wide is a needle, not a cover
+NEEDLE_SAMPLES = 12  # poses the needle fit samples, up to full scale
+NEEDLE_LIFT = 0.0025  # m towards the eye: a converted needle over the display
+NEEDLE_METERS = {"METER_TACH": "tach", "METER_SPEED": "speed"}
+
+
+def _turning(dash) -> dict:
+    """Elements an rpm or speed meter turns: {element: family} for those with a
+    rotation track on the meter's PROGRESS slide."""
+    from dsfforza.convert import dash_scene as ds
+
+    out = {}
+    for key, family in NEEDLE_METERS.items():
+        c = dash.bound(key)
+        for s in dash.slides.get(c, []) if c is not None else []:
+            if s["name"].upper() != "PROGRESS":
+                continue
+            for en in s["entries"]:
+                for on, ti in en["tracks"]:
+                    name = ds.HP.get(dash.bgf["tracks"][ti]["prop"] & 0xFFFFFF, "")
+                    if on and name.startswith("rotation"):
+                        out.setdefault(en["elem"], family)
+    return out
+
+
+def _pose(dash, element: int):
+    """(2 x 2 A, t) of the first quad drawn in an element's subtree: world = local @ A + t."""
+    sub = _subtree(dash, element)
+    for d in dash.drawables():
+        if d[-2] in sub and d[0] in ("quad", "mesh"):
+            m = d[1]
+            return m[:2, :2].copy(), m[3, :2].copy()
+    return None
+
+
+def _set_meter(dash, family: str, value: float, tach_max: float, speed_max: float) -> None:
+    if family == "tach":
+        for key in RPM_METERS:
+            if dash.bound(key) is not None:
+                dash.progress(key, value / tach_max)
+    else:
+        dash.progress("METER_SPEED", value / speed_max)
+
+
+def _needles(dash, view, patches, tach_max: float, top_rpm: float) -> tuple[list, set]:
+    """Needles the scene turns with the rpm or the speed, as DSF needles: a flat quad
+    over the needle's rest pose, turned by the engine (gauge id 1 or 2) about the pivot
+    the scene turns it about, at the scene's degrees per rpm or mph. Returns
+    ([needle dicts], the elements they are made of)."""
+    speed_max = dash.number("SPEED_MAX") or 200.0
+    found, elements = [], set()
+    for element, family in _turning(dash).items():
+        if any(n["family"] == family for n in found):
+            continue
+        _rest_state(dash, tach_max)
+        img = _layer_tree(dash, element, view)
+        alpha = img[..., 3] / 255.0
+        ys, xs = np.nonzero(alpha > 0.3)
+        if len(xs) < 6:
+            continue
+        pts = np.stack([xs, ys], 1).astype(np.float64) / SCALE + (view[0], view[2])
+        centre = pts.mean(0)
+        _, vecs = np.linalg.eigh(np.cov((pts - centre).T))
+        major, minor = vecs[:, 1], vecs[:, 0]
+        a = (pts - centre) @ major
+        b = (pts - centre) @ minor
+        if (a.max() - a.min()) < NEEDLE_ASPECT * max(1.0, b.max() - b.min()):
+            continue  # a cover or mask turning over a bar, not a needle
+        top = top_rpm if family == "tach" else speed_max
+        pose0 = _pose(dash, element)
+        values = [top * k / NEEDLE_SAMPLES for k in range(1, NEEDLE_SAMPLES + 1)]
+        poses = []
+        for value in values:
+            _set_meter(dash, family, value, tach_max, speed_max)
+            poses.append(_pose(dash, element))
+        _rest_state(dash, tach_max)
+        if pose0 is None or any(q is None for q in poses):
+            continue
+
+        def turn(p, q):
+            r = np.linalg.solve(p[0], q[0])  # local rotation from pose p to pose q
+            return math.atan2(r[0, 1], r[0, 0])
+
+        # the world point the rest and the full-scale pose both hold (scene units, y up)
+        A = np.linalg.solve(pose0[0], poses[-1][0])
+        t = poses[-1][1] - pose0[1] @ A
+        try:
+            fixed = np.linalg.solve(np.eye(2) - A.T, t)
+        except np.linalg.LinAlgError:
+            continue
+        pivot = (fixed[0] + RT_W / 2, RT_H / 2 - fixed[1])  # render-target pixels
+        # Angles from the rest pose, unwrapped step by step; DSF's needle is linear, so
+        # fit angle = rest + rate x value over the upper three quarters (the range
+        # driven in; non-linear faces such as the LFA's are off below it).
+        angles, last = [], 0.0
+        for q in poses:
+            a_ = turn(pose0, q)
+            while a_ - last > math.pi:
+                a_ -= 2 * math.pi
+            while a_ - last < -math.pi:
+                a_ += 2 * math.pi
+            angles.append(a_)
+            last = a_
+        sel = [k for k, v in enumerate(values) if v >= 0.25 * top]
+        xs_, ys_ = np.array([values[k] for k in sel]), np.array([angles[k] for k in sel])
+        rate, rest = np.polyfit(xs_, ys_, 1)
+        full = rate * top
+        p = next((q for q in patches if q.contains(*pivot)), None)
+        if p is None or abs(full) < 1e-3:
+            continue
+        # the needle's quad turned to the fitted rest (0 rpm / 0 mph)
+        c, sn = math.cos(rest), math.sin(rest)
+        ends = [centre + major * a.min() + minor * b.min(), centre + major * a.max() + minor * b.min()]
+        ends += [centre + major * a.max() + minor * b.max(), centre + major * a.min() + minor * b.max()]
+        # render-target y is down: a scene angle r turns (dx, -dy) by r
+        ends = [
+            np.array(
+                (
+                    pivot[0] + (e[0] - pivot[0]) * c - (-(e[1] - pivot[1])) * sn,
+                    pivot[1] - ((e[0] - pivot[0]) * sn + (-(e[1] - pivot[1])) * c),
+                )
+            )
+            for e in ends
+        ]
+        corners = [p.point(float(x), float(y), NEEDLE_LIFT) for x, y in ends]
+        colour = tuple(int(c) for c in (img[ys, xs, :3].mean(0)).round()) + (255,)
+        # The scene turns counter-clockwise for positive angles (y up); seen on the
+        # display the same, so a negative angle is clockwise for the driver.
+        found.append(
+            {
+                "family": family,
+                "patch": p,
+                "pivot": pivot,  # render-target pixels
+                "pivot3d": p.point(*pivot),
+                "rt": [tuple(float(c) for c in e) for e in ends],
+                "corners": corners,
+                "colour": colour,
+                "per_unit": float(abs(math.degrees(rate))),  # degrees per rpm or mph
+                "rest_deg": float(math.degrees(rest)),
+                "reverse": bool(full > 0),  # counter-clockwise as the driver sees it
+                "top": float(top),
+            }
+        )
+        elements |= _subtree(dash, element)
+    return found, elements
+
+
+def _layer_tree(dash, element: int, view):
+    """An element and its subtree alone, RGBA at the render scale, over the view."""
+    from dsfforza.convert import dash_scene as ds
+
+    keep = _subtree(dash, element)
+    return np.asarray(ds.render(dash, RT_W * SCALE, keep=lambda i: i in keep, alpha=True, view=view))
 
 
 def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
@@ -405,12 +610,8 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
     if not patches:
         return None
     tach_max = dash.number("TACH_MAX") or redline
-    report: dict = {"tach_max": tach_max, "patches": len(patches)}
-    needles: set = set()  # elements left out of the artwork (none yet)
-
-    def keep_static(i):
-        return i not in needles
-
+    units = speed_units(dash)
+    report: dict = {"tach_max": tach_max, "patches": len(patches), "units": units}
     # The part of the scene the displays show (render-target pixels, whole).
     wins = [p.window() for p in patches]
     ux0, ux1 = max(0, math.floor(min(w[0] for w in wins))), min(RT_W, math.ceil(max(w[1] for w in wins)))
@@ -418,6 +619,12 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
     if ux1 - ux0 < 4 or uy1 - uy0 < 4:
         return None
     view = (ux0, ux1, uy0, uy1)
+    # Needles become DSF needles and leave the artwork.
+    found, needles = _needles(dash, view, patches, tach_max, min(tach_max, redline))
+    report["needles"] = [n["family"] for n in found]
+
+    def keep_static(i):
+        return i not in needles
 
     # 1. The scene at rest.
     _rest_state(dash, tach_max)
@@ -573,7 +780,8 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
                 sub.resize((cw - 2 * CELL_MARGIN, ch), Image.LANCZOS),
             )
         uvbox = ((cx + CELL_MARGIN) / W, CELL_MARGIN / H, (cx + cw - CELL_MARGIN) / W, (CELL_MARGIN + ch) / H)
-        ids = SPEED_DIGITS[:SPEED_SLOTS] if kind == "speed" else [GEAR]
+        digits = KMH_DIGITS if units == "kmh" else SPEED_DIGITS
+        ids = digits[:SPEED_SLOTS] if kind == "speed" else [GEAR]
         placed = 0
         for slot, r in zip(ids, slots_px, strict=True):
             rr = (ux0 + r[0] / SCALE, ux0 + r[1] / SCALE, uy0 + r[2] / SCALE, uy0 + r[3] / SCALE)
@@ -612,15 +820,17 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
         report["bar_pieces"] = pieces
         report["bar_colours"] = len(palette)
     plan.report = report
+    plan.needles = found
     return plan
 
 
 def digi_data(mph: float, rpm: float, gear: int, redline: float) -> dict:
     """g_fDigiData as FUN_00891670 fills it: (id, comp) -> v offset."""
     out = {RPM: 0.5 * min(rpm, redline) / max(1.0, redline), GEAR: gear / 7.0, (7, 0): 0.5 if gear else 0.0}
-    digits = str(int(round(abs(mph))))
-    for k, slot in enumerate(SPEED_DIGITS):
-        out[slot] = (int(digits[-1 - k]) + 1) * DIGIT_PITCH if k < len(digits) else 0.0
+    for slots, value in ((SPEED_DIGITS, mph), (KMH_DIGITS, mph * 1.609344)):  # km/h: dsfforza.asi
+        digits = str(int(round(abs(value))))
+        for k, slot in enumerate(slots):
+            out[slot] = (int(digits[-1 - k]) + 1) * DIGIT_PITCH if k < len(digits) else 0.0
     return out
 
 
@@ -679,6 +889,18 @@ def preview(
             m &= texel[..., 3] >= 128
             region = out[by0:by1, bx0:bx1]
             region[m] = texel[..., :3][m]
+    for n in plan.needles:  # turned as the engine turns them (clockwise unless reverse)
+        value = min(rpm, redline) if n["family"] == "tach" else mph
+        deg = n["per_unit"] * value * (1 if n["reverse"] else -1)  # y down: negative is clockwise
+        c, sn = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+        px, py = n["pivot"]
+        poly = []
+        for x, y in n["rt"]:
+            dx, dy = x - px, -(y - py)
+            poly.append(((px + dx * c - dy * sn - x0) * scale, (py - (dx * sn + dy * c) - y0) * scale))
+        pil = Image.fromarray(out)
+        ImageDraw.Draw(pil).polygon(poly, fill=n["colour"][:3])
+        out = np.asarray(pil).copy()
     img = Image.fromarray(out)
     if label:
         ImageDraw.Draw(img).text((4, 4), f"{mph:.0f} mph {rpm:.0f} rpm gear {gear}", fill=(255, 255, 0))

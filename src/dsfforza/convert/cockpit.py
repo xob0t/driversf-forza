@@ -1134,6 +1134,27 @@ def drop_unturned(cf: CockpitFit, gauge_slots: dict[int, int]) -> list[str]:
     return dropped
 
 
+def dash_needles(plan, version: int) -> list:
+    """The dash scene's needles (digital_dash._needles) as DSF needles: (Gauge,
+    GaugeCalibration) with a flat needle quad in the scene's colour, at its fitted rest
+    (0 rpm / 0 mph), turned by the engine like a Forza needle."""
+    out = []
+    for n in plan.needles:
+        normal = _scale(n["patch"].towards_eye, -1)  # into the dash
+        section = _dial_section(f"{n['family']}_min", version, {"dsf_needle": [(n["corners"], n["patch"].towards_eye)]})
+        for sub in section.subsections:
+            sub.needle_rgba = tuple(n["colour"])
+        unit = GAUGE_UNITS[n["family"]]
+        sweep = max(1, round(n["per_unit"] * unit))
+        span = (-1 if n["reverse"] else 1) * n["per_unit"] * n["top"]
+        g = Gauge(n["family"], n["pivot3d"], normal, span, section)
+        cal = GaugeCalibration(
+            n["family"], GAUGE_IDS[n["family"]], sweep, n["reverse"], 0.0, round(n["top"], 1), 0.0, "dash scene needle"
+        )
+        out.append((g, cal))
+    return out
+
+
 def digital_displays(static: dict, eye, folder: Path, forza) -> tuple:
     """The car's dash scene (folder/digitalgauge, formats/anark.py; shared textures and
     fonts in <cache>/<game>/dash_media) drawn live on its digital displays
@@ -1171,7 +1192,9 @@ def digital_displays(static: dict, eye, folder: Path, forza) -> tuple:
         sec.subsections = [sub for k, sub in enumerate(sec.subsections) if k not in subs]
         static[name] = sec
     rep = dict(plan.report)
-    rep["provides"] = [f for f, k in (("speed", "speed"), ("tach", "bar_pieces")) if rep.get(k)]
+    rep["provides"] = sorted(
+        {f for f, k in (("speed", "speed"), ("tach", "bar_pieces")) if rep.get(k)} | {n["family"] for n in plan.needles}
+    )
     rep["missing"] = sorted(dash.assets.missing)
     return plan, rep
 
@@ -1278,6 +1301,12 @@ def fit(
     if lod0 and folder is not None:
         # Forza's digital displays, live through DSF's digital dials (digital_dash).
         digital_plan, digital_report = digital_displays(static, eye_point(wheel, offset), folder, forza)
+        if digital_plan is not None:
+            version = next((s.version for s in static.values()), 3)
+            for g, cal in dash_needles(digital_plan, version):
+                if g.family not in gauges:  # Forza's own needle first
+                    gauges[g.family], calibration[g.family] = g, cal
+                    needles[g.family] = {"min": g.rest}
     provided = set(digital_report.get("provides", ()))
     if lod0 and virtual:
         version = next((s.version for s in static.values()), 3)
@@ -2611,6 +2640,8 @@ def cull_sections(sections: list[carbin.Section], kept: dict[tuple[int, int], se
 
 
 def _needle_colour(atlases, section, sub) -> tuple[int, int, int, int]:
+    if getattr(sub, "needle_rgba", None) is not None:  # a dash scene's needle (dash_needles)
+        return sub.needle_rgba
     if sub.material in VIRTUAL_NEEDLE_COLOURS:
         return VIRTUAL_NEEDLE_COLOURS[sub.material]
     m = fm.resolve(section, sub, fm.classify_cockpit)
@@ -2819,7 +2850,7 @@ def convert_interior(
                     tris.append(tuple(out))
             if tris:
                 needle_subs.append(builder.add(mats.needles, verts, tris))
-        digital_report = None
+        digital_report, digital_templates = None, None
         if cf.digital_plan is not None and mats.needles is not None:
             from dsfforza.convert import digital_dash as dd
 
@@ -2828,15 +2859,33 @@ def convert_interior(
             drsp.children.append(
                 dm.texture_entry(stream, texc, dd.dxt5_dds(plan.width, plan.height, plan.rgba), tex_uid)
             )
-            drsp.children.append(
-                dm.retarget_material(stream, dd.stock_material(stream), {dd.STOCK_TEXTURE: tex_uid}, mat_uid)
-            )
-            stride = layout[mats.needles][0]
-            builder.layout[mat_uid] = (stride, dd.MODL_FLAG)
             import os
 
-            if os.environ.get("DSF_DD_VARIANT") == "needle":  # in-game test: the Dials material
+            variant = os.environ.get("DSF_DD_VARIANT")  # in-game tests of the material and texture
+            if variant == "atlas":  # the digital material on the cockpit atlas
+                drsp.children.append(
+                    dm.retarget_material(stream, dd.stock_material(stream), {dd.STOCK_TEXTURE: mats.texture}, mat_uid)
+                )
+            elif variant == "dialstex":  # a copy of the host's Dials material on our texture
+                dials = next(
+                    e
+                    for e in original_children
+                    if e.tag == "MACO" and dm.material_info(stream, e)["uid"] == mats.needles
+                )
+                drsp.children.append(dm.retarget_material(stream, dials, {mats.texture: tex_uid}, mat_uid))
+            else:
+                drsp.children.append(
+                    dm.retarget_material(stream, dd.stock_material(stream), {dd.STOCK_TEXTURE: tex_uid}, mat_uid)
+                )
+            # The digital-dials shaders are drawn from the Volt's own buffer layout (no
+            # normal): a buffer of their own, stride 16 (hosts 250 and 293 draw their
+            # needles from that layout too, so they share it).
+            stride = dd.STOCK_STRIDE
+            builder.layout[mat_uid] = (stride, dd.MODL_FLAG)
+            digital_templates = {stride: dd.stock_buffer(stream)}
+            if variant == "needle":  # in-game test: the Dials material
                 mat_uid = mats.needles
+                stride = layout[mats.needles][0]
             verts, tris = dd.vertices(plan, place, stride, getattr(cf, "digital_redline", 7000.0))
             if tris:
                 needle_subs.append(builder.add(mat_uid, verts, tris))
@@ -2847,7 +2896,7 @@ def convert_interior(
                 "material": mat_uid.hex(),
                 "redline": round(float(getattr(cf, "digital_redline", 7000.0)), 1),
             }
-        forza2dsf.rebuild_drsp(stream, drsp, builder, keep_host_materials=True)
+        forza2dsf.rebuild_drsp(stream, drsp, builder, keep_host_materials=True, templates=digital_templates)
         part_lods = {mats.cabin_part: {INTERIOR_MASK: cabin}}
         if mats.needle_part is not None:
             part_lods[mats.needle_part] = {INTERIOR_MASK: needle_subs}
