@@ -972,6 +972,10 @@ Headless VM, the same five cars built from master and from this change
 (before) and `vm2-20261027-050401` (after). From behind, the F355's tail panel
 between the lamps is flat black with the horse and the lettering, instead of
 the blurred grey bay pictures (`img/exposed-f355-ingame-before-after.jpg`).
+Damage (`-Damage -DamagePanels`, IDs 1 and 5, run `vm1-20261027-054158`): full
+visual damage, the F355's engine cover opened and swung off; the tail panel stays
+flat black, no crash (`img/exposed-f355-damage.png`). The bay pictures under the
+opened cover aren't readable in those shots.
 
 ## Risks and open questions
 
