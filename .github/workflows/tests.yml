@@ -1,0 +1,26 @@
+# Tests: lint, format and the tests that need no game, Forza discs or out/
+# (`uv run python -m tests --ci`; tests/ci-skip.txt lists the rest). No plugin build and
+# no package: those run only on a release tag (release.yml).
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          version: "0.13.5"
+
+      - name: Tests
+        run: uv run python -m tests --ci
