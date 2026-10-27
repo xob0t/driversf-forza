@@ -236,6 +236,104 @@ def test_reuse_takes_each_car_from_the_first_build_that_has_it():
         assert other.rebuilt["TEST_Other_11"] == "not built there"
 
 
+def _old_build(folder: Path, old: Path, cars: list[str], sound_dir: Path) -> list[dict]:
+    """An earlier build in `old` with each of `cars` converted (fingerprints that hold)."""
+    (old / "work").mkdir(parents=True)
+    jobs = []
+    for n, media in enumerate(cars):
+        job = {**_job(folder), "media": media, "spool_id": 7 + n, "sound_dir": str(sound_dir)}
+        fp = _record(folder, job)
+        (old / "work" / f"{media}.fp.json").write_text(json.dumps(fp))
+        (old / "work" / f"{media}.json").write_text(json.dumps({"media": media, "ok": True, "host": 198}))
+        (old / "work" / f"{media}.chnk").write_bytes(b"CHNK" + media.encode())
+        (old / "work" / f"{media}.job.json").write_text(json.dumps(job))
+        jobs.append(job)
+    return jobs
+
+
+def test_verify_mismatch_stops_port_batch_and_rebuilds_for_dsff_install():
+    """Issue #133: a reused car that converts differently stops a developer's build; in
+    dsff install (--verify-mismatch rebuild) its fresh copy is kept and the other cars
+    reused from the same build are converted again."""
+    cars = ["TEST_A_10", "TEST_B_10", "TEST_C_10"]
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        (folder / "car").mkdir()
+        (folder / "car" / "input.bin").write_bytes(bytes(64))
+        old = folder / "old"
+        jobs = _old_build(folder, old, cars, folder / "new" / "sound")
+        work = folder / "new" / "work"
+        work.mkdir(parents=True)
+
+        def fake_run_workers(checks, where, parallel, log=print, progress=None):
+            out = {}
+            for check in checks:  # a fresh conversion that comes out different
+                Path(check["chunk"]).write_bytes(b"FRESH " + check["media"].encode())
+                report = {"media": check["media"], "ok": True, "host": 198, "fresh": True}
+                Path(check["report"]).write_text(json.dumps(report))
+                (where / "sound" / check["media"]).mkdir(parents=True, exist_ok=True)
+                (where / "sound" / check["media"] / "sweep_new.wav").write_bytes(b"new")
+                out[check["media"]] = report
+            return out
+
+        args = argparse.Namespace(reuse=old, rebuild_where=None, trust_code=False, verify_reuse=1, verify_seed=5)
+        real = port_batch.run_workers
+        port_batch.run_workers = fake_run_workers
+        try:
+            reuse = port_batch.Reuse(args, work)
+            for job in jobs:
+                assert reuse.take(job) is not None
+            try:
+                reuse.verify(jobs, 1)
+                raise AssertionError("port_batch build must stop")
+            except SystemExit as error:
+                assert "came out different" in str(error)
+            reuse = port_batch.Reuse(args, work)
+            for job in jobs:
+                reuse.take(job)
+            redo = reuse.verify(jobs, 1, on_mismatch="rebuild")
+        finally:
+            port_batch.run_workers = real
+        bad = reuse.mismatch["different"]
+        assert len(bad) == 1 and sorted(redo + bad) == cars
+        assert (work / f"{bad[0]}.chnk").read_bytes() == b"FRESH " + bad[0].encode()
+        assert json.loads((work / f"{bad[0]}.json").read_text())["fresh"]
+        assert (folder / "new" / "sound" / bad[0] / "sweep_new.wav").read_bytes() == b"new"
+        assert not json.loads((work / f"{bad[0]}.job.json").read_text()).get("verify")
+        assert (old / "work" / f"{bad[0]}.chnk").read_bytes() == b"CHNK" + bad[0].encode()  # the source is untouched
+        record = reuse.record()
+        assert record["reused"] == [] and record["verify_mismatch"]["converted_again"] == redo
+
+
+def test_workers_run_with_one_blas_thread():
+    """Issues #84, #133: numpy's threaded BLAS made a car convert a few hundred bytes
+    differently each time (BMW_Z4_11: 3 runs, 3 different chunks; 3 runs with one thread:
+    identical). Workers get fingerprint.WORKER_ENV."""
+    seen = []
+
+    class FakeProc:
+        def poll(self):
+            return 0
+
+    def fake_popen(argv, **kw):
+        seen.append(kw["env"])
+        job = json.loads(Path(argv[-1]).read_text())
+        Path(job["report"]).write_text(json.dumps({"media": job["media"], "ok": True}))
+        return FakeProc()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        job = {**_job(folder), "report": str(folder / "TEST_Car_10.json")}
+        real = port_batch.subprocess.Popen
+        port_batch.subprocess.Popen = fake_popen
+        try:
+            results = port_batch.run_workers([job], folder, 1, log=lambda t: None)
+        finally:
+            port_batch.subprocess.Popen = real
+        assert results["TEST_Car_10"]["ok"]
+        assert seen and all(seen[0].get(k) == v for k, v in fingerprint.WORKER_ENV.items())
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

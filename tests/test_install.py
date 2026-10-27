@@ -403,6 +403,10 @@ def test_tracker_counts_cars_rate_eta_and_failures():
     t.handle("car_start", media="D", spool_id=4, verify=True)
     t.handle("car_done", media="D", report={"ok": True})
     assert t.verify_done == 1 and t.converted == 2  # a reuse check is not a converted car
+    # Issue #133: D came out different; dsff install goes on (its fresh copy, E converted again).
+    t.reused = 2
+    notes = t.handle("verify_mismatch", cars=["D (DIFFERENT)"], redo=["E"])
+    assert notes[0][0] == "warn" and "D (DIFFERENT)" in notes[0][1] and t.reused == 1 and t.phase == "convert"
     assert t.stage == "build"
     t.handle("merge", cars=3)
     assert t.stage == "pack" and "merging 3" in t.pack_detail()
@@ -411,6 +415,24 @@ def test_tracker_counts_cars_rate_eta_and_failures():
     assert t.pack_detail().startswith("garage pictures and badges 1/2")
     t.handle("done", report="r.json")
     assert t.phase == "done"
+
+
+def test_summary_notes_a_verify_mismatch():
+    """Issue #133: the build goes on and the summary says what happened."""
+    with tempfile.TemporaryDirectory() as tmp:
+        build = Path(tmp) / "build"
+        build.mkdir()
+        mismatch = {"different": ["BMW_Z4_11"], "failed": [], "converted_again": ["A", "B"], "fresh_copies": []}
+        report = {
+            "ok": [{"media": m} for m in ("BMW_Z4_11", "A", "B", "C")],
+            "failed": [],
+            "reuse": {"reused": ["C"], "verify_mismatch": mismatch},
+        }
+        (build / "batch-report.json").write_text(json.dumps(report), encoding="utf-8")
+        run = _run(_args("--build-only", out=build))
+        run.read_report(build)
+        assert run.summary.reused == 1 and run.summary.built == 3
+        assert any("BMW_Z4_11" in n and "2 other reused cars" in n for n in run.summary.notes)
 
 
 def test_plain_display_is_ascii_and_moves_build_to_pack():

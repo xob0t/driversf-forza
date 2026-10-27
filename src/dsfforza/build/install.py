@@ -687,6 +687,18 @@ class Tracker:
         elif event == "verify":
             self.phase = "verify"
             self.verify = set(data.get("cars", []))
+        elif event == "verify_mismatch":  # port_batch --verify-mismatch rebuild (issue #133)
+            bad, redo = data.get("cars", []), data.get("redo", [])
+            notes.append(
+                (
+                    "warn",
+                    f"{', '.join(bad)}: came out different when converted again; using the new copy and "
+                    f"converting the {len(redo)} other reused cars again",
+                )
+            )
+            self.reused = max(0, self.reused - len(redo))
+            self.todo += len(redo)
+            self.phase = "convert"
         elif event == "merge":
             self.phase = "merge"
             self.merge_cars = data.get("cars", 0)
@@ -1458,6 +1470,9 @@ class Run:
         for source in sources:
             argv += ["--reuse", str(source)]
         argv += ["--jobs", str(args.jobs), "--verify-reuse", str(args.verify_reuse if sources else 0)]
+        # A reused car that comes out different when built again doesn't stop a player's build:
+        # its fresh copy is used and its build's other cars are converted again (issue #133).
+        argv += ["--verify-mismatch", "rebuild"]
         if args.verify_pack:
             argv += ["--verify-pack"]
         build_args = port_batch.build_parser().parse_args(argv)
@@ -1486,6 +1501,14 @@ class Run:
         except (OSError, ValueError):
             return
         reused = set((report.get("reuse") or {}).get("reused") or [])
+        mismatch = (report.get("reuse") or {}).get("verify_mismatch")
+        if mismatch:
+            bad = mismatch.get("different", []) + mismatch.get("failed", [])
+            s.notes.append(
+                f"{len(bad)} reused car(s) came out different when converted again ({', '.join(bad)}): their new copies "
+                f"were used and {len(mismatch.get('converted_again', []))} other reused cars were converted again. "
+                "Nothing to do; please mention it in a bug report (install.cmd --report) if something looks wrong."
+            )
         ok = [c["media"] for c in report.get("ok", [])]
         s.in_archive = len(ok)
         s.reused = sum(1 for m in ok if m in reused)
