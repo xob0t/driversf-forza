@@ -55,4 +55,11 @@ jobs:
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create $env:GITHUB_REF_NAME $env:ZIP --title $env:GITHUB_REF_NAME --generate-notes
+        # Notes from docs/releases/<tag>.md when there is one, else GitHub's list of PRs.
+        # v0.x and v*-rc/-beta tags are marked as pre-releases.
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $notes = "docs\releases\$tag.md"
+          $opts = if (Test-Path $notes) { @('--notes-file', $notes) } else { @('--generate-notes') }
+          if ($tag -like 'v0.*' -or $tag -like '*-*') { $opts += '--prerelease' }
+          gh release create $tag $env:ZIP --title $tag @opts
