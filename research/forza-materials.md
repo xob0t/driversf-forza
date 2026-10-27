@@ -636,7 +636,8 @@ Cuda's grille inserts and fender gills, the H1 Alpha's bonnet vent
 
 In game (confirmed-runtime, headless VM 2, the same palette entry,
 `run-series.ps1 -Views nose,front -Palette 0 -ShotSeconds 2 -ZoomPresses 8
--WaitSeconds 600`, the new `nose` camera; IDs 1 Cuda 426, 2 Range Rover 12, 3
+-WaitSeconds 600`, with a front three-quarter camera at bonnet height that is
+`grille` in clonetest.lua now (master's own `nose`, added since, is closer); IDs 1 Cuda 426, 2 Range Rover 12, 3
 Volt, 4 Cougar Eliminator, plus stock 175, the Cougar's host): before
 `vm2-20261027-083402` (`out/fx/before`, built from master 4f5057c), after
 `vm2-20261027-084411` (`out/fx/after`, this branch). The Cougar's centre grille
