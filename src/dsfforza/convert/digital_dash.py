@@ -45,6 +45,7 @@ STATIC = (5, 0)  # never written: no offset
 DIGIT_PITCH = 23 / 256  # v between digit cells (blank, 0..9)
 GEAR_PITCH = 1 / 7  # v between gear cells (R, 1..6)
 BAR_LIT_FROM = 0.505  # bar columns: lit from this v up, transparent below
+BUILD_REDLINE = 20000.0  # rpm the bar pieces are built for (no clamp), relit for p42 by retune
 BAR_MAX = 0.49  # largest threshold (rpm at the redline gives 0.5)
 
 

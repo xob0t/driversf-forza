@@ -651,7 +651,6 @@ class CockpitFit:
     virtual: dict = field(default_factory=dict)  # virtual_gauges report: dials drawn on a blank display
     digital_plan: object = None  # digital_dash.DigitalPlan: live digital displays (DSF's digital dials)
     digital_displays: dict = field(default_factory=dict)  # digital_displays' report
-    digital_redline: float = 7000.0  # VO3D p42 the bar pieces' v is computed for (forza2dsf sets it)
 
 
 # Main-carbin sections that make a cockpit when the cockpit carbin is a stub.
@@ -3236,7 +3235,9 @@ def convert_interior(
             if variant == "needle":  # in-game test: the Dials material
                 mat_uid = mats.needles
                 stride = layout[mats.needles][0]
-            verts, tris = dd.vertices(plan, place, stride, getattr(cf, "digital_redline", 7000.0))
+            # Bar pieces for a nominal redline; port_car relights them for the final VO3D
+            # p42 once the handling pass has set it (digital_dash.retune).
+            verts, tris = dd.vertices(plan, place, stride, dd.BUILD_REDLINE)
             if tris:
                 needle_subs.append(builder.add(mat_uid, verts, tris))
             digital_report = {
@@ -3244,7 +3245,7 @@ def convert_interior(
                 "quads": len(plan.quads),
                 "texture": [plan.width, plan.height],
                 "material": mat_uid.hex(),
-                "redline": round(float(getattr(cf, "digital_redline", 7000.0)), 1),
+                "redline": dd.BUILD_REDLINE,
             }
         forza2dsf.rebuild_drsp(stream, drsp, builder, keep_host_materials=True, templates=digital_templates)
         part_lods = {mats.cabin_part: {INTERIOR_MASK: cabin}}
