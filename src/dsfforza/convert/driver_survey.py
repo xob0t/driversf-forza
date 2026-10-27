@@ -12,7 +12,7 @@ in the stock archive) this measures:
   Forza eye with the host's eye-to-seat offset; new seat: cockpit.seat_for_marker);
 - miss: the largest distance from the driver model's grips (the stock hand rig at
   the stock point of the seat) to the drawn rim (the cockpit wheel fit, onto which
-  the main-carbin wheel is aligned), before dsfforza.asi [hands] moves them onto it;
+  the main-carbin wheel is aligned);
 - roof: the room over the driver model's eyes (seat + cockpit.FLEET_EYE_ABOVE_SEAT)
   up to the first triangle of the Forza body at LOD 1 straight above.
 
@@ -139,7 +139,7 @@ def survey_car(media: str, host: int, stream, root) -> dict:
     centre = SIDE.point(cf.wheel.centre)
     axis = cockpit._norm(SIDE.normal(cf.wheel.axis))
     radius = cf.wheel.radius
-    pivot = cockpit._add(centre, cockpit.hand_shift(centre, axis, radius))  # the steering marker: patch_seats
+    pivot = cockpit.seat_anchor(centre, axis, radius)  # where patch_seats puts the seat
     eye = SIDE.point(cf.eye)
     quat = seat_info["quat"]
     # Old placement (cockpit.patch_seats before): under the Forza eye, host's eye-to-seat offset.

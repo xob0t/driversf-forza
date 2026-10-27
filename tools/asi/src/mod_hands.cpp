@@ -413,12 +413,18 @@ static void fix_arm(const Rig& rig, Xf* pose, Xf* model, const Arm& a, const Rim
         if (a.group[j] == kHand) g = add(g, joint_pos(rig, pose, j)), count++;
     if (!count) return;
     g = mul(g, 1.0f / count);
-    V3 v = sub(g, rim.centre);
+    // The hand keeps its angle about the circle the animations turn it on, now about the
+    // rim's hub: so it turns with the wheel even where that circle's centre is off the
+    // wheel's column (the occupant's seat, cockpit.seat_anchor). For the arms the circle's
+    // centre, A, is on the column, and this is the nearest point of the rim.
+    V3 v = sub(g, anim.centre);
     V3 plane = sub(v, mul(rim.axis, dot(v, rim.axis)));
     if (len(plane) < 0.02f) return;
     V3 target = add(rim.centre, mul(unit(plane), rim.radius));
     V3 delta = sub(target, g);
     float miss = len(delta);
+    V3 vr = sub(g, rim.centre);
+    float from_column = len(sub(vr, mul(rim.axis, dot(vr, rim.axis))));
     // A hand off the wheel (over the top while turning hand over hand, at the gear stick)
     // is left alone, and fades in as it comes back. On the wheel the fist is near the
     // circle the animations grip or near the rim.
@@ -432,7 +438,7 @@ static void fix_arm(const Rig& rig, Xf* pose, Xf* model, const Arm& a, const Rim
     if (log)
         dsf_log("hands: %s %s grip (%.3f %.3f %.3f) %.1f cm from the column, %.1f cm off the rim (r %.1f cm), %.1f cm off "
                 "the animations' circle; hold %.2f weight %.2f, moved %.1f cm",
-                rig.body ? "occupant" : "arms", side ? "left" : "right", g.x, g.y, g.z, len(plane) * 100, miss * 100,
+                rig.body ? "occupant" : "arms", side ? "left" : "right", g.x, g.y, g.z, from_column * 100, miss * 100,
                 rim.radius * 100, off_rig * 100, hold, w, len(delta) * 100);
     if (len(delta) < 1e-4f) return;
     // Two-bone IK: the shoulder stays, the wrist goes to W + delta, the elbow stays in
@@ -779,9 +785,11 @@ int mod_hands_selftest()
     }
     // The occupant: a hip-rooted arm in the seat's frame, its fist on the animations' circle
     // (g_body_circle) 45 degrees right of the top, moved onto a rim with Forza's column
-    // (15 degrees) and radius (0.15 and 0.20 m) found from a tilted seat matrix. The
-    // model-space transforms get the same moves.
-    for (float r : radii) {
+    // (15 degrees) and radius (0.15 and 0.20 m) found from a tilted seat matrix, its hub on
+    // the circle's column or 4 cm below it (the seat at cockpit.seat_anchor). The fist keeps
+    // its angle; the model-space transforms get the same moves.
+    for (int k = 0; k < 4; k++) {
+        float r = radii[k & 1], drop = k < 2 ? 0.0f : 0.04f;
         const Circle& c = g_body_circle;
         V3 up = unit(sub({0, 1, 0}, mul(c.axis, c.axis.y)));
         V3 p = add(c.centre, add(mul({1, 0, 0}, c.radius * 0.7071f), mul(up, c.radius * 0.7071f)));
@@ -806,26 +814,29 @@ int mod_hands_selftest()
         const float s5 = sinf(-0.0873f), c5 = cosf(-0.0873f);
         const float seat[16] = {1, 0, 0, 0, 0, c5, s5, 0, 0, -s5, c5, 0, 0.37f, 0.10f, -0.40f, 1};
         V3 axis_seat = unit({0, sinf(0.2618f), -cosf(0.2618f)});
-        V3 centre_car = mat_point(seat, add(c.centre, mul(c.axis, 0.01f)));
+        V3 hub = sub(add(c.centre, mul(c.axis, 0.01f)), mul(up, drop));
+        V3 centre_car = mat_point(seat, hub);
         V3 axis_car = sub(mat_point(seat, axis_seat), mat_point(seat, {0, 0, 0}));
         Rim rim;
         bool ok = mat_inverse_point(seat, centre_car, false, &rim.centre) && mat_inverse_point(seat, axis_car, true, &rim.axis);
         rim.axis = unit(rim.axis);
         rim.radius = r;
-        ok = ok && len(sub(rim.centre, add(c.centre, mul(c.axis, 0.01f)))) < 1e-4f && len(sub(rim.axis, axis_seat)) < 1e-4f;
+        ok = ok && len(sub(rim.centre, hub)) < 1e-4f && len(sub(rim.axis, axis_seat)) < 1e-4f;
         fix_arm(rig, pose, model, a, rim, c, 1.0f, 0, false);
         V3 g = fist(rig, pose, a);
         V3 gv = sub(g, rim.centre);
         float radial = len(sub(gv, mul(rim.axis, dot(gv, rim.axis)))), off = dot(gv, rim.axis);
         V3 S = joint_pos(rig, pose, 2), E = joint_pos(rig, pose, 4), W = joint_pos(rig, pose, 5);
-        ok = ok && fabsf(radial - r) < 1e-3f && fabsf(off) < 1e-3f && len(sub(S, at[2])) < 1e-4f &&
+        V3 was = sub(p, c.centre), now = sub(gv, mul(rim.axis, off));
+        was = sub(was, mul(rim.axis, dot(was, rim.axis)));
+        ok = ok && dot(unit(was), unit(now)) > 0.9999f && fabsf(radial - r) < 1e-3f && fabsf(off) < 1e-3f && len(sub(S, at[2])) < 1e-4f &&
              len(sub(joint_pos(rig, pose, 1), at[1])) < 1e-5f && fabsf(len(sub(E, S)) - len(sub(at[4], at[2]))) < 1e-3f &&
              fabsf(len(sub(W, E)) - len(sub(at[5], at[4]))) < 1e-3f &&
              fabsf(len(sub(joint_pos(rig, pose, 3), S)) - len(sub(at[3], at[2]))) < 1e-3f;
         for (int j = 0; j < 8; j++) ok = ok && len(sub(joint_pos(rig, model, j), joint_pos(rig, pose, j))) < 1e-5f;
         if (!ok)
-            printf("hands selftest occupant r %.2f: fist %.4f (off %.4f), shoulder moved %.4f\n", r, radial, off,
-                   len(sub(S, at[2])));
+            printf("hands selftest occupant r %.2f drop %.2f: fist %.4f (off %.4f), shoulder moved %.4f\n", r, drop, radial,
+                   off, len(sub(S, at[2])));
         fails += !ok;
     }
     return fails;
