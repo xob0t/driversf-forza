@@ -1753,6 +1753,57 @@ draws Forza's main-carbin wheel, and the E36 M3, M Coupe, Camaro ZL1 and
 XKR-S's main-carbin wheel fits are off (`align_main_wheel`), so their chase-view
 hubs sit 3 to 8 cm off the turn line.
 
+## Hands on Forza's rim (2026-10-27, issue #99)
+
+PR #90 left the stock hands gripping a fixed circle 0.177 m from the column and
+scaled 153 Forza wheels (0.85 to 1.3) where they missed it by more than 2 cm.
+Now `dsfforza.asi [hands]` (`tools/asi/src/mod_hands.cpp`) moves the hands
+onto each car's own rim after the animation has posed them, and the wheel
+always keeps Forza's size.
+
+**The cockpit arms** (confirmed-static; `out/ghidra/hg1`..`hg14`):
+
+- Class vtable 0x00DE3D38 (ctor FUN_00566F20, 0x3A4 bytes). The character
+  manager (FUN_0055AF30, `[engine+0x2A8]`) holds two at +0x10, one per local
+  player. FUN_0055A350 -> FUN_005672B0 attaches one to the player's vehicle
+  (+0x348) with two models from FUN_00559F50, chosen by the VSCT record's byte
+  +3 (3: one set, 0/1/2/4 the other): +0x340 sets up the animation graph,
+  +0x344 is drawn.
+- Each frame, the vehicle's draw (FUN_0087A5D0 -> FUN_005676B0, FUN_0087A6A0 ->
+  FUN_00566FD0) does:
+  - FUN_005676B0 evaluates the graph (+0xD4; skeleton at +0xD8) with
+    FUN_008609C0 (the call at 0x005676FF) into the global pose buffer
+    0x01214400. That is 64 joint transforms of 0x20 bytes: quaternion (x, y,
+    z, w; `p -> q p q* + t`) and translation, already composed with each
+    joint's inverse bind.
+  - FUN_00BCA840 builds them from the local pose. The skeleton keeps, per
+    joint j at +0x54 + 0x70 j: the parent index, the name hash (FUN_00BC9340:
+    byte i mod 4 += character i), and the inverse bind at +0x2C.
+  - FUN_005676B0 then lerps the steering matrix (+0x44 previous, +4 current,
+    written by FUN_00573E10) into +0x360. Joint 1's rotation times that matrix
+    turns the car's wheel (FUN_00875A50).
+  - FUN_00566FD0 counter-turns the arm that leaves the wheel (joints 24..45 by
+    +0x34C, 2..23 by +0x350) and draws the model through FUN_0055FAE0.
+- The steering matrix is R(column, angle) T(A), so the pose is in the car's
+  orientation with its origin at A (marker + p538/p559). Its translation row
+  is the marker, as the probe below shows.
+- No IK pass touches the arms. The only IK in the exe is the pedestrians'
+  feet (FUN_0057F5B0, LeftFoot/RightFoot).
+
+**The skeleton** (confirmed-runtime, `[hands] debug=1`; run
+`vm2-20261027-074532`, Regal GNX). It has 46 joints and hangs from the wheel:
+
+- 0 root and 1 the wheel joint, both at A.
+- 2 RightHand: 15 finger joints, and RightForearm (at the wrist).
+  RightForearm leads to RightForearmRoll and RightArm (at the elbow).
+  RightArm leads to RightArmRoll, RightElbow and RightShoulder (at the shoulder).
+- 24 LeftHand: the same.
+
+The fist (the wrist and its 15 finger joints) sits on a circle about A, 0.177 m
+from the column (to 0.3 cm), its normal 26.6 degrees up (the stock column is 24).
+That holds at rest and at DSF's full lock: there the pose is the same and the
+steering matrix turns it. Only the hand-over-hand frames leave the circle (12.6 cm).
+
 ## Risks and open questions
 
 1. Whether the cockpit view draws only the interior entry (hypothesis). If

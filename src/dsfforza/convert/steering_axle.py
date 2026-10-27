@@ -22,8 +22,8 @@ LOD for the chase views; cockpit.fit_wheel_points) and reports:
   research/cockpit.md "Hands on Forza's rim"). `grip_stock` is the largest
   distance from those grips to the drawn rim; `grip_asi` the same after
   dsfforza.asi [hands] moves each grip onto the rim the car's VO3D gives it
-  (p95 radius, p87 centre along the column; ASI_NEAR / ASI_FAR / ASI_MAX_MOVE as
-  the plugin's defaults), and `asi_rim` how far that rim is from the drawn one
+  (p95 radius, p87 centre along the column; by ASI_MAX_MOVE at most, the
+  plugin's default), and `asi_rim` how far that rim is from the drawn one
   (centre distance plus radius difference).
 
     uv run dsff steering_axle out/final4/dngvehicles.sp --out out/axle/final4.tsv
@@ -43,9 +43,9 @@ from pathlib import Path
 from dsfforza.convert import cockpit
 
 NEAR = 0.3  # m from the hinge: the largest rim (0.24 m) plus the largest hand shift (6 cm)
-# dsfforza.asi [hands] defaults (tools/asi/src/mod_hands.cpp): a grip this close to the rim
-# moves onto it fully, from ASI_FAR on not at all, and by ASI_MAX_MOVE at most.
-ASI_NEAR, ASI_FAR, ASI_MAX_MOVE = 0.06, 0.12, 0.08
+# dsfforza.asi [hands] (tools/asi/src/mod_hands.cpp) moves a hand that holds the wheel
+# by at most this (max_move_mm); the grips modelled here always hold it.
+ASI_MAX_MOVE = 0.10
 
 
 def skinned_points(mesh, skin: bytes) -> dict[int, list[tuple]]:
@@ -101,17 +101,16 @@ def turn_error(pts: list[tuple], pivot, direction, hinge_axis) -> dict:
 
 
 def asi_grip(grip, rim) -> tuple:
-    """Where dsfforza.asi [hands] moves a grip: onto the nearest point of `rim`
-    (centre, unit axis, radius), fully within ASI_NEAR, fading out at ASI_FAR,
-    by ASI_MAX_MOVE at most."""
+    """Where dsfforza.asi [hands] moves a grip of the stock rig (on the animations'
+    grip circle): onto the nearest point of `rim` (centre, unit axis, radius), by
+    ASI_MAX_MOVE at most."""
     centre, axis, radius = rim
     target = cockpit._rim_nearest(grip, centre, axis, radius)
     delta = cockpit._sub(target, grip)
     miss = math.sqrt(cockpit._dot(delta, delta))
-    w = 1.0 if miss <= ASI_NEAR else 0.0 if miss >= ASI_FAR else (ASI_FAR - miss) / (ASI_FAR - ASI_NEAR)
     if miss > ASI_MAX_MOVE:
         delta = cockpit._scale(delta, ASI_MAX_MOVE / miss)
-    return cockpit._add(grip, cockpit._scale(delta, w))
+    return cockpit._add(grip, delta)
 
 
 def grip_error(anchor, drawn: dict, asi_rim) -> dict:

@@ -66,9 +66,14 @@ static const int kAlongParam = 87;
 
 // ---- settings --------------------------------------------------------------
 static int g_debug = 0;
-static float g_near = 0.06f;     // m: a grip this close to the rim is moved fully
-static float g_far = 0.12f;      // m: from here on not at all (the hand is off the wheel)
-static float g_max_move = 0.08f; // m: largest move of a hand
+static float g_near = 0.04f;     // m: a fist this close to the grip circle or the rim is moved fully
+static float g_far = 0.09f;      // m: from here on not at all (the hand is off the wheel)
+static float g_max_move = 0.10f; // m: largest move of a hand
+
+// The circle DSF's animations grip, in the pose (A-relative, the car's axes): the fist
+// sits 0.177 m from a column 26.6 degrees up (Regal GNX probe, research/cockpit.md).
+static const V3 kRigAxis = {0.0f, 0.448f, -0.894f};
+static const float kRigRadius = 0.177f;
 
 // ---- quaternion convention, checked against the game's compose once ---------
 static int g_qmode = -1;   // 0: (x,y,z,w) active, 1: (x,y,z,w) conjugate, 2: unknown (module off)
@@ -319,8 +324,13 @@ static void fix_arm(const Rig& rig, Xf* pose, const Arm& a, const Rim& rim, floa
     V3 delta = sub(target, g);
     float miss = len(delta);
     // A hand off the wheel (over the top while turning hand over hand, at the gear stick)
-    // is left alone, and fades in as it comes back.
-    float w = hold * (miss <= g_near ? 1.0f : miss >= g_far ? 0.0f : (g_far - miss) / (g_far - g_near));
+    // is left alone, and fades in as it comes back. On the wheel the fist is near the
+    // circle the animations grip (kRigRadius about A, the pose origin) or near the rim.
+    V3 rv = g;   // A is the pose origin
+    V3 rp = sub(rv, mul(kRigAxis, dot(rv, kRigAxis)));
+    float off_rig = len(sub(rv, mul(unit(rp), kRigRadius)));
+    float off = off_rig < miss ? off_rig : miss;
+    float w = hold * (off <= g_near ? 1.0f : off >= g_far ? 0.0f : (g_far - off) / (g_far - g_near));
     if (miss > g_max_move) delta = mul(delta, g_max_move / miss);
     delta = mul(delta, w);
     if (log)
@@ -558,7 +568,50 @@ static void __cdecl draw_hook(uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4
     if (s < 4 && now - last[s][c] >= 3000 && g_samples < 900) {
         last[s][c] = now;
         const float* w = (const float*)a4;
-        dsf_log("hands: draw site %08X model %08X joints %u world %.2f %.2f %.2f", site, a3, a6, w[12], w[13], w[14]);
+        // Characters drawn by FUN_00568590 / FUN_00573450 pass their +0x80 world matrix;
+        // the vehicle occupant class (FUN_00567E60) keeps its vehicle at +0x360.
+        uint8_t* ch = (uint8_t*)a4 - 0x80;
+        uint8_t* veh = player_vehicle(0);
+        bool mine = s != 1 && veh && !IsBadReadPtr(ch, 0x400) && *(uint8_t**)(ch + 0x360) == veh;
+        dsf_log("hands: draw site %08X model %08X joints %u world %.2f %.2f %.2f char %p vtable %08X%s", site, a3, a6, w[12],
+                w[13], w[14], ch, IsBadReadPtr(ch, 4) ? 0 : *(uint32_t*)ch, mine ? " (the player's car's occupant)" : "");
+        if (mine) {
+            uint8_t* skel = *(uint8_t**)(ch + 0xD4);
+            int n = skel && !IsBadReadPtr(skel, 0x28) ? *(int*)(skel + 0x24) : 0;
+            static void* dumped[4];
+            bool known = false;
+            for (void* d : dumped) known |= d == skel;
+            if (n > 0 && n <= 64 && !known) {
+                for (void*& d : dumped)
+                    if (!d) { d = skel; break; }
+                for (int j = 0; j < n; j++) {
+                    const uint8_t* rec = skel + 0x54 + 0x70 * j;
+                    char hex[0x70 * 3 + 1];
+                    for (int b = 0; b < 0x70; b++) sprintf_s(hex + 3 * b, 4, "%02X ", rec[b]);
+                    dsf_log("hands: occupant joint %d parent %d rec %s", j, j ? *(int*)rec : -1, hex);
+                }
+            }
+            log_floats("occupant world", w, 16);
+            char line[1024];
+            int k = _snprintf_s(line, sizeof line, _TRUNCATE, "hands: occupant char");
+            for (int o = 0; o < 0x400; o += 4) {
+                k += _snprintf_s(line + k, sizeof line - k, _TRUNCATE, " %08X", *(uint32_t*)(ch + o));
+                if (k > 900) {
+                    dsf_log("%s", line);
+                    k = _snprintf_s(line, sizeof line, _TRUNCATE, "hands: occupant char+%X", o + 4);
+                }
+            }
+            dsf_log("%s", line);
+            const Xf* pose = (const Xf*)a7;
+            for (int j0 = 0; j0 < (int)a6 && j0 < 64; j0 += 8) {
+                char pl[4096];
+                int q = _snprintf_s(pl, sizeof pl, _TRUNCATE, "hands: occupant pose %d", j0);
+                for (int j = j0; j < (int)a6 && j < j0 + 8; j++)
+                    for (int c2 = 0; c2 < 8; c2++)
+                        q += _snprintf_s(pl + q, sizeof pl - q, _TRUNCATE, " %.5g", c2 < 4 ? pose[j].q[c2] : pose[j].t[c2 - 4]);
+                dsf_log("%s", pl);
+            }
+        }
     }
     ((DrawFn)kDraw)(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16);
 }
@@ -566,9 +619,9 @@ static void __cdecl draw_hook(uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4
 void mod_hands_init()
 {
     g_debug = cfg_int("hands", "debug", 0);
-    g_near = cfg_int("hands", "near_mm", 60) / 1000.0f;
-    g_far = cfg_int("hands", "far_mm", 120) / 1000.0f;
-    g_max_move = cfg_int("hands", "max_move_mm", 80) / 1000.0f;
+    g_near = cfg_int("hands", "near_mm", 40) / 1000.0f;
+    g_far = cfg_int("hands", "far_mm", 90) / 1000.0f;
+    g_max_move = cfg_int("hands", "max_move_mm", 100) / 1000.0f;
     if (g_far <= g_near) g_far = g_near + 0.01f;
     if (!bytes_equal(kCompose, "\x83\xEC\x30\x56\x57", 5)) {
         dsf_log("hands: FUN_00BC9E90 differs; hands left alone");
@@ -601,6 +654,8 @@ int mod_hands_selftest()
     check_convention();
     fails += g_qmode != 0;
     const float radii[2] = {0.20f, 0.15f};
+    float near_was = g_near, far_was = g_far;
+    g_near = 1.0f, g_far = 2.0f;   // the IK alone: every hand on the wheel
     for (float r : radii) {
         static uint8_t skel[0x80 + 0x70 * 64];
         memset(skel, 0, sizeof skel);
@@ -640,6 +695,27 @@ int mod_hands_selftest()
         if (!ok)
             printf("hands selftest r %.2f: fist %.4f (rim %.4f, off %.4f), shoulder moved %.4f\n", r, radial, rim.radius, off,
                    len(sub(S, at[6])));
+        fails += !ok;
+    }
+    g_near = near_was, g_far = far_was;
+    // A fist far from the animations' circle and from the rim (a hand off the wheel) stays.
+    {
+        Rig rig = {};
+        rig.n = 7;
+        const int parent[7] = {-1, 0, 1, 1, 3, 4, 4};
+        const V3 at[7] = {{0, 0, 0}, {0.05f, 0.30f, 0.0f}, {0.06f, 0.32f, 0.02f}, {0.05f, 0.30f, 0.0f},
+                          {0.20f, 0.10f, -0.25f}, {0.18f, 0.06f, -0.54f}, {0.20f, 0.08f, -0.40f}};
+        for (int j = 0; j < 7; j++) rig.parent[j] = parent[j], rig.bind[j] = at[j];
+        Arm& a = rig.arm[0];
+        a = {1, 3, 4, 5, true, {}};
+        const uint8_t group[7] = {kNone, kHand, kHand, kFore, kUpper, kShoulder, kUpper};
+        memcpy(a.group, group, sizeof group);
+        Xf pose[7];
+        for (Xf& x : pose) x = {{0, 0, 0, 1}, {0, 0, 0, 0}};
+        Rim rim = {{0, 0, 0}, unit({0, -0.417f, 0.909f}), 0.20f};
+        fix_arm(rig, pose, a, rim, 1.0f, 0, false);
+        bool ok = len(sub(joint_pos(rig, pose, 1), at[1])) < 1e-5f;
+        if (!ok) printf("hands selftest: a hand off the wheel moved\n");
         fails += !ok;
     }
     return fails;
