@@ -1844,17 +1844,13 @@ DriverTruck), drawn by FUN_00568590.
   0x00580536) drew him in run `vm2-20261027-093214`, nor anything else but the
   cockpit arms. Pedestrians weren't drawn there either.
 - So FUN_00573450's other branch (+0x32B set: FUN_0055A230 queues the
-  character for a batched draw) is the likely path. It is not followed here
-  (issue #117).
-- Until that is hooked, the chase views keep PR #90's arrangement:
-  - the seat holds the stock grips at `seat_anchor`;
-  - the main-carbin wheel they draw is scaled by `chase_wheel_scale` (PR #90's
-    rule: only past 2 cm, 0.85 to 1.3), so the chase-view hands miss its rim by
-    the same median 1.3 cm, at most 3.5 cm;
-  - while steering, the hands still turn about the old anchor.
-- The cockpit and chase wheels now differ in size on those cars (the bus 0.220
-  against 0.187 m, the ARX-01b 0.113 against 0.147 m). The two views never show
-  together.
+  character for a batched draw) is the likely path. (Confirmed and hooked since:
+  "Hands in the chase views" below, issue #117.)
+- Until then the chase views kept PR #90's arrangement: the seat held the stock
+  grips at `seat_anchor`, the main-carbin wheel they draw was scaled by
+  `chase_wheel_scale` (PR #90's rule), and while steering the hands turned about
+  the old anchor. The cockpit and chase wheels differed in size on those cars
+  (the bus 0.220 against 0.187 m, the ARX-01b 0.113 against 0.147 m).
 
 **Survey.**
 
@@ -1887,6 +1883,119 @@ DriverTruck), drawn by FUN_00568590.
 - `img/hands-rim-chase-left.jpg`: the side view, unchanged.
 - The tour bus draws no cockpit (no arms, no interior) from its DriverEye camera
   in both runs, so it can't be judged there.
+
+## Hands in the chase views (2026-10-27, issue #117)
+
+The driver in the chase and side views, and every AI driver, is a full-body
+vehicle occupant, not the cockpit arms. Since this change `dsfforza.asi [hands]`
+moves his hands onto each ported car's rim too. The chase-view wheel keeps Forza's
+size, the same as the cockpit wheel. The seat doesn't move.
+
+**How he is drawn** (confirmed-static, `out/ghidra/ch1`..`ch13` in the worktree):
+
+- The occupants come from a pool in the character manager
+  (`[[0x00FE7228]+0x2A8] + 0x8B540`, FUN_0055A250 -> FUN_0055B2D0): 0x90 items of
+  0x39C bytes from +8. FUN_00567E60 sets one up: +0x00 (and +0x40) the seat
+  marker's matrix in the car (FUN_00561BF0), +0x360 the vehicle, +0x364 the seat
+  (0 the driver), +0x368 the animation set.
+- FUN_00569120 calls FUN_00568590 for every character on a list, pedestrians
+  included. Outside an enter/exit blend it calls FUN_00573450 with the character
+  in ECX. +0x32B is set whenever the skeleton fits (always, in practice), so it
+  takes the queued branch: FUN_0055A230 hands out a slot of 0x280 bytes (at most
+  0x80 per frame; slot +0x144 the character, +0x40 his world matrix, +0x160 his
+  scale), and FUN_0055ACE0 submits an engine task, FUN_005668B0 -> FUN_005650A0,
+  on the async task group. FUN_0055B090 waits for the group before the draw.
+- FUN_005650A0 blends his clips (FUN_00861460, twice for a blend) into a local
+  pose on its own stack, then builds the model-space and skin transforms with
+  FUN_00BCA840 (call at 0x005652FB). When the head looks at something it bends
+  the head and rebuilds them (0x00565910). The skin transforms go to the shader
+  as 3x4 rows (FUN_00BC9C70, FUN_00BA9CE0 with the constant at 0x00F40534).
+- His pose frame is the seat marker's. The steering marker sits at (0, 0.469,
+  0.428) in it on 138 of 147 stock cars ("The driver's seat follows the wheel").
+  The skeleton has 60 joints, rooted at the hips (RightShoulder -> RightArm ->
+  RightForeArm -> RightHand -> fingers). Some occupants use a 16-joint skeleton
+  without a Shoulder joint (seen on AI drivers).
+- That is why the probe at FUN_0055FAE0 (#118) never saw him: the queued branch
+  doesn't go through it.
+
+**His grips** (confirmed-runtime, `[hands] debug=1`, runs `vm1-20261027-164654`
+and `vm1-20261027-165637`, the fists in the seat frame):
+
+- The fist (wrist and finger joints) runs on a circle about the stock steering
+  marker's place, (0, 0.469, 0.428), in the column's plane (along it: -0.4 cm).
+  In the car and sports sets it is 0.193 m from the column, 1.7 cm outside a stock
+  0.176 m rim (stock 229 0.194 m). The truck set (tour bus) holds at a quarter to
+  three, 0.206 m out.
+- Standing at full lock his hands go hand over hand, like the cockpit arms; one
+  fist leaves the circle by up to 15 cm.
+
+**Fix** (`tools/asi/src/mod_hands.cpp`):
+
+- Hooks: the call to FUN_005650A0 in the task (0x005668D3) keeps the slot per
+  thread, and the two calls to FUN_00BCA840 (0x005652FB, 0x00565910) go to a
+  wrapper. It builds the transforms and then moves the hands, in both the skin
+  and the model-space transforms, before anything reads them. All three sites
+  or none.
+- Only pool occupants in seat 0 of a car whose VO3D carries the rim (p95, p87)
+  are touched. The rim goes into the seat frame through the inverse of +0x00.
+- Each fist goes onto the rim (1.7 cm outside its centre line, as on stock
+  wheels) at the angle the animation gives it about (0, 0.469, 0.428), not to
+  the nearest point. So the hands turn with the wheel about its hub, also where
+  the seat's anchor is off the hub. For the cockpit arms that centre is on the
+  column and the move is the same as before.
+- The arm follows through the same two-bone IK as the arms'. A hip-rooted arm
+  turns about RightArm (the shoulder joint), so a skeleton without Shoulder works.
+- Hands off the wheel are told as before: a fist more than 4 cm from the
+  animations' circle (0.193 m, give or take 1.5 cm for the truck set) and from
+  the rim fades out of the move, gone at 9 cm.
+- The largest move is now 12 cm (`max_move_mm`, was 10). The tour bus needs 11.6
+  cm at rest: its wheel lies 70 degrees back, the animations' circle 24.
+- Threads: the task runs on the engine's worker threads. The skeleton cache is
+  filled under a lock; everything else is on the stack.
+
+**The converter** (`cockpit.py`, `forza2dsf.py`):
+
+- `chase_wheel_scale`, `hand_reach`, `HAND_FIT_TOLERANCE` and
+  `WHEEL_SCALE_RANGE` are gone. `align_main_wheel` puts the main-carbin wheel on
+  the cockpit wheel at its size, so both views draw Forza's wheel.
+- The seat stays at `seat_anchor` (PR #90's placement; no seat moves, none rises).
+  Putting the seat on the steering marker instead would make the animations turn
+  the hands about the hub by themselves. Over the 573 cars of the roster it would
+  raise the seat on 415 cars, by a median 1.5 cm and up to 5.9 cm (JT1, Bentley
+  Speed 8, Viper CC, CCX; `out/ch/seat_survey.tsv`). Keeping the hand's angle
+  about the anchor in the plugin gives the same steering without that.
+
+**Survey** (`uv run dsff steering_axle`, which now also reports the chase views'
+grips: the stock circle about the stock point of the seat's frame, `turn_off` the
+distance of that centre from the drawn rim's column, `asi_move` the plugin's
+largest move up to full lock, 105 degrees either way):
+
+| | Chase wheel | Hands at rest (stock rig model) | While steering |
+| --- | --- | --- | --- |
+| master (roster prediction, 573 cars) | 157 scaled, 0.85 to 1.3; differs from the cockpit wheel on 106 by over 5 mm (up to 3.6 cm) | median 0.02 cm off the scaled rim, 90th pct 1.05, worst 1.95 | turn about the seat's anchor, median 1.9 cm (worst 6.0) off the hub: at full lock off the rim by a median 3.0 cm, 90th pct 7.9, worst 9.5 |
+| this branch (roster prediction) | Forza's, as in the cockpit | on the rim (0.00 cm) | on the rim at the animation's angle; largest move a median 4.3 cm, 90th pct 9.8; 27 cars need more than 12 cm at full lock (tour bus 23.8, Kenworth T440 15.7, the LMP yokes 14 to 15) |
+
+On the four test cars (`out/ch/before`, `out/ch/after2`): chase rim radius
+0.196 / 0.187 / 0.147 / 0.189 m (Regal, bus, ARX-01b, Mini) before, 0.200 /
+0.220 / 0.113 / 0.188 m after, the cockpit's. Chase hubs on the turn line 0.00 cm
+(the bus's 5.1 cm before was its scaled, culled flat wheel). Seats byte-equal in
+both builds.
+
+**In game** (VM 1 and 2, `run-series.ps1 -Vm -ProbeIds 1,2,3,4,229 -ShotSeconds 2
+-Views left,front -WaitSeconds 900`, with `-DriveKey Left -DriveSeconds 10` for
+full lock):
+
+- Before: master's converter and master's dsfforza.asi.
+- After: this branch's converter and plugin.
+- RUNS_AND_IMAGES
+
+**Open.**
+
+- An AI driver of a ported car wasn't seen: the traffic requested in the runs
+  (`-TrafficIds 1,2,3,4`) never spawned a ported car. The AI drivers the plugin
+  logged (traffic spools 136 to 298, all seat 0) go through the same hook; stock
+  cars carry no rim and are left alone.
+- Where a move exceeds 12 cm (the 27 cars above at full lock) the hand stops short.
 
 ## Risks and open questions
 

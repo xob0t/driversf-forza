@@ -680,7 +680,7 @@ Module `lua` (`tools/asi/src/mod_lua.cpp`). Issue #56; runs and symptoms in
 
 ## Hands on the rim
 
-Module `hands` (`tools/asi/src/mod_hands.cpp`, issue #99). The arms rig, the
+Module `hands` (`tools/asi/src/mod_hands.cpp`, issues #99 and #117). The arms rig, the
 pose buffer and the probe that measured them are in `cockpit.md`, "Hands on
 Forza's rim".
 
@@ -696,7 +696,7 @@ Forza's rim".
   `cockpit.grip_params` writes them; a car without p95 (every stock car) is left
   alone.
 - **Per hand:** the fist is the wrist and its 15 finger joints. It moves to the
-  nearest point of the rim, by at most `max_move_mm` (100). The weight is 1 while
+  nearest point of the rim, by at most `max_move_mm` (120). The weight is 1 while
   the fist is within `near_mm` (40) of the animations' grip circle or of the rim,
   fading to 0 at `far_mm` (90): a hand over the top while turning hand over hand,
   or one at the gear stick, stays where the animation puts it. The release
@@ -709,8 +709,28 @@ Forza's rim".
   checks the quaternion convention against FUN_00BC9E90 in the mapped image, moves
   a synthetic hanging arm onto rims 13% larger and 15% smaller (fist on the rim to
   1 mm, shoulder fixed, bone lengths kept), and leaves a hand off the wheel alone.
+  Since #117 also: the three occupant sites are patched; a hip-rooted arm in a
+  tilted seat's frame goes onto rims of 0.15 and 0.20 m with the hub on or 4 cm off
+  the animations' column (fist at its angle, model-space transforms moved alike);
+  a full-body skeleton record yields both arms by name.
+- **The chase views and AI drivers** (issue #117; `cockpit.md`, "Hands in the
+  chase views"): the full-body vehicle occupant is posed by an engine task. The
+  call at 0x005668D3 (`E8 C8 E7 FF FF`, task -> FUN_005650A0) keeps the queued
+  slot per thread (TlsAlloc), and the calls at 0x005652FB and 0x00565910
+  (`E8 .. .. 66 00`, FUN_00BCA840, the skin build) go to a wrapper that moves the
+  hands in the skin and model-space transforms. All three or none; `[hands]
+  chase=0` leaves the occupants alone. The queue carries pedestrians too: only
+  characters of the occupant pool (`[[0x00FE7228]+0x2A8] + 0x8B548`, 0x90 of
+  0x39C bytes) in seat 0 count. The rim is taken into his seat marker's frame
+  (+0x00). Each fist keeps the angle the animation gives it about the stock
+  steering point of that frame, (0, 0.469, 0.428), and lands 1.7 cm outside the
+  rim's centre line, as the occupant's fist sits on stock wheels. The IK turns a
+  hip-rooted arm about RightArm.
+- `max_move_mm` is 120 (was 100): the tour bus's flat wheel needs 116 at rest.
 - `[hands] debug=1` logs the skeleton (joint records), every 1.5 s the pose
   buffer, the steering matrices and the car's marker and grip parameters, and each
   hand's grip, miss and move. A joint's position is its skin transform applied
-  to its bind position, the inverse bind's inverse applied to the origin.
+  to its bind position, the inverse bind's inverse applied to the origin. For the
+  occupants, one every 1.5 s: the car, seat, seat and world matrices, the rim in
+  the seat frame, both fists, wrists, elbows and shoulders, and each hand's move.
 

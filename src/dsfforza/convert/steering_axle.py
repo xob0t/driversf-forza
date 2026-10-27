@@ -52,7 +52,7 @@ from dsfforza.convert import cockpit
 NEAR = 0.3  # m from the hinge: the largest rim (0.24 m) plus the largest hand shift (6 cm)
 # dsfforza.asi [hands] (tools/asi/src/mod_hands.cpp) moves a hand that holds the wheel
 # by at most this (max_move_mm); the grips modelled here always hold it.
-ASI_MAX_MOVE = 0.10
+ASI_MAX_MOVE = 0.12
 # DSF's full lock: the steering matrix turns the cockpit arms by up to 1.7456 rad (100 deg)
 # (research/cockpit.md, "Driver's hands and the steering wheel").
 TURN_DEG = 105

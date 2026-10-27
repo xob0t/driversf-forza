@@ -86,7 +86,7 @@ static const int kAlongParam = 87;
 static int g_debug = 0;
 static float g_near = 0.04f;     // m: a fist this close to the grip circle or the rim is moved fully
 static float g_far = 0.09f;      // m: from here on not at all (the hand is off the wheel)
-static float g_max_move = 0.10f; // m: largest move of a hand
+static float g_max_move = 0.12f; // m: largest move of a hand
 
 static int g_body = 1;           // [hands] chase=0 leaves the occupants alone
 
@@ -95,15 +95,17 @@ static int g_body = 1;           // [hands] chase=0 leaves the occupants alone
 struct Circle {
     V3 centre, axis;
     float radius;
-    float out;   // how far outside the rim's centre line the fist sits on a stock wheel
+    float out;    // how far outside the rim's centre line the fist sits on a stock wheel
+    float band;   // the radius varies by this either way (the occupants' animation sets)
 };
-static const Circle kArmsCircle = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.448f, -0.894f}, 0.177f, 0.0f};
+static const Circle kArmsCircle = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.448f, -0.894f}, 0.177f, 0.0f, 0.0f};
 // In the occupant's pose (the seat marker's frame) his circle sits about the stock steering
 // marker's place, (0, 0.469, 0.428) in 138 of 147 stock cars (research/cockpit.md, "The
 // driver's seat follows the wheel"). His fist (the wrist and the finger joints of the
-// full-body skeleton) runs 0.193 m from it, 1.7 cm outside a stock 0.176 m rim (debug=1,
-// run vm1-20261027-164654: stock 229 and the four test ports; "Hands in the chase views").
-static const Circle kBodyCircle = {{0.0f, 0.469f, 0.428f}, {0.0f, 0.448f, -0.894f}, 0.193f, 0.017f};
+// full-body skeleton) runs 0.193 m from it, 1.7 cm outside a stock 0.176 m rim, in the car
+// and sports sets; the truck set (tour bus) grips at a quarter to three, 0.206 m out (debug=1,
+// runs vm1-20261027-164654, -165637; "Hands in the chase views").
+static const Circle kBodyCircle = {{0.0f, 0.469f, 0.428f}, {0.0f, 0.448f, -0.894f}, 0.193f, 0.017f, 0.015f};
 
 // ---- quaternion convention, checked against the game's compose once ---------
 static int g_qmode = -1;   // 0: (x,y,z,w) active, 1: (x,y,z,w) conjugate, 2: unknown (module off)
@@ -435,7 +437,9 @@ static void fix_arm(const Rig& rig, Xf* pose, Xf* model, const Arm& a, const Rim
     // circle the animations grip or near the rim.
     V3 rv = sub(g, anim.centre);
     V3 rp = sub(rv, mul(anim.axis, dot(rv, anim.axis)));
-    float off_rig = len(sub(rv, mul(unit(rp), anim.radius)));
+    float radial = fabsf(len(rp) - anim.radius) - anim.band, along = dot(rv, anim.axis);
+    if (radial < 0) radial = 0;
+    float off_rig = sqrtf(radial * radial + along * along);
     float off = off_rig < miss ? off_rig : miss;
     float w = hold * (off <= g_near ? 1.0f : off >= g_far ? 0.0f : (g_far - off) / (g_far - g_near));
     if (miss > g_max_move) delta = mul(delta, g_max_move / miss);
@@ -695,7 +699,7 @@ void mod_hands_init()
     g_debug = cfg_int("hands", "debug", 0);
     g_near = cfg_int("hands", "near_mm", 40) / 1000.0f;
     g_far = cfg_int("hands", "far_mm", 90) / 1000.0f;
-    g_max_move = cfg_int("hands", "max_move_mm", 100) / 1000.0f;
+    g_max_move = cfg_int("hands", "max_move_mm", 120) / 1000.0f;
     g_body = cfg_int("hands", "chase", 1);
     if (g_far <= g_near) g_far = g_near + 0.01f;
     InitializeCriticalSection(&g_lock);
