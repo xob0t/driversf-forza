@@ -554,7 +554,7 @@ logos are dark on the black list (Hennessey's red, Chrysler's grey).
 Counts: before, 56 of 92 groups with their own logo (35 stock, 21 new) and
 36 without or with the host's; after, 92 of 92.
 
-### Another car's nameplate: the Ford Ka showed "SHELBY GT500" (2026-10-27)
+### Another car's nameplate: the Ford Ka showed "SHELBY GT500" (issue #98)
 
 Player report (Discord, build and options unknown): the Ford Ka
 (FOR_Ka_11, host 249 Aston Martin Cygnet) showed the Ford badge and the stock
@@ -576,7 +576,13 @@ when DSF has the make, took the Model (plate) of that make's closest-year
 stock car. For a 2011 Ford three stock Fords are a year off (194 Shelby
 GT500, 196 Taurus SHO, 251 F-150 SuperCrew, all 2010) and the first in
 `pairs()` order wins: in the game the Shelby, in lupa's Lua 5.1 the F-150
-(the game's numbers are single floats, so its hash order differs). A car
+(the game's numbers are single floats, so its hash order differs).
+Reproduced in game (confirmed-runtime): out/final4's archive and ported.lua
+with no hud.lua and master's register.lua, run `vm1-20261027-034058`
+(ID 404): the log says `id 404 (Ford Ka): stock match nil, same make 194`
+and the HUD shows the Ford badge over "SHELBY GT500", as in the player's
+screenshot. Over the whole roster without hud.lua, 533 of the 573 cars
+showed another model's plate (only the 40 exact stock matches their own). A car
 of a make DSF lacks kept the host's badge and plate (the Ka on the Cygnet
 would have shown ASTON MARTIN CYGNET). So the player's game had the archive
 and ported.lua but no hud.lua entry for the Ka:

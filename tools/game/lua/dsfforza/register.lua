@@ -116,7 +116,7 @@ local OVERFLOW_GROUP = "FORZA"   -- makes without a group of their own share FOR
 --   same make            -> host entry with that make's badge and no nameplate
 --   make not in DSF      -> host entry with no badge and no nameplate
 -- Never another model's plate or name: a Ford Ka without a hud.lua entry used
--- to take the closest-year Ford's, and showed "SHELBY GT500".
+-- to take the closest-year Ford's, and showed "SHELBY GT500" (issue #98).
 local BLANK_GLYPH = 32   -- " ": a text of spaces and control characters draws nothing
                          -- (the renderer drops it; research/gui-assets.md), whatever the font
 local function token(text)
