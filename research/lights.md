@@ -783,7 +783,7 @@ over their closed lids; after, the lids are shut and flush, the Cougar's
 grille doors closed. At night with the lamps on, the closed pods show no
 head-lamp glow (it is inside them); the bumper lamps still light
 (RX-7, NSX), and the Countach's nose stays dark: the price of one state
-until a switch exists (issue #123).
+until a switch exists (issue #122).
 
 Harness: a `-Views` entry with `+lit` (`nose+lit`) switches the car's
 Headlights and DaytimeRunning on for that view, `+night` also lays
