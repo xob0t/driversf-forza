@@ -60,6 +60,6 @@ jobs:
         run: |
           $tag = $env:GITHUB_REF_NAME
           $notes = "docs\releases\$tag.md"
-          $opts = if (Test-Path $notes) { @('--notes-file', $notes) } else { @('--generate-notes') }
+          [string[]]$opts = if (Test-Path $notes) { @("--notes-file", $notes) } else { @("--generate-notes") }
           if ($tag -like '*-*') { $opts += '--prerelease' }
           gh release create $tag $env:ZIP --title $tag @opts
