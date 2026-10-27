@@ -1654,14 +1654,15 @@ and the angle between the line and the rim's normal.
 | --- | --- | --- | --- |
 | stock fleet (146 cockpits) | median 0.03 cm, 90th pct 0.35 | 13 / 10 / 1 (School Bus) | median 0.4 deg |
 | `out/final4` (573 cars) | median 1.91 cm, 90th pct 4.97, worst 11.2 (tour bus), Esperante 7.9, Corrado 6.6, ARX-01b 5.5, Regal 3.2 | 497 / 424 / 272 | median 0.2 deg, worst 1.9 |
-| this fix, full roster (`out/axle/full`) | median 0.01 cm, 90th pct 0.01 | 6 / 5 / 2 | median 0.2 deg, worst 1.9 |
+| this fix, full roster (`out/axle/full2`) | median 0.01 cm, 90th pct 0.01 | 6 / 4 / 1 | median 0.2 deg, worst 1.9 |
 
 The stock host 229 itself: 0.1 cm (cockpit and chase). The six cars left
 over 0.5 cm have the hinge on the converter's own fit (in-plane shift 0); the
-survey refits the culled interior mesh, and on these the two fits differ by
-1 to 4 cm (CRX 4.0: rendered turned, its hub stays put; Kenworth T440 2.2,
-Corrados 1.2, GTO 1.2, TT-R 0.6). The chase views are the same except for
-seven cars whose chase-view wheel isn't the cockpit's (below).
+survey refits the culled interior mesh, and on these the two fits differ
+(tour bus 5.1 cm and Kenworth T440 2.0: flat wheels whose lower half is
+culled; rendered turned, their hubs stay put; Corrados 1.1, TT-R 0.8, E36 M3
+0.6). The chase views are the same except for seven cars whose chase-view
+wheel isn't the cockpit's (below).
 
 **Where the grips come from: not per-vehicle data.** The hands are DSF's
 animated driver rig, placed at the marker (cockpit view) or at the stock point
@@ -1717,14 +1718,18 @@ graph has posed them (a new hook, not attempted: issue #99).
   drifted under them.
 
 Scaling against `out/final4` (36 wheels scaled by 1.04 to 1.21, plus the bus
-0.88): 414 of 570 wheels keep Forza's size; 156 are scaled, 71 of them by
+0.88), predicted from the reports: 414 of 570 wheels keep Forza's size; 156 are scaled, 71 of them by
 under 5% (Regal 0.200 -> 0.196 m, 0.98; S5S Raptor 1.03). The large ones:
 tour bus 0.85 (grips still 3.5 cm off: its 70-degree column), Kenworth T440
 0.91, rims of 0.201 to 0.209 m 0.94 to 0.97; race yokes 1.2 to 1.3 (A4 DTM,
 R8 LMP, FLM, ARX-02a, 908, B09, AMR-Lola, Furai, SR8, 905), the three ARX-01b
 at the 1.3 cap with the grips 2.4 cm off. Grips off the rim in the cockpit
 view: median 1.3 cm, 90th percentile 2.0, worst 3.5 (bus); over 2.05 cm
-only the bus, the three ARX-01b (2.4) and the two Mini Cooper S 1965 (2.2). PR #69's survey had 0.0 median: at
+only the bus, the three ARX-01b (2.4) and the two Mini Cooper S 1965 (2.2).
+The full-roster build (`out/axle/full2`, 573 built, all lint ok) has 153
+scaled (the fit on the built mesh differs slightly), grips median 1.3 cm,
+90th percentile 2.0, worst 3.5, and every driver seat within 0.2 mm of
+`out/final4`'s. PR #69's survey had 0.0 median: at
 rest the hands sit up to 2 cm inside or outside the rim now, the price of a
 wheel that turns about its hub without resizing Forza's wheel.
 
