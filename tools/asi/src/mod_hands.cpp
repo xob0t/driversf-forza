@@ -276,9 +276,11 @@ static bool car_rim(uint8_t* arms, Rim* rim)
     if (!(r > 0.05f && r < 0.4f)) return false;   // stock cars: 0
     float along = vo3d(spec, kAlongParam);
     if (!(fabsf(along) < 0.5f)) return false;
-    V3 marker = v3((const float*)(spec + 0x37E0));
+    // In the pose: the origin is A = marker + (0, p538, p559) (FUN_005743E0), the axes
+    // are the car's. The rim's centre is the marker + along x the column direction.
     V3 axis = unit(v3((const float*)(spec + 0x37F0)));
-    rim->centre = add(marker, mul(axis, along));
+    V3 from_a = {0.0f, -vo3d(spec, 538), -vo3d(spec, 559)};
+    rim->centre = add(from_a, mul(axis, along));
     rim->axis = axis;
     rim->radius = r;
     return true;
@@ -462,160 +464,6 @@ static void probe(uint8_t* arms, uint32_t caller)
 }
 
 
-// ---- debug probe: other characters (the chase views' driver) ---------------------
-static const uint32_t kGenericEvalCall = 0x0055FF00;   // call FUN_008609C0 in FUN_0055FEE0
-static const uint8_t kGenericEvalCallBytes[5] = {0xE8, 0xBB, 0x0A, 0x30, 0x00};
-
-static uint8_t* player_vehicle(int i)
-{
-    uint8_t* engine = *(uint8_t**)0x00FE7228;
-    uint8_t* mgr = engine ? *(uint8_t**)(engine + 0x2A8) : nullptr;
-    return mgr ? *(uint8_t**)(mgr + 0x10 + 0x3A4 * i + 0x348) : nullptr;
-}
-
-static void probe_other(void* graph, const float* world, uint32_t caller)
-{
-    uint8_t* skel = *(uint8_t**)((uint8_t*)graph + 4);
-    if (!skel) return;
-    int n = *(int*)(skel + 0x24);
-    if (n <= 0 || n > 64) return;
-    int hand = -1;
-    uint32_t lh = name_hash("LeftHand");
-    for (int j = 0; j < n; j++)
-        if (hash_of(skel, j) == lh) hand = j;
-    if (hand < 0) return;
-    static void* seen[32];
-    static DWORD last[32];
-    int slot = -1;
-    for (int i = 0; i < 32; i++)
-        if (seen[i] == graph) { slot = i; break; }
-    if (slot < 0) {
-        for (int i = 0; i < 32; i++)
-            if (!seen[i]) { slot = i; seen[i] = graph; break; }
-        if (slot < 0) return;
-    }
-    uint8_t* veh[2] = {player_vehicle(0), player_vehicle(1)};
-    int at = -1;
-    uint8_t* ch = (uint8_t*)graph - 0xD0;
-    for (int o = 0; o < 0x400 && at < 0; o += 4)
-        if (veh[0] && *(uint8_t**)(ch + o) == veh[0]) at = o;
-    DWORD now = GetTickCount();
-    if (now - last[slot] < 1500 || g_samples >= 900) return;
-    last[slot] = now;
-    g_samples++;
-    dsf_log("hands: other %d graph %p skel %p n %d caller %08X player vehicle %p at char+%X world %.2f %.2f %.2f", g_samples,
-            graph, skel, n, caller, veh[0], at, world[12], world[13], world[14]);
-    if (at < 0) return;
-    static void* dumped[8];
-    bool known = false;
-    for (void* d : dumped) known |= d == skel;
-    if (!known) {
-        for (void*& d : dumped)
-            if (!d) { d = skel; break; }
-        for (int j = 0; j < n; j++) {
-            const uint8_t* rec = skel + 0x54 + 0x70 * j;
-            char hex[0x70 * 3 + 1];
-            for (int b = 0; b < 0x70; b++) sprintf_s(hex + 3 * b, 4, "%02X ", rec[b]);
-            dsf_log("hands: other joint %d parent %d rec %s", j, j ? *(int*)rec : -1, hex);
-        }
-    }
-    log_floats("other world", world, 16);
-    char line[1024];
-    int k = _snprintf_s(line, sizeof line, _TRUNCATE, "hands: other char");
-    for (int o = 0; o < 0x400; o += 4) {
-        k += _snprintf_s(line + k, sizeof line - k, _TRUNCATE, " %08X", *(uint32_t*)(ch + o));
-        if (k > 900) {
-            dsf_log("%s", line);
-            k = _snprintf_s(line, sizeof line, _TRUNCATE, "hands: other char+%X", o + 4);
-        }
-    }
-    dsf_log("%s", line);
-    const Xf* pose = (const Xf*)kPose;
-    char pl[4096];
-    for (int j0 = 0; j0 < n; j0 += 8) {
-        int q = _snprintf_s(pl, sizeof pl, _TRUNCATE, "hands: other pose %d", j0);
-        for (int j = j0; j < n && j < j0 + 8; j++)
-            for (int c = 0; c < 8; c++)
-                q += _snprintf_s(pl + q, sizeof pl - q, _TRUNCATE, " %.5g", c < 4 ? pose[j].q[c] : pose[j].t[c - 4]);
-        dsf_log("%s", pl);
-    }
-}
-
-static void __fastcall generic_eval_hook(void* graph, void*, void* pose, int count, int zero, float t)
-{
-    ((EvalFn)kEval)(graph, pose, count, zero, t);
-    uint8_t* frame = (uint8_t*)_AddressOfReturnAddress() + 0x1C;   // FUN_0055FEE0's entry esp
-    if (g_debug >= 2 && pose == (void*)kPose) probe_other(graph, *(const float**)(frame + 0x10), *(uint32_t*)frame);
-}
-
-// Every character draw (FUN_0055FAE0, cdecl, 16 arguments: +3 model, +4 world matrix,
-// +6 joint count, +7 pose) at its four call sites: who draws what where.
-static const uint32_t kDraw = 0x0055FAE0;
-static const uint32_t kDrawCalls[4] = {0x0055FF55, 0x0056726D, 0x00568C1E, 0x00580536};
-typedef void(__cdecl* DrawFn)(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
-                              uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
-
-static void __cdecl draw_hook(uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5, uint32_t a6, uint32_t a7,
-                              uint32_t a8, uint32_t a9, uint32_t a10, uint32_t a11, uint32_t a12, uint32_t a13, uint32_t a14,
-                              uint32_t a15, uint32_t a16)
-{
-    uint32_t site = *(uint32_t*)_AddressOfReturnAddress() - 5;
-    static DWORD last[4][4];
-    int s = 0;
-    while (s < 4 && kDrawCalls[s] != site) s++;
-    int c = a6 < 30 ? 0 : a6 < 50 ? 1 : a6 < 60 ? 2 : 3;
-    DWORD now = GetTickCount();
-    if (s < 4 && now - last[s][c] >= 3000 && g_samples < 900) {
-        last[s][c] = now;
-        const float* w = (const float*)a4;
-        // Characters drawn by FUN_00568590 / FUN_00573450 pass their +0x80 world matrix;
-        // the vehicle occupant class (FUN_00567E60) keeps its vehicle at +0x360.
-        uint8_t* ch = (uint8_t*)a4 - 0x80;
-        uint8_t* veh = player_vehicle(0);
-        bool mine = s != 1 && veh && !IsBadReadPtr(ch, 0x400) && *(uint8_t**)(ch + 0x360) == veh;
-        dsf_log("hands: draw site %08X model %08X joints %u world %.2f %.2f %.2f char %p vtable %08X%s", site, a3, a6, w[12],
-                w[13], w[14], ch, IsBadReadPtr(ch, 4) ? 0 : *(uint32_t*)ch, mine ? " (the player's car's occupant)" : "");
-        if (mine) {
-            uint8_t* skel = *(uint8_t**)(ch + 0xD4);
-            int n = skel && !IsBadReadPtr(skel, 0x28) ? *(int*)(skel + 0x24) : 0;
-            static void* dumped[4];
-            bool known = false;
-            for (void* d : dumped) known |= d == skel;
-            if (n > 0 && n <= 64 && !known) {
-                for (void*& d : dumped)
-                    if (!d) { d = skel; break; }
-                for (int j = 0; j < n; j++) {
-                    const uint8_t* rec = skel + 0x54 + 0x70 * j;
-                    char hex[0x70 * 3 + 1];
-                    for (int b = 0; b < 0x70; b++) sprintf_s(hex + 3 * b, 4, "%02X ", rec[b]);
-                    dsf_log("hands: occupant joint %d parent %d rec %s", j, j ? *(int*)rec : -1, hex);
-                }
-            }
-            log_floats("occupant world", w, 16);
-            char line[1024];
-            int k = _snprintf_s(line, sizeof line, _TRUNCATE, "hands: occupant char");
-            for (int o = 0; o < 0x400; o += 4) {
-                k += _snprintf_s(line + k, sizeof line - k, _TRUNCATE, " %08X", *(uint32_t*)(ch + o));
-                if (k > 900) {
-                    dsf_log("%s", line);
-                    k = _snprintf_s(line, sizeof line, _TRUNCATE, "hands: occupant char+%X", o + 4);
-                }
-            }
-            dsf_log("%s", line);
-            const Xf* pose = (const Xf*)a7;
-            for (int j0 = 0; j0 < (int)a6 && j0 < 64; j0 += 8) {
-                char pl[4096];
-                int q = _snprintf_s(pl, sizeof pl, _TRUNCATE, "hands: occupant pose %d", j0);
-                for (int j = j0; j < (int)a6 && j < j0 + 8; j++)
-                    for (int c2 = 0; c2 < 8; c2++)
-                        q += _snprintf_s(pl + q, sizeof pl - q, _TRUNCATE, " %.5g", c2 < 4 ? pose[j].q[c2] : pose[j].t[c2 - 4]);
-                dsf_log("%s", pl);
-            }
-        }
-    }
-    ((DrawFn)kDraw)(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16);
-}
-
 void mod_hands_init()
 {
     g_debug = cfg_int("hands", "debug", 0);
@@ -632,15 +480,6 @@ void mod_hands_init()
         return;
     }
     dsf_log("hands: pose hook at %08X (debug %d)", kEvalCall, g_debug);
-    if (g_debug >= 2 && patch_call(kGenericEvalCall, (void*)generic_eval_hook, kGenericEvalCallBytes))
-        dsf_log("hands: debug probe of other characters at %08X", kGenericEvalCall);
-    if (g_debug >= 2)
-        for (uint32_t site : kDrawCalls) {
-            uint8_t call[5] = {0xE8};
-            int32_t rel = (int32_t)(kDraw - (site + 5));
-            memcpy(call + 1, &rel, 4);
-            if (patch_call(site, (void*)draw_hook, call)) dsf_log("hands: debug probe of character draws at %08X", site);
-        }
 }
 
 // Offline check (tools/asi/test/offline.cpp, Driver.exe's image mapped, no game

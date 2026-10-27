@@ -313,6 +313,21 @@ def test_grip_params_give_dsfforza_asi_the_drawn_rim():
     assert set(cockpit.hand_params()) == set(cockpit.HAND_PARAMS)  # no steering report: p538/p559 only
 
 
+def test_chase_wheel_keeps_its_size_unless_the_chase_hands_miss():
+    # dsfforza.asi moves only the cockpit arms; the chase-view driver's grips sit
+    # 0.17 m from the column, so the chase views' wheel is scaled as PR #90 scaled
+    # every wheel: only past HAND_FIT_TOLERANCE, within WHEEL_SCALE_RANGE.
+    side = (0.0, 0.0, 0.0)
+    axis = cockpit._norm(cockpit.STOCK_COLUMN)
+    for radius in (0.165, cockpit.STOCK_RIM_RADIUS, 0.190, 0.200):  # hatchback, stock, ..., Regal GNX
+        k = cockpit.chase_wheel_scale(side, axis, radius)
+        shift = cockpit.hand_shift(side, axis, radius * k)
+        assert cockpit.hand_grip_error(shift, side, axis, radius * k) <= cockpit.HAND_FIT_TOLERANCE + 1e-4, radius
+        assert k == 1.0 or abs(k - 1) < 0.05, (radius, k)
+    k = cockpit.chase_wheel_scale(side, axis, 0.114)  # ARX-01b
+    assert 1.2 < k <= cockpit.WHEEL_SCALE_RANGE[1]
+
+
 def test_seat_anchor_puts_the_grips_on_the_rim():
     # The chase view's driver holds the wheel at the stock point of the seat's frame;
     # the seat goes where those grips land on the drawn rim (in-plane shift allowed).
