@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -139,6 +140,35 @@ def test_fingerprint_records_inputs_and_code():
         (folder / "car" / "input.bin").write_bytes(bytes(64))
         assert fingerprint.Checker().check(changed, job) == "code dsfforza.formats.xds.parse_header"
         assert fingerprint.Checker().check(changed, job, code=False) is None
+
+
+def test_a_moved_stock_archive_with_the_same_digest_is_the_same_input():
+    """dsff install builds from the game's dngvehicles.sp the first time and from the install's
+    backup of it after that (issue #95: every car was converted again on each later run)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        game = folder / "game"
+        stock = game / "Install" / "dngvehicles.sp"
+        stock.parent.mkdir(parents=True)
+        stock.write_bytes(b"stock archive")
+        job = {**_job(folder), "dsf": str(stock), "game_dir": str(game)}
+        recorder = fingerprint.Recorder([folder / "out"]).start()
+        try:
+            stock.read_bytes()
+        finally:
+            fp = recorder.finish(job)
+        assert fingerprint.norm(stock) in fp["files"]
+        # The install backs the archive up (time stamp kept, as Copy-Item does) and replaces it.
+        backup = game / "dsfforza-backup" / "Install" / "dngvehicles.sp"
+        backup.parent.mkdir(parents=True)
+        shutil.copy2(stock, backup)
+        stock.write_bytes(b"the installed build")
+        after = {**job, "dsf": str(backup)}
+        assert fingerprint.Checker().check(fp, after) is None
+        assert fingerprint.Checker().moved(fp, after) == {fingerprint.norm(stock): fingerprint.norm(backup)}
+        assert fingerprint.Checker().check(fp, job).startswith("input ")  # the game's file is the build now
+        backup.write_bytes(b"another archive")
+        assert fingerprint.Checker().check(fp, after) == "job: dsf"
 
 
 def test_reuse_copies_unchanged_cars_and_honours_the_predicate():

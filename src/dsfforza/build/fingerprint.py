@@ -401,21 +401,40 @@ class Checker:
             self._dirs[path] = dir_digest(path)
         return self._dirs[path]
 
-    def check(self, fp: dict, job: dict | None, code: bool = True) -> str | None:
+    def moved(self, fp: dict, job: dict) -> dict[str, str]:
+        r"""{the recorded stock archive path: the job's} when the job reads the stock archive
+        from another place but it has the same digest. dsff install builds from the game's
+        Install\dngvehicles.sp the first time and from the install's backup of it
+        (dsfforza-backup\Install\dngvehicles.sp; tools/install.ps1 copies it with its
+        time stamp) every time after, and the archive is the same file."""
+        old, new = (fp.get("job") or {}).get("dsf"), job_key(job).get("dsf")
+        recorded = fp.get("files", {}).get(old) if old else None
+        if not new or old == new or recorded is None or self.file(new) != recorded:
+            return {}
+        return {old: new}
+
+    def check(self, fp: dict, job: dict | None, code: bool = True, moved: dict | None = None) -> str | None:
         """None when nothing the fingerprint recorded changed, else the first reason.
         job None: don't compare the job (a first try, whose options were the job's
-        before the fallback); code False: don't compare the code (--trust-code)."""
+        before the fallback); code False: don't compare the code (--trust-code).
+        moved: recorded input paths read from elsewhere now (default: the stock archive
+        when it moved with the same digest, see `moved`)."""
         if fp.get("format") != FORMAT:
             return "no fingerprint of this format"
         if not fp.get("complete"):
             return "fingerprint incomplete (sources changed while the car was built)"
-        if job is not None and fp.get("job") != job_key(job):
-            old, new = fp.get("job") or {}, job_key(job)
-            return "job: " + ", ".join(k for k in sorted(set(old) | set(new)) if old.get(k) != new.get(k))
+        if moved is None:
+            moved = self.moved(fp, job) if job is not None else {}
+        if job is not None:
+            old, new = dict(fp.get("job") or {}), job_key(job)
+            if old.get("dsf") in moved:
+                old["dsf"] = moved[old["dsf"]]
+            if old != new:
+                return "job: " + ", ".join(k for k in sorted(set(old) | set(new)) if old.get(k) != new.get(k))
         if fp.get("env") != self.env:
             return "Python or numpy version"
         for path, digest in fp.get("files", {}).items():
-            if self.file(path) != digest:
+            if self.file(moved.get(path, path)) != digest:
                 return f"input {path}"
         for path, digest in fp.get("dirs", {}).items():
             if self.dir(path) != digest:
