@@ -290,20 +290,45 @@ def test_wheel_fit_ignores_a_modelled_column():
         assert abs(w.radius - 0.165) < 0.01 and abs(math.degrees(math.asin(w.axis[1])) - tilt) < 2, w
 
 
-def test_small_rims_are_scaled_to_the_hands():
-    # The stock hands grip 0.25 m apart: an LMP rim of 0.114 m can't be reached by a
-    # capped shift (it missed by 3 cm); the wheel is scaled until the grips sit on it.
+def test_rims_keep_their_size_unless_the_hands_miss():
+    # The hinge only moves along the column (an in-plane shift made the hub circle
+    # while steering: Regal GNX 3.2 cm), so the grips sit 0.17 m from the column.
+    # Forza's wheel keeps its size while they are within HAND_FIT_TOLERANCE of the
+    # rim (stock trucks: 0.20 m rims); a race yoke is scaled only that far.
     side = (0.0, 0.0, 0.0)
     axis = cockpit._norm(cockpit.STOCK_COLUMN)
-    assert cockpit.hand_wheel_scale(side, axis, cockpit.STOCK_RIM_RADIUS) == 1.0
-    assert cockpit.hand_wheel_scale(side, axis, 0.165) == 1.0  # a shift is enough
-    k = cockpit.hand_wheel_scale(side, axis, 0.114)
-    assert 1.1 < k < 1.3
+    for radius in (0.165, cockpit.STOCK_RIM_RADIUS, 0.190, 0.200):  # hatchback, stock, ..., Regal GNX
+        k = cockpit.hand_wheel_scale(side, axis, radius)
+        shift = cockpit.hand_shift(side, axis, radius * k)
+        assert cockpit.hand_grip_error(shift, side, axis, radius * k) <= cockpit.HAND_FIT_TOLERANCE + 1e-4, radius
+        assert k == 1.0 or abs(k - 1) < 0.05, (radius, k)
+    assert cockpit.hand_wheel_scale(side, axis, 0.180) == 1.0
+    k = cockpit.hand_wheel_scale(side, axis, 0.114)  # ARX-01b
+    assert 1.2 < k <= cockpit.WHEEL_SCALE_RANGE[1]
     shift = cockpit.hand_shift(side, axis, 0.114 * k)
-    assert cockpit.hand_grip_error(shift, side, axis, 0.114 * k) < 0.005
     along = cockpit._dot(shift, axis)
-    in_plane = math.sqrt(cockpit._dot(shift, shift) - along * along)
-    assert in_plane <= cockpit.MAX_HAND_SHIFT + 1e-9 and abs(along) <= cockpit.MAX_HAND_ALONG + 1e-9
+    assert math.sqrt(max(0.0, cockpit._dot(shift, shift) - along * along)) < 1e-9  # no orbit
+    assert abs(along) <= cockpit.MAX_HAND_ALONG + 1e-9
+
+
+def test_seat_anchor_puts_the_grips_on_the_rim():
+    # The chase view's driver holds the wheel at the stock point of the seat's frame;
+    # the seat goes where those grips land on the drawn rim (in-plane shift allowed).
+    side = (0.0, 0.0, 0.0)
+    axis = cockpit._norm(cockpit.STOCK_COLUMN)
+    for radius in (0.150, 0.200):
+        anchor = cockpit.grip_shift(side, axis, radius)
+        assert cockpit.hand_grip_error(anchor, side, axis, radius) < 0.003, radius
+
+
+def test_hand_shift_keeps_the_hinge_on_the_column():
+    # A flatter Forza column (S5S Raptor: 10 deg) than the stock rig's (24 deg): the
+    # grips sit off the rim's plane, and only a move along the column is allowed.
+    t = math.radians(10.0)
+    axis = (0.0, math.sin(t), -math.cos(t))
+    shift = cockpit.hand_shift((0.3, 0.6, 0.2), axis, cockpit.STOCK_RIM_RADIUS)
+    assert abs(math.sqrt(cockpit._dot(shift, shift)) - abs(cockpit._dot(shift, axis))) < 1e-9
+    assert cockpit._dot(shift, shift) > 0.0001  # it does move
 
 
 def _hierarchy(markers: list[tuple[int, tuple, tuple]]) -> bytes:
