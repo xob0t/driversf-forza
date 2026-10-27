@@ -194,7 +194,8 @@ class WheelAtlas(unittest.TestCase):
         t = dm.Texturing(Path())
         t.plan([], {1}, wheels=([self.wheel], {1}))
         self.assertIn(fm.WHEEL, t.families)
-        self.assertEqual(t.material(self.wheel, self.rim), dm.CHASSIS)
+        # Forza's rim reflection: a gloss copy of the Lights material (tests/test_gloss.py)
+        self.assertTrue(t.material(self.wheel, self.rim).startswith(dm.GLOSS_PREFIX))
         self.assertEqual(t.material(self.wheel, self.tire), fm.TYRE)
         self.assertEqual(t.material(self.wheel, self.blur), fm.SKIP)
         uvs, key = t.triangle_uvs(self.wheel, self.rim, 0, [self.wheel.vertices[i].uv0 for i in (0, 1, 2)])
@@ -244,10 +245,12 @@ class WheelAtlas(unittest.TestCase):
     def test_wheel_material(self):
         t = dm.Texturing(Path())
         t.plan([], {1}, wheels=([self.wheel], {1}))
-        chassis, lights = b"C" * 8, b"L" * 8
-        binding = dm.Binding(t, dm.Installed({dm.CHASSIS: chassis, dm.LIGHTS_MAT: lights}, b"T" * 8, {}))
+        chassis, lights, gloss = b"C" * 8, b"L" * 8, b"G" * 8
+        kind = t.material(self.wheel, self.rim)
+        materials = {dm.CHASSIS: chassis, dm.LIGHTS_MAT: lights, kind: gloss}
+        binding = dm.Binding(t, dm.Installed(materials, b"T" * 8, {}))
         shared = forza2dsf.SHARED_EXTERIOR
-        self.assertEqual(forza2dsf.wheel_material(binding, self.wheel, self.rim, shared), chassis)
+        self.assertEqual(forza2dsf.wheel_material(binding, self.wheel, self.rim, shared), gloss)
         self.assertEqual(forza2dsf.wheel_material(binding, self.wheel, self.tire, shared), forza2dsf.TYRE_LOD1)
         self.assertIsNone(forza2dsf.wheel_material(binding, self.wheel, self.blur, shared))
         # no textures: everything but the blur on the shared tyre (swatches)
@@ -443,6 +446,7 @@ class TrimArt(unittest.TestCase):
         dark = self.top(0.52, 0.1, 0.3, (36, 4, 60, 28))  # on the roof: dark trim
         filler = self.top(0.52, 0.32, 0.45, (4, 36, 28, 60))  # white but alpha 0
         hidden = self.top(0.0, -0.3, 0.3, (4, 4, 28, 28))  # white, inside the box
+        # dark: flat near black, and misc has a specular in Forza: a gloss cell (tests/test_gloss.py)
         misc = carbin.SubSection("misc", 1, 4, self.transform, white + dark + filler + hidden)
         black = carbin.SubSection("black", 1, 4, self.transform, list(white))
         lod3 = carbin.SubSection("misc", 3, 4, self.transform, list(white))
@@ -455,22 +459,37 @@ class TrimArt(unittest.TestCase):
         self.assertEqual(
             report,
             {
-                "body/misc": {"triangles": 2, "metal": 0, "detail": 0, "grey": 0, "area": unittest.mock.ANY},
-                "body/smooth_metal": {"triangles": 2, "metal": 2, "detail": 0, "grey": 0, "area": unittest.mock.ANY},
+                "body/misc": {
+                    "triangles": 4,
+                    "metal": 0,
+                    "detail": 0,
+                    "grey": 0,
+                    "gloss": 2,
+                    "area": unittest.mock.ANY,
+                },
+                "body/smooth_metal": {
+                    "triangles": 2,
+                    "metal": 2,
+                    "detail": 0,
+                    "grey": 0,
+                    "gloss": 0,
+                    "area": unittest.mock.ANY,
+                },
             },
         )
-        self.assertAlmostEqual(report["body/misc"]["area"], 0.2 * 0.2, places=6)
+        self.assertAlmostEqual(report["body/misc"]["area"], 2 * 0.2 * 0.2, places=6)
         names = [s.material for s in out.subsections]
-        self.assertEqual(
-            names, ["body", "misc", trim_art.ART_TECHNIQUE[fm.NODAMAGE], "black", "misc", trim_art.METAL_TECHNIQUE]
-        )
+        art = fm.with_source(trim_art.ART_TECHNIQUE[fm.NODAMAGE], "misc")
+        gloss = fm.with_source(trim_art.GLOSS_TECHNIQUE, "misc")
+        self.assertEqual(names, ["body", "misc", art, gloss, "black", "misc", trim_art.METAL_TECHNIQUE])
         self.assertEqual(fm.classify(trim_art.METAL_TECHNIQUE)[0], fm.CHROME)  # DSF's shared chrome
         self.assertIs(out.subsections[0], paint)
-        self.assertIs(out.subsections[3], black)  # black* stays trim
-        self.assertIs(out.subsections[4], lod3)  # not a requested LOD
-        self.assertEqual(out.subsections[1].indices, dark + filler + hidden)
+        self.assertIs(out.subsections[4], black)  # black* stays trim
+        self.assertIs(out.subsections[5], lod3)  # not a requested LOD
+        self.assertEqual(out.subsections[1].indices, filler + hidden)
         self.assertEqual(out.subsections[2].indices, white)
         self.assertEqual(out.subsections[2].uv_transform, self.transform)
+        self.assertEqual(out.subsections[3].indices, dark)
 
     def test_nothing_to_move(self):
         dark = self.top(0.0, 0.1, 0.3, (36, 4, 60, 28))
@@ -481,9 +500,10 @@ class TrimArt(unittest.TestCase):
             (1, 1, 1),
             self.verts,
             [],
-            [carbin.SubSection("misc", 1, 4, self.transform, dark)],
+            # frame: no specular or reflection in Forza, so flat black stays on the shared trim
+            [carbin.SubSection("frame", 1, 4, self.transform, dark)],
         )
-        (out,), report = trim_art.split_trim_art([section], self.atlases)
+        (out,), report = trim_art.split_trim_art([section], self.atlases, settings={})
         self.assertIs(out, section)
         self.assertEqual(report, {})
 
@@ -634,7 +654,11 @@ class TrimTexels(unittest.TestCase):
         (out,), report = trim_art.split_trim_art([section], atlases, settings={"misc": {"PristinePaintScale": 0.8}})
         names = [s.material for s in out.subsections]
         self.assertEqual(
-            names, [fm.with_scale(trim_art.DETAIL_TECHNIQUE, 0.8), fm.with_scale(trim_art.GREY_TECHNIQUE, 0.8)]
+            names,
+            [
+                fm.with_source(fm.with_scale(trim_art.DETAIL_TECHNIQUE, 0.8), "misc"),
+                fm.with_source(fm.with_scale(trim_art.GREY_TECHNIQUE, 0.8), "misc"),
+            ],
         )
         self.assertEqual(report["body/misc"]["detail"], 2)
         self.assertEqual(report["body/misc"]["grey"], 2)
@@ -645,7 +669,7 @@ class TrimTexels(unittest.TestCase):
             t = dm.Texturing(Path(), size=(64, 64)).plan([out], {1})
         family = fm.scaled_family(fm.NODAMAGE, 0.8)
         self.assertIn(family, t.families)
-        self.assertEqual(t.material(out, detail), dm.CHASSIS)
+        self.assertTrue(t.material(out, detail).startswith(dm.GLOSS_PREFIX))  # misc's gloss
         _uvs, tag = t.triangle_uvs(out, detail, 0, [verts[i].uv0 for i in detail.indices[:3]])
         self.assertEqual(tag[0], family)  # a region of the scaled atlas
         _uvs, tag = t.triangle_uvs(out, flat, 0, [verts[i].uv0 for i in flat.indices[:3]])

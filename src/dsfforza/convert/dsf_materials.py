@@ -289,6 +289,14 @@ def _paint_through(family: str, r: int, g: int, b: int, a: int) -> bool:
 LENS_REAR_Z, LENS_MIN_RED, LENS_MIN_ALPHA = 0.5, 80, 128
 
 CHASSIS, LIGHTS_MAT = "chassis", "lights"
+
+
+def is_atlas_kind(kind) -> bool:
+    """Texturing.material kinds drawn through the atlas: the host Chassis and Lights
+    materials and the gloss copies of the Lights one (GLOSS_PREFIX)."""
+    return kind in (CHASSIS, LIGHTS_MAT) or (isinstance(kind, str) and kind.startswith(GLOSS_PREFIX))
+
+
 # Atlas weight of the wheel texture against nodamage/Lights (DSF texels per
 # wheel.xds texel = WHEEL_WEIGHT x the atlas's uniform scale, at most 1). A
 # wheel.xds bigger than WHEEL_TEXELS (512² on the Veyron and 300C; 256² on 36 of
@@ -309,8 +317,98 @@ DROP = "drop"  # triangle_uvs tag: leave this triangle out (alpha-tested away in
 # again on its own.
 ART_TECHNIQUES = ("dsf_trim_art", "dsf_trim_art_lights")  # trim_art.ART_TECHNIQUE
 DETAIL_TECHNIQUES = ("dsf_trim_detail",)  # trim_art.DETAIL_TECHNIQUE
-GREY_TECHNIQUES = ("dsf_trim_grey",)  # trim_art.GREY_TECHNIQUE: one flat colour cell
+# trim_art.GREY_TECHNIQUE and GLOSS_TECHNIQUE: one flat colour cell each
+GREY_TECHNIQUES = ("dsf_trim_grey", "dsf_trim_gloss")
 ART_MIN_SCALE_SHARE = 0.9
+
+# --- gloss: Forza's specular and reflection on trims and rims ------------------------
+#
+# Forza adds a specular and a cube-map reflection to its trims and rims
+# (fm.gloss_params; research/forza-materials.md, "Gloss"). The host Chassis material the
+# atlas trims and rims draw with has almost none (g_hSpecularIntensity 0.03 x texel
+# alpha, power 24, no reflection), the shared trim even less (0.01 x the shared
+# texture's green). The host's Lights material, the stock cars' reflective one, runs a
+# program (SSIC GPCH d3f06377, _LOD1: ef85326d) that draws the atlas RGB lit like the
+# Chassis one plus
+#     g_hSpecularIntensity x (R.V)^g_hSpecularPower x the sun's specular colour
+#   + env x saturate(texel G x g_hReflectionAmount
+#                    x max(g_fCubemapFresnelMin, (1 - N.V)^g_hFresnelPower + g_hReflectionFresnelBias))
+#   + texel alpha x the colour of the vertex's lamp (semantic 9 byte 2; 0 = no lamp, none)
+# so copies of it with their own parameters (GlossMaterial; installed next to the host's
+# materials in the full and exterior entries, gloss_entries) draw Forza's terms: the
+# specular unmasked like Forza's, (N.H)^p ~ (R.V)^(p/4), the reflection with Schlick's
+# Fresnel (power 5, bias F0), divided by the texel's green that masks it.
+GLOSS_PREFIX = "gloss"  # Texturing.material kinds "gloss0", "gloss1"...: GlossMaterial n
+GLOSS_SPECULAR_SCALE = float(os.environ.get("DSFFORZA_GLOSS_SPEC", "0.25"))  # DSF intensity per Forza SpecularAmount
+GLOSS_REFLECTION_SCALE = float(os.environ.get("DSFFORZA_GLOSS_REFL", "1.0"))  # DSF reflection per Forza's
+GLOSS_POWER_RATIO = 4.0  # Forza's (N.H) power over DSF's (R.V) power for the same highlight
+GLOSS_POWER_RANGE = (1.0, 150.0)
+GLOSS_INTENSITY_MAX = 1.0  # the stock Lights material's (some cars set SpecularAmount 12: the Boss 429's plastic2)
+GLOSS_GREEN_FLOOR = 16  # texel green the reflection amount is scaled for at least (near-black trims)
+GLOSS_REFLECTION_MAX = 16.0
+GLOSS_MIN = 0.01  # specular intensity and reflection below this: no gloss material
+GLOSS_MAX_MATERIALS = 8  # per entry; more distinct ones merge into the nearest
+CHROME_FRESNEL = (16.0, 1.0)  # (power, bias): chrome reflects alike at every angle
+GLOSS_FRESNEL_POWER = 5.0
+
+
+def _q(value: float, step: float = 2**0.5) -> float:
+    """value rounded to a geometric grid (steps of `step`), 3 significant digits."""
+    if value <= 0:
+        return 0.0
+    return float(f"{step ** round(math.log(value, step)):.3g}")
+
+
+@dataclass(frozen=True, order=True)
+class GlossMaterial:
+    """The parameters of one copy of the host Lights material (see GLOSS_PREFIX)."""
+
+    intensity: float  # g_hSpecularIntensity
+    power: float  # g_hSpecularPower
+    reflection: float  # g_hReflectionAmount
+    fresnel_power: float  # g_hFresnelPower
+    bias: float  # g_hReflectionFresnelBias
+
+    def params(self) -> dict[str, float]:
+        return {
+            "g_hSpecularIntensity": self.intensity,
+            "g_hSpecularPower": self.power,
+            "g_hReflectionAmount": self.reflection,
+            "g_hFresnelPower": self.fresnel_power,
+            "g_hReflectionFresnelBias": self.bias,
+        }
+
+
+def gloss_material(g: fm.Gloss, green: float) -> GlossMaterial | None:
+    """The DSF material for a Forza technique's gloss `g` on texels whose green averages
+    `green` (0..255, as drawn); None when both terms are negligible."""
+    intensity = _q(min(GLOSS_INTENSITY_MAX, GLOSS_SPECULAR_SCALE * g.specular))
+    power = _q(min(GLOSS_POWER_RANGE[1], max(GLOSS_POWER_RANGE[0], g.power / GLOSS_POWER_RATIO)))
+    reflection = GLOSS_REFLECTION_SCALE * g.reflection
+    amount = _q(min(GLOSS_REFLECTION_MAX, reflection * 255 / max(green, GLOSS_GREEN_FLOOR)))
+    if intensity < GLOSS_MIN and reflection < GLOSS_MIN:
+        return None
+    if g.fresnel_scalar is None:
+        fresnel_power, bias = CHROME_FRESNEL
+    else:
+        fresnel_power, bias = GLOSS_FRESNEL_POWER, round(g.f0, 3)
+    if reflection < GLOSS_MIN:
+        amount = 0.0
+    return GlossMaterial(intensity, power if intensity else 1.0, amount, fresnel_power, bias)
+
+
+def merge_gloss(counts: dict[GlossMaterial, int], limit: int = GLOSS_MAX_MATERIALS) -> dict:
+    """{material: the material it is drawn with}: the `limit` most used (by triangles) as
+    they are, the others the nearest of those (log distance over the parameters)."""
+    kept = sorted(counts, key=lambda m: (-counts[m], m))[:limit]
+
+    def distance(a: GlossMaterial, b: GlossMaterial) -> float:
+        d = 0.0
+        for x, y in ((a.intensity, b.intensity), (a.power, b.power), (a.reflection, b.reflection)):
+            d += (math.log(x + 0.01) - math.log(y + 0.01)) ** 2
+        return d + (a.bias - b.bias) ** 2 + (a.fresnel_power != b.fresnel_power)
+
+    return {m: m if m in kept else min(kept, key=lambda k: (distance(m, k), k)) for m in counts}
 
 
 # --- DXT5 ------------------------------------------------------------------------
@@ -855,6 +953,12 @@ class Texturing:
     # Exterior only: lamp lenses baked over what lies behind them (src/dsfforza/convert/lenses.py).
     bake_lenses: bool = True
     lens_report: dict = field(default_factory=dict)  # lenses.bake's report
+    # Exterior only: atlas trims and rims with Forza's specular and reflection draw with
+    # copies of the host Lights material (GLOSS_PREFIX, _plan_gloss).
+    gloss_enabled: bool = True
+    gloss: dict = field(default_factory=dict)  # id(sub) -> index into gloss_materials
+    gloss_materials: list = field(default_factory=list)  # [GlossMaterial]
+    gloss_report: dict = field(default_factory=dict)  # technique -> {material index: triangles}
 
     # -- planning --
     def plan(self, sections, lods, extra_solids: dict | None = None, wheels=None) -> Texturing:
@@ -959,7 +1063,72 @@ class Texturing:
                 self.resolved[(id(section), id(sub))] = flat[sid]
                 self.atlas_subs.discard(sid)
             self.art_flat = chosen
+        self._plan_gloss(work)
         return self
+
+    def _plan_gloss(self, work) -> None:
+        """Pick a gloss material (GlossMaterial) for every subsection drawn with the
+        Chassis material from nodamage (trims, badges) or the wheel texture (rims) whose
+        Forza technique has a specular or a reflection (fm.gloss_params with the car's
+        ShaderSettings): Forza's terms on the green its texels average as drawn. At most
+        GLOSS_MAX_MATERIALS distinct ones (merge_gloss). Exterior only (no classifier)."""
+        if not self.gloss_enabled or self.classifier is not None or self.atlases is None:
+            return
+        from dsfforza.convert import trim_art
+
+        try:
+            settings = fm.shader_settings(self.car_dir)
+        except OSError:
+            settings = {}
+        picks: dict[int, tuple[GlossMaterial, str, int]] = {}  # id(sub) -> (material, technique, triangles)
+        images: dict[str, np.ndarray] = {}
+        for section, section_lods in work:
+            for sub in section.subsections:
+                if sub.lod not in section_lods or id(sub) in picks or self.material(section, sub) != CHASSIS:
+                    continue
+                m = self.submaterial(section, sub)
+                if fm.base_family(m.family) not in (fm.NODAMAGE, fm.WHEEL):
+                    continue
+                technique = fm.technique_source(m.technique)
+                g = fm.gloss_params(settings, technique)
+                if g is None:
+                    continue
+                if m.kind == "swatch":
+                    green = float(self._convert_texel(m.family, *m.colour)[1])
+                else:
+                    if m.family not in images:
+                        w, h, rgba = self.atlases.get(m.family)
+                        images[m.family] = np.frombuffer(bytes(rgba), dtype=np.uint8).reshape(h, w, 4)
+                    image = images[m.family]
+                    h, w = image.shape[:2]
+                    pool = section.vertices_for(sub)
+                    rows = [
+                        trim_art.triangle_texels(image, [((u := m.uv(pool[i].uv0))[0] * w, u[1] * h) for i in tri])
+                        for k, tri in enumerate(sub.triangles())
+                        if (id(sub), k) not in self.dropped
+                    ]
+                    if not rows:
+                        continue
+                    texels = np.concatenate(rows)
+                    if m.family != fm.WHEEL:  # paint-through filler is drawn as the plain texel
+                        opaque = texels[texels[:, 3] >= trim_art.ALPHA_OPAQUE]
+                        texels = opaque if len(opaque) else texels
+                    green = float(texels[:, 1].mean())
+                mat = gloss_material(g, green)
+                if mat is not None:
+                    picks[id(sub)] = (mat, technique, len(sub.triangles()))
+        counts: dict[GlossMaterial, int] = {}
+        for mat, _, n in picks.values():
+            counts[mat] = counts.get(mat, 0) + n
+        merged = merge_gloss(counts)
+        self.gloss_materials = sorted(set(merged.values()))
+        index = {mat: n for n, mat in enumerate(self.gloss_materials)}
+        self.gloss, self.gloss_report = {}, {}
+        for sid, (mat, technique, n) in picks.items():
+            k = index[merged[mat]]
+            self.gloss[sid] = k
+            per = self.gloss_report.setdefault(technique, {})
+            per[k] = per.get(k, 0) + n
 
     def _wheel_paint_scale(self, sections, lods) -> dict[str, float]:
         """Scale, in place, the RGB of the wheel texture's texels by the PaintScale
@@ -1207,7 +1376,11 @@ class Texturing:
         if self._uses_atlas(m) and (
             (m.kind == "textured" and id(sub) in self.atlas_subs) or (m.kind == "swatch" and self._has_cell(m))
         ):
-            return LIGHTS_MAT if m.family == fm.LIGHTS else CHASSIS
+            if m.family == fm.LIGHTS:
+                return LIGHTS_MAT
+            if id(sub) in self.gloss:
+                return f"{GLOSS_PREFIX}{self.gloss[id(sub)]}"
+            return CHASSIS
         if m.role == fm.TEXTURED:
             return fm.TRIM  # tiling/procedural lamp parts: untextured
         return m.role
@@ -1234,7 +1407,7 @@ class Texturing:
             return None, DROP
         m = self.submaterial(section, sub)
         uvs = [m.uv(uv) for uv in raw_uvs]
-        if self.material(section, sub) not in (CHASSIS, LIGHTS_MAT):
+        if not is_atlas_kind(self.material(section, sub)):
             return uvs, None
         if m.kind == "swatch":
             key = ("swatch",) + self._convert_texel(m.family, *m.colour)
@@ -1571,6 +1744,63 @@ def retarget_material(stream, maco: Entry, textures: dict[bytes, bytes], new_uid
     return e
 
 
+def set_material_params(stream, maco: Entry, values: dict[str, float]) -> int:
+    """Set, in place, the float parameters named in `values` in every pass (MARC) of a
+    MACO that has them (type-1 MARPs; the other parameters and passes are left alone).
+    Returns how many MARPs changed."""
+    changed = 0
+    for marc in maco.children:
+        if marc.tag != "MARC":
+            continue
+        for p in marc.children:
+            if p.tag != "MARP":
+                continue
+            data = current(stream, p)
+            param = parse_marp(data)
+            if param.type == 1 and param.name in values:
+                p.payload = data[:32] + struct.pack("<f", values[param.name]) + data[36:]
+                changed += 1
+    return changed
+
+
+def material_params(stream, maco: Entry) -> dict[str, float]:
+    """The float (type 1) parameters of a MACO's first pass that has each."""
+    out: dict[str, float] = {}
+    for marc in maco.children:
+        if marc.tag != "MARC":
+            continue
+        for p in marc.children:
+            if p.tag == "MARP":
+                param = parse_marp(current(stream, p))
+                if param.type == 1:
+                    out.setdefault(param.name, struct.unpack_from("<f", param.value)[0])
+    return out
+
+
+def gloss_uid(prefix: bytes, n: int) -> bytes:
+    """UID of gloss material n: forza2dsf.Builder.new_uid's stock-looking layout (byte 1
+    0x12, byte 7 0x2D with its top bit clear) on its own 4-byte prefix."""
+    n += 1
+    return bytes([(n << 4) & 0xFF, 0x12, n >> 4, prefix[0], prefix[1], prefix[2], prefix[3] & 0x7F, 0x2D])
+
+
+def add_gloss(stream, drsp: Entry, lights: Entry, gloss: list, prefix: bytes, textures=None) -> dict[str, bytes]:
+    """Add one copy of the Lights MACO `lights` per GlossMaterial to `drsp` (after its
+    last TEXC/MACO), each with its parameters and a UID from `prefix` (gloss_uid);
+    `textures` remaps their texture UIDs (retarget_material). Returns {kind: UID}."""
+    kids = list(drsp.children)
+    at = max([i for i, e in enumerate(kids) if e.tag in ("TEXC", "MACO")], default=-1) + 1
+    out = {}
+    for n, mat in enumerate(gloss):
+        uid = gloss_uid(prefix, n)
+        e = retarget_material(stream, lights, textures or {}, uid)
+        set_material_params(stream, e, mat.params())
+        kids.insert(at + n, e)
+        out[f"{GLOSS_PREFIX}{n}"] = uid
+    drsp.children = kids
+    return out
+
+
 def texture_entry(stream, texc: Entry, dds: bytes, new_uid: bytes | None = None) -> Entry:
     """Copy of a TEXC holding `dds` (and `new_uid`, if given)."""
     e = copy.deepcopy(texc)
@@ -1607,8 +1837,20 @@ def host_materials(stream, drsp: Entry, lod1: bool = False) -> dict[str, tuple[E
     return found
 
 
+def _with_gloss(installed: Installed, gloss: dict[str, bytes]) -> Installed:
+    installed.materials.update(gloss)
+    installed.layout.update(dict.fromkeys(gloss.values(), STRIDES[LIGHTS_MAT]))
+    return installed
+
+
 def install_full(
-    stream, drsp: Entry, dds: bytes, mode: str = "replace", uid_seed: bytes = b"\x00\x12\xfe\xed"
+    stream,
+    drsp: Entry,
+    dds: bytes,
+    mode: str = "replace",
+    uid_seed: bytes = b"\x00\x12\xfe\xed",
+    gloss: list | None = None,
+    gloss_prefix: bytes = b"\x00\x00\x5a\x3c",
 ) -> Installed:
     """Install the atlas in a full (kind 0) entry's DRSP, in place.
 
@@ -1618,6 +1860,8 @@ def install_full(
              difference in DDS size only.
     clone:   a new TEXC (new UID) and copies of the Chassis and Lights
              materials (new UIDs) pointing at it are added; the host's stay.
+    gloss:   GlossMaterials (Texturing.gloss_materials): copies of the Lights
+             material, UIDs from `gloss_prefix` (add_gloss), kinds "gloss<n>".
     """
     found = host_materials(stream, drsp)
     if set(found) != {CHASSIS, LIGHTS_MAT}:
@@ -1628,9 +1872,10 @@ def install_full(
         raise ValueError(f"chassis texture {host_tex.hex()} not in this entry")
     if mode == "replace":
         child(texcs[host_tex], "DXTC").payload = dds
-        return Installed(
+        installed = Installed(
             {k: v[1]["uid"] for k, v in found.items()}, host_tex, {v[1]["uid"]: STRIDES[k] for k, v in found.items()}
         )
+        return _with_gloss(installed, add_gloss(stream, drsp, found[LIGHTS_MAT][0], gloss or [], gloss_prefix))
     if mode != "clone":
         raise ValueError(mode)
     new_tex = uid_seed + b"\x00\x00\x00\x01"
@@ -1642,7 +1887,9 @@ def install_full(
     for n, kind in enumerate((CHASSIS, LIGHTS_MAT)):
         kids.insert(last_mat + 1 + n, retarget_material(stream, found[kind][0], {host_tex: new_tex}, new_mats[kind]))
     drsp.children = kids
-    return Installed(new_mats, new_tex, {new_mats[k]: STRIDES[k] for k in new_mats})
+    installed = Installed(new_mats, new_tex, {new_mats[k]: STRIDES[k] for k in new_mats})
+    textures = {host_tex: new_tex}
+    return _with_gloss(installed, add_gloss(stream, drsp, found[LIGHTS_MAT][0], gloss or [], gloss_prefix, textures))
 
 
 def install_exterior(
@@ -1652,6 +1899,8 @@ def install_exterior(
     mode: str = "replace",
     uid_seed: bytes = b"\x00\x12\xfe\xee",
     fallback: list[Entry] | None = None,
+    gloss: list | None = None,
+    gloss_prefix: bytes = b"\x00\x00\x5a\xc3",
 ) -> Installed:
     """Use the clean exterior (kind 2) entry's own Chassis/Lights materials;
     they sample the full entry's TEXC by UID. In clone mode, copies pointing
@@ -1668,12 +1917,16 @@ def install_exterior(
             found.setdefault(kind, value)
     if set(found) != {CHASSIS, LIGHTS_MAT}:
         raise ValueError(f"exterior entry needs a Chassis and a Lights material, found {sorted(found)}")
+    lights_tex = next(iter(found[LIGHTS_MAT][1]["textures"]), None)
+    remap = {lights_tex: full.texture} if lights_tex is not None and mode != "replace" else {}
+    gloss_uids = add_gloss(stream, drsp, found[LIGHTS_MAT][0], gloss or [], gloss_prefix, remap)
     if mode == "replace":
-        return Installed(
+        installed = Installed(
             {k: v[1]["uid"] for k, v in found.items()},
             full.texture,
             {v[1]["uid"]: STRIDES[k] for k, v in found.items()},
         )
+        return _with_gloss(installed, gloss_uids)
     new_mats = {CHASSIS: uid_seed + b"\x00\x00\x00\x02", LIGHTS_MAT: uid_seed + b"\x00\x00\x00\x03"}
     kids = list(drsp.children)
     last_mat = max(i for i, e in enumerate(kids) if e.tag == "MACO")
@@ -1683,7 +1936,7 @@ def install_exterior(
             last_mat + 1 + n, retarget_material(stream, found[kind][0], {old_tex: full.texture}, new_mats[kind])
         )
     drsp.children = kids
-    return Installed(new_mats, full.texture, {new_mats[k]: STRIDES[k] for k in new_mats})
+    return _with_gloss(Installed(new_mats, full.texture, {new_mats[k]: STRIDES[k] for k in new_mats}), gloss_uids)
 
 
 def host_texture(stream, drsp: Entry) -> bytes | None:
@@ -1709,7 +1962,7 @@ class Binding:
         """DSF material UID for a subsection; `shared` maps the roles paint,
         glass, trim, tyre (and skip -> None) to DSF's shared materials."""
         kind = self.texturing.material(section, sub)
-        if kind in (CHASSIS, LIGHTS_MAT):
+        if is_atlas_kind(kind):
             return self.installed.materials[kind]
         return shared.get(kind)
 
@@ -1741,6 +1994,7 @@ def prepare(
     log=print,
     interior_vehc: Entry | None = None,
     wheels=None,
+    uid_seed: bytes | None = None,
 ) -> tuple[Binding, Binding | None]:
     """Plan and encode the car's atlas and install it in a host vehicle's full
     entry (and its clean exterior entry). Call before rebuilding the DRSPs,
@@ -1772,11 +2026,33 @@ def prepare(
     if wheels is not None and fm.WHEEL not in t.families:
         log(f"no {fm.FAMILY_FILES[fm.WHEEL][0]} in {car_dir}: rims keep flat swatches")
     dds = t.dds(template=host)
-    full = install_full(stream, full_drsp, dds, mode)
+    # The gloss materials' UIDs: the car's own (uid_seed, forza2dsf.Builder's), apart for each entry.
+    seed = uid_seed or b"\x00\x00\x00\x00"
+    full = install_full(
+        stream, full_drsp, dds, mode, gloss=t.gloss_materials, gloss_prefix=seed[:3] + bytes([seed[3] ^ 0x3C])
+    )
+    if t.gloss_materials:
+        log(
+            "gloss materials (Lights copies; intensity/power/reflection/fresnel power/bias): "
+            + "; ".join(
+                f"{n}: {m.intensity:g}/{m.power:g}/{m.reflection:g}/{m.fresnel_power:g}/{m.bias:g}"
+                for n, m in enumerate(t.gloss_materials)
+            )
+            + " for "
+            + ", ".join(f"{k} {v}" for k, v in sorted(t.gloss_report.items()))
+        )
     ext = None
     if exterior_vehc is not None:
         fallback = ([child(child(interior_vehc, "MDXN"), "DRSP")] if interior_vehc is not None else []) + [full_drsp]
-        ext = install_exterior(stream, child(child(exterior_vehc, "MDXN"), "DRSP"), full, mode, fallback=fallback)
+        ext = install_exterior(
+            stream,
+            child(child(exterior_vehc, "MDXN"), "DRSP"),
+            full,
+            mode,
+            fallback=fallback,
+            gloss=t.gloss_materials,
+            gloss_prefix=seed[:3] + bytes([seed[3] ^ 0xC3]),
+        )
     log(
         f"{t.summary()}; {mode}: texture {full.texture.hex()}, DDS {len(dds):#x} bytes "
         f"(host {len(host) if host else 0:#x})"

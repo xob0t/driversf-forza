@@ -76,6 +76,12 @@ METAL_MAX_LEVEL = 240  # white is paint
 # - darker and flat stays on the shared trim, which looks the same.
 DETAIL_TECHNIQUE = "dsf_trim_detail"
 GREY_TECHNIQUE = "dsf_trim_grey"
+# Flat dark trims whose Forza technique has a specular or a reflection (fm.gloss_params:
+# the Cougar Eliminator's satin-black scoop, `misc` on texels of 2 to 7): one colour
+# cell each, drawn with a gloss material (dsf_materials.GLOSS) instead of the shared
+# trim, which has next to no specular (research/forza-materials.md, "Gloss"). Swatch
+# subsections (one texel for the whole subsection) are taken too, by triangle.
+GLOSS_TECHNIQUE = "dsf_trim_gloss"
 DETAIL_WINDOW = 5  # texels (odd)
 DETAIL_MIN_LEVEL = 40
 DETAIL_MIN_SPREAD = 20
@@ -159,7 +165,7 @@ def is_metal(technique: str, texels) -> bool:
     )
 
 
-ART, METAL, DETAIL, GREY = "art", "metal", "detail", "grey"
+ART, METAL, DETAIL, GREY, GLOSS = "art", "metal", "detail", "grey", "gloss"
 
 
 def local_contrast(image):
@@ -224,6 +230,18 @@ def classify_texels(technique: str, texels, scale: float = 1.0) -> str | None:
     if level >= GREY_MIN_LEVEL:
         return GREY
     return None
+
+
+def has_gloss(settings, technique: str) -> bool:
+    """Whether Forza gives this trim technique a specular or a reflection
+    (fm.gloss_params with the car's ShaderSettings)."""
+    g = fm.gloss_params(settings, technique)
+    return g is not None and (g.specular > 0 or g.reflection > 0)
+
+
+def is_opaque(texels) -> bool:
+    """Half the texels or more opaque: trim colour, not paint-through filler."""
+    return len(texels) > 0 and int((texels[:, 3] >= ALPHA_OPAQUE).sum()) >= ART_MIN_OPAQUE * len(texels)
 
 
 def keeps_trim(technique: str) -> bool:
@@ -363,9 +381,12 @@ def split_trim_art(sections, atlases: fm.AtlasCache, lods=None, settings: dict |
             if lods is not None and sub.lod not in lods:
                 continue
             m = fm.resolve(section, sub)
-            if m.role != fm.TRIM or m.kind != "textured" or m.family not in ART_TECHNIQUE:
+            if m.role != fm.TRIM or m.kind not in ("textured", "swatch") or m.family not in ART_TECHNIQUE:
                 continue
             if keeps_trim(sub.material):
+                continue
+            glossy = m.family == fm.NODAMAGE and has_gloss(settings, sub.material)
+            if m.kind == "swatch" and not glossy:
                 continue
             if m.family not in images:
                 try:
@@ -383,7 +404,13 @@ def split_trim_art(sections, atlases: fm.AtlasCache, lods=None, settings: dict |
             pool = section.vertices_for(sub)
             for k, tri in enumerate(sub.triangles()):
                 pts = [((u := m.uv(pool[i].uv0))[0] * width, u[1] * height) for i in tri]
-                kind = classify_texels(sub.material, triangle_texels(image, pts), scale)
+                texels = triangle_texels(image, pts)
+                if m.kind == "swatch":  # one texel for the whole subsection: only its gloss
+                    kind = GLOSS if is_opaque(texels) else None
+                else:
+                    kind = classify_texels(sub.material, texels, scale)
+                    if kind is None and glossy and is_opaque(texels):
+                        kind = GLOSS
                 if kind is None or (m.family != fm.NODAMAGE and kind in (DETAIL, GREY)):
                     continue
                 entry = found.setdefault((si, ui), (m.family, scale, [], [], {}))
@@ -416,7 +443,7 @@ def split_trim_art(sections, atlases: fm.AtlasCache, lods=None, settings: dict |
                 subs.append(sub)
                 continue
             family, scale, _, _, kinds = found[(si, ui)]
-            keep, parts, area = [], {ART: [], METAL: [], DETAIL: [], GREY: []}, 0.0
+            keep, parts, area = [], {ART: [], METAL: [], DETAIL: [], GREY: [], GLOSS: []}, 0.0
             pool = section.vertices_for(sub)
             for k, tri in enumerate(sub.triangles()):
                 if k not in picked:
@@ -427,22 +454,26 @@ def split_trim_art(sections, atlases: fm.AtlasCache, lods=None, settings: dict |
                 area += 0.5 * float(np.linalg.norm(np.cross(p[1] - p[0], p[2] - p[0])))
             if keep:
                 subs.append(dataclasses.replace(sub, index_type=4, indices=keep))
+            # The textured classes keep the Forza technique they came from (its gloss).
             names = {
-                ART: fm.with_scale(ART_TECHNIQUE[family], scale),
+                ART: fm.with_source(fm.with_scale(ART_TECHNIQUE[family], scale), sub.material),
                 METAL: METAL_TECHNIQUE,
-                DETAIL: fm.with_scale(DETAIL_TECHNIQUE, scale),
-                GREY: fm.with_scale(GREY_TECHNIQUE, scale),
+                DETAIL: fm.with_source(fm.with_scale(DETAIL_TECHNIQUE, scale), sub.material),
+                GREY: fm.with_source(fm.with_scale(GREY_TECHNIQUE, scale), sub.material),
+                GLOSS: fm.with_source(fm.with_scale(GLOSS_TECHNIQUE, scale), sub.material),
             }
             for kind, indices in parts.items():
                 if indices:
                     subs.append(carbin.SubSection(names[kind], sub.lod, 4, sub.uv_transform, indices))
             stats = report.setdefault(
-                f"{section.name}/{sub.material}", {"triangles": 0, "metal": 0, "detail": 0, "grey": 0, "area": 0.0}
+                f"{section.name}/{sub.material}",
+                {"triangles": 0, "metal": 0, "detail": 0, "grey": 0, "gloss": 0, "area": 0.0},
             )
             stats["triangles"] += sum(len(v) for v in parts.values()) // 3
             stats["metal"] += len(parts[METAL]) // 3
             stats["detail"] += len(parts[DETAIL]) // 3
             stats["grey"] += len(parts[GREY]) // 3
+            stats["gloss"] += len(parts[GLOSS]) // 3
             stats["area"] += area
         out.append(dataclasses.replace(section, subsections=subs))
     return out, report
