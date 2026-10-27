@@ -1,0 +1,43 @@
+name: Bug report
+description: A car looks or drives wrong, the install fails, or the game misbehaves with the mod.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before you write: in a terminal in the unzipped release folder, run
+
+            .\install.cmd --report
+
+        It writes `driversf-forza-report-<date-time>.zip` into that folder. The zip says which
+        version you have, how it was installed, your game folder's state, the disc images it
+        found and the logs, so we don't have to ask. It holds no save files, disc images or game
+        files, and your Windows user folder is replaced by `%USERPROFILE%`.
+  - type: textarea
+    id: report
+    attributes:
+      label: Report zip
+      description: Drag the driversf-forza-report-*.zip file here. If it won't attach, paste the summary the command printed.
+    validations:
+      required: true
+  - type: input
+    id: car
+    attributes:
+      label: Car
+      description: The car's name as the game shows it, or its Forza name (e.g. BMW_M3E30_91). "Install" if the install failed.
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot
+      description: Drag a screenshot here (the car in the game, or the install window with the error).
+    validations:
+      required: true
