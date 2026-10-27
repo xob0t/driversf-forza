@@ -331,9 +331,9 @@ def foreign_uids(
     vehicles never share part or resource UIDs; clones that kept the host's
     part UIDs turned into the host in game (run 20261022-024010). `owners`:
     uid_owners of the archive (made here when not given). `facts` (a dict) gets
-    "refs_ext", the UIDs the vehicle references but doesn't define, and "defined"
-    (hex): what another vehicle's change must not touch for this result to hold
-    (src/dsfforza/build/pack_reuse.py)."""
+    "refs_ext", the UIDs the vehicle references but doesn't define (hex): what another
+    vehicle's change must not define for this result to hold, and, when it has a
+    "defined" key, the UIDs the vehicle defines (src/dsfforza/build/pack_reuse.py)."""
     mine = {id(e) for e in kinds.values()}
     own_res, own_parts = set(), set()
     for e in kinds.values():
@@ -348,7 +348,8 @@ def foreign_uids(
         facts["refs_ext"] = sorted(
             {u.hex() for _, u in refs if u not in own_res and u not in own_parts and u not in none}
         )
-        facts["defined"] = sorted(u.hex() for u in own_res | own_parts)
+        if "defined" in facts:  # asked for (lint-many --defined)
+            facts["defined"] = sorted(u.hex() for u in own_res | own_parts)
     # UID -> the first other vehicle entry (archive order) that defines it.
     others: dict[bytes, str] = {}
     for u in {u for _, u in refs} | own_res | own_parts:
@@ -658,7 +659,9 @@ def cmd_lint_many(args: argparse.Namespace) -> None:
                     }
                 )
                 lines: list[str] = []
-                facts = {} if args.facts else None
+                facts = None
+                if args.facts:
+                    facts = {"defined": None} if int(spool_id) in set(args.defined or []) else {}
                 try:
                     problems = lint_vehicle(ctx, int(spool_id), None, one, emit=lines.append, facts=facts)
                     lines.append(f"{problems} problem(s)")
@@ -668,8 +671,6 @@ def cmd_lint_many(args: argparse.Namespace) -> None:
                 failed += bool(problems)
                 row = {"id": int(spool_id), "ok": not problems, "text": "\n".join(lines)}
                 if facts is not None:
-                    if int(spool_id) not in set(args.defined or []):
-                        facts.pop("defined", None)
                     row["facts"] = facts
                 print(json.dumps(row), flush=True)
         finally:

@@ -347,8 +347,9 @@ uv run dsff port_batch build --out out/all2 --list roster.txt --reuse out/all \
 
 `--reuse DIR` copies a car's output from an earlier build (`DIR/work`:
 `<media>.chnk`, the report, the log, `sound/<media>/`) when nothing that
-went into it changed, and converts only the other cars. The merge, the lint
-and the GUI step still run over every car. Files are hard-linked where the
+went into it changed, and converts only the other cars. The pack step after it (merge, lint,
+garage pictures) redoes only what changed too: see "Pack reuse" below.
+Files are hard-linked where the
 volume allows it, so an earlier build of 573 cars costs no second 2 GB.
 
 **What decides.** Each worker writes `work/<media>.fp.json`
@@ -419,6 +420,98 @@ Recording costs about 2 s per car (34.7 s instead of 32.8 s for the
 Express): mostly hashing the 10 to 30 MiB a car reads and parsing the
 package modules it loaded. Checking 573 cars hashes about 15 GB once,
 then reuses the digests of shared files.
+
+### Pack reuse
+
+The pack step (`port_batch.finish`: merge, upvh lint, manifest and Lua,
+garage pictures, HUD badges, fonts and locale files) took 13 minutes on
+the full roster even when every car was reused (issue #100). It now
+redoes only what changed since an earlier pack
+(`src/dsfforza/build/pack_reuse.py`). The earlier packs it looks at are
+the build folder's own (a rerun, `--resume`) and the `--reuse` builds'
+(`dsff install`: the last finished build and an interrupted one).
+`--no-pack-reuse` turns it off.
+
+**The record.** Each pack writes `<build>/pack/pack.json`:
+
+- the settings that shape the pack besides the cars: ID policy, root
+  limit, `--gui`, `--wide-glyphs`, the disc images, the stock archive's
+  digest;
+- the cars in merge order, each with a key: the SHA-256 of its chunk plus
+  the report fields the merge reads (entry, host, game, spool IDs). A
+  chunk's digest is kept with its file ID, size and mtime, so a
+  hard-linked chunk (`--reuse`) isn't read again;
+- a fingerprint of the pack, made like a car's (above): the files it read
+  (stock archive, the game's `gui.sp`, `Fonts.fchunk`, locale files, disc
+  images, string tables, `stock-banks.json`) and the code units it ran,
+  in this process, the `upvh lint-many` processes (`--record`) and the
+  render processes (`gui_assets._Renders`). The build folders themselves
+  and the chunks don't count: the keys cover them;
+- per car: its lint result with what ties it to other cars, and its
+  garage picture's key;
+- the nameplates and Forza logos it drew (`pack/images/`, by text and
+  size or by maker);
+- the size and mtime of every file it wrote.
+
+A record is used only when its settings are this build's and its
+fingerprint holds. A game file read from the game folder before an
+install and from `dsfforza-backup\` after it (`gui_assets.stock_file`)
+counts as the same input when the digest is the same.
+
+**Whole pack.** When an earlier record has the same cars with the same
+keys and its outputs are unchanged, nothing is redone: the archive is
+hard-linked, `gui/` copied (the next pack writes it in place), the
+manifest and the Lua written again from the earlier manifest's cars.
+
+**Some cars changed.** The merge runs over every car (15 to 20 s since
+`MultiStream.read` bisects its parts and `chnk.write_chunk` lays out each
+nested chunk once; it took 50 to 80 s). Then:
+
+- lint: the cars whose key changed, plus every unchanged car a change
+  could reach. upvh lint's cross-vehicle checks look at UIDs another
+  vehicle defines and at sound bank IDs another bank uses, so lint-many
+  `--facts` reports per car the UIDs it references but doesn't define and
+  the cars whose banks share an ID with its own (`near`). An unchanged
+  car is linted again when it was `near` an earlier version of a changed
+  or removed car, is `near` a changed car now, or references a UID a
+  changed car now defines. A failed result is always linted again. The
+  lint of one car still reads the archive's tables first (10 to 20 s).
+- garage pictures: a car's picture is taken from the earlier build when
+  its key (car key, VEHC records, Forza names) is the same; only the
+  others are rendered.
+- nameplates and logos: taken from the earlier builds. Drawing the
+  chrome nameplates (`gui_assets.text_plate`, pure Python) was most of
+  the GUI step: about 500 s of the full roster's, against 35 s for the
+  logos and about 1 s per rendered car.
+- the badge plan, `Fonts.fchunk`, `gui.sp`, the locale files and
+  `hud.lua` are made again: they number every car's badges and names.
+
+**Check.** `--verify-pack` (`dsff install --verify-pack`) makes a full
+pack of the same cars into `<build>/pack-verify/` afterwards and stops
+when any file differs: the archive, the Lua, the manifest (but its time
+and archive path), and every file of `gui/`. The comparison is
+`port_batch.compare_packs`; `tests/test_pack_reuse.py` checks the
+decisions with stand-ins for the merge, lint and pictures.
+
+Measured on the full roster (573 cars, all reused with `--resume` from a
+copy of `out/final4`'s work folder, `--jobs 4`, `--gui --wide-glyphs
+--id-policy asi --root-limit 3003`; changed cars are older outputs of the
+same cars from `out/final3`):
+
+| Run | Before (origin/master) | After |
+| --- | --- | --- |
+| full pack (no earlier record) | 810 s (merge 80, lint 38, GUI 679) | 819 s (merge 15, lint 77, GUI 707) |
+| nothing changed, same folder | 810 s | 10 s |
+| nothing changed, another folder (as `dsff install`) | 810 s | 13 s |
+| 1 car changed | 810 s | 78 s (merge 18, lint 10, GUI 37) |
+| 50 cars changed | 810 s | 117 s (merge 20, lint 15, GUI 67) |
+
+Before, the pack did the same work whatever changed. The first pack's
+lint takes longer than before (`--facts`: 45 s instead of 35 s over the
+whole roster, measured on its own; 77 s in the run above on a busy
+machine). The full packs of
+both versions are byte-identical (`compare_packs`), and so are the
+whole-pack copy and the 50-car pack with `--verify-pack`.
 
 A batch archive is byte-identical to a `port_car.py` archive with the same
 cars and IDs: tested with `FOR_FocusRS500_10` at 304, SHA-256 equal.
