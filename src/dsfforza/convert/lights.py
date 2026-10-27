@@ -187,6 +187,9 @@ def fallback(function: str, front: bool) -> str | None:
     return None
 
 
+HEAD_DAYTIME = 0x1D  # Headlights + DaytimeRunning
+
+
 def type_byte(function: str, side: str) -> int:
     if function == HEAD:
         return 0x01
@@ -229,6 +232,7 @@ class Lamp:
     per_lod: dict = field(default_factory=dict)  # lod -> [area, centre sum xyz, normal sum xyz, triangles]
     light_id: int | None = None  # host light entry id; vertices get id + 1
     cluster: int = 0  # 0 = the largest lamp of its function, side and end
+    daytime: bool = False  # a head lamp that also lights with DaytimeRunning (0x1D; LampPlan.assign)
 
     def measure(self, lod: int, area: float, centre, normal) -> None:
         acc = self.per_lod.setdefault(lod, [0.0, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], 0])
@@ -271,7 +275,11 @@ class Lamp:
 
     @property
     def flags(self) -> int:
-        return type_byte(self.function, self.side) << 24 | self.colour << 16 | variant_byte(self.function)
+        return self.type << 24 | self.colour << 16 | variant_byte(self.function)
+
+    @property
+    def type(self) -> int:
+        return HEAD_DAYTIME if self.function == HEAD and self.daytime else type_byte(self.function, self.side)
 
 
 def _tri_geometry(pts, normals):
@@ -756,6 +764,17 @@ class LampPlan:
                 else:
                     self.unlit.append(lamp.key)
         self.slots = [(o, lid, taken.get((o, lid))) for o, lid in entries]
+        # Day-time running: a front side without a lamp of its own that lights
+        # with DaytimeRunning gets head lamps that do (0x1D, Headlights +
+        # DaytimeRunning), as 31 stock vehicles draw theirs; the other stock
+        # cars but 10 have white position lamps (0x03) in their head-lamp
+        # clusters. Forza's lamps mostly have no position-lamp technique, so
+        # ported head lamps (0x01) stayed dark by day while stock cars' glowed
+        # (player report; 66 of 573 ported cars had a front DRL lamp).
+        own = {l.side for _, _, l in self.slots if l is not None and l.front and l.function in (POSITION, DRL_IND)}
+        for lamp in order:
+            if lamp.function == HEAD and lamp.front and lamp.side not in own:
+                lamp.daytime = True
         return self
 
     def light_byte(self, sub, k) -> int:
@@ -796,7 +815,7 @@ class LampPlan:
     def report(self) -> dict:
         lamps = []
         for lamp in sorted(self.lamps.values(), key=lambda l: (not l.front, l.function, l.side)):
-            mask = LIGHT_TYPE_MASK[type_byte(lamp.function, lamp.side)]
+            mask = LIGHT_TYPE_MASK[lamp.type]
             lamps.append(
                 {
                     "function": lamp.function,

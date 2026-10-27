@@ -189,6 +189,38 @@ def test_transparent_red_is_clear():
     assert lights.texel_class((123, 0, 0, 0)) == "white"  # VAU_Agila_11's clear lens
 
 
+class _Upvh:  # what LampPlan.assign reads of a parsed UPVH: n light entries with ids 0..n-1
+    def __init__(self, n: int):
+        import struct
+
+        self.offsets, self.counts = {"lights": 0}, {"lights": n}
+        self.data = b"".join(b"\0" * 40 + struct.pack("<I", i) + b"\0" * 20 for i in range(n))
+
+
+def _assigned(sections, entries: int) -> dict:
+    from dsfforza.formats import upvh as uv
+
+    parse, uv.parse = uv.parse, lambda data: _Upvh(entries)
+    try:
+        plan = lights.LampPlan.build(sections, _Place(), 0.0).assign(b"")
+    finally:
+        uv.parse = parse
+    return {(l.function, l.side, l.front): l.flags >> 24 for l in plan.lamps.values()}
+
+
+def test_head_lamps_light_by_day():
+    # Stock cars light a front lamp with DaytimeRunning (0x03 position lamps, or 0x1D head lamps
+    # on 31 of 150); ported head lamps were 0x01 only and stayed dark by day (player report)
+    heads = [_quad("headlightL", "head_light", 0.6, 2.0), _quad("headlightR", "head_light", -0.6, 2.0)]
+    got = _assigned(heads + TAILS, 8)
+    assert got[(lights.HEAD, "L", True)] == got[(lights.HEAD, "R", True)] == 0x1D, got
+    # with a position lamp of its own on that side, the head lamp stays 0x01 (stock 229)
+    drl = [_quad("drlL", "drlwhite", 0.8, 2.0)]
+    got = _assigned(heads + drl + TAILS, 8)
+    assert got[(lights.HEAD, "L", True)] == 0x01 and got[(lights.HEAD, "R", True)] == 0x1D, got
+    assert got[(lights.POSITION, "L", True)] == 0x03, got
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
