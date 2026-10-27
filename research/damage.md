@@ -915,6 +915,64 @@ colour, held door/wing patches blue, M5, S5S Raptor, Grand Cherokee, 250
 GTO), `img/damage-doorparts-ajar.png` (doors 0.15 rad ajar under a side
 crush, testdrive10 left).
 
+## Visible trims keep their trim (2026-10-26)
+
+User report on `out/final4` (FER_355Challenge_95, FH1, spool 353 on host 125):
+"a blurry panel on its back". In the chase view the black tail panel between
+the tail lamps (with the F355 lettering and the horse) showed blurred light
+shapes; in Forza (render of the stock sections with their atlases,
+`out/inv/frender.py`; FH1 thumbnail 339) it is flat black.
+
+### Cause (confirmed-static)
+
+The panel is Forza trim (`body`: `black`, `frame`, `matte_colors`, and the
+`bumperFrameR` frame below it). In the built exterior entry those triangles
+were on the shared trim material, but not on `TRIM_UV`: `split_exposed` had
+put them in the `bay` zone, and `DamagePlan` projected the shared chassis
+texture's engine-bay pictures onto them (`out/inv/dsf_view.py`: red = trim off
+`TRIM_UV`). The F355 is mid-engined, so its boot lid (`trunk`) is the engine
+cover and the bay is everything below the cover's map; the tail panel sits
+under the lid's rear edge (lid y 0.69 to 0.80, panel 0.50 to 0.69, both
+ending at z 2.0 to 2.07). A picture a few centimetres wide stretched over a
+0.5 m panel is the blur. The zones only test position against the panel's
+map (under the cover, or 2 cm to 0.6 m inward of a bumper skin); nothing
+asked whether the panel actually hides the triangle.
+
+### Fix (`damage.split_exposed`, `_seen_zone_triangles`)
+
+After the zone votes, the zone triangles of each LOD (not the panel
+undersides, `inner`) go through `trim_art.seen_from_outside`: orthographic
+depth buffers of the LOD's non-glass triangles from 8 directions level with
+the car, 8 from 35 degrees above and one from straight above (as for "Trim
+artwork" in `forza-materials.md`). A triangle that is seen keeps its trim, so
+it draws as Forza's flat trim; hidden ones keep their zone pictures for when
+the panel comes off. The build log counts them (`seen bay lod 1 357`).
+`split_exposed(visible=False)` is the old behaviour.
+
+### Survey (every roster car, `out/exp_survey.py`)
+
+Zone triangles the test returns to trim, LOD 1: 577,066 triangles on all 573
+cars, median 3.7 m2 a car (34% of the zone area; at most 9.2 m2, the SC430s,
+Zonda, Sesto Elemento: open or skeletal bodies). LODs 2 to 5 alike (median 3.2
+to 3.8 m2). What it is: grille backings and radiator faces seen through
+grilles (the Carlton's front grille), wheel-arch liners, the scuttle under the
+windscreen, the underbody seen from low, and recessed tail panels (the F355's,
+`body/black` and `matte_colors` facing back). The F355 at LOD 1: bay 894 to
+537 triangles, boot 1055 to 361, rear 264 to 39, front 88 to 43. The test
+adds about 6 s a car (18 s at most).
+
+`img/exposed-f355-before-after.png` (exterior entry from behind, red = trim on
+projected pictures): the tail panel and the diffuser go back to flat trim.
+
+### In game
+
+Headless VM, the same five cars built from master and from this change
+(`out/t/before`, `out/t/after`; ID 5 is the F355 Challenge, 1 the Carlton),
+`-Views wheels,rear -Palette 0 -ShotSeconds 3`: runs `vm1-20261027-045825`
+(before) and `vm2-20261027-050401` (after). From behind, the F355's tail panel
+between the lamps is flat black with the horse and the lettering, instead of
+the blurred grey bay pictures (`img/exposed-f355-ingame-before-after.jpg`).
+
 ## Risks and open questions
 
 1. Crush, panel swing and removal (`-DamagePanels`), decals and seams have
