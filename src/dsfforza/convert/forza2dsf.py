@@ -138,14 +138,32 @@ def material_for(name: str) -> bytes | None:
     return TRIM
 
 
+def raised_lamp(name: str, names) -> bool:
+    """A pop-up or hidden head lamp's raised (open) state: <base>up beside the
+    lowered state <base>down or plain <base>, any case (headlightLup /
+    headlightLdown, the NSX's headlightLUp, glassLHLup, the Stratos's and Elan's
+    headlightRup next to headlightR). Forza draws the lowered state on a parked
+    car and its cockpit carbins hold only that; DSF has no stock pop-up lamps
+    to switch to (research/lights.md, "Pop-up head lamps")."""
+    m = re.fullmatch(r"(.+)up", name, re.I)
+    if not m:
+        return False
+    base = m.group(1).lower()
+    lowered = {n.lower() for n in names}
+    return base + "down" in lowered or base in lowered
+
+
 def stock_sections(sections: list[carbin.Section]) -> list[carbin.Section]:
     """Drop upgrade variants: for parts named <base><letter>, keep variant 'a';
-    drop <base>race and parts that only exist as non-'a' variants."""
+    drop <base>race and parts that only exist as non-'a' variants. Pop-up head
+    lamps keep only their lowered state (raised_lamp)."""
     names = {s.name for s in sections}
     keep = []
     for s in sections:
         name = s.name
         if name.endswith("race") and name != "race":
+            continue
+        if raised_lamp(name, names):
             continue
         m = re.fullmatch(r"(.*?)([a-z])", name)  # FM4 goes past d: Skyline R32 bumperFa..Fg, hooda/hoodg
         if m and m.group(1) and (m.group(1) + "a" in names or m.group(1) + "b" in names) and m.group(2) != "a":

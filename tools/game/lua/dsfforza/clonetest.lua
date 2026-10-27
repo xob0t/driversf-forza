@@ -33,7 +33,10 @@ local VIEWS = {}              -- config.views (run-test -Views): extra views bet
                               -- "front": the driver's seat seen through the side windows or the windscreen;
                               -- "rear": the tailgate; "exhaust": the tailpipes, low; "wheels": the left side at hub height; "fq": the
                               -- front left wheel from the front three-quarter; "lock": that wheel
-                              -- from ahead, for steering in place with run-test -DriveKey Left; "nose": the headlamps; "grille": grille and bonnet)
+                              -- from ahead, for steering in place with run-test -DriveKey Left; "nose": the headlamps; "grille": grille and bonnet).
+                              -- A "+lit" suffix ("nose+lit") switches the head lamps on (Headlights, DaytimeRunning) for
+                              -- that view, "+night" also darkens the scene (lightstest.lua's dark mood); views
+                              -- without one switch them off again (pop-up head lamps, research/lights.md)
 local PALETTE = nil           -- config.palette (run-test -Palette): paint palette entry of the spawned cars
                               -- (Spawn's shaderParams[0], as the game's grid spawns set it); nil: the game's pick
 local DYNO = nil              -- config.dyno (run-test -Dyno): the dyno.lua module, acceleration and braking runs
@@ -571,10 +574,38 @@ local function endFixedCamera()
 	end
 end
 
+-- Lit views: "<view>+lit" and "<view>+night" (config.views). lightstest.lua
+-- holds the lamp switch and the dark mood; loaded on first use.
+local lampModule = nil
+local lampMode = nil
+local function setViewLamps(id, car, mode)
+	if mode == lampMode then return end
+	if lampModule == nil then
+		lampModule = LIGHTS
+		if lampModule == nil then
+			local loaded, module = user_open("dsfforza\\lightstest.lua")
+			lampModule = (loaded and type(module) == "table") and module or false
+		end
+	end
+	if not lampModule or not lampModule.setLights then
+		log(string.format("id %d: lamps %s: lightstest.lua did not load", id, tostring(mode)))
+		return
+	end
+	lampMode = mode
+	local on = mode == "lit" or mode == "night"
+	lampModule.setLights(car, { All = false, Headlights = on, DaytimeRunning = on })
+	lampModule.setDark(mode == "night")
+	log(string.format("id %d: lamps %s", id, mode or "off"))
+end
+
 -- Switch to extra view `name`: a camera mode, or a fixed camera made the way
 -- cameraselection.lua's createFreeCam makes the debug free camera.
 local function showView(id, car, name)
 	endFixedCamera()
+	local mode
+	name, mode = string.match(name, "^([^+]*)%+?(.*)$")
+	if mode == "" then mode = nil end
+	if mode ~= nil or lampMode ~= nil then setViewLamps(id, car, mode) end
 	local ok, err
 	if FIXED_VIEWS[name] then
 		ok, err = pcall(function()
@@ -638,7 +669,8 @@ local function step()
 	if #VIEWS > 0 and id ~= nil and state.spawned ~= nil then
 		if state.phase == "chase_view" and state.ticks == VIEW_TICKS - 1 then
 			logCameraInCar(id, state.spawned, "Normal")
-		elseif state.phase == "extra_view" and state.ticks == EXTRA_VIEW_TICKS - 1 and not FIXED_VIEWS[VIEWS[state.view]] then
+		elseif state.phase == "extra_view" and state.ticks == EXTRA_VIEW_TICKS - 1
+			and not FIXED_VIEWS[string.match(VIEWS[state.view], "^[^+]*")] then
 			logCameraInCar(id, state.spawned, VIEWS[state.view])
 		elseif state.phase == "cockpit_view" and state.ticks == 6 then
 			logCameraInCar(id, state.spawned, "DriverEye")
@@ -777,6 +809,7 @@ local function step()
 	elseif (state.phase == "chase_view" and state.ticks >= VIEW_TICKS)
 		or (state.phase == "extra_view" and state.ticks >= EXTRA_VIEW_TICKS) then
 		endFixedCamera()
+		if lampMode ~= nil then setViewLamps(id, state.spawned, nil) end
 		-- Cockpit camera, the way challengeracelogic.lua forces it.
 		local ok, err = pcall(function()
 			localPlayer.cameraMode = "DriverEye"
