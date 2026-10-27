@@ -647,6 +647,13 @@ draws the default glyph for codes the font lacks: '_' (95), the Bentley
   hud.lua, or whose hud.lua lacks a car or names another car at its ID, and
   say to rebuild with `dsff install` (or `port_batch build --gui`).
 
+In game (confirmed-runtime, `img/hud-ka-nameplate-before-after.jpg`): with
+out/final4's archive and ported.lua, no hud.lua and this register.lua, run
+`vm1-20261027-051646`: ID 404 shows the Ford badge and no plate (before:
+`-034058`, "SHELBY GT500"). The player's path on this branch (the one-car
+FM4-only build above with its gui.sp, Fonts.fchunk, global.fchunk and
+hud.lua, no plugin), run `vm1-20261027-054022`: ID 1 shows Ford and "KA".
+
 Tests: `tests/test_register_hud.py` (register.lua on the stock vehicleStats:
 no hud.lua, another build's hud.lua, the build's own),
 `tests/test_install.py` (`gui_problem`), `tests/test_gui_badges.py`.

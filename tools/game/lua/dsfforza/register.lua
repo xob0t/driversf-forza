@@ -270,7 +270,7 @@ local function hudEntry(id, car)
 	if not HUD then
 		if PORTED and not warnedHud then
 			warnedHud = true
-			log("no dsfforza\\hud.lua:ported cars get their maker's stock badge (or none) and no nameplate")
+			log("no dsfforza\\hud.lua: ported cars get their maker's stock badge (or none) and no nameplate")
 		end
 		return nil
 	end
