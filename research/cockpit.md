@@ -323,7 +323,8 @@ no camera.
    the shell to its coarsest LOD. None of the three test cars needed it.
 5. Patches the full entry's UPVH: the steering hinge pivot and axis, the
    role-47 marker (position and quaternion; hinge and marker at the wheel
-   centre plus the hand shift, VO3D p538/p559 zeroed: "Driver's hands"), the speed and tach gauge
+   centre plus the hand shift along the column, VO3D p538/p559 zeroed: "Driver's hands",
+   "The steering wheel turns about its hub"), the speed and tach gauge
    entries (pivot, dial quaternion, sweep from the tick table), the gauge cluster hinge pivot (mean
    of the gauges), the mirrors table, and the driver/passenger seat markers
    (roles 10/11: where they put the steering marker at the stock point of the
@@ -917,6 +918,10 @@ Raptor; most cars under 2.5 cm) makes the hub circle by 2В·shiftВ·sin(angle/
 while steering. With a fixed rig the alternative would be to rescale the
 Forza wheel. The converter report has `steering.hands` (shift, in-plane and
 along-column parts, grip error before/after).
+
+(Superseded 2026-10-26: the shift is now along the column only and the wheel
+is scaled to the grips instead, so it turns about its own hub; see "The
+steering wheel turns about its hub".)
 
 Verified: offline, `out/steering/grip_survey.py` on `out/steering/build`
 (WRX, S5S Raptor, Silvia, S2000, 370Z, Cuda, M3 E30) puts the grips within
@@ -1614,6 +1619,107 @@ metre further away). `img/hands-cl65-vs-host279.jpg`. At rest the CL65's driver
 holds the wheel as the stock host's does. What the user saw is not reproduced;
 the open question is whether it was while steering (the hand-over-hand pose at
 full lock) or another view.
+
+## The steering wheel turns about its hub (2026-10-26, confirmed-runtime)
+
+User report on `out/final4` (master c395515): the Buick Regal GNX's
+(BUI_RegalGNX_87, FM4, host 229) wheel sits under the hands, but "when it
+turns, it's not turning on its axle".
+
+**What turns the wheel** (Ghidra, `out/ghidra/steer4`, `steer9`):
+`FUN_0088E310` keeps the steering marker's position (spec+0x37E0) and a
+direction from its quaternion (spec+0x37F0); `FUN_005743E0` copies that
+direction into the driver object; `FUN_005756E0` builds the steering matrix
+with `FUN_00514150` (axis = that direction, angle from the animation state).
+With the experiments of "Driver's hands" (the hinge moves the wheel against
+the hands, the marker moves both): the skinned wheel is drawn at
+A + R(v - hinge), so in the mesh's own space it turns about the line through
+the hinge pivot along the marker's direction.
+
+**Cause.** `hand_shift` put the hinge and marker at the Forza wheel centre
+plus a shift that brings the stock grips onto the rim, and up to 6 cm of it
+lay in the wheel plane. The wheel then turned about a point off its hub, so
+the hub circled with that radius (2 |shift| sin(angle / 2) away at an angle):
+the Regal's 3.2 cm (a 0.200 m rim, the grips 2.4 cm inside it at rest) puts
+the hub 4.5 cm away at 90 degrees. The axis was never the problem: the
+marker's direction is within 2 degrees of the rim's normal on every car.
+
+**Measure** (`uv run dsff steering_axle <archive>`, new): per car, the rim the
+view draws (the interior entry's skinned vertices for the cockpit, the full
+entry's finest LOD for the chase views), fitted with `fit_wheel_points`,
+against the line the engine turns it about: the hub's distance from the line
+and the angle between the line and the rim's normal.
+
+| Archive | Hub off the turn line (cockpit) | Over 0.5 / 1 / 2 cm | Line vs rim normal |
+| --- | --- | --- | --- |
+| stock fleet (146 cockpits) | median 0.03 cm, 90th pct 0.35 | 13 / 10 / 1 (School Bus) | median 0.4 deg |
+| `out/final4` (573 cars) | median 1.91 cm, 90th pct 4.97, worst 11.2 (tour bus), Esperante 7.9, Corrado 6.6, ARX-01b 5.5, Regal 3.2 | 497 / 424 / 272 | median 0.2 deg, worst 1.9 |
+| this fix, full roster (`out/axle/full`) | median 0.01 cm, 90th pct 0.01 | 6 / 5 / 2 | median 0.2 deg, worst 1.9 |
+
+The stock host 229 itself: 0.1 cm (cockpit and chase). The six cars left
+over 0.5 cm have the hinge on the converter's own fit (in-plane shift 0); the
+survey refits the culled interior mesh, and on these the two fits differ by
+1 to 4 cm (CRX 4.0: rendered turned, its hub stays put; Kenworth T440 2.2,
+Corrados 1.2, GTO 1.2, TT-R 0.6). The chase views are the same except for
+seven cars whose chase-view wheel isn't the cockpit's (below).
+
+**Where the grips come from: not per-vehicle data.** The hands are DSF's
+animated driver rig, placed at the marker (cockpit view) or at the stock point
+of the seat's frame (chase views), and turned with the steering matrix. The
+only per-vehicle input `FUN_005743E0` reads besides the marker and VO3D
+p538/p559 is the vehicle's VSCT record (`FUN_0086C5B0`, keyed by spool ID):
+bytes +0x18 and +0x19 pick two of seven animation hashes at `DAT_00F08024`
+(`2614F404`, `2614F404`, `3715F405`, `2225FB4E`, `3109045A`, `41104D45`,
+`8AC4BCAD`; index 7 is 0) and +0x1A is a flag (driver +0xCE; set on 57 stock vehicles). The idle-state
+code (`FUN_00574A10`, `FUN_00575150`) queues +0x50 or +0x4C when the gear
+(driver +0x58, from `FUN_008AD7F0`) goes down or up: they are gear-change
+animations; with the flag set, the shift animation plays only when one of
+the two gears is neutral. Stock trucks and buses (rims
+0.197 to 0.206 m) use set 0, as the Audi R8 does (0.178 m). So the grip radius
+is baked into the shared driver animations, not set per car. The stock fleet
+handles larger wheels two ways: the trucks keep the hinge on the hub (0.1 to
+0.4 cm), which leaves the stock grips about 2.5 cm inside their 0.20 m rims
+(offline; in game below); the School
+Bus (0.258 m) moves its hinge 8.6 cm off the hub, the way the converter did
+for every car. A per-car hand offset would need dsfforza.asi to move the
+driver's hand bones (not attempted).
+
+**Fix** (`cockpit.hand_shift`, `hand_wheel_scale`, `seat_anchor`):
+
+- The hinge and marker move along the column only (least squares, capped at
+  12 cm as before), so the wheel turns about its own hub.
+- The grips then sit about 0.17 m from the column. Forza's wheel keeps its size
+  unless the grips would miss its rim by more than 2 cm (`HAND_FIT_TOLERANCE`,
+  about what stock trucks leave); then it is scaled just enough to bring them
+  to 2 cm, within 0.85 to 1.3 (`WHEEL_SCALE_RANGE`). The chase-view wheel
+  follows through `align_main_wheel`.
+- The seat doesn't move: `seat_anchor` reproduces the old placement (the
+  translation that put the grips on Forza's rim, scaled as before), and
+  `patch_seats` puts the stock point of the seat's frame there instead of at the
+  marker. Over the 570 reports of `out/final4` it lands within 0.4 mm of the
+  old marker (0.43 cm on the Viper CC, the report's rounding). The cost: in
+  the chase views the driver's hands now turn about the old anchor while the
+  wheel turns about its hub, so they drift off the rim while steering by up
+  to the old in-plane shift (median 1.9 cm, at most 6), where before the hub
+  drifted under them.
+
+Scaling against `out/final4` (36 wheels scaled by 1.04 to 1.21, plus the bus
+0.88): 414 of 570 wheels keep Forza's size; 156 are scaled, 71 of them by
+under 5% (Regal 0.200 -> 0.196 m, 0.98; S5S Raptor 1.03). The large ones:
+tour bus 0.85 (grips still 3.5 cm off: its 70-degree column), Kenworth T440
+0.91, rims of 0.201 to 0.209 m 0.94 to 0.97; race yokes 1.2 to 1.3 (A4 DTM,
+R8 LMP, FLM, ARX-02a, 908, B09, AMR-Lola, Furai, SR8, 905), the three ARX-01b
+at the 1.3 cap with the grips 2.4 cm off. Grips off the rim in the cockpit
+view: median 1.3 cm, 90th percentile 2.0, worst 3.5 (bus); over 2.05 cm
+only the bus, the three ARX-01b (2.4) and the two Mini Cooper S 1965 (2.2). PR #69's survey had 0.0 median: at
+rest the hands sit up to 2 cm inside or outside the rim now, the price of a
+wheel that turns about its hub without resizing Forza's wheel.
+
+**Chase-view wheels not on the cockpit wheel** (issue #86, not fixed here): the
+Express and F-350 keep their same-vehicle host's cockpit while the chase view
+draws Forza's main-carbin wheel, and the E36 M3, M Coupe, Camaro ZL1 and
+XKR-S's main-carbin wheel fits are off (`align_main_wheel`), so their chase-view
+hubs sit 3 to 8 cm off the turn line.
 
 ## Risks and open questions
 
