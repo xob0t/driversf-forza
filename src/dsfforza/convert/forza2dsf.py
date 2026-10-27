@@ -2007,7 +2007,8 @@ def convert(
         from dsfforza.convert import lights
 
         lenses = tex_full.texturing.lens_subs if tex_full is not None else frozenset()
-        lamps = lights.LampPlan.build(car.body, place, axle_mid, lenses).assign(
+        texel = lights.texel_sampler(tex_full.texturing.atlases) if tex_full is not None else None
+        lamps = lights.LampPlan.build(car.body, place, axle_mid, lenses, texel).assign(
             payload(stream, child(child(full, "NONR"), "UPVH"))
         )
         report["lights"] = lamps.report()

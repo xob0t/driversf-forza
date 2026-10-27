@@ -167,8 +167,28 @@ HIGH_BRAKE_RISE = 0.08  # a centre tail lamp this far above the side tails is th
 
 # Group priority when the host has fewer light entries than the car has lamps;
 # lower first. Groups that miss out share an entry of the same function and
-# side, else stay unlit.
-PRIORITY = {HEAD: 0, TAIL: 1, BRAKE: 2, INDICATOR: 3, BRAKE_IND: 3, DRL_IND: 3, REVERSE: 4, POSITION: 5, FOG: 6}
+# side, else of their fallback() function (same side first, then any side at the
+# same end), else stay unlit. Red lenses over indicators
+# (_red_lens_indicators) add two lamps to 58 cars; on full hosts they come
+# after the reverse lamps (AUD_RS4_06, TOY_Camry_07 lost theirs), and the
+# position lamps they push out (BMW_M5_12, VIP_Viper_13 on 147, 182) light
+# with the head or tail lamps.
+PRIORITY = {HEAD: 0, TAIL: 1, BRAKE: 2, INDICATOR: 3, DRL_IND: 3, REVERSE: 4, BRAKE_IND: 4.5, POSITION: 5, FOG: 6}
+
+
+def fallback(function: str, front: bool) -> str | None:
+    """The function whose entry a lamp left without one shares: a
+    brake-and-indicator lamp still brakes with the tail lamp, a position lamp
+    lights with the head lamp (front) or the tail lamp (rear)."""
+    if function == BRAKE_IND:
+        return TAIL
+    if function == POSITION:
+        return HEAD if front else TAIL
+    return None
+
+
+HEAD_DAYTIME = 0x1D  # Headlights + DaytimeRunning
+DAYTIME_SHARE = 0.25  # a side's own position lamps at least this share of its head lamps' area keep them 0x01
 
 
 def type_byte(function: str, side: str) -> int:
@@ -213,6 +233,7 @@ class Lamp:
     per_lod: dict = field(default_factory=dict)  # lod -> [area, centre sum xyz, normal sum xyz, triangles]
     light_id: int | None = None  # host light entry id; vertices get id + 1
     cluster: int = 0  # 0 = the largest lamp of its function, side and end
+    daytime: bool = False  # a head lamp that also lights with DaytimeRunning (0x1D; LampPlan.assign)
 
     def measure(self, lod: int, area: float, centre, normal) -> None:
         acc = self.per_lod.setdefault(lod, [0.0, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], 0])
@@ -255,7 +276,11 @@ class Lamp:
 
     @property
     def flags(self) -> int:
-        return type_byte(self.function, self.side) << 24 | self.colour << 16 | variant_byte(self.function)
+        return self.type << 24 | self.colour << 16 | variant_byte(self.function)
+
+    @property
+    def type(self) -> int:
+        return HEAD_DAYTIME if self.function == HEAD and self.daytime else type_byte(self.function, self.side)
 
 
 def _tri_geometry(pts, normals):
@@ -271,6 +296,68 @@ def _tri_geometry(pts, normals):
 LENS_COLOUR = {"detail_glass_red": RED, "detail_glass_amber": AMBER, "linred": RED, "rinred": RED}
 CLUSTER_GAP = 0.2  # metres between triangle centres that still belong to one lamp
 CLEAR_LENS_REACH = 0.35  # m: a clear lens lights with the nearest lamp this close
+# Lens texel colour (texel_class): saturated texels whose hue (degrees from
+# red towards yellow) is below LENS_RED_HUE are red, up to 60 amber. Fleet
+# (finest LOD, mean texel per triangle): 99% of `detail_glass_red` triangles at
+# the rear sit at -15 to +10, `detail_glass_amber` at the front mostly at 10 to
+# 35 (out/brakes/lensfleet.py).
+LENS_MIN_SATURATION = 0.35
+# Texels this transparent are glass, whatever their colour: VAU_Agila_11's
+# clear lens over its reverse lamps samples (123, 0, 0) at alpha 0, and Lights
+# alpha is the glow mask, so they never glow red anyway.
+LENS_MIN_ALPHA = 64
+LENS_RED_HUE = 10.0
+
+
+def texel_class(texel) -> str | None:
+    """ "red", "amber" or "white" (clear, grey, transparent or not red at
+    all) for a mean texel (r, g, b, a); None without one."""
+    if texel is None:
+        return None
+    r, g, b = texel[:3]
+    hi, lo = max(r, g, b), min(r, g, b)
+    if hi < 8 or (hi - lo) / hi < LENS_MIN_SATURATION or r < hi or texel[3] < LENS_MIN_ALPHA:
+        return "white"
+    return "red" if 60 * (g - b) / (hi - lo) < LENS_RED_HUE else "amber"
+
+
+def texel_sampler(atlases):
+    """(section, sub, triangle) -> the mean Forza texel (r, g, b, a) under one
+    triangle of a Lights-texture subsection, else None. atlases: a
+    forza_materials.AtlasCache of the car (dsf_materials.Texturing.atlases)."""
+    from dsfforza.convert import forza_materials as fm
+    from dsfforza.convert import trim_art
+
+    images: dict = {}
+    materials: dict = {}
+
+    def sample(section, sub, tri):
+        key = id(sub)
+        if key not in materials:
+            materials[key] = fm.resolve(section, sub, fm.classify)
+        m = materials[key]
+        if m.family != fm.LIGHTS or m.kind not in ("textured", "swatch"):
+            return None
+        if fm.LIGHTS not in images:
+            try:
+                w, h, rgba = atlases.get(fm.LIGHTS)
+            except (FileNotFoundError, OSError):
+                images[fm.LIGHTS] = None
+            else:
+                import numpy as np
+
+                images[fm.LIGHTS] = np.frombuffer(bytes(rgba), dtype=np.uint8).reshape(h, w, 4)
+        image = images[fm.LIGHTS]
+        if image is None:
+            return None
+        h, w = image.shape[:2]
+        pool = section.vertices_for(sub)
+        texels = trim_art.triangle_texels(image, [((u := m.uv(pool[i].uv0))[0] * w, u[1] * h) for i in tri])
+        if not len(texels):
+            return None
+        return tuple(float(c) for c in texels.mean(0))
+
+    return sample
 
 
 @dataclass
@@ -285,6 +372,7 @@ class Tri:
     centre: tuple
     normal: tuple
     lod: int
+    pts: tuple = ()  # corners (lamp-technique triangles; _red_lens_indicators)
 
 
 def _single_link(points, gap: float) -> list[list[int]]:
@@ -328,6 +416,103 @@ def _high_brake(records) -> None:
     if centre and sides and mean_y(centre) > mean_y(sides) + HIGH_BRAKE_RISE:
         for r in centre:
             r.function = BRAKE
+
+
+def _lens_classes(section, sub, tris, pts_all, texel, colour: int, mid_z: float):
+    """Texel class per triangle of a lens subsection (texel_class), and whether
+    a rear amber-technique lens is a red one: more than half its rear area on
+    red texels. The FM4 Lotus Carlton's tail lamps are one
+    `detail_glass_amber` lens on red texels (mean (140, 40, 40)) with the
+    `tail_light` bulb hidden behind it; taken by name it lit as an indicator
+    only and the car showed no brake light (user report on out/final4)."""
+    classes = [texel_class(texel(section, sub, t)) for t in tris]
+    if colour != AMBER:
+        return classes, False
+    red = total = 0.0
+    for cls, pts in zip(classes, pts_all):
+        if sum(p[2] for p in pts) / 3 <= mid_z:
+            area = _tri_geometry(pts, [(0, 0, 0)] * 3)[0]
+            total += area
+            red += area if cls == "red" else 0.0
+    return classes, red > total / 2
+
+
+INDICATING = (INDICATOR, BRAKE_IND, DRL_IND)
+
+
+def _red_lens_indicators(records, from_lens: set, red_indicators: list, red_by_texel: set) -> None:
+    """What a red rear lens triangle lights with, when the lamp behind it
+    isn't a tail lamp. Stock lamps are opaque, so a bulb behind a lens never
+    shows: the lens has to light for it.
+
+    The bulb behind a lens triangle is the nearest lamp triangle (same LOD,
+    not a lens, within CLEAR_LENS_REACH along the view) whose outline, seen
+    from behind, holds the lens triangle's centre; failing that, the nearest
+    across the view (x, y).
+
+    - A reverse bulb (outline only), under a lens that is red by its texels
+      rather than its technique: a reverse lamp, as these lenses lit before
+      the texels decided. Forza draws some reverse sections on red lens
+      texels of clear or lamp-cover lenses (PEU_207RC_07, TOY_CelicaSSI_03,
+      CHR_300C_08); as tail lamps they hid the bulb and the car showed no
+      reverse light. `detail_glass_red` lenses stay tail lamps, as before.
+    - An indicator: a red lamp that brakes and indicates (BRAKE_IND, types
+      0x19/0x1A, as on stock US-style cars): FOR_GT_05's red lenses over its
+      drlinl/drlinr lamps, MIN_Coopers_11's red glass over its
+      indicator_left/right bulbs.
+    - A red "amber" lens on a side without any other rear indicator
+      (MIT_GTO_97: (76, 0, 0) texels, no amber at the rear) also brakes and
+      indicates."""
+    import numpy as np
+
+    bulbs: dict = {}  # lod -> [(corners, centre, function)] of rear lamp triangles that are not lenses
+    for n, r in enumerate(records):
+        if n not in from_lens and not r.front and r.pts:
+            bulbs.setdefault(r.lod, []).append((r.pts, r.centre, r.function))
+    arrays = {
+        lod: (np.array([b[0] for b in bs], dtype=float), np.array([b[1] for b in bs], dtype=float), [b[2] for b in bs])
+        for lod, bs in bulbs.items()
+    }
+
+    def behind(r) -> tuple[str | None, bool]:
+        """(function of the bulb behind r, whether its outline holds r's centre)."""
+        if r.lod not in arrays:
+            return None, False
+        corners, centres, functions = arrays[r.lod]
+        x, y, z = r.centre
+        dz = np.abs(centres[:, 2] - z)
+        reach = dz < CLEAR_LENS_REACH
+        a, b, c = corners[:, 0], corners[:, 1], corners[:, 2]
+
+        def side(p, q):  # which side of edge p -> q the centre lies on, seen from behind
+            return (q[:, 0] - p[:, 0]) * (y - p[:, 1]) - (q[:, 1] - p[:, 1]) * (x - p[:, 0])
+
+        d1, d2, d3 = side(a, b), side(b, c), side(c, a)
+        inside = reach & (((d1 >= 0) & (d2 >= 0) & (d3 >= 0)) | ((d1 <= 0) & (d2 <= 0) & (d3 <= 0)))
+        if inside.any():
+            return functions[int(np.where(inside, dz, np.inf).argmin())], True
+        across = np.where(reach, np.linalg.norm(centres[:, :2] - (x, y), axis=1), np.inf)
+        i = int(across.argmin())
+        return (functions[i], False) if across[i] < CLEAR_LENS_REACH else (None, False)
+
+    def indicate(r) -> None:
+        r.function = BRAKE_IND
+        if r.side == "C":
+            r.side = "L" if r.centre[0] > 0 else "R"
+
+    for n in from_lens:
+        r = records[n]
+        if r.function != TAIL:
+            continue
+        function, outline = behind(r)
+        if function == REVERSE and outline and n in red_by_texel:
+            r.function, r.colour = REVERSE, WHITE
+        elif function in INDICATING:
+            indicate(r)
+    indicating = {r.side for r in records if not r.front and r.function in INDICATING}
+    for n in red_indicators:
+        if records[n].function == TAIL and records[n].side not in indicating:
+            indicate(records[n])
 
 
 REFLECTORS = ("textured_reflector", "reflector")
@@ -382,15 +567,21 @@ class LampPlan:
     slots: list = field(default_factory=list)  # per host light entry: (offset, id, Lamp | None)
 
     @classmethod
-    def build(cls, sections, place, mid_z: float, lenses=frozenset()) -> LampPlan:
+    def build(cls, sections, place, mid_z: float, lenses=frozenset(), texel=None) -> LampPlan:
         """sections: Forza body sections (all LODs). place: forza2dsf.Placement.
         mid_z: DSF z of the wheelbase midpoint (front lamps are ahead of it).
         lenses: id(sub) of lamp-cover glass subsections drawn as lamp texels
         (dsf_materials.Texturing.lens_subs); they light like clear lenses,
         with the lamp behind each triangle (the DMC-12's grid lens: tail,
-        indicator and reverse cells over one reflector)."""
+        indicator and reverse cells over one reflector).
+        texel: (section, sub, triangle) -> mean Forza texel or None
+        (texel_sampler); rear lens triangles on red texels are tail lamps
+        whatever their technique says (_lens_classes)."""
         plan = cls()
         records, clear = [], []  # clear lenses are placed after the lamps
+        red_indicators = []  # records of amber-technique lens triangles on red texels
+        red_by_texel = set()  # records of lens triangles red by their texels, not their technique
+        from_lens = set()  # records of lens triangles
         for section in sections:
             for sub in section.subsections:
                 entry = TECHNIQUE_FUNCTION.get(sub.material)
@@ -406,8 +597,11 @@ class LampPlan:
                 pts_all = [[place.point(pool[i].position) for i in t] for t in tris]
                 max_x = max(abs(p[0]) for pts in pts_all for p in pts)
                 colour = TECHNIQUE_COLOUR.get(sub.material, FUNCTION_COLOUR.get(function, WHITE))
+                classes, red_lens = None, False
                 if function == LENS:
                     colour = LENS_COLOUR.get(sub.material, WHITE)
+                    if texel is not None:
+                        classes, red_lens = _lens_classes(section, sub, tris, pts_all, texel, colour, mid_z)
                 for k, (t, pts) in enumerate(zip(tris, pts_all)):
                     normals = [place.normal(pool[i].normal) for i in t]
                     area, centre, normal = _tri_geometry(pts, normals)
@@ -421,6 +615,21 @@ class LampPlan:
                     f, c = function, colour
                     if f == POSITION:
                         c = WHITE if front else RED  # front parking / DRL, rear tail marker
+                    # What the player sees at the rear is the lens texture: red
+                    # texels are a tail lamp whatever the technique, and a rear
+                    # "amber" lens that is mostly red texels is a red lens.
+                    if (
+                        f == LENS
+                        and classes is not None
+                        and not front
+                        and (classes[k] == "red" or (red_lens and classes[k] != "amber"))
+                    ):
+                        if c == AMBER:
+                            side = side if side != "C" else ("L" if centre[0] > 0 else "R")
+                            red_indicators.append(len(records))
+                        if c != RED:
+                            red_by_texel.add(len(records))
+                        c = RED
                     if f == LENS:
                         # Amber lenses are indicators, red ones at the rear tail lamps;
                         # clear ones light with the lamp behind them.
@@ -432,7 +641,8 @@ class LampPlan:
                         else:
                             clear.append(Tri(sub, k, LENS, side, front, c, area, centre, normal, sub.lod))
                             continue
-                    records.append(Tri(sub, k, f, side, front, c, area, centre, normal, sub.lod))
+                        from_lens.add(len(records))
+                    records.append(Tri(sub, k, f, side, front, c, area, centre, normal, sub.lod, tuple(pts)))
         if not any(r.function == HEAD and r.front for r in records):
             # No head-lamp technique (CHE_CorvetteGS_10, DOD_RamSRT10_06,
             # FOR_MustangSVTCobraR_93 and several race cars draw the lamp as a
@@ -446,9 +656,10 @@ class LampPlan:
                 ]
             else:
                 records += _headlight_reflectors(sections, place, mid_z)
+        _red_lens_indicators(records, from_lens, red_indicators, red_by_texel)
         _high_brake(records)
         plan._cluster(records)
-        plan._place_clear(clear)
+        plan._place_clear(clear, records, red_by_texel)
         return plan
 
     def _cluster(self, records) -> None:
@@ -481,15 +692,29 @@ class LampPlan:
                     lamp.measure(r.lod, r.area, r.centre, r.normal)
                 self.tri_lamp[(id(r.sub), r.k)] = lamp.key
 
-    def _place_clear(self, clear) -> None:
+    def _place_clear(self, clear, records, skip=frozenset()) -> None:
         """Clear lenses light with the nearest lamp at the same end (within
-        CLEAR_LENS_REACH), else stay unlit."""
+        CLEAR_LENS_REACH), else stay unlit. Lamp centres leave out the lens
+        triangles that are red by their texels (`skip`, record indices): with
+        them a tail lamp's centre moved onto its red lens and clear lenses
+        that lit with it went to the reverse lamp (JAG_XFR_10)."""
+        centres = {}  # lamp key -> [area, weighted centre sum] on the lamp's finest LOD
+        for n, r in enumerate(records):
+            key = self.tri_lamp.get((id(r.sub), r.k))
+            if n in skip or key is None or r.lod != min(self.lamps[key].per_lod):
+                continue
+            acc = centres.setdefault(key, [0.0, [0.0, 0.0, 0.0]])
+            acc[0] += r.area
+            for i in range(3):
+                acc[1][i] += r.centre[i] * r.area
         for r in clear:
             best, best_d = None, CLEAR_LENS_REACH
             for lamp in self.lamps.values():
                 if lamp.front != r.front or not lamp.area:
                     continue
-                d = math.dist(lamp.position, r.centre)
+                acc = centres.get(lamp.key)
+                position = tuple(c / acc[0] for c in acc[1]) if acc and acc[0] else lamp.position
+                d = math.dist(position, r.centre)
                 if d < best_d:
                     best, best_d = lamp, d
             if best is not None:
@@ -529,11 +754,42 @@ class LampPlan:
                     ),
                     None,
                 )
+                other = fallback(lamp.function, lamp.front)
+                if twin is None and other is not None:
+                    near = [
+                        l for l in order if l.light_id is not None and l.function == other and l.front == lamp.front
+                    ]
+                    twin = next((l for l in near if l.side == lamp.side), near[0] if near else None)
                 if twin is not None:
                     lamp.light_id = twin.light_id
                 else:
                     self.unlit.append(lamp.key)
         self.slots = [(o, lid, taken.get((o, lid))) for o, lid in entries]
+        # Day-time running: a front side without a lamp of its own that lights
+        # with DaytimeRunning gets head lamps that do (0x1D, Headlights +
+        # DaytimeRunning), as 31 stock vehicles draw theirs; the other stock
+        # cars but 10 have white position lamps (0x03) in their head-lamp
+        # clusters. Forza's lamps mostly have no position-lamp technique, so
+        # ported head lamps (0x01) stayed dark by day while stock cars' glowed
+        # (player report; 66 of 573 ported cars had a front DRL lamp).
+        # A position lamp a fraction the head lamp's size doesn't count
+        # (CHR_Cuda426_71: 10 triangles beside 109).
+        entered = {id(l) for _, _, l in self.slots if l is not None}
+
+        def area(functions, side, own=False):
+            return sum(
+                l.area
+                for l in order
+                if l.front and l.side == side and l.function in functions and (not own or id(l) in entered)
+            )
+
+        for lamp in order:
+            if (
+                lamp.function == HEAD
+                and lamp.front
+                and area((POSITION, DRL_IND), lamp.side, own=True) < DAYTIME_SHARE * area((HEAD,), lamp.side)
+            ):
+                lamp.daytime = True
         return self
 
     def light_byte(self, sub, k) -> int:
@@ -574,7 +830,7 @@ class LampPlan:
     def report(self) -> dict:
         lamps = []
         for lamp in sorted(self.lamps.values(), key=lambda l: (not l.front, l.function, l.side)):
-            mask = LIGHT_TYPE_MASK[type_byte(lamp.function, lamp.side)]
+            mask = LIGHT_TYPE_MASK[lamp.type]
             lamps.append(
                 {
                     "function": lamp.function,
@@ -630,7 +886,7 @@ def main(argv: list[str] | None = None) -> None:
     t.add_argument("archive", type=Path)
     t.add_argument("--id", type=int, required=True)
     args = parser.parse_args(argv)
-    if getattr(args, "dsf", None):
+    if args.cmd == "plan":
         args.dsf = game_paths.stock(args.dsf)  # the original when a dsfforza install replaced it
 
     from dsfforza.formats import upvh as uv
@@ -660,7 +916,9 @@ def main(argv: list[str] | None = None) -> None:
     # Desanne's hub height and axle midpoint whatever --host was).
     hw = forza2dsf.host_wheels(upvh, modl)
     place = forza2dsf.Placement(dy=hw.hub_y - dims.radius + dims.ride_height, dz=hw.axle_mid + dims.mid_z)
-    plan = LampPlan.build(car.body, place, hw.axle_mid).assign(upvh)
+    from dsfforza.convert import forza_materials as fm
+
+    plan = LampPlan.build(car.body, place, hw.axle_mid, texel=texel_sampler(fm.AtlasCache(car.folder))).assign(upvh)
     import json
 
     print(json.dumps(plan.report(), indent=1))
