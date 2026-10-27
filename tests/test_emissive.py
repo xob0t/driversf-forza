@@ -138,5 +138,93 @@ class RedLensScale(unittest.TestCase):
         self.assertEqual(set(seen), {90})
 
 
+class WhiteLensScale(unittest.TestCase):
+    """Head lamps whose visible white surface is brighter than stock's visible median are
+    darkened to it (issue #115: the Lotus Carlton's lit head lamps were white blobs by day);
+    darker ones and other hues are left alone."""
+
+    def test_bright_lens_darkened(self):
+        from dsfforza.convert import dsf_materials as dm
+
+        k = dm.white_lens_scale([208] * 1000)  # the Carlton's baked head lamp lens
+        self.assertAlmostEqual(208 * k, dm.VISIBLE_WHITE_STOCK_MEDIAN, places=3)
+        r, g, b, a = dm.matched_lamp_texel(208, 208, 210, 150, None, None, k)
+        self.assertEqual((r, g, b), (137, 137, 138))
+        self.assertEqual(a, dm.matched_lamp_alpha(208, 208, 210, 150))  # the glow is the original texel's
+
+    def test_dark_lens_and_other_hues_untouched(self):
+        from dsfforza.convert import dsf_materials as dm
+
+        self.assertEqual(dm.white_lens_scale([100] * 1000), 1.0)
+        self.assertIsNone(dm.white_lens_scale([208] * 10))  # too few samples
+        self.assertEqual(
+            dm.matched_lamp_texel(200, 200, 200, 99, None, None, 1.0), dm.matched_lamp_texel(200, 200, 200, 99)
+        )
+        amber = dm.matched_lamp_texel(230, 150, 30, 200)
+        self.assertEqual(dm.matched_lamp_texel(230, 150, 30, 200, None, None, 0.5), amber)
+
+    def test_visible_white_sees_the_front_lens(self):
+        """Two stacked quads in front of the car (Forza -z) and one at the rear: only the
+        outer front one counts."""
+        from unittest import mock
+
+        from dsfforza.convert import dsf_materials as dm
+
+        size = 8
+        img = bytearray()
+        for y in range(size):
+            for x in range(size):
+                img += bytes(
+                    (200, 200, 200, 255)
+                    if x < size // 2
+                    else ((90, 90, 90, 255) if y < size // 2 else (60, 60, 60, 255))
+                )
+        atlases = {fm.LIGHTS: (size, size, img), fm.NODAMAGE: (4, 4, bytearray(64))}
+
+        class FakeAtlases:
+            def __init__(self, car_dir, lod0=False):
+                pass
+
+            def get(self, family):
+                return atlases[family]
+
+        class V:
+            def __init__(self, p, uv):
+                self.position, self.uv0, self.normal = p, uv, (0.0, 0.0, -1.0)
+
+        class Sub:
+            def __init__(self, material, tris, lod=1):
+                self.material, self.lod, self.uv_transform, self._tris = material, lod, (0.0, 1.0, 0.0, 1.0), tris
+
+            def triangles(self):
+                return self._tris
+
+        class Section:
+            def __init__(self, name, vertices, subs):
+                self.name, self.vertices, self.subsections = name, vertices, subs
+
+            def vertices_for(self, sub):
+                return self.vertices
+
+        def quad(z, u0, u1, v0=0.1, v1=0.4):
+            return [
+                V((0.0, 0.0, z), (u0, v0)),
+                V((0.3, 0.0, z), (u1, v0)),
+                V((0.3, 0.2, z), (u1, v1)),
+                V((0.0, 0.2, z), (u0, v1)),
+            ]
+
+        tris = [(0, 1, 2), (0, 2, 3)]
+        outer = Section("headlightL", quad(-2.0, 0.55, 0.95), [Sub("head_light", tris)])
+        inner = Section("headlightL2", quad(-1.9, 0.05, 0.45), [Sub("reflector", tris)])
+        rear = Section("reverse", quad(2.0, 0.55, 0.95, 0.6, 0.9), [Sub("reverse_light", tris)])
+        with mock.patch.object(fm, "AtlasCache", FakeAtlases):
+            t = dm.Texturing(Path())
+            t.plan([inner, outer, rear], {1})
+            seen = t.visible_white()
+        self.assertGreater(len(seen), 1000)
+        self.assertEqual(set(seen), {90})
+
+
 if __name__ == "__main__":
     unittest.main()

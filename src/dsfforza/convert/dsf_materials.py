@@ -202,16 +202,46 @@ def red_lens_scale(visible: list[int]) -> float | None:
     return min(1.0, VISIBLE_RED_STOCK_MEDIAN / median) if median > 0 else None
 
 
-def matched_lamp_texel(r: int, g: int, b: int, a: int, red_curve=None, lens_scale=None) -> tuple[int, int, int, int]:
+# What a camera straight ahead of the car sees of stock front lamps: the brightest channel of
+# the white texels (lamp_hue) on the visible lamp surface, area-weighted (orthographic front
+# view z-buffered over the lamp geometry of the full entries of 142 stock vehicles, pooled):
+# p5 41, p25 93, median 137, p75 180, p95 230 (per-vehicle median p10 82, p50 134, p90 178).
+# Forza's white lamp texels are brighter: the Lotus Carlton's head lamps (a light clear lens
+# over a white reflector, baked by lenses.py) 206, the Lancer Evo VI's 173, the M3 E30's 197.
+VISIBLE_WHITE_STOCK_MEDIAN = 137
+
+
+def white_lens_scale(visible: list[int]) -> float | None:
+    """One car's darkening of its white lamp texels: the factor that brings the median
+    brightness of its visible white front lamp surface (Forza values seen from ahead, lenses
+    baked) down to stock's visible median; never above 1. Forza's head lamps are light grey
+    lenses over white reflectors (the Carlton's lens 195 over a reflector at 205 to 221), so
+    they looked lit in daylight with the lamps off, and lit by day (0x1D, research/lights.md)
+    the glow on top of them blew them out into white blobs (issue #115). None with too few
+    samples."""
+    if len(visible) < VISIBLE_RED_MIN_SAMPLES:
+        return None
+    ordered = sorted(visible)
+    median = ordered[len(ordered) // 2]
+    return min(1.0, VISIBLE_WHITE_STOCK_MEDIAN / median) if median > 0 else None
+
+
+def matched_lamp_texel(
+    r: int, g: int, b: int, a: int, red_curve=None, lens_scale=None, white_scale=None
+) -> tuple[int, int, int, int]:
     """Stock-like lamp texel (LIGHTS_ALPHA "matched"): alpha from the curves, red
     lenses darkened to stock's brightness (the shared curve, then this car's
-    red_lens_scale; never brighter). Alpha is scored on the original texel."""
+    red_lens_scale), white texels by this car's white_lens_scale (never brighter).
+    Alpha is scored on the original texel."""
     alpha = matched_lamp_alpha(r, g, b, a, red_curve)
-    if lamp_hue(r, g, b) == "red":
+    hue = lamp_hue(r, g, b)
+    if hue == "red":
         v = max(r, g, b)
         if v:
             k = _shared_lens(v) / v * (lens_scale if lens_scale is not None else 1.0)
             r, g, b = (int(c * k + 0.5) for c in (r, g, b))
+    elif hue == "white" and white_scale is not None and white_scale < 1.0:
+        r, g, b = (int(c * white_scale + 0.5) for c in (r, g, b))
     return r, g, b, alpha
 
 
@@ -1024,7 +1054,7 @@ class Texturing:
         """Regions, swatch cells and packing for these atlas triangles and swatches."""
         self.regions, self.owners, self.alpha_only = {}, {}, set()
         self.solids, self.solid_colours, self.scale = {}, {}, {}
-        self._red_curve_done = self._lens_scale_done = False
+        self._red_curve_done = self._lens_scale_done = self._white_scale_done = False
         for family in self.families:
             w, h, _ = self.atlases.get(family)
             self.src_sizes[family] = (w, h)
@@ -1248,19 +1278,45 @@ class Texturing:
         LOD, one sample per VISIBLE_STEP; Forza's rear is +z). Hidden bulbs, reflectors and
         inner lenses don't count. Clear lamp-cover glass is drawn transparent, so it doesn't
         hide anything here either."""
-        if not self.lamp_tris or self.atlases is None:
+        px = self._visible_lamp_texels(front=False)
+        if px is None:
             return []
+        r, g, b = px[:, 0], px[:, 1], px[:, 2]
+        red = (r > 1.6 * g) & (r > 1.6 * b)  # lamp_hue "red"
+        return px[red, :3].max(1).tolist()
+
+    def visible_white(self) -> list[int]:
+        """Brightest channel of the white (lamp_hue) Lights-atlas texels a camera straight
+        ahead of the car sees: as visible_red, from the front (Forza -z), over the
+        triangles in the front half of the car only."""
+        px = self._visible_lamp_texels(front=True)
+        if px is None:
+            return []
+        r, g, b = px[:, 0], px[:, 1], px[:, 2]
+        red = (r > 1.6 * g) & (r > 1.6 * b)
+        amber = (r > 1.2 * b + 20) & (g > 0.35 * r) & (g > 1.2 * b)
+        return px[~red & ~amber, :3].max(1).tolist()
+
+    def _visible_lamp_texels(self, front: bool):
+        """RGBA (n, 4) of the Lights-atlas texels an orthographic camera straight behind
+        (front: ahead of) the car sees, one per VISIBLE_STEP; None without lamps."""
+        if not self.lamp_tris or self.atlases is None:
+            return None
         import numpy as np
 
         lod = min(t[0] for t in self.lamp_tris)
         tris = [t for t in self.lamp_tris if t[0] == lod]
+        if front:  # Forza's front is -z; the camera looks down +z, nearest = largest -z
+            tris = [(t[0], [(x, y, -z) for x, y, z in t[1]], t[2]) for t in tris if sum(p[2] for p in t[1]) < 0]
+            if not tris:
+                return None
         P = np.array([t[1] for t in tris], float)  # (n, 3, 3)
         U = np.array([t[2] for t in tris], float)  # (n, 3, 2)
         x0, y0 = P[..., 0].min(), P[..., 1].min()
         W = int((P[..., 0].max() - x0) / VISIBLE_STEP) + 2
         H = int((P[..., 1].max() - y0) / VISIBLE_STEP) + 2
         if W * H > 4_000_000:
-            return []
+            return None
         depth = np.full((H, W), -np.inf)
         uv = np.zeros((H, W, 2))
         for n in range(len(tris)):
@@ -1290,10 +1346,7 @@ class Texturing:
         img = np.frombuffer(bytes(src), np.uint8).reshape(sh, sw, 4)
         u = (uv[hit, 0].clip(0, 1) * sw).astype(int).clip(0, sw - 1)
         v = (uv[hit, 1].clip(0, 1) * sh).astype(int).clip(0, sh - 1)
-        px = img[v, u, :3].astype(int)
-        r, g, b = px[:, 0], px[:, 1], px[:, 2]
-        red = (r > 1.6 * g) & (r > 1.6 * b)  # lamp_hue "red"
-        return px[red].max(1).tolist()
+        return img[v, u].astype(int)
 
     def _red_lens_scale(self):
         """This car's red lens darkening (red_lens_scale); None until planned."""
@@ -1303,6 +1356,15 @@ class Texturing:
             return None
         self._lens_scale, self._lens_scale_done = red_lens_scale(self.visible_red()), True
         return self._lens_scale
+
+    def _white_lens_scale(self):
+        """This car's white lamp texel darkening (white_lens_scale); None until planned."""
+        if getattr(self, "_white_scale_done", False):
+            return self._white_scale
+        if self.atlases is None or not self.regions:
+            return None
+        self._white_scale, self._white_scale_done = white_lens_scale(self.visible_white()), True
+        return self._white_scale
 
     def _convert_texel(self, family: str, r: int, g: int, b: int, a: int) -> tuple[int, int, int, int]:
         """Forza texel -> DSF conventions (alpha = specular / glow mask)."""
@@ -1317,7 +1379,9 @@ class Texturing:
         if family == fm.LIGHTS:
             if LIGHTS_ALPHA == "raw":  # analysis only: Forza's alpha as is
                 return r, g, b, a
-            return matched_lamp_texel(r, g, b, a, self._red_lamp_curve(), self._red_lens_scale())
+            return matched_lamp_texel(
+                r, g, b, a, self._red_lamp_curve(), self._red_lens_scale(), self._white_lens_scale()
+            )
         if _paint_through(family, r, g, b, a):
             return self.plain  # paint-through body texel
         lum = (r + g + b) / 3

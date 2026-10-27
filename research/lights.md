@@ -792,6 +792,76 @@ switches both off (`clonetest.lua` `setViewLamps`). Note that the shot
 labels in `events.json` come from Driver.log and can lag the screen by
 several shots.
 
+### Head lamps white blobs by day (issue #115)
+
+Symptom (confirmed-runtime): the Carlton's head lamps, lit by day as 0x1D
+since #104, are flat blown-out white patches (run `vm2-20261027-110011`,
+master, `-Views nose -Palette 0`: lamp-box luminance mean 229, standard
+deviation 16). The user's earlier screenshot was on `out/final4`, built
+before #93 and #104, with the head lamps off by day, and they already read as
+white blobs there. So the glow isn't the main cause.
+
+Measure (offline-checked, `out/dayglow/frontlamps.py`): the orthographic
+rear view of `rearlamps.py` turned to the front (4 mm pixels, z-buffered over
+the lamp triangles of the full entry, area-weighted), per visible pixel the
+table type, texel RGB and alpha. Stock, 142 vehicles, white texels
+(`lamp_hue`) of the front lamps: brightest channel pooled p5 41, p25 93,
+median 137, p75 180, p95 230 (per-vehicle median p10 82, p50 134, p90 178).
+Glow alpha of the visible surface: per-vehicle mean p10 41, p50 64, p90 108.
+Stock 0x1D head lamps (32 vehicles) carry the same texel alpha as 0x01 ones
+(texel-weighted mean 71 and 71, median 49 and 50, `out/lamps/stock_tex.npy`),
+so stock doesn't author its day-lit lamps with less glow. Ported, master
+(`out/dayglow/master`): the Carlton's visible head lamps sit at brightness
+206 with alpha mean 35, median 26; Lancer Evo VI 173 (alpha 33); M3 E30 197
+(alpha 69, median 26); 370Z 90.
+
+Cause (confirmed-static): Forza's white lamp texels are much lighter than
+stock's. The Carlton's head lamp is a (195, 195, 195) `detail_glass_clear`
+lens at opacity 88 to 247 over a `head_light` / `textured_reflector` of 205 to
+221 at alpha 255 (`out/dayglow/forzalens.py`), so the baked lens is about 205
+everywhere: a light surface in sun before any lamp lights, and with the
+0x1D glow on top it blows out. Only red lenses were brought to stock's
+brightness (Open 5). Forza's mask carries no hot spot for the Carlton (the
+reflector is 255 throughout), so there is no bulb structure to carry over.
+
+Fix (`dsf_materials.white_lens_scale`, `Texturing.visible_white`): as
+`red_lens_scale` does for red lamps, the visible white front lamp surface of
+each car is measured on the Forza side (the `visible_red` view turned to the
+front, triangles of the front half, lenses baked), and every white Lights
+texel of the car is scaled so its median is at most stock's 137 (never
+brightened; under 400 samples nothing changes). Alpha (glow) is scored on
+the original texel, so it doesn't change. On the DSF side the Carlton, Evo
+VI and M3 E30 go to 136, 137 and 133; the 370Z (101 on the Forza side) is
+unchanged. Rear white lamps take the same factor: stock reverse lamps seen
+from behind are median 119 (per vehicle p10 65, p90 177); the ports sit at
+148 to 235 on master.
+
+Survey of the roster (`out/dayglow/survey.py`, `tools/batches/all.txt`,
+573 cars): 311 are darkened (scale 0.54 to 0.99, median 0.77; lowest
+MAS_MC12Corsa_08, MER_SLR_05, MAZ_Furai_08, REN_Clio197_07, 0.54 to 0.58),
+245 already sit at or below stock, and 17 have too few visible white texels
+(race cars with covered or decal lamps, PAN_51_Esperante_05's yellow
+lexan). Per car the visible white median is p10 74, p50 145, p90 204 before.
+
+In game (confirmed-runtime, `-Views nose -Palette 0`; master
+`vm2-20261027-110011`, this change `vm1-20261027-110149` and
+`vm2-20261027-162933`; `img/headlamps-day-whitescale.jpg`): the Carlton's
+lit head lamps show the lens flutes and reflector instead of a flat patch
+(lamp-box luminance mean 229 -> 211, standard deviation 16 -> 22; stock 198's
+lit 0x1D lamp 211, 37 in the same box size). The Evo VI changes little (x0.80).
+Stock 229, the host, has 0x01 head lamps and a small 0x03 position lamp, so
+its head lamps stay dark by day.
+
+Tried and dropped: blending the glow mask through a white lens like its
+colour (`a x lens + (1 - a) x behind`, run `vm1-20261027-164203`). It lit the
+M3 E30's half-clear round lamps (lens alpha 126 over an `oldhead` at 255) the
+way stock 241's and 130's round 0x1D lamps light, but the Carlton's uniform
+255 reflector made its whole lens one alpha (p25 47, median 51, p75 72) and
+it was a flat blob again (luminance 236, standard deviation 10). Stock lit
+lamps keep about a quarter of the lamp at low alpha (0x1D visible p25 18 on
+average), which is where their structure comes from. The M3 E30's dim lamps
+are the open part (issue #124, Open 8).
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and
@@ -813,9 +883,10 @@ several shots.
    crashed run 123840 (the nearest traffic car ahead, to the player's own
    model 227); register.lua's experimental `swapTraffic` and `carrier` paths
    were removed for that reason (they were off by default).
-5. Converted white and amber lenses keep Forza's brightness (white median
-   182 against stock's 126); only red lenses are darkened. The S5S Raptor's
-   tails (mean 91) sit above stock's per-vehicle p90 (81).
+5. Converted amber lenses keep Forza's brightness; red lenses are darkened
+   (`red_lens_scale`) and white ones too since issue #115
+   (`white_lens_scale`). The S5S Raptor's tails (mean 91) sit above stock's
+   per-vehicle p90 (81).
 6. In a run, cars after the fifth sometimes don't spool ("NOT spooled after
    40 ticks", run host-20261024-003943); keep lamp runs to five IDs.
 7. Lens bake ("Lamp lenses drawn opaque"): the view is straight in along the
@@ -825,6 +896,11 @@ several shots.
    glass (the WRX STI 05's near-opaque light rear cover, (184, 161, 160) at
    alpha 236, shows its dark reflector instead), and what Forza's
    `DarkValues` / `LightValues` do to a lens is not decoded. Issue #89.
+8. Head lamp glow by day follows a lens's opacity, not the lamp behind it:
+   the M3 E30's half-clear round lamps look unlit, and the roster's daytime
+   glow is spread wider than stock's (156 cars under stock's p10, 105 over
+   its p90). Blending the glow mask through the lens fixed the M3 but made
+   the Carlton a blob again. Issue #124.
 
 ## Paint
 
