@@ -10,6 +10,8 @@ import itertools
 import tempfile
 from pathlib import Path
 
+import numpy as np
+
 from dsfforza.convert import dsf_materials as dm
 from dsfforza.convert import forza_materials as fm
 from dsfforza.convert import lenses
@@ -102,6 +104,135 @@ def test_glass_max_opacity():
     with tempfile.TemporaryDirectory() as car_dir:
         (Path(car_dir) / "ShaderSettings.xml").write_text(xml)
         assert lenses.glass_max_opacity(Path(car_dir)) == {"lights_glass": 0.75, "glass": 1.0}
+
+
+def _grid(name: str, material: str, z, u0: float, u1: float, n: int = 8, sign: float = -1.0) -> carbin.Section:
+    """An n x n grid 0.2 m wide facing Forza's front (-z: sign -1) or rear; z(x, y) gives
+    each vertex's z (a reflector bowl)."""
+    verts, idx = [], []
+    for j in range(n + 1):
+        for i in range(n + 1):
+            x, y = -0.1 + 0.2 * i / n, 0.4 + 0.2 * j / n
+            uv = (u0 + (u1 - u0) * i / n, j / n)
+            verts.append(carbin.Vertex((x, y, z(x, y)), uv, (0, 0), (0.0, 0.0, sign)))
+    for j in range(n):
+        for i in range(n):
+            a = j * (n + 1) + i
+            idx += [a, a + 1, a + n + 1, a + n + 1, a + 1, a + n + 2]
+    sub = carbin.SubSection(material, 1, 4, (0.0, 1.0, 0.0, 1.0) * 2, idx)
+    return carbin.Section(name, (0, 0, 0), (0, 0, 0), (0, 0, 0), lod_vertices=verts, subsections=[sub])
+
+
+class _ClearAtlases(_Atlases):
+    """A clear lens (half opaque, its own mask low) left, a reflector with a flat mask 255 right."""
+
+    def __init__(self, lens=(180, 180, 180, 100), lamp=(200, 200, 200, 255)):
+        rgba = bytearray()
+        for _ in range(SIZE):
+            for x in range(SIZE):
+                rgba += bytes(lens if x < SIZE // 2 else lamp)
+        self.lights = (SIZE, SIZE, rgba)
+
+    def get(self, family):
+        return self.lights  # swatch trims (nodamage) sample it too
+
+
+def _bake_glow(lens, lamp, atlases=None):
+    atlases = atlases or _ClearAtlases()
+    glow = lenses.new_glow(SIZE, SIZE)
+    with tempfile.TemporaryDirectory() as car_dir:
+        ids = {id(s) for s in lens.subsections}
+        lenses.bake([lens, lamp], {1}, atlases, ids, Path(car_dir), glow=glow)
+    assert (np.isfinite(glow[..., 0]) == np.isfinite(glow[..., 1])).all()
+    return atlases, glow[..., 0]
+
+
+def test_head_lamp_glow_follows_the_reflector_bowl():
+    # Issue #124: a clear front lens over a reflector whose mask is 255 everywhere (the Lotus
+    # Carlton's) gets its raw glow from the bowl: brightest over its deepest part, dim at the
+    # rim; master gave every texel the lens's own score.
+    lens = _grid("glassLHL", "detail_glass_clear", lambda x, y: -2.0, 0.0, 0.5)
+    bowl = _grid("headlightL", "head_light", lambda x, y: -2.0 + 0.1 - 4.5 * (x * x + (y - 0.5) ** 2), 0.5, 1.0)
+    _, raw = _bake_glow(lens, bowl)
+    assert np.isfinite(raw[:, : SIZE // 2]).all()
+    assert np.isnan(raw[:, SIZE // 2 :]).all()  # the reflector's own texels: lamp_glow's
+    centre, rim = raw[SIZE // 2, SIZE // 4], raw[1, 1]
+    assert centre > 150 and rim < centre / 3, (centre, rim)
+
+
+def test_day_glow_on_stock_distribution_with_a_dark_rim():
+    # A round lamp with a flat raw glow, seen straight on (one texel per view sample): the rim
+    # fades, so the middle glows and the edge doesn't, on stock's day-lit distribution.
+    n, step = 40, 0.005
+    yy, xx = np.mgrid[0:n, 0:n]
+    disc = (yy - n / 2 + 0.5) ** 2 + (xx - n / 2 + 0.5) ** 2 < 15**2
+    glow = lenses.new_glow(n, n)
+    glow[disc, 0], glow[disc, 1] = 255.0, 0.0
+    glow[..., 2], glow[..., 3] = (xx + 0.5) * step, (yy + 0.5) * step
+    out = lenses.day_glow(glow, (np.nonzero(disc), disc, (0.0, 0.0), step))
+    assert np.isnan(out[~disc]).all()
+    centre, edge = out[n // 2, n // 2], out[n // 2, n // 2 - 14]
+    assert centre > 100 and centre == np.nanmax(out) and edge < 20, (centre, edge)
+    assert 30 < np.median(out[disc]) < 90, np.median(out[disc])
+    # Too small a lamp keeps its converted alpha.
+    small = disc & (xx < 3 + n // 2 - 15)
+    assert lenses.day_glow(glow, (np.nonzero(small), small, (0.0, 0.0), step)) is None
+
+
+def test_head_lamp_surface_glow():
+    # A head lamp reflector seen directly (no lens, or behind DSF's clear glass): its mask times
+    # how deep each point sits, so the bowl's centre glows and its rim doesn't.
+    bowl = _grid("headlightL", "head_light", lambda x, y: -1.9 - 4.5 * (x * x + (y - 0.5) ** 2), 0.5, 1.0)
+    glow = lenses.new_glow(SIZE, SIZE)
+    assert lenses.lamp_glow([bowl], {1}, _ClearAtlases(), glow) > 0
+    raw = glow[..., 0]
+    assert set(np.unique(glow[..., 1][np.isfinite(raw)])) == {0.0}
+    assert np.isnan(raw[:, : SIZE // 2]).all()
+    assert raw[SIZE // 2, SIZE * 3 // 4] > 200 and raw[1, SIZE // 2 + 1] < 60, raw
+    # Already set texels (a lens's) stay.
+    glow[..., 0] = 7.0
+    assert lenses.lamp_glow([bowl], {1}, _ClearAtlases(), glow) == 0 and (glow[..., 0] == 7.0).all()
+
+
+def test_head_lamp_glow_only_on_clear_front_lenses():
+    bowl = lambda x, y: -2.0 + 0.1 - 4.5 * (x * x + (y - 0.5) ** 2)  # noqa: E731
+    lens = _grid("glassLHL", "detail_glass_clear", lambda x, y: -2.0, 0.0, 0.5)
+    # A red lens keeps its lamp score (the coloured lenses' glow is unchanged).
+    _, glow = _bake_glow(lens, _grid("headlightL", "head_light", bowl, 0.5, 1.0), _ClearAtlases(lens=(200, 0, 0, 128)))
+    assert np.isnan(glow).all()
+    # A rear lens (Forza +z) too.
+    rear = _grid("glassLTL", "detail_glass_clear", lambda x, y: 2.0, 0.0, 0.5, sign=1.0)
+    _, glow = _bake_glow(rear, _grid("taillightL", "reverse_light", lambda x, y: 1.9, 0.5, 1.0, sign=1.0))
+    assert np.isnan(glow).all()
+    # A lens with no lamp behind it (only a trim housing) keeps its own glow.
+    _, glow = _bake_glow(lens, _grid("headlightL", "frame", bowl, 0.5, 1.0))
+    assert np.isnan(glow).all()
+    # A chrome reflector bowl is a lamp (the Honda Civic Si 99's).
+    _, glow = _bake_glow(lens, _grid("headlightL", "chrome", bowl, 0.5, 1.0))
+    assert np.isfinite(glow[:, : SIZE // 2]).all()
+
+
+def test_render_takes_the_lens_glow():
+    t = dm.Texturing(Path(), size=(32, 32))
+    t.families = (fm.LIGHTS,)
+    src = bytearray(bytes((180, 180, 180, 100)) * (SIZE * SIZE))
+
+    class Atl:
+        def get(self, family):
+            return SIZE, SIZE, src
+
+    t.atlases = Atl()
+    t.regions = {fm.LIGHTS: [dm.Region(fm.LIGHTS, (8, 4, 16, 12))]}
+    t.regions[fm.LIGHTS][0].dst, t.regions[fm.LIGHTS][0].size = (0, 0), (8 + 2 * dm.PAD, 8 + 2 * dm.PAD)
+    t.scale = {fm.LIGHTS: 1.0}
+    t.lamp_raw = lenses.new_glow(SIZE, SIZE)
+    t._lamp_glow, t._glow_done = np.full((SIZE, SIZE), np.nan), True
+    t._lamp_glow[:, 8:12] = 200.0
+    out = np.frombuffer(bytes(t.render()), np.uint8).reshape(32, 32, 4)
+    plain = t._convert_texel(fm.LIGHTS, 180, 180, 180, 100)[3]
+    assert plain != 200
+    assert out[dm.PAD + 2, dm.PAD + 1, 3] == 200  # source x 9: the glow
+    assert out[dm.PAD + 2, dm.PAD + 6, 3] == plain  # source x 14: no glow, the converted alpha
 
 
 def test_red_curve_knots_apart():

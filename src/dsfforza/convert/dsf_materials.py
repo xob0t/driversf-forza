@@ -964,6 +964,10 @@ class Texturing:
     gloss: dict = field(default_factory=dict)  # id(sub) -> index into gloss_materials
     gloss_materials: list = field(default_factory=list)  # [GlossMaterial]
     gloss_report: dict = field(default_factory=dict)  # technique -> {material index: triangles}
+    # Head lamps by day (issue #124): the raw glow of the clear front lens texels and the head lamp
+    # surfaces (lenses.new_glow, lens_glow, lamp_glow); None: none. _glow() turns it into glow
+    # alpha, which render() takes over the converted alpha.
+    lamp_raw: np.ndarray | None = None
 
     # -- planning --
     def plan(self, sections, lods, extra_solids: dict | None = None, wheels=None) -> Texturing:
@@ -1203,8 +1207,13 @@ class Texturing:
                     and lenses.is_lens_technique(m.technique)
                 ):
                     ids.add(id(sub))
+        # The head lamps' raw glow (clear front lenses and head lamp surfaces), for _glow.
+        w, h, _ = self.atlases.get(fm.LIGHTS)
+        glow = lenses.new_glow(h, w)
         if ids:
-            self.lens_report = lenses.bake(body, set(lods), self.atlases, ids, self.car_dir)
+            self.lens_report = lenses.bake(body, set(lods), self.atlases, ids, self.car_dir, glow=glow)
+        lenses.lamp_glow(body, set(lods), self.atlases, glow)
+        self.lamp_raw = glow if np.isfinite(glow[..., 0]).any() else None
 
     def _art_swatch(self, section, sub, m: fm.SubMaterial) -> fm.SubMaterial:
         """A trim-artwork subsection as one flat colour: the mean of the opaque
@@ -1229,7 +1238,7 @@ class Texturing:
         """Regions, swatch cells and packing for these atlas triangles and swatches."""
         self.regions, self.owners, self.alpha_only = {}, {}, set()
         self.solids, self.solid_colours, self.scale = {}, {}, {}
-        self._red_curve_done = self._lens_scale_done = self._white_scale_done = False
+        self._red_curve_done = self._lens_scale_done = self._white_scale_done = self._glow_done = False
         for family in self.families:
             w, h, _ = self.atlases.get(family)
             self.src_sizes[family] = (w, h)
@@ -1479,6 +1488,16 @@ class Texturing:
     def _visible_lamp_texels(self, front: bool):
         """RGBA (n, 4) of the Lights-atlas texels an orthographic camera straight behind
         (front: ahead of) the car sees, one per VISIBLE_STEP; None without lamps."""
+        seen = self._lamp_view(front)
+        if seen is None:
+            return None
+        sw, sh, src = self.atlases.get(fm.LIGHTS)
+        return np.frombuffer(bytes(src), np.uint8).reshape(sh, sw, 4)[seen].astype(int)
+
+    def _lamp_view(self, front: bool, grid: bool = False):
+        """(rows, columns) of the Lights-atlas texels _visible_lamp_texels sees, one per sample
+        (grid: ((rows, columns), the (H, W) mask of the view's samples in their order, the
+        view's origin x, y, its step)); None without lamps."""
         if not self.lamp_tris or self.atlases is None:
             return None
         import numpy as np
@@ -1521,11 +1540,10 @@ class Texturing:
             uv[iy, ix, 0] = (w0 * U[n, 0, 0] + w1 * U[n, 1, 0] + w2 * U[n, 2, 0])[ok]
             uv[iy, ix, 1] = (w0 * U[n, 0, 1] + w1 * U[n, 1, 1] + w2 * U[n, 2, 1])[ok]
         hit = np.isfinite(depth)
-        sw, sh, src = self.atlases.get(fm.LIGHTS)
-        img = np.frombuffer(bytes(src), np.uint8).reshape(sh, sw, 4)
+        sw, sh, _ = self.atlases.get(fm.LIGHTS)
         u = (uv[hit, 0].clip(0, 1) * sw).astype(int).clip(0, sw - 1)
         v = (uv[hit, 1].clip(0, 1) * sh).astype(int).clip(0, sh - 1)
-        return img[v, u].astype(int)
+        return ((v, u), hit, (x0, y0), VISIBLE_STEP) if grid else (v, u)
 
     def _red_lens_scale(self):
         """This car's red lens darkening (red_lens_scale); None until planned."""
@@ -1544,6 +1562,24 @@ class Texturing:
             return None
         self._white_scale, self._white_scale_done = white_lens_scale(self.visible_white()), True
         return self._white_scale
+
+    def _glow(self):
+        """Glow alpha of the head lamps by day (lenses.day_glow of lamp_raw, ranked per lamp
+        over the surface a camera straight ahead sees), a float array the size of the Lights
+        atlas, NaN where the converted alpha stays; None when there is none, until planned, and
+        under LIGHTS_ALPHA "raw" (Forza's alpha as is)."""
+        if LIGHTS_ALPHA != "matched" or self.lamp_raw is None:
+            return None
+        if getattr(self, "_glow_done", False):
+            return self._lamp_glow
+        if self.atlases is None or not self.regions:
+            return None
+        from dsfforza.convert import lenses
+
+        view = self._lamp_view(front=True, grid=True)
+        self._lamp_glow = None if view is None else lenses.day_glow(self.lamp_raw, view)
+        self._glow_done = True
+        return self._lamp_glow
 
     def _convert_texel(self, family: str, r: int, g: int, b: int, a: int) -> tuple[int, int, int, int]:
         """Forza texel -> DSF conventions (alpha = specular / glow mask)."""
@@ -1623,6 +1659,18 @@ class Texturing:
                         )
                     texels.append(converted[key])
                 block = np.array(texels, dtype=np.uint8)[index.reshape(-1)].reshape(mean.shape)
+                if family == fm.LIGHTS and self._glow() is not None:
+                    # Clear front lens texels: their glow (lens_glow) over the converted alpha,
+                    # averaged over the source texels under each DSF texel like the colour.
+                    g = self._glow()[top : top + table.shape[0] - 1, left : left + table.shape[1] - 1]
+                    lit = np.isfinite(g)
+                    if lit.any():
+                        sums = np.zeros(table.shape[:2] + (2,))
+                        sums[1:, 1:] = np.stack([np.where(lit, g, 0.0), lit], -1).cumsum(0).cumsum(1)
+                        box = sums[y1, x1] - sums[y0, x1] - sums[y1, x0] + sums[y0, x0]
+                        k = box[:, :, 1] > 0
+                        a = (box[:, :, 0] + block[:, :, 3] * (n[:, :, 0] - box[:, :, 1])) / n[:, :, 0]
+                        block[:, :, 3][k] = np.clip(np.rint(a[k]), 0, 255).astype(np.uint8)
                 if cut:
                     block[mean[:, :, 3] < 128] = self.cutout_colour
                 out[r.dst[1] : r.dst[1] + r.size[1], r.dst[0] : r.dst[0] + r.size[0]] = block
@@ -1657,6 +1705,12 @@ class Texturing:
                                 acc[c] += sum(row[c::4])
                         n = (y1 - y0) * (x1 - x0)
                         texel = self._convert_texel(family, *(v // n for v in acc))
+                        if family == fm.LIGHTS and self._glow() is not None:
+                            g = self._glow()[y0:y1, x0:x1]
+                            lit = np.isfinite(g)
+                            if lit.any():
+                                a = (g[lit].sum() + texel[3] * (n - lit.sum())) / n
+                                texel = (*texel[:3], max(0, min(255, int(round(a)))))
                         if cut and acc[3] // n < 128:
                             texel = self.cutout_colour
                         o = (y * width + x) * 4

@@ -860,7 +860,117 @@ way stock 241's and 130's round 0x1D lamps light, but the Carlton's uniform
 it was a flat blob again (luminance 236, standard deviation 10). Stock lit
 lamps keep about a quarter of the lamp at low alpha (0x1D visible p25 18 on
 average), which is where their structure comes from. The M3 E30's dim lamps
-are the open part (issue #124, Open 8).
+were the open part (issue #124, next section).
+
+### Head lamp glow by day (issue #124)
+
+Symptom (confirmed-static, confirmed-runtime in #115's runs): the ported head
+lamps' daytime glow followed the lens, not the lamp. The M3 E30's round lamps
+barely glowed where stock 241's and 130's round 0x1D lamps glow white, and over
+the roster the visible daytime glow was spread wider than stock's both ways.
+
+Measure (offline-checked, `out/dayglow/` in the `driversf-forza-wt-dayglow`
+worktree): `dsffront.py` is `rearlamps.py` turned to the front (DSF side, full
+entry, 4 mm, z-buffered over the lamp-byte triangles, per pixel the table type
+and texel); `survey.py` is the Forza-side view of #115
+(`Texturing._visible_lamp_texels(front=True)`, 4 mm), with each pixel's glow
+alpha (the converted texel's, or the new day glow) and per lamp (connected
+pixels) the mean alpha in the outer, middle and inner third of the distance
+from its edge (`profile`). Stock, 142 vehicles: white front lamp alpha
+per-vehicle mean p10/50/90 41/64/108; the 32 vehicles with 0x1D head lamps
+pool to p10/25/50/75/90 5/19/55/116/180 and their lamps run dark to hot,
+median 32 / 88 / 131 by thirds (inner over outer 4.9). On master the ports'
+lamps were nearly flat (median 45 / 55 / 66 by thirds, ratio 1.1).
+
+Cause (confirmed-static): the glow of a baked lens texel was the lens texel's
+own lamp score (#93), and a `detail_glass_*` lens's alpha is its opacity. A
+half-clear lens glowed little whatever lamp sat behind it (the M3 E30's at 126
+maps to about 20); an opaque fluted one glowed along its flutes and edges (the
+Carlton's edge third 49, its middle 28). Head lamp surfaces seen directly
+(through DSF's clear glass) glowed by their Forza mask, which is 255 almost
+everywhere on most cars, so their lamps came out flat and at the top of
+stock's range (REN_Clio197_07 visible mean 222).
+
+Fix (`lenses.lens_glow`, `lamp_glow`, `day_glow`; `Texturing._glow`, used by
+`render`):
+
+- **Raw glow from the lamp.** Each clear front lens texel's ray (the bake's)
+  stops at the first opaque surface; when that is a Lights surface (bulb,
+  reflector; atlas or tiling) or chrome (the chrome reflector bowls of the
+  Civic Si 99 and the Versa), its glow is that surface's mask (at least 128:
+  Forza leaves most reflectors at 0 to 10 and lights the bulb), passed by the
+  lens, `(1 - a) + a x lens mask`. Over paint, trim or a housing it is 0. A
+  lens with under 10% of its texels over a lamp keeps its score as before.
+  Head lamp surfaces (`head_light`, `oldhead`, ...) at the front get their own
+  mask (at least 128).
+- **The reflector's shape.** The raw glow is scaled by the depth of the lamp
+  behind each texel against the lamp's full depth (90th percentile): the
+  reflector bowl is deepest behind the bulb (M3 E30 48 mm at the centre, 3 mm
+  at the rim; Carlton 95 to 7), so the lamp is hot in the middle whatever its
+  mask holds. A bulb in front of the reflector is a dip narrower than 2 cm and
+  is filled (morphological closing), so it is as hot as the bowl around it.
+  For a lamp surface seen directly the depth is behind its subsection's
+  frontmost point.
+- **Per lamp onto stock.** `Texturing._glow` looks at the car from straight
+  ahead (the `visible_white` view, 5 mm) and, per lamp (one lens or head lamp
+  subsection; at least 50 visible samples), fades the outer 40% of its
+  edge-to-middle distance in to 0 (stock lamps are dark at the rim; a box
+  reflector like the Carlton's stays deep to the lens edge), then ranks each
+  texel's raw glow among the lamp's visible samples onto the stock 0x1D
+  distribution (`DAY_HEAD_ALPHA`). Every head lamp therefore glows as much as
+  stock's, brightest where Forza's light and the reflector's shape are, and a
+  bumper lamp no longer pushes the main lamps down. Raw 0 stays 0. Left and
+  right lamps often share texels, so positions are kept as |x|.
+- `render` takes that glow over the converted alpha, averaged over the source
+  texels under each DSF texel like the colour. Coloured lenses, rear lamps and
+  everything else keep the converted alpha; texel colours don't change. A
+  front lens's texels shared with other triangles (the DB5 Vantage's lens
+  shares 95% with its reflector's coarser LODs) get the glow too; their
+  colour is still left alone.
+
+Roster (offline, `survey.py` on the 573 cars of `tools/batches/all.txt`,
+master -> branch; per-car mean glow alpha of the visible white front lamp surface,
+cars with 400 samples or more, against stock's per-vehicle p10 41 and p90 108):
+
+| | p10 / 50 / 90 | under stock p10 | over p90 | by thirds outer / middle / inner |
+| --- | --- | ---: | ---: | --- |
+| lit lamp surfaces, master (543 cars) | 21 / 52 / 129 | 207 | 89 | 44 / 55 / 66 |
+| lit lamp surfaces, branch | 61 / 74 / 77 | 10 | 2 | 32 / 90 / 126 |
+| every white Lights surface, master (560) | 23 / 64 / 130 | 159 | 104 | |
+| every white Lights surface, branch | 53 / 74 / 107 | 24 | 54 | |
+
+"Lit lamp surfaces" are the triangles of lamp techniques and lenses
+(`lights.TECHNIQUE_FUNCTION`), the ones the lamp plan gives a light byte. The
+second measure is #115's and the issue's: it also counts unlit Lights-atlas
+surfaces (`textured_reflector`, housings), which have no light byte and don't
+glow in game; the 54 cars still over p90 there are those (REN_Clio197_07 lit
+lamps 75, every white surface 130; MER_SLR_05's white reflector housing). 541
+cars get the new glow. Of the 10 lit-surface cars still under p10, the two
+Corvette Grand Sport 10s (0, 9) have lenses over a painted housing (their head
+lamps come from the reflector fallback, "The converter" above) and the R390
+and Agera (24, 25) lenses over trim; the other six sit at 38 to 40.
+
+Built (DSF side, `dsffront.py`, IDs 304 to 306 of `out/dayglow/before` and
+`after`), 0x1D visible alpha mean and by thirds outer / middle / inner:
+
+| Car | master | branch |
+| --- | --- | --- |
+| BMW_M3E30_91 | 68, 60 / 65 / 90 | 79, 23 / 94 / 158 |
+| LOT_Carlton_89 | 35, 48 / 28 / 26 | 73, 26 / 84 / 129 |
+| MIT_LancerEvoVIGSR_99 | 33, 18 / 40 / 55 | 75, 25 / 90 / 150 |
+| stock 0x1D (32 vehicles) | 74 median, 32 / 88 / 131 | |
+
+In game (confirmed-runtime, VM 2, `-Views 'nose,nose+night' -Palette 0
+-ShotSeconds 3 -WaitSeconds 600`; master `out/dayglow/before` run
+`vm2-20261027-195131` with stock 241 and 130, branch `out/dayglow/after2` runs
+`vm2-20261027-200145` and `vm2-20261027-202618`;
+`img/headlamps-dayglow-ingame.jpg`, `img/headlamps-dayglow-offline.png`): by day
+the M3 E30's round lamps now glow white with a hot middle, as stock 241's and
+130's round 0x1D lamps do (master: pale unlit discs); the Evo VI's lamps glow
+from the reflector's centre instead of barely; the Carlton's glow gathers in the
+middle of the lamp. At night the three light as before or brighter in the
+middle, not past stock. A traffic car hit the Evo (first branch run) and the
+Carlton (second) during their views; the shots used are before the hits.
 
 ### Open
 
@@ -896,11 +1006,10 @@ are the open part (issue #124, Open 8).
    glass (the WRX STI 05's near-opaque light rear cover, (184, 161, 160) at
    alpha 236, shows its dark reflector instead), and what Forza's
    `DarkValues` / `LightValues` do to a lens is not decoded. Issue #89.
-8. Head lamp glow by day follows a lens's opacity, not the lamp behind it:
-   the M3 E30's half-clear round lamps look unlit, and the roster's daytime
-   glow is spread wider than stock's (156 cars under stock's p10, 105 over
-   its p90). Blending the glow mask through the lens fixed the M3 but made
-   the Carlton a blob again. Issue #124.
+8. Head lamp glow by day (issue #124, "Head lamp glow by day"): only clear
+   front lenses and head lamp surfaces get it. Clear rear lenses over reverse
+   lamps still glow by their opacity, and so do front lenses with no lamp
+   behind them within 0.4 m.
 
 ## Paint
 
