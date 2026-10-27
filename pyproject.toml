@@ -10,6 +10,7 @@ dependencies = [
     "numpy>=2.1",
     "pillow>=11.0",   # glass.py survey (its texture preview); imported only there
     "rich>=15.0.0",
+    "truststore>=0.10",  # thirdparty.py downloads: the OS certificate check (a fresh Windows lacks roots Python needs)
 ]
 
 [project.scripts]

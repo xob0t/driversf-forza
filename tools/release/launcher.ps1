@@ -47,6 +47,8 @@ if (-not $uv) {
     if (-not $uv) {
         throw 'uv could not be installed. Install it yourself (winget install astral-sh.uv), open a new window and run install.cmd again.'
     }
+    # Astral's installer ends with how to put uv on PATH; nothing to do for install.cmd.
+    Write-Host "uv is installed ($uv). (The PATH note above is for new terminals; install.cmd goes on by itself.)"
 }
 
 $help = $Forward | Where-Object { $_ -in @('-h', '--help') }

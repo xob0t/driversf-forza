@@ -21,6 +21,7 @@ import argparse
 import hashlib
 import json
 import shutil
+import ssl
 import sys
 import urllib.request
 import zipfile
@@ -79,6 +80,17 @@ class DownloadError(Exception):
     pass
 
 
+def open_url(url: str):
+    """urlopen with the operating system's certificate check (truststore). Python's own check
+    only trusts the root certificates already in the Windows store, and Windows fetches most
+    roots the first time something of its own needs them: on a fresh Windows the download from
+    GitHub's release host (release-assets.githubusercontent.com) failed with
+    CERTIFICATE_VERIFY_FAILED while github.com itself passed (issue #95)."""
+    import truststore
+
+    return urllib.request.urlopen(url, context=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT), timeout=120)
+
+
 def file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
@@ -107,7 +119,7 @@ def ready(name: str, root: Path = TOOLS_DL, repo: Path = REPO) -> bool:
     return cached(tool, root, repo) is not None
 
 
-def download(url: str, target: Path, sha256: str, opener=urllib.request.urlopen) -> None:
+def download(url: str, target: Path, sha256: str, opener=open_url) -> None:
     """url to target, through target.part; raises DownloadError when the bytes don't hash to sha256."""
     target.parent.mkdir(parents=True, exist_ok=True)
     part = target.with_name(target.name + ".part")
@@ -126,7 +138,7 @@ def download(url: str, target: Path, sha256: str, opener=urllib.request.urlopen)
     part.replace(target)
 
 
-def fetch(name: str, root: Path = TOOLS_DL, repo: Path = REPO, opener=urllib.request.urlopen, log=print) -> Path:
+def fetch(name: str, root: Path = TOOLS_DL, repo: Path = REPO, opener=open_url, log=print) -> Path:
     """The tool's archive (or, for an unpacked tool, its folder), downloading it if needed."""
     tool = TOOLS[name]
     folder = Path(root) / tool.folder
