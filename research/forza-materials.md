@@ -613,32 +613,44 @@ any trim artwork) flattens the detail subsections first (one colour each),
 then, if that isn't enough, the artwork too.
 
 **Survey (all 573 roster cars, `out/inv/survey.py`, LODs 1, 3 and 5, atlas
-512² as the build; master's split against this one).** 554 of 573 cars change: 197,384 triangles
-at LOD 1 move off the shared trim (median 186 a car): 126,888 as detail on 546
-cars, 69,421 as grey on 400, and 1,075 artwork triangles on 14 cars are now drawn
-darker by their PaintScale. The atlas scale drops on 191 cars, by 3.1% in the
-median and 10% at most (LEX_IS300_03 0.627 to 0.565, the budget's limit); 14
-pack slightly better (artwork whose PaintScale makes it detail or grey). On 95
-cars the detail is drawn flat (one colour per subsection) to keep the budget;
-their artwork stays on the atlas. The split costs about 15 s a car for both
-splits and both plans in the survey (the converter's split alone: 3 to 5 s).
-The Cougar: 178 detail triangles (`hooda/misc`, `body/plastic2`, the open
-headlamp doors), atlas 0.639 as before. The Range Rover 12: its silver mesh
-grille, "RANGE ROVER" letters and bumper strip were black; the Cuda's grille
-inserts and fender gills; the H1 Alpha's bonnet vent and lettering.
+512² as the build; master's split against this one).** 553 of 573 cars
+change: 201,065 triangles at LOD 1 move off the shared trim (median 195 a car):
+129,267 as detail on 544 cars, 71,766 as grey on 397, and 32 artwork triangles
+on one car are drawn at its `PristinePaintScale`. The atlas scale drops on 190
+cars, by 3.1% in the median and 10% at most (LEX_IS300_03 0.627 to 0.565, the
+budget's limit); 13 pack slightly better. On 97 cars the detail is drawn flat
+(one colour per subsection) to keep the budget; their artwork stays on the
+atlas. The survey takes about 15 s a car for both splits and both plans (the
+converter's split alone: 3 to 5 s). The Cougar: 535 triangles (501 detail: the
+centre grille, the closed and open headlamp doors, the end pieces; 34 grey),
+atlas 0.639 to 0.660. The Range Rover 12: the mesh between its grille bars
+(the bars were chrome on master); the Cuda's grille inserts and fender gills;
+the H1 Alpha's bonnet vent and its lettering.
 
 Offline (`out/inv/frender2.py`: the car's stock sections at LOD 1 through
-`car_render`'s shading; rows Forza texels times the texel scale, master,
-this change): the Range Rover's silver mesh grille, "RANGE ROVER" lettering
-and bumper strip (black on master), the Cuda's grille inserts and fender
-gills, the Challenger's grille mesh, the Cougar's grille end pieces and centre
-slats (`img/black-trims-offline.png`).
+`car_render`'s shading; rows Forza's texels times the texel scale, master's
+split (light artwork and metal), this change): the Cougar's centre grille
+slats, headlamp-door bars and end pieces, the Range Rover's grille mesh, the
+Cuda's grille inserts and fender gills, the H1 Alpha's bonnet vent
+(`img/black-trims-offline.jpg`).
 
-IN_GAME
+In game (confirmed-runtime, headless VM 2, the same palette entry,
+`run-series.ps1 -Views nose,front -Palette 0 -ShotSeconds 2 -ZoomPresses 8
+-WaitSeconds 600`, the new `nose` camera; IDs 1 Cuda 426, 2 Range Rover 12, 3
+Volt, 4 Cougar Eliminator, plus stock 175, the Cougar's host): before
+`vm2-20261027-083402` (`out/fx/before`, built from master 4f5057c), after
+`vm2-20261027-084411` (`out/fx/after`, this branch). The Cougar's centre grille
+shows its slats instead of one black block; its headlamp doors stay dark, their
+bars only a shade lighter at the in-game distance. The Range Rover looks the
+same at that distance (its bars were already chrome; the mesh is a few atlas
+texels). The scoop is unchanged: black without a highlight, issue #87
+(`img/black-trims-ingame.jpg`). The after run ran out of time before IDs 1 and 3;
+all four cars spooled and drove in the before run and IDs 175, 4 and 2 in the
+after run, no crash.
 
 Not changed: the scoop's `badge` decal is cut at alpha 128 (`cutout`) where
 Forza blends it into the paint; the hidden-headlamp doors are drawn open and
-closed at once (both stock sections).
+closed at once (both stock sections, issue #88).
 
 ## Open
 
