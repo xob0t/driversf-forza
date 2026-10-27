@@ -55,6 +55,7 @@ import statistics
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
 from dataclasses import dataclass, field
@@ -514,6 +515,11 @@ def read_install_record(game: Path) -> dict | None:
         return json.loads((Path(game) / "dsfforza-backup" / "install.json").read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return None
+
+
+def hook_source(path: Path) -> bool:
+    """--hook-archive is usable: an archive file, or a folder holding plugins/DriverNGHook.asi."""
+    return path.is_file() or (path / "plugins" / "DriverNGHook.asi").is_file()
 
 
 def installed(record: dict | None) -> bool:
@@ -1280,8 +1286,10 @@ class Run:
                 )
             from dsfforza.build import thirdparty
 
-            if args.hook_archive and not Path(args.hook_archive).is_file():
-                problems.append(f"--hook-archive {args.hook_archive}: no such file.")
+            if args.hook_archive and not hook_source(Path(args.hook_archive)):
+                problems.append(
+                    f"--hook-archive {args.hook_archive}: no such file, nor a folder with plugins\\DriverNGHook.asi in it."
+                )
             hook = self.game_has_hook() or args.hook_archive or thirdparty.ready("dnghook")
             if not hook and args.no_download:
                 tool = thirdparty.TOOLS["dnghook"]
@@ -1520,8 +1528,9 @@ class Run:
         return bool(name) and name.lower() not in self.ours()
 
     def hook_files(self) -> tuple[Path | None, Path | None]:
-        """(DNGHook archive, ASI loader) for install.ps1: given, else the pinned downloads
-        (src/dsfforza/build/thirdparty.py) when the game doesn't have them yet."""
+        """(DNGHook folder, ASI loader) for install.ps1: given, else the pinned downloads
+        (src/dsfforza/build/thirdparty.py) when the game doesn't have them yet. The hook's
+        .7z is unpacked here, not by install.ps1's tar.exe (no LZMA in some Windows builds)."""
         from dsfforza.build import thirdparty
 
         args = self.args
@@ -1529,6 +1538,8 @@ class Run:
             return None, None
         hook, loader = args.hook_archive, args.asi_loader
         try:
+            if hook and Path(hook).is_file():
+                hook = thirdparty.unpack(Path(hook), Path(tempfile.mkdtemp(prefix="dsfforza-hook-")))
             if not hook and not self.game_has_hook():
                 self.reporter.stage("install", "running", "DriverNGHook")
                 hook = thirdparty.fetch("dnghook", log=log)
@@ -1805,7 +1816,9 @@ def build_parser() -> argparse.ArgumentParser:
     inst.add_argument(
         "--no-download", action="store_true", help="download nothing (vgmstream, DriverNGHook, the ASI loader)"
     )
-    inst.add_argument("--hook-archive", type=Path, help="DNGHook_072.7z (default: the pinned download)")
+    inst.add_argument(
+        "--hook-archive", type=Path, help="DNGHook_072.7z, or its unpacked folder (default: the pinned download)"
+    )
     inst.add_argument("--asi-loader", type=Path, help="the Ultimate ASI Loader's dinput8.dll or its zip")
     inst.add_argument("--skip-hook", action="store_true", help="don't install DriverNGHook or an ASI loader")
     inst.add_argument("--keep-backup", action="store_true", help="with --uninstall: keep dsfforza-backup")
