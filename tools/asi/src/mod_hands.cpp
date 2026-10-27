@@ -17,7 +17,8 @@
 // stock cars have neither), each hand that holds the wheel is moved onto the rim,
 // and its arm follows through a two-bone IK (shoulder fixed, elbow in the arm's
 // own bend plane, bone lengths kept). Everything is done on the pose buffer before
-// the game reads it, so the cockpit and the chase views get the same hands.
+// the game reads it. The arms are drawn in the cockpit view only; the chase views'
+// driver is a vehicle occupant this hook doesn't reach (issue #117).
 #include "patch.h"
 
 #define WIN32_LEAN_AND_MEAN

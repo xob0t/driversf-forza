@@ -1502,7 +1502,7 @@ def seat_anchor(centre, axis, forza_radius) -> tuple[float, float, float]:
 
 # The chase views' driver (a full-body occupant, not the cockpit arms) holds the stock
 # grips at the seat's anchor (seat_anchor) and dsfforza.asi doesn't move him yet (issue
-# #99 follow-up): the main-carbin wheel he holds is scaled as PR #90 scaled every wheel,
+# #117): the main-carbin wheel he holds is scaled as PR #90 scaled every wheel,
 # only where his grips would miss Forza's rim by more than HAND_FIT_TOLERANCE, and only
 # that far, within WHEEL_SCALE_RANGE.
 HAND_FIT_TOLERANCE = 0.02  # m

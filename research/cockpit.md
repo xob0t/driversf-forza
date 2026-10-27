@@ -1,6 +1,6 @@
 # Cockpit view: interior entry, steering wheel, gauges, head camera
 
-Updated: 2026-10-26
+Updated: 2026-10-27
 
 How DSF draws the cockpit view, where Forza keeps the same data, and what
 `src/dsfforza/convert/cockpit.py` (`--cockpit` in `forza2dsf.py`, on by default in
@@ -1706,7 +1706,9 @@ graph has posed them (a new hook, not attempted: issue #99).
   unless the grips would miss its rim by more than 2 cm (`HAND_FIT_TOLERANCE`,
   about what stock trucks leave); then it is scaled just enough to bring them
   to 2 cm, within 0.85 to 1.3 (`WHEEL_SCALE_RANGE`). The chase-view wheel
-  follows through `align_main_wheel`.
+  follows through `align_main_wheel`. (Since 2026-10-27 only the chase-view
+  wheel is scaled; the cockpit wheel keeps Forza's size and dsfforza.asi moves
+  the hands: "Hands on Forza's rim".)
 - The seat doesn't move: `seat_anchor` reproduces the old placement (the
   translation that put the grips on Forza's rim, scaled as before), and
   `patch_seats` puts the stock point of the seat's frame there instead of at the
@@ -1803,6 +1805,88 @@ The fist (the wrist and its 15 finger joints) sits on a circle about A, 0.177 m
 from the column (to 0.3 cm), its normal 26.6 degrees up (the stock column is 24).
 That holds at rest and at DSF's full lock: there the pose is the same and the
 steering matrix turns it. Only the hand-over-hand frames leave the circle (12.6 cm).
+`cockpit.hand_grips` (0.176 m, 45 degrees either side of the top, stock column)
+is the same circle to within 0.3 cm and 2.4 degrees.
+
+**Fix, cockpit view** (`dsfforza.asi [hands]`, research/asi.md "Hands on the rim"):
+
+- **Per-car value.** The converter writes the rim into the car's VO3D
+  (`cockpit.grip_params`): p95 is the drawn radius and p87 the centre from the
+  steering marker along the engine's column direction. The marker sits on the
+  hub's column (`hand_shift`), so the centre is on that line. p95 and p87 are
+  "unused" in the type table (0x00F3E450), nothing reads them, and no stock VO3D
+  sets them. The values travel with the car into any archive and to any spool ID.
+- **The move.** The module wraps the call at 0x005676FF. In the pose frame
+  (origin A, the car's axes) it moves each fist to the nearest point of that rim,
+  by at most 10 cm.
+- **The arm.** A two-bone IK: the shoulder stays, the elbow stays in the arm's
+  bend plane, and both bones keep their length. The hand is only translated, so
+  the wrist bends a little: on the 0.113 m ARX-01b yoke the hands move 6 cm in
+  and the elbows about 3.5 cm.
+- **Hands off the wheel.** A hand whose fist is more than 4 cm from both the
+  animations' circle and the rim fades out of the move (none past 9 cm). So the
+  hand going over the top in the hand-over-hand pose, or at the gear stick, plays
+  as animated. The release weights (+0x34C, +0x350) scale the move too.
+- **The wheel.** The cockpit wheel keeps Forza's size (`hand_wheel_scale` is
+  gone). The hinge and marker still move along the column only (`hand_shift`):
+  that keeps the wheel turning about its hub, and puts the rim in the plane of
+  the animations' grips, so the move stays in the wheel plane.
+
+**The chase views' driver is not the arms.** The probe never sees the arms
+object outside the cockpit view (caller 0x0087A695, FUN_0087A5D0, only while
+DriverEye is on). The driver in the chase and side views is a full-body
+occupant: class set up by FUN_00567E60 (vehicle at +0x360, seat index +0x364,
+the anim set by vehicle class: DriverSport, DriverSport_t, DriverSaloon,
+DriverTruck), drawn by FUN_00568590.
+
+- FUN_00568590 skips the player's own driver in the cockpit camera modes (3, 4).
+- None of the four FUN_0055FAE0 call sites (0x0055FF55, 0x0056726D, 0x00568C1E,
+  0x00580536) drew him in run `vm2-20261027-093214`, nor anything else but the
+  cockpit arms. Pedestrians weren't drawn there either.
+- So FUN_00573450's other branch (+0x32B set: FUN_0055A230 queues the
+  character for a batched draw) is the likely path. It is not followed here
+  (issue #117).
+- Until that is hooked, the chase views keep PR #90's arrangement:
+  - the seat holds the stock grips at `seat_anchor`;
+  - the main-carbin wheel they draw is scaled by `chase_wheel_scale` (PR #90's
+    rule: only past 2 cm, 0.85 to 1.3), so the chase-view hands miss its rim by
+    the same median 1.3 cm, at most 3.5 cm;
+  - while steering, the hands still turn about the old anchor.
+- The cockpit and chase wheels now differ in size on those cars (the bus 0.220
+  against 0.187 m, the ARX-01b 0.113 against 0.147 m). The two views never show
+  together.
+
+**Survey.**
+
+- Roster, 570 reports of `out/final4`, Forza's radius = report radius / its wheel
+  scale, with the converter's rig model (`cockpit.hand_grips`):
+  - PR #90 scales 153 wheels, and its grips miss the drawn rim by a median
+    1.31 cm, 90th percentile 2.00, worst 3.51 (tour bus).
+  - Unscaled wheels with the stock grips would miss by a median 1.31, 90th
+    percentile 3.25, worst 6.81; the largest move the module makes is 6.8 cm.
+  - With the module, the cockpit grips land on the rim: 0.0 cm, none capped.
+- `uv run dsff steering_axle` now also reports the cockpit grips (`grip_stock`,
+  `grip_asi`) and the module's rim against the drawn one (`asi_rim`).
+  - On the four test cars (`out/hg/after2`): grips 5.80 cm median (6.81 bus) ->
+    0.03 cm (0.34, the Regal's 0.33 cm VO3D rounding); the module's rim is
+    0.08 cm from the drawn one.
+  - Hubs on the turn line: 0.01 cm. The chase view's numbers are PR #90's (bus
+    5.1 cm, the culled flat wheel).
+
+**In game** (VM 2, `run-series.ps1 -Vm -VmId 2 -DriveKey Left -DriveSeconds 10
+-ShotSeconds 2 -Views left -WaitSeconds 900`, IDs 1 to 4 and stock 229):
+
+- Before: `vm2-20261027-093214`, master's converter on Regal GNX, tour bus,
+  ARX-01b and Mini Cooper S 1965.
+- After: `vm2-20261027-100256`, this branch with `[hands] debug=1`.
+- The log has each hand's move: Regal 2.3 to 2.4 cm out to its 0.200 m rim, Mini
+  1.3 to 2.5 cm, ARX-01b 5.9 to 6.3 cm in to its 0.113 m yoke. Stock 229 is
+  untouched.
+- In the hand-over-hand frames one hand's weight drops (0.14, 0.61).
+- `img/hands-rim-cockpit.jpg`: full lock and rest, before and after.
+- `img/hands-rim-chase-left.jpg`: the side view, unchanged.
+- The tour bus draws no cockpit (no arms, no interior) from its DriverEye camera
+  in both runs, so it can't be judged there.
 
 ## Risks and open questions
 
