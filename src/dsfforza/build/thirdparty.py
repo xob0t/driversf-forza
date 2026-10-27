@@ -8,8 +8,11 @@ Nothing of these is in the repo or the release zip.
 - vgmstream (decodes Forza's XMA engine sound; src/dsfforza/formats/forza_audio.py looks
   for out/tools-dl/vgmstream/vgmstream-cli.exe): unpacked there.
 - DriverNGHook 0.7.2 (runs the Lua that registers the cars) and the Ultimate ASI Loader
-  (loads DriverNGHook and dsfforza.asi): tools/install.ps1 unpacks them into the game
+  (loads DriverNGHook and dsfforza.asi): tools/install.ps1 copies them into the game
   folder (src/dsfforza/build/install.py passes them as -HookArchive and -AsiLoader).
+  DriverNGHook's .7z is unpacked here (src/dsfforza/formats/sevenzip.py), not by
+  install.ps1's tar.exe: Windows builds whose tar has no liblzma stopped the install with
+  "tar.exe: LZMA codec is unsupported".
 
 A copy that is already there with the pinned hash (out/tools-dl, or a developer's
 _ref/downloads) is used without a download.
@@ -40,7 +43,7 @@ class Tool:
     url: str
     sha256: str
     folder: str  # under out/tools-dl
-    unpack: str = ""  # a file the unpacked zip must hold (empty: keep the archive as it is)
+    unpack: str = ""  # a file the unpacked zip or 7z must hold (empty: keep the archive as it is)
     also: tuple[str, ...] = ()  # other places a copy may already be (relative to the repo)
 
     @property
@@ -64,6 +67,7 @@ TOOLS = {
         "https://github.com/ReHamster/DriverNGToolkit/releases/download/0.7.2/DNGHook_072.7z",
         "C2AE54B0A7F0FD2D00CBCFE9ED721017F8BA84D1FEC618D53FC99F4C78BC3056",
         "dnghook-0.7.2",
+        unpack="plugins/DriverNGHook.asi",
         also=("_ref/downloads/dnghook-0.7.2/DNGHook_072.7z",),
     ),
     "asi-loader": Tool(
@@ -151,7 +155,7 @@ def fetch(name: str, root: Path = TOOLS_DL, repo: Path = REPO, opener=open_url, 
         download(tool.url, path, tool.sha256, opener)
     if not tool.unpack:
         return path
-    unpack_zip(path, folder)
+    unpack(path, folder)
     if not (folder / tool.unpack).is_file():
         raise DownloadError(f"{path} has no {tool.unpack}")
     (folder / "pinned.json").write_text(
@@ -159,6 +163,25 @@ def fetch(name: str, root: Path = TOOLS_DL, repo: Path = REPO, opener=open_url, 
         encoding="utf-8",
     )
     return folder
+
+
+def unpack(archive: Path, folder: Path) -> Path:
+    """A zip or 7z into folder (returned)."""
+    if Path(archive).suffix.lower() == ".7z":
+        unpack_7z(archive, folder)
+    else:
+        unpack_zip(archive, folder)
+    return folder
+
+
+def unpack_7z(archive: Path, folder: Path) -> None:
+    """Every member of a 7z into folder (members that would land outside it are refused)."""
+    from dsfforza.formats import sevenzip
+
+    try:
+        sevenzip.SevenZip(archive).extract(folder)
+    except (sevenzip.SevenZipError, OSError) as error:
+        raise DownloadError(f"could not unpack {archive}: {error}") from error
 
 
 def unpack_zip(archive: Path, folder: Path) -> None:

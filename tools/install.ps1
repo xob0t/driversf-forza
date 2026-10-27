@@ -68,7 +68,7 @@ param(
     [Parameter(ParameterSetName = 'Install')]
     [string]$BuildDir,                    # where to build (default out\install-build)
     [Parameter(ParameterSetName = 'Install')]
-    [string]$HookArchive,                 # DNGHook_072.7z (default: the repo's _ref copy, or -Download)
+    [string]$HookArchive,                 # DNGHook_072.7z or its unpacked folder (default: the repo's _ref copy, or -Download)
     [Parameter(ParameterSetName = 'Install')]
     [string]$AsiLoader,                   # dinput8.dll of the Ultimate ASI Loader, or a zip holding it
     [Parameter(ParameterSetName = 'Install')]
@@ -537,12 +537,37 @@ function Get-HookFiles {
                   "https://github.com/ReHamster/DriverNGToolkit/releases/tag/0.7.2 and pass -HookArchive <path>, or add -Download.")
         }
     }
+    # Already unpacked (dsff install passes the folder: src/dsfforza/build/thirdparty.py unpacks the .7z).
+    if (Test-Path -LiteralPath $archive -PathType Container) {
+        if (-not (Test-Path -LiteralPath (Join-Path $archive 'plugins\DriverNGHook.asi'))) { Fail "$archive has no plugins\DriverNGHook.asi" }
+        return (Resolve-Path -LiteralPath $archive).Path
+    }
+    if (-not (Test-Path -LiteralPath $archive)) { Fail "hook archive not found: $archive" }
     $out = Join-Path $env:TEMP ('dsfforza-hook-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $out | Out-Null
+    $asi = Join-Path $out 'plugins\DriverNGHook.asi'
+    # Windows' tar.exe reads the 7z only where its build has liblzma ("tar.exe: LZMA codec is
+    # unsupported" on the others); the repo's own reader (dsff sevenzip, Python's lzma) always can.
+    $why = 'no tar.exe (Windows 10 1803 or later has one)'
     $tar = Join-Path $env:WINDIR 'System32\tar.exe'
-    if (-not (Test-Path -LiteralPath $tar)) { Fail "tar.exe (Windows 10 1803 or later) is needed to unpack $archive; unpack it yourself and install DriverNGHook, then use -SkipHook." }
-    & $tar -xf $archive -C $out
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $out 'plugins\DriverNGHook.asi'))) { Fail "could not unpack $archive" }
+    if (Test-Path -LiteralPath $tar) {
+        $pref = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'   # tar's stderr is the reason, not a stop
+        try { $why = (& $tar -xf $archive -C $out 2>&1 | ForEach-Object { "$_" }) -join '; ' }
+        finally { $ErrorActionPreference = $pref }
+        if (-not $why) { $why = "tar.exe exit code $LASTEXITCODE" }
+    }
+    if (-not (Test-Path -LiteralPath $asi)) {
+        $uv = Find-Uv
+        if ($uv) {
+            Say "tar.exe could not unpack $archive ($why); unpacking it with dsff sevenzip"
+            & $uv run --project $Repo --frozen --no-dev dsff sevenzip extract $archive $out | Out-Host
+        }
+    }
+    if (-not (Test-Path -LiteralPath $asi)) {
+        Fail ("could not unpack $archive ($why). Unpack it with 7-Zip and pass the folder as -HookArchive, " +
+              "or install uv (winget install astral-sh.uv) and run this again.")
+    }
     return $out
 }
 
