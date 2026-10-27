@@ -17,6 +17,7 @@ void dsf_core_init();
 #define DSF_MODULE(name) void mod_##name##_init();
 #include "../src/modules.h"
 #undef DSF_MODULE
+int mod_hands_selftest();
 
 static int failures = 0;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #c); failures++; } } while (0)
@@ -353,6 +354,9 @@ int main(int argc, char** argv)
         CHECK(name_set != 0x00ACE110 && badge_set != 0x00ACE110 && name_set != badge_set);
     }
     lua_heap_test();
+    // Hands: the arms' pose call goes through the plugin; the IK on a synthetic arm.
+    CHECK(*(BYTE*)0x005676FF == 0xE8 && *(int*)0x00567700 != (int)(0x008609C0 - 0x00567704));
+    CHECK(mod_hands_selftest() == 0);
     printf("%s (%d failures); log: %s\\dsfforza.log\n", failures ? "FAILED" : "ok", failures, dsf_plugin_dir());
     return failures ? 1 : 0;
 }

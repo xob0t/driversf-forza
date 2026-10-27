@@ -642,7 +642,6 @@ class CockpitFit:
     camera: tuple | None = None  # final head camera (Forza space), set by forza2dsf after camera_eye
     display_faces: int = 0  # digital_gauge triangles drawn textured (display_face)
     virtual: dict = field(default_factory=dict)  # virtual_gauges report: dials drawn on a blank display
-    wheel_scale: float = 1.0  # the Forza wheel scaled so the stock hands reach it (hand_wheel_scale)
 
 
 # Main-carbin sections that make a cockpit when the cockpit carbin is a stub.
@@ -1164,16 +1163,8 @@ def fit(
             source = "cockpit; steering wheel from the main carbin"
     else:
         wheel_source = "cockpit" if lod0 else "main carbin"
+    # Forza's wheel keeps its size: dsfforza.asi [hands] moves the hands onto its rim (grip_params).
     wheel = fit_wheel(static["steering_wheel"])
-    # The rim is scaled to the stock hands: the hinge stays on the hub's column (hand_shift).
-    from dsfforza.convert import forza2dsf
-
-    turn = forza2dsf.Placement(0.0, 0.0)
-    wheel_scale = hand_wheel_scale(turn.point(wheel.centre), turn.normal(wheel.axis), wheel.radius)
-    if abs(wheel_scale - 1.0) > 1e-3:
-        static["steering_wheel"], wheel = scale_wheel(static["steering_wheel"], wheel, wheel_scale)
-    else:
-        wheel_scale = 1.0
     gauges = {}
     for family, poses in needles.items():
         g = fit_gauge(family, poses)
@@ -1232,7 +1223,6 @@ def fit(
         dropped,
         display_faces=faces,
         virtual=virtual_report,
-        wheel_scale=wheel_scale,
     )
 
 
@@ -1402,12 +1392,6 @@ STOCK_COLUMN = (0.0, 0.410, -0.912)  # DSF model space, towards the driver
 HAND_GRIP_DEG = 45.0
 MAX_HAND_ALONG = 0.12  # m, along the column (no orbit; the driver model moves with it)
 MAX_SEAT_SHIFT = 0.06  # m, in the wheel plane: grip_shift for the seat (the chase view's driver)
-# The rig's grips sit 0.17 m from the column; stock trucks and buses hold 0.20 m rims
-# with them, so stock leaves up to 2.5 cm (research/cockpit.md, "The steering wheel
-# turns about its hub"). Forza's wheel is only scaled where the grips would miss it by
-# more than this, and only as far as this.
-HAND_FIT_TOLERANCE = 0.02  # m
-WHEEL_SCALE_RANGE = (0.85, 1.3)
 
 
 def _rim_nearest(p, centre, axis, radius):
@@ -1441,7 +1425,7 @@ def hand_shift(centre, axis, radius) -> tuple[float, float, float]:
     the marker's direction through the hinge, so any part of the shift in the
     wheel plane makes the hub circle by 2 |shift| sin(angle / 2) while steering
     (research/cockpit.md, "The steering wheel turns about its hub"); the grips
-    reach the rim through hand_wheel_scale instead."""
+    reach the rim through dsfforza.asi [hands] instead (grip_params)."""
     axis = _norm(axis)
     grips = hand_grips(centre)
     t = 0.0
@@ -1509,71 +1493,50 @@ def seat_anchor(centre, axis, forza_radius) -> tuple[float, float, float]:
     return _add(centre, grip_shift(centre, axis, forza_radius * k))
 
 
-def hand_reach(centre, axis, radius) -> float:
-    """Mean distance of the stock grips from the column, in the wheel plane, with
-    the hinge at centre + hand_shift: the rim radius the hands hold."""
-    axis = _norm(axis)
-    reach = []
-    for g in hand_grips(_add(centre, hand_shift(centre, axis, radius))):
-        d = _sub(g, centre)
-        d = _sub(d, _scale(axis, _dot(d, axis)))
-        reach.append(math.sqrt(_dot(d, d)))
-    return sum(reach) / len(reach)
-
-
-def hand_wheel_scale(centre, axis, radius) -> float:
-    """Scale of the Forza wheel (about its centre) for the stock hand grips. The
-    rig grips 0.25 m apart, 45 deg either side of the top of a 0.176 m rim, and
-    the hinge only moves along the column (hand_shift), so the grips sit a
-    fixed distance from the column. Forza's wheel keeps its size (1) unless the
-    grips would miss its rim by more than HAND_FIT_TOLERANCE, as far as stock
-    trucks leave them; then it is scaled just enough to bring them that close,
-    within WHEEL_SCALE_RANGE (race yokes of 0.11 m stay short)."""
-    axis = _norm(axis)
-    k = 1.0
-    for _ in range(6):
-        reach = hand_reach(centre, axis, radius * k)
-        target = min(reach + HAND_FIT_TOLERANCE, max(reach - HAND_FIT_TOLERANCE, radius))
-        new = min(WHEEL_SCALE_RANGE[1], max(WHEEL_SCALE_RANGE[0], target / radius))
-        if abs(new - k) < 1e-4:
-            break
-        k = new
-    return k
-
-
-def scale_wheel(section: carbin.Section, wheel: Wheel, k: float) -> tuple[carbin.Section, Wheel]:
-    """The steering wheel section and its fit scaled by k about the wheel centre."""
-    import copy
-    import dataclasses
-
-    def move(v):
-        return dataclasses.replace(v, position=_add(wheel.centre, _scale(_sub(v.position, wheel.centre), k)))
-
-    out = copy.copy(section)
-    out.lod_vertices = [move(v) for v in section.lod_vertices]
-    same = section.lod0_vertices is section.lod_vertices  # promote_lod shares the pool
-    out.lod0_vertices = out.lod_vertices if same else [move(v) for v in section.lod0_vertices]
-    return out, Wheel(wheel.centre, wheel.axis, wheel.radius * k)
-
-
 def hand_grip_error(pivot, centre, axis, radius) -> float:
     """Largest distance (m) from a stock grip to the Forza rim."""
     return max(math.dist(g, _rim_nearest(g, centre, _norm(axis), radius)) for g in hand_grips(pivot))
 
 
-def hand_params() -> dict[int, float]:
+def hand_params(steering: dict | None = None) -> dict[int, float]:
     """VO3D p538/p559 (the hand rig's offset from the marker) to zero: they move
     the wheel with the hands, away from where Forza puts it (Cuda host:
-    -4 cm y, +7.5 cm z)."""
-    return dict.fromkeys(HAND_PARAMS, 0.0)
+    -4 cm y, +7.5 cm z). With patch_hierarchy's steering report, also the rim
+    dsfforza.asi [hands] puts the driver's hands on (GRIP_PARAMS)."""
+    params = dict.fromkeys(HAND_PARAMS, 0.0)
+    if steering:
+        params.update(grip_params(steering))
+    return params
+
+
+# dsfforza.asi [hands] (tools/asi/src/mod_hands.cpp) moves the driver's hands onto each
+# car's rim (research/cockpit.md, "Hands on Forza's rim"). It reads the rim from VO3D
+# parameters that nothing in the game uses: type 3 ("unused") in the parameter type table
+# at 0x00F3E450, no displacement or immediate reference in Driver.exe at either base
+# (spec + 0x2C70, block + 0x2960), set by no stock VO3D. Stock cars leave them at 0 and
+# keep the stock grips.
+GRIP_RADIUS_PARAM = 95  # the drawn rim's radius (m)
+GRIP_ALONG_PARAM = 87  # the rim centre from the steering marker along the engine's column direction (m)
+GRIP_PARAMS = (GRIP_RADIUS_PARAM, GRIP_ALONG_PARAM)
+
+
+def grip_params(steering: dict) -> dict[int, float]:
+    """VO3D values for dsfforza.asi [hands] from patch_hierarchy's steering report:
+    the rim's radius and its centre's offset from the marker along the column (the
+    marker sits on the hub's column, hand_shift). The engine's column direction
+    (spec + 0x37F0) is the marker quaternion's +z: away from the driver, the
+    opposite of the report's axis. The centre is the marker minus the shift."""
+    shift = steering["hands"]["shift"]
+    axis = _norm(steering["axis"])
+    return {GRIP_RADIUS_PARAM: float(steering["radius"]), GRIP_ALONG_PARAM: _dot(shift, axis)}
 
 
 def patch_hierarchy(upvh_data: bytes, host: HostCockpit, place, cf: CockpitFit) -> tuple[bytes, dict]:
     """Move the steering hinge and marker, the gauges and the mirrors to the
     Forza cockpit (all in DSF model space through `place`). The hinge and
     marker sit at the wheel centre plus hand_shift (along the column, so the
-    wheel turns about its own hub), and with the wheel scaled by
-    hand_wheel_scale the stock hands grip the Forza rim (with hand_params in VO3D)."""
+    wheel turns about its own hub); dsfforza.asi [hands] moves the stock hands
+    onto the Forza rim (hand_params in VO3D)."""
     from dsfforza.formats import upvh
 
     h = upvh.parse(upvh_data)
@@ -1596,7 +1559,7 @@ def patch_hierarchy(upvh_data: bytes, host: HostCockpit, place, cf: CockpitFit) 
     struct.pack_into("<3f", data, marker_at, *pivot)
     struct.pack_into("<4f", data, marker_at + 0x10, *q)
     along = _dot(shift, axis)
-    seat = seat_anchor(centre, axis, cf.wheel.radius / cf.wheel_scale)
+    seat = seat_anchor(centre, axis, cf.wheel.radius)
     report["steering"] = {
         "record": host.wheel_record,
         "hinge": host.wheel_hinge,
@@ -1607,7 +1570,6 @@ def patch_hierarchy(upvh_data: bytes, host: HostCockpit, place, cf: CockpitFit) 
         "skin": list(host.wheel_skin),
         "seat_anchor": [round(c, 5) for c in seat],  # patch_seats: where the driver model holds the wheel
         "hands": {
-            "wheel_scale": round(cf.wheel_scale, 3),
             "shift": [round(c, 4) for c in shift],
             "along_column": round(along, 4),
             "in_plane": round(math.sqrt(max(0.0, _dot(shift, shift) - along * along)), 4),

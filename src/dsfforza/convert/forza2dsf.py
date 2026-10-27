@@ -2212,8 +2212,11 @@ def convert(
         vo3d = child(nonr, "VO3D")
         # The speedometer stops at the Forza dial's last mark (p605).
         gauge_vo3d = cockpit.gauge_params(cf)
-        # The hand rig's offset from the steering marker would move the wheel off its Forza place.
-        vo3d.payload = cockpit.patch_vo3d(payload(stream, vo3d), {**camera, **gauge_vo3d, **cockpit.hand_params()})
+        # The hand rig's offset from the steering marker would move the wheel off its Forza place;
+        # dsfforza.asi [hands] puts the hands on the rim the steering report describes.
+        vo3d.payload = cockpit.patch_vo3d(
+            payload(stream, vo3d), {**camera, **gauge_vo3d, **cockpit.hand_params(hier["steering"])}
+        )
         paint_uv = tex_ext.paint_uv if tex_ext is not None else PAINT_UV
         interior_report = cockpit.convert_interior(
             stream,
