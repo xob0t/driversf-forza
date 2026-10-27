@@ -29,6 +29,7 @@ built. Everything the tools print goes to `out\logs\install-<date-time>.log`.
 | `--build-only`, `--install-only` | only build, or only install the last build |
 | `--no-write-profile` | don't mark the new garage cars owned in the save (below) |
 | `--status` | what is installed |
+| `--report` | a zip for a bug report ([below](#reporting-a-bug)) |
 | `--force` | replace files another mod changed (they are backed up and put back on uninstall) |
 
 ### Downloads
@@ -82,6 +83,33 @@ afterwards is left in place and reported. Then it removes `dsfforza-backup\`
 (`--keep-backup` keeps it). If a file can't be restored, the backup is kept
 and the message says which file it was. Running it again finishes an
 interrupted uninstall.
+
+## Reporting a bug
+
+In a terminal in the unzipped folder, run `.\install.cmd --report`. It writes
+`driversf-forza-report-<date-time>.zip` into that folder and prints a short
+summary. Attach the zip to a
+[GitHub issue](https://github.com/xob0t/driversf-forza/issues/new?template=bug.yml)
+or to your Discord message, with a screenshot and the car's name. If you can't
+attach files, paste the summary.
+
+The zip holds:
+
+- the version of this copy and how the cars were installed;
+- Windows, its language, the CPU, RAM and free disk space, uv, Python and the
+  VC++ x86 runtime;
+- the game folder: whether `Driver.exe` is 1.04, each installed file and
+  whether it is still the one from the last build, other mods (ASI loaders,
+  `.asi` plugins, another `bootstrap.lua`), and a summary of the newest crash
+  dump;
+- the names and sizes of your disc images and what each one is;
+- the last build: the cars, the ones that failed and why;
+- the last install logs, `plugins\dsfforza.log`, DriverNGHook's `Driver.log`
+  and the game's `graphics.ini` (long logs are cut down to their start and end).
+
+No save files, disc images or game files go in, only their names and sizes.
+Your Windows user folder is replaced by `%USERPROFILE%` in every path. The
+command only reads; it changes nothing but writing the zip.
 
 ## Your save game
 

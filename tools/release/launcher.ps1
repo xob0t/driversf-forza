@@ -10,11 +10,13 @@ game folder, then runs `uv run dsff install` with install.cmd's arguments.
   %USERPROFILE%\.local\bin).
 - The game folder comes from DSF_GAME_DIR (this window's, else the one saved for your
   user). When neither holds Driver.exe the script asks once and saves the answer as your
-  user's DSF_GAME_DIR. `--game DIR` skips all of this.
+  user's DSF_GAME_DIR. `--game DIR` skips all of this, and so does `--report` (the report
+  says what DSF_GAME_DIR holds, set or not).
 
 .EXAMPLE
 install.cmd
 install.cmd --uninstall
+install.cmd --report
 install.cmd --help
 #>
 $ErrorActionPreference = 'Stop'
@@ -52,7 +54,7 @@ if (-not $uv) {
 }
 
 $help = $Forward | Where-Object { $_ -in @('-h', '--help') }
-if (-not ($Forward -contains '--game') -and -not $help) {
+if (-not ($Forward -contains '--game') -and -not $help -and -not ($Forward -contains '--report')) {
     $game = $env:DSF_GAME_DIR
     if (-not (Test-Game $game)) { $game = [Environment]::GetEnvironmentVariable('DSF_GAME_DIR', 'User') }
     if (-not (Test-Game $game)) {

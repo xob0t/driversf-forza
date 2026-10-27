@@ -38,6 +38,11 @@ game file back.
 What the installer changes, your save game, and the known limits:
 [INSTALL.md](INSTALL.md).
 
+## Reporting a bug
+
+Reporting a bug: run `.\install.cmd --report` and attach the zip, with a
+screenshot and the car's name ([what is in it](INSTALL.md#reporting-a-bug)).
+
 ## Acknowledgements
 
 - [DriverNGToolkit](https://github.com/ReHamster/DriverNGToolkit)

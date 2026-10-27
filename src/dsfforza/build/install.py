@@ -6,6 +6,7 @@
     uv run dsff install --list my.txt       # other cars (--car NAME, repeatable, also works)
     uv run dsff install --status            # what is installed (tools/install.ps1 -Status)
     uv run dsff install --uninstall         # put the game back (tools/install.ps1 -Uninstall)
+    uv run dsff install --report            # a zip for a bug report (src/dsfforza/build/report.py)
 
 Stages, each skipped when there is nothing to do:
 
@@ -1717,6 +1718,11 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--install-only", action="store_true", help="install the last build (out/build or --build)")
     mode.add_argument("--status", action="store_true", help="show what is installed (install.ps1 -Status)")
     mode.add_argument("--uninstall", action="store_true", help="restore the game's files (install.ps1 -Uninstall)")
+    mode.add_argument(
+        "--report",
+        action="store_true",
+        help="write driversf-forza-report-<time>.zip for a bug report (setup, install state, logs) and print a summary",
+    )
     parser.add_argument("--game", type=Path, help="the game folder (default: $DSF_GAME_DIR)")
     pick = parser.add_argument_group("cars")
     pick.add_argument("--list", type=Path, action="append", help="car list, one per line (default: all.txt)")
@@ -1803,6 +1809,10 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
     if args.status or args.uninstall:
         return passthrough(args)
+    if args.report:
+        from dsfforza.build import report
+
+        return report.main(["--game", str(args.game)] if args.game else [])
     if args.jobs is None:
         args.jobs = default_jobs(os.cpu_count(), gentle.enabled())
     args.out = Path(args.out).resolve()
@@ -1812,6 +1822,7 @@ def main(argv: list[str] | None = None) -> int:
         run = Run(args, reporter)
         run.summary.log = log_path
         log(f"dsff install {' '.join(sys.argv[1:] if argv is None else argv)}")
+        log(f"started by {os.environ.get('DSFF_LAUNCHER') or 'dsff install'}")  # for dsff report
         log(f"display: {'rich (live)' if isinstance(reporter, LiveReporter) else 'plain text'}")
         with reporter:
             code = execute(run)
