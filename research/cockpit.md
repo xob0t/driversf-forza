@@ -1987,7 +1987,26 @@ full lock):
 
 - Before: master's converter and master's dsfforza.asi.
 - After: this branch's converter and plugin.
-- RUNS_AND_IMAGES
+- Runs: before at lock `vm2-20261027-165034`, at rest `vm2-20261027-170129`;
+  after at lock `vm1-20261027-170826`, at rest `vm2-20261027-171042` (both with
+  `[hands] debug=1 crash_log=1`), and for the Regal, whose side views the first
+  car of a run misses, `vm1-20261027-171458` (lock) and `vm2-20261027-171553`
+  (rest). All finished; no fault.
+- The log has each occupant hand's move: the Regal 2.7 cm at rest, the Mini 1.8
+  to 3.0 cm, the ARX-01b 5.4 to 5.5 cm at rest (in to its 0.113 m yoke) and up to
+  11.9 cm at full lock, the tour bus 11.4 to 11.5 cm at rest (its flat wheel; the
+  old 10 cm cap left it 1.6 cm short). Stock 229 and the stock traffic drivers are
+  left alone. Standing at full lock one hand goes over the top and fades out of
+  the move (weight 0.5 to 0.9).
+- A second Regal spawned ahead of the player (`-AheadIds 1`, another vehicle) had
+  its driver's hands moved too, through the same hook: the path AI drivers take.
+- `img/chase-hands-regal.jpg`, `img/chase-hands-arx.jpg`,
+  `img/chase-hands-mini.jpg`: side and front views at full lock and at rest,
+  before and after. The Regal's wheel was 0.98 of Forza's before and is Forza's
+  now; the ARX-01b's yoke was 1.3x and is Forza's now, with the hands in on it;
+  the Mini's hand at full lock floated under the rim before and holds it now.
+- The tour bus can't be judged from the harness: its side and front cameras sit
+  inside the 12 m body, and the chase camera sees its back.
 
 **Open.**
 
@@ -1996,6 +2015,8 @@ full lock):
   logged (traffic spools 136 to 298, all seat 0) go through the same hook; stock
   cars carry no rim and are left alone.
 - Where a move exceeds 12 cm (the 27 cars above at full lock) the hand stops short.
+- Some occupants use a 16-joint skeleton (AI drivers seen in traffic; no Shoulder
+  joint). The plugin handles it, but no ported car was seen with it.
 
 ## Risks and open questions
 
