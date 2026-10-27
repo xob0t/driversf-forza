@@ -20,7 +20,10 @@ project ships no game or Forza files.
 1. Download the latest `driversf-forza-<version>.zip` from
    [Releases](https://github.com/xob0t/driversf-forza/releases) and unzip it.
 2. Put your Forza `.iso` files in its `assets` folder.
-3. Close the game and double-click `install.cmd`.
+3. Close the game and double-click `install.cmd`. Windows may say it can't
+   verify the publisher (the zip came from the internet): click **Run**. To
+   skip that warning, right-click the zip before unzipping it, choose
+   **Properties** and tick **Unblock**.
 
 The first time, it asks for your game folder (the one with `Driver.exe`) and
 remembers it. It installs [uv](https://docs.astral.sh/uv/) if you don't have it,

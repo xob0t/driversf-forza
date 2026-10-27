@@ -1635,7 +1635,7 @@ def execute(run: Run) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="dsff install",
+        prog=command_name(),  # the usage line as the user types it
         description=__doc__.splitlines()[0],
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__.split("\n", 2)[2],
