@@ -224,7 +224,7 @@ def seen_from_outside(occluders, candidates):
     return seen
 
 
-def _lod_triangles(sections, lod):
+def lod_triangles(sections, lod):
     """Every triangle at `lod` that hides what lies behind it (all but glass and
     skipped techniques), as an array (n, 3, 3)."""
     import numpy as np
@@ -290,7 +290,7 @@ def split_trim_art(sections, atlases: fm.AtlasCache, lods=None):
     for lod in sorted({sections[si].subsections[ui].lod for si, ui in found}):
         keys = [key for key in found if sections[key[0]].subsections[key[1]].lod == lod]
         candidates = np.array([t for key in keys for t in found[key][2]], dtype=np.float64).reshape(-1, 3, 3)
-        seen = seen_from_outside(_lod_triangles(sections, lod), candidates)
+        seen = seen_from_outside(lod_triangles(sections, lod), candidates)
         n = 0
         for key in keys:
             count = len(found[key][1])

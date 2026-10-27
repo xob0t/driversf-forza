@@ -1318,14 +1318,23 @@ def zone_votes(maps: dict, lod: int, tris, zones=EXPOSED_ZONES) -> list:
     return out
 
 
-def split_exposed(body, place, log=None, engine: str | None = None) -> tuple[list, dict]:
+def split_exposed(body, place, log=None, engine: str | None = None, visible: bool = True) -> tuple[list, dict]:
     """Split the trim subsections of `body` that a missing bonnet, boot lid or
     bumper exposes into their own subsections, one per EXPOSED_MAP tag (inner
     faces of hood*/trunk*, technique INNER_TECHNIQUE; trims hidden by a panel,
     by EXPOSED_ZONES zone and facing). Each new subsection carries `exposed`
     (the tag) and `exposed_uv` (its EXPOSED_SENTINEL, which
     add_geometry(exposed=True) writes as UV0). Returns (new body, report).
-    Untouched sections and subsections stay the same objects."""
+    Untouched sections and subsections stay the same objects.
+
+    A zone's map only says that a trim lies under the cover or inward of the
+    bumper skin. With `visible` (default) a zone triangle that can be seen from
+    outside the intact car (trim_art.seen_from_outside, every non-glass
+    triangle of its LOD as occluders) keeps its trim: no panel hides it, and
+    Forza draws it as the trim it is. FER_355Challenge_95's black tail panel
+    lies under the rear edge of its engine cover and drew the bay pictures,
+    blurred over the panel between the tail lamps (user report on out/final4;
+    research/damage.md, "Visible trims keep their trim")."""
     from dsfforza.convert import forza_materials as fm
     from dsfforza.formats import carbin
 
@@ -1333,18 +1342,16 @@ def split_exposed(body, place, log=None, engine: str | None = None) -> tuple[lis
     zones = exposed_zones(engine)
     maps = zone_maps(body, place, lods, zones)
     report = Counter()
-    out = []
-    for section in body:
+    tagged = {}  # (section index, subsection index) -> (triangles, [tag per triangle])
+    for si, section in enumerate(body):
         name = section.name.lower()
         panel = name.startswith(("hood", "trunk"))
         bay_ok = not name.startswith(BAY_SKIP)
         zone_ok = not name.startswith(ZONE_SKIP)
         paint_grid = {}
-        new_subs, changed = [], False
-        for sub in section.subsections:
+        for ui, sub in enumerate(section.subsections):
             role = fm.classify(sub.material)[0]
             if sub.lod <= 0 or role != fm.TRIM or "plate" in sub.material.lower() or not (panel or bay_ok):
-                new_subs.append(sub)
                 continue
             pool = section.vertices_for(sub)
             if panel and sub.lod not in paint_grid:
@@ -1360,7 +1367,6 @@ def split_exposed(body, place, log=None, engine: str | None = None) -> tuple[lis
                             cents.append(tuple(sum(p[k] for p in pts) / 3 for k in range(3)))
                             normals.append(nrm)
                 paint_grid[sub.lod] = Grid(cents, normals, cell=0.1)
-            groups = defaultdict(list)
             tris = list(sub.triangles())
             placed = [[place.point(pool[i].position) for i in t] for t in tris]
             normals = [_norm(_cross(_sub(pts[1], pts[0]), _sub(pts[2], pts[0]))) for pts in placed]
@@ -1370,7 +1376,8 @@ def split_exposed(body, place, log=None, engine: str | None = None) -> tuple[lis
                 if panel
                 else zone_votes(maps, sub.lod, [pts for pts, nrm in zip(placed, normals) if nrm is not None], zones)
             )
-            for t, pts, nrm in zip(tris, placed, normals, strict=True):
+            tags = []
+            for pts, nrm in zip(placed, normals, strict=True):
                 c = tuple(sum(p[k] for p in pts) / 3 for k in range(3))
                 tag = None
                 if panel and nrm is not None:
@@ -1384,26 +1391,63 @@ def split_exposed(body, place, log=None, engine: str | None = None) -> tuple[lis
                     # their own) keep their trim outside the bay, as before.
                     if kind is not None and (kind == "bay" or zone_ok):
                         tag = _axis_tag(kind, nrm)
-                groups[tag].extend(t)
-            if set(groups) <= {None}:
+                tags.append(tag)
+            if any(tags):
+                tagged[(si, ui)] = (tris, tags)
+    if visible and tagged:
+        for key, picked in _seen_zone_triangles(body, tagged).items():
+            tags = tagged[key][1]
+            for k in picked:
+                report[f"seen {_kind_of(tags[k])} lod {body[key[0]].subsections[key[1]].lod}"] += 1
+                tags[k] = None
+    out = []
+    for si, section in enumerate(body):
+        if not any(key[0] == si and any(tagged[key][1]) for key in tagged):
+            out.append(section)
+            continue
+        new_subs = []
+        for ui, sub in enumerate(section.subsections):
+            if (si, ui) not in tagged or not any(tagged[(si, ui)][1]):
                 new_subs.append(sub)
                 continue
-            changed = True
+            groups = defaultdict(list)
+            for t, tag in zip(*tagged[(si, ui)], strict=True):
+                groups[tag].extend(t)
             for tag, idx in groups.items():
-                if not idx:
-                    continue
                 material = INNER_TECHNIQUE if tag and tag.startswith("inner") else sub.material
                 part = carbin.SubSection(material, sub.lod, 4, sub.uv_transform, idx)
                 part.exposed, part.exposed_uv = tag, EXPOSED_SENTINEL.get(tag)
                 new_subs.append(part)
                 if tag:
                     report[f"{_kind_of(tag)} lod {sub.lod}"] += len(idx) // 3
-        if changed:
-            section = dataclasses.replace(section, subsections=new_subs)
-        out.append(section)
+        out.append(dataclasses.replace(section, subsections=new_subs))
     if log and report:
         log("exposed geometry: " + ", ".join(f"{k} {v}" for k, v in sorted(report.items())))
     return out, dict(report)
+
+
+def _seen_zone_triangles(body, tagged: dict) -> dict:
+    """{(section index, subsection index): {triangle index}} of the zone-tagged
+    (not "inner") triangles in `tagged` that trim_art.seen_from_outside sees from
+    outside the intact car, LOD by LOD (Forza space: the views only need +y up)."""
+    from dsfforza.convert import trim_art
+
+    found = defaultdict(list)  # lod -> [(key, triangle index, corners)]
+    for key, (tris, tags) in tagged.items():
+        section = body[key[0]]
+        sub = section.subsections[key[1]]
+        pool = section.vertices_for(sub)
+        for k, (t, tag) in enumerate(zip(tris, tags, strict=True)):
+            if tag and not tag.startswith("inner"):
+                found[sub.lod].append((key, k, [pool[i].position for i in t]))
+    out = defaultdict(set)
+    for lod, items in sorted(found.items()):
+        candidates = np.array([c for _, _, c in items], dtype=np.float64).reshape(-1, 3, 3)
+        seen = trim_art.seen_from_outside(trim_art.lod_triangles(body, lod), candidates)
+        for (key, k, _), s in zip(items, seen.tolist(), strict=True):
+            if s:
+                out[key].add(k)
+    return dict(out)
 
 
 def smooth_labels(labels: list, areas: list, corners: list, passes: int = 2) -> tuple[list, int]:
