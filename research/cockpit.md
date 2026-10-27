@@ -1681,8 +1681,21 @@ handles larger wheels two ways: the trucks keep the hinge on the hub (0.1 to
 0.4 cm), which leaves the stock grips about 2.5 cm inside their 0.20 m rims
 (offline; in game below); the School
 Bus (0.258 m) moves its hinge 8.6 cm off the hub, the way the converter did
-for every car. A per-car hand offset would need dsfforza.asi to move the
-driver's hand bones (not attempted).
+for every car.
+
+The per-frame side (`FUN_005756E0`, `FUN_00574A10`, `FUN_00573E10`): the
+steering code fills an output block with a 4x4 matrix (the turn about the
+marker's direction through A), a queue of animation hashes and named
+parameters (`FUN_00575AF0(hash, float)`, e.g. 0x726F64CA), and
+`FUN_00573E10` hands them to the driver's animation graph
+(`FUN_0085E010` queues the hashes, `FUN_0085E180` sets each parameter by
+hash in the graph's parameter table at +0x8C/+0x90, typed float, vec2 or
+vec4). No parameter carries a wheel size; the grips are in the graph's
+animations. The matrix is the only per-car geometric input, and the wheel
+uses it too (p538/p559, which feed it, move the wheel with the hands), so a
+per-car scale of it in dsfforza.asi would scale wheel and hands together.
+Moving the hands alone would mean editing the driver's hand bones after the
+graph has posed them (a new hook, not attempted: issue #99).
 
 **Fix** (`cockpit.hand_shift`, `hand_wheel_scale`, `seat_anchor`):
 
