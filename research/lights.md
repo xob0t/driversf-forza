@@ -570,6 +570,25 @@ uses 0x03 red tails too), `reverse_light` drawn on red texels
 lamps are `lindtailside/rindtailside` (DRL + indicator; whether Forza brakes
 them is unknown).
 
+### Head lamps dark by day (player report)
+
+"The headlights should be on all the time like vanilla cars." Static
+(`out/brakes/stockfront.py`, front light entries of the 150 stock
+vehicles): 140 have a front lamp that lights with DaytimeRunning: white
+position lamps 0x03 in the head-lamp cluster (99 vehicles, next to 0x01 head
+lamps; stock 229 at x ±0.60 beside its ±0.44 head lamps), or head lamps of
+type 0x1D, Headlights + DaytimeRunning (33; 31 of them have no 0x01 at
+all). Only 10 have neither. The converter gave Forza's head lamps 0x01 and
+made position lamps only from position-lamp techniques (`drlwhite`...), so
+in the front survey 66 of 573 ported cars had a visible front lamp lit by
+DaytimeRunning.
+
+Fix (`LampPlan.assign`): head lamps on a front side without a position lamp
+(or DRL indicator) of its own are 0x1D. Front survey: 550 of 573 cars now
+show a DaytimeRunning lamp from the front. Of the 23 others, the NASCARs and
+MIT_HKS_06 / PEU_3_905EVO_93 have decal or cover-glass lamps; on the rest a
+position lamp of their own sits out of the frontal view.
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and

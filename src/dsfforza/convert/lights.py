@@ -188,6 +188,7 @@ def fallback(function: str, front: bool) -> str | None:
 
 
 HEAD_DAYTIME = 0x1D  # Headlights + DaytimeRunning
+DAYTIME_SHARE = 0.25  # a side's own position lamps at least this share of its head lamps' area keep them 0x01
 
 
 def type_byte(function: str, side: str) -> int:
@@ -771,9 +772,23 @@ class LampPlan:
         # clusters. Forza's lamps mostly have no position-lamp technique, so
         # ported head lamps (0x01) stayed dark by day while stock cars' glowed
         # (player report; 66 of 573 ported cars had a front DRL lamp).
-        own = {l.side for _, _, l in self.slots if l is not None and l.front and l.function in (POSITION, DRL_IND)}
+        # A position lamp a fraction the head lamp's size doesn't count
+        # (CHR_Cuda426_71: 10 triangles beside 109).
+        entered = {id(l) for _, _, l in self.slots if l is not None}
+
+        def area(functions, side, own=False):
+            return sum(
+                l.area
+                for l in order
+                if l.front and l.side == side and l.function in functions and (not own or id(l) in entered)
+            )
+
         for lamp in order:
-            if lamp.function == HEAD and lamp.front and lamp.side not in own:
+            if (
+                lamp.function == HEAD
+                and lamp.front
+                and area((POSITION, DRL_IND), lamp.side, own=True) < DAYTIME_SHARE * area((HEAD,), lamp.side)
+            ):
                 lamp.daytime = True
         return self
 
