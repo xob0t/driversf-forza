@@ -1,6 +1,6 @@
 # Forza materials and textures, and their DSF counterparts
 
-Updated: 2026-10-26
+Updated: 2026-10-27
 
 Code: `src/dsfforza/convert/forza_materials.py` (Forza side), `src/dsfforza/convert/dsf_materials.py`
 (DSF side, atlas, preview), `--textures` in `src/dsfforza/convert/forza2dsf.py` and
@@ -744,18 +744,37 @@ needs 3 to 12 materials (median 8); past `GLOSS_MAX_MATERIALS` (12) the rarest m
 into the nearest. Frame, undercarriage and `black` (no specular, no reflection in
 Forza) stay as they were, and so does what the cockpit draws (its own Texturing).
 
-**Calibration (in game, headless VM).** A first build with the specular at 0.25 per
-SpecularAmount and the reflection at 1 (`out/fx/after1`, run `vm1-20261027-180408`
-against master's `vm1-20261027-175157`) showed the program works on trims and in the
-wheel part (no glow from the zero lamp byte, no crash) but was far too strong: the
-Cougar's scoop (`badge`, intensity 1) and the Boss 429's (`matte_colors`) lit up cream
-from end to end when the sun's reflection came near the camera (a flat panel takes the
-same `R.V` all over), and the Focus RS500's black rims (Forza FresnelIndex 3, the
-texel green 23 compensated to an amount of 11) came out white. DSF's sun specular
-colour is far brighter than the scale suggested; 0.04 keeps a `badge` (4) at 0.125
-and the Cougar's satin `misc` (0.5) at 0.016. The stock chrome reflects
-`0.4 to 0.48 x env` (its texel green); `GLOSS_REFLECTION_SCALE` 0.5 puts a CubeScale
-1 chrome rim there.
+**Calibration (in game, headless VM; IDs 1 Cougar Eliminator, 2 Continental (2004),
+3 Mustang Boss 429, 4 Focus RS500, 5 300SL; `run-series.ps1 -Views grille,wheels
+-Palette 0`).** Master's build (`out/fx/before`, run `vm1-20261027-175157`) against
+three tunings. The first (specular 0.25 per SpecularAmount, reflection 1; `out/fx/after1`,
+`vm1-20261027-180408`) showed the copied program works on trims and in the wheel part
+(no glow from the zero lamp byte, no crash), but far too strong: the Cougar's scoop
+(`badge`, intensity 1) and the Boss 429's (`matte_colors`) lit up cream from end to end
+when the sun's reflection came near the camera (a flat panel takes the same `R.V` all
+over), and the Focus RS500's black rims (Forza SpecularAmount 1, power 4) came out
+cream: DSF's sun specular colour is far brighter than its diffuse light. The second
+(0.04, reflection 0.5; `vm1-20261027-191933`) still showed khaki scoops and cream
+rims; broad lobes (`(R.V)^1`, from Forza's power 4) light whole panels. The third, the
+one kept (0.01, at most 0.0625, power at least 4; `out/fx/after3`, `vm2-20261027-194455`):
+the scoops and grilles read as satin black with a grey sheen where they face the sky
+or the sun, the grille bars and the Boss's grille mesh catch highlights, the Focus's
+black rims are gloss black, and the chrome rims of the Cougar and the Continental
+reflect like the stock chrome instead of drawing flat white
+(`img/gloss-trims-ingame.jpg`, `img/gloss-scoops-zoom.jpg`,
+`img/gloss-rims-ingame.jpg`). The stock chrome reflects `0.4 to 0.48 x env` (its
+texel green); `GLOSS_REFLECTION_SCALE` 0.5 puts a CubeScale 1 chrome rim there.
+Stock trims have no sheen at all (stock 175, the Cougar's host, in the same runs), so
+this is Forza's look drawn with a stock program rather than stock's look.
+
+The 300SL shows a white glint on its side window in every build (the first and the
+last, a 16 times different specular): DSF's glass, not the gloss materials.
+
+**Cost.** Each copy is a Lights MACO (about 11 KB in the full entry, 12 KB in the
+exterior), and the trims and rims that move to it take stride-32 vertices instead of
+28. The five test cars' full entries grow by 0x11800 to 0x25800 (the Cougar, 12
+copies: MDXN 0x101800 to 0x127000) and their exteriors by 0x15000 to 0x2f000, far
+under the 0x2C0000 limit.
 
 ## Open
 
@@ -790,7 +809,12 @@ and the Cougar's satin `misc` (0.5) at 0.016. The stock chrome reflects
    atlas. Open: which technique runs which shader (the effect's technique
    tables aren't decoded; `plastic2` sets both parameters on some cars), the
    `black*` techniques (still the shared dark trim whatever their texels),
-   the trims' specular and reflection (issue #87), DSF's shared chrome can't
-   take the Forza grey as a tint, and the visibility test is orthographic from
-   around and above: artwork seen only from below or through a narrow gap
-   counts as hidden.
+   DSF's shared chrome can't take the Forza grey as a tint, and the visibility
+   test is orthographic from around and above: artwork seen only from below or
+   through a narrow gap counts as hidden.
+9. Gloss ("Gloss: Forza's specular and reflection on trims and rims"): the cockpit
+   (interior entry) draws the outside sections it holds (bonnet scoops, A-pillars)
+   without it (issue #136); the reflection on atlas regions is masked by their texel
+   green (a grille's bars reflect more than its gaps, unlike Forza); `black*`,
+   `frame` and `undercarriage` have none in Forza and stay flat; the calibration
+   (`GLOSS_SPECULAR_SCALE`, `GLOSS_REFLECTION_SCALE`) was judged on five cars by day.
