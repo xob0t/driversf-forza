@@ -95,13 +95,15 @@ static int g_body = 1;           // [hands] chase=0 leaves the occupants alone
 struct Circle {
     V3 centre, axis;
     float radius;
+    float out;   // how far outside the rim's centre line the fist sits on a stock wheel
 };
-static const Circle kArmsCircle = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.448f, -0.894f}, 0.177f};
-// In the occupant's pose (the seat marker's frame) the same circle sits about the stock
-// steering marker's place, (0, 0.469, 0.428) in 138 of 147 stock cars (research/cockpit.md,
-// "The driver's seat follows the wheel"); measured in game with debug=1 ("Hands in the
-// chase views").
-static Circle g_body_circle = {{0.0f, 0.469f, 0.428f}, {0.0f, 0.448f, -0.894f}, 0.177f};
+static const Circle kArmsCircle = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.448f, -0.894f}, 0.177f, 0.0f};
+// In the occupant's pose (the seat marker's frame) his circle sits about the stock steering
+// marker's place, (0, 0.469, 0.428) in 138 of 147 stock cars (research/cockpit.md, "The
+// driver's seat follows the wheel"). His fist (the wrist and the finger joints of the
+// full-body skeleton) runs 0.193 m from it, 1.7 cm outside a stock 0.176 m rim (debug=1,
+// run vm1-20261027-164654: stock 229 and the four test ports; "Hands in the chase views").
+static const Circle kBodyCircle = {{0.0f, 0.469f, 0.428f}, {0.0f, 0.448f, -0.894f}, 0.193f, 0.017f};
 
 // ---- quaternion convention, checked against the game's compose once ---------
 static int g_qmode = -1;   // 0: (x,y,z,w) active, 1: (x,y,z,w) conjugate, 2: unknown (module off)
@@ -232,11 +234,15 @@ static bool find_arm(Rig& r, const char* side, Arm* a)
     a->fore = joint_named(r, side, "Forearm", "ForeArm");
     a->arm = joint_named(r, side, "Arm");
     a->shoulder = joint_named(r, side, "Shoulder");
-    if (a->hand < 0 || a->fore < 0 || a->arm < 0 || a->shoulder < 0) return false;
+    if (a->hand < 0 || a->fore < 0 || a->arm < 0) return false;
     a->hanging = above(r, a->arm, a->hand);
-    // The chain must be one line, either way up.
+    // The chain must be one line, either way up. The hanging arms need the shoulder (the IK
+    // turns about it); a hip-rooted arm turns about Arm, and the occupants' 16-joint
+    // skeleton has no Shoulder joint.
+    if (a->shoulder < 0 && a->hanging) return false;
     bool line = a->hanging ? above(r, a->fore, a->hand) && above(r, a->arm, a->fore) && above(r, a->shoulder, a->arm)
-                           : above(r, a->arm, a->shoulder) && above(r, a->fore, a->arm) && above(r, a->hand, a->fore);
+                           : (a->shoulder < 0 || above(r, a->arm, a->shoulder)) && above(r, a->fore, a->arm) &&
+                                 above(r, a->hand, a->fore);
     if (!line) return false;
     for (int j = 0; j < r.n; j++) {
         a->group[j] = kNone;
@@ -419,7 +425,7 @@ static void fix_arm(const Rig& rig, Xf* pose, Xf* model, const Arm& a, const Rim
     V3 v = sub(g, anim.centre);
     V3 plane = sub(v, mul(rim.axis, dot(v, rim.axis)));
     if (len(plane) < 0.02f) return;
-    V3 target = add(rim.centre, mul(unit(plane), rim.radius));
+    V3 target = add(rim.centre, mul(unit(plane), rim.radius + anim.out));
     V3 delta = sub(target, g);
     float miss = len(delta);
     V3 vr = sub(g, rim.centre);
@@ -569,8 +575,8 @@ static void __fastcall body_skin_hook(void* skel, void*, Xf* local, Xf* model, X
     Rig* rig = rig_for((const uint8_t*)skel, true);
     if (log) body_probe(slot, body, rig, skin, has_rim ? &rim : nullptr);
     if (!rig || !has_rim) return;
-    fix_arm(*rig, skin, model, rig->arm[0], rim, g_body_circle, 1.0f, 0, log);
-    fix_arm(*rig, skin, model, rig->arm[1], rim, g_body_circle, 1.0f, 1, log);
+    fix_arm(*rig, skin, model, rig->arm[0], rim, kBodyCircle, 1.0f, 0, log);
+    fix_arm(*rig, skin, model, rig->arm[1], rim, kBodyCircle, 1.0f, 1, log);
 }
 
 // ---- debug probe ---------------------------------------------------------------
@@ -806,13 +812,13 @@ int mod_hands_selftest()
         fails += !ok;
     }
     // The occupant: a hip-rooted arm in the seat's frame, its fist on the animations' circle
-    // (g_body_circle) 45 degrees right of the top, moved onto a rim with Forza's column
+    // (kBodyCircle) 45 degrees right of the top, moved onto a rim with Forza's column
     // (15 degrees) and radius (0.15 and 0.20 m) found from a tilted seat matrix, its hub on
     // the circle's column or 4 cm below it (the seat at cockpit.seat_anchor). The fist keeps
     // its angle; the model-space transforms get the same moves.
     for (int k = 0; k < 4; k++) {
         float r = radii[k & 1], drop = k < 2 ? 0.0f : 0.04f;
-        const Circle& c = g_body_circle;
+        const Circle& c = kBodyCircle;
         V3 up = unit(sub({0, 1, 0}, mul(c.axis, c.axis.y)));
         V3 p = add(c.centre, add(mul({1, 0, 0}, c.radius * 0.7071f), mul(up, c.radius * 0.7071f)));
         Rig rig = {};
@@ -851,7 +857,7 @@ int mod_hands_selftest()
         V3 S = joint_pos(rig, pose, 2), E = joint_pos(rig, pose, 4), W = joint_pos(rig, pose, 5);
         V3 was = sub(p, c.centre), now = sub(gv, mul(rim.axis, off));
         was = sub(was, mul(rim.axis, dot(was, rim.axis)));
-        ok = ok && dot(unit(was), unit(now)) > 0.9999f && fabsf(radial - r) < 1e-3f && fabsf(off) < 1e-3f && len(sub(S, at[2])) < 1e-4f &&
+        ok = ok && dot(unit(was), unit(now)) > 0.9999f && fabsf(radial - (r + c.out)) < 1e-3f && fabsf(off) < 1e-3f && len(sub(S, at[2])) < 1e-4f &&
              len(sub(joint_pos(rig, pose, 1), at[1])) < 1e-5f && fabsf(len(sub(E, S)) - len(sub(at[4], at[2]))) < 1e-3f &&
              fabsf(len(sub(W, E)) - len(sub(at[5], at[4]))) < 1e-3f &&
              fabsf(len(sub(joint_pos(rig, pose, 3), S)) - len(sub(at[3], at[2]))) < 1e-3f;
