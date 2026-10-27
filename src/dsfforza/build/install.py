@@ -48,6 +48,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import shutil
 import statistics
 import struct
@@ -512,6 +513,56 @@ def read_install_record(game: Path) -> dict | None:
 
 def installed(record: dict | None) -> bool:
     return bool(record) and record.get("state") != "uninstalled"
+
+
+GUI_FILES = ("gui.sp", "Fonts.fchunk", "hud.lua")  # gui_assets: pictures, glyphs, the codes that use them
+
+
+def gui_problem(build: Path) -> str | None:
+    """Why `build`'s gui/ doesn't go with its cars, or None. Without gui/ (built without
+    --gui, or its GUI step failed) register.lua has no hud.lua for the cars, and with
+    one made for other cars (another build's gui/) the HUD would show their names.
+    tools/install.ps1 Test-BuildGui checks the same."""
+    gui = Path(build) / "gui"
+    missing = [name for name in GUI_FILES if not (gui / name).is_file()]
+    if missing:
+        why = ""
+        try:
+            report = json.loads((Path(build) / "batch-report.json").read_text(encoding="utf-8"))
+            error = (report.get("timings_s") or {}).get("gui_error")
+            why = f" (its GUI step failed: {error})" if error else ""
+        except (OSError, ValueError, AttributeError):
+            pass
+        return (
+            f"{build} has no {', '.join('gui/' + m for m in missing)}{why}: it was built without --gui or its "
+            "GUI step failed, so the cars would have no garage pictures, badges or nameplates of their own"
+        )
+    try:
+        cars = json.loads((Path(build) / "dngvehicles.json").read_text(encoding="utf-8"))["cars"]
+        want = {int(c["spool_id"]): str(c["media"]) for c in cars}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None  # the install checks the manifest itself
+    have: dict[int, str | None] = {}
+    for line in (gui / "hud.lua").read_text(encoding="utf-8", errors="replace").splitlines():
+        m = re.match(r"\s*\[(\d+)\]\s*=\s*\{(.*)\}", line)
+        if m:
+            picture = re.search(r'Picture1\s*=\s*"([^"]*)"', m.group(2))
+            have[int(m.group(1))] = picture.group(1) if picture else None
+    absent = sorted(i for i in want if i not in have)
+    other = sorted(
+        i
+        for i, media in want.items()
+        if (have.get(i) or "").startswith("dsfforza_") and have[i] != f"dsfforza_{media.lower()}"
+    )
+    if absent or other:
+        parts = []
+        if absent:
+            parts.append(f"no hud.lua entry for {len(absent)} cars (IDs {', '.join(map(str, absent[:8]))})")
+        if other:
+            i = other[0]
+            parts.append(f"{len(other)} hud.lua entries are for other cars (ID {i}: {have[i][9:]}, not {want[i]})")
+        return f"{build}/gui doesn't match its cars: {'; '.join(parts)}. It is another build's gui/"
+    return None
 
 
 # --- the build's progress -----------------------------------------------------------------------
@@ -1465,6 +1516,12 @@ class Run:
                 )
         if self.build_dir is None:
             self.read_report(build)
+        problem = gui_problem(build)
+        if problem:
+            raise StageError(
+                problem + ".",
+                f"Build again with `{command_name()}` (it builds them), or `port_batch build --gui` for your own list.",
+            )
         if self.probes.running(game):
             raise StageError("Driver.exe is running from the game folder.", "Close the game and run --install-only.")
         try:

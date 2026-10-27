@@ -81,12 +81,12 @@ def parse(data: bytes) -> dict[int, tuple[str, str]]:
 class Strings:
     """Resolve "_&N" references against a game's string tables."""
 
-    def __init__(self, game: str, cache: Path | None = None):
+    def __init__(self, game: str, cache: Path | None = None, iso: Path | None = None):
         self.tables: dict[int, dict[int, tuple[str, str]]] = {}
         folder = cache or (REPO / "out" / "cache" / game / "strings")
         missing = [f for f in STRING_FILES if not (folder / f).exists()]
         if missing:
-            extract(game, folder)
+            extract(game, folder, iso)
         for name in STRING_FILES:
             path = folder / name
             if not path.exists():
@@ -109,12 +109,12 @@ class Strings:
         return entry[1] if entry else None
 
 
-def extract(game: str, folder: Path) -> None:
+def extract(game: str, folder: Path, iso: Path | None = None) -> None:
     from dsfforza.formats.forzazip import ForzaZip
     from dsfforza.formats.xiso import XIso
 
-    iso, path = ISO_PATHS[game]
-    image = XIso(iso)
+    default, path = ISO_PATHS[game]
+    image = XIso(iso or default)
     try:
         z = ForzaZip(image.open(image.find(path)))
         folder.mkdir(parents=True, exist_ok=True)
@@ -125,12 +125,13 @@ def extract(game: str, folder: Path) -> None:
         image.close()
 
 
-def car_names(game: str, media: list[str], gamedb: Path | None = None) -> dict[str, dict]:
-    """{media: {make, display, model_short, family, year}} from Data_Car, List_CarMake, List_FamilyModel."""
+def car_names(game: str, media: list[str], gamedb: Path | None = None, iso: Path | None = None) -> dict[str, dict]:
+    """{media: {make, display, model_short, family, year}} from Data_Car, List_CarMake, List_FamilyModel
+    (the string tables from `iso`, the game's disc image (disc 1), default assets/)."""
     import sqlite3
 
     gamedb = gamedb or REPO / "out" / "cache" / game / "gamedb.slt"
-    strings = Strings(game)
+    strings = Strings(game, iso=iso)
     db = sqlite3.connect(f"file:{Path(gamedb).as_posix()}?mode=ro", uri=True)
     out = {}
     try:

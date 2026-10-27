@@ -207,6 +207,28 @@ def roster(isos: list[Path]) -> tuple[dict[str, Car], list[str]]:
     return cars, notes
 
 
+def game_discs(isos: list[Path]) -> dict[str, Path]:
+    """{"FH1": image, "FM4": disc 1, "FM4 disc 2": ...} of the given disc images, by
+    default.xex's title and disc number, whatever the files are called. Images that
+    can't be read are left out."""
+    out: dict[str, Path] = {}
+    for iso in isos:
+        try:
+            image = XIso(Path(iso))
+        except (OSError, ValueError):
+            continue
+        try:
+            title, disc, _discs = xex_title(image)
+        except (KeyError, ValueError):
+            continue
+        finally:
+            image.close()
+        game = TITLES.get(title)
+        if game:
+            out.setdefault(game if disc <= 1 else f"{game} disc {disc}", Path(iso))
+    return out
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("isos", nargs="*", type=Path)

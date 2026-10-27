@@ -1003,7 +1003,23 @@ def common(args) -> tuple[Path, list[Path], dict, dict[str, Path]]:
     game_data.prepare(game_from_dsf(args.dsf), isos, log=lambda t: print(f"prepare: {t}"))
     cars = load_roster(isos)
     dbs = gamedbs(isos, args.cache)
+    string_tables(isos)
     return args.dsf, isos, cars, dbs
+
+
+def string_tables(isos: list[Path]) -> None:
+    """Forza's string tables (car, maker and family names) into out/cache/<game>/strings
+    from the given disc images, found by title: gui_assets.car_texts and car_groups read
+    them there, whatever the images are called."""
+    from dsfforza.build.forza_roster import game_discs
+    from dsfforza.formats import forza_strings
+
+    for game, iso in game_discs(isos).items():
+        if game in ("FH1", "FM4"):
+            try:
+                forza_strings.Strings(game.lower(), iso=iso)
+            except Exception as error:  # names then come from the media names
+                print(f"warning: {game} string tables from {iso.name}: {type(error).__name__}: {error}")
 
 
 def print_plan(picks: list[Pick]) -> None:
@@ -1489,6 +1505,8 @@ def finish(
                 # SPOI per picture too, not shared SPOIs past 177 (research/gui-assets.md).
                 root_limit=getattr(args, "root_limit", None) or ENTRY_LIMIT,
                 jobs=max(1, args.jobs),
+                # The disc images by title (logos, names): any file names, FH1 not needed.
+                isos=[Path(i) for i in (getattr(args, "iso", None) or sorted((REPO / "assets").glob("*.iso")))],
             )
         except Exception as error:  # the archive is still usable without pictures and badges
             print(f"gui assets failed: {type(error).__name__}: {error}")
