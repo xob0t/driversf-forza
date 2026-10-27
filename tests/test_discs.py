@@ -223,7 +223,13 @@ def test_gamedb_and_string_tables_come_from_the_disc_of_that_game():
                 raise AssertionError(f"{iso.name} taken for {game}")
             except LookupError as error:
                 assert "not the" in str(error)
-        # Without a disc of the game among assets/*.iso: LookupError (car_texts skips it).
+        # Without a disc of the game among the images: LookupError (car_texts skips it).
+        assert forza_strings.game_disc("fm4", isos=only_fm4) == d["FM4 disc 1"]
+        try:
+            forza_strings.game_disc("fh1", isos=only_fm4)
+            raise AssertionError("no FH1 disc")
+        except LookupError as error:
+            assert "the given disc images" in str(error)
         with mock.patch.object(forza_roster, "default_images", return_value=only_fm4):
             assert forza_strings.game_disc("fm4") == d["FM4 disc 1"]
             try:
@@ -272,8 +278,8 @@ def test_car_names_are_read_from_each_cars_own_game_disc():
         fm4 = _discs(root, games=("FM4",))
         calls = []
 
-        def names(game, media, gamedb=None, iso=None):
-            calls.append((game, iso))
+        def names(game, media, gamedb=None, iso=None, isos=None):
+            calls.append((game, isos))
             if game == "fh1":
                 raise LookupError("no FH1 disc")  # an FM4-only player: not a problem
             return {m: {"display": "Fiesta", "make": "Ford", "family": "Fiesta", "year": 2011} for m in media}
@@ -281,5 +287,6 @@ def test_car_names_are_read_from_each_cars_own_game_disc():
         cars = [{"media": "FOR_Fiesta_11", "game": "FM4"}, {"media": "FOR_Ka_11", "game": "FH1"}]
         with mock.patch.object(forza_strings, "car_names", side_effect=names):
             texts = g.car_texts(cars, list(fm4.values()))
-        assert ("fm4", fm4["FM4 disc 1"]) in calls and ("fh1", None) in calls
+        # Each game's names from the build's own images (no fallback to assets/), FH1's then FM4's for the Ka.
+        assert [c[0] for c in calls] == ["fm4", "fh1", "fm4"] and all(c[1] == list(fm4.values()) for c in calls)
         assert texts["FOR_Fiesta_11"]["model"] == "FIESTA" and texts["FOR_Ka_11"]["make"] == "FORD"

@@ -376,13 +376,13 @@ def garage_groups() -> tuple[dict[str, int], dict[str, str]]:
     return counts, {make: name for make, (_, name) in makes.items()}
 
 
-def car_groups(picks: list[Pick], group_of: dict[str, str]) -> dict[str, str]:
+def car_groups(picks: list[Pick], group_of: dict[str, str], isos: list[Path] | None = None) -> dict[str, str]:
     """{media: garage group key} as gui_assets.build will name the maker: Forza's own
     maker name (src/dsfforza/formats/forza_strings.py via gui_assets.car_texts) mapped by
     gui_assets.dsf_make to a stock maker's "ID:nnnnnn" string, else the plain name."""
     from dsfforza.game import gui_assets
 
-    texts = gui_assets.car_texts([{"media": p.media, "game": p.game} for p in picks])
+    texts = gui_assets.car_texts([{"media": p.media, "game": p.game} for p in picks], isos)
     out = {}
     for p in picks:
         t = texts[p.media]
@@ -425,7 +425,9 @@ def root_limit_of(args) -> int:
     return limit
 
 
-def assign_ids(picks: list[Pick], taken: set[int], policy: str, first_high: int) -> None:
+def assign_ids(
+    picks: list[Pick], taken: set[int], policy: str, first_high: int, isos: list[Path] | None = None
+) -> None:
     """policy "garage": IDs 1..61 (listed in the garage) while a maker group has room
     for the car, else first_high and up; "high": first_high and up only; "asi"
     (installs with dsfforza.asi): every free ID below 1000 in order, 1..61, the 92
@@ -436,7 +438,7 @@ def assign_ids(picks: list[Pick], taken: set[int], policy: str, first_high: int)
     low = [i for i in GARAGE_IDS if i not in taken] if policy == "garage" else []
     asi = [i for i in ASI_LOW_IDS if i not in taken and i not in RESERVED_IDS] if policy == "asi" else []
     counts, group_of = garage_groups() if (low or policy == "asi") else ({}, {})
-    groups = car_groups(picks, group_of) if (low or policy == "asi") else {}
+    groups = car_groups(picks, group_of, isos) if (low or policy == "asi") else {}
     next_id = first_high
     for p in picks:
         own = groups.get(p.media)
@@ -1044,14 +1046,14 @@ def print_plan(picks: list[Pick]) -> None:
 
 
 def cmd_plan(args) -> None:
-    dsf, _isos, cars, dbs = common(args)
+    dsf, isos, cars, dbs = common(args)
     picks = select(args, cars, dsf, dbs)
     from dsfforza.build import clone_vehicle
     from dsfforza.formats.chnk import read_chunk
 
     with dsf.open("rb") as stream:
         taken = clone_vehicle.taken_ids(stream, read_chunk(stream, 0).entries)
-    assign_ids([p for p in picks if not p.notes], taken, args.id_policy, args.first_id)
+    assign_ids([p for p in picks if not p.notes], taken, args.id_policy, args.first_id, isos)
     print_plan(picks)
     print(f"{len(picks)} cars")
     if args.tsv:
@@ -1312,7 +1314,7 @@ def cmd_build(args) -> None:
     with dsf.open("rb") as stream:
         stock_entries = read_chunk(stream, 0).entries
         taken = clone_vehicle.taken_ids(stream, stock_entries)
-    assign_ids(picks, taken, args.id_policy, args.first_id)
+    assign_ids(picks, taken, args.id_policy, args.first_id, isos)
     root_limit = root_limit_of(args)
     room = (root_limit - len(stock_entries)) // 3  # 453 root entries in the stock archive
     if len(picks) > room:

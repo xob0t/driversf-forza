@@ -1669,9 +1669,6 @@ def car_texts(cars: list[dict], isos: list[Path] | None = None) -> dict[str, dic
     for car in cars:
         by_game.setdefault(str(car.get("game", "FH1")).lower(), []).append(car["media"])
     found: dict[str, dict] = {}
-    from dsfforza.build.forza_roster import game_discs
-
-    discs = {game.lower(): path for game, path in game_discs(isos).items()}
     try:
         from dsfforza.formats import forza_strings
 
@@ -1681,7 +1678,7 @@ def car_texts(cars: list[dict], isos: list[Path] | None = None) -> dict[str, dic
                 if not missing:
                     break
                 try:
-                    names = forza_strings.car_names(other, missing, iso=discs.get(other))
+                    names = forza_strings.car_names(other, missing, isos=isos)
                     found.update({k: v for k, v in names.items() if v.get("display")})
                 except LookupError:  # that game's disc (or its gamedb) isn't there
                     continue

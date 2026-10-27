@@ -78,12 +78,12 @@ def parse(data: bytes) -> dict[int, tuple[str, str]]:
 class Strings:
     """Resolve "_&N" references against a game's string tables."""
 
-    def __init__(self, game: str, cache: Path | None = None, iso: Path | None = None):
+    def __init__(self, game: str, cache: Path | None = None, iso: Path | None = None, isos: list[Path] | None = None):
         self.tables: dict[int, dict[int, tuple[str, str]]] = {}
         folder = cache or (REPO / "out" / "cache" / game / "strings")
         missing = [f for f in STRING_FILES if not (folder / f).exists()]
         if missing:
-            extract(game, folder, iso)
+            extract(game, folder, iso, isos)
         for name in STRING_FILES:
             path = folder / name
             if not path.exists():
@@ -106,17 +106,19 @@ class Strings:
         return entry[1] if entry else None
 
 
-def game_disc(game: str, iso: Path | None = None) -> Path:
+def game_disc(game: str, iso: Path | None = None, isos: list[Path] | None = None) -> Path:
     """The disc image with `game`'s string tables (FH1's disc, FM4's disc 1): `iso`, checked
-    by its content, or the one of assets/*.iso whose default.xex says so, whatever the files
-    are called. LookupError when the game's disc isn't there or `iso` is another disc."""
+    by its content, or the one of `isos` (default assets/*.iso) whose default.xex says so,
+    whatever the files are called. LookupError when the game's disc isn't there or `iso` is
+    another disc."""
     from dsfforza.build import forza_roster
 
     game = game.upper()
     if iso is None:
-        found = forza_roster.game_discs().get(game)
+        found = forza_roster.game_discs(isos).get(game)
         if found is None:
-            raise LookupError(f"no {game} disc among the disc images in {REPO / 'assets'}")
+            where = "the given disc images" if isos is not None else f"the disc images in {REPO / 'assets'}"
+            raise LookupError(f"no {game} disc among {where}")
         return found
     disc = forza_roster.identify(iso)
     if disc.game != game or disc.disc > 1:
@@ -124,13 +126,13 @@ def game_disc(game: str, iso: Path | None = None) -> Path:
     return Path(iso)
 
 
-def extract(game: str, folder: Path, iso: Path | None = None) -> None:
-    """The STRING_FILES of `game` into folder, from `iso` or the game's disc in assets/
-    (game_disc)."""
+def extract(game: str, folder: Path, iso: Path | None = None, isos: list[Path] | None = None) -> None:
+    """The STRING_FILES of `game` into folder, from `iso` or the game's disc among `isos`
+    (default assets/*.iso; game_disc)."""
     from dsfforza.formats.forzazip import ForzaZip
     from dsfforza.formats.xiso import XIso
 
-    image = XIso(game_disc(game, iso))
+    image = XIso(game_disc(game, iso, isos))
     try:
         z = ForzaZip(image.open(image.find(STRING_ZIP)))
         folder.mkdir(parents=True, exist_ok=True)
@@ -141,16 +143,18 @@ def extract(game: str, folder: Path, iso: Path | None = None) -> None:
         image.close()
 
 
-def car_names(game: str, media: list[str], gamedb: Path | None = None, iso: Path | None = None) -> dict[str, dict]:
+def car_names(
+    game: str, media: list[str], gamedb: Path | None = None, iso: Path | None = None, isos: list[Path] | None = None
+) -> dict[str, dict]:
     """{media: {make, display, model_short, family, year}} from Data_Car, List_CarMake, List_FamilyModel
-    (the string tables from `iso`, the game's disc image (disc 1), default the game's disc
-    among assets/*.iso, found by content)."""
+    (the string tables from `iso`, the game's disc image (disc 1), else the game's disc
+    among `isos` (default assets/*.iso), found by content)."""
     import sqlite3
 
     gamedb = gamedb or REPO / "out" / "cache" / game / "gamedb.slt"
     if not Path(gamedb).is_file():  # written by the build from the game's disc (port_car.extract_gamedb)
         raise LookupError(f"no {gamedb}")
-    strings = Strings(game, iso=iso)
+    strings = Strings(game, iso=iso, isos=isos)
     db = sqlite3.connect(f"file:{Path(gamedb).as_posix()}?mode=ro", uri=True)
     out = {}
     try:
