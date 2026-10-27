@@ -876,6 +876,28 @@ the cost of taking the lock from Forza's geometry rather than from DSF's
 tuning; capping at Forza's lock (min of the two) would have kept the 48 pairs
 as they were and changed 72 cars instead of 573.
 
+In game (confirmed-runtime; headless VM 1, `-Dyno -DynoRuns 4 -DynoKeys
+'Up:8,Down:6;Up:0.8,Left:8,Down:3;Up:@20,Right:1.0,None:1.5,Down:5;Up:@45,Right:1.0,None:1.5,Down:5'
+-DynoKeep 'impulse:1,none,impulse:1:8,impulse:1:18'`; the three race
+prototypes of wheels.md, "Steering lock", 40 -> 30 deg; before
+`vm1-20261027-193002`, after `vm1-20261027-193609`). The turning circle is a
+least-squares circle through the path while the car rolls at full lock
+between 1.5 and 6 m/s (`out/steer/circle.py`). The VM's slow key timing
+spoilt some runs (the 20 mph step never started; two of the six circles
+spun or rolled too fast).
+
+| Car | Turning circle (path radius, m) | Full lock at about 34 mph: steady yaw deg/s, g | 1 s step steer at 47 to 50 mph: steady yaw deg/s, g |
+| --- | --- | --- | --- |
+| ACU_66_ARX02a_09 | - / 5.05 | - | 54.1, 1.95 / 54.2, 2.02 |
+| AST_007_AMRLola_09 | 3.48 / - | - / 75.0, 2.06 | 54.0, 2.27 / 53.3, 2.25 |
+| BMW_15_LMR_99 | 3.35 / 4.56 (+36%) | 77.9, 1.90 / 79.9, 1.99 | 55.9, 2.23 / 55.0, 2.29 |
+
+The circle follows the geometry (rear axle wheelbase / tan lock: 3.34 and
+4.85 m for the LMR). At 34 mph a full-lock turn is grip-limited at 30 deg as at
+40, and the 50 mph step steer doesn't move: the cars turn and corner as before
+once moving, only the tightest low-speed turns (U-turns, parking) take more
+room, as much as they do in Forza.
+
 Clearance at full lock and in game: research/wheels.md, "Steering lock".
 
 ### Remaining gaps

@@ -684,12 +684,16 @@ The three test cars (IDs 1 ACU_66_ARX02a_09, 2 AST_007_AMRLola_09, 3 BMW_15_LMR_
 all 40 -> 30 deg) built with this change (`out/steer/after`), and the same archive
 with p298 set back to master's 40 (`out/steer/before.sp`: 6 bytes differ),
 `run-series -Vm -DriveKey Left -DriveSeconds 10 -Views lock,fq,wheels`: before
-`vm1-20261027-185802` (an earlier try, `-182035`, stuck loading the story world),
-after `vm1-20261027-182651`. `img/steer-lock-ingame.jpg`: at 40 deg the ARX-02a's
-and the AMR-Lola's locked tyres stick out of the side of the wheel fairing; at
-Forza's 30 they stay inside it, as the survey says. From the cockpit the wheel and
-the hands stand at the same hand-over-hand pose at full lock before and after
-(the rig turns by angle / p298).
+`vm1-20261027-185802` (an earlier try, `-182035`, stuck loading the story world;
+the LMR, last in line, got no views before the time-out, so `-194209` for it alone,
+where as the first car of a run it got only the side view), after
+`vm1-20261027-182651`. `img/steer-lock-ingame.jpg`: at 40 deg the ARX-02a's and the
+AMR-Lola's locked tyres stick out of the side of the wheel fairing; at Forza's 30
+they stay inside it, as the survey says. The LMR's tyre turns less into its arch.
+From the cockpit the wheel and the hands stand at the same hand-over-hand pose at
+full lock before and after (the rig turns by angle / p298). Handling: research/
+handling.md, "Steering lock" (turning circle 3.35 -> 4.56 m on the LMR; the 50 mph
+step steer unchanged).
 
 ## Open
 
