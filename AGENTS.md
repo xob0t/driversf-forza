@@ -53,6 +53,10 @@ Research notes are in `research/` (read the ones for your area first).
   Only file what differs from the stock game or from Forza. Behaviour the
   stock game has too (its layouts, its UI quirks) is not an issue; check a
   stock car or the unmodified game before filing.
+- A comment, review or reply on an issue or PR someone else opened (a
+  player's report, a contributor's PR) starts with the line
+  `<model name> on behalf of xob0t:` (e.g. `Claude Opus 5.5 on behalf of
+  xob0t:`), then a blank line and the response.
 - Python: the package `dsfforza` in `src/dsfforza/` (`formats/`, `convert/`,
   `build/`, `game/`, `harness/`), managed with uv on Python 3.13
   (`pyproject.toml`, `uv.lock`). Run a tool with `uv run dsff <tool> ...`
