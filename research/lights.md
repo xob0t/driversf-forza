@@ -1051,9 +1051,11 @@ logged `FUN_008A78E0`'s lamp objects, below):
    Charger SRT8 12, Viper CC, Ultima GTR, MP4-12C, Scirocco and 8 more in part); the
    X5 M's tails are Forza's flat red in game (`img/taillamps-x5m-swatch-ingame.jpg`).
 
-The Veyron's speckled round lamps by day (master and branch alike, also offline) are
-its red ring texture through the red alpha curve, not broken lamps; the 300C's and
-G37's tails look right at rest on both builds.
+The user's Veyron showed the blobs on its outer round lamps: their centres are the
+reverse lamps, which master hung under host 279's wing indicator records (entries 14,
+15, x 1.06, z +0.43), so any front or side contact broke them. The 300C's and G37's
+tails look right at rest on both builds; their reports (0.1.0, 0.1.1) predate the
+current host picks and weren't reproduced.
 
 ### Open
 
