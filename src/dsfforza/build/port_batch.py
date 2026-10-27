@@ -667,6 +667,13 @@ def worker_report(work: Path, media: str, code: int | None) -> dict:
     }
 
 
+def _fingerprint_worker_env() -> dict[str, str]:
+    """fingerprint.WORKER_ENV: one BLAS thread per worker, so a conversion is repeatable."""
+    from dsfforza.build import fingerprint
+
+    return fingerprint.WORKER_ENV
+
+
 def run_workers(jobs: list[dict], work: Path, parallel: int, log=print, progress=None) -> dict[str, dict]:
     """Run one worker process per job, at most `parallel` at once, Below Normal priority.
     A worker that can't start, times out or dies is a failed car, not a failed batch;
@@ -694,7 +701,7 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print, progress
                         stderr=subprocess.STDOUT,
                         creationflags=flags,
                         cwd=str(REPO),
-                        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                        env={**os.environ, "PYTHONUNBUFFERED": "1", **_fingerprint_worker_env()},
                     )
                 except OSError as error:
                     log_file.close()
@@ -1160,8 +1167,10 @@ class Reuse:
         self.seed = getattr(args, "verify_seed", None)
         self.checker = fingerprint.Checker()
         self.taken: dict[str, dict] = {}
+        self.taken_from: dict[str, str] = {}  # media -> the build it was taken from
         self.rebuilt: dict[str, str] = {}
         self.verified: dict[str, str] = {}
+        self.mismatch: dict = {}  # --verify-mismatch rebuild: what a mismatch replaced (record())
 
     def _predicate(self, report: dict, job: dict) -> bool:
         names = {
@@ -1251,6 +1260,7 @@ class Reuse:
                 shutil.rmtree(dst)
             shutil.copytree(sound_src, dst, copy_function=_link_or_copy)
         self.taken[media] = report
+        self.taken_from[media] = str(source)
         return {**report, "reused_from": str(source)}
 
     def summary(self) -> None:
@@ -1262,13 +1272,19 @@ class Reuse:
         for why, cars in sorted(reasons.items(), key=lambda kv: -len(kv[1])):
             print(f"  {why}: {len(cars)} ({', '.join(cars[:6])}{', ...' if len(cars) > 6 else ''})")
 
-    def verify(self, jobs: list[dict], parallel: int, progress=None) -> None:
+    def verify(self, jobs: list[dict], parallel: int, progress=None, on_mismatch: str = "stop") -> list[str]:
         """Convert a random few of the reused cars again into work/verify/ and require the
-        same bytes; raise SystemExit (before the merge) when any differs."""
+        same bytes. When any differs (or fails), on_mismatch "stop" raises SystemExit
+        (before the merge: port_batch build, for developers); "rebuild" (dsff install, for
+        players: issue #133) keeps going: a car that came out different takes its fresh
+        copy, and the cars to convert again are returned: the other reused cars of the
+        builds the bad ones came from (a mismatch can't be pinned to its car: a missed
+        input may be shared) and the ones whose fresh conversion failed."""
         import random
+        import shutil
 
         if not self.verify_count or not self.taken:
-            return
+            return []
         seed = self.seed if self.seed is not None else random.randrange(1 << 30)
         sample = random.Random(seed).sample(sorted(self.taken), min(self.verify_count, len(self.taken)))
         folder = self.work / "verify"
@@ -1304,13 +1320,55 @@ class Reuse:
                 self.verified[media] = "identical"
             if self.verified[media] != "identical":
                 bad.append(f"{media} ({self.verified[media]})")
-        if bad:
+        if bad and on_mismatch != "rebuild":
             raise SystemExit(
                 f"--verify-reuse (seed {seed}): {len(bad)} of {len(sample)} reused cars came out different when built "
-                f"again: {'; '.join(bad)}. Their fingerprints missed a change (research/batch.md, 'Selective "
-                f"rebuild'); build without --reuse, or with --rebuild-where covering them."
+                f"again: {'; '.join(bad)}. Either their fingerprints missed a change or the conversion isn't "
+                f"repeatable (issue #84; research/batch.md, 'Selective rebuild'); build without --reuse, or with "
+                f"--rebuild-where covering them."
             )
-        print(f"--verify-reuse: {len(sample)} of {len(sample)} identical")
+        if not bad:
+            print(f"--verify-reuse: {len(sample)} of {len(sample)} identical")
+            return []
+        differ = [m for m in sample if self.verified[m] == "DIFFERENT"]
+        failed = [m for m in sample if self.verified[m].startswith("failed")]
+        for media in differ:  # the fresh copy replaces the reused one
+            for name in WORK_FILES:
+                (self.work / f"{media}.{name}").unlink(missing_ok=True)
+                if (folder / f"{media}.{name}").exists():
+                    (folder / f"{media}.{name}").replace(self.work / f"{media}.{name}")
+            sound = Path(by_media[media]["sound_dir"]) / media
+            shutil.rmtree(sound, ignore_errors=True)
+            if (folder / "sound" / media).is_dir():
+                shutil.move(str(folder / "sound" / media), str(sound))
+            check = next(c for c in checks if c["media"] == media)
+            job = {**by_media[media], "port_options": check["port_options"], "fallback": check["fallback"]}
+            (self.work / f"{media}.job.json").write_text(json.dumps(job, indent=1), encoding="utf-8")
+            self.taken.pop(media, None)
+        sources = {self.taken_from.get(m) for m in differ + failed}
+        redo = sorted(
+            m
+            for m in self.taken
+            if m not in self.verified or self.verified[m] != "identical"
+            if self.taken_from.get(m) in sources
+        )
+        for media in redo:
+            self.taken.pop(media, None)
+        self.mismatch = {
+            "seed": seed,
+            "different": differ,
+            "failed": failed,
+            "fresh_copies": differ,
+            "converted_again": redo,
+            "sources": sorted(s for s in sources if s),
+        }
+        print(
+            f"--verify-reuse (seed {seed}): {'; '.join(bad)}: came out different when built again. "
+            f"Using the fresh copies, and converting the {len(redo)} other cars reused from "
+            f"{', '.join(self.mismatch['sources']) or 'there'} again (--verify-mismatch rebuild)."
+        )
+        emit(progress, "verify_mismatch", cars=bad, redo=redo)
+        return redo
 
     def record(self) -> dict:
         """For batch-report.json (timings_s.reuse)."""
@@ -1320,6 +1378,7 @@ class Reuse:
             "reused": sorted(self.taken),
             "rebuilt": self.rebuilt,
             "verified": self.verified,
+            **({"verify_mismatch": self.mismatch} if self.mismatch else {}),
             "trust_code": self.trust_code,
             "rebuild_where": self.where,
         }
@@ -1466,9 +1525,27 @@ def cmd_build(args) -> None:
     timings["convert"] = round(time.time() - t, 1)
     if reuse is not None:
         t = time.time()
-        # stops the build if a rebuilt car differs from its reused output
-        reuse.verify(jobs, args.jobs, progress=progress)
+        # A rebuilt car that differs from its reused output stops the build (--verify-mismatch
+        # stop), or (rebuild, dsff install) its fresh copy is kept and its build's other cars
+        # are converted again.
+        redo = reuse.verify(jobs, args.jobs, progress=progress, on_mismatch=getattr(args, "verify_mismatch", "stop"))
         timings["verify_reuse"] = round(time.time() - t, 1)
+        if redo:
+            import shutil
+
+            t = time.time()
+            by_media = {j["media"]: j for j in jobs}
+            for media in redo:
+                for name in WORK_FILES + ("tmp", "json.tmp", "fp.json.tmp"):
+                    (work / f"{media}.{name}").unlink(missing_ok=True)
+                shutil.rmtree(Path(by_media[media]["sound_dir"]) / media, ignore_errors=True)
+                reused.pop(media, None)
+            results.update(run_workers([by_media[m] for m in redo], work, args.jobs, progress=progress))
+            timings["convert_again"] = round(time.time() - t, 1)
+        for media in reuse.mismatch.get("fresh_copies", []):
+            fresh = Path(work / f"{media}.json")
+            with contextlib.suppress(OSError, ValueError):
+                results[media] = json.loads(fresh.read_text(encoding="utf-8"))
         args.reuse_record = reuse.record()
 
     ok = [results[p.media] for p in picks if results.get(p.media, {}).get("ok")]
@@ -1971,6 +2048,13 @@ def build_parser() -> argparse.ArgumentParser:
                 help="with --reuse: build N random reused cars again and stop if any differs (default 2; 0: off)",
             )
             p.add_argument("--verify-seed", type=int, help="the random seed of --verify-reuse (default: random)")
+            p.add_argument(
+                "--verify-mismatch",
+                choices=("stop", "rebuild"),
+                default="stop",
+                help="when --verify-reuse finds a car that differs: stop the build (default), or use the fresh "
+                "copy and convert the other cars reused from the same build again (dsff install)",
+            )
             p.add_argument(
                 "--no-pack-reuse",
                 action="store_true",

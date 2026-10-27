@@ -752,6 +752,7 @@ def build_info(build: Path, files: dict[str, str]) -> dict:
             "timings_s": report.get("timings_s"),
             "reused": len(reuse.get("reused") or []),
             "rebuilt": len(reuse.get("rebuilt") or {}),
+            "verify_mismatch": reuse.get("verify_mismatch"),  # issue #133
             "host_sound": (report.get("forza_sound") or {}).get("host_sound"),
             "gui_problem": install.gui_problem(Path(build)),
             # spool id -> car, to find the car of a garage ID or a log line

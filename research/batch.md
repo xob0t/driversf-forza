@@ -406,6 +406,28 @@ chunk differs. The seed is printed; `--verify-seed` repeats a pick.
 `batch-report.json` gets a `reuse` record: source, reused cars, rebuilt
 cars with their reasons, verification results.
 
+`--verify-mismatch rebuild` (what `dsff install` passes; the default `stop` is
+for developers) doesn't stop: a car that came out different takes its fresh
+copy, and the other cars reused from the same earlier build are converted
+again, since the mismatch can't be pinned to its car. The `reuse` record gets
+`verify_mismatch` (the cars, the ones converted again), the install summary
+a note, and `dsff report` the record (issue #133: a player's install stopped
+on BMW_Z4_11 and the player lost the cars built so far).
+
+**Repeatability (issues #84, #133).** BMW_Z4_11 converted three times with
+the v0.1.1 code and three times with master gave a different chunk each time:
+75 to 360 bytes in the full entry's first texture (DXTC) and two vertex
+buffers (the low bytes of vertex positions). Without `--damage` it came out
+the same. `PYTHONHASHSEED=0` didn't help; one OpenBLAS thread
+(`OPENBLAS_NUM_THREADS=1`) did, three runs identical, at the same speed (the
+workers are the parallelism). port_batch starts its workers with one BLAS
+thread (`fingerprint.WORKER_ENV`). That is not all of it: AST_DB9_05 (#84)
+still differs between runs with one thread (280 to 420 bytes, the same kinds
+of entries; 1250 bytes without `--damage`, so it isn't the damage step), and
+BMW_Z4_11 still now and then (two of seven runs). So `--verify-reuse` can still fail on
+a car whose inputs didn't change; `port_car` run on its own still uses BLAS
+threads.
+
 Tested (4 cars: MAZ_RX7_97, CHE_Express2500Cargo_05, SAL_S5SRaptor_10,
 DEL_DMC12_82@fm4, `out/perf/r*` in the perf worktree):
 

@@ -441,6 +441,15 @@ def job_key(job: dict) -> dict:
     return out
 
 
+# The environment port_batch starts its workers with (run_workers). numpy's OpenBLAS
+# splits work over its threads and adds the parts up in an order that can vary from run
+# to run, so a car converted twice could come out a few hundred bytes different (vertex
+# positions, a texture; BMW_Z4_11: three runs, three different chunks; one thread: the
+# same chunk; issues #84, #133). One thread each: the workers are the parallelism. Not
+# part of the fingerprint: a car built with BLAS threads is as good, just not repeatable.
+WORKER_ENV = {"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
+
+
 def environment() -> dict:
     import numpy
 
