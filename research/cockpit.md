@@ -1832,19 +1832,49 @@ digits and needs no record: `g_fDigiData` doesn't go through the gauge table.
 
 ### In game (VM, confirmed-runtime)
 
-Runs:
+**First proofs.** S2000 `vm2-20261027-095858`, LFA `vm2-20261027-101258`:
 
-- first proofs: S2000 `vm2-20261027-095858`, LFA `vm2-20261027-101258`;
-- before/after, `-HoldMph '0,30,60,90'`, `-Asi`, before `out/build` (master):
-  RUNS.
+- the digits read 40 and 94 at the held speeds;
+- the bar lights with the rpm;
+- the LFA's needle turns over its scene.
 
-Findings:
+**Before and after.**
 
-- The digits read the held speed, and the gear and the rpm pieces follow the
-  car.
-- The LFA's needle turns over its scene.
-- The C63 AMG's centre display reads km/h.
-- `img/digital-displays-ingame.jpg`.
+- Settings: `run-series.ps1 -Vm -Asi -HoldMph '0,30,60,90' -ShotSeconds 2
+  -ZoomPresses 0`.
+- Before: `out/build`, master. After: `out/dd/test2.sp`, the six cars at IDs
+  304..309.
+- Runs:
+
+| Car | Before | After |
+| --- | --- | --- |
+| Panoz Esperante GTLM #51 | `vm2-20261027-105000` | `vm2-20261027-163220` |
+| S2000 | `vm2-20261027-165814`, `-111537` | `vm2-20261027-164830` |
+| LFA | `vm2-20261027-170816` | `vm2-20261027-170616` |
+| C63 AMG | `vm2-20261027-171753` | `vm2-20261027-171401` |
+| FLM09 | `vm2-20261027-172233` | `vm2-20261027-172016` |
+| Viper Competition Coupe | `vm2-20261027-172640` | `vm2-20261027-172444` |
+
+Images: `img/digital-displays-ingame-1.jpg`, `-2.jpg`.
+
+**Panoz, S2000, LFA and Viper.** Before, each display was a static face (a
+dim LCD, the S2000's bar outline, the LFA's dial with its needle on 0). After:
+
+- the speed digits read 0, 30, 60 and 94;
+- the gear shows 1, 2, 3;
+- the rpm bars light with the engine;
+- the LFA's needle turns over its ring, which turns orange near the redline.
+
+**C63 AMG.** Its centre display shows the km/h digits from dsfforza.asi
+`[dash]` next to Forza's needles. They are too small to read at 1600 x 900;
+On larger km/h displays the digits read 48 at 30 mph and 153 at 90 mph (Virage `vm2-20261027-173156`, RCZ `vm2-20261027-173346`, `out/dd/test3.sp`; `img/digital-displays-kmh-ingame.jpg`).
+
+**FLM09.** Its only display is on the wheel, so it keeps #92's virtual
+display: two dials turning on the dash, left of the wheel.
+
+**Mistakes these runs found.** Earlier builds drew nothing or screen-sized
+triangles (needle buffer layout: `vm2-20261027-091948`). Transparent texels
+came out black blocks (no alpha test: `vm2-20261027-111010`).
 
 ## Hands on small race wheels and wheels with columns (2026-10-25)
 
