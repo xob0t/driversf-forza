@@ -512,7 +512,7 @@ def wheel_material(textures, section, sub, shared: dict) -> bytes | None:
         from dsfforza.convert import dsf_materials
 
         kind = textures.texturing.material(section, sub)
-        if kind in (dsf_materials.CHASSIS, dsf_materials.LIGHTS_MAT):
+        if dsf_materials.is_atlas_kind(kind):  # Chassis, or a gloss copy of the Lights material
             return textures.material(section, sub, shared)
         if kind == "skip":
             return None
@@ -1926,9 +1926,9 @@ def convert(
             car = dataclasses.replace(car, body=body)
             report["trim_art"] = {k: {**v, "area": round(v["area"], 5)} for k, v in art.items()}
             log(
-                "trim artwork off the shared trim (metal/detail/grey): "
+                "trim artwork off the shared trim (metal/detail/grey/gloss): "
                 + ", ".join(
-                    f"{k} {v['triangles']} ({v['metal']}/{v['detail']}/{v['grey']}, {v['area']:.3f} m2)"
+                    f"{k} {v['triangles']} ({v['metal']}/{v['detail']}/{v['grey']}/{v['gloss']}, {v['area']:.3f} m2)"
                     for k, v in sorted(art.items())
                 )
             )
@@ -1947,6 +1947,7 @@ def convert(
             swatch_trims=opts.swatch_trims,
             log=log,
             interior_vehc=interior,
+            uid_seed=seed,
             wheels=wheels,
         )
         layout.update(tex_full.layout)

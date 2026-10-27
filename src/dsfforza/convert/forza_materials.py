@@ -141,13 +141,24 @@ _add(CHROME, NODAMAGE, "dsf_trim_metal")  # bare-metal artwork (trim_art.is_meta
 # Dark trims with detail (the Cougar Eliminator's grille bars) through the atlas, flat
 # mid-grey ones as one colour cell (trim_art.classify_texels).
 _add(TEXTURED, NODAMAGE, "dsf_trim_detail dsf_trim_grey")
+# Flat dark trims with Forza's specular or reflection: a colour cell on a gloss material
+# (trim_art.GLOSS_TECHNIQUE, dsf_materials.GLOSS_PREFIX).
+_add(TEXTURED, NODAMAGE, "dsf_trim_gloss")
 # trim_art names its subsections "<technique>@<scale>" when the Forza technique scales
 # its texels (texel_scale): Texturing samples them from the scaled atlas.
 SCALE_SUFFIX = "@"
 
 
+# ... and "<technique>~<source>" with the Forza technique the triangles came from, whose
+# gloss (gloss_params) they keep: "dsf_trim_detail@0.2~misc".
+SOURCE_SUFFIX = "~"
+
+
 def technique_scale(name: str) -> tuple[str, float]:
-    """("dsf_trim_detail", 0.2) for "dsf_trim_detail@0.2"; (name, 1.0) without a scale."""
+    """("dsf_trim_detail", 0.2) for "dsf_trim_detail@0.2" (and "dsf_trim_detail@0.2~misc");
+    (name, 1.0) without a scale."""
+    if name.startswith("dsf_") and SOURCE_SUFFIX in name:
+        name = name.partition(SOURCE_SUFFIX)[0]
     if SCALE_SUFFIX in name:
         base, _, scale = name.partition(SCALE_SUFFIX)
         try:
@@ -159,6 +170,18 @@ def technique_scale(name: str) -> tuple[str, float]:
 
 def with_scale(technique: str, scale: float) -> str:
     return technique if scale == 1.0 else f"{technique}{SCALE_SUFFIX}{scale:.4g}"
+
+
+def with_source(technique: str, source: str) -> str:
+    return f"{technique}{SOURCE_SUFFIX}{source}"
+
+
+def technique_source(name: str) -> str:
+    """The Forza technique a subsection's triangles came from: "misc" for
+    "dsf_trim_detail@0.2~misc", the name itself for Forza's own techniques."""
+    if name.startswith("dsf_") and SOURCE_SUFFIX in name:
+        return name.partition(SOURCE_SUFFIX)[2]
+    return name
 
 
 # Virtual dials drawn on blank digital displays, display faces or a virtual display
@@ -258,7 +281,7 @@ def classify(name: str) -> tuple[str, str | None]:
     the prefix conventions of the technique list and CustomCarShaders.xml."""
     if name in TECHNIQUES:
         return TECHNIQUES[name]
-    if SCALE_SUFFIX in name and name.startswith("dsf_"):  # trim_art's scaled techniques
+    if name.startswith("dsf_") and (SCALE_SUFFIX in name or SOURCE_SUFFIX in name):  # trim_art's names
         return classify(technique_scale(name)[0])
     n = name.lower()
     if n.startswith(("blur", "chrome_blur", "ghost")) or "shadow" in n:
@@ -419,6 +442,9 @@ def parse_shader_settings(text: str) -> dict[str, dict[str, float]]:
 def wheel_paint_scale(technique: str, settings: dict[str, dict[str, float]]) -> float:
     """The PaintScale Forza applies to a wheel technique's texel colour: the
     car's own setting, else WHEEL_PAINT_SCALE, else 1 (the technique has none)."""
+    chrome = chrome_diffuse_scale(settings, technique)
+    if chrome is not None:  # chrome_rim: the texel times ChromeDiffuseScale under its reflection
+        return chrome
     default = next((v for k, v in WHEEL_PAINT_SCALE.items() if k.lower() == technique.lower()), None)
     if default is None:
         return 1.0
@@ -573,6 +599,122 @@ def texel_scale(settings: dict[str, dict[str, float]], technique: str) -> float:
     else:
         value = params.get("PaintScale", TRIM_PAINT_SCALE[n])
     return min(TEXEL_SCALE_MAX, max(0.0, value))
+
+
+# --- the trim and rim shaders' specular and reflection -------------------------------
+#
+# Besides the texel, Forza's car shaders add a specular term, SpecularAmount x the
+# directional light x (N.H)^SpecularPower, and a cube-map reflection: CubeScale x
+# FresnelScalar x a Fresnel term of FresnelIndex in the paint and trim shaders, CubeScale
+# alone in the chrome ones (research/forza-materials.md, "Gloss: Forza's specular and
+# reflection on trims and rims"). The defaults per technique are those of the shared
+# media/cars/Shared.zip ShaderSettings/Normal.xml (FH1 and FM4 alike for these); a
+# technique the file gives none of them to (black, wheel_black, grille1) has no
+# specular and no reflection. A car's ShaderSettings.xml overrides them (the Cougar
+# Eliminator's `misc`: SpecularAmount 0.5, SpecularPower 5, FresnelScalar 0.2).
+# technique: (SpecularAmount, SpecularPower, FresnelScalar, CubeScale, FresnelIndex)
+GLOSS_DEFAULTS = {
+    "misc": (0.2, 20.0, 0.1, 1.0, 1.65),
+    "plastic": (1.0, 120.0, 0.0, 1.0, 1.65),
+    "plastic2": (2.0, 8.0, 0.0, 1.0, 1.65),
+    "plastic_simple": (1.0, 120.0, 0.0, 1.0, 1.65),
+    "dullplastic": (0.3, 8.0, 0.0, 1.0, 1.65),
+    "embossed_plastic": (4.0, 128.0, 0.0, 1.0, 1.65),
+    "embossed_plastic2": (4.0, 128.0, 0.0, 1.0, 1.65),
+    "matte": (1.5, 20.0, 0.0, 1.0, 1.65),
+    "matte_colors": (0.75, 20.0, 0.0, 1.0, 1.65),
+    "matte_colors2": (4.0, 128.0, 0.0, 1.0, 1.65),
+    "rubber_trim": (1.0, 10.0, 0.0, 1.0, 1.65),
+    "rubber_trim_2": (1.0, 10.0, 0.0, 1.0, 1.65),
+    "weatherstrip": (0.3, 5.5, 0.0, 1.0, 1.65),
+    "bumper_frame": (4.0, 128.0, 0.0, 1.0, 1.65),
+    "bottom": (4.0, 128.0, 1.0, 1.0, 1.65),
+    "bottom_2": (4.0, 128.0, 1.0, 1.0, 1.65),
+    "frame": (0.0, 128.0, 0.0, 1.0, 1.65),
+    "undercarriage": (0.0, 128.0, 0.0, 1.0, 1.65),
+    "engine": (4.0, 128.0, 0.0, 1.0, 1.65),
+    "cage": (4.0, 128.0, 1.0, 1.0, 1.65),
+    "race_kit_red": (4.0, 128.0, 1.0, 1.0, 1.65),
+    "defrost_lines": (4.0, 128.0, 0.0, 1.0, 1.65),
+    "hub": (0.3, 25.0, 0.0, 1.0, 1.65),
+    "rotor": (2.0, 10.0, 0.0, 1.0, 1.65),
+    "caliper": (0.0, 128.0, 0.0, 1.0, 1.65),
+    "badge": (4.0, 128.0, 1.0, 1.0, 1.65),
+    "badge2": (4.0, 128.0, 1.0, 1.0, 1.65),
+    "brake_badge": (4.0, 128.0, 0.0, 1.0, 1.65),
+    "emblem": (0.0, 75.0, 1.0, 0.8, 1.65),
+    # wheel techniques (classify_wheel)
+    "rim": (0.0, 1.5, 1.0, 1.5, 1.65),
+    "rim_v2": (4.0, 128.0, 1.0, 1.5, 1.65),
+    "rim_bump_metal": (4.0, 128.0, 1.0, 1.0, 1.65),
+    "rim_bump_metal2": (4.0, 128.0, 1.0, 1.0, 1.65),
+    "rim_simple": (4.0, 9.0, 0.0, 1.0, 1.65),
+    "inner_rim": (4.0, 128.0, 0.0, 1.5, 1.65),
+    "inner_rim_v2": (4.0, 128.0, 0.0, 1.5, 1.65),
+    "outer_rim": (4.0, 128.0, 1.0, 1.5, 1.65),
+    "wheel_emblem": (4.0, 128.0, 1.0, 1.0, 1.65),
+    "wheel_emblem_v2": (4.0, 128.0, 1.0, 1.0, 1.65),
+}
+# Chrome shaders: no specular, the cube map times CubeScale at every angle, the texel
+# times ChromeDiffuseScale. technique: (CubeScale, ChromeDiffuseScale)
+CHROME_GLOSS_DEFAULTS = {
+    "chrome_rim": (1.0, 0.5),
+    "chrome_rim_v2": (1.0, 0.5),
+}
+
+
+@dataclass(frozen=True)
+class Gloss:
+    """A technique's specular and reflection (GLOSS_DEFAULTS, a car's ShaderSettings).
+    fresnel_scalar None: a chrome shader (reflection at every angle, no Fresnel term)."""
+
+    specular: float
+    power: float
+    fresnel_scalar: float | None
+    cube: float
+    fresnel_index: float = 1.65
+
+    @property
+    def f0(self) -> float:
+        """Reflectance at normal incidence of the Fresnel term (Schlick, FresnelIndex)."""
+        n = self.fresnel_index
+        return ((n - 1) / (n + 1)) ** 2
+
+    @property
+    def reflection(self) -> float:
+        """Strength of the reflection at grazing angles (CubeScale x FresnelScalar)."""
+        return self.cube * (1.0 if self.fresnel_scalar is None else self.fresnel_scalar)
+
+
+def gloss_params(settings: dict[str, dict[str, float]], technique: str) -> Gloss | None:
+    """The Forza specular and reflection of a technique (its source technique for
+    trim_art's subsections, technique_source), the car's ShaderSettings (shader_settings)
+    over GLOSS_DEFAULTS; None for a technique without either (black, wheel_black, the
+    cockpit and lamp techniques: not handled here)."""
+    n = technique_source(technique).lower()
+    own = settings.get(n, {})
+    if n in CHROME_GLOSS_DEFAULTS:
+        cube, _ = CHROME_GLOSS_DEFAULTS[n]
+        return Gloss(0.0, 1.0, None, max(0.0, own.get("CubeScale", cube)))
+    if n not in GLOSS_DEFAULTS:
+        return None
+    spec, power, scalar, cube, index = GLOSS_DEFAULTS[n]
+    return Gloss(
+        max(0.0, own.get("SpecularAmount", spec)),
+        max(0.0, own.get("SpecularPower", power)),
+        max(0.0, own.get("FresnelScalar", scalar)),
+        max(0.0, own.get("CubeScale", cube)),
+        max(1.0, own.get("FresnelIndex", index)),
+    )
+
+
+def chrome_diffuse_scale(settings: dict[str, dict[str, float]], technique: str) -> float | None:
+    """ChromeDiffuseScale of a chrome wheel technique (the texel's share of its colour),
+    None for the others."""
+    n = technique.lower()
+    if n not in CHROME_GLOSS_DEFAULTS:
+        return None
+    return max(0.0, settings.get(n, {}).get("ChromeDiffuseScale", CHROME_GLOSS_DEFAULTS[n][1]))
 
 
 def srgb_to_linear(c):

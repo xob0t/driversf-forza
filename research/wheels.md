@@ -703,6 +703,9 @@ step steer unchanged).
    per corner) could go into the wheel part as static geometry; not done.
    Stock DSF wheels have none, and a caliper in the wheel part would spin
    with it.
-3. The Chassis material has little specular; Forza's chrome rims are
-   reflective (`wheel.xds` alpha). The Lights material reflects but adds lamp
-   glow through its alpha.
+3. Done (issue #108): rims draw with gloss copies of the host's Lights material
+   (its lamp glow needs a lamp byte, which rims don't have), Forza's rim
+   reflection and `chrome_rim`'s chrome on them (forza-materials.md, "Gloss").
+   The reflection is masked by the texel's green, not `wheel.xds` alpha. Stock
+   rims, for comparison, are drawn by 111 of the 150 stock vehicles with their own
+   Chassis material on their chassis texture (no reflection), not `GLOBAL_Tyre`.
