@@ -642,6 +642,7 @@ class CockpitFit:
     camera: tuple | None = None  # final head camera (Forza space), set by forza2dsf after camera_eye
     display_faces: int = 0  # digital_gauge triangles drawn textured (display_face)
     virtual: dict = field(default_factory=dict)  # virtual_gauges report: dials drawn on a blank display
+    digital_plan: object = None  # digital_dash.DigitalPlan: live digital displays (DSF's digital dials)
 
 
 # Main-carbin sections that make a cockpit when the cockpit carbin is a stub.
@@ -829,7 +830,7 @@ def _touching(tris: list[list[tuple]], cell: float = 0.01) -> list[list[tuple]]:
     return list(groups.values())
 
 
-def blank_displays(static: dict, eye) -> list[Display]:
+def blank_displays(static: dict, eye, faces: bool = False) -> list[Display]:
     """digital_gauge patches (triangles sharing a vertex position within 1 cm)
     in the cabin sections, not on the steering wheel (needles don't turn with
     it), each with its plane and rectangle. Textured faces (display_face) are
@@ -841,7 +842,7 @@ def blank_displays(static: dict, eye) -> list[Display]:
         if fm.COCKPIT_EXTERIOR_SECTIONS.match(name) or name.lower() == "steering_wheel":
             continue
         for sub in s.subsections:
-            if sub.lod or sub.material.lower() not in DIGITAL_TECHNIQUES:
+            if sub.lod or sub.material.lower() not in ({DISPLAY_FACE} if faces else DIGITAL_TECHNIQUES):
                 continue
             pool = s.vertices_for(sub)
             for pts in _touching([[pool[i].position for i in t] for t in sub.triangles()]):
@@ -1201,6 +1202,17 @@ def fit(
             gauges[g.family] = g
             calibration[g.family] = cal
             static[face.name] = face
+    digital_plan = None
+    import os
+
+    if lod0 and os.environ.get("DSF_DD_PROTO"):  # in-game test of the digital dials (digital_dash)
+        from dsfforza.convert import digital_dash
+
+        found = blank_displays(static, eye_point(wheel, offset))
+        found += blank_displays(static, eye_point(wheel, offset), faces=True)
+        if found:
+            best = max(found, key=lambda d: d.size[0] * d.size[1])
+            digital_plan = digital_dash.prototype_plan(best)
     digital = sum(
         len(sub.triangles())
         for s in static.values()
@@ -1224,6 +1236,7 @@ def fit(
         dropped,
         display_faces=faces,
         virtual=virtual_report,
+        digital_plan=digital_plan,
     )
 
 
@@ -1942,15 +1955,15 @@ def host_interior(stream, interior, known: dict | None = None) -> InteriorMateri
     )
 
 
-def _needle_vertex(pos, uv, gauge_id: int, normal, stride: int = 20) -> bytes:
-    """Host needle layout: s0 4 x i16, s8 4 x f16 (u, v, gauge id, 0), then at
+def _needle_vertex(pos, uv, gauge_id: int, normal, stride: int = 20, comp: int = 0) -> bytes:
+    """Host needle layout: s0 4 x i16, s8 4 x f16 (u, v, gauge id, comp), then at
     stride 20 s5 4 x u8 (the normal). Hosts 250 and 293 draw their Dials
     material from a stride-16 buffer without the normal (145 stock interiors
     use 20)."""
     from dsfforza.convert import forza2dsf
 
     q = [max(-32768, min(32767, round(c * forza2dsf.POSITION_SCALE))) for c in pos]
-    head = struct.pack("<4h4e", q[0], q[1], q[2], 4096, uv[0], uv[1], float(gauge_id), 0.0)
+    head = struct.pack("<4h4e", q[0], q[1], q[2], 4096, uv[0], uv[1], float(gauge_id), float(comp))
     if stride == 16:
         return head
     p0, p1 = forza2dsf.spherical(normal)
@@ -2714,6 +2727,20 @@ def convert_interior(
                     tris.append(tuple(out))
             if tris:
                 needle_subs.append(builder.add(mats.needles, verts, tris))
+        digital_report = None
+        if cf.digital_plan is not None and mats.needles is not None:
+            from dsfforza.convert import digital_dash as dd
+
+            plan = cf.digital_plan
+            tex_uid, mat_uid = builder.new_uid(), builder.new_uid()
+            drsp.children.append(dm.texture_entry(stream, texc, dd.dxt5_dds(plan.width, plan.height, plan.rgba), tex_uid))
+            drsp.children.append(dm.retarget_material(stream, dd.stock_material(stream), {dd.STOCK_TEXTURE: tex_uid}, mat_uid))
+            stride = layout[mats.needles][0]
+            builder.layout[mat_uid] = (stride, dd.MODL_FLAG)
+            verts, tris = dd.vertices(plan, place, stride)
+            if tris:
+                needle_subs.append(builder.add(mat_uid, verts, tris))
+            digital_report = {"quads": len(plan.quads), "texture": [plan.width, plan.height], **plan.report}
         forza2dsf.rebuild_drsp(stream, drsp, builder, keep_host_materials=True)
         part_lods = {mats.cabin_part: {INTERIOR_MASK: cabin}}
         if mats.needle_part is not None:
@@ -2754,6 +2781,7 @@ def convert_interior(
         "digital_triangles": cf.digital,
         "display_face_triangles": cf.display_faces,
         **({"virtual_gauges": cf.virtual} if cf.virtual else {}),
+        **({"digital_displays": digital_report} if digital_report else {}),
         "atlas": t.summary(),
         "visibility": culled_report,
         "attempts": attempts,
@@ -2864,7 +2892,8 @@ def needle_check(stream, interior, h) -> tuple[list[int], int]:
 
     ids = needle_gauge_ids(stream, interior)
     records = gauge_records(h)
-    unturned = sorted(int(k) for k, n in ids.items() if n and k not in records)
+    # Ids 3..7 are digital displays' (digital_dash: g_fDigiData), which need no record.
+    unturned = sorted(int(k) for k, n in ids.items() if n and k in GAUGE_IDS.values() and k not in records)
     drsp = child(child(interior, "MDXN"), "DRSP").children
     dials = None
     for e in drsp:

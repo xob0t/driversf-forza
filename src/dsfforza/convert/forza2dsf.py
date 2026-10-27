@@ -2271,7 +2271,9 @@ def convert(
         # The engine picks each needle's transform by semantic 8's gauge id; any
         # pass that rewrites it leaves the needles static.
         needle_ids = cockpit.needle_gauge_ids(stream, interior)
-        stray = sorted(k for k in needle_ids if k not in set(cockpit.GAUGE_IDS.values()))
+        # Digital displays (digital_dash) draw from the needle buffer with ids 1..7.
+        allowed = set(cockpit.GAUGE_IDS.values()) | (set(range(1, 8)) if "digital_displays" in interior_report else set())
+        stray = sorted(k for k in needle_ids if k not in allowed)
         if stray:
             raise ValueError(
                 f"interior needle vertices with gauge ids {stray[:6]} (not in "
