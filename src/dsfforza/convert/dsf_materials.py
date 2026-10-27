@@ -146,6 +146,12 @@ def _interp(s: float, xs, ys) -> float:
 LAMP_PERCENTILES = (0, 5, 10, 20, 30, 40, 50, 60, 70, 80, 85, 90, 93, 95, 97, 98, 99, 99.5, 100)
 RED_CURVE_MIN_TEXELS = 200  # fewer red lamp texels: the shared red curve
 RED_CURVE_SAMPLES = 40000  # about this many texels sampled over a car's lights regions
+# Score knots of a car's red curve for different alphas stay at least this far apart. A car whose red texels are
+# mostly one flat lens (SUB_WRXSTi_04: 60% of them at 0.69 +- DXT noise) had knots 1e-4
+# apart there, so the noise of a flat red lens became alpha 8 to 30 in blotches and the
+# lit lamp glowed mottled (user report on out/final4). 0.01 is about the score noise of a
+# flat DXT texel (5 levels of the red channel).
+RED_CURVE_MIN_GAP = 0.01
 
 
 def red_lamp_curve(scores: list[float]):
@@ -158,9 +164,11 @@ def red_lamp_curve(scores: list[float]):
         return None
     ordered = sorted(scores)
     xs = []
-    for q in LAMP_PERCENTILES:
+    for k, q in enumerate(LAMP_PERCENTILES):
         x = ordered[min(len(ordered) - 1, int(q / 100 * (len(ordered) - 1) + 0.5))]
-        xs.append(max(x, xs[-1] + 1e-4) if xs else x)
+        if xs:  # knots for one alpha (the zeros at the bottom) only need to stay in order
+            x = max(x, xs[-1] + (RED_CURVE_MIN_GAP if _LAMP_Y_RED[k] != _LAMP_Y_RED[k - 1] else 1e-4))
+        xs.append(x)
     return tuple(xs), _LAMP_Y_RED
 
 
@@ -809,6 +817,9 @@ class Texturing:
     art_flat: set = field(default_factory=set)  # id(sub): trim artwork drawn flat (ART_MIN_SCALE_SHARE)
     pack_scale: float = 0.0  # the uniform scale _pack found (before family weights)
     wheel_paint: dict = field(default_factory=dict)  # rim technique -> PaintScale applied (_wheel_paint_scale)
+    # Exterior only: lamp lenses baked over what lies behind them (src/dsfforza/convert/lenses.py).
+    bake_lenses: bool = True
+    lens_report: dict = field(default_factory=dict)  # lenses.bake's report
 
     # -- planning --
     def plan(self, sections, lods, extra_solids: dict | None = None, wheels=None) -> Texturing:
@@ -832,6 +843,8 @@ class Texturing:
         for family, rgb in self.filler.items():
             if family in self.families:
                 fm.fill_transparent(self.atlases.get(family), rgb, below=PAINT_THROUGH_ALPHA)
+        if self.bake_lenses and self.classifier is None and fm.LIGHTS in self.families:
+            self._bake_lenses(work, lods)
         tris: dict[str, list] = {f: [] for f in self.families}
         keys: dict[str, list] = {f: [] for f in self.families}
         tested: dict[str, list] = {f: [] for f in self.families}
@@ -841,7 +854,8 @@ class Texturing:
             for sub in section.subsections:
                 if sub.lod not in section_lods:
                     continue
-                m = self._resolve(section, sub)
+                # Resolved once (_bake_lenses resolves first: is_lens reads the unbaked lens).
+                m = self.resolved.get((id(section), id(sub))) or self._resolve(section, sub)
                 self.resolved[(id(section), id(sub))] = m
                 alpha_tested = m.technique in fm.ALPHA_TESTED
                 if self._uses_atlas(m) and m.kind == "textured":
@@ -930,6 +944,33 @@ class Texturing:
         px = np.frombuffer(rgba, dtype=np.uint8).reshape(h, w, 4)
         px[:, :, :3] = np.clip(np.rint(px[:, :, :3] * factor[:, :, None]), 0, 255).astype(np.uint8)
         return scales
+
+    def _bake_lenses(self, work, lods) -> None:
+        """Forza's lamp lenses are glass; the Lights material is opaque. Each lens drawn
+        from the Lights atlas (lenses.is_lens_technique) gets what Forza shows through
+        it baked into its texels (src/dsfforza/convert/lenses.py)."""
+        from dsfforza.convert import lenses
+
+        ids = set()
+        body = []
+        for section, section_lods in work:
+            if id(section) in self.wheel_ids:
+                continue
+            body.append(section)
+            for sub in section.subsections:
+                if sub.lod not in section_lods:
+                    continue
+                m = self._resolve(section, sub)
+                self.resolved[(id(section), id(sub))] = m
+                if (
+                    m.family == fm.LIGHTS
+                    and m.kind == "textured"
+                    and m.role == fm.TEXTURED
+                    and lenses.is_lens_technique(m.technique)
+                ):
+                    ids.add(id(sub))
+        if ids:
+            self.lens_report = lenses.bake(body, set(lods), self.atlases, ids, self.car_dir)
 
     def _art_swatch(self, section, sub, m: fm.SubMaterial) -> fm.SubMaterial:
         """A trim-artwork subsection as one flat colour: the mean of the opaque
@@ -1614,6 +1655,14 @@ def prepare(
     plain = DEFAULT_PLAIN
     t = Texturing(Path(car_dir), size=size, mips=mips, swatch_trims=swatch_trims, plain=plain)
     t.plan(sections, set(lods), wheels=wheels)
+    if t.lens_report:
+        log(
+            "lenses baked over their lamps: "
+            + ", ".join(
+                f"{k} {v['texels']} texels ({v['behind']:.0%} with something behind)"
+                for k, v in sorted(t.lens_report.items())
+            )
+        )
     if wheels is not None and fm.WHEEL not in t.families:
         log(f"no {fm.FAMILY_FILES[fm.WHEEL][0]} in {car_dir}: rims keep flat swatches")
     dds = t.dds(template=host)

@@ -117,7 +117,7 @@ and panel undersides use the paint material (`damage.md`, step 6).
 | interior | nodamage | textured | textured | host **Chassis** (stride 28) |
 | emblem | nodamage | textured, alpha-tested | textured | host Chassis; fully transparent triangles dropped |
 | badge | nodamage | alpha 0 everywhere | textured | dropped |
-| taillight2S, tail_light, reverse_light, textured_reflector, indicator_left/right, hidhead, oldhead, slorange, drlwhite, detail_glass_red, detail_glass_clear | Lights | textured | textured | host **Lights** (stride 32, UV1 = UV0) |
+| taillight2S, tail_light, reverse_light, textured_reflector, indicator_left/right, hidhead, oldhead, slorange, drlwhite, detail_glass_red, detail_glass_clear | Lights | textured | textured | host **Lights** (stride 32, UV1 = UV0); `detail_glass_*` lenses are glass in Forza and get the lamp behind them baked in (`lights.md`, "Lamp lenses drawn opaque") |
 | fogred | Lights | swatch | textured | host Lights, solid cell |
 | tire | global | tiling | tyre | shared TYRE (unwrapped onto the stock tread and sidewall, `research/wheels.md`) |
 | rim, chrome_rim, outer_rim, inner_rim, wheel_black, wheel_emblem (`wheel` section) | the car's `wheel.xds` | textured (inner_rim sometimes a swatch) | textured | host **Chassis**, in the wheel MODL part (`wheels.md`, "Rim textures") |
@@ -523,7 +523,9 @@ the scoops stays on the atlas (`img/trim-art-veyron-ingame-before-after.jpg`).
    the full entry, MDXN 0xf6000 to 0x11c800); a material with an alpha test
    would cost none.
 3. Headlight glass uses shared GLASS, so the lamp internals show through it.
-   Whether DSF's glass is transparent enough is unchecked.
+   Whether DSF's glass is transparent enough is unchecked. `detail_glass_*`
+   lenses are opaque Lights texels with the lamp behind baked in
+   (`lights.md`, "Lamp lenses drawn opaque").
 4. Done: the interior entry (N+1000) gets the converted
    `<car>_cockpit.carbin` by default (`cockpit.md`; `port_car.py
    --no-cockpit` keeps the host's).

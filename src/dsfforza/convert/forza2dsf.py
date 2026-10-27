@@ -1920,6 +1920,8 @@ def convert(
         )
         layout.update(tex_full.layout)
         layout.update(tex_ext.layout)
+        if tex_full.texturing.lens_report:
+            report["lenses"] = tex_full.texturing.lens_report
 
     # Cockpit: fit the Forza cockpit and find the host's steering-wheel node first,
     # so the body's steering wheel can be skinned to it as well.
@@ -2007,7 +2009,13 @@ def convert(
         from dsfforza.convert import lights
 
         lenses = tex_full.texturing.lens_subs if tex_full is not None else frozenset()
-        texel = lights.texel_sampler(tex_full.texturing.atlases) if tex_full is not None else None
+        # Lens colours from Forza's own texels: the atlas copy the texturing drew from has
+        # the lamps behind the lenses baked into them (src/dsfforza/convert/lenses.py).
+        texel = None
+        if tex_full is not None:
+            from dsfforza.convert import forza_materials as fm
+
+            texel = lights.texel_sampler(fm.AtlasCache(car.folder))
         lamps = lights.LampPlan.build(car.body, place, axle_mid, lenses, texel).assign(
             payload(stream, child(child(full, "NONR"), "UPVH"))
         )
