@@ -1012,6 +1012,49 @@ The 85 left are rear reverse (45) and rear fog lamps (32) and a few
 indicators on hosts with fewer rear entries than the car has rear lamps;
 they light, and break with the front.
 
+### Tail lamps with the broken-lamp pattern (issue #141)
+
+Symptom (user and player reports on 0.1.0 to master 18ea3c9): tail lamps showed dark
+blobs over the red on cars that looked undamaged (Veyron, X5 M, 300C, G37 one lamp);
+on the Cee'd only the third brake lamp lit when braking.
+
+Two causes, both confirmed in game (VM runs `vm1-20261027-231606` and `-233632` on
+master, `vm1-20261027-231924` on the #132 branch, `vm1-20261027-233940` on the branch
+with the lens fix; cars 304 to 308 = Veyron, X5 M, 300C, G37, Cee'd; a debug module
+logged `FUN_008A78E0`'s lamp objects, below):
+
+1. **Tail lamps on front light entries (#132's mapping).** A lamp object's broken bit
+   (flags bit 0, set only by `0x8E65B0` from the break walk `0x8E84A0`) is the colour's
+   w: the Lights shader then multiplies the lamp's diffuse and glow by the damage
+   decal's alpha at UV1 (the three-blob tile; GPCH 130's pixel shader:
+   `cmp r3.xyz, 0.005 - w, texel, texel * decal.a`), and `0x8E6760` keeps a broken lamp
+   dark. On master 659 tail and brake lamps of 317 cars hung under front records, so a
+   nose-first bump broke them: the Veyron's lamps 12 and 13 after a `+hitfront`
+   (flags 0x29F, brightness 0) while its rear lamps on rear entries stayed lit; the
+   Cee'd's tails sat on entries 13 and 14 (front), which is why only its third brake lamp
+   lit. Nothing breaks at spawn: with no hit, `0x8E84A0` is never called and every lamp
+   object's bit 0 is clear (run 231606, call 1 of each car). With the #132 assignment
+   (`LampPlan.assign`) 2 tail/brake lamps on 2 cars are left on front entries
+   (CHE_CorvetteGrandSport_96, LEX_SC430_02); in game the Veyron's tails stay lit after
+   the front hit (lamps 1, 3, 4, 6 flags 0x9E, brightness 1) and break with the rear
+   one, and its head lamps no longer break with the rear (master: lamps 5, 6 bit 0 set
+   after `+hitrear`; branch: 14, 15 clear).
+2. **A lens stretched over a tint swatch (X5 M).** Its red tail glass (`glassLTL`,
+   `glassRTL`, `trunk` `detail_glass_red`) samples a 17 x 14 texel swatch of flat red
+   (202 texels over 756 cm2, 19 mm a texel on the car). `lenses.bake` casts one ray per
+   block of texels, so each swatch texel got one random part of the lamp behind: a
+   pink-and-black mosaic, the dark blobs seen at rest (offline: `car_render` of the
+   built car shows it without any lamp state). Fix (`lenses._scrambled`): a lens whose
+   texels are coarse (over 6 mm) keeps its own texels where lens points over 3 cm apart
+   (|x|) share one, all of them when that is most of the lens. Roster (lens subsections
+   of the 573 cars at their finest LOD): 14 cars change, 2,378 texels (X5 M whole lenses;
+   Charger SRT8 12, Viper CC, Ultima GTR, MP4-12C, Scirocco and 8 more in part); the
+   X5 M's tails are Forza's flat red in game (`img/taillamps-x5m-swatch-ingame.jpg`).
+
+The Veyron's speckled round lamps by day (master and branch alike, also offline) are
+its red ring texture through the red alpha curve, not broken lamps; the 300C's and
+G37's tails look right at rest on both builds.
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and
