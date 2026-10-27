@@ -261,10 +261,10 @@ static Rig* rig_for_locked(const uint8_t* skel, bool body)
         if (!s.skel) { r = &s; break; }
     if (!r) return nullptr;   // more skeletons than slots: leave the rest alone
     memset(r, 0, sizeof *r);
+    r->skel = skel;   // find_arm reads the joint names through it
     r->n = *(const int*)(skel + 0x24);
     r->body = body;
     if (r->n < (body ? 8 : 46) || r->n > 64) {
-        r->skel = skel;
         dsf_log("hands: %s skeleton %p has %d joints; hands left alone", body ? "occupant" : "arms", skel, r->n);
         return nullptr;
     }
@@ -281,7 +281,6 @@ static Rig* rig_for_locked(const uint8_t* skel, bool body)
     // body is rooted at the hips.
     r->ok = arms && (body ? !r->arm[0].hanging && !r->arm[1].hanging
                           : r->arm[0].hand >= 2 && r->arm[0].hand <= 23 && r->arm[1].hand >= 24 && r->arm[1].hand <= 45);
-    r->skel = skel;
     dsf_log("hands: %s skeleton %p, %d joints: right hand/forearm/arm/shoulder %d/%d/%d/%d, left %d/%d/%d/%d%s%s",
             body ? "occupant" : "arms", skel, r->n, r->arm[0].hand, r->arm[0].fore, r->arm[0].arm, r->arm[0].shoulder,
             r->arm[1].hand, r->arm[1].fore, r->arm[1].arm, r->arm[1].shoulder,
@@ -520,6 +519,24 @@ static void __fastcall body_task_hook(void* self, void*, void* slot, void* a2, v
 
 static void body_probe(uint8_t* slot, uint8_t* body, const Rig* rig, const Xf* skin, const Rim* rim);
 
+// The queue carries every character FUN_00568590 draws, pedestrians too (their +0x360 is
+// no vehicle). Occupants come from the character manager's pool ([[0x00FE7228]+0x2A8]
+// + 0x8B540, FUN_0055A250 -> FUN_0055B2D0): 0x90 items of 0x39C bytes from +8.
+static const uint32_t kEngine = 0x00FE7228;
+static const uint32_t kOccupantPool = 0x8B540, kOccupantSize = 0x39C, kOccupants = 0x90;
+
+static bool is_occupant(const uint8_t* body)
+{
+    const uint8_t* engine = *(const uint8_t* const*)kEngine;
+    if (!body || !engine) return false;
+    const uint8_t* mgr = *(const uint8_t* const*)(engine + 0x2A8);
+    if (!mgr) return false;
+    const uint8_t* base = mgr + kOccupantPool + 8;
+    if (body < base) return false;
+    uint32_t off = (uint32_t)(body - base);
+    return off < kOccupantSize * kOccupants && off % kOccupantSize == 0;
+}
+
 static void __fastcall body_skin_hook(void* skel, void*, Xf* local, Xf* model, Xf* skin)
 {
     ((SkinBuildFn)kSkinBuild)(skel, local, model, skin);
@@ -534,7 +551,12 @@ static void __fastcall body_skin_hook(void* skel, void*, Xf* local, Xf* model, X
     // The slot (FUN_00573450): +0x144 the occupant. The occupant (FUN_00567E60): +0x00 his
     // seat marker's matrix in the car, +0x360 the vehicle, +0x364 the seat (0: the driver).
     uint8_t* body = *(uint8_t**)(slot + 0x144);
-    if (!body || !*(uint8_t**)(body + 0x360) || *(int*)(body + 0x364) != 0) return;
+    if (!is_occupant(body)) {
+        static volatile LONG others = 0;
+        if (g_debug && InterlockedIncrement(&others) <= 3) dsf_log("hands: queued character %p is no vehicle occupant", body);
+        return;
+    }
+    if (!*(uint8_t**)(body + 0x360) || *(int*)(body + 0x364) != 0) return;
     Rim rim;
     bool has_rim = body_rim(body, &rim);
     DWORD now = GetTickCount();
@@ -838,6 +860,34 @@ int mod_hands_selftest()
             printf("hands selftest occupant r %.2f drop %.2f: fist %.4f (off %.4f), shoulder moved %.4f\n", r, drop, radial,
                    off, len(sub(S, at[2])));
         fails += !ok;
+    }
+    // A full-body skeleton as the game keeps it (joint records of 0x70 bytes from +0x54:
+    // parent, name hash, inverse bind at +0x2C), rooted at the hips: rig_for finds both
+    // arms by name, not hanging.
+    {
+        static uint8_t skel[0x80 + 0x70 * 64];
+        memset(skel, 0, sizeof skel);
+        const char* names[15] = {"Hips",          "RightShoulder", "RightArm",       "RightArmRoll", "RightForeArm",
+                                 "RightHand",     "RightHandIndex1", "LeftShoulder", "LeftArm",      "LeftArmRoll",
+                                 "LeftForeArm",   "LeftHand",      "LeftHandIndex1", "Spine",        "Head"};
+        const int parent[15] = {-1, 13, 1, 2, 2, 4, 5, 13, 7, 8, 8, 10, 11, 0, 13};
+        *(int*)(skel + 0x24) = 15;
+        for (int j = 0; j < 15; j++) {
+            uint8_t* rec = skel + 0x54 + 0x70 * j;
+            *(int*)rec = parent[j];
+            *(uint32_t*)(rec + 4) = name_hash(names[j]);
+            Xf* ib = (Xf*)(rec + 0x2C);
+            *ib = {{0, 0, 0, 1}, {-0.01f * j, -0.02f * j, 0, 0}};
+        }
+        if (!g_lock_ok) InitializeCriticalSection(&g_lock), g_lock_ok = true;
+        Rig* r = rig_for(skel, true);
+        bool ok = r && r->arm[0].hand == 5 && r->arm[0].fore == 4 && r->arm[0].arm == 2 && r->arm[0].shoulder == 1 &&
+                  r->arm[1].hand == 11 && !r->arm[0].hanging && r->arm[0].group[6] == kHand && r->arm[0].group[3] == kUpper &&
+                  len(sub(r->bind[5], {0.05f, 0.10f, 0})) < 1e-5f;
+        if (!ok) printf("hands selftest: the occupant skeleton's arms not found\n");
+        fails += !ok;
+        for (Rig& x : g_rigs)
+            if (x.skel == skel) memset(&x, 0, sizeof x);
     }
     return fails;
 }
