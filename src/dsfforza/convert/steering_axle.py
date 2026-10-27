@@ -25,6 +25,12 @@ LOD for the chase views; cockpit.fit_wheel_points) and reports:
   (p95 radius, p87 centre along the column; by ASI_MAX_MOVE at most, the
   plugin's default), and `asi_rim` how far that rim is from the drawn one
   (centre distance plus radius difference).
+- the chase views' grips: the driver there is a full-body occupant posed in the
+  driver seat marker's frame, his grips the same circle about the stock
+  steering marker's place in that frame (seat_grips). The same `grip_stock`,
+  `grip_asi` (dsfforza.asi [hands] moves him too since issue #117) and
+  `turn_off`, how far from the rim's column the animations turn his hands
+  while steering (the hands slide along the rim by up to that).
 
     uv run dsff steering_axle out/final4/dngvehicles.sp --out out/axle/final4.tsv
     uv run dsff steering_axle out/stock/Install/dngvehicles.sp --stock
@@ -113,16 +119,29 @@ def asi_grip(grip, rim) -> tuple:
     return cockpit._add(grip, delta)
 
 
-def grip_error(anchor, drawn: dict, asi_rim) -> dict:
-    """The hand rig's grips at `anchor` against the drawn rim, without and with
-    dsfforza.asi (asi_rim: the rim from the car's VO3D, or None for a car without it)."""
+def seat_grips(seat, quat) -> list[tuple]:
+    """Where the chase views' driver (the full-body occupant, posed in his seat marker's
+    frame) grips: the stock grips about the stock steering marker's place in that frame
+    (cockpit.STOCK_MARKER_FROM_SEAT), turned and placed by the seat marker."""
+    return [
+        cockpit._add(seat, cockpit.quat_rotate(quat, g)) for g in cockpit.hand_grips(cockpit.STOCK_MARKER_FROM_SEAT)
+    ]
+
+
+def grip_error(anchor, drawn: dict, asi_rim, grips=None) -> dict:
+    """The hand rig's grips at `anchor` (or `grips`) against the drawn rim, without
+    and with dsfforza.asi (asi_rim: the rim from the car's VO3D, or None for a car
+    without it). `turn_off`: how far from the drawn rim's column the grips turn while
+    steering (the animations turn them about `anchor`), in the rim's plane."""
     rim = (drawn["centre"], cockpit._norm(drawn["axis"]), drawn["radius"])
 
     def miss(p):
         return math.dist(p, cockpit._rim_nearest(p, *rim))
 
-    grips = cockpit.hand_grips(anchor)
-    out = {"grip_stock": max(miss(g) for g in grips)}
+    grips = grips or cockpit.hand_grips(anchor)
+    d = cockpit._sub(anchor, rim[0])
+    d = cockpit._sub(d, cockpit._scale(rim[1], cockpit._dot(d, rim[1])))
+    out = {"grip_stock": max(miss(g) for g in grips), "turn_off": math.sqrt(cockpit._dot(d, d))}
     out["grip_asi"] = max(miss(asi_grip(g, asi_rim)) for g in grips) if asi_rim else out["grip_stock"]
     if asi_rim:
         out["asi_rim"] = math.dist(asi_rim[0], rim[0]) + abs(asi_rim[2] - rim[2])
@@ -158,6 +177,12 @@ def survey_vehicle(archive: Path, stream, root, spool_id: int) -> dict:
         engine_dir = cockpit.quat_rotate(q, (0.0, 0.0, 1.0))  # spec + 0x37F0
         along = vo3d.params.get(cockpit.GRIP_ALONG_PARAM, 0.0)
         asi_rim = (cockpit._add(marker, cockpit._scale(engine_dir, along)), cockpit._norm(engine_dir), radius)
+    # The chase views' driver sits on the driver seat marker (role 10, cockpit.patch_seats).
+    seats = cockpit.seat_markers(data)
+    seat = None
+    if cockpit.DRIVER_SEAT_ROLE in seats:
+        raw = h.table("markers")[seats[cockpit.DRIVER_SEAT_ROLE]]
+        seat = (struct.unpack_from("<3f", raw), struct.unpack_from("<4f", raw, 0x10))
     index = {id(e): n for n, e in enumerate(root.entries)}
     for kind, view in ((1, "cockpit"), (0, "chase")):
         if kind not in kinds:
@@ -176,6 +201,10 @@ def survey_vehicle(archive: Path, stream, root, spool_id: int) -> dict:
         row[view] = turn_error(pts, pivot, direction, hinge_axis)
         if view == "cockpit":
             row[view].update(grip_error(anchor, row[view], asi_rim))
+        elif seat is not None:
+            pos, quat = seat
+            at = cockpit._add(pos, cockpit.quat_rotate(quat, cockpit.STOCK_MARKER_FROM_SEAT))
+            row[view].update(grip_error(at, row[view], asi_rim, seat_grips(pos, quat)))
     return row
 
 
@@ -222,6 +251,7 @@ def summary(rows: list[dict], view: str) -> None:
         ("grip_stock", "grips off the rim, stock hands"),
         ("grip_asi", "grips off the rim, with dsfforza.asi [hands]"),
         ("asi_rim", "dsfforza.asi's rim vs the drawn rim"),
+        ("turn_off", "the hands' turn centre off the drawn rim's column"),
     ):
         have = [r for r in ok if key in r[view]]
         if not have:
@@ -280,7 +310,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"{len(errors)} skipped")
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        measures = ("off", "along", "tilt", "hinge_tilt", "radius", "grip_stock", "grip_asi", "asi_rim")
+        measures = ("off", "along", "tilt", "hinge_tilt", "radius", "grip_stock", "grip_asi", "asi_rim", "turn_off")
         keys = ["id", "name", "host", "error"] + [f"{view}_{k}" for view in ("cockpit", "chase") for k in measures]
         with args.out.open("w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, keys, delimiter="\t", extrasaction="ignore")

@@ -1978,16 +1978,15 @@ def convert(
                     host_cp = cockpit.host_cockpit(payload(stream, child(child(full, "NONR"), "UPVH")))
                     skin = {"steering_wheel": host_cp.wheel_skin}
                     # The hands grip the cockpit's wheel in every view; the chase views draw
-                    # the main carbin's, which Forza models elsewhere (up to 17 cm away),
-                    # scaled to the chase-view driver's grips (cockpit.chase_wheel_scale).
+                    # the main carbin's, which Forza models elsewhere (up to 17 cm away): it
+                    # goes onto the cockpit wheel, at its size (dsfforza.asi [hands] moves the
+                    # chase views' driver onto that rim too).
                     import dataclasses
-
-                    chase_wheel = cockpit.Wheel(cf.wheel.centre, cf.wheel.axis, cf.wheel.radius * cf.chase_wheel_scale)
 
                     body = []
                     for section in car.body:
                         if section.name == "steering_wheel":
-                            aligned, wheel_report = cockpit.align_main_wheel(section, chase_wheel)
+                            aligned, wheel_report = cockpit.align_main_wheel(section, cf.wheel)
                             report["main_steering_wheel"] = wheel_report
                             log(
                                 f"main-carbin steering wheel: moved {wheel_report.get('move')} m, turned "
@@ -2221,9 +2220,9 @@ def convert(
             hier["gauges_added"] = gauges_added
         eye = place.point(cf.eye)
         # The driver model sits on the seat marker (role 10) and its hands hold the wheel
-        # only where stock cars have it from the seat: the seat goes where its grips
-        # land on Forza's rim (steering.seat_anchor, cockpit.seat_anchor).
-        upvh.payload, hier["seats"] = cockpit.patch_seats(upvh.payload, eye, hier["steering"]["seat_anchor"])
+        # where stock cars have the steering marker from the seat: the seat goes there,
+        # so his hands turn about the wheel's column (dsfforza.asi [hands] puts them on the rim).
+        upvh.payload, hier["seats"] = cockpit.patch_seats(upvh.payload, eye)
         # The raise stops before the cluster's cowl hides the needles the Forza eye sees.
         drawn = [
             s for n, s in cf.static.items() if n not in cockpit.SKIP_SECTIONS and not cockpit.LIGHT_SECTIONS.search(n)

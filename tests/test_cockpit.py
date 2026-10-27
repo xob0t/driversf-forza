@@ -313,29 +313,28 @@ def test_grip_params_give_dsfforza_asi_the_drawn_rim():
     assert set(cockpit.hand_params()) == set(cockpit.HAND_PARAMS)  # no steering report: p538/p559 only
 
 
-def test_chase_wheel_keeps_its_size_unless_the_chase_hands_miss():
-    # dsfforza.asi moves only the cockpit arms; the chase-view driver's grips sit
-    # 0.17 m from the column, so the chase views' wheel is scaled as PR #90 scaled
-    # every wheel: only past HAND_FIT_TOLERANCE, within WHEEL_SCALE_RANGE.
-    side = (0.0, 0.0, 0.0)
-    axis = cockpit._norm(cockpit.STOCK_COLUMN)
-    for radius in (0.165, cockpit.STOCK_RIM_RADIUS, 0.190, 0.200):  # hatchback, stock, ..., Regal GNX
-        k = cockpit.chase_wheel_scale(side, axis, radius)
-        shift = cockpit.hand_shift(side, axis, radius * k)
-        assert cockpit.hand_grip_error(shift, side, axis, radius * k) <= cockpit.HAND_FIT_TOLERANCE + 1e-4, radius
-        assert k == 1.0 or abs(k - 1) < 0.05, (radius, k)
-    k = cockpit.chase_wheel_scale(side, axis, 0.114)  # ARX-01b
-    assert 1.2 < k <= cockpit.WHEEL_SCALE_RANGE[1]
+def test_chase_driver_turns_his_hands_about_the_column():
+    # The chase views' driver is posed in his seat's frame and grips the stock circle
+    # about the stock steering marker's place there. patch_seats puts that place on the
+    # steering marker, on the hub's column (hand_shift), so the animations turn his hands
+    # about the wheel's own column, as the cockpit arms' (dsfforza.asi [hands] then moves
+    # both onto Forza's rim, which keeps its size in every view).
+    from dsfforza.convert import steering_axle
 
-
-def test_seat_anchor_puts_the_grips_on_the_rim():
-    # The chase view's driver holds the wheel at the stock point of the seat's frame;
-    # the seat goes where those grips land on the drawn rim (in-plane shift allowed).
-    side = (0.0, 0.0, 0.0)
-    axis = cockpit._norm(cockpit.STOCK_COLUMN)
-    for radius in (0.150, 0.200):
-        anchor = cockpit.grip_shift(side, axis, radius)
-        assert cockpit.hand_grip_error(anchor, side, axis, radius) < 0.003, radius
+    tilt = (-0.0436, 0.0, 0.0, 0.999)  # a seat 5 degrees down (host 193)
+    for deg, radius in ((24.0, 0.114), (10.0, cockpit.STOCK_RIM_RADIUS), (30.0, 0.220)):  # ARX-01b, Raptor, bus
+        t = math.radians(deg)
+        axis = (0.0, math.sin(t), -math.cos(t))
+        centre = (0.37, 0.55, 0.30)
+        marker = cockpit._add(centre, cockpit.hand_shift(centre, axis, radius))
+        seat = cockpit.seat_for_marker(marker, tilt)
+        anchor = cockpit._add(seat, cockpit.quat_rotate(tilt, cockpit.STOCK_MARKER_FROM_SEAT))
+        drawn = {"centre": centre, "axis": axis, "radius": radius}
+        grips = steering_axle.seat_grips(seat, tilt)
+        err = steering_axle.grip_error(anchor, drawn, (centre, cockpit._norm(axis), radius), grips)
+        assert err["turn_off"] < 1e-6, deg
+        assert err["grip_asi"] < 1e-6, err
+        assert err["grip_stock"] > 0.005 or radius == cockpit.STOCK_RIM_RADIUS, err
 
 
 def test_hand_shift_keeps_the_hinge_on_the_column():

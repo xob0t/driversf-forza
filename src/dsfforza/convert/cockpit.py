@@ -642,7 +642,6 @@ class CockpitFit:
     camera: tuple | None = None  # final head camera (Forza space), set by forza2dsf after camera_eye
     display_faces: int = 0  # digital_gauge triangles drawn textured (display_face)
     virtual: dict = field(default_factory=dict)  # virtual_gauges report: dials drawn on a blank display
-    chase_wheel_scale: float = 1.0  # the chase views' (main-carbin) wheel only: chase_wheel_scale()
 
 
 # Main-carbin sections that make a cockpit when the cockpit carbin is a stub.
@@ -1164,13 +1163,9 @@ def fit(
             source = "cockpit; steering wheel from the main carbin"
     else:
         wheel_source = "cockpit" if lod0 else "main carbin"
-    # Forza's wheel keeps its size: dsfforza.asi [hands] moves the cockpit hands onto its rim
-    # (grip_params). The chase views' driver isn't moved by it yet: their wheel is scaled to him.
+    # Forza's wheel keeps its size in every view: dsfforza.asi [hands] moves the driver's
+    # hands onto its rim (grip_params), the cockpit arms and the chase views' driver alike.
     wheel = fit_wheel(static["steering_wheel"])
-    from dsfforza.convert import forza2dsf
-
-    turn = forza2dsf.Placement(0.0, 0.0)
-    chase_scale = chase_wheel_scale(turn.point(wheel.centre), turn.normal(wheel.axis), wheel.radius)
     gauges = {}
     for family, poses in needles.items():
         g = fit_gauge(family, poses)
@@ -1229,7 +1224,6 @@ def fit(
         dropped,
         display_faces=faces,
         virtual=virtual_report,
-        chase_wheel_scale=chase_scale,
     )
 
 
@@ -1398,7 +1392,6 @@ STOCK_RIM_RADIUS = 0.176
 STOCK_COLUMN = (0.0, 0.410, -0.912)  # DSF model space, towards the driver
 HAND_GRIP_DEG = 45.0
 MAX_HAND_ALONG = 0.12  # m, along the column (no orbit; the driver model moves with it)
-MAX_SEAT_SHIFT = 0.06  # m, in the wheel plane: grip_shift for the seat (the chase view's driver)
 
 
 def _rim_nearest(p, centre, axis, radius):
@@ -1442,101 +1435,6 @@ def hand_shift(centre, axis, radius) -> tuple[float, float, float]:
         t += _dot(_mean(moves), axis)
     t = max(-MAX_HAND_ALONG, min(MAX_HAND_ALONG, t))
     return _scale(axis, t)
-
-
-def grip_shift(centre, axis, radius) -> tuple[float, float, float]:
-    """Translation (y and z) from the wheel centre that puts the stock grips on
-    the rim (least squares), with the in-plane part capped at MAX_SEAT_SHIFT and
-    the part along the column at MAX_HAND_ALONG. Not for the hinge (the wheel
-    would turn about an off-hub point): it places the driver's seat, whose
-    animated driver holds the wheel at the stock point of the seat's frame in
-    the chase views (seat_anchor, patch_seats). The same translation placed the
-    hinge and marker before 2026-10-26."""
-    axis = _norm(axis)
-    grips = hand_grips(centre)
-    shift = (0.0, 0.0, 0.0)
-    for _ in range(8):
-        moves = [_sub(_rim_nearest(_add(g, shift), centre, axis, radius), _add(g, shift)) for g in grips]
-        shift = _add(shift, _mean(moves))
-        shift = (0.0, shift[1], shift[2])
-    along = _scale(axis, _dot(shift, axis))
-    plane = _sub(shift, along)
-    n = math.sqrt(_dot(plane, plane))
-    if n > MAX_SEAT_SHIFT:
-        plane = _scale(plane, MAX_SEAT_SHIFT / n)
-    n = math.sqrt(_dot(along, along))
-    if n > MAX_HAND_ALONG:
-        along = _scale(along, MAX_HAND_ALONG / n)
-    shift = _add(plane, along)
-    return (0.0, shift[1], shift[2])
-
-
-SEAT_FIT_TOLERANCE = 0.005  # m
-SEAT_SCALE_RANGE = (0.8, 1.3)
-
-
-def seat_anchor(centre, axis, forza_radius) -> tuple[float, float, float]:
-    """Where the driver's seat holds the wheel (patch_seats): the point whose
-    stock grips land on Forza's rim, as the hinge and marker were placed up to
-    2026-10-26 (grip_shift on the rim scaled the way it was then: by 0.8 to 1.3
-    where that shift left the grips over 5 mm off). Kept so fixing the hinge
-    doesn't move the driver model: the chase-view hands stay where they held
-    the wheel, and the head room stays."""
-    axis = _norm(axis)
-    k = 1.0
-    for _ in range(6):
-        pivot = _add(centre, grip_shift(centre, axis, forza_radius * k))
-        if hand_grip_error(pivot, centre, axis, forza_radius * k) <= SEAT_FIT_TOLERANCE:
-            break
-        reach = []
-        for g in hand_grips(pivot):
-            d = _sub(g, centre)
-            d = _sub(d, _scale(axis, _dot(d, axis)))
-            reach.append(math.sqrt(_dot(d, d)))
-        new = min(SEAT_SCALE_RANGE[1], max(SEAT_SCALE_RANGE[0], sum(reach) / len(reach) / forza_radius))
-        if abs(new - k) < 1e-4:
-            break
-        k = new
-    return _add(centre, grip_shift(centre, axis, forza_radius * k))
-
-
-# The chase views' driver (a full-body occupant, not the cockpit arms) holds the stock
-# grips at the seat's anchor (seat_anchor) and dsfforza.asi doesn't move him yet (issue
-# #117): the main-carbin wheel he holds is scaled as PR #90 scaled every wheel,
-# only where his grips would miss Forza's rim by more than HAND_FIT_TOLERANCE, and only
-# that far, within WHEEL_SCALE_RANGE.
-HAND_FIT_TOLERANCE = 0.02  # m
-WHEEL_SCALE_RANGE = (0.85, 1.3)
-
-
-def hand_reach(centre, axis, radius) -> float:
-    """Mean distance of the stock grips from the column, in the wheel plane, with
-    the hinge at centre + hand_shift: the rim radius the hands hold."""
-    axis = _norm(axis)
-    reach = []
-    for g in hand_grips(_add(centre, hand_shift(centre, axis, radius))):
-        d = _sub(g, centre)
-        d = _sub(d, _scale(axis, _dot(d, axis)))
-        reach.append(math.sqrt(_dot(d, d)))
-    return sum(reach) / len(reach)
-
-
-def chase_wheel_scale(centre, axis, radius) -> float:
-    """Scale of the chase views' copy of the Forza wheel (align_main_wheel) for the
-    stock grips of the chase-view driver: 1 unless they would miss its rim by more
-    than HAND_FIT_TOLERANCE, then just enough to bring them that close, within
-    WHEEL_SCALE_RANGE (PR #90's rule for every wheel; the cockpit wheel keeps
-    Forza's size)."""
-    axis = _norm(axis)
-    k = 1.0
-    for _ in range(6):
-        reach = hand_reach(centre, axis, radius * k)
-        target = min(reach + HAND_FIT_TOLERANCE, max(reach - HAND_FIT_TOLERANCE, radius))
-        new = min(WHEEL_SCALE_RANGE[1], max(WHEEL_SCALE_RANGE[0], target / radius))
-        if abs(new - k) < 1e-4:
-            break
-        k = new
-    return k
 
 
 def hand_grip_error(pivot, centre, axis, radius) -> float:
@@ -1605,7 +1503,6 @@ def patch_hierarchy(upvh_data: bytes, host: HostCockpit, place, cf: CockpitFit) 
     struct.pack_into("<3f", data, marker_at, *pivot)
     struct.pack_into("<4f", data, marker_at + 0x10, *q)
     along = _dot(shift, axis)
-    seat = seat_anchor(centre, axis, cf.wheel.radius)
     report["steering"] = {
         "record": host.wheel_record,
         "hinge": host.wheel_hinge,
@@ -1614,9 +1511,7 @@ def patch_hierarchy(upvh_data: bytes, host: HostCockpit, place, cf: CockpitFit) 
         "axis": [round(c, 4) for c in axis],
         "radius": round(cf.wheel.radius, 4),
         "skin": list(host.wheel_skin),
-        "seat_anchor": [round(c, 5) for c in seat],  # patch_seats: where the driver model holds the wheel
         "hands": {
-            "chase_wheel_scale": round(cf.chase_wheel_scale, 3),
             "shift": [round(c, 4) for c in shift],
             "along_column": round(along, 4),
             "in_plane": round(math.sqrt(max(0.0, _dot(shift, shift) - along * along)), 4),
@@ -1715,9 +1610,11 @@ def patch_seats(upvh_data: bytes, eye_dsf=None, anchor=None) -> tuple[bytes, dic
     model) so `anchor` (default: the steering marker) sits where the steering
     marker does in stock cars, in the seat's frame (STOCK_MARKER_FROM_SEAT), and
     the passenger's (role 11) to the mirrored x at the same height and depth.
-    patch_hierarchy reports the anchor (steering.seat_anchor, seat_anchor()). Call after patch_hierarchy with VO3D
-    p538/p559 at zero (hand_params). The marker
-    quaternions (seat tilt) stay the host's. `eye_dsf` (the head camera) only goes
+    The driver model's animations then turn his hands about the wheel's column,
+    as the cockpit arms do, and dsfforza.asi [hands] moves them onto the rim
+    (research/cockpit.md, "Hands in the chase views"). Call after patch_hierarchy
+    with VO3D p538/p559 at zero (hand_params). The marker quaternions (seat tilt)
+    stay the host's. `eye_dsf` (the head camera) only goes
     into the report, against the driver model's eyes."""
     from dsfforza.formats import upvh
 
