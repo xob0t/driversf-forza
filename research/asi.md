@@ -15,6 +15,7 @@ when `-Asi` is given. Evidence tags as in `dngvehicles.md`.
 | `garage` | garage list IDs 0..303 → 0..999, 40 → 120 maker groups, 20 → any number of cars per maker group (the vehicles screen's 20 cards become a moving window), save flags for IDs 304..999 | [Garage and save](#garage-and-save) |
 | `hud` | HUD/Shift/garage-shop maker badge and model plate: one-byte glyph codes → 16-bit (`ManufacturerGlyph`/`ModelGlyph`); garage card emblem: Forza logo instead of the SF disc (`GarageEmblem`) | [HUD badges and plates](#hud-badges-and-plates) |
 | `lua` | the game's Lua heap: one fixed 10 MB block → overflows into a private heap when full | [Lua heap](#lua-heap) |
+| `hands` | the cockpit arms grip DSF's 0.177 m circle → each ported car's rim (VO3D p95/p87), arm through a two-bone IK | [Hands on the rim](#hands-on-the-rim) |
 
 Every module checks the original bytes of each site before patching and
 patches nothing of a feature when one site differs (another mod, another exe
@@ -676,3 +677,40 @@ Module `lua` (`tools/asi/src/mod_lua.cpp`). Issue #56; runs and symptoms in
 | `vm1-20261026-145055` | 32 MB + overflow | 63 maker rows opened: Lua peak 9 MB, nothing refused, no fault |
 | `vm1-20261026-142558` | 32 MB + overflow, stock archive | the issue's browse: Lua peak 6 MB, no fault |
 | `vm1-20261026-152238` | the same, rebased on master | the issue's browse: Lua peak 9 MB, nothing refused, no fault |
+
+## Hands on the rim
+
+Module `hands` (`tools/asi/src/mod_hands.cpp`, issue #99). The arms rig, the
+pose buffer and the probe that measured them are in `cockpit.md`, "Hands on
+Forza's rim".
+
+- **Hook:** the call at 0x005676FF (`E8 BC 92 2F 00`, FUN_005676B0 -> FUN_008609C0)
+  goes to `eval_hook`, which calls the graph evaluation and then edits the pose
+  buffer 0x01214400 before FUN_00566FD0 counter-turns and draws it. It needs
+  FUN_00BC9E90 (transform compose, used for every rotation) to start with
+  `83 EC 30 56 57`; else nothing is patched.
+- **Per car:** the vehicle (arms +0x348) -> +0x53C -> +8 -> +0xAA4 is the spec
+  (FUN_008CE300). VO3D p95 is the rim radius, p87 the rim centre from the steering
+  marker along the column direction (spec + 0x37F0). Both IDs are "unused" in the
+  type table at 0x00F3E450, no code reads them, and no stock VO3D sets them.
+  `cockpit.grip_params` writes them; a car without p95 (every stock car) is left
+  alone.
+- **Per hand:** the fist is the wrist and its 15 finger joints. It moves to the
+  nearest point of the rim, by at most `max_move_mm` (100). The weight is 1 while
+  the fist is within `near_mm` (40) of the animations' grip circle or of the rim,
+  fading to 0 at `far_mm` (90): a hand over the top while turning hand over hand,
+  or one at the gear stick, stays where the animation puts it. The release
+  weights (+0x350 right, +0x34C left) scale it too.
+- **Arm:** a two-bone IK. The shoulder stays, the elbow stays in the arm's bend
+  plane, both bones keep their length, and the hand is translated (its grip keeps
+  its orientation). The joints are found by name (`RightHand`, `RightForearm`,
+  `RightArm`, `RightShoulder`, and Left), so a skeleton without them is left alone.
+- **Offline** (`build.ps1 -Test`): the call site is patched; `mod_hands_selftest`
+  checks the quaternion convention against FUN_00BC9E90 in the mapped image, moves
+  a synthetic hanging arm onto rims 13% larger and 15% smaller (fist on the rim to
+  1 mm, shoulder fixed, bone lengths kept), and leaves a hand off the wheel alone.
+- `[hands] debug=1` logs the skeleton (joint records), every 1.5 s the pose
+  buffer, the steering matrices and the car's marker and grip parameters, and each
+  hand's grip, miss and move. A joint's position is its skin transform applied
+  to its bind position, the inverse bind's inverse applied to the origin.
+

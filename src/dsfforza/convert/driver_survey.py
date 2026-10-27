@@ -139,7 +139,7 @@ def survey_car(media: str, host: int, stream, root) -> dict:
     centre = SIDE.point(cf.wheel.centre)
     axis = cockpit._norm(SIDE.normal(cf.wheel.axis))
     radius = cf.wheel.radius
-    pivot = cockpit.seat_anchor(centre, axis, radius / cf.wheel_scale)  # where patch_seats puts the seat
+    pivot = cockpit.seat_anchor(centre, axis, radius)  # where patch_seats puts the seat
     eye = SIDE.point(cf.eye)
     quat = seat_info["quat"]
     # Old placement (cockpit.patch_seats before): under the Forza eye, host's eye-to-seat offset.

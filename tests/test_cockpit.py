@@ -290,25 +290,42 @@ def test_wheel_fit_ignores_a_modelled_column():
         assert abs(w.radius - 0.165) < 0.01 and abs(math.degrees(math.asin(w.axis[1])) - tilt) < 2, w
 
 
-def test_rims_keep_their_size_unless_the_hands_miss():
-    # The hinge only moves along the column (an in-plane shift made the hub circle
-    # while steering: Regal GNX 3.2 cm), so the grips sit 0.17 m from the column.
-    # Forza's wheel keeps its size while they are within HAND_FIT_TOLERANCE of the
-    # rim (stock trucks: 0.20 m rims); a race yoke is scaled only that far.
+def test_grip_params_give_dsfforza_asi_the_drawn_rim():
+    # Forza's wheel keeps its size; dsfforza.asi [hands] moves the hands onto the rim
+    # it reads from VO3D: the radius, and the centre from the steering marker along
+    # the engine's column direction (the marker quaternion's +z, away from the driver).
+    t = math.radians(24.0)
+    axis = (0.0, math.sin(t), -math.cos(t))  # report axis: towards the driver
+    centre = (0.4, 0.6, 0.28)
+    for radius in (0.114, cockpit.STOCK_RIM_RADIUS, 0.220):  # ARX-01b, stock, tour bus
+        shift = cockpit.hand_shift(centre, axis, radius)
+        along = cockpit._dot(shift, axis)
+        assert math.sqrt(max(0.0, cockpit._dot(shift, shift) - along * along)) < 1e-9  # no orbit
+        marker = cockpit._add(centre, shift)
+        steering = {"axis": list(axis), "radius": radius, "hands": {"shift": list(shift)}}
+        params = cockpit.grip_params(steering)
+        assert params[cockpit.GRIP_RADIUS_PARAM] == radius
+        engine_dir = cockpit.quat_rotate(cockpit.quat_from_to((0, 0, -1), axis), (0.0, 0.0, 1.0))
+        found = cockpit._add(marker, cockpit._scale(engine_dir, params[cockpit.GRIP_ALONG_PARAM]))
+        assert math.dist(found, centre) < 1e-6, radius
+    hand = cockpit.hand_params(steering)
+    assert hand[538] == hand[559] == 0.0 and set(cockpit.GRIP_PARAMS) <= set(hand)
+    assert set(cockpit.hand_params()) == set(cockpit.HAND_PARAMS)  # no steering report: p538/p559 only
+
+
+def test_chase_wheel_keeps_its_size_unless_the_chase_hands_miss():
+    # dsfforza.asi moves only the cockpit arms; the chase-view driver's grips sit
+    # 0.17 m from the column, so the chase views' wheel is scaled as PR #90 scaled
+    # every wheel: only past HAND_FIT_TOLERANCE, within WHEEL_SCALE_RANGE.
     side = (0.0, 0.0, 0.0)
     axis = cockpit._norm(cockpit.STOCK_COLUMN)
     for radius in (0.165, cockpit.STOCK_RIM_RADIUS, 0.190, 0.200):  # hatchback, stock, ..., Regal GNX
-        k = cockpit.hand_wheel_scale(side, axis, radius)
+        k = cockpit.chase_wheel_scale(side, axis, radius)
         shift = cockpit.hand_shift(side, axis, radius * k)
         assert cockpit.hand_grip_error(shift, side, axis, radius * k) <= cockpit.HAND_FIT_TOLERANCE + 1e-4, radius
         assert k == 1.0 or abs(k - 1) < 0.05, (radius, k)
-    assert cockpit.hand_wheel_scale(side, axis, 0.180) == 1.0
-    k = cockpit.hand_wheel_scale(side, axis, 0.114)  # ARX-01b
+    k = cockpit.chase_wheel_scale(side, axis, 0.114)  # ARX-01b
     assert 1.2 < k <= cockpit.WHEEL_SCALE_RANGE[1]
-    shift = cockpit.hand_shift(side, axis, 0.114 * k)
-    along = cockpit._dot(shift, axis)
-    assert math.sqrt(max(0.0, cockpit._dot(shift, shift) - along * along)) < 1e-9  # no orbit
-    assert abs(along) <= cockpit.MAX_HAND_ALONG + 1e-9
 
 
 def test_seat_anchor_puts_the_grips_on_the_rim():
