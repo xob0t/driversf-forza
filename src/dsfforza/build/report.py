@@ -199,11 +199,9 @@ def version_text(v: dict) -> str:
 
 
 def install_logs(repo: Path) -> list[Path]:
-    """out/logs/install-*.log, newest first."""
+    """out/logs/install-<date>-<time>.log, newest first (by the name: its start time)."""
     folder = Path(repo) / "out" / "logs"
-    return (
-        sorted(folder.glob("install-*.log"), key=lambda p: p.stat().st_mtime, reverse=True) if folder.is_dir() else []
-    )
+    return sorted(folder.glob("install-*.log"), key=lambda p: p.name, reverse=True) if folder.is_dir() else []
 
 
 LOG_LINE = re.compile(r"^\[dsff install (\d\d:\d\d:\d\d)\] (.*)$")
@@ -534,7 +532,7 @@ def archive_state(game: Path, status: dict) -> str:
         if row["path"].lower() == "install\\dngvehicles.sp":
             if row.get("matches_build"):
                 return f"the dsfforza build ({size_text(size)})"
-            return f"a dsfforza install ({size_text(size)}; not the last build's archive)"
+            return f"a dsfforza install ({size_text(size)}; not its build's archive)"
     return f"not stock, not installed by dsfforza ({size_text(size)}): another mod?"
 
 
@@ -887,7 +885,11 @@ def summary_lines(r: dict) -> list[str]:
             other = [x["path"] for x in rows if x.get("matches_build") is False]
             text = f"{d.get('state')} {d.get('installed') or ''}, {d.get('cars')} cars, {len(rows)} files"
             text += f"; changed or missing: {', '.join(changed)}" if changed else "; all as installed"
-            text += f"; not the last build's: {', '.join(other)}" if other else "; same as the last build"
+            text += (
+                f"; not the files of the build it came from: {', '.join(other)}"
+                if other
+                else "; same as the build it came from"
+            )
             lines.append(f"dsfforza:   {text}")
         else:
             lines.append(f"dsfforza:   {d.get('state', 'not installed')}")
@@ -917,7 +919,7 @@ def summary_lines(r: dict) -> list[str]:
         lines += [f"              note: {n}" for n in discs.get("notes") or []]
     elif discs:
         lines.append(
-            f"Discs:      no .iso in assets ({len(discs.get('assets_folder') or [])} other files there)"
+            f"Discs:      no .iso in assets (other files there: {len(discs.get('assets_folder') or [])})"
             if discs.get("assets_folder")
             else "Discs:      none in assets"
         )

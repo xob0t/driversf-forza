@@ -259,7 +259,7 @@ def test_collect_and_zip_a_fake_setup():
         assert "v0.2.0 (release zip" in text
         assert "Driver.exe 1.04" in text
         assert "changed or missing: Common\\UserLuaScripts\\dsfforza\\hud.lua, plugins\\dsfforza.asi" in text
-        assert "not the last build's: media\\Fonts.fchunk" in text
+        assert "not the files of the build it came from: media\\Fonts.fchunk" in text
         assert "FER_F40_87: convert" in text
         assert "ASI loader dinput8.dll" in text
 
