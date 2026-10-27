@@ -1480,7 +1480,9 @@ def cmd_build(args) -> None:
 
         # This folder's own earlier pack (--resume, a rerun) and the --reuse builds'.
         settings = pack_reuse.settings_of(args, dsf, root_limit, gui_isos(args))
-        pack = pack_reuse.PackReuse(out_dir, reuse.sources if reuse is not None else [], settings)
+        pack = pack_reuse.PackReuse(
+            out_dir, reuse.sources if reuse is not None else [], settings, game_dir=game_from_dsf(dsf)
+        )
     try:
         finish(args, dsf, out_dir, work, ok, failed, port_args, port_options, timings, started, results, pack)
     finally:

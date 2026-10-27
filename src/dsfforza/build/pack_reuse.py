@@ -128,17 +128,16 @@ def same_folder(a: Path, b: Path) -> bool:
     return fingerprint.norm(a) == fingerprint.norm(b)
 
 
-def moved_inputs(fp: dict, checker: fingerprint.Checker) -> dict[str, str]:
-    r"""{recorded path: where the same file is now} for game files a pack read: the game's
-    own <game>\X before a dsfforza install, its backup <game>\dsfforza-backup\X after
-    (gui_assets.stock_file reads the backup while an install is in place), and back after
-    an uninstall."""
+def moved_inputs(fp: dict, checker: fingerprint.Checker, game_dir: Path | None) -> dict[str, str]:
+    r"""{recorded path: where the same file is now} for the files a pack read in the game
+    folder `game_dir`: the game's own <game>\X before a dsfforza install, its backup
+    <game>\dsfforza-backup\X after (gui_assets.stock_file reads the backup while an
+    install is in place), and back after an uninstall. Without a game folder: none."""
     from dsfforza.game import game_paths
 
-    try:
-        game = fingerprint.norm(game_paths.game_dir()) + os.sep
-    except Exception:
+    if game_dir is None:
         return {}
+    game = fingerprint.norm(game_dir) + os.sep
     backup = game + os.path.normcase(game_paths.BACKUP) + os.sep
     out = {}
     for path, digest in fp.get("files", {}).items():
@@ -183,8 +182,10 @@ class Earlier:
 class PackReuse:
     """The pack's reuse of earlier builds' packs (see the module docstring)."""
 
-    def __init__(self, out_dir: Path, sources: list[Path], settings: dict, log=print):
+    def __init__(self, out_dir: Path, sources: list[Path], settings: dict, log=print, game_dir: Path | None = None):
+        """`game_dir`: the game folder the build reads its stock files from (moved_inputs)."""
         self.out_dir = Path(out_dir)
+        self.game_dir = Path(game_dir) if game_dir is not None else None
         self.settings = settings
         self.log = log
         self.checker = fingerprint.Checker()
@@ -224,7 +225,7 @@ class PackReuse:
             old, new = record.get("settings") or {}, self.settings
             return "settings: " + ", ".join(k for k in sorted(set(old) | set(new)) if old.get(k) != new.get(k)), {}
         fp = record.get("fingerprint") or {}
-        moved = moved_inputs(fp, self.checker)
+        moved = moved_inputs(fp, self.checker, self.game_dir)
         why = self.checker.check(fp, None, moved=moved)
         return (why and f"its {why} changed"), moved
 

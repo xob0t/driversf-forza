@@ -343,29 +343,19 @@ def test_game_files_read_from_the_backup_after_an_install_are_the_same_inputs():
         game = Path(tmp)
         (game / "Install").mkdir()
         (game / "Install" / "gui.sp").write_bytes(b"stock gui")
-        old = os.environ.get("DSF_GAME_DIR")
-        os.environ["DSF_GAME_DIR"] = str(game)
-        try:
-            fp = {
-                "files": {
-                    fingerprint.norm(game / "Install" / "gui.sp"): fingerprint.file_digest(game / "Install" / "gui.sp")
-                }
-            }
-            # An install: the stock file moves to the backup, the game gets ours.
-            (game / game_paths.BACKUP / "Install").mkdir(parents=True)
-            (game / game_paths.BACKUP / "Install" / "gui.sp").write_bytes(b"stock gui")
-            (game / "Install" / "gui.sp").write_bytes(b"our gui")
-            checker = fingerprint.Checker()
-            moved = pack_reuse.moved_inputs(fp, checker)
-            assert list(moved.values()) == [fingerprint.norm(game / game_paths.BACKUP / "Install" / "gui.sp")]
-            fp = {"format": fingerprint.FORMAT, "complete": True, "env": fingerprint.environment(), **fp}
-            assert checker.check(fp, None).startswith("input ")
-            assert checker.check(fp, None, moved=moved) is None
-        finally:
-            if old is None:
-                os.environ.pop("DSF_GAME_DIR", None)
-            else:
-                os.environ["DSF_GAME_DIR"] = old
+        gui = game / "Install" / "gui.sp"
+        fp = {"files": {fingerprint.norm(gui): fingerprint.file_digest(gui)}}
+        # An install: the stock file moves to the backup, the game gets ours.
+        (game / game_paths.BACKUP / "Install").mkdir(parents=True)
+        (game / game_paths.BACKUP / "Install" / "gui.sp").write_bytes(b"stock gui")
+        gui.write_bytes(b"our gui")
+        checker = fingerprint.Checker()
+        assert pack_reuse.moved_inputs(fp, checker, None) == {}  # no game folder: nothing moved
+        moved = pack_reuse.moved_inputs(fp, checker, game)
+        assert list(moved.values()) == [fingerprint.norm(game / game_paths.BACKUP / "Install" / "gui.sp")]
+        fp = {"format": fingerprint.FORMAT, "complete": True, "env": fingerprint.environment(), **fp}
+        assert checker.check(fp, None).startswith("input ")
+        assert checker.check(fp, None, moved=moved) is None
 
 
 def test_compare_packs_names_what_differs():
