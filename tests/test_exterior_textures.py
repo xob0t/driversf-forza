@@ -558,6 +558,25 @@ class TrimArt(unittest.TestCase):
         again = copy.copy(section)
         self.assertEqual(t.material(again, bowl), dm.LIGHTS_MAT)
 
+    def test_new_section_keeps_the_trim_plan(self):
+        # Resolved again in a new section object, a swatch lost the colour plan() sampled into
+        # it and flat artwork its flat colour: no atlas cell, so both drew as shared trim (and
+        # never reached a gloss material) in the exterior entry on about 400 cars (issue #173).
+        t, section, art = self._plan((4, 4, 28, 28))  # costly: drawn flat
+        swatch = carbin.SubSection(
+            "emblem", 1, 4, (0.25, 0.0, 0.25, 0.0) + self.transform[4:], self.top(0.5, 0.3, 0.4, (0, 0, 1, 1))
+        )
+        section.subsections.append(swatch)
+        with mock.patch.object(fm, "AtlasCache", lambda *a, **k: self.atlases):
+            t = dm.Texturing(Path(), size=(48, 48)).plan([section], {1})
+        self.assertEqual(t.art_flat, {id(art)})
+        again = copy.copy(section)
+        self.assertEqual(t.material(section, art), dm.CHASSIS)
+        self.assertTrue(t.material(section, swatch).startswith(dm.GLOSS_PREFIX))  # emblem: Forza's gloss
+        for sub in (art, swatch):
+            self.assertEqual(t.material(again, sub), t.material(section, sub))
+            self.assertEqual(t.submaterial(again, sub), t.submaterial(section, sub))
+
 
 class TrimTexels(unittest.TestCase):
     """Forza's trim shaders scale the texel (PaintScale / PristinePaintScale from the car's

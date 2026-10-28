@@ -1343,7 +1343,8 @@ re-sampled the Lights atlas after `lenses.bake` had written into it ((156, 144, 
 (`lamp_cover`) lost that role. No atlas cell, so `material()` fell back to shared trim or window glass.
 
 Fix (`Texturing.planned`, `submaterial`): a Lights-family subsection keeps plan()'s answer in any
-section object around it. Trim artwork has the same fault (below, #173) and is left as it was.
+section object around it. Trim artwork had the same fault (#173); every planned subsection now keeps
+plan()'s answer (below).
 
 Roster (offline, `out/l4/py/survey2.py` in the `t3-f6fc8832` worktree: plan, then the plates pass and
 `split_exposed` on the host-picks host, `material()` on master against this change, Forza LODs 1, 3,
@@ -1353,6 +1354,23 @@ lamp glass goes from window glass to its baked lens (2,200 triangles; VW_GTIVR6_
 triangles; FOR_MustangGT_05 800, VIP_Viper_13's tail lamps 260, fer_f142_10's red tail lenses 139); at
 LODs 3 to 5 (full entry) 19 and 18 cars. The same mechanism draws trim artwork (`trim_art`: gloss,
 grey and detail trims) as plain shared trim on about 400 cars (157,000 exterior triangles): issue #173.
+
+Trim artwork and swatches (issue #173, confirmed-static, confirmed-runtime): the same re-resolve drew
+them as shared trim. `_layout` samples a swatch's colour into plan()'s `SubMaterial` in place
+(`fm.sample_colours`) and the ART_MIN_SCALE_SHARE step swaps flat artwork for its `_art_swatch`; resolved
+again, a swatch had no colour and flat artwork was its textured self outside `atlas_subs`, so neither had
+a cell and `material()` never reached the gloss index (#143). `Texturing.planned` now holds plan()'s
+answer for every subsection, not only Lights ones. Subsections the later passes make (plates,
+`split_exposed`'s split pieces) are new objects and are still resolved in `submaterial()`.
+Roster (offline, `out/s173/survey.py` in the #173 worktree: as above on 566 cars; master's Lights-only
+plan against all families): exterior entry (LOD 1) trim -> gloss on 371 cars (150,707 triangles), trim
+-> Chassis cell on 99 (4,617); LODs 3 and 5, 386 and 110 cars (50,233 and 2,777); nothing else changes,
+and every subsection in the rebuilt sections now draws plan()'s answer. By technique (LOD 1): plastic2
+55,811, rubber_trim 33,021, misc 30,575, matte_colors 27,369. In game (VM 1, `-Views nose,rear,grille
+-Palette 0`, vanilla 229, IDs 1 Camaro ZL1 12, 2 Huayra 12, 3 XB Falcon GT 73, 4 Yellowbird 87, 5 Fiat
+595 68; master `vm1-20261028-155614`, this change `vm1-20261028-160123`): black trims get #143's satin
+sheen on the player's car; the Camaro's front splitter (`bumperFa`, `plastic2`, gloss specular 0.031,
+power 5.66) draws as a cream band in the sun, #143's broad-lobe look on a flat panel (#176).
 
 In game (VM 1, `-Views 'nose,rear,nose+night,rear+night' -Palette 0 -ShotSeconds 3 -WaitSeconds 600`,
 vanilla 229 first; master `out/l4/before` run `vm1-20261028-140509`, this change on the full roster
