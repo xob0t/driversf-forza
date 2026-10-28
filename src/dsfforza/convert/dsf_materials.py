@@ -307,6 +307,10 @@ TEXTURED_COVERS = ("lights_glass", "lights_gls_noemit")
 # Plain glass lamp covers (Texturing.clear_cover): left out when a Lights-atlas surface lies up
 # to COVER_DEPTH behind this share of their area; never in the window sections.
 COVER_MIN_SHARE, COVER_DEPTH = 0.3, 0.3
+# A lamp cover whose Lights texels are this share or more of its lenses' texels is a second skin
+# over them (_bake_lenses): left out.
+COVER_ON_LENS = 0.9
+TILE_EPS = 1e-4  # UV: a triangle corner this close past a tile edge is on it (unwrap_tiles)
 WINDOW_SECTIONS = ("glassf", "glassr", "glasslf", "glassrf", "glasslm", "glassrm", "glasslr", "glassrr", "glasst")
 
 CHASSIS, LIGHTS_MAT = "chassis", "lights"
@@ -919,6 +923,49 @@ def skyline_pack(sizes: list[tuple[int, int]], width: int, height: int) -> list[
 
 
 @dataclass
+class TileWrapped(fm.SubMaterial):
+    """A tiling subsection laid on the atlas: each vertex's UV less the whole tiles of its
+    triangles (`shift`: raw UV0 -> (du, dv)), so every triangle samples the texels Forza's
+    wrapping sampler reads, inside 0..1."""
+
+    shift: dict = field(default_factory=dict)
+
+    def uv(self, raw: tuple[float, float]) -> tuple[float, float]:
+        u, v = super().uv(raw)
+        du, dv = self.shift.get(tuple(raw), (0.0, 0.0))
+        return u - du, v - dv
+
+
+def unwrap_tiles(section, sub, m: fm.SubMaterial) -> TileWrapped | None:
+    """A tiling lamp part (UVs past 0..1) whose every triangle lies inside one tile, moved
+    into the 0..1 tile triangle by triangle (TileWrapped): an ordinary textured part. The FM4
+    Mustang GT's round head lamp bowls (`textured_reflector`, u -2.9 to 3.9) sit in tiles -3,
+    0 and 3; drawn as one flat colour (_tiling_swatch) they were plain white domes. None when
+    a triangle crosses a tile edge or a vertex is in triangles of two tiles."""
+    import dataclasses
+
+    pool = section.vertices_for(sub)
+    shift: dict = {}
+    lo = [math.inf, math.inf]
+    hi = [-math.inf, -math.inf]
+    for tri in sub.triangles():
+        uvs = [m.uv(pool[i].uv0) for i in tri]
+        tile = tuple(math.floor(min(c[a] for c in uvs) + TILE_EPS) for a in (0, 1))
+        if any(math.floor(max(c[a] for c in uvs) - TILE_EPS) != tile[a] for a in (0, 1)):
+            return None
+        for i, c in zip(tri, uvs):
+            if shift.setdefault(tuple(pool[i].uv0), tile) != tile:
+                return None
+            for a in (0, 1):
+                lo[a], hi[a] = min(lo[a], c[a] - tile[a]), max(hi[a], c[a] - tile[a])
+    if not shift:
+        return None
+    base = {f.name: getattr(m, f.name) for f in dataclasses.fields(fm.SubMaterial)}
+    base.update(kind="textured", bounds=(lo[0], lo[1], hi[0], hi[1]))
+    return TileWrapped(**base, shift={k: (float(du), float(dv)) for k, (du, dv) in shift.items()})
+
+
+@dataclass
 class Texturing:
     """Decides, for one Forza car, which DSF material and UVs each subsection
     gets, and builds the chassis atlas they sample.
@@ -1269,6 +1316,7 @@ class Texturing:
                     )
                 ):
                     ids.add(id(sub))
+        self._drop_lens_skins(body, set(lods), ids)
         # The head lamps' raw glow (clear front lenses and head lamp surfaces), for _glow.
         w, h, _ = self.atlases.get(fm.LIGHTS)
         glow = lenses.new_glow(h, w)
@@ -1285,6 +1333,41 @@ class Texturing:
             )
         lenses.lamp_glow(body, set(lods), self.atlases, glow, self.glow_owners)
         self.lamp_raw = glow if np.isfinite(glow[..., 0]).any() else None
+
+    def _drop_lens_skins(self, sections, lods, ids: set) -> None:
+        """Lamp covers (lamp_cover, in `ids`) whose texels are COVER_ON_LENS or more of the
+        lenses' texels are a second skin over the lenses, drawn with the lens artwork: left out
+        (dropped_lenses) and not baked. Baked, each cover wrote its own bake into the lenses'
+        texels: the Panoz Esperante's covers both sample the left tail lenses' texels, and the
+        left tails came out paler and glowed more than the right (the right lenses have texels
+        of their own)."""
+        from dsfforza.convert import lenses
+
+        w, h, _ = self.atlases.get(fm.LIGHTS)
+        lod = min(lods)
+        lens_texels, covers = set(), []
+        for section in sections:
+            for sub in section.subsections:
+                if sub.lod != lod or id(sub) not in ids:
+                    continue
+                m = self.resolved[(id(section), id(sub))]
+                got = lenses._lens_samples(section, sub, m, w, h)
+                if got is None:
+                    continue
+                texels = set((got[1] * w + got[0]).tolist())
+                if m.technique.lower() in TEXTURED_COVERS:
+                    covers.append((section, sub, texels))
+                elif lenses.is_lens_technique(m.technique):
+                    lens_texels |= texels
+        for section, sub, texels in covers:
+            if len(texels & lens_texels) >= COVER_ON_LENS * len(texels):
+                self.dropped_lenses.add((section.name, sub.material))
+        if not covers:
+            return
+        for section in sections:
+            for sub in section.subsections:
+                if (section.name, sub.material) in self.dropped_lenses:
+                    ids.discard(id(sub))
 
     def _lamp_shapes(self, sections, lods) -> list:
         """(lod, positions) of the Lights surfaces of `sections` (atlas or swatch; not lenses or covers),
@@ -1348,8 +1431,8 @@ class Texturing:
         return dataclasses.replace(m, kind="swatch", colour=colour)
 
     def _tiling_swatch(self, section, sub, m: fm.SubMaterial) -> fm.SubMaterial:
-        """A lamp part that tiles the Lights atlas (UVs past 0..1: the FM4 Mustang GT's
-        and 300C's reflector bowls, `textured_reflector`) as one flat Lights colour: the
+        """A lamp part that tiles the Lights atlas (UVs past 0..1) and that unwrap_tiles can't
+        lay on the atlas (triangles across a tile edge) as one flat Lights colour: the
         mean texel at its corners and centres, UVs wrapped as Forza's sampler does. The
         atlas regions can't hold a tiling footprint, and as untextured trim the bowls
         drew in the shared trim's dark texel: the Mustang's head lamps were a black strip
@@ -1424,7 +1507,7 @@ class Texturing:
             return self._art_swatch(section, sub, m)
         tiling_lamp = m.role == fm.TEXTURED and fm.base_family(m.family) == fm.LIGHTS and m.kind == "tiling"
         if tiling_lamp and self.atlases is not None and self.classifier is None:
-            return self._tiling_swatch(section, sub, m)
+            return unwrap_tiles(section, sub, m) or self._tiling_swatch(section, sub, m)
         if self.classifier is None and self.is_lens(section, sub, m):
             import dataclasses
 

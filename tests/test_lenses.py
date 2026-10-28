@@ -41,10 +41,12 @@ class _Atlases:
         return tuple(self.lights[2][o : o + 4])
 
 
-def _quad(name: str, material: str, z: float, u0: float, u1: float, x: float = 0.0) -> carbin.Section:
+def _quad(
+    name: str, material: str, z: float, u0: float, u1: float, x: float = 0.0, normal=(0.0, 0.0, 1.0)
+) -> carbin.Section:
     pts = [(x - 0.1, 0.4, z), (x + 0.1, 0.4, z), (x - 0.1, 0.6, z), (x + 0.1, 0.6, z)]
     uvs = [(u0, 0.0), (u1, 0.0), (u0, 1.0), (u1, 1.0)]
-    verts = [carbin.Vertex(p, uv, (0, 0), (0.0, 0.0, 1.0)) for p, uv in zip(pts, uvs)]
+    verts = [carbin.Vertex(p, uv, (0, 0), normal) for p, uv in zip(pts, uvs)]
     sub = carbin.SubSection(material, 1, 4, (0.0, 1.0, 0.0, 1.0) * 2, [0, 1, 2, 2, 1, 3])
     return carbin.Section(name, (0, 0, 0), (0, 0, 0), (0, 0, 0), lod_vertices=verts, subsections=[sub])
 
@@ -382,6 +384,81 @@ def test_swatch_lens_tints_the_lamp_behind():
     assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
     assert got[3] == LAMP[3]  # the reflector keeps its glow mask
     assert report["tinted"]["texels"] == (SIZE // 2) * SIZE
+
+
+def test_flat_rear_lens_tints_the_lamp_behind():
+    # A rear lens of one flat colour however fine its texels (the BMW X6 M's red tail glass, 40,000
+    # texels of (183, 0, 0, 118)) is a swatch lens: left out, its tint over the lamp behind.
+    lens = _quad("glassLTL", "detail_glass_red", 2.0, 0.0, 0.5)
+    lamp = _quad("taillightL", "textured_reflector", 1.9, 0.5, 1.0)
+    dropped = set()
+    atlases, report = _bake([lens, lamp], [lens], dropped=dropped)
+    assert dropped == {("glassLTL", "detail_glass_red")}
+    rgb = [round(b * l / 255) for l, b in zip(LENS[:3], LAMP[:3])]
+    got = atlases.texel(SIZE * 3 // 4, SIZE // 2)
+    assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
+    assert got[3] == LAMP[3]
+    # A flat front lens is baked as before.
+    lens = _quad("glassLHL", "detail_glass_red", -2.0, 0.0, 0.5, normal=(0.0, 0.0, -1.0))
+    lamp = _quad("headlightL", "textured_reflector", -1.9, 0.5, 1.0, normal=(0.0, 0.0, -1.0))
+    dropped = set()
+    atlases, _ = _bake([lens, lamp], [lens], dropped=dropped)
+    assert not dropped
+    assert atlases.texel(SIZE // 4, SIZE // 2) != LENS
+
+
+def test_laid_back_front_lens_sees_the_lamp_along_the_axis():
+    # A front lens facing up (the Panoz Esperante's head lamps): along its normal nothing, along
+    # the car's axis the lamp behind it.
+    lens = _quad("glassLHL", "detail_glass_clear", -2.0, 0.0, 0.5, normal=(0.0, 1.0, 0.0))
+    lamp = _quad("headlightL", "textured_reflector", -1.9, 0.5, 1.0, normal=(0.0, 0.0, -1.0))
+    atlases, report = _bake([lens, lamp], [lens])
+    a = LENS[3] / 255
+    rgb = [round(a * l + (1 - a) * b) for l, b in zip(LENS[:3], LAMP[:3])]
+    got = atlases.texel(SIZE // 4, SIZE // 2)
+    assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
+    assert report["glassLHL/detail_glass_clear"]["behind"] == 1.0
+
+
+def test_cover_over_its_lenses_is_left_out():
+    # A lamp cover drawn with its lenses' texels (the Panoz Esperante's tail covers): left out,
+    # not baked into the lenses' texels.
+    red = _quad("glassLTL", "detail_glass_red", 2.0, 0.0, 0.5)
+    cover = _quad("glassLTL", "lights_glass", 2.01, 0.0, 0.5)
+    own = _quad("glassRTL", "lights_glass", 2.01, 0.5, 1.0, x=0.5)  # texels of its own: baked
+    t = dm.Texturing(Path())
+    t.atlases = _Atlases()
+    sections = [red, cover, own]
+    ids = set()
+    for section in sections:
+        for sub in section.subsections:
+            t.resolved[(id(section), id(sub))] = _textured(section, sub)
+            ids.add(id(sub))
+    t._drop_lens_skins(sections, {1}, ids)
+    assert t.dropped_lenses == {("glassLTL", "lights_glass")}
+    assert ids == {id(red.subsections[0]), id(own.subsections[0])}
+
+
+def _textured(section, sub):
+    import dataclasses
+
+    return dataclasses.replace(fm.resolve(section, sub), role=fm.TEXTURED, family=fm.LIGHTS)
+
+
+def test_tiling_lamp_part_unwrapped():
+    # The Mustang GT 05's head lamp bowls: every triangle inside one tile (here tile 3).
+    bowl = _quad("body", "textured_reflector", -1.0, 3.1, 3.4)
+    m = fm.resolve(bowl, bowl.subsections[0])
+    assert m.kind == "tiling"
+    got = dm.unwrap_tiles(bowl, bowl.subsections[0], m)
+    assert got is not None and got.kind == "textured"
+    pool = bowl.vertices_for(bowl.subsections[0])
+    us = sorted({round(got.uv(v.uv0)[0], 6) for v in pool})
+    assert us == [0.1, 0.4], us
+    assert abs(got.bounds[0] - 0.1) < 1e-6 and abs(got.bounds[2] - 0.4) < 1e-6
+    # A triangle across a tile edge can't be laid on the atlas.
+    edge = _quad("body", "textured_reflector", -1.0, 2.9, 3.4)
+    assert dm.unwrap_tiles(edge, edge.subsections[0], fm.resolve(edge, edge.subsections[0])) is None
 
 
 if __name__ == "__main__":
