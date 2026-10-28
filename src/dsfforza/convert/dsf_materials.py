@@ -210,6 +210,16 @@ def red_lens_scale(visible: list[int]) -> float | None:
 # over a white reflector, baked by lenses.py) 206, the Lancer Evo VI's 173, the M3 E30's 197.
 VISIBLE_WHITE_VANILLA_MEDIAN = 137
 
+# Head lamps lit by day (0x1D, lights.LampPlan.assign): their glow (lenses.day_glow, ranked onto
+# stock's head lamp alpha) times this. The game scales a lamp's glow by its type
+# (0xF3FB68: 0x1D 10, a 0x01 head lamp or 0x03 position lamp 2; research/lights.md "How a lamp
+# lights"), and 0x1D's 10 over a whole Forza head lamp clipped it to a white plate by day (the
+# VW GTI VR6 after #164). 99 of the 140 stock vehicles with a day-lit front lamp light a
+# small 0x03 position lamp beside 0x01 head lamps; the 32 with 0x1D lamps keep their head
+# lamp readable by glowing in fine stripes with dark texels between. A fifth gives the ported
+# 0x1D lamps a 0x01 or 0x03 lamp's glow, by day and in the dark mood.
+DAYTIME_GLOW = 0.2
+
 
 def white_lens_scale(visible: list[int]) -> float | None:
     """One car's darkening of its white lamp texels: the factor that brings the median
@@ -983,6 +993,10 @@ class Texturing:
     # surfaces (lenses.new_glow, lens_glow, lamp_glow); None: none. _glow() turns it into glow
     # alpha, which render() takes over the converted alpha.
     lamp_raw: np.ndarray | None = None
+    glow_owners: dict = field(default_factory=dict)  # lamp number in lamp_raw -> (section, sub) (lenses._GlowSum)
+    # Lights atlas texels of the head lamps that light by day (0x1D; Binding.set_daytime): their
+    # glow is scaled by DAYTIME_GLOW. None: no lamp plan, no scaling.
+    daytime_texels: np.ndarray | None = None
 
     # -- planning --
     def plan(self, sections, lods, extra_solids: dict | None = None, wheels=None) -> Texturing:
@@ -1249,9 +1263,16 @@ class Texturing:
         glow = lenses.new_glow(h, w)
         if ids:
             self.lens_report = lenses.bake(
-                body, set(lods), self.atlases, ids, self.car_dir, glow=glow, dropped=self.dropped_lenses
+                body,
+                set(lods),
+                self.atlases,
+                ids,
+                self.car_dir,
+                glow=glow,
+                dropped=self.dropped_lenses,
+                owners=self.glow_owners,
             )
-        lenses.lamp_glow(body, set(lods), self.atlases, glow)
+        lenses.lamp_glow(body, set(lods), self.atlases, glow, self.glow_owners)
         self.lamp_raw = glow if np.isfinite(glow[..., 0]).any() else None
 
     def _lamp_shapes(self, sections, lods) -> list:
@@ -1745,8 +1766,38 @@ class Texturing:
 
         view = self._lamp_view(front=True, grid=True)
         self._lamp_glow = None if view is None else lenses.day_glow(self.lamp_raw, view)
+        if self._lamp_glow is not None and self.daytime_texels is not None:
+            self._lamp_glow[self.daytime_texels] *= DAYTIME_GLOW
         self._glow_done = True
         return self._lamp_glow
+
+    def daytime_mask(self, daytime) -> np.ndarray | None:
+        """The Lights atlas texels with a head lamp glow (lamp_raw) that the triangles lighting
+        by day sample: daytime(sub, k) as for Binding.set_daytime. None when there are none."""
+        from dsfforza.convert import lenses
+
+        if self.lamp_raw is None or not self.glow_owners:
+            return None
+        h, w = self.lamp_raw.shape[:2]
+        day = np.zeros((h, w), bool)
+        for section, sub in {id(sub): (section, sub) for section, sub in self.glow_owners.values()}.values():
+            m = self.resolved.get((id(section), id(sub))) or fm.resolve(section, sub)
+            pool = section.vertices_for(sub)
+            for k, tri in enumerate(sub.triangles()):
+                if daytime(sub, k):
+                    ix, iy, _ = lenses._texels(np.array([m.uv(pool[i].uv0) for i in tri]) * (w, h))
+                    ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
+                    day[iy[ok], ix[ok]] = True
+        # The bake spreads a lens's glow lenses.DILATE texels into unused neighbours.
+        for _ in range(lenses.DILATE):
+            grown = day.copy()
+            grown[1:] |= day[:-1]
+            grown[:-1] |= day[1:]
+            grown[:, 1:] |= day[:, :-1]
+            grown[:, :-1] |= day[:, 1:]
+            day = grown
+        day &= np.isfinite(self.lamp_raw[..., 0])
+        return day if day.any() else None
 
     def _convert_texel(self, family: str, r: int, g: int, b: int, a: int) -> tuple[int, int, int, int]:
         """Forza texel -> DSF conventions (alpha = specular / glow mask)."""
@@ -2195,6 +2246,29 @@ class Binding:
 
     def triangle_uvs(self, section, sub, triangle_index: int, raw_uvs):
         return self.texturing.triangle_uvs(section, sub, triangle_index, raw_uvs)
+
+    def set_daytime(self, stream, vehc: Entry, daytime) -> bool:
+        """daytime(sub, k): whether the lamp plan lights triangle k of `sub` with a head lamp
+        that lights by day (0x1D; lights.LampPlan.is_daytime). When any glowing head lamp texel
+        is one of theirs (Texturing.daytime_mask), the atlas installed in `vehc` (this binding's
+        full entry) is rendered again with their glow scaled (DAYTIME_GLOW). The atlas is
+        rendered in prepare(), before the lamp plan exists (it keys on the subsections
+        damage.split_exposed makes later)."""
+        t = self.texturing
+        day = t.daytime_mask(daytime)
+        if day is None:
+            return False
+        t.daytime_texels = day
+        t._glow_done = False
+        drsp = child(child(vehc, "MDXN"), "DRSP")
+        texc = next(
+            e
+            for e in drsp.children
+            if e.tag == "TEXC" and payload(stream, child(e, "UIDC"))[:8] == self.installed.texture
+        )
+        dxtc = child(texc, "DXTC")
+        dxtc.payload = t.dds(template=payload(stream, dxtc))
+        return True
 
     @property
     def paint_uv(self) -> tuple[float, float]:

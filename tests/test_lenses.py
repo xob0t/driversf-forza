@@ -233,6 +233,37 @@ def test_head_lamp_glow_only_on_clear_front_lenses():
     assert np.isfinite(glow[:, : SIZE // 2]).all()
 
 
+def test_daytime_head_lamps_glow_at_a_fifth():
+    # A clear lens over a head lamp bowl whose left half lights by day (0x1D) and right half
+    # doesn't (an indicator behind the same lens, the Lancer Evo VI's): only the left half's
+    # glow is scaled (DAYTIME_GLOW).
+    lens = _grid("glassLHL", "detail_glass_clear", lambda x, y: -2.0, 0.0, 0.5)
+    bowl = _grid("headlightL", "head_light", lambda x, y: -2.0 + 0.1 - 4.5 * (x * x + (y - 0.5) ** 2), 0.5, 1.0)
+    t = dm.Texturing(Path(), size=(32, 32))
+    t.lamp_raw = lenses.new_glow(SIZE, SIZE)
+    with tempfile.TemporaryDirectory() as car_dir:
+        ids = {id(s) for s in lens.subsections}
+        lenses.bake([lens, bowl], {1}, _ClearAtlases(), ids, Path(car_dir), glow=t.lamp_raw, owners=t.glow_owners)
+    sub = lens.subsections[0]
+    assert {id(s) for _, s in t.glow_owners.values()} == {id(sub)}
+    assert t.daytime_mask(lambda s, k: False) is None
+    # Triangle k of the 8 x 8 grid is in column (k // 2) % 8: columns 0-3 are u 0 to 0.25.
+    day = t.daytime_mask(lambda s, k: s is sub and (k // 2) % 8 < 4)
+    assert day[:, :6].all() and not day[:, 12:].any(), day[0]
+
+    t.atlases, t.regions = _ClearAtlases(), {fm.LIGHTS: [None]}
+    t._lamp_view = lambda front, grid: "view"
+    flat = np.where(np.isfinite(t.lamp_raw[..., 0]), 100.0, np.nan)
+    real, lenses.day_glow = lenses.day_glow, lambda glow, view: flat.copy()
+    try:
+        t.daytime_texels = day
+        out = t._glow()
+    finally:
+        lenses.day_glow = real
+    assert (out[day] == 100.0 * dm.DAYTIME_GLOW).all()
+    assert (out[:, 12:16] == 100.0).all()
+
+
 def test_render_takes_the_lens_glow():
     t = dm.Texturing(Path(), size=(32, 32))
     t.families = (fm.LIGHTS,)

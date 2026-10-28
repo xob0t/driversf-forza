@@ -881,6 +881,12 @@ class LampPlan:
                 lamp.daytime = True
         return self
 
+    def is_daytime(self, sub, k) -> bool:
+        """Whether triangle k of `sub` lights with a head lamp that also lights by day (0x1D,
+        assign): dsf_materials.Binding.set_daytime."""
+        lamp = self.lamps.get(self.tri_lamp.get((id(sub), k)))
+        return lamp is not None and lamp.light_id is not None and lamp.type == HEAD_DAYTIME
+
     def light_byte(self, sub, k) -> int:
         key = self.tri_lamp.get((id(sub), k))
         if key is None:

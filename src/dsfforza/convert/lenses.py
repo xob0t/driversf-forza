@@ -428,19 +428,20 @@ def lens_glow(a, lens_mask, ray, ray_pos, depth, mask, lamp) -> np.ndarray | Non
     return light[ray] * (a * lens_mask / 255 + (1 - a))
 
 
-def lamp_glow(sections, lods, atlases: fm.AtlasCache, glow: np.ndarray) -> int:
+def lamp_glow(sections, lods, atlases: fm.AtlasCache, glow: np.ndarray, owners: dict | None = None) -> int:
     """Raw glow (0..255, Forza's scale) of the front head lamp surfaces (lights.TECHNIQUE_FUNCTION
     head lamp techniques: reflectors and bulbs, seen directly or through DSF's clear glass) of
     the finest of `lods`, into `glow` (new_glow) where it is still NaN: the texel's Forza mask
     (at least GLOW_REFLECTOR) times the reflector's shape (_shape: how deep each point sits
-    behind the subsection's front). One lamp per subsection. Returns the number of texels set."""
+    behind the subsection's front). One lamp per subsection (owners: _GlowSum). Returns the number
+    of texels set."""
     from dsfforza.convert import lights
 
     head = {t for t, (f, _) in lights.TECHNIQUE_FUNCTION.items() if f == lights.HEAD}
     lod = min(lods)
     w, h, rgba = atlases.get(fm.LIGHTS)
     src = np.frombuffer(bytes(rgba), np.uint8).reshape(h, w, 4)
-    acc = _GlowSum(h, w, glow)
+    acc = _GlowSum(h, w, glow, owners)
     for section in sections:
         for sub in section.subsections:
             if sub.lod != lod or sub.material not in head:
@@ -467,7 +468,7 @@ def lamp_glow(sections, lods, atlases: fm.AtlasCache, glow: np.ndarray) -> int:
             # Forza's front is -z: depth behind the subsection's frontmost point.
             depth = pos[first, 2] - pos[:, 2].min()
             shape = _shape(pos[first], depth, np.ones(len(first), bool))
-            acc.add(iy, ix, np.maximum(src[iy, ix, 3], GLOW_REFLECTOR) * shape[inverse], pos)
+            acc.add(iy, ix, np.maximum(src[iy, ix, 3], GLOW_REFLECTOR) * shape[inverse], pos, (section, sub))
     new = acc.done & np.isnan(glow[..., 0])
     acc.write(glow, new)
     return int(new.sum())
@@ -483,20 +484,23 @@ def new_glow(h: int, w: int) -> np.ndarray:
 
 class _GlowSum:
     """Raw glow and positions summed over the triangles sampling each texel, one lamp number per
-    add() (after those already in `glow`)."""
+    add() (after those already in `glow`). owners: gets lamp number -> (section, sub) each lamp
+    comes from (dsf_materials.Binding.set_daytime)."""
 
-    def __init__(self, h: int, w: int, glow: np.ndarray):
+    def __init__(self, h: int, w: int, glow: np.ndarray, owners: dict | None = None):
         self.total = np.zeros((h, w, 5))  # raw, |x|, y, |x|^2, y^2
         self.count = np.zeros((h, w))
         self.lamp = np.full((h, w), np.nan)
+        self.owners = owners if owners is not None else {}
         lamps = glow[..., 1]
         self.next = int(np.nanmax(lamps)) + 1 if np.isfinite(lamps).any() else 0
 
-    def add(self, iy, ix, raw, pos) -> None:
+    def add(self, iy, ix, raw, pos, owner=None) -> None:
         x, y = np.abs(pos[:, 0]), pos[:, 1]
         np.add.at(self.total, (iy, ix), np.stack([raw, x, y, x * x, y * y], 1))
         np.add.at(self.count, (iy, ix), 1)
         self.lamp[iy, ix] = self.next
+        self.owners[self.next] = owner
         self.next += 1
 
     @property
@@ -678,12 +682,14 @@ def bake(
     car_dir: Path,
     glow: np.ndarray | None = None,
     dropped: set | None = None,
+    owners: dict | None = None,
 ) -> dict:
     """Bake every lamp glass subsection (id(sub) in lens_ids, Lights atlas: lenses, lamp glass,
     covers; is_glass_technique) of the finest of `lods` over what lies behind it, into atlases'
     Lights texels (in place). glow: a glow map (new_glow) that gets the raw glow of the clear
     front lens and cover texels (lens_glow, one lamp per lens, for day_glow); without it they
-    keep their lamp score like the coloured ones. dropped: gets (section name, technique) of the
+    keep their lamp score like the coloured ones; owners: gets their lamps' subsections
+    (_GlowSum). dropped: gets (section name, technique) of the
     swatch lenses left out (their tint goes onto the lamp behind them, SWATCH_TINT).
     Returns a report: {"<section>/<technique>": {"texels", "behind" (share of rays that met
     something), "shared" (texels left alone)}}."""
@@ -712,7 +718,7 @@ def bake(
     lamp_tris = np.nonzero((surf.kind == 1) & np.array([f == fm.LIGHTS for f in surf.family], bool))[0]
     total = np.zeros((h, w, 4))
     count = np.zeros((h, w))
-    lit = _GlowSum(h, w, glow) if glow is not None else None
+    lit = _GlowSum(h, w, glow, owners) if glow is not None else None
     report = {}
     samples = [(section, sub, m, _lens_samples(section, sub, m, w, h)) for section, sub, m in surf.lens_subs]
     scrambled = _scrambled(samples, h, w)
@@ -820,7 +826,7 @@ def bake(
             lens_mask = lens_rgba[sel, 3] if emits(sub.material) else np.zeros(int(sel.sum()))
             raw = lens_glow(lens_a[sel], lens_mask, inverse[sel], origins, depth, mask, lamp)
             if raw is not None:
-                lit.add(iy[sel], ix[sel], raw, pos[sel])
+                lit.add(iy[sel], ix[sel], raw, pos[sel], (section, sub))
     glowing = lit.done if lit is not None else np.zeros((h, w), bool)
     if lit is not None:
         lit.write(glow, glowing)
@@ -858,36 +864,6 @@ def bake(
         report.setdefault("tinted", {"texels": 0, "behind": 0, "shared": 0})["texels"] += _tint_behind(
             surf, tris, tint, out, w, h, tinted
         )
-    rgba[:] = np.clip(np.rint(out), 0, 255).astype(np.uint8).tobytes()
-    for v in report.values():
-        v["behind"] = round(v["behind"] / v["texels"], 3) if v["texels"] else 0.0
-    return report
-    out = src.copy()
-    out[done] = total[done] / count[done, None]
-    # Spread baked texels into unused neighbours, so the atlas's box filter at the
-    # region edges reads baked colour (and glow) rather than the bare lens.
-    grown = done.copy()
-    for _ in range(DILATE):
-        acc = np.zeros((h, w, 4))
-        n = np.zeros((h, w))
-        g_acc, g_n = np.zeros((h, w, 4)), np.zeros((h, w))
-        for dy, dx in ((0, 1), (0, -1), (1, 0), (-1, 0)):
-            shifted = np.roll(np.roll(grown, dy, 0), dx, 1)
-            vals = np.roll(np.roll(out, dy, 0), dx, 1)
-            take = shifted & ~grown & ~used & ~scrambled
-            acc[take] += vals[take]
-            n[take] += 1
-            if glow is not None:
-                near = take & np.roll(np.roll(glowing, dy, 0), dx, 1)
-                g_acc[near] = np.roll(np.roll(glow, dy, 0), dx, 1)[near]  # a neighbour's (one lamp)
-                g_n[near] = 1
-        new = n > 0
-        out[new] = acc[new] / n[new, None]
-        if glow is not None:
-            near = g_n > 0
-            glow[near] = g_acc[near]
-            glowing |= near
-        grown |= new
     rgba[:] = np.clip(np.rint(out), 0, 255).astype(np.uint8).tobytes()
     for v in report.values():
         v["behind"] = round(v["behind"] / v["texels"], 3) if v["texels"] else 0.0
