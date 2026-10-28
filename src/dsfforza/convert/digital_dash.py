@@ -24,6 +24,7 @@ and lit above it (alpha-tested away when transparent). Static artwork uses id
 
 from __future__ import annotations
 
+import itertools
 import math
 from dataclasses import dataclass, field
 
@@ -173,8 +174,21 @@ MAX_BAR_COLUMNS = 16  # bar columns at most (rarer colour sequences fold onto th
 PALETTE = 12  # flat colours of the bar pieces (one texture column each)
 COLUMN = 4  # texels per bar colour column (a DXT block)
 CELL_MARGIN = 2  # texels kept clear round each digit/gear cell
-DIGIT_LIFT = 0.0008  # m towards the eye: digits and bars over the drawn display
+# m towards the eye over the drawn display: bar pieces, then digits over them. Positions
+# are stored in 1/4096 m (0.24 mm) steps, so layers sit 0.8 mm apart or more.
+PIECE_LIFT = 0.0008
+DIGIT_LIFT = 0.0016
 CHANGES = 2  # colour changes per pixel the rpm makes (rest -> lit -> warning)
+# The digital dials draw their texel unlit (shader program 163 has no light term) in a
+# dim, lit cabin, and the game's tone curve flattens bright texels: the Panoz's face at
+# texel luminance 157 shows at 205, at 108 still at 181 (runs vm1-20261028-124014,
+# -124528). Vanilla digital textures are dark screens with bright glyphs (backgrounds at
+# median luminance 0 to 47); Forza's LCD scenes are often pale (Panoz, Acura ARX, Devon:
+# 120 to 190) and the LFA's ring is white. The whole texture is scaled down until the
+# displays' mean luminance is at most the brightest vanilla background and their 95th
+# percentile at most:
+DISPLAY_MEAN_LUMINANCE = 48.0
+DISPLAY_PEAK_LUMINANCE = 160.0
 SPEED_SLOTS = 3  # digits laid out for the speed readout (units, tens, hundreds)
 GEAR_CHARS = "R123456"  # g_fDigiData gear: 0 = reverse, then 1..6 (no neutral in DSF)
 BLANK_TEXT = (  # readouts DSF has no value for: drawn empty
@@ -237,6 +251,41 @@ class DisplayPatch:
         x0, x1, y0, y1 = self.window()
         return x0 <= x <= x1 and y0 <= y <= y1
 
+    def covers(self, x: float, y: float, tolerance: float = 0.5) -> bool:
+        """Whether render-target pixel (x, y) lies on one of the display's triangles
+        (within `tolerance` pixels), not just inside its window."""
+        for tri in self.uv0:
+            (ax, ay), (bx, by), (cx, cy) = (self.rt(uv) for uv in tri)
+            d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+            if abs(d) < 1e-12:
+                continue
+            ls = (
+                ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / d,
+                ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / d,
+            )
+            ls = (*ls, 1 - ls[0] - ls[1])
+            # barycentric slack worth `tolerance` pixels along the triangle's shortest height
+            edge = max(math.dist((ax, ay), (bx, by)), math.dist((bx, by), (cx, cy)), math.dist((cx, cy), (ax, ay)))
+            slack = tolerance * edge / abs(d)
+            if min(ls) >= -slack:
+                return True
+        return False
+
+
+def coverage(patches: list, view: tuple, width: int, height: int):
+    """Boolean (height, width) mask of the render-target pixels of `view` (x0, x1, y0,
+    y1; one pixel per array cell) that the displays' triangles show. Pixels in a
+    display's window but off its triangles (round dials, the corners of an oval) aren't
+    drawn by Forza, and a live quad there would float off the display in its plane."""
+    from PIL import Image, ImageDraw
+
+    img = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(img)
+    for p in patches:
+        for tri in p.uv0:
+            draw.polygon([(p.rt(uv)[0] - view[0], p.rt(uv)[1] - view[2]) for uv in tri], fill=255, outline=255)
+    return np.asarray(img) > 0
+
 
 def _bbox(alpha, threshold: float = 0.02):
     ys, xs = np.nonzero(alpha > threshold)
@@ -262,10 +311,20 @@ def _palette(colours, k: int):
     return centres, labels
 
 
-def _runs_to_rects(mask, slack: int = 2):
+def _runs_to_rects(mask, slack: int = 2, forbid=None):
     """Rectangles (x0, x1, y0, y1), pixel edges, covering a boolean mask: runs per row,
     merged down while a run stays within `slack` pixels of the rectangle above (which
-    then grows to hold it)."""
+    then grows to hold it), and while the grown rectangle takes in no `forbid` pixel
+    (another piece's: two pieces in one plane z-fight where they overlap)."""
+    if forbid is not None:  # summed-area table: forbidden pixels in a box in O(1)
+        sat = np.zeros((mask.shape[0] + 1, mask.shape[1] + 1), np.int64)
+        sat[1:, 1:] = np.cumsum(np.cumsum(forbid & ~mask, 0), 1)
+
+    def clear(x0, x1, y0, y1):
+        if forbid is None:
+            return True
+        return sat[y1, x1] - sat[y0, x1] - sat[y1, x0] + sat[y0, x0] == 0
+
     rects, open_ = [], []  # open: [x0, x1, y0, last row]
     for y in range(mask.shape[0]):
         row = mask[y]
@@ -276,7 +335,15 @@ def _runs_to_rects(mask, slack: int = 2):
         still = []
         for x0, x1 in runs:
             match = next(
-                (r for r in open_ if r[3] == y - 1 and abs(r[0] - x0) <= slack and abs(r[1] - x1) <= slack), None
+                (
+                    r
+                    for r in open_
+                    if r[3] == y - 1
+                    and abs(r[0] - x0) <= slack
+                    and abs(r[1] - x1) <= slack
+                    and clear(min(r[0], x0), max(r[1], x1), r[2], y + 1)
+                ),
+                None,
             )
             if match is not None:
                 open_.remove(match)
@@ -288,6 +355,36 @@ def _runs_to_rects(mask, slack: int = 2):
         open_ = still
     rects += [(r[0], r[1], r[2], r[3] + 1) for r in open_]
     return rects
+
+
+def _shown_spans(slots: list) -> list:
+    """Per slot rectangle (x0, x1, y0, y1), the x span it is drawn over: where two
+    neighbours overlap, each keeps its side of the middle of the overlap."""
+    spans = [[r[0], r[1]] for r in slots]
+    order = sorted(range(len(slots)), key=lambda k: slots[k][0])
+    for left, right in itertools.pairwise(order):
+        if spans[left][1] > spans[right][0]:
+            cut = (spans[left][1] + spans[right][0]) / 2
+            spans[left][1], spans[right][0] = cut, cut
+    return [tuple(s) for s in spans]
+
+
+def _shown_box(shown, rect, full: float = 0.9) -> tuple:
+    """The part of `rect` (x0, x1, y0, y1, pixels of the `shown` mask) to keep on the
+    display: ((x0, x1), (y0, y1)), first the rows at least `full` shown, then, in those,
+    the columns."""
+    x0, x1 = max(0, math.floor(rect[0])), min(shown.shape[1], math.ceil(rect[1]))
+    y0, y1 = max(0, math.floor(rect[2])), min(shown.shape[0], math.ceil(rect[3]))
+    sub = shown[y0:y1, x0:x1]
+    rows = np.flatnonzero(sub.mean(1) >= full) if sub.size else []
+    if not len(rows):
+        return (rect[0], rect[0]), (rect[2], rect[2])
+    cols = np.flatnonzero(sub[rows[0] : rows[-1] + 1].mean(0) >= full)
+    if not len(cols):
+        return (rect[0], rect[0]), (rect[2], rect[2])
+    xs = (rect[0] if cols[0] == 0 else x0 + cols[0], rect[1] if cols[-1] == sub.shape[1] - 1 else x0 + cols[-1] + 1)
+    ys = (rect[2] if rows[0] == 0 else y0 + rows[0], rect[3] if rows[-1] == sub.shape[0] - 1 else y0 + rows[-1] + 1)
+    return xs, ys
 
 
 def _rgba(colour) -> tuple:
@@ -606,6 +703,10 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
             cur[changed] = img[changed]
         _rest_state(dash, tach_max)
     ev_step[:, flicker] = -1
+    # Only what the displays' triangles show: Forza draws nothing of the scene off them.
+    shown = coverage(patches, view, wid, hgt)
+    report["rpm_pixels_off_display"] = int(((ev_step[0] >= 0) & ~shown).sum())
+    ev_step[:, ~shown] = -1
     lit = ev_step[0] >= 0
     report["rpm_pixels"] = int(lit.sum())
     report["flicker_pixels"] = int(flicker.sum())
@@ -675,7 +776,7 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
             plan.quads[-1].rt = [*pts, pts[2]]
 
     def patch_for(px, py):
-        return next((p for p in patches if p.contains(px, py)), None)
+        return next((p for p in patches if p.covers(px, py)), None)
 
     def rect_quad(p, rect, uvbox, slot, lift):
         x0, x1, y0, y1 = rect
@@ -689,6 +790,7 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
     # offset. Each slot has its own column: the artwork under it differs.
     base_img = (np.clip(base, 0, 1) * 255 + 0.5).astype(np.uint8)
     placed: dict = {}
+    shown_x = {kind: _shown_spans(slots) for kind, _, _, slots in columns}
     for kind, j, cx, cw in cols:
         _, cells, cell, slots = next(c for c in columns if c[0] == kind)
         r = slots[j]
@@ -711,10 +813,27 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
             for m in range(CELL_MARGIN):
                 plan.blit(cx + CELL_MARGIN, y - 1 - m, Image.fromarray(t[:1]))
                 plan.blit(cx + CELL_MARGIN, y + ch + m, Image.fromarray(t[-1:]))
-        uvbox = ((cx + CELL_MARGIN) / W, CELL_MARGIN / H, (cx + cw - CELL_MARGIN) / W, (CELL_MARGIN + ch) / H)
+        # Neighbouring slots whose cells overlap (wide glyphs, tight tracking) meet half way:
+        # two quads in one plane z-fight where they overlap.
+        a, b = shown_x[kind][j]
+        # ... and keep to the rows and columns the display shows: a cell reaching past its
+        # edge (a slanted top, a rounded corner) draws its black outside over the bezel.
+        c, d = _shown_box(shown, (a / SCALE, b / SCALE, r[2] / SCALE, r[3] / SCALE))
+        a, b = max(a, c[0] * SCALE), min(b, c[1] * SCALE)
+        top, bottom = max(r[2], d[0] * SCALE), min(r[3], d[1] * SCALE)
+        if b - a < 1 or bottom - top < 1:
+            continue
+        u0, u1 = (cx + CELL_MARGIN) / W, (cx + cw - CELL_MARGIN) / W
+        v0, v1 = CELL_MARGIN / H, (CELL_MARGIN + ch) / H
+        uvbox = (
+            u0 + (u1 - u0) * (a - r[0]) / (r[1] - r[0]),
+            v0 + (v1 - v0) * (top - r[2]) / (r[3] - r[2]),
+            u0 + (u1 - u0) * (b - r[0]) / (r[1] - r[0]),
+            v0 + (v1 - v0) * (bottom - r[2]) / (r[3] - r[2]),
+        )
         digits = KMH_DIGITS if units == "kmh" else SPEED_DIGITS
         slot = digits[j] if kind == "speed" else GEAR
-        rr = (ux0 + r[0] / SCALE, ux0 + r[1] / SCALE, uy0 + r[2] / SCALE, uy0 + r[3] / SCALE)
+        rr = (ux0 + a / SCALE, ux0 + b / SCALE, uy0 + top / SCALE, uy0 + bottom / SCALE)
         p = patch_for((rr[0] + rr[1]) / 2, (rr[2] + rr[3]) / 2)
         if p is not None:
             rect_quad(p, rr, uvbox, slot, DIGIT_LIFT)
@@ -739,12 +858,18 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
         col_of = {s_idx: k for k, s_idx in enumerate(signatures)}
         first = ev_step[0]
         pieces = 0
+        taken = lit | ~shown  # pixels a piece may not grow into: other steps', earlier pieces', off the display
         for k in range(RPM_STEPS):
             at_k = first == k
             if not at_k.any():
                 continue
             v = BAR_LIT_FROM - min(BAR_MAX, 0.5 * steps[k] / max(1.0, redline))
-            for x0, x1, y0, y1 in _runs_to_rects(at_k):
+            # Pieces lie in one plane: one reaching into another's pixels z-fights with it.
+            # A piece may grow over unlit pixels (fewer pieces), not over another step's.
+            rects = _runs_to_rects(at_k, forbid=taken)
+            for x0, x1, y0, y1 in rects:
+                taken[y0:y1, x0:x1] = True
+            for x0, x1, y0, y1 in rects:
                 sigs = sig_img[y0:y1, x0:x1][at_k[y0:y1, x0:x1]]
                 sigs = sigs[sigs >= 0]
                 if not len(sigs):
@@ -757,9 +882,21 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
                 p = patch_for((rect[0] + rect[1]) / 2, (rect[2] + rect[3]) / 2)
                 if p is None:
                     continue
-                rect_quad(p, rect, (u, v, u, v), RPM, DIGIT_LIFT)
+                rect_quad(p, rect, (u, v, u, v), RPM, PIECE_LIFT)
                 pieces += 1
         report["bar_pieces"] = pieces
+    # Dim pale and glaring displays (DISPLAY_MEAN_LUMINANCE); dark ones stay as they are.
+    big = np.repeat(np.repeat(shown, SCALE, 0), SCALE, 1)[: base.shape[0], : base.shape[1]]
+    lum = base[: big.shape[0], : big.shape[1], :3] @ np.array([0.299, 0.587, 0.114], np.float32) * 255
+    if big.any():
+        mean, peak = float(lum[big].mean()), float(np.percentile(lum[big], 95))
+        gain = min(1.0, DISPLAY_MEAN_LUMINANCE / max(1.0, mean), DISPLAY_PEAK_LUMINANCE / max(1.0, peak))
+        report["luminance"] = [round(mean, 1), round(peak, 1)]
+        if gain < 1.0:
+            texels = np.frombuffer(bytes(plan.rgba), np.uint8).reshape(-1, 4).copy()
+            texels[:, :3] = np.clip(texels[:, :3] * gain + 0.5, 0, 255).astype(np.uint8)
+            plan.rgba = bytearray(texels.tobytes())
+            report["gain"] = round(gain, 3)
     plan.report = report
     plan.needles = found
     plan.patches = patches

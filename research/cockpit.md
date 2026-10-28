@@ -1753,7 +1753,9 @@ scene is decomposed into what `g_fDigiData` can drive:
      change (the LFA's ring goes white -> green -> orange).
    - Pixels that go back to their rest colour are left at rest; a needle
      sweeping past does that.
-   - The changed pixels of each step become rectangles (merged runs) on id 1.
+   - The changed pixels of each step become rectangles (merged runs) on id 1,
+     only where the displays' triangles are, and never reaching into another
+     step's pixels or an earlier piece ("Flicker and glare" below).
      Each rectangle samples one texture column, from the top: the rest
      colour, from v 0.505 the first change's colour, and a later change some
      steps further.
@@ -1775,7 +1777,8 @@ scene is decomposed into what `g_fDigiData` can drive:
 
 **Geometry.**
 
-- Quads are double-sided, 0.8 mm over the display, needles 2.5 mm.
+- Quads are double-sided: bar pieces 0.8 mm over the display, digits 1.6 mm,
+  needles 2.5 mm.
 - They go into a stride-16 buffer with the vanilla Volt's declaration
   (`vanilla_buffer`, `rebuild_drsp(templates=)`).
 - The material is a copy of the Volt's (`e012cc80f0aa8829`) on the car's
@@ -1875,6 +1878,96 @@ display: two dials turning on the dash, left of the wheel.
 **Mistakes these runs found.** Earlier builds drew nothing or screen-sized
 triangles (needle buffer layout: `vm2-20261027-091948`). Transparent texels
 came out black blocks (no alpha test: `vm2-20261027-111010`).
+
+### Flicker and glare (2026-10-28, issue #161)
+
+User report on v0.1.2: the digital displays flicker (the Panoz's rpm bar torn in
+different places from shot to shot, the Devon's shift-light marks scrambled) and look
+washed out (pale cyan or green faces brighter than the cabin, the LFA's white ring
+glowing).
+
+**Causes (confirmed-static, `cockpit.fit` over the 300 cars with a plan, against
+`out/master`).**
+
+- *Pieces in one plane overlap.* Bar pieces are rectangles merged from each rpm step's
+  pixel runs with 2 px of slack. On slanted or curved bars (the Panoz's arc, the
+  Vipers', the LMP and GT racers') a step's rectangle reaches into the next step's
+  pixels. Both sit 0.8 mm over the display, and positions are stored in 1/4096 m
+  (0.24 mm) steps, so the two planes cross from vertex to vertex and the nearer one
+  changes with the view: z-fighting. 63 cars, 14571 overlapping pairs.
+- *Digit slots overlap.* Each speed slot's cell is the union of the ten glyph boxes;
+  with tight tracking neighbouring slots overlap, again in one plane: 65 cars
+  (Aston Martins, Audis, Vipers, S2000...).
+- *Live quads off the display.* Pieces and cells were placed where a display's
+  *window* (the bounding box of its triangles in the render target) shows them, so
+  parts the triangles don't show (the corners of round dials, the space above a
+  slanted top edge) were extrapolated into the display's plane over the bezel or
+  the dial ring. The Devon's shift lights sit above its round tachometer face: 88 of
+  its 90 pieces were mostly off the face, over Forza's `gauge_emissive` ring (0.28 mm
+  in front of the display) and the cowl. 53 cars.
+- *Unlit and pale.* The digital dials' pixel shader has an unlit variant (SSIC
+  program 163: texel to output, clamped at 6; the lit variants 151, 153 and 181
+  multiply by the sun and ambient terms). In game the display shows at its texel
+  colour while the cabin round it is lit and dim. Vanilla digital textures are dark
+  screens with bright glyphs (the 14 `*_Digital_Dials` textures: median luminance 0
+  to 47); Forza's LCD scenes are often pale (Panoz 119, ARX-01b 157, Devon 189) and the
+  LFA's ring is white (95th percentile 255). The game's tone curve flattens bright
+  texels: the Panoz's face at texel luminance 157 shows at 205, scaled to 108 still
+  at 181 (`vm1-20261028-124014`, `-124528`). 122 displays have a mean luminance over
+  48, 70 a 95th percentile over 160.
+- The ghosted TCS/ABS/STM and the empty half of the bar are Forza's own look: the
+  scene's `COCKPIT_LIGHT` OFF slides draw them at 25% opacity. They stay; dimming the
+  face takes their glare away with it.
+
+**Fix (`digital_dash.build_plan`).**
+
+1. Only what the triangles show: `coverage` rasterizes the displays' triangles over
+   the view; rpm pixels off them are dropped, pieces may not grow off them, and digit
+   and gear cells keep to the rows and then columns at least 90% shown (`_shown_box`,
+   UVs cut to match). A slot whose centre is off the triangles (`DisplayPatch.covers`)
+   is left out: the F430 GT's and SLR's gear sat wholly off their displays.
+2. No overlap: a piece may grow over unlit pixels but not into another step's pixels or
+   an earlier piece (`_runs_to_rects(forbid=)`); overlapping digit slots meet half way
+   (`_shown_spans`); pieces 0.8 mm over the display, digits 1.6 mm, needles 2.5 mm.
+   Merging exactly (no growth over unlit pixels) would have taken the Viper 2013 from
+   3326 to 5104 pieces; splitting each step by colour column, to 14904.
+3. Dimmed: the car's whole dial texture is scaled until the displays' mean luminance
+   is at most 48 (`DISPLAY_MEAN_LUMINANCE`, the brightest vanilla background) and
+   their 95th percentile at most 160 (`DISPLAY_PEAK_LUMINANCE`). Dark displays keep
+   their colours. Report: `digital_displays.luminance`, `gain`.
+
+**Survey, before (`origin/master`) and after (this code), same 300 cars:**
+
+| | Before | After |
+| --- | ---: | ---: |
+| rpm pieces overlapping each other | 63 cars, 14571 pairs, 143919 px2 | 34 cars, 520 pairs, 1191 px2 |
+| digit slots overlapping | 65 cars | 0 |
+| live quads mostly off the display | 53 cars, 6657 quads | 0 |
+| displays with mean luminance over 48 | 122 | 1 |
+| rpm pieces in all | 25290 | 40948 (largest: Viper 2013, 2146 -> 3326) |
+
+What overlaps is left is between pieces of one rpm step, which light at the same rpm:
+only two neighbouring shades of the 12-colour palette can trade places, over at most
+504 px2 a car (V12 Zagato). 160 cars' displays got darker; speed, rpm bars and needles
+are drawn on the same cars as before, gear on all but the two above.
+
+**In game (VM, confirmed-runtime).** `run-series.ps1 -Vm -Asi -ProbeIds
+'225,1,2,3,4,5,6' -HoldMph '40,100' -ShotSeconds 3 -WaitSeconds 600 -ZoomPresses 0`,
+the six cars built from `origin/master` and from this code at IDs 1 to 6 (Panoz
+Esperante GTLM, Devon GTX, LFA, ARX-01b #66, Viper Competition Coupe, S2000), the
+vanilla MP4-12C (225) for reference. Before `vm1-20261028-124014`, after
+`vm1-20261028-131725` (earlier steps: `-124528` with the first gain, `-130141`/`-130503`
+with the cap of 48 before cells kept to the display). All seven drove without a crash.
+The Devon's shift lights were green and black blobs spilling off the tachometer face in
+every frame; now a row of LEDs on it (`img/gauges-161-devon-ingame.jpg`). The faces
+are darker and less washed out (`img/gauges-161-ingame.jpg`); the LFA's ring is grey
+rather than glowing. At 1600 x 900 the Panoz's bar is about 100 px long, too small to
+show the z-fighting in a screenshot either way; the overlaps are measured offline.
+
+Open: in frames taken right after the probe forces 40 mph (t2), two after-builds
+showed a stray "1" in the hundreds place of the Panoz and the ARX (`139` while the HUD
+read 39) and a doubled gear glyph; frames from t4 on read right on every car, and the
+plan offline shows 39 with the hundreds blank. Not explained.
 
 ## Hands on small race wheels and wheels with columns (2026-10-25)
 
