@@ -815,6 +815,9 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
     size = pixel_size(patches)
     cell_px = max(1, math.ceil(PIECE_SIZE / size - 1e-6)) if size else 1
     g_rest, g_col, g_step, lit = bar_cells(base1, ev_step, ev_col, shown, cell_px)
+    # lit pixels in no drawn cell (cells mostly off the display, or hardly changing)
+    in_cell = np.repeat(np.repeat(lit, cell_px, 0), cell_px, 1)[:hgt, :wid]
+    report["rpm_pixels_left_out"] = int(((ev_step[0] >= 0) & ~in_cell).sum())
 
     # Texture: columns on the right, the artwork on the left. The digital dials draw
     # opaque (no alpha test), so every cell carries the artwork under it.

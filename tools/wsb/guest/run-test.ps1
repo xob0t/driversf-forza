@@ -35,6 +35,7 @@ param(
     [int]$WaitSeconds = 120,
     [int]$ZoomPresses = 0,
     [int]$ShotSeconds = 10, # screenshot interval while observing
+    [int]$BurstShots = 1, # with -HoldMph or -DriveSeconds: shots per sample, as fast as they save (observe-NN-b2.png...; shimmer, flicker)
     [string]$ProbeIds,   # comma-separated, e.g. 266,304
     [string]$TrafficIds, # comma-separated IDs for TrafficSpooler.RequestTrafficVehicles
     [string]$AheadIds,   # comma-separated IDs spawned in front without zapping
@@ -938,6 +939,7 @@ try {
             $speed = @($lines | Where-Object { $_ -match '\[dsfforza\] id \d+: (cockpit t\d+ speed|holding)' })
             $name = "observe-{0:D2}.png" -f (++$shot)
             Save-Shot $name
+            for ($b = 2; $b -le $BurstShots; $b++) { Save-Shot ("observe-{0:D2}-b{1}.png" -f $shot, $b) }
             Note ("$name" + $(if ($holdUntil) { ' (throttle)' } else { '' }) + $(if ($speed.Count) { ' ' + $speed[-1].Trim() } else { '' }))
         }
         else {
