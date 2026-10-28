@@ -201,6 +201,12 @@ def body_triangles(sections, lod: int, place) -> list:
             role, _ = fm.classify(sub.material)
             if role == fm.SKIP:
                 continue
+            # trim_art's subsections (dsf_trim_gloss~misc, ...) are the Forza trim they
+            # came from: mounting faces (#159: the Mazda 2's rear bumper recess, gloss
+            # trim since #176, was no face, and its plate fell back onto the boot lid).
+            source = fm.technique_source(sub.material)
+            if source != sub.material:
+                role = fm.classify(source)[0]
             c, f = CLASS.get(role, 0), feature(sub.material)
             if s.name.lower().startswith("exhaust"):
                 f = FEAT_EXHAUST
@@ -772,6 +778,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--host", type=int, required=True)
     p.add_argument("--dsf", type=Path, default=None, help="vanilla dngvehicles.sp (default: from $DSF_GAME_DIR)")
     p.add_argument("--png", type=Path, help="depth maps of both ends with the plates")
+    p.add_argument("--raw", action="store_true", help="the Forza sections as loaded (no cut-outs, no trim artwork)")
     args = parser.parse_args(argv)
     from dsfforza.formats import upvh as upvh_mod
     from dsfforza.formats.chnk import read_chunk
@@ -801,6 +808,19 @@ def main(argv: list[str] | None = None) -> None:
 
     car = forza2dsf.load_car(args.car, args.car.name)
     dims = forza2dsf.car_dims(car)
+    if not args.raw:
+        # As forza2dsf.convert: alpha cut-outs and trim artwork are split off before
+        # the plates are placed, and the plates see their subsections.
+        import dataclasses
+
+        from dsfforza.convert import cutout, trim_art
+        from dsfforza.convert import forza_materials as fm
+
+        opts = forza2dsf.ConvertOptions()
+        lods = set(opts.lods.values()) | {opts.shadow_lod, opts.exterior_lod}
+        body, _ = cutout.cut_alpha_tested(car.body, fm.AtlasCache(car.folder), lods=lods)
+        body, _ = trim_art.split_trim_art(body, fm.AtlasCache(car.folder), lods=lods)
+        car = dataclasses.replace(car, body=body)
     path = game_paths.vanilla(args.dsf, quiet=True)
     with path.open("rb") as stream:
         root = read_chunk(stream, 0)
