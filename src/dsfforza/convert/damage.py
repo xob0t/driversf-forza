@@ -129,6 +129,9 @@ SEAM_NEAR = 0.003  # m; positions of two rigid panels this close form a seam too
 SEAM_BORDER = 0.015  # m; host vertices of two rigid panels this close are a host panel border
 SEAM_STILL = 0.03  # m; host borders of a role pair whose median crush is below this are pinned
 SEAM_REACH = 0.2  # m; crush fades in over this distance from a pinned seam
+MIRRORS = (40, 41)
+MOUNT_TOUCH = 0.02  # m; mirror points this close to a panel's count towards it as the mirror's mount
+MOUNT_REACH = 0.06  # m; no panel touched: the nearest one within this is the mount
 # Vertex positions are int16 in 1/4096 m (forza2dsf.POSITION_SCALE); the w
 # component (baked sky term) uses the same scale, 4096 = 1.
 POSITION_UNITS = 4096
@@ -3017,6 +3020,8 @@ class DamagePlan:
                     _scale_collision(out, pdl + 0x10 + r.collision, scale)
                     entry["collision_scale"] = [round(s, 3) for s in scale]
                 report[f"record {r.index}"] = entry
+        out, report["mirrors"] = self._remount_mirrors(bytes(out))
+        out = bytearray(out)
         if self.opts.hull:
             root = h.records[0]
             if root.collision >= 0:
@@ -3025,6 +3030,155 @@ class DamagePlan:
                 report["hull"] = {"host": [host_box.lo, host_box.hi], "forza": [forza_box.lo, forza_box.hi]}
         self.report["upvh"] = report
         return bytes(out), report
+
+    # A side mirror's record hangs under the record of what the mirror is mounted on,
+    # and moves with it: vanilla mirrors sit on the door skin and hang under the door
+    # record (253 of 277), the rest under the front structure, the chassis or the
+    # bonnet (276, 197, 232...). Forza mirrors are often mounted on the A-pillar or the
+    # sail ahead of the window, which the converted car draws through the chassis
+    # (or on a door held shut, DamagePlan.bound). Under the host's door record they
+    # swung out with the door whenever a crash knocked it ajar, and floated beside the
+    # body (issue #187: Devon GTX, Lancer Evo X). Such a mirror goes under the record
+    # that moves its mount as drawn.
+
+    def _mirror_mount(self, pair) -> tuple | None:
+        """The panel a mirror panel is mounted on: the one with the most mirror points
+        within MOUNT_TOUCH of its own (finest full-entry LOD), else the nearest within
+        MOUNT_REACH; None if no panel is that close."""
+        pts = np.array(self.boxes.get(pair, ()), dtype=float).reshape(-1, 3)
+        if not len(pts):
+            return None
+        lo, hi = pts.min(0) - MOUNT_REACH, pts.max(0) + MOUNT_REACH
+        best = None
+        for other, opts in self.boxes.items():
+            panel = self.panels.get(other)
+            if other == pair or panel is None or panel.role in MIRRORS:
+                continue
+            q = np.array(opts, dtype=float).reshape(-1, 3)
+            q = q[((q >= lo) & (q <= hi)).all(1)]
+            if not len(q):
+                continue
+            d = np.full(len(pts), np.inf)
+            for k in range(0, len(q), 2048):
+                d = np.minimum(d, np.sqrt(((pts[:, None, :] - q[None, k : k + 2048, :]) ** 2).sum(-1)).min(1))
+            if d.min() > MOUNT_REACH:
+                continue
+            score = (int((d <= MOUNT_TOUCH).sum()), -float(d.min()))
+            if best is None or score > best[0]:
+                best = (score, other)
+        return best[1] if best else None
+
+    def _remount_mirrors(self, data: bytes) -> tuple[bytes, dict]:
+        """Put each mirror record under the record whose transform slot draws its
+        mount (DamagePlan.bound), where its host parent is another (move_subtree)."""
+        report = {}
+        for pair, panel in sorted(self.panels.items()):
+            if panel.role not in MIRRORS or pair not in self.boxes:
+                continue
+            mount = self._mirror_mount(pair)
+            if mount is None:
+                continue
+            slot = self.bound(mount)[0]
+            h = upvh_mod.parse(data)
+            par = _parents(h)
+            mirror = next((r for r in h.records if r.type == 1 and (r.slot, r.model) == pair), None)
+            if mirror is None or par[mirror.index] is None:
+                continue
+            parent = h.records[par[mirror.index]]
+            # A record without a slot of its own (the front structure) moves with the chassis.
+            if (parent.slot if parent.slot >= 0 else self.chassis[0]) == slot:
+                continue
+            targets = [r for r in h.records if r.type == 1 and r.slot == slot]
+            target = next((r for r in targets if (r.slot, r.model) == mount), None)
+            target = target or next((r for r in targets if r.role == 38), None) or (targets[0] if targets else None)
+            if target is None or mirror.index <= target.index < mirror.index + mirror.subtree:
+                continue
+            data, ordered = move_subtree(data, mirror.index, target.index)
+            report[self.label(pair)] = {
+                "mount": self.label(mount),
+                "from": role_name(parent.role),
+                "to": role_name(target.role),
+                "in_order": ordered,
+            }
+        return data, report
+
+
+def _parents(h) -> list[int | None]:
+    """Record index -> its parent's (depth-first, subtree sizes)."""
+    out, stack = [None] * len(h.records), []
+    for r in h.records:
+        while stack and stack[-1][1] <= r.index:
+            stack.pop()
+        out[r.index] = stack[-1][0] if stack else None
+        stack.append((r.index, r.index + r.subtree))
+    return out
+
+
+def move_subtree(data: bytes, index: int, parent: int) -> tuple[bytes, bool]:
+    """Move record `index` and its subtree to be a child of record `parent` (UPVH
+    records are depth-first with subtree sizes). Vanilla hierarchies number their part
+    records' transform slots (+0x34) and panel-data indices (+0x2A) in record order,
+    and vertices carry those numbers, so the subtree goes between the new parent's
+    children where that order holds; if there is no such place, after them
+    (returns False)."""
+    h = upvh_mod.parse(data)
+    par = _parents(h)
+    size = upvh_mod.RECORD_SIZE
+    count = h.records[index].subtree
+    if index <= parent < index + count:
+        raise ValueError(f"record {parent} is inside record {index}'s subtree")
+    raw = [bytearray(r.raw) for r in h.records]
+    sub = [r.subtree for r in h.records]
+    p = par[index]
+    while p is not None:
+        sub[p] -= count
+        p = par[p]
+    moved = set(range(index, index + count))
+    keep = [i for i in range(len(raw)) if i not in moved]
+    where = {old: new for new, old in enumerate(keep)}
+    ancestors = []
+    p = parent
+    while p is not None:
+        ancestors.append(where[p])
+        p = par[p]
+    rest_raw, rest_sub = [raw[i] for i in keep], [sub[i] for i in keep]
+    block_raw, block_sub = raw[index : index + count], sub[index : index + count]
+    pp = where[parent]
+    bounds, c = [], pp + 1
+    while c < pp + rest_sub[pp]:
+        bounds.append(c)
+        c += rest_sub[c]
+    bounds.append(pp + rest_sub[pp])
+
+    def numbers(records):
+        return [
+            v
+            for r in records
+            if struct.unpack_from("<H", r, 0x08)[0] == 1
+            for v in [(struct.unpack_from("<h", r, 0x34)[0], struct.unpack_from("<h", r, 0x2A)[0])]
+        ]
+
+    mine = numbers(block_raw)
+
+    def fits(b) -> bool:
+        before, after = numbers(rest_raw[:b]), numbers(rest_raw[b:])
+        return all(
+            all(v[a] < m[a] for v in before if v[a] >= 0 for m in mine if m[a] >= 0)
+            and all(v[a] > m[a] for v in after if v[a] >= 0 for m in mine if m[a] >= 0)
+            for a in (0, 1)
+        )
+
+    at = next((b for b in bounds if fits(b)), None)
+    ordered = at is not None
+    at = bounds[-1] if at is None else at
+    for a in ancestors:
+        rest_sub[a] += count
+    new_raw = rest_raw[:at] + block_raw + rest_raw[at:]
+    new_sub = rest_sub[:at] + block_sub + rest_sub[at:]
+    for r, s in zip(new_raw, new_sub, strict=True):
+        struct.pack_into("<H", r, 0x14, s)
+    start, end = upvh_mod.HEADER_SIZE, upvh_mod.HEADER_SIZE + len(raw) * size
+    return data[:start] + b"".join(bytes(r) for r in new_raw) + data[end:], ordered
 
 
 def robust_box(points, trim: float = 0.02) -> Box | None:

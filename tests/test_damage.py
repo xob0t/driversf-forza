@@ -6,10 +6,11 @@ or Forza files).
 
 from __future__ import annotations
 
+import struct
 import unittest
 
 from dsfforza.convert import damage, forza2dsf
-from dsfforza.formats import carbin
+from dsfforza.formats import carbin, upvh
 
 
 def _plan(host_points: dict, records: dict) -> damage.DamagePlan:
@@ -160,6 +161,86 @@ class ExposedVisible(unittest.TestCase):
         self.assertIsNone(after["black"])  # the tail panel: seen from behind
         self.assertEqual(after["frame"], before["frame"])  # inside the box: still the bay's
         self.assertEqual(report["seen bay lod 1"], 2)
+
+
+def _record(type_: int, role: int, subtree: int, slot: int = -1, model: int = -1) -> bytes:
+    rec = bytearray(upvh.RECORD_SIZE)
+    rec[:8] = upvh.NONE_UID
+    struct.pack_into("<HH", rec, 0x08, type_, role)
+    struct.pack_into("<H", rec, 0x14, subtree)
+    struct.pack_into("<hhh", rec, 0x1A, -1, -1, -1)
+    struct.pack_into("<h", rec, 0x2A, model)
+    struct.pack_into("<h", rec, 0x34, slot)
+    return bytes(rec)
+
+
+TAIL = struct.pack("<4f", 1.0, 2.0, 3.0, 4.0)  # a table after the records, to check it stays
+
+
+def _hierarchy() -> bytes:
+    """Like host 182's front: root, chassis part (slot 0), the -x door (slot 6) with its
+    mirror (slot 7, with a marker) and a door marker, then the bonnet (slot 8)."""
+    records = [
+        _record(4, 0, 7),
+        _record(1, 38, 6, 0, 0),
+        _record(1, 32, 4, 6, 7),
+        _record(1, 41, 2, 7, 8),
+        _record(3, 73, 1),
+        _record(3, 67, 1),
+        _record(1, 4, 1, 8, 9),
+    ]
+    head = bytearray(upvh.HEADER_SIZE)
+    head[:4] = b"AWHF"
+    struct.pack_into("<6I", head, 4, 0, 0, 26, len(records), 1, 0)
+    head[0x2D] = 1  # mirrors
+    return bytes(head) + b"".join(records) + TAIL
+
+
+def _tree(data: bytes) -> list:
+    h = upvh.parse(data)
+    par = damage._parents(h)
+    return [(r.role, h.records[par[r.index]].role if par[r.index] is not None else None) for r in h.records]
+
+
+class MirrorMount(unittest.TestCase):
+    def test_move_subtree_keeps_the_slot_order(self):
+        data = _hierarchy()
+        out, ordered = damage.move_subtree(data, 3, 1)  # the mirror under the chassis
+        self.assertTrue(ordered)
+        self.assertEqual(_tree(out), [(0, None), (38, 0), (32, 38), (67, 32), (41, 38), (73, 41), (4, 38)])
+        h = upvh.parse(out)
+        self.assertEqual([r.subtree for r in h.records], [7, 6, 2, 1, 2, 1, 1])
+        self.assertEqual([r.slot for r in h.records if r.type == 1], [0, 6, 7, 8])
+        self.assertTrue(out.endswith(TAIL) and len(out) == len(data))
+        # Under the bonnet the slots can't stay in record order: it goes after its children.
+        out, ordered = damage.move_subtree(data, 3, 6)
+        self.assertFalse(ordered)
+        self.assertEqual(_tree(out)[-2:], [(41, 4), (73, 41)])
+        with self.assertRaises(ValueError):
+            damage.move_subtree(data, 2, 3)  # into its own subtree
+
+    def test_mirror_follows_what_it_is_mounted_on(self):
+        records = {(0, 0): 38, (6, 7): 32, (7, 8): 41, (8, 9): 4}
+        plan = _plan({}, records)
+        door = [(-0.9, y / 10, z / 10) for y in range(-3, 4) for z in range(-8, 5)]
+        sail = [(-0.75, 0.3, 0.12), (-0.75, 0.35, 0.15)]  # the A-pillar: the chassis
+        mirror = [(-0.76, 0.3, 0.12), (-0.91, 0.31, 0.1), (-1.0, 0.3, 0.08)]
+        plan.boxes = {(0, 0): sail, (6, 7): door, (7, 8): mirror, (8, 9): [(0.0, 0.2, 1.2)]}
+        self.assertEqual(plan._mirror_mount((7, 8)), (0, 0))
+        out, report = plan._remount_mirrors(_hierarchy())
+        self.assertEqual(_tree(out)[3:5], [(67, 32), (41, 38)])
+        self.assertEqual(
+            report["7,8 mirror -x"],
+            {"mount": "0,0 chassis", "from": "door front -x", "to": "chassis", "in_order": True},
+        )
+        # On a door that swings (a Forza part) it stays under the door, as vanilla.
+        plan.boxes[(0, 0)] = [(0.0, 0.0, 0.0)]
+        plan.swinging = {(6, 7)}
+        self.assertEqual(plan._mirror_mount((7, 8)), (6, 7))
+        self.assertEqual(plan._remount_mirrors(_hierarchy()), (_hierarchy(), {}))
+        # On a door held shut (drawn through the chassis' slot) it goes under the chassis.
+        plan.swinging = set()
+        self.assertEqual(_tree(plan._remount_mirrors(_hierarchy())[0])[4], (41, 38))
 
 
 if __name__ == "__main__":
