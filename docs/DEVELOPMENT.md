@@ -102,9 +102,12 @@ Build the VM once with `tools/wsb/vm-build.ps1` (set `DSF_VM_ISO` to a
 Windows 10/11 ISO), then:
 
 ```powershell
-.\tools\wsb\run-series.ps1 -Vm -Archives out\build\dngvehicles.sp `
-    -LuaFiles 'dsfforza\ported.lua=out\build\dngvehicles.lua' -ProbeIds '147,1,2'
+.\tools\wsb\run-series.ps1 -Vm -Archives out\build\dngvehicles.sp -ProbeIds '147,1,2'
 ```
+
+An archive named `dngvehicles.sp` goes with its build's `dngvehicles.lua`
+and `gui\` (as `tools\install.ps1` installs them), so each car has its
+vehicleStats entry, badge and nameplate; `-ArchiveOnly` leaves them out.
 
 Screenshots and logs land in `%LOCALAPPDATA%\Temp\dsfforza-wsb\runs\`.
 Options and the other modes (host, sandbox): `research/in-game-tests.md`.
