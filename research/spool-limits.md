@@ -461,6 +461,21 @@ interior and exterior entries to such a frame.
 append bounded and removes the trap, so a frame past 16384 draws loses its
 last draws instead of ending the game.
 
+**In game (VM, master 3ca28fd's full build, the user's dsf_enhanced.asi and
+unmodified ini).** Not reproduced: the probe spawns cars on a street, not
+out of the Hunters Point garage, and the VM's window is 16:9.
+
+| Run | Plugin | Result |
+| --- | --- | --- |
+| `vm1-20261028-230138` | the installed one (no `render`) | 420, 488, 296, 11, 540 spawn, drive, cockpit and chase views; then a breakpoint at 0x005A759B from the harness's `-TrafficIds` (`in-game-tests.md`, "Traffic"), not the draw queue |
+| `vm2-20261028-230155` | with `render` | same cars, same harness trap; `render` logged no drop and no frame at 12288 |
+| `vm1-20261028-230723` | with `render`, high-water lines from 8192, no `-TrafficIds`, 8 s throttle in each cockpit view | finished, no crash; no frame reached 8192 queued draws with up to 377 traffic vehicles |
+
+So the vanilla game in the VM stays under half the queue. What filled the
+user's queue (the garage exit at Hunters Point, the 21:9 view, terrain LOD
+x0.25) is not measured; with the plugin the log will say when a frame gets
+past 8192.
+
 ## Vertex and index buffers (confirmed-static)
 
 FUN_00BBAFE0 (VXCK) and FUN_00BBAD40 (IXCK) create D3D9 buffers through
