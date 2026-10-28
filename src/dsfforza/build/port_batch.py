@@ -13,6 +13,10 @@ Selection (combinable; a list keeps its order, filters keep roster order):
                                 muscle suv pickup race (race cars are left out unless named)
     --year 1960-1979            --no-counterpart / --counterpart (a stock DSF car of the same model)
     --exclude NAME ...          --diverse N (round-robin over body classes, N cars)  --max N
+    --skip-stock-models         leave out the cars the stock game already has (the cars with a
+                                counterpart), for a --list too; a car named with --car is
+                                kept. With --id-map no ID moves. dsff install
+                                passes it unless it gets --with-stock-models.
 
 Every car is built by port_car.build_car in its own worker process (Below
 Normal priority, at most --jobs at a time, a new one only while 1.5 GB of RAM
@@ -45,6 +49,12 @@ its garage module lists IDs up to 999 in up to 120 maker groups and keeps the
 save flags of IDs 304+ in a side file, so every car can be in the garage. Cars
 get every free ID in order: 1..61, the 92 IDs in 62..303 the stock archive
 leaves unused, then --first-id up; cars that won't fit a maker group get a note.
+--id-map FILE ({media: ID}, JSON) makes IDs independent of the selection: a car in the map
+keeps its ID when the stock archive doesn't use it, new cars take free IDs in list order
+(skipping every ID in the map), and the build writes the result back, rows of cars not
+built included, so a car left out by --skip-stock-models gets its ID again when it is
+built later. dsff install keeps one map per install (dsfforza-backup/ids.json). Without
+a map the IDs follow the list order alone.
 
 Outputs in --out DIR: dngvehicles.sp, dngvehicles.json (port_car's manifest
 format, plus "batch": failures and timings), dngvehicles.lua (the
@@ -288,7 +298,8 @@ def select(args, cars: dict, dsf: Path, dbs: dict[str, Path]) -> list[Pick]:
     if args.year:
         lo, _, hi = args.year.partition("-")
         years = (int(lo or 0), int(hi or 9999))
-    out = []
+    named = {m.lower() for m, _, _ in (c.partition("@") for c in args.car or [])}
+    out, left_out = [], []
     for p in picks:
         if p.media.lower() in excluded:
             continue
@@ -309,6 +320,9 @@ def select(args, cars: dict, dsf: Path, dbs: dict[str, Path]) -> list[Pick]:
                 continue
             if args.counterpart and p.counterpart is None:
                 continue
+        if getattr(args, "skip_stock_models", False) and p.counterpart is not None and p.media.lower() not in named:
+            left_out.append(p)  # a --list entry is skipped too; a car named with --car is kept
+            continue
         out.append(p)
     if args.diverse:
         out = diverse(out, args.diverse)
@@ -320,6 +334,11 @@ def select(args, cars: dict, dsf: Path, dbs: dict[str, Path]) -> list[Pick]:
         if p.media.lower() not in seen:
             seen.add(p.media.lower())
             unique.append(p)
+    # For the report: the cars --skip-stock-models left out of this selection.
+    args.stock_models_skipped = [
+        {"media": p.media, "stock_id": p.counterpart, "stock_model": p.counterpart_model}
+        for p in {p.media.lower(): p for p in left_out}.values()
+    ]
     return unique
 
 
@@ -427,8 +446,41 @@ def root_limit_of(args) -> int:
     return limit
 
 
+ID_LIMIT = 1000  # base IDs: n, n + 1000 (interior) and n + 2000 (exterior)
+
+
+def read_id_map(path: Path | None) -> dict[str, int]:
+    """--id-map FILE: {media: spool ID} (JSON), or {} when there is no file yet."""
+    if path is None or not Path(path).is_file():
+        return {}
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        return {str(k): int(v) for k, v in data.items()}
+    except (ValueError, AttributeError, TypeError) as error:
+        raise SystemExit(f"{path}: not an ID map ({{media: spool ID}}): {error}") from error
+
+
+def write_id_map(path: Path, old: dict[str, int], picks: list[Pick]) -> dict[str, int]:
+    """The map after a build: every earlier row (a car left out of this selection keeps its
+    ID, and gets it back when it is selected again) with this selection's IDs on top."""
+    new = dict(old)
+    for p in picks:
+        if p.spool_id is not None:
+            for key in [k for k in new if k.lower() == p.media.lower()]:
+                del new[key]
+            new[p.media] = p.spool_id
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(json.dumps(dict(sorted(new.items())), indent=1) + "\n", encoding="utf-8")
+    return new
+
+
 def assign_ids(
-    picks: list[Pick], taken: set[int], policy: str, first_high: int, isos: list[Path] | None = None
+    picks: list[Pick],
+    taken: set[int],
+    policy: str,
+    first_high: int,
+    isos: list[Path] | None = None,
+    id_map: dict[str, int] | None = None,
 ) -> None:
     """policy "garage": IDs 1..61 (listed in the garage) while a maker group has room
     for the car, else first_high and up; "high": first_high and up only; "asi"
@@ -436,13 +488,54 @@ def assign_ids(
     IDs in 62..303 the stock archive doesn't use, then first_high up, each car
     garage-listed by the plugin while the maker list (ASI_GROUPS_CAP groups) has
     room; the plugin's groups take any number of cars. List order decides which cars get the garage IDs (garage) or the group
-    slots (asi). IDs some mod is known to use (RESERVED_IDS) are skipped."""
+    slots (asi). IDs some mod is known to use (RESERVED_IDS) are skipped.
+
+    id_map ({media: ID}, --id-map): a car in the map keeps its ID when the base archive
+    doesn't use it (`taken`), whatever the selection, its place in it or the policy; the
+    cars not in it take free IDs in list order as above, skipping every ID in the map (a
+    car left out of this selection, e.g. by --skip-stock-models, keeps its ID reserved).
+    Without a map the IDs follow the list order alone. The maker group of a car in the map
+    is settled first, in ID order, so the groups don't depend on the selection either:
+    asi opens fewer groups than ASI_GROUPS_CAP for the whole roster, so every car's group
+    is its maker's (only past the cap would the selection matter)."""
+    mapped = {k.lower(): v for k, v in (id_map or {}).items()}
+    fixed: list[Pick] = []
+    for p in picks:
+        wanted = mapped.get(p.media.lower())
+        if (
+            wanted is not None
+            and 1 <= wanted < ID_LIMIT
+            and wanted not in taken
+            and wanted not in RESERVED_IDS
+            and all(wanted != f.spool_id for f in fixed)
+        ):
+            p.spool_id = wanted
+            fixed.append(p)
+    taken.update(f.spool_id for f in fixed)
+    taken.update(mapped.values())  # rows of cars not built now stay reserved
+    fixed.sort(key=lambda p: p.spool_id)
     low = [i for i in GARAGE_IDS if i not in taken] if policy == "garage" else []
     asi = [i for i in ASI_LOW_IDS if i not in taken and i not in RESERVED_IDS] if policy == "asi" else []
     counts, group_of = garage_groups() if (low or policy == "asi") else ({}, {})
     groups = car_groups(picks, group_of, isos) if (low or policy == "asi") else {}
+    for p in fixed:  # their groups first, in ID order
+        own = groups.get(p.media)
+        if own is None or not (policy == "asi" or p.spool_id in GARAGE_IDS):
+            continue
+        if policy == "asi":
+            group = garage_group(own, own, counts, ASI_GROUP_CAP, ASI_GROUPS_CAP)
+        else:
+            group = garage_group(own, own, counts, GARAGE_GROUP_CAP, GARAGE_GROUPS_CAP)
+        if group is None:
+            p.notes_soft = "no garage group left" + (" (dsfforza.asi)" if policy == "asi" else "")
+            continue
+        counts[group] = counts.get(group, 0) + 1
+        if group != own:
+            p.notes_soft = f"garage group {group}"
     next_id = first_high
     for p in picks:
+        if p.spool_id is not None:
+            continue
         own = groups.get(p.media)
         group = garage_group(own, own, counts, GARAGE_GROUP_CAP, GARAGE_GROUPS_CAP) if low else None
         if group is not None:
@@ -1085,6 +1178,16 @@ def string_tables(isos: list[Path]) -> None:
                 print(f"warning: {game} string tables from {iso.name}: {type(error).__name__}: {error}")
 
 
+def note_stock_models(args) -> None:
+    """Say which cars --skip-stock-models left out (select() records them)."""
+    left_out = getattr(args, "stock_models_skipped", None) or []
+    if left_out:
+        print(
+            f"{len(left_out)} cars left out, the stock game has the model (--skip-stock-models): "
+            + ", ".join(f"{c['media']} (stock {c['stock_model']})" for c in left_out)
+        )
+
+
 def print_plan(picks: list[Pick]) -> None:
     print(f"{'ID':>4}  {'car':30} {'game':4} {'year':4}  {'body':11} {'drive':5} {'kW':>5}  host / counterpart")
     for p in picks:
@@ -1106,9 +1209,17 @@ def cmd_plan(args) -> None:
 
     with dsf.open("rb") as stream:
         taken = clone_vehicle.taken_ids(stream, read_chunk(stream, 0).entries)
-    assign_ids([p for p in picks if not p.notes], taken, args.id_policy, args.first_id, isos)
+    assign_ids(
+        [p for p in picks if not p.notes],
+        taken,
+        args.id_policy,
+        args.first_id,
+        isos,
+        read_id_map(args.id_map),
+    )
     print_plan(picks)
     print(f"{len(picks)} cars")
+    note_stock_models(args)
     if args.tsv:
         cols = [
             "spool_id",
@@ -1419,13 +1530,17 @@ def cmd_build(args) -> None:
     with dsf.open("rb") as stream:
         stock_entries = read_chunk(stream, 0).entries
         taken = clone_vehicle.taken_ids(stream, stock_entries)
-    assign_ids(picks, taken, args.id_policy, args.first_id, isos)
+    id_map = read_id_map(args.id_map)
+    assign_ids(picks, taken, args.id_policy, args.first_id, isos, id_map)
+    note_stock_models(args)
     root_limit = root_limit_of(args)
     room = (root_limit - len(stock_entries)) // 3  # 453 root entries in the stock archive
     if len(picks) > room:
         raise SystemExit(
             f"{len(picks)} cars: the archive root holds at most {room} new ones (--root-limit {root_limit})"
         )
+    if args.id_map:  # this selection's IDs on top of the earlier rows
+        write_id_map(args.id_map, id_map, picks)
     print_plan(picks + skipped)
     progress = getattr(args, "progress", None)
     emit(
@@ -1433,6 +1548,7 @@ def cmd_build(args) -> None:
         "plan",
         cars=[p.media for p in picks],
         skipped=[{"media": p.media, "error": "; ".join(p.notes)} for p in skipped],
+        stock_models=args.stock_models_skipped,
     )
     # Warm the shared caches once so workers only read them.
     from dsfforza.build import host_select
@@ -1670,6 +1786,7 @@ def finish(
         "probe_ids": [c["spool_id"] for c in cars_out],
         "batch": {
             "id_policy": args.id_policy,
+            "skip_stock_models": bool(getattr(args, "skip_stock_models", False)),
             "port_options": port_options,
             "failed": [{k: f.get(k) for k in ("media", "spool_id", "cause", "error")} for f in failed],
         },
@@ -1931,6 +2048,9 @@ def write_report(
     }
     if getattr(args, "reuse_record", None):
         report["reuse"] = args.reuse_record
+    if getattr(args, "skip_stock_models", False):
+        # The cars left out because the stock game has the model (their IDs stay free).
+        report["stock_models_skipped"] = getattr(args, "stock_models_skipped", [])
     (out_dir / "batch-report.json").write_text(json.dumps(report, indent=1, default=str) + "\n", encoding="utf-8")
     print(
         f"\n{len(cars)} cars built, {len(failed)} failed; total {timings['total']:.0f} s "
@@ -1976,6 +2096,12 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--year", help="range, e.g. 1960-1979")
         p.add_argument("--no-counterpart", action="store_true", help="only cars DSF has no same-model car for")
         p.add_argument("--counterpart", action="store_true", help="only cars DSF has a same-model car for")
+        p.add_argument(
+            "--skip-stock-models",
+            action="store_true",
+            help="leave out the cars the stock game has a same-model car for, also from a --list; "
+            "a car named with --car is kept. With --id-map no ID changes",
+        )
         p.add_argument("--exclude", action="append", metavar="NAME")
         p.add_argument("--diverse", type=int, metavar="N", help="N cars spread over body classes and makes")
         p.add_argument("--max", type=int)
@@ -1988,6 +2114,15 @@ def build_parser() -> argparse.ArgumentParser:
             "through dsfforza.asi (research/asi.md)",
         )
         p.add_argument("--first-id", type=int, default=HIGH_FIRST_ID)
+        p.add_argument(
+            "--id-map",
+            type=Path,
+            metavar="FILE",
+            help="JSON {media: spool ID}: a car in it keeps its ID (when the base archive doesn't use it), "
+            "whatever the selection or order; new cars take free IDs in list order and build writes the "
+            "result back (rows of cars not built stay, so their IDs stay reserved). dsff install keeps one "
+            "per install. Without it the IDs follow the list order",
+        )
         p.add_argument(
             "--root-limit",
             type=int,

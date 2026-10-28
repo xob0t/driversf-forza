@@ -746,6 +746,8 @@ def build_info(build: Path, files: dict[str, str]) -> dict:
                 for f in failed
             ],
             "failed_by_cause": report.get("failed_by_cause"),
+            # the cars left out because the stock game has the model (dsff install's default)
+            "stock_models_skipped": report.get("stock_models_skipped"),
             "fallbacks": report.get("fallbacks"),
             "archive_bytes": report.get("archive_bytes"),
             "jobs": report.get("jobs"),
@@ -938,6 +940,14 @@ def summary_lines(r: dict) -> list[str]:
             lines.append(f"              ... {len(failed) - 10} more in report.json")
         if b.get("gui_problem"):
             lines.append(f"              GUI: {b['gui_problem']}")
+        left_out = [c.get("media") for c in b.get("stock_models_skipped") or [] if isinstance(c, dict)]
+        if left_out:
+            lines.append(
+                f"Left out:   {len(left_out)} cars the stock game has the model of (--with-stock-models builds "
+                f"them): {', '.join(map(str, left_out))}"
+            )
+        elif options.get("skip_stock_models") is False:
+            lines.append("Left out:   none (built with --with-stock-models)")
     else:
         lines.append("Last build: none in out\\build")
     runs = r.get("install_runs") or []

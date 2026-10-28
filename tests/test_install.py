@@ -435,6 +435,74 @@ def test_summary_notes_a_verify_mismatch():
         assert any("BMW_Z4_11" in n and "2 other reused cars" in n for n in run.summary.notes)
 
 
+def test_summary_names_the_cars_left_out_because_the_stock_game_has_them():
+    with tempfile.TemporaryDirectory() as tmp:
+        build = Path(tmp) / "build"
+        build.mkdir()
+        rows = [{"media": "NIS_370Z_10", "stock_model": "Nissan_370Z_2009_Civ"}, {"media": "FOR_GT_05"}]
+        report = {"ok": [{"media": "A"}], "failed": [], "stock_models_skipped": rows}
+        (build / "batch-report.json").write_text(json.dumps(report), encoding="utf-8")
+        run = _run(_args("--build-only", out=build))
+        run.read_report(build)
+        assert run.summary.stock_models == ["NIS_370Z_10", "FOR_GT_05"]
+        assert "2 cars the stock game already has" in "\n".join(install.summary_lines(run.summary))
+
+
+def _build_argv(*extra: str, game: Path, setup=None) -> list[str]:
+    """The port_batch arguments Run.build makes (cmd_build is replaced)."""
+    from dsfforza.build import port_batch
+
+    seen = []
+    with _tmp() as tmp:
+        tmp = Path(tmp)
+        run = _run(_args("--build-only", *extra, "--no-reuse", out=tmp / "build"))
+        run.stock_archive, run.isos, run.game = tmp / "stock.sp", [], game
+        run.record = install.read_install_record(game)
+        with (
+            mock.patch.object(port_batch, "cmd_build", side_effect=seen.append),
+            mock.patch.object(install, "promote", return_value=tmp / "build"),
+            mock.patch.object(install.Run, "read_report"),
+        ):
+            run.build()
+        args = seen[-1]
+        args.map_file = Path(args.id_map).read_text(encoding="utf-8") if Path(args.id_map).is_file() else None
+    return args
+
+
+def test_the_build_leaves_out_stock_models_unless_asked():
+    with _tmp() as tmp:
+        game = Path(tmp) / "game"
+        args = _build_argv(game=game)
+        assert args.skip_stock_models is True and args.list == [install.DEFAULT_LIST]
+        assert _build_argv("--with-stock-models", game=game).skip_stock_models is False
+
+
+def test_the_build_gets_the_installs_id_map_else_the_record_else_nothing():
+    with _tmp() as tmp:
+        game = Path(tmp) / "game"
+        assert _build_argv(game=game).map_file is None  # a first install: list order
+        record = {"state": "installed", "cars": ["A_1", "B_2"], "ids": "5,304"}
+        _touch(game / "dsfforza-backup" / "install.json", json.dumps(record).encode())
+        assert json.loads(_build_argv(game=game).map_file) == {"A_1": 5, "B_2": 304}  # from before the map
+        install.write_ids_file(install.id_map_path(game), {"A_1": 7, "OFF_3": 9})
+        assert json.loads(_build_argv(game=game).map_file) == {"A_1": 7, "OFF_3": 9}  # the install's own wins
+
+
+def test_the_installs_id_map_keeps_the_earlier_rows_and_the_installed_cars():
+    with _tmp() as tmp:
+        tmp = Path(tmp)
+        game, build = tmp / "game", tmp / "build"
+        (game / "dsfforza-backup").mkdir(parents=True)
+        install.write_ids_file(build / "ids.json", {"A_1": 5, "B_2": 304, "C_3": 305})
+        (build / "dngvehicles.json").write_text(json.dumps({"cars": [{"media": "A_1", "spool_id": 5}]}))
+        run = _run(_args("--build-only", out=build))
+        run.game = game
+        run.keep_ids(build, {"OLD_4": 306, "A_1": 99})
+        # OLD_4 and C_3 are not installed now but keep their rows (a skipped car gets its ID back)
+        assert install.read_ids_file(install.id_map_path(game)) == {"A_1": 5, "B_2": 304, "C_3": 305, "OLD_4": 306}
+        assert install.record_ids({"cars": ["A"], "ids": "1,2"}) == {}  # mismatched: not trusted
+
+
 def test_plain_display_is_ascii_and_moves_build_to_pack():
     stream = io.StringIO()
     r = install.PlainReporter(stream)

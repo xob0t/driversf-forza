@@ -4,6 +4,7 @@
     uv run dsff install --build-only        # stop after the build (out/build)
     uv run dsff install --install-only      # install out/build (or --build DIR) as it is
     uv run dsff install --list my.txt       # other cars (--car NAME, repeatable, also works)
+    uv run dsff install --with-stock-models # also the Forza cars the stock game already has
     uv run dsff install --status            # what is installed (tools/install.ps1 -Status)
     uv run dsff install --uninstall         # put the game back (tools/install.ps1 -Uninstall)
     uv run dsff install --report            # a zip for a bug report (src/dsfforza/build/report.py)
@@ -29,6 +30,10 @@ Stages, each skipped when there is nothing to do:
    --reuse DIR made from the same inputs and code, so a re-run only converts what
    changed. Without any of those, the earlier build under out/ with the most cars is
    used. When the build finishes, out/build.new becomes out/build.
+   Cars the stock game already has (a stock car of the same model, port_batch's
+   "counterpart") are left out, from a --list too, unless --with-stock-models is given
+   or the car is named with --car. They keep their IDs free: every other car has the ID
+   it has with them. The count is in the summary, the names in the log and `dsff report`.
 5. pack: the merge into one archive, lint, garage pictures and HUD badges (same run).
 6. install: the save folder (Documents/Ubisoft/Driver San Francisco/reloaded/savegames)
    is copied to out/save-backups/<time>/, then tools/install.ps1 installs the build,
@@ -517,6 +522,70 @@ def read_install_record(game: Path) -> dict | None:
         return None
 
 
+# --- the ID map -----------------------------------------------------------------------------
+# A car keeps its spool ID across installs, whatever the selection (saves key unlocks and
+# ownership by it): <game>\dsfforza-backup\install-ids.json, {media: ID}, written after a
+# successful install and removed by -Uninstall with the rest of the backup folder (its name
+# matches install*.json*, which install.ps1 leaves alone when it clears a leftover backup).
+# Every build gets a copy to work on (port_batch --id-map) and writes its result into
+# its folder as ids.json.
+
+ID_MAP_NAME = "install-ids.json"
+
+
+def id_map_path(game: Path) -> Path:
+    return Path(game) / "dsfforza-backup" / ID_MAP_NAME
+
+
+def read_ids_file(path: Path) -> dict[str, int]:
+    """{media: ID} from a JSON file, {} when it is missing or damaged."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        return {str(k): int(v) for k, v in data.items() if int(v) > 0}
+    except (OSError, ValueError, AttributeError, TypeError):
+        return {}
+
+
+def write_ids_file(path: Path, ids: dict[str, int]) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    part = path.with_name(path.name + ".part")
+    part.write_text(json.dumps(dict(sorted(ids.items())), indent=1) + "\n", encoding="utf-8")
+    part.replace(path)
+
+
+def record_ids(record: dict | None) -> dict[str, int]:
+    """The cars and IDs an install record names (install.ps1 writes `cars` and `ids` in the
+    same order), for an install from before the ID map."""
+    if not record:
+        return {}
+    cars = record.get("cars") or []
+    ids = record.get("ids") or []
+    if isinstance(ids, str):
+        ids = [i for i in ids.split(",") if i.strip()]
+    try:
+        return {str(c): int(i) for c, i in zip(cars, ids, strict=True)} if len(cars) == len(ids) else {}
+    except ValueError:
+        return {}
+
+
+def seed_id_map(game: Path, record: dict | None, last_build: Path | None) -> tuple[dict[str, int], str]:
+    """(map, where it came from) for a build: the install's own map, else the cars and IDs of
+    the install record (an install from before the map), else the last build's ids.json (a
+    first install on a machine that built before), else nothing: the IDs then follow the
+    list order, as port_batch makes them without a map. One source only: they can disagree."""
+    found = read_ids_file(id_map_path(game))
+    if found:
+        return found, "the install's ID map"
+    found = record_ids(record) if installed(record) else {}
+    if found:
+        return found, "the install record"
+    found = read_ids_file(Path(last_build) / "ids.json") if last_build else {}
+    if found:
+        return found, f"{rel(Path(last_build))}/ids.json"
+    return {}, ""
+
+
 def hook_source(path: Path) -> bool:
     """--hook-archive is usable: an archive file, or a folder holding plugins/DriverNGHook.asi."""
     return path.is_file() or (path / "plugins" / "DriverNGHook.asi").is_file()
@@ -652,6 +721,14 @@ class Tracker:
                 failure = CarFailure(s["media"], "not selected", s.get("error", ""))
                 self.failures.append(failure)
                 notes.append(("error", f"{failure.media}: {failure.error or failure.cause}"))
+            if data.get("stock_models"):
+                notes.append(
+                    (
+                        "info",
+                        f"{len(data['stock_models'])} cars left out: the stock game has the model "
+                        "(--with-stock-models builds them too)",
+                    )
+                )
         elif event == "convert":
             self.phase = "convert"
             self.todo = len(data.get("todo", []))
@@ -798,6 +875,7 @@ class Summary:
     built: int = 0
     reused: int = 0
     failed: list = field(default_factory=list)  # CarFailure
+    stock_models: list = field(default_factory=list)  # cars left out: the stock game has the model
     archive_bytes: int | None = None
     pack: str = ""  # what the pack step redid ("" before it ran)
     game: Path | None = None
@@ -925,6 +1003,14 @@ class PlainReporter(Reporter):
             self.line(text)
 
 
+def stock_models_text(s: Summary) -> str:
+    """The summary's line for the cars left out (the names are in the log and `dsff report`)."""
+    return (
+        f"{len(s.stock_models)} cars the stock game already has (same model as a stock car); "
+        "--with-stock-models builds them too" + (f". The names are in the log, {s.log}" if s.log else "")
+    )
+
+
 def summary_lines(s: Summary) -> list[str]:
     lines = ["", f"Finished in {clock_text(s.elapsed)}."]
     if s.build_dir is not None:
@@ -932,6 +1018,8 @@ def summary_lines(s: Summary) -> list[str]:
             f"  Cars:      {s.in_archive} in the archive ({s.built} built, {s.reused} reused), {len(s.failed)} failed"
         )
         lines.append(f"  Archive:   {s.build_dir / 'dngvehicles.sp'} ({size_text(s.archive_bytes)})")
+        if s.stock_models:
+            lines.append(f"  Left out:  {stock_models_text(s)}")
     for f in s.failed:
         lines.append(f"    {f.media}: {f.cause}" + (f" - {f.error[:100]}" if f.error else ""))
         if f.log:
@@ -1059,6 +1147,8 @@ class LiveReporter(Reporter):
             failed = f", [red]{len(s.failed)} failed[/]" if s.failed else ", 0 failed"
             grid.add_row("Cars", f"{s.in_archive} in the archive ({s.built} built, {s.reused} reused){failed}")
             grid.add_row("Archive", f"{s.build_dir / 'dngvehicles.sp'} ({size_text(s.archive_bytes)})")
+            if s.stock_models:
+                grid.add_row("Left out", stock_models_text(s))
         if s.installed:
             grid.add_row(
                 "Installed",
@@ -1465,6 +1555,16 @@ class Run:
             argv += ["--list", str(path)]
         for car in args.car or []:
             argv += ["--car", car]
+        seed, where = seed_id_map(self.game, self.record, dirs.out)
+        id_map = dirs.staging / "ids.json"
+        if seed:
+            write_ids_file(id_map, seed)
+            log(f"ID map: {len(seed)} cars from {where}")
+        else:
+            id_map.unlink(missing_ok=True)
+        argv += ["--id-map", str(id_map)]
+        if not args.with_stock_models:
+            argv += ["--skip-stock-models"]
         for iso in self.isos:
             argv += ["--iso", str(iso)]
         for source in sources:
@@ -1514,6 +1614,9 @@ class Run:
         s.reused = sum(1 for m in ok if m in reused)
         s.built = len(ok) - s.reused
         s.archive_bytes = report.get("archive_bytes")
+        s.stock_models = [str(c.get("media")) for c in report.get("stock_models_skipped") or [] if isinstance(c, dict)]
+        if s.stock_models:
+            log(f"left out, the stock game has the model ({len(s.stock_models)}): " + ", ".join(s.stock_models))
         s.failed = []
         for f in report.get("failed", []):
             log_path = build / "work" / f"{f['media']}.log"
@@ -1585,6 +1688,19 @@ class Run:
         log(f"save folder {save} copied to {target}")
         return target
 
+    def keep_ids(self, build: Path, earlier: dict[str, int]) -> None:
+        """The install's ID map: the earlier one, the build's (its rows of cars not installed
+        stay, so a car left out now gets its ID back later), and the installed cars' IDs."""
+        ids = {**earlier, **read_ids_file(Path(build) / "ids.json")}
+        try:
+            manifest = json.loads((Path(build) / "dngvehicles.json").read_text(encoding="utf-8"))
+            ids.update({str(c["media"]): int(c["spool_id"]) for c in manifest.get("cars", [])})
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        if ids and (Path(self.game) / "dsfforza-backup").is_dir():
+            write_ids_file(id_map_path(self.game), ids)
+            log(f"ID map: {len(ids)} cars kept in {id_map_path(self.game)}")
+
     def install(self) -> str:
         args, game = self.args, self.game
         build = Path(args.build) if args.build else (self.build_dir or args.out)
@@ -1613,6 +1729,7 @@ class Run:
         self.reporter.stage("install", "running", "backing up the save")
         self.summary.save_backup = None if args.no_save_backup else self.backup_save()
         hook, loader = self.hook_files()
+        earlier_ids = read_ids_file(id_map_path(game))  # install.ps1 clears the folder of an earlier install
         self.reporter.stage("install", "running", "tools/install.ps1: backing up and copying the game files")
         command = [
             powershell(),
@@ -1649,6 +1766,7 @@ class Run:
                 (line.strip() for line in result.stderr.splitlines() if line.strip()), f"exit code {result.returncode}"
             )
             raise StageError(f"tools/install.ps1 failed: {message}", f"The full output is in {self.summary.log}.")
+        self.keep_ids(build, earlier_ids)
         record = read_install_record(game) or {}
         entries = [e for e in record.get("entries", []) if isinstance(e, dict)]
         s = self.summary
@@ -1793,6 +1911,12 @@ def build_parser() -> argparse.ArgumentParser:
     pick = parser.add_argument_group("cars")
     pick.add_argument("--list", type=Path, action="append", help="car list, one per line (default: all.txt)")
     pick.add_argument("--car", action="append", metavar="NAME[@fh1|@fm4]", help="a car (repeatable)")
+    pick.add_argument(
+        "--with-stock-models",
+        action="store_true",
+        help="also build the Forza cars the stock game already has (a stock car of the same model); "
+        "by default they are left out, also from a --list, but not a car named with --car",
+    )
     pick.add_argument(
         "--iso", type=Path, action="append", help="Forza disc images, any file names (default: assets/*.iso)"
     )
