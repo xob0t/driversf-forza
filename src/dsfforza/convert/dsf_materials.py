@@ -960,7 +960,7 @@ class Texturing:
     filler: dict = field(default_factory=dict)
     alpha_only: set = field(default_factory=set)  # (family, region index) used only by alpha-tested tris
     resolved: dict = field(default_factory=dict)  # (id(section), id(sub)) -> SubMaterial
-    planned: dict = field(default_factory=dict)  # id(sub) -> (sub, its SubMaterial in plan()); submaterial
+    planned: dict = field(default_factory=dict)  # id(sub) -> (sub, its Lights SubMaterial in plan()); submaterial
     regions: dict = field(default_factory=dict)  # family -> [Region]
     owners: dict = field(default_factory=dict)  # (id(sub), triangle index) -> region index
     solids: dict = field(default_factory=dict)  # key -> (x, y) of a solid cell
@@ -1108,7 +1108,7 @@ class Texturing:
         for section, _ in work:
             for sub in section.subsections:
                 m = self.resolved.get((id(section), id(sub)))
-                if m is not None:
+                if m is not None and fm.base_family(m.family or "") == fm.LIGHTS:
                     self.planned[id(sub)] = (sub, m)
         self._plan_gloss(work)
         return self
@@ -1569,12 +1569,13 @@ class Texturing:
 
     # -- per-subsection answers --
     def submaterial(self, section, sub) -> fm.SubMaterial:
-        """The subsection's material as plan() resolved it, also when a later pass (damage,
-        plates) hands in a new section object around it. Resolved again, a tiling lamp part
-        would sample the Lights atlas after lenses.bake wrote into it, a plain swatch would have
-        no colour and a flat trim artwork its texture: a colour without an atlas cell, so they
-        drew as shared trim. The Mustang GT 05's head lamp bowls did so in the exterior entry,
-        the one the player's car draws, and never glowed (issue #158)."""
+        """The subsection's material; a lamp part's as plan() resolved it, also when a later
+        pass (plates, damage.split_exposed) hands it in inside a new section object. Resolved
+        again, a tiling lamp part sampled the Lights atlas after lenses.bake had written into
+        it and a plain lamp swatch had no colour: no atlas cell, so they drew as shared trim
+        (the Mustang GT 05's head lamp bowls in the exterior entry, the one the player's car
+        draws: they never glowed, issue #158), and lamp glass baked as a lens (_bake_lenses)
+        drew as window glass."""
         key = (id(section), id(sub))
         if key not in self.resolved:
             planned = self.planned.get(id(sub))

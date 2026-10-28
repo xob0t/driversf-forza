@@ -1320,6 +1320,46 @@ with this change alike (bumper lamps included), while its tails light; its light
 the head lamps on host 192's front entries 14 and 15 (0x1D), under the headlamp part records
 (roles 50, 51). That is outside the lamp plan and open (#158).
 
+### No front lamp on the player's car: lamp parts drawn as trim in the exterior entry (issue #158)
+
+Symptom (confirmed-runtime): the Ford Mustang GT 05 showed no front lamp at all, by day or in the
+dark mood, on master and with "Head lamp units with no lamp technique" alike, while its tails lit.
+
+Ruled out (confirmed-static): the lamp objects. `0x8E82B0` makes lamp object `id` (table entry
++0x28) for every type-17 record (`ecx = this + id x 16` before `call 0x8E6720`) and skips a record's
+subtree only when its dword +0x0C is 0; on host 192 every record above a light has it set. `0x8A78E0`
+uploads every lamp object's colour. The full entry was right too (orthographic front view,
+`out/l4/py/zfront.py`): the round bowls carry the head lamp bytes 15/16 on the Lights material.
+
+Cause (confirmed-static, confirmed-runtime): the player's car draws the clean exterior entry
+(`vehicle-model.md`), and there the bowls (`body/textured_reflector`, 800 triangles at Forza LOD 1)
+were drawn with the shared trim (`GLOBAL_Chassis_Simple_LOD1`), so their light byte did nothing; the
+bumper `head_light` lamps sit behind the amber indicator lenses. `Texturing.plan()` resolves each
+subsection (`Texturing.resolved`, keyed by section and subsection object), but the plates pass and
+`damage.split_exposed` run after it and hand the untouched subsections to `add_geometry` inside new
+section objects. `submaterial()` then resolved them again: a tiling lamp part (`_tiling_swatch`)
+re-sampled the Lights atlas after `lenses.bake` had written into it ((156, 144, 150) instead of
+(160, 145, 149)), a plain swatch had no colour, and lamp glass that `_bake_lenses` made a lens
+(`lamp_cover`) lost that role. No atlas cell, so `material()` fell back to shared trim or window glass.
+
+Fix (`Texturing.planned`, `submaterial`): a Lights-family subsection keeps plan()'s answer in any
+section object around it. Trim artwork has the same fault (below, #173) and is left as it was.
+
+Roster (offline, `out/l4/py/survey2.py` in the `t3-f6fc8832` worktree: plan, then the plates pass and
+`split_exposed` on the host-picks host, `material()` on master against this change, Forza LODs 1, 3,
+4, 5; 572 cars, NIS_Leaf_11 has no car data): 49 cars change. In the exterior entry (LOD 1) 23 cars'
+lamp glass goes from window glass to its baked lens (2,200 triangles; VW_GTIVR6_98's head lamp covers
+138, RUF_Yellowbird_87 194, ACU_IntegraR_01 262) and 11 cars' lamp swatches from trim to Lights (1,549
+triangles; FOR_MustangGT_05 800, VIP_Viper_13's tail lamps 260, fer_f142_10's red tail lenses 139); at
+LODs 3 to 5 (full entry) 19 and 18 cars. The same mechanism draws trim artwork (`trim_art`: gloss,
+grey and detail trims) as plain shared trim on about 400 cars (157,000 exterior triangles): issue #173.
+
+In game (VM 1, `-Views 'nose,rear,nose+night,rear+night' -Palette 0 -ShotSeconds 3 -WaitSeconds 600`,
+vanilla 229 first; master `out/l4/before` run `vm1-20261028-140509`, this change on the full roster
+of section objects `out/l4/after` run `vm1-20261028-140904`, IDs 1 Mustang GT 05, 2 Mustang Mach 1 71,
+3 XB Falcon GT 73): the Mustang's bowls show their lamp colour by day (master: black) and glow in the
+dark mood (master: no front lamp); `img/headlamps-mustanggt05-exterior-ingame.jpg`.
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and
