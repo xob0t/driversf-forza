@@ -798,12 +798,13 @@ Offline (`build.ps1 -Test`): the call site checks and patches.
 Module `render` (`tools/asi/src/mod_render.cpp`). The queue and the crash it
 fixes are in `spool-limits.md`, "Draw queue: 16384 entries per frame".
 
-**Patch.** Both calls to the queue's append (FUN_00BB5710: at 0x00BB5B4C in
-FUN_00BB5A50, at 0x00BB5BB5 in FUN_00BB5B70; `E8` checked) go to a bounded
+**Patch.** The three calls that append to the frame's queue (FUN_00BB5710:
+at 0x00BB5B4C in FUN_00BB5A50, at 0x00BB5BB5 in FUN_00BB5B70, at 0x00BB7301
+in ShiftRenderCache_FinalizeEntry's replay; `E8` checked) go to a bounded
 append: the same compare-exchange on the count, but only while
 count < capacity; past that the draw is dropped. FUN_00BB5A50's trap branch
 (`0F 84 BF 00 00 00` at 0x00BB5A95, a jump to `INT3`) becomes six NOPs, so a
-full queue reaches the bounded append. All three sites are checked before any
+full queue reaches the bounded append. All four sites are checked before any
 is written. The log gets a line on the first dropped draw, then at most one
 every 10 s with the running total, and a line each time a frame's queue first
 reaches a new multiple of 1024 entries from 8192 up, so a run shows how near
@@ -812,6 +813,6 @@ its frames come. `[render] drop_full=0` keeps the vanilla trap.
 Cost: nothing until a queue is full. A frame over the limit misses the draws
 submitted after it filled, for that frame only.
 
-Offline (`build.ps1 -Test`): the three sites patch, the mismatch run leaves
-both calls vanilla, and three appends through the patched call site onto a
+Offline (`build.ps1 -Test`): the four sites patch, the mismatch run leaves
+the calls vanilla, and three appends through the patched call site onto a
 two-entry queue keep two entries and count one drop.
