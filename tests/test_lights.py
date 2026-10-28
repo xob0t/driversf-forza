@@ -289,6 +289,29 @@ def test_pop_up_lamps_keep_the_lowered_state():
     assert kept == ["body", "headlightLdown", "headlightRdown", "glassLHLdown", "headlightL2", "lonelyup"], kept
 
 
+def test_head_lamp_unit_without_a_lamp_technique():
+    # FOR_MustangGT_05 (issue #158): the round bowls are a textured_reflector in `body` under
+    # the headlightL/R plain glass, and the car's only head lamp technique is elsewhere (the
+    # head_light under its bumper lenses). The bowls light as the head lamp; a reflector
+    # outside the cover, and one under a cover with its own head lamp, stay unlit.
+    bowls = [_quad("body", "textured_reflector", 0.6, 1.9), _quad("body", "textured_reflector", -0.6, 1.9)]
+    covers = [_quad("headlightL", "glass", 0.6, 2.0), _quad("headlightR", "glass", -0.6, 2.0)]
+    bumper = [_quad("bumperFa", "head_light", 0.25, 2.1), _quad("bumperFa", "head_light", -0.25, 2.1)]
+    other = _quad("bumperFa", "reflector", 0.0, 2.1)
+    plan = lights.LampPlan.build(bowls + covers + bumper + [other] + TAILS, _Place(), 0.0)
+
+    def lit(section):
+        key = plan.tri_lamp.get((id(section.subsections[0]), 0))
+        return None if key is None else (plan.lamps[key].function, plan.lamps[key].side)
+
+    assert [lit(s) for s in bowls] == [(lights.HEAD, "L"), (lights.HEAD, "R")]
+    assert lit(other) is None
+    # With a head lamp technique under the cover, its reflectors are left as they were.
+    own = [_quad("headlightL", "head_light", 0.6, 1.95), _quad("headlightR", "head_light", -0.6, 1.95)]
+    plan = lights.LampPlan.build(bowls + covers + own + TAILS, _Place(), 0.0)
+    assert [lit(s) for s in bowls] == [None, None]
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

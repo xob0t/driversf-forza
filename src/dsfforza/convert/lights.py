@@ -571,6 +571,8 @@ def _red_lens_indicators(records, from_lens: set, red_indicators: list, red_by_t
 
 REFLECTORS = ("textured_reflector", "reflector")
 LAMP_COVERS = ("glass", "lights_glass", "lights_gls_noemit")  # = glass.LAMP_MATERIALS
+HEAD_UNIT_DEPTH = 0.3  # m behind a headlight section's cover (dsf_materials.COVER_DEPTH)
+HEAD_UNIT_PAD = 0.02  # m round its outline
 
 
 def _headlight_reflectors(sections, place, mid_z: float) -> list[Tri]:
@@ -584,6 +586,48 @@ def _headlight_reflectors(sections, place, mid_z: float) -> list[Tri]:
         if out:
             return out
     return []
+
+
+def _bare_head_units(sections, place, mid_z: float, records) -> list[Tri]:
+    """Head-lamp triangles for the head lamp units of a car that draws its head lamps elsewhere
+    with a head lamp technique: the front reflectors (any section) behind a headlight
+    section's cover (headlightL/R, glassLHL/RHL; up to HEAD_UNIT_DEPTH behind it, inside its
+    outline) with no head lamp triangle in it. The Ford Mustang GT 05's round bowls are a
+    tiling textured_reflector in `body` under the plain glass of headlightL/R, and its only
+    head lamp technique is the head_light under the amber bumper lenses, so the bowls got no
+    light byte and never glowed (issue #158)."""
+    import numpy as np
+
+    heads = np.array([r.centre for r in records if r.function == HEAD and r.front]).reshape(-1, 3)
+    boxes = []
+    for section in sections:
+        if not re.match(r"headlight|glass[lr]hl", section.name.lower()):
+            continue
+        for sub in section.subsections:
+            if sub.material not in LAMP_COVERS:
+                continue
+            pool = section.vertices_for(sub)
+            pts = np.array([place.point(pool[i].position) for t in sub.triangles() for i in t]).reshape(-1, 3)
+            if not len(pts) or pts[:, 2].mean() <= mid_z:
+                continue
+            # One box per side: a section may hold both covers.
+            for side in (pts[:, 0] > 0, pts[:, 0] <= 0):
+                if side.sum() < 3:
+                    continue
+                q = pts[side]
+                lo = q.min(0) - (HEAD_UNIT_PAD, HEAD_UNIT_PAD, HEAD_UNIT_DEPTH)
+                hi = q.max(0) + HEAD_UNIT_PAD
+                if not (((heads >= lo) & (heads <= hi)).all(1)).any():
+                    boxes.append((lo, hi))
+    if not boxes:
+        return []
+    out = []
+    for r in _front_tris(sections, REFLECTORS, place, mid_z):
+        c = np.array(r.centre)
+        if any(((c >= lo) & (c <= hi)).all() for lo, hi in boxes):
+            side = "L" if c[0] > 0 else "R"
+            out.append(Tri(r.sub, r.k, HEAD, side, True, WHITE, r.area, r.centre, r.normal, r.lod))
+    return out
 
 
 def _front_tris(sections, materials, place, mid_z: float) -> list[Tri]:
@@ -729,6 +773,8 @@ class LampPlan:
                 ]
             else:
                 records += _headlight_reflectors(sections, place, mid_z)
+        else:
+            records += _bare_head_units(sections, place, mid_z, records)
         _yellow_head_covers(records, yellow_front, from_lens)
         _red_lens_indicators(records, from_lens, red_indicators, red_by_texel)
         _high_brake(records)
