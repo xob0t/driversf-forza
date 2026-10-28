@@ -542,6 +542,56 @@ readable copy in `Common/LuaScripts/vehiclestats/vehiclestats.lua`). Copying
 need their own entries: manufacturer, name strings (or new string IDs),
 pictures and stat bars.
 
+### Stray badges and plates in harness shots (2026-10-28)
+
+Most VM before/after images until then had a row of other cars' plates and
+badges floating over the scene ("SPORT SUPERCHARGED", "WRANGLER", "370Z",
+"Countach", "CONTINENTAL SUPERSPORTS"...: PR #171's
+`img/gauges-161-ingame.jpg`, #163's and #164's chase views), a wrong badge
+in the HUD's corner (CAISSON, GMC C5500), and three red takeover icons.
+They changed from shot to shot, and players don't see them.
+
+**Cause: the same as above, in the harness.** `run-series.ps1 -Archives
+<build>\dngvehicles.sp` installed the archive only. Without the build's
+`dngvehicles.lua` as `dsfforza\ported.lua`, register.lua registers no car,
+so the ported probe cars have no vehicleStats entry and the HUD draws what
+is left in the record. A vanilla car in the same run (225) is clean
+(run `vm1-20261028-131725`). The 2026-10-21 run above shows the same stack
+before dsfforza.asi existed, so the plugin's `[hud]` slots don't cause it.
+A player install always has ported.lua and hud.lua: `tools/install.ps1`
+and `dsff install` refuse a build without them (`install.gui_problem`).
+
+**Fix (harness).**
+
+- `run-test.ps1`: an archive named `dngvehicles.sp` now brings its build's
+  files with it, as `install.ps1` installs them: `dngvehicles.lua` as
+  `dsfforza\ported.lua`, and, when `gui\` has `gui.sp`, `Fonts.fchunk` and
+  `hud.lua`, those three plus `gui\Locale\<language>\global.fchunk`.
+  `-Override` and `-LuaFiles` still win, and `-ArchiveOnly` (also on
+  `run-series.ps1`) leaves the build's files out. result.json
+  `buildFiles` and an events.json line list what was used. register.lua
+  doesn't add these cars to traffic (`register = { interesting = false }`
+  in config.lua), as before. With an explicit `-LuaFiles` ported.lua,
+  traffic is unchanged.
+- `clonetest.lua`: a probe or `-AheadIds` car that still has no entry (an
+  archive with another name, `-ArchiveOnly`) gets a copy of
+  `vehicleStats[266]` with `Manufacturer`/`Model` 32: no badge and no
+  plate (register.lua's blank glyph).
+
+In game (confirmed-runtime): out/hudtest (Panoz 51 Esperante GTLM at ID 1,
+Audi A4 Avant at ID 2, `--gui --wide-glyphs`, dsfforza.asi), IDs 225, 1
+and 2, `-HoldMph 60`.
+
+- Before: master's harness, run `vm1-20261028-211915`. Stray rows in the
+  chase and cockpit views of both cars.
+- After: run `vm1-20261028-212621`. No stray glyphs, and each car shows
+  its own HUD badge and plate: the Panoz its Forza logo and plate (page 1
+  glyphs, slots 1 and 2 in dsfforza.log), the Audi the vanilla rings over
+  "A4 AVANT". See `img/vm-stray-hud-glyphs-before-after.jpg`.
+- The same archive as `bare.sp` (no build files), run
+  `vm1-20261028-213136`: `vehicleStats[1]: none; blank badge and plate`,
+  and no badge, plate or stray row.
+
 ## Game behaviour the harness had to handle
 
 - **The save loads into the Shift overview** (zap level 7, `inZap` true,
