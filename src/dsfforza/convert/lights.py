@@ -628,6 +628,9 @@ class LampPlan:
                 entry = TECHNIQUE_FUNCTION.get(sub.material)
                 if entry is None and id(sub) in lenses:
                     entry = (LENS, None)
+                rear_reflector = entry is None and sub.material in REFLECTORS
+                if rear_reflector:
+                    entry = (LENS, None)
                 if entry is None:
                     continue
                 function, named_side = entry
@@ -650,6 +653,15 @@ class LampPlan:
                     normals = [place.normal(pool[i].normal) for i in t]
                     area, centre, normal = _tri_geometry(pts, normals)
                     front = centre[2] > mid_z
+                    if rear_reflector:
+                        # A rear lamp's reflector lights with the lamp it belongs to, like a
+                        # clear lens: under a clear cover it is what the player sees (the Devon
+                        # GTX's red reflectors round a 15-triangle tail_light), and unlit the
+                        # tail lamps were dark at night (issue #160). Front reflectors stay
+                        # unlit: head lamps glow by day from their lens or bulb (#124).
+                        if not front:
+                            clear.append(Tri(sub, k, LENS, "C", False, WHITE, area, centre, normal, sub.lod))
+                        continue
                     if named_side:
                         side = named_side
                     elif max_x < CENTRE_X:

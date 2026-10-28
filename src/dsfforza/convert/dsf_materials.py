@@ -1326,6 +1326,21 @@ class Texturing:
             self.lens_subs.add(id(sub))
         return m
 
+    def clear_cover(self, m: fm.SubMaterial) -> bool:
+        """A lamp cover of Forza's plain `glass` technique, left out. Forza draws it as
+        texture-less, nearly clear glass (TEXTURED_COVERS); DSF's shared glass is a dark
+        pane (glass texture blue = alpha 192) and hid the lamp behind it: the Mustang GT
+        05's head lamps were a black strip (issue #158), and at night the Veyron's and
+        300C's tail lamps barely glowed through it while they glowed red without it (VM
+        runs vm1-20261028-092017 and -092416; issue #160). Stock lamps are opaque Lights
+        texels, so the lamp itself is what shows."""
+        return (
+            self.classifier is None
+            and m.role == fm.GLASS
+            and fm.base_family(m.family) == fm.LIGHTS
+            and m.technique.lower() == "glass"
+        )
+
     def is_lens(self, section, sub, m: fm.SubMaterial) -> bool:
         """A coloured rear lamp lens drawn with a textured lamp-cover glass technique
         (lights_glass, lights_gls_noemit on the Lights atlas; not plain glass,
@@ -1418,7 +1433,7 @@ class Texturing:
 
     def material(self, section, sub) -> str:
         m = self.submaterial(section, sub)
-        if id(sub) in self.cutout:
+        if id(sub) in self.cutout or self.clear_cover(m):
             return fm.SKIP
         if self._uses_atlas(m) and (
             (m.kind == "textured" and id(sub) in self.atlas_subs) or (m.kind == "swatch" and self._has_cell(m))
