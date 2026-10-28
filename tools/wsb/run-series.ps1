@@ -47,7 +47,7 @@ param(
     [int]$ZoomPresses = 5,
     [int]$ShotSeconds = 10,
     [string]$AheadIds,
-    [string]$TrafficIds,          # IDs for TrafficSpooler.RequestTrafficVehicles after the probe IDs (clonetest.lua)
+    [string]$TrafficIds,          # IDs for TrafficSpooler.RequestTrafficVehicles after the probe IDs (clonetest.lua); none of the probe IDs (the game traps: research/in-game-tests.md, "Traffic")
     [int]$DriveSeconds = 0,       # hold the throttle this long in each cockpit view
     [string]$DriveKey = 'Up',
     [string]$HoldMph,             # e.g. '30,60,90': speeds forced in turn in each cockpit view

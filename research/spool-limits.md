@@ -1,6 +1,6 @@
 # Vehicle spool size limits
 
-Updated: 2026-10-24
+Updated: 2026-10-28
 
 Where `Driver.exe` 1.04 sizes the memory a spooled vehicle uses, which of
 those sizes a bigger VEHC can hit, and how to raise each one. Addresses are
@@ -27,6 +27,7 @@ modes) against the `-b` project copy. Outputs are in `out/ghidra/spool-*`,
 | Global UID list | 16384 entries, write-only | fills faster with more submodels | code: NOP the counter (hypothesis that it matters) |
 | Resource hash arena | 45,000 nodes, global | more buffers/textures per car use more | not needed: nodes are recycled through a free list when a resource is released, so only what is resident counts ("Global lists") |
 | Slots per kind | SSLP +0x18: 35, 2, 2 | no | data plus pool table; not needed for detail |
+| Draw queue | 16384 draws per frame, all objects together (not per car) | yes, with dsf_enhanced's worldlod world: an unchecked replay overruns the queue, then an `INT3` or a write to address 0 | code: `dsfforza.asi` `[render]` drops the extra draws ("Draw queue" below) |
 
 The MDXN size itself has no separate limit. The 0x29B000 MDXN crash was
 first blamed on the 0x280000 read buffer path; the pad tests ("Test
@@ -397,6 +398,105 @@ GraphicsManager_Construct runs:
 Keep GPU KiB (0x00FD2738, 0x23) a multiple of the slot count. The parent
 arena (GraphicsParentArena_Initialize) is sized from the sum of all SYS
 fields, so it grows by itself.
+
+## Draw queue: 16384 entries per frame (confirmed-static)
+
+Not a spool limit, but the one a ported car first ran into: on 2026-10-28
+the game ended with no error when the user picked the Hennessey Venom GT
+(420) in a garage. `Driver.log` ends at `spawnVehicle( HUNTERS POINT, 420,
+nil)`; the Windows event log has `Exception code: 0x80000003, Fault offset:
+0x007B5B5A` (VA 0x00BB5B5A). Outputs: `out/ghidra/venom1..3`.
+
+0x00BB5B5A is the `INT3` at the end of FUN_00BB5A50, just past the graphics
+pool code above. FUN_00BB5A50 queues one draw (callers:
+ShiftDrawMetadata_Enqueue 0x006BA880 and FUN_00BB42E0):
+
+```text
+00BB5A88  8B 44 24 48        MOV EAX,[ESP+0x48]   ; the queue
+00BB5A8C  8B 08              MOV ECX,[EAX]        ; count
+00BB5A92  3B 48 04           CMP ECX,[EAX+4]      ; capacity
+00BB5A95  0F 84 BF 00 00 00  JZ 0x00BB5B5A        ; INT3
+...
+00BB5B4C  E8 BF FB FF FF     CALL 0x00BB5710      ; append
+```
+
+The queues: RenderQueueHolder_Construct (0x00BB6580) allocates one
+0x130158-byte manager (holder 0x019B6434) and RenderQueueManager_Construct
+(0x00BB5960) embeds two queues in it, used in turn (FUN_00BB5780 flips them,
+FUN_00BB5800 zeroes the active count). A queue is `{u32 count, u32 capacity
+= 0x4000, block, entries}`, the entries 0x20 bytes each (0x80000 per queue);
+the block is a separate 0x18000-byte constants area plus 0x80 flags
+(FUN_00BB84E0), not per entry. FUN_00BB5710 appends with a compare-exchange
+on the count and no bound. Its other checked caller, FUN_00BB5B70, skips the
+draw when the queue is full; FUN_00BB5A50 traps. A third caller has no
+check at all: ShiftRenderCache_FinalizeEntry (0x00BB6DA0) replays a cached
+draw list into the active queue (`[0x019B6434]+4`, the call at 0x00BB7301).
+Once that replay pushes the count past 16384, the two equality checks never
+fire again and every append writes past the array. Queue B's header
+(+0x980B0) directly follows queue A's entries, so entry 16384 of queue A
+overwrites it, and a later frame finds a queue whose count equals its
+capacity (the trap above) or whose entries pointer is 0. The user's second
+crash that day is that: `Driver_20261028_200039.dmp`, access violation
+writing address 0 at 0x00BB5737 (FUN_00BB5710's first store, EDX =
+index x 0x20 + entries = 0), called from FUN_00BB5A50. The equality checks
+also race: two threads that both read 16383 append 16384 and 16385. (The
+cache's own queues, the call at 0x00BB6FC3, take a size class from
+0x00FD2824 at least as big as the list, so they can't overflow.) RenderQueue_FilterAndConsume
+(0x00BAAEA0) hands `[entries, entries + count)` to RenderQueue_FilterRange
+(0x00BBC0C0), which filters it in packets into a fixed global output area
+(0x019C66C0); that is why the capacity isn't simply raised here.
+
+So the limit is 16384 queued draws per frame for everything on screen and in
+the passes that render it, not a per-car budget. One car's share is one
+draw per submodel of its current LOD per pass. Offline survey of the root
+VEHCs (`full_lod_subs` of `dsff vehicle_limits`: submodels in the mask-4 LOD
+of the full entry, the one `VehicleFullDetail=1` draws at any distance):
+
+| Cars | Median | p90 | Max |
+| --- | ---: | ---: | ---: |
+| vanilla (150) | 97 | 113 | 129 |
+| ported, v0.1.2 (`out/master`, 573) | 60 | 72 | 88 |
+| ported, master 3ca28fd (`out/build`, 573) | 76 | 93 | 121 |
+
+The Venom: 59 → 84 in the full entry, 10 → 19 in the exterior entry, 8 in
+the interior. The submodels added since v0.1.2 (gloss and lamp materials
+split out of shared subsections, #164 to #178) raised every ported car, but
+none past the vanilla maximum: no single car is near the limit.
+
+And ported cars barely reach a frame: traffic is vanilla models. In run
+`vm2-20261028-234914` the plugin's census (`register.lua`) counted 79
+traffic cars with every ported ID at 0, and 10 interesting-vehicle slots.
+The ported share of a frame is the player's car: for the Venom 59 + 10 + 8
+= 77 submodels (full, exterior, interior entries) in v0.1.2 against
+84 + 19 + 8 = 111 now, per pass.
+
+What filled the user's queue is the world. On 2026-10-28 at 10:06,
+before the master build was installed (22:08), dsf_enhanced's worldlod
+replaced `Install\san_francisco.dngc` (532 MB to 775 MB). The VM, with the
+same dsf_enhanced and ini at 16:9: the vanilla world never queued 8192 draws
+in a frame; worldlod's queued 11,264 as soon as the world was up, before any
+probe car spawned (runs below). The user's 21:9 view and terrain LOD x0.25
+draw more again.
+
+**Patch:** `dsfforza.asi` `[render]` (`asi.md`, "Draw queue") makes the
+append bounded and removes the trap, so a frame past 16384 draws loses its
+last draws instead of ending the game.
+
+**In game (VM, master 3ca28fd's full build, the user's dsf_enhanced.asi and
+unmodified ini).** Neither crash reproduced: the probe spawns cars on a
+street, not out of the Hunters Point garage, and the VM's window is 16:9.
+
+| Run | Plugin | Result |
+| --- | --- | --- |
+| `vm1-20261028-230138` | the installed one (no `render`) | 420, 488, 296, 11, 540 spawn, drive, cockpit and chase views; then a breakpoint at 0x005A759B from the harness's `-TrafficIds` (`in-game-tests.md`, "Traffic"), not the draw queue |
+| `vm2-20261028-230155` | with `render` | same cars, same harness trap; `render` logged no drop and no frame at 12288 |
+| `vm1-20261028-230723` | with `render`, high-water lines from 8192, no `-TrafficIds`, 8 s throttle in each cockpit view | finished, no crash; no frame reached 8192 queued draws with up to 377 traffic vehicles |
+| `vm1-20261028-234848` | installed (no `render`), worldlod's `san_francisco.dngc` | finished, no crash; the probe stayed in zap mode and drove no car (worldlod's world loads slowly in the VM) |
+| `vm2-20261028-234914` | with `render` (all three call sites), worldlod's world | finished, no crash; a frame reached 11,264 queued draws at world load; the Venom spawned and was driven |
+
+With the vanilla world a VM frame stays under half the queue; with
+worldlod's it passes two thirds at 16:9. With the plugin, `dsfforza.log`
+says when a frame gets past 8192 and when draws are dropped.
 
 ## Vertex and index buffers (confirmed-static)
 

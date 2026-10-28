@@ -657,6 +657,18 @@ player's own car). The game probably rebuilds the traffic set from its own
 district/time-of-day Lua (compiled in `ScriptsLuaScripts.fchunk`). Felony
 Rework's readable `trafficspoolingdata.lua` only lists mission vehicle pots.
 
+**Don't put a probe ID in `-TrafficIds`.** Runs `vm1-20261028-230138` and
+`vm2-20261028-230155` (`-ProbeIds '420,488,296,11,540' -TrafficIds
+'488,296,369,11,61,169,218,540'`) ended with a breakpoint exception (exit
+code 0x80000003, fault offset 0x001A759B) right after the request. 0x005A759B
+is an `INT3` in FUN_005A7490, the traffic spooler's request handler: for each
+requested model that is already spooled and in use (FUN_0059CFC0,
+FUN_0059CD20) it traps unless the model is the one at spooler +0xDB4. The
+probe cars 11 and 540 were still spooled as mission vehicles (`spool id 540
+mission=true`). The overlap came from the harness's call; whether the
+game's own traffic scripts can ever ask for a model held as a mission vehicle
+is not known (not seen in play).
+
 ## Forza geometry in game (confirmed-runtime)
 
 Converter: `src/dsfforza/convert/forza2dsf.py` (FH1 carbin в†’ DSF VEHC), `src/dsfforza/convert/exp_hollow.py`

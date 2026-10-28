@@ -11,6 +11,8 @@ Limits (see research/spool-limits.md):
   static 2.5 MiB spool buffer (handled by the game, reported for information).
 - Per-slot graphics pool budgets (SYS bytes and range nodes) bound the number
   of render objects (submodels, materials, textures, buffers) per vehicle.
+- full_lod_subs: submodels in the full-detail LOD (MODL mask 4), the car's draws
+  per pass; a frame's draw queue holds 16384 in all.
 """
 
 from __future__ import annotations
@@ -22,6 +24,9 @@ from pathlib import Path
 from dsfforza.formats.chnk import read_chunk
 
 STATIC_SPOOL_BUFFER = 0x280000
+# MODL LOD mask of the full-detail mesh: one draw per submodel per pass. A frame queues at most
+# 16384 draws in all (research/spool-limits.md, "Draw queue"); vanilla full entries have 38 to 129.
+FULL_DETAIL_MASK = 4
 
 
 def child(entry, tag):
@@ -51,6 +56,7 @@ def measure(stream, vehc) -> dict:
         "tex_bytes": 0,
         "parts": 0,
         "lod_max_subs": 0,
+        "full_lod_subs": 0,
         "modl": 0,
         "upvh": 0,
     }
@@ -83,8 +89,10 @@ def measure(stream, vehc) -> dict:
         for p in range(parts):
             lod_count, lod_offset = struct.unpack_from("<II", data, 0x10 + p * 0x60 + 0x48)
             for k in range(lod_count):
-                _, count = struct.unpack_from("<II", data, lod_offset + k * 16)
+                mask, count = struct.unpack_from("<II", data, lod_offset + k * 16)
                 m["lod_max_subs"] = max(m["lod_max_subs"], count)
+                if mask == FULL_DETAIL_MASK:
+                    m["full_lod_subs"] += count
     upvh = child(nonr, "UPVH") if nonr else None
     m["upvh"] = upvh.size if upvh else 0
     return m
