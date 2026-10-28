@@ -80,6 +80,38 @@ def test_preview_draws_the_cells_the_engine_picks():
         assert tuple(img[6, 6]) == ((mph + 1) * 20, 0, 0)
 
 
+def test_pieces_of_different_steps_never_overlap():
+    # A slanted bar: each rpm step lights a parallelogram. Rectangles grown with slack
+    # must not reach into a neighbouring step's pixels (one plane: they would z-fight).
+    yy, xx = np.mgrid[0:60, 0:300]
+    band = (yy > 0.15 * xx - 5) & (yy < 0.15 * xx + 20)
+    steps = np.where(band, (xx + yy) // 9, -1)
+    lit = steps >= 0
+    owner = np.full(steps.shape, -1)
+    for k in range(steps.max() + 1):
+        mask = steps == k
+        for x0, x1, y0, y1 in dd._runs_to_rects(mask, forbid=lit):
+            box = owner[y0:y1, x0:x1]
+            assert not ((box >= 0) & (box != k)).any()
+            assert not (lit[y0:y1, x0:x1] & ~mask[y0:y1, x0:x1]).any()
+            box[box < 0] = k
+
+
+def test_live_quads_stay_on_the_display():
+    # A round-ish display: its window's corners are off the triangles.
+    p = _patch()
+    p.uv0 = [p.uv0[0]]  # only the lower right triangle
+    p.points = [p.points[0]]
+    assert p.covers(800, 550) and not p.covers(150, 250)
+    shown = dd.coverage([p], (100, 900, 200, 600), 800, 400)
+    assert shown[350, 700] and not shown[50, 50]
+
+
+def test_overlapping_digit_slots_meet_half_way():
+    spans = dd._shown_spans([(20, 40, 0, 10), (0, 24, 0, 10), (38, 60, 0, 10)])
+    assert spans == [(22.0, 39.0), (0, 22.0), (39.0, 60)]
+
+
 def test_texture_files():
     rgba = bytearray(range(256)) * 64  # 64 x 64 texels
     dxt = dd.dxt5_dds(64, 64, rgba)
