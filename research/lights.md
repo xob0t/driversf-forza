@@ -1359,6 +1359,12 @@ vanilla 229 first; master `out/l4/before` run `vm1-20261028-140509`, this change
 of section objects `out/l4/after` run `vm1-20261028-140904`, IDs 1 Mustang GT 05, 2 Mustang Mach 1 71,
 3 XB Falcon GT 73): the Mustang's bowls show their lamp colour by day (master: black) and glow in the
 dark mood (master: no front lamp); `img/headlamps-mustanggt05-exterior-ingame.jpg`.
+Lamp parts only (this change), same views: master `out/l4/before2` run `vm1-20261028-153131`, this
+change `out/l4/after2` run `vm1-20261028-153451`, IDs 1 Mustang GT 05, 2 VW GTI VR6, 3 Viper 13,
+4 Ferrari F142. The Mustang glows as before. The GTI VR6's bumper covers are baked lenses now,
+not window glass, and light with its head lamps (0x1D) by day and in the dark mood: the full entry
+has done that since #164, but those bumper lamps have no lamp technique in Forza (#174). The Viper's
+and F142's tails look the same in both runs.
 
 ### Open
 
