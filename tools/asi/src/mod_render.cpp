@@ -8,25 +8,31 @@
 // bytes per entry. FUN_00BB5710 appends one entry: it bumps the count with a
 // compare-exchange and copies the entry, with no bound.
 //
-// Its two callers check the bound first:
+// Its callers into the frame's queue:
 //   FUN_00BB5B70 skips the draw when count == capacity;
 //   FUN_00BB5A50 (ShiftDrawMetadata_Enqueue 0x006BA880, FUN_00BB42E0) traps:
 //     00BB5A92  3B 48 04           CMP ECX,[EAX+4]
 //     00BB5A95  0F 84 BF 00 00 00  JZ 0x00BB5B5A   ; INT3
-// so the 16385th draw of a frame ends the game with a breakpoint exception
-// (0x80000003, fault offset 0x007B5B5A) and no error. The check is also not
-// atomic: two threads that both see 16383 push entries 16384 and 16385 past the
-// array, onto the other queue's header.
+//   ShiftRenderCache_FinalizeEntry (0x00BB6DA0) replays a cached draw list into
+//     the active queue ([0x019B6434]+4) at 0x00BB7301 with no check at all.
+// Once the replay has pushed the count past 16384, the equality checks never
+// fire again and every append writes past the array: entry 16384 lands on the
+// other queue's header (it follows the entries), so a later frame finds a queue
+// whose count equals its capacity (the trap: breakpoint exception 0x80000003 at
+// offset 0x007B5B5A) or whose entries pointer is 0 (access violation at
+// 0x00BB5737). The equality checks also race: two threads that both see 16383
+// push 16384 and 16385. (The cache's own queues, the call at 0x00BB6FC3, take a
+// size class at least as big as the list, 0x00FD2824.)
 //
-// A vanilla frame stays well under 16384. Full-detail traffic out to the cull
-// distance (dsf_enhanced VehicleFullDetail=1) and a 500 m traffic radius bring
-// a busy street near it; the user's game ended on a car spawn there (Hennessey
-// Venom GT, 2026-10-28).
+// A vanilla frame stays well under 16384. dsf_enhanced's worldlod world archive
+// and full-detail traffic out to the cull distance brought the user's frames past
+// it (2026-10-28: both crashes, the first on a car spawn out of a garage).
 //
 // This module:
-//   1. replaces both calls to FUN_00BB5710 (0x00BB5B4C, 0x00BB5BB5) with a push
-//      that takes a slot only while count < capacity (same compare-exchange),
-//      and drops the draw otherwise;
+//   1. replaces the three calls to FUN_00BB5710 into the frame's queue
+//      (0x00BB5B4C, 0x00BB5BB5, 0x00BB7301) with a push that takes a slot only
+//      while count < capacity (same compare-exchange), and drops the draw
+//      otherwise;
 //   2. turns FUN_00BB5A50's trap branch into NOPs, so a full queue reaches that
 //      push and the draw is dropped, as FUN_00BB5B70 does.
 // A frame over the limit then misses its last draws instead of ending the game.
@@ -39,10 +45,16 @@
 
 #include <string.h>
 
-static const uint32_t kPushCallChecked = 0x00BB5B4C;  // in FUN_00BB5A50
-static const uint32_t kPushCallSkipped = 0x00BB5BB5;  // in FUN_00BB5B70
-static const uint8_t kPushCallCheckedBytes[5] = {0xE8, 0xBF, 0xFB, 0xFF, 0xFF};  // call 0x00BB5710
-static const uint8_t kPushCallSkippedBytes[5] = {0xE8, 0x56, 0xFB, 0xFF, 0xFF};  // call 0x00BB5710
+struct PushCall {
+    uint32_t va;
+    uint8_t bytes[5];  // call 0x00BB5710
+};
+static const PushCall kPushCalls[] = {
+    {0x00BB5B4C, {0xE8, 0xBF, 0xFB, 0xFF, 0xFF}},  // FUN_00BB5A50
+    {0x00BB5BB5, {0xE8, 0x56, 0xFB, 0xFF, 0xFF}},  // FUN_00BB5B70
+    {0x00BB7301, {0xE8, 0x0A, 0xE4, 0xFF, 0xFF}},  // ShiftRenderCache_FinalizeEntry's replay
+};
+static const int kPushCallCount = sizeof kPushCalls / sizeof kPushCalls[0];
 static const uint32_t kTrapJump = 0x00BB5A95;  // jz 0x00BB5B5A (int3)
 static const uint8_t kTrapJumpBytes[6] = {0x0F, 0x84, 0xBF, 0x00, 0x00, 0x00};
 static const uint8_t kNops[6] = {0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
@@ -103,21 +115,22 @@ void mod_render_init()
         return;
     }
     // All or nothing: check every site before changing any.
-    if (!check_bytes(kPushCallChecked, kPushCallCheckedBytes, 5) ||
-        !check_bytes(kPushCallSkipped, kPushCallSkippedBytes, 5) || !check_bytes(kTrapJump, kTrapJumpBytes, 6)) {
+    bool same = check_bytes(kTrapJump, kTrapJumpBytes, 6);
+    for (int i = 0; i < kPushCallCount; i++) same = same && check_bytes(kPushCalls[i].va, kPushCalls[i].bytes, 5);
+    if (!same) {
         dsf_log("render: draw queue sites differ from Driver.exe 1.04, nothing patched");
         return;
     }
     // The trap goes last: with it still in place a full queue stays fatal, as in vanilla.
-    bool ok = patch_call(kPushCallChecked, (void*)&bounded_push, kPushCallCheckedBytes) &&
-              patch_call(kPushCallSkipped, (void*)&bounded_push, kPushCallSkippedBytes) &&
-              patch_bytes(kTrapJump, kNops, 6, kTrapJumpBytes);
-    if (!ok) {
-        patch_bytes(kPushCallChecked, kPushCallCheckedBytes, 5);
-        patch_bytes(kPushCallSkipped, kPushCallSkippedBytes, 5);
+    int done = 0;
+    while (done < kPushCallCount &&
+           patch_call(kPushCalls[done].va, (void*)&bounded_push, kPushCalls[done].bytes))
+        done++;
+    if (done < kPushCallCount || !patch_bytes(kTrapJump, kNops, 6, kTrapJumpBytes)) {
+        for (int i = 0; i < done; i++) patch_bytes(kPushCalls[i].va, kPushCalls[i].bytes, 5);
         dsf_log("render: a write failed, draw queue left vanilla");
         return;
     }
-    dsf_log("render: a full draw queue drops draws (calls at %08X, %08X; trap at %08X off)", kPushCallChecked,
-            kPushCallSkipped, kTrapJump);
+    dsf_log("render: a full draw queue drops draws (calls at %08X, %08X, %08X; trap at %08X off)",
+            kPushCalls[0].va, kPushCalls[1].va, kPushCalls[2].va, kTrapJump);
 }

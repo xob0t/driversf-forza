@@ -214,7 +214,8 @@ static int mismatch_test()
     CHECK(*(int*)0x0070D72B == (int)(0x00ADA7F0 - 0x0070D72F));        // hud: picture-slot calls vanilla
     CHECK(*(BYTE*)0x006C6855 == 0xE8 && *(int*)0x006C6856 != (int)(0x006C40C0 - 0x006C685A));  // text sites on
     CHECK(*(int*)0x00BB5B4D == (int)(0x00BB5710 - 0x00BB5B51) &&
-          *(int*)0x00BB5BB6 == (int)(0x00BB5710 - 0x00BB5BBA));        // render: both pushes vanilla
+          *(int*)0x00BB5BB6 == (int)(0x00BB5710 - 0x00BB5BBA) &&
+          *(int*)0x00BB7302 == (int)(0x00BB5710 - 0x00BB7306));        // render: the pushes vanilla
     printf("%s (%d failures, changed sites)\n", failures ? "FAILED" : "ok", failures);
     return failures ? 1 : 0;
 }
@@ -394,11 +395,12 @@ int main(int argc, char** argv)
     CHECK(*(BYTE*)0x005652FB == 0xE8 && *(int*)0x005652FC != (int)(0x00BCA840 - 0x00565300));
     CHECK(*(BYTE*)0x00565910 == 0xE8 && *(int*)0x00565911 != (int)(0x00BCA840 - 0x00565915));
     CHECK(mod_hands_selftest() == 0);
-    // Draw queue: both pushes go through the plugin, the trap branch is gone, and a
+    // Draw queue: the three pushes go through the plugin, the trap branch is gone, and a
     // full queue drops the entry (FUN_00BB5710's thiscall, through the patched site).
     {
         CHECK(memcmp((void*)0x00BB5A95, "\x90\x90\x90\x90\x90\x90", 6) == 0);
         CHECK(*(int*)0x00BB5BB6 == *(int*)0x00BB5B4D + (0x00BB5B51 - 0x00BB5BBA));
+        CHECK(*(int*)0x00BB7302 == *(int*)0x00BB5B4D + (0x00BB5B51 - 0x00BB7306));
         typedef void(__fastcall * PushFn)(void* queue, void*, const unsigned* entry);
         PushFn push = (PushFn)(0x00BB5B51 + *(int*)0x00BB5B4D);
         CHECK((unsigned)(size_t)push != 0x00BB5710);
