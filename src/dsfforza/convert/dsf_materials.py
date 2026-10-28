@@ -211,10 +211,10 @@ def red_lens_scale(visible: list[int]) -> float | None:
 VISIBLE_WHITE_VANILLA_MEDIAN = 137
 
 # Head lamps lit by day (0x1D, lights.LampPlan.assign): their glow (lenses.day_glow, ranked onto
-# stock's head lamp alpha) times this. The game scales a lamp's glow by its type
+# vanilla's head lamp alpha) times this. The game scales a lamp's glow by its type
 # (0xF3FB68: 0x1D 10, a 0x01 head lamp or 0x03 position lamp 2; research/lights.md "How a lamp
 # lights"), and 0x1D's 10 over a whole Forza head lamp clipped it to a white plate by day (the
-# VW GTI VR6 after #164). 99 of the 140 stock vehicles with a day-lit front lamp light a
+# VW GTI VR6 after #164). 99 of the 140 vanilla vehicles with a day-lit front lamp light a
 # small 0x03 position lamp beside 0x01 head lamps; the 32 with 0x1D lamps keep their head
 # lamp readable by glowing in fine stripes with dark texels between. A fifth gives the ported
 # 0x1D lamps a 0x01 or 0x03 lamp's glow, by day and in the dark mood.
