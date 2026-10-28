@@ -369,6 +369,24 @@ def _shown_spans(slots: list) -> list:
     return [tuple(s) for s in spans]
 
 
+def _shown_box(shown, rect, full: float = 0.9) -> tuple:
+    """The part of `rect` (x0, x1, y0, y1, pixels of the `shown` mask) to keep on the
+    display: ((x0, x1), (y0, y1)), first the rows at least `full` shown, then, in those,
+    the columns."""
+    x0, x1 = max(0, math.floor(rect[0])), min(shown.shape[1], math.ceil(rect[1]))
+    y0, y1 = max(0, math.floor(rect[2])), min(shown.shape[0], math.ceil(rect[3]))
+    sub = shown[y0:y1, x0:x1]
+    rows = np.flatnonzero(sub.mean(1) >= full) if sub.size else []
+    if not len(rows):
+        return (rect[0], rect[0]), (rect[2], rect[2])
+    cols = np.flatnonzero(sub[rows[0] : rows[-1] + 1].mean(0) >= full)
+    if not len(cols):
+        return (rect[0], rect[0]), (rect[2], rect[2])
+    xs = (rect[0] if cols[0] == 0 else x0 + cols[0], rect[1] if cols[-1] == sub.shape[1] - 1 else x0 + cols[-1] + 1)
+    ys = (rect[2] if rows[0] == 0 else y0 + rows[0], rect[3] if rows[-1] == sub.shape[0] - 1 else y0 + rows[-1] + 1)
+    return xs, ys
+
+
 def _rgba(colour) -> tuple:
     return (*(int(round(float(v) * 255)) for v in colour[:3]), 255)
 
@@ -798,16 +816,24 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
         # Neighbouring slots whose cells overlap (wide glyphs, tight tracking) meet half way:
         # two quads in one plane z-fight where they overlap.
         a, b = shown_x[kind][j]
+        # ... and keep to the rows and columns the display shows: a cell reaching past its
+        # edge (a slanted top, a rounded corner) draws its black outside over the bezel.
+        c, d = _shown_box(shown, (a / SCALE, b / SCALE, r[2] / SCALE, r[3] / SCALE))
+        a, b = max(a, c[0] * SCALE), min(b, c[1] * SCALE)
+        top, bottom = max(r[2], d[0] * SCALE), min(r[3], d[1] * SCALE)
+        if b - a < 1 or bottom - top < 1:
+            continue
         u0, u1 = (cx + CELL_MARGIN) / W, (cx + cw - CELL_MARGIN) / W
+        v0, v1 = CELL_MARGIN / H, (CELL_MARGIN + ch) / H
         uvbox = (
             u0 + (u1 - u0) * (a - r[0]) / (r[1] - r[0]),
-            CELL_MARGIN / H,
+            v0 + (v1 - v0) * (top - r[2]) / (r[3] - r[2]),
             u0 + (u1 - u0) * (b - r[0]) / (r[1] - r[0]),
-            (CELL_MARGIN + ch) / H,
+            v0 + (v1 - v0) * (bottom - r[2]) / (r[3] - r[2]),
         )
         digits = KMH_DIGITS if units == "kmh" else SPEED_DIGITS
         slot = digits[j] if kind == "speed" else GEAR
-        rr = (ux0 + a / SCALE, ux0 + b / SCALE, uy0 + r[2] / SCALE, uy0 + r[3] / SCALE)
+        rr = (ux0 + a / SCALE, ux0 + b / SCALE, uy0 + top / SCALE, uy0 + bottom / SCALE)
         p = patch_for((rr[0] + rr[1]) / 2, (rr[2] + rr[3]) / 2)
         if p is not None:
             rect_quad(p, rr, uvbox, slot, DIGIT_LIFT)
@@ -832,7 +858,7 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
         col_of = {s_idx: k for k, s_idx in enumerate(signatures)}
         first = ev_step[0]
         pieces = 0
-        taken = lit.copy()  # pixels a piece may not grow into: other steps' and earlier pieces'
+        taken = lit | ~shown  # pixels a piece may not grow into: other steps', earlier pieces', off the display
         for k in range(RPM_STEPS):
             at_k = first == k
             if not at_k.any():

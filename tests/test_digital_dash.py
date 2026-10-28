@@ -112,6 +112,17 @@ def test_overlapping_digit_slots_meet_half_way():
     assert spans == [(22.0, 39.0), (0, 22.0), (39.0, 60)]
 
 
+def test_digit_cells_keep_to_the_display():
+    # A display whose top edge slants down to the right: a cell over the edge loses the
+    # rows above it (they would draw the black outside over the bezel).
+    shown = np.zeros((40, 40), bool)
+    for x in range(40):
+        shown[10 + x // 4 :, x] = True
+    (x0, x1), (y0, y1) = dd._shown_box(shown, (4.0, 12.0, 0.0, 30.0))
+    assert (x0, x1) == (4.0, 12.0) and y0 == 12 and y1 == 30.0
+    assert shown[int(y0) :, 4:12].all()
+
+
 def test_texture_files():
     rgba = bytearray(range(256)) * 64  # 64 x 64 texels
     dxt = dd.dxt5_dds(64, 64, rgba)
