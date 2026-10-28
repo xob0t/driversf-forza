@@ -175,6 +175,7 @@ CLASS = {"paint": 1, "trim": 2, "chrome": 2, "glass": 3, "textured": 4, "tyre": 
 # sections (the Zonda Cinque's centre tailpipes). Grilles are marked too: a plate may
 # cross one (on a bracket, as on the real cars) but a grille is no mounting face.
 FEAT_GRILLE, FEAT_BADGE, FEAT_LAMP, FEAT_EXHAUST = 1, 2, 3, 4
+FLAT_TRIM_ART = ("dsf_trim_gloss", "dsf_trim_grey")  # trim_art's one-colour trims
 
 
 def feature(technique: str) -> int:
@@ -204,13 +205,17 @@ def body_triangles(sections, lod: int, place) -> list:
             role, _ = fm.classify(sub.material)
             if role == fm.SKIP:
                 continue
-            # trim_art's subsections (dsf_trim_gloss~misc, ...) are the Forza trim they
-            # came from: mounting faces (#159: the Mazda 2's rear bumper recess, gloss
-            # trim since #176, was no face, and its plate fell back onto the boot lid).
-            source = fm.technique_source(sub.material)
-            if source != sub.material:
-                role = fm.classify(source)[0]
+            # trim_art's flat-colour trims (dsf_trim_gloss~misc, dsf_trim_grey~...) are
+            # the Forza trim they came from: mounting faces (#159: the Mazda 2's rear
+            # bumper recess, gloss trim since #176, was no face, and its plate fell
+            # back onto the boot lid). Detail trims are grille bars and the like (the
+            # Challenger SRT8's upper grille): no face, but no badge either.
             c, f = CLASS.get(role, 0), feature(sub.material)
+            kind = fm.technique_scale(sub.material)[0]
+            if kind in FLAT_TRIM_ART:
+                c = CLASS.get(fm.classify(fm.technique_source(sub.material))[0], 0)
+            elif kind == "dsf_trim_detail":
+                f = FEAT_GRILLE
             if s.name.lower().startswith("exhaust"):
                 f = FEAT_EXHAUST
             pool = s.vertices_for(sub)
