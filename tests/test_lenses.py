@@ -49,11 +49,13 @@ def _quad(name: str, material: str, z: float, u0: float, u1: float, x: float = 0
     return carbin.Section(name, (0, 0, 0), (0, 0, 0), (0, 0, 0), lod_vertices=verts, subsections=[sub])
 
 
-def _bake(sections, lens_sections):
+def _bake(sections, lens_sections, xml: str | None = None, dropped: set | None = None):
     atlases = _Atlases()
     ids = {id(sub) for s in lens_sections for sub in s.subsections}
     with tempfile.TemporaryDirectory() as car_dir:
-        report = lenses.bake(sections, {1}, atlases, ids, Path(car_dir))
+        if xml:
+            (Path(car_dir) / "ShaderSettings.xml").write_text(xml)
+        report = lenses.bake(sections, {1}, atlases, ids, Path(car_dir), dropped=dropped)
     return atlases, report
 
 
@@ -263,6 +265,65 @@ def test_red_curve_knots_apart():
     lo = dm._interp(0.690, xs, dm._LAMP_Y_RED)
     hi = dm._interp(0.693, xs, dm._LAMP_Y_RED)
     assert hi - lo < 10, (lo, hi)
+
+
+def test_opacity_rules():
+    # Lenses: the texel alpha, capped by the car's GlassMaxOpacity only. Lamp glass: Forza's
+    # opacity starts at 1, so it is GlassMaxOpacity. Covers: max(texel alpha, GlassColor.w).
+    settings = {
+        "lights_gls_tail_light": {"GlassMaxOpacity": 0.8},
+        "lights_glass": {"GlassMaxOpacity": 0.9, "GlassColor": (0.5, 0.5, 0.5, 0.25)},
+    }
+    assert lenses.opacity_rule("detail_glass_clear", settings) == (0.0, 1.0)
+    assert lenses.opacity_rule("lights_gls_tail_light", settings) == (1.0, 0.8)
+    assert lenses.opacity_rule("lights_gls_noemit", {}) == (1.0, 1.0)
+    assert lenses.opacity_rule("lights_glass", settings) == (0.25, 0.9)
+    assert lenses.opacity_rule("lights_glass", {}) == (0.0, 1.0)
+    assert lenses.is_glass_technique("lights_gls_oldhead") and lenses.is_glass_technique("lights_glass")
+    # The red lens filter: red remapped by DarkValues / LightValues (detail_glass_red.fxobj).
+    red = {"detail_glass_red": {"DarkValues": 0.4, "LightValues": 1.5}}
+    f = lenses.lens_filter("detail_glass_red", (155, 0, 2), red)
+    assert abs(f[0] - (0.4 + 1.1 * (155 / 255) ** 2) ** 0.5) < 1e-9 and f[1] == 0.0
+    assert not lenses.emits("lights_glass") and lenses.emits("lights_gls_reverse_light")
+
+
+def test_lamp_glass_at_its_max_opacity():
+    # lights_gls_* glass over a reflector: GlassMaxOpacity of it shows, whatever its texel alpha.
+    xml = (
+        '<ShaderSettings><lights_gls_tail_light><GlassMaxOpacity value="0.8"/></lights_gls_tail_light></ShaderSettings>'
+    )
+    glass = _quad("glassLTL", "lights_gls_tail_light", 2.0, 0.0, 0.5)
+    lamp = _quad("taillightL", "textured_reflector", 1.9, 0.5, 1.0)
+    atlases, _ = _bake([glass, lamp], [glass], xml)
+    rgb = [round(0.8 * a + 0.2 * b) for a, b in zip(LENS[:3], LAMP[:3])]
+    got = atlases.texel(SIZE // 4, SIZE // 2)
+    assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
+    assert abs(dm.lamp_score(*got) - dm.lamp_score(*LENS)) < 0.01  # its own glow
+
+
+def test_cover_passes_the_lamp_glow():
+    # A cover (lights_glass) has no glow of its own: the lamp's behind it.
+    cover = _quad("glassLTL", "lights_glass", 2.0, 0.0, 0.5)
+    lamp = _quad("taillightL", "textured_reflector", 1.9, 0.5, 1.0)
+    atlases, _ = _bake([cover, lamp], [cover])
+    got = atlases.texel(SIZE // 4, SIZE // 2)
+    want = dm.lamp_score(*LAMP)
+    assert abs(dm.lamp_score(*got) - want) < 0.01, (got, dm.lamp_score(*got), want)
+
+
+def test_swatch_lens_tints_the_lamp_behind():
+    # A swatch lens (issue #145) with dropped= given: left out, its tint laid over the reflector.
+    inner = _quad("glassLTL", "detail_glass_red", 2.0, 0.0, 2 / SIZE, x=0.5)
+    outer = _quad("trunk", "detail_glass_red", 2.0, 0.0, 2 / SIZE, x=0.8)
+    lamps = [_quad(f"taillight{i}", "textured_reflector", 1.9, 0.5, 1.0, x=x) for i, x in enumerate((0.5, 0.8))]
+    dropped = set()
+    atlases, report = _bake([inner, outer, *lamps], [inner, outer], dropped=dropped)
+    assert dropped == {("glassLTL", "detail_glass_red"), ("trunk", "detail_glass_red")}
+    rgb = [round(b * l / 255) for l, b in zip(LENS[:3], LAMP[:3])]  # its filter: the texel
+    got = atlases.texel(SIZE * 3 // 4, SIZE // 2)
+    assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
+    assert got[3] == LAMP[3]  # the reflector keeps its glow mask
+    assert report["tinted"]["texels"] == (SIZE // 2) * SIZE
 
 
 if __name__ == "__main__":
