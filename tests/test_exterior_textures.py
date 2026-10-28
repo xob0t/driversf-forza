@@ -7,6 +7,7 @@ on synthetic data (no game or Forza files).
 
 from __future__ import annotations
 
+import copy
 import struct
 import unittest
 from pathlib import Path
@@ -535,6 +536,16 @@ class TrimArt(unittest.TestCase):
         self.assertEqual(tag[0], "swatch")
         self.assertEqual(tag[1:4], (240, 240, 240))  # the artwork's mean colour
         self.assertEqual(len(set(uvs)), 1)
+
+    def test_new_section_keeps_the_plan(self):
+        # The damage pass hands the planned subsections in new section objects. Resolved
+        # again, the flat artwork had no cell and drew as shared trim; so did the Mustang
+        # GT 05's tiling head lamp bowls in the exterior entry (issue #158).
+        t, section, art = self._plan((4, 4, 28, 28))
+        again = copy.copy(section)
+        self.assertEqual(t.material(again, art), dm.CHASSIS)
+        _uvs, tag = t.triangle_uvs(again, art, 0, [section.lod_vertices[i].uv0 for i in art.indices[:3]])
+        self.assertEqual(tag[:4], ("swatch", 240, 240, 240))
 
 
 class TrimTexels(unittest.TestCase):

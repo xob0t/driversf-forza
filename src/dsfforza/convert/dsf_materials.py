@@ -960,6 +960,7 @@ class Texturing:
     filler: dict = field(default_factory=dict)
     alpha_only: set = field(default_factory=set)  # (family, region index) used only by alpha-tested tris
     resolved: dict = field(default_factory=dict)  # (id(section), id(sub)) -> SubMaterial
+    planned: dict = field(default_factory=dict)  # id(sub) -> (sub, its SubMaterial in plan()); submaterial
     regions: dict = field(default_factory=dict)  # family -> [Region]
     owners: dict = field(default_factory=dict)  # (id(sub), triangle index) -> region index
     solids: dict = field(default_factory=dict)  # key -> (x, y) of a solid cell
@@ -1104,6 +1105,11 @@ class Texturing:
                 self.resolved[(id(section), id(sub))] = flat[sid]
                 self.atlas_subs.discard(sid)
             self.art_flat = chosen
+        for section, _ in work:
+            for sub in section.subsections:
+                m = self.resolved.get((id(section), id(sub)))
+                if m is not None:
+                    self.planned[id(sub)] = (sub, m)
         self._plan_gloss(work)
         return self
 
@@ -1563,9 +1569,16 @@ class Texturing:
 
     # -- per-subsection answers --
     def submaterial(self, section, sub) -> fm.SubMaterial:
+        """The subsection's material as plan() resolved it, also when a later pass (damage,
+        plates) hands in a new section object around it. Resolved again, a tiling lamp part
+        would sample the Lights atlas after lenses.bake wrote into it, a plain swatch would have
+        no colour and a flat trim artwork its texture: a colour without an atlas cell, so they
+        drew as shared trim. The Mustang GT 05's head lamp bowls did so in the exterior entry,
+        the one the player's car draws, and never glowed (issue #158)."""
         key = (id(section), id(sub))
         if key not in self.resolved:
-            self.resolved[key] = self._resolve(section, sub)
+            planned = self.planned.get(id(sub))
+            self.resolved[key] = planned[1] if planned and planned[0] is sub else self._resolve(section, sub)
         return self.resolved[key]
 
     def material(self, section, sub) -> str:
