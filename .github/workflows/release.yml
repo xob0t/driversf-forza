@@ -55,11 +55,11 @@ jobs:
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
-        # Notes from docs/releases/<tag>.md when there is one, else GitHub's list of PRs.
+        # A draft with GitHub's list of PRs: the player-facing notes are written on the
+        # draft and it is published by hand (docs/DEVELOPMENT.md, "Releases").
         # Tags with a suffix (v1.2.0-rc.1, -beta) are marked as pre-releases.
         run: |
           $tag = $env:GITHUB_REF_NAME
-          $notes = "docs\releases\$tag.md"
-          [string[]]$opts = if (Test-Path $notes) { @("--notes-file", $notes) } else { @("--generate-notes") }
+          [string[]]$opts = @("--draft", "--generate-notes")
           if ($tag -like '*-*') { $opts += '--prerelease' }
           gh release create $tag $env:ZIP --title $tag @opts
