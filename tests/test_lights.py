@@ -143,6 +143,25 @@ def test_red_texels_rear_only():
     assert got["glassLHL"] == got["glassRHL"] == lights.INDICATOR, got
 
 
+def test_yellow_front_lens_is_head_lamp_cover():
+    # PAN_51_Esperante_05: yellow lexan (detail_glass_amber, hue about 50) over the head lamps
+    # lights with them; an orange-amber front lens (the Mustang GT's bumper lamps) stays an
+    # indicator even with a head_light bulb behind it
+    yellow = (134, 114, 1, 162)
+    assert lights.yellow_lens(yellow) and not lights.yellow_lens(AMBER_TEXEL)
+    assert not lights.yellow_lens((145, 73, 26, 164)) and not lights.yellow_lens(CLEAR_TEXEL)
+    car = [
+        _quad("lexanLHL", "detail_glass_amber", 0.6, 2.05),
+        _quad("headL", "head_light", 0.6, 2.0),
+        _quad("lexanRHL", "detail_glass_amber", -0.6, 2.05),
+        _quad("headR", "head_light", -0.6, 2.0),
+    ] + TAILS
+    got = _functions(car, {"lexanLHL": yellow, "lexanRHL": yellow})
+    assert got["lexanLHL"] == got["lexanRHL"] == lights.HEAD, got
+    got = _functions(car, {"lexanLHL": (145, 73, 26, 164), "lexanRHL": (145, 73, 26, 164)})
+    assert got["lexanLHL"] == got["lexanRHL"] == lights.INDICATOR, got
+
+
 def test_clear_lens_on_red_texels_is_tail():
     # a rear clear lens drawn on red texels lights with the brakes, not with the reverse lamp
     car = [

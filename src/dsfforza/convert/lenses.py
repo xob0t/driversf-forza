@@ -584,6 +584,8 @@ def bake(
     day_glow); without it they keep their lamp score like the coloured ones.
     Returns a report: {"<section>/<technique>": {"texels", "behind" (share of rays that met
     something), "shared" (texels left alone)}}."""
+    from dsfforza.convert import lights
+
     lod = min(lods)
     opacity = glass_max_opacity(car_dir)
     surf = _Surfaces(sections, lod, atlases, lens_ids, opacity)
@@ -680,6 +682,10 @@ def bake(
             r, g, b = lens_rgba[:, 0], lens_rgba[:, 1], lens_rgba[:, 2]
             red = (r > 1.6 * g) & (r > 1.6 * b)
             amber = (r > 1.2 * b + 20) & (g > 0.35 * r) & (g > 1.2 * b)
+            # A selective-yellow lens covers a head lamp (lights.yellow_lens: the Panoz
+            # Esperante GTLM's lexan) and glows with it like a clear one.
+            if lights.yellow_lens(tuple(lens_rgba.mean(0))):
+                amber[:] = False
             sel = ~red & ~amber
             raw = lens_glow(lens_a[sel], lens_rgba[sel, 3], inverse[sel], origins, depth, mask, lamp)
             if raw is not None:

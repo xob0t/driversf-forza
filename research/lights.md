@@ -1,6 +1,6 @@
 # Lamps and paint
 
-Updated: 2026-10-27
+Updated: 2026-10-28
 
 How stock DSF cars light their lamps and pick a paint colour, and what the
 converter does about both. Code: `src/dsfforza/convert/lights.py` (lamps), `src/dsfforza/convert/paint.py`
@@ -106,9 +106,12 @@ on a shorter or longer car).
    reverse; `indicator_left/right` to indicator; `fogwhite/fogred` to fog;
    `brinl/brinr`, `drlinl*/drlinr*`, `lindtailside` to the combined types.
    Lenses take a function from their colour: `detail_glass_amber` to
-   indicator, `detail_glass_red` at the rear to tail; `detail_glass_clear`
-   lights with the lamp of the nearest lamp triangle behind it (0.35 m),
-   reflectors and housings stay unlit. At the rear the lens texels decide
+   indicator (a selective-yellow one at the front over a head lamp lights
+   with it, "Lamp covers drawn as window glass" below), `detail_glass_red`
+   at the rear to tail; `detail_glass_clear` lights with the lamp of the
+   nearest lamp triangle behind it (0.35 m), and so do rear reflectors
+   (`textured_reflector`, `reflector`); front reflectors and housings stay
+   unlit. At the rear the lens texels decide
    over the technique: a lens triangle on red texels is a tail lamp, and a
    red lens over an indicator brakes and indicates (0x19/0x1A; "The Lotus
    Carlton showed no brake light" below). FH1's `ShaderSettings.xml` agrees: `tail_light` has a
@@ -1057,6 +1060,86 @@ reverse lamps, which master hung under host 279's wing indicator records (entrie
 tails look right at rest on both builds; their reports (0.1.0, 0.1.1) predate the
 current host picks and weren't reproduced.
 
+### Lamp covers drawn as window glass (issue #160)
+
+Symptom (player and user reports on v0.1.2): lamps that look painted on, flat
+or black, and don't glow. The Mustang GT 05's head lamps were a black strip
+(#158), the Devon GTX's tail lamps a flat red plate, the Panoz Esperante GTLM's
+yellow head lamps didn't glow, the Veyron's, 300C's and G37's tails glowed
+little or not at all at night.
+
+**What Forza draws (confirmed-static, `dsff fxobj` on FH1's
+`media/shaders/Cars/shaders_v16.fxobj`).** The pixel shaders with a
+`GlassColor` constant split in two. Those of the plain `glass` and `window`
+techniques (0x8df3c, 0x8eb40 and their variants) sample no texture at all, only
+the environment and the damage-glass maps: colour `GlassColor` (default 0) plus
+the reflection, opacity `max(GlassColor.w, Fresnel term)` capped by
+`GlassMaxOpacity`. So a `glass` lamp cover is nearly clear glass, and its UVs'
+texels (the Devon's covers sit on flat red ones, its front covers on
+(143, 51, 52)) are never seen. `lights_glass` (0xd0894, 0xd11cc) does read the
+Lights atlas: texel x `PaintScale` x `GlassColor`, opacity from the texel alpha,
+capped by `GlassMaxOpacity`.
+
+**What the ports had (confirmed-static, `out/lamps/survey.py`: the main carbin of
+the 573 cars of `tools/batches/all.txt`, finest LOD; a cover is over a lamp when a
+Lights-atlas surface lies 0 to 0.3 m behind 30% of its area or more).**
+
+| Failure | Cars | Subsections |
+| --- | ---: | ---: |
+| plain `glass` lamp cover over a lamp, drawn as DSF window glass (front 912, rear 266) | 423 | 1,178 |
+| of them rear covers on red texels moved to the atlas as an opaque plate (`Texturing.is_lens`) | 15 | 24 |
+| lamp parts with tiling UVs on the Lights atlas drawn as dark shared trim | 15 | 34 |
+| front `detail_glass_amber` lens over head lamps, selective yellow (hue 49 to 51) | 1 | 3 |
+| rear reflectors (no light byte) | 508 cars light more of their rear lamps after the change | |
+
+DSF's window glass texel is (13, 233, 192): blue is the alpha, so the pane is 75%
+opaque with a dark diffuse. Stock cars use the same slot over their head lamps
+(134 of 148 stock vehicles have glass over 30% or more of their front lamp
+area, `out/lamps/stockcover.py`; their cover UVs sit in the flat window region),
+but in game the pane over a converted lamp hid it: with the covers left out
+(`out/lamps/nocover`, run `vm1-20261028-092416`) the Veyron's and 300C's tails
+glowed red at night, under the window glass (run `vm1-20261028-092017`) barely.
+The 15 opaque covers (BUG_Veyron_09, CHE_Volt_11, CHR_300C_08 (FM4), DEV_GTX_10,
+INF_G37Sport_08, JAG_XFR_10, JAG_XKRS_12, MAZ_Mazdaspeed3_10, MIN_Coopers_11,
+NIS_Skyline350GT_03, PAG_ZondaCinque_09, SUB_WRXSTi_04, VAU_AstraVXR_06,
+VAU_CorsaVXR_09, fer_f142_10) showed Forza's unseen red texels over the lamp.
+The Devon's tail lamp is mostly a red `textured_reflector` round a
+15-triangle `tail_light`; reflectors had no light byte, so with the cover gone
+its tails didn't glow either. The Mustang's head lamp bowls are a tiling
+`textured_reflector` (UVs -2.9 to 3.9): the atlas regions can't hold a tiling
+footprint, and `Texturing.material` drew it in the shared trim's dark texel.
+
+**Fix.**
+
+- `Texturing.clear_cover`: a plain `glass` subsection on the Lights atlas, outside
+  the window sections (`WINDOW_SECTIONS`), with a Lights surface behind 30% of
+  its area (`COVER_MIN_SHARE`, `COVER_DEPTH` 0.3 m) is left out. 30 cars draw
+  windows (148 subsections, BUS_TOUR_12's windscreen among them) with the same
+  technique; they stay glass.
+- `Texturing.is_lens` takes only the covers whose texels Forza draws
+  (`TEXTURED_COVERS`: `lights_glass`, `lights_gls_noemit`; the DMC-12's grid lens).
+- `Texturing._tiling_swatch`: a tiling lamp part is one Lights colour, the mean
+  texel at its corners and centres with the UVs wrapped (the Mustang's bowls
+  (160, 145, 149)).
+- `lights.yellow_lens`, `_yellow_head_covers`: a front amber lens whose mean texel
+  hue is 45 or more lights as a head lamp when a head lamp triangle lies within
+  0.15 m (the Panoz; FER_83_F430GT_10's yellow bumper lens has none and stays an
+  indicator), and the lens bake gives it the day glow of a clear lens.
+- Rear reflectors light with the nearest rear lamp within 0.35 m, like clear
+  lenses (`LampPlan.build`): rear lamp triangles with a light byte 674,063 ->
+  1,197,438 over the roster (host 266 plan, `out/lamps/plan_survey.py`).
+
+In game (confirmed-runtime, `-Views 'nose,rear,nose+night,rear+night' -Palette 0
+-ShotSeconds 3 -WaitSeconds 600`; master `out/lamps/before14`, branch
+`out/lamps/after14` / `final14`; runs `vm1-20261028-093612` / `-094231` (Devon,
+Mustang, Panoz, X5 M, Veyron, 300C, stock 182), `vm2-20261028-093737` / `-094430`
+(G37, Cee'd, Supra, Eclipse, 9-3, ZR1, stock 227) and the rerun below): the Devon's
+tails show the lamp's structure by day and glow red at night; the Panoz's yellow
+lamps glow by day and night; the G37's, Eclipse's, 9-3's and ZR1's tails show
+their lamp graphics and glow at night (the ZR1's four round lamps, #103), the
+Supra's brighter. In run `-094231` traffic hit the X5 M and the Veyron from
+behind before their rear views (dented bumper, broken-lamp pattern).
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and
@@ -1086,9 +1169,9 @@ current host picks and weren't reproduced.
    40 ticks", run host-20261024-003943); keep lamp runs to five IDs.
 7. Lens bake ("Lamp lenses drawn opaque"): the view is straight in along the
    lens normal, so the lamp inside doesn't shift with the camera (stock lamps
-   are flat textures too). `lights_gls_*` lamp glass and the lamp-cover
-   techniques (`glass`, `lights_glass`) aren't baked: covers stay DSF's clear
-   glass (the WRX STI 05's near-opaque light rear cover, (184, 161, 160) at
+   are flat textures too). `lights_gls_*` lamp glass and `lights_glass` covers
+   aren't baked (plain `glass` covers are left out since issue #160): they stay
+   DSF's window glass (the WRX STI 05's near-opaque light rear cover, (184, 161, 160) at
    alpha 236, shows its dark reflector instead), and what Forza's
    `DarkValues` / `LightValues` do to a lens is not decoded. Issue #89.
 8. Head lamp glow by day (issue #124, "Head lamp glow by day"): only clear
