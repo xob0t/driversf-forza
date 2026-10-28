@@ -1384,6 +1384,107 @@ not window glass, and light with its head lamps (0x1D) by day and in the dark mo
 has done that since #164, but those bumper lamps have no lamp technique in Forza (#174). The Viper's
 and F142's tails look the same in both runs.
 
+### Flat lenses, lens skins, laid-back head lamp lenses and tiling bowls (player reports on 3ca28fd)
+
+Symptoms (user's build of master 3ca28fd): the BMW X6 M's tail lamps were flat dark red with no lamp
+graphics and only the LED strip lit, as the X5 M's before #164; the Panoz Esperante GTLM's (the road
+car, PAN_Esperante_05, host 151; PAN_51_Esperante_05 is the #51 race car) left tail lamps were brighter
+than the right, and its head lamps looked painted on; the Mustang GT 05's head lamp bowls were plain
+white domes.
+
+**X6 M: flat lenses (offline-checked).** Its red tail glass (`glassLTL/RTL`, `trunk`
+`detail_glass_red`) is 40,000 texels of one colour, (183, 0, 0, 118): not a swatch stretched over the
+lens, so `lenses._scrambled` (texels lens points far apart share) never took it as #164's swatch lens.
+It was baked as a lens: 46% flat red over the lamp and the lens's own flat alpha as glow, so the lamp's
+L-shaped graphics showed faintly and the glow mask was gone. A rear lens whose texels are one colour
+(`lenses._flat`: 90% within 6 of the median per channel, `FLAT_SHARE`, `FLAT_SPREAD`) is now a swatch
+lens too: left out when half its rays meet a lamp, its filter (`lens_filter`) laid over the lamp
+behind. Front lenses keep their bake (their day glow, #124, comes from the lens).
+
+**Panoz tails: lens skins (offline-checked).** Each tail lamp is a red and a clear `detail_glass_*`
+lens under a `lights_glass` cover (cap 0.604) whose texels are the lenses' own: both covers sample
+the left lenses' texels (20,966 = 10,357 + 10,608), the right lenses have texels of their own.
+`lenses.bake` averages every bake that writes a texel, so the left lenses' texels were the mean of
+the left lens's bake and both covers' bakes (paler, with the covers' glow, the lamp's whole mask);
+the right lenses' were their own. A lamp cover (`lamp_cover`) whose texels are 90% or more lens
+texels (`COVER_ON_LENS`) is a second skin drawn with the lens artwork: `Texturing._drop_lens_skins`
+leaves it out (`dropped_lenses`) before the bake.
+
+**Panoz head lamps: rays along the axis (offline-checked).** The head lamp lens (`headlightL/R`
+`detail_glass_clear`, texels (174, 172, 174) at alpha 66 over the two reflector bowls) lies back on the
+wing: its normal is (-0.13, 0.65, -0.58). Rays along the normal met the housing floor (`body/misc`,
+1,743 of 2,484 rays through the see-through circles), so the bowls baked black. Along the car's axis
+2,179 of them meet the bowls (`body/head_light`, the foil texels (208, 208, 208)). A front lens ray
+that meets no lamp surface along the normal is cast again along +z (`lenses._axis_fallback`) and
+takes that result when it meets a lamp. Rear lenses are unchanged.
+
+**Mustang GT 05 bowls: tiles unwrapped (offline-checked).** The bowls (`body/textured_reflector`,
+LOD 1, u -2.9 to 3.9) sit in tiles -3, 0 and 3 with no triangle across a tile edge.
+`dsf_materials.unwrap_tiles` moves each triangle into the 0..1 tile (`TileWrapped`: a vertex's
+shift by its raw UV); a tiling lamp part that unwraps is an ordinary textured part. Up to 10% of its
+triangles may cross a tile edge (`TILE_CROSS_SHARE`; the Range Rover 12's head lamp bowls, 3 of 304):
+they are clamped into the tile of their lowest corner. `_tiling_swatch` (#168) stays for parts with
+more, or with a vertex in triangles of two tiles: the emitter shares a vertex within a region, so it
+has one UV.
+`resolve_lamp` gives lenses (`_Surfaces`, the bake's shared-texel pass, `lamp_glow`) and the lamp
+plan's texel sampler the same unwrapped material (the Mustang's lamp plan is unchanged by it).
+
+**Roster (offline; `out/l5/survey.py`, resolve and texels only, and `out/l5/bake_survey.py`,
+`Texturing._bake_lenses` on master's rules and on this change, LODs 1, 3, 4, 5, the tiling parts
+unwrapped in both; `out/l5/tile_count.py` for the tiling parts; the 573 cars of
+`tools/batches/all.txt`):**
+
+| Change | Cars | Subsections |
+| --- | ---: | ---: |
+| flat rear lenses left out, their filter on the lamp (master: baked as flat plates) | 82 | 220 |
+| lamp covers over their own lenses' texels left out (master: baked into the lenses' texels) | 23 | 37 |
+| front lens rays that met no lamp, now along the axis onto one | 262 | 85,468 rays |
+| tiling lamp parts unwrapped (master: one flat colour), all LODs | 29 | 166 |
+| of them at LOD 1 (the exterior entry; 5,290 triangles) | 16 | 36 |
+| tiling lamp parts still one colour, all LODs | 39 | 104 |
+| of them at LOD 1: FOR_ShelbyGT500_13's tails (every triangle across an edge), KIA_ForteKoup_10's head lamp bowls and MIN_JohnCooperWorks_09's reflector (vertices in two tiles) | 3 | 6 |
+| cars whose baked Lights texels change (more than 8 in a channel) | 273 | |
+
+The flat rear lenses: 155 red and 82 clear on the static count (`out/l5/s_all.tsv`), alpha 0 to 255;
+the Golf R's red tail glass is flat and opaque, (131, 8, 5, 255), so master drew it as an opaque plate
+over the lamp. The lens skins: ACU_IntegraR_01, BEN_ContinentalSS_10, BMW_M5E39_03,
+BMW_M635CSi_84, CHE_CamaroIROCZ_90, CIT_C1_11, FER_355Berlinetta_94, FER_89_F430GT_10,
+FER_90_F430GT_08, FIA_500AbarthSS_10, HON_CRXDelSol_95, HYU_ix20_11, LAN_Delta_92,
+LOT_EspritTurbo_80, MER_C32AMG_04, NIS_FairladyZ_03, NIS_SkylineGTRVspec_95, PAN_Esperante_05,
+REN_5Turbo_80, RUF_Yellowbird_87, TOY_CelicaST205_94, VAU_Agila_11, VW_GTIVR6_98. Most axis rays:
+HYU_GenesisCoupe_13 5,559, PON_TransAmGTA_87 3,677, TOY_Sprinter_85 3,405, NIS_240SX_94 3,125.
+
+In game (confirmed-runtime; VM 2, `-Views 'nose,rear,nose+night,rear+night' -Palette 0
+-ShotSeconds 3 -WaitSeconds 600`, vanilla 182 first; IDs 1 X6 M, 2 Esperante GTLM (road),
+3 Esperante #51, 4 Mustang GT 05; master's lamp code `out/l5/before` run `vm2-20261029-004501`, this
+change `out/l5/after` run `vm2-20261029-005310`):
+
+- X6 M: by day the tails show their L-shaped lamp graphics instead of a flat plate; in the dark mood
+  the graphics glow red (master: only the third brake light) (`img/lamps5-x6m-tails-ingame.jpg`).
+- Esperante (road): the left and right red lenses look alike by day (master: the left a flat bright
+  disc, the right with the lamp's pattern) and glow alike in the dark mood; the clear lenses are
+  grey on both sides (`img/lamps5-panoz-tails-ingame.jpg`). The head lamps show their two reflector
+  bowls through the lens by day and glow over them in the dark mood (master: a white crescent at
+  the top) (`img/lamps5-panoz-headlamps-ingame.jpg`).
+- Esperante #51: the yellow head lamps show more of the lamp; the tails as on master.
+- Mustang GT 05: the bowls show Forza's crinkled reflector and the bulb (master: plain domes)
+  (`img/lamps5-mustanggt05-headlamps-ingame.jpg`).
+
+Cars the rules reach beyond the reports, same views (`out/l5/before2` / `after2`: IDs 1 Golf R 10, 2 Genesis
+Coupe 13, 3 Sprinter 85, 4 GTI VR6; runs `vm2-20261029-012814` / `-014349` for the Golf R, the VMs were
+slow and the probe stopped after it; `vm1-20261029-022411` / `-023026` for IDs 2 to 4, `-WaitSeconds
+1500`; `out/l5/before3` / `after3`: IDs 1 Range Rover 12, 2 IS300, runs `vm2-20261029-023034` /
+`-023621`, with the 10% edge rule):
+
+- Golf R: the tails show the smoked lamp with its red L by day (master: its flat opaque red lens, a
+  salmon plate) and light red in the dark mood (`img/lamps5-golfr-tails-ingame.jpg`).
+- Genesis Coupe 13: the tails are red lamps with their graphics (master: its tiling lenses as one
+  white and red flat colour each) and glow red in the dark mood (master: barely). The amber
+  reflector inside each head lamp reads orange by day: its amber lens now sees it along the axis
+  (its glow is the lens's own score, as before).
+- Sprinter 85, GTI VR6 (its tail covers left out as lens skins), Range Rover 12, IS300: as on master
+  by day and in the dark mood, the IS300's bumper fog lenses with a little more detail.
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and
@@ -1424,6 +1525,10 @@ and F142's tails look the same in both runs.
    plates by day"). Clear rear lenses over reverse
    lamps still glow by their opacity, and so do front lenses with no lamp
    behind them within 0.4 m.
+9. Issue #189: tiling lamp parts with many triangles across a tile edge or a vertex in two tiles
+   stay one colour (FOR_ShelbyGT500_13's tails, KIA_ForteKoup_10's bowls, MIN_JohnCooperWorks_09;
+   104 subsections on 39 cars at any LOD); flat front lenses (74 on 32 cars) are still baked as
+   plates; rear lenses have no axis fallback.
 
 ## Paint
 

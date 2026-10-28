@@ -15,7 +15,8 @@ lens keeps its triangles and the atlas gets what Forza shows through it: for eac
 lens texel (finest planned LOD), a ray from its point on the lens straight in
 along the lens normal composites the lens over every lens layer behind it and the
 first opaque surface it meets (lamp, reflector, housing; their texels, or their
-flat colour), with Forza's blend:
+flat colour; a front lens ray that meets no lamp that way looks in along the car's axis,
+_axis_fallback), with Forza's blend:
 
     out = a * lens + (1 - a) * behind
 
@@ -83,6 +84,11 @@ SWATCH_SHARE = 0.5  # a coarse lens with more of its texel samples scrambled kee
 # Such a swatch lens is left out and its tint laid over the Lights surfaces behind it
 # (_tint_behind) when this share of its rays meets one; else it keeps its flat tint.
 SWATCH_TINT = 0.5
+# A rear lens whose texels are one colour (FLAT_SHARE of them within FLAT_SPREAD of the median,
+# each channel) is a flat tint over the whole lamp too, however fine its texels: the BMW X6 M's
+# red tail glass is 40,000 texels of (183, 0, 0, 118). Taken as a swatch lens (issue #145).
+FLAT_SHARE = 0.9
+FLAT_SPREAD = 6
 RAY_CHUNK = 256
 RAY_CELL = 0.04  # m: rays are chunked by these cells
 RAY_STEP = 2  # texels per ray, each way, at least
@@ -127,6 +133,13 @@ GLOW_SHARED = 0.01  # m: a texel whose surfaces lie further apart than this has 
 # texels' alpha at dsf_materials.LAMP_PERCENTILES, pooled over the 32 vanilla vehicles that have
 # them (out/dayglow/dsffront.py on the full entries; per-vehicle mean p10/50/90 41/74/102).
 DAY_HEAD_ALPHA = (0, 0, 5, 14, 24, 37, 55, 74, 97, 135, 157, 180, 199, 215, 235, 247, 254, 255, 255)
+
+
+def _resolve(section, sub) -> fm.SubMaterial:
+    """A subsection's material, tiling lamp parts laid on the atlas as Texturing draws them."""
+    from dsfforza.convert import dsf_materials
+
+    return dsf_materials.resolve_lamp(section, sub)
 
 
 def is_lens_technique(technique: str) -> bool:
@@ -265,7 +278,7 @@ class _Surfaces:
             for sub in section.subsections:
                 if sub.lod != lod:
                     continue
-                m = fm.resolve(section, sub)
+                m = _resolve(section, sub)
                 tris = sub.triangles()
                 if not tris:
                     continue
@@ -387,6 +400,30 @@ def _behind(surf: _Surfaces, origins, dirs, cand):
     return acc, hits, solid_at, solid_mask, solid_lamp, solid_tri
 
 
+def _axis_fallback(surf: _Surfaces, origins, dirs, found) -> int:
+    """A front lens's rays that met no lamp along the lens normal, again along the car's axis
+    (+z, into the car): a laid-back head lamp lens (the Panoz Esperante's, its normal 65% up)
+    sees the housing floor along its normal and the reflector bowls a camera ahead of the car
+    sees through it along the axis. A ray's results (`found`: _behind's arrays, in place) take
+    the axis ray's where that meets a lamp. Returns the rays changed."""
+    redo = np.nonzero(~found[4])[0]
+    if not len(redo):
+        return 0
+    axis = np.tile([0.0, 0.0, 1.0], (len(redo), 1))
+    start = origins[redo] + dirs[redo] * 0.001 - axis * 0.002  # off the lens along the axis
+    changed = 0
+    for c0 in range(0, len(redo), RAY_CHUNK):
+        rows = redo[c0 : c0 + RAY_CHUNK]
+        o, d = start[c0 : c0 + RAY_CHUNK], axis[: len(rows)]
+        ends = o + d * RAY_DEPTH
+        got = _behind(surf, o, d, surf.near(np.minimum(o.min(0), ends.min(0)), np.maximum(o.max(0), ends.max(0))))
+        take = got[4]
+        for out, new in zip(found, (got[0], got[1], got[2], got[3], got[4], got[5])):
+            out[rows[take]] = new[take]
+        changed += int(take.sum())
+    return changed
+
+
 def _closing(pos: np.ndarray, values: np.ndarray, radius: float) -> np.ndarray:
     """Morphological closing of per-ray values over the lens (max, then min, of the rays
     within `radius` of each): fills dips narrower than the radius, keeps the rim's falloff."""
@@ -446,7 +483,7 @@ def lamp_glow(sections, lods, atlases: fm.AtlasCache, glow: np.ndarray, owners: 
         for sub in section.subsections:
             if sub.lod != lod or sub.material not in head:
                 continue
-            m = fm.resolve(section, sub)
+            m = _resolve(section, sub)
             if m.family != fm.LIGHTS or m.kind != "textured":
                 continue
             pool = section.vertices_for(sub)
@@ -649,6 +686,15 @@ def _scrambled(samples, h: int, w: int) -> np.ndarray:
     return out.reshape(h, w)
 
 
+def _flat(rgba: np.ndarray) -> bool:
+    """Whether a lens's texel samples (n, 4) are one colour: FLAT_SHARE of them within
+    FLAT_SPREAD of the median in every channel."""
+    if not len(rgba):
+        return False
+    median = np.median(rgba, 0)
+    return float((np.abs(rgba - median).max(1) <= FLAT_SPREAD).mean()) >= FLAT_SHARE
+
+
 def _tint_behind(surf: _Surfaces, tris, tint: np.ndarray, out, w: int, h: int, tinted) -> int:
     """A swatch lens's flat tint (lens_filter: per channel, 0..1) multiplied into every texel of
     the Lights surfaces behind it (surf triangles `tris`), into `out` (h, w, 4), once a texel
@@ -708,7 +754,7 @@ def bake(
         for sub in section.subsections:
             if sub.lod not in lods or id(sub) in lens_ids:
                 continue
-            m = fm.resolve(section, sub)
+            m = _resolve(section, sub)
             if m.family != fm.LIGHTS or m.kind != "textured" or m.role not in (fm.TEXTURED, fm.TRIM, fm.PAINT):
                 continue
             pool = section.vertices_for(sub)
@@ -739,7 +785,12 @@ def bake(
         # Forza draws it over the lamp's graphics. Kept as the lens's own texels it hid them and
         # their glow (the BMW X5 M's tails: only the LED strip lit, issue #145), so its filter
         # (lens_filter) goes onto the Lights surfaces behind it and the lens is left out.
-        swatch = dropped is not None and is_lens_technique(sub.material) and scrambled[iy, ix].mean() > SWATCH_SHARE
+        # So is a rear lens of one flat colour (_flat: the BMW X6 M's red tail glass).
+        swatch = (
+            dropped is not None
+            and is_lens_technique(sub.material)
+            and (scrambled[iy, ix].mean() > SWATCH_SHARE or (pos[:, 2].mean() >= GLOW_FRONT_Z and _flat(src[iy, ix])))
+        )
         # A front lens's glow covers its shared texels too (the AST DB5 Vantage's lens shares
         # 95% of its texels with its reflector's coarser LODs): the same lamp. Not its
         # scrambled ones: they hold no one lamp. The lamp glass is a lamp itself (lamp_glow).
@@ -783,6 +834,8 @@ def bake(
             behind[c0:c1], met[c0:c1], depth[c0:c1], mask[c0:c1], lamp[c0:c1], solid[c0:c1] = _behind(
                 surf, origins[c0:c1], dirs[c0:c1], surf.near(lo, hi)
             )
+        if pos[:, 2].mean() < GLOW_FRONT_Z:
+            _axis_fallback(surf, origins, dirs, (behind, met, depth, mask, lamp, solid))
         if swatch:
             on_lamp = solid[np.isin(solid, lamp_tris)]
             if len(on_lamp) >= SWATCH_TINT * len(first):

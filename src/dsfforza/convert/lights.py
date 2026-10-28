@@ -361,8 +361,8 @@ def texel_sampler(atlases):
     """(section, sub, triangle) -> the mean Forza texel (r, g, b, a) under one
     triangle of a Lights-texture subsection, else None. atlases: a
     forza_materials.AtlasCache of the car (dsf_materials.Texturing.atlases)."""
+    from dsfforza.convert import dsf_materials, trim_art
     from dsfforza.convert import forza_materials as fm
-    from dsfforza.convert import trim_art
 
     images: dict = {}
     materials: dict = {}
@@ -370,7 +370,7 @@ def texel_sampler(atlases):
     def sample(section, sub, tri):
         key = id(sub)
         if key not in materials:
-            materials[key] = fm.resolve(section, sub, fm.classify)
+            materials[key] = dsf_materials.resolve_lamp(section, sub, fm.classify)
         m = materials[key]
         if m.family != fm.LIGHTS or m.kind not in ("textured", "swatch"):
             return None
