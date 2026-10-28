@@ -329,6 +329,11 @@ LENS_MIN_SATURATION = 0.35
 # alpha is the glow mask, so they never glow red anyway.
 LENS_MIN_ALPHA = 64
 LENS_RED_HUE = 10.0
+# A front `detail_glass_amber` lens this yellow (mean texel hue, degrees) is a selective-
+# yellow head lamp cover, not an indicator: the Panoz Esperante GTLM's lexan (hue 49 to 51)
+# over its head lamps. Front amber lenses over indicators sit at 0 to 35 in the roster (CHR_
+# Cuda426_71's 43 next); as indicators the Panoz's covered head lamps never lit by day.
+YELLOW_LENS_HUE = 45.0
 
 
 def texel_class(texel) -> str | None:
@@ -341,6 +346,14 @@ def texel_class(texel) -> str | None:
     if hi < 8 or (hi - lo) / hi < LENS_MIN_SATURATION or r < hi or texel[3] < LENS_MIN_ALPHA:
         return "white"
     return "red" if 60 * (g - b) / (hi - lo) < LENS_RED_HUE else "amber"
+
+
+def yellow_lens(texel) -> bool:
+    """Whether a mean lens texel (r, g, b, a) is a selective-yellow lens (YELLOW_LENS_HUE)."""
+    if texel_class(texel) != "amber":
+        return False
+    r, g, b = texel[:3]
+    return 60 * (g - b) / (max(r, g, b) - min(r, g, b)) >= YELLOW_LENS_HUE
 
 
 def texel_sampler(atlases):
@@ -438,6 +451,12 @@ def _high_brake(records) -> None:
     if centre and sides and mean_y(centre) > mean_y(sides) + HIGH_BRAKE_RISE:
         for r in centre:
             r.function = BRAKE
+
+
+def _mean_texel(section, sub, tris, texel):
+    """Mean of texel (texel_sampler) over a subsection's triangles; None without one."""
+    got = [t for tri in tris if (t := texel(section, sub, tri)) is not None]
+    return tuple(sum(t[c] for t in got) / len(got) for c in range(4)) if got else None
 
 
 def _lens_classes(section, sub, tris, pts_all, texel, colour: int, mid_z: float):
@@ -620,10 +639,13 @@ class LampPlan:
                 max_x = max(abs(p[0]) for pts in pts_all for p in pts)
                 colour = TECHNIQUE_COLOUR.get(sub.material, FUNCTION_COLOUR.get(function, WHITE))
                 classes, red_lens = None, False
+                yellow = False
                 if function == LENS:
                     colour = LENS_COLOUR.get(sub.material, WHITE)
                     if texel is not None:
                         classes, red_lens = _lens_classes(section, sub, tris, pts_all, texel, colour, mid_z)
+                        if colour == AMBER:
+                            yellow = yellow_lens(_mean_texel(section, sub, tris, texel))
                 for k, (t, pts) in enumerate(zip(tris, pts_all)):
                     normals = [place.normal(pool[i].normal) for i in t]
                     area, centre, normal = _tri_geometry(pts, normals)
@@ -653,9 +675,10 @@ class LampPlan:
                             red_by_texel.add(len(records))
                         c = RED
                     if f == LENS:
-                        # Amber lenses are indicators, red ones at the rear tail lamps;
+                        # Amber lenses are indicators (a yellow one at the front covers a head
+                        # lamp, YELLOW_LENS_HUE), red ones at the rear tail lamps;
                         # clear ones light with the lamp behind them.
-                        if c == AMBER:
+                        if c == AMBER and not (yellow and front):
                             f = INDICATOR
                             side = side if side != "C" else ("L" if centre[0] > 0 else "R")
                         elif c == RED and not front:

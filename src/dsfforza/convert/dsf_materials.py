@@ -287,6 +287,13 @@ def _paint_through(family: str, r: int, g: int, b: int, a: int) -> bool:
 # lenses (red minus max(green, blue) 98 to 135, alpha 138 to 241); clear and
 # smoked covers (Supra, RX-7, IS F, Range Rover: 13 to 58) stay glass.
 LENS_REAR_Z, LENS_MIN_RED, LENS_MIN_ALPHA = 0.5, 80, 128
+# Lamp-cover techniques whose texels Forza draws (lights_glass: texel x GlassColor, alpha
+# capped by GlassMaxOpacity). Plain `glass` samples no texture at all (shaders_v16.fxobj:
+# its pixel shaders read only the environment and damage-glass maps; colour GlassColor,
+# opacity from the Fresnel term), so its UVs' texels are never seen: the Devon GTX's clear
+# tail covers sit on flat red texels, and moved to the atlas they hid the lamp as a flat red
+# plate (issue #160).
+TEXTURED_COVERS = ("lights_glass", "lights_gls_noemit")
 
 CHASSIS, LIGHTS_MAT = "chassis", "lights"
 
@@ -1234,6 +1241,26 @@ class Texturing:
         colour = tuple(int(round(c)) for c in (opaque if len(opaque) else texels).mean(0))
         return dataclasses.replace(m, kind="swatch", colour=colour)
 
+    def _tiling_swatch(self, section, sub, m: fm.SubMaterial) -> fm.SubMaterial:
+        """A lamp part that tiles the Lights atlas (UVs past 0..1: the FM4 Mustang GT's
+        and 300C's reflector bowls, `textured_reflector`) as one flat Lights colour: the
+        mean texel at its corners and centres, UVs wrapped as Forza's sampler does. The
+        atlas regions can't hold a tiling footprint, and as untextured trim the bowls
+        drew in the shared trim's dark texel: the Mustang's head lamps were a black strip
+        (issue #158)."""
+        import dataclasses
+
+        w, h, rgba = self.atlases.get(m.family)
+        image = np.frombuffer(bytes(rgba), dtype=np.uint8).reshape(h, w, 4)
+        pool = section.vertices_for(sub)
+        uvs = np.array([[m.uv(pool[i].uv0) for i in tri] for tri in sub.triangles()], float)
+        if not len(uvs):
+            return m
+        uvs = np.concatenate([uvs.reshape(-1, 2), uvs.mean(1)]) % 1.0
+        texels = image[(uvs[:, 1] * h).astype(int).clip(0, h - 1), (uvs[:, 0] * w).astype(int).clip(0, w - 1)]
+        colour = tuple(int(round(c)) for c in texels.astype(float).mean(0))
+        return dataclasses.replace(m, kind="swatch", colour=colour)
+
     def _layout(self, tris, keys, tested, swatches, extra_solids) -> None:
         """Regions, swatch cells and packing for these atlas triangles and swatches."""
         self.regions, self.owners, self.alpha_only = {}, {}, set()
@@ -1289,6 +1316,9 @@ class Texturing:
             m = dataclasses.replace(m, family=fm.scaled_family(m.family, scale))
         if technique in GREY_TECHNIQUES and self.atlases is not None and m.kind == "textured":
             return self._art_swatch(section, sub, m)
+        tiling_lamp = m.role == fm.TEXTURED and fm.base_family(m.family) == fm.LIGHTS and m.kind == "tiling"
+        if tiling_lamp and self.atlases is not None and self.classifier is None:
+            return self._tiling_swatch(section, sub, m)
         if self.classifier is None and self.is_lens(section, sub, m):
             import dataclasses
 
@@ -1297,8 +1327,9 @@ class Texturing:
         return m
 
     def is_lens(self, section, sub, m: fm.SubMaterial) -> bool:
-        """A coloured rear lamp lens drawn with a lamp-cover glass technique
-        (glass, lights_glass, lights_gls_noemit on the Lights atlas). DSF's
+        """A coloured rear lamp lens drawn with a textured lamp-cover glass technique
+        (lights_glass, lights_gls_noemit on the Lights atlas; not plain glass,
+        TEXTURED_COVERS). DSF's
         shared glass would draw it clear, with the glass texture's crack
         bands, over whatever lies behind: the DMC-12's tail lamps are a white
         reflector under a red, amber and white grid lens, and came out white
@@ -1310,6 +1341,7 @@ class Texturing:
             m.role != fm.GLASS
             or m.family != fm.LIGHTS
             or m.kind != "textured"
+            or m.technique.lower() not in TEXTURED_COVERS
             or self.atlases is None
             or fm.LIGHTS not in self.families
         ):
