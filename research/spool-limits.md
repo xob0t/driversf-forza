@@ -27,7 +27,7 @@ modes) against the `-b` project copy. Outputs are in `out/ghidra/spool-*`,
 | Global UID list | 16384 entries, write-only | fills faster with more submodels | code: NOP the counter (hypothesis that it matters) |
 | Resource hash arena | 45,000 nodes, global | more buffers/textures per car use more | not needed: nodes are recycled through a free list when a resource is released, so only what is resident counts ("Global lists") |
 | Slots per kind | SSLP +0x18: 35, 2, 2 | no | data plus pool table; not needed for detail |
-| Draw queue | 16384 draws per frame, all objects together (not per car) | yes, with dsf_enhanced's full-detail traffic: the frame's last draw hits an `INT3` | code: `dsfforza.asi` `[render]` drops the extra draws ("Draw queue" below) |
+| Draw queue | 16384 draws per frame, all objects together (not per car) | yes, with dsf_enhanced's worldlod world: an unchecked replay overruns the queue, then an `INT3` or a write to address 0 | code: `dsfforza.asi` `[render]` drops the extra draws ("Draw queue" below) |
 
 The MDXN size itself has no separate limit. The 0x29B000 MDXN crash was
 first blamed on the 0x280000 read buffer path; the pad tests ("Test
