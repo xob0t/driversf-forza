@@ -965,6 +965,15 @@ def unwrap_tiles(section, sub, m: fm.SubMaterial) -> TileWrapped | None:
     return TileWrapped(**base, shift={k: (float(du), float(dv)) for k, (du, dv) in shift.items()})
 
 
+def resolve_lamp(section, sub, classifier=None) -> fm.SubMaterial:
+    """fm.resolve, with a tiling Lights subsection unwrapped (unwrap_tiles) when it can be: what
+    lenses and lights sample of a lamp part is what Texturing draws."""
+    m = fm.resolve(section, sub, classifier or fm.classify)
+    if m.kind == "tiling" and fm.base_family(m.family or "") == fm.LIGHTS:
+        return unwrap_tiles(section, sub, m) or m
+    return m
+
+
 @dataclass
 class Texturing:
     """Decides, for one Forza car, which DSF material and UVs each subsection

@@ -134,6 +134,13 @@ GLOW_SHARED = 0.01  # m: a texel whose surfaces lie further apart than this has 
 DAY_HEAD_ALPHA = (0, 0, 5, 14, 24, 37, 55, 74, 97, 135, 157, 180, 199, 215, 235, 247, 254, 255, 255)
 
 
+def _resolve(section, sub) -> fm.SubMaterial:
+    """A subsection's material, tiling lamp parts laid on the atlas as Texturing draws them."""
+    from dsfforza.convert import dsf_materials
+
+    return dsf_materials.resolve_lamp(section, sub)
+
+
 def is_lens_technique(technique: str) -> bool:
     return technique.startswith(LENS_PREFIXES)
 
@@ -270,7 +277,7 @@ class _Surfaces:
             for sub in section.subsections:
                 if sub.lod != lod:
                     continue
-                m = fm.resolve(section, sub)
+                m = _resolve(section, sub)
                 tris = sub.triangles()
                 if not tris:
                     continue
@@ -475,7 +482,7 @@ def lamp_glow(sections, lods, atlases: fm.AtlasCache, glow: np.ndarray, owners: 
         for sub in section.subsections:
             if sub.lod != lod or sub.material not in head:
                 continue
-            m = fm.resolve(section, sub)
+            m = _resolve(section, sub)
             if m.family != fm.LIGHTS or m.kind != "textured":
                 continue
             pool = section.vertices_for(sub)
@@ -746,11 +753,7 @@ def bake(
         for sub in section.subsections:
             if sub.lod not in lods or id(sub) in lens_ids:
                 continue
-            m = fm.resolve(section, sub)
-            if m.kind == "tiling" and m.family == fm.LIGHTS:
-                from dsfforza.convert import dsf_materials
-
-                m = dsf_materials.unwrap_tiles(section, sub, m) or m  # its atlas texels, as drawn
+            m = _resolve(section, sub)
             if m.family != fm.LIGHTS or m.kind != "textured" or m.role not in (fm.TEXTURED, fm.TRIM, fm.PAINT):
                 continue
             pool = section.vertices_for(sub)

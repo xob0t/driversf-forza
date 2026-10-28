@@ -392,7 +392,7 @@ def test_flat_rear_lens_tints_the_lamp_behind():
     lens = _quad("glassLTL", "detail_glass_red", 2.0, 0.0, 0.5)
     lamp = _quad("taillightL", "textured_reflector", 1.9, 0.5, 1.0)
     dropped = set()
-    atlases, report = _bake([lens, lamp], [lens], dropped=dropped)
+    atlases, _ = _bake([lens, lamp], [lens], dropped=dropped)
     assert dropped == {("glassLTL", "detail_glass_red")}
     rgb = [round(b * l / 255) for l, b in zip(LENS[:3], LAMP[:3])]
     got = atlases.texel(SIZE * 3 // 4, SIZE // 2)
