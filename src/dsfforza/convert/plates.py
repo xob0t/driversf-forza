@@ -90,8 +90,15 @@ RECESS_STEP = 0.004  # border cells this much nearer than the plane: recess wall
 MAX_TILT = 0.8  # |dz/dy| of the plate (about 39 degrees)
 BRACKET_TILT = 0.25  # |dz/dy| of a fallback plate on a bracket (about 14 degrees)
 PRIOR_BAND = 0.3  # recesses searched within this of the host's plate height (m)
+WIDE_BAND = 0.5  # ... and within this when there is none nearer
 FLAT_BAND = 0.15  # plain flat faces (no recess walls) only within this
 MIN_FIT = 0.7  # smallest plate scale when fitting a small recess
+# Fallback plates (fallback_height): cost per share of the plate over a badge, lamp or
+# glass, and per share over other sections than its main one, against the gap (m)
+# between plate and face.
+HIDE_COST = 0.5
+BADGE_BAND = 0.4  # a run of badge-technique cells this wide is grille artwork (m)
+MIX_COST = 0.1
 LOD_PUSH_LIMIT = 0.08  # coarser LODs move the plate out by at most this
 # Baked AO bytes for the plate vertices (forza2dsf.vertex_sky): an open,
 # vertical face, sky term ~0.48 against vanilla plates' ~0.5.
@@ -161,10 +168,29 @@ def host_plates(stream, vehc) -> HostPlates:
 # --- depth maps of the Forza body ---------------------------------------------------------
 
 CLASS = {"paint": 1, "trim": 2, "chrome": 2, "glass": 3, "textured": 4, "tyre": 5}
+# What a plate must not hide (depth map `feat`): badges and emblems, lamps, exhaust
+# sections (the Zonda Cinque's centre tailpipes). Grilles are marked too: a plate may
+# cross one (on a bracket, as on the real cars) but a grille is no mounting face.
+FEAT_GRILLE, FEAT_BADGE, FEAT_LAMP, FEAT_EXHAUST = 1, 2, 3, 4
+
+
+def feature(technique: str) -> int:
+    """FEAT_* of a Forza technique (trim_art's names by their source technique)."""
+    from dsfforza.convert import forza_materials as fm
+
+    n = fm.technique_source(technique).lower()
+    if "badge" in n or "emblem" in n:
+        return FEAT_BADGE
+    if n.startswith("grille"):
+        return FEAT_GRILLE
+    role, family = fm.classify(technique)
+    if family == fm.LIGHTS and role in (fm.TEXTURED, fm.GLASS):
+        return FEAT_LAMP
+    return 0
 
 
 def body_triangles(sections, lod: int, place) -> list:
-    """(DSF points, class, section name) for every body triangle at `lod`."""
+    """(DSF points, class, section name, feature) for every body triangle at `lod`."""
     from dsfforza.convert import forza_materials as fm
 
     out = []
@@ -175,9 +201,12 @@ def body_triangles(sections, lod: int, place) -> list:
             role, _ = fm.classify(sub.material)
             if role == fm.SKIP:
                 continue
+            c, f = CLASS.get(role, 0), feature(sub.material)
+            if s.name.lower().startswith("exhaust"):
+                f = FEAT_EXHAUST
             pool = s.vertices_for(sub)
             for t in sub.triangles():
-                out.append(([place.point(pool[i].position) for i in t], CLASS.get(role, 0), s.name))
+                out.append(([place.point(pool[i].position) for i in t], c, s.name, f))
     return out
 
 
@@ -195,6 +224,7 @@ class DepthMap:
     cls: np.ndarray
     sec: np.ndarray
     names: list
+    feat: np.ndarray  # FEAT_* of the nearest surface (0: none)
 
     def col(self, s: float) -> float:
         return (s - self.s0) / PX - 0.5
@@ -221,9 +251,10 @@ def depth_map(tris, end: str, s_range, y_range) -> DepthMap:
     depth = np.full((height, width), np.inf)
     cls = np.zeros((height, width), np.int8)
     sec = np.full((height, width), -1, np.int32)
+    feat = np.zeros((height, width), np.int8)
     names: list = []
     index: dict = {}
-    for pts, c, name in tris:
+    for pts, c, name, f in tris:
         v = [view_coords(end, p) for p in pts]
         q = [(a[0] - s0) / PX for a in v]
         r = [(y1 - a[1]) / PX for a in v]
@@ -248,11 +279,12 @@ def depth_map(tris, end: str, s_range, y_range) -> DepthMap:
             continue
         win[better] = d[better]
         cls[cy0:cy1, cx0:cx1][better] = c
+        feat[cy0:cy1, cx0:cx1][better] = f
         if name not in index:
             index[name] = len(names)
             names.append(name)
         sec[cy0:cy1, cx0:cx1][better] = index[name]
-    return DepthMap(end, s0, y1, depth, cls, sec, names)
+    return DepthMap(end, s0, y1, depth, cls, sec, names, feat)
 
 
 def fit_plane(dm: DepthMap, rows: slice, cols: slice, mask=None):
@@ -344,6 +376,73 @@ def _forza_mesh(sections, end: str, place, z_mid: float):
     return best
 
 
+def run_widths(mask: np.ndarray) -> np.ndarray:
+    """Per cell: the length (cells) of the horizontal run of True cells holding it (0 off the mask)."""
+    out = np.zeros(mask.shape, np.int32)
+    for i, row in enumerate(mask):
+        edges = np.flatnonzero(np.diff(np.r_[0, row.astype(np.int8), 0]))
+        for a, b in zip(edges[::2], edges[1::2]):
+            out[i, a:b] = b - a
+    return out
+
+
+def fallback_height(dm: DepthMap, prior_y: float, base: tuple[float, float]) -> tuple[float, str]:
+    """(height, note) of a plate with no face to sit on, at s = 0 (step 3).
+
+    Within PRIOR_BAND of the host's height: where the plate covers the car's
+    face and hugs it best once pushed out to its nearest point (a plate on a
+    mounting pad or bracket, near-vertical), on one panel, and hiding no badge,
+    lamp, glass or exhaust. A grille may sit behind it, as on the real cars (the Mazda 2's
+    lower bumper grille); the emblem slot above it may not (#159: the host's
+    height alone put the plate over the Mazda's emblem and bonnet edge)."""
+    height, width = dm.depth.shape
+    # Cells of the car's face, not the underbody or cabin seen through a gap.
+    centre_cols = slice(max(0, int(dm.col(-0.3))), min(width, int(dm.col(0.3)) + 1))
+    finite = dm.depth[:, centre_cols][np.isfinite(dm.depth[:, centre_cols])]
+    face = (dm.depth < float(finite.min()) + 0.3) if finite.size else np.isfinite(dm.depth)
+    # Badge cells in a run wider than BADGE_BAND are grille artwork drawn with a badge
+    # technique (the BMW M1's nose band), not an emblem.
+    badge = dm.feat == FEAT_BADGE
+    hidden = badge & (run_widths(badge) * PX < BADGE_BAND)
+    hidden |= np.isin(dm.feat, (FEAT_LAMP, FEAT_EXHAUST)) | (dm.cls == CLASS["glass"])
+    c_ = slice(max(0, int(round(dm.col(-base[0] / 2)))), min(width, int(round(dm.col(base[0] / 2))) + 1))
+    best = None
+    for dy in np.arange(-PRIOR_BAND, PRIOR_BAND + 0.001, PX):
+        y = prior_y + float(dy)
+        r = slice(max(0, int(round(dm.row(y + base[1] / 2)))), min(height, int(round(dm.row(y - base[1] / 2))) + 1))
+        if r.stop <= r.start:
+            continue
+        cover = float(face[r, c_].mean())
+        win = dm.depth[r, c_]
+        ok = face[r, c_]
+        gap, mixed = 1.0, 1.0
+        if ok.sum() > 6:
+            ii, _ = np.nonzero(ok)
+            yy = dm.y_of(ii + r.start)
+            fit = np.polyfit(yy - y, win[ok], 1) if np.ptp(yy) > 0 else (0.0, 0.0)
+            bb = float(np.clip(fit[0], -BRACKET_TILT, BRACKET_TILT))
+            rel = win[ok] - bb * (yy - y)
+            gap = float(np.median(rel - rel.min()))
+            # Section and material boundaries (bonnet shut line, bumper to body, the
+            # edge of a grille): the plate on one surface.
+            cells = zip(dm.sec[r, c_][ok].tolist(), dm.cls[r, c_][ok].tolist())
+            mixed = 1.0 - Counter(cells).most_common(1)[0][1] / float(ok.sum())
+        hide = float(hidden[r, c_].mean())
+        cost = gap + 0.1 * abs(float(dy)) + HIDE_COST * hide + MIX_COST * mixed
+        key = (round(cover, 1), -cost)
+        if best is None or key > best[0]:
+            best = (key, y, hide, mixed)
+    if best is None:  # the host's height maps outside the depth map (plan() skips the end)
+        raise ValueError(f"{dm.end} plate: no body surface near y {prior_y:.2f}")
+    _, y, hide, mixed = best
+    note = "no flat face of plate size"
+    if hide > 0:
+        note += f", hides {hide:.0%} badge/lamp/glass/exhaust"
+    if mixed > 0:
+        note += f", {mixed:.0%} on other sections"
+    return y, note
+
+
 def plan_end(
     tris, end: str, host: HostPlate, prior_y: float, ground: float, half_width: float, forza_mesh=None
 ) -> Plate:
@@ -369,7 +468,7 @@ def plan_end(
     cands = []
     for top in range(height - wrows):
         cy = float(dm.y_of(top + (wrows - 1) / 2))
-        if cy - ground < 0.15 or cy - ground > 1.45 or abs(cy - prior_y) > PRIOR_BAND:
+        if cy - ground < 0.15 or cy - ground > 1.45 or abs(cy - prior_y) > WIDE_BAND:
             continue
         for off in (-4, -2, 0, 2, 4):
             c0 = int(round(centre_col - (wcols - 1) / 2)) + off
@@ -395,7 +494,11 @@ def plan_end(
             cands.append((proud, rms, cy, s, b, c, top, c0))
     pick = None
     if cands:
-        recess = [k for k in cands if k[0] >= 0.3]
+        recess = [k for k in cands if k[0] >= 0.3 and abs(k[2] - prior_y) <= PRIOR_BAND]
+        # The car's own recess further from the host's height before a plate on no face
+        # (#159: the Audi RS2's bumper recess under its tail lamp band, the host's plate
+        # on its boot lid).
+        recess = recess or [k for k in cands if k[0] >= 0.3]
         if recess:
             source = "recess"
             pick = max(recess, key=lambda k: k[0] - 0.5 * abs(k[2] - prior_y) - 2.0 * abs(k[3]))
@@ -447,39 +550,9 @@ def plan_end(
             f"{'-' if room_w is None else f'{room_w:.2f}'} x {'-' if room_h is None else f'{room_h:.2f}'}"
         )
     else:
-        # No face: near the host's height (within 0.3 m), where the plate covers
-        # the car's face and hugs it best once pushed out to its nearest point
-        # (a plate on a mounting pad or bracket), near-vertical.
-        source, cs, size, note = "host", 0.0, base, "no flat face of plate size"
+        source, cs, size = "host", 0.0, base
         b = 0.0
-        best = None
-        # Cells of the car's face, not the underbody or cabin seen through a gap.
-        centre_cols = slice(max(0, int(dm.col(-0.3))), min(width, int(dm.col(0.3)) + 1))
-        finite = dm.depth[:, centre_cols][np.isfinite(dm.depth[:, centre_cols])]
-        face = (dm.depth < float(finite.min()) + 0.3) if finite.size else np.isfinite(dm.depth)
-        c_ = slice(max(0, int(round(dm.col(-base[0] / 2)))), min(width, int(round(dm.col(base[0] / 2))) + 1))
-        for dy in np.arange(-0.3, 0.301, PX):
-            y = prior_y + float(dy)
-            r = slice(max(0, int(round(dm.row(y + base[1] / 2)))), min(height, int(round(dm.row(y - base[1] / 2))) + 1))
-            if r.stop <= r.start:
-                continue
-            cover = float(face[r, c_].mean())
-            win = dm.depth[r, c_]
-            ok = face[r, c_]
-            gap = 1.0
-            if ok.sum() > 6:
-                ii, _ = np.nonzero(ok)
-                yy = dm.y_of(ii + r.start)
-                fit = np.polyfit(yy - y, win[ok], 1)
-                bb = float(np.clip(fit[0], -BRACKET_TILT, BRACKET_TILT))
-                rel = win[ok] - bb * (yy - y)
-                gap = float(np.median(rel - rel.min()))
-            key = (round(cover, 1), -(gap + 0.1 * abs(float(dy))))
-            if best is None or key > best[0]:
-                best = (key, y)
-        if best is None:  # the host's height maps outside the depth map (plan() skips the end)
-            raise ValueError(f"{end} plate: no body surface near y {prior_y:.2f}")
-        cy = best[1]
+        cy, note = fallback_height(dm, prior_y, base)
     # Final plane over the plate's own cells: tilt from the fit, then out to the
     # nearest surface so no cell pokes through.
     rows = slice(max(0, int(round(dm.row(cy + size[1] / 2)))), min(height, int(round(dm.row(cy - size[1] / 2))) + 1))
@@ -535,7 +608,7 @@ def plan(car_body, place, ground: float, host: HostPlates, lods, log=print) -> P
     tris = body_triangles(car_body, 1 if 1 in lods else min(lods), place)
     if not tris:
         return PlatePlan([], [], {"plates": {}})
-    pts = [p for t, _, _ in tris for p in t]
+    pts = [p for t, *_ in tris for p in t]
     ys = [p[1] for p in pts]
     zs = [p[2] for p in pts]
     xs = [abs(p[0]) for p in pts]
@@ -653,9 +726,9 @@ def _debug_png(car_body, place, ground, pp: PlatePlan, path: Path) -> None:
     from dsfforza.formats import vehicle_mesh as vm
 
     tris = body_triangles(car_body, 1, place)
-    xs = [abs(p[0]) for t, _, _ in tris for p in t]
+    xs = [abs(p[0]) for t, *_ in tris for p in t]
     hw = min(0.9, max(xs) + 0.02)
-    zs = [p[2] for t, _, _ in tris for p in t]
+    zs = [p[2] for t, *_ in tris for p in t]
     z_mid = (max(zs) + min(zs)) / 2
     tiles = []
     colours = {1: (0.85, 0.3, 0.3), 2: (0.35, 0.35, 0.4), 3: (0.4, 0.6, 0.85), 4: (0.95, 0.8, 0.2), 5: (0.2, 0.2, 0.2)}
@@ -677,8 +750,12 @@ def _debug_png(car_body, place, ground, pp: PlatePlan, path: Path) -> None:
                 continue
             r0, r1 = int(dm.row(p.centre[1] + p.size[1] / 2)), int(dm.row(p.centre[1] - p.size[1] / 2))
             c0, c1 = int(dm.col(p.centre[0] - p.size[0] / 2)), int(dm.col(p.centre[0] + p.size[0] / 2))
-            rgb[max(r0, 0) : r1 + 1, max(c0, 0) : c1 + 1] = (0.95, 0.6, 0.15)
-            rgb[max(r0, 0), max(c0, 0) : c1 + 1] = rgb[r1, max(c0, 0) : c1 + 1] = (0, 1, 0)
+            r0, r1 = max(r0, 0), min(r1, d.shape[0] - 1)
+            c0, c1 = max(c0, 0), min(c1, d.shape[1] - 1)
+            if r0 > r1 or c0 > c1:
+                continue
+            rgb[r0 : r1 + 1, c0 : c1 + 1] = (0.95, 0.6, 0.15)
+            rgb[r0, c0 : c1 + 1] = rgb[r1, c0 : c1 + 1] = (0, 1, 0)
         tiles.append((np.clip(rgb, 0, 1) * 255).astype(np.uint8))
     img = np.kron(np.concatenate(tiles, axis=1), np.ones((2, 2, 1), np.uint8))
     vm.write_png(path, img.shape[1], img.shape[0], bytearray(img.tobytes()))
