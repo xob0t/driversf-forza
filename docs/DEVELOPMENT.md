@@ -115,12 +115,11 @@ Options and the other modes (host, sandbox): `research/in-game-tests.md`.
 `dsfforza.asi` (`tools/asi/build.ps1 -Test -NoRun`: the offline test is
 compiled, not run, as CI has no `Driver.exe`), runs `uv run python -m tests
 --ci`, packages the zip (`uv run dsff package`, `src/dsfforza/build/package.py`)
-and attaches it to a GitHub Release. `gh workflow run release.yml --ref
+and attaches it to a draft GitHub Release. `gh workflow run release.yml --ref
 <branch>` runs the same steps and uploads the zip as a workflow artifact
 instead of releasing it (GitHub dispatches a workflow only once it is on
-`master`). Release notes come from `docs/releases/<tag>.md` when the tagged
-commit has one (else GitHub lists the PRs); a tag with a suffix (`-rc.1`,
-`-beta`) is marked as a pre-release.
+`master`). The draft's notes are GitHub's list of the PRs since the last
+release; a tag with a suffix (`-rc.1`, `-beta`) is marked as a pre-release.
 
 Making a release (master keeps taking PRs meanwhile):
 
@@ -128,16 +127,18 @@ Making a release (master keeps taking PRs meanwhile):
    origin/master` (or the commit to release), then `.\tools\worktree-setup.ps1`
    there. Nothing else goes onto this branch except fixes for what the next
    steps find.
-2. Write `docs/releases/vX.Y.Z.md` on the branch (what changed for players,
-   whether every car is converted again, known issues) and commit it.
-3. Verify from the branch: `uv run dsff install` (a full build and an install
+2. Verify from the branch: `uv run dsff install` (a full build and an install
    into the game), then a VM series on its `out\build` with a few changed cars
    (`run-series.ps1 -Vm`, with the build's gui.sp, fonts, locale and Lua).
-4. Tag the branch head and push the tag: `git tag -a vX.Y.Z -m vX.Y.Z; git push
+3. Tag the branch head and push the tag: `git tag -a vX.Y.Z -m vX.Y.Z; git push
    origin vX.Y.Z`. Check the release run (`gh run list --workflow
-   release.yml`) and the release (`gh release view vX.Y.Z`).
-5. Bring the notes (and any fix made on the branch) to master in a PR, then
-   delete the branch; the tag keeps its commit.
+   release.yml`); it leaves a draft release with the zip.
+4. Write the notes on the draft, above GitHub's PR list (what changed for
+   players, whether every car is converted again, known issues; see an
+   earlier release), then publish it: `gh release edit vX.Y.Z --notes-file
+   <file> --draft=false`. Later corrections are edits of the release.
+5. Bring any fix made on the branch to master in a PR, then delete the
+   branch; the tag keeps its commit.
 
 The zip holds the git-tracked files a player's install needs (the package,
 `pyproject.toml`, `uv.lock`, `tools/install.ps1`, the registration Lua, the car
