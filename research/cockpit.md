@@ -593,6 +593,19 @@ What `fit` does now (`main_sections` = the main carbin):
   2.5 m). `convert_interior` steps to finer shell LODs until it's open
   (LOD 4 for all of them). Single rays gave false alarms on the windscreen
   frit or sun strip (`black_glass`) of 40 cars.
+- **Shell lidding the cockpit** (2026-10-28, issue #157): the windscreen
+  rays pass over a lid below the eye. The Audi R10s' LOD 5 body closes the
+  open cockpit with flat panels at the height of the wheel's top (DSF y 0.08
+  to 0.17, eye 0.23, hub 0.02); the Monaro VXR 05's LOD 5 `frame` is two
+  triangles, a car-wide plane at y 0.72 to 0.82 (Forza) through the cabin.
+  In game the lid drew as a reflective silver plane through the driver's
+  hands and the lower half of the view. `shell_lids_cockpit` casts rays from
+  the eye to the wheel's hub and 8 rim points; `shell_closes` steps to a
+  finer LOD when 3 or more stop short (`LID_RAYS`). Roster (573 cars,
+  offline): 570 stop 0 rays at their shell LOD, the R10 10, R10 08 and
+  Monaro 6; all three get LOD 4, where 0 stop. `render_eye_view` skips
+  triangles that cross behind the eye, so the cockpit render didn't show the
+  lid: look for it with the rays, not the render.
 - `forza2dsf.convert` keeps the host interior if `fit` still fails, or (from
   2026-10-24) when the cockpit is a placeholder and the host is the same
   vehicle ("Placeholder cockpits on a same-vehicle host").

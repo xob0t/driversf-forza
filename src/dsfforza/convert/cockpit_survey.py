@@ -98,11 +98,11 @@ def survey_one(source, media: str, work: Path, dbs: list[Path]) -> dict:
         ]
         lods = sorted({sub.lod for x in vanilla for sub in x.subsections if sub.lod > 0})
         lod = min(lods[-1], 5) if lods else 0
-        while lod >= 1 and cockpit.shell_blocks_view(vanilla, lod, cf.eye):
+        while lod >= 1 and cockpit.shell_closes(vanilla, lod, cf):
             lod -= 1  # convert_interior steps to finer shell LODs the same way
         row["shell_lod"] = lod
         if lods and lod < 1:
-            warnings.append("every shell LOD closes the windscreen")
+            warnings.append("every shell LOD closes the windscreen or the cockpit")
         elif lods and lod < min(lods[-1], 5):
             row["cause"] = (row["cause"] + "; " if row["cause"] else "") + f"shell LOD {lod}"
     if row.get("main_error"):
