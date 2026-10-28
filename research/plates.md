@@ -1,6 +1,6 @@
 # Licence plates
 
-Updated: 2026-10-22
+Updated: 2026-10-28
 
 How vanilla DSF cars draw their plates, what the Forza cars have, and what
 `src/dsfforza/convert/plates.py` adds to converted cars (`ConvertOptions.plates`, on by
@@ -102,13 +102,21 @@ Forza cars mostly have no plate. In `tools/batches/testdrive.txt` (40 cars):
      ring is at least 4 mm nearer the viewer on 30% or more of its cells;
      the best recess within 0.3 m of the host's plate height wins (height =
      the host plate's height fraction of its body box mapped onto the Forza
-     body box). Else a plain flat face within 0.15 m of that height. The
+     body box), else the best within 0.5 m (#159). Else a plain flat face
+     within 0.15 m of that height. The
      window is then centred on the face (walk out along its row and column
      while cells stay within 4 mm of the plane) and the plate shrunk (aspect
      kept, at least 0.7x) if the face is smaller than the host plate;
-   - else (**host** fallback) x = 0 within 0.3 m of the host's height, at
-     the height where the plate covers the car's face and lies closest to it,
-     tilt clamped to 14 degrees (a plate on a pad or bracket).
+   - else (**host** fallback, `fallback_height`) x = 0 within 0.3 m of the
+     host's height, at the height where the plate covers the car's face at
+     the lowest cost: the gap between plate and face (m), plus 0.1 x the
+     distance from the host's height, plus 0.5 x the share of the plate over
+     a badge, lamp, glass or exhaust section, plus 0.1 x the share over
+     another section or material class than its main one (bonnet shut line,
+     grille edge). Tilt clamped to 14 degrees (a plate on a pad or bracket).
+     A grille may lie behind the plate (real cars mount plates over bumper
+     grilles); badge-technique runs wider than 0.4 m are grille artwork
+     (the BMW M1's nose band), not emblems (#159).
    Finally the plate is pushed out to the nearest surface under it plus 3 mm,
    and per LOD (1..5) further out if that LOD's surface comes forward (at
    most 8 cm).
@@ -192,6 +200,71 @@ model or UPVH plate marker (the vanilla survey found plate triangles in MODL
 part 0 and the panel parts of every plated car, and converted cars before
 this change showed none).
 
+### Fallback plates on grilles, badges and bonnet edges (#159, 2026-10-28)
+
+The host-height fallback (step 3) took the host's plate height and only asked
+for a face close behind the plate. On the Mazda 2 (MAZ_2_11, host 128) that put
+the front plate on the emblem slot under the bonnet (the issue's report), and
+in the build the rear one on the boot lid. Three causes, three changes:
+
+- **What lies under the plate.** The depth map now records per cell a feature
+  (`feature`, `FEAT_*`): badge or emblem technique, lamp (lights-atlas
+  textured or glass), grille technique, exhaust section (`exhaust*`).
+  `fallback_height` scores each height within 0.3 m of the host's by the gap
+  (as before), 0.1 x the distance, 0.5 x the share over a badge, lamp, glass or
+  exhaust, and 0.1 x the share over another section or material class than
+  its main one. Badge-technique runs wider than 0.4 m are not emblems: the
+  BMW M1's whole nose band and the Trans Am's intakes are drawn with `badge`.
+  A grille behind the plate is allowed (the Mazda 2's lower bumper grille,
+  as on the real car).
+- **trim_art's trims were no faces.** Since #173/#176, `trim_art` renames
+  trim triangles on artwork to `dsf_trim_gloss~misc`, `dsf_trim_grey~...`,
+  `dsf_trim_detail~...`, which classify as textured: the recess search (paint
+  or trim cells only) no longer saw them, so the build fell back where
+  `plates plan` (no trim_art) found a recess. The Mazda 2's rear bumper
+  recess is gloss trim. The flat-colour ones (gloss, grey) are faces again,
+  by their source technique; detail trims (grille bars: the Challenger SRT8's
+  upper grille) stay no face and count as grille. `plates plan` now runs the
+  build's cut-outs and trim artwork first (`--raw`: without).
+- **Recesses further away.** Where there is neither a recess within 0.3 m nor
+  a flat face within 0.15 m of the host's height, a recess within 0.5 m is
+  taken before the fallback (the Audi RS2's rear bumper recess under its lamp
+  band, the host's plate on its boot lid; the Camaro Z28 79's rear plate pad).
+
+**Roster survey** (566 cars of `tools/batches/all.txt` on their hosts of the
+2026-10-27 build, cut-outs and trim artwork applied as in the build;
+master's converter against this one; `out/plates159/survey.py`). A plate is
+flagged when over 2% of it lies on a badge (narrower than 0.4 m), lamp or
+glass, when under 90% of it is on its main section, or when it floats (median
+gap over 3 cm, or over 25% of it over an opening):
+
+| | front master | front now | rear master | rear now |
+| --- | ---: | ---: | ---: | ---: |
+| recess | 68 | 98 | 392 | 433 |
+| flat face | 76 | 85 | 35 | 34 |
+| Forza plate | 14 | 14 | 16 | 16 |
+| host fallback | 343 | 304 | 118 | 78 |
+| fallbacks flagged | 125 | 86 | 65 | 38 |
+| all plates over a badge | 59 | 20 | 28 | 6 |
+| all plates over a lamp | 2 | 0 | 15 | 8 |
+| all plates across sections | 36 | 17 | 35 | 21 |
+| all plates floating | 69 | 77 | 33 | 41 |
+
+258 cars change a plate. "Floating" grows: plates that leave a badge or a
+shut line often land on a curved bumper or across an opening (on a bracket).
+Plan renders (`img/plates-159-plans.png`, master left, now right):
+Mazda 2, Audi RS2, Camaro Z28 79, Golf GTI 16v Mk2, BMW M1.
+
+**In game** (confirmed-runtime; VM run `vm1-20261028-184410` master,
+`vm1-20261028-184904` this converter; vanilla 128 then the Mazda 2, Golf GTI
+16v Mk2, Audi RS2, BMW M1, Camaro Z28 79, Elan Sprint; views nose and rear;
+`img/plates-159-ingame.jpg`): the Mazda 2's front plate in its lower grille
+and its rear one in the bumper recess, the Golf's front plate on the bumper
+under the grille instead of over it beside the GTI badge, the Camaro's rear
+plate on its bumper pad instead of over the Z28 badge. The RS2's rear was not
+seen (the car was wrecked in that shot); the Golf's rear plate is invisible
+before and after (a recess under the bumper, tilt -0.73: #179).
+
 ## Open
 
 1. In game: front plates (not yet seen), the other cars of the test build,
@@ -201,7 +274,9 @@ this change showed none).
    assumed, not checked.
 3. Front fallbacks float in front of curved bumpers (up to a few cm at the
    edges); real cars use brackets too. A pad/bracket search (protruding
-   faces) would place some better.
+   faces) would place some better. Still 66 front and 32 rear fallbacks
+   float (#159 survey); race prototypes make up many of them.
+6. Recess plates tilted under the bumper, facing the road (#179).
 4. Plate lamps (`numplate`) are trim; they could light with the tail lamps
    (vanilla has no plate lamp entries; not done).
 5. Plate size follows the host (0.25..0.37 m wide). A fixed 0.26 x 0.122
