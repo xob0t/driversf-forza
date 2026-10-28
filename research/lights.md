@@ -1140,6 +1140,96 @@ their lamp graphics and glow at night (the ZR1's four round lamps, #103), the
 Supra's brighter. In run `-094231` traffic hit the X5 M and the Veyron from
 behind before their rear views (dented bumper, broken-lamp pattern).
 
+### Lamp glass (issues #89, #145)
+
+Symptom: on 129 cars the textured lamp covers (`lights_glass`, `lights_gls_noemit`) over a
+lamp were drawn as DSF's dark window glass (97 cars) or moved to the atlas as an opaque plate
+of their own texels (`is_lens`, 46 cars), so their lamps showed dimly or not at all; the
+`lights_gls_*` lamp glass (61 cars) was opaque Lights texels; and the BMW X5 M's red tail
+glass, a 17 x 14 texel swatch stretched over the lens, showed one flat red over its L-shaped
+lamps, and only the LED strip glowed (#145).
+
+**What Forza draws in a race (confirmed-static, `dsff fxobj` on FH1's
+`media/shaders/Cars/shaders_v16.fxobj`, `CustomCarShaders.xml` and
+`media/cars/Shared.zip` `ShaderSettings/Normal.xml`, the same on FM4).**
+
+- `CustomCarShaders.xml` lists 145 custom techniques (`detail_glass_red`, `_clear`,
+  `_amber`, `lights_glass` among them), every one `uiload="true" inraceload="false"`: their
+  own `.fxobj` shaders are loaded for the UI only, and a race uses the `shaders_v16.fxobj`
+  techniques of the same name.
+- The custom `detail_glass_*` shaders (UI) draw in two passes: the first (0x2d44, 84 to 108
+  bytes) writes the texel with no lighting and no texel alpha (`detail_glass_red`: red
+  remapped to `sqrt(DarkValues + (LightValues - DarkValues) x red^2)`, defaults 0 and 1),
+  which makes sense only as a filter multiplied over what is behind; the second adds the
+  environment reflection (`Glancing`, `Direct`, Fresnel). The blend states themselves are in
+  the effect's pass tables, which `fxobj.py` doesn't decode.
+- The `shaders_v16` glass shaders: `lights_glass` (0xd0894, 0xd71ac) colour
+  `texel x GlassColor x (PaintScale x diffuse + AmbientColor)` plus reflection, opacity
+  `max(texel alpha, GlassColor.w)` plus Fresnel and specular, capped by `GlassMaxOpacity`.
+  The lamp shaders (`tail_light` 0xb800c; the lamp glass with `GlassColor`, 0xd1bf4 to
+  0xd6684) start the opacity at 1 instead of the texel alpha (literal `c254.y` / `c255.y`
+  = 1), so their opacity is `GlassMaxOpacity`, and the texel alpha is only the glow mask
+  (times `BrakeColor` and the like).
+- Shared defaults (`Normal.xml`): `lights_glass` GlassColor (0.5, 0.5, 0.5, 0), cap 1;
+  `lights_gls_*` GlassColor (1, 1, 1, 1), cap 1, PaintScale 0.7; `detail_glass_*` cap 0.7,
+  GlassColor (0.25, 0, 0, 0) red, (0.2, 0.2, 0.2, 0.6) clear, (0, 0, 0, 0.8) amber, PaintScale
+  0.2. Cars set `GlassMaxOpacity` on 229 `lights_gls_*` techniques (0.8 on 182) and 86
+  `lights_glass` ones (0.5 to 0.95).
+
+**Roster (offline, `out/lamps2/survey.py` on master and `out/lamps2/after.py` with this
+change; the main carbin of the 573 cars of `tools/batches/all.txt`, finest LOD; a cover is
+over a lamp when a Lights surface lies 0 to 0.3 m behind 30% of its area or more).**
+
+| Class | Before (cars / subsections) | After |
+| --- | --- | --- |
+| `lights_glass` / `lights_gls_noemit` cover over a lamp | 129 / 303 (DSF window glass 97 / 210, opaque plate 46 / 93) | 129 / 304 baked over the lamp |
+| `lights_gls_*` lamp glass with `GlassMaxOpacity` under 1 | 44 / 222 opaque | 44 / 222 baked at that opacity |
+| swatch lenses (scrambled texels, #141) | 14 cars, 51 subsections keep a flat tint | 6 cars, 11 whole swatch lenses left out, their tint on the lamp behind (131,330 texels); the partly scrambled ones keep their tint |
+
+The swatch lenses left out: BMW_X5M_11 (`glassLTL`, `glassRTL`, `trunk` red), CHE_Spark_11,
+KIA_ForteKoup_10, ULT_GTR_12, VOL_242Turbo_83 and VW_SciroccoGT_09. The bake takes 2.9 s a
+car (median; at most 7.4).
+
+**Change (`lenses.py`, `Texturing._bake_lenses`).**
+
+- Covers over a lamp (`Texturing.lamp_cover`) go to the atlas and are baked like the lenses,
+  with Forza's opacity `min(max(texel alpha, GlassColor.w), GlassMaxOpacity)`
+  (`lenses.opacity_rule`, car settings first, then the shared defaults). They have no glow of
+  their own: a baked cover texel glows with the lamp behind it, its whole glow (Forza's lamp
+  emission is HDR and outshines a cover at 0.9; passing only `1 - opacity` of it left the GTI
+  VR6's tails dimmer in the dark mood than under the window glass, run `vm1-20261028-103705`).
+  The rear red covers `is_lens` moves to the atlas are baked when they lie over a lamp
+  (2 cars, 3 subsections, are not over one and keep their texels).
+- `lights_gls_*` glass with a cap under 1 is baked at that cap (0.8 on most cars: a fifth of
+  the lamp behind shows) and keeps its own glow (its lamp score).
+- The lenses keep their texel alpha as opacity (capped by the car's own `GlassMaxOpacity`):
+  the shared defaults (opacity at least 0.6 and at most 0.7 on clear lenses) go with a lens
+  colour of a twentieth of the texel plus Forza's reflection; with the texel's own colour,
+  which the bake draws, they would make milky plates.
+- A swatch lens whose texels are mostly scrambled (`lenses._scrambled`) and whose rays meet
+  Lights surfaces for half or more of the lens is left out at every LOD
+  (`Texturing.dropped_lenses`); every texel of the Lights surfaces it covers is multiplied by
+  its filter (`lenses.lens_filter`, the custom shader's first pass). Blended by its texel alpha
+  instead (61 on the X5 M), the X5 M's red lens over pale grey reflectors came out pink. The
+  tinted reflectors keep their glow mask, and since #163 they light with the tail lamp.
+
+In game (VM 1, `-Views 'nose,rear,nose+night,rear+night' -Palette 0 -ShotSeconds 3
+-WaitSeconds 600`; IDs 304 X5 M, 305 Lancer Evo VI, 306 GTI VR6, 307 300C (FM4), 308 Mustang
+GT 05, stock 182; master `out/lamps2/beforeA` run `vm1-20261028-103158`, this change
+`out/lamps2/afterA` run `vm1-20261028-103705`, with the cover glow above `out/lamps2/afterA2`
+run `vm1-20261028-104816`, IDs 306, 305, 304, 182):
+
+- X5 M: the tails show the L-shaped lamps in red by day instead of a flat dark plate, and the
+  whole L glows red in the dark mood (master: barely visible) (`img/lampglass-x5m-ingame.jpg`).
+- GTI VR6: red tail lamps behind their covers instead of dark grey glass; the head lamps
+  show their reflectors, and glow by day as day-lit head lamps (0x1D) do on the other ports;
+  in the dark mood the tails glow along the whole lamp, as stock 182's do
+  (`img/lampglass-gtivr6-ingame.jpg`, `img/lampglass-gtivr6-dark-ingame.jpg`).
+- Lancer Evo VI: the red tail glass a little deeper by day; lit in the dark mood (master's
+  shot of that view missed the car) (`img/lampglass-evo6-ingame.jpg`).
+- 300C and Mustang GT 05 (unchanged by this; clean shots of both, item 7 of #163's report):
+  the 300C's tails as on master; the Mustang's round head lamp bowls stay dark (#158).
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and
@@ -1169,11 +1259,12 @@ behind before their rear views (dented bumper, broken-lamp pattern).
    40 ticks", run host-20261024-003943); keep lamp runs to five IDs.
 7. Lens bake ("Lamp lenses drawn opaque"): the view is straight in along the
    lens normal, so the lamp inside doesn't shift with the camera (stock lamps
-   are flat textures too). `lights_gls_*` lamp glass and `lights_glass` covers
-   aren't baked (plain `glass` covers are left out since issue #160): they stay
-   DSF's window glass (the WRX STI 05's near-opaque light rear cover, (184, 161, 160) at
-   alpha 236, shows its dark reflector instead), and what Forza's
-   `DarkValues` / `LightValues` do to a lens is not decoded. Issue #89.
+   are flat textures too). Since "Lamp glass" the `lights_gls_*` glass and the
+   textured covers are baked too; covers not over a lamp stay DSF's window glass.
+   The lenses keep the texel's colour and alpha: Forza's race shaders scale the lens
+   colour by `GlassColor x PaintScale` (a twentieth of the texel by default) and add a
+   reflection the bake doesn't draw, and the pass tables (blend states) of the effects
+   aren't decoded. Issue #89.
 8. Head lamp glow by day (issue #124, "Head lamp glow by day"): only clear
    front lenses and head lamp surfaces get it. Clear rear lenses over reverse
    lamps still glow by their opacity, and so do front lenses with no lamp

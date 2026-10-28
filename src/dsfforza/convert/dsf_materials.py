@@ -971,6 +971,8 @@ class Texturing:
     # Exterior only: lamp lenses baked over what lies behind them (src/dsfforza/convert/lenses.py).
     bake_lenses: bool = True
     lens_report: dict = field(default_factory=dict)  # lenses.bake's report
+    # (section name, technique) of swatch lenses left out, their tint on the lamp behind (lenses.bake)
+    dropped_lenses: set = field(default_factory=set)
     # Exterior only: atlas trims and rims with Forza's specular and reflection draw with
     # copies of the host Lights material (GLOSS_PREFIX, _plan_gloss).
     gloss_enabled: bool = True
@@ -1200,11 +1202,17 @@ class Texturing:
         return scales
 
     def _bake_lenses(self, work, lods) -> None:
-        """Forza's lamp lenses are glass; the Lights material is opaque. Each lens drawn
-        from the Lights atlas (lenses.is_lens_technique) gets what Forza shows through
-        it baked into its texels (src/dsfforza/convert/lenses.py)."""
+        """Forza's lamp lenses and lamp glass are glass; the Lights material is opaque. Each
+        lens drawn from the Lights atlas (lenses.is_lens_technique), each lamp glass
+        subsection Forza draws less than opaque (lights_gls_*, GlassMaxOpacity under 1) and
+        each textured lamp cover over a lamp (lamp_cover) gets what Forza shows through it
+        baked into its texels (src/dsfforza/convert/lenses.py). Swatch lenses whose tint
+        goes onto the lamp behind them are left out (dropped_lenses)."""
+        import dataclasses
+
         from dsfforza.convert import lenses
 
+        settings = lenses.glass_settings(self.car_dir)
         ids = set()
         body = []
         for section, section_lods in work:
@@ -1212,24 +1220,81 @@ class Texturing:
                 continue
             body.append(section)
             for sub in section.subsections:
-                if sub.lod not in section_lods:
+                if sub.lod in section_lods:
+                    self.resolved[(id(section), id(sub))] = self._resolve(section, sub)
+        shapes = self._lamp_shapes(body, set(lods))
+        for section in body:
+            for sub in section.subsections:
+                m = self.resolved.get((id(section), id(sub)))
+                if m is None or m.family != fm.LIGHTS or m.kind != "textured":
                     continue
-                m = self._resolve(section, sub)
-                self.resolved[(id(section), id(sub))] = m
-                if (
-                    m.family == fm.LIGHTS
-                    and m.kind == "textured"
-                    and m.role == fm.TEXTURED
-                    and lenses.is_lens_technique(m.technique)
+                technique = m.technique.lower()
+                if self.lamp_cover(section, sub, m, shapes):
+                    if m.role != fm.TEXTURED:
+                        m = dataclasses.replace(m, role=fm.TEXTURED)
+                        self.resolved[(id(section), id(sub))] = m
+                    self.lens_subs.add(id(sub))
+                    ids.add(id(sub))
+                elif m.role == fm.TEXTURED and (
+                    lenses.is_lens_technique(m.technique)
+                    or (
+                        technique.startswith(lenses.LAMP_GLASS)
+                        and technique not in TEXTURED_COVERS
+                        and lenses.opacity_rule(m.technique, settings)[1] < 1.0
+                    )
                 ):
                     ids.add(id(sub))
         # The head lamps' raw glow (clear front lenses and head lamp surfaces), for _glow.
         w, h, _ = self.atlases.get(fm.LIGHTS)
         glow = lenses.new_glow(h, w)
         if ids:
-            self.lens_report = lenses.bake(body, set(lods), self.atlases, ids, self.car_dir, glow=glow)
+            self.lens_report = lenses.bake(
+                body, set(lods), self.atlases, ids, self.car_dir, glow=glow, dropped=self.dropped_lenses
+            )
         lenses.lamp_glow(body, set(lods), self.atlases, glow)
         self.lamp_raw = glow if np.isfinite(glow[..., 0]).any() else None
+
+    def _lamp_shapes(self, sections, lods) -> list:
+        """(lod, positions) of the Lights surfaces of `sections` (atlas or swatch; not lenses or covers),
+        for _over_lamp before plan() has collected lamp_tris."""
+        from dsfforza.convert import lenses
+
+        out = []
+        for section in sections:
+            for sub in section.subsections:
+                m = self.resolved.get((id(section), id(sub)))
+                if (
+                    sub.lod not in lods
+                    or m is None
+                    or m.role != fm.TEXTURED
+                    or fm.base_family(m.family or "") != fm.LIGHTS
+                    or lenses.is_lens_technique(m.technique)
+                    or m.technique.lower() in TEXTURED_COVERS
+                ):
+                    continue
+                pool = section.vertices_for(sub)
+                out += [(sub.lod, [pool[i].position for i in t]) for t in sub.triangles()]
+        return out
+
+    def lamp_cover(self, section, sub, m: fm.SubMaterial, shapes=None) -> bool:
+        """A textured lamp cover (TEXTURED_COVERS: lights_glass, lights_gls_noemit) on the
+        Lights atlas, outside the window sections, with a Lights surface behind at least
+        COVER_MIN_SHARE of its area: baked over the lamp (_bake_lenses) instead of drawn as
+        DSF's dark window glass, which hid the lamp (127 cars, issue #89), or moved to the
+        atlas as an opaque plate (is_lens). Forza draws it as the texel with an opacity of
+        max(texel alpha, GlassColor.w) capped by GlassMaxOpacity (lenses.opacity_rule)."""
+        if (
+            self.classifier is not None
+            or fm.base_family(m.family or "") != fm.LIGHTS
+            or m.kind != "textured"
+            or m.technique.lower() not in TEXTURED_COVERS
+            or section.name.lower() in WINDOW_SECTIONS
+        ):
+            return False
+        key = ("textured", id(sub))
+        if key not in self._covers:
+            self._covers[key] = self._over_lamp(section, sub, shapes) >= COVER_MIN_SHARE
+        return self._covers[key]
 
     def _art_swatch(self, section, sub, m: fm.SubMaterial) -> fm.SubMaterial:
         """A trim-artwork subsection as one flat colour: the mean of the opaque
@@ -1359,10 +1424,12 @@ class Texturing:
             self._covers[key] = self._over_lamp(section, sub) >= COVER_MIN_SHARE
         return self._covers[key]
 
-    def _over_lamp(self, section, sub) -> float:
+    def _over_lamp(self, section, sub, shapes=None) -> float:
         """Share of a subsection's area whose triangle centres, seen along z towards the car,
-        lie on a Lights triangle (lamp_tris, lamp_swatch_tris; same LOD) 0 to COVER_DEPTH behind."""
-        shapes = [(t[0], t[1]) for t in self.lamp_tris] + self.lamp_swatch_tris
+        lie on a Lights triangle (shapes: (lod, positions); default lamp_tris and
+        lamp_swatch_tris; same LOD) 0 to COVER_DEPTH behind."""
+        if shapes is None:
+            shapes = [(t[0], t[1]) for t in self.lamp_tris] + self.lamp_swatch_tris
         lods = {t[0] for t in shapes}
         if not lods:
             return 0.0
@@ -1482,7 +1549,7 @@ class Texturing:
 
     def material(self, section, sub) -> str:
         m = self.submaterial(section, sub)
-        if id(sub) in self.cutout or self.clear_cover(section, sub, m):
+        if id(sub) in self.cutout or self.clear_cover(section, sub, m) or self.dropped_lens(section, sub):
             return fm.SKIP
         if self._uses_atlas(m) and (
             (m.kind == "textured" and id(sub) in self.atlas_subs) or (m.kind == "swatch" and self._has_cell(m))
@@ -1495,6 +1562,10 @@ class Texturing:
         if m.role == fm.TEXTURED:
             return fm.TRIM  # tiling/procedural lamp parts: untextured
         return m.role
+
+    def dropped_lens(self, section, sub) -> bool:
+        """A swatch lens left out at every LOD: lenses.bake laid its tint over the lamp behind."""
+        return (section.name, sub.material) in self.dropped_lenses
 
     def _has_cell(self, m: fm.SubMaterial) -> bool:
         """Whether a swatch has its colour cell: a subsection at a LOD plan() didn't lay

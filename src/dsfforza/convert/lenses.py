@@ -45,12 +45,26 @@ import numpy as np
 from dsfforza.convert import forza_materials as fm
 
 # Lens techniques on the Lights atlas that Forza alpha-blends with the texel alpha as the
-# lens's opacity (glass with a lens texture: flutes, dots, a tint). The lights_gls_* lamp
-# glass is left as it was: its opacity is a material setting (GlassMaxOpacity) and its
-# texel alpha looks like a glow mask (the Lancer Evo VI's red tail glass, baked with it,
-# came out mostly white), and the coloured covers Texturing.is_lens moves to the atlas
-# (the DMC-12's grid lens) were checked in game as they are.
+# lens's opacity (glass with a lens texture: flutes, dots, a tint).
 LENS_PREFIXES = ("detail_glass",)
+# The other lamp glass on the Lights atlas is baked the same way, with Forza's own opacity
+# (research/lights.md, "Lamp glass"). In a race Forza draws all its lamp glass with the glass
+# shaders of shaders_v16.fxobj (CustomCarShaders.xml loads its custom detail_glass_* shaders in
+# the UI only, inraceload false): colour from the texel, opacity max(texel alpha, GlassColor.w)
+# (plus Fresnel and specular) capped by GlassMaxOpacity. The lamp glass (lights_gls_tail_light,
+# _oldhead...) starts from 1 instead of the texel alpha, so its opacity is GlassMaxOpacity (0.8 on
+# most cars) and its texel alpha is the lamp's glow mask; baked with the texel alpha as opacity,
+# the Lancer Evo VI's red tail glass came out mostly white. The covers (lights_glass,
+# lights_gls_noemit) have no glow of their own: the lamp behind glows through them.
+COVERS = ("lights_glass", "lights_gls_noemit")  # = dsf_materials.TEXTURED_COVERS
+LAMP_GLASS = "lights_gls_"
+# technique prefix -> (GlassColor.w, GlassMaxOpacity) when the car's ShaderSettings.xml sets
+# none: media/cars/Shared.zip ShaderSettings/Normal.xml, the same on FH1 and FM4. The lenses
+# (detail_glass_*) keep their texel alpha, capped only by the car's own GlassMaxOpacity: the
+# shared defaults (GlassColor.w 0.6 on clear and 0.8 on amber lenses, cap 0.7) go with a lens
+# colour of texel x GlassColor x PaintScale (a twentieth of the texel) and Forza's reflection,
+# which the bake doesn't draw; with the texel's own colour they would make milky plates.
+GLASS_DEFAULTS = {"lights_glass": (0.0, 1.0), LAMP_GLASS: (1.0, 1.0)}
 RAY_DEPTH = 0.4  # m: how deep a lamp housing can be behind its lens
 SAME_LAYER = 0.004  # m: a lens hit this close to the ray's start is the lens's own other face
 MAX_LAYERS = 4  # lens layers composited before the opaque surface
@@ -66,6 +80,9 @@ MAX_LAYERS = 4  # lens layers composited before the opaque surface
 SCRAMBLED_SPREAD = 0.03  # m
 COARSE_TEXEL = 0.006  # m: sqrt(lens area / its distinct texels)
 SWATCH_SHARE = 0.5  # a coarse lens with more of its texel samples scrambled keeps all its texels
+# Such a swatch lens is left out and its tint laid over the Lights surfaces behind it
+# (_tint_behind) when this share of its rays meets one; else it keeps its flat tint.
+SWATCH_TINT = 0.5
 RAY_CHUNK = 256
 RAY_CELL = 0.04  # m: rays are chunked by these cells
 RAY_STEP = 2  # texels per ray, each way, at least
@@ -116,9 +133,16 @@ def is_lens_technique(technique: str) -> bool:
     return technique.startswith(LENS_PREFIXES)
 
 
-def glass_max_opacity(car_dir: Path) -> dict[str, float]:
-    """technique -> GlassMaxOpacity from the car's ShaderSettings.xml (values above 1: no
-    cap); {} without the file or when it doesn't parse."""
+def is_glass_technique(technique: str) -> bool:
+    """Lamp glass bake() takes: lenses, the lamp glass (lights_gls_*) and covers."""
+    t = technique.lower()
+    return is_lens_technique(technique) or t.startswith(LAMP_GLASS) or t in COVERS
+
+
+def glass_settings(car_dir: Path) -> dict[str, dict]:
+    """technique -> {"GlassMaxOpacity": 0..1 (values above 1: no cap), "GlassColor": (r, g, b,
+    a), "DarkValues", "LightValues"} from the car's ShaderSettings.xml, the parameters it sets;
+    {} without the file or when it doesn't parse."""
     import xml.etree.ElementTree as ET
 
     path = next((p for p in Path(car_dir).iterdir() if p.name.lower() == "shadersettings.xml"), None)
@@ -130,13 +154,61 @@ def glass_max_opacity(car_dir: Path) -> dict[str, float]:
         return {}
     out = {}
     for element in root.iter():
+        got = {}
         setting = element.find("GlassMaxOpacity")
-        if setting is not None:
-            try:
-                out[element.tag] = min(1.0, max(0.0, float(setting.get("value", ""))))
-            except ValueError:
-                continue
+        colour = element.find("GlassColor")
+        try:
+            if setting is not None:
+                got["GlassMaxOpacity"] = min(1.0, max(0.0, float(setting.get("value", ""))))
+            for name in ("DarkValues", "LightValues"):
+                if element.find(name) is not None:
+                    got[name] = float(element.find(name).get("value", ""))
+            if colour is not None:
+                got["GlassColor"] = tuple(float(colour.get(c, "")) for c in "rgba")
+        except ValueError:
+            continue
+        if got:
+            out[element.tag] = got
     return out
+
+
+def glass_max_opacity(car_dir: Path) -> dict[str, float]:
+    """technique -> GlassMaxOpacity from the car's ShaderSettings.xml (glass_settings)."""
+    return {t: v["GlassMaxOpacity"] for t, v in glass_settings(car_dir).items() if "GlassMaxOpacity" in v}
+
+
+def opacity_rule(technique: str, settings: dict) -> tuple[float, float]:
+    """(floor, cap) of a lamp glass technique's opacity, max(texel alpha, floor) capped by cap:
+    lenses their texel alpha under the car's GlassMaxOpacity, the rest Forza's rule with the
+    shared defaults (GLASS_DEFAULTS). settings: glass_settings."""
+    own = settings.get(technique, {})
+    if is_lens_technique(technique):
+        return 0.0, own.get("GlassMaxOpacity", 1.0)
+    t = technique.lower()
+    floor, cap = next((v for k, v in GLASS_DEFAULTS.items() if t.startswith(k)), (0.0, 1.0))
+    colour = own.get("GlassColor")
+    return (min(1.0, max(0.0, colour[3])) if colour else floor), own.get("GlassMaxOpacity", cap)
+
+
+def lens_filter(technique: str, rgb, settings: dict) -> np.ndarray:
+    """What a lens lets through per channel (0..1) as the custom detail_glass_* shaders draw it
+    (detail_glass_red.fxobj, its first pass: the texel, red remapped as sqrt(DarkValues +
+    (LightValues - DarkValues) x red^2), with no lighting and no texel alpha, multiplied over
+    what lies behind; defaults 0 and 1). Used for swatch lenses (_tint_behind): their texel alpha
+    is low (the X5 M's red tail glass 61), and blended by it a red lens over a pale reflector
+    came out pink."""
+    f = np.asarray(rgb[:3], float) / 255
+    if technique.startswith("detail_glass_red"):
+        own = settings.get(technique, {})
+        dark, light = own.get("DarkValues", 0.0), own.get("LightValues", 1.0)
+        f[0] = math.sqrt(max(0.0, dark + (light - dark) * f[0] ** 2))
+    return np.clip(f, 0.0, 1.0)
+
+
+def emits(technique: str) -> bool:
+    """Whether the glass glows by its own texel alpha (lenses keep their lamp score, the lamp
+    glass is a lamp); covers (COVERS) glow with the lamp behind them."""
+    return technique.lower() not in COVERS
 
 
 def _texels(uv_px: np.ndarray):
@@ -185,9 +257,9 @@ class _Surfaces:
     opaque surfaces (their texel or flat colour). Glass, skipped techniques and tyres
     are not in it (rays pass through them)."""
 
-    def __init__(self, sections, lod: int, atlases: fm.AtlasCache, lens_ids: set, opacity: dict):
+    def __init__(self, sections, lod: int, atlases: fm.AtlasCache, lens_ids: set, settings: dict):
         self.atlases = atlases
-        pts, uvs, kinds, colours, fams, alphas, lamps = [], [], [], [], [], [], []
+        pts, uvs, kinds, colours, fams, rules, lamps = [], [], [], [], [], [], []
         self.lens_subs = []  # (section, sub, SubMaterial)
         for section in sections:
             for sub in section.subsections:
@@ -216,14 +288,14 @@ class _Surfaces:
                     fams.append(m.family if textured else None)
                     lamps.append(not lens and (m.family == fm.LIGHTS or m.role == fm.CHROME))
                     colours.append(colour)
-                    alphas.append(opacity.get(m.technique, 1.0))
+                    rules.append(opacity_rule(m.technique, settings))
         self.pts = np.array(pts, float).reshape(-1, 3, 3)
         self.uvs = np.array(uvs, float).reshape(-1, 3, 2)
         self.kind = np.array(kinds, int)  # 0 flat, 1 textured, 2 lens (textured on Lights)
         self.lamp = np.array(lamps, bool)  # Lights surfaces (atlas or tiling) and chrome: a bulb or reflector
         self.family = fams
         self.colour = np.array(colours, float).reshape(-1, 4)
-        self.max_opacity = np.array(alphas, float)
+        self.opacity = np.array(rules, float).reshape(-1, 2)  # per triangle: (floor, cap), opacity_rule
         self.lo = self.pts.min(1) if len(self.pts) else np.zeros((0, 3))
         self.hi = self.pts.max(1) if len(self.pts) else np.zeros((0, 3))
         self.images = {}
@@ -268,8 +340,8 @@ class _Surfaces:
 def _behind(surf: _Surfaces, origins, dirs, cand):
     """What each ray sees behind its lens: the lens layers and the first opaque surface
     (HOUSING if none) composited front to back. Returns the RGBA, whether the ray met
-    anything, and the distance to the first opaque surface, its glow mask and whether it is
-    a lamp (_Surfaces.lamp; RAY_DEPTH, 0 and False if none)."""
+    anything, and the distance to the first opaque surface, its glow mask, whether it is
+    a lamp (_Surfaces.lamp; RAY_DEPTH, 0 and False if none) and its triangle (-1 if none)."""
     n = len(origins)
     acc = np.zeros((n, 4))
     trans = np.ones(n)
@@ -277,6 +349,7 @@ def _behind(surf: _Surfaces, origins, dirs, cand):
     solid_at = np.full(n, RAY_DEPTH)
     solid_mask = np.zeros(n)
     solid_lamp = np.zeros(n, bool)
+    solid_tri = np.full(n, -1)
     if len(cand):
         tris = (surf.pts[cand, 0], surf.pts[cand, 1] - surf.pts[cand, 0], surf.pts[cand, 2] - surf.pts[cand, 0])
         t, u, v = _intersect(origins, dirs, tris)
@@ -302,14 +375,16 @@ def _behind(surf: _Surfaces, origins, dirs, cand):
             rgba = surf.sample(tri[r], u[r, k[r]], v[r, k[r]])
             hits[r] = True
             solid = surf.kind[tri[r]] != 2
-            a = np.where(solid, 1.0, np.minimum(rgba[:, 3] / 255.0, surf.max_opacity[tri[r]]))
+            rule = surf.opacity[tri[r]]
+            a = np.where(solid, 1.0, np.minimum(np.maximum(rgba[:, 3] / 255.0, rule[:, 0]), rule[:, 1]))
             acc[r] += (trans[r] * a)[:, None] * rgba
             solid_at[r[solid]] = dist[r[solid]]
             solid_mask[r[solid]] = rgba[solid, 3]
             solid_lamp[r[solid]] = surf.lamp[tri[r[solid]]]
+            solid_tri[r[solid]] = tri[r[solid]]
             trans[r] *= 1 - a
     acc += trans[:, None] * np.array(HOUSING, float)
-    return acc, hits, solid_at, solid_mask, solid_lamp
+    return acc, hits, solid_at, solid_mask, solid_lamp, solid_tri
 
 
 def _closing(pos: np.ndarray, values: np.ndarray, radius: float) -> np.ndarray:
@@ -570,6 +645,31 @@ def _scrambled(samples, h: int, w: int) -> np.ndarray:
     return out.reshape(h, w)
 
 
+def _tint_behind(surf: _Surfaces, tris, tint: np.ndarray, out, w: int, h: int, tinted) -> int:
+    """A swatch lens's flat tint (lens_filter: per channel, 0..1) multiplied into every texel of
+    the Lights surfaces behind it (surf triangles `tris`), into `out` (h, w, 4), once a texel
+    (`tinted` marks those). The texels keep their alpha (their glow mask). Returns the texels
+    tinted."""
+    count = 0
+    for k in tris:
+        if surf.kind[k] != 1 or surf.family[k] != fm.LIGHTS:
+            continue
+        ix, iy, _ = _texels(surf.uvs[k] * (w, h))
+        ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
+        ix, iy = ix[ok], iy[ok]
+        new = ~tinted[iy, ix]
+        ix, iy = ix[new], iy[new]
+        out[iy, ix, :3] = out[iy, ix, :3] * tint
+        tinted[iy, ix] = True
+        count += len(ix)
+    return count
+
+
+def _weight(rgb: np.ndarray) -> np.ndarray:
+    """The brightness factor of dsf_materials.lamp_score: 0.6 + 0.4 x brightest channel."""
+    return 0.6 + 0.4 * rgb[:, :3].max(1) / 255
+
+
 def bake(
     sections,
     lods,
@@ -577,18 +677,21 @@ def bake(
     lens_ids: set,
     car_dir: Path,
     glow: np.ndarray | None = None,
+    dropped: set | None = None,
 ) -> dict:
-    """Bake every lens (id(sub) in lens_ids, Lights atlas) of the finest of `lods` over
-    what lies behind it, into atlases' Lights texels (in place). glow: a glow map (new_glow) that
-    gets the raw glow of the clear front lens texels (lens_glow, one lamp per lens, for
-    day_glow); without it they keep their lamp score like the coloured ones.
+    """Bake every lamp glass subsection (id(sub) in lens_ids, Lights atlas: lenses, lamp glass,
+    covers; is_glass_technique) of the finest of `lods` over what lies behind it, into atlases'
+    Lights texels (in place). glow: a glow map (new_glow) that gets the raw glow of the clear
+    front lens and cover texels (lens_glow, one lamp per lens, for day_glow); without it they
+    keep their lamp score like the coloured ones. dropped: gets (section name, technique) of the
+    swatch lenses left out (their tint goes onto the lamp behind them, SWATCH_TINT).
     Returns a report: {"<section>/<technique>": {"texels", "behind" (share of rays that met
     something), "shared" (texels left alone)}}."""
     from dsfforza.convert import lights
 
     lod = min(lods)
-    opacity = glass_max_opacity(car_dir)
-    surf = _Surfaces(sections, lod, atlases, lens_ids, opacity)
+    settings = glass_settings(car_dir)
+    surf = _Surfaces(sections, lod, atlases, lens_ids, settings)
     if not surf.lens_subs:
         return {}
     w, h, rgba = atlases.get(fm.LIGHTS)
@@ -606,12 +709,14 @@ def bake(
             for t in sub.triangles():
                 ix, iy, _ = _texels(np.array([m.uv(pool[i].uv0) for i in t]) * (w, h))
                 used[iy.clip(0, h - 1), ix.clip(0, w - 1)] = True
+    lamp_tris = np.nonzero((surf.kind == 1) & np.array([f == fm.LIGHTS for f in surf.family], bool))[0]
     total = np.zeros((h, w, 4))
     count = np.zeros((h, w))
     lit = _GlowSum(h, w, glow) if glow is not None else None
     report = {}
     samples = [(section, sub, m, _lens_samples(section, sub, m, w, h)) for section, sub, m in surf.lens_subs]
     scrambled = _scrambled(samples, h, w)
+    tints = []  # (behind triangles, lens_filter) of the swatch lenses left out
     for section, sub, _m, got in samples:
         if got is None:
             continue
@@ -623,23 +728,34 @@ def bake(
         mixed = scrambled[iy, ix] & ~used[iy, ix]
         if mixed.any():
             entry["scrambled"] = entry.get("scrambled", 0) + int(mixed.sum())
+        floor, cap = opacity_rule(sub.material, settings)
+        # A swatch lens (most of its texels scrambled) is one flat tint over the whole lamp, as
+        # Forza draws it over the lamp's graphics. Kept as the lens's own texels it hid them and
+        # their glow (the BMW X5 M's tails: only the LED strip lit, issue #145), so its filter
+        # (lens_filter) goes onto the Lights surfaces behind it and the lens is left out.
+        swatch = dropped is not None and is_lens_technique(sub.material) and scrambled[iy, ix].mean() > SWATCH_SHARE
         # A front lens's glow covers its shared texels too (the AST DB5 Vantage's lens shares
         # 95% of its texels with its reflector's coarser LODs): the same lamp. Not its
-        # scrambled ones: they hold no one lamp.
-        front = glow is not None and pos[:, 2].mean() < GLOW_FRONT_Z
-        keep = ~scrambled[iy, ix] if front else free
+        # scrambled ones: they hold no one lamp. The lamp glass is a lamp itself (lamp_glow).
+        front = glow is not None and pos[:, 2].mean() < GLOW_FRONT_Z and not sub.material.lower().startswith(LAMP_GLASS)
+        keep = np.ones(len(ix), bool) if swatch else (~scrambled[iy, ix] if front else free)
         ix, iy, pos, nrm, free = ix[keep], iy[keep], pos[keep], nrm[keep], free[keep]
         if not len(ix):
             continue
         lens_rgba = src[iy, ix]
-        lens_a = np.minimum(lens_rgba[:, 3] / 255.0, opacity.get(sub.material, 1.0))
+        lens_a = np.minimum(np.maximum(lens_rgba[:, 3] / 255.0, floor), cap)
         # One ray per block of RAY_STEP x RAY_STEP texels or more (about RAYS_PER_LENS
         # rays a lens): what lies behind a lens is softer than the lens's own pattern
         # (flutes, dots), which stays per texel, and the DSF atlas holds the Lights texels
-        # at about half their size anyway.
-        step = max(RAY_STEP, math.ceil(math.sqrt(len(ix) / RAYS_PER_LENS)))
-        block = (iy // step) * w + ix // step
-        _, first, inverse = np.unique(block, return_index=True, return_inverse=True)
+        # at about half their size anyway. A swatch lens's texels stand for points far
+        # apart: one ray per lens point, RAYS_PER_LENS at most.
+        if swatch:
+            first = np.arange(0, len(ix), max(1, math.ceil(len(ix) / RAYS_PER_LENS)))
+            inverse = np.zeros(len(ix), int)
+        else:
+            step = max(RAY_STEP, math.ceil(math.sqrt(len(ix) / RAYS_PER_LENS)))
+            block = (iy // step) * w + ix // step
+            _, first, inverse = np.unique(block, return_index=True, return_inverse=True)
         # Rays in compact spatial chunks, so each chunk tests few triangles.
         cell = np.floor(pos[first] / RAY_CELL).astype(np.int64)
         order = np.lexsort((cell[:, 2], cell[:, 1], cell[:, 0]))
@@ -652,23 +768,37 @@ def bake(
         depth = np.full(len(first), RAY_DEPTH)
         mask = np.zeros(len(first))
         lamp = np.zeros(len(first), bool)
+        solid = np.full(len(first), -1)
         for c0 in range(0, len(first), RAY_CHUNK):
             c1 = min(len(first), c0 + RAY_CHUNK)
             ends = origins[c0:c1] + dirs[c0:c1] * RAY_DEPTH
             lo = np.minimum(origins[c0:c1].min(0), ends.min(0))
             hi = np.maximum(origins[c0:c1].max(0), ends.max(0))
-            behind[c0:c1], met[c0:c1], depth[c0:c1], mask[c0:c1], lamp[c0:c1] = _behind(
+            behind[c0:c1], met[c0:c1], depth[c0:c1], mask[c0:c1], lamp[c0:c1], solid[c0:c1] = _behind(
                 surf, origins[c0:c1], dirs[c0:c1], surf.near(lo, hi)
             )
+        if swatch:
+            on_lamp = solid[np.isin(solid, lamp_tris)]
+            if len(on_lamp) >= SWATCH_TINT * len(first):
+                tints.append((np.unique(on_lamp), lens_filter(sub.material, lens_rgba.mean(0), settings)))
+                dropped.add((section.name, sub.material))
+                entry["dropped"] = True
+            continue
         hit_any = met[inverse]
         baked = lens_a[:, None] * lens_rgba + (1 - lens_a[:, None]) * behind[inverse]
-        # The glow stays the lens's: the alpha is set so the converter's lamp score
-        # (dsf_materials.lamp_score: alpha x (0.6 + 0.4 x brightest channel)) is the lens
-        # texel's own. Blending in the reflector's glow mask too gave the Subaru WRX STI's
-        # flat red tail lens (85% opaque) blotches of 7 to 32 when lit: the car's red
-        # curve stretches small differences over stock's whole range.
-        weight = 0.6 + 0.4 * lens_rgba[:, :3].max(1) / 255
-        baked[:, 3] = lens_rgba[:, 3] * weight / (0.6 + 0.4 * baked[:, :3].max(1) / 255)
+        if emits(sub.material):
+            # The glow stays the lens's: the alpha is set so the converter's lamp score
+            # (dsf_materials.lamp_score: alpha x (0.6 + 0.4 x brightest channel)) is the lens
+            # texel's own. Blending in the reflector's glow mask too gave the Subaru WRX STI's
+            # flat red tail lens (85% opaque) blotches of 7 to 32 when lit: the car's red
+            # curve stretches small differences over stock's whole range.
+            baked[:, 3] = lens_rgba[:, 3] * _weight(lens_rgba) / _weight(baked)
+        else:
+            # A cover has no glow of its own: the lamp behind glows through it. Forza's lamp
+            # emission is HDR (BrakeColor 2 to 4 times its mask) and outshines a cover at 0.9;
+            # passing only (1 - opacity) of it left the VW GTI VR6's tails darker in the dark mood
+            # than under DSF's window glass (VM run vm1-20261028-103705). The lamp's whole glow.
+            baked[:, 3] = mask[inverse] * _weight(behind[inverse]) / _weight(baked)
         entry["texels"] += int(free.sum())
         entry["behind"] += int(hit_any[free].sum())
         # Rays that met nothing keep the lens texel: a lens with nothing behind it in
@@ -687,15 +817,51 @@ def bake(
             if lights.yellow_lens(tuple(lens_rgba.mean(0))):
                 amber[:] = False
             sel = ~red & ~amber
-            raw = lens_glow(lens_a[sel], lens_rgba[sel, 3], inverse[sel], origins, depth, mask, lamp)
+            lens_mask = lens_rgba[sel, 3] if emits(sub.material) else np.zeros(int(sel.sum()))
+            raw = lens_glow(lens_a[sel], lens_mask, inverse[sel], origins, depth, mask, lamp)
             if raw is not None:
                 lit.add(iy[sel], ix[sel], raw, pos[sel])
     glowing = lit.done if lit is not None else np.zeros((h, w), bool)
     if lit is not None:
         lit.write(glow, glowing)
     done = count > 0
-    if not done.any():
+    if not done.any() and not tints:
         return report
+    out = src.copy()
+    out[done] = total[done] / count[done, None]
+    # Spread baked texels into unused neighbours, so the atlas's box filter at the
+    # region edges reads baked colour (and glow) rather than the bare lens.
+    grown = done.copy()
+    for _ in range(DILATE):
+        acc = np.zeros((h, w, 4))
+        n = np.zeros((h, w))
+        g_acc, g_n = np.zeros((h, w, 4)), np.zeros((h, w))
+        for dy, dx in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+            shifted = np.roll(np.roll(grown, dy, 0), dx, 1)
+            vals = np.roll(np.roll(out, dy, 0), dx, 1)
+            take = shifted & ~grown & ~used & ~scrambled
+            acc[take] += vals[take]
+            n[take] += 1
+            if glow is not None:
+                near = take & np.roll(np.roll(glowing, dy, 0), dx, 1)
+                g_acc[near] = np.roll(np.roll(glow, dy, 0), dx, 1)[near]  # a neighbour's (one lamp)
+                g_n[near] = 1
+        new = n > 0
+        out[new] = acc[new] / n[new, None]
+        if glow is not None:
+            near = g_n > 0
+            glow[near] = g_acc[near]
+            glowing |= near
+        grown |= new
+    tinted = np.zeros((h, w), bool)
+    for tris, tint in tints:
+        report.setdefault("tinted", {"texels": 0, "behind": 0, "shared": 0})["texels"] += _tint_behind(
+            surf, tris, tint, out, w, h, tinted
+        )
+    rgba[:] = np.clip(np.rint(out), 0, 255).astype(np.uint8).tobytes()
+    for v in report.values():
+        v["behind"] = round(v["behind"] / v["texels"], 3) if v["texels"] else 0.0
+    return report
     out = src.copy()
     out[done] = total[done] / count[done, None]
     # Spread baked texels into unused neighbours, so the atlas's box filter at the
