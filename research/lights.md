@@ -1290,6 +1290,36 @@ clipped white plates); in the dark mood they glow, a little smaller than on mast
 master -> this change: GTI VR6 2717 -> 547, Evo VI 2184 -> 478, M3 E30 1990 -> 398, Devon GTX
 407 -> 82.
 
+### Head lamp units with no lamp technique (issue #158)
+
+Symptom: the Ford Mustang GT 05's round head lamp bowls never glow (#158). Its only head lamp
+technique is the `head_light` under the amber bumper lenses (`bumperFa`). The bowls are a
+tiling `textured_reflector` in `body` under the plain glass of `headlightL/R`, and front
+reflectors stay unlit (#124). So they had no light byte.
+
+Fix (`lights._bare_head_units`): on a car that has a head lamp technique at the front, a
+headlight section's cover (`headlightL/R`, `glassLHL/RHL`, the `LAMP_COVERS` techniques; one
+box a side) with no head lamp triangle inside its outline (2 cm round it, `HEAD_UNIT_PAD`)
+and up to 0.3 m behind it (`HEAD_UNIT_DEPTH`) makes the front reflectors in that box head lamp
+triangles. They cluster with the car's other head lamps (0x1D like them), and since "Head
+lamps white plates by day" their texels and swatch cells glow at `DAYTIME_GLOW`.
+
+Roster (offline, `out/t1/survey2.py` in the `t3-cc1295ad` worktree: `LampPlan.build` on the
+host-picks hosts, 572 of 573 cars, NIS_Leaf_11 has no car data): 9 cars light head lamp
+units this way: FOR_MustangGT_05 (236 triangles at LOD 1), FOR_FocusRS500_10 (104),
+BMW_E36M3_97 (150), BMW_M635CSi_84 (104), FOR_9_FGFalcon_11 (156), LAN_DeltaS4_86 (144),
+SEA_LeonCupra_07 (48), SEA_LeonCupraR_10 (40), VOL_S60_11 (210). Built, the Mustang's day-lit
+front lamp emission is 362 (cm2 x alpha / 255 x 10; the bowls at their swatch's alpha x 0.2).
+
+In game (VM 1, `-Views 'nose,rear,nose+night,rear+night' -Palette 0 -ShotSeconds 3
+-WaitSeconds 600`; master `out/t1/before2` run `vm1-20261028-115057`, this change on top of
+"Head lamps white plates by day" `out/t1/after2` run `vm1-20261028-115446`;
+`img/headlamp-units-ingame.jpg`): the Focus RS500's projector bowls glow round the bulb in
+the dark mood. The Mustang GT 05 shows no front lamp at all in the dark mood, on master and
+with this change alike (bumper lamps included), while its tails light; its light table has
+the head lamps on host 192's front entries 14 and 15 (0x1D), under the headlamp part records
+(roles 50, 51). That is outside the lamp plan and open (#158).
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and
