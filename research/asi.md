@@ -1,6 +1,6 @@
 # dsfforza.asi: runtime patches of Driver.exe 1.04
 
-Updated: 2026-10-25
+Updated: 2026-10-28
 
 One native plugin, `plugins\dsfforza.asi`, patches the running
 `Driver.exe` 1.04 in memory to lift limits that block large car batches.
@@ -17,6 +17,7 @@ when `-Asi` is given. Evidence tags as in `dngvehicles.md`.
 | `lua` | the game's Lua heap: one fixed 10 MB block → overflows into a private heap when full | [Lua heap](#lua-heap) |
 | `hands` | the cockpit arms grip DSF's 0.177 m circle → each ported car's rim (VO3D p95/p87), arm through a two-bone IK | [Hands on the rim](#hands-on-the-rim) |
 | `dash` | digital dashboards: km/h digits for converted Forza displays (the game only fills mph digits) | [Digital dashboards](#digital-dashboards) |
+| `render` | a frame's draw queue (16384 draws): a draw past the limit is dropped instead of ending the game on an `INT3` | [Draw queue](#draw-queue) |
 
 Every module checks the original bytes of each site before patching and
 patches nothing of a feature when one site differs (another mod, another exe
@@ -32,8 +33,8 @@ the stack. DriverNGHook's fatal-error dialog often leaves no minidump.
 Offline check: `tools\asi\build.ps1 -Test` maps `Driver.exe`'s image at
 0x00400000 in a test process (`tools/asi/test/offline.cpp`), runs every
 module's init against it and exercises the hooks that need no game state.
-A second test process changes one byte in three all-or-nothing sets (archive
-readers, maker groups, card emblem) and checks that nothing of each lands.
+A second test process changes one byte in four all-or-nothing sets (archive
+readers, maker groups, card emblem, draw queue) and checks that nothing of each lands.
 
 ## Archive size
 
@@ -791,3 +792,26 @@ blank. `[dash] kmh=0` turns it off.
 
 Offline (`build.ps1 -Test`): the call site checks and patches.
 
+
+## Draw queue
+
+Module `render` (`tools/asi/src/mod_render.cpp`). The queue and the crash it
+fixes are in `spool-limits.md`, "Draw queue: 16384 entries per frame".
+
+**Patch.** Both calls to the queue's append (FUN_00BB5710: at 0x00BB5B4C in
+FUN_00BB5A50, at 0x00BB5BB5 in FUN_00BB5B70; `E8` checked) go to a bounded
+append: the same compare-exchange on the count, but only while
+count < capacity; past that the draw is dropped. FUN_00BB5A50's trap branch
+(`0F 84 BF 00 00 00` at 0x00BB5A95, a jump to `INT3`) becomes six NOPs, so a
+full queue reaches the bounded append. All three sites are checked before any
+is written. The log gets a line on the first dropped draw, then at most one
+every 10 s with the running total, and a line each time a frame's queue first
+reaches a new multiple of 1024 entries from 8192 up, so a run shows how near
+its frames come. `[render] drop_full=0` keeps the vanilla trap.
+
+Cost: nothing until a queue is full. A frame over the limit misses the draws
+submitted after it filled, for that frame only.
+
+Offline (`build.ps1 -Test`): the three sites patch, the mismatch run leaves
+both calls vanilla, and three appends through the patched call site onto a
+two-entry queue keep two entries and count one drop.

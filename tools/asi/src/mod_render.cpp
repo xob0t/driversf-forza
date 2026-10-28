@@ -30,7 +30,7 @@
 //   2. turns FUN_00BB5A50's trap branch into NOPs, so a full queue reaches that
 //      push and the draw is dropped, as FUN_00BB5B70 does.
 // A frame over the limit then misses its last draws instead of ending the game.
-// Drops and each new 1024 entries of the queue's high-water mark past 12288 are
+// Drops and each new 1024 entries of the queue's high-water mark from 8192 up are
 // logged.
 #include "patch.h"
 
@@ -47,7 +47,7 @@ static const uint32_t kTrapJump = 0x00BB5A95;  // jz 0x00BB5B5A (int3)
 static const uint8_t kTrapJumpBytes[6] = {0x0F, 0x84, 0xBF, 0x00, 0x00, 0x00};
 static const uint8_t kNops[6] = {0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
 
-static const long kMarkFrom = 12288;  // high-water marks logged from here on
+static const long kMarkFrom = 8192;  // high-water marks logged from here on
 static const long kMarkStep = 1024;
 
 static volatile long g_dropped = 0;   // draws dropped since the start
@@ -108,9 +108,16 @@ void mod_render_init()
         dsf_log("render: draw queue sites differ from Driver.exe 1.04, nothing patched");
         return;
     }
-    patch_call(kPushCallChecked, (void*)&bounded_push, kPushCallCheckedBytes);
-    patch_call(kPushCallSkipped, (void*)&bounded_push, kPushCallSkippedBytes);
-    patch_bytes(kTrapJump, kNops, 6, kTrapJumpBytes);
+    // The trap goes last: with it still in place a full queue stays fatal, as in vanilla.
+    bool ok = patch_call(kPushCallChecked, (void*)&bounded_push, kPushCallCheckedBytes) &&
+              patch_call(kPushCallSkipped, (void*)&bounded_push, kPushCallSkippedBytes) &&
+              patch_bytes(kTrapJump, kNops, 6, kTrapJumpBytes);
+    if (!ok) {
+        patch_bytes(kPushCallChecked, kPushCallCheckedBytes, 5);
+        patch_bytes(kPushCallSkipped, kPushCallSkippedBytes, 5);
+        dsf_log("render: a write failed, draw queue left vanilla");
+        return;
+    }
     dsf_log("render: a full draw queue drops draws (calls at %08X, %08X; trap at %08X off)", kPushCallChecked,
             kPushCallSkipped, kTrapJump);
 }

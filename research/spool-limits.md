@@ -1,6 +1,6 @@
 # Vehicle spool size limits
 
-Updated: 2026-10-24
+Updated: 2026-10-28
 
 Where `Driver.exe` 1.04 sizes the memory a spooled vehicle uses, which of
 those sizes a bigger VEHC can hit, and how to raise each one. Addresses are
@@ -27,6 +27,7 @@ modes) against the `-b` project copy. Outputs are in `out/ghidra/spool-*`,
 | Global UID list | 16384 entries, write-only | fills faster with more submodels | code: NOP the counter (hypothesis that it matters) |
 | Resource hash arena | 45,000 nodes, global | more buffers/textures per car use more | not needed: nodes are recycled through a free list when a resource is released, so only what is resident counts ("Global lists") |
 | Slots per kind | SSLP +0x18: 35, 2, 2 | no | data plus pool table; not needed for detail |
+| Draw queue | 16384 draws per frame, all objects together (not per car) | yes, with dsf_enhanced's full-detail traffic: the frame's last draw hits an `INT3` | code: `dsfforza.asi` `[render]` drops the extra draws ("Draw queue" below) |
 
 The MDXN size itself has no separate limit. The 0x29B000 MDXN crash was
 first blamed on the 0x280000 read buffer path; the pad tests ("Test
@@ -397,6 +398,68 @@ GraphicsManager_Construct runs:
 Keep GPU KiB (0x00FD2738, 0x23) a multiple of the slot count. The parent
 arena (GraphicsParentArena_Initialize) is sized from the sum of all SYS
 fields, so it grows by itself.
+
+## Draw queue: 16384 entries per frame (confirmed-static)
+
+Not a spool limit, but the one a ported car first ran into: on 2026-10-28
+the game ended with no error when the user picked the Hennessey Venom GT
+(420) in a garage. `Driver.log` ends at `spawnVehicle( HUNTERS POINT, 420,
+nil)`; the Windows event log has `Exception code: 0x80000003, Fault offset:
+0x007B5B5A` (VA 0x00BB5B5A). Outputs: `out/ghidra/venom1..3`.
+
+0x00BB5B5A is the `INT3` at the end of FUN_00BB5A50, just past the graphics
+pool code above. FUN_00BB5A50 queues one draw (callers:
+ShiftDrawMetadata_Enqueue 0x006BA880 and FUN_00BB42E0):
+
+```text
+00BB5A88  8B 44 24 48        MOV EAX,[ESP+0x48]   ; the queue
+00BB5A8C  8B 08              MOV ECX,[EAX]        ; count
+00BB5A92  3B 48 04           CMP ECX,[EAX+4]      ; capacity
+00BB5A95  0F 84 BF 00 00 00  JZ 0x00BB5B5A        ; INT3
+...
+00BB5B4C  E8 BF FB FF FF     CALL 0x00BB5710      ; append
+```
+
+The queues: RenderQueueHolder_Construct (0x00BB6580) allocates one
+0x130158-byte manager (holder 0x019B6434) and RenderQueueManager_Construct
+(0x00BB5960) embeds two queues in it, used in turn (FUN_00BB5780 flips them,
+FUN_00BB5800 zeroes the active count). A queue is `{u32 count, u32 capacity
+= 0x4000, block, entries}`, the entries 0x20 bytes each (0x80000 per queue);
+the block is a separate 0x18000-byte constants area plus 0x80 flags
+(FUN_00BB84E0), not per entry. FUN_00BB5710 appends with a compare-exchange
+on the count and no bound. Its other checked caller, FUN_00BB5B70, skips the
+draw when the queue is full; FUN_00BB5A50 traps. The check isn't atomic:
+two threads that both read 16383 append entries 16384 and 16385, past the
+array onto the other queue's header. RenderQueue_FilterAndConsume
+(0x00BAAEA0) hands `[entries, entries + count)` to RenderQueue_FilterRange
+(0x00BBC0C0), which filters it in packets into a fixed global output area
+(0x019C66C0); that is why the capacity isn't simply raised here.
+
+So the limit is 16384 queued draws per frame for everything on screen and in
+the passes that render it, not a per-car budget. One car's share is one
+draw per submodel of its current LOD per pass. Offline survey of the root
+VEHCs (`full_lod_subs` of `dsff vehicle_limits`: submodels in the mask-4 LOD
+of the full entry, the one `VehicleFullDetail=1` draws at any distance):
+
+| Cars | Median | p90 | Max |
+| --- | ---: | ---: | ---: |
+| vanilla (150) | 97 | 113 | 129 |
+| ported, v0.1.2 (`out/master`, 573) | 60 | 72 | 88 |
+| ported, master 3ca28fd (`out/build`, 573) | 76 | 93 | 121 |
+
+The Venom: 59 → 84 in the full entry, 10 → 19 in the exterior entry, 8 in
+the interior. The submodels added since v0.1.2 (gloss and lamp materials
+split out of shared subsections, #164 to #178) raised every ported car, but
+none past the vanilla maximum: no single car is near the limit. What brings
+a frame near it is the scene: the user's dsf_enhanced draws traffic at full
+detail out to the cull distance (`VehicleFullDetail=1`, about 930 m at 21:9,
+where vanilla draws a few-submodel hull past about 100 m), with a 500 m
+traffic radius and terrain LOD x0.25. A car spawn adds the new car's full,
+interior and exterior entries to such a frame.
+
+**Patch:** `dsfforza.asi` `[render]` (`asi.md`, "Draw queue") makes the
+append bounded and removes the trap, so a frame past 16384 draws loses its
+last draws instead of ending the game.
 
 ## Vertex and index buffers (confirmed-static)
 
