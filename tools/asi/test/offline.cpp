@@ -18,6 +18,7 @@ void dsf_core_init();
 #include "../src/modules.h"
 #undef DSF_MODULE
 int mod_hands_selftest();
+long mod_render_dropped();
 
 static int failures = 0;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #c); failures++; } } while (0)
@@ -200,6 +201,7 @@ static int mismatch_test()
     *(BYTE*)0x008FC400 ^= 0xFF;   // archive: last replaced function ("open in memory")
     *(BYTE*)0x00711411 ^= 0xFF;   // garage: maker index read, late in the maker-group edits
     *(BYTE*)0x007118A5 ^= 0xFF;   // hud: card emblem site (checked after the picture-slot calls)
+    *(BYTE*)0x00BB5A96 ^= 0xFF;   // render: the trap branch (checked after both push calls)
 #define DSF_MODULE(name) printf("init %s (changed sites)\n", #name); mod_##name##_init();
 #include "../src/modules.h"
 #undef DSF_MODULE
@@ -211,6 +213,8 @@ static int mismatch_test()
     CHECK(*(unsigned*)(0x006C587C + 2) == 1000);                       // the list patch still applies
     CHECK(*(int*)0x0070D72B == (int)(0x00ADA7F0 - 0x0070D72F));        // hud: picture-slot calls vanilla
     CHECK(*(BYTE*)0x006C6855 == 0xE8 && *(int*)0x006C6856 != (int)(0x006C40C0 - 0x006C685A));  // text sites on
+    CHECK(*(int*)0x00BB5B4D == (int)(0x00BB5710 - 0x00BB5B51) &&
+          *(int*)0x00BB5BB6 == (int)(0x00BB5710 - 0x00BB5BBA));        // render: both pushes vanilla
     printf("%s (%d failures, changed sites)\n", failures ? "FAILED" : "ok", failures);
     return failures ? 1 : 0;
 }
@@ -390,6 +394,22 @@ int main(int argc, char** argv)
     CHECK(*(BYTE*)0x005652FB == 0xE8 && *(int*)0x005652FC != (int)(0x00BCA840 - 0x00565300));
     CHECK(*(BYTE*)0x00565910 == 0xE8 && *(int*)0x00565911 != (int)(0x00BCA840 - 0x00565915));
     CHECK(mod_hands_selftest() == 0);
+    // Draw queue: both pushes go through the plugin, the trap branch is gone, and a
+    // full queue drops the entry (FUN_00BB5710's thiscall, through the patched site).
+    {
+        CHECK(memcmp((void*)0x00BB5A95, "\x90\x90\x90\x90\x90\x90", 6) == 0);
+        CHECK(*(int*)0x00BB5BB6 == *(int*)0x00BB5B4D + (0x00BB5B51 - 0x00BB5BBA));
+        typedef void(__fastcall * PushFn)(void* queue, void*, const unsigned* entry);
+        PushFn push = (PushFn)(0x00BB5B51 + *(int*)0x00BB5B4D);
+        CHECK((unsigned)(size_t)push != 0x00BB5710);
+        static unsigned entries[3 * 8];
+        struct { long count, capacity; void* block; unsigned* entries; } q = {0, 2, nullptr, entries};
+        unsigned e[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+        long before = mod_render_dropped();
+        for (int i = 0; i < 3; i++) { e[0] = 10 + i; push(&q, nullptr, e); }
+        CHECK(q.count == 2 && entries[0] == 10 && entries[8] == 11 && entries[15] == 8 && entries[16] == 0);
+        CHECK(mod_render_dropped() == before + 1);
+    }
     printf("%s (%d failures); log: %s\\dsfforza.log\n", failures ? "FAILED" : "ok", failures, dsf_plugin_dir());
     return failures ? 1 : 0;
 }
