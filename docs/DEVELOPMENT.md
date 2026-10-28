@@ -6,12 +6,12 @@ contributors: read [AGENTS.md](../AGENTS.md) first.
 
 ## What it does
 
-Each Forza car is converted onto a similar stock DSF car (the host) and added
+Each Forza car is converted onto a similar vanilla DSF car (the host) and added
 to `Install\dngvehicles.sp` under its own ID:
 
 - body, cockpit, glass, lamps, plates, wheels and paint from Forza;
-- stock-style damage (panels, crush, detachable parts);
-- Forza's own engine sound, in a stock sound bank;
+- vanilla-style damage (panels, crush, detachable parts);
+- Forza's own engine sound, in a vanilla sound bank;
 - handling derived from the car's specs on the host's DSF tuning;
 - garage pictures, HUD badges and names.
 
@@ -48,7 +48,7 @@ uv run dsff install --status
 uv run dsff install --uninstall
 ```
 
-Stages: preflight (game 1.04, stock archive, discs, disk space, and for an
+Stages: preflight (game 1.04, vanilla archive, discs, disk space, and for an
 install: game not running, VC++ x86 runtime, other mods' files), prepare
 (`game_data prepare` when its files are missing or stale; vgmstream), plugin
 (`out/asi/dsfforza.asi`, rebuilt with `tools/asi/build.ps1 -Test` when

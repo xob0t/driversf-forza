@@ -72,7 +72,7 @@ end
 
 -- merge = { into = "ID:242753", from = { "ID:242757", "ID:242755" } }: the
 -- garage files every car of the `from` makers under `into` (one big group of
--- real, drivable stock cars: Chevrolet 16 + Ford 13 + Dodge 10 = 39).
+-- real, drivable vanilla cars: Chevrolet 16 + Ford 13 + Dodge 10 = 39).
 if type(cfg.merge) == "table" and type(vehicleStats) == "table" then
 	local from, n = {}, 0
 	for _, name in ipairs(cfg.merge.from or {}) do from[name] = true end

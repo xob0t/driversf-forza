@@ -66,7 +66,7 @@ param(
     [string]$DynoKeys,            # key steps per run, e.g. 'Up:25,Down:6;Up:5,Up+Right:0.5,Down:5'
     [string]$MenuKeys,            # menu taps after -MenuTrigger appears in Driver.log, e.g. 'Enter:2,Right:1.5'
     [string]$MenuTrigger,
-    [double]$TrafficRadius = 0,   # traffic road radius in metres, patched in memory once the world is up (350 stock)
+    [double]$TrafficRadius = 0,   # traffic road radius in metres, patched in memory once the world is up (350 vanilla)
     [switch]$OnHost,
     [switch]$Vm,
     [string]$VmId,                # with -Vm: this VM only (1, 2, or a name; vm-common.ps1)

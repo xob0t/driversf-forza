@@ -3,21 +3,21 @@ the converter's old and new driver-seat placement (research/cockpit.md, "The
 driver's seat follows the wheel").
 
 The driver model sits on the driver-seat marker (role 10) and holds the wheel
-where stock cars have it in the seat's frame (cockpit.STOCK_MARKER_FROM_SEAT).
+where vanilla cars have it in the seat's frame (cockpit.VANILLA_MARKER_FROM_SEAT).
 For each Forza car (offline, from its extracted folder in out/cache and its host
-in the stock archive) this measures:
+in the vanilla archive) this measures:
 
 - off: how far the steering anchor (the hinge/marker at the Forza wheel centre plus
-  the hand shift) is from the stock point in the seat's frame (old seat: under the
+  the hand shift) is from the vanilla point in the seat's frame (old seat: under the
   Forza eye with the host's eye-to-seat offset; new seat: cockpit.seat_for_marker);
-- miss: the largest distance from the driver model's grips (the stock hand rig at
-  the stock point of the seat) to the drawn rim (the cockpit wheel fit, onto which
+- miss: the largest distance from the driver model's grips (the vanilla hand rig at
+  the vanilla point of the seat) to the drawn rim (the cockpit wheel fit, onto which
   the main-carbin wheel is aligned);
 - roof: the room over the driver model's eyes (seat + cockpit.FLEET_EYE_ABOVE_SEAT)
   up to the first triangle of the Forza body at LOD 1 straight above.
 
     uv run dsff driver_survey cars --list tools/batches/testdrive.txt --hosts out/testdrive11/work
-    uv run dsff driver_survey stock      # roof room of the stock fleet, for comparison
+    uv run dsff driver_survey vanilla      # roof room of the vanilla fleet, for comparison
 
 `--hosts` is a folder of port_batch per-car reports (<media>.json with "host").
 Writes a TSV (--out) and prints the summary.
@@ -36,7 +36,7 @@ from pathlib import Path
 from dsfforza import REPO
 from dsfforza.convert import cockpit, forza2dsf
 
-STOCK_ARCHIVE = REPO / "out" / "stock" / "Install" / "dngvehicles.sp"
+VANILLA_ARCHIVE = REPO / "out" / "vanilla" / "Install" / "dngvehicles.sp"
 CACHE = REPO / "out" / "cache"
 ROOF_LOD = 1
 SIDE = forza2dsf.Placement(0.0, 0.0)  # the turn only: every measure here is relative
@@ -112,7 +112,7 @@ def body_triangles(car, lod: int) -> list:
 
 def chase_miss(seat, quat, centre, axis, radius) -> float:
     """Largest distance from the driver model's grips to the drawn rim."""
-    anchor = cockpit._add(seat, cockpit.quat_rotate(quat, cockpit.STOCK_MARKER_FROM_SEAT))
+    anchor = cockpit._add(seat, cockpit.quat_rotate(quat, cockpit.VANILLA_MARKER_FROM_SEAT))
     return cockpit.hand_grip_error(anchor, centre, axis, radius)
 
 
@@ -149,7 +149,7 @@ def survey_car(media: str, host: int, stream, root) -> dict:
     tris = body_triangles(car, ROOF_LOD)
     inv = quat_inverse(quat)
     for tag, seat in (("old", old), ("new", new)):
-        off = cockpit._sub(cockpit.quat_rotate(inv, cockpit._sub(pivot, seat)), cockpit.STOCK_MARKER_FROM_SEAT)
+        off = cockpit._sub(cockpit.quat_rotate(inv, cockpit._sub(pivot, seat)), cockpit.VANILLA_MARKER_FROM_SEAT)
         row[f"off_{tag}"] = math.sqrt(cockpit._dot(off, off))
         row[f"off_{tag}_xyz"] = tuple(round(c, 4) for c in off)
         row[f"miss_{tag}"] = chase_miss(seat, quat, centre, axis, radius)
@@ -189,7 +189,7 @@ def fmt(v, scale=100.0, digits=1):
 def summary(rows: list[dict]) -> None:
     ok = [r for r in rows if "error" not in r]
     print(f"{len(ok)} cars measured, {len(rows) - len(ok)} skipped")
-    for key, label in (("off", "anchor off the stock point"), ("miss", "grips off the drawn rim")):
+    for key, label in (("off", "anchor off the vanilla point"), ("miss", "grips off the drawn rim")):
         for tag in ("old", "new"):
             col = sorted(r[f"{key}_{tag}"] for r in ok)
             if not col:
@@ -218,7 +218,7 @@ def cmd_cars(args) -> None:
     cars += args.car or []
     hosts = read_hosts(args.hosts)
     rows = []
-    with args.stock.open("rb") as stream:
+    with args.vanilla.open("rb") as stream:
         root = read_chunk(stream)
         for n, media in enumerate(cars, 1):
             if media not in hosts:
@@ -252,16 +252,16 @@ def cmd_cars(args) -> None:
     summary(rows)
 
 
-def cmd_stock(args) -> None:
+def cmd_vanilla(args) -> None:
     """The steering marker in the driver seat's frame and the room over the driver
-    model's eyes (full entry, LOD mask 4) in the stock fleet."""
+    model's eyes (full entry, LOD mask 4) in the vanilla fleet."""
     from dsfforza.formats import upvh, vehicle_mesh
     from dsfforza.formats.chnk import read_chunk
 
     with (REPO / "research" / "vehicles.tsv").open(encoding="utf-8") as f:
         ids = sorted({int(r["spool_id"]) for r in csv.DictReader(f, delimiter="\t")})
     rooms, off = [], []
-    with args.stock.open("rb") as stream:
+    with args.vanilla.open("rb") as stream:
         root = read_chunk(stream)
         index = {id(e): n for n, e in enumerate(root.entries)}
         for sid in ids:
@@ -269,7 +269,7 @@ def cmd_stock(args) -> None:
             if info is None:
                 continue
             vehc = upvh.entries_for(stream, root.entries, sid, None)[0]
-            _, mesh = vehicle_mesh.load(args.stock, index[id(vehc)], root.entries)
+            _, mesh = vehicle_mesh.load(args.vanilla, index[id(vehc)], root.entries)
             tris = []
             for part_no, part in enumerate(mesh.parts):
                 if part_no:  # part 0 is the body; other parts sit in their own frames
@@ -284,19 +284,19 @@ def cmd_stock(args) -> None:
             room = roof_room(eye, tris)
             rooms.append((room, sid))
             frame = cockpit.quat_rotate(quat_inverse(info["quat"]), cockpit._sub(info["marker"], info["pos"]))
-            off.append((math.dist(frame, cockpit.STOCK_MARKER_FROM_SEAT), sid, frame))
+            off.append((math.dist(frame, cockpit.VANILLA_MARKER_FROM_SEAT), sid, frame))
             print(
                 f"{sid:4} marker in the seat frame ({', '.join(f'{c:.3f}' for c in frame)}), "
                 f"room over the driver's eyes {fmt(room)} cm"
             )
     odd = [(sid, tuple(round(c, 3) for c in frame)) for d, sid, frame in off if d > 0.01]
     print(
-        f"{len(off) - len(odd)} of {len(off)} stock cars have the marker within 1 cm of {cockpit.STOCK_MARKER_FROM_SEAT}"
+        f"{len(off) - len(odd)} of {len(off)} vanilla cars have the marker within 1 cm of {cockpit.VANILLA_MARKER_FROM_SEAT}"
     )
     print(f"  the others: {odd}")
     col = sorted(r for r, _ in rooms if r is not None)
     print(
-        f"{len(col)} stock cars: median {fmt(statistics.median(col))} cm, 5th pct {fmt(col[len(col) // 20])}, "
+        f"{len(col)} vanilla cars: median {fmt(statistics.median(col))} cm, 5th pct {fmt(col[len(col) // 20])}, "
         f"lowest {fmt(col[0])} cm ({min(r for r in rooms if r[0] is not None)[1]}); "
         f"{sum(1 for r, _ in rooms if r is None)} with nothing above"
     )
@@ -309,12 +309,12 @@ def main(argv: list[str] | None = None) -> None:
     c.add_argument("--list", type=Path, help="batch list (tools/batches/*.txt)")
     c.add_argument("--car", action="append", help="media name (repeatable)")
     c.add_argument("--hosts", type=Path, required=True, help="folder of port_batch per-car reports")
-    c.add_argument("--stock", type=Path, default=STOCK_ARCHIVE)
+    c.add_argument("--vanilla", type=Path, default=VANILLA_ARCHIVE)
     c.add_argument("--out", type=Path)
     c.set_defaults(func=cmd_cars)
-    s = sub.add_parser("stock", help="stock fleet: room over the driver's eyes")
-    s.add_argument("--stock", type=Path, default=STOCK_ARCHIVE)
-    s.set_defaults(func=cmd_stock)
+    s = sub.add_parser("vanilla", help="vanilla fleet: room over the driver's eyes")
+    s.add_argument("--vanilla", type=Path, default=VANILLA_ARCHIVE)
+    s.set_defaults(func=cmd_vanilla)
     args = ap.parse_args(argv)
     args.func(args)
 

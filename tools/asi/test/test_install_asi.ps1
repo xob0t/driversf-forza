@@ -79,7 +79,7 @@ Check 'tree identical after removing the kept ini' ((Compare-Object $before (Sna
 $r = Run @('-Build', $build, '-AsiLoader', $loader, '-Force', '-IdPolicy', 'asi')
 Check '-IdPolicy asi without the plugin refused' ($r.code -ne 0 -and $r.text -match 'IdPolicy asi needs the dsfforza.asi plugin' -and -not (Test-Path $backup))
 
-# 6. an archive past the stock reader (1200 root entries): refused without -Asi, installed with the plugin
+# 6. an archive past the vanilla reader (1200 root entries): refused without -Asi, installed with the plugin
 $big = 'out\scratch\testbuild-bigroot'
 New-Item -ItemType Directory -Force $big | Out-Null
 Copy-Item (Join-Path $build 'dngvehicles.json'), (Join-Path $build 'dngvehicles.lua') $big -Force

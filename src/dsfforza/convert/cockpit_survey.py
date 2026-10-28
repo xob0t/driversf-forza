@@ -90,15 +90,15 @@ def survey_one(source, media: str, work: Path, dbs: list[Path]) -> dict:
     if not {"speed", "tach"} <= set(cf.gauges):
         warnings.append("missing " + "/".join(f for f in ("speed", "tach") if f not in cf.gauges) + " needle")
     if main:
-        stock = [
+        vanilla = [
             x
             for x in main
             if not cockpit.SHELL_SKIP.match(x.name)
             and x.name.lower() not in {n.lower() for n in cf.static} | {n.lower() for n in cf.shell_skip}
         ]
-        lods = sorted({sub.lod for x in stock for sub in x.subsections if sub.lod > 0})
+        lods = sorted({sub.lod for x in vanilla for sub in x.subsections if sub.lod > 0})
         lod = min(lods[-1], 5) if lods else 0
-        while lod >= 1 and cockpit.shell_blocks_view(stock, lod, cf.eye):
+        while lod >= 1 and cockpit.shell_blocks_view(vanilla, lod, cf.eye):
             lod -= 1  # convert_interior steps to finer shell LODs the same way
         row["shell_lod"] = lod
         if lods and lod < 1:

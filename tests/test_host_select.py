@@ -37,7 +37,7 @@ def _car(media, make, model, year, body, wheelbase, length):
     )
 
 
-# Stock hosts and Forza cars as the survey and gamedb.slt give them.
+# Vanilla hosts and Forza cars as the survey and gamedb.slt give them.
 SAVANA = _host("GMC_Savana_2005", "gmc_savana_news_van", 2005, "van", 3.4323, 5.706)
 CHARGER = _host("Dodge_Charger_SRT_8_2009_civ", "dodge_charger_srt8", 2009, "sedan", 3.0481, 5.087)
 F350 = _host("Ford_F350_SuperDuty_2008", "ford_f350_super_duty", 2008, "pickup", 4.0501, 6.284)

@@ -223,7 +223,7 @@ def _run(args, running=False, free=1 << 50, vc=True, loader="winmm.dll"):
 def _fake_game(root: Path) -> Path:
     game = root / "game"
     _exe(game / "Driver.exe")
-    _touch(game / "Install" / "dngvehicles.sp", b"not the stock archive")
+    _touch(game / "Install" / "dngvehicles.sp", b"not the vanilla archive")
     (game / "media").mkdir()
     return game
 
@@ -267,7 +267,7 @@ def test_preflight_lists_every_problem_at_once():
         args = _args("--game", str(game), "--iso", str(root / "missing.iso"), "--car", "NIS_370Z_10", out=root / "b")
         text = _problems(_run(args, running=True, free=0, vc=False, loader=None))
         assert "is not Driver: San Francisco 1.04" in text
-        assert "not the stock 1.04 vehicle archive" in text
+        assert "not the vanilla 1.04 vehicle archive" in text
         assert "Disc image not found" in text
         assert "Driver.exe is running" in text
         assert "Visual C++" in text
@@ -283,11 +283,11 @@ def test_preflight_build_only_skips_the_install_checks():
         args = _args("--build-only", "--game", str(game), "--iso", str(iso), "--car", "X_1", out=root / "b")
         text = _problems(_run(args, running=True, vc=False, loader=None))
         assert "running" not in text and "Visual C++" not in text
-        assert "not the stock" in text  # the build reads the stock archive
+        assert "not the vanilla" in text  # the build reads the vanilla archive
         assert "fh1.iso: not an Xbox 360 disc image" in text  # an empty file: no Forza disc at all
         fh1 = forza_roster.Disc(iso, "FH1", 1, 1)  # what tests/test_discs.py's images are
         with (
-            mock.patch.object(install, "STOCK_ARCHIVE_SHA256", install.sha256(game / "Install" / "dngvehicles.sp")),
+            mock.patch.object(install, "VANILLA_ARCHIVE_SHA256", install.sha256(game / "Install" / "dngvehicles.sp")),
             mock.patch.object(forza_roster, "identify", return_value=fh1),
         ):
             run = _run(args, running=True)
@@ -302,11 +302,11 @@ def test_preflight_no_plugin_caps_the_selection_and_other_mods_need_force():
         game = _fake_game(root)
         iso = _touch(root / "fh1.iso")
         lst = root / "many.txt"
-        lst.write_text("\n".join(f"CAR_{n}" for n in range(install.STOCK_ROOM + 1)), encoding="utf-8")
+        lst.write_text("\n".join(f"CAR_{n}" for n in range(install.VANILLA_ROOM + 1)), encoding="utf-8")
         _touch(game / "Common" / "UserLuaScripts" / "bootstrap.lua", b"-- another mod")
         args = _args("--no-plugin", "--game", str(game), "--iso", str(iso), "--list", str(lst), out=root / "b")
         text = _problems(_run(args))
-        assert f"at most {install.STOCK_ROOM} added cars" in text
+        assert f"at most {install.VANILLA_ROOM} added cars" in text
         assert "bootstrap.lua belongs to another mod" in text
         forced = _args("--force", "--game", str(game), "--iso", str(iso), "--list", str(lst), out=root / "b")
         assert "bootstrap.lua" not in _problems(_run(forced))

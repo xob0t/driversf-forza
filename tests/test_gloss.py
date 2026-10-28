@@ -72,7 +72,7 @@ class DsfGloss(unittest.TestCase):
         chrome = dm.gloss_material(fm.gloss_params({}, "chrome_rim"), green=120)
         self.assertEqual((chrome.fresnel_power, chrome.bias), dm.CHROME_FRESNEL)
         self.assertEqual(chrome.intensity, 0.0)
-        # the Boss 429's plastic2 (SpecularAmount 12) is capped at the stock Lights intensity
+        # the Boss 429's plastic2 (SpecularAmount 12) is capped at the vanilla Lights intensity
         self.assertLessEqual(dm.gloss_material(fm.Gloss(12.0, 14.0, 0.0, 1.0), 20).intensity, dm.GLOSS_INTENSITY_MAX)
 
     def test_merge(self):
@@ -101,7 +101,7 @@ def _maco(uid: bytes, path: str, params: dict[str, float], texture: bytes) -> En
     return Entry("MACO", 0, 0, 0, 0, None, children=head + passes)
 
 
-LIGHTS = {  # the stock Lights material's
+LIGHTS = {  # the vanilla Lights material's
     "g_hSpecularIntensity": 1.0,
     "g_hSpecularPower": 150.0,
     "g_hReflectionAmount": 1.0,
@@ -141,7 +141,7 @@ class InstallGloss(unittest.TestCase):
         for n, mat in enumerate(gloss):
             uid = installed.materials[f"{dm.GLOSS_PREFIX}{n}"]
             self.assertEqual(uid, dm.gloss_uid(b"\x01\x02\x03\x84", n))
-            self.assertEqual((uid[1], uid[7], uid[6] & 0x80), (0x12, 0x2D, 0))  # stock-looking, top bit clear
+            self.assertEqual((uid[1], uid[7], uid[6] & 0x80), (0x12, 0x2D, 0))  # vanilla-looking, top bit clear
             self.assertEqual(installed.layout[uid], (32, 5))  # the Lights material's layout
             maco = drsp.children[3 + n]
             self.assertEqual(dm.material_info(None, maco)["uid"], uid)

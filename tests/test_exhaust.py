@@ -25,7 +25,7 @@ def _record(type_: int, role: int, subtree: int, marker: int = -1) -> bytes:
 
 
 def _host(exhausts: list[tuple[int, tuple]]) -> bytes:
-    """A UPVH like a stock car's rear: root, then per (part role, marker
+    """A UPVH like a vanilla car's rear: root, then per (part role, marker
     positions) an exhaust part with its role-0x4D markers, then a steering
     marker (role 47), one mirror entry and an empty PDL."""
     records, table = [], []
@@ -82,7 +82,7 @@ def test_set_count_keeps_sides():
 
 def test_quaternion_turns_minus_z_onto_the_flow():
     assert exhaust.quaternion(exhaust.BACK) == (0.0, 0.0, 0.0, 1.0)
-    # Stock Classic 06's right-hand side exit: (0, -0.71, 0, 0.71).
+    # Vanilla Classic 06's right-hand side exit: (0, -0.71, 0, 0.71).
     q = exhaust.quaternion((1.0, 0.0, 0.0))
     assert max(abs(a - b) for a, b in zip(q, (0.0, -math.sqrt(0.5), 0.0, math.sqrt(0.5)))) < 1e-9
 

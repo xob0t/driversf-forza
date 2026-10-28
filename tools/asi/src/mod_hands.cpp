@@ -2,7 +2,7 @@
 // See research/cockpit.md ("Hands on Forza's rim", "Hands in the chase views") and
 // research/asi.md.
 //
-// Stock path (Driver.exe 1.04, confirmed-static): the in-car arms object
+// Vanilla path (Driver.exe 1.04, confirmed-static): the in-car arms object
 // (class vtable 0x00DE3D38, 0x3A4 bytes, two of them at [engine+0x2A8]+0x10,
 // one per local player) evaluates its animation graph (+0xD4; skeleton at +0xD8,
 // joint count at skeleton+0x24) with FUN_008609C0 into the global pose buffer
@@ -22,7 +22,7 @@
 // the head look-at), then uploads them as shader constants. His pose frame is the seat's.
 //
 // This module wraps both. For a car whose VO3D carries its rim (p95 radius, p87 centre
-// along the column from the steering marker; written by the converter, stock cars have
+// along the column from the steering marker; written by the converter, vanilla cars have
 // neither), each hand that holds the wheel is moved onto the rim, and its arm follows
 // through a two-bone IK (shoulder fixed, elbow in the arm's own bend plane, bone lengths
 // kept). Everything is done on the skin transforms before the game reads them.
@@ -95,14 +95,14 @@ static int g_body = 1;           // [hands] chase=0 leaves the occupants alone
 struct Circle {
     V3 centre, axis;
     float radius;
-    float out;    // how far outside the rim's centre line the fist sits on a stock wheel
+    float out;    // how far outside the rim's centre line the fist sits on a vanilla wheel
     float band;   // the radius varies by this either way (the occupants' animation sets)
 };
 static const Circle kArmsCircle = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.448f, -0.894f}, 0.177f, 0.0f, 0.0f};
-// In the occupant's pose (the seat marker's frame) his circle sits about the stock steering
-// marker's place, (0, 0.469, 0.428) in 138 of 147 stock cars (research/cockpit.md, "The
+// In the occupant's pose (the seat marker's frame) his circle sits about the vanilla steering
+// marker's place, (0, 0.469, 0.428) in 138 of 147 vanilla cars (research/cockpit.md, "The
 // driver's seat follows the wheel"). His fist (the wrist and the finger joints of the
-// full-body skeleton) runs 0.193 m from it, 1.7 cm outside a stock 0.176 m rim, in the car
+// full-body skeleton) runs 0.193 m from it, 1.7 cm outside a vanilla 0.176 m rim, in the car
 // and sports sets; the truck set (tour bus) grips at a quarter to three, 0.206 m out (debug=1,
 // runs vm1-20261027-164654, -165637; "Hands in the chase views").
 static const Circle kBodyCircle = {{0.0f, 0.469f, 0.428f}, {0.0f, 0.448f, -0.894f}, 0.193f, 0.017f, 0.015f};
@@ -323,13 +323,13 @@ struct Rim {
 };
 
 // The rim in the car's model space: the steering marker (spec + 0x37E0) + p87 along the
-// column direction (spec + 0x37F0), radius p95. False for a car without it (stock).
+// column direction (spec + 0x37F0), radius p95. False for a car without it (vanilla).
 static bool car_rim(uint8_t* vehicle, const uint8_t** spec_out, Rim* rim)
 {
     const uint8_t* spec = vehicle_spec(vehicle);
     if (!spec) return false;
     float r = vo3d(spec, kRadiusParam);
-    if (!(r > 0.05f && r < 0.4f)) return false;   // stock cars: 0
+    if (!(r > 0.05f && r < 0.4f)) return false;   // vanilla cars: 0
     float along = vo3d(spec, kAlongParam);
     if (!(fabsf(along) < 0.5f)) return false;
     V3 axis = unit(v3((const float*)(spec + 0x37F0)));

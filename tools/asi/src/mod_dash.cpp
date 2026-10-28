@@ -1,7 +1,7 @@
 // Digital dashboards: km/h digits for converted Forza displays.
 // See research/cockpit.md ("Digital displays") and research/asi.md ("Digital dashboards").
 //
-// Stock (Driver.exe 1.04, confirmed-static): the vehicle manager's frame update
+// Vanilla (Driver.exe 1.04, confirmed-static): the vehicle manager's frame update
 // (FUN_00888F30) calls FUN_008919A0 at 0x00888FE6 with ECX = the gauge input array,
 // one 0x98-byte object per player ([[[0xFE7228]+0x78C]+4] + 0x2251C). Per object:
 // +0x00 the seven needle inputs (id 1 rpm / 5000, id 2 clamp(mph, p606, p605) x

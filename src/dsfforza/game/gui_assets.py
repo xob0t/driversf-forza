@@ -18,15 +18,15 @@ xor) of the lower-cased name. Car pictures are 512 x 256 DXT5 without mips:
 the car in a front three-quarter view on the right, a fading photo strip with
 the maker's logo and model name on the left, transparent elsewhere.
 
-`add_pictures` writes a NEW gui.sp: the stock bytes unchanged, new SPOIs
+`add_pictures` writes a NEW gui.sp: the vanilla bytes unchanged, new SPOIs
 appended after the last entry, and a rebuilt SSIC (UIDL/SPOL/SSLP with the new
 names) appended too; the root entry table (which has room for 100 more entries
-before the first payload) points at them. Nothing in the stock file moves.
+before the first payload) points at them. Nothing in the vanilla file moves.
 
 Pictures come from the Forza disc: FH1 media/ui/Textures.zip holds
 Thumbnails/Thumbnail_<Data_Car.Id>.xds (768 x 288, 32-bit, one per FH1 car)
 and UI4/Logos/Manufacturer_Logos*/L_MAN_<Make>_Logo.xds. The car itself is a
-render of the converted model from the stock pictures' camera (car_render.py);
+render of the converted model from the vanilla pictures' camera (car_render.py);
 FH1's thumbnails (eye level, mirrored) only with --fh1-thumbnails.
 
     uv run dsff gui_assets build out/ported.json --out out/gui [--name MEDIA=TEXT] [--wide-glyphs] [--jobs 2]
@@ -55,8 +55,8 @@ from dsfforza.formats.vehicle_mesh import child, payload
 from dsfforza.game import game_paths
 
 
-def stock_file(relative: str) -> Path:
-    """A stock game file: tools/install.ps1's backup copy when the game folder
+def vanilla_file(relative: str) -> Path:
+    """A vanilla game file: tools/install.ps1's backup copy when the game folder
     holds an installed (patched) one, else the game's own."""
     game = game_paths.game_dir()  # $DSF_GAME_DIR (src/dsfforza/build/port_batch.py, tools/install.ps1 set it)
     backup = game / "dsfforza-backup" / relative
@@ -111,7 +111,7 @@ def find_picture(stream, root, name: str) -> bytes | None:
 
 
 def append_patch(source: Path, data: bytearray, root, replace: dict, add: list) -> bytearray:
-    """Edit a CHNK file without moving any stock byte: the entries in
+    """Edit a CHNK file without moving any vanilla byte: the entries in
     `replace` (root index -> Entry with children) and `add` are serialized and
     appended at the end, each at its alignment, and the root entry table is
     patched to point at them (replaced rows retargeted, added rows after the
@@ -130,7 +130,7 @@ def append_patch(source: Path, data: bytearray, root, replace: dict, add: list) 
     table_end = chnk.HEADER.size + chnk.ENTRY.size * (count + len(add))
     first_payload = min(chnk.ENTRY.unpack_from(data, chnk.HEADER.size + chnk.ENTRY.size * i)[1] for i in range(count))
     if table_end > first_payload:
-        # Grow the root table: move every root payload (stock bytes unchanged,
+        # Grow the root table: move every root payload (vanilla bytes unchanged,
         # nested CHNK offsets are relative) down by a multiple of the largest
         # alignment, and shift the existing rows' offsets with them.
         largest = 1 << max(e.align_log2 for e in root.entries)
@@ -226,7 +226,7 @@ def add_pictures(
 
 
 def _new_uid(n: int, used: set) -> bytes:
-    """Stock-shaped texture UID (byte 1 = 0x12, byte 7 below 0x80, research/upvh.md)."""
+    """Vanilla-shaped texture UID (byte 1 = 0x12, byte 7 below 0x80, research/upvh.md)."""
     while True:
         uid = bytes([(n << 4) & 0xFF, 0x12, (n >> 4) & 0xFF, (n >> 12) & 0xFF, 0xF0, 0x5A, 0x2E, 0x2D])
         if uid not in used:
@@ -737,7 +737,7 @@ PLATE_RENDER_H = 76  # = 2 x the garage picture's plate height (build: nameplate
 def nameplate(text: str, max_w: int = 98, max_h: int = 34, min_h: int = 18) -> Image:
     """A model nameplate fitted to max_w x max_h; a long name that would come
     out lower than min_h is set on two lines (split at the middle space), as
-    stock plates such as BEETLE / CONVERTIBLE are."""
+    vanilla plates such as BEETLE / CONVERTIBLE are."""
     render_h = max(2 * max_h, PLATE_RENDER_H)  # one render size for picture and HUD plates (cache)
     plate = text_plate(text, render_h)
     one = plate.fit(max_w, max_h)
@@ -779,8 +779,8 @@ def badge_glyph(logo: Image) -> Image:
 
 # --- the garage picture -----------------------------------------------------------------
 
-PANEL = (0, 0, 471, 198)  # opaque backdrop rectangle of stock pictures (x0, y0, x1, y1)
-CAR_BOX = (100, 14, 498, 244)  # where stock pictures put the car
+PANEL = (0, 0, 471, 198)  # opaque backdrop rectangle of vanilla pictures (x0, y0, x1, y1)
+CAR_BOX = (100, 14, 498, 244)  # where vanilla pictures put the car
 LOGO_BOX = (14, 78, 126, 140)
 PLATE_BOX = (8, 144, 132, 182)
 CACHE = REPO / "out" / "cache" / "gui"
@@ -788,7 +788,7 @@ FOG_FROM, FOG_BLEND = 140, 40  # backdrop columns right of FOG_FROM are syntheti
 VEHICLE_STATS_LUA = REPO / "out" / "lua-src" / "LuaScripts.copy" / "vehiclestats" / "vehiclestats.lua"
 
 
-def stock_picture_names() -> list[str]:
+def vanilla_picture_names() -> list[str]:
     import re
 
     if not VEHICLE_STATS_LUA.exists():
@@ -796,14 +796,14 @@ def stock_picture_names() -> list[str]:
     return sorted(set(re.findall(r'Picture1 = "([^"]+)"', VEHICLE_STATS_LUA.read_text(encoding="utf-8"))))
 
 
-def stock_pictures(gui: Path | None = None) -> list[Image]:
-    gui = gui or stock_file("Install/gui.sp")
+def vanilla_pictures(gui: Path | None = None) -> list[Image]:
+    gui = gui or vanilla_file("Install/gui.sp")
     from dsfforza.convert import dsf_materials as dm
 
     out = []
     with gui.open("rb") as stream:
         root = chnk.read_chunk(stream, 0)
-        for name in stock_picture_names():
+        for name in vanilla_picture_names():
             dds = find_picture(stream, root, name)
             if dds is None:
                 continue
@@ -813,10 +813,10 @@ def stock_pictures(gui: Path | None = None) -> list[Image]:
     return out
 
 
-def stock_backdrop(gui: Path | None = None) -> Image:
-    gui = gui or stock_file("Install/gui.sp")
-    """The photo strip every stock car picture shares, recovered per pixel as
-    the most common colour across the stock pictures (the cars cover
+def vanilla_backdrop(gui: Path | None = None) -> Image:
+    gui = gui or vanilla_file("Install/gui.sp")
+    """The photo strip every vanilla car picture shares, recovered per pixel as
+    the most common colour across the vanilla pictures (the cars cover
     different parts of it). Pixels no picture shows are filled along their
     row; the logo and name area is filled from the rows above and below.
     Cached in out/cache/gui/backdrop.rgba."""
@@ -826,7 +826,7 @@ def stock_backdrop(gui: Path | None = None) -> Image:
         data = cached.read_bytes()
         if len(data) == w * h * 4:  # else cut short (written in place before): rebuild
             return Image(w, h, data)
-    pics = stock_pictures(gui)
+    pics = vanilla_pictures(gui)
     x0, y0, x1, y1 = PANEL
     img = Image(w, h)
     known = bytearray(w * h)
@@ -933,11 +933,11 @@ def compose_picture(car: Image, logo: Image | None, plate: Image | None, backdro
 
 
 def picture_dds(img: Image, template: bytes | None = None) -> bytes:
-    """512 x 256 DXT5 without mips, header like the stock pictures'."""
+    """512 x 256 DXT5 without mips, header like the vanilla pictures'."""
     from dsfforza.convert import dsf_materials as dm
 
     dds = bytearray(dm.dds_file(img.px, img.w, img.h, 1, template))
-    struct.pack_into("<I", dds, 28, 0)  # stock pictures: mip count 0
+    struct.pack_into("<I", dds, 28, 0)  # vanilla pictures: mip count 0
     return bytes(dds)
 
 
@@ -961,13 +961,13 @@ RENDER_SIZE = (1000, 560)  # about 2.4 x the car's size in the picture: the fit 
 
 
 def render_car(archive: Path, spool_id: int, size: tuple[int, int] = RENDER_SIZE, camera=None) -> Image:
-    """The converted car as the stock garage pictures show theirs (car_render.py:
+    """The converted car as the vanilla garage pictures show theirs (car_render.py:
     exterior, interior through the glass, floor shadow), cropped; `.solid` is the
     car's own box in the image (without the shadow), which compose_picture fits."""
     from dsfforza.game import car_render
 
     scene = car_render.load_scene(archive, spool_id)
-    rgba = car_render.render(scene, camera or car_render.STOCK_CAMERA, *size)
+    rgba = car_render.render(scene, camera or car_render.VANILLA_CAMERA, *size)
     img = Image.from_array(rgba)
     solid = img.bbox(250)
     box = img.bbox(4)
@@ -978,9 +978,9 @@ def render_car(archive: Path, spool_id: int, size: tuple[int, int] = RENDER_SIZE
     return out
 
 
-# --- the camera of the stock pictures and of FH1's thumbnails (`gui_assets camera`) ---------
+# --- the camera of the vanilla pictures and of FH1's thumbnails (`gui_assets camera`) ---------
 
-FIT_LEFT = 135  # stock pictures: the logo and name left of this, not the car
+FIT_LEFT = 135  # vanilla pictures: the logo and name left of this, not the car
 
 
 def _mask_box(mask) -> tuple[int, int, int, int] | None:
@@ -995,8 +995,8 @@ def _rescale(mask, width: int, height: int):
     return mask[ys.astype(int)][:, xs.astype(int)]
 
 
-def stock_car_mask(picture: Image, backdrop: Image):
-    """(256, 512) bool: where a stock picture shows its car (opaque, and outside the
+def vanilla_car_mask(picture: Image, backdrop: Image):
+    """(256, 512) bool: where a vanilla picture shows its car (opaque, and outside the
     backdrop panel or unlike the backdrop)."""
     a = picture.array().astype(int)
     yy, xx = np.mgrid[0 : picture.h, 0 : picture.w]
@@ -1011,11 +1011,11 @@ TONE_KEYS = ("V10", "V50", "V90", "V99", "S25", "S50", "S75", "white")
 
 
 def picture_tone(picture: Image, backdrop: Image) -> dict[str, float]:
-    """Tone of a garage picture's car (stock_car_mask): percentiles of the HSV
+    """Tone of a garage picture's car (vanilla_car_mask): percentiles of the HSV
     value (V) and saturation (S), and the share of white highlight pixels (value
     over 0.8, saturation under 0.25). What car_render's tone is calibrated on
     (research/gui-assets.md, "Tone")."""
-    mask = stock_car_mask(picture, backdrop)
+    mask = vanilla_car_mask(picture, backdrop)
     px = picture.array()[..., :3][mask].astype(np.float64) / 255
     if not len(px):
         return dict.fromkeys(TONE_KEYS, 0.0)
@@ -1037,7 +1037,7 @@ def read_picture(gui: Path, name: str) -> Image | None:
     return Image(*dm.decode_dds(dds))
 
 
-def _stock_score(target):
+def _vanilla_score(target):
     """IoU right of FIT_LEFT of a coverage mask placed like the target: scaled to its
     height, aligned on its right and bottom edges."""
     _, ty0, tx1, ty1 = _mask_box(target)
@@ -1078,8 +1078,8 @@ def _shape_score(target):
 
 
 def fit_cameras(manifest: Path | None = None, names: list[str] | None = None, log=print) -> list[dict]:
-    """The camera of each stock picture (`names`, default all cars), fitted with
-    renders of the stock car's silhouette; with `manifest`, the camera of each
+    """The camera of each vanilla picture (`names`, default all cars), fitted with
+    renders of the vanilla car's silhouette; with `manifest`, the camera of each
     ported car's FH1 thumbnail instead, fitted with renders of the converted car."""
     import json
 
@@ -1087,15 +1087,15 @@ def fit_cameras(manifest: Path | None = None, names: list[str] | None = None, lo
 
     out = []
     if manifest is None:
-        archive = game_paths.stock(None)
-        backdrop = stock_backdrop()
+        archive = game_paths.vanilla(None)
+        backdrop = vanilla_backdrop()
         spool = {}
-        for sid, fields in stock_stats().items():
+        for sid, fields in vanilla_stats().items():
             spool.setdefault(str(fields.get("Picture1", "")).strip('"'), sid)
-        with stock_file("Install/gui.sp").open("rb") as stream:
+        with vanilla_file("Install/gui.sp").open("rb") as stream:
             root = chnk.read_chunk(stream, 0)
             jobs = []
-            for name in names or stock_picture_names():
+            for name in names or vanilla_picture_names():
                 dds = find_picture(stream, root, name)
                 if dds is not None and name in spool:
                     from dsfforza.convert import dsf_materials as dm
@@ -1103,7 +1103,7 @@ def fit_cameras(manifest: Path | None = None, names: list[str] | None = None, lo
                     jobs.append((name, spool[name], Image(*dm.decode_dds(dds))))
         for name, sid, picture in jobs:
             scene = car_render.load_scene(archive, sid, interior=False)
-            score, cam = car_render.fit_camera(scene, _stock_score(stock_car_mask(picture, backdrop)))
+            score, cam = car_render.fit_camera(scene, _vanilla_score(vanilla_car_mask(picture, backdrop)))
             out.append({"car": name, "spool_id": sid, "score": score, **cam.__dict__})
             log(
                 f"{name} (spool {sid}): IoU {score:.3f}, yaw {cam.yaw:.0f}, pitch {cam.pitch:.0f}, distance {cam.distance:.2f}"
@@ -1186,7 +1186,7 @@ def read_glyphs(fntd: bytes) -> dict[int, list[int]]:
 
 
 def glyph_images(fonts: Path | None = None) -> tuple[Image, dict]:
-    fonts = fonts or stock_file("media/Fonts.fchunk")
+    fonts = fonts or vanilla_file("media/Fonts.fchunk")
     """The vehicles_font texture pages stacked top to bottom (page order), and
     the glyph records (y within its page)."""
     from dsfforza.convert import dsf_materials as dm
@@ -1210,7 +1210,7 @@ def glyph_images(fonts: Path | None = None) -> tuple[Image, dict]:
     return sheet, read_glyphs(fntd)
 
 
-# Stock glyph metrics (vehicles_font, 186 glyphs): maker badges sit on the
+# Vanilla glyph metrics (vehicles_font, 186 glyphs): maker badges sit on the
 # cell's bottom (y offset + h = 99, about 56 x 56), model nameplates are
 # centred on y = 25 (y offset = 25 - h / 2, median 97 x 21, up to 47 high);
 # both are centred across the 99-wide cell. The first ported glyphs were all
@@ -1228,7 +1228,7 @@ def glyph_y(img: Image, h: int) -> int:
 
 # 16-bit glyph codes (confirmed-static, research/gui-assets.md "Unlimited badges
 # and plates"): the font takes any u16 code and several texture pages (record
-# +0x12 = page index), but the stock HUD passes Manufacturer/Model as one byte.
+# +0x12 = page index), but the vanilla HUD passes Manufacturer/Model as one byte.
 # dsfforza.asi [hud] gives each HUD text element a slot code (HUD_SLOT_CODES),
 # copies the 16-bit glyph's record (position, size, offsets, page) over the
 # slot's record in the loaded font and sets the element's text to that one
@@ -1240,7 +1240,7 @@ HUD_SLOT_CODES = (1, 2, 3, 4, 5, 6, 7, 8, 14, 15, 16, 17)  # empty records the p
 
 
 def _font_uid(n: int, used: set) -> bytes:
-    """Texture UID for an extra vehicles_font page: stock-shaped (byte 1 = 0x12,
+    """Texture UID for an extra vehicles_font page: vanilla-shaped (byte 1 = 0x12,
     byte 7 below 0x80) and apart from gui.sp's picture UIDs (byte 3 = 0x7F)."""
     while True:
         uid = bytes([(n << 4) & 0xFF, 0x12, (n >> 4) & 0xFF, 0x7F, 0xF0, 0x5A, 0x2E, 0x2D])
@@ -1286,8 +1286,8 @@ def _shelf_pack(fitted: dict[int, Image], width: int, height: int | None, top: i
 
 def add_glyphs(fonts: Path, out: Path, glyphs: dict[int, Image], textures: dict[bytes, bytes] | None = None) -> dict:
     """Write a copy of Fonts.fchunk whose vehicles_font has `glyphs` (code ->
-    image, at most 98 x 98). Codes below 256 go in new rows under the stock
-    atlas (page 0; the stock DXT blocks are kept, only the new rows are
+    image, at most 98 x 98). Codes below 256 go in new rows under the vanilla
+    atlas (page 0; the vanilla DXT blocks are kept, only the new rows are
     encoded); existing codes are redirected to the new image. Codes from 256
     (WIDE_FIRST) go on extra texture pages the size of page 0, each a new TEXC
     in the font's DRSP with its UID in MDID and in FNTD's page table.
@@ -1318,9 +1318,9 @@ def add_glyphs(fonts: Path, out: Path, glyphs: dict[int, Image], textures: dict[
     height, width = struct.unpack_from("<II", dds, 12)
     pages, count = struct.unpack_from("<II", fntd, 0)
     if pages != 1:
-        raise ValueError(f"vehicles_font has {pages} pages; expected the stock single page")
+        raise ValueError(f"vehicles_font has {pages} pages; expected the vanilla single page")
     records = read_glyphs(fntd)
-    tail = bytes(fntd[0x30 + 20 * count :])  # kerning pairs (none in stock)
+    tail = bytes(fntd[0x30 + 20 * count :])  # kerning pairs (none in vanilla)
     fitted = {
         code: (img if img.w <= CELL - 1 and img.h <= CELL - 1 else img.fit(CELL - 1, CELL - 1))
         for code, img in glyphs.items()
@@ -1328,7 +1328,7 @@ def add_glyphs(fonts: Path, out: Path, glyphs: dict[int, Image], textures: dict[
     narrow = {c: g for c, g in fitted.items() if c < WIDE_FIRST}
     wide = {c: g for c, g in fitted.items() if c >= WIDE_FIRST}
 
-    # Page 0: the stock atlas plus rows below it for one-byte codes.
+    # Page 0: the vanilla atlas plus rows below it for one-byte codes.
     new_height = height
     if narrow:
         placed0, bottom = _shelf_pack(narrow, width, None, height + 1)
@@ -1467,7 +1467,7 @@ def forza_emblem_image(logo: Image, margin: int = 2) -> Image:
 
 
 def add_textures(fonts: Path, out: Path, textures: dict[bytes, bytes]) -> dict:
-    """Write a copy of Fonts.fchunk (stock or already patched) whose
+    """Write a copy of Fonts.fchunk (vanilla or already patched) whose
     vehicles_font package also carries `textures` ({u64 UID: DDS}): a TEXC
     each in its DRSP, UIDs added to MDID. The font doesn't use them (FNTD is
     unchanged); the package just keeps them loaded for the plugin."""
@@ -1509,7 +1509,7 @@ def emblem_dds(ui: ForzaUI, template: bytes | None = None) -> tuple[bytes, Image
 
 
 def read_strings(path: Path | None = None) -> dict[int, str]:
-    path = path or stock_file("Locale/English/global.fchunk")
+    path = path or vanilla_file("Locale/English/global.fchunk")
     with path.open("rb") as stream:
         root = chnk.read_chunk(stream, 0)
         slrr = child(child(root.entries[0], "NONR"), "SLRR")
@@ -1524,7 +1524,7 @@ def read_strings(path: Path | None = None) -> dict[int, str]:
     return out
 
 
-# New strings for ported makers and models: IDs from here up (stock IDs run
+# New strings for ported makers and models: IDs from here up (vanilla IDs run
 # 36190 to 249144 in global.fchunk and loc.sp), "ID:<n>" in vehicleStats.
 FIRST_STRING_ID = 700000
 # One-character strings of the 16-bit badge glyphs, GLYPH_STRING_BASE + code
@@ -1544,7 +1544,7 @@ def add_strings(source: Path, out: Path, texts: dict[int, str]) -> dict:
     """Write a copy of a Locale global.fchunk with `texts` (id -> text) added:
     SLRC gains {byte offset, id} rows (kept sorted by id), SLRS the UTF-16
     texts, SLRH its count; the package is appended and the root row retargeted
-    (append_patch), so no stock byte moves."""
+    (append_patch), so no vanilla byte moves."""
     with source.open("rb") as stream:
         root = chnk.read_chunk(stream, 0)
         index = next(i for i, e in enumerate(root.entries) if e.tag == "SPOO")
@@ -1570,8 +1570,8 @@ def add_strings(source: Path, out: Path, texts: dict[int, str]) -> dict:
     return {"strings": len(texts), "total": len(rows)}
 
 
-def stock_stats() -> dict[int, dict]:
-    """vehicleStats.lua (decompiled stock copy) as {id: {field: value}} (game_data.read_vehiclestats)."""
+def vanilla_stats() -> dict[int, dict]:
+    """vehicleStats.lua (decompiled vanilla copy) as {id: {field: value}} (game_data.read_vehiclestats)."""
     if not VEHICLE_STATS_LUA.exists():
         return {}
     from dsfforza.game import game_data
@@ -1579,11 +1579,11 @@ def stock_stats() -> dict[int, dict]:
     return game_data.read_vehiclestats(VEHICLE_STATS_LUA)
 
 
-def stock_codes(strings: dict[int, str]) -> tuple[dict, dict]:
+def vanilla_codes(strings: dict[int, str]) -> tuple[dict, dict]:
     """({MAKE: (Manufacturer code, ManufacturerName)}, {(MAKE, MODEL): (Model code, ModelName)})
-    from the stock vehicleStats, names upper-cased as the strings are."""
+    from the vanilla vehicleStats, names upper-cased as the strings are."""
     makes, models = {}, {}
-    for fields in stock_stats().values():
+    for fields in vanilla_stats().values():
         try:
             mf_id, mo_id = fields["ManufacturerName"], fields["ModelName"]
             make = strings.get(int(mf_id.split(":")[1]), "").upper()
@@ -1619,12 +1619,12 @@ def forza_car_id(media: str) -> int | None:
 # --- names and glyph codes for a batch -----------------------------------------------------
 #
 # vehicleStats Manufacturer and Model are single characters ("%c") of
-# vehicles_font, so the code space is one byte: 186 stock glyphs, 44 more codes
+# vehicles_font, so the code space is one byte: 186 vanilla glyphs, 44 more codes
 # used so far (FREE, SPARE, 128..159), at most about 28 more among the control
 # codes 1..31 (CONTROL_CODES, untested: the text path may act on them). That
 # is about 70 new glyphs per install however the font grows, so badges are
 # shared per maker, nameplates per name (all the Mustangs' "MUSTANG" family
-# plate when needed), stock badges and plates are reused when DSF has the same
+# plate when needed), vanilla badges and plates are reused when DSF has the same
 # maker or model, and whatever still does not fit gets one shared blank plate
 # (the HUD shows the badge alone, not the host's name).
 
@@ -1708,7 +1708,7 @@ def plan_glyphs(
     """Assign Manufacturer/Model codes. Returns ({media: entry fields},
     {code: Image}, notes). `logos(make)` gives the Forza logo Image or None.
 
-    Stock badges and plates are reused where DSF has the maker or the model
+    Vanilla badges and plates are reused where DSF has the maker or the model
     (or its family) under that maker. New badges are one per maker, new
     plates one per name. When the codes don't cover every new badge and
     plate: plates fall back to family names (Forza List_FamilyModel) where
@@ -1796,7 +1796,7 @@ def plan_glyphs(
                 blanks[kind] = free.pop(0)
                 glyphs[blanks[kind]] = Image(1, 1)
                 glyphs[blanks[kind]].kind = kind
-            else:  # without a field register.lua would fill in a stock one: say blank
+            else:  # without a field register.lua would fill in a vanilla one: say blank
                 blanks[kind] = BLANK_CODE
             notes[f"blank_{kind}_code"] = blanks[kind]
         for media in new_makes[key] if kind == "badge" else plate_cars[key]:
@@ -1811,9 +1811,9 @@ def plan_wide_glyphs(
 ) -> tuple[dict, dict, dict]:
     """16-bit codes for dsfforza.asi [hud]: {media: {ManufacturerGlyph,
     ModelGlyph}}, {code: Image}, notes. Run after plan_glyphs (which sets
-    texts[media]["dsf_make"]). A car whose maker DSF has keeps the stock badge
+    texts[media]["dsf_make"]). A car whose maker DSF has keeps the vanilla badge
     (no ManufacturerGlyph), else one new badge per maker from the Forza logo;
-    a car whose exact model DSF has keeps the stock plate, else one plate per
+    a car whose exact model DSF has keeps the vanilla plate, else one plate per
     name (its full name, no family fallback). No budget: codes from `first`
     up, badges then plates, each sorted by name. Manufacturer/Model from
     plan_glyphs stay as the fallback for a game without the plugin."""
@@ -1945,12 +1945,12 @@ def build(
     """Garage pictures, HUD glyphs and dsfforza\\hud.lua for the cars of a
     src/dsfforza/build/port_car.py manifest. Writes out_dir/gui.sp, out_dir/Fonts.fchunk,
     out_dir/hud.lua and a PNG preview per picture. `wide_glyphs` also gives
-    every car without a stock badge/plate its own 16-bit glyph
+    every car without a vanilla badge/plate its own 16-bit glyph
     (ManufacturerGlyph/ModelGlyph, drawn by dsfforza.asi [hud]; the one-byte
     Manufacturer/Model plan stays as the fallback). Every car also gets
     GarageEmblem = 1 and Fonts.fchunk the Forza emblem texture: with
     dsfforza.asi the garage card shows the Forza logo instead of the SF disc.
-    Every picture is a render of the converted car from the stock pictures'
+    Every picture is a render of the converted car from the vanilla pictures'
     camera (render_car); `thumbnails` takes FH1's own thumbnail where there is one
     instead (sharper, but at eye level and mirrored: gui-assets.md, "Camera").
     `jobs` > 1 renders in that many processes (render_car is the slow step; each
@@ -1966,9 +1966,9 @@ def build(
     archive = archive or Path(manifest).with_suffix(".sp")
     names = names or {}
     strings = read_strings()
-    makes, models = stock_codes(strings)
+    makes, models = vanilla_codes(strings)
     used_codes = set()
-    for fields in stock_stats().values():
+    for fields in vanilla_stats().values():
         for key in ("Manufacturer", "Model"):
             if fields.get(key, "").isdigit():
                 used_codes.add(int(fields[key]))
@@ -1977,9 +1977,9 @@ def build(
         pool = tuple(c for c in pool if c not in HUD_SLOT_CODES)
     free = [c for c in pool if c not in used_codes]
     ui = ForzaUI.of(isos)
-    gui = gui or stock_file("Install/gui.sp")
-    fonts = fonts or stock_file("media/Fonts.fchunk")
-    backdrop = stock_backdrop(gui)
+    gui = gui or vanilla_file("Install/gui.sp")
+    fonts = fonts or vanilla_file("media/Fonts.fchunk")
+    backdrop = vanilla_backdrop(gui)
     with gui.open("rb") as stream:
         template = find_picture(stream, chnk.read_chunk(stream, 0), "nissan_370z")
     texts = car_texts(data["cars"], isos)
@@ -2129,7 +2129,7 @@ def write_locales(out_dir: Path, texts: dict[int, str]) -> dict:
     languages = sorted(p.name for p in locale.iterdir() if (p / "global.fchunk").exists()) if locale.exists() else []
     for lang in languages:
         report[lang] = add_strings(
-            stock_file(f"Locale/{lang}/global.fchunk"), out_dir / "Locale" / lang / "global.fchunk", texts
+            vanilla_file(f"Locale/{lang}/global.fchunk"), out_dir / "Locale" / lang / "global.fchunk", texts
         )
     return report
 
@@ -2150,7 +2150,7 @@ def write_hud_lua(path: Path, hud: dict[int, dict]) -> None:
 
 
 def glyph_test(out_dir: Path, ids: list[int], plates: int = 400, badges: int = 40, fonts: Path | None = None) -> dict:
-    fonts = fonts or stock_file("media/Fonts.fchunk")
+    fonts = fonts or vanilla_file("media/Fonts.fchunk")
     """A stress test for 16-bit codes: a Fonts.fchunk copy with `badges`
     numbered badges ("B1".."Bn") and `plates` numbered nameplates ("P1"
     ..) on extra pages, and a hud.lua giving the cars `ids` codes spread over
@@ -2229,7 +2229,7 @@ def main(argv: list[str] | None = None) -> None:
         "--root-limit",
         type=int,
         default=chnk.ENTRY_LIMIT,
-        help=f"gui.sp root entries before pictures share a SPOI (default {chnk.ENTRY_LIMIT}, the stock "
+        help=f"gui.sp root entries before pictures share a SPOI (default {chnk.ENTRY_LIMIT}, the vanilla "
         "CHNK reader; dsfforza.asi [archive] lifts it, e.g. 16384: one SPOI per picture)",
     )
     b.add_argument("--jobs", type=int, default=1, help="processes for the car renders (default 1)")
@@ -2241,8 +2241,8 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="FH1's own thumbnail where there is one instead of the render (eye level, mirrored)",
     )
-    c = sub.add_parser("camera", help="measure the stock pictures' camera (or FH1 thumbnails') against renders")
-    c.add_argument("--cars", default="", help="comma-separated stock picture names / media names (default: all)")
+    c = sub.add_parser("camera", help="measure the vanilla pictures' camera (or FH1 thumbnails') against renders")
+    c.add_argument("--cars", default="", help="comma-separated vanilla picture names / media names (default: all)")
     c.add_argument("--thumbnails", type=Path, metavar="MANIFEST", help="fit the FH1 thumbnails of these ported cars")
     t = sub.add_parser("glyphtest", help="16-bit glyph stress test: numbered badges and plates, hud.lua for IDs")
     t.add_argument("--out", type=Path, default=Path("out/hud/glyphtest"))
@@ -2253,12 +2253,12 @@ def main(argv: list[str] | None = None) -> None:
     e.add_argument("name")
     e.add_argument("png", type=Path)
     e.add_argument("--gui", type=Path, default=None)
-    tn = sub.add_parser("tone", help="tone of garage pictures' cars: stock picture next to a built one")
+    tn = sub.add_parser("tone", help="tone of garage pictures' cars: vanilla picture next to a built one")
     tn.add_argument(
         "pairs",
         nargs="+",
-        metavar="STOCK=PORTED",
-        help="stock picture name = picture name in --gui, e.g. chevrolet_volt=dsfforza_che_volt_11",
+        metavar="VANILLA=PORTED",
+        help="vanilla picture name = picture name in --gui, e.g. chevrolet_volt=dsfforza_che_volt_11",
     )
     tn.add_argument("--gui", type=Path, required=True, help="a built gui.sp")
     s = sub.add_parser("strings", help="search Locale global.fchunk strings")
@@ -2290,7 +2290,7 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "extract":
         from dsfforza.convert import dsf_materials as dm
 
-        args.gui = args.gui or stock_file("Install/gui.sp")
+        args.gui = args.gui or vanilla_file("Install/gui.sp")
         with args.gui.open("rb") as stream:
             dds = find_picture(stream, chnk.read_chunk(stream, 0), args.name)
         if dds is None:
@@ -2298,12 +2298,12 @@ def main(argv: list[str] | None = None) -> None:
         w, h, px = dm.decode_dds(dds)
         write_png(args.png, w, h, px)
     elif args.cmd == "tone":
-        stock_gui = stock_file("Install/gui.sp")
-        backdrop = stock_backdrop(stock_gui)
+        vanilla_gui = vanilla_file("Install/gui.sp")
+        backdrop = vanilla_backdrop(vanilla_gui)
         print(f"{'':40s} " + " ".join(f"{k:>6s}" for k in TONE_KEYS))
         for pair in args.pairs:
-            stock_name, ported_name = pair.split("=", 1)
-            for gui, name in ((stock_gui, stock_name), (args.gui, ported_name)):
+            vanilla_name, ported_name = pair.split("=", 1)
+            for gui, name in ((vanilla_gui, vanilla_name), (args.gui, ported_name)):
                 img = read_picture(gui, name)
                 if img is None:
                     print(f"{name:40s} not in {gui}")

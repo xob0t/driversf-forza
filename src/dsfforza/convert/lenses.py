@@ -10,7 +10,7 @@ Evo VI's fluted headlamp covers as white frosted plates, the Lotus Carlton's as
 white blobs, the Panoz Esperante GTLM's yellow lexan covers as solid yellow
 (user reports on out/final4).
 
-Stock DSF lamps are opaque Lights texels with the lens pattern painted in, so the
+Vanilla DSF lamps are opaque Lights texels with the lens pattern painted in, so the
 lens keeps its triangles and the atlas gets what Forza shows through it: for each
 lens texel (finest planned LOD), a ray from its point on the lens straight in
 along the lens normal composites the lens over every lens layer behind it and the
@@ -29,7 +29,7 @@ texel).
 Head lamps by day (issue #124) glow from the lamp, not from the lens: clear front lenses
 get a raw glow from the lamp behind them (lens_glow), head lamp surfaces seen directly
 from their own mask (lamp_glow), both shaped by the reflector's depth, and day_glow ranks
-each lamp's raw glow, as a camera straight ahead sees it, onto stock's day-lit head lamps.
+each lamp's raw glow, as a camera straight ahead sees it, onto vanilla's day-lit head lamps.
 
     bake(sections, lods, atlases, lens_ids, car_dir, glow=None) -> report
     glow = new_glow(h, w); lamp_glow(sections, lods, atlases, glow); day_glow(glow, view)
@@ -99,9 +99,9 @@ ROLE_COLOUR = {
 # Head lamps by day (lens_glow, lamp_glow, day_glow; research/lights.md, "Head lamp glow by
 # day"). A Forza lens's alpha is its opacity, not a glow mask, so keeping the lens texel's lamp
 # score made the glow follow the lens: the BMW M3 E30's half-clear round lenses (alpha 126 over
-# an `oldhead` reflector at 255) glowed about 20 and looked unlit by day, where stock round
+# an `oldhead` reflector at 255) glowed about 20 and looked unlit by day, where vanilla round
 # 0x1D lamps glow white. Blending the reflector's glow mask through the lens alone fixed the
-# M3 but made the Lotus Carlton a flat blob: its reflector's mask is 255 everywhere. Stock
+# M3 but made the Lotus Carlton a flat blob: its reflector's mask is 255 everywhere. Vanilla
 # lamps glow from a bulb or reflector hot spot and stay dim at the lens edge. The reflector
 # behind a lens is a bowl, deepest behind the bulb's axis and meeting the lens at its rim (M3
 # E30 48 mm at the centre to 3 mm at the rim, Carlton 95 to 7), so the depth of what each
@@ -118,13 +118,13 @@ GLOW_FLAT = 0.005  # m: a lamp shallower than this is flat (its mask alone)
 GLOW_MIN_SAMPLES = 50  # fewer visible samples of a lamp (about 12 cm2): its converted alpha, as before
 GLOW_MIN_SHARE = 0.1  # a lens with less of its texels over a lamp keeps its score
 # The rim of a lamp (front view) fades in over this share of its edge-to-middle distance. The
-# stock 0x1D lamps' visible alpha by thirds of that distance, outer to inner, is median 32 / 88
+# vanilla 0x1D lamps' visible alpha by thirds of that distance, outer to inner, is median 32 / 88
 # / 131; without the fade the ports' was 50 / 71 / 101 (the depth of a box reflector like the
 # Carlton's stays high out to the lens edge), 0.4 brings six of them to 18-37 / 77-101 / 125-171.
 GLOW_RIM = 0.4
 GLOW_SHARED = 0.01  # m: a texel whose surfaces lie further apart than this has no one place
-# Stock DSF day-lit head lamps (type 0x1D) seen from straight ahead: the visible white lamp
-# texels' alpha at dsf_materials.LAMP_PERCENTILES, pooled over the 32 stock vehicles that have
+# Vanilla DSF day-lit head lamps (type 0x1D) seen from straight ahead: the visible white lamp
+# texels' alpha at dsf_materials.LAMP_PERCENTILES, pooled over the 32 vanilla vehicles that have
 # them (out/dayglow/dsffront.py on the full entries; per-vehicle mean p10/50/90 41/74/102).
 DAY_HEAD_ALPHA = (0, 0, 5, 14, 24, 37, 55, 74, 97, 135, 157, 180, 199, 215, 235, 247, 254, 255, 255)
 
@@ -540,10 +540,10 @@ def day_glow(glow: np.ndarray, view) -> np.ndarray | None:
     view's origin x, y and step in metres).
 
     Each lamp's rim as the camera sees it fades out: a texel GLOW_RIM or less of the way from
-    the lamp's edge to its middle has its raw glow scaled down to 0 at the edge (stock lamps
+    the lamp's edge to its middle has its raw glow scaled down to 0 at the edge (vanilla lamps
     are dark at the rim). Then per lamp each value's rank among the lamp's visible samples
-    goes onto stock's day-lit head lamp alpha (DAY_HEAD_ALPHA). So every head lamp glows as
-    much as stock's, brightest where Forza's light and the reflector's shape are, and a bumper
+    goes onto vanilla's day-lit head lamp alpha (DAY_HEAD_ALPHA). So every head lamp glows as
+    much as vanilla's, brightest where Forza's light and the reflector's shape are, and a bumper
     lamp doesn't push the main lamps down; raw 0 (a lens over a dark housing) stays 0. Lamps
     with fewer than GLOW_MIN_SAMPLES visible samples keep NaN (hidden reflectors behind a lens;
     the converted alpha). None when no lamp is mapped."""
@@ -791,7 +791,7 @@ def bake(
             # (dsf_materials.lamp_score: alpha x (0.6 + 0.4 x brightest channel)) is the lens
             # texel's own. Blending in the reflector's glow mask too gave the Subaru WRX STI's
             # flat red tail lens (85% opaque) blotches of 7 to 32 when lit: the car's red
-            # curve stretches small differences over stock's whole range.
+            # curve stretches small differences over vanilla's whole range.
             baked[:, 3] = lens_rgba[:, 3] * _weight(lens_rgba) / _weight(baked)
         else:
             # A cover has no glow of its own: the lamp behind glows through it. Forza's lamp

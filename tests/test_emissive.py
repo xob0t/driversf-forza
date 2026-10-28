@@ -1,4 +1,4 @@
-"""Things that glow or are too bright on converted cars: paint brighter than any stock
+"""Things that glow or are too bright on converted cars: paint brighter than any vanilla
 paint, livery decal slots drawn from the car atlases."""
 
 from __future__ import annotations
@@ -24,9 +24,9 @@ def _entry(c2, c3, power, bias=0.01, metallic=True):
     }
 
 
-# A small stock set: the security van's yellow (the S5S Raptor's template), a flat grey
-# with bright rims (the brightest stock kind) and a white with a dark edge tint.
-STOCK = [
+# A small vanilla set: the security van's yellow (the S5S Raptor's template), a flat grey
+# with bright rims (the brightest vanilla kind) and a white with a dark edge tint.
+VANILLA = [
     {"sid": 301, "params": _entry((0.567, 0.302, 0.032), (0.267, 0.125, 0.045), 1.0)},
     {"sid": 136, "params": _entry((0.384, 0.384, 0.384), (0.789, 0.789, 0.789), 15.0)},
     {"sid": 176, "params": _entry((0.899, 0.974, 1.0), (0.02, 0.023, 0.024), 0.1)},
@@ -34,12 +34,12 @@ STOCK = [
 
 
 class PaintBrightness(unittest.TestCase):
-    def test_too_bright_colour_is_dimmed_to_stock(self):
+    def test_too_bright_colour_is_dimmed_to_vanilla(self):
         # FH1 S5S Raptor: #ffbf19 metallic, linear (1.0, 0.52, 0.01) on the van's yellow.
-        q = paint.shade(paint.ForzaColour(1, (0xFF, 0xBF, 0x19), True, "Yellow"), STOCK)
+        q = paint.shade(paint.ForzaColour(1, (0xFF, 0xBF, 0x19), True, "Yellow"), VANILLA)
         self.assertEqual(q["_template"], 301)
         self.assertLess(q["_dimmed"], 0.8)
-        cap = paint.brightness_cap(STOCK)
+        cap = paint.brightness_cap(VANILLA)
         for got, limit in zip(paint.brightness(q), cap):
             self.assertLessEqual(got, limit + 1e-6)
         # hue kept: both colours scaled alike
@@ -47,7 +47,7 @@ class PaintBrightness(unittest.TestCase):
         self.assertAlmostEqual(c2[1] / c2[0], paint.srgb_to_linear(0xBF / 255), places=3)
 
     def test_ordinary_colour_untouched(self):
-        q = paint.shade(paint.ForzaColour(1, (0xF5, 0xF5, 0xF5), True, "White"), STOCK)
+        q = paint.shade(paint.ForzaColour(1, (0xF5, 0xF5, 0xF5), True, "White"), VANILLA)
         self.assertEqual(q["_dimmed"], 1.0)
         self.assertAlmostEqual(q["g_vec3TintColour2"][0], paint.srgb_to_linear(0xF5 / 255), places=4)
 
@@ -64,16 +64,16 @@ class LiveryDecals(unittest.TestCase):
 
 
 class RedLensScale(unittest.TestCase):
-    """A car whose visible red lamp surface is brighter than stock's visible median is
+    """A car whose visible red lamp surface is brighter than vanilla's visible median is
     darkened to it; darker ones are left alone (never brightened)."""
 
     def test_bright_flat_lens_darkened(self):
         from dsfforza.convert import dsf_materials as dm
 
         k = dm.red_lens_scale([177] * 1000)  # the TT RS's tail lens
-        self.assertAlmostEqual(dm._shared_lens(177) * k, dm.VISIBLE_RED_STOCK_MEDIAN, places=3)
+        self.assertAlmostEqual(dm._shared_lens(177) * k, dm.VISIBLE_RED_VANILLA_MEDIAN, places=3)
         r, _g, _b, _ = dm.matched_lamp_texel(177, 0, 0, 200, None, k)
-        self.assertEqual(r, dm.VISIBLE_RED_STOCK_MEDIAN)
+        self.assertEqual(r, dm.VISIBLE_RED_VANILLA_MEDIAN)
 
     def test_dark_lens_untouched(self):
         from dsfforza.convert import dsf_materials as dm
@@ -139,7 +139,7 @@ class RedLensScale(unittest.TestCase):
 
 
 class WhiteLensScale(unittest.TestCase):
-    """Head lamps whose visible white surface is brighter than stock's visible median are
+    """Head lamps whose visible white surface is brighter than vanilla's visible median are
     darkened to it (issue #115: the Lotus Carlton's lit head lamps were white blobs by day);
     darker ones and other hues are left alone."""
 
@@ -147,7 +147,7 @@ class WhiteLensScale(unittest.TestCase):
         from dsfforza.convert import dsf_materials as dm
 
         k = dm.white_lens_scale([208] * 1000)  # the Carlton's baked head lamp lens
-        self.assertAlmostEqual(208 * k, dm.VISIBLE_WHITE_STOCK_MEDIAN, places=3)
+        self.assertAlmostEqual(208 * k, dm.VISIBLE_WHITE_VANILLA_MEDIAN, places=3)
         r, g, b, a = dm.matched_lamp_texel(208, 208, 210, 150, None, None, k)
         self.assertEqual((r, g, b), (137, 137, 138))
         self.assertEqual(a, dm.matched_lamp_alpha(208, 208, 210, 150))  # the glow is the original texel's

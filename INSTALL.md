@@ -48,7 +48,7 @@ checked against its SHA-256 (they are not in the zip):
 
 | File | Change |
 | --- | --- |
-| `Install\dngvehicles.sp` | the vehicle archive with the new cars added (the stock cars are unchanged) |
+| `Install\dngvehicles.sp` | the vehicle archive with the new cars added (the vanilla cars are unchanged) |
 | `Install\gui.sp` | garage pictures for the new cars added |
 | `media\Fonts.fchunk` | new maker badges and model nameplates added to the HUD font |
 | `Locale\<language>\global.fchunk` | the new cars' maker and model names |
@@ -117,7 +117,7 @@ The installer copies your save folder first (step 3). Then:
 
 - The plugin keeps the flags of the added cars (unlocked, owned, new, driven)
   in a second file next to the save, `dsfforza-garage.dat`, written whenever
-  the game saves. `autosave.dat` keeps exactly the stock layout: the game
+  the game saves. `autosave.dat` keeps exactly the vanilla layout: the game
   without the plugin (or after an uninstall) loads it as before, and the added
   cars are simply gone.
 - `dsfforza-garage.dat` stays when you uninstall. It does nothing without the
@@ -126,7 +126,7 @@ The installer copies your save folder first (step 3). Then:
 - By default the mod marks each new garage car unlocked and owned on every
   game start (`dsfforza\config.lua`, `writeProfile`); the game shows a "new
   vehicle" notice once per car. `--no-write-profile` leaves that out: then
-  you buy the new cars in the garage like stock cars.
+  you buy the new cars in the garage like vanilla cars.
 
 ## Known limitations
 
@@ -135,15 +135,15 @@ The installer copies your save folder first (step 3). Then:
     the city, so they appear among traffic now and then, not in every street.
   - With more than 24 added cars, each car is placed in only some districts.
 - **Sound, collision and handling base:**
-  - Each new car is built on a similar stock car, its host, and keeps the
+  - Each new car is built on a similar vanilla car, its host, and keeps the
     host's crash physics shape and some handling settings. The engine sound
     is the Forza car's own where its sound bank is on your discs.
   - A Forza car that DSF also has (370Z, Skyline, Camaro and others) uses
-    that stock car's handling.
+    that vanilla car's handling.
 - **Damage:**
-  - Cars crumple panel by panel like stock cars.
+  - Cars crumple panel by panel like vanilla cars.
   - Some FM4 cars and some hosts can't be converted with damage. Those are
-    built without stock-like damage, and the build report says so.
+    built without vanilla-like damage, and the build report says so.
 - **Interiors:**
   - The cockpit view uses the Forza cockpit.
   - A few cars have no usable steering wheel model. They keep the host's

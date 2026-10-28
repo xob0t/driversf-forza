@@ -5,13 +5,13 @@ badges: port_batch.finish) redoes only what changed since an earlier build
 A build's pack record, <build>/pack/pack.json, holds:
 
 - "settings": what shapes the pack besides the cars: the ID policy, the root entry limit,
-  --gui, --wide-glyphs, the disc images and the stock archive's digest;
+  --gui, --wide-glyphs, the disc images and the vanilla archive's digest;
 - "cars": [media, key] in the merge's input order. A car's key is the SHA-256 of its
   chunk (work/<media>.chnk) with its report's entry, host, game and spool IDs;
   "chunks" keeps each chunk's digest with its file's identity (file ID, size, mtime), so
   a hard-linked chunk (port_batch --reuse) isn't read again;
 - "fingerprint": what the pack read and which code it ran, in this process, the lint
-  processes and the render processes (src/dsfforza/build/fingerprint.py): the stock
+  processes and the render processes (src/dsfforza/build/fingerprint.py): the vanilla
   archive, the game's gui.sp, Fonts.fchunk and locale files, the disc images, string
   tables, and the package's code units;
 - "lint": per car its key, its upvh lint result and the facts that tie the result to
@@ -103,7 +103,7 @@ def settings_of(args, dsf: Path, root_limit: int, isos: list[Path]) -> dict:
         "gui": bool(getattr(args, "gui", False)),
         "wide_glyphs": bool(getattr(args, "wide_glyphs", False)),
         "isos": [fingerprint.norm(p) for p in isos],
-        "stock": fingerprint.file_digest(fingerprint.norm(dsf)),
+        "vanilla": fingerprint.file_digest(fingerprint.norm(dsf)),
     }
 
 
@@ -131,7 +131,7 @@ def same_folder(a: Path, b: Path) -> bool:
 def moved_inputs(fp: dict, checker: fingerprint.Checker, game_dir: Path | None) -> dict[str, str]:
     r"""{recorded path: where the same file is now} for the files a pack read in the game
     folder `game_dir`: the game's own <game>\X before a dsfforza install, its backup
-    <game>\dsfforza-backup\X after (gui_assets.stock_file reads the backup while an
+    <game>\dsfforza-backup\X after (gui_assets.vanilla_file reads the backup while an
     install is in place), and back after an uninstall. Without a game folder: none."""
     from dsfforza.game import game_paths
 
@@ -183,7 +183,7 @@ class PackReuse:
     """The pack's reuse of earlier builds' packs (see the module docstring)."""
 
     def __init__(self, out_dir: Path, sources: list[Path], settings: dict, log=print, game_dir: Path | None = None):
-        """`game_dir`: the game folder the build reads its stock files from (moved_inputs)."""
+        """`game_dir`: the game folder the build reads its vanilla files from (moved_inputs)."""
         self.out_dir = Path(out_dir)
         self.game_dir = Path(game_dir) if game_dir is not None else None
         self.settings = settings

@@ -33,7 +33,7 @@ def test_glyph_strings_match_the_plugin():
     base = int(re.search(r"kGlyphStringBase = (\d+);", MOD_HUD).group(1))
     assert base == g.GLYPH_STRING_BASE
     assert g.glyph_strings([0x100, 0x2FB]) == {base + 0x100: "Ā", base + 0x2FB: "˻"}
-    # Not in the range of the stock strings or of the new name strings.
+    # Not in the range of the vanilla strings or of the new name strings.
     assert g.GLYPH_STRING_BASE > g.FIRST_STRING_ID + 50000
 
 

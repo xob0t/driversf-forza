@@ -26,7 +26,7 @@ class Stand:
     """Stand-ins for the merge, upvh lint and gui_assets.build, with what each was asked.
 
     A car's chunk is JSON: the UIDs it defines and references, its sound IDs, a version.
-    The "archive" is the stock file plus every chunk, one per line. A car's lint fails
+    The "archive" is the vanilla file plus every chunk, one per line. A car's lint fails
     when another car in the archive defines a UID it references but doesn't define, or
     shares a sound ID with it (the cross-vehicle checks of upvh lint)."""
 
@@ -153,7 +153,7 @@ def pack(root: Path, name: str, results: dict, sources=(), reuse=True, stand=Non
     out = root / name
     out.mkdir(parents=True, exist_ok=True)
     args = args_for(root / "game.iso")
-    dsf = root / "stock.sp"
+    dsf = root / "vanilla.sp"
     p = None
     if reuse:
         settings = pack_reuse.settings_of(args, dsf, 3003, [root / "game.iso"])
@@ -192,7 +192,7 @@ class Patched:
 
 
 def setup(root: Path) -> dict[str, dict]:
-    (root / "stock.sp").write_bytes(b"STOCK")
+    (root / "vanilla.sp").write_bytes(b"VANILLA")
     (root / "game.iso").write_bytes(b"ISO")
     return make_cars(root / "work")
 
@@ -284,7 +284,7 @@ def test_other_settings_inputs_or_a_changed_output_mean_a_full_pack():
         results = setup(root)
         with Patched(Stand(root / "work")) as stand:
             pack(root, "a", results)
-            (root / "stock.sp").write_bytes(b"STOCK2")  # in the settings (its digest)
+            (root / "vanilla.sp").write_bytes(b"VANILLA2")  # in the settings (its digest)
             stand.rendered.clear()
             pack(root, "b", results, sources=["a"])
             assert len(stand.rendered) == 4 and stand.merged == 2
@@ -342,12 +342,12 @@ def test_game_files_read_from_the_backup_after_an_install_are_the_same_inputs():
     with tempfile.TemporaryDirectory() as tmp:
         game = Path(tmp)
         (game / "Install").mkdir()
-        (game / "Install" / "gui.sp").write_bytes(b"stock gui")
+        (game / "Install" / "gui.sp").write_bytes(b"vanilla gui")
         gui = game / "Install" / "gui.sp"
         fp = {"files": {fingerprint.norm(gui): fingerprint.file_digest(gui)}}
-        # An install: the stock file moves to the backup, the game gets ours.
+        # An install: the vanilla file moves to the backup, the game gets ours.
         (game / game_paths.BACKUP / "Install").mkdir(parents=True)
-        (game / game_paths.BACKUP / "Install" / "gui.sp").write_bytes(b"stock gui")
+        (game / game_paths.BACKUP / "Install" / "gui.sp").write_bytes(b"vanilla gui")
         gui.write_bytes(b"our gui")
         checker = fingerprint.Checker()
         assert pack_reuse.moved_inputs(fp, checker, None) == {}  # no game folder: nothing moved

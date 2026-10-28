@@ -125,8 +125,8 @@ static void lua_heap_test()
     typedef void*(__cdecl * AllocFn)(void* ud, void* ptr, size_t osize, size_t nsize);
     static void* mgr[8];
     unsigned saved_mgr = *(unsigned*)0x012536AC;
-    BYTE saved_stock[5];
-    memcpy(saved_stock, (void*)0x005E4AB0, 5);
+    BYTE saved_vanilla[5];
+    memcpy(saved_vanilla, (void*)0x005E4AB0, 5);
     *(BYTE*)0x005E4AB0 = 0xE9;   // the game's allocator -> the stand-in
     *(int*)0x005E4AB1 = (int)((size_t)fake_arena_alloc - (0x005E4AB0 + 5));
     *(unsigned*)(g_arena + 4) = sizeof g_arena;   // arena header: +4 size
@@ -166,7 +166,7 @@ static void lua_heap_test()
     void* again = alloc(nullptr, nullptr, 0, 1024);   // the arena has room again
     CHECK(again && in_arena(again));
     alloc(nullptr, again, 1024, 0);
-    memcpy((void*)0x005E4AB0, saved_stock, 5);
+    memcpy((void*)0x005E4AB0, saved_vanilla, 5);
     *(unsigned*)0x012536AC = saved_mgr;
 }
 
@@ -205,11 +205,11 @@ static int mismatch_test()
 #undef DSF_MODULE
     CHECK(*(BYTE*)0x008FB340 == 0x8B && *(BYTE*)0x008FBE90 == 0x53);    // archive: no site replaced
     CHECK(*(BYTE*)0x0085A9B2 == 0xEB);                                 // large_files is its own patch
-    CHECK(*(unsigned*)(0x006C7D90 + 1) == 0x3728);                     // garage object size stock
-    CHECK(*(unsigned*)(0x006C54C2 + 2) == 0x20FC && *(unsigned*)(0x006C57F3 + 2) == 0x31DC);  // groups stock
+    CHECK(*(unsigned*)(0x006C7D90 + 1) == 0x3728);                     // garage object size vanilla
+    CHECK(*(unsigned*)(0x006C54C2 + 2) == 0x20FC && *(unsigned*)(0x006C57F3 + 2) == 0x31DC);  // groups vanilla
     CHECK(*(unsigned*)0x00E18B1C != 0x006C55A0);                       // big groups are their own set
     CHECK(*(unsigned*)(0x006C587C + 2) == 1000);                       // the list patch still applies
-    CHECK(*(int*)0x0070D72B == (int)(0x00ADA7F0 - 0x0070D72F));        // hud: picture-slot calls stock
+    CHECK(*(int*)0x0070D72B == (int)(0x00ADA7F0 - 0x0070D72F));        // hud: picture-slot calls vanilla
     CHECK(*(BYTE*)0x006C6855 == 0xE8 && *(int*)0x006C6856 != (int)(0x006C40C0 - 0x006C685A));  // text sites on
     printf("%s (%d failures, changed sites)\n", failures ? "FAILED" : "ok", failures);
     return failures ? 1 : 0;
@@ -237,13 +237,13 @@ int main(int argc, char** argv)
     SlotFn slot = (SlotFn)0x00507CF0;
     TestFn test = (TestFn)0x00507D30;
     int* a = slot(list, nullptr, 100);
-    CHECK(a == list + 0x38 / 4 && a[0] == 100);           // stock ID: stock list, first slot
+    CHECK(a == list + 0x38 / 4 && a[0] == 100);           // vanilla ID: vanilla list, first slot
     int* b = slot(list, nullptr, 500);
     CHECK(b && (b < list || b >= list + sizeof list / 4) && b[0] == 500);  // added ID: outside the block
     b[1] |= 2;
     CHECK(test(list, nullptr, 500, 1) == 1 && test(list, nullptr, 500, 0) == 0);
     CHECK(slot(list, nullptr, 500) == b);
-    int* c = slot(list, nullptr, 310);                   // legacy entry already in the stock list wins
+    int* c = slot(list, nullptr, 310);                   // legacy entry already in the vanilla list wins
     CHECK(c != nullptr);
     list[0x38 / 4 + 2 * 5] = 320; list[0x38 / 4 + 2 * 5 + 1] = 1;
     CHECK(slot(list, nullptr, 320) == list + 0x38 / 4 + 10 && test(list, nullptr, 320, 0) == 1);
@@ -252,7 +252,7 @@ int main(int argc, char** argv)
     CHECK(test(list, nullptr, 8000000 + 0x1000 + 41, 0) == 1);
     CHECK(test(list, nullptr, 8000000 + 0x2000 + 999, 0) == 1);
     CHECK(test(list, nullptr, 8000000 + 0x2000 + 1000, 0) == 0);
-    // Full stock list: a scratch slot instead of a NULL write.
+    // Full vanilla list: a scratch slot instead of a NULL write.
     for (int i = 0; i < 0x130; i++) list[0x38 / 4 + 2 * i] = 1000 + i;
     int* d = slot(list, nullptr, 50);
     CHECK(d != nullptr && d[0] == 50);
@@ -266,7 +266,7 @@ int main(int argc, char** argv)
     int* o2 = owned(stats, nullptr, 700);
     CHECK(o2 && (o2 < stats || o2 >= stats + sizeof stats / 4) && *o2 == 700);
 
-    // Take-a-ride setter (FUN_0050A170, no side effects): stock bit, extended bit, dropped.
+    // Take-a-ride setter (FUN_0050A170, no side effects): vanilla bit, extended bit, dropped.
     memset(stats, 0, sizeof stats);
     SetFn ride = (SetFn)0x0050A170;
     ride(stats, nullptr, 33);
@@ -324,7 +324,7 @@ int main(int argc, char** argv)
         LoadFn load = (LoadFn)0x0059B6D0;
         FindFn find = (FindFn)0x0059B5A0;
         load(provider, nullptr, reader, 0);
-        CHECK(*(unsigned*)(provider + 0x2260) == 1100);                        // inline part as stock sees it
+        CHECK(*(unsigned*)(provider + 0x2260) == 1100);                        // inline part as vanilla sees it
         CHECK(find(provider, nullptr, 0x1000 + 1400, 0x2D00AA00) == 1400);      // past 1100: the side list
         CHECK(find(provider, nullptr, 0x1000 + 7, 0x2D00AA00) == 7);
         CHECK(find(provider, nullptr, 0x9999, 0x2D00AA00) == 0xFFFF);
@@ -340,7 +340,7 @@ int main(int argc, char** argv)
     CHECK(*(BYTE*)0x007118AA == 0x90 && *(BYTE*)0x007118AC == 0x90 && *(BYTE*)0x007118AD == 0x74);
     CHECK(*(BYTE*)0x0070D72A == 0xE8 && *(int*)0x0070D72B != (int)(0x00ADA7F0 - 0x0070D72F));
     // The text length check of FUN_007215E0: a lone slot code keeps its length,
-    // other strings of bytes up to 0x20 are empty as stock.
+    // other strings of bytes up to 0x20 are empty as vanilla.
     CHECK(*(BYTE*)0x007216BE == 0xE9 && *(BYTE*)0x0072487A == 0xE9);
     CHECK(text_len("\x01") == 2 && text_len("\x0F") == 2 && text_len("A") == 2 && text_len("AB") == 3);
     CHECK(text_len("\x10") == 2 && text_len("\x11") == 2);

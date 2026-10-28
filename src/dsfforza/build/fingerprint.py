@@ -7,7 +7,7 @@ A worker records, while it converts one car:
 - every file it opens for reading (an audit hook on "open" and "sqlite3.connect"),
   except Python's own files and this package's sources, with a digest: SHA-256 for
   files up to 64 MiB, else size, mtime and the SHA-256 of the first and last 4 MiB
-  (the stock archive, the disc images);
+  (the vanilla archive, the disc images);
 - every directory it lists (os.listdir, os.scandir), as a digest of the names;
 - the code it ran (sys.monitoring PY_START, each code object once), as units of
   the package's modules: a function or method body, a class body without its
@@ -480,7 +480,7 @@ class Checker:
         return self._dirs[path]
 
     def moved(self, fp: dict, job: dict) -> dict[str, str]:
-        r"""{the recorded stock archive path: the job's} when the job reads the stock archive
+        r"""{the recorded vanilla archive path: the job's} when the job reads the vanilla archive
         from another place but it has the same digest. dsff install builds from the game's
         Install\dngvehicles.sp the first time and from the install's backup of it
         (dsfforza-backup\Install\dngvehicles.sp; tools/install.ps1 copies it with its
@@ -495,7 +495,7 @@ class Checker:
         """None when nothing the fingerprint recorded changed, else the first reason.
         job None: don't compare the job (a first try, whose options were the job's
         before the fallback); code False: don't compare the code (--trust-code).
-        moved: recorded input paths read from elsewhere now (default: the stock archive
+        moved: recorded input paths read from elsewhere now (default: the vanilla archive
         when it moved with the same digest, see `moved`)."""
         if fp.get("format") != FORMAT:
             return "no fingerprint of this format"

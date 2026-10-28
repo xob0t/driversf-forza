@@ -1,7 +1,7 @@
 """Live digital displays in the cockpit view, through DSF's own digital dials.
 
 Driver: San Francisco has a live digital-dashboard path of its own, used by 14
-stock interiors (Volt, LP670, Alfa 8C, ...; research/cockpit.md, "Digital
+vanilla interiors (Volt, LP670, Alfa 8C, ...; research/cockpit.md, "Digital
 displays"): materials `*_Digital_Dials.matxml` whose vertex shader adds
 `g_fDigiData[(id - 1) * 4 + comp]` to the vertex's v texture coordinate. The
 vertex format is the needles' (DashboardInstrument (u, v, id, comp)), and the
@@ -29,11 +29,11 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-# The stock Volt's digital material (entry 148, Chevrolet_Volt_2011_Digital_Dials.matxml):
+# The vanilla Volt's digital material (entry 148, Chevrolet_Volt_2011_Digital_Dials.matxml):
 # alpha test 0.5, g_texDiffuseMap b012ecfc52fb762a. Its submodel sits in the
 # interior's needle part with MODL flag 1, in a needle-layout buffer.
-STOCK_MATERIAL = bytes.fromhex("e012cc80f0aa8829")
-STOCK_TEXTURE = bytes.fromhex("b012ecfc52fb762a")
+VANILLA_MATERIAL = bytes.fromhex("e012cc80f0aa8829")
+VANILLA_TEXTURE = bytes.fromhex("b012ecfc52fb762a")
 MODL_FLAG = 1
 
 RPM = (1, 0)  # (id, comp): rpm / redline x 0.5
@@ -82,7 +82,7 @@ class DigitalPlan:
 
 
 def dxt5_dds(width: int, height: int, rgba: bytes | bytearray, template: bytes | None = None) -> bytes:
-    """A single-mip DXT5 DDS (the stock digital textures are DXT5/DXT1; a single
+    """A single-mip DXT5 DDS (the vanilla digital textures are DXT5/DXT1; a single
     mip is never dropped by the texture-quality setting and keeps the cells and
     bar columns from bleeding into each other)."""
     from dsfforza.convert import dsf_materials as dm
@@ -90,17 +90,17 @@ def dxt5_dds(width: int, height: int, rgba: bytes | bytearray, template: bytes |
     return dm.dds_file(rgba, width, height, 1, template)
 
 
-STOCK_STRIDE = 16  # the Volt's digital buffer: s0 position 4 x i16, s8 4 x f16 (u, v, id, comp)
+VANILLA_STRIDE = 16  # the Volt's digital buffer: s0 position 4 x i16, s8 4 x f16 (u, v, id, comp)
 
-_STOCK: dict = {}
-_STOCK_VB: dict = {}
+_VANILLA: dict = {}
+_VANILLA_VB: dict = {}
 
 
-def stock_buffer(stream):
-    """The VXCK the stock Volt draws its digital dials from: its vertex declaration
+def vanilla_buffer(stream):
+    """The VXCK the vanilla Volt draws its digital dials from: its vertex declaration
     (no normal) is the one the digital-dials shaders are drawn with."""
     key = id(stream)
-    if key not in _STOCK_VB:
+    if key not in _VANILLA_VB:
         from dsfforza.convert import dsf_materials as dm
         from dsfforza.formats import chnk
         from dsfforza.formats.vehicle_mesh import child
@@ -111,7 +111,7 @@ def stock_buffer(stream):
             for _, c in chnk.walk([e]):
                 if c.tag == "SBMC" and c.is_chunk:
                     d = dm.current(stream, child(c, "SBBH"))
-                    if d[8:16] == STOCK_MATERIAL:
+                    if d[8:16] == VANILLA_MATERIAL:
                         vb = d[16:24]
             if vb is not None:
                 for _, c in chnk.walk([e]):
@@ -119,15 +119,15 @@ def stock_buffer(stream):
                         found = c
                 break
         if found is None:
-            raise ValueError("the stock Volt's digital-dials buffer is not in the source archive")
-        _STOCK_VB[key] = found
-    return _STOCK_VB[key]
+            raise ValueError("the vanilla Volt's digital-dials buffer is not in the source archive")
+        _VANILLA_VB[key] = found
+    return _VANILLA_VB[key]
 
 
-def stock_material(stream):
-    """The stock Volt digital MACO (Entry) and its TEXC, from the source archive."""
+def vanilla_material(stream):
+    """The vanilla Volt digital MACO (Entry) and its TEXC, from the source archive."""
     key = id(stream)
-    if key not in _STOCK:
+    if key not in _VANILLA:
         from dsfforza.convert import dsf_materials as dm
         from dsfforza.formats import chnk
 
@@ -135,15 +135,15 @@ def stock_material(stream):
         found = None
         for e in root.entries:
             for _, c in chnk.walk([e]):
-                if c.tag == "MACO" and c.is_chunk and dm.material_info(stream, c)["uid"] == STOCK_MATERIAL:
+                if c.tag == "MACO" and c.is_chunk and dm.material_info(stream, c)["uid"] == VANILLA_MATERIAL:
                     found = c
                     break
             if found is not None:
                 break
         if found is None:
-            raise ValueError("stock digital material e012cc80f0aa8829 (Volt) not in the source archive")
-        _STOCK[key] = found
-    return _STOCK[key]
+            raise ValueError("vanilla digital material e012cc80f0aa8829 (Volt) not in the source archive")
+        _VANILLA[key] = found
+    return _VANILLA[key]
 
 
 def vertices(plan: DigitalPlan, place, stride: int) -> tuple[list[bytes], list[tuple[int, int, int]]]:

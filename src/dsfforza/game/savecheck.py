@@ -2,7 +2,7 @@
 
     uv run dsff savecheck <savegames folder or autosave.dat> [--ids 305,500]
 
-Checks the stock block (size, ten guard words, version) and lists what it
+Checks the vanilla block (size, ten guard words, version) and lists what it
 holds for vehicles: the 304-slot {id, flags} list, the four 320-bit arrays and
 the 304-slot owned list, flagging any ID of 304 and up (dsfforza.asi never
 writes those into the block; older test saves may have some). Then lists the

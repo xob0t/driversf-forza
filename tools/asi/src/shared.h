@@ -3,7 +3,7 @@
 #pragma once
 
 // mod_garage: the number of car cards the vehicles screen's car list fills at
-// most for the group it shows (stock 20; 19 while a group of 20 or more cars
+// most for the group it shows (vanilla 20; 19 while a group of 20 or more cars
 // is shown through a window, which keeps card 20's Header_Sprite_20 free).
 int garage_card_limit();
 

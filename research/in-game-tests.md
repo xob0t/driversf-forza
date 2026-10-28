@@ -4,7 +4,7 @@ Updated: 2026-10-26
 
 Runs up to 2026-10-22 used the persistent Windows Sandbox harness in
 `tools/wsb/` (see the README); later ones run on the host (`-OnHost`) or in
-the headless VM (`-Vm`), both below. All of them: the stock game folder
+the headless VM (`-Vm`), both below. All of them: the vanilla game folder
 mapped read-only, DriverNGHook 0.7.2, the
 probe in `tools/game/lua/`, and the player's own save. Run folders are under
 `%LOCALAPPDATA%\Temp\dsfforza-wsb\runs\`.
@@ -83,7 +83,7 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
   `run-test.ps1` runs with its defaults: `C:\Repo` (repo, read-only),
   `C:\Output` (`%LOCALAPPDATA%\Temp\dsfforza-wsb`, read-write), `C:\Profile`
   (Documents\Ubisoft\Driver San Francisco, read-only). `C:\Game` is a local
-  copy of the game folder (share `Game`, read-only), put back to stock from
+  copy of the game folder (share `Game`, read-only), put back to vanilla from
   `dsfforza-backup\install.json`: replaced files restored and hash-checked,
   created ones dropped. Re-run `setup-vm.ps1 -Phase Game` (through `vm.ps1
   Exec`) after changing the host install. `dsf_enhanced.asi` and `.ini` don't
@@ -170,7 +170,7 @@ the missing MAC don't matter; the clone gets new UUIDs at its first power-on.
 - **Game files in VM runs** (2026-10-26, issue #59): `C:\Game` is the host
   game folder as of provisioning (VM 1's snapshot `clean`, 2026-10-24 02:07),
   so its `dsf_enhanced.asi` (SHA-256 `1ADDEC5C...`) was a build without the
-  fix for "Crashes while the world loads". Stock series without `-Override`
+  fix for "Crashes while the world loads". Vanilla series without `-Override`
   hit that crash in about half the runs (`vm2-20261026-112701`). Now each
   `-Vm` run copies the host's current `dsf_enhanced.asi` and `.ini` into its
   run folder (`host-game\`), and `run-test.ps1 -GameRootFrom` puts them over
@@ -180,10 +180,10 @@ the missing MAC don't matter; the clone gets new UUIDs at its first power-on.
   warns once per series if one differs from the host's (then run `-Phase
   Game`). Retaking the snapshot wasn't needed: apart from `dsf_enhanced.asi`,
   the host files changed since then are the dsfforza install's, which
-  `-Phase Game` puts back to stock anyway.
+  `-Phase Game` puts back to vanilla anyway.
 - **Checked** (2026-10-26, host `dsf_enhanced.asi` `BF829B28...` from
   dsf_enhanced main `e9c3ba0`; its log says "legal screen skipped; kept 17
-  pending resource references"): 12 stock runs without `-Override` (IDs
+  pending resource references"): 12 vanilla runs without `-Override` (IDs
   147,1,2), VM 2 `vm2-20261026-120240` to `-123911` and VM 1
   `vm1-20261026-124150` to `-124751`. None hit the fatal-error dialog. 11
   finished; `vm2-20261026-123140` ran out the 150 s Story deadline while it
@@ -247,15 +247,15 @@ the missing MAC don't matter; the clone gets new UUIDs at its first power-on.
 
 **Two series at once** (2026-10-26, after a host reboot; VM 1 reverted to
 `clean`, the new settings written, VM 2 cloned again): from 11:21, in two
-processes, a stock series (3 runs, pool, so VM 2) and a full-roster series
+processes, a vanilla series (3 runs, pool, so VM 2) and a full-roster series
 (2 runs, VM 1).
 
 - Both ran side by side, 11:22 to 11:29: full roster `vm1-20261026-112227`
-  (198 s, the first after the revert) and `-112554` (163 s); stock
+  (198 s, the first after the revert) and `-112554` (163 s); vanilla
   `vm2-20261026-112238` (126 s) and `-112453` (118 s) finished.
   `vm2-20261026-112701` hit the DriverNGHook fatal error while the first
   probe car loaded (100 s, loading-screen shots): the engine fault of
-  "Crashes while the world loads", as the stock series ran the game folder's
+  "Crashes while the world loads", as the vanilla series ran the game folder's
   dsf_enhanced without the fix. 1.4 GB was available in the guest then.
 - Guests: peak used 2.7 to 2.9 GB of 4, at least 1.16 GB available,
   Driver.exe 960 to 991 MB private.
@@ -282,7 +282,7 @@ revert and the new settings).
 
 From 12:02 on 2026-10-26 every run on VM 2 drew the cockpit view as a flat
 grey shell (no dashboard, wheel, gauges or hands) and, on the full roster,
-spooled only the first probe ID ("NOT spooled after 40 ticks"); stock cars
+spooled only the first probe ID ("NOT spooled after 40 ticks"); vanilla cars
 too. The cause was neither the 512 MB of graphics memory nor the 4 GB guest:
 that VM 2 session was running at half speed.
 
@@ -308,7 +308,7 @@ that VM 2 session was running at half speed.
   still false in `vm2-20261026-144237`), and a mission vehicle requested
   next waits behind the traffic loads past the probe's 40 ticks (397 in that
   run was loaded later; 73 took 19 ticks).
-- **Not the settings of #61:** VM 1 at 4 GB / 512 MB drew the same stock car
+- **Not the settings of #61:** VM 1 at 4 GB / 512 MB drew the same vanilla car
   textured in the same hours (`vm1-20261026-124150`, `-153216`), and VM 2's
   first session after the clone (11:21 to 11:44, same settings) did too
   (`vm2-20261026-112238`). A new power-on of VM 2 (TSC sync 48 us) fixed both
@@ -326,7 +326,7 @@ that VM 2 session was running at half speed.
   the fix): full roster `out\final3`, dsfforza.asi with #79, IDs 537, 397, 73,
   53, 28, 372: `vm1-20261026-154434` and `vm2-20261026-154434` each spooled
   and drove all six (the first after 2 ticks, the rest after 1) with
-  textured cockpits; stock archive, IDs 147 and 266: `vm1-20261026-160105`,
+  textured cockpits; vanilla archive, IDs 147 and 266: `vm1-20261026-160105`,
   `vm2-20261026-160105`, textured. The spooler was idle from the second
   sample on. Host memory with both games running: at least 10.0 GB free,
   vmware-vmx at most 4.4 (VM 1) and 6.9 GB (VM 2), mksSandbox 0.9 GB
@@ -338,7 +338,7 @@ that VM 2 session was running at half speed.
 
 ### VM results (2026-10-24)
 
-- Stock smoke test `vm-20261024-015247` (stock archive, ID 147): finished in
+- Vanilla smoke test `vm-20261024-015247` (vanilla archive, ID 147): finished in
   81 s, Story world ready after 3 Enter presses at 23 s (the host took 32 s
   in `host-20261023-174440`), `keysSkipped` 0. The shots show the textured
   city, traffic, HUD and Shift-view flares: real 3D, not black.
@@ -403,7 +403,7 @@ About half of the VM runs ended at the DriverNGHook fatal-error dialog 20 to
   and resolves or drops each one.
 - The fault: a slot pointer in that list points at freed memory (reads of 2,
   3 or 0xE9xxxxxx).
-- It happens with the **stock archive, without dsfforza.asi and without any
+- It happens with the **vanilla archive, without dsfforza.asi and without any
   ported car**: 2 of 4 runs (`vm-20261024-203720` to `-204228`); with the
   plugin, 1 of 3.
 - So it isn't caused by the ported cars or the plugin.
@@ -412,16 +412,16 @@ About half of the VM runs ended at the DriverNGHook fatal-error dialog 20 to
   start (FUN_004A20C0, called at 0x00799C92) runs while startup files are
   still loading. That function empties the pending list
   (`mov dword [0x0188A6B8],0` at 0x004A2153), so the references waiting
-  then (17 to 281 in the VM; 0 with the stock wait) are dropped, and the
+  then (17 to 281 in the VM; 0 with the vanilla wait) are dropped, and the
   list is corrupt by the time the world loads.
-  - Bisect, stock archive, user's ini: `SkipLegalScreen=0` 0 of 8 crashed;
+  - Bisect, vanilla archive, user's ini: `SkipLegalScreen=0` 0 of 8 crashed;
     the skip with every other dsf_enhanced feature off 2 of 4.
   - Fix in dsf_enhanced (branch `fix/world-load-crash`): the legal screen's
     call keeps the pending list; every other loading screen empties it as
-    stock. 0 of 10 runs crashed on the stock archive, 0 of 4 with the full
+    vanilla. 0 of 10 runs crashed on the vanilla archive, 0 of 4 with the full
     roster and dsfforza.asi. Merged: dsf_enhanced main `e9c3ba0`, on the
     host since 2026-10-26; VM runs use the host's copy ("Game files in VM
-    runs" above), and 0 of 12 stock runs crashed with it.
+    runs" above), and 0 of 12 vanilla runs crashed with it.
   - On a real PC it is the same race between startup loading and the first
     menu frames, so a slow or busy disk can hit it; the slow VM disk and CPU
     hit it in about half the runs. Notes: driver-sf-mods,
@@ -466,7 +466,7 @@ About half of the VM runs ended at the DriverNGHook fatal-error dialog 20 to
   requests. Lua 5.1 raises "not enough memory" at whatever allocation hit the
   wall, the game's pcall wrapper (FUN_005E4760) drops the error, and the state
   is left half-updated. Which half-done update frees the closure was not
-  traced. The stock roster peaks at about 6 MB (`vm1-20261026-142558`).
+  traced. The vanilla roster peaks at about 6 MB (`vm1-20261026-142558`).
 - Control runs with `[lua] overflow=0` (10 MB block, failures only logged):
   `vm2-20261026-122308`: first refused request at 12:27:43 with Lua at
   8538 KB, four more, then the Lua VM fault at 12:28:48 (`005F7787`), while
@@ -485,7 +485,7 @@ About half of the VM runs ended at the DriverNGHook fatal-error dialog 20 to
   | `vm1-20261026-122537` | 10 MB + overflow heap | the issue's 108 steps | 65,536+ refused requests served from the overflow heap (peak 751 KB, Lua 9.3 MB); finished, no fault |
   | `vm1-20261026-143525` | 32 MB + overflow | the issue's 108 steps: makers 1 to 19, then 39 to 42 (BMW, BUGATTI, BUICK, BUS) | Lua peak 9 MB, nothing refused; finished (555 s), no fault |
   | `vm1-20261026-145055` | 32 MB + overflow | 268 steps at 1.5 times the pace: 63 maker rows opened (the issue's 23, then 20 up and 20 down) | Lua peak 9 MB, nothing refused; finished (977 s), no fault |
-  | `vm1-20261026-142558` | 32 MB + overflow, stock archive | the issue's 108 steps (35 makers) | Lua peak 6 MB; finished, no fault |
+  | `vm1-20261026-142558` | 32 MB + overflow, vanilla archive | the issue's 108 steps (35 makers) | Lua peak 6 MB; finished, no fault |
   | `vm1-20261026-152238` | the PR head (rebased build), 32 MB + overflow | the issue's 108 steps at 1.5 times the pace, same makers | Lua peak 9 MB, nothing refused; finished (559 s), no fault |
 
 - Key pace: on a busy VM an Enter that comes before the maker list is ready
@@ -499,7 +499,7 @@ About half of the VM runs ended at the DriverNGHook fatal-error dialog 20 to
 ## Result: a cloned vehicle works (confirmed-runtime)
 
 `out/dngvehicles.clone.sp` (`clone_vehicle.py --source 266 --id 304`) loads
-like the stock archive. In run `20261021-224926`:
+like the vanilla archive. In run `20261021-224926`:
 
 ```text
 vehicleStats[304] copied from [266]
@@ -513,13 +513,13 @@ id 304: PLAYER IS DRIVING IT after 3 ticks (inZap: false)
 
 The player drives the clone in normal traffic, textured, with the ASYM badge
 and "Desanne" on the HUD: `img/clone-304-with-stats.jpg`. The control run
-`20261021-224726` (stock archive, ID 266) looks the same:
-`img/stock-266-control.jpg`.
+`20261021-224726` (vanilla archive, ID 266) looks the same:
+`img/vanilla-266-control.jpg`.
 
 What this confirms:
 
 - the game accepts a rebuilt `dngvehicles.sp` with 151 vehicles;
-- a new ID (304, outside the stock 62вЂ“303 range) spools through
+- a new ID (304, outside the vanilla 62вЂ“303 range) spools through
   `TrafficSpooler.RequestMissionVehicle`, so the SSLP/VSCT edits are enough
   for the spool system;
 - `GameVehicleResource.create{Model_Id = 304}` builds a drivable car from the
@@ -624,7 +624,7 @@ Converter: `src/dsfforza/convert/forza2dsf.py` (FH1 carbin в†’ DSF VEHC), `
 - **Axes**: both use +y up, but Forza's front is at -z and DSF's at +z. An
   earlier note here said the axes match; that was a misread screenshot. In
   runs `-002224` and `-004928` the chase camera sees the 370Z's headlights
-  and grille, so the car sits backwards on its chassis (the stock Desanne
+  and grille, so the car sits backwards on its chassis (the vanilla Desanne
   shows its tail lights from the same camera). `forza2dsf.Placement` now
   turns the body 180В° about y (confirmed in run `20261022-015851`, below).
 - **Paint UV0** samples the vehicle's chassis texture; Forza UVs on the host's
@@ -645,8 +645,8 @@ Converter: `src/dsfforza/convert/forza2dsf.py` (FH1 carbin в†’ DSF VEHC), `
   moved to the 370Z's wheelbase and track. Loads, spawns, drives, clean
   paint, but the body is backwards (see Axes). Lights and badges are untextured (trim material).
 - **Full-entry crash root cause**: new resource UIDs that don't look like
-  stock ones. The engine marks resolved pointers with the top bit of UID
-  byte 7, so a counter there broke past 0x80. Stock-like UIDs (byte 1 =
+  vanilla ones. The engine marks resolved pointers with the top bit of UID
+  byte 7, so a counter there broke past 0x80. Vanilla-like UIDs (byte 1 =
   0x12, byte 7 = 0x2D, `Builder.new_uid`) let a full replacement with no host
   geometry load (runs `20261022-004457`, `-004637`).
 - **Textured full replacement** (`out/370z-v2.sp`, run `20261022-004928`):
@@ -668,7 +668,7 @@ converter (in game: "Fix2 in game" below):
 
 | Defect | Screenshot | Cause | Fix |
 | --- | --- | --- | --- |
-| Cracked glass on an undamaged car, worst from the cockpit | `img/cockpit-v1-a.png`, `img/skyline-chase-v1.png` | Glass UV0 spread over v 0..0.97; stock glass keeps v in 0..0.25, the clean band of the engine's glass texture (`vehicle-model.md`) | `forza2dsf.glass_uv` (full, exterior, interior) |
+| Cracked glass on an undamaged car, worst from the cockpit | `img/cockpit-v1-a.png`, `img/skyline-chase-v1.png` | Glass UV0 spread over v 0..0.97; vanilla glass keeps v in 0..0.25, the clean band of the engine's glass texture (`vehicle-model.md`) | `forza2dsf.glass_uv` (full, exterior, interior) |
 | Cockpit nearly black, only the needle pivots lit; paint black on every converted car | `img/cockpit-v1-a.png`, `img/cockpit-v1-skyline.png` | The fourth position component is a baked sky-light term; ours was 0 (needles 4096) | `forza2dsf.vertex_sky` from Forza's baked AO byte |
 | Driver's head through the roof in chase view | `img/skyline-chase-v1.png`, `img/fh1-370z-v2-textured.png` | The driver sits on the UPVH driver-seat marker (role 10), still at the Desanne's seat | `cockpit.patch_seats`: seat under the new eye, host eye-to-seat offset (`cockpit.md`) |
 | (found on the way) Body 0.14 to 0.23 m too low on its wheels | | Forza y = 0 is the body bottom, the ground is StockRideHeight below (`forza-sources.md`) | `CarDims.ride_height` in `Placement` |
@@ -678,7 +678,7 @@ Rebuilt archives (same IDs, `port_car.py` defaults):
 - `out/fix2/ported-fix2.sp`: all four fixes; glass bound to the chassis.
 - `out/fix2/ported-fix2-links.sp`: the same plus `--glass-links`
   (windscreen and rear window bound to the host's glass-panel records, like
-  stock glass). Test only if the first still shows cracks.
+  vanilla glass). Test only if the first still shows cracks.
 
 Offline evidence: `img/placement-before-after.png` (side view, wheel model
 on the UPVH hubs; left the tested archive, right fix2: tyres were sunk into
@@ -709,7 +709,7 @@ roof, tyres inside the arches.
   (`img/fix2-m5-cockpit.png`); the M5 dials are dark. HUD still says
   Desanne.
 
-### Fix3: Forza handling, stock baseline (run `20261022-024010`)
+### Fix3: Forza handling, vanilla baseline (run `20261022-024010`)
 
 `out/fix3/ported-fix3.sp` (fix2 plus Forza-derived VO3D from
 `src/dsfforza/build/handling.py`, wired into `port_car.py`; `--no-handling` keeps the
@@ -717,8 +717,8 @@ host's). Probe order 266, 304, 305, 306.
 
 - All four spool, drive and switch to cockpit; the handling VO3Ds load
   (confirmed-runtime). How they drive is untested: the probe gives no input.
-- Stock Desanne cockpit for reference: clean windscreen
-  (`img/fix3-desanne-stock-cockpit.png`).
+- Vanilla Desanne cockpit for reference: clean windscreen
+  (`img/fix3-desanne-vanilla-cockpit.png`).
 - **Damaged ported car turns into the host.** The Skyline took damage while
   moving on the zap boost (cracked windscreen, `img/fix3-skyline-damaged-cockpit.png`,
   the expected damage look); the chase camera then shows a damaged gold
@@ -730,7 +730,7 @@ host's). Probe order 266, 304, 305, 306.
 
 Cause of the host swap (confirmed-static): the clones kept the Desanne's 41
 MODL part UIDs, in all three entries, and so did every ported car. Part
-UIDs key a global table like resource UIDs, and all 6,139 stock ones are
+UIDs key a global table like resource UIDs, and all 6,139 vanilla ones are
 unique (`upvh.md`, "MODL part UIDs are global keys too"). Every other
 reference in the cloned entries (SBBH, MDID, VXDP/IXDP, MARP textures, MODL
 LOD lists) already resolved inside the clone. In the fix3 run the swap came
@@ -749,18 +749,18 @@ so a damaged ported car next to a loaded host is still unseen.
 
 Regression check: `upvh.py lint` fails when a car shares a resource or part
 UID with another vehicle, or references a UID only another vehicle defines
-(no stock vehicle trips it; all three fix3 cars do); `port_car.py` runs it
+(no vanilla vehicle trips it; all three fix3 cars do); `port_car.py` runs it
 on every car.
 
 The M5 windscreen still streaked, now as thinner diagonal lines
 (`img/fix4-m5-cockpit-streaks.png`): fix4 squashed interior glass u into
-the 0 to 0.12 strip stock interiors use, but kept v 0 to 0.25.
+the 0 to 0.12 strip vanilla interiors use, but kept v 0 to 0.25.
 
 ### Fix5: interior glass in the flat block (run `20261022-030613`, confirmed-runtime)
 
 The glass texture is in the archive after all (SSIC; `vehicle-model.md`,
 "The glass texture"). The interior strip holds a grey smear texture at
-v 0 to 0.06 above flat black; stock interiors put two thirds of their glass
+v 0 to 0.06 above flat black; vanilla interiors put two thirds of their glass
 in the black block. `out/fix5/ported-fix5.sp` maps interior glass into that
 block (u 0.065 to 0.115, v 0.13 to 0.245) and exterior glass into the flat
 windscreen rows (u 0.14 to 0.98, v 0.004 to 0.12, clear of the strip and
@@ -791,13 +791,13 @@ the rear-window defroster lines).
 after the limit tests (`spool-limits.md`): all three cars at the first LOD
 step (exterior Forza LOD 1, full 3/4/5). All load, drive and switch to the
 cockpit. `register.lua` (now in `bootstrap.lua`) matches each car to a
-stock vehicleStats entry by Picture1: the HUD shows the Nissan badge and
+vanilla vehicleStats entry by Picture1: the HUD shows the Nissan badge and
 "370Z" for 304 (copied from 227) and the Nissan badge and "SKYLINE" for
 306 (badge and Model index of 229); 305 (BMW, no BMW in DSF) keeps the
 Desanne's (`img/fix6-370z-hud-name.png`). The HUD reads the numeric
 Manufacturer/Model fields; ManufacturerName/ModelName strings don't reach it.
 
-Cockpit camera too low: stock head cameras see the steering rim's top 7.9В°
+Cockpit camera too low: vanilla head cameras see the steering rim's top 7.9В°
 below eye level (median of 146, `out/eye/wheel_view.py`); ours were 6.5В°
 (370Z), 3.3В° (M5), 1.9В° (Skyline), so the wheel filled half the screen.
 `cockpit.camera_eye` now raises the camera only (in game: "Head camera"
@@ -833,8 +833,8 @@ the speed every frame) with `-ProbeIds '266,304,305,306'`.
   and the HUD lag each other by a frame or two, so this is not a precise
   check. Tachometers sit at plausible values for the gear (370Z about 5500
   at 29 mph in first). Full frames: `img/gauges-370z-94mph.png`,
-  `img/gauges-m5-111mph.png`, `img/gauges-skyline-50mph.png`; stock
-  Desanne at 91 mph for comparison: `img/gauges-desanne-stock-91mph.png`.
+  `img/gauges-m5-111mph.png`, `img/gauges-skyline-50mph.png`; vanilla
+  Desanne at 91 mph for comparison: `img/gauges-desanne-vanilla-91mph.png`.
 - **Throttle**: holding Up works (Skyline 17 to 50 mph in run 1). Driver.log
   reaches the disk seconds late, so the harness can't see the probe's
   phases in time; it now holds the throttle from "PLAYER IS DRIVING IT" to
@@ -844,7 +844,7 @@ the speed every frame) with `-ProbeIds '266,304,305,306'`.
 - **Head camera** (`cockpit.camera_eye`): the rim now sits in the lower
   third of the screen with the dials above it, not across half the screen
   (`img/gauges-m5-111mph.png`, `img/gauges-skyline-50mph.png`); still a
-  little higher than the stock Desanne's (`img/fix3-desanne-stock-cockpit.png`).
+  little higher than the vanilla Desanne's (`img/fix3-desanne-vanilla-cockpit.png`).
   `out/eye/wheel_view.py`: rim top 6.5В° (370Z), 4.6В° (M5), 5.2В° (Skyline)
   below the eye; the hosts 227, 147, 229 have 8.3, 8.3, 9.1, the Desanne
   13.7. `camera_eye` aims for 7.9В° using the rim's centre-line radius and
@@ -858,7 +858,7 @@ the speed every frame) with `-ProbeIds '266,304,305,306'`.
 
 `out/r7/ported-r7.sp`: 304 370Z (host 227), 305 M5 (147 CTS-V), 306 Skyline
 R32 (229 R33), 307 Mustang Boss 429 (193), 308 Raptor (251); auto hosts,
-`--damage panels`, gauges, lights, factory paint, camera at the stock
+`--damage panels`, gauges, lights, factory paint, camera at the vanilla
 7.9В° rim angle (all five, `out/eye/wheel_view.py`).
 
 - All five spool, drive (throttle held, up to 100 mph) and switch to the
@@ -932,11 +932,11 @@ Method (confirmed-runtime unless noted):
   longitudinal model fitted to these runs, reproduces 0-60/0-100/1/4 mile
   only to about 10%, so it isn't used for decisions.
 
-Stock and Forza-mapped ports on their own model's host (run -043801,
+Vanilla and Forza-mapped ports on their own model's host (run -043801,
 `out/physics/pairs-a.sp`, two runs each; the Forza mapping as it was before
 the DSF-first default):
 
-| Car | 0-60 s stock / port | 0-100 s stock / port | top in 25 s mph stock / port |
+| Car | 0-60 s vanilla / port | 0-100 s vanilla / port | top in 25 s mph vanilla / port |
 | --- | --- | --- | --- |
 | 370Z (227 / 304) | 3.26 / 3.42 | 8.94 / 10.74 | 139.1 / 132.3 |
 | GT-R (228 / 305) | 4.11 / 3.59 | 8.51 / 7.47 | 150.3 / 158.2 |
@@ -945,7 +945,7 @@ the DSF-first default):
 | Gallardo LP570 (212 / 308) | 3.01 / 2.81 | 7.19 / 6.43 | 149.4 / 154.5 |
 
 That spread (-11% to +20% to 100 mph on a car's own host) is what led to
-the DSF-first default, which keeps the stock values on a same-model host.
+the DSF-first default, which keeps the vanilla values on a same-model host.
 
 ### Round 2 (runs 20261022-063701 to -102557)
 
@@ -954,19 +954,19 @@ Handling results: `handling.md`, "Round 2". Harness notes:
 - **Launch detection**: the first car of a session creeps from the Shift
   zoom taps (Up) and can pass 1 m/s long before the throttle; `dyno.py` now
   takes the last sample under 1 m/s before the car passes 5 m/s, which
-  repaired the stock 225 and 228 first runs (225: 2.61 s to 60 mph, not
+  repaired the vanilla 225 and 228 first runs (225: 2.61 s to 60 mph, not
   11.8).
 - **Diagnostic builds**: `out/dyno/build_chain.sh <list> <out>` chains
   `port_car.py` builds (one line per car: media, host or auto, dsf/forza,
   LOO flag) into one archive with a merged `ported.lua`;
-  `out/dyno/patch_vo3d.py` then copies chosen parameters from a stock car
+  `out/dyno/patch_vo3d.py` then copies chosen parameters from a vanilla car
   into chosen ports, so one session compares several variants of one port
-  against its stock car (GT-R: -073627; Mito and Scirocco: -081941, -083248,
+  against its vanilla car (GT-R: -073627; Mito and Scirocco: -081941, -083248,
   -091649, -095156).
 - **Steering and handbrake inputs** run on a free car: `-DynoKeep
   impulse:1:22` lets go of the lane keeper at 22 m/s. Holding the speed with
   `gameVehicle.speed` until the input was tried (-054100) and pins the car.
-- **Sessions of 10 IDs**: stock cars and ports alternate; the HUD bars
+- **Sessions of 10 IDs**: vanilla cars and ports alternate; the HUD bars
   (`Speed`, `Strength`, `Drift`) of ports now come from `ported.lua`
   (`handling_dsf.stat_bars`).
 - Another helper's runs (-062630 to -063206, `out/cockpit3`) sit between
@@ -982,9 +982,9 @@ rules), hosts auto, cockpit, gauges, lights, paint, `--damage panels`,
 (as if DSF didn't have them). HUD bars from `stat_bars`. All eight load,
 spawn and drive:
 
-| ID | Car | Host | Handling | 0-60 s | 0-100 s | 1/4 mile s | 60-0 m | handbrake deg / slip | Stock reference |
+| ID | Car | Host | Handling | 0-60 s | 0-100 s | 1/4 mile s | 60-0 m | handbrake deg / slip | Vanilla reference |
 | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
-| 304 | Forza 370Z | 227 370Z | stock values (same model) | 3.30 | 8.98 | 11.98 | 16.4 | 70 / 15 | 227: 3.26 / 8.94 / 11.96 / 16.7, 78 / 21 |
+| 304 | Forza 370Z | 227 370Z | vanilla values (same model) | 3.30 | 8.98 | 11.98 | 16.4 | 70 / 15 | 227: 3.26 / 8.94 / 11.96 / 16.7, 78 / 21 |
 | 305 | Forza 370Z | 228 GT-R | DSF-first, as if DSF had no 370Z | 3.26 | 8.94 | 11.96 | 16.8 | 99 / 43 | 227 as above |
 | 309 | Forza GT-R 2012 | 240 RUF CTR3 | DSF-first, as if DSF had no GT-R | 3.50 | 7.59 | 11.50 | 16.9 | 87 / 28 | 228: 4.12 / 8.52 / 11.96 / 18.7, 80 / 20 |
 | 306 | Forza Skyline GT-R R32 (FM4) | 229 Skyline R33 | DSF-first, family host | 3.06 | 7.94 | 11.54 | - | 76 / 27 | 229 R33: 2.83 / 7.31 / 11.28 (run -061717) |
@@ -997,7 +997,7 @@ The handbrake flick keeps the throttle on after the 0.4 s Space + Right
 (`Up:2.5`), so the yaw change includes power-on rotation: a RWD car with
 more power or less engine friction rotates further.
 
-How to compare (the user's own drive test): spawn the stock car next to the
+How to compare (the user's own drive test): spawn the vanilla car next to the
 port (probe `config.lua` with `ids = { 227, 304, 305, ... }`, at most 10)
 and switch between them with Shift. 304 should feel exactly like 227; 305
 and 309 show how a car DSF doesn't have comes out; 306, 307, 310 and 311
@@ -1009,9 +1009,9 @@ CTS-V (106 vs 84 deg in the handbrake flick).
 - `-Lights` harness mode works; the user-defined dark mood darkens the
   scene. Ported tail lamps glow at one constant level in every phase (off,
   headlights, brakes, indicators): they don't respond to `setLights`
-  (`img/lamps-dark-phases.jpg`). No stock control yet, so it's open whether
+  (`img/lamps-dark-phases.jpg`). No vanilla control yet, so it's open whether
   setLights works on the player's car at all (answered later: `lights.md`,
-  "Stock control and real driving").
+  "Vanilla control and real driving").
 - Paint A/B (Forza or host palette x host or grey paint cell): identical in
   all four; 370Z black, M5 grey, Skyline black (`img/paint-ab-runs.jpg`).
   Neither palette nor cell decides the colour; cause open.
@@ -1058,7 +1058,7 @@ escape) stopped registration on the first attempt; fixed in
   before the target speed.
 - **Lifted handbrake test**: `handling_tune.KEYS` (runs 2 and 3 a 0.4 s flick
   with the throttle lifted, run 4 a 1 s step steer) repeats to 0 to 8 deg of
-  rotation on the stock cars (6 to 21 deg with the old throttle-on flick).
+  rotation on the vanilla cars (6 to 21 deg with the old throttle-on flick).
   `measure()` classifies by run number: a step steer can turn the car more
   than 25 deg.
 - **Drift recovery** (`handling_tune.py recovery`, `dyno.manoeuvre` recover_s
@@ -1066,14 +1066,14 @@ escape) stopped registration on the first attempt; fixed in
   Huayra".
 - **Play archive** (`out/play/play.sp` + `play.lua`, now also
   `tools/game/lua/dsfforza/ported.lua`): IDs 304 to 314, the p4 set plus the
-  Huayra, built from the stock archive with the 10-year donor rule and the
+  Huayra, built from the vanilla archive with the 10-year donor rule and the
   tuned cache (`out/play/list5.txt`; round-3 build kept as `play-r3.sp`).
   Smoke run 20261022-201655: every car loads and drives. Huayra 314 comes
-  out of the power drift in 2.7 s (slip area 77; stock Zonda 3.9 s, 81). The
+  out of the power drift in 2.7 s (slip area 77; vanilla Zonda 3.9 s, 81). The
   CTS-V, GT-R, Mito and 370Z take 2.0 to 3.6 s. The Huayra's launch run
   started with the car rolling back, and dyno.py misreads its 0-60.
-- **Stock files**: builds and fleet/host caches read the stock archive (out/stock or
-  dsfforza-backup) through `game_paths.stock()`. The installed test-drive
+- **Vanilla files**: builds and fleet/host caches read the vanilla archive (out/vanilla or
+  dsfforza-backup) through `game_paths.vanilla()`. The installed test-drive
   archive at D:\...\Install put the 40 ports into `dsf-fleet.json` for a
   while; they had no vehicleStats, so the fleet fits and the donor choice
   ignored them.
@@ -1092,7 +1092,7 @@ Results: `handling.md`, "Off road". Harness notes:
   0-20 mph, the largest braking deceleration over 0.5 s after the peak and the
   yaw response to the steer while still on the dirt.
 - **Game time, not keys**: the guest holds keys for wall-clock seconds, and a
-  VM on a loaded host runs the game slower (in -111001 the stock A4's 2.5 s of
+  VM on a loaded host runs the game slower (in -111001 the vanilla A4's 2.5 s of
   throttle acted for 1.1 s of game time). Launch times, deceleration and yaw
   rate come from the Lua update count (0.008 s each) and stay comparable;
   peak speeds and where the car brakes don't.

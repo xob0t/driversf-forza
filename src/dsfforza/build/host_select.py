@@ -1,6 +1,6 @@
-"""Pick the stock DSF vehicle a ported Forza car is built on (port_car --host auto).
+"""Pick the vanilla DSF vehicle a ported Forza car is built on (port_car --host auto).
 
-A ported car is a clone of one stock vehicle (the host) with the Forza body
+A ported car is a clone of one vanilla vehicle (the host) with the Forza body
 put in. Everything the converter doesn't rebuild stays the host's: the engine
 sound (NONR/VSRT, a Wwise bank per vehicle), the hierarchy (UPVH: parts,
 doors, collision, damage, lights), the VO3D base that src/dsfforza/build/handling.py
@@ -8,7 +8,7 @@ rescales (steering, assists, tyre curves, cameras), the paint sets (SPSR) and
 the VSCT record. So the closer the host, the more the port behaves like a
 first-party car. See research/hosts.md.
 
-Ranking, per stock host (scores add up; reasons are printed):
+Ranking, per vanilla host (scores add up; reasons are printed):
 
 1. Identity: the same model (make and model name, year within 4) +60, the same
    model family (Skyline R32 -> Skyline R33, Raptor -> F-150) +30, same make +6.
@@ -27,13 +27,13 @@ entries (VSCT category byte) unless --allow-special, and every host the
 converter can't use (not 4 wheels, no steering marker/hinge, no _Interior
 material, no Chassis/Lights materials in the full or exterior entry, missing
 vertex-buffer strides, wheel parts it can't find). Drift and rally variants
-of a stock car get a penalty so the civilian one wins.
+of a vanilla car get a penalty so the civilian one wins.
 
     uv run dsff host_select rank NIS_370Z_10 BMW_M5_12 NIS_SkylineGTR_93@fm4 [--top 8]
-    uv run dsff host_select survey --tsv research/hosts.tsv     # the stock fleet as hosts
+    uv run dsff host_select survey --tsv research/hosts.tsv     # the vanilla fleet as hosts
     uv run dsff host_select roster --tsv research/host-picks.tsv  # every Forza car, odd picks flagged
 
-The survey of the stock archive is cached in out/cache/host-survey.json.
+The survey of the vanilla archive is cached in out/cache/host-survey.json.
 """
 
 from __future__ import annotations
@@ -430,7 +430,7 @@ def engine_score(host: Engine, car: Engine) -> tuple[float, list[str]]:
     return score, why
 
 
-# --- the stock fleet ----------------------------------------------------------------
+# --- the vanilla fleet ----------------------------------------------------------------
 
 
 def _dsf_body(cls: str, model: str) -> str:
@@ -488,10 +488,10 @@ def _dsf_body(cls: str, model: str) -> str:
 def survey(
     dsf: Path | None = None, lua: Path | None = DEFAULT_LUA, cache: Path | None = SURVEY_CACHE, refresh: bool = False
 ) -> list[dict]:
-    """One record per stock base vehicle: identity, category, engine (vehicleStats),
+    """One record per vanilla base vehicle: identity, category, engine (vehicleStats),
     hierarchy facts (UPVH), size, VO3D mass, sound (VSRT), and what the converter
     needs (problems: why it can't be a host). Cached by archive size and mtime."""
-    dsf = game_paths.stock(Path(dsf) if dsf else None, quiet=True)  # not an installed dsfforza archive (its ports)
+    dsf = game_paths.vanilla(Path(dsf) if dsf else None, quiet=True)  # not an installed dsfforza archive (its ports)
     stat = dsf.stat()
     # Not the path: the same archive is read from the game folder or its dsfforza-backup copy
     # (handling_dsf.load_fleet).
@@ -902,7 +902,7 @@ def _carbin_doors(folder: Path, media: str, body: str | None = None) -> int | No
 
 
 def _model_parts(host: dict) -> tuple[str, str, int | None, str]:
-    """(make, normalised model, year, model family) of a stock host, from vehicleStats
+    """(make, normalised model, year, model family) of a vanilla host, from vehicleStats
     Picture1 ("ford_mustang_shelby_gt500_old": ford, mustangshelbygt500, 1967, mustang)."""
     pic = host["stats"].get("Picture1", "").lower()
     pic = re.sub(r"^unlicensed_", "", pic)
@@ -982,7 +982,7 @@ def make_group(make: str) -> str:
 
 
 def same_vehicle(host: dict, car: ForzaInfo) -> str | None:
-    """Why the stock host is the same vehicle as the Forza car, or None: the same
+    """Why the vanilla host is the same vehicle as the Forza car, or None: the same
     model (identity_score's "same model": make, model name, year within 4) or a
     badge-engineered twin (another make of the same group), either way with the
     same body class, model years within SAME_VEHICLE_YEARS and wheelbase and length
@@ -1032,7 +1032,7 @@ def same_vehicle_for(
     gamedbs: dict[str, Path] | None = None,
     lua: Path | None = DEFAULT_LUA,
 ) -> str | None:
-    """same_vehicle for a Forza car on a stock host given by spool ID."""
+    """same_vehicle for a Forza car on a vanilla host given by spool ID."""
     host = next((h for h in survey(dsf, lua) if h["id"] == host_id), None)
     return same_vehicle(host, forza_info(media, gamedbs, game, folder)) if host else None
 
@@ -1088,7 +1088,7 @@ def score_host(host: dict, car: ForzaInfo, mode: str = "host") -> tuple[float, l
     if car.height and host.get("height"):
         size += 3 * max(0.0, 1 - abs(car.height - host["height"]) / 0.5)
     if car.mass:
-        mass = host.get("mass") or 1700.0  # VO3D default when p0 is not set (2 stock cars)
+        mass = host.get("mass") or 1700.0  # VO3D default when p0 is not set (2 vanilla cars)
         size += 4 * max(0.0, 1 - abs(math.log(car.mass / mass)) / math.log(1.6))
     total += size
     why.append(f"+{size:.0f} size (wheelbase {host.get('wheelbase', 0):.2f}, {host.get('mass', 0):.0f} kg)")
@@ -1097,7 +1097,7 @@ def score_host(host: dict, car: ForzaInfo, mode: str = "host") -> tuple[float, l
         why.append("-3 not both gauges (speed 2, tach 1)")
     if re.search(r"_(drift|rally)$", host["model"], re.I):  # the civilian sibling is a better base
         total -= 8
-        why.append("-8 drift/rally variant of a stock car")
+        why.append("-8 drift/rally variant of a vanilla car")
     if host["category"] in HEAVY_CATEGORIES and car.body not in ("bus", "truck", "van"):
         total -= 20
         why.append("-20 heavy vehicle")
@@ -1114,7 +1114,7 @@ class Ranked:
 
 
 def rank(car: ForzaInfo, hosts: list[dict], allow_special: bool = False, mode: str = "host") -> list[Ranked]:
-    """Every stock host, best first; excluded hosts (special categories, converter
+    """Every vanilla host, best first; excluded hosts (special categories, converter
     problems) at the end with the reason."""
     out = []
     for h in hosts:
@@ -1265,11 +1265,11 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description=__doc__.splitlines()[0], formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--dsf", type=Path, default=None, help="stock dngvehicles.sp (default: from $DSF_GAME_DIR)")
+    parser.add_argument("--dsf", type=Path, default=None, help="vanilla dngvehicles.sp (default: from $DSF_GAME_DIR)")
     parser.add_argument("--lua", type=Path, default=DEFAULT_LUA, help="decompiled vehiclestats.lua")
     parser.add_argument("--refresh", action="store_true", help="re-read the archive instead of the cache")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("rank", help="rank stock hosts for Forza cars")
+    p = sub.add_parser("rank", help="rank vanilla hosts for Forza cars")
     p.add_argument("cars", nargs="+", metavar="NAME[@fh1|@fm4]")
     p.add_argument("--top", type=int, default=8)
     p.add_argument("--allow-special", action="store_true", help="consider cop/taxi/emergency/... entries")
@@ -1279,10 +1279,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--roster", type=Path, default=REPO / "research" / "forza-roster.tsv")
     p.add_argument("--tsv", type=Path, help="write the table here (default: stdout)")
     p.add_argument("--cache", type=Path, default=REPO / "out" / "cache", help="port_car extraction cache")
-    p = sub.add_parser("survey", help="print (or write) the stock fleet as hosts")
+    p = sub.add_parser("survey", help="print (or write) the vanilla fleet as hosts")
     p.add_argument("--tsv", type=Path)
     args = parser.parse_args(argv)
-    args.dsf = game_paths.stock(args.dsf)  # the original when a dsfforza install replaced it
+    args.dsf = game_paths.vanilla(args.dsf)  # the original when a dsfforza install replaced it
 
     hosts = survey(args.dsf, args.lua, refresh=args.refresh)
     if args.cmd == "survey":

@@ -9,16 +9,16 @@ sandbox dyno and nudges two values per car toward targets, a few iterations:
     p345  axle balance (FUN_008BD9B0), within +-0.05 of rule W, toward the handbrake
           rotation target (about -7 deg per +0.01, run 20261022-123844)
 
-Targets: for a car DSF has, the stock car's own measurement (--stock 305=227); else
-from the stock fleet: 0-60 from a fit of measured stock cars on power-to-weight and
-drivetrain, rotation the median of the measured stock cars among the car's best-ranked
+Targets: for a car DSF has, the vanilla car's own measurement (--vanilla 305=227); else
+from the vanilla fleet: 0-60 from a fit of measured vanilla cars on power-to-weight and
+drivetrain, rotation the median of the measured vanilla cars among the car's best-ranked
 hosts (how Reflections tuned similar cars). Results go to out/cache/handling-tune.json
 keyed "MEDIA@HOST"; handling_dsf.apply uses them (DSF_HANDLING_NOTUNE=1 ignores them).
 
-    uv run dsff handling_tune stock <run dir>...          # add stock measurements
+    uv run dsff handling_tune vanilla <run dir>...          # add vanilla measurements
     uv run dsff handling_tune targets                     # print the target model
     uv run dsff handling_tune run --archive out/play/play.sp --lua out/play/play.lua \\
-        --ids 305,309,308 --stock 305=227,309=228 [--iterations 3] [--dry-run]
+        --ids 305,309,308 --vanilla 305=227,309=228 [--iterations 3] [--dry-run]
     uv run dsff handling_tune show
 """
 
@@ -42,7 +42,7 @@ from dsfforza.formats.chnk import read_chunk
 from dsfforza.harness import dyno
 
 CACHE = REPO / "out" / "cache" / "handling-tune.json"
-STOCK_DB = REPO / "out" / "cache" / "stock-dyno.json"
+VANILLA_DB = REPO / "out" / "cache" / "vanilla-dyno.json"
 RUNS = Path.home() / "AppData" / "Local" / "Temp" / "dsfforza-wsb" / "runs"
 # The test: run 1 full throttle 25 s then brake (0-60, quarter mile); runs 2 and 3 a
 # handbrake flick at 55 mph with the throttle lifted; run 4 a 1 s step steer at 45 mph.
@@ -141,15 +141,15 @@ def _x(specs: D.Specs) -> list[float]:
 
 
 class Targets:
-    """0-60 from the measured stock cars' power-to-weight and drivetrain; rotation from
-    the measured stock cars among a car's best-ranked hosts."""
+    """0-60 from the measured vanilla cars' power-to-weight and drivetrain; rotation from
+    the measured vanilla cars among a car's best-ranked hosts."""
 
-    def __init__(self, stock: dict[str, dict], fleet: dict[int, dict]):
-        self.stock = {int(k): v for k, v in stock.items()}
+    def __init__(self, vanilla: dict[str, dict], fleet: dict[int, dict]):
+        self.vanilla = {int(k): v for k, v in vanilla.items()}
         self.fleet = fleet
         rows = [
             (D.specs_from_stats(fleet[i]["stats"]), v["0-60"])
-            for i, v in self.stock.items()
+            for i, v in self.vanilla.items()
             if v.get("0-60") and i in fleet and D.specs_from_stats(fleet[i]["stats"])
         ]
         self.beta = _fit([_x(s) for s, _ in rows], [math.log(t) for _, t in rows]) if len(rows) >= 6 else None
@@ -164,13 +164,13 @@ class Targets:
         info = HS.forza_info(media)
         same = {h["id"] for h in HS.survey() if HS.identity_score(h, info)[0] >= 60} | set(exclude)
         order = [r.id for r in HS.rank(info, HS.survey(), allow_special=True) if r.id not in same]
-        used = [i for i in order if (self.stock.get(i) or {}).get("hb_yaw") is not None][:3]
+        used = [i for i in order if (self.vanilla.get(i) or {}).get("hb_yaw") is not None][:3]
         if not used:
             return None, []
-        return statistics.median(self.stock[i]["hb_yaw"] for i in used), used
+        return statistics.median(self.vanilla[i]["hb_yaw"] for i in used), used
 
     def loo(self) -> None:
-        """How well the model predicts the stock cars themselves (leave one out)."""
+        """How well the model predicts the vanilla cars themselves (leave one out)."""
         errs = []
         for i, (specs, t) in enumerate(self.rows):
             rest = self.rows[:i] + self.rows[i + 1 :]
@@ -179,7 +179,7 @@ class Targets:
             errs.append(abs(math.log(pred / t)))
         if errs:
             print(
-                f"0-60 model, leave one out over {len(errs)} stock cars: median |log error| "
+                f"0-60 model, leave one out over {len(errs)} vanilla cars: median |log error| "
                 f"{statistics.median(errs):.3f}, mean {statistics.mean(errs):.3f}"
             )
 
@@ -256,9 +256,9 @@ def tune(args) -> None:
     fleet = D.load_fleet()
     cars = ported_cars(args.lua)
     ids = [int(i) for i in args.ids.split(",")]
-    stock_map = {int(a): int(b) for a, b in (p.split("=") for p in args.stock.split(","))} if args.stock else {}
-    stock_db = load_json(STOCK_DB)
-    targets = Targets(stock_db, fleet)
+    vanilla_map = {int(a): int(b) for a, b in (p.split("=") for p in args.vanilla.split(","))} if args.vanilla else {}
+    vanilla_db = load_json(VANILLA_DB)
+    targets = Targets(vanilla_db, fleet)
     cache = load_json(CACHE)
     base = {}
     for sid in ids:
@@ -266,9 +266,13 @@ def tune(args) -> None:
         base[sid] = {18: v.get(18), 345: v.get(345)}
     state = {sid: {"x18": base[sid][18], "x345": base[sid][345], "hist": []} for sid in ids}
     work = args.archive.with_name(args.archive.stem + "-tune.sp")
-    # Stock references not yet measured with this test (the stock command fills the cache).
+    # Vanilla references not yet measured with this test (the vanilla command fills the cache).
     refs = sorted(
-        {stock_map[s] for s in ids if s in stock_map and not (stock_db.get(str(stock_map[s])) or {}).get("hb_yaw")}
+        {
+            vanilla_map[s]
+            for s in ids
+            if s in vanilla_map and not (vanilla_db.get(str(vanilla_map[s])) or {}).get("hb_yaw")
+        }
         - set(ids)
     )
     for it in range(args.iterations):
@@ -289,23 +293,23 @@ def tune(args) -> None:
         if it == 0:
             for r in refs:
                 if r in meas:
-                    stock_db[str(r)] = meas[r]
-            save_json(STOCK_DB, stock_db)
-            targets = Targets(stock_db, fleet)
+                    vanilla_db[str(r)] = meas[r]
+            save_json(VANILLA_DB, vanilla_db)
+            targets = Targets(vanilla_db, fleet)
         for sid in ids:
             m = meas.get(sid)
             if not m:
                 continue
             car = cars[sid]
             specs = D.specs_from_forza(car["media"], H.load_forza(car["media"], D.DBS))
-            ref = stock_db.get(str(stock_map[sid])) if sid in stock_map else None
+            ref = vanilla_db.get(str(vanilla_map[sid])) if sid in vanilla_map else None
             t60 = ref["0-60"] if ref and ref.get("0-60") else targets.zero_sixty(specs)
             thb = ref["hb_yaw"] if ref and ref.get("hb_yaw") else targets.rotation(car["media"])[0]
             st = state[sid]
             st["hist"].append({"x18": st["x18"], "x345": st["x345"], **m, "t60": t60, "thb": thb, "run": run.name})
             pts18 = [(math.log(h["x18"]), math.log(h["0-60"])) for h in st["hist"] if h.get("0-60")]
-            # A model target (no stock counterpart) is only good to about 15% (leave one
-            # out over the stock cars), so it only bounds the port: act outside +-18%.
+            # A model target (no vanilla counterpart) is only good to about 15% (leave one
+            # out over the vanilla cars), so it only bounds the port: act outside +-18%.
             band = NOISE["0-60"] if ref and ref.get("0-60") else 0.18
             if t60 and pts18 and abs(pts18[-1][1] - math.log(t60)) > band:
                 # ln(0-60) is about linear in ln(p18)
@@ -329,7 +333,7 @@ def tune(args) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("stock", help="add stock-car measurements from run folders")
+    p = sub.add_parser("vanilla", help="add vanilla-car measurements from run folders")
     p.add_argument("runs", type=Path, nargs="+")
     sub.add_parser("targets", help="print the target model")
     sub.add_parser("show", help="print the tune cache")
@@ -337,7 +341,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--archive", type=Path, required=True)
     p.add_argument("--lua", type=Path, required=True)
     p.add_argument("--ids", required=True)
-    p.add_argument("--stock", default="", help="port=stock pairs whose stock car sets the targets")
+    p.add_argument("--vanilla", default="", help="port=vanilla pairs whose vanilla car sets the targets")
     p.add_argument("--iterations", type=int, default=3)
     p.add_argument("--dry-run", action="store_true")
     p = sub.add_parser(
@@ -348,15 +352,15 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--lua", type=Path)
     p.add_argument("--ids", default="")
     args = parser.parse_args(argv)
-    if args.cmd == "stock":
-        db = load_json(STOCK_DB)
+    if args.cmd == "vanilla":
+        db = load_json(VANILLA_DB)
         for car, m in measure(args.runs).items():
             if car < 304:
                 db[str(car)] = m
                 print(car, {k: (round(v, 2) if isinstance(v, float) else v) for k, v in m.items()})
-        save_json(STOCK_DB, db)
+        save_json(VANILLA_DB, db)
     elif args.cmd == "targets":
-        t = Targets(load_json(STOCK_DB), D.load_fleet())
+        t = Targets(load_json(VANILLA_DB), D.load_fleet())
         print("0-60 model:", t.beta)
         t.loo()
     elif args.cmd == "show":

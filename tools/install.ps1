@@ -24,7 +24,7 @@ Install:
      runtime patches of Driver.exe 1.04 (no file is changed) that raise the
      archive, garage and save limits (research/asi.md). The ASI loader (step 4)
      loads it, so -SkipHook needs a loader of your own. An archive past the
-     stock reader (more than 1100 root entries, or 2 GiB) and -IdPolicy asi
+     vanilla reader (more than 1100 root entries, or 2 GiB) and -IdPolicy asi
      need it.
   Everything it did is recorded in <game>\dsfforza-backup\install.json.
   dsfforza.asi writes plugins\dsfforza.log (removed by -Uninstall) and keeps
@@ -97,7 +97,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$StockArchiveHash = '0DDC885E23028F708A92A2426B643938A6934C99204C780E01755C5B7778AE35'   # Install\dngvehicles.sp 1.04
+$VanillaArchiveHash = '0DDC885E23028F708A92A2426B643938A6934C99204C780E01755C5B7778AE35'   # Install\dngvehicles.sp 1.04
 # -Download fetches these pinned releases (the same as src/dsfforza/build/thirdparty.py) into
 # out\tools-dl and checks their SHA-256.
 $HookUrl = 'https://github.com/ReHamster/DriverNGToolkit/releases/download/0.7.2/DNGHook_072.7z'
@@ -172,10 +172,10 @@ function Test-GameRunning {
     return $false
 }
 
-# Stock 1.04 SHA-256 of the files the install replaces (English install; other
+# Vanilla 1.04 SHA-256 of the files the install replaces (English install; other
 # languages' global.fchunk are not known here and are not checked).
-$StockHashes = @{
-    'Install\dngvehicles.sp'       = $StockArchiveHash
+$VanillaHashes = @{
+    'Install\dngvehicles.sp'       = $VanillaArchiveHash
     'Install\gui.sp'               = 'AADB62925387307AF7E2BC5091D5E583823E553C23D4E71C5DD6BB71936DA11F'
     'media\Fonts.fchunk'           = '23B1724A878CB9937A764B55F7ADCF0E2D7403C0C63E8504A78566D8EE4602F2'
     'Locale\English\global.fchunk' = 'BA892E734B66A8AA08B98A19CEC32CE1A540792A02205D0AB3FB38BD599A96B8'
@@ -420,8 +420,8 @@ function Invoke-Uninstall([switch]$Keep) {
 
 # Before an install: a backup folder with no install in place (an uninstall that
 # could not delete everything, or an install that died before writing its record).
-# Its files are only safe to drop when the game files are stock; with -Force a game
-# file that isn't stock is put back from a leftover backup that is.
+# Its files are only safe to drop when the game files are vanilla; with -Force a game
+# file that isn't vanilla is put back from a leftover backup that is.
 function Resolve-LeftoverBackup {
     if (-not (Test-Path -LiteralPath $BackupDir)) { return }
     Say "Found $BackupDir without an install in place:"
@@ -429,23 +429,23 @@ function Resolve-LeftoverBackup {
         $relative = $file.FullName.Substring($BackupDir.Length + 1)
         if ($relative -like 'install*.json*') { continue }
         $target = Join-Path $Game $relative
-        $stock = $StockHashes[$relative]
+        $vanilla = $VanillaHashes[$relative]
         $backupHash = Get-Sha256 $file.FullName
         $gameHash = $null
         if (Test-Path -LiteralPath $target) { $gameHash = Get-Sha256 $target }
         if ($gameHash -eq $backupHash) { Say "  $relative = the game's file"; continue }
-        if ($stock -and $gameHash -eq $stock) { Say "  $relative : the game's file is stock (backup differs; not needed)"; continue }
-        if ($stock -and $backupHash -eq $stock) {
+        if ($vanilla -and $gameHash -eq $vanilla) { Say "  $relative : the game's file is vanilla (backup differs; not needed)"; continue }
+        if ($vanilla -and $backupHash -eq $vanilla) {
             if (-not $Force) {
-                Fail ("$relative in the game is not stock, but $BackupDir holds the stock file. " +
+                Fail ("$relative in the game is not vanilla, but $BackupDir holds the vanilla file. " +
                       "Add -Force to put it back, or copy it back yourself.")
             }
             Copy-Item -LiteralPath $file.FullName -Destination $target -Force
-            if ((Get-Sha256 $target) -ne $stock) { Fail "could not restore $relative from the leftover backup" }
+            if ((Get-Sha256 $target) -ne $vanilla) { Fail "could not restore $relative from the leftover backup" }
             Say "  restored $relative from the leftover backup (-Force)"
             continue
         }
-        Say "  $relative : differs from the game's file and isn't a known stock file; left in the backup folder"
+        Say "  $relative : differs from the game's file and isn't a known vanilla file; left in the backup folder"
     }
     $manifest = Read-Manifest
     if ($manifest) {
@@ -453,24 +453,24 @@ function Resolve-LeftoverBackup {
     }
 }
 
-# The replaced files must be stock: the build was made from the stock files and the
+# The replaced files must be vanilla: the build was made from the vanilla files and the
 # backups are what -Uninstall restores. gui.sp, Fonts.fchunk and global.fchunk from
 # another mod are replaced (and restored on uninstall) only with -Force.
-function Test-StockFiles {
-    foreach ($relative in $StockHashes.Keys) {
+function Test-VanillaFiles {
+    foreach ($relative in $VanillaHashes.Keys) {
         $path = Join-Path $Game $relative
         if (-not (Test-Path -LiteralPath $path)) { continue }
         $hash = Get-Sha256 $path
-        if ($hash -eq $StockHashes[$relative]) { continue }
+        if ($hash -eq $VanillaHashes[$relative]) { continue }
         if ($relative -eq 'Install\dngvehicles.sp') {
-            Fail ("Install\dngvehicles.sp is not the stock 1.04 archive (SHA-256 $hash). " +
+            Fail ("Install\dngvehicles.sp is not the vanilla 1.04 archive (SHA-256 $hash). " +
                   "Restore the original (Steam/Uplay: verify files) and run again.")
         }
         if (-not $Force) {
-            Fail ("$relative is not the stock 1.04 file (SHA-256 $hash; another mod?). Add -Force to replace it " +
+            Fail ("$relative is not the vanilla 1.04 file (SHA-256 $hash; another mod?). Add -Force to replace it " +
                   "anyway (it is backed up and restored by -Uninstall), or restore the original first.")
         }
-        Say "  WARNING: $relative is not stock (another mod?); replacing it (-Force), -Uninstall restores it"
+        Say "  WARNING: $relative is not vanilla (another mod?); replacing it (-Force), -Uninstall restores it"
     }
 }
 
@@ -480,8 +480,8 @@ function Show-Status {
     $manifest = Read-Manifest
     $archive = Join-Path $Game 'Install\dngvehicles.sp'
     $hash = Get-Sha256 $archive
-    $state = 'unknown (not the 1.04 stock archive)'
-    if ($hash -eq $StockArchiveHash) { $state = 'stock 1.04' }
+    $state = 'unknown (not the 1.04 vanilla archive)'
+    if ($hash -eq $VanillaArchiveHash) { $state = 'vanilla 1.04' }
     elseif ($manifest) {
         foreach ($e in @($manifest.entries)) {
             if ($e.path -eq 'Install\dngvehicles.sp' -and $e.installed_sha256 -eq $hash) { $state = 'dsfforza build (as installed)' }
@@ -609,7 +609,7 @@ function Invoke-Build([string]$RootLimit) {
     # The repo's own Python 3.13 environment (.venv, from uv.lock); --no-dev: no lint/test tools.
     $pyArgs = @('run', '--project', $Repo, '--frozen', '--no-dev', 'dsff', 'port_batch', 'build', '--dsf', (Join-Path $Game 'Install\dngvehicles.sp'),
                  '--out', $out, '--gui', '--id-policy', $IdPolicy)
-    # dsfforza.asi's archive module reads more than the stock reader's 1100 root entries.
+    # dsfforza.asi's archive module reads more than the vanilla reader's 1100 root entries.
     if ($RootLimit) { $pyArgs += @('--root-limit', $RootLimit) }
     $isos = $Iso
     if (-not $isos) { $isos = @(Get-ChildItem -LiteralPath (Join-Path $Repo 'assets') -Filter '*.iso' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }) }
@@ -642,7 +642,7 @@ function Invoke-Install {
         Invoke-Uninstall
     }
     Resolve-LeftoverBackup
-    Test-StockFiles
+    Test-VanillaFiles
 
     $lua = Join-Path $Repo 'tools\game\lua'
     $bootstrapTarget = Join-Path $Game 'Common\UserLuaScripts\bootstrap.lua'
@@ -686,16 +686,17 @@ function Invoke-Install {
     $buildManifestPath = Join-Path $buildFolder 'dngvehicles.json'
     $portedLua = Join-Path $buildFolder 'dngvehicles.lua'
     foreach ($f in @($archive, $buildManifestPath, $portedLua)) { if (-not (Test-Path -LiteralPath $f)) { Fail "build folder incomplete: $f missing" } }
-    # The stock reader holds 1100 root entries and seeks below 2 GiB; more needs the plugin's archive module.
+    # The vanilla reader holds 1100 root entries and seeks below 2 GiB; more needs the plugin's archive module.
     $rootEntries = Get-ArchiveRootCount $archive
     $archiveBytes = (Get-Item -LiteralPath $archive).Length
     if (-not $asiFile -and ($rootEntries -gt 1100 -or $archiveBytes -ge 2GB)) {
-        Fail ("the archive has $rootEntries root entries and $([math]::Round($archiveBytes / 1MB)) MB; the stock game reads at most " +
+        Fail ("the archive has $rootEntries root entries and $([math]::Round($archiveBytes / 1MB)) MB; the vanilla game reads at most " +
               "1100 entries and 2 GiB. Add -Asi to install the dsfforza.asi plugin with it (tools\asi\build.ps1).")
     }
     $buildManifest = Read-BuildManifest $buildManifestPath
-    if ($buildManifest.ContainsKey('stock_sha256') -and $buildManifest['stock_sha256'] -and
-        $buildManifest['stock_sha256'] -ne $StockArchiveHash) { Fail 'the build was made from a different stock archive' }
+    $builtFrom = $buildManifest['vanilla_sha256']
+    if (-not $builtFrom) { $builtFrom = $buildManifest['stock_sha256'] }   # builds before v0.1.3 name it so
+    if ($builtFrom -and $builtFrom -ne $VanillaArchiveHash) { Fail 'the build was made from a different vanilla archive' }
     Test-BuildGui $buildFolder $buildManifest
     $ids = @($buildManifest['cars'] | ForEach-Object { $_['spool_id'] })
     Say "Installing $($ids.Count) cars (IDs $($ids -join ', ')) into $Game"

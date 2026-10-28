@@ -66,7 +66,7 @@ param(
                          # (runs separated by ';', cycling; keys Up Down Left Right Space Shift W A S D)
     [string]$MenuKeys,   # menu taps after -MenuTrigger shows in Driver.log: 'Enter:2,Right:1.5,...' (key:wait s)
     [string]$MenuTrigger = 'garage\.enterGarage: true',
-    [double]$TrafficRadius = 0, # metres: once the world is up, the traffic road radius (350 m stock, 256 m in the
+    [double]$TrafficRadius = 0, # metres: once the world is up, the traffic road radius (350 m vanilla, 256 m in the
                          # [[engine+0x754]] case scaled alike) is read from a new float instead (research/draw-distance.md, plan A).
                          # Operands only: above 360 m 0x7723A0's 21-cell list overflows; use DSF Enhanced's TrafficSpawnRadius.
     [switch]$OnHost,
@@ -424,10 +424,10 @@ try {
         ini = & $hashOf $iniSource; iniFrom = $iniSource; iniRewritten = -not $overrides['dsf_enhanced.ini'] }
     $overrides['install\dngvehicles.sp'] = $Archive
     # A dsfforza install on the host (tools\install.ps1) replaces some game files. Tests use
-    # the repo's copy of the originals (out\stock, see src\dsfforza\game\game_paths.py) unless -Override
+    # the repo's copy of the originals (out\vanilla, see src\dsfforza\game\game_paths.py) unless -Override
     # names a file. Never link the install's own dsfforza-backup: a running test would hold
     # those files open and block install.ps1.
-    $backup = Join-Path $RepoDir 'out\stock'
+    $backup = Join-Path $RepoDir 'out\vanilla'
     if ((Test-Path (Join-Path $GameDir 'dsfforza-backup')) -and (Test-Path $backup)) {
         foreach ($file in Get-ChildItem $backup -Recurse -File | Where-Object { $_.Name -ne 'install.json' }) {
             $key = $file.FullName.Substring($backup.Length + 1).ToLower()
@@ -712,7 +712,7 @@ try {
     # shots per phase 0.7 s apart (indicators blink), then tell it to finish (-1).
     $lightSync = Join-Path $RunPath 'Common\UserLuaScripts\dsfforza\lightsync.lua'
     # The game reads lightsync.lua every update (io.open), so a write can hit a sharing
-    # violation (run host-20261023-095111 died on one at stock 171 phase 10). Retry for up
+    # violation (run host-20261023-095111 died on one at vanilla 171 phase 10). Retry for up
     # to 5 s, then note the miss and go on: the Lua advances by itself after its timeout.
     function Set-LightSync([int]$phase) {
         $text = "return { phase = $phase }`r`n"

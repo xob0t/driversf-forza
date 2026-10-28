@@ -67,7 +67,7 @@ class ClassifyWheel(unittest.TestCase):
 
 
 class ChromeTrim(unittest.TestCase):
-    """Forza's chrome techniques go to DSF's shared chrome materials (stock: GLOBAL_LOD_Chrome
+    """Forza's chrome techniques go to DSF's shared chrome materials (vanilla: GLOBAL_LOD_Chrome
     in full entries, GLOBAL_Chassis_Chrome in clean exteriors), not the flat dark trim: the
     Mustang Boss 429's bumpers and window frames came out black (out/testdrive11)."""
 
@@ -682,7 +682,7 @@ class TrimTexels(unittest.TestCase):
 
 
 class WheelSky(unittest.TestCase):
-    """Wheel vertices get a baked sky term like stock wheels (outward faces about
+    """Wheel vertices get a baked sky term like vanilla wheels (outward faces about
     0.64, the back of the disc and the barrel's inside dark), not a flat 0.42."""
 
     def disc(self, x, radius, normal_x, segments=24):

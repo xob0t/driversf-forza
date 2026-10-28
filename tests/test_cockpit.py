@@ -63,7 +63,7 @@ def test_badges_follow_their_section():
 
 def test_upgrade_bonnets_left_out():
     # Cockpit carbins hold every bonnet the car can wear (11 of the 40 testdrive cars);
-    # fit() keeps the stock one, as forza2dsf.stock_sections does on the outside. The
+    # fit() keeps the vanilla one, as forza2dsf.vanilla_sections does on the outside. The
     # Mustang Boss 429's body-colour race scoop (hoodCIrace) hid hooda's black one.
     from dsfforza.convert import forza2dsf
 
@@ -87,7 +87,7 @@ def test_upgrade_bonnets_left_out():
         "glassF",
     ]
     sections = [carbin.Section(n, (0, 0, 0), (0, 0, 0), (0, 0, 0)) for n in names]
-    kept = [s.name for s in forza2dsf.stock_sections(sections)]
+    kept = [s.name for s in forza2dsf.vanilla_sections(sections)]
     dropped = {"cagerace", "hoodCIrace", "hoodPSrace", "hoodb", "hoodg"}
     assert kept == [n for n in names if n not in dropped], kept
 
@@ -129,7 +129,7 @@ def test_virtual_dials_on_a_blank_display():
 
 
 def test_needles_the_host_cannot_turn_are_dropped():
-    # Stock 250 (the Volt's host) has no gauge record, so add_gauge_records can't give
+    # Vanilla 250 (the Volt's host) has no gauge record, so add_gauge_records can't give
     # it one: a needle (here a virtual dial) whose id the host can't turn is left out.
     panel = _display((0.5, 0.0, 0.5, 0.0) * 2, width=0.16, height=0.10)
     dials, report, _ = cockpit.virtual_gauges({"interior": panel}, {}, (0.08, 0.05, 0.7), _Car(), 2)
@@ -144,7 +144,7 @@ def test_needles_the_host_cannot_turn_are_dropped():
 
 
 def _gauge_hierarchy(gauge_id: int) -> bytes:
-    """root > cluster part (role 185) > one gauge record (the stock role for its id),
+    """root > cluster part (role 185) > one gauge record (the vanilla role for its id),
     then the steering marker: a one-gauge host like 146 (speedometer) or 225 (tachometer)."""
     head = bytearray(upvh.HEADER_SIZE)
     head[:4] = b"AWHF"
@@ -169,7 +169,7 @@ def _gauge_hierarchy(gauge_id: int) -> bytes:
 
 
 def test_one_gauge_host_gets_the_other_record():
-    # 19 stock hosts have a speedometer record only, 225 (MP4-12C) a tachometer only:
+    # 19 vanilla hosts have a speedometer record only, 225 (MP4-12C) a tachometer only:
     # the engine turns a needle only through a gauge record for its id (issue #62).
     for have, add in ((2, 1), (1, 2)):
         data = _gauge_hierarchy(have)
@@ -179,7 +179,7 @@ def test_one_gauge_host_gets_the_other_record():
         assert len(h.records) == 5 and h.counts["seats"] == 2
         assert [r.subtree for r in h.records] == [5, 3, 1, 1, 1]
         gauges = cockpit.gauge_records(h)
-        # Stock order: the speedometer's record before the tachometer's, both under the cluster.
+        # Vanilla order: the speedometer's record before the tachometer's, both under the cluster.
         assert gauges == {2: 2, 1: 3}, gauges
         for gid, index in gauges.items():
             r = h.records[index]
@@ -402,7 +402,7 @@ def test_grip_params_give_dsfforza_asi_the_drawn_rim():
     t = math.radians(24.0)
     axis = (0.0, math.sin(t), -math.cos(t))  # report axis: towards the driver
     centre = (0.4, 0.6, 0.28)
-    for radius in (0.114, cockpit.STOCK_RIM_RADIUS, 0.220):  # ARX-01b, stock, tour bus
+    for radius in (0.114, cockpit.VANILLA_RIM_RADIUS, 0.220):  # ARX-01b, vanilla, tour bus
         shift = cockpit.hand_shift(centre, axis, radius)
         along = cockpit._dot(shift, axis)
         assert math.sqrt(max(0.0, cockpit._dot(shift, shift) - along * along)) < 1e-9  # no orbit
@@ -419,14 +419,14 @@ def test_grip_params_give_dsfforza_asi_the_drawn_rim():
 
 
 def test_chase_driver_hands_keep_their_angle_on_forza_rim():
-    # The chase views' driver grips the stock circle about the seat's anchor
+    # The chase views' driver grips the vanilla circle about the seat's anchor
     # (seat_anchor, off the wheel's column on small or large rims); the chase-view wheel
     # keeps Forza's size, and dsfforza.asi [hands] puts each hand on its rim at the angle
     # the animations give it about that anchor, so the hands turn with the wheel.
     from dsfforza.convert import steering_axle
 
     side = (0.0, 0.0, 0.0)
-    axis = cockpit._norm(cockpit.STOCK_COLUMN)
+    axis = cockpit._norm(cockpit.VANILLA_COLUMN)
     for radius in (0.114, 0.200, 0.220):  # ARX-01b, Regal GNX, tour bus
         anchor = cockpit.seat_anchor(side, axis, radius)
         rim = (side, axis, radius)
@@ -440,21 +440,21 @@ def test_chase_driver_hands_keep_their_angle_on_forza_rim():
 
 
 def test_seat_anchor_puts_the_grips_on_the_rim():
-    # The chase view's driver holds the wheel at the stock point of the seat's frame;
+    # The chase view's driver holds the wheel at the vanilla point of the seat's frame;
     # the seat goes where those grips land on the drawn rim (in-plane shift allowed).
     side = (0.0, 0.0, 0.0)
-    axis = cockpit._norm(cockpit.STOCK_COLUMN)
+    axis = cockpit._norm(cockpit.VANILLA_COLUMN)
     for radius in (0.150, 0.200):
         anchor = cockpit.grip_shift(side, axis, radius)
         assert cockpit.hand_grip_error(anchor, side, axis, radius) < 0.003, radius
 
 
 def test_hand_shift_keeps_the_hinge_on_the_column():
-    # A flatter Forza column (S5S Raptor: 10 deg) than the stock rig's (24 deg): the
+    # A flatter Forza column (S5S Raptor: 10 deg) than the vanilla rig's (24 deg): the
     # grips sit off the rim's plane, and only a move along the column is allowed.
     t = math.radians(10.0)
     axis = (0.0, math.sin(t), -math.cos(t))
-    shift = cockpit.hand_shift((0.3, 0.6, 0.2), axis, cockpit.STOCK_RIM_RADIUS)
+    shift = cockpit.hand_shift((0.3, 0.6, 0.2), axis, cockpit.VANILLA_RIM_RADIUS)
     assert abs(math.sqrt(cockpit._dot(shift, shift)) - abs(cockpit._dot(shift, axis))) < 1e-9
     assert cockpit._dot(shift, shift) > 0.0001  # it does move
 
@@ -478,7 +478,7 @@ def _hierarchy(markers: list[tuple[int, tuple, tuple]]) -> bytes:
 
 
 def test_seat_follows_the_steering_marker():
-    # The driver model holds the wheel only where stock cars have it in the seat's
+    # The driver model holds the wheel only where vanilla cars have it in the seat's
     # frame: the seat goes where that puts the marker, at the host's seat tilt
     # (Mustang Shelby GT500 1967, 193: -5 deg; its own marker sits at (0.505, 0.385) from the seat).
     tilt = (-0.0436, 0.0, 0.0, 0.999)
@@ -494,9 +494,9 @@ def test_seat_follows_the_steering_marker():
     assert struct.unpack_from("<4f", h.table("markers")[1], 0x10) == struct.unpack_from(
         "<4f", upvh.parse(data).table("markers")[1], 0x10
     )
-    # in the seat's frame the marker is the stock point; in model space the host's own offset
+    # in the seat's frame the marker is the vanilla point; in model space the host's own offset
     frame = cockpit.quat_rotate((-tilt[0], 0, 0, tilt[3]), tuple(m - s for m, s in zip(marker, seat)))
-    assert max(abs(a - b) for a, b in zip(frame, cockpit.STOCK_MARKER_FROM_SEAT)) < 1e-4
+    assert max(abs(a - b) for a, b in zip(frame, cockpit.VANILLA_MARKER_FROM_SEAT)) < 1e-4
     assert abs(marker[1] - seat[1] - 0.505) < 2e-3 and abs(marker[2] - seat[2] - 0.385) < 2e-3
     assert report["driver"]["from"] == [0.3, -0.4, -0.12] and "body_eye_from_camera" in report
 

@@ -3,7 +3,7 @@
 Each card of the garage's card browser has its disc (`Spr3D.unlocked<N>`) at
 its own top right corner, where it overlaps the picture of the next card
 behind it. dsfforza.asi `[hud] card_emblem` shows the Forza logo there for a
-car with `GarageEmblem = 1` and the stock SF disc otherwise
+car with `GarageEmblem = 1` and the vanilla SF disc otherwise
 (research/gui-assets.md, "Garage card emblem").
 
 The run needs `[garage] menu_debug=1` and `[hud] emblem_debug=1` in the

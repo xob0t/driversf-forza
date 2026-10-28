@@ -24,7 +24,7 @@ What DSF needs (research/cockpit.md):
   input clamp(mph, p606, p605) / 80 (FUN_00891670). Ids 3..7 get no input.
   So the u32 is the needle's degrees per 5000 rpm or per 80 mph, the rest
   pose is 0 rpm / 0 mph, and VO3D p605 is the speedometer's last mark
-  (stock DeLorean 88, Eldorado 120; default 255).
+  (vanilla DeLorean 88, Eldorado 120; default 255).
 - The head camera (VO3D 430..432, FUN_0088DF80 case 0x14) is
   (p430 - marker47.x, p431, p432) in a frame turned 180 degrees about y,
   so in model space eye = (marker47.x - p430, p431, -p432).
@@ -108,7 +108,7 @@ FLAT_COCKPIT = [
 ]
 FLAT_DEFAULT = (34, 34, 36, 255)
 VIRTUAL_ONLY_FLAT = {r"^dsf_dial_mark_dark$", r"^dsf_dial_display$", r"^dsf_dial_bezel$"}
-# The engine's interior paint material: used by every stock interior that has
+# The engine's interior paint material: used by every vanilla interior that has
 # painted parts (227, 147, 229, 193, 251, 266 checked; out/cockpit2/host_shared.py).
 INTERIOR_PAINT = bytes.fromhex("10122b9653b14e2a")
 # Detail techniques whose UVs run along thin strips or noise tiles of the
@@ -260,7 +260,7 @@ def fit_wheel(section: carbin.Section) -> Wheel:
 # Some Forza wheels are modelled with their column (the FM4 FG Falcon racers: a
 # 1 m shaft to the bulkhead) or a deep quick-release spacer (FM4 TT-R): the
 # column pulls the least-spread direction off the wheel's own (the Falcons'
-# came out 74 deg up, radius 6 cm) and the stock hand grips missed by 9 cm.
+# came out 74 deg up, radius 6 cm) and the vanilla hand grips missed by 9 cm.
 COLUMN_DEPTH = 0.30  # m along Forza z: a deeper section carries its column
 WHEEL_DEPTH = 0.22  # m kept at the driver's end then (a 0.2 m rim at 30 deg spans 0.13)
 RIM_REFITS = 3
@@ -1459,7 +1459,7 @@ def flatten_face(static: dict, face: dict) -> int:
 def drop_unturned(cf: CockpitFit, gauge_slots: dict[int, int]) -> list[str]:
     """Take out the speed and tach needles (Forza's or virtual dials) whose
     gauge id the host's gauge table has no entry for, after add_gauge_records:
-    only hosts without any gauge record (stock 250, the Volt's, and four
+    only hosts without any gauge record (vanilla 250, the Volt's, and four
     unused ones). The engine would leave such a needle unturned, so it isn't
     drawn at all. Returns the families dropped."""
     dropped = [f for f in cf.gauges if f in GAUGE_IDS and GAUGE_IDS[f] not in gauge_slots]
@@ -1589,13 +1589,13 @@ def fit(
         sections = cabin
         lod0 = False
     else:
-        # Upgrade parts, as on the outside (forza2dsf.stock_sections): the cockpit
+        # Upgrade parts, as on the outside (forza2dsf.vanilla_sections): the cockpit
         # carbin holds every bonnet the car can wear (Mustang Boss 429: hooda,
-        # hoodCIrace, hoodPSrace), all drawn at once over the stock one. The
+        # hoodCIrace, hoodPSrace), all drawn at once over the vanilla one. The
         # Boss's body-colour race scoop hid hooda's black one from the cockpit.
         from dsfforza.convert import forza2dsf
 
-        sections = forza2dsf.stock_sections(sections)
+        sections = forza2dsf.vanilla_sections(sections)
     static, needles = cockpit_parts(sections)
     if "steering_wheel" not in static:
         borrowed = promote_lod(main["steering_wheel"]) if "steering_wheel" in main else None
@@ -1782,16 +1782,16 @@ def host_cockpit(upvh_data: bytes) -> HostCockpit:
     )
 
 
-# Stock gauge records (type 18) are leaves under the cluster part (role 185):
+# Vanilla gauge records (type 18) are leaves under the cluster part (role 185):
 # the speedometer's has role 0, the tachometer's 187, and every record field
 # but the role and the gauge-table index is the same (144 speedometers, 126
-# tachometers over the 150 stock hierarchies). FUN_0088E310 keeps, per gauge
+# tachometers over the 150 vanilla hierarchies). FUN_0088E310 keeps, per gauge
 # table index (at most 7), the record of each type-18 record whose role isn't
 # 185 and whose entry's gauge id is below 8; the render loop turns a needle
 # through every kept record's entry (research/cockpit.md, "Gauges").
 GAUGE_RECORD_TYPE = 18
 CLUSTER_ROLE = 185
-GAUGE_ROLES = {2: 0, 1: 187}  # gauge id -> the stock record's role
+GAUGE_ROLES = {2: 0, 1: 187}  # gauge id -> the vanilla record's role
 MAX_GAUGES = 7
 
 
@@ -1809,11 +1809,11 @@ def gauge_records(h) -> dict[int, int]:
 
 def add_gauge_records(upvh_data: bytes, ids) -> tuple[bytes, list[int]]:
     """Give the hierarchy a gauge record and gauge-table entry for each id in
-    `ids` it lacks, so the engine turns that needle too. 19 stock hosts carry a
+    `ids` it lacks, so the engine turns that needle too. 19 vanilla hosts carry a
     speedometer only (146 the 1968 Camaro, 230, 249...), 225 (MP4-12C) a
     tachometer only. The new record is a copy of the host's own gauge record
-    (same parent, the cluster part; the stock role for the id), the speedometer's
-    before the tachometer's as in stock hierarchies; its entry is a copy of
+    (same parent, the cluster part; the vanilla role for the id), the speedometer's
+    before the tachometer's as in vanilla hierarchies; its entry is a copy of
     that record's entry with the new id, appended to the table (patch_hierarchy
     sets the pivot, dial and sweep). A host without any gauge record (250,
     the Volt's) gets none: there is no cluster record to hang one on.
@@ -1868,13 +1868,13 @@ def add_gauge_records(upvh_data: bytes, ids) -> tuple[bytes, list[int]]:
 # marker's column (FUN_005756E0 -> FUN_00514150). So the marker and p538/p559
 # move the wheel and the hands together. Only the hinge, the point of the wheel
 # mesh drawn at A, moves the hands against the wheel. The marker's quaternion
-# leaves both alone at rest. The rig fits the stock wheel: in every stock car the
+# leaves both alone at rest. The rig fits the vanilla wheel: in every vanilla car the
 # hinge is the centre of the same wheel mesh, rim radius 0.176 m (fleet median of
 # the fit_wheel measure; quartiles 0.174 to 0.180), column 24 deg up. The hands
 # grip it about 45 deg either side of the top.
 HAND_PARAMS = (538, 559)
-STOCK_RIM_RADIUS = 0.176
-STOCK_COLUMN = (0.0, 0.410, -0.912)  # DSF model space, towards the driver
+VANILLA_RIM_RADIUS = 0.176
+VANILLA_COLUMN = (0.0, 0.410, -0.912)  # DSF model space, towards the driver
 HAND_GRIP_DEG = 45.0
 MAX_HAND_ALONG = 0.12  # m, along the column (no orbit; the driver model moves with it)
 MAX_SEAT_SHIFT = 0.06  # m, in the wheel plane: grip_shift for the seat (the chase view's driver)
@@ -1887,16 +1887,17 @@ def _rim_nearest(p, centre, axis, radius):
 
 
 def hand_grips(pivot) -> list[tuple]:
-    """Where the stock hand rig grips when the steering pivot (hinge = marker,
+    """Where the vanilla hand rig grips when the steering pivot (hinge = marker,
     p538/p559 zero) is at `pivot` (DSF model space)."""
-    a = _norm(STOCK_COLUMN)
+    a = _norm(VANILLA_COLUMN)
     up = _norm(_sub((0.0, 1.0, 0.0), _scale(a, a[1])))
     t = math.radians(HAND_GRIP_DEG)
     return [
         _add(
             pivot,
             _add(
-                _scale((1.0, 0.0, 0.0), s * STOCK_RIM_RADIUS * math.sin(t)), _scale(up, STOCK_RIM_RADIUS * math.cos(t))
+                _scale((1.0, 0.0, 0.0), s * VANILLA_RIM_RADIUS * math.sin(t)),
+                _scale(up, VANILLA_RIM_RADIUS * math.cos(t)),
             ),
         )
         for s in (1, -1)
@@ -1906,7 +1907,7 @@ def hand_grips(pivot) -> list[tuple]:
 def hand_shift(centre, axis, radius) -> tuple[float, float, float]:
     """Offset from the Forza wheel centre for the steering hinge and marker,
     along the column only: the least-squares move along the axis that brings the
-    stock hand grips to the rim's plane, capped at MAX_HAND_ALONG (it moves the
+    vanilla hand grips to the rim's plane, capped at MAX_HAND_ALONG (it moves the
     driver model with the seat, patch_seats). The engine turns the wheel about
     the marker's direction through the hinge, so any part of the shift in the
     wheel plane makes the hub circle by 2 |shift| sin(angle / 2) while steering
@@ -1924,11 +1925,11 @@ def hand_shift(centre, axis, radius) -> tuple[float, float, float]:
 
 
 def grip_shift(centre, axis, radius) -> tuple[float, float, float]:
-    """Translation (y and z) from the wheel centre that puts the stock grips on
+    """Translation (y and z) from the wheel centre that puts the vanilla grips on
     the rim (least squares), with the in-plane part capped at MAX_SEAT_SHIFT and
     the part along the column at MAX_HAND_ALONG. Not for the hinge (the wheel
     would turn about an off-hub point): it places the driver's seat, whose
-    animated driver holds the wheel at the stock point of the seat's frame in
+    animated driver holds the wheel at the vanilla point of the seat's frame in
     the chase views (seat_anchor, patch_seats). The same translation placed the
     hinge and marker before 2026-10-26."""
     axis = _norm(axis)
@@ -1956,7 +1957,7 @@ SEAT_SCALE_RANGE = (0.8, 1.3)
 
 def seat_anchor(centre, axis, forza_radius) -> tuple[float, float, float]:
     """Where the driver's seat holds the wheel (patch_seats): the point whose
-    stock grips land on Forza's rim, as the hinge and marker were placed up to
+    vanilla grips land on Forza's rim, as the hinge and marker were placed up to
     2026-10-26 (grip_shift on the rim scaled the way it was then: by 0.8 to 1.3
     where that shift left the grips over 5 mm off). Kept so fixing the hinge
     doesn't move the driver model: the head room stays. The chase views' wheel
@@ -1982,7 +1983,7 @@ def seat_anchor(centre, axis, forza_radius) -> tuple[float, float, float]:
 
 
 def hand_grip_error(pivot, centre, axis, radius) -> float:
-    """Largest distance (m) from a stock grip to the Forza rim."""
+    """Largest distance (m) from a vanilla grip to the Forza rim."""
     return max(math.dist(g, _rim_nearest(g, centre, _norm(axis), radius)) for g in hand_grips(pivot))
 
 
@@ -2001,8 +2002,8 @@ def hand_params(steering: dict | None = None) -> dict[int, float]:
 # car's rim (research/cockpit.md, "Hands on Forza's rim"). It reads the rim from VO3D
 # parameters that nothing in the game uses: type 3 ("unused") in the parameter type table
 # at 0x00F3E450, no displacement or immediate reference in Driver.exe at either base
-# (spec + 0x2C70, block + 0x2960), set by no stock VO3D. Stock cars leave them at 0 and
-# keep the stock grips.
+# (spec + 0x2C70, block + 0x2960), set by no vanilla VO3D. Vanilla cars leave them at 0 and
+# keep the vanilla grips.
 GRIP_RADIUS_PARAM = 95  # the drawn rim's radius (m)
 GRIP_ALONG_PARAM = 87  # the rim centre from the steering marker along the engine's column direction (m)
 GRIP_PARAMS = (GRIP_RADIUS_PARAM, GRIP_ALONG_PARAM)
@@ -2023,7 +2024,7 @@ def patch_hierarchy(upvh_data: bytes, host: HostCockpit, place, cf: CockpitFit) 
     """Move the steering hinge and marker, the gauges and the mirrors to the
     Forza cockpit (all in DSF model space through `place`). The hinge and
     marker sit at the wheel centre plus hand_shift (along the column, so the
-    wheel turns about its own hub); dsfforza.asi [hands] moves the stock hands
+    wheel turns about its own hub); dsfforza.asi [hands] moves the vanilla hands
     onto the Forza rim (hand_params in VO3D)."""
     from dsfforza.formats import upvh
 
@@ -2040,7 +2041,7 @@ def patch_hierarchy(upvh_data: bytes, host: HostCockpit, place, cf: CockpitFit) 
     pivot = _add(centre, shift)
     struct.pack_into("<3f", data, hinge_at, *pivot)
     struct.pack_into("<3f", data, hinge_at + 0x10, *axis)
-    # The stock marker quaternion turns (0, 0, -1) onto the column (Desanne: 24.4 deg about x);
+    # The vanilla marker quaternion turns (0, 0, -1) onto the column (Desanne: 24.4 deg about x);
     # the engine turns the wheel and hands about it.
     q = quat_from_to((0, 0, -1), axis)
     marker_at = h.offsets["markers"] + host.wheel_marker * 0x20
@@ -2077,8 +2078,8 @@ def patch_hierarchy(upvh_data: bytes, host: HostCockpit, place, cf: CockpitFit) 
         normal = _norm(place.normal(g.normal))
         cal = cf.calibration.get(family)
         if cal is not None and cal.reverse:
-            normal = _scale(normal, -1)  # stock counter-clockwise needles (Pacer, Aston tachs) do this
-        # Stock gauge quaternions turn (0, 0, 1) onto the dial normal (Desanne: 21.8 deg about x);
+            normal = _scale(normal, -1)  # vanilla counter-clockwise needles (Pacer, Aston tachs) do this
+        # Vanilla gauge quaternions turn (0, 0, 1) onto the dial normal (Desanne: 21.8 deg about x);
         # the engine turns the needle right-handed about it.
         struct.pack_into("<3f", data, at, *pivot)
         struct.pack_into("<4f", data, at + 0x10, *quat_from_to((0, 0, 1), normal))
@@ -2122,13 +2123,13 @@ def patch_hierarchy(upvh_data: bytes, host: HostCockpit, place, cf: CockpitFit) 
 
 DRIVER_SEAT_ROLE, PASSENGER_SEAT_ROLE = 10, 11
 # The driver model in the chase views is one animated rig placed on the driver seat
-# marker (role 10), hands included: they hold the wheel only where the stock wheel is
+# marker (role 10), hands included: they hold the wheel only where the vanilla wheel is
 # in the seat's frame (research/cockpit.md, "The driver's seat follows the wheel").
-# 138 of 147 stock cars put the steering marker (role 47) at this point of the seat
+# 138 of 147 vanilla cars put the steering marker (role 47) at this point of the seat
 # marker's frame within 1 cm, all but two within 2 cm (the seat tilt, 0 or -5 deg,
-# turns the frame; `dsff driver_survey stock`).
-STOCK_MARKER_FROM_SEAT = (0.0, 0.469, 0.428)
-# Head-camera eye in the seat marker's frame, stock median (y 0.642..0.841, z -0.286..0.129):
+# turns the frame; `dsff driver_survey vanilla`).
+VANILLA_MARKER_FROM_SEAT = (0.0, 0.469, 0.428)
+# Head-camera eye in the seat marker's frame, vanilla median (y 0.642..0.841, z -0.286..0.129):
 # about where the driver model's eyes are.
 FLEET_EYE_ABOVE_SEAT = (0.0, 0.738, -0.069)
 
@@ -2146,15 +2147,15 @@ def seat_markers(upvh_data: bytes) -> dict[int, int]:
 
 
 def seat_for_marker(marker, seat_quat) -> tuple[float, float, float]:
-    """The driver seat position that puts the steering marker where stock cars have
-    it in the seat's frame (STOCK_MARKER_FROM_SEAT), for a seat turned by seat_quat."""
-    return _sub(marker, quat_rotate(seat_quat, STOCK_MARKER_FROM_SEAT))
+    """The driver seat position that puts the steering marker where vanilla cars have
+    it in the seat's frame (VANILLA_MARKER_FROM_SEAT), for a seat turned by seat_quat."""
+    return _sub(marker, quat_rotate(seat_quat, VANILLA_MARKER_FROM_SEAT))
 
 
 def patch_seats(upvh_data: bytes, eye_dsf=None, anchor=None) -> tuple[bytes, dict]:
     """Move the driver's seat marker (role 10, where the game seats the driver
     model) so `anchor` (default: the steering marker) sits where the steering
-    marker does in stock cars, in the seat's frame (STOCK_MARKER_FROM_SEAT), and
+    marker does in vanilla cars, in the seat's frame (VANILLA_MARKER_FROM_SEAT), and
     the passenger's (role 11) to the mirrored x at the same height and depth.
     patch_hierarchy reports the anchor (steering.seat_anchor, seat_anchor()). Call after patch_hierarchy with VO3D
     p538/p559 at zero (hand_params). The marker
@@ -2188,7 +2189,7 @@ def patch_seats(upvh_data: bytes, eye_dsf=None, anchor=None) -> tuple[bytes, dic
     return bytes(data), report
 
 
-# Stock head cameras see the steering rim's top this far below eye level
+# Vanilla head cameras see the steering rim's top this far below eye level
 # (median of 146 cars, out/eye/wheel_view.py; quartiles 7.0 to 9.0, Desanne
 # 13.7). Forza's CamCockpitOffset sits lower (370Z 6.5, M5 3.3, Skyline 1.9),
 # so with DSF's field of view the rim fills the lower half of the screen.
@@ -2198,7 +2199,7 @@ RIM_DROP_DEG = 7.9
 def camera_eye(eye_dsf, wheel_points_dsf, sight=None) -> tuple[float, float, float]:
     """The head-camera position: the Forza eye, raised (never lowered) until the
     steering wheel's topmost vertex is RIM_DROP_DEG below it, measured the way
-    out/eye/wheel_view.py measures stock cars. The driver's seat stays under
+    out/eye/wheel_view.py measures vanilla cars. The driver's seat stays under
     the Forza eye, so the driver model keeps its headroom.
 
     `sight(rise)` (GaugeSight) is the share of the needles' sweep the driver
@@ -2404,7 +2405,7 @@ def host_interior(stream, interior, known: dict | None = None) -> InteriorMateri
         return max(found, key=lambda m: sizes[m]) if found else fallback
 
     glass = pick(28, 7, forza2dsf.GLASS)
-    # Every stock interior paints with INTERIOR_PAINT; picking the largest
+    # Every vanilla interior paints with INTERIOR_PAINT; picking the largest
     # stride-32 material instead took GLOBAL_LOD_Chrome (a012f01306d57a2a) on
     # hosts that use more chrome than paint (193, the Mustang's host).
     paint = INTERIOR_PAINT if INTERIOR_PAINT in shared_used else pick(32, 5, forza2dsf.PAINT)
@@ -2430,7 +2431,7 @@ def host_interior(stream, interior, known: dict | None = None) -> InteriorMateri
 def _needle_vertex(pos, uv, gauge_id: int, normal, stride: int = 20, comp: int = 0) -> bytes:
     """Host needle layout: s0 4 x i16, s8 4 x f16 (u, v, gauge id, comp), then at
     stride 20 s5 4 x u8 (the normal). Hosts 250 and 293 draw their Dials
-    material from a stride-16 buffer without the normal (145 stock interiors
+    material from a stride-16 buffer without the normal (145 vanilla interiors
     use 20)."""
     from dsfforza.convert import forza2dsf
 
@@ -2444,7 +2445,7 @@ def _needle_vertex(pos, uv, gauge_id: int, normal, stride: int = 20, comp: int =
 
 # Vertex-cluster cells (m) tried in turn until the interior MDXN fits.
 DECIMATE_LADDER = (0.0, 0.004, 0.007, 0.01, 0.015, 0.02, 0.03)
-# Largest stock interior MDXN (Sports Coupe 10); port_car enforces the same.
+# Largest vanilla interior MDXN (Sports Coupe 10); port_car enforces the same.
 INTERIOR_MDXN_LIMIT = 0x12D000
 
 
@@ -2454,7 +2455,7 @@ class CockpitOptions:
     shell: bool = True
     headlights: bool = False  # the cockpit carbin's headlight sections (lights_LOD0)
     atlas_size: tuple[int, int] | None = None
-    # DXT1 halves the atlas (stock interiors ship DXT1 textures too); the
+    # DXT1 halves the atlas (vanilla interiors ship DXT1 textures too); the
     # Interior material then loses its alpha specular mask, and needle cells
     # stay opaque for the alpha-tested Dials material.
     atlas_format: str = "DXT1"
@@ -3225,14 +3226,14 @@ def convert_interior(
                 dm.texture_entry(stream, texc, dd.dxt5_dds(plan.width, plan.height, plan.rgba), tex_uid)
             )
             drsp.children.append(
-                dm.retarget_material(stream, dd.stock_material(stream), {dd.STOCK_TEXTURE: tex_uid}, mat_uid)
+                dm.retarget_material(stream, dd.vanilla_material(stream), {dd.VANILLA_TEXTURE: tex_uid}, mat_uid)
             )
             # The digital-dials shaders are drawn from the Volt's own buffer layout (no
             # normal): a buffer of their own, stride 16 (hosts 250 and 293 draw their
             # needles from that layout too, so they share it).
-            stride = dd.STOCK_STRIDE
+            stride = dd.VANILLA_STRIDE
             builder.layout[mat_uid] = (stride, dd.MODL_FLAG)
-            digital_templates = {stride: dd.stock_buffer(stream)}
+            digital_templates = {stride: dd.vanilla_buffer(stream)}
             verts, tris = dd.vertices(plan, place, stride)
             if tris:
                 needle_subs.append(builder.add(mat_uid, verts, tris))
@@ -3293,7 +3294,7 @@ def convert_interior(
 
 # --- previews -------------------------------------------------------------------------
 
-GLASS_FLAG = 7  # MODL per-submodel value of glass submodels (stock interiors and exteriors)
+GLASS_FLAG = 7  # MODL per-submodel value of glass submodels (vanilla interiors and exteriors)
 
 
 def _entry_triangles(

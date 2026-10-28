@@ -31,7 +31,7 @@ from pathlib import Path
 
 from dsfforza.formats import chnk
 
-# Stock Lua 5.1 on x86 except byte 10: sizeof(lua_Number) is 4 (float, not double).
+# Vanilla Lua 5.1 on x86 except byte 10: sizeof(lua_Number) is 4 (float, not double).
 LUA51_HEADER = b"\x1bLua\x51\x00\x01\x04\x04\x04\x04\x00"
 
 

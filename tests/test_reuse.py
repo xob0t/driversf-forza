@@ -87,7 +87,7 @@ def _job(folder: Path) -> dict:
         "games": "FH1",
         "source": {"iso": str(folder / "disc.iso"), "path": "media/cars/x.zip"},
         "spool_id": 7,
-        "dsf": str(folder / "stock.sp"),
+        "dsf": str(folder / "vanilla.sp"),
         "game_dir": str(folder),
         "cache": str(folder),
         "isos": [],
@@ -142,30 +142,30 @@ def test_fingerprint_records_inputs_and_code():
         assert fingerprint.Checker().check(changed, job, code=False) is None
 
 
-def test_a_moved_stock_archive_with_the_same_digest_is_the_same_input():
+def test_a_moved_vanilla_archive_with_the_same_digest_is_the_same_input():
     """dsff install builds from the game's dngvehicles.sp the first time and from the install's
     backup of it after that (issue #95: every car was converted again on each later run)."""
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
         game = folder / "game"
-        stock = game / "Install" / "dngvehicles.sp"
-        stock.parent.mkdir(parents=True)
-        stock.write_bytes(b"stock archive")
-        job = {**_job(folder), "dsf": str(stock), "game_dir": str(game)}
+        vanilla = game / "Install" / "dngvehicles.sp"
+        vanilla.parent.mkdir(parents=True)
+        vanilla.write_bytes(b"vanilla archive")
+        job = {**_job(folder), "dsf": str(vanilla), "game_dir": str(game)}
         recorder = fingerprint.Recorder([folder / "out"]).start()
         try:
-            stock.read_bytes()
+            vanilla.read_bytes()
         finally:
             fp = recorder.finish(job)
-        assert fingerprint.norm(stock) in fp["files"]
+        assert fingerprint.norm(vanilla) in fp["files"]
         # The install backs the archive up (time stamp kept, as Copy-Item does) and replaces it.
         backup = game / "dsfforza-backup" / "Install" / "dngvehicles.sp"
         backup.parent.mkdir(parents=True)
-        shutil.copy2(stock, backup)
-        stock.write_bytes(b"the installed build")
+        shutil.copy2(vanilla, backup)
+        vanilla.write_bytes(b"the installed build")
         after = {**job, "dsf": str(backup)}
         assert fingerprint.Checker().check(fp, after) is None
-        assert fingerprint.Checker().moved(fp, after) == {fingerprint.norm(stock): fingerprint.norm(backup)}
+        assert fingerprint.Checker().moved(fp, after) == {fingerprint.norm(vanilla): fingerprint.norm(backup)}
         assert fingerprint.Checker().check(fp, job).startswith("input ")  # the game's file is the build now
         backup.write_bytes(b"another archive")
         assert fingerprint.Checker().check(fp, after) == "job: dsf"

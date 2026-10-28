@@ -53,17 +53,17 @@ GLASS = bytes.fromhex("001283369afd1027")
 TRIM = bytes.fromhex("0012833b12fe1027")
 TYRE = bytes.fromhex("00128337b2fd1027")
 # Their *_LOD1 twins (GLOBAL_Chassis_LOD1, _Glass_LOD1, _Chassis_Simple_LOD1, _Tyre_LOD1):
-# what stock clean exterior entries use (paint and trim in 149 of 150, tyres in 150,
+# what vanilla clean exterior entries use (paint and trim in 149 of 150, tyres in 150,
 # glass in 145; the full-entry materials in at most 8, for a few hundred triangles).
 # Converted exteriors used the full-entry ones, and the player's car, which the
 # chase camera draws from that entry, came out wrong where the full-entry shaders
-# read per-car constants: the DMC-12's stainless entry (copied from stock 171, same
+# read per-car constants: the DMC-12's stainless entry (copied from vanilla 171, same
 # shader maths) drew near black (research/lights.md, "The DMC-12 came out black").
 PAINT_LOD1 = bytes.fromhex("10122b9653b14e2a")
 GLASS_LOD1 = bytes.fromhex("10122b9953b14e2a")
 TRIM_LOD1 = bytes.fromhex("10122b9753b14e2a")
 TYRE_LOD1 = bytes.fromhex("10122b9b53b14e2a")
-# Chrome (Forza's chrome techniques: bumpers, window frames, drip rails). Stock
+# Chrome (Forza's chrome techniques: bumpers, window frames, drip rails). Vanilla
 # full entries draw their chrome with GLOBAL_LOD_Chrome (96 of 150 vehicles,
 # 374k triangles; GLOBAL_Chassis_Chrome in 9) and clean exteriors with
 # GLOBAL_Chassis_Chrome (148 of 150, 322k triangles; GLOBAL_LOD_Chrome in 8),
@@ -72,7 +72,7 @@ TYRE_LOD1 = bytes.fromhex("10122b9b53b14e2a")
 CHROME = bytes.fromhex("a012f01306d57a2a")  # GLOBAL_LOD_Chrome
 CHROME_LOD1 = bytes.fromhex("00128338d7fd1027")  # GLOBAL_Chassis_Chrome
 # Vertex stride each material was used with in the Desanne, and MODL render flag
-# (the _LOD1 twins: the same in stock exteriors, e.g. 147, 171, 227). Read only:
+# (the _LOD1 twins: the same in vanilla exteriors, e.g. 147, 171, 227). Read only:
 # each conversion adds its host's own materials to a copy (Builder.layout).
 MATERIAL_LAYOUT = {
     PAINT: (32, 5),
@@ -91,7 +91,7 @@ DEFAULT_LODS = "4:1,8:3,16:5"  # DSF MODL mask -> Forza LOD
 SHADOW_MASK, DEFAULT_SHADOW_LOD = 1, 5
 EXTERIOR_MASK = 2
 POSITION_SCALE = 4096
-# Largest MDXN among stock VEHC entries per kind. Spooling a bigger one crashed
+# Largest MDXN among vanilla VEHC entries per kind. Spooling a bigger one crashed
 # the game (run 20261021-233936, MDXN 0x21D800), so the converter refuses.
 MDXN_LIMIT = {0: 0x138800, 1: 0x12D000, 2: 0xDD800}
 NONR_LIMIT = {0: 0x6D000, 1: 0x1000, 2: 0x1000}  # SSLP per-kind NONR buffers (spool-limits.md)
@@ -105,13 +105,13 @@ HOST_HUB_Y = -0.398
 PAINT_UV = (0.835, 0.703)
 # Shared trim (GLOBAL_Chassis_Simple) UV: the uniform dark block of the global
 # chassis texture (SSIC 00122b73d1fa1227, texels ~(944-1023, 236-268), RG ~24)
-# that stock trims drawn from a single texel use most (46 hosts: 39% of that area).
+# that vanilla trims drawn from a single texel use most (46 hosts: 39% of that area).
 TRIM_UV = (0.969, 0.496)
-# Shared chrome UV0: the middle of the block of that texture stock chrome samples
+# Shared chrome UV0: the middle of the block of that texture vanilla chrome samples
 # most (texels 972-980 x 404-424 on both chrome materials, 150 vehicles; red,
 # the grey level, ~98). One texel: Forza's chrome UVs land on its own atlas.
 CHROME_UV = (0.9536, 0.8135)
-# Licence plates (src/dsfforza/convert/plates.py): stock plates are paint-material quads whose
+# Licence plates (src/dsfforza/convert/plates.py): vanilla plates are paint-material quads whose
 # UV0 covers the plate in the same shared atlas; the synthetic plate sections
 # carry those UVs and keep them (add_geometry).
 PLATE_TECHNIQUE = "dsf_plate"
@@ -143,7 +143,7 @@ def raised_lamp(name: str, names) -> bool:
     lowered state <base>down or plain <base>, any case (headlightLup /
     headlightLdown, the NSX's headlightLUp, glassLHLup, the Stratos's and Elan's
     headlightRup next to headlightR). Forza draws the lowered state on a parked
-    car and its cockpit carbins hold only that; DSF has no stock pop-up lamps
+    car and its cockpit carbins hold only that; DSF has no vanilla pop-up lamps
     to switch to (research/lights.md, "Pop-up head lamps")."""
     m = re.fullmatch(r"(.+)up", name, re.I)
     if not m:
@@ -153,7 +153,7 @@ def raised_lamp(name: str, names) -> bool:
     return base + "down" in lowered or base in lowered
 
 
-def stock_sections(sections: list[carbin.Section]) -> list[carbin.Section]:
+def vanilla_sections(sections: list[carbin.Section]) -> list[carbin.Section]:
     """Drop upgrade variants: for parts named <base><letter>, keep variant 'a';
     drop <base>race and parts that only exist as non-'a' variants. Pop-up head
     lamps keep only their lowered state (raised_lamp)."""
@@ -192,7 +192,7 @@ RIGID = bytes((0, 0, 0, 1))  # vertex semantic 9: follow the chassis
 def encode_vertex(stride: int, pos, uv0, uv1, normal, s9: bytes = RIGID, sky: float = 0.0) -> bytes:
     """One vertex in the host's layouts. s9 (VDCL semantic 9, 4 x u8) binds the
     vertex to a hierarchy node: (record +0x34 slot, record +0x2A model, light, 1);
-    stock steering-wheel vertices carry the wheel record's pair, e.g. (1, 1, 0, 1)
+    vanilla steering-wheel vertices carry the wheel record's pair, e.g. (1, 1, 0, 1)
     on the Desanne (research/cockpit.md). (0, 0, 0, 1) is the chassis.
 
     sky (0..1) goes into the fourth position component (x 4096): a baked
@@ -213,7 +213,7 @@ def encode_vertex(stride: int, pos, uv0, uv1, normal, s9: bytes = RIGID, sky: fl
 
 # --- baked lighting and glass UVs -------------------------------------------------
 #
-# Fourth position component (s0.w, int16 / 4096): every stock vertex carries a
+# Fourth position component (s0.w, int16 / 4096): every vanilla vertex carries a
 # baked sky-light term. On the Desanne it tracks the normal's up component
 # (exterior: mean 0.67 facing up, 0.38 sideways, 0.04 facing down; the
 # interior is darker, median 0.21) and drops in occluded places. Converted
@@ -243,7 +243,7 @@ def vertex_sky(vertex, pool, normal_dsf) -> float:
     return ao * (SKY_FLOOR + SKY_RANGE * up)
 
 
-# Glass UVs. Every stock glass submodel uses one of the shared glass materials
+# Glass UVs. Every vanilla glass submodel uses one of the shared glass materials
 # GLOBAL_Glass / _LOD1 / _LOD5 (defined in SSIC, the archive's shared chunk),
 # which all sample texture 00122b77dffa1227 (SSIC, DXT1 512 x 1024). Its four
 # v bands are damage states: 0..0.25 clean, then light cracks, heavy cracks,
@@ -256,7 +256,7 @@ def vertex_sky(vertex, pool, normal_dsf) -> float:
 #                    a grey smear texture at v 0..0.06, flat black at
 #                    v 0.06..0.125 and at u 0.06..0.12, v 0.125..0.25, a dark
 #                    red block at u 0..0.06, v 0.125..0.25.
-# Stock interior windows use that strip in three layers (src/dsfforza/convert/glass.py,
+# Vanilla interior windows use that strip in three layers (src/dsfforza/convert/glass.py,
 # "interior glass"): a smear surface (states 0-2; the windscreen only along
 # its top and pillars), crack-line slivers on the red block (states 1-2) and
 # rim shards on the black blocks (state 3). The pixel shader discards texels
@@ -266,13 +266,13 @@ def vertex_sky(vertex, pool, normal_dsf) -> float:
 # 0-2, stretched shard streaks in 3), then in a 10 x 10 texel smear patch
 # (uniform in states 0-2, gone in 3: no cracks ever showed from the cockpit).
 # With glass_rect=INTERIOR_GLASS_RECT add_geometry now rebuilds each window in
-# the stock layout (glass.InteriorGlass). Exterior and full-entry glass no
+# the vanilla layout (glass.InteriorGlass). Exterior and full-entry glass no
 # longer squash Forza's UVs into GLASS_RECT: with glass_rect=GLASS_RECT
 # add_geometry maps each window by its shape onto its panel slot (windscreen,
 # rear window, side glass; src/dsfforza/convert/glass.py), so the cracks and the shattered
 # hole of each damage state line up with the window.
 GLASS_RECT = (0.14, 0.98, 0.004, 0.12)  # exterior/full: selects the slot mapping
-INTERIOR_GLASS_RECT = (0.0664, 0.0859, 0.0371, 0.0469)  # interior: selects glass.InteriorGlass (stock layout)
+INTERIOR_GLASS_RECT = (0.0664, 0.0859, 0.0371, 0.0469)  # interior: selects glass.InteriorGlass (vanilla layout)
 
 
 def glass_uv(uv, rect: tuple[float, float, float, float] = GLASS_RECT) -> tuple[float, float]:
@@ -283,7 +283,7 @@ def glass_uv(uv, rect: tuple[float, float, float, float] = GLASS_RECT) -> tuple[
 
 def host_glass_links(stream, vehc: Entry, glass: tuple = (GLASS,)) -> dict[str, bytes]:
     """s9 bytes of the host's windscreen and rear-window glass, read from the
-    host's own glass vertices (call before the geometry is replaced). Stock
+    host's own glass vertices (call before the geometry is replaced). Vanilla
     glass vertices are never bound to the chassis (0, 0): on the Desanne the
     windscreen carries (0, 5) (record 29, role 8), the rear window (0, 20)
     (record 61, role 8), side windows their doors, lamp glass the lamps.
@@ -352,7 +352,7 @@ def glass_link(links: dict, section: str, pts, normals, default: bytes) -> bytes
 
 def interior_glass_skin(dmg, car, opts) -> dict[str, bytes]:
     """Section name -> s9 bytes for the interior entry's glass sections: the
-    panel the damage plan put that window on in the full entry (stock
+    panel the damage plan put that window on in the full entry (vanilla
     interiors bind their glass like the exterior: windscreen (0, 5), door
     glass on its door). Glass on the chassis showed the chassis record's
     crack state, so a knocked car lost its interior windscreen. {} without
@@ -420,14 +420,14 @@ class Builder:
     layout: dict[bytes, tuple[int, int]] = field(default_factory=lambda: dict(MATERIAL_LAYOUT))
 
     def new_uid(self) -> bytes:
-        """A stock-looking resource UID: [counter<<4] 0x12 [counter>>4] prefix[3]
+        """A vanilla-looking resource UID: [counter<<4] 0x12 [counter>>4] prefix[3]
         then byte 7 = 0x2D.
 
         The engine stores a resolved resource as a pointer in the same 8-byte
         slot and marks it by setting the top bit of byte 7 (research/upvh.md),
         so byte 7 must keep that bit clear. Our first scheme put a counter in
         byte 7 and crashed once it reached 0x80; a scheme with byte 7 = 0x2E
-        and arbitrary bytes 0..6 crashed too. This layout, copied from stock
+        and arbitrary bytes 0..6 crashed too. This layout, copied from vanilla
         UIDs (byte 1 = 0x12, byte 7 = 0x2D), loads with 130+ new submodels
         (runs 20261022-004457 and -004637). Unique for 4095 resources per
         builder; different builders must use different prefixes."""
@@ -469,12 +469,12 @@ ROLE_OF = {PAINT: "paint", GLASS: "glass", TRIM: "trim", TYRE: "tyre", CHROME: "
 # tyre centred on x = 0, and the rim face (spokes, lug nuts, centre cap, blur discs) at -x,
 # which is the car's left in Forza space. DSF wheel models face +x: the UPVH wheel table gives
 # the +x wheels the identity and the -x wheels a 180-degree turn about y ((0, 1, 0, 0)), so one
-# model serves both sides (stock 227 and 266: centre cap and spoke disc at x +0.05..+0.12). The
+# model serves both sides (vanilla 227 and 266: centre cap and spoke disc at x +0.05..+0.12). The
 # converter used to copy the Forza wheel unturned, so all four wheels showed the back of the rim
 # outwards. Now it is turned 180 degrees about y like the body (Placement), which puts the face
-# at +x. Stock wheels use the shared tyre texture (GLOBAL_Tyre, 512x512 DXT1: red is the grey
+# at +x. Vanilla wheels use the shared tyre texture (GLOBAL_Tyre, 512x512 DXT1: red is the grey
 # level, green the gloss, blue 255), never Forza's tiling tyre/rim UVs; the tyre is unwrapped onto
-# the texture's tread strip and sidewall ring like stock tyres (TyreMap; the "tyre" swatch is only
+# the texture's tread strip and sidewall ring like vanilla tyres (TyreMap; the "tyre" swatch is only
 # the fallback). Forza's rims sample the car's own wheel.xds (media/wheels/<car>, port_car.
 # extract_wheel): with textures, rims go through the car's atlas on the Chassis material
 # (wheel_material, dsf_materials.Texturing.plan(wheels=...)). Without the texture each rim
@@ -502,10 +502,10 @@ def wheel_material(textures, section, sub, shared: dict) -> bytes | None:
     """DSF material of a Forza wheel subsection; None = leave it out. With the car's
     wheel texture in the atlas (dsf_materials.Texturing.plan(wheels=...)), rims,
     caps and wheel emblems use the entry's Chassis material and their own
-    artwork, as stock centre caps do (the wheel parts of 110 of the 140 four-wheeled
-    stock vehicles mix GLOBAL_Tyre with 4 to 244 triangles on the vehicle's own
+    artwork, as vanilla centre caps do (the wheel parts of 110 of the 140 four-wheeled
+    vanilla vehicles mix GLOBAL_Tyre with 4 to 244 triangles on the vehicle's own
     Chassis material, in both entries); the tyre stays on the shared tyre material
-    (stride 20, like stock wheels). Without it, every part is on the shared tyre
+    (stride 20, like vanilla wheels). Without it, every part is on the shared tyre
     with a uniform swatch per wheel_role (WHEEL_UV)."""
     tyre = shared.get("tyre") or TYRE
     if textures is not None:
@@ -544,7 +544,7 @@ def wheel_lod(sections, lod: int) -> int:
     return min(have, key=lambda l: (abs(l - lod), l))
 
 
-# Stock tyres (research/wheels.md, 30 hosts surveyed): GLOBAL_Tyre has no normal map, the
+# Vanilla tyres (research/wheels.md, 30 hosts surveyed): GLOBAL_Tyre has no normal map, the
 # tread and sidewall detail is all in the diffuse atlas. Tread: the fine tread strip, u
 # across the tyre (0.505..0.75 with the shoulders), v one tile along the circumference
 # (0.897..0.989), repeated round the tyre. Sidewalls (both): the lower half-ring centred on
@@ -640,8 +640,8 @@ class TyreMap:
 # Baked sky term (s0.w) of the wheel model. Forza's wheel vertices carry no AO byte
 # (all 0 on the 40 testdrive cars), so vertex_sky gave every wheel vertex
 # DEFAULT_AO x the hemisphere factor of its wheel-local normal: about 0.42 on the rim
-# face, the back of the spokes and the inside of the barrel alike. Stock wheels bake
-# their own occlusion (wheel parts of the 140 four-wheeled stock vehicles, exterior
+# face, the back of the spokes and the inside of the barrel alike. Vanilla wheels bake
+# their own occlusion (wheel parts of the 140 four-wheeled vanilla vehicles, exterior
 # entry, median of per-vehicle medians): outward faces 0.64, inward faces 0.02, the
 # barrel's inside 0.15, the tread 0.29, with no up/down term (the wheel turns). With
 # the flat 0.42 the inside of a wheel lit like its face: the 205 T16's white rim read
@@ -652,7 +652,7 @@ class TyreMap:
 # WHEEL_AO_SKIP voxels are the vertex's own surface), rays heading inboard (-x
 # in the DSF wheel frame) end on the car, and rays leaving past the tyre's radius
 # count WHEEL_SKY_SIDE (the arch above, the road below): the tread comes out at
-# about 0.3 like stock instead of 0.45.
+# about 0.3 like vanilla instead of 0.45.
 WHEEL_SKY_OPEN = 0.64
 WHEEL_SKY_SIDE = 0.5
 WHEEL_AO_RAYS = 24
@@ -825,7 +825,7 @@ def add_geometry(
 
     wheel: the sections are the Forza wheel model: turned into DSF's wheel frame
     (wheel_point, scaled by wheel_fit), blur discs left out. `lod` goes through
-    wheel_lod; the tyre is on the shared tyre material, unwrapped onto the stock
+    wheel_lod; the tyre is on the shared tyre material, unwrapped onto the vanilla
     tread strip and sidewall ring (TyreMap). Rims sample the car's wheel texture
     through `textures` (planned with the wheel, wheel_material), else they are on
     the shared tyre material with a swatch per wheel_role.
@@ -841,10 +841,10 @@ def add_geometry(
     semantic 9 bytes (encode_vertex), e.g. the steering wheel's hierarchy node.
     glass_links: {"front": s9, "rear": s9} (host_glass_links): windscreen and
     rear-window triangles are bound to the host's glass-panel records like
-    stock glass, instead of the chassis. glass_rect: GLASS_RECT (default) maps
+    vanilla glass, instead of the chassis. glass_rect: GLASS_RECT (default) maps
     each window onto its slot of the glass texture (glass.SlotMapper); another
     rectangle squashes Forza's glass UVs into it, except INTERIOR_GLASS_RECT
-    (the interior entry), which lays each window out like stock interior glass
+    (the interior entry), which lays each window out like vanilla interior glass
     (glass.InteriorGlass; per-window report in builder.interior_glass);
     glass_sight (cockpit.GlassSight) tells it which glass the driver sees."""
     textured = textures is not None
@@ -897,7 +897,7 @@ def add_geometry(
                         for tri in sub.triangles():
                             slots.add(section.name, [place.point(pool[i].position) for i in tri], sub.material)
     # Interior glass (glass_rect=INTERIOR_GLASS_RECT): collected per window and
-    # rebuilt in the stock interior layout (glass.InteriorGlass: smear surface,
+    # rebuilt in the vanilla interior layout (glass.InteriorGlass: smear surface,
     # crack lines for states 1-2, rim shards for state 3), each window on its
     # own s9 so the panel's crack state shows from the cockpit.
     interior_glass = not wheel and glass_rect == INTERIOR_GLASS_RECT
@@ -1002,7 +1002,7 @@ def add_geometry(
                                 # Shared trim samples DSF's global chassis texture (engine bay,
                                 # undercarriage, grilles, plate...); Forza's swatch/tiling UVs
                                 # land anywhere in it (the Veyron's carbon, x246 tiling, drew
-                                # noise over its whole upper body). Stock flat trims use its
+                                # noise over its whole upper body). Vanilla flat trims use its
                                 # dark block.
                                 uv0 = TRIM_UV
                             elif material == CHROME or material == shared.get("chrome"):
@@ -1257,7 +1257,7 @@ def fill_empty_parts(builder: Builder, modl: bytes, part_lods: dict[int, dict[in
 class HostWheels:
     """The host's wheels, read from its own hierarchy (research/hosts.md). Hub
     height and axle midpoint differ per host (Desanne y -0.398, z 0.1155; 370Z
-    -0.326; Skyline R33 and F-150 y 0), and 33 four-wheeled stock cars keep the front and
+    -0.326; Skyline R33 and F-150 y 0), and 33 four-wheeled vanilla cars keep the front and
     rear wheels in two MODL parts."""
 
     hubs: list[tuple[float, float, float]]  # UPVH wheel table, in table order
@@ -1336,7 +1336,7 @@ def modl_part_lods(modl: bytes, part: int) -> list[tuple[int, list[tuple[bytes, 
 
 def add_modl_part(modl: bytes, source: int, uid: bytes) -> tuple[bytes, int]:
     """The MODL with a copy of part `source` (its box and LOD lists) appended under a new
-    part UID. Returns (MODL, the new part's index). Same layout as stock and rebuild_modl:
+    part UID. Returns (MODL, the new part's index). Same layout as vanilla and rebuild_modl:
     part records, the LOD table, then all submodel UID lists, then their flags."""
     part_count, _, _, tail = struct.unpack_from("<4I", modl)
     records = [bytearray(modl[0x10 + p * 0x60 : 0x10 + (p + 1) * 0x60]) for p in range(part_count)]
@@ -1366,12 +1366,12 @@ def add_modl_part(modl: bytes, source: int, uid: bytes) -> tuple[bytes, int]:
 
 def split_rear_wheel(stream, full: Entry, exterior: Entry, uid_prefix: bytes) -> dict | None:
     """Give a host whose four wheel records share one wheel part a separate rear wheel part,
-    as 33 stock hosts have (Lamborghinis, Corvette, GT...), so the converter can draw the rear
+    as 33 vanilla hosts have (Lamborghinis, Corvette, GT...), so the converter can draw the rear
     wheels at the rear tyre's size.
 
     The shared part is copied (box and LOD lists) to the end of the full entry's MODL and the
     exterior wheel part to the end of the exterior's, each under a new part UID; the rear wheel
-    records then point at the full copy and their LOD links (no stock vehicle shares one
+    records then point at the full copy and their LOD links (no vanilla vehicle shares one
     between axles) at the exterior copy. The engine finds parts by UID (research/upvh.md), and the wheel
     records keep their hinges, bodies and wheel indices, so spin and steering are unchanged.
     The edited payloads are set on the entries. Returns a report, or None when the host
@@ -1395,7 +1395,7 @@ def split_rear_wheel(stream, full: Entry, exterior: Entry, uid_prefix: bytes) ->
     if any(not 0 <= r.lod_link < len(links) or links[r.lod_link][1] is None for r in rear):
         return None
     if {r.lod_link for r in front} & {r.lod_link for r in rear}:
-        return None  # a link shared across axles: no stock host has one
+        return None  # a link shared across axles: no vanilla host has one
     ext_shared = {links[r.lod_link][1] for r in rear}
     if len(ext_shared) != 1 or {links[r.lod_link][1] for r in front} != ext_shared:
         return None
@@ -1572,7 +1572,7 @@ class ForzaCar:
     name: str
     folder: Path
     sections: list
-    body: list  # stock body sections (upgrade variants dropped), wheel excluded
+    body: list  # vanilla body sections (upgrade variants dropped), wheel excluded
     wheel: list
 
     @property
@@ -1587,17 +1587,17 @@ WHEEL_CARBIN = "wheel.carbin"
 
 def load_car(folder: Path, name: str) -> ForzaCar:
     """The car's main carbin. The wheel is its `wheel` section; without one, the
-    stock variant of a `wheela`/`wheelb` pair (the Minis), else the `wheel` section
+    vanilla variant of a `wheela`/`wheelb` pair (the Minis), else the `wheel` section
     of the wheel archive's carbin (Ferrari 360 and Dino, Gallardo 05, Esperante,
     Corvette Grand Sport: their main carbin has no wheel)."""
     path = find_file(folder, f"{name}.carbin")
     if path is None:
         raise FileNotFoundError(f"{name}.carbin not in {folder}")
     sections = carbin.parse(path.read_bytes())
-    stock = stock_sections(sections)
+    vanilla = vanilla_sections(sections)
     wheel = [s for s in sections if s.name == "wheel"]
     if not wheel:
-        wheel = [s for s in stock if re.fullmatch(r"wheel[a-z]", s.name)]
+        wheel = [s for s in vanilla if re.fullmatch(r"wheel[a-z]", s.name)]
     if not wheel:
         archive = find_file(folder, WHEEL_CARBIN)
         if archive is not None:
@@ -1605,7 +1605,9 @@ def load_car(folder: Path, name: str) -> ForzaCar:
     if not wheel:
         raise ValueError(f"{name}: no wheel section (main carbin or {WHEEL_CARBIN})")
     taken = {id(s) for s in wheel}
-    return ForzaCar(name, Path(folder), sections, [s for s in stock if s.name != "wheel" and id(s) not in taken], wheel)
+    return ForzaCar(
+        name, Path(folder), sections, [s for s in vanilla if s.name != "wheel" and id(s) not in taken], wheel
+    )
 
 
 @dataclass
@@ -1751,12 +1753,12 @@ class ConvertOptions:
     cockpit_opts: object = None  # cockpit.CockpitOptions; defaults when None
     # Why the host is the same vehicle as the Forza car (host_select.same_vehicle),
     # or None. When Forza's cockpit carbin is a placeholder (cockpit.is_stub), such a
-    # host keeps its own stock interior (cockpit, gauges, wheel, hands, head camera)
+    # host keeps its own vanilla interior (cockpit, gauges, wheel, hands, head camera)
     # instead of the main carbin's low-detail cabin (research/cockpit.md).
     same_vehicle_host: str | None = None
     gamedbs: list = field(default_factory=list)  # for CameraOverrides (eye point)
     # Bind windscreen/rear-window glass to the host's glass-panel records like
-    # stock glass (host_glass_links) instead of the chassis. Off by default
+    # vanilla glass (host_glass_links) instead of the chassis. Off by default
     # until tested in game.
     glass_links: bool = False
     # Working lamps (src/dsfforza/convert/lights.py): lamp triangles carry their light in vertex
@@ -1765,12 +1767,12 @@ class ConvertOptions:
     # Factory paint palette (src/dsfforza/convert/paint.py): the host's SPSR colours replaced by
     # the car's gamedb.slt Combo_Colors (gamedb from gamedbs, else next to the car).
     paint: bool = True
-    # Stock-like damage (src/dsfforza/convert/damage.py): body triangles on the host's panels
+    # Vanilla-like damage (src/dsfforza/convert/damage.py): body triangles on the host's panels
     # (semantic 9), crush targets (semantic 12), per-panel MODL parts, panel
     # hinges/bodies/collision moved onto the Forza panels. Off until tested in game.
     damage: bool = False
     damage_opts: object = None  # damage.DamageOptions; defaults when None
-    # Licence plates (src/dsfforza/convert/plates.py): the stock DSF plate (shared paint atlas)
+    # Licence plates (src/dsfforza/convert/plates.py): the vanilla DSF plate (shared paint atlas)
     # on the Forza car's plate recess / mounting face, at each end the host has
     # a plate, on the panel under it. Forza `numberplate` quads are replaced.
     plates: bool = True
@@ -1863,7 +1865,7 @@ def convert(
     rear_half_track = ((dims.rear_track_outer or dims.track_outer) - dims.tyre_width * rear_fit[0]) / 2
     rear_hub_y = hw.hub_y + dims.radius * rear_fit[1] - front_radius
     log(
-        f"{car.name}: {len(car.body)} stock body sections, wheelbase {dims.wheelbase:.3f}, "
+        f"{car.name}: {len(car.body)} vanilla body sections, wheelbase {dims.wheelbase:.3f}, "
         f"tyre radius {front_radius:.3f} (model {dims.radius:.3f}), track {2 * half_track:.3f} ({dims.source})"
     )
     swapped = {lod: wheel_lod(car.wheel, lod) for lod in [*opts.lods.values(), opts.exterior_lod]}
@@ -1976,7 +1978,7 @@ def convert(
                 if cf.source != "cockpit":
                     log(f"cockpit: {cf.source}")
                 if not cf.lod0_atlases and opts.same_vehicle_host:
-                    # Forza ships a placeholder cockpit; the host's stock interior is
+                    # Forza ships a placeholder cockpit; the host's vanilla interior is
                     # this vehicle's (same model or badge twin) and complete.
                     log(
                         f"cockpit: placeholder Forza cockpit and the host is the same vehicle "
@@ -2028,7 +2030,7 @@ def convert(
     if opts.damage and car.body:
         # Bonnet/boot undersides and the trims under the bonnet into their own
         # subsections (before the lamp plan, which keys on subsections), so
-        # DamagePlan can texture what a missing bonnet exposes like stock.
+        # DamagePlan can texture what a missing bonnet exposes like vanilla.
         import dataclasses
 
         from dsfforza.convert import damage
@@ -2230,7 +2232,7 @@ def convert(
             hier["gauges_added"] = gauges_added
         eye = place.point(cf.eye)
         # The driver model sits on the seat marker (role 10) and its hands hold the wheel
-        # only where stock cars have it from the seat: the seat goes where its grips
+        # only where vanilla cars have it from the seat: the seat goes where its grips
         # land on Forza's rim (steering.seat_anchor, cockpit.seat_anchor).
         upvh.payload, hier["seats"] = cockpit.patch_seats(upvh.payload, eye, hier["steering"]["seat_anchor"])
         # The raise stops before the cluster's cowl hides the needles the Forza eye sees.
@@ -2308,7 +2310,7 @@ def convert(
             "interior": interior_report,
         }
     if not opts.skip_full:
-        # The Bonnet camera: in front of the Forza windscreen, where stock cars have it
+        # The Bonnet camera: in front of the Forza windscreen, where vanilla cars have it
         # relative to theirs (the host's sat inside lower cars' cabins).
         vo3d = child(child(full, "NONR"), "VO3D")
         host_cam = vehicle_cameras.bonnet_camera(payload(stream, vo3d), camera_ground)
@@ -2344,7 +2346,7 @@ def convert(
         boxes = (dmg.full_field.box, dmg.forza_box) if dmg is not None else None
         upvh.payload, report["exhaust"] = exhaust.patch_upvh(payload(stream, upvh), tips, boxes)
         log(exhaust.describe(report["exhaust"]))
-    # Hosts with more than one chassis record (172 and 38 other stock cars) draw a
+    # Hosts with more than one chassis record (172 and 38 other vanilla cars) draw a
     # variant part instead of part 0: give those parts the body too (src/dsfforza/convert/chassis_variants.py).
     from dsfforza.convert import chassis_variants
 
@@ -2364,7 +2366,7 @@ def convert(
         colours = paint.forza_colours(gamedb, car.name) if gamedb else []
         # Leave room under the NONR buffer for handling edits made after this.
         report["paint"] = paint.install(
-            stream, full, colours, paint.stock_paints(stream), nonr_limit=NONR_LIMIT[0] - 0x400
+            stream, full, colours, paint.vanilla_paints(stream), nonr_limit=NONR_LIMIT[0] - 0x400
         )
         log(f"paint: {report['paint'].get('installed')} factory colours (host had {report['paint'].get('host_count')})")
     return report
@@ -2412,7 +2414,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--ignore-size-limit",
         action="store_true",
-        help="write entries larger than the largest stock ones (to test the limit)",
+        help="write entries larger than the largest vanilla ones (to test the limit)",
     )
     parser.add_argument(
         "--empty-other-parts",
@@ -2493,7 +2495,7 @@ def main(argv: list[str] | None = None) -> None:
         interior = root.entries[index_by_id[args.id + 1000]]
         convert(stream, full, exterior, car, dims, opts, interior=interior)
 
-        # Check sizes against the largest stock entries; oversized entries crash the game.
+        # Check sizes against the largest vanilla entries; oversized entries crash the game.
         too_big = []
         for kind, vehc in ((0, full), (1, interior), (2, exterior)):
             sizes = entry_sizes(vehc)
@@ -2504,7 +2506,7 @@ def main(argv: list[str] | None = None) -> None:
             if sizes["MDXN"] > MDXN_LIMIT[kind] or sizes["NONR"] > NONR_LIMIT[kind]:
                 too_big.append(kind)
         if too_big and not args.ignore_size_limit:
-            raise SystemExit(f"entries {too_big} exceed the stock size limits; use lower --lods / --exterior-lod")
+            raise SystemExit(f"entries {too_big} exceed the vanilla size limits; use lower --lods / --exterior-lod")
         with args.out.open("wb") as out:
             write_chunk(out, stream, root.entries, root.version)
     print(f"wrote {args.out}")

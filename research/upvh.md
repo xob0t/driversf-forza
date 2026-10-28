@@ -7,7 +7,7 @@ Static analysis of build 1.04. File offsets are relative to the UPVH payload
 are VAs in `Driver.exe`. Evidence levels follow `dngvehicles.md`.
 
 Tools: `dsff upvh summary <archive> --id N [--tables]` prints the
-decoded hierarchy; `dsff upvh lint <archive> --id N --stock <stock.sp>`
+decoded hierarchy; `dsff upvh lint <archive> --id N --vanilla <vanilla.sp>`
 checks a converted car against the rules below. Ghidra script:
 `tools/ghidra/FindScalars.java` (scalar/FourCC search, vtables, callers).
 
@@ -33,7 +33,7 @@ submodel UID in every LOD (FUN_006A58F0).
 So a UID whose byte 7 (in archive byte order) is 0x80 or more is not looked
 up. The engine dereferences its low dword as an object pointer and crashes.
 
-- All 46,813 resource UIDs in the stock archive (SBMC, VXCK, IXCK, TEXC,
+- All 46,813 resource UIDs in the vanilla archive (SBMC, VXCK, IXCK, TEXC,
   MACO) have byte 7 between 0x27 and 0x2D.
 - `forza2dsf.py` builds UIDs as `4 random bytes + struct.pack(">I", counter)`.
   Byte 7 is the counter's low byte, so UIDs 0x80 to 0xFF of each 256 are
@@ -69,7 +69,7 @@ Untested in game: `out/uid-safe.sp` and `out/uid-signbit.sp` (see the end).
 ## MODL part UIDs are global keys too (confirmed-static, fix confirmed-runtime)
 
 The MODL loader registers every part UID in a global table (FUN_00494390,
-table at 0x0113A1F8), like the resource UIDs. In the stock archive all
+table at 0x0113A1F8), like the resource UIDs. In the vanilla archive all
 6,139 part UIDs across the 450 entries are unique, and none is also a
 resource UID (`out/dmg/partscan.py`). Per vehicle the part UIDs appear only
 in the three MODLs and in the full entry's UPVH, always with the 32-bit
@@ -84,7 +84,7 @@ halves swapped there (Desanne: 41 part UIDs, 56 UPVH references):
 
 `clone_vehicle.renew_uids` used to renew only resource UIDs, so every
 ported car kept the Desanne's 41 part UIDs, and so did every other ported
-car. In run `20261022-024010` (stock 266 spawned first, then 304, 305, 306)
+car. In run `20261022-024010` (vanilla 266 spawned first, then 304, 305, 306)
 the Skyline turned into a damaged gold Desanne in chase view right after
 the probe called `VehicleLodSpooler.RequestVehicle(266)`, which re-spooled
 266's interior and exterior (the log shows 266 `interior=true
@@ -94,7 +94,7 @@ loaded 266 (confirmed-runtime for the symptom; which lookup returns the
 other vehicle's part is a hypothesis: no Ghidra trace yet). The Skyline had
 been damaged just before, but the damage was probably a coincidence: the
 swap also explains the bumper hanging from the Desanne's own rear-bumper
-part. Fix: `renew_uids(parts=True)` gives the MODL parts fresh stock-shaped
+part. Fix: `renew_uids(parts=True)` gives the MODL parts fresh vanilla-shaped
 UIDs (byte 1 = 0x12, byte 7 = 0x2D) and rewrites the four UPVH fields
 above (`remap_upvh_parts`), then checks that no old part UID remains in
 any leaf in either half order. Result in game: see `in-game-tests.md`,
@@ -109,7 +109,7 @@ shared materials, which no vehicle defines (`out/dmg/uidscan.py` on
 `upvh.py lint` now checks this for every car (`foreign_uids`): no resource
 or part UID the car defines may be defined by another vehicle, and no UID
 it references (SBBH, MARP textures, MDID, VXDP/IXDP, MODL LOD lists, the
-UPVH fields above) may be one only another vehicle defines. No stock
+UPVH fields above) may be one only another vehicle defines. No vanilla
 vehicle trips it; all three fix3 cars do (41 shared part UIDs each).
 `port_car.py` runs it on every car, and checks part UIDs as well as
 resource UIDs for clashes before writing. `upvh.py lint --allow-shared`
@@ -124,7 +124,7 @@ source is fine because the data is identical.
 
 ## UPVH layout (confirmed-static)
 
-All 150 stock UPVHs parse with this layout: the tables end exactly where the
+All 150 vanilla UPVHs parse with this layout: the tables end exactly where the
 PDL starts, and the PDL runs to the end of the payload. Record index fields
 never exceed their table's count.
 
@@ -223,7 +223,7 @@ probably right.
 
 Marker roles seen (type 3 records): 47 steering-wheel hub (`cockpit.md`);
 **10 driver seat and 11 passenger seat** (Desanne (±0.425, -0.306, 0.067);
-role 10's x is within 2 cm of the steering marker's in all 147 stock cars with one, so it is
+role 10's x is within 2 cm of the steering marker's in all 147 vanilla cars with one, so it is
 the driver's side; the eye from VO3D 430..432 sits (0, 0.737, -0.080) above
 it, fleet median, y 0.64 to 0.84; `out/glassdbg/seat_survey.txt`). The game
 seats the driver model there (confirmed-static by the fleet relation;
@@ -242,7 +242,7 @@ apart from 0 and 1.
 
 ### Chassis variants (confirmed-static; the symptom confirmed-runtime)
 
-39 stock vehicles have more than one chassis record (type 5): roles 257,
+39 vanilla vehicles have more than one chassis record (type 5): roles 257,
 258, 259, 513, 1280, 1281, 1282 or 1 next to the usual 256 (Taxi 01-04,
 Tanner, 172, 210, 211, 217 Rally 04 with four...). Each has its own full-entry
 MODL part and its own LOD link to an interior and an exterior part. On 172
@@ -255,7 +255,7 @@ wheels, the driver and his hands (runs 20261022-163835, -164332, -164459,
 vertex and index ranges) into every extra chassis part after conversion, and
 `upvh.py lint` fails a car whose variant parts are empty while part 0 is
 not. 24 of the 137 usable hosts have variant parts (`uv run
-dsff chassis_variants <stock> --ids ...`). In the 40-car test drive, 8
+dsff chassis_variants <vanilla> --ids ...`). In the 40-car test drive, 8
 cars sat on such hosts; only the 257-role ones are known to go invisible
 (the Cuda; the 250 GTO on 210 is untested); cars on 1281 hosts (M3 E30, RX-7,
 S2000, Firebird, 300SL, 2000GT) were not reported, so the game probably
@@ -276,7 +276,7 @@ emits particle effect 13 there (`FUN_00498F60`), with an intensity that falls
 with the car's speed: the smoke shows most at a standstill. The engine
 sound's emitter B sits at the first slot (`engine-sound.md`).
 
-**Stock fleet** (`out/exh/stock_markers.py`): 0, 1, 2 or 4 exhaust markers
+**Vanilla fleet** (`out/exh/vanilla_markers.py`): 0, 1, 2 or 4 exhaust markers
 (13, 33, 80 and 24 cars), one per tailpipe, as children of the exhaust parts
 (role 136 at -x, 15 at +x) or of the body (38). Rear pipes carry the
 identity quaternion; the flow is the marker's local -z: Classic 06's
@@ -290,7 +290,7 @@ its only outlet is the twin-tip trapezoid in the middle of the diffuser
 (`img/exhaust-focusst-before-after.jpg`).
 
 **Fix** (`src/dsfforza/convert/exhaust.py`, last UPVH edit in
-`forza2dsf.convert`): the Forza `exhaust*` sections of the stock variant
+`forza2dsf.convert`): the Forza `exhaust*` sections of the vanilla variant
 give the openings: each connected piece's outermost 4 cm along its flow
 (straight back, or out of the side when the piece ends within 8 cm of the
 body's side: GT1, V8 Supercar and DTM side exits), split where the
@@ -370,9 +370,9 @@ interior and exterior are linked through the LOD-link table.
 
 ## Rules for converted cars
 
-1. Every new resource UID must have byte 7 below 0x80. Copy the stock shape:
+1. Every new resource UID must have byte 7 below 0x80. Copy the vanilla shape:
    a varying low dword, and a fixed high dword whose top byte is 0x2E or
-   higher but below 0x80, so new UIDs can't collide with stock ones.
+   higher but below 0x80, so new UIDs can't collide with vanilla ones.
 2. Keep the full entry's TEXC and MACO, or at least the material and
    texture the interior and exterior take from it.
 3. Keep every MODL part record, in all three entries. UPVH refers to

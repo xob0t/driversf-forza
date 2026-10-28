@@ -1,7 +1,7 @@
 // HUD maker badge and model nameplate with 16-bit glyph codes.
 // See research/gui-assets.md ("Unlimited badges and plates") and research/asi.md.
 //
-// Stock path (Driver.exe 1.04, confirmed-static): the vehicle-data manager's
+// Vanilla path (Driver.exe 1.04, confirmed-static): the vehicle-data manager's
 // vtable slot 0x134 (FUN_006C63D0) calls Lua getVehicleStats(id), reads the
 // fields and builds a 0x100-byte vehicle info record with FUN_006C40C0, which
 // formats Manufacturer and Model as one-character strings ("%c") at +0x90 and
@@ -25,10 +25,10 @@
 //      glyph records for them), the slot's glyph record in the loaded
 //      vehicles_font is overwritten with the 16-bit glyph's (position, size,
 //      offsets, page), and the element's text becomes that one byte. Without
-//      a code, the stock one-byte string.
+//      a code, the vanilla one-byte string.
 //
-// Cars without the new fields (every stock car, installs without the wide
-// font) take the stock path unchanged.
+// Cars without the new fields (every vanilla car, installs without the wide
+// font) take the vanilla path unchanged.
 #include "patch.h"
 #include "shared.h"
 
@@ -178,7 +178,7 @@ static void set_text(void* elem, const char* text, uint16_t code)
         }
         if (g_wide_hits < 16) {
             g_wide_hits++;
-            dsf_log("hud: U+%04X not drawn (font %p, glyph %p, slot record %p): stock text", code, font, src, dst);
+            dsf_log("hud: U+%04X not drawn (font %p, glyph %p, slot record %p): vanilla text", code, font, src, dst);
         }
     }
     set(elem, nullptr, text);
@@ -209,7 +209,7 @@ static void __fastcall hud_plate(void* elem, void*, const char* text)
 // vm-20261025-063019, -063317, -065150: no badge or plate, page 0 glyphs
 // included). Both checks (`cmp dl,0x20; ja +2; xor ecx,ecx`) jump to a stub
 // that keeps the length of a one-byte string whose byte is a slot code and
-// does as stock otherwise. There ecx holds the byte count with the terminator
+// does as vanilla otherwise. There ecx holds the byte count with the terminator
 // (2 for one character), esi the string, and eax is free.
 static const uint8_t kTextLenBytes[7] = {0x80, 0xFA, 0x20, 0x77, 0x02, 0x33, 0xC9};
 static const uint32_t kTextLenChecks[2] = {0x007216BE, 0x0072487A};
@@ -310,7 +310,7 @@ const char* hud_maker_logo_text(int id)
     if (!s || s[0] != code || s[1]) {
         static int noted = 0;
         if (noted++ < 4)
-            dsf_log("hud: maker logo: no string %d holding U+%04X (model %d); stock badge text", kGlyphStringBase + code,
+            dsf_log("hud: maker logo: no string %d holding U+%04X (model %d); vanilla badge text", kGlyphStringBase + code,
                     code, id);
         return nullptr;
     }
@@ -428,7 +428,7 @@ static bool patch_site(const Site& s)
 // The sprite sizes itself from the bound texture (FUN_00B42100), so texture
 // size and UVs both have to match the SF resource's. Other cars get their
 // original resource back. The spare's own UVs come back before anything else
-// uses it: a group of 20 cars shown as stock, or the challenge browser, which shares
+// uses it: a group of 20 cars shown as vanilla, or the challenge browser, which shares
 // Header_Sprite_01..20 and even the card objects: its texture-slot lookups are
 // wrapped and put every disc back to the SF resource. (Leaving the vehicles
 // screen sets the SF resource back on the discs too; entering it refills the
@@ -545,7 +545,7 @@ static void* spare_entry(void* reg, void* sf_entry)
     static int logs = 0;
     bool log = logs++ < 4;
     if (!slot || !is_sprite_resource(sf)) {
-        if (log) dsf_log("hud: emblem: no sprite resource %s (%p) or SF resource (%p); card emblems stay stock",
+        if (log) dsf_log("hud: emblem: no sprite resource %s (%p) or SF resource (%p); card emblems stay vanilla",
                          kSpareName, entry, sf_entry);
         return nullptr;
     }
@@ -554,7 +554,7 @@ static void* spare_entry(void* reg, void* sf_entry)
     g_step = 42;
     if (!engine || !((FindTextureFn)kFindTexture)(*(void**)(engine + 0xC), nullptr, kLogoLo, kLogoHi, info)) {
         if (log) dsf_log("hud: emblem: texture %08X%08X not loaded (Fonts.fchunk from gui_assets.py not installed?); "
-                         "card emblems stay stock", kLogoHi, kLogoLo);
+                         "card emblems stay vanilla", kLogoHi, kLogoLo);
         return nullptr;
     }
     if (log) log_resource("spare before", entry);
@@ -652,7 +652,7 @@ static void card_emblem_body(uint8_t* screen, int id, int index, int cars)
         g_step = 7;
         if (g_emblem_logs < 40) {
             g_emblem_logs++;
-            dsf_log("hud: emblem: card %d (%p) model %d -> %s", index + 1, obj, id, want ? "Forza logo" : "stock");
+            dsf_log("hud: emblem: card %d (%p) model %d -> %s", index + 1, obj, id, want ? "Forza logo" : "vanilla");
         }
     }
 }
@@ -713,7 +713,7 @@ static void restore_all_cards(const char* why)
 
 // Called (ecx = resource) instead of FUN_00ADA7F0 where a screen is about to set a
 // Header_Sprite_NN picture: the spare gets its own UVs back first; in the
-// challenge browser the card discs go back to stock too.
+// challenge browser the card discs go back to vanilla too.
 static void slot_check(uint8_t* res, bool challenges)
 {
     if (!g_card_emblem) return;
@@ -754,7 +754,7 @@ static __declspec(naked) void slot_stub_challenges()
 static void card_emblem_init()
 {
     if (!cfg_bool("hud", "card_emblem", true)) {
-        dsf_log("hud: card_emblem=0; garage card emblem stays stock");
+        dsf_log("hud: card_emblem=0; garage card emblem stays vanilla");
         return;
     }
     g_emblem_debug = cfg_bool("hud", "emblem_debug", false);
@@ -764,12 +764,12 @@ static void card_emblem_init()
         int32_t rel = (int32_t)(kSpriteTexture - (va + 5));
         memcpy(expect + 1, &rel, 4);
         if (!bytes_equal(va, expect, 5)) {
-            dsf_log("hud: call to FUN_00ADA7F0 at %08X differs; garage card emblem stays stock", va);
+            dsf_log("hud: call to FUN_00ADA7F0 at %08X differs; garage card emblem stays vanilla", va);
             return;
         }
     }
     if (!bytes_equal(kCardSite, kCardSiteBytes, sizeof kCardSiteBytes)) {
-        dsf_log("hud: car list itemState write at %08X differs; garage card emblem stays stock", kCardSite);
+        dsf_log("hud: car list itemState write at %08X differs; garage card emblem stays vanilla", kCardSite);
         return;
     }
     const int nslots = (int)(sizeof kSlotSites / sizeof kSlotSites[0]);
@@ -785,7 +785,7 @@ static void card_emblem_init()
     memcpy(code + 1, &rel, 4);
     if (done < nslots || !patch_bytes(kCardSite, code, sizeof code, kCardSiteBytes)) {
         for (int i = 0; i < done; i++) patch_bytes(kSlotSites[i], orig[i], 5);
-        dsf_log("hud: writing the card emblem hooks failed (undone); garage card emblem stays stock");
+        dsf_log("hud: writing the card emblem hooks failed (undone); garage card emblem stays vanilla");
         return;
     }
     g_card_emblem = true;
@@ -800,7 +800,7 @@ void mod_hud_init()
         dsf_log("hud: call to the vehicle info ctor at %08X differs; no HUD patches", kInfoCtorCall);
         return;
     }
-    // Without the length check a slot text draws nothing: then keep every site stock.
+    // Without the length check a slot text draws nothing: then keep every site vanilla.
     if (!textlen_init()) {
         dsf_log("hud: a text length check differs; no HUD patches (badges stay one-byte)");
         return;
@@ -811,7 +811,7 @@ void mod_hud_init()
             sites++;
             dsf_log("hud: patched %s at %08X", s.what, s.va);
         } else {
-            dsf_log("hud: skipped %s at %08X (stock narrow text stays)", s.what, s.va);
+            dsf_log("hud: skipped %s at %08X (vanilla narrow text stays)", s.what, s.va);
         }
     }
     if (!sites) {

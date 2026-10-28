@@ -1,6 +1,6 @@
 """Measure every VEHC against the spool limits found in Driver.exe.
 
-    uv run dsff vehicle_limits <archive>                 # stock maxima per kind
+    uv run dsff vehicle_limits <archive>                 # vanilla maxima per kind
     uv run dsff vehicle_limits <archive> --vehc 450 451  # these entries vs the limits
 
 Limits (see research/spool-limits.md):

@@ -54,15 +54,15 @@ DEFAULT_MIPS = 4
 # Paint UV0 does not sample the vehicle's texture: both paint materials
 # (GLOBAL_Chassis, GLOBAL_Chassis_LOD1) sample the shared SSIC texture
 # 00122b73d1fa1227, a 1024 x 512 atlas of masks and parts, and 57 to 91% of
-# every stock car's paint triangles sit in its (240, 192, 240) block (50 x 50
+# every vanilla car's paint triangles sit in its (240, 192, 240) block (50 x 50
 # texels centred here). UV0 elsewhere draws the paint black or grey
 # (research/lights.md, "Paint").
 PAINT_TEXEL_UV = (0.8481, 0.7119)  # forza2dsf.PAINT_UV (0.835, 0.703) is inside the same block
 # Lamp texel alpha (the Lights shader adds lamp colour x brightness x texel alpha,
 # research/lights.md). "matched" (default): a score s = Forza glow mask x (0.6 + 0.4 x
 # brightest channel), all 0..1, mapped through a curve per texel hue (red, amber, white) that
-# puts the converted texels on stock DSF's lamp alpha distribution (quantile match of
-# six FH1/FM4 cars against 146 stock vehicles, out/lamps/scripts/fit_lut.py). It keeps
+# puts the converted texels on vanilla DSF's lamp alpha distribution (quantile match of
+# six FH1/FM4 cars against 146 vanilla vehicles, out/lamps/scripts/fit_lut.py). It keeps
 # the order of the texels, so hot spots, reflector cells and dark edges stay where
 # Forza has them, and a near-black lens only glows where its glow mask is bright.
 # "raw": Forza's alpha as is (analysis builds). The earlier modes ("value", "luma",
@@ -72,7 +72,7 @@ LIGHTS_ALPHA_MODES = ("matched", "raw")
 LIGHTS_ALPHA = os.environ.get("DSFFORZA_LIGHTS_ALPHA", "matched")
 if LIGHTS_ALPHA not in LIGHTS_ALPHA_MODES:
     raise ValueError(f"DSFFORZA_LIGHTS_ALPHA={LIGHTS_ALPHA!r}: one of {', '.join(LIGHTS_ALPHA_MODES)}")
-# "matched" curves: score knots -> stock alpha knots (stock percentiles 0, 5, 10, 20,
+# "matched" curves: score knots -> vanilla alpha knots (vanilla percentiles 0, 5, 10, 20,
 # ..., 90, 93, 95, 97, 98, 99, 99.5 of amber and of white lamps; red lamps also have
 # 85 and 100, LAMP_PERCENTILES).
 _LAMP_X_RED = (
@@ -125,8 +125,8 @@ LAMP_CURVES = {
 }
 
 
-# "matched" also darkens red lamp lenses to stock's brightness: Forza's red lamp texels
-# are brighter (brightest channel median 144, M3 E30 199, DMC-12 158) than stock's
+# "matched" also darkens red lamp lenses to vanilla's brightness: Forza's red lamp texels
+# are brighter (brightest channel median 144, M3 E30 199, DMC-12 158) than vanilla's
 # (103), so its lenses looked lit in daylight before any lamp was on. Brightest channel
 # x -> at most y (quantile match like the alpha curves; red hue only, never brighter).
 _LENS_X_RED = (0, 98, 106, 128, 144, 158, 172, 189, 222, 249, 255)
@@ -142,7 +142,7 @@ def _interp(s: float, xs, ys) -> float:
     return float(ys[-1])
 
 
-# Stock red lamp alpha at the percentiles LAMP_PERCENTILES (= _LAMP_Y_RED).
+# Vanilla red lamp alpha at the percentiles LAMP_PERCENTILES (= _LAMP_Y_RED).
 LAMP_PERCENTILES = (0, 5, 10, 20, 30, 40, 50, 60, 70, 80, 85, 90, 93, 95, 97, 98, 99, 99.5, 100)
 RED_CURVE_MIN_TEXELS = 200  # fewer red lamp texels: the shared red curve
 RED_CURVE_SAMPLES = 40000  # about this many texels sampled over a car's lights regions
@@ -155,8 +155,8 @@ RED_CURVE_MIN_GAP = 0.01
 
 
 def red_lamp_curve(scores: list[float]):
-    """One car's red lamp curve: its own red texel scores' percentiles -> stock's red
-    alpha percentiles, so every car's red lamps land on stock's distribution (with one
+    """One car's red lamp curve: its own red texel scores' percentiles -> vanilla's red
+    alpha percentiles, so every car's red lamps land on vanilla's distribution (with one
     curve for all cars a dim Forza mask gave the S2000 a tail median of 2 and the
     Challenger 73; in game the S2000's and S5S's lamps barely lit, run
     20261024-002212). None with too few texels (the shared curve is used)."""
@@ -172,11 +172,11 @@ def red_lamp_curve(scores: list[float]):
     return tuple(xs), _LAMP_Y_RED
 
 
-# What a camera straight behind the car sees of stock red brake lamps: the brightest channel
+# What a camera straight behind the car sees of vanilla red brake lamps: the brightest channel
 # of the texels on the visible lamp surface, area-weighted (orthographic rear view z-buffered
-# over the lamp geometry, full entries of 140 stock vehicles, pooled; out/emissive/rearlamps.py):
+# over the lamp geometry, full entries of 140 vanilla vehicles, pooled; out/emissive/rearlamps.py):
 # p5 35, p25 71, median 92, p75 115, p95 153.
-VISIBLE_RED_STOCK_MEDIAN = 92
+VISIBLE_RED_VANILLA_MEDIAN = 92
 VISIBLE_RED_MIN_SAMPLES = 400  # fewer visible red lamp samples: the shared lens curve only
 VISIBLE_STEP = 0.005  # metres per sample of the rear view
 
@@ -188,33 +188,33 @@ def _shared_lens(v: float) -> float:
 def red_lens_scale(visible: list[int]) -> float | None:
     """One car's extra darkening of its red lamp texels: the factor that brings the median
     brightness of its visible red lamp surface (Forza values seen from behind, through the
-    shared curve) down to stock's visible median; never above 1. The shared curve is
+    shared curve) down to vanilla's visible median; never above 1. The shared curve is
     texel-weighted over every red lamp texel, hidden bulbs and reflectors included, so a car
-    whose outer lens is one bright, flat red kept it well above stock: the Audi TT RS's tail
-    lens (Forza 177, 128 after the shared curve, the stock A4 beside it 101) read flat pink in
+    whose outer lens is one bright, flat red kept it well above vanilla: the Audi TT RS's tail
+    lens (Forza 177, 128 after the shared curve, the vanilla A4 beside it 101) read flat pink in
     daylight whether braking or not (user report on out/testdrive9; run vm-20261024-051926,
-    red lamp pixels 224 on the throttle against stock's 159 to 178). None with too few
+    red lamp pixels 224 on the throttle against vanilla's 159 to 178). None with too few
     samples."""
     if len(visible) < VISIBLE_RED_MIN_SAMPLES:
         return None
     ordered = sorted(_shared_lens(v) for v in visible)
     median = ordered[len(ordered) // 2]
-    return min(1.0, VISIBLE_RED_STOCK_MEDIAN / median) if median > 0 else None
+    return min(1.0, VISIBLE_RED_VANILLA_MEDIAN / median) if median > 0 else None
 
 
-# What a camera straight ahead of the car sees of stock front lamps: the brightest channel of
+# What a camera straight ahead of the car sees of vanilla front lamps: the brightest channel of
 # the white texels (lamp_hue) on the visible lamp surface, area-weighted (orthographic front
-# view z-buffered over the lamp geometry of the full entries of 142 stock vehicles, pooled):
+# view z-buffered over the lamp geometry of the full entries of 142 vanilla vehicles, pooled):
 # p5 41, p25 93, median 137, p75 180, p95 230 (per-vehicle median p10 82, p50 134, p90 178).
 # Forza's white lamp texels are brighter: the Lotus Carlton's head lamps (a light clear lens
 # over a white reflector, baked by lenses.py) 206, the Lancer Evo VI's 173, the M3 E30's 197.
-VISIBLE_WHITE_STOCK_MEDIAN = 137
+VISIBLE_WHITE_VANILLA_MEDIAN = 137
 
 
 def white_lens_scale(visible: list[int]) -> float | None:
     """One car's darkening of its white lamp texels: the factor that brings the median
     brightness of its visible white front lamp surface (Forza values seen from ahead, lenses
-    baked) down to stock's visible median; never above 1. Forza's head lamps are light grey
+    baked) down to vanilla's visible median; never above 1. Forza's head lamps are light grey
     lenses over white reflectors (the Carlton's lens 195 over a reflector at 205 to 221), so
     they looked lit in daylight with the lamps off, and lit by day (0x1D, research/lights.md)
     the glow on top of them blew them out into white blobs (issue #115). None with too few
@@ -223,14 +223,14 @@ def white_lens_scale(visible: list[int]) -> float | None:
         return None
     ordered = sorted(visible)
     median = ordered[len(ordered) // 2]
-    return min(1.0, VISIBLE_WHITE_STOCK_MEDIAN / median) if median > 0 else None
+    return min(1.0, VISIBLE_WHITE_VANILLA_MEDIAN / median) if median > 0 else None
 
 
 def matched_lamp_texel(
     r: int, g: int, b: int, a: int, red_curve=None, lens_scale=None, white_scale=None
 ) -> tuple[int, int, int, int]:
-    """Stock-like lamp texel (LIGHTS_ALPHA "matched"): alpha from the curves, red
-    lenses darkened to stock's brightness (the shared curve, then this car's
+    """Vanilla-like lamp texel (LIGHTS_ALPHA "matched"): alpha from the curves, red
+    lenses darkened to vanilla's brightness (the shared curve, then this car's
     red_lens_scale), white texels by this car's white_lens_scale (never brighter).
     Alpha is scored on the original texel."""
     alpha = matched_lamp_alpha(r, g, b, a, red_curve)
@@ -260,7 +260,7 @@ def lamp_score(r: int, g: int, b: int, a: int) -> float:
 
 
 def matched_lamp_alpha(r: int, g: int, b: int, a: int, red_curve=None) -> int:
-    """Stock-like lamp alpha from a Forza lamp texel (LIGHTS_ALPHA "matched");
+    """Vanilla-like lamp alpha from a Forza lamp texel (LIGHTS_ALPHA "matched");
     red_curve: this car's own (score knots, alpha knots) for red texels."""
     hue = lamp_hue(r, g, b)
     xs, ys = red_curve if hue == "red" and red_curve else LAMP_CURVES[hue]
@@ -268,7 +268,7 @@ def matched_lamp_alpha(r: int, g: int, b: int, a: int, red_curve=None) -> int:
 
 
 DEFAULT_PLAIN = (74, 72, 74, 15)
-# Chassis texels (not lamps): alpha follows luminance, as on stock chassis
+# Chassis texels (not lamps): alpha follows luminance, as on vanilla chassis
 # textures (module docstring): (lum - CHASSIS_ALPHA_LUM) x CHASSIS_ALPHA_GAIN.
 CHASSIS_ALPHA_LUM, CHASSIS_ALPHA_GAIN = 45, 0.55
 # nodamage texels this transparent and this bright are the paint-through body
@@ -338,7 +338,7 @@ ART_MIN_SCALE_SHARE = 0.9
 # (fm.gloss_params; research/forza-materials.md, "Gloss"). The host Chassis material the
 # atlas trims and rims draw with has almost none (g_hSpecularIntensity 0.03 x texel
 # alpha, power 24, no reflection), the shared trim even less (0.01 x the shared
-# texture's green). The host's Lights material, the stock cars' reflective one, runs a
+# texture's green). The host's Lights material, the vanilla cars' reflective one, runs a
 # program (SSIC GPCH d3f06377, _LOD1: ef85326d) that draws the atlas RGB lit like the
 # Chassis one plus
 #     g_hSpecularIntensity x (R.V)^g_hSpecularPower x the sun's specular colour
@@ -545,7 +545,7 @@ def encode_dxt5(rgba: bytes | bytearray, width: int, height: int) -> bytes:
 
 def encode_dxt1(rgba: bytes | bytearray, width: int, height: int) -> bytes:
     """Encode RGB of RGBA8 as opaque DXT1 blocks (four-colour mode only;
-    alpha is dropped). Stock interior entries ship DXT1 textures too."""
+    alpha is dropped). Vanilla interior entries ship DXT1 textures too."""
     return _colour_blocks(_blocks(rgba, width, height)[:, :, :3]).tobytes()
 
 
@@ -990,7 +990,7 @@ class Texturing:
         extra_solids: key -> RGBA cells to reserve as well (`solid_uv(key)`).
         wheels: (wheel sections, their LODs): the Forza wheel model, whose rims
         then sample the car's wheel texture (fm.classify_wheel) through the
-        atlas, like the centre caps stock wheels draw with the Chassis material.
+        atlas, like the centre caps vanilla wheels draw with the Chassis material.
         Without the wheel texture in the car folder the rims keep their
         swatches (forza2dsf.WHEEL_UV)."""
         self.atlases = fm.AtlasCache(self.car_dir, lod0=self.lod0)
@@ -1406,7 +1406,7 @@ class Texturing:
         pane (glass texture blue = alpha 192) and hid the lamp behind it: the Mustang GT
         05's head lamps were a black strip (issue #158), and at night the Veyron's and
         300C's tail lamps barely glowed through it while they glowed red without it (VM
-        runs vm1-20261028-092017 and -092416; issue #160). Stock lamps are opaque Lights
+        runs vm1-20261028-092017 and -092416; issue #160). Vanilla lamps are opaque Lights
         texels, so the lamp itself is what shows. A cover is plain glass on the Lights
         atlas, outside the window sections, with a Lights-atlas lamp surface behind at
         least COVER_MIN_SHARE of its area: some cars draw their windows, windscreen
@@ -1464,7 +1464,7 @@ class Texturing:
         shared glass would draw it clear, with the glass texture's crack
         bands, over whatever lies behind: the DMC-12's tail lamps are a white
         reflector under a red, amber and white grid lens, and came out white
-        with crack lines (runs host-20261023-082346, -083742). Stock tail lamps
+        with crack lines (runs host-20261023-082346, -083742). Vanilla tail lamps
         are opaque Lights-material texels, so such lenses go to the atlas.
         Front covers stay glass: on several FH1 cars (Challenger, S65, 300C,
         Golf R) their UVs land on red texels Forza doesn't show."""
@@ -2005,7 +2005,7 @@ def material_params(stream, maco: Entry) -> dict[str, float]:
 
 
 def gloss_uid(prefix: bytes, n: int) -> bytes:
-    """UID of gloss material n: forza2dsf.Builder.new_uid's stock-looking layout (byte 1
+    """UID of gloss material n: forza2dsf.Builder.new_uid's vanilla-looking layout (byte 1
     0x12, byte 7 0x2D with its top bit clear) on its own 4-byte prefix."""
     n += 1
     return bytes([(n << 4) & 0xFF, 0x12, n >> 4, prefix[0], prefix[1], prefix[2], prefix[3] & 0x7F, 0x2D])
@@ -2133,11 +2133,11 @@ def install_exterior(
     they sample the full entry's TEXC by UID. In clone mode, copies pointing
     at the new texture are added.
 
-    Most stock vehicles define one or both of their exterior's _LOD1
+    Most vanilla vehicles define one or both of their exterior's _LOD1
     materials in the interior or the full entry instead (the Desanne and 370Z
     keep both in the exterior); the `fallback` DRSPs (interior, full) are
     searched for the missing *_LOD1 ones, which the exterior then uses by
-    UID, as stock exteriors do."""
+    UID, as vanilla exteriors do."""
     found = host_materials(stream, drsp)
     for other in fallback or []:
         for kind, value in host_materials(stream, other, lod1=True).items():

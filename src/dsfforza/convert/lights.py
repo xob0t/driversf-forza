@@ -1,6 +1,6 @@
 """Working lamps for converted Forza cars: vertex light bytes and the UPVH light table.
 
-How stock DSF lamps work (research/lights.md, confirmed-static):
+How vanilla DSF lamps work (research/lights.md, confirmed-static):
 
 - The UPVH light table holds one 0x40-byte entry per lamp: vec4 position,
   vec4 direction (car space, +z forward, +x the car's left), f32 pi, f32 pi,
@@ -496,7 +496,7 @@ INDICATING = (INDICATOR, BRAKE_IND, DRL_IND)
 
 def _red_lens_indicators(records, from_lens: set, red_indicators: list, red_by_texel: set) -> None:
     """What a red rear lens triangle lights with, when the lamp behind it
-    isn't a tail lamp. Stock lamps are opaque, so a bulb behind a lens never
+    isn't a tail lamp. Vanilla lamps are opaque, so a bulb behind a lens never
     shows: the lens has to light for it.
 
     The bulb behind a lens triangle is the nearest lamp triangle (same LOD,
@@ -511,7 +511,7 @@ def _red_lens_indicators(records, from_lens: set, red_indicators: list, red_by_t
       CHR_300C_08); as tail lamps they hid the bulb and the car showed no
       reverse light. `detail_glass_red` lenses stay tail lamps, as before.
     - An indicator: a red lamp that brakes and indicates (BRAKE_IND, types
-      0x19/0x1A, as on stock US-style cars): FOR_GT_05's red lenses over its
+      0x19/0x1A, as on vanilla US-style cars): FOR_GT_05's red lenses over its
       drlinl/drlinr lamps, MIN_Coopers_11's red glass over its
       indicator_left/right bulbs.
     - A red "amber" lens on a side without any other rear indicator
@@ -856,10 +856,10 @@ class LampPlan:
         self.slots = [(o, lid, taken.get((o, lid))) for o, lid in entries]
         # Day-time running: a front side without a lamp of its own that lights
         # with DaytimeRunning gets head lamps that do (0x1D, Headlights +
-        # DaytimeRunning), as 31 stock vehicles draw theirs; the other stock
+        # DaytimeRunning), as 31 vanilla vehicles draw theirs; the other vanilla
         # cars but 10 have white position lamps (0x03) in their head-lamp
         # clusters. Forza's lamps mostly have no position-lamp technique, so
-        # ported head lamps (0x01) stayed dark by day while stock cars' glowed
+        # ported head lamps (0x01) stayed dark by day while vanilla cars' glowed
         # (player report; 66 of 573 ported cars had a front DRL lamp).
         # A position lamp a fraction the head lamp's size doesn't count
         # (CHR_Cuda426_71: 10 triangles beside 109).
@@ -967,16 +967,16 @@ def read_table(upvh: bytes) -> list[dict]:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("plan", help="classify a Forza car's lamps on a stock host (default the Desanne)")
+    p = sub.add_parser("plan", help="classify a Forza car's lamps on a vanilla host (default the Desanne)")
     p.add_argument("car", type=Path)
-    p.add_argument("--dsf", type=Path, default=None, help="stock dngvehicles.sp (default: from $DSF_GAME_DIR)")
+    p.add_argument("--dsf", type=Path, default=None, help="vanilla dngvehicles.sp (default: from $DSF_GAME_DIR)")
     p.add_argument("--host", type=int, default=266)
     t = sub.add_parser("table", help="print a vehicle's light table")
     t.add_argument("archive", type=Path)
     t.add_argument("--id", type=int, required=True)
     args = parser.parse_args(argv)
     if args.cmd == "plan":
-        args.dsf = game_paths.stock(args.dsf)  # the original when a dsfforza install replaced it
+        args.dsf = game_paths.vanilla(args.dsf)  # the original when a dsfforza install replaced it
 
     from dsfforza.formats import upvh as uv
     from dsfforza.formats import vehicle_mesh as vm

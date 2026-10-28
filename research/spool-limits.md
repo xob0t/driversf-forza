@@ -15,7 +15,7 @@ modes) against the `-b` project copy. Outputs are in `out/ghidra/spool-*`,
 
 ## Summary
 
-| Limit | Stock value | Hit by a bigger VEHC? | Raise by |
+| Limit | Vanilla value | Hit by a bigger VEHC? | Raise by |
 | --- | --- | --- | --- |
 | NONR buffer per slot | SSLP +0x08/+0x0C/+0x10: 0x6D000, 0x1000, 0x1000 | yes, heap overflow if NONR is larger | data: SSLP header |
 | Shared spool read buffer | 0x280000 static, heap above that | VEHC > 0x27F000 takes a path no shipped file uses | not needed: the pad test passed ("Test results") |
@@ -78,7 +78,7 @@ So the SSLP header fields are:
 
 | Offset | Value | Meaning |
 | --- | --- | --- |
-| +0x08 | 0x6D000 | NONR buffer, kind 0 (largest stock NONR 0x6CE30) |
+| +0x08 | 0x6D000 | NONR buffer, kind 0 (largest vanilla NONR 0x6CE30) |
 | +0x0C | 0x1000 | NONR buffer, kind 1 (largest 0x480) |
 | +0x10 | 0x1000 | NONR buffer, kind 2 (largest 0x620) |
 | +0x14 | 0 | kind 3, unused |
@@ -91,7 +91,7 @@ grow) to the largest NONR rounded up to 4 KiB. Cost: 35 x the kind-0 value
 of heap, allocated at boot (0x100000 would cost 35 MiB; the exe is large
 address aware). A NONR larger than the buffer overruns the heap block. Note
 that the cloned Desanne's NONR is 0x6C8D0 and the e5-big clone's is 0x6CF70,
-only 0x90 bytes under the stock limit; a converted car with a bigger UPVH or
+only 0x90 bytes under the vanilla limit; a converted car with a bigger UPVH or
 MODL will cross it.
 
 ## Shared spool read buffer (confirmed-static)
@@ -118,8 +118,8 @@ package is at most 0x280000 (largest: menusmaster 0x26C000, MegaMesh
 at a time (each DRSP under 0x258980) through the type-1 path, where
 FUN_008FC860 returns the same 0x280000 threshold. The packager evidently
 kept every read under 2.5 MiB, so the heap path is probably never exercised
-by stock data. Any code that keeps a pointer into the VEHC buffer after the
-load would read a reused static buffer in stock but a freed block here. I
+by vanilla data. Any code that keeps a pointer into the VEHC buffer after the
+load would read a reused static buffer in vanilla but a freed block here. I
 did not find such a pointer; this was the main hypothesis for the e5-big
 crash, and the pad test checked it directly: it passed ("Test results"), so
 the patch below was never needed.
@@ -153,9 +153,9 @@ FUN_00BBB510 SBMC, ...).
 What it limits:
 
 - **Root of dngvehicles.sp**: 1100 entries, so at most 1097 VEHC, which is
-  365 vehicles (stock 150; the room is 215 more).
+  365 vehicles (vanilla 150; the room is 215 more).
 - **One DRSP**: 1100 children (TEXC + MACO + SBMC + VXCK + IXCK + MDID).
-  Stock maximum is 382 (VEHC 144), e5-big has 415. A converted car with
+  Vanilla maximum is 382 (VEHC 144), e5-big has 415. A converted car with
   more than about 1090 submodels has to split its resources across several
   DRSPs: MdxnResource_PollDelayedRelease (0x00BB93F0) states 8 and 9 process
   every DRSP child of the MDXN in turn, as SSIC's five DRSPs show.
@@ -170,7 +170,7 @@ next section.
 `dsfforza.asi` module `archive` (`tools/asi/src/mod_archive.cpp`) lets a
 CHNK hold up to `[archive] max_entries` entries (default 16384) and lets
 archives grow past 2 GiB. With it, `dngvehicles.sp` holds a car for every
-free base model ID: 849 added cars (IDs 1..999 minus the 150 stock ones;
+free base model ID: 849 added cars (IDs 1..999 minus the 150 vanilla ones;
 `port_batch.py --id-policy asi` assigns all of them, the default policy
 1..61 and 304..999, so 757). In game, a 2,724-entry archive
 (757 clones, 2.67 GB) loads, and cars from both ends of the root table spool,
@@ -219,10 +219,10 @@ side table for entries and pointers 1100 and up, keyed by the reader's
 address (64 slots, SRW lock). Every reader function that indexes the table
 or walks it is replaced by a C++ copy that uses the side table for indices
 of 1100 and up. For a reader of up to 1100 entries each copy does what the
-stock function did (same calls, same order). Fourteen entry-point jumps,
-applied only if all fourteen sites hold the stock bytes:
+vanilla function did (same calls, same order). Fourteen entry-point jumps,
+applied only if all fourteen sites hold the vanilla bytes:
 
-| VA | Stock function | Original bytes (checked) | New |
+| VA | Vanilla function | Original bytes (checked) | New |
 | --- | --- | --- | --- |
 | 0x008FB340 | tag(i) | `8B 44 24 04 C1 E0 04 8B 44 08 08 C2 04 00` | `E9` → `h_tag` |
 | 0x008FB370 | version(i) | `8B 44 24 04 40 C1 E0 04 8A 04 08 C2 04 00` | `E9` → `h_version` |
@@ -239,7 +239,7 @@ applied only if all fourteen sites hold the stock bytes:
 | 0x008FC0A0 | async open state machine | `83 EC 1C 53 56 8B F1 8B 86 10 56 00 00` | `E9` → `h_poll`; a table of more than 1100 entries is read into a heap buffer instead of the static one |
 | 0x008FC400 | open a CHNK in memory | `83 EC 18 53 8B 5C 24 20 81 3B 43 48 4E 4B` | `E9` → `h_load_mem` |
 
-Each jump replaces the first five bytes; the rest of the stock function is
+Each jump replaces the first five bytes; the rest of the vanilla function is
 never reached. Not replaced: FUN_008FB500, FUN_008FB940, FUN_008FB9E0,
 FUN_008FBB30, FUN_008FBBD0 (write a CHNK to disk), FUN_008FBF30 and
 FUN_008FC2F0 (append). No call, jump or data reference reaches them.
@@ -271,7 +271,7 @@ Everything after it is unsigned. FUN_0085AB80 keeps
 (no buffering, overlapped). FUN_0085AE50 advances +0x30 with unsigned
 compares. The patch turns the `JGE` into `JMP` (0x0085A9B2: `7D` → `EB`,
 checked against `83 79 30 00 7D 07`). A position past the end is still
-clamped to the file size by the next check; that only differs from stock for
+clamped to the file size by the next check; that only differs from vanilla for
 a relative seek to before the start of the file, which the readers never do.
 The new limit comes from the u32 offsets in CHNK headers and the rounded size
 at +0x28: just under 4 GiB (4 GiB - 2 KiB). `[archive] large_files=0`
@@ -301,12 +301,12 @@ with 2000, FUN_00506C90 is timing.
 
 ### In game (confirmed-runtime)
 
-Test archive `out/lim-root-full.sp`: the stock archive plus 757 clones of
+Test archive `out/lim-root-full.sp`: the vanilla archive plus 757 clones of
 248 (Cobra), 293 (Buggy), 250 (Volt) and 266 (Desanne) in turn, at IDs
 1..61 and 304..999 (2,724 root entries, 2.67 GB):
 
 ```sh
-uv run dsff clone_vehicle out/stock/Install/dngvehicles.sp out/lim-root-full.sp \
+uv run dsff clone_vehicle out/vanilla/Install/dngvehicles.sp out/lim-root-full.sp \
     --source 248,293,250,266 --id 1-61,304-999 --root-limit 3003
 ```
 
@@ -320,10 +320,10 @@ and SSIC at 2721.
 | `20261022-220605` | test archive, `[archive]` only | 266, 1, 459, 460, 700 and 999 spool, spawn, take the player and switch to the cockpit |
 | `20261022-220929` | test archive, whole plugin (`archive`, `garage`, `hud`) | 459, 460, 999 in cockpit view with the throttle held: 460 to 63 mph, 999 to 114 mph |
 | `20261022-221412` | same | 62, 459, 700, 1: 459 to 73 mph, 700 to 46 mph, 1 to 49 mph |
-| `20261022-221150` | stock archive, whole plugin | 266, 130, 303 as before (130 to 46 mph, 303 to 100 mph) |
+| `20261022-221150` | vanilla archive, whole plugin | 266, 130, 303 as before (130 to 46 mph, 303 to 100 mph) |
 | `20261022-221629` | test archive, no plugin (negative control) | never reaches the menu: `Driver.log` stops after the D3D9 hook, no Lua runs, and the process ends with code -1 after 10 minutes |
 
-The first car of each run shows no speed, in the stock run too: the
+The first car of each run shows no speed, in the vanilla run too: the
 harness's throttle hold starts before that car's cockpit view. The clones'
 HUD names are wrong because they have no `vehicleStats` entries
 (`in-game-tests.md`), which is unrelated.
@@ -389,7 +389,7 @@ the result without a check, so exhaustion crashes.
 Write it from DllMain, not from a thread, so it lands before
 GraphicsManager_Construct runs:
 
-| VA (RVA) | Stock | Meaning | Proposed |
+| VA (RVA) | Vanilla | Meaning | Proposed |
 | --- | --- | --- | --- |
 | 0x00FD2730 (0x00BD2730) | `00 20 00 00` | Vehicle Spooled SYS KiB, all 35 slots | 0x4000 (468 KiB per slot, +8 MiB total) |
 | 0x00FD2734 (0x00BD2734) | `00 00 01 00` | Vehicle Spooled SYS nodes | 0x20000 (3744 per slot; the node array is malloc'd, 16 B each) |
@@ -412,7 +412,7 @@ deformation buffer on this path). If a vertex declaration needs conversion,
 FUN_00BAEF80 takes scratch from an arena and falls back to the raw data when
 it is full, so that is not a limit either.
 
-Stock maxima for reference (`src/dsfforza/game/vehicle_limits.py`): kind 0 has at most
+Vanilla maxima for reference (`src/dsfforza/game/vehicle_limits.py`): kind 0 has at most
 3 VBs, 15,506 vertices in one buffer, 20,905 per car, 216,228 indices, 374
 submodels, 13 submodels per part LOD; kind 1 reaches 21,446 vertices in one
 buffer.
@@ -446,7 +446,7 @@ buffer (`_TRV`), index buffer (`_XDI`), texture (`_TEX`), shader (`_UPG`)
 and material through ResourceHashPool_Acquire (0x00BAED90), a bump arena
 with no end check (known from the driver-sf-mods terrain work). It is
 shared by everything resident, so only cars with many more buffers and
-materials than stock matter. Not patched here.
+materials than vanilla matter. Not patched here.
 
 The arena recycles its nodes (confirmed-static, `out/ghidra/arena1..3`).
 Acquire pops the free list at owner +0x127AC0 before it bumps +0x127AC4.
@@ -480,7 +480,7 @@ All three load, spawn, drive and switch to the cockpit with no crash:
 So the read path above 0x280000 is fine and a bigger NONR only needs the
 SSLP header. The old 0x29B000 MDXN crash was most likely the UID scheme of
 that build (counter in UID byte 7, `upvh.md`), not its size. `port_car.py
---mdxn-limit 0x2C0000` lifts the stock-maximum MDXN cap.
+--mdxn-limit 0x2C0000` lifts the vanilla-maximum MDXN cap.
 
 ## Test plan (run; results in "Test results" above)
 
@@ -512,12 +512,12 @@ Reading the results:
 
 Running `tools/game/dump-spool-limits.ps1 -Every 5` beside any of these
 prints pool 8 to 11 slot usage (bytes and nodes, worst slot), the UID list
-counter and the spool buffer state, so it also measures the real stock
+counter and the spool buffer state, so it also measures the real vanilla
 headroom.
 
 ## Tools
 
-- `dsff vehicle_limits <archive> [--vehc N ...]`: stock maxima per kind,
+- `dsff vehicle_limits <archive> [--vehc N ...]`: vanilla maxima per kind,
   or one entry checked against the NONR buffer and the 0x280000 threshold.
 - `src/dsfforza/game/spool_variants.py`: the archive variants above (`--pad-vehc`,
   `--pad-nonr`, `--sslp-nonr`, `--sslp-slots`).

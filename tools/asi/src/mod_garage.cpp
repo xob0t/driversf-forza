@@ -2,16 +2,16 @@
 //
 // Design and evidence: research/asi.md, "Garage and save". In short:
 //   save   Per-vehicle profile data for IDs 304..999 lives in this module
-//          (g_ext), never in the stock 0x4CF8 save block, and is persisted to
-//          <savegames>\dsfforza-garage.dat next to autosave.dat. The stock
+//          (g_ext), never in the vanilla 0x4CF8 save block, and is persisted to
+//          <savegames>\dsfforza-garage.dat next to autosave.dat. The vanilla
 //          block keeps its layout, so the save still loads in an unmodded game.
 //   garage The maker-list builder walks IDs 0..999 instead of 0..303, with a
 //          relocated sort-key table; the group-count cap is enforced instead
-//          of overrunning memory; optionally the group table (stock 40) and
+//          of overrunning memory; optionally the group table (vanilla 40) and
 //          the menu's maker index array are moved to larger storage, and the
 //          maker menu's script lists (menusmaster.sp, 40 entries each) are
 //          grown when the menu is filled. A group holds any number of cars
-//          (stock 20: IDs 21.. live here), and the vehicles screen, which
+//          (vanilla 20: IDs 21.. live here), and the vehicles screen, which
 //          has 20 cards, shows a group of 20 or more through a window of 19
 //          cards that moves when Right/Left reach its edges.
 //   lua    ProfileSettings.GetVehicleUnlocked(8000000 + k) answers
@@ -29,14 +29,14 @@
 namespace {
 
 // ---- constants ------------------------------------------------------------
-const int kStockIds = 0x130;     // 304 slots in the stock flag/owned lists
-const int kStockBits = 320;      // the stock bit arrays hold IDs 0..319
+const int kVanillaIds = 0x130;     // 304 slots in the vanilla flag/owned lists
+const int kVanillaBits = 320;      // the vanilla bit arrays hold IDs 0..319
 const int kExtMax = 1000;        // model IDs below 1000 (N+1000/N+2000 are parts)
-const int kExtFirst = 304;       // first ID kept outside the stock block
+const int kExtFirst = 304;       // first ID kept outside the vanilla block
 const int kWords = (kExtMax + 31) / 32;
 const uint32_t kMagic = 8000000;  // GetVehicleUnlocked(kMagic + k) queries; the game's Lua numbers are
                                      // floats, so the value must stay below 2^23
-const int kStockGroups = 40;
+const int kVanillaGroups = 40;
 const int kGroupSize = 0x6C;     // one maker group: 20 IDs, count, name[16], badge, manufacturer
 const int kGroupCars = 20;
 const uint32_t kGarageSize = 0x3728;  // operator new size of the garage object
@@ -64,7 +64,7 @@ const uint32_t kProfBits[4] = {0x2088, 0x20B0, 0x20D8, 0x2100};  // unlocked-eve
 // ---- extended profile data ------------------------------------------------
 struct Slot {
     int32_t id;
-    uint32_t flags;  // bit 0 unlocked, 1 owned, 2 new (stock meaning)
+    uint32_t flags;  // bit 0 unlocked, 1 owned, 2 new (vanilla meaning)
 };
 
 struct Ext {
@@ -83,10 +83,10 @@ char g_side_name[64] = "dsfforza-garage.dat";
 // Garage list.
 int32_t g_sortkey[kExtMax];
 int g_max_id = kExtMax;          // IDs the garage walks: 0 .. g_max_id-1
-int g_max_groups = kStockGroups;
+int g_max_groups = kVanillaGroups;
 int g_max_cars = kGroupCars;     // cars per maker group ([garage] max_cars once the car list window is in)
 uint32_t g_groups_off = 0x20FC;  // groups table offset in the garage object
-uint32_t g_count_rel = kStockGroups * kGroupSize;  // count offset from the table
+uint32_t g_count_rel = kVanillaGroups * kGroupSize;  // count offset from the table
 int32_t* g_maker_index = nullptr;  // menu maker -> group index (index 1..groups)
 bool g_garage_active = false, g_save_active = false;
 
@@ -106,7 +106,7 @@ void ext_clear(Ext& e)
 }
 
 bool is_ext(int id) { return id >= kExtFirst && id < kExtMax; }
-// IDs the plugin's list tables can hold: IDs 304..999 always, 0..303 when the stock list is full.
+// IDs the plugin's list tables can hold: IDs 304..999 always, 0..303 when the vanilla list is full.
 bool in_table(int id) { return id >= 0 && id < kExtMax; }
 
 char* profile()
@@ -237,14 +237,14 @@ int32_t* __fastcall h_flag_slot(char* list, void*, int id)
 {
     int32_t* base = (int32_t*)(list + 0x38);
     int32_t* empty = nullptr;
-    for (int i = 0; i < kStockIds; i++) {
+    for (int i = 0; i < kVanillaIds; i++) {
         int32_t* s = base + 2 * i;
         if (*s == id) return s;
         if (!empty && *s == -1) empty = s;
     }
     if (is_ext(id) || (!empty && in_table(id))) {
-        // 304..999 never go into the block; a stock-range ID does only when the
-        // stock list is full (stock: write through NULL).
+        // 304..999 never go into the block; a vanilla-range ID does only when the
+        // vanilla list is full (vanilla: write through NULL).
         if (!empty && !is_ext(id)) {
             static int noted = 0;
             if (noted++ < 5) dsf_log("garage: vehicle flag list full; id %d kept in %s", id, g_side_name);
@@ -260,7 +260,7 @@ int32_t* __fastcall h_flag_slot(char* list, void*, int id)
         if (in_table(id) && s.id == id) return &s.id;   // overflowed earlier, list has room again
     }
     if (!empty) {
-        // Stock: writes through NULL (crash). Hand out a scratch slot instead.
+        // Vanilla: writes through NULL (crash). Hand out a scratch slot instead.
         static int warned = 0;
         if (warned++ < 5) dsf_log("garage: vehicle flag list full, id %d not stored", id);
         g_dummy_slot.id = id;
@@ -277,7 +277,7 @@ int magic_query(uint32_t q)
     if (k == 0) return g_save_active ? 1 : 0;                  // save hooks
     if (k == 1) return g_garage_active ? 1 : 0;                // garage walks IDs beyond 303
     if (k >= 0x1000 && k < 0x2000) return (int)(k - 0x1000) <= g_max_groups;   // n <= max groups
-    if (k >= 0x2000 && k < 0x3000) return (int)(k - 0x2000) < (g_garage_active ? g_max_id : kStockIds);  // id listable
+    if (k >= 0x2000 && k < 0x3000) return (int)(k - 0x2000) < (g_garage_active ? g_max_id : kVanillaIds);  // id listable
     if (k >= 0x3000 && k < 0x4000) return (int)(k - 0x3000) <= g_max_cars;    // n <= cars per maker group
     return 0;
 }
@@ -287,7 +287,7 @@ uint32_t __fastcall h_flag_test(char* list, void*, int id, uint32_t bit)
 {
     if ((uint32_t)id - kMagic < 0x4000) return magic_query((uint32_t)id);
     int32_t* base = (int32_t*)(list + 0x38);
-    for (int i = 0; i < kStockIds; i++)
+    for (int i = 0; i < kVanillaIds; i++)
         if (base[2 * i] == id) return (base[2 * i + 1] >> (bit & 31)) & 1;
     if (in_table(id)) {
         Lock lock;
@@ -302,7 +302,7 @@ int32_t* __fastcall h_owned_slot(char* stats, void*, int id)
 {
     int32_t* base = (int32_t*)(stats + 0xBDC);
     int32_t* empty = nullptr;
-    for (int i = 0; i < kStockIds; i++) {
+    for (int i = 0; i < kVanillaIds; i++) {
         if (base[i] == id) return base + i;
         if (!empty && base[i] == -1) empty = base + i;
     }
@@ -324,7 +324,7 @@ int32_t* __fastcall h_owned_slot(char* stats, void*, int id)
 // ---- bit arrays (FUN_0050A1A0 unlocked-ever, FUN_0050A120 driven, FUN_0050A170 take-a-ride)
 // The setters index [this + off + (id >> 5) * 4]. For IDs 304..999 the stubs
 // swap `this` for a base that lands in g_ext.bits; IDs of 1000 and up are
-// dropped (stock: silent corruption of the next arrays).
+// dropped (vanilla: silent corruption of the next arrays).
 uint32_t g_fake_4e0, g_fake_508, g_fake_558;
 
 __declspec(naked) void s_unlocked()  // at 0x50A1A0
@@ -385,12 +385,12 @@ __declspec(naked) void s_takeride()  // at 0x50A170
     }
 }
 
-// Bit k (0 unlocked-ever, 1 driven, 3 take-a-ride) of an ID, stock or extended.
+// Bit k (0 unlocked-ever, 1 driven, 3 take-a-ride) of an ID, vanilla or extended.
 int bit_get(int k, uint32_t id)
 {
     int bit = 0;
-    if (id < (uint32_t)kStockBits) {
-        // IDs 304..319 fit the stock arrays; older saves may have them set there.
+    if (id < (uint32_t)kVanillaBits) {
+        // IDs 304..319 fit the vanilla arrays; older saves may have them set there.
         char* p = profile();
         if (p) bit = (((uint32_t*)(p + kProfBits[k]))[id >> 5] >> (id & 31)) & 1;
         if (id < (uint32_t)kExtFirst) return bit;
@@ -402,7 +402,7 @@ int bit_get(int k, uint32_t id)
     return bit;
 }
 
-// ProfileSettings.GetVehicleDriven (0x67C320): stock reads [profile+0x20B0] inline.
+// ProfileSettings.GetVehicleDriven (0x67C320): vanilla reads [profile+0x20B0] inline.
 int __cdecl lua_GetVehicleDriven(void* L)
 {
     int id = lua_checkint(L, 1);
@@ -410,7 +410,7 @@ int __cdecl lua_GetVehicleDriven(void* L)
     return 1;
 }
 
-// ProfileSettings.GetNumVehiclesDrivenTakeARide (0x67C3C0): stock counts IDs 0..303.
+// ProfileSettings.GetNumVehiclesDrivenTakeARide (0x67C3C0): vanilla counts IDs 0..303.
 int __cdecl lua_GetNumTakeARide(void* L)
 {
     char* p = profile();
@@ -568,7 +568,7 @@ FILE* __cdecl f_read(const char* path, const char* mode)
 
 // ---- maker groups of more than 20 cars ------------------------------------
 // A group keeps its first 20 IDs inline (+0x00..+0x4C) and its car count at
-// +0x50, as stock; IDs 21 and up live here, keyed by the group's name (+0x54,
+// +0x50, as vanilla; IDs 21 and up live here, keyed by the group's name (+0x54,
 // 16 bytes). The builder files cars by that name, so it is unique, and it
 // travels with the group when FUN_006C7BB0 shifts the table to insert one.
 // Every reader outside the garage object goes through vfunc 0x12C (car i of
@@ -598,8 +598,8 @@ int32_t* over_ids(const int32_t* group, bool create)
 int32_t& group_at(int32_t* group, int32_t* over, int i) { return i < kGroupCars ? group[i] : over[i - kGroupCars]; }
 
 // FUN_006C5740 (thiscall garage, ret 8): file `id` into `group`, before the
-// first car whose sort key is larger (stock order; stock skips IDs past the
-// walked range). Stock has no capacity check: the 21st car overwrote the count.
+// first car whose sort key is larger (vanilla order; vanilla skips IDs past the
+// walked range). Vanilla has no capacity check: the 21st car overwrote the count.
 void __fastcall group_add_car(char* garage, void*, int32_t* group, int id)
 {
     (void)garage;
@@ -874,12 +874,12 @@ __declspec(naked) void s_menu_set_string()
 // badge (mod_hud: ManufacturerGlyph with its localised string), the list gets
 // "ID:n" instead, which the renderer draws as that glyph; the one-byte code
 // can't name more than about 50 new makers. The group's first car stands for
-// it: every car of a maker shares its badge. The stock list's elements are
+// it: every car of a maker shares its badge. The vanilla list's elements are
 // external ({text, external 1, set, capacity}: FUN_00ACE220 keeps the pointer
 // and takes the length as capacity), which is fine for the plugin's texts:
 // they live as long as the process. An element with its own buffer (the ones
 // list_grow adds) takes a copy, so it must be large enough, else it keeps the
-// stock string.
+// vanilla string.
 typedef void(__fastcall* MenuSetStringFn)(void* elem, void*, const char* text, int n);
 
 void __fastcall menu_set_badge(uint8_t* elem, void*, const char* text, int n)
@@ -935,7 +935,7 @@ int* screen_var(uint8_t* screen, uint32_t off) { return *(int**)(screen + off); 
 int screen_group(uint8_t* screen, int cat)
 {
     if (g_maker_index) return (cat >= 0 && cat <= g_max_groups) ? g_maker_index[cat] : -1;
-    return (cat >= 0 && cat <= kStockGroups) ? *(int*)(screen + 0x270 + cat * 4) : -1;
+    return (cat >= 0 && cat <= kVanillaGroups) ? *(int*)(screen + 0x270 + cat * 4) : -1;
 }
 
 // Called by loop_stub at the end of each car of the car list loop: `done` cars
@@ -1461,7 +1461,7 @@ bool install_list()
         undo_hooks(caps, 2);
         return false;
     }
-    dsf_log("garage: maker list walks model IDs 0..%d (stock 0..303); at most %d cars per group", g_max_id - 1,
+    dsf_log("garage: maker list walks model IDs 0..%d (vanilla 0..303); at most %d cars per group", g_max_id - 1,
             g_max_cars);
     return true;
 }
@@ -1497,9 +1497,9 @@ bool install_window()
     return true;
 }
 
-// Move the maker-group table (stock: 40 groups at garage+0x20FC, count at
+// Move the maker-group table (vanilla: 40 groups at garage+0x20FC, count at
 // +0x31DC) behind the object, which operator new allocates larger, and the
-// menu's maker index array (stock: int[40] at menu+0x274) into g_maker_index.
+// menu's maker index array (vanilla: int[40] at menu+0x274) into g_maker_index.
 bool install_groups(int groups)
 {
     const uint32_t off = kGarageSize;                       // new table offset
@@ -1567,7 +1567,7 @@ bool install_groups(int groups)
     g_groups_off = off;
     g_count_rel = rel;
     g_max_groups = groups;
-    dsf_log("garage: maker groups %d (stock 40): table at garage+0x%X, count at +0x%X, object 0x%X bytes; "
+    dsf_log("garage: maker groups %d (vanilla 40): table at garage+0x%X, count at +0x%X, object 0x%X bytes; "
             "maker menu lists grown on fill (E18B14), string sets checked (6C6AC8, 6C6AE2)",
             groups, off, count, size);
     return true;
@@ -1585,17 +1585,17 @@ void mod_garage_init()
     else dsf_log("garage: [garage] save=0, save hooks off");
 
     int max_id = cfg_int("garage", "max_id", kExtMax);
-    if (max_id < kStockIds) max_id = kStockIds;
+    if (max_id < kVanillaIds) max_id = kVanillaIds;
     if (max_id > kExtMax) max_id = kExtMax;
     g_max_id = max_id;
     int groups = cfg_int("garage", "max_groups", 120);
-    if (groups < kStockGroups) groups = kStockGroups;
+    if (groups < kVanillaGroups) groups = kVanillaGroups;
     if (groups > 1000) groups = 1000;
 
     if (!cfg_bool("garage", "list", true)) {
         dsf_log("garage: [garage] list=0, garage list unchanged");
-    } else if (max_id > kStockIds && !g_save_active) {
-        // Listing IDs the save can't hold would corrupt the stock arrays.
+    } else if (max_id > kVanillaIds && !g_save_active) {
+        // Listing IDs the save can't hold would corrupt the vanilla arrays.
         dsf_log("garage: save hooks are off, so the garage list stays at IDs 0..303");
     } else {
         int cars = cfg_int("garage", "max_cars", kExtMax);
@@ -1609,7 +1609,7 @@ void mod_garage_init()
         int max_cars = g_max_cars;
         g_max_cars = kGroupCars;   // until the window is in
         g_garage_active = install_list();
-        if (g_garage_active && groups > kStockGroups && !install_groups(groups))
+        if (g_garage_active && groups > kVanillaGroups && !install_groups(groups))
             dsf_log("garage: maker groups stay at 40");
         g_count_rel = (uint32_t)g_max_groups * kGroupSize;
         if (g_garage_active && max_cars > kGroupCars) {

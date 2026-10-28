@@ -55,7 +55,7 @@ BINF order is not archive order.
 | ---: | --- | --- |
 | +0x02 | u16 450 | record count (confirmed-static) |
 | +0x04 | 0x00EEB102 | = 35 × 0x6D000 + 4 × 0x1000 + 0x102; no code reads it |
-| +0x08 | 0x0006D000 | NONR buffer per kind-0 slot (confirmed-static, `spool-limits.md`); the largest stock NONR (0x6CE30) rounded up to 4 KiB |
+| +0x08 | 0x0006D000 | NONR buffer per kind-0 slot (confirmed-static, `spool-limits.md`); the largest vanilla NONR (0x6CE30) rounded up to 4 KiB |
 | +0x0C, +0x10 | 0x1000, 0x1000 | NONR buffers for kinds 1 and 2 (confirmed-static) |
 | +0x18 | bytes 35, 2, 2, 0 | spool slots per kind (confirmed-static) |
 
@@ -174,7 +174,7 @@ vehicles.
 ## Rewriting the archive
 
 `dsff chnk rebuild` re-serializes an archive from its parsed tree, and
-the output is byte-identical to the stock `dngvehicles.sp`. The layout rules
+the output is byte-identical to the vanilla `dngvehicles.sp`. The layout rules
 are in the `chnk.py` docstring. The same rules round-trip
 `GUI_FrontEnd.fchunk`, but not `san_francisco.dngc`, `gui.sp` or
 `ScriptsLuaScripts.fchunk`. Those come from other exporters, with a
