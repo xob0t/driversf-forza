@@ -235,7 +235,7 @@ class WheelAtlas(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "ShaderSettings.xml").write_text(xml)
             settings = fm.shader_settings(Path(tmp))
-            self.assertEqual(settings, {"rim": {"PaintScale": 0.5}})
+            self.assertEqual(settings, {"rim": {"PaintScale": 0.5, "SpecularColor": 1.0}})
             self.assertEqual(fm.wheel_paint_scale("rim", settings), 0.5)
             self.assertEqual(fm.wheel_paint_scale("inner_rim", settings), 1.0)
             self.assertEqual(fm.wheel_paint_scale("wheel_emblem", {"wheel_emblem": {"PaintScale": 3.0}}), 1.0)
@@ -598,7 +598,8 @@ class TrimTexels(unittest.TestCase):
           <frame><PristinePaintScale value="0.3"/></frame>
         </ShaderSettings>"""
         settings = fm.parse_shader_settings(text)
-        self.assertEqual(settings["misc"], {"SpecularAmount": 0.5, "PaintScale": 0.2})
+        # SpecularColor as its RGB mean (the gloss specular, #176)
+        self.assertEqual(settings["misc"], {"SpecularAmount": 0.5, "PaintScale": 0.2, "SpecularColor": 1.0})
         self.assertEqual(settings["badge"], {"FresnelIndex": 1.0})  # mismatched close tag
         # misc is a paint shader: PaintScale scales the paint, the texel stays
         self.assertEqual(fm.texel_scale(settings, "misc"), 1.0)

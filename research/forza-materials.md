@@ -1,6 +1,6 @@
 # Forza materials and textures, and their DSF counterparts
 
-Updated: 2026-10-27
+Updated: 2026-10-28
 
 Code: `src/dsfforza/convert/forza_materials.py` (Forza side), `src/dsfforza/convert/dsf_materials.py`
 (DSF side, atlas, preview), `--textures` in `src/dsfforza/convert/forza2dsf.py` and
@@ -659,7 +659,8 @@ Issues #87 (the Cougar Eliminator's satin-black scoop, grille and headlamp doors
 draw dead flat) and #108 (chrome rims look like flat grey paint).
 
 **What Forza adds (confirmed-static).** Besides the texel, the car shaders add
-`SpecularAmount x light x (N.H)^SpecularPower` and a cube-map reflection,
+`SpecularAmount x SpecularColor x light x (R.L)^SpecularPower` (Phong; see "Gloss
+power and SpecularColor" below; first read as `(N.H)^p`) and a cube-map reflection,
 `CubeScale x FresnelScalar x Fresnel(FresnelIndex)` in the paint and trim
 shaders, `CubeScale` alone at every angle in the chrome ones (whose texel is
 scaled by `ChromeDiffuseScale`). The defaults per technique are in the shared
@@ -734,7 +735,7 @@ instead of the Chassis material:
 
 The parameters (`gloss_material`): specular intensity `GLOSS_SPECULAR_SCALE` (0.04) `x
 SpecularAmount`, at most 0.25; power `SpecularPower / 4` (`(N.H)^p` is about
-`(R.V)^(p/4)`); reflection with Schlick's Fresnel (power 5, bias F0 of FresnelIndex;
+`(R.V)^(p/4)`; both changed by #176: below); reflection with Schlick's Fresnel (power 5, bias F0 of FresnelIndex;
 chrome: power 16, bias 1, alike at every angle) of amount `GLOSS_REFLECTION_SCALE`
 (0.5) `x CubeScale x FresnelScalar x 255 / green`, the green the subsection's texels
 average as drawn (the program masks the reflection by it; at least 16 on atlas
@@ -775,6 +776,66 @@ exterior), and the trims and rims that move to it take stride-32 vertices instea
 28. The five test cars' full entries grow by 0x11800 to 0x25800 (the Cougar, 12
 copies: MDXN 0x101800 to 0x127000) and their exteriors by 0x15000 to 0x2f000, far
 under the 0x2C0000 limit.
+
+## Gloss power and SpecularColor (2026-10-28)
+
+Issue #176: on the player's car (since #177 the exterior entry draws the gloss trims),
+the Camaro ZL1 12's front splitter (`bumperFa`, `dsf_trim_gloss~plastic2`, a
+(13, 13, 13) colour cell) drew as a cream band in the sun and its bonnet vent insert
+(`hooda`) as a khaki panel. Gloss material: intensity 0.031, power 5.66.
+
+**Forza's specular is Phong (confirmed-static; `dsff fxobj --shader 0x85a3c` and
+`0x86914`, the paint-trim and trim shaders).** The vector the cube map reads (the
+view reflected about the normal: `2(N.V)N - V`) is dotted with `psLightDirWS`
+(`dp3_sat`), and `log`, times `SpecularPower` (`c124` / `c168`; the scalar-constant
+op prints it as `r60` / `r40`, register & 63), `exp`. That is `(R.L)^SpecularPower`, the
+same form as DSF's `(R.V)^g_hSpecularPower`, not Blinn's `(N.H)^p`. The term is
+then multiplied by `SpecularAmount x shDirectionalColourAndLum.w` and by
+`SpecularColor` (`c125`, RGB). Neither shader has an N.L or texel factor on it.
+
+**What the converter did.** It divided the power by 4 (taking Forza's as Blinn's)
+and left `SpecularColor` out. The shared `Normal.xml` gives the four big trim
+techniques a dim one: plastic2, plastic and plastic_simple 0.4, matte and
+matte_colors 0.3, rubber_trim 0.5, frame 0.04, `rim` 0 (others 1); 25 cars set their
+own on a gloss technique (the Syclone's plastic2 0.3). The Camaro's plastic2
+(SpecularAmount 2.478, power 23.55, colour 0.4 by default) took 0.031 at `(R.V)^5.66`
+(half peak 28 degrees off the mirror direction) where Forza has 0.0099 at `^23.55`
+(14 degrees): four times the light on a lobe twice as wide, so a flat panel lit end to
+end over a wide range of sun and camera angles.
+
+**Fix (`dsf_materials.GLOSS_POWER_RATIO` 1; `forza_materials.SPECULAR_COLOUR_DEFAULTS`,
+`gloss_params`, `parse_shader_settings` keeps `SpecularColor` as its RGB mean).**
+`GLOSS_SPECULAR_SCALE`, the floor of power 4 and the cap stay: the calibration cars of
+#143 (the Cougar's `misc` and `badge`, colour 1, power 5 and 128) keep their sheen.
+Default `matte_colors` (0.75 x 0.3) now falls under `GLOSS_MIN` and has no sun
+specular, as near as DSF gets to Forza's faint one.
+
+**Roster (offline, 573 cars, `out/s176/survey.py`, not committed: cutout, trim_art and
+plan() at LOD 1 as `port_car` runs them, the gloss materials of the exterior body).**
+"Lights at once": the largest area whose normals lie within half the lobe's half-peak
+angle of one direction (a flat panel that lights end to end).
+
+| | master | this change |
+| --- | --- | --- |
+| LOD 1 body triangles with a sun specular | 1,487,826 (573 cars) | 1,169,099 (566) |
+| of them at a broad lobe (DSF power 8 or less) | 1,114,023, 1,019 m2 | 549,565, 408 m2 |
+| triangles at intensity 0.0156 or more | 930,455 | 392,406 (rims and badges, power 128: 368,867) |
+| cars with 0.1 m2 or more lighting at once at intensity 0.0156+, power 8 or less | 324 | 6 |
+| ... 0.25 m2 or more | 125 | 2 |
+
+Every car's gloss materials change. The ones left with broad lobes (power 4 to 8) are
+those Forza gives them (plastic2's default 8, the Syclone's 3, the Kenworth's
+matte_colors), now at Forza's dimmer colour.
+
+**In game (VM 1, `-Views nose,rear,grille -Palette 0 -ShotSeconds 3`, vanilla 229, then
+IDs 1 Camaro ZL1 12, 2 XB Falcon GT 73, 3 Huayra 12, 4 SVT Raptor 12, 5 Express 2500
+Cargo 05).** Master `vm1-20261028-164942`, the power rule alone
+`vm1-20261028-165557`, both changes `vm1-20261028-170804`
+(`img/gloss-power-camarozl1-ingame.jpg`, `img/gloss-power-raptor-express-ingame.jpg`,
+`img/gloss-power-falcon-huayra-ingame.jpg`). The Camaro's splitter and vent insert
+are black, the Raptor's bonnet vents lose their khaki and the Express's front bumper
+its cream band; the Falcon's and Huayra's trims look as before. The power rule alone
+already removed the Camaro's band in these views.
 
 ## Open
 
