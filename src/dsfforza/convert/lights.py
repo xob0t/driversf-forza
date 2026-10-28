@@ -334,6 +334,7 @@ LENS_RED_HUE = 10.0
 # over its head lamps. Front amber lenses over indicators sit at 0 to 35 in the roster (CHR_
 # Cuda426_71's 43 next); as indicators the Panoz's covered head lamps never lit by day.
 YELLOW_LENS_HUE = 45.0
+YELLOW_COVER_REACH = 0.15  # m: a head lamp triangle this close to a yellow lens triangle
 
 
 def texel_class(texel) -> str | None:
@@ -457,6 +458,18 @@ def _mean_texel(section, sub, tris, texel):
     """Mean of texel (texel_sampler) over a subsection's triangles; None without one."""
     got = [t for tri in tris if (t := texel(section, sub, tri)) is not None]
     return tuple(sum(t[c] for t in got) / len(got) for c in range(4)) if got else None
+
+
+def _yellow_head_covers(records, yellow_front: list, from_lens: set) -> None:
+    """A front selective-yellow lens (yellow_lens) lights as a head lamp when a head lamp
+    triangle that isn't a lens lies within YELLOW_COVER_REACH of it (the Panoz Esperante
+    GTLM's lexan); one with no head lamp near (FER_83_F430GT_10's bumper lens) stays an
+    indicator."""
+    heads = [r.centre for n, r in enumerate(records) if r.function == HEAD and r.front and n not in from_lens]
+    for n in yellow_front:
+        r = records[n]
+        if any(math.dist(r.centre, h) < YELLOW_COVER_REACH for h in heads):
+            r.function, r.colour = HEAD, WHITE
 
 
 def _lens_classes(section, sub, tris, pts_all, texel, colour: int, mid_z: float):
@@ -623,6 +636,7 @@ class LampPlan:
         red_indicators = []  # records of amber-technique lens triangles on red texels
         red_by_texel = set()  # records of lens triangles red by their texels, not their technique
         from_lens = set()  # records of lens triangles
+        yellow_front = []  # records of front selective-yellow lens triangles (yellow_lens)
         for section in sections:
             for sub in section.subsections:
                 entry = TECHNIQUE_FUNCTION.get(sub.material)
@@ -687,11 +701,13 @@ class LampPlan:
                             red_by_texel.add(len(records))
                         c = RED
                     if f == LENS:
-                        # Amber lenses are indicators (a yellow one at the front covers a head
-                        # lamp, YELLOW_LENS_HUE), red ones at the rear tail lamps;
+                        # Amber lenses are indicators (a yellow one at the front may cover a
+                        # head lamp, _yellow_head_covers), red ones at the rear tail lamps;
                         # clear ones light with the lamp behind them.
-                        if c == AMBER and not (yellow and front):
+                        if c == AMBER:
                             f = INDICATOR
+                            if yellow and front:
+                                yellow_front.append(len(records))
                             side = side if side != "C" else ("L" if centre[0] > 0 else "R")
                         elif c == RED and not front:
                             f = TAIL
@@ -713,6 +729,7 @@ class LampPlan:
                 ]
             else:
                 records += _headlight_reflectors(sections, place, mid_z)
+        _yellow_head_covers(records, yellow_front, from_lens)
         _red_lens_indicators(records, from_lens, red_indicators, red_by_texel)
         _high_brake(records)
         plan._cluster(records)
