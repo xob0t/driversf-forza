@@ -98,6 +98,12 @@ end
 -- bars). A clone has no entry, so the HUD shows other cars' names and badges.
 -- Give each clone a copy of its source's entry.
 local STATS_SOURCES = { [304] = 266 }
+-- A probed car that still has no entry (an archive run without its build's
+-- dngvehicles.lua, which register.lua makes the entries from) would show a row
+-- of other cars' badges and plates over the screen: it gets a copy of this entry
+-- with a blank badge and plate (32: a text " " draws nothing; register.lua's BLANK_GLYPH).
+local BLANK_SOURCE = 266
+local BLANK_GLYPH = 32
 
 -- Cars built by src/dsfforza/build/port_car.py: dsfforza\ported.lua (written with
 -- --install-lua) lists each ported ID with its host. Its IDs become the test
@@ -128,6 +134,20 @@ local function registerCloneStats()
 			end
 			vehicleStats[clone] = entry
 			log(string.format("vehicleStats[%d] copied from [%d]", clone, source))
+		end
+	end
+	for _, list in ipairs({ TEST_IDS, AHEAD_IDS }) do
+		for _, id in ipairs(list) do
+			if vehicleStats[id] == nil and type(vehicleStats[BLANK_SOURCE]) == "table" then
+				local entry = {}
+				for key, value in pairs(vehicleStats[BLANK_SOURCE]) do
+					entry[key] = value
+				end
+				entry.Manufacturer, entry.Model = BLANK_GLYPH, BLANK_GLYPH
+				entry.ManufacturerName, entry.ModelName = "DSFFORZA", "ID " .. id
+				vehicleStats[id] = entry
+				log(string.format("vehicleStats[%d]: none; blank badge and plate (copy of [%d])", id, BLANK_SOURCE))
+			end
 		end
 	end
 	return true

@@ -40,6 +40,8 @@ param(
                                   # root files too ('dsf_enhanced.asi=out\x\dsf_enhanced.asi;dsf_enhanced.ini=out\x\test.ini')
     [string]$Asi,                 # repo-relative plugin, e.g. out\asi\dsfforza.asi (its .ini is copied too)
     [string]$LuaFiles,            # UserLuaScripts files replaced after the repo copy: 'dsfforza\hud.lua=out\x\hud.lua;dsfforza\ported.lua=out\x\dngvehicles.lua'
+    [switch]$ArchiveOnly,         # an archive named dngvehicles.sp goes with its build's dngvehicles.lua and gui\ (each car's
+                                  # vehicleStats entry, badge and plate) unless this is set (run-test.ps1)
     [string]$ProbeIds = '304',
     [int]$WaitSeconds = 60,
     [int]$ZoomPresses = 5,

@@ -30,6 +30,7 @@ param(
     [switch]$Hook,
     [string]$Asi,        # guest path of a plugin .asi copied into plugins with the .ini beside it; plugins\*.log is collected
     [string]$LuaFiles,   # 'dsfforza\hud.lua=C:\Repo\out\x\hud.lua;...': UserLuaScripts files replaced after the repo copy (-Probe)
+    [switch]$ArchiveOnly, # only the archive, not its build's dngvehicles.lua and gui\ (below: "The build's files")
     [switch]$Probe,
     [int]$WaitSeconds = 120,
     [int]$ZoomPresses = 0,
@@ -423,6 +424,35 @@ try {
         asi = & $hashOf (Join-Path $run 'dsf_enhanced.asi'); asiFrom = & $sourceOf 'dsf_enhanced.asi'
         ini = & $hashOf $iniSource; iniFrom = $iniSource; iniRewritten = -not $overrides['dsf_enhanced.ini'] }
     $overrides['install\dngvehicles.sp'] = $Archive
+    # The build's files: an archive named dngvehicles.sp in a port_batch build folder goes with
+    # the files tools\install.ps1 installs beside it: dngvehicles.lua as dsfforza\ported.lua
+    # (register.lua makes each car's vehicleStats entry from it) and gui\ (gui.sp, Fonts.fchunk,
+    # hud.lua and Locale\<language>\global.fchunk: the car's own badge, plate and pictures).
+    # Without an entry the HUD draws a row of other cars' badges and plates over the screen
+    # (research/in-game-tests.md, "The HUD needs a vehicleStats entry"). -Override and -LuaFiles
+    # win; -ArchiveOnly takes none. register.lua doesn't add these cars to traffic here, as before.
+    $buildLua = [ordered]@{}   # UserLuaScripts name -> file, copied before -LuaFiles
+    $buildFiles = @()
+    $buildFolder = Split-Path $Archive
+    if (-not $ArchiveOnly -and (Split-Path $Archive -Leaf) -eq 'dngvehicles.sp' -and
+        (Test-Path -LiteralPath (Join-Path $buildFolder 'dngvehicles.lua'))) {
+        $buildLua['dsfforza\ported.lua'] = Join-Path $buildFolder 'dngvehicles.lua'
+        $gui = Join-Path $buildFolder 'gui'
+        if (@('gui.sp', 'Fonts.fchunk', 'hud.lua' | Where-Object { Test-Path -LiteralPath (Join-Path $gui $_) }).Count -eq 3) {
+            $buildLua['dsfforza\hud.lua'] = Join-Path $gui 'hud.lua'
+            $guiFiles = @{ 'install\gui.sp' = Join-Path $gui 'gui.sp'; 'media\fonts.fchunk' = Join-Path $gui 'Fonts.fchunk' }
+            foreach ($file in Get-ChildItem -LiteralPath (Join-Path $gui 'Locale') -Recurse -File -Filter 'global.fchunk' -ErrorAction SilentlyContinue) {
+                $guiFiles["locale\$($file.Directory.Name.ToLower())\global.fchunk"] = $file.FullName
+            }
+            foreach ($key in $guiFiles.Keys) {
+                if (-not $overrides.ContainsKey($key)) { $overrides[$key] = $guiFiles[$key]; $buildFiles += $guiFiles[$key] }
+            }
+        }
+        foreach ($pair in ($LuaFiles -split ';' | Where-Object { $_ })) { $buildLua.Remove(($pair -split '=', 2)[0].Trim()) }
+        $buildFiles += @($buildLua.Values)
+        Note "build files from ${buildFolder}: $(($buildFiles | ForEach-Object { $_.Substring($buildFolder.Length + 1) }) -join ', ')"
+    }
+    $result.buildFiles = $buildFiles
     # A dsfforza install on the host (tools\install.ps1) replaces some game files. Tests use
     # the repo's copy of the originals (out\vanilla, see src\dsfforza\game\game_paths.py) unless -Override
     # names a file. Never link the install's own dsfforza-backup: a running test would hold
@@ -486,6 +516,7 @@ try {
                 $userLua = New-Item -ItemType Directory -Path (Join-Path $target 'UserLuaScripts')
                 if ($Probe) {
                     Copy-Item (Join-Path $RepoDir 'tools\game\lua\*') $userLua.FullName -Recurse
+                    foreach ($name in $buildLua.Keys) { Copy-Item $buildLua[$name] (Join-Path $userLua.FullName $name) -Force }
                     foreach ($pair in ($LuaFiles -split ';' | Where-Object { $_ })) {
                         $name, $path = $pair -split '=', 2
                         Copy-Item $path.Trim() (Join-Path $userLua.FullName $name.Trim()) -Force
@@ -502,6 +533,7 @@ try {
                     if ($DamageSide) { $fields += "damage_side = true" }
                     if ($GlassLadder) { $fields += "glass_ladder = true" }
                     if ($Palette -ge 0) { $fields += "palette = $Palette" }
+                    if ($buildLua.Contains('dsfforza\ported.lua')) { $fields += "register = { interesting = false }" }
                     if ($Views) { $fields += "views = { " + (($Views -split ',' | Where-Object { $_ } | ForEach-Object { "`"$($_.Trim())`"" }) -join ', ') + " }" }
                     if ($Lights) {
                         $fields += $(if ($LightsDriveOnly) { "lights = { dark = true, phases = false }" } else { "lights = { dark = true }" })
