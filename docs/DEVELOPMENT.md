@@ -128,7 +128,7 @@ Making a release (master keeps taking PRs meanwhile):
    there. Nothing else goes onto this branch except fixes for what the next
    steps find.
 2. Verify from the branch: `uv run dsff install` (a full build and an install
-   into the game), then a VM series on its `outuild` with a few changed cars
+   into the game), then a VM series on its `out\build` with a few changed cars
    (`run-series.ps1 -Vm`, with the build's gui.sp, fonts, locale and Lua).
 3. Tag the branch head and push the tag: `git tag -a vX.Y.Z -m vX.Y.Z; git push
    origin vX.Y.Z`. Check the release run (`gh run list --workflow
