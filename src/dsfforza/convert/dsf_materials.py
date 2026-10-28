@@ -357,12 +357,17 @@ ART_MIN_SCALE_SHARE = 0.9
 #   + texel alpha x the colour of the vertex's lamp (semantic 9 byte 2; 0 = no lamp, none)
 # so copies of it with their own parameters (GlossMaterial; installed next to the host's
 # materials in the full and exterior entries, gloss_entries) draw Forza's terms: the
-# specular unmasked like Forza's, (N.H)^p ~ (R.V)^(p/4), the reflection with Schlick's
-# Fresnel (power 5, bias F0), divided by the texel's green that masks it.
+# specular unmasked like Forza's and with its power (Forza's is Phong too: the view's
+# reflection vector, the one its cube map reads, dotted with the light, to
+# SpecularPower), the reflection with Schlick's Fresnel (power 5, bias F0), divided by
+# the texel's green that masks it.
 GLOSS_PREFIX = "gloss"  # Texturing.material kinds "gloss0", "gloss1"...: GlossMaterial n
 GLOSS_SPECULAR_SCALE = float(os.environ.get("DSFFORZA_GLOSS_SPEC", "0.01"))  # DSF intensity per Forza SpecularAmount
 GLOSS_REFLECTION_SCALE = float(os.environ.get("DSFFORZA_GLOSS_REFL", "0.5"))  # DSF reflection per Forza's
-GLOSS_POWER_RATIO = 4.0  # Forza's (N.H) power over DSF's (R.V) power for the same highlight
+# Forza's power over DSF's for the same highlight: 1, both are (R.V)^p. A ratio of 4
+# (Forza taken as Blinn's (N.H)^p) made every lobe four times broader, and a flat black
+# trim lit end to end in the sun (the Camaro ZL1 12's splitter, issue #176).
+GLOSS_POWER_RATIO = 1.0
 GLOSS_POWER_RANGE = (4.0, 150.0)  # broader lobes light whole panels in the sun
 GLOSS_INTENSITY_MAX = 0.0625  # some cars set SpecularAmount 12 (the Boss 429's plastic2)
 GLOSS_GREEN_FLOOR = 16  # texel green the reflection amount is scaled for at least: regions (texels vary)
