@@ -240,18 +240,20 @@ def test_daytime_head_lamps_glow_at_a_fifth():
     lens = _grid("glassLHL", "detail_glass_clear", lambda x, y: -2.0, 0.0, 0.5)
     bowl = _grid("headlightL", "head_light", lambda x, y: -2.0 + 0.1 - 4.5 * (x * x + (y - 0.5) ** 2), 0.5, 1.0)
     t = dm.Texturing(Path(), size=(32, 32))
+    t.atlases, t.families = _ClearAtlases(), (fm.LIGHTS,)
     t.lamp_raw = lenses.new_glow(SIZE, SIZE)
     with tempfile.TemporaryDirectory() as car_dir:
         ids = {id(s) for s in lens.subsections}
         lenses.bake([lens, bowl], {1}, _ClearAtlases(), ids, Path(car_dir), glow=t.lamp_raw, owners=t.glow_owners)
     sub = lens.subsections[0]
     assert {id(s) for _, s in t.glow_owners.values()} == {id(sub)}
-    assert t.daytime_mask(lambda s, k: False) is None
+    t.resolved = {(id(sec), id(s)): fm.resolve(sec, s) for sec in (lens, bowl) for s in sec.subsections}
+    assert t.daytime_mask([lens, bowl], lambda s, k: False) == (None, set())
     # Triangle k of the 8 x 8 grid is in column (k // 2) % 8: columns 0-3 are u 0 to 0.25.
-    day = t.daytime_mask(lambda s, k: s is sub and (k // 2) % 8 < 4)
-    assert day[:, :6].all() and not day[:, 12:].any(), day[0]
+    day, cells = t.daytime_mask([lens, bowl], lambda s, k: s is sub and (k // 2) % 8 < 4)
+    assert not cells and day[:, :6].all() and not day[:, 12:].any(), day[0]
 
-    t.atlases, t.regions = _ClearAtlases(), {fm.LIGHTS: [None]}
+    t.regions = {fm.LIGHTS: [None]}
     t._lamp_view = lambda front, grid: "view"
     flat = np.where(np.isfinite(t.lamp_raw[..., 0]), 100.0, np.nan)
     real, lenses.day_glow = lenses.day_glow, lambda glow, view: flat.copy()
@@ -262,6 +264,31 @@ def test_daytime_head_lamps_glow_at_a_fifth():
         lenses.day_glow = real
     assert (out[day] == 100.0 * dm.DAYTIME_GLOW).all()
     assert (out[:, 12:16] == 100.0).all()
+    # A day-lit lamp surface without a glow (a reflector, the bowl here) keeps its texels
+    # but a fifth of their converted alpha; a tiling one, its swatch cell.
+    day, _ = t.daytime_mask([lens, bowl], lambda s, k: s is bowl.subsections[0])
+    assert day[:, 16:].all() and not day[:, 12:16].any()
+
+
+def test_render_scales_daytime_alpha():
+    t = dm.Texturing(Path(), size=(32, 32))
+    t.families = (fm.LIGHTS,)
+    src = bytearray(bytes((180, 180, 180, 100)) * (SIZE * SIZE))
+
+    class Atl:
+        def get(self, family):
+            return SIZE, SIZE, src
+
+    t.atlases = Atl()
+    t.regions = {fm.LIGHTS: [dm.Region(fm.LIGHTS, (8, 4, 16, 12))]}
+    t.regions[fm.LIGHTS][0].dst, t.regions[fm.LIGHTS][0].size = (0, 0), (8 + 2 * dm.PAD, 8 + 2 * dm.PAD)
+    t.scale = {fm.LIGHTS: 1.0}
+    t.daytime_texels = np.zeros((SIZE, SIZE), bool)
+    t.daytime_texels[:, 8:12] = True
+    out = np.frombuffer(bytes(t.render()), np.uint8).reshape(32, 32, 4)
+    plain = t._convert_texel(fm.LIGHTS, 180, 180, 180, 100)[3]
+    assert out[dm.PAD + 2, dm.PAD + 1, 3] == round(plain * dm.DAYTIME_GLOW)  # source x 9: day-lit
+    assert out[dm.PAD + 2, dm.PAD + 6, 3] == plain  # source x 14: as converted
 
 
 def test_render_takes_the_lens_glow():

@@ -995,7 +995,7 @@ class Texturing:
     lamp_raw: np.ndarray | None = None
     glow_owners: dict = field(default_factory=dict)  # lamp number in lamp_raw -> (section, sub) (lenses._GlowSum)
     # Lights atlas texels of the head lamps that light by day (0x1D; Binding.set_daytime): their
-    # glow is scaled by DAYTIME_GLOW. None: no lamp plan, no scaling.
+    # glow, or their converted alpha, is scaled by DAYTIME_GLOW. None: no lamp plan, no scaling.
     daytime_texels: np.ndarray | None = None
 
     # -- planning --
@@ -1771,33 +1771,48 @@ class Texturing:
         self._glow_done = True
         return self._lamp_glow
 
-    def daytime_mask(self, daytime) -> np.ndarray | None:
-        """The Lights atlas texels with a head lamp glow (lamp_raw) that the triangles lighting
-        by day sample: daytime(sub, k) as for Binding.set_daytime. None when there are none."""
+    def daytime_mask(self, sections, daytime) -> tuple[np.ndarray | None, set]:
+        """The Lights texels of the head lamps that light by day: daytime(sub, k) says whether
+        the lamp plan lights triangle k of `sub` so (lights.LampPlan.is_daytime). Returns the
+        atlas texels their triangles sample (None: none) and the swatch cells of their tiling
+        parts (_tiling_swatch: the Mustang GT 05's bowls), for Binding.set_daytime."""
         from dsfforza.convert import lenses
 
-        if self.lamp_raw is None or not self.glow_owners:
-            return None
-        h, w = self.lamp_raw.shape[:2]
+        if self.atlases is None or fm.LIGHTS not in self.families:
+            return None, set()
+        w, h, _ = self.atlases.get(fm.LIGHTS)
         day = np.zeros((h, w), bool)
-        for section, sub in {id(sub): (section, sub) for section, sub in self.glow_owners.values()}.values():
-            m = self.resolved.get((id(section), id(sub))) or fm.resolve(section, sub)
-            pool = section.vertices_for(sub)
-            for k, tri in enumerate(sub.triangles()):
-                if daytime(sub, k):
-                    ix, iy, _ = lenses._texels(np.array([m.uv(pool[i].uv0) for i in tri]) * (w, h))
+        cells = set()
+        for section in sections:
+            for sub in section.subsections:
+                m = self.resolved.get((id(section), id(sub)))
+                if m is None or m.family != fm.LIGHTS or m.kind not in ("textured", "swatch"):
+                    continue
+                tris = list(sub.triangles())
+                lit = [k for k in range(len(tris)) if daytime(sub, k)]
+                if not lit:
+                    continue
+                if m.kind == "swatch":
+                    cells.add(("swatch",) + self._convert_texel(m.family, *m.colour))
+                    continue
+                pool = section.vertices_for(sub)
+                for k in lit:
+                    ix, iy, _ = lenses._texels(np.array([m.uv(pool[i].uv0) for i in tris[k]]) * (w, h))
                     ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
                     day[iy[ok], ix[ok]] = True
-        # The bake spreads a lens's glow lenses.DILATE texels into unused neighbours.
-        for _ in range(lenses.DILATE):
-            grown = day.copy()
-            grown[1:] |= day[:-1]
-            grown[:-1] |= day[1:]
-            grown[:, 1:] |= day[:, :-1]
-            grown[:, :-1] |= day[:, 1:]
-            day = grown
-        day &= np.isfinite(self.lamp_raw[..., 0])
-        return day if day.any() else None
+        if self.lamp_raw is not None:
+            # The bake spreads a lens's glow lenses.DILATE texels into unused neighbours.
+            glow = np.isfinite(self.lamp_raw[..., 0])
+            grown = day & glow
+            for _ in range(lenses.DILATE):
+                g = grown.copy()
+                g[1:] |= grown[:-1]
+                g[:-1] |= grown[1:]
+                g[:, 1:] |= grown[:, :-1]
+                g[:, :-1] |= grown[:, 1:]
+                grown = g
+            day |= grown & glow
+        return (day if day.any() else None), cells
 
     def _convert_texel(self, family: str, r: int, g: int, b: int, a: int) -> tuple[int, int, int, int]:
         """Forza texel -> DSF conventions (alpha = specular / glow mask)."""
@@ -1877,17 +1892,23 @@ class Texturing:
                         )
                     texels.append(converted[key])
                 block = np.array(texels, dtype=np.uint8)[index.reshape(-1)].reshape(mean.shape)
-                if family == fm.LIGHTS and self._glow() is not None:
-                    # Clear front lens texels: their glow (lens_glow) over the converted alpha,
-                    # averaged over the source texels under each DSF texel like the colour.
-                    g = self._glow()[top : top + table.shape[0] - 1, left : left + table.shape[1] - 1]
+                if family == fm.LIGHTS and (self._glow() is not None or self.daytime_texels is not None):
+                    # Clear front lens texels: their glow (lens_glow) over the converted alpha;
+                    # the other texels of day-lit head lamps: the converted alpha x DAYTIME_GLOW.
+                    # Averaged over the source texels under each DSF texel like the colour.
+                    window = (slice(top, top + table.shape[0] - 1), slice(left, left + table.shape[1] - 1))
+                    glow = self._glow()
+                    g = glow[window] if glow is not None else np.full((table.shape[0] - 1, table.shape[1] - 1), np.nan)
                     lit = np.isfinite(g)
-                    if lit.any():
+                    keep = np.where(lit, 0.0, 1.0)
+                    if self.daytime_texels is not None:
+                        keep[self.daytime_texels[window] & ~lit] = DAYTIME_GLOW
+                    if lit.any() or (keep[~lit] < 1).any():
                         sums = np.zeros(table.shape[:2] + (2,))
-                        sums[1:, 1:] = np.stack([np.where(lit, g, 0.0), lit], -1).cumsum(0).cumsum(1)
+                        sums[1:, 1:] = np.stack([np.where(lit, g, 0.0), keep], -1).cumsum(0).cumsum(1)
                         box = sums[y1, x1] - sums[y0, x1] - sums[y1, x0] + sums[y0, x0]
-                        k = box[:, :, 1] > 0
-                        a = (box[:, :, 0] + block[:, :, 3] * (n[:, :, 0] - box[:, :, 1])) / n[:, :, 0]
+                        k = box[:, :, 1] < n[:, :, 0] - 1e-9
+                        a = (box[:, :, 0] + block[:, :, 3] * box[:, :, 1]) / n[:, :, 0]
                         block[:, :, 3][k] = np.clip(np.rint(a[k]), 0, 255).astype(np.uint8)
                 if cut:
                     block[mean[:, :, 3] < 128] = self.cutout_colour
@@ -1923,11 +1944,15 @@ class Texturing:
                                 acc[c] += sum(row[c::4])
                         n = (y1 - y0) * (x1 - x0)
                         texel = self._convert_texel(family, *(v // n for v in acc))
-                        if family == fm.LIGHTS and self._glow() is not None:
-                            g = self._glow()[y0:y1, x0:x1]
+                        if family == fm.LIGHTS and (self._glow() is not None or self.daytime_texels is not None):
+                            glow = self._glow()
+                            g = glow[y0:y1, x0:x1] if glow is not None else np.full((y1 - y0, x1 - x0), np.nan)
                             lit = np.isfinite(g)
-                            if lit.any():
-                                a = (g[lit].sum() + texel[3] * (n - lit.sum())) / n
+                            keep = np.where(lit, 0.0, 1.0)
+                            if self.daytime_texels is not None:
+                                keep[self.daytime_texels[y0:y1, x0:x1] & ~lit] = DAYTIME_GLOW
+                            if keep.sum() < n - 1e-9:
+                                a = (g[lit].sum() + texel[3] * keep.sum()) / n
                                 texel = (*texel[:3], max(0, min(255, int(round(a)))))
                         if cut and acc[3] // n < 128:
                             texel = self.cutout_colour
@@ -2247,18 +2272,21 @@ class Binding:
     def triangle_uvs(self, section, sub, triangle_index: int, raw_uvs):
         return self.texturing.triangle_uvs(section, sub, triangle_index, raw_uvs)
 
-    def set_daytime(self, stream, vehc: Entry, daytime) -> bool:
-        """daytime(sub, k): whether the lamp plan lights triangle k of `sub` with a head lamp
-        that lights by day (0x1D; lights.LampPlan.is_daytime). When any glowing head lamp texel
-        is one of theirs (Texturing.daytime_mask), the atlas installed in `vehc` (this binding's
-        full entry) is rendered again with their glow scaled (DAYTIME_GLOW). The atlas is
-        rendered in prepare(), before the lamp plan exists (it keys on the subsections
-        damage.split_exposed makes later)."""
+    def set_daytime(self, stream, vehc: Entry, sections, daytime) -> bool:
+        """daytime(sub, k): whether the lamp plan lights triangle k of `sub` (of `sections`)
+        with a head lamp that also lights by day (0x1D; lights.LampPlan.is_daytime). Their
+        Lights texels (Texturing.daytime_mask) glow at DAYTIME_GLOW: the atlas installed in
+        `vehc` (this binding's full entry) is rendered again. It is rendered in prepare(),
+        before the lamp plan exists (the plan keys on the subsections damage.split_exposed
+        makes later)."""
         t = self.texturing
-        day = t.daytime_mask(daytime)
-        if day is None:
+        day, cells = t.daytime_mask(sections, daytime)
+        if day is None and not cells:
             return False
         t.daytime_texels = day
+        for key in cells:
+            r, g, b, a = t.solid_colours[key]
+            t.solid_colours[key] = (r, g, b, int(round(a * DAYTIME_GLOW)))
         t._glow_done = False
         drsp = child(child(vehc, "MDXN"), "DRSP")
         texc = next(
