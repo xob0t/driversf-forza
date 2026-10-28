@@ -1470,6 +1470,21 @@ change `out/l5/after` run `vm2-20261029-005310`):
 - Mustang GT 05: the bowls show Forza's crinkled reflector and the bulb (master: plain domes)
   (`img/lamps5-mustanggt05-headlamps-ingame.jpg`).
 
+Cars the rules reach beyond the reports, same views (`out/l5/before2` / `after2`: IDs 1 Golf R 10, 2 Genesis
+Coupe 13, 3 Sprinter 85, 4 GTI VR6; runs `vm2-20261029-012814` / `-014349` for the Golf R, the VMs were
+slow and the probe stopped after it; `vm1-20261029-022411` / `-023026` for IDs 2 to 4, `-WaitSeconds
+1500`; `out/l5/before3` / `after3`: IDs 1 Range Rover 12, 2 IS300, runs `vm2-20261029-023034` /
+`-023621`, with the 10% edge rule):
+
+- Golf R: the tails show the smoked lamp with its red L by day (master: its flat opaque red lens, a
+  salmon plate) and light red in the dark mood (`img/lamps5-golfr-tails-ingame.jpg`).
+- Genesis Coupe 13: the tails are red lamps with their graphics (master: its tiling lenses as one
+  white and red flat colour each) and glow red in the dark mood (master: barely). The amber
+  reflector inside each head lamp reads orange by day: its amber lens now sees it along the axis
+  (its glow is the lens's own score, as before).
+- Sprinter 85, GTI VR6 (its tail covers left out as lens skins), Range Rover 12, IS300: as on master
+  by day and in the dark mood, the IS300's bumper fog lenses with a little more detail.
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and
@@ -1510,6 +1525,10 @@ change `out/l5/after` run `vm2-20261029-005310`):
    plates by day"). Clear rear lenses over reverse
    lamps still glow by their opacity, and so do front lenses with no lamp
    behind them within 0.4 m.
+9. Issue #189: tiling lamp parts with many triangles across a tile edge or a vertex in two tiles
+   stay one colour (FOR_ShelbyGT500_13's tails, KIA_ForteKoup_10's bowls, MIN_JohnCooperWorks_09;
+   104 subsections on 39 cars at any LOD); flat front lenses (74 on 32 cars) are still baked as
+   plates; rear lenses have no axis fallback.
 
 ## Paint
 
