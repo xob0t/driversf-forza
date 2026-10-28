@@ -12,12 +12,12 @@ The Ghidra outputs are in `out/ghidra/profile-*`; the scripts used are
 
 | Limit | Value | Source |
 | --- | --- | --- |
-| Root entries in `dngvehicles.sp` | 1100. Stock uses 453: 150 cars x 3, plus SSIC, DMWK and BINF. That leaves room for 215 more cars (1100 - 453 = 647 entries, 3 per car). | confirmed-static, `spool-limits.md` |
+| Root entries in `dngvehicles.sp` | 1100. Vanilla uses 453: 150 cars x 3, plus SSIC, DMWK and BINF. That leaves room for 215 more cars (1100 - 453 = 647 entries, 3 per car). | confirmed-static, `spool-limits.md` |
 | `dngvehicles.sp` file size | below 2 GiB: the file layer's seek clamps larger positions to 0. At about 3.45 MB per ported car that is about 480 added cars, so only the root entry limit applies without the plugin. | confirmed-runtime, `spool-limits.md` |
 | Base model IDs | below 1000; N+1000 and N+2000 are the interior and exterior entries (FUN_005A7FC0 adds 1000 and 2000). 849 IDs are free: 1 to 61, the 92 gaps in 62 to 303, and 304 to 999. | confirmed-static |
 | Garage list | model IDs 0 to 303 only (FUN_006c57d0, and an `int[0x130]` indexed by ID at garage object +0x3264) | confirmed-static |
-| Garage maker groups | at most 40 groups (stock: 35 with selectable cars) and at most 20 cars per group (stock maximum: Chevrolet, 16). Groups are keyed by the first 15 characters of `ManufacturerName`, upper-cased. The insert code (FUN_006C7B40, FUN_006C7BB0) has no capacity check. | confirmed-static |
-| Save, vehicle flag list | 304 `{id, flags}` slots at profile +0x184 (bit 0 unlocked, bit 1 owned, bit 2 new). Lookup is a linear search, and any ID works as a key. Stock cars use about 146 slots. A full list makes FUN_00507CF0 write through NULL (crash). | confirmed-static |
+| Garage maker groups | at most 40 groups (vanilla: 35 with selectable cars) and at most 20 cars per group (vanilla maximum: Chevrolet, 16). Groups are keyed by the first 15 characters of `ManufacturerName`, upper-cased. The insert code (FUN_006C7B40, FUN_006C7BB0) has no capacity check. | confirmed-static |
+| Save, vehicle flag list | 304 `{id, flags}` slots at profile +0x184 (bit 0 unlocked, bit 1 owned, bit 2 new). Lookup is a linear search, and any ID works as a key. Vanilla cars use about 146 slots. A full list makes FUN_00507CF0 write through NULL (crash). | confirmed-static |
 | Save, `SetVehicleUnlocked` bit array | 320 bits at profile +0x2088, bit = ID. IDs 320 to 639 land in the Driven array (+0x20B0, the "driven" bit of ID - 320), 640 to 959 in an unidentified array, 960 to 999 in the take-a-ride array. No crash: silent save corruption. | confirmed-static |
 | Save, `SetVehicleOwned` list | 304-entry ID list at profile +0x2784 (NULL write when full) | confirmed-static |
 | Save file | fixed 0x4CF8-byte block with ten 0x278A106F guard words and a version field. `autosave.dat` is written raw, without a checksum. | confirmed-static |
@@ -31,8 +31,8 @@ The Ghidra outputs are in `out/ghidra/profile-*`; the scripts used are
 | `dngvehicles.sp` file size | `archive` module (`large_files`): below 4 GiB, enough for all 849 IDs (about 3.4 GB) |
 | Garage list | model IDs 0 to 999 (`[garage] max_id`) |
 | Garage maker groups | 120 groups (`[garage] max_groups`) of any number of cars (`[garage] max_cars`, 1000); the vehicles screen shows a group of 20 cars or more 19 cards at a time and scrolls on at the edges (`asi.md`, "Maker groups past 20 cars"); a group that doesn't fit is left out instead of overrunning memory |
-| Save flags (list, bit arrays, owned list) | IDs 304 to 999 are kept outside the stock block, in `dsfforza-garage.dat` next to `autosave.dat`; IDs of 1000 and up are dropped by the bit setters; a full stock list no longer crashes |
-| Save file | unchanged (stock-range data only), so an unmodded game still loads it |
+| Save flags (list, bit arrays, owned list) | IDs 304 to 999 are kept outside the vanilla block, in `dsfforza-garage.dat` next to `autosave.dat`; IDs of 1000 and up are dropped by the bit setters; a full vanilla list no longer crashes |
+| Save file | unchanged (vanilla-range data only), so an unmodded game still loads it |
 
 The Lua bindings are `ProfileSettings.GetVehicleUnlocked` 0x678D40,
 `SetVehicleUnlocked` 0x678D90, `GetVehicleOwned` 0x678E00 and
@@ -46,7 +46,7 @@ No (confirmed-static from the game's Lua):
 
 - **Traffic** comes from the chapter's traffic set and the interesting-vehicle
   regions. `register.lua` adds the ported IDs to those regions. The engine
-  spools them into the 35 kind-0 slots like stock interesting vehicles, not
+  spools them into the 35 kind-0 slots like vanilla interesting vehicles, not
   through mission requests.
 - **The garage** spools one car at a time (`Garages.SpoolVehicleModel`, then
   `IsPlayerVehicleLoaded`).
@@ -60,16 +60,16 @@ hold about 8 resident models (5 in "All chapters" plus the chapter's own), so
 ## ID policy
 
 1. **IDs 1 to 61 for cars that should be in the garage.**
-   - Stock base IDs run from 62 to 303, so 0 to 61 are free, and the garage
+   - Vanilla base IDs run from 62 to 303, so 0 to 61 are free, and the garage
      loop covers them.
    - In the save they stay inside every array, and the flag list has room:
-     146 stock + 61 = 207 of 304 slots.
+     146 vanilla + 61 = 207 of 304 slots.
    - 0 is left out as a precaution (-1 marks empty slots, so 0 is a valid
      key, but it is a likely "none" value in C code).
    - 62 is Tanner's car.
 2. **IDs 304 and up for the rest.**
    - They load, drive and spawn in traffic (304 to 314 are confirmed in game).
-   - They never appear in the stock garage (with dsfforza.asi they do: below).
+   - They never appear in the vanilla garage (with dsfforza.asi they do: below).
    - The save can't hold them safely, so nothing may call
      `SetVehicleUnlocked` or `SetVehicleOwned` for them: at 320 and up it
      corrupts other bits, and many such IDs would overflow the 304-slot
@@ -81,18 +81,18 @@ hold about 8 resident models (5 in "All chapters" plus the chapter's own), so
      drops calls for added IDs above 303. Only Lua callers go through the
      wrapper, and the engine itself never calls them with these IDs.
 3. **Garage IDs only while a maker group has room.**
-   - A car joins its maker's group: the stock `"ID:nnnnnn"` maker string when
+   - A car joins its maker's group: the vanilla `"ID:nnnnnn"` maker string when
      DSF has the make (from `hud.lua`, `src/dsfforza/game/gui_assets.py`), else a plain
      name such as "BMW".
    - A new make opens a group while fewer than 39 exist (one is kept back).
    - With `dsfforza.asi` a make's group takes all its cars (Ford in the full
-     roster: 35 ported + 13 stock); `register.lua` reads the plugin's
+     roster: 35 ported + 13 vanilla); `register.lua` reads the plugin's
      cars-per-group limit. Without the plugin (or with `[garage] max_cars=20`)
      a group holds 20, and a car past that joins a shared "FORZA" group (then
      "FORZA 2" ...). The "<maker> 2" continuation groups of PR #39 are gone.
    - `port_batch.py` (`garage_group`, with a margin of one per cap) and
      `register.lua` (`garageGroup`, exact caps, run against the real
-     `vehicleStats` at game start, so mods that make more stock cars
+     `vehicleStats` at game start, so mods that make more vanilla cars
      selectable are counted) apply the same rule.
    - A car that gets no group gets an ID from 304 at build time. At runtime
      it stays unselectable.
@@ -102,11 +102,11 @@ hold about 8 resident models (5 in "All chapters" plus the chapter's own), so
 confirmed in game.
 
 `--id-policy asi` (for installs with `dsfforza.asi`) gives the cars every
-free ID in list order: 1 to 61, then the 92 IDs in 62..303 that the stock
+free ID in list order: 1 to 61, then the 92 IDs in 62..303 that the vanilla
 archive leaves unused (no traffic set, `vehicleStats` key or model-ID field
 of the game's Lua names them; Felony Rework's dummies 622 and 623 are
 skipped too), then 304 and up. The plugin lists IDs up to 999 in the garage and
-saves their flags in its side file, and IDs up to 303 are listed and saved by the stock code anyway;
+saves their flags in its side file, and IDs up to 303 are listed and saved by the vanilla code anyway;
 `register.lua` detects the plugin and makes every car selectable while its
 maker list has room (120 groups, any number of cars each). The build notes cars that
 won't fit a group (same rule, `ASI_GROUPS_CAP`, `ASI_GROUP_CAP`). `install.ps1 -IdPolicy asi` builds
@@ -134,7 +134,7 @@ The defaults are player-safe:
 | `writeProfile` | false | on each start, marks every garage-listed added car unlocked and owned, so the game shows a "new vehicle" notice once per car. It uses one slot of the 304-slot list per car, and the flags stay in the save after an uninstall (harmless: no car, no garage entry). |
 | `guardProfile` | true | drops Lua `SetVehicleUnlocked`/`Owned` calls for added IDs above 303 (above 999 with `dsfforza.asi`'s save hooks) |
 | `garage` | true | `Selectable` for IDs below 304 (below 1000 with `dsfforza.asi`), subject to the group caps |
-| `regionCars` | 24 | With more added cars than this, car k (in ID order) goes to every m-th region, offset by k (m = ceil(cars / 24)), so each region gets about 24 of them. Stock region lists hold 9 to 110 IDs. |
+| `regionCars` | 24 | With more added cars than this, car k (in ID order) goes to every m-th region, offset by k (m = ceil(cars / 24)), so each region gets about 24 of them. Vanilla region lists hold 9 to 110 IDs. |
 | `interesting` | true | the interesting-vehicle wrapper (traffic) |
 | `missionPot` | false | experimental: keep the cars resident in the "All chapters" mission pot |
 
@@ -177,7 +177,7 @@ How a build runs:
 - A new worker starts only while 1.5 GB of RAM is free. One worker peaks at
   about 420 MB.
 - Each worker writes the car's three VEHC entries to `work/<media>.chnk`.
-- The merge reads the stock archive and every car file as one address space,
+- The merge reads the vanilla archive and every car file as one address space,
   so nothing is copied twice. It registers the clones (SSLP, VSCT), checks
   the root entry limit (`--root-limit`, default 1100; more needs dsfforza.asi's
   `archive` module) and UID clashes, and writes the archive.
@@ -330,7 +330,7 @@ Batch-level costs at full-roster scale:
   rendered (numpy `car_render.py`, about 1 s a car; `gui-assets.md`,
   "Camera and render"): the 40 cars of out/testdrive11 85 s -> 44 s at
   `--jobs 2`.
-- **Worker start-up** is about 3 s per car (imports, the stock archive's
+- **Worker start-up** is about 3 s per car (imports, the vanilla archive's
   root, host survey and sound index from `out/cache`), small next to the
   conversion.
 - **`--jobs` above the physical cores**: not measured here (the machine was
@@ -356,11 +356,11 @@ volume allows it, so an earlier build of 573 cars costs no second 2 GB.
 (`src/dsfforza/build/fingerprint.py`) next to the chunk:
 
 - the job: car, game, disc source, spool ID, the requested `--port`
-  options, the stock archive, cache and disc paths (links and junctions
+  options, the vanilla archive, cache and disc paths (links and junctions
   resolved, so another worktree with the same `out/cache` matches);
 - Python and numpy versions;
 - every file the worker opened for reading, from an audit hook on `open`
-  and `sqlite3.connect`, with its SHA-256. Files over 64 MiB (the stock
+  and `sqlite3.connect`, with its SHA-256. Files over 64 MiB (the vanilla
   archive, the disc images) get size, mtime and the SHA-256 of their first
   and last 4 MiB. Python's own files and the package sources don't count;
 - every folder it listed (`os.listdir`, `os.scandir`), as a hash of the
@@ -388,7 +388,7 @@ the list order, or add new cars at the end.
 folder nobody listed. A `stat()` without an open. Code run in the parent
 before the workers start, except what reaches the job (spool IDs, options)
 and the shared caches the workers read (`host-survey.json`,
-`dsf-fleet.json`, `stock-banks.json`), which are recorded as files. And
+`dsf-fleet.json`, `vanilla-banks.json`), which are recorded as files. And
 anything outside Python, numpy and the package, such as a different
 Windows build of the C runtime. `--verify-reuse` exists for these.
 
@@ -457,15 +457,15 @@ the build folder's own (a rerun, `--resume`) and the `--reuse` builds'
 **The record.** Each pack writes `<build>/pack/pack.json`:
 
 - the settings that shape the pack besides the cars: ID policy, root
-  limit, `--gui`, `--wide-glyphs`, the disc images, the stock archive's
+  limit, `--gui`, `--wide-glyphs`, the disc images, the vanilla archive's
   digest;
 - the cars in merge order, each with a key: the SHA-256 of its chunk plus
   the report fields the merge reads (entry, host, game, spool IDs). A
   chunk's digest is kept with its file ID, size and mtime, so a
   hard-linked chunk (`--reuse`) isn't read again;
 - a fingerprint of the pack, made like a car's (above): the files it read
-  (stock archive, the game's `gui.sp`, `Fonts.fchunk`, locale files, disc
-  images, string tables, `stock-banks.json`) and the code units it ran,
+  (vanilla archive, the game's `gui.sp`, `Fonts.fchunk`, locale files, disc
+  images, string tables, `vanilla-banks.json`) and the code units it ran,
   in this process, the `upvh lint-many` processes (`--record`) and the
   render processes (`gui_assets._Renders`). The build folders themselves
   and the chunks don't count: the keys cover them;
@@ -477,7 +477,7 @@ the build folder's own (a rerun, `--resume`) and the `--reuse` builds'
 
 A record is used only when its settings are this build's and its
 fingerprint holds. A game file read from the game folder before an
-install and from `dsfforza-backup\` after it (`gui_assets.stock_file`)
+install and from `dsfforza-backup\` after it (`gui_assets.vanilla_file`)
 counts as the same input when the digest is the same.
 
 **Whole pack.** When an earlier record has the same cars with the same
@@ -567,7 +567,7 @@ hosts, DSF-first handling, cockpit) on a Ryzen 7 5800X3D (8 cores) with
 
 **Result: all 31 built, linted clean, and all got garage IDs 1 to 31.**
 
-- The archive is 590,426,112 bytes (563 MiB). Stock is 483,110,912, so the
+- The archive is 590,426,112 bytes (563 MiB). Vanilla is 483,110,912, so the
   31 cars add about 3.4 MB each.
 - The archive has 546 root entries, and `chnk.py rebuild --verify`
   reproduces it byte for byte.
@@ -588,8 +588,8 @@ Failures on the first try:
 
 | Car | Cause | Fallback | Result |
 | --- | --- | --- | --- |
-| DOD_ChallengerSRT8392_12 (host 173) | `damage.py`: `Uv1Field.read` on the host's interior gets a vertex element `None` (`vehicle_mesh.py` line 60, `'NoneType' object has no attribute 'type'`) | without `--damage` | ok, no stock-like damage |
-| FIA_500AbarthSS_10 (host 184) | the same `damage.py` error | without `--damage` | ok, no stock-like damage |
+| DOD_ChallengerSRT8392_12 (host 173) | `damage.py`: `Uv1Field.read` on the host's interior gets a vertex element `None` (`vehicle_mesh.py` line 60, `'NoneType' object has no attribute 'type'`) | without `--damage` | ok, no vanilla-like damage |
+| FIA_500AbarthSS_10 (host 184) | the same `damage.py` error | without `--damage` | ok, no vanilla-like damage |
 | DOD_Durango_99 | `cockpit.py fit`: "cockpit has no steering_wheel section" | `--no-cockpit` (host interior) | ok |
 | CHE_Express2500Cargo_05 | the same cockpit error | `--no-cockpit` | ok |
 
@@ -649,7 +649,7 @@ Every car got the first LOD step: full entry Forza LOD 3/4/5, exterior LOD 1.
   - **Glyph budget.** 44 codes are free. This batch used all of them: 15 new
     badges plus 29 nameplates. 32 of the codes come from the untested
     cp1252 range 128 to 159.
-  - **Over 31 cars**, a batch needs more codes (by reusing stock glyphs, or
+  - **Over 31 cars**, a batch needs more codes (by reusing vanilla glyphs, or
     a second font page) or has to drop nameplates.
   - **Nameplate text comes from the media name.** The results look like
     "WRXS TI", "S65AMG", "M5E28", "205T16" and "CHALLENGER SRT8392". A
@@ -687,7 +687,7 @@ is a copy of the user's Ultimate ASI Loader (`winmm.dll`, renamed
 | `-Force` over an existing install (2 cars, then 31) | uninstalls first, then installs; then `-Uninstall` gives an identical tree |
 | hook and ASI loader already present (dummy `DriverNGHook.asi`, `winmm.dll` loader) | left alone, not in the manifest |
 | a user-edited `hud.lua` | kept on uninstall and reported |
-| `dngvehicles.sp` not stock | refuses (SHA-256 shown) |
+| `dngvehicles.sp` not vanilla | refuses (SHA-256 shown) |
 | build path: `-Car FOR_FocusRS500_10 -BuildDir out\batch\bd-test` via `powershell.exe -File` | builds (Python found, `DSF_GAME_DIR` = the fake tree, gui assets from the fake tree), installs, uninstalls; tree identical |
 
 Not tested:
@@ -723,15 +723,15 @@ so the next run stopped with "MISSING backup".
     can be undone.
 - **A leftover backup folder** (no install recorded, or one marked
   uninstalled) is checked file by file:
-  - a backup equal to the game file, or a game file that is stock, needs
+  - a backup equal to the game file, or a game file that is vanilla, needs
     nothing;
-  - a stock backup over a non-stock game file is put back with `-Force`
+  - a vanilla backup over a non-vanilla game file is put back with `-Force`
     (refused without it).
   - The old manifest is renamed `install.json.<stamp>.old`.
   - `Install-File` reuses a backup that already equals the game file, so a
     locked leftover is no obstacle.
-- **Stock check.** Stock SHA-256s for `Install\gui.sp`, `media\Fonts.fchunk`
-  and `Locale\English\global.fchunk` (the `out/stock` copies) join the
+- **Vanilla check.** Vanilla SHA-256s for `Install\gui.sp`, `media\Fonts.fchunk`
+  and `Locale\English\global.fchunk` (the `out/vanilla` copies) join the
   archive check.
   - A changed archive is always refused.
   - The other three are refused unless `-Force`.
@@ -749,9 +749,9 @@ undeletable). All 22 checks pass:
 | install with `Locale\English\global.fchunk`, uninstall | identical tree |
 | uninstall with the backup `gui.sp` locked | succeeds; files restored, warning, manifest `uninstalled`, `-Status` "not installed (a leftover ...)" |
 | `-Force` install while the leftover is still locked | reuses the backup; installs |
-| the reported case: all files restored to stock, `dngvehicles.sp` backup deleted, manifest listing everything | `-Force` reinstall works ("already restored") |
+| the reported case: all files restored to vanilla, `dngvehicles.sp` backup deleted, manifest listing everything | `-Force` reinstall works ("already restored") |
 | missing backup of a still-installed file | uninstall stops; after the backup is back, a second `-Uninstall` resumes; identical tree |
-| leftover stock backup, non-stock `gui.sp`, no manifest | refused; with `-Force` restored from the leftover, then installed |
+| leftover vanilla backup, non-vanilla `gui.sp`, no manifest | refused; with `-Force` restored from the leftover, then installed |
 | modded `Fonts.fchunk` | refused; with `-Force` installed, uninstall gives back the modded file byte for byte |
 
 At the end the tree matched the snapshot taken before all tests, every file
@@ -762,7 +762,7 @@ by SHA-256.
 This rebuilds the same 31-car list after the fixes in `host_select.py`,
 `damage.py`, `cockpit.py` and `gui_assets.py`. `port_batch.py` now names
 garage groups as `gui_assets` will: Forza's own maker name via
-`car_texts`/`dsf_make`, mapped to the stock `"ID:nnnnnn"` maker string.
+`car_texts`/`dsf_make`, mapped to the vanilla `"ID:nnnnnn"` maker string.
 Built with the default policy:
 
 ```sh
@@ -779,8 +779,8 @@ port_batch.py build --out out/batch/second --list tools/batches/first.txt --jobs
   - 14 new badges and 30 nameplates, from Forza's own string tables (for
     example "WRX STI", "CUDA 426 HEMI", "VEYRON SUPER SPORT"). All 44 codes
     are used and none is blank.
-  - DMC 12 uses the stock DeLorean nameplate.
-  - The Jeep and Range Rover use the stock Jeep and Range Rover badges.
+  - DMC 12 uses the vanilla DeLorean nameplate.
+  - The Jeep and Range Rover use the vanilla Jeep and Range Rover badges.
 - **New hosts:**
   - 23 Express van → 198 GMC Savana;
   - 10 Charger Daytona → 175 Charger R/T 1969;
@@ -799,7 +799,7 @@ the garage:
 | new: MAZDA | 3 |
 | new: HONDA | 4, 17 |
 | shared: FORZA | 6, 7, 11, 12, 13, 18, 22, 24, 25, 28, 29, 30 (12 cars) |
-| stock makers | Nissan 5; Dodge 8, 10, 19; Pontiac 9; VW 15; Fiat 16; Jeep 20; Range Rover 21; Chevrolet 23; DMC 27; Pagani 31 |
+| vanilla makers | Nissan 5; Dodge 8, 10, 19; Pontiac 9; VW 15; Fiat 16; Jeep 20; Range Rover 21; Chevrolet 23; DMC 27; Pagani 31 |
 
 That makes 40 groups, the largest with 17 cars.
 
@@ -903,7 +903,7 @@ python tools/port_batch.py build --list tools/batches/all.txt --gui --wide-glyph
 ```
 
 `--root-limit 3003` is needed on top of `--id-policy asi`: 573 cars are
-453 + 3 x 573 = 2172 root entries, past the stock 1100.
+453 + 3 x 573 = 2172 root entries, past the vanilla 1100.
 
 **Result: 562 of 573 converted, 11 failed, and 14 of the 562 fail lint.**
 
@@ -918,15 +918,15 @@ python tools/port_batch.py build --list tools/batches/all.txt --gui --wide-glyph
 
 | Limit | Needed | Room | Verdict |
 | --- | --- | --- | --- |
-| Model IDs (`--id-policy asi`) | 573 IDs: 1..61, the 92 stock gaps in 62..303, then 304..725 | 849 free IDs below 1000 | fits |
+| Model IDs (`--id-policy asi`) | 573 IDs: 1..61, the 92 vanilla gaps in 62..303, then 304..725 | 849 free IDs below 1000 | fits |
 | Root entries in `dngvehicles.sp` | 2,139 (453 + 3 x 562) | 16,384 with `[archive]` (pass `--root-limit 3003`) | fits |
-| Archive size | 2,750,959,616 bytes (2.56 GiB) for 562 cars | 4 GiB with `[archive] large_files`; the stock reader stops at 2 GiB | fits, about 1.4 GiB spare |
+| Archive size | 2,750,959,616 bytes (2.56 GiB) for 562 cars | 4 GiB with `[archive] large_files`; the vanilla reader stops at 2 GiB | fits, about 1.4 GiB spare |
 | Per-car size, 3 VEHC entries | median 3.89 MiB (p5 3.49, p95 4.17), max 4.69 (KOE_CCXR_09), min 1.81 (AUD_A4Avant_04); 2,156 MiB for all 562 | no per-car cap besides MDXN | No car is above 5 MiB. The 1.8 to 2 MiB cars are FH1's low-detail cars (Durango, PT Cruiser, Prius, RAV4, Leaf, tour bus...), whose Forza cockpit is only `interior`, `seatR` and `steering_wheel`. |
 | MDXN per entry | largest 0x200800 (2,099,200 bytes) | `--mdxn-limit 0x2C0000` | 73% of the cap. Recheck after #23 (badge cutouts) and #27 (chrome). |
 | Resource hash arena (45,000 nodes) | bounded by what is resident, not by the archive | free list (below) | not a limit for the roster |
 | Garage maker groups | 112 maker groups, plus 139 cars in 8 shared groups `FORZA`..`FORZA 8` (`plan`) | 120 groups of 20 (`[garage] max_groups`) | Fits. The extra cars of makers with more than 20 (Ford, Chevrolet, Nissan, Porsche...) go into the mixed FORZA groups. |
 | Garage IDs | 573 cars, all below 1000 | `[garage] max_id=1000` | fits |
-| HUD glyphs | one 16-bit badge or plate per car without a stock one | `--wide-glyphs`: codes 0x100..0xD7FF, about 800 plates in 4 pages | fits; not yet checked in game at this count |
+| HUD glyphs | one 16-bit badge or plate per car without a vanilla one | `--wide-glyphs`: codes 0x100..0xD7FF, about 800 plates in 4 pages | fits; not yet checked in game at this count |
 | gui.sp pictures | 562 pictures; gui.sp already holds 923 entries | 177 one-per-SPOI below 1100, shared SPOIs beyond | `port_batch` passes no root limit to `gui_assets.build`, so 385 pictures share SPOIs (untested in game). The fix passes the archive's root limit through. |
 
 **Resource hash arena (confirmed-static; Ghidra on the `-b` project,
@@ -948,7 +948,7 @@ python tools/port_batch.py build --list tools/batches/all.txt --gui --wide-glyph
 
 | Cause | Cars | What is wrong |
 | --- | --- | --- |
-| `forza2dsf.load_car`: "no wheel section" (8) | FER_360_99, FER_360Challenge_03, FER_Dino246_69, LAM_Gallardo_05, PAN_Esperante_05, CHE_CORVETTEGSC_10, AUS_MiniCooperS_65, AUS_ShowCaseMiniCooperS_65 | The main carbin has no `wheel` section. The first five keep it only in the wheel archive's carbin (`media/wheels/<car>`, one section `wheel`). The Minis name it `wheela`/`wheelb`, like upgrade variants, and `stock_sections` keeps `wheela` in the body, so the wheel would also be drawn as body. The Corvette Grand Sport's and the Mini's wheel-archive carbins don't parse (next row). |
+| `forza2dsf.load_car`: "no wheel section" (8) | FER_360_99, FER_360Challenge_03, FER_Dino246_69, LAM_Gallardo_05, PAN_Esperante_05, CHE_CORVETTEGSC_10, AUS_MiniCooperS_65, AUS_ShowCaseMiniCooperS_65 | The main carbin has no `wheel` section. The first five keep it only in the wheel archive's carbin (`media/wheels/<car>`, one section `wheel`). The Minis name it `wheela`/`wheelb`, like upgrade variants, and `vanilla_sections` keeps `wheela` in the body, so the wheel would also be drawn as body. The Corvette Grand Sport's and the Mini's wheel-archive carbins don't parse (next row). |
 | `carbin.parse`: "no parsable sections found" (1) | FIA_595_68 | The first section (`roof1`) is empty: 0 vertices, bounds FLT_MAX / -FLT_MAX. `_looks_like_section` rejects any float of magnitude 100 or more, so it accepts no start position. From 0xDB0 all 34 sections parse. The wheel-archive carbins of the Grand Sport, the Mini and the 595 fail later, in the section tail. Their LOD0 pool is skinned, so the tail's per-vertex record is 16 bytes instead of 4 and the tail starts 4 bytes earlier. The geometry before the tail parses. |
 | `forza_materials`: "nodamage.xds not in ..." (2) | CHE_CamaroZ28_79, PON_TransAm_73 (FM4 1950-2000 pack) | No `nodamage.xds`, only colour variants: `nodamage_blue/gold/orange/yellow.xds` and their `_lod0`, plus `damage.xds`. |
 
@@ -957,7 +957,7 @@ python tools/port_batch.py build --list tools/batches/all.txt --gui --wide-glyph
 | Lint check | Cars |
 | --- | --- |
 | kind 1: "interior glass has crack lines for states 1-2 and rim shards for state 3" (crack and shard counts all 0; surface triangles only) | AUD_14_R10_10, AUD_2_R10_08, AUD_2_R15TDI_09, AUD_2_R8_06, BMW_15_LMR_99, CHE_55/89/99_FLM09_10, MAZ_MX5SL_10, MER_SLRStirlingMoss_10, PAN_11_LMP_03: open race cars and roadsters, whose only interior glass is a small windscreen or wind deflector |
-| kind 1: "interior glass triangles each inside one stock interior region" (448, 611 and 460 straddle) | CHE_Express2500Cargo_05, FOR_F350SuperDuty_08, FOR_TaurusSHO_10: the three stub cockpits that keep the host's interior since #18 (the Express on the Savana, the F-350 and the Taurus on their same-model hosts) |
+| kind 1: "interior glass triangles each inside one vanilla interior region" (448, 611 and 460 straddle) | CHE_Express2500Cargo_05, FOR_F350SuperDuty_08, FOR_TaurusSHO_10: the three stub cockpits that keep the host's interior since #18 (the Express on the Savana, the F-350 and the Taurus on their same-model hosts) |
 
 ### Other report flags (built cars, not failures)
 
@@ -968,7 +968,7 @@ python tools/port_batch.py build --list tools/batches/all.txt --gui --wide-glyph
 | cockpit without needle gauges | 128 | race cars with digital dashes, and FH1's low-detail cockpits |
 | some lamps left unlit | 22 | e.g. LEX_ISF_09, NIS_370Z_10, BMW_1M_11, FER_F50_95 |
 | no head lamp found | 10 | Race cars (Corvette C5-R, CLK GTR, McLaren F1 GTR, 905 EVO...), but also CHE_CorvetteGS_10, DOD_RamSRT10_06 and FOR_MustangSVTCobraR_93. |
-| no tail lamp found | 2 | CHE_2_MonteCarloSS_11, FOR_1_Fusion_11 (race liveries of stock cars) |
+| no tail lamp found | 2 | CHE_2_MonteCarloSS_11, FOR_1_Fusion_11 (race liveries of vanilla cars) |
 | dropped Forza plates | 18 | FH1 low-detail cars and stub cockpits |
 | host engine sound | 8 | CHE_Volt_11 and NIS_Leaf_11 are electric (bank `NA.fsb`, expected). AUD_Q7_09, CHE_Corvette_60, HYU_GenesisCoupe_10, MAZ_16_B09_09, sal_s281_06 and VW_IECorrado_95 have no `<car>_ET.xml` in any EngineTuning zip. |
 | host score below 50 | 9 | small city cars on the Cygnet (C1, 107, Aygo), the tour bus, the T440 truck, the Leaf, both Veyrons |
@@ -987,7 +987,7 @@ python tools/port_batch.py build --list tools/batches/all.txt --gui --wide-glyph
 | #33 | carbin parser: empty sections (FLT_MAX bounds), skinned section tails, binary names from wrong starts | FIA_595_68 (+ 102 wheel-archive carbins) | over all 1,665 carbins of the roster: 1,561 identical, 103 newly parse, 1 changed (Miata 94's wheel archive, from a garbage start to `wheel`) |
 | #35 (on #33) | no `wheel` section in the main carbin | 8 | wheel from `wheela` (Minis) or the wheel archive's carbin (360, 360 Challenge, Dino, Gallardo 05, Esperante, Corvette GS) |
 | #32 | only colour variants of `nodamage.xds` | 2 | Camaro Z28 79, Trans Am 73 build |
-| #36 | interior glass lint: stub cockpits check the host's stock interior; lamp-only cockpits can't have cracks | 14 lint | 562 of 562 lint ok |
+| #36 | interior glass lint: stub cockpits check the host's vanilla interior; lamp-only cockpits can't have cracks | 14 lint | 562 of 562 lint ok |
 | #37 | ET file on the other game's disc, or only for the base model | 6 | Forza engine sound 6 of 6 |
 | #38 | no headlamp technique (reflector under a clear lens) | 10 | 8 get headlamps; the 2 NASCARs have decal headlights |
 | #34 | `--root-limit` not passed to the GUI step | all | gui.sp 1485 entries, one SPOI per picture |
@@ -1031,11 +1031,11 @@ and #42's groups.
   build. 35 cockpits have no `hood*` section in either build: FH1's
   low-detail cars and mid-engined cars.
 - **`dsff driver_survey cars`** (573 cars, 537 measured):
-  - anchor off the stock point: 0.0 cm for every car;
+  - anchor off the vanilla point: 0.0 cm for every car;
   - grips off the drawn rim: median 0.0 cm, 20 cars over 3 cm (worst
     FOR_17_FGFalcon_11, 9.1 cm);
   - room over the driver's eyes: median 18.1 cm. 25 cars are under the
-    lowest stock car's 8.7 cm and 5 under 3 cm: BEN_7_Speed8_03 0.0 cm,
+    lowest vanilla car's 8.7 cm and 5 under 3 cm: BEN_7_Speed8_03 0.0 cm,
     DOD_ChallengerHemi_70 0.5, ACU_NSX_05 2.1, GUM_ApolloS_10 2.1,
     FOR_1_Fusion_11 2.1. Then MIT_HKS_06, BUS_TOUR_12,
     CHE_2_MonteCarloSS_11, TOY_2000GT_69 and the FG Falcons follow, at 3.8
@@ -1060,7 +1060,7 @@ and #42's groups.
   - The Lua VM fault with the big generated files: fixed by #44, 0 in 15
     runs after the fix.
   - The engine fault in the deferred UID list: it follows **dsf_enhanced**.
-    - Stock archive, no dsfforza.asi, no added cars:
+    - Vanilla archive, no dsfforza.asi, no added cars:
       - with the user's dsf_enhanced.ini: 2 of 4 runs crashed;
       - with a neutral ini (traffic radius 350, no AF, no full-detail
         traffic, `vm-20261025-005639` to `-010158`): 4 of 4 crashed;

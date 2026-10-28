@@ -1,7 +1,7 @@
 """Decode the UPVH vehicle hierarchy (AWHF format) in dngvehicles.sp.
 
 UPVH sits in VEHC/NONR of a vehicle's full entry (spool ID N). Layout,
-little-endian, checked against all 150 stock vehicles (see research/upvh.md):
+little-endian, checked against all 150 vanilla vehicles (see research/upvh.md):
 
     header (0x60)
       0x00 "AWHF"
@@ -278,7 +278,7 @@ def references(stream, kinds: dict[int, Entry]) -> list[tuple[str, bytes]]:
             elif c.tag in ("VXCK", "IXCK"):
                 dep = next(k for k in c.children if k.tag in ("VXDP", "IXDP"))
                 d = _leaf(stream, dep)
-                # VXDP: n UIDs then n zero bytes; IXDP: n UIDs (stock layout)
+                # VXDP: n UIDs then n zero bytes; IXDP: n UIDs (vanilla layout)
                 n = len(d) // 9 if dep.tag == "VXDP" else len(d) // 8
                 out += [(f"kind {kind} {dep.tag}", d[i * 8 : i * 8 + 8]) for i in range(n)]
         modl = _leaf(stream, child(child(vehc, "NONR"), "MODL"))
@@ -327,7 +327,7 @@ def foreign_uids(
       other vehicle's data whenever that vehicle is loaded);
     - a resource or MODL part UID it defines that another vehicle defines too.
 
-    UIDs no vehicle defines (the engine's shared materials) are fine. Stock
+    UIDs no vehicle defines (the engine's shared materials) are fine. Vanilla
     vehicles never share part or resource UIDs; clones that kept the host's
     part UIDs turned into the host in game (run 20261022-024010). `owners`:
     uid_owners of the archive (made here when not given). `facts` (a dict) gets
@@ -444,14 +444,14 @@ def fmt3(v) -> str:
 
 class LintContext:
     """What the lints of several cars in one archive share: the archive's root, which
-    vehicle defines each UID, the engine sound banks, and the stock archive's host
+    vehicle defines each UID, the engine sound banks, and the vanilla archive's host
     tables. One lint walks the whole archive for these; a batch walks it once."""
 
-    def __init__(self, stream, root_entries: list[Entry], stock: Path | None = None):
-        self.stream, self.entries, self.stock_path = stream, root_entries, stock
+    def __init__(self, stream, root_entries: list[Entry], vanilla: Path | None = None):
+        self.stream, self.entries, self.vanilla_path = stream, root_entries, vanilla
         self._owners = None
         self.sound: dict = {}  # engine_sound.lint's cache
-        self._stock = None  # (stream, root entries, shared UIDs)
+        self._vanilla = None  # (stream, root entries, shared UIDs)
         self._hosts: dict[int, tuple] = {}
 
     @property
@@ -460,22 +460,22 @@ class LintContext:
             self._owners = uid_owners(self.stream, self.entries)
         return self._owners
 
-    def _open_stock(self) -> tuple:
-        if self._stock is None:
-            stream = self.stock_path.open("rb")
+    def _open_vanilla(self) -> tuple:
+        if self._vanilla is None:
+            stream = self.vanilla_path.open("rb")
             entries = read_chunk(stream, 0).entries
-            self._stock = (stream, entries, shared_uids(stream, entries))
-        return self._stock
+            self._vanilla = (stream, entries, shared_uids(stream, entries))
+        return self._vanilla
 
     def host_kinds(self, source: int) -> tuple:
-        """(stock archive stream, {kind: entry}) of a stock host."""
-        stream, entries, _ = self._open_stock()
+        """(vanilla archive stream, {kind: entry}) of a vanilla host."""
+        stream, entries, _ = self._open_vanilla()
         return stream, entries_for(stream, entries, source, None)
 
     def host(self, source: int) -> tuple[set[bytes], list, set[bytes]]:
-        """(borrowed_from_full, the host's DRSP UIDs, SSIC's shared UIDs) of a stock host."""
+        """(borrowed_from_full, the host's DRSP UIDs, SSIC's shared UIDs) of a vanilla host."""
         if source not in self._hosts:
-            stream, entries, shared = self._open_stock()
+            stream, entries, shared = self._open_vanilla()
             host = entries_for(stream, entries, source, None)
             self._hosts[source] = (
                 borrowed_from_full(stream, host),
@@ -485,14 +485,14 @@ class LintContext:
         return self._hosts[source]
 
     def close(self) -> None:
-        if self._stock is not None:
-            self._stock[0].close()
+        if self._vanilla is not None:
+            self._vanilla[0].close()
 
 
 def lint_vehicle(
     ctx: LintContext, spool_id: int | None, vehc: int | None, args, emit=print, facts: dict | None = None
 ) -> int:
-    """The lint of one vehicle (args: source, stock, verbose, allow_shared, no_sound, as
+    """The lint of one vehicle (args: source, vanilla, verbose, allow_shared, no_sound, as
     the lint command takes them); emit(line) per reported check. Returns the problem count.
     `facts` (a dict) gets what ties the result to other vehicles: foreign_uids' "refs_ext"
     and "defined", and "near", the spool IDs of the other banks sharing a sound ID."""
@@ -519,7 +519,7 @@ def lint_vehicle(
     glass_rows = glass.check(
         stream,
         kinds,
-        host=ctx.host_kinds(args.source) if args.stock else None,
+        host=ctx.host_kinds(args.source) if args.vanilla else None,
         window_cracks=False if getattr(args, "plain_glass", False) else None,
     )
     # Engine sound: bank round trip, VSVH events, Wwise IDs across the archive (src/dsfforza/convert/engine_sound.py).
@@ -538,7 +538,7 @@ def lint_vehicle(
                 if index == vehc and kind == 0
             )
         )
-        reserved = engine_sound.stock_index(args.stock)["reserved"] if args.stock else None
+        reserved = engine_sound.vanilla_index(args.vanilla)["reserved"] if args.vanilla else None
         sound_rows = engine_sound.lint(stream, root_entries, spool, reserved, cache=ctx.sound)
         if facts is not None:
             facts["near"] = ctx.sound.get("near", {}).get(spool, [])
@@ -574,7 +574,7 @@ def lint_vehicle(
         refs = {(f, u) for tag, _, f, u in items if f in ("vertex_buffer", "index_buffer")}
         bad = sorted(u.hex() for f, u in refs if u not in defined[kind])
         report(not bad, f"kind {kind}: every SBMC buffer UID is defined in the same DRSP (unresolved {bad[:3]})")
-    if args.stock:
+    if args.vanilla:
         needed, host_uids, shared = ctx.host(args.source)
         # Materials/textures the host uses that none of its entries define, and every
         # material/texture SSIC defines: the engine's shared vehicle materials
@@ -584,12 +584,12 @@ def lint_vehicle(
         if needed <= defined.get(0, set()):
             report(
                 True,
-                f"the {len(needed)} materials/textures the stock interior/exterior take from "
+                f"the {len(needed)} materials/textures the vanilla interior/exterior take from "
                 f"the full entry are still defined there",
             )
         else:
             # Renewed UIDs (clone_vehicle --new-uids): check the car's own borrowing instead.
-            # Most stock exteriors use _LOD1 materials their interior or full entry defines
+            # Most vanilla exteriors use _LOD1 materials their interior or full entry defines
             # (the Desanne's are local), so any of the car's three entries will do.
             own = set().union(*defined.values())
             for kind in (1, 2):
@@ -628,7 +628,7 @@ def lint_vehicle(
 def cmd_lint(args: argparse.Namespace) -> None:
     """Checks a converted vehicle against the rules in research/upvh.md."""
     with args.archive.open("rb") as stream:
-        ctx = LintContext(stream, read_chunk(stream, 0).entries, args.stock)
+        ctx = LintContext(stream, read_chunk(stream, 0).entries, args.vanilla)
         try:
             problems = lint_vehicle(ctx, args.id, args.vehc, args)
         finally:
@@ -647,7 +647,7 @@ def cmd_lint_many(args: argparse.Namespace) -> None:
 
     failed = 0
     with args.archive.open("rb") as stream:
-        ctx = LintContext(stream, read_chunk(stream, 0).entries, args.stock)
+        ctx = LintContext(stream, read_chunk(stream, 0).entries, args.vanilla)
         try:
             for car in args.car:
                 spool_id, _, source = car.partition(":")
@@ -695,11 +695,11 @@ def main(argv: list[str] | None = None) -> None:
         else:
             p.add_argument("--verbose", "-v", action="store_true", help="print passing checks too")
             p.add_argument(
-                "--stock",
+                "--vanilla",
                 type=Path,
-                help="stock archive, to check what the interior and exterior borrow from the full entry",
+                help="vanilla archive, to check what the interior and exterior borrow from the full entry",
             )
-            p.add_argument("--source", type=int, default=266, help="host's stock spool ID (default 266)")
+            p.add_argument("--source", type=int, default=266, help="host's vanilla spool ID (default 266)")
             p.add_argument(
                 "--no-sound",
                 action="store_true",
@@ -719,8 +719,8 @@ def main(argv: list[str] | None = None) -> None:
             )
     many = sub.add_parser("lint-many", help="lint several vehicles of one archive (one JSON line each)")
     many.add_argument("archive", type=Path)
-    many.add_argument("--car", action="append", required=True, metavar="ID:SOURCE", help="spool ID and stock host")
-    many.add_argument("--stock", type=Path, help="stock archive (as lint --stock)")
+    many.add_argument("--car", action="append", required=True, metavar="ID:SOURCE", help="spool ID and vanilla host")
+    many.add_argument("--vanilla", type=Path, help="vanilla archive (as lint --vanilla)")
     many.add_argument("--verbose", "-v", action="store_true")
     many.add_argument("--no-sound", action="store_true")
     many.add_argument("--allow-shared", action="store_true")

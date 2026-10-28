@@ -28,7 +28,7 @@ from capstone import x86
 from dsfforza import REPO
 
 CACHE = REPO / "out" / "asi" / "xref.pickle"
-EXE_CANDIDATES = [REPO / "out" / "stock" / "Driver.exe"] + (
+EXE_CANDIDATES = [REPO / "out" / "vanilla" / "Driver.exe"] + (
     [Path(os.environ["DSF_GAME_DIR"]) / "Driver.exe"] if os.environ.get("DSF_GAME_DIR") else []
 )
 

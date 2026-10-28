@@ -9,7 +9,7 @@ part(s) placed the way the engine does it: hub + quaternion x wheel-local
 point), `out/wheels/tyre_uv.py`, `out/wheels/tex_dump.py`. Evidence levels
 follow `dngvehicles.md`.
 
-## Stock DSF wheels (confirmed-static)
+## Vanilla DSF wheels (confirmed-static)
 
 - One wheel model per MODL part (33 hosts keep front and rear in two parts),
   in its own frame: hub at the origin, spin axis x, tyre centred on x = 0.
@@ -27,7 +27,7 @@ follow `dngvehicles.md`.
   gloss, blue 255 (so it decodes blue). It holds sidewall half-rings, tread
   strips and uniform grey/gloss swatches in the corners; the Desanne's rim
   uses the swatch at (0.906, 0.008) (grey 131, gloss 190).
-- No brake discs or calipers in stock wheel parts.
+- No brake discs or calipers in vanilla wheel parts.
 
 ## The Forza wheel (confirmed-static)
 
@@ -51,7 +51,7 @@ follow `dngvehicles.md`.
   - the two 1965 Minis have `wheela` and `wheelb` instead, like upgrade
     variants.
 
-  `forza2dsf.load_car` takes `wheel`, else the stock variant (`wheela`, which
+  `forza2dsf.load_car` takes `wheel`, else the vanilla variant (`wheela`, which
   is kept out of the body), else the `wheel` section of the wheel archive's
   carbin. `port_car.extract_wheel` caches that carbin as `wheel.carbin`.
 
@@ -93,17 +93,17 @@ is the grey level.
 ## Tyre texture and wheel LODs (2026-10-23)
 
 User report on `out/testdrive3` (40 cars): tyres are plain, without the
-tread and sidewall detail of stock tyres; the RX-7's wheels are pale grey
+tread and sidewall detail of vanilla tyres; the RX-7's wheels are pale grey
 blobs with no rim, apparently bulging past the arches.
 
-### Stock tyres (confirmed-static, 30 hosts: `out/wheels2/stock_side.py`)
+### Vanilla tyres (confirmed-static, 30 hosts: `out/wheels2/vanilla_side.py`)
 
 `GLOBAL_Tyre` has only a diffuse map (`g_texDiffuseMap` 00122b7bf7fa1227
 and a cube map); no normal map, and the stride-20 wheel vertices have no
 tangents. All the tyre detail is in the diffuse atlas, reached through UVs
 (`out/wheels2/tyre_r.png` is the red channel, the grey level):
 
-| Region | UV | Stock use |
+| Region | UV | Vanilla use |
 | --- | --- | --- |
 | Lower sidewall half-ring ("ZRT PLUS", arrows) | centre (0.5, 1.0), radius 0.31 to 0.50; lettering band 0.33 to 0.39, ridge at 0.40 | every surveyed host's sidewalls, both faces. 180 degrees of tyre cover the whole half-ring (the full circle is mapped onto it twice); rim edge at ring radius 0.33 to 0.40, tread edge at 0.40 to 0.50 |
 | Fine tread strip | u 0.508 to 0.757, v 0.89 to 1.0 | tread: u across the tyre (0.527 to 0.73, shoulders 0.503 to 0.526), v one tile (0.897 to 0.989) per segment of 14 to 25 degrees, repeated round the tyre |
@@ -127,7 +127,7 @@ and the new mapping).
   the nearest one that has it (finer on a tie): RX-7 and Civic exterior
   1 -> 2, Golf R and DMC-12 full 3/4/5 -> 1, Durango and Express 5 -> 4.
   `convert` logs the swaps.
-- `TyreMap` unwraps the tyre onto the stock regions: triangles whose face
+- `TyreMap` unwraps the tyre onto the vanilla regions: triangles whose face
   normal is within about 55 degrees of the axle go on the sidewall ring
   (ring radius 0.33 at the tyre's inner radius to 0.492 at its outer, 180
   degrees of tyre per half-ring, lettering included), the rest on the fine
@@ -145,7 +145,7 @@ from 0 triangles per LOD (testdrive3) to 2863.
 
 Renders (`out/wheels2/render.py <archive> <id> <prefix> [kind] [mask]`, the
 tyre atlas shown grey): `out/wheels2/local-before-after.png` (each wheel
-model from outside, inside and the front; testdrive3 against wheels2, stock
+model from outside, inside and the front; testdrive3 against wheels2, vanilla
 370Z for reference), `out/wheels2/after/id3-full4-sides.png` (Golf R full
 entry, mask 4).
 
@@ -192,10 +192,10 @@ texel of DSF's tyre atlas (`WHEEL_UV`: rim grey, inner dark, chrome): plain
 silver discs, no caps, logos, nuts or rim colours (the Veyron's orange, the
 WRX's gold, the Agera's black with stripes).
 
-### How stock DSF wheels are textured (confirmed-static)
+### How vanilla DSF wheels are textured (confirmed-static)
 
-`out/rims/stock_wheel_mats.txt`: the wheel parts of all 140 four-wheeled
-stock vehicles use `GLOBAL_Tyre` (tyre and most of the rim, on the shared
+`out/rims/vanilla_wheel_mats.txt`: the wheel parts of all 140 four-wheeled
+vanilla vehicles use `GLOBAL_Tyre` (tyre and most of the rim, on the shared
 atlas's rim and nut pictures) and the two blur materials; 110 of them also
 have 4 to 244 triangles on the vehicle's own Chassis material (stride 28) in
 both entries: centre caps and logos from the car's chassis texture.
@@ -212,7 +212,7 @@ both entries: centre caps and logos from the car's chassis texture.
   host's texture size, so entry sizes don't change.
 - `forza2dsf.wheel_material`: rims, caps and emblems use the entry's Chassis
   material (full entry) / Chassis_LOD1 (exterior), the tyre the shared tyre
-  material with the stock unwrap; the swatches remain the fallback when there
+  material with the vanilla unwrap; the swatches remain the fallback when there
   is no wheel texture or `--textures none`.
 
 Atlas cost (`out/rims/atlas_scales.txt`, 40 cars against `out/testdrive10`):
@@ -231,19 +231,19 @@ same silver. The full entry (LOD 3, `out/rims/wheels_full.png`) the same.
 
 In game (confirmed-runtime, headless VM; fixed cameras on the car's left
 side, outside and at each wheel): `vm-20261024-065630` (`out/testdrive10`)
-against `vm-20261024-064427` (`out/rims/td`), IDs 147 (stock CTS-V for
+against `vm-20261024-064427` (`out/rims/td`), IDs 147 (vanilla CTS-V for
 reference), 25, 38, 28, 6, 29. The rims draw their own artwork through the
 Chassis material: the 250 GTO's wire wheels with the knock-off cap, the
 Raptor's dark rims with the SVT cap, the Veyron's orange (a little lighter
 and redder than Forza's), the WRX's gold, the Agera's black rim with its
 yellow and blue stripes; no flicker or missing triangles, brightness next to
-the stock CTS-V's wheels alike. `img/rims-ingame-before-after.jpg`.
+the vanilla CTS-V's wheels alike. `img/rims-ingame-before-after.jpg`.
 
 ## Wheel shading (2026-10-24)
 
 User report on `out/testdrive11` (ID 18, PEU_205T16_84 on host 274): "plain
 white wheel disks". Scripts in `out/inv/` (`wrender.py`, `wobl.py`,
-`stock_sky.py`, `stock_sky_agg.py`, `sky_check.py`).
+`vanilla_sky.py`, `vanilla_sky_agg.py`, `sky_check.py`).
 
 ### The 205's wheel is white, and the texture is applied (confirmed-static)
 
@@ -261,11 +261,11 @@ white wheel disks". Scripts in `out/inv/` (`wrender.py`, `wobl.py`,
 
 Forza's wheel vertices have no AO byte (0 on every vertex of the 40 testdrive
 cars' wheels), so `vertex_sky` gave them `DEFAULT_AO` x the hemisphere factor
-of the wheel-local normal. Stock wheels bake their own occlusion. Exterior
-wheel parts of the 140 four-wheeled stock vehicles (median of per-vehicle
+of the wheel-local normal. Vanilla wheels bake their own occlusion. Exterior
+wheel parts of the 140 four-wheeled vanilla vehicles (median of per-vehicle
 medians), against `out/testdrive11` IDs 18, 25, 6:
 
-| Surface (DSF wheel frame) | Stock | testdrive11 | Fix (40 cars) |
+| Surface (DSF wheel frame) | Vanilla | testdrive11 | Fix (40 cars) |
 | --- | --- | --- | --- |
 | outward faces (normal +x) | 0.64 (tyre material), 0.635 (chassis caps) | 0.42 | rim 0.56, tyre 0.61 |
 | inward faces (-x: back of the disc, inner sidewall) | 0.02 | 0.42 | 0.00 |
@@ -280,7 +280,7 @@ shadow, so the holes are dark (`out/inv/205_wobl.png`: oblique views without
 and with the rotor and caliper).
 
 Fix (`forza2dsf.wheel_sky`, `wheel_skies`): each wheel vertex gets
-`WHEEL_SKY_OPEN` (0.64, stock's outward faces) x the share of 24
+`WHEEL_SKY_OPEN` (0.64, vanilla's outward faces) x the share of 24
 cosine-weighted rays over its hemisphere that escape. Rays are marched through
 a 3 mm voxel grid of the wheel's own triangles at that LOD (hits closer than 3
 voxels are the vertex's own surface); rays heading inboard end on the car, and
@@ -291,9 +291,9 @@ instead of 10 s. The tyre texture, UVs and materials are unchanged.
 
 In game (confirmed-runtime, headless VM, new probe view `wheels`: the car's
 left side at hub height): `vm-20261024-110508` (`out/testdrive11`, ID 18)
-against `vm-20261024-105751` (`out/fx/b2`, ID 1; stock Scirocco 274 in the
+against `vm-20261024-105751` (`out/fx/b2`, ID 1; vanilla Scirocco 274 in the
 same run). The 205's holes and the recess round the nuts now read dark, as
-through the stock Scirocco's spokes; the disc itself stays white, as Forza's
+through the vanilla Scirocco's spokes; the disc itself stays white, as Forza's
 is (`img/wheels-205-ingame-before-after.jpg`).
 
 ### Open (wheels)
@@ -333,9 +333,9 @@ pose, variants).
   p3. So a VO3D with a ride offset p25 or a dead zone p4 draws its wheels
   higher (or lower) at rest than the hub table, and the body settles by that
   much: on the A4 (p4 0.05 and p25 -0.02 from the Alfa 8C suspension set,
-  1050 kg on p1 2100) 39 mm at the front, 33 at the rear. Over the stock
+  1050 kg on p1 2100) 39 mm at the front, 33 at the rear. Over the vanilla
   fleet the offset is small (median +4 mm front, -8 mm rear), and Reflections
-  modelled each stock body around its own rest pose anyway.
+  modelled each vanilla body around its own rest pose anyway.
 - Forza draws its single wheel model at each axle's Data_Car tyre size
   (`FrontTireWidthMM`, aspect, rim inches): 160 of the 573 wheel models are
   more than 5 mm off their front tyre's radius (88 bigger, up to
@@ -451,8 +451,8 @@ three-quarter) and `Bonnet`; the A4's own before shot is from
   removed, `vm-20261025-073350`, against the build, `-074620`) the body
   moved 40.7 mm at the front and 36.1 at the rear, `rest_offsets` says 41.2
   and 34.9. The absolute height against Atlas's ground carries a car-dependent
-  12 to 40 mm more sink that the model doesn't explain, stock cars included
-  (stock 127: 19 and 18 mm; 162: 12 and 16); it doesn't show as a wheel offset
+  12 to 40 mm more sink that the model doesn't explain, vanilla cars included
+  (vanilla 127: 19 and 18 mm; 162: 12 and 16); it doesn't show as a wheel offset
   in the shots, so it is more likely the ground data than the wheels.
 - Handling (dyno, `vm-20261025-091055` before, `-091517` after, the
   `handling_tune` test): A4 0-60 2.71 / 2.70 s, 0-100 6.90 / 6.90, 60-0
@@ -478,7 +478,7 @@ three-quarter) and `Bonnet`; the A4's own before shot is from
 
 ## Rear wheel parts (2026-10-26, issue #53)
 
-107 of the 140 four-wheeled stock vehicles draw all four wheels from one MODL
+107 of the 140 four-wheeled vanilla vehicles draw all four wheels from one MODL
 part, so a port on such a host drew its rear wheels at the front tyre's size.
 After the wheel-clearance fix that left 63 cars (of `out/final3`: 67) with a
 rear arch gap more than 10 mm larger than Forza's, up to 60 mm
@@ -506,13 +506,13 @@ When the host shares its wheel part and Data_Car's rear tyre would be drawn
 more than 5 mm off in radius (`REAR_PART_RADIUS`, 10 mm of arch gap) or 10 mm
 in width (`REAR_PART_WIDTH`), `convert` first copies the shared part, box and
 LOD lists, to the end of the full entry's MODL and the exterior wheel part to
-the end of the exterior's (`add_modl_part`), each under a new stock-shaped
+the end of the exterior's (`add_modl_part`), each under a new vanilla-shaped
 part UID (`Builder` UIDs from the conversion seed, its own prefix); then
 points the rear wheel records at the full copy and their LOD links at the
 exterior copy. `host_wheels` then sees a split host, and the existing rear
 path scales the rear copy to the rear tyre, moves the rear hubs to the rear
-track and stands them on Forza's ground. Run on every stock four-wheeled
-vehicle in memory (`out/rw/check_stock.py`): the 107 shared hosts all come out
+track and stands them on Forza's ground. Run on every vanilla four-wheeled
+vehicle in memory (`out/rw/check_vanilla.py`): the 107 shared hosts all come out
 split, the 33 split ones are left alone, the other parts' LOD lists are
 unchanged, the full MODL grows by 0x120 bytes at most. `port_car
 --no-rear-wheel-part` keeps the old behaviour. `car_render` now draws each
@@ -613,7 +613,7 @@ luminance per car, texels as converted before and times `PaintScale` now:
 | now (texel x PaintScale) | 43 | 90 | 117 | 145 | 160 | 21 | 3 |
 
 The brightest before: SUB_LegacyB4GT_05 253, FIA_500AbarthSS_10 246,
-MAZ_MX5SL_10 239, NIS_SkylineMinesR32_93 239; the Carlton 182 to 137. Stock
+MAZ_MX5SL_10 239, NIS_SkylineMinesR32_93 239; the Carlton 182 to 137. Vanilla
 DSF rims sample the tyre atlas's grey swatch of 131 (red channel).
 
 ### Fix (`forza_materials.WHEEL_PAINT_SCALE`, `shader_settings`, `wheel_paint_scale`; `dsf_materials.Texturing._wheel_paint_scale`)
@@ -630,13 +630,13 @@ the darker colour. The build log's atlas line names the scales other than 1
 
 Headless VM, the same five cars built from master and from this change
 (`out/t/before`, `out/t/after`: IDs 1 LOT_Carlton_89, 2 SUB_LegacyB4GT_05, 3
-FOR_FocusRS500_10, 4 BEN_CONTINENTALGT_11, 5 FER_355Challenge_95, plus stock
+FOR_FocusRS500_10, 4 BEN_CONTINENTALGT_11, 5 FER_355Challenge_95, plus vanilla
 229), `-Views wheels,rear -Palette 0 -ShotSeconds 3`: runs `vm1-20261027-045825`
 (before) and `vm1-20261027-050351` (after; the Carlton's side shot is its
 `zoom-05`, the wheels view came before the first observe shot). The Carlton's
 and the Legacy's rims are light grey with their spoke shading instead of flat
 white, the Continental's (PaintScale 0.5) mid grey, the Focus RS500's (7.5)
-black rims a little lighter, with the blue cap; next to stock 229's silver
+black rims a little lighter, with the blue cap; next to vanilla 229's silver
 rims they now look alike (`img/rims-paintscale-ingame.jpg`).
 
 ## Steering lock (2026-10-27, issue #54)
@@ -698,14 +698,14 @@ step steer unchanged).
 ## Open
 
 1. In game: whether wheels without blur geometry look right at speed
-   (stock wheels fade a spoke disc in; ours have none).
+   (vanilla wheels fade a spoke disc in; ours have none).
 2. Brake discs and calipers (Forza `_rotor*`/`_caliper*` carbins, LOD 0 only,
    per corner) could go into the wheel part as static geometry; not done.
-   Stock DSF wheels have none, and a caliper in the wheel part would spin
+   Vanilla DSF wheels have none, and a caliper in the wheel part would spin
    with it.
 3. Done (issue #108): rims draw with gloss copies of the host's Lights material
    (its lamp glow needs a lamp byte, which rims don't have), Forza's rim
    reflection and `chrome_rim`'s chrome on them (forza-materials.md, "Gloss").
-   The reflection is masked by the texel's green, not `wheel.xds` alpha. Stock
-   rims, for comparison, are drawn by 111 of the 150 stock vehicles with their own
+   The reflection is masked by the texel's green, not `wheel.xds` alpha. Vanilla
+   rims, for comparison, are drawn by 111 of the 150 vanilla vehicles with their own
    Chassis material on their chassis texture (no reflection), not `GLOBAL_Tyre`.

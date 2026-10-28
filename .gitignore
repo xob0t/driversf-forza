@@ -1,7 +1,7 @@
 _ref/
 out/
 __pycache__/
-assets/*.iso
+assets/
 tools/game/lua/dsfforza/ported.lua
 tools/game/lua/dsfforza/hud.lua
 .claude/worktrees/

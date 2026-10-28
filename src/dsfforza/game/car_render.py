@@ -17,7 +17,7 @@ and the interior entry (kind 1), which shows through the glass. numpy only:
   upper left, the vertex sky / AO term (vehicle-model.md) as ambient
   occlusion, and a soft contact shadow on the floor.
 
-The camera matches the stock garage pictures (`STOCK_CAMERA`; measured with
+The camera matches the vanilla garage pictures (`VANILLA_CAMERA`; measured with
 `dsff gui_assets camera`, research/gui-assets.md "Camera").
 """
 
@@ -53,7 +53,7 @@ class Camera:
     distance: float
 
 
-STOCK_CAMERA = Camera(yaw=36.5, pitch=13.0, distance=1.3)  # median of 24 stock pictures (gui-assets.md, "Camera")
+VANILLA_CAMERA = Camera(yaw=36.5, pitch=13.0, distance=1.3)  # median of 24 vanilla pictures (gui-assets.md, "Camera")
 
 
 @dataclass
@@ -68,8 +68,8 @@ class Shading:
     power: float  # key-light specular exponent
 
 
-# Tone calibrated against the stock garage pictures (research/gui-assets.md, "Tone"):
-# renders of 10 stock cars with saturated paint, from the stock archive with the
+# Tone calibrated against the vanilla garage pictures (research/gui-assets.md, "Tone"):
+# renders of 10 vanilla cars with saturated paint, from the vanilla archive with the
 # palette entry of the picture's hue, matched to their pictures by the brightness
 # (HSV value) and saturation percentiles and the share of white highlight pixels of
 # the car. The pictures show deep, saturated paint with soft highlights and almost
@@ -235,7 +235,7 @@ def _face_normals(pos: np.ndarray) -> np.ndarray:
 class Paint:
     """A palette entry as the paint shader uses it (lights.md, "What the paint
     shader does"): colour 2 mixed toward colour 3 by bias + (1 - bias) (1 - n.v)^power,
-    linear RGB. Most stock entries are a dark colour 2 with a lighter colour 3 at
+    linear RGB. Most vanilla entries are a dark colour 2 with a lighter colour 3 at
     grazing angles only (power 5 to 15); a flat colour has colour 2 = colour 3."""
 
     c2: tuple[float, float, float]
@@ -260,12 +260,12 @@ DEFAULT_PAINT_SRGB = (150, 20, 20)  # a car without a palette
 
 
 def picture_paint(c2, c3, power: float, bias: float, metallic: bool) -> Paint:
-    """The palette entry as the stock garage pictures show it. An entry with a
+    """The palette entry as the vanilla garage pictures show it. An entry with a
     fresnel power of 1 or more (the usual dark colour 2, lighter colour 3 at the
     edges: the Volt's red) is mixed by the view angle as the shader does; the
     pictures show its colour 2 with lighter edges. Taken literally, an entry
     with a low power or a high bias shows colour 3 almost everywhere, near black
-    for most of them, but the stock pictures of such colours (370Z blue, power
+    for most of them, but the vanilla pictures of such colours (370Z blue, power
     0.25; Cobra red, 0.1) show colour 2 facing the camera, darker toward the
     edges: such an entry is drawn with the power raised to LOW_POWER_FLOOR and
     the bias lowered to LOW_POWER_BIAS."""
@@ -278,7 +278,7 @@ LOW_POWER_FLOOR, LOW_POWER_BIAS = 2.0, 0.05
 
 
 def paint_colour(stream, full) -> Paint:
-    """The palette's most colourful entry (stock pictures rarely show black or
+    """The palette's most colourful entry (vanilla pictures rarely show black or
     grey), chosen by the colour it mostly shows (paint.apparent)."""
     from dsfforza.convert import paint
 
@@ -753,7 +753,7 @@ FIT_GRID = (range(24, 53, 4), range(0, 29, 4), (0.9, 1.1, 1.3, 1.6, 2.0, 2.6, 3.
 def fit_camera(scene: Scene, score, size: tuple[int, int] = (360, 240)) -> tuple[float, Camera]:
     """The camera whose coverage mask scores best: a coarse grid over yaw, pitch
     and distance (FIT_GRID), then 1-degree / 10% steps around the best."""
-    best = (-math.inf, STOCK_CAMERA)
+    best = (-math.inf, VANILLA_CAMERA)
     for yaw in FIT_GRID[0]:
         for pitch in FIT_GRID[1]:
             for dist in FIT_GRID[2]:
@@ -768,7 +768,7 @@ def fit_camera(scene: Scene, score, size: tuple[int, int] = (360, 240)) -> tuple
     return best
 
 
-def render(scene: Scene, camera: Camera = STOCK_CAMERA, width: int = 900, height: int = 480) -> np.ndarray:
+def render(scene: Scene, camera: Camera = VANILLA_CAMERA, width: int = 900, height: int = 480) -> np.ndarray:
     """(height, width, 4) uint8 straight-alpha RGBA: the car, its glass and its
     floor shadow on a transparent background."""
     view = _View(scene, camera, width, height)

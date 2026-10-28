@@ -181,9 +181,9 @@ def test_head_lamp_glow_follows_the_reflector_bowl():
     assert centre > 150 and rim < centre / 3, (centre, rim)
 
 
-def test_day_glow_on_stock_distribution_with_a_dark_rim():
+def test_day_glow_on_vanilla_distribution_with_a_dark_rim():
     # A round lamp with a flat raw glow, seen straight on (one texel per view sample): the rim
-    # fades, so the middle glows and the edge doesn't, on stock's day-lit distribution.
+    # fades, so the middle glows and the edge doesn't, on vanilla's day-lit distribution.
     n, step = 40, 0.005
     yy, xx = np.mgrid[0:n, 0:n]
     disc = (yy - n / 2 + 0.5) ** 2 + (xx - n / 2 + 0.5) ** 2 < 15**2

@@ -1,5 +1,5 @@
 // archive: lifts the 1100-entries-per-CHNK limit of the game's chunk reader,
-// so dngvehicles.sp can hold more than 365 vehicles (stock 150 + 215 added).
+// so dngvehicles.sp can hold more than 365 vehicles (vanilla 150 + 215 added).
 // research/spool-limits.md, "Raising the root entry limit", has the evidence
 // and the patch table.
 //
@@ -145,7 +145,7 @@ Ext* ext_find_locked(Reader* r)
     return nullptr;
 }
 
-// Entry i of r. Indices past the side table fall back to the stock (inline,
+// Entry i of r. Indices past the side table fall back to the vanilla (inline,
 // overflowing) address, which is what the game did before.
 Entry* E(Reader* r, uint32_t i)
 {
@@ -157,7 +157,7 @@ Entry* E(Reader* r, uint32_t i)
     ReleaseSRWLockShared(&g_lock);
     if (e) return e;
     if (InterlockedExchange(&g_warned_overflow, 1) == 0)
-        dsf_log("archive: reader %p entry %u has no side table (count %u); stock address used", r, i, r->count);
+        dsf_log("archive: reader %p entry %u has no side table (count %u); vanilla address used", r, i, r->count);
     return &r->entries[i];
 }
 
@@ -171,12 +171,12 @@ void** P(Reader* r, uint32_t i)
     ReleaseSRWLockShared(&g_lock);
     if (p) return p;
     if (InterlockedExchange(&g_warned_overflow, 1) == 0)
-        dsf_log("archive: reader %p pointer %u has no side table (count %u); stock address used", r, i, r->count);
+        dsf_log("archive: reader %p pointer %u has no side table (count %u); vanilla address used", r, i, r->count);
     return &r->ptrs[i];
 }
 
 // Makes room for count entries (count > kInline). Pointers of indices at or
-// above old_ptr_count are zeroed, as the stock pointer-vector resize does.
+// above old_ptr_count are zeroed, as the vanilla pointer-vector resize does.
 bool ext_ensure(Reader* r, uint32_t count, uint32_t old_ptr_count)
 {
     uint32_t need = count - kInline;
@@ -284,7 +284,7 @@ void log_big(Reader* r, uint32_t count, const char* how, const void* stack)
 
 uint32_t align_up(uint32_t v, uint32_t a) { return (v + a - 1) & ~(a - 1); }
 
-// Payload plus name, aligned to the entry alignment (stock arithmetic,
+// Payload plus name, aligned to the entry alignment (vanilla arithmetic,
 // including the 8-bit wrap of name_len + 3).
 uint32_t entry_span(const Entry* e)
 {
@@ -433,7 +433,7 @@ void* __fastcall h_read_entry(Reader* r, void*, uint32_t i, void* buf, int store
 
 // 0x008FC0A0: async open state machine (1 read the first sector, 2 parse the
 // header and read the whole entry table, 3 copy the table). Same steps as
-// stock; a table of more than kInline entries goes through g_big_hdr and the
+// vanilla; a table of more than kInline entries goes through g_big_hdr and the
 // side table.
 uint32_t __fastcall h_poll(Reader* r, void*)
 {
@@ -553,7 +553,7 @@ uint32_t __fastcall h_load_mem(Reader* r, void*, uint32_t* p, int flag, int)
             return 0;
         }
         log_big(r, n, flag ? "parses (borrowed)" : "parses (copied)", _AddressOfReturnAddress());
-        // The stock pointer-vector resize zeroes the new slots.
+        // The vanilla pointer-vector resize zeroes the new slots.
         for (uint32_t j = r->ptr_count; j < kInline; j++) r->ptrs[j] = nullptr;
         r->count = n;
         r->ptr_count = n;
@@ -612,10 +612,10 @@ const Site kSites[] = {
 // 0x0059B4D0, and nothing else reads the array (Ghidra scans of 0x2260 and of
 // the find's callers, out/ghidra/spol*). gui.sp's garage pictures go through
 // it: with more than 1100 pictures the list stayed empty and every garage card,
-// stock ones included, showed the lock icon (VM runs vm-20261024-235436 with
+// vanilla ones included, showed the lock icon (VM runs vm-20261024-235436 with
 // 1121 SPOL entries against -234833 with 1098).
 // The replacements keep lists longer than 1100 in a side table keyed by the
-// provider object (the first 1100 also inline, as far as stock code would see
+// provider object (the first 1100 also inline, as far as vanilla code would see
 // them), and the find searches the side list when the object has one. Lists
 // of at most 1100 behave exactly as before.
 const uint32_t kSpolInline = 1100;
@@ -695,7 +695,7 @@ void __fastcall h_spol_load(uint8_t* self, void*, Reader* reader, uint32_t index
         dsf_log("archive: no slot for the spool list of %u items at %p; the first %u load", n, self, kSpolInline);
         return;
     }
-    dsf_log("archive: spool list at %p holds %u items (%u past the stock %u)", self, n, n - kSpolInline,
+    dsf_log("archive: spool list at %p holds %u items (%u past the vanilla %u)", self, n, n - kSpolInline,
             kSpolInline);
 }
 
@@ -734,7 +734,7 @@ void patch_spool_lists()
     if (!bytes_equal(0x0059B6D0, load_expect, sizeof load_expect) ||
         !bytes_equal(0x0059B5A0, find_expect, sizeof find_expect) ||
         !bytes_equal(0x0059B6ED, cap_expect, sizeof cap_expect)) {
-        dsf_log("archive: 0059B6D0/0059B5A0 are not the stock code; spool lists stay at %u items", kSpolInline);
+        dsf_log("archive: 0059B6D0/0059B5A0 are not the vanilla code; spool lists stay at %u items", kSpolInline);
         return;
     }
     if (!patch_jmp(0x0059B5A0, (void*)h_spol_find, sizeof find_expect, find_expect)) return;
@@ -742,7 +742,7 @@ void patch_spool_lists()
         patch_bytes(0x0059B5A0, find_expect, sizeof find_expect);
         return;
     }
-    dsf_log("archive: 0059B6D0/0059B5A0 spool item lists (SSIC SPOL) hold up to %u items (stock %u)", g_max_entries,
+    dsf_log("archive: 0059B6D0/0059B5A0 spool item lists (SSIC SPOL) hold up to %u items (vanilla %u)", g_max_entries,
             kSpolInline);
 }
 
@@ -753,7 +753,7 @@ static void patch_readers()
 {
     for (const Site& s : kSites) {
         if (!bytes_equal(s.va, s.expect, s.n)) {
-            dsf_log("archive: %08X (%s) is not the stock code (another plugin?); CHNK readers stay at %u entries",
+            dsf_log("archive: %08X (%s) is not the vanilla code (another plugin?); CHNK readers stay at %u entries",
                     s.va, s.what, kInline);
             return;
         }
@@ -769,7 +769,7 @@ static void patch_readers()
         }
         dsf_log("archive: %08X %s -> %p", s.va, s.what, s.target);
     }
-    dsf_log("archive: CHNK readers hold up to %u entries (stock %u)", g_max_entries, kInline);
+    dsf_log("archive: CHNK readers hold up to %u entries (vanilla %u)", g_max_entries, kInline);
 }
 
 void mod_archive_init()
@@ -795,6 +795,6 @@ void mod_archive_init()
         if (bytes_equal(0x0085A9AE, expect, sizeof expect) && patch_bytes(0x0085A9B2, jmp, 1, expect + 4))
             dsf_log("archive: 0085A9B2 file seek takes positions up to 4 GiB (JGE -> JMP)");
         else
-            dsf_log("archive: 0085A9AE file seek is not the stock code; archives must stay below 2 GiB");
+            dsf_log("archive: 0085A9AE file seek is not the vanilla code; archives must stay below 2 GiB");
     }
 }

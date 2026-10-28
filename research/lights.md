@@ -2,7 +2,7 @@
 
 Updated: 2026-10-28
 
-How stock DSF cars light their lamps and pick a paint colour, and what the
+How vanilla DSF cars light their lamps and pick a paint colour, and what the
 converter does about both. Code: `src/dsfforza/convert/lights.py` (lamps), `src/dsfforza/convert/paint.py`
 (palettes), `dsf_materials.PAINT_TEXEL_UV` and `LIGHTS_ALPHA`; lamps and
 palettes run inside `forza2dsf.convert` (`ConvertOptions.lights`,
@@ -25,7 +25,7 @@ the boot lid (role 5). Fleet: 0 to 27 lamps per vehicle, 15 on the Desanne.
 | ---: | --- | --- |
 | 0x00 | vec4 | position, car space (+z forward, +x the car's left, w 1) |
 | 0x10 | vec4 | direction (unit, w 0): (0, 0, 1) on headlamps, roughly the lens normal elsewhere |
-| 0x20 | f32, f32 | pi, pi in all 2,281 stock entries (cone angles?) |
+| 0x20 | f32, f32 | pi, pi in all 2,281 vanilla entries (cone angles?) |
 | 0x28 | u32 | id: a permutation of 0..n-1 per vehicle |
 | 0x2C | u32 | flags, below |
 | 0x30 | 16 bytes | the same constant in every entry (exporter leftover) |
@@ -39,7 +39,7 @@ Flags, little-endian bytes b0..b3:
   4 DaytimeRunning, 8 LeftIndicator, 16 RightIndicator, 32 Reverse, 64 Siren,
   128 DippedHeadlights, 256 FogLights, 8191 All.
 
-  | b3 | Mask | Stock use (lamps in 150 vehicles) |
+  | b3 | Mask | Vanilla use (lamps in 150 vehicles) |
   | ---: | --- | --- |
   | 0x01 | Headlights | front white headlamp (218) |
   | 0x02 | Brakes | rear red, mostly the centre high-mounted stop lamp (158) |
@@ -84,7 +84,7 @@ The Lights material has no per-lamp parameters (one technique, `g_texDiffuseMap`
 glow comes from the vertex light byte and the texture's alpha ("How a lamp
 lights" below).
 
-Stock lamp texels have low alpha that follows brightness: medians 0 to 76
+Vanilla lamp texels have low alpha that follows brightness: medians 0 to 76
 per lamp function on the Desanne and the 370Z (Desanne headlamp luminance
 124 to alpha 63, reverse 133 to 76, brake 50 to 2; `lamp_alpha.py`).
 
@@ -147,9 +147,9 @@ on a shorter or longer car).
    exterior entries, all LODs and the shadow LOD), keeping bytes 0 and 1.
 
 Lamp texel alpha in the atlas (`dsf_materials.LIGHTS_ALPHA`): "matched"
-(the default since the evening of 2026-10-23, "Stock lamp alpha" below)
+(the default since the evening of 2026-10-23, "Vanilla lamp alpha" below)
 maps `Forza alpha x (0.6 + 0.4 x max(r, g, b))` through a curve per texel
-hue onto stock's lamp alpha distribution; "raw" keeps Forza's alpha
+hue onto vanilla's lamp alpha distribution; "raw" keeps Forza's alpha
 (analysis builds, `DSFFORZA_LIGHTS_ALPHA=raw`). Earlier modes, since
 removed from the code: "value" (briefly the default, `out/testdrive7`) was
 `max(64, (max(r, g, b) - 40) * 0.8) * Forza alpha / 255` and made lenses
@@ -163,7 +163,7 @@ unlit); every light byte's vertices sit within 0.05 m of their entry in the
 exterior entry (the front indicators' 0.55 to 0.69 m is the shared repeater).
 
 `uv run dsff lights plan out/cache/fh1/NIS_370Z_10` prints the plan
-against the stock Desanne; `uv run dsff lights table <archive> --id 304`
+against the vanilla Desanne; `uv run dsff lights table <archive> --id 304`
 prints a vehicle's light table with the Lua names.
 
 ### In-game test: the harness mode
@@ -215,7 +215,7 @@ Since 2026-10-23 the mode does more per car (`lightstest.lua`, driven by
    off, the probe counted 0 cars and nothing to swap, run 121707).
 
 `lightsync.lua` writes retry for 5 s on a sharing violation (the game reads
-the file every update; run host-20261023-095111 stopped on one at stock 171
+the file every update; run host-20261023-095111 stopped on one at vanilla 171
 phase 10). `run-series.ps1` now passes `-TrafficIds`. Crops and comparisons:
 `out/lamps/scripts/compare.py <run>/crop OUT ids shots [box]`, `report.py`,
 `redcells.py`; offline checks `audit.py`, `lamptex.py`, `walk.py`,
@@ -231,8 +231,8 @@ but it still shows its rear: Open 1);
 `getLightTypeBrightness` returned nil for a name and for `{LightType}` (a mask
 is tried next). In the dark phases the 370Z's and Skyline's tail lamps glowed
 flat and saturated at the same level in every phase, never responding. No
-stock control was in those runs, so whether `setLights` works on the
-player's car at all was open. Settled below ("Stock control and real
+vanilla control was in those runs, so whether `setLights` works on the
+player's car at all was open. Settled below ("Vanilla control and real
 driving"): the player's car holds its brake lamps on at rest whatever
 `setLights` says, so a lit tail lamp looks the same in every phase.
 
@@ -252,9 +252,9 @@ classed every lamp-cover glass technique (`glass`, `lights_glass`,
 to the rear bumper record (21, 25) and mapped onto the side-front slot of the
 glass texture, so the reflector showed through white and the lens took the
 glass texture's crack bands. In the DSF atlas the tail lamps sampled
-(207, 203, 204) with alpha 132 on average against the stock DeLorean's
-(52, 38, 36), alpha 1 (`out/dmc/lampuv.py`). Stock DSF tail lamps are opaque
-Lights-material texels; no stock car has glass over its tail lamps except the
+(207, 203, 204) with alpha 132 on average against the vanilla DeLorean's
+(52, 38, 36), alpha 1 (`out/dmc/lampuv.py`). Vanilla DSF tail lamps are opaque
+Lights-material texels; no vanilla car has glass over its tail lamps except the
 GT-R (228).
 
 Fix (`dsf_materials.Texturing.is_lens`, `lights.LampPlan.build(lenses=...)`):
@@ -270,13 +270,13 @@ of the M3 E30, Silvia, 300C, M5 E28, 205 T16 and DMC-12 (98 to 135 red, alpha
 Rover 45, Civic, 500 Abarth, S2000) and the low-alpha ones (Durango, Express,
 Jeep, the 205's bumper lens) stay glass. In game (`host-20261023-091014`,
 `observe-10`, `out/dmc/run3L-rear.png`) the DMC's lamps are a red grid with
-white reverse cells and no crack lines, like the stock DeLorean's; final
+white reverse cells and no crack lines, like the vanilla DeLorean's; final
 build `out/dmc/final` in `host-20261023-094929` (`observe-06`). The lens
 triangles carry the light bytes of the lamps behind them (tail 13/14, reverse
 7/8 in the full and exterior entries). In the lamp-phase run
 `host-20261023-095111` (`-Lights`, `out/dmc/lights-dmc.png`) the DMC's lamps
 look the same in every phase, day and dark; `lights_diff.py`'s whole-frame
-numbers are dominated by traffic (stock 147 scores the same) and the 171
+numbers are dominated by traffic (vanilla 147 scores the same) and the 171
 control stopped after phase 10 (`lightsync.lua` locked by another process).
 The DMC's lamps do respond in real driving (next sections).
 
@@ -295,7 +295,7 @@ The DMC's lamps do respond in real driving (next sections).
 - **Lamp objects.** `0x8E82B0` walks the UPVH records; each type-17 record
   makes lamp object `id` (type b3, blink variant b0, colour b2) from table
   entry `record +0x30`. A record whose dword at +0x0C is 0 has its subtree
-  skipped; statically every light of stock 147, 171, 227, 266 and of the
+  skipped; statically every light of vanilla 147, 171, 227, 266 and of the
   converted cars is reached (`walk.py`). Light bytes, panel bindings,
   material, render class (5) and vertex format of converted lamps match
   the host's (`audit.py`, `subclass.py`).
@@ -310,9 +310,9 @@ The DMC's lamps do respond in real driving (next sections).
   tail/stop lamp shows 0.2 with only the running lights and 1 when
   braking; a type 3 tail lamp shows 2 with the running lights.
 
-### Stock control and real driving (runs host-20261023-103726 to -121707)
+### Vanilla control and real driving (runs host-20261023-103726 to -121707)
 
-Confirmed-runtime: stock 227 (warm-up), 266, 171, 147 against the ports
+Confirmed-runtime: vanilla 227 (warm-up), 266, 171, 147 against the ports
 370Z, M3 E30, DMC-12, S2000 and Durango (`out/lamps/build*`) in the same
 runs:
 
@@ -326,7 +326,7 @@ runs:
   brake lamps on in every phase too. This, and the 0.2 of a 0x18 lamp with
   only the running lights, is why the first runs saw converted tail lamps
   "flat in every phase".
-- **Real driving:** stock and converted lamps follow the same state: dark
+- **Real driving:** vanilla and converted lamps follow the same state: dark
   while rolling on the throttle, lit while braking and at rest, white
   reverse lamps while reversing (`out/lamps/r115652-drive.png`: 266, 147,
   370Z, DMC-12, M3 E30, daylight and dark). The state machine runs on the
@@ -338,7 +338,7 @@ runs:
   third of a red lens's red, so red texels got almost no alpha: 370Z high
   stop lamp mean 1.9, tails 10.2; in `out/testdrive5` 17 of 40 cars had a
   brake or tail mean below 10 (S2000 and Durango high stop lamps 0.0).
-  Stock red lamp texels average 20 (75 vehicles, `fleet_alpha.py`; per car
+  Vanilla red lamp texels average 20 (75 vehicles, `fleet_alpha.py`; per car
   9 to 58). Fix (`dsf_materials`): the "value" rule (brightest channel) and
   a floor of 64 for lenses that are near black, which Forza lights by its
   glow mask alone (S2000 (31, 2, 2), Durango (19, 0, 0)). Means now: 370Z
@@ -348,15 +348,15 @@ runs:
   Desanne's, and go dark on the throttle. Full rebuild `out/testdrive7`
   (this rule; only the Express van's tails stay low, mean 12.7) in run
   124438 (`out/lamps/r124438-final.png`): S2000, DMC-12 and Express light
-  when braking and reversing like stock 266; the 370Z hit a traffic car in
-  its drive and its broken lamps stayed dark (as stock lamps do when
+  when braking and reversing like vanilla 266; the 370Z hit a traffic car in
+  its drive and its broken lamps stayed dark (as vanilla lamps do when
   broken).
 - **Then too bright and flat** (user report on `out/testdrive7`: "braking
   lights on custom cars are too bright, they are uniformly red"). Under
-  "value" the red lamp means were 19 to 97 against stock's 9 to 58, and the
+  "value" the red lamp means were 19 to 97 against vanilla's 9 to 58, and the
   floor and the saturation of Forza's mostly-high mask (below) gave whole
   lenses the same alpha, so a braking lamp lit as one red patch where
-  stock lamps light along their lens pattern. Fixed by "matched" (next
+  vanilla lamps light along their lens pattern. Fixed by "matched" (next
   section).
 - **Converted cars as traffic: not seen.** `-TrafficIds` with eight ports
   (run 125721): `RequestTrafficVehicles` returned nil and none appeared in
@@ -365,13 +365,13 @@ runs:
   through the same path (traffic AI `0x779960` -> `0x8D0470(3, Brakes,
   ...)` -> the lamp component and its table types), which the runs above
   show working on converted cars, so converted traffic should brake-light
-  like stock (hypothesis until a converted car is seen in traffic).
+  like vanilla (hypothesis until a converted car is seen in traffic).
 
-### Stock lamp alpha and the "matched" rule (offline-checked)
+### Vanilla lamp alpha and the "matched" rule (offline-checked)
 
-Stock lamp texels, all texels under lamp triangles (UV0 rasterised, full
-entry LOD 4) of 146 stock vehicles (`out/lamps/scripts/fleet_tex.py`,
-samples `out/lamps/stock_tex.npy`):
+Vanilla lamp texels, all texels under lamp triangles (UV0 rasterised, full
+entry LOD 4) of 146 vanilla vehicles (`out/lamps/scripts/fleet_tex.py`,
+samples `out/lamps/vanilla_tex.npy`):
 
 | Lamps | Colour | Mean alpha | p10 / 25 / 50 / 75 / 90 / 99 | > 128 | Per-vehicle mean p10 / 50 / 90 / max |
 | --- | --- | ---: | --- | ---: | --- |
@@ -383,10 +383,10 @@ samples `out/lamps/stock_tex.npy`):
 | reverse | white | 58 | 1 / 11 / 36 / 82 / 156 / 253 | 14% | 24 / 53 / 108 / 150 |
 | headlamps | white | 71 | 3 / 16 / 49 / 108 / 180 / 255 | 20% | 41 / 70 / 110 / 161 |
 
-So stock alpha is an authored glow mask: low over most of a lens, with LED
+So vanilla alpha is an authored glow mask: low over most of a lens, with LED
 dots, bulb hot spots and lit strips near 255 (Desanne tail: a dot grid over
 the red part, two bright strips in the reverse part; headlamps a radial
-hot centre; `out/lamps/tex-266-stock.png`). It follows the texel's
+hot centre; `out/lamps/tex-266-vanilla.png`). It follows the texel's
 brightness only loosely (correlation +0.2 to +0.4).
 
 Forza's lamp alpha (raw build of the 370Z, M3 E30, DMC-12, S2000, S5S
@@ -403,15 +403,15 @@ v)` (a = Forza alpha, v = brightest channel, both 0..1: the glow mask leads,
 so a near-black lens glows only where its mask is bright, and darker cells
 and edges of a lens glow less), then a piecewise-linear curve per texel hue
 (`lamp_hue`: red, amber, white) from quantile matching the six cars' scores
-to the stock distribution of that colour (`fit_lut.py`; knots in
-`LAMP_CURVES`, stock percentiles 0, 5, 10, 20 ... 90, 93, 95, 97, 98, 99,
+to the vanilla distribution of that colour (`fit_lut.py`; knots in
+`LAMP_CURVES`, vanilla percentiles 0, 5, 10, 20 ... 90, 93, 95, 97, 98, 99,
 99.5; red also 85 and 100). The curve is monotonic, so each lens keeps Forza's order of texels:
 hot spots near 255, the body low (`out/lamps/forza/*_value_vs_matched.png`:
 Forza RGB, "value", "matched"). Per car and lamp on the six cars: tail +
 stop means 18 to 95 (370Z 25, S2000 18, DMC-12 38, S5S 37, M3 E30 75,
 Challenger 95), stop lamps 10 to 124, reverse 36 to 97, indicators 29 to
-132, headlamps 25 to 135, inside or at the edge of stock's per-vehicle
-range (the Challenger's stop lamp, 124, is above stock's 111).
+132, headlamps 25 to 135, inside or at the edge of vanilla's per-vehicle
+range (the Challenger's stop lamp, 124, is above vanilla's 111).
 
 In game with one shared curve (`out/lamps/matched`, runs
 host-20261024-001505 and -002212) the lens structure showed, but the
@@ -421,33 +421,33 @@ through a shared curve (S2000 tail median 2). Two changes
 
 - **Red curve per car** (`red_lamp_curve`, `Texturing._red_lamp_curve`):
   the knots for red texels come from this car's own red texels inside its
-  lights regions (percentiles of their scores -> stock's red alpha
-  percentiles), so every car's red lamps land on stock's distribution in
+  lights regions (percentiles of their scores -> vanilla's red alpha
+  percentiles), so every car's red lamps land on vanilla's distribution in
   their own order. White and amber keep the shared curves.
-- **Red lenses darkened to stock's brightness** (`matched_lamp_texel`,
+- **Red lenses darkened to vanilla's brightness** (`matched_lamp_texel`,
   `_LENS_X_RED`/`_LENS_Y_RED`): Forza's red lamp texels are brighter than
-  stock's (brightest channel median 144 against 103; M3 E30 199, DMC-12
+  vanilla's (brightest channel median 144 against 103; M3 E30 199, DMC-12
   158), so the lenses looked lit before braking. Their brightest channel is
   mapped down by a quantile curve (never brightened); alpha is scored on
   the original texel.
 
 Per car now (`lamptex.py`): tail + stop means 370Z 41, M3 E30 69, DMC-12
-34, S2000 44, S5S 91, Challenger 36 (stock per-vehicle 23 to 81, max 128);
-stop lamps 370Z 57, S2000 35, Challenger 65 (stock up to 111); red lens
+34, S2000 44, S5S 91, Challenger 36 (vanilla per-vehicle 23 to 81, max 128);
+stop lamps 370Z 57, S2000 35, Challenger 65 (vanilla up to 111); red lens
 brightness DMC-12 129 (was 169), M3 E30 149 (181).
 
 In game (runs host-20261024-003943, -004749, -005601, drive-only:
-`-Lights -LightsDriveOnly`; sheet `out/lamps/lamps-stock-value-matched.png`,
-stock / "value" / "matched", braking under the dark mood and in daylight;
+`-Lights -LightsDriveOnly`; sheet `out/lamps/lamps-vanilla-value-matched.png`,
+vanilla / "value" / "matched", braking under the dark mood and in daylight;
 per run `out/lamps/r003943-zoom.png`, `r004749-zoom.png`,
 `r005601-zoom.png`): the converted lamps now light along their lens
 pattern, the 370Z's tails along their inner edge with the high stop bar,
 the S2000's round tails from a hot centre, the M3 E30's and DMC-12's
 cells unevenly instead of as flat blocks, the Challenger's strip in
-segments, and no brighter than the stock cars beside them (stock 370Z 227,
+segments, and no brighter than the vanilla cars beside them (vanilla 370Z 227,
 DeLorean 171, Desanne 266, Sports Car 07 278, Challenger-like 173). Lamps
 whose Forza lens has no structure (the DMC-12's grid cells) still glow
-cell by cell, more evenly than the stock DeLorean's dots.
+cell by cell, more evenly than the vanilla DeLorean's dots.
 
 ### Red lenses too bright when unlit (user report on `out/testdrive9`, Audi TT RS)
 
@@ -455,21 +455,21 @@ Symptom (confirmed-runtime): the TT RS's tail lamps were one flat pink-red
 patch. In run `vm-20261024-051926` (`out/testdrive10`, `-Lights
 -LightsDriveOnly`; red lamp pixels of the daylight drive frames,
 `out/emissive/redpix.py`) they measured red 224 to 229 in every step, rolling
-on the throttle with the lamps off included, against stock 159 to 178 on the
+on the throttle with the lamps off included, against vanilla 159 to 178 on the
 throttle (Desanne 266, A4 136, 370Z 227) and 173 for the converted 370Z. So
 the lens itself was too bright, not its glow: the alpha of what the camera
-sees (below) is in stock's range.
+sees (below) is in vanilla's range.
 
 Measure (offline-checked, `out/emissive/rearlamps.py`): an orthographic view
 from straight behind, z-buffered over the lamp geometry (triangles with a
 light byte) of the full entry, keeping the pixels of red brake-capable lamps;
 per pixel the texel's alpha and brightest channel, so lamps count by the
 surface the player sees, not by texel count, and bulbs and reflectors behind
-an outer lens don't count. Stock, 140 vehicles with red lamps seen from
+an outer lens don't count. Vanilla, 140 vehicles with red lamps seen from
 behind: brightest channel pooled p5 35, p25 71, median 92, p75 115, p95 153
 (per-vehicle median p10 64, p50 96, p90 126); alpha per-vehicle mean p10 21,
 p50 40, p90 81. `out/testdrive10`: alpha per-vehicle mean p10 19, p50 39,
-p90 57 (in range), brightness median 112 per vehicle (TT 127, stock A4 101).
+p90 57 (in range), brightness median 112 per vehicle (TT 127, vanilla A4 101).
 
 Cause (confirmed-static): the shared lens curve (`_LENS_X_RED`) was fitted on
 every red lamp texel, hidden layers included. Forza lamps are layered (bulb,
@@ -481,7 +481,7 @@ Fix (`dsf_materials.red_lens_scale`, `Texturing.visible_red`): the same rear
 view on the Forza side (Lights-atlas triangles of the finest planned LOD,
 Forza's rear is +z, 5 mm steps) gives each car's visible red texels; after
 the shared curve, every red lamp texel of the car is scaled so the median of
-the visible ones is at most stock's 92 (never brightened; under 400 samples
+the visible ones is at most vanilla's 92 (never brightened; under 400 samples
 the shared curve only). Alpha is untouched. Survey of the 40 testdrive cars
 (`out/emissive/lenssurvey.py`): 31 are darkened, by x0.57 (205 T16, Forza
 224) to x0.97 (Charger Daytona, Golf R); TT x0.72 (128 to 92), M3 E30 x0.68;
@@ -491,18 +491,18 @@ DSF side): TT visible brightness 127 to 87, M3 E30 124 to 84, 370Z 74
 unchanged; alpha unchanged.
 
 In game (run `vm-20261024-060832`, `out/emissive/build2`, IDs 3 = TT, 4 = M3
-E30, next to stock 136 and 266; `research/img/emissive-ttrs-tails.jpg`): on
+E30, next to vanilla 136 and 266; `research/img/emissive-ttrs-tails.jpg`): on
 the throttle in sun the TT's tails are a deeper red (red lamp pixels 201,
-was 224; stock 266 173 in the same run) and braking shows a hot centre
-instead of a flat patch; the M3 E30 measures 174 on the throttle, as stock.
-The TT still reads a little brighter than stock in direct sun with its
-texels below stock's median: its lens tilts up into the sky (lighting, not
+was 224; vanilla 266 173 in the same run) and braking shows a hot centre
+instead of a flat patch; the M3 E30 measures 174 on the throttle, as vanilla.
+The TT still reads a little brighter than vanilla in direct sun with its
+texels below vanilla's median: its lens tilts up into the sky (lighting, not
 texture; open). The A4 control was hit by traffic in that run.
 
 ### The Lotus Carlton showed no brake light (user report on `out/final4`, spool 495)
 
 Symptom (confirmed-runtime, user screenshot): the FM4 LOT_Carlton_89 (host
-229) at rest showed dark tail lamps; stock 229 lights its tails and high
+229) at rest showed dark tail lamps; vanilla 229 lights its tails and high
 stop lamp at rest and when braking (run `vm1-20261026-220339`,
 `lights-229-d1brake.png`).
 
@@ -511,7 +511,7 @@ one `detail_glass_amber` lens (`glassLTL/RTL`, 185 triangles) whose texels
 are red (mean (140, 40, 40), alpha 245), with a small orange band (160, 86,
 52) and the `tail_light` bulb (68 triangles) hidden behind it. The converter
 took lens colours from the technique name, so the lens became an amber
-indicator, and stock lamps are opaque Lights texels: the bulb never shows.
+indicator, and vanilla lamps are opaque Lights texels: the bulb never shows.
 The car had no visible lamp that brakes (master plan: indicator 589 + 599
 cm², reverse 176 cm², tail/stop 0).
 
@@ -544,7 +544,7 @@ Fix (`lights.LampPlan.build(..., texel=texel_sampler(atlases))`):
 - **The bulb behind a red lens** (`_red_lens_indicators`): the nearest
   non-lens lamp triangle whose outline, seen from behind, holds the lens
   triangle's centre (else the nearest across the view). An indicator there
-  makes the lens brake and indicate (0x19/0x1A, as on stock US-style cars):
+  makes the lens brake and indicate (0x19/0x1A, as on vanilla US-style cars):
   FOR_GT_05's red lenses over its `drlinl/drlinr` lamps, MIN_Coopers_11's red
   glass over its indicator bulbs. A reverse bulb keeps a lens that is red by
   its texels (not its technique) a reverse lamp, as it lit before
@@ -578,10 +578,10 @@ Result (offline, master -> branch, at the built LOD 3):
     cad_ctsvcoupe_11, FOR_Fiesta_09, FOR_GT_05, GMC_YukonXL_01, BMW_M6_13,
     FER_458Spider_12, SSC_UltimateAero_10.
 - In game (`vm2-20261027-054204` master and `vm2-20261027-045417` branch,
-  `-Lights -LightsDriveOnly`, IDs 229 stock, 1 Carlton, 2 GTO, 3 Ford GT, 4
+  `-Lights -LightsDriveOnly`, IDs 229 vanilla, 1 Carlton, 2 GTO, 3 Ford GT, 4
   207 RC; `research/img/brakelights-vm-sheet.jpg`): on master the Carlton's
   lamps stay dark when braking, day and dark. On the branch they light like
-  stock 229's, its orange band blinks, and the lower band lights white in
+  vanilla 229's, its orange band blinks, and the lower band lights white in
   reverse. The Ford GT's round lamps dim on the throttle and light on the
   brake. The 207 RC's side tails don't glow on master or branch: their
   Lights texels have alpha median 0 (glow mask, #103).
@@ -591,7 +591,7 @@ and TOY_6_SC430_08 draw their lamps at Forza LOD 3 only as `lights_glass`
 cover glass, with no lamp technique (#103).
 
 The cars still under half (LOD 1 list): rear fog lamps (`fogred`, ASC_KZ1R_12,
-LAM_Countach_88), tail-only position lamps (`drlred`, BMW_M3E92_08; stock
+LAM_Countach_88), tail-only position lamps (`drlred`, BMW_M3E92_08; vanilla
 uses 0x03 red tails too), `reverse_light` drawn on red texels
 (PEU_207Super2000_07, TOY_Aygo_11), and CHE_CorvetteZR1_09, whose four round
 lamps are `lindtailside/rindtailside` (DRL + indicator; whether Forza brakes
@@ -600,10 +600,10 @@ them is unknown).
 ### Head lamps dark by day (player report)
 
 "The headlights should be on all the time like vanilla cars." Static
-(`out/brakes/stockfront.py`, front light entries of the 150 stock
+(`out/brakes/vanillafront.py`, front light entries of the 150 vanilla
 vehicles): 140 have a front lamp that lights with DaytimeRunning: white
 position lamps 0x03 in the head-lamp cluster (99 vehicles, next to 0x01 head
-lamps; stock 229 at x ±0.60 beside its ±0.44 head lamps), or head lamps of
+lamps; vanilla 229 at x ±0.60 beside its ±0.44 head lamps), or head lamps of
 type 0x1D, Headlights + DaytimeRunning (33; 31 of them have no 0x01 at
 all). Only 10 have neither. The converter gave Forza's head lamps 0x01 and
 made position lamps only from position-lamp techniques (`drlwhite`...), so
@@ -618,7 +618,7 @@ the front (512 through 0x1D head lamps); 515 cars change at the front. At the
 built LOD 3: 64 -> 549. In game (`vm1-20261027-051849` master,
 `vm1-20261027-052118` branch, `-Views fq`; `research/img/headlamps-day.jpg`):
 the Carlton's head lamps are dark by day on master and lit on the branch,
-like stock 198's 0x1D lamps in the same run. So the game lights DaytimeRunning
+like vanilla 198's 0x1D lamps in the same run. So the game lights DaytimeRunning
 on the player's car in daylight. The 19 cars without one (LOD 1):
 pop-up or covered head lamps (MAZ_Miata_94, TOY_Sprinter_85,
 JAG_XJ220_93, CHE_CorvetteStingray_67, race cars), decal lamps (the
@@ -662,7 +662,7 @@ the built car `out/lens/sub4_alpha_ba.png`), which the brake lamp's red lit
 up. 375 cars had such knots under 0.002 apart (most of them only in the
 alpha-0 knots at the bottom, which don't matter).
 
-**Fix (`src/dsfforza/convert/lenses.py`, `Texturing._bake_lenses`).** Stock
+**Fix (`src/dsfforza/convert/lenses.py`, `Texturing._bake_lenses`).** Vanilla
 lamps are opaque Lights texels with the lens pattern painted in, so the lens
 keeps its triangles and its texels get what Forza shows through it: before the
 atlas is planned, every texel of a `detail_glass_*` lens (finest planned LOD)
@@ -697,7 +697,7 @@ the `out/final4` chunks remerged as IDs 304 to 308 (`out/lens/before4`), run
 show their reflectors through the lens instead of a white plate, the Evo its
 amber indicator in the corner; the Esperante's yellow lexan shows the lamps
 inside it; the WRX STI 04's tail lamps, braking at rest, glow an even red
-instead of blotches. Stock hosts weren't in these runs: the glow (lamp score)
+instead of blotches. Vanilla hosts weren't in these runs: the glow (lamp score)
 of a baked lens is the lens texel's, as before. With the default
 `-WaitSeconds 60` the probe ended before its Shift camera came down (run
 `vm1-20261027-040419`: "zap level 3" until the end), and with `-ShotSeconds 10`
@@ -710,7 +710,7 @@ lens colours from Forza's own texels (`forza2dsf.convert` gives
 decisions are unchanged. The WRX STI 04's tails look as in the run above.
 The Carlton's head lamps, now lit by day, are bright white in daylight
 (`img/carlton-headlamps-by-day.jpg`). Their lens glow alpha is mean 50,
-median 31, inside stock's head-lamp range (mean 71, median 49), and the bake
+median 31, inside vanilla's head-lamp range (mean 71, median 49), and the bake
 keeps it as it was: issue #115.
 
 ### Pop-up head lamps drawn raised and lowered at once (issue #88)
@@ -720,7 +720,7 @@ lamps in both states at once, the raised pods standing over the closed lids
 (RX-7 FC, NSX, Countach, the Corvettes, the Cougar Eliminator's grille doors
 open and shut together).
 
-**What Forza has (confirmed-static).** The two states are separate stock
+**What Forza has (confirmed-static).** The two states are separate vanilla
 sections of the main carbin: `<base>up` (raised, doors open) beside
 `<base>down` (lowered, doors shut): `headlightLup`/`headlightLdown`,
 `headlightLUp` on the two NSXs, `glassLHLup`/`glassLHLdown` on the Starion.
@@ -730,7 +730,7 @@ the Stratos's `headlightLup` has no LOD 1 or 2 geometry). Nothing in
 `carattribs.xml` or `ShaderSettings.xml` names them, and the cockpit carbins
 hold only the lowered state (`headlightLdown` on the Countach and the M1,
 nothing on the others): a parked Forza car shows its lamps down. The names
-didn't end in an upgrade letter, so `stock_sections` kept both. The GTO
+didn't end in an upgrade letter, so `vanilla_sections` kept both. The GTO
 Judge's `headlightL_Cover` (grille doors over the lamps) is a single state
 and stays.
 
@@ -746,7 +746,7 @@ MIT_Starion_88, MRC_CougarEliminator_70, PON_TransAm_02,
 PON_TransAmGTA_87, TOY_CelicaSupra_84, TOY_MR2GT_95, TOY_MR2SC_89,
 TOY_Supra20GT_92. After the fix: 0.
 
-**What stock DSF does (confirmed-static).** Stock pop-up cars use chassis
+**What vanilla DSF does (confirmed-static).** Vanilla pop-up cars use chassis
 variants (`upvh.md`, "Chassis variants"): the Countach (210), Diablo (211)
 and Jalpa (213) have two chassis records, role 0x100 on MODL part 0 and 0x101
 on part 1. Part 0 is the body with the lamps raised (308 / 164 / 270 more
@@ -756,13 +756,13 @@ four (0x100 to 0x103: lamps up or down, with or without the centre pod). The
 other 0x1xx pairs are not lamps: the taxi signs (268, 272, 282), the
 Eldorado's, XLR's and Beetle's roofs, the Cutlass's spoiler, identical
 copies on the Challenger (172) and Tanner; 0x5xx are convertible roofs.
-`out/popup/variant_diff.py` and `chassis_records.py` list them. No stock
+`out/popup/variant_diff.py` and `chassis_records.py` list them. No vanilla
 car animates its lamps (the 13 UPVH animation blobs are on spoilers and
 the tow truck).
 
 In game the variant doesn't follow the lamps (confirmed-runtime, run
-`vm1-20261027-162907`, stock archive, `-Views 'nose,nose+lit,nose+night'`;
-`img/popup-stock-countach-jalpa.jpg`): the player's Countach and Jalpa show
+`vm1-20261027-162907`, vanilla archive, `-Views 'nose,nose+lit,nose+night'`;
+`img/popup-vanilla-countach-jalpa.jpg`): the player's Countach and Jalpa show
 the raised part 0 (0x100) by day with every lamp off, and the same with
 Headlights and DaytimeRunning on, by day and under the dark mood. When the
 game draws the lowered 0x101 part (traffic, parked cars, a random pick per
@@ -770,7 +770,7 @@ spawn?) is not traced; the Cuda on host 172 drew it as the player's car
 (`upvh.md`), so the pick is probably per vehicle or per spawn, not per lamp
 state. So DSF has no lamp-driven geometry switch to give the ports.
 
-**Fix (`forza2dsf.raised_lamp`, used by `stock_sections`).** A section
+**Fix (`forza2dsf.raised_lamp`, used by `vanilla_sections`).** A section
 `<base>up` (any case) is dropped when `<base>down` or `<base>` exists, so
 the exterior, cockpit, lamp plan and damage all see the lowered state only,
 as Forza shows a parked car. The lamp plan's head lamps now sit in the
@@ -810,23 +810,23 @@ white blobs there. So the glow isn't the main cause.
 Measure (offline-checked, `out/dayglow/frontlamps.py`): the orthographic
 rear view of `rearlamps.py` turned to the front (4 mm pixels, z-buffered over
 the lamp triangles of the full entry, area-weighted), per visible pixel the
-table type, texel RGB and alpha. Stock, 142 vehicles, white texels
+table type, texel RGB and alpha. Vanilla, 142 vehicles, white texels
 (`lamp_hue`) of the front lamps: brightest channel pooled p5 41, p25 93,
 median 137, p75 180, p95 230 (per-vehicle median p10 82, p50 134, p90 178).
 Glow alpha of the visible surface: per-vehicle mean p10 41, p50 64, p90 108.
-Stock 0x1D head lamps (32 vehicles) carry the same texel alpha as 0x01 ones
-(texel-weighted mean 71 and 71, median 49 and 50, `out/lamps/stock_tex.npy`),
-so stock doesn't author its day-lit lamps with less glow. Ported, master
+Vanilla 0x1D head lamps (32 vehicles) carry the same texel alpha as 0x01 ones
+(texel-weighted mean 71 and 71, median 49 and 50, `out/lamps/vanilla_tex.npy`),
+so vanilla doesn't author its day-lit lamps with less glow. Ported, master
 (`out/dayglow/master`): the Carlton's visible head lamps sit at brightness
 206 with alpha mean 35, median 26; Lancer Evo VI 173 (alpha 33); M3 E30 197
 (alpha 69, median 26); 370Z 90.
 
 Cause (confirmed-static): Forza's white lamp texels are much lighter than
-stock's. The Carlton's head lamp is a (195, 195, 195) `detail_glass_clear`
+vanilla's. The Carlton's head lamp is a (195, 195, 195) `detail_glass_clear`
 lens at opacity 88 to 247 over a `head_light` / `textured_reflector` of 205 to
 221 at alpha 255 (`out/dayglow/forzalens.py`), so the baked lens is about 205
 everywhere: a light surface in sun before any lamp lights, and with the
-0x1D glow on top it blows out. Only red lenses were brought to stock's
+0x1D glow on top it blows out. Only red lenses were brought to vanilla's
 brightness (Open 5). Forza's mask carries no hot spot for the Carlton (the
 reflector is 255 throughout), so there is no bulb structure to carry over.
 
@@ -834,18 +834,18 @@ Fix (`dsf_materials.white_lens_scale`, `Texturing.visible_white`): as
 `red_lens_scale` does for red lamps, the visible white front lamp surface of
 each car is measured on the Forza side (the `visible_red` view turned to the
 front, triangles of the front half, lenses baked), and every white Lights
-texel of the car is scaled so its median is at most stock's 137 (never
+texel of the car is scaled so its median is at most vanilla's 137 (never
 brightened; under 400 samples nothing changes). Alpha (glow) is scored on
 the original texel, so it doesn't change. On the DSF side the Carlton, Evo
 VI and M3 E30 go to 136, 137 and 133; the 370Z (101 on the Forza side) is
-unchanged. Rear white lamps take the same factor: stock reverse lamps seen
+unchanged. Rear white lamps take the same factor: vanilla reverse lamps seen
 from behind are median 119 (per vehicle p10 65, p90 177); the ports sit at
 148 to 235 on master.
 
 Survey of the roster (`out/dayglow/survey.py`, `tools/batches/all.txt`,
 573 cars): 311 are darkened (scale 0.54 to 0.99, median 0.77; lowest
 MAS_MC12Corsa_08, MER_SLR_05, MAZ_Furai_08, REN_Clio197_07, 0.54 to 0.58),
-245 already sit at or below stock, and 17 have too few visible white texels
+245 already sit at or below vanilla, and 17 have too few visible white texels
 (race cars with covered or decal lamps, PAN_51_Esperante_05's yellow
 lexan). Per car the visible white median is p10 74, p50 145, p90 204 before.
 
@@ -853,17 +853,17 @@ In game (confirmed-runtime, `-Views nose -Palette 0`; master
 `vm2-20261027-110011`, this change `vm1-20261027-110149` and
 `vm2-20261027-162933`; `img/headlamps-day-whitescale.jpg`): the Carlton's
 lit head lamps show the lens flutes and reflector instead of a flat patch
-(lamp-box luminance mean 229 -> 211, standard deviation 16 -> 22; stock 198's
+(lamp-box luminance mean 229 -> 211, standard deviation 16 -> 22; vanilla 198's
 lit 0x1D lamp 211, 37 in the same box size). The Evo VI changes little (x0.80).
-Stock 229, the host, has 0x01 head lamps and a small 0x03 position lamp, so
+Vanilla 229, the host, has 0x01 head lamps and a small 0x03 position lamp, so
 its head lamps stay dark by day.
 
 Tried and dropped: blending the glow mask through a white lens like its
 colour (`a x lens + (1 - a) x behind`, run `vm1-20261027-164203`). It lit the
 M3 E30's half-clear round lamps (lens alpha 126 over an `oldhead` at 255) the
-way stock 241's and 130's round 0x1D lamps light, but the Carlton's uniform
+way vanilla 241's and 130's round 0x1D lamps light, but the Carlton's uniform
 255 reflector made its whole lens one alpha (p25 47, median 51, p75 72) and
-it was a flat blob again (luminance 236, standard deviation 10). Stock lit
+it was a flat blob again (luminance 236, standard deviation 10). Vanilla lit
 lamps keep about a quarter of the lamp at low alpha (0x1D visible p25 18 on
 average), which is where their structure comes from. The M3 E30's dim lamps
 were the open part (issue #124, next section).
@@ -872,8 +872,8 @@ were the open part (issue #124, next section).
 
 Symptom (confirmed-static, confirmed-runtime in #115's runs): the ported head
 lamps' daytime glow followed the lens, not the lamp. The M3 E30's round lamps
-barely glowed where stock 241's and 130's round 0x1D lamps glow white, and over
-the roster the visible daytime glow was spread wider than stock's both ways.
+barely glowed where vanilla 241's and 130's round 0x1D lamps glow white, and over
+the roster the visible daytime glow was spread wider than vanilla's both ways.
 
 Measure (offline-checked, `out/dayglow/` in the `driversf-forza-wt-dayglow`
 worktree): `dsffront.py` is `rearlamps.py` turned to the front (DSF side, full
@@ -882,7 +882,7 @@ and texel); `survey.py` is the Forza-side view of #115
 (`Texturing._visible_lamp_texels(front=True)`, 4 mm), with each pixel's glow
 alpha (the converted texel's, or the new day glow) and per lamp (connected
 pixels) the mean alpha in the outer, middle and inner third of the distance
-from its edge (`profile`). Stock, 142 vehicles: white front lamp alpha
+from its edge (`profile`). Vanilla, 142 vehicles: white front lamp alpha
 per-vehicle mean p10/50/90 41/64/108; the 32 vehicles with 0x1D head lamps
 pool to p10/25/50/75/90 5/19/55/116/180 and their lamps run dark to hot,
 median 32 / 88 / 131 by thirds (inner over outer 4.9). On master the ports'
@@ -895,7 +895,7 @@ maps to about 20); an opaque fluted one glowed along its flutes and edges (the
 Carlton's edge third 49, its middle 28). Head lamp surfaces seen directly
 (through DSF's clear glass) glowed by their Forza mask, which is 255 almost
 everywhere on most cars, so their lamps came out flat and at the top of
-stock's range (REN_Clio197_07 visible mean 222).
+vanilla's range (REN_Clio197_07 visible mean 222).
 
 Fix (`lenses.lens_glow`, `lamp_glow`, `day_glow`; `Texturing._glow`, used by
 `render`):
@@ -917,14 +917,14 @@ Fix (`lenses.lens_glow`, `lamp_glow`, `day_glow`; `Texturing._glow`, used by
   is filled (morphological closing), so it is as hot as the bowl around it.
   For a lamp surface seen directly the depth is behind its subsection's
   frontmost point.
-- **Per lamp onto stock.** `Texturing._glow` looks at the car from straight
+- **Per lamp onto vanilla.** `Texturing._glow` looks at the car from straight
   ahead (the `visible_white` view, 5 mm) and, per lamp (one lens or head lamp
   subsection; at least 50 visible samples), fades the outer 40% of its
-  edge-to-middle distance in to 0 (stock lamps are dark at the rim; a box
+  edge-to-middle distance in to 0 (vanilla lamps are dark at the rim; a box
   reflector like the Carlton's stays deep to the lens edge), then ranks each
-  texel's raw glow among the lamp's visible samples onto the stock 0x1D
+  texel's raw glow among the lamp's visible samples onto the vanilla 0x1D
   distribution (`DAY_HEAD_ALPHA`). Every head lamp therefore glows as much as
-  stock's, brightest where Forza's light and the reflector's shape are, and a
+  vanilla's, brightest where Forza's light and the reflector's shape are, and a
   bumper lamp no longer pushes the main lamps down. Raw 0 stays 0. Left and
   right lamps often share texels, so positions are kept as |x|.
 - `render` takes that glow over the converted alpha, averaged over the source
@@ -936,9 +936,9 @@ Fix (`lenses.lens_glow`, `lamp_glow`, `day_glow`; `Texturing._glow`, used by
 
 Roster (offline, `survey.py` on the 573 cars of `tools/batches/all.txt`,
 master -> branch; per-car mean glow alpha of the visible white front lamp surface,
-cars with 400 samples or more, against stock's per-vehicle p10 41 and p90 108):
+cars with 400 samples or more, against vanilla's per-vehicle p10 41 and p90 108):
 
-| | p10 / 50 / 90 | under stock p10 | over p90 | by thirds outer / middle / inner |
+| | p10 / 50 / 90 | under vanilla p10 | over p90 | by thirds outer / middle / inner |
 | --- | --- | ---: | ---: | --- |
 | lit lamp surfaces, master (543 cars) | 21 / 52 / 129 | 207 | 89 | 44 / 55 / 66 |
 | lit lamp surfaces, branch | 61 / 74 / 77 | 10 | 2 | 32 / 90 / 126 |
@@ -964,18 +964,18 @@ Built (DSF side, `dsffront.py`, IDs 304 to 306 of `out/dayglow/before` and
 | BMW_M3E30_91 | 68, 60 / 65 / 90 | 79, 23 / 94 / 158 |
 | LOT_Carlton_89 | 35, 48 / 28 / 26 | 73, 26 / 84 / 129 |
 | MIT_LancerEvoVIGSR_99 | 33, 18 / 40 / 55 | 75, 25 / 90 / 150 |
-| stock 0x1D (32 vehicles) | 74 median, 32 / 88 / 131 | |
+| vanilla 0x1D (32 vehicles) | 74 median, 32 / 88 / 131 | |
 
 In game (confirmed-runtime, VM 2, `-Views 'nose,nose+night' -Palette 0
 -ShotSeconds 3 -WaitSeconds 600`; master `out/dayglow/before` run
-`vm2-20261027-195131` with stock 241 and 130, branch `out/dayglow/after2` runs
+`vm2-20261027-195131` with vanilla 241 and 130, branch `out/dayglow/after2` runs
 `vm2-20261027-200145` and `vm2-20261027-202618`;
 `img/headlamps-dayglow-ingame.jpg`, `img/headlamps-dayglow-offline.png`): by day
-the M3 E30's round lamps now glow white with a hot middle, as stock 241's and
+the M3 E30's round lamps now glow white with a hot middle, as vanilla 241's and
 130's round 0x1D lamps do (master: pale unlit discs); the Evo VI's lamps glow
 from the reflector's centre instead of barely; the Carlton's glow gathers in the
 middle of the lamp. At night the three light as before or brighter in the
-middle, not past stock. A traffic car hit the Evo (first branch run) and the
+middle, not past vanilla. A traffic car hit the Evo (first branch run) and the
 Carlton (second) during their views; the shots used are before the hits.
 
 ### Lamps broke with the wrong end (issue #132)
@@ -1002,7 +1002,7 @@ the lamp's end.
 Survey (offline, `out/lampside/survey.py` and `summary.py` in the
 `driversf-forza-wt-lampside` worktree; the 573 cars of
 `tools/batches/all.txt` on their `research/host-picks.tsv` hosts, entry
-places from the stock tables; NIS_Leaf_11 has no car data):
+places from the vanilla tables; NIS_Leaf_11 has no car data):
 
 | | master | branch |
 | --- | ---: | ---: |
@@ -1093,9 +1093,9 @@ Lights-atlas surface lies 0 to 0.3 m behind 30% of its area or more).**
 | rear reflectors (no light byte) | 508 cars light more of their rear lamps after the change | |
 
 DSF's window glass texel is (13, 233, 192): blue is the alpha, so the pane is 75%
-opaque with a dark diffuse. Stock cars use the same slot over their head lamps
-(134 of 148 stock vehicles have glass over 30% or more of their front lamp
-area, `out/lamps/stockcover.py`; their cover UVs sit in the flat window region),
+opaque with a dark diffuse. Vanilla cars use the same slot over their head lamps
+(134 of 148 vanilla vehicles have glass over 30% or more of their front lamp
+area, `out/lamps/vanillacover.py`; their cover UVs sit in the flat window region),
 but in game the pane over a converted lamp hid it: with the covers left out
 (`out/lamps/nocover`, run `vm1-20261028-092416`) the Veyron's and 300C's tails
 glowed red at night, under the window glass (run `vm1-20261028-092017`) barely.
@@ -1132,8 +1132,8 @@ footprint, and `Texturing.material` drew it in the shared trim's dark texel.
 In game (confirmed-runtime, `-Views 'nose,rear,nose+night,rear+night' -Palette 0
 -ShotSeconds 3 -WaitSeconds 600`; master `out/lamps/before14`, branch
 `out/lamps/after14` / `final14`; runs `vm1-20261028-093612` / `-094231` (Devon,
-Mustang, Panoz, X5 M, Veyron, 300C, stock 182), `vm2-20261028-093737` / `-094430`
-(G37, Cee'd, Supra, Eclipse, 9-3, ZR1, stock 227) and the rerun below): the Devon's
+Mustang, Panoz, X5 M, Veyron, 300C, vanilla 182), `vm2-20261028-093737` / `-094430`
+(G37, Cee'd, Supra, Eclipse, 9-3, ZR1, vanilla 227) and the rerun below): the Devon's
 tails show the lamp's structure by day and glow red at night; the Panoz's yellow
 lamps glow by day and night; the G37's, Eclipse's, 9-3's and ZR1's tails show
 their lamp graphics and glow at night (the ZR1's four round lamps, #103), the
@@ -1215,7 +1215,7 @@ car (median; at most 7.4).
 
 In game (VM 1, `-Views 'nose,rear,nose+night,rear+night' -Palette 0 -ShotSeconds 3
 -WaitSeconds 600`; IDs 304 X5 M, 305 Lancer Evo VI, 306 GTI VR6, 307 300C (FM4), 308 Mustang
-GT 05, stock 182; master `out/lamps2/beforeA` run `vm1-20261028-103158`, this change
+GT 05, vanilla 182; master `out/lamps2/beforeA` run `vm1-20261028-103158`, this change
 `out/lamps2/afterA` run `vm1-20261028-103705`, with the cover glow above `out/lamps2/afterA2`
 run `vm1-20261028-104816`, IDs 306, 305, 304, 182):
 
@@ -1223,7 +1223,7 @@ run `vm1-20261028-104816`, IDs 306, 305, 304, 182):
   whole L glows red in the dark mood (master: barely visible) (`img/lampglass-x5m-ingame.jpg`).
 - GTI VR6: red tail lamps behind their covers instead of dark grey glass; the head lamps
   show their reflectors, and glow by day as day-lit head lamps (0x1D) do on the other ports;
-  in the dark mood the tails glow along the whole lamp, as stock 182's do
+  in the dark mood the tails glow along the whole lamp, as vanilla 182's do
   (`img/lampglass-gtivr6-ingame.jpg`, `img/lampglass-gtivr6-dark-ingame.jpg`).
 - Lancer Evo VI: the red tail glass a little deeper by day; lit in the dark mood (master's
   shot of that view missed the car) (`img/lampglass-evo6-ingame.jpg`).
@@ -1237,7 +1237,7 @@ run `vm1-20261028-104816`, IDs 306, 305, 304, 182):
    write may set only the position), so headlamps and front position lamps
    of converted cars are unchecked in game. Traffic never sets Headlights
    or DaytimeRunning in daylight (`draw-distance.md`), so in normal play
-   they stay off for stock and converted traffic alike.
+   they stay off for vanilla and converted traffic alike.
 2. b0 and the pi, pi pair; whether the flare sprite uses the direction.
 3. Lamps under detachable parts: the light records hang under the host's
    bumper and boot records (a lamp breaks when its record's part is damaged,
@@ -1253,12 +1253,12 @@ run `vm1-20261028-104816`, IDs 306, 305, 304, 182):
    were removed for that reason (they were off by default).
 5. Converted amber lenses keep Forza's brightness; red lenses are darkened
    (`red_lens_scale`) and white ones too since issue #115
-   (`white_lens_scale`). The S5S Raptor's tails (mean 91) sit above stock's
+   (`white_lens_scale`). The S5S Raptor's tails (mean 91) sit above vanilla's
    per-vehicle p90 (81).
 6. In a run, cars after the fifth sometimes don't spool ("NOT spooled after
    40 ticks", run host-20261024-003943); keep lamp runs to five IDs.
 7. Lens bake ("Lamp lenses drawn opaque"): the view is straight in along the
-   lens normal, so the lamp inside doesn't shift with the camera (stock lamps
+   lens normal, so the lamp inside doesn't shift with the camera (vanilla lamps
    are flat textures too). Since "Lamp glass" the `lights_gls_*` glass and the
    textured covers are baked too; covers not over a lamp stay DSF's window glass.
    The lenses keep the texel's colour and alpha: Forza's race shaders scale the lens
@@ -1279,7 +1279,7 @@ sets. The first is the palette: 1 to 14 `SPSP` (fleet: 25 vehicles with 8,
 22 with 1, 17 with 6, ... 3 with 14), one per paint choice. Each SPSP holds
 nine `MARP` (seven on two vehicles):
 
-| Parameter | Meaning (from the 948 stock entries) |
+| Parameter | Meaning (from the 948 vanilla entries) |
 | --- | --- |
 | `g_vec4TintColour1_Alpha` | (x, 1, z, 1) on metallic paints, (0, 0, 0, 1) on solid ones (91 entries, e.g. the Desanne's dark blue, Super Car whites); a few vans and trucks hold a colour here |
 | `g_vec3TintColour2` | base colour, linear RGB; whites reach 0.9 to 1.0 (the Desanne's white is 0.54) |
@@ -1298,7 +1298,7 @@ for script-spawned cars looks deterministic.
 Paint UV0 does **not** sample the vehicle's chassis texture: both paint
 materials (`GLOBAL_Chassis`, `GLOBAL_Chassis_LOD1`) have `g_texDiffuseMap` =
 `00122b73d1fa1227`, a shared 1024 x 512 DXT1 atlas in SSIC (parts, plates
-and colour-coded mask blocks). On every stock car checked (266, 227, 229,
+and colour-coded mask blocks). On every vanilla car checked (266, 227, 229,
 147) 57 to 91% of the paint triangles' UV0 lands in its (240, 192, 240)
 block (50 x 50 texels centred at (0.848, 0.712); `global_paint_uv.py`), the
 rest on other mask colours (panel details). UV1 is the damage-decal UV
@@ -1333,12 +1333,12 @@ stainless body as flat grey paint.
 
 ### The converter (`src/dsfforza/convert/paint.py`, offline-checked)
 
-For each Forza colour: pick the stock palette entry of the same finish
+For each Forza colour: pick the vanilla palette entry of the same finish
 (metallic: `TintColour1.y` = 1) whose apparent colour (colour 2, or colour 3
 when the fresnel power is 1 or more and colour 3 is brighter) is closest in
 sRGB, luminance weighted; copy its nine parameters; set the main colour to
 the Forza colour in linear RGB and the other to the Forza colour times the
-stock entry's luminance ratio (near-black colours keep the stock sheen).
+vanilla entry's luminance ratio (near-black colours keep the vanilla sheen).
 `install` replaces the host's SPSPs (the host's first SPSP is the chunk
 template; every MARP gets an explicit payload) and drops colours from the end
 if the full entry's NONR would pass the SSLP buffer (0x6D000) less 0x400 for
@@ -1348,16 +1348,16 @@ Since the DMC-12 report (below), `forza_colours` drops repeated
 (RGB, metallic) rows, `pick_colours` keeps the 14 most distinct colours (in
 Forza's order) when a car has more, instead of the first 14 (the FM4 Charger
 Daytona's 20 lost its white, grey and black), templates exclude the 40
-stock entries whose colour 1 is an RGB colour (`is_template`), and
+vanilla entries whose colour 1 is an RGB colour (`is_template`), and
 `SPECIAL_FINISHES` maps a car to a `FINISH_PRESETS` entry used as is
-(`DEL_DMC12_82` -> `stainless`, the stock DeLorean's (spool 171) single
+(`DEL_DMC12_82` -> `stainless`, the vanilla DeLorean's (spool 171) single
 entry).
 
 ### What the paint shader does with the palette (confirmed-static)
 
 `GLOBAL_Chassis` is SSIC GPCH program 27 (26 to 29 are the variants with
 `g_hCustomFresnelPower`; disassembly: `python out/damage/gpdis.py
-out/stock/Install/dngvehicles.sp 27 p`, saved in
+out/vanilla/Install/dngvehicles.sp 27 p`, saved in
 `out/scratch/paint/gp27_ps.txt`). In
 `Vehicles_Functions.hlsl` / `PixelShader.hlsl`:
 
@@ -1376,12 +1376,12 @@ out      = lerp(lit + refl, g_vec4FinalTintColour.rgb, g_vec4FinalTintColour.a)
 `g_vec4TintColour1_Alpha` is an effect parameter but no vertex or pixel
 shader of the 87 programs has it in its constant table (only
 `g_vec4FinalTintColour`, a global): colour 1 doesn't reach the paint
-shader. The stock entries fall into two kinds: flat ones (fresnel power 5
+shader. The vanilla entries fall into two kinds: flat ones (fresnel power 5
 to 15, colour 2 = colour 3, e.g. a flat silver of 0.27 to 0.35 on 67 of the
-150 stock vehicles), which show one colour at every angle, and low-power ones (0.05 to 1.7)
+150 vanilla vehicles), which show one colour at every angle, and low-power ones (0.05 to 1.7)
 with a dark colour 3, which mix toward colour 3 by the fresnel term. Taken
 literally (vectors as named, power as stored), a low-power entry would show
-mostly colour 3, which doesn't fit white stock cars with colour 2 0.95 and
+mostly colour 3, which doesn't fit white vanilla cars with colour 2 0.95 and
 colour 3 0.02; the CPU may transform the power (it already derives
 `g_OneMinusFresnelbias` and `TintColour3MinusTintColour2`), so how bright
 the two kinds look against each other is open (hypothesis).
@@ -1389,7 +1389,7 @@ the two kinds look against each other is open (hypothesis).
 ### The DMC-12 came out white (user report on `out/testdrive3`, ID 27)
 
 What was built (confirmed-static): Forza's solid `#999999` (linear 0.319)
-matched the stock Courier van's (spool 170) flat grey entry, giving
+matched the vanilla Courier van's (spool 170) flat grey entry, giving
 colour 2 = colour 3 = 0.319, fresnel power 10, reflection 0.3, second
 specular 0.05 / power 1: one light grey at every angle, a plain light-silver
 paint. DSF's own DeLorean (171) uses colour 2 0.267, colour 3 0.004, fresnel
@@ -1397,33 +1397,33 @@ power 0.75, reflection 0.1, second specular 0.3 / power 5. Why the flat
 light grey reads as pure white rather than silver is the in-game question
 (hypothesis: the flat entry has no darker term at all, the steel one mixes
 toward near black). The decal tint mask at the DMC's paint UV1 is normal (mean 0.87,
-like other ports 0.88 to 0.93 and stock 0.93 to 0.97;
+like other ports 0.88 to 0.93 and vanilla 0.93 to 0.97;
 `out/scratch/paint/tintmask.py`), so the paint was not lost to bare metal.
 
-Fix: `SPECIAL_FINISHES` / `FINISH_PRESETS` (stainless = the stock 171 entry).
+Fix: `SPECIAL_FINISHES` / `FINISH_PRESETS` (stainless = the vanilla 171 entry).
 
 The `out/paintfix/` runs planned here never ran; the preset was tested on
 `out/testdrive4` instead (next section).
 
 ### The DMC-12 came out black (user report on `out/testdrive4`, ID 27)
 
-Symptom (confirmed-runtime): with the stainless preset (the stock DeLorean's
+Symptom (confirmed-runtime): with the stainless preset (the vanilla DeLorean's
 entry) the port drew near black in the chase view (`host-20261023-082346`,
-`observe-06/07`), while stock 171 in the same runs is light silver
+`observe-06/07`), while vanilla 171 in the same runs is light silver
 (`host-20261023-083742`, `-090511`, `-092427`, `observe-02`).
 
 Ruled out (offline and A/B in game, all on the DMC alone, ID 1; sheets
 `out/dmc/run2*.png`, `run3*.png`, `stainless-compare.png`):
 
-- the palette: identical to stock 171 (`out/dmc/spsr.py`), and copying 171's
+- the palette: identical to vanilla 171 (`out/dmc/spsr.py`), and copying 171's
   entry byte for byte (`vF`, `host-20261023-093016`) changes nothing;
 - vertex normals (decoded like the vertex shader, against face normals and
   outward: `out/dmc/normals.py`, `outward.py`), damaged-normal deltas, the
-  baked sky term, MODL flags and submodel headers: like stock;
-- paint UV0 on stock 171's own texel (0.909, 0.708) instead of the paint
+  baked sky term, MODL flags and submodel headers: like vanilla;
+- paint UV0 on vanilla 171's own texel (0.909, 0.708) instead of the paint
   block (`vC`, `-090833`) and UV1 on its hidden-face corner (0.99, 0.01)
   (`vB`, `-090652`): still black;
-- the exterior entry's materials: stock exteriors use the `_LOD1` shared
+- the exterior entry's materials: vanilla exteriors use the `_LOD1` shared
   materials (paint and trim in 149 of 150, glass 145, tyres 150;
   `out/dmc/extmats.py`), converted ones used the full-entry ones; switching
   to `_LOD1` (`vE`, `-092015`) changes nothing visible (kept, below).
@@ -1432,11 +1432,11 @@ A flat palette (colour 3 = colour 2 = 0.267, power 10; `vD`,
 `-085437`, `observe-12`) gives a light steel body, so the fresnel term was it.
 A probe with colour 2 red and colour 3 blue on both cars (`vG`,
 `-092835`, `out/dmc/run7G-compare.png`) shows the mix applied literally on
-both: stock 171's rear panel, facing the camera, is pink (red and blue), its
+both: vanilla 171's rear panel, facing the camera, is pink (red and blue), its
 edges blue; the port's visible paint is blue at the edges. The paint shader
 treats both cars alike; what differs is what the chase camera sees. Weighted
 by projected area from behind and 15 degrees above (`out/dmc/facing.py`),
-stock 171 shows 2.3 m² of paint at a mean n.v of 0.54 (its rear panel,
+vanilla 171 shows 2.3 m² of paint at a mean n.v of 0.54 (its rear panel,
 lamp surround and bumper are paint, "DeLorean" in black letters), the port
 0.86 m² at 0.25: Forza's DMC has a black rear surround (`body` `black`),
 a grey plastic bumper (`bumperRa` `plastic2`), like the real car, and its
@@ -1445,18 +1445,18 @@ those grazing panels go to colour 3, near black.
 
 This also settles the open question above about how literally the power is
 used: `pow(1 - n.v, g_fresnelpower)` as stored. A low-power entry with a dark
-colour 3 darkens a lot at moderate angles (stock 171's rear panel already
+colour 3 darkens a lot at moderate angles (vanilla 171's rear panel already
 mixes about halfway); the M3 E30's red #ca0000 entry (power 0.05, colour 3
 0.017) reads maroon in game (`host-20261023-092609`, `observe-03`).
 
-Fix (`paint.FINISH_PRESETS["stainless"]`): stock 171's entry with colour 3
+Fix (`paint.FINISH_PRESETS["stainless"]`): vanilla 171's entry with colour 3
 0.2 instead of 0.004 (brushed steel stays light at grazing angles). In game
 colour 3 0.13 (`-094028`) still left the flanks dark grey, 0.2 (`-094153`)
-gives light steel sides like stock. Final build `out/dmc/final`
+gives light steel sides like vanilla. Final build `out/dmc/final`
 (`host-20261023-094929`, `observe-06`): a light brushed-steel body with the
-black rear surround, next to stock 171's `observe-02` in the same run.
+black rear surround, next to vanilla 171's `observe-02` in the same run.
 The black rear surround and grey bumper are Forza's (and the real car's);
-the stock DSF model paints them.
+the vanilla DSF model paints them.
 
 ### The S5S Raptor glowed (user report on `out/testdrive9`, ID 22)
 
@@ -1469,15 +1469,15 @@ linear RGB. The Saleen's only colour, #ffbf19 metallic, is (1.0, 0.52, 0.01);
 its template, the security van's yellow (301: (0.567, 0.302, 0.032), colour 3
 at 0.44 of colour 2, fresnel power 1), keeps colour 3 bright too. Luminance
 of the fresnel mix taken literally (`paint.brightness`: at n.v 0.9, 0.7, 0.5
-and area-weighted): 0.55, 0.49, 0.42, 0.48, where no stock car paint
+and area-weighted): 0.55, 0.49, 0.42, 0.48, where no vanilla car paint
 (the 906 `is_template` entries) passes 0.388, 0.388, 0.388, 0.391 (the flat
-greys with bright rims, 136 and 167). No other testdrive car passes the stock
+greys with bright rims, 136 and 167). No other testdrive car passes the vanilla
 maximum (`out/emissive/paintsurvey.py`; next brightest the 500 Abarth's cream
 0.384 and the M5 E28's light blue 0.36).
 
 Fix (`paint.shade`, `brightness_cap`): both colours of a recoloured entry are
-scaled by the largest factor that keeps every measure at or below the stock
-maximum (computed from the stock palettes, not a constant). Only the Saleen
+scaled by the largest factor that keeps every measure at or below the vanilla
+maximum (computed from the vanilla palettes, not a constant). Only the Saleen
 changes: x0.705, colour 2 (0.705, 0.367, 0.007), a #dba314 yellow
 (`install` reports `dimmed`).
 In game (run `vm-20261024-060602`, `out/emissive/build2` ID 1;

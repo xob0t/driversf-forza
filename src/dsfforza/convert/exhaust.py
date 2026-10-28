@@ -8,9 +8,9 @@ nearest ancestor that has one; the slot count is a byte at spec+0x4931. The
 next array (role 0x57) starts at spec+0x3A50, so there is room for 4 and no
 bounds check. FUN_00881DD0 emits one particle effect per slot through
 the marker's matrix, and the engine sound's emitter B sits at the first one
-(engine-sound.md). The flow direction is the marker's local -z: stock markers
+(engine-sound.md). The flow direction is the marker's local -z: vanilla markers
 are identity on rear pipes, Classic 06's right-hand side exit turns -z onto +x.
-Stock cars have 0 to 4 (150 cars: 13, 33, 80, 0, 24), one per tailpipe, as
+Vanilla cars have 0 to 4 (150 cars: 13, 33, 80, 0, 24), one per tailpipe, as
 children of the exhaust parts (roles 136 at -x, 15 at +x) or of the body.
 
 A converted car kept the host's markers, so the smoke came out where the
@@ -18,7 +18,7 @@ host's pipes were (the Focus ST on host 127: two pipes 0.49 m either side of
 the centre line and 15 cm inside its bumper, under a car with one twin-tip
 outlet in the middle of the diffuser).
 
-The fix finds the openings on the Forza `exhaust*` sections (the stock
+The fix finds the openings on the Forza `exhaust*` sections (the vanilla
 variant the body uses) and moves the host's markers onto them:
 
 1. Tips (find_tips): each connected piece of exhaust mesh flows straight
@@ -31,7 +31,7 @@ variant the body uses) and moves the host's markers onto them:
    Openings much deeper inside the body than the outermost one (REACH), rear
    ones well ahead of the rearmost (REAR_REACH: pipe ends at the bumper's
    corners), flat ones and ones too big for a pipe don't count. The flow is
-   straight back or straight out: stock markers are identity on rear pipes
+   straight back or straight out: vanilla markers are identity on rear pipes
    too, and the wall normals of these low-poly tips gave no stable axis.
 2. Markers (patch_upvh): as many as the openings, up to the 4 the game has
    room for. A host with fewer gets copies of its own exhaust marker records
@@ -621,13 +621,13 @@ def main(argv: list[str] | None = None) -> None:
     t.add_argument("folder", type=Path)
     t.add_argument("--dy", type=float, default=0.0)
     t.add_argument("--dz", type=float, default=0.0)
-    h = sub.add_parser("host", help="a stock vehicle's exhaust markers")
+    h = sub.add_parser("host", help="a vanilla vehicle's exhaust markers")
     h.add_argument("archive", type=Path)
     h.add_argument("--id", type=int, required=True)
     s = sub.add_parser("survey", help="markers vs Forza tips over a port_batch work folder")
     s.add_argument("work", type=Path)
     s.add_argument("--cache", type=Path, default=REPO / "out/cache")
-    s.add_argument("--archive", type=Path, default=REPO / "out/stock/Install/dngvehicles.sp")
+    s.add_argument("--archive", type=Path, default=REPO / "out/vanilla/Install/dngvehicles.sp")
     s.add_argument("--out", type=Path)
     args = ap.parse_args(argv)
     if args.cmd == "tips":

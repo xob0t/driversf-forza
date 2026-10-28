@@ -170,7 +170,7 @@ def test_camera_front_right():
     """The camera stands on the car's front right (DSF: +z forward, +x the car's
     left), so the nose is drawn on the right and the right side faces the camera."""
     view = cr._View(
-        _scene([(_quad(-1, 1, 0, 1.4, 2.3), 0)], [cr.Material("paint", None, np.ones(3))]), cr.STOCK_CAMERA, 400, 200
+        _scene([(_quad(-1, 1, 0, 1.4, 2.3), 0)], [cr.Material("paint", None, np.ones(3))]), cr.VANILLA_CAMERA, 400, 200
     )
     nose = view.project(np.array([[0.0, 0.5, 2.3]]))
     tail = view.project(np.array([[0.0, 0.5, -2.3]]))

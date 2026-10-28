@@ -22,8 +22,8 @@ These override the shared paint material GLOBAL_Chassis. A ported car keeps
 its host's palette (the Desanne's ten colours). This module builds one from the
 car's factory colours in the Forza game database (gamedb.slt Combo_Colors:
 Ordinal = Data_Car.Id, Sequence, Metallic, RGB): each colour takes the shading
-parameters of the most similar stock paint of the same finish (all 150 stock
-palettes, 948 entries), and its base colour; the second colour keeps the stock
+parameters of the most similar vanilla paint of the same finish (all 150 vanilla
+palettes, 948 entries), and its base colour; the second colour keeps the vanilla
 entry's brightness ratio in the Forza colour's hue.
 
     uv run dsff paint colours out/cache/fh1/gamedb.slt NIS_370Z_10
@@ -45,28 +45,28 @@ from dsfforza.formats.vehicle_mesh import child, payload
 from dsfforza.game import game_paths
 
 COLOUR_PARAMS = ("g_vec4TintColour1_Alpha", "g_vec3TintColour2", "g_vec3TintColour3")
-MAX_COLOURS = 14  # the largest stock palette
+MAX_COLOURS = 14  # the largest vanilla palette
 
 # Finishes Combo_Colors can't express (it only has RGB and a metallic flag):
-# media name -> finish. Each finish is a preset built from a stock DSF palette entry.
+# media name -> finish. Each finish is a preset built from a vanilla DSF palette entry.
 SPECIAL_FINISHES = {
     # Brushed stainless body panels. Forza paints it solid #999999, which the
-    # flat stock greys (colour 2 = colour 3, fresnel power 5 to 15) turn into a
+    # flat vanilla greys (colour 2 = colour 3, fresnel power 5 to 15) turn into a
     # light silver that reads white in game; DSF's own DeLorean (spool 171)
     # has one steel entry.
     "DEL_DMC12_82": "stainless",
 }
 FINISH_PRESETS = {
-    # From stock 171 (DMC_DeLorean_DMC_12_1981) palette entry 0: mid grey facing
+    # From vanilla 171 (DMC_DeLorean_DMC_12_1981) palette entry 0: mid grey facing
     # the camera (colour 2 0.267), fresnel power 0.75, little reflection (0.1), a
     # broad second specular (0.3, power 5). Its edge tint (colour 3 0.004) is not
     # kept: the fresnel term is applied literally (power 0.75 mixes far toward
     # colour 3; research/lights.md, "The DMC-12 came out black"), and the Forza
     # body shows the chase camera its stainless mostly at grazing angles (paint
-    # n.v 0.25 against the stock model's 0.54, whose rear panel and bumper are
+    # n.v 0.25 against the vanilla model's 0.54, whose rear panel and bumper are
     # paint where Forza's are black trim and grey plastic), so 0.004 drew the port
     # near black. Brushed steel stays light at grazing angles: colour 3 is 0.2
-    # (run host-20261023-094153 against -094028, 0.13, and the stock edge tint).
+    # (run host-20261023-094153 against -094028, 0.13, and the vanilla edge tint).
     "stainless": {
         "g_vec4TintColour1_Alpha": (2.3328e-05, 1.0, 0.0738278, 1.0),
         "g_vec3TintColour2": (0.267358, 0.267358, 0.267358, 1.0),
@@ -195,7 +195,7 @@ def spsp_params(stream, spsp: Entry) -> dict:
 
 
 def palette_set(stream, full: Entry) -> Entry | None:
-    """The SPSS whose SPSPs carry the paint colours (the first in stock)."""
+    """The SPSS whose SPSPs carry the paint colours (the first in vanilla)."""
     spsr = next((c for c in child(full, "NONR").children if c.tag == "SPSR"), None)
     if spsr is None:
         return None
@@ -205,16 +205,16 @@ def palette_set(stream, full: Entry) -> Entry | None:
     return None
 
 
-_STOCK_CACHE: dict = {}
+_VANILLA_CACHE: dict = {}
 
 
-def stock_paints(stream, entries=None) -> list[dict]:
+def vanilla_paints(stream, entries=None) -> list[dict]:
     """Every palette entry with the full parameter set in an archive's
-    vehicles below spool ID 304 (the stock ones): [{params, sid}]. Cached per
+    vehicles below spool ID 304 (the vanilla ones): [{params, sid}]. Cached per
     stream."""
     key = getattr(stream, "name", id(stream))
-    if key in _STOCK_CACHE:
-        return _STOCK_CACHE[key]
+    if key in _VANILLA_CACHE:
+        return _VANILLA_CACHE[key]
     from dsfforza.formats import vehicles
 
     if entries is None:
@@ -234,7 +234,7 @@ def stock_paints(stream, entries=None) -> list[dict]:
             params = spsp_params(stream, spsp)
             if len(params) >= 9:
                 out.append({"sid": sid, "params": params})
-    _STOCK_CACHE[key] = out
+    _VANILLA_CACHE[key] = out
     return out
 
 
@@ -246,7 +246,7 @@ def _lum(c) -> float:
 
 
 def apparent(params: dict) -> tuple[float, float, float]:
-    """The colour a stock entry mostly shows: colour 2 with a low fresnel
+    """The colour a vanilla entry mostly shows: colour 2 with a low fresnel
     power, colour 3 with a high one (research/lights.md)."""
     c2, c3 = params["g_vec3TintColour2"][:3], params["g_vec3TintColour3"][:3]
     return tuple(c3) if params.get("g_fresnelpower", 0) >= 1 and _lum(c3) > _lum(c2) else tuple(c2)
@@ -258,7 +258,7 @@ def is_metallic(params: dict) -> bool:
 
 def is_template(params: dict) -> bool:
     """Car paint entries: colour 1 is (0, 0, 0) (solid) or (x, 1, z)
-    (metallic). The 40 stock entries with an RGB colour there belong to vans,
+    (metallic). The 40 vanilla entries with an RGB colour there belong to vans,
     trucks, the buggy and striped or two-tone cars (Courier, Vandura, rigs,
     Cobra, Shelby GT500, Eldorado, Monaco) and carry their own reflection and
     specular set-ups (the Courier's flat grey gave the DeLorean port its
@@ -301,24 +301,24 @@ def brightness(params: dict) -> tuple[float, ...]:
 _CAP_CACHE: dict = {}
 
 
-def brightness_cap(stock: list[dict]) -> tuple[float, ...]:
-    """The brightest stock car paint, per brightness() measure."""
-    key = (id(stock), len(stock))
+def brightness_cap(vanilla: list[dict]) -> tuple[float, ...]:
+    """The brightest vanilla car paint, per brightness() measure."""
+    key = (id(vanilla), len(vanilla))
     if key not in _CAP_CACHE:
-        rows = [brightness(s["params"]) for s in stock if is_template(s["params"])] or [(1.0,) * 4]
+        rows = [brightness(s["params"]) for s in vanilla if is_template(s["params"])] or [(1.0,) * 4]
         _CAP_CACHE[key] = tuple(max(r[k] for r in rows) for k in range(len(rows[0])))
     return _CAP_CACHE[key]
 
 
-def shade(colour: ForzaColour, stock: list[dict]) -> dict:
+def shade(colour: ForzaColour, vanilla: list[dict]) -> dict:
     """Parameters for one Forza colour: a special finish's preset as is, else
-    the most similar stock car-paint entry of the same finish (any finish if
+    the most similar vanilla car-paint entry of the same finish (any finish if
     none), recoloured."""
     if colour.finish in FINISH_PRESETS:
         return dict(FINISH_PRESETS[colour.finish])
     target = colour.linear
-    stock = [s for s in stock if is_template(s["params"])] or stock
-    same = [s for s in stock if is_metallic(s["params"]) == colour.metallic] or stock
+    vanilla = [s for s in vanilla if is_template(s["params"])] or vanilla
+    same = [s for s in vanilla if is_metallic(s["params"]) == colour.metallic] or vanilla
     best = min(same, key=lambda s: _distance(apparent(s["params"]), target))
     params = dict(best["params"])
     c2, c3 = params["g_vec3TintColour2"], params["g_vec3TintColour3"]
@@ -327,19 +327,19 @@ def shade(colour: ForzaColour, stock: list[dict]) -> dict:
     ratio = _lum(other) / max(_lum(main), 1e-4)
     new_main = tuple(min(1.0, c) for c in target)
     new_other = tuple(min(1.0, c * ratio) for c in target)
-    if _lum(target) < 0.01:  # near black: keep the stock sheen colour
+    if _lum(target) < 0.01:  # near black: keep the vanilla sheen colour
         new_other = tuple(other[:3])
     if main_is_3:
         params["g_vec3TintColour3"], params["g_vec3TintColour2"] = new_main + (c3[3],), new_other + (c2[3],)
     else:
         params["g_vec3TintColour2"], params["g_vec3TintColour3"] = new_main + (c2[3],), new_other + (c3[3],)
-    # Never brighter than the brightest stock car paint. Forza's swatch RGB taken as linear
-    # can be far above anything stock DSF paints: the S5S Raptor's #ffbf19 on the security
+    # Never brighter than the brightest vanilla car paint. Forza's swatch RGB taken as linear
+    # can be far above anything vanilla DSF paints: the S5S Raptor's #ffbf19 on the security
     # van's yellow (fresnel power 1, colour 3 at 0.44 of colour 2) gave luminance 0.55
-    # facing the camera where no stock paint passes 0.39, and the body bloomed into an
+    # facing the camera where no vanilla paint passes 0.39, and the body bloomed into an
     # orange halo in daylight (user report on out/testdrive9). Both colours are scaled,
     # so the hue and the template's shading stay.
-    cap, now = brightness_cap(stock), brightness(params)
+    cap, now = brightness_cap(vanilla), brightness(params)
     k = min([1.0] + [c / v for c, v in zip(cap, now) if v > c])
     if k < 1.0:
         for name in ("g_vec3TintColour2", "g_vec3TintColour3"):
@@ -353,7 +353,9 @@ def shade(colour: ForzaColour, stock: list[dict]) -> dict:
 # --- installing -----------------------------------------------------------------------
 
 
-def install(stream, full: Entry, colours: list[ForzaColour], stock: list[dict], nonr_limit: int | None = None) -> dict:
+def install(
+    stream, full: Entry, colours: list[ForzaColour], vanilla: list[dict], nonr_limit: int | None = None
+) -> dict:
     """Replace the full entry's palette with the Forza colours (up to
     MAX_COLOURS, fewer if NONR would outgrow nonr_limit). The host's first
     SPSP is the template for the chunk layout; every MARP gets an explicit
@@ -366,7 +368,7 @@ def install(stream, full: Entry, colours: list[ForzaColour], stock: list[dict], 
     chosen = pick_colours(colours)
     built = []
     for colour in chosen:
-        params = shade(colour, stock)
+        params = shade(colour, vanilla)
         spsp = copy.deepcopy(template)
         for p in spsp.children:
             if p.tag != "MARP":
@@ -412,16 +414,16 @@ def find_gamedb(car_folder: Path) -> Path | None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
-    c = sub.add_parser("colours", help="a car's factory colours and the stock shading each would get")
+    c = sub.add_parser("colours", help="a car's factory colours and the vanilla shading each would get")
     c.add_argument("gamedb", type=Path)
     c.add_argument("media")
-    c.add_argument("--dsf", type=Path, default=None, help="stock dngvehicles.sp (default: from $DSF_GAME_DIR)")
+    c.add_argument("--dsf", type=Path, default=None, help="vanilla dngvehicles.sp (default: from $DSF_GAME_DIR)")
     p = sub.add_parser("palette", help="print a vehicle's palette")
     p.add_argument("archive", type=Path)
     p.add_argument("--id", type=int, required=True)
     args = parser.parse_args(argv)
     if args.cmd == "colours":
-        args.dsf = game_paths.stock(args.dsf)  # the original when a dsfforza install replaced it
+        args.dsf = game_paths.vanilla(args.dsf)  # the original when a dsfforza install replaced it
 
     from dsfforza.formats import upvh as uv
     from dsfforza.formats.chnk import read_chunk
@@ -441,13 +443,13 @@ def main(argv: list[str] | None = None) -> None:
                 )
         return
     with args.dsf.open("rb") as stream:
-        stock = stock_paints(stream, read_chunk(stream, 0).entries)
+        vanilla = vanilla_paints(stream, read_chunk(stream, 0).entries)
     for colour in pick_colours(forza_colours(args.gamedb, args.media)):
-        q = shade(colour, stock)
+        q = shade(colour, vanilla)
         dimmed = q.get("_dimmed", 1.0)
         print(
             f"{colour.sequence:2} #{'{:02x}{:02x}{:02x}'.format(*colour.rgb)} {'metallic' if colour.metallic else 'solid   '} "
-            f"{colour.colour_class:8} {colour.finish or ''}<- stock {q['_template']} c2 {tuple(round(x, 3) for x in q['g_vec3TintColour2'][:3])} "
+            f"{colour.colour_class:8} {colour.finish or ''}<- vanilla {q['_template']} c2 {tuple(round(x, 3) for x in q['g_vec3TintColour2'][:3])} "
             f"c3 {tuple(round(x, 3) for x in q['g_vec3TintColour3'][:3])} power {q['g_fresnelpower']:.2f}"
             + (f" dimmed x{dimmed}" if dimmed < 1 else "")
         )

@@ -2,11 +2,11 @@
 
 Updated: 2026-10-23
 
-How a stock DSF car's body damages, from static analysis of the stock
+How a vanilla DSF car's body damages, from static analysis of the vanilla
 archive and the shared vehicle shaders, and what `src/dsfforza/convert/damage.py` builds
 for converted Forza cars. Evidence levels follow `dngvehicles.md`
 (confirmed-static, confirmed-runtime, hypothesis). Hosts checked: Saloon 15
-(ASYM Desanne, 266), Sports Car 06 (stock 370Z, 227), Saloon 03 (147),
+(ASYM Desanne, 266), Sports Car 06 (vanilla 370Z, 227), Saloon 03 (147),
 DriftCar 03 (229), Old 01 (130), Tanner (62), plus fleet surveys of all 150.
 
 Scratch scripts: `out/damage/` (`fleet.py`, `roles.py`, `s5delta.py`,
@@ -67,13 +67,13 @@ DXT5 dirt). The decal's blue and alpha give `fDecalTintMask`, which fades
 the paint tint to bare metal as damage rises; dent normals feed the
 lighting.
 
-Stock UV1 is an unwrap of each panel onto its own tile of that one atlas,
+Vanilla UV1 is an unwrap of each panel onto its own tile of that one atlas,
 the same layout for every car (`out/damage/uv1.py`; Desanne, CTS-V,
 Mustang 193, in the full, exterior and interior entries): front bumper top
 left, rear bumper top right, boot in the middle, bonnet on the right, the
 sides and wings in the three rows below; lamps (Lights material) on the
 small tile of three dark blobs (broken lamp), hidden faces on one corner
-texel, and stock interiors' GLOBAL_LOD_Chrome tiles UV1 over -4..5.
+texel, and vanilla interiors' GLOBAL_LOD_Chrome tiles UV1 over -4..5.
 
 Converted cars carried Forza's UV1 on paint and the lamp-atlas UV on
 lamps, so their panels sampled the wrong tiles: damaged cars showed bright
@@ -91,9 +91,9 @@ moved vertices).
 vertices that don't crush (glass, cabin, the middle of the body: about a
 third of all vertices).
 
-## Crush targets on stock cars (confirmed-static)
+## Crush targets on vanilla cars (confirmed-static)
 
-Every stock body vertex carries a crushed position. Fleet survey
+Every vanilla body vertex carries a crushed position. Fleet survey
 (`out/damage/fleet.py`, MODL part 0, full mask 4 and exterior mask 2):
 
 | | Full entry | Exterior |
@@ -111,8 +111,8 @@ up to 0.62 m), the bonnet buckles up by up to 0.27 m in its middle, the
 wings fold back, the tail moves forward 0.09 m (up to 0.39 m on the boot
 lid), the doors dent by a few centimetres, the suspension parts rise 0.1 m
 (0.2 m in the exterior) and glass doesn't move.
-Render: `img/damage-stock266-crushed.png` (every panel at fDamage = 1,
-coloured by panel), `img/damage-stock227-crushed.png` (stock 370Z).
+Render: `img/damage-vanilla266-crushed.png` (every panel at fDamage = 1,
+coloured by panel), `img/damage-vanilla227-crushed.png` (vanilla 370Z).
 
 ## Panels: MODL parts and UPVH records (confirmed-static)
 
@@ -145,7 +145,7 @@ x/y/z normalised by the part-0 box, +z front, +x the car's left):
 (The "+x/-x" naming is ours; DSF's +x is the car's left, the driver's side
 on left-hand-drive cars.)
 
-On the Desanne (`uv run dsff damage panels <stock> --id 266`):
+On the Desanne (`uv run dsff damage panels <vanilla> --id 266`):
 
 - **MODL part 0 is the whole intact car**: one submodel per material holding
   every panel's triangles (8,027 vertices = the sum of all other parts but
@@ -180,7 +180,7 @@ call the two suspension parts the bumpers; renders show struts and arms
    (swing within `limit`, `param` maybe a break-off strength: 4000 on
    bumpers, 24/15 on bonnet/boot) and, once detached, from the debris body.
    Doors and wings have limit 0, but they do swing: `forceOpenPanels`
-   opens stock doors wide (confirmed-runtime, see "Doors and wings swing"
+   opens vanilla doors wide (confirmed-runtime, see "Doors and wings swing"
    below), so limit 0 is not "locked"; what it means is untraced.
 2. A detached panel is drawn from its own MODL part.
 3. ~~The glass crack state follows the glass panel's damage index~~ Now
@@ -201,7 +201,7 @@ empty. With the option:
    their bumper, `hood*` bonnet (4), `trunk` boot (5, else 124),
    `headlight*`/`glass?HL` and `mirror*` and `exhaust*` the record of their
    side (never the other side's, split per side if a section has both;
-   "One panel for both mirrors" below), `glassF`/`glassR` the centred glass panel in that half (the stock
+   "One panel for both mirrors" below), `glassF`/`glassR` the centred glass panel in that half (the vanilla
    370Z has none at the rear: its rear window goes with the hatch), tail
    lamps and wings the majority of their nearest centred panel (left and
    right voting together), side windows their door or the chassis,
@@ -217,9 +217,9 @@ empty. With the option:
    area-weighted majority passes over edge neighbours, and connected
    patches under 0.08 m², or of at most 3 triangles under 0.3 m², join the
    panel they share most edges with). See "Tears in crushed doors" below for
-   why. (`forza2dsf.stock_sections`
+   why. (`forza2dsf.vanilla_sections`
    now drops upgrade variants past `d` too: the FM4 Skyline kept bumperFe/f/g
-   and hoodg stacked on the stock parts.)
+   and hoodg stacked on the vanilla parts.)
 2. **Crush targets.** For each new vertex, the host's crush displacement of
    the same panel, inverse-distance weighted over the 6 nearest host
    vertices (normalised coordinates), scaled per axis by the car size
@@ -257,7 +257,7 @@ empty. With the option:
    the lamp plan, `forza2dsf.convert` splits trim subsections into their own:
    trim triangles of `hood*`/`trunk*` facing away from the section's nearest
    paint triangle (within 0.2 m) are the panel's underside and become
-   technique `dsf_inner` (shared paint, like stock undersides); trim
+   technique `dsf_inner` (shared paint, like vanilla undersides); trim
    triangles of other sections below the hood surface (a 5 cm height map
    of the hood, 1 cm clearance) are the bay. Each split subsection is
    tagged by facing (`bay+y` floor, `bay-y` underside, `bay x` side walls,
@@ -268,7 +268,7 @@ empty. With the option:
    (`EXPOSED_MAP`: engine and wiring for floors, subframe for undersides,
    inner wing/strut tower for side walls, bulkhead and radiator for the
    front and rear walls, the inner-frame picture for panel undersides), and
-   the baked sky with a facing-based value like stock (bay 0.62 up, 0.35
+   the baked sky with a facing-based value like vanilla (bay 0.62 up, 0.35
    sideways, 0.04 down; undersides 0.2). Without `--damage` (and in the
    shadow LOD and the interior shell) the split subsections draw as before
    (`dsf_inner` as plain paint). Since 2026-10-23 the bay is one of four
@@ -291,15 +291,15 @@ empty. With the option:
    islands, found by joining host triangles through shared position+UV1)
    is put on the chart most of its corners use; the other corners get a
    copy of their vertex with UV1 from that chart (`_split_seams`).
-   Offline: the panels land on the stock tiles (`img/damage-uv1-305.png`,
-   stock `img/damage-uv1-stock266.png`). Paint area on exterior triangles
-   whose UV1 spans more than 0.15 (stock: 0%): 2.4-6.2% without the seam
+   Offline: the panels land on the vanilla tiles (`img/damage-uv1-305.png`,
+   vanilla `img/damage-uv1-vanilla266.png`). Paint area on exterior triangles
+   whose UV1 spans more than 0.15 (vanilla: 0%): 2.4-6.2% without the seam
    split (a white streak along the Mustang's roof centre in the preview),
    0.1% with it (Mustang). Lights-material triangles without a lamp byte
    (s9 byte 2 = 0: badges, plate, reflector trim) take their panel's paint
    layout, not the lamp layout, which would put them on the broken-lamp tile. `uv run dsff damage render ... --by decal`
    previews the scratch mask at UV1 (`img/damage-decal-305.png`
-   against `img/damage-decal-stock147.png`).
+   against `img/damage-decal-vanilla147.png`).
 
 The lamp bytes (`src/dsfforza/convert/lights.py`) pass through: damage writes s9 bytes 0
 and 1 only.
@@ -312,7 +312,7 @@ test cars pass; `upvh.py lint` passes.
 ### Test build (2026-10-22)
 
 `port_car.py ... --car NIS_370Z_10 --car BMW_M5_12 --car NIS_SkylineGTR_93
---mdxn-limit 0x2C0000 --damage` (hosts chosen by `host_select`: 227 stock
+--mdxn-limit 0x2C0000 --damage` (hosts chosen by `host_select`: 227 vanilla
 370Z, 147 Saloon 03, 229 Skyline R33 drift):
 
 | Car | Panels used | Notes |
@@ -338,10 +338,10 @@ without `--damage` (`out/damage/baseline.sp`). `chnk.py rebuild --verify`
 is byte-identical.
 
 Renders: `img/damage-304-panels.png` (intact, by panel),
-`img/damage-304-crushed.png` against the stock 370Z
-`img/damage-stock227-crushed.png`, `img/damage-304-parts.png` (the panel
+`img/damage-304-crushed.png` against the vanilla 370Z
+`img/damage-vanilla227-crushed.png`, `img/damage-304-parts.png` (the panel
 parts without part 0), `img/damage-305-exterior-crushed.png` against
-`img/damage-stock147-exterior-crushed.png`.
+`img/damage-vanilla147-exterior-crushed.png`.
 
 ### In-game test (built, not yet run)
 
@@ -365,7 +365,7 @@ on the road as the Forza bumper.
 ### Run 20261022-062852 (confirmed-runtime) and the bumper frames
 
 `out/cockpit3/ported-cockpit3.sp` (with the UV1 fix), `-Damage`: scratches
-look stock-like and the Mustang bonnet from the cockpit is clean
+look vanilla-like and the Mustang bonnet from the cockpit is clean
 (`img/r8-mustang-cockpit.png`). The damaged M5 still showed a white chevron
 low on the rear bumper (`img/r8-m5-damaged.png`); the r7 build showed the
 same shape while its bumper UV1 was a constant (0, 0), so it was not the
@@ -375,11 +375,11 @@ chassis panel, right behind the bumper skin. Crushed, the skin moves forward
 more than the chassis there, and the frame pokes through near the centre
 (`out/damage3/305-rear-before-after.png`: chassis-coloured bits in the
 crushed bumper, gone after the fix). Fix: `bumperFrameR`/`bumperFrameF` go
-on their bumper panels (stock bumper parts carry their own trim), so they
+on their bumper panels (vanilla bumper parts carry their own trim), so they
 move and crush with the skin. `out/damage3/poke.py` counts pixels, over
 five views, of triangles hidden on the intact car that show when every
-panel is crushed by t: comparable to stock (M5 at t = 0.5: 2,816 px against
-2,430 for stock 147).
+panel is crushed by t: comparable to vanilla (M5 at t = 0.5: 2,816 px against
+2,430 for vanilla 147).
 
 ### Run 20261022-040545 (confirmed-runtime)
 
@@ -423,8 +423,8 @@ the bonnet had come off. Scratch scripts and renders: `out/dmgfix/`.
 ### Tears in crushed doors (cause confirmed-static)
 
 Not folding: triangles that turn over at full crush cover 0.10% of the M5's
-exterior, the same as stock 147 (`flips.py`), and the crushed-normal turn per
-panel matches stock (`ndelta.py`). The slits are panel borders. The old vote
+exterior, the same as vanilla 147 (`flips.py`), and the crushed-normal turn per
+panel matches vanilla (`ndelta.py`). The slits are panel borders. The old vote
 (7 nearest host vertices) put long chassis-bound triangle islands into the
 M5's door skins (`td3-m5-roles.png`, `m5-ext-panels.png`): the host's door
 skins are large triangles with vertices only at their edges, so mid-door
@@ -432,7 +432,7 @@ points sat nearer to chassis vertices behind the skin (jambs, cabin). Every
 island border is a seam inside one Forza surface whose two sides follow
 different panels (crush field and damage amount), so it opened when crushed;
 behind it is the unlit inside of a single-skinned Forza body, hence black.
-Stock panels meet at real shut lines, backed by jambs and door cards.
+Vanilla panels meet at real shut lines, backed by jambs and door cards.
 
 Islands per car (`survey.py`: connected same-panel patches under 0.3 m²
 touching another panel, `nearest`-rule sections, exterior LOD, testdrive3
@@ -450,17 +450,17 @@ Seams that remain between rigid panels now share the crushed position
 (step 2). Converted M5 exterior, positions on more than one panel whose
 crushed positions differ by more than 1 cm: 375 (testdrive3) to 129, all on
 seams with panels that swing or detach (boot, bumpers, headlights, mirror),
-as on stock (147 has 185 such positions). They still open when two rigid
-panels get different damage amounts, along the shut line, as stock seams do.
+as on vanilla (147 has 185 such positions). They still open when two rigid
+panels get different damage amounts, along the shut line, as vanilla seams do.
 
 Cost: big flat Forza triangles with one seam corner fold over at full crush
 under the nose (undertrays facing down: Mustang 1.0% to 1.8% of the
-exterior area, Skyline 0.36% to 0.55%, M5 0.10% to 0.23%; stock 0.01-0.10%).
+exterior area, Skyline 0.36% to 0.55%, M5 0.10% to 0.23%; vanilla 0.01-0.10%).
 They face the road and only show from below.
 
 ### Black bay and panel undersides (cause confirmed-static)
 
-Stock bays (147, `stock147-ext-nobonnet-sky.png`) are drawn from the shared
+Vanilla bays (147, `vanilla147-ext-nobonnet-sky.png`) are drawn from the shared
 chassis texture's bay pictures (GLOBAL_Chassis_Simple: radiator, inner
 wings, subframe; `out/dmgfix/trimtex-grid-*.png`) plus the host's own engine
 cover, with baked sky 0.4-0.7 on floors and ~0.34 on walls; bonnet and boot
@@ -473,7 +473,7 @@ exposed geometry per car is large (testdrive cars at LOD 1: 700 to 3,200 bay
 triangles, 90 to 490 underside triangles; `survey-testdrive.txt`); the
 material budget is unchanged (shared trim and paint only). Renders of the
 four test cars from above without the bonnet: `s2-bays-top.png` (right:
-stock 147). An earlier variant copied the host's UV0 per vertex; Forza's bay
+vanilla 147). An earlier variant copied the host's UV0 per vertex; Forza's bay
 floors are a few large triangles (the M5's: 44 over 1.65 m²) and the
 pictures came out as streaks (`m5new-ext-nobonnet-sky.png`).
 
@@ -485,7 +485,7 @@ pictures came out as streaks (`m5new-ext-nobonnet-sky.png`).
 `run-series.ps1 -Archives out\dmgfix\set2\dngvehicles.sp -ProbeIds '1,2,3,4,147'
 -Damage -DamagePanels -ShotSeconds 3` (`-DamagePanels`: after
 `fullVisualDamage` at ~3 s the probe calls `forceOpenPanels` at ~6 s and
-`removeAllPanels` at ~9 s in the same chase view; stock 147 is the control).
+`removeAllPanels` at ~9 s in the same chase view; vanilla 147 is the control).
 
 ## Black boot well and rear panel (testdrive4, 2026-10-23)
 
@@ -496,17 +496,17 @@ the FM4 Skyline (ID 36, observe-12) showed a flat, near-black, featureless
 surface where the boot lid and the rear bumper had been, and in the boot
 well. Scratch: `out/underside/` (`view.py` shaded render from any angle with
 panels removed and a census of what is visible in a screen box,
-`stockref.py`, `forzarear.py`, `atlas.py`, `survey.py`).
+`vanillaref.py`, `forzarear.py`, `atlas.py`, `survey.py`).
 
-### What stock cars show there (confirmed-static, confirmed-runtime)
+### What vanilla cars show there (confirmed-static, confirmed-runtime)
 
-Stock run `host-20261023-093807` (stock archive, probe `62,147,227,229,266`,
+Vanilla run `host-20261023-093807` (vanilla archive, probe `62,147,227,229,266`,
 `-Damage -DamagePanels`): 147 with its panels removed (observe-03) shows a
 grey boot tub and, behind the rear bumper, the rear panel and crash beam
 with bright bolts; 229 (observe-12) the same beam under its opened boot lid.
-Static, every stock trim triangle hidden by a removable panel (inside the
-panel's footprint and inward of it; `stockref.py`, exterior entries of 147,
-227, 229, 266, 193, 251; `stockref-ext.txt`): almost all
+Static, every vanilla trim triangle hidden by a removable panel (inside the
+panel's footprint and inward of it; `vanillaref.py`, exterior entries of 147,
+227, 229, 266, 193, 251; `vanillaref-ext.txt`): almost all
 `GLOBAL_Chassis_Simple` on pictures of the shared chassis texture (SSIC
 `00122b73d1fa1227`): the boot tub panels (u 0.40-0.48, v 0.10-0.29), the
 rear panel/crash beam picture (u 0.31-0.50, v 0.35-0.53), radiator,
@@ -530,7 +530,7 @@ M5's boot well and rear panel are Forza `body` trims (`frame`, `black`:
 converted trim sits on `TRIM_UV`, one texel (R 24) of the uniform dark
 block. The census of the testdrive4 M5 from behind with the boot lid and
 bumper removed: 100% `GLOBAL_Chassis_Simple` at uv (0.97, 0.50), against
-stock 147's tub and beam pictures. Normals, sky (0.2-0.45) and material
+vanilla 147's tub and beam pictures. Normals, sky (0.2-0.45) and material
 binding were fine (`view.py --mode backface`: the stored normals face the
 viewer); the surface was just one dark texel.
 
@@ -557,7 +557,7 @@ them dark: `cmp3-tu.png` against `cmp4-tu.png`, red = still `TRIM_UV`).
 Bumper, exhaust and plate sections are never re-textured outside the bay.
 Projection boxes: the cover's box deepened by 0.55 m, the bumper's box
 deepened inward by 0.6 m. Sky by facing: 0.08 down, 0.28 sideways, 0.40 up
-(stock 0.09-0.41). The material budget is unchanged (shared trim only).
+(vanilla 0.09-0.41). The material budget is unchanged (shared trim only).
 
 ### Survey (40 testdrive cars, exterior LOD; `out/underside/survey-testdrive4.txt`)
 
@@ -570,7 +570,7 @@ section, so their front lid now covers a luggage well and no bay is
 found. No zone: Express van (no covers), Veyron and SVT Raptor (no boot
 lid or rear bumper sections), 250 GTO / 2000GT / Agera (no bumper
 sections). Offline renders: `out/underside/offline-rear-before-after.png`
-(stock 147/229 against the M5, Skyline and RX-7 before and after),
+(vanilla 147/229 against the M5, Skyline and RX-7 before and after),
 `mid-check.png` (Agera, DMC-12; red = untouched trims).
 
 ### Test build and in-game result
@@ -583,9 +583,9 @@ Host run `host-20261023-101158` (probe `147,1,3,2,4,5`, `-Damage
 panel removed the M5 (observe-03) shows a grey tub wall where the boot was
 and the crash beam and undercarriage pictures, with bright bolts, below it;
 the Skyline (observe-12) a textured grey rear panel under the lamps and a
-grey boot well. Side by side with testdrive4 and stock 147/229:
+grey boot well. Side by side with testdrive4 and vanilla 147/229:
 `out/underside/ingame-before-after.png`. Both are clearly textured now,
-not flat black, but still darker than stock 147's boot. That boot has a
+not flat black, but still darker than vanilla 147's boot. That boot has a
 floor that faces up into the sun; the M5's Forza "boot" is one rear-facing
 wall (risk 7). An earlier build of the same cars with the centroid rule and
 the darker tub crop (run `host-20261023-100134`) was visibly darker.
@@ -595,7 +595,7 @@ M5 gaps (user report "damaged body parts have gaps"): in the damaged shots
 are closed and untorn. The gaps are at the boot lid: at full damage it
 crushes forward and lifts, so dark wedges open between it and the tail
 lamps or wings, and a slot opens under the plate where the lid parts from
-the bumper. Stock 147 opens the same shut lines, but less. Through the
+the bumper. Vanilla 147 opens the same shut lines, but less. Through the
 gaps you see the boot zone, now on the tub picture instead of the black
 texel. The lid's crush and hinge come from the host's field (147), not
 from this fix.
@@ -607,7 +607,7 @@ told you about, on bmw". After a crash into the S5S Raptor's (ID 22, host
 163) front corner, wide, jagged black slits opened in front of the door
 and through the rear quarter, from the window down to the sill (user
 screenshot, crop `out/seams/user-crop.png`). Scratch: `out/seams/`
-(`border.py`, `stockside.py`, `dview.py`, `panelview.py`, `comps.py`,
+(`border.py`, `vanillaside.py`, `dview.py`, `panelview.py`, `comps.py`,
 `survey.py`, `zoom.py`, `summary.py`).
 
 ### Cause (confirmed-static)
@@ -634,11 +634,11 @@ screenshot, crop `out/seams/user-crop.png`). Scratch: `out/seams/`
   touching) were not seams at all and opened even at uniform damage
   (S5S Raptor: up to 0.29 m, chassis against front structure).
 
-Stock cars (`border.py`, `stockside.py`, exterior part 0 of 147, 163, 205,
+Vanilla cars (`border.py`, `vanillaside.py`, exterior part 0 of 147, 163, 205,
 227, 229, 274): door, wing, sill and chassis vertices where two panels
 meet barely move (median 0-3 mm; p90 up to 30 mm, max 77 mm), the dents
 are in the panels' middles. Wings against the front structure move
-0.14-0.33 m, but that border is under the bonnet. Stock borders still part
+0.14-0.33 m, but that border is under the bonnet. Vanilla borders still part
 by up to 5-8 cm with uneven damage; they are real shut lines with jambs and
 inner panels behind them, so no hole shows.
 
@@ -665,7 +665,7 @@ inner panels behind them, so no hole shows.
 
 ### Survey (40 testdrive cars, exterior LOD 1; `out/seams/survey-testdrive7.txt`)
 
-`survey.py` runs `DamagePlan` and the exterior build on the stock host
+`survey.py` runs `DamagePlan` and the exterior build on the vanilla host
 without a full conversion, once with the testdrive7 rules and once with
 the fix, and measures every pair of rigid-panel vertices within 3 mm:
 separation at uniform damage, worst differential (one panel at 1, the
@@ -722,7 +722,7 @@ camera leaves the copy behind (`host-20261024-003745`).
   `out/seams/ingame-full-sheet.png`, rear crops `ingame-full-rear.png`):
   no crash, all phases ok; cockpit views clean. The WRX's boot lid crumples
   and parts from the rear quarters (a swinging panel; not pinned, as
-  stock). In observe-03 a grey plate stands up through the S5S Raptor's
+  vanilla). In observe-03 a grey plate stands up through the S5S Raptor's
   tail, not there in observe-02 (debris or a detached panel in flight;
   not traced).
 - Host starts are flaky at present: two runs of this build and one of
@@ -746,7 +746,7 @@ vertex get crush 0, so the seam stays shut for any damage amounts. That
 holds only while both panels share a transform. Doors (roles 31, 32, 54,
 55) and wings (33, 34) have their own transform slot (s9 byte 0) and a
 hinge with limit 0, and limit 0 does not lock them: `forceOpenPanels`
-opens stock doors wide (run `host-20261023-093807`: 227 observe-07, 266
+opens vanilla doors wide (run `host-20261023-093807`: 227 observe-07, 266
 observe-16), and on converted cars it swings the door and wing patches out
 as thin arcs (run `host-20261023-101158`, RX-7 and Mustang; VM run
 `vm-20261024-061315`, S5S Raptor observe-10, 250 GTO observe-17). A crash
@@ -780,9 +780,9 @@ the shader would draw it):
 
 Seams between a rigid and a swinging panel (bonnet against wing, bumper
 against front structure) open under uneven crush by 0-340 mm per car,
-the same range as stock hosts (147: 205-267 mm; 163: 156-268 mm; 229: up
-to 494 mm, same survey on the stock archive): those are Forza section
-borders and stock shut lines, backed by the exposed-surface texturing
+the same range as vanilla hosts (147: 205-267 mm; 163: 156-268 mm; 229: up
+to 494 mm, same survey on the vanilla archive): those are Forza section
+borders and vanilla shut lines, backed by the exposed-surface texturing
 above. Renders (crush as `side-x`/`front` plus the 0.1 rad swing, magenta
 = hole): `img/damage-swing-s5s-side.png` (S5S Raptor, testdrive10 top, fix
 bottom), `img/damage-swing-250gto-front.png` (250 GTO, testdrive10 left).
@@ -833,11 +833,11 @@ the host's isn't, or the rigid body more than 0.15 m from the panel's
 geometry): testdrive10 8 cars (RX-7 and S2000 mirrors, RX-7 exhaust body,
 WRX, Fiat 500, Range Rover exhausts, Durango and Express headlights), fix 1
 (the Mito: host 128's own -x headlight body sits 1.65 m from its lamp,
-mass 29 kg, the same on the stock car).
+mass 29 kg, the same on the vanilla car).
 
 ## Doors and wings as Forza parts (2026-10-24, follow-up)
 
-PR #14 held every converted door and wing shut. Stock doors swing ajar in
+PR #14 held every converted door and wing shut. Vanilla doors swing ajar in
 crashes and open wide with `forceOpenPanels`, so this round finds the doors
 and wings in the Forza mesh and lets those swing. Scratch: `out/dmg6/`
 (`islands.py`, `parts.py`, `panelrender.py`, `jambrender.py`).
@@ -873,10 +873,10 @@ while its wing, sill and rear quarter are one shell (`sal-idx.png`).
   with the door (the S5S Raptor's door and quarter windows are one Forza
   section; sunroofs and T-tops stay); `interior` triangles on the door's
   side, within its length and height, at most 0.2 m inward of its skin and
-  facing the cabin are its door card and go with it, as stock door cards
+  facing the cabin are its door card and go with it, as vanilla door cards
   are skinned to the door records.
 - Parts keep their own transform slot (`DamagePlan.bound`): they swing and
-  come off like stock. Doors and wings that are not parts keep the PR #14
+  come off like vanilla. Doors and wings that are not parts keep the PR #14
   binding (chassis slot, own damage index) and stay shut.
 
 Behind an open door is what Forza models there: the door-opening trims
@@ -904,7 +904,7 @@ their doors). The door shows its card on the inside.
 
 S5S Raptor (ID 1), M5 (ID 2) and S2000 (ID 3) of the test build: with
 `forceOpenPanels` the doors open wide as solid doors with dark cards inside,
-along their shut lines, like stock 266 (`host-20261023-093807` observe-16);
+along their shut lines, like vanilla 266 (`host-20261023-093807` observe-16);
 testdrive10's door patches swung as thin jagged arcs and master's (#14)
 stayed shut (`img/damage-doorparts-forceopen.jpg`). `removeAllPanels`
 removes them. No crash in the run; one start before it hit the known
@@ -920,7 +920,7 @@ crush, testdrive10 left).
 User report on `out/final4` (FER_355Challenge_95, FH1, spool 353 on host 125):
 "a blurry panel on its back". In the chase view the black tail panel between
 the tail lamps (with the F355 lettering and the horse) showed blurred light
-shapes; in Forza (render of the stock sections with their atlases,
+shapes; in Forza (render of the vanilla sections with their atlases,
 `out/inv/frender.py`; FH1 thumbnail 339) it is flat black.
 
 ### Cause (confirmed-static)
@@ -993,8 +993,8 @@ opened cover aren't readable in those shots.
    open, but a door dent stops short of the borders, and the crush near
    them is lost (mean rigid-panel crush down by a median 28%, at most 59%). Trim seams the host
    moves (wing against front structure on 163) still open with differing
-   damage amounts, as stock under-bonnet borders do. Forza's `interior` section (door cards included) stays on the chassis,
-   while stock door cards are on the door: a deep door dent can push the
+   damage amounts, as vanilla under-bonnet borders do. Forza's `interior` section (door cards included) stays on the chassis,
+   while vanilla door cards are on the door: a deep door dent can push the
    skin through the card.
 7. Exposed geometry is found by geometry (under a cover, behind a bumper
    skin, facing away from the panel's paint). Trims outside every panel's
@@ -1003,7 +1003,7 @@ opened cover aren't readable in those shots.
    panels not named `hood*`/`trunk*`/`bumper*`, keep the dark texel. Forza
    models the structure behind panels coarsely (the M5's "boot" is one
    rear-facing wall 0.5 m behind the lid, no floor), so it catches less sun
-   than a stock tub and still reads darker than stock in game.
+   than a vanilla tub and still reads darker than vanilla in game.
 3. The crush field is the host's, mapped by box. A Forza car much longer or
    shorter in the nose than its host crushes in the host's proportions.
 4. The interior entry's outer shell still has s12 = position and chassis

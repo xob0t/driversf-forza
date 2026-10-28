@@ -2,13 +2,13 @@
 
 Driver: San Francisco's driving model is its own (arcade grip and slides, assists,
 boost-friendly gearing). A ported car should drive like a car Reflections would have
-made, so this starts from the host's complete VO3D (a stock car already tuned for
+made, so this starts from the host's complete VO3D (a vanilla car already tuned for
 DSF, picked by src/dsfforza/build/host_select.py) and changes only what the car's real specs
-say must change, by the rules the stock fleet itself follows:
+say must change, by the rules the vanilla fleet itself follows:
 
     H  keep the host's value
     M  host value x (new mass / host mass)
-    F  host value moved by the fleet model: a least-squares fit over the stock fleet
+    F  host value moved by the fleet model: a least-squares fit over the vanilla fleet
        of the parameter (log, when always positive) against the vehicleStats specs
        (log weight, log power, log torque, model year, FWD, AWD); the new value is
        the host's times exp(f(new) - f(host)), or plus f(new) - f(host)
@@ -19,7 +19,7 @@ say must change, by the rules the stock fleet itself follows:
 and a few joint rules: gearing (G*: the host's gear set and its top-gear-to-limit
 relation, re-solved for the new tyre, redline and top speed), the drive split (D)
 and the CoG (C*). Which rule each parameter uses was chosen by the leave-one-out
-test on the 48 stock cars that also exist in Forza (`loo`), see RULES and
+test on the 48 vanilla cars that also exist in Forza (`loo`), see RULES and
 research/handling.md.
 
     uv run dsff handling_dsf loo [--csv out.csv]          # the decisive offline check
@@ -157,7 +157,7 @@ def specs_from_stats(stats: dict) -> Specs | None:
 
 def specs_from_forza(media: str, car: H.ForzaCar, dbs: list[Path] = DBS) -> Specs:
     """Real-world specs as vehicleStats states them: Data_Car SimPeakPower (100 W),
-    SimPeakTorque (100 Nm), the stock body mass and year."""
+    SimPeakTorque (100 Nm), the vanilla body mass and year."""
     for db in dbs:
         con = sqlite3.connect(f"file:{Path(db).as_posix()}?mode=ro", uri=True)
         row = con.execute(
@@ -173,17 +173,17 @@ def specs_from_forza(media: str, car: H.ForzaCar, dbs: list[Path] = DBS) -> Spec
     raise SystemExit(f"{media}: not in {dbs}")
 
 
-# --- the stock fleet --------------------------------------------------------------------
+# --- the vanilla fleet --------------------------------------------------------------------
 
 
 def load_fleet(dsf: Path | None = None, lua: Path = HS.DEFAULT_LUA, refresh: bool = False) -> dict[int, dict]:
-    """Every stock base vehicle: VO3D, vehicleStats, hub geometry and host facts."""
+    """Every vanilla base vehicle: VO3D, vehicleStats, hub geometry and host facts."""
     # The original archive when a dsfforza install replaced it (the installed one carries the
     # ported cars at IDs 1..40, which leaked into the fleet on 2026-10-22).
-    dsf = HS.game_paths.stock(dsf, quiet=True)
+    dsf = HS.game_paths.vanilla(dsf, quiet=True)
     hosts = HS.survey(dsf, lua)
     stat = dsf.stat()
-    # Not the path: dsff install reads the stock archive from the game folder the first time and
+    # Not the path: dsff install reads the vanilla archive from the game folder the first time and
     # from its backup (dsfforza-backup) after, and a rewritten cache is a changed input of every car.
     key = f"{FLEET_VERSION}:{stat.st_size}:{int(stat.st_mtime)}"
     if FLEET_CACHE.exists() and not refresh:
@@ -372,7 +372,7 @@ RULES: dict[int, str] = {
 # on the 48 pairs |error| 0.030 m against 0.054 for the fleet median offset. The CoG is
 # the strongest predictor of handbrake rotation in game (with p32 and the yaw inertia).
 COG_HEIGHT_OFFSET = 0.052
-# On a host of the car's own model the stock VO3D is Reflections' version of the car:
+# On a host of the car's own model the vanilla VO3D is Reflections' version of the car:
 # keep it, only follow the hubs (wheelbase, CoG offset scaled with it) and Forza's lock.
 SAME_MODEL_RULES: dict[int, str] = {361: "GH", 32: "CH", 298: "Z"}
 
@@ -389,7 +389,7 @@ def torque_power_rule(car: H.ForzaCar) -> float:
 
 
 # vehicleStats stat bars (the HUD's Speed / Strength / Drift, Reflections' summary of a
-# car), fitted over the 137 stock cars that have them. Leave-one-out mean absolute
+# car), fitted over the 137 vanilla cars that have them. Leave-one-out mean absolute
 # error 0.042, 0.041 and 0.127 (bar spread 0.24, 0.18, 0.28). P/W in kW per kg.
 BAR_FITS = {
     "Speed": (-0.6525, 0.0101, 0.0587),  # + p160 (mph), + ln(P/W)
@@ -412,7 +412,7 @@ def stat_bars(params: dict[int, float], specs: Specs) -> dict[str, float]:
 
 
 # Handbrake rotation (yaw change in 3 s after a 0.4 s Space+Right flick, degrees) from
-# 46 in-game runs on 9 stock cars and 7 ports (runs 20261022-050855, -055824, -063701):
+# 46 in-game runs on 9 vanilla cars and 7 ports (runs 20261022-050855, -055824, -063701):
 # 25.3 - 11.56 x p16/p0 + 5.64 x p369/p0 - 41.4 x p368/p0 + 1.68 x mph, R^2 0.63,
 # rms 11 deg. Yaw inertia per kg, lateral stiffness per kg and grip per kg are the dials
 # Reflections' cars differ by. drift_index() is the speed-free part.
@@ -434,7 +434,7 @@ def _mph_at_redline(rel: float, p361: float, p360: float, p42: float) -> float:
 
 @dataclass
 class Context:
-    host: dict  # fleet record of the host (its stock VO3D and geometry)
+    host: dict  # fleet record of the host (its vanilla VO3D and geometry)
     host_specs: Specs
     car: H.ForzaCar
     specs: Specs
@@ -442,7 +442,7 @@ class Context:
     neighbors: list[dict]  # fleet records of the next-best hosts (incl. the host)
     base: dict[int, float]  # the clone's current VO3D (host values plus earlier edits)
     scales: dict[int, float] | None = None  # fleet spread per parameter (for the feel medoid)
-    same_model: bool = False  # the host is a stock version of this car
+    same_model: bool = False  # the host is a vanilla version of this car
     family: bool = False  # the host is of the car's model family (host_select identity >= 30)
     drive_donor: dict | None = None  # best-ranked host with the car's drivetrain
 
@@ -451,8 +451,8 @@ TORQUE_SCALED = (355, 358)
 # Rule W: parameters Reflections set from the weight distribution (front share fw of the
 # axle load, from p32: 0.5 + (p32 - axle midpoint) / wheelbase), fitted over the fleet.
 # p345 is the base of the axle balance in FUN_008BD9B0 (r = -0.93 with fw, residual sd
-# 0.015 over 136 cars): swapping a GT-R port's 0.58 for the stock 0.51 brought its
-# handbrake rotation from 41 to 90 deg (stock 72 to 82; run 20261022-123844).
+# 0.015 over 136 cars): swapping a GT-R port's 0.58 for the vanilla 0.51 brought its
+# handbrake rotation from 41 to 90 deg (vanilla 72 to 82; run 20261022-123844).
 WEIGHT_BALANCE = {345: (0.9448, -0.8298), 505: (3.035, -3.812)}
 
 
@@ -638,7 +638,7 @@ def build(
     # log p18, r = 0.78): the fleet's median ratio to p18 times the new p18 (rule R). The
     # GT-R on the RUF and the Mito launched 1 to 3 s slow on heavy-engined hosts and
     # donors (runs 20261022-073627, -091649, -095156); R puts both within 15% of the
-    # stock cars' values (GT-R 0.0103 vs 0.009, Mito 0.0052 vs 0.005).
+    # vanilla cars' values (GT-R 0.0103 vs 0.009, Mito 0.0052 vs 0.005).
     if engine_scale and not ctx.same_model:
         # Engine inertia (launch): the fleet's median ratio to p18 x new p18 (rule R).
         c = candidates(ctx, 355, new)
@@ -646,10 +646,10 @@ def build(
             put(355, c["R"], "R: fleet median ratio to p18 x new p18")
         # Engine friction: the drivetrain donor's (best-ranked host with the car's
         # drivetrain), x new p18 / donor p18. The fleet ratio (R) gave the 370Z and the
-        # GT-R 50 to 90% more friction than their stock cars and cost them 1.5 to 2 s to
+        # GT-R 50 to 90% more friction than their vanilla cars and cost them 1.5 to 2 s to
         # 100 mph (run 20261022-100024); the engine-set medoid gave the Mito a 1971-style
         # Fiat 500's 0.0055 against its own 0.003, and a weak engine can't afford it
-        # (Mito with the stock engine set: 0-60 9.5 -> 6.6 s, run 20261022-123030). Over
+        # (Mito with the vanilla engine set: 0-60 9.5 -> 6.6 s, run 20261022-123030). Over
         # the 48 pairs the drivetrain donor is as close as the medoid (1.199 vs 1.201).
         donor = ctx.drive_donor or ctx.host
         p18_new, p18_donor = new.get(18, value(b, 18)), value(donor["params"], 18)
@@ -776,7 +776,7 @@ def apply(
     car = H.load_forza(media, dbs)
     order, same = ranked_hosts(media, fleet)
     # DSF_HANDLING_LOO=1 (test builds): treat the car as absent from DSF, as the
-    # leave-one-out check does: no stock version of it among the feel donors, fleet
+    # leave-one-out check does: no vanilla version of it among the feel donors, fleet
     # fits without it.
     loo = os.environ.get("DSF_HANDLING_LOO") == "1"
     ranking = [host_id] + [i for i in order if i != host_id and not (loo and i in same)]
@@ -815,7 +815,7 @@ def apply(
     donors = sorted({rule.split(" from ")[1] for _, _, _, rule in changes if " from " in rule})
     log(
         f"  handling (dsf): {len(changes)} parameters changed on host {host_id}"
-        + (" (same model: stock values kept)" if ctx.same_model else "")
+        + (" (same model: vanilla values kept)" if ctx.same_model else "")
         + (f", feel sets from {', '.join(donors)}" if donors else "")
         + f"; {car.mass:.0f} kg, {car.drive}, {ctx.specs.power:.0f} kW, {ctx.specs.torque:.0f} Nm"
     )
@@ -834,7 +834,7 @@ def apply(
 
 
 def ranked_hosts(media: str, fleet: dict[int, dict], exclude_model_of: int | None = None) -> tuple[list[int], set[int]]:
-    """Host IDs best first (host_select), and the IDs of the car's own stock model."""
+    """Host IDs best first (host_select), and the IDs of the car's own vanilla model."""
     hosts = HS.survey()
     info = HS.forza_info(media)
     same = {h["id"] for h in hosts if HS.identity_score(h, info)[0] >= 60}
@@ -1082,13 +1082,13 @@ def loo(
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("loo", help="leave-one-out over the 48 stock/Forza pairs")
+    p = sub.add_parser("loo", help="leave-one-out over the 48 vanilla/Forza pairs")
     p.add_argument("--csv", type=Path)
     p.add_argument("-v", "--verbose", action="store_true")
     p = sub.add_parser("build", help="print the DSF-first VO3D changes for a Forza car")
     p.add_argument("--car", required=True)
     p.add_argument("--host", type=int, help="default: host_select's choice")
-    p.add_argument("--exclude-self", action="store_true", help="skip hosts of the car's own stock model")
+    p.add_argument("--exclude-self", action="store_true", help="skip hosts of the car's own vanilla model")
     p.add_argument("--feel", choices=("medoid", "host"), default="medoid")
     sub.add_parser("refresh", help="rebuild the fleet cache")
     args = parser.parse_args(argv)

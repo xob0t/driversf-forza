@@ -18,10 +18,10 @@ media means rewriting DATA, DIDX and every Sound that uses them;
 `Bank.replace_media` does that.
 
 Commands:
-    uv run dsff wwise_bank info  out/sound/stock/227/SBAK.bin
-    uv run dsff wwise_bank tree  out/sound/stock/227/SBAK.bin [--curves]
-    uv run dsff wwise_bank wavs  out/sound/stock/227/SBAK.bin out/sound/wav/227
-    uv run dsff wwise_bank check out/sound/stock/*/SBAK.bin   # parse + byte-identical rebuild
+    uv run dsff wwise_bank info  out/sound/vanilla/227/SBAK.bin
+    uv run dsff wwise_bank tree  out/sound/vanilla/227/SBAK.bin [--curves]
+    uv run dsff wwise_bank wavs  out/sound/vanilla/227/SBAK.bin out/sound/wav/227
+    uv run dsff wwise_bank check out/sound/vanilla/*/SBAK.bin   # parse + byte-identical rebuild
 """
 
 from __future__ import annotations

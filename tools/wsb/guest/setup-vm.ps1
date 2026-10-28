@@ -5,7 +5,7 @@ Runs inside the dsfforza test VM as its user (admin, no UAC), in the desktop ses
   Provision  links C:\Repo, C:\Output, C:\Profile to the VMware shared folders, then
              runs Game, Profile and Session (tools\wsb\vm-build.ps1 Provision).
   Game       C:\Game <- the host's game folder (share "Game", read-only), mirrored, then
-             put back to stock: files a dsfforza install replaced come from its
+             put back to vanilla: files a dsfforza install replaced come from its
              dsfforza-backup, files it created are dropped (run-test.ps1 rebuilds plugins
              and UserLuaScripts anyway). Re-run to pick up changes to the host install.
   Profile    Documents\Ubisoft\Driver San Francisco <- C:\Profile, switched to a
@@ -127,8 +127,8 @@ function Invoke-Game {
             if ($entry.action -eq 'replaced') {
                 Copy-Item -LiteralPath (Join-Path $backup $entry.backup) $path -Force
                 $hash = (Get-FileHash -LiteralPath $path).Hash
-                if ($entry.original_sha256 -and $hash -ne $entry.original_sha256) { throw "stock $($entry.path) hash mismatch" }
-                Say "stock $($entry.path)"
+                if ($entry.original_sha256 -and $hash -ne $entry.original_sha256) { throw "vanilla $($entry.path) hash mismatch" }
+                Say "vanilla $($entry.path)"
             }
             elseif ($entry.action -eq 'created') { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
         }

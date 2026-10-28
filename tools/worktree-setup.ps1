@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
 Links a git worktree to the main checkout's untracked inputs: the Forza disc
-images (assets\), the stock game copy (out\stock), the extraction cache
+images (assets\), the vanilla game copy (out\vanilla), the extraction cache
 (out\cache), the downloaded tools (out\tools-dl: vgmstream for the Forza
 engine sound) and the reference downloads (_ref). Then it writes the derived
 game data the tools read (out\lua-src\...\vehiclestats.lua, out\db\*.slt)
@@ -26,7 +26,10 @@ $here = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 # The main checkout is the first entry of `git worktree list`.
 $main = ((git -C $here worktree list --porcelain) | Where-Object { $_ -like 'worktree *' } | Select-Object -First 1).Substring(9) -replace '/', '\'
 if ((Resolve-Path $main).Path -eq $here) { "this is the main checkout; nothing to link"; return }
-foreach ($rel in 'assets', 'out\stock', 'out\cache', 'out\tools-dl', '_ref') {
+$links = 'assets', 'out\vanilla', 'out\cache', 'out\tools-dl', '_ref'
+# out\stock: the vanilla copy's link in worktrees made before v0.1.3 (it was called stock).
+if ($Unlink) { $links += 'out\stock' }
+foreach ($rel in $links) {
     $target = Join-Path $here $rel
     if ($Unlink) {
         $item = Get-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue

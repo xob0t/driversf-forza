@@ -51,7 +51,7 @@ def main(argv: list[str] | None = None) -> None:
     from dsfforza.formats import carbin
 
     sections = carbin.parse((args.car / f"{args.name}.carbin").read_bytes())
-    body = [s for s in F.stock_sections(sections) if s.name != "wheel"]
+    body = [s for s in F.vanilla_sections(sections) if s.name != "wheel"]
     misc = ET.parse(args.car / "Physics" / "MAXData.xml").getroot().find("Misc")
     mid_z = float(misc.find("BottomCenterWheelbasePos").get("z"))
     place = F.Placement(dy=F.HOST_HUB_Y - 0.339, dz=0.1155 - mid_z)

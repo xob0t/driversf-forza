@@ -359,7 +359,7 @@ def test_name_hashes_share_the_crc() -> None:
 
 
 def test_vehiclestats_read_back() -> None:
-    """game_data.read_vehiclestats (handling.lua_stats, gui_assets.stock_stats) on the
+    """game_data.read_vehiclestats (handling.lua_stats, gui_assets.vanilla_stats) on the
     layout game_data.vehiclestats_text writes."""
     table = {
         62: {

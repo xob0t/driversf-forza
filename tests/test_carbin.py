@@ -120,7 +120,7 @@ def test_load_car_wheel_section():
 
 
 def test_load_car_wheel_variants():
-    # AUS_MiniCooperS_65: wheela (stock) and wheelb (upgrade), no wheel
+    # AUS_MiniCooperS_65: wheela (vanilla) and wheelb (upgrade), no wheel
     car = _load([_section("body", 3, 0, BOX), _section("wheela", 4, 0, BOX), _section("wheelb", 5, 0, BOX)])
     assert [s.name for s in car.wheel] == ["wheela"]
     assert [s.name for s in car.body] == ["body"]  # neither variant is drawn as body

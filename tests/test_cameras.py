@@ -47,7 +47,7 @@ def test_bonnet_params_round_trip():
     ground = -0.73
     cam = (0.0, 0.48, 0.87)
     params = vc.bonnet_params(cam, ground)
-    # Stock 147: p536 0.91, p537 0.87, ground 0.73 under the origin -> (0, 0.48, 0.87) in model space.
+    # Vanilla 147: p536 0.91, p537 0.87, ground 0.73 under the origin -> (0, 0.48, 0.87) in model space.
     assert abs(params[536] - 0.91) < 1e-9 and params[537] == 0.87
     vo3d = handling.VO3D(304, {0: 1500.0}).build()
     patched = vc.patch_vo3d(vo3d, params)

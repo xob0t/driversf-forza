@@ -51,10 +51,10 @@ from pathlib import Path
 
 import numpy as np
 
-# FUN_0088D750: sag = -p140 * p0 / (wheels * 25) / p1, p140 = -17 on every stock car.
+# FUN_0088D750: sag = -p140 * p0 / (wheels * 25) / p1, p140 = -17 on every vanilla car.
 SAG_PER_KG = 17.0 / (4 * 25)
 DEAD_ZONE_RAMP = 0.1  # m: FUN_008BA900 ramps the force from 0 at p4 to full at p4 + 0.1
-TYRE_CORE = 0.75  # body points nearer the axle than this share of the radius are inside the rim (stock calipers)
+TYRE_CORE = 0.75  # body points nearer the axle than this share of the radius are inside the rim (vanilla calipers)
 SAMPLE_STEP = 0.008  # m between sample points on body triangles near a wheel
 
 

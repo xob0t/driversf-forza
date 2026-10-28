@@ -1,7 +1,7 @@
-"""Stock-like damage for converted Forza cars: panels, crush morph, hinges.
+"""Vanilla-like damage for converted Forza cars: panels, crush morph, hinges.
 
-How a stock DSF car damages (research/damage.md, confirmed-static from the
-shared vehicle shaders in SSIC and the stock geometry):
+How a vanilla DSF car damages (research/damage.md, confirmed-static from the
+shared vehicle shaders in SSIC and the vanilla geometry):
 
 - Vertex semantic 9 bytes 0 and 1 pick the panel. Byte 0 (UPVH record +0x34)
   indexes g_PanelTransforms (a 3x4 matrix per panel: hinge swing, detached
@@ -10,7 +10,7 @@ shared vehicle shaders in SSIC and the stock geometry):
 - Semantic 12 ("vec3DamagePos", half4) is the panel's fully crushed position.
   The vertex shader draws lerp(position, s12, fDamage), with
   fDamage = PerPanelData[byte 1].x - offset * x (a per-panel amount with a
-  left-right gradient). Stock cars push the nose back by about 6% of the car
+  left-right gradient). Vanilla cars push the nose back by about 6% of the car
   length and the tail forward by about 2%, buckle the bonnet up and dent the
   doors by a few centimetres.
 - Semantic 5 bytes 2 and 3 are the normal's polar/azimuth change at full
@@ -59,8 +59,8 @@ from dsfforza.formats.chnk import read_chunk
 from dsfforza.formats.vehicle_mesh import child, payload
 
 # --- UPVH roles (record +0x0A) of part records, from a fleet survey of the 150
-# stock vehicles (MODL part box centres; research/damage.md). "+x" is the car's
-# left (DSF: +z forward, +y up, right-handed); stock names don't say which.
+# vanilla vehicles (MODL part box centres; research/damage.md). "+x" is the car's
+# left (DSF: +z forward, +y up, right-handed); vanilla names don't say which.
 ROLES = {
     38: "chassis",
     37: "front structure",
@@ -462,7 +462,7 @@ def _ranges(starts, counts) -> np.ndarray:
 # The vehicle pixel shader samples the shared damage-decal texture (SSIC
 # 00122b6db3fa1227, 1024x1024 DXT5: dent normals in RGB, scratch mask in
 # alpha) and the dirt texture (001251560b05e528) at UV1, semantic 8
-# components 2-3 of the 32-byte buffers (paint and lamps). Stock cars unwrap
+# components 2-3 of the 32-byte buffers (paint and lamps). Vanilla cars unwrap
 # each panel onto its own tile of that atlas (front bumper top left, rear
 # bumper top right, bonnet, boot, sides in the rows below; lamps on the
 # small broken-lamp tile). Converted vertices carried Forza's UV1 (paint) or
@@ -588,7 +588,7 @@ class Uv1Field:
                 keys[("degenerate",)].append(n)
                 continue
             if any(not -0.01 <= uv[k] <= 1.01 for uv in uvs for k in (0, 1)):
-                # Tiled UV1 (stock interiors' GLOBAL_LOD_Chrome runs to -4..5): not the
+                # Tiled UV1 (vanilla interiors' GLOBAL_LOD_Chrome runs to -4..5): not the
                 # panel atlas layout.
                 keys[("tiled",)].append(n)
                 continue
@@ -751,7 +751,7 @@ class Uv1Field:
 
 def s9_pair(vb, index: int) -> tuple[int, int]:
     """Semantic 9 bytes 0, 1 (panel transform, panel data) of a vertex; (0, 0),
-    the chassis, for buffers without semantic 9 (some stock interiors, e.g.
+    the chassis, for buffers without semantic 9 (some vanilla interiors, e.g.
     173 and 184, have 32-byte buffers without it)."""
     e9 = vb.element(9)
     if e9 is None:
@@ -790,7 +790,7 @@ class Panel:
 
 @dataclass
 class HostField:
-    """Stock vertices of one entry's part 0: position, s12 - position, panel pair."""
+    """Vanilla vertices of one entry's part 0: position, s12 - position, panel pair."""
 
     points: list
     disp: list
@@ -894,10 +894,10 @@ def section_rule(name: str) -> tuple[str, tuple]:
     plate = re.fullmatch(r"(.*)_plate_(front|rear)", n)
     if plate:
         # Licence plates (src/dsfforza/convert/plates.py): the panel of the section they sit
-        # on (bumper, boot lid), whole: one panel per plate, like stock. On a
-        # plain body section: at the front the bumper (stock: 121 of 131 front
+        # on (bumper, boot lid), whole: one panel per plate, like vanilla. On a
+        # plain body section: at the front the bumper (vanilla: 121 of 131 front
         # plates), at the rear the nearest of rear bumper, boot lid, chassis
-        # (stock: 73, 34, 32 of 141).
+        # (vanilla: 73, 34, 32 of 141).
         kind, roles = section_rule(plate.group(1))
         if kind == "nearest":
             if plate.group(2) == "front":
@@ -909,7 +909,7 @@ def section_rule(name: str) -> tuple[str, tuple]:
     # The bumper frames sit right behind the bumper skins. On the chassis or
     # front structure they crushed less than the skin and poked through it
     # (the M5's rear frame showed as a white chevron on the damaged bumper,
-    # run 20261022-062852), so they go with their bumper, as stock bumper
+    # run 20261022-062852), so they go with their bumper, as vanilla bumper
     # parts carry their own trim.
     if n.startswith("bumperframef"):
         return "fixed", (35, 37, 38)
@@ -952,7 +952,7 @@ def mirror_key(name: str) -> str:
 
 # --- exposed inner geometry -----------------------------------------------------------
 #
-# When the bonnet, boot lid or a bumper swings open or falls off, stock cars
+# When the bonnet, boot lid or a bumper swings open or falls off, vanilla cars
 # show structure drawn from the shared chassis texture (SSIC 00122b73d1fa1227,
 # which every GLOBAL_Chassis* material samples: radiator, bulkhead, inner wings,
 # strut towers, subframe, boot tub, crash beam and undercarriage pictures) and
@@ -960,7 +960,7 @@ def mirror_key(name: str) -> str:
 # (GLOBAL_Chassis; its blue channel is the paint mask). Baked sky there follows
 # the facing: bay floors 0.4-0.7, walls ~0.34, undersides ~0.03, bonnet
 # undersides 0.01-0.24 (hosts 147, 193, 227, 251, 266); boot wells 0.23-0.34 and
-# the structure behind the bumpers 0.09-0.41 (out/underside/stockref-ext.txt).
+# the structure behind the bumpers 0.09-0.41 (out/underside/vanillaref-ext.txt).
 # Forza models have that geometry too (techniques frame, black, bottom,
 # undercarriage...), but the converter put every trim on TRIM_UV, one dark
 # texel (R 24), and Forza's AO is baked with the panels shut: a flat black void
@@ -1075,8 +1075,8 @@ def engine_placement(name: str, gamedbs=(), folder=None) -> str | None:
 # tag -> (picture in the shared chassis texture (u0, u1, v0, v1), axis along u, axis along v);
 # an axis "y" runs up the picture. Pictures read off out/dmgfix/trimtex-grid-*.png and
 # out/underside/atlas-boot.png.
-_TUB = (0.420, 0.495, 0.170, 0.300)  # boot tub panels, the part stock boot wells use (147: R ~48)
-_BEAM = (0.310, 0.500, 0.365, 0.530)  # rear panel and crash beam (stock 147/229 behind the bumper)
+_TUB = (0.420, 0.495, 0.170, 0.300)  # boot tub panels, the part vanilla boot wells use (147: R ~48)
+_BEAM = (0.310, 0.500, 0.365, 0.530)  # rear panel and crash beam (vanilla 147/229 behind the bumper)
 _SUBFRAME = (0.495, 0.598, 0.560, 0.875)  # subframe from below
 _INNER_WING = (0.095, 0.172, 0.100, 0.550)  # inner wing, strut tower
 _RADIATOR = (0.207, 0.300, 0.005, 0.135)
@@ -1107,12 +1107,12 @@ EXPOSED_MAP = {
 }
 # Sentinel UV0 per tag (exact in half floats; add_geometry writes them, _expose replaces them).
 EXPOSED_SENTINEL = {tag: (-2.0, -1.0 - n) for n, tag in enumerate(EXPOSED_MAP)}
-INNER_SKY = 0.2  # stock bonnet undersides 0.01-0.24
-BAY_SKY = (0.04, 0.35, 0.62)  # facing down, sideways, up (stock front structure)
+INNER_SKY = 0.2  # vanilla bonnet undersides 0.01-0.24
+BAY_SKY = (0.04, 0.35, 0.62)  # facing down, sideways, up (vanilla front structure)
 ZONE_SKY = {
     "bay": BAY_SKY,
-    "boot": (0.08, 0.28, 0.40),  # stock boot wells 0.23-0.34 (147, 227, 229, 266, 193)
-    "rear": (0.08, 0.28, 0.40),  # stock behind the bumpers 0.09-0.41
+    "boot": (0.08, 0.28, 0.40),  # vanilla boot wells 0.23-0.34 (147, 227, 229, 266, 193)
+    "rear": (0.08, 0.28, 0.40),  # vanilla behind the bumpers 0.09-0.41
     "front": (0.08, 0.28, 0.40),
 }
 
@@ -1523,9 +1523,9 @@ def smooth_labels(labels: list, areas: list, corners: list, passes: int = 2) -> 
 # vote follows the host's layout, so a door patch spilled over those edges and
 # had to be held shut (DamagePlan.bound). A door or wing whose triangles are
 # mostly whole components that voted for it takes exactly those components: its
-# border is then the Forza shut line, and it can swing like stock.
+# border is then the Forza shut line, and it can swing like vanilla.
 
-SWINGS = DOORS + (33, 34)  # roles that swing on stock cars (doors, front wings)
+SWINGS = DOORS + (33, 34)  # roles that swing on vanilla cars (doors, front wings)
 PART_SHARE = 0.6  # share of a component's area its panel vote needs to take it whole
 PART_MIN_AREA = 0.15  # m2 of whole components a door or wing needs to be a Forza part
 
@@ -2098,7 +2098,7 @@ class DamagePlan:
     def _glass_panel(self, which: str) -> tuple | None:
         """The host's centred glass panel (role 8) in the front (z > 0) or rear
         half: windscreen or rear window. None if the host has none there (the
-        stock 370Z's rear window is part of its hatch)."""
+        vanilla 370Z's rear window is part of its hatch)."""
         cands = [
             p
             for p in self.panels_with((8,))
@@ -2267,7 +2267,7 @@ class DamagePlan:
                 per_section[name] = Counter(labels)
         else:
             span = {}
-        # Door cards go with their swinging door, as stock door cards are
+        # Door cards go with their swinging door, as vanilla door cards are
         # skinned to the door records (cockpit.md): an open door shows its
         # card, and no card is left standing in the opening.
         doors = [d for d in span if self.panels[d].role in DOORS]
@@ -2346,8 +2346,8 @@ class DamagePlan:
         p = self.panels.get(pair)
         return p is not None and p.role in BODY
 
-    # Doors and wings swing on stock cars. Their hinge limit is 0, but
-    # forceOpenPanels opens stock doors wide (run host-20261023-093807: 227,
+    # Doors and wings swing on vanilla cars. Their hinge limit is 0, but
+    # forceOpenPanels opens vanilla doors wide (run host-20261023-093807: 227,
     # 266) and the converted RX-7's and Mustang's door panels too (run
     # host-20261023-101158), and a crash knocks them ajar. A converted door or
     # wing is a patch of the one-piece Forza skin cut along the host's panel
@@ -2360,7 +2360,7 @@ class DamagePlan:
     # chassis' transform slot (s9 byte 0) and keep their own panel-data index
     # (byte 1): they still dent with their own damage amount, and never swing.
     # A door or wing that is a Forza part (self.swinging, assignment) has the
-    # Forza shut line as its border and keeps its own slot: it swings as stock.
+    # Forza shut line as its border and keeps its own slot: it swings as vanilla.
 
     def bound(self, pair) -> tuple:
         """s9 bytes 0, 1 written on a panel's vertices: (transform slot, panel
@@ -2436,7 +2436,7 @@ class DamagePlan:
     # slits after a side hit). A seam vertex is drawn at p + f * d on each
     # side, f being that panel's damage amount; sharing d closes the seam only
     # when both panels get the same f, which fullVisualDamage does and a real
-    # impact doesn't. Only d = 0 keeps it shut for any f. Stock cars do that:
+    # impact doesn't. Only d = 0 keeps it shut for any f. Vanilla cars do that:
     # the vertices where doors, wings, sills and the chassis meet barely move
     # (median 0-3 mm on 147, 163, 227), while their middles dent; where they
     # move (wings against the front structure, 0.2-0.3 m on 163), the seam is
@@ -2883,7 +2883,7 @@ class DamagePlan:
         )
 
     def exterior(self, builder, lod: int, **kwargs) -> list:
-        """Exterior entry: the merged body only (stock exteriors have no panel parts)."""
+        """Exterior entry: the merged body only (vanilla exteriors have no panel parts)."""
         panel_subs = self._geometry(builder, self.car.body, lod, self.ext_field, **kwargs)
         merged = self._merge(builder, panel_subs)
         drop = {id(s) for subs in panel_subs.values() for s in subs}

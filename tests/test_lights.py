@@ -177,7 +177,7 @@ def test_clear_lens_on_red_texels_is_tail():
 
 
 def test_red_lens_over_indicator_blinks():
-    # FOR_GT_05: red lenses over drlinl/drlinr lamps. Stock lamps are opaque, so the bulb
+    # FOR_GT_05: red lenses over drlinl/drlinr lamps. Vanilla lamps are opaque, so the bulb
     # behind never shows: the lens itself brakes and indicates.
     car = [
         _quad("glassLTL", "detail_glass_red", 0.6, -2.05),
@@ -254,12 +254,12 @@ def test_lamps_get_entries_at_their_own_end_and_side():
 
 
 def test_head_lamps_light_by_day():
-    # Stock cars light a front lamp with DaytimeRunning (0x03 position lamps, or 0x1D head lamps
+    # Vanilla cars light a front lamp with DaytimeRunning (0x03 position lamps, or 0x1D head lamps
     # on 31 of 150); ported head lamps were 0x01 only and stayed dark by day (player report)
     heads = [_quad("headlightL", "head_light", 0.6, 2.0), _quad("headlightR", "head_light", -0.6, 2.0)]
     got = _assigned(heads + TAILS, 8)
     assert got[(lights.HEAD, "L", True)] == got[(lights.HEAD, "R", True)] == 0x1D, got
-    # with a position lamp of its own on that side, the head lamp stays 0x01 (stock 229)
+    # with a position lamp of its own on that side, the head lamp stays 0x01 (vanilla 229)
     drl = [_quad("drlL", "drlwhite", 0.8, 2.0)]
     got = _assigned(heads + drl + TAILS, 8)
     assert got[(lights.HEAD, "L", True)] == 0x01 and got[(lights.HEAD, "R", True)] == 0x1D, got
@@ -285,7 +285,7 @@ def test_pop_up_lamps_keep_the_lowered_state():
         "lonelyup",
     ]
     sections = [carbin.Section(n, (0, 0, 0), (0, 0, 0), (0, 0, 0)) for n in names]
-    kept = [s.name for s in forza2dsf.stock_sections(sections)]
+    kept = [s.name for s in forza2dsf.vanilla_sections(sections)]
     assert kept == ["body", "headlightLdown", "headlightRdown", "glassLHLdown", "headlightL2", "lonelyup"], kept
 
 

@@ -16,7 +16,7 @@ BODY, WHEEL, EXT_BODY, EXT_WHEEL = (bytes([n, 0x12, 0, 0, 0, 0, 0x28, 0x2D]) for
 
 
 def _modl(parts: list[tuple[bytes, list[tuple[int, list[bytes]]]]]) -> bytes:
-    """A MODL in the stock layout: part records, LOD table, submodel UIDs, flags."""
+    """A MODL in the vanilla layout: part records, LOD table, submodel UIDs, flags."""
     lod_offset = 0x10 + len(parts) * 0x60
     entries = [(mask, subs) for _, lods in parts for mask, subs in lods]
     uid_list = lod_offset + len(entries) * 16
@@ -128,7 +128,7 @@ def test_split_gives_the_rear_wheels_their_own_parts():
     assert hw.full_parts == [1, 2] and hw.exterior_parts == [1, 2]
     assert hw.axles == {(0, 1): "front", (0, 2): "rear", (2, 1): "front", (2, 2): "rear"}
     assert hw.hubs == before.hubs
-    # new part UIDs: stock-shaped, byte 7 below 0x80, not the host's
+    # new part UIDs: vanilla-shaped, byte 7 below 0x80, not the host's
     full_ids, ext_ids = upvh.modl_part_uids(_payload(full, "MODL")), upvh.modl_part_uids(_payload(exterior, "MODL"))
     new = {full_ids[2], ext_ids[2]}
     assert len(new) == 2 and not new & {BODY, WHEEL, EXT_BODY, EXT_WHEEL}

@@ -2,9 +2,9 @@
 game of tests/test_register_asi.py): a car never shows another model's nameplate.
 
 A Ford Ka (FOR_Ka_11, 2011, host 249 Aston Martin Cygnet) showed the Ford badge and
-the stock "SHELBY GT500" plate: without its hud.lua entry register.lua gave a ported
-car of a make DSF has the plate of that make's closest-year stock car. For 2011 three
-stock Fords tie (2010 Shelby GT500 194, Taurus SHO 196, F-150 251) and the first in
+the vanilla "SHELBY GT500" plate: without its hud.lua entry register.lua gave a ported
+car of a make DSF has the plate of that make's closest-year vanilla car. For 2011 three
+vanilla Fords tie (2010 Shelby GT500 194, Taurus SHO 196, F-150 251) and the first in
 pairs() order wins: the Shelby (Model 186) in the game, the F-150 (178) here. Now such
 a car gets the make's badge and no plate (Model 32, " ", which the renderer drops), and
 a hud.lua entry made for another car isn't used.
@@ -24,7 +24,7 @@ _harness = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_harness)
 
 BLANK = 32
-FORD, SHELBY_GT500 = 43, 186  # stock vehicleStats[194]: Ford badge, "SHELBY GT500" plate
+FORD, SHELBY_GT500 = 43, 186  # vanilla vehicleStats[194]: Ford badge, "SHELBY GT500" plate
 CARS = {  # id: (media, host, make, model, year)
     404: ("FOR_Ka_11", 249, "Ford", "Ka", "2011"),
     412: ("FOR_ShelbyGT500_10", 194, "Ford", "Shelby GT500", "2010"),

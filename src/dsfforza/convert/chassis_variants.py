@@ -1,7 +1,7 @@
 """Body variants: give every chassis record's MODL part the converted body.
 
-Most stock vehicles have one chassis record (UPVH record type 5, role 256)
-whose MODL part is part 0 of each entry. 39 stock vehicles have more:
+Most vanilla vehicles have one chassis record (UPVH record type 5, role 256)
+whose MODL part is part 0 of each entry. 39 vanilla vehicles have more:
 roles 257, 258, 259, 513, 1280, 1281, 1282 or 1, each with its own MODL
 part in the full entry and its own LOD link to an interior and an exterior
 part. On host 172 (70's Muscle 04) the role-257 parts hold a second copy of
@@ -122,7 +122,7 @@ def fill_entry(stream, vehc: Entry, parts_to_fill: list[int], new_uid) -> int:
                 added.append((fresh, uid))
                 copies.append(fresh)
             new_lods.append((mask, copies, list(extras)))
-        # Keep LODs the variant part already had that part 0 doesn't (none on stock data).
+        # Keep LODs the variant part already had that part 0 doesn't (none on vanilla data).
         masks = {m for m, _, _ in new_lods}
         parts[p] = new_lods + [lod for lod in parts[p] if lod[0] not in masks]
     if not added:
@@ -178,7 +178,7 @@ def fill(
     (call after they are rebuilt; pass None for an entry that kept the host's
     geometry, and full_rebuilt=False if the full entry did). Returns {kind:
     parts and submodels added}."""
-    from dsfforza.build.clone_vehicle import stock_like_uid
+    from dsfforza.build.clone_vehicle import vanilla_like_uid
 
     nonr = child(full, "NONR")
     entries = {0: full if full_rebuilt else None, 1: interior, 2: exterior}
@@ -191,7 +191,7 @@ def fill(
 
     def new_uid() -> bytes:
         counter[0] += 1
-        return stock_like_uid(prefix, counter[0])
+        return vanilla_like_uid(prefix, counter[0])
 
     report = {}
     for kind, parts in todo.items():

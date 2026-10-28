@@ -7,7 +7,7 @@
 -- chapter loads. Background: research/game-lua.md.
 --
 -- What it does per car in CARS:
---   HUD     vehicleStats[id] = copy of a stock entry plus overrides
+--   HUD     vehicleStats[id] = copy of a vanilla entry plus overrides
 --           (badge, name strings, stat bars). The HUD, garage and unlock
 --           panels read this table through getVehicleStats(id).
 --   traffic adds the ID to the chapter's "interesting vehicle" regions
@@ -32,7 +32,7 @@ local M = {}
 -- Per-car settings, from dsfforza\ported.lua (src/dsfforza/build/port_car.py or
 -- src/dsfforza/build/port_batch.py) or config.lua's register.cars. Empty without either, so
 -- nothing is registered for cars that aren't in the installed archive.
--- `source` is the stock model whose vehicleStats entry is copied; every other
+-- `source` is the vanilla model whose vehicleStats entry is copied; every other
 -- field overrides that copy. Example:
 --	[304] = {
 --		source = 266,                 -- ASYM Desanne (the clone's host)
@@ -53,7 +53,7 @@ local OPTIONS = {
 	missionPot = false,   -- keep the car resident: add it to spooling.missionSpecificVehiclePots["All chapters"]
 	                      -- (what Felony Rework does for cop car 267; uses one of 18 mission spool slots)
 	regionCars = 24,      -- (1) at most about this many added cars per region; more cars are spread
-	                      --     over the 17 regions so stock interesting vehicles keep their share
+	                      --     over the 17 regions so vanilla interesting vehicles keep their share
 	garage = true,        -- (2) Selectable = true in vehicleStats (IDs below 304, below 1000 with dsfforza.asi,
 	                      --     while the maker list has room)
 	writeProfile = false, -- (2) ProfileSettings.SetVehicleUnlocked/Owned for garage cars: WRITES THE SAVE
@@ -72,7 +72,7 @@ local OPTIONS = {
 -- dsfforza.asi's garage module (tools/asi, research/asi.md) lifts both: the
 -- garage walks IDs up to 999, holds more maker groups of any number of cars
 -- (and drops what doesn't fit instead of overrunning memory), and flags of IDs 304..999 go to
--- <savegames>\dsfforza-garage.dat instead of the stock save block. Lua can't
+-- <savegames>\dsfforza-garage.dat instead of the vanilla save block. Lua can't
 -- call native code, so the plugin answers ProfileSettings.GetVehicleUnlocked
 -- for magic IDs 8000000 + k (the game's Lua numbers are single floats, exact
 -- below 2^24; literals must stay below 2^23); an unpatched game looks the number up in
@@ -111,8 +111,8 @@ local OVERFLOW_GROUP = "FORZA"   -- makes without a group of their own share FOR
 -- list above. The HUD badge and name come from the numeric Manufacturer and
 -- Model fields (vehicles_font glyph codes; ManufacturerName/ModelName strings
 -- don't reach it). dsfforza\hud.lua (gui_assets) gives every car its own; for a
--- car it doesn't cover, the stock entries are matched on Picture1 ("nissan_370z"):
---   same make and model  -> copy that stock entry (badge, name, pictures, stats)
+-- car it doesn't cover, the vanilla entries are matched on Picture1 ("nissan_370z"):
+--   same make and model  -> copy that vanilla entry (badge, name, pictures, stats)
 --   same make            -> host entry with that make's badge and no nameplate
 --   make not in DSF      -> host entry with no badge and no nameplate
 -- Never another model's plate or name: a Ford Ka without a hud.lua entry used
@@ -123,7 +123,7 @@ local function token(text)
 	return string.lower(tostring(text or "")):gsub("[^%w]", "")
 end
 
-local function stockMatch(car)
+local function vanillaMatch(car)
 	if type(vehicleStats) ~= "table" then
 		return nil
 	end
@@ -233,7 +233,7 @@ local state = _G.dsfforzaRegister
 -- call ProfileSettings.SetVehicleUnlocked for this ID on chapter load.
 local UNLOCK_FIELDS = { "UnlockedInChapter", "UnlockedInGarage", "UnlockByActivity" }
 
--- Resolve stock matches once vehicleStats exists (called from M.registerStats).
+-- Resolve vanilla matches once vehicleStats exists (called from M.registerStats).
 local function resolvePorted()
 	if not PORTED then
 		return
@@ -243,7 +243,7 @@ local function resolvePorted()
 	for id, car in pairs(CARS) do
 		if car.make and not car.resolved then
 			car.resolved = true
-			local exact, near = stockMatch({ make = car.make, model = car.model, year = car.yearText, ids = own })
+			local exact, near = vanillaMatch({ make = car.make, model = car.model, year = car.yearText, ids = own })
 			if exact then
 				car.source = exact
 				car.year = nil
@@ -256,7 +256,7 @@ local function resolvePorted()
 				car.modelIndex = BLANK_GLYPH
 				car.modelName = string.upper(tostring(car.model or ""))
 			end
-			log(string.format("id %d (%s %s): stock match %s, same make %s", id, tostring(car.make),
+			log(string.format("id %d (%s %s): vanilla match %s, same make %s", id, tostring(car.make),
 				tostring(car.model), tostring(exact), tostring(near)))
 		end
 	end
@@ -270,7 +270,7 @@ local function hudEntry(id, car)
 	if not HUD then
 		if PORTED and not warnedHud then
 			warnedHud = true
-			log("no dsfforza\\hud.lua: ported cars get their maker's stock badge (or none) and no nameplate")
+			log("no dsfforza\\hud.lua: ported cars get their maker's vanilla badge (or none) and no nameplate")
 		end
 		return nil
 	end
@@ -363,7 +363,7 @@ function M.registerStats()
 		return false
 	end
 	resolvePorted()
-	-- Selectable stock (or other mods') cars per garage group, before ours.
+	-- Selectable vanilla (or other mods') cars per garage group, before ours.
 	local counts = {}
 	for id, entry in pairs(vehicleStats) do
 		if type(id) == "number" and id <= GARAGE_MAX_ID and CARS[id] == nil and type(entry) == "table"

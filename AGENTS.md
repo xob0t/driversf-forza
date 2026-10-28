@@ -11,7 +11,7 @@ Research notes are in `research/` (read the ones for your area first).
 - Work in your own git worktree on a branch named for the task
   (`fix/cockpit-glass`, `feat/engine-sound`, ...), never in the main checkout.
 - In a new worktree run `.\tools\worktree-setup.ps1` once. It links the
-  untracked inputs from the main checkout: `assets\*.iso`, `out\stock`,
+  untracked inputs from the main checkout: `assets\*.iso`, `out\vanilla`,
   `out\cache`, `out\tools-dl`, `_ref`, and writes the worktree's own
   `out\lua-src` and `out\db` (`uv run dsff game_data prepare`). Before the
   worktree is removed, run
@@ -50,9 +50,9 @@ Research notes are in `research/` (read the ones for your area first).
   log lines, numbers, and screenshots committed under `research/img/` and
   linked by commit SHA (as for PRs). Also say what you ruled out and where you
   would start. Mention the issue numbers in your PR and in your report.
-  Only file what differs from the stock game or from Forza. Behaviour the
-  stock game has too (its layouts, its UI quirks) is not an issue; check a
-  stock car or the unmodified game before filing.
+  Only file what differs from the vanilla game or from Forza. Behaviour the
+  vanilla game has too (its layouts, its UI quirks) is not an issue; check a
+  vanilla car or the unmodified game before filing.
 - A comment, review or reply on an issue or PR someone else opened (a
   player's report, a contributor's PR) starts with the line
   `<model name> on behalf of xob0t:` (e.g. `Claude Opus 5.5 on behalf of

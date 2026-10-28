@@ -18,7 +18,7 @@ How to work:
    `.\tools\worktree-setup.ps1` in it. Never write to the main checkout or its `out\`.
 2. Find the cause before changing code. Prefer one systemic fix for every car with the same
    cause over a per-car fix. Compare against Forza (its assets under `out/cache`) and against
-   a stock DSF car (on the same host where it matters): change only what differs from them.
+   a vanilla DSF car (on the same host where it matters): change only what differs from them.
 3. Measure the roster (the 573 cars of `tools/batches/all.txt`) before and after: how many
    cars change, and the numbers that show it. Survey offline where you can.
 4. Verify in game with `tools\wsb\run-series.ps1 -Vm` (never `-OnHost`), before and after,

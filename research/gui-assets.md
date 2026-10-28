@@ -20,10 +20,10 @@ the Lua C API:
 
 `Picture2`/`Picture3` (`*_icon_large`, `*_icon_small`) are only read by the
 online lobby (`onlineGetVehicleLargeImage/SmallImage`); their images are not
-in gui.sp. **A car whose ID is 304 or higher never appears in the stock
+in gui.sp. **A car whose ID is 304 or higher never appears in the vanilla
 garage list**, whatever `vehicleStats` says (the loop bound is in the code;
 dsfforza.asi `[garage]` lists IDs up to 999, `asi.md`). Free IDs below 304:
-0 to 61 (stock base IDs run 62 to 303) and the 92 IDs in 62..303 the stock
+0 to 61 (vanilla base IDs run 62 to 303) and the 92 IDs in 62..303 the vanilla
 archive doesn't use (123, 131, 277 and 289 are in the archive but have no
 `vehicleStats` entry; `port_batch.py`, `ASI_LOW_IDS`).
 
@@ -52,22 +52,22 @@ panel at the bottom right with a soft shadow; transparent elsewhere.
 
 ### Adding pictures (offline-checked)
 
-`gui_assets.add_pictures` writes a copy of gui.sp without moving a stock
-byte: new SPOIs (texture UID shaped like stock ones, byte 1 = 0x12,
+`gui_assets.add_pictures` writes a copy of gui.sp without moving a vanilla
+byte: new SPOIs (texture UID shaped like vanilla ones, byte 1 = 0x12,
 byte 7 = 0x2D) and a rebuilt SSIC (UIDL, SPOL, SSLP with the new names and
 the count) are appended at the end, and the root entry table (room for 100
 more rows before the first payload at 0x4000) points at them; the old SSIC
 bytes stay unused. A full `chnk.py rebuild` of gui.sp is not byte-identical
 (`dngvehicles.md`), so the file is patched instead. Reading the copy back
-finds both the stock and the new pictures by name.
+finds both the vanilla and the new pictures by name.
 
-The picture: a software render of the converted car from the stock
+The picture: a software render of the converted car from the vanilla
 pictures' camera (`render_car`, `car_render.py`; "Camera and render" below).
 Until 2026-10-24 FH1 cars used Forza Horizon's own thumbnail instead
 (`media/ui/Textures.zip` `Thumbnails/Thumbnail_<Data_Car.Id>.xds`, 768 x 288,
 32-bit `k_8_8_8_8` tiled, 153 FH1 cars; the right third is a top view),
 cropped and mirrored to face right; `build --fh1-thumbnails` still does. The
-backdrop is recovered from the stock pictures (per pixel the most common
+backdrop is recovered from the vanilla pictures (per pixel the most common
 colour across all 142; the right part, which cars cover in most pictures, is
 the photo's fog gradient), the logo is FH1's
 `UI4/Logos/Manufacturer_Logos_LG/L_MAN_<Make>_Logo.xds` (format 50, the
@@ -79,31 +79,31 @@ User report on `out/testdrive11`: "some are not quite the right angle, some
 have glass rendered as opaque".
 
 **Camera (measured).** `uv run dsff gui_assets camera` renders the silhouette
-of the stock car behind each stock picture (`car_render.coverage`, exterior
-entry of the stock archive) over a grid of yaw, pitch and camera distance,
+of the vanilla car behind each vanilla picture (`car_render.coverage`, exterior
+entry of the vanilla archive) over a grid of yaw, pitch and camera distance,
 places it like the picture's car (scaled to its height, right and bottom edges
 aligned) and keeps the camera with the best overlap right of the logo column
-(`car_render.fit_camera`, `stock_car_mask`: opaque and unlike the recovered
+(`car_render.fit_camera`, `vanilla_car_mask`: opaque and unlike the recovered
 backdrop). `--thumbnails <manifest>` does the same for the FH1 thumbnails of
 a build's cars against renders of the converted cars (shape of the whole car,
 both boxes scaled to one size).
 
 | Source | Cars | Yaw (median, range) | Pitch | Distance (car lengths) | Overlap |
 | --- | ---: | --- | --- | --- | --- |
-| stock garage pictures | 24 | 36.5 (33..40) | 13 (9..21) | 1.30 (1.07..2.0) | IoU 0.75..0.94 |
+| vanilla garage pictures | 24 | 36.5 (33..40) | 13 (9..21) | 1.30 (1.07..2.0) | IoU 0.75..0.94 |
 | FH1 thumbnails (out/testdrive11) | 31 | 35 (30..40) | 1 (0..4) | 1.43 (1.10..2.0) | 0.81..0.93 |
 | old `render_car` | | 38 | 12 | 2.4 | |
 
 Yaw is the angle from straight ahead towards the car's right side, pitch the
 camera's height above the horizon, distance from the eye to the car's centre.
-The stock pictures share one camera within a few degrees (the Miura's 21 is
+The vanilla pictures share one camera within a few degrees (the Miura's 21 is
 the outlier; the lowest IoUs are cars whose dark lower body matches the dark
 backdrop). The FH1 thumbnails are taken from eye level, 12 degrees lower than
 DSF's: that is the "not quite the right angle", visible on every FH1 car next
-to stock cars. They are also mirrored to face right, so their plates,
+to vanilla cars. They are also mirrored to face right, so their plates,
 badges and steering wheel side are mirrored. So every picture is now a render
-from `STOCK_CAMERA` = yaw 36.5, pitch 13, distance 1.3
-(`img/garage-pictures-angle.jpg`: stock, before, after);
+from `VANILLA_CAMERA` = yaw 36.5, pitch 13, distance 1.3
+(`img/garage-pictures-angle.jpg`: vanilla, before, after);
 `build --fh1-thumbnails` keeps the old thumbnails.
 
 **Render (`src/dsfforza/game/car_render.py`).** numpy, about 1 s a car
@@ -140,15 +140,15 @@ from `STOCK_CAMERA` = yaw 36.5, pitch 13, distance 1.3
   (vertex sky term divided by the converter's `0.25 + 0.55 (1 + n_y) / 2`),
   and a soft floor shadow under the car's footprint.
 - Framing: rendered at 1000 x 560, cropped; the car's box without its shadow
-  is fitted into `CAR_BOX` by its right and bottom edges, as stock (median
-  right edge 496, bottom 242 in the 142 stock pictures).
+  is fitted into `CAR_BOX` by its right and bottom edges, as vanilla (median
+  right edge 496, bottom 242 in the 142 vanilla pictures).
 
 **Tone (calibrated, 2026-10-25).** User report on out/final-gui2: "garage
 vehicle previews look right, but are too glossy". Measured on the car of
-each picture (`stock_car_mask`; `uv run dsff gui_assets tone
+each picture (`vanilla_car_mask`; `uv run dsff gui_assets tone
 chevrolet_volt=dsfforza_che_volt_11 ... --gui <built gui.sp>`: HSV value and
 saturation percentiles, share of white highlight pixels), the ported
-pictures were lighter, washed out and shiny next to stock: for the red pairs
+pictures were lighter, washed out and shiny next to vanilla: for the red pairs
 (Volt, TT RS, GT-R / R33) median saturation 0.18 to 0.42 against 0.81 to
 0.90, white highlights 3 to 7 % of the car against 0.1 %. Two causes:
 
@@ -158,12 +158,12 @@ pictures were lighter, washed out and shiny next to stock: for the red pairs
   `car_render.Paint` now mixes colour 2 toward colour 3 by the view angle as
   the shader does (lights.md), so panels facing the camera show colour 2.
   Taken literally, a low-power or high-bias entry would be near black (colour
-  3 almost everywhere), which the stock pictures of such colours don't show
+  3 almost everywhere), which the vanilla pictures of such colours don't show
   (370Z blue, power 0.25; Cobra red, 0.1: colour 2, darker at the edges):
   `picture_paint` raises the power to 2 and lowers the bias to 0.05 for those.
 - Light. Environment reflections and the soft box were about as bright as the
-  paint itself and veiled it in grey. Calibrated on 10 stock cars with
-  saturated paint (`out/stock` archive, the palette entry of the picture's
+  paint itself and veiled it in grey. Calibrated on 10 vanilla cars with
+  saturated paint (`out/vanilla` archive, the palette entry of the picture's
   hue, the same geometry and camera as their pictures; 159 Ti, 8C, Giulia
   TZ2, Spider, Q7, TT RS, XLR-V, C10, Camaro SS, Corvette) by a coordinate
   search over ambient, key light, environment, soft box and reflection and
@@ -174,21 +174,21 @@ pictures were lighter, washed out and shiny next to stock: for the red pairs
   after (0.21 at the search's optimum, which had no sheen left at all; the
   chosen set keeps a soft highlight).
 
-Result on the ported red pairs: median saturation 0.67 to 0.84 (stock 0.81
-to 0.90), white 0.2 to 0.3 % (stock 0.1 %); still a little brighter than
-stock (Volt median value 0.34 against 0.21, before 0.48; 90th percentile
-0.42 against 0.34, before 0.76). `img/garage-pictures-tone.jpg`: stock,
+Result on the ported red pairs: median saturation 0.67 to 0.84 (vanilla 0.81
+to 0.90), white 0.2 to 0.3 % (vanilla 0.1 %); still a little brighter than
+vanilla (Volt median value 0.34 against 0.21, before 0.48; 90th percentile
+0.42 against 0.34, before 0.76). `img/garage-pictures-tone.jpg`: vanilla,
 before, after. In game the new pictures show on the garage cards (runs
 `vm-20261025-083412`, the CHEVROLET card browser, and `-092759`).
 
-Checked on the stock cars against their own pictures (370Z, R8, Charger,
-159: same framing, the stock pictures' paint a little darker and glossier)
+Checked on the vanilla cars against their own pictures (370Z, R8, Charger,
+159: same framing, the vanilla pictures' paint a little darker and glossier)
 and on the 40 cars of out/testdrive11 (`img/garage-pictures-render.jpg`:
 old and new renders of the FM4 cars). In game (confirmed-runtime, headless
 VM, out/testdrive11 with the new gui.sp, Fonts.fchunk and hud.lua,
 dsfforza.asi): runs `vm-20261024-161110` (the maker list scrolled through
 every maker, the TOYOTA browser) and `vm-20261024-162337` (the NISSAN
-browser, ported and stock cards side by side) show the new pictures on the
+browser, ported and vanilla cards side by side) show the new pictures on the
 cards, no crash (`img/garage-pictures-ingame.jpg`).
 
 Speed (one process, out/testdrive11): `render_car` 0.78 to 1.27 s a car
@@ -226,8 +226,8 @@ HUD does not.
 ### Adding glyphs (offline-checked)
 
 `gui_assets.add_glyphs` writes a copy of Fonts.fchunk with the new glyphs in
-rows under the stock atlas (texture 1024 x 500 → 1024 x 564 for three
-glyphs; the stock DXT blocks are kept, only the new rows are encoded; FNTD
+rows under the vanilla atlas (texture 1024 x 500 → 1024 x 564 for three
+glyphs; the vanilla DXT blocks are kept, only the new rows are encoded; FNTD
 count and height updated, records inserted in code order) and the vehicles
 font package appended at the end of the file with its root row retargeted
 (Fonts.fchunk does not round-trip through `chnk.py` either). New codes come
@@ -236,7 +236,7 @@ glyphs (252, 244, 88, 78 to 74), then 128 to 159 (they draw: the RX-7's
 156 in out/testdrive3; the text path draws bytes, no code page). Not 160:
 in out/testdrive3 both M5s had plate 160 ("M5", glyph present, 58 x 34) and
 the HUD drew no plate (user screenshot), 0xA0 being the no-break space;
-stock never uses it either (confirmed-runtime, removed from the pool).
+vanilla never uses it either (confirmed-runtime, removed from the pool).
 
 ### Accented letters on the nameplates (2026-10-26)
 
@@ -249,10 +249,10 @@ side panel's and the HUD's from the car's `vehicles_font` plate glyph
 `gui_assets.py`. It had A to Z, 0 to 9 and `- . / &`, and it skipped any
 other character without a word.
 
-What the stock game does: `vehicles_font` has one glyph per badge or
+What the vanilla game does: `vehicles_font` has one glyph per badge or
 nameplate, not per letter, so there is no letter to borrow in this or another
 locale (only English is installed here; `Fonts.fchunk` sits in `media/`, not
-in `Locale/`). Its plates are artwork, and four stock plates have an É drawn
+in `Locale/`). Its plates are artwork, and four vanilla plates have an É drawn
 into the picture: 92 S5 COUPÉ and 94 TT RS COUPÉ (the badge only), 207
 MURCIÉLAGO LP670-4 SV and 209 MURCIÉLAGO LP640 (the accent over the É).
 
@@ -310,9 +310,9 @@ uv run dsff gui_assets build out/ported.json --out out/gui \
 ```
 
 For each car of a `port_car.py` manifest: a picture named
-`dsfforza_<media>`, the stock badge when DSF has the maker (matched on the
+`dsfforza_<media>`, the vanilla badge when DSF has the maker (matched on the
 upper-cased maker string), else a new badge glyph from the Forza logo; the
-stock nameplate when DSF has the same model (370Z → 219), else a new
+vanilla nameplate when DSF has the same model (370Z → 219), else a new
 nameplate glyph. Writes `out/gui/gui.sp`, `out/gui/Fonts.fchunk`,
 `out/gui/hud.lua` (per ID: `Picture1`, `Manufacturer`, `Model`,
 `ManufacturerName`, `ModelName`), previews and `gui-assets.json`.
@@ -326,7 +326,7 @@ Test set (`out/gui/build2`, from `out/lights/build2/ported-lp.sp`):
 
 | ID | Car | Picture | Manufacturer | Model |
 | ---: | --- | --- | --- | --- |
-| 304 | 370Z | FH1 thumbnail | 54 (stock Nissan) | 219 (stock 370Z) |
+| 304 | 370Z | FH1 thumbnail | 54 (vanilla Nissan) | 219 (vanilla 370Z) |
 | 305 | M5 | FH1 thumbnail | 212 (new BMW badge) | 213 (new "M5") |
 | 306 | Skyline GT-R R32 (FM4) | render | 54 | 245 (new "SKYLINE GT-R") |
 
@@ -337,8 +337,8 @@ Test set (`out/gui/build2`, from `out/lights/build2/ported-lp.sp`):
 The game's CHNK reader holds 1100 entries (`spool-limits.md`), and gui.sp
 has 923, so 177 more pictures can each get a SPOI. `append_patch` now grows
 the root table when its 100 free rows run out, by moving every root payload
-down a multiple of 0x1000 (stock bytes and nested chunks unchanged; checked
-with 150 pictures: the stock and the new pictures read back). Past 177,
+down a multiple of 0x1000 (vanilla bytes and nested chunks unchanged; checked
+with 150 pictures: the vanilla and the new pictures read back). Past 177,
 `add_pictures` packs several pictures into one SPOI (a TEXC each in its
 DRSP, MDID listing all), each with its own SPOL UID and SSLP spool ID
 pointing at the shared root entry (checked offline with 260; whether the
@@ -346,7 +346,7 @@ spooler loads a shared item for each spool ID is untested).
 
 With dsfforza.asi [archive] (another module: the CHNK reader keeps entries
 past 1100 in a side table, `spool-limits.md`) the root can hold one SPOI per
-picture: `gui_assets.py build --root-limit 16384` (default 1100, the stock
+picture: `gui_assets.py build --root-limit 16384` (default 1100, the vanilla
 reader). SSLP spool ids and root indices are u16, so 800 more pictures fit.
 
 **The SPOL cap (confirmed-runtime).** The game also caps the SSIC SPOL list
@@ -354,7 +354,7 @@ at 1100 items: a longer list isn't loaded at all.
 
 - This applies with one SPOI per picture and with shared SPOIs alike, since
   each picture has its own SPOL UID.
-- Past 177 added pictures, every garage card, stock ones included, shows the
+- Past 177 added pictures, every garage card, vanilla ones included, shows the
   lock icon instead of its picture.
 - dsfforza.asi's `[archive] spool_lists` lifts the cap (`asi.md`, "Spool
   item lists").
@@ -368,19 +368,19 @@ at 1100 items: a longer list isn't loaded at all.
 space is 0..255 whatever the font texture holds (FNTD codes are u16, but
 the garage and the HUD record (FUN_006C40C0, next section) format
 `(char)Manufacturer` with "%c" into 2-byte buffers). Free: 3 safe codes, 9
-unused stock glyphs, 128..159 (32, in use by the 31-car batch, still
+unused vanilla glyphs, 128..159 (32, in use by the 31-car batch, still
 untested) and, behind `--control-codes`, 1..31 without tab, line feed and
 return (28, untested: the text path may act on them). A second font page or
 multi-glyph plates don't help while the value is one character.
 
 `plan_glyphs` shares and prioritises instead:
 
-1. Stock badges where DSF has the maker (`dsf_make`: Forza's maker name,
+1. Vanilla badges where DSF has the maker (`dsf_make`: Forza's maker name,
    upper-cased; SRT and Viper to DODGE, GMC Truck to GMC, Range Rover models
    to RANGE ROVER, SLR McLaren to MCLAREN). DSF has no Mercedes-Benz,
    Chrysler, Plymouth or BMW badge: each gets one new badge shared by all its
    cars.
-2. Stock plates where DSF has the model or its family under the same maker.
+2. Vanilla plates where DSF has the model or its family under the same maker.
 3. New plates one per name, so cars with the same name share one.
 4. Over budget: names fall back to Forza's family names (List_FamilyModel:
    MUSTANG, CORVETTE, 911...) where several cars share one; then badges and
@@ -390,7 +390,7 @@ multi-glyph plates don't help while the value is one character.
 Simulated on the 453 cars of `out/batch/plan-all.tsv` (first N in list
 order; badges/plates are cars covered):
 
-| Cars | Codes | Stock badge | New badge | Blank badge | Stock plate | New plate glyphs | Blank plate |
+| Cars | Codes | Vanilla badge | New badge | Blank badge | Vanilla plate | New plate glyphs | Blank plate |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 31 (first batch) | 44 | 12 | 14 makers | 0 | 1 | 30 | 0 |
 | 100 | 44 / 72 | 53 | 10 | 0 | 13 | 32 / 60 | 34 / 6 |
@@ -452,7 +452,7 @@ FUN_008352B0), and that drew a 16-bit badge ("B39", page 1) in run
 
 **The patch (`tools/asi/src/mod_hud.cpp`).** vehicleStats gets two optional
 fields, `ManufacturerGlyph` and `ModelGlyph` (codes 0x100 up). The text
-stays one byte, as stock: each text element that shows a car with a code
+stays one byte, as vanilla: each text element that shows a car with a code
 gets a slot code of its own (1..8, 14..17: control characters the narrow
 layout draws as glyphs, "Why the 16-bit glyphs drew nothing" below;
 gui_assets writes empty records for them),
@@ -461,7 +461,7 @@ page) over the slot's record in the loaded vehicles_font, and sets the
 element's text to that byte (after an empty text when the slot's glyph
 changed, so the element refreshes). Twelve slots cover the ten call sites;
 when elements are re-created and all are taken, the least recently set
-slot is reused. Cars without the fields (all stock cars) take the stock
+slot is reused. Cars without the fields (all vanilla cars) take the vanilla
 path unchanged.
 
 | VA | Original bytes | New | Why |
@@ -481,7 +481,7 @@ path unchanged.
 `hud_badge`/`hud_plate` are thiscall-compatible (`__fastcall`, ecx = element,
 one stack argument, callee pops): they read the model id at text + 4 (badge)
 or text + 2 (plate), look up the code, and call the element's own vtable
-+0xBC with either the stock text or the slot byte. Each site is checked
++0xBC with either the vanilla text or the slot byte. Each site is checked
 against its original bytes and skipped (logged) if another plugin changed
 it; the ctor hook is applied only if at least one site was.
 
@@ -521,11 +521,11 @@ one-byte codes only), so the slot path had never drawn in game.
 
 **Which cars lost what.** Every 16-bit glyph was missing, whatever its page:
 533 of the 573 cars have a `ModelGlyph` (no plate on the HUD) and 303 a
-`ManufacturerGlyph` (no badge); only the stock badges (263 cars of makers DSF
-has) and the 40 stock plates showed, and 7 cars without a Forza logo showed
+`ManufacturerGlyph` (no badge); only the vanilla badges (263 cars of makers DSF
+has) and the 40 vanilla plates showed, and 7 cars without a Forza logo showed
 their host's badge (below). Runs `vm-20261025-063019`
 and `-063317`: no badge or plate for IDs 1 (page 1 glyphs), 26 (pages 1 and
-2) and 705, even with 705's fields pointed at stock page 0 glyphs (Nissan
+2) and 705, even with 705's fields pointed at vanilla page 0 glyphs (Nissan
 badge 54, 370Z plate 219). The plugin logged "slot 1 shows U+0134 (page 1,
 ...)" for each: the records were copied.
 
@@ -543,7 +543,7 @@ layout (FUN_00726320) also tabs at 9 and breaks the line at 10 to 13, so
 slot codes 11 and 12 could never draw either. The fix
 (`tools/asi/src/mod_hud.cpp`, `textlen_init`): both checks jump to a stub
 that keeps the length of a one-byte string whose byte is a slot code (mask
-of `kSlotCodes`) and does as stock otherwise; the slots are 1..8 and 14..17
+of `kSlotCodes`) and does as vanilla otherwise; the slots are 1..8 and 14..17
 (`HUD_SLOT_CODES`). The [hud] sites are patched only when both checks are.
 Offline test: `text_len`/`text_key` in `tools/asi/test/offline.cpp` run the
 patched code on "\x01", "\x10", " ", "\x0B"...
@@ -551,12 +551,12 @@ patched code on "\x01", "\x10", " ", "\x0B"...
 In game (confirmed-runtime): with the fixed plugin and the unchanged
 out/final-gui2 data, the driving HUD shows the badge and plate of IDs 705
 (Volvo 242, page 1 badge, page 2 plate), 26 (2000GT), 1 (M3 E30) and 400
-(Focus ZX4: stock Ford badge, page 1 plate), run `vm-20261025-080159`
+(Focus ZX4: vanilla Ford badge, page 1 plate), run `vm-20261025-080159`
 (`img/hud-wide-glyphs-before-after.jpg`; before: run `-065150`, a first fix that patched only the first check); the same
 with the rebuilt out/final-gui3 (run `-084300`), and the garage card
 browser's side panel shows the ported plates (run `-083412`). Run `-093537`
 (out/final-gui3): the user's Audi A4 (ID 73, "92 AUDI A4 TOURING CAR"
-under the stock rings, `img/hud-audi-a4-before-after.jpg`), the text badges
+under the vanilla rings, `img/hud-audi-a4-before-after.jpg`), the text badges
 of the tour bus (222) and the Kenworth (463), and late IDs 725 (Wiesmann)
 and 382 (Fiat 595, page 1 badge) (`img/hud-text-badges-late-ids.jpg`).
 
@@ -593,7 +593,7 @@ groups had no logo or a wrong one.
   `hud_maker_logo_text`, which first checks the string table, FUN_008352B0 on
   `[0x0124A794]`, for the one-character string: without it the text would
   draw as the glyphs "I", "D", ":"...). An element that can't hold the text
-  keeps the stock string (logged).
+  keeps the vanilla string (logged).
 - Makers without a logo: FM4's `Media/UI/Textures.zip` (DVD 1) has the same
   `UI4/Logos/Manufacturer_Logos*` folders and Renault; `ForzaUI.logo` reads it
   when FH1 has none. A maker with no logo in either (the tour bus "BUS",
@@ -601,12 +601,12 @@ groups had no logo or a wrong one.
   nameplate style, up to 98 x 30) as its HUD badge, maker list badge and
   picture logo, instead of the host's badge.
 
-The stock list's 40 string elements are external (`{text, external 1, set,
+The vanilla list's 40 string elements are external (`{text, external 1, set,
 capacity}`; FUN_00ACE220 keeps the caller's pointer and takes its length as
 capacity), the ones `list_grow` adds have their own 64-byte buffer. The
 plugin's `"ID:n"` texts live for the whole process, so both kinds take them
-(a first build that required a large enough buffer left the stock elements,
-the makers at positions 35 to 39, stock: run `vm-20261025-083412`).
+(a first build that required a large enough buffer left the vanilla elements,
+the makers at positions 35 to 39, vanilla: run `vm-20261025-083412`).
 
 In game (confirmed-runtime, run `vm-20261025-092759`: out/final-gui3, the
 maker list scrolled through all 92 groups): every maker shows a logo, the 57
@@ -615,38 +615,38 @@ badges, RENAULT from FM4...); `img/garage-maker-logos-before-after.jpg`
 (before: out/final-gui2, run `vm-20261025-084543`),
 `img/garage-maker-list-all-after.jpg` (every fifth position). A few Forza
 logos are dark on the black list (Hennessey's red, Chrysler's grey).
-Counts: before, 56 of 92 groups with their own logo (35 stock, 21 new) and
+Counts: before, 56 of 92 groups with their own logo (35 vanilla, 21 new) and
 36 without or with the host's; after, 92 of 92.
 
 ### Another car's nameplate: the Ford Ka showed "SHELBY GT500" (issue #98)
 
 Player report (Discord, build and options unknown): the Ford Ka
-(FOR_Ka_11, host 249 Aston Martin Cygnet) showed the Ford badge and the stock
+(FOR_Ka_11, host 249 Aston Martin Cygnet) showed the Ford badge and the vanilla
 "SHELBY GT500" plate on the driving HUD (`img/hud-ka-shelby-plate.jpg`). The
-plate is stock glyph 186, the plate of vehicleStats[194] (2010 Shelby GT500).
-Ours are the italic chrome of `nameplate`; this one is the stock lettering.
+plate is vanilla glyph 186, the plate of vehicleStats[194] (2010 Shelby GT500).
+Ours are the italic chrome of `nameplate`; this one is the vanilla lettering.
 
 **Our builds are right.** out/final4 (573 cars) has the Ka at ID 404 with
-`Manufacturer = 43` (stock Ford), `Model = 158` (the one-byte plan's blank
+`Manufacturer = 43` (vanilla Ford), `Model = 158` (the one-byte plan's blank
 plate, a 1 x 1 glyph) and `ModelGlyph = 621`, whose glyph in its Fonts.fchunk
 reads "KA"; the Shelbys (FOR_ShelbyGT500_10/_13, SHE_GT500_07) have the
-stock 186, SHE_GT500KR_68 (ID 658) its own wide plate 589 over the one-byte
+vanilla 186, SHE_GT500KR_68 (ID 658) its own wide plate 589 over the one-byte
 MUSTANG family plate 135. Every build under out/ with a gui/ has a hud.lua
 entry for each of its cars, made for that car (`install.gui_problem`).
 
 **Cause: register.lua's fallback for a car without a hud.lua entry.** For a
 ported car hud.lua doesn't cover, register.lua copied the host's entry and,
 when DSF has the make, took the Model (plate) of that make's closest-year
-stock car. For a 2011 Ford three stock Fords are a year off (194 Shelby
+vanilla car. For a 2011 Ford three vanilla Fords are a year off (194 Shelby
 GT500, 196 Taurus SHO, 251 F-150 SuperCrew, all 2010) and the first in
 `pairs()` order wins: in the game the Shelby, in lupa's Lua 5.1 the F-150
 (the game's numbers are single floats, so its hash order differs).
 Reproduced in game (confirmed-runtime): out/final4's archive and ported.lua
 with no hud.lua and master's register.lua, run `vm1-20261027-034058`
-(ID 404): the log says `id 404 (Ford Ka): stock match nil, same make 194`
+(ID 404): the log says `id 404 (Ford Ka): vanilla match nil, same make 194`
 and the HUD shows the Ford badge over "SHELBY GT500", as in the player's
 screenshot. Over the whole roster without hud.lua, 533 of the 573 cars
-showed another model's plate (only the 40 exact stock matches their own). A car
+showed another model's plate (only the 40 exact vanilla matches their own). A car
 of a make DSF lacks kept the host's badge and plate (the Ka on the Cygnet
 would have shown ASTON MARTIN CYGNET). So the player's game had the archive
 and ported.lua but no hud.lua entry for the Ka. Ways to get there:
@@ -672,7 +672,7 @@ and ported.lua but no hud.lua entry for the Ka. Ways to get there:
   and picture.
 
 A second `-Car` install over the first doesn't collide: `-Force` uninstalls
-the first (every file back to stock) and the new one-car build takes ID 1
+the first (every file back to vanilla) and the new one-car build takes ID 1
 again, so the first car is gone rather than added to (the installer now
 says so).
 
@@ -680,19 +680,19 @@ The other setups don't do it: a subset roster (a disc missing) shifts IDs
 and glyph codes, but the archive, ported.lua, hud.lua and Fonts.fchunk of one
 build agree; without `--wide-glyphs` or without the plugin the Ka shows the
 one-byte plan's code (its own plate or the blank one); `--id-policy` only
-moves IDs. A hud.lua with the Fonts.fchunk of another build (or the stock one)
+moves IDs. A hud.lua with the Fonts.fchunk of another build (or the vanilla one)
 draws the default glyph for codes the font lacks: '_' (95), the Bentley
 "CONTINENTAL SUPERSPORTS" plate.
 
 **Fix.**
 
-- register.lua: a car hud.lua doesn't cover gets its make's stock badge (or
+- register.lua: a car hud.lua doesn't cover gets its make's vanilla badge (or
   none) and no plate, never another model's: `Manufacturer`/`Model` 32. A
   one-byte text " " draws nothing in any font (the renderer's blank-text
   check, "Why the 16-bit glyphs drew nothing"; 32 is not a slot code, so the
   plugin's patch keeps it blank). `ModelName` is the plain model name, which
   the garage doesn't render ("Fixes after the first test drive"), and
-  `ManufacturerName` the make's stock string or the plain make.
+  `ManufacturerName` the make's vanilla string or the plain make.
 - register.lua uses a hud.lua entry only if its `Picture1` is
   `dsfforza_<media>` of the car ported.lua has at that ID (gui_assets names
   every picture so); another build's entry is logged and skipped.
@@ -718,7 +718,7 @@ out/final4's archive and ported.lua, no hud.lua and this register.lua, run
 FM4-only build above with its gui.sp, Fonts.fchunk, global.fchunk and
 hud.lua, no plugin), run `vm1-20261027-054022`: ID 1 shows Ford and "KA".
 
-Tests: `tests/test_register_hud.py` (register.lua on the stock vehicleStats:
+Tests: `tests/test_register_hud.py` (register.lua on the vanilla vehicleStats:
 no hud.lua, another build's hud.lua, the build's own),
 `tests/test_install.py` (`gui_problem`), `tests/test_gui_badges.py`.
 
@@ -802,14 +802,14 @@ part of card N+1's picture, so a disc reads as if it were the next card's.
 It isn't:
 
 - The last card of a group has its disc with no card behind it. In run
-  `vm-20261026-120559`, CHEVROLET's car 46, the stock Corvette ZR1, shows SF
+  `vm-20261026-120559`, CHEVROLET's car 46, the vanilla Corvette ZR1, shows SF
   there (menu-56).
 - The first card has nothing at its top left (menu-11).
 - ABARTH (run `host-20261023-100401`) has three cards and three discs, the
   front one on the front card's corner.
 
 `img/garage-emblem-card-ownership.jpg` marks the cards and their discs. The
-stock game draws the same SF disc on every card, so this only shows once a
+vanilla game draws the same SF disc on every card, so this only shows once a
 row mixes the two. A disc that seems one card off is the previous card's.
 
 **The patch (`tools/asi/src/mod_hud.cpp`, part of [hud], `card_emblem=1`).**
@@ -837,7 +837,7 @@ vehicles screen puts the SF resource back on the discs by itself (seen as
 resource sets at the exit in run `-095535`, by a probe hook on
 CObjectSprite3D's raw resource set that the final build no longer has); entering it again refills the
 list and the hook re-applies. Cars without
-the field, every stock car, keep the stock resource; a game without the
+the field, every vanilla car, keep the vanilla resource; a game without the
 plugin ignores the field. All site bytes are checked first (all or
 nothing); game calls run under `__try`, a fault turns the feature off and
 is logged.
@@ -857,10 +857,10 @@ resident before the garage opens.
 Final build, run `host-20261023-100401` (confirmed-runtime; crops in
 `img/garage-emblem-run-100401.png` and `img/garage-emblem-abarth-mixed.png`):
 FORZA group (12 added cars): Forza logo on every card, in the maker list
-(menu-01) and the card browser (menu-08). ABARTH (stock 695 SS Assetto
-Corse, added 500 Esseesse ID 16, stock 500): SF, Forza, SF in both views
-(menu-02, menu-13). ALFA ROMEO (stock 159 Ti, added MiTo ID 40): SF, Forza
-(menu-03). AMC (stock Pacer only): SF (menu-04). Challenge browser: SF on
+(menu-01) and the card browser (menu-08). ABARTH (vanilla 695 SS Assetto
+Corse, added 500 Esseesse ID 16, vanilla 500): SF, Forza, SF in both views
+(menu-02, menu-13). ALFA ROMEO (vanilla 159 Ti, added MiTo ID 40): SF, Forza
+(menu-03). AMC (vanilla Pacer only): SF (menu-04). Challenge browser: SF on
 every card, log "challenge browser: 20 card discs back to the SF resource"
 (menu-19). Back to VEHICLES: Forza logos again (menu-23, -24). No crash, no
 fault logged. The logo sits exactly where and as large as the disc (same
@@ -874,15 +874,15 @@ with `[garage] enabled=0` (`out/emblem/asi/`).
 **Garage names (user: "imported cars missing names").** Plain-text
 `ManufacturerName`/`ModelName` ("BMW", "M5") don't render; the game wants
 "ID:n" string IDs. `build` now gives every plain maker and model name a new
-ID from 700000 up (stock IDs run 36190 to 249144) and writes a copy of each
+ID from 700000 up (vanilla IDs run 36190 to 249144) and writes a copy of each
 installed language's `Locale/<lang>/global.fchunk` (`add_strings`: SLRC
 {byte offset, id} rows stay sorted by id, SLRS gets the UTF-16 text, SLRH
-its count; the package is appended and its root row retargeted, stock bytes
+its count; the package is appended and its root row retargeted, vanilla bytes
 unchanged; only English is installed here, other languages get the English
-text). hud.lua then points at "ID:7000xx". Checked offline: all 4537 stock
+text). hud.lua then points at "ID:7000xx". Checked offline: all 4537 vanilla
 strings read back unchanged and every hud.lua ID resolves.
 
-**HUD glyphs too low (user: badge/plate "on top of the health bar").** Stock
+**HUD glyphs too low (user: badge/plate "on top of the health bar").** Vanilla
 glyphs have two vertical conventions: maker badges sit on the cell's bottom
 (y offset + h = 99, about 56 x 56), model nameplates are centred near the
 top (y offset = 25 - h / 2; median 97 x 21, up to 47 high). The first
@@ -890,12 +890,12 @@ ported glyphs were all bottom-aligned, so new nameplates sat about 60 units
 low, over the boost bar (`img/r8-m5-hud-badge.png` shows it too). Now
 plates are centred on y = 25 and at most 98 x 34 (two lines below 18 px),
 badges 58 wide and bottom-aligned (`glyph_y`, `BADGE_SIZE`). The font atlas
-still grows below row 500 (to 652 for this set); stock glyph records are
+still grows below row 500 (to 652 for this set); vanilla glyph records are
 unchanged.
 
-Stock sources: with `tools/install.ps1` having replaced the game's gui.sp
+Vanilla sources: with `tools/install.ps1` having replaced the game's gui.sp
 and Fonts.fchunk, `gui_assets` now reads the originals from
-`<game>/dsfforza-backup/` (`stock_file`).
+`<game>/dsfforza-backup/` (`vanilla_file`).
 
 ## Open
 
@@ -941,7 +941,7 @@ and Fonts.fchunk, `gui_assets` now reads the originals from
    whose picture it covers, but it belongs to the card before ("Which card a
    disc belongs to" above). Read that way, those shots are right: the ported
    Cobalt SS, Chevelle SS-454, Volt and Express 2500 van wear the Forza logo,
-   the stock Camaro SS, Bel Air and Volt the SF disc. The car list hook passes the card
+   the vanilla Camaro SS, Bel Air and Volt the SF disc. The car list hook passes the card
    index and the model the car list writes for that card (`ebp`, `[esp+0x18]`
    from `group_car`, which already adds the window's first car), so the
    window can't shift it. Checked in game over every position:

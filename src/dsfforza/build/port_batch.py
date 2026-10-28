@@ -11,15 +11,15 @@ Selection (combinable; a list keeps its order, filters keep roster order):
     --make NIS,BMW,Ford         Forza make code or make name
     --body sedan,hatch,...      host_select body class: sedan coupe convertible hatch supercar
                                 muscle suv pickup race (race cars are left out unless named)
-    --year 1960-1979            --no-counterpart / --counterpart (a stock DSF car of the same model)
+    --year 1960-1979            --no-counterpart / --counterpart (a vanilla DSF car of the same model)
     --exclude NAME ...          --diverse N (round-robin over body classes, N cars)  --max N
 
 Every car is built by port_car.build_car in its own worker process (Below
 Normal priority, at most --jobs at a time, a new one only while 1.5 GB of RAM
 is free), which writes the car's three VEHC entries to work/<media>.chnk and
-a report. The merge then registers them into one copy of the stock archive
+a report. The merge then registers them into one copy of the vanilla archive
 (SSLP/VSCT records), checks the root entry limit (--root-limit, default 1100:
-150 stock cars plus at most 215 new ones; dsfforza.asi's archive module lifts
+150 vanilla cars plus at most 215 new ones; dsfforza.asi's archive module lifts
 it, research/spool-limits.md) and UID clashes (a car that clashes is left out
 and the rest merged again), writes the archive, and lints every car.
 A car that fails in src/dsfforza/convert/damage.py is retried once without --damage, one
@@ -36,14 +36,14 @@ stops the build if any differs; --rebuild-where EXPR and --trust-code let a fix
 name the cars it affects (research/batch.md, "Selective rebuild").
 
 ID policy (research/batch.md): the garage lists model IDs 0..303 only
-(research/gui-assets.md) and stock cars use 62..303, so the first cars of a
+(research/gui-assets.md) and vanilla cars use 62..303, so the first cars of a
 batch get IDs 1..61 (garage-visible), the rest 304 upwards (traffic, Shift and
 scripts, but never the garage). --id-policy high puts every car at 304+
 (the range confirmed in game); --first-id moves the high range.
 --id-policy asi is for installs with dsfforza.asi (tools/asi, research/asi.md):
 its garage module lists IDs up to 999 in up to 120 maker groups and keeps the
 save flags of IDs 304+ in a side file, so every car can be in the garage. Cars
-get every free ID in order: 1..61, the 92 IDs in 62..303 the stock archive
+get every free ID in order: 1..61, the 92 IDs in 62..303 the vanilla archive
 leaves unused, then --first-id up; cars that won't fit a maker group get a note.
 
 Outputs in --out DIR: dngvehicles.sp, dngvehicles.json (port_car's manifest
@@ -89,7 +89,7 @@ from dsfforza.build import forza_roster, gentle
 from dsfforza.formats.chnk import ENTRY_LIMIT
 from dsfforza.game import game_paths
 
-GARAGE_IDS = range(1, 62)  # garage loop covers 0..303; 0 is left alone, stock starts at 62
+GARAGE_IDS = range(1, 62)  # garage loop covers 0..303; 0 is left alone, vanilla starts at 62
 HIGH_FIRST_ID = 304
 WORKER_TIMEOUT = 45 * 60
 FREE_RAM_FOR_WORKER = 1536 << 20
@@ -103,7 +103,7 @@ DEFAULT_PORT_OPTIONS = "--mdxn-limit 0x2C0000 --damage"
 def game_from_dsf(dsf: Path) -> Path:
     game = dsf.resolve().parent.parent
     # <game>/dsfforza-backup/Install/dngvehicles.sp (src/dsfforza/game/game_paths.py): the game is one up.
-    if game == game_paths.REPO_STOCK.resolve():  # the repo's stock copy (a junction in a worktree): the real game
+    if game == game_paths.REPO_VANILLA.resolve():  # the repo's vanilla copy (a junction in a worktree): the real game
         return game_paths.game_dir()
     return game.parent if game.name == game_paths.BACKUP else game
 
@@ -184,7 +184,7 @@ class Pick:
     host: int | None = None
     host_model: str = ""
     host_score: float = 0.0
-    counterpart: int | None = None  # stock car of the same model (identity 60)
+    counterpart: int | None = None  # vanilla car of the same model (identity 60)
     counterpart_model: str = ""
     spool_id: int | None = None
     notes: list[str] = field(default_factory=list)
@@ -210,7 +210,7 @@ def gamedbs(isos: list[Path], cache: Path) -> dict[str, Path]:
 
 
 def describe_cars(cars: dict, requests: list[tuple[str, str | None]], dsf: Path, dbs: dict[str, Path]) -> list[Pick]:
-    """A Pick per (media, game or None) with body class, best host and the stock
+    """A Pick per (media, game or None) with body class, best host and the vanilla
     counterpart; unknown names become picks with a note."""
     from dsfforza.build import host_select as hs
     from dsfforza.build.port_car import CarRequest, pick_source
@@ -343,15 +343,15 @@ def diverse(picks: list[Pick], count: int) -> list[Pick]:
 
 
 # Garage limits (research/batch.md, confirmed-static): the maker list holds at most
-# 40 groups (stock: 35 selectable) and 20 cars per group (stock: Chevrolet 16), with no
+# 40 groups (vanilla: 35 selectable) and 20 cars per group (vanilla: Chevrolet 16), with no
 # capacity check, so a garage ID is only given while its maker group has room. The
-# margin leaves space for mods that make more stock cars selectable (Felony Rework);
+# margin leaves space for mods that make more vanilla cars selectable (Felony Rework);
 # register.lua checks the real table again at runtime.
 GARAGE_GROUP_CAP = 20 - 1
 GARAGE_GROUPS_CAP = 40 - 1
 ASI_GROUPS_CAP = 120 - 1  # dsfforza.asi [garage] max_groups (default 120)
 ASI_GROUP_CAP = 1000  # dsfforza.asi [garage] max_cars: a maker group holds all its cars
-# --id-policy asi: the low IDs first. 62..303 holds 150 stock cars (and spool IDs without
+# --id-policy asi: the low IDs first. 62..303 holds 150 vanilla cars (and spool IDs without
 # a vehicleStats entry: 123, 131, 277, 289); the 92 others appear in no traffic set,
 # vehicleStats key or model-ID field of the game's Lua (research/asi.md), and the
 # archive's own IDs are skipped through `taken` anyway.
@@ -360,14 +360,14 @@ RESERVED_IDS = {622, 623}  # Felony Rework's vehicleStats dummies (not models)
 
 
 def garage_groups() -> tuple[dict[str, int], dict[str, str]]:
-    """({group key: stock selectable cars}, {DSF maker key: group key}) from the stock
+    """({group key: vanilla selectable cars}, {DSF maker key: group key}) from the vanilla
     vehicleStats. The group key is the ManufacturerName string ("ID:242753" = Chevrolet),
     the maker key what gui_assets.dsf_make returns ("CHEVROLET")."""
     try:
         from dsfforza.game import gui_assets
 
-        stats = gui_assets.stock_stats()
-        makes, _ = gui_assets.stock_codes(gui_assets.read_strings())
+        stats = gui_assets.vanilla_stats()
+        makes, _ = gui_assets.vanilla_codes(gui_assets.read_strings())
     except (OSError, ValueError, KeyError):
         return {}, {}
     counts: dict[str, int] = {}
@@ -381,7 +381,7 @@ def garage_groups() -> tuple[dict[str, int], dict[str, str]]:
 def car_groups(picks: list[Pick], group_of: dict[str, str], isos: list[Path] | None = None) -> dict[str, str]:
     """{media: garage group key} as gui_assets.build will name the maker: Forza's own
     maker name (src/dsfforza/formats/forza_strings.py via gui_assets.car_texts) mapped by
-    gui_assets.dsf_make to a stock maker's "ID:nnnnnn" string, else the plain name."""
+    gui_assets.dsf_make to a vanilla maker's "ID:nnnnnn" string, else the plain name."""
     from dsfforza.game import gui_assets
 
     texts = gui_assets.car_texts([{"media": p.media, "game": p.game} for p in picks], isos)
@@ -416,12 +416,12 @@ def garage_group(make: str, group: str, counts: dict[str, int], cap: int, groups
 
 
 def root_limit_of(args) -> int:
-    """--root-limit: 1100 (stock) unless the install uses dsfforza.asi's archive module."""
+    """--root-limit: 1100 (vanilla) unless the install uses dsfforza.asi's archive module."""
     limit = getattr(args, "root_limit", None) or ENTRY_LIMIT
     if limit > ENTRY_LIMIT:
         print(
             f"note: root limit {limit}: the archive needs dsfforza.asi with [archive] enabled "
-            f"(the stock game reads {ENTRY_LIMIT} entries)",
+            f"(the vanilla game reads {ENTRY_LIMIT} entries)",
             file=sys.stderr,
         )
     return limit
@@ -433,7 +433,7 @@ def assign_ids(
     """policy "garage": IDs 1..61 (listed in the garage) while a maker group has room
     for the car, else first_high and up; "high": first_high and up only; "asi"
     (installs with dsfforza.asi): every free ID below 1000 in order, 1..61, the 92
-    IDs in 62..303 the stock archive doesn't use, then first_high up, each car
+    IDs in 62..303 the vanilla archive doesn't use, then first_high up, each car
     garage-listed by the plugin while the maker list (ASI_GROUPS_CAP groups) has
     room; the plugin's groups take any number of cars. List order decides which cars get the garage IDs (garage) or the group
     slots (asi). IDs some mod is known to use (RESERVED_IDS) are skipped."""
@@ -579,7 +579,7 @@ def worker(job_path: Path) -> int:
         with dsf.open("rb") as stream:
             root = read_chunk(stream, 0)
             entries = root.entries
-            nonr_limit, mdxn_max = port_car.stock_limits(stream, entries, args.mdxn_limit)
+            nonr_limit, mdxn_max = port_car.vanilla_limits(stream, entries, args.mdxn_limit)
             names = {s: entries[i].name for s, i, k in clone_vehicle.sslp_records(stream, entries) if k == 0}
             if job.get("sound_dir"):
                 args.forza_sound_dir = Path(job["sound_dir"])
@@ -789,7 +789,7 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print, progress
 
 
 class MultiStream:
-    """Several files read as one address space: the stock archive at 0 and each
+    """Several files read as one address space: the vanilla archive at 0 and each
     car's chunk file after it, so chnk.write_chunk can copy from all of them."""
 
     def __init__(self, first: Path):
@@ -837,7 +837,7 @@ class MultiStream:
 def merge(
     dsf: Path, out: Path, results: list[dict], work: Path, log=print, root_limit: int = ENTRY_LIMIT
 ) -> tuple[list[dict], list[dict]]:
-    """Register every built car into a copy of the stock archive. Returns (entries
+    """Register every built car into a copy of the vanilla archive. Returns (entries
     of the manifest's "cars", failures found here). Cars that define a resource or
     MODL part UID another vehicle defines too are left out (cause "UID clash") and
     the rest are registered again, so one clash doesn't fail the whole batch."""
@@ -942,7 +942,7 @@ def register_cars(
             temp.unlink(missing_ok=True)  # a failed write leaves no 1-2 GB partial copy behind
         size = out.stat().st_size
         if size >= 1 << 31:
-            # The stock file layer clamps seek positions of 2 GiB and up to 0 (spool-limits.md).
+            # The vanilla file layer clamps seek positions of 2 GiB and up to 0 (spool-limits.md).
             log(
                 f"note: {out.name} is {size / 2**30:.2f} GiB; past 2 GiB it needs dsfforza.asi "
                 f"[archive] large_files=1 (the default)"
@@ -991,7 +991,7 @@ def lint_all(
     groups = [cars[k : k + size] for k in range(0, len(cars), size)]
     procs = []
     for n, group in enumerate(groups):
-        command = [sys.executable, "-m", "dsfforza.formats.upvh", "lint-many", str(out), "--stock", str(dsf)]
+        command = [sys.executable, "-m", "dsfforza.formats.upvh", "lint-many", str(out), "--vanilla", str(dsf)]
         for c in group:
             command += ["--car", f"{c['spool_id']}:{c['host']}"]
             if plain_glass(c):
@@ -1088,7 +1088,7 @@ def string_tables(isos: list[Path]) -> None:
 def print_plan(picks: list[Pick]) -> None:
     print(f"{'ID':>4}  {'car':30} {'game':4} {'year':4}  {'body':11} {'drive':5} {'kW':>5}  host / counterpart")
     for p in picks:
-        cp = f"   stock {p.counterpart} {p.counterpart_model}" if p.counterpart else ""
+        cp = f"   vanilla {p.counterpart} {p.counterpart_model}" if p.counterpart else ""
         host = f"{p.host} {p.host_model[:26]} ({p.host_score:.0f})" if p.host else "-"
         print(
             f"{p.spool_id or '':>4}  {p.media:30} {p.game:4} {p.year or '':4}  {p.body:11} {p.drive or '':5} "
@@ -1404,7 +1404,7 @@ def cmd_build(args) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     archive = out_dir / "dngvehicles.sp"
     if archive.resolve() == dsf.resolve():
-        raise SystemExit("refusing to overwrite the stock archive")
+        raise SystemExit("refusing to overwrite the vanilla archive")
     work = out_dir / "work"
     work.mkdir(exist_ok=True)
     port_options = shlex.split(args.port if args.port is not None else DEFAULT_PORT_OPTIONS, posix=True)
@@ -1417,11 +1417,11 @@ def cmd_build(args) -> None:
     from dsfforza.formats.chnk import read_chunk
 
     with dsf.open("rb") as stream:
-        stock_entries = read_chunk(stream, 0).entries
-        taken = clone_vehicle.taken_ids(stream, stock_entries)
+        vanilla_entries = read_chunk(stream, 0).entries
+        taken = clone_vehicle.taken_ids(stream, vanilla_entries)
     assign_ids(picks, taken, args.id_policy, args.first_id, isos)
     root_limit = root_limit_of(args)
-    room = (root_limit - len(stock_entries)) // 3  # 453 root entries in the stock archive
+    room = (root_limit - len(vanilla_entries)) // 3  # 453 root entries in the vanilla archive
     if len(picks) > room:
         raise SystemExit(
             f"{len(picks)} cars: the archive root holds at most {room} new ones (--root-limit {root_limit})"
@@ -1445,7 +1445,7 @@ def cmd_build(args) -> None:
     if not port_args.no_forza_sound:
         from dsfforza.convert import engine_sound
 
-        engine_sound.stock_index(dsf)  # templates and reserved Wwise IDs (out/cache/sound/stock-banks.json)
+        engine_sound.vanilla_index(dsf)  # templates and reserved Wwise IDs (out/cache/sound/vanilla-banks.json)
     timings["plan"] = round(time.time() - started, 1)
 
     jobs = [
@@ -1658,8 +1658,8 @@ def finish(
 
     manifest = {
         "archive": str(archive),
-        "stock": str(dsf),
-        "stock_sha256": sha256(dsf),
+        "vanilla": str(dsf),
+        "vanilla_sha256": sha256(dsf),
         "host": port_args.host,
         "sound_host": port_args.sound_host,
         "created": datetime.datetime.now().isoformat(timespec="seconds"),
@@ -1961,7 +1961,7 @@ def build_parser() -> argparse.ArgumentParser:
             "--dsf",
             type=Path,
             default=None,
-            help="stock Install/dngvehicles.sp (only read; default: from $DSF_GAME_DIR); "
+            help="vanilla Install/dngvehicles.sp (only read; default: from $DSF_GAME_DIR); "
             "its game folder is used for the rest",
         )
         p.add_argument(
@@ -1984,7 +1984,7 @@ def build_parser() -> argparse.ArgumentParser:
             choices=("garage", "high", "asi"),
             default="garage",
             help="garage (default): IDs 1..61 first, then --first-id up; high: --first-id up only; "
-            "asi: every free ID from 1 (stock gaps in 62..303 too), then --first-id up, garage-listed "
+            "asi: every free ID from 1 (vanilla gaps in 62..303 too), then --first-id up, garage-listed "
             "through dsfforza.asi (research/asi.md)",
         )
         p.add_argument("--first-id", type=int, default=HIGH_FIRST_ID)
@@ -1992,7 +1992,7 @@ def build_parser() -> argparse.ArgumentParser:
             "--root-limit",
             type=int,
             default=ENTRY_LIMIT,
-            help=f"root entries allowed (default {ENTRY_LIMIT}, the stock reader); "
+            help=f"root entries allowed (default {ENTRY_LIMIT}, the vanilla reader); "
             "more needs dsfforza.asi [archive], e.g. 3003 for every base ID below 1000",
         )
         if name == "plan":
@@ -2096,7 +2096,7 @@ def main(argv: list[str] | None = None) -> None:
     if argv[:1] == ["_worker"]:
         sys.exit(worker(Path(argv[1])))
     args = build_parser().parse_args(argv)
-    args.dsf = game_paths.stock(args.dsf)  # the original when a dsfforza install replaced it
+    args.dsf = game_paths.vanilla(args.dsf)  # the original when a dsfforza install replaced it
     {"plan": cmd_plan, "build": cmd_build, "remerge": cmd_remerge}[args.cmd](args)
 
 

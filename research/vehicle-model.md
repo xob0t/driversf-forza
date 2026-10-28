@@ -100,7 +100,7 @@ reflections) and the cockpit nearly black, except the needle pivots, the only
 vertices with 4096 (`img/cockpit-v1-a.png`). `forza2dsf.vertex_sky` now writes
 Forza's own baked AO (first trailing vertex byte, `forza-materials.md`) times
 `0.25 + 0.55 (1 + n_y) / 2`; the converted cars' medians come out at 0.42 to
-0.48 (full and exterior) and 0.20 to 0.25 (interior), close to stock. In-game
+0.48 (full and exterior) and 0.20 to 0.25 (interior), close to vanilla. In-game
 confirmation pending (hypothesis-runtime).
 
 **Semantic 12** is the vertex's fully crushed position as float16 (x, y,
@@ -109,7 +109,7 @@ position only where nothing crushes (glass, cabin, about a third of the
 vertices); an earlier note here said it was always the position. Details:
 `damage.md`.
 
-**Glass UVs live in v 0–0.25** (confirmed-static). Every stock glass
+**Glass UVs live in v 0–0.25** (confirmed-static). Every vanilla glass
 submodel (the shared glass materials `001283369afd1027`, `0012cc8576953429`,
 `10122b9953b14e2a`; MODL value 7, stride 28) keeps UV0 v at or below 0.26
 for 99.2% of 585,632 glass vertices across the fleet
@@ -134,14 +134,14 @@ shattered with holes. Inside the clean band:
 | --- | --- | --- |
 | u 0.12–1, v 0–0.125 | flat (13, 233, 192) | exterior windscreen and door glass |
 | u 0.17–0.62, v 0.13–0.23 | rear-window defroster lines on the flat colour | exterior rear window |
-| u 0–0.12, v 0–0.06 | grey smear (mean (57, 139, 90): alpha 0.35, reflective), the same in bands 0–2, a hole in band 3 | interior windows: 9% of stock interior glass triangles but 64–97% of each window's area (147, 227, 266; `out/glassfix/intglass.py`) |
-| u 0–0.12, v 0.06–0.125, and u 0.06–0.12, v 0.125–0.25 | flat black (13, 0, 0): blue 0, discarded by the pixel shader in bands 0–2; in band 3 smear-coloured (upper block) and bright streaky shards (94, 189, 173, lower block) | interior rim shards, visible in state 3 only: 66% of stock interior glass triangles (3 mm slivers; 3–34% of the area) |
+| u 0–0.12, v 0–0.06 | grey smear (mean (57, 139, 90): alpha 0.35, reflective), the same in bands 0–2, a hole in band 3 | interior windows: 9% of vanilla interior glass triangles but 64–97% of each window's area (147, 227, 266; `out/glassfix/intglass.py`) |
+| u 0–0.12, v 0.06–0.125, and u 0.06–0.12, v 0.125–0.25 | flat black (13, 0, 0): blue 0, discarded by the pixel shader in bands 0–2; in band 3 smear-coloured (upper block) and bright streaky shards (94, 189, 173, lower block) | interior rim shards, visible in state 3 only: 66% of vanilla interior glass triangles (3 mm slivers; 3–34% of the area) |
 | u 0–0.06, v 0.125–0.25 | flat dark red (66, 0, 0), blue 0 in band 0; streaky (blue ~170) in band 1 from v 0.18 down and in all of band 2; black in band 3 | interior crack lines: rows 0.18–0.25 show in states 1 and 2, rows 0.125–0.18 in state 2 only (9% of interior glass triangles) |
 
 `GLOBAL_Glass_LOD5` reflects far more than the exterior glass
 (`g_hReflectionAmount` 1.0, `g_hReflectionFresnelBias` -0.5,
 `g_hSpecularPower` 150; `GLOBAL_Glass` 0.25, -0.1, 1500), so interior glass is
-a dark, reflective layer. Stock interior windscreens are dense shard meshes
+a dark, reflective layer. Vanilla interior windscreens are dense shard meshes
 (2.2 cm triangles on the Desanne, 2,691 vertices for one windscreen), each
 shard with its own small UV patch (u extent about 0.03, no spatial
 continuity), presumably so the crack bands break along shard edges.
@@ -167,15 +167,15 @@ sets `.y` on the CPU side is not traced. `GLOBAL_Glass_LOD5` (interiors)
 does the same: programs 61 and 63 shift v by `0.25 * floor(c96[s9.y].y)`
 (`g_v4PerPanelData`, the same per-panel array), 60 and 62 don't
 (`out/cockpitglass/gp/`). In game, `GameVehicleResource.applyDamage` cracks
-the interior glass of stock and converted cars alike (run
+the interior glass of vanilla and converted cars alike (run
 `host-20261023-174148`, "Interior glass" below).
 
-**Panel slots.** Each band holds four panel slots, and stock cars map each
+**Panel slots.** Each band holds four panel slots, and vanilla cars map each
 window over its own slot so the crack pattern and the band-3 hole fit the
 window (`out/glassfix/orient.py` on 147, 176, 205, 227, 266; hole extents
 from the texture's blue channel):
 
-| Slot | Band-0 rectangle (u, v) | Band-3 hole (u, v - 0.75) | Stock use |
+| Slot | Band-0 rectangle (u, v) | Band-3 hole (u, v - 0.75) | Vanilla use |
 | --- | --- | --- | --- |
 | windscreen | 0.13–0.665, 0–0.125 | 0.18–0.64, 0.012–0.108 | windscreen: u along +x, v down the glass |
 | side front | 0.67–1, 0–0.125 | 0.70–0.97, 0.014–0.107 | front door glass (u along -z), headlight covers |
@@ -185,8 +185,8 @@ from the texture's blue channel):
 In every slot band 0 is flat except the rear slot's defroster lines (8%
 of its texels); band 1 has 11–14% crack texels; band 2 66–92%; band 3 is
 72–84% hole and 100% hole in the slot's middle, with shattered glass only
-round the rim. Stock windows fill their slot (147's windscreen
-u 0.130–0.665, v 0.009–0.123), so a stock window in state 3 is an empty
+round the rim. Vanilla windows fill their slot (147's windscreen
+u 0.130–0.665, v 0.009–0.123), so a vanilla window in state 3 is an empty
 frame with shards at the edges.
 
 **Converted glass** (confirmed-static; the symptom confirmed-runtime). The
@@ -202,8 +202,8 @@ third. The M5's rear-window UVs run u 0.55–0.93 from the bottom edge to the
 top, so in band 3 the gap between the two upper hole slots (u 0.64–0.70)
 became that band (offline render of state 3: `out/glassfix/compare-states.png`,
 top row, matches the screenshot). The chassis record's `.y` was 3 on an
-apparently undamaged car. In run `20261022-184447` the stock CTS-V (147) and
-the stock GT-R (228) also spawned with heavy cracks in their rear windows,
+apparently undamaged car. In run `20261022-184447` the vanilla CTS-V (147) and
+the vanilla GT-R (228) also spawned with heavy cracks in their rear windows,
 and 147-hosted cars were placed off the usual dyno start (x 1683.8 and
 1678.7 against 1671.4), so the spawn probably knocked them. That is
 unconfirmed. The bug was the misaligned pattern, not the crack state.
@@ -212,7 +212,7 @@ Every car built before the fix has the old mapping. `dsff glass check`
 flags 38 of the 40 `out/testdrive2` cars: their glass triangles straddle the
 windscreen and side-front slots. The Fiat 500 and Golf R pass only because
 none of their triangles happens to cross u 0.665–0.672. `src/dsfforza/convert/glass.py
-survey` (state 3, share of each panel's middle that is not a hole; stock
+survey` (state 3, share of each panel's middle that is not a hole; vanilla
 cars 0–9%) puts the worst at the S65 AMG (76%, several windows on the
 chassis record), Supra (50%, lamp covers), Jeep Grand Cherokee (44%,
 hatch glass), Range Rover (43%), Charger Daytona (25%), Civic, Silvia and
@@ -231,9 +231,9 @@ u 0.135–0.665, v 0.006–0.122; side front 0.672–0.994, 0.006–0.122; rear
 comes from all of a section's glass triangles, so the damage converter's
 per-panel calls agree.
 
-**Interior glass** (stock layout confirmed-static; the converted result
-confirmed-runtime 2026-10-23). Stock interiors (147, 227, 229, 266;
-`out/cockpitglass/stockparts.py`, `stockcracks.py`, head-camera renders with
+**Interior glass** (vanilla layout confirmed-static; the converted result
+confirmed-runtime 2026-10-23). Vanilla interiors (147, 227, 229, 266;
+`out/cockpitglass/vanillaparts.py`, `vanillacracks.py`, head-camera renders with
 `eyeglass.py`) use only the strip u 0–0.12, in three layers per window, all
 bound to that window's panel record (windscreen (0, 5), rear (0, 20), doors):
 
@@ -243,10 +243,10 @@ bound to that window's panel record (windscreen (0, 5), rear (0, 20), doors):
 | cracks | red block (u 0.01–0.056, v 0.13–0.24), each sliver about 0.02 x 0.013 of it | 3 mm wide slivers in 2–6 cm segments, rooted at the edges: windscreen 0.75–1.7 m for state 1 plus 0.6–1.2 m more for state 2, rear 0.3–0.4 m each, front doors about 0.1 m each | rows 0.18–0.25: states 1–2; rows 0.125–0.18: state 2 |
 | shards | black blocks (one texel each in the upper block, a 0.03 x 0.02 patch in the lower) | jagged slivers round the rim: windscreen 600–900, doors 70–220 | state 3 |
 
-So from the cockpit a stock windscreen has a faint smear frame when clean
-(`img/fix3-desanne-stock-cockpit.png`), a few edge-rooted crack lines in
+So from the cockpit a vanilla windscreen has a faint smear frame when clean
+(`img/fix3-desanne-vanilla-cockpit.png`), a few edge-rooted crack lines in
 state 1, more and longer ones in state 2, and in state 3 an empty frame with
-shards at the rim (`out/cockpitglass/stock227-states-big.png`). Some stock
+shards at the rim (`out/cockpitglass/vanilla227-states-big.png`). Some vanilla
 rear-door and quarter glass (147 and 266: (19, 22), (21, 24); 229) samples
 the exterior side-rear slot instead.
 
@@ -265,7 +265,7 @@ between states 0 and 2. Hence the user's report on `out/testdrive7`:
 Fix (`glass.InteriorGlass`, used by `forza2dsf.add_geometry` when
 `glass_rect=INTERIOR_GLASS_RECT`, i.e. for the interior entry): interior
 glass triangles are collected per window (the `SlotMapper` groups and
-frames), then emitted in the stock layout on each window's own s9:
+frames), then emitted in the vanilla layout on each window's own s9:
 
 - surface: planar, isotropic UVs over `SMEAR_RECT` (u 0.012–0.108,
   v 0.008–0.052, inset from the strip edges); windscreens of 0.3 m² or more
@@ -289,9 +289,9 @@ budget landed out of sight. Windows the driver cannot see keep the surface
 only. Output is deterministic per car (seeded by the builder UID prefix and
 the window). The per-window summary is in the car's report
 (`entry.cockpit.interior.glass_windows`) and the log line `interior glass:`.
-Offline (`out/cockpitglass/compare-a.png`, `compare-b.png`: stock 147 and
+Offline (`out/cockpitglass/compare-a.png`, `compare-b.png`: vanilla 147 and
 227, then M5, RX-7, 370Z and Challenger before and after, states 0–3 from
-the head camera) the converted cockpits follow the stock progression. In
+the head camera) the converted cockpits follow the vanilla progression. In
 game: see `cockpit.md`, "Cockpit glass damage".
 
 Lint (`glass.check`, so `upvh.py lint` and `port_batch`): every interior
@@ -300,9 +300,9 @@ interior with surface glass must have state-1 and state-2 cracks and rim
 shards. Old builds fail the second rule.
 
 The rear
-window now shows the stock defroster lines when clean. Rebuilt M5, S65, Supra and Jeep (`out/glassfix/`, IDs
+window now shows the vanilla defroster lines when clean. Rebuilt M5, S65, Supra and Jeep (`out/glassfix/`, IDs
 304–307): all glass inside one slot (`glass check`); state 3 renders as an
-empty frame with a shattered rim like stock 147
+empty frame with a shattered rim like vanilla 147
 (`out/glassfix/compare-states.png`, `jeep-compare.png`, `s65-compare.png`;
 `out/glassfix/glassrender.py` draws a state). The classifier gives every
 glass section of the 40 testdrive cars its own non-degenerate frame
@@ -320,15 +320,15 @@ record (21, 25)) showed band-1 cracks. The same archive and five rebuilt
 variants showed a clean rear window in runs `-083742`, `-090511`, `-090652`,
 `-090833` and `-091014` (`out/dmc/rearwindows.png`), so the converted window
 itself is clean (band 0, inside its slot; `glass.py check`), and the crack
-state is per spawn. Binding glass to the chassis record is stock practice
-(63 stock vehicles, 19,222 full-entry triangles; `out/dmc/glassroles.py`),
+state is per spawn. Binding glass to the chassis record is vanilla practice
+(63 vanilla vehicles, 19,222 full-entry triangles; `out/dmc/glassroles.py`),
 as is binding to bumpers (228's tail-lamp covers). What raises `.y` at spawn
 is still untraced (the harness zaps into cars in traffic; the vE run crashed
 into a tanker within seconds). The lamp-lens part was a converter bug:
 coloured rear lenses no longer become glass (`lights.md`, "Coloured lamp
 lenses drawn as glass").
 
-**Exterior materials.** Stock clean exterior entries draw with the `_LOD1`
+**Exterior materials.** Vanilla clean exterior entries draw with the `_LOD1`
 shared materials (`GLOBAL_Chassis_LOD1` `10122b9653b14e2a` in 149 of 150,
 `GLOBAL_Chassis_Simple_LOD1` `10122b97…` 149, `GLOBAL_Glass_LOD1`
 `10122b99…` 145, `GLOBAL_Tyre_LOD1` `10122b9b…` 150; the full-entry ones in at
@@ -337,13 +337,13 @@ exteriors used the full-entry materials; they now use the twins
 (`forza2dsf.SHARED_EXTERIOR`, same strides and MODL flags). The `_LOD1`
 paint shader (program 26) is program 27 without the damage terms, with the
 same fresnel. No visible change on the DMC (`host-20261023-092015`); done for
-fidelity with stock.
+fidelity with vanilla.
 
-Stock glass binding: semantic 9 on glass is mostly the glass panel's
+Vanilla glass binding: semantic 9 on glass is mostly the glass panel's
 record (Desanne windscreen (0, 5) = record 29, rear window (0, 20) =
 record 61, both type 1 role 8; door glass on the door records, lamp glass
 on the lamp records), in the full, interior and exterior entries alike.
-Some stock glass is on the chassis (0, 0): 147's quarter lights and
+Some vanilla glass is on the chassis (0, 0): 147's quarter lights and
 sunroof, 227's hatch. Converted glass is on the chassis unless `--damage`
 (each window on its panel: `damage.py`, glassF/glassR to the host's front
 or rear role-8 record, side glass to its door) or `--glass-links`
@@ -368,7 +368,7 @@ u32[]    one value per submodel, meaning unknown
 
 Part 0's UID equals the model UID in UPVH's AWHF header, so MODL parts and
 UPVH hierarchy parts presumably share UIDs. Part UIDs are unique across the
-whole stock archive (6,139 in 450 entries) and the engine keys a global table
+whole vanilla archive (6,139 in 450 entries) and the engine keys a global table
 by them; clones must not reuse the host's (`upvh.md`). The oriented boxes give each
 part's extent: part 0 is the whole car (5.14 × 2.08 × 1.51 m), parts 3, 5,
 17, 19 are 1.39 × 1.3 m (the four doors), part 31 is the wheel.

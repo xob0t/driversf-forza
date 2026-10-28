@@ -8,7 +8,7 @@ things that came from earlier research steps on the developer's machine:
   unluac (Java). Here it is rebuilt without Java: the compiled chunk in
   media/ScriptsLuaScripts.fchunk only builds a table of constants, so a small
   Lua 5.1 bytecode evaluator runs it and prints the table in unluac's layout
-  (byte-identical to unluac's output for the stock file).
+  (byte-identical to unluac's output for the vanilla file).
 - out/db/fh1_gamedb.slt, out/db/fm4_gamedb.slt and out/cache/<game>/gamedb.slt:
   each game's Media/db/gamedb.slt from its disc.
 

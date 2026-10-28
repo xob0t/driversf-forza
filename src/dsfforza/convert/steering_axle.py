@@ -19,22 +19,22 @@ LOD for the chase views; cockpit.fit_wheel_points) and reports:
 - grip: where the driver's hands hold it in the cockpit view. DSF's hand rig grips
   0.176 m from the column, 45 degrees either side of the top, centred on A
   (cockpit.hand_grips; an in-game probe of the arms' fists agrees,
-  research/cockpit.md "Hands on Forza's rim"). `grip_stock` is the largest
+  research/cockpit.md "Hands on Forza's rim"). `grip_vanilla` is the largest
   distance from those grips to the drawn rim; `grip_asi` the same after
   dsfforza.asi [hands] moves each grip onto the rim the car's VO3D gives it
   (p95 radius, p87 centre along the column; by ASI_MAX_MOVE at most, the
   plugin's default), and `asi_rim` how far that rim is from the drawn one
   (centre distance plus radius difference).
 - the chase views' grips: the driver there is a full-body occupant posed in the
-  driver seat marker's frame, his grips the same circle about the stock
-  steering marker's place in that frame (rig_grips). The same `grip_stock` and
+  driver seat marker's frame, his grips the same circle about the vanilla
+  steering marker's place in that frame (rig_grips). The same `grip_vanilla` and
   `grip_asi` (dsfforza.asi [hands] moves him too since issue #117), and
   `turn_off`, how far from the rim's column the animations turn his hands
   (the plugin keeps each hand's angle about that centre, so they turn with the
   wheel, and moves them by up to `asi_move` over a full turn).
 
     uv run dsff steering_axle out/final4/dngvehicles.sp --out out/axle/final4.tsv
-    uv run dsff steering_axle out/stock/Install/dngvehicles.sp --stock
+    uv run dsff steering_axle out/vanilla/Install/dngvehicles.sp --vanilla
 """
 
 from __future__ import annotations
@@ -111,7 +111,7 @@ def turn_error(pts: list[tuple], pivot, direction, hinge_axis) -> dict:
 
 
 def asi_target(grip, rim, about) -> tuple:
-    """Where dsfforza.asi [hands] puts a grip of the stock rig, which the animations turn
+    """Where dsfforza.asi [hands] puts a grip of the vanilla rig, which the animations turn
     on a circle about `about`: on `rim` (centre, unit axis, radius) at the grip's angle
     about `about` (for the cockpit arms `about` is on the column: the nearest point)."""
     centre, axis, radius = rim
@@ -130,19 +130,19 @@ def asi_grip(grip, rim, about) -> tuple:
 
 
 def rig_grips(anchor, column, seat=None) -> tuple[list[tuple], tuple]:
-    """The stock rig's grips at rest and the axis the steering turns them about (unit).
+    """The vanilla rig's grips at rest and the axis the steering turns them about (unit).
     Cockpit: about `anchor` in the car's axes, turned by the steering matrix about the
     marker's direction (`column`). Chase views (`seat` = (position, quaternion) of the
     driver seat marker): the full-body occupant is posed in that marker's frame and grips
-    the same circle about the stock steering marker's place there
-    (cockpit.STOCK_MARKER_FROM_SEAT); his animations turn it about the stock column."""
+    the same circle about the vanilla steering marker's place there
+    (cockpit.VANILLA_MARKER_FROM_SEAT); his animations turn it about the vanilla column."""
     if seat is None:
         return cockpit.hand_grips(anchor), cockpit._norm(column)
     pos, quat = seat
     grips = [
-        cockpit._add(pos, cockpit.quat_rotate(quat, g)) for g in cockpit.hand_grips(cockpit.STOCK_MARKER_FROM_SEAT)
+        cockpit._add(pos, cockpit.quat_rotate(quat, g)) for g in cockpit.hand_grips(cockpit.VANILLA_MARKER_FROM_SEAT)
     ]
-    return grips, cockpit._norm(cockpit.quat_rotate(quat, cockpit.STOCK_COLUMN))
+    return grips, cockpit._norm(cockpit.quat_rotate(quat, cockpit.VANILLA_COLUMN))
 
 
 def grip_error(anchor, drawn: dict, asi_rim, seat=None) -> dict:
@@ -159,9 +159,9 @@ def grip_error(anchor, drawn: dict, asi_rim, seat=None) -> dict:
     grips, column = rig_grips(anchor, asi_rim[1] if asi_rim else rim[1], seat)
     d = cockpit._sub(anchor, rim[0])
     d = cockpit._sub(d, cockpit._scale(rim[1], cockpit._dot(d, rim[1])))
-    out = {"grip_stock": max(miss(g) for g in grips), "turn_off": math.sqrt(cockpit._dot(d, d))}
+    out = {"grip_vanilla": max(miss(g) for g in grips), "turn_off": math.sqrt(cockpit._dot(d, d))}
     if not asi_rim:
-        out["grip_asi"] = out["grip_stock"]
+        out["grip_asi"] = out["grip_vanilla"]
         return out
     out["grip_asi"] = max(miss(asi_grip(g, asi_rim, anchor)) for g in grips)
     out["asi_rim"] = math.dist(asi_rim[0], rim[0]) + abs(asi_rim[2] - rim[2])
@@ -231,7 +231,7 @@ def survey_vehicle(archive: Path, stream, root, spool_id: int) -> dict:
             row[view].update(grip_error(anchor, row[view], asi_rim))
         elif seat is not None:
             pos, quat = seat
-            at = cockpit._add(pos, cockpit.quat_rotate(quat, cockpit.STOCK_MARKER_FROM_SEAT))
+            at = cockpit._add(pos, cockpit.quat_rotate(quat, cockpit.VANILLA_MARKER_FROM_SEAT))
             row[view].update(grip_error(at, row[view], asi_rim, seat))
     return row
 
@@ -241,7 +241,7 @@ def ported_cars(manifest: Path) -> list[tuple[int, str, int | None]]:
     return [(c["spool_id"], c["media"], c.get("host")) for c in d["cars"]]
 
 
-def stock_ids() -> list[tuple[int, str, None]]:
+def vanilla_ids() -> list[tuple[int, str, None]]:
     from dsfforza import REPO
 
     with (REPO / "research" / "vehicles.tsv").open(encoding="utf-8") as f:
@@ -276,7 +276,7 @@ def summary(rows: list[dict], view: str) -> None:
     radii = [r[view]["radius"] for r in ok]
     print(f"  rim radius: median {statistics.median(radii):.3f} m, {min(radii):.3f} to {max(radii):.3f}")
     for key, label in (
-        ("grip_stock", "grips off the rim, stock hands"),
+        ("grip_vanilla", "grips off the rim, vanilla hands"),
         ("grip_asi", "grips off the rim, with dsfforza.asi [hands]"),
         ("asi_rim", "dsfforza.asi's rim vs the drawn rim"),
         ("turn_off", "the hands' turn centre off the drawn rim's column"),
@@ -296,15 +296,15 @@ def summary(rows: list[dict], view: str) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("archive", type=Path, help="dngvehicles.sp (built, or the stock one with --stock)")
+    ap.add_argument("archive", type=Path, help="dngvehicles.sp (built, or the vanilla one with --vanilla)")
     ap.add_argument("--manifest", type=Path, help="port_batch manifest (default: <archive>.json)")
-    ap.add_argument("--stock", action="store_true", help="the stock fleet (research/vehicles.tsv)")
+    ap.add_argument("--vanilla", action="store_true", help="the vanilla fleet (research/vehicles.tsv)")
     ap.add_argument("--ids", help="comma-separated spool IDs only")
     ap.add_argument("--out", type=Path, help="TSV")
     args = ap.parse_args(argv)
     from dsfforza.formats.chnk import read_chunk
 
-    cars = stock_ids() if args.stock else ported_cars(args.manifest or args.archive.with_suffix(".json"))
+    cars = vanilla_ids() if args.vanilla else ported_cars(args.manifest or args.archive.with_suffix(".json"))
     if args.ids:
         keep = {int(x) for x in args.ids.split(",")}
         cars = [c for c in cars if c[0] in keep]
@@ -314,7 +314,7 @@ def main(argv: list[str] | None = None) -> None:
         for sid, name, host in cars:
             try:
                 row = survey_vehicle(args.archive, stream, root, sid)
-            except Exception as error:  # a stock car without a steering marker, ...
+            except Exception as error:  # a vanilla car without a steering marker, ...
                 row = {"error": f"{type(error).__name__}: {error}"}
             row.update({"id": sid, "name": name, "host": host})
             rows.append(row)
@@ -325,7 +325,7 @@ def main(argv: list[str] | None = None) -> None:
             for view in ("cockpit", "chase"):
                 if view in row:
                     v = row[view]
-                    grip = f" grip {fmt(v['grip_stock'])} -> {fmt(v['grip_asi'])} cm" if "grip_stock" in v else ""
+                    grip = f" grip {fmt(v['grip_vanilla'])} -> {fmt(v['grip_asi'])} cm" if "grip_vanilla" in v else ""
                     parts.append(
                         f"{view} off {fmt(v['off'])} cm tilt {v['tilt']:.1f} (hinge {v['hinge_tilt']:.1f}) "
                         f"r {v['radius']:.3f}{grip}"
@@ -345,7 +345,7 @@ def main(argv: list[str] | None = None) -> None:
             "tilt",
             "hinge_tilt",
             "radius",
-            "grip_stock",
+            "grip_vanilla",
             "grip_asi",
             "asi_rim",
             "turn_off",

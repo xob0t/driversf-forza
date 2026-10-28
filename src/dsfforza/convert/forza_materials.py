@@ -51,7 +51,7 @@ from dsfforza.formats import carbin
 # Roles, matching the DSF side's shared materials plus "textured".
 PAINT, GLASS, TRIM, TYRE, TEXTURED, SKIP = "paint", "glass", "trim", "tyre", "textured", "skip"
 # Exterior chrome (bumpers, window frames, drip rails...): DSF's shared chrome
-# materials, as on stock cars (research/forza-materials.md, "Chrome trim").
+# materials, as on vanilla cars (research/forza-materials.md, "Chrome trim").
 CHROME = "chrome"
 # Texture families (the atlas the technique's baseSampler is bound to).
 NODAMAGE, LIGHTS = "nodamage", "lights"
@@ -365,7 +365,7 @@ def classify_wheel(name: str) -> tuple[str, str | None]:
     """classify() for the main carbin's `wheel` section (research/wheels.md):
     every rim technique (rim, chrome_rim, outer_rim, inner_rim, wheel_black,
     wheel_emblem...) samples the car's wheel texture, wheel.xds; the tyre takes
-    DSF's shared tyre (forza2dsf.TyreMap unwraps it onto the stock tread and
+    DSF's shared tyre (forza2dsf.TyreMap unwraps it onto the vanilla tread and
     sidewall); the spinning-blur discs, shadows and ghosts are left out.
     Drawing the 40 testdrive cars' rim UV triangles over wheel.xds lands them on
     matching artwork (spoke shading, the Nissan, Audi, Bugatti and SVT caps,

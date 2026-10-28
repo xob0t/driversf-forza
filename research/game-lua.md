@@ -45,7 +45,7 @@ strips the `..`.
 ### Bytecode (confirmed-static)
 
 Plain Lua 5.1 bytecode, no encryption and no custom opcodes. The only
-difference from a stock x86 `luac` is byte 10 of the header,
+difference from a vanilla x86 `luac` is byte 10 of the header,
 `sizeof(lua_Number)`:
 
 ```text
@@ -75,7 +75,7 @@ $p.PriorityClass = 'Idle'; $p.WaitForExit()
 (mirror of the SourceForge hg repo, which Cloudflare blocks for curl);
 `unluac.jar` was compiled from it with `javac`. A whole run takes about two
 minutes. Output: `out/lua/<Package>/<path>.luac` and
-`out/lua-src/<Package>/<path>.lua`; `LuaScripts.copy` is the stock core
+`out/lua-src/<Package>/<path>.lua`; `LuaScripts.copy` is the vanilla core
 package. Felony Rework's packages are in `out/lua-felony-src/`.
 
 ## Traffic
@@ -220,13 +220,13 @@ field names sit together in `Driver.exe`'s strings next to
 `garageSpawnVehicle`. No Lua code reads `Selectable`, `Tier`, `Price`,
 `Picture1` or the stat bars, so the menus read them from C++.
 
-Felony Rework's readable `vehicleStats.lua` is the stock file plus:
+Felony Rework's readable `vehicleStats.lua` is the vanilla file plus:
 `Selectable = true` and `UnlockedInChapter = 10` for 172 and 266-268 (plus
 a 5000 price for 266-268); a full entry for 277 (prison van, copied from
 118); 302 and 303 selectable with prices; dummy entries 622 and 623 (not
 models) with `UnlockByActivity` set to two of its new activities. Its
 changelog credits this to "Klancnik's garage mod". So a `vehicleStats`
-entry with `Selectable = true` and an unlock is enough for a stock model to
+entry with `Selectable = true` and an unlock is enough for a vanilla model to
 show up in the garage. The engine walks a fixed ID range, not the table:
 FUN_006C57D0 loops IDs 0..303 (`gui-assets.md`, `asi.md`), so the dummies
 622 and 623 are never listed.
@@ -285,7 +285,7 @@ end
 It reads optional overrides from `dsfforza\config.lua` (`register = { ... }`,
 including `cars`). The core of each part:
 
-(3) HUD name and badge: copy a stock entry, override names and bars.
+(3) HUD name and badge: copy a vanilla entry, override names and bars.
 
 ```lua
 local entry = {}
@@ -339,7 +339,7 @@ and install (e.g. run `20261022-230004`, `asi.md`).
 ## Open
 
 1. Whether the interesting-vehicle manager spawns a model that isn't in
-   the active traffic set. The stock lists mix set members and non-members,
+   the active traffic set. The vanilla lists mix set members and non-members,
    so probably yes.
 2. Answered: the garage loops IDs 0..303 and the save holds flags for IDs
    below 304 (320 bits); dsfforza.asi lifts both (`asi.md`).

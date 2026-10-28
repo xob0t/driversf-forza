@@ -47,7 +47,7 @@ NONR_LIMIT = 0x6D000  # per-slot NONR buffer for kind-0 entries (SSLP +0x08, spo
 # id: (name, unit, evidence). "default" is the value Driver.exe uses when a VO3D
 # leaves the ID out (evaluated from the initializer FUN_0088AC20).
 # Evidence: S = confirmed-static (code read), D = data correlation across the
-# 150 stock vehicles or the Forza pairs, H = hypothesis.
+# 150 vanilla vehicles or the Forza pairs, H = hypothesis.
 
 
 @dataclass(frozen=True)
@@ -78,7 +78,7 @@ PARAMS: dict[int, Param] = {
     40: Param("idle_rpm", "rpm", 2383, "S: gearbox E[1]: torque curve start, downshift point"),
     42: Param("redline_rpm", "rpm", 13000, "S: gearbox E[2]: torque curve end, upshift base; D: = Forza RedlineRPM"),
     138: Param("p138", "?", 1, "S: read in FUN_008858F0"),
-    140: Param("gravity", "m/s^2", -17, "S: static sag = -p140 * p0 / p1; no stock car overrides it"),
+    140: Param("gravity", "m/s^2", -17, "S: static sag = -p140 * p0 / p1; no vanilla car overrides it"),
     141: Param("gravity_air", "m/s^2", -17, "S: FUN_008BE410, FUN_008BCAF0"),
     160: Param("top_speed_limit", "mph", 160, "S: spec printer 'limit topSpeed' (x 0.447 to m/s)"),
     166: Param("launch_throttle", "0..1", 0.9, "S: launch/burnout assist throttle threshold"),
@@ -418,7 +418,7 @@ def _tyre_radius(width_mm: float, aspect: float, rim_in: float) -> float:
 
 
 def load_forza(media: str, databases: list[Path]) -> ForzaCar:
-    """Read a car's stock physics from the first gamedb.slt (FH1 or FM4) that has it."""
+    """Read a car's vanilla physics from the first gamedb.slt (FH1 or FM4) that has it."""
     for db in databases:
         con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
         try:
@@ -440,24 +440,24 @@ def _one(con, sql: str, *args) -> sqlite3.Row:
 
 def _read_car(con, car: sqlite3.Row, db: Path) -> ForzaCar:
     cid = car["Id"]
-    body_id = _one(con, "SELECT CarBodyID FROM List_UpgradeCarBody WHERE Ordinal = ? AND IsStock = 1", cid)[0]
+    body_id = _one(con, "SELECT CarBodyID FROM List_UpgradeCarBody WHERE Ordinal = ? AND IsVanilla = 1", cid)[0]
     body = _one(con, "SELECT * FROM Data_CarBody WHERE Id = ?", body_id)
     weight = con.execute(
-        "SELECT * FROM List_UpgradeCarBodyWeight WHERE CarBodyId = ? AND IsStock = 1", (body_id,)
+        "SELECT * FROM List_UpgradeCarBodyWeight WHERE CarBodyId = ? AND IsVanilla = 1", (body_id,)
     ).fetchone()
-    drivetrain_id = _one(con, "SELECT DrivetrainID FROM List_UpgradeDrivetrain WHERE Ordinal = ? AND IsStock = 1", cid)[
-        0
-    ]
+    drivetrain_id = _one(
+        con, "SELECT DrivetrainID FROM List_UpgradeDrivetrain WHERE Ordinal = ? AND IsVanilla = 1", cid
+    )[0]
     drive = DRIVE_TYPES[_one(con, "SELECT DrivetypeID FROM Data_Drivetrain WHERE DrivetrainID = ?", drivetrain_id)[0]]
     gearbox = _one(
-        con, "SELECT * FROM List_UpgradeDrivetrainTransmission WHERE DrivetrainID = ? AND IsStock = 1", drivetrain_id
+        con, "SELECT * FROM List_UpgradeDrivetrainTransmission WHERE DrivetrainID = ? AND IsVanilla = 1", drivetrain_id
     )
     ratios = [gearbox[f"GearRatio{i}"] for i in range(gearbox["NumGears"])]
     diff = con.execute(
-        "SELECT * FROM List_UpgradeDrivetrainDifferential WHERE DrivetrainID = ? AND IsStock = 1", (drivetrain_id,)
+        "SELECT * FROM List_UpgradeDrivetrainDifferential WHERE DrivetrainID = ? AND IsVanilla = 1", (drivetrain_id,)
     ).fetchone()
-    engine_id = _one(con, "SELECT EngineID FROM List_UpgradeEngine WHERE Ordinal = ? AND IsStock = 1", cid)[0]
-    cam = _one(con, "SELECT * FROM List_UpgradeEngineCamshaft WHERE EngineID = ? AND IsStock = 1", engine_id)
+    engine_id = _one(con, "SELECT EngineID FROM List_UpgradeEngine WHERE Ordinal = ? AND IsVanilla = 1", cid)[0]
+    cam = _one(con, "SELECT * FROM List_UpgradeEngineCamshaft WHERE EngineID = ? AND IsVanilla = 1", engine_id)
     curve = _one(con, "SELECT * FROM List_TorqueCurve WHERE TorqueCurveID = ?", cam["TorqueCurveFullThrottleID"])
     count = curve["NumTorqueValues"]
     step = cam["TorqueCurveMaxRPM"] / (count - 1)
@@ -468,7 +468,7 @@ def _read_car(con, car: sqlite3.Row, db: Path) -> ForzaCar:
     peak_index = max(range(count), key=nms.__getitem__)
     end = next((i for i in range(peak_index, count) if nms[i] <= 0), count)
     rpms, nms = rpms[:end], nms[:end]
-    # Stock upgrade parts (turbos, intake, ...) rescale the curve. Rather than model
+    # Vanilla upgrade parts (turbos, intake, ...) rescale the curve. Rather than model
     # each, scale it so its peak matches the game's own simulated peak torque.
     sim_peak = car["SimPeakTorque"] * 100
     curve_peak = max(t for r, t in zip(rpms, nms) if r <= cam["RedlineRPM"])
@@ -476,7 +476,7 @@ def _read_car(con, car: sqlite3.Row, db: Path) -> ForzaCar:
         nms = [t * sim_peak / curve_peak for t in nms]
     springs = con.execute(
         "SELECT FrontSpringDamperPhysicsID, RearSpringDamperPhysicsID FROM List_UpgradeSpringDamper"
-        " WHERE Ordinal = ? AND IsStock = 1",
+        " WHERE Ordinal = ? AND IsVanilla = 1",
         (cid,),
     ).fetchone()
     rates = []
@@ -518,7 +518,7 @@ def _read_car(con, car: sqlite3.Row, db: Path) -> ForzaCar:
 
 
 # --- mapping ---------------------------------------------------------------------------
-# Fits from the 45 stock DSF vehicles that have a Forza counterpart (research/handling.md):
+# Fits from the 45 vanilla DSF vehicles that have a Forza counterpart (research/handling.md):
 #   p160 ~ 50.83 + 0.477 * Forza TopSpeed-mph  (residual sd 8.3 mph; DSF caps at 160)
 #   p18  ~ 14.735 * peak_Nm ** 0.621           (DSF torque is "game" torque, compressed)
 #   inertia ~ k * box inertia from Forza's BlockDim (k = 2.30, 2.36, 2.70)
@@ -531,7 +531,7 @@ INERTIA_K = (2.30, 2.36, 2.70)
 CURVE_SCALE = (0.92, 0.87)
 CLAMP = {522: (0.5, 0.87), 523: (0.53, 0.78), 524: (0.38, 0.75), 371: (0.15, 0.3)}
 FRONT_WEIGHT_CLAMP = (0.42, 0.58)
-# Scaled by the mass ratio (new / host): the stock fleet keeps these roughly
+# Scaled by the mass ratio (new / host): the vanilla fleet keeps these roughly
 # proportional to mass (p368 = 0.65 x mass, IQR 11%), so scaling keeps the host's
 # ride frequency, grip in g, and drivetrain-to-body inertia ratio.
 MASS_SCALED = (1, 2, 13, 355, 356, 357, 358, 359, 367, 368, 369)
@@ -555,10 +555,10 @@ def gear_set(car: ForzaCar, top_speed_mph: float) -> tuple[list[float], float, f
 
     DSF speed in gear i: rel_i * p361 * p360 * rpm * pi / 30. p361 = 1 / (final
     drive * reference gear), the reference being the Forza gear closest to 1:1,
-    as in the stock data. Stock vehicles reach p160 in top gear at redline
+    as in the vanilla data. Vanilla vehicles reach p160 in top gear at redline
     (fleet median ratio 1.01), so the gears above second are compressed in log
     space, first and second kept, until top gear at redline equals the target
-    top speed (stock data often keeps the low gears exact, e.g. the 370Z).
+    top speed (vanilla data often keeps the low gears exact, e.g. the 370Z).
     """
     gears = car.gears[:MAX_GEARS]
     reference = min(car.gears, key=lambda g: abs(g - 1.0))
@@ -644,7 +644,7 @@ def build_vo3d(
 
     # Geometry. forza2dsf keeps the host's axle midpoint and moves the hubs to the
     # Forza wheelbase, so the CoG goes there too.
-    put(392, car.wheelbase, "Forza wheelbase (= UPVH hub wheelbase in stock data)")
+    put(392, car.wheelbase, "Forza wheelbase (= UPVH hub wheelbase in vanilla data)")
     # Steering lock: the front wheels turn as far as Forza turns them and no further,
     # so the tyre stays where Forza's body leaves room for it (research/handling.md,
     # "Steering lock").
@@ -785,7 +785,7 @@ def main(argv: list[str] | None = None) -> None:
         p.add_argument(
             "--torque-scale",
             type=float,
-            help="p18 = scale x Forza peak Nm instead of the fleet fit (stock median 1.38)",
+            help="p18 = scale x Forza peak Nm instead of the fleet fit (vanilla median 1.38)",
         )
         p.add_argument(
             "--scale-cameras",

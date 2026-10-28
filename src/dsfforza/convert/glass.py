@@ -11,10 +11,10 @@ shattered. In band 3 the texture is mostly holes (blue 0: the pixel shader's
 texkill), with a shattered rim around each hole.
 
 The texture (SSIC 00122b77dffa1227, 512 x 1024) is laid out as four panel
-slots per band, and stock cars map each window over its own slot so the
+slots per band, and vanilla cars map each window over its own slot so the
 cracks and the hole line up with the window:
 
-    slot          u            v (band 0)   stock use (147, 176, 205, 227, 266)
+    slot          u            v (band 0)   vanilla use (147, 176, 205, 227, 266)
     windscreen    0.13-0.665   0-0.125      windscreen, u along x, v down the glass
     side_front    0.67-1       0-0.125      front door glass (u along -z), lamp glass
     rear          0.17-0.62    0.125-0.25   rear window (defroster lines in band 0)
@@ -27,7 +27,7 @@ across the window: on the M5 (FH1, host 147) in state 3 the rear window was a
 hole with a band of shattered glass across its lower part, where the gap
 between two hole slots fell (sandbox run 20261022-191859, observe-21..29).
 `slot_uvs` maps each converted window by its own geometry onto its slot
-instead, so state k looks like a stock window in state k.
+instead, so state k looks like a vanilla window in state k.
 
     uv run dsff glass check <archive> --id N      # lint one converted vehicle
     uv run dsff glass survey <chunk-or-archive>... # state-3 look of every glass panel
@@ -47,7 +47,7 @@ from pathlib import Path
 
 from dsfforza import REPO
 
-# Shared glass materials (SSIC): GLOBAL_Glass, _LOD1 (stock exteriors), _LOD5 (interiors).
+# Shared glass materials (SSIC): GLOBAL_Glass, _LOD1 (vanilla exteriors), _LOD5 (interiors).
 EXTERIOR_GLASS = {bytes.fromhex("001283369afd1027"), bytes.fromhex("10122b9953b14e2a")}
 INTERIOR_GLASS = bytes.fromhex("0012cc8576953429")
 GLASS_TEXTURE = bytes.fromhex("00122b77dffa1227")
@@ -55,7 +55,7 @@ BAND = 0.25
 
 # Band-0 rectangles (u0, u1, v0, v1). Each covers its slot's band-3 hole
 # (windscreen u 0.18-0.64, side_front 0.70-0.97, rear 0.16-0.63,
-# side_rear 0.70-0.98) with a rim, like stock windows, and stays clear of
+# side_rear 0.70-0.98) with a rim, like vanilla windows, and stays clear of
 # the slot edges so bilinear filtering never reads the neighbour.
 SLOTS = {
     "windscreen": (0.135, 0.665, 0.006, 0.122),
@@ -211,8 +211,8 @@ class SlotMapper:
 #
 # GLOBAL_Glass_LOD5, the interior's glass material, samples the same texture
 # with the same crack-state shift (programs 61 and 63: v += 0.25 * floor(
-# c96[s9.y].y); 60 and 62 have no shift), but stock interiors (147, 227, 229,
-# 266; out/cockpitglass/stockparts.py, stockcracks.py) use the left strip
+# c96[s9.y].y); 60 and 62 have no shift), but vanilla interiors (147, 227, 229,
+# 266; out/cockpitglass/vanillaparts.py, vanillacracks.py) use the left strip
 # u 0-0.12 only, where the four bands give each window three layers:
 #
 #   surface  the smear rows (u 0-0.12, v 0-0.06): a faint reflective layer in
@@ -220,7 +220,7 @@ class SlotMapper:
 #            windscreen only along its top and pillars, its centre is open.
 #   cracks   3 mm slivers in 2-6 cm segments on the red block (u 0-0.06,
 #            v 0.125-0.25): discarded in states 0 and 3; rows v 0.18-0.25 show
-#            in states 1 and 2, rows 0.125-0.18 in state 2 only. Stock
+#            in states 1 and 2, rows 0.125-0.18 in state 2 only. Vanilla
 #            windscreens carry 0.75-1.7 m of state-1 cracks plus 0.6-1.2 m more
 #            for state 2, rear windows 0.3-0.4 m each, front doors about 0.1 m.
 #   shards   jagged slivers round the rim on the black blocks (u 0-0.12,
@@ -243,7 +243,7 @@ INTERIOR_REGIONS = {
     "shard_bright": SHARD_BRIGHT,
 }
 # The windscreen surface is kept only outside this box (normalised s across,
-# t down the glass from the top): the stock frame of smear, open centre.
+# t down the glass from the top): the vanilla frame of smear, open centre.
 WINDSCREEN_OPEN = (0.06, 0.94, 0.22)
 WINDSCREEN_OPEN_AREA = 0.3  # m2: smaller windscreens keep their whole surface
 CRACK_BUDGET = {
@@ -405,7 +405,7 @@ def _rotate(d, angle):
 
 
 class InteriorGlass:
-    """Interior (cockpit) glass laid out like stock interiors (see above).
+    """Interior (cockpit) glass laid out like vanilla interiors (see above).
 
     Feed every glass triangle of the entry with `add` (DSF positions, normals,
     sky terms, s9 bytes); `triangles()` then gives, per window (SlotMapper
@@ -640,7 +640,7 @@ class InteriorGlass:
                     du, dv = 0.03, 0.022
                     cu, cv = rng.uniform(u0, u1 - du), rng.uniform(v0, v1 - dv)
                     uvs, region = [(cu, cv), (cu + du, cv), (cu + du * rng.uniform(0.3, 0.7), cv + dv)], "shard_bright"
-                else:  # stock: one texel per sliver
+                else:  # vanilla: one texel per sliver
                     u0, u1, v0, v1 = SHARD_DULL
                     uv = (rng.uniform(u0, u1), rng.uniform(v0, v1))
                     uvs, region = [uv, uv, uv], "shard_dull"
@@ -701,12 +701,12 @@ def _uv_signature(tris) -> list:
 def check(stream, kinds: dict, host: tuple | None = None, window_cracks: bool | None = None) -> list[tuple[bool, str]]:
     """Lint rows (ok, message) for the converted vehicle's glass: exterior
     (full entry part 0 mask 4, exterior entry mask 2) in one panel slot per
-    triangle; interior (mask 64) in the stock interior layout, with crack
+    triangle; interior (mask 64) in the vanilla interior layout, with crack
     lines and rim shards (InteriorGlass).
 
-    host: (stock stream, the host's {kind: entry}). An interior whose glass is
+    host: (vanilla stream, the host's {kind: entry}). An interior whose glass is
     the host's own (a stub cockpit keeps the host's interior, cockpit.md) is
-    stock data, not converted: its layout isn't checked (stock interiors don't
+    vanilla data, not converted: its layout isn't checked (vanilla interiors don't
     follow it either: the GMC Savana's straddles 448 of 1678 triangles).
     window_cracks: False when the cockpit report says no window qualified for
     cracks (only lamp covers and panes under MIN_WINDOW_AREA, as in open race
@@ -741,8 +741,8 @@ def check(stream, kinds: dict, host: tuple | None = None, window_cracks: bool | 
                 rows.append(
                     (
                         True,
-                        f"kind 1: interior glass is the host's own stock interior ({len(tris)} triangles, "
-                        "a stub cockpit keeps it; stock layout, not checked)",
+                        f"kind 1: interior glass is the host's own vanilla interior ({len(tris)} triangles, "
+                        "a stub cockpit keeps it; vanilla layout, not checked)",
                     )
                 )
                 return rows
@@ -757,7 +757,7 @@ def check(stream, kinds: dict, host: tuple | None = None, window_cracks: bool | 
         rows.append(
             (
                 stray == 0,
-                f"kind 1: interior glass triangles each inside one stock interior region of the "
+                f"kind 1: interior glass triangles each inside one vanilla interior region of the "
                 f"glass texture (smear surface, crack rows, shard blocks; src/dsfforza/convert/glass.py) or a "
                 f"panel slot ({stray} of {len(tris)} straddle or miss)",
             )
@@ -802,7 +802,7 @@ def _texture():
     from dsfforza.formats.vehicle_mesh import child, payload
     from dsfforza.game import game_paths
 
-    with (game_paths.REPO_STOCK / "Install" / "dngvehicles.sp").open("rb") as s:
+    with (game_paths.REPO_VANILLA / "Install" / "dngvehicles.sp").open("rb") as s:
         root = read_chunk(s, 0)
         ssic = next(e for e in root.entries if e.tag == "SSIC")
         for _, e in walk(ssic.children):
@@ -813,7 +813,7 @@ def _texture():
 
 def panel_looks(tris, tex, state: int = 3, steps: int = 6) -> dict:
     """Per s9 group (panel record): share of the window's central area (inner
-    70% x 60% of its own extent) that is NOT a hole in `state`. Stock-like
+    70% x 60% of its own extent) that is NOT a hole in `state`. Vanilla-like
     mapping: ~0 (the hole fills the middle, shattered glass only at the rim)."""
     w, h, rgba = tex
     by_pair = defaultdict(list)

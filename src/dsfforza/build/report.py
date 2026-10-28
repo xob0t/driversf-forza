@@ -20,7 +20,7 @@ changes), how the cars were installed (install.cmd, dsff install, or tools/insta
 hand), Windows, locale, CPU, RAM, free disk space, uv and Python, the VC++ x86 runtime;
 the game folder: Driver.exe (1.04 or not), each installed file as tools/install.ps1
 -Status checks it and whether it is the last build's, other mods (ASI loaders,
-DriverNGHook, other .asi files, another bootstrap.lua, changed stock files), crash dumps
+DriverNGHook, other .asi files, another bootstrap.lua, changed vanilla files), crash dumps
 (a summary of the newest, never the dump); the disc images (names, sizes and what
 each one is, never the images); the last build (cars, failed cars and why, options).
 
@@ -54,7 +54,7 @@ CAR_LOG_LIMIT = 64 * 1024
 INSTALL_LOGS = 3  # the newest out/logs/install-*.log
 FAILED_CAR_LOGS = 10
 HASH_LIMIT = 600 * install.MIB  # bigger files (a ported archive) are compared by size and date
-STOCK_ARCHIVE_SIZE = 483_110_912  # Install\dngvehicles.sp 1.04
+VANILLA_ARCHIVE_SIZE = 483_110_912  # Install\dngvehicles.sp 1.04
 DUMP_LIMIT = 64 * install.MIB
 DSF_LOGS = ("Driver.log",)  # DriverNGHook's log (with the game's Lua output), in the game folder
 SETTINGS = ("plugins/dsfforza.ini", "dsfforza-backup/install.json")
@@ -526,14 +526,16 @@ def archive_state(game: Path, status: dict) -> str:
     if not archive.is_file():
         return "missing"
     size = archive.stat().st_size
-    if size == STOCK_ARCHIVE_SIZE:
-        return "stock 1.04" if install.sha256(archive) == install.STOCK_ARCHIVE_SHA256 else "stock size, other bytes"
+    if size == VANILLA_ARCHIVE_SIZE:
+        return (
+            "vanilla 1.04" if install.sha256(archive) == install.VANILLA_ARCHIVE_SHA256 else "vanilla size, other bytes"
+        )
     for row in status["files"]:
         if row["path"].lower() == "install\\dngvehicles.sp":
             if row.get("matches_build"):
                 return f"the dsfforza build ({size_text(size)})"
             return f"a dsfforza install ({size_text(size)}; not its build's archive)"
-    return f"not stock, not installed by dsfforza ({size_text(size)}): another mod?"
+    return f"not vanilla, not installed by dsfforza ({size_text(size)}): another mod?"
 
 
 def other_mods(game: Path, record: dict | None, repo: Path) -> dict:
@@ -578,15 +580,15 @@ def other_mods(game: Path, record: dict | None, repo: Path) -> dict:
         else:
             bootstrap_state = "another mod's"
     user_lua = game / "Common" / "UserLuaScripts"
-    stock = {}
-    for relative, digest in install.STOCK_FILES.items():
+    vanilla = {}
+    for relative, digest in install.VANILLA_FILES.items():
         path = game / relative
         if not path.is_file():
-            stock[relative] = "missing"
+            vanilla[relative] = "missing"
         elif path.stat().st_size > HASH_LIMIT:
-            stock[relative] = "not stock (size)"
+            vanilla[relative] = "not vanilla (size)"
         else:
-            stock[relative] = "stock" if install.sha256(path) == digest else "not stock"
+            vanilla[relative] = "vanilla" if install.sha256(path) == digest else "not vanilla"
     return {
         "asi_loader": install.find_asi_loader(game),
         "loader_dlls": loaders,
@@ -604,7 +606,7 @@ def other_mods(game: Path, record: dict | None, repo: Path) -> dict:
         )
         if user_lua.is_dir()
         else [],
-        "stock_files": stock,
+        "vanilla_files": vanilla,
     }
 
 
@@ -902,9 +904,10 @@ def summary_lines(r: dict) -> list[str]:
             parts.append(f"bootstrap.lua {m.get('bootstrap_lua')}")
             if m.get("other_asi"):
                 parts.append("other .asi: " + ", ".join(a["path"] for a in m["other_asi"]))
-            changed = [k for k, v in (m.get("stock_files") or {}).items() if v != "stock"]
+            files = m.get("vanilla_files") or m.get("stock_files") or {}  # stock_*: reports before v0.1.3
+            changed = [k for k, v in files.items() if v not in ("vanilla", "stock")]
             if changed and not rows:
-                parts.append("not stock: " + ", ".join(changed))
+                parts.append("not vanilla: " + ", ".join(changed))
             lines.append(f"Mods:       {'; '.join(parts)}")
         logs = [f"dsfforza.log {stamp_text(g.get('dsfforza_log'))}" if g.get("dsfforza_log") else "no dsfforza.log"]
         logs += [f"{x['name']} {stamp_text(x)}" for x in g.get("logs") or []]

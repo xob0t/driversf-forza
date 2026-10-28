@@ -1,8 +1,8 @@
-# Hosts: which stock car a port is built on
+# Hosts: which vanilla car a port is built on
 
 Updated: 2026-10-22
 
-A ported car is a clone of one stock vehicle, the host, with the Forza body,
+A ported car is a clone of one vanilla vehicle, the host, with the Forza body,
 cockpit, wheels and handling numbers put in. Everything the converter does
 not rebuild stays the host's, so the host decides much of how the port
 sounds and behaves. Until now every port used 266 (ASYM Desanne, a V6 saloon).
@@ -13,7 +13,7 @@ sounds and behaves. Until now every port used 266 (ASYM Desanne, a V6 saloon).
 
 | Data | Where | Converter |
 | --- | --- | --- |
-| Engine sound | NONR/VSRT | replaced by the car's own Forza loops in a stock template bank (`engine-sound.md`); kept (or `--sound-host`) with `--no-forza-sound` or when that fails |
+| Engine sound | NONR/VSRT | replaced by the car's own Forza loops in a vanilla template bank (`engine-sound.md`); kept (or `--sound-host`) with `--no-forza-sound` or when that fails |
 | Hierarchy: parts, doors, hinges, collision (PDL), lights, damage | NONR/UPVH | hubs, steering, gauges, seats moved; the rest kept |
 | Handling base: steering, assists, tyre curves, cameras | NONR/VO3D | `handling_dsf.py` (default) keeps the host's VO3D and moves it by the fleet's rules (`handling.md`); `--handling forza` is the older `handling.py` mapping (about 33 parameters, grip, springs and dampers scaled by mass) |
 | Paint sets | NONR/SPSR | kept |
@@ -40,7 +40,7 @@ sounds and behaves. Until now every port used 266 (ASYM Desanne, a V6 saloon).
 
 So the VSRT is self-contained and keyed by the spool ID at VSVH+0, which
 `clone_vehicle.py` already patches. A clone of the 370Z gets the 370Z's
-sound. Copying another stock car's VSRT into a clone and patching VSVH+0 is
+sound. Copying another vanilla car's VSRT into a clone and patching VSVH+0 is
 the same operation (`clone_vehicle.copy_sound`, `port_car.py --sound-host
 N|auto`, `clone_vehicle.py --sound-host N`). The clone then shares the bank
 ID with the sound host, just as every clone already shares it with its host
@@ -56,7 +56,7 @@ kind-0 limit is 0x6D000). A large sound on a host with a large UPVH can
 overflow it; `port_car.py` checks every entry, and the M5 on 266 with the
 MP4-12C sound came to 0x6BE90.
 
-## The stock fleet as hosts
+## The vanilla fleet as hosts
 
 `uv run dsff host_select survey --tsv research/hosts.tsv` (cached in
 `out/cache/host-survey.json`). Per vehicle: VSCT category, body class,
@@ -88,8 +88,8 @@ included, so they are not rear doors. 88 usable hosts have 2 doors, 44 have 4.
 | Placement with `HOST_HUB_Y` and axle midpoint 0.1155 | axle midpoint from -4.64 (bus) to 0.94 | from the host's wheel table (`ConvertOptions.host_axle_mid` = None) |
 | Wheel geometry in full-entry MODL part 31 | 33 four-wheeled hosts split front and rear wheels into two parts (Corvette, GT, Lamborghinis, RUFs ...) | the parts the wheel records point at; the wheel goes into each. The other hosts get a rear copy of their wheel part when the Forza tyres differ (`forza2dsf.split_rear_wheel`, `wheels.md` "Rear wheel parts") |
 | Exterior wheel in the last MODL part | right on all usable hosts, but by luck | the parts the wheel records' LOD links name |
-| Exterior Chassis/Lights materials in the exterior DRSP (`dsf_materials.install_exterior`) | only 45 vehicles; 105 keep one or both `_LOD1` materials in the interior or full entry | falls back to the interior's, then the full entry's `*_LOD1` materials, used by UID like stock |
-| Lint: kind 1/2 materials local, in the full entry, or used by the host | stock 229 and 251 failed their own lint | `upvh.py lint` accepts any of the car's three entries and every SSIC material/texture; all 150 stock cars pass |
+| Exterior Chassis/Lights materials in the exterior DRSP (`dsf_materials.install_exterior`) | only 45 vehicles; 105 keep one or both `_LOD1` materials in the interior or full entry | falls back to the interior's, then the full entry's `*_LOD1` materials, used by UID like vanilla |
+| Lint: kind 1/2 materials local, in the full entry, or used by the host | vanilla 229 and 251 failed their own lint | `upvh.py lint` accepts any of the car's three entries and every SSIC material/texture; all 150 vanilla cars pass |
 
 The wheel bodies (UPVH bodies table, +0x30) hold the negated hub position
 (Desanne record 33: hub (-0.848, -0.398, 1.583), body (0.825, 0.398,
@@ -178,8 +178,8 @@ GMC C5500 that VEHC names "Van 07") are classes of their own; the 2009
 Charger SRT8 ("Modern Muscle", 4 doors) counts as a saloon; Viper and
 Corvette Z06/ZR1 as supercars, not muscle.
 
-Check against the 48 stock/Forza pairs of `out/handling/pairs.py`: the top
-host is the paired stock car for 45. The other three are right too: the
+Check against the 48 vanilla/Forza pairs of `out/handling/pairs.py`: the top
+host is the paired vanilla car for 45. The other three are right too: the
 Forza Challenger SRT8 2009 goes to 173 (the pair list had 172, the 1970
 R/T), the Scirocco R to the civilian 274 instead of the rally 275, and the
 RUF RT12 S can't use 243 (no steering hinge) and gets 240 (CTR3).
@@ -191,7 +191,7 @@ host for all 573 cars of `forza-roster.tsv` (FH1 first, as `port_car` does;
 the carbin door rule where the car is in `out/cache`), with the runner-up,
 the margin and flags: body similarity under 0.5, a door mismatch, score
 under 45, cylinders more than 2 apart, wheelbase more than 0.6 m apart, or
-a runner-up within 1 point whose body fits better. 87 stock cars are used.
+a runner-up within 1 point whose body fits better. 87 vanilla cars are used.
 
 | Car class | Cars | Host classes | Most used hosts | Flagged |
 | --- | ---: | --- | --- | ---: |
@@ -250,7 +250,7 @@ on the Desanne with the 370Z's VSRT (227), 305 BMW_M5_12 on the Desanne
 with the McLaren MP4-12C's (225, twin-turbo V8). Same hierarchy as the tested
 fix6 build, so only the sound differs from it.
 
-Offline renders in `out/hosts/png/`: `sides.png` (stock host left, port
+Offline renders in `out/hosts/png/`: `sides.png` (vanilla host left, port
 right, wheel part on the UPVH hubs: all wheels in their arches), `eyes.png`
 (head-camera views, all five cockpits in place), `desanne-regression.png`.
 

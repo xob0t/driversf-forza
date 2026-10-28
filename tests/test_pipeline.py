@@ -81,7 +81,7 @@ def test_merge_leaves_out_cars_with_uid_clashes():
     port_batch.register_cars = register
     try:
         results = [{"media": m, "spool_id": i} for i, m in enumerate("ABC", 1)]
-        cars, failed = port_batch.merge(Path("stock.sp"), Path("out.sp"), results, Path(), log=lambda t: None)
+        cars, failed = port_batch.merge(Path("vanilla.sp"), Path("out.sp"), results, Path(), log=lambda t: None)
     finally:
         port_batch.register_cars = real
     assert calls == [["A", "B", "C"], ["A", "C"]]

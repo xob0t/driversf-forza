@@ -1,7 +1,7 @@
 // Lua heap: room for the game's Lua state past its fixed 10 MB block.
 // See research/asi.md ("Lua heap") and research/in-game-tests.md.
 //
-// Stock (Driver.exe 1.04, confirmed-static): FUN_005E4BF0 creates heap 3 of
+// Vanilla (Driver.exe 1.04, confirmed-static): FUN_005E4BF0 creates heap 3 of
 // the engine's heap manager ([0x012536AC]) as one 10 MB block (push 0xA00000
 // at 0x005E4C05; FUN_0075A190 -> FUN_00758EE0 mallocs it once, it never
 // grows). The Lua state is made by lua_newstate(FUN_005E4AB0, 0) at
@@ -12,7 +12,7 @@
 // API calls. The game's pcall wrapper (FUN_005E4760) drops the error, so
 // nothing is logged and the state is left half-updated.
 //
-// The stock game stays well under 10 MB. With the full roster (573 cars: their
+// The vanilla game stays well under 10 MB. With the full roster (573 cars: their
 // vehicleStats entries, dsfforza\ported.lua, hud.lua) the arena refuses
 // requests once Lua holds about 8.5 MB, which a drive through traffic or a few
 // minutes in the garage reach; the game then dies in the Lua VM a minute or
@@ -37,7 +37,7 @@
 
 typedef void*(__cdecl* LuaAlloc)(void* ud, void* ptr, size_t osize, size_t nsize);
 
-static const uint32_t kStockAlloc = 0x005E4AB0;     // the game's lua_Alloc (heap 3)
+static const uint32_t kVanillaAlloc = 0x005E4AB0;     // the game's lua_Alloc (heap 3)
 static const uint32_t kNewStatePush = 0x005E7DB7;   // push 0x005E4AB0 before call lua_newstate (0x005F4E40)
 static const uint8_t kNewStatePushBytes[5] = {0x68, 0xB0, 0x4A, 0x5E, 0x00};
 static const uint32_t kArenaSizePush = 0x005E4C05;  // push 0xA00000: heap 3's size, in FUN_005E4BF0
@@ -85,7 +85,7 @@ static void note_over(size_t before)
 
 static void* __cdecl lua_alloc(void* ud, void* ptr, size_t osize, size_t nsize)
 {
-    LuaAlloc stock = (LuaAlloc)kStockAlloc;
+    LuaAlloc vanilla = (LuaAlloc)kVanillaAlloc;
     if (ptr && g_heap && !in_arena(ptr)) {   // an overflow block
         size_t before = g_over_bytes;
         g_over_bytes -= HeapSize(g_heap, 0, ptr);
@@ -98,7 +98,7 @@ static void* __cdecl lua_alloc(void* ud, void* ptr, size_t osize, size_t nsize)
         note_over(before);
         return p;
     }
-    void* p = stock(ud, ptr, osize, nsize);
+    void* p = vanilla(ud, ptr, osize, nsize);
     if (p || nsize == 0) {
         uint32_t mb = lua_total_bytes() >> 20;
         if (mb > g_total_mark) {
@@ -122,7 +122,7 @@ static void* __cdecl lua_alloc(void* ud, void* ptr, size_t osize, size_t nsize)
     note_over(before);
     if (ptr) {   // an arena block that couldn't grow: move it out (it stays where it was if this fails)
         memcpy(p, ptr, osize < nsize ? osize : nsize);
-        stock(ud, ptr, osize, 0);
+        vanilla(ud, ptr, osize, 0);
     }
     return p;
 }
@@ -140,12 +140,12 @@ void mod_lua_init()
         uint32_t bytes = (uint32_t)mb << 20;
         memcpy(push + 1, &bytes, 4);
         if (patch_bytes(kArenaSizePush, push, sizeof push, kArenaSizePushBytes))
-            dsf_log("lua: Lua arena %d MB (stock 10)", mb);
+            dsf_log("lua: Lua arena %d MB (vanilla 10)", mb);
         else
             dsf_log("lua: arena size push at %08X differs; arena stays as it is", kArenaSizePush);
     }
     if (!cfg_bool("lua", "overflow", true)) {
-        dsf_log("lua: overflow=0: a full arena fails requests as stock (logged)");
+        dsf_log("lua: overflow=0: a full arena fails requests as vanilla (logged)");
     } else if (!(g_heap = HeapCreate(0, 0, 0))) {
         dsf_log("lua: HeapCreate failed (%lu); no overflow heap", GetLastError());
     }

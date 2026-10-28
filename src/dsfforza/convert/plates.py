@@ -1,6 +1,6 @@
 """Licence plates for converted Forza cars (research/plates.md).
 
-How stock DSF cars draw their plates (confirmed-static, all 150 stock cars):
+How vanilla DSF cars draw their plates (confirmed-static, all 150 vanilla cars):
 
 - Every plate is a flat quad (2 to 66 triangles) drawn with the shared paint
   material (GLOBAL_Chassis in the full entry, GLOBAL_Chassis_LOD1 in the
@@ -17,7 +17,7 @@ How stock DSF cars draw their plates (confirmed-static, all 150 stock cars):
   and s5 normal deltas like the surrounding bumper, UV1 on the bumper's tile
   of the scratch atlas, sky term about 0.5. The plate is in part 0 and in the
   panel's own MODL part, so it crushes, swings and falls off with its panel.
-- 130 stock cars have front and rear plates, 11 rear only, 1 front only,
+- 130 vanilla cars have front and rear plates, 11 rear only, 1 front only,
   8 none (trucks, buses, buggies).
 
 Forza cars mostly have no plate geometry: in tools/batches/testdrive.txt only
@@ -37,9 +37,9 @@ not the plate. So the plate is placed on the Forza body:
 3. else the host's plate height mapped onto the Forza body, x = 0, pushed out
    to the nearest surface in front (a plate on a bracket).
 
-An end gets a plate only if the host has one there (stock trucks and buggies
+An end gets a plate only if the host has one there (vanilla trucks and buggies
 have none at the front, a few cars none at the front: the host is the most
-similar stock car). The plate becomes a synthetic body section
+similar vanilla car). The plate becomes a synthetic body section
 `<surface section>_plate_front|rear` (technique PLATE_TECHNIQUE) on every body
 LOD, so the rest of the converter treats it like Forza geometry: paint
 material (forza2dsf), damage panels by the surface section's rule
@@ -67,7 +67,7 @@ from dsfforza.formats import carbin
 
 PLATE_TECHNIQUE = "dsf_plate"
 SECTION_SUFFIX = "_plate_"  # <surface>_plate_front / _plate_rear
-# The plate in the shared paint atlas 00122b73d1fa1227: u0, v0, u1, v1 (stock 227's quads).
+# The plate in the shared paint atlas 00122b73d1fa1227: u0, v0, u1, v1 (vanilla 227's quads).
 PLATE_UV = (0.4929, 0.8867, 0.5986, 0.9971)
 SHARED_ATLAS_MATERIALS = {
     bytes.fromhex(h)
@@ -80,7 +80,7 @@ SHARED_ATLAS_MATERIALS = {
         "a012f01306d57a2a",  # GLOBAL_LOD_Chrome
     )
 }
-DEFAULT_SIZE = (0.26, 0.122)  # stock median quad
+DEFAULT_SIZE = (0.26, 0.122)  # vanilla median quad
 FORZA_PLATE_TECHNIQUES = ("numberplate",)
 PX = 0.01  # depth-map cell (m)
 FLAT_RMS = 0.003  # plane-fit RMS of a usable mounting face
@@ -94,7 +94,7 @@ FLAT_BAND = 0.15  # plain flat faces (no recess walls) only within this
 MIN_FIT = 0.7  # smallest plate scale when fitting a small recess
 LOD_PUSH_LIMIT = 0.08  # coarser LODs move the plate out by at most this
 # Baked AO bytes for the plate vertices (forza2dsf.vertex_sky): an open,
-# vertical face, sky term ~0.48 against stock plates' ~0.5.
+# vertical face, sky term ~0.48 against vanilla plates' ~0.5.
 PLATE_AO = (95, 96, 97, 96)
 SURFACE_CLASSES = (1, 2)  # paint, trim (depth-map classes below)
 
@@ -118,7 +118,7 @@ class HostPlates:
 
 
 def host_plates(stream, vehc) -> HostPlates:
-    """Plates of a stock vehicle's full entry (MODL part 0, mask 4): triangles on
+    """Plates of a vanilla vehicle's full entry (MODL part 0, mask 4): triangles on
     a shared-atlas material whose UV0 centroid is on the plate."""
     from dsfforza.convert.damage import load_mesh
     from dsfforza.formats import vehicle_mesh as vm
@@ -348,7 +348,7 @@ def plan_end(
     tris, end: str, host: HostPlate, prior_y: float, ground: float, half_width: float, forza_mesh=None
 ) -> Plate:
     base = host.size if host.size[0] > 0.15 else DEFAULT_SIZE
-    if base[0] > 0.45:  # a stock oddity (Super Car 01's front: 0.99 m, several pieces)
+    if base[0] > 0.45:  # a vanilla oddity (Super Car 01's front: 0.99 m, several pieces)
         base = DEFAULT_SIZE
     if forza_mesh is not None:
         _, mesh, name = forza_mesh
@@ -687,13 +687,13 @@ def _debug_png(car_body, place, ground, pp: PlatePlan, path: Path) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
-    h = sub.add_parser("host", help="a stock vehicle's plates")
+    h = sub.add_parser("host", help="a vanilla vehicle's plates")
     h.add_argument("archive", type=Path)
     h.add_argument("--id", type=int, action="append", required=True)
     p = sub.add_parser("plan", help="where a Forza car's plates go on a host")
     p.add_argument("car", type=Path, help="extracted car folder (out/cache/<game>/<media>)")
     p.add_argument("--host", type=int, required=True)
-    p.add_argument("--dsf", type=Path, default=None, help="stock dngvehicles.sp (default: from $DSF_GAME_DIR)")
+    p.add_argument("--dsf", type=Path, default=None, help="vanilla dngvehicles.sp (default: from $DSF_GAME_DIR)")
     p.add_argument("--png", type=Path, help="depth maps of both ends with the plates")
     args = parser.parse_args(argv)
     from dsfforza.formats import upvh as upvh_mod
@@ -701,7 +701,7 @@ def main(argv: list[str] | None = None) -> None:
     from dsfforza.game import game_paths
 
     if args.cmd == "host":
-        path = game_paths.stock(args.archive, quiet=True)
+        path = game_paths.vanilla(args.archive, quiet=True)
         with path.open("rb") as stream:
             root = read_chunk(stream, 0)
             for spool_id in args.id:
@@ -724,7 +724,7 @@ def main(argv: list[str] | None = None) -> None:
 
     car = forza2dsf.load_car(args.car, args.car.name)
     dims = forza2dsf.car_dims(car)
-    path = game_paths.stock(args.dsf, quiet=True)
+    path = game_paths.vanilla(args.dsf, quiet=True)
     with path.open("rb") as stream:
         root = read_chunk(stream, 0)
         kinds = upvh_mod.entries_for(stream, root.entries, args.host, None)

@@ -186,7 +186,7 @@ def _fake_setup(root: Path) -> tuple[Path, Path, Path]:
         "entries": entries,
     }
     _touch(game / "dsfforza-backup" / "install.json", json.dumps(record).encode())
-    _touch(game / "dsfforza-backup" / "Install" / "dngvehicles.sp", b"STOCK BACKUP")
+    _touch(game / "dsfforza-backup" / "Install" / "dngvehicles.sp", b"VANILLA BACKUP")
     _touch(game / "plugins" / "dsfforza.log", b"dsfforza: patched 12 sites\n")
     _touch(game / "plugins" / "dsfforza.ini", b"[hands]\nenabled=1\n")
     _touch(game / "plugins" / "DriverNGHook.asi", b"hook")
@@ -270,7 +270,7 @@ def test_collect_and_zip_a_fake_setup():
         assert not (Path(tmp) / "out" / "r.zip.part").exists()
         assert "summary.txt" in names and "report.json" in names
         assert not [n for n in names if n.lower().endswith((".iso", ".dat", ".sp", ".dmp", ".exe"))]
-        assert b"SECRET SAVE BYTES" not in blob and b"STOCK BACKUP" not in blob
+        assert b"SECRET SAVE BYTES" not in blob and b"VANILLA BACKUP" not in blob
         assert b"Jane Doe" not in blob and b"%USERPROFILE%" in blob
 
 

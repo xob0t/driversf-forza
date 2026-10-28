@@ -5,11 +5,11 @@ Bumper) take their mounts from VO3D (research/cockpit.md, "Cameras"). Measured i
 game (clonetest.lua logs the camera in the car's frame, run vm-20261024-053821):
 
 - Bonnet: (p535, p536 + 0.30, p537) above the ground, +z forward (147: p536 0.91,
-  p537 0.87 -> (0, 1.21, 0.87)). 140 stock cars set p536/p537 per car: the camera
+  p537 0.87 -> (0, 1.21, 0.87)). 140 vanilla cars set p536/p537 per car: the camera
   sits just in front of the windscreen's centre, at the role-63 marker (on the
   windscreen, 57% of its height up the centre line) + (0, 0.058, 0.085) (fleet
   medians, quartiles 0.014..0.094 and 0.028..0.154; out/cameras/bonnet_fleet.py).
-- Bumper: (p327, p328 + 0.30, z from the host's collision box + p329); no stock car
+- Bumper: (p327, p328 + 0.30, z from the host's collision box + p329); no vanilla car
   sets them, the player's car is hidden in that view, so they stay the host's.
 - The ground those heights count from is the host's: model y = highest hub y - p360
   of the host as shipped (147, 266, 205, 278 within 3 mm, 163 within 8 mm).
@@ -17,7 +17,7 @@ game (clonetest.lua logs the camera in the car's frame, run vm-20261024-053821):
 A converted car kept the host's p535..537, so on a car lower than its host the
 camera sat inside the cabin behind the glass (the Agera on host 163: 6 cm under
 its roof top). bonnet_params puts it at the same place relative to the Forza
-windscreen (`glassF`) as stock cars have it relative to theirs.
+windscreen (`glassF`) as vanilla cars have it relative to theirs.
 """
 
 from __future__ import annotations
@@ -27,10 +27,10 @@ import struct
 
 BONNET = (535, 536, 537)
 BONNET_LIFT = 0.30  # in game: p536 + 0.30 above the ground
-BONNET_OFFSET = (0.0, 0.058, 0.085)  # camera - windscreen centre, stock fleet median (DSF model space)
-WINDSCREEN_HEIGHT = 0.57  # the role-63 marker's place up the windscreen (stock median)
+BONNET_OFFSET = (0.0, 0.058, 0.085)  # camera - windscreen centre, vanilla fleet median (DSF model space)
+WINDSCREEN_HEIGHT = 0.57  # the role-63 marker's place up the windscreen (vanilla median)
 CENTRE_BAND = 0.15  # m either side of the centre line
-MIN_CLEARANCE = 0.09  # m over the car below it (stock: 10th percentile 0.087, median 0.12)
+MIN_CLEARANCE = 0.09  # m over the car below it (vanilla: 10th percentile 0.087, median 0.12)
 WINDSCREEN_SECTION = "glassF"
 
 
@@ -78,7 +78,7 @@ def first_hit(tris, origin, direction, reach: float = math.inf) -> float | None:
 
 def windscreen_centre(tris) -> tuple[float, float, float] | None:
     """The point on a windscreen (triangles in DSF model space, +z forward) on the
-    centre line, WINDSCREEN_HEIGHT of the way up: where stock cars put their
+    centre line, WINDSCREEN_HEIGHT of the way up: where vanilla cars put their
     role-63 marker."""
     if not tris:
         return None

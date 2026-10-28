@@ -1,4 +1,4 @@
-"""Give a ported car its own Forza engine sound (media swap into a stock Wwise bank).
+"""Give a ported car its own Forza engine sound (media swap into a vanilla Wwise bank).
 
 DSF drives a vehicle's engine with two sets of rpm-layered loops in its
 Wwise bank (research/engine-sound.md): set A is played by the event at
@@ -7,7 +7,7 @@ with a pitch curve 1200*log2(rpm / recording rpm) on vehicle_rpm and a
 layer crossfade on vehicle_rpm. The game maps the car's normalised rpm
 (VO3D p40..p42) onto VSVH+94..+98, the bank's rpm range.
 
-The conversion keeps a stock template bank's hierarchy (events, switches,
+The conversion keeps a vanilla template bank's hierarchy (events, switches,
 layers, load and speed RTPCs) and replaces the loops of both sets:
 
 1. Forza: <car>_ET.xml gives idle/redline and the HT file per emission;
@@ -26,11 +26,11 @@ layers, load and speed RTPCs) and replaces the loops of both sets:
    indexes them globally: a copy with the template's IDs would play the
    template's media whenever that car is loaded first), and the VSVH event
    fields follow. Fresh IDs are (spool ID << 22) | 22 bits of an FNV-1 hash of
-   the old ID, rehashed while they hit an ID of the stock fleet's banks, of
+   the old ID, rehashed while they hit an ID of the vanilla fleet's banks, of
    WWiseDefault.pck or of the bank itself: deterministic, and two cars of one
    build (different spool IDs) can't collide (`fresh_ids`).
 
-Templates (`template_order`): stock sample banks with the 370Z layout (two
+Templates (`template_order`): vanilla sample banks with the 370Z layout (two
 loop sets of 6 to 8 loops, no granular GRBK), in the order of
 src/dsfforza/build/host_select.py's sound ranking for the car (identity, engine, era), the
 explicit --sound-host first. port_car tries them, and shorter loops, until the
@@ -41,9 +41,9 @@ Commands:
     uv run dsff engine_sound convert --car MAZ_RX7_97 --game fh1 --host 227 --out out/sound/MAZ_RX7_97
     uv run dsff engine_sound apply out/sound/build/dngvehicles.sp out/sound/build/dngvehicles.sound.sp \\
         --spool 1 --sound out/sound/MAZ_RX7_97
-    uv run dsff engine_sound sets 227          # a stock bank's loop sets
-    uv run dsff engine_sound templates         # stock banks usable as templates
-    uv run dsff engine_sound lint out/testdrive8/dngvehicles.sp --id 1 [--stock ...]
+    uv run dsff engine_sound sets 227          # a vanilla bank's loop sets
+    uv run dsff engine_sound templates         # vanilla banks usable as templates
+    uv run dsff engine_sound lint out/testdrive8/dngvehicles.sp --id 1 [--vanilla ...]
 
 convert outputs in --out: SBAK.bin, VSVH.bin, report.json, wav/ (every new
 loop as the game will decode it) and sweep_{template,new}.wav (an offline
@@ -74,13 +74,13 @@ from dsfforza import REPO
 from dsfforza.formats import wwise_bank as wb
 from dsfforza.formats.chnk import read_chunk, write_chunk
 
-DEFAULT_DSF = REPO / "out" / "stock" / "Install" / "dngvehicles.sp"
+DEFAULT_DSF = REPO / "out" / "vanilla" / "Install" / "dngvehicles.sp"
 CACHE = REPO / "out" / "cache" / "sound"
 RPM = 0x9C4D0121
 RATE = 32000
 VSVH_SIZE = 0x9C
 VSVH_EVENTS = (0x04, 0x0C)  # Play events of set A and set B
-# VSVH fields holding event IDs of the vehicle's own bank: on all 150 stock cars
+# VSVH fields holding event IDs of the vehicle's own bank: on all 150 vanilla cars
 # every non-zero value at these offsets is an Event in the car's bank, and no
 # other field ever is (research/engine-sound.md).
 EVENT_FIELDS = (
@@ -120,7 +120,7 @@ MAX_SECONDS = (1.1, 0.8, 0.6)  # loop lengths tried in turn against the NONR bud
 EMISSION_GROUP = {"Exhaust": "ExhaustL", "EngineAmbient": "EngineAmbient", "EngineIntake": "EngineIntake"}
 # Emission per set, first one the car has (race cars often lack one).
 SET_EMISSIONS = {"A": ("EngineAmbient", "EngineIntake", "Exhaust"), "B": ("Exhaust", "EngineAmbient", "EngineIntake")}
-STOCK_INDEX_VERSION = 2
+VANILLA_INDEX_VERSION = 2
 
 
 def fnv1(text: str) -> int:
@@ -151,8 +151,8 @@ class Slot:
     sounds: list = field(default_factory=list)
 
 
-def stock_sound(dsf: Path, spool: int) -> tuple[bytes, bytes]:
-    """(SBAK, VSVH) of a stock vehicle's kind-0 entry."""
+def vanilla_sound(dsf: Path, spool: int) -> tuple[bytes, bytes]:
+    """(SBAK, VSVH) of a vanilla vehicle's kind-0 entry."""
     from dsfforza.build import clone_vehicle as cv
     from dsfforza.formats.vehicles import find
 
@@ -163,7 +163,7 @@ def stock_sound(dsf: Path, spool: int) -> tuple[bytes, bytes]:
                 vsrt = find(find(entries[index].children, "NONR").children, "VSRT")
                 parts = {c.tag: cv.read_leaf(s, c) for c in vsrt.children}
                 return parts["SBAK"], parts["VSVH"]
-    raise KeyError(f"no stock vehicle {spool}")
+    raise KeyError(f"no vanilla vehicle {spool}")
 
 
 def subtree(bank: wb.Bank, root: int) -> list[wb.HircObject]:
@@ -230,7 +230,7 @@ def set_of_objects(bank: wb.Bank, vsvh: bytes) -> dict[int, str]:
     return out
 
 
-# --------------------------------------------------------------------------- stock index
+# --------------------------------------------------------------------------- vanilla index
 
 
 def game_dir(dsf: Path | None = None) -> Path:
@@ -240,7 +240,7 @@ def game_dir(dsf: Path | None = None) -> Path:
         from dsfforza.game import game_paths
 
         found = game_paths.game_dir_of(dsf)
-        if found is not None and found.resolve() != game_paths.REPO_STOCK.resolve():
+        if found is not None and found.resolve() != game_paths.REPO_VANILLA.resolve():
             return found.parent if found.name == game_paths.BACKUP else found
     from dsfforza.game import game_paths
 
@@ -317,16 +317,18 @@ def bank_ids(bank: wb.Bank, references: bool = True) -> set[int]:
     return out
 
 
-def stock_index(dsf: Path = DEFAULT_DSF, cache: Path = CACHE / "stock-banks.json", game: Path | None = None) -> dict:
-    """Facts about the stock vehicle banks, cached by archive (and pck) size and mtime:
-    "reserved": every ID the stock vehicle banks and WWiseDefault.pck define or use
+def vanilla_index(
+    dsf: Path = DEFAULT_DSF, cache: Path = CACHE / "vanilla-banks.json", game: Path | None = None
+) -> dict:
+    """Facts about the vanilla vehicle banks, cached by archive (and pck) size and mtime:
+    "reserved": every ID the vanilla vehicle banks and WWiseDefault.pck define or use
     (fresh IDs avoid them); "banks": per base spool ID, the loop sets, sizes, rpm range,
     granular flag and whether it can be a template."""
     pck = find_pck(game or game_dir(dsf))
     stat = dsf.stat()
     # Not the archive's path: it is read from the game folder or its dsfforza-backup copy
     # (handling_dsf.load_fleet).
-    key = f"{STOCK_INDEX_VERSION}:{stat.st_size}:{int(stat.st_mtime)}"
+    key = f"{VANILLA_INDEX_VERSION}:{stat.st_size}:{int(stat.st_mtime)}"
     if pck:
         key += f":{pck}:{pck.stat().st_size}:{int(pck.stat().st_mtime)}"
     if cache.is_file():
@@ -1162,7 +1164,7 @@ def build_sound(
 
 
 def template_order(index: dict, ranking: list[int], first: list[int] | None = None, limit: int = 3) -> list[int]:
-    """Usable templates (stock_index "why" empty) in preference order: `first`
+    """Usable templates (vanilla_index "why" empty) in preference order: `first`
     (an explicit sound host), then the sound ranking, at most `limit`, and the
     370Z (227) as the proven fallback."""
     out = []
@@ -1245,7 +1247,7 @@ class Plan:
                 vsrt = find(find(self.entries[index].children, "NONR").children, "VSRT")
                 parts = {c.tag: cv.read_leaf(self.stream, c) for c in vsrt.children}
                 return parts["SBAK"], parts["VSVH"]
-        raise KeyError(f"no stock vehicle {sid}")
+        raise KeyError(f"no vanilla vehicle {sid}")
 
 
 def install(full, sbak: bytes, vsvh: bytes, stream=None) -> dict:
@@ -1325,7 +1327,7 @@ def lint_bank(bank: wb.Bank, vsvh: bytes) -> list[str]:
 
 def _content(bank: wb.Bank) -> dict[int, bytes]:
     """ID -> content digest for everything a bank defines. Masked, as they differ
-    between stock banks sharing an object: references to the bank's own ID (Sound
+    between vanilla banks sharing an object: references to the bank's own ID (Sound
     file IDs, Play actions' bank), a Sound's media offset (where the media sits in
     this bank file) and an ActorMixer's children list (each bank lists only its
     own children of a shared mixer)."""
@@ -1383,10 +1385,10 @@ def lint(
     """Checks of a vehicle's engine sound in an archive: VSRT parts, the bank's parse and
     byte-identical rebuild, media/offset consistency, VSVH event fields, and ID
     uniqueness across the archive. A dsfforza bank's IDs (bank, objects, layers,
-    media) must be its own: no other vehicle's bank and no reserved (stock or
+    media) must be its own: no other vehicle's bank and no reserved (vanilla or
     WWiseDefault.pck) ID may equal them. Any other bank may share IDs only with
     banks that give them the same content (clones and sound hosts share their
-    template's bank, as stock cars do). `cache` (a dict kept between calls for the
+    template's bank, as vanilla cars do). `cache` (a dict kept between calls for the
     same archive): every vehicle's bank parsed once, for linting many cars."""
     if cache is None:
         cache = {}
@@ -1488,7 +1490,7 @@ def lint(
             rows.append(
                 (
                     not hit,
-                    "sound: no Forza bank ID is a stock or WWiseDefault.pck ID"
+                    "sound: no Forza bank ID is a vanilla or WWiseDefault.pck ID"
                     + (f" ({', '.join(f'{i:08x}' for i in hit[:4])})" if hit else ""),
                 )
             )
@@ -1517,7 +1519,7 @@ def apply(archive: Path, target: Path, spool: int, sound: Path) -> dict:
     with archive.open("rb") as s:
         root = read_chunk(s, 0)
         entries = root.entries
-        nonr_limit, mdxn_max = port_car.stock_limits(s, entries)
+        nonr_limit, mdxn_max = port_car.vanilla_limits(s, entries)
         done = []
         for sid, index, kind in cv.sslp_records(s, entries):
             if sid - 1000 * kind != spool:
@@ -1546,7 +1548,7 @@ def main(argv: list[str] | None = None) -> None:
     c = sub.add_parser("convert")
     c.add_argument("--car", required=True, help="Forza media name, e.g. MAZ_RX7_97")
     c.add_argument("--game", choices=("fh1", "fm4"), required=True)
-    c.add_argument("--host", type=int, default=227, help="stock sample-bank vehicle whose bank is the template")
+    c.add_argument("--host", type=int, default=227, help="vanilla sample-bank vehicle whose bank is the template")
     c.add_argument("--spool", type=int, default=1, help="spool ID the sound is for (the fresh-ID namespace)")
     c.add_argument("--out", type=Path, required=True)
     c.add_argument("--dsf", type=Path, default=DEFAULT_DSF)
@@ -1579,16 +1581,16 @@ def main(argv: list[str] | None = None) -> None:
     li = sub.add_parser("lint")
     li.add_argument("archive", type=Path)
     li.add_argument("--id", type=int, required=True, action="append")
-    li.add_argument("--stock", type=Path, help="stock archive: also check Forza IDs against the reserved ones")
+    li.add_argument("--vanilla", type=Path, help="vanilla archive: also check Forza IDs against the reserved ones")
     args = ap.parse_args(argv)
 
     if args.cmd == "convert":
         from dsfforza.build.forza_roster import default_images
 
-        sbak, vsvh = stock_sound(args.dsf, args.host)
+        sbak, vsvh = vanilla_sound(args.dsf, args.host)
         isos = args.iso or default_images()
         forza = forza_engine(args.car, args.game, isos, args.cache)
-        reserved = stock_index(args.dsf)["reserved"]
+        reserved = vanilla_index(args.dsf)["reserved"]
         sound = build_sound(
             sbak,
             vsvh,
@@ -1620,7 +1622,7 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "apply":
         print(json.dumps(apply(args.archive, args.target, args.spool, args.sound), indent=1))
     elif args.cmd == "templates":
-        index = stock_index(args.dsf)
+        index = vanilla_index(args.dsf)
         print(f"{len(index['reserved'])} reserved IDs (pck: {index['pck']})")
         for sid, row in sorted(index["banks"].items()):
             sets = "+".join(str(len(row["sets"].get(k, []))) for k in "AB")
@@ -1629,7 +1631,7 @@ def main(argv: list[str] | None = None) -> None:
                 f"type {ENGINE_TYPES.get(row['engine_type'], row['engine_type'])}  {row['why'] or 'template'}"
             )
     elif args.cmd == "lint":
-        reserved = stock_index(args.stock)["reserved"] if args.stock else None
+        reserved = vanilla_index(args.vanilla)["reserved"] if args.vanilla else None
         bad = 0
         with args.archive.open("rb") as stream:
             entries = read_chunk(stream, 0).entries
@@ -1639,7 +1641,7 @@ def main(argv: list[str] | None = None) -> None:
                     print(f"{sid} " + ("ok    " if ok else "FAIL  ") + message)
         sys.exit(1 if bad else 0)
     else:
-        sbak, vsvh = stock_sound(args.dsf, args.host)
+        sbak, vsvh = vanilla_sound(args.dsf, args.host)
         bank = wb.Bank.parse(sbak)
         lo, hi = struct.unpack_from("<II", vsvh, 0x94)
         print(f"bank {bank.bank_id:08x} VSVH rpm range {lo}..{hi}")

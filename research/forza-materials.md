@@ -104,12 +104,12 @@ the converter squashes the Forza window UVs into that band
 
 Shared TRIM (`GLOBAL_Chassis_Simple`) samples DSF's global chassis texture
 (SSIC `00122b73d1fa1227`, 1024x512: engine bay, undercarriage, grilles,
-plate, swatches; stock trims unwrap onto those). Converted trims carried
+plate, swatches; vanilla trims unwrap onto those). Converted trims carried
 Forza's UVs into it: swatch trims hit one arbitrary texel, tiling ones
 (carbon x246) spread over the whole texture. The Veyron's exposed carbon
 (22 m², most of its upper body) drew bright noise ("materials messed up",
 `img/fix-veyron-trim.png` top). Converted trims now all use the texture's
-uniform dark block (`forza2dsf.TRIM_UV`, (0.969, 0.496)), the texel stock
+uniform dark block (`forza2dsf.TRIM_UV`, (0.969, 0.496)), the texel vanilla
 trims drawn from a single texel use most (46 hosts). With `--damage`, the
 trims a missing bonnet or boot lid exposes (bay walls and floor, panel
 undersides) are projected onto the texture's engine-bay pictures instead,
@@ -119,7 +119,7 @@ and panel undersides use the paint material (`damage.md`, step 6).
 | badge | nodamage | alpha 0 everywhere | textured | dropped |
 | taillight2S, tail_light, reverse_light, textured_reflector, indicator_left/right, hidhead, oldhead, slorange, drlwhite, detail_glass_red, detail_glass_clear | Lights | textured | textured | host **Lights** (stride 32, UV1 = UV0); `detail_glass_*` lenses are glass in Forza and get the lamp behind them baked in (`lights.md`, "Lamp lenses drawn opaque") |
 | fogred | Lights | swatch | textured | host Lights, solid cell |
-| tire | global | tiling | tyre | shared TYRE (unwrapped onto the stock tread and sidewall, `research/wheels.md`) |
+| tire | global | tiling | tyre | shared TYRE (unwrapped onto the vanilla tread and sidewall, `research/wheels.md`) |
 | rim, chrome_rim, outer_rim, inner_rim, wheel_black, wheel_emblem (`wheel` section) | the car's `wheel.xds` | textured (inner_rim sometimes a swatch) | textured | host **Chassis**, in the wheel MODL part (`wheels.md`, "Rim textures") |
 | blur_rim, blur_lip, chrome_blur_* | | | skip | dropped |
 
@@ -138,7 +138,7 @@ patches (`research/img/emissive-agera-cockpit.jpg`, `emissive-agera-wing-render.
 
 Plates: `numberplate` (a plate quad on 2 of the 40 testdrive cars) and
 `numplate` (the plate lamp strip) stay trim; the converter replaces
-`numberplate` quads with DSF's stock plate and places one on cars without
+`numberplate` quads with DSF's vanilla plate and places one on cars without
 (`plates.md`).
 
 The full technique table, with prefix fallbacks for names not seen on this
@@ -157,7 +157,7 @@ car, is `TECHNIQUES` / `classify()` in `forza_materials.py`.
 - The DSF texture is plain RGBA. Alpha is a specular/glow mask: on non-lamp
   texels it tracks luminance (correlation 0.9–0.99, about
   `(lum − 45) × 0.55`); on lamps it peaks at the bulbs. The converter maps
-  Forza `Lights` alpha through the stock-matched per-hue curves
+  Forza `Lights` alpha through the vanilla-matched per-hue curves
   (`LIGHTS_ALPHA = "matched"`, `lights.md`; gamma 2 was the first mapping).
   On `nodamage` texels it uses the luminance formula and turns paint-through
   texels into the Desanne's plain texel (74, 72, 74, 15; `DEFAULT_PLAIN`,
@@ -178,7 +178,7 @@ car, is `TECHNIQUES` / `classify()` in `forza_materials.py`.
 - `forza2dsf.add_geometry(..., textures=binding, merge=True)`:
   `merge` makes one submodel per material instead of per (section,
   material). Exterior SBMCs drop from 53 to 6, full-entry SBMCs from 376 to
-  261, and lod_max_subs from 52 to 5, all below the stock maxima (kind 0:
+  261, and lod_max_subs from 52 to 5, all below the vanilla maxima (kind 0:
   374 SBMC, kind 2: 41).
 
 Results for the 370Z on the hollow layout (`exp_hollow.py --complete`):
@@ -305,18 +305,18 @@ opaque near-black texels of `nodamage.xds` (18, 17, 18, alpha 255):
 carbin's `hooda` has the same technique on the same texel, 722 triangles),
 `winga` 550 (the spoiler), `body` 596 (the louvres over the rear window).
 The car's `ShaderSettings.xml` gives `matte_colors` SpecularAmount 1 and
-SpecularPower 5: a broad matte sheen, not paint. So Forza's stock Boss 429
+SpecularPower 5: a broad matte sheen, not paint. So Forza's vanilla Boss 429
 has a black scoop, spoiler and louvres, as the 1970 car did (black scoop on
 1970 cars, body colour on 1969 ones; louvres and spoiler black). The
 converter's flat dark trim matches them; DSF's own black trims look the same
 (`GLOBAL_Chassis_Simple`: specular intensity 0.01, power 7.5).
 
 **The cockpit's red scoop: upgrade bonnets.** The cockpit carbin holds every
-bonnet the car can wear: `hooda` (stock) plus `hoodCIrace` (a body-colour
+bonnet the car can wear: `hooda` (vanilla) plus `hoodCIrace` (a body-colour
 cowl-induction box, 4,768 triangles) and `hoodPSrace` (6,350), and
 `cockpit.fit` kept every section but `cagerace`, so all three were drawn on
-top of each other. The race box sits higher and hid the stock scoop. The
-outside never had this: `forza2dsf.stock_sections` keeps variant `a` and
+top of each other. The race box sits higher and hid the vanilla scoop. The
+outside never had this: `forza2dsf.vanilla_sections` keeps variant `a` and
 drops `<base>race`. Fix: `cockpit.fit` applies the same rule to the cockpit
 carbin. Survey (`out/inv/trim_survey.py`, every cached car, 572 folders):
 112 cockpit carbins carry extra bonnets (`hoodb` to `hoodq`, 39
@@ -329,8 +329,8 @@ Supra). Interior entries shrink (Boss 0x1a1000 to 0x199800 MDXN, Cuda
 technique (and `chrome_2`, `chrome_3`, `chrome_bump`, `lights_chrome`) had
 role trim, so the Boss's chrome bumpers, window frames, drip rails, door
 handles and tail-lamp bezels (1.85 m², 4,583 exterior vertices) drew with
-the shared trim's dark texel: black. Stock cars draw chrome with DSF's shared
-chrome materials (`out/inv/stock_mats.py` over all 150 stock vehicles):
+the shared trim's dark texel: black. Vanilla cars draw chrome with DSF's shared
+chrome materials (`out/inv/vanilla_mats.py` over all 150 vanilla vehicles):
 
 | Entry | Material | Vehicles | Triangles | Layout |
 | --- | --- | --- | --- | --- |
@@ -341,7 +341,7 @@ chrome materials (`out/inv/stock_mats.py` over all 150 stock vehicles):
 
 Both sample the shared chassis texture `00122b73d1fa1227` (reflection
 amount 1, specular power 150; `GLOBAL_LOD_Chrome` adds a static cube map).
-Stock chrome UV0 lands mostly on texels 972-980 x 404-424 (grey level about
+Vanilla chrome UV0 lands mostly on texels 972-980 x 404-424 (grey level about
 98); UV1 is the damage-decal UV as on paint (mostly the corner texel). Host
 193, the Boss's host, has 3,074 chrome vertices in its exterior; the port had
 none.
@@ -363,19 +363,19 @@ opaque texels (370Z exhaust, Express mirrors, IS F front bumper strip,
 Charger Daytona mirrors). They are chrome now too.
 
 **The dark lower body (confirmed-static, and in game).** Not a baked-light
-bug: the sky term (s0.w) of the Boss's paint matches its stock host's
+bug: the sky term (s0.w) of the Boss's paint matches its vanilla host's
 (`out/inv/sky_cmp.py`, exterior paint by facing and height: side 0.44 to 0.54
 against 0.39 to 0.54, downward-sloping 0.30 against 0.18 to 0.30). In the
-same fixed side camera the stock 193 (dark green) shades its lower doors as
-much (`img/lower-body-port-vs-stock.jpg`); the user's port had a dark red.
+same fixed side camera the vanilla 193 (dark green) shades its lower doors as
+much (`img/lower-body-port-vs-vanilla.jpg`); the user's port had a dark red.
 
 In game (confirmed-runtime, headless VM, the same 4 cars built from master
-and from the fix: `out/fx/before`, `out/fx/after`, IDs 1 to 4 plus stock
+and from the fix: `out/fx/before`, `out/fx/after`, IDs 1 to 4 plus vanilla
 193): runs `vm-20261024-133045` (before) and `vm-20261024-134146` (after).
 The Boss's rear bumper, tail-lamp bezels, rear-window and side-window frames,
 drip rail and door handle are chrome; the scoop, spoiler and louvres stay
 black (`img/chrome-boss429-ingame-before-after.jpg`). From the cockpit the
-Boss shows its black stock scoop instead of the race box, the Firebird its
+Boss shows its black vanilla scoop instead of the race box, the Firebird its
 shaker scoop instead of a box filling the windscreen
 (`img/cockpit-bonnets-before-after.jpg`). The paint colour differs between
 the runs: the spawn picks a palette entry. One "after" run hit DriverNGHook's
@@ -410,11 +410,11 @@ or more) and whose mean luminance is 90 or more: 294,408 triangles on 566
 cars. Most of that can't be seen: the underbody (`undercarriage`, 189 m²),
 frames under the bonnet and in the boot (the Lancer Evo VI: 1.3 m² of
 `frame`), race-kit variants the converter drops. A quick orthographic render
-of each car's stock sections with the Forza texels on every trim
+of each car's vanilla sections with the Forza texels on every trim
 (`out/inv/frender.py`) against the converter's trims shows the visible cases:
 light artwork drawn black. Besides the GTA's badges: the Crossfire's silver
 side-vent strakes, A-pillar trim and door handles, the Veyron's aluminium roof
-scoops, engine cover and fuel cap, the Monte Carlo SS stock car's rear spoiler,
+scoops, engine cover and fuel cap, the Monte Carlo SS vanilla car's rear spoiler,
 the Kenworth T440's red box frame.
 
 **Fix (`src/dsfforza/convert/trim_art.py`, `forza2dsf.convert`).** Before the
@@ -502,7 +502,7 @@ flat near white (the review above). Final version, the same palette entry in
 both runs (`run-series.ps1 -Palette 0`, new: clonetest.lua passes it to
 `Spawn.Spawn` as `shaderParams[0]`, as the game's grid spawns do; the probe
 now also holds the car still during the fixed views, after the Crossfire drove
-out of them), probe IDs 1 to 4 plus stock 126 (the GTA's host, the TZ2) with
+out of them), probe IDs 1 to 4 plus vanilla 126 (the GTA's host, the TZ2) with
 the `left`, `wheels` and `rear` views: before `vm-20261025-091951`
 (`out/fx/before`), after `vm-20261026-113128` (`out/fx/after3`). The GTA's
 wing and tail triangles are white with the green cloverleaf instead of black
@@ -627,7 +627,7 @@ atlas 0.639 to 0.660. The Range Rover 12: the mesh between its grille bars
 (the bars were chrome on master); the Cuda's grille inserts and fender gills;
 the H1 Alpha's bonnet vent and its lettering.
 
-Offline (`out/inv/frender2.py`: the car's stock sections at LOD 1 through
+Offline (`out/inv/frender2.py`: the car's vanilla sections at LOD 1 through
 `car_render`'s shading; rows Forza's texels times the texel scale, master's
 split (light artwork and metal), this change): the Cougar's centre grille
 slats, headlamp-door bars and end pieces, the Range Rover's grille mesh, the
@@ -638,7 +638,7 @@ In game (confirmed-runtime, headless VM 2, the same palette entry,
 `run-series.ps1 -Views nose,front -Palette 0 -ShotSeconds 2 -ZoomPresses 8
 -WaitSeconds 600`, with a front three-quarter camera at bonnet height that is
 `grille` in clonetest.lua now (master's own `nose`, added since, is closer); IDs 1 Cuda 426, 2 Range Rover 12, 3
-Volt, 4 Cougar Eliminator, plus stock 175, the Cougar's host): before
+Volt, 4 Cougar Eliminator, plus vanilla 175, the Cougar's host): before
 `vm2-20261027-083402` (`out/fx/before`, built from master 4f5057c), after
 `vm2-20261027-084411` (`out/fx/after`, this branch). The Cougar's centre grille
 shows its slats instead of one black block; its headlamp doors stay dark, their
@@ -651,7 +651,7 @@ after run, no crash.
 
 Not changed: the scoop's `badge` decal is cut at alpha 128 (`cutout`) where
 Forza blends it into the paint; the hidden-headlamp doors are drawn open and
-closed at once (both stock sections, issue #88).
+closed at once (both vanilla sections, issue #88).
 
 ## Gloss: Forza's specular and reflection on trims and rims (2026-10-27)
 
@@ -694,7 +694,7 @@ highlight with little reflection (FresnelScalar 0.1 to 0.2 where there is one;
 the paint's is 0.9), and its rims are mostly reflection.
 
 **What DSF offers (confirmed-static; `out/inv/ssic_mats.py`, `local_mats.py`,
-`gpdis2.py`: the materials of the stock archive and their pixel shaders, SSIC
+`gpdis2.py`: the materials of the vanilla archive and their pixel shaders, SSIC
 GPCH programs disassembled with d3dcompiler).**
 
 | Material | Where | Pixel shader (per texel `tex`) |
@@ -702,16 +702,16 @@ GPCH programs disassembled with d3dcompiler).**
 | `GLOBAL_Chassis_Simple(_LOD1)` | shared trim | `light x tex.R + 0.01 x tex.G x (R.V)^7.5`; no reflection |
 | `GLOBAL_LOD_Chrome` / `GLOBAL_Chassis_Chrome` | shared chrome | `light x tex.R + tex.G x (R.V)^150 + env x tex.G x 1`; grey only, no Fresnel |
 | `GLOBAL_Tyre(_LOD1)` | tyres | `light x tex.R + tex.G x (R.V)^30 + env x tex.G x 0.5 x max(0.2, 1 - N.V)` |
-| `<car>_Chassis` (stride 28) | 143 stock full entries, `_LOD1` in exteriors | `light x tex.rgb + 0.03 x tex.a x (R.V)^24`; no reflection |
+| `<car>_Chassis` (stride 28) | 143 vanilla full entries, `_LOD1` in exteriors | `light x tex.rgb + 0.03 x tex.a x (R.V)^24`; no reflection |
 | `<car>_Lights` (stride 32) | 148 + 149 | `light x tex.rgb + 1 x (R.V)^150 + env x tex.G x 1 x max(min, (1 - N.V)^1 - 0.5) + tex.a x lamp colour` |
 
 The shared materials sample the shared 1024 x 512 chassis texture
-(`00122b73d1fa1227`), R the grey level, G the gloss. Stock cars draw their
+(`00122b73d1fa1227`), R the grey level, G the gloss. Vanilla cars draw their
 trims with the shared trim (148 vehicles), 2.7% of its area on a gloss-black
 swatch of that texture (R 20, G 252; 90 vehicles: specular 0.01, still next to
 none), and their rim faces with their own Chassis material on their chassis
 texture (111 of 150 vehicles' wheel parts; texel alpha median 21: no reflection
-either). No stock material gives a dark texel a reflection except the chrome
+either). No vanilla material gives a dark texel a reflection except the chrome
 ones, which draw the R channel as grey and reflect alike at every angle. The
 Lights material is the only per-car one with a reflection and an unmasked
 specular; its glow is `tex.a` times the colour of the vertex's lamp (semantic 9
@@ -760,12 +760,12 @@ one kept (0.01, at most 0.0625, power at least 4; `out/fx/after3`, `vm2-20261027
 the scoops and grilles read as satin black with a grey sheen where they face the sky
 or the sun, the grille bars and the Boss's grille mesh catch highlights, the Focus's
 black rims are gloss black, and the chrome rims of the Cougar and the Continental
-reflect like the stock chrome instead of drawing flat white
+reflect like the vanilla chrome instead of drawing flat white
 (`img/gloss-trims-ingame.jpg`, `img/gloss-scoops-zoom.jpg`,
-`img/gloss-rims-ingame.jpg`). The stock chrome reflects `0.4 to 0.48 x env` (its
+`img/gloss-rims-ingame.jpg`). The vanilla chrome reflects `0.4 to 0.48 x env` (its
 texel green); `GLOSS_REFLECTION_SCALE` 0.5 puts a CubeScale 1 chrome rim there.
-Stock trims have no sheen at all (stock 175, the Cougar's host, in the same runs), so
-this is Forza's look drawn with a stock program rather than stock's look.
+Vanilla trims have no sheen at all (vanilla 175, the Cougar's host, in the same runs), so
+this is Forza's look drawn with a vanilla program rather than vanilla's look.
 
 The 300SL shows a white glint on its side window in every build (the first and the
 last, a 16 times different specular): DSF's glass, not the gloss materials.
@@ -801,7 +801,7 @@ under the 0x2C0000 limit.
    are readable with `dsff fxobj` ("Forza's trim shaders and flat black
    grilles").
 7. The cockpit draws exterior chrome (A-pillar trim, bonnet strips) flat from
-   its atlas; stock interiors have `GLOBAL_LOD_Chrome` (host 193 uses it for
+   its atlas; vanilla interiors have `GLOBAL_LOD_Chrome` (host 193 uses it for
    3,700 triangles), which the interior entry could use the same way.
 8. Trim artwork ("Trim artwork", "Forza's trim shaders and flat black
    grilles"), issue #58: `PaintScale` / `PristinePaintScale` are decoded

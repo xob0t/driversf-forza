@@ -12,7 +12,7 @@ Each section ends with a patch plan for the user's other mod, DSF Enhanced
 Evidence tags as elsewhere: `confirmed-static` (read in Driver.exe or data),
 `confirmed-runtime` (measured in game; since 2026-10-23 on the host with
 `run-series.ps1 -OnHost`), `hypothesis`. Addresses are
-VAs in the stock Driver.exe 1.04 (image base 0x400000; DSF Enhanced uses
+VAs in the vanilla Driver.exe 1.04 (image base 0x400000; DSF Enhanced uses
 RVAs = VA - 0x400000). The engine singleton is `[0xFE7228]`.
 
 Tools and outputs: `out/drawdist/re.py` (capstone helpers: dump, xref, calls,
@@ -35,8 +35,8 @@ eye from the crops), key crops in `out/drawdist/evidence/`. Runs are in
 | Does the fixed radius work? | **Yes, at 500 m (user-confirmed).** `TrafficSpawnRadius=500` with `VehicleFullDetail=1` and the plan-C flare curves: "works awesome, no pop in anywhere". **700 m crashed** after about 20 s: the traffic vehicle store (500) filled and the lane-carrier pool (12,000 nodes) overflowed into it (section 1, "700 m crash"). DSF Enhanced now accepts 350 to 500 m, default 500. | user's play session; static + minidump |
 | Why does a bigger radius spawn cars near the player? | **A stack overflow in the road walk.** `0x7723A0` lists the 240 m road-grid cells of the radius square in a 21-entry stack array with no bound check. Up to 360 m the square has at most 16 cells; at 490 m 25 to 36, at 700 m 36 to 49. Entry 21 overwrites the list's own count, so about half the cells are dropped, on the probe's drive **always including the player's own cell**. Roads near the player then drop out of the wanted set and come back as the overflow pattern shifts, and their cars despawn and respawn next to the player. | static (emulated: `out/drawdist/cells.py`) |
 | How is a car's LOD picked? | Metric ≈ **57.5 / (d − 7.5 m)²** for the Desanne in the user's 21:9 projection (d = camera distance), against five category-2 thresholds; first match wins, no cross-fade. | static (0x6A5010, 0x6B64D0), runtime sweep |
-| Real distances on High (user's 21:9) | mask 4 to **54 m**, mask 8 to **102 m**, mask 16 to **113 m**, mask 1 (wheel-less hull) to **927 m**, then culled. DSF Enhanced's ×0.25: 100 / 197 / 220 / 1,847 m. Stock 16:9 at 60°: about 1.26 × these. | runtime |
-| Why does the user see spawns? | The cull (927 m) is beyond every spawn point, so each car that spawns in view pops in where it spawns, 318 to 666 m away, as a mask-1 hull. `LODEngineThresholdScale` doesn't change that (both cull distances lie beyond the spawn ring). The parts appear later, at the hull → mask 16 switch (113 m stock, 220 m with ×0.25). | runtime |
+| Real distances on High (user's 21:9) | mask 4 to **54 m**, mask 8 to **102 m**, mask 16 to **113 m**, mask 1 (wheel-less hull) to **927 m**, then culled. DSF Enhanced's ×0.25: 100 / 197 / 220 / 1,847 m. Vanilla 16:9 at 60°: about 1.26 × these. | runtime |
+| Why does the user see spawns? | The cull (927 m) is beyond every spawn point, so each car that spawns in view pops in where it spawns, 318 to 666 m away, as a mask-1 hull. `LODEngineThresholdScale` doesn't change that (both cull distances lie beyond the spawn ring). The parts appear later, at the hull → mask 16 switch (113 m vanilla, 220 m with ×0.25). | runtime |
 | Which category does DSF Enhanced scale? | 1, 2, 3, 4 = Terrain, **Vehicle**, Pedestrian, Driver (its comments were off by one). Vehicle is now separate (`VehicleFullDetail`, `VehicleLODThresholdScale`, `VehicleDrawDistance`); `LODEngineThresholdScale` keeps 1, 3, 4. | static (names at 0xF104B8) |
 | Setter keys per slot | `0x6A4F40/0x6A4F70(cat, key)` map key 2 → slot 0 (draws mask 4), 4 → slot 1 (mask 8), 8 → slot 2 (mask 16), 16 → slot 3 (mask 1; the cull), 1 → slot 4 (nothing). DSF Enhanced's old log order "4, 8, 16, 1, 2" is therefore T1, T2, T3, T4, T0. | static (jump table 0x6A4E44 / 0x6A4E5C) |
 | Do parts have their own cutoffs? | No. Each MODL LOD is a complete set. Forced in game: mask 1 has no wheels, opaque glass, whitish unlit lamp patches; mask 16 keeps wheels and glass. | static, runtime (forced masks) |
@@ -89,7 +89,7 @@ the two instruction operands, not the constants.
   sampled as described above.
 
 A square of side 2r spans up to ⌈2r/240⌉ + 1 cells per axis: at most 16 cells up to r = 360 m,
-which the stock 350 m respects. Beyond that the 22nd cell's x lands on the count, so later cells
+which the vanilla 350 m respects. Beyond that the 22nd cell's x lands on the count, so later cells
 overwrite earlier ones and whole columns vanish; its z goes to `esp+0x168`, the saved ebp when the
 frame is 8-aligned (harmless here: the caller `0x772800` keeps an esp frame). A count that ends
 up above 21 (cell x ≥ 21, world x beyond about 4,900 m) would write over the return address, and
@@ -115,7 +115,7 @@ The pools are not the limit (confirmed-static):
   list sentinel `+0x501810`; the wanted list `+0x50182C` (count `+0x50282C`) stops at 512 as
   well, and since cells are sorted by distance the far roads are the ones dropped;
 - traffic vehicles: `0x77AA50` (vehicle store `manager+0x56CDDC`) refuses a car once its count
-  `+0x56CDE4` reaches **500**; stock has about 150 cars within 1.5 km;
+  `+0x56CDE4` reaches **500**; vanilla has about 150 cars within 1.5 km;
 - the model pick `0x77ADA0` → `0x8C5C80` can come back empty (then `0x8C9520` releases it);
 - a carrier whose car could not be created stays empty; `0x77F9E0`, the lane balancer called
   when a road is activated next to an active one, retries through the same `0x77AA50`.
@@ -155,7 +155,7 @@ car's tail lamps light only while it brakes (hypothesis; see section 3).
   - 10th percentile 77, 90th percentile 98, maximum 107.
   - Interesting vehicles were enabled with 10 desired slots in those runs.
 
-  So stock traffic is already about 100 cars inside the 350 m road set.
+  So vanilla traffic is already about 100 cars inside the 350 m road set.
 - **Spawn and despawn distances (confirmed-runtime, run
   `host-20261023-164511`).**
   - Method: `drawdist.lua` mode `traffic` moves the player's car along the
@@ -277,7 +277,7 @@ screen:
 - aspect constant 0x9E50B0 = 2.389;
 - FOV scalar 0x9D9A80: 0.017453 → 0.023453 (×1.344).
 
-The probe logs `CameraSystem` `fov` = 1.40717 rad (80.6°, i.e. stock 60° ×
+The probe logs `CameraSystem` `fov` = 1.40717 rad (80.6°, i.e. vanilla 60° ×
 1.344; 1.4346 while the car was rolling) and `aspect_ratio` = 2.389.
 
 Screen positions of the lineup cars give the projection:
@@ -288,8 +288,8 @@ Screen positions of the lineup cars give the projection:
   image is the user's 21:9 projection squeezed sideways.
 
 Every distance below is therefore the user's in-game distance. Compared with
-stock 16:9 at 60° (P00·P11 = 5.33 against 3.33), the user's metric is 0.62×,
-so on stock 16:9 every distance is 1.26× longer. A proper Hor+ (keeping the
+vanilla 16:9 at 60° (P00·P11 = 5.33 against 3.33), the user's metric is 0.62×,
+so on vanilla 16:9 every distance is 1.26× longer. A proper Hor+ (keeping the
 16:9 vertical FOV) would give 0.71×. DSF Enhanced's linear FOV scaling widens
 the vertical FOV from 36° to 39°.
 
@@ -306,7 +306,7 @@ car is exempt: it stays drawn with every threshold at 1000.
 | --- | ---: | ---: | ---: | ---: | ---: |
 | High (preset 2) | 54 m | 102 m | 113 m | 927 m | 927 m |
 | High × 0.25 (DSF Enhanced now) | 100 m | 197 m | 220 m | 1,847 m | 1,847 m |
-| Stock 16:9, 60°, High | 66 m | 127 m | 141 m | 1,170 m | 1,170 m |
+| Vanilla 16:9, 60°, High | 66 m | 127 m | 141 m | 1,170 m | 1,170 m |
 
 Mesh contents:
 
@@ -324,7 +324,7 @@ mood ends at 1,000 m.
 **Correction to the static estimate** (cull "330 to 510 m", "the 0.25
 option makes spawn pop-in more visible"):
 
-- The stock cull is 927 m, beyond the farthest spawn (666 m), and so is the
+- The vanilla cull is 927 m, beyond the farthest spawn (666 m), and so is the
   × 0.25 cull.
 - In both cases a car that spawns in view pops in at its spawn point, as a
   hull. `LODEngineThresholdScale` changes how much detail the car has
@@ -353,7 +353,7 @@ Crops: `out/drawdist/evidence/sweep*.png` (sweep), `masks.png`, `p07.png`.
 ## 3. MODL parts per LOD (confirmed-static)
 
 Full details: `out/drawdist/modl/summary.txt`, `features.txt`, `lamps.txt`.
-Each LOD is a complete, separate set: all 43,790 stock submodels belong to
+Each LOD is a complete, separate set: all 43,790 vanilla submodels belong to
 exactly one LOD record. The per-submodel u32 after the UID list is a
 render-class flag (5 opaque, 7 alpha-blended, 1 needles and mirror), not a
 distance, and nothing else in VEHC is a cutoff.
@@ -388,7 +388,7 @@ so the lamp mesh gets dimmer with fog, not brighter.
   is `R:\Resources\Misc\VehicleLights\VehicleLights.matxml` in
   `media/SfxMisc.fchunk`: a 256×256 DXT5 star with horizontal streaks, drawn
   by `DiffuseMapOnly.fx` (program 5), alpha-blended, no depth write. The
-  installed `SfxMisc.fchunk` is dated 2026-07-07 while the stock files are
+  installed `SfxMisc.fchunk` is dated 2026-07-07 while the vanilla files are
   2012, so it may be modded.
 - **Per frame:** `0x8C72E0` walks every vehicle in the render manager's
   list (`+0x82D8`) that has a light component, so this does not depend on
@@ -453,7 +453,7 @@ It is real and deliberate.
 formats into a buffer). Each takes two 3-number tables. `0x67F770` rejects
 distances that are not strictly increasing; a missing or invalid table
 leaves that half unchanged. Setter `0x50B410(type, attr, dists, values)`.
-Stock Lua never calls these.
+Vanilla Lua never calls these.
 
 **On screen (confirmed-runtime, runs `host-20261023-163051` and
 `-165139`; crops `out/drawdist/evidence/flares*.png`, `candidates-far.png`):**
@@ -482,14 +482,14 @@ below is its old setting.)
 
 All three are for DSF Enhanced. The values are for the user's setup:
 3440×1440 with DSF Enhanced's ultrawide FOV, so K = 57.5 and
-d(T) = 7.5 + √(57.5/T) for a Desanne-sized car. On stock 16:9 at 60°,
+d(T) = 7.5 + √(57.5/T) for a Desanne-sized car. On vanilla 16:9 at 60°,
 multiply every distance by 1.26.
 
 **What decides where cars pop in** (runtime, section 1):
 
-- With a cull beyond the farthest spawn, about 670 m at stock radius, a car
+- With a cull beyond the farthest spawn, about 670 m at vanilla radius, a car
   that spawns in view pops in where it spawns: 318 to 666 m away, median
-  390 m. That is already the case on stock High (927 m) and with today's
+  390 m. That is already the case on vanilla High (927 m) and with today's
   × 0.25 (1,847 m).
 - A cull nearer than the spawn ring only moves the pop inward.
 - A bigger radius moves most spawns outward, but it also adds spawns close
@@ -505,7 +505,7 @@ So the achievable fix:
 
 ### Recommended settings (user's 21:9)
 
-| Item | Value | Distance it gives | Stock High |
+| Item | Value | Distance it gives | Vanilla High |
 | --- | --- | --- | --- |
 | A: traffic radius scale | **1.0** (remove the no-op Lua script; don't ship the operand patch yet) | spawns 318 to 666 m | same |
 | B: T0, Lua 5, slot 0 → mask 4 | **6.7e-3** | mask 4 to 100 m | 0.026697, 54 m |
@@ -556,12 +556,12 @@ Notes on these values:
 
   | Radius | Cars within 1.5 km (median) | Farthest car (median) | New cars: median / p10 distance | New cars < 300 m (in view) |
   | ---: | ---: | ---: | ---: | ---: |
-  | 350 (stock) | 152 | 557 m | 390 / 341 m | 0 (0) |
+  | 350 (vanilla) | 152 | 557 m | 390 / 341 m | 0 (0) |
   | 490 | 175 | 675 m | 492 / 210 m | 98 (29) |
   | 700 | 339 | 908 m | 633 / 224 m | 192 (51) |
 
   - A bigger radius moves most spawns out, but it brings in new cars 20 to
-    300 m from the player, many on screen. That is worse pop-in than stock.
+    300 m from the player, many on screen. That is worse pop-in than vanilla.
   - Some of these near cars reuse a handle that vanished 300 to 600 m away
     in the same sample. Others are fresh, so this is not only recycling.
   - Cause (found 2026-10-23, static): the operand patch alone overflows
@@ -591,7 +591,7 @@ Notes on these values:
   - The metric goes with P00·P11. DSF Enhanced scales the horizontal FOV
     linearly with aspect a: fov_h = 60° × a / (16/9), P00 = 1/tan(fov_h/2),
     P11 = a·P00.
-  - For 21:9 (a = 2.389) that is 0.62× the stock 16:9 metric, so every
+  - For 21:9 (a = 2.389) that is 0.62× the vanilla 16:9 metric, so every
     switch is 21 % nearer, not 14 %. The table above already includes it.
   - For another aspect: K = 57.5 × P00·P11 / 3.33, and distances scale
     with √K.
@@ -637,7 +637,7 @@ Notes on these values:
 - **Removed:** `TrafficSpawnDistanceScale`, the Lua `pingInRadius` script
   (`TryApplyTrafficSpawnRadiusLuaPatch`), its dispatch from the error-message page hook (that hook
   now serves only the Ubisoft prompt) and from `DrawIndexedPrimitive`, whose hook went too.
-- **Plan A, `[Quality] TrafficSpawnRadius`** (metres, 350 to 500, shipped 500; 350 = stock, no patch;
+- **Plan A, `[Quality] TrafficSpawnRadius`** (metres, 350 to 500, shipped 500; 350 = vanilla, no patch;
   the 500 m cap is the pool limit found in the 700 m crash).
   At startup, after checking every original byte (all or nothing):
   - the five cell-list instructions point at a plugin buffer of 1,024 cells: `0x77247B`,
@@ -662,7 +662,7 @@ Notes on these values:
 Harness: `run-series.ps1 -Override` (and `run-dd.ps1 -Override`) now take root files,
 e.g. `dsf_enhanced.asi=out\drawdist\asi\dsf_enhanced.asi;dsf_enhanced.ini=out\drawdist\asi\r700.ini`;
 `run-test.ps1` copies them over the run folder's copies (an overridden ini is not rewritten).
-Test builds and inis: `out/drawdist/asi/` (`stock`, `full`, `r500`, `r700`, `r700full`; all with
+Test builds and inis: `out/drawdist/asi/` (`vanilla`, `full`, `r500`, `r700`, `r700full`; all with
 `TrafficDiagnostics=1`, `RemoveVSync=1`, other LOD categories at 1.0). `traffic2.py` now also
 counts "new" cars nearer than 300 and 200 m.
 
@@ -692,7 +692,7 @@ Build of 17:45 with `TrafficSpawnRadius=700`, `VehicleFullDetail=1`, `TrafficDia
   records 0x2FC bytes, list sentinel `+0x5D43C`). At 700 m demand exceeded 500 from about 410
   lanes on. Carriers whose car can't be created stay empty and are filled later, wherever a car
   frees up, which can be near the player.
-- **Limits at stock density:** on this route vehicles reach 500 at ~410 active lanes and
+- **Limits at vanilla density:** on this route vehicles reach 500 at ~410 active lanes and
   carriers 12,000 at ~490 lanes; scaled by area that is roughly 640 m and 690 m. 500 m (about
   250 lanes, ~300 cars, ~6,000 carriers here) leaves about 2× headroom; denser districts have
   less. Going beyond 500 m needs both pools enlarged: the carrier storage can move to plugin
@@ -713,15 +713,15 @@ Build of 17:45 with `TrafficSpawnRadius=700`, `VehicleFullDetail=1`, `TrafficDia
    clamped to 500):
 
    ```powershell
-   foreach ($v in 'r700','stock','full','r700full','r500') {
+   foreach ($v in 'r700','vanilla','full','r700full','r500') {
      .\out\drawdist\probe\run-dd.ps1 -Modes traffic -Override "dsf_enhanced.asi=out\drawdist\asi\dsf_enhanced.asi;dsf_enhanced.ini=out\drawdist\asi\$v.ini" }
    # per run: python -I out\drawdist\analyze.py traffic <run>; python -I out\drawdist\traffic2.py <run>
    # and the TrafficDiag / TrafficRadius / LOD / Lights lines in <run>\dsf_enhanced.log
    ```
 
    Pass criteria: `TrafficRadius: patched` in the log; with r700 no "new" traffic car nearer than
-   300 m while driving (stock has none) and the median new-car distance near R + 40 m;
-   `wantedRoads` below 512; `vehicles` well below 500; fps of `full` against `stock` and
+   300 m while driving (vanilla has none) and the median new-car distance near R + 40 m;
+   `wantedRoads` below 512; `vehicles` well below 500; fps of `full` against `vanilla` and
    `r700full` against `r700` over the drive window (5 to 39 s). Then pick the shipped
    `TrafficSpawnRadius` (now 500) and `VehicleFullDetail` (now 1).
 2. Whether the LOD metric's 7.5 m offset is a distance from the player car

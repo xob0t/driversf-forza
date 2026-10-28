@@ -10,7 +10,7 @@
 
 Stages, each skipped when there is nothing to do:
 
-1. preflight: DSF_GAME_DIR (or --game) is Driver: San Francisco 1.04 with its stock
+1. preflight: DSF_GAME_DIR (or --game) is Driver: San Francisco 1.04 with its vanilla
    vehicle archive, the Forza disc images are there (assets/*.iso or --iso), there is
    disk space, and for an install: the game isn't running, the VC++ x86 runtime,
    DriverNGHook and an ASI loader are there or can be downloaded, and no other mod's
@@ -21,8 +21,8 @@ Stages, each skipped when there is nothing to do:
    says it was built from the current tools/asi sources, else built with
    tools/asi/build.ps1 -Test when Visual Studio Build Tools are installed, else a
    prebuilt one is used as it is. The whole roster needs it (--id-policy asi and
-   more than the stock reader's 1100 root entries and 2 GiB); --no-plugin builds for
-   the stock game instead (at most 215 cars, garage IDs 1..61).
+   more than the vanilla reader's 1100 root entries and 2 GiB); --no-plugin builds for
+   the vanilla game instead (at most 215 cars, garage IDs 1..61).
 4. build: src/dsfforza/build/port_batch.py build with --gui --wide-glyphs --id-policy
    asi --root-limit 3003 (tools/batches/all.txt by default) into out/build.new, reusing
    every car the last build (out/build), an interrupted one (out/build.partial) or
@@ -67,8 +67,10 @@ from dsfforza.build import gentle
 
 # --- constants ------------------------------------------------------------------------------
 
-STOCK_ARCHIVE_SHA256 = "0DDC885E23028F708A92A2426B643938A6934C99204C780E01755C5B7778AE35"  # Install\dngvehicles.sp 1.04
-STOCK_FILES = {  # the other files install.ps1 replaces (English install), as tools/install.ps1 $StockHashes
+VANILLA_ARCHIVE_SHA256 = (
+    "0DDC885E23028F708A92A2426B643938A6934C99204C780E01755C5B7778AE35"  # Install\dngvehicles.sp 1.04
+)
+VANILLA_FILES = {  # the other files install.ps1 replaces (English install), as tools/install.ps1 $VanillaHashes
     "Install/gui.sp": "AADB62925387307AF7E2BC5091D5E583823E553C23D4E71C5DD6BB71936DA11F",
     "media/Fonts.fchunk": "23B1724A878CB9937A764B55F7ADCF0E2D7403C0C63E8504A78566D8EE4602F2",
     "Locale/English/global.fchunk": "BA892E734B66A8AA08B98A19CEC32CE1A540792A02205D0AB3FB38BD599A96B8",
@@ -97,7 +99,7 @@ DEFAULT_OUT = REPO / "out" / "build"
 LOG_DIR = REPO / "out" / "logs"
 SAVE_BACKUPS = REPO / "out" / "save-backups"
 ASI_ROOT_LIMIT = 3003  # every base ID below 1000 (3 entries each) plus SSIC, DMWK, BINF
-STOCK_ROOM = 215  # (1100 - 453 stock root entries) // 3: cars the stock archive reader takes
+VANILLA_ROOM = 215  # (1100 - 453 vanilla root entries) // 3: cars the vanilla archive reader takes
 MIB = 1 << 20
 GIB = 1 << 30
 VS_INSTALLER = Path(r"C:\Program Files (x86)\Microsoft Visual Studio\Installer")
@@ -411,7 +413,7 @@ def space_needed(cars: int, reusing: bool) -> tuple[int, int]:
     """(bytes on the build drive, bytes on the game drive), roughly: the archive is about
     0.5 GiB plus 4.2 MiB a car, the garage assets 0.4 MiB a car; a converted car takes about
     25 MiB more (work/ chunk, sound previews, the extraction cache); the install copies
-    the archive and backs up 0.6 GiB of stock files."""
+    the archive and backs up 0.6 GiB of vanilla files."""
     build = GIB // 2 + cars * 5 * MIB + (cars * 4 * MIB if reusing else cars * 25 * MIB)
     game = GIB // 2 + cars * 5 * MIB + 6 * GIB // 10
     return build, game
@@ -1161,7 +1163,7 @@ class Run:
     probes: Probes = field(default_factory=Probes)
     game: Path | None = None
     isos: list = field(default_factory=list)
-    stock_archive: Path | None = None
+    vanilla_archive: Path | None = None
     record: dict | None = None
     plugin: Path | None = None
     build_dir: Path | None = None
@@ -1202,12 +1204,12 @@ class Run:
         from dsfforza.game import game_paths
 
         self.record = read_install_record(game)
-        self.stock_archive = game_paths.stock(game / "Install" / "dngvehicles.sp", quiet=True)
-        if not self.stock_archive.is_file():
+        self.vanilla_archive = game_paths.vanilla(game / "Install" / "dngvehicles.sp", quiet=True)
+        if not self.vanilla_archive.is_file():
             problems.append(f"{game / 'Install' / 'dngvehicles.sp'} is missing.")
-        elif sha256(self.stock_archive) != STOCK_ARCHIVE_SHA256:
+        elif sha256(self.vanilla_archive) != VANILLA_ARCHIVE_SHA256:
             problems.append(
-                f"{self.stock_archive} is not the stock 1.04 vehicle archive (another mod?). "
+                f"{self.vanilla_archive} is not the vanilla 1.04 vehicle archive (another mod?). "
                 "Restore the original (Steam/Uplay: verify files) and run again."
             )
         else:
@@ -1242,9 +1244,9 @@ class Run:
             if gone:
                 problems.append(f"Car list not found: {', '.join(map(str, gone))}")
             cars = count_cars([p for p in lists if p not in gone], args.car or [])
-            if args.no_plugin and cars > STOCK_ROOM:
+            if args.no_plugin and cars > VANILLA_ROOM:
                 problems.append(
-                    f"--no-plugin: the stock game reads at most {STOCK_ROOM} added cars, the selection has {cars}. "
+                    f"--no-plugin: the vanilla game reads at most {VANILLA_ROOM} added cars, the selection has {cars}. "
                     "Pass a shorter --list, or leave out --no-plugin."
                 )
         if self.installing:
@@ -1323,11 +1325,11 @@ class Run:
                     "Common\\UserLuaScripts\\bootstrap.lua belongs to another mod. Add --force to replace it "
                     "(it is backed up and put back by --uninstall)."
                 )
-            for relative, digest in STOCK_FILES.items():
+            for relative, digest in VANILLA_FILES.items():
                 path = game / relative
                 if path.is_file() and sha256(path) != digest:
                     problems.append(
-                        f"{relative} is not the stock 1.04 file (another mod?). Add --force to replace it "
+                        f"{relative} is not the vanilla 1.04 file (another mod?). Add --force to replace it "
                         "(it is backed up and put back by --uninstall), or restore the original first."
                     )
         return problems
@@ -1370,7 +1372,7 @@ class Run:
     def plugin_stage(self) -> tuple[str, str]:
         args = self.args
         if args.no_plugin:
-            return "skipped", "--no-plugin: stock limits, no dsfforza.asi"
+            return "skipped", "--no-plugin: vanilla limits, no dsfforza.asi"
         if args.asi:
             if not Path(args.asi).is_file():
                 raise StageError(f"--asi {args.asi}: no such file.")
@@ -1403,13 +1405,13 @@ class Run:
             return "done", f"{rel(ASI_OUT)} (prebuilt, {state}: no Visual Studio to rebuild it)"
         if action == "missing":
             raise StageError(
-                "dsfforza.asi is needed for the whole roster (--id-policy asi, an archive past the stock 1100 entries "
+                "dsfforza.asi is needed for the whole roster (--id-policy asi, an archive past the vanilla 1100 entries "
                 "and 2 GiB), and it can't be built here: Visual Studio 2022 Build Tools with the C++ workload "
                 "were not found.",
                 "Install them (winget install Microsoft.VisualStudio.2022.BuildTools --override "
                 '"--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"), or copy a '
-                f"built dsfforza.asi to {ASI_OUT.parent} (or pass --asi FILE), or build for the stock game: "
-                f"--no-plugin with a --list of at most {STOCK_ROOM} cars.",
+                f"built dsfforza.asi to {ASI_OUT.parent} (or pass --asi FILE), or build for the vanilla game: "
+                f"--no-plugin with a --list of at most {VANILLA_ROOM} cars.",
             )
         self.build_plugin(vcvars)
         self.plugin = ASI_OUT
@@ -1456,7 +1458,7 @@ class Run:
         if sources:
             self.reporter.stage("build", "running", "reusing cars from " + ", ".join(rel(s) for s in sources))
             hint = seconds_per_car(sources[0])
-        argv = ["build", "--out", str(dirs.staging), "--dsf", str(self.stock_archive), "--gui"]
+        argv = ["build", "--out", str(dirs.staging), "--dsf", str(self.vanilla_archive), "--gui"]
         if args.no_plugin:
             argv += ["--id-policy", "garage"]
         else:
@@ -1476,7 +1478,7 @@ class Run:
         if args.verify_pack:
             argv += ["--verify-pack"]
         build_args = port_batch.build_parser().parse_args(argv)
-        build_args.dsf = game_paths.stock(build_args.dsf, quiet=True)
+        build_args.dsf = game_paths.vanilla(build_args.dsf, quiet=True)
         build_args.progress = self.reporter.event
         self.reporter.tracker.seconds_hint = hint
         os.environ["DSF_GAME_DIR"] = str(self.game)
@@ -1822,7 +1824,7 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument(
         "--no-plugin",
         action="store_true",
-        help=f"build and install for the stock game, without dsfforza.asi (at most {STOCK_ROOM} cars)",
+        help=f"build and install for the vanilla game, without dsfforza.asi (at most {VANILLA_ROOM} cars)",
     )
     build.add_argument("--asi", type=Path, help="install this dsfforza.asi instead of out/asi's")
     build.add_argument(

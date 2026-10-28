@@ -14,7 +14,7 @@ Variant 0 stores the ID as a u32 at:
 By default the clone keeps the source's model and texture UIDs (MDID/UIDC)
 and MODL part UIDs, which is fine while the data stays identical (confirmed in
 game with both loaded). With --new-uids every resource and MODL part the three
-entries define gets a fresh stock-shaped UID, and the UPVH's part references
+entries define gets a fresh vanilla-shaped UID, and the UPVH's part references
 follow, so the clone's data can change without clashing with the source in
 the game's global UID tables (src/dsfforza/build/port_car.py does this).
 
@@ -55,8 +55,8 @@ def read_leaf(stream, entry: Entry) -> bytes:
     return stream.read(entry.size)
 
 
-def stock_like_uid(prefix: bytes, counter: int) -> bytes:
-    """A resource UID shaped like the stock ones: [counter<<4] 0x12 [counter>>4]
+def vanilla_like_uid(prefix: bytes, counter: int) -> bytes:
+    """A resource UID shaped like the vanilla ones: [counter<<4] 0x12 [counter>>4]
     prefix[0..2] prefix[3]&0x7F, then byte 7 = 0x2D. Byte 7 must keep its top
     bit clear (research/upvh.md); this is the layout that loads in game
     (forza2dsf.Builder.new_uid). Unique for counters 1..0xFFF per prefix."""
@@ -127,7 +127,7 @@ def renew_uids(stream, vehcs: list[Entry], prefix: bytes, parts: bool = True) ->
 
     Needed once the clone's data differs from its source's (textures,
     materials, geometry): the game keeps global tables keyed by UID, one for
-    resources and one for MODL parts (FUN_00494390). In the stock archive all
+    resources and one for MODL parts (FUN_00494390). In the vanilla archive all
     6,139 part UIDs are unique. Clones that kept the host's part UIDs rendered
     as the host as soon as the host's entries were loaded too (run
     20261022-024010: the ported Skyline turned into the Desanne once
@@ -140,7 +140,7 @@ def renew_uids(stream, vehcs: list[Entry], prefix: bytes, parts: bool = True) ->
     old_parts = [u for vehc in vehcs for u in part_uids(stream, vehc)] if parts else []
     if len(set(old_parts)) != len(old_parts) or set(old_parts) & set(old):
         raise ValueError("duplicate part UIDs inside the entries")
-    mapping = {u: stock_like_uid(prefix, n + 1) for n, u in enumerate(old + old_parts)}
+    mapping = {u: vanilla_like_uid(prefix, n + 1) for n, u in enumerate(old + old_parts)}
     for vehc in vehcs:
         for _, entry in walk(vehc.children):
             if entry.children is None and entry.tag in UID_LEAVES:
@@ -160,7 +160,7 @@ def remap_upvh_parts(data: bytes, mapping: dict[bytes, bytes]) -> bytes:
     swapped): the header's model UID (+0x04), every record's UID (+0x00), both
     halves of each LOD link, and each attachment's part UID (+0x10; the rest
     of an attachment is exporter junk, so only values in `mapping` change).
-    These are all the places the stock Desanne's UPVH holds its 41 part UIDs."""
+    These are all the places the vanilla Desanne's UPVH holds its 41 part UIDs."""
     from dsfforza.formats import upvh
 
     h = upvh.parse(data)
@@ -233,7 +233,7 @@ def make_clones(stream, entries: list[Entry], source_id: int, new_id: int, name:
 
 
 def copy_sound(stream, entries: list[Entry], full_clone: Entry, sound_id: int, new_id: int) -> dict:
-    """Give a clone's full entry another stock vehicle's engine sound: replace its
+    """Give a clone's full entry another vanilla vehicle's engine sound: replace its
     NONR/VSRT (VSVH header, SBAK Wwise bank, GRBK granular bank on 18 cars) with a
     copy of `sound_id`'s and write the clone's ID at VSVH+0. The VSRT is
     self-contained: the bank IDs and event hashes it uses live inside it, and
@@ -383,7 +383,7 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="give the clone's submodels, buffers, textures, materials and MODL parts fresh UIDs",
     )
-    parser.add_argument("--sound-host", type=int, help="take the engine sound (NONR/VSRT) from this stock vehicle")
+    parser.add_argument("--sound-host", type=int, help="take the engine sound (NONR/VSRT) from this vanilla vehicle")
     parser.add_argument(
         "--root-limit",
         type=int,

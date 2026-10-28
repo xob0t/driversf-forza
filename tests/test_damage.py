@@ -43,14 +43,14 @@ MIRROR_LEFT = [(-0.85, 0.25, 0.0), (-0.8, 0.3, 0.05), (-0.9, 0.28, -0.05)]
 
 class PanelBinding(unittest.TestCase):
     def test_rigid_panels_use_the_chassis_transform(self):
-        # Doors and wings swing on stock cars (forceOpenPanels, crashes); a
+        # Doors and wings swing on vanilla cars (forceOpenPanels, crashes); a
         # converted door is a patch of the one-piece Forza skin, so it keeps
         # its damage index but takes the chassis' transform slot.
         plan = _plan({}, {(0, 0): 38, (8, 9): 32, (14, 16): 34, (17, 19): 4, (9, 10): 41})
         self.assertEqual(plan.bound((8, 9)), (0, 9))
         self.assertEqual(plan.bound((14, 16)), (0, 16))
-        self.assertEqual(plan.bound((17, 19)), (17, 19))  # bonnet: swings, as stock
-        self.assertEqual(plan.bound((9, 10)), (9, 10))  # mirror: detaches, as stock
+        self.assertEqual(plan.bound((17, 19)), (17, 19))  # bonnet: swings, as vanilla
+        self.assertEqual(plan.bound((9, 10)), (9, 10))  # mirror: detaches, as vanilla
         # A door that is a Forza part (its border the Forza shut line) swings.
         plan.swinging = {(8, 9)}
         self.assertEqual(plan.bound((8, 9)), (8, 9))
@@ -96,7 +96,7 @@ class PanelBinding(unittest.TestCase):
         self.assertIsNone(plan._side_panel((40, 41), (0.85, 0.27, 0.0)))
 
     def test_centred_record_takes_both_sides(self):
-        # A host twin exhaust spanning both sides (stock 278) keeps both.
+        # A host twin exhaust spanning both sides (vanilla 278) keeps both.
         pipes = [(-0.45, -0.4, -1.9), (0.45, -0.4, -1.9), (0.0, -0.4, -1.9)]
         plan = _plan({(0, 0): [(0.0, 0.0, 0.0)], (2, 3): pipes}, {(0, 0): 38, (2, 3): 15})
         self.assertEqual(plan._side_panel((136, 15), (-0.45, -0.4, -1.9)), (2, 3))

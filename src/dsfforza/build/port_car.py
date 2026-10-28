@@ -13,11 +13,11 @@ For each --car NAME[@fh1|@fm4]:
    out/cache/<game>/<NAME>/ (once; re-extracted when this list grows), and
    the game's gamedb.slt (cockpit eye point).
 3. Clone the host under the next free base ID from --first-id (IDs below 1000
-   that no vehicle uses). --host auto (default) picks the most similar stock car
+   that no vehicle uses). --host auto (default) picks the most similar vanilla car
    per Forza car (src/dsfforza/build/host_select.py: same model, engine for the sound, body,
    size, era; research/hosts.md); --host N forces one (266 = ASYM Desanne, the
    host of every earlier port). --sound-host N|auto takes the engine sound
-   (NONR/VSRT) from another stock car (untested in game). Give the
+   (NONR/VSRT) from another vanilla car (untested in game). Give the
    clone's resources and MODL parts fresh UIDs (clone_vehicle.renew_uids) so
    several ported cars, and the host itself, can be loaded together. Shared
    part UIDs made a ported car render as the host once the host's entries
@@ -33,7 +33,7 @@ For each --car NAME[@fh1|@fm4]:
    can't fit, the host's is kept.
 5. Engine sound (src/dsfforza/convert/engine_sound.py, research/engine-sound.md; untested in
    game): the car's own Forza engine loops (its ET/HT files, EngAmb loops for
-   set A, Exh for set B) go into a stock template bank with the 370Z layout,
+   set A, Exh for set B) go into a vanilla template bank with the 370Z layout,
    the best engine match first, with retuned pitch and crossfade curves,
    VSVH+4C from the cylinder count and fresh Wwise IDs in the car's spool-ID
    namespace. Templates and shorter loops are tried until the NONR fits.
@@ -52,7 +52,7 @@ probe; --install-lua also copies it to tools/game/lua/dsfforza/ported.lua).
 
 Size limits (research/spool-limits.md): each entry's NONR must fit the
 per-kind NONR buffer in the SSLP header (+0x08 + 4 * kind; the game memcpy's
-without a check), and MDXN stays at or under the largest stock MDXN of its
+without a check), and MDXN stays at or under the largest vanilla MDXN of its
 kind (a bigger one crashed; the cause is still open).
 
 Wheel placement (research/forza-sources.md): Forza's front is at -z and
@@ -574,8 +574,8 @@ def uid_prefix(*parts) -> bytes:
     return hashlib.sha1(":".join(str(p) for p in parts).encode()).digest()[:4]
 
 
-def stock_limits(stream, entries, mdxn_limit: int | None = None) -> tuple[dict[int, int], dict[int, int]]:
-    """(NONR buffer per kind from the SSLP header, largest stock MDXN per kind, or
+def vanilla_limits(stream, entries, mdxn_limit: int | None = None) -> tuple[dict[int, int], dict[int, int]]:
+    """(NONR buffer per kind from the SSLP header, largest vanilla MDXN per kind, or
     mdxn_limit (--mdxn-limit) where that is bigger)."""
     nonr = child(next(e for e in entries if e.tag == "SSIC"), "NONR")
     header = clone_vehicle.read_leaf(stream, child(nonr, "SSLP"))
@@ -587,7 +587,7 @@ def stock_limits(stream, entries, mdxn_limit: int | None = None) -> tuple[dict[i
             mdxn_max[kind] = max(mdxn_max.get(kind, 0), mdxn.size)
     if mdxn_limit:
         # lim-pad-over (VEHC 0x30A000, past the 0x280000 static read buffer)
-        # loads in game, so the stock maxima aren't hard limits.
+        # loads in game, so the vanilla maxima aren't hard limits.
         mdxn_max = {kind: max(size, mdxn_limit) for kind, size in mdxn_max.items()}
     return nonr_limit, mdxn_max
 
@@ -603,7 +603,7 @@ def check_entry(vehc, kind: int, nonr_limit: dict, mdxn_max: dict) -> tuple[dict
     if sizes.get("NONR", 0) > nonr_limit[kind]:
         problems.append(f"NONR {sizes['NONR']:#x} > SSLP buffer {nonr_limit[kind]:#x}")
     if sizes.get("MDXN", 0) > mdxn_max[kind]:
-        problems.append(f"MDXN {sizes['MDXN']:#x} > stock max {mdxn_max[kind]:#x}")
+        problems.append(f"MDXN {sizes['MDXN']:#x} > vanilla max {mdxn_max[kind]:#x}")
     if read > STATIC_READ_BUFFER:
         problems.append(f"VEHC read size {read:#x} > static buffer {STATIC_READ_BUFFER:#x}")
     for mdxn in (c for c in vehc.children if c.tag == "MDXN"):
@@ -641,7 +641,7 @@ def forza_sound_plan(
 ):
     """(engine_sound.Plan or None, report) for the car's own Forza engine sound
     (src/dsfforza/convert/engine_sound.py, research/engine-sound.md): its Forza loops, its engine
-    type and the stock template banks to try, best engine match first (an explicit
+    type and the vanilla template banks to try, best engine match first (an explicit
     --sound-host before them). None, with the reason, when it is disabled or the
     car's Forza audio can't be resolved; the car then keeps the host's sound."""
     if getattr(args, "no_forza_sound", False):
@@ -650,7 +650,7 @@ def forza_sound_plan(
     from dsfforza.convert import engine_sound
 
     try:
-        index = engine_sound.stock_index(args.dsf)
+        index = engine_sound.vanilla_index(args.dsf)
         db = gamedb or extract_gamedb(isos, game, args.cache)
         info = host_select.forza_info(media, {game: db} if db else None, game, folder)
         ranking = host_select.rank(info, host_select.survey(args.dsf), allow_special=True, mode="sound")
@@ -968,7 +968,7 @@ def run_lint(out: Path, spool_id: int, dsf: Path, host: int, allow_shared: bool 
             str(out),
             "--id",
             str(spool_id),
-            "--stock",
+            "--vanilla",
             str(dsf),
             "--source",
             str(host),
@@ -987,7 +987,7 @@ def host_arg(text: str) -> int | str:
 
 def pick_hosts(args, media: str, game: str, folder: Path, gamedb: Path | None, isos, log) -> tuple:
     """(host, sound host or None, report) for one car: --host/--sound-host as given,
-    or src/dsfforza/build/host_select.py's best stock car for "auto"."""
+    or src/dsfforza/build/host_select.py's best vanilla car for "auto"."""
     from dsfforza.build import host_select
 
     choice: dict = {"mode": "forced" if args.host != "auto" else "auto"}
@@ -1121,7 +1121,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Details: this file's docstring and docs/DEVELOPMENT.md.",
     )
-    parser.add_argument("--dsf", type=Path, required=True, help="stock Install/dngvehicles.sp (only read)")
+    parser.add_argument("--dsf", type=Path, required=True, help="vanilla Install/dngvehicles.sp (only read)")
     parser.add_argument("--out", type=Path, required=True, help="archive to write")
     parser.add_argument(
         "--car",
@@ -1134,20 +1134,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--host",
         type=host_arg,
         default="auto",
-        help="stock vehicle to build on: auto (default: the most similar stock car per Forza "
+        help="vanilla vehicle to build on: auto (default: the most similar vanilla car per Forza "
         "car, src/dsfforza/build/host_select.py) or a base spool ID (266 = ASYM Desanne)",
     )
     parser.add_argument(
         "--sound-host",
         type=host_arg,
-        help="take the engine sound (NONR/VSRT) from this stock car instead of the host: "
+        help="take the engine sound (NONR/VSRT) from this vanilla car instead of the host: "
         "a base spool ID, or auto (best engine match); default: the host's (untested in game)",
     )
     parser.add_argument(
         "--no-forza-sound",
         action="store_true",
         help="keep the host's (or --sound-host's) engine sound; default: the car's own Forza "
-        "engine loops in a stock template bank (src/dsfforza/convert/engine_sound.py; untested in game)",
+        "engine loops in a vanilla template bank (src/dsfforza/convert/engine_sound.py; untested in game)",
     )
     parser.add_argument(
         "--forza-sound-dir",
@@ -1169,13 +1169,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--root-limit",
         type=int,
         default=ENTRY_LIMIT,
-        help=f"root entries allowed in the output archive (default {ENTRY_LIMIT}, the stock "
+        help=f"root entries allowed in the output archive (default {ENTRY_LIMIT}, the vanilla "
         "reader); more needs dsfforza.asi with [archive] enabled",
     )
     parser.add_argument(
         "--mdxn-limit",
         type=lambda text: int(text, 0),
-        help="allow MDXN up to this size in every entry instead of the stock maximum "
+        help="allow MDXN up to this size in every entry instead of the vanilla maximum "
         "of its kind, e.g. 0x2C0000 (bigger VEHCs load in game: spool-limits.md)",
     )
     parser.add_argument(
@@ -1214,20 +1214,20 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         const="panels",
         choices=("panels", "hull"),
-        help="stock-like damage (src/dsfforza/convert/damage.py): body on the host's panels, crush "
+        help="vanilla-like damage (src/dsfforza/convert/damage.py): body on the host's panels, crush "
         "targets, panel parts, hinges moved; 'hull' also scales the root collision "
         "hull (untested in game)",
     )
     parser.add_argument(
         "--glass-links",
         action="store_true",
-        help="bind windscreen/rear-window glass to the host's glass-panel records, like stock "
+        help="bind windscreen/rear-window glass to the host's glass-panel records, like vanilla "
         "glass (default: the chassis; untested in game)",
     )
     parser.add_argument(
         "--no-plates",
         action="store_true",
-        help="no licence plates (default: the stock DSF plate on the Forza car's plate "
+        help="no licence plates (default: the vanilla DSF plate on the Forza car's plate "
         "recess at each end the host has one, src/dsfforza/convert/plates.py; untested in game)",
     )
     parser.add_argument(
@@ -1274,10 +1274,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     gentle.apply()  # out/gentle: Idle on two CPUs (src/dsfforza/build/gentle.py)
     args = build_parser().parse_args(argv)
-    args.dsf = game_paths.stock(args.dsf)  # the original when a dsfforza install replaced it
+    args.dsf = game_paths.vanilla(args.dsf)  # the original when a dsfforza install replaced it
 
     if args.out.resolve() == args.dsf.resolve():
-        raise SystemExit("refusing to overwrite the stock archive")
+        raise SystemExit("refusing to overwrite the vanilla archive")
     if args.forza_sound_dir is None:
         args.forza_sound_dir = args.out.with_name(args.out.stem + "-sound")
     if args.share_host_uids and len(args.car) > 1 and args.textures != "none":
@@ -1298,7 +1298,7 @@ def main(argv: list[str] | None = None) -> None:
     temp = args.out.with_name(args.out.name + ".tmp")
     manifest = {
         "archive": str(args.out),
-        "stock": str(args.dsf),
+        "vanilla": str(args.dsf),
         "host": args.host,
         "sound_host": args.sound_host,
         "created": datetime.datetime.now().isoformat(timespec="seconds"),
@@ -1310,7 +1310,7 @@ def main(argv: list[str] | None = None) -> None:
     with args.dsf.open("rb") as stream:
         root = read_chunk(stream, 0)
         entries = root.entries
-        nonr_limit, mdxn_max = stock_limits(stream, entries, args.mdxn_limit)
+        nonr_limit, mdxn_max = vanilla_limits(stream, entries, args.mdxn_limit)
         manifest["limits"] = {
             "nonr": {str(k): v for k, v in nonr_limit.items()},
             "mdxn": {str(k): v for k, v in mdxn_max.items()},
