@@ -99,6 +99,31 @@ def test_bar_cells_are_coarse_and_smooth():
     assert np.allclose(colours2[0][:, :20], colours[0][:, :20], atol=1e-4)
 
 
+def test_small_lights_on_their_own_displays_stay():
+    # Round shift lights on display triangles of their own (the Zonda Cinque's): every cell
+    # round them is mostly off the display, so each light is one piece of its own, mostly
+    # on the display and over nothing drawn.
+    yy, xx = np.mgrid[0:40, 0:120]
+    shown = np.zeros((40, 120), bool)
+    steps = np.full((40, 120), -1)
+    for k, cx in enumerate((20, 60, 100)):
+        light = (xx - cx) ** 2 + (yy - 20) ** 2 <= 8**2
+        shown |= light
+        steps[light] = k
+    ev_step = np.stack([steps, np.full_like(steps, -1)])
+    ev_col = np.zeros((2, 40, 120, 3), np.float32)
+    ev_col[0][steps >= 0] = (0.1, 0.9, 0.1)
+    base = np.zeros((40, 120, 3), np.float32)
+    _, _, _, drawn = dd.bar_cells(base, ev_step, ev_col, shown, 10)
+    assert not drawn.any()
+    in_cell = np.zeros((40, 120), bool)
+    pieces = dd.edge_pieces(base, ev_step, ev_col, shown, in_cell, 10)
+    assert [p[3][0] for p in pieces] == [0, 1, 2]
+    for (x0, x1, y0, y1), rest, colours, _ in pieces:
+        assert shown[y0:y1, x0:x1].mean() >= dd.EDGE_SHOWN and min(x1 - x0, y1 - y0) >= 5
+        assert colours[0][1] > 0.6 and rest.max() == 0
+
+
 def test_bar_pieces_are_watertight_and_never_overlap():
     # Runs of cells along rows, with every neighbour's ends on their top and bottom edges:
     # no T-junction (a vertex rounded off its neighbour's edge opens a crack), no overlap.

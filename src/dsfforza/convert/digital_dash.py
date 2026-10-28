@@ -190,6 +190,7 @@ DIGIT_LIFT = 0.0016
 # (issue #188). The vanilla Zonda's rpm segments are 1.6 mm at their thinnest.
 PIECE_SIZE = 0.0015
 CELL_SHOWN = 0.9  # share of a cell on the displays' triangles for it to be drawn
+EDGE_SHOWN = 0.6  # share of an edge piece's box on the display (the Zonda Cinque's round shift lights: 0.67 to 0.71)
 CELL_BLUR = 0.4  # cell colours are blurred first, by a Gaussian this many cells wide (sigma)
 CHANGES = 2  # colour changes per pixel the rpm makes (rest -> lit -> warning)
 # The digital dials draw their texel unlit (shader program 163 has no light term) in a
@@ -428,6 +429,70 @@ def cell_runs(step, column, drawn) -> list:
             j = j1
         rows.append(runs)
     return rows
+
+
+def _components(mask) -> list:
+    """Bounding boxes (x0, x1, y0, y1) of the 8-connected groups of a boolean mask."""
+    seen = np.zeros(mask.shape, bool)
+    boxes = []
+    for y, x in zip(*np.nonzero(mask), strict=True):
+        if seen[y, x]:
+            continue
+        seen[y, x] = True
+        todo, box = [(y, x)], [x, x + 1, y, y + 1]
+        while todo:
+            cy, cx = todo.pop()
+            box = [min(box[0], cx), max(box[1], cx + 1), min(box[2], cy), max(box[3], cy + 1)]
+            for ny in range(max(0, cy - 1), min(mask.shape[0], cy + 2)):
+                for nx in range(max(0, cx - 1), min(mask.shape[1], cx + 2)):
+                    if mask[ny, nx] and not seen[ny, nx]:
+                        seen[ny, nx] = True
+                        todo.append((ny, nx))
+        boxes.append(tuple(box))
+    return boxes
+
+
+def edge_pieces(base, ev_step, ev_col, shown, in_cell, c: int) -> list:
+    """The rpm's changes the cells leave out (cells mostly off the display: shift lights
+    on displays of their own, a bar along a display's edge), per step and connected
+    group as one rectangle: its box if EDGE_SHOWN of it is on the display (a round light
+    in its square), else the rows and columns of the box CELL_SHOWN shown. Each is off
+    every drawn cell and earlier piece, at least half a cell on each side, and takes the
+    mean colours of its shown pixels: [(rect (x0, x1, y0, y1), rest, colours, steps)]
+    like bar_cells' cells."""
+    first = ev_step[0]
+    taken = in_cell.copy()  # drawn cells, then each edge piece too
+    left = (first >= 0) & ~taken
+    out = []
+    for k in np.unique(first[left]):
+        for box in _components(left & (first == k)):
+            x0, x1, y0, y1 = box
+            if taken[y0:y1, x0:x1].any() or shown[y0:y1, x0:x1].mean() < EDGE_SHOWN:
+                free = shown & ~taken
+                (a, b), (t, u) = _shown_box(free, box, CELL_SHOWN)
+                x0, x1, y0, y1 = int(math.floor(a)), int(math.ceil(b)), int(math.floor(t)), int(math.ceil(u))
+                if x1 <= x0 or y1 <= y0 or not free[y0:y1, x0:x1].all():
+                    continue
+            if min(x1 - x0, y1 - y0) < max(1, c / 2):
+                continue
+            on = shown[y0:y1, x0:x1].reshape(-1)
+            rest = base[y0:y1, x0:x1, :3].reshape(-1, 3)[on].mean(0)
+            state, colours = base[y0:y1, x0:x1, :3], []
+            for level in range(CHANGES):
+                state = np.where((ev_step[level][y0:y1, x0:x1] >= 0)[..., None], ev_col[level][y0:y1, x0:x1], state)
+                colours.append(state.reshape(-1, 3)[on].mean(0))
+            if np.abs(colours[0] - rest).max() <= LIT_DIFFERENCE:
+                continue
+            steps = [int(k)]
+            lit_here = first[y0:y1, x0:x1] >= 0
+            for level in range(1, CHANGES):
+                later = ev_step[level][y0:y1, x0:x1]
+                has = lit_here & (later >= 0)
+                gap = later[has] - first[y0:y1, x0:x1][has]
+                steps.append(int(k + np.median(gap)) if has.sum() * 2 >= lit_here.sum() else -1)
+            taken[y0:y1, x0:x1] = True
+            out.append(((x0, x1, y0, y1), rest, np.stack(colours), steps))
+    return out
 
 
 def run_outline(rows: list, i: int, run: tuple) -> tuple[list, list]:
@@ -817,6 +882,9 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
     g_rest, g_col, g_step, lit = bar_cells(base1, ev_step, ev_col, shown, cell_px)
     # lit pixels in no drawn cell (cells mostly off the display, or hardly changing)
     in_cell = np.repeat(np.repeat(lit, cell_px, 0), cell_px, 1)[:hgt, :wid]
+    edges = edge_pieces(base1, ev_step, ev_col, shown, in_cell, cell_px)
+    for (x0, x1, y0, y1), *_ in edges:
+        in_cell[y0:y1, x0:x1] = True
     report["rpm_pixels_left_out"] = int(((ev_step[0] >= 0) & ~in_cell).sum())
 
     # Texture: columns on the right, the artwork on the left. The digital dials draw
@@ -832,15 +900,19 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
             cols.append((kind, j, x, w))
     # Bar columns: one per (rest, first, second colour, steps between the changes).
     signatures, sig_img = {}, None
-    if lit.any():
-        states = [g_rest[lit]] + [g_col[level][lit] for level in range(CHANGES)]
+    if lit.any() or edges:
+        # cells first, then the edge pieces
+        e_rest = np.array([e[1] for e in edges], np.float32).reshape(-1, 3)
+        e_col = np.array([e[2] for e in edges], np.float32).reshape(-1, CHANGES, 3)
+        e_step = np.array([e[3] for e in edges], np.int32).reshape(-1, CHANGES)
+        st = [np.concatenate([g_step[level][lit], e_step[:, level]]) for level in range(CHANGES)]
+        states = [np.concatenate([g_rest[lit], e_rest])]
+        states += [np.concatenate([g_col[level][lit], e_col[:, level]]) for level in range(CHANGES)]
         palette, labels = _palette(np.concatenate(states), PALETTE)
-        n = int(lit.sum())
+        n = len(states[0])
         lab = [labels[i * n : (i + 1) * n] for i in range(CHANGES + 1)]
-        later = [np.where(g_step[level][lit] >= 0, lab[level + 1], -1) for level in range(1, CHANGES)]
-        gaps = [
-            np.where(g_step[level][lit] >= 0, g_step[level][lit] - g_step[0][lit], -1) for level in range(1, CHANGES)
-        ]
+        later = [np.where(st[level] >= 0, lab[level + 1], -1) for level in range(1, CHANGES)]
+        gaps = [np.where(st[level] >= 0, st[level] - st[0], -1) for level in range(1, CHANGES)]
         keys = np.stack([lab[0], lab[1], *later, *gaps], 1)
         uniq, inverse, freq = np.unique(keys, axis=0, return_counts=True, return_inverse=True)
         room = max(0, min(MAX_BAR_COLUMNS, (x - 256) // COLUMN))
@@ -860,7 +932,8 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
                 fold[s_idx] = int(same[0]) if same else -1
         inverse = np.array([fold.get(int(k), int(k)) for k in inverse.ravel()])
         sig_img = np.full(lit.shape, -1, np.int32)
-        sig_img[lit] = inverse
+        sig_img[lit] = inverse[: int(lit.sum())]
+        edge_sig = inverse[int(lit.sum()) :]
         x -= COLUMN * len(signatures)
         bar_x = x
         report["bar_columns"] = len(signatures)
@@ -988,7 +1061,19 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
                 plan.quads.append(Quad(corners, [(u, v)] * len(rt), RPM, zipper(above, below)))
                 plan.quads[-1].rt = rt
                 pieces += 1
+        for ((x0, x1, y0, y1), _, _, e_steps), s_idx in zip(edges, edge_sig, strict=True):
+            if int(s_idx) not in col_of:
+                continue
+            rect = (float(ux0 + x0), float(ux0 + x1), float(uy0 + y0), float(uy0 + y1))
+            p = patch_for((rect[0] + rect[1]) / 2, (rect[2] + rect[3]) / 2)
+            if p is None:
+                continue
+            v = BAR_LIT_FROM - min(BAR_MAX, 0.5 * steps[e_steps[0]] / max(1.0, redline))
+            u = (bar_x + col_of[int(s_idx)] * COLUMN + COLUMN / 2) / W
+            rect_quad(p, rect, (u, v, u, v), RPM, PIECE_LIFT)
+            pieces += 1
         report["bar_pieces"] = pieces
+        report["bar_edge_pieces"] = len(edges)
         report["bar_cell_mm"] = round(cell_px * size * 1000, 2)
     # Dim pale and glaring displays (DISPLAY_MEAN_LUMINANCE); dark ones stay as they are.
     big = np.repeat(np.repeat(shown, SCALE, 0), SCALE, 1)[: base.shape[0], : base.shape[1]]
