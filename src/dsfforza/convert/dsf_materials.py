@@ -311,6 +311,10 @@ COVER_MIN_SHARE, COVER_DEPTH = 0.3, 0.3
 # over them (_bake_lenses): left out.
 COVER_ON_LENS = 0.9
 TILE_EPS = 1e-4  # UV: a triangle corner this close past a tile edge is on it (unwrap_tiles)
+# A tiling lamp part with at most this share of its triangles across a tile edge is unwrapped all
+# the same, those triangles clamped into the tile of their lowest corner (the Range Rover 12's head
+# lamp bowls: 3 of 304).
+TILE_CROSS_SHARE = 0.1
 WINDOW_SECTIONS = ("glassf", "glassr", "glasslf", "glassrf", "glasslm", "glassrm", "glasslr", "glassrr", "glasst")
 
 CHASSIS, LIGHTS_MAT = "chassis", "lights"
@@ -926,39 +930,43 @@ def skyline_pack(sizes: list[tuple[int, int]], width: int, height: int) -> list[
 class TileWrapped(fm.SubMaterial):
     """A tiling subsection laid on the atlas: each vertex's UV less the whole tiles of its
     triangles (`shift`: raw UV0 -> (du, dv)), so every triangle samples the texels Forza's
-    wrapping sampler reads, inside 0..1."""
+    wrapping sampler reads, inside 0..1 (a triangle across a tile edge clamped into it)."""
 
     shift: dict = field(default_factory=dict)
 
     def uv(self, raw: tuple[float, float]) -> tuple[float, float]:
         u, v = super().uv(raw)
         du, dv = self.shift.get(tuple(raw), (0.0, 0.0))
-        return u - du, v - dv
+        return min(1.0, max(0.0, u - du)), min(1.0, max(0.0, v - dv))
 
 
 def unwrap_tiles(section, sub, m: fm.SubMaterial) -> TileWrapped | None:
     """A tiling lamp part (UVs past 0..1) whose every triangle lies inside one tile, moved
     into the 0..1 tile triangle by triangle (TileWrapped): an ordinary textured part. The FM4
     Mustang GT's round head lamp bowls (`textured_reflector`, u -2.9 to 3.9) sit in tiles -3,
-    0 and 3; drawn as one flat colour (_tiling_swatch) they were plain white domes. None when
-    a triangle crosses a tile edge or a vertex is in triangles of two tiles."""
+    0 and 3; drawn as one flat colour (_tiling_swatch) they were plain white domes. Triangles
+    across a tile edge (TILE_CROSS_SHARE of them at most) are clamped into the tile of their
+    lowest corner. None when more cross an edge or a vertex is in triangles of two tiles (one
+    UV a vertex: the emitter shares vertices by region)."""
     import dataclasses
 
     pool = section.vertices_for(sub)
     shift: dict = {}
     lo = [math.inf, math.inf]
     hi = [-math.inf, -math.inf]
-    for tri in sub.triangles():
+    tris = sub.triangles()
+    crossing = 0
+    for tri in tris:
         uvs = [m.uv(pool[i].uv0) for i in tri]
         tile = tuple(math.floor(min(c[a] for c in uvs) + TILE_EPS) for a in (0, 1))
-        if any(math.floor(max(c[a] for c in uvs) - TILE_EPS) != tile[a] for a in (0, 1)):
-            return None
+        crossing += any(math.floor(max(c[a] for c in uvs) - TILE_EPS) != tile[a] for a in (0, 1))
         for i, c in zip(tri, uvs):
             if shift.setdefault(tuple(pool[i].uv0), tile) != tile:
                 return None
             for a in (0, 1):
-                lo[a], hi[a] = min(lo[a], c[a] - tile[a]), max(hi[a], c[a] - tile[a])
-    if not shift:
+                lo[a] = min(lo[a], max(0.0, c[a] - tile[a]))
+                hi[a] = max(hi[a], min(1.0, c[a] - tile[a]))
+    if not shift or crossing > TILE_CROSS_SHARE * len(tris):
         return None
     base = {f.name: getattr(m, f.name) for f in dataclasses.fields(fm.SubMaterial)}
     base.update(kind="textured", bounds=(lo[0], lo[1], hi[0], hi[1]))

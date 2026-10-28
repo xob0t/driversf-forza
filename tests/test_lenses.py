@@ -456,9 +456,21 @@ def test_tiling_lamp_part_unwrapped():
     us = sorted({round(got.uv(v.uv0)[0], 6) for v in pool})
     assert us == [0.1, 0.4], us
     assert abs(got.bounds[0] - 0.1) < 1e-6 and abs(got.bounds[2] - 0.4) < 1e-6
-    # A triangle across a tile edge can't be laid on the atlas.
+    # Triangles across a tile edge (both of this quad's) can't be laid on the atlas.
     edge = _quad("body", "textured_reflector", -1.0, 2.9, 3.4)
     assert dm.unwrap_tiles(edge, edge.subsections[0], fm.resolve(edge, edge.subsections[0])) is None
+    # One of many is clamped into its tile.
+    sections = [_quad("body", "textured_reflector", -1.0, 3.1 + 0.01 * k, 3.2 + 0.01 * k) for k in range(10)]
+    sections.append(_quad("body", "textured_reflector", -1.0, 3.9, 4.05))
+    verts, idx = [], []
+    for q in sections:
+        idx += [len(verts) + i for i in q.subsections[0].indices]
+        verts += q.lod_vertices
+    sub = carbin.SubSection("textured_reflector", 1, 4, (0.0, 1.0, 0.0, 1.0) * 2, idx)
+    many = carbin.Section("body", (0, 0, 0), (0, 0, 0), (0, 0, 0), lod_vertices=verts, subsections=[sub])
+    got = dm.unwrap_tiles(many, sub, fm.resolve(many, sub))
+    assert got is not None
+    assert all(0.0 <= got.uv(v.uv0)[0] <= 1.0 for v in verts)
 
 
 if __name__ == "__main__":

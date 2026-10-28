@@ -1421,23 +1421,28 @@ takes that result when it meets a lamp. Rear lenses are unchanged.
 **Mustang GT 05 bowls: tiles unwrapped (offline-checked).** The bowls (`body/textured_reflector`,
 LOD 1, u -2.9 to 3.9) sit in tiles -3, 0 and 3 with no triangle across a tile edge.
 `dsf_materials.unwrap_tiles` moves each triangle into the 0..1 tile (`TileWrapped`: a vertex's
-shift by its raw UV); a tiling lamp part that unwraps is an ordinary textured part, and
-`_tiling_swatch` (#168) stays for those with a triangle across an edge or a vertex in two tiles.
+shift by its raw UV); a tiling lamp part that unwraps is an ordinary textured part. Up to 10% of its
+triangles may cross a tile edge (`TILE_CROSS_SHARE`; the Range Rover 12's head lamp bowls, 3 of 304):
+they are clamped into the tile of their lowest corner. `_tiling_swatch` (#168) stays for parts with
+more, or with a vertex in triangles of two tiles: the emitter shares a vertex within a region, so it
+has one UV.
 `resolve_lamp` gives lenses (`_Surfaces`, the bake's shared-texel pass, `lamp_glow`) and the lamp
 plan's texel sampler the same unwrapped material (the Mustang's lamp plan is unchanged by it).
 
 **Roster (offline; `out/l5/survey.py`, resolve and texels only, and `out/l5/bake_survey.py`,
-`Texturing._bake_lenses` on master's rules and on this change, LODs 1, 3, 4, 5; the 573 cars of
+`Texturing._bake_lenses` on master's rules and on this change, LODs 1, 3, 4, 5, the tiling parts
+unwrapped in both; `out/l5/tile_count.py` for the tiling parts; the 573 cars of
 `tools/batches/all.txt`):**
 
 | Change | Cars | Subsections |
 | --- | ---: | ---: |
-| flat rear lenses left out, their filter on the lamp (master: baked as flat plates) | 82 | 216 |
+| flat rear lenses left out, their filter on the lamp (master: baked as flat plates) | 82 | 220 |
 | lamp covers over their own lenses' texels left out (master: baked into the lenses' texels) | 23 | 37 |
-| front lens rays that met no lamp, now along the axis onto one | 262 | 84,936 rays |
-| tiling lamp parts unwrapped (master: one flat colour), all LODs | 21 | 135 |
-| of them at LOD 1 (the exterior entry) | 14 | 30 |
-| tiling lamp parts still one colour (a triangle across a tile edge), all LODs | 44 | 135 |
+| front lens rays that met no lamp, now along the axis onto one | 262 | 85,468 rays |
+| tiling lamp parts unwrapped (master: one flat colour), all LODs | 29 | 166 |
+| of them at LOD 1 (the exterior entry; 5,290 triangles) | 16 | 36 |
+| tiling lamp parts still one colour, all LODs | 39 | 104 |
+| of them at LOD 1: FOR_ShelbyGT500_13's tails (every triangle across an edge), KIA_ForteKoup_10's head lamp bowls and MIN_JohnCooperWorks_09's reflector (vertices in two tiles) | 3 | 6 |
 | cars whose baked Lights texels change (more than 8 in a channel) | 273 | |
 
 The flat rear lenses: 155 red and 82 clear on the static count (`out/l5/s_all.tsv`), alpha 0 to 255;
