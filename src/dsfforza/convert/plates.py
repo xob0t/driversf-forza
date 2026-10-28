@@ -32,10 +32,13 @@ not the plate. So the plate is placed on the Forza body:
    under 3 mm RMS), paint/trim-covered window of plate size near the
    centreline, preferring windows whose border steps outwards (a recess) and
    heights near the host's plate (the host's plate height mapped by the body
-   boxes); the window is then centred on the recess and the plate shrunk to
-   fit it;
-3. else the host's plate height mapped onto the Forza body, x = 0, pushed out
-   to the nearest surface in front (a plate on a bracket).
+   boxes; a recess up to WIDE_BAND away when there is neither a recess nor a
+   flat face nearer); the window is then centred on the recess and the plate
+   shrunk to fit it;
+3. else near the host's plate height, x = 0, pushed out to the nearest surface
+   in front (a plate on a bracket): the height where the plate hugs the face,
+   hides no badge, lamp, glass or exhaust and sits on one section and
+   material (fallback_height; #159).
 
 An end gets a plate only if the host has one there (vanilla trucks and buggies
 have none at the front, a few cars none at the front: the host is the most
@@ -501,19 +504,19 @@ def plan_end(
     pick = None
     if cands:
         recess = [k for k in cands if k[0] >= 0.3 and abs(k[2] - prior_y) <= PRIOR_BAND]
-        # The car's own recess further from the host's height before a plate on no face
-        # (#159: the Audi RS2's bumper recess under its tail lamp band, the host's plate
-        # on its boot lid).
-        recess = recess or [k for k in cands if k[0] >= 0.3]
-        if recess:
+        # A flat face without walls is weak evidence (the Skyline R32's boot face won
+        # over its bumper's mounting pad): only near the host's height.
+        near = [k for k in cands if abs(k[2] - prior_y) <= FLAT_BAND]
+        # Then the car's own recess further from the host's height, before a plate on
+        # no face (#159: the Audi RS2's rear bumper recess under its tail lamp band,
+        # the host's plate on its boot lid).
+        far = [k for k in cands if k[0] >= 0.3]
+        if recess or (far and not near):
             source = "recess"
-            pick = max(recess, key=lambda k: k[0] - 0.5 * abs(k[2] - prior_y) - 2.0 * abs(k[3]))
-        else:
-            # A flat face without walls is weak evidence (the Skyline R32's boot
-            # face won over its bumper's mounting pad): only near the host's height.
-            near = [k for k in cands if abs(k[2] - prior_y) <= FLAT_BAND]
+            pick = max(recess or far, key=lambda k: k[0] - 0.5 * abs(k[2] - prior_y) - 2.0 * abs(k[3]))
+        elif near:
             source = "flat"
-            pick = min(near, key=lambda k: abs(k[2] - prior_y) + 2.0 * abs(k[3])) if near else None
+            pick = min(near, key=lambda k: abs(k[2] - prior_y) + 2.0 * abs(k[3]))
     if cands and pick is not None:
         proud, rms, cy, cs, b, c, top, c0 = pick
         # Centre on the face: walk out from the window centre along its row and
