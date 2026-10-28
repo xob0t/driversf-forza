@@ -7,6 +7,8 @@ on synthetic data (no game or Forza files).
 
 from __future__ import annotations
 
+import copy
+import dataclasses
 import struct
 import unittest
 from pathlib import Path
@@ -535,6 +537,26 @@ class TrimArt(unittest.TestCase):
         self.assertEqual(tag[0], "swatch")
         self.assertEqual(tag[1:4], (240, 240, 240))  # the artwork's mean colour
         self.assertEqual(len(set(uvs)), 1)
+
+    def test_new_section_keeps_the_lamp_plan(self):
+        # The damage pass hands planned subsections in new section objects. Resolved again
+        # there, a tiling lamp part sampled the Lights atlas after lenses.bake had written
+        # into it: a colour without an atlas cell, so it drew as shared trim. The Mustang GT
+        # 05's head lamp bowls did so in the exterior entry and never glowed (issue #158).
+        tiling = self.top(0.5, 0.0, 0.2, (0, 0, 8, 8))
+        for i in tiling:  # UVs well past 0..1, as the Mustang's bowls (-2.9..3.9)
+            v = self.verts[i]
+            self.verts[i] = dataclasses.replace(v, uv0=(v.uv0[0] * 40 - 2.9, v.uv0[1] * 40 - 2.9))
+        bowl = carbin.SubSection("textured_reflector", 1, 4, self.transform, tiling)
+        section = carbin.Section("body", (0, 0, 0), (0, 0, 0), (1, 1, 1), self.verts, [], [bowl])
+        with mock.patch.object(fm, "AtlasCache", lambda *a, **k: self.atlases):
+            t = dm.Texturing(Path(), size=(48, 48), bake_lenses=False).plan([section], {1})
+        self.assertEqual(t.submaterial(section, bowl).kind, "swatch")
+        self.assertEqual(t.material(section, bowl), dm.LIGHTS_MAT)
+        _w, _h, data = self.atlases.get(fm.LIGHTS)
+        data[:] = bytes(len(data))  # what the lens bake writes later
+        again = copy.copy(section)
+        self.assertEqual(t.material(again, bowl), dm.LIGHTS_MAT)
 
 
 class TrimTexels(unittest.TestCase):
