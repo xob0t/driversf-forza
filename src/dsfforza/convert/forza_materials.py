@@ -406,14 +406,15 @@ def shader_settings(car_dir: Path) -> dict[str, dict[str, float]]:
     return parse_shader_settings(path.read_text(encoding="utf-8", errors="replace"))
 
 
+SCALAR_COLOURS = {"SpecularColor"}  # colour parameters parse_shader_settings keeps (RGB mean)
 _SETTINGS_TOKEN = re.compile(r"<!--.*?-->|<\s*(/?)\s*([A-Za-z_][\w.]*)([^<>]*?)(/?)\s*>", re.S)
 _SETTINGS_ATTR = re.compile(r'([A-Za-z_]\w*)\s*=\s*"([^"]*)"')
 
 
 def parse_shader_settings(text: str) -> dict[str, dict[str, float]]:
     """A ShaderSettings XML (a car's, or the shared Normal.xml) as {technique (lower
-    case): {parameter: value}}: scalar `value` parameters only (colours and
-    non-numbers are left out). Read leniently: a few cars' files don't nest their tags
+    case): {parameter: value}}: scalar `value` parameters, and SpecularColor as the mean
+    of its RGB (other colours and non-numbers are left out). Read leniently: a few cars' files don't nest their tags
     properly (`<badge>...</BADGE>`, a stray close tag), which Forza's reader takes."""
     out: dict[str, dict[str, float]] = {}
     stack: list[str] = []
@@ -427,7 +428,14 @@ def parse_shader_settings(text: str) -> dict[str, dict[str, float]]:
             continue
         values = dict(_SETTINGS_ATTR.findall(attrs))
         if selfclose or values:
-            if len(stack) >= 2 and "value" in values:  # <ShaderSettings><technique><Param value=.../>
+            if len(stack) >= 2 and name in SCALAR_COLOURS and all(c in values for c in "rgb"):
+                try:
+                    value = sum(float(values[c]) for c in "rgb") / 3
+                except ValueError:
+                    continue
+                if math.isfinite(value):
+                    out.setdefault(stack[-1], {})[name] = value
+            elif len(stack) >= 2 and "value" in values:  # <ShaderSettings><technique><Param value=.../>
                 try:
                     value = float(values["value"])
                 except ValueError:
@@ -603,9 +611,9 @@ def texel_scale(settings: dict[str, dict[str, float]], technique: str) -> float:
 
 # --- the trim and rim shaders' specular and reflection -------------------------------
 #
-# Besides the texel, Forza's car shaders add a specular term, SpecularAmount x the
-# directional light x (R.L)^SpecularPower (R the view's reflection vector: Phong, not
-# Blinn), and a cube-map reflection: CubeScale x FresnelScalar x a Fresnel term of
+# Besides the texel, Forza's car shaders add a specular term, SpecularAmount x
+# SpecularColor x the directional light x (R.L)^SpecularPower (R the view's reflection
+# vector: Phong, not Blinn), and a cube-map reflection: CubeScale x FresnelScalar x a Fresnel term of
 # FresnelIndex in the paint and trim shaders, CubeScale alone in the chrome ones
 # (research/forza-materials.md, "Gloss: Forza's specular and reflection on trims and
 # rims"). The defaults per technique are those of the shared
@@ -662,6 +670,21 @@ CHROME_GLOSS_DEFAULTS = {
     "chrome_rim": (1.0, 0.5),
     "chrome_rim_v2": (1.0, 0.5),
 }
+# SpecularColor (the mean of its RGB) of the techniques Normal.xml doesn't give white;
+# the shaders multiply the specular by it (issue #176). Ignored, the large black trims
+# (plastic2, matte_colors, rubber_trim) drew two to three times Forza's specular.
+SPECULAR_COLOUR_DEFAULTS = {
+    "plastic": 0.4,
+    "plastic2": 0.4,
+    "plastic_simple": 0.4,
+    "matte": 0.3,
+    "matte_colors": 0.3,
+    "rubber_trim": 0.5,
+    "rubber_trim_2": 0.5,
+    "frame": 0.04,
+    "rotor": 0.917,
+    "rim": 0.0,
+}
 
 
 @dataclass(frozen=True)
@@ -690,7 +713,8 @@ class Gloss:
 def gloss_params(settings: dict[str, dict[str, float]], technique: str) -> Gloss | None:
     """The Forza specular and reflection of a technique (its source technique for
     trim_art's subsections, technique_source), the car's ShaderSettings (shader_settings)
-    over GLOSS_DEFAULTS; None for a technique without either (black, wheel_black, the
+    over GLOSS_DEFAULTS and SPECULAR_COLOUR_DEFAULTS (the specular is SpecularAmount x
+    SpecularColor); None for a technique without either (black, wheel_black, the
     cockpit and lamp techniques: not handled here)."""
     n = technique_source(technique).lower()
     own = settings.get(n, {})
@@ -700,8 +724,9 @@ def gloss_params(settings: dict[str, dict[str, float]], technique: str) -> Gloss
     if n not in GLOSS_DEFAULTS:
         return None
     spec, power, scalar, cube, index = GLOSS_DEFAULTS[n]
+    colour = own.get("SpecularColor", SPECULAR_COLOUR_DEFAULTS.get(n, 1.0))
     return Gloss(
-        max(0.0, own.get("SpecularAmount", spec)),
+        max(0.0, own.get("SpecularAmount", spec) * colour),
         max(0.0, own.get("SpecularPower", power)),
         max(0.0, own.get("FresnelScalar", scalar)),
         max(0.0, own.get("CubeScale", cube)),

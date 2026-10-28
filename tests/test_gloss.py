@@ -90,6 +90,21 @@ class DsfGloss(unittest.TestCase):
         # broader than (R.V)^4 still not: a flat panel would light end to end
         self.assertEqual(dm.gloss_material(fm.Gloss(1.0, 1.5, 0.0, 1.0), 13).power, dm.GLOSS_POWER_RANGE[0])
 
+    def test_specular_colour(self):
+        # Forza's specular is SpecularAmount x SpecularColor; Normal.xml gives plastic2 0.4
+        self.assertAlmostEqual(fm.gloss_params({}, "plastic2").specular, 2.0 * 0.4)
+        self.assertAlmostEqual(fm.gloss_params({}, "misc").specular, 0.2)
+        # a car's own colour (the Syclone's plastic2, 0.3) as its RGB mean
+        settings = fm.parse_shader_settings(
+            '<ShaderSettings><plastic2><SpecularPower value="3"/>'
+            '<SpecularColor r="0.3" g="0.3" b="0.3" a="0"/></plastic2></ShaderSettings>'
+        )
+        self.assertAlmostEqual(settings["plastic2"]["SpecularColor"], 0.3)
+        self.assertAlmostEqual(fm.gloss_params(settings, "dsf_trim_gloss~plastic2").specular, 2.0 * 0.3)
+        # the Camaro ZL1 12's splitter: a quarter of the intensity it had (#176)
+        zl1 = {"plastic2": {"SpecularAmount": 2.478, "SpecularPower": 23.55}}
+        self.assertLessEqual(dm.gloss_material(fm.gloss_params(zl1, "plastic2"), 13).intensity, 0.008)
+
     def test_merge(self):
         a = dm.GlossMaterial(0.5, 2.0, 0.0, 5.0, 0.06)
         b = dm.GlossMaterial(0.354, 2.0, 0.0, 5.0, 0.06)
