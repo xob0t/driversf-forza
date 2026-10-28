@@ -1783,9 +1783,11 @@ class Texturing:
         w, h, _ = self.atlases.get(fm.LIGHTS)
         day = np.zeros((h, w), bool)
         cells = set()
+        # By subsection: the plates and damage passes replace the section objects after plan().
+        by_sub = {sub_id: m for (_, sub_id), m in self.resolved.items()}
         for section in sections:
             for sub in section.subsections:
-                m = self.resolved.get((id(section), id(sub)))
+                m = by_sub.get(id(sub))
                 if m is None or m.family != fm.LIGHTS or m.kind not in ("textured", "swatch"):
                     continue
                 tris = list(sub.triangles())
