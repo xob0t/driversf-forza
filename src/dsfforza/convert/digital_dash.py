@@ -179,13 +179,16 @@ CELL_MARGIN = 2  # texels kept clear round each digit/gear cell
 PIECE_LIFT = 0.0008
 DIGIT_LIFT = 0.0016
 CHANGES = 2  # colour changes per pixel the rpm makes (rest -> lit -> warning)
-# The digital dials draw their texel as it is, unlit (shader program 163: no light term),
-# where the cabin round them is lit and dim. Vanilla digital textures are dark screens
-# (median luminance 0 to 47) with bright glyphs; Forza's LCD scenes are often pale
-# (Panoz, Acura ARX, Devon: 120 to 190) and the LFA's ring is white. The whole texture is
-# scaled down until the displays' mean luminance and their 95th percentile are at most:
-DISPLAY_MEAN_LUMINANCE = 80.0
-DISPLAY_PEAK_LUMINANCE = 192.0
+# The digital dials draw their texel unlit (shader program 163 has no light term) in a
+# dim, lit cabin, and the game's tone curve flattens bright texels: the Panoz's face at
+# texel luminance 157 shows at 205, at 108 still at 181 (runs vm1-20261028-124014,
+# -124528). Vanilla digital textures are dark screens with bright glyphs (backgrounds at
+# median luminance 0 to 47); Forza's LCD scenes are often pale (Panoz, Acura ARX, Devon:
+# 120 to 190) and the LFA's ring is white. The whole texture is scaled down until the
+# displays' mean luminance is at most the brightest vanilla background and their 95th
+# percentile at most:
+DISPLAY_MEAN_LUMINANCE = 48.0
+DISPLAY_PEAK_LUMINANCE = 160.0
 SPEED_SLOTS = 3  # digits laid out for the speed readout (units, tens, hundreds)
 GEAR_CHARS = "R123456"  # g_fDigiData gear: 0 = reverse, then 1..6 (no neutral in DSF)
 BLANK_TEXT = (  # readouts DSF has no value for: drawn empty
@@ -829,13 +832,18 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
         col_of = {s_idx: k for k, s_idx in enumerate(signatures)}
         first = ev_step[0]
         pieces = 0
+        taken = lit.copy()  # pixels a piece may not grow into: other steps' and earlier pieces'
         for k in range(RPM_STEPS):
             at_k = first == k
             if not at_k.any():
                 continue
             v = BAR_LIT_FROM - min(BAR_MAX, 0.5 * steps[k] / max(1.0, redline))
-            # no piece may reach into another's pixels: pieces lie in one plane
-            for x0, x1, y0, y1 in _runs_to_rects(at_k, forbid=lit):
+            # Pieces lie in one plane: one reaching into another's pixels z-fights with it.
+            # A piece may grow over unlit pixels (fewer pieces), not over another step's.
+            rects = _runs_to_rects(at_k, forbid=taken)
+            for x0, x1, y0, y1 in rects:
+                taken[y0:y1, x0:x1] = True
+            for x0, x1, y0, y1 in rects:
                 sigs = sig_img[y0:y1, x0:x1][at_k[y0:y1, x0:x1]]
                 sigs = sigs[sigs >= 0]
                 if not len(sigs):
