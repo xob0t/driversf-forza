@@ -60,7 +60,7 @@ class DsfGloss(unittest.TestCase):
         satin = fm.Gloss(0.5, 5.0, 0.2, 1.0, 2.3)
         m = dm.gloss_material(satin, green=4)
         self.assertGreater(m.intensity, 0)
-        self.assertLessEqual(m.power, 5.0)  # (N.H)^5 is a broad lobe: a lower (R.V) power
+        self.assertAlmostEqual(m.power, 5.0, delta=5.0 * (2**0.25 - 1))  # on the power grid
         self.assertEqual(m.fresnel_power, dm.GLOSS_FRESNEL_POWER)
         self.assertAlmostEqual(m.bias, round(satin.f0, 3))
         # the reflection amount makes up for the dark texel green that masks it
@@ -74,6 +74,21 @@ class DsfGloss(unittest.TestCase):
         self.assertEqual(chrome.intensity, 0.0)
         # the Boss 429's plastic2 (SpecularAmount 12) is capped at the vanilla Lights intensity
         self.assertLessEqual(dm.gloss_material(fm.Gloss(12.0, 14.0, 0.0, 1.0), 20).intensity, dm.GLOSS_INTENSITY_MAX)
+
+    def test_power_as_forza(self):
+        # Forza's specular is Phong like DSF's, (R.L)^SpecularPower, so the power carries
+        # over as is (#176): the Camaro ZL1 12's plastic2 (SpecularAmount 2.478, power
+        # 23.55) was (R.V)^5.66, a lobe broad enough to light its splitter end to end.
+        zl1 = dm.gloss_material(
+            fm.gloss_params({"plastic2": {"SpecularAmount": 2.478, "SpecularPower": 23.55}}, "plastic2"), 13
+        )
+        self.assertGreaterEqual(zl1.power, 23.55 / 2**0.25)
+        self.assertLessEqual(zl1.power, 23.55 * 2**0.25)
+        for power in (8.0, 20.0, 128.0):
+            m = dm.gloss_material(fm.Gloss(1.0, power, 0.0, 1.0), 13)
+            self.assertAlmostEqual(m.power, power, delta=power * (2**0.25 - 1))
+        # broader than (R.V)^4 still not: a flat panel would light end to end
+        self.assertEqual(dm.gloss_material(fm.Gloss(1.0, 1.5, 0.0, 1.0), 13).power, dm.GLOSS_POWER_RANGE[0])
 
     def test_merge(self):
         a = dm.GlossMaterial(0.5, 2.0, 0.0, 5.0, 0.06)

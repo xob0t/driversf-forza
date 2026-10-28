@@ -604,10 +604,11 @@ def texel_scale(settings: dict[str, dict[str, float]], technique: str) -> float:
 # --- the trim and rim shaders' specular and reflection -------------------------------
 #
 # Besides the texel, Forza's car shaders add a specular term, SpecularAmount x the
-# directional light x (N.H)^SpecularPower, and a cube-map reflection: CubeScale x
-# FresnelScalar x a Fresnel term of FresnelIndex in the paint and trim shaders, CubeScale
-# alone in the chrome ones (research/forza-materials.md, "Gloss: Forza's specular and
-# reflection on trims and rims"). The defaults per technique are those of the shared
+# directional light x (R.L)^SpecularPower (R the view's reflection vector: Phong, not
+# Blinn), and a cube-map reflection: CubeScale x FresnelScalar x a Fresnel term of
+# FresnelIndex in the paint and trim shaders, CubeScale alone in the chrome ones
+# (research/forza-materials.md, "Gloss: Forza's specular and reflection on trims and
+# rims"). The defaults per technique are those of the shared
 # media/cars/Shared.zip ShaderSettings/Normal.xml (FH1 and FM4 alike for these); a
 # technique the file gives none of them to (black, wheel_black, grille1) has no
 # specular and no reflection. A car's ShaderSettings.xml overrides them (the Cougar
