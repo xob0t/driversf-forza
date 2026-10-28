@@ -2620,6 +2620,59 @@ def shell_blocks_view(shell: list[carbin.Section], lod: int, eye, reach: float =
     return stopped * 3 >= len(WINDSCREEN_RAYS) * 2
 
 
+def wheel_targets(wheel: Wheel) -> list[tuple]:
+    """The steering wheel's hub and eight points around its rim (Forza space)."""
+    a = wheel.axis
+    t = _norm(_cross(a, (1.0, 0.0, 0.0)) if abs(a[0]) < 0.9 else _cross(a, (0.0, 1.0, 0.0)))
+    b = _cross(a, t)
+    rim = [
+        tuple(wheel.centre[k] + wheel.radius * (math.cos(th) * t[k] + math.sin(th) * b[k]) for k in range(3))
+        for th in (i * math.pi / 4 for i in range(8))
+    ]
+    return [wheel.centre] + rim
+
+
+def shell_lids_cockpit(shell: list[carbin.Section], lod: int, eye, wheel: Wheel, margin: float = 0.02) -> int:
+    """How many rays from the eye to the steering wheel (wheel_targets) the
+    shell at `lod` stops before they reach it, glass included. Open cars' main
+    carbins close the cockpit with a lid at their coarsest LOD (Audi R10, R15:
+    a flat body panel at the height of the wheel's top, issue #157), which the
+    windscreen rays pass over."""
+    targets = wheel_targets(wheel)
+    lo = [min(p[k] for p in [eye, *targets]) for k in range(3)]
+    hi = [max(p[k] for p in [eye, *targets]) for k in range(3)]
+    tris = [
+        tri
+        for s in shell
+        for sub in s.subsections
+        if sub.lod == lod
+        for t in sub.triangles()
+        for tri in [[s.vertices_for(sub)[i].position for i in t]]
+        if all(min(p[k] for p in tri) <= hi[k] and max(p[k] for p in tri) >= lo[k] for k in range(3))
+    ]
+    stopped = 0
+    for p in targets:
+        d = _sub(p, eye)
+        length = math.sqrt(_dot(d, d))
+        ray = _scale(d, 1 / length)
+        if any((h := _ray_hit(eye, ray, tri)) is not None and h < length - margin for tri in tris):
+            stopped += 1
+    return stopped
+
+
+LID_RAYS = 3  # eye-to-wheel rays (of 9) a shell may stop before it counts as a lid
+
+
+def shell_closes(shell: list[carbin.Section], lod: int, cf: CockpitFit) -> str | None:
+    """What the shell at `lod` closes from the eye: "windscreen"
+    (shell_blocks_view), "cockpit" (shell_lids_cockpit) or None."""
+    if shell_blocks_view(shell, lod, cf.eye):
+        return "windscreen"
+    if shell_lids_cockpit(shell, lod, cf.eye, cf.wheel) >= LID_RAYS:
+        return "cockpit"
+    return None
+
+
 NEAR_PLANE = 0.01  # m, cube-face near plane for the visibility pass
 # Head-movement volume for the visibility pass (Forza space, m): DSF's cockpit
 # camera bobs, leans and looks around (holes in the IS F and M3 when only
@@ -3125,16 +3178,15 @@ def convert_interior(
     # What the driver sees of the glass: crack lines start and rim shards sit there.
     sight = GlassSight(sections, cf.camera or cf.eye, place)
     shell_lod = opts.shell_lod
-    # Step to finer shell LODs while the shell closes the windscreen.
-    while (
-        shell
-        and shell_lod > 1
-        and shell_blocks_view(shell, max((l for l in shell_lods if l <= shell_lod), default=shell_lod), cf.eye)
-    ):
-        log(f"cockpit shell: LOD {shell_lod} closes the windscreen; trying LOD {shell_lod - 1}")
+    # Step to finer shell LODs while the shell closes the windscreen or the cockpit.
+    while shell and shell_lod > 1:
+        closed = shell_closes(shell, max((l for l in shell_lods if l <= shell_lod), default=shell_lod), cf)
+        if not closed:
+            break
+        log(f"cockpit shell: LOD {shell_lod} closes the {closed}; trying LOD {shell_lod - 1}")
         shell_lod -= 1
     ladder = [(cell, shell_lod) for cell in ([opts.decimate] if opts.decimate else DECIMATE_LADDER)]
-    if shell_lods and max(shell_lods) > shell_lod and not shell_blocks_view(shell, max(shell_lods), cf.eye):
+    if shell_lods and max(shell_lods) > shell_lod and not shell_closes(shell, max(shell_lods), cf):
         ladder.append((ladder[-1][0], max(shell_lods)))
     attempts = []
     for cell, shell_lod in ladder:

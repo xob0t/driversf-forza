@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 import struct
+import types
 
 from dsfforza.convert import cockpit
 from dsfforza.convert import forza_materials as fm
@@ -499,6 +500,41 @@ def test_seat_follows_the_steering_marker():
     assert max(abs(a - b) for a, b in zip(frame, cockpit.VANILLA_MARKER_FROM_SEAT)) < 1e-4
     assert abs(marker[1] - seat[1] - 0.505) < 2e-3 and abs(marker[2] - seat[2] - 0.385) < 2e-3
     assert report["driver"]["from"] == [0.3, -0.4, -0.12] and "body_eye_from_camera" in report
+
+
+def _shell(quads: dict[int, list]) -> carbin.Section:
+    """A main-carbin body section: per LOD, quads given by their four corners."""
+    verts, subs = [], []
+    for lod, corners in quads.items():
+        idx = []
+        for quad in corners:
+            n = len(verts)
+            verts += [carbin.Vertex(p, (0.0, 0.0), (0.0, 0.0), (0.0, 1.0, 0.0)) for p in quad]
+            idx += [n, n + 1, n + 2, n, n + 2, n + 3]
+        subs.append(carbin.SubSection("body", lod, 4, (0.0, 1.0, 0.0, 1.0) * 2, idx))
+    return carbin.Section("body", (0, 0, 0), (0, 0, 0), (0, 0, 0), lod_vertices=verts, subsections=subs)
+
+
+def test_shell_lid_over_an_open_cockpit_steps_to_a_finer_lod():
+    # Audi R10 (#157): the main carbin's LOD 5 closes the open cockpit with a flat
+    # panel at the height of the wheel's top; LOD 4 has the opening. The windscreen
+    # rays pass over the panel, the rays from the eye to the wheel don't.
+    eye = (-0.2, 0.75, -0.08)
+    wheel = cockpit.Wheel((-0.2, 0.55, -0.55), cockpit._norm((0.0, 0.3, 1.0)), 0.15)
+    cf = types.SimpleNamespace(eye=eye, wheel=wheel)
+
+    def flat(x0, x1, y, z0, z1):
+        return [(x0, y, z0), (x1, y, z0), (x1, y, z1), (x0, y, z1)]
+
+    sides = [flat(-1.0, -0.45, 0.6, -1.5, 0.6), flat(0.45, 1.0, 0.6, -1.5, 0.6)]
+    shell = [_shell({4: sides, 5: [flat(-1.0, 1.0, 0.62, -1.5, 0.6)]})]
+    assert not cockpit.shell_blocks_view(shell, 5, eye)  # the old rule kept LOD 5
+    assert cockpit.shell_lids_cockpit(shell, 5, eye, wheel) >= cockpit.LID_RAYS
+    assert cockpit.shell_closes(shell, 5, cf) == "cockpit"
+    assert cockpit.shell_lids_cockpit(shell, 4, eye, wheel) == 0 and cockpit.shell_closes(shell, 4, cf) is None
+    # A closed car's roof above the eye and its floor under the wheel are no lid.
+    closed = [_shell({5: [flat(-1.0, 1.0, 1.2, -1.0, 1.0), flat(-1.0, 1.0, 0.1, -2.0, 1.0)]})]
+    assert cockpit.shell_closes(closed, 5, cf) is None
 
 
 if __name__ == "__main__":
