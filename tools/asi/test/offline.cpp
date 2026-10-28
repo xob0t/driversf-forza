@@ -306,6 +306,35 @@ int main(int argc, char** argv)
         CHECK(copy[20] == 30 && copy[0] == 1 && strcmp((char*)copy + 0x54, "OFFLINE A") == 0);
     }
 
+    // The maker menu's per-car check (call at 0x007111D1 to FUN_00710DA0) for car i of a
+    // group: a car sold at a garage the profile has opened (item type 2, garage 2) is
+    // available. Card texts exist for i < 20 only; past them the screen holds other
+    // things (issue #181: an int where the text object was read, a crash).
+    {
+        typedef bool(__fastcall * CheckFn)(void* screen, void*, void* item, int i);
+        CHECK(*(BYTE*)0x007111D1 == 0xE8);
+        CheckFn check = (CheckFn)(0x007111D1 + 5 + *(int*)(0x007111D1 + 1));
+        CHECK((unsigned)(size_t)check != 0x00710DA0);
+        static unsigned char engine[0x400], profile[0x14C + 0xA10], item[0x100];
+        static unsigned screen[0x318 / 4 + 64];
+        *(unsigned**)(engine + 0x36C) = (unsigned*)profile;
+        unsigned* opened = (unsigned*)(profile + 0x14C + 0x9B8);   // {garage, bits} x 10
+        opened[0] = 2;
+        opened[1] = 1;
+        *(int*)(item + 0xA0) = 2;
+        *(int*)(item + 0xEC) = 2;
+        for (unsigned& v : screen) v = (unsigned)(size_t)&screen[0];   // objects whose "vtable" is no vtable
+        for (int i = 0; i < 20; i++) screen[0x1C0 / 4 + i] = 0;          // no card texts: nothing to write
+        void* saved = *(void**)0x00FE7228;
+        *(void**)0x00FE7228 = engine;
+        CHECK(check(screen, nullptr, item, 3));
+        CHECK(check(screen, nullptr, item, 31));
+        CHECK(check(screen, nullptr, item, 999));
+        opened[1] = 0;   // garage 2 not opened: not available, wherever the car is
+        CHECK(!check(screen, nullptr, item, 3) && !check(screen, nullptr, item, 31));
+        *(void**)0x00FE7228 = saved;
+    }
+
     // Spool item lists past 1100 (SSIC SPOL): load through the patched 0x0059B6D0 from a
     // fake reader whose entry 0 is the list, then find UIDs through 0x0059B5A0.
     {

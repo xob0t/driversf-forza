@@ -1229,6 +1229,28 @@ void __fastcall carlist_hook(uint8_t* screen)
     carlist_post(screen);
 }
 
+// The maker menu (FUN_00711040) calls FUN_00710DA0(item, i) for each car i of
+// each group: it answers whether the car can be had (bought, or sold at a
+// garage the player has opened; a maker with none is not listed) and, if so,
+// writes that into card i's vehicle_field_date text ([screen+0x1C0+i*4], 20 of
+// them; issue #181). For i of 20 and up the original runs on a zeroed screen
+// at card 0, whose text slot is NULL: same answer, nothing written.
+typedef bool(__fastcall* CardCheckFn)(void* screen, void*, void* item, int i);
+const CardCheckFn card_check_orig = (CardCheckFn)0x00710DA0;
+uint8_t g_no_screen[0x318];   // the vehicles screen object's size
+
+bool __fastcall maker_card_check(uint8_t* screen, void*, void* item, int i)
+{
+    if (i >= 0 && i < kGroupCars) return card_check_orig(screen, nullptr, item, i);
+    bool can = card_check_orig(g_no_screen, nullptr, item, 0);
+    static int logged = 0;
+    if (can && logged < 3) {
+        logged++;
+        dsf_log("garage: maker menu: car %d of a group can be had; no card %d to write it on", i, i + 1);
+    }
+    return can;
+}
+
 // [garage] menu_debug=1: a thread logs the vehicles screen's script variables when they change.
 const char* const kDebugVars[] = {"itemBrowserIndex", "categorySelected", "currentItemNum", "NumItemsVisible",
                                   "startPageSelected", "ItemBrowserIndex", "currentItemMenuState", "itemSelected",
@@ -1472,7 +1494,7 @@ bool install_list()
 bool install_window()
 {
     const uint8_t none[1] = {0};
-    Edit edits[5];
+    Edit edits[6];
     int n = 0;
     edits[n++] = edit_u32(0x00E18B1C, none, 0, 0x006C55A0, (uint32_t)group_car);    // garage vtable slot 0x12C
     edits[n++] = edit_u32(0x00E18B20, none, 0, 0x006C55C0, (uint32_t)group_copy);   // slot 0x130
@@ -1485,6 +1507,11 @@ bool install_window()
     loop = {0x007118C3, 8, {0x89, 0x44, 0x24, 0x30, 0x3B, 0x44, 0x24, 0x28}, {0xE8, 0, 0, 0, 0, 0x90, 0x90, 0x90}};
     rel = (int32_t)((uint32_t)loop_stub - (0x007118C3 + 5));
     memcpy(loop.neu + 1, &rel, 4);
+    // The maker menu's per-car check writes card i's text for every car i of the group.
+    Edit& check = edits[n++];
+    check = {0x007111D1, 5, {}, {}};
+    call_bytes(check.old, 0x007111D1, 0x00710DA0);
+    call_bytes(check.neu, 0x007111D1, (uint32_t)maker_card_check);
     // The maker menu fill (slot 0x124) tells the script 19 for a windowed maker;
     // install_groups has already pointed it at fill_makers when it ran.
     if (bytes_equal(0x00E18B14, "\x40\x69\x6C\x00", 4))
@@ -1492,7 +1519,7 @@ bool install_window()
     if (!edits_match("big maker groups", edits, n) || !apply_edits("big maker groups", edits, n)) return false;
     g_window_on = true;
     dsf_log("garage: maker groups of up to %d cars; one of %d or more is shown %d cards at a time "
-            "(vfuncs 12C/130 at E18B1C, car list 7113A0, 7118C3)",
+            "(vfuncs 12C/130 at E18B1C, car list 7113A0, 7118C3, maker menu card check 7111D1)",
             g_max_cars, kGroupCars, kWindowCards);
     return true;
 }

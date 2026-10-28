@@ -7,6 +7,8 @@
 --          the source entry (266) with ManufacturerName "DSFT nn" (perMaker cars
 --          per maker), Selectable; once in a car, every own-th of them is marked
 --          unlocked and owned.
+--          garage = n: sold at garage n (UnlockedInGarage), like the vanilla cars
+--          the player buys there.
 --   set    once in a car: SetVehicleUnlocked/Owned/Driven/DrivenInTakeARide for
 --          each ID, then TriggerAutoSave.
 --   check  once in a car (before set): log every flag of each ID.
@@ -61,7 +63,7 @@ if type(cfg.fill) == "table" and type(vehicleStats) == "table" then
 		local id = (f.first or 400) + i
 		local e = {}
 		for k, v in pairs(source) do e[k] = v end
-		e.UnlockedInChapter, e.UnlockedInGarage, e.UnlockByActivity = nil, nil, nil
+		e.UnlockedInChapter, e.UnlockedInGarage, e.UnlockByActivity = nil, f.garage, nil
 		e.ManufacturerName = string.format("DSFT %02d", math.floor(i / per))
 		e.Selectable = true
 		e.Price = 1000 + id

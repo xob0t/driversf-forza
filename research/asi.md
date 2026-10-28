@@ -307,6 +307,26 @@ installed).** All or nothing, after the list and group patches:
 | 0x7113A0 | `sub esp,0x208` | `jmp carlist_hook`: picks the window, runs the car list, then sets the "x/y OWNED" texts and `[screen+0x28]` from the whole group |
 | 0x7118C3 | `mov [esp+0x30],eax; cmp eax,[esp+0x28]` | `call loop_stub`: the loop also ends after 19 cards; records which car each card shows |
 | 0xE18B14 (slot 0x124) | `0x006C6940` | `fill_makers` (as with `max_groups`): `ManufacturerNumList` says 19 for a maker of 20 or more listed cars |
+| 0x7111D1 | `call 0x00710DA0` | `call maker_card_check`: card *i* below 20 as vanilla; from 20 on the original runs on a zeroed screen at card 0 (same answer, no text written) |
+
+**The maker menu's per-car check (confirmed-static, issue #181).** The maker
+menu FUN_00711040 walks every car *i* of every group (count from slot 0x130,
+the whole group) and, for each car the profile hasn't unlocked (flag-list bit
+0), calls FUN_00710DA0(item, *i*) on the vehicles screen. That answers
+whether the car can be had, which decides whether the maker is listed: item
+type 1 (`[item+0xA8]`, a car bought with WP) through FUN_005083B0, type 2
+(`UnlockedInGarage`, `[item+0xEC]` the garage) through FUN_00507E40, which
+looks the garage up in the progression's `{garage, bits}` × 10 at +0x9B8
+(save block offset 0xA60) and tests bit 0. When the answer is yes and card
+*i*'s `vehicle_field_date` slot (`[screen+0x1C0+i*4]`) is set, it writes the
+garage's name (table of 32-byte names at 0xF18448: 1 FISHERMANS WHARF,
+2 DOWNTOWN, ...) or the price into it through FUN_006CB160, which calls the
+element's vfuncs 0xAC/0xA8. Nothing bounds *i*: vanilla groups stop at 20.
+With 1000-car groups, car 31 of the full roster's Chevrolet group (vanilla
+ID 162, sold at Downtown) read `itemState_` slot 9 as a text element, whose
+first word is 3, and faulted reading 0xAF at 0x006CB16B. A save that has
+every vanilla car unlocked (the test VMs' save: 293 of 304) never makes the
+call, which is why the garage tests never hit it.
 
 A maker of up to 19 listed cars is shown as vanilla (window at car 0). One of
 20 or more gets 19 cards, so card 20's `Header_Sprite_20` stays free for the
