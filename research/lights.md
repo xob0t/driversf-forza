@@ -1230,6 +1230,66 @@ run `vm1-20261028-104816`, IDs 306, 305, 304, 182):
 - 300C and Mustang GT 05 (unchanged by this; clean shots of both, item 7 of #163's report):
   the 300C's tails as on master; the Mustang's round head lamp bowls stay dark (#158).
 
+### Head lamps white plates by day (after #164)
+
+Symptom (confirmed-runtime): after #164 the VW GTI VR6's head lamps by day were solid white
+plates; on master before it the lamp could be read through DSF's dark window glass
+(`img/lampglass-gtivr6-ingame.jpg`, right half). The Lancer Evo VI and BMW M3 E30 looked the
+same way by day without any cover (run `vm1-20261028-112351`, `-Views nose`).
+
+Measure (offline-checked; `out/t1/front.py` in the `t3-cc1295ad` worktree, an orthographic
+front view of the full entry at 4 mm, z-buffered, per visible lamp pixel the light type and
+texel; the 150 vanilla vehicles and the built ports). Vanilla 241's 0x1D head lamps carry more
+glow than the ports' (alpha median 98, mean 112, against the GTI's 60 and 76), yet by day they
+read as lamps: their glow follows the lens's flutes, stripes of high alpha with dark texels
+between, so where it clips the stripes stay apart. The ports' day glow (#142) is a smooth blob
+hot in the middle and dark only at the rim; clipped, it is a plate. What differs is the
+level: the game scales a lamp's glow by its type (0x1D 10, a 0x01 head lamp or 0x03 position
+lamp 2), and 99 of the 130 vanilla vehicles with a day-lit white front lamp light only a small
+0x03 position lamp by day beside 0x01 head lamps (vanilla 229, an R33 Skyline). Per vehicle,
+the day-lit front lamp emission (alpha / 255 x the type's scale x area, cm2) is p50 144,
+p75 311, p90 1254 over those 130; the day-lit area p10/50/90 66 / 248 / 454 cm2.
+
+Cause: the ports' head lamps are 0x1D on 524 of 573 cars ("Head lamps dark by day") and take
+vanilla's day-lit alpha (`DAY_HEAD_ALPHA`) over the whole Forza lamp, so they light at 0x1D's
+10 over an area as large as vanilla's: by day the ports' median emission was 686 and 100 cars
+were above vanilla's p90.
+
+Fix (`dsf_materials.DAYTIME_GLOW`, `Texturing.daytime_mask`, `Binding.set_daytime`,
+`lights.LampPlan.is_daytime`): every Lights texel that a 0x1D head lamp triangle samples glows
+at 0.2 of what it did, a 0x01 or 0x03 lamp's glow: the day glow (#142) where it has one, else
+the converted alpha, and the swatch cell of a tiling lamp part. Texels of a lens that also
+covers an indicator (the Evo VI's) keep theirs. `Texturing.resolved` is looked up by
+subsection: the plates and damage passes replace the section objects after `plan()`. The atlas is rendered in `prepare()` before the lamp
+plan exists (it keys on the subsections `damage.split_exposed` makes later), so it is
+rendered again after the plan for the cars that have such texels (one more render, about a
+second). 0x01 head lamps (49 cars with their own position lamps) are unchanged.
+
+Roster (offline, `out/t1/survey.py`: Forza side, the `visible_white` view of the
+`Texturing._glow` texels on 0x1D head lamps; 572 cars, NIS_Leaf_11 has no car data;
+emission scaled by 0.67, the DSF / Forza ratio of the four built cars):
+
+| | p10 / 50 / 90 | over vanilla p90 | over vanilla p75 |
+| --- | --- | ---: | ---: |
+| ports with a day-lit head lamp glow (514), master | 188 / 686 / 1545 | 100 | 421 |
+| the same, this change | 38 / 137 / 309 | 0 | 50 |
+| vanilla (130 vehicles) | p50 144, p75 311, p90 1254 | | |
+
+The highest after the change: SAA_93Aero_02 595, VW_GTIVR6_98 574, LOT_Carlton_89 529.
+
+In game (confirmed-runtime, VM 1, `-Views 'nose,rear,nose+night,rear+night' -Palette 0
+-ShotSeconds 3 -WaitSeconds 600`; IDs 1 GTI VR6, 2 Lancer Evo VI, 3 M3 E30, 5 Devon GTX, vanilla
+241 (0x1D) and 229 (0x01); master `out/t1/before` run `vm1-20261028-112351`, this change
+`out/t1/after` run `vm1-20261028-112849`; then IDs 1 GTI VR6, 2 Mustang GT 05, 3 Focus RS500,
+4 M3 E36, vanilla 241 and 229, master `out/t1/before2` run `vm1-20261028-115057`, this change with
+the next PR's head lamp units `out/t1/after2` run `vm1-20261028-115446`; the first car of a run
+misses its first views, so vanilla 241 went first): by day the GTI VR6's, Evo VI's, M3 E30's and
+M3 E36's head lamps show their lens and reflector with a soft glow, as vanilla 241's do (master:
+clipped white plates); in the dark mood they glow, a little smaller than on master
+(`img/headlamps-daytime-glow-ingame.jpg`). Built (DSF side, `front.py`), day-lit emission
+master -> this change: GTI VR6 2717 -> 547, Evo VI 2184 -> 478, M3 E30 1990 -> 398, Devon GTX
+407 -> 82.
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and
@@ -1266,7 +1326,8 @@ run `vm1-20261028-104816`, IDs 306, 305, 304, 182):
    reflection the bake doesn't draw, and the pass tables (blend states) of the effects
    aren't decoded. Issue #89.
 8. Head lamp glow by day (issue #124, "Head lamp glow by day"): only clear
-   front lenses and head lamp surfaces get it. Clear rear lenses over reverse
+   front lenses and head lamp surfaces get it; on 0x1D lamps at a fifth ("Head lamps white
+   plates by day"). Clear rear lenses over reverse
    lamps still glow by their opacity, and so do front lenses with no lamp
    behind them within 0.4 m.
 
