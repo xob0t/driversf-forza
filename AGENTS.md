@@ -16,7 +16,9 @@ Research notes are in `research/` (read the ones for your area first).
   `out\lua-src` and `out\db` (`uv run dsff game_data prepare`). Before the
   worktree is removed, run
   `.\tools\worktree-setup.ps1 -Unlink`: some delete tools follow junctions
-  and would empty the main checkout's folders.
+  and would empty the main checkout's folders. Worktrees removed without it
+  are cleaned up by `.\tools\worktree-setup.ps1 -Sweep` in the main checkout
+  (`merge-pr.ps1` runs it).
 - Never write to the main checkout or its `out\` (builds, installs and
   releases run there); write only under your worktree. Read-only use of an
   existing build there (e.g. `out\build` as a "before") is fine.
