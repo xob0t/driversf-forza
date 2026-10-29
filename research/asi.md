@@ -810,6 +810,18 @@ every 10 s with the running total, and a line each time a frame's queue first
 reaches a new multiple of 1024 entries from 8192 up, so a run shows how near
 its frames come. `[render] drop_full=0` keeps the vanilla trap.
 
+**With DSF Enhanced** (dsf-enhanced PR #12, `[Limits] DrawQueueEntries`). DSF Enhanced owns the
+fix: it bounds FUN_00BB5710 itself, removes the trap at 0x00BB5B5A, enlarges both frame queues
+(65,536 entries by default, capacity at header +4), bounds the fifth inlined append at
+0x006C21F0 and grows the two 4 MB per-frame draw-data areas. It creates the named event
+`Local\DSFEnhanced.DrawQueue.<pid>` in DllMain once its guard is in. `[render]` opens that event
+first and, when it exists, patches nothing (log: "DSF Enhanced's draw queue guard is active").
+When dsfforza.asi loads first (from the game root), DSF Enhanced finds the three call sites
+patched, leaves them, and still enlarges the queues; the bounded append reads the capacity from
+the queue header, so it follows ("reached 11264 of 65536" in DSF Enhanced's tests). Without
+DSF Enhanced, `[render]` is the only guard, and the 4 MB draw-data areas stay unbounded; a
+vanilla world stays under half the queue, so they aren't reached there.
+
 Cost: nothing until a queue is full. A frame over the limit misses the draws
 submitted after it filled, for that frame only.
 

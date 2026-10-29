@@ -114,6 +114,18 @@ void mod_render_init()
         dsf_log("render: draw queue full stays fatal ([render] drop_full=0)");
         return;
     }
+    // DSF Enhanced bounds FUN_00BB5710 itself and enlarges the queues (its [Limits]
+    // DrawQueueEntries, dsf-enhanced PR #12). Its DllMain creates this event once that
+    // guard is in; when it loaded first, it alone handles the queue. When this plugin
+    // loads first, DSF Enhanced finds these call sites patched and still enlarges the
+    // queues: bounded_push reads the capacity from the queue header, so it follows.
+    char marker[64];
+    wsprintfA(marker, "Local\\DSFEnhanced.DrawQueue.%lu", GetCurrentProcessId());
+    if (HANDLE h = OpenEventA(SYNCHRONIZE, FALSE, marker)) {
+        CloseHandle(h);
+        dsf_log("render: DSF Enhanced's draw queue guard is active (%s); drop_full stands down", marker);
+        return;
+    }
     // All or nothing: check every site before changing any.
     bool same = check_bytes(kTrapJump, kTrapJumpBytes, 6);
     for (int i = 0; i < kPushCallCount; i++) same = same && check_bytes(kPushCalls[i].va, kPushCalls[i].bytes, 5);
