@@ -251,6 +251,35 @@ class MirrorMount(unittest.TestCase):
         self.assertEqual(_tree(out)[4], (41, 38))
         self.assertEqual(report["7,8 mirror -x"]["to"], "chassis")
 
+    def test_mirrors_leave_a_shared_parent_in_turn(self):
+        # As on the DBR9's host: both mirrors under the bonnet (slot 5); each is on the body.
+        records = [
+            _record(4, 0, 6, flags=23),
+            _record(1, 38, 5, 0, 0, 7),
+            _record(1, 4, 3, 5, 5, 1),
+            _record(1, 41, 1, 6, 6, 4),
+            _record(1, 40, 1, 7, 7, 4),
+            _record(1, 36, 1, 8, 8, 0),
+        ]
+        head = bytearray(upvh.HEADER_SIZE)
+        head[:4] = b"AWHF"
+        struct.pack_into("<6I", head, 4, 0, 0, 26, len(records), 1, 0)
+        head[0x2D] = 1  # mirrors
+        data = bytes(head) + b"".join(records) + TAIL
+        self.assertIsNone(damage.move_subtree(data, 3, 1))  # -x first: +x is still in the way
+        plan = _plan({}, {(0, 0): 38, (5, 5): 4, (6, 6): 41, (7, 7): 40, (8, 8): 36})
+        plan.boxes = {
+            (0, 0): [(-0.8, 0.3, 0.1), (0.8, 0.3, 0.1)],
+            (5, 5): [(0.0, 0.2, 1.2)],
+            (6, 6): [(-0.81, 0.3, 0.1)],
+            (7, 7): [(0.81, 0.3, 0.1)],
+            (8, 8): [(0.0, 0.0, -2.0)],
+        }
+        out, report = plan._remount_mirrors(data)
+        self.assertEqual(_tree(out), [(0, None), (38, 0), (4, 38), (41, 38), (40, 38), (36, 38)])
+        self.assertEqual(_flags(out), [23, 7, 0, 4, 4, 0])
+        self.assertEqual(sorted(report), ["6,6 mirror -x", "7,7 mirror +x"])
+
 
 if __name__ == "__main__":
     unittest.main()

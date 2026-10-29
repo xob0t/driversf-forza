@@ -3073,43 +3073,56 @@ class DamagePlan:
         mount (DamagePlan.bound), where its host parent is another (move_subtree).
         When that record can't take it in slot order, under the chassis' instead: a
         mirror on a bonnet the door record held (ARX-01b), or on a door the bonnet
-        record held (DBR9), stays on the body rather than flying off with a panel
-        it isn't on."""
+        record held (DBR9), stays on the body rather than leaving with a panel it
+        isn't on."""
         report = {}
+        pending = {}
         for pair, panel in sorted(self.panels.items()):
-            if panel.role not in MIRRORS or pair not in self.boxes:
-                continue
-            mount = self._mirror_mount(pair)
-            if mount is None:
-                continue
-            slot = self.bound(mount)[0]
-            h = upvh_mod.parse(data)
-            par = _parents(h)
-            mirror = next((r for r in h.records if r.type == 1 and (r.slot, r.model) == pair), None)
-            if mirror is None or par[mirror.index] is None:
-                continue
-            parent = h.records[par[mirror.index]]
-            # A record without a slot of its own (the front structure) moves with the chassis.
-            if (parent.slot if parent.slot >= 0 else self.chassis[0]) == slot:
-                continue
-            chassis = next((r for r in h.records if r.type == 1 and r.role == 38), None)
-            target = next((r for r in h.records if r.type == 1 and (r.slot, r.model) == mount), None)
-            if target is None or target.slot != slot:
-                target = chassis if slot == self.chassis[0] else None
-            moved = move_subtree(data, mirror.index, target.index) if target is not None else None
-            if moved is None and target is not chassis and chassis is not None and parent is not chassis:
-                target = chassis
-                moved = move_subtree(data, mirror.index, chassis.index)
-            if moved is None:
-                report[self.label(pair)] = {"mount": self.label(mount), "kept": role_name(parent.role)}
-                continue
-            data = moved
-            report[self.label(pair)] = {
-                "mount": self.label(mount),
-                "from": role_name(parent.role),
-                "to": role_name(target.role),
-            }
+            if panel.role in MIRRORS and pair in self.boxes:
+                mount = self._mirror_mount(pair)
+                if mount is not None:
+                    pending[pair] = mount
+        # Both mirrors under one record (the DBR9's bonnet): the one with the higher slot
+        # has to leave first, so the rest are tried again until none moves.
+        while pending:
+            moved = False
+            for pair, mount in list(pending.items()):
+                out, entry = self._remount(data, pair, mount)
+                if out is not None:
+                    data, moved = out, True
+                    del pending[pair]
+                    if entry:
+                        report[self.label(pair)] = entry
+            if not moved:
+                break
+        for pair, mount in pending.items():
+            report[self.label(pair)] = {"mount": self.label(mount), "kept": "host parent"}
         return data, report
+
+    def _remount(self, data: bytes, pair, mount) -> tuple[bytes | None, dict | None]:
+        """One mirror of _remount_mirrors: (the hierarchy, what moved), the hierarchy
+        unchanged and None if its parent already moves its mount, (None, None) if it
+        can't move in slot order (yet)."""
+        slot = self.bound(mount)[0]
+        h = upvh_mod.parse(data)
+        par = _parents(h)
+        mirror = next((r for r in h.records if r.type == 1 and (r.slot, r.model) == pair), None)
+        if mirror is None or par[mirror.index] is None:
+            return data, None
+        parent = h.records[par[mirror.index]]
+        # A record without a slot of its own (the front structure) moves with the chassis.
+        if (parent.slot if parent.slot >= 0 else self.chassis[0]) == slot:
+            return data, None
+        chassis = next((r for r in h.records if r.type == 1 and r.role == 38), None)
+        target = next((r for r in h.records if r.type == 1 and (r.slot, r.model) == mount), None)
+        if target is None or target.slot != slot:
+            target = chassis if slot == self.chassis[0] else None
+        out = move_subtree(data, mirror.index, target.index) if target is not None else None
+        if out is None and chassis is not None and target is not chassis and parent is not chassis:
+            target, out = chassis, move_subtree(data, mirror.index, chassis.index)
+        if out is None:
+            return None, None
+        return out, {"mount": self.label(mount), "from": role_name(parent.role), "to": role_name(target.role)}
 
 
 def _parents(h) -> list[int | None]:
