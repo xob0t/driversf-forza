@@ -112,12 +112,24 @@ FLAT_BAND = 0.15  # plain flat faces (no recess walls) only within this
 MIN_FIT = 0.7  # smallest plate scale when fitting a small recess
 # Fallback plates (fallback_height): cost per share of the plate over a badge, lamp or
 # glass, and per share over other sections than its main one, against the gap (m)
-# between plate and face.
-HIDE_COST = 0.5
-# ... and a height that hides none (up to this share: a cell or two of edge) comes
-# first, whatever its cost (#241: the Delta S4's front plate took its grille band, the
-# Lancia shield's edge under it, over its bumper face, 1.7% for a cost of 0.008).
+# between plate and face (#159; the hide cost doubled with the gap's in #213).
+HIDE_COST = 1.0
+# The gap counts twice: a plate standing off its face by a few centimetres shows more
+# than one across a section edge or a little off the host's height (#213: with the gap
+# at 1, shrinking or clearing an emblem's edge moved plates 3 to 7 cm off their faces).
+GAP_COST = 2.0
+# ... plus this once it hides more of a badge than HIDE_NONE (a cell or two of edge):
+# even a sliver of an emblem shows (#241: the Delta S4's front plate took its grille
+# band over the Lancia shield's lower edge, 1.7% of it, for a cost of 0.008). Lamp and
+# exhaust edges keep the share cost alone: the step put plates under bumpers, standing
+# off by 3 to 7 cm, to clear the corner of a tail lamp (the Cougar Eliminator's rear).
+HIDE_STEP = 0.02
 HIDE_NONE = 0.005
+# A fallback plate may shrink to fit between a badge and an edge: scales tried, the
+# cost per unit of shrink, and the narrowest plate (vanilla's: 0.23 m front, 0.226 rear).
+FALLBACK_SCALES = (1.0, 0.9, 0.8)
+SHRINK_COST = 0.05
+MIN_WIDTH = 0.23
 BADGE_BAND = 0.4  # a run of badge-technique cells this wide is grille artwork (m)
 MIX_COST = 0.1
 LOD_PUSH_LIMIT = 0.08  # coarser LODs move the plate out by at most this
@@ -472,53 +484,63 @@ def rest(dm: DepthMap, rows: slice, cols: slice, centre: tuple[float, float], ok
     return float(tt[k]), float(bb[k]), float(lo[k]), gaps[k]
 
 
-def fallback_height(dm: DepthMap, prior_y: float, base: tuple[float, float]) -> tuple[float, str]:
-    """(height, note) of a plate with no face to sit on, at s = 0 (step 3).
+def fallback_height(dm: DepthMap, prior_y: float, base: tuple[float, float]) -> tuple[float, tuple, str]:
+    """(height, size, note) of a plate with no face to sit on, at s = 0 (step 3).
 
     Within PRIOR_BAND of the host's height: where the plate covers the car's
-    face and hugs it best once pushed out to its nearest point (a plate on a
-    mounting pad or bracket, near-vertical), on one panel, and hiding no badge,
-    lamp, glass or exhaust. A grille may sit behind it, as on the real cars (the Mazda 2's
-    lower bumper grille); the emblem slot above it may not (#159: the host's
-    height alone put the plate over the Mazda's emblem and bonnet edge)."""
+    face and hugs it best once rested on it (rest: a plate on a mounting pad or
+    bracket, near-vertical, bent round a curved bumper), on one panel, and hiding
+    no badge, lamp, glass or exhaust; shrunk (FALLBACK_SCALES, at least MIN_WIDTH
+    wide) where that fits it between them (#241). A grille may sit behind it, as
+    on the real cars (the Mazda 2's lower bumper grille); the emblem slot above it
+    may not (#159: the host's height alone put the plate over the Mazda's emblem
+    and bonnet edge)."""
     height, width = dm.depth.shape
     face = face_cells(dm)
     # Badge cells in a run wider than BADGE_BAND are grille artwork drawn with a badge
     # technique (the BMW M1's nose band), not an emblem.
     badge = dm.feat == FEAT_BADGE
-    hidden = badge & (run_widths(badge) * PX < BADGE_BAND)
-    hidden |= np.isin(dm.feat, (FEAT_LAMP, FEAT_EXHAUST)) | (dm.cls == CLASS["glass"])
-    c_ = slice(max(0, int(round(dm.col(-base[0] / 2)))), min(width, int(round(dm.col(base[0] / 2))) + 1))
+    emblem = badge & (run_widths(badge) * PX < BADGE_BAND)
+    hidden = emblem | np.isin(dm.feat, (FEAT_LAMP, FEAT_EXHAUST)) | (dm.cls == CLASS["glass"])
     best = None
-    for dy in np.arange(-PRIOR_BAND, PRIOR_BAND + 0.001, PX):
-        y = prior_y + float(dy)
-        r = slice(max(0, int(round(dm.row(y + base[1] / 2)))), min(height, int(round(dm.row(y - base[1] / 2))) + 1))
-        if r.stop <= r.start:
+    for k in FALLBACK_SCALES:
+        if k < 1.0 and base[0] * k < MIN_WIDTH:
             continue
-        cover = float(face[r, c_].mean())
-        ok = face[r, c_]
-        gap, mixed = 1.0, 1.0
-        if ok.sum() > 6:
-            # The mean gap under the plate once tilted and bent onto the face (rest).
-            gap = float(rest(dm, r, c_, (0.0, y), ok)[3].mean())
-            # Section and material boundaries (bonnet shut line, bumper to body, the
-            # edge of a grille): the plate on one surface.
-            cells = zip(dm.sec[r, c_][ok].tolist(), dm.cls[r, c_][ok].tolist())
-            mixed = 1.0 - Counter(cells).most_common(1)[0][1] / float(ok.sum())
-        hide = float(hidden[r, c_].mean())
-        cost = gap + 0.1 * abs(float(dy)) + HIDE_COST * hide + MIX_COST * mixed
-        key = (round(cover, 1), hide <= HIDE_NONE, -cost)
-        if best is None or key > best[0]:
-            best = (key, y, hide, mixed)
+        size = (base[0] * k, base[1] * k)
+        c_ = slice(max(0, int(round(dm.col(-size[0] / 2)))), min(width, int(round(dm.col(size[0] / 2))) + 1))
+        for dy in np.arange(-PRIOR_BAND, PRIOR_BAND + 0.001, PX):
+            y = prior_y + float(dy)
+            r = slice(max(0, int(round(dm.row(y + size[1] / 2)))), min(height, int(round(dm.row(y - size[1] / 2))) + 1))
+            if r.stop <= r.start:
+                continue
+            ok = face[r, c_]
+            cover = float(ok.mean())
+            gap, mixed = 1.0, 1.0
+            if ok.sum() > 6:
+                # The mean gap under the plate once tilted and bent onto the face (rest).
+                gap = float(rest(dm, r, c_, (0.0, y), ok)[3].mean())
+                # Section and material boundaries (bonnet shut line, bumper to body, the
+                # edge of a grille): the plate on one surface.
+                cells = zip(dm.sec[r, c_][ok].tolist(), dm.cls[r, c_][ok].tolist())
+                mixed = 1.0 - Counter(cells).most_common(1)[0][1] / float(ok.sum())
+            hide = float(hidden[r, c_].mean())
+            cost = GAP_COST * gap + 0.1 * abs(float(dy)) + HIDE_COST * hide + MIX_COST * mixed + SHRINK_COST * (1.0 - k)
+            if float(emblem[r, c_].mean()) > HIDE_NONE:
+                cost += HIDE_STEP
+            key = (round(cover, 1), -cost)
+            if best is None or key > best[0]:
+                best = (key, y, size, hide, mixed)
     if best is None:  # the host's height maps outside the depth map (plan() skips the end)
         raise ValueError(f"{dm.end} plate: no body surface near y {prior_y:.2f}")
-    _, y, hide, mixed = best
+    _, y, size, hide, mixed = best
     note = "no flat face of plate size"
+    if size != base:
+        note += f", shrunk to {size[0] / base[0]:.1f}"
     if hide > 0:
         note += f", hides {hide:.0%} badge/lamp/glass/exhaust"
     if mixed > 0:
         note += f", {mixed:.0%} on other sections"
-    return y, note
+    return y, size, note
 
 
 def plan_end(
@@ -629,9 +651,9 @@ def plan_end(
             f"{'-' if room_w is None else f'{room_w:.2f}'} x {'-' if room_h is None else f'{room_h:.2f}'}"
         )
     else:
-        source, cs, size = "host", 0.0, base
+        source, cs = "host", 0.0
         b = 0.0
-        cy, note = fallback_height(dm, prior_y, base)
+        cy, size, note = fallback_height(dm, prior_y, base)
     # Final plane over the plate's own cells: tilt from the fit, then out to the
     # nearest surface so no cell pokes through.
     rows = slice(max(0, int(round(dm.row(cy + size[1] / 2)))), min(height, int(round(dm.row(cy - size[1] / 2))) + 1))
