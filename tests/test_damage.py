@@ -163,10 +163,10 @@ class ExposedVisible(unittest.TestCase):
         self.assertEqual(report["seen bay lod 1"], 2)
 
 
-def _record(type_: int, role: int, subtree: int, slot: int = -1, model: int = -1) -> bytes:
+def _record(type_: int, role: int, subtree: int, slot: int = -1, model: int = -1, flags: int = 0) -> bytes:
     rec = bytearray(upvh.RECORD_SIZE)
     rec[:8] = upvh.NONE_UID
-    struct.pack_into("<HH", rec, 0x08, type_, role)
+    struct.pack_into("<HHH", rec, 0x08, type_, role, flags)
     struct.pack_into("<H", rec, 0x14, subtree)
     struct.pack_into("<hhh", rec, 0x1A, -1, -1, -1)
     struct.pack_into("<h", rec, 0x2A, model)
@@ -179,21 +179,26 @@ TAIL = struct.pack("<4f", 1.0, 2.0, 3.0, 4.0)  # a table after the records, to c
 
 def _hierarchy() -> bytes:
     """Like host 182's front: root, chassis part (slot 0), the -x door (slot 6) with its
-    mirror (slot 7, with a marker) and a door marker, then the bonnet (slot 8)."""
+    mirror (slot 7, with a marker) and a door marker, then the bonnet (slot 8). +0x0C
+    as host 182's: bit 0 on the records with part children."""
     records = [
-        _record(4, 0, 7),
-        _record(1, 38, 6, 0, 0),
-        _record(1, 32, 4, 6, 7),
-        _record(1, 41, 2, 7, 8),
+        _record(4, 0, 7, flags=23),
+        _record(1, 38, 6, 0, 0, 7),
+        _record(1, 32, 4, 6, 7, 5),
+        _record(1, 41, 2, 7, 8, 4),
         _record(3, 73, 1),
         _record(3, 67, 1),
-        _record(1, 4, 1, 8, 9),
+        _record(1, 4, 1, 8, 9, 0),
     ]
     head = bytearray(upvh.HEADER_SIZE)
     head[:4] = b"AWHF"
     struct.pack_into("<6I", head, 4, 0, 0, 26, len(records), 1, 0)
     head[0x2D] = 1  # mirrors
     return bytes(head) + b"".join(records) + TAIL
+
+
+def _flags(data: bytes) -> list:
+    return [struct.unpack_from("<H", r.raw, 0x0C)[0] for r in upvh.parse(data).records]
 
 
 def _tree(data: bytes) -> list:
@@ -212,10 +217,13 @@ class MirrorMount(unittest.TestCase):
         self.assertEqual([r.subtree for r in h.records], [7, 6, 2, 1, 2, 1, 1])
         self.assertEqual([r.slot for r in h.records if r.type == 1], [0, 6, 7, 8])
         self.assertTrue(out.endswith(TAIL) and len(out) == len(data))
+        self.assertEqual(_flags(out), [23, 7, 4, 0, 4, 0, 0])  # the door has no part child left
         # Under the bonnet the slots can't stay in record order: it goes after its children.
         out, ordered = damage.move_subtree(data, 3, 6)
         self.assertFalse(ordered)
         self.assertEqual(_tree(out)[-2:], [(41, 4), (73, 41)])
+        self.assertEqual(_flags(out)[2], 4)
+        self.assertEqual(_flags(out)[4], 1)  # the bonnet has one now
         with self.assertRaises(ValueError):
             damage.move_subtree(data, 2, 3)  # into its own subtree
 

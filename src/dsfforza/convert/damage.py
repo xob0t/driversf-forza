@@ -3177,6 +3177,17 @@ def move_subtree(data: bytes, index: int, parent: int) -> tuple[bytes, bool]:
     new_sub = rest_sub[:at] + block_sub + rest_sub[at:]
     for r, s in zip(new_raw, new_sub, strict=True):
         struct.pack_into("<H", r, 0x14, s)
+    # Bit 0 of +0x0C is set on exactly the records with part or wheel children (all 150
+    # vanilla hierarchies); a door left with it and no mirror crashed forceOpenPanels.
+    old, new = rest_raw[where[par[index]]], rest_raw[pp]
+    for n, r in enumerate(new_raw):
+        if r is old or r is new:
+            kids, c = [], n + 1
+            while c < n + new_sub[n]:
+                kids.append(struct.unpack_from("<H", new_raw[c], 0x08)[0])
+                c += new_sub[c]
+            flags = struct.unpack_from("<H", r, 0x0C)[0] & ~1
+            struct.pack_into("<H", r, 0x0C, flags | (1 if {1, 2} & set(kids) else 0))
     start, end = upvh_mod.HEADER_SIZE, upvh_mod.HEADER_SIZE + len(raw) * size
     return data[:start] + b"".join(bytes(r) for r in new_raw) + data[end:], ordered
 
