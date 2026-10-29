@@ -130,7 +130,9 @@ Forza cars mostly have no plate. In `tools/batches/testdrive.txt` (40 cars):
      share over another section or material class than its main one (bonnet
      shut line, grille edge), plus 0.05 x the shrink: the plate may shrink to
      0.9 or 0.8 of the host's (not under 0.23 m wide, vanilla's narrowest) to
-     fit between an emblem and an edge (#159, #213, #241). The plate **rests**
+     fit between an emblem and an edge (#159, #213, #241). Cells within 2 cm of a lamp
+     count as hidden; a plate whose best height still covers over 10% of a lamp is
+     dropped (#251, #259). The plate **rests**
      on the face (`rest`, #213): tilted (up to 14 degrees, a plate on a pad or
      bracket) and bent back at its centre line (each half up to 11 degrees, as
      vanilla bends plates on curved bumpers) so that it touches the nearest
@@ -397,6 +399,73 @@ bumper. `render_compare diff` (`out/rc/213`): all 10 cars draw differently, plat
 the other regions that change are the ones a moved plate covers or uncovers (the Delta
 S4's shield +62 px, the 2-Eleven's front badge 0 -> 165 px).
 
+### Fallback plates clear of lamps (#251, #259, 2026-10-29)
+
+The lamp mask was complete (every technique `lights.py` lights, lamp covers included,
+is `FEAT_LAMP`), but `fallback_height` ranks a height first by how much of the plate
+lies on the face, then by cost. A lamp is face, so on race cars whose only face near the
+host's plate height is the rain light's panel, the plate went onto the lamp: the ARX-01b's
+rear (32% of the plate over its two rain-light strips, 12 cm apart on a crossbar 4 cm tall
+above them), the Mazda B09's (15%, two round reflectors under an 8 cm bar). On the Viper
+GTS-R the plate sat between its two lamp covers (0.23 m apart for a 0.236 m plate),
+touching both. Changes (`fallback_height`):
+
+- **A margin round lamps**: cells within `LAMP_MARGIN` (2 cm, about a plate frame) of a
+  lamp count as hidden (1.0 per share, like emblems). Windows keep their own cells only
+  (a margin under the F430 GT's rear window moved its plate off the boot lid).
+- **No plate on a lamp panel**: a best height still over a lamp by more than
+  `LAMP_DROP` (10%) gets no plate at that end, as the Forza car has none (`plan` reports
+  the end as `none`). The B09's lamp-clear alternatives were its rear wing (`winga`, 0.3 m
+  above) and a 7.7 cm gap under the reflectors.
+- **No lettering instead of a lamp**: where the margin would move the plate onto more
+  than `EMBLEM_AREA` (15%) of an emblem's area (strokes grown by a cell) than the plate
+  the search picks with the lamps' own cells alone, that plate stays: kept clear of its
+  rain light's edge, the Evora Type 124's rear went up over its EVORA letters (24% of
+  their area, 5% of strokes); it stays on its bumper face under the lamp (5% of the
+  plate on the lamp's lower edge), as on master. Dropping it instead lost a plate that
+  reads fine; dropping on emblem area alone also took the Zonda Cinque's, which sits
+  next to a badge decal where the vanilla Zonda Cinque (232) has its own plate.
+
+**Roster** (`dsff plates_survey --ref master=origin/master`, the 339 cars of the main
+checkout's full build with a host-fallback plate, each on its build host; only fallbacks
+can change): 12 plates move on 12 cars.
+
+| | front master | now | rear master | now |
+| --- | ---: | ---: | ---: | ---: |
+| host fallbacks | 311 | 311 | 81 | 76 |
+| none (lamp panel) | 0 | 0 | 0 | 5 |
+| over a lamp | 2 | 0 | 7 | 1 |
+| over a badge | 1 | 1 | 3 | 3 |
+| floating | 36 | 38 | 22 | 23 |
+| corner off > 3 cm | 110 | 110 | 39 | 39 |
+| across sections | 66 | 68 | 41 | 36 |
+
+- No rear plate: the ARX-01b's three liveries (32% of the plate on the rain light) and
+  the B09's two (15%).
+- The Viper GTS-R pair's front plate goes from between the lamp covers (y -0.13) to the
+  lower nose (y -0.29), where it was before #213 (-0.28). It floats there by the survey's
+  measure (median gap 50 mm: the nose curves back and down to the grille), as before #213,
+  and reads better in game (#259). That is the front's floating 36 -> 38.
+- The Zonda C12's rear: its two centre lamps are 8 cm apart, the plate 10 cm tall, so it
+  goes under the lower one onto the keel (gap 41 mm, was 7 mm over the lamp's top): the
+  rear's floating 22 -> 23.
+- 1 to 2 cm lower, the lamp's margin: the R390 GT1, Zonda R, S7, C8 Laviolette (rear).
+- The one plate over a lamp left: the Evora Type 124's rear (above).
+- Unchanged on the same 311 front and 76 rear plates: median gap 6.7 and 11.1 -> 11.2 mm,
+  worst corner median 17 and 28 mm (p75 41, 117).
+
+`render_compare diff` (`out/rc/251`, 15 cars built with master's and an earlier version
+of this `plates.py` that dropped the Evora's plate): 13 draw differently, the 12 above and
+the Evora, plates first on each; the other regions are what a plate uncovers (the ARX-01b's
+rain light 1436 -> 2372 px). Its flag "plates: over rear_lamps" is fixed on the ARX-01b and B09, no
+new flag. Renders: `img/plates-251-renders.jpg` (master left).
+
+**In game** (confirmed-runtime; VM runs `vm1-20261029-194717` master and
+`vm1-20261029-195320` this converter, the same 15-car build, IDs 1 to 9, views nose and
+rear; `img/plates-251-ingame.jpg`): the ARX-01b's rain light shows, the B09 has no rear
+plate, both Vipers' plates sit on the lower nose under the lamp covers, the Zonda C12's
+under its centre lamp. Neither run crashed.
+
 ## Open
 
 1. In game: front plates are seen since #180's run (`vm1-20261028-184904`:
@@ -406,9 +475,10 @@ S4's shield +62 px, the 2-Eleven's front badge 0 -> 165 px).
 2. Paint-material plates on hosts whose paint palette gives an odd tint:
    vanilla uses the same material, so the plate should look as on vanilla cars;
    assumed, not checked.
-3. Fallbacks still float on 33 front and 20 rear plates (#213's survey), most
+3. Fallbacks still float on 35 front and 21 rear plates (#251's survey, #277), most
    on race prototypes with an open nose or diffuser at the centre line (Acura
-   ARX, Audi R10/R15, Lola). Some trade a badge for a gap: the 2-Eleven's rear
+   ARX, Audi R10/R15, Lola); the 905 Evo's rear plate is on its wing, the Furai's on
+   its exhaust section. Some trade a badge for a gap: the 2-Eleven's rear
    (4.1 cm, instead of covering 15% of a badge), the Pantera's front (3.4 cm).
    A pad/bracket search (protruding faces) might place some better.
 4. Plate lamps (`numplate`) are trim; they could light with the tail lamps
