@@ -351,7 +351,7 @@ def recolour(params: dict, target) -> tuple[tuple[float, ...], tuple[float, ...]
         k3 = k2 * l3 / l2
     else:
         k2, k3 = 0.0, 1 / w
-    top = 1 / max(max(target), 1e-6)
+    top = 1 / max(*target, 1e-6)
     if k2 > top and k2 >= k3:
         k2 = top
         k3 = (1 - (1 - w) * top) / w
