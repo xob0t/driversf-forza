@@ -220,18 +220,38 @@ static int mismatch_test()
     return failures ? 1 : 0;
 }
 
+// DSF Enhanced's draw queue guard is in (its marker event exists): [render] stands
+// down and leaves the trap branch and the three pushes as they are.
+static int dsfe_test()
+{
+    char marker[64];
+    wsprintfA(marker, "Local\\DSFEnhanced.DrawQueue.%lu", GetCurrentProcessId());
+    HANDLE ev = CreateEventA(nullptr, TRUE, FALSE, marker);
+    CHECK(ev != nullptr);
+    mod_render_init();
+    CHECK(memcmp((void*)0x00BB5A95, "\x90\x90\x90\x90\x90\x90", 6) != 0);  // trap branch kept
+    CHECK(*(int*)0x00BB5B4D == (int)(0x00BB5710 - 0x00BB5B51) &&
+          *(int*)0x00BB5BB6 == (int)(0x00BB5710 - 0x00BB5BBA) &&
+          *(int*)0x00BB7302 == (int)(0x00BB5710 - 0x00BB7306));                // the pushes vanilla
+    CloseHandle(ev);
+    printf("%s (%d failures, DSF Enhanced guard)\n", failures ? "FAILED" : "ok", failures);
+    return failures ? 1 : 0;
+}
+
 int main(int argc, char** argv)
 {
     if (argc < 2 || strcmp(argv[1], "--child") != 0) {
         const char* exe = argc > 1 ? argv[1] : "D:\\Games\\Driver San Francisco\\Driver.exe";
         int mismatch = spawn_child(exe, "mismatch");
+        int dsfe = spawn_child(exe, "dsfe");
         int normal = spawn_child(exe, "normal");   // last, so the log left behind is the normal run's
-        return mismatch ? mismatch : normal;
+        return mismatch ? mismatch : dsfe ? dsfe : normal;
     }
     const char* exe = argv[2];
     if (!map_image(exe)) return 2;
     dsf_core_init();
     if (argc > 3 && strcmp(argv[3], "mismatch") == 0) return mismatch_test();
+    if (argc > 3 && strcmp(argv[3], "dsfe") == 0) return dsfe_test();
 #define DSF_MODULE(name) printf("init %s\n", #name); mod_##name##_init();
 #include "../src/modules.h"
 #undef DSF_MODULE
