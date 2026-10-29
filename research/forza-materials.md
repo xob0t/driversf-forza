@@ -96,7 +96,7 @@ the converter squashes the Forza window UVs into that band
 | --- | --- | --- | --- | --- |
 | body, body_2 | nodamage (alpha 0) | textured | paint | shared PAINT, UV0 on the paint block of the shared paint texture (`lights.md`, "Paint") |
 | window | nodamage | textured | glass | shared GLASS |
-| glass (headlight cover) | Lights | textured | glass | shared GLASS |
+| glass, lights_glass, lights_gls_noemit (lamp covers) | Lights | textured | glass | shared GLASS, except over a lamp: plain `glass` is left out (#163), the textured covers are baked into the lamp texels (#164) (`lights.md`, "Lamp covers drawn as window glass", "Lamp glass") |
 | black_glass | nodamage | textured | trim | shared TRIM |
 | black, frame, bottom, plastic2, weatherstrip, matte_colors, misc, rubber_trim, bumper_frame, undercarriage, race_kit_red | nodamage | mostly swatch | trim | shared TRIM (`--swatch-trims`: Chassis with the swatch colour); textured triangles seen from outside on light artwork, dark detail or flat mid-grey: host Chassis, texels times the technique's PaintScale ("Trim artwork", "Forza's trim shaders and flat black grilles" below); with a Forza specular or reflection a gloss copy of host Lights instead ("Gloss") |
 | chrome, chrome_2, chrome_3, chrome_bump, lights_chrome | nodamage (lights) | textured or swatch | chrome | shared CHROME: GLOBAL_LOD_Chrome (full), GLOBAL_Chassis_Chrome (exterior); "Chrome trim" below |
@@ -864,10 +864,10 @@ already removed the Camaro's band in these views.
    ("Badge plates"), which costs triangles (the Firebird: about 7000 more in
    the full entry, MDXN 0xf6000 to 0x11c800); a material with an alpha test
    would cost none.
-3. Headlight glass uses shared GLASS, so the lamp internals show through it.
-   Whether DSF's glass is transparent enough is unchecked. `detail_glass_*`
-   lenses are opaque Lights texels with the lamp behind baked in
-   (`lights.md`, "Lamp lenses drawn opaque").
+3. Answered: DSF's window glass over a converted lamp hid it (#160). Lamp
+   covers over a lamp are now left out or baked into the lamp texels, as the
+   `detail_glass_*` lenses are (`lights.md`, "Lamp lenses drawn opaque",
+   "Lamp covers drawn as window glass", "Lamp glass").
 4. (Done and dropped: the converted cockpit in the interior entry,
    `cockpit.md`.)
 5. Damage textures (`damage`, `damagelights`) and DSF's damage decal path.
