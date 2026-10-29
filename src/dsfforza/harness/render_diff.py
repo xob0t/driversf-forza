@@ -91,8 +91,46 @@ def changed_cars(before: Path, after: Path) -> tuple[list[dict], dict]:
     }
 
 
-def compare_builds(before: Path, after: Path, car: dict, roots_a, roots_b, out: Path, views, size) -> dict:
-    """One changed car: both builds' renders and scores, and what changed per region."""
+# Regions a change is listed in. "other" is ours with no Forza counterpart: what the
+# converter adds (virtual displays' housings, moved wheel displays: #249).
+LISTED = [*rc.SCORED, "cabin", "other", "displays", "glass"]
+ADDED = "added"  # how "other" is named in the report
+
+
+def region_changes(ga: np.ndarray, gb: np.ndarray, d: np.ndarray, names=LISTED) -> list[dict]:
+    """Per region (ID maps ga, gb of the two builds; d: per-pixel delta E between their
+    renders): the share of the region's pixels that moved or changed by CHANGED or more,
+    when that is 2% or more and the region has MIN_PIXELS."""
+    out = []
+    for name in names:
+        rid = rc.RID[name]
+        ma, mb = ga == rid, gb == rid
+        both = ma & mb
+        n = int((ma | mb).sum())
+        if n < rc.MIN_PIXELS:
+            continue
+        moved = int((ma ^ mb).sum())
+        diff = int((both & (d > CHANGED)).sum())
+        share = (moved + diff) / n
+        if share < 0.02:
+            continue
+        out.append(
+            {
+                "region": ADDED if name == "other" else name,
+                "changed": round(share, 3),
+                "pixels_before": int(ma.sum()),
+                "pixels_after": int(mb.sum()),
+                "dE": round(float(d[both].mean()), 1) if both.any() else None,
+            }
+        )
+    return out
+
+
+def compare_builds(
+    before: Path, after: Path, car: dict, roots_a, roots_b, out: Path, views, size, cockpit: bool = True
+) -> dict:
+    """One changed car: both builds' renders and scores, and what changed per region (the
+    exterior views, and the cockpit view when both builds have a cockpit)."""
     media = car["media"]
     t0 = time.time()
     res: dict = {"media": media, "spool_id": car["spool_id"]}
@@ -105,10 +143,16 @@ def compare_builds(before: Path, after: Path, car: dict, roots_a, roots_b, out: 
         pb = rc.build_pair(Path(after) / "dngvehicles.sp", roots_b, car["spool_id"], media, rep_b)
         metrics_a, metrics_b, changes = {}, {}, []
         folder = out / "cars" / media
-        for vname in views:
-            view = rc.VIEWS[vname]
-            ra = rc.render_view(pa, view, size)
-            rb = rc.render_view(pb, view, size)
+        jobs = [(vname, rc.VIEWS[vname], pa, pb) for vname in views]
+        # The cockpit view from the after build's eye (one camera for both: the pixels compare).
+        camera = rc.cockpit_camera(rep_b) if rc.cockpit_camera(rep_a) else None
+        if cockpit and camera is not None:
+            ca = rc.build_cockpit_pair(Path(before) / "dngvehicles.sp", roots_a, car["before_spool_id"], media, rep_a)
+            cb = rc.build_cockpit_pair(Path(after) / "dngvehicles.sp", roots_b, car["spool_id"], media, rep_b)
+            jobs.append(("cockpit", rc.View("cockpit", camera, modes=("day", "dark")), ca, cb))
+        for vname, view, qa, qb in jobs:
+            ra = rc.render_view(qa, view, size)
+            rb = rc.render_view(qb, view, size)
             metrics_a[vname] = {"day": rc.region_scores(ra)}
             metrics_b[vname] = {"day": rc.region_scores(rb)}
             for mode in view.modes:
@@ -118,27 +162,9 @@ def compare_builds(before: Path, after: Path, car: dict, roots_a, roots_b, out: 
                 la, lb = rc._lab(ra["ours"][mode]), rc._lab(rb["ours"][mode])
                 d = np.linalg.norm(la - lb, axis=-1)
                 ga, gb = ra["regions"]["ours"], rb["regions"]["ours"]
-                for name in rc.SCORED + ["cabin"]:
-                    rid = rc.RID[name]
-                    ma, mb = ga == rid, gb == rid
-                    both = ma & mb
-                    n = int((ma | mb).sum())
-                    if n < rc.MIN_PIXELS:
-                        continue
-                    moved = int((ma ^ mb).sum())
-                    diff = int((both & (d > CHANGED)).sum())
-                    share = (moved + diff) / n
-                    if share < 0.02:
-                        continue
-                    entry = {
-                        "view": vname,
-                        "mode": mode,
-                        "region": name,
-                        "changed": round(share, 3),
-                        "pixels_before": int(ma.sum()),
-                        "pixels_after": int(mb.sum()),
-                        "dE": round(float(d[both].mean()), 1) if both.any() else None,
-                    }
+                for entry in region_changes(ra["regions"]["ours"], rb["regions"]["ours"], d):
+                    entry.update({"view": vname, "mode": mode})
+                    name = entry["region"]
                     if mode == "day":
                         sa = metrics_a[vname]["day"].get(name, {})
                         sb = metrics_b[vname]["day"].get(name, {})
