@@ -182,3 +182,38 @@ def test_fallback_hides_no_badge_where_it_can():
     y, _, note = P.fallback_height(front_map(tris), 0.40, SIZE)
     assert y + SIZE[1] / 2 <= 0.40 or y - SIZE[1] / 2 >= 0.41, (y, note)
     assert "hides" not in note
+
+
+def test_plate_keeps_clear_of_lamp_covers_beside_it():
+    # #259: two lamp covers 0.27 m apart at the host's height (the Viper GTS-R's nose):
+    # a plate between them would touch both, so it goes on the bumper face under them.
+    tris = (
+        quad(-0.45, -0.135, 0.30, 0.55, 2.005, cls=4, feat=P.FEAT_LAMP)
+        + quad(0.135, 0.45, 0.30, 0.55, 2.005, cls=4, feat=P.FEAT_LAMP)
+        + quad(-0.5, 0.5, 0.0, 0.8, 2.0)
+    )
+    y, _, _ = P.fallback_height(front_map(tris), 0.42, SIZE)
+    assert y + SIZE[1] / 2 <= 0.30 - P.LAMP_MARGIN + 0.005 or y - SIZE[1] / 2 >= 0.55, y
+
+
+def test_plate_on_a_lamp_panel_is_dropped():
+    # #251: the only face near the host's height is a panel of lamps (the ARX-01b's rain
+    # light between its diffusers, open above and below): no plate at that end.
+    # Behind it, 0.5 m back, the car's insides (no mounting face).
+    tris = quad(-0.4, 0.4, 0.30, 0.44, 2.0, cls=4, feat=P.FEAT_LAMP) + quad(-0.4, 0.4, 0.0, 0.8, 1.5, cls=0)
+    host = P.HostPlate("front", (0.0, 0.37, 2.0), SIZE, (0, 0), 2)
+    try:
+        P.plan_end(tris, "front", host, 0.37, -0.1, 0.6)
+    except ValueError as error:  # plan() reports the end as "none"
+        assert "lamps" in str(error)
+    else:
+        raise AssertionError("a plate on the lamp panel")
+
+
+def test_dilate():
+    import numpy as np
+
+    mask = np.zeros((5, 5), bool)
+    mask[2, 2] = True
+    assert P.dilate(mask, 1).sum() == 9 and P.dilate(mask, 2).all()
+    assert P.dilate(mask, 0).sum() == 1
