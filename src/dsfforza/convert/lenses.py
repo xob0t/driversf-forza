@@ -134,6 +134,15 @@ GLOW_MIN_SHARE = 0.1  # a lens with less of its texels over a lamp keeps its sco
 # Carlton's stays high out to the lens edge), 0.4 brings six of them to 18-37 / 77-101 / 125-171.
 GLOW_RIM = 0.4
 GLOW_SHARED = 0.01  # m: a texel whose surfaces lie further apart than this has no one place
+# Structure (#286): vanilla's day-lit lamps glow along their lens pattern (flutes, the bulb, LED
+# dots) with dark texels between, the ports' raw glow (mask x the reflector's depth) is a smooth
+# blob, which by day reads as a white plate. Before the ranking, each lamp's raw glow is
+# multiplied by (its visible texel's brightness against the mean over GLOW_DETAIL_RADIUS round
+# it) ** GLOW_DETAIL_GAMMA, clipped to GLOW_DETAIL_CLIP: the brighter parts of the lamp's own
+# picture rank high, the smooth stretches between them low.
+GLOW_DETAIL_RADIUS = 0.015  # m
+GLOW_DETAIL_GAMMA = 2.0
+GLOW_DETAIL_CLIP = (0.25, 2.0)
 # Vanilla DSF day-lit head lamps (type 0x1D) seen from straight ahead: the visible white lamp
 # texels' alpha at dsf_materials.LAMP_PERCENTILES, pooled over the 32 vanilla vehicles that have
 # them (out/dayglow/dsffront.py on the full entries; per-vehicle mean p10/50/90 41/74/102).
@@ -593,7 +602,21 @@ def _rim(mask: np.ndarray) -> np.ndarray:
     return dist
 
 
-def day_glow(glow: np.ndarray, view) -> np.ndarray | None:
+def _detail(image: np.ndarray, mask: np.ndarray, radius: int) -> np.ndarray:
+    """image / (its mean over the (2 radius + 1)^2 box within mask), 1 outside mask."""
+    v = np.where(mask, image, 0.0)
+    n = mask.astype(float)
+    for a in (0, 1):
+        for arr in (v, n):
+            c = np.cumsum(np.pad(arr, [(radius + 1, radius) if k == a else (0, 0) for k in (0, 1)]), axis=a)
+            arr[...] = np.take(c, np.arange(2 * radius + 1, c.shape[a]), axis=a) - np.take(
+                c, np.arange(0, c.shape[a] - 2 * radius - 1), axis=a
+            )
+    mean = np.where(n > 0, v / np.maximum(n, 1e-9), 1.0)
+    return np.where(mask & (mean > 1e-6), image / np.maximum(mean, 1e-6), 1.0)
+
+
+def day_glow(glow: np.ndarray, view, colour: np.ndarray | None = None) -> np.ndarray | None:
     """Glow alpha (DSF, 0..255) from a glow map (new_glow: raw glow from lens_glow and
     lamp_glow, lamps, positions). view: what a camera straight ahead sees (Texturing._lamp_view:
     the (rows, columns) of the texel each sample sees, the (H, W) mask of the samples, and the
@@ -606,7 +629,10 @@ def day_glow(glow: np.ndarray, view) -> np.ndarray | None:
     much as vanilla's, brightest where Forza's light and the reflector's shape are, and a bumper
     lamp doesn't push the main lamps down; raw 0 (a lens over a dark housing) stays 0. Lamps
     with fewer than GLOW_MIN_SAMPLES visible samples keep NaN (hidden reflectors behind a lens;
-    the converted alpha). None when no lamp is mapped."""
+    the converted alpha). None when no lamp is mapped.
+
+    colour: the Lights atlas (h, w, 3+) the car is drawn with: each lamp's raw glow follows the
+    detail of its visible picture (GLOW_DETAIL_*) before the ranking (#286)."""
     from dsfforza.convert import dsf_materials as dm
 
     seen, grid, (x0, y0), step = view
@@ -631,12 +657,29 @@ def day_glow(glow: np.ndarray, view) -> np.ndarray | None:
                 inside = placed & (row >= 0) & (row < grid.shape[0]) & (col >= 0) & (col < grid.shape[1])
                 d[inside] = np.maximum(d[inside], rim[row[inside], col[inside]])
             raw[mine] *= np.where(placed, np.minimum(1.0, d / (GLOW_RIM * rim.max())), 1.0)
+        if colour is not None and GLOW_DETAIL_GAMMA:
+            # The lamp's own picture as the camera sees it: each seen texel's brightness against
+            # its neighbourhood's; a texel seen by several samples takes their mean.
+            lum = colour[..., :3].max(-1).astype(float)
+            picture = np.zeros(grid.shape)
+            picture[grid] = lum[seen]
+            ratio = _detail(picture, mask, max(1, round(GLOW_DETAIL_RADIUS / step)))
+            rows, cols = seen
+            pick = mask[grid]
+            acc = np.zeros(raw.shape)
+            cnt = np.zeros(raw.shape)
+            np.add.at(acc, (rows[pick], cols[pick]), ratio[mask])
+            np.add.at(cnt, (rows[pick], cols[pick]), 1)
+            factor = np.where(cnt > 0, acc / np.maximum(cnt, 1), 1.0)
+            factor = np.clip(factor, *GLOW_DETAIL_CLIP) ** GLOW_DETAIL_GAMMA
+            raw[mine] *= factor[mine]
         visible = (seen_lamp == g) & np.isfinite(raw[seen])
         pool = np.sort(raw[seen][visible])
         r = raw[mine]
         # The share of the lamp's visible samples below each value (ties: the middle).
         rank = (np.searchsorted(pool, r, "left") + np.searchsorted(pool, r, "right")) / (2 * len(pool))
-        out[mine] = np.where(r > 0, np.interp(rank * 100, dm.LAMP_PERCENTILES, DAY_HEAD_ALPHA), 0.0)
+        alpha = np.where(r > 0, np.interp(rank * 100, dm.LAMP_PERCENTILES, DAY_HEAD_ALPHA), 0.0)
+        out[mine] = alpha
     return out if np.isfinite(out).any() else None
 
 

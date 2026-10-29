@@ -212,14 +212,14 @@ def red_lens_scale(visible: list[int]) -> float | None:
 VISIBLE_WHITE_VANILLA_MEDIAN = 137
 
 # Head lamps lit by day (0x1D, lights.LampPlan.assign): their glow (lenses.day_glow, ranked onto
-# vanilla's head lamp alpha) times this. The game scales a lamp's glow by its type
-# (0xF3FB68: 0x1D 10, a 0x01 head lamp or 0x03 position lamp 2; research/lights.md "How a lamp
-# lights"), and 0x1D's 10 over a whole Forza head lamp clipped it to a white plate by day (the
-# VW GTI VR6 after #164). 99 of the 140 vanilla vehicles with a day-lit front lamp light a
-# small 0x03 position lamp beside 0x01 head lamps; the 32 with 0x1D lamps keep their head
-# lamp readable by glowing in fine stripes with dark texels between. A fifth gives the ported
-# 0x1D lamps a 0x01 or 0x03 lamp's glow, by day and in the dark mood.
-DAYTIME_GLOW = 0.2
+# vanilla's head lamp alpha, following the lamp's own picture) and their other texels times this.
+# The game lights a 0x1D lamp at its type's 10 by day and in the dark mood alike (0xF3FB68;
+# research/lights.md "How a lamp lights"), so one alpha serves both. #167 set a fifth (a 0x01 or
+# 0x03 lamp's level) against the VW GTI VR6's white plates by day; at night that left the ports'
+# head lamps at p95 1.6 to 2.0 in render_compare's renderer, where vanilla's 0x1D lamps glow at
+# 2.5 / 3.8 / 5.3 (p10 / median / p90 over 28 vehicles, front view, under their window glass;
+# #286). 0.45 puts the median of 15 ports (1.69 at 0.2) on vanilla's 3.8.
+DAYTIME_GLOW = 0.45
 
 
 def white_lens_scale(visible: list[int]) -> float | None:
@@ -2134,7 +2134,9 @@ class Texturing:
         from dsfforza.convert import lenses
 
         view = self._lamp_view(front=True, grid=True)
-        self._lamp_glow = None if view is None else lenses.day_glow(self.lamp_raw, view)
+        sw, sh, src = self.atlases.get(fm.LIGHTS)
+        colour = np.frombuffer(bytes(src), np.uint8).reshape(sh, sw, 4)
+        self._lamp_glow = None if view is None else lenses.day_glow(self.lamp_raw, view, colour)
         if self._lamp_glow is not None and self.daytime_texels is not None:
             self._lamp_glow[self.daytime_texels] *= DAYTIME_GLOW
         self._glow_done = True
