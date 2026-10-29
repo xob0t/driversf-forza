@@ -902,12 +902,11 @@ Five cars draw differently, all in their trims region: the Monte Carlo SS 11's r
 now), the One-77's grille (58%), the Veyron's roof scoops (47%), the Crossfire's
 strakes, window frames and A-pillar strip (32%; the strip also from the cockpit), the
 Q7's rear trims (33%). The ARX-01b's data differ but it renders alike (the full entry's
-atlas, #84); the other three are unchanged (`img/metal-greys-offline.jpg`: master, this
-change, Forza).
+atlas, #84); the other three are unchanged (images: PR #302).
 
 **In game (VM 1, `-Views grille,rear,left -Palette 0 -ShotSeconds 3 -ZoomPresses 0`, IDs 5
 Veyron 09, 6 One-77 10, 7 Q7 09, 8 Monte Carlo SS 11, 9 Crossfire 06).** Master
-`vm1-20261030-011801`, this change `vm1-20261030-012144` (`img/metal-greys-ingame.jpg`).
+`vm1-20261030-011801`, this change `vm1-20261030-012144` (images: PR #302).
 The One-77's grille, the Monte Carlo's rear wing and the Q7's skid plate read as light
 bare metal instead of dark grey; the Crossfire's strakes and window frames are a shade
 lighter. The Veyron's roof scoops are the brightest case: near white with a halo where
