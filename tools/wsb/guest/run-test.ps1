@@ -77,6 +77,9 @@ param(
     [switch]$CopyRepoFiles, # copy files from -RepoDir into the run folder instead of linking them (the VM's C:\Repo is a
                          # VMware shared folder; tools\wsb\run-series.ps1 -Vm)
     [int]$MemorySeconds = 5, # memory.csv sample interval (0: none); peaks go into result.json "memory"
+    [int]$StallSeconds = 120, # Story stage: give up once Driver.exe's private bytes have made no new high (+4 MB) for this
+                         # long (a hung load); a slow load that still grows is waited for (issue #70)
+    [int]$StorySeconds = 900, # Story stage: give up after this long in any case
     [string]$GameRootFrom, # folder whose files replace the game folder's root files of the same name (run-series.ps1 -Vm:
                          # the host game folder's current dsf_enhanced.asi and .ini); -Override wins. result.json
                          # "dsfEnhanced" records the .asi and .ini used, "gameRoot" the game folder's root file hashes.
@@ -610,12 +613,27 @@ try {
     }
     Start-Sleep -Seconds 5
     $pulses = 0
-    $deadline = (Get-Date).AddSeconds(150)
+    # No fixed deadline (it was 150 s): on a busy host a healthy load took up to 156 s and the
+    # 150 s cut killed loads that were still growing (issue #70). A load counts as progressing
+    # while Driver.exe's private bytes make a new high (+4 MB); in 361 VM loads that loaded
+    # (2026-10-26 to -29) the longest gap between highs was 49 s, while hung loads sat flat
+    # for 87 s and more. -StorySeconds caps the stage in any case.
+    $storyStart = Get-Date
+    $deadline = $storyStart.AddSeconds($StorySeconds)
+    $privateHigh = 0; $lastHigh = $storyStart
     while (-not (& $worldReady)) {
         $driver.Refresh()
         if ($driver.HasExited) { throw "Driver exited in the frontend (code $($driver.ExitCode))" }
         if (Test-CrashDialog) { $result.crashed = $true; throw "game crashed while loading (DriverNGHook fatal error dialog)" }
-        if ((Get-Date) -gt $deadline) { throw "Story world not ready after $pulses Enter presses" }
+        $privateMB = [math]::Round($driver.PrivateMemorySize64 / 1MB)
+        if ($privateMB -gt $privateHigh + 4) { $privateHigh = $privateMB; $lastHigh = Get-Date }
+        $result.storySeconds = [math]::Round(((Get-Date) - $storyStart).TotalSeconds)
+        $result.storyPrivateMB = $privateHigh
+        if (((Get-Date) - $lastHigh).TotalSeconds -gt $StallSeconds) {
+            $result.storyStalled = $true
+            throw "Story world not ready: load stalled (Driver.exe private bytes no new high above $privateHigh MB for $StallSeconds s, $($result.storySeconds) s in, $pulses Enter presses)"
+        }
+        if ((Get-Date) -gt $deadline) { throw "Story world not ready after $StorySeconds s ($pulses Enter presses; still loading, $privateHigh MB)" }
         [DsfGuest]::Tap((Get-GameWindow), 0x0D, 0x1C)
         $pulses++
         if ($pulses % 5 -eq 0) { Save-Shot ("frontend-{0:D2}.png" -f $pulses) }

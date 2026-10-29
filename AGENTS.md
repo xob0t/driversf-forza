@@ -93,11 +93,15 @@ Research notes are in `research/` (read the ones for your area first).
     ends before it reaches the last cars;
   - a run that fails before the world loads (no desktop session, a hang on
     the way to Story mode, a slow load on a busy host) is usually the VM,
-    not your change: rerun it once, on the other VM if you can, before
-    looking for a cause in your build.
+    not your change. `run-series.ps1` waits for spare host CPU before each
+    launch and retries such a run once by itself; if it still fails, look at
+    the host's load before looking for a cause in your build.
+- Host CPU starves the VMs' game loads (issue #70). Run heavy offline jobs
+  (surveys, renders, builds) at Idle priority with at most 2 processes
+  (`--jobs 2`), and none while your own VM series loads the game.
 - Full-roster builds take over an hour and slow everyone's VM runs. Survey
-  offline where you can, build only the cars your change affects for the
-  in-game check, and keep `--jobs` at 4 or less while other agents run.
+  offline where you can and build only the cars your change affects for the
+  in-game check.
 - Never modify the installed game (`DSF_GAME_DIR`) except through
   `tools\install.ps1` when asked.
 

@@ -71,6 +71,11 @@ param(
     [string]$MenuKeys,            # menu taps after -MenuTrigger appears in Driver.log, e.g. 'Enter:2,Right:1.5'
     [string]$MenuTrigger,
     [double]$TrafficRadius = 0,   # traffic road radius in metres, patched in memory once the world is up (350 vanilla)
+    [int]$StallSeconds = 120,     # Story stage: a load whose Driver.exe private bytes make no new high this long is hung
+    [int]$StorySeconds = 900,     # Story stage: the cap for a slow but progressing load
+    [int]$CpuGate = 70,           # before each game launch, wait until the host's competing CPU (processes above below-normal
+                                  # priority) stays under this percent for 15 s; 0: don't wait (issue #70)
+    [int]$CpuGateSeconds = 600,   # longest wait at the CPU gate; the run starts anyway after it
     [switch]$OnHost,
     [switch]$Vm,
     [string]$VmId,                # with -Vm: this VM only (1, 2, or a name; vm-common.ps1)
@@ -265,12 +270,61 @@ function Show-GameFiles($r) {
     }
 }
 
-$resultSeconds = [math]::Max(600, $WaitSeconds + 420)
+$resultSeconds = [math]::Max(600, $WaitSeconds + 420 + [math]::Max(0, $StorySeconds - 150))
+
+function Get-HostCpu([double]$Seconds = 5) {
+    # Host CPU over $Seconds as a percent of all logical processors, from per-process CPU time:
+    # total, and "competing", i.e. without Idle and BelowNormal priority processes (builds and
+    # surveys run at Idle and yield to the VMs). A process whose priority can't be read (vmware-vmx
+    # and other elevated ones) counts as competing; the other VM's game is competition too.
+    $sample = { $t = @{}; foreach ($p in Get-Process) {
+            $cpu = $p.TotalProcessorTime.TotalSeconds; if ($null -eq $cpu) { continue }
+            $low = $false; try { $low = $p.PriorityClass -in 'Idle', 'BelowNormal' } catch { }
+            $t[$p.Id] = @($cpu, $low) }
+        $t }
+    $a = & $sample; Start-Sleep -Milliseconds ([int]($Seconds * 1000)); $b = & $sample
+    $total = 0.0; $competing = 0.0
+    foreach ($id in $b.Keys) {
+        if (-not $a.ContainsKey($id) -or $id -eq 0) { continue }
+        $d = $b[$id][0] - $a[$id][0]
+        $total += $d; if (-not $b[$id][1]) { $competing += $d }
+    }
+    $scale = 100 / ($Seconds * [Environment]::ProcessorCount)
+    [pscustomobject]@{ Total = [math]::Round($total * $scale); Competing = [math]::Round($competing * $scale) }
+}
+
+function Wait-CpuGate {
+    # Issue #70: on a busy host the game's load slows to a crawl in the VM (the guest gets little
+    # CPU). Wait until three 5 s samples in a row have the competing CPU under -CpuGate, at most
+    # -CpuGateSeconds. Returns the line to log.
+    if ($CpuGate -le 0) { return $null }
+    $start = Get-Date; $calm = 0; $last = $null
+    while ($true) {
+        $last = Get-HostCpu 5
+        $calm = if ($last.Competing -lt $CpuGate) { $calm + 1 } else { 0 }
+        $waited = [math]::Round(((Get-Date) - $start).TotalSeconds)
+        if ($calm -ge 3) { return "CPU gate: passed after $waited s (competing $($last.Competing) %, total $($last.Total) %)" }
+        if ($waited -ge $CpuGateSeconds) { return "CPU gate: competing CPU still $($last.Competing) % (total $($last.Total) %) after $waited s; starting anyway" }
+        if ($calm -eq 0 -and ($waited -lt 10 -or $waited % 60 -lt 5)) { "  CPU gate: competing $($last.Competing) %, total $($last.Total) %; waiting" | Write-Host }
+    }
+}
+
+function Test-LoadFailure($r) {
+    # A run that never got the Story world up: stalled, capped, crashed or exited while loading.
+    $r.stage -eq 'story' -and ($r.storyStalled -or $r.crashed -or "$($r.error)" -match 'Story world not ready|exited in the frontend')
+}
 try {
     if (-not $OnHost) { Restore-DeadHostSession }
     if ($OnHost) { Wait-HostPause; Enter-HostSession } elseif ($Vm) { Confirm-Vm } else { Confirm-Sandbox }
-    foreach ($archive in $Archives) {
+    # Each archive once; a run that fails while the world loads (issue #70) is retried once,
+    # right after, from a new game start.
+    $queue = [System.Collections.Generic.List[object]]::new()
+    foreach ($a in $Archives) { $queue.Add([pscustomobject]@{ Archive = $a; Retry = $false }) }
+    for ($qi = 0; $qi -lt $queue.Count; $qi++) {
+        $archive = $queue[$qi].Archive
         if ($OnHost) { Wait-HostPause }
+        $gate = if ($OnHost -or $Vm) { Wait-CpuGate }
+        if ($gate) { "  $gate" }
         $guestValues = Get-GuestArgs $archive
         if ($OnHost) {
             # Same script, run here and waited for.
@@ -328,9 +382,14 @@ try {
         while (-not (Test-Path $result) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 3 }
         "=== $archive -> $runDir"
         if (-not (Test-Path $result)) { "  no result after $resultSeconds s"; continue }
+        if ($gate) { Set-Content (Join-Path $runDir 'cpu-gate.txt') $gate }
         $r = Get-Content $result -Raw | ConvertFrom-Json
         "  stage=$($r.stage) crashed=$([bool]$r.crashed) error=$($r.error)"
         Show-GameFiles $r
+        if ((Test-LoadFailure $r) -and -not $queue[$qi].Retry -and ($OnHost -or $Vm)) {
+            "  the world didn't load; retrying once"
+            $queue.Insert($qi + 1, [pscustomobject]@{ Archive = $archive; Retry = $true })
+        }
         $r.probeLines | Where-Object { $_ -match 'id \d+:' -and $_ -notmatch 'cockpit t\d+ speed' -and $_ -notmatch '\] dy \d' } | ForEach-Object { "  $_" }
         $speeds = @($r.probeLines | Where-Object { $_ -match 'cockpit t\d+ speed ([\d.]+) m/s ([\d.]+) mph' } |
             ForEach-Object { [double]($_ -replace '.* ([\d.]+) mph.*', '$1') })
