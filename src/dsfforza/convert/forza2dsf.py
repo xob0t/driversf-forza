@@ -2073,6 +2073,8 @@ class CarDims:
     # front is at -z: the wheel arches of the Cuda, Mustang Boss 429 and Veyron
     # centre on -z (-0.24 / -0.20 / -0.12 against z = +0.203 / +0.213 / +0.122).
     # Taking +z put those cars' wheels 2 x z (0.25 to 0.43 m) off their arches.
+    # Plus the wheel model's own z offset (tyre_centre[2], car_dims): the arches centre on
+    # where Forza draws the tyre, not on the physics' hub.
     mid_z: float
     track_outer: float  # front track, outer tyre wall to outer tyre wall
     radius: float  # tyre radius, measured on the wheel model
@@ -2149,7 +2151,16 @@ def car_dims(car: ForzaCar, gamedb: Path | None = None) -> CarDims:
        FH1's NIS_Leaf_11. FM4 cars carry the same file as FH1 (lower-case path).
     2. gamedb.slt Data_CarBody (ModelWheelbase, ModelFrontTrackOuter,
        BottomCenterWheelbasePosZ), when a gamedb is given.
-    Tyre radius, width and centre always come from the car's own wheel model."""
+    Tyre radius, width and centre always come from the car's own wheel model.
+
+    A wheel model whose tyre sits off its origin along the car (z) moves the wheelbase
+    midpoint by that much. Forza draws the model unturned at each hub, so its tyres stand
+    that far behind the physics' hubs on both sides, and the body's arches are cut round
+    them: the five Commodore VE race cars' tyres are 0.300 m behind their origin, and their
+    arches 0.295 to 0.310 m behind MAXData's hubs (issue #301). The converter turns the
+    wheel about the tyre's centre (tyre_centre), so it takes the hubs to the tyres instead.
+    Across (x) and up (y) the tyre stays on the hub: TOY_6_Supra_05's, MER_ML63AMG_09's
+    and VW_BEETLE_68's arches centre on the hub, not on their models' offsets."""
     radius, width = tyre_size(car.wheel)
     centre = tyre_centre(car.wheel)
     maxdata = find_file(car.folder, "Physics/MAXData.xml")
@@ -2158,7 +2169,7 @@ def car_dims(car: ForzaCar, gamedb: Path | None = None) -> CarDims:
         ride = [float(misc.get(k)) for k in ("FrontStockRideHeight", "RearStockRideHeight") if misc.get(k)]
         return CarDims(
             float(misc.get("Wheelbase")),
-            -float(misc.find("BottomCenterWheelbasePos").get("z")),
+            -float(misc.find("BottomCenterWheelbasePos").get("z")) + centre[2],
             float(misc.get("FrontTrackOuter")),
             radius,
             width,
@@ -2171,7 +2182,9 @@ def car_dims(car: ForzaCar, gamedb: Path | None = None) -> CarDims:
         row = gamedb_body(gamedb, car.name)
         if row:
             source = f"{Path(gamedb).name} Data_CarBody"
-            return CarDims(row[0], -row[2], row[1], radius, width, source, row[3] or 0.0, tyre_centre=centre)
+            return CarDims(
+                row[0], -row[2] + centre[2], row[1], radius, width, source, row[3] or 0.0, tyre_centre=centre
+            )
     raise ValueError(f"{car.name}: no Physics/MAXData.xml and no gamedb Data_CarBody row")
 
 
