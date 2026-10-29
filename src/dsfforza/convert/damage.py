@@ -1784,6 +1784,7 @@ class DamagePlan:
         self._members: dict[tuple, dict] = {}
         self._grids: dict[tuple, Grid] = {}
         self.boxes: dict[tuple, list] = defaultdict(list)  # pair -> placed points (finest LOD built)
+        self.drawn: set = set()  # pairs given geometry in any LOD built so far
         self._boxes_lod: int | None = None
         self._seam: dict = {}  # quantised position -> rigid panels sharing it (current LOD)
         self._seam_written: set = set()  # (field, position) given a shared crushed position
@@ -2342,6 +2343,7 @@ class DamagePlan:
                 self.boxes[pair] += pts
             if subs:
                 out[pair] = subs
+                self.drawn.add(pair)
         self.report["seam_positions"] = len(self._seam_written)
         return out
 
@@ -3120,12 +3122,69 @@ class DamagePlan:
         target = next((r for r in h.records if r.type == 1 and (r.slot, r.model) == mount), None)
         if target is None or target.slot != slot:
             target = chassis if slot == self.chassis[0] else None
-        out = move_subtree(data, mirror.index, target.index) if target is not None else None
-        if out is None and chassis is not None and target is not chassis and parent is not chassis:
-            target, out = chassis, move_subtree(data, mirror.index, chassis.index)
-        if out is None:
-            return None, None
-        return out, {"mount": self.label(mount), "from": role_name(parent.role), "to": role_name(target.role)}
+        targets = [target] if target is not None else []
+        if chassis is not None and target is not chassis and parent is not chassis:
+            targets.append(chassis)
+        blockers = self._blockers(h, par, mirror)
+        for to in targets:
+            for k in range(len(blockers) + 1 if to is chassis else 1):
+                out = _move_in_turn(data, blockers[:k][::-1] + [mirror], to)
+                if out is not None:
+                    entry = {"mount": self.label(mount), "from": role_name(parent.role), "to": role_name(to.role)}
+                    if k:
+                        entry["with"] = [self.label((max(r.slot, 0), r.model)) for r in blockers[:k]]
+                    return out, entry
+        return None, None
+
+    # On 22 hosts the door record holds a door-glass record after the mirror (the DB9's
+    # host 133: door slot 8 / index 10, mirror 9 / 11, glass index 12), so the mirror
+    # alone has no place outside the door that keeps both orders (issue #193). The
+    # converted car draws nothing through those glass records (the side windows are on
+    # their door's or the chassis' panel, section_rule), so they go under the chassis
+    # first, last one first, then the mirror between the door and them. Markers (the
+    # door's role 65/67) stay where they are.
+
+    def _blockers(self, h, par, mirror) -> list:
+        """The part records after a mirror among its siblings that may leave with it, in
+        record order: up to the first that is a mirror, holds a record other than parts
+        and markers, or has a part drawn through its own transform slot. They only go
+        under the chassis."""
+        drawn = set(self.boxes) | self.drawn
+        out = []
+        c = mirror.index + mirror.subtree
+        stop = par[mirror.index] + h.records[par[mirror.index]].subtree
+        while c < stop:
+            sub = h.records[c : c + h.records[c].subtree]
+            c += sub[0].subtree
+            if sub[0].type != 1 and not any(r.type == 1 for r in sub):
+                continue  # markers, lights, seats: no numbers in the way
+            if any(r.type not in (1, 3) or r.role in MIRRORS for r in sub) or any(
+                r.type == 1
+                and r.slot >= 0
+                and (r.slot, r.model) in drawn
+                and self.bound((r.slot, r.model))[0] == r.slot
+                for r in sub
+            ):
+                break
+            out.append(sub[0])
+        return out
+
+
+def _move_in_turn(data: bytes, records: list, parent) -> bytes | None:
+    """move_subtree each record (and its subtree) in turn under `parent`, found again
+    by type, role, slot and panel-data index after every move; None if one can't go."""
+
+    def find(h, r):
+        return next(
+            x.index for x in h.records if (x.type, x.role, x.slot, x.model) == (r.type, r.role, r.slot, r.model)
+        )
+
+    for r in records:
+        h = upvh_mod.parse(data)
+        data = move_subtree(data, find(h, r), find(h, parent))
+        if data is None:
+            return None
+    return data
 
 
 def _parents(h) -> list[int | None]:

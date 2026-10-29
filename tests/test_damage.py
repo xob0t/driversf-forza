@@ -21,6 +21,7 @@ def _plan(host_points: dict, records: dict) -> damage.DamagePlan:
     plan.panels = {pair: damage.Panel(pair, [], None, role) for pair, role in records.items()}
     plan.chassis = (0, 0)
     plan.swinging = set()
+    plan.drawn = set()
     points, disp, pairs = [], [], []
     for pair, pts in host_points.items():
         for p in pts:
@@ -282,6 +283,61 @@ class MirrorMount(unittest.TestCase):
         self.assertEqual(_tree(out), [(0, None), (38, 0), (4, 38), (41, 38), (40, 38), (36, 38)])
         self.assertEqual(_flags(out), [23, 7, 0, 4, 4, 0])
         self.assertEqual(sorted(report), ["6,6 mirror -x", "7,7 mirror +x"])
+
+    @staticmethod
+    def _door_with_glass(glass_slot: int) -> bytes:
+        """As on the DB9's host 133: the -x door holds its mirror (with a marker), a door
+        marker and the door glass (no slot of its own there); then the +x door."""
+        door, mirror = (8, 9) if glass_slot < 0 else (7, 8)
+        records = [
+            _record(4, 0, 8, flags=23),
+            _record(1, 38, 7, 0, 0, 7),
+            _record(1, 32, 5, door, 10, 5),
+            _record(1, 41, 2, mirror, 11, 4),
+            _record(3, 73, 1),
+            _record(3, 67, 1),
+            _record(1, 8, 1, glass_slot, 12, 0),
+            _record(1, 31, 1, 10, 13, 0),
+        ]
+        head = bytearray(upvh.HEADER_SIZE)
+        head[:4] = b"AWHF"
+        struct.pack_into("<6I", head, 4, 0, 0, 26, len(records), 1, 0)
+        head[0x2D] = 1  # mirrors
+        return bytes(head) + b"".join(records) + TAIL
+
+    def test_door_glass_after_the_mirror_leaves_first(self):
+        # Door slot 8 / index 10, mirror 9 / 11, glass index 12, +x door 10 / 13: alone, the
+        # mirror has no place under the chassis that keeps both orders (issue #193).
+        data = self._door_with_glass(-1)
+        self.assertIsNone(damage.move_subtree(data, 3, 1))
+        plan = _plan({}, {(0, 0): 38, (8, 10): 32, (9, 11): 41, (0, 12): 8, (10, 13): 31})
+        plan.boxes = {(0, 0): [(-0.75, 0.3, 0.12)], (8, 10): [(-0.9, 0.0, 0.0)], (9, 11): [(-0.76, 0.3, 0.12)]}
+        out, report = plan._remount_mirrors(data)
+        # The glass, then the mirror between the door and it; the door marker stays.
+        self.assertEqual(_tree(out), [(0, None), (38, 0), (32, 38), (67, 32), (41, 38), (73, 41), (8, 38), (31, 38)])
+        h = upvh.parse(out)
+        self.assertEqual(
+            [(r.slot, r.model) for r in h.records if r.type == 1][1:], [(8, 10), (9, 11), (-1, 12), (10, 13)]
+        )
+        self.assertEqual(_flags(out)[2], 4)  # the door has no part child left
+        fields = damage._tree_fields([r.raw for r in h.records])
+        self.assertEqual([damage._read_tree_fields(r.raw) for r in h.records], fields)
+        self.assertEqual(report["9,11 mirror -x"]["with"], ["0,12 glass"])
+
+    def test_door_glass_drawn_through_its_slot_stays(self):
+        # Glass with a slot of its own (9) that draws a panel stays on the door, and so
+        # does the mirror; with nothing drawn through it, both leave as above.
+        data = self._door_with_glass(9)
+        plan = _plan({}, {(0, 0): 38, (7, 10): 32, (8, 11): 41, (9, 12): 8, (10, 13): 31})
+        plan.boxes = {(0, 0): [(-0.75, 0.3, 0.12)], (8, 11): [(-0.76, 0.3, 0.12)]}
+        plan.drawn = {(9, 12)}
+        out, report = plan._remount_mirrors(data)
+        self.assertEqual(out, data)
+        self.assertEqual(report["8,11 mirror -x"], {"mount": "0,0 chassis", "kept": "host parent"})
+        plan.drawn = set()
+        out, report = plan._remount_mirrors(data)
+        self.assertEqual(_tree(out)[4:7], [(41, 38), (73, 41), (8, 38)])
+        self.assertEqual(report["8,11 mirror -x"]["with"], ["9,12 glass"])
 
     def test_moved_records_get_vanilla_pop_counts(self):
         # Host 182's +x door: door (hinge), its marker, then its mirror and the mirror's
