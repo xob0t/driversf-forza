@@ -306,7 +306,7 @@ _AREA_NDV = tuple((k + 0.5) / _AREA_STEPS for k in range(_AREA_STEPS))
 # 0.3 (research/lights.md, "Paint shows darker than Forza"). The Forza swatch taken as is
 # drew a mid grey (#999999 flat, 0.32) white and the S5S Raptor's yellow as a glow.
 SHOWN_GAIN = 0.3
-NEAR_BLACK = 0.01  # Forza colours darker than this (linear luminance) keep the vanilla black
+NEAR_BLACK = 0.01  # Forza colours darker than this (linear luminance) show as bright as the vanilla black
 
 
 def _fresnel(params: dict, ndv: float) -> float:
@@ -383,7 +383,7 @@ def shade(colour: ForzaColour, vanilla: list[dict]) -> dict:
     """Parameters for one Forza colour: a special finish's preset as is, else the vanilla
     car-paint entry of the same finish (any finish if none) whose shown colour (apparent)
     is nearest the colour's DSF target (target_colour), recoloured to show the target.
-    Near-black colours keep the vanilla black as it is (its sheen and edge tint)."""
+    Near-black colours show as bright as the vanilla black, in their own hue."""
     if colour.finish in FINISH_PRESETS:
         return dict(FINISH_PRESETS[colour.finish])
     target = target_colour(colour)
@@ -391,10 +391,16 @@ def shade(colour: ForzaColour, vanilla: list[dict]) -> dict:
     same = [s for s in vanilla if is_metallic(s["params"]) == colour.metallic] or vanilla
     best = min(same, key=lambda s: _distance(apparent(s["params"]), target))
     params = dict(best["params"])
-    if _lum(colour.linear) >= NEAR_BLACK:
-        c2, c3 = params["g_vec3TintColour2"], params["g_vec3TintColour3"]
-        new2, new3 = recolour(params, target)
-        params["g_vec3TintColour2"], params["g_vec3TintColour3"] = new2 + tuple(c2[3:]), new3 + tuple(c3[3:])
+    if _lum(colour.linear) < NEAR_BLACK:
+        # Below this the twin-car gain isn't measured (vanilla blacks show 0 to 0.01): the
+        # vanilla black's brightness, in the Forza colour's hue, not the vanilla one's (the
+        # Firebird's #0f140d kept vanilla 200's green rim, colour 3 (0.02, 0.04, 0.02), and
+        # drew dark green in game).
+        lum, want = _lum(target), _lum(apparent(params))
+        target = tuple(c * want / lum for c in target) if lum > 0 else (want,) * 3
+    c2, c3 = params["g_vec3TintColour2"], params["g_vec3TintColour3"]
+    new2, new3 = recolour(params, target)
+    params["g_vec3TintColour2"], params["g_vec3TintColour3"] = new2 + tuple(c2[3:]), new3 + tuple(c3[3:])
     # Never brighter than the brightest vanilla car paint. Forza's swatch RGB taken as linear
     # was far above anything vanilla DSF paints: the S5S Raptor's #ffbf19 on the security
     # van's yellow gave luminance 0.55 facing the camera where no vanilla paint passes 0.39,

@@ -102,11 +102,19 @@ class Shade(unittest.TestCase):
         dark = paint.ForzaColour(1, (0x50, 0x00, 0x00), False, "Red")
         self.assertEqual(paint.shade(dark, [LOW_POWER, HIGH_POWER, CAP])["_template"], 225)
 
-    def test_near_black_keeps_the_vanilla_black(self):
-        q = paint.shade(paint.ForzaColour(1, (5, 5, 5), False, "Black"), [BLACK, HIGH_POWER, CAP])
-        self.assertEqual(q["_template"], 201)
-        self.assertEqual(q["g_vec3TintColour3"], BLACK["params"]["g_vec3TintColour3"])
-        self.assertEqual(q["g_vec3TintColour2"], BLACK["params"]["g_vec3TintColour2"])
+    def test_near_black_shows_the_vanilla_black_in_its_own_hue(self):
+        # The Firebird's #0f140d on a black with a green rim: as bright as that black, in the
+        # Forza colour's hue (green / red 1.45 in linear), not the rim's (2.0).
+        green_rim = {"sid": 200, "params": _entry((0.006, 0.007, 0.006), (0.02, 0.04, 0.02), 5.3)}
+        q = paint.shade(paint.ForzaColour(1, (0x0F, 0x14, 0x0D), False, "Black"), [green_rim, HIGH_POWER, CAP])
+        self.assertEqual(q["_template"], 200)
+        shown = paint.apparent(q)
+        self.assertAlmostEqual(paint._lum(shown), paint._lum(paint.apparent(green_rim["params"])), places=5)
+        rim = q["g_vec3TintColour3"][:3]
+        forza = paint.ForzaColour(1, (0x0F, 0x14, 0x0D), False, "").linear
+        self.assertAlmostEqual(rim[1] / rim[0], forza[1] / forza[0], places=3)
+        black = paint.shade(paint.ForzaColour(1, (5, 5, 5), False, "Black"), [BLACK, HIGH_POWER, CAP])
+        self.assertEqual(black["_template"], 201)
 
     def test_vanilla_colour_comes_back_as_itself(self):
         # A vanilla entry's own shown colour as the Forza colour shows the same colour.
