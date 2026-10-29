@@ -225,6 +225,25 @@ def _submodel_triangles(mesh, sub, cache: dict):
     return pos, nrm, uv, ao
 
 
+def _fades_in(mesh, sub, cache: dict) -> bool:
+    """Whether every vertex a submodel draws has vertex semantic 9 byte 3 = 2: the wheel's
+    speed-blur disc (GLOBAL_Wheel_Blur_SpokeDisc and the ports' copies of it), whose
+    programs fade it in with the wheel's speed (opacity 2.5 b - 0.15; SSIC GPCH 21 to 40),
+    so it is invisible at rest (issue #221). Byte 3 = 1 is always drawn, 0 fades out."""
+    vb = mesh.vertex_buffers[sub.vertex_buffer]
+    if vb.uid not in cache:
+        cache[vb.uid] = _elements(vb)
+    s9 = cache[vb.uid].get(9)
+    if s9 is None or s9.shape[1] < 4:
+        return False
+    idx = np.frombuffer(mesh.index_buffers[sub.index_buffer], "<u2")[
+        sub.first_index : sub.first_index + sub.index_count
+    ].astype(np.int64)
+    idx = idx + sub.base_vertex
+    idx = idx[idx < vb.count]
+    return bool(len(idx)) and bool((s9[idx, 3] == 2).all())
+
+
 def _face_normals(pos: np.ndarray) -> np.ndarray:
     n = np.cross(pos[:, 1] - pos[:, 0], pos[:, 2] - pos[:, 0])
     n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
@@ -456,6 +475,8 @@ def _load_scene(archive: Path, stream, spool_id: int, entries, interior: bool) -
                     or mesh.vertex_buffers[sub.vertex_buffer].stride == 20
                 ):
                     continue  # the exterior glass covers the cabin; needles are tiny
+                if wheel and _fades_in(mesh, sub, cache):
+                    continue  # the speed-blur disc: drawn only as the wheel spins (#221)
                 pos, nrm, uvs, ao = _submodel_triangles(mesh, sub, cache)
                 m = material(sub.material, kind == 1, wheel)
                 if wheel:

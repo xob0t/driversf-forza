@@ -114,7 +114,12 @@ from `VANILLA_CAMERA` = yaw 36.5, pitch 13, distance 1.3
   the hub's quaternion (the old renderer copied only the stride-20 tyre and
   left the rim at the origin), and the interior entry (kind 1) without its
   glass and gauge needles. Exterior parts that list the same submodel ranges
-  (parts 0 and 1) are drawn once.
+  (parts 0 and 1) are drawn once. A wheel-part submodel whose vertices all
+  carry semantic 9 byte 3 = 2 is left out (`_fades_in`): the speed-blur disc
+  (`GLOBAL_Wheel_Blur_SpokeDisc` and copies of it, #211), which the game fades
+  in with the wheel's speed and doesn't show at rest. Drawn opaque it was a flat
+  blue cover over every wheel (#221; `img/garage-render-blur-disc.jpg`, PAG_Huayra_12
+  of the #211 branch's build, before and after).
 - Raster: triangles cut into tiles of 1 to 16 pixels, every pixel centre
   tested at once; per pixel the nearest fragment. Surfaces are drawn from both
   sides, but back faces lose depth ties (panel undersides on the panel). The
