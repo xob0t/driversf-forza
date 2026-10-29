@@ -1593,6 +1593,41 @@ Unlit lamps 53 -> 76: the 34 fog lamps, less the ones that now share a twin. The
 pairs (or centre lamps) on hosts with no rear entry left for either side, e.g. HON_S2000_03 and LEX_ISF_09
 on 274, AUD_RS4_06, the C5 and C6 Corvettes' centre reverse lamps. Sharing them with a red lamp would light
 them red, and leaving them unlit would lose the reverse light, so they keep the front entry.
+### Tail lamps that brake and indicate: lindtailside (issue #103)
+
+Symptom (offline-checked): the Corvette ZR1 09's four round tail lamps never braked; of its 883 cm2 of
+visible red rear lamp at LOD 3 only 59 did (a small `tail_light` and the high stop lamp).
+
+Cause (confirmed-static): they are `lindtailside`/`rindtailside`, which the converter took as DaytimeRunning
++ indicator (`DRL_IND`, 0x14/0x15). The technique is in FH1's `shaders_v16.fxobj` but not in the shared
+`ShaderSettings/Normal.xml`, so its defaults are unknown. 12 cars set it in their own `ShaderSettings.xml`,
+and 10 of them give it a `BrakeColor` (Camaro ZL1 12 3.0, Charger R/T 69 2.2, Corvette Stingray 67 1.8,
+Cuda 426 71 1.5, Explorer 10 1.0, the F-350 08's right lamp 1.5...); the Express 2500 and the F-350's left
+lamp set only a `TailLightColor`. So the lamp is a tail, brake and indicator lamp in one, as on the real C6
+ZR1.
+
+Change (`lights.TECHNIQUE_FUNCTION`): both are `BRAKE_IND` (0x19/0x1A: DaytimeRunning + Brakes + left or
+right indicator, as on vanilla US-style cars), like `brinl`/`brinr`. 16 roster cars use them.
+
+Roster (offline, `out/l6/lamp_survey.py` in the #189 worktree: the lamp plan on each car's host-picks host,
+an orthographic view from behind at LOD 3, 5 mm, visible lamp pixels by the type of their entry and whether
+the baked texel is red; 566 cars). The visible red area that brakes changes on 7 cars:
+
+| Car | master: brakes / red that doesn't (cm2) | this change |
+| --- | --- | --- |
+| CHE_CorvetteZR1_09 | 59 / 824 | 883 / 0 |
+| FOR_Explorer_10 | 345 / 227 | 571 / 0 |
+| FOR_SVTRaptor_12 | 48 / 402 | 295 / 155 |
+| FOR_F350SuperDuty_08 | 429 / 486 | 658 / 256 |
+| DOD_Durango_99 | 468 / 298 | 519 / 247 |
+| cad_ctsvcoupe_11, FOR_FocusZX4_05 | within 10 cm2 | |
+
+The other users draw them where the view from behind doesn't see them, or under red lenses that already
+brake. Cars with less than half of their visible red lamp area braking: 46 -> 43 by this survey's red test
+(red minus the larger of green and blue at least 40 on the baked texel; stricter than #104's, so the count
+is higher). Of the 43, 32 have red texels lit as another lamp (reverse or indicator lenses on red texels,
+the M3 E92's 0x03 `drlred` tails, rear fog lamps), 10 red Lights texels with no lamp (the NASCARs' decal
+lamps, unlit reflectors), 1 an unlit lamp.
 
 ### Open
 
