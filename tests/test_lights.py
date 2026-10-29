@@ -312,6 +312,22 @@ def test_head_lamp_unit_without_a_lamp_technique():
     assert [lit(s) for s in bowls] == [None, None]
 
 
+def test_rear_lamps_short_of_rear_entries_stay_at_the_rear():
+    # Issue #146: a host with fewer rear entries than the car has rear lamps. The right reverse
+    # lamp shares the left one's entry rather than take a front entry (it would break with the
+    # front); the rear fog lamp, never lit (no Lua sets FogLights), stays unlit.
+    heads = [_quad("headlightL", "head_light", 0.6, 2.0), _quad("headlightR", "head_light", -0.6, 2.0)]
+    revs = [_quad("revL", "reverse_light", 0.4, -2.0), _quad("revR", "reverse_light", -0.4, -2.0)]
+    fog = [_quad("fogR", "fogred", 0.0, -2.1)]
+    places = [(0.6, 2.0), (-0.6, 2.0), (0.6, 2.1), (-0.6, 2.1), (0.6, -2.0), (-0.6, -2.0), (0.4, -2.0)]
+    plan = _plan(heads + TAILS + revs + fog, 7, places)
+    rear = {e for e, (x, z) in enumerate(places) if z < 0}
+    got = {(l.function, l.side): l.light_id for l in plan.lamps.values() if not l.front}
+    assert got[(lights.REVERSE, "L")] == got[(lights.REVERSE, "R")] in rear, got
+    assert got[(lights.FOG, "C")] is None, got
+    assert all(i in rear for k, i in got.items() if k[0] != lights.FOG), got
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
