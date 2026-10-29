@@ -2088,8 +2088,28 @@ In game (VM 2, `-Views 'nose,nose+night' -Palette 0`, vanilla 241 first, then th
 429; master `vm2-20261029-195645`, this change `vm2-20261029-200139`;
 `img/lamps8-venom-ingame.jpg`, `img/lamps8-s60-ingame.jpg`): by day the Venom's head lamps show their
 projectors under the lens instead of two white plates; the S60's lamp edge is less white. In the dark
-mood the Venom now glows from its two projectors only: its own `head_light` and `hidhead` texels are
-dim (converted alpha median 20, so 4 by day), where master lit the whole lexan plate.
+mood the Venom glowed from its two projectors only (render p95 0.35 against master's 6.1).
+
+That was a fourth fault: the left-out lexan stayed in the front lamp view (`Texturing._lamp_view`,
+`lamp_tris`), so it hid the head lamps from `day_glow` and `visible_white`, and they kept their dim
+converted alpha (median 20, 4 by day) and a white scale set by the grey lexan (0.66). Lenses left out
+(`dropped_lenses`) now stay out of the front views (the rear view, `visible_red`, is unchanged: 94
+cars' left-out rear lenses still count there, open). Cars with a front lens left out: the Venom, BMW
+M635CSi 84, Dodge Viper CC 03, Hyundai ix20 11 (`out/l8/day_survey.py`, `wscale.py`):
+
+| Car | 0x1D lamp mean alpha (LOD 1) | day emission, cm2 | white scale |
+| --- | --- | ---: | --- |
+| HEN_VenomGT_12 | `head_light` 3.5 -> 12.1, inner lens 5.0 -> 7.7, `hidhead` 1.9 -> 0 | 59 -> 85 | 0.66 -> 0.99 |
+| DOD_ViperCC_03 | `headlightL/R` 17.7 -> 19.3, bumper lamps 18.7 -> 17.7 | 974 -> 986 | none (too few samples) |
+| HYU_ix20_11 | 15.2 -> 15.3 | 190 -> 191 | 1.0 |
+| BMW_M635CSi_84 | unchanged | 353 | 1.0 |
+
+The Venom's head lamps now glow as the other ports' 0x1D lamps do: render_compare's renderer, front
+view, dark mood, p95 1.37 over 1,417 lamp pixels (the other ports about 1.65; master 6.1 over 5,439,
+the lexan plate that was white by day). Its `hidhead` projectors stay dark: their few visible samples
+sit in `day_glow`'s faded rim. Master's night level came from the same unscaled alpha as its day
+plate; a 0x1D lamp has one alpha for both, and #167 sets it at a fifth by day and at night (issue
+filed with this pass).
 
 ### Head lamp techniques at the rear (issue #264)
 
