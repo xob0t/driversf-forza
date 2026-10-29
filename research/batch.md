@@ -1,6 +1,6 @@
 # Batch porting, model IDs and the installer
 
-Updated: 2026-10-24
+Updated: 2026-10-29
 
 How many Forza cars one `dngvehicles.sp` can take, which model IDs they get,
 what the save and the garage can hold, and how `src/dsfforza/build/port_batch.py` and
@@ -13,7 +13,7 @@ The Ghidra outputs are in `out/ghidra/profile-*`; the scripts used are
 | Limit | Value | Source |
 | --- | --- | --- |
 | Root entries in `dngvehicles.sp` | 1100. Vanilla uses 453: 150 cars x 3, plus SSIC, DMWK and BINF. That leaves room for 215 more cars (1100 - 453 = 647 entries, 3 per car). | confirmed-static, `spool-limits.md` |
-| `dngvehicles.sp` file size | below 2 GiB: the file layer's seek clamps larger positions to 0. At about 3.45 MB per ported car that is about 480 added cars, so only the root entry limit applies without the plugin. | confirmed-runtime, `spool-limits.md` |
+| `dngvehicles.sp` file size | below 2 GiB: the file layer's seek clamps larger positions to 0. At about 4.5 MB per ported car (the full roster's average: 3,058,479,104 bytes for 573 cars, `out/build`, 2026-10-28) that is about 370 added cars, so only the root entry limit applies without the plugin. | confirmed-runtime, `spool-limits.md` |
 | Base model IDs | below 1000; N+1000 and N+2000 are the interior and exterior entries (FUN_005A7FC0 adds 1000 and 2000). 849 IDs are free: 1 to 61, the 92 gaps in 62 to 303, and 304 to 999. | confirmed-static |
 | Garage list | model IDs 0 to 303 only (FUN_006c57d0, and an `int[0x130]` indexed by ID at garage object +0x3264) | confirmed-static |
 | Garage maker groups | at most 40 groups (vanilla: 35 with selectable cars) and at most 20 cars per group (vanilla maximum: Chevrolet, 16). Groups are keyed by the first 15 characters of `ManufacturerName`, upper-cased. The insert code (FUN_006C7B40, FUN_006C7BB0) has no capacity check. | confirmed-static |
@@ -28,7 +28,7 @@ The Ghidra outputs are in `out/ghidra/profile-*`; the scripts used are
 | Limit | With the plugin |
 | --- | --- |
 | Root entries in `dngvehicles.sp` | `archive` module: 16384 (`[archive] max_entries`). The model IDs bind first: 453 + 3 × 849 = 3000 entries. `port_batch.py` assigns 1 to 61 and 304 to 999 (at most 757 cars), or all 849 with `--id-policy asi`; pass `--root-limit` (3003 covers every ID), since the default stays 1100 for installs without the plugin. Tested in game with 2,724 entries (`spool-limits.md`, "Raising the root entry limit"). |
-| `dngvehicles.sp` file size | `archive` module (`large_files`): below 4 GiB, enough for all 849 IDs (about 3.4 GB) |
+| `dngvehicles.sp` file size | `archive` module (`large_files`): below 4 GiB. The 573 cars take 3.06 GB. At their 4.5 MB a car, all 849 IDs would need about 4.3 GB, a little over 4 GiB; the 177 cars of #162 would bring the archive to about 3.85 GB |
 | Garage list | model IDs 0 to 999 (`[garage] max_id`) |
 | Garage maker groups | 120 groups (`[garage] max_groups`) of any number of cars (`[garage] max_cars`, 1000); the vehicles screen shows a group of 20 cars or more 19 cards at a time and scrolls on at the edges (`asi.md`, "Maker groups past 20 cars"); a group that doesn't fit is left out instead of overrunning memory |
 | Save flags (list, bit arrays, owned list) | IDs 304 to 999 are kept outside the vanilla block, in `dsfforza-garage.dat` next to `autosave.dat`; IDs of 1000 and up are dropped by the bit setters; a full vanilla list no longer crashes |
@@ -131,7 +131,7 @@ The defaults are player-safe:
 | Option | Default | Effect |
 | --- | --- | --- |
 | `probe` | false; true when `config.lua` has `ids` (the test harness) | logs traffic counts and profile flags for 3 minutes |
-| `writeProfile` | false | on each start, marks every garage-listed added car unlocked and owned, so the game shows a "new vehicle" notice once per car. It uses one slot of the 304-slot list per car, and the flags stay in the save after an uninstall (harmless: no car, no garage entry). |
+| `writeProfile` | false (`tools/install.ps1 -WriteProfile` turns it on; `dsff install` passes that unless `--no-write-profile`) | on each start, marks every garage-listed added car unlocked and owned, so the game shows a "new vehicle" notice once per car. It uses one slot of the 304-slot list per car, and the flags stay in the save after an uninstall (harmless: no car, no garage entry). |
 | `guardProfile` | true | drops Lua `SetVehicleUnlocked`/`Owned` calls for added IDs above 303 (above 999 with `dsfforza.asi`'s save hooks) |
 | `garage` | true | `Selectable` for IDs below 304 (below 1000 with `dsfforza.asi`), subject to the group caps |
 | `regionCars` | 24 | With more added cars than this, car k (in ID order) goes to every m-th region, offset by k (m = ceil(cars / 24)), so each region gets about 24 of them. Vanilla region lists hold 9 to 110 IDs. |
@@ -323,7 +323,7 @@ Batch-level costs at full-roster scale:
   at 4 at a time. `upvh lint-many` reads them once per process (6 cars:
   3.6 s instead of 19 s of single lints) and prints the same text.
 - **GUI** is linear in the cars, but `render_car` read the whole archive
-  twice per render, and at 573 cars that archive is about 2.4 GB. It is
+  twice per render, and at 573 cars that archive is about 3 GB. It is
   read once now. The nameplate rasteriser is about 3 times faster, and the
   renders (about 5 s each, every car without an FH1 thumbnail) run in
   `--jobs` processes. 4 cars: 36 s -> 15 s. Since 2026-10-24 every car is
@@ -549,8 +549,8 @@ machine that has only the game and the discs:
   constant-chunk evaluator, byte-identical to unluac's output;
 - each game's `gamedb.slt`.
 
-`DSF_GAME_DIR` points `host_select.py` and `gui_assets.py` at another game
-folder.
+Every tool reads the game folder from `DSF_GAME_DIR`; there is no built-in
+default.
 
 ## Batch 1 (tools/batches/first.txt, out/batch/first)
 
@@ -811,7 +811,11 @@ guard covers both 304 to 319 and 320 to 334.
 
 Run from the repo root. The plan was written for the sandbox; on this PC
 the sandbox guest bugchecks (`in-game-tests.md`), so add `-Vm` (headless VM,
-started by `run-series.ps1`) to each command.
+started by `run-series.ps1`) to each command. Since #184 an archive named
+`dngvehicles.sp` brings its build's `dngvehicles.lua`, `hud.lua`, `gui.sp`,
+`Fonts.fchunk` and `global.fchunk` into the run by itself
+(`in-game-tests.md`, "Stray badges and plates in harness shots"), so the
+`Copy-Item` lines and `-Override` below are no longer needed.
 
 What the harness provides:
 
@@ -926,7 +930,7 @@ python tools/port_batch.py build --list tools/batches/all.txt --gui --wide-glyph
 | Resource hash arena (45,000 nodes) | bounded by what is resident, not by the archive | free list (below) | not a limit for the roster |
 | Garage maker groups | 112 maker groups, plus 139 cars in 8 shared groups `FORZA`..`FORZA 8` (`plan`) | 120 groups of 20 (`[garage] max_groups`) | Fits. The extra cars of makers with more than 20 (Ford, Chevrolet, Nissan, Porsche...) go into the mixed FORZA groups. |
 | Garage IDs | 573 cars, all below 1000 | `[garage] max_id=1000` | fits |
-| HUD glyphs | one 16-bit badge or plate per car without a vanilla one | `--wide-glyphs`: codes 0x100..0xD7FF, about 800 plates in 4 pages | fits; not yet checked in game at this count |
+| HUD glyphs | one 16-bit badge or plate per car without a vanilla one | `--wide-glyphs`: codes 0x100..0xD7FF, about 800 plates in 4 pages | fits. In game they drew nothing until the renderer's blank-text checks were patched (`gui-assets.md`, "Why the 16-bit glyphs drew nothing") |
 | gui.sp pictures | 562 pictures; gui.sp already holds 923 entries | 177 one-per-SPOI below 1100, shared SPOIs beyond | `port_batch` passes no root limit to `gui_assets.build`, so 385 pictures share SPOIs (untested in game). The fix passes the archive's root limit through. |
 
 **Resource hash arena (confirmed-static; Ghidra on the `-b` project,
@@ -1094,7 +1098,9 @@ both, the maker list logos need the new `global.fchunk` too.
 
 ### Install (not run here)
 
-From the worktree that holds the build, with dsfforza.asi built from master
+Today `uv run dsff install --install-only --build <folder>` does this, with
+`-WriteProfile` unless `--no-write-profile` (`docs/DEVELOPMENT.md`). As
+written then, from the worktree that holds the build, with dsfforza.asi built from master
 (`.\tools\asi\build.ps1`):
 
 ```powershell
