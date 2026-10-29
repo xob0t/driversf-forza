@@ -1,6 +1,6 @@
 # Damage: panels, crush morph, hinges
 
-Updated: 2026-10-23
+Updated: 2026-10-29
 
 How a vanilla DSF car's body damages, from static analysis of the vanilla
 archive and the shared vehicle shaders, and what `src/dsfforza/convert/damage.py` builds
@@ -976,6 +976,105 @@ Damage (`-Damage -DamagePanels`, IDs 1 and 5, run `vm1-20261027-054158`): full
 visual damage, the F355's engine cover opened and swung off; the tail panel stays
 flat black, no crash (`img/exposed-f355-damage.png`). The bay pictures under the
 opened cover aren't readable in those shots.
+
+## Mirrors that hang beside the car (issue #187, 2026-10-29)
+
+User report on the 3ca28fd build: the Devon GTX (DEV_GTX_10, spool 328, host
+182) once damaged, both side mirrors hanging outward beside the body; a player
+reported the same on the Lancer Evo X (mit_lancerevoxgsr_08, host 136).
+Scratch: `out/m187/` (`mirrors.py`, `survey3.py`, `simulate.py`, `fields.py`).
+
+### Cause (confirmed-runtime)
+
+The mirror's own rigging was right: each side on the host's mirror record
+(roles 40/41), its rigid body, collision box and UPVH mirror-table point within
+0.1 m of the Forza mirror, no crush (as vanilla). What was wrong is its
+**parent record**. Vanilla mirrors are separate meshes on the door skin, and
+their record hangs under the door's (253 of 277 vanilla mirror records; the
+rest under the front structure, the chassis or the bonnet: 276, 167, 197, 246,
+232...), so a door knocked ajar carries its mirror (vanilla 182 and 136 under
+`fullVisualDamage`, run `vm1-20261029-011834`). Forza mirrors are often
+mounted on the A-pillar or the sail ahead of the window, which the converted
+car draws through the chassis (or on a door held shut, `DamagePlan.bound`):
+the Evo X's mirror touches the chassis (92 vertices within 2 cm) and is 30 mm
+from its door, the Devon's 18 mm from the chassis and 23 mm from its door.
+Under the host's door record the mirror swung out with the door while its
+mount stayed on the body. With `forceOpenPanels` the Devon's mirrors hang in
+the air beside the car exactly as in the report (run `vm1-20261029-024106`).
+On the DBR9 (host with both mirrors under the bonnet record) they went up with
+the bonnet.
+
+### Fix (`DamagePlan._remount_mirrors`, `move_subtree`)
+
+- The mirror's mount is the panel with the most mirror points within 2 cm
+  (`MOUNT_TOUCH`) at the finest full-entry LOD, else the nearest within 6 cm
+  (`MOUNT_REACH`); the record to hang under is the one whose transform slot
+  draws that panel (`bound`).
+- `move_subtree` moves the mirror record and its marker (role 73/74) under
+  it. Every vanilla hierarchy numbers its part records' transform slots
+  (+0x34) and panel-data indices (+0x2A) in record order, and vertices carry
+  those numbers, so the subtree goes only where that order holds, else the
+  move is refused. A mirror under a bonnet after it (ARX-01b, slots 9 and 11
+  under slot 17) crashed `forceOpenPanels` (run `vm2-20261029-030631`).
+  When the mount's record can't take it in order, the mirror goes under the
+  chassis: it then stays on the body when its mount (bonnet, door) swings,
+  instead of leaving with a panel it isn't on.
+- Three record fields follow the tree's shape (`_tree_fields`, `upvh.md`), and
+  `move_subtree` writes them again for the new tree on every record that
+  followed them before: +0x0C bit 0 (the record has a part child; all 10,959
+  vanilla records), and +0x18/+0x16, the number of hinged records among a
+  record and its ancestors whose subtree ends where its own does (on leaves
+  but the list's last, also +0x16), i.e. how many hinge transforms the engine
+  pops there (10,944 of 10,959; the rest are three headlights on hosts 210 and
+  217). Moves that left them stale crashed: a door with bit 0 and no mirror
+  (Devon, `forceOpenPanels`, runs `vm1-20261029-024550`,
+  `vm2-20261029-025144`, `vm1-20261029-025513`); bit 0 right but the +x
+  mirror's old pop counts (ARX-01b under `forceOpenPanels`, run
+  `vm1-20261029-033943`; Devon under `fullVisualDamage` alone, run
+  `vm2-20261029-034112`). A door given a mirror without bit 0 didn't carry it
+  (DBR9, run `vm1-20261029-025726`). `damage check` checks all three.
+- Two mirrors under one record (DBR9's bonnet): the one with the higher slot
+  has to leave first, so the rest are retried until none moves.
+
+### In game (headless VMs; before = master, after = this fix, same IDs)
+
+Seven test cars: 1 Devon GTX, 2 Lancer Evo X, 3 Sentra (held doors), 4 Miata
+'94, 5 Civic Type R '04, 6 DBR9 '06 (both mirrors under its host's bonnet
+record), 7 ARX-01b (mirrors on the bonnet, under door records).
+
+- `-Damage -DamagePanels` (`forceOpenPanels`), IDs 7, 1, 2, 5, 6: before
+  `vm2-20261029-055515`, after `vm2-20261029-060831`, both clean. The Devon's
+  mirrors hang off the tips of its open doors before and stay on the body at
+  the A-pillars after (`img/damage-mirrors-devon-forceopen.jpg`); the DBR9's
+  ride up on the open bonnet before and stay on the body after
+  (`img/damage-mirrors-dbr9-forceopen.jpg`).
+- `-Damage` with left, right and rear views, IDs 1, 2, 3, 5, 6: before
+  `vm1-20261029-055544`, after `vm1-20261029-061037` (shots through every
+  car and view; the series hit the 30-minute background limit while it
+  collected the run, so that folder has no `result.json` or `Driver.log`).
+  No door swung ajar in these shots, before or after.
+- The first build of the fix, with the same mirror placement but stale
+  record fields (runs `vm2-20261029-020126` before, `vm2-20261029-021554`
+  after, `-Damage` and views): where the Evo X's and Civic's doors hung ajar,
+  their mirrors stood off the A-pillar sail before and sit on it after
+  (`img/damage-mirrors-evox-civic-ajar.jpg`); the Sentra's and DBR9's alike.
+
+### Survey (master build 3ca28fd, 566 built cars; `out/m187/sim-master.jsonl`)
+
+`simulate.py` runs `_remount_mirrors` on each built car's hierarchy and full
+entry. 469 mirrors on 266 cars move, all under the chassis in slot order:
+340 from a door with the mirror on the chassis, 39 on the front structure, 24
+on a held wing, 11 on a held door; 18 from a door with the mirror on the
+bonnet; 37 from the bonnet record (16 on the chassis, 19 on a door, 2 on the
+front structure). Left as before: 40 mirrors on 24 cars. On 22 of them the
+host's door record has a door-glass record after the mirror (AST_DB9_05,
+BMW_Z4_11, MAZ_RX7_90, LOT_Elise111S_05...; on the Lotus 2-Eleven and the
+Cougar Eliminator the mirror is on its door, which is held shut), so no place
+under the chassis keeps both orders; the BMW V12 LMR's -x mirror can't leave
+its bonnet record in order either, and the Radical SR8's two sit on its front
+bumper but hang under the front structure ahead of its other parts. The other
+276 cars have their mirrors under the right record already, no mirror panel,
+or none within 6 cm of a panel.
 
 ## Risks and open questions
 
