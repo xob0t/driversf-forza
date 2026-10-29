@@ -90,8 +90,10 @@ SWATCH_TINT = 0.5
 FLAT_SHARE = 0.9
 FLAT_SPREAD = 6
 RAY_CHUNK = 256
-# A lens point whose normal points out of the car's end at least this much (its z component;
-# the Panoz Esperante's laid-back head lamp lens 0.58) may look in along the axis (_axis_fallback).
+# A lens whose points face out of the car's end at least this much on average (the z component of
+# their normals: the Panoz Esperante's laid-back head lamp lens 0.59, the Maserati MC12's tails 0.57)
+# may look in along the axis (_axis_fallback). Not side markers (0), nor glass balls and domes
+# (the Fiat 595's round lamps 0.0, the Dino 246's tails 0.2), whose texels other lamps share.
 AXIS_MIN_FACING = 0.25
 RAY_CELL = 0.04  # m: rays are chunked by these cells
 RAY_STEP = 2  # texels per ray, each way, at least
@@ -417,10 +419,13 @@ def _axis_fallback(surf: _Surfaces, origins, dirs, found, front: bool = True) ->
     and the reflector bowls a camera ahead of the car sees through it along the axis; a tail
     lamp lens wrapped round the wing or laid along the boot lid, the same from behind. A ray's
     results (`found`: _behind's arrays, in place) take the axis ray's where that meets a lamp.
-    Only rays from lens points facing out of the car's end (AXIS_MIN_FACING): along the axis, a
-    side marker's would run along the flank. Returns the rays changed."""
+    Only a lens facing out of the car's end (AXIS_MIN_FACING on average over its rays: along the
+    axis, a side marker's would run along the flank), and only its points that face out. Returns
+    the rays changed."""
     outward = dirs[:, 2] if front else -dirs[:, 2]  # dirs point in: -normal
-    redo = np.nonzero(~found[4] & (outward >= AXIS_MIN_FACING))[0]
+    if not len(outward) or outward.mean() < AXIS_MIN_FACING:
+        return 0
+    redo = np.nonzero(~found[4] & (outward > 0))[0]
     if not len(redo):
         return 0
     axis = np.tile([0.0, 0.0, 1.0 if front else -1.0], (len(redo), 1))
