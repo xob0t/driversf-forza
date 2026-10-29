@@ -1036,6 +1036,29 @@ the bonnet.
 - Two mirrors under one record (DBR9's bonnet): the one with the higher slot
   has to leave first, so the rest are retried until none moves.
 
+### In game (headless VMs; before = master, after = this fix, same IDs)
+
+Seven test cars: 1 Devon GTX, 2 Lancer Evo X, 3 Sentra (held doors), 4 Miata
+'94, 5 Civic Type R '04, 6 DBR9 '06 (both mirrors under its host's bonnet
+record), 7 ARX-01b (mirrors on the bonnet, under door records).
+
+- `-Damage -DamagePanels` (`forceOpenPanels`), IDs 7, 1, 2, 5, 6: before
+  `vm2-20261029-055515`, after `vm2-20261029-060831`, both clean. The Devon's
+  mirrors hang off the tips of its open doors before and stay on the body at
+  the A-pillars after (`img/damage-mirrors-devon-forceopen.jpg`); the DBR9's
+  ride up on the open bonnet before and stay on the body after
+  (`img/damage-mirrors-dbr9-forceopen.jpg`).
+- `-Damage` with left, right and rear views, IDs 1, 2, 3, 5, 6: before
+  `vm1-20261029-055544`, after `vm1-20261029-061037` (shots through every
+  car and view; the series hit the 30-minute background limit while it
+  collected the run, so that folder has no `result.json` or `Driver.log`).
+  No door swung ajar in these shots, before or after.
+- The first build of the fix, with the same mirror placement but stale
+  record fields (runs `vm2-20261029-020126` before, `vm2-20261029-021554`
+  after, `-Damage` and views): where the Evo X's and Civic's doors hung ajar,
+  their mirrors stood off the A-pillar sail before and sit on it after
+  (`img/damage-mirrors-evox-civic-ajar.jpg`); the Sentra's and DBR9's alike.
+
 ### Survey (master build 3ca28fd, 566 built cars; `out/m187/sim-master.jsonl`)
 
 `simulate.py` runs `_remount_mirrors` on each built car's hierarchy and full
