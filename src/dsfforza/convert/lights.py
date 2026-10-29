@@ -1295,10 +1295,15 @@ class LampPlan:
         return self
 
     def is_daytime(self, sub, k) -> bool:
-        """Whether triangle k of `sub` lights with a head lamp that also lights by day (0x1D,
-        assign): dsf_materials.Binding.set_daytime."""
+        """Whether triangle k of `sub` lights with an entry that also lights by day (a 0x1D head
+        lamp's, assign): dsf_materials.Binding.set_daytime. The entry's type, not the lamp's: a
+        lamp sharing a head lamp's entry (the Mustang Boss 429's amber side markers, position
+        lamps on the head lamp's entry) glows with it, at 0x1D's level (#250)."""
         lamp = self.lamps.get(self.tri_lamp.get((id(sub), k)))
-        return lamp is not None and lamp.light_id is not None and lamp.type == HEAD_DAYTIME
+        if lamp is None or lamp.light_id is None:
+            return False
+        owner = next((l for _, lid, l in self.slots if lid == lamp.light_id and l is not None), lamp)
+        return owner.type == HEAD_DAYTIME
 
     def light_byte(self, sub, k) -> int:
         key = self.tri_lamp.get((id(sub), k))

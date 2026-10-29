@@ -294,6 +294,54 @@ def test_render_scales_daytime_alpha():
     assert out[dm.PAD + 2, dm.PAD + 6, 3] == plain  # source x 14: as converted
 
 
+def test_daytime_mask_takes_the_dsf_texel_box():
+    # Issue #250: a day-lit triangle whose UVs fall on one source texel (the Volvo S60 11's head
+    # lamp reflector slivers) samples the DSF texel that averages a 2 x 2 box of source texels
+    # (scale 0.5): the whole box is day-lit, or the DSF texel kept most of its alpha. A texel
+    # another lamp's triangle samples (an indicator) keeps its own.
+    t = dm.Texturing(Path(), size=(32, 32))
+    t.families = (fm.LIGHTS,)
+    src = bytearray(bytes((180, 180, 180, 100)) * (SIZE * SIZE))
+
+    class Atl:
+        def get(self, family):
+            return SIZE, SIZE, src
+
+    t.atlases = Atl()
+    region = dm.Region(fm.LIGHTS, (8, 4, 16, 12))
+    region.dst, region.size = (0, 0), (4 + 2 * dm.PAD, 4 + 2 * dm.PAD)
+    t.regions, t.scale, t.src_sizes = {fm.LIGHTS: [region]}, {fm.LIGHTS: 0.5}, {fm.LIGHTS: (SIZE, SIZE)}
+    point = (10.5 / SIZE, 6.5 / SIZE)  # source texel (10, 6): DSF texel (PAD + 1, PAD + 1)
+    sliver = _quad("headlightL", "reflector", -2.0, *(point[0],) * 2)
+    for v in sliver.lod_vertices:
+        v.uv0 = point
+    indicator = _quad("headlightL", "indicator_left", -2.0, 14.5 / SIZE, 14.5 / SIZE)
+    for v in indicator.lod_vertices:
+        v.uv0 = (14.5 / SIZE, 6.5 / SIZE)  # source texel (14, 6): DSF texel (PAD + 3, PAD + 1)
+    subs = [sliver.subsections[0], indicator.subsections[0]]
+    # Textured parts (their other triangles cover texels): only these triangles are slivers.
+    t.resolved = {
+        (id(sec), id(sec.subsections[0])): dataclasses.replace(fm.resolve(sec, sec.subsections[0]), kind="textured")
+        for sec in (sliver, indicator)
+    }
+    for sub in subs:
+        for k in range(2):
+            t.owners[(id(sub), k)] = 0
+    day, _ = t.daytime_mask([sliver, indicator], lambda s, k: s is subs[0], lambda s, k: True)
+    assert day[6, 10] and day[6:8, 10:12].all()  # the texel and the box around it
+    assert not day[6:8, 14:16].any()  # the indicator's
+    t.daytime_texels = day
+    out = np.frombuffer(bytes(t.render()), np.uint8).reshape(32, 32, 4)
+    plain = t._convert_texel(fm.LIGHTS, 180, 180, 180, 100)[3]
+    assert out[dm.PAD + 1, dm.PAD + 1, 3] == round(plain * dm.DAYTIME_GLOW)
+    assert out[dm.PAD + 1, dm.PAD + 3, 3] == plain
+    # Without the box (the source texel alone) the DSF texel kept most of its alpha.
+    t.daytime_texels = np.zeros((SIZE, SIZE), bool)
+    t.daytime_texels[6, 10] = True
+    out = np.frombuffer(bytes(t.render()), np.uint8).reshape(32, 32, 4)
+    assert out[dm.PAD + 1, dm.PAD + 1, 3] > 0.75 * plain
+
+
 def test_render_takes_the_lens_glow():
     t = dm.Texturing(Path(), size=(32, 32))
     t.families = (fm.LIGHTS,)
@@ -385,6 +433,28 @@ def test_swatch_lens_tints_the_lamp_behind():
     assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
     assert got[3] == LAMP[3]  # the reflector keeps its glow mask
     assert report["tinted"]["texels"] == (SIZE // 2) * SIZE
+
+
+def test_clear_swatch_lens_over_a_lamp_is_left_out():
+    # Issue #250: a clear swatch lens over a whole head lamp unit (the Hennessey Venom GT's lexan
+    # covers), whose rays meet the housing more than the lamp, is left out with its tint on the
+    # lamp it covers; kept, it was an opaque grey plate that glowed white by day. A red one
+    # stays the lamp surface (a tail lens over a small bulb).
+    front = (0.0, 0.0, -1.0)
+    for colour, left_out in (((180, 180, 180, 128), True), (LENS, False)):
+        sections, ids = [], set()
+        for i, x in enumerate((0.5, 0.8)):  # two lenses on the same swatch texels
+            lens = _quad(f"lexan{i}", "detail_glass_clear", -2.0, 0.0, 2 / SIZE, x=x, normal=front)
+            bulb = _quad(f"headlight{i}", "head_light", -1.9, 0.5, 1.0, x=x - 0.15, normal=front)  # a quarter
+            housing = _quad(f"headlight{i}", "frame", -1.9, 0.5, 1.0, x=x + 0.05, normal=front)
+            sections += [lens, bulb, housing]
+            ids.add(id(lens.subsections[0]))
+        atlases = _ClearAtlases(lens=colour)
+        dropped = set()
+        with tempfile.TemporaryDirectory() as car_dir:
+            report = lenses.bake(sections, {1}, atlases, ids, Path(car_dir), dropped=dropped)
+        assert report["lexan0/detail_glass_clear"]["scrambled"] > 0
+        assert (("lexan0", "detail_glass_clear") in dropped) == left_out, (colour, dropped)
 
 
 def test_flat_rear_lens_tints_the_lamp_behind():
@@ -598,3 +668,23 @@ def test_plain_glass_cover_in_a_lamp_section():
         m = dataclasses.replace(fm.resolve(cover, cover.subsections[0]), role=fm.GLASS, family=fm.LIGHTS)
         assert dm.COVER_LAMP_SECTION_SHARE < t._over_lamp(cover, cover.subsections[0]) < dm.COVER_MIN_SHARE
         assert t.clear_cover(cover, cover.subsections[0], m) == left_out, name
+
+
+def test_front_lamp_view_leaves_out_dropped_lenses():
+    # Issue #250: a lens left out (dropped_lenses) isn't drawn. Kept in the front view it hid the
+    # lamp behind it, so the Venom GT's head lamps got no day glow under their left-out lexan.
+    lens = _quad("lexanLHL", "detail_glass_clear", -2.0, 0.0, 0.5, normal=(0.0, 0.0, -1.0))
+    lamp = _quad("headlightL", "head_light", -1.9, 0.5, 1.0, normal=(0.0, 0.0, -1.0))
+    t = dm.Texturing(Path())
+    t.atlases = _ClearAtlases()
+    for sec in (lens, lamp):
+        sub = sec.subsections[0]
+        for tri in sub.triangles():
+            pts = [sec.lod_vertices[i].position for i in tri]
+            uvs = [sec.lod_vertices[i].uv0 for i in tri]
+            t.lamp_tris.append((1, pts, uvs, (sec.name, sub.material)))
+    _, u = t._lamp_view(front=True)
+    assert (u < SIZE // 2).all()  # the lens's texels: it is in front
+    t.dropped_lenses = {("lexanLHL", "detail_glass_clear")}
+    _, u = t._lamp_view(front=True)
+    assert (u >= SIZE // 2).all()  # the lamp's
