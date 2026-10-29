@@ -2379,8 +2379,9 @@ target in sRGB, luminance weighted; copy its nine parameters; set colours 2
 and 3 to the target's hue so that the entry shows the target, colour 3 at the
 template's luminance ratio to colour 2 (where that would need a colour above
 1, the brighter one is the hue at full scale and the other makes up the
-rest). Near-black colours (linear luminance under 0.01) keep the vanilla
-black as it is. Before issue #289 the main colour was the swatch as is and
+rest). Near-black colours (linear luminance under 0.01) show as bright as
+the vanilla black they matched, in their own hue (not the template's: vanilla
+200's black has a green rim). Before issue #289 the main colour was the swatch as is and
 `apparent` read colour 2 or colour 3, not the mix.
 `install` replaces the host's SPSPs (the host's first SPSP is the chunk
 template; every MARP gets an explicit payload) and drops colours from the end
@@ -2578,6 +2579,21 @@ master (the TSX's `#a6abab` 0.33 to 0.12, the Grand Cherokee's `#9aa1ab`
 0.29 to 0.11), reds, blues, oranges and yellows on low-power templates
 brighter (F50 GT 0.005 to 0.034 (red channel 0.025 to 0.158), 370Z blue
 0.009 to 0.048, Boss 429 orange 0.019 to 0.135).
+
+In game (confirmed-runtime; master and this branch built for 8 cars,
+`-Palette 0`, chase and `grille` views, vanilla 126 (red) and 224 (McLaren
+F1 white) for reference; runs `vm2-20261029-232404` / `-232914` and, for
+the F50 GT, which as the first probed car lost its exterior shots,
+`vm2-20261029-234033` / `-234402`; `img/paint-289-f50-m3-tsx.jpg`,
+`img/paint-289-ingame.jpg`): the F50 GT goes from dark maroon to bright red
+like Forza's, the 370Z from navy to Forza's bright blue, the Boss 429 from
+brown to Grabber orange; the S5S Raptor stays a plain yellow (no glow), the
+DMC-12 is unchanged (stainless preset), the M3 E30's white is lighter (still
+a little cream next to the F1's white), the Firebird stays black with a
+faint green (Forza's `#0f140d` is green-tinted). The TSX's `#a6abab`
+silver goes from near white to a mid grey: on the twin cars light metallic
+greys show 0.32 of the swatch (median of 54), so 0.3 is right on average
+for silvers, but no vanilla silver was in the run to compare (open).
 
 ### Survey of the 40 testdrive cars (`out/testdrive3`, offline)
 
