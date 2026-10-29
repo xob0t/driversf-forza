@@ -693,6 +693,11 @@ def day_glow(glow: np.ndarray, view, colour: np.ndarray | None = None) -> np.nda
 # TAIL_RED_ALPHA, its own picture's detail first (GLOW_DETAIL_*), so both sides of a car get the
 # same range (the Panoz Esperante's left and right tails differed).
 TAIL_MIN_SAMPLES = 40
+# The dimmest share of each ported tail lamp's visible pixels that stays dark: a ported tail lamp is
+# drawn over about 2.5 times vanilla's red area (render_compare's rear view: median 7,108 px against
+# 2,867; reflectors, bezels and lens edges), so ranked whole onto vanilla's distribution 56% of it
+# lit where vanilla lights 26% of its own, an even glow. The rest is ranked onto TAIL_RED_ALPHA.
+TAIL_DARK = 0.4
 # Vanilla's 0x18 tail lamps (DaytimeRunning + Brakes, the converter's tail type): the texel alpha
 # of the visible red lamp pixels at dsf_materials.LAMP_PERCENTILES (render_compare's renderer,
 # rear view, 56 vehicles, 137,610 pixels; out/l8/head_survey.py HEAD_REAR, HEAD_ALPHA_DUMP; per vehicle
@@ -728,9 +733,9 @@ def tail_glow(atlas: np.ndarray, view, tris=()) -> np.ndarray | None:
     of. Per red lamp as seen (a connected patch of red samples), each sample's lamp score
     (dsf_materials.lamp_score) times its picture's detail (GLOW_DETAIL_*) makes the lamp's pool;
     every texel of a triangle seen on the lamp is ranked in that pool by its own score times the
-    triangle's mean detail, onto TAIL_RED_ALPHA (the view samples one texel in many: ranking only
-    those left most of a lamp's texels at the converted alpha). A texel of several triangles
-    takes their mean."""
+    triangle's mean detail, onto TAIL_RED_ALPHA, the dimmest TAIL_DARK of the lamp at 0 (the view
+    samples one texel in many: ranking only those left most of a lamp's texels at the converted
+    alpha). A texel of several triangles takes their mean."""
     from dsfforza.convert import dsf_materials as dm
 
     if TAIL_RED_ALPHA is None:
@@ -777,6 +782,7 @@ def tail_glow(atlas: np.ndarray, view, tris=()) -> np.ndarray | None:
     def rank(k, values):
         pool = pools[k]
         r = (np.searchsorted(pool, values, "left") + np.searchsorted(pool, values, "right")) / (2 * len(pool))
+        r = np.clip((r - TAIL_DARK) / (1 - TAIL_DARK), 0.0, 1.0)
         return np.interp(r * 100, dm.LAMP_PERCENTILES, TAIL_RED_ALPHA)
 
     covered = np.zeros((h, w), bool)
