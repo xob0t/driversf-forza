@@ -369,24 +369,34 @@ def test_red_drawn_reverse_and_indicator_brake():
     # amber indicator lamps they lit white or amber when reversing or indicating and never braked.
     car = [
         _quad("revL", "reverse_light", 0.4, -2.0),
-        _quad("revL2", "reverse_light", 0.3, -2.0),
         _quad("revR", "reverse_light", -0.4, -2.0),
         _quad("indL", "indicator_left", 0.8, -2.0),
         _quad("indR", "indicator_right", -0.8, -2.0),
     ] + TAILS
     got = _seen_functions(car, {"revL": "red", "indL": "red", "indR": "red"})
-    assert got["revL"] == [lights.TAIL] * 2 and got["revL2"] == got["revR"] == [lights.REVERSE] * 2, got
+    assert got["revL"] == [lights.TAIL] * 2 and got["revR"] == [lights.REVERSE] * 2, got
     # a rear indicator side drawn red brakes and indicates (vanilla's US-style 0x19/0x1A)
     assert got["indL"] == got["indR"] == [lights.BRAKE_IND] * 2, got
-    # all of a side's reverse lamp drawn red: it stays the reverse lamp (VW_GolfR_10's bulbs)
-    got = _seen_functions(car, {"revR": "red"})
-    assert got["revR"] == [lights.REVERSE] * 2, got
     # white and amber ones keep their technique
     got = _seen_functions(car, {"indL": "amber"})
     assert got["revL"] == [lights.REVERSE] * 2 and got["indL"] == [lights.INDICATOR] * 2, got
     # without the drawn texels nothing changes
     plan = lights.LampPlan.build(car, _Place(), 0.0)
     assert {l.function for l in plan.lamps.values()} == {lights.REVERSE, lights.INDICATOR, lights.TAIL}
+
+
+def test_white_lens_over_a_red_drawn_reverse_bulb_stays_reverse():
+    # HON_IntegraMugen_02, VW_GolfR_10: the reverse bulbs are drawn red behind a clear lens drawn
+    # white. The lens lights with the reverse lamp behind it; only the bulb moves to the tail lamp.
+    car = [
+        _quad("glassLTL", "detail_glass_clear", 0.4, -2.05),
+        _quad("revL", "reverse_light", 0.4, -2.0),
+        _quad("tailL", "tail_light", 0.65, -2.0),
+    ]
+    got = _seen_functions(car, {"revL": "red"})
+    assert got["glassLTL"] == [lights.REVERSE] * 2 and got["revL"] == [lights.TAIL] * 2, got
+    got = _seen_functions(car, {"revL": "red", "glassLTL": "red"})
+    assert got["glassLTL"] == [lights.TAIL] * 2, got
 
 
 def test_red_reflector_round_a_reverse_bulb_lights_with_the_tail_lamp():
@@ -402,6 +412,29 @@ def test_red_reflector_round_a_reverse_bulb_lights_with_the_tail_lamp():
     assert set(got) == {lights.TAIL}, got
     got = _seen_functions([bowl, rev, _quad("tailL", "tail_light", 1.5, -2.0)], {"taillightL": "red"})
     assert set(got["taillightL"]) == {None}, got
+
+
+def test_lenses_keep_the_lamp_they_lie_over():
+    # LAM_Countach_88: amber lenses over indicator bulbs drawn red stay amber indicators (the side
+    # isn't mostly red once its lenses count); a red lens over a red-drawn indicator bulb is a red
+    # indicator that brakes too, lens and bulb (vanilla's US-style 0x19/0x1A).
+    car = [
+        _quad("glassLTL", "detail_glass_clear", 0.8, -2.05),
+        _quad("indL", "indicator_left", 0.8, -2.0),
+        _quad("indR", "indicator_right", -0.8, -2.0),
+    ] + TAILS
+    got = _seen_functions(car, {"glassLTL": "amber", "indL": "red"})
+    assert got["glassLTL"] == [lights.INDICATOR] * 2, got
+    got = _seen_functions(car, {"glassLTL": "red", "indL": "red"})
+    assert got["glassLTL"] == got["indL"] == [lights.BRAKE_IND] * 2, got
+    # PON_TransAm_02: a white lens over a red reflector round the reverse bulb: the reflector
+    # moves to the tail lamp, the lens stays the reverse lamp's
+    bowl = _strip("taillightL", "textured_reflector", 0.6, -2.02, 4)
+    lens = _strip("glassLTL", "detail_glass_clear", 0.6, -2.06, 4)
+    rev = _quad("revL", "reverse_light", 0.5, -2.0)
+    tail = _quad("tailL", "tail_light", 0.75, -2.0)
+    got = _seen_functions([lens, bowl, rev, tail], {"taillightL": "red"})
+    assert set(got["taillightL"]) == {lights.TAIL} and lights.REVERSE in got["glassLTL"], got
 
 
 if __name__ == "__main__":
