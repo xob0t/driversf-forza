@@ -1019,12 +1019,20 @@ the bonnet.
   When the mount's record can't take it in order, the mirror goes under the
   chassis: it then stays on the body when its mount (bonnet, door) swings,
   instead of leaving with a panel it isn't on.
-- Record +0x0C is a bit field (`upvh.md`): bit 0 set on exactly the records
-  with a part child (all 10,959 vanilla records). A door left with bit 0 and
-  no mirror crashed `forceOpenPanels` every time (runs `vm1-20261029-024550`,
-  `vm2-20261029-025144`, `vm1-20261029-025513`, Devon); a door given a mirror
-  without it didn't carry it (DBR9, run `vm1-20261029-025726`). `move_subtree`
-  keeps bit 0 on the old and new parent; `damage check` checks it.
+- Three record fields follow the tree's shape (`_tree_fields`, `upvh.md`), and
+  `move_subtree` writes them again for the new tree on every record that
+  followed them before: +0x0C bit 0 (the record has a part child; all 10,959
+  vanilla records), and +0x18/+0x16, the number of hinged records among a
+  record and its ancestors whose subtree ends where its own does (on leaves
+  but the list's last, also +0x16), i.e. how many hinge transforms the engine
+  pops there (10,944 of 10,959; the rest are three headlights on hosts 210 and
+  217). Moves that left them stale crashed: a door with bit 0 and no mirror
+  (Devon, `forceOpenPanels`, runs `vm1-20261029-024550`,
+  `vm2-20261029-025144`, `vm1-20261029-025513`); bit 0 right but the +x
+  mirror's old pop counts (ARX-01b under `forceOpenPanels`, run
+  `vm1-20261029-033943`; Devon under `fullVisualDamage` alone, run
+  `vm2-20261029-034112`). A door given a mirror without bit 0 didn't carry it
+  (DBR9, run `vm1-20261029-025726`). `damage check` checks all three.
 - Two mirrors under one record (DBR9's bonnet): the one with the higher slot
   has to leave first, so the rest are retried until none moves.
 
