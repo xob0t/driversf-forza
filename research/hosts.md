@@ -294,7 +294,7 @@ right, wheel part on the UPVH hubs: all wheels in their arches), `eyes.png`
 3. Collision (PDL): with `--damage` (on in `port_batch`) each panel's
    collision boxes are moved and scaled onto the Forza panel; the root hull
    stays the host's shape unless `--damage hull`, which is untested in game
-   (`damage.md`).
+   (`damage.md`, #210).
 
 The host's SPSR paint sets, open here before, are replaced by the car's
 Forza factory colours (`paint.py`, table above).
