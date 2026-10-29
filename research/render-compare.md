@@ -286,6 +286,14 @@ BMW_15_LMR_99 16.7, CHE_CorvetteGrandSport_96 16.4, NIS_12_GTR_10 16.3,
 CHE_ElCaminoSS_70 16.0; `sheet.html` has all 573 and the flag table. Ten cars, ours |
 Forza: `img/render-compare-sample.jpg`.
 
+The second pass (the cockpit view and the full entry's two traffic views; 573 cars, no
+errors; car score median 3.8, p90 8.6) repeats the exterior's categories at the traffic
+LOD (rear lamps colour 199 cars, structure 173, no glow 92: as above). Its own: the cockpit
+coverage flag on 134 cars and body, trims and chrome "not drawn" in the cockpit view
+(75, 114 and 63 cars), the bonnet and pillars seen through the windscreen at the
+reference's finest shell LOD against the converter's coarser one (Open 2); in the traffic
+views those cars' body, trims and chrome are drawn (missing under 2%). No issue from it.
+
 Issues from the run: #247 (R8 head lamps), #250 (white plates by day), #251 (plates over
 rain lights), a comment on #166. Not filed: the categories above that are the
 converter's design or vanilla's behaviour.
