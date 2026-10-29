@@ -84,7 +84,9 @@ def test_sweep_removes_only_the_links_of_folders_that_are_no_longer_worktrees():
             _junction(main / "worktrees" / "live" / "assets", main / "assets"),  # a live worktree
             _junction(tmp / "other" / "assets", main / "assets"),  # not a worktree root, not main-*
             _junction(main / "worktrees" / "gone" / "out" / "elsewhere", tmp / "outside"),  # not into main
+            _junction(tmp / "main-clone" / "assets", main / "assets"),  # a clone of its own, not a worktree
         ]
+        (tmp / "main-clone" / ".git").mkdir()
         removed = [
             _junction(main / "worktrees" / "gone" / "assets", main / "assets"),
             _junction(main / "worktrees" / "gone" / "out" / "cache", main / "out" / "cache"),

@@ -84,12 +84,14 @@ if ($Sweep) {
     }
     $folders = @(foreach ($root in $roots) { Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue })
     $folders += @(Get-ChildItem -LiteralPath $mainParent -Directory -Force -Filter "$mainName-*" -ErrorAction SilentlyContinue)
+    # Not a live worktree, not itself a link, not a clone of its own (a .git folder, not a worktree's .git file).
     $leftover = @($folders | Sort-Object FullName -Unique | Where-Object {
-        -not $live.Contains((Get-FullPath $_.FullName)) -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) })
+        -not $live.Contains((Get-FullPath $_.FullName)) -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -and
+        -not (Test-Path -LiteralPath (Join-Path $_.FullName '.git') -PathType Container) })
     $verb = if ($DryRun) { 'would unlink' } else { 'unlinked' }
     $count = 0
     foreach ($dir in $leftover) {
-        # Three levels reach the deepest links (out\cache) without walking a build's car folders.
+        # The setup's links are at most two levels down (out\cache); three levels stop short of a build's car folders.
         foreach ($link in (Find-Links $dir 3)) {
             $target = Get-LinkTarget $link
             if (-not $target -or -not ($target -eq $mainFull -or $target.StartsWith("$mainFull\", [StringComparison]::OrdinalIgnoreCase))) {
