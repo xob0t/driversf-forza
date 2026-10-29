@@ -42,7 +42,9 @@ local VIEWS = {}              -- config.views (run-test -Views): extra views bet
                               -- that view, "+night" also darkens the scene (lightstest.lua's dark mood); views
                               -- without one switch them off again (pop-up head lamps, research/lights.md);
                               -- "+hitfront" / "+hitrear" damage the front or rear bumper first (lamps that
-                              -- break with it, issue #132), e.g. "nose+night+hitrear"
+                              -- break with it, issue #132), e.g. "nose+night+hitrear"; "+mph<N>" on a fixed
+                              -- camera holds the car at N mph through the view and moves the camera with it
+                              -- ("wheel+mph60": wheel speed blur, research/wheels.md)
 local PALETTE = nil           -- config.palette (run-test -Palette): paint palette entry of the spawned cars
                               -- (Spawn's shaderParams[0], as the game's grid spawns set it); nil: the game's pick
 local DYNO = nil              -- config.dyno (run-test -Dyno): the dyno.lua module, acceleration and braking runs
@@ -503,12 +505,16 @@ local FIXED_VIEWS = {
 	-- The tailpipes from behind, low and close: exhaust smoke at idle (src/dsfforza/convert/exhaust.py).
 	exhaust = { { 0.7, 0.75, -4.4 }, { 0.0, 0.3, -2.0 } },
 	wheels = { { 3.6, 0.6, 0.0 }, { 0.6, 0.35, 0.0 } },
+	-- The front left wheel from its side, close: the rim face (wheel speed blur with "+mph<N>").
+	wheel = { { 2.5, 0.5, 1.3 }, { 0.75, 0.35, 1.3 } },
 	-- Wheel clearance (research/wheels.md): the front left wheel in its arch from the front
 	-- three-quarter, and from ahead at hub height (the tyre swept by the steering).
 	fq = { { 2.9, 1.1, 3.9 }, { 0.6, 0.4, 1.1 } },
 	lock = { { 1.3, 0.55, 4.2 }, { 0.8, 0.35, 1.3 } },
 }
 local fixedCamera = nil
+local followView = nil        -- "+mph<N>" views: { car, view } the camera follows every frame
+local viewHold = false        -- the view set holdTarget (cleared with the camera)
 
 -- A camera matrix at p looking at t (world vectors). Cameras look down -z (debug.lua's
 -- printCamLookFrom: lookAt = matrix[3] - matrix[2] * 5); rows are x, y, z, position.
@@ -622,7 +628,18 @@ local function logRestPose(id, car, label)
 	if not ok then log(string.format("id %d: rest %s: %s", id, label, tostring(err))) end
 end
 
+-- "+mph<N>" views: the fixed camera keeps its place in the car's frame while the car moves.
+local function followCamera()
+	if followView == nil or fixedCamera == nil then return end
+	local m = followView.car.matrix
+	fixedCamera.matrix = lookMatrix(carPoint(m, followView.view[1]), carPoint(m, followView.view[2]))
+end
+
 local function endFixedCamera()
+	followView = nil
+	if viewHold then
+		holdTarget, viewHold = nil, false
+	end
 	if fixedCamera ~= nil then
 		pcall(function()
 			CameraSystem.EnableLuaDebugCameras(false)
@@ -677,6 +694,8 @@ local function showView(id, car, name)
 			mode = string.gsub(mode, "%+?" .. hit, "")
 		end
 	end
+	local mph = tonumber(string.match(mode, "mph(%d+)"))
+	mode = string.gsub(mode, "%+?mph%d+", "")
 	mode = string.gsub(mode, "^%+", "")
 	if mode == "" then mode = nil end
 	if mode ~= nil or lampMode ~= nil then setViewLamps(id, car, mode) end
@@ -695,6 +714,10 @@ local function showView(id, car, name)
 			game_camera.viewport = nil
 			fixedCamera.viewport = 0
 			CameraSystem.EnableLuaDebugCameras(true)
+			if mph ~= nil then
+				followView, holdTarget, viewHold = { car = car, view = view }, mph, true
+				log(string.format("id %d: holding %d mph, camera following", id, mph))
+			end
 		end)
 	else
 		ok, err = pcall(function()
@@ -735,7 +758,8 @@ local function step()
 	if id ~= nil and state.spawned ~= nil and state.phase == "chase_view" and (state.ticks == 12 or state.ticks == 20) then
 		logRestPose(id, state.spawned, "t" .. state.ticks)
 	end
-	if #VIEWS > 0 and id ~= nil and state.spawned ~= nil and (state.phase == "chase_view" or state.phase == "extra_view") then
+	if #VIEWS > 0 and id ~= nil and state.spawned ~= nil and not viewHold
+		and (state.phase == "chase_view" or state.phase == "extra_view") then
 		-- Hold the car still for the fixed views: a car spawned in front of a moving one keeps
 		-- rolling out of the fixed cameras (the Crossfire in runs vm-20261025-075152, -075859).
 		pcall(function() state.spawned.velocity = vec.vector(0, 0, 0, 0) end)
@@ -749,6 +773,11 @@ local function step()
 		elseif state.phase == "cockpit_view" and state.ticks == 6 then
 			logCameraInCar(id, state.spawned, "DriverEye")
 		end
+	end
+	if viewHold and id ~= nil and state.phase == "extra_view" and state.ticks % 2 == 0 then
+		local speed = vehicleSpeed()
+		log(string.format("id %d: view t%d speed %s", id, state.ticks,
+			speed and string.format("%.2f m/s %.1f mph", speed, speed * MPH) or "?"))
 	end
 	if DAMAGE and id ~= nil and state.phase == "chase_view" and state.ticks == DAMAGE_TICK then
 		damageCar(id, state.spawned)
@@ -933,6 +962,13 @@ end
 
 log("clone test loaded; ids: " .. table.concat(TEST_IDS, ", "))
 addUserUpdateFunction("dsfforza_clonetest", safeStep, TICK)
-if #HOLD_MPH > 0 then
+local viewSpeeds = false
+for _, view in ipairs(VIEWS) do
+	if string.find(view, "mph%d") then viewSpeeds = true end
+end
+if #HOLD_MPH > 0 or viewSpeeds then
 	addUserUpdateFunction("dsfforza_speedhold", function() pcall(holdSpeed) end, 1)
+end
+if viewSpeeds then
+	addUserUpdateFunction("dsfforza_follow", function() pcall(followCamera) end, 1)
 end

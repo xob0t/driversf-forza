@@ -322,8 +322,83 @@ CHASSIS, LIGHTS_MAT = "chassis", "lights"
 
 def is_atlas_kind(kind) -> bool:
     """Texturing.material kinds drawn through the atlas: the host Chassis and Lights
-    materials and the gloss copies of the Lights one (GLOSS_PREFIX)."""
-    return kind in (CHASSIS, LIGHTS_MAT) or (isinstance(kind, str) and kind.startswith(GLOSS_PREFIX))
+    materials, the gloss copies of the Lights one (GLOSS_PREFIX) and the wheel's blur disc
+    (WHEEL_BLUR_MAT)."""
+    return kind in (CHASSIS, LIGHTS_MAT, WHEEL_BLUR_MAT) or (isinstance(kind, str) and kind.startswith(GLOSS_PREFIX))
+
+
+# --- the wheel's speed-blur disc (forza2dsf.wheel_blur_section) ------------------------
+#
+# The disc draws with a copy of DSF's shared GLOBAL_Wheel_Blur_SpokeDisc (_LOD1 in the
+# exterior), its texture swapped for the car's atlas, where Forza's spinning-wheel picture
+# (fm.WHEEL_BLUR) goes, converted to what that material reads (wheel_blur_texels): red the
+# grey level, times the vehicle's g_vec4WheelBlurColour (its tint, Texturing.wheel_blur_tint;
+# paint.set_wheel_blur_colour), green the gloss (WHEEL_BLUR_GLOSS x grey, the vanilla
+# disc's ratio: means 136 red, 60 green), blue the coverage. The picture is laid over
+# WHEEL_BLUR_BACKDROP (a mid grey for what shows between the spokes: with the port's dark
+# barrel, 20, open wheels came out darker at speed than at rest, vanilla's brighter), so the
+# disc is opaque once faded in and hides the port's sharp rim, which cannot fade (research/wheels.md, "Speed blur"). It is
+# blurred, so WHEEL_BLUR_TEXELS across are enough (a 256-texel picture weighted 0.5, which
+# the atlas's uniform scale takes down to 50 to 120 texels).
+WHEEL_BLUR_MAT = "wheel_blur"
+SPOKE_DISC_MATERIALS = (bytes.fromhex("001262258aa7c428"), bytes.fromhex("10122b9e53b14e2a"))  # full, exterior
+SPOKE_DISC_TEXTURE = bytes.fromhex("0012622354a4c428")  # the vanilla disc picture they sample
+WHEEL_BLUR_TEXELS = 128
+WHEEL_BLUR_BACKDROP = 60
+WHEEL_BLUR_GLOSS = 0.44
+WHEEL_BLUR_LAYOUT = (20, 7)  # stride, MODL flag (alpha-blended)
+
+
+def wheel_blur_texels(rgba: bytearray, paint_scale: float = 1.0) -> tuple[bytearray, tuple[float, float, float]]:
+    """Forza's spinning-wheel picture (RGBA, alpha the coverage) -> the SpokeDisc material's
+    texels (red grey, green gloss, blue coverage 255) and the tint g_vec4WheelBlurColour
+    takes: the coverage-weighted mean colour of the picture over the backdrop, its largest
+    channel 1. The colour is scaled by the rim's PaintScale first, as the rim's own texels
+    are (Texturing._wheel_paint_scale), so the faded-in disc matches the rim it covers."""
+    px = np.frombuffer(bytes(rgba), dtype=np.uint8).reshape(-1, 4).astype(np.float64)
+    a = px[:, 3:4] / 255.0
+    colour = np.clip(px[:, :3] * paint_scale, 0, 255) * a + WHEEL_BLUR_BACKDROP * (1 - a)
+    weight = a[:, 0] + 1e-6
+    mean = (colour * weight[:, None]).sum(0) / weight.sum()
+    tint = mean / max(mean.max(), 1e-6)
+    luma = np.array([0.2126, 0.7152, 0.0722])
+    grey = colour @ luma
+    out = np.empty((len(px), 4), dtype=np.uint8)
+    out[:, 0] = np.clip(np.rint(grey / max(float(tint @ luma), 1e-6)), 0, 255)
+    out[:, 1] = np.clip(np.rint(grey * WHEEL_BLUR_GLOSS), 0, 255)
+    out[:, 2] = 255
+    out[:, 3] = 255
+    return bytearray(out.tobytes()), (float(tint[0]), float(tint[1]), float(tint[2]))
+
+
+def blur_disc_material(stream, drsp: Entry, source: Entry, texture: bytes, uid: bytes) -> bytes:
+    """Add to `drsp` (after its last TEXC/MACO) a copy of the shared SpokeDisc MACO `source`
+    sampling `texture` under `uid`; returns the UID."""
+    kids = list(drsp.children)
+    at = max([i for i, e in enumerate(kids) if e.tag in ("TEXC", "MACO")], default=-1) + 1
+    kids.insert(at, retarget_material(stream, source, {SPOKE_DISC_TEXTURE: texture}, uid))
+    drsp.children = kids
+    return uid
+
+
+def shared_macos(stream, entries, uids) -> dict[bytes, Entry]:
+    """{uid: MACO} of these shared materials in the archive's SSIC chunk."""
+    from dsfforza.formats.vehicles import find
+
+    found: dict[bytes, Entry] = {}
+    wanted = set(uids)
+
+    def walk(e):
+        if e.tag == "MACO":
+            uid = current(stream, child(e, "MAHE"))[:8]
+            if uid in wanted:
+                found[uid] = e
+            return
+        for c in e.children or []:
+            walk(c)
+
+    walk(find(entries, "SSIC"))
+    return found
 
 
 # Atlas weight of the wheel texture against nodamage/Lights (DSF texels per
@@ -1141,6 +1216,8 @@ class Texturing:
     art_flat: set = field(default_factory=set)  # id(sub): trim artwork drawn flat (ART_MIN_SCALE_SHARE)
     pack_scale: float = 0.0  # the uniform scale _pack found (before family weights)
     wheel_paint: dict = field(default_factory=dict)  # rim technique -> PaintScale applied (_wheel_paint_scale)
+    # The wheel's blur disc (WHEEL_BLUR_MAT): plan(wheel_blur=True) puts the picture in the atlas.
+    wheel_blur_tint: tuple | None = None  # g_vec4WheelBlurColour RGB (wheel_blur_texels)
     # Exterior only: lamp lenses baked over what lies behind them (src/dsfforza/convert/lenses.py).
     bake_lenses: bool = True
     lens_report: dict = field(default_factory=dict)  # lenses.bake's report
@@ -1162,14 +1239,19 @@ class Texturing:
     daytime_texels: np.ndarray | None = None
 
     # -- planning --
-    def plan(self, sections, lods, extra_solids: dict | None = None, wheels=None) -> Texturing:
+    def plan(
+        self, sections, lods, extra_solids: dict | None = None, wheels=None, wheel_blur: bool = False
+    ) -> Texturing:
         """Resolve every subsection at `lods` and lay out the atlas.
         extra_solids: key -> RGBA cells to reserve as well (`solid_uv(key)`).
         wheels: (wheel sections, their LODs): the Forza wheel model, whose rims
         then sample the car's wheel texture (fm.classify_wheel) through the
         atlas, like the centre caps vanilla wheels draw with the Chassis material.
         Without the wheel texture in the car folder the rims keep their
-        swatches (forza2dsf.WHEEL_UV)."""
+        swatches (forza2dsf.WHEEL_UV). wheel_blur: the wheel's blur disc
+        (forza2dsf.wheel_blur_section, among the wheel sections) samples Forza's
+        spinning-wheel picture (fm.WHEEL_BLUR) through the atlas when the car folder
+        has it (WHEEL_BLUR_MAT); else it keeps the shared disc."""
         self.atlases = fm.AtlasCache(self.car_dir, lod0=self.lod0)
         work = [(section, lods) for section in sections]
         if wheels is not None and self.wheel_texture():
@@ -1180,6 +1262,19 @@ class Texturing:
             self.wheel_ids |= {id(section) for section in wheels[0]}
             work += [(section, set(wheels[1])) for section in wheels[0]]
             self.wheel_paint = self._wheel_paint_scale(wheels[0], set(wheels[1]))
+        if wheels is not None and wheel_blur and self._has(fm.WHEEL_BLUR):
+            if fm.WHEEL_BLUR not in self.families:
+                self.families = tuple(self.families) + (fm.WHEEL_BLUR,)
+            w, h, rgba = self.atlases.get(fm.WHEEL_BLUR)
+            self.weights.setdefault(fm.WHEEL_BLUR, min(1.0, WHEEL_BLUR_TEXELS / max(w, h)))
+            try:
+                scale = fm.wheel_paint_scale("rim", fm.shader_settings(self.car_dir))
+            except OSError:
+                scale = fm.WHEEL_PAINT_SCALE["rim"]
+            rgba[:], self.wheel_blur_tint = wheel_blur_texels(rgba, scale)
+            if not self.wheel_ids:
+                self.wheel_ids |= {id(section) for section in wheels[0]}
+                work += [(section, set(wheels[1])) for section in wheels[0]]
         for family, rgb in self.filler.items():
             if family in self.families:
                 fm.fill_transparent(self.atlases.get(family), rgb, below=PAINT_THROUGH_ALPHA)
@@ -1598,8 +1693,11 @@ class Texturing:
 
     def wheel_texture(self) -> bool:
         """Whether the car folder holds the wheel texture (port_car.extract_wheel)."""
+        return self._has(fm.WHEEL)
+
+    def _has(self, family: str) -> bool:
         try:
-            fm.texture_path(self.car_dir, fm.WHEEL, self.lod0)
+            fm.texture_path(self.car_dir, family, self.lod0)
         except (FileNotFoundError, OSError):
             return False
         return True
@@ -1793,6 +1891,8 @@ class Texturing:
         ):
             if m.family == fm.LIGHTS:
                 return LIGHTS_MAT
+            if m.family == fm.WHEEL_BLUR:
+                return WHEEL_BLUR_MAT
             if id(sub) in self.gloss:
                 return f"{GLOSS_PREFIX}{self.gloss[id(sub)]}"
             return CHASSIS
@@ -2037,6 +2137,8 @@ class Texturing:
 
     def _convert_texel(self, family: str, r: int, g: int, b: int, a: int) -> tuple[int, int, int, int]:
         """Forza texel -> DSF conventions (alpha = specular / glow mask)."""
+        if family == fm.WHEEL_BLUR:
+            return r, g, b, a  # converted in plan() (wheel_blur_texels)
         floor = self.lift.get(fm.base_family(family))
         if floor:
             r, g, b = (int(floor + c * (255 - floor) / 255) for c in (r, g, b))
@@ -2193,6 +2295,8 @@ class Texturing:
         parts = []
         for family in self.families:
             parts.append(f"{family}: {len(self.regions[family])} regions at {self.scale[family]:.3f}x")
+        if self.wheel_blur_tint is not None:
+            parts.append("wheel blur tint " + "/".join(f"{c:.2f}" for c in self.wheel_blur_tint))
         paint = {t: k for t, k in self.wheel_paint.items() if k != 1.0}
         if paint:
             parts.append("rim PaintScale " + ", ".join(f"{t} {round(k, 3):g}" for t, k in sorted(paint.items())))
@@ -2375,6 +2479,7 @@ def install_full(
     uid_seed: bytes = b"\x00\x12\xfe\xed",
     gloss: list | None = None,
     gloss_prefix: bytes = b"\x00\x00\x5a\x3c",
+    blur: tuple[Entry, bytes] | None = None,
 ) -> Installed:
     """Install the atlas in a full (kind 0) entry's DRSP, in place.
 
@@ -2386,7 +2491,22 @@ def install_full(
              materials (new UIDs) pointing at it are added; the host's stay.
     gloss:   GlossMaterials (Texturing.gloss_materials): copies of the Lights
              material, UIDs from `gloss_prefix` (add_gloss), kinds "gloss<n>".
+    blur:    (shared SpokeDisc MACO, UID): its copy sampling the atlas, kind
+             WHEEL_BLUR_MAT (blur_disc_material).
     """
+    installed = _install_full(stream, drsp, dds, mode, uid_seed, gloss, gloss_prefix)
+    return _with_blur(stream, drsp, installed, blur)
+
+
+def _with_blur(stream, drsp: Entry, installed: Installed, blur: tuple[Entry, bytes] | None) -> Installed:
+    if blur is not None:
+        uid = blur_disc_material(stream, drsp, blur[0], installed.texture, blur[1])
+        installed.materials[WHEEL_BLUR_MAT] = uid
+        installed.layout[uid] = WHEEL_BLUR_LAYOUT
+    return installed
+
+
+def _install_full(stream, drsp, dds, mode, uid_seed, gloss, gloss_prefix) -> Installed:
     found = host_materials(stream, drsp)
     if set(found) != {CHASSIS, LIGHTS_MAT}:
         raise ValueError(f"host entry needs a Chassis and a Lights material, found {sorted(found)}")
@@ -2425,6 +2545,7 @@ def install_exterior(
     fallback: list[Entry] | None = None,
     gloss: list | None = None,
     gloss_prefix: bytes = b"\x00\x00\x5a\xc3",
+    blur: tuple[Entry, bytes] | None = None,
 ) -> Installed:
     """Use the clean exterior (kind 2) entry's own Chassis/Lights materials;
     they sample the full entry's TEXC by UID. In clone mode, copies pointing
@@ -2434,7 +2555,12 @@ def install_exterior(
     materials in the interior or the full entry instead (the Desanne and 370Z
     keep both in the exterior); the `fallback` DRSPs (interior, full) are
     searched for the missing *_LOD1 ones, which the exterior then uses by
-    UID, as vanilla exteriors do."""
+    UID, as vanilla exteriors do. blur: as for install_full (the _LOD1 SpokeDisc)."""
+    installed = _install_exterior(stream, drsp, full, mode, uid_seed, fallback, gloss, gloss_prefix)
+    return _with_blur(stream, drsp, installed, blur)
+
+
+def _install_exterior(stream, drsp, full, mode, uid_seed, fallback, gloss, gloss_prefix) -> Installed:
     found = host_materials(stream, drsp)
     for other in fallback or []:
         for kind, value in host_materials(stream, other, lod1=True).items():
@@ -2545,13 +2671,16 @@ def prepare(
     interior_vehc: Entry | None = None,
     wheels=None,
     uid_seed: bytes | None = None,
+    blur_materials: dict | None = None,
 ) -> tuple[Binding, Binding | None]:
     """Plan and encode the car's atlas and install it in a host vehicle's full
     entry (and its clean exterior entry). Call before rebuilding the DRSPs,
     and keep the entries' TEXC/MACO (forza2dsf.rebuild_drsp with
     keep_host_materials=True). Atlas size and mip count default to the host
     chassis texture's, so replace mode leaves the entry size unchanged.
-    wheels: (wheel sections, LODs), see Texturing.plan."""
+    wheels: (wheel sections, LODs), see Texturing.plan. blur_materials: the shared
+    SpokeDisc MACOs (shared_macos(SPOKE_DISC_MATERIALS)); with them the wheel's blur disc
+    samples Forza's spinning-wheel picture (Texturing.plan(wheel_blur=True))."""
     full_drsp = child(child(full_vehc, "MDXN"), "DRSP")
     host = host_texture(stream, full_drsp)
     if host is not None:
@@ -2564,7 +2693,8 @@ def prepare(
     # itself samples the shared paint texture, PAINT_TEXEL_UV).
     plain = DEFAULT_PLAIN
     t = Texturing(Path(car_dir), size=size, mips=mips, swatch_trims=swatch_trims, plain=plain)
-    t.plan(sections, set(lods), wheels=wheels)
+    blur_materials = blur_materials or {}
+    t.plan(sections, set(lods), wheels=wheels, wheel_blur=all(u in blur_materials for u in SPOKE_DISC_MATERIALS))
     if t.lens_report:
         log(
             "lenses baked over their lamps: "
@@ -2578,8 +2708,20 @@ def prepare(
     dds = t.dds(template=host)
     # The gloss materials' UIDs: the car's own (uid_seed, forza2dsf.Builder's), apart for each entry.
     seed = uid_seed or b"\x00\x00\x00\x00"
+    blurred = fm.WHEEL_BLUR in t.families
+
+    def blur(n: int, xor: int):
+        source = blur_materials.get(SPOKE_DISC_MATERIALS[n])
+        return (source, gloss_uid(seed[:3] + bytes([seed[3] ^ xor]), 0)) if blurred and source else None
+
     full = install_full(
-        stream, full_drsp, dds, mode, gloss=t.gloss_materials, gloss_prefix=seed[:3] + bytes([seed[3] ^ 0x3C])
+        stream,
+        full_drsp,
+        dds,
+        mode,
+        gloss=t.gloss_materials,
+        gloss_prefix=seed[:3] + bytes([seed[3] ^ 0x3C]),
+        blur=blur(0, 0x5B),
     )
     if t.gloss_materials:
         log(
@@ -2602,6 +2744,7 @@ def prepare(
             fallback=fallback,
             gloss=t.gloss_materials,
             gloss_prefix=seed[:3] + bytes([seed[3] ^ 0xC3]),
+            blur=blur(1, 0xB5),
         )
     log(
         f"{t.summary()}; {mode}: texture {full.texture.hex()}, DDS {len(dds):#x} bytes "

@@ -20,8 +20,8 @@ follow `dngvehicles.md`.
   189).
 - Materials: `GLOBAL_Tyre` (stride 20; on the Desanne the whole wheel, rim
   included), `GLOBAL_Wheel_Blur` and `GLOBAL_Wheel_Blur_SpokeDisc`
-  (alpha-blended speed blur; vertex semantic 9 byte 3 is 0, 1 or 2 on
-  them, probably static / always / blurred), sometimes a centre cap on the
+  (alpha-blended speed blur; vertex semantic 9 byte 3 is 0 (fades out), 1
+  (always) or 2 (fades in) on them: "Speed blur"), sometimes a centre cap on the
   car's Chassis material. All tyre-texture UVs point into one shared
   512 x 512 DXT1 atlas (`00122b7bf7fa1227`): red is the grey level, green the
   gloss, blue 255 (so it decodes blue). It holds sidewall half-rings, tread
@@ -696,16 +696,176 @@ full lock before and after (the rig turns by angle / p298). Handling: research/
 handling.md, "Steering lock" (turning circle 3.35 -> 4.56 m on the LMR; the 50 mph
 step steer unchanged).
 
+## Speed blur (2026-10-29, issue #211)
+
+Ported wheels had no speed blur: `forza2dsf` drops every Forza wheel subsection
+with "blur" in its name (above, "What was wrong"), and nothing replaced them.
+Scratch scripts: `out/blur/` (`survey.py`, `fleet.py`, `progs2.py`,
+`gpdis2.py`, `disc_geo.py`, `tex.py`, `roster2.py`, `sheet.py`), left in the
+PR's worktree.
+
+### How vanilla wheels blur (confirmed-static)
+
+- **Materials** (SSIC): `GLOBAL_Wheel_Blur` (`001251d20eeac228`, `_LOD1`
+  `10122b9d53b14e2a`; samples the shared tyre atlas),
+  `GLOBAL_Wheel_Blur_SpokeDisc` (`001262258aa7c428`, `_LOD1`
+  `10122b9e53b14e2a`; texture `0012622354a4c428`) and `GLOBAL_Wheel_Blur_Disc`
+  (`0012622488a6c428`, `_LOD1` `10122b9c53b14e2a`; texture
+  `0012622143a4c428`). All three: `rs_alphablendenable`, `SortMode` 1,
+  `rs_cullmode` 1, the discs also `rs_zwriteenable` 0; stride 20, MODL flag 7
+  (opaque wheel submodels: 5).
+- **Programs.** Their passes run SSIC programs 21 to 40 of the second DRSP in
+  `SSIC/MDXN` (the GPCH survey in `damage.md` covered the first DRSP only). The
+  vertex shader (`Vehicles_Functions.hlsl`, `CustomVertexTransform_VS`):
+
+  ```text
+  b         = 1.15 * g_v4PerPanelData[s9.byte1].y         // the wheel's blur amount
+  t         = s9.byte3 - 1                                 // typeSpecificData
+  fadeIn    = saturate(t);  base = 1 - fadeIn
+  opacity   = saturate(t * (b * (1 + 1.5 fadeIn) - 0.15) + base)
+            // byte 3 = 0: 1.15 - b (fades out); 1: 1 (always);
+            // 2: 2.5 b - 0.15 (fades in, opaque from b = 0.46)
+  ```
+
+  The Blur pixel shader draws texel red as the grey level (green: specular and
+  reflection, `g_hReflectionAmount` 1), alpha = opacity. The SpokeDisc / Disc
+  pixel shader draws red x `g_vec4WheelBlurColour` (the vehicle's SPSR third
+  set; vanilla: a grey per vehicle, 1.0 on 37 of 150), green the gloss, alpha =
+  blue x opacity. No other program reads byte 3: the car's Chassis and Lights
+  materials cannot fade.
+- **Use** (140 four-wheeled vanilla vehicles, exterior wheel part): 116 draw
+  their sharp rim on `Blur_LOD1` at byte 3 = 0 (25 also have some byte 3 = 1
+  there), 93 add a SpokeDisc and 26 a Disc at byte 3 = 2, 111 a centre cap on
+  their own Chassis material at byte 3 = 1; the tyre is `Tyre_LOD1` at 1. The
+  disc is a shallow dish over the whole rim face (227: x +0.044 at the hub,
+  +0.123 at r 0.11, +0.109 at its edge r 0.27, out to the tyre's bead), mapped
+  flat (u = 0.5 - z / 2R, v = 0.5 - y / 2R), normals along +x, sky 0.9 to 1.0.
+  The SpokeDisc texture is one generic blurred wheel (red 136, green 60, blue
+  210 on average: 82% coverage).
+- **What sets `.y`**: not traced. `FUN_00874EA0` (the per-wheel draw state)
+  keeps a rate-limited spin speed and the spin angle per wheel; the step from
+  there to the per-panel constant is not found. A hashed name
+  `VehicleWheelBlur` (`FUN_00DC44F0`) is written and never read. Glass uses
+  the same `.y` slot for its crack state (`vehicle-model.md`), so the engine
+  sets it per draw. A port's wheel vertices have s9 (0, 0, 0, 1), like vanilla
+  wheels, so the engine treats them alike.
+
+### Forza's blur (confirmed-static)
+
+The wheel archive's `wheel0..3.xds` (all 520 cars that have one): `wheel0`
+the sharp rim face with alpha cut out between the spokes, `wheel1` to
+`wheel3` the same face blurred more and more round the axle, alpha partial
+in the spoke ring (`img/wheel-blur-forza-pictures.jpg`: the Carlton, 370Z,
+Veyron SS and Huayra, `wheel0` to `wheel3` with their alpha). `blur_rim` is a disc mapped flat onto
+them (a plain planar map on all but 23 roster cars), at the face (Carlton,
+370Z) or inside the dished rim (250 GTO: behind the knock-off); `blur_lip` /
+`chrome_blur_lip` a copy of the lip. Forza's LOD 5 wheel has no sharp rim on
+503 of 573 cars, only `blur_rim`: there the disc is the rim. Shared
+`Normal.xml` lists `blur_rim` twice (PaintScale 1.0, then 0.65).
+
+### What was wrong
+
+- Every port's sharp spokes stayed as they are at any speed.
+- The full entry's far LODs drew wheels without a rim where Forza's LOD has
+  only `blur_rim` (dropped): mask 8 on 526 cars, mask 16 on 539, mask 4 (the
+  full-detail LOD) on 15 (DOD_Durango_99, CHE_Express2500Cargo_05,
+  AUD_A4Avant_04, BUS_TOUR_12, FOR_Explorer_10, FOR_TaurusSHO_10, KEN_T440_12,
+  VW_Beetle_04, ...; full roster, LODs of `out/build`).
+
+### Fix (`forza2dsf.wheel_blur_section`, `dsf_materials.wheel_blur_texels`)
+
+A port's rims keep their artwork on the Chassis / gloss materials, which
+cannot fade, so the port gets vanilla's disc only, made to cover the rim when
+faded in:
+
+- **Geometry.** Per Forza wheel LOD drawn, a dish round the axle
+  `WHEEL_BLUR_LIFT` (3 mm) in front of the rim face: per ring the outermost
+  point of all non-tyre geometry within a ring of it, so no spoke pokes
+  through; out to the rim's edge (at most the tyre's inner radius); rings
+  where the face is flat are left out. 24 to 264 triangles (median 168).
+- **Material.** A copy of `GLOBAL_Wheel_Blur_SpokeDisc` (`_LOD1` in the
+  exterior) in each entry, its texture swapped for the car's atlas
+  (`blur_disc_material`, `prepare(blur_materials=...)`; the shared MACOs from
+  `shared_macos`). Stride 20, MODL flag 7, s9 (0, 0, 0, 2): fades in like
+  vanilla discs. On a LOD with no sharp rim (`wheel_has_rim`) s9 (0, 0, 0, 1):
+  always drawn, the rim's stand-in as in Forza. Sky 0.9, as on vanilla discs
+  (first tried 0.56, the converted rim's outward faces: the disc came out
+  darker than the rim, below).
+- **Texture.** `wheel2.xds` (the middle blur level; `port_car.extract_wheel`
+  now takes it, family `fm.WHEEL_BLUR`) through Forza's own planar map,
+  scaled by the rim's PaintScale like the rim's texels, laid over a mid-grey
+  backdrop (60) for what shows between the spokes, so the disc is opaque at
+  full blur; red the grey level over the tint, green 0.44 x grey (the vanilla
+  disc's ratio), blue 255. In the atlas at weight 128 / its size (0.25x to
+  0.30x on the test cars).
+- **Colour.** `g_vec4WheelBlurColour` = the picture's coverage-weighted mean
+  colour, largest channel 1 (`paint.set_wheel_blur_colour`): the Veyron SS's
+  orange 1.00/0.19/0.05, grey rims about 1/1/1.
+- **Without the picture** (52 cars without a wheel archive, `--textures none`)
+  the disc uses the shared SpokeDisc and its generic texture, mapped like
+  vanilla discs; the host's blur colour stays. `port_car --no-wheel-blur`
+  leaves the disc out.
+
+### Survey (all 573 roster cars, `out/blur/roster2.py`, LODs from `out/build`)
+
+| | Cars |
+| --- | ---: |
+| disc on the wheel | 572 (NIS_Leaf_11: the survey's error, no gamedb passed) |
+| with Forza's picture / the shared disc | 520 / 52 |
+| exterior disc fades in | 572 |
+| full entry mask 4 / 8 / 16: fades in | 557 / 46 / 33 |
+| full entry mask 4 / 8 / 16: always (the rim was missing) | 15 / 526 / 539 |
+
+Cost: the five test cars' full entries grow by 24 to 32 KiB (six discs and
+one MACO), the exteriors by 16 to 20 KiB; the archive by about 48 KB a car
+(27 MB for the roster). Each wheel part gains one submodel per LOD: mask-4
+submodels +2 (ports' maximum 121 -> 123, vanilla's 129; `spool-limits.md`,
+"Draw queue"). Atlas: in a sample of 72 cars the uniform scale is unchanged on
+46, 0.992 on average, at worst 0.945 (FOR_MustangKingCobra_78).
+
+### In game
+
+Headless VM, probe view `wheel` (new: the front left wheel from its side,
+close) and `wheel+mph<N>` (new in `clonetest.lua`: the car held at N mph through
+the view, the camera moving with it). `out/blur/before` (master) and
+`out/blur/after` / `after2` (this change; IDs 1 FER_250GTO_64, 2
+LOT_Carlton_89, 3 NIS_370Z_10, 4 BUG_VeyronSS_11, 5 PAG_Huayra_12; vanilla 227
+for reference), `-Views 'wheel,wheel+mph15,wheel+mph35,wheel+mph60'`:
+
+- `vm2-20261029-094256` (before) and `-094943` (after, sky 0.56, backdrop
+  20): the vanilla 370Z's spokes crossfade into a bright silver disc between
+  15 and 35 mph. The ports' spokes stayed sharp at every speed before (frozen
+  in the shots: strobing); after, each crossfades the same way into a blurred
+  disc of its own wheel: the 250 GTO's wire wheels to a light grey disc, the
+  Carlton's white five-spokes to smeared lobes, the Veyron SS's orange spokes to
+  an orange disc. But the faded-in disc was darker than the rim: mean grey of
+  the 370Z's wheel face 90 at rest, 70 at 60 mph (vanilla 370Z 103 and 146);
+  the Huayra's thin spokes went nearly black.
+- `vm2-20261029-102813` (after2: sky 0.9, backdrop 60): the 370Z's face 96 at
+  60 mph against 90 at rest; GTO, Carlton, Veyron as before but lighter.
+- `vm2-20261029-105151` (before) and `-110000` (after2), traffic off (#228):
+  `img/wheel-blur-ingame-before-after.jpg` (rows vanilla 227, 370Z, Huayra,
+  Veyron SS, each before then after; columns rest, 15, 35, 60 mph).
+
+Garage pictures: `car_render` leaves the fading disc out since #222 (#221;
+`img/wheel-blur-garage-after.jpg`: Huayra and Veyron SS, before and after,
+identical).
+
+### Left open (speed blur)
+
+- What sets the blur amount (`.y`) and its speed curve: in the shots the
+  vanilla and the ported discs are half in at 15 mph and fully in by 35.
+- One picture for every speed: Forza swaps `wheel1..3` with speed, DSF has
+  one disc that fades in.
+
 ## Open
 
-1. In game: whether wheels without blur geometry look right at speed
-   (vanilla wheels fade a spoke disc in; ours have none): #211.
-2. Brake discs and calipers (Forza `_rotor*`/`_caliper*` carbins, LOD 0 only,
+1. Brake discs and calipers (Forza `_rotor*`/`_caliper*` carbins, LOD 0 only,
    per corner) could go into the wheel part as static geometry; not done.
    Vanilla DSF wheels have none, and a caliper in the wheel part would spin
    with it: #212.
 
-Done since and dropped from this list: rim gloss (issue #108, PR #143). Rims
+Done since and dropped from this list: speed blur (#211, "Speed blur"); rim gloss (issue #108, PR #143). Rims
 draw with gloss copies of the host's Lights material (its lamp glow needs a
 lamp byte, which rims don't have), Forza's rim reflection and `chrome_rim`'s
 chrome on them (forza-materials.md, "Gloss"). The reflection is masked by the

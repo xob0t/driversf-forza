@@ -86,6 +86,7 @@ from dsfforza.build import (
 from dsfforza.build.forza_roster import Source, default_images, roster
 from dsfforza.convert import (
     cockpit,
+    dsf_materials,
     forza2dsf,
 )
 from dsfforza.formats import stfs
@@ -378,7 +379,8 @@ def extract_car(source: Source, media: str, cache: Path, log=print) -> Path:
 # rim techniques sample at LOD 1+), wheel_LOD0.xds and the blur discs wheel0..3.xds.
 # The archive's carbin ({name}.carbin) is cached as wheel.carbin (the main carbin has
 # the car's name too): forza2dsf.load_car takes its wheel when the main carbin has none.
-WHEEL_FILES = ("wheel.xds", "{name}.carbin")
+# wheel2.xds, the middle blur picture, is the wheel's speed-blur disc (fm.WHEEL_BLUR).
+WHEEL_FILES = ("wheel.xds", "{name}.carbin", "wheel2.xds")
 WHEEL_RENAME = {"{name}.carbin": forza2dsf.WHEEL_CARBIN}
 WHEEL_STAMP = "wheel_source.json"
 
@@ -760,6 +762,8 @@ def build_car(
             exhaust=not getattr(args, "no_exhaust", False),
             split_rear_wheel=not getattr(args, "no_rear_wheel_part", False),
             cockpit_opts=cockpit.CockpitOptions(mdxn_limit=mdxn_max[1]) if use_cockpit else None,
+            wheel_blur=not getattr(args, "no_wheel_blur", False),
+            blur_materials=dsf_materials.shared_macos(stream, entries, dsf_materials.SPOKE_DISC_MATERIALS),
         )
         if args.damage:  # src/dsfforza/convert/damage.py; untested in game
             from dsfforza.convert import damage
@@ -1267,6 +1271,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="on a host with one wheel part for both axles, draw the rear wheels at the front "
         "tyre's size (default: a rear copy of the part when the tyres differ, "
         "forza2dsf.split_rear_wheel, research/wheels.md 'Rear wheel parts')",
+    )
+    parser.add_argument(
+        "--no-wheel-blur",
+        action="store_true",
+        help="no speed-blur disc on the wheels (default: one that fades in as they spin, "
+        "forza2dsf.wheel_blur_section, research/wheels.md 'Speed blur')",
     )
     return parser
 
