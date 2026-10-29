@@ -13,6 +13,8 @@ from __future__ import annotations
 import importlib
 import sys
 
+from dsfforza import safe_stdio
+
 # tool name -> module; every module here has a main().
 TOOLS = {
     name: f"dsfforza.{group}.{name}"
@@ -40,6 +42,7 @@ def usage() -> str:
 
 def main(argv: list[str] | None = None) -> int | None:
     argv = sys.argv[1:] if argv is None else argv
+    safe_stdio()
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(usage())
         return 0 if argv else 2

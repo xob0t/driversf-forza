@@ -84,7 +84,7 @@ import traceback
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from dsfforza import REPO
+from dsfforza import REPO, safe_stdio
 from dsfforza.build import forza_roster, gentle
 from dsfforza.formats.chnk import ENTRY_LIMIT
 from dsfforza.game import game_paths
@@ -2091,6 +2091,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
+    safe_stdio()  # python -m dsfforza.build.port_batch, and the _worker processes
     with contextlib.suppress(AttributeError, ValueError):
         sys.stdout.reconfigure(line_buffering=True)
     if argv[:1] == ["_worker"]:
