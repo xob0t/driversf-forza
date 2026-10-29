@@ -201,7 +201,7 @@ probably right.
 | 0x00 | u64 | part UID with halves swapped (MODL order = bytes 4..7, 0..3), or -1 | confirmed-static |
 | 0x08 | u16 | record type: 4 root, 5 chassis, 1 part, 2 wheel, 3 marker, 17 light, 18 seat | confirmed-static |
 | 0x0A | u16 | role enum: wheels 27 to 30, body part kinds, marker kinds. Not a submodel index (tested). | confirmed-static |
-| 0x0C | u16 | 0..7, 23 on the root | unknown |
+| 0x0C | u16 | bit field: bit 0 the record has a part (type 1) child, bit 1 a wheel below it, bit 2 on most part records with a body (doors, mirrors, glass, the chassis part; not bonnets, boots, bumpers), bit 4 the root (23). Bits 0 and 1 hold on all 10,959 vanilla records; a door left with bit 0 and no part child crashed `forceOpenPanels` (`damage.md`, "Mirrors that hang beside the car") | bits 0, 1 confirmed-static and runtime; bit 2 unknown |
 | 0x0E | u16 | flags (0x4000 group, low bits 0..3) | unknown |
 | 0x10, 0x12 | u16 | small values and bit flags | unknown |
 | 0x14 | u16 | subtree size, self included (root = record count) | confirmed-static |
