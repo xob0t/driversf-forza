@@ -220,13 +220,15 @@ the 2008 and 2012 Range Rover, whose front door glass ends 0.46 m behind the
 midpoint on a 2.90 m wheelbase. Three of them were on a 2-door host. It
 also took vent panes for the door glass (Fiesta, Corsa VXR and Colt
 Ralliart, all 3-doors, got 4) and left most 5-door hatches unanswered.
-Survey of the 573 cars (`out/cache`, offline, 2026-10-29), first rule ->
-this one: 44 cars change their door count. All 55 saloons and 15 SUVs now
-have 4 (6 saloons and both Range Rovers had 2). Hatches: 23 get 4 (all real
-5-doors: Focus ST 2012, Mazdaspeed3, 308 GTi, Aygo, Leon, Micra, Versa,
-ix20 ...; 2 before), 49 get 2 (all real 2- and 3-doors; 42 before, 3 of
-them 5-doors), 19 none (the Prius, a 5-door, had 2). Picks that change:
-see "The whole roster".
+Survey of the 573 cars (`out/cache`, offline, 2026-10-29; `host-picks.tsv`
+first rule -> this one): 43 cars change their door count. All 55 saloons and
+15 SUVs now have 4 (6 saloons and both Range Rovers had 2). Hatches: 23 get
+4, all real 5-doors (Focus ST 2012, Mazdaspeed3, 308 GTi, Aygo, Leon, Micra,
+Versa, ix20, SX4 ...; before 4 hatches had 4, three of them 3-doors: Fiesta,
+Corsa VXR, Colt Ralliart), 49 get 2, all real 2- and 3-doors (40 before),
+19 none (47 before; the Prius, a 5-door, had 2). Coupe, supercar, race,
+convertible and muscle bodies keep 2. Picks that change: "The whole
+roster".
 
 DSF side, same pass: buses (category 0x0A) and trucks (0x07, including the
 GMC C5500 that VEHC names "Van 07") are classes of their own; the 2009
@@ -250,16 +252,34 @@ under 45, cylinders more than 2 apart, wheelbase more than 0.6 m apart, or
 a runner-up within 1 point whose body fits better. 87 vanilla cars are used.
 The TSV was regenerated on 2026-10-29 with the whole roster extracted in
 `out/cache`, so 48 more cars take their door count from the carbin (18 picks
-changed); it now matches the hosts in the main checkout's `out/build` on all
-573 cars (offline-checked against `batch-report.json`).
+changed); it then matched the hosts in the main checkout's `out/build` on all
+573 cars (offline-checked against `batch-report.json`). Regenerated again
+with the door rule of #208 ("Scoring", the Doors paragraph): 11 picks change,
+all on cars whose door count changed, listed below; a build made before it
+has the old hosts on those 11.
+
+| Car | Doors | Host before -> after | Why the new one is better |
+| --- | --- | --- | --- |
+| SUB_WRXSTi_04, SUB_S204_06 | 2 -> 4 | 274 Scirocco (2-door hatch) -> 136 A4 | four-door saloon on a four-door saloon, turbo four on a turbo four |
+| LOT_Carlton_89 | 2 -> 4 | 229 Skyline R33 (coupe) -> 196 Taurus SHO | four-door saloon on a four-door saloon, turbo six (281 kW) on a turbo V6 (272 kW), instead of a coupe |
+| VAU_CorsaVXR_09 | 4 -> 2 | 127 Giulietta (5-door) -> 274 Scirocco | 3-door hatch on a 3-door hatch (the old count took its vent pane for the door glass) |
+| REN_Clio197_07 | none -> 2 | 127 Giulietta -> 274 Scirocco | 3-door hatch on a 3-door hatch |
+| HYU_ix20_11, SUZ_SX4_11 | none -> 4 | 128 MiTo (3-door) -> 127 Giulietta | 5-door hatch on a 5-door hatch |
+| SEA_LeonSupercup_07 | none -> 4 | 274 Scirocco -> 127 Giulietta | 5-door Leon body on a 5-door hatch |
+| KIA_Ceed_11, NIS_Versa_09, SUZ_Liana_02 | none -> 4 | 128 MiTo -> 179 Neon | four doors on four doors (the host's rear door records take the Forza rear doors), and an unblown I4 of 98 kW for 78 to 92 kW; flagged: a hatch on a saloon, the Ceed 0.1 point ahead of the 5-door Giulietta |
+
+The Range Rovers, the 2005 WRX STi, the 2005 Legacy B4 and the Rapide keep
+their hosts (4-door already, or the door count didn't decide); the C1 (4 ->
+none), the Prius (2 -> none) and 26 other hatches change their count but
+not their host.
 
 | Car class | Cars | Host classes | Most used hosts | Flagged |
 | --- | ---: | --- | --- | ---: |
 | coupe | 172 | coupe 139, convertible 15, supercar 8, muscle 8, sedan 2 | 227 370Z (26), 229 Skyline R33 (18), 125 Alfa 8C (13) | 6 |
-| hatch | 91 | hatch 87, coupe 3, sedan 1 | 128 MiTo (27), 274 Scirocco (27), 127 Giulietta (14) | 4 |
+| hatch | 91 | hatch 84, sedan 4, coupe 3 | 274 Scirocco (28), 128 MiTo (22), 127 Giulietta (15) | 7 |
 | race | 86 | supercar 75, coupe 11 | 162 Corvette Z06 (42), 232 Zonda (12), 182 Viper (6) | 0 |
 | supercar | 85 | supercar 75, coupe 9, convertible 1 | 232 Zonda (13), 162 Corvette Z06 (11), 163 Corvette ZR1 (9) | 5 |
-| sedan | 55 | sedan 49, hatch 3, wagon 2, coupe 1 | 176 Charger SRT8 (11), 136 A4 (11), 124 Alfa 159 (7) | 4 |
+| sedan | 55 | sedan 52, wagon 2, hatch 1 | 136 A4 (13), 176 Charger SRT8 (11), 124 Alfa 159 (7) | 1 |
 | convertible | 30 | convertible 18, coupe 9, supercar 3 | 278 Solstice (7), 248 Cobra (5), 129 Spider Duetto (5) | 5 |
 | muscle | 29 | muscle 29 | Camaros, Challenger R/T, Mustangs, GTO, Trans Am (3 each) | 0 |
 | SUV | 15 | SUV 15 | 138 Q7 (7), 239 Range Rover Sport (4), 203 H3 (3) | 1 |
@@ -287,9 +307,8 @@ The 28 flagged picks, reviewed:
   the TT RS, Clio V6 and 205 T16 on coupes), the Civic Si coupe on the Neon,
   and small coupes landing on convertibles by a fraction of a point
   (Integra R 2000, S2000, Starion; Elise on the Giulia TZ2).
-- Wrong door count (#208): SUB_WRXSTi_04 and SUB_S204_06 on 274 Scirocco
-  and LOT_Carlton_89 on 229 Skyline R33, four-door saloons the carbin rule
-  counts as 2-door ("Scoring", the Doors paragraph).
+- Hatches on a saloon for the door count: KIA_Ceed_11, NIS_Versa_09 and
+  SUZ_Liana_02 (5-doors) on 179 Neon, the Giulietta next (#208).
 
 ## Test builds
 
