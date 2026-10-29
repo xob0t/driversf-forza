@@ -205,6 +205,23 @@ def palette_set(stream, full: Entry) -> Entry | None:
     return None
 
 
+def set_wheel_blur_colour(stream, full: Entry, rgb) -> bool:
+    """Set g_vec4WheelBlurColour (SPSR's third set) to (r, g, b, 1): what the wheel's blur
+    disc multiplies its grey by (forza2dsf.wheel_blur_section; vanilla: a grey per vehicle,
+    1.0 on 37 of 150). False if the entry has no such parameter."""
+    spsr = next((c for c in child(full, "NONR").children if c.tag == "SPSR"), None)
+    done = False
+    for spss in spsr.children if spsr is not None else []:
+        for spsp in spss.children or []:
+            for p in spsp.children or []:
+                if p.tag == "MARP":
+                    data = _current(stream, p)
+                    if parse_marp(data)[0] == "g_vec4WheelBlurColour":
+                        p.payload = set_marp(data, (*(float(c) for c in rgb[:3]), 1.0))
+                        done = True
+    return done
+
+
 _VANILLA_CACHE: dict = {}
 
 

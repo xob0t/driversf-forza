@@ -64,6 +64,14 @@ INTERIOR = "interior"
 # the car folder). It holds the spoke shading, centre cap logos and nuts; its
 # alpha is a gloss mask on most cars, not a cut-out (classify_wheel).
 WHEEL = "wheel"
+# The wheel's speed-blur disc (forza2dsf.wheel_blur_section, research/wheels.md, "Speed
+# blur"): one of Forza's spinning-wheel pictures from the wheel archive, the whole
+# wheel face blurred round its axle. Drawn through a copy of DSF's shared
+# GLOBAL_Wheel_Blur_SpokeDisc material, which reads the texel as grey (red), gloss
+# (green) and coverage (blue); dsf_materials.Texturing converts it (wheel_blur_texels).
+WHEEL_BLUR = "wheel_blur"
+# The synthetic subsection that carries the disc; its UV0 is in the blur picture.
+WHEEL_BLUR_TECHNIQUE = "dsf_wheel_blur"
 
 FAMILY_FILES = {
     # family: (main-carbin file, lod0/cockpit file, damaged pair)
@@ -71,6 +79,9 @@ FAMILY_FILES = {
     LIGHTS: ("Lights.xds", "lights_LOD0.xds", "damagelights.xds"),
     INTERIOR: ("interior_LOD0.xds", "interior_LOD0.xds", "interior_LOD0.xds"),
     WHEEL: ("wheel.xds", "wheel_LOD0.xds", "wheel.xds"),
+    # wheel0..3.xds: the sharp face (alpha cut out between the spokes), then three
+    # blur levels; wheel2 is the middle one (the spokes smeared, not yet gone).
+    WHEEL_BLUR: ("wheel2.xds", "wheel2.xds", "wheel2.xds"),
 }
 
 # Exact technique names -> (role, family). Family is the atlas baseSampler
@@ -371,6 +382,8 @@ def classify_wheel(name: str) -> tuple[str, str | None]:
     matching artwork (spoke shading, the Nissan, Audi, Bugatti and SVT caps,
     nuts); inner_rim is a swatch of it on some cars (250 GTO, S5S)."""
     n = name.lower()
+    if n == WHEEL_BLUR_TECHNIQUE:
+        return TEXTURED, WHEEL_BLUR  # forza2dsf.wheel_blur_section's disc
     if "blur" in n or "shadow" in n or n.startswith("ghost"):
         return SKIP, None
     if n.startswith(("tire", "tyre", "tread", "sidewall")):

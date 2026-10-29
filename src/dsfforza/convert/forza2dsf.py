@@ -85,6 +85,10 @@ MATERIAL_LAYOUT = {
     TRIM_LOD1: (28, 5),
     TYRE_LOD1: (20, 5),
     CHROME_LOD1: (32, 5),
+    # GLOBAL_Wheel_Blur_SpokeDisc(_LOD1) (SPOKE_DISC below): alpha-blended, MODL flag 7 in
+    # every vanilla wheel part that has it
+    bytes.fromhex("001262258aa7c428"): (20, 7),
+    bytes.fromhex("10122b9e53b14e2a"): (20, 7),
 }
 
 DEFAULT_LODS = "4:1,8:3,16:5"  # DSF MODL mask -> Forza LOD
@@ -451,13 +455,22 @@ class Builder:
         return sub
 
 
-SHARED = {"paint": PAINT, "glass": GLASS, "trim": TRIM, "tyre": TYRE, "chrome": CHROME, "skip": None}
+SHARED = {
+    "paint": PAINT,
+    "glass": GLASS,
+    "trim": TRIM,
+    "tyre": TYRE,
+    "chrome": CHROME,
+    "spoke_disc": bytes.fromhex("001262258aa7c428"),  # SPOKE_DISC
+    "skip": None,
+}
 SHARED_EXTERIOR = {
     "paint": PAINT_LOD1,
     "glass": GLASS_LOD1,
     "trim": TRIM_LOD1,
     "tyre": TYRE_LOD1,
     "chrome": CHROME_LOD1,
+    "spoke_disc": bytes.fromhex("10122b9e53b14e2a"),  # SPOKE_DISC_LOD1
     "skip": None,
 }
 ROLE_OF = {PAINT: "paint", GLASS: "glass", TRIM: "trim", TYRE: "tyre", CHROME: "chrome"}
@@ -512,11 +525,20 @@ def wheel_material(textures, section, sub, shared: dict) -> bytes | None:
         from dsfforza.convert import dsf_materials
 
         kind = textures.texturing.material(section, sub)
-        if dsf_materials.is_atlas_kind(kind):  # Chassis, or a gloss copy of the Lights material
+        if dsf_materials.is_atlas_kind(kind):  # Chassis, a gloss copy of Lights, the blur disc's copy
             return textures.material(section, sub, shared)
-        if kind == "skip":
+        if kind == "skip" and not is_blur_disc(sub):
             return None
+    if is_blur_disc(sub):  # no blur picture in the atlas: the shared disc and its texture
+        return shared.get("spoke_disc") or SPOKE_DISC
     return None if wheel_role(sub.material) is None else tyre
+
+
+def is_blur_disc(sub) -> bool:
+    """A subsection of wheel_blur_section's disc."""
+    from dsfforza.convert import forza_materials as fm
+
+    return sub.material == fm.WHEEL_BLUR_TECHNIQUE
 
 
 def wheel_point(p, fit=(1.0, 1.0)) -> tuple[float, float, float]:
@@ -637,6 +659,190 @@ class TyreMap:
         return out
 
 
+# --- wheel speed blur (research/wheels.md, "Speed blur") ---------------------------------
+#
+# Vanilla wheels fade a blurred disc in as they spin. Their wheel parts draw the sharp rim on
+# GLOBAL_Wheel_Blur and a disc over the rim face on GLOBAL_Wheel_Blur_SpokeDisc (or _Disc),
+# both alpha-blended, MODL flag 7, stride 20. The blur programs (SSIC GPCH 21 to 40) take the
+# opacity from vertex semantic 9 byte 3 and the wheel's blur amount b (1.15 x
+# g_v4PerPanelData[s9 byte 1].y, set by the engine per wheel): byte 3 = 0 fades out
+# (1.15 - b), 1 stays opaque, 2 fades in (2.5 b - 0.15, opaque from b ~ 0.46). Of the 140
+# four-wheeled vanilla vehicles, 116 put their sharp rim on byte 3 = 0, 93 add a SpokeDisc
+# and 26 a Disc on byte 3 = 2; caps on the vehicle's Chassis material stay at byte 3 = 1.
+# The SpokeDisc pixel shader draws grey (texel red) x g_vec4WheelBlurColour (the vehicle's
+# SPSR third set), gloss from green, alpha = blue x opacity.
+#
+# A port's rims draw their own artwork through the car's Chassis material, which cannot fade
+# (only the blur programs read byte 3, and they draw grey). So the port keeps its sharp rim
+# and gets the disc only: a dish just in front of the rim face (the face's outer envelope,
+# WHEEL_BLUR_LIFT out), out to the rim's edge, on a copy of GLOBAL_Wheel_Blur_SpokeDisc that
+# samples the car's atlas, where the middle of Forza's own spinning-wheel pictures
+# (wheel2.xds, fm.WHEEL_BLUR) goes, laid over a dark backdrop so the disc is opaque once
+# faded in: the rim under it is hidden as vanilla's faded-out rim is. Without that picture
+# (no wheel archive, --textures none) the disc uses the shared SpokeDisc and its own texture,
+# mapped like vanilla discs (u = 0.5 - z / 2R, v = 0.5 - y / 2R in the DSF wheel frame).
+# Forza's own LOD 5 wheel (503 of the 573 roster cars; 17 at LOD 3) has no sharp rim at all,
+# only its blur_rim disc; there the disc is the rim and stays (byte 3 = 1).
+SPOKE_DISC = bytes.fromhex("001262258aa7c428")  # GLOBAL_Wheel_Blur_SpokeDisc (SSIC)
+SPOKE_DISC_LOD1 = bytes.fromhex("10122b9e53b14e2a")  # GLOBAL_Wheel_Blur_SpokeDisc_LOD1
+WHEEL_BLUR_SECTION = "dsf_wheel_blur"
+WHEEL_BLUR_FADE_IN = bytes((0, 0, 0, 2))  # s9: fades in with the wheel's speed
+WHEEL_BLUR_ALWAYS = bytes((0, 0, 0, 1))  # s9: always drawn (a LOD whose rim is the disc)
+WHEEL_BLUR_RINGS = 6  # rings of the dish, centre to rim edge (fewer where the face is flat)
+WHEEL_BLUR_FLAT = 0.001  # m: a ring this close to the line through its neighbours is left out
+WHEEL_BLUR_SEGMENTS = 24
+WHEEL_BLUR_LIFT = 0.003  # m in front of the rim face
+# Baked sky of the disc's vertices: the converted rim's outward faces (0.56, "Wheel shading"),
+# so the faded-in disc is lit like the rim it covers (vanilla discs carry 0.9 to 1.0 over
+# rims on 0.64).
+WHEEL_BLUR_SKY = 0.56
+# Barycentric samples of each triangle for the rim face's envelope: corners, edge midpoints,
+# centroid.
+_FACE_SAMPLES = (
+    (1.0, 0.0, 0.0),
+    (0.0, 1.0, 0.0),
+    (0.0, 0.0, 1.0),
+    (0.5, 0.5, 0.0),
+    (0.0, 0.5, 0.5),
+    (0.5, 0.0, 0.5),
+    (1 / 3, 1 / 3, 1 / 3),
+)
+
+
+def wheel_has_rim(sections, lod: int) -> bool:
+    """Whether the wheel model has a sharp rim at `lod` (a rim or chrome subsection),
+    not just its blur disc (Forza's LOD 5 on 503 roster cars)."""
+    return any(
+        wheel_role(sub.material) in ("rim", "chrome") for s in sections for sub in s.subsections if sub.lod == lod
+    )
+
+
+def blur_picture_map(sections):
+    """((u0, u_y, u_z), (v0, v_y, v_z)): Forza's planar map of its spinning-wheel pictures,
+    fitted to the blur_rim vertices (Forza wheel frame; residual 0 on all but a few roster
+    cars), or None (no blur_rim, or one that is not a plain planar map)."""
+    import numpy as np
+
+    subs = sorted(
+        ((s, sub) for s in sections for sub in s.subsections if sub.lod > 0 and sub.material.lower() == "blur_rim"),
+        key=lambda item: item[1].lod,
+    )
+    for section, sub in subs:
+        pool = section.vertices_for(sub)
+        ids = sorted({i for t in sub.triangles() for i in t})
+        if len(ids) < 3:
+            continue
+        xo, xs, yo, ys = sub.uv_transform[:4]
+        a = np.array([(1.0, pool[i].position[1], pool[i].position[2]) for i in ids])
+        uv = np.array([(pool[i].uv0[0] * xs + xo, pool[i].uv0[1] * ys + yo) for i in ids])
+        cu = np.linalg.lstsq(a, uv[:, 0], rcond=None)[0]
+        cv = np.linalg.lstsq(a, uv[:, 1], rcond=None)[0]
+        rms = float(np.sqrt(((a @ cu - uv[:, 0]) ** 2 + (a @ cv - uv[:, 1]) ** 2).mean()))
+        if rms <= 0.01 and abs(cu[1] * cv[2] - cu[2] * cv[1]) > 1.0:
+            return tuple(float(c) for c in cu), tuple(float(c) for c in cv)
+    return None
+
+
+def wheel_blur_section(sections, lods, centre=(0.0, 0.0, 0.0)) -> carbin.Section | None:
+    """The speed-blur disc of the Forza wheel model (Forza wheel frame, like the model):
+    for each Forza wheel LOD in `lods`, a dish of WHEEL_BLUR_RINGS x WHEEL_BLUR_SEGMENTS
+    quads round the axle through `centre` (CarDims.tyre_centre), WHEEL_BLUR_LIFT in front
+    of the rim face (-x; per ring the outermost point of every non-tyre subsection within
+    a ring of it, so the dish never cuts a spoke), out to the rim's edge (the rim's largest
+    radius, at most the tyre's smallest). One subsection per LOD, technique
+    fm.WHEEL_BLUR_TECHNIQUE: UV0 in Forza's blur picture (blur_picture_map, else the
+    vanilla disc map), UV1 the vanilla disc map (the shared SpokeDisc's texture), and
+    `always` when the LOD has no sharp rim (wheel_has_rim). None without a rim."""
+    import numpy as np
+
+    from dsfforza.convert import forza_materials as fm
+
+    picture = blur_picture_map(sections)
+    _, cy, cz = centre  # the face's x is the model's own
+    weights = np.array(_FACE_SAMPLES)
+    verts: list[carbin.Vertex] = []
+    subs = []
+    for lod in sorted(set(lods)):
+        pts, tyre_r = [], []
+        for s in sections:
+            for sub in s.subsections:
+                n = sub.material.lower()
+                if sub.lod != lod or "shadow" in n or n.startswith("ghost"):
+                    continue
+                pool = s.vertices_for(sub)
+                tris = np.array([[pool[i].position for i in t] for t in sub.triangles()], dtype=np.float64)
+                if not len(tris):
+                    continue
+                if wheel_role(sub.material) == "tyre":
+                    tyre_r.append(float(np.hypot(tris[..., 1] - cy, tris[..., 2] - cz).min()))
+                    continue
+                pts.append(np.einsum("kc,tcd->tkd", weights, tris).reshape(-1, 3))
+        if not pts:
+            continue
+        p = np.concatenate(pts)
+        r = np.hypot(p[:, 1] - cy, p[:, 2] - cz)
+        edge = float(r.max())
+        if tyre_r:
+            edge = min(edge, *tyre_r)
+        if edge < 0.05:
+            continue
+        rings = np.linspace(0.0, edge, WHEEL_BLUR_RINGS + 1)
+        step = rings[1] - rings[0]
+        face = []
+        for rk in rings:
+            near = (r >= rk - step) & (r <= rk + step)
+            face.append(float(p[near, 0].min()) if near.any() else None)
+        known = [k for k, x in enumerate(face) if x is not None]
+        face = [float(x) for x in np.interp(range(len(face)), known, [face[k] for k in known])]
+        keep = list(range(len(rings)))
+        while len(keep) > 2:  # drop the ring that bends the profile least, while under WHEEL_BLUR_FLAT
+            bend = [
+                abs(face[k] - np.interp(rings[k], [rings[a], rings[b]], [face[a], face[b]]))
+                for a, k, b in zip(keep, keep[1:], keep[2:])
+            ]
+            n = int(np.argmin(bend))
+            if bend[n] >= WHEEL_BLUR_FLAT:
+                break
+            del keep[n + 1]
+        rings, face = rings[keep], [face[k] for k in keep]
+        base = len(verts)
+
+        def add(x, y, z, edge=edge):
+            dy, dz = y - cy, z - cz
+            plain = (0.5 + dz / (2 * edge), 0.5 - dy / (2 * edge))  # the vanilla map, before the turn
+            uv0 = plain
+            if picture is not None:
+                (u0, uy, uz), (v0, vy, vz) = picture
+                uv0 = (u0 + uy * y + uz * z, v0 + vy * y + vz * z)
+            uv0 = tuple(min(1.0, max(0.0, c)) for c in uv0)  # the picture ends at the rim's edge
+            verts.append(carbin.Vertex((x, y, z), uv0, plain, (-1.0, 0.0, 0.0)))
+
+        add(face[0] - WHEEL_BLUR_LIFT, cy, cz)
+        count = WHEEL_BLUR_SEGMENTS
+        for k in range(1, len(rings)):
+            for j in range(count):
+                a = 2 * math.pi * j / count
+                add(face[k] - WHEEL_BLUR_LIFT, cy + rings[k] * math.sin(a), cz + rings[k] * math.cos(a))
+        idx = []
+        for j in range(count):  # the centre fan
+            idx += [base, base + 1 + j, base + 1 + (j + 1) % count]
+        for k in range(1, len(rings) - 1):
+            inner, outer = base + 1 + (k - 1) * count, base + 1 + k * count
+            for j in range(count):
+                a, b = inner + j, inner + (j + 1) % count
+                c, d = outer + j, outer + (j + 1) % count
+                idx += [a, c, d, a, d, b]
+        sub = carbin.SubSection(fm.WHEEL_BLUR_TECHNIQUE, lod, 4, (0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0), idx)
+        sub.always = not wheel_has_rim(sections, lod)
+        subs.append(sub)
+    if not subs:
+        return None
+    lo = tuple(min(v.position[k] for v in verts) for k in range(3))
+    hi = tuple(max(v.position[k] for v in verts) for k in range(3))
+    version = sections[0].version if sections else 0
+    return carbin.Section(WHEEL_BLUR_SECTION, (0.0, 0.0, 0.0), lo, hi, verts, [], subs, version)
+
+
 # Baked sky term (s0.w) of the wheel model. Forza's wheel vertices carry no AO byte
 # (all 0 on the 40 testdrive cars), so vertex_sky gave every wheel vertex
 # DEFAULT_AO x the hemisphere factor of its wheel-local normal: about 0.42 on the rim
@@ -746,7 +952,7 @@ def wheel_skies(sections, lod: int, fit=(1.0, 1.0)) -> dict:
     tris, verts = [], {}
     for section in sections:
         for sub in section.subsections:
-            if sub.lod != lod or fm.classify_wheel(sub.material)[0] == fm.SKIP:
+            if sub.lod != lod or fm.classify_wheel(sub.material)[0] == fm.SKIP or is_blur_disc(sub):
                 continue
             pool = section.vertices_for(sub)
             for t in sub.triangles():
@@ -851,7 +1057,7 @@ def add_geometry(
     tyre_map = skies = None
     if wheel:
         lod = wheel_lod(sections, lod)
-        skies = wheel_skies(sections, lod, wheel_fit)
+        skies = wheel_skies([s for s in sections if s.name != WHEEL_BLUR_SECTION], lod, wheel_fit)
         tyre_map = TyreMap.build(
             [
                 [wheel_point(s.vertices_for(sub)[i].position, wheel_fit) for i in t]
@@ -932,6 +1138,9 @@ def add_geometry(
                     if tag == "drop":
                         continue  # alpha-tested away in Forza (dsf_materials.DROP)
                     s9 = skin.get(section.name, RIGID)
+                    disc = wheel and is_blur_disc(sub)  # wheel_blur_section: fades in, or always drawn
+                    if disc:
+                        s9 = WHEEL_BLUR_ALWAYS if getattr(sub, "always", False) else WHEEL_BLUR_FADE_IN
                     if glass_links and material in glass_materials and not wheel:
                         s9 = glass_link(
                             glass_links,
@@ -987,7 +1196,9 @@ def add_geometry(
                             pos = wheel_point(v.position, wheel_fit) if wheel else place.point(v.position)
                             uv0 = uvs[n] if uvs else (v.uv0[0] * x_scale + x_off, v.uv0[1] * y_scale + y_off)
                             uv1 = v.uv1
-                            if wheel and tag is None:
+                            if disc and tag is None:
+                                uv0 = v.uv1  # the shared SpokeDisc texture, mapped like vanilla discs
+                            elif wheel and tag is None:
                                 uv0 = tyre_uv[n] if tyre_uv else WHEEL_UV[role]
                             elif sub.material == PLATE_TECHNIQUE:
                                 uv0 = v.uv0  # the plate in the shared paint atlas (src/dsfforza/convert/plates.py)
@@ -1017,6 +1228,8 @@ def add_geometry(
                             remap[key] = len(verts_out)
                             normal = wheel_normal(v.normal, wheel_fit) if wheel else place.normal(v.normal)
                             sky = skies.get((id(pool), i)) if skies is not None else None
+                            if disc:
+                                sky = WHEEL_BLUR_SKY
                             if sky is None:
                                 sky = vertex_sky(v, pool, normal)
                             verts_out.append(encode_vertex(stride, pos, uv0, uv1, normal, s9, sky))
@@ -1779,6 +1992,13 @@ class ConvertOptions:
     # Exhaust markers (src/dsfforza/convert/exhaust.py): the host's role-0x4D markers (smoke,
     # backfire, the exhaust sound) moved onto the Forza tailpipes, one per tip, up to 4.
     exhaust: bool = True
+    # Wheel speed blur (wheel_blur_section): a disc over each wheel's rim face that fades in as
+    # the wheel spins, like vanilla wheels' spoke discs.
+    wheel_blur: bool = True
+    # The archive's shared GLOBAL_Wheel_Blur_SpokeDisc MACOs ({uid: Entry},
+    # dsf_materials.shared_macos): with them and --textures the disc draws Forza's own
+    # spinning-wheel picture; without, the shared disc and its texture.
+    blur_materials: dict | None = None
 
 
 def parse_lods(text: str) -> dict[int, int]:
@@ -1874,6 +2094,21 @@ def convert(
             "wheel LODs without a tyre, using the nearest that has one: "
             + ", ".join(f"{a} -> {b}" for a, b in sorted(swapped.items()) if a != b)
         )
+    blur_disc = None
+    if opts.wheel_blur and not opts.no_wheel:
+        import dataclasses
+
+        blur_disc = wheel_blur_section(car.wheel, set(swapped.values()), dims.tyre_centre)
+        if blur_disc is not None:
+            car = dataclasses.replace(car, wheel=[*car.wheel, blur_disc])
+            log(
+                "wheel blur disc: "
+                + ", ".join(
+                    f"LOD {sub.lod} {'always (no sharp rim)' if sub.always else 'fades in'}"
+                    for sub in blur_disc.subsections
+                )
+                + ("" if blur_picture_map(car.wheel) else "; no blur_rim to map Forza's picture: the vanilla map")
+            )
     report: dict = {
         "placement": {
             "source": dims.source,
@@ -1951,6 +2186,7 @@ def convert(
             interior_vehc=interior,
             uid_seed=seed,
             wheels=wheels,
+            blur_materials=opts.blur_materials,
         )
         layout.update(tex_full.layout)
         layout.update(tex_ext.layout)
@@ -2372,6 +2608,18 @@ def convert(
             stream, full, colours, paint.vanilla_paints(stream), nonr_limit=NONR_LIMIT[0] - 0x400
         )
         log(f"paint: {report['paint'].get('installed')} factory colours (host had {report['paint'].get('host_count')})")
+    tint = tex_full.texturing.wheel_blur_tint if tex_full is not None else None
+    if blur_disc is not None:
+        report["wheel_blur"] = {
+            "lods": {sub.lod: "always" if sub.always else "fade" for sub in blur_disc.subsections},
+            "picture": tint is not None,
+        }
+    if tint is not None and not opts.skip_full:
+        from dsfforza.convert import paint
+
+        report["wheel_blur"]["colour"] = [round(c, 3) for c in tint]
+        if not paint.set_wheel_blur_colour(stream, full, tint):
+            log("wheel blur: the host has no g_vec4WheelBlurColour; the disc keeps the material's white")
     return report
 
 
