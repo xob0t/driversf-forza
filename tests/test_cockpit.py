@@ -130,8 +130,8 @@ def test_virtual_dials_on_a_blank_display():
 
 
 def test_needles_the_host_cannot_turn_are_dropped():
-    # A host whose gauge table has no entry for an id (one without a cluster part to hang
-    # a record on): a needle (here a virtual dial) the engine can't turn is left out.
+    # Vanilla 250 (the Volt's host) has no gauge record, so add_gauge_records can't give
+    # it one: a needle (here a virtual dial) whose id the host can't turn is left out.
     panel = _display((0.5, 0.0, 0.5, 0.0) * 2, width=0.16, height=0.10)
     dials, report, _ = cockpit.virtual_gauges({"interior": panel}, {}, (0.08, 0.05, 0.7), _Car(), 2)
     cf = cockpit.CockpitFit(None, {}, (0, 0, 0), (0, 0, 0), "", {}, {"interior": panel}, {}, virtual=report)
@@ -618,53 +618,6 @@ def test_digital_dials_are_not_needles():
     assert cockpit.needle_check(None, _needle_interior([2], [1], blind=True), h) == ([], 2)
 
 
-def _recordless_hierarchy() -> bytes:
-    """root > cluster part (role 185, no gauge record under it), then the steering marker,
-    and an empty gauge table: vanilla 250 (the Volt's host) and 293."""
-    head = bytearray(upvh.HEADER_SIZE)
-    head[:4] = b"AWHF"
-    struct.pack_into("<6I", head, 4, 0, 0, 26, 3, 1, 0)
-    struct.pack_into("<H", head, 0x28, 1)
-    records = bytearray()
-    for kind, role, subtree, marker in ((4, 0, 3, -1), (1, cockpit.CLUSTER_ROLE, 1, -1), (3, 47, 1, 0)):
-        rec = bytearray(b"\xff" * upvh.RECORD_SIZE)
-        struct.pack_into("<HHHHHHHH", rec, 0x08, kind, role, 0, 0, 1, 0, subtree, 0)
-        struct.pack_into("<h", rec, 0x1A, marker)
-        records += rec
-    return bytes(head + records + struct.pack("<3f4x4f", 0.3, 0.5, 0.3, 0, 0, 0, 1))
-
-
-def test_recordless_host_gets_gauge_records():
-    # Issue #148: the Volt's host (250) has a cluster part but no gauge record, so its
-    # virtual tachometer was dropped. The first record comes from a vanilla template.
-    from dsfforza.convert import damage
-
-    data = _recordless_hierarchy()
-    out, added = cockpit.add_gauge_records(data, {1, 2})
-    assert added == [2, 1]
-    h = upvh.parse(out)
-    assert len(h.records) == 5 and h.counts["seats"] == 2
-    assert [r.subtree for r in h.records] == [5, 3, 1, 1, 1]
-    assert cockpit.gauge_records(h) == {2: 2, 1: 3}
-    for gid, index in cockpit.gauge_records(h).items():
-        r = h.records[index]
-        assert r.type == 18 and r.role == cockpit.GAUGE_ROLES[gid]
-        assert struct.unpack_from("<I", h.table("seats")[r.seat], 0x20)[0] == gid
-    # The hinge pops of the new records and their ancestors as vanilla writes them.
-    fields = damage._tree_fields([r.raw for r in h.records])
-    for k in (1, 2, 3):
-        assert struct.unpack_from("<HH", h.records[k].raw, 0x16) == fields[k][1:], k
-    assert h.records[4].type == 3 and h.records[4].marker == 0
-    assert h.table("markers") == upvh.parse(data).table("markers")
-    # Only the tachometer: one record.
-    out1, added1 = cockpit.add_gauge_records(data, {1})
-    assert added1 == [1] and cockpit.gauge_records(upvh.parse(out1)) == {1: 2}
-    # No cluster part: nothing to hang one on.
-    no_cluster = bytearray(data)
-    struct.pack_into("<H", no_cluster, upvh.HEADER_SIZE + upvh.RECORD_SIZE + 0x0A, 0)
-    assert cockpit.add_gauge_records(bytes(no_cluster), {1, 2}) == (bytes(no_cluster), [])
-
-
 def _open_cockpit(cowl_name: str = "hooda"):
     """Eye at the origin, a wheel 0.45 m ahead, and in front only the bodywork round the
     wheel (`cowl_name`): an open cockpit like the ARX-02a's, no dash."""
@@ -684,7 +637,12 @@ def test_cowl_holds_a_virtual_display_in_an_open_cockpit():
         assert d is None and report == {"virtual_display": "no room"}
         d, housing, report = cockpit.pod_display(static, eye, wheel, 2, {}, 2, cowl=True)
         assert d is not None and report["virtual_display"]["cowl"] is True, report
-        assert abs(d.centre[2] + 0.8) < 0.05 and d.normal[2] < -0.9
+        assert -0.8 < d.centre[2] < -0.7  # in front of the cowl,
+        assert cockpit._dot(d.normal, cockpit._norm(d.centre)) > 0.99  # facing the eye
+        # and out from under the HUD's lower corners.
+        down = math.degrees(math.atan2(-d.centre[1], math.hypot(d.centre[0], d.centre[2])))
+        across = math.degrees(math.atan2(d.centre[0], -d.centre[2]))
+        assert down <= cockpit.HUD_DOWN_DEG or -cockpit.HUD_LEFT_DEG <= across <= cockpit.HUD_RIGHT_DEG
     # The housing of one virtual display keeps a second one off it.
     static[housing.name] = housing
     d2, _, _ = cockpit.pod_display(static, eye, wheel, 2, {}, 2, cowl=True, name="dsf_second")
@@ -721,7 +679,8 @@ def test_wheel_display_moves_onto_a_virtual_display():
     for tri in m.points:
         for p in tri:  # just in front of the screen
             assert abs(plane - cockpit._dot(p, n) - cockpit.WHEEL_DISPLAY_LIFT) < 1e-6
-    assert m.towards_eye[2] > 0.9
+    centre = cockpit._mean([p for tri in m.points for p in tri])
+    assert cockpit._dot(m.towards_eye, cockpit._norm(centre)) < -0.99  # facing the eye
     # Without a display on the wheel there's nothing to move.
     static["steering_wheel"].subsections = static["steering_wheel"].subsections[:1]
     assert cockpit.wheel_display_pod(static, eye, wheel, {}, 2)[:2] == ([], None)

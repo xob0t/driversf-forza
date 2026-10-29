@@ -1159,6 +1159,14 @@ POD_SIDE_DEG = 35.0  # to either side of the wheel's centre, at most
 POD_BELOW_EYE = -0.05  # the line of sight's y: at least 3 degrees down (the dashboard, not the roof)
 POD_RESOLUTION = 256  # pixels across the 90-degree view the search runs on
 POD_STEP = 3  # pixels between candidate centres
+# DSF's HUD covers the cockpit view's lower corners: the progress bar from about 8
+# degrees left of straight ahead, the car and speed box from about 24 degrees right,
+# both from about 13 degrees under the eye line (1280 x 720, the head camera about 80
+# degrees wide; runs vm1-20261029-144633, vm2-20261029-144816). A virtual display there
+# would be hidden: pod_display keeps clear of it, with a margin.
+HUD_DOWN_DEG = 13.5
+HUD_LEFT_DEG = 7.0
+HUD_RIGHT_DEG = 23.0
 POD_COWL_SUPPORT = 0.5  # share of a cowl display (and of its bottom quarter) in front of the cowl
 # An open cockpit's bodywork round the wheel (ARX-02a: a_pillar; R10: hood): pod_display(cowl=True).
 COWL_SECTIONS = re.compile(r"^(hood|a_pillar)", re.I)
@@ -1197,7 +1205,8 @@ def pod_display(
     Every line of sight to it must reach the cabin within POD_DEPTH behind it (not
     the windscreen, the bonnet or an A-pillar), pass outside the rim (and
     POD_WHEEL_CLEAR) and clear of Forza's own dials, digital displays and gauge
-    faces. Found on a depth image from the eye.
+    faces, and out from under DSF's HUD (HUD_DOWN_DEG...). Found on a depth image
+    from the eye.
 
     With `cowl` (open cockpits, issue #147), the bodywork in front of the driver
     (the cockpit carbin's `hood*` and `a_pillar` sections, which close round the
@@ -1257,6 +1266,9 @@ def pod_display(
     # display may stand in front of it.
     bad = (~hit & (not cowl)) | (hit & ((ids < 0) | flags[np.maximum(ids, 0)])) | (far & (not cowl))
     bad |= _disc_mask(rays, eye, wheel.centre, wheel.axis, wheel.radius + POD_WHEEL_CLEAR)
+    across = np.degrees(np.arctan2(rays[:, 0], -rays[:, 2]))  # the driver's right is +x
+    down = np.degrees(np.arctan2(-rays[:, 1], np.hypot(rays[:, 0], rays[:, 2])))
+    bad |= (down > HUD_DOWN_DEG) & ((across > HUD_RIGHT_DEG) | (across < -HUD_LEFT_DEG))
     for g in gauges.values():
         reach = max((math.dist(p, g.pivot) for p in section_points(g.rest)), default=0.0)
         bad |= _disc_mask(rays, eye, g.pivot, g.normal, reach * POD_GAUGE_CLEAR)
@@ -1940,14 +1952,6 @@ GAUGE_RECORD_TYPE = 18
 CLUSTER_ROLE = 185
 GAUGE_ROLES = {2: 0, 1: 187}  # gauge id -> the vanilla record's role
 MAX_GAUGES = 7
-# A vanilla speedometer record (232's record 27; every vanilla gauge record has these
-# bytes but the role, the gauge-table index at +0x26 and the hinge pops at +0x16/+0x18),
-# for hosts without any (add_gauge_records). The table entry's pivot, dial and sweep are
-# patch_hierarchy's.
-GAUGE_RECORD_TEMPLATE = bytes.fromhex(
-    "ffffffffffffffff120000000000000000000000010000000000ffffffffffffffffffffffff"
-    "00ffff00ffff0300ffffffffffffffffffffffffffff0000ffffffffffff010000000400000010d81800"
-)
 
 
 def gauge_records(h) -> dict[int, int]:
@@ -1970,25 +1974,18 @@ def add_gauge_records(upvh_data: bytes, ids) -> tuple[bytes, list[int]]:
     (same parent, the cluster part; the vanilla role for the id), the speedometer's
     before the tachometer's as in vanilla hierarchies; its entry is a copy of
     that record's entry with the new id, appended to the table (patch_hierarchy
-    sets the pivot, dial and sweep). A host without any gauge record (250, the
-    Volt's, and 293) gets the first one from GAUGE_RECORD_TEMPLATE under its
-    cluster part (add_first_gauge_record), the rest as above.
+    sets the pivot, dial and sweep). A host without any gauge record (250,
+    the Volt's, and 293) gets none: its only dial material is a digital one
+    (`*_Digital_Dials`), whose program doesn't read g_InstrumentTransforms, so no
+    needle could turn there (research/cockpit.md, "Displays on the steering wheel").
     Returns the new hierarchy and the ids added."""
     from dsfforza.formats import upvh
 
     h = upvh.parse(upvh_data)
     have = gauge_records(h)
     missing = sorted(set(ids) - set(have), reverse=True)  # speedometer (2) first
-    if not missing:
+    if not have or not missing:
         return upvh_data, []
-    first = []
-    if not have:
-        upvh_data, first = add_first_gauge_record(upvh_data, missing[0])
-        h = upvh.parse(upvh_data)
-        have = gauge_records(h)
-        missing = missing[1:] if first else []
-        if not missing:
-            return upvh_data, first
     data = upvh_data
     added = []
     for gid in missing:
@@ -2021,53 +2018,7 @@ def add_gauge_records(upvh_data: bytes, ids) -> tuple[bytes, list[int]]:
         out[0x2C] = seat + 1
         data = bytes(out)
         added.append(gid)
-    return data, first + added
-
-
-def add_first_gauge_record(upvh_data: bytes, gid: int) -> tuple[bytes, list[int]]:
-    """A gauge record for `gid` on a hierarchy that has none: GAUGE_RECORD_TEMPLATE
-    (the vanilla role for the id, gauge-table index 0) as the first child of the
-    cluster part (role 185, every vanilla hierarchy has one), and a table entry with
-    the id (patch_hierarchy sets the pivot, dial and sweep). Its hinge pop counts
-    (+0x16, +0x18) and its ancestors' are recomputed as vanilla writes them
-    (damage._tree_fields). Returns the new hierarchy and [gid], or the hierarchy and []
-    when there is no cluster part."""
-    from dsfforza.convert import damage
-    from dsfforza.formats import upvh
-
-    h = upvh.parse(upvh_data)
-    cluster = next((r for r in h.records if r.type == 1 and r.role == CLUSTER_ROLE), None)
-    if cluster is None or gid not in GAUGE_ROLES or h.counts["seats"]:
-        return upvh_data, []
-    rec = bytearray(GAUGE_RECORD_TEMPLATE)
-    struct.pack_into("<H", rec, 0x0A, GAUGE_ROLES[gid])
-    struct.pack_into("<b", rec, 0x26, 0)
-    at = cluster.index + 1
-    raw = [bytearray(r.raw) for r in h.records]
-    raw.insert(at, rec)
-    p = cluster.index
-    while p is not None:  # the cluster and its ancestors hold one more record
-        struct.pack_into("<H", raw[p], 0x14, struct.unpack_from("<H", raw[p], 0x14)[0] + 1)
-        p = parent_of(h, p)
-    fields = damage._tree_fields([bytes(r) for r in raw])
-    p = cluster.index
-    touched = {at}
-    while p is not None:
-        touched.add(p)
-        p = parent_of(h, p)
-    for k in touched:
-        _bit, leaf, pops = fields[k]
-        struct.pack_into("<HH", raw[k], 0x16, leaf, pops)
-    entry = bytearray(0x30)
-    struct.pack_into("<4f4fII", entry, 0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, gid, 100)
-    tables = upvh.HEADER_SIZE + len(h.records) * upvh.RECORD_SIZE
-    seats_at = h.offsets["seats"]
-    out = bytearray(
-        upvh_data[: upvh.HEADER_SIZE] + b"".join(raw) + upvh_data[tables:seats_at] + entry + upvh_data[seats_at:]
-    )
-    struct.pack_into("<I", out, 0x10, len(raw))
-    out[0x2C] = 1
-    return bytes(out), [gid]
+    return data, added
 
 
 # --- driver's hands -------------------------------------------------------------------
