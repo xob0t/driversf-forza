@@ -117,6 +117,52 @@ class ChromeTrim(unittest.TestCase):
             self.assertAlmostEqual(mats[chrome][1], forza2dsf.CHROME_UV[1], places=3)
             self.assertEqual(forza2dsf.MATERIAL_LAYOUT[chrome], (32, 5))
 
+    def test_metal_greys(self):
+        """Bare metal draws on the shared chrome's texel nearest its Forza grey (#154), as
+        vanilla chrome picks its grey per part; Forza's chrome keeps CHROME_UV. Two greys on
+        one vertex pool keep their own UV0."""
+        import numpy as np
+
+        self.assertEqual(forza2dsf.chrome_grey(177), 156)  # the Veyron's scoops: vanilla's brightest
+        self.assertEqual(forza2dsf.chrome_grey(240), 156)
+        self.assertEqual(forza2dsf.chrome_grey(100), 98)
+        self.assertEqual(forza2dsf.chrome_grey(20), 45)
+        # the Veyron's 227 frame at PristinePaintScale 0.3, as Forza draws it
+        self.assertAlmostEqual(trim_art.metal_grey(np.array([[227, 227, 227, 255]] * 3), 0.3), 133, delta=1)
+        self.assertAlmostEqual(trim_art.metal_grey(np.array([[177, 176, 177, 255], [0, 0, 0, 0]])), 176.4, 1)
+        self.assertEqual(fm.technique_grey("dsf_trim_metal#74"), 74)
+        self.assertIsNone(fm.technique_grey("dsf_trim_metal"))
+        self.assertEqual(fm.technique_scale("dsf_trim_metal#74"), ("dsf_trim_metal", 1.0))
+        transform = (0.0, 1.0, 0.0, 1.0)
+        subs = [
+            carbin.SubSection(fm.with_grey(trim_art.METAL_TECHNIQUE, g), 1, 4, transform, [0, 1, 2]) for g in (156, 74)
+        ] + [carbin.SubSection("chrome", 1, 4, transform, [0, 1, 2])]
+        section = carbin.Section("body", (0, 0, 0), (0, 0, 0), (1, 1, 1), self.section.lod_vertices, [], subs)
+        t = dm.Texturing(Path())
+        for sub in subs:
+            t.resolved[(id(section), id(sub))] = fm.resolve(section, sub)
+        binding = dm.Binding(t, dm.Installed({dm.CHASSIS: b"C" * 8, dm.LIGHTS_MAT: b"L" * 8}, b"T" * 8, {}))
+        builder = forza2dsf.Builder(bytes((1, 2, 3, 4)))
+        (added,) = forza2dsf.add_geometry(
+            builder,
+            [section],
+            1,
+            forza2dsf.Placement(0.0, 0.0),
+            wheel=False,
+            textures=binding,
+            shared=forza2dsf.SHARED_EXTERIOR,
+            merge=True,
+        )
+        self.assertEqual(added.material, forza2dsf.CHROME_LOD1)
+        buf = builder.buffers[added.stride]
+        uvs = []
+        for n in range(0, 9, 3):
+            v = builder.indices[added.first_index + n] + added.base_vertex
+            uvs.append(struct.unpack_from("<2e", buf, v * added.stride + 8))
+        for uv, want in zip(uvs, (forza2dsf.CHROME_GREYS[156], forza2dsf.CHROME_GREYS[74], forza2dsf.CHROME_UV)):
+            self.assertAlmostEqual(uv[0], want[0], places=3)
+            self.assertAlmostEqual(uv[1], want[1], places=3)
+
     def test_textured_binding_keeps_chrome_shared(self):
         t = dm.Texturing(Path())
         sub = self.subs["chrome"]
@@ -472,6 +518,7 @@ class TrimArt(unittest.TestCase):
                 "body/smooth_metal": {
                     "triangles": 2,
                     "metal": 2,
+                    "metal_greys": {"156": 2},  # white 240: the brightest chrome grey
                     "detail": 0,
                     "grey": 0,
                     "gloss": 0,
@@ -483,8 +530,10 @@ class TrimArt(unittest.TestCase):
         names = [s.material for s in out.subsections]
         art = fm.with_source(trim_art.ART_TECHNIQUE[fm.NODAMAGE], "misc")
         gloss = fm.with_source(trim_art.GLOSS_TECHNIQUE, "misc")
-        self.assertEqual(names, ["body", "misc", art, gloss, "black", "misc", trim_art.METAL_TECHNIQUE])
-        self.assertEqual(fm.classify(trim_art.METAL_TECHNIQUE)[0], fm.CHROME)  # DSF's shared chrome
+        metal = fm.with_grey(trim_art.METAL_TECHNIQUE, 156)
+        self.assertEqual(names, ["body", "misc", art, gloss, "black", "misc", metal])
+        self.assertEqual(fm.classify(metal)[0], fm.CHROME)  # DSF's shared chrome
+        self.assertEqual(fm.classify(trim_art.METAL_TECHNIQUE)[0], fm.CHROME)
         self.assertIs(out.subsections[0], paint)
         self.assertIs(out.subsections[4], black)  # black* stays trim
         self.assertIs(out.subsections[5], lod3)  # not a requested LOD

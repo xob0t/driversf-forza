@@ -54,7 +54,9 @@ ALPHA_OPAQUE = 128
 # Light artwork that is bare metal (is_metal) takes DSF's shared chrome instead of the
 # atlas, as Forza's chrome techniques do (research/forza-materials.md, "Chrome trim"):
 # on the host Chassis material (specular 0.03, no reflection) the Veyron's grey 177
-# scoops read as flat white in game.
+# scoops read as flat white in game. Each triangle on the chrome texel nearest its Forza
+# grey as drawn (metal_grey; forza2dsf.CHROME_GREYS, vanilla's chrome greys), named
+# "dsf_trim_metal#<grey>" (fm.with_grey; issue #154: one shared grey for every car).
 METAL_TECHNIQUE = "dsf_trim_metal"
 METAL_WORDS = ("metal", "alum", "steel")
 METAL_MAX_CHROMA = 24  # brightest minus darkest channel of the mean colour
@@ -166,6 +168,20 @@ def is_metal(technique: str, texels) -> bool:
 
 
 ART, METAL, DETAIL, GREY, GLOSS = "art", "metal", "detail", "grey", "gloss"
+
+
+def metal_grey(texels, scale: float = 1.0) -> float:
+    """The grey level (sRGB, 0..255) Forza draws bare-metal texels (triangle_texels) at:
+    the luminance of their opaque texels' mean, times the technique's texel scale in
+    linear light (fm.scale_texels: the Veyron's 227 `frame` at PristinePaintScale 0.3 is
+    drawn at 133)."""
+    import numpy as np
+
+    opaque = texels[texels[:, 3] >= ALPHA_OPAQUE]
+    rows = opaque if len(opaque) else texels
+    mean = rows[:, :3].astype(float).mean(0)
+    lum = float(np.dot(fm.scale_texels(mean, scale), (0.299, 0.587, 0.114)))
+    return min(255.0, max(0.0, lum))
 
 
 def local_contrast(image):
@@ -365,10 +381,14 @@ def split_trim_art(sections, atlases: fm.AtlasCache, lods=None, settings: dict |
     technique's texel scale (fm.with_scale; `settings`: the car's ShaderSettings,
     read from the atlases' folder when None). The other triangles keep theirs.
     Only textured trims of the main atlases at `lods` (None: all); on the Lights
-    atlas only artwork, unscaled. Unchanged sections are returned as they are.
-    Report: per section/technique, the triangles moved, how many of them as
-    metal, detail and grey, and their area (m2)."""
+    atlas only artwork, unscaled. Bare metal goes into one subsection per chrome grey
+    (forza2dsf.chrome_grey of metal_grey: METAL_TECHNIQUE#<grey>). Unchanged sections
+    are returned as they are. Report: per section/technique, the triangles moved, how
+    many of them as metal (and per chrome grey, metal_greys), detail and grey, and their
+    area (m2)."""
     import numpy as np
+
+    from dsfforza.convert import forza2dsf
 
     if settings is None:
         car_dir = getattr(atlases, "car_dir", None)
@@ -419,7 +439,7 @@ def split_trim_art(sections, atlases: fm.AtlasCache, lods=None, settings: dict |
                 entry = found.setdefault((si, ui), (m.family, scale, [], [], {}))
                 entry[2].append(k)
                 entry[3].append([pool[i].position for i in tri])
-                entry[4][k] = kind
+                entry[4][k] = (METAL, forza2dsf.chrome_grey(metal_grey(texels, scale))) if kind == METAL else kind
     if not found:
         return list(sections), {}
     moved: dict = {}  # (si, ui) -> set of triangle indices
@@ -446,13 +466,13 @@ def split_trim_art(sections, atlases: fm.AtlasCache, lods=None, settings: dict |
                 subs.append(sub)
                 continue
             family, scale, _, _, kinds = found[(si, ui)]
-            keep, parts, area = [], {ART: [], METAL: [], DETAIL: [], GREY: [], GLOSS: []}, 0.0
+            keep, parts, area = [], {ART: [], DETAIL: [], GREY: [], GLOSS: []}, 0.0
             pool = section.vertices_for(sub)
             for k, tri in enumerate(sub.triangles()):
                 if k not in picked:
                     keep += tri
                     continue
-                parts[kinds[k]].extend(tri)
+                parts.setdefault(kinds[k], []).extend(tri)
                 p = np.array([pool[i].position for i in tri])
                 area += 0.5 * float(np.linalg.norm(np.cross(p[1] - p[0], p[2] - p[0])))
             if keep:
@@ -460,20 +480,24 @@ def split_trim_art(sections, atlases: fm.AtlasCache, lods=None, settings: dict |
             # The textured classes keep the Forza technique they came from (its gloss).
             names = {
                 ART: fm.with_source(fm.with_scale(ART_TECHNIQUE[family], scale), sub.material),
-                METAL: METAL_TECHNIQUE,
                 DETAIL: fm.with_source(fm.with_scale(DETAIL_TECHNIQUE, scale), sub.material),
                 GREY: fm.with_source(fm.with_scale(GREY_TECHNIQUE, scale), sub.material),
                 GLOSS: fm.with_source(fm.with_scale(GLOSS_TECHNIQUE, scale), sub.material),
             }
-            for kind, indices in parts.items():
-                if indices:
-                    subs.append(carbin.SubSection(names[kind], sub.lod, 4, sub.uv_transform, indices))
+            metal = sorted(kind for kind in parts if isinstance(kind, tuple))  # (METAL, grey), darkest first
+            for kind in [ART, *metal, DETAIL, GREY, GLOSS]:
+                if parts[kind]:
+                    name = fm.with_grey(METAL_TECHNIQUE, kind[1]) if kind in metal else names[kind]
+                    subs.append(carbin.SubSection(name, sub.lod, 4, sub.uv_transform, parts[kind]))
             stats = report.setdefault(
                 f"{section.name}/{sub.material}",
                 {"triangles": 0, "metal": 0, "detail": 0, "grey": 0, "gloss": 0, "area": 0.0},
             )
             stats["triangles"] += sum(len(v) for v in parts.values()) // 3
-            stats["metal"] += len(parts[METAL]) // 3
+            stats["metal"] += sum(len(parts[kind]) for kind in metal) // 3
+            for kind in metal:
+                greys = stats.setdefault("metal_greys", {})
+                greys[str(kind[1])] = greys.get(str(kind[1]), 0) + len(parts[kind]) // 3
             stats["detail"] += len(parts[DETAIL]) // 3
             stats["grey"] += len(parts[GREY]) // 3
             stats["gloss"] += len(parts[GLOSS]) // 3

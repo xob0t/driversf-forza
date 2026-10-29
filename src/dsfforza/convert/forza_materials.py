@@ -163,13 +163,18 @@ SCALE_SUFFIX = "@"
 # ... and "<technique>~<source>" with the Forza technique the triangles came from, whose
 # gloss (gloss_params) they keep: "dsf_trim_detail@0.2~misc".
 SOURCE_SUFFIX = "~"
+# ... and bare metal (trim_art.METAL_TECHNIQUE) "<technique>#<grey>" with the grey of the
+# shared chrome's texel it draws on (forza2dsf.chrome_uv): "dsf_trim_metal#156".
+GREY_SUFFIX = "#"
 
 
 def technique_scale(name: str) -> tuple[str, float]:
     """("dsf_trim_detail", 0.2) for "dsf_trim_detail@0.2" (and "dsf_trim_detail@0.2~misc");
-    (name, 1.0) without a scale."""
+    (name, 1.0) without a scale ("dsf_trim_metal" for "dsf_trim_metal#156")."""
     if name.startswith("dsf_") and SOURCE_SUFFIX in name:
         name = name.partition(SOURCE_SUFFIX)[0]
+    if name.startswith("dsf_") and GREY_SUFFIX in name:
+        name = name.partition(GREY_SUFFIX)[0]
     if SCALE_SUFFIX in name:
         base, _, scale = name.partition(SCALE_SUFFIX)
         try:
@@ -185,6 +190,20 @@ def with_scale(technique: str, scale: float) -> str:
 
 def with_source(technique: str, source: str) -> str:
     return f"{technique}{SOURCE_SUFFIX}{source}"
+
+
+def with_grey(technique: str, grey: int) -> str:
+    return f"{technique}{GREY_SUFFIX}{grey}"
+
+
+def technique_grey(name: str) -> int | None:
+    """156 for "dsf_trim_metal#156"; None without a grey."""
+    if not name.startswith("dsf_") or GREY_SUFFIX not in name:
+        return None
+    try:
+        return int(name.partition(GREY_SUFFIX)[2].partition(SOURCE_SUFFIX)[0])
+    except ValueError:
+        return None
 
 
 def technique_source(name: str) -> str:
@@ -292,7 +311,7 @@ def classify(name: str) -> tuple[str, str | None]:
     the prefix conventions of the technique list and CustomCarShaders.xml."""
     if name in TECHNIQUES:
         return TECHNIQUES[name]
-    if name.startswith("dsf_") and (SCALE_SUFFIX in name or SOURCE_SUFFIX in name):  # trim_art's names
+    if name.startswith("dsf_") and any(s in name for s in (SCALE_SUFFIX, SOURCE_SUFFIX, GREY_SUFFIX)):  # trim_art's
         return classify(technique_scale(name)[0])
     n = name.lower()
     if n.startswith(("blur", "chrome_blur", "ghost")) or "shadow" in n:
