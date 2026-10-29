@@ -82,7 +82,7 @@ BODY, TRIMS, CHROME, GLASS, PLATES, BADGES, WHEELS, FRONT_LAMPS, REAR_LAMPS = (
     "front_lamps",
     "rear_lamps",
 )
-COCKPIT, GAUGES, CABIN = "cockpit", "gauges", "cabin"
+COCKPIT, GAUGES, CABIN, DISPLAYS = "cockpit", "gauges", "cabin", "displays"
 CABIN_SECTION = re.compile(r"^(interior|seat|steering_wheel|dash|cagerace|driver)", re.I)
 
 
@@ -343,6 +343,21 @@ def _triangles(section, sub, point, normal):
     return pos[idx], nrm[idx], uv[idx], ao[idx]
 
 
+_CARS: dict = {}
+
+
+def load_car(folder: Path, media: str):
+    """forza2dsf.load_car, kept for the last car (the body and the cockpit references
+    read the same carbin)."""
+    from dsfforza.convert import forza2dsf
+
+    key = (str(Path(folder).resolve()), media)
+    if key not in _CARS:
+        _CARS.clear()
+        _CARS[key] = forza2dsf.load_car(Path(folder), media)
+    return _CARS[key]
+
+
 def _placement(placement: dict):
     from dsfforza.convert import forza2dsf
 
@@ -360,7 +375,7 @@ def body_scene(
     from dsfforza.convert import forza2dsf, lights
     from dsfforza.convert import forza_materials as fm
 
-    car = forza2dsf.load_car(Path(folder), media)
+    car = load_car(Path(folder), media)
     place = _placement(placement)
     mats = _Materials(Path(folder), paint)
     plan = lights.LampPlan.build(
@@ -543,6 +558,7 @@ def forza_lamp_rgb(lamps: list[cr.LampInfo], lighting: cr.Lighting) -> np.ndarra
 # --- the cockpit -----------------------------------------------------------------------------
 
 GAUGE_TECHNIQUE = re.compile(r"^(cockpit_)?(z_)?(digital_)?gauge|needle", re.I)
+DISPLAY_TECHNIQUE = re.compile(r"^(cockpit_)?(z_)?digital_gauge", re.I)
 
 
 def cockpit_region(section: str, technique: str, role: str, family: str | None, front: bool) -> tuple[str, str]:
@@ -553,6 +569,8 @@ def cockpit_region(section: str, technique: str, role: str, family: str | None, 
     from dsfforza.convert import forza_materials as fm
 
     t = fm.technique_source(technique)
+    if DISPLAY_TECHNIQUE.match(t):
+        return DISPLAYS, ""  # drawn live (Forza's dash scene, DSF's digital dials): not compared
     if GAUGE_TECHNIQUE.match(t) or cockpit.NEEDLE.match(section):
         return GAUGES, ""
     if not fm.COCKPIT_EXTERIOR_SECTIONS.match(section):
@@ -569,12 +587,12 @@ def cockpit_scene(
     a stub), drawn as Forza's cockpit shaders do (forza_materials.classify_cockpit, the
     _LOD0 atlases), and the main carbin's body at `shell_lod` round it. Returns the scene
     and {eye (Forza space)}."""
-    from dsfforza.convert import cockpit, forza2dsf
+    from dsfforza.convert import cockpit
     from dsfforza.convert import forza_materials as fm
     from dsfforza.convert import paint as paint_mod
 
     folder = Path(folder)
-    car = forza2dsf.load_car(folder, media)
+    car = load_car(folder, media)
     place = _placement(placement)
     gamedb = paint_mod.find_gamedb(folder)
     sections = cockpit.load_cockpit(folder, media) or []

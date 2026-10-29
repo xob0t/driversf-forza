@@ -146,6 +146,7 @@ class Material:
     lens: Lens | None = None  # kind "lens": see-through lamp glass, opacity from the texel
     program: str = ""  # what draws it, for the reports: a DSF material class or a Forza role
     name: str = ""  # the DSF material's name or the Forza technique
+    uid: bytes = b""  # the DSF material's UID
 
 
 @dataclass(frozen=True)
@@ -780,7 +781,7 @@ def _physical(m: Material, uid: bytes, info: dict, name: str, texture_of) -> Non
         m.emissive = True
     else:
         m.program = "chassis"
-    m.name = info.get("path", "")
+    m.name, m.uid = info.get("path", ""), uid
     if m.program == "paint":
         # The garage tone's paint, through the same terms as every other material here.
         sh = SHADING[m.kind]

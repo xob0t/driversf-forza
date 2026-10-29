@@ -52,6 +52,7 @@ REGIONS = [
     fr.COCKPIT,
     fr.GAUGES,
     "other",
+    fr.DISPLAYS,
 ]
 RID = {name: i for i, name in enumerate(REGIONS)}
 SCORED = [
@@ -265,6 +266,10 @@ def build_cockpit_pair(archive: Path, roots, spool_id: int, media: str, report: 
     prog = _program_ids(ours)
     prog[:] = np.array([PID.get(m.program, 0) for m in ours.materials])[ours.mat]
     ours_region[~on & (prog == PID["glass"])] = RID[fr.GLASS]
+    from dsfforza.convert import digital_dash
+
+    live = np.array([m.uid == digital_dash.VANILLA_MATERIAL for m in ours.materials])[ours.mat]
+    ours_region[live] = RID[fr.DISPLAYS]
     pts = ours.pos.reshape(-1, 3)
     match = {
         "triangles": len(ours.mat),
@@ -377,19 +382,33 @@ GLOW_ON = 0.08  # linear luminance a pixel's glow must reach to count as glowing
 DETAIL_RADIUS = 3  # px: the local-contrast window (7 x 7)
 
 
+CROP_PAD = 8  # px round a region's box: its windowed measures (blur, local contrast) see its edge
+
+
+def _crop(*masks) -> tuple[slice, slice]:
+    any_ = np.logical_or.reduce(masks)
+    ys, xs = np.nonzero(any_)
+    h, w = any_.shape
+    return (
+        slice(max(0, ys.min() - CROP_PAD), min(h, ys.max() + CROP_PAD + 1)),
+        slice(max(0, xs.min() - CROP_PAD), min(w, xs.max() + CROP_PAD + 1)),
+    )
+
+
 def region_scores(r: dict, mode: str = "day") -> dict:
     """{region: metrics} for one view in one mode (render_view's output)."""
-    ro, rf = r["regions"]["ours"], r["regions"]["ref"]
-    co, cf = r["ours"][mode], r["ref"][mode]
-    lo, lf = _lab(co), _lab(cf)
+    ro_full, rf_full = r["regions"]["ours"], r["regions"]["ref"]
+    lo_full, lf_full = _lab(r["ours"][mode]), _lab(r["ref"][mode])
     out = {}
-    progs = r["programs"]
     for name in SCORED:
         rid = RID[name]
-        mo, mf = ro == rid, rf == rid
+        mo, mf = ro_full == rid, rf_full == rid
         n_o, n_f = int(mo.sum()), int(mf.sum())
         if max(n_o, n_f) < MIN_PIXELS:
             continue
+        box = _crop(mo, mf)
+        mo, mf = mo[box], mf[box]
+        ro, rf, lo, lf, progs = ro_full[box], rf_full[box], lo_full[box], lf_full[box], r["programs"][box]
         if name in LAMP_REGIONS:
             # A lamp is seen through its cover on one side and uncovered or baked on the
             # other (plain glass covers are left out, lights.md #160): its pixels are either
@@ -534,16 +553,26 @@ def glow_scores(r: dict, mode: str) -> dict:
 
 # Limits (calibrated on known bad and good cars: research/render-compare.md, "Calibration").
 LIMITS = {
-    "missing": 0.35,  # share of Forza's region pixels our car doesn't draw as that region
+    "missing": 0.35,
+    # The cockpit seen from the eye: Forza's cabin pixels ours covers with something else
+    # (the Audi R10s' shell lid, #157: 3.1% and 4.6% before the fix, 0.3% at most after
+    # it and on the controls).
+    "cockpit_missing": 0.02,  # share of Forza's region pixels our car doesn't draw as that region
     "extra": 0.35,
     "dark": 18.0,  # L* below Forza's
     "light": 18.0,
+    # Trims: dark and near Forza's on the good builds (L* within +6), lit up when a gloss
+    # material's lobe is too broad (#176: the Camaro ZL1's splitter +21, the Raptor's vents +10).
+    "trims_light": 8.0,
     "colour": 25.0,  # mean delta E
     "detail": 0.5,  # share of Forza's local contrast lost
     "structure": 0.25,  # correlation of the region's fine structure below this
     "drawn_as": 0.3,  # share of a lamp region drawn by a program that can't draw lamps
     "glow_place": 0.3,  # share of Forza's lit lamp pixels ours lights (and of ours Forza's) below this
-    "glow_hue": 1.2,  # |log| of the ratio of the glow's green/red, ours against Forza's
+    "glow_hue": 1.2,
+    # Our daytime glow's 95th percentile over this (linear; a 0x01 lamp's texel of alpha 1
+    # glows 2): white plates by day (#167: GTI VR6 7.2, Evo VI 8.5 before, 1.6 after).
+    "glare": 3.0,  # |log| of the ratio of the glow's green/red, ours against Forza's
     "flat_glow": 0.45,  # our glow spread under this share of Forza's
     "plate_over": 0.1,  # share of a plate over badges, lamps or chrome
 }
@@ -585,16 +614,15 @@ def flags_for(metrics: dict) -> list[dict]:
         for region, m in day.items():
             if region in LAMP_REGIONS and view in LAMP_VIEWS_SKIP:
                 continue
-            if m.get("missing") is not None and m["ref_px"] >= MIN_PIXELS * 2 and m["missing"] > L["missing"]:
-                _flag(
-                    flags,
-                    region,
-                    view,
-                    "missing",
-                    m["missing"],
-                    m["missing"],
-                    f"{region}: {m['missing']:.0%} not drawn",
+            limit = L["cockpit_missing"] if region == fr.COCKPIT else L["missing"]
+            if m.get("missing") is not None and m["ref_px"] >= MIN_PIXELS * 2 and m["missing"] > limit:
+                severity = m["missing"] * (20 if region == fr.COCKPIT else 1)
+                text = (
+                    f"{region}: {m['missing']:.0%} not drawn"
+                    if region != fr.COCKPIT
+                    else (f"cockpit: {m['missing']:.0%} covered by something Forza's hasn't")
                 )
+                _flag(flags, region, view, "missing", m["missing"], severity, text)
             if (
                 m.get("extra") is not None
                 and region != fr.PLATES
@@ -608,14 +636,14 @@ def flags_for(metrics: dict) -> list[dict]:
                     _flag(
                         flags, region, view, "dark", d, d / 40, f"{region}: too dark (L* {m['L_ours']} vs {m['L_ref']})"
                     )
-                elif -d > L["light"]:
+                elif -d > (L["trims_light"] if region == fr.TRIMS else L["light"]):
                     _flag(
                         flags,
                         region,
                         view,
                         "light",
                         -d,
-                        -d / 40,
+                        -d / (15 if region == fr.TRIMS else 40),
                         f"{region}: washed out (L* {m['L_ours']} vs {m['L_ref']})",
                     )
                 if m["dE"] > L["colour"] and abs(d) < L["dark"]:
@@ -677,6 +705,16 @@ def flags_for(metrics: dict) -> list[dict]:
                         v,
                         0.6 * (1 - v),
                         f"{region}: glows elsewhere than Forza's lamp ({words}, {g['covered']:.0%} of it)",
+                    )
+                if mode == "day_lit" and g["ours_p95"] > L["glare"] and g["ours_lit_px"] >= 60:
+                    _flag(
+                        flags,
+                        region,
+                        view,
+                        "glare_day_lit",
+                        g["ours_p95"],
+                        min(2.0, g["ours_p95"] / L["glare"]),
+                        f"{region}: white plate by day (glow {g['ours_p95']:.1f}x a 0x01 lamp's full alpha)",
                     )
                 if mode == "day_lit" and g.get("spread_ref") and g["ours_lit_px"] >= 60:
                     flat = g["spread_ours"] / g["spread_ref"]
