@@ -1089,6 +1089,22 @@ def _streak_value(uv: np.ndarray, axis: int, image: np.ndarray | None) -> float:
     return (int(err.argmin()) + 0.5) / img.shape[1]
 
 
+def _finer_in_a_tile(section, sub, m: fm.SubMaterial) -> bool:
+    """Whether the finer LODs of a subsection's part (same section and technique, a lower LOD)
+    lie in one tile, every triangle inside it: the part doesn't tile, a coarse LOD's UVs only
+    drift over the tile's edge."""
+    tiles = set()
+    for other in section.subsections:
+        if other.material != sub.material or other.lod >= sub.lod or not other.triangles():
+            continue
+        pool = section.vertices_for(other)
+        uv = np.array([[m.uv(pool[i].uv0) for i in t] for t in other.triangles()], float)
+        if _outside_share(uv, [0, 1]) > 0:
+            return False
+        tiles |= {tuple(t) for t in np.floor(uv.mean(1)).astype(int).tolist()}
+    return len(tiles) == 1
+
+
 def unwrap_tiles(section, sub, m: fm.SubMaterial, image: np.ndarray | None = None) -> TileWrapped | None:
     """A tiling lamp part (UVs past 0..1) laid into the 0..1 tile triangle by triangle
     (TileWrapped): an ordinary textured part. The FM4 Mustang GT's round head lamp bowls
@@ -1100,7 +1116,11 @@ def unwrap_tiles(section, sub, m: fm.SubMaterial, image: np.ndarray | None = Non
     one axis (median span a tile or more) and stay inside one along the other, is laid on
     one texel column or row (_streak_value; `image`: the Lights atlas, (h, w, 4)): the Ford
     Shelby GT500 13's tail strips repeat a red band 187 times along u, which Forza draws as
-    the band's rows. None otherwise (_tiling_swatch: one flat colour)."""
+    the band's rows. A coarse LOD's part whose finer LODs lie in one tile (_finer_in_a_tile) is
+    laid triangle by triangle whatever it clamps: decimated, its UVs drift over the tile's edge
+    (the Dodge Viper SRT-10 03's LOD 5 reflector, u -0.06 to 0.15 against its finer LODs' 0.01
+    to 0.84, 41% of its UV area past the edge; the Ferrari F50's LOD 3 head lamps 27%; issue
+    #229). None otherwise (_tiling_swatch: one flat colour)."""
     import dataclasses
 
     pool = section.vertices_for(sub)
@@ -1109,7 +1129,7 @@ def unwrap_tiles(section, sub, m: fm.SubMaterial, image: np.ndarray | None = Non
         return None
     uv = np.array([[m.uv(pool[i].uv0) for i in t] for t in tris], float)
     collapse = None
-    if _outside_share(uv, [0, 1]) > TILE_CROSS_SHARE:
+    if _outside_share(uv, [0, 1]) > TILE_CROSS_SHARE and not _finer_in_a_tile(section, sub, m):
         long = np.median(uv.max(1) - uv.min(1), 0) >= 1.0
         if long.sum() != 1:
             return None

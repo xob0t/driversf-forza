@@ -529,6 +529,32 @@ def test_tiling_mesh_across_a_tile_edge():
     assert [round(v, 6) for _, v in got.triangle(raw[2])] == [0.1, 0.1, 0.3]
 
 
+def test_coarse_lod_drifting_over_the_tile_edge():
+    # Issue #229: the Dodge Viper SRT-10 03's LOD 5 reflector (u -0.06 to 0.15) while its finer
+    # LODs lie inside tile 0 (u 0.01 to 0.84). Half its UV area past the edge was one flat
+    # colour; laid triangle by triangle it samples the reflector as the finer LODs do.
+    def part(fine_us, coarse_us):
+        fine, coarse = _strip(fine_us, (0.2, 0.4)), _strip(coarse_us, (-0.4, 0.4))
+        n = len(fine.lod_vertices)
+        sub5 = carbin.SubSection(
+            "textured_reflector", 5, 4, (0.0, 1.0, 0.0, 1.0) * 2, [i + n for i in coarse.subsections[0].indices]
+        )
+        verts = fine.lod_vertices + coarse.lod_vertices
+        return carbin.Section(
+            "body", (0, 0, 0), (0, 0, 0), (0, 0, 0), lod_vertices=verts, subsections=[fine.subsections[0], sub5]
+        ), sub5
+
+    section, sub5 = part([0.1, 0.3, 0.6], [-0.4, 0.4])
+    assert fm.resolve(section, sub5).kind == "tiling"
+    got = dm.unwrap_tiles(section, sub5, fm.resolve(section, sub5))
+    assert got is not None and got.kind == "textured"
+    # Without finer LODs, or with finer LODs that tile themselves, it stays one colour.
+    alone = _strip([-0.4, 0.4], (-0.4, 0.4))
+    assert dm.unwrap_tiles(alone, alone.subsections[0], fm.resolve(alone, alone.subsections[0])) is None
+    section, sub5 = part([0.8, 1.6, 2.4], [-0.4, 0.4])
+    assert dm.unwrap_tiles(section, sub5, fm.resolve(section, sub5)) is None
+
+
 def test_tiling_streak_laid_on_one_column():
     # The Shelby GT500 13's tail strips: a band repeated many times along u (here 5 tiles a
     # triangle), inside one tile along v. Laid on the column closest to each row's mean.
