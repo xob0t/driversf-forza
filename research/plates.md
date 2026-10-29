@@ -315,6 +315,17 @@ The Golf's rear plate goes to its tailgate recess between the lamps (room 0.54 x
 where they were as host fallbacks, tilt clamped to -0.25; the fallback clamp is
 symmetric (`BRACKET_TILT`), so none of them faces down by more than 14 degrees.
 
+**In game** (confirmed-runtime; VM runs `vm1-20261029-130353` master and
+`vm1-20261029-132153` this converter, a 9-car `--list` build, vanilla 128 first,
+views nose and rear; `img/plates-179-ingame.jpg`): the Golf's rear plate,
+barely visible under its bumper before, reads in the tailgate recess; the Audi S4's
+moves from under its bumper to its boot-lid recess; the Corrado's up onto its
+bumper face; the Esprit's front from under its nose to the bumper face. The Delta
+S4's front gets worse: the fallback puts it on the grille band, its top edge over
+the Lancia shield's lower edge (1.7% of the plate, under the hide cost that would
+move it). Its bumper face is 8 cm tall, the host's (274) plate 0.315 x 0.142 m
+(#242).
+
 ## Open
 
 1. In game: front plates are seen since #180's run (`vm1-20261028-184904`:
