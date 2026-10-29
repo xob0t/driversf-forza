@@ -125,6 +125,21 @@ GAP_COST = 2.0
 # off by 3 to 7 cm, to clear the corner of a tail lamp (the Cougar Eliminator's rear).
 HIDE_STEP = 0.02
 HIDE_NONE = 0.005
+# A fallback plate keeps this clear of lamps and their covers (about a plate frame):
+# cells this near a lamp count as hidden. The Viper GTS-R's front plate sat between its
+# lamp covers, touching both (#259).
+LAMP_MARGIN = 0.02
+# A fallback plate whose best height still covers more than this share of a lamp has no
+# place at that end and gets none, as the Forza car has none (#251: the ARX-01b's and
+# Mazda B09's rear plates covered their rain lights between the diffusers, the face near
+# the host's plate height).
+LAMP_DROP = 0.1
+# The lamp margin doesn't move a plate onto more than this share of an emblem's area (its
+# strokes grown by a cell, so lettering counts whole) than the plate scored with the
+# lamps' own cells alone covers: that plate stays. Kept clear of its rain light's edge,
+# the Evora Type 124's rear plate went up over its EVORA letters (24% of their area, 5%
+# of strokes) from its bumper face under the lamp.
+EMBLEM_AREA = 0.15
 # A fallback plate may shrink to fit between a badge and an edge: scales tried, the
 # cost per unit of shrink, and the narrowest plate (vanilla's: 0.23 m front, 0.226 rear).
 FALLBACK_SCALES = (1.0, 0.9, 0.8)
@@ -449,6 +464,17 @@ def run_widths(mask: np.ndarray) -> np.ndarray:
     return out
 
 
+def dilate(mask: np.ndarray, cells: int) -> np.ndarray:
+    """`mask` grown by `cells` in every direction (a square)."""
+    out = mask.copy()
+    height, width = mask.shape
+    for di in range(-cells, cells + 1):
+        for dj in range(-cells, cells + 1):
+            src = mask[max(0, -di) : height - max(0, di), max(0, -dj) : width - max(0, dj)]
+            out[max(0, di) : height - max(0, -di), max(0, dj) : width - max(0, -dj)] |= src
+    return out
+
+
 def face_cells(dm: DepthMap) -> np.ndarray:
     """Cells of the car's face, not the underbody or cabin seen through a gap: within
     0.3 m of the nearest surface near the centre line."""
@@ -494,15 +520,25 @@ def fallback_height(dm: DepthMap, prior_y: float, base: tuple[float, float]) -> 
     wide) where that fits it between them (#241). A grille may sit behind it, as
     on the real cars (the Mazda 2's lower bumper grille); the emblem slot above it
     may not (#159: the host's height alone put the plate over the Mazda's emblem
-    and bonnet edge)."""
+    and bonnet edge). It keeps LAMP_MARGIN clear of lamps unless that only moves it
+    onto lettering (EMBLEM_AREA); still over a lamp by more than LAMP_DROP, the end
+    gets no plate (ValueError; #251, #259)."""
     height, width = dm.depth.shape
     face = face_cells(dm)
     # Badge cells in a run wider than BADGE_BAND are grille artwork drawn with a badge
     # technique (the BMW M1's nose band), not an emblem.
     badge = dm.feat == FEAT_BADGE
     emblem = badge & (run_widths(badge) * PX < BADGE_BAND)
-    hidden = emblem | np.isin(dm.feat, (FEAT_LAMP, FEAT_EXHAUST)) | (dm.cls == CLASS["glass"])
-    best = None
+    # Lamps and their covers (glass techniques of the lights family) get the margin;
+    # windows only their own cells (#251: a margin under the F430 GT's rear window moved
+    # its plate off the boot lid).
+    lamp = dm.feat == FEAT_LAMP
+    near_lamp = dilate(lamp, int(round(LAMP_MARGIN / PX)))
+    hidden = emblem | near_lamp | (dm.feat == FEAT_EXHAUST) | (dm.cls == CLASS["glass"])
+    # ... and the plate the search picks with the lamps' own cells alone (EMBLEM_AREA).
+    hidden_cells = emblem | lamp | (dm.feat == FEAT_EXHAUST) | (dm.cls == CLASS["glass"])
+    lettering = dilate(emblem, 1)
+    best = plain = None
     for k in FALLBACK_SCALES:
         if k < 1.0 and base[0] * k < MIN_WIDTH:
             continue
@@ -524,15 +560,25 @@ def fallback_height(dm: DepthMap, prior_y: float, base: tuple[float, float]) -> 
                 cells = zip(dm.sec[r, c_][ok].tolist(), dm.cls[r, c_][ok].tolist())
                 mixed = 1.0 - Counter(cells).most_common(1)[0][1] / float(ok.sum())
             hide = float(hidden[r, c_].mean())
-            cost = GAP_COST * gap + 0.1 * abs(float(dy)) + HIDE_COST * hide + MIX_COST * mixed + SHRINK_COST * (1.0 - k)
+            cost = GAP_COST * gap + 0.1 * abs(float(dy)) + MIX_COST * mixed + SHRINK_COST * (1.0 - k)
             if float(emblem[r, c_].mean()) > HIDE_NONE:
                 cost += HIDE_STEP
-            key = (round(cover, 1), -cost)
+            on_emblem = float(lettering[r, c_].mean())
+            pick = (y, size, hide, mixed, float(lamp[r, c_].mean()), on_emblem)
+            key = (round(cover, 1), -(cost + HIDE_COST * hide))
             if best is None or key > best[0]:
-                best = (key, y, size, hide, mixed)
+                best = (key, *pick)
+            cells_hide = float(hidden_cells[r, c_].mean())
+            key = (round(cover, 1), -(cost + HIDE_COST * cells_hide))
+            if plain is None or key > plain[0]:
+                plain = (key, y, size, cells_hide, mixed, *pick[4:])
     if best is None:  # the host's height maps outside the depth map (plan() skips the end)
         raise ValueError(f"{dm.end} plate: no body surface near y {prior_y:.2f}")
-    _, y, size, hide, mixed = best
+    if best[6] > max(EMBLEM_AREA, plain[6]):
+        best = plain
+    _, y, size, hide, mixed, on_lamp, _ = best
+    if on_lamp > LAMP_DROP:
+        raise ValueError(f"{dm.end} plate: no face clear of the lamps near y {prior_y:.2f} ({on_lamp:.0%} on a lamp)")
     note = "no flat face of plate size"
     if size != base:
         note += f", shrunk to {size[0] / base[0]:.1f}"
