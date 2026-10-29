@@ -547,7 +547,7 @@ def test_coarse_lod_drifting_over_the_tile_edge():
     section, sub5 = part([0.1, 0.3, 0.6], [-0.4, 0.4])
     assert fm.resolve(section, sub5).kind == "tiling"
     got = dm.unwrap_tiles(section, sub5, fm.resolve(section, sub5))
-    assert got is not None and got.kind == "textured"
+    assert got is not None and got.kind == "textured" and got.drifted
     # Without finer LODs, or with finer LODs that tile themselves, it stays one colour.
     alone = _strip([-0.4, 0.4], (-0.4, 0.4))
     assert dm.unwrap_tiles(alone, alone.subsections[0], fm.resolve(alone, alone.subsections[0])) is None

@@ -1014,6 +1014,7 @@ class TileWrapped(fm.SubMaterial):
 
     shift: dict = field(default_factory=dict)
     collapse: tuple | None = None
+    drifted: bool = False  # a coarse LOD's part laid though it crosses (_finer_in_a_tile)
 
     def _place(self, u: float, v: float, tile) -> tuple[float, float]:
         out = [min(1.0, max(0.0, c - t)) for c, t in zip((u, v), tile)]
@@ -1128,8 +1129,8 @@ def unwrap_tiles(section, sub, m: fm.SubMaterial, image: np.ndarray | None = Non
     if not tris:
         return None
     uv = np.array([[m.uv(pool[i].uv0) for i in t] for t in tris], float)
-    collapse = None
-    if _outside_share(uv, [0, 1]) > TILE_CROSS_SHARE and not _finer_in_a_tile(section, sub, m):
+    collapse, drifted = None, False
+    if _outside_share(uv, [0, 1]) > TILE_CROSS_SHARE and not (drifted := _finer_in_a_tile(section, sub, m)):
         long = np.median(uv.max(1) - uv.min(1), 0) >= 1.0
         if long.sum() != 1:
             return None
@@ -1139,7 +1140,7 @@ def unwrap_tiles(section, sub, m: fm.SubMaterial, image: np.ndarray | None = Non
         collapse = (axis, _streak_value(uv, axis, image))
     base = {f.name: getattr(m, f.name) for f in dataclasses.fields(fm.SubMaterial)}
     base["kind"] = "textured"
-    wrapped = TileWrapped(**base, collapse=collapse)
+    wrapped = TileWrapped(**base, collapse=collapse, drifted=drifted)
     laid = np.array([wrapped.triangle([pool[i].uv0 for i in t]) for t in tris], float)
     for t in tris:
         tile = wrapped.tile([pool[i].uv0 for i in t])
