@@ -37,9 +37,10 @@ not the plate. So the plate is placed on the Forza body:
    flat face nearer); the window is then centred on the recess and the plate
    shrunk to fit it;
 3. else near the host's plate height, x = 0, pushed out to the nearest surface
-   in front (a plate on a bracket): the height where the plate hugs the face,
-   hides no badge, lamp, glass or exhaust and sits on one section and
-   material (fallback_height; #159).
+   in front (a plate on a bracket), tilted and bent back at its centre line to
+   rest on the face as closely as it can (rest; #213): the height where the
+   plate hugs the face, hides no badge, lamp, glass or exhaust and sits on one
+   section and material (fallback_height; #159).
 
 An end gets a plate only if the host has one there (vanilla trucks and buggies
 have none at the front, a few cars none at the front: the host is the most
@@ -99,14 +100,36 @@ MAX_TILT = 0.8  # dd/dy of a plate facing up (about 39 degrees)
 # allows its own tilt.
 FACE_DOWN = 0.4  # about 22 degrees
 BRACKET_TILT = 0.25  # |dz/dy| of a fallback plate on a bracket (about 14 degrees)
+# A fallback plate on a bumper that curves back towards the sides bends at its centre
+# line, each half turned back by up to this dd/ds (about 11 degrees; #213). Vanilla
+# bends plates so: 25 of 120 front plates in two halves turn by over 2 degrees, the
+# '68 Camaro's by 24, the Eldorado's by 14 (research/plates.md, "Bent plates").
+BEND_MAX = 0.2
+OPENING = 0.1  # a cell this far behind the plate is a hole (grille, gap), not its face
 PRIOR_BAND = 0.3  # recesses searched within this of the host's plate height (m)
 WIDE_BAND = 0.5  # ... and within this when there is none nearer
 FLAT_BAND = 0.15  # plain flat faces (no recess walls) only within this
 MIN_FIT = 0.7  # smallest plate scale when fitting a small recess
 # Fallback plates (fallback_height): cost per share of the plate over a badge, lamp or
 # glass, and per share over other sections than its main one, against the gap (m)
-# between plate and face.
-HIDE_COST = 0.5
+# between plate and face (#159; the hide cost doubled with the gap's in #213).
+HIDE_COST = 1.0
+# The gap counts twice: a plate standing off its face by a few centimetres shows more
+# than one across a section edge or a little off the host's height (#213: with the gap
+# at 1, shrinking or clearing an emblem's edge moved plates 3 to 7 cm off their faces).
+GAP_COST = 2.0
+# ... plus this once it hides more of a badge than HIDE_NONE (a cell or two of edge):
+# even a sliver of an emblem shows (#241: the Delta S4's front plate took its grille
+# band over the Lancia shield's lower edge, 1.7% of it, for a cost of 0.008). Lamp and
+# exhaust edges keep the share cost alone: the step put plates under bumpers, standing
+# off by 3 to 7 cm, to clear the corner of a tail lamp (the Cougar Eliminator's rear).
+HIDE_STEP = 0.02
+HIDE_NONE = 0.005
+# A fallback plate may shrink to fit between a badge and an edge: scales tried, the
+# cost per unit of shrink, and the narrowest plate (vanilla's: 0.23 m front, 0.226 rear).
+FALLBACK_SCALES = (1.0, 0.9, 0.8)
+SHRINK_COST = 0.05
+MIN_WIDTH = 0.23
 BADGE_BAND = 0.4  # a run of badge-technique cells this wide is grille artwork (m)
 MIX_COST = 0.1
 LOD_PUSH_LIMIT = 0.08  # coarser LODs move the plate out by at most this
@@ -346,21 +369,30 @@ class Plate:
     surface: str  # Forza section under the plate
     lod_depth: dict = field(default_factory=dict)  # lod -> plate d at the centre
     note: str = ""
+    bend: float = 0.0  # dd/d|s - centre s|: each half turned back by this (0: flat)
+
+    def point(self, ds: float, dy: float, lod: int | None = None):
+        """DSF point of the plate at (ds, dy) from its centre (viewer's right, up)."""
+        d0 = self.lod_depth.get(lod, self.depth) if lod is not None else self.depth
+        s, y = self.centre
+        d = d0 + self.tilt * dy + self.bend * abs(ds)
+        return (-(s + ds), y + dy, d) if self.end == "rear" else (s + ds, y + dy, -d)
 
     def corners(self, lod: int | None = None):
         """DSF corners (viewer's top-left, top-right, bottom-right, bottom-left)."""
-        d0 = self.lod_depth.get(lod, self.depth) if lod is not None else self.depth
-        s, y = self.centre
         w, h = self.size
-        out = []
-        for ds, dy in ((-w / 2, h / 2), (w / 2, h / 2), (w / 2, -h / 2), (-w / 2, -h / 2)):
-            d = d0 + self.tilt * dy
-            out.append((-(s + ds), y + dy, d) if self.end == "rear" else (s + ds, y + dy, -d))
-        return out
+        return [
+            self.point(ds, dy, lod) for ds, dy in ((-w / 2, h / 2), (w / 2, h / 2), (w / 2, -h / 2), (-w / 2, -h / 2))
+        ]
 
-    def normal(self) -> tuple[float, float, float]:
-        n = math.sqrt(1 + self.tilt * self.tilt)
-        return (0.0, self.tilt / n, (-1.0 if self.end == "rear" else 1.0) / n)
+    def normal(self, side: int = 0) -> tuple[float, float, float]:
+        """Outward DSF normal of the viewer's left (side -1) or right (+1) half, or
+        along the centre line (0)."""
+        a = self.bend * side
+        n = math.sqrt(1 + self.tilt * self.tilt + a * a)
+        if self.end == "rear":
+            return (-a / n, self.tilt / n, -1.0 / n)
+        return (a / n, self.tilt / n, 1.0 / n)
 
     def report(self) -> dict:
         return {
@@ -369,6 +401,7 @@ class Plate:
             "centre_s_y": [round(c, 4) for c in self.centre],
             "size": [round(c, 4) for c in self.size],
             "tilt": round(self.tilt, 3),
+            **({"bend": round(self.bend, 3)} if self.bend else {}),
             "depth": round(self.depth, 4),
             "lod_depth": {str(k): round(v, 4) for k, v in sorted(self.lod_depth.items())},
             **({"note": self.note} if self.note else {}),
@@ -416,61 +449,98 @@ def run_widths(mask: np.ndarray) -> np.ndarray:
     return out
 
 
-def fallback_height(dm: DepthMap, prior_y: float, base: tuple[float, float]) -> tuple[float, str]:
-    """(height, note) of a plate with no face to sit on, at s = 0 (step 3).
-
-    Within PRIOR_BAND of the host's height: where the plate covers the car's
-    face and hugs it best once pushed out to its nearest point (a plate on a
-    mounting pad or bracket, near-vertical), on one panel, and hiding no badge,
-    lamp, glass or exhaust. A grille may sit behind it, as on the real cars (the Mazda 2's
-    lower bumper grille); the emblem slot above it may not (#159: the host's
-    height alone put the plate over the Mazda's emblem and bonnet edge)."""
-    height, width = dm.depth.shape
-    # Cells of the car's face, not the underbody or cabin seen through a gap.
+def face_cells(dm: DepthMap) -> np.ndarray:
+    """Cells of the car's face, not the underbody or cabin seen through a gap: within
+    0.3 m of the nearest surface near the centre line."""
+    width = dm.depth.shape[1]
     centre_cols = slice(max(0, int(dm.col(-0.3))), min(width, int(dm.col(0.3)) + 1))
     finite = dm.depth[:, centre_cols][np.isfinite(dm.depth[:, centre_cols])]
-    face = (dm.depth < float(finite.min()) + 0.3) if finite.size else np.isfinite(dm.depth)
+    return (dm.depth < float(finite.min()) + 0.3) if finite.size else np.isfinite(dm.depth)
+
+
+def rest(dm: DepthMap, rows: slice, cols: slice, centre: tuple[float, float], ok: np.ndarray):
+    """(tilt, bend, d, gaps) of a plate with no face of its own resting on the cells
+    `ok` of a window: the surface d + tilt (y - cy) + bend |s - cs| (flat, or bent
+    back at its centre line) that touches the nearest cell and stands off the others
+    least on average, each gap counted up to OPENING (#213: a flat plate stood off
+    a bumper curving back towards its sides by several centimetres at its corners).
+    Tilt within BRACKET_TILT, bend within BEND_MAX."""
+    cs, cy = centre
+    ii, jj = np.nonzero(ok)
+    d = dm.depth[rows, cols][ok]
+    y = dm.y_of(ii + rows.start) - cy
+    s = np.abs(dm.s_of(jj + cols.start) - cs)
+    tt, bb = np.meshgrid(
+        np.linspace(-BRACKET_TILT, BRACKET_TILT, int(round(2 * BRACKET_TILT / 0.01)) + 1),
+        np.linspace(0.0, BEND_MAX, int(round(BEND_MAX / 0.01)) + 1),
+        indexing="ij",
+    )
+    tt, bb = tt.ravel(), bb.ravel()
+    rel = d[None, :] - tt[:, None] * y[None, :] - bb[:, None] * s[None, :]
+    lo = rel.min(axis=1)
+    gaps = np.minimum(rel - lo[:, None], OPENING)
+    # Ties (a flat face) go to the plainest plate: upright and flat.
+    k = int(np.argmin(gaps.mean(axis=1) + 1e-4 * (np.abs(tt) + bb)))
+    return float(tt[k]), float(bb[k]), float(lo[k]), gaps[k]
+
+
+def fallback_height(dm: DepthMap, prior_y: float, base: tuple[float, float]) -> tuple[float, tuple, str]:
+    """(height, size, note) of a plate with no face to sit on, at s = 0 (step 3).
+
+    Within PRIOR_BAND of the host's height: where the plate covers the car's
+    face and hugs it best once rested on it (rest: a plate on a mounting pad or
+    bracket, near-vertical, bent round a curved bumper), on one panel, and hiding
+    no badge, lamp, glass or exhaust; shrunk (FALLBACK_SCALES, at least MIN_WIDTH
+    wide) where that fits it between them (#241). A grille may sit behind it, as
+    on the real cars (the Mazda 2's lower bumper grille); the emblem slot above it
+    may not (#159: the host's height alone put the plate over the Mazda's emblem
+    and bonnet edge)."""
+    height, width = dm.depth.shape
+    face = face_cells(dm)
     # Badge cells in a run wider than BADGE_BAND are grille artwork drawn with a badge
     # technique (the BMW M1's nose band), not an emblem.
     badge = dm.feat == FEAT_BADGE
-    hidden = badge & (run_widths(badge) * PX < BADGE_BAND)
-    hidden |= np.isin(dm.feat, (FEAT_LAMP, FEAT_EXHAUST)) | (dm.cls == CLASS["glass"])
-    c_ = slice(max(0, int(round(dm.col(-base[0] / 2)))), min(width, int(round(dm.col(base[0] / 2))) + 1))
+    emblem = badge & (run_widths(badge) * PX < BADGE_BAND)
+    hidden = emblem | np.isin(dm.feat, (FEAT_LAMP, FEAT_EXHAUST)) | (dm.cls == CLASS["glass"])
     best = None
-    for dy in np.arange(-PRIOR_BAND, PRIOR_BAND + 0.001, PX):
-        y = prior_y + float(dy)
-        r = slice(max(0, int(round(dm.row(y + base[1] / 2)))), min(height, int(round(dm.row(y - base[1] / 2))) + 1))
-        if r.stop <= r.start:
+    for k in FALLBACK_SCALES:
+        if k < 1.0 and base[0] * k < MIN_WIDTH:
             continue
-        cover = float(face[r, c_].mean())
-        win = dm.depth[r, c_]
-        ok = face[r, c_]
-        gap, mixed = 1.0, 1.0
-        if ok.sum() > 6:
-            ii, _ = np.nonzero(ok)
-            yy = dm.y_of(ii + r.start)
-            fit = np.polyfit(yy - y, win[ok], 1) if np.ptp(yy) > 0 else (0.0, 0.0)
-            bb = float(np.clip(fit[0], -BRACKET_TILT, BRACKET_TILT))
-            rel = win[ok] - bb * (yy - y)
-            gap = float(np.median(rel - rel.min()))
-            # Section and material boundaries (bonnet shut line, bumper to body, the
-            # edge of a grille): the plate on one surface.
-            cells = zip(dm.sec[r, c_][ok].tolist(), dm.cls[r, c_][ok].tolist())
-            mixed = 1.0 - Counter(cells).most_common(1)[0][1] / float(ok.sum())
-        hide = float(hidden[r, c_].mean())
-        cost = gap + 0.1 * abs(float(dy)) + HIDE_COST * hide + MIX_COST * mixed
-        key = (round(cover, 1), -cost)
-        if best is None or key > best[0]:
-            best = (key, y, hide, mixed)
+        size = (base[0] * k, base[1] * k)
+        c_ = slice(max(0, int(round(dm.col(-size[0] / 2)))), min(width, int(round(dm.col(size[0] / 2))) + 1))
+        for dy in np.arange(-PRIOR_BAND, PRIOR_BAND + 0.001, PX):
+            y = prior_y + float(dy)
+            r = slice(max(0, int(round(dm.row(y + size[1] / 2)))), min(height, int(round(dm.row(y - size[1] / 2))) + 1))
+            if r.stop <= r.start:
+                continue
+            ok = face[r, c_]
+            cover = float(ok.mean())
+            gap, mixed = 1.0, 1.0
+            if ok.sum() > 6:
+                # The mean gap under the plate once tilted and bent onto the face (rest).
+                gap = float(rest(dm, r, c_, (0.0, y), ok)[3].mean())
+                # Section and material boundaries (bonnet shut line, bumper to body, the
+                # edge of a grille): the plate on one surface.
+                cells = zip(dm.sec[r, c_][ok].tolist(), dm.cls[r, c_][ok].tolist())
+                mixed = 1.0 - Counter(cells).most_common(1)[0][1] / float(ok.sum())
+            hide = float(hidden[r, c_].mean())
+            cost = GAP_COST * gap + 0.1 * abs(float(dy)) + HIDE_COST * hide + MIX_COST * mixed + SHRINK_COST * (1.0 - k)
+            if float(emblem[r, c_].mean()) > HIDE_NONE:
+                cost += HIDE_STEP
+            key = (round(cover, 1), -cost)
+            if best is None or key > best[0]:
+                best = (key, y, size, hide, mixed)
     if best is None:  # the host's height maps outside the depth map (plan() skips the end)
         raise ValueError(f"{dm.end} plate: no body surface near y {prior_y:.2f}")
-    _, y, hide, mixed = best
+    _, y, size, hide, mixed = best
     note = "no flat face of plate size"
+    if size != base:
+        note += f", shrunk to {size[0] / base[0]:.1f}"
     if hide > 0:
         note += f", hides {hide:.0%} badge/lamp/glass/exhaust"
     if mixed > 0:
         note += f", {mixed:.0%} on other sections"
-    return y, note
+    return y, size, note
 
 
 def plan_end(
@@ -581,24 +651,36 @@ def plan_end(
             f"{'-' if room_w is None else f'{room_w:.2f}'} x {'-' if room_h is None else f'{room_h:.2f}'}"
         )
     else:
-        source, cs, size = "host", 0.0, base
+        source, cs = "host", 0.0
         b = 0.0
-        cy, note = fallback_height(dm, prior_y, base)
+        cy, size, note = fallback_height(dm, prior_y, base)
     # Final plane over the plate's own cells: tilt from the fit, then out to the
     # nearest surface so no cell pokes through.
     rows = slice(max(0, int(round(dm.row(cy + size[1] / 2)))), min(height, int(round(dm.row(cy - size[1] / 2))) + 1))
     cols = slice(max(0, int(round(dm.col(cs - size[0] / 2)))), min(width, int(round(dm.col(cs + size[0] / 2))) + 1))
-    fit = fit_plane(dm, rows, cols)
-    if fit is None:
+    if fit_plane(dm, rows, cols) is None:
         raise ValueError(f"{end} plate: no body surface at y {cy:.2f}")
-    b = float(np.clip(fit[0], -BRACKET_TILT, BRACKET_TILT)) if source == "host" else b
     win = dm.depth[rows, cols]
-    ii, _ = np.mgrid[rows, cols]
     ok = np.isfinite(win)
-    depth = float(np.min(win[ok] - b * (dm.y_of(ii[ok]) - cy))) - PROUD
+    bend = 0.0
+    if source == "host":
+        on_face = ok & face_cells(dm)[rows, cols]
+        b, bend, nearest, _ = rest(dm, rows, cols, (cs, cy), on_face if on_face.sum() >= 6 else ok)
+        depth = nearest - PROUD
+    else:
+        ii, _ = np.mgrid[rows, cols]
+        depth = float(np.min(win[ok] - b * (dm.y_of(ii[ok]) - cy))) - PROUD
     surface_idx = Counter(dm.sec[rows, cols][ok].ravel().tolist()).most_common(1)[0][0]
     return Plate(
-        end, (cs, cy), size, b, depth, source, dm.names[surface_idx] if surface_idx >= 0 else "body", note=note
+        end,
+        (cs, cy),
+        size,
+        b,
+        depth,
+        source,
+        dm.names[surface_idx] if surface_idx >= 0 else "body",
+        note=note,
+        bend=bend,
     )
 
 
@@ -617,8 +699,9 @@ def lod_depths(plate: Plate, sections, lods, place) -> None:
         ok = np.isfinite(dm.depth)
         d = plate.depth
         if ok.any():
-            ii, _ = np.nonzero(ok)
-            nearest = float(np.min(dm.depth[ok] - plate.tilt * (dm.y_of(ii) - y))) - PROUD
+            ii, jj = np.nonzero(ok)
+            plane = plate.tilt * (dm.y_of(ii) - y) + plate.bend * np.abs(dm.s_of(jj) - s)
+            nearest = float(np.min(dm.depth[ok] - plane)) - PROUD
             if nearest < d:
                 d = max(nearest, plate.depth - LOD_PUSH_LIMIT)
         plate.lod_depth[lod] = d
@@ -688,16 +771,35 @@ def plate_section(p: Plate, version: int, lods) -> carbin.Section:
     """A Forza-space section holding the plate quad on every LOD. Placement is
     undone here (forza2dsf.add_geometry places it again)."""
     u0, v0, u1, v1 = PLATE_UV
-    uvs = ((u0, v0), (u1, v0), (u1, v1), (u0, v1))  # viewer's top-left, top-right, ...
-    n = p.normal()
+    w, h = p.size
+    # Columns across the plate seen from the viewer: (ds, u, side); a bent plate
+    # has a third along its centre line.
+    columns = [(-w / 2, u0, -1), (w / 2, u1, 1)]
+    if p.bend:
+        columns.insert(1, (0.0, (u0 + u1) / 2, 0))
     pool, subs = [], []
     extra_len = 4 if version == 3 else 8
     for lod in sorted(lods):
         base = len(pool)
-        for k, (corner, uv) in enumerate(zip(p.corners(lod), uvs)):
-            pool.append(carbin.Vertex(corner, uv, (0.0, 0.0), n, bytes([PLATE_AO[k]]) + bytes(extra_len - 1)))
-        # Outward winding: (tl, bl, br), (tl, br, tr) seen from the viewer.
-        idx = [base, base + 3, base + 2, base, base + 2, base + 1]
+        # Top row left to right, then the bottom row (AO bytes: tl, tr, br, bl).
+        for row, (dy, v) in enumerate(((h / 2, v0), (-h / 2, v1))):
+            for ds, u, side in columns:
+                k = (0, 1)[side > 0] if row == 0 else (3, 2)[side > 0]
+                pool.append(
+                    carbin.Vertex(
+                        p.point(ds, dy, lod),
+                        (u, v),
+                        (0.0, 0.0),
+                        p.normal(side),
+                        bytes([PLATE_AO[k]]) + bytes(extra_len - 1),
+                    )
+                )
+        # Outward winding per panel: (tl, bl, br), (tl, br, tr) seen from the viewer.
+        idx = []
+        n = len(columns)
+        for c in range(n - 1):
+            tl, tr, bl, br = base + c, base + c + 1, base + n + c, base + n + c + 1
+            idx += [tl, bl, br, tl, br, tr]
         subs.append(carbin.SubSection(PLATE_TECHNIQUE, lod, 4, (0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0), idx))
     section = carbin.Section(
         f"{p.surface}{SECTION_SUFFIX}{p.end}",
@@ -746,7 +848,9 @@ def apply(car, place, ground: float, host: HostPlates, log=print):
     for p in pp.plates:
         log(
             f"plates: {p.end} {p.source} on {p.surface}, {p.size[0]:.3f} x {p.size[1]:.3f} m at "
-            f"s {p.centre[0]:+.3f} y {p.centre[1]:+.3f}, tilt {p.tilt:+.2f}" + (f" ({p.note})" if p.note else "")
+            f"s {p.centre[0]:+.3f} y {p.centre[1]:+.3f}, tilt {p.tilt:+.2f}"
+            + (f", bend {p.bend:.2f}" if p.bend else "")
+            + (f" ({p.note})" if p.note else "")
         )
     return body, pp
 

@@ -51,6 +51,13 @@ Classic 06, Super Car 02/12, some trucks, a bus, a buggy), 1 front only
 San Francisco cars carry front plates as a rule, supercars included
 (`out/plates/fleet.txt`).
 
+**Bent plates.** Plates split at x = 0 are often bent there round a curved
+bumper: of 120 front plates with both halves, 25 turn by over 2 degrees
+between the halves (normals of the two halves' plate-facing triangles), 4 by
+over 5: the '68 Camaro (158) 24 degrees, the Eldorado (149) 14, the DB9 (133)
+10, the Challenger (173) 6. Rears: 20 over 2 degrees, 1 over 5 (the V12
+Vantage, 5). Converted fallback plates bend the same way (#213).
+
 **Vertex semantics.** The plate is part of its panel:
 
 | | Front | Rear |
@@ -114,12 +121,20 @@ Forza cars mostly have no plate. In `tools/batches/testdrive.txt` (40 cars):
      while cells stay within 4 mm of the plane) and the plate shrunk (aspect
      kept, at least 0.7x) if the face is smaller than the host plate;
    - else (**host** fallback, `fallback_height`) x = 0 within 0.3 m of the
-     host's height, at the height where the plate covers the car's face at
-     the lowest cost: the gap between plate and face (m), plus 0.1 x the
-     distance from the host's height, plus 0.5 x the share of the plate over
-     a badge, lamp, glass or exhaust section, plus 0.1 x the share over
-     another section or material class than its main one (bonnet shut line,
-     grille edge). Tilt clamped to 14 degrees (a plate on a pad or bracket).
+     host's height, at the height and size where the plate covers the car's
+     face at the lowest cost: 2 x the mean gap between plate and face once it
+     rests on the face (m, each cell's gap counted up to 10 cm), plus 0.1 x
+     the distance from the host's height, plus 1.0 x the share of the plate
+     over a badge, lamp, glass or exhaust section, plus 0.02 if it covers more
+     than 0.5% of an emblem (a badge narrower than 0.4 m), plus 0.1 x the
+     share over another section or material class than its main one (bonnet
+     shut line, grille edge), plus 0.05 x the shrink: the plate may shrink to
+     0.9 or 0.8 of the host's (not under 0.23 m wide, vanilla's narrowest) to
+     fit between an emblem and an edge (#159, #213, #241). The plate **rests**
+     on the face (`rest`, #213): tilted (up to 14 degrees, a plate on a pad or
+     bracket) and bent back at its centre line (each half up to 11 degrees, as
+     vanilla bends plates on curved bumpers) so that it touches the nearest
+     cell and stands off the rest least on average.
      A grille may lie behind the plate (real cars mount plates over bumper
      grilles); badge-technique runs wider than 0.4 m are grille artwork
      (the BMW M1's nose band), not emblems (#159).
@@ -127,10 +142,11 @@ Forza cars mostly have no plate. In `tools/batches/testdrive.txt` (40 cars):
    and per LOD (1..5) further out if that LOD's surface comes forward (at
    most 8 cm).
 3. **Geometry.** One synthetic body section per plate,
-   `<surface section>_plate_front|rear`, with a quad (2 triangles) on every
-   body LOD, technique `dsf_plate`, UV0 = the vanilla plate rect oriented as
-   above, normal along the plate, AO bytes giving a sky term of about 0.48
-   (vertical). The section joins `car.body` (a copy; `ForzaCar` is not
+   `<surface section>_plate_front|rear`, with a quad (2 triangles; a bent
+   plate two quads, the UV split at its centre line) on every body LOD,
+   technique `dsf_plate`, UV0 = the vanilla plate rect oriented as
+   above, normal along the plate (each half's on a bent plate), AO bytes
+   giving a sky term of about 0.48 (vertical). The section joins `car.body` (a copy; `ForzaCar` is not
    mutated), so everything downstream treats it as Forza geometry:
    `forza2dsf.material_for` / `forza_materials.classify` give it the shared
    paint material, `add_geometry` keeps its UVs (`PLATE_TECHNIQUE` branch),
@@ -326,6 +342,61 @@ the Lancia shield's lower edge (1.7% of the plate, under the hide cost that woul
 move it). Its bumper face is 8 cm tall, the host's (274) plate 0.315 x 0.142 m
 (#241).
 
+### Fallback plates rest on the face, bent and tilted (#213, #241, 2026-10-29)
+
+The fallback took the host's height and size, pushed a flat plate out to the nearest
+surface under it plus 3 mm, tilted by a plain fit clamped to 14 degrees. On a bumper
+curving back towards its sides the corners stood off, and the height search scored the
+median gap, which never saw them. Changes (`plates.rest`, `fallback_height`):
+
+- **Rest.** The plate is the surface d + tilt (y - cy) + bend |s|: tilt within 14
+  degrees, each half turned back by up to 11 degrees at the centre line (vanilla bends
+  plates so, "Bent plates" above). It touches the nearest cell and stands off the
+  others least on average (each gap counted up to 10 cm). A bent plate is two quads
+  with the UV split at the centre line and each half's normal.
+- **The mean gap counts twice** in the height search, and the hidden share with it
+  (1.0 for each share over a badge, lamp, glass or exhaust): a plate standing off by a
+  few centimetres shows more than one across a section edge.
+- **No emblem slivers** (#241): covering more than 0.5% of an emblem adds 0.02. The
+  Delta S4's front plate took its grille band over the Lancia shield's lower edge
+  (1.7%, for a cost of 0.008).
+- **Smaller plates where they fit better**: 0.9 or 0.8 of the host's (not under
+  0.23 m wide), at 0.05 per unit of shrink. The Delta S4's plate is 0.8 (0.25 m)
+  between the shield and the bumper.
+
+**Roster** (`dsff plates_survey`: every car of the main checkout's full build with a
+host-fallback plate on master, and #179's 13; 348 cars, each on its build host, cut-outs
+and trim artwork as in the build; master, the rest step alone, and the final weights).
+A plate floats when its median gap is over 3 cm or over 25% of it is over an opening (a
+cell over 10 cm behind it, or no surface); corner off: a 3 x 3-cell corner block's
+median gap over 3 cm:
+
+| | front master | rest only | final | rear master | rest only | final |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| host fallbacks | 316 | 316 | 316 | 81 | 81 | 81 |
+| floating | 69 | 59 | 36 | 33 | 28 | 23 |
+| corner off > 3 cm | 173 | 151 | 111 | 58 | 50 | 40 |
+| over a badge | 16 | 9 | 1 | 5 | 3 | 3 |
+| over a lamp | 0 | 0 | 2 | 8 | 9 | 7 |
+| across sections | 84 | 73 | 68 | 44 | 43 | 41 |
+
+Front fallbacks: median gap (median over plates) 14.0 -> 6.7 mm, worst corner median
+34 -> 17 mm (p75 72 -> 41 mm); rear 17.9 -> 11.1 mm, 50 -> 21 mm. 389 plates move on
+337 cars; recess, flat-face and Forza plates don't. 246 of the 316 front fallbacks bend
+(median 0.06, 19 at the limit), 21 of 81 rear; 159 front and 49 rear shrink (40 and 5
+to 0.8). Plan renders (`img/plates-213-plans.png`, master left; Delta S4, Viper GTS-R,
+Corvette Grand Sport, Fiat 595, 2-Eleven, Mazda 2).
+
+**In game** (confirmed-runtime; VM runs `vm1-20261029-154953` master and
+`vm1-20261029-155537` this converter, a 10-car `--list` build, vanilla 128 first,
+views nose and rear; `img/plates-213-ingame.jpg`): the Delta S4's plate below the
+Lancia shield; the Viper GTS-R's from 6 cm under its nose to between its lamp covers;
+the Corvette Grand Sport's onto its plate pad; the Fiat 595's onto its bumper bar; the
+2-Eleven's front under its badge; the Chevelle's rear from the boot lid onto its
+bumper. `render_compare diff` (`out/rc/213`): all 10 cars draw differently, plates first;
+the other regions that change are the ones a moved plate covers or uncovers (the Delta
+S4's shield +62 px, the 2-Eleven's front badge 0 -> 165 px).
+
 ## Open
 
 1. In game: front plates are seen since #180's run (`vm1-20261028-184904`:
@@ -335,10 +406,11 @@ move it). Its bumper face is 8 cm tall, the host's (274) plate 0.315 x 0.142 m
 2. Paint-material plates on hosts whose paint palette gives an odd tint:
    vanilla uses the same material, so the plate should look as on vanilla cars;
    assumed, not checked.
-3. Front fallbacks float in front of curved bumpers (up to a few cm at the
-   edges); real cars use brackets too. A pad/bracket search (protruding
-   faces) would place some better. Still 66 front and 32 rear fallbacks
-   float (#159 survey); race prototypes make up many of them (#213).
+3. Fallbacks still float on 33 front and 20 rear plates (#213's survey), most
+   on race prototypes with an open nose or diffuser at the centre line (Acura
+   ARX, Audi R10/R15, Lola). Some trade a badge for a gap: the 2-Eleven's rear
+   (4.1 cm, instead of covering 15% of a badge), the Pantera's front (3.4 cm).
+   A pad/bracket search (protruding faces) might place some better.
 4. Plate lamps (`numplate`) are trim; they could light with the tail lamps
    (vanilla has no plate lamp entries; not done).
 5. Plate size follows the host (0.25..0.37 m wide). A fixed 0.26 x 0.122
