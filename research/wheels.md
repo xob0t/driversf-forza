@@ -40,8 +40,8 @@ follow `dngvehicles.md`.
   against 0.667 by 0.265 at the front).
 - `tire`, `rim`, `inner_rim` UVs tile (scale x31) into Forza's shared wheel
   textures, which are not in the car's zip. Brake rotors and calipers are
-  separate carbins (`<car>_rotorLF_LOD0.carbin`, `_caliperLF_...`), not
-  converted.
+  separate carbins (`<car>_rotorLF_LOD0.carbin`, `_caliperLF_...`); the rotors
+  are converted since #212 ("Brake rotors"), the calipers not.
 - Exceptions on the discs (full-roster survey, all 573 main carbins):
   - six main carbins have no wheel section: FER_360_99, FER_360Challenge_03,
     FER_Dino246_69, LAM_Gallardo_05, PAN_Esperante_05 and
@@ -302,7 +302,7 @@ same run). The 205's holes and the recess round the nuts now read dark, as
 through the vanilla Scirocco's spokes; the disc itself stays white, as Forza's
 is (`img/wheels-205-ingame-before-after.jpg`).
 
-The brake rotor behind the holes is not converted: Open 2 (#212).
+The brake rotor behind the holes is converted since #212 ("Brake rotors").
 
 ## Wheel clearance (2026-10-25)
 
@@ -858,14 +858,82 @@ identical).
 - One picture for every speed: Forza swaps `wheel1..3` with speed, DSF has
   one disc that fades in.
 
+## Brake rotors (2026-10-29, issue #212)
+
+Through open spokes a port showed the dark inside of its barrel (since "Wheel
+shading"); Forza draws a brake disc and caliper there. Scratch scripts in
+`out/brakes/` (`survey.py`, `summ.py`, `summ2.py`), left in the PR's worktree.
+
+### What Forza has (confirmed-static, all 573 roster cars)
+
+- 567 cars have `<car>_rotor{LF,RF,LR,RR}_LOD0.carbin` and
+  `_caliper{LF,RF,LR,RR}_LOD0.carbin` in the car's zip (beside
+  `stripped_*` copies of a few hundred bytes); the six without are
+  CHR_PTCruiser_04, FOR_Explorer_10, FOR_F350SuperDuty_08, FOR_FocusZX4_05,
+  TOY_Prius_11 and VW_Beetle_04. LOD 0 only, TypeId 1, one section each.
+- Frame: the hub's, like the wheel model's (spin axis x, the hub face at -x on
+  the left-hand corners, where the wheel's rim face is). The rotor is centred on
+  the axis and on x = 0: the 205 T16's disc at x +0.011..+0.040, r up to 0.137,
+  its hub hat at x -0.040..+0.011, r up to 0.083. The right-hand carbins mirror
+  the left ones. The caliper sits off the axis at one clock position (the 205's
+  front one at z -0.07..-0.16, y -0.06..+0.10), so it must not turn with the
+  wheel.
+- Size: rotor triangles per car, front / rear: median 540 / 638, 90th
+  percentile 2144 / 2472, at most 9410 (SEA_IbizaCupra_09's drilled front disc)
+  / 4038 (rear drums of the late-60s Americans). Calipers median 1138 / 1016, up
+  to 7903.
+- Materials: `hub` (497 rotor carbins), `rotor` (415), `brake` (184), `drum`
+  (36), `misc`, `matte_colors`, `front`, ...; 201 rotors have only one of `hub`,
+  `misc`, `front`, `right_side` for disc and hub alike. They sample Forza's
+  shared `media/cars/Shared.zip` `rotor0..4.xds` (pictures of four disc types and
+  a caliper), not the car's textures.
+
+### Fix (`forza2dsf.brake_rotor_section`, `port_car.extract_brakes`)
+
+- `port_car.extract_brakes` caches the left front and rear rotor carbins as
+  `rotorLF_LOD0.carbin` / `rotorLR_LOD0.carbin` (own stamp
+  `brake_source.json`); `load_car` reads them into `ForzaCar.rotors`.
+- `convert` adds the axle's rotor to each wheel part at the finest wheel LODs
+  (`BRAKE_ROTOR_MAX_LOD` 2: the exterior's LOD 1 and the full entry's mask 4):
+  the front rotor to the front or only wheel part, the rear one to a rear part
+  (split hosts, "Rear wheel parts"). One model serves both sides, so the left
+  rotor stands for the right (its mirror image). The rotor keeps Forza's size
+  (the part's fit scales the wheel model, not the rotor) and its place against
+  the tyre's centre.
+- Drawn on the shared tyre material with plain swatches of the tyre atlas, no
+  artwork: the friction ring (triangles beyond 0.6 of the rotor's radius, since
+  the names don't tell) on the uniform mid-grey square (red 106, gloss 58, at
+  (0.07, 0.57); the rims' swatch is 131 / 190), the hat and hub on the inner-rim
+  dark (65 / 5). The baked sky is the wheel's (`wheel_skies` with the rotor among
+  the occluders), so the rotor lies in the shadow of the barrel and spokes.
+- A rotor of more than `BRAKE_ROTOR_MAX_TRIANGLES` (2000; 145 of the 1146 front
+  and rear rotors) is replaced by `plain_rotor`, a plain disc of its size: ring
+  faces, rim and inner edge over the ring's axial extent and a hat over the
+  rest's, 32 segments, at most 352 triangles, wound like the carbin's own.
+- `port_car` drops the rotors before stepping a car down to coarser LODs when an
+  entry is over the limits, and `--no-brake-rotors` leaves them out.
+
+### Calipers (not converted, #212)
+
+The caliper has to stay still while the wheel turns, and steer and ride with
+it. In the vanilla hierarchy (`upvh summary`, host 227) the front wheel records
+(type 2) hang under part records of roles 155 / 156 ("front hubs (brake
+disc)", `damage.md`), which hang under the front suspension part (188); the rear
+wheels hang straight under the rear suspension (190), with no hub records. The
+hub records have a full-entry MODL part, a hinge at the hub (axis x, limit
+0.5655), a panel-transform slot and no LOD link, so the exterior entry, which
+the player's car draws, has no part to carry a caliper on any corner; whether
+the engine steers the hub parts is not known. A caliper would need new LOD
+links (and new records at the rear): the hierarchy changes that crashed
+`forceOpenPanels` before when they went wrong. Left for an issue.
+
 ## Open
 
-1. Brake discs and calipers (Forza `_rotor*`/`_caliper*` carbins, LOD 0 only,
-   per corner) could go into the wheel part as static geometry; not done.
-   Vanilla DSF wheels have none, and a caliper in the wheel part would spin
-   with it: #212.
+1. Brake calipers (Forza `_caliper*` carbins) are not converted: they must not
+   turn with the wheel, and the exterior entry has no hierarchy part on the hubs
+   to carry them ("Brake rotors", "Calipers").
 
-Done since and dropped from this list: speed blur (#211, "Speed blur"); rim gloss (issue #108, PR #143). Rims
+Done since and dropped from this list: brake rotors (#212, "Brake rotors"); speed blur (#211, "Speed blur"); rim gloss (issue #108, PR #143). Rims
 draw with gloss copies of the host's Lights material (its lamp glow needs a
 lamp byte, which rims don't have), Forza's rim reflection and `chrome_rim`'s
 chrome on them (forza-materials.md, "Gloss"). The reflection is masked by the
