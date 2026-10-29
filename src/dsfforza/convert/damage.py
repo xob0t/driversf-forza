@@ -3070,7 +3070,11 @@ class DamagePlan:
 
     def _remount_mirrors(self, data: bytes) -> tuple[bytes, dict]:
         """Put each mirror record under the record whose transform slot draws its
-        mount (DamagePlan.bound), where its host parent is another (move_subtree)."""
+        mount (DamagePlan.bound), where its host parent is another (move_subtree).
+        When that record can't take it in slot order, under the chassis' instead: a
+        mirror on a bonnet the door record held (ARX-01b), or on a door the bonnet
+        record held (DBR9), stays on the body rather than flying off with a panel
+        it isn't on."""
         report = {}
         for pair, panel in sorted(self.panels.items()):
             if panel.role not in MIRRORS or pair not in self.boxes:
@@ -3088,17 +3092,22 @@ class DamagePlan:
             # A record without a slot of its own (the front structure) moves with the chassis.
             if (parent.slot if parent.slot >= 0 else self.chassis[0]) == slot:
                 continue
-            targets = [r for r in h.records if r.type == 1 and r.slot == slot]
-            target = next((r for r in targets if (r.slot, r.model) == mount), None)
-            target = target or next((r for r in targets if r.role == 38), None) or (targets[0] if targets else None)
-            if target is None or mirror.index <= target.index < mirror.index + mirror.subtree:
+            chassis = next((r for r in h.records if r.type == 1 and r.role == 38), None)
+            target = next((r for r in h.records if r.type == 1 and (r.slot, r.model) == mount), None)
+            if target is None or target.slot != slot:
+                target = chassis if slot == self.chassis[0] else None
+            moved = move_subtree(data, mirror.index, target.index) if target is not None else None
+            if moved is None and target is not chassis and chassis is not None and parent is not chassis:
+                target = chassis
+                moved = move_subtree(data, mirror.index, chassis.index)
+            if moved is None:
+                report[self.label(pair)] = {"mount": self.label(mount), "kept": role_name(parent.role)}
                 continue
-            data, ordered = move_subtree(data, mirror.index, target.index)
+            data = moved
             report[self.label(pair)] = {
                 "mount": self.label(mount),
                 "from": role_name(parent.role),
                 "to": role_name(target.role),
-                "in_order": ordered,
             }
         return data, report
 
@@ -3114,19 +3123,22 @@ def _parents(h) -> list[int | None]:
     return out
 
 
-def move_subtree(data: bytes, index: int, parent: int) -> tuple[bytes, bool]:
+def move_subtree(data: bytes, index: int, parent: int) -> bytes | None:
     """Move record `index` and its subtree to be a child of record `parent` (UPVH
-    records are depth-first with subtree sizes). Vanilla hierarchies number their part
-    records' transform slots (+0x34) and panel-data indices (+0x2A) in record order,
-    and vertices carry those numbers, so the subtree goes between the new parent's
-    children where that order holds; if there is no such place, after them
-    (returns False)."""
+    records are depth-first with subtree sizes). Every vanilla hierarchy numbers its
+    part records' transform slots (+0x34) and panel-data indices (+0x2A) in record
+    order, and vertices carry those numbers, so the subtree goes between the new
+    parent's children where that order holds; None if there is no such place (a
+    mirror moved under a bonnet after it crashed forceOpenPanels, VM run
+    vm2-20261029-030631)."""
+    if index <= parent < index + upvh_mod.parse(data).records[index].subtree:
+        raise ValueError(f"record {parent} is inside record {index}'s subtree")
     h = upvh_mod.parse(data)
     par = _parents(h)
     size = upvh_mod.RECORD_SIZE
     count = h.records[index].subtree
-    if index <= parent < index + count:
-        raise ValueError(f"record {parent} is inside record {index}'s subtree")
+    if any(r.type == 2 for r in h.records[index : index + count]):
+        raise ValueError(f"record {index}'s subtree holds a wheel (+0x0C bit 1 isn't kept)")
     raw = [bytearray(r.raw) for r in h.records]
     sub = [r.subtree for r in h.records]
     p = par[index]
@@ -3169,16 +3181,17 @@ def move_subtree(data: bytes, index: int, parent: int) -> tuple[bytes, bool]:
         )
 
     at = next((b for b in bounds if fits(b)), None)
-    ordered = at is not None
-    at = bounds[-1] if at is None else at
+    if at is None:
+        return None
     for a in ancestors:
         rest_sub[a] += count
     new_raw = rest_raw[:at] + block_raw + rest_raw[at:]
     new_sub = rest_sub[:at] + block_sub + rest_sub[at:]
     for r, s in zip(new_raw, new_sub, strict=True):
         struct.pack_into("<H", r, 0x14, s)
-    # Bit 0 of +0x0C is set on exactly the records with part or wheel children (all 150
-    # vanilla hierarchies); a door left with it and no mirror crashed forceOpenPanels.
+    # Bit 0 of +0x0C is set on exactly the records with a part (type 1) child, bit 1 on
+    # those with a wheel below (all 150 vanilla hierarchies). A door left with bit 0 and no
+    # mirror crashed forceOpenPanels; a door given a mirror without it didn't carry it.
     old, new = rest_raw[where[par[index]]], rest_raw[pp]
     for n, r in enumerate(new_raw):
         if r is old or r is new:
@@ -3187,9 +3200,9 @@ def move_subtree(data: bytes, index: int, parent: int) -> tuple[bytes, bool]:
                 kids.append(struct.unpack_from("<H", new_raw[c], 0x08)[0])
                 c += new_sub[c]
             flags = struct.unpack_from("<H", r, 0x0C)[0] & ~1
-            struct.pack_into("<H", r, 0x0C, flags | (1 if {1, 2} & set(kids) else 0))
+            struct.pack_into("<H", r, 0x0C, flags | int(1 in kids))
     start, end = upvh_mod.HEADER_SIZE, upvh_mod.HEADER_SIZE + len(raw) * size
-    return data[:start] + b"".join(bytes(r) for r in new_raw) + data[end:], ordered
+    return data[:start] + b"".join(bytes(r) for r in new_raw) + data[end:]
 
 
 def robust_box(points, trim: float = 0.02) -> Box | None:
@@ -3567,8 +3580,18 @@ def cmd_check(args) -> None:
     with stream:
         full = kinds[0]
         nonr = child(full, "NONR")
-        panels = host_panels(payload(stream, child(nonr, "UPVH")), payload(stream, child(nonr, "MODL")))
+        upvh = payload(stream, child(nonr, "UPVH"))
+        panels = host_panels(upvh, payload(stream, child(nonr, "MODL")))
         meshes = {k: load_mesh(stream, kinds[k]) for k in (0, 2) if k in kinds}
+    h = upvh_mod.parse(upvh)
+    par = _parents(h)
+    stray = [
+        r.index
+        for r in h.records
+        if bool(struct.unpack_from("<H", r.raw, 0x0C)[0] & 1)
+        != any(par[c.index] == r.index and c.type == 1 for c in h.records)
+    ]
+    report(not stray, f"record +0x0C bit 0 set exactly on records with a part child (move_subtree; not: {stray})")
     # Rigid panels are drawn through the chassis' transform slot (DamagePlan.bound).
     chassis_slot = 0 if (0, 0) in panels else min(panels)[0]
     drawn = {pair: (chassis_slot, pair[1]) if panel.role in BODY else pair for pair, panel in panels.items()}

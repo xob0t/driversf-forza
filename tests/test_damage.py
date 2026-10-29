@@ -210,20 +210,15 @@ def _tree(data: bytes) -> list:
 class MirrorMount(unittest.TestCase):
     def test_move_subtree_keeps_the_slot_order(self):
         data = _hierarchy()
-        out, ordered = damage.move_subtree(data, 3, 1)  # the mirror under the chassis
-        self.assertTrue(ordered)
+        out = damage.move_subtree(data, 3, 1)  # the mirror under the chassis
         self.assertEqual(_tree(out), [(0, None), (38, 0), (32, 38), (67, 32), (41, 38), (73, 41), (4, 38)])
         h = upvh.parse(out)
         self.assertEqual([r.subtree for r in h.records], [7, 6, 2, 1, 2, 1, 1])
         self.assertEqual([r.slot for r in h.records if r.type == 1], [0, 6, 7, 8])
         self.assertTrue(out.endswith(TAIL) and len(out) == len(data))
         self.assertEqual(_flags(out), [23, 7, 4, 0, 4, 0, 0])  # the door has no part child left
-        # Under the bonnet the slots can't stay in record order: it goes after its children.
-        out, ordered = damage.move_subtree(data, 3, 6)
-        self.assertFalse(ordered)
-        self.assertEqual(_tree(out)[-2:], [(41, 4), (73, 41)])
-        self.assertEqual(_flags(out)[2], 4)
-        self.assertEqual(_flags(out)[4], 1)  # the bonnet has one now
+        # Under the bonnet (slot 8, after the mirror's 7) the slots can't stay in record order.
+        self.assertIsNone(damage.move_subtree(data, 3, 6))
         with self.assertRaises(ValueError):
             damage.move_subtree(data, 2, 3)  # into its own subtree
 
@@ -239,7 +234,7 @@ class MirrorMount(unittest.TestCase):
         self.assertEqual(_tree(out)[3:5], [(67, 32), (41, 38)])
         self.assertEqual(
             report["7,8 mirror -x"],
-            {"mount": "0,0 chassis", "from": "door front -x", "to": "chassis", "in_order": True},
+            {"mount": "0,0 chassis", "from": "door front -x", "to": "chassis"},
         )
         # On a door that swings (a Forza part) it stays under the door, as vanilla.
         plan.boxes[(0, 0)] = [(0.0, 0.0, 0.0)]
@@ -249,6 +244,12 @@ class MirrorMount(unittest.TestCase):
         # On a door held shut (drawn through the chassis' slot) it goes under the chassis.
         plan.swinging = set()
         self.assertEqual(_tree(plan._remount_mirrors(_hierarchy())[0])[4], (41, 38))
+        # On the bonnet, which can't take it in slot order: under the chassis, not the door.
+        plan.boxes[(8, 9)] = [(-0.92, 0.31, 0.1)]
+        self.assertEqual(plan._mirror_mount((7, 8)), (8, 9))
+        out, report = plan._remount_mirrors(_hierarchy())
+        self.assertEqual(_tree(out)[4], (41, 38))
+        self.assertEqual(report["7,8 mirror -x"]["to"], "chassis")
 
 
 if __name__ == "__main__":
