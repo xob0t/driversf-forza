@@ -39,6 +39,14 @@ Research notes are in `research/` (read the ones for your area first).
   description by commit SHA, not branch name (branches are deleted on merge):
   `https://github.com/xob0t/driversf-forza/blob/<commit-sha>/research/img/<file>?raw=true`
   with the SHA of a commit on your branch that contains the image.
+- Converter changes: say which cars draw differently, not only the ones you
+  meant to change. Build master and your branch for the cars you touch (or
+  the roster survey's list), run
+  `uv run dsff render_compare diff --before <master build> --after <your build> --out out/rc/<topic>`
+  at idle priority, and put its list of changed cars and regions in the PR,
+  with its sheet for any car you didn't expect to change
+  (`research/render-compare.md`). It renders only the cars whose drawn data
+  differ, so it also catches side effects like a washed-out splitter.
 - Keep the PR to one topic. Don't reformat or touch unrelated files.
 - Bugs outside your task, and the open items your PR leaves, go to GitHub
   issues for later agents rather than into your PR. First search the open and
