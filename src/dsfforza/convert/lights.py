@@ -835,6 +835,17 @@ class LampPlan:
                     else:
                         side = "L" if centre[0] > 0 else "R"
                     f, c = function, colour
+                    if f == HEAD and not front:
+                        # A head lamp technique behind the wheelbase midpoint is no head lamp:
+                        # vanilla has no rear 0x01 entry and lights no plate. The 510's coarse
+                        # LOD 2 tail lamps, the Mini 65's plate lamp on its boot, the A4 Avant's
+                        # `fullbeam` tail lamp bulbs (#264): as rear head lamps they took rear
+                        # light entries from the real rear lamps and lit white with the head
+                        # lamps. Placed like a clear lens, with the lamp it lies in or over.
+                        clear.append(
+                            Tri(sub, k, LENS, side, front, WHITE, area, centre, normal, sub.lod, tuple(pts), shown)
+                        )
+                        continue
                     if f == POSITION:
                         c = WHITE if front else RED  # front parking / DRL, rear tail marker
                     # What the player sees at the rear is the lens texture: red
@@ -1175,8 +1186,11 @@ class LampPlan:
             o = base + i * 0x40
             entries.append((o, struct.unpack_from("<I", h.data, o + 40)[0]))
         place = {e: entry_place(h.data, e[0]) for e in entries}
+        # Lamps the red-drawn texel move emptied (_place_clear: the BMW M3 E30's, Audi RS6's and
+        # Peugeot 207s' reverse lamps, all their triangles red) take no entry (#264).
+        drawn = set(self.tri_lamp.values())
         order = sorted(
-            (l for l in self.lamps.values() if l.area),
+            (l for k, l in self.lamps.items() if l.area and k in drawn),
             key=lambda l: (PRIORITY.get(l.function, 9) + 10 * min(l.cluster, 1), not l.front, l.side),
         )
         free = list(entries)

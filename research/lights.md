@@ -55,7 +55,10 @@ later PR replaced a rule, the earlier section says so in one line.
 - Side from the technique or x (a subsection within 0.3 m of the centre
   line is a centre lamp); each (function, side, end) group splits into lamps
   0.2 m apart; a centre tail lamp more than 8 cm above the side tails is the
-  high stop lamp (0x02).
+  high stop lamp (0x02). A head lamp technique behind the wheelbase
+  midpoint is placed like a clear lens, not as a head lamp, and a lamp the
+  red-drawn move empties takes no entry
+  ([#264](#head-lamp-techniques-at-the-rear-issue-264)).
 
 **Light entries** (`LampPlan.assign`, `patch_upvh`).
 
@@ -2011,6 +2014,67 @@ lens (Spark 9, Genesis Coupe 8, Volvo 242 1, Forte Koup 6); the only sizeable on
 head lamp lens (343 of about 1,000 texels) and the Scirocco R's tail lenses (39 of about 1,400). The lens
 texels that no lamp lies behind (Venom GT's and Noble M600's lexan, the MP4-12C's wing lens) are scrambled
 with nothing to bake, so they keep their own texels as before.
+
+### Head lamp techniques at the rear (issue #264)
+
+Symptom (offline-checked, the seventh pass's `out/l7/lamp_survey.py`): on 9 cars the lamp plan made
+head lamps (0x01) at the rear, from a Forza head lamp technique on rear parts, and gave them rear light
+entries taken from the real rear lamps: 13 rear head lamps, all with an entry. The 510's (host 130)
+took two of four rear entries and left its reverse lamps without one (#261 later freed one by
+pairing); every one lit white at the rear with the head lamps.
+
+| Car | What |
+| --- | --- |
+| NIS_510_70 | `body` `head_light` LOD 2 (its tail lamps at that LOD) |
+| AUD_A4Avant_04 | `taillightR` `fullbeam`, LODs 1 to 5, red-drawn (#257 moved its triangles to the tail lamps; the empty head lamps kept their two entries) |
+| AUS_MiniCooperS_65, AUS_ShowCaseMiniCooperS_65 | `trunk` `oldhead`, LODs 1 to 4, on the centre line of the boot: the plate lamp |
+| MCL_43_McLarenF1GTR_97 | `body` `head_light` LOD 1, 16 triangles |
+| TOY_Camry_07 | `taillightR` `oldhead` and its reflector, LOD 4 |
+| TOY_CorollaDX_95 | `glassRTL` `lights_gls_oldhead`, LOD 2 |
+| PON_GTOJudge_69 | `body` `oldhead` LOD 4, one triangle |
+| CHE_CorvetteZ06_06 | `body` `head_light` LODs 1 and 2, one triangle each |
+
+Vanilla has no rear 0x01 entry and lights no plate lamp: its white rear entries are reverse lamps
+(0x08, 257) and sirens (`out/l8/vanilla_rear.py`, every vanilla vehicle).
+
+The same survey found a second way rear entries go to lamps that draw nothing: #257's move of
+red-drawn rear triangles to the nearest red lamp can empty a lamp, which `assign` still ranked by the
+area measured before the move. 9 lamps on 5 cars held an empty entry: the A4 Avant's two rear head
+lamps, and reverse lamps all of whose triangles are drawn red (BMW_M3E30_91's centre one, AUD_RS6_09,
+PEU_207RC_07 and PEU_207Super2000_07, two each).
+
+Change (`LampPlan.build`, `assign`):
+
+- A head lamp technique triangle behind the wheelbase midpoint goes with the clear lenses
+  (`_place_clear`): it lights with the lamp it lies over or in, else one of its own section within
+  reach, else stays unlit.
+- `assign` gives entries only to lamps that still have triangles.
+
+Roster (offline, `out/l8/plan_survey.py` in the t3-a7c21235-b worktree: master's `lights.py` and this
+one on one `Texturing.plan` per car, host-picks hosts, 566 cars): rear head lamps 13 on 9 cars -> 0;
+lamps with an entry and no triangle 9 -> 0. The triangles of exactly those 9 cars change, and the
+emptied lamps' entries are free on the other 4:
+
+- the 510's LOD 2 parts light with its tail lamps; the A4 Avant's `fullbeam` with its tail and
+  brake + indicator lamps; the Camry's LOD 4 and the Corolla DX's LOD 2 parts with the tail and
+  reverse lamps they lie in;
+- the Minis' plate lamp, the F1 GTR's 16 triangles and the GTO Judge's one stay unlit (no lamp behind
+  them or in their section within reach);
+- the Corvette Z06's rear `body` reflectors (24 triangles at LODs 1 and 2) are unlit now: they lit
+  with the tail lamp only through the stray head lamp triangle inside them. Unlit rear
+  retro-reflectors are the plan's rule (#174).
+
+The emptied-lamp rule ran after that survey; `out/l8/plan_survey.py` on the M3 E30, RS6 09 and 207 RC
+shows their emptied reverse lamps without an entry (the 207 Super 2000 shares the 207 RC's layout).
+
+`render_compare diff` (master 1481ae6 against this change, the 15 cars of this pass, `out/rc/l8-264`):
+7 cars' data change, 1 draws differently, MCL_43_McLarenF1GTR_97 (`rear_lamps` rear3q dark 6%); the
+others change only in light entries or at LODs these views don't draw. Scores unchanged.
+
+In game (VM 1, `-Lights -LightsDriveOnly -Palette 0`, vanilla 241 first, then the A4 Avant and the
+Mini 65; master `vm1-20261029-200145`, this change `vm1-20261029-200533`;
+`img/lamps8-mini-plate-ingame.jpg`, `img/lamps8-a4-tails-ingame.jpg`): the A4 Avant's tails light and
+brake as on master; the Mini's plate area no longer lights white in the dark mood.
 
 ### Open
 
