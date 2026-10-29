@@ -30,7 +30,8 @@ not the plate. So the plate is placed on the Forza body:
 2. else the plate recess or mounting face: a depth map of the body seen from
    behind / in front (1 cm cells, LOD 1), searched for a flat (plane fit
    under 3 mm RMS), paint/trim-covered window of plate size near the
-   centreline, preferring windows whose border steps outwards (a recess) and
+   centreline, facing out of the end (up by at most 39 degrees, down by at
+   most 22: never under a bumper's overhang, #179), preferring windows whose border steps outwards (a recess) and
    heights near the host's plate (the host's plate height mapped by the body
    boxes; a recess up to WIDE_BAND away when there is neither a recess nor a
    flat face nearer); the window is then centred on the recess and the plate
@@ -90,7 +91,11 @@ FLAT_RMS = 0.003  # plane-fit RMS of a usable mounting face
 COPLANAR = 0.004  # recess region: within this of the plane
 PROUD = 0.003  # plate in front of the face
 RECESS_STEP = 0.004  # border cells this much nearer than the plane: recess wall
-MAX_TILT = 0.8  # |dz/dy| of the plate (about 39 degrees)
+MAX_TILT = 0.8  # dd/dy of a plate facing up (about 39 degrees)
+# ... and of one facing the road: vanilla plates face down by at most 0.36 (rear, the
+# Camaro's; fronts 0.30 but one), so a window under a bumper's overhang is no mounting
+# face (#179: the Golf GTI 16v Mk2's rear plate, -0.73, was invisible in game).
+FACE_DOWN = 0.4  # about 22 degrees
 BRACKET_TILT = 0.25  # |dz/dy| of a fallback plate on a bracket (about 14 degrees)
 PRIOR_BAND = 0.3  # recesses searched within this of the host's plate height (m)
 WIDE_BAND = 0.5  # ... and within this when there is none nearer
@@ -493,7 +498,7 @@ def plan_end(
             if surf.mean() < 0.97:
                 continue
             fit = fit_plane(dm, rows, cols, surf)
-            if fit is None or fit[2] > FLAT_RMS or abs(fit[0]) > MAX_TILT:
+            if fit is None or fit[2] > FLAT_RMS or not -FACE_DOWN <= fit[0] <= MAX_TILT:
                 continue
             b, c, rms, _ = fit
             # Border ring 3 cells wide: a recess's walls are nearer the viewer.

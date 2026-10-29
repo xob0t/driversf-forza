@@ -79,3 +79,31 @@ def test_feature_of_techniques():
     assert P.feature("lights_gls_tail_light") == P.FEAT_LAMP
     assert P.feature("body") == 0
     assert P.feature("plastic2") == 0
+
+
+def slope(x0, x1, y0, y1, z0, z1, cls=1, name="bumperFa"):
+    """Two triangles of a rectangle from (y0, z0) to (y1, z1) facing +z (the front)."""
+    a, b, c, d = (x0, y0, z0), (x1, y0, z0), (x1, y1, z1), (x0, y1, z1)
+    return [([a, b, c], cls, name, 0), ([a, c, d], cls, name, 0)]
+
+
+def overhang(z_low):
+    """A bumper face (y 0.30..0.6) standing 3.5 cm out over a face sloping back under it,
+    from z 1.995 at y 0.30 to z_low at y 0.14: the bumper is a recess wall above it."""
+    return quad(-0.5, 0.5, 0.30, 0.6, 2.03) + slope(-0.5, 0.5, 0.14, 0.30, z_low, 1.995)
+
+
+def test_recess_search_rejects_a_face_under_an_overhang():
+    # #179: the Golf GTI 16v Mk2's rear plate went under the bumper, facing the road
+    # (tilt -0.73), and was invisible in game. Here the face under it tilts -0.52.
+    host = P.HostPlate("front", (0.0, 0.2, 2.0), SIZE, (0, 0), 2)
+    plate = P.plan_end(overhang(1.912), "front", host, 0.2, 0.0, 0.6)
+    assert plate.tilt >= -0.4, plate
+
+
+def test_recess_search_keeps_a_face_tilted_like_vanilla():
+    # Facing down by 0.25 (14 degrees): within what vanilla plates do.
+    host = P.HostPlate("front", (0.0, 0.2, 2.0), SIZE, (0, 0), 2)
+    plate = P.plan_end(overhang(1.955), "front", host, 0.2, 0.0, 0.6)
+    assert plate.source == "recess" and plate.surface == "bumperFa", plate
+    assert -0.3 < plate.tilt < -0.2 and plate.centre[1] < 0.30, plate
