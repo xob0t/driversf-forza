@@ -1,10 +1,10 @@
 # Wheels: the Forza wheel model in DSF
 
-Updated: 2026-10-27
+Updated: 2026-10-29
 
 User report from driving the testdrive build (`out/testdrive`, 40 cars): the
-wheels look broken on every car, the Veyron worst. Offline investigation
-(no game run); tools: `out/wheels/render.py` (exterior plus the wheel
+wheels look broken on every car, the Veyron worst. The first sections are
+offline (no game run); the later ones have in-game runs. Tools of the first: `out/wheels/render.py` (exterior plus the wheel
 part(s) placed the way the engine does it: hub + quaternion x wheel-local
 point), `out/wheels/tyre_uv.py`, `out/wheels/tex_dump.py`. Evidence levels
 follow `dngvehicles.md`.
@@ -135,7 +135,7 @@ and the new mapping).
   of circumference: 8 to 31 tiles). Tile edges snap to the model's own vertex
   angles so no triangle straddles a seam. Rims keep their swatches.
 
-### Test set (offline-checked; in game pending)
+### Test set (offline-checked)
 
 `out/wheels2/build/dngvehicles.sp` (`port_batch.py build --car MAZ_RX7_97
 --car BMW_M5_12 --car VW_GolfR_10 --car DOD_ChargerDaytona_69@fm4 --port
@@ -149,7 +149,9 @@ model from outside, inside and the front; testdrive3 against wheels2, vanilla
 370Z for reference), `out/wheels2/after/id3-full4-sides.png` (Golf R full
 entry, mask 4).
 
-In-game check, once the sandbox works:
+No in-game check of the unwrap itself is recorded; every later build carries
+it. The planned check (its `-LuaFiles` is no longer needed: an archive named
+`dngvehicles.sp` brings its Lua since #184):
 
 ```powershell
 .\tools\wsb\run-series.ps1 -Archives out\wheels2\build\dngvehicles.sp -LuaFiles 'dsfforza\ported.lua=out\wheels2\build\dngvehicles.lua' -ProbeIds '1,2,3,4' -WaitSeconds 900 -ShotSeconds 3
@@ -194,11 +196,15 @@ WRX's gold, the Agera's black with stripes).
 
 ### How vanilla DSF wheels are textured (confirmed-static)
 
-`out/rims/vanilla_wheel_mats.txt`: the wheel parts of all 140 four-wheeled
-vanilla vehicles use `GLOBAL_Tyre` (tyre and most of the rim, on the shared
-atlas's rim and nut pictures) and the two blur materials; 110 of them also
-have 4 to 244 triangles on the vehicle's own Chassis material (stride 28) in
-both entries: centre caps and logos from the car's chassis texture.
+The wheel parts of all 140 four-wheeled vanilla vehicles use `GLOBAL_Tyre`
+(tyre and most of the rim, on the shared atlas's rim and nut pictures), most
+also the two blur materials; 109 of them also have triangles on the
+vehicle's own Chassis material (stride 28; 108 in both entries, 4 to 1,184
+triangles over the exterior wheel parts' LODs): centre caps and logos from
+the car's chassis texture. Five more (180, 197, 198, 231, 233) use a stride-32
+material of their own instead. (Recounted 2026-10-29 over the vanilla
+archive, offline-checked; the first survey, `out/rims/vanilla_wheel_mats.txt`,
+is gone and said 110.)
 
 ### Fix
 
@@ -296,11 +302,7 @@ same run). The 205's holes and the recess round the nuts now read dark, as
 through the vanilla Scirocco's spokes; the disc itself stays white, as Forza's
 is (`img/wheels-205-ingame-before-after.jpg`).
 
-### Open (wheels)
-
-- The brake rotor (`<car>_rotorLF_LOD0.carbin`: disc and hub, about 1100
-  triangles on the 205) could go into the wheel part; it turns with the wheel,
-  unlike the caliper. With the barrel's inside dark it matters less.
+The brake rotor behind the holes is not converted: Open 2 (#212).
 
 ## Wheel clearance (2026-10-25)
 
@@ -461,20 +463,17 @@ three-quarter) and `Bonnet`; the A4's own before shot is from
   handbrake flicks (62 / 54 deg on the A4, 59 / 62 on the F151) are within
   that test's 8 deg noise.
 
-### Open (wheel clearance)
+### Left open (wheel clearance)
 
-- Fixed ("Rear wheel parts" below): hosts with one wheel part for both axles
-  drew all four wheels at the front tyre's size, so 63 cars with a bigger
-  Forza rear tyre got a rear arch gap larger than Forza's (JAG_33_XKR_10: 50
-  mm against -8).
-- Fixed ("Steering lock" below): full lock. 41 cars still put a front tyre
-  more than 10 mm deeper into the body than Forza's tyre does at Forza's own
-  lock; 27 of them steer further in DSF (p298 40 or 45 deg from the steering
-  donor against Forza's 30 or 36: the race prototypes, TOY_3_GT1_99,
-  FOR_40_GTR_09). Most of the depth was the check's, not the body's (below).
+Two gaps this round left were fixed since: the rear tyres of the 63 cars on
+hosts with one wheel part for both axles (#82, "Rear wheel parts"), and the
+41 cars with a front tyre deeper in the body at full lock than Forza's
+(#138, "Steering lock"; most of that depth was the check's). What stays:
+
 - Full bump (p188): most cars put a tyre into the body at the top of DSF's
   visual travel, as Forza's would at its MaxCompressHeight; not changed.
-- The rest-pose sink against Atlas's ground beyond the model (above).
+- The rest-pose sink against Atlas's ground beyond the model (above;
+  vanilla cars sink too, so not filed).
 
 ## Rear wheel parts (2026-10-26, issue #53)
 
@@ -620,7 +619,9 @@ DSF rims sample the tyre atlas's grey swatch of 131 (red channel).
 
 When `Texturing.plan` takes the wheel, it scales the RGB of the car's
 `wheel.xds` texels by the `PaintScale` of the technique whose UV triangles
-cover them (the car's `ShaderSettings.xml`, else the shared default, else 1);
+cover them (the car's `ShaderSettings.xml`, else the shared default, else 1;
+since #143 a `chrome_rim` texel takes its `ChromeDiffuseScale` instead, 0.5 by
+default, `forza-materials.md`, "Gloss");
 texels no triangle covers take the scale that covers the most texels. Then the
 atlas is packed as before, so the alpha (specular mask, from luminance) follows
 the darker colour. The build log's atlas line names the scales other than 1
@@ -663,7 +664,7 @@ converter now builds it.
 
 ### Survey (`out/final4`, all 573 cars, front wheels)
 
-`out/steer/lock_survey.py`: each car's front tyres at its p298 and at Forza's lock,
+`out/steer/lock_survey.py` (left in the PR's worktree, gone): each car's front tyres at its p298 and at Forza's lock,
 against Forza's own tyre at Forza's lock (`gap_forza_lock`). Cars with a tyre more
 than 10 mm deeper in the body than Forza's:
 
@@ -698,14 +699,16 @@ step steer unchanged).
 ## Open
 
 1. In game: whether wheels without blur geometry look right at speed
-   (vanilla wheels fade a spoke disc in; ours have none).
+   (vanilla wheels fade a spoke disc in; ours have none): #211.
 2. Brake discs and calipers (Forza `_rotor*`/`_caliper*` carbins, LOD 0 only,
    per corner) could go into the wheel part as static geometry; not done.
    Vanilla DSF wheels have none, and a caliper in the wheel part would spin
-   with it.
-3. Done (issue #108): rims draw with gloss copies of the host's Lights material
-   (its lamp glow needs a lamp byte, which rims don't have), Forza's rim
-   reflection and `chrome_rim`'s chrome on them (forza-materials.md, "Gloss").
-   The reflection is masked by the texel's green, not `wheel.xds` alpha. Vanilla
-   rims, for comparison, are drawn by 111 of the 150 vanilla vehicles with their own
-   Chassis material on their chassis texture (no reflection), not `GLOBAL_Tyre`.
+   with it: #212.
+
+Done since and dropped from this list: rim gloss (issue #108, PR #143). Rims
+draw with gloss copies of the host's Lights material (its lamp glow needs a
+lamp byte, which rims don't have), Forza's rim reflection and `chrome_rim`'s
+chrome on them (forza-materials.md, "Gloss"). The reflection is masked by the
+texel's green, not `wheel.xds` alpha. Vanilla rims have no reflection: their
+caps and logos are on the car's own Chassis material, the rest on
+`GLOBAL_Tyre` ("How vanilla DSF wheels are textured").
