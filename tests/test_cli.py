@@ -25,7 +25,7 @@ from dsfforza.build import port_batch
 from dsfforza.game import game_paths
 
 game_paths.vanilla = lambda path: path
-port_batch.cmd_plan = lambda args: port_batch.print_plan([port_batch.Pick({ascii(NAME)}, "FM4", 2008, "FM4", {{}})])
+port_batch.cmd_plan = lambda args: port_batch.print_plan([port_batch.Pick({NAME!a}, "FM4", 2008, "FM4", {{}})])
 if sys.argv[1] == "cli":
     sys.exit(cli.main(["port_batch", "plan", "--dsf", "x.sp"]))
 port_batch.main(["plan", "--dsf", "x.sp"])
