@@ -1079,7 +1079,42 @@ under the chassis keeps both orders; the BMW V12 LMR's -x mirror can't leave
 its bonnet record in order either, and the Radical SR8's two sit on its front
 bumper but hang under the front structure ahead of its other parts. The other
 276 cars have their mirrors under the right record already, no mirror panel,
-or none within 6 cm of a panel.
+or none within 6 cm of a panel. The 22 door-glass hosts are fixed since
+(#193, next section).
+
+### Door glass after the mirror (issue #193)
+
+On those 22 cars (8 hosts: 129, 133, 146, 172, 175, 241, 258, 278) the
+mirror's door record holds, after the mirror, a door-glass record (role 8):
+DB9 (host 133) door -x slot 8 / index 10, mirror 9 / 11, the door marker
+(role 67), glass with no slot / index 12, then door +x 10 / 13. Outside the
+door the mirror alone had no place that keeps both orders. The converted car
+draws nothing through these glass records: side windows go to their door's
+panel or the chassis (`section_rule`), and no build report lists geometry on
+a door-glass pair. The records hold a body and a collision box; on 172 each
+holds a second glass record, on 175 two follow the -x mirror; on 146 and 278
+(10 of the cars) they have a transform slot of their own, and on 278 a hinge
+and a marker child.
+
+Fix (`DamagePlan._blockers`, `_move_in_turn`): when the mirror can't go under
+the chassis alone, the part records after it among its siblings go there first,
+last one first, as long as none is a mirror, holds a record other than parts
+and markers, or draws a panel through its own transform slot (`drawn`, every
+pair given geometry in a LOD built so far). Each lands after the door's
+subtree, then the mirror between the door and them, all in order. Markers stay
+on the door. The report's mirror entry lists them under `"with"`.
+
+Roster simulation (`out/m193/simulate.py`: `_remount_mirrors` on each built
+car's vanilla host hierarchy with its build report's mounts, swinging panels
+and drawn panels; master's rule reproduces the master build's report exactly):
+292 cars with mirror entries, 473 mirrors moved and 40 kept before, 510 and 3
+after. 37 mirrors on the 22 cars change, all to the chassis, no other car
+changes, and every record's +0x0C bit 0, +0x16 and +0x18 follow the tree.
+Still kept: the BMW V12 LMR's -x mirror (under its bonnet, slot 7, ahead of
+the +x mirror that stays there) and the Radical SR8's two (on the front bumper,
+slot 14, but under the front structure ahead of its headlights and exhausts).
+Both need the mirror records renumbered (vertex s9 bytes 0 and 1 in every
+entry), issue #NNN.
 
 ## Side doors 52/53 (issue #209, 2026-10-29)
 
