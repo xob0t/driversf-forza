@@ -423,6 +423,36 @@ class Tri:
     pts: tuple = ()  # corners (lamp-technique triangles; _red_lens_indicators)
 
 
+def _hull_xy(points):
+    """Convex hull (counter-clockwise, (k, 2)) of points (n, 2): Andrew's monotone chain."""
+    import numpy as np
+
+    pts = sorted(set(map(tuple, np.round(np.asarray(points, float), 5).tolist())))
+    if len(pts) < 3:
+        return np.array(pts, float).reshape(-1, 2)
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower, upper = [], []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    return np.array(lower[:-1] + upper[:-1], float)
+
+
+def _in_hull(hull, xy):
+    """Which points xy (n, 2) lie inside a counter-clockwise convex hull (k, 2)."""
+    a, b = hull, hull[[*range(1, len(hull)), 0]]
+    ex, ey = (b - a)[:, 0][None], (b - a)[:, 1][None]
+    return (ex * (xy[:, 1:2] - a[:, 1][None]) - ey * (xy[:, 0:1] - a[:, 0][None]) >= 0).all(1)
+
+
 def _inside_xy(corners, x: float, y: float):
     """Which triangles (corners (n, 3, 3)) hold the point (x, y) seen along z."""
     a, b, c = corners[:, 0], corners[:, 1], corners[:, 2]
@@ -868,9 +898,10 @@ class LampPlan:
         with a lamp beside it: the VW GTI VR6's bumper fog covers glowed with its head lamps,
         which Forza never lights (issue #174).
 
-        - A rear reflector piece (triangles joined by their corners, CLEAR_PIECE_SNAP) lights with the lamps whose triangles lie
-          inside its outline, within CLEAR_LENS_REACH either way along z (a reflector bowl
-          surrounds its bulb), each triangle with the nearest of them.
+        - A rear reflector piece (triangles joined by their corners, CLEAR_PIECE_SNAP) lights
+          with the lamps whose triangles lie inside its outline along z (its convex hull: a bowl
+          often has a hole where the bulb sits), within CLEAR_LENS_REACH either way along z,
+          each triangle with the nearest of them.
         - A lens or cover triangle lights with the lamp surface right behind it (inside its
           outline along z, up to CLEAR_LENS_REACH deep; lamp triangles and the reflectors lit
           above), the rest of its piece with the nearest of the lamps the piece has behind it.
@@ -959,15 +990,14 @@ class LampPlan:
         lit = []
         for rs in reflectors:
             corners, keys = surface(rs[0].lod, rs[0].front)
-            tri = np.array([r.pts for r in rs], float).reshape(-1, 3, 3)
-            z = tri[:, :, 2].mean(1)
+            pts = np.array([r.pts for r in rs], float).reshape(-1, 3)
+            hull = _hull_xy(pts[:, :2])
             inside = set()
-            for c, key in zip(corners.mean(1), keys):
-                if key in inside:
-                    continue
-                near = np.abs(z - c[2]) < CLEAR_LENS_REACH
-                if near.any() and _inside_xy(tri[near], c[0], c[1]).any():
-                    inside.add(key)
+            if keys and len(hull) >= 3:
+                c = corners.mean(1)
+                z0, z1 = pts[:, 2].min() - CLEAR_LENS_REACH, pts[:, 2].max() + CLEAR_LENS_REACH
+                near = (c[:, 2] > z0) & (c[:, 2] < z1) & _in_hull(hull, c[:, :2])
+                inside = {keys[i] for i in np.nonzero(near)[0]}
             inside = inside or same_section(rs)
             if inside:
                 for r in rs:
