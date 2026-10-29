@@ -232,11 +232,14 @@ def run(
                 args = [(str(before), str(after), c, str(out), views, size) for c in chunks]
                 results = [r for part in pool.map(_worker, args) for r in part]
     results.sort(key=lambda r: -max((c["changed"] for c in r.get("changes") or []), default=0))
+    visible = [r["media"] for r in results if r.get("changes")]
     summary = {
         "before": str(before),
         "after": str(after),
         **counts,
         "rendered": len(todo),
+        "drawn_differently": len(visible),
+        "renders_alike": [r["media"] for r in results if not r.get("changes") and not r.get("error")],
         "seconds": round(time.time() - t0, 1),
         "digest_seconds": round(t_digest, 1),
         "views": list(views),
@@ -286,7 +289,9 @@ def write_sheet(out: Path, width: int = 900) -> Path:
     text = PAGE.format(
         title=html.escape(f"render_compare diff: {s['before']} -> {s['after']}"),
         summary=html.escape(
-            f"{s['changed']} cars changed, {s['unchanged']} unchanged, {len(s['new'])} new, {len(s['gone'])} gone; "
+            f"{s['changed']} cars' drawn data changed ({s.get('drawn_differently')} drawn differently, "
+            f"{len(s.get('renders_alike', []))} rendering alike), {s['unchanged']} unchanged, {len(s['new'])} new, "
+            f"{len(s['gone'])} gone; "
             f"{s['rendered']} rendered in {s['seconds']} s (digests {s['digest_seconds']} s)"
         ),
         cars="".join(parts),

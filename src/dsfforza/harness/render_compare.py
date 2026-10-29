@@ -339,6 +339,9 @@ def render_view(pair: Pair, view: View, size=SIZE) -> dict:
             colour, alpha = cr.shade(scene, frame, lt, rgb_of(scene.lamps, lt), shadow=False)
             out[side][mode] = colour.reshape(h, w, 3)
             out["alpha"][side] = alpha.reshape(h, w)
+            if mode == "dark":  # the dark mood with every lamp off: what the lamps add is the rest
+                base, _ = cr.shade(scene, frame, lt, None, shadow=False)
+                out[side]["dark_base"] = base.reshape(h, w, 3)
     return out
 
 
@@ -493,7 +496,9 @@ def _glow(r: dict, side: str, mode: str) -> np.ndarray:
     and light, lamps off); the dark render itself (no other light to speak of)."""
     if mode == "day_lit":
         return np.maximum(r[side]["day_lit"] - r[side]["day"], 0).max(axis=-1)
-    return r[side][mode].max(axis=-1)
+    if f"{mode}_base" in r[side]:
+        return np.maximum(r[side][mode] - r[side][f"{mode}_base"], 0).max(axis=-1)
+    return r[side][mode].max(axis=-1)  # runs from before dark_base: the dark render itself
 
 
 GLOW_FLOOR = 0.03  # linear luminance: a lamp pixel glowing less than this is unlit
@@ -911,7 +916,7 @@ def load_renders(path: Path) -> dict:
     }
     for key in z.files:
         side, _, mode = key.partition("_")
-        if side in ("ours", "ref") and mode in cr.LIGHTINGS:
+        if side in ("ours", "ref") and (mode in cr.LIGHTINGS or mode == "dark_base"):
             r[side][mode] = z[key].astype(np.float32) / HDR_SCALE
     return r
 
@@ -920,7 +925,8 @@ def _save_images(folder: Path, images: dict, flags: list) -> None:
     for key, r in images.items():
         regions = sorted({f["region"] for f in flags if f["view"] == key and f["region"] in REGIONS})
         for mode in r["ours"]:
-            save_jpeg(folder / f"{key}-{mode}.jpg", pair_image(r, mode, regions))
+            if mode in cr.LIGHTINGS:
+                save_jpeg(folder / f"{key}-{mode}.jpg", pair_image(r, mode, regions))
 
 
 def compare_car(
@@ -996,7 +1002,11 @@ def rescore(run_dir: Path) -> list[dict]:
             images = {p.stem: load_renders(p) for p in stored}
             metrics = {}
             for key, r in images.items():
-                metrics[key] = {"day": region_scores(r, "day")} if key == "cockpit" else score_view(r, r["ours"].keys())
+                metrics[key] = (
+                    {"day": region_scores(r, "day")}
+                    if key == "cockpit"
+                    else score_view(r, [m for m in r["ours"] if m in cr.LIGHTINGS])
+                )
             flags = flags_for(metrics)
             res.update({"metrics": metrics, "flags": flags, "score": car_score(flags)})
             _save_images(folder, images, flags)
@@ -1141,7 +1151,10 @@ def main(argv: list[str] | None = None) -> int:
         s = render_diff.run(
             args.before, args.after, args.out, args.jobs, tuple(args.views.split(",")), (w, h), args.limit
         )
-        print(f"{s['changed']} changed, {s['unchanged']} unchanged ({s['seconds']} s)")
+        print(
+            f"{s['changed']} changed ({s['drawn_differently']} drawn differently, {len(s['renders_alike'])} alike), "
+            f"{s['unchanged']} unchanged ({s['seconds']} s)"
+        )
         for car in s["cars"][:30]:
             top = "; ".join(
                 f"{c['region']} {c['view']} {c['mode']} {c['changed']:.0%}" for c in (car.get("changes") or [])[:3]

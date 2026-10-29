@@ -22,6 +22,9 @@ table{{border-collapse:collapse}} td,th{{padding:1px 8px;text-align:left}} tr:nt
 </style>
 <h1>{title}</h1>
 <p>{summary}</p>
+<h2>Flags over the roster</h2>
+<table><tr><th>region</th><th>flag</th><th>cars</th><th>worst</th></tr>{kinds}</table>
+<h2>Cars, worst first</h2>
 <table><tr><th>#</th><th>car</th><th>score</th><th>worst flags</th></tr>{rows}</table>
 {cars}
 """
@@ -56,14 +59,37 @@ def write(run: Path, top: int = 0, title: str | None = None, width: int = 560) -
             f"<ul>{items}</ul>{''.join(shots)}"
         )
     out = run / "sheet.html"
+    kinds = flag_counts(summary["ranking"])
+    kind_rows = "".join(
+        f"<tr><td>{html.escape(r)}</td><td>{html.escape(w)}</td><td>{len(cars)}</td>"
+        f"<td>{', '.join(f'<a href="#{m}">{m}</a>' for m in cars[:6])}</td></tr>"
+        for (r, w), cars in kinds
+    )
     text = PAGE.format(
         title=html.escape(title or f"render_compare: {summary.get('build')}"),
         summary=html.escape(
             f"{summary['cars']} cars, {summary['errors']} errors, {summary['seconds']} s; views {', '.join(summary['views'])}"
         ),
         rows="".join(rows),
+        kinds=kind_rows,
         cars="".join(cars),
         width=width,
     )
     out.write_text(text, encoding="utf-8")
     return out
+
+
+def flag_counts(ranking: list[dict]) -> list[tuple[tuple[str, str], list[str]]]:
+    """[((region, flag kind), cars worst first)], most cars first; the lit modes' kinds
+    (no_glow_dark, no_glow_day_lit) count as one."""
+    out: dict = {}
+    for car in ranking:
+        seen = set()
+        for f in sorted(car.get("flags") or [], key=lambda f: -f["severity"]):
+            what = f["what"].replace("_day_lit", "").replace("_dark", "")
+            key = (f["region"], what)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.setdefault(key, []).append((f["severity"], car["media"]))
+    return sorted(((k, [m for _, m in sorted(v, reverse=True)]) for k, v in out.items()), key=lambda kv: -len(kv[1]))
