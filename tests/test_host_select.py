@@ -5,6 +5,13 @@ uv run python tests/test_host_select.py     # or: uv run python -m tests host_se
 
 from __future__ import annotations
 
+import sqlite3
+import tempfile
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
+
+from dsfforza.build import forza_roster
 from dsfforza.build import host_select as hs
 
 
@@ -83,6 +90,71 @@ def test_door_count_from_carbin_parts():
     assert hs.door_count(*p308, 2.54, "coupe") is None  # 2-door bodies never get 4
     fiesta = ([(-0.83, -0.69), (-0.62, 0.49), (0.57, 1.23)], [(0.32, 1.61, 0.13, 1.08)], [(0.26, 0.71)])
     assert hs.door_count(*fiesta, 2.50, "hatch") == 2  # vent pane ahead of the door glass
+
+
+def _gamedb(path: Path, media: str) -> Path:
+    """A gamedb.slt with one car: a 2008 V8 RWD saloon (FamilyBodyID 7) of an unknown make."""
+    con = sqlite3.connect(path)
+    con.executescript(
+        "CREATE TABLE Data_Car (Id, MediaName, Year, FamilyBodyID, CurbWeight, DriveTypeID, EngineConfigID,"
+        " CylinderID, SimPeakPower, AspirationTypeId);"
+        "CREATE TABLE List_Cylinders (CylinderID, Number, Rotors);"
+        "CREATE TABLE Data_CarBody (Id);"
+        "INSERT INTO List_Cylinders VALUES (8, 8, 0);"
+    )
+    con.execute("INSERT INTO Data_Car VALUES (1, ?, 2008, 7, 17, 2, 1, 8, 2000, 1)", (media,))
+    con.commit()
+    con.close()
+    return path
+
+
+def _survey_host(spool, doors):
+    return {
+        "id": spool,
+        "model": f"Test_Saloon_{doors}door_2008",
+        "body": "sedan",
+        "doors": doors,
+        "category": 0x10,
+        "category_name": "civilian",
+        "problems": [],
+        "gauges": [1, 2],
+        "wheelbase": 2.8,
+        "mass": 1700.0,
+        "stats": {"Picture1": "zzz_saloon", "Year": 2008, "Cylinders": "V8", "PowerMetric": 200, "Drivetrain": "RWD"},
+    }
+
+
+def test_plan_picks_the_host_the_build_picks():
+    """port_batch's plan and port_car.pick_hosts (the build) pick one host for a car
+    whose carbin says 2 doors while its body class says 4 (issue #239)."""
+    from dsfforza.build import port_batch, port_car
+
+    media = "ZZZ_Saloon_08"
+    hosts = [_survey_host(10, 4), _survey_host(20, 2)]  # alike but for the door count
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        db = _gamedb(tmp / "gamedb.slt", media)
+        cache = tmp / "cache"
+        source = forza_roster.Source("FH1", "FH1", "media/cars/zzz.zip", 0, 0, "car")
+        cars = {media.lower(): forza_roster.Car(media, [source], 2008)}
+        args = SimpleNamespace(host="auto", sound_host=None, dsf=None, allow_special_hosts=False, cache=cache)
+
+        def carbin_doors(folder, name, body=None):
+            return 2 if (Path(folder) / f"{name}.carbin").exists() else None
+
+        with (
+            mock.patch.object(hs, "survey", lambda *a, **k: hosts),
+            mock.patch.object(hs, "_carbin_doors", carbin_doors),
+        ):
+            [before] = port_batch.describe_cars(cars, [(media, None)], None, {"FH1": db}, cache)
+            assert (before.host, before.host_guess) == (10, True)  # not extracted: 4 doors from the class
+
+            folder = port_car.car_folder(cache, "FH1", media)  # as extract_car leaves it
+            folder.mkdir(parents=True)
+            (folder / f"{media}.carbin").write_bytes(b"")
+            [plan] = port_batch.describe_cars(cars, [(media, None)], None, {"FH1": db}, cache)
+            host, _, _ = port_car.pick_hosts(args, media, "FH1", folder, db, [], lambda text: None)
+            assert (plan.host, plan.host_guess) == (host, False) == (20, False)
 
 
 if __name__ == "__main__":

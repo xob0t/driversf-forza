@@ -187,6 +187,7 @@ class Pick:
     counterpart: int | None = None  # vanilla car of the same model (identity 60)
     counterpart_model: str = ""
     spool_id: int | None = None
+    host_guess: bool = False  # car not extracted yet: doors from the body class, the build may pick another host
     notes: list[str] = field(default_factory=list)
     notes_soft: str = ""  # informational (e.g. why no garage ID)
 
@@ -209,11 +210,15 @@ def gamedbs(isos: list[Path], cache: Path) -> dict[str, Path]:
     return out
 
 
-def describe_cars(cars: dict, requests: list[tuple[str, str | None]], dsf: Path, dbs: dict[str, Path]) -> list[Pick]:
+def describe_cars(
+    cars: dict, requests: list[tuple[str, str | None]], dsf: Path, dbs: dict[str, Path], cache: Path | None = None
+) -> list[Pick]:
     """A Pick per (media, game or None) with body class, best host and the vanilla
-    counterpart; unknown names become picks with a note."""
+    counterpart; unknown names become picks with a note. The host is picked as
+    port_car.pick_hosts picks it: the source game's gamedb and the car's extracted
+    folder under `cache` (its carbin's door count, issue #239)."""
     from dsfforza.build import host_select as hs
-    from dsfforza.build.port_car import CarRequest, pick_source
+    from dsfforza.build.port_car import CarRequest, car_folder, pick_source
 
     hosts = hs.survey(dsf)
     picks = []
@@ -227,7 +232,10 @@ def describe_cars(cars: dict, requests: list[tuple[str, str | None]], dsf: Path,
         except SystemExit as error:
             picks.append(Pick(car.name, game or "?", car.year, car.games, {}, notes=[str(error)]))
             continue
-        info = hs.forza_info(rcar.name, dbs, source.game)
+        folder = car_folder(cache, source.game, rcar.name) if cache is not None else None
+        extracted = folder is not None and folder.is_dir()
+        db = dbs.get(source.game)
+        info = hs.forza_info(rcar.name, {source.game: db} if db else None, source.game, folder if extracted else None)
         ranking = hs.rank(info, hosts)
         best = ranking[0]
         counterpart = None
@@ -252,6 +260,7 @@ def describe_cars(cars: dict, requests: list[tuple[str, str | None]], dsf: Path,
                 host_score=best.score,
                 counterpart=counterpart["id"] if counterpart else None,
                 counterpart_model=counterpart["model"] if counterpart else "",
+                host_guess=not extracted and info.body in hs.DOOR_RULE_BODIES,
                 notes=[] if not best.excluded else [f"no usable host ({best.excluded})"],
             )
         )
@@ -280,7 +289,7 @@ def select(args, cars: dict, dsf: Path, dbs: dict[str, Path]) -> list[Pick]:
             for c in sorted(cars.values(), key=lambda c: c.name.lower())
             if not args.game or args.game.upper() in c.games.split(",")
         ]
-    picks = describe_cars(cars, requests, dsf, dbs)
+    picks = describe_cars(cars, requests, dsf, dbs, args.cache)
     excluded = {e.lower() for e in args.exclude or []}
     makes = {m.strip().lower() for m in (args.make or "").split(",") if m.strip()}
     bodies = {b.strip().lower() for b in (args.body or "").split(",") if b.strip()}
@@ -1089,13 +1098,16 @@ def print_plan(picks: list[Pick]) -> None:
     print(f"{'ID':>4}  {'car':30} {'game':4} {'year':4}  {'body':11} {'drive':5} {'kW':>5}  host / counterpart")
     for p in picks:
         cp = f"   vanilla {p.counterpart} {p.counterpart_model}" if p.counterpart else ""
-        host = f"{p.host} {p.host_model[:26]} ({p.host_score:.0f})" if p.host else "-"
+        guess = "?" if p.host_guess else ""
+        host = f"{p.host} {p.host_model[:26]} ({p.host_score:.0f}{guess})" if p.host else "-"
         print(
             f"{p.spool_id or '':>4}  {p.media:30} {p.game:4} {p.year or '':4}  {p.body:11} {p.drive or '':5} "
             f"{p.power_kw or 0:5.0f}  {host}{cp}"
             + (f"  !! {'; '.join(p.notes)}" if p.notes else "")
             + (f"  ({p.notes_soft})" if p.notes_soft else "")
         )
+    if any(p.host_guess and p.host for p in picks):
+        print("(score?): car not extracted yet, its door count from the body class; the build may pick another host")
 
 
 def cmd_plan(args) -> None:

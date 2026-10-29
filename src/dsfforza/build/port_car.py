@@ -311,9 +311,14 @@ def colour_variants(names: set[str], written: set[str]) -> dict[str, str]:
     return out
 
 
+def car_folder(cache: Path, game: str, media: str) -> Path:
+    """cache/<game>/<media>/: where extract_car puts a car's files."""
+    return cache / game.lower() / media
+
+
 def extract_car(source: Source, media: str, cache: Path, log=print) -> Path:
     """Extract the files the conversion needs into cache/<game>/<media>/."""
-    folder = cache / source.game.lower() / media
+    folder = car_folder(cache, source.game, media)
     stamp = folder / "source.json"
     try:
         old = json.loads(stamp.read_text())
