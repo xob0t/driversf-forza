@@ -445,9 +445,9 @@ def _read_car(con, car: sqlite3.Row, db: Path) -> ForzaCar:
     weight = con.execute(
         "SELECT * FROM List_UpgradeCarBodyWeight WHERE CarBodyId = ? AND IsStock = 1", (body_id,)
     ).fetchone()
-    drivetrain_id = _one(
-        con, "SELECT DrivetrainID FROM List_UpgradeDrivetrain WHERE Ordinal = ? AND IsStock = 1", cid
-    )[0]
+    drivetrain_id = _one(con, "SELECT DrivetrainID FROM List_UpgradeDrivetrain WHERE Ordinal = ? AND IsStock = 1", cid)[
+        0
+    ]
     drive = DRIVE_TYPES[_one(con, "SELECT DrivetypeID FROM Data_Drivetrain WHERE DrivetrainID = ?", drivetrain_id)[0]]
     gearbox = _one(
         con, "SELECT * FROM List_UpgradeDrivetrainTransmission WHERE DrivetrainID = ? AND IsStock = 1", drivetrain_id
