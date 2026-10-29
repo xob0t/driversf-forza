@@ -487,3 +487,21 @@ def test_head_lamp_technique_at_the_rear_is_no_head_lamp():
     for sec in bulbs:
         keys = {plan.tri_lamp.get((id(sec.subsections[0]), k)) for k in range(2)}
         assert {k[0] for k in keys} == {lights.TAIL}, keys
+
+
+def test_a_lamp_the_red_move_empties_takes_no_entry():
+    # Issue #264: reverse lamps whose triangles are all drawn red move to the tail lamp (#103) and
+    # held their entries empty (the BMW M3 E30's, Audi RS6's and Peugeot 207s'); left free, the
+    # entries go to lamps that light.
+    from dsfforza.formats import upvh as uv
+
+    car = [_quad("revL", "reverse_light", 0.4, -2.0), _quad("revR", "reverse_light", -0.4, -2.0)] + TAILS
+    by_sub = {id(sub): "red" for sec in car for sub in sec.subsections}
+    parse, uv.parse = uv.parse, lambda data: _Upvh(4, [(0.6, -2.0), (-0.6, -2.0), (0.4, -2.0), (-0.4, -2.0)])
+    try:
+        plan = lights.LampPlan.build(car, _Place(), 0.0, seen=lambda sec, sub, tri: by_sub[id(sub)]).assign(b"")
+    finally:
+        uv.parse = parse
+    reverse = [l for l in plan.lamps.values() if l.function == lights.REVERSE]
+    assert reverse and all(l.light_id is None for l in reverse), [(l.side, l.light_id) for l in reverse]
+    assert sum(1 for _, _, lamp in plan.slots if lamp is not None) == 2

@@ -1186,8 +1186,11 @@ class LampPlan:
             o = base + i * 0x40
             entries.append((o, struct.unpack_from("<I", h.data, o + 40)[0]))
         place = {e: entry_place(h.data, e[0]) for e in entries}
+        # Lamps the red-drawn texel move emptied (_place_clear: the BMW M3 E30's, Audi RS6's and
+        # Peugeot 207s' reverse lamps, all their triangles red) take no entry (#264).
+        drawn = set(self.tri_lamp.values())
         order = sorted(
-            (l for l in self.lamps.values() if l.area),
+            (l for k, l in self.lamps.items() if l.area and k in drawn),
             key=lambda l: (PRIORITY.get(l.function, 9) + 10 * min(l.cluster, 1), not l.front, l.side),
         )
         free = list(entries)
