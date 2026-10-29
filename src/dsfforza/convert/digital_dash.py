@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import itertools
 import math
+import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -50,9 +51,13 @@ BAR_MAX = 0.49  # largest threshold (rpm at the redline gives 0.5)
 
 @dataclass
 class Quad:
-    corners: list  # 4 Forza-space points, in order round the quad
-    uvs: list  # 4 (u, v) texture coordinates
+    corners: list  # 4 Forza-space points, in order round the quad (more for a bar piece)
+    uvs: list  # a (u, v) texture coordinate per corner
     slot: tuple  # (id, comp)
+    tris: list | None = None  # triangles over the corners; None: the quad's two
+
+    def triangles(self) -> list:
+        return self.tris if self.tris is not None else [(0, 1, 2), (0, 2, 3)]
 
 
 @dataclass
@@ -154,13 +159,13 @@ def vertices(plan: DigitalPlan, place, stride: int) -> tuple[list[bytes], list[t
     verts, tris = [], []
     for q in plan.quads:
         uvs = q.uvs
-        a, b, c = q.corners[0], q.corners[1], q.corners[2]
+        a, b, c = (q.corners[i] for i in q.triangles()[0])
         n = cockpit._norm(cockpit._cross(cockpit._sub(b, a), cockpit._sub(c, a)))
         base = len(verts)
         for p, uv in zip(q.corners, uvs, strict=True):
             verts.append(cockpit._needle_vertex(place.point(p), uv, q.slot[0], place.normal(n), stride, q.slot[1]))
-        tris += [(base, base + 1, base + 2), (base, base + 2, base + 3)]
-        tris += [(base, base + 2, base + 1), (base, base + 3, base + 2)]
+        tris += [(base + i, base + j, base + k) for i, j, k in q.triangles()]
+        tris += [(base + i, base + k, base + j) for i, j, k in q.triangles()]
     return verts, tris
 
 
@@ -178,6 +183,24 @@ CELL_MARGIN = 2  # texels kept clear round each digit/gear cell
 # are stored in 1/4096 m (0.24 mm) steps, so layers sit 0.8 mm apart or more.
 PIECE_LIFT = 0.0008
 DIGIT_LIFT = 0.0016
+# Bar pieces are cells this size (m) at the least, each with its pixels' mean colours.
+# Forza's bars have detail finer than a screen pixel (the S2000's arc is radial stripes
+# 1 to 2 render-target pixels wide, 0.27 mm). Drawn as pieces, those were thinner than
+# the 0.24 mm position step and than a pixel, and shimmered as the head camera moved
+# (issue #188). 1 mm is about a pixel in the cockpit view at 1600 x 900 (the S2000's
+# 255 mm display spans 340 pixels) and 4 position steps; the vanilla Zonda's rpm
+# segments are 1.6 mm at their thinnest. Coarser cells (1.5 mm) shimmered no less and
+# blurred the Viper 2013's fan more.
+PIECE_SIZE = 0.001
+CELL_SHOWN = 0.9  # share of a cell on the displays' triangles for it to be drawn
+EDGE_SHOWN = 0.6  # share of an edge piece's box on the display
+SEGMENT_STEPS = 6  # rpm steps a segment may light over (it lights at their median; GranTurismo S: 4 to 5)
+SEGMENT_HULL = 1.3  # a group lit at one step is a segment when its convex hull is at most this x its area
+SEGMENT_FOREIGN = 0.08  # share of a segment's hull that may be other lit pixels (antialiased rims)
+SEGMENT_DETAIL = 0.02  # ... and static detail or pixels off the display
+STATIC_DETAIL = 0.2  # rest luminance (0..1) off the bar's that makes a never-lit pixel detail
+STATIC_SHARE = 0.05  # share of a cell that may be static detail for it to be drawn
+CELL_BLUR = 0.4  # cell colours are blurred first, by a Gaussian this many cells wide (sigma)
 CHANGES = 2  # colour changes per pixel the rpm makes (rest -> lit -> warning)
 # The digital dials draw their texel unlit (shader program 163 has no light term) in a
 # dim, lit cabin, and the game's tone curve flattens bright texels: the Panoz's face at
@@ -311,50 +334,365 @@ def _palette(colours, k: int):
     return centres, labels
 
 
-def _runs_to_rects(mask, slack: int = 2, forbid=None):
-    """Rectangles (x0, x1, y0, y1), pixel edges, covering a boolean mask: runs per row,
-    merged down while a run stays within `slack` pixels of the rectangle above (which
-    then grows to hold it), and while the grown rectangle takes in no `forbid` pixel
-    (another piece's: two pieces in one plane z-fight where they overlap)."""
-    if forbid is not None:  # summed-area table: forbidden pixels in a box in O(1)
-        sat = np.zeros((mask.shape[0] + 1, mask.shape[1] + 1), np.int64)
-        sat[1:, 1:] = np.cumsum(np.cumsum(forbid & ~mask, 0), 1)
+def pixel_size(patches: list) -> float:
+    """Metres per render-target pixel on the finest of the displays (0 if none has area)."""
+    best = 0.0
+    for p in patches:
+        area3, area2 = 0.0, 0.0
+        for tri, uvs in zip(p.points, p.uv0, strict=True):
+            a, b, c = (np.asarray(q, float) for q in tri)
+            area3 += float(np.linalg.norm(np.cross(b - a, c - a))) / 2
+            (ax, ay), (bx, by), (cx, cy) = (p.rt(uv) for uv in uvs)
+            area2 += abs((bx - ax) * (cy - ay) - (cx - ax) * (by - ay)) / 2
+        if area3 > 0 and area2 > 0:
+            size = math.sqrt(area3 / area2)
+            best = size if not best else min(best, size)
+    return best
 
-    def clear(x0, x1, y0, y1):
-        if forbid is None:
-            return True
-        return sat[y1, x1] - sat[y0, x1] - sat[y1, x0] + sat[y0, x0] == 0
 
-    rects, open_ = [], []  # open: [x0, x1, y0, last row]
-    for y in range(mask.shape[0]):
-        row = mask[y]
-        runs = []
-        if row.any():
-            edges = np.flatnonzero(np.diff(np.concatenate([[0], row.astype(np.int8), [0]])))
-            runs = [(int(a), int(b)) for a, b in zip(edges[0::2], edges[1::2], strict=True)]
-        still = []
-        for x0, x1 in runs:
-            match = next(
-                (
-                    r
-                    for r in open_
-                    if r[3] == y - 1
-                    and abs(r[0] - x0) <= slack
-                    and abs(r[1] - x1) <= slack
-                    and clear(min(r[0], x0), max(r[1], x1), r[2], y + 1)
-                ),
-                None,
-            )
-            if match is not None:
-                open_.remove(match)
-                match[0], match[1], match[3] = min(match[0], x0), max(match[1], x1), y
-                still.append(match)
-            else:
-                still.append([x0, x1, y, y])
-        rects += [(r[0], r[1], r[2], r[3] + 1) for r in open_]
-        open_ = still
-    rects += [(r[0], r[1], r[2], r[3] + 1) for r in open_]
-    return rects
+def _blocks(a, c: int):
+    """Sums of `a` over c x c blocks of its first two axes (padded with zeros)."""
+    h, w = a.shape[:2]
+    rows, cols = -(-h // c), -(-w // c)
+    a = np.pad(a, [(0, rows * c - h), (0, cols * c - w)] + [(0, 0)] * (a.ndim - 2))
+    return a.reshape(rows, c, cols, c, *a.shape[2:]).sum((1, 3))
+
+
+def _block_values(a, c: int, fill):
+    """(rows, cols, c * c): each block's values of a 2-D array (padded with `fill`)."""
+    h, w = a.shape
+    rows, cols = -(-h // c), -(-w // c)
+    a = np.pad(a, [(0, rows * c - h), (0, cols * c - w)], constant_values=fill)
+    return a.reshape(rows, c, cols, c).transpose(0, 2, 1, 3).reshape(rows, cols, c * c)
+
+
+def _blur(a, weight, sigma: float):
+    """`a` (H, W, 3) blurred by a Gaussian of `sigma` pixels, each pixel counted by its
+    `weight` (H, W): pixels of weight 0 (off the displays) don't bleed in."""
+    if sigma <= 0:
+        return a
+    r = int(math.ceil(3 * sigma))
+    k = np.exp(-0.5 * (np.arange(-r, r + 1) / sigma) ** 2).astype(np.float32)
+    num, den = a * weight[..., None], weight[..., None].astype(np.float32)
+    for axis in (0, 1):
+        pad = [(0, 0)] * 3
+        pad[axis] = (r, r)
+        pn, pd = np.pad(num, pad), np.pad(den, pad)
+        n = a.shape[axis]
+        num = sum(k[t] * np.take(pn, range(t, t + n), axis=axis) for t in range(2 * r + 1))
+        den = sum(k[t] * np.take(pd, range(t, t + n), axis=axis) for t in range(2 * r + 1))
+    return num / np.maximum(den, 1e-6)
+
+
+def static_detail(base, ev_step, shown, c: int):
+    """Shown pixels the rpm never changes that stand out from the bar at rest (the
+    Viper 2013's numerals and ticks over its lit fan): a cell over them would draw them
+    as its mean colour. Their rest luminance differs by STATIC_DETAIL or more from the
+    mean rest luminance of the lit pixels near them (5 cells round)."""
+    lum = base[..., :3] @ np.array([0.299, 0.587, 0.114], np.float32)
+    lit = (ev_step[0] >= 0).astype(np.float32)
+    near = _blur((lum * lit)[..., None].repeat(3, -1), lit, 2.5 * c)[..., 0]
+    seen = _blur(lit[..., None].repeat(3, -1), np.ones_like(lit), 2.5 * c)[..., 0] > 0.01
+    return shown & (ev_step[0] < 0) & seen & (np.abs(lum - near) >= STATIC_DETAIL)
+
+
+def bar_cells(base, ev_step, ev_col, shown, c: int, blocked=None):
+    """What the rpm changes, filtered onto cells of c x c render-target pixels: (rest,
+    colours, steps, drawn). Per cell, `rest` and each `colours[level]` are the mean colours
+    of its shown pixels at rest and after each change (pixels that don't change keep their
+    colour), blurred first: detail finer than a cell (the S2000's stripes, 3.5 pixels
+    apart in cells of 4) would otherwise beat with the cells into a mottle of two shades.
+    `steps[0]` is the median step its pixels first change at, and
+    `steps[1]` the step of the second change if at least half of them have one (else -1).
+    A cell is `drawn` when it is CELL_SHOWN on the displays, changes visibly, holds no more
+    than STATIC_SHARE of static detail and no `blocked` pixel."""
+    weight = shown.astype(np.float32)
+    n = _blocks(weight, c)
+    per = np.maximum(n, 1)[..., None]
+    sigma = CELL_BLUR * c if c > 1 else 0.0
+    rest = _blocks(_blur(base[..., :3], weight, sigma) * weight[..., None], c) / per
+    state, colours = base[..., :3], []
+    for level in range(CHANGES):
+        state = np.where((ev_step[level] >= 0)[..., None], ev_col[level], state)
+        colours.append(_blocks(_blur(state, weight, sigma) * weight[..., None], c) / per)
+    first = _block_values(np.where(ev_step[0] >= 0, ev_step[0], -1), c, -1).astype(np.float32)
+    lit = first >= 0
+    count = lit.sum(-1)
+    with warnings.catch_warnings():  # cells with no lit pixel: all-NaN medians
+        warnings.simplefilter("ignore", RuntimeWarning)
+        steps = [np.nanpercentile(np.where(lit, first, np.nan), 50, axis=-1, method="lower")]
+        for level in range(1, CHANGES):
+            later = _block_values(ev_step[level], c, -1).astype(np.float32)
+            gap = np.where(lit & (later >= 0), later - first, np.nan)
+            has = (later >= 0).sum(-1) * 2 >= np.maximum(count, 1)
+            mid = np.nanpercentile(gap, 50, axis=-1, method="lower")
+            steps.append(np.where(has & (count > 0), steps[0] + mid, np.nan))
+    steps = np.stack([np.where(np.isnan(s), -1, s) for s in steps]).astype(np.int32)
+    change = np.abs(colours[0] - rest).max(-1)
+    detail = static_detail(base, ev_step, shown, c)
+    covers = _blocks(detail.astype(np.float32), c) > STATIC_SHARE * c * c
+    if blocked is not None:  # pixels another piece covers: no overlap at all
+        covers |= _blocks(blocked.astype(np.float32), c) > 0
+    drawn = (count > 0) & (n >= CELL_SHOWN * c * c) & (change > LIT_DIFFERENCE) & ~covers
+    steps[:, ~drawn] = -1
+    return rest, np.stack(colours), steps, drawn
+
+
+def cell_runs(step, column, drawn) -> list:
+    """Per row of cells, the runs (j0, j1, step, column) of drawn cells with one step and
+    one column."""
+    rows = []
+    for i in range(drawn.shape[0]):
+        runs, j = [], 0
+        while j < drawn.shape[1]:
+            if not drawn[i, j]:
+                j += 1
+                continue
+            j1 = j + 1
+            while j1 < drawn.shape[1] and drawn[i, j1] and (step[i, j1], column[i, j1]) == (step[i, j], column[i, j]):
+                j1 += 1
+            runs.append((j, j1, int(step[i, j]), int(column[i, j])))
+            j = j1
+        rows.append(runs)
+    return rows
+
+
+def _labels(mask):
+    """The 8-connected groups of a boolean mask: (label image, -1 off the mask; their
+    bounding boxes (x0, x1, y0, y1) by label)."""
+    labels = np.full(mask.shape, -1, np.int32)
+    boxes = []
+    for y, x in zip(*np.nonzero(mask), strict=True):
+        if labels[y, x] >= 0:
+            continue
+        n = len(boxes)
+        labels[y, x] = n
+        todo, box = [(y, x)], [x, x + 1, y, y + 1]
+        while todo:
+            cy, cx = todo.pop()
+            box = [min(box[0], cx), max(box[1], cx + 1), min(box[2], cy), max(box[3], cy + 1)]
+            for ny in range(max(0, cy - 1), min(mask.shape[0], cy + 2)):
+                for nx in range(max(0, cx - 1), min(mask.shape[1], cx + 2)):
+                    if mask[ny, nx] and labels[ny, nx] < 0:
+                        labels[ny, nx] = n
+                        todo.append((ny, nx))
+        boxes.append(tuple(int(v) for v in box))
+    return labels, boxes
+
+
+def _components(mask) -> list:
+    """Bounding boxes (x0, x1, y0, y1) of the 8-connected groups of a boolean mask."""
+    return _labels(mask)[1]
+
+
+def _hull(group, x0: int, y0: int, corners: bool = True) -> list:
+    """Convex hull of the True pixels of `group` (a mask whose top left pixel is (x0, y0)):
+    of their corners (a polygon covering them), or of their centres."""
+    g = np.pad(group, 1)
+    edge = group & ~(g[:-2, 1:-1] & g[2:, 1:-1] & g[1:-1, :-2] & g[1:-1, 2:])
+    ys, xs = np.nonzero(edge)
+    offsets = ((0, 0), (0, 1), (1, 0), (1, 1)) if corners else ((0.5, 0.5),)
+    pts = sorted(
+        {(x0 + x + dx, y0 + y + dy) for x, y in zip(xs.tolist(), ys.tolist(), strict=True) for dx, dy in offsets}
+    )
+    if len(pts) < 3:
+        return pts
+
+    def turn(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    def half(points):
+        out = []
+        for q in points:
+            while len(out) >= 2 and turn(out[-2], out[-1], q) <= 0:
+                out.pop()
+            out.append(q)
+        return out
+
+    lower, upper = half(pts), half(pts[::-1])
+    return lower[:-1] + upper[:-1]
+
+
+def _area(poly) -> float:
+    return abs(sum(a[0] * b[1] - b[0] * a[1] for a, b in zip(poly, poly[1:] + poly[:1], strict=True))) / 2
+
+
+def _polygon_mask(poly, box):
+    """Pixels of `box` (x0, x1, y0, y1) whose centres are inside the polygon."""
+    from PIL import Image, ImageDraw
+
+    x0, x1, y0, y1 = box
+    img = Image.new("L", (x1 - x0, y1 - y0), 0)
+    ImageDraw.Draw(img).polygon([(x - x0 - 0.5, y - y0 - 0.5) for x, y in poly], fill=255)
+    return np.asarray(img) > 0
+
+
+def _means(base, ev_step, ev_col, on, box, k: int):
+    """(rest, colours, steps) of a piece lit at step k over the pixels `on` (a mask of
+    `box`): their mean colours at rest and after each change, like bar_cells' cells; None
+    if they hardly change."""
+    x0, x1, y0, y1 = box
+    on = on.reshape(-1)
+    if not on.any():
+        return None
+    rest = base[y0:y1, x0:x1, :3].reshape(-1, 3)[on].mean(0)
+    state, colours = base[y0:y1, x0:x1, :3], []
+    for level in range(CHANGES):
+        state = np.where((ev_step[level][y0:y1, x0:x1] >= 0)[..., None], ev_col[level][y0:y1, x0:x1], state)
+        colours.append(state.reshape(-1, 3)[on].mean(0))
+    if np.abs(colours[0] - rest).max() <= LIT_DIFFERENCE:
+        return None
+    first = ev_step[0][y0:y1, x0:x1].reshape(-1)[on]
+    steps, lit = [int(k)], first >= 0
+    for level in range(1, CHANGES):
+        later = ev_step[level][y0:y1, x0:x1].reshape(-1)[on]
+        has = lit & (later >= 0)
+        steps.append(int(k + np.median(later[has] - first[has])) if has.sum() * 2 >= max(1, lit.sum()) else -1)
+    return rest, np.stack(colours), steps
+
+
+def _rect(box) -> list:
+    x0, x1, y0, y1 = box
+    return [(x0, y1), (x1, y1), (x1, y0), (x0, y0)]
+
+
+def _segment_labels(mask):
+    """The parts of a boolean mask joined only by bridges a pixel or two wide (the
+    antialiased pixels under a segmented bar's separators): the mask opened (eroded by a
+    pixel, labelled, grown back by two inside the mask). Pixels of no part are -1."""
+    m = np.pad(mask, 1)
+    core = mask & m[:-2, 1:-1] & m[2:, 1:-1] & m[1:-1, :-2] & m[1:-1, 2:]
+    labels, _ = _labels(core)
+    for _ in range(2):
+        grown = labels.copy()
+        for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            shifted = np.full(labels.shape, -1, np.int32)
+            ys = slice(max(0, dy), labels.shape[0] + min(0, dy))
+            yd = slice(max(0, -dy), labels.shape[0] + min(0, -dy))
+            xs = slice(max(0, dx), labels.shape[1] + min(0, dx))
+            xd = slice(max(0, -dx), labels.shape[1] + min(0, -dx))
+            shifted[yd, xd] = labels[ys, xs]
+            take = mask & (grown < 0) & (shifted >= 0)
+            grown[take] = shifted[take]
+        labels = grown
+    count = int(labels.max()) + 1
+    ys, xs = np.nonzero(labels >= 0)
+    ns = labels[ys, xs]
+    lo_x, lo_y = np.full(count, labels.shape[1]), np.full(count, labels.shape[0])
+    hi_x, hi_y = np.zeros(count, int), np.zeros(count, int)
+    np.minimum.at(lo_x, ns, xs)
+    np.minimum.at(lo_y, ns, ys)
+    np.maximum.at(hi_x, ns, xs + 1)
+    np.maximum.at(hi_y, ns, ys + 1)
+    return labels, [(int(a), int(b), int(c), int(d)) for a, b, c, d in zip(lo_x, hi_x, lo_y, hi_y, strict=True)]
+
+
+def bar_segments(base, ev_step, ev_col, shown, detail, c: int):
+    """Segments: parts of what the rpm lights (`_segment_labels`: joined to the rest by
+    bridges a pixel or two wide at most) lit within SEGMENT_STEPS steps and nearly convex,
+    each one piece over its convex hull, lit at its median step: shift lights and LEDs (the Zonda
+    Cinque's, on displays of their own), the segments of segmented bars (GranTurismo S,
+    599XX, LP700-4). Cells would cut a segment into parts, each mostly off a light's
+    display or over the separators between segments. The hull is the segment's core's
+    (its rim may reach over a separator); it takes in at most SEGMENT_FOREIGN of other
+    lit pixels or earlier segments and SEGMENT_DETAIL of static detail or pixels off the
+    display. Specks under half a cell (a needle's trace) are left to the cells,
+    which average them as the eye would. Returns ([(outline, rest, colours, steps)], the
+    pixels the segments cover)."""
+    first = ev_step[0]
+    labels, boxes = _segment_labels(first >= 0)
+    covered = np.zeros(first.shape, bool)
+    out = []
+    for n, (x0, x1, y0, y1) in enumerate(boxes):
+        group = labels[y0:y1, x0:x1] == n
+        s = first[y0:y1, x0:x1][group]
+        if s.max() - s.min() > SEGMENT_STEPS or min(x1 - x0, y1 - y0) < c / 2 or group.sum() < c * c / 4:
+            continue
+        outline = _hull(group, x0, y0)
+        if len(outline) < 3 or _area(outline) > SEGMENT_HULL * group.sum():
+            continue  # not convex (an arc lit at one step): cells
+        # The piece covers the segment's core (pixels whose 4 neighbours are lit too): its
+        # antialiased rim may reach over a separator.
+        lit = np.pad(first >= 0, 1)[y0 : y1 + 2, x0 : x1 + 2]
+        core = group & lit[:-2, 1:-1] & lit[2:, 1:-1] & lit[1:-1, :-2] & lit[1:-1, 2:]
+        if core.sum() < 3:
+            continue
+        hull = _hull(core, x0, y0)
+        box = (x0, x1, y0, y1)
+        inside = _polygon_mask(_hull(core, x0, y0, corners=False), box) | core
+        if (
+            len(hull) < 3
+            or (inside & (detail[y0:y1, x0:x1] | ~shown[y0:y1, x0:x1])).sum() > SEGMENT_DETAIL * inside.sum()
+        ):
+            continue
+        other = (labels[y0:y1, x0:x1] != n) & (first[y0:y1, x0:x1] >= 0) | covered[y0:y1, x0:x1]
+        if (inside & other).sum() > SEGMENT_FOREIGN * inside.sum():
+            continue
+        m = _means(base, ev_step, ev_col, group, box, int(np.median(s)))
+        if m is None:
+            continue
+        covered[y0:y1, x0:x1] |= inside | group
+        out.append((hull, *m))
+    return out, covered
+
+
+def edge_pieces(base, ev_step, ev_col, shown, in_cell, c: int) -> list:
+    """The rpm's changes the segments and cells leave out (a bar along a display's edge,
+    where cells are mostly off the display), per step and connected group as one
+    rectangle: its box if EDGE_SHOWN of it is on the display, else the rows and columns of
+    the box CELL_SHOWN shown. Each is off every drawn cell and earlier piece, a cell or
+    more on each side (no slivers), and takes the mean colours of its shown pixels:
+    [(outline, rest, colours, steps)] like bar_segments."""
+    first = ev_step[0]
+    taken = in_cell | static_detail(base, ev_step, shown, c)  # drawn cells, detail, then each edge piece
+    left = (first >= 0) & ~taken
+    out = []
+    for k in np.unique(first[left]):
+        for box in _components(left & (first == k)):
+            x0, x1, y0, y1 = box
+            if taken[y0:y1, x0:x1].any() or shown[y0:y1, x0:x1].mean() < EDGE_SHOWN:
+                free = shown & ~taken
+                (a, b), (t, u) = _shown_box(free, box, CELL_SHOWN)
+                x0, x1, y0, y1 = int(math.floor(a)), int(math.ceil(b)), int(math.floor(t)), int(math.ceil(u))
+                if x1 <= x0 or y1 <= y0 or not free[y0:y1, x0:x1].all():
+                    continue
+            if min(x1 - x0, y1 - y0) < c:
+                continue
+            m = _means(base, ev_step, ev_col, shown[y0:y1, x0:x1], (x0, x1, y0, y1), int(k))
+            if m is None:
+                continue
+            taken[y0:y1, x0:x1] = True
+            out.append((_rect((x0, x1, y0, y1)), *m))
+    return out
+
+
+def run_outline(rows: list, i: int, run: tuple) -> tuple[list, list]:
+    """The x (cell edges) along the top and the bottom of run `run` of row `i`: its ends
+    and every end of the rows above and below inside it. Neighbouring pieces then share
+    every vertex along their common edges, with no T-junction: positions are rounded to
+    1/4096 m, and a vertex rounded off its neighbour's edge opens a crack."""
+
+    def chain(other):
+        inner = {e for r in other for e in r[:2] if run[0] < e < run[1]}
+        return sorted({run[0], run[1]} | inner)
+
+    above = rows[i - 1] if i > 0 else []
+    below = rows[i + 1] if i + 1 < len(rows) else []
+    return chain(above), chain(below)
+
+
+def zipper(top: list, bottom: list) -> list:
+    """Triangles over a strip between two chains of x that start and end together:
+    corners 0..len(top)-1 along the top, then the bottom's."""
+    tris, i, j, n = [], 0, 0, len(top)
+    while i < len(top) - 1 or j < len(bottom) - 1:
+        if j == len(bottom) - 1 or (i < len(top) - 1 and top[i + 1] <= bottom[j + 1]):
+            tris.append((i, i + 1, n + j))
+            i += 1
+        else:
+            tris.append((i, n + j + 1, n + j))
+            j += 1
+    return tris
 
 
 def _shown_spans(slots: list) -> list:
@@ -707,9 +1045,23 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
     shown = coverage(patches, view, wid, hgt)
     report["rpm_pixels_off_display"] = int(((ev_step[0] >= 0) & ~shown).sum())
     ev_step[:, ~shown] = -1
-    lit = ev_step[0] >= 0
-    report["rpm_pixels"] = int(lit.sum())
+    report["rpm_pixels"] = int((ev_step[0] >= 0).sum())
     report["flicker_pixels"] = int(flicker.sum())
+    # The bar pieces are drawn from cells no finer than PIECE_SIZE, box-filtered.
+    size = pixel_size(patches)
+    cell_px = max(1, math.ceil(PIECE_SIZE / size - 1e-6)) if size else 1
+    detail = static_detail(base1, ev_step, shown, cell_px)
+    segments, covered = bar_segments(base1, ev_step, ev_col, shown, detail, cell_px)
+    rest_step = ev_step.copy()  # what the segments leave to the cells
+    rest_step[:, covered] = -1
+    g_rest, g_col, g_step, lit = bar_cells(base1, rest_step, ev_col, shown, cell_px, covered)
+    # lit pixels in no drawn cell (cells mostly off the display, or hardly changing)
+    in_cell = np.repeat(np.repeat(lit, cell_px, 0), cell_px, 1)[:hgt, :wid] | covered
+    edges = segments + edge_pieces(base1, rest_step, ev_col, shown, in_cell, cell_px)
+    for outline, *_ in edges[len(segments) :]:
+        (x0, y1), (x1, _), _, (_, y0) = outline
+        in_cell[y0:y1, x0:x1] = True
+    report["rpm_pixels_left_out"] = int(((ev_step[0] >= 0) & ~in_cell).sum())
 
     # Texture: columns on the right, the artwork on the left. The digital dials draw
     # opaque (no alpha test), so every cell carries the artwork under it.
@@ -724,15 +1076,19 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
             cols.append((kind, j, x, w))
     # Bar columns: one per (rest, first, second colour, steps between the changes).
     signatures, sig_img = {}, None
-    if lit.any():
-        states = [base1[lit]] + [ev_col[level][lit] for level in range(CHANGES)]
+    if lit.any() or edges:
+        # cells first, then the edge pieces
+        e_rest = np.array([e[1] for e in edges], np.float32).reshape(-1, 3)
+        e_col = np.array([e[2] for e in edges], np.float32).reshape(-1, CHANGES, 3)
+        e_step = np.array([e[3] for e in edges], np.int32).reshape(-1, CHANGES)
+        st = [np.concatenate([g_step[level][lit], e_step[:, level]]) for level in range(CHANGES)]
+        states = [np.concatenate([g_rest[lit], e_rest])]
+        states += [np.concatenate([g_col[level][lit], e_col[:, level]]) for level in range(CHANGES)]
         palette, labels = _palette(np.concatenate(states), PALETTE)
-        n = int(lit.sum())
+        n = len(states[0])
         lab = [labels[i * n : (i + 1) * n] for i in range(CHANGES + 1)]
-        later = [np.where(ev_step[level][lit] >= 0, lab[level + 1], -1) for level in range(1, CHANGES)]
-        gaps = [
-            np.where(ev_step[level][lit] >= 0, ev_step[level][lit] - ev_step[0][lit], -1) for level in range(1, CHANGES)
-        ]
+        later = [np.where(st[level] >= 0, lab[level + 1], -1) for level in range(1, CHANGES)]
+        gaps = [np.where(st[level] >= 0, st[level] - st[0], -1) for level in range(1, CHANGES)]
         keys = np.stack([lab[0], lab[1], *later, *gaps], 1)
         uniq, inverse, freq = np.unique(keys, axis=0, return_counts=True, return_inverse=True)
         room = max(0, min(MAX_BAR_COLUMNS, (x - 256) // COLUMN))
@@ -744,12 +1100,16 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
                 signatures[s_idx] = tuple(int(v) for v in uniq[s_idx])
         fold = {}
         for s_idx in range(len(uniq)):
-            if s_idx not in keep:  # the most common kept column with the same first change
+            if s_idx not in keep:  # the most common kept column with the same first change,
                 same = [k for k in order[:room] if tuple(uniq[k][:2]) == tuple(uniq[s_idx][:2])]
+                if not same and room:  # else the nearest in rest and lit colour (a hole otherwise)
+                    near = [((palette[uniq[k][:2]] - palette[uniq[s_idx][:2]]) ** 2).sum() for k in order[:room]]
+                    same = [order[int(np.argmin(near))]]
                 fold[s_idx] = int(same[0]) if same else -1
         inverse = np.array([fold.get(int(k), int(k)) for k in inverse.ravel()])
-        sig_img = np.full((hgt, wid), -1, np.int32)
-        sig_img[lit] = inverse
+        sig_img = np.full(lit.shape, -1, np.int32)
+        sig_img[lit] = inverse[: int(lit.sum())]
+        edge_sig = inverse[int(lit.sum()) :]
         x -= COLUMN * len(signatures)
         bar_x = x
         report["bar_columns"] = len(signatures)
@@ -820,29 +1180,29 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
         # edge (a slanted top, a rounded corner) draws its black outside over the bezel.
         c, d = _shown_box(shown, (a / SCALE, b / SCALE, r[2] / SCALE, r[3] / SCALE))
         a, b = max(a, c[0] * SCALE), min(b, c[1] * SCALE)
-        top, bottom = max(r[2], d[0] * SCALE), min(r[3], d[1] * SCALE)
-        if b - a < 1 or bottom - top < 1:
+        row0, row1 = max(r[2], d[0] * SCALE), min(r[3], d[1] * SCALE)
+        if b - a < 1 or row1 - row0 < 1:
             continue
         u0, u1 = (cx + CELL_MARGIN) / W, (cx + cw - CELL_MARGIN) / W
         v0, v1 = CELL_MARGIN / H, (CELL_MARGIN + ch) / H
         uvbox = (
             u0 + (u1 - u0) * (a - r[0]) / (r[1] - r[0]),
-            v0 + (v1 - v0) * (top - r[2]) / (r[3] - r[2]),
+            v0 + (v1 - v0) * (row0 - r[2]) / (r[3] - r[2]),
             u0 + (u1 - u0) * (b - r[0]) / (r[1] - r[0]),
-            v0 + (v1 - v0) * (bottom - r[2]) / (r[3] - r[2]),
+            v0 + (v1 - v0) * (row1 - r[2]) / (r[3] - r[2]),
         )
         digits = KMH_DIGITS if units == "kmh" else SPEED_DIGITS
         slot = digits[j] if kind == "speed" else GEAR
-        rr = (ux0 + a / SCALE, ux0 + b / SCALE, uy0 + top / SCALE, uy0 + bottom / SCALE)
+        rr = (ux0 + a / SCALE, ux0 + b / SCALE, uy0 + row0 / SCALE, uy0 + row1 / SCALE)
         p = patch_for((rr[0] + rr[1]) / 2, (rr[2] + rr[3]) / 2)
         if p is not None:
             rect_quad(p, rr, uvbox, slot, DIGIT_LIFT)
             placed[kind] = placed.get(kind, 0) + 1
     report.update(placed)
 
-    # Bar pieces: pixels with the same column and first change step, as rectangles; a
-    # piece's v puts its first change at its rpm (share of the redline), the column the
-    # later one the same number of steps on.
+    # Bar pieces: runs of cells along a row with one step and one column. A piece's v puts
+    # its first change at its rpm (share of the redline), the column the later one the
+    # same number of steps on.
     if signatures:
         step_v = 0.5 * top / RPM_STEPS / max(1.0, redline)
         for col, sig in enumerate(signatures.values()):
@@ -856,35 +1216,45 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
             for v0, v1, c in rows:
                 plan.fill(cx0, int(math.ceil(v0 * H)), cx0 + COLUMN, int(math.ceil(v1 * H)), _rgba(c))
         col_of = {s_idx: k for k, s_idx in enumerate(signatures)}
-        first = ev_step[0]
-        pieces = 0
-        taken = lit | ~shown  # pixels a piece may not grow into: other steps', earlier pieces', off the display
-        for k in range(RPM_STEPS):
-            at_k = first == k
-            if not at_k.any():
-                continue
-            v = BAR_LIT_FROM - min(BAR_MAX, 0.5 * steps[k] / max(1.0, redline))
-            # Pieces lie in one plane: one reaching into another's pixels z-fights with it.
-            # A piece may grow over unlit pixels (fewer pieces), not over another step's.
-            rects = _runs_to_rects(at_k, forbid=taken)
-            for x0, x1, y0, y1 in rects:
-                taken[y0:y1, x0:x1] = True
-            for x0, x1, y0, y1 in rects:
-                sigs = sig_img[y0:y1, x0:x1][at_k[y0:y1, x0:x1]]
-                sigs = sigs[sigs >= 0]
-                if not len(sigs):
-                    continue
-                s_idx = int(np.bincount(sigs).argmax())  # the rectangle's most common column
+        runs = cell_runs(g_step[0], sig_img, lit)
+        pieces, shared = 0, {}  # shared: rt point -> its Forza point, the same for every piece
+        for i, row in enumerate(runs):
+            y0, y1 = uy0 + i * cell_px, uy0 + (i + 1) * cell_px
+            for run in row:
+                j0, j1, k, s_idx = run
                 if s_idx not in col_of:
                     continue
-                u = (bar_x + col_of[s_idx] * COLUMN + COLUMN / 2) / W
-                rect = (float(ux0 + x0), float(ux0 + x1), float(uy0 + y0), float(uy0 + y1))
-                p = patch_for((rect[0] + rect[1]) / 2, (rect[2] + rect[3]) / 2)
+                x0, x1 = ux0 + j0 * cell_px, ux0 + j1 * cell_px
+                p = patch_for((x0 + x1) / 2, (y0 + y1) / 2)
                 if p is None:
                     continue
-                rect_quad(p, rect, (u, v, u, v), RPM, PIECE_LIFT)
+                v = BAR_LIT_FROM - min(BAR_MAX, 0.5 * steps[k] / max(1.0, redline))
+                u = (bar_x + col_of[s_idx] * COLUMN + COLUMN / 2) / W
+                above, below = run_outline(runs, i, run)
+                rt = [(float(ux0 + e * cell_px), float(y0)) for e in above]
+                rt += [(float(ux0 + e * cell_px), float(y1)) for e in below]
+                corners = [shared.setdefault(q, p.point(*q, PIECE_LIFT)) for q in rt]
+                plan.quads.append(Quad(corners, [(u, v)] * len(rt), RPM, zipper(above, below)))
+                plan.quads[-1].rt = rt
                 pieces += 1
+        for (outline, _, _, e_steps), s_idx in zip(edges, edge_sig, strict=True):
+            if int(s_idx) not in col_of:
+                continue
+            rt = [(float(ux0 + x), float(uy0 + y)) for x, y in outline]
+            p = patch_for(sum(q[0] for q in rt) / len(rt), sum(q[1] for q in rt) / len(rt))
+            if p is None:
+                continue
+            v = BAR_LIT_FROM - min(BAR_MAX, 0.5 * steps[e_steps[0]] / max(1.0, redline))
+            u = (bar_x + col_of[int(s_idx)] * COLUMN + COLUMN / 2) / W
+            corners = [p.point(x, y, PIECE_LIFT) for x, y in rt]
+            fan = [(0, i, i + 1) for i in range(1, len(rt) - 1)]
+            plan.quads.append(Quad(corners, [(u, v)] * len(rt), RPM, fan))
+            plan.quads[-1].rt = rt
+            pieces += 1
         report["bar_pieces"] = pieces
+        report["bar_segments"] = len(segments)
+        report["bar_edge_pieces"] = len(edges) - len(segments)
+        report["bar_cell_mm"] = round(cell_px * size * 1000, 2)
     # Dim pale and glaring displays (DISPLAY_MEAN_LUMINANCE); dark ones stay as they are.
     big = np.repeat(np.repeat(shown, SCALE, 0), SCALE, 1)[: base.shape[0], : base.shape[1]]
     lum = base[: big.shape[0], : big.shape[1], :3] @ np.array([0.299, 0.587, 0.114], np.float32) * 255
@@ -942,7 +1312,7 @@ def preview(
     for q in plan.quads:
         uvs = q.uvs
         off = digi.get(q.slot, 0.0)
-        for tri in ((0, 1, 2), (0, 2, 3)):
+        for tri in q.triangles():
             P = [((q.rt[i][0] - x0) * scale, (q.rt[i][1] - y0) * scale) for i in tri]
             (ax, ay), (bx, by), (cx, cy) = P
             d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)

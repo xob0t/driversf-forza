@@ -46,6 +46,7 @@ param(
     [int]$WaitSeconds = 60,
     [int]$ZoomPresses = 5,
     [int]$ShotSeconds = 10,
+    [int]$BurstShots = 1,         # with -HoldMph or -DriveSeconds: shots per sample in quick succession (observe-NN-bK.png)
     [string]$AheadIds,
     [string]$TrafficIds,          # IDs for TrafficSpooler.RequestTrafficVehicles after the probe IDs (clonetest.lua); none of the probe IDs (the game traps: research/in-game-tests.md, "Traffic")
     [int]$DriveSeconds = 0,       # hold the throttle this long in each cockpit view

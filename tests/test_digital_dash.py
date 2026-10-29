@@ -5,6 +5,8 @@ uv run python tests/test_digital_dash.py     # or every test: uv run python -m t
 
 from __future__ import annotations
 
+import itertools
+
 import numpy as np
 
 from dsfforza.convert import digital_dash as dd
@@ -24,22 +26,6 @@ def test_digi_data_is_what_the_engine_writes():
     assert abs(d[(2, 2)] - 2 * 23 / 256) < 1e-9 and d[(2, 3)] == 0.0
     assert abs(d[(1, 0)] - 0.25) < 1e-9 and abs(d[(6, 0)] - 3 / 7) < 1e-9
     assert dd.digi_data(5, 0, 0, 7000)[(2, 1)] == 0.0  # 5 mph: the tens cell is blank
-
-
-def test_runs_to_rects_cover_the_mask():
-    rng = np.random.default_rng(1)
-    mask = rng.random((40, 60)) > 0.6
-    mask[5:20, 10:30] = True
-    cover = np.zeros_like(mask)
-    for x0, x1, y0, y1 in dd._runs_to_rects(mask, slack=0):
-        assert not cover[y0:y1, x0:x1].any()  # exact runs don't overlap
-        cover[y0:y1, x0:x1] = True
-    assert (cover == mask).all()
-    # with slack the rectangles may grow a little, but still hold every pixel
-    cover[:] = False
-    for x0, x1, y0, y1 in dd._runs_to_rects(mask):
-        cover[y0:y1, x0:x1] = True
-    assert (cover | ~mask).all()
 
 
 def _patch():
@@ -80,21 +66,122 @@ def test_preview_draws_the_cells_the_engine_picks():
         assert tuple(img[6, 6]) == ((mph + 1) * 20, 0, 0)
 
 
-def test_pieces_of_different_steps_never_overlap():
-    # A slanted bar: each rpm step lights a parallelogram. Rectangles grown with slack
-    # must not reach into a neighbouring step's pixels (one plane: they would z-fight).
+def _slanted_bar():
+    # A slanted bar of radial-ish stripes 1 px wide, 3 px apart (the S2000's arc): each rpm
+    # step lights a parallelogram of it.
     yy, xx = np.mgrid[0:60, 0:300]
     band = (yy > 0.15 * xx - 5) & (yy < 0.15 * xx + 20)
-    steps = np.where(band, (xx + yy) // 9, -1)
-    lit = steps >= 0
-    owner = np.full(steps.shape, -1)
-    for k in range(steps.max() + 1):
-        mask = steps == k
-        for x0, x1, y0, y1 in dd._runs_to_rects(mask, forbid=lit):
-            box = owner[y0:y1, x0:x1]
-            assert not ((box >= 0) & (box != k)).any()
-            assert not (lit[y0:y1, x0:x1] & ~mask[y0:y1, x0:x1]).any()
-            box[box < 0] = k
+    stripe = (xx + yy // 4) % 3 == 0
+    steps = np.where(band & stripe, (xx + yy) // 9, -1)
+    ev_step = np.stack([steps, np.full_like(steps, -1)])
+    ev_col = np.zeros((2, 60, 300, 3), np.float32)
+    ev_col[0][steps >= 0] = (1.0, 0.4, 0.0)
+    base = np.zeros((60, 300, 3), np.float32)
+    return base, ev_step, ev_col
+
+
+def test_bar_cells_are_coarse_and_smooth():
+    # Stripes finer than a cell become one flat colour per cell, not stripes: the cells
+    # inside the bar all light, at about the stripes' mean (a third of the lit colour).
+    base, ev_step, ev_col = _slanted_bar()
+    shown = np.ones(base.shape[:2], bool)
+    _rest, colours, steps, drawn = dd.bar_cells(base, ev_step, ev_col, shown, 6)
+    assert steps.shape == (2, 10, 50) and drawn.sum() > 60
+    inner = drawn.copy()
+    inner[1:-1, 1:-1] &= drawn[:-2, 1:-1] & drawn[2:, 1:-1] & drawn[1:-1, :-2] & drawn[1:-1, 2:]
+    red = colours[0][..., 0][inner & np.pad(np.ones((8, 48), bool), 1)]
+    assert len(red) and abs(red.mean() - 1 / 3) < 0.08 and red.std() < 0.05
+    assert (steps[1] == -1).all() and (steps[0][drawn] >= 0).all()
+    # off the displays nothing is drawn, and the blur takes no colour from there
+    shown[:, 150:] = False
+    _, colours2, _, drawn2 = dd.bar_cells(base, ev_step, ev_col, shown, 6)
+    assert not drawn2[:, 25:].any()
+    assert np.allclose(colours2[0][:, :20], colours[0][:, :20], atol=1e-4)
+
+
+def test_lights_and_segments_are_one_piece_each():
+    # Round shift lights on display triangles of their own (the Zonda Cinque's): every cell
+    # round them is mostly off the display, so each light is one piece over its convex
+    # hull (round, not a box), on the display and over nothing else.
+    yy, xx = np.mgrid[0:40, 0:120]
+    shown = np.zeros((40, 120), bool)
+    steps = np.full((40, 120), -1)
+    for k, cx in enumerate((20, 60, 100)):
+        light = (xx - cx) ** 2 + (yy - 20) ** 2 <= 8**2
+        shown |= light
+        steps[light] = k
+    ev_step = np.stack([steps, np.full_like(steps, -1)])
+    ev_col = np.zeros((2, 40, 120, 3), np.float32)
+    ev_col[0][steps >= 0] = (0.1, 0.9, 0.1)
+    base = np.zeros((40, 120, 3), np.float32)
+    _, _, _, drawn = dd.bar_cells(base, ev_step, ev_col, shown, 10)
+    assert not drawn.any()
+    detail = np.zeros((40, 120), bool)
+    pieces, covered = dd.bar_segments(base, ev_step, ev_col, shown, detail, 10)
+    assert [p[3][0] for p in pieces] == [0, 1, 2]
+    for outline, rest, colours, _ in pieces:
+        assert abs(dd._area(outline) - np.pi * 8**2) < 0.15 * np.pi * 8**2  # a disc, not its box
+        assert colours[0][1] > 0.85 and rest.max() == 0
+    assert not (covered & ~shown).sum() > 0.05 * covered.sum()
+    # a segment the cells must stay off: no cell over a covered pixel
+    _, _, _, drawn = dd.bar_cells(base, ev_step, ev_col, np.ones((40, 120), bool), 10, covered)
+    assert not drawn.any()
+
+
+def test_a_bar_along_a_display_edge_leaves_no_slivers():
+    # A bar whose lower rows run off the display: what the cells leave becomes edge
+    # pieces of a cell or more a side, or nothing.
+    base, ev_step, ev_col = _slanted_bar()
+    shown = np.ones(base.shape[:2], bool)
+    shown[33:, :] = False
+    ev_step[:, ~shown] = -1
+    _, _, _, drawn = dd.bar_cells(base, ev_step, ev_col, shown, 6)
+    in_cell = np.repeat(np.repeat(drawn, 6, 0), 6, 1)[:60, :300]
+    for (x0, x1, y0, y1), *_ in dd.edge_pieces(base, ev_step, ev_col, shown, in_cell, 6):
+        assert min(x1 - x0, y1 - y0) >= 6 and not in_cell[y0:y1, x0:x1].any()
+        assert shown[y0:y1, x0:x1].mean() >= dd.EDGE_SHOWN
+
+
+def test_bar_pieces_are_watertight_and_never_overlap():
+    # Runs of cells along rows, with every neighbour's ends on their top and bottom edges:
+    # no T-junction (a vertex rounded off its neighbour's edge opens a crack), no overlap.
+    rng = np.random.default_rng(3)
+    drawn = rng.random((12, 30)) > 0.2
+    step = rng.integers(0, 4, (12, 30))
+    column = rng.integers(0, 2, (12, 30))
+    rows = dd.cell_runs(step, column, drawn)
+    cover = np.zeros(drawn.shape, int)
+    edges = {}  # (y, x0, x1) of every vertex-to-vertex segment along a row line -> count
+    for i, row in enumerate(rows):
+        for run in row:
+            j0, j1, k, c = run
+            assert (step[i, j0:j1] == k).all() and (column[i, j0:j1] == c).all()
+            cover[i, j0:j1] += 1
+            top, bottom = dd.run_outline(rows, i, run)
+            tris = dd.zipper(top, bottom)
+            pts = [(x, i) for x in top] + [(x, i + 1) for x in bottom]
+            area = sum(
+                abs(
+                    (pts[b][0] - pts[a][0]) * (pts[c][1] - pts[a][1])
+                    - (pts[c][0] - pts[a][0]) * (pts[b][1] - pts[a][1])
+                )
+                / 2
+                for a, b, c in tris
+            )
+            assert abs(area - (j1 - j0)) < 1e-9  # the triangles tile the run, none degenerate
+            assert all(len({pts[a], pts[b], pts[c]}) == 3 for a, b, c in tris)
+            for y, chain in ((i, top), (i + 1, bottom)):
+                for x0, x1 in itertools.pairwise(chain):
+                    edges[(y, x0, x1)] = edges.get((y, x0, x1), 0) + 1
+    assert (cover == drawn).all()
+    # where two pieces meet along a row line, they cut it at the same vertices
+    for (y, x0, x1), n in edges.items():
+        if 0 < y < drawn.shape[0] and drawn[y - 1, x0] and drawn[y, x0]:
+            assert n == 2, (y, x0, x1)
+
+
+def test_pixel_size():
+    assert abs(dd.pixel_size([_patch()]) - 0.2 / 800) < 1e-9
 
 
 def test_live_quads_stay_on_the_display():

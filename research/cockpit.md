@@ -1766,13 +1766,15 @@ scene is decomposed into what `g_fDigiData` can drive:
      change (the LFA's ring goes white -> green -> orange).
    - Pixels that go back to their rest colour are left at rest; a needle
      sweeping past does that.
-   - The changed pixels of each step become rectangles (merged runs) on id 1,
-     only where the displays' triangles are, and never reaching into another
-     step's pixels or an earlier piece ("Flicker and glare" below).
-     Each rectangle samples one texture column, from the top: the rest
+   - The changes are filtered onto cells of 1.5 mm or more (blurred, then
+     averaged), only where the displays' triangles are. Runs of cells along a
+     row with one step and one column become pieces on id 1, sharing every
+     vertex with their neighbours ("Shimmer" below; before that, "Flicker and
+     glare": rectangles of pixels).
+     Each piece samples one texture column, from the top: the rest
      colour, from v 0.505 the first change's colour, and a later change some
      steps further.
-   - A rectangle's v is 0.505 - 0.5 x rpm / Forza redline, so the engine's
+   - A piece's v is 0.505 - 0.5 x rpm / Forza redline, so the engine's
      rpm / p42 x 0.5 reaches its colour at the same share of DSF's redline.
      The bar shows the rpm as a share of the redline: full at DSF's redline as
      at Forza's. Needles stay in absolute rpm, as before.
@@ -1791,7 +1793,8 @@ scene is decomposed into what `g_fDigiData` can drive:
 **Geometry.**
 
 - Quads are double-sided: bar pieces 0.8 mm over the display, digits 1.6 mm,
-  needles 2.5 mm.
+  needles 2.5 mm. A bar piece is a strip of triangles over a run of cells (its
+  neighbours' ends on its top and bottom edges), not always a quad.
 - They go into a stride-16 buffer with the vanilla Volt's declaration
   (`vanilla_buffer`, `rebuild_drsp(templates=)`).
 - The material is a copy of the Volt's (`e012cc80f0aa8829`) on the car's
@@ -1981,6 +1984,141 @@ Open: in frames taken right after the probe forces 40 mph (t2), two after-builds
 showed a stray "1" in the hundreds place of the Panoz and the ARX (`139` while the HUD
 read 39) and a doubled gear glyph; frames from t4 on read right on every car, and the
 plan offline shows 39 with the hundreds blank. Not explained.
+
+### Shimmer: bar pieces finer than a pixel (2026-10-29, issue #188)
+
+User report on the 3ca28fd build (with #171): the S2000's digital dash has a "weird
+shimmer" in the cockpit view, which a still frame doesn't show.
+
+**Cause (confirmed-static, confirmed-runtime).** The rpm pieces of #171 were rectangles
+of render-target pixels. Forza's bars often have detail finer than a screen pixel:
+
+- The S2000's arc is radial stripes 1 to 2 render-target pixels wide (0.27 mm each) and
+  3.5 apart. One render-target pixel is about 0.35 screen pixels in the cockpit view at
+  1600 x 900 (the 255 mm display spans 340 pixels).
+- So the arc became 1106 pieces, mostly a single row of pixels (0.27 mm tall). That is
+  thinner than a pixel and close to the 0.24 mm position step.
+- Each pixel shows whichever sliver its centre falls on, orange or dark orange. As the
+  head camera moves at speed, that pattern changes every frame.
+- The pieces also met at 1948 T-junctions, and 2 still overlapped (one of #171's 34 cars).
+
+Ruled out:
+
+- *Mips:* the artwork is 1.39 texels per mm, about 1 texel per screen pixel, and its
+  simulated shimmer is low.
+- *Z-fighting with the cabin:* cabin surfaces within 4 mm of the S2000's display cover it
+  in only 3.5% of its area. That is the bezel rim and four buttons, all more than
+  0.8 mm in front. Within 0.05 mm: 185 px, before or after rounding to the position step.
+
+**Offline shimmer measure (`out/s188/shimmer.py`).**
+
+- The plan is rasterized as the GPU draws it: pixel-centre coverage, bilinear texels,
+  vertices on the 1/4096 m lattice, one camera.
+- It is rendered at 0.35 screen px per render-target px, with random sub-pixel camera
+  offsets, and compared with an 8x supersampled render.
+- The measure is the per-pixel deviation of that error from frame to frame (luminance,
+  0 to 255) inside the bar (pixels whose 3 x 3 neighbourhood is all bar). Pixels on the
+  bar's outline alias on any polygon and are left out.
+- S2000 at 60% of the redline: 10.1 before, with 23% of bar pixels over 20.
+
+**Fix (`digital_dash.build_plan`).**
+
+1. *Cells.* The rpm's changes are filtered onto cells of `PIECE_SIZE` (1 mm) or more
+   (`bar_cells`):
+   - each state is blurred (Gaussian, sigma 0.4 cell, weighted by the display mask),
+     then averaged over the cell;
+   - a cell takes the median of its pixels' steps;
+   - it is drawn when it is 90% on the display and changes visibly.
+   - Without the blur, the 3.5-pixel stripes beat with the cells (4 pixels on the S2000)
+     into a mottle of two shades.
+2. *Watertight pieces.* Runs of cells along a row with one step and one column become
+   one piece (`cell_runs`). Each piece is a strip of triangles whose top and bottom
+   edges carry every end of the runs above and below (`run_outline`, `zipper`).
+   Neighbours share every vertex, the same Forza point (no T-junction), so rounding to
+   the position step can't open a crack.
+3. *Segments.* Some parts of the lit mask are joined to the rest only by bridges a pixel
+   or two wide (`_segment_labels`: erode by a pixel, label, grow back by two inside the
+   mask). Such a part is one piece over the convex hull of its core when it is lit
+   within 6 steps, nearly convex (hull at most 1.3 x its area) and clear of static
+   detail and other pieces (`bar_segments`); it lights at its median step. This covers
+   shift lights and LEDs and the segments of segmented bars (GranTurismo S, 599XX,
+   LP700-4).
+   - Cells would cut a segment into parts. On lights with display triangles of their
+     own (the Zonda Cinque's, the CLK GTR's) every part was mostly off the display, and
+     they vanished. On segmented bars the parts fell over the separators.
+   - The hull is the core's, the pixels whose four neighbours are lit: a segment's
+     antialiased rim reaches over the separator next to it.
+   - Cells and edge pieces stay off every segment, so no two pieces overlap.
+4. *Static detail.* A cell isn't drawn over never-lit pixels whose rest luminance is 0.2
+   or more off the lit pixels near them (`static_detail`), such as the Viper 2013's
+   numerals and ticks inside its lit fan.
+5. *Edge pieces.* What the segments and cells leave along a display's edge becomes, per step and
+   group, a rectangle kept to the display, a cell or more a side (`edge_pieces`).
+   Otherwise it is left out (report `rpm_pixels_left_out`).
+6. *Columns.* A colour signature that doesn't fit the 16 columns folds onto the nearest
+   kept one. Before, it was dropped when no kept column had the same first change,
+   which left holes in the S2000's band.
+7. *Second change.* `step_v` (the second colour change, the LFA ring's green to orange)
+   used `top`, which the digit loop overwrites with a cell's pixel row. It now uses the
+   rpm top again, so the second change sits at its rpm on cars with digits.
+
+**Survey, before (`origin/master`) and after (this code), the 91 cars with rpm pieces
+(`out/s188/survey.py` over `cockpit.fit` inputs).**
+
+| | Before | After |
+| --- | ---: | ---: |
+| rpm pieces | 43898 | 27201 |
+| pieces thinner than 1 mm | 40840 (83 cars) | 589 (22 cars): segments, whose shape is that thin |
+| T-junctions between pieces | 74041 (81 cars) | 9 (3 cars: edge pieces beside cells) |
+| overlapping pieces | 609 pairs (34 cars) | none (0.1 px2 on the Viper 2013, rasterized at 4x) |
+| simulated shimmer inside the bar, mean over cars, at 50% / 90% of the redline | 4.27 / 6.05 | 3.33 / 3.15 |
+| cars over 5 at 50% / 90% | 9 / 16 | 6 / 8 |
+| lit pixels drawn by no piece | 0 | 30639 of 1547261 (2.0%) |
+
+- The S2000 at 60% of its redline: 7.13 inside the bar before, 14.9% of its pixels over 20; after, 2.35 and 0.1%.
+- Speed digits are drawn on 80 cars and gear on 76, before and after.
+- Left out are mostly lines under a third of a screen pixel. The Viper 2013's logo outline
+  and underline account for 14609 pixels. The Agera's are 3120 pixels, the Speed 8's 2070.
+- Worse inside the bar by more than 1: the TT-R at 90% (0.52 -> 3.41), the F40
+  Competizione at 50% (32.1 -> 35.0) and the 599XX at 50% (35.7 -> 38.9). These are small
+  high-contrast lights and segments, whose outlines alias like any polygon. The 599XX at
+  90%: 48.3 -> 33.8.
+
+**In game (VM, confirmed-runtime).** `run-series.ps1 -Vm -Asi out\asi\dsfforza.asi -ProbeIds
+'232,1,2,3,4,5' -HoldMph '40,100' -ShotSeconds 3 -WaitSeconds 900 -ZoomPresses 0
+-BurstShots 4 -Resolution 1600x900`. The cars are the vanilla Zonda Cinque (232), then
+the S2000, Viper 2013, R8 LMS, Devon GTX and Corvette C6.R, built from master (`before3`)
+and from this code.
+
+- Runs: before `vm1-20261029-063050`; after `vm1-20261029-064126` (built before
+  segments) and `vm1-20261029-094525` (the final code).
+- The S2000's plan is the same in both after builds.
+- Two earlier tries of the final build stalled on Story's loading screen
+  (`vm2-20261029-085943`, `vm1-20261029-091436`) while the host was busy.
+- `-BurstShots 4` takes four shots per sample about 0.1 s apart (new in
+  `tools\wsb\guest\run-test.ps1`).
+- The S2000's arc was a torn orange mosaic that changed from frame to frame. It is now a
+  smooth band in every frame (`img/dash-188-s2000-ingame.jpg`). At 107 mph the mean
+  frame-to-frame change over its dash, with the head camera's motion aligned away, went
+  from 5.78 to 3.50.
+- The Devon's and the R8 LMS's shift lights show as round lights.
+- All six cars drove without a crash.
+- Offline, at in-game size: `img/dash-188-offline.png`.
+
+**Open.**
+
+- *1-pixel dark specks.* Rare 1-pixel dark specks inside the S2000's lit band show in
+  some frames, before and after (`img/dash-188-specks.jpg`). Ruled out:
+  - cracks: the built mesh is watertight at its stored positions (every interior edge
+    used 4 times, double-sided);
+  - holes in the plan: no unlit piece sits between two lit ones in a row at any of 200
+    rpm values;
+  - gaps showing the artwork: an underlay of grown pieces at 0.4 mm (run
+    `vm2-20261029-024513`) didn't remove them.
+  - Issue #195.
+- *Fine detail is averaged.* The Viper 2013's logo outline and its underline are lines
+  under a third of a screen pixel. They come out dim or are left out: about how a
+  filtered image shows them, and they would flicker if drawn sharp.
 
 ## Hands on small race wheels and wheels with columns (2026-10-25)
 
