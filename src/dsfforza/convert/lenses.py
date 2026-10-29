@@ -695,8 +695,9 @@ def day_glow(glow: np.ndarray, view, colour: np.ndarray | None = None) -> np.nda
 TAIL_MIN_SAMPLES = 40
 # Vanilla's 0x18 tail lamps (DaytimeRunning + Brakes, the converter's tail type): the texel alpha
 # of the visible red lamp pixels at dsf_materials.LAMP_PERCENTILES (render_compare's renderer,
-# rear view; filled from out/l8/head_survey.py HEAD_REAR with HEAD_ALPHA_DUMP).
-TAIL_RED_ALPHA = None
+# rear view, 56 vehicles, 137,610 pixels; out/l8/head_survey.py HEAD_REAR, HEAD_ALPHA_DUMP; per vehicle
+# p95 52 / 106 / 210).
+TAIL_RED_ALPHA = (0, 3, 12, 23, 33, 41, 49, 62, 80, 103, 122, 141, 158, 186, 243, 243, 247, 247, 255)
 
 
 def _components(mask: np.ndarray) -> np.ndarray:
