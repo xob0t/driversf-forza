@@ -883,9 +883,6 @@ local function step()
 			nextId()
 			return
 		end
-		log(string.format("id %d: shader param set %s / %s", id,
-			try(GameVehicleResource.getShaderParamSet, spawned),
-			try(GameVehicleResource.getShaderParamSet, { gameVehicle = spawned })))
 		state.previous, state.spawned = current, spawned
 		localPlayer:SetZapLevel(1, nil, false, { forcedOut = true })
 		localPlayer:ZapIntoVehicle(spawned, false, false, false, nil, { disableZapFlash = true })
