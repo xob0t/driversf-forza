@@ -1,6 +1,6 @@
 # dngvehicles.sp
 
-Updated: 2026-10-21
+Updated: 2026-10-29
 
 Static analysis of build 1.04 `Install/dngvehicles.sp` (483,110,912 bytes).
 Every claim here comes from reading the file with `src/dsfforza/formats/chnk.py` and
@@ -8,8 +8,15 @@ Every claim here comes from reading the file with `src/dsfforza/formats/chnk.py`
 `exe-vehicles.md` and `spool-limits.md` (confirmed-static claims below cite
 them).
 
-Evidence levels follow the parent repo's convention:
-`confirmed-static`, `confirmed-runtime`, `hypothesis`, `disproved`.
+Evidence levels, used by every doc in `research/`:
+
+- `confirmed-static`: read in the data or in the decompiled or disassembled
+  code;
+- `offline-checked`: measured with this repo's tools on built or vanilla
+  data (a survey, a render, `tools/asi/build.ps1 -Test`), not in game;
+- `confirmed-runtime`: seen in game, with the run folder;
+- `hypothesis`: inferred, not checked;
+- `disproved`.
 
 ## Container format (confirmed-static)
 
@@ -68,14 +75,16 @@ identical contents. Only base IDs appear.
 Truncated names that match more than one BINF model print as
 `A|B|C`.
 
-### Hypotheses
+### Hypotheses and what settled them
 
 - The last VSCT byte is a vehicle category, not a bit mask: 0x10 saloon,
   0x02 cop, 0x04 taxi (the three Desanne entries), 0x13 sports car,
   0x0C 70s muscle, 0x0B pickup and so on, one value per VEHC class family
-  (data; table in `hosts.md`).
-- The `UPVH` hierarchy UID equals the spool ID (see below), so the spool ID is
-  probably the game's vehicle ID.
+  (data; table in `hosts.md`). Hypothesis: no code reading it was traced.
+- The spool ID is the game's model ID (confirmed): the `UPVH` hierarchy UID
+  equals it, Lua spools and spawns cars by it (`exe-vehicles.md`), and a
+  clone with only the four ID fields changed spools, spawns and drives under
+  its new ID ("Clone" below).
 
 ## One vehicle: `Saloon 15` (ASYM Desanne, spool 266)
 
@@ -96,7 +105,7 @@ VEHC 'Saloon 15'
     VSRT          engine sound: VSVH header, SBAK bank, GRBK granular bank
     VO3D  0x368   handling data
     UPVH  0x42B0  vehicle hierarchy (parts, damage)
-    SPSR          shader param sets: SPID vehicle id, SPSS x3 (SPSP x10 each)
+    SPSR          shader param sets: SPID vehicle id, SPSS x3 (10, 1 and 1 SPSP)
 ```
 
 ### Variant 1, VEHC 4 (0.9 MiB)
@@ -114,22 +123,20 @@ borrow everything else from variant 0. Variant 1 (N+1000) is the interior
 and variant 2 (N+2000) a clean exterior (`vehicle-model.md`,
 `spool-limits.md`: FUN_005A7FC0 spools them as the interior and exterior).
 
-### UPVH (confirmed-static header, hypothesis for the rest)
+### UPVH (confirmed-static)
 
 Starts with `AWHF`, the hierarchy format DSCript reads for Driver: Parallel
 Lines (`Models/Hierarchies/HierarchyInfo.cs`,
-`Vehicles/VehicleHierarchyData.cs`). Header fields for Saloon 15:
+`Vehicles/VehicleHierarchyData.cs`). The full layout (header, records,
+tables, PDL) is in `upvh.md`. Header fields for Saloon 15:
 
 | Field | Value |
 | --- | --- |
-| model UID | `0x31691200:0x28954700`, format byte `0x52` |
+| model UID | `0x31691200:0x28954752` (MODL part 0's UID; the 0x52 DPL kept as a format byte is part of the UID in DSF, `upvh.md`) |
 | type | 26 |
 | part count | 77 |
 | hierarchy UID | 0x10A = 266, the spool ID |
 | PDL size | 0xC80 |
-
-DPL's layout (parts, moving parts, damaging parts, marker points) is the first
-thing to test against DSF's.
 
 ### VO3D handling data (confirmed-static layout)
 
@@ -163,18 +170,23 @@ vehicles.
 2. The VEHC-to-BINF mapping for ambiguous names (Camaro 1968/2010/1986, cop
    and taxi versions).
 3. Answered: SSLP header fields (table above, `spool-limits.md`).
-4. The VSCT byte fields other than the role mask.
+4. The VSCT byte fields other than the category byte.
 5. Whether SBMC/SBBH and the MDXN model package match DSCript's DPL/DSF
    `ModelPackage` reader closely enough to reuse its layout.
-6. Whether two vehicles may share model and texture UIDs (MDID/UIDC) while
-   both are loaded. A clone sharing them works on its own (see
-   `in-game-tests.md`), and so does the clone with its source loaded
-   (`in-game-tests.md`, "Clone and source loaded together").
+6. Answered: two vehicles may share model, texture and part UIDs only while
+   the data are identical. A clone with its source loaded works
+   (`in-game-tests.md`, "Clone and source loaded together", run
+   `20261021-225831`). A ported car that kept its host's MODL part UIDs
+   turned into the host when the host re-spooled (`in-game-tests.md`,
+   "Fix4"; `upvh.md`, "MODL part UIDs are global keys too"), so
+   `clone_vehicle --new-uids` (what `port_car.py` uses) renews them all and
+   `upvh.py lint` fails a car that shares one.
 
 ## Rewriting the archive
 
 `dsff chnk rebuild` re-serializes an archive from its parsed tree, and
-the output is byte-identical to the vanilla `dngvehicles.sp`. The layout rules
+the output is byte-identical to the vanilla `dngvehicles.sp` (checked again
+2026-10-29). The layout rules
 are in the `chnk.py` docstring. The same rules round-trip
 `GUI_FrontEnd.fchunk`, but not `san_francisco.dngc`, `gui.sp` or
 `ScriptsLuaScripts.fchunk`. Those come from other exporters, with a
@@ -189,4 +201,5 @@ inserts the copies after the last VEHC, and appends three SSLP records and
 three VSCT records. Reading the result back with `src/dsfforza/formats/vehicles.py` gives
 151 vehicles. In game the clone spools, spawns and drives
 (confirmed-runtime, `in-game-tests.md`); its HUD name and badge also need a
-Lua `vehicleStats[304]` entry.
+Lua `vehicleStats[304]` entry. By default the clone shares the source's
+resource and part UIDs; `--new-uids` gives it its own (Open 6).

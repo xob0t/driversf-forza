@@ -1,6 +1,6 @@
 # Vehicle model format (VEHC → MDXN/NONR)
 
-Updated: 2026-10-23
+Updated: 2026-10-29
 
 Decoded from `Saloon 15` (ASYM Desanne, spool ID 266, VEHC 3–5) with
 `src/dsfforza/formats/vehicle_mesh.py`. Confirmed by rendering: the decoded geometry is the
@@ -60,6 +60,8 @@ SBMC  submodel
   SBBH (0x48, v4) {u64 uid, u64 material_uid, u64 vertex_buffer_uid, u64 0,
                    u32 base_vertex, u8[12] 0, u64 index_buffer_uid,
                    u32 first_index, u32 index_count, u64 0}
+                  (+0x18 is 0 in all 43,790 vanilla SBBHs; the engine
+                  reads it as a second vertex stream UID, `upvh.md`)
 MDID  u64[] all renderer resource UIDs in the package
 ```
 
@@ -88,8 +90,8 @@ interior's stride-20 needle buffer, semantic 8 component 2 is the gauge id.
 ±1.04 × ±0.76 × ±2.57 m, matching the MODL box.
 
 **The fourth int16 is a baked sky-light / ambient-occlusion term, 0–4096 =
-0–1** (confirmed-static by correlation; that it drives the lighting is
-confirmed only indirectly, see below). On the Desanne it follows the
+0–1** (confirmed-static by correlation; that it drives the lighting
+confirmed-runtime by the fix below). On the Desanne it follows the
 normal's up component: binned by `(1 + n_y) / 2`, the clean exterior's mean
 w rises from 0.06 (facing down) through 0.34 (sideways) to 0.64 (facing up),
 correlation 0.61, and it drops in occluded places (wheel wells, under the
@@ -100,8 +102,9 @@ reflections) and the cockpit nearly black, except the needle pivots, the only
 vertices with 4096 (`img/cockpit-v1-a.png`). `forza2dsf.vertex_sky` now writes
 Forza's own baked AO (first trailing vertex byte, `forza-materials.md`) times
 `0.25 + 0.55 (1 + n_y) / 2`; the converted cars' medians come out at 0.42 to
-0.48 (full and exterior) and 0.20 to 0.25 (interior), close to vanilla. In-game
-confirmation pending (hypothesis-runtime).
+0.48 (full and exterior) and 0.20 to 0.25 (interior), close to vanilla. In
+game the paint is coloured again and the 370Z's dials are lit (run
+`20261022-023610`, `in-game-tests.md`, "Fix2 in game"; confirmed-runtime).
 
 **Semantic 12** is the vertex's fully crushed position as float16 (x, y,
 z, 1.0); the shader draws lerp(position, s12, panel damage). It equals the
@@ -366,8 +369,9 @@ u64[]    submodel UIDs (all 243, in DRSP order)
 u32[]    one value per submodel, meaning unknown
 ```
 
-Part 0's UID equals the model UID in UPVH's AWHF header, so MODL parts and
-UPVH hierarchy parts presumably share UIDs. Part UIDs are unique across the
+Part 0's UID equals the model UID in UPVH's AWHF header, and the UPVH
+records name their MODL parts by UID (halves swapped; `upvh.md`, "MODL part
+UIDs are global keys too"). Part UIDs are unique across the
 whole vanilla archive (6,139 in 450 entries) and the engine keys a global table
 by them; clones must not reuse the host's (`upvh.md`). The oriented boxes give each
 part's extent: part 0 is the whole car (5.14 × 2.08 × 1.51 m), parts 3, 5,
@@ -384,7 +388,7 @@ MACO  material
     MARP  x n: {char name[32], u8 value[16], u32 type}
 TEXC  texture
   UIDC  u64 texture_uid
-  DXTC  a complete DDS file (DXT5 512x512 with mips in Saloon 15)
+  DXTC  a complete DDS file (DXT5 512x512 with 4 mip levels in Saloon 15)
 ```
 
 MARP types: 1 float, 3 vec4, 9 texture UID (e.g. `g_texDiffuseMap` =
