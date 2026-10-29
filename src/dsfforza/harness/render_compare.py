@@ -15,9 +15,6 @@ glow; flags above calibrated limits rank the roster (research/render-compare.md)
 
     uv run dsff render_compare run --build out/build --out out/rc/master [--cars A,B] [--jobs 4]
     uv run dsff render_compare sheet out/rc/master
-    uv run dsff render_compare diff --before out/build --after out/pr/build --out out/rc/pr [--jobs 4]
-
-`diff` is render_diff: only the cars whose drawn data differ are rendered.
 """
 
 from __future__ import annotations
@@ -1174,14 +1171,6 @@ def main(argv: list[str] | None = None) -> int:
     q = sub.add_parser("rescore", help="score a --keep run again from its stored renders")
     q.add_argument("run", type=Path)
     q.add_argument("--jobs", type=int, default=1)
-    d = sub.add_parser("diff", help="before/after: the cars two builds draw differently, and how")
-    d.add_argument("--before", type=Path, required=True, help="build folder (master's)")
-    d.add_argument("--after", type=Path, required=True, help="build folder (the change's)")
-    d.add_argument("--out", type=Path, required=True)
-    d.add_argument("--jobs", type=int, default=1)
-    d.add_argument("--views", default=",".join(DEFAULT_VIEWS))
-    d.add_argument("--size", default=f"{SIZE[0]}x{SIZE[1]}")
-    d.add_argument("--limit", type=int, default=0, help="render at most this many changed cars")
     t = sub.add_parser("thumbnail", help="Forza's own picture | the reference | ours (a check of the reference)")
     t.add_argument("--build", type=Path, required=True)
     t.add_argument("--cars", required=True)
@@ -1217,24 +1206,6 @@ def main(argv: list[str] | None = None) -> int:
             from dsfforza.harness import render_sheet
 
             print(render_sheet.write(args.out))
-        return 0
-    if args.cmd == "diff":
-        from dsfforza.harness import render_diff
-
-        w, h = (int(x) for x in args.size.lower().split("x"))
-        s = render_diff.run(
-            args.before, args.after, args.out, args.jobs, tuple(args.views.split(",")), (w, h), args.limit
-        )
-        print(
-            f"{s['changed']} changed ({s['drawn_differently']} drawn differently, {len(s['renders_alike'])} alike), "
-            f"{s['unchanged']} unchanged ({s['seconds']} s)"
-        )
-        for car in s["cars"][:30]:
-            top = "; ".join(
-                f"{c['region']} {c['view']} {c['mode']} {c['changed']:.0%}" for c in (car.get("changes") or [])[:3]
-            )
-            print(f"  {car['media']:32} {car.get('score_before')} -> {car.get('score_after')}  {top}")
-        print(render_diff.write_sheet(args.out))
         return 0
     if args.cmd == "rescore":
         for r in rescore(args.run, args.jobs)[:20]:
