@@ -257,6 +257,7 @@ class Scene:
 
 
 _SHARED: dict = {}
+SHARED_KEEP = 2  # archives whose shared materials stay read (render_compare diff reads two)
 
 
 def _decode_texture(stream, texc) -> np.ndarray:
@@ -275,7 +276,8 @@ def _shared(archive: Path, stream, entries) -> tuple[dict, dict]:
     st = archive.stat()
     key = (str(archive.resolve()), st.st_size, st.st_mtime_ns)
     if key not in _SHARED:
-        _SHARED.clear()
+        while len(_SHARED) >= SHARED_KEEP:
+            del _SHARED[next(iter(_SHARED))]
         materials, textures = {}, {}
         ssic = next(e for e in entries if e.tag == "SSIC")
         for _, e in walk(ssic.children):
@@ -1206,6 +1208,18 @@ def _channel(t: np.ndarray | None, mask: str | None, n: int) -> np.ndarray:
     return t[:, {"r": 0, "g": 1, "b": 2, "a": 3}[mask]]
 
 
+SUN_ELEVATION = 25.0  # degrees: compare renders' sun, beyond the car as the camera sees it
+SUN_POWER = 1.0  # its specular against the key light's (no diffuse: the tone stays the garage's)
+
+
+def _sun(view: _View) -> np.ndarray:
+    """Towards the sun: from beyond the car, SUN_ELEVATION above the horizon."""
+    away = -view.eye_dir * np.array([1.0, 0.0, 1.0])
+    away /= max(np.linalg.norm(away), 1e-9)
+    e = math.radians(SUN_ELEVATION)
+    return away * math.cos(e) + np.array([0.0, math.sin(e), 0.0])
+
+
 def _shade_physical(mat: Material, view: _View, light, nn, uv, occlusion, rr, lighting: Lighting):
     """A material with its own Shading (dsf_shading, forza_render): light x base plus
     Phong specular and a Fresnel reflection, each masked by a texel channel."""
@@ -1232,7 +1246,10 @@ def _shade_physical(mat: Material, view: _View, light, nn, uv, occlusion, rr, li
         half = light[None] - rr
         half /= np.linalg.norm(half, axis=1, keepdims=True)
         lobe = np.clip(np.einsum("ni,ni->n", nn, half), 0, None)
-    spec = sh.highlight * lobe**sh.power * lighting.key * _channel(t, sh.spec_mask, len(nn))
+    spec = sh.highlight * lobe**sh.power * lighting.key
+    if sh.phong:  # compare renders: the sun ahead of the camera too (glints on flat panels, #176)
+        spec = spec + sh.highlight * np.clip(refl @ _sun(view), 0, None) ** sh.power * SUN_POWER * lighting.key
+    spec = spec * _channel(t, sh.spec_mask, len(nn))
     r = f * sh.reflect * _channel(t, sh.mask, len(nn))
     out = (
         base * (ambient + lambert * np.clip(occ * 1.6, 0, 1)) * sh.diffuse

@@ -213,11 +213,13 @@ def test_painted_on_lamp_is_detail_lost():
     assert {"detail", "drawn_as"} <= whats, flags
 
 
-def test_missing_region_and_plate_over_grille():
+def test_missing_region_and_plate_over_badge():
+    """A plate over the grille's badge (#159) flags; over a trim alone (its holder) it doesn't."""
     h, w = 60, 80
     ref_region = np.zeros((h, w), np.uint8)
     ref_region[5:55, 5:75] = rc.RID[fr.BODY]
     ref_region[30:50, 20:60] = rc.RID[fr.TRIMS]  # the grille
+    ref_region[35:45, 30:50] = rc.RID[fr.BADGES]  # its badge
     ours_region = ref_region.copy()
     ours_region[30:50, 20:60] = rc.RID[fr.PLATES]  # a plate over all of it
     rgb = np.full((h, w, 3), 0.3, np.float32)
@@ -226,6 +228,9 @@ def test_missing_region_and_plate_over_grille():
     flags = rc.flags_for({"front": {"day": m}})
     assert any(f["what"] == "plate_over" for f in flags), flags
     assert any(f["what"] == "missing" and f["region"] == fr.TRIMS for f in flags), flags
+    ref_region[35:45, 30:50] = rc.RID[fr.TRIMS]
+    m = rc.region_scores(_views(ours_region, ref_region, rgb, rgb))
+    assert not any(f["what"] == "plate_over" for f in rc.flags_for({"front": {"day": m}}))
 
 
 def test_no_glow_flag():
@@ -256,3 +261,63 @@ def test_identical_renders_raise_no_flags():
     rgb = rng.uniform(0, 0.5, size=(h, w, 3)).astype(np.float32)
     m = rc.region_scores(_views(region, region, rgb, rgb))
     assert rc.flags_for({"front3q": {"day": m}}) == []
+
+
+# --- rescore and the before/after digest -------------------------------------------------------
+
+
+def test_stored_renders_round_trip(tmp_path=None):
+    import tempfile
+    from pathlib import Path
+
+    h, w = 20, 30
+    rng = np.random.default_rng(6)
+    r = {
+        "regions": {
+            "ours": rng.integers(0, 10, (h, w)).astype(np.uint8),
+            "ref": rng.integers(0, 10, (h, w)).astype(np.uint8),
+        },
+        "programs": rng.integers(0, 9, (h, w)).astype(np.uint8),
+        "alpha": {"ours": np.ones((h, w)), "ref": np.ones((h, w))},
+        "ours": {
+            "day": rng.uniform(0, 2, (h, w, 3)).astype(np.float32),
+            "dark": rng.uniform(0, 4, (h, w, 3)).astype(np.float32),
+        },
+        "ref": {
+            "day": rng.uniform(0, 2, (h, w, 3)).astype(np.float32),
+            "dark": rng.uniform(0, 4, (h, w, 3)).astype(np.float32),
+        },
+    }
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "v.npz"
+        rc.save_renders(path, r)
+        back = rc.load_renders(path)
+    assert (back["regions"]["ours"] == r["regions"]["ours"]).all() and (back["programs"] == r["programs"]).all()
+    for side in ("ours", "ref"):
+        for mode in ("day", "dark"):
+            assert np.abs(back[side][mode] - r[side][mode]).max() < 1 / rc.HDR_SCALE + 1e-6
+
+
+def test_digest_ignores_handling():
+    """Two cars whose VEHC differ only in VO3D (handling, cameras) draw alike; a changed
+    vertex buffer doesn't."""
+    import io
+
+    from dsfforza.formats.chnk import Entry
+    from dsfforza.harness import render_diff
+
+    def leaf(tag, data, at):
+        return Entry(tag, at, len(data), 0, 0, None)
+
+    def car(vxdt: bytes, vo3d: bytes):
+        blob = vxdt + vo3d + b"MODL"
+        mdxn = Entry("MDXN", 0, 0, 0, 0, None, [leaf("VXDT", vxdt, 0)])
+        nonr = Entry(
+            "NONR", 0, 0, 0, 0, None, [leaf("VO3D", vo3d, len(vxdt)), leaf("MODL", b"MODL", len(vxdt) + len(vo3d))]
+        )
+        return io.BytesIO(blob), {0: Entry("VEHC", 0, 0, 0, 0, None, [mdxn, nonr])}
+
+    a = render_diff.vehc_digest(*car(b"vertices", b"handling A"))
+    b = render_diff.vehc_digest(*car(b"vertices", b"handling B"))
+    c = render_diff.vehc_digest(*car(b"vertexes", b"handling A"))
+    assert a == b != c

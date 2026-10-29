@@ -16,6 +16,8 @@ glow; flags above calibrated limits rank the roster (research/render-compare.md)
     uv run dsff render_compare run --build out/build --out out/rc/master [--cars A,B] [--jobs 4]
     uv run dsff render_compare sheet out/rc/master
     uv run dsff render_compare diff --before out/build --after out/pr/build --out out/rc/pr [--jobs 4]
+
+`diff` is render_diff: only the cars whose drawn data differ are rendered.
 """
 
 from __future__ import annotations
@@ -251,10 +253,10 @@ def build_cockpit_pair(archive: Path, roots, spool_id: int, media: str, report: 
     rep = report["entry"]
     ours = cr.load_scene(archive, spool_id, roots, entry="interior", physical=True)
     ours.lamp = np.full(len(ours.mat), -1, np.int32)
-    interior = rep.get("cockpit", {}).get("interior", {})
-    shell_lod = interior.get("shell_lod") or 1
+    # The reference's shell at the finest LOD: the converter's coarser one can close the
+    # cockpit (the Audi R10's lid, #157), which is what this view should find.
     folder = _cache_dir(archive.parent, media, report)
-    ref, _ = fr.cockpit_scene(folder, media, rep["placement"], ours.info["paint"], int(shell_lod))
+    ref, _ = fr.cockpit_scene(folder, media, rep["placement"], ours.info["paint"], 1)
     src, dist = rm.match(ours.pos, ref.scene.pos)
     ref_region = np.array([RID[o.region] for o in ref.origins], np.uint8)[ref.scene.tag]
     ours_region = np.full(len(ours.mat), RID["other"], np.uint8)
@@ -388,14 +390,27 @@ def region_scores(r: dict, mode: str = "day") -> dict:
         n_o, n_f = int(mo.sum()), int(mf.sum())
         if max(n_o, n_f) < MIN_PIXELS:
             continue
-        both = mo & mf
-        n_b = int(both.sum())
-        m = {
-            "ref_px": n_f,
-            "ours_px": n_o,
-            "missing": round(1 - n_b / n_f, 3) if n_f else None,
-            "extra": round(1 - n_b / n_o, 3) if n_o else None,
-        }
+        if name in LAMP_REGIONS:
+            # A lamp is seen through its cover on one side and uncovered or baked on the
+            # other (plain glass covers are left out, lights.md #160): its pixels are either
+            # side's, and missing means our car draws nothing there.
+            both = mo | mf
+            n_b = int(both.sum())
+            m = {
+                "ref_px": n_f,
+                "ours_px": n_o,
+                "missing": round(float((mf & (ro == 0)).sum()) / n_f, 3) if n_f else None,
+                "extra": round(float((mo & (rf == 0)).sum()) / n_o, 3) if n_o else None,
+            }
+        else:
+            both = mo & mf
+            n_b = int(both.sum())
+            m = {
+                "ref_px": n_f,
+                "ours_px": n_o,
+                "missing": round(1 - n_b / n_f, 3) if n_f else None,
+                "extra": round(1 - n_b / n_o, 3) if n_o else None,
+            }
         # What the ref's pixels of this region show on our side.
         if n_f:
             under = ro[mf]
@@ -530,7 +545,7 @@ LIMITS = {
     "glow_place": 0.3,  # share of Forza's lit lamp pixels ours lights (and of ours Forza's) below this
     "glow_hue": 1.2,  # |log| of the ratio of the glow's green/red, ours against Forza's
     "flat_glow": 0.45,  # our glow spread under this share of Forza's
-    "plate_over": 0.3,  # share of a plate over trims, badges or lamps
+    "plate_over": 0.1,  # share of a plate over badges, lamps or chrome
 }
 WEIGHTS = {
     fr.FRONT_LAMPS: 3.0,
@@ -543,7 +558,8 @@ WEIGHTS = {
     fr.WHEELS: 1.0,
 }
 LAMP_PROGRAMS = ("lights", "gloss", "chassis")
-LAMP_VIEWS_SKIP = ("side",)  # lamps seen edge-on: not scored there  # what can draw a lamp's texels (Lights: glow)
+LAMP_VIEWS_SKIP = ("side",)  # lamps seen edge-on: not scored there
+PLATE_NOT_ON = (fr.BADGES, fr.FRONT_LAMPS, fr.REAR_LAMPS, fr.CHROME)  # what can draw a lamp's texels (Lights: glow)
 
 
 def _flag(flags: list, region: str, view: str, what: str, value: float, severity: float, text: str) -> None:
@@ -625,11 +641,8 @@ def flags_for(metrics: dict) -> list[dict]:
                     kinds = ", ".join(f"{k} {v:.0%}" for k, v in m["drawn_as"].items() if k not in LAMP_PROGRAMS)
                     _flag(flags, region, view, "drawn_as", bad, bad * 1.2, f"{region}: drawn as {kinds}")
             if region == fr.PLATES and m.get("over"):
-                over = sum(
-                    v
-                    for k, v in m["over"].items()
-                    if k in (fr.TRIMS, fr.BADGES, fr.FRONT_LAMPS, fr.REAR_LAMPS, fr.CHROME)
-                )
+                # A plate on a trim may be on its holder; on a badge, a lamp or chrome it isn't.
+                over = sum(v for k, v in m["over"].items() if k in PLATE_NOT_ON)
                 if over > L["plate_over"]:
                     where = ", ".join(f"{k} {v:.0%}" for k, v in m["over"].items() if k != fr.BODY)
                     _flag(flags, region, view, "plate_over", over, over, f"plates: over {where}")
@@ -737,13 +750,146 @@ def pair_image(r: dict, mode: str, outline_regions=()) -> np.ndarray:
     return np.concatenate([a, gap, b], axis=1)
 
 
+# --- Forza's own pictures: a check of the reference renderer -----------------------------------
+
+THUMB_CAMERA = cr.Camera(-62.0, 6.0, 1.45)  # FM4's thumbnails: front left, near eye level
+
+
+def forza_thumbnail(media: str, game: str | None) -> np.ndarray | None:
+    """Forza's own picture of the car (RGBA): FM4's Thumbnails/Thumbnail_<id>.xds by its
+    gamedb id (out/db/fm4_gamedb.slt), else FH1's (gui_assets.forza_car_id); the car part
+    (left two thirds; the right third is a top view)."""
+    import sqlite3
+
+    from dsfforza import REPO
+    from dsfforza.game import gui_assets as g
+
+    ui = g.ForzaUI.of(None)
+    found = None
+    db = REPO / "out" / "db" / "fm4_gamedb.slt"
+    if db.exists():
+        con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
+        try:
+            row = con.execute("SELECT Id FROM Data_Car WHERE lower(MediaName) = lower(?)", (media,)).fetchone()
+        finally:
+            con.close()
+        if row:
+            found = ui._read_fallback(f"Thumbnails/Thumbnail_{row[0]}.xds")
+    if found is None:
+        cid = g.forza_car_id(media)
+        found = ui.thumbnail(cid) if cid else None
+    if found is None:
+        return None
+    w, h, px = found
+    img = np.frombuffer(bytes(px), np.uint8).reshape(h, w, 4)
+    return img[:, : w * 2 // 3][:, ::-1]  # mirrored, like FH1's (gui_assets.forza_car_image)
+
+
+def thumbnail_check(build: Path, media: str, out: Path, size=(640, 300)) -> Path | None:
+    """Forza's picture | the reference | ours, at a camera like the picture's and in the
+    picture's paint (the median of its saturated car pixels): out/thumb-<media>.jpg."""
+    from dsfforza.game.gui_assets import _root_entries
+
+    report = car_report(build, media)
+    if report is None:
+        return None
+    thumb = forza_thumbnail(media, report.get("game"))
+    if thumb is None:
+        return None
+    rgb = thumb[..., :3].astype(np.float32)
+    sat = rgb.max(axis=-1) - rgb.min(axis=-1)
+    car = (thumb[..., 3] > 128) & (rgb.max(axis=-1) > 20)
+    colour = np.median(rgb[car & (sat > 40)], axis=0) if (car & (sat > 40)).sum() > 200 else np.array([40, 40, 40])
+    archive = Path(build) / "dngvehicles.sp"
+    with archive.open("rb") as stream:
+        roots = _root_entries(archive, stream)
+    pair = build_pair(archive, roots, report["entry"]["spool_id"], media, report)
+    paint = cr.Paint.flat(tuple(int(c) for c in colour))
+    for scene in (pair.ours, pair.ref):
+        for m in scene.materials:
+            if m.paint is not None:
+                m.paint = (
+                    paint
+                    if m.kind in cr.PAINT_KINDS
+                    else cr.Paint(
+                        tuple(c * fr.PAINT_TEXEL for c in paint.c2), tuple(c * fr.PAINT_TEXEL for c in paint.c3)
+                    )
+                )
+    view = View("thumb", THUMB_CAMERA, modes=("day",))
+    r = render_view(pair, view, size)
+    from PIL import Image
+
+    t = Image.fromarray(thumb[..., :3]).resize((int(thumb.shape[1] * size[1] / thumb.shape[0]), size[1]))
+    parts = [
+        np.asarray(t),
+        to_srgb8(r["ref"]["day"], r["alpha"]["ref"]),
+        to_srgb8(r["ours"]["day"], r["alpha"]["ours"]),
+    ]
+    gap = np.full((size[1], 4, 3), 20, np.uint8)
+    path = Path(out) / f"thumb-{media}.jpg"
+    save_jpeg(path, np.concatenate([parts[0], gap, parts[1], gap, parts[2]], axis=1))
+    return path
+
+
 # --- the run -----------------------------------------------------------------------------------
 
 
+def score_view(r: dict, modes) -> dict:
+    """{"day": region scores, "glow_<mode>": glow scores} of one rendered view."""
+    mm = {"day": region_scores(r, "day")}
+    for mode in modes:
+        if mode != "day":
+            mm[f"glow_{mode}"] = glow_scores(r, mode)
+    return mm
+
+
+HDR_SCALE = 4096  # --keep: linear colour stored as uint16 x this (16 times the exposure's white)
+
+
+def save_renders(path: Path, r: dict) -> None:
+    """A view's renders and ID maps (render_view's output), for `rescore`."""
+    arrays = {
+        "regions_ours": r["regions"]["ours"],
+        "regions_ref": r["regions"]["ref"],
+        "programs": r["programs"],
+        "alpha_ours": (np.clip(r["alpha"]["ours"], 0, 1) * 255).astype(np.uint8),
+        "alpha_ref": (np.clip(r["alpha"]["ref"], 0, 1) * 255).astype(np.uint8),
+    }
+    for side in ("ours", "ref"):
+        for mode, c in r[side].items():
+            arrays[f"{side}_{mode}"] = np.clip(c * HDR_SCALE, 0, 65535).astype(np.uint16)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(path, **arrays)
+
+
+def load_renders(path: Path) -> dict:
+    z = np.load(path)
+    r = {
+        "regions": {"ours": z["regions_ours"], "ref": z["regions_ref"]},
+        "programs": z["programs"],
+        "alpha": {"ours": z["alpha_ours"] / 255.0, "ref": z["alpha_ref"] / 255.0},
+        "ours": {},
+        "ref": {},
+    }
+    for key in z.files:
+        side, _, mode = key.partition("_")
+        if side in ("ours", "ref") and mode in cr.LIGHTINGS:
+            r[side][mode] = z[key].astype(np.float32) / HDR_SCALE
+    return r
+
+
+def _save_images(folder: Path, images: dict, flags: list) -> None:
+    for key, r in images.items():
+        regions = sorted({f["region"] for f in flags if f["view"] == key and f["region"] in REGIONS})
+        for mode in r["ours"]:
+            save_jpeg(folder / f"{key}-{mode}.jpg", pair_image(r, mode, regions))
+
+
 def compare_car(
-    archive: Path, roots, car: dict, out: Path, views=DEFAULT_VIEWS, size=SIZE, entries=("exterior",)
+    archive: Path, roots, car: dict, out: Path, views=DEFAULT_VIEWS, size=SIZE, entries=("exterior",), keep=False
 ) -> dict:
-    """Render, score and save one car: out/cars/<media>.json and its images."""
+    """Render, score and save one car: out/cars/<media>.json and its images (with keep,
+    each view's renders too: out/cars/<media>/<view>.npz, for rescore)."""
     media, sid = car["media"], car["spool_id"]
     t0 = time.time()
     report = car_report(archive.parent, media)
@@ -751,6 +897,7 @@ def compare_car(
     if report is None or "placement" not in report.get("entry", {}):
         result["error"] = "no converter report (work/<media>.json) in the build"
         return result
+    folder = out / "cars" / media
     try:
         metrics: dict = {}
         images: dict = {}
@@ -777,21 +924,16 @@ def compare_car(
                     view = View(view.name, view.camera, view.zoom, ("day", "dark"))
                 r = render_view(pair, view, size)
                 key = vname if entry == "exterior" else f"{entry}-{vname}"
-                mm = {mode: region_scores(r, mode) for mode in ("day",)}
-                for mode in view.modes:
-                    if mode != "day":
-                        mm[f"glow_{mode}"] = glow_scores(r, mode)
-                metrics[key] = mm
+                metrics[key] = score_view(r, view.modes)
                 images[key] = r
         flags = flags_for(metrics)
         result["metrics"] = metrics
         result["flags"] = flags
         result["score"] = car_score(flags)
-        folder = out / "cars" / media
-        for key, r in images.items():
-            regions = sorted({f["region"] for f in flags if f["view"] == key and f["region"] in REGIONS})
-            for mode in r["ours"]:
-                save_jpeg(folder / f"{key}-{mode}.jpg", pair_image(r, mode, regions))
+        _save_images(folder, images, flags)
+        if keep:
+            for key, r in images.items():
+                save_renders(folder / f"{key}.npz", r)
         result["seconds"] = round(time.time() - t0, 1)
     except Exception as error:  # one car's failure is a result, not the run's end
         import traceback
@@ -803,8 +945,40 @@ def compare_car(
     return result
 
 
+def rescore(run_dir: Path) -> list[dict]:
+    """Score a --keep run again from its stored renders (after a change of the metrics or
+    the limits); rewrites the cars' JSON and images and roster.json."""
+    run_dir = Path(run_dir)
+    results = []
+    for path in sorted((run_dir / "cars").glob("*.json")):
+        res = json.loads(path.read_text(encoding="utf-8"))
+        folder = run_dir / "cars" / res["media"]
+        stored = sorted(folder.glob("*.npz")) if folder.exists() else []
+        if stored:
+            images = {p.stem: load_renders(p) for p in stored}
+            metrics = {}
+            for key, r in images.items():
+                metrics[key] = {"day": region_scores(r, "day")} if key == "cockpit" else score_view(r, r["ours"].keys())
+            flags = flags_for(metrics)
+            res.update({"metrics": metrics, "flags": flags, "score": car_score(flags)})
+            _save_images(folder, images, flags)
+            path.write_text(json.dumps(res, indent=1), encoding="utf-8")
+        results.append(
+            {k: res.get(k) for k in ("media", "spool_id", "game", "score", "flags", "error", "seconds", "match")}
+        )
+    roster_path = run_dir / "roster.json"
+    summary = json.loads(roster_path.read_text(encoding="utf-8")) if roster_path.exists() else {"cars": len(results)}
+    summary["ranking"] = sorted(results, key=lambda r: -(r.get("score") or 0))
+    summary.setdefault("errors", sum(1 for r in results if r.get("error")))
+    summary.setdefault("seconds", 0)
+    summary.setdefault("views", [])
+    summary.setdefault("build", str(run_dir))
+    roster_path.write_text(json.dumps(summary, indent=1), encoding="utf-8")
+    return summary["ranking"]
+
+
 def _worker(args):
-    archive, cars, out, views, size, entries = args
+    archive, cars, out, views, size, entries, keep = args
     from dsfforza.game.gui_assets import _root_entries
 
     archive = Path(archive)
@@ -812,7 +986,7 @@ def _worker(args):
         roots = _root_entries(archive, stream)
     results = []
     for car in cars:
-        r = compare_car(archive, roots, car, Path(out), views, size, entries)
+        r = compare_car(archive, roots, car, Path(out), views, size, entries, keep)
         print(f"{car['media']}: score {r.get('score')} {r.get('error', '')} ({r.get('seconds')} s)", flush=True)
         results.append(
             {k: r.get(k) for k in ("media", "spool_id", "game", "score", "flags", "error", "seconds", "match")}
@@ -821,7 +995,14 @@ def _worker(args):
 
 
 def run(
-    build: Path, out: Path, cars: list[dict], jobs: int = 1, views=DEFAULT_VIEWS, size=SIZE, entries=("exterior",)
+    build: Path,
+    out: Path,
+    cars: list[dict],
+    jobs: int = 1,
+    views=DEFAULT_VIEWS,
+    size=SIZE,
+    entries=("exterior",),
+    keep: bool = False,
 ) -> list[dict]:
     archive = Path(build) / "dngvehicles.sp"
     out.mkdir(parents=True, exist_ok=True)
@@ -829,7 +1010,7 @@ def run(
     chunks = [cars[i::jobs] for i in range(jobs)]
     t0 = time.time()
     if jobs == 1:
-        results = _worker((str(archive), cars, str(out), views, size, entries))
+        results = _worker((str(archive), cars, str(out), views, size, entries, keep))
     else:
         from concurrent.futures import ProcessPoolExecutor
 
@@ -837,7 +1018,7 @@ def run(
         with ProcessPoolExecutor(jobs) as pool:
             results = [
                 r
-                for part in pool.map(_worker, [(str(archive), c, str(out), views, size, entries) for c in chunks])
+                for part in pool.map(_worker, [(str(archive), c, str(out), views, size, entries, keep) for c in chunks])
                 for r in part
             ]
     ranking = sorted(results, key=lambda r: -(r.get("score") or 0))
@@ -869,6 +1050,23 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--size", default=f"{SIZE[0]}x{SIZE[1]}")
     p.add_argument("--entries", default="exterior", help="exterior,full")
     p.add_argument("--no-sheet", action="store_true")
+    p.add_argument(
+        "--keep", action="store_true", help="store each view's renders (cars/<media>/<view>.npz) for rescore"
+    )
+    q = sub.add_parser("rescore", help="score a --keep run again from its stored renders")
+    q.add_argument("run", type=Path)
+    d = sub.add_parser("diff", help="before/after: the cars two builds draw differently, and how")
+    d.add_argument("--before", type=Path, required=True, help="build folder (master's)")
+    d.add_argument("--after", type=Path, required=True, help="build folder (the change's)")
+    d.add_argument("--out", type=Path, required=True)
+    d.add_argument("--jobs", type=int, default=1)
+    d.add_argument("--views", default=",".join(DEFAULT_VIEWS))
+    d.add_argument("--size", default=f"{SIZE[0]}x{SIZE[1]}")
+    d.add_argument("--limit", type=int, default=0, help="render at most this many changed cars")
+    t = sub.add_parser("thumbnail", help="Forza's own picture | the reference | ours (a check of the reference)")
+    t.add_argument("--build", type=Path, required=True)
+    t.add_argument("--cars", required=True)
+    t.add_argument("--out", type=Path, required=True)
     s = sub.add_parser("sheet", help="write the HTML contact sheet of a run")
     s.add_argument("run", type=Path)
     s.add_argument("--top", type=int, default=0, help="only the N worst cars")
@@ -880,7 +1078,14 @@ def main(argv: list[str] | None = None) -> int:
             cars = [c for c in cars if c["media"] in want or str(c["spool_id"]) in want]
         w, h = (int(x) for x in args.size.lower().split("x"))
         ranking = run(
-            args.build, args.out, cars, args.jobs, tuple(args.views.split(",")), (w, h), tuple(args.entries.split(","))
+            args.build,
+            args.out,
+            cars,
+            args.jobs,
+            tuple(args.views.split(",")),
+            (w, h),
+            tuple(args.entries.split(",")),
+            args.keep,
         )
         for r in ranking[:20]:
             print(
@@ -890,6 +1095,32 @@ def main(argv: list[str] | None = None) -> int:
             from dsfforza.harness import render_sheet
 
             print(render_sheet.write(args.out))
+        return 0
+    if args.cmd == "diff":
+        from dsfforza.harness import render_diff
+
+        w, h = (int(x) for x in args.size.lower().split("x"))
+        s = render_diff.run(
+            args.before, args.after, args.out, args.jobs, tuple(args.views.split(",")), (w, h), args.limit
+        )
+        print(f"{s['changed']} changed, {s['unchanged']} unchanged ({s['seconds']} s)")
+        for car in s["cars"][:30]:
+            top = "; ".join(
+                f"{c['region']} {c['view']} {c['mode']} {c['changed']:.0%}" for c in (car.get("changes") or [])[:3]
+            )
+            print(f"  {car['media']:32} {car.get('score_before')} -> {car.get('score_after')}  {top}")
+        print(render_diff.write_sheet(args.out))
+        return 0
+    if args.cmd == "rescore":
+        for r in rescore(args.run)[:20]:
+            print(
+                f"{r.get('score') or 0:7.2f}  {r['media']:32} "
+                + "; ".join(f["text"] for f in (r.get("flags") or [])[:3])
+            )
+        return 0
+    if args.cmd == "thumbnail":
+        for media in args.cars.split(","):
+            print(media, thumbnail_check(args.build, media.strip(), args.out))
         return 0
     if args.cmd == "sheet":
         from dsfforza.harness import render_sheet
