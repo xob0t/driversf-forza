@@ -2108,8 +2108,10 @@ The Venom's head lamps now glow as the other ports' 0x1D lamps do: render_compar
 view, dark mood, p95 1.37 over 1,417 lamp pixels (the other ports about 1.65; master 6.1 over 5,439,
 the lexan plate that was white by day). Its `hidhead` projectors stay dark: their few visible samples
 sit in `day_glow`'s faded rim. Master's night level came from the same unscaled alpha as its day
-plate; a 0x1D lamp has one alpha for both, and #167 sets it at a fifth by day and at night (issue
-filed with this pass).
+plate; a 0x1D lamp has one alpha for both, and #167 sets it at a fifth by day and at night (#286).
+In game (VM 1, the S60 and Venom rebuilt, run `vm1-20261029-211107`; `img/lamps8-venom-ingame2.jpg`,
+rows master, this change before the view fix, with it): by day the projectors show, a little lighter;
+at night they glow brighter than before the view fix, far below master's lit plate.
 
 ### Head lamp techniques at the rear (issue #264)
 
