@@ -537,13 +537,6 @@ def test_shell_lid_over_an_open_cockpit_steps_to_a_finer_lod():
     assert cockpit.shell_closes(closed, 5, cf) is None
 
 
-if __name__ == "__main__":
-    for name, fn in list(globals().items()):
-        if name.startswith("test_"):
-            fn()
-            print("ok", name)
-
-
 def _leaf(tag: str, data: bytes) -> chnk.Entry:
     return chnk.Entry(tag, 0, len(data), 0, 0, None, payload=data)
 
@@ -580,7 +573,13 @@ def _needle_interior(dials_ids: list[int], digital_ids: list[int], blind: bool =
             "SBMC",
             _leaf(
                 "SBBH",
-                b"S%07d" % n + mat + b"V" * 8 + struct.pack("<I12x", q * 4) + b"I" * 8 + struct.pack("<II", n * 6, 6),
+                b"S%07d" % n
+                + mat
+                + b"V" * 8
+                + bytes(8)
+                + struct.pack("<I12x", q * 4)
+                + b"I" * 8
+                + struct.pack("<II", n * 6, 6),
             ),
         )
         for n, (mat, q) in enumerate(quads)
@@ -596,7 +595,7 @@ def _needle_interior(dials_ids: list[int], digital_ids: list[int], blind: bool =
     if blind:
         drsp.append(vxck(b"W" * 8, [2], 0x12345678))
         drsp.append(
-            _node("SBMC", _leaf("SBBH", b"B" * 8 + dials + b"W" * 8 + bytes(16) + b"I" * 8 + struct.pack("<II", 0, 6)))
+            _node("SBMC", _leaf("SBBH", b"B" * 8 + dials + b"W" * 8 + bytes(24) + b"I" * 8 + struct.pack("<II", 0, 6)))
         )
     assert digital_dash.RPM[0] == 1 and digital_dash.SPEED_DIGITS[0][0] == 2
     return _node("VEHC", _node("MDXN", _node("DRSP", *drsp)))
@@ -617,3 +616,10 @@ def test_digital_dials_are_not_needles():
     assert cockpit.needle_check(None, _needle_interior([2, 1], [1, 5]), h) == ([1], 0)
     # and so is a needle drawn from a buffer without gauge ids.
     assert cockpit.needle_check(None, _needle_interior([2], [1], blind=True), h) == ([], 2)
+
+
+if __name__ == "__main__":
+    for name, fn in list(globals().items()):
+        if name.startswith("test_"):
+            fn()
+            print("ok", name)

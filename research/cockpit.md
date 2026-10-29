@@ -1697,6 +1697,28 @@ cockpit view, in both builds. All eight cars of the after runs (373, 294, 595,
 record (and on 225 the record after it moving down one) didn't upset the
 engine.
 
+**Digital dials aren't needles (2026-10-29, issue #234, offline-checked).** The
+digital dials (`digital_dash`, "Digital displays") draw their g_fDigiData
+vertices through the same DashboardInstrument declaration, with ids 1 (rpm
+bar), 2 (mph digits), 3 (km/h digits), 5 (static) and 6 (gear), on hosts 250
+and 293 from the same stride-16 buffer as the needles. The engine reads those
+through no gauge record, but `needle_check` counted every DashboardInstrument
+vertex, so the Spark (318, rpm bar on id 1, host 249 with a speedometer record
+only) and the Volt (319, mph digits on id 2, host 250 with no record) failed
+lint in `out/build` (2026-10-29 00:13). `needle_check` and `needle_survey` now
+count only the vertices drawn with the needle material (`dials_material`, the
+first `_Dials` or alpha-tested MACO, as `host_interior` picks it; the digital
+copy is added after the host's materials). The build's own check
+(`forza2dsf`, ids 1..7 allowed with digital displays) still reads every
+DashboardInstrument vertex. Survey of that build, before and after: lint and
+`dsff cockpit needles` FAILs 3 -> 1 (Spark and Volt gone; the Reventon
+Roadster's parked speed needle stays, a Forza placeholder box `fit_gauge`
+rejects); the `needles` column loses the digital ids on 300 cars and no other
+column changes. The same check still catches a real needle without a record:
+with the gauge records taken out of their hierarchies, the Spark reports id 2
+(its Forza speedometer needle) and the Camaro SS (283) ids 1 and 2, while the
+S2000 (4, both readouts digital) and the Volt report none.
+
 ## Virtual dials on display faces and virtual displays (2026-10-26, issue #63)
 
 Since "Digital displays" below, these virtual dials are the fallback: where no
