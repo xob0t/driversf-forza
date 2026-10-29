@@ -2078,6 +2078,19 @@ Venom's lexan, and the clear rear swatch lenses of ACU_TSX_10, SUZ_SX4_11, VW_Fo
 and MCL_MP412C_11 (`winga`), over their reverse and tail lamps. Left over 60: VW_RabbitGTI_84 (p95 82;
 its `oldhead` mean 43).
 
+`render_compare diff` (master 1481ae6 against this change, 15 cars, `out/rc/l8-250` in the t3-a7c21235
+worktree): 14 cars' data change, 2 draw differently (the Venom's front lamps 99 to 100% of the region
+in every mode, score 16.1 -> 0.7; the Boss 429's front lamps 22% lit by day and dark, 6.0 -> 2.9). The
+S60's white plate flag goes (12.0 -> 6.0) with under the comparison's 6 delta E changed: its slivers
+are a few pixels. No region but the front lamps changes.
+
+In game (VM 2, `-Views 'nose,nose+night' -Palette 0`, vanilla 241 first, then the S60, Venom and Boss
+429; master `vm2-20261029-195645`, this change `vm2-20261029-200139`;
+`img/lamps8-venom-ingame.jpg`, `img/lamps8-s60-ingame.jpg`): by day the Venom's head lamps show their
+projectors under the lens instead of two white plates; the S60's lamp edge is less white. In the dark
+mood the Venom now glows from its two projectors only: its own `head_light` and `hidhead` texels are
+dim (converted alpha median 20, so 4 by day), where master lit the whole lexan plate.
+
 ### Head lamp techniques at the rear (issue #264)
 
 Symptom (offline-checked, the seventh pass's `out/l7/lamp_survey.py`): on 9 cars the lamp plan made
