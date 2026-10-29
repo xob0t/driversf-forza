@@ -262,13 +262,6 @@ def _lum(c) -> float:
     return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 
 
-def apparent(params: dict) -> tuple[float, float, float]:
-    """The colour a vanilla entry mostly shows: colour 2 with a low fresnel
-    power, colour 3 with a high one (research/lights.md)."""
-    c2, c3 = params["g_vec3TintColour2"][:3], params["g_vec3TintColour3"][:3]
-    return tuple(c3) if params.get("g_fresnelpower", 0) >= 1 and _lum(c3) > _lum(c2) else tuple(c2)
-
-
 def is_metallic(params: dict) -> bool:
     return params["g_vec4TintColour1_Alpha"][1] > 0.5
 
@@ -292,27 +285,80 @@ def _distance(a, b) -> float:
     return d + 2 * (_lum(sa) - _lum(sb)) ** 2
 
 
-# How bright a palette entry looks: the paint shader mixes colour 2 toward colour 3 by
-# bias + (1 - bias) x (1 - n.v)^power, taken literally (research/lights.md, "The DMC-12 came
-# out black"). Luminance of that mix at n.v 0.9, 0.7 and 0.5 (panels facing the camera, at
-# an angle, oblique) and averaged over the projected area (n.v weighted).
+# What a palette entry shows: the paint shader mixes colour 2 toward colour 3 by
+# f = bias + (1 - bias) x (1 - n.v)^power, taken literally (research/lights.md, "The DMC-12
+# came out black"). Measured at n.v 0.9, 0.7 and 0.5 (panels facing the camera, at an angle,
+# oblique) and averaged over the projected area (n.v weighted).
 BRIGHTNESS_ANGLES = (0.9, 0.7, 0.5)
 _AREA_STEPS = 32
+_AREA_NDV = tuple((k + 0.5) / _AREA_STEPS for k in range(_AREA_STEPS))
+
+# How bright DSF draws paint against Forza's swatch. On the 50 vanilla cars Forza also has
+# (handling_dsf.PAIRS) the vanilla entries show (area-weighted) about 0.3 of the linear
+# luminance of the nearest Forza colour of the same car: whites 0.25 to 0.33 against Forza's
+# 0.86 to 0.99, the Ruf's yellow 0.33 against 0.58; a fit over all 338 colours is best at
+# 0.3 (research/lights.md, "Paint shows darker than Forza"). The Forza swatch taken as is
+# drew a mid grey (#999999 flat, 0.32) white and the S5S Raptor's yellow as a glow.
+SHOWN_GAIN = 0.3
+NEAR_BLACK = 0.01  # Forza colours darker than this (linear luminance) keep the vanilla black
+
+
+def _fresnel(params: dict, ndv: float) -> float:
+    power, bias = params["g_fresnelpower"], params["g_fresnelbias"]
+    return bias + (1 - bias) * (1 - ndv) ** power
 
 
 def _mix(params: dict, ndv: float) -> tuple[float, float, float]:
     c2, c3 = params["g_vec3TintColour2"][:3], params["g_vec3TintColour3"][:3]
-    power, bias = params["g_fresnelpower"], params["g_fresnelbias"]
-    f = bias + (1 - bias) * (1 - ndv) ** power
+    f = _fresnel(params, ndv)
     return tuple(a + f * (b - a) for a, b in zip(c2, c3))
+
+
+def shown_weight(params: dict) -> float:
+    """The share of colour 3 in what an entry shows, averaged over the projected area."""
+    return sum(x * _fresnel(params, x) for x in _AREA_NDV) / sum(_AREA_NDV)
+
+
+def apparent(params: dict) -> tuple[float, float, float]:
+    """The colour an entry shows (linear RGB): the fresnel mix averaged over the projected
+    area. A low-power entry shows mostly colour 3 (the vanilla whites with a dark colour 3
+    and power 0.1 show 0.14 to 0.2), a flat or high-power one colour 2."""
+    w = shown_weight(params)
+    c2, c3 = params["g_vec3TintColour2"][:3], params["g_vec3TintColour3"][:3]
+    return tuple(a + w * (b - a) for a, b in zip(c2, c3))
 
 
 def brightness(params: dict) -> tuple[float, ...]:
     """Luminance of an entry at BRIGHTNESS_ANGLES, then its area-weighted mean."""
-    at = tuple(_lum(_mix(params, x)) for x in BRIGHTNESS_ANGLES)
-    xs = [(k + 0.5) / _AREA_STEPS for k in range(_AREA_STEPS)]
-    area = sum(x * _lum(_mix(params, x)) for x in xs) / sum(xs)
-    return at + (area,)
+    return tuple(_lum(_mix(params, x)) for x in BRIGHTNESS_ANGLES) + (_lum(apparent(params)),)
+
+
+def target_colour(colour: ForzaColour) -> tuple[float, float, float]:
+    """The colour a Forza swatch should show in DSF (linear RGB)."""
+    return tuple(SHOWN_GAIN * c for c in colour.linear)
+
+
+def recolour(params: dict, target) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Colours 2 and 3 in the target's hue so that the entry shows the target (apparent),
+    with colour 3 at the template's brightness ratio to colour 2. Where that ratio would
+    need a colour above 1 (the MP4-12C's red: colour 3 at 0.03 of colour 2 and 98% of
+    colour 3 showing), the brighter one is the target's hue at full scale and the other
+    makes up the rest."""
+    w = min(max(shown_weight(params), 1e-6), 1 - 1e-6)
+    l2, l3 = _lum(params["g_vec3TintColour2"][:3]), _lum(params["g_vec3TintColour3"][:3])
+    if l2 > 1e-4:
+        k2 = 1 / ((1 - w) + w * l3 / l2)
+        k3 = k2 * l3 / l2
+    else:
+        k2, k3 = 0.0, 1 / w
+    top = 1 / max(max(target), 1e-6)
+    if k2 > top and k2 >= k3:
+        k2 = top
+        k3 = (1 - (1 - w) * top) / w
+    elif k3 > top:
+        k3 = top
+        k2 = (1 - w * top) / (1 - w)
+    return tuple(min(1.0, k2 * c) for c in target), tuple(min(1.0, k3 * c) for c in target)
 
 
 _CAP_CACHE: dict = {}
@@ -328,34 +374,27 @@ def brightness_cap(vanilla: list[dict]) -> tuple[float, ...]:
 
 
 def shade(colour: ForzaColour, vanilla: list[dict]) -> dict:
-    """Parameters for one Forza colour: a special finish's preset as is, else
-    the most similar vanilla car-paint entry of the same finish (any finish if
-    none), recoloured."""
+    """Parameters for one Forza colour: a special finish's preset as is, else the vanilla
+    car-paint entry of the same finish (any finish if none) whose shown colour (apparent)
+    is nearest the colour's DSF target (target_colour), recoloured to show the target.
+    Near-black colours keep the vanilla black as it is (its sheen and edge tint)."""
     if colour.finish in FINISH_PRESETS:
         return dict(FINISH_PRESETS[colour.finish])
-    target = colour.linear
+    target = target_colour(colour)
     vanilla = [s for s in vanilla if is_template(s["params"])] or vanilla
     same = [s for s in vanilla if is_metallic(s["params"]) == colour.metallic] or vanilla
     best = min(same, key=lambda s: _distance(apparent(s["params"]), target))
     params = dict(best["params"])
-    c2, c3 = params["g_vec3TintColour2"], params["g_vec3TintColour3"]
-    main_is_3 = tuple(apparent(params)) == tuple(c3[:3]) and tuple(c3[:3]) != tuple(c2[:3])
-    main, other = (c3, c2) if main_is_3 else (c2, c3)
-    ratio = _lum(other) / max(_lum(main), 1e-4)
-    new_main = tuple(min(1.0, c) for c in target)
-    new_other = tuple(min(1.0, c * ratio) for c in target)
-    if _lum(target) < 0.01:  # near black: keep the vanilla sheen colour
-        new_other = tuple(other[:3])
-    if main_is_3:
-        params["g_vec3TintColour3"], params["g_vec3TintColour2"] = new_main + (c3[3],), new_other + (c2[3],)
-    else:
-        params["g_vec3TintColour2"], params["g_vec3TintColour3"] = new_main + (c2[3],), new_other + (c3[3],)
+    if _lum(colour.linear) >= NEAR_BLACK:
+        c2, c3 = params["g_vec3TintColour2"], params["g_vec3TintColour3"]
+        new2, new3 = recolour(params, target)
+        params["g_vec3TintColour2"], params["g_vec3TintColour3"] = new2 + tuple(c2[3:]), new3 + tuple(c3[3:])
     # Never brighter than the brightest vanilla car paint. Forza's swatch RGB taken as linear
-    # can be far above anything vanilla DSF paints: the S5S Raptor's #ffbf19 on the security
-    # van's yellow (fresnel power 1, colour 3 at 0.44 of colour 2) gave luminance 0.55
-    # facing the camera where no vanilla paint passes 0.39, and the body bloomed into an
-    # orange halo in daylight (user report on out/testdrive9). Both colours are scaled,
-    # so the hue and the template's shading stay.
+    # was far above anything vanilla DSF paints: the S5S Raptor's #ffbf19 on the security
+    # van's yellow gave luminance 0.55 facing the camera where no vanilla paint passes 0.39,
+    # and the body bloomed into an orange halo in daylight (user report on out/testdrive9).
+    # SHOWN_GAIN keeps targets under that; the cap stays as a guard. Both colours are
+    # scaled, so the hue and the template's shading stay.
     cap, now = brightness_cap(vanilla), brightness(params)
     k = min([1.0] + [c / v for c, v in zip(cap, now) if v > c])
     if k < 1.0:

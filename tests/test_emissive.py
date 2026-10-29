@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from dsfforza.convert import forza_materials as fm
 from dsfforza.convert import paint
@@ -34,13 +35,23 @@ VANILLA = [
 
 
 class PaintBrightness(unittest.TestCase):
-    def test_too_bright_colour_is_dimmed_to_vanilla(self):
-        # FH1 S5S Raptor: #ffbf19 metallic, linear (1.0, 0.52, 0.01) on the van's yellow.
+    def test_yellow_stays_under_vanilla(self):
+        # FH1 S5S Raptor: #ffbf19 metallic, linear (1.0, 0.52, 0.01). It glowed when the
+        # swatch went in as is; at DSF's paint brightness (paint.SHOWN_GAIN) it shows below
+        # the brightest vanilla paint without the cap.
         q = paint.shade(paint.ForzaColour(1, (0xFF, 0xBF, 0x19), True, "Yellow"), VANILLA)
+        self.assertEqual(q["_dimmed"], 1.0)
+        for got, limit in zip(paint.brightness(q), paint.brightness_cap(VANILLA)):
+            self.assertLessEqual(got, limit + 1e-6)
+
+    def test_too_bright_colour_is_dimmed_to_vanilla(self):
+        # The cap still holds where a target passes the vanilla maximum (the swatch taken
+        # as linear, as before SHOWN_GAIN).
+        with mock.patch.object(paint, "SHOWN_GAIN", 1.0):
+            q = paint.shade(paint.ForzaColour(1, (0xFF, 0xBF, 0x19), True, "Yellow"), VANILLA)
         self.assertEqual(q["_template"], 301)
         self.assertLess(q["_dimmed"], 0.8)
-        cap = paint.brightness_cap(VANILLA)
-        for got, limit in zip(paint.brightness(q), cap):
+        for got, limit in zip(paint.brightness(q), paint.brightness_cap(VANILLA)):
             self.assertLessEqual(got, limit + 1e-6)
         # hue kept: both colours scaled alike
         c2 = q["g_vec3TintColour2"]
@@ -49,7 +60,9 @@ class PaintBrightness(unittest.TestCase):
     def test_ordinary_colour_untouched(self):
         q = paint.shade(paint.ForzaColour(1, (0xF5, 0xF5, 0xF5), True, "White"), VANILLA)
         self.assertEqual(q["_dimmed"], 1.0)
-        self.assertAlmostEqual(q["g_vec3TintColour2"][0], paint.srgb_to_linear(0xF5 / 255), places=4)
+        want = paint.SHOWN_GAIN * paint.srgb_to_linear(0xF5 / 255)
+        for got in paint.apparent(q):
+            self.assertAlmostEqual(got, want, places=4)
 
 
 class LiveryDecals(unittest.TestCase):
