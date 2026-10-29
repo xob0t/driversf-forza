@@ -709,12 +709,34 @@ _FACE_SAMPLES = (
 )
 
 
-def wheel_has_rim(sections, lod: int) -> bool:
-    """Whether the wheel model has a sharp rim at `lod` (a rim or chrome subsection),
-    not just its blur disc (Forza's LOD 5 on 503 roster cars)."""
-    return any(
-        wheel_role(sub.material) in ("rim", "chrome") for s in sections for sub in s.subsections if sub.lod == lod
-    )
+def wheel_has_rim(sections, lod: int, centre=(0.0, 0.0, 0.0)) -> bool:
+    """Whether the wheel model has a sharp rim at `lod`, not just its blur disc (Forza's
+    LOD 5 on 503 roster cars): a subsection the converter draws from the wheel texture
+    (fm.classify_wheel; DOD_StealthTurbo_96's whole rim is `wheel_emblem`), not the inner
+    rim, reaching half the radius of the wheel's non-tyre geometry (a lone centre cap is
+    not a rim)."""
+    from dsfforza.convert import forza_materials as fm
+
+    rim = whole = 0.0
+    for s in sections:
+        for sub in s.subsections:
+            n = sub.material.lower()
+            role, family = fm.classify_wheel(n)
+            if sub.lod != lod or role == fm.TYRE or is_blur_disc(sub):
+                continue
+            pool = s.vertices_for(sub)
+            reach = max(
+                (
+                    math.hypot(pool[i].position[1] - centre[1], pool[i].position[2] - centre[2])
+                    for t in sub.triangles()
+                    for i in t
+                ),
+                default=0.0,
+            )
+            whole = max(whole, reach)
+            if role == fm.TEXTURED and family == fm.WHEEL and "inner" not in n:
+                rim = max(rim, reach)
+    return rim > 0 and rim >= 0.5 * whole
 
 
 def blur_picture_map(sections):
@@ -774,7 +796,9 @@ def wheel_blur_section(sections, lods, centre=(0.0, 0.0, 0.0)) -> carbin.Section
                 if not len(tris):
                     continue
                 if wheel_role(sub.material) == "tyre":
-                    tyre_r.append(float(np.hypot(tris[..., 1] - cy, tris[..., 2] - cz).min()))
+                    tr = np.hypot(tris[..., 1] - cy, tris[..., 2] - cz)
+                    # its inner radius; DOD_ViperSRT10_03's tyre mesh also closes the wheel at r 0
+                    tyre_r.append(float(tr[tr > 0.5 * tr.max()].min()))
                     continue
                 pts.append(np.einsum("kc,tcd->tkd", weights, tris).reshape(-1, 3))
         if not pts:
@@ -833,7 +857,7 @@ def wheel_blur_section(sections, lods, centre=(0.0, 0.0, 0.0)) -> carbin.Section
                 c, d = outer + j, outer + (j + 1) % count
                 idx += [a, c, d, a, d, b]
         sub = carbin.SubSection(fm.WHEEL_BLUR_TECHNIQUE, lod, 4, (0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0), idx)
-        sub.always = not wheel_has_rim(sections, lod)
+        sub.always = not wheel_has_rim(sections, lod, centre)
         subs.append(sub)
     if not subs:
         return None

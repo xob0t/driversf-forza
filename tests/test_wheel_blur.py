@@ -122,6 +122,30 @@ class Disc(unittest.TestCase):
         tyre_only.subsections = [s for s in self.wheel.subsections if s.material == "tire"]
         self.assertIsNone(forza2dsf.wheel_blur_section([tyre_only], {1}))
 
+    def test_rim_drawn_as_emblem(self):
+        """DOD_StealthTurbo_96 draws its whole rim with wheel_emblem (from the wheel texture):
+        a sharp rim, so the disc fades in; a lone centre cap is no rim."""
+        for sub in self.wheel.subsections:
+            if sub.material == "rim":
+                sub.material = "wheel_emblem"
+        self.assertTrue(forza2dsf.wheel_has_rim([self.wheel], 1))
+        cap = carbin.Section("cap", (0, 0, 0), (0, 0, 0), (0, 0, 0), [], [], [])
+        cap.lod_vertices = [carbin.Vertex(p, (0, 0), (0, 0), (-1, 0, 0)) for p in [(-0.1, 0, 0), *_ring(0.03, -0.1)]]
+        cap.subsections = [carbin.SubSection("rim", 5, 4, IDENTITY_UV, [0, 1, 2, 0, 2, 3])]
+        self.assertFalse(forza2dsf.wheel_has_rim([self.wheel, cap], 5))
+
+    def test_tyre_closing_the_wheel(self):
+        """DOD_ViperSRT10_03's tyre mesh also closes the wheel at r 0: the disc still ends at
+        the tyre's inner radius, not at the axle."""
+        verts = self.wheel.lod_vertices
+        base = len(verts)
+        verts.append(carbin.Vertex((0.1, 0.0, 0.0), (0, 0), (0, 0), (1, 0, 0)))
+        tyre = next(s for s in self.wheel.subsections if s.material == "tire" and s.lod == 1)
+        tyre.indices += [base, base - 1, base - 2]  # a fan triangle from the axle (inboard)
+        disc = forza2dsf.wheel_blur_section([self.wheel], {1})
+        radii = [math.hypot(v.position[1], v.position[2]) for v in disc.lod_vertices]
+        self.assertAlmostEqual(max(radii), 0.2, places=3)
+
     def test_left_out_of_the_wheels_sky(self):
         """The disc must not shade the rim it covers (wheel_skies' voxel march)."""
         with mock.patch.object(forza2dsf, "wheel_sky", side_effect=lambda pts, nrm, tris: [len(tris)] * len(pts)):
