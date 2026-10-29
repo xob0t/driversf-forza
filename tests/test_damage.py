@@ -163,12 +163,15 @@ class ExposedVisible(unittest.TestCase):
         self.assertEqual(report["seen bay lod 1"], 2)
 
 
-def _record(type_: int, role: int, subtree: int, slot: int = -1, model: int = -1, flags: int = 0) -> bytes:
+def _record(
+    type_: int, role: int, subtree: int, slot: int = -1, model: int = -1, flags: int = 0, hinge: int = -1, pops=(0, 0)
+) -> bytes:
     rec = bytearray(upvh.RECORD_SIZE)
     rec[:8] = upvh.NONE_UID
     struct.pack_into("<HHH", rec, 0x08, type_, role, flags)
     struct.pack_into("<H", rec, 0x14, subtree)
-    struct.pack_into("<hhh", rec, 0x1A, -1, -1, -1)
+    struct.pack_into("<HH", rec, 0x16, *pops)
+    struct.pack_into("<hhh", rec, 0x1A, -1, hinge, -1)
     struct.pack_into("<h", rec, 0x2A, model)
     struct.pack_into("<h", rec, 0x34, slot)
     return bytes(rec)
@@ -279,6 +282,34 @@ class MirrorMount(unittest.TestCase):
         self.assertEqual(_tree(out), [(0, None), (38, 0), (4, 38), (41, 38), (40, 38), (36, 38)])
         self.assertEqual(_flags(out), [23, 7, 0, 4, 4, 0])
         self.assertEqual(sorted(report), ["6,6 mirror -x", "7,7 mirror +x"])
+
+    def test_moved_records_get_vanilla_pop_counts(self):
+        # Host 182's +x door: door (hinge), its marker, then its mirror and the mirror's
+        # marker, which ends the door's subtree and so pops the door's hinge (+0x16/+0x18
+        # = 1, 1). Moved under the chassis, the door's marker ends it instead (as on 197).
+        records = [
+            _record(4, 0, 7, flags=23),
+            _record(1, 38, 6, 0, 0, 7),
+            _record(1, 31, 4, 8, 9, 5, hinge=8, pops=(0, 1)),
+            _record(3, 65, 1),
+            _record(1, 40, 2, 9, 10, 4, pops=(0, 1)),
+            _record(3, 74, 1, pops=(1, 1)),
+            _record(3, 86, 1),
+        ]
+        head = bytearray(upvh.HEADER_SIZE)
+        head[:4] = b"AWHF"
+        struct.pack_into("<6I", head, 4, 0, 0, 26, len(records), 1, 0)
+        head[0x2D] = 1  # mirrors
+        data = bytes(head) + b"".join(records) + TAIL
+        out = damage.move_subtree(data, 4, 1)
+        h = upvh.parse(out)
+        self.assertEqual(_tree(out), [(0, None), (38, 0), (31, 38), (65, 31), (40, 38), (74, 40), (86, 38)])
+        self.assertEqual(
+            [struct.unpack_from("<HH", r.raw, 0x16) for r in h.records][2:6], [(0, 1), (1, 1), (0, 0), (0, 0)]
+        )
+        self.assertEqual(_flags(out)[2], 4)
+        fields = damage._tree_fields([r.raw for r in h.records])
+        self.assertEqual([damage._read_tree_fields(r.raw) for r in h.records], fields)
 
 
 if __name__ == "__main__":

@@ -3202,20 +3202,50 @@ def move_subtree(data: bytes, index: int, parent: int) -> bytes | None:
     new_sub = rest_sub[:at] + block_sub + rest_sub[at:]
     for r, s in zip(new_raw, new_sub, strict=True):
         struct.pack_into("<H", r, 0x14, s)
-    # Bit 0 of +0x0C is set on exactly the records with a part (type 1) child, bit 1 on
-    # those with a wheel below (all 150 vanilla hierarchies). A door left with bit 0 and no
-    # mirror crashed forceOpenPanels; a door given a mirror without it didn't carry it.
-    old, new = rest_raw[where[par[index]]], rest_raw[pp]
-    for n, r in enumerate(new_raw):
-        if r is old or r is new:
-            kids, c = [], n + 1
-            while c < n + new_sub[n]:
-                kids.append(struct.unpack_from("<H", new_raw[c], 0x08)[0])
-                c += new_sub[c]
-            flags = struct.unpack_from("<H", r, 0x0C)[0] & ~1
-            struct.pack_into("<H", r, 0x0C, flags | int(1 in kids))
+    # Fields that follow the tree (_tree_fields) are written again for the new one, on
+    # every record that followed them before (a few vanilla exporter quirks stay).
+    before = _tree_fields(raw, sub_of=[r.subtree for r in h.records])
+    by_id = {id(r): k for k, r in enumerate(raw)}
+    for r, fields in zip(new_raw, _tree_fields(new_raw), strict=True):
+        if _read_tree_fields(r) == before[by_id[id(r)]]:
+            struct.pack_into("<H", r, 0x0C, (struct.unpack_from("<H", r, 0x0C)[0] & ~1) | fields[0])
+            struct.pack_into("<HH", r, 0x16, *fields[1:])
     start, end = upvh_mod.HEADER_SIZE, upvh_mod.HEADER_SIZE + len(raw) * size
     return data[:start] + b"".join(bytes(r) for r in new_raw) + data[end:]
+
+
+def _read_tree_fields(r) -> tuple[int, int, int]:
+    return (struct.unpack_from("<H", r, 0x0C)[0] & 1,) + struct.unpack_from("<HH", r, 0x16)
+
+
+def _tree_fields(records, sub_of=None) -> list[tuple[int, int, int]]:
+    """Per raw record, what vanilla hierarchies write from the tree's shape (10,944 of
+    10,959 vanilla records; the rest are the list's last record and three headlights):
+    +0x0C bit 0, set if the record has a part (type 1) child; +0x18, how many hinged
+    records among it and its ancestors end their subtree where its own ends (the hinge
+    transforms the engine pops there); +0x16, the same on a leaf but the list's last,
+    else 0. A door left with bit 0 and no mirror crashed forceOpenPanels, and so did a
+    mirror moved under the chassis with its old pop counts (research/damage.md)."""
+    sub = sub_of or [struct.unpack_from("<H", r, 0x14)[0] for r in records]
+    par, stack = [None] * len(records), []
+    for k in range(len(records)):
+        while stack and stack[-1][1] <= k:
+            stack.pop()
+        par[k] = stack[-1][0] if stack else None
+        stack.append((k, k + sub[k]))
+    out = []
+    for k in range(len(records)):
+        kids, c = [], k + 1
+        while c < k + sub[k]:
+            kids.append(struct.unpack_from("<H", records[c], 0x08)[0])
+            c += sub[c]
+        end, pops, x = k + sub[k], 0, k
+        while x is not None:
+            pops += struct.unpack_from("<h", records[x], 0x1C)[0] >= 0 and x + sub[x] == end
+            x = par[x]
+        leaf = pops if sub[k] == 1 and end < len(records) else 0
+        out.append((int(1 in kids), leaf, pops))
+    return out
 
 
 def robust_box(points, trim: float = 0.02) -> Box | None:
@@ -3597,14 +3627,13 @@ def cmd_check(args) -> None:
         panels = host_panels(upvh, payload(stream, child(nonr, "MODL")))
         meshes = {k: load_mesh(stream, kinds[k]) for k in (0, 2) if k in kinds}
     h = upvh_mod.parse(upvh)
-    par = _parents(h)
+    # Hosts 210 and 217 keep a vanilla exporter quirk on three headlight records.
     stray = [
         r.index
-        for r in h.records
-        if bool(struct.unpack_from("<H", r.raw, 0x0C)[0] & 1)
-        != any(par[c.index] == r.index and c.type == 1 for c in h.records)
+        for r, fields in zip(h.records, _tree_fields([r.raw for r in h.records]), strict=True)
+        if _read_tree_fields(r.raw) != fields and r.role not in (50, 51)
     ]
-    report(not stray, f"record +0x0C bit 0 set exactly on records with a part child (move_subtree; not: {stray})")
+    report(not stray, f"records' +0x0C bit 0, +0x16, +0x18 follow the tree (_tree_fields; not: {stray})")
     # Rigid panels are drawn through the chassis' transform slot (DamagePlan.bound).
     chassis_slot = 0 if (0, 0) in panels else min(panels)[0]
     drawn = {pair: (chassis_slot, pair[1]) if panel.role in BODY else pair for pair, panel in panels.items()}
