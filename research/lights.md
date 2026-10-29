@@ -1534,6 +1534,23 @@ rays along their normal, as on master.
 | flat rear lenses left out (two more meet a lamp along the axis) | 253 | 255 (MCL_MP412C_11's clear tail lenses) |
 | cars whose baked Lights texels change (4x4 blocks, more than 8 in a channel) | | 274 |
 
+In game (confirmed-runtime; `-Views 'rear,nose,rear+night,nose+night' -Palette 0 -ShotSeconds 3`, vanilla 241
+first; master's lamp code `out/l6/before1` / `before2`, this change `out/l6/after1` / `after2`):
+
+- Forte Koup (VM 2, `vm2-20261029-061539` / `-062957`): the head lamp bowls show their chrome reflector and
+  bulb instead of one flat tan colour (`img/lamps6-forte-headlamps-ingame.jpg`).
+- Shelby GT500 13 (same runs): the tail strips read as red bands with a darker edge; master's car was hit by
+  traffic before its rear views (`img/lamps6-shelby-tails-ingame.jpg`).
+- Ferrari 599 (VM 1, `vm1-20261029-081043` / `-082631`): its flat amber head lamp lenses show the reflector
+  behind them, tinted amber, instead of an orange plate (`img/lamps6-f599-headlamps-ingame.jpg`). The Audi
+  Q7's flat bumper lens and the Mini JCW's reflector look as on master by day and in the dark mood.
+- Panoz Esperante #51 and Maserati MC12 (VM 2, `vm2-20261029-081228` / `-083320`): the yellow lexan covers
+  stay yellow with the bowls inside; the MC12's round tails as on master with a little more ring detail.
+  The Ford GT GTR's yellow covers show two projectors in a black housing (branch only: master's views
+  fell in the Shift effect; `img/lamps6-fordgtr-headlamps-ingame.jpg`).
+- Earlier runs of the same pairs stopped at "Story world not ready" on both VMs (`vm2-20261029-071914`,
+  `vm1-20261029-071930`, a busy host); the reruns above loaded.
+
 **Panoz Esperante head lamps by day (after #190's axis rays).** A report had them close to a white
 glow. Built (`out/l6/front_emission.py`: the full entry from straight ahead, 4 mm, the day-lit types'
 alpha / 255 x type scale x area): day-lit emission 652 over 1,113 cm2, glow alpha mean 15, lamp texels'
