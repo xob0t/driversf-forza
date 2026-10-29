@@ -1635,6 +1635,55 @@ first; master's lamp code `out/l6/before3` run `vm1-20261029-073318`, this chang
 the ZR1's four round lamps and the Explorer's tails glow as on master (`img/lamps6-zr1-tails-dark-ingame.jpg`):
 master lit them at full as DaytimeRunning lamps whatever the brakes did. The difference is on the throttle
 (0x19/0x1A dim to a tail lamp's 0.2 off the brakes), which these runs don't drive; not checked in game.
+### Clear covers over reflectors with no lamp (issue #174)
+
+Symptom (confirmed-runtime since #158): the VW GTI VR6's bumper fog lamps glowed with its head lamps, by
+day and in the dark mood. In Forza they never glow: `bumperFa` holds `lights_glass` covers over a
+`reflector` and a `textured_reflector`, with no lamp technique.
+
+Cause (confirmed-static): `LampPlan._place_clear` lit a clear lens, a cover baked as a lens and a rear
+reflector with the nearest lamp at its end within 0.35 m. The GTI's head lamp in `headlightL/R` was 0.29 m
+from the bumper covers.
+
+Change (`_place_clear`; pieces are triangles joined by their corners, `_pieces`):
+
+- A rear reflector piece lights with the lamps whose triangles lie inside its outline along z (its convex
+  hull: a bowl often has a hole where the bulb sits), within 0.35 m either way, each triangle with the
+  nearest of them.
+- A lens or cover triangle lights with the lamp surface right behind it (inside its outline along z, up to
+  0.35 m deep); the rest of its piece with the nearest of the lamps the piece has behind it. Front
+  reflector bowls of a lamp unit (by the reflector rule) count as what lies behind a lens, though they stay
+  unlit themselves: the Alfa Brera's lens over three projector bowls with one bulb lights over all three.
+- A piece with nothing behind or inside it lights with the nearest lamp of its own Forza section (the GTI's
+  small reflector cups beside its tail bulbs); a lens or cover piece, else with a lamp whose outline overlaps
+  its own (the Dodge SRT-4's lens wrapped round its bulb); else it stays unlit.
+- Head lamp triangles made from reflectors or covers (`_headlight_reflectors`, `_bare_head_units`) now carry
+  their corners, so a cover finds them behind it (the BMW E36 M3's head lamp units).
+
+Roster (offline, `out/l6/lamp_survey.py` in the #189 worktree, master's `lights.py` against this one on the
+same texturing plan; LOD 1 triangles of clear lenses, covers baked as lenses and reflectors; 565 cars):
+
+| | master | this change |
+| --- | ---: | ---: |
+| cover triangles lit / unlit | 32,258 / 136 | 31,830 / 564 |
+| lens triangles lit / unlit | 181,263 / 4,395 | 179,850 / 5,808 |
+| reflector triangles lit / unlit (front reflectors are never lit) | 231,160 / 223,975 | 228,525 / 226,610 |
+| subsections that lose light | | 131 on 119 cars (6,062 triangles) |
+| subsections that gain light | | 100 on 52 cars (1,586) |
+| subsections lighting with another lamp, as many triangles lit | | 906 on 334 cars |
+
+The losses are 83 reflectors (rear bumper retro-reflectors with no bulb: Z4 M Coupe, Zonda Cinque, MC12s,
+V12 Vantage, R8 V10; red reflector bands and lower lamps with no lamp technique: Camaro Z28 70, Cobra 427),
+43 lenses and 5 covers over reflectors with no lamp (the GTI's and RS2's bumper covers, the 205 T16
+ShowCase's bumper lenses, the Saab 99's wrap-around corner lenses). Forza lights none of them: emission comes
+from the lamp techniques only. The gains and moves are lenses over a lamp other than the nearest centre
+(the M3 E30's tail reflectors now light with the tail lamp around them rather than the reverse lamp's
+centre).
+
+In game (VM 1, `-Views 'rear,nose,rear+night,nose+night,rear+hitfront' -Palette 0 -ShotSeconds 3`, vanilla
+241 first; master's lamp code `out/l6/before3` run `vm1-20261029-073318`, this change with #146 and #103
+`out/l6/after3` run `vm1-20261029-084829`): the GTI VR6's bumper fog lamps no longer glow in the dark mood;
+its head lamps do as before (`img/lamps6-gtivr6-bumper-dark-ingame.jpg`).
 
 ### Open
 

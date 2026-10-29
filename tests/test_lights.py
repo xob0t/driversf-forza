@@ -166,8 +166,8 @@ def test_clear_lens_on_red_texels_is_tail():
     # a rear clear lens drawn on red texels lights with the brakes, not with the reverse lamp
     car = [
         _quad("glassLTL", "detail_glass_clear", 0.6, -2.05),
-        _quad("revL", "reverse_light", 0.75, -2.0),
-        _quad("revR", "reverse_light", -0.75, -2.0),
+        _quad("revL", "reverse_light", 0.68, -2.0),  # behind part of the lens
+        _quad("revR", "reverse_light", -0.68, -2.0),
     ]
     assert _functions(car, {})["glassLTL"] == lights.REVERSE
     assert _functions(car, {"glassLTL": RED_TEXEL})["glassLTL"] == lights.TAIL
@@ -334,6 +334,21 @@ def test_tailside_lamps_brake():
     car = [_quad("taillightL", "lindtailside", 0.6, -2.0), _quad("taillightR", "rindtailside", -0.6, -2.0)]
     got = _assigned(car, 8)
     assert got[(lights.BRAKE_IND, "L", False)] == 0x19 and got[(lights.BRAKE_IND, "R", False)] == 0x1A, got
+
+
+def test_clear_cover_lights_only_with_a_lamp_behind_it():
+    # VW_GTIVR6_98 (issue #174): bumperFa's clear covers lie over reflectors with no lamp of
+    # their own, 0.3 m from the head lamp. They used to light with the nearest lamp (the head
+    # lamp); now only a lamp behind a cover lights it. The head lamp's own lens still does,
+    # and so does a rear reflector cup of the tail lamp's section beside its bulb.
+    head = [_quad("headlightL", "head_light", 0.6, 1.95), _quad("headlightR", "head_light", -0.6, 1.95)]
+    lens = [_quad("glassLHL", "detail_glass_clear", 0.6, 2.0), _quad("glassRHL", "detail_glass_clear", -0.6, 2.0)]
+    fog = [_quad("bumperFa", "detail_glass_clear", 0.35, 2.1), _quad("fogL", "textured_reflector", 0.35, 2.05)]
+    cup = _quad("taillightL", "reflector", 0.85, -1.95)
+    got = _functions(head + lens + fog + TAILS + [cup], {})
+    assert got["glassLHL"] == got["glassRHL"] == lights.HEAD, got
+    assert got["bumperFa"] is None, got
+    assert got["taillightL"] == lights.TAIL, got
 
 
 if __name__ == "__main__":
