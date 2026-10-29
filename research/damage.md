@@ -1081,6 +1081,42 @@ bumper but hang under the front structure ahead of its other parts. The other
 276 cars have their mirrors under the right record already, no mirror panel,
 or none within 6 cm of a panel.
 
+## Side doors 52/53 (issue #209, 2026-10-29)
+
+`damage.py` called UPVH roles 52/53 "sill +x/-x" and held them like the
+chassis (`BODY`, drawn through the chassis transform). In the vanilla
+archive they are side doors with the doors' hinge (vertical axis, limit 0,
+`dsff damage panels <vanilla> --id 231/198`): the Vista Cruiser's rear
+doors (231: records 17/19, hinges at (+-0.93, 0.35, -0.22), just behind the
+front doors' at z 0.81; it has no 54/55), the GMC Savana's two right-side
+cargo doors (198: two role-53 records, hinges at (-0.97, 0.02, 0.37) and
+(-0.94, 0.02, -1.09), opening opposite ways; 54/55 are its rear doors), the
+Vandura's side door (200, no hinge) and the airport fire truck's lockers
+(186). Under `forceOpenPanels` vanilla 198's side door swings out like its
+other doors (run `vm1-20261029-113635`, observe-39/40).
+
+Fix: 52/53 are "side door +x/-x" and members of `DOORS` (so of `SWINGS` and
+`BODY` as before). They take part in the Forza-part test like the other
+doors (a side door that is a Forza part keeps its own transform slot and
+swings and comes off like vanilla; one that is not stays held), side-window
+glass and door cards can go with them, and `patch_upvh` moves their hinge,
+body and collision box as before. A Savana side door has no partner on the
+other side (`_partner` finds no role 52), so each qualifies alone. The
+mirror re-parenting (#187/#196) is unchanged: it hangs a mirror under the
+record that draws its mount, and no Forza mirror is mounted on a side door
+on these hosts (the Express's go under the chassis, from the front doors,
+as before).
+
+Roster: only CHE_Express2500Cargo_05 sits on such a host (198,
+`host-picks.tsv`, before and after #208). Its build (`port_batch`,
+default options) now has both right-side cargo doors as swinging Forza
+parts ("side door -x" 0.88 and 0.61 m2 of whole Forza components, report
+`shut_line_parts`; hinges moved 0.08 and 0.34 m onto the Forza doors), where
+before they were held on the chassis. To see the Vista Cruiser's rear doors
+on a converted car, AUD_A4Avant_04 was built on 231 (`--host 231`): both
+rear doors become swinging parts (0.75 m2 each), held before. `damage check`:
+0 problems on both.
+
 ## Risks and open questions
 
 1. Crush, panel swing and removal (`-DamagePanels`), decals and seams have
