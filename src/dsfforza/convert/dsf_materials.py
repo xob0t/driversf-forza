@@ -1377,7 +1377,9 @@ class Texturing:
                     {f: [tris[f][n] for n in kept[f]] for f in self.families},
                     {f: [keys[f][n] for n in kept[f]] for f in self.families},
                     {f: [tested[f][n] for n in kept[f]] for f in self.families},
-                    swatches + [(art_subs[sid][1], flat[sid]) for sid in flat_ids],
+                    # In art_subs' (the carbin's) order: flat_ids holds id()s, whose set order
+                    # changes from run to run, and so did the swatch cells' places (issue #84).
+                    swatches + [(art_subs[sid][1], flat[sid]) for sid in art_subs if sid in flat_ids],
                     extra_solids,
                 )
                 return self.pack_scale
