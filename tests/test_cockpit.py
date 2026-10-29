@@ -695,7 +695,7 @@ def test_cowl_holds_a_virtual_display_in_an_open_cockpit():
     hi = [max(p[i] for p in box) for i in range(2)]
     assert not any(lo[0] < p[0] < hi[0] and lo[1] < p[1] < hi[1] for p in corners)
     # #92's dials on an open cockpit go there too.
-    dials, report, extra = cockpit.virtual_gauges(_open_cockpit()[0], {}, eye, _Car(), 2, wheel=wheel)
+    dials, report, _ = cockpit.virtual_gauges(_open_cockpit()[0], {}, eye, _Car(), 2, wheel=wheel)
     assert [g.family for _, _, g, _ in dials] == ["tach", "speed"] and report["virtual_display"]["cowl"]
 
 
@@ -739,7 +739,7 @@ def test_placeholder_cockpit_gets_virtual_dials():
     rim = [v.position for v in _wheel_disc(wheel.centre, axis, wheel.radius).lod0_vertices[1:5]]
     static = {"interior": dash, "steering_wheel": _quad_section("steering_wheel", rim, ("leather",))}
     assert cockpit.virtual_gauges(static, {}, eye, _Car(), 2, wheel=wheel) == ([], {}, {})
-    dials, report, extra = cockpit.virtual_gauges(static, {}, eye, _Car(), 2, wheel=wheel, assume=("tach", "speed"))
+    dials, _, extra = cockpit.virtual_gauges(static, {}, eye, _Car(), 2, wheel=wheel, assume=("tach", "speed"))
     assert [g.family for _, _, g, _ in dials] == ["tach", "speed"] and set(extra) == {"dsf_dial_panel"}
 
 
