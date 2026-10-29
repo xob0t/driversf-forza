@@ -2416,7 +2416,10 @@ def host_interior(stream, interior, known: dict | None = None) -> InteriorMateri
     # Without the engine trim the largest stride-28 material can be a chassis
     # one (193: Chassis_LOD1); keep the engine trim, MATERIAL_LAYOUT has its layout.
     trim = forza2dsf.TRIM
-    for uid in (glass, paint, trim):
+    # Outside chrome seen from the seat (A-pillar trim, window frames, bonnet strips): the
+    # shared chrome vanilla interiors use (host 193: 3,700 triangles), issue #232.
+    chrome = forza2dsf.CHROME
+    for uid in (glass, paint, trim, chrome):
         layout.setdefault(uid, (forza2dsf.MATERIAL_LAYOUT if known is None else known).get(uid, (28, 5)))
     tex = next(iter(local["interior"]["textures"]))
     if tex not in texc:
@@ -2425,7 +2428,7 @@ def host_interior(stream, interior, known: dict | None = None) -> InteriorMateri
         local["interior"]["uid"],
         local["dials"]["uid"] if "dials" in local else None,
         tex,
-        {"paint": paint, "glass": glass, "trim": trim, "tyre": None, "skip": None},
+        {"paint": paint, "glass": glass, "trim": trim, "chrome": chrome, "tyre": None, "skip": None},
         layout,
         needle_part,
         cabin_part,
@@ -2447,6 +2450,9 @@ def _needle_vertex(pos, uv, gauge_id: int, normal, stride: int = 20, comp: int =
     return head + struct.pack("<4B", p0, p1, 128, 128)
 
 
+# Gloss materials (copies of the car's Lights material, about 11 KB each) the interior
+# entry takes at most for the outside parts it holds (issue #232).
+COCKPIT_GLOSS_MATERIALS = 6
 # Vertex-cluster cells (m) tried in turn until the interior MDXN fits.
 DECIMATE_LADDER = (0.0, 0.004, 0.007, 0.01, 0.015, 0.02, 0.03)
 # Largest vanilla interior MDXN (Sports Coupe 10); port_car enforces the same.
@@ -2492,10 +2498,16 @@ class CockpitBinding:
     """dsf_materials.Binding-like object for add_geometry: textured cockpit
     subsections use the interior's own material through the cockpit atlas,
     the rest the host interior's paint/glass/trim. Paint samples the shared
-    paint atlas at paint_uv (the converted exterior's paint texel)."""
+    paint atlas at paint_uv (the converted exterior's paint texel). On the
+    outside parts (`outside(section)`: the cockpit carbin's bonnet, A-pillars and
+    mirrors, and the shell), chrome takes the shared chrome and the atlas trims
+    Texturing gave a gloss material take its copy of the Lights material (`gloss`:
+    Texturing kind -> UID), as on the exterior (issue #232)."""
 
-    def __init__(self, texturing, materials: InteriorMaterials, paint_uv):
+    def __init__(self, texturing, materials: InteriorMaterials, paint_uv, gloss: dict | None = None, outside=None):
         self.texturing, self.materials, self._paint_uv = texturing, materials, paint_uv
+        self.gloss = gloss or {}
+        self.outside = outside or (lambda section: False)
 
     def _flat(self, section, sub) -> bool:
         """Borrowed main-carbin sections (`section.flat`, a steering wheel
@@ -2511,7 +2523,16 @@ class CockpitBinding:
         if FORCE_FLAT.match(sub.material) or self._flat(section, sub):
             return self.materials.textured
         kind = self.texturing.material(section, sub)
-        if kind in (dm.CHASSIS, dm.LIGHTS_MAT, fm.TRIM):
+        if (
+            kind != fm.SKIP
+            and shared.get("chrome")
+            and self.outside(section)
+            and fm.classify(sub.material)[0] == fm.CHROME
+        ):
+            return shared["chrome"]  # add_geometry puts UV0 on its grey texel (forza2dsf.CHROME_UV)
+        if kind in self.gloss:
+            return self.gloss[kind]
+        if dm.is_atlas_kind(kind) or kind == fm.TRIM:
             return self.materials.textured
         return shared.get(kind)
 
@@ -2522,11 +2543,14 @@ class CockpitBinding:
         if (
             FORCE_FLAT.match(sub.material)
             or self._flat(section, sub)
-            or self.texturing.material(section, sub) == fm.TRIM
+            or (self.texturing.material(section, sub) == fm.TRIM and not self._chrome(section, sub))
         ):
             key = ("flat",) + flat_colour(sub.material)
             return [self.texturing.solid_uv(key)] * len(raw_uvs), key
         return self.texturing.triangle_uvs(section, sub, triangle_index, raw_uvs)
+
+    def _chrome(self, section, sub) -> bool:
+        return self.outside(section) and fm.classify(sub.material)[0] == fm.CHROME
 
     @property
     def paint_uv(self):
@@ -3077,6 +3101,7 @@ def convert_interior(
     glass_links: dict | None = None,
     glass_skin: dict | None = None,
     layout: dict | None = None,
+    lights_template=None,
 ) -> dict:
     """Rebuild the interior entry (kind 1) from the Forza cockpit, in place.
 
@@ -3085,7 +3110,10 @@ def convert_interior(
     the eye and 8 cm either side, glass transparent) are dropped. The outer
     body from the main carbin at `shell_lod` fills the window views. If the
     MDXN is over `mdxn_limit`, the cockpit is vertex-clustered with growing
-    cells (DECIMATE_LADDER), then the shell drops to its coarsest LOD."""
+    cells (DECIMATE_LADDER), then the shell drops to its coarsest LOD.
+    lights_template: (Lights MACO, its texture UID) of the car (forza2dsf.lights_template):
+    the outside parts the cockpit holds then take Forza's specular and reflection from
+    copies of it, as on the exterior (issue #232); None: no gloss."""
     from dsfforza.convert import dsf_materials as dm
     from dsfforza.convert import forza2dsf
     from dsfforza.formats.chnk import entry_size
@@ -3178,6 +3206,15 @@ def convert_interior(
         )
         shell = [s for s in car.body if s.name.lower() not in skip and not SHELL_SKIP.match(s.name)]
     shell_lods = sorted({sub.lod for s in shell for sub in s.subsections if sub.lod > 0})
+    shell_ids = {id(s) for s in shell}
+
+    def outside(section) -> bool:
+        """The parts of the car's outside the interior entry draws: the cockpit carbin's
+        bonnet, A-pillars and mirrors (fm.COCKPIT_EXTERIOR_SECTIONS), and the shell."""
+        return id(section) in shell_ids or bool(fm.COCKPIT_EXTERIOR_SECTIONS.match(section.name))
+
+    def gloss_filter(section, sub) -> bool:  # chrome takes the shared chrome (CockpitBinding)
+        return outside(section) and fm.classify(sub.material)[0] != fm.CHROME
 
     # What the driver sees of the glass: crack lines start and rim shards sit there.
     sight = GlassSight(sections, cf.camera or cf.eye, place)
@@ -3210,10 +3247,19 @@ def convert_interior(
             tone={fm.NODAMAGE: opts.trim_tone} if opts.trim_tone else {},
             filler={fm.NODAMAGE: opts.filler} if opts.filler else {},
             cutout_colour=(34, 34, 36, 0),
+            gloss_enabled=lights_template is not None,
+            gloss_filter=gloss_filter,
+            gloss_max=COCKPIT_GLOSS_MATERIALS,
         )
         t.plan(current, {0}, extra_solids=needle_colours)
         child(texc, "DXTC").payload = t.dds(template=host_dds)
-        binding = CockpitBinding(t, mats, paint_uv)
+        gloss = {}
+        if t.gloss_materials:
+            template, template_tex = lights_template
+            prefix = seed[:3] + bytes([seed[3] ^ 0x2B])
+            gloss = dm.add_gloss(stream, drsp, template, t.gloss_materials, prefix, {template_tex: mats.texture})
+            layout.update(dict.fromkeys(gloss.values(), dm.STRIDES[dm.LIGHTS_MAT]))
+        binding = CockpitBinding(t, mats, paint_uv, gloss, outside)
         builder = forza2dsf.Builder(seed[:3] + bytes([seed[3] ^ 0x55]), layout=layout)
         cabin = forza2dsf.add_geometry(
             builder,
@@ -3318,6 +3364,16 @@ def convert_interior(
         if size <= opts.mdxn_limit:
             break
     log(f"interior atlas: {t.summary()}")
+    if t.gloss_materials:
+        log(
+            "interior gloss materials (intensity/power/reflection/fresnel power/bias): "
+            + "; ".join(
+                f"{n}: {m.intensity:g}/{m.power:g}/{m.reflection:g}/{m.fresnel_power:g}/{m.bias:g}"
+                for n, m in enumerate(t.gloss_materials)
+            )
+            + " for "
+            + ", ".join(f"{k} {sum(v.values())}" for k, v in sorted(t.gloss_report.items()))
+        )
     glass_windows = getattr(builder, "interior_glass", {})
     log(
         "interior glass: "
@@ -3341,6 +3397,8 @@ def convert_interior(
         **({"virtual_gauges": cf.virtual} if cf.virtual else {}),
         **({"digital_displays": digital_report} if digital_report else {}),
         "atlas": t.summary(),
+        **({"gloss": {k: sum(v.values()) for k, v in t.gloss_report.items()}} if t.gloss_materials else {}),
+        "chrome_triangles": sum(b.index_count // 3 for b in builder.subs if b.material == mats.shared["chrome"]),
         "visibility": culled_report,
         "attempts": attempts,
         "decimate": attempts[-1]["decimate"],

@@ -749,7 +749,8 @@ regions, whose texels vary, and 2 on colour cells, which are one exact colour). 
 on a geometric grid (`GLOSS_STEPS`: intensity x2, power x1.41, reflection x4), so a car
 needs 3 to 12 materials (median 8); past `GLOSS_MAX_MATERIALS` (12) the rarest merge
 into the nearest. Frame, undercarriage and `black` (no specular, no reflection in
-Forza) stay as they were, and so does what the cockpit draws (its own Texturing).
+Forza) stay as they were. The cockpit (its own Texturing) had none until #232 (`cockpit.md`,
+"Gloss and chrome on the outside parts").
 
 **Calibration (in game, headless VM; IDs 1 Cougar Eliminator, 2 Continental (2004),
 3 Mustang Boss 429, 4 Focus RS500, 5 300SL; `run-series.ps1 -Views grille,wheels
@@ -877,9 +878,9 @@ already removed the Camaro's band in these views.
    chrome texels above). The shaders themselves (constant tables, microcode)
    are readable with `dsff fxobj` ("Forza's trim shaders and flat black
    grilles").
-7. The cockpit draws exterior chrome (A-pillar trim, bonnet strips) flat from
-   its atlas; vanilla interiors have `GLOBAL_LOD_Chrome` (host 193 uses it for
-   3,700 triangles), which the interior entry could use the same way.
+7. Done (issue #232): the cockpit's outside parts draw their chrome with
+   `GLOBAL_LOD_Chrome`, as vanilla interiors do (`cockpit.md`, "Gloss and chrome
+   on the outside parts").
 8. Trim artwork ("Trim artwork", "Forza's trim shaders and flat black
    grilles"), issue #58 (closed 2026-10-28 by #91 and #143): `PaintScale` /
    `PristinePaintScale` are decoded (they scale the texel) and mid-grey and
@@ -890,13 +891,10 @@ already removed the Camaro's band in these views.
    test is orthographic from around and above: artwork seen only from below or
    through a narrow gap counts as hidden (no car known to show it, #58).
 9. Gloss ("Gloss: Forza's specular and reflection on trims and rims"): the cockpit
-   (interior entry) draws the outside sections it holds (bonnet scoops, A-pillars)
-   with its own Texturing, and `cockpit.py` installs no gloss materials. The
-   cockpit view draws the interior entry alone (confirmed-runtime 2026-10-29), so
-   from the driver's seat painted panels reflect (the interior paints with the
-   exterior's `GLOBAL_Chassis_LOD1`) but trims, scoops and chrome don't: #136's
-   closing observation was the paint or `_Interior`'s specular, not a change
-   (`cockpit.md`, "What DSF draws"; issue #232); the reflection on atlas regions is masked by their texel
+   view draws the interior entry alone (confirmed-runtime 2026-10-29); since
+   #232 its outside parts (bonnet scoops, A-pillars, mirrors, the shell) take gloss
+   copies of the full entry's Lights material and the shared chrome, at most 6
+   copies (`cockpit.md`, "Gloss and chrome on the outside parts"); the reflection on atlas regions is masked by their texel
    green (a grille's bars reflect more than its gaps, unlike Forza); `black*`,
    `frame` and `undercarriage` have none in Forza and stay flat; the calibration
    (`GLOSS_SPECULAR_SCALE`, `GLOSS_REFLECTION_SCALE`) was judged on five cars by day.

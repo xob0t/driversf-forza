@@ -43,17 +43,17 @@ and so are their materials.
 - Materials: cabin trims and dial faces come from `interior_LOD0`, and the
   outside sections (`a_pillar`, `hood*`, `mirror*`) from `nodamage_LOD0`, through
   one DXT1 atlas on the interior's own `_Interior` material
-  (`forza_materials.classify_cockpit`). Chrome is drawn from its swatch there
-  too: the cockpit has no chrome material, where vanilla interiors use
-  `GLOBAL_LOD_Chrome` (`forza-materials.md`, Open 7). Mirror glass, tiling
+  (`forza_materials.classify_cockpit`). On the outside parts (those sections
+  and the shell), chrome draws with the shared `GLOBAL_LOD_Chrome`, as vanilla
+  interiors do, and atlas trims whose Forza technique has a specular or a
+  reflection draw with copies of the full entry's Lights material, as on the
+  exterior (at most `COCKPIT_GLOSS_MATERIALS`, 6; "Gloss and chrome on the
+  outside parts", issue #232). Cabin trims keep `_Interior`. Mirror glass, tiling
   detail textures and stitching are flat atlas cells (`CockpitBinding`).
   Paint uses `GLOBAL_Chassis_LOD1`
   (`INTERIOR_PAINT`), the clean exterior's shared paint material, as vanilla
   interiors do. Glass uses `GLOBAL_Glass_LOD5` in the vanilla three-layer
-  layout (`vehicle-model.md`, "Interior glass"). The exterior's gloss copies
-  and chrome materials aren't used: from the cockpit, painted panels reflect
-  as they do outside, while trims, scoops and chrome have only `_Interior`'s
-  specular and no reflection (issues #136 and #232, "What DSF draws").
+  layout (`vehicle-model.md`, "Interior glass").
 - Gauges: Forza's speed and tach needles go on the host's `_Dials` material
   with gauge ids 2 and 1, swept per the `CarAttribs.xml` tick table ("Gauges").
   A host missing a gauge record gets one (`add_gauge_records`, issue #62).
@@ -132,7 +132,7 @@ a Texturing with a classifier, as the cockpit's is).
 What looked glossy is the paint (its reflection on the Cougar's bonnet shows
 in observe-16), or `_Interior`'s specular, which on the DXT1 atlas may be
 unmasked (Risks 3) (hypothesis: the user's screenshot isn't on record). Chrome and gloss trims seen from inside
-still have no reflection: issue #232.
+had no reflection (issue #232) until "Gloss and chrome on the outside parts" below.
 
 Interior materials (Desanne): two local MACOs, `_Interior` (stride 28,
 MODL value 5) and `_Dials` (stride 20, MODL value 1,
@@ -2783,6 +2783,85 @@ full lock):
 - Where a move exceeds 12 cm (the 27 cars above at full lock) the hand stops short.
 - Some occupants use a 16-joint skeleton (AI drivers seen in traffic; no Shoulder
   joint). The plugin handles it, but no ported car was seen with it.
+
+## Gloss and chrome on the outside parts (2026-10-29, issue #232)
+
+The cockpit view draws the interior entry alone ("What DSF draws"), so the
+exterior's gloss copies of the Lights material (`forza-materials.md`, "Gloss")
+and its chrome never showed from the driver's seat: the bonnet scoops, wipers,
+A-pillar and windscreen chrome and mirror trims of the interior entry drew on
+`_Interior` (specular 0.03 at power 24, no reflection), chrome from its atlas
+swatch.
+
+**Change (`cockpit.convert_interior`, `CockpitBinding`; `dsf_materials.Texturing`
+`gloss_filter`, `gloss_max`; `forza2dsf.lights_template`).** On the outside
+parts the interior entry draws (`outside`: the cockpit carbin's
+`COCKPIT_EXTERIOR_SECTIONS` and the shell):
+
+- chrome (`forza_materials.classify` role chrome) draws with
+  `GLOBAL_LOD_Chrome` (`a012f01306d57a2a`, stride 32, flag 5) at
+  `forza2dsf.CHROME_UV`, the shared chrome vanilla interiors use (host 193:
+  3,700 triangles), the full entry's chrome. On the shell too, which before drew
+  its chrome as a flat trim cell;
+- atlas trims whose Forza technique has a specular or a reflection get gloss
+  materials planned as on the exterior (`_plan_gloss`, Forza's terms with the
+  car's ShaderSettings, #178's power and SpecularColor), on the green the trim's
+  texels average after the cockpit's lift and tone (`trim_lift` 40,
+  `trim_tone`), as drawn; a lifted trim reflects less. At most
+  `COCKPIT_GLOSS_MATERIALS` (6) copies, made from the full entry's Lights
+  material (56 of the 87 hosts in `out/build` have no Lights MACO in the
+  interior) with its diffuse texture moved to the interior's atlas, UIDs from
+  the car's seed (`seed[3] ^ 0x2B`);
+- the cabin keeps `_Interior`: Forza draws it with the `cockpit_` shader variants
+  on `interior_LOD0`, and the shell's other trims stay on the shared trim (the
+  atlas has no cells for LOD 5).
+
+**Cost.** Five cars (`out/g232/before` from master, `out/g232/after`; IDs 1 to 5):
+
+| Car | MDXN before | after | gloss materials | gloss triangles | chrome triangles |
+| --- | --- | --- | --- | --- | --- |
+| Cougar Eliminator 70 | 0x1c1800 | 0x1d2800 | 5 | 1,782 | 2,940 |
+| Camaro Z28 69 | 0x169800 | 0x172000 | 2 | 157 | 3,775 |
+| Mustang Boss 429 70 | 0x192000 | 0x19b000 | 2 | 743 | 3,892 |
+| Cuda 426 71 | 0x1a8800 | 0x1bc800 | 5 | 6,620 | 1,961 |
+| Firebird Trans Am 77 | 0x184000 | 0x18d800 | 3 | 938 | 411 |
+
+None decimates; the largest interior in `out/build` (MC12 GT1, 0x248000) has
+0x78000 left under `port_batch`'s 0x2C0000. All five lint clean.
+
+**Roster (offline, a script under `out/` not committed: per car the cockpit
+carbin's LOD-0 outside sections, without `cagerace`, upgrade bonnets, lamps and
+glass, through the cockpit's Texturing with the new filter, and the shell's
+chrome at LOD 5; no visibility culling, so these are upper bounds: on the five
+cars above the build keeps about half the triangles and up to one material
+fewer).** Of the 573 cars, 564 were surveyed; 6 have no `_LOD0` atlases and 3
+a placeholder cockpit (both draw the main carbin's cabin, not covered here). 554 get
+gloss materials (none 10, 1: 44, 2: 167, 3: 213, 4: 111, 5: 16, 6: 3; the cap of 6
+merges on 3 cars), median 4,350 gloss triangles (most: Miura P400, 38,558), by
+technique `plastic2` 1.33 M, `rubber_trim` 0.83 M, `misc` 0.49 M, `emblem` 0.16
+M. 306 have chrome in the cockpit carbin's outside sections (median 1,478
+triangles; most: Thunderbird 57, 19,314), 265 on the shell (15,113 triangles in
+all). 4 cars get neither. Seven materials pair an intensity of 0.0156 with a
+broad lobe (power 8 or less: GT-R 12, Brera, Continental 04, H1 Alpha, ix20...):
+the terms their exteriors get for the same technique (`gloss_material` is
+unchanged), not checked in game from the cockpit.
+
+**In game (VM 2, by day, overcast; `run-series.ps1 -Vm -ProbeIds '1,2,3,4,5'
+-ShotSeconds 3 -Palette 0`).** Runs `vm2-20261029-115727` (before) and
+`vm2-20261029-121754` (after) reached IDs 1 to 3 and 1 to 4; IDs 4 and 5 again
+in `vm2-20261029-123954` (before) and `vm2-20261029-125639` (after). From the
+driver's seat the Camaro's and the Boss 429's wipers and windscreen surround,
+flat near-white atlas trim before, are chrome reflecting the sky
+(`img/cockpit-gloss-camaro-ingame.jpg`, `img/cockpit-gloss-boss-ingame.jpg`).
+The Cougar's satin-black scoop (`misc`), a flat lifted grey before, shades
+darker with a sheen towards the windscreen, and its A-pillar's chrome edge
+reflects (`img/cockpit-gloss-cougar-ingame.jpg`). No flat panel lit up
+(#178's cream splitter): the Boss 429's black scoop (`matte_colors`, under
+`GLOSS_MIN` as on the exterior) is unchanged, and the Cuda's shaker scoop stays
+dark. The Firebird's gloss and chrome parts are out of view behind its bonnet. The
+Cuda's paint differed in each run (blue, orange, dark green) although
+`-Palette 0` was given, so its bonnet isn't compared. Not checked: sunlight
+straight on a scoop (these runs were overcast), at night.
 
 ## Risks and open questions
 
