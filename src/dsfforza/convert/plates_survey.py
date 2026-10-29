@@ -89,7 +89,8 @@ def host(spool: int):
 
         with game_paths.vanilla(None, quiet=True).open("rb") as stream:
             root = read_chunk(stream, 0)
-            full, _, exterior = upvh.entries_for(stream, root.entries, spool, None)[:3]
+            kinds = upvh.entries_for(stream, root.entries, spool, None)
+            full, exterior = kinds[0], kinds[2]
             hw = forza2dsf.host_wheels(
                 payload(stream, child(child(full, "NONR"), "UPVH")),
                 payload(stream, child(child(full, "NONR"), "MODL")),

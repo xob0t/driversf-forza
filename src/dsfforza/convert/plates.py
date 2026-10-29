@@ -114,6 +114,10 @@ MIN_FIT = 0.7  # smallest plate scale when fitting a small recess
 # glass, and per share over other sections than its main one, against the gap (m)
 # between plate and face.
 HIDE_COST = 0.5
+# ... and a height that hides none (up to this share: a cell or two of edge) comes
+# first, whatever its cost (#241: the Delta S4's front plate took its grille band, the
+# Lancia shield's edge under it, over its bumper face, 1.7% for a cost of 0.008).
+HIDE_NONE = 0.005
 BADGE_BAND = 0.4  # a run of badge-technique cells this wide is grille artwork (m)
 MIX_COST = 0.1
 LOD_PUSH_LIMIT = 0.08  # coarser LODs move the plate out by at most this
@@ -503,7 +507,7 @@ def fallback_height(dm: DepthMap, prior_y: float, base: tuple[float, float]) -> 
             mixed = 1.0 - Counter(cells).most_common(1)[0][1] / float(ok.sum())
         hide = float(hidden[r, c_].mean())
         cost = gap + 0.1 * abs(float(dy)) + HIDE_COST * hide + MIX_COST * mixed
-        key = (round(cover, 1), -cost)
+        key = (round(cover, 1), hide <= HIDE_NONE, -cost)
         if best is None or key > best[0]:
             best = (key, y, hide, mixed)
     if best is None:  # the host's height maps outside the depth map (plan() skips the end)

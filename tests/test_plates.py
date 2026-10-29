@@ -172,3 +172,13 @@ def test_bent_plate_section():
     mid = [v.position[2] for v in section.lod_vertices if abs(v.position[0]) < 1e-9]
     side = [v.position[2] for v in section.lod_vertices if abs(v.position[0]) > 0.1]
     assert max(mid) < min(side) + 0.02 and min(side) > min(mid)
+
+
+def test_fallback_hides_no_badge_where_it_can():
+    # #241: a small emblem flush with the bumper at the host's height costs less to
+    # cover (0.5 x ~1%) than the 7 cm it takes to clear it (0.1 per metre); a height
+    # that hides nothing still comes first.
+    tris = quad(-0.02, 0.02, 0.398, 0.408, 2.0, cls=4, feat=P.FEAT_BADGE) + quad(-0.5, 0.5, 0.0, 0.8, 2.0)
+    y, note = P.fallback_height(front_map(tris), 0.40, SIZE)
+    assert y + SIZE[1] / 2 <= 0.40 or y - SIZE[1] / 2 >= 0.41, (y, note)
+    assert "hides" not in note
