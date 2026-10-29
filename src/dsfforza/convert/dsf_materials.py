@@ -310,9 +310,9 @@ TEXTURED_COVERS = ("lights_glass", "lights_gls_noemit")
 COVER_MIN_SHARE, COVER_DEPTH = 0.3, 0.3
 # In a lamp unit's own section (headlightL, glassLHL, lexanRHL, taillightR) a plain glass cover
 # is a lamp cover from this share: it often covers the unit's housing as well as its lamp (the
-# Audi R8 race car's lexan 30%, the Ferrari 458 Spider's glass 18 to 21%), and left as window
-# glass it hid the head lamps (#247).
-COVER_LAMP_SECTION_SHARE = 0.1
+# Audi R8 race car's lexan 30%, the Ferrari 458 Spider's glass 18 to 21%, the Gumpert Apollo S's
+# lexan 9.9%), and left as window glass it hid the head lamps (#247).
+COVER_LAMP_SECTION_SHARE = 0.05
 LAMP_SECTION = re.compile(r"^(head|tail)light[lr]?$|^(glass|lexan)[lr]?(hl|tl)$", re.I)
 # A lamp cover whose Lights texels are this share or more of its lenses' texels is a second skin
 # over them (_bake_lenses): left out.

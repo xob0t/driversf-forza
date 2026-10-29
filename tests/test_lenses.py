@@ -596,5 +596,5 @@ def test_plain_glass_cover_in_a_lamp_section():
     for name, left_out in (("lexanLHL", True), ("glassLHL", True), ("body", False)):
         cover = _grid(name, "glass", lambda x, y: -2.0, 0.0, 0.5, n=10)
         m = dataclasses.replace(fm.resolve(cover, cover.subsections[0]), role=fm.GLASS, family=fm.LIGHTS)
-        assert 0.1 < t._over_lamp(cover, cover.subsections[0]) < dm.COVER_MIN_SHARE
+        assert dm.COVER_LAMP_SECTION_SHARE < t._over_lamp(cover, cover.subsections[0]) < dm.COVER_MIN_SHARE
         assert t.clear_cover(cover, cover.subsections[0], m) == left_out, name
