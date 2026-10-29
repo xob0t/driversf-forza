@@ -139,7 +139,7 @@ x/y/z normalised by the part-0 box, +z front, +x the car's left):
 | 188 / 190 | 143 / 146 | front / rear suspension (struts, arms) | x axis at the axle |
 | 155 / 156 | 130 / 130 | front hubs (brake disc) +x / -x | at the hub |
 | 15 / 136 | 91 / 99 | exhausts +x / -x | none |
-| 52 / 53 | 4 / 7 | side doors: the Vista Cruiser's rear doors (231), the vans' side doors (198, 200), the airport fire truck's lockers (186). `damage.py` calls them sills and holds them like the chassis (#209) | vertical, limit 0 |
+| 52 / 53 | 4 / 7 | side doors: the Vista Cruiser's rear doors (231), the vans' side doors (198, 200), the airport fire truck's lockers (186). Doors in `damage.py` (`DOORS`) since #209 ("Side doors 52/53" below) | vertical, limit 0 |
 | 0 | 209 | miscellaneous | |
 
 (The "+x/-x" naming is ours; DSF's +x is the car's left, the driver's side
@@ -1080,6 +1080,57 @@ its bonnet record in order either, and the Radical SR8's two sit on its front
 bumper but hang under the front structure ahead of its other parts. The other
 276 cars have their mirrors under the right record already, no mirror panel,
 or none within 6 cm of a panel.
+
+## Side doors 52/53 (issue #209, 2026-10-29)
+
+`damage.py` called UPVH roles 52/53 "sill +x/-x" and held them like the
+chassis (`BODY`, drawn through the chassis transform). In the vanilla
+archive they are side doors with the doors' hinge (vertical axis, limit 0,
+`dsff damage panels <vanilla> --id 231/198`): the Vista Cruiser's rear
+doors (231: records 17/19, hinges at (+-0.93, 0.35, -0.22), just behind the
+front doors' at z 0.81; it has no 54/55), the GMC Savana's two right-side
+cargo doors (198: two role-53 records, hinges at (-0.97, 0.02, 0.37) and
+(-0.94, 0.02, -1.09), opening opposite ways; 54/55 are its rear doors), the
+Vandura's side door (200, no hinge) and the airport fire truck's lockers
+(186). Under `forceOpenPanels` vanilla 198's side door swings out like its
+other doors (run `vm1-20261029-113635`, observe-39/40).
+
+Fix: 52/53 are "side door +x/-x" and members of `DOORS` (so of `SWINGS` and
+`BODY` as before). They take part in the Forza-part test like the other
+doors (a side door that is a Forza part keeps its own transform slot and
+swings and comes off like vanilla; one that is not stays held), side-window
+glass and door cards can go with them, and `patch_upvh` moves their hinge,
+body and collision box as before. A Savana side door has no partner on the
+other side (`_partner` finds no role 52), so each qualifies alone. The
+mirror re-parenting (#187/#196) is unchanged: it hangs a mirror under the
+record that draws its mount, and no Forza mirror is mounted on a side door
+on these hosts (the Express's go under the chassis, from the front doors,
+as before).
+
+Roster: only CHE_Express2500Cargo_05 sits on such a host (198,
+`host-picks.tsv`, before and after #208). Its build (`port_batch`,
+default options) now has both right-side cargo doors as swinging Forza
+parts ("side door -x" 0.88 and 0.61 m2 of whole Forza components, report
+`shut_line_parts`; hinges moved 0.08 and 0.34 m onto the Forza doors), where
+before they were held on the chassis. To see the Vista Cruiser's rear doors
+on a converted car, AUD_A4Avant_04 was built on 231 (`--host 231`): both
+rear doors become swinging parts (0.75 m2 each), held before. `damage check`:
+0 problems on both.
+
+In game (headless VMs, `-Damage -DamagePanels`, before = master, after =
+this change, same builds otherwise), all runs clean:
+
+- Express (ID 1) and vanilla 198: before `vm1-20261029-113635`, after
+  `vm1-20261029-115305`. Under `forceOpenPanels` the after build's right-side
+  cargo doors swing out past the body (seen nearly edge-on from the chase
+  camera), as vanilla 198's do; before, nothing moved on that side
+  (`img/damage-side-doors-express.jpg`: before observe-26, after observe-30,
+  vanilla 198 observe-39).
+- A4 Avant on 231 (ID 1) and vanilla 231, with the `wheels` view (left side,
+  after `removeAllPanels`): before `vm2-20261029-132300`, after
+  `vm2-20261029-132540`. Before, the front door is gone and the rear door
+  stays on the body; after, both doors are gone, as on vanilla 231
+  (`img/damage-side-doors-a4on231.jpg`: observe-01, -01, -07).
 
 ## Risks and open questions
 
