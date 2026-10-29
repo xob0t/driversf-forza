@@ -298,6 +298,31 @@ def test_stored_renders_round_trip(tmp_path=None):
             assert np.abs(back[side][mode] - r[side][mode]).max() < 1 / rc.HDR_SCALE + 1e-6
 
 
+def test_digest_ignores_handling():
+    """Two cars whose VEHC differ only in VO3D (handling, cameras) draw alike; a changed
+    vertex buffer doesn't."""
+    import io
+
+    from dsfforza.formats.chnk import Entry
+    from dsfforza.harness import render_diff
+
+    def leaf(tag, data, at):
+        return Entry(tag, at, len(data), 0, 0, None)
+
+    def car(vxdt: bytes, vo3d: bytes):
+        blob = vxdt + vo3d + b"MODL"
+        mdxn = Entry("MDXN", 0, 0, 0, 0, None, [leaf("VXDT", vxdt, 0)])
+        nonr = Entry(
+            "NONR", 0, 0, 0, 0, None, [leaf("VO3D", vo3d, len(vxdt)), leaf("MODL", b"MODL", len(vxdt) + len(vo3d))]
+        )
+        return io.BytesIO(blob), {0: Entry("VEHC", 0, 0, 0, 0, None, [mdxn, nonr])}
+
+    a = render_diff.vehc_digest(*car(b"vertices", b"handling A"))
+    b = render_diff.vehc_digest(*car(b"vertices", b"handling B"))
+    c = render_diff.vehc_digest(*car(b"vertexes", b"handling A"))
+    assert a == b != c
+
+
 def test_glass_windows_are_windows():
     """FH1 windows drawn with the `glass` technique (glassF, glassR...) are windows, not lamp covers."""
     assert fr.region_of("glassF", "glass", "glass", "lights", True)[0] == fr.GLASS
