@@ -218,8 +218,8 @@ VISIBLE_WHITE_VANILLA_MEDIAN = 137
 # 0x03 lamp's level) against the VW GTI VR6's white plates by day; at night that left the ports'
 # head lamps at p95 1.6 to 2.0 in render_compare's renderer, where vanilla's 0x1D lamps glow at
 # 2.5 / 3.8 / 5.3 (p10 / median / p90 over 28 vehicles, front view, under their window glass;
-# #286). This puts the ports on vanilla's.
-DAYTIME_GLOW = 0.5
+# #286). 0.45 puts the median of 15 ports (1.69 at 0.2) on vanilla's 3.8.
+DAYTIME_GLOW = 0.45
 
 
 def white_lens_scale(visible: list[int]) -> float | None:
