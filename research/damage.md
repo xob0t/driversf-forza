@@ -105,7 +105,7 @@ Every vanilla body vertex carries a crushed position. Fleet survey
 | s9 pairs that are no record's (slot, model) | at most 2.8% (DriftCar 05), 0 on most | at most 1.7% |
 
 137 of 150 full entries push the nose back by more than 5 cm; the three
-without crush targets are trucks (123, 131, 289). The shape is artist-made:
+without crush targets are the trailers (123, 131, 289). The shape is artist-made:
 on the Desanne the nose goes back 0.42 m (median, front 0.4 m of the car,
 up to 0.62 m), the bonnet buckles up by up to 0.27 m in its middle, the
 wings fold back, the tail moves forward 0.09 m (up to 0.39 m on the boot
@@ -139,7 +139,7 @@ x/y/z normalised by the part-0 box, +z front, +x the car's left):
 | 188 / 190 | 143 / 146 | front / rear suspension (struts, arms) | x axis at the axle |
 | 155 / 156 | 130 / 130 | front hubs (brake disc) +x / -x | at the hub |
 | 15 / 136 | 91 / 99 | exhausts +x / -x | none |
-| 52 / 53 | 4 / 7 | sills | |
+| 52 / 53 | 4 / 7 | side doors: the Vista Cruiser's rear doors (231), the vans' side doors (198, 200), the airport fire truck's lockers (186). `damage.py` calls them sills and holds them like the chassis (#209) | vertical, limit 0 |
 | 0 | 209 | miscellaneous | |
 
 (The "+x/-x" naming is ours; DSF's +x is the car's left, the driver's side
@@ -194,7 +194,9 @@ call the two suspension parts the bumpers; renders show struts and arms
 
 Converted cars used to put every body triangle on the chassis panel with
 s12 = position: no crush, no swinging or falling parts, and the panel parts
-empty. With the option:
+empty. `port_car.py` and `ConvertOptions.damage` still default to that, but
+`port_batch` passes `--damage` (`DEFAULT_PORT_OPTIONS`), so every roster
+build and release has it. With the option:
 
 1. **Panel per triangle.** Forza sections map to host roles by name:
    `bumperF*` front bumper (35), `bumperR*` rear bumper (36), `bumperFrameF`/`R`
@@ -343,9 +345,10 @@ Renders: `img/damage-304-panels.png` (intact, by panel),
 parts without part 0), `img/damage-305-exterior-crushed.png` against
 `img/damage-vanilla147-exterior-crushed.png`.
 
-### In-game test (built, not yet run)
+### In-game test plan (2026-10-22)
 
-Archives in `out/damage/` (IDs 304 370Z, 305 M5, 306 Skyline; the same
+The panels variant ran as the r7 and later builds below, with this probe;
+`damage-hull.sp` has no recorded run (risk 6, #210). Archives in `out/damage/` (IDs 304 370Z, 305 M5, 306 Skyline; the same
 three builds apart from the damage option):
 
 - `damage-panels.sp`: `--damage`.
@@ -477,8 +480,10 @@ vanilla 147). An earlier variant copied the host's UV0 per vertex; Forza's bay
 floors are a few large triangles (the M5's: 44 over 1.65 m²) and the
 pictures came out as streaks (`m5new-ext-nobonnet-sky.png`).
 
-### Test build `out/dmgfix/set2` (not yet run in game)
+### Test build `out/dmgfix/set2`
 
+No recorded run; the next section's `out/underside/build` holds the same
+four cars with this fix and the boot-well fix, and ran in game.
 `port_batch.py build --out out/dmgfix/set2 --car BMW_M5_12 --car NIS_370Z_10
 --car NIS_SkylineGTR_93@fm4 --car FOR_MustangBOSS429_70` (IDs 1 to 4, hosts
 147, 227, 229, 193): all lint, `damage.py check` passes on all four. Probe:
@@ -1025,8 +1030,8 @@ the bonnet.
   vanilla records), and +0x18/+0x16, the number of hinged records among a
   record and its ancestors whose subtree ends where its own does (on leaves
   but the list's last, also +0x16), i.e. how many hinge transforms the engine
-  pops there (10,944 of 10,959; the rest are three headlights on hosts 210 and
-  217). Moves that left them stale crashed: a door with bit 0 and no mirror
+  pops there (10,956 of 10,959; the rest are three headlights on hosts 210 and
+  217; recounted in `upvh.md`, #201). Moves that left them stale crashed: a door with bit 0 and no mirror
   (Devon, `forceOpenPanels`, runs `vm1-20261029-024550`,
   `vm2-20261029-025144`, `vm1-20261029-025513`); bit 0 right but the +x
   mirror's old pop counts (ARX-01b under `forceOpenPanels`, run
@@ -1066,7 +1071,7 @@ entry. 469 mirrors on 266 cars move, all under the chassis in slot order:
 340 from a door with the mirror on the chassis, 39 on the front structure, 24
 on a held wing, 11 on a held door; 18 from a door with the mirror on the
 bonnet; 37 from the bonnet record (16 on the chassis, 19 on a door, 2 on the
-front structure). Left as before: 40 mirrors on 24 cars. On 22 of them the
+front structure). Left as before (issue #193): 40 mirrors on 24 cars. On 22 of them the
 host's door record has a door-glass record after the mirror (AST_DB9_05,
 BMW_Z4_11, MAZ_RX7_90, LOT_Elise111S_05...; on the Lotus 2-Eleven and the
 Cougar Eliminator the mirror is on its door, which is held shut), so no place
@@ -1092,9 +1097,20 @@ or none within 6 cm of a panel.
    open, but a door dent stops short of the borders, and the crush near
    them is lost (mean rigid-panel crush down by a median 28%, at most 59%). Trim seams the host
    moves (wing against front structure on 163) still open with differing
-   damage amounts, as vanilla under-bonnet borders do. Forza's `interior` section (door cards included) stays on the chassis,
-   while vanilla door cards are on the door: a deep door dent can push the
-   skin through the card.
+   damage amounts, as vanilla under-bonnet borders do. On a door that is a
+   Forza part, its card (`interior` triangles next to the skin) goes with
+   the door; on a held door the card stays on the chassis, while vanilla
+   door cards are on the door, so a deep door dent can push the skin
+   through the card.
+3. The crush field is the host's, mapped by box. A Forza car much longer or
+   shorter in the nose than its host crushes in the host's proportions.
+4. The interior entry's outer shell still has s12 = position and chassis
+   panels (cockpit work).
+5. Lamp light entries hang under the host's records (lights work,
+   `lights.md`); a lamp on a bumper that falls off may leave its light
+   behind (hypothesis; #146 tracks rear lamps on front light entries).
+6. `--damage hull` changes the car's collision hull, i.e. physics; test it
+   separately from plain `--damage` (#210).
 7. Exposed geometry is found by geometry (under a cover, behind a bumper
    skin, facing away from the panel's paint). Trims outside every panel's
    map (walls above a cover's lowest edge, wheel-arch liners, the RX-7's
@@ -1103,11 +1119,3 @@ or none within 6 cm of a panel.
    models the structure behind panels coarsely (the M5's "boot" is one
    rear-facing wall 0.5 m behind the lid, no floor), so it catches less sun
    than a vanilla tub and still reads darker than vanilla in game.
-3. The crush field is the host's, mapped by box. A Forza car much longer or
-   shorter in the nose than its host crushes in the host's proportions.
-4. The interior entry's outer shell still has s12 = position and chassis
-   panels (cockpit work).
-5. Lamp light entries hang under the host's records (lights work); a lamp
-   on a bumper that falls off may leave its light behind.
-6. `--damage hull` changes the car's collision hull, i.e. physics; test it
-   separately from plain `--damage`.
