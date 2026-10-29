@@ -259,9 +259,36 @@ Esperante's lamps lighter than Forza's.
 
 ## Roster
 
-The ranking of master's full build is in the PR that adds this note (its run over the
-573 cars of the build of 2026-10-29, master ede81a1). A sample of ten cars, ours | Forza
-(`img/render-compare-sample.jpg`).
+Master ede81a1's full build (the main checkout's `out/build` of 2026-10-29 13:33, copied
+before the run; `out/rc/roster-final` in the `t3-1b4e7c10` worktree), exterior views, 573
+cars, no errors: car score median 5.2, p90 11.6. The cockpit and traffic views are a
+second pass (`out/rc/roster-final-cockpit`). Flags by kind (cars):
+
+| Region | Flag | Cars | What it is |
+| --- | --- | ---: | --- |
+| trims | detail lost | 242 | Forza's trim texels against the flat shared trim; mostly the converter's design (Open 7) |
+| rear lamps | colour off | 222 | the red lamp texels mapped onto vanilla's (#166; comment there) |
+| rear lamps | structure | 216 | the lenses baked, Forza's lamp seen through glass |
+| chrome | extra | 124 | bare-metal trims on the shared chrome (#154) |
+| rear lamps | no glow | 109 | under 0.03 with the running lights: vanilla's tails glow 0 to 0.24 in this renderer (8 cars, 3 under 0.04), so mostly vanilla-like (Open 8) |
+| front lamps | structure | 96 | |
+| rear lamps | glows elsewhere | 94 | reflectors and lenses lit (#163) where Forza's mask is dark |
+| front lamps | drawn as glass | 90 | lamp covers that stay DSF's window glass; vanilla has glass over most of its head lamps too |
+| rear lamps | too dark by day | 40 | #166 |
+| plates | over badges, lamps or chrome | 44 | over chrome bumpers on most; over a lamp on five race cars (#251) |
+| front lamps | white plate by day | 3 | Volvo S60 11 7.7, Venom GT 12 6.1, Boss 429 3.1 (#250) |
+
+The worst-ranked cars (score): FER_458Spider_12 20.7 (head lamps under window glass;
+rear lamps' structure), PON_FirebirdTransAm_69 18.0 (tails unlit; trims L* 6 against 69),
+DOD_StealthTurbo_96 17.7, FOR_Thunderbird_57 17.6, CAD_6_LMP_02 17.5, AUD_2_R8_06 17.3
+(head lamps at about 4% of Forza's glow under lexan covers drawn as window glass, #247),
+BMW_15_LMR_99 16.7, CHE_CorvetteGrandSport_96 16.4, NIS_12_GTR_10 16.3,
+CHE_ElCaminoSS_70 16.0; `sheet.html` has all 573 and the flag table. Ten cars, ours |
+Forza: `img/render-compare-sample.jpg`.
+
+Issues from the run: #247 (R8 head lamps), #250 (white plates by day), #251 (plates over
+rain lights), a comment on #166. Not filed: the categories above that are the
+converter's design or vanilla's behaviour.
 
 ## Before/after
 
@@ -315,6 +342,10 @@ itself, its workers inherit it). `--keep` stores 6.6 MB a car (3.8 GB for the ro
    are region `other`, not scored.
 6. The reference uses the current converter's lamp plan for every build (calibration
    builds from older commits included).
-7. Trims "detail lost" fires on 256 cars: Forza's trim texels against DSF's flat shared
+7. Trims "detail lost" fires on 242 cars: Forza's trim texels against DSF's flat shared
    trim (the one dark texel). The converter moves detailed trims to the atlas
    (`trim_art`); which of these are real (grille bars drawn flat) is not sorted.
+8. "No glow" uses a fixed floor (0.03); vanilla's own tails reach 0 to 0.24 with the
+   running lights in this renderer (266 0.04, 182 0.06, 147 0.20, 227 0.03, 229 0.04,
+   171 0.09, 205 0, 241 0.24). A limit taken from vanilla's distribution per light type
+   would make it a test of "darker than vanilla".
