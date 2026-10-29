@@ -538,6 +538,37 @@ class TrimArt(unittest.TestCase):
         self.assertEqual(tag[1:4], (240, 240, 240))  # the artwork's mean colour
         self.assertEqual(len(set(uvs)), 1)
 
+    def test_flat_artwork_cells_in_carbin_order(self):
+        # Two costly artworks drawn flat take a solid cell each, in the carbin's order. They
+        # went in the order of a set of id()s, which changes from run to run: AST_DB9_05
+        # converted to other bytes each time (issue #84). Here the id()s sort against the
+        # carbin's order, as they may in a run.
+        white = carbin.SubSection(
+            trim_art.ART_TECHNIQUE[fm.NODAMAGE], 1, 4, self.transform, self.top(0.5, -0.3, -0.1, (4, 4, 28, 28))
+        )
+        dark = carbin.SubSection(
+            trim_art.ART_TECHNIQUE[fm.NODAMAGE], 1, 4, self.transform, self.top(0.5, 0.1, 0.3, (36, 4, 60, 28))
+        )
+        section = carbin.Section("body", (0, 0, 0), (0, 0, 0), (1, 1, 1), self.verts, [], [white, dark])
+        fake = {id(white): 2, id(dark): 1}
+
+        def stand_in_id(obj, real=id):
+            return fake.get(real(obj), real(obj))
+
+        with (
+            mock.patch.object(fm, "AtlasCache", lambda *a, **k: self.atlases),
+            mock.patch.object(dm, "id", stand_in_id, create=True),
+        ):
+            t = dm.Texturing(Path(), size=(48, 48)).plan([section], {1})
+            self.assertEqual(t.art_flat, {2, 1})
+            cells = [key[1:] for key in t.solid_colours if key[0] == "swatch"]
+            colours = [
+                t.triangle_uvs(section, sub, 0, [section.lod_vertices[i].uv0 for i in sub.indices[:3]])[1][1:]
+                for sub in (white, dark)
+            ]
+        self.assertEqual(cells, colours)
+        self.assertGreater(colours[0][0], colours[1][0])  # white, then dark
+
     def test_new_section_keeps_the_lamp_plan(self):
         # The damage pass hands planned subsections in new section objects. Resolved again
         # there, a tiling lamp part sampled the Lights atlas after lenses.bake had written
