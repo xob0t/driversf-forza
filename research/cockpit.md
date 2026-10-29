@@ -2036,16 +2036,23 @@ Ruled out:
    edges carry every end of the runs above and below (`run_outline`, `zipper`).
    Neighbours share every vertex, the same Forza point (no T-junction), so rounding to
    the position step can't open a crack.
-3. *Lights.* A group of pixels lit within one step, between half a cell and 5 cells
-   across (shift lights, LEDs), is one piece over its box (`bar_lights`). Its box is
-   grown to a cell where that stays 60% on the display.
-   - Cells would cut such a light into parts. On lights with display triangles of their
+3. *Segments.* Some parts of the lit mask are joined to the rest only by bridges a pixel
+   or two wide (`_segment_labels`: erode by a pixel, label, grow back by two inside the
+   mask). Such a part is one piece over the convex hull of its core when it is lit
+   within 6 steps, nearly convex (hull at most 1.3 x its area) and clear of static
+   detail and other pieces (`bar_segments`); it lights at its median step. This covers
+   shift lights and LEDs and the segments of segmented bars (GranTurismo S, 599XX,
+   LP700-4).
+   - Cells would cut a segment into parts. On lights with display triangles of their
      own (the Zonda Cinque's, the CLK GTR's) every part was mostly off the display, and
-     they vanished.
+     they vanished. On segmented bars the parts fell over the separators.
+   - The hull is the core's, the pixels whose four neighbours are lit: a segment's
+     antialiased rim reaches over the separator next to it.
+   - Cells and edge pieces stay off every segment, so no two pieces overlap.
 4. *Static detail.* A cell isn't drawn over never-lit pixels whose rest luminance is 0.2
    or more off the lit pixels near them (`static_detail`), such as the Viper 2013's
    numerals and ticks inside its lit fan.
-5. *Edge pieces.* What the cells leave along a display's edge becomes, per step and
+5. *Edge pieces.* What the segments and cells leave along a display's edge becomes, per step and
    group, a rectangle kept to the display, a cell or more a side (`edge_pieces`).
    Otherwise it is left out (report `rpm_pixels_left_out`).
 6. *Columns.* A colour signature that doesn't fit the 16 columns folds onto the nearest
@@ -2056,9 +2063,47 @@ Ruled out:
    rpm top again, so the second change sits at its rpm on cars with digits.
 
 **Survey, before (`origin/master`) and after (this code), the 91 cars with rpm pieces
-(`out/s188/survey.py` over `cockpit.fit` inputs).** SURVEY_TABLE
+(`out/s188/survey.py` over `cockpit.fit` inputs).**
 
-**In game (VM, confirmed-runtime).** VM_RUNS
+| | Before | After |
+| --- | ---: | ---: |
+| rpm pieces | 43898 | 27201 |
+| pieces thinner than 1 mm | 40840 (83 cars) | 589 (22 cars): segments, whose shape is that thin |
+| T-junctions between pieces | 74041 (81 cars) | 9 (3 cars: edge pieces beside cells) |
+| overlapping pieces | 609 pairs (34 cars) | none (0.1 px2 on the Viper 2013, rasterized at 4x) |
+| simulated shimmer inside the bar, mean over cars, at 50% / 90% of the redline | 4.27 / 6.05 | 3.33 / 3.15 |
+| cars over 5 at 50% / 90% | 9 / 16 | 6 / 8 |
+| lit pixels drawn by no piece | 0 | 30639 of 1547261 (2.0%) |
+
+- The S2000 at 60% of its redline: 7.13 inside the bar before, 14.9% of its pixels over 20; after, 2.35 and 0.1%.
+- Speed digits are drawn on 80 cars and gear on 76, before and after.
+- Left out are mostly lines under a third of a screen pixel. The Viper 2013's logo outline
+  and underline account for 14609 pixels. The Agera's are 3120 pixels, the Speed 8's 2070.
+- Worse inside the bar by more than 1: the TT-R at 90% (0.52 -> 3.41), the F40
+  Competizione at 50% (32.1 -> 35.0) and the 599XX at 50% (35.7 -> 38.9). These are small
+  high-contrast lights and segments, whose outlines alias like any polygon. The 599XX at
+  90%: 48.3 -> 33.8.
+
+**In game (VM, confirmed-runtime).** `run-series.ps1 -Vm -Asi out\asi\dsfforza.asi -ProbeIds
+'232,1,2,3,4,5' -HoldMph '40,100' -ShotSeconds 3 -WaitSeconds 900 -ZoomPresses 0
+-BurstShots 4 -Resolution 1600x900`. The cars are the vanilla Zonda Cinque (232), then
+the S2000, Viper 2013, R8 LMS, Devon GTX and Corvette C6.R, built from master (`before3`)
+and from this code.
+
+- Runs: before `vm1-20261029-063050`; after `vm1-20261029-064126` (built before
+  segments) and `vm1-20261029-094525` (the final code).
+- The S2000's plan is the same in both after builds.
+- Two earlier tries of the final build stalled on Story's loading screen
+  (`vm2-20261029-085943`, `vm1-20261029-091436`) while the host was busy.
+- `-BurstShots 4` takes four shots per sample about 0.1 s apart (new in
+  `tools\wsb\guest\run-test.ps1`).
+- The S2000's arc was a torn orange mosaic that changed from frame to frame. It is now a
+  smooth band in every frame (`img/dash-188-s2000-ingame.jpg`). At 107 mph the mean
+  frame-to-frame change over its dash, with the head camera's motion aligned away, went
+  from 5.78 to 3.50.
+- The Devon's and the R8 LMS's shift lights show as round lights.
+- All six cars drove without a crash.
+- Offline, at in-game size: `img/dash-188-offline.png`.
 
 **Open.**
 
@@ -2070,13 +2115,10 @@ Ruled out:
     rpm values;
   - gaps showing the artwork: an underlay of grown pieces at 0.4 mm (run
     `vm2-20261029-024513`) didn't remove them.
-  - Issue SPECK_ISSUE.
+  - Issue #195.
 - *Fine detail is averaged.* The Viper 2013's logo outline and its underline are lines
   under a third of a screen pixel. They come out dim or are left out: about how a
-  filtered image shows them, and they would flicker if drawn sharp. Round lights become
-  squares of their mean colour (2 to 5 screen pixels).
-- *Redline.* The bar runs to a 7000 rpm fallback on every car until #191 (the gamedb
-  query) is fixed.
+  filtered image shows them, and they would flicker if drawn sharp.
 
 ## Hands on small race wheels and wheels with columns (2026-10-25)
 
