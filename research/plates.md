@@ -51,6 +51,13 @@ Classic 06, Super Car 02/12, some trucks, a bus, a buggy), 1 front only
 San Francisco cars carry front plates as a rule, supercars included
 (`out/plates/fleet.txt`).
 
+**Bent plates.** Plates split at x = 0 are often bent there round a curved
+bumper: of 120 front plates with both halves, 25 turn by over 2 degrees
+between the halves (normals of the two halves' plate-facing triangles), 4 by
+over 5: the '68 Camaro (158) 24 degrees, the Eldorado (149) 14, the DB9 (133)
+10, the Challenger (173) 6. Rears: 20 over 2 degrees, 1 over 5 (the V12
+Vantage, 5). Converted fallback plates bend the same way (#213).
+
 **Vertex semantics.** The plate is part of its panel:
 
 | | Front | Rear |
@@ -115,11 +122,16 @@ Forza cars mostly have no plate. In `tools/batches/testdrive.txt` (40 cars):
      kept, at least 0.7x) if the face is smaller than the host plate;
    - else (**host** fallback, `fallback_height`) x = 0 within 0.3 m of the
      host's height, at the height where the plate covers the car's face at
-     the lowest cost: the gap between plate and face (m), plus 0.1 x the
+     the lowest cost: the mean gap between plate and face once it rests on
+     the face (m, each cell's gap counted up to 10 cm), plus 0.1 x the
      distance from the host's height, plus 0.5 x the share of the plate over
      a badge, lamp, glass or exhaust section, plus 0.1 x the share over
      another section or material class than its main one (bonnet shut line,
-     grille edge). Tilt clamped to 14 degrees (a plate on a pad or bracket).
+     grille edge). The plate **rests** on the face (`rest`, #213): tilted
+     (up to 14 degrees, a plate on a pad or bracket) and bent back at its
+     centre line (each half up to 11 degrees, as vanilla bends plates on
+     curved bumpers) so that it touches the nearest cell and stands off the
+     rest least on average.
      A grille may lie behind the plate (real cars mount plates over bumper
      grilles); badge-technique runs wider than 0.4 m are grille artwork
      (the BMW M1's nose band), not emblems (#159).
@@ -127,9 +139,9 @@ Forza cars mostly have no plate. In `tools/batches/testdrive.txt` (40 cars):
    and per LOD (1..5) further out if that LOD's surface comes forward (at
    most 8 cm).
 3. **Geometry.** One synthetic body section per plate,
-   `<surface section>_plate_front|rear`, with a quad (2 triangles) on every
-   body LOD, technique `dsf_plate`, UV0 = the vanilla plate rect oriented as
-   above, normal along the plate, AO bytes giving a sky term of about 0.48
+   `<surface section>_plate_front|rear`, with a quad (2 triangles; a bent
+   plate two quads, the UV split at its centre line) on every body LOD, technique `dsf_plate`, UV0 = the vanilla plate rect oriented as
+   above, normal along the plate (each half's on a bent plate), AO bytes giving a sky term of about 0.48
    (vertical). The section joins `car.body` (a copy; `ForzaCar` is not
    mutated), so everything downstream treats it as Forza geometry:
    `forza2dsf.material_for` / `forza_materials.classify` give it the shared

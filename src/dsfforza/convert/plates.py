@@ -37,9 +37,10 @@ not the plate. So the plate is placed on the Forza body:
    flat face nearer); the window is then centred on the recess and the plate
    shrunk to fit it;
 3. else near the host's plate height, x = 0, pushed out to the nearest surface
-   in front (a plate on a bracket): the height where the plate hugs the face,
-   hides no badge, lamp, glass or exhaust and sits on one section and
-   material (fallback_height; #159).
+   in front (a plate on a bracket), tilted and bent back at its centre line to
+   rest on the face as closely as it can (rest; #213): the height where the
+   plate hugs the face, hides no badge, lamp, glass or exhaust and sits on one
+   section and material (fallback_height; #159).
 
 An end gets a plate only if the host has one there (vanilla trucks and buggies
 have none at the front, a few cars none at the front: the host is the most
@@ -102,7 +103,7 @@ BRACKET_TILT = 0.25  # |dz/dy| of a fallback plate on a bracket (about 14 degree
 # A fallback plate on a bumper that curves back towards the sides bends at its centre
 # line, each half turned back by up to this dd/ds (about 11 degrees; #213). Vanilla
 # bends plates so: 25 of 120 front plates in two halves turn by over 2 degrees, the
-# '68 Camaro's by 24, the Eldorado's by 14 (out/plates-survey/vanilla_bend.py, #213).
+# '68 Camaro's by 24, the Eldorado's by 14 (research/plates.md, "Bent plates").
 BEND_MAX = 0.2
 OPENING = 0.1  # a cell this far behind the plate is a hole (grille, gap), not its face
 PRIOR_BAND = 0.3  # recesses searched within this of the host's plate height (m)
