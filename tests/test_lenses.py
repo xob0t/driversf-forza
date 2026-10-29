@@ -203,6 +203,27 @@ def test_day_glow_on_vanilla_distribution_with_a_dark_rim():
     assert lenses.day_glow(glow, (np.nonzero(small), small, (0.0, 0.0), step)) is None
 
 
+def test_day_glow_follows_the_lamps_picture():
+    # #286: a flat raw glow over a lamp whose picture has bright stripes with dark ones between
+    # (a fluted lens, as vanilla's lamps glow): the bright stripes rank high, the dark ones low,
+    # not one smooth blob.
+    n, step = 30, 0.004
+    yy, xx = np.mgrid[0:n, 0:n]
+    disc = (yy - n / 2 + 0.5) ** 2 + (xx - n / 2 + 0.5) ** 2 < 14**2
+    glow = lenses.new_glow(n, n)
+    glow[disc, 0], glow[disc, 1] = 255.0, 0.0
+    glow[..., 2], glow[..., 3] = (xx + 0.5) * step, (yy + 0.5) * step
+    colour = np.zeros((n, n, 4))
+    colour[..., :3] = np.where((xx // 2 % 2 == 0)[..., None], 220.0, 80.0)
+    out = lenses.day_glow(glow, (np.nonzero(disc), disc, (0.0, 0.0), step), colour)
+    middle = disc & ((yy - n / 2) ** 2 + (xx - n / 2) ** 2 < 6**2)
+    bright, dark = middle & (xx // 2 % 2 == 0), middle & (xx // 2 % 2 == 1)
+    assert np.mean(out[bright]) > 2 * np.mean(out[dark]), (np.mean(out[bright]), np.mean(out[dark]))
+    # Without the picture the same lamp is smooth there.
+    flat = lenses.day_glow(glow, (np.nonzero(disc), disc, (0.0, 0.0), step))
+    assert abs(np.mean(flat[bright]) - np.mean(flat[dark])) < 0.2 * np.mean(flat[middle])
+
+
 def test_head_lamp_surface_glow():
     # A head lamp reflector seen directly (no lens, or behind DSF's clear glass): its mask times
     # how deep each point sits, so the bowl's centre glows and its rim doesn't.
@@ -259,7 +280,7 @@ def test_daytime_head_lamps_glow_at_a_fifth():
     t.regions = {fm.LIGHTS: [None]}
     t._lamp_view = lambda front, grid: "view"
     flat = np.where(np.isfinite(t.lamp_raw[..., 0]), 100.0, np.nan)
-    real, lenses.day_glow = lenses.day_glow, lambda glow, view: flat.copy()
+    real, lenses.day_glow = lenses.day_glow, lambda glow, view, colour=None: flat.copy()
     try:
         t.daytime_texels = day
         out = t._glow()
