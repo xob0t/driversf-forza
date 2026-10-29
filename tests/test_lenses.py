@@ -709,3 +709,28 @@ def test_front_lamp_view_leaves_out_dropped_lenses():
     t.dropped_lenses = {("lexanLHL", "detail_glass_clear")}
     _, u = t._lamp_view(front=True)
     assert (u >= SIZE // 2).all()  # the lamp's
+
+
+def test_tail_glow_ranks_each_tail_lamp_onto_vanilla():
+    # #290: two tail lamps seen from behind, the left one's texels brighter than the right's (the
+    # Panoz Esperante's sides differed): each is ranked on its own onto vanilla's visible tail alpha,
+    # so both glow alike; texels nobody sees from behind, and white ones, keep their alpha (NaN).
+    h, w = 8, 64
+    atlas = np.zeros((h, w, 4))
+    atlas[:, :20] = (220, 10, 10, 250)  # left lamp's texels
+    atlas[:, 20:40] = (120, 5, 5, 90)  # right lamp's: dimmer
+    atlas[:, 40:50] = (230, 230, 230, 200)  # a white reverse lamp
+    atlas[:, 0:40:2, 3] *= 0.6  # some detail
+    gy, gx = np.mgrid[0:12, 0:30]
+    grid = np.ones((12, 30), bool)
+    # columns 13 to 15 see the white reverse lamp between the two red ones
+    cols = np.where(gx < 13, gx, np.where(gx > 15, 20 + gx - 16, 40 + gx % 10))[grid]
+    rows = (gy % h)[grid]
+    out = lenses.tail_glow(atlas.astype(np.uint8), ((rows, cols), grid, (0.0, 0.0), 0.005))
+    left, right = out[:, :13], out[:, 20:34]
+    assert np.isfinite(left).all() and np.isfinite(right).all()
+    assert abs(np.percentile(left, 95) - np.percentile(right, 95)) < 25, (
+        np.percentile(left, 95),
+        np.percentile(right, 95),
+    )
+    assert np.isnan(out[:, 40:]).all()
