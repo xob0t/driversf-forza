@@ -38,7 +38,12 @@ like the rest of the body).
 0.262 x 0.123 m (front 0.232..0.32 wide except one 0.99 m oddity, rear
 0.226..0.46); about 2.1 : 1, slightly wider than the texture rect
 (108 x 57 texels, 1.9 : 1), so vanilla stretches the plate a little. Centred on
-x = 0 on all cars checked, vertical or following the panel.
+x = 0 on all cars checked, vertical or following the panel. Tilt (dd/dy seen from
+the end, + = faces up; area-weighted normal, `host_plates`): front -0.70..+0.28
+(median -0.02; below -0.36 only the Stratos, 217), rear -0.36..+0.63 (median
++0.08; the '68 Camaro 146 lowest, the Beetle 257 highest). So no vanilla plate
+faces the road by more than 20 degrees but the Stratos's front
+(`dsff plates host <archive> --id N` prints it last; #179).
 
 **Presence.** 130 cars have front and rear plates, 11 rear only (Sports Car 01,
 Classic 06, Super Car 02/12, some trucks, a bus, a buggy), 1 front only
@@ -98,7 +103,8 @@ Forza cars mostly have no plate. In `tools/batches/testdrive.txt` (40 cars):
      seen from behind / in front, with each cell's material class and
      section) is searched with a plate-sized window at x = 0 (offsets up to
      4 cm) for faces covered by paint/trim, plane fit `d = b y + c` under
-     3 mm RMS, tilt under 0.8. A **recess** is a face whose 3-cell border
+     3 mm RMS, tilt from -0.4 (facing the road by 22 degrees, or the host
+     plate's own tilt where it faces down further) to +0.8 (#179). A **recess** is a face whose 3-cell border
      ring is at least 4 mm nearer the viewer on 30% or more of its cells;
      the best recess within 0.3 m of the host's plate height wins (height =
      the host plate's height fraction of its body box mapped onto the Forza
@@ -272,6 +278,43 @@ this converter; log lines `plates: front|rear <source> on <section>`): front
 get none, as their hosts have none (215 Miura: both Miuras and the 330 P4;
 252 F-350). 7 plates tilt below -0.5 (#179).
 
+### Plates under a bumper's overhang, facing the road (#179, 2026-10-29)
+
+The recess search took any flat window with |tilt| up to 0.8. Under a bumper that
+stands out over the panel below it, that panel slopes back and down, and the bumper's
+lower edge, nearer the viewer, counts as the recess's upper wall: a "recess" facing
+the road. The Golf GTI 16v Mk2's rear plate went there (tilt -0.73, under its black
+bumper) and was invisible in game (VM runs `vm1-20261028-184410`,
+`vm1-20261028-184904`). The search now takes windows from -0.4 to +0.8, or down to
+the host plate's own tilt where that is lower (the Stratos's front, -0.70).
+
+Offline (each car on its host of the full build, cut-outs and trim artwork as in
+the build, master's converter against this one): only plates whose window faced down by
+more than 0.4 can move; the main checkout's full build has 13 (log lines
+`plates: ... tilt`). Each, master -> now:
+
+| Car | End | master | now |
+| --- | --- | --- | --- |
+| AUD_S4_00 | rear | recess on bumperRa, y +0.10, tilt -0.62 | recess on trunk, y +0.45, +0.29 |
+| CHE_ElCaminoSS_70 | rear | recess on bumperRa, y -0.26, -0.57 | fallback on bumperRa, y -0.27, -0.25 |
+| FOR_GT_05 | front | recess on bumperFa, y -0.04, -0.45 | fallback, same height, -0.25 |
+| LAM_MurcielagoLP640_07 | front | recess on bumperFa, y -0.30, -0.42 | flat on bumperFa, y -0.33, -0.38 |
+| LAN_DeltaS4_86 | front | recess on bumperFa, y -0.01, -0.70 | fallback on body, y +0.25, -0.04 |
+| LOT_Esprit_02 | front | recess on bumperFa, y -0.02, -0.54 | flat on bumperFa, y +0.10, -0.13 |
+| MCL_MP412C_11 | rear | recess on bumperRa, y +0.07, -0.47 | recess on bumperRa, y +0.25, +0.34 |
+| PLY_Barracuda_68 | rear | recess on body, y -0.41, -0.58 | fallback on body, same height, -0.25 |
+| TOY_Altezza_04 | front | recess on bumperFa, y -0.37, -0.41 | fallback on bumperFa, y -0.23, +0.25 |
+| VW_Corrado_95 | rear | recess on bumperRa, y +0.09, -0.45 | flat on bumperRa, y +0.19, -0.17 |
+| VW_GolfGTi16vMk2_92 | rear | recess on bumperRa, y +0.11, -0.73 | recess on trunk, y +0.56, +0.35 |
+| fer_f142_10 | front | flat on bumperFa, y -0.40, -0.74 | fallback on bumperFa, y -0.31, +0.25 |
+| sal_s281_06 | front | recess on bumperFa, y -0.05, -0.42 | fallback on bumperFa, y +0.10, -0.19 |
+
+The Golf's rear plate goes to its tailgate recess between the lamps (room 0.54 x
+0.16 m, a European plate's), the Audi S4's to its boot-lid recess. Plan renders:
+`img/plates-179-plans.png`. Three plates (El Camino, Ford GT, Barracuda) stay
+where they were as host fallbacks, tilt clamped to -0.25; the fallback clamp is
+symmetric (`BRACKET_TILT`), so none of them faces down by more than 14 degrees.
+
 ## Open
 
 1. In game: front plates are seen since #180's run (`vm1-20261028-184904`:
@@ -290,5 +333,4 @@ get none, as their hosts have none (215 Miura: both Miuras and the 330 P4;
 5. Plate size follows the host (0.25..0.37 m wide). A fixed 0.26 x 0.122
    would make all ports alike; the host's is closer to what that vanilla car
    shows.
-6. Recess plates tilted under the bumper, facing the road (#179; 7 in
-   `out/build`).
+6. Recess plates tilted under the bumper, facing the road: fixed (#179).
