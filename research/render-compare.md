@@ -313,6 +313,14 @@ for byte the same twice (#84); `diff.json` lists them as `renders_alike`
 (`img/render-compare-diff-190.jpg`). 359 s for the 17 cars at 2 jobs (21 s a car
 and build pair).
 
+**One frame for both builds (#254).** Each render is framed by the car's extent; in the
+diff both builds of a car are framed by the union of their extents (`union_box`), so a
+part that moves outward doesn't shift every other pixel. Framed by its own extent, the
+Golf GTI 16v's plate 1 to 3 cm further out (#213's builds) put chrome 85%, front lamps 82%,
+badges 76% and wheels 42% in the report; with one frame only its plate changes, and the
+2-Eleven's plate and the badge it now uncovers. The #190 pair reports what it did before
+(the same 6 cars drawn differently, the same regions and shares).
+
 **Added geometry and the cockpit (#249).** The diff lists the cockpit view too (the after
 build's eye for both builds), and region `other` as `added`: our triangles with no Forza
 triangle under them, such as the virtual displays' housings (`dsf_dial_panel`) and moved

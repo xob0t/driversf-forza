@@ -151,8 +151,10 @@ def compare_builds(
             cb = rc.build_cockpit_pair(Path(after) / "dngvehicles.sp", roots_b, car["spool_id"], media, rep_b)
             jobs.append(("cockpit", rc.View("cockpit", camera, modes=("day", "dark")), ca, cb))
         for vname, view, qa, qb in jobs:
-            ra = rc.render_view(qa, view, size)
-            rb = rc.render_view(qb, view, size)
+            # One frame for both builds: their own extents differ when a part moves (#254).
+            box = rc.union_box(qa.box, qb.box)
+            ra = rc.render_view(qa, view, size, box)
+            rb = rc.render_view(qb, view, size, box)
             metrics_a[vname] = {"day": rc.region_scores(ra)}
             metrics_b[vname] = {"day": rc.region_scores(rb)}
             for mode in view.modes:
