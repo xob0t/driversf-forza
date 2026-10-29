@@ -1521,7 +1521,7 @@ whose texels the front indicators share. Side markers and domes (the Dino 246's 
 rays along their normal, as on master.
 
 **Roster (offline; `out/l6/bake_survey.py`, `Texturing.plan` with the lens bake on LODs 1, 3, 5, master
-`out/l6/bk_master` against this change `out/l6/bk_branch2`, `bake_compare.py`; 566 cars):**
+`out/l6/bk_master` against this change `out/l6/bk_branch3`, `bake_compare.py`; 566 cars):**
 
 | | master | this change |
 | --- | --- | --- |
@@ -1529,9 +1529,10 @@ rays along their normal, as on master.
 | of them at LOD 1 (the exterior entry) | 6 on 3 (Shelby, Forte, JCW) | 0 |
 | streak parts laid on one column | | 7 (Shelby GT500 13, LODs 1/3/5) |
 | flat front lenses baked as a filter, LOD 1 | | 48 subsections on 27 cars |
-| rear lens rays along the axis | | 26,187 rays on 309 cars (before the per-lens guard) |
+| rear lens rays along the axis | | 37,032 rays on 328 cars |
+| front lens rays along the axis (side-facing lenses no longer) | 85,468 on 262 (#190's count) | 51,082 on 207 |
 | flat rear lenses left out (two more meet a lamp along the axis) | 253 | 255 (MCL_MP412C_11's clear tail lenses) |
-| cars whose baked Lights texels change (4x4 blocks, more than 8 in a channel) | | 272 |
+| cars whose baked Lights texels change (4x4 blocks, more than 8 in a channel) | | 274 |
 
 ### Open
 
