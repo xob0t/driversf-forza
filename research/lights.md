@@ -89,6 +89,10 @@ later PR replaced a rule, the earlier section says so in one line.
   `a x (0.6 + 0.4 x brightest channel)` onto vanilla's lamp alpha per hue,
   red on a curve fitted per car
   ([matched](#vanilla-lamp-alpha-and-the-matched-rule-offline-checked)).
+- The red lamps a camera straight behind the car sees are ranked per lamp
+  onto vanilla's visible 0x18 tail alpha, following each lamp's picture, the
+  dimmest 40% dark, never below the converted alpha
+  ([#290](#tail-lamps-at-half-vanilla-at-night-issue-290)).
 - Red lamp texels are darkened (shared curve, then per car) until the
   visible red median is at most vanilla's 92; white ones until the visible
   white front median is at most 137; amber ones keep Forza's brightness
@@ -2308,6 +2312,57 @@ their lens pattern; no lamp reads as a flat plate.
 Rear lamps at night (the same measure, rear view, red lamp pixels): vanilla, 141 vehicles, p95 0.04 /
 0.10 / 0.29; the 15 ports 0.02 / 0.05 / 0.12, over larger areas (the X6 M 2,912 px at 0.04): the same
 problem at the rear, #290.
+
+### Tail lamps at half vanilla at night (issue #290)
+
+Symptom (offline-checked, `out/l8/head_survey.py` with `HEAD_REAR`: render_compare's renderer, rear view,
+dark mood, the red lamp pixels' glow; the tail lamps at the running lights' 0.2): ported tail lamps
+glowed at half vanilla's at their brightest and over larger areas: vanilla, 141 vehicles, p95 0.04 /
+0.10 / 0.29 (p10 / median / p90); 17 ports on master 0.025 / 0.048 / 0.12. The BMW X6 M's tails (the
+user's "painted on taillights") at 0.045 over 2,912 px.
+
+Cause (confirmed-static). A red lamp texel's alpha is its rank among every red texel of the car
+(`red_lamp_curve`, #93) mapped onto vanilla's red alpha. Hidden bulbs and reflectors take the top
+ranks, so the surface a camera behind the car sees sat in the middle of vanilla's range. Vanilla's
+visible 0x18 tails (56 vehicles, 137,610 pixels, rear view) are alpha p50 49, p90 141, p95 186.
+
+Change (`lenses.tail_glow`, `Texturing._glow`, `_lamp_view(rear_half=True)`):
+
+- The red lamps seen from behind (the rear half's Lights triangles, lenses left out excluded as from
+  the front) are split into lamps, each a connected patch of red samples (`TAIL_MIN_SAMPLES` 40 or
+  more). Per lamp, each sample's lamp score times its picture's detail (`_detail`, as #286's)
+  makes a pool; every texel of a triangle seen on the lamp is ranked in it by its own score times the
+  triangle's detail, onto vanilla's visible tail alpha (`TAIL_RED_ALPHA`). The view samples one texel
+  in many; ranking only the sampled ones left 88 to 94% of a tail lamp's texels at their old alpha.
+- The dimmest 40% of each lamp stay dark (`TAIL_DARK`): a ported tail is drawn over about 2.5 times
+  vanilla's red area (median 7,108 px against 2,867: reflectors, bezels, lens edges), and ranked
+  whole 56% of it lit where vanilla lights 26% of its own, an even glow.
+- A texel never ends below its converted alpha: tails that already glowed at vanilla's level (the
+  GTI VR6's, M3 E30's, Evo VI's) keep it; ranked down they dropped to half.
+- Each lamp is ranked on its own, so a car's two sides get the same range (the Panoz Esperante's left
+  and right tails, the user's report).
+
+Results, 19 ports (the front set with the Esperante road car, the TT RS, the Devon GTX, the F50 and the
+Commodore VE #1; master 5b346c0's lamp code against this; rear view, dark mood):
+
+| | vanilla | master | this change |
+| --- | --- | --- | --- |
+| p95 | 0.042 / 0.097 / 0.29 | 0.025 / 0.060 / 0.121 | 0.055 / 0.082 / 0.136 |
+| contrast (local std / mean over the lit pixels) | 0.23 / 0.36 / 0.57 | 0.19 / 0.35 / 0.45 | 0.26 / 0.36 / 0.45 |
+| lit share of the red lamp pixels | 0.10 / 0.26 / 0.48 | 0.02 / 0.27 / 0.48 | 0.19 / 0.31 / 0.52 |
+
+No car is dimmer. X6 M 0.045 -> 0.057, Devon GTX 0.033 -> 0.081, Golf R 0.016 -> 0.098, Mustang GT 05
+0.027 -> 0.082, S60 0.040 -> 0.088, Thunderbird 57 0.020 -> 0.073, TT RS 0.120 -> 0.155. The
+Esperante's sides: p95 0.068 and 0.059.
+
+In game (VM, `-Views 'rear,rear+night' -Palette 0`, vanilla 130 first; master `vm1-20261030-021734`
+and `vm2-20261030-024709`, this change (without the "never below" rule) `vm1-20261030-022240` and (as
+merged) `vm2-20261030-025201`): at night the X6 M's, Mustang GT 05's, S60's and Golf R's tails glow
+brighter, along their lamp graphics; the Esperante's two sides glow alike; the TT RS's and Devon GTX's
+as before. By day the tails look as on master.
+
+Not this: the F50's starburst and white patches and the Commodore VE race cars' flat red block with a
+white patch (#300) are the same in both builds by day: their tail lens and cover bake, not the glow.
 
 ### Open
 
