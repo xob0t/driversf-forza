@@ -2111,6 +2111,35 @@ master; 156 of them, on 79 cars, are in a lamp unit's section and are now left o
 Prius). The 12 left are outside lamp sections (`body` on the RS6 03 and Insignia VXR, `trunk` on the
 Mini 65s and Axela, the Volt's `bumperFa` and mirrors) and stay as before.
 
+Vanilla's covers (offline, `out/l8/vanilla_covers.py`): 241, 130, 198, 229, 227, 266 and 147 all draw
+the glass over their head lamps with `GLOBAL_Glass_LOD1` at the flat window texel (UVs u 0.13 to 0.98,
+v 0 to 0.12, 75% opaque), the same as these covers on master. Their lamps glow through it because their
+texel alpha is high and unscaled (0x1D median 149 to 172 on 241 and 130; 0x01 46 to 123). The ports'
+0x1D texels are a fifth of their glow by design (`DAYTIME_GLOW`, #167), so the same glass over them
+gives a tenth of vanilla's glow. DSF's shared glass has one other, less opaque patch, the interior
+windows' grey smear (u 0 to 0.12, v 0 to 0.06, alpha 0.35, streaked); a cover drawn on it would keep a
+reflection, but it is untried on the outside and `render_compare` ignores the glass texture, so only an
+in-game run could judge it.
+
+`render_compare diff` (master 1481ae6 against this change; the R8, 458 Spider, Stealth and Cadillac in
+`out/rc/l8-247`, 8 more of the 79 in `out/rc/l8-247x`; `img/lamps8-covers-look.jpg`): all 12 draw
+differently, front lamps 76 to 100% of the region. Scores 17.4 -> 10.7 (R8), 19.5 -> 15.9 (458), 17.6
+-> 12.3 (Stealth), 17.8 -> 12.8 (Cadillac), 9.5 -> 6.9 (DB9), 5.2 -> 2.3 (Gallardo), 18.4 -> 15.4 (GT-R
+GT1), 5.0 -> 2.1 (Evora), 3.7 -> 0.8 (E63 AMG), 7.9 -> 2.3 (Golf R), 13.1 -> 5.5 (Prius), 17.8 -> 14.9
+(Sagaris). Non-lamp regions that change are the chrome and trims inside the lamp units, seen through
+where the cover was: chrome on the R8, Prius, Gallardo, Evora, Golf R (100%), Sagaris (98%), GT-R GT1
+(86%), E63 (12%); trims 3 to 47% on all but the GT-R. The reference labels a plain cover's pixels as
+lamp, so these come up as "chrome extra" and "trims extra" flags. No hole or gap shows: the housing,
+bowls and projectors are what Forza draws through its clear cover. What is lost is the cover's
+reflection by day: master's window glass and Forza's clear glass both draw a highlight on the Golf R's,
+E63's and DB9's lamps that the bare lamp doesn't.
+
+In game (VM 2, `-Views 'nose,nose+night' -Palette 0`, vanilla 241 first, then the R8, 458 Spider,
+Stealth and Cadillac; master `vm2-20261029-195645`, this change `vm2-20261029-200749`;
+`img/lamps8-r8-ingame.jpg`, `img/lamps8-stealth-ingame.jpg`): in the dark mood the R8's and Stealth's
+head lamps glow brighter and larger; the 458's and the Cadillac's look about as on master. By day the
+lamp units look as on master (the 458's housing a little lighter without the dark glass); no hole or gap.
+
 ### Open
 
 1. Front lamps in the lamp-phase mode (`-Lights`): neither copy faces the
