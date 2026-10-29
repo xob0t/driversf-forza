@@ -119,12 +119,15 @@ CHROME_UV = (0.9536, 0.8135)
 # Vanilla chrome takes its grey per part by where UV0 lands (149 vehicles: the mean R of a
 # vehicle's chrome 43 to 156, median 80; most cars span over 30 levels between their
 # darker and lighter parts; research/forza-materials.md, "Bare-metal greys"): columns
-# x 972 to 1021 of rows 392 to 443, a ramp falling from R 103 (G 126) to 45 (G 58), and a
-# block of R 156 (G 198) at x 838 to 869, y 420 to 445. Bare-metal trims (trim_art.METAL)
-# take the one nearest their Forza grey; G, the gloss and reflection, follows R as on
-# vanilla chrome. grey -> UV0 (texel centres; ramp columns whose neighbours are within 3).
+# x 972 to 1021 of rows 392 to 443, a ramp falling from R 103 (G 126) to 45 (G 58), and
+# for its lightest parts a block of R 135, G 135 at x 904 to 941, y 229 to 266 (6 vehicles:
+# the Impala taxi, the RS6 Avant...) or one of R 156, G 198 (103 vehicles, small parts).
+# Bare-metal trims (trim_art.METAL) take the one nearest their Forza grey; G, the gloss and
+# reflection, comes with it. Not 156: its G of 198 made large panels (the Veyron's roof
+# scoops, the One-77's grille) bloom in the sky's reflection; 135's G is near CHROME_UV's
+# 122. grey -> UV0 (texel centres; ramp columns whose neighbours are within 3).
 CHROME_GREYS = {
-    156: (852.5 / 1024, 432.5 / 512),
+    135: (922.5 / 1024, 247.5 / 512),
     103: (973.5 / 1024, 416.5 / 512),
     98: (976.5 / 1024, 416.5 / 512),
     92: (981.5 / 1024, 416.5 / 512),

@@ -123,8 +123,9 @@ class ChromeTrim(unittest.TestCase):
         one vertex pool keep their own UV0."""
         import numpy as np
 
-        self.assertEqual(forza2dsf.chrome_grey(177), 156)  # the Veyron's scoops: vanilla's brightest
-        self.assertEqual(forza2dsf.chrome_grey(240), 156)
+        self.assertEqual(forza2dsf.chrome_grey(177), 135)  # the Veyron's scoops: the lightest one
+        self.assertEqual(forza2dsf.chrome_grey(240), 135)
+        self.assertNotIn(156, forza2dsf.CHROME_GREYS)  # G 198: large panels bloomed (#302)
         self.assertEqual(forza2dsf.chrome_grey(100), 98)
         self.assertEqual(forza2dsf.chrome_grey(20), 45)
         # the Veyron's 227 frame at PristinePaintScale 0.3, as Forza draws it
@@ -135,7 +136,7 @@ class ChromeTrim(unittest.TestCase):
         self.assertEqual(fm.technique_scale("dsf_trim_metal#74"), ("dsf_trim_metal", 1.0))
         transform = (0.0, 1.0, 0.0, 1.0)
         subs = [
-            carbin.SubSection(fm.with_grey(trim_art.METAL_TECHNIQUE, g), 1, 4, transform, [0, 1, 2]) for g in (156, 74)
+            carbin.SubSection(fm.with_grey(trim_art.METAL_TECHNIQUE, g), 1, 4, transform, [0, 1, 2]) for g in (135, 74)
         ] + [carbin.SubSection("chrome", 1, 4, transform, [0, 1, 2])]
         section = carbin.Section("body", (0, 0, 0), (0, 0, 0), (1, 1, 1), self.section.lod_vertices, [], subs)
         t = dm.Texturing(Path())
@@ -159,7 +160,7 @@ class ChromeTrim(unittest.TestCase):
         for n in range(0, 9, 3):
             v = builder.indices[added.first_index + n] + added.base_vertex
             uvs.append(struct.unpack_from("<2e", buf, v * added.stride + 8))
-        for uv, want in zip(uvs, (forza2dsf.CHROME_GREYS[156], forza2dsf.CHROME_GREYS[74], forza2dsf.CHROME_UV)):
+        for uv, want in zip(uvs, (forza2dsf.CHROME_GREYS[135], forza2dsf.CHROME_GREYS[74], forza2dsf.CHROME_UV)):
             self.assertAlmostEqual(uv[0], want[0], places=3)
             self.assertAlmostEqual(uv[1], want[1], places=3)
 
@@ -518,7 +519,7 @@ class TrimArt(unittest.TestCase):
                 "body/smooth_metal": {
                     "triangles": 2,
                     "metal": 2,
-                    "metal_greys": {"156": 2},  # white 240: the brightest chrome grey
+                    "metal_greys": {"135": 2},  # white 240: the lightest chrome grey
                     "detail": 0,
                     "grey": 0,
                     "gloss": 0,
@@ -530,7 +531,7 @@ class TrimArt(unittest.TestCase):
         names = [s.material for s in out.subsections]
         art = fm.with_source(trim_art.ART_TECHNIQUE[fm.NODAMAGE], "misc")
         gloss = fm.with_source(trim_art.GLOSS_TECHNIQUE, "misc")
-        metal = fm.with_grey(trim_art.METAL_TECHNIQUE, 156)
+        metal = fm.with_grey(trim_art.METAL_TECHNIQUE, 135)
         self.assertEqual(names, ["body", "misc", art, gloss, "black", "misc", metal])
         self.assertEqual(fm.classify(metal)[0], fm.CHROME)  # DSF's shared chrome
         self.assertEqual(fm.classify(trim_art.METAL_TECHNIQUE)[0], fm.CHROME)
