@@ -23,7 +23,7 @@ TOOLS = {
         "exp_hollow forza2dsf forza_materials glass lights paint plates steering_axle wheel_clearance",
         "build": "clone_vehicle forza_roster handling handling_dsf handling_tune host_select install package port_batch port_car report thirdparty",
         "game": "game_data gui_assets savecheck spool_variants traffic_sets vehicle_limits xref",
-        "harness": "dyno emblem_check lights_diff vnckeys vncshot",
+        "harness": "dyno emblem_check lights_diff render_compare vnckeys vncshot",
     }.items()
     for name in names.split()
 }
