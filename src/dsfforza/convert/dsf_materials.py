@@ -2058,7 +2058,8 @@ class Texturing:
         lod = min(t[0] for t in self.lamp_tris)
         tris = [t for t in self.lamp_tris if t[0] == lod]
         if rear_half:  # behind the car: the rear half's lamps only (the body hides the rest)
-            tris = [t for t in tris if sum(p[2] for p in t[1]) > 0]
+            # and, as from the front, not the lenses left out (the X6 M's flat red tail glass)
+            tris = [t for t in tris if sum(p[2] for p in t[1]) > 0 and t[3] not in self.dropped_lenses]
             if not tris:
                 return None
         if front:  # Forza's front is -z; the camera looks down +z, nearest = largest -z
