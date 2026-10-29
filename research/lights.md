@@ -2064,6 +2064,18 @@ emptied lamps' entries are free on the other 4:
   with the tail lamp only through the stray head lamp triangle inside them. Unlit rear
   retro-reflectors are the plan's rule (#174).
 
+The emptied-lamp rule ran after that survey; `out/l8/plan_survey.py` on the M3 E30, RS6 09 and 207 RC
+shows their emptied reverse lamps without an entry (the 207 Super 2000 shares the 207 RC's layout).
+
+`render_compare diff` (master 1481ae6 against this change, the 15 cars of this pass, `out/rc/l8-264`):
+7 cars' data change, 1 draws differently, MCL_43_McLarenF1GTR_97 (`rear_lamps` rear3q dark 6%); the
+others change only in light entries or at LODs these views don't draw. Scores unchanged.
+
+In game (VM 1, `-Lights -LightsDriveOnly -Palette 0`, vanilla 241 first, then the A4 Avant and the
+Mini 65; master `vm1-20261029-200145`, this change `vm1-20261029-200533`;
+`img/lamps8-mini-plate-ingame.jpg`, `img/lamps8-a4-tails-ingame.jpg`): the A4 Avant's tails light and
+brake as on master; the Mini's plate area no longer lights white in the dark mood.
+
 ### Open
 
 1. Front lamps in the lamp-phase mode (`-Lights`): neither copy faces the
