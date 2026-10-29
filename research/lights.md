@@ -339,14 +339,15 @@ Since 2026-10-23 the mode does more per car (`lightstest.lua`, driven by
    `0idle`, `6throttle` (rolling, lamps off), `1brake`, `2brake`,
    `3reverse`, `4brakeup`, `5idle`. The Lua logs the distance moved per
    update and `isReversing`. With traffic on, a drive can hit a traffic car
-   and break lamps (370Z in run 124438). `-LightsDriveOnly` skips the
+   and break lamps (370Z in run 124438); since #228 the probe switches
+   traffic off unless `-Traffic` is given. `-LightsDriveOnly` skips the
    `setLights` phases (`lights = { phases = false }`).
 3. Phases 1 to 18 as before, on the player's car and both copies.
 4. No traffic phase. Two tries in `lightstest.lua` (sync 92 to 94, since
    removed): `Spawn.Spawn` plus `civilianTraffic.AddVehicleToCarrier`
    returned false and the car stayed parked (run 20261023-115652);
    `GameVehicleResource.swapWithModel` on the nearest live traffic car
-   crashed the game (run 20261023-123840). Traffic is left on (switched
+   crashed the game (run 20261023-123840). Traffic was left on then (switched
    off, the probe counted 0 cars and nothing to swap, run 121707).
 
 `lightsync.lua` writes retry for 5 s on a sharing violation (the game reads
