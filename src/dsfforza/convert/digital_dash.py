@@ -187,10 +187,18 @@ DIGIT_LIFT = 0.0016
 # Forza's bars have detail finer than a screen pixel (the S2000's arc is radial stripes
 # 1 to 2 render-target pixels wide, 0.27 mm). Drawn as pieces, those were thinner than
 # the 0.24 mm position step and than a pixel, and shimmered as the head camera moved
-# (issue #188). The vanilla Zonda's rpm segments are 1.6 mm at their thinnest.
-PIECE_SIZE = 0.0015
+# (issue #188). 1 mm is about a pixel in the cockpit view at 1600 x 900 (the S2000's
+# 255 mm display spans 340 pixels) and 4 position steps; the vanilla Zonda's rpm
+# segments are 1.6 mm at their thinnest. Coarser cells (1.5 mm) shimmered no less and
+# blurred the Viper 2013's fan more.
+PIECE_SIZE = 0.001
 CELL_SHOWN = 0.9  # share of a cell on the displays' triangles for it to be drawn
-EDGE_SHOWN = 0.6  # share of an edge piece's box on the display (the Zonda Cinque's round shift lights: 0.67 to 0.71)
+EDGE_SHOWN = (
+    0.6  # share of a light's or edge piece's box on the display (the Zonda Cinque's round shift lights: 0.67 to 0.71)
+)
+LIGHT_CELLS = 5  # a group lit at one step no wider or taller than this many cells is a light
+STATIC_DETAIL = 0.2  # rest luminance (0..1) off the bar's that makes a never-lit pixel detail
+STATIC_SHARE = 0.05  # share of a cell that may be static detail for it to be drawn
 CELL_BLUR = 0.4  # cell colours are blurred first, by a Gaussian this many cells wide (sigma)
 CHANGES = 2  # colour changes per pixel the rpm makes (rest -> lit -> warning)
 # The digital dials draw their texel unlit (shader program 163 has no light term) in a
@@ -375,6 +383,18 @@ def _blur(a, weight, sigma: float):
     return num / np.maximum(den, 1e-6)
 
 
+def static_detail(base, ev_step, shown, c: int):
+    """Shown pixels the rpm never changes that stand out from the bar at rest (the
+    Viper 2013's numerals and ticks over its lit fan): a cell over them would draw them
+    as its mean colour. Their rest luminance differs by STATIC_DETAIL or more from the
+    mean rest luminance of the lit pixels near them (5 cells round)."""
+    lum = base[..., :3] @ np.array([0.299, 0.587, 0.114], np.float32)
+    lit = (ev_step[0] >= 0).astype(np.float32)
+    near = _blur((lum * lit)[..., None].repeat(3, -1), lit, 2.5 * c)[..., 0]
+    seen = _blur(lit[..., None].repeat(3, -1), np.ones_like(lit), 2.5 * c)[..., 0] > 0.01
+    return shown & (ev_step[0] < 0) & seen & (np.abs(lum - near) >= STATIC_DETAIL)
+
+
 def bar_cells(base, ev_step, ev_col, shown, c: int):
     """What the rpm changes, filtered onto cells of c x c render-target pixels: (rest,
     colours, steps, drawn). Per cell, `rest` and each `colours[level]` are the mean colours
@@ -407,7 +427,9 @@ def bar_cells(base, ev_step, ev_col, shown, c: int):
             steps.append(np.where(has & (count > 0), steps[0] + mid, np.nan))
     steps = np.stack([np.where(np.isnan(s), -1, s) for s in steps]).astype(np.int32)
     change = np.abs(colours[0] - rest).max(-1)
-    drawn = (count > 0) & (n >= CELL_SHOWN * c * c) & (change > LIT_DIFFERENCE)
+    detail = static_detail(base, ev_step, shown, c)
+    covers = _blocks(detail.astype(np.float32), c) > STATIC_SHARE * c * c
+    drawn = (count > 0) & (n >= CELL_SHOWN * c * c) & (change > LIT_DIFFERENCE) & ~covers
     steps[:, ~drawn] = -1
     return rest, np.stack(colours), steps, drawn
 
@@ -452,16 +474,77 @@ def _components(mask) -> list:
     return boxes
 
 
-def edge_pieces(base, ev_step, ev_col, shown, in_cell, c: int) -> list:
-    """The rpm's changes the cells leave out (cells mostly off the display: shift lights
-    on displays of their own, a bar along a display's edge), per step and connected
-    group as one rectangle: its box if EDGE_SHOWN of it is on the display (a round light
-    in its square), else the rows and columns of the box CELL_SHOWN shown. Each is off
-    every drawn cell and earlier piece, at least half a cell on each side, and takes the
-    mean colours of its shown pixels: [(rect (x0, x1, y0, y1), rest, colours, steps)]
-    like bar_cells' cells."""
+def _piece(base, ev_step, ev_col, shown, rect, k: int):
+    """(rect, rest, colours, steps) of one piece over `rect` (x0, x1, y0, y1) lit at step
+    k: the mean colours of its shown pixels, like bar_cells' cells; None if it hardly
+    changes."""
+    x0, x1, y0, y1 = rect
+    on = shown[y0:y1, x0:x1].reshape(-1)
+    if not on.any():
+        return None
+    rest = base[y0:y1, x0:x1, :3].reshape(-1, 3)[on].mean(0)
+    state, colours = base[y0:y1, x0:x1, :3], []
+    for level in range(CHANGES):
+        state = np.where((ev_step[level][y0:y1, x0:x1] >= 0)[..., None], ev_col[level][y0:y1, x0:x1], state)
+        colours.append(state.reshape(-1, 3)[on].mean(0))
+    if np.abs(colours[0] - rest).max() <= LIT_DIFFERENCE:
+        return None
+    first = ev_step[0][y0:y1, x0:x1]
+    steps, lit = [int(k)], first >= 0
+    for level in range(1, CHANGES):
+        later = ev_step[level][y0:y1, x0:x1]
+        has = lit & (later >= 0)
+        steps.append(int(k + np.median(later[has] - first[has])) if has.sum() * 2 >= max(1, lit.sum()) else -1)
+    return (rect, rest, np.stack(colours), steps)
+
+
+def bar_lights(base, ev_step, ev_col, shown, c: int) -> list:
+    """Lights: groups of pixels the rpm lights together (within one step), no wider or
+    taller than LIGHT_CELLS cells and no smaller than half a cell (shift lights, LEDs),
+    each one piece over its box,
+    grown to a cell a side where that stays EDGE_SHOWN on the display and off the other
+    lights. Cells would cut a light into parts, each mostly off a light that has a
+    display of its own. [(rect, rest, colours, steps)] like edge_pieces."""
     first = ev_step[0]
-    taken = in_cell.copy()  # drawn cells, then each edge piece too
+    taken = np.zeros(first.shape, bool)
+    out = []
+    for box in _components(first >= 0):
+        x0, x1, y0, y1 = box
+        s = first[y0:y1, x0:x1]
+        s = s[s >= 0]
+        if max(x1 - x0, y1 - y0) > LIGHT_CELLS * c or s.max() - s.min() > 1:
+            continue
+        if min(x1 - x0, y1 - y0) < c / 2 or len(s) < c * c / 4:
+            continue  # a speck (a needle's trace): the cells average it as the eye would
+        gx, gy = max(0, c - (x1 - x0)), max(0, c - (y1 - y0))
+        grown = (
+            max(0, x0 - gx // 2),
+            min(first.shape[1], x1 + gx - gx // 2),
+            max(0, y0 - gy // 2),
+            min(first.shape[0], y1 + gy - gy // 2),
+        )
+        for x0, x1, y0, y1 in (grown, box):
+            if taken[y0:y1, x0:x1].any() or shown[y0:y1, x0:x1].mean() < EDGE_SHOWN:
+                continue
+            if ((first[y0:y1, x0:x1] >= 0) & ~np.isin(first[y0:y1, x0:x1], s)).any():
+                continue  # another group's pixels
+            piece = _piece(base, ev_step, ev_col, shown, (x0, x1, y0, y1), int(np.median(s)))
+            if piece is not None:
+                taken[y0:y1, x0:x1] = True
+                out.append(piece)
+            break
+    return out
+
+
+def edge_pieces(base, ev_step, ev_col, shown, in_cell, c: int) -> list:
+    """The rpm's changes the lights and cells leave out (a bar along a display's edge,
+    where cells are mostly off the display), per step and connected group as one
+    rectangle: its box if EDGE_SHOWN of it is on the display, else the rows and columns of
+    the box CELL_SHOWN shown. Each is off every drawn cell and earlier piece, a cell or
+    more on each side (no slivers), and takes the mean colours of its shown pixels:
+    [(rect (x0, x1, y0, y1), rest, colours, steps)] like bar_cells' cells."""
+    first = ev_step[0]
+    taken = in_cell | static_detail(base, ev_step, shown, c)  # drawn cells, detail, then each edge piece
     left = (first >= 0) & ~taken
     out = []
     for k in np.unique(first[left]):
@@ -473,25 +556,13 @@ def edge_pieces(base, ev_step, ev_col, shown, in_cell, c: int) -> list:
                 x0, x1, y0, y1 = int(math.floor(a)), int(math.ceil(b)), int(math.floor(t)), int(math.ceil(u))
                 if x1 <= x0 or y1 <= y0 or not free[y0:y1, x0:x1].all():
                     continue
-            if min(x1 - x0, y1 - y0) < max(1, c / 2):
+            if min(x1 - x0, y1 - y0) < c:
                 continue
-            on = shown[y0:y1, x0:x1].reshape(-1)
-            rest = base[y0:y1, x0:x1, :3].reshape(-1, 3)[on].mean(0)
-            state, colours = base[y0:y1, x0:x1, :3], []
-            for level in range(CHANGES):
-                state = np.where((ev_step[level][y0:y1, x0:x1] >= 0)[..., None], ev_col[level][y0:y1, x0:x1], state)
-                colours.append(state.reshape(-1, 3)[on].mean(0))
-            if np.abs(colours[0] - rest).max() <= LIT_DIFFERENCE:
+            piece = _piece(base, ev_step, ev_col, shown, (x0, x1, y0, y1), int(k))
+            if piece is None:
                 continue
-            steps = [int(k)]
-            lit_here = first[y0:y1, x0:x1] >= 0
-            for level in range(1, CHANGES):
-                later = ev_step[level][y0:y1, x0:x1]
-                has = lit_here & (later >= 0)
-                gap = later[has] - first[y0:y1, x0:x1][has]
-                steps.append(int(k + np.median(gap)) if has.sum() * 2 >= lit_here.sum() else -1)
             taken[y0:y1, x0:x1] = True
-            out.append(((x0, x1, y0, y1), rest, np.stack(colours), steps))
+            out.append(piece)
     return out
 
 
@@ -879,10 +950,15 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
     # The bar pieces are drawn from cells no finer than PIECE_SIZE, box-filtered.
     size = pixel_size(patches)
     cell_px = max(1, math.ceil(PIECE_SIZE / size - 1e-6)) if size else 1
-    g_rest, g_col, g_step, lit = bar_cells(base1, ev_step, ev_col, shown, cell_px)
+    lights = bar_lights(base1, ev_step, ev_col, shown, cell_px)
+    rest_step, rest_shown = ev_step.copy(), shown.copy()  # what the lights leave to the cells
+    for (x0, x1, y0, y1), *_ in lights:
+        rest_step[:, y0:y1, x0:x1] = -1
+        rest_shown[y0:y1, x0:x1] = False
+    g_rest, g_col, g_step, lit = bar_cells(base1, rest_step, ev_col, rest_shown, cell_px)
     # lit pixels in no drawn cell (cells mostly off the display, or hardly changing)
-    in_cell = np.repeat(np.repeat(lit, cell_px, 0), cell_px, 1)[:hgt, :wid]
-    edges = edge_pieces(base1, ev_step, ev_col, shown, in_cell, cell_px)
+    in_cell = np.repeat(np.repeat(lit, cell_px, 0), cell_px, 1)[:hgt, :wid] | ~rest_shown & shown
+    edges = lights + edge_pieces(base1, rest_step, ev_col, rest_shown, in_cell, cell_px)
     for (x0, x1, y0, y1), *_ in edges:
         in_cell[y0:y1, x0:x1] = True
     report["rpm_pixels_left_out"] = int(((ev_step[0] >= 0) & ~in_cell).sum())
@@ -1073,7 +1149,8 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
             rect_quad(p, rect, (u, v, u, v), RPM, PIECE_LIFT)
             pieces += 1
         report["bar_pieces"] = pieces
-        report["bar_edge_pieces"] = len(edges)
+        report["bar_lights"] = len(lights)
+        report["bar_edge_pieces"] = len(edges) - len(lights)
         report["bar_cell_mm"] = round(cell_px * size * 1000, 2)
     # Dim pale and glaring displays (DISPLAY_MEAN_LUMINANCE); dark ones stay as they are.
     big = np.repeat(np.repeat(shown, SCALE, 0), SCALE, 1)[: base.shape[0], : base.shape[1]]

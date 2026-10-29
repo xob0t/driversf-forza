@@ -101,8 +101,8 @@ def test_bar_cells_are_coarse_and_smooth():
 
 def test_small_lights_on_their_own_displays_stay():
     # Round shift lights on display triangles of their own (the Zonda Cinque's): every cell
-    # round them is mostly off the display, so each light is one piece of its own, mostly
-    # on the display and over nothing drawn.
+    # round them is mostly off the display, so each light is one piece of its own over its
+    # box, mostly on the display.
     yy, xx = np.mgrid[0:40, 0:120]
     shown = np.zeros((40, 120), bool)
     steps = np.full((40, 120), -1)
@@ -116,12 +116,25 @@ def test_small_lights_on_their_own_displays_stay():
     base = np.zeros((40, 120, 3), np.float32)
     _, _, _, drawn = dd.bar_cells(base, ev_step, ev_col, shown, 10)
     assert not drawn.any()
-    in_cell = np.zeros((40, 120), bool)
-    pieces = dd.edge_pieces(base, ev_step, ev_col, shown, in_cell, 10)
+    pieces = dd.bar_lights(base, ev_step, ev_col, shown, 10)
     assert [p[3][0] for p in pieces] == [0, 1, 2]
     for (x0, x1, y0, y1), rest, colours, _ in pieces:
         assert shown[y0:y1, x0:x1].mean() >= dd.EDGE_SHOWN and min(x1 - x0, y1 - y0) >= 5
         assert colours[0][1] > 0.6 and rest.max() == 0
+
+
+def test_a_bar_along_a_display_edge_leaves_no_slivers():
+    # A bar whose lower rows run off the display: what the cells leave becomes edge
+    # pieces of a cell or more a side, or nothing.
+    base, ev_step, ev_col = _slanted_bar()
+    shown = np.ones(base.shape[:2], bool)
+    shown[33:, :] = False
+    ev_step[:, ~shown] = -1
+    _, _, _, drawn = dd.bar_cells(base, ev_step, ev_col, shown, 6)
+    in_cell = np.repeat(np.repeat(drawn, 6, 0), 6, 1)[:60, :300]
+    for (x0, x1, y0, y1), *_ in dd.edge_pieces(base, ev_step, ev_col, shown, in_cell, 6):
+        assert min(x1 - x0, y1 - y0) >= 6 and not in_cell[y0:y1, x0:x1].any()
+        assert shown[y0:y1, x0:x1].mean() >= dd.EDGE_SHOWN
 
 
 def test_bar_pieces_are_watertight_and_never_overlap():
