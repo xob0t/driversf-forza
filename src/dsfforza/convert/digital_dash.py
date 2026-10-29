@@ -400,7 +400,7 @@ def bar_cells(base, ev_step, ev_col, shown, c: int):
     colours, steps, drawn). Per cell, `rest` and each `colours[level]` are the mean colours
     of its shown pixels at rest and after each change (pixels that don't change keep their
     colour), blurred first: detail finer than a cell (the S2000's stripes, 3.5 pixels
-    apart in cells of 6) would otherwise beat with the cells into a mottle of two shades.
+    apart in cells of 4) would otherwise beat with the cells into a mottle of two shades.
     `steps[0]` is the median step its pixels first change at, and
     `steps[1]` the step of the second change if at least half of them have one (else -1).
     A cell is `drawn` when it is CELL_SHOWN on the displays and changes visibly."""
