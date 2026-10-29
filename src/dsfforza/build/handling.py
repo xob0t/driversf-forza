@@ -440,24 +440,24 @@ def _one(con, sql: str, *args) -> sqlite3.Row:
 
 def _read_car(con, car: sqlite3.Row, db: Path) -> ForzaCar:
     cid = car["Id"]
-    body_id = _one(con, "SELECT CarBodyID FROM List_UpgradeCarBody WHERE Ordinal = ? AND IsVanilla = 1", cid)[0]
+    body_id = _one(con, "SELECT CarBodyID FROM List_UpgradeCarBody WHERE Ordinal = ? AND IsStock = 1", cid)[0]
     body = _one(con, "SELECT * FROM Data_CarBody WHERE Id = ?", body_id)
     weight = con.execute(
-        "SELECT * FROM List_UpgradeCarBodyWeight WHERE CarBodyId = ? AND IsVanilla = 1", (body_id,)
+        "SELECT * FROM List_UpgradeCarBodyWeight WHERE CarBodyId = ? AND IsStock = 1", (body_id,)
     ).fetchone()
-    drivetrain_id = _one(
-        con, "SELECT DrivetrainID FROM List_UpgradeDrivetrain WHERE Ordinal = ? AND IsVanilla = 1", cid
-    )[0]
+    drivetrain_id = _one(con, "SELECT DrivetrainID FROM List_UpgradeDrivetrain WHERE Ordinal = ? AND IsStock = 1", cid)[
+        0
+    ]
     drive = DRIVE_TYPES[_one(con, "SELECT DrivetypeID FROM Data_Drivetrain WHERE DrivetrainID = ?", drivetrain_id)[0]]
     gearbox = _one(
-        con, "SELECT * FROM List_UpgradeDrivetrainTransmission WHERE DrivetrainID = ? AND IsVanilla = 1", drivetrain_id
+        con, "SELECT * FROM List_UpgradeDrivetrainTransmission WHERE DrivetrainID = ? AND IsStock = 1", drivetrain_id
     )
     ratios = [gearbox[f"GearRatio{i}"] for i in range(gearbox["NumGears"])]
     diff = con.execute(
-        "SELECT * FROM List_UpgradeDrivetrainDifferential WHERE DrivetrainID = ? AND IsVanilla = 1", (drivetrain_id,)
+        "SELECT * FROM List_UpgradeDrivetrainDifferential WHERE DrivetrainID = ? AND IsStock = 1", (drivetrain_id,)
     ).fetchone()
-    engine_id = _one(con, "SELECT EngineID FROM List_UpgradeEngine WHERE Ordinal = ? AND IsVanilla = 1", cid)[0]
-    cam = _one(con, "SELECT * FROM List_UpgradeEngineCamshaft WHERE EngineID = ? AND IsVanilla = 1", engine_id)
+    engine_id = _one(con, "SELECT EngineID FROM List_UpgradeEngine WHERE Ordinal = ? AND IsStock = 1", cid)[0]
+    cam = _one(con, "SELECT * FROM List_UpgradeEngineCamshaft WHERE EngineID = ? AND IsStock = 1", engine_id)
     curve = _one(con, "SELECT * FROM List_TorqueCurve WHERE TorqueCurveID = ?", cam["TorqueCurveFullThrottleID"])
     count = curve["NumTorqueValues"]
     step = cam["TorqueCurveMaxRPM"] / (count - 1)
@@ -476,7 +476,7 @@ def _read_car(con, car: sqlite3.Row, db: Path) -> ForzaCar:
         nms = [t * sim_peak / curve_peak for t in nms]
     springs = con.execute(
         "SELECT FrontSpringDamperPhysicsID, RearSpringDamperPhysicsID FROM List_UpgradeSpringDamper"
-        " WHERE Ordinal = ? AND IsVanilla = 1",
+        " WHERE Ordinal = ? AND IsStock = 1",
         (cid,),
     ).fetchone()
     rates = []

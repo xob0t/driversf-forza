@@ -43,6 +43,9 @@ from dsfforza.harness import dyno
 
 CACHE = REPO / "out" / "cache" / "handling-tune.json"
 VANILLA_DB = REPO / "out" / "cache" / "vanilla-dyno.json"
+_LEGACY_DB = REPO / "out" / "cache" / "stock-dyno.json"  # its name before #169
+if not VANILLA_DB.exists() and _LEGACY_DB.is_file():
+    _LEGACY_DB.rename(VANILLA_DB)
 RUNS = Path.home() / "AppData" / "Local" / "Temp" / "dsfforza-wsb" / "runs"
 # The test: run 1 full throttle 25 s then brake (0-60, quarter mile); runs 2 and 3 a
 # handbrake flick at 55 mph with the throttle lifted; run 4 a 1 s step steer at 45 mph.
