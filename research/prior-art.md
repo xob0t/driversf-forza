@@ -1,6 +1,6 @@
 # Prior art
 
-Updated: 2026-10-21
+Updated: 2026-10-29
 
 ## Fireboyd78/driver-tools
 
@@ -13,8 +13,9 @@ Relevant parts:
 
 - `DSCript/Spooling/FileChunker.cs`: CHNK reader and writer, including the
   per-entry name string and LZW flag.
-- `DSCript/Common/Chunks/types.csv`: FourCC names, many from DSF. It lists
-  VEHC as "No research has been done on this format".
+- `DSCript/Common/Chunks/types.csv`: FourCC names, many from DSF (VEHC is
+  `VehicleChunk`). `ChunkTypes.cs` next to it says of VEHC "No research has
+  been done on this format".
 - `DSCript/Models/`: MDXN model package (DPL and DSF), submodels, vertex
   declarations, materials and textures.
 - `DSCript/Models/Hierarchies/`: the AWHF hierarchy format and vehicle parts
@@ -35,8 +36,9 @@ test vehicle IDs and spawning before writing native hooks.
 
 ## Local work
 
-`C:\Users\admin\Documents\GitHub\driver-sf-mods`, branch
-`archive/shift-map-2026-10-03`:
+The user's local checkout of DSF Enhanced
+(<https://github.com/xob0t/dsf_enhanced>), branch
+`archive/shift-map-2026-10-03` (local only, not pushed):
 
 - `tools/extract-gegl-mapping.py`: the CHNK reader this project's
   `src/dsfforza/formats/chnk.py` grew from.

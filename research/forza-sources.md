@@ -1,7 +1,7 @@
 # Forza sources: what is on the user's discs
 
-All three images are XGD3 discs (partition at 0x2080000). `default.xex`
-gives the title and disc number:
+The three images the tools use are XGD3 discs (partition at 0x2080000).
+`default.xex` gives the title and disc number:
 
 | Image | Title | Disc |
 |---|---|---|
@@ -15,6 +15,18 @@ step asks `forza_roster.game_discs` / `discs_of` for "the FH1 disc" or "FM4
 disc 1" out of the build's images (`assets/*.iso` or `--iso`). A file that is
 no Forza disc is skipped with a note, and a game without its disc just has no
 cars (issue #113).
+
+Two more sources sit in `assets/` on this PC and aren't used yet (#162; its
+offline survey of 2026-10-28, not rechecked here):
+
+- `Forza Horizon 2 (USA).iso`, the Xbox 360 version (title 4D530AA4, one
+  disc). `forza_roster` doesn't know the title and skips it as another game.
+  Its 215 main and cockpit carbins parse with the FH1 parser.
+- `Forza Motorsport 4 Full DLC Collection/`: 16 LIVE packages, one folder
+  per pack, laid out like the disc 2 packs below; `stfs.py` and `ForzaZip`
+  read them. 176 cars, 148 of them not in the roster.
+
+Together they add 177 cars the roster doesn't have (29 only on FH2).
 
 ## Where the cars are
 
@@ -143,8 +155,10 @@ car zip and pack folder found it in every FM4 car (disc 1 and the 188 disc 2
 pack cars) and every FH1 car except `NIS_Leaf_11`. Both
 games' `gamedb.slt` also have `Data_CarBody` (`ModelWheelbase`,
 `ModelFrontTrackOuter`, `BottomCenterWheelbasePosZ`, pristine bounding box),
-keyed by `Data_Car.Id * 1000`. FM4's has 503 rows but none for the 370Z, so
-it's the fallback; FH1's has the Leaf (wheelbase 2.690). `CarPartPositions`
+keyed by `Data_Car.Id * 1000`: 503 rows in FM4's, 176 in FH1's. Both have
+the 370Z (row 1103000, wheelbase 2.5516) and the Leaf (2.690).
+`car_dims` reads `maxdata.xml` first and the gamedb only as the fallback
+(the Leaf's). `CarPartPositions`
 rows 5 to 8 sit near the hubs (the 370Z's are 2.5516 apart, its wheelbase),
 but what the part IDs mean isn't known. Tyre radius and width are measured
 on the car's own `wheel` section.
