@@ -1,6 +1,6 @@
 # UPVH vehicle hierarchy, and why converted cars crashed
 
-Updated: 2026-10-25
+Updated: 2026-10-29
 
 Static analysis of build 1.04. File offsets are relative to the UPVH payload
 (Saloon 15, VEHC 3, spool 266, 0x42B0 bytes, unless stated). Code addresses
@@ -35,8 +35,8 @@ up. The engine dereferences its low dword as an object pointer and crashes.
 
 - All 46,813 resource UIDs in the vanilla archive (SBMC, VXCK, IXCK, TEXC,
   MACO) have byte 7 between 0x27 and 0x2D.
-- `forza2dsf.py` builds UIDs as `4 random bytes + struct.pack(">I", counter)`.
-  Byte 7 is the counter's low byte, so UIDs 0x80 to 0xFF of each 256 are
+- `forza2dsf.py` used to build UIDs as `4 random bytes + struct.pack(">I", counter)`.
+  Byte 7 was the counter's low byte, so UIDs 0x80 to 0xFF of each 256 were
   "resolved pointers". The vertex and index buffer UIDs are allocated after
   the submodels, so once a build makes more than 127 submodels, every
   submodel's buffer references are poisoned.
@@ -54,7 +54,9 @@ and MODL. A sample of 24 submodel UIDs, in both half orders, appears nowhere
 else in the install, `Driver.exe` included. UPVH holds no submodel, buffer,
 material or texture UIDs.
 
-Untested in game: `out/uid-safe.sp` and `out/uid-signbit.sp` (see the end).
+The fix, vanilla-shaped UIDs (rule 1 below), loads a full replacement with
+130+ new submodels (runs `20261022-004457`, `-004637`; `in-game-tests.md`).
+Every ported car since uses it.
 
 ## Other cross-entry references (confirmed-static)
 
@@ -147,12 +149,12 @@ never exceed their table's count.
 | 0x2C | u8 | 2 | seats |
 | 0x2D | u8 | 2 | mirrors |
 | 0x32 | u16 | 15 | lights |
-| 0x34 | u16 | 0x0CE8 | constant |
+| 0x34 | u16 | 0x0CE8 | in 148 of 150; 192 and 257 hold other values here and at 0x54 |
 | 0x36 | u16 | 8 | LOD links |
 | 0x38 | 24 bytes | 0xFF | |
 | 0x50 | u16 | 6 | attachments |
-| 0x52 | u16 | 4 | wheels (6 in VEHC 96) |
-| 0x54 | 12 bytes | `ecf31c3d 4dcafb46 82e5e6a5` | constant in all vehicles |
+| 0x52 | u16 | 4 | wheels (6 in 10 vehicles: VEHC 96, 210, 270, 330, 345, 399, 414, 417, 423, 432) |
+| 0x54 | 12 bytes | `ecf31c3d 4dcafb46 82e5e6a5` | the same in 148 of 150 (not 192, 257) |
 
 DPL kept a format byte in the low byte of 0x04. DSF doesn't: 0x52 is part of
 the UID.
@@ -205,7 +207,7 @@ probably right.
 | 0x0E | u16 | flags (0x4000 group, low bits 0..3) | unknown |
 | 0x10, 0x12 | u16 | small values and bit flags | unknown |
 | 0x14 | u16 | subtree size, self included (root = record count) | confirmed-static |
-| 0x16, 0x18 | u16 | 0x18: how many hinged records among this one and its ancestors end their subtree where this one's ends (the hinge transforms popped there); 0x16 the same on a leaf (not the list's last), else 0. 10,944 of 10,959 vanilla records; three headlights on hosts 210 and 217 differ. Left stale by a record move, the game crashed (`damage.md`, "Mirrors that hang beside the car") | confirmed-static; the crash confirmed-runtime |
+| 0x16, 0x18 | u16 | 0x18: how many hinged records among this one and its ancestors end their subtree where this one's ends (the hinge transforms popped there); 0x16 the same on a leaf (not the list's last), else 0. 10,956 of 10,959 vanilla records (recounted 2026-10-29 with `damage._tree_fields`); three headlights on hosts 210 and 217 differ. Left stale by a record move, the game crashed (`damage.md`, "Mirrors that hang beside the car") | confirmed-static; the crash confirmed-runtime |
 | 0x1A | i16 | marker index | confirmed-static |
 | 0x1C | i16 | hinge index | confirmed-static |
 | 0x1E | i16 | body index | confirmed-static |
@@ -360,7 +362,7 @@ equals the number of records with a collision offset.
 | MODL load: offsets become pointers, each part UID is registered in a global table (FUN_00494390 at 0x0113A1F8, 85,000 buckets), each LOD's submodel UIDs go into the global fix-up queue at 0x0186A6B8 (count 0x0188A6B8) | FUN_006A52B0, FUN_006A58F0 | confirmed-static |
 | MODL LOD: if the first per-submodel u32 has bit 0 clear, submodels whose material reports 1 for property DAT_00F3FFB4 are sorted to the front | FUN_006A58F0 | confirmed-static; meaning hypothesis |
 | DRSP loader: seven passes in tag order TEXC, GPCH, MACO, SBMC, VXCK, IXCK, MDID | FUN_00BBB8E0 | confirmed-static |
-| SBBH v3/v4 parse: two vertex stream UIDs (+0x10, +0x18), base vertex, first index, index count / 3, +0x40 copied into the submodel | FUN_00BB9990, FUN_00BB9A60 | confirmed-static |
+| SBBH v3/v4 parse: two vertex stream UIDs (+0x10, +0x18; the second is 0 in all 43,790 vanilla SBBHs), base vertex, first index, index count / 3, +0x40 copied into the submodel | FUN_00BB9990, FUN_00BB9A60 | confirmed-static |
 | Submodel objects live in a UID hash table (0x3AA5 buckets) | FUN_00BBBE40 | confirmed-static |
 | MDID is copied as a plain array of `size / 8` UIDs | FUN_00BB9F00 | confirmed-static |
 
@@ -370,9 +372,14 @@ interior and exterior are linked through the LOD-link table.
 
 ## Rules for converted cars
 
-1. Every new resource UID must have byte 7 below 0x80. Copy the vanilla shape:
-   a varying low dword, and a fixed high dword whose top byte is 0x2E or
-   higher but below 0x80, so new UIDs can't collide with vanilla ones.
+1. Every new resource and part UID must have byte 7 below 0x80. Copy the
+   vanilla shape, as `forza2dsf.Builder.new_uid` and
+   `clone_vehicle.vanilla_like_uid` do: `[counter<<4] 0x12 [counter>>4]`,
+   a per-builder 4-byte prefix with byte 6's top bit clear, then byte 7 =
+   0x2D (confirmed-runtime, runs `20261022-004457`, `-004637`). Uniqueness
+   comes from the prefix, and `upvh.py lint` checks it (rule 5). An earlier
+   rule here, a high byte of 0x2E or more with arbitrary bytes 0..6, crashed
+   too according to `new_uid`'s docstring (no run folder recorded).
 2. Keep the full entry's TEXC and MACO, or at least the material and
    texture the interior and exterior take from it.
 3. Keep every MODL part record, in all three entries. UPVH refers to
@@ -383,29 +390,22 @@ interior and exterior are linked through the LOD-link table.
 5. Keep UIDs unique across the archive, part UIDs included. The resource
    and part tables are global (`upvh.py lint` checks it).
 
-## Test archives (built, not yet run)
+## Test archives (superseded)
 
-Both come from `out/upvh/uidtest.py`, which runs `forza2dsf.py` with only
-`Builder.new_uid` replaced. Both use the same command, a full replacement
-that removes host SBMC/VXCK/IXCK (the mode that always crashed), with 130
-submodels, the same count as v-under:
-
-```sh
-python out/upvh/uidtest.py safe|signbit out/dngvehicles.clone.sp out/uid-<mode>.sp --id 304 \
-    --car out/fh1/NIS_370Z_10 --name NIS_370Z_10 --keep-host-materials \
-    --lods 4:3,8:4,16:5 --shadow-lod 5 --exterior-lod 3
-```
-
-- `out/uid-safe.sp`: UIDs `<u32 seed + 16n> <u32 0x2E000000 | seed24>`. Expected
-  to load and drive.
-- `out/uid-signbit.sp`: the same, with bit 63 set on every new UID. Expected
-  to crash on spooling.
+`out/upvh/uidtest.py` built two variants of a 130-submodel full
+replacement: `out/uid-safe.sp` (UIDs `<u32 seed + 16n> <u32 0x2E000000 |
+seed24>`) and `out/uid-signbit.sp` (the same with bit 63 set). Neither run
+is recorded. The vanilla-shaped scheme above was tested instead and loads;
+a byte-7 = 0x2E scheme like uid-safe's is the one `new_uid`'s docstring says
+crashed.
 
 ## Open
 
 1. The spec manager's UPVH consumer (Engine+0x778 vtable +0x48), and the
-   runtime use of record fields 0x0C to 0x18 and 0x2C (0x2A and 0x34: the
-   shader's panel indices, `damage.md`).
+   runtime use of record fields 0x0C (bits past 1), 0x0E to 0x12 and 0x2C.
+   Decoded since: 0x0C bits 0 and 1 and the hinge pop counts at 0x16/0x18
+   (#196, `damage.md`), 0x2A and 0x34 (the shader's panel indices,
+   `damage.md`).
 2. Light flags (decoded in `lights.md` but b0), attachment kinds (the gauge entry's second u32 is the
    needle sweep: `cockpit.md`, "Gauges"). Steering hinge, role-47 marker and head camera:
    `cockpit.md`.
