@@ -683,6 +683,88 @@ def day_glow(glow: np.ndarray, view, colour: np.ndarray | None = None) -> np.nda
     return out if np.isfinite(out).any() else None
 
 
+# Tail and brake lamps seen from behind (#290). Ported red lamps took their alpha from a rank over
+# every red texel of the car (dsf_materials.red_lamp_curve), hidden bulbs and reflectors
+# included, so the surface a camera behind the car sees sat in the middle of vanilla's range: at
+# night their glow reached p95 0.05 where vanilla's reaches 0.10 (render_compare's renderer, rear
+# view, dark mood: p10 / median / p90 0.02 / 0.05 / 0.12 over 15 ports, 0.04 / 0.10 / 0.29 over
+# 141 vanilla vehicles), over larger areas: painted on (the BMW X6 M). Each red lamp as seen from
+# behind (one connected patch of red samples, TAIL_MIN_SAMPLES or more) is ranked on its own onto
+# TAIL_RED_ALPHA, its own picture's detail first (GLOW_DETAIL_*), so both sides of a car get the
+# same range (the Panoz Esperante's left and right tails differed).
+TAIL_MIN_SAMPLES = 40
+# Vanilla's 0x18 tail lamps (DaytimeRunning + Brakes, the converter's tail type): the texel alpha
+# of the visible red lamp pixels at dsf_materials.LAMP_PERCENTILES (render_compare's renderer,
+# rear view; filled from out/l8/head_survey.py HEAD_REAR with HEAD_ALPHA_DUMP).
+TAIL_RED_ALPHA = None
+
+
+def _components(mask: np.ndarray) -> np.ndarray:
+    """4-connected labels of mask (0 outside, 1..n)."""
+    labels = np.zeros(mask.shape, int)
+    n = 0
+    h, w = mask.shape
+    for y0, x0 in zip(*np.nonzero(mask)):
+        if labels[y0, x0]:
+            continue
+        n += 1
+        stack = [(y0, x0)]
+        labels[y0, x0] = n
+        while stack:
+            y, x = stack.pop()
+            for yy, xx in ((y + 1, x), (y - 1, x), (y, x + 1), (y, x - 1)):
+                if 0 <= yy < h and 0 <= xx < w and mask[yy, xx] and not labels[yy, xx]:
+                    labels[yy, xx] = n
+                    stack.append((yy, xx))
+    return labels
+
+
+def tail_glow(atlas: np.ndarray, view) -> np.ndarray | None:
+    """Glow alpha (DSF, 0..255) of the red lamp texels a camera straight behind the car sees, a
+    float array the size of the Lights atlas, NaN elsewhere; None without any. atlas: the Lights
+    atlas (h, w, 4) the car is drawn with (lenses baked); view: Texturing._lamp_view(front=False,
+    grid=True). Per red lamp as seen (a connected patch of red samples), each sample's lamp score
+    (dsf_materials.lamp_score) times its picture's detail (GLOW_DETAIL_*), ranked within the lamp
+    onto TAIL_RED_ALPHA; a texel seen by several samples takes their mean."""
+    from dsfforza.convert import dsf_materials as dm
+
+    if TAIL_RED_ALPHA is None:
+        return None
+    seen, grid, _, step = view
+    rows, cols = seen
+    px = atlas[rows, cols].astype(float)
+    r, g, b, a = px[:, 0], px[:, 1], px[:, 2], px[:, 3]
+    red = (r > 1.6 * g) & (r > 1.6 * b)
+    image = np.zeros(grid.shape, bool)
+    image[grid] = red
+    labels = _components(image)
+    score = np.zeros(grid.shape)
+    score[grid] = a / 255 * (0.6 + 0.4 * np.maximum(np.maximum(r, g), b) / 255)
+    bright = np.zeros(grid.shape)
+    bright[grid] = np.maximum(np.maximum(r, g), b)
+    h, w = atlas.shape[:2]
+    acc, cnt = np.zeros((h, w)), np.zeros((h, w))
+    sample_rows = np.full(grid.shape, -1)
+    sample_cols = np.full(grid.shape, -1)
+    sample_rows[grid], sample_cols[grid] = rows, cols
+    radius = max(1, round(GLOW_DETAIL_RADIUS / step))
+    for k in range(1, labels.max() + 1):
+        lamp = labels == k
+        if lamp.sum() < TAIL_MIN_SAMPLES:
+            continue
+        s = score.copy()
+        if GLOW_DETAIL_GAMMA:
+            s *= np.clip(_detail(bright, lamp, radius), *GLOW_DETAIL_CLIP) ** GLOW_DETAIL_GAMMA
+        pool = np.sort(s[lamp])
+        rank = (np.searchsorted(pool, s[lamp], "left") + np.searchsorted(pool, s[lamp], "right")) / (2 * len(pool))
+        alpha = np.interp(rank * 100, dm.LAMP_PERCENTILES, TAIL_RED_ALPHA)
+        np.add.at(acc, (sample_rows[lamp], sample_cols[lamp]), alpha)
+        np.add.at(cnt, (sample_rows[lamp], sample_cols[lamp]), 1)
+    if not cnt.any():
+        return None
+    return np.where(cnt > 0, acc / np.maximum(cnt, 1), np.nan)
+
+
 def _lens_samples(section, sub, m, w: int, h: int):
     """A lens subsection's texel samples on the (w, h) Lights atlas: (ix, iy, position,
     normal) arrays, one row per texel centre inside each triangle, and the size of its texels

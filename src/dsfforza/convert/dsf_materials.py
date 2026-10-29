@@ -2047,7 +2047,7 @@ class Texturing:
         sw, sh, src = self.atlases.get(fm.LIGHTS)
         return np.frombuffer(bytes(src), np.uint8).reshape(sh, sw, 4)[seen].astype(int)
 
-    def _lamp_view(self, front: bool, grid: bool = False):
+    def _lamp_view(self, front: bool, grid: bool = False, rear_half: bool = False):
         """(rows, columns) of the Lights-atlas texels _visible_lamp_texels sees, one per sample
         (grid: ((rows, columns), the (H, W) mask of the view's samples in their order, the
         view's origin x, y, its step)); None without lamps."""
@@ -2057,6 +2057,10 @@ class Texturing:
 
         lod = min(t[0] for t in self.lamp_tris)
         tris = [t for t in self.lamp_tris if t[0] == lod]
+        if rear_half:  # behind the car: the rear half's lamps only (the body hides the rest)
+            tris = [t for t in tris if sum(p[2] for p in t[1]) > 0]
+            if not tris:
+                return None
         if front:  # Forza's front is -z; the camera looks down +z, nearest = largest -z
             # Lenses left out (dropped_lenses) aren't drawn: kept in the view they hid the lamps
             # behind them, and the Venom GT's head lamps got no day glow under its lexan (#250).
@@ -2124,10 +2128,11 @@ class Texturing:
 
     def _glow(self):
         """Glow alpha of the head lamps by day (lenses.day_glow of lamp_raw, ranked per lamp
-        over the surface a camera straight ahead sees), a float array the size of the Lights
-        atlas, NaN where the converted alpha stays; None when there is none, until planned, and
-        under LIGHTS_ALPHA "raw" (Forza's alpha as is)."""
-        if LIGHTS_ALPHA != "matched" or self.lamp_raw is None:
+        over the surface a camera straight ahead sees) and of the red lamps a camera straight
+        behind sees (lenses.tail_glow), a float array the size of the Lights atlas, NaN where the
+        converted alpha stays; None when there is none, until planned, and under LIGHTS_ALPHA
+        "raw" (Forza's alpha as is)."""
+        if LIGHTS_ALPHA != "matched":
             return None
         if getattr(self, "_glow_done", False):
             return self._lamp_glow
@@ -2135,12 +2140,23 @@ class Texturing:
             return None
         from dsfforza.convert import lenses
 
-        view = self._lamp_view(front=True, grid=True)
         sw, sh, src = self.atlases.get(fm.LIGHTS)
         colour = np.frombuffer(bytes(src), np.uint8).reshape(sh, sw, 4)
-        self._lamp_glow = None if view is None else lenses.day_glow(self.lamp_raw, view, colour)
-        if self._lamp_glow is not None and self.daytime_texels is not None:
-            self._lamp_glow[self.daytime_texels] *= DAYTIME_GLOW
+        front = None
+        if self.lamp_raw is not None:
+            view = self._lamp_view(front=True, grid=True)
+            front = None if view is None else lenses.day_glow(self.lamp_raw, view, colour)
+            if front is not None and self.daytime_texels is not None:
+                front[self.daytime_texels] *= DAYTIME_GLOW
+        # The red lamps seen from behind (#290): where the front has no glow of its own.
+        view = self._lamp_view(front=False, grid=True, rear_half=True)
+        rear = None if view is None else lenses.tail_glow(colour, view)
+        if front is None:
+            self._lamp_glow = rear
+        elif rear is None:
+            self._lamp_glow = front
+        else:
+            self._lamp_glow = np.where(np.isfinite(front), front, rear)
         self._glow_done = True
         return self._lamp_glow
 
