@@ -1384,9 +1384,20 @@ def pod_display(
 # cockpit's cowl clear of it (#147), else the dashboard as before the HUD rule (#92's
 # placement: the display may sit under the HUD's lower corners).
 POD_PASSES = ((False, True), (True, True), (False, False))
+POD_HUD_PASSES = POD_PASSES[:2]  # the passes clear of DSF's HUD
 
 
-def place_pod(static: dict, eye, wheel: Wheel, dials: int, gauges: dict, version: int, sight_sections=None, **kw):
+def place_pod(
+    static: dict,
+    eye,
+    wheel: Wheel,
+    dials: int,
+    gauges: dict,
+    version: int,
+    sight_sections=None,
+    passes=POD_PASSES,
+    **kw,
+):
     """pod_display over POD_PASSES: the first that finds room. Seen from the head
     camera as high as camera_eye's rim rule may raise it (up to 12 cm over the Forza
     eye: GT-R GT1), where the converted car will look from: from the Forza eye, a
@@ -1395,7 +1406,7 @@ def place_pod(static: dict, eye, wheel: Wheel, dials: int, gauges: dict, version
     if "steering_wheel" in static:
         eye = camera_eye(eye, section_points(static["steering_wheel"]))
     d, housing, report = None, None, {}
-    for cowl, hud in POD_PASSES:
+    for cowl, hud in passes:
         d, housing, report = pod_display(
             static, eye, wheel, dials, gauges, version, sight_sections, cowl=cowl, hud=hud, **kw
         )
@@ -1593,6 +1604,10 @@ def dash_needles(plan, version: int) -> list:
 # its own shape, tried at these sizes (x its own) from the largest down: further away
 # than the wheel, it keeps about the size it has there.
 WHEEL_DISPLAY_SCALES = (1.5, 1.25, 1.0, 0.8, 0.6)
+# Tried when those find room only under DSF's HUD, in the passes clear of it: a smaller
+# display in sight beats a larger one behind the progress bar or the speed box (#147: the
+# R15 TDI, the GT-R and the Skyline 2003 at 0.5).
+WHEEL_DISPLAY_SMALL_SCALES = (0.5, 0.4)
 WHEEL_DISPLAY_LIFT = 0.001  # m: the moved display in front of the housing's screen
 DASH_PANEL = "dsf_dash_panel"  # the housing of a moved wheel display (pod_display name)
 
@@ -1624,6 +1639,13 @@ def wheel_display_pod(static: dict, eye, wheel: Wheel, gauges: dict, version: in
     centre = _add(_add(centre, _scale(right, (max(us) + min(us)) / 2)), _scale(up, (max(vs) + min(vs)) / 2))
     sizes = tuple((w * k, h * k) for k in WHEEL_DISPLAY_SCALES)
     d, housing, report = place_pod(static, eye, wheel, 1, gauges, version, sight_sections, sizes=sizes, name=DASH_PANEL)
+    if d is None or report["virtual_display"].get("under_hud"):
+        small = tuple((w * k, h * k) for k in WHEEL_DISPLAY_SMALL_SCALES)
+        found = place_pod(
+            static, eye, wheel, 1, gauges, version, sight_sections, passes=POD_HUD_PASSES, sizes=small, name=DASH_PANEL
+        )
+        if found[0] is not None:
+            d, housing, report = found
     if d is None:
         return [], None, report
     k = d.size[0] / w

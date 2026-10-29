@@ -686,6 +686,41 @@ def test_wheel_display_moves_onto_a_virtual_display():
     assert cockpit.wheel_display_pod(static, eye, wheel, {}, 2)[:2] == ([], None)
 
 
+def test_wheel_display_found_only_under_the_hud_tries_smaller_sizes():
+    # Issue #147: the R15 TDI's, GT-R's and Skyline 2003's moved displays found room only
+    # under DSF's HUD; a smaller one clear of it is drawn instead, and the larger one stays
+    # when no smaller one fits either.
+    eye = (0.0, 0.0, 0.0)
+    static, wheel = _open_cockpit()
+    real = cockpit.place_pod
+    for small_fits in (True, False):
+        calls = []
+
+        def fake(*args, passes=cockpit.POD_PASSES, sizes=None, calls=calls, small_fits=small_fits, **kw):
+            calls.append((passes, sizes))
+            d, housing, report = real(*args, passes=passes, sizes=sizes, **kw)
+            if passes == cockpit.POD_PASSES:
+                report["virtual_display"]["under_hud"] = True  # as if only the last pass found room
+            elif not small_fits:
+                return None, None, {"virtual_display": "no room"}
+            return d, housing, report
+
+        cockpit.place_pod = fake
+        try:
+            moved, housing, report = cockpit.wheel_display_pod(static, eye, wheel, {}, 2)
+        finally:
+            cockpit.place_pod = real
+        assert [c[0] for c in calls] == [cockpit.POD_PASSES, cockpit.POD_HUD_PASSES]
+        w = calls[0][1][0][0] / cockpit.WHEEL_DISPLAY_SCALES[0]
+        assert [round(s[0] / w, 3) for s in calls[1][1]] == list(cockpit.WHEEL_DISPLAY_SMALL_SCALES)
+        assert moved and housing is not None
+        k = report["virtual_display"]["scale"]
+        if small_fits:
+            assert k in cockpit.WHEEL_DISPLAY_SMALL_SCALES and not report["virtual_display"].get("under_hud")
+        else:
+            assert k in cockpit.WHEEL_DISPLAY_SCALES and report["virtual_display"]["under_hud"]
+
+
 def test_placeholder_cockpit_gets_virtual_dials():
     # Issue #148: a placeholder cockpit carbin's cabin (the main carbin's) has no needle
     # and no display; the car still has a speedometer and a tachometer.
