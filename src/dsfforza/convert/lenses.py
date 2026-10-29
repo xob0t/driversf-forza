@@ -720,47 +720,94 @@ def _components(mask: np.ndarray) -> np.ndarray:
     return labels
 
 
-def tail_glow(atlas: np.ndarray, view) -> np.ndarray | None:
-    """Glow alpha (DSF, 0..255) of the red lamp texels a camera straight behind the car sees, a
-    float array the size of the Lights atlas, NaN elsewhere; None without any. atlas: the Lights
-    atlas (h, w, 4) the car is drawn with (lenses baked); view: Texturing._lamp_view(front=False,
-    grid=True). Per red lamp as seen (a connected patch of red samples), each sample's lamp score
-    (dsf_materials.lamp_score) times its picture's detail (GLOW_DETAIL_*), ranked within the lamp
-    onto TAIL_RED_ALPHA; a texel seen by several samples takes their mean."""
+def tail_glow(atlas: np.ndarray, view, tris=()) -> np.ndarray | None:
+    """Glow alpha (DSF, 0..255) of the red lamps a camera straight behind the car sees, a float
+    array the size of the Lights atlas, NaN elsewhere; None without any. atlas: the Lights atlas
+    (h, w, 4) the car is drawn with (lenses baked); view: Texturing._lamp_view(front=False,
+    grid=True, rear_half=True); tris: the atlas UVs (3, 2) of the triangles that view was made
+    of. Per red lamp as seen (a connected patch of red samples), each sample's lamp score
+    (dsf_materials.lamp_score) times its picture's detail (GLOW_DETAIL_*) makes the lamp's pool;
+    every texel of a triangle seen on the lamp is ranked in that pool by its own score times the
+    triangle's mean detail, onto TAIL_RED_ALPHA (the view samples one texel in many: ranking only
+    those left most of a lamp's texels at the converted alpha). A texel of several triangles
+    takes their mean."""
     from dsfforza.convert import dsf_materials as dm
 
     if TAIL_RED_ALPHA is None:
         return None
     seen, grid, _, step = view
     rows, cols = seen
-    px = atlas[rows, cols].astype(float)
-    r, g, b, a = px[:, 0], px[:, 1], px[:, 2], px[:, 3]
-    red = (r > 1.6 * g) & (r > 1.6 * b)
-    image = np.zeros(grid.shape, bool)
-    image[grid] = red
-    labels = _components(image)
-    score = np.zeros(grid.shape)
-    score[grid] = a / 255 * (0.6 + 0.4 * np.maximum(np.maximum(r, g), b) / 255)
-    bright = np.zeros(grid.shape)
-    bright[grid] = np.maximum(np.maximum(r, g), b)
     h, w = atlas.shape[:2]
-    acc, cnt = np.zeros((h, w)), np.zeros((h, w))
-    sample_rows = np.full(grid.shape, -1)
-    sample_cols = np.full(grid.shape, -1)
-    sample_rows[grid], sample_cols[grid] = rows, cols
+    rgb = atlas[..., :3].astype(float)
+    texel_score = atlas[..., 3] / 255 * (0.6 + 0.4 * rgb.max(-1) / 255)
+    texel_red = (rgb[..., 0] > 1.6 * rgb[..., 1]) & (rgb[..., 0] > 1.6 * rgb[..., 2])
+    image = np.zeros(grid.shape, bool)
+    image[grid] = texel_red[rows, cols]
+    labels = _components(image)
+    bright = np.zeros(grid.shape)
+    bright[grid] = rgb[rows, cols].max(-1)
+    score = np.zeros(grid.shape)
+    score[grid] = texel_score[rows, cols]
     radius = max(1, round(GLOW_DETAIL_RADIUS / step))
+    # Per sample: its lamp and its detail factor; per lamp: the pool of score x detail.
+    lamp_of = np.zeros(grid.shape, int)
+    factor = np.ones(grid.shape)
+    pools = {}
     for k in range(1, labels.max() + 1):
         lamp = labels == k
         if lamp.sum() < TAIL_MIN_SAMPLES:
             continue
-        s = score.copy()
+        f = np.ones(grid.shape)
         if GLOW_DETAIL_GAMMA:
-            s *= np.clip(_detail(bright, lamp, radius), *GLOW_DETAIL_CLIP) ** GLOW_DETAIL_GAMMA
-        pool = np.sort(s[lamp])
-        rank = (np.searchsorted(pool, s[lamp], "left") + np.searchsorted(pool, s[lamp], "right")) / (2 * len(pool))
-        alpha = np.interp(rank * 100, dm.LAMP_PERCENTILES, TAIL_RED_ALPHA)
-        np.add.at(acc, (sample_rows[lamp], sample_cols[lamp]), alpha)
-        np.add.at(cnt, (sample_rows[lamp], sample_cols[lamp]), 1)
+            f = np.clip(_detail(bright, lamp, radius), *GLOW_DETAIL_CLIP) ** GLOW_DETAIL_GAMMA
+        lamp_of[lamp] = k
+        factor[lamp] = f[lamp]
+        pools[k] = np.sort((score * f)[lamp])
+    if not pools:
+        return None
+    # The atlas texel each sample sees: its lamp and factor, for the triangles' texels below.
+    seen_lamp = np.zeros((h, w), int)
+    seen_factor = np.zeros((h, w))
+    seen_count = np.zeros((h, w))
+    np.maximum.at(seen_lamp, (rows, cols), lamp_of[grid])
+    np.add.at(seen_factor, (rows, cols), factor[grid])
+    np.add.at(seen_count, (rows, cols), 1)
+    acc, cnt = np.zeros((h, w)), np.zeros((h, w))
+
+    def rank(k, values):
+        pool = pools[k]
+        r = (np.searchsorted(pool, values, "left") + np.searchsorted(pool, values, "right")) / (2 * len(pool))
+        return np.interp(r * 100, dm.LAMP_PERCENTILES, TAIL_RED_ALPHA)
+
+    covered = np.zeros((h, w), bool)
+    for uv in tris:
+        ix, iy, _ = _texels(np.asarray(uv, float) * (w, h))
+        ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
+        ix, iy = ix[ok], iy[ok]
+        if not len(ix):
+            continue
+        lamps = seen_lamp[iy, ix]
+        lamps = lamps[lamps > 0]
+        if not len(lamps):
+            continue
+        k = np.bincount(lamps).argmax()
+        on = seen_count[iy, ix] > 0
+        f = (seen_factor[iy, ix][on] / seen_count[iy, ix][on]).mean() if on.any() else 1.0
+        red = texel_red[iy, ix]
+        if not red.any():
+            continue
+        iy, ix = iy[red], ix[red]
+        np.add.at(acc, (iy, ix), rank(k, texel_score[iy, ix] * f))
+        np.add.at(cnt, (iy, ix), 1)
+        covered[iy, ix] = True
+    # Samples on texels no listed triangle holds (none passed): their own rank.
+    rest = (lamp_of[grid] > 0) & ~covered[rows, cols]
+    for k in pools:
+        sel = rest & (lamp_of[grid] == k)
+        if sel.any():
+            vals = rank(k, (score * factor)[grid][sel])
+            np.add.at(acc, (rows[sel], cols[sel]), vals)
+            np.add.at(cnt, (rows[sel], cols[sel]), 1)
     if not cnt.any():
         return None
     return np.where(cnt > 0, acc / np.maximum(cnt, 1), np.nan)

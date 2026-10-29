@@ -2151,7 +2151,15 @@ class Texturing:
                 front[self.daytime_texels] *= DAYTIME_GLOW
         # The red lamps seen from behind (#290): where the front has no glow of its own.
         view = self._lamp_view(front=False, grid=True, rear_half=True)
-        rear = None if view is None else lenses.tail_glow(colour, view)
+        rear = None
+        if view is not None:
+            lod = min(t[0] for t in self.lamp_tris)
+            tris = [
+                t[2]
+                for t in self.lamp_tris
+                if t[0] == lod and sum(p[2] for p in t[1]) > 0 and t[3] not in self.dropped_lenses
+            ]
+            rear = lenses.tail_glow(colour, view, tris)
         if front is None:
             self._lamp_glow = rear
         elif rear is None:
