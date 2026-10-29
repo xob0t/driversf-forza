@@ -1,6 +1,6 @@
 # The game's Lua: how vehicles are registered and used
 
-Updated: 2026-10-24
+Updated: 2026-10-29
 
 Evidence tags as elsewhere: `confirmed-static` (read in data or decompiled
 code), `confirmed-runtime`, `hypothesis`.
@@ -14,7 +14,7 @@ code), `confirmed-runtime`, `hypothesis`.
 | Per district? | 17 "interesting vehicle" regions (centre, radius, model list), one list per chapter. The engine spools these and mixes them into traffic. | `ScriptsChapterN.fchunk` `traffic\trafficSpoolingData.lua` |
 | Why didn't `RequestTrafficVehicles` add 304? | It only loads models. Traffic spawns from the active set's list plus the interesting-vehicle regions. | (hypothesis, consistent with run `20261021-230611`) |
 | HUD name and badge | `vehicleStats[id]`, read by the engine through the Lua global `getVehicleStats(id)` | `vehiclestats\vehicleStats.lua`, `VehicleStatFunctions.lua` |
-| Garage list | Engine menu code reads `getVehicleStats(id)` fields `Selectable`, `Tier`, `Price`, `Picture1..3`, plus the save's unlocked/owned flags. Felony Rework adds cars to the garage by editing only `vehicleStats`. | strings in `Driver.exe`, Felony Rework diff |
+| Garage list | Engine menu code reads `getVehicleStats(id)` fields `Selectable`, `Tier`, `Price`, `Picture1..3` for IDs 0..303 (0..999 with dsfforza.asi), plus the save's unlocked/owned flags. Felony Rework adds cars to the garage by editing only `vehicleStats`. | strings in `Driver.exe`, Felony Rework diff, `asi.md` |
 | Unlocks | `vehicleManager.updateVehicleUnlocks` walks `vehicleStats` for `UnlockedInChapter`, `UnlockedInGarage`, `UnlockByActivity` and calls `ProfileSettings.SetVehicleUnlocked`. | `gamelogic\vehiclemanager\data\vehicleData.lua` |
 | Shift (zap) | No model list. Any vehicle `zapcontroller.IsVehicleZappable` accepts. | `gamelogic\zap\system\zapModes.lua` |
 
@@ -64,9 +64,9 @@ only in `unlockables.lua` (the repack also unlocks the Uplay challenges).
 ### Reproduce
 
 ```powershell
-uv run dsff lua_scripts extract-all "D:\Games\Driver San Francisco\media" out\lua
+uv run dsff lua_scripts extract-all "$env:DSF_GAME_DIR\media" out\lua
 # unluac 1.2.3.561 built from the official source mirror (MIT), JDK 21, Idle priority:
-$java = "C:\Program Files\Microsoft\jdk-21.0.12.101-hotspot\bin\java.exe"
+$java = "<JDK 21>\bin\java.exe"
 $p = Start-Process $java -ArgumentList '-cp','_ref\downloads\unluac\unluac.jar','tools\unluac\BatchDecompile.java','out\lua','out\lua-src' -NoNewWindow -PassThru
 $p.PriorityClass = 'Idle'; $p.WaitForExit()
 ```
@@ -76,7 +76,11 @@ $p.PriorityClass = 'Idle'; $p.WaitForExit()
 `unluac.jar` was compiled from it with `javac`. A whole run takes about two
 minutes. Output: `out/lua/<Package>/<path>.luac` and
 `out/lua-src/<Package>/<path>.lua`; `LuaScripts.copy` is the vanilla core
-package. Felony Rework's packages are in `out/lua-felony-src/`.
+package. Felony Rework's packages are in `out/lua-felony-src/`. The build
+tools need only `vehiclestats.lua`; `uv run dsff game_data prepare` makes it
+without Java (a constant-table evaluator, byte-identical to unluac's output).
+A new worktree gets only that file, so the rest of `out/lua-src` comes from
+the run above.
 
 ## Traffic
 
@@ -202,7 +206,8 @@ doesn't put it on the road.
 
 `LuaScripts\vehiclestats\vehicleStats.lua` defines 146 entries (62..303).
 Spool IDs without an entry: 123 (trailer), 131, 277, 289. Six entries have
-`Selectable = false`: 172, 266, 267, 268, 302, 303. Fields:
+`Selectable = false`: 172, 266, 267, 268, 302, 303 (both counted again on
+2026-10-29 from `game_data`'s vehiclestats.lua). Fields:
 
 ```text
 Manufacturer   badge index          Model, Year, Cylinders, Power*, Torque*, Weight*, Drivetrain
@@ -212,6 +217,11 @@ Price, Tier    garage shop          Selectable  garage list
 UnlockedInChapter | UnlockedInGarage | UnlockByActivity   unlock rule
 Speed, Strength, Drift   0..1 bars  OnlineGroup, UPlay, UniqueKey
 ```
+
+The HUD draws the badge and nameplate from the numeric `Manufacturer` and
+`Model` fields (vehicles_font glyph codes); plain `ManufacturerName` and
+`ModelName` strings don't reach it. The garage groups makers by
+`ManufacturerName` and draws `ID:nnnnnn` strings (`gui-assets.md`).
 
 `VehicleStatFunctions.lua` defines the global `getVehicleStats(id)`. The
 engine calls it: `getVehicleStats`, `Selectable`, `Picture1` and the stat
@@ -285,22 +295,29 @@ end
 It reads optional overrides from `dsfforza\config.lua` (`register = { ... }`,
 including `cars`). The core of each part:
 
-(3) HUD name and badge: copy a vanilla entry, override names and bars.
+(3) HUD name and badge (`buildStats`): copy the car's `source` entry (its
+host), drop the unlock fields, apply the car's overrides, then
+`dsfforza\hud.lua`'s fields when it has an entry for the car (badge and
+plate glyph codes, `ManufacturerGlyph`/`ModelGlyph`, pictures,
+`GarageEmblem`; `gui_assets.py`). Without one, a vanilla entry of the same
+make and model is copied, or the host's entry gets that make's badge and no
+plate (the register.lua header has the rules).
 
 ```lua
 local entry = {}
-for k, v in pairs(vehicleStats[266]) do entry[k] = v end
+for k, v in pairs(vehicleStats[car.source]) do entry[k] = v end
 entry.UnlockedInChapter, entry.UnlockedInGarage, entry.UnlockByActivity = nil, nil, nil
-entry.ManufacturerName = "Nissan"        -- or an existing "ID:nnnnnn"
-entry.ModelName = "370Z (Forza)"
 entry.Speed, entry.Strength, entry.Drift = 0.62, 0.45, 0.7
+for k, v in pairs(hud[id] or {}) do entry[k] = v end
 vehicleStats[304] = entry
 ```
 
-(2) Garage: make it selectable; unlocking writes the save.
+(2) Garage (`registerStats`, `garageGroup`): `Selectable = true` when the
+maker list has room for the car's group; with `writeProfile` also
+`UnlockedInChapter = 1` and the save's flags.
 
 ```lua
-vehicleStats[304].Selectable, vehicleStats[304].Tier, vehicleStats[304].Price = true, 2, 5000
+vehicleStats[304].Selectable = true       -- garage = true, the group fits
 ProfileSettings.SetVehicleUnlocked(304)   -- only with writeProfile = true
 ProfileSettings.SetVehicleOwned(304)
 ```
@@ -329,23 +346,25 @@ bootstrap, skips IDs already in a list, and re-sends
 | `garage` | true | `Selectable = true` for IDs below 304 (below 1000 with dsfforza.asi) while the garage maker list has room (`research/batch.md`) |
 | `writeProfile` | false | set unlocked and owned in the save, `UnlockedInChapter = 1` (garage-listed IDs only) |
 | `guardProfile` | true | drop Lua `SetVehicleUnlocked`/`Owned` calls for added IDs above 303; with dsfforza.asi's save hooks only for IDs above 999 (`research/batch.md`) |
-| `regionCars` | 24 | spread more added cars than this over the regions |
-| `probe` | false (true with a test `config.lua` that has `ids`) | log `vehiclesAvailable`, `Vehicles`, profile flags, `civilianTraffic` functions and nearby traffic counts every 10 s for about 3 minutes |
+| `regionCars` | 24 | at most about this many added cars per region; more are spread over the 17 regions |
+| `probe` | false (true with a test `config.lua` that has `ids`) | log `vehiclesAvailable`, `Vehicles`, profile flags, `civilianTraffic` functions, then nearby traffic counts every 20 updates (about 10 s) |
+| `probeTicks` | 360 | probe updates (every 30 frames) before it stops, about 3 minutes |
 
 It is tested against stubbed APIs in an embedded Lua 5.1 (lupa,
-`tests/test_register_asi.py`) and runs in game in every harness run
+`tests/test_register_asi.py`, `tests/test_register_hud.py`) and runs in game in every harness run
 and install (e.g. run `20261022-230004`, `asi.md`).
 
 ## Open
 
-1. Whether the interesting-vehicle manager spawns a model that isn't in
-   the active traffic set. The vanilla lists mix set members and non-members,
-   so probably yes.
-2. Answered: the garage loops IDs 0..303 and the save holds flags for IDs
-   below 304 (320 bits); dsfforza.asi lifts both (`asi.md`).
-3. Answered: plain strings don't render; the HUD takes glyph codes from the
-   numeric `Manufacturer`/`Model` fields and the garage `ID:nnnnnn` strings
-   (`gui-assets.md`).
-4. Signatures of `civilianTraffic.SetVehicleModelOverride` and friends.
-5. Whether the engine checks `san_franciscoAI.fchunk` (size, hash) before
+1. Signatures of `civilianTraffic.SetVehicleModelOverride` and friends.
+2. Whether the engine checks `san_franciscoAI.fchunk` (size, hash) before
    loading a patched copy.
+
+Answered since: the interesting-vehicle manager does spawn models that are in
+no traffic set. In run `20261022-025601` (`in-game-tests.md`, "Fix4"),
+register.lua's traffic samples counted ported 304, 305 and 306 near the
+player before the probe spawned them (confirmed-runtime from the log, not
+checked on screenshots). The test harness turns the region wrapper off
+whenever a run installs a build's `ported.lua` (`register = { interesting =
+false }`, `tools/wsb/guest/run-test.ps1`), so later runs' traffic censuses
+show no ported cars; installs keep the default (on).
