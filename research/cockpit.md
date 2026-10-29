@@ -64,8 +64,9 @@ and so are their materials.
   display stands in ("Gauges under the cowl", "Virtual dials on display
   faces"). A display only on the steering wheel is moved, live, onto a
   virtual display on the dash or an open cockpit's cowl; a placeholder cockpit
-  gets virtual dials; a host without gauge records gets them ("Displays on the
-  steering wheel, placeholder cockpits", #147, #148). Open: #172 (stray
+  gets virtual dials; virtual displays are placed from the head camera and
+  clear of DSF's HUD ("Displays on the steering wheel, placeholder cockpits",
+  #147, #148). Open: #172 (stray
   hundreds digit), #195 (1-pixel specks).
 - Head camera: VO3D p430..432 from the Forza eye (`CameraOverrides`, else the
   fleet median), raised to see the rim 7.9 degrees down, but not so far that
@@ -2947,7 +2948,13 @@ cluster seen through the rim), then the Beetle 1963, Corvette 1960, Cobra
    passes (`place_pod`, `POD_PASSES`): the dash clear of the HUD, then the cowl
    clear of it, then the dash as #92 placed it (report `under_hud`), so no car
    loses the display it had.
-4. **Placeholder cockpits** (`is_stub`, the main carbin's cabin): Forza has
+4. **From the head camera.** The game looks from the head camera, which
+   `camera_eye` raises over the Forza eye to see the rim 7.9 degrees down: 4.3
+   cm on the Durango, 12.3 cm on the GT-R GT1. Placed from the Forza eye, the
+   Durango's dials sank behind the HUD's speed box and the GT-R's moved display
+   under its dash top in game (run `vm1-20261029-151818`). `place_pod` searches
+   from the camera the rim rule raises to, the most it rises.
+5. **Placeholder cockpits** (`is_stub`, the main carbin's cabin): Forza has
    no needle and no display there, and the tick tables are mostly empty, but
    these are road cars and trucks with a speedometer and a tachometer
    (`virtual_gauges(assume=)`): #92's virtual display with two dials on the
@@ -2969,7 +2976,48 @@ speed digits work.
 `out/g147/gauge_survey.py` reads a build (needle ids with a gauge record, and
 the readouts the scene drives); `out/g147/fit_survey.py` runs `cockpit.fit` on
 the cached cars. Before: `out/build`, 534 of 573 cars with both a working
-speedometer and tachometer.
+speedometer and tachometer. After: `cockpit.fit` with this code over the 67 cars
+the change can reach (the 39 without both, the 26 with a #92 virtual display,
+and the cars on hosts 250 and 293; the others take none of the new paths:
+their displays aren't only on the wheel, their dash pod search isn't reached,
+their cockpit isn't a placeholder): **556 of 573**, none lost.
+
+| Group | Cars | Now |
+| --- | ---: | --- |
+| #147, wheel display only, no room before | 7 | ARX-02a x2 and GT-R GT1 x2: their wheel LCD, moved; R10 x2: #92 dials on the cowl; R15 TDI: its LCD moved, but only under the HUD's lower left corner (`under_hud`), so hidden in game |
+| #148, placeholder cockpit | 15 | #92 dials on the dash, all 15 |
+| the Volt | 1 | speed digits only, no tachometer (above) |
+| wheel display only, #92 dials before | 19 | their own wheel LCD, moved (Lola AMR x2, FLM09 x3, NSX, SC430 x3, MC12 Corsa, B09 x2, Furai, GT-R x2, Skyline 2003, Fairlady Z x2, Panoz LMP, 908 x2); 4 of them (GT-R x2, Skyline 2003, Panoz LMP) only under the HUD's lower corner (`under_hud`) |
+| #92 dials elsewhere | 8 | moved by the HUD rule and the camera: M3 GT2, F40 Competizione, Reventon x2, Evora (still `under_hud`), Aygo, Tuscan S (the Volt's is dropped as before) |
+
+The cars that still lack a gauge have none in Forza either (250 GTO, GT40,
+DBR1, Mini, Beetle 1968...), keep the host's vanilla cockpit (the Express: the
+Savana has no tachometer), or are the Volt.
+
+### In game (VM, confirmed-runtime)
+
+`run-series.ps1 -Vm -Asi -HoldMph '40,90' -ShotSeconds 3`; before `out/build`
+(master, 2026-10-29 13:18), after the 10-car build of this branch:
+
+- Before: `vm2-20261029-144816` (vanilla 147, ARX-02a, R10, GT-R GT1 #24,
+  Durango, Prius, tour bus, Volt), `vm2-20261029-151836` (FLM09, R15 TDI,
+  Skyline 2003). None of the #147 and #148 cars shows a gauge; the FLM09's #92
+  dials sit half under the progress bar.
+- After, first code: `vm1-20261029-144633`, `vm1-20261029-151818`. The
+  placeholder cockpits' dials were behind the HUD's speed box, the GT-R's
+  display under its dash (from the camera, not the Forza eye): items 3 and 4.
+- After, final: `vm1-20261029-160129` (straight ahead) and
+  `vm1-20261029-160513` (Left held while the speed is held). The ARX-02a's
+  LCD on the cowl reads its speed, gear and rpm bar; the R10's two dials stand
+  on its cowl; the GT-R GT1's LCD on the dash top (a roll-cage tube crosses
+  it); the FLM09's left of the wheel; the Durango's and the Prius's dials on
+  the dash left of the wheel, turning. With the wheel turned hand over hand
+  the displays stay where they are and in sight.
+  `img/gauges-wheel-displays-ingame.jpg`, `img/gauges-placeholder-cockpits-ingame.jpg`,
+  `img/gauges-wheel-steering-ingame.jpg`.
+- The tour bus shows no cabin at all in these runs, and so does master's code
+  in a one-car build (`vm1-20261029-153539`), so that is not this change
+  (issue #255).
 
 ## Risks and open questions
 
