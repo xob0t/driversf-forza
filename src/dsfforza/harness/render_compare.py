@@ -1069,6 +1069,17 @@ def run(
                 for part in pool.map(_worker, [(str(archive), c, str(out), views, size, entries, keep) for c in chunks])
                 for r in part
             ]
+    # Every car --out has (a --resume run's earlier ones too).
+    keys = ("media", "spool_id", "game", "score", "flags", "error", "seconds", "match")
+    done = {r["media"]: r for r in results}
+    for path in (out / "cars").glob("*.json"):
+        if path.stem not in done:
+            try:
+                r = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            done[path.stem] = {k: r.get(k) for k in keys}
+    results = list(done.values())
     ranking = sorted(results, key=lambda r: -(r.get("score") or 0))
     summary = {
         "build": str(build),
@@ -1082,6 +1093,36 @@ def run(
     }
     (out / "roster.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
     return ranking
+
+
+def idle_priority() -> None:
+    """Run at Idle priority (Windows; nice 19 elsewhere): the renders are background work
+    beside builds and VM runs, and the worker processes inherit it."""
+    import ctypes
+
+    try:
+        if os.name == "nt":
+            from ctypes import wintypes
+
+            kernel32 = ctypes.windll.kernel32
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            kernel32.SetPriorityClass.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+            kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), 0x00000040)  # IDLE_PRIORITY_CLASS
+        else:
+            os.nice(19)
+    except (OSError, AttributeError):
+        pass
+
+
+def _done(out: Path, media: str) -> bool:
+    path = out / "cars" / f"{media}.json"
+    if not path.exists():
+        return False
+    try:
+        r = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return "metrics" in r and not r.get("error")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1098,6 +1139,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--size", default=f"{SIZE[0]}x{SIZE[1]}")
     p.add_argument("--entries", default="exterior", help="exterior,full")
     p.add_argument("--no-sheet", action="store_true")
+    p.add_argument("--resume", action="store_true", help="skip the cars --out already has scores for")
     p.add_argument(
         "--keep", action="store_true", help="store each view's renders (cars/<media>/<view>.npz) for rescore"
     )
@@ -1119,11 +1161,14 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("run", type=Path)
     s.add_argument("--top", type=int, default=0, help="only the N worst cars")
     args = ap.parse_args(argv)
+    idle_priority()
     if args.cmd == "run":
         cars = roster(args.build)
         if args.cars:
             want = [w.strip() for w in args.cars.split(",") if w.strip()]
             cars = [c for c in cars if c["media"] in want or str(c["spool_id"]) in want]
+        if args.resume:
+            cars = [c for c in cars if not _done(args.out, c["media"])]
         w, h = (int(x) for x in args.size.lower().split("x"))
         ranking = run(
             args.build,

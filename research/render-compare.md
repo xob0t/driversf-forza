@@ -209,7 +209,51 @@ may be on its holder). Each flag's severity is its size times the region's weigh
 
 ## Calibration
 
-TO FILL
+Known cases, each car rendered from a build that had the bug and one that has its fix
+(`out/rc/k-*` in the `t3-1b4e7c10` worktree, `--keep`; `out/rc/calib.py` prints the
+table). Bad builds: the main checkout's `out/master` (master of 2026-10-27, before
+#143/#163/#164/#175/#177) and `out/build` (master at 50b7cb6, before #190), and two small
+builds of these cars from old commits (5e6ce2d, before #178; c5fce5c, before #167). Good:
+the same cars built from master d1fbc57 (17 cars), and `out/build` for what was fixed
+before it. The flags of the case's region:
+
+| Case | Car | Bad build: flags (car score) | Fixed: flags (score) |
+| --- | --- | --- | --- |
+| #158 bowls drawn as glass, no front lamp | Mustang GT 05 | drawn as glass 89%, no glow by day and dark, detail lost 78% (14.6) | glows elsewhere than Forza's mask, 29% (2.6) |
+| #190 white domes | Mustang GT 05 | flat glow by day (4.4) | as above (2.6) |
+| #145 swatch lens tint | X5 M | no glow by day and dark (ours 0.008 / 0.02, Forza 0.16) (12.9) | darker than Forza by day, L* -22 (1.9) |
+| #190 flat tail lenses | X6 M | no glow by day and dark (7.4) | colour off, delta E 26 (2.7) |
+| #160 flat red tail plate | Devon GTX | detail lost 85%, too dark, flat glow by day (15.2) | colour off, delta E 32 (#166, open) (6.5) |
+| #176 cream splitter, vent insert | Camaro ZL1 12 | trims washed out, L* +21 (3.4) | - (1.8) |
+| #176 khaki vents | SVT Raptor 12 | trims washed out, L* +10 (2.0) | - (1.5) |
+| #176 cream bumper | Express 2500 | trims washed out, L* +23 (11.0) | - (8.7) |
+| #167 white plates by day | GTI VR6 | white plate by day, glow 7.2 (7.2) | - (0) |
+| #167 | Lancer Evo VI | white plate by day, glow 8.5 (11.1) | washed out by day, structure (4.1) |
+| #167 | M3 E30 | white plate by day, glow 7.6; detail lost 54%; drawn as glass 38% (12.3) | - (1.6) |
+| #159 plate on the badge | Mazda 2 | plate 18% over the badge (14.7) | - (10.3) |
+| #157 shell lid in the cockpit | Audi R10 (10) | cockpit 3.1% covered (12.1) | - (8.8) |
+| #157 | Audi R10 (08) | cockpit 4.6% covered (11.0) | - (8.0) |
+| #173 trims as shared trim on the player's car | Camaro ZL1 12 | trims detail lost 66% (11.6) | - (1.8) |
+| #190 painted-on head lamps | Esperante GTLM | head lamps washed out, L* +26 (7.9) | washed out, L* +29 (9.2): not separated |
+| #190 left and right tails differ | Esperante GTLM | glows elsewhere (7.9) | glows elsewhere (9.2): not separated |
+
+15 of the 17 cases separate: the bad build carries the case's flag, the fixed build
+doesn't. The limits came from these cars (`LIMITS`, the numbers in its comments): the
+glare limit 3 (#167 7.2 to 8.5, fixed 1.6; a 0x01 lamp's texel at full alpha glows 2), the
+cockpit cover 2% (#157 3.1 and 4.6%, fixed and controls 0.4% at most), trims 8 L* lighter
+(good builds +6 at most, #176 +10 to +23), a plate 10% over badges, lamps or chrome
+(#159 18%; the fixed Mazda 2's plate sits on its trim holder). The Esperante's head lamps
+look alike to the scores before and after #190 (the reference draws its clear lens over
+dark bowls, both builds lighter); left/right symmetry is not measured.
+
+The build of 2026-10-27 shows #160 on every car: its lamp covers are DSF's window glass
+("front lamps: drawn as glass" 70 to 100% on all ten cars rendered from it).
+
+Flags that remain on fixed builds are differences from Forza that the converter makes on
+purpose or that are open: rear lamps darker than Forza by day (the red lamp texels are
+darkened to vanilla's, #166), front lamps glowing where Forza's mask doesn't (the
+converter lights reflectors and gives head lamps vanilla's daytime glow, #124), the
+Esperante's lamps lighter than Forza's.
 
 ## Roster (out/build)
 
