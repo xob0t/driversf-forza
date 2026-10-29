@@ -2142,6 +2142,17 @@ def gamedb_body(gamedb: Path, name: str) -> tuple[float, float, float, float] | 
     return tuple(row) if row else None
 
 
+# Wheelbase midpoints (Forza model z, CarDims.mid_z) of cars whose MAXData.xml doesn't fit
+# their body. CIT_C1_11 carries PEU_107_11's MAXData.xml value for value
+# (BottomCenterWheelbasePos z -0.151, wheelbase 2.340), but its body sits 0.17 m further
+# forward in the model than the 107's (body length midpoint -0.124 against +0.048), so its
+# wheels stood 0.17 m behind its arches (issue #301; the arches centre on -0.024, the 107's
+# 5 mm off its own midpoint the same way). The only car of the roster's 573 whose arches
+# both lie more than 60 mm off MAXData's hubs the same way (research/wheels.md, "Wheels off
+# their arches").
+MID_Z_FIXES = {"cit_c1_11": 0.151 - 0.170}
+
+
 def car_dims(car: ForzaCar, gamedb: Path | None = None) -> CarDims:
     """Wheel placement data, from the first source that has it (ride height:
     mean of the front and rear StockRideHeight):
@@ -2160,16 +2171,18 @@ def car_dims(car: ForzaCar, gamedb: Path | None = None) -> CarDims:
     arches 0.295 to 0.310 m behind MAXData's hubs (issue #301). The converter turns the
     wheel about the tyre's centre (tyre_centre), so it takes the hubs to the tyres instead.
     Across (x) and up (y) the tyre stays on the hub: TOY_6_Supra_05's, MER_ML63AMG_09's
-    and VW_BEETLE_68's arches centre on the hub, not on their models' offsets."""
+    and VW_BEETLE_68's arches centre on the hub, not on their models' offsets. A car of
+    MID_Z_FIXES takes its midpoint from there instead of MAXData's."""
     radius, width = tyre_size(car.wheel)
     centre = tyre_centre(car.wheel)
     maxdata = find_file(car.folder, "Physics/MAXData.xml")
     if maxdata is not None:
         misc = ET.parse(maxdata).getroot().find("Misc")
         ride = [float(misc.get(k)) for k in ("FrontStockRideHeight", "RearStockRideHeight") if misc.get(k)]
+        mid_z = MID_Z_FIXES.get(car.name.lower(), -float(misc.find("BottomCenterWheelbasePos").get("z")))
         return CarDims(
             float(misc.get("Wheelbase")),
-            -float(misc.find("BottomCenterWheelbasePos").get("z")) + centre[2],
+            mid_z + centre[2],
             float(misc.get("FrontTrackOuter")),
             radius,
             width,
