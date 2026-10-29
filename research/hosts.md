@@ -268,6 +268,21 @@ has the old hosts on those 11.
 | SEA_LeonSupercup_07 | none -> 4 | 274 Scirocco -> 127 Giulietta | 5-door Leon body on a 5-door hatch |
 | KIA_Ceed_11, NIS_Versa_09, SUZ_Liana_02 | none -> 4 | 128 MiTo -> 179 Neon | four doors on four doors (the host's rear door records take the Forza rear doors), and an unblown I4 of 98 kW for 78 to 92 kW; flagged: a hatch on a saloon, the Ceed 0.1 point ahead of the 5-door Giulietta |
 
+In game (headless VM, the 11 cars built on their new hosts with `port_batch`
+defaults, `out/s208/after` in the worktree; `-Views nose -DriveSeconds 5`):
+run `vm2-20261029-133011`, IDs 1 to 10 spawned, drove (43 to 71 mph during
+the cockpit view) and showed chase, nose and cockpit views without a crash;
+the session's 11th mission car didn't spool (the harness limit of about 10,
+`batch.md`), so the Leon Supercup ran alone in `vm1-20261029-133822` (spawned,
+drove, nose, cockpit and chase views, no crash).
+On the 4-door hosts the Forza rear doors now land on rear door records:
+they swing as Forza parts on 8 of the 9 four- and five-door cars
+(`shut_line_parts`; the ix20's are held: on its -x side only 0.09 of the
+0.54 m2 voted for the rear door are whole Forza components, and a door
+swings only with its partner), where the 2-door hosts had no rear
+door records. `img/hosts-doors-ingame.jpg`: the 2004 WRX
+STi and S204 on 136 and the Carlton on 196.
+
 The Range Rovers, the 2005 WRX STi, the 2005 Legacy B4 and the Rapide keep
 their hosts (4-door already, or the door count didn't decide); the C1 (4 ->
 none), the Prius (2 -> none) and 26 other hatches change their count but
