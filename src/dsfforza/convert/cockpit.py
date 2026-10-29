@@ -1163,13 +1163,33 @@ POD_STEP = 3  # pixels between candidate centres
 # degrees left of straight ahead, the car and speed box from about 24 degrees right,
 # both from about 13 degrees under the eye line (1280 x 720, the head camera about 80
 # degrees wide; runs vm1-20261029-144633, vm2-20261029-144816). A virtual display there
-# would be hidden: pod_display keeps clear of it, with a margin.
+# would be hidden: pod_display keeps clear of it, with a margin. At 21:9 with DSF Enhanced's
+# FOV scaling the HUD keeps its share of the screen while the view widens, so its corners
+# lie further out (about 11 left, 35 right, 16 down) and these angles hold there too
+# (runs vm1-20261029-201836, -203508; research/cockpit.md, "The leftovers").
 HUD_DOWN_DEG = 13.5
 HUD_LEFT_DEG = 7.0
 HUD_RIGHT_DEG = 23.0
+# The hand rig holds the rim HAND_GRIP_DEG either side of its top; a display behind a
+# hand and wrist is as hidden as one under the HUD (the GT-R's and Skyline 2003's small
+# moved displays in runs vm2-20261029-201910, vm1-20261029-202300). pod_display(hands=True)
+# keeps this far from each grip, in the wheel's plane.
+POD_HAND_CLEAR = 0.13  # m
 POD_COWL_SUPPORT = 0.5  # share of a cowl display (and of its bottom quarter) in front of the cowl
 # An open cockpit's bodywork round the wheel (ARX-02a: a_pillar; R10: hood): pod_display(cowl=True).
 COWL_SECTIONS = re.compile(r"^(hood|a_pillar)", re.I)
+
+
+def rim_grips(wheel: Wheel) -> list[tuple]:
+    """Where the hands hold the rim (Forza space): HAND_GRIP_DEG either side of its
+    top, the top being the rim point highest along y."""
+    up = _norm(_sub((0.0, 1.0, 0.0), _scale(wheel.axis, wheel.axis[1])))
+    right = _norm(_cross(wheel.axis, up))
+    t = math.radians(HAND_GRIP_DEG)
+    return [
+        _add(wheel.centre, _add(_scale(right, s * wheel.radius * math.sin(t)), _scale(up, wheel.radius * math.cos(t))))
+        for s in (1, -1)
+    ]
 
 
 def _disc_mask(rays, eye, centre, normal, radius):
@@ -1199,6 +1219,7 @@ def pod_display(
     cowl: bool = False,
     name: str = "dsf_dial_panel",
     hud: bool = True,
+    hands: bool = False,
 ):
     """A virtual display for `dials` (1 or 2) dials: the largest of POD_SIZES (or
     `sizes`, (width, height) in m, largest first) that fits, nearest the point just
@@ -1271,6 +1292,9 @@ def pod_display(
     down = np.degrees(np.arctan2(-rays[:, 1], np.hypot(rays[:, 0], rays[:, 2])))
     if hud:
         bad |= (down > HUD_DOWN_DEG) & ((across > HUD_RIGHT_DEG) | (across < -HUD_LEFT_DEG))
+    if hands:
+        for grip in rim_grips(wheel):
+            bad |= _disc_mask(rays, eye, grip, wheel.axis, POD_HAND_CLEAR)
     for g in gauges.values():
         reach = max((math.dist(p, g.pivot) for p in section_points(g.rest)), default=0.0)
         bad |= _disc_mask(rays, eye, g.pivot, g.normal, reach * POD_GAUGE_CLEAR)
@@ -1604,9 +1628,11 @@ def dash_needles(plan, version: int) -> list:
 # its own shape, tried at these sizes (x its own) from the largest down: further away
 # than the wheel, it keeps about the size it has there.
 WHEEL_DISPLAY_SCALES = (1.5, 1.25, 1.0, 0.8, 0.6)
-# Tried when those find room only under DSF's HUD, in the passes clear of it: a smaller
-# display in sight beats a larger one behind the progress bar or the speed box (#147: the
-# R15 TDI, the GT-R and the Skyline 2003 at 0.5).
+# Tried when those find room only under DSF's HUD, in the passes clear of it and clear of
+# the hands: a smaller display in sight beats a larger one behind the progress bar or the
+# speed box (#147: the R15 TDI's, on its cowl at 0.5). Where the only smaller spot is
+# behind a hand (the GT-R's, the Skyline 2003's), the larger one stays: at 21:9 it shows
+# past the HUD's corner (research/cockpit.md, "The leftovers").
 WHEEL_DISPLAY_SMALL_SCALES = (0.5, 0.4)
 WHEEL_DISPLAY_LIFT = 0.001  # m: the moved display in front of the housing's screen
 DASH_PANEL = "dsf_dash_panel"  # the housing of a moved wheel display (pod_display name)
@@ -1639,10 +1665,20 @@ def wheel_display_pod(static: dict, eye, wheel: Wheel, gauges: dict, version: in
     centre = _add(_add(centre, _scale(right, (max(us) + min(us)) / 2)), _scale(up, (max(vs) + min(vs)) / 2))
     sizes = tuple((w * k, h * k) for k in WHEEL_DISPLAY_SCALES)
     d, housing, report = place_pod(static, eye, wheel, 1, gauges, version, sight_sections, sizes=sizes, name=DASH_PANEL)
-    if d is None or report["virtual_display"].get("under_hud"):
+    if d is not None and report["virtual_display"].get("under_hud"):
         small = tuple((w * k, h * k) for k in WHEEL_DISPLAY_SMALL_SCALES)
         found = place_pod(
-            static, eye, wheel, 1, gauges, version, sight_sections, passes=POD_HUD_PASSES, sizes=small, name=DASH_PANEL
+            static,
+            eye,
+            wheel,
+            1,
+            gauges,
+            version,
+            sight_sections,
+            passes=POD_HUD_PASSES,
+            sizes=small,
+            name=DASH_PANEL,
+            hands=True,
         )
         if found[0] is not None:
             d, housing, report = found
