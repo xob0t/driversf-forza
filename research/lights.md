@@ -1629,6 +1629,13 @@ is higher). Of the 43, 32 have red texels lit as another lamp (reverse or indica
 the M3 E92's 0x03 `drlred` tails, rear fog lamps), 10 red Lights texels with no lamp (the NASCARs' decal
 lamps, unlit reflectors), 1 an unlit lamp.
 
+In game (VM 1, `-Views 'rear,nose,rear+night,nose+night,rear+hitfront' -Palette 0 -ShotSeconds 3`, vanilla 241
+first; master's lamp code `out/l6/before3` run `vm1-20261029-073318`, this change with #174 and #146
+`out/l6/after3` run `vm1-20261029-084829`): at rest, with the brakes on as the player's car always has them,
+the ZR1's four round lamps and the Explorer's tails glow as on master (`img/lamps6-zr1-tails-dark-ingame.jpg`):
+master lit them at full as DaytimeRunning lamps whatever the brakes did. The difference is on the throttle
+(0x19/0x1A dim to a tail lamp's 0.2 off the brakes), which these runs don't drive; not checked in game.
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and
