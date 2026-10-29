@@ -111,9 +111,23 @@ def car_report(build: Path, media: str) -> dict | None:
 
 
 def roster(build: Path) -> list[dict]:
-    """[{media, spool_id, game}] of a build's cars (batch-report.json)."""
-    rep = json.loads((Path(build) / "batch-report.json").read_text(encoding="utf-8"))
-    return [{"media": c["media"], "spool_id": c["spool_id"], "game": c.get("game")} for c in rep.get("ok", [])]
+    """[{media, spool_id, game}] of a build's cars: batch-report.json, else (a build whose
+    batch report is gone) its per-car reports, work/<media>.json."""
+    path = Path(build) / "batch-report.json"
+    if path.exists():
+        rep = json.loads(path.read_text(encoding="utf-8"))
+        return [{"media": c["media"], "spool_id": c["spool_id"], "game": c.get("game")} for c in rep.get("ok", [])]
+    out = []
+    for p in sorted((Path(build) / "work").glob("*.json")):
+        if p.name.endswith((".job.json", ".fp.json")):
+            continue
+        try:
+            r = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if r.get("ok") and r.get("spool_id") is not None:
+            out.append({"media": r["media"], "spool_id": r["spool_id"], "game": r.get("game")})
+    return out
 
 
 def _cache_dir(build: Path, media: str, report: dict | None) -> Path:

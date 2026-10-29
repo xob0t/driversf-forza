@@ -328,3 +328,21 @@ def test_glass_windows_are_windows():
     assert fr.region_of("glassF", "glass", "glass", "lights", True)[0] == fr.GLASS
     assert fr.region_of("glassR", "glass", "glass", "lights", False)[0] == fr.GLASS
     assert fr.region_of("lexanLHL", "glass", "glass", "lights", True) == (fr.FRONT_LAMPS, "cover")
+
+
+def test_diff_lists_added_geometry():
+    """Geometry ours adds with no Forza counterpart (region "other": a virtual display's
+    housing, #249) is listed as "added" when it appears; nothing is listed when alike."""
+    from dsfforza.harness import render_diff
+
+    h, w = 60, 80
+    a = np.zeros((h, w), np.uint8)
+    a[10:50, 10:70] = rc.RID[fr.COCKPIT]
+    b = a.copy()
+    b[20:35, 30:50] = rc.RID["other"]  # a new housing on the dash
+    d = np.zeros((h, w))
+    changes = render_diff.region_changes(a, b, d)
+    assert {c["region"] for c in changes} == {"added", fr.COCKPIT}, changes
+    added = next(c for c in changes if c["region"] == "added")
+    assert added["pixels_before"] == 0 and added["pixels_after"] == 300
+    assert render_diff.region_changes(a, a, d) == []

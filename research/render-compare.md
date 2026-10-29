@@ -313,6 +313,15 @@ for byte the same twice (#84); `diff.json` lists them as `renders_alike`
 (`img/render-compare-diff-190.jpg`). 359 s for the 17 cars at 2 jobs (21 s a car
 and build pair).
 
+**Added geometry and the cockpit (#249).** The diff lists the cockpit view too (the after
+build's eye for both builds), and region `other` as `added`: our triangles with no Forza
+triangle under them, such as the virtual displays' housings (`dsf_dial_panel`) and moved
+wheel displays (`dsf_dash_panel`), which no region held before. On #249's build
+(`out/g147/build` in worktree t3-adf67db3, against master ede81a1): the ARX-02a's new dash
+housing is "added, cockpit, 84% of its pixels", the R10's "added, 43%"
+(`img/render-compare-diff-added.jpg`); before, both cars listed no change. A build without
+`batch-report.json` is read from its `work/<media>.json` reports.
+
 ## Runtime
 
 A car (exterior five views, cockpit, full entry two views; 800 x 450): 25 to 45 s, median
