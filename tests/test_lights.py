@@ -351,6 +351,59 @@ def test_clear_cover_lights_only_with_a_lamp_behind_it():
     assert got["taillightL"] == lights.TAIL, got
 
 
+def _seen_functions(sections, seen: dict) -> dict:
+    """{section name: [function of each triangle's lamp]} with the drawn texel class per section
+    name (LampPlan.build `seen`)."""
+    by_sub = {id(sub): seen.get(sec.name, "white") for sec in sections for sub in sec.subsections}
+    plan = lights.LampPlan.build(sections, _Place(), 0.0, seen=lambda sec, sub, tri: by_sub[id(sub)])
+    out = {}
+    for sec in sections:
+        for sub in sec.subsections:
+            keys = [plan.tri_lamp.get((id(sub), k)) for k in range(len(list(sub.triangles())))]
+            out[sec.name] = [key[0] if key else None for key in keys]
+    return out
+
+
+def test_red_drawn_reverse_and_indicator_brake():
+    # Issue #103: Forza draws some reverse and indicator bulbs on red texels. Lit as reverse and
+    # amber indicator lamps they lit white or amber when reversing or indicating and never braked.
+    car = [
+        _quad("revL", "reverse_light", 0.4, -2.0),
+        _quad("revL2", "reverse_light", 0.3, -2.0),
+        _quad("revR", "reverse_light", -0.4, -2.0),
+        _quad("indL", "indicator_left", 0.8, -2.0),
+        _quad("indR", "indicator_right", -0.8, -2.0),
+    ] + TAILS
+    got = _seen_functions(car, {"revL": "red", "indL": "red", "indR": "red"})
+    assert got["revL"] == [lights.TAIL] * 2 and got["revL2"] == got["revR"] == [lights.REVERSE] * 2, got
+    # a rear indicator side drawn red brakes and indicates (vanilla's US-style 0x19/0x1A)
+    assert got["indL"] == got["indR"] == [lights.BRAKE_IND] * 2, got
+    # all of a side's reverse lamp drawn red: it stays the reverse lamp (VW_GolfR_10's bulbs)
+    got = _seen_functions(car, {"revR": "red"})
+    assert got["revR"] == [lights.REVERSE] * 2, got
+    # white and amber ones keep their technique
+    got = _seen_functions(car, {"indL": "amber"})
+    assert got["revL"] == [lights.REVERSE] * 2 and got["indL"] == [lights.INDICATOR] * 2, got
+    # without the drawn texels nothing changes
+    plan = lights.LampPlan.build(car, _Place(), 0.0)
+    assert {l.function for l in plan.lamps.values()} == {lights.REVERSE, lights.INDICATOR, lights.TAIL}
+
+
+def test_red_reflector_round_a_reverse_bulb_lights_with_the_tail_lamp():
+    # MER_S65AMG_12, KOE_Agera_11 (issue #103): a red reflector bowl round the reverse bulb lit as
+    # the reverse lamp (it is inside the bowl's outline). On red texels it lights with the red
+    # lamp nearest it; a white one stays the reverse lamp's, and with no red lamp near it
+    # stays unlit rather than light white on reverse.
+    bowl = _strip("taillightL", "textured_reflector", 0.6, -2.02, 4)  # x 0.4 to 0.8
+    rev = _quad("revL", "reverse_light", 0.5, -2.0)
+    tail = _quad("tailL", "tail_light", 0.75, -2.0)
+    assert _seen_functions([bowl, rev, tail], {})["taillightL"][0] == lights.REVERSE
+    got = _seen_functions([bowl, rev, tail], {"taillightL": "red"})["taillightL"]
+    assert set(got) == {lights.TAIL}, got
+    got = _seen_functions([bowl, rev, _quad("tailL", "tail_light", 1.5, -2.0)], {"taillightL": "red"})
+    assert set(got["taillightL"]) == {None}, got
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

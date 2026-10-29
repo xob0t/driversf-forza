@@ -16,7 +16,7 @@ in the worktrees of the PRs that made them, not in the repo.
 
 ## Current lamp rules (summary)
 
-What the converter does as of PR #223. The sections after this one are in
+What the converter does as of the seventh lamp pass (after PR #223). The sections after this one are in
 the order the lamp PRs landed (#93 to #223) and hold the evidence; where a
 later PR replaced a rule, the earlier section says so in one line.
 
@@ -39,6 +39,13 @@ later PR replaced a rule, the earlier section says so in one line.
   their own Forza section, else (lenses and covers) with a lamp whose
   outline overlaps theirs, else stay unlit. Front reflectors never light
   ([#174](#clear-covers-over-reflectors-with-no-lamp-issue-174)).
+- Rear lamp triangles drawn on red texels (the mean of the baked atlas's
+  texels, `lights.seen_sampler`) light only with a red lamp: reverse ones
+  become tail lamps, an indicator side mostly drawn red brakes and
+  indicates (0x19/0x1A), and red reflector, lens and cover triangles take
+  the nearest red lamp behind or inside their piece, of their section, or
+  within 0.35 m, else stay unlit
+  ([red drawn texels](#red-texels-lit-as-reverse-and-indicator-lamps-issue-103)).
 - Head lamps without a head lamp technique: the front clear lenses, else
   the headlight sections' reflectors, else their cover glass. With one, the
   reflector bowls under a headlight cover that has no head lamp in it light

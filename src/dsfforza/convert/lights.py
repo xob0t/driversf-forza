@@ -670,20 +670,28 @@ RED_INDICATOR_SHARE = 0.5  # a rear indicator side with this share of its area o
 def _seen_red(records) -> None:
     """Rear lamp triangles drawn on red texels (Tri.seen) light as red lamps. Forza draws some
     reverse and indicator bulbs on red texels, or on red lens and cover texels the bake keeps
-    (the Mercedes S65 AMG's tail lamp halves, the Dodge Durango's covers): lit as reverse or
-    amber indicator lamps they glowed red when reversing or indicating and never braked, while
-    vanilla draws its reverse lamps white and its indicators amber, and lights its red rear
-    lamp texels with the tail and brake lamps (issue #103).
+    (the Mercedes S65 AMG's tail lamp halves, the Dodge Durango's covers). Lit as reverse or
+    amber indicator lamps, the red lit white or amber when reversing or indicating (a lamp glows
+    in its entry's colour) and never braked; vanilla draws its reverse lamps white and its
+    indicators amber, and lights its red rear lamp texels with the tail and brake lamps
+    (issue #103).
 
-    - A reverse triangle on red texels is a tail lamp.
+    - A reverse triangle on red texels is a tail lamp, unless every reverse triangle of its
+      side is: then they are the lamp (the VW Golf R 10's bulbs, drawn red inside a white
+      reflector and clear lens that light with them), and only the red pieces round them leave
+      it (_place_clear).
     - A rear indicator side mostly on red texels (RED_INDICATOR_SHARE of its finest LOD's
       area) is a red indicator that brakes too (BRAKE_IND, 0x19/0x1A, as vanilla's US-style
       cars and _red_lens_indicators' red lenses); else its red triangles are tail lamps and the
       amber ones stay indicators."""
     rear = [r for r in records if not r.front and r.seen is not None]
-    for r in rear:
-        if r.function == REVERSE and r.seen == "red":
-            r.function, r.colour = TAIL, RED
+    for side in ("L", "R", "C"):
+        rs = [r for r in rear if r.function == REVERSE and r.side == side]
+        if all(r.seen == "red" for r in rs):
+            continue  # the lamp itself: the white reflector and lenses round it light with it
+        for r in rs:
+            if r.seen == "red":
+                r.function, r.colour = TAIL, RED
     for side in ("L", "R"):
         rs = [r for r in rear if r.function == INDICATOR and r.side == side]
         if not rs:
@@ -851,7 +859,9 @@ class LampPlan:
                         # GTX's red reflectors round a 15-triangle tail_light), and unlit the
                         # tail lamps were dark at night (issue #160). Front reflectors stay
                         # unlit: head lamps glow by day from their lens or bulb (#124).
-                        reflector = Tri(sub, k, LENS, "C", front, WHITE, area, centre, normal, sub.lod, tuple(pts), shown)
+                        reflector = Tri(
+                            sub, k, LENS, "C", front, WHITE, area, centre, normal, sub.lod, tuple(pts), shown
+                        )
                         (front_reflectors if front else clear).append(reflector)
                         continue
                     if named_side:
@@ -890,7 +900,9 @@ class LampPlan:
                         elif c == RED and not front:
                             f = TAIL
                         else:
-                            clear.append(Tri(sub, k, LENS, side, front, c, area, centre, normal, sub.lod, tuple(pts), shown))
+                            clear.append(
+                                Tri(sub, k, LENS, side, front, c, area, centre, normal, sub.lod, tuple(pts), shown)
+                            )
                             continue
                         from_lens.add(len(records))
                     records.append(Tri(sub, k, f, side, front, c, area, centre, normal, sub.lod, tuple(pts), shown))
@@ -1041,7 +1053,7 @@ class LampPlan:
             red: then the nearest red one of `keys` (the lamps behind or inside its piece), else
             of its section's (same_section), else the red lamp with a triangle nearest r within
             CLEAR_LENS_REACH, else None (unlit). A red reflector round a reverse bulb lit as the
-            reverse lamp glowed red when reversing and never braked (issue #103)."""
+            reverse lamp lit the red white when reversing and never braked (issue #103)."""
             if key is None or r.front or r.seen != "red" or red(key):
                 return key
             reds = {k for k in keys if red(k)} or {k for k in same_section(rs) if red(k)}
