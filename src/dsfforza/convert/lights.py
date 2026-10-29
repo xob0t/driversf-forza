@@ -176,6 +176,11 @@ HIGH_BRAKE_RISE = 0.08  # a centre tail lamp this far above the side tails is th
 PRIORITY = {HEAD: 0, TAIL: 1, BRAKE: 2, INDICATOR: 3, DRL_IND: 3, REVERSE: 4, BRAKE_IND: 4.5, POSITION: 5, FOG: 6}
 
 
+# Functions whose table type doesn't depend on the side: a left and a right lamp of one of these
+# can share an entry (assign). Indicators and the combined types with one are per side.
+SIDELESS = (HEAD, POSITION, TAIL, BRAKE, REVERSE, FOG)
+
+
 def fallback(function: str, front: bool) -> str | None:
     """The function whose entry a lamp left without one shares: a
     brake-and-indicator lamp still brakes with the tail lamp, a position lamp
@@ -874,10 +879,14 @@ class LampPlan:
             taken[entry] = lamp
 
         def partner(lamp):
-            """A lit lamp whose entry this one can share: same function, end and side, else
-            its fallback function's at its end (same side first)."""
+            """A lit lamp whose entry this one can share: same function, end and side, else the
+            same function at its end on the other side when the type has no side (SIDELESS: the
+            right reverse lamp on the left one's entry), else its fallback function's at its end
+            (same side first)."""
             lit = [l for l in order if l.light_id is not None and l.front == lamp.front]
             twin = next((l for l in lit if l.function == lamp.function and l.side == lamp.side), None)
+            if twin is None and lamp.function in SIDELESS:
+                twin = next((l for l in lit if l.function == lamp.function), None)
             other = fallback(lamp.function, lamp.front)
             if twin is None and other is not None:
                 near = [l for l in lit if l.function == other]
@@ -886,10 +895,12 @@ class LampPlan:
 
         # Most important first, each an entry at its end; one with none left there takes one at
         # the other end (lit, though it breaks with that end's panel) unless it can share a lamp's
-        # at its own end: a rear reverse lamp outranks a front fog lamp, as before.
+        # at its own end: a rear reverse lamp outranks a front fog lamp, as before. A fog lamp
+        # never does: the game's Lua never sets FogLights (only Siren), so on an entry at the
+        # other end it would only break with that end's panel (issue #146); it stays unlit.
         for lamp in order:
             pick = _best_entry(lamp, [e for e in free if place[e][0] == lamp.front], place)
-            if pick is None and partner(lamp) is None:
+            if pick is None and partner(lamp) is None and lamp.function != FOG:
                 pick = _best_entry(lamp, free, place)
             if pick is not None:
                 take(lamp, pick)
