@@ -1,12 +1,12 @@
 # Hosts: which vanilla car a port is built on
 
-Updated: 2026-10-22
+Updated: 2026-10-29
 
 A ported car is a clone of one vanilla vehicle, the host, with the Forza body,
 cockpit, wheels and handling numbers put in. Everything the converter does
 not rebuild stays the host's, so the host decides much of how the port
-sounds and behaves. Until now every port used 266 (ASYM Desanne, a V6 saloon).
-`src/dsfforza/build/host_select.py` now picks a host per car and `port_car.py --host auto`
+sounds and behaves. The first ports all used 266 (ASYM Desanne, a V6 saloon).
+`src/dsfforza/build/host_select.py` picks a host per car and `port_car.py --host auto`
 (the default) uses it. Evidence levels follow `dngvehicles.md`.
 
 ## What comes from the host
@@ -15,8 +15,8 @@ sounds and behaves. Until now every port used 266 (ASYM Desanne, a V6 saloon).
 | --- | --- | --- |
 | Engine sound | NONR/VSRT | replaced by the car's own Forza loops in a vanilla template bank (`engine-sound.md`); kept (or `--sound-host`) with `--no-forza-sound` or when that fails |
 | Hierarchy: parts, doors, hinges, collision (PDL), lights, damage | NONR/UPVH | hubs, steering, gauges, seats moved; the rest kept |
-| Handling base: steering, assists, tyre curves, cameras | NONR/VO3D | `handling_dsf.py` (default) keeps the host's VO3D and moves it by the fleet's rules (`handling.md`); `--handling forza` is the older `handling.py` mapping (about 33 parameters, grip, springs and dampers scaled by mass) |
-| Paint sets | NONR/SPSR | kept |
+| Handling base: steering, assists, tyre curves, cameras | NONR/VO3D | `handling_dsf.py` (default) keeps the host's VO3D and moves it by the fleet's rules (`handling.md`); `--handling forza` is the older `handling.py` mapping (about 33 parameters, grip, springs and dampers scaled by mass). Builds between #169 and #192 kept the host's VO3D unchanged (`handling.md`) |
+| Paint sets | NONR/SPSR | replaced by the car's Forza factory colours (`paint.py`, `Combo_Colors`), each with the shading of the closest vanilla paint; all 573 cars in the main checkout's `out/build` (log line `paint: N factory colours`) |
 | Category, flags | SSIC/VSCT record | copied |
 | HUD badge, name, stat bars | Lua `vehicleStats` | copied by `register.lua`; stat bars generated (`handling_dsf.stat_bars`) |
 
@@ -65,15 +65,17 @@ MODL part 0 box), VO3D mass, gauge IDs, engine and year from `vehicleStats`,
 granular sound, and why it can't be a host.
 
 137 of 150 can be hosts. The 13 that can't: 10 with six wheels (trucks,
-buses, rigs), three trailers (no steering marker, no `_Interior` material),
-and 243 RUF RT12 (no hinge at the steering marker).
+buses, rigs, and the transporter trailer 289), the two four-wheeled trailers
+123 and 131 (no steering marker, no `_Interior` material; 289 lacks them
+too), and 243 RUF RT12 (no hinge at the steering marker).
 
 VSCT category byte (last byte of the record; data, one value per VEHC class
 family): 0x00 security van, 0x01 fire truck, 0x02 cop, 0x03 ambulance,
 0x04 taxi, 0x05 rig, 0x06 trailer, 0x07 truck, 0x08 tow truck, 0x09 limo,
 0x0A bus, 0x0B pickup, 0x0C 70s muscle, 0x0D modern muscle, 0x0E van,
 0x0F SUV, 0x10 saloon, 0x11 mini car, 0x12 super car, 0x13 sports car,
-0x14 drift car, 0x15 rally and buggy, 0x16 classic, 0x17 Jeep, 0x18 Tanner.
+0x14 drift car, 0x15 rally and buggy, 0x16 classic, 0x17 off-roader (only
+the 1988 Wrangler), 0x18 Tanner.
 
 Doors: UPVH part records with roles 31/32 are the front doors (vertical
 hinge at |x| about 0.9), 54/55 (52/53 on the Vista Cruiser) the rear doors.
@@ -124,9 +126,21 @@ Points add up; every host gets a list of reasons.
 | Era | up to 5 | 0 at 30 years apart |
 | Penalties | -3 / -8 / -20 | host lacks speed or tach gauge; a `_drift`/`_rally` variant whose civilian sibling exists; bus or truck for a car |
 
-Excluded unless asked: categories 0x00 to 0x06, 0x08 and 0x18 (`--allow-special-hosts`),
+Excluded unless asked: categories 0x00 to 0x06, 0x08 and 0x18
+(`port_car.py --allow-special-hosts`, `host_select.py --allow-special`),
 and every host with a converter problem (always). `--sound` (and
-`--sound-host auto`) ranks by identity, engine and era only.
+`--sound-host auto`) ranks by identity, engine and era only, and excludes
+nothing: `port_car.py` asks for the sound host with special entries allowed,
+and a converter problem doesn't matter for the sound.
+
+`host_select.same_vehicle` also says when the host is the Forza car itself:
+the same model or a badge twin of the same group (Chevrolet Express / GMC
+Savana), same body class, years within 4, wheelbase within 2.5% and length
+within 4% (1% each for twins). The converter then keeps the host's interior
+when Forza ships only a placeholder cockpit (`forza2dsf`, log line
+`cockpit: placeholder Forza cockpit and the host is the same vehicle`): 3
+cars in `out/build` (Express 2500 Cargo on the GMC Savana, F-350, Taurus
+SHO).
 
 Forza side, from the car's game's `gamedb.slt` `Data_Car`: `CylinderID`
 (`List_Cylinders.Number`), `EngineConfigID` (V, W, I, rotary, flat,
@@ -167,21 +181,30 @@ says 2 doors if that ends 0.4 m or more behind the midpoint (every 2-door in
 0.55 m long starts within 0.15 m behind it (every saloon and SUV there:
 -0.04 to 0.18 m), and nothing otherwise; coupe, muscle, supercar,
 convertible and race bodies never get 4 (the 1969 Charger R/T's quarter
-window looks like a rear door). On the cars extracted in `out/cache` it
-matches the real door count wherever it answers (the M5 and WRX STi, whose
-front glass ends at 0.38 and 0.28 m, get no answer and fall back to 4); without a carbin, or when it can't tell,
+window looks like a rear door). Without a carbin, or when it can't tell,
 the body class decides (sedan, SUV, wagon 4; coupes 2; hatch, pickup, van
-not scored).
+not scored); the M5 and the 2011 WRX STi, whose front glass ends at 0.38 and
+0.28 m, get no answer and fall back to 4.
+
+The thresholds came from the few dozen cars then in `out/cache`. Over the
+whole roster (main checkout's `out/build`, 2026-10-29) the rule gives 2 doors
+to 8 four-door cars: the 2004 and 2005 WRX STi, the S204, the 2005 Legacy B4,
+the Carlton and the Rapide, whose rear-door pane starts where the front one
+ends and is merged into it, and the 2008 and 2012 Range Rover, whose front
+door glass alone ends 0.46 m behind the midpoint. Three picks move to a
+2-door host (issue #208). Of the 55 saloons, 49 get 4 doors; of the 15 SUVs,
+13.
 
 DSF side, same pass: buses (category 0x0A) and trucks (0x07, including the
 GMC C5500 that VEHC names "Van 07") are classes of their own; the 2009
 Charger SRT8 ("Modern Muscle", 4 doors) counts as a saloon; Viper and
 Corvette Z06/ZR1 as supercars, not muscle.
 
-Check against the 48 vanilla/Forza pairs of `out/handling/pairs.py`: the top
-host is the paired vanilla car for 45. The other three are right too: the
-Forza Challenger SRT8 2009 goes to 173 (the pair list had 172, the 1970
-R/T), the Scirocco R to the civilian 274 instead of the rally 275, and the
+Check against the 48 vanilla/Forza pairs (`handling_dsf.PAIRS`, first kept in
+`out/handling/pairs.py`): the top host is the paired vanilla car for 45
+(rerun 2026-10-29 with the carbins in `out/cache`, offline-checked). The
+other three are right too: the Forza Challenger SRT8 2009 goes to 173 (the
+pair list had 172, the 1970 R/T), the Scirocco R to the civilian 274 instead of the rally 275, and the
 RUF RT12 S can't use 243 (no steering hinge) and gets 240 (CTR3).
 
 ## The whole roster (`research/host-picks.tsv`)
@@ -192,14 +215,18 @@ the carbin door rule where the car is in `out/cache`), with the runner-up,
 the margin and flags: body similarity under 0.5, a door mismatch, score
 under 45, cylinders more than 2 apart, wheelbase more than 0.6 m apart, or
 a runner-up within 1 point whose body fits better. 87 vanilla cars are used.
+The TSV was regenerated on 2026-10-29 with the whole roster extracted in
+`out/cache`, so 48 more cars take their door count from the carbin (18 picks
+changed); it now matches the hosts in the main checkout's `out/build` on all
+573 cars (offline-checked against `batch-report.json`).
 
 | Car class | Cars | Host classes | Most used hosts | Flagged |
 | --- | ---: | --- | --- | ---: |
 | coupe | 172 | coupe 139, convertible 15, supercar 8, muscle 8, sedan 2 | 227 370Z (26), 229 Skyline R33 (18), 125 Alfa 8C (13) | 6 |
-| hatch | 91 | hatch 87, coupe 3, sedan 1 | 127 Giulietta (29), 128 MiTo (24), 274 Scirocco (15) | 4 |
+| hatch | 91 | hatch 87, coupe 3, sedan 1 | 128 MiTo (27), 274 Scirocco (27), 127 Giulietta (14) | 4 |
 | race | 86 | supercar 75, coupe 11 | 162 Corvette Z06 (42), 232 Zonda (12), 182 Viper (6) | 0 |
 | supercar | 85 | supercar 75, coupe 9, convertible 1 | 232 Zonda (13), 162 Corvette Z06 (11), 163 Corvette ZR1 (9) | 5 |
-| sedan | 55 | sedan 52, wagon 2, hatch 1 | 136 A4 (13), 176 Charger SRT8 (11), 124 Alfa 159 (7) | 1 |
+| sedan | 55 | sedan 49, hatch 3, wagon 2, coupe 1 | 176 Charger SRT8 (11), 136 A4 (11), 124 Alfa 159 (7) | 4 |
 | convertible | 30 | convertible 18, coupe 9, supercar 3 | 278 Solstice (7), 248 Cobra (5), 129 Spider Duetto (5) | 5 |
 | muscle | 29 | muscle 29 | Camaros, Challenger R/T, Mustangs, GTO, Trans Am (3 each) | 0 |
 | SUV | 15 | SUV 15 | 138 Q7 (7), 239 Range Rover Sport (4), 203 H3 (3) | 1 |
@@ -212,7 +239,7 @@ supercar (V8 supercharged, 2-door; 226 SLR and 189 Ford GT next), and
 DOD_ChargerDaytona_69 to 175 Charger R/T 1969 (2 doors). The five cars
 tested in game keep their hosts (227, 147, 229, 193, 251).
 
-The 25 flagged picks, reviewed:
+The 28 flagged picks, reviewed:
 
 - Nothing closer exists in DSF: BUS_TOUR_12 (school bus, 8.3 m wheelbase on
   6.5), KEN_T440_12 (C5500, 7.0 on 4.9, the only 4-wheeled truck host),
@@ -227,6 +254,9 @@ The 25 flagged picks, reviewed:
   the TT RS, Clio V6 and 205 T16 on coupes), the Civic Si coupe on the Neon,
   and small coupes landing on convertibles by a fraction of a point
   (Integra R 2000, S2000, Starion; Elise on the Giulia TZ2).
+- Wrong door count (#208): SUB_WRXSTi_04 and SUB_S204_06 on 274 Scirocco
+  and LOT_Carlton_89 on 229 Skyline R33, four-door saloons the carbin rule
+  counts as 2-door ("Scoring", the Doors paragraph).
 
 ## Test builds
 
@@ -256,10 +286,15 @@ right, wheel part on the UPVH hubs: all wheels in their arches), `eyes.png`
 
 ## Open
 
-1. In game: engine sounds of the five hosts on the ports, and the swapped
-   sound in `ported-sound.sp` (does it play, does it follow rpm).
+1. In game: the swapped sound in `ported-sound.sp` (does it play, does it
+   follow rpm). Ports now get their own Forza engine banks by default
+   (`engine-sound.md`); none has been checked in game yet (#202).
 2. Whether moving the wheel bodies changes anything (they were left at the
    Desanne's hubs before).
-3. Collision (PDL) stays the host's shape; a closer host makes it fit better,
-   but nothing rescales it yet.
-4. The host's SPSR paint sets (the paint texel is settled: above).
+3. Collision (PDL): with `--damage` (on in `port_batch`) each panel's
+   collision boxes are moved and scaled onto the Forza panel; the root hull
+   stays the host's shape unless `--damage hull`, which is untested in game
+   (`damage.md`, #210).
+
+The host's SPSR paint sets, open here before, are replaced by the car's
+Forza factory colours (`paint.py`, table above).
