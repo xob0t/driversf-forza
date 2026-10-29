@@ -217,3 +217,31 @@ def test_dilate():
     mask[2, 2] = True
     assert P.dilate(mask, 1).sum() == 9 and P.dilate(mask, 2).all()
     assert P.dilate(mask, 0).sum() == 1
+
+
+def lettering(y0, y1, x0=-0.28, x1=0.28, z=2.004):
+    """Badge strokes 1 cm wide every 4 cm (spaced letters), proud of the bumper."""
+    out = []
+    x = x0
+    while x < x1:
+        out += quad(x, x + 0.01, y0, y1, z, cls=4, feat=P.FEAT_BADGE)
+        x += 0.04
+    return out
+
+
+def test_plate_between_a_lamp_and_lettering_is_dropped():
+    # #251: the Evora Type 124's rear panel, its rain light at the host's plate height,
+    # LOTUS letters above it and the exhausts' opening below: kept clear of the lamp, the
+    # plate would cover the letters (a few percent of their strokes, most of their area).
+    tris = (
+        quad(-0.05, 0.05, 0.36, 0.40, 2.005, cls=4, feat=P.FEAT_LAMP)
+        + lettering(0.47, 0.56)
+        + quad(-0.5, 0.5, 0.30, 0.6, 2.0)
+        + quad(-0.5, 0.5, 0.0, 0.30, 1.5, cls=0)
+    )
+    try:
+        y, _, note = P.fallback_height(front_map(tris), 0.38, SIZE)
+    except ValueError as error:
+        assert "emblem" in str(error)
+    else:
+        raise AssertionError(f"a plate at y {y:.2f}: {note}")

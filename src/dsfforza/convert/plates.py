@@ -130,10 +130,15 @@ HIDE_NONE = 0.005
 # lamp covers, touching both (#259).
 LAMP_MARGIN = 0.02
 # A fallback plate whose best height still covers more than this share of a lamp has no
-# place at that end: the face there is a lamp panel (#251: the ARX-01b's and Mazda B09's
-# rear plates covered their rain lights, between diffusers with no other face near the
-# host's plate height). The end gets no plate, as the Forza car has none.
+# place at that end and gets none, as the Forza car has none (#251: the ARX-01b's and
+# Mazda B09's rear plates covered their rain lights between the diffusers, the face near
+# the host's plate height).
 LAMP_DROP = 0.05
+# ... nor one that covers more than this share of an emblem's area (its strokes grown by
+# a cell, so lettering counts whole): kept clear of its rain light, the Evora Type 124's
+# rear plate went over its LOTUS letters (24%; 5% of strokes). An emblem's edge stays
+# under it (the Javelin AMX's and M5 E28's front plates: 11% and 7%, under 1% of strokes).
+EMBLEM_DROP = 0.15
 # A fallback plate may shrink to fit between a badge and an edge: scales tried, the
 # cost per unit of shrink, and the narrowest plate (vanilla's: 0.23 m front, 0.226 rear).
 FALLBACK_SCALES = (1.0, 0.9, 0.8)
@@ -521,9 +526,13 @@ def fallback_height(dm: DepthMap, prior_y: float, base: tuple[float, float]) -> 
     # technique (the BMW M1's nose band), not an emblem.
     badge = dm.feat == FEAT_BADGE
     emblem = badge & (run_widths(badge) * PX < BADGE_BAND)
-    lamp = (dm.feat == FEAT_LAMP) | (dm.cls == CLASS["glass"])
+    # Lamps and their covers (glass techniques of the lights family) get the margin;
+    # windows only their own cells (#251: a margin under the F430 GT's rear window moved
+    # its plate off the boot lid).
+    lamp = dm.feat == FEAT_LAMP
     near_lamp = dilate(lamp, int(round(LAMP_MARGIN / PX)))
-    hidden = emblem | near_lamp | (dm.feat == FEAT_EXHAUST)
+    hidden = emblem | near_lamp | (dm.feat == FEAT_EXHAUST) | (dm.cls == CLASS["glass"])
+    lettering = dilate(emblem, 1)
     best = None
     for k in FALLBACK_SCALES:
         if k < 1.0 and base[0] * k < MIN_WIDTH:
@@ -551,12 +560,15 @@ def fallback_height(dm: DepthMap, prior_y: float, base: tuple[float, float]) -> 
                 cost += HIDE_STEP
             key = (round(cover, 1), -cost)
             if best is None or key > best[0]:
-                best = (key, y, size, hide, mixed, float(lamp[r, c_].mean()))
+                best = (key, y, size, hide, mixed, float(lamp[r, c_].mean()), float(lettering[r, c_].mean()))
     if best is None:  # the host's height maps outside the depth map (plan() skips the end)
         raise ValueError(f"{dm.end} plate: no body surface near y {prior_y:.2f}")
-    _, y, size, hide, mixed, on_lamp = best
-    if on_lamp > LAMP_DROP:
-        raise ValueError(f"{dm.end} plate: no face clear of the lamps near y {prior_y:.2f} ({on_lamp:.0%} on a lamp)")
+    _, y, size, hide, mixed, on_lamp, on_emblem = best
+    if on_lamp > LAMP_DROP or on_emblem > EMBLEM_DROP:
+        raise ValueError(
+            f"{dm.end} plate: no face clear of lamps and emblems near y {prior_y:.2f} "
+            f"({on_lamp:.0%} on a lamp, {on_emblem:.0%} on an emblem)"
+        )
     note = "no flat face of plate size"
     if size != base:
         note += f", shrunk to {size[0] / base[0]:.1f}"
