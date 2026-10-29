@@ -699,6 +699,60 @@ def test_wheel_display_moves_onto_a_virtual_display():
     assert cockpit.wheel_display_pod(static, eye, wheel, {}, 2)[:2] == ([], None)
 
 
+def test_wheel_display_found_only_under_the_hud_tries_smaller_sizes():
+    # Issue #147: the R15 TDI's, GT-R's and Skyline 2003's moved displays found room only
+    # under DSF's HUD; a smaller one clear of it is drawn instead, and the larger one stays
+    # when no smaller one fits either.
+    eye = (0.0, 0.0, 0.0)
+    static, wheel = _open_cockpit()
+    real = cockpit.place_pod
+    for small_fits in (True, False):
+        calls = []
+
+        def fake(*args, passes=cockpit.POD_PASSES, sizes=None, calls=calls, small_fits=small_fits, **kw):
+            calls.append((passes, sizes))
+            d, housing, report = real(*args, passes=passes, sizes=sizes, **kw)
+            if passes == cockpit.POD_PASSES:
+                report["virtual_display"]["under_hud"] = True  # as if only the last pass found room
+            elif not small_fits:
+                return None, None, {"virtual_display": "no room"}
+            return d, housing, report
+
+        cockpit.place_pod = fake
+        try:
+            moved, housing, report = cockpit.wheel_display_pod(static, eye, wheel, {}, 2)
+        finally:
+            cockpit.place_pod = real
+        assert [c[0] for c in calls] == [cockpit.POD_PASSES, cockpit.POD_HUD_PASSES]
+        w = calls[0][1][0][0] / cockpit.WHEEL_DISPLAY_SCALES[0]
+        assert [round(s[0] / w, 3) for s in calls[1][1]] == list(cockpit.WHEEL_DISPLAY_SMALL_SCALES)
+        assert moved and housing is not None
+        k = report["virtual_display"]["scale"]
+        if small_fits:
+            assert k in cockpit.WHEEL_DISPLAY_SMALL_SCALES and not report["virtual_display"].get("under_hud")
+        else:
+            assert k in cockpit.WHEEL_DISPLAY_SCALES and report["virtual_display"]["under_hud"]
+
+
+def test_virtual_display_keeps_clear_of_the_hands():
+    # The GT-R's small moved display sat behind the left hand in game (#147); with
+    # hands=True no line of sight to the display passes within POD_HAND_CLEAR of a grip.
+    eye = (0.0, 0.0, 0.0)
+    static, wheel = _open_cockpit()
+    grips = cockpit.rim_grips(wheel)
+    for g in grips:  # on the rim, HAND_GRIP_DEG either side of its top
+        assert abs(math.dist(g, wheel.centre) - wheel.radius) < 1e-9 and g[1] > wheel.centre[1]
+    assert grips[0][0] * grips[1][0] < 0
+    d, _, _ = cockpit.pod_display(static, eye, wheel, 1, {}, 2, cowl=True, hands=True, sizes=[(0.05, 0.03)])
+    assert d is not None
+    for u in d.rect[:2]:
+        for v in d.rect[2:]:
+            ray = cockpit._norm(d.point(u, v))
+            for g in grips:
+                hit = cockpit._scale(ray, cockpit._dot(g, wheel.axis) / cockpit._dot(ray, wheel.axis))
+                assert math.dist(hit, g) > cockpit.POD_HAND_CLEAR
+
+
 def test_placeholder_cockpit_gets_virtual_dials():
     # Issue #148: a placeholder cockpit carbin's cabin (the main carbin's) has no needle
     # and no display; the car still has a speedometer and a tachometer.

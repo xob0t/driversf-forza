@@ -3027,7 +3027,85 @@ Savana has no tachometer), or are the Volt.
   in a one-car build (`vm1-20261029-153539`), so that is not this change
   (issue #255).
 
-## Risks and open questions
+### The leftovers: displays under the HUD, other aspect ratios (2026-10-29)
+
+**Smaller moved displays (`WHEEL_DISPLAY_SMALL_SCALES`).** Four cars kept their
+moved wheel display only under the HUD's lower corners (`under_hud`). Seen from the
+head camera, the display centres sat at:
+- the R15 TDI: 23 degrees left, 23 down, behind the progress bar;
+- the GT-R 10 and 23: 33 left, 19 down;
+- the Skyline 2003: 34 left, 15 down;
+- the Panoz LMP: 28 right, 19 down, behind the speed box.
+
+The Evora no longer has a virtual display: it has Forza's needles and a digital
+display. When the sizes 1.5 to 0.6 find room only under the HUD,
+`wheel_display_pod` tries 0.5 and 0.4 in the passes clear of it (`POD_HUD_PASSES`),
+and keeps the larger one if neither fits. A smaller display in sight beats a larger
+one that is hidden. The first try ignored the hands: the GT-R's and the Skyline's
+small displays landed left of the wheel at 12 degrees down, right behind the left
+hand and wrist. At 16:9 they were still half readable there, but at 21:9 the old
+larger ones showed better (below). So the smaller sizes also keep `POD_HAND_CLEAR`
+(13 cm, in the wheel's plane) from both grips (`rim_grips`, the hand rig's
+HAND_GRIP_DEG either side of the rim's top; `pod_display(hands=True)`). The other
+cars never reach the new sizes. Measured from the head camera:
+
+| Car | Before | After |
+| --- | --- | --- |
+| R15 TDI | 5.0 x 7.1 cm (0.6), 23 left / 23 down | 4.1 x 5.9 cm (0.5) on the cowl at 1.05 m, 25 left / 7 down |
+| GT-R 10, GT-R 23 | 10.4 x 5.4 cm (0.8), 33 left / 19 down | 5.2 x 2.7 cm (0.4), 34 left / 10 down, outboard of the left hand |
+| Skyline 2003 | 12.5 x 6.4 cm (0.8), 34 left / 15 down | 7.8 x 4.0 cm (0.5), 33 left / 12 down, outboard of the left hand |
+| Panoz LMP | 8.8 x 4.3 cm (0.6), 28 right / 19 down | unchanged: no smaller size fits clear of the HUD |
+
+**The HUD at other aspect ratios.** DSF Enhanced's `[Ultrawide]` (on in the
+user's ini) widens the horizontal FOV with the aspect (`draw-distance.md`,
+"Projection"). On a 21:9 backbuffer the HUD keeps its place as a share of the
+screen: host runs with the user's 3440x1440 backbuffer drawn into a 1280x720
+window (`host-20261029-190225`, observe-02) put the progress bar and the speed box
+at the same screen fractions as the VM's 16:9 runs. So the HUD covers the same part
+of the screen while the 3D view behind it gets wider. In angles from the head camera
+the corners move outwards: with the head camera about 80 degrees wide at 16:9 and
+1.344x that at 21:9, the bar's inner edge goes from 7 to about 11 degrees left, the
+speed box's from 23 to about 35 right, and their tops from 13.5 to about 16 degrees
+down. So a display clear of the 16:9 keep-out is clear at 21:9 too, and some under
+it come out.
+
+Checked in the VM with the user's projection: `-Override 'dsf_enhanced.ini=...'` with
+`TargetAspect=2.389`. That draws the 21:9 projection squeezed into the 16:9
+backbuffer, as on the host runs, with the HUD where it is at 21:9. Master's build at
+21:9 (`vm1-20261029-201836`): the GT-R's old display shows below the progress bar
+(gear, lights, speed), and the Skyline's through the translucent HINT box. Both are
+hidden at 16:9 (`vm2-20261029-201337`). The R15's shows through the HINT band next to the left hand. The Panoz's stays hidden at both aspects.
+On narrower screens with the same scaling (16:10, 4:3) the
+corners move inwards. At 4:3 that is about 5 left, 16 right and 12 down, so displays
+near the 16:9 edge (FLM09's bottom edge, 13 down) could go partly under the bar
+(computed only, not run).
+
+**In game (VM, confirmed-runtime).** `run-series.ps1 -Vm -Asi -HoldMph 40
+-ShotSeconds 3`, cars 147 (not compared), R15 TDI, GT-R 10, Skyline 2003, Panoz
+LMP, FLM09, Durango, at the same IDs:
+- 16:9: before `vm2-20261029-201337`, after `vm2-20261029-203504`.
+- 21:9 (`TargetAspect=2.389`): before `vm1-20261029-201836`, after `vm1-20261029-203508`.
+- The first try without the hand keep-out: `vm2-20261029-201910` (16:9) and
+  `vm1-20261029-202300` (21:9).
+
+Results:
+- At 16:9 the R15's display now stands on its cowl by the left mirror: small, with its
+  shift lights, gear and speed. The Skyline's is above the HINT box, readable, clear
+  of the hand. The GT-R's is at the screen's left edge, partly cut by it; before, it
+  was wholly under the HUD.
+- At 21:9 all three are in sight and clear of the hands.
+- The FLM09's and the Durango's displays are where they were.
+
+`img/gauges-hud-small-displays-ingame.jpg` (16:9) and
+`img/gauges-hud-small-displays-219-ingame.jpg` (21:9): before | after, R15 TDI,
+GT-R 10, Skyline 2003.
+
+Still open:
+- The Panoz LMP: no smaller size fits clear of the HUD and the hands.
+- The hands aren't kept out of #92's virtual displays or of the moved displays at
+  their regular sizes. Before this, the FLM09's and the placeholder cockpits'
+  displays were checked in game only for the HUD.
+
 
 1. Answered: the cockpit view draws only the interior entry
    (confirmed-runtime 2026-10-29, "What DSF draws").
