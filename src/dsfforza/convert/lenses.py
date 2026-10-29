@@ -90,6 +90,9 @@ SWATCH_TINT = 0.5
 FLAT_SHARE = 0.9
 FLAT_SPREAD = 6
 RAY_CHUNK = 256
+# A lens point whose normal points out of the car's end at least this much (its z component;
+# the Panoz Esperante's laid-back head lamp lens 0.58) may look in along the axis (_axis_fallback).
+AXIS_MIN_FACING = 0.25
 RAY_CELL = 0.04  # m: rays are chunked by these cells
 RAY_STEP = 2  # texels per ray, each way, at least
 RAYS_PER_LENS = 3000
@@ -407,16 +410,20 @@ def _behind(surf: _Surfaces, origins, dirs, cand):
     return acc, hits, solid_at, solid_mask, solid_lamp, solid_tri
 
 
-def _axis_fallback(surf: _Surfaces, origins, dirs, found) -> int:
-    """A front lens's rays that met no lamp along the lens normal, again along the car's axis
-    (+z, into the car): a laid-back head lamp lens (the Panoz Esperante's, its normal 65% up)
-    sees the housing floor along its normal and the reflector bowls a camera ahead of the car
-    sees through it along the axis. A ray's results (`found`: _behind's arrays, in place) take
-    the axis ray's where that meets a lamp. Returns the rays changed."""
-    redo = np.nonzero(~found[4])[0]
+def _axis_fallback(surf: _Surfaces, origins, dirs, found, front: bool = True) -> int:
+    """A lens's rays that met no lamp along the lens normal, again along the car's axis into
+    the car (+z from the front, -z from the rear: Forza's front is -z): a laid-back head lamp
+    lens (the Panoz Esperante's, its normal 65% up) sees the housing floor along its normal
+    and the reflector bowls a camera ahead of the car sees through it along the axis; a tail
+    lamp lens wrapped round the wing or laid along the boot lid, the same from behind. A ray's
+    results (`found`: _behind's arrays, in place) take the axis ray's where that meets a lamp.
+    Only rays from lens points facing out of the car's end (AXIS_MIN_FACING): along the axis, a
+    side marker's would run along the flank. Returns the rays changed."""
+    outward = dirs[:, 2] if front else -dirs[:, 2]  # dirs point in: -normal
+    redo = np.nonzero(~found[4] & (outward >= AXIS_MIN_FACING))[0]
     if not len(redo):
         return 0
-    axis = np.tile([0.0, 0.0, 1.0], (len(redo), 1))
+    axis = np.tile([0.0, 0.0, 1.0 if front else -1.0], (len(redo), 1))
     start = origins[redo] + dirs[redo] * 0.001 - axis * 0.002  # off the lens along the axis
     changed = 0
     for c0 in range(0, len(redo), RAY_CHUNK):
@@ -841,8 +848,15 @@ def bake(
             behind[c0:c1], met[c0:c1], depth[c0:c1], mask[c0:c1], lamp[c0:c1], solid[c0:c1] = _behind(
                 surf, origins[c0:c1], dirs[c0:c1], surf.near(lo, hi)
             )
-        if pos[:, 2].mean() < GLOW_FRONT_Z:
-            _axis_fallback(surf, origins, dirs, (behind, met, depth, mask, lamp, solid))
+        axis = _axis_fallback(
+            surf, origins, dirs, (behind, met, depth, mask, lamp, solid), front=pos[:, 2].mean() < GLOW_FRONT_Z
+        )
+        if axis:
+            entry["axis"] = entry.get("axis", 0) + axis
+            entry["front"] = bool(pos[:, 2].mean() < GLOW_FRONT_Z)
+        flat = is_lens_technique(sub.material) and _flat(src[iy, ix])
+        if flat:
+            entry["flat"] = True
         if swatch:
             on_lamp = solid[np.isin(solid, lamp_tris)]
             if len(on_lamp) >= SWATCH_TINT * len(first):
@@ -852,7 +866,15 @@ def bake(
             continue
         hit_any = met[inverse]
         baked = lens_a[:, None] * lens_rgba + (1 - lens_a[:, None]) * behind[inverse]
-        if emits(sub.material):
+        if flat and pos[:, 2].mean() < GLOW_FRONT_Z:
+            # A front lens of one flat colour (the Audi Q7's bumper lens, the Ferrari 599's amber
+            # head lamp lenses; issue #189) stays: its clear texels carry the head lamps' day glow
+            # (lens_glow). Blended by its alpha it was a flat plate over the lamp, and its glow the
+            # lens's flat alpha: its colour is a filter over what lies behind (lens_filter, as a
+            # swatch lens's over its lamp), and it glows with the lamp behind, as a cover does.
+            baked[:, :3] = behind[inverse][:, :3] * lens_filter(sub.material, lens_rgba.mean(0), settings)
+            baked[:, 3] = mask[inverse] * _weight(behind[inverse]) / _weight(baked)
+        elif emits(sub.material):
             # The glow stays the lens's: the alpha is set so the converter's lamp score
             # (dsf_materials.lamp_score: alpha x (0.6 + 0.4 x brightest channel)) is the lens
             # texel's own. Blending in the reflector's glow mask too gave the Subaru WRX STI's

@@ -398,26 +398,44 @@ def test_flat_rear_lens_tints_the_lamp_behind():
     got = atlases.texel(SIZE * 3 // 4, SIZE // 2)
     assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
     assert got[3] == LAMP[3]
-    # A flat front lens is baked as before.
+    # A flat front lens stays (its texels carry the day glow), its colour a filter over the lamp
+    # and its glow the lamp's (issue #189).
     lens = _quad("glassLHL", "detail_glass_red", -2.0, 0.0, 0.5, normal=(0.0, 0.0, -1.0))
     lamp = _quad("headlightL", "textured_reflector", -1.9, 0.5, 1.0, normal=(0.0, 0.0, -1.0))
     dropped = set()
     atlases, _ = _bake([lens, lamp], [lens], dropped=dropped)
     assert not dropped
-    assert atlases.texel(SIZE // 4, SIZE // 2) != LENS
+    got = atlases.texel(SIZE // 4, SIZE // 2)
+    assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
+    assert abs(dm.lamp_score(*got) - dm.lamp_score(*LAMP)) < 0.01, (got, LAMP)
 
 
 def test_laid_back_front_lens_sees_the_lamp_along_the_axis():
     # A front lens facing up (the Panoz Esperante's head lamps): along its normal nothing, along
     # the car's axis the lamp behind it.
-    lens = _quad("glassLHL", "detail_glass_clear", -2.0, 0.0, 0.5, normal=(0.0, 1.0, 0.0))
+    lens = _quad("glassLHL", "detail_glass_clear", -2.0, 0.0, 0.5, normal=(0.0, 0.95, -0.31))
     lamp = _quad("headlightL", "textured_reflector", -1.9, 0.5, 1.0, normal=(0.0, 0.0, -1.0))
+    atlases, report = _bake([lens, lamp], [lens])
+    rgb = [round(b * l / 255) for l, b in zip(LENS[:3], LAMP[:3])]  # one flat colour: a filter
+    got = atlases.texel(SIZE // 4, SIZE // 2)
+    assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
+    assert report["glassLHL/detail_glass_clear"]["behind"] == 1.0
+    # A lens facing sideways or straight up (a side marker) doesn't look along the axis.
+    lens = _quad("glassLHL", "detail_glass_clear", -2.0, 0.0, 0.5, normal=(0.0, 1.0, 0.0))
+    _, report = _bake([lens, lamp], [lens])
+    assert report["glassLHL/detail_glass_clear"]["behind"] == 0.0
+
+
+def test_laid_back_rear_lens_sees_the_lamp_along_the_axis():
+    # The same at the rear (issue #189): into the car is -z there.
+    lens = _quad("glassLTL", "detail_glass_clear", 2.0, 0.0, 0.5, normal=(0.0, 0.95, 0.31))
+    lamp = _quad("taillightL", "textured_reflector", 1.9, 0.5, 1.0, normal=(0.0, 0.0, 1.0))
     atlases, report = _bake([lens, lamp], [lens])
     a = LENS[3] / 255
     rgb = [round(a * l + (1 - a) * b) for l, b in zip(LENS[:3], LAMP[:3])]
     got = atlases.texel(SIZE // 4, SIZE // 2)
     assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
-    assert report["glassLHL/detail_glass_clear"]["behind"] == 1.0
+    assert report["glassLTL/detail_glass_clear"]["axis"] > 0
 
 
 def test_cover_over_its_lenses_is_left_out():
