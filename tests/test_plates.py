@@ -107,3 +107,10 @@ def test_recess_search_keeps_a_face_tilted_like_vanilla():
     plate = P.plan_end(overhang(1.955), "front", host, 0.2, 0.0, 0.6)
     assert plate.source == "recess" and plate.surface == "bumperFa", plate
     assert -0.3 < plate.tilt < -0.2 and plate.centre[1] < 0.30, plate
+
+
+def test_host_plate_facing_down_allows_its_tilt():
+    # The vanilla Stratos's front plate faces down by 0.70: a port on it may too.
+    host = P.HostPlate("front", (0.0, 0.2, 2.0), SIZE, (0, 0), 2, tilt=-0.7)
+    plate = P.plan_end(overhang(1.912), "front", host, 0.2, 0.0, 0.6)
+    assert plate.source == "recess" and plate.tilt < -0.5, plate
