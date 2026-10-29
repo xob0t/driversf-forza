@@ -574,6 +574,15 @@ try {
             default { Add-LinkTree $dir.FullName $target $dir.Name.ToLower() }
         }
     }
+    # -Override files in folders the game doesn't have ('dlss5\dsf-dlss5-helper.exe=...', a mod's
+    # own subfolder): the folders are made in the run folder only.
+    $gameDirs = @(Get-ChildItem $GameDir -Directory | ForEach-Object { $_.Name.ToLower() })
+    foreach ($key in @($overrides.Keys | Where-Object { $_ -match '\\' -and ($_ -split '\\')[0] -notin $gameDirs })) {
+        $path = Join-Path $run $key
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+        New-FileLink $path $overrides[$key]
+        Note "new file $key <- $($overrides[$key])"
+    }
     Clear-ReadOnly $run
     $result.archiveSize = (Get-Item $Archive).Length
     Note 'run folder built'
