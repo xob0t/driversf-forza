@@ -324,7 +324,7 @@ bumper face; the Esprit's front from under its nose to the bumper face. The Delt
 S4's front gets worse: the fallback puts it on the grille band, its top edge over
 the Lancia shield's lower edge (1.7% of the plate, under the hide cost that would
 move it). Its bumper face is 8 cm tall, the host's (274) plate 0.315 x 0.142 m
-(#242).
+(#241).
 
 ## Open
 
