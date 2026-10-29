@@ -2160,6 +2160,18 @@ class Texturing:
                 if t[0] == lod and sum(p[2] for p in t[1]) > 0 and t[3] not in self.dropped_lenses
             ]
             rear = lenses.tail_glow(colour, view, tris)
+            if rear is not None:
+                # Never dimmer than the converted alpha: the tails that already glowed at vanilla's
+                # level (the GTI VR6's, M3 E30's, Evo VI's) keep it; the ranking only raises.
+                ys, xs = np.nonzero(np.isfinite(rear))
+                cache: dict = {}
+                conv = np.empty(len(ys))
+                for n, (y, x) in enumerate(zip(ys, xs)):
+                    key = tuple(int(c) for c in colour[y, x])
+                    if key not in cache:
+                        cache[key] = self._convert_texel(fm.LIGHTS, *key)[3]
+                    conv[n] = cache[key]
+                rear[ys, xs] = np.maximum(rear[ys, xs], conv)
         if front is None:
             self._lamp_glow = rear
         elif rear is None:
