@@ -989,9 +989,10 @@ catch {
     Note "error: $($result.error)"
 }
 finally {
-    foreach ($path in (Join-Path $RunPath 'Driver.log'), (Join-Path $RunPath 'dsf_enhanced.log')) {
-        if (Test-Path $path) { Copy-Item $path $RunDir }
-    }
+    # Every log the run wrote beside Driver.exe: Driver.log, dsf_enhanced.log and those of root
+    # files from -Override (ReShade.log, DXVK's Driver_d3d9.log; the game folder's own logs are not
+    # copied into the run folder).
+    Get-ChildItem -LiteralPath $RunPath -Filter *.log -File -ErrorAction SilentlyContinue | Copy-Item -Destination $RunDir
     if ($Asi) { Get-ChildItem (Join-Path $RunPath 'plugins') -Filter *.log -ErrorAction SilentlyContinue | Copy-Item -Destination $RunDir }
     # The guest's save folder (the host profile's copy, kept until the sandbox restarts): autosave.dat
     # and dsfforza.asi's side file dsfforza-garage.dat (research/asi.md).
