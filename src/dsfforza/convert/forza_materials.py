@@ -377,7 +377,8 @@ def classify_wheel(name: str) -> tuple[str, str | None]:
     every rim technique (rim, chrome_rim, outer_rim, inner_rim, wheel_black,
     wheel_emblem...) samples the car's wheel texture, wheel.xds; the tyre takes
     DSF's shared tyre (forza2dsf.TyreMap unwraps it onto the vanilla tread and
-    sidewall); the spinning-blur discs, shadows and ghosts are left out.
+    sidewall); Forza's spinning-blur discs, shadows and ghosts are left out
+    (forza2dsf.wheel_blur_section's disc, WHEEL_BLUR_TECHNIQUE, samples the blur picture).
     Drawing the 40 testdrive cars' rim UV triangles over wheel.xds lands them on
     matching artwork (spoke shading, the Nissan, Audi, Bugatti and SVT caps,
     nuts); inner_rim is a swatch of it on some cars (250 GTO, S5S)."""

@@ -12,7 +12,8 @@ Version 1 limits: no textures unless --textures (then lamps, badges and
 interior sample the car's converted atlas through the host's Chassis/Lights
 materials, see src/dsfforza/convert/dsf_materials.py; everything else uses one of DSF's
 shared materials by role), no separate damage parts (all body geometry goes into
-MODL part 0; other parts are emptied), wheel blur dropped. Wheels are moved
+MODL part 0; other parts are emptied), Forza's wheel blur sections dropped (a vanilla-style
+blur disc instead, wheel_blur_section). Wheels are moved
 by rewriting the hub positions in the host's UPVH.
 
     uv run dsff forza2dsf out/dngvehicles.clone.sp out/forza.sp --id 304 \\
@@ -1054,7 +1055,8 @@ def add_geometry(
     (section, material), and return the submodels.
 
     wheel: the sections are the Forza wheel model: turned into DSF's wheel frame
-    (wheel_point, scaled by wheel_fit), blur discs left out. `lod` goes through
+    (wheel_point, scaled by wheel_fit), Forza's blur sections left out (wheel_blur_section's
+    disc, among the sections, fades in instead). `lod` goes through
     wheel_lod; the tyre is on the shared tyre material, unwrapped onto the vanilla
     tread strip and sidewall ring (TyreMap). Rims sample the car's wheel texture
     through `textures` (planned with the wheel, wheel_material), else they are on
