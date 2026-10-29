@@ -326,7 +326,9 @@ def _tri_geometry(pts, normals):
 
 LENS_COLOUR = {"detail_glass_red": RED, "detail_glass_amber": AMBER, "linred": RED, "rinred": RED}
 CLUSTER_GAP = 0.2  # metres between triangle centres that still belong to one lamp
-CLEAR_LENS_REACH = 0.35  # m: a clear lens lights with the nearest lamp this close
+CLEAR_LENS_REACH = 0.35  # m: how deep a lamp may lie behind a clear lens (_place_clear)
+CLEAR_PIECE_SNAP = 0.001  # m: clear lens, cover or reflector triangles with corners this close are one piece
+CLEAR_SAME_PLANE = 0.01  # m: a lamp surface this far in front of a lens triangle still lies behind it
 # Lens texel colour (texel_class): saturated texels whose hue (degrees from
 # red towards yellow) is below LENS_RED_HUE are red, up to 60 amber. Fleet
 # (finest LOD, mean texel per triangle): 99% of `detail_glass_red` triangles at
@@ -419,6 +421,39 @@ class Tri:
     normal: tuple
     lod: int
     pts: tuple = ()  # corners (lamp-technique triangles; _red_lens_indicators)
+
+
+def _inside_xy(corners, x: float, y: float):
+    """Which triangles (corners (n, 3, 3)) hold the point (x, y) seen along z."""
+    a, b, c = corners[:, 0], corners[:, 1], corners[:, 2]
+
+    def side(p, q):
+        return (q[:, 0] - p[:, 0]) * (y - p[:, 1]) - (q[:, 1] - p[:, 1]) * (x - p[:, 0])
+
+    d1, d2, d3 = side(a, b), side(b, c), side(c, a)
+    return ((d1 >= 0) & (d2 >= 0) & (d3 >= 0)) | ((d1 <= 0) & (d2 <= 0) & (d3 <= 0))
+
+
+def _pieces(triangles) -> list[list[int]]:
+    """Indices of `triangles` (corner points) grouped into connected pieces: triangles with a
+    corner within CLEAR_PIECE_SNAP of each other's are one piece."""
+    parent = list(range(len(triangles)))
+
+    def root(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    seen: dict = {}
+    for n, pts in enumerate(triangles):
+        for p in pts:
+            key = tuple(round(c / CLEAR_PIECE_SNAP) for c in p)
+            parent[root(n)] = root(seen.setdefault(key, n))
+    groups: dict[int, list[int]] = {}
+    for n in range(len(triangles)):
+        groups.setdefault(root(n), []).append(n)
+    return list(groups.values())
 
 
 def _single_link(points, gap: float) -> list[list[int]]:
@@ -728,7 +763,9 @@ class LampPlan:
                         # tail lamps were dark at night (issue #160). Front reflectors stay
                         # unlit: head lamps glow by day from their lens or bulb (#124).
                         if not front:
-                            clear.append(Tri(sub, k, LENS, "C", False, WHITE, area, centre, normal, sub.lod))
+                            clear.append(
+                                Tri(sub, k, LENS, "C", False, WHITE, area, centre, normal, sub.lod, tuple(pts))
+                            )
                         continue
                     if named_side:
                         side = named_side
@@ -766,7 +803,7 @@ class LampPlan:
                         elif c == RED and not front:
                             f = TAIL
                         else:
-                            clear.append(Tri(sub, k, LENS, side, front, c, area, centre, normal, sub.lod))
+                            clear.append(Tri(sub, k, LENS, side, front, c, area, centre, normal, sub.lod, tuple(pts)))
                             continue
                         from_lens.add(len(records))
                     records.append(Tri(sub, k, f, side, front, c, area, centre, normal, sub.lod, tuple(pts)))
@@ -779,7 +816,8 @@ class LampPlan:
             if front_clear:
                 clear = [r for r in clear if not r.front]
                 records += [
-                    Tri(r.sub, r.k, HEAD, r.side, True, WHITE, r.area, r.centre, r.normal, r.lod) for r in front_clear
+                    Tri(r.sub, r.k, HEAD, r.side, True, WHITE, r.area, r.centre, r.normal, r.lod, r.pts)
+                    for r in front_clear
                 ]
             else:
                 records += _headlight_reflectors(sections, place, mid_z)
@@ -789,7 +827,7 @@ class LampPlan:
         _red_lens_indicators(records, from_lens, red_indicators, red_by_texel)
         _high_brake(records)
         plan._cluster(records)
-        plan._place_clear(clear, records, red_by_texel)
+        plan._place_clear(clear, records, red_by_texel, {id(sub): s.name for s in sections for sub in s.subsections})
         return plan
 
     def _cluster(self, records) -> None:
@@ -822,33 +860,112 @@ class LampPlan:
                     lamp.measure(r.lod, r.area, r.centre, r.normal)
                 self.tri_lamp[(id(r.sub), r.k)] = lamp.key
 
-    def _place_clear(self, clear, records, skip=frozenset()) -> None:
-        """Clear lenses light with the nearest lamp at the same end (within
-        CLEAR_LENS_REACH), else stay unlit. Lamp centres leave out the lens
-        triangles that are red by their texels (`skip`, record indices): with
-        them a tail lamp's centre moved onto its red lens and clear lenses
-        that lit with it went to the reverse lamp (JAG_XFR_10)."""
+    def _place_clear(self, clear, records, skip=frozenset(), sections=None) -> None:
+        """What clear lenses, lamp covers baked as lenses and rear reflectors light with: a lamp
+        that lies behind them, seen along the car's axis. They used to light with the nearest
+        lamp within CLEAR_LENS_REACH, so a cover over a reflector with no lamp of its own lit
+        with a lamp beside it: the VW GTI VR6's bumper fog covers glowed with its head lamps,
+        which Forza never lights (issue #174).
+
+        - A rear reflector piece (triangles joined by their corners, CLEAR_PIECE_SNAP) lights with the lamps whose triangles lie
+          inside its outline, within CLEAR_LENS_REACH either way along z (a reflector bowl
+          surrounds its bulb), each triangle with the nearest of them.
+        - A lens or cover triangle lights with the lamp surface right behind it (inside its
+          outline along z, up to CLEAR_LENS_REACH deep; lamp triangles and the reflectors lit
+          above), the rest of its piece with the nearest of the lamps the piece has behind it.
+        - A piece with no lamp behind it or in it lights with the nearest lamp of its own Forza
+          section within CLEAR_LENS_REACH (the VW GTI VR6's small reflector cups beside its tail
+          bulbs), else stays unlit.
+
+        Lamp centres for "nearest" leave out the lens triangles that are red by their texels
+        (`skip`, record indices): with them a tail lamp's centre moved onto its red lens and
+        clear lenses that lit with it went to the reverse lamp (JAG_XFR_10). sections: id(sub)
+        -> its section's name."""
+        import numpy as np
+
         centres = {}  # lamp key -> [area, weighted centre sum] on the lamp's finest LOD
+        surfaces: dict = {}  # (lod, front) -> ([corners], [lamp key]) of lamp triangles
+        own: dict = {}  # (section, lod, front) -> lamp keys of its lamp triangles
+        sections = sections or {}
         for n, r in enumerate(records):
             key = self.tri_lamp.get((id(r.sub), r.k))
-            if n in skip or key is None or r.lod != min(self.lamps[key].per_lod):
+            if key is None:
+                continue
+            own.setdefault((sections.get(id(r.sub)), r.lod, r.front), set()).add(key)
+            if r.pts:
+                pts, keys = surfaces.setdefault((r.lod, r.front), ([], []))
+                pts.append(r.pts)
+                keys.append(key)
+            if n in skip or r.lod != min(self.lamps[key].per_lod):
                 continue
             acc = centres.setdefault(key, [0.0, [0.0, 0.0, 0.0]])
             acc[0] += r.area
             for i in range(3):
                 acc[1][i] += r.centre[i] * r.area
+
+        def centre(key):
+            acc = centres.get(key)
+            return tuple(c / acc[0] for c in acc[1]) if acc and acc[0] else self.lamps[key].position
+
+        def nearest(keys, r):
+            return min(keys, key=lambda k: (math.dist(centre(k), r.centre), k))
+
+        def same_section(rs):
+            """The piece's own section's lamps whose centre is within CLEAR_LENS_REACH of it."""
+            keys = own.get((sections.get(id(rs[0].sub)), rs[0].lod, rs[0].front), set())
+            return {k for k in keys if any(math.dist(centre(k), r.centre) < CLEAR_LENS_REACH for r in rs)}
+
+        def surface(lod, front):
+            pts, keys = surfaces.get((lod, front), ([], []))
+            return np.array(pts, float).reshape(-1, 3, 3), keys
+
+        by_sub: dict = {}
         for r in clear:
-            best, best_d = None, CLEAR_LENS_REACH
-            for lamp in self.lamps.values():
-                if lamp.front != r.front or not lamp.area:
+            side = "L" if r.centre[0] > 0 else "R"
+            by_sub.setdefault((id(r.sub), r.front, side), []).append(r)
+        pieces = []
+        for rs in by_sub.values():
+            pieces += [[rs[m] for m in members] for members in _pieces([r.pts for r in rs])]
+        reflectors = [rs for rs in pieces if rs[0].sub.material in REFLECTORS]
+        lit = []
+        for rs in reflectors:
+            corners, keys = surface(rs[0].lod, rs[0].front)
+            tri = np.array([r.pts for r in rs], float).reshape(-1, 3, 3)
+            z = tri[:, :, 2].mean(1)
+            inside = set()
+            for c, key in zip(corners.mean(1), keys):
+                if key in inside:
                     continue
-                acc = centres.get(lamp.key)
-                position = tuple(c / acc[0] for c in acc[1]) if acc and acc[0] else lamp.position
-                d = math.dist(position, r.centre)
-                if d < best_d:
-                    best, best_d = lamp, d
-            if best is not None:
-                self.tri_lamp[(id(r.sub), r.k)] = best.key
+                near = np.abs(z - c[2]) < CLEAR_LENS_REACH
+                if near.any() and _inside_xy(tri[near], c[0], c[1]).any():
+                    inside.add(key)
+            inside = inside or same_section(rs)
+            if inside:
+                for r in rs:
+                    key = nearest(inside, r)
+                    self.tri_lamp[(id(r.sub), r.k)] = key
+                    lit.append((r, key))
+        for r, key in lit:
+            pts, keys = surfaces.setdefault((r.lod, r.front), ([], []))
+            pts.append(r.pts)
+            keys.append(key)
+        for rs in pieces:
+            if rs[0].sub.material in REFLECTORS:
+                continue
+            corners, keys = surface(rs[0].lod, rs[0].front)
+            z = corners[:, :, 2].mean(1)
+            got = {}
+            for r in rs:
+                x, y, rz = r.centre
+                depth = rz - z if r.front else z - rz  # +z is forward: behind a front lens is lower z
+                hit = (depth > -CLEAR_SAME_PLANE) & (depth < CLEAR_LENS_REACH) & _inside_xy(corners, x, y)
+                if hit.any():
+                    got[id(r)] = keys[int(np.where(hit, depth, np.inf).argmin())]
+            behind = set(got.values()) or same_section(rs)
+            for r in rs:
+                key = got.get(id(r)) or (nearest(behind, r) if behind else None)
+                if key is not None:
+                    self.tri_lamp[(id(r.sub), r.k)] = key
 
     # -- host light entries --
     def assign(self, upvh: bytes) -> LampPlan:
