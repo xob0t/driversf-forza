@@ -1,6 +1,6 @@
 # Vehicle spool size limits
 
-Updated: 2026-10-28
+Updated: 2026-10-29
 
 Where `Driver.exe` 1.04 sizes the memory a spooled vehicle uses, which of
 those sizes a bigger VEHC can hit, and how to raise each one. Addresses are
@@ -27,17 +27,17 @@ modes) against the `-b` project copy. Outputs are in `out/ghidra/spool-*`,
 | Global UID list | 16384 entries, write-only | fills faster with more submodels | code: NOP the counter (hypothesis that it matters) |
 | Resource hash arena | 45,000 nodes, global | more buffers/textures per car use more | not needed: nodes are recycled through a free list when a resource is released, so only what is resident counts ("Global lists") |
 | Slots per kind | SSLP +0x18: 35, 2, 2 | no | data plus pool table; not needed for detail |
-| Draw queue | 16384 draws per frame, all objects together (not per car) | yes, with dsf_enhanced's worldlod world: an unchecked replay overruns the queue, then an `INT3` or a write to address 0 | code: `dsfforza.asi` `[render]` drops the extra draws ("Draw queue" below) |
+| Draw queue | 16384 draws per frame, all objects together (not per car) | no: no ported car comes near the vanilla per-car maximum; dsf_enhanced's worldlod world fills it, and an unchecked replay then overruns the queue (an `INT3` or a write to address 0) | code: `dsfforza.asi` `[render]` drops the extra draws; DSF Enhanced's `DrawQueueEntries` raises it ("Draw queue" below) |
 
 The MDXN size itself has no separate limit. The 0x29B000 MDXN crash was
 first blamed on the 0x280000 read buffer path; the pad tests ("Test
 results") ruled that out, and the UID scheme of that build is the likely
 cause.
 
-## Correction: FUN_005A0DE0 measures SSIC, not vehicles
+## FUN_005A0DE0 measures SSIC, not vehicles
 
-`exe-vehicles.md` says FUN_005A0DE0 records the largest MDXN and NONR
-across the root entries. It doesn't. FUN_005A11E0 calls it with the SSIC
+FUN_005A0DE0 does not record the largest MDXN and NONR across the root
+entries, as was first read. FUN_005A11E0 calls it with the SSIC
 entry index, and FUN_008FC5C0 opens that entry as a nested CHNK, so it walks
 SSIC's two children: MDXN 0x9CB800 and NONR 0x13EAA0. The results land at
 spool object +0x72F0/+0x72F4 (FUN_005A11E0 runs with `this` = object +0xC)
@@ -89,8 +89,8 @@ FUN_005A0AF0 also reads +0x08 + 4k, only for a float load estimate.
 
 **Raise by data.** Set +0x08 (and +0x0C/+0x10 if interiors or exteriors
 grow) to the largest NONR rounded up to 4 KiB. Cost: 35 x the kind-0 value
-of heap, allocated at boot (0x100000 would cost 35 MiB; the exe is large
-address aware). A NONR larger than the buffer overruns the heap block. Note
+of heap, allocated at boot (0x100000 would cost 35 MiB of the 2 GB address
+space vanilla 1.04 has; it is not large-address aware, `exe-vehicles.md`). A NONR larger than the buffer overruns the heap block. Note
 that the cloned Desanne's NONR is 0x6C8D0 and the e5-big clone's is 0x6CF70,
 only 0x90 bytes under the vanilla limit; a converted car with a bigger UPVH or
 MODL will cross it.
@@ -345,8 +345,12 @@ or ranges and `--source` a list to cycle through (the test archive above).
   the graphics pool slot (about 1800 render objects, below) would run out
   soon after. Untested.
 - An archive past 1100 entries or 2 GiB on a game without the plugin hangs or
-  corrupts memory. `tools/install.ps1` refuses such an archive unless `-Asi` installs the plugin with it.
-- `port_batch.py --id-policy asi` uses the 92 free IDs inside 62..303 (after 1..61, before 304); the other policies don't.
+  corrupts memory. `tools/install.ps1` refuses such an archive unless `-Asi`
+  installs the plugin with it, and `dsff install --no-plugin` builds for at
+  most the vanilla room.
+
+`port_batch.py --id-policy asi` also uses the 92 free IDs inside 62..303
+(after 1..61, before 304), hence 849 against the default policy's 757.
 
 ## Graphics pool slots (confirmed-static)
 
@@ -441,10 +445,22 @@ writing address 0 at 0x00BB5737 (FUN_00BB5710's first store, EDX =
 index x 0x20 + entries = 0), called from FUN_00BB5A50. The equality checks
 also race: two threads that both read 16383 append 16384 and 16385. (The
 cache's own queues, the call at 0x00BB6FC3, take a size class from
-0x00FD2824 at least as big as the list, so they can't overflow.) RenderQueue_FilterAndConsume
+0x00FD2824 at least as big as the list, so they can't overflow.) A fourth append
+into the frame's queue is inlined in the job-side draw path at 0x006C21F0, with
+its own compare-exchange; it stops at the limit (`cmp esi,0x4000; jae` at
+0x006C21F9), so it can't overrun. RenderQueue_FilterAndConsume
 (0x00BAAEA0) hands `[entries, entries + count)` to RenderQueue_FilterRange
 (0x00BBC0C0), which filters it in packets into a fixed global output area
-(0x019C66C0); that is why the capacity isn't simply raised here.
+(0x019C66C0, about 3.5 MB); that is why the capacity isn't simply raised here.
+
+Each queued draw also takes draw data from one of two 4 MB per-frame arenas
+(`mov ebx,0x400000` at 0x00BAEF1D, renderer init FUN_00BAEF10). The engine's
+own bump (FUN_00BAEF80) fails when the arena is full; the job-side bump
+FUN_00BB78A0, 64 bytes and more per draw, has no check. DSF Enhanced's PR #12
+measured frames of 13,000 to 15,000 draws (3440x1440, wide FOV) that ran past
+an arena and crashed at 0x00C2A59A / 0x00C389A2 before the queue was full (its
+run `vm2-20261029-010751`; not rerun here). So a heavy frame can end the game
+below 16384 draws, where the queue's bound doesn't help.
 
 So the limit is 16384 queued draws per frame for everything on screen and in
 the passes that render it, not a per-car budget. One car's share is one
@@ -479,8 +495,12 @@ probe car spawned (runs below). The user's 21:9 view and terrain LOD x0.25
 draw more again.
 
 **Patch:** `dsfforza.asi` `[render]` (`asi.md`, "Draw queue") makes the
-append bounded and removes the trap, so a frame past 16384 draws loses its
-last draws instead of ending the game.
+three unchecked or trapping appends bounded and removes the trap, so a frame
+past 16384 draws loses its last draws instead of ending the game. It does
+nothing for the draw-data arenas. DSF Enhanced's `[Limits] DrawQueueEntries`
+(dsf-enhanced PR #12, open on 2026-10-29) raises the queues and the arenas and
+bounds the arena bump; `[render]` stands down when DSF Enhanced's guard is in
+(#194). What is left is issue #185.
 
 **In game (VM, master 3ca28fd's full build, the user's dsf_enhanced.asi and
 unmodified ini).** Neither crash reproduced: the probe spawns cars on a
@@ -600,15 +620,11 @@ The padding is an unknown `PADD` child at the end of the VEHC (or NONR).
 FUN_00858A70 skips unknown VEHC children, and LoadTaggedResources only loads
 tags it has providers for, so the geometry the game sees is identical.
 
-Reading the results:
-
-- under works, over crashes: the 2.5 MiB read path is the limit. Apply the
-  static-buffer patch (two imm32 writes above) and retest e5-big.
-- both work: the read path is fine; e5-big's crash is in its content (vertex
-  buffers of 29,919 and 18,052 vertices, 404 submodels, part LODs
-  with 41 submodels; all within the limits found here). Next step would be
-  to bisect those on top of the clone.
-- nonr-raise works: SSLP +0x08 is all a bigger NONR needs.
+`lim-nonr-overflow.sp` is not among the three runs. Both pad archives worked, so the read path
+is not the limit and the static-buffer patch above was never applied; e5-big's
+content (vertex buffers of 29,919 and 18,052 vertices, 404 submodels, part
+LODs with 41 submodels) is within every limit found here, and its crash is put
+down to the UID scheme of that build ("Test results").
 
 Running `tools/game/dump-spool-limits.ps1 -Every 5` beside any of these
 prints pool 8 to 11 slot usage (bytes and nodes, worst slot), the UID list

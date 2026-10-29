@@ -1,6 +1,6 @@
 # dsfforza.asi: runtime patches of Driver.exe 1.04
 
-Updated: 2026-10-28
+Updated: 2026-10-29
 
 One native plugin, `plugins\dsfforza.asi`, patches the running
 `Driver.exe` 1.04 in memory to lift limits that block large car batches.
@@ -35,6 +35,8 @@ Offline check: `tools\asi\build.ps1 -Test` maps `Driver.exe`'s image at
 module's init against it and exercises the hooks that need no game state.
 A second test process changes one byte in four all-or-nothing sets (archive
 readers, maker groups, card emblem, draw queue) and checks that nothing of each lands.
+A third creates DSF Enhanced's marker event and checks that `[render]` leaves
+its sites vanilla ([Draw queue](#draw-queue)).
 
 ## Archive size
 
@@ -392,10 +394,12 @@ range sits just below that:
 | 1 | the garage list walks IDs past 303 |
 | 0x1000 + n | n ≤ the maker group limit |
 | 0x2000 + id | the garage lists that ID |
+| 0x3000 + n | n ≤ the cars per maker group (`[garage] max_cars`; 20 without the card window) |
 
 An unpatched game looks the number up in the flag list and returns false.
 `register.lua` binary-searches the limits at start (`asiQuery`,
-`asiLimit`) and uses them for `garage`, `garageGroup` and `guardProfile`.
+`asiLimit`: groups, highest listed ID, cars per group) and uses them for
+`garage`, `garageGroup` and `guardProfile`.
 
 ### In game
 
@@ -474,19 +478,19 @@ bootstrap, `savetest.lua` and `out/garagefix/cfg_full.lua`), `-MenuKeys`
 Enter, Down × 110, Enter, Right, Esc, Esc, Enter, Up × 3, Esc
 (`out/garagefix/keys-full.txt`).
 
-**Pending** (the sandbox stopped surviving a game start after a host
-reboot on 2026-10-23; the host runs above cover `garage` and the save round
-trip. `garage-tests.ps1 -Vm` runs in the headless VM, but the VM copies the
-host profile into the guest at the start of every series, so `vanilla` and
-`check` need the sandbox or a host series that keeps the save):
+**Pending** (issue #197). The host runs above cover the save round trip
+with the plugin. `garage-tests.ps1 -Vm` runs in the headless VM, but the VM
+copies the host profile into the guest at the start of every series, so
+`vanilla` and `check` need a host series that keeps the save:
 
 - `vanilla`: the same save without the plugin loads and reaches Story, added
   IDs read false.
 - `check`: with the plugin again the five IDs read back true from the side
   file (persistence across a session, and across an unmodded one).
-- `garage`: picking a ported car at 304+ from the garage and driving it
-  out (the maker menu past 40 entries and a late maker's car list are
-  answered above).
+
+The third, `garage` (a ported car at 304+ picked in the garage and driven
+out), was run with the card window: run `vm-20261024-222016`, model 393
+("Maker groups past 20 cars" below).
 
 **Maker groups past 20 cars (confirmed-runtime, headless VM; the VM's
 dsf_enhanced at a 350 m traffic radius without full-detail traffic, which
@@ -517,9 +521,11 @@ lists them.
   the two full-roster runs (menu-02..13) differ in under 0.1 % of the pixels,
   except AUDI (36 cars, 1.2 %) and DODGE (31, 0.7 %), whose preview stacks
   changed.
-- Pictures of the full-roster build (made before #41 reworked the garage
-  pictures) don't show in either run: a lock icon on every card, vanilla cars
-  included; not caused by this change.
+- Pictures of the full-roster build don't show in either run: a lock icon on
+  every card, vanilla cars included. Not caused by this change: a full-roster
+  gui.sp holds 1,494 SPOL items, past the vanilla 1100 (run
+  `vm-20261024-224733`), which `[archive] spool_lists` lifted afterwards
+  (#43; "Spool item lists" above).
 - A maker of exactly 20 (issue #66; out/final-gui2 with the GUI step rebuilt
   for #50, `menu_debug=1`, `emblem_debug=1`). Before (plugin at 976abf6, run
   `vm2-20261026-142149`): ASTON MARTIN on 20 cards, all 1460 card decisions
@@ -542,8 +548,6 @@ lists them.
   in a save) is shown on up to 20 cards, and mod_hud's gate counts the
   group's cars, so its cards would all keep SF although card 20 stays empty.
   From the code only; every run above lists all cars.
-- Card N's disc lies over card N+1's picture and reads as that card's once
-  Forza and SF discs mix: issue #67.
 - The window after a drive: where the game restores `itemBrowserIndex` on
   return (FUN_006CCD50 sets it from a saved value), the window starts at car 0
   again, so in a long group the highlight would land on another car. Not run.
@@ -669,8 +673,10 @@ Module `lua` (`tools/asi/src/mod_lua.cpp`). Issue #56; runs and symptoms in
 ### The patch
 
 - `arena_mb` (default 32): the size pushed at 0x005E4C05 (`68 00 00 A0 00`).
-  Driver.exe is large-address aware and uses about 1.2 GB of its 4 GB
-  (`in-game-tests.md`, VM memory), so 22 MB more doesn't matter.
+  The game uses about 1.2 GB of address space (`in-game-tests.md`, VM
+  memory), so 22 MB more doesn't matter. Vanilla 1.04 is not large-address
+  aware (PE characteristics 0x0103), so that is 1.2 of 2 GB; the copy on the
+  test PC has the flag set by a 4 GB patch (`exe-vehicles.md`).
 - `push <dsfforza lua_Alloc>` at 0x005E7DB7 (`68 B0 4A 5E 00`). It calls
   FUN_005E4AB0 first. With `overflow=1` (default) a request the block refuses
   gets memory from a private `HeapCreate` heap instead; a pointer outside the
@@ -780,7 +786,7 @@ The game writes `g_fDigiData` for these ids only:
 - ids 6 and 7: the gear.
 
 It never writes ids 3 to 5. A copy taken when the frame's draw lists are built
-(`FUN_0087A8E0`, `rep movsd` at 0x0087AA7F) goes to the digital-dials vertex
+(`FUN_0087A8E0`, `mov ecx,0x1C; rep movsd` at 0x0087AA7F) goes to the digital-dials vertex
 shader. The shader adds `g_fDigiData[(id - 1) x 4 + comp]` to each vertex's v.
 
 **Patch.** `patch_call` at 0x00888FE6 calls the original first. Then, for each
@@ -808,19 +814,32 @@ full queue reaches the bounded append. All four sites are checked before any
 is written. The log gets a line on the first dropped draw, then at most one
 every 10 s with the running total, and a line each time a frame's queue first
 reaches a new multiple of 1024 entries from 8192 up, so a run shows how near
-its frames come. `[render] drop_full=0` keeps the vanilla trap.
+its frames come. `[render] drop_full=0` keeps the vanilla trap. A fourth
+append into the frame's queue, inlined in the job-side draw path at
+0x006C21F0, needs no patch: it already stops at the limit (`cmp esi,0x4000;
+jae` at 0x006C21F9; confirmed-static).
 
-**With DSF Enhanced** (dsf-enhanced PR #12, `[Limits] DrawQueueEntries`). DSF Enhanced owns the
-fix: it bounds FUN_00BB5710 itself, removes the trap at 0x00BB5B5A, enlarges both frame queues
-(65,536 entries by default, capacity at header +4), bounds the fifth inlined append at
-0x006C21F0 and grows the two 4 MB per-frame draw-data areas. It creates the named event
-`Local\DSFEnhanced.DrawQueue.<pid>` in DllMain once its guard is in. `[render]` opens that event
-first and, when it exists, patches nothing (log: "DSF Enhanced's draw queue guard is active").
-When dsfforza.asi loads first (from the game root), DSF Enhanced finds the three call sites
-patched, leaves them, and still enlarges the queues; the bounded append reads the capacity from
-the queue header, so it follows ("reached 11264 of 65536" in DSF Enhanced's tests). Without
-DSF Enhanced, `[render]` is the only guard, and the 4 MB draw-data areas stay unbounded; a
-vanilla world stays under half the queue, so they aren't reached there.
+**With DSF Enhanced** (dsf-enhanced PR #12, `[Limits] DrawQueueEntries`; still open on
+2026-10-29, so only DSF Enhanced builds with it create the marker). DSF Enhanced owns the fix:
+it bounds FUN_00BB5710 itself, sends the `INT3` at 0x00BB5B5A to a drop, enlarges both frame
+queues (65,536 entries by default, capacity at header +4), points the inlined append's constant
+at 0x006C21F9 at the new capacity and grows the two 4 MB per-frame draw-data areas. It creates
+the named event `Local\DSFEnhanced.DrawQueue.<pid>` in DllMain once its guard is in. `[render]`
+opens that event first and, when it exists, patches nothing (log: "DSF Enhanced's draw queue
+guard is active"). When dsfforza.asi loads first (from the game root), DSF Enhanced finds the
+three call sites patched, leaves them, and still enlarges the queues; the bounded append reads
+the capacity from the queue header, so it follows ("reached 11264 of 65536" in DSF Enhanced's
+tests).
+
+Without DSF Enhanced's fix, `[render]` is the only guard, and it covers the queue only. The
+draw data of each frame goes to one of two 4 MB arenas (`mov ebx,0x400000` at 0x00BAEF1D), and
+the job-side bump FUN_00BB78A0 takes 64 bytes or more per draw with no check against the
+arena's end (confirmed-static). DSF Enhanced's PR measured that at 3440x1440 with a wide FOV,
+frames of 13,000 to 15,000 draws ran past the arena and crashed at 0x00C2A59A / 0x00C389A2
+(writes from 0x006C21B2 and 0x006C22F0) before the queue was full (its run
+`vm2-20261029-010751`, a DSF Enhanced build without the fix; not rerun here). `[render]` can't
+help with that crash. A vanilla world stays under half the queue at 16:9, so neither limit is
+reached there (spool-limits.md, "Draw queue"; issue #185).
 
 Cost: nothing until a queue is full. A frame over the limit misses the draws
 submitted after it filled, for that frame only.
