@@ -618,6 +618,90 @@ def test_digital_dials_are_not_needles():
     assert cockpit.needle_check(None, _needle_interior([2], [1], blind=True), h) == ([], 2)
 
 
+def _open_cockpit(cowl_name: str = "hooda"):
+    """Eye at the origin, a wheel 0.45 m ahead, and in front only the bodywork round the
+    wheel (`cowl_name`): an open cockpit like the ARX-02a's, no dash."""
+    axis = cockpit._norm((0.0, 0.03, 1.0))
+    wheel = cockpit.Wheel((0.0, -0.25, -0.45), axis, 0.15)
+    cowl = _quad_section(cowl_name, [(-0.8, -0.7, -0.8), (0.8, -0.7, -0.8), (0.8, -0.12, -0.8), (-0.8, -0.12, -0.8)])
+    return {cowl_name: cowl, "steering_wheel": _wheel_disc(wheel.centre, axis, wheel.radius)}, wheel
+
+
+def test_cowl_holds_a_virtual_display_in_an_open_cockpit():
+    # Issue #147: the bodywork round an open cockpit's wheel is the car's outside
+    # (hood*, a_pillar), so the dash search finds no room; the cowl search may use it.
+    eye = (0.0, 0.0, 0.0)
+    for name in ("hooda", "a_pillar"):
+        static, wheel = _open_cockpit(name)
+        d, _, report = cockpit.pod_display(static, eye, wheel, 2, {}, 2)
+        assert d is None and report == {"virtual_display": "no room"}
+        d, housing, report = cockpit.pod_display(static, eye, wheel, 2, {}, 2, cowl=True)
+        assert d is not None and report["virtual_display"]["cowl"] is True, report
+        assert -0.8 < d.centre[2] < -0.7  # in front of the cowl,
+        assert cockpit._dot(d.normal, cockpit._norm(d.centre)) > 0.99  # facing the eye
+        # and out from under the HUD's lower corners.
+        down = math.degrees(math.atan2(-d.centre[1], math.hypot(d.centre[0], d.centre[2])))
+        across = math.degrees(math.atan2(d.centre[0], -d.centre[2]))
+        assert down <= cockpit.HUD_DOWN_DEG or -cockpit.HUD_LEFT_DEG <= across <= cockpit.HUD_RIGHT_DEG
+    # The housing of one virtual display keeps a second one off it.
+    static[housing.name] = housing
+    d2, _, _ = cockpit.pod_display(static, eye, wheel, 2, {}, 2, cowl=True, name="dsf_second")
+    assert d2 is not None
+    corners = [d2.point(u, v) for u in d2.rect[:2] for v in d2.rect[2:]]
+    box = cockpit.section_points(housing)
+    lo = [min(p[i] for p in box) for i in range(2)]
+    hi = [max(p[i] for p in box) for i in range(2)]
+    assert not any(lo[0] < p[0] < hi[0] and lo[1] < p[1] < hi[1] for p in corners)
+    # #92's dials on an open cockpit go there too.
+    dials, report, _ = cockpit.virtual_gauges(_open_cockpit()[0], {}, eye, _Car(), 2, wheel=wheel)
+    assert [g.family for _, _, g, _ in dials] == ["tach", "speed"] and report["virtual_display"]["cowl"]
+
+
+def test_wheel_display_moves_onto_a_virtual_display():
+    # Issue #147: DSF can't draw on the turning wheel, so the wheel's display patches go,
+    # rigidly and with their UVs, onto a virtual display in view.
+    eye = (0.0, 0.0, 0.0)
+    static, wheel = _open_cockpit()
+    on_wheel = cockpit.display_patches(static, eye, on_wheel=True)
+    assert len(on_wheel) == 1 and cockpit.display_patches(static, eye) == []
+    moved, housing, report = cockpit.wheel_display_pod(static, eye, wheel, {}, 2)
+    assert housing.name == cockpit.DASH_PANEL and len(moved) == 1
+    m, w = moved[0], on_wheel[0]
+    assert m.section == cockpit.DASH_PANEL and m.uv0 == w.uv0 and m.transform == w.transform
+    k = report["virtual_display"]["scale"]
+    assert k in cockpit.WHEEL_DISPLAY_SCALES
+    for ta, tb in zip(m.points, w.points):  # the same triangles, scaled by k
+        for i in range(3):
+            assert abs(math.dist(ta[i], ta[(i + 1) % 3]) - k * math.dist(tb[i], tb[(i + 1) % 3])) < 1e-6
+    screen = cockpit.section_points(housing, {"dsf_dial_display"})
+    n = cockpit._scale(m.towards_eye, -1)
+    plane = cockpit._dot(screen[0], n)
+    for tri in m.points:
+        for p in tri:  # just in front of the screen
+            assert abs(plane - cockpit._dot(p, n) - cockpit.WHEEL_DISPLAY_LIFT) < 1e-6
+    centre = cockpit._mean([p for tri in m.points for p in tri])
+    assert cockpit._dot(m.towards_eye, cockpit._norm(centre)) < -0.99  # facing the eye
+    # Without a display on the wheel there's nothing to move.
+    static["steering_wheel"].subsections = static["steering_wheel"].subsections[:1]
+    assert cockpit.wheel_display_pod(static, eye, wheel, {}, 2)[:2] == ([], None)
+
+
+def test_placeholder_cockpit_gets_virtual_dials():
+    # Issue #148: a placeholder cockpit carbin's cabin (the main carbin's) has no needle
+    # and no display; the car still has a speedometer and a tachometer.
+    eye = (0.0, 0.0, 0.0)
+    axis = cockpit._norm((0.0, 0.36, 0.93))
+    wheel = cockpit.Wheel((0.0, -0.25, -0.45), axis, 0.17)
+    dash = _quad_section(
+        "interior", [(-0.6, -0.6, -0.85), (0.6, -0.6, -0.85), (0.6, -0.02, -0.85), (-0.6, -0.02, -0.85)]
+    )
+    rim = [v.position for v in _wheel_disc(wheel.centre, axis, wheel.radius).lod0_vertices[1:5]]
+    static = {"interior": dash, "steering_wheel": _quad_section("steering_wheel", rim, ("leather",))}
+    assert cockpit.virtual_gauges(static, {}, eye, _Car(), 2, wheel=wheel) == ([], {}, {})
+    dials, _, extra = cockpit.virtual_gauges(static, {}, eye, _Car(), 2, wheel=wheel, assume=("tach", "speed"))
+    assert [g.family for _, _, g, _ in dials] == ["tach", "speed"] and set(extra) == {"dsf_dial_panel"}
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

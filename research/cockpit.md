@@ -62,8 +62,12 @@ and so are their materials.
   "Digital displays"), with rpm pieces made of 1 mm cells and whole segments
   ("Shimmer"). Where no scene drives a readout, a virtual dial or a virtual
   display stands in ("Gauges under the cowl", "Virtual dials on display
-  faces"). Open: #147 (7 racers with only a steering-wheel display), #148 (15
-  stub cockpits), #172 (stray hundreds digit), #195 (1-pixel specks).
+  faces"). A display only on the steering wheel is moved, live, onto a
+  virtual display on the dash or an open cockpit's cowl; a placeholder cockpit
+  gets virtual dials; virtual displays are placed from the head camera and
+  clear of DSF's HUD ("Displays on the steering wheel, placeholder cockpits",
+  #147, #148). Open: #172 (stray
+  hundreds digit), #195 (1-pixel specks).
 - Head camera: VO3D p430..432 from the Forza eye (`CameraOverrides`, else the
   fleet median), raised to see the rim 7.9 degrees down, but not so far that
   the cowl hides more than 5% of the needles' sweep (`camera_eye`,
@@ -1590,6 +1594,9 @@ eye sees on 70 cars (RS6 2003 and CL65 39%, S4 2004 and Dino 246 33%, Pantera
 4. *Stride-16 needles.* Hosts 250 and 293 draw their Dials material from a
    16-byte buffer (no normal; 145 vanilla interiors use 20). `_needle_vertex`
    writes the host's layout. No car on those hosts had needles before.
+   (Corrected 2026-10-29: that material is each host's `*_Digital_Dials`,
+   whose program doesn't turn needles; "Displays on the steering wheel,
+   placeholder cockpits".)
 
 After (offline, same survey with the new code): 459 cars with both, 111
 missing one. What is left is digital readouts the converter can't place a
@@ -1887,7 +1894,8 @@ format.
   4 x i16, s8 4 x f16, no normal. The same quads in the host's stride-20
   needle buffer drew as screen-filling triangles (run `vm2-20261027-091948`).
 - *No steering-wheel display.* The digital shader uses `g_ObjectToWorld` alone,
-  so its vertices can't follow the wheel's skin.
+  so its vertices can't follow the wheel's skin (checked in the programs since:
+  "Displays on the steering wheel, placeholder cockpits").
 
 ### The conversion (`convert/digital_dash.py`, `cockpit.digital_displays`)
 
@@ -1983,7 +1991,8 @@ scene is decomposed into what `g_fDigiData` can drive:
 - A readout the scene doesn't drive (`provides`) still gets #92's virtual dial
   or virtual display. The scene's displays count as a readout and are kept
   clear (`virtual_gauges(readout=, provided=)`).
-- So do steering-wheel-only displays.
+- So did steering-wheel-only displays, until "Displays on the steering wheel,
+  placeholder cockpits" moved them onto a virtual display of their own.
 
 ### Survey
 
@@ -2862,6 +2871,153 @@ dark. The Firebird's gloss and chrome parts are out of view behind its bonnet. T
 Cuda's paint differed in each run (blue, orange, dark green) although
 `-Palette 0` was given, so its bonnet isn't compared. Not checked: sunlight
 straight on a scoop (these runs were overcast), at night.
+
+## Displays on the steering wheel, placeholder cockpits (2026-10-29, issues #147, #148)
+
+23 cars of `out/build` (2026-10-29 13:18, master `ede81a1`) had no working
+speedometer or tachometer for these reasons: 7 open-cockpit racers whose only
+display is on the steering wheel and whose dash had no room for #92's virtual
+display (#147), 15 FH1 cars with a placeholder or missing cockpit carbin
+(#148), and the Volt, whose scene drives the speed digits but whose host (250)
+has no gauge record for a tachometer.
+
+### Can a display turn with the wheel? (confirmed-static)
+
+No, not through the vertex data. The vertex programs of the two DSF gauge
+paths, disassembled from the vanilla archive's SSIC (`out/g147/gpdis.py`,
+d3dcompiler `D3DDisassemble`):
+
+- **Needles** (GPCH 151 and 193): inputs position, the DashboardInstrument
+  texcoord and a normal; no semantic 9. With `M = g_InstrumentTransforms` and
+  `k = floor(id)`, a vertex goes to `M[0] (M[k] (p - t_k))`, `t_k` the
+  translation column of `M[k]`. `FUN_008A4660` writes `M[0]` from the object's
+  world matrix (+0x40), resets `M[1..7]` (`FUN_0040A4F0` seven times; identity,
+  hypothesis: a needle without a record is drawn at rest) and then writes
+  `M[id]` for each gauge record.
+- **Digital dials** (GPCH 153, 158, 163, 178, 181, 184): `g_ObjectToWorld` and
+  `g_fDigiData` only.
+
+The wheel is skinned through semantic 9 (`g_PanelTransforms`), which neither
+program reads, so a needle or digital-dial submodel can't carry the wheel's
+binding. Two other routes were looked at and not taken:
+
+- *A MODL part on the steering record.* Interior parts are tied to records
+  by LOD links (the needle part to the cluster record, role 185). No vanilla
+  steering record has a LOD link, and `FUN_008A5C90` draws the interior as
+  the one part of the chassis record's link, with `g_ObjectToWorld` set once
+  for the object (hypothesis from the decompile; untested in game).
+- *dsfforza.asi.* It could compose the wheel's turn into `M[k]` (static
+  geometry on a free needle id turns exactly; a needle only when its dial is
+  square to the column), but the live digits and rpm bar are drawn by the
+  digital program with the object's `g_ObjectToWorld`, which can't be changed
+  per submodel without hooking the draw. A wheel display would then be a
+  needle stand-in, not Forza's.
+
+**Vanilla cars don't mount gauges on the wheel.** Over the 150 vanilla
+interiors (`out/g147/vanilla_wheel_displays.py`), the DashboardInstrument
+vertex nearest the steering hinge is 14.5 cm from it (Jaguar E-Type, its
+cluster seen through the rim), then the Beetle 1963, Corvette 1960, Cobra
+(15 cm); vanilla race cars keep a fixed cluster on the dash.
+
+### The fix (`cockpit.py`)
+
+1. **Wheel displays move onto a virtual display** (`wheel_display_pod`, called
+   from `digital_displays` when no display is off the wheel and the needles
+   lack a speedometer or tachometer). The wheel's `digital_gauge` patches keep
+   their UVs, so the dash scene draws the same window on them; their points
+   move rigidly from the wheel display's plane onto a virtual display
+   (`pod_display`, housing `dsf_dash_panel`, the patches 1 mm in front of its
+   screen) and scale with it: `WHEEL_DISPLAY_SCALES` 1.5 down to 0.6 of the
+   wheel display's own size, the largest that fits. The wheel keeps its own
+   display (Forza's face, or blank). Report:
+   `cockpit.interior.digital_displays.moved_from_wheel`.
+2. **The cowl of an open cockpit** (`pod_display(cowl=True)`): the bodywork
+   round the wheel (`hood*`, and `a_pillar`, which on the ARX-02a is the
+   cockpit surround) may hold the housing, which may rise into the open sky
+   above it, as long as half of it, and half of its bottom quarter, stands in
+   front of bodywork within reach (the nose beyond 1.375 m counts as
+   background). Where nothing fits above the hub, centres go down to the rim's
+   bottom. Other virtual displays' housings (`dsf_*`) stay clear.
+3. **Clear of DSF's HUD** (`pod_display(hud=True)`). In the first VM run
+   (below) the placeholder cockpits' displays sat 25 to 30 degrees to the side
+   and 10 to 11 down, behind the HUD's speed box. The HUD covers the cockpit
+   view's lower corners: from about 13.5 degrees under the eye line, left of
+   7 degrees (the progress bar) and right of 23 degrees (the car and speed box)
+   (`HUD_*_DEG`, measured at 1280 x 720 on the ARX-02a's and R10's displays,
+   whose places are known; the head camera is about 80 degrees wide). The
+   passes (`place_pod`, `POD_PASSES`): the dash clear of the HUD, then the cowl
+   clear of it, then the dash as #92 placed it (report `under_hud`), so no car
+   loses the display it had.
+4. **From the head camera.** The game looks from the head camera, which
+   `camera_eye` raises over the Forza eye to see the rim 7.9 degrees down: 4.3
+   cm on the Durango, 12.3 cm on the GT-R GT1. Placed from the Forza eye, the
+   Durango's dials sank behind the HUD's speed box and the GT-R's moved display
+   under its dash top in game (run `vm1-20261029-151818`). `place_pod` searches
+   from the camera the rim rule raises to, the most it rises.
+5. **Placeholder cockpits** (`is_stub`, the main carbin's cabin): Forza has
+   no needle and no display there, and the tick tables are mostly empty, but
+   these are road cars and trucks with a speedometer and a tachometer
+   (`virtual_gauges(assume=)`): #92's virtual display with two dials on the
+   dash, scales from Forza's top speed and redline. The Leaf and Prius get a
+   tachometer too: Forza models both with gears and a redline (Leaf 6550 rpm,
+   5 gears), so nothing in its data tells them apart.
+
+**The Volt keeps no tachometer.** Its host (250) has no gauge record, and its
+only dial material is the vanilla Volt's `Chevrolet_Volt_2011_Digital_Dials`
+(as on 293, `Buggy_Boxy_Digital_Dials`): `host_interior` takes it for the needle
+material by name, but its program is a digital one, which reads `g_fDigiData`
+and not `g_InstrumentTransforms`, so a needle on it can't turn whatever record
+the hierarchy gets ("One-gauge hosts" called these stride-16 needles). The
+real Volt has no tachometer and Forza's Volt scene shows no rpm either; its
+speed digits work.
+
+### Survey
+
+`out/g147/gauge_survey.py` reads a build (needle ids with a gauge record, and
+the readouts the scene drives); `out/g147/fit_survey.py` runs `cockpit.fit` on
+the cached cars. Before: `out/build`, 534 of 573 cars with both a working
+speedometer and tachometer. After: `cockpit.fit` with this code over the 67 cars
+the change can reach (the 39 without both, the 26 with a #92 virtual display,
+and the cars on hosts 250 and 293; the others take none of the new paths:
+their displays aren't only on the wheel, their dash pod search isn't reached,
+their cockpit isn't a placeholder): **556 of 573**, none lost.
+
+| Group | Cars | Now |
+| --- | ---: | --- |
+| #147, wheel display only, no room before | 7 | ARX-02a x2 and GT-R GT1 x2: their wheel LCD, moved; R10 x2: #92 dials on the cowl; R15 TDI: its LCD moved, but only under the HUD's lower left corner (`under_hud`), so hidden in game |
+| #148, placeholder cockpit | 15 | #92 dials on the dash, all 15 |
+| the Volt | 1 | speed digits only, no tachometer (above) |
+| wheel display only, #92 dials before | 19 | their own wheel LCD, moved (Lola AMR x2, FLM09 x3, NSX, SC430 x3, MC12 Corsa, B09 x2, Furai, GT-R x2, Skyline 2003, Fairlady Z x2, Panoz LMP, 908 x2); 4 of them (GT-R x2, Skyline 2003, Panoz LMP) only under the HUD's lower corner (`under_hud`) |
+| #92 dials elsewhere | 8 | moved by the HUD rule and the camera: M3 GT2, F40 Competizione, Reventon x2, Evora (still `under_hud`), Aygo, Tuscan S (the Volt's is dropped as before) |
+
+The cars that still lack a gauge have none in Forza either (250 GTO, GT40,
+DBR1, Mini, Beetle 1968...), keep the host's vanilla cockpit (the Express: the
+Savana has no tachometer), or are the Volt.
+
+### In game (VM, confirmed-runtime)
+
+`run-series.ps1 -Vm -Asi -HoldMph '40,90' -ShotSeconds 3`; before `out/build`
+(master, 2026-10-29 13:18), after the 10-car build of this branch:
+
+- Before: `vm2-20261029-144816` (vanilla 147, ARX-02a, R10, GT-R GT1 #24,
+  Durango, Prius, tour bus, Volt), `vm2-20261029-151836` (FLM09, R15 TDI,
+  Skyline 2003). None of the #147 and #148 cars shows a gauge; the FLM09's #92
+  dials sit half under the progress bar.
+- After, first code: `vm1-20261029-144633`, `vm1-20261029-151818`. The
+  placeholder cockpits' dials were behind the HUD's speed box, the GT-R's
+  display under its dash (from the camera, not the Forza eye): items 3 and 4.
+- After, final: `vm1-20261029-160129` (straight ahead) and
+  `vm1-20261029-160513` (Left held while the speed is held). The ARX-02a's
+  LCD on the cowl reads its speed, gear and rpm bar; the R10's two dials stand
+  on its cowl; the GT-R GT1's LCD on the dash top (a roll-cage tube crosses
+  it); the FLM09's left of the wheel; the Durango's and the Prius's dials on
+  the dash left of the wheel, turning. With the wheel turned hand over hand
+  the displays stay where they are and in sight.
+  `img/gauges-wheel-displays-ingame.jpg`, `img/gauges-placeholder-cockpits-ingame.jpg`,
+  `img/gauges-wheel-steering-ingame.jpg`.
+- The tour bus shows no cabin at all in these runs, and so does master's code
+  in a one-car build (`vm1-20261029-153539`), so that is not this change
+  (issue #255).
 
 ## Risks and open questions
 
