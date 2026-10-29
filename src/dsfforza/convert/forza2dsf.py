@@ -898,11 +898,10 @@ def wheel_blur_section(sections, lods, centre=(0.0, 0.0, 0.0)) -> carbin.Section
 # (wheel_skies, with the rotor among the occluders), so it lies in the wheel's shadow like the
 # barrel. A rotor of more than BRAKE_ROTOR_MAX_TRIANGLES (drums, drilled discs: 145 of the 1146
 # front and rear rotors, up to 9410 triangles) is replaced by a plain disc of its size
-# (plain_rotor). Only at the finest wheel LODs (BRAKE_ROTOR_MAX_LOD). The calipers, which
+# (plain_rotor). Only on each entry's finest LOD (the exterior, the full entry's mask 4). The calipers, which
 # don't turn, are left out (#212).
 ROTOR_CARBINS = {"front": "rotorLF_LOD0.carbin", "rear": "rotorLR_LOD0.carbin"}  # port_car.extract_brakes
 BRAKE_ROTOR_SECTION = "dsf_brake_rotor"
-BRAKE_ROTOR_MAX_LOD = 2  # Forza LODs drawn with the rotor (the exterior's 1, the full entry's mask 4)
 BRAKE_ROTOR_MAX_TRIANGLES = 2000
 ROTOR_RING = 0.6  # share of the rotor's radius where the friction ring starts
 PLAIN_ROTOR_SEGMENTS = 32
@@ -2327,12 +2326,13 @@ def convert(
 
     rotor_cache: dict = {}
 
-    def wheel_sections(kind: int, part: int, lod: int) -> list:
-        """car.wheel, plus the axle's brake rotor (brake_rotor_section) at the finest LODs. One
-        rotor section per (axle, fit, LOD), so the full and exterior entries share wheel_skies."""
+    def wheel_sections(kind: int, part: int, lod: int, finest: bool = True) -> list:
+        """car.wheel, plus the axle's brake rotor (brake_rotor_section) on the entry's finest
+        LOD. One rotor section per (axle, fit, LOD), so entries drawing the same LOD share
+        wheel_skies."""
         axle = "rear" if hw.axles.get((kind, part)) == "rear" else "front"
         rotor = car.rotors.get(axle) if opts.brake_rotors else None
-        if not rotor or lod > BRAKE_ROTOR_MAX_LOD:
+        if not rotor or not finest:
             return car.wheel
         fit = part_fit(kind, part)
         key = (axle, fit, wheel_lod(car.wheel, lod))
@@ -2605,7 +2605,7 @@ def convert(
                 for wheel_part in hw.full_parts:  # Desanne: part 31; 33 hosts split front/rear
                     part_lods.setdefault(wheel_part, {})[mask] = add_geometry(
                         builder,
-                        wheel_sections(0, wheel_part, lod),
+                        wheel_sections(0, wheel_part, lod, finest=mask == min(opts.lods)),
                         lod,
                         place,
                         wheel=True,

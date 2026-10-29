@@ -893,8 +893,8 @@ shading"); Forza draws a brake disc and caliper there. Scratch scripts in
 - `port_car.extract_brakes` caches the left front and rear rotor carbins as
   `rotorLF_LOD0.carbin` / `rotorLR_LOD0.carbin` (own stamp
   `brake_source.json`); `load_car` reads them into `ForzaCar.rotors`.
-- `convert` adds the axle's rotor to each wheel part at the finest wheel LODs
-  (`BRAKE_ROTOR_MAX_LOD` 2: the exterior's LOD 1 and the full entry's mask 4):
+- `convert` adds the axle's rotor to each wheel part on each entry's finest LOD
+  (the exterior, Forza LOD 1, and the full entry's mask 4, Forza LOD 3):
   the front rotor to the front or only wheel part, the rear one to a rear part
   (split hosts, "Rear wheel parts"). One model serves both sides, so the left
   rotor stands for the right (its mirror image). The rotor keeps Forza's size
