@@ -261,12 +261,56 @@ TO FILL
 
 ## Before/after
 
-TO FILL
+`render_compare diff --before A --after B` (`render_diff.py`): the cars whose drawn
+data differ are found by hashing, in both archives, each car's three VEHC entries: their
+MDXN and NONR's MODL, UPVH and paint palette (SPSR). VO3D (handling, cameras) and VSRT
+are left out, so a handling change touches no car. Hashing 573 cars in both archives
+reads a few GB; on 17 cars it takes 4 s. Only those cars are rendered, from both builds
+against the same Forza reference. Per view, mode and region it reports the share of the
+region's pixels that changed (moved, or delta E 6 or more), the delta E, what draws the
+region before and after, and the flags each build raises against Forza (fixed, new).
+`diff.html` shows before | after (changed pixels outlined) | Forza.
+
+On #190 (the 17 calibration cars built from 50b7cb6 and from d1fbc57 at the same IDs,
+`out/rc/diff-190`): all 17 cars' drawn data changed, 6 are drawn differently: the X6 M's
+tails (82 to 88% of the region's pixels; "no glow by day and dark" fixed, score 7.4 to
+2.7), the Mustang GT 05's head lamps (68 to 79%; 4.4 to 2.6), the Esperante GTLM's head
+lamps (91 to 94%), the Golf R's and Mazda 2's tails, the X5 M a little (8 to 15% in the
+lit modes). The other 11 render alike: their data differ because #192's handling change
+moves the settled hubs (UPVH, a few bytes) and the full entry's atlas is not built byte
+for byte the same twice (#84); `diff.json` lists them as `renders_alike`
+(`img/render-compare-diff-190.jpg`). 359 s for the 17 cars at 2 jobs (21 s a car
+and build pair).
 
 ## Runtime
 
-TO FILL
+A car (exterior five views, cockpit, full entry two views; 800 x 450): 25 to 45 s, median
+about 37 s on this PC (load 1 s, Forza scene and lamp plan 2 to 4 s, cockpit fit 5 s, the
+geometry match about 1 s, 2 x 8 rasters and 2 x 19 shades, the scores 1 s a view). The
+roster: 573 cars in about 2 h 30 at 4 jobs and then 2 (Idle priority; the tool lowers
+itself, its workers inherit it). `--keep` stores 6.6 MB a car (3.8 GB for the roster);
+`rescore` scores the stored renders again, 2 jobs about 25 min for 573 cars, and resumes.
 
 ## Open
 
-TO FILL
+1. The Esperante GTLM's head lamps and its left/right tails (#190) don't separate
+   (Calibration). Left/right symmetry is not measured.
+2. The cockpit coverage flag (calibrated on the Audi R10s' lid, #157) fires on 134 cars,
+   most from the shell: the reference's is the finest LOD, ours the converter's coarser
+   one, so the bonnet seen through the windscreen differs by design. It is weighted down;
+   a mask of the cabin below the windscreen would make it specific.
+3. Glow levels are compared shape against shape, not in absolute terms, except the
+   day-time glare limit: the converter maps glow onto vanilla's distribution on purpose.
+4. Forza's shaders are approximated: tread, carbon and grille-mesh tiling textures are
+   flat; blend states of the lamp glass are guessed (lenses tint what is behind); the
+   paint is the built car's palette entry on both sides. Forza's FM4 thumbnails are
+   darker and their rims darker than both renders. Calibrating against Forza itself
+   (Xenia) is a later task.
+5. About 2% of a car's body triangles match no Forza triangle: the main-carbin steering
+   wheel, which the converter moves onto the cockpit's rim (#117), and a few others; they
+   are region `other`, not scored.
+6. The reference uses the current converter's lamp plan for every build (calibration
+   builds from older commits included).
+7. Trims "detail lost" fires on 256 cars: Forza's trim texels against DSF's flat shared
+   trim (the one dark texel). The converter moves detailed trims to the atlas
+   (`trim_art`); which of these are real (grille bars drawn flat) is not sorted.

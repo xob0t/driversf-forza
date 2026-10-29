@@ -321,3 +321,10 @@ def test_digest_ignores_handling():
     b = render_diff.vehc_digest(*car(b"vertices", b"handling B"))
     c = render_diff.vehc_digest(*car(b"vertexes", b"handling A"))
     assert a == b != c
+
+
+def test_glass_windows_are_windows():
+    """FH1 windows drawn with the `glass` technique (glassF, glassR...) are windows, not lamp covers."""
+    assert fr.region_of("glassF", "glass", "glass", "lights", True)[0] == fr.GLASS
+    assert fr.region_of("glassR", "glass", "glass", "lights", False)[0] == fr.GLASS
+    assert fr.region_of("lexanLHL", "glass", "glass", "lights", True) == (fr.FRONT_LAMPS, "cover")

@@ -621,7 +621,10 @@ def flags_for(metrics: dict) -> list[dict]:
                 continue
             limit = L["cockpit_missing"] if region == fr.COCKPIT else L["missing"]
             if m.get("missing") is not None and m["ref_px"] >= MIN_PIXELS * 2 and m["missing"] > limit:
-                severity = m["missing"] * (20 if region == fr.COCKPIT else 1)
+                # (the cockpit: weighted down: the reference's shell is the finest LOD, ours the
+                # converter's coarser one, so the bonnet seen through the windscreen differs on
+                # many cars by design; research/render-compare.md, "Open")
+                severity = m["missing"] * (5 if region == fr.COCKPIT else 1)
                 text = (
                     f"{region}: {m['missing']:.0%} not drawn"
                     if region != fr.COCKPIT
@@ -989,35 +992,60 @@ def compare_car(
     return result
 
 
-def rescore(run_dir: Path) -> list[dict]:
+RESULT_KEYS = ("media", "spool_id", "game", "score", "flags", "error", "seconds", "match")
+
+
+def _scoring_stamp() -> str:
+    """Digest of this module's source: a car rescored with the same code is not done again."""
+    import hashlib
+
+    return hashlib.blake2b(Path(__file__).read_bytes(), digest_size=8).hexdigest()
+
+
+def _rescore_car(path: str, stamp: str) -> dict:
+    path = Path(path)
+    res = json.loads(path.read_text(encoding="utf-8"))
+    folder = path.parent / res["media"]
+    stored = sorted(folder.glob("*.npz")) if folder.exists() else []
+    if stored and res.get("rescored") != stamp:
+        images = {p.stem: load_renders(p) for p in stored}
+        metrics = {}
+        for key, r in images.items():
+            modes = [m for m in r["ours"] if m in cr.LIGHTINGS]
+            metrics[key] = {"day": region_scores(r, "day")} if key == "cockpit" else score_view(r, modes)
+        flags = flags_for(metrics)
+        res.update({"metrics": metrics, "flags": flags, "score": car_score(flags), "rescored": stamp})
+        _save_images(folder, images, flags)
+        path.write_text(json.dumps(res, indent=1), encoding="utf-8")
+    return {k: res.get(k) for k in RESULT_KEYS}
+
+
+def _rescore_worker(args):
+    idle_priority()
+    paths, stamp = args
+    return [_rescore_car(p, stamp) for p in paths]
+
+
+def rescore(run_dir: Path, jobs: int = 1) -> list[dict]:
     """Score a --keep run again from its stored renders (after a change of the metrics or
-    the limits); rewrites the cars' JSON and images and roster.json."""
+    the limits); rewrites the cars' JSON and images and roster.json. Cars already rescored
+    by this code (their "rescored" stamp) are kept, so an interrupted rescore resumes."""
     run_dir = Path(run_dir)
-    results = []
-    for path in sorted((run_dir / "cars").glob("*.json")):
-        res = json.loads(path.read_text(encoding="utf-8"))
-        folder = run_dir / "cars" / res["media"]
-        stored = sorted(folder.glob("*.npz")) if folder.exists() else []
-        if stored:
-            images = {p.stem: load_renders(p) for p in stored}
-            metrics = {}
-            for key, r in images.items():
-                metrics[key] = (
-                    {"day": region_scores(r, "day")}
-                    if key == "cockpit"
-                    else score_view(r, [m for m in r["ours"] if m in cr.LIGHTINGS])
-                )
-            flags = flags_for(metrics)
-            res.update({"metrics": metrics, "flags": flags, "score": car_score(flags)})
-            _save_images(folder, images, flags)
-            path.write_text(json.dumps(res, indent=1), encoding="utf-8")
-        results.append(
-            {k: res.get(k) for k in ("media", "spool_id", "game", "score", "flags", "error", "seconds", "match")}
-        )
+    paths = [str(p) for p in sorted((run_dir / "cars").glob("*.json"))]
+    stamp = _scoring_stamp()
+    jobs = max(1, min(jobs, len(paths) or 1))
+    if jobs == 1:
+        results = _rescore_worker((paths, stamp))
+    else:
+        from concurrent.futures import ProcessPoolExecutor
+
+        with ProcessPoolExecutor(jobs) as pool:
+            parts = pool.map(_rescore_worker, [(paths[i::jobs], stamp) for i in range(jobs)])
+            results = [r for part in parts for r in part]
     roster_path = run_dir / "roster.json"
     summary = json.loads(roster_path.read_text(encoding="utf-8")) if roster_path.exists() else {"cars": len(results)}
     summary["ranking"] = sorted(results, key=lambda r: -(r.get("score") or 0))
-    summary.setdefault("errors", sum(1 for r in results if r.get("error")))
+    summary["errors"] = sum(1 for r in results if r.get("error"))
     summary.setdefault("seconds", 0)
     summary.setdefault("views", [])
     summary.setdefault("build", str(run_dir))
@@ -1145,6 +1173,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     q = sub.add_parser("rescore", help="score a --keep run again from its stored renders")
     q.add_argument("run", type=Path)
+    q.add_argument("--jobs", type=int, default=1)
     d = sub.add_parser("diff", help="before/after: the cars two builds draw differently, and how")
     d.add_argument("--before", type=Path, required=True, help="build folder (master's)")
     d.add_argument("--after", type=Path, required=True, help="build folder (the change's)")
@@ -1208,7 +1237,7 @@ def main(argv: list[str] | None = None) -> int:
         print(render_diff.write_sheet(args.out))
         return 0
     if args.cmd == "rescore":
-        for r in rescore(args.run)[:20]:
+        for r in rescore(args.run, args.jobs)[:20]:
             print(
                 f"{r.get('score') or 0:7.2f}  {r['media']:32} "
                 + "; ".join(f["text"] for f in (r.get("flags") or [])[:3])

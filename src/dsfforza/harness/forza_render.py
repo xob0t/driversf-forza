@@ -129,6 +129,8 @@ def region_of(section: str, technique: str, role: str, family: str | None, front
     t = fm.technique_source(technique).lower()
     if CABIN_SECTION.match(section) or t in ("interior", "interior_banner"):
         return CABIN, ""  # seen through the windows only
+    if is_window(section, t):
+        return GLASS, ""
     function = lamp_function(t, section, family)
     if function is not None and function != "lamp_trim":
         return (FRONT_LAMPS if front else REAR_LAMPS), function
@@ -145,6 +147,14 @@ def region_of(section: str, technique: str, role: str, family: str | None, front
     if role == fm.TYRE:
         return WHEELS, ""
     return TRIMS, ""
+
+
+def is_window(section: str, technique: str) -> bool:
+    """A window drawn with the lamp-cover technique `glass` (FH1 cars' windscreens and side
+    windows): the converter keeps those as window glass (dsf_materials.WINDOW_SECTIONS)."""
+    from dsfforza.convert import dsf_materials as dm
+
+    return technique.lower() == "glass" and section.lower() in dm.WINDOW_SECTIONS
 
 
 class _Atlases:
@@ -220,6 +230,12 @@ class _Materials:
         if sm.role == fm.SKIP or sm.kind == "none":
             return None, sm.role, sm.family
         tech = sm.technique
+        if is_window(section.name, tech):
+            key = ("window",)
+            if key not in self.index:
+                self.index[key] = len(self.materials)
+                self.materials.append(cr.Material("glass", None, np.zeros(3, np.float32), program="glass", name=tech))
+            return self.index[key], fm.GLASS, None
         swatch = None
         if sm.kind == "swatch" and sm.family:
             atlas = self.atlases.raw.get(sm.family) if self.atlases.get(sm.family) is not None else None
