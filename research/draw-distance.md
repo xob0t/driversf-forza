@@ -1,13 +1,13 @@
 # Car draw distance, pop-in and distant lamps
 
-Updated: 2026-10-23 (runtime measurements on the host)
+Updated: 2026-10-29 (runtime measurements on the host, 2026-10-23)
 
 Why traffic cars pop into view and grow parts as they approach, and why their
 brake and position lamps stand out when far away. Covers the traffic spawn
 radius, the vehicle LOD selector and its per-preset thresholds, which parts
 each MODL LOD has, and the lamp flare sprites with their distance curves.
 Each section ends with a patch plan for the user's other mod, DSF Enhanced
-(`C:\Users\admin\Documents\GitHub\driver-sf-mods`, `src\dsf_enhanced.cpp`).
+(<https://github.com/xob0t/dsf_enhanced>, `src/dsf_enhanced.cpp`).
 
 Evidence tags as elsewhere: `confirmed-static` (read in Driver.exe or data),
 `confirmed-runtime` (measured in game; since 2026-10-23 on the host with
@@ -16,8 +16,8 @@ VAs in the vanilla Driver.exe 1.04 (image base 0x400000; DSF Enhanced uses
 RVAs = VA - 0x400000). The engine singleton is `[0xFE7228]`.
 
 Tools and outputs: `out/drawdist/re.py` (capstone helpers: dump, xref, calls,
-dis), Ghidra decompiles in `out/ghidra/dd-*` (project copy
-`C:\Tools\GhidraProjects\driversf-forza-drawdist`), MODL survey
+dis), Ghidra decompiles in `out/ghidra/dd-*` (from a local copy of the
+Ghidra project, not in the repo), MODL survey
 `out/drawdist/modl/`, lamp shader and flare asset survey
 `out/drawdist/lamps/`, in-game probe `tools/game/lua/dsfforza/drawdist.lua`
 (runs with `out/drawdist/probe/run-dd.ps1 -Modes <ddconfig name>`), run parsers
@@ -596,7 +596,10 @@ Notes on these values:
   - For another aspect: K = 57.5 × P00·P11 / 3.33, and distances scale
     with √K.
 - **Risks:**
-  - more triangles and draw calls (batches of 32);
+  - more triangles and draw calls (batches of 32). Each frame's draw queue
+    holds 16384 draws (`spool-limits.md`, "Draw queue"); with DSF Enhanced's
+    worldlod world it reached 11,264 at world load, and dsfforza.asi's
+    `[render]` drops what doesn't fit (#185, #186, #194);
   - category 2 is shared by the Shift-view renderer (`0x8F12D0`) and
     per-view managers, and DSF Enhanced only patches view 0.
 
@@ -629,10 +632,11 @@ Notes on these values:
     install (dated 2026-07-07).
   - Brightness above about 4 saturates.
 
-## Implemented in DSF Enhanced (2026-10-23, working tree, not committed)
+## Implemented in DSF Enhanced (2026-10-23, its commit `41bc25e`)
 
-`src/dsf_enhanced.cpp` and `src/dsf_enhanced.ini` in
-`C:\Users\admin\Documents\GitHub\driver-sf-mods`:
+`src/dsf_enhanced.cpp` and `src/dsf_enhanced.ini` of DSF Enhanced
+(<https://github.com/xob0t/dsf_enhanced>, `main`; the shipped values below
+are its ini's defaults there, checked 2026-10-29):
 
 - **Removed:** `TrafficSpawnDistanceScale`, the Lua `pingInRadius` script
   (`TryApplyTrafficSpawnRadiusLuaPatch`), its dispatch from the error-message page hook (that hook
@@ -656,7 +660,7 @@ Notes on these values:
   `d1:v1, d2:v2, d3:v3`, written into the table at `0x120D1F8` once the static initialiser has
   filled it, re-checked every 250 ms. Shipped: scale `6:0, 80:0.45, 300:0.6`, brightness
   `0:1, 20:2.5, 300:1.2`, transparency unchanged.
-- **`[General] TrafficDiagnostics`**: every 2 s, fps (a `Present` counter, hooked only with this
+- **`[General] TrafficDiagnostics`** (off by default): every 2 s, fps (a `Present` counter, hooked only with this
   option) and the counts above (wanted roads, active roads, active lanes, vehicles).
 
 Harness: `run-series.ps1 -Override` (and `run-dd.ps1 -Override`) now take root files,

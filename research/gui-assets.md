@@ -1,6 +1,6 @@
 # Garage pictures, HUD badge and model name
 
-Updated: 2026-10-25
+Updated: 2026-10-29
 
 How DSF shows a car's picture, maker badge and model name, and how ported
 cars get their own. Code: `src/dsfforza/game/gui_assets.py`. Evidence tags as elsewhere;
@@ -318,9 +318,11 @@ nameplate glyph. Writes `out/gui/gui.sp`, `out/gui/Fonts.fchunk`,
 `ManufacturerName`, `ModelName`), previews and `gui-assets.json`.
 `register.lua` loads `dsfforza\hud.lua` and applies it over the copied
 entry. Every entry also gets `GarageEmblem = 1` and Fonts.fchunk the
-Forza emblem texture (garage card emblem, below; needs dsfforza.asi). Model names come from the media name (`SkylineGTR` → `SKYLINE GTR`)
-unless `--name` gives one; Forza's own name strings are LSB2 IDs (not
-decoded).
+Forza emblem texture (garage card emblem, below; needs dsfforza.asi). Model
+names are Forza's own (`car_texts`: DisplayName, List_CarMake and
+List_FamilyModel through `forza_strings.py`, "Names from Forza's string
+tables" below), else the media name (`SkylineGTR` → `SKYLINE GTR`);
+`--name` overrides both.
 
 Test set (`out/gui/build2`, from `out/lights/build2/ported-lp.sp`):
 
@@ -368,8 +370,8 @@ at 1100 items: a longer list isn't loaded at all.
 space is 0..255 whatever the font texture holds (FNTD codes are u16, but
 the garage and the HUD record (FUN_006C40C0, next section) format
 `(char)Manufacturer` with "%c" into 2-byte buffers). Free: 3 safe codes, 9
-unused vanilla glyphs, 128..159 (32, in use by the 31-car batch, still
-untested) and, behind `--control-codes`, 1..31 without tab, line feed and
+unused vanilla glyphs, 128..159 (32; they draw, "Adding glyphs" above)
+and, behind `--control-codes`, 1..31 without tab, line feed and
 return (28, untested: the text path may act on them). A second font page or
 multi-glyph plates don't help while the value is one character.
 
@@ -485,7 +487,8 @@ or text + 2 (plate), look up the code, and call the element's own vtable
 against its original bytes and skipped (logged) if another plugin changed
 it; the ctor hook is applied only if at least one site was.
 
-**Data (`dsff gui_assets --wide-glyphs`, default off).** The one-byte
+**Data (`dsff gui_assets build --wide-glyphs`, default off; `dsff install`
+passes it).** The one-byte
 plan above still runs and stays in `Manufacturer`/`Model` as the fallback
 for a game without the plugin. On top, `plan_wide_glyphs` gives one code
 per maker DSF has no badge for (Forza logo) and one per model name DSF has
@@ -505,7 +508,8 @@ fields are ignored and the one-byte codes show.
 Glyph space: shelf-packing 800 plates (98 x 18..34) and 60 badges fits in
 4 pages of 1024 x 652 (5 of 1024 x 500), about 2.5 MB of DXT5. Model ids
 up to 4095 (the plugin's table). Garage-shop and panel screens use the same
-calls, so they show the wide glyphs too (not yet looked at in game).
+calls, so they show the wide glyphs too (the vehicle panel is checked in
+game, Open 7; the shop is not).
 
 `uv run dsff gui_assets glyphtest --ids 1,2,... --out out/hud/glyphtest`
 writes a stress-test Fonts.fchunk (40 numbered badges "B1".., 400 plates
@@ -950,8 +954,9 @@ and Fonts.fchunk, `gui_assets` now reads the originals from
    Those shots cover CHEVROLET (46 cars) and FORD (49), each scrolled to the
    end, past it and back past the start, and GMC (8), in runs
    `vm-20261026-120559` and `vm1-20261026-130246`. Each decision matches the
-   car's `GarageEmblem`, except in a 20-car group (ASTON MARTIN), which keeps SF
-   by design (issue #66). That the disc reads as the next card's is issue #67.
+   car's `GarageEmblem`, except in a 20-car group (ASTON MARTIN), which then
+   kept SF (issue #66, fixed since by #76, above). That the disc reads as the
+   next card's is the vanilla layout (issue #67, closed as such).
 9. Answered: the crash with `[garage]` on (runs `host-20261023-080433`,
    `-080858`, `-081321`) was not the emblem patch. The garage fills its maker
    menu (FUN_006C6940) into four menu-script lists of `Install\menusmaster.sp`

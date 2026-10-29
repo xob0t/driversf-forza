@@ -1,18 +1,20 @@
 # Engine sound: giving ports their own Forza engine
 
-Updated: 2026-10-23
+Updated: 2026-10-29
 
 Can a ported car sound like its Forza self instead of borrowing a vanilla
 DSF car's engine? Yes. Forza's engine loops can be swapped into a vanilla
 DSF bank, keeping the bank's structure, and the bank still checks out
 offline. `port_car`/`port_batch` now do this for every car by default
-(section "In the build"). It has not been heard in game yet.
+(section "In the build"). In the full roster (`out/build`,
+2026-10-28) 571 of 573 cars have it; the Volt and the Leaf keep their
+host's (Forza's bank for them is `NA.fsb`). Nobody has listened to it in
+game yet (#202).
 
-Evidence levels as in `dngvehicles.md`:
-- **confirmed-static**: code or file read.
-- **data**: seen across the vanilla fleet or Forza files.
-- **offline**: produced and checked by our tools.
-- **hypothesis**.
+Evidence levels as in `dngvehicles.md`: confirmed-static (code or file
+read), offline-checked (surveys of the vanilla fleet or the Forza files,
+and what our tools produce and check), hypothesis. Nothing here is
+confirmed-runtime yet.
 
 Tools:
 - `src/dsfforza/formats/wwise_bank.py`: Wwise v48 bank parser, rebuilder and IMA ADPCM codec.
@@ -30,7 +32,7 @@ Tools:
 - **Failure mode:** if the load fails, `FUN_0048f780` leaves the car silent.
 - **No hard-coded bank contents:** the code never looks up object or media IDs inside a vehicle bank. It only posts the event IDs stored in VSVH and sets global RTPC, switch and state IDs.
 
-### IDs are global (data)
+### IDs are global (offline-checked)
 
 Across the 150 vanilla banks:
 - 3582 HIRC IDs and 617 media IDs; 3113 of the HIRC IDs appear in more than one bank.
@@ -41,12 +43,12 @@ Across the 150 vanilla banks:
 to the bank's own ID (a Sound's file ID, a Play action's bank), a Sound's
 media offset in its bank file, and an ActorMixer's children list (each bank
 lists only its own children of a shared mixer). With those masked, 0 of the
-fleet's shared IDs differ (data; `engine_sound._content`, the lint's rule for
+fleet's shared IDs differ (offline-checked; `engine_sound._content`, the lint's rule for
 banks that are not ours).
 
 This is ordinary Wwise: objects and media are indexed by ID across all loaded banks. So a modified bank must not reuse its host's IDs. If the host car's bank loads first, its objects and media would be the ones played (hypothesis based on the SDK's behaviour; the vanilla data is consistent with it).
 
-### Media (confirmed-static, data)
+### Media (confirmed-static, offline-checked)
 
 - Every embedded media in every vanilla vehicle bank is RIFF format 0x0002, Wwise IMA ADPCM:
   - mono, 32 kHz;
@@ -68,7 +70,10 @@ Run `wwise_bank.py tree out/sound/vanilla/227/SBAK.bin --curves`. The bank holds
 - Both sets carry identical `vehicle_engineload` curves (params 6 and 11, -90 to 0 dB; names unresolved). So **there is no on-load/off-load pair**; the two sets are two microphone positions.
 - The 17th media is a 0.2 s backfire pop (VSVH+70/74).
 - Shared sounds (whine, tyres, wind, tone generators) reference media in other banks.
-- Fleet: 93 of the 131 sample banks have 8+8 loops; the others have 7+7, 8+7, 7+8, 8+14 or 15+15.
+- Fleet: of the 131 sample banks, 93 have 8+8 loops, 10 7+7, 10 8+7 and 9 7+8
+  (`out/cache/sound/vanilla-banks.json`). Five more count 8+14 or 15+15 because
+  their sets also hold idle grains, and four have no rpm loop sets ("In the
+  build", 2.).
 
 ### VSVH (confirmed-static unless marked)
 
@@ -86,10 +91,10 @@ Run `wwise_bank.py tree out/sound/vanilla/227/SBAK.bin --curves`. The bank holds
 All event IDs live in the vehicle's own bank, so a VSVH must stay paired with its SBAK.
 On all 150 vanilla cars every non-zero value at +04, +08, +0C, +10, +14, +1C,
 +24, +28, +2C, +34..+48, +54..+5C and +68..+78 is an Event of the car's own
-bank, and no other field ever is (data; `engine_sound.EVENT_FIELDS`, checked
+bank, and no other field ever is (offline-checked; `engine_sound.EVENT_FIELDS`, checked
 by the lint).
 
-**Engine type, VSVH+4C (confirmed-static, data).** `0x550300` reads +4C,
+**Engine type, VSVH+4C (confirmed-static, offline-checked).** `0x550300` reads +4C,
 subtracts 1 and indexes a 10-entry jump table; anything out of range
 (including 0) gives v8:
 
@@ -97,10 +102,12 @@ subtracts 1 and indexes a 10-entry jump table; anything out of range
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | state | v6 | v8 | v10 | v12 | vr6 | h4 | h6 | il4 | il5 | il5 (not il6) | v8 |
 
-Vanilla values (engine from `vehicleStats`): 2 on 67 V8s, 9 V12s, 4 I6s, 3
-V10s and a W12; 1 on 9 V6s and 4 I6s; 8 on 11 I4s; 10 on 6 I6s (which
-therefore get il5); 3, 5, 6, 9 on a few cars each; 0 on 23 (granular and
-silent ones included). Reflections' own values are loose. The switch is
+Vanilla values (engine from `vehicleStats` `Cylinders`; the 150 banks in
+`out/cache/sound/vanilla-banks.json`): 2 on 86 cars (67 V8s, 9 V12s, 4 I6s,
+3 V10s, a W12, a V6 and an I5); 1 on 14 (9 V6s, 4 I6s, a V8); 8 on 13 (11
+I4s, an I2, an I5); 10 on 7 (6 I6s, which therefore get il5, and one
+without an entry); 3 and 5 on three cars each, 6 on one; 0 on 23 (granular
+and silent ones included). No vanilla car uses 4, 7 or 9. Reflections' own values are loose. The switch is
 used only by four Switch containers in the `HUD` bank of `WWiseDefault.pck`
 (none in any vehicle bank). Each picks one of three plugin-source Sounds
 (tone generators) whose frequency follows `vehicle_rpm` linearly up to
@@ -151,7 +158,7 @@ Layout (`FUN_00547800`):
 **Car to bank:**
 1. `EngineTuning.zip/<car>_ET.xml` gives idle, redline and, per emission and upgrade level, an HT file.
 2. `HarmonicTuning.zip/<x>_HT.xml` gives the bank and one `<Loop rpm_min rpm_sample rpm_max volume>` per subsong.
-3. The mapping resolves for 146/175 FH1 cars, 277/312 FM4 disc 1 cars and 179/188 pack cars. The misses are mostly race cars with `NA.xml` at L0.
+3. The mapping resolves for 146/175 FH1 cars, 277/312 FM4 disc 1 cars and 179/188 pack cars. The misses are mostly race cars with `NA.xml` at L0. (Counted 2026-10-23, not rechecked. The build takes another emission when one is `NA.xml`, and since #37 the other game's ET file or the same model's, so 571 of 573 cars get a Forza sound.)
 
 **Format.** FSB4 with XMA, mostly 36 kHz mono; some loops are 48 kHz stereo.
 - Every subsong is one whole seamless loop of 0.6–3.4 s, and a sample's pitch is 1 at its `rpm_sample` (HT pitch is always 1).
@@ -186,7 +193,7 @@ Layout (`FUN_00547800`):
    - Research effort of days, and a lower payoff. For ports on granular hosts, use (a) with a sample-bank sound host. `engine_sound.py apply` drops the GRBK.
 4. **(c) Wwise authoring tool of the matching version (2010.x/2011.1).** Not offered by the current Launcher; it would need Audiokinetic to supply a legacy build, a licence for modding use, and a re-created DSF project (state, switch and RTPC names are now known by FNV). Not needed given (a).
 
-## In the build (offline)
+## In the build (offline-checked)
 
 `port_car.py` step 5 and every `port_batch.py` worker, on by default
 (`--no-forza-sound` turns it off). Per car (`port_car.forza_sound_plan`,
@@ -267,7 +274,7 @@ Build-time checks on top: `same_structure` against the template under the
 ID map, `Bank.validate`, and the event check above, before a candidate is
 accepted.
 
-### The 40-car test build (offline)
+### The 40-car test build (offline-checked)
 
 `uv run dsff port_batch build --dsf out/vanilla/Install/dngvehicles.sp
 --list tools/batches/testdrive.txt --gui --out out/testdrive8 --jobs 10`
@@ -311,7 +318,7 @@ loop (a beat at the seam). Worth trying as `--forza-sound-intake` once the
 plain swap has been heard in game; comparing `sweep_new.wav` with and
 without it offline is the first step.
 
-## Proof of concept (offline)
+## Proof of concept (offline-checked)
 
 ```sh
 uv run dsff engine_sound convert --car MAZ_RX7_97 --game fh1 --host 227 --out out/sound/MAZ_RX7_97
@@ -330,12 +337,12 @@ Converted so far:
 
 Each folder has `SBAK.bin`, `VSVH.bin`, `report.json`, `tree.txt` (RX7), `wav/` (every loop as the game will decode it), `sweep_host.wav` / `sweep_new.wav` (an offline render of idle → redline → idle through both sets' own pitch and crossfade curves) and `sweeps.png` (their spectrograms).
 
-Checks (offline):
+Checks (offline-checked):
 - `wwise_bank.py check` parses every object to its exact size and rebuilds byte-identically. Every Sound's offset and size point at its media, and the media are whole ADPCM blocks. This passes on all 150 vanilla banks and the three new ones.
 - `engine_sound.same_structure` confirms the new bank is the host's hierarchy under the ID map: same objects, order, sizes and fields; only curve points, media and IDs differ. A corrupted child reference is caught.
 - The sweeps show unbroken harmonics through every crossfade. The RX7 has 2 orders per revolution (rotary), the 370Z 3 (V6).
 
-Test archive (offline): `out/sound/build/dngvehicles.forza-sound.sp`. It holds the RX7 as ID 1 on the Solstice GXP 278, with the Forza sound. The same build without the sound step is `dngvehicles.sp` (the RX7 with the vanilla 370Z sound), the A/B control. Both use the same `dngvehicles.lua`.
+Test archive (offline-checked): `out/sound/build/dngvehicles.forza-sound.sp`. It holds the RX7 as ID 1 on the Solstice GXP 278, with the Forza sound. The same build without the sound step is `dngvehicles.sp` (the RX7 with the vanilla 370Z sound), the A/B control. Both use the same `dngvehicles.lua`.
 - NONR is 0x57D80 against the 0x6D000 limit.
 - The VSVH has +0 = 1 and rpm range 800/8000, and its 19 event fields resolve in the new bank.
 - SBAK is 16-byte aligned.
@@ -344,8 +351,10 @@ Test archive (offline): `out/sound/build/dngvehicles.forza-sound.sp`. It holds t
 
 ## Verifying in game (needs the user: no audio capture)
 
-With a batch build (`out/testdrive8` in the worktree of PR "Forza engine
-sound in the build"; IDs 1..40 in `tools/batches/testdrive.txt` order):
+With a build of `tools/batches/testdrive.txt` (IDs 1..40 in its order;
+`out/testdrive8` was the first) or of the full roster, whose list starts
+with the same 40 cars at the same IDs (checked on `out/build`). Tracked in
+#202:
 
 1. **Does it load?** Spawn a few ports in free roam or the test drive: ID 32
    (370Z, template 227, its own model's bank), 3 (RX-7: rotary on an I4
@@ -370,7 +379,7 @@ sound in the build"; IDs 1..40 in `tools/batches/testdrive.txt` order):
 
 ## Open
 
-- Everything in game (above).
+- Everything in game (above; #202).
 - What ParamIDs 6 and 11 control, and whether `vehicle_gear_direction` is ever set (no setter was found).
 - VSVH+4C is now set from the Forza engine; what the tone adds is not heard yet.
 - Intake mixing (option above) and the right exhaust channel (ExhaustR, the right half of stereo subsongs) are not used.
