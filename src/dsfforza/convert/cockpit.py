@@ -1198,6 +1198,7 @@ def pod_display(
     sizes=None,
     cowl: bool = False,
     name: str = "dsf_dial_panel",
+    hud: bool = True,
 ):
     """A virtual display for `dials` (1 or 2) dials: the largest of POD_SIZES (or
     `sizes`, (width, height) in m, largest first) that fits, nearest the point just
@@ -1205,8 +1206,8 @@ def pod_display(
     Every line of sight to it must reach the cabin within POD_DEPTH behind it (not
     the windscreen, the bonnet or an A-pillar), pass outside the rim (and
     POD_WHEEL_CLEAR) and clear of Forza's own dials, digital displays and gauge
-    faces, and out from under DSF's HUD (HUD_DOWN_DEG...). Found on a depth image
-    from the eye.
+    faces, and with `hud` out from under DSF's HUD (HUD_DOWN_DEG...). Found on a
+    depth image from the eye.
 
     With `cowl` (open cockpits, issue #147), the bodywork in front of the driver
     (the cockpit carbin's `hood*` and `a_pillar` sections, which close round the
@@ -1268,7 +1269,8 @@ def pod_display(
     bad |= _disc_mask(rays, eye, wheel.centre, wheel.axis, wheel.radius + POD_WHEEL_CLEAR)
     across = np.degrees(np.arctan2(rays[:, 0], -rays[:, 2]))  # the driver's right is +x
     down = np.degrees(np.arctan2(-rays[:, 1], np.hypot(rays[:, 0], rays[:, 2])))
-    bad |= (down > HUD_DOWN_DEG) & ((across > HUD_RIGHT_DEG) | (across < -HUD_LEFT_DEG))
+    if hud:
+        bad |= (down > HUD_DOWN_DEG) & ((across > HUD_RIGHT_DEG) | (across < -HUD_LEFT_DEG))
     for g in gauges.values():
         reach = max((math.dist(p, g.pivot) for p in section_points(g.rest)), default=0.0)
         bad |= _disc_mask(rays, eye, g.pivot, g.normal, reach * POD_GAUGE_CLEAR)
@@ -1372,8 +1374,28 @@ def pod_display(
             }
             if cowl:
                 report["virtual_display"]["cowl"] = True
+            if not hud:
+                report["virtual_display"]["under_hud"] = True
             return d, housing, report
     return None, None, report
+
+
+# pod_display's passes, (cowl, hud): the dashboard clear of DSF's HUD, else an open
+# cockpit's cowl clear of it (#147), else the dashboard as before the HUD rule (#92's
+# placement: the display may sit under the HUD's lower corners).
+POD_PASSES = ((False, True), (True, True), (False, False))
+
+
+def place_pod(static: dict, eye, wheel: Wheel, dials: int, gauges: dict, version: int, sight_sections=None, **kw):
+    """pod_display over POD_PASSES: the first that finds room."""
+    d, housing, report = None, None, {}
+    for cowl, hud in POD_PASSES:
+        d, housing, report = pod_display(
+            static, eye, wheel, dials, gauges, version, sight_sections, cowl=cowl, hud=hud, **kw
+        )
+        if d is not None:
+            break
+    return d, housing, report
 
 
 def _housing(d: Display, depth: float, version: int) -> carbin.Section:
@@ -1478,12 +1500,9 @@ def virtual_gauges(
                     "front_mm": round(1000 * front, 1),
                 }
     if d is None and wheel is not None:
-        for cowl in (False, True):  # an open cockpit's cowl only where the dash has no room (#147)
-            d, housing, why = pod_display(
-                static, eye, wheel, len(missing), gauges, version, sight_sections, avoid=list(readout), cowl=cowl
-            )
-            if d is not None:
-                break
+        d, housing, why = place_pod(
+            static, eye, wheel, len(missing), gauges, version, sight_sections, avoid=list(readout)
+        )
         report.update(why)
         if d is not None:
             extra[housing.name] = housing
@@ -1598,13 +1617,7 @@ def wheel_display_pod(static: dict, eye, wheel: Wheel, gauges: dict, version: in
     w, h = max(us) - min(us), max(vs) - min(vs)
     centre = _add(_add(centre, _scale(right, (max(us) + min(us)) / 2)), _scale(up, (max(vs) + min(vs)) / 2))
     sizes = tuple((w * k, h * k) for k in WHEEL_DISPLAY_SCALES)
-    d, housing, report = None, None, {}
-    for cowl in (False, True):  # an open cockpit's cowl only where the dash has no room
-        d, housing, report = pod_display(
-            static, eye, wheel, 1, gauges, version, sight_sections, sizes=sizes, cowl=cowl, name=DASH_PANEL
-        )
-        if d is not None:
-            break
+    d, housing, report = place_pod(static, eye, wheel, 1, gauges, version, sight_sections, sizes=sizes, name=DASH_PANEL)
     if d is None:
         return [], None, report
     k = d.size[0] / w
