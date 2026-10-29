@@ -1,9 +1,12 @@
 # Driver.exe: vehicle loading
 
-Updated: 2026-10-21
+Updated: 2026-10-29
 
 Static findings from `Driver.exe` 1.04 (SHA-256 `C79987B0...6616`, fixed image
-base 0x00400000, no ASLR). Addresses are VAs. Function names are Ghidra
+base 0x00400000, no ASLR). A copy with the large-address-aware flag set by a
+4 GB patch (PE characteristics 0x0123 instead of 0x0103, the stored checksum
+left 0x20 off), as on this project's test PC, hashes to `847224A7...C34B`;
+its code is the same. Addresses are VAs. Function names are Ghidra
 defaults until a finding earns a real name.
 
 Produced with `tools/ghidra/FindVehicleLookup.java` and
@@ -22,7 +25,7 @@ Produced with `tools/ghidra/FindVehicleLookup.java` and
 | How are IDs resolved to archive entries? | Linear scan of SSLP records `{u16 id, u16 index, u16 kind}`, count at SSLP+2. Order doesn't matter. | FUN_005A0A80 |
 | What is the ID used for in game? | It's the model ID: `TrafficSpooler.RequestMissionVehicle(188)` spools the Gran Torino, `GameVehicleResource.create{Model_Id = ...}` spawns it. | Felony Rework scripts |
 | Is there a cap on spooled vehicles? | Yes, per kind, from SSLP header bytes +0x18..: 35 base, 2, 2, 0. | FUN_005A0AD0, FUN_005A6FD0 |
-| Are vehicle IDs range-checked? | Not on the request path read so far (FUN_005A7860 → FUN_005A6FD0 → FUN_005A0A80). Other systems may still index tables by ID. | hypothesis |
+| Are vehicle IDs range-checked? | Not on the request path (FUN_005A7860 → FUN_005A6FD0 → FUN_005A0A80). But a base model ID must stay below 1000: the LOD request adds 1000 and 2000 for the interior and exterior entries (`spool-limits.md`, "Everything else that scales with the car count"). The garage and save stop at 303 (`asi.md`). | confirmed-static |
 
 ## Unified spooling package loader (confirmed-static)
 
@@ -30,16 +33,16 @@ FUN_005A11E0 is a state machine for any `.sp` package, not just vehicles:
 
 1. State 1 opens the spool file. On failure it logs
    `Couldn't Open Spool File '%s'`.
-2. State 2 calls FUN_005A0DE0, then scans the root entries for `SSIC`; without
-   one it logs `Package does not contain SSIC, therefore this package is not
-   compatible with the Unified Spooling scheme.` FUN_0059F9C0 creates the
-   handler for the package type.
+2. State 2 creates the handler for the package type (FUN_0059F9C0), then
+   scans the root entries for `SSIC`; without one it logs `Package does not
+   contain SSIC, therefore this package is not compatible with the Unified
+   Spooling scheme.` It then calls FUN_005A0DE0 with SSIC's entry index.
 3. State 3 polls the handler.
 
-FUN_005A0DE0 records the sizes of the `MDXN` (entry version 3) and `NONR`
-it finds. Correction (see `spool-limits.md`): it only measures SSIC's own
-blocks (0x9CB800 and 0x13EAA0), not the largest vehicle entries. Vehicle
-limits are covered in `spool-limits.md`.
+FUN_005A0DE0 opens that entry as a nested CHNK and records the sizes of
+SSIC's own `MDXN` and `NONR` (0x9CB800 and 0x13EAA0), not the largest vehicle
+entries (`spool-limits.md`, "FUN_005A0DE0 measures SSIC, not vehicles").
+Vehicle limits are covered in `spool-limits.md`.
 
 The spool object's SSLP methods (vtable 0x00DE4D30):
 
