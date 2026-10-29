@@ -339,6 +339,60 @@ that VM 2 session was running at half speed.
 - Finding such sessions in old runs: the `spooler busy` field of the
   `[dsfforza.register] t<n> traffic` lines in Driver.log.
 
+### Loads on a busy host (2026-10-29, issue #70)
+
+Runs that stop at "Story world not ready" are mostly slow loads, not hangs.
+The host's CPU load slows the guest (the user confirmed it: workers' builds and
+surveys at normal priority), and `run-test.ps1` gave up 150 s after the window
+was up.
+
+- **Rate:** VM runs that reached the Story stage and didn't load: 7 of 74 on
+  2026-10-26, 13 of 138 on -27, 4 of 114 on -28 (crash dialogs), 23 of 109 on
+  -29, of which 16 of 21 between 07:00 and 10:00 while five workers built at
+  normal priority. Loads that made it took a median 22 s on -28 and 45 to
+  140 s on -29 morning (window up to world ready).
+- **Slow, not hung:** Driver.exe's private bytes (`memory.csv`) climb from
+  about 250 MB to 650 MB (vanilla) or more during a load. Over the 361 loads
+  that finished (2026-10-26 to -29), the longest stretch without a new high
+  (+4 MB) was 49 s (`vm2-20261027-045417`; `vm1-20261029-062029` 43 s). Of
+  the 37 "not ready" runs, 34 had made a new high in their last 60 s: they
+  were still loading when cut off (e.g. `vm2-20261029-070927`, 486 MB and
+  growing 3 to 4 MB per sample at 204 s). Three sat flat at the end, real
+  hangs: `vm2-20261026-130721` (87 s at 344 MB), `vm2-20261029-092237` (132
+  s at 302 MB, Driver.log stopped at the hook's start, dsf_enhanced.log at
+  the auto-acknowledged server prompt) and `vm2-20261026-133303` (446 to
+  448 MB for minutes).
+- **Not the shadow map:** every VM load from 08:59 to 09:42 on -29 failed
+  (8 not ready, 2 crash dialogs) after the host's `dsf_enhanced.ini` gained
+  `[Shadows] ShadowMapSize=3072`, but runs with the same `.asi` (`81E83DD8`)
+  and `.ini` loaded in under 30 s from 09:43 on (`vm2-20261029-094256`,
+  `vm1-20261029-094525`), once the workers' builds went to idle priority.
+- **Changes:**
+  - `run-test.ps1`: no fixed deadline. The Story stage fails once Driver.exe's
+    private bytes have made no new high for `-StallSeconds` (120;
+    `result.json` `storyStalled`), or after `-StorySeconds` (900) in any case.
+    `storySeconds` and `storyPrivateMB` record where it stood.
+  - `run-series.ps1`: a CPU gate before each game launch (`-Vm` and
+    `-OnHost`). It samples the host's CPU time per process every 5 s and
+    waits until three samples in a row have the competing CPU under `-CpuGate`
+    (70 %), at most `-CpuGateSeconds` (600), then starts anyway. Competing
+    means processes above BelowNormal priority: Idle and BelowNormal work
+    yields to the VMs; processes whose priority can't be read (vmware-vmx,
+    other elevated ones) count. The series prints the gate's line and puts it
+    in the run folder (`cpu-gate.txt`). The run's result wait grows with
+    `-StorySeconds`.
+  - `run-series.ps1`: a run that fails while the world loads (stalled, capped,
+    crash dialog, game exited in the frontend) is run again once, at once, on
+    the same VM in a new run folder ("the world didn't load; retrying once").
+    The other VM is not tried: the series holds its VM's mutex and queue
+    ticket, and taking the second VM mid-series would bypass the queue.
+- **Priority:** vmware-vmx is started by the elevated vmware-authd, so the
+  harness can't raise it (`Set-VmPriority` is refused). The `.vmx` keys
+  `priority.grabbed` / `priority.ungrabbed` apply to the whole session, not
+  the load, and only normal and low (Idle, which starved the VM under host
+  builds) have been tried; `high` is untested and would also take CPU from
+  the user's desktop.
+
 ### VM results (2026-10-24)
 
 - Vanilla smoke test `vm-20261024-015247` (vanilla archive, ID 147): finished in
