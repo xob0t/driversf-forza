@@ -66,9 +66,12 @@ later PR replaced a rule, the earlier section says so in one line.
   centre one, else any) ([#132](#lamps-broke-with-the-wrong-end-issue-132)).
 - A lamp with no entry left at its end shares one there: same function and
   side, else the other side's for types with no side, else its fallback's
-  (brake + indicator: the tail lamp; position: head or tail lamp). Only then
+  (brake + indicator: the tail lamp; position: head or tail lamp). A rear
+  lamp with none to share has a left and right pair of one type with no side
+  (brake lamps, then tails) share one entry and takes the other. Only then
   does it take a free entry at the other end; fog lamps never do and stay
-  unlit ([#146](#rear-lamps-short-of-a-rear-entry-issue-146)).
+  unlit ([#146](#rear-lamps-short-of-a-rear-entry-issue-146),
+  [pairs](#a-rear-entry-freed-by-a-left-and-right-pair-issue-146)).
 - Head lamps on a front side whose own position or DRL-indicator lamps
   (with an entry) are under a quarter of their area are 0x1D, Headlights +
   DaytimeRunning, so they light by day as on 33 vanilla vehicles
@@ -126,9 +129,8 @@ later PR replaced a rule, the earlier section says so in one line.
 damaged (`0x8E84A0`); the broken bit darkens it and lays the damage decal's
 broken-lamp blobs over it ([How a lamp lights](#how-a-lamp-lights-confirmed-static-driverexe-104),
 [#141](#tail-lamps-with-the-broken-lamp-pattern-issue-141)). Records stay
-where the host has them, so a lamp breaks with the end its entry is at; 37
-lamps on 20 cars, mostly reverse lamps, still sit on an entry at the other
-end (#146). With `--damage` the lamp geometry rides on its panel's record
+where the host has them, so a lamp breaks with the end its entry is at; 6
+lamps on 4 cars still sit on an entry of their own at the other end (#146). With `--damage` the lamp geometry rides on its panel's record
 (`damage.section_rule`, `damage.md`).
 
 **Open** ([list](#open)): #89 (lamp glass colour and reflection), #103
@@ -1927,6 +1929,47 @@ master's IS F lit its whole inner lamp white-pink, this change only its white re
 likewise (`img/lamps7-s65-brake-reverse-ingame.jpg`, `img/lamps7-isf-brake-reverse-ingame.jpg`; the offline
 plan `img/lamps7-red-texels-plan.jpg`).
 
+### A rear entry freed by a left and right pair (issue #146)
+
+Symptom (offline-checked): after #219, rear reverse lamps on hosts with no rear entry left took a front one,
+and broke with the front (16 rear reverse lamps; the Honda S2000 03 and Mazda RX-7 97 on host 278, the Lexus
+IS F on 176, the Ford Focus RS500 on 274, the AMC Javelin AMX's centre reverse lamp on 161). On hosts with no
+free entry at either end they stayed unlit: the BMW 2002 Turbo's, Nissan 510's, VW Beetle 68's and Alfa
+GTA's reverse lamps, the Mazda Miata 94's, Lotus Elise 99's and Shelby Series 1's right rear indicator.
+
+Cause (confirmed-static): `LampPlan.assign` gives every lamp its own entry while there are some at its end.
+A left and a right lamp of a type with no side (tail 0x18, brake 0x02, reverse, position, fog) each took one,
+so the tails used two of the host's four or five rear entries, and the reverse lamps that came after had
+none.
+
+Change (`assign`, `pair_entry`): a rear lamp with no entry left at its end and no lamp to share one with
+there (its twin, or its fallback's) frees one. A left and a right rear lamp of one SIDELESS function (head
+lamps aside) that hold an entry each share the left one's, and the right one's goes to the lamp; the least
+important such pair (PRIORITY: brake lamps before tails), else as before an entry at the other end. The two
+keep their type and light as before; the right one breaks with the left one's record, which on vanilla
+hosts hangs under the same part (the body or boot).
+
+Roster (offline, `out/l7/lamp_survey.py` in this PR's worktree, master's and this `lights.py` on one
+`Texturing.plan` per car, each car's host-picks host; only cars with a lamp on an entry at the other end
+or a rear lamp unlit for want of an entry can change: 26 cars):
+
+| | master | this change |
+| --- | ---: | ---: |
+| lamps on their own entry at the other end | 22 on 19 cars | 6 on 4 cars |
+| of them rear reverse / rear indicators / rear brake | 16 / 3 / 1 | 2 / 2 / 0 |
+| front reverse, front indicator (hosts short at the front) | 1, 1 | 1, 1 |
+| rear reverse and indicator lamps unlit (no entry anywhere) | 15 on 7 cars | 5 on 3 cars |
+
+(#219 counted 37 on 20 cars: lamps sharing an entry at the other end too; this survey counts each entry
+once.) Left: the Chevrolet Express's left reverse lamp and the Mustang Boss 429's front right indicator
+(hosts with too few entries at the front: front lamps aren't paired), the Corvette Grand Sport 96's centre
+reverse lamp and the Lexus SC430 02's rear indicators and left reverse lamp on host 161 (two rear entries:
+one pair frees one entry), and the Miata 94's, Elise's and Series 1's reverse lamps (their freed entry goes to
+the right indicator, which ranks higher).
+
+In game (VM, `-Lights -LightsDriveOnly -Palette 0`, vanilla 241 first, then the S2000, Javelin AMX, 2002
+Turbo and Miata 94; master's lamp code `out/l7/before` against this change `out/l7/after`): master `vm1-20261029-162920`, this change `vm1-20261029-163437`. The 2002 Turbo, which had no reverse light, lights white reverse lamps (`img/lamps7-2002turbo-reverse-ingame.jpg`); the S2000 and Javelin look the same (their reverse lamps lit on master too, from a front entry). A lamp breaking with its new end (`+hitfront`, `+hitrear`) is not checked in game.
+
 ### Open
 
 1. Front lamps in the lamp-phase mode (`-Lights`): neither copy faces the
@@ -1988,11 +2031,13 @@ plan `img/lamps7-red-texels-plan.jpg`).
     lamps, the M3 E92's 0x03 `drlred` tails, the Stealth's reflector panel)
     but FOR_EscortRSCosworth_92 and TOY_6_SC430_08, which have no lamp
     technique at Forza LOD 3, so their full entries have almost no lamps
-    (the Escort only its front indicators). The ZR1's `lindtailside` lamps
-    (#220) weren't driven on the throttle in game.
-11. Lamps on the other end's entries (#146): 37 on 20 cars after #219, 29 of
-    them reverse lamps on hosts with no rear entry left. Fog lamps on full
-    hosts stay unlit (#219).
+    (the Escort only its front indicators). The ZR1's
+    `lindtailside` lamps (#220) weren't driven on the throttle in game.
+11. Lamps on the other end's entries (#146): 6 on 4 cars after "A rear entry
+    freed by a left and right pair" (hosts short at the front, and host 161's
+    two rear entries); the reverse lamps of the Miata 94, Elise 99 and Series 1
+    stay unlit (their freed entry goes to the right indicator). Fog lamps on
+    full hosts stay unlit (#219).
 12. Pop-up head lamps can't rise with the lights (#122).
 
 ## Paint

@@ -1202,15 +1202,47 @@ class LampPlan:
                 twin = next((l for l in near if l.side == lamp.side), near[0] if near else None)
             return twin
 
-        # Most important first, each an entry at its end; one with none left there takes one at
-        # the other end (lit, though it breaks with that end's panel) unless it can share a lamp's
-        # at its own end: a rear reverse lamp outranks a front fog lamp, as before. A fog lamp
-        # never does: the game's Lua never sets FogLights (only Siren), so on an entry at the
-        # other end it would only break with that end's panel (issue #146); it stays unlit.
+        def pair_entry(lamp):
+            """An entry at a rear lamp's end freed for it: a left and a right lamp there of one
+            SIDELESS function (not head lamps) with an entry each share the left one's, and the
+            right one's goes to `lamp`; the least important such pair (PRIORITY), else None.
+            The two keep their type and light as before (issue #146)."""
+            if lamp.front:
+                return None
+            pairs = []
+            for a in order:
+                if a.light_id is None or a.front != lamp.front or a.function not in SIDELESS or a.function == HEAD:
+                    continue
+                for b in order:
+                    if (
+                        b is not a
+                        and b.light_id is not None
+                        and b.light_id != a.light_id
+                        and b.front == a.front
+                        and b.function == a.function
+                        and (a.side, b.side) == ("L", "R")
+                        and taken.get(next((e for e in entries if e[1] == b.light_id), None)) is b
+                    ):
+                        pairs.append((a, b))
+            if not pairs:
+                return None
+            a, b = max(pairs, key=lambda p: (PRIORITY.get(p[0].function, 9), -p[0].area - p[1].area))
+            entry = next(e for e in entries if e[1] == b.light_id)
+            del taken[entry]
+            free.append(entry)
+            b.light_id = a.light_id
+            return entry
+
+        # Most important first, each an entry at its end. A rear lamp with none left there takes one
+        # a left and right pair frees by sharing (pair_entry), else one at the other end (lit, though
+        # it breaks with that end's panel) unless it can share a lamp's at its own end: a rear
+        # reverse lamp outranks a front fog lamp, as before. A fog lamp never does: the game's Lua
+        # never sets FogLights (only Siren), so on an entry at the other end it would only break with
+        # that end's panel (issue #146); it stays unlit.
         for lamp in order:
             pick = _best_entry(lamp, [e for e in free if place[e][0] == lamp.front], place)
             if pick is None and partner(lamp) is None and lamp.function != FOG:
-                pick = _best_entry(lamp, free, place)
+                pick = pair_entry(lamp) or _best_entry(lamp, free, place)
             if pick is not None:
                 take(lamp, pick)
         for lamp in order:
