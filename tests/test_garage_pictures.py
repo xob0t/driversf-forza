@@ -235,3 +235,24 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
             print(f"ok {name}")
+
+
+def test_blur_disc_fades_in():
+    """A wheel submodel whose vertices all carry semantic 9 byte 3 = 2 is the speed-blur
+    disc, invisible at rest (#221); byte 3 = 1 is drawn."""
+    import struct
+
+    from dsfforza.formats import vehicle_mesh as vm
+
+    def mesh(byte3: int):
+        elements = [vm.VertexElement(0, 4, 1, 0, 0), vm.VertexElement(9, 4, 2, 0, 8)]
+        data = b"".join(struct.pack("<4h", i, 0, 0, 2048) + bytes((0, 0, 0, byte3)) for i in range(3))
+        m = vm.Mesh()
+        m.vertex_buffers[b"vb"] = vm.VertexBuffer(b"vb", 3, 12, elements, data)
+        m.index_buffers[b"ib"] = struct.pack("<3H", 0, 1, 2)
+        sub = vm.SubModel(b"s", b"m", b"vb", 0, b"ib", 0, 3)
+        return m, sub
+
+    assert cr._fades_in(*mesh(2), {})
+    assert not cr._fades_in(*mesh(1), {})
+    assert not cr._fades_in(*mesh(0), {})
