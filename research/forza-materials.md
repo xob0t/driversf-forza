@@ -459,8 +459,9 @@ metal (`metal`, `alum`, `steel`), or its opaque texels are one flat neutral
 grey: chroma of the mean colour 24 or less, luminance spread (standard
 deviation) 12 or less, brightest channel under 240. Painted artwork has colour
 (the quadrifoglio), detail (lettering, the Veyron's engine-cover script) or is
-white, and stays on the atlas. DSF's chrome samples the shared chassis texture,
-so the Forza grey can't tint it without a material of our own.
+white, and stays on the atlas. DSF's chrome samples the shared chassis texture;
+since #154 each part takes the vanilla chrome grey nearest its Forza grey
+("Bare-metal greys").
 
 The atlas pays for the new regions. `Texturing.plan` lays the atlas out with
 and without the artwork; if the artwork leaves less than 90% of the scale
@@ -854,6 +855,38 @@ are black, the Raptor's bonnet vents lose their khaki and the Express's front bu
 its cream band; the Falcon's and Huayra's trims look as before. The power rule alone
 already removed the Camaro's band in these views.
 
+## Bare-metal greys (2026-10-29)
+
+Issue #154: the bare-metal trims (`trim_art.is_metal`, "Trim artwork") all drew on
+`forza2dsf.CHROME_UV`, one texel of the shared chassis texture (R 98, G 122), whatever
+grey Forza gives them: the Veyron's roof scoops (`misc`, grey 177) and its fuel cap and
+window frames (`frame`, 227) alike.
+
+**How vanilla does it (confirmed-static; `out/s154/vanilla_chrome.py` in the
+`t3-48861189` worktree: every vanilla vehicle's exterior chrome, the shared texture
+sampled at each triangle's UV0, by area).** One shared material (`GLOBAL_Chassis_Chrome`,
+`GLOBAL_LOD_Chrome`) and one texture, but the grey is chosen per part by where UV0
+lands: 156 chrome materials on 149 vehicles, the mean R of a vehicle's chrome 43 to 156
+(median 80), and on 117 of them the lighter and darker parts (p10 to p90) lie more than
+30 levels apart. The texels are a ramp at x 904 to 1023, rows 392 to 443, constant down
+each column: x 972 to 1021 falls smoothly from R 103 (G 126) to 45 (G 58), G about 1.25 R
+(x 904 to 963 is a second, rougher ramp from 90 to 41), and a block of R 156, G 198 at
+x 838 to 869, y 420 to 445, which 8 vehicles use for all their chrome (RS200, Savana,
+LP670-4 SV, the 1967 and 2010 Shelby GT500, the prison and security vans, the tour bus).
+No vanilla chrome is lighter than 156. R is the grey the program lights, G its
+specular and reflection mask ("Gloss", the table of programs).
+
+**Fix (`trim_art.metal_grey`, `forza2dsf.CHROME_GREYS`, `chrome_grey`, `chrome_uv`).**
+Each bare-metal triangle takes the vanilla chrome texel whose R is nearest the grey
+Forza draws it at: the luminance of its opaque texels' mean, times the technique's
+texel scale in linear light (`fm.texel_scale`; the Veyron's `frame` at
+PristinePaintScale 0.3 is drawn at 133). `split_trim_art` puts each grey in its own
+subsection, `dsf_trim_metal#<grey>` (`fm.with_grey`, `technique_grey`), and
+`add_geometry` puts UV0 on that grey's texel (the grey is in the vertex key, so two
+greys sharing a vertex keep their own). Forza's own chrome techniques keep `CHROME_UV`.
+DSF's chrome draws R lit as a diffuse grey plus the reflection, so R is matched to
+Forza's diffuse grey; the reflection comes on top of it, as on vanilla chrome.
+
 ## Open
 
 1. In game, badges on the Chassis material: seen since ("Badge plates": the
@@ -887,7 +920,8 @@ already removed the Camaro's band in these views.
    dark detailed trims go through the atlas. Open: which technique runs which shader (the effect's technique
    tables aren't decoded; `plastic2` sets both parameters on some cars), the
    `black*` techniques (still the shared dark trim whatever their texels),
-   DSF's shared chrome can't take the Forza grey as a tint (#154), and the visibility
+   bare metal's greys above vanilla's lightest chrome (156) and their tint ("Bare-metal
+   greys"), and the visibility
    test is orthographic from around and above: artwork seen only from below or
    through a narrow gap counts as hidden (no car known to show it, #58).
 9. Gloss ("Gloss: Forza's specular and reflection on trims and rims"): the cockpit
