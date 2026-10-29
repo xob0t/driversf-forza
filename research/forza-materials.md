@@ -887,6 +887,24 @@ greys sharing a vertex keep their own). Forza's own chrome techniques keep `CHRO
 DSF's chrome draws R lit as a diffuse grey plus the reflection, so R is matched to
 Forza's diffuse grey; the reflection comes on top of it, as on vanilla chrome.
 
+**Roster (offline, all 573 cars, `out/s154/survey.py` in the `t3-48861189` worktree:
+cutout and `split_trim_art` at LODs 1, 3, 5 as `port_car` runs them).** 303 cars have
+bare metal at LOD 1: 74,593 triangles, 33.5 m2 (247 cars at LOD 3, 84 at LOD 5). Forza
+draws it at greys of 130 to 228 (p5 to p95; median 168), above vanilla's lightest chrome
+on 95% of the triangles, so 30.9 m2 takes the 156 block. The rest takes the ramp: 103
+(2.4 m2), 92, 87, 82 and 74 (0.2 m2 together), on 89 cars. Before, all of it drew at 98.
+Bare metal is lighter on every one of these cars, and Forza's chrome techniques are
+unchanged.
+
+**render_compare (`out/rc/metal`, 9 cars built from master 62736c2 and this change).**
+Five cars draw differently, all in their trims region: the Monte Carlo SS 11's rear wing
+(82% of the region's pixels; "trims too dark, L* 27.6 against Forza's 46.1" fixed, 40.8
+now), the One-77's grille (58%), the Veyron's roof scoops (47%), the Crossfire's
+strakes, window frames and A-pillar strip (32%; the strip also from the cockpit), the
+Q7's rear trims (33%). The ARX-01b's data differ but it renders alike (the full entry's
+atlas, #84); the other three are unchanged (`img/metal-greys-offline.jpg`: master, this
+change, Forza).
+
 ## Open
 
 1. In game, badges on the Chassis material: seen since ("Badge plates": the
