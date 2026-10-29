@@ -552,6 +552,17 @@ def lint_vehicle(
     report(h.model_uid == parts[0][0], f"AWHF model UID {h.model_uid.hex()} is MODL part 0")
     missing = [r.index for r in h.records if r.uid and r.uid not in parts[0]]
     report(not missing, f"every record UID is a MODL part of the full entry (missing: records {missing})")
+    # +0x0C bit 0 and the hinge pop counts +0x16/+0x18 follow the tree's shape; an
+    # inserted or moved record that left them stale crashed the game (research/damage.md,
+    # #266). Hosts 210 and 217 keep a vanilla exporter quirk on three headlight records.
+    from dsfforza.convert import damage
+
+    stray = [
+        r.index
+        for r, fields in zip(h.records, damage._tree_fields([r.raw for r in h.records]), strict=True)
+        if damage._read_tree_fields(r.raw) != fields and r.role not in (50, 51)
+    ]
+    report(not stray, f"records' +0x0C bit 0, +0x16, +0x18 follow the tree (not: records {stray})")
     # Hosts with several chassis records (172: roles 257 and 256) draw a variant
     # part; an empty one made the body invisible (src/dsfforza/convert/chassis_variants.py).
     from dsfforza.convert import chassis_variants

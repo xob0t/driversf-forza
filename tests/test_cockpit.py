@@ -9,7 +9,7 @@ import math
 import struct
 import types
 
-from dsfforza.convert import cockpit
+from dsfforza.convert import cockpit, damage
 from dsfforza.convert import forza_materials as fm
 from dsfforza.formats import carbin, chnk, upvh
 
@@ -146,7 +146,9 @@ def test_needles_the_host_cannot_turn_are_dropped():
 
 def _gauge_hierarchy(gauge_id: int) -> bytes:
     """root > cluster part (role 185) > one gauge record (the vanilla role for its id),
-    then the steering marker: a one-gauge host like 146 (speedometer) or 225 (tachometer)."""
+    then the steering marker: a one-gauge host like 146 (speedometer) or 225 (tachometer).
+    The cluster is hinged (the needles' hinge, as on 146) and the records' tree fields
+    (+0x0C bit 0, +0x16/+0x18) are vanilla's."""
     head = bytearray(upvh.HEADER_SIZE)
     head[:4] = b"AWHF"
     struct.pack_into("<6I", head, 4, 0, 0, 26, 4, 1, 0)
@@ -163,7 +165,13 @@ def _gauge_hierarchy(gauge_id: int) -> bytes:
         struct.pack_into("<HHHHHHHH", rec, 0x08, kind, role, 0, 0, 1, 0, subtree, 0)
         struct.pack_into("<b", rec, 0x26, seat)
         struct.pack_into("<h", rec, 0x1A, marker)
+        struct.pack_into("<h", rec, 0x1C, 1 if role == cockpit.CLUSTER_ROLE else -1)
         records += rec
+    raw = [records[k : k + upvh.RECORD_SIZE] for k in range(0, len(records), upvh.RECORD_SIZE)]
+    for r, (bit, leaf, pops) in zip(raw, damage._tree_fields(raw), strict=True):
+        struct.pack_into("<HHH", r, 0x14, struct.unpack_from("<H", r, 0x14)[0], leaf, pops)
+        struct.pack_into("<H", r, 0x0C, bit)
+    records = b"".join(raw)
     markers = struct.pack("<3f4x4f", 0.3, 0.5, 0.3, 0, 0, 0, 1)
     seats = struct.pack("<3f4x4fII", 0.3, 0.6, 0.5, 0, 0, 0, 1, gauge_id, 120) + bytes(8)
     return bytes(head + records + markers + seats)
@@ -187,6 +195,11 @@ def test_one_gauge_host_gets_the_other_record():
             assert r.type == 18 and r.role == cockpit.GAUGE_ROLES[gid]
             assert struct.unpack_from("<I", h.table("seats")[r.seat], 0x20)[0] == gid
         assert h.records[gauges[add]].seat == 1  # appended to the table
+        # The gauge record that now ends the cluster's subtree pops its hinge, the
+        # other none (#266: a stale pop count on the speedometer failed damage check).
+        fields = damage._tree_fields([r.raw for r in h.records])
+        assert [damage._read_tree_fields(r.raw) for r in h.records] == fields
+        assert fields[2] == (0, 0, 0) and fields[3] == (0, 1, 1), fields
         assert h.table("seats")[0] == upvh.parse(data).table("seats")[0]
         # The marker after them moved down a record; its table entry is unchanged.
         assert h.records[4].type == 3 and h.records[4].marker == 0

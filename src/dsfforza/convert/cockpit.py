@@ -1998,6 +1998,7 @@ def add_gauge_records(upvh_data: bytes, ids) -> tuple[bytes, list[int]]:
     (`*_Digital_Dials`), whose program doesn't read g_InstrumentTransforms, so no
     needle could turn there (research/cockpit.md, "Displays on the steering wheel").
     Returns the new hierarchy and the ids added."""
+    from dsfforza.convert import damage
     from dsfforza.formats import upvh
 
     h = upvh.parse(upvh_data)
@@ -2028,6 +2029,20 @@ def add_gauge_records(upvh_data: bytes, ids) -> tuple[bytes, list[int]]:
             o = p * upvh.RECORD_SIZE + 0x14
             struct.pack_into("<H", records, o, struct.unpack_from("<H", records, o)[0] + 1)
             p = parent_of(h, p)
+        # The fields that follow the tree's shape (damage._tree_fields: +0x0C bit 0 and
+        # the hinge pop counts +0x16/+0x18) are written again for the new tree on every
+        # record that followed them before. The record that ended the cluster's subtree
+        # popped its hinge there; a leaf before the new one pops nothing (#266).
+        raw = [records[k * upvh.RECORD_SIZE : (k + 1) * upvh.RECORD_SIZE] for k in range(len(h.records) + 1)]
+        old = [r.raw for r in h.records]
+        before = damage._tree_fields(old)
+        source = [k if k < at else k - 1 for k in range(len(raw))]
+        source[at] = src.index
+        for k, (r, fields) in enumerate(zip(raw, damage._tree_fields(raw), strict=True)):
+            if damage._read_tree_fields(old[source[k]]) == before[source[k]]:
+                struct.pack_into("<H", r, 0x0C, (struct.unpack_from("<H", r, 0x0C)[0] & ~1) | fields[0])
+                struct.pack_into("<HH", r, 0x16, *fields[1:])
+        records = b"".join(raw)
         entry = bytearray(h.table("seats")[src.seat])
         struct.pack_into("<I", entry, 0x20, gid)
         tables = upvh.HEADER_SIZE + len(h.records) * upvh.RECORD_SIZE

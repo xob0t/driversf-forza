@@ -1668,7 +1668,15 @@ declaration differs from that last one, apart from one exterior material of
    hierarchies), and a copy of its table entry with the new id is appended
    to the table; `patch_hierarchy` then sets its pivot, dial and sweep like
    any other. Record count, seat count and the ancestors' subtree sizes
-   follow. Report: `cockpit.hierarchy.gauges_added`. On all 20 one-gauge
+   follow, and so do the fields that follow the tree's shape (`damage._tree_fields`:
+   +0x0C bit 0 and the hinge pop counts +0x16/+0x18, `upvh.md`; #266). On
+   hosts 146, 230 and 249 the cluster (role 185) is hinged and its gauge
+   record ends its subtree, so it pops the hinge (0, 1, 1). Copied whole, the
+   speedometer kept that and the tachometer after it got it too: two pops of
+   one hinge, and `damage check` failed on the 9 cars on those hosts (two
+   Camaros '69, Camaro '70, C1, Ka, 442, 107, Aygo, Agila). Now the new last
+   record pops it and the speedometer pops nothing, as in vanilla; `upvh lint`
+   checks the three fields on every record. Report: `cockpit.hierarchy.gauges_added`. On all 20 one-gauge
    hosts the result parses and `host_cockpit` finds both slots
    (`out/g62/vanilla_add.py`). The host choice keeps its -3 for a host without
    both gauges; it no longer matters for the needles.
