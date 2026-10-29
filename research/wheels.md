@@ -1,6 +1,6 @@
 # Wheels: the Forza wheel model in DSF
 
-Updated: 2026-10-29
+Updated: 2026-10-30
 
 User report from driving the testdrive build (`out/testdrive`, 40 cars): the
 wheels look broken on every car, the Veyron worst. The first sections are
@@ -349,7 +349,9 @@ pose, variants).
   box): the five Commodore VE race cars 300 mm along z, TOY_6_Supra_05 49 mm
   out and 80 mm down, MER_ML63AMG_09 and VW_BEETLE_68 39 mm across. The port
   turned them about the origin, so those wheels hung off their hubs (the
-  Commodore's in front of its bumper) and wobbled as they turned.
+  Commodore's in front of its bumper) and wobbled as they turned. Centred on
+  the hub, the Commodore's tyres still stood 0.3 m off their arches: see
+  "Wheels off their arches" (#301).
 
 ### The check (`dsff wheel_clearance`)
 
@@ -962,6 +964,86 @@ the player's car draws, has no part to carry a caliper on any corner; whether
 the engine steers the hub parts is not known. A caliper would need new LOD
 links (and new records at the rear): the hierarchy changes that crashed
 `forceOpenPanels` before when they went wrong. Left for an issue.
+
+## Wheels off their arches (2026-10-30, issue #301)
+
+User report on the full-roster release candidate (c4ee059): on the Commodore VE race
+cars (HOL_1/8/11/33/88_CommodoreVE_11, host 162) the front wheels stand out of the
+bodywork and every wheel sits off its arch. Scratch scripts in `out/w301/` (left in the
+PR's worktree): `survey.py`, `analyse.py`, `sources.py`, `fine.py`, `rend.py`.
+
+### The survey (confirmed-static, all 573 roster cars)
+
+Per car, in Forza space, each corner's arch opening against the hub `convert` places
+(MAXData's wheelbase, midpoint and track, the tyre centred on the hub): body points
+of the car's LOD 1 outboard of the tyre's centre plane and above the hub; the arch is
+the z along the car where the largest empty circle at hub height centres (the middle of
+the plateau). Front and rear offsets, deciles 5 / 25 / 50 / 75 / 95%: front -15 -5 0 5
+22 mm, rear -15 -5 0 5 25 mm. Cars more than 60 mm off with both axles agreeing:
+
+| Car | Front / rear arch off the hub | Cause |
+| --- | --- | --- |
+| HOL_1/8/11/33/88_CommodoreVE_11 | +315 / +305 mm (behind) | the wheel model's tyre sits 0.300 m behind its origin (`wheel` section offset z +0.300) |
+| CIT_C1_11 | -165 / -185 mm (ahead) | its MAXData.xml is PEU_107_11's, value for value (`BottomCenterWheelbasePos` z -0.151, wheelbase 2.340); the C1's body sits 0.172 m further forward in its model (body length midpoint -0.124 against the 107's +0.048) |
+
+The other large readings have axles that disagree and are the finder's, not the cars'
+(arch shapes: PAG_Huayra_12 +95 / +160, the 1965 Minis +150 / +5, BUS_TOUR_12 +155 / +2,
+ASC_KZ1R_12 +70 / +135, SAL_S7_04 +180 / +380 with its rear wheel half under the
+bodywork as on the real car): renders of the built cars show their wheels in their
+arches. HOL_HSVw427_09 (host 176) is 15 mm / 0 off: it is not affected. The wheel
+models off their origin across or up (TOY_6_Supra_05 49 mm out and 80 mm down,
+MER_ML63AMG_09 and VW_BEETLE_68 39 mm across) have their arches on the hub, so the
+tyre stays centred there.
+
+FM4's gamedb `Data_CarBody.BottomCenterWheelbasePosZ` is no better source: it differs
+from MAXData's by more than 30 mm on 461 of the 572 cars that have both, while
+MAXData's midpoint fits the arches on all but the C1 (the gamedb's is 51 mm off the
+C1's arches, 410 off the Commodores').
+
+### Fix (`forza2dsf.car_dims`, `MID_Z_FIXES`)
+
+- Forza draws the wheel model unturned at each hub, so a tyre that sits off its origin
+  along the car stands that far from the physics' hubs, on both sides, and the arches
+  are cut round it. `car_dims` adds the tyre centre's z (`tyre_centre`) to the
+  wheelbase midpoint (`CarDims.mid_z`); the wheel still turns about the tyre's centre,
+  so the hubs go to the tyres. Only the five Commodores have such an offset (z under
+  1 mm counts as 0 on every other car).
+- `MID_Z_FIXES` gives CIT_C1_11 its own midpoint (MAXData's +0.151 less 0.170 = -0.019:
+  its arches centre on -0.024, the same finder reads the 107's 5 mm short of its own
+  midpoint).
+
+After the fix (the same survey with the fixed `car_dims`, `survey_after.py`): the
+Commodores' arches 10 / 5 mm off the hubs, the C1's 5 / -15, within the roster's spread
+(HOL_HSVw427_09 and PEU_107_11 unchanged, -15 / 0 and 5 / -15).
+
+Every `Placement` user takes the corrected midpoint (convert, `lights`, `plates`,
+`host_select`'s window panes), so body, lamps, plates and cockpit move together
+against the hubs; the hubs, wheelbase, track and handling are unchanged.
+
+Test set (`out/w301/cars.txt`): IDs 1 to 5 the Commodores, 6 HOL_HSVw427_09, 7
+CIT_C1_11, 8 PEU_107_11, built with master's converter (`out/w301/build-before`) and
+with the fix (`out/w301/build-after`); all lint ok, no LOD or size changes.
+
+In game (headless VM 2, `run-series -Vm -ProbeIds '1,2,3,4,5,6,7' -Views
+'wheels,front,fq,lock' -DriveKey Left -DriveSeconds 2 -ShotSeconds 3 -Palette 0`, the
+car standing, steering held left through the views): `vm2-20261030-021153` (before),
+`vm2-20261030-021654` (after). Before, the Commodores' wheels stand forward of their
+arches (the arch's open back edge behind each tyre in the side view) and the steered
+front tyre stands out ahead of the flared wing; after, all four sit in their arches
+and the steered tyre stays inside the flare. The C1's wheels move forward into their
+arches. HOL_HSVw427_09 draws the same in both runs. The first car of the after run got
+only its chase and side shots; HOL_8 (ID 2) shows the same views.
+
+`render_compare diff --before out/w301/build-before --after out/w301/build-after --out
+out/rc/wheels-301`: the six changed cars draw differently, PEU_107_11 and
+HOL_HSVw427_09 alike. Every view of them changes, since the renders frame the car by
+its hubs and the body moves 0.3 m (0.17 m on the C1) against them. The cockpit eye
+moves with the body: before, it sat 0.3 m forward, in the Commodore's steering wheel;
+after, behind it, as in Forza's reference. The Commodores' scores rise (HOL_1 12.5 to
+16.5) because their whole wheels now show in the arches: these race cars have no
+`wheel.xds` and keep the flat swatch rims ("Rim textures"), light against Forza's dark
+ones (`wheels: washed out`). The C1's falls (3.34 to 2.61).
+
 
 ## Open
 
