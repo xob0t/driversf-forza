@@ -816,7 +816,7 @@ def build_car(
             brake_rotors=use_rotors,
             blur_materials=dsf_materials.shared_macos(stream, entries, dsf_materials.SPOKE_DISC_MATERIALS),
         )
-        if args.damage:  # src/dsfforza/convert/damage.py; untested in game
+        if args.damage:  # src/dsfforza/convert/damage.py
             from dsfforza.convert import damage
 
             opts.damage, opts.damage_opts = True, damage.DamageOptions(hull=args.damage == "hull")
@@ -1274,11 +1274,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--damage",
         nargs="?",
-        const="panels",
+        const="hull",
         choices=("panels", "hull"),
         help="vanilla-like damage (src/dsfforza/convert/damage.py): body on the host's panels, crush "
-        "targets, panel parts, hinges moved; 'hull' also scales the root collision "
-        "hull (untested in game)",
+        "targets, panel parts, hinges moved, and (default, 'hull') the root collision hull mapped "
+        "onto the Forza body; 'panels' keeps the host's hull",
     )
     parser.add_argument(
         "--glass-links",

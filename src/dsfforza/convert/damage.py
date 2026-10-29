@@ -111,6 +111,9 @@ LAYOUT = {32: (16, 20, 24), 28: (12, 16, 20)}
 K_NEAREST = 6
 VOTES = 7  # host vertices voting on a body triangle's panel
 COLLISION_SCALE = (0.67, 1.5)  # clamp for a panel's collision box scale
+# The root hull is mapped between boxes that leave out this share of the vertices at each
+# end per axis: 8 stray vertices 0.4 m above the Spark's roof made its hull that tall (#210).
+HULL_TRIM = 0.002
 DEGENERATE_UV = 0.004  # host UV1 triangles smaller than this are hidden faces
 FACING_WEIGHT = 0.15  # normalised-distance penalty per unit of normal mismatch (UV1 lookup)
 MAX_HINGE_MOVE = 0.35  # m; a panel hinge mapped further than this keeps the host's
@@ -1692,7 +1695,7 @@ def _set_idle_priority() -> None:
 
 @dataclass
 class DamageOptions:
-    hull: bool = False  # also scale the root collision hull (PDL) to the Forza body
+    hull: bool = False  # also map the root collision hull (PDL) onto the Forza body (port_car --damage, #210)
     k: int = K_NEAREST
 
 
@@ -1744,6 +1747,7 @@ class DamagePlan:
             for v in (s.vertices_for(sub)[i] for i in t)
         ]
         self.forza_box = Box.of(pts)
+        self.forza_hull_box = trimmed_box(set(pts))
         # Projection boxes for exposed inner geometry (split_exposed, _expose).
         self.exposed_boxes: dict[str, Box] = {}
         for name in ("hood", "trunk"):
@@ -3030,9 +3034,17 @@ class DamagePlan:
         if self.opts.hull:
             root = h.records[0]
             if root.collision >= 0:
-                host_box, forza_box = self.full_field.box, self.forza_box
-                _map_collision(out, pdl + 0x10 + root.collision, host_box, forza_box)
-                report["hull"] = {"host": [host_box.lo, host_box.hi], "forza": [forza_box.lo, forza_box.hi]}
+                host_box, forza_box = trimmed_box(self.full_field.points), self.forza_hull_box
+                at = pdl + 0x10 + root.collision
+                floor = _collision_bottom(out, at)
+                _map_collision(out, at, host_box, forza_box)
+                raised = _floor_collision(out, at, floor)
+                report["hull"] = {
+                    k: [[round(c, 3) for c in b.lo], [round(c, 3) for c in b.hi]]
+                    for k, b in (("host", host_box), ("forza", forza_box))
+                }
+                if raised:
+                    report["hull"]["bottom_raised"] = round(raised, 3)
         self.report["upvh"] = report
         return bytes(out), report
 
@@ -3325,6 +3337,15 @@ def robust_box(points, trim: float = 0.02) -> Box | None:
     return Box(tuple(lo), tuple(hi))
 
 
+def trimmed_box(points, trim: float = HULL_TRIM) -> Box | None:
+    """Box leaving out `trim` of the points at each end per axis (stray vertices)."""
+    p = np.array(list(points), dtype=float).reshape(-1, 3)
+    if not len(p):
+        return None
+    lo, hi = np.percentile(p, (100 * trim, 100 * (1 - trim)), axis=0)
+    return Box(tuple(float(c) for c in lo), tuple(float(c) for c in hi))
+
+
 def _scale_collision(data: bytearray, at: int, scale) -> None:
     """Scale every primitive of one PDL collision model (in its body's frame):
     translation and extents per axis, radius by the largest factor."""
@@ -3349,6 +3370,46 @@ def _map_collision(data: bytearray, at: int, host: Box, forza: Box) -> None:
         struct.pack_into("<3f", data, p + 0x30, *host.to(forza, t))
         e = struct.unpack_from("<3f", data, p + 0x50)
         struct.pack_into("<3f", data, p + 0x50, *(e[a] * scale[a] for a in range(3)))
+
+
+def _primitive_bottom(data, p) -> tuple[float, int]:
+    """(lowest y of one PDL box primitive's corners, the box axis nearest vertical)."""
+    m = struct.unpack_from("<12f", data, p)
+    rows = (m[0:3], m[4:7], m[8:11])
+    t = struct.unpack_from("<3f", data, p + 0x30)
+    e = struct.unpack_from("<3f", data, p + 0x50)
+    return t[1] - sum(abs(e[a] * rows[a][1]) for a in range(3)), max(range(3), key=lambda a: abs(rows[a][1]))
+
+
+def _collision_bottom(data, at: int) -> float:
+    """Lowest corner (y) over every primitive of one PDL collision model."""
+    n = struct.unpack_from("<I", data, at + 12)[0]
+    return min(_primitive_bottom(data, at + 0x10 + k * 0x60)[0] for k in range(n))
+
+
+def _floor_collision(data: bytearray, at: int, floor: float) -> float:
+    """Raise the bottom of every primitive that reaches below `floor` to it, keeping its top:
+    the box shrinks and moves up along its most vertical axis. Returns the largest raise.
+    The mapped root hull may end no lower than the host's own (#210: mapped onto a low
+    race car's sill, the R8 LMS's ended 5 cm above the ground, lower than any vanilla
+    hull's 8 cm)."""
+    n = struct.unpack_from("<I", data, at + 12)[0]
+    most = 0.0
+    for k in range(n):
+        p = at + 0x10 + k * 0x60
+        low, a = _primitive_bottom(data, p)
+        if low >= floor - 1e-6:
+            continue
+        row = struct.unpack_from("<3f", data, p + a * 0x10)
+        e = list(struct.unpack_from("<3f", data, p + 0x50))
+        half = min((floor - low) / 2 / abs(row[1]), e[a])  # along the axis: half the raise each side
+        t = struct.unpack_from("<3f", data, p + 0x30)
+        up = 1.0 if row[1] > 0 else -1.0
+        struct.pack_into("<3f", data, p + 0x30, *(t[c] + up * half * row[c] for c in range(3)))
+        e[a] -= half
+        struct.pack_into("<3f", data, p + 0x50, *e)
+        most = max(most, floor - low)
+    return most
 
 
 def compact(builder, keep: list) -> None:
