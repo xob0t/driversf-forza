@@ -36,6 +36,7 @@ import argparse
 import copy
 import math
 import os
+import re
 import struct
 import sys
 from dataclasses import dataclass, field
@@ -307,6 +308,12 @@ TEXTURED_COVERS = ("lights_glass", "lights_gls_noemit")
 # Plain glass lamp covers (Texturing.clear_cover): left out when a Lights-atlas surface lies up
 # to COVER_DEPTH behind this share of their area; never in the window sections.
 COVER_MIN_SHARE, COVER_DEPTH = 0.3, 0.3
+# In a lamp unit's own section (headlightL, glassLHL, lexanRHL, taillightR) a plain glass cover
+# is a lamp cover from this share: it often covers the unit's housing as well as its lamp (the
+# Audi R8 race car's lexan 30%, the Ferrari 458 Spider's glass 18 to 21%), and left as window
+# glass it hid the head lamps (#247).
+COVER_LAMP_SECTION_SHARE = 0.1
+LAMP_SECTION = re.compile(r"^(head|tail)light[lr]?$|^(glass|lexan)[lr]?(hl|tl)$", re.I)
 # A lamp cover whose Lights texels are this share or more of its lenses' texels is a second skin
 # over them (_bake_lenses): left out.
 COVER_ON_LENS = 0.9
@@ -1777,7 +1784,8 @@ class Texturing:
             return False
         key = id(sub)
         if key not in self._covers:
-            self._covers[key] = self._over_lamp(section, sub) >= COVER_MIN_SHARE
+            share = COVER_LAMP_SECTION_SHARE if LAMP_SECTION.match(section.name) else COVER_MIN_SHARE
+            self._covers[key] = self._over_lamp(section, sub) >= share
         return self._covers[key]
 
     def _over_lamp(self, section, sub, shapes=None) -> float:
