@@ -98,7 +98,7 @@ Three sources:
    402.336 m quarter mile, and caps speed at `p160 * 0.447`.
 3. Data. I parsed all 150 VO3Ds and UPVH wheel tables and joined them with
    the game's Lua `vehicleStats`. I also paired 48 vanilla vehicles with the
-   same model in FH1 or FM4 (`out/handling/pairs.py`).
+   same model in FH1 or FM4 (`out/handling/pairs.py`, now `handling_dsf.PAIRS`).
 
 The pairs settle units. The DSF data was clearly built from real-world specs
 of the same kind Forza uses. The 370Z's first two relative gear ratios
