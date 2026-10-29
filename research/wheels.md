@@ -926,6 +926,13 @@ master's full build comes near the static read buffer with that. The 250 GTO
 disc. Offline renders: `img/brake-rotors-render.jpg` (front left wheel, outside
 and from the front, before | after).
 
+`render_compare diff --before out/brakes/before --after out/brakes/after --out
+out/rc/brake-rotors`: 5 of the 6 cars drawn differently, only between the spokes
+(370Z: "trims" side 16 %, wheels side 7 %, front3q 4 %; 250 GTO 13 / 11 / 7 %;
+Ibiza 12 / 10 %, rear3q 4 %; Veyron SS wheels side 9 %; 205 3 / 2 %; the Beetle
+alike), scores unchanged; the "trims" share is the region Forza's reference
+gives the pixels between the spokes.
+
 ### In game (headless VM 1)
 
 `run-series -Vm -ProbeIds '1,2,3,4,5,6' -Views 'wheel,wheel+night,wheel+mph8,wheels'
@@ -936,6 +943,11 @@ in the wheel's shadow; at night they stay dark (no glow, no white). The Beetle's
 hubcap hides its drum as before; the 205's holes still show the barrel's dark
 (its disc ends inside the hole circle). No flicker between disc and rim in the
 shots.
+
+Damage and steering (`-ProbeIds '2,3,4' -Damage -DamagePanels -DriveKey Left
+-DriveSeconds 2 -Views 'lock,wheels'`): `vm1-20261029-174017` (before),
+`vm1-20261029-174645` (after). The same crush, panels opened and dropped, wheels
+on their hubs and the front wheel turned alike in both; no crash.
 
 ### Calipers (not converted, #212)
 
