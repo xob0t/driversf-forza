@@ -11,7 +11,7 @@ import types
 
 from dsfforza.convert import cockpit
 from dsfforza.convert import forza_materials as fm
-from dsfforza.formats import carbin, upvh
+from dsfforza.formats import carbin, chnk, upvh
 
 
 def _display(transform: tuple, width: float = 0.25, height: float = 0.08) -> carbin.Section:
@@ -542,3 +542,78 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
             print("ok", name)
+
+
+def _leaf(tag: str, data: bytes) -> chnk.Entry:
+    return chnk.Entry(tag, 0, len(data), 0, 0, None, payload=data)
+
+
+def _node(tag: str, *children: chnk.Entry) -> chnk.Entry:
+    return chnk.Entry(tag, 0, 0, 0, 0, None, children=list(children))
+
+
+def _needle_interior(dials_ids: list[int], digital_ids: list[int], blind: bool = False) -> chnk.Entry:
+    """An interior entry like a port on host 250 or 293: the host's needle material
+    and the digital dials' material (a copy of digital_dash.VANILLA_MATERIAL) draw
+    from one stride-16 DashboardInstrument buffer (position 4 x i16, then u, v, gauge
+    id, component as f16), a quad per gauge id. With `blind`, the needle material also
+    draws a quad from a buffer without the declaration."""
+    from dsfforza.convert import digital_dash
+
+    dials, digital = b"D" * 8, b"G" * 8
+
+    def maco(uid: bytes, path: str) -> chnk.Entry:
+        return _node("MACO", _leaf("MAHE", uid + bytes(8)), _leaf("MATX", path.encode() + b"\0"))
+
+    def vxck(uid: bytes, ids: list[int], name_hash: int) -> chnk.Entry:
+        vdcl = struct.pack("<I4I4I", 2, 0, 4, 1, 0, 8, 4, 8, name_hash)
+        data = b"".join(struct.pack("<4h4e", 0, 0, 0, 0, 0.5, 0.5, gid, 0) for gid in ids for _ in range(4))
+        head = uid + struct.pack("<II", len(ids) * 4, 16)
+        return _node("VXCK", _leaf("VXHD", head), _leaf("VDCL", vdcl), _leaf("VXDT", data))
+
+    quads = [(dials, q) for q in range(len(dials_ids))] + [
+        (digital, len(dials_ids) + q) for q in range(len(digital_ids))
+    ]
+    indices = b"".join(struct.pack("<6H", 0, 1, 2, 2, 1, 3) for _ in quads)
+    subs = [
+        _node(
+            "SBMC",
+            _leaf(
+                "SBBH",
+                b"S%07d" % n + mat + b"V" * 8 + struct.pack("<I12x", q * 4) + b"I" * 8 + struct.pack("<II", n * 6, 6),
+            ),
+        )
+        for n, (mat, q) in enumerate(quads)
+    ]
+    drsp = [
+        maco(dials, r"R:\Vehicles\Host\Textures\Host_Dials.matxml"),
+        maco(b"T" * 8, r"R:\Vehicles\Host\Textures\Host_Interior.matxml"),
+        maco(digital, r"R:\Vehicles\Chevrolet_Volt_2011\Textures\Chevrolet_Volt_2011_Digital_Dials.matxml"),
+        vxck(b"V" * 8, dials_ids + digital_ids, cockpit.DASHBOARD_INSTRUMENT),
+        _node("IXCK", _leaf("IXHD", b"I" * 8 + struct.pack("<II", len(indices) // 2, 2)), _leaf("IXDT", indices)),
+        *subs,
+    ]
+    if blind:
+        drsp.append(vxck(b"W" * 8, [2], 0x12345678))
+        drsp.append(
+            _node("SBMC", _leaf("SBBH", b"B" * 8 + dials + b"W" * 8 + bytes(16) + b"I" * 8 + struct.pack("<II", 0, 6)))
+        )
+    assert digital_dash.RPM[0] == 1 and digital_dash.SPEED_DIGITS[0][0] == 2
+    return _node("VEHC", _node("MDXN", _node("DRSP", *drsp)))
+
+
+def test_digital_dials_are_not_needles():
+    # Issue #234: the digital dials draw g_fDigiData vertices with gauge ids 1 (rpm bar,
+    # the Spark) and 2 (mph digits, the Volt) through the needles' declaration. The engine
+    # reads those through no gauge record, so lint mustn't ask for one.
+    h = upvh.parse(_gauge_hierarchy(2))  # a speedometer record only (host 249, the Spark's)
+    spark = _needle_interior([2], [1, 2, 5, 6])
+    assert cockpit.dials_material(None, spark) == b"D" * 8
+    assert cockpit.needle_check(None, spark, h) == ([], 0)
+    assert cockpit.needle_gauge_ids(None, spark, dials_only=True) == {2.0: 4}
+    # The build's own check still sees every DashboardInstrument vertex.
+    assert cockpit.needle_gauge_ids(None, spark) == {2.0: 8, 1.0: 4, 5.0: 4, 6.0: 4}
+    # A real tachometer needle on a host without its record is still caught,
+    assert cockpit.needle_check(None, _needle_interior([2, 1], [1, 5]), h) == ([1], 0)
+    # and so is a needle drawn from a buffer without gauge ids.
+    assert cockpit.needle_check(None, _needle_interior([2], [1], blind=True), h) == ([], 2)
