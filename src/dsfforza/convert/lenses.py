@@ -143,10 +143,6 @@ GLOW_SHARED = 0.01  # m: a texel whose surfaces lie further apart than this has 
 GLOW_DETAIL_RADIUS = 0.015  # m
 GLOW_DETAIL_GAMMA = 2.0
 GLOW_DETAIL_CLIP = (0.25, 2.0)
-# Area (#286): a lamp seen over more than this (m2, one side's) is scaled by GLOW_AREA / its
-# area after the ranking, so a big smooth reflector or housing doesn't light more than a vanilla
-# head lamp; bulbs, projectors and LED strips, smaller, keep vanilla's full alpha.
-GLOW_AREA = 0.012
 # Vanilla DSF day-lit head lamps (type 0x1D) seen from straight ahead: the visible white lamp
 # texels' alpha at dsf_materials.LAMP_PERCENTILES, pooled over the 32 vanilla vehicles that have
 # them (out/dayglow/dsffront.py on the full entries; per-vehicle mean p10/50/90 41/74/102).
@@ -636,8 +632,7 @@ def day_glow(glow: np.ndarray, view, colour: np.ndarray | None = None) -> np.nda
     the converted alpha). None when no lamp is mapped.
 
     colour: the Lights atlas (h, w, 3+) the car is drawn with: each lamp's raw glow follows the
-    detail of its visible picture (GLOW_DETAIL_*) before the ranking, and a lamp seen over more
-    than GLOW_AREA is scaled down by its area after it (#286)."""
+    detail of its visible picture (GLOW_DETAIL_*) before the ranking (#286)."""
     from dsfforza.convert import dsf_materials as dm
 
     seen, grid, (x0, y0), step = view
@@ -684,20 +679,8 @@ def day_glow(glow: np.ndarray, view, colour: np.ndarray | None = None) -> np.nda
         # The share of the lamp's visible samples below each value (ties: the middle).
         rank = (np.searchsorted(pool, r, "left") + np.searchsorted(pool, r, "right")) / (2 * len(pool))
         alpha = np.where(r > 0, np.interp(rank * 100, dm.LAMP_PERCENTILES, DAY_HEAD_ALPHA), 0.0)
-        if GLOW_AREA:
-            # Left and right lamps often share a lamp number (positions as |x|): one side's area.
-            sides = 2 if (np.isfinite(glow[..., 2][mine]).any() and _both_sides(mask, x0, step)) else 1
-            area = mask.sum() * step * step / sides
-            alpha = alpha * min(1.0, GLOW_AREA / area)
         out[mine] = alpha
     return out if np.isfinite(out).any() else None
-
-
-def _both_sides(mask: np.ndarray, x0: float, step: float) -> bool:
-    """Whether a lamp's samples in the front view lie on both sides of the car's centre line."""
-    cols = np.nonzero(mask.any(0))[0]
-    x = x0 + (cols + 0.5) * step
-    return bool((x > 0.05).any() and (x < -0.05).any())
 
 
 def _lens_samples(section, sub, m, w: int, h: int):

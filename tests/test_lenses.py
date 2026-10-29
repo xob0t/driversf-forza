@@ -187,7 +187,7 @@ def test_head_lamp_glow_follows_the_reflector_bowl():
 def test_day_glow_on_vanilla_distribution_with_a_dark_rim():
     # A round lamp with a flat raw glow, seen straight on (one texel per view sample): the rim
     # fades, so the middle glows and the edge doesn't, on vanilla's day-lit distribution.
-    n, step = 40, 0.004  # a lamp 12 cm across: under GLOW_AREA, not scaled
+    n, step = 40, 0.005
     yy, xx = np.mgrid[0:n, 0:n]
     disc = (yy - n / 2 + 0.5) ** 2 + (xx - n / 2 + 0.5) ** 2 < 15**2
     glow = lenses.new_glow(n, n)
@@ -201,13 +201,6 @@ def test_day_glow_on_vanilla_distribution_with_a_dark_rim():
     # Too small a lamp keeps its converted alpha.
     small = disc & (xx < 3 + n // 2 - 15)
     assert lenses.day_glow(glow, (np.nonzero(small), small, (0.0, 0.0), step)) is None
-    # #286: the same lamp seen at twice the size (a big smooth reflector) is scaled by its area,
-    # so it lights no more than a vanilla-sized lamp; the small one keeps vanilla's alpha.
-    twice = glow.copy()
-    twice[..., 2:] *= 2
-    big = lenses.day_glow(twice, (np.nonzero(disc), disc, (0.0, 0.0), 2 * step))
-    area = disc.sum() * (2 * step) ** 2
-    assert area > lenses.GLOW_AREA and abs(np.nanmax(big) - centre * lenses.GLOW_AREA / area) < 1, (big, area)
 
 
 def test_day_glow_follows_the_lamps_picture():
@@ -293,7 +286,7 @@ def test_daytime_head_lamps_glow_at_a_fifth():
         out = t._glow()
     finally:
         lenses.day_glow = real
-    assert (out[day] == 100.0 * dm.DAY_GLOW_LEVEL).all()
+    assert (out[day] == 100.0 * dm.DAYTIME_GLOW).all()
     assert (out[:, 12:16] == 100.0).all()
     # A day-lit lamp surface without a glow (a reflector, the bowl here) keeps its texels
     # but a fifth of their converted alpha; a tiling one, its swatch cell.
