@@ -368,6 +368,16 @@ class MirrorMount(unittest.TestCase):
         self.assertEqual([damage._read_tree_fields(r.raw) for r in h.records], fields)
 
 
+def _flipped(model, p) -> bytearray:
+    """One primitive of a PDL model upside down (y negated), so its top is a bottom."""
+    out = bytearray(model[p : p + 0x60])
+    m = list(struct.unpack_from("<16f", out, 0))
+    for k in (1, 5, 9, 13):
+        m[k] = -m[k]
+    struct.pack_into("<16f", out, 0, *m)
+    return out
+
+
 class Hull(unittest.TestCase):
     def test_stray_points_dont_stretch_the_box(self):
         # The Spark's 8 vertices 0.4 m above its roof made its hull that tall (#210).
@@ -392,6 +402,32 @@ class Hull(unittest.TestCase):
             self.assertAlmostEqual(got, want, places=5)
         for got, want in zip(extent, (0.9, 0.6, 2.7), strict=True):
             self.assertAlmostEqual(got, want, places=5)
+
+    def test_mapped_hull_ends_no_lower_than_the_host_hull(self):
+        # A deck box tilted 0.3 rad about x and a lower-body box; the Forza body reaches lower,
+        # so the mapped boxes would too: their bottoms stop at the host hull's, tops kept.
+        import math
+
+        c, s = math.cos(0.3), math.sin(0.3)
+        model = bytearray(0x10 + 2 * 0x60)
+        struct.pack_into("<IIfI", model, 0, len(model), 2 * 0x60, 2.5, 2)
+        struct.pack_into("<16f", model, 0x10, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.0, -0.1, 0.0, 1)
+        struct.pack_into("<3f", model, 0x10 + 0x50, 1.0, 0.4, 2.2)
+        struct.pack_into("<16f", model, 0x70, 1, 0, 0, 0, 0, c, -s, 0, 0, s, c, 0, 0.0, 0.3, -1.7, 1)
+        struct.pack_into("<3f", model, 0x70 + 0x50, 0.8, 0.4, 0.6)
+        floor = damage._collision_bottom(model, 0)
+        self.assertAlmostEqual(floor, -0.5, places=5)
+        host = damage.Box((-1.0, -0.5, -2.2), (1.0, 0.7, 2.2))
+        forza = damage.Box((-1.0, -0.9, -2.2), (1.0, 0.7, 2.2))
+        damage._map_collision(model, 0, host, forza)
+        tops = [damage._primitive_bottom(model, p)[0] for p in (0x10, 0x70)]
+        self.assertLess(min(tops), floor)
+        top_before = [-damage._primitive_bottom(_flipped(model, p), 0)[0] for p in (0x10, 0x70)]
+        raised = damage._floor_collision(model, 0, floor)
+        self.assertGreater(raised, 0.0)
+        for p, top in zip((0x10, 0x70), top_before, strict=True):
+            self.assertGreaterEqual(damage._primitive_bottom(model, p)[0], floor - 1e-5)
+            self.assertAlmostEqual(-damage._primitive_bottom(_flipped(model, p), 0)[0], top, places=5)
 
 
 if __name__ == "__main__":

@@ -1200,6 +1200,26 @@ Both boxes leave out 0.2% of the vertices at each end per axis
 the untrimmed box's top is 0.25 m or more above the trimmed one on 23
 cars, most of them race cars (SC430, DBR9, Z4 GT3, R8 LMS: 0.44 to 0.47 m).
 
+The mapped hull ends no lower than the host's own (`_floor_collision`):
+every primitive whose lowest corner falls below the host hull's lowest
+corner is cut back to it along its most vertical axis, its top kept. The
+car is placed with its hubs at the host's hub height, so the hull clears
+the ground at least as much as the host's hull would on that car. Mapped
+onto low race cars' sills the hull's bottom came down to 5.1 cm above the
+ground (R8 LMS; HKS Evo 5.2, R8 race car 5.7, Furai 6.7), lower than any
+vanilla hull (8.2 cm), where a low car could catch on kerbs and crests.
+The report's `upvh.hull.bottom_raised` gives the cut (R8 LMS 7.3 cm,
+Furai 1.9 cm).
+
+Kerb at speed (`-Dyno -DynoKeep none -DynoKeys 'Up:12,Down:6'`: with no lane
+keeper the car drifts off the dyno straight; AUD_R8LMS_09 and MAZ_Furai_08,
+`--damage panels` against this change, before `vm1-20261029-201030`, after
+`vm1-20261029-201318`, both clean): the Furai leaves the road at about
+100 mph 19 m to the left, crosses the kerb onto the pavement and brakes to
+a stop there in both builds, with no step in its height or heading over
+3 cm or 0.02 rad between updates. The R8 LMS drifted 13 and 6.6 m and the
+shots don't show it reaching the kerb. Hill crests weren't driven.
+
 ### In game (confirmed-runtime)
 
 Test cars (IDs 1-5): MAS_MC12_04 (long, 5.35 m on the 4.49 m Zonda, host
@@ -1266,10 +1286,12 @@ Each car's host hull mapped from the host's part-0 box to the built car's
 - Hull extents change by more than 0.1 m at the front on 213 cars, at the
   rear on 282, on top on 139, in half width on 35 and at the bottom on 19
   (at most 0.17 m).
-- The hull's bottom stays above the ground (the hubs' height less the tyre
-  radius) on every car: 5.1 cm at least (R8 LMS, 12.6 cm with the host's
-  hull), 9.3 cm at the 5th percentile, median 19 cm; the host hulls' least
-  is 8.2 cm.
+- The hull's bottom above the ground (the hubs' height less the tyre
+  radius; scratch `out/hull/survey2.py`, the converter's own functions):
+  mapped alone, 5.1 cm at least and 12 cars under vanilla's 8.2 cm; with
+  the floor, 9.5 cm at least (the Furai, its host's own), 13 cm at the 5th
+  percentile, median 20 cm. The floor cuts 214 cars' hulls, by 2.6 cm
+  (median) to 13.4 cm.
 
 ## Risks and open questions
 
@@ -1303,8 +1325,7 @@ Each car's host hull mapped from the host's part-0 box to the built car's
    by relative position, so it keeps the host's shape (cabin box, deck
    slopes) on the Forza car's box; a Forza car shaped very differently from
    its host (a cab-over truck on a bonneted host) still collides with the
-   host's profile. Not run in game: car against wall and kerbs, and the
-   low race cars whose hull bottom ends 5 to 8 cm above the ground.
+   host's profile. Not run in game: car against a wall, and crests.
 7. Exposed geometry is found by geometry (under a cover, behind a bumper
    skin, facing away from the panel's paint). Trims outside every panel's
    map (walls above a cover's lowest edge, wheel-arch liners, the RX-7's

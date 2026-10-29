@@ -3035,11 +3035,16 @@ class DamagePlan:
             root = h.records[0]
             if root.collision >= 0:
                 host_box, forza_box = trimmed_box(self.full_field.points), self.forza_hull_box
-                _map_collision(out, pdl + 0x10 + root.collision, host_box, forza_box)
+                at = pdl + 0x10 + root.collision
+                floor = _collision_bottom(out, at)
+                _map_collision(out, at, host_box, forza_box)
+                raised = _floor_collision(out, at, floor)
                 report["hull"] = {
                     k: [[round(c, 3) for c in b.lo], [round(c, 3) for c in b.hi]]
                     for k, b in (("host", host_box), ("forza", forza_box))
                 }
+                if raised:
+                    report["hull"]["bottom_raised"] = round(raised, 3)
         self.report["upvh"] = report
         return bytes(out), report
 
@@ -3365,6 +3370,46 @@ def _map_collision(data: bytearray, at: int, host: Box, forza: Box) -> None:
         struct.pack_into("<3f", data, p + 0x30, *host.to(forza, t))
         e = struct.unpack_from("<3f", data, p + 0x50)
         struct.pack_into("<3f", data, p + 0x50, *(e[a] * scale[a] for a in range(3)))
+
+
+def _primitive_bottom(data, p) -> tuple[float, int]:
+    """(lowest y of one PDL box primitive's corners, the box axis nearest vertical)."""
+    m = struct.unpack_from("<12f", data, p)
+    rows = (m[0:3], m[4:7], m[8:11])
+    t = struct.unpack_from("<3f", data, p + 0x30)
+    e = struct.unpack_from("<3f", data, p + 0x50)
+    return t[1] - sum(abs(e[a] * rows[a][1]) for a in range(3)), max(range(3), key=lambda a: abs(rows[a][1]))
+
+
+def _collision_bottom(data, at: int) -> float:
+    """Lowest corner (y) over every primitive of one PDL collision model."""
+    n = struct.unpack_from("<I", data, at + 12)[0]
+    return min(_primitive_bottom(data, at + 0x10 + k * 0x60)[0] for k in range(n))
+
+
+def _floor_collision(data: bytearray, at: int, floor: float) -> float:
+    """Raise the bottom of every primitive that reaches below `floor` to it, keeping its top:
+    the box shrinks and moves up along its most vertical axis. Returns the largest raise.
+    The mapped root hull may end no lower than the host's own (#210: mapped onto a low
+    race car's sill, the R8 LMS's ended 5 cm above the ground, lower than any vanilla
+    hull's 8 cm)."""
+    n = struct.unpack_from("<I", data, at + 12)[0]
+    most = 0.0
+    for k in range(n):
+        p = at + 0x10 + k * 0x60
+        low, a = _primitive_bottom(data, p)
+        if low >= floor - 1e-6:
+            continue
+        row = struct.unpack_from("<3f", data, p + a * 0x10)
+        e = list(struct.unpack_from("<3f", data, p + 0x50))
+        half = min((floor - low) / 2 / abs(row[1]), e[a])  # along the axis: half the raise each side
+        t = struct.unpack_from("<3f", data, p + 0x30)
+        up = 1.0 if row[1] > 0 else -1.0
+        struct.pack_into("<3f", data, p + 0x30, *(t[c] + up * half * row[c] for c in range(3)))
+        e[a] -= half
+        struct.pack_into("<3f", data, p + 0x50, *e)
+        most = max(most, floor - low)
+    return most
 
 
 def compact(builder, keep: list) -> None:
