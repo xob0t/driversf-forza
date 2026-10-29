@@ -2273,12 +2273,19 @@ stainless body as flat grey paint.
 
 ### The converter (`src/dsfforza/convert/paint.py`, offline-checked)
 
-For each Forza colour: pick the vanilla palette entry of the same finish
-(metallic: `TintColour1.y` = 1) whose apparent colour (colour 2, or colour 3
-when the fresnel power is 1 or more and colour 3 is brighter) is closest in
-sRGB, luminance weighted; copy its nine parameters; set the main colour to
-the Forza colour in linear RGB and the other to the Forza colour times the
-vanilla entry's luminance ratio (near-black colours keep the vanilla sheen).
+For each Forza colour: its DSF target is the swatch in linear RGB times
+`SHOWN_GAIN` (0.3, DSF's paint brightness against Forza's; "Paint shows darker
+than Forza" below). Pick the vanilla palette entry of the same finish
+(metallic: `TintColour1.y` = 1) whose shown colour (`apparent`: the fresnel
+mix of colours 2 and 3 averaged over the projected area) is closest to the
+target in sRGB, luminance weighted; copy its nine parameters; set colours 2
+and 3 to the target's hue so that the entry shows the target, colour 3 at the
+template's luminance ratio to colour 2 (where that would need a colour above
+1, the brighter one is the hue at full scale and the other makes up the
+rest). Near-black colours (linear luminance under 0.01) show as bright as
+the vanilla black they matched, in their own hue (not the template's: vanilla
+200's black has a green rim). Before issue #289 the main colour was the swatch as is and
+`apparent` read colour 2 or colour 3, not the mix.
 `install` replaces the host's SPSPs (the host's first SPSP is the chunk
 template; every MARP gets an explicit payload) and drops colours from the end
 if the full entry's NONR would pass the SSLP buffer (0x6D000) less 0x400 for
@@ -2324,7 +2331,8 @@ literally (vectors as named, power as stored), a low-power entry would show
 mostly colour 3, which doesn't fit white vanilla cars with colour 2 0.95 and
 colour 3 0.02; the CPU may transform the power (it already derives
 `g_OneMinusFresnelbias` and `TintColour3MinusTintColour2`), so how bright
-the two kinds look against each other is open (hypothesis).
+the two kinds look against each other is open (hypothesis). Answered in
+the next sections: the power is used as stored ("The DMC-12 came out black").
 
 ### The DMC-12 came out white (user report on `out/testdrive3`, ID 27)
 
@@ -2423,6 +2431,72 @@ changes: x0.705, colour 2 (0.705, 0.367, 0.007), a #dba314 yellow
 In game (run `vm-20261024-060602`, `out/emissive/build2` ID 1;
 `research/img/emissive-saleen-chase.jpg` against `host-20261024-013435`) the
 body is a plain yellow with no halo.
+
+### Paint shows darker than Forza (issue #289)
+
+Symptom (player report): the Ferrari F50 GT (`FER_F50GT_96`, Forza solid
+`#c00000`) drew dark maroon where Forza shows bright red; the M3 E30's
+`#ca0000` read maroon in the DMC-12 runs too (above).
+
+Cause (confirmed-static): `apparent` still took colour 2 for a low fresnel
+power and colour 3 for a high one with a brighter colour 3, the opposite of
+the literal mix the red/blue probe showed. `shade` matched the F50's red to
+the MP4-12C's (225) red entry by its colour 2 (1.0, 0, 0) and put the swatch
+(0.527, 0, 0) there, with colour 3 at 0.016. With power 0.05 and bias 0.75
+98% of colour 3 shows: `#300000` at n.v 0.9. Read as the mix, `apparent`
+was off the shown luminance by more than 25% on 735 of vanilla's 906 car
+paint entries: the low-power ones (whites with colour 2 0.9 to 1.0 and colour
+3 0.02 show 0.14 to 0.2) and the flat or high-power ones with brighter rims.
+
+How bright DSF paints (offline-checked): on the 50 vanilla cars Forza also has
+(`handling_dsf.PAIRS`), the vanilla entries show (area-weighted mix) about 0.3
+of the linear luminance of the nearest Forza colour of the same car: whites
+0.25 to 0.33 against Forza's 0.86 to 0.99, the Ruf's yellow (flat) 0.33
+against 0.58. Matching each Forza colour to the car's vanilla entries by
+chromaticity and luminance at a gain g, the median shown/swatch ratio is 0.24
+at g 0.2, 0.31 at 0.3, 0.35 at 0.4 and still 0.42 at g 1 (`dsff paint
+survey`, `twin_median_ratio`); the fit cost is lowest at 0.3 to 0.35. The
+swatch as is was too bright wherever it showed: the DMC-12's flat `#999999`
+(0.32) read white, the S5S Raptor glowed. So the target is 0.3 x the swatch
+(`SHOWN_GAIN`), and the brightness cap (the S5S note) stays as a guard; it
+dims one roster entry now (the Continental SS's `#fff5a7`, x0.996) where it
+dimmed 25.
+
+Roster (`tools/batches/all.txt`, 573 cars, 3,231 palette entries; 2,807
+measured, leaving out 423 near-black ones and the DMC-12's stainless; shown =
+area-weighted mix luminance):
+
+| | master | this fix |
+| --- | --- | --- |
+| shown under a third of the swatch's luminance (the issue's measure) | 1,537 | all (0.3 by design) |
+| shown outside ±25% of the target (0.3 x swatch) | 2,254 on 533 cars | 0 |
+| of those too dark (< 1/3 of the target) | 478 | 0 |
+| of those too bright (> 1.25 x the target) | 1,166 | 0 |
+| median, 10th and 90th percentile of shown / target | 1.05, 0.16, 2.66 | 1.00 |
+| vanilla's own entries as Forza colours (832; 73 brighter than 0.3 per channel left out): shown outside ±25% of their own | 520 | 0 |
+
+So master was both: low-power templates (most reds, blues, dark colours) far
+too dark, flat and high-power ones (silvers, greys, whites on the flat
+templates) up to 3x brighter than vanilla. Silvers come out darker than on
+master (the TSX's `#a6abab` 0.33 to 0.12, the Grand Cherokee's `#9aa1ab`
+0.29 to 0.11), reds, blues, oranges and yellows on low-power templates
+brighter (F50 GT 0.005 to 0.034 (red channel 0.025 to 0.158), 370Z blue
+0.009 to 0.048, Boss 429 orange 0.019 to 0.135).
+
+In game (confirmed-runtime; master and this branch built for 8 cars,
+`-Palette 0`, chase and `grille` views, vanilla 126 (red) and 224 (McLaren
+F1 white) for reference; runs `vm2-20261029-232404` / `-232914` and, for
+the F50 GT, which as the first probed car lost its exterior shots,
+`vm2-20261029-234033` / `-234402`; `img/paint-289-f50-m3-tsx.jpg`,
+`img/paint-289-ingame.jpg`): the F50 GT goes from dark maroon to bright red
+like Forza's, the 370Z from navy to Forza's bright blue, the Boss 429 from
+brown to Grabber orange; the S5S Raptor stays a plain yellow (no glow), the
+DMC-12 is unchanged (stainless preset), the M3 E30's white is lighter (still
+a little cream next to the F1's white), the Firebird stays black with a
+faint green (Forza's `#0f140d` is green-tinted). The TSX's `#a6abab`
+silver goes from near white to a mid grey: on the twin cars light metallic
+greys show 0.32 of the swatch (median of 54), so 0.3 is right on average
+for silvers, but no vanilla silver was in the run to compare (open).
 
 ### Survey of the 40 testdrive cars (`out/testdrive3`, offline)
 
