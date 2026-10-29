@@ -664,10 +664,10 @@ def _red_lens_indicators(records, from_lens: set, red_indicators: list, red_by_t
             indicate(records[n])
 
 
-# A rear indicator lamp with this share of its area drawn red, and at most INDICATOR_AMBER of it
-# amber, is a red indicator that brakes too (LampPlan._place_clear).
-RED_INDICATOR_SHARE = 0.5
-INDICATOR_AMBER = 0.1
+# A rear indicator lamp with this share of its area drawn red is a red indicator that brakes too
+# (LampPlan._place_clear); with less, its clear or amber part stays an amber indicator (the
+# Mercedes S65 AMG's clear strip).
+RED_INDICATOR_SHARE = 0.9
 
 
 REFLECTORS = ("textured_reflector", "reflector")
@@ -1011,10 +1011,14 @@ class LampPlan:
         def red(key) -> bool:
             return self.lamps[key].colour == RED
 
-        def rename(key, function) -> None:
-            """Lamp `key` becomes a red `function` lamp (joining one of that key if there is)."""
+        def rename(key, function=None, cluster=None) -> None:
+            """Lamp `key` becomes a red `function` lamp (joining one of that key if there is), or
+            cluster `cluster` of its group."""
             lamp = self.lamps.pop(key)
-            lamp.function, lamp.colour = function, RED
+            if function is not None:
+                lamp.function, lamp.colour = function, RED
+            if cluster is not None:
+                lamp.cluster = cluster
             new = lamp.key
             into = self.lamps.setdefault(new, lamp)
             if into is not lamp:
@@ -1130,10 +1134,17 @@ class LampPlan:
                 indicators.setdefault(key, []).append(r)
         for key, rs in indicators.items():
             finest = min(r.lod for r in rs)
-            area = {c: sum(r.area for r in rs if r.lod == finest and r.seen == c) for c in ("red", "amber")}
-            total = sum(r.area for r in rs if r.lod == finest)
-            if area["red"] >= RED_INDICATOR_SHARE * total and area["amber"] <= INDICATOR_AMBER * total:
+            red_area = sum(r.area for r in rs if r.lod == finest and r.seen == "red")
+            if red_area >= RED_INDICATOR_SHARE * sum(r.area for r in rs if r.lod == finest):
                 rename(key, BRAKE_IND)
+        # The indicators left keep their order, the first cluster 0 (assign ranks the others last:
+        # the Ford Sierra RS500's main amber indicator lost its entry when its red side lamp,
+        # cluster 0, went).
+        for side in ("L", "R"):
+            left = sorted(k for k in self.lamps if k[0] == INDICATOR and k[1] == side and not k[2])
+            for n, k in enumerate(left):
+                if k[3] != n:
+                    rename(k, cluster=n)
         for r in drawn:
             key = self.tri_lamp.get((id(r.sub), r.k))
             if key is None or r.seen != "red" or red(key):
