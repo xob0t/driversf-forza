@@ -173,27 +173,60 @@ Doors: Forza has no door sections, and the side-glass names don't say which
 pane is a door. `glassLM` is the M5's rear-door window but the door window
 behind a vent pane on the 2-door Charger Daytona, Gallardo, MP4-12C and
 300SL (the first version counted the Daytona as 4 doors and gave it the
-four-door 2009 Charger). `_carbin_doors` now measures the left panes
-(`glassLF/LM/LR`, not the lamp glass) from the wheelbase midpoint backwards,
-merges the panes that touch from the front into the front door glass, and
-says 2 doors if that ends 0.4 m or more behind the midpoint (every 2-door in
-`out/cache`: 0.42 to 1.11 m), 4 if it ends by 0.2 m and a window at least
-0.55 m long starts within 0.15 m behind it (every saloon and SUV there:
--0.04 to 0.18 m), and nothing otherwise; coupe, muscle, supercar,
-convertible and race bodies never get 4 (the 1969 Charger R/T's quarter
-window looks like a rear door). Without a carbin, or when it can't tell,
-the body class decides (sedan, SUV, wagon 4; coupes 2; hatch, pickup, van
-not scored); the M5 and the 2011 WRX STi, whose front glass ends at 0.38 and
-0.28 m, get no answer and fall back to 4.
+four-door 2009 Charger). The `body` mesh, though, is cut along the real shut
+lines (`damage.md`, "Doors and wings as Forza parts"): joined through shared
+vertices, its triangles fall apart into front wing, doors, rear quarter and
+roof, and each door carries its handle as a small piece of its own.
+`_carbin_doors` (`door_count`) measures, at the first LOD past 0, from the
+wheelbase midpoint backwards:
 
-The thresholds came from the few dozen cars then in `out/cache`. Over the
-whole roster (main checkout's `out/build`, 2026-10-29) the rule gives 2 doors
-to 8 four-door cars: the 2004 and 2005 WRX STi, the S204, the 2005 Legacy B4,
-the Carlton and the Rapide, whose rear-door pane starts where the front one
-ends and is merged into it, and the 2008 and 2012 Range Rover, whose front
-door glass alone ends 0.46 m behind the midpoint. Three picks move to a
-2-door host (issue #208). Of the 55 saloons, 49 get 4 doors; of the 15 SUVs,
-13.
+- the front door glass: the first left pane (`glassLF/LM/LR`, not the lamp
+  glass) after any vent pane (shorter than 0.45 m and ending more than
+  0.15 m ahead of the midpoint: Fiesta, Corsa, Colt, C4, Rapide), merged
+  with panes that overlap it by more than 0.1 m (CRX del Sol);
+- the side panels: pieces of `body` paint facing the left side, at least
+  0.12 m2, and the handles: pieces at the side 0.08 to 0.4 m long and at
+  most 0.15 m tall, of 12 triangles or more;
+- a rear door: a side panel at least 0.5 m long that starts within 0.2 m
+  ahead of or 0.12 m behind the front glass's end, ends at most 0.08 m
+  behind the rear axle and carries a handle; a rear quarter: such a panel
+  that runs on past the rear axle.
+
+4 doors: a rear door, and the front glass ends by 0.175 x wheelbase
+(saloons and SUVs 0.06 to 0.167, the Rapide highest). 2 doors: the front
+glass ends past that (3-doors from 0.185), or no rear door and the front
+glass ends 0.4 m or more behind the midpoint (2-doors 0.40 to 1.11 m,
+saloons up to 0.38) or a rear quarter starts behind it. Otherwise no
+answer. Coupe, muscle, supercar, convertible and race bodies never get 4
+(mid-engined cars' side intakes look like rear doors), and vans, buses and
+trucks get none (their glass and doors don't follow a car's). Without a
+carbin, or when it can't tell, the body class decides (sedan, SUV, wagon 4;
+coupes 2; hatch, pickup, van not scored).
+
+The handle is what tells a rear door from a 3-door's rear quarter split at
+the wheel arch (the Golf GTI VR6's and Civic Mugen's carry none); the
+Spark's and 2010 Leon Cupra R's rear handles hide in the C-pillar, so they
+get no answer. `img/hosts-doors-components.png` shows the pieces (one
+colour each, glass outlined, red lines at the axles and the midpoint) on
+the 2004 WRX STi, the Range Rover, the 308 GTi (4 doors), the GTI VR6 (no
+answer) and the Clio 197 (2 doors).
+
+The first rule (2026-10-28) merged panes that touch from the front into the
+front door glass and said 2 doors past 0.4 m, 4 by 0.2 m. Over the whole
+roster it gave 2 doors to 8 four-door cars (issue #208): the 2004 and 2005
+WRX STi, the S204, the 2005 Legacy B4, the Carlton and the Rapide, whose
+rear-door pane starts where the front one ends and was merged into it, and
+the 2008 and 2012 Range Rover, whose front door glass ends 0.46 m behind the
+midpoint on a 2.90 m wheelbase. Three of them were on a 2-door host. It
+also took vent panes for the door glass (Fiesta, Corsa VXR and Colt
+Ralliart, all 3-doors, got 4) and left most 5-door hatches unanswered.
+Survey of the 573 cars (`out/cache`, offline, 2026-10-29), first rule ->
+this one: 44 cars change their door count. All 55 saloons and 15 SUVs now
+have 4 (6 saloons and both Range Rovers had 2). Hatches: 23 get 4 (all real
+5-doors: Focus ST 2012, Mazdaspeed3, 308 GTi, Aygo, Leon, Micra, Versa,
+ix20 ...; 2 before), 49 get 2 (all real 2- and 3-doors; 42 before, 3 of
+them 5-doors), 19 none (the Prius, a 5-door, had 2). Picks that change:
+see "The whole roster".
 
 DSF side, same pass: buses (category 0x0A) and trucks (0x07, including the
 GMC C5500 that VEHC names "Van 07") are classes of their own; the 2009

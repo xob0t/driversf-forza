@@ -840,22 +840,40 @@ def _forza_body(
 
 
 TWO_DOOR_BODIES = ("coupe", "muscle", "supercar", "convertible", "race")
+DOOR_RULE_BODIES = ("sedan", "suv", "wagon", "hatch", "pickup") + TWO_DOOR_BODIES  # not vans, buses, trucks
+VENT_PANE = (-0.15, 0.45)  # m: a pane ending ahead of this and shorter than this is a vent pane
+FRONT_GLASS_2DOOR = 0.4  # m behind the wheelbase midpoint: the front door glass ends past it on 2-doors
+FRONT_GLASS_4DOOR = 0.175  # x wheelbase: on 4-doors it ends before it (Rapide 0.167, the 3-doors from 0.185)
+REAR_DOOR_START = (-0.2, 0.12)  # m from the front door glass's end: where the rear door's (or quarter's) skin starts
+REAR_DOOR_END = 0.08  # m behind the rear axle: a rear door ends ahead of it, a rear quarter past it
 
 
 @functools.lru_cache(maxsize=32)  # forza_info asks up to three times per car (host, sound, same vehicle)
 def _carbin_doors(folder: Path, media: str, body: str | None = None) -> int | None:
-    """Door count from the main carbin's left side glass (glassLF/LM/LR; not the lamp
-    glass glassLHL/LTL), or None when it can't tell. Forza has no door sections, and
-    the section names don't say which window is a door: glassLM is the rear-door
-    window on the M5 but the door window behind a vent pane on the 2-door Charger
-    Daytona, Gallardo and MP4-12C. So: merge the panes that touch from the front
-    (vent + door window) into the front door glass. It ends past 0.4 m behind the
-    wheelbase midpoint on every 2-door in out/cache (0.42 to 1.11) -> 2 doors. It ends
-    by 0.2 m and a window at least 0.55 m long starts within 0.15 m behind it on every
-    saloon and SUV there -> 4 doors, but only for bodies that can have rear doors
-    (a coupe's quarter window looks the same: Charger R/T 1969)."""
-    import re as _re
+    """Door count from the main carbin's left side, or None when it can't tell.
 
+    Forza has no door sections, and the side-glass names don't say which pane is a
+    door: glassLM is the rear-door window on the M5 but the door window behind a vent
+    pane on the 2-door Charger Daytona, Gallardo and MP4-12C. But the `body` mesh is cut
+    along the real shut lines (research/damage.md, "Doors and wings as Forza parts"), so:
+
+    - the front door glass is the first left pane after any vent pane (short, ahead of
+      the wheelbase midpoint), with panes that overlap it by more than 0.1 m;
+    - a rear door is a side panel of the body that starts where that glass ends, ends
+      by the rear axle, and carries a door handle (a 3-door's rear quarter, split at the
+      wheel arch on the Civic Mugen and Golf GTI VR6, carries none); a rear quarter
+      starts there and runs past the rear axle.
+
+    4 doors: a rear door, and the front glass ends by 0.175 x wheelbase (saloons and SUVs
+    0.06 to 0.167). 2 doors: the front glass ends past that (3-doors from 0.185: the 205
+    T16's side intake carries something handle-like), or there is no rear door and the
+    front glass ends 0.4 m or more behind the midpoint (2-doors 0.40 to 1.11, saloons up
+    to 0.38) or a rear quarter starts behind it. Coupe, muscle, supercar, convertible and race bodies never get 4 (side
+    intakes ahead of a mid-engine's rear wheel look like rear doors). Issue #208: the
+    first rule merged a rear-door pane touching the front one into it and called the
+    2004 WRX STi, S204, Carlton, Rapide ... 2-door."""
+    if body not in DOOR_RULE_BODIES:
+        return None  # vans, buses, trucks: their glass and doors don't follow a car's
     try:
         from dsfforza.convert import forza2dsf
 
@@ -863,39 +881,108 @@ def _carbin_doors(folder: Path, media: str, body: str | None = None) -> int | No
         dims = forza2dsf.car_dims(car)
     except (OSError, ValueError):
         return None
+    sign = 0.0
     panes = []
     for s in car.sections:
-        if not _re.fullmatch(r"glassL[FMR]", s.name):
+        if not re.fullmatch(r"glassL[FMR]", s.name):
             continue
         subs = [sub for sub in s.subsections if sub.lod > 0]
         if not subs:
             continue
         lod = min(sub.lod for sub in subs)
-        # Forza's front is -z; measure backwards from the wheelbase midpoint.
-        zs = [
-            s.vertices_for(sub)[i].position[2] - dims.mid_z
-            for sub in subs
-            if sub.lod == lod
-            for tri in sub.triangles()
-            for i in tri
+        pts = [
+            s.vertices_for(sub)[i].position for sub in subs if sub.lod == lod for tri in sub.triangles() for i in tri
         ]
-        if zs:
-            panes.append((min(zs), max(zs)))
+        if pts:
+            # Forza's front is -z; measure backwards from the wheelbase midpoint.
+            panes.append((min(p[2] for p in pts) - dims.mid_z, max(p[2] for p in pts) - dims.mid_z))
+            sign += sum(p[0] for p in pts)
     if not panes:
         return None
-    panes.sort()
-    end = panes[0][1]
-    rest = []
-    for z0, z1 in panes[1:]:
-        if z0 <= end + 0.02 and not rest:
+    panels, handles = _side_parts(car, dims, 1.0 if sign >= 0 else -1.0)
+    return door_count(panes, panels, handles, dims.wheelbase, body)
+
+
+def door_count(panes: list, panels: list, handles: list, wheelbase: float, body: str | None) -> int | None:
+    """_carbin_doors' rule on measured parts (z in m from the wheelbase midpoint
+    backwards): left side panes (z0, z1), body panels (z0, z1, y0, y1), door handle
+    centres (z, y)."""
+    panes = sorted(panes)
+    i = 0
+    while i + 1 < len(panes) and panes[i][1] < VENT_PANE[0] and panes[i][1] - panes[i][0] < VENT_PANE[1]:
+        i += 1
+    start, end = panes[i]
+    for z0, z1 in panes[i + 1 :]:
+        if z0 < end - 0.1:
             end = max(end, z1)
-        else:
-            rest.append((z0, z1))
-    if end >= 0.4:
+    if end - start > 1.6:
+        return None  # one pane for every side window (Prius)
+    rear_axle = wheelbase / 2
+    near = [p for p in panels if end + REAR_DOOR_START[0] <= p[0] <= end + REAR_DOOR_START[1] and p[1] - p[0] >= 0.5]
+    rear = [
+        p
+        for p in near
+        if p[1] <= rear_axle + REAR_DOOR_END
+        and any(p[0] + 0.25 <= hz <= p[1] and p[2] <= hy <= p[3] + 0.15 for hz, hy in handles)
+    ]
+    quarter = [p for p in near if p[1] > rear_axle + REAR_DOOR_END]
+    long_front = end > FRONT_GLASS_4DOOR * wheelbase
+    if rear and not long_front:
+        return None if body in TWO_DOOR_BODIES else 4
+    if long_front or end >= FRONT_GLASS_2DOOR or quarter:
         return 2
-    if end <= 0.2 and body not in TWO_DOOR_BODIES and any(z0 <= end + 0.15 and z1 - z0 >= 0.55 for z0, z1 in rest):
-        return 4
     return None
+
+
+def _side_parts(car, dims, sign: float) -> tuple[list, list]:
+    """The `body` section's pieces on the carbin's left side (finest LOD past 0), as
+    triangles joined through shared vertices (damage.part_components): panels, side-facing
+    paint skins of at least 0.12 m2, as (z0, z1, y0, y1); and door handles, small pieces
+    (0.08 to 0.4 m long, at most 0.15 m tall, 12 triangles or more) at the side, as their
+    centre (z, y). z from the wheelbase midpoint backwards."""
+    from dsfforza.convert import forza_materials as fm
+    from dsfforza.convert.damage import part_components
+
+    body = next((s for s in car.sections if s.name == "body"), None)
+    lods = [sub.lod for sub in body.subsections if sub.lod > 0] if body is not None else []
+    if not lods:
+        return [], []
+    lod = min(lods)
+    keys, tris = [], []
+    for sub in body.subsections:
+        if sub.lod != lod:
+            continue
+        pool = body.vertices_for(sub)
+        paint = fm.classify(sub.material)[0] == fm.PAINT
+        for t in sub.triangles():
+            keys.append([(id(pool), i) for i in t])
+            tris.append(([pool[i].position for i in t], paint))
+    groups: dict[int, list] = {}
+    for c, tri in zip(part_components(keys), tris):
+        groups.setdefault(c, []).append(tri)
+    panels, handles = [], []
+    for members in groups.values():
+        pts = [q for p, _ in members for q in p]
+        zs = [q[2] - dims.mid_z for q in pts]
+        ys = [q[1] for q in pts]
+        at_side = min(q[0] * sign for q in pts) >= 0.5 and len(members) >= 12
+        if at_side and 0.08 <= max(zs) - min(zs) <= 0.4 and max(ys) - min(ys) <= 0.15:
+            handles.append(((min(zs) + max(zs)) / 2, (min(ys) + max(ys)) / 2))
+            continue
+        side = total = 0.0
+        for p, paint in members:
+            if not paint:
+                continue
+            a = [p[1][k] - p[0][k] for k in range(3)]
+            b = [p[2][k] - p[0][k] for k in range(3)]
+            n = (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+            area = math.sqrt(sum(c * c for c in n)) / 2
+            total += area
+            if area and n[0] * sign / (2 * area) > 0.5:
+                side += area
+        if side >= 0.12 and side >= 0.5 * total:
+            panels.append((min(zs), max(zs), min(ys), max(ys)))
+    return sorted(panels), handles
 
 
 # --- scoring ------------------------------------------------------------------------
