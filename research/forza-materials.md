@@ -891,9 +891,12 @@ already removed the Camaro's band in these views.
    through a narrow gap counts as hidden (no car known to show it, #58).
 9. Gloss ("Gloss: Forza's specular and reflection on trims and rims"): the cockpit
    (interior entry) draws the outside sections it holds (bonnet scoops, A-pillars)
-   with its own Texturing, and `cockpit.py` installs no gloss materials; #136 was
-   closed on 2026-10-28 after the user saw glossy exterior trims from the cockpit
-   on v0.1.2, but which change did that isn't traced (unverified); the reflection on atlas regions is masked by their texel
+   with its own Texturing, and `cockpit.py` installs no gloss materials. The
+   cockpit view draws the interior entry alone (confirmed-runtime 2026-10-29), so
+   from the driver's seat painted panels reflect (the interior paints with the
+   exterior's `GLOBAL_Chassis_LOD1`) but trims, scoops and chrome don't: #136's
+   closing observation was the paint or `_Interior`'s specular, not a change
+   (`cockpit.md`, "What DSF draws"; issue #232); the reflection on atlas regions is masked by their texel
    green (a grille's bars reflect more than its gaps, unlike Forza); `black*`,
    `frame` and `undercarriage` have none in Forza and stay flat; the calibration
    (`GLOSS_SPECULAR_SCALE`, `GLOSS_REFLECTION_SCALE`) was judged on five cars by day.
