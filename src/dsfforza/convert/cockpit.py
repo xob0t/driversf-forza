@@ -1315,19 +1315,28 @@ def pod_display(
     hub = _norm(_sub(wheel.centre, eye))
     score = np.degrees(np.arccos(np.clip(rays @ top, -1.0, 1.0))).reshape(res, res)
     side = np.degrees(np.arctan2(rays[:, 0], -rays[:, 2]) - math.atan2(hub[0], -hub[2])).reshape(res, res)
-    low = ((rays[:, 1] < hub[1]) | (rays[:, 1] > POD_BELOW_EYE)).reshape(res, res)  # under the eye line, the dash
+    # Under the eye line (the dash), no lower than the hub. Beside an open cockpit's wheel,
+    # where nothing fits above the hub, down to the rim's bottom (the bulkhead panels).
+    floors = [hub[1]]
+    if cowl:
+        floors.append(_norm(_sub(_sub(wheel.centre, _scale(up_w, wheel.radius)), eye))[1])
     pix = np.arange(POD_STEP // 2, res, POD_STEP)
-    scored = sorted(
-        (float(score[y, x]), int(x), int(y))
-        for y in pix
-        for x in pix
-        if hit[y, x]
-        and not bad[y, x]
-        and not low[y, x]
-        and abs(side[y, x]) <= POD_SIDE_DEG
-        and score[y, x] <= POD_MAX_DEG
-    )
-    for w, h in sizes or POD_SIZES[dials]:
+
+    def candidates(floor):
+        low = ((rays[:, 1] < floor) | (rays[:, 1] > POD_BELOW_EYE)).reshape(res, res)
+        return sorted(
+            (float(score[y, x]), int(x), int(y))
+            for y in pix
+            for x in pix
+            if hit[y, x]
+            and not bad[y, x]
+            and not low[y, x]
+            and abs(side[y, x]) <= POD_SIDE_DEG
+            and score[y, x] <= POD_MAX_DEG
+        )
+
+    tries = [(w, h, c) for floor in floors for c in [candidates(floor)] for w, h in sizes or POD_SIZES[dials]]
+    for w, h, scored in tries:
         for ang, x, y in scored:
             n = rays[y * res + x]
             got = fits(n, float(hits[y, x] @ n), w, h)
@@ -1546,7 +1555,7 @@ def dash_needles(plan, version: int) -> list:
 # A display only on the steering wheel (LMP, GT racers) moves onto a virtual display of
 # its own shape, tried at these sizes (x its own) from the largest down: further away
 # than the wheel, it keeps about the size it has there.
-WHEEL_DISPLAY_SCALES = (1.5, 1.25, 1.0, 0.8)
+WHEEL_DISPLAY_SCALES = (1.5, 1.25, 1.0, 0.8, 0.6)
 WHEEL_DISPLAY_LIFT = 0.001  # m: the moved display in front of the housing's screen
 DASH_PANEL = "dsf_dash_panel"  # the housing of a moved wheel display (pod_display name)
 
@@ -1621,8 +1630,9 @@ def digital_displays(
     """The car's dash scene (folder/digitalgauge, formats/anark.py; shared textures and
     fonts in <cache>/<game>/dash_media) drawn live on its digital displays
     (digital_dash.build_plan): the displays' subsections leave the cabin (the plan draws
-    them). A car whose only display is on the steering wheel gets it on a virtual
-    display (wheel_display_pod, needs `wheel`; the wheel keeps its own). Returns (plan
+    them). A car whose only display is on the steering wheel and whose needles
+    (`gauges`) lack a speedometer or tachometer gets it on a virtual display
+    (wheel_display_pod, needs `wheel`; the wheel keeps its own). Returns (plan
     or None, report: "provides" lists the speed/tach readouts it drives, extra static
     sections: the virtual display's housing)."""
     import copy
@@ -1639,7 +1649,7 @@ def digital_displays(
         return None, {"skipped": f"{len(stems)} dash scenes"}, {}
     patches = display_patches(static, eye)
     extra, moved = {}, {}
-    if not patches and wheel is not None:
+    if not patches and wheel is not None and not {"speed", "tach"} <= set(gauges or {}):
         patches, housing, moved = wheel_display_pod(static, eye, wheel, gauges or {}, version, sight_sections)
         if housing is not None:
             extra[housing.name] = housing
