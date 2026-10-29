@@ -70,6 +70,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import struct
 import subprocess
@@ -443,6 +444,54 @@ def extract_wheel(source: Source, media: str, cache: Path, log=print) -> list[st
     return written
 
 
+# The car's brake rotors (forza2dsf.brake_rotor_section): <car>_rotorLF_LOD0.carbin and
+# _rotorLR_ (front and rear axle; the right-hand ones mirror them) in the car's zip, LOD 0
+# only. Cached under the names in BRAKE_FILES (some zips name the carbins differently from
+# the zip), with their own stamp so caches made before stay valid.
+BRAKE_FILES = {"rotorlf": forza2dsf.ROTOR_CARBINS["front"], "rotorlr": forza2dsf.ROTOR_CARBINS["rear"]}
+BRAKE_STAMP = "brake_source.json"
+
+
+def extract_brakes(source: Source, media: str, cache: Path, log=print) -> list[str]:
+    """Put the car's front and rear brake rotor carbins (BRAKE_FILES) into its cache folder.
+    Returns the files written (cached: the stamp's list; none if the car has no rotors)."""
+    folder = cache / source.game.lower() / media
+    stamp = folder / BRAKE_STAMP
+    try:
+        old = json.loads(stamp.read_text())
+    except (OSError, ValueError):
+        old = {}
+    if old.get("path") == source.path and old.get("wanted") == sorted(BRAKE_FILES.values()):
+        return old.get("files", [])
+    image, archive, prefix = open_car_zip(source)
+    written = []
+    try:
+        for info in archive.entries():
+            name = info.filename.replace("\\", "/")
+            if info.is_dir() or not name.lower().startswith(prefix):
+                continue
+            match = re.fullmatch(r".*_(rotor[lr][fr])_lod0\.carbin", name[len(prefix) :].lower())
+            if match is None or "/" in name[len(prefix) :] or name[len(prefix) :].lower().startswith("stripped_"):
+                continue
+            target = BRAKE_FILES.get(match.group(1))
+            if target is None or target in written:
+                continue
+            folder.mkdir(parents=True, exist_ok=True)
+            write_atomic(folder / target, archive.read(info))
+            written.append(target)
+    finally:
+        image.close()
+    folder.mkdir(parents=True, exist_ok=True)
+    write_atomic(
+        stamp,
+        json.dumps(
+            {"path": source.path, "files": sorted(written), "wanted": sorted(BRAKE_FILES.values())}, indent=1
+        ).encode(),
+    )
+    log(f"{media}: brake rotors {', '.join(sorted(written)) if written else 'not found'}")
+    return written
+
+
 DASH_STAMP = "dash_source.json"
 DASH_FOLDER = "digitalgauge"  # the car's Anark dash scene (cockpit digital displays)
 DASH_MEDIA = "dash_media"  # per game: shared dashboard textures and the vector fonts
@@ -735,6 +784,7 @@ def build_car(
     fi = ei = 0
     attempts = []
     use_cockpit = not args.no_cockpit
+    use_rotors = not getattr(args, "no_brake_rotors", False)
     while True:
         lods = clamp_lods(full_ladder[fi], available)
         shadow = clamp_lods(f"1:{SHADOW_LOD}", available)[1]
@@ -763,6 +813,7 @@ def build_car(
             split_rear_wheel=not getattr(args, "no_rear_wheel_part", False),
             cockpit_opts=cockpit.CockpitOptions(mdxn_limit=mdxn_max[1]) if use_cockpit else None,
             wheel_blur=not getattr(args, "no_wheel_blur", False),
+            brake_rotors=use_rotors,
             blur_materials=dsf_materials.shared_macos(stream, entries, dsf_materials.SPOKE_DISC_MATERIALS),
         )
         if args.damage:  # src/dsfforza/convert/damage.py; untested in game
@@ -784,6 +835,7 @@ def build_car(
             {
                 "lods": {str(m): v for m, v in lods.items()},
                 "exterior_lod": exterior_lod,
+                "brake_rotors": bool(report.get("brake_rotors")),
                 "problems": {k: p for k, (_, p) in checks.items() if p},
             }
         )
@@ -801,6 +853,11 @@ def build_car(
                 raise SystemExit(f"{car.name}: the interior entry is over the limits; it is the host's own")
             log(f"{car.name}: the converted interior is over the limits; keeping the host's interior")
             use_cockpit = False
+            continue
+        if use_rotors and over & {0, 2} and report.get("brake_rotors"):
+            # the brake rotors give way before the body's detail does
+            log(f"{car.name}: over the limits; retrying without the brake rotors")
+            use_rotors = False
             continue
         stepped = False
         if 0 in over and fi + 1 < len(full_ladder):
@@ -1049,6 +1106,7 @@ def prepare_car(args, source: Source, media: str, isos, log=print) -> PreparedCa
     folder = extract_car(source, media, args.cache, log)
     # rim textures (forza_materials.WHEEL), and the wheel for cars whose main carbin has none
     extract_wheel(source, media, args.cache, log)
+    extract_brakes(source, media, args.cache, log)  # brake rotors behind the spokes
     if not args.no_cockpit and extract_dash(source, media, args.cache, log):  # cockpit digital displays
         extract_dash_media(isos, source.game, args.cache)
     car = forza2dsf.load_car(folder, media)
@@ -1277,6 +1335,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="no speed-blur disc on the wheels (default: one that fades in as they spin, "
         "forza2dsf.wheel_blur_section, research/wheels.md 'Speed blur')",
+    )
+    parser.add_argument(
+        "--no-brake-rotors",
+        action="store_true",
+        help="no brake rotors behind the spokes (default: Forza's front and rear rotor in the "
+        "wheel parts, forza2dsf.brake_rotor_section, research/wheels.md 'Brake rotors')",
     )
     return parser
 

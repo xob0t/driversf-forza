@@ -494,12 +494,25 @@ ROLE_OF = {PAINT: "paint", GLASS: "glass", TRIM: "trim", TYRE: "tyre", CHROME: "
 # (wheel_material, dsf_materials.Texturing.plan(wheels=...)). Without the texture each rim
 # material gets a uniform swatch of the tyre texture: the Desanne's rim grey, a dark inner-rim
 # grey, bright chrome (research/wheels.md); every rim came out plain silver that way.
-WHEEL_UV = {"tyre": (0.5, 0.0078), "rim": (0.906, 0.0078), "inner": (0.4375, 0.0547), "chrome": (0.117, 0.0078)}
+# The brake rotor (brake_rotor_section) always takes swatches: the disc the uniform mid grey
+# square (red 106, gloss 58: duller than the rims' 131 / 190), the hub the inner-rim dark.
+ROTOR_DISC = "dsf_rotor_disc"  # Forza's rotor / brake / drum subsections: the friction faces
+ROTOR_HUB = "dsf_rotor_hub"  # hub hats, studs and whatever else the rotor carbin holds
+WHEEL_UV = {
+    "tyre": (0.5, 0.0078),
+    "rim": (0.906, 0.0078),
+    "inner": (0.4375, 0.0547),
+    "chrome": (0.117, 0.0078),
+    ROTOR_DISC: (0.07, 0.57),
+    ROTOR_HUB: (0.4375, 0.0547),
+}
 
 
 def wheel_role(material: str) -> str | None:
     """Which tyre-texture swatch a Forza wheel subsection gets; None = leave out (blur discs,
     shadows, alpha-cut emblems)."""
+    if material in (ROTOR_DISC, ROTOR_HUB):
+        return material
     n = material.lower()
     if "blur" in n or "shadow" in n or "emblem" in n or n.startswith("ghost"):
         return None
@@ -522,6 +535,8 @@ def wheel_material(textures, section, sub, shared: dict) -> bytes | None:
     (stride 20, like vanilla wheels). Without it, every part is on the shared tyre
     with a uniform swatch per wheel_role (WHEEL_UV)."""
     tyre = shared.get("tyre") or TYRE
+    if is_rotor(sub):  # brake_rotor_section: swatches on the tyre material, never the atlas
+        return tyre
     if textures is not None:
         from dsfforza.convert import dsf_materials
 
@@ -868,6 +883,167 @@ def wheel_blur_section(sections, lods, centre=(0.0, 0.0, 0.0)) -> carbin.Section
     return carbin.Section(WHEEL_BLUR_SECTION, (0.0, 0.0, 0.0), lo, hi, verts, [], subs, version)
 
 
+# Brake rotors (research/wheels.md, "Brake rotors"). Forza draws the disc and hub behind the
+# spokes from separate carbins, <car>_rotor{LF,RF,LR,RR}_LOD0.carbin (LOD 0 only, in the hub's
+# frame: spin axis x, the hub face at -x like the wheel's rim face; 567 of the 573 roster cars
+# have them); vanilla DSF wheels have none, so through open spokes a port showed the dark inside
+# of its barrel. The rotor turns with the wheel, so it goes into the wheel part: the front rotor
+# into the front (or only) wheel part, the rear rotor into a rear one. One model serves both
+# sides there, so the left rotors stand for the right ones (their mirror images). It keeps
+# Forza's own size (the wheel part's fit scales the wheel model, not the rotor) and its place
+# against the tyre's centre. It is drawn on the shared tyre material with plain swatches of the
+# tyre texture (Forza's shared rotor0..4.xds aren't in the car's atlas): the friction ring
+# (triangles beyond ROTOR_RING of the rotor's radius; Forza's technique names don't tell, 201
+# rotors are all `hub` or `misc`) mid grey, the hat and hub dark. It takes the wheel's baked sky
+# (wheel_skies, with the rotor among the occluders), so it lies in the wheel's shadow like the
+# barrel. A rotor of more than BRAKE_ROTOR_MAX_TRIANGLES (drums, drilled discs: 145 of the 1146
+# front and rear rotors, up to 9410 triangles) is replaced by a plain disc of its size
+# (plain_rotor). Only on each entry's finest LOD (the exterior, the full entry's mask 4). The calipers, which
+# don't turn, are left out (#212).
+ROTOR_CARBINS = {"front": "rotorLF_LOD0.carbin", "rear": "rotorLR_LOD0.carbin"}  # port_car.extract_brakes
+BRAKE_ROTOR_SECTION = "dsf_brake_rotor"
+BRAKE_ROTOR_MAX_TRIANGLES = 2000
+ROTOR_RING = 0.6  # share of the rotor's radius where the friction ring starts
+PLAIN_ROTOR_SEGMENTS = 32
+
+
+def _rotor_triangles(rotor) -> list:
+    """[(3 positions, 3 normals)] of the rotor carbin's drawn triangles (shadows and blur
+    left out), in the rotor's own frame."""
+    out = []
+    for section in rotor:
+        for sub in section.subsections:
+            if "shadow" in sub.material.lower() or "blur" in sub.material.lower():
+                continue
+            pool = section.vertices_for(sub)
+            for tri in sub.triangles():
+                out.append(([pool[i].position for i in tri], [pool[i].normal for i in tri]))
+    return out
+
+
+def plain_rotor(triangles) -> list:
+    """A plain stand-in of the rotor's size: the friction ring (both faces, its rim and its inner
+    edge) over the ring triangles' axial extent, and a hat (a cylinder and its face) over the
+    rest's, PLAIN_ROTOR_SEGMENTS round. Same format as _rotor_triangles."""
+    radius = lambda p: math.hypot(p[1], p[2])  # noqa: E731
+    pts = [p for ps, _ in triangles for p in ps]
+    outer = max(radius(p) for p in pts)
+    ring = [p for ps, _ in triangles if radius(_centroid(ps)) >= ROTOR_RING * outer for p in ps]
+    hat = [p for ps, _ in triangles if radius(_centroid(ps)) < ROTOR_RING * outer for p in ps] or ring
+    r0, r1 = ROTOR_RING * outer, outer
+    rx = (
+        (min(p[0] for p in ring), max(p[0] for p in ring)) if ring else (min(p[0] for p in pts), max(p[0] for p in pts))
+    )
+    hx = (min(p[0] for p in hat), max(p[0] for p in hat))
+    hub_face = hx[0] if hx[0] < rx[0] else hx[1]  # the hat stands out of the ring towards the hub face
+    ring_face = rx[0] if hub_face < rx[0] else rx[1]
+    rh = 0.85 * r0
+    n = PLAIN_ROTOR_SEGMENTS
+    ang = [2 * math.pi * k / n for k in range(n + 1)]
+    out = []
+
+    def tri(a, b, c, normal):
+        u = [b[k] - a[k] for k in range(3)]
+        v = [c[k] - a[k] for k in range(3)]
+        if (
+            math.dist(
+                (0.0, 0.0, 0.0), (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
+            )
+            > 1e-12
+        ):
+            out.append(([a, b, c], [normal] * 3))  # no flat ones (a ring of no thickness has no rim)
+
+    def quad(a, b, c, d, normal):
+        tri(a, b, c, normal)
+        tri(a, c, d, normal)
+
+    def at(x, r, t):
+        return (x, r * math.cos(t), r * math.sin(t))
+
+    for k in range(n):
+        t0, t1 = ang[k], ang[k + 1]
+        tm = (t0 + t1) / 2
+        radial = (0.0, math.cos(tm), math.sin(tm))
+        for x, nx in ((rx[0], -1.0), (rx[1], 1.0)):  # the ring's two faces
+            quad(at(x, r0, t0), at(x, r1, t0), at(x, r1, t1), at(x, r0, t1), (nx, 0.0, 0.0))
+        quad(at(rx[0], r1, t0), at(rx[1], r1, t0), at(rx[1], r1, t1), at(rx[0], r1, t1), radial)  # rim
+        inward = (0.0, -radial[1], -radial[2])
+        quad(at(rx[0], r0, t0), at(rx[1], r0, t0), at(rx[1], r0, t1), at(rx[0], r0, t1), inward)
+        quad(at(ring_face, rh, t0), at(hub_face, rh, t0), at(hub_face, rh, t1), at(ring_face, rh, t1), radial)
+        face = (-1.0 if hub_face < ring_face else 1.0, 0.0, 0.0)
+        tri(at(hub_face, 0.0, t0), at(hub_face, rh, t0), at(hub_face, rh, t1), face)
+    return out
+
+
+def _winding(triangles) -> bool:
+    """Whether most of `triangles` wind counter-clockwise about their vertex normals."""
+    votes = 0
+    for ps, ns in triangles:
+        a, b, c = ps
+        u = (b[0] - a[0], b[1] - a[1], b[2] - a[2])
+        v = (c[0] - a[0], c[1] - a[1], c[2] - a[2])
+        cross = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
+        n = [sum(n[k] for n in ns) for k in range(3)]
+        votes += 1 if sum(cross[k] * n[k] for k in range(3)) > 0 else -1
+    return votes >= 0
+
+
+def _centroid(ps):
+    return tuple(sum(p[k] for p in ps) / 3 for k in range(3))
+
+
+def brake_rotor_section(rotor, lod: int, fit=(1.0, 1.0)) -> carbin.Section | None:
+    """The rotor carbin's sections as one wheel section at Forza `lod`, its vertices placed so
+    that wheel_point(p, fit) lands them at Forza's own size: the wheel part's fit scales the
+    wheel model, not the rotor. Subsections ROTOR_DISC (the friction ring, ROTOR_RING) and
+    ROTOR_HUB; plain_rotor when the rotor has more than BRAKE_ROTOR_MAX_TRIANGLES. The
+    section's `plain` says which. None without triangles."""
+    triangles = _rotor_triangles(rotor)
+    if not triangles:
+        return None
+    plain = len(triangles) > BRAKE_ROTOR_MAX_TRIANGLES
+    if plain:  # wound like the carbin's own triangles
+        front = _winding(triangles)
+        triangles = [
+            (ps if _winding([(ps, ns)]) == front else [ps[0], ps[2], ps[1]], ns) for ps, ns in plain_rotor(triangles)
+        ]
+    ax, rad = fit[0], fit[1]
+    cx, cy, cz = fit[2:5] if len(fit) >= 5 else (0.0, 0.0, 0.0)
+    outer = max(math.hypot(p[1], p[2]) for ps, _ in triangles for p in ps)
+    verts: list[carbin.Vertex] = []
+    remap: dict = {}
+    indices: dict[str, list[int]] = {}
+    for ps, ns in triangles:
+        c = _centroid(ps)
+        role = ROTOR_DISC if math.hypot(c[1], c[2]) >= ROTOR_RING * outer else ROTOR_HUB
+        out = indices.setdefault(role, [])
+        for (x, y, z), (nx, ny, nz) in zip(ps, ns):
+            key = (x, y, z, nx, ny, nz)
+            if key not in remap:
+                remap[key] = len(verts)
+                verts.append(
+                    carbin.Vertex(
+                        (cx + (x - cx) / ax, cy + y / rad, cz + z / rad),
+                        (0.0, 0.0),
+                        (0.0, 0.0),
+                        (nx * ax, ny * rad, nz * rad),
+                    )
+                )
+            out.append(remap[key])
+    identity = (0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0)
+    subs = [carbin.SubSection(role, lod, 4, identity, idx) for role, idx in sorted(indices.items())]
+    lo = tuple(min(v.position[k] for v in verts) for k in range(3))
+    hi = tuple(max(v.position[k] for v in verts) for k in range(3))
+    section = carbin.Section(BRAKE_ROTOR_SECTION, (0.0, 0.0, 0.0), lo, hi, verts, verts, subs, rotor[0].version)
+    section.plain = plain
+    return section
+
+
+def is_rotor(sub) -> bool:
+    """A subsection of brake_rotor_section's rotor."""
+    return sub.material in (ROTOR_DISC, ROTOR_HUB)
+
+
 # Baked sky term (s0.w) of the wheel model. Forza's wheel vertices carry no AO byte
 # (all 0 on the 40 testdrive cars), so vertex_sky gave every wheel vertex
 # DEFAULT_AO x the hemisphere factor of its wheel-local normal: about 0.42 on the rim
@@ -1159,7 +1335,9 @@ def add_geometry(
                     if merge and len(verts_out) > 0xFFFF - 3:
                         flush()
                     uvs, tag = (
-                        textures.triangle_uvs(section, sub, k, [pool[i].uv0 for i in tri]) if textured else (None, None)
+                        textures.triangle_uvs(section, sub, k, [pool[i].uv0 for i in tri])
+                        if textured and not (wheel and is_rotor(sub))
+                        else (None, None)
                     )
                     if tag == "drop":
                         continue  # alpha-tested away in Forza (dsf_materials.DROP)
@@ -1825,6 +2003,8 @@ class ForzaCar:
     sections: list
     body: list  # vanilla body sections (upgrade variants dropped), wheel excluded
     wheel: list
+    # {"front"|"rear": sections of the left rotor carbin} (ROTOR_CARBINS, brake_rotor_section)
+    rotors: dict = field(default_factory=dict)
 
     @property
     def game(self) -> str:
@@ -1857,8 +2037,30 @@ def load_car(folder: Path, name: str) -> ForzaCar:
         raise ValueError(f"{name}: no wheel section (main carbin or {WHEEL_CARBIN})")
     taken = {id(s) for s in wheel}
     return ForzaCar(
-        name, Path(folder), sections, [s for s in vanilla if s.name != "wheel" and id(s) not in taken], wheel
+        name,
+        Path(folder),
+        sections,
+        [s for s in vanilla if s.name != "wheel" and id(s) not in taken],
+        wheel,
+        load_rotors(folder),
     )
+
+
+def load_rotors(folder: Path) -> dict:
+    """{"front"|"rear": sections} of the car's cached rotor carbins (ROTOR_CARBINS); an axle
+    without one, or whose carbin doesn't parse, is left out."""
+    rotors = {}
+    for axle, name in ROTOR_CARBINS.items():
+        path = find_file(folder, name)
+        if path is None:
+            continue
+        try:
+            sections = carbin.parse(path.read_bytes())
+        except (carbin.CarbinError, struct.error, IndexError):
+            continue
+        if any(sub.triangles() for s in sections for sub in s.subsections):
+            rotors[axle] = sections
+    return rotors
 
 
 @dataclass
@@ -2033,6 +2235,9 @@ class ConvertOptions:
     # Wheel speed blur (wheel_blur_section): a disc over each wheel's rim face that fades in as
     # the wheel spins, like vanilla wheels' spoke discs.
     wheel_blur: bool = True
+    # Brake rotors (brake_rotor_section): Forza's front and rear rotor in the wheel parts, behind
+    # the spokes, at the finest wheel LODs.
+    brake_rotors: bool = True
     # The archive's shared GLOBAL_Wheel_Blur_SpokeDisc MACOs ({uid: Entry},
     # dsf_materials.shared_macos): with them and --textures the disc draws Forza's own
     # spinning-wheel picture; without, the shared disc and its texture.
@@ -2118,6 +2323,26 @@ def convert(
     def part_fit(kind: int, part: int) -> tuple[float, ...]:
         # with the tyre's centre: some wheel models sit off their origin (TOY_6_Supra_05)
         return (*fits[hw.axles.get((kind, part), "both")], *dims.tyre_centre)
+
+    rotor_cache: dict = {}
+
+    def wheel_sections(kind: int, part: int, lod: int, finest: bool = True) -> list:
+        """car.wheel, plus the axle's brake rotor (brake_rotor_section) on the entry's finest
+        LOD. One rotor section per (axle, fit, LOD), so entries drawing the same LOD share
+        wheel_skies."""
+        axle = "rear" if hw.axles.get((kind, part)) == "rear" else "front"
+        rotor = car.rotors.get(axle) if opts.brake_rotors else None
+        if not rotor or not finest:
+            return car.wheel
+        fit = part_fit(kind, part)
+        key = (axle, fit, wheel_lod(car.wheel, lod))
+        if key not in rotor_cache:
+            rotor_cache[key] = section = brake_rotor_section(rotor, key[2], fit)
+            if section is not None:
+                tris = sum(len(sub.triangles()) for sub in section.subsections)
+                report.setdefault("brake_rotors", {})[f"{axle} LOD {key[2]}"] = tris
+                log(f"brake rotor ({axle}, LOD {key[2]}): {tris} triangles{' (plain disc)' if section.plain else ''}")
+        return car.wheel if rotor_cache[key] is None else [*car.wheel, rotor_cache[key]]
 
     half_track = (dims.track_outer - front_width) / 2
     rear_half_track = ((dims.rear_track_outer or dims.track_outer) - dims.tyre_width * rear_fit[0]) / 2
@@ -2379,7 +2604,13 @@ def convert(
             if not opts.no_wheel:
                 for wheel_part in hw.full_parts:  # Desanne: part 31; 33 hosts split front/rear
                     part_lods.setdefault(wheel_part, {})[mask] = add_geometry(
-                        builder, car.wheel, lod, place, wheel=True, wheel_fit=part_fit(0, wheel_part), textures=tex_full
+                        builder,
+                        wheel_sections(0, wheel_part, lod, finest=mask == min(opts.lods)),
+                        lod,
+                        place,
+                        wheel=True,
+                        wheel_fit=part_fit(0, wheel_part),
+                        textures=tex_full,
                     )
         part_lods[0][SHADOW_MASK] = add_geometry(
             builder,
@@ -2474,7 +2705,7 @@ def convert(
             ext_lods[wheel_part] = {
                 EXTERIOR_MASK: add_geometry(
                     ext_builder,
-                    car.wheel,
+                    wheel_sections(2, wheel_part, opts.exterior_lod),
                     opts.exterior_lod,
                     place,
                     wheel=True,
