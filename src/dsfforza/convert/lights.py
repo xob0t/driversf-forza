@@ -368,10 +368,11 @@ def yellow_lens(texel) -> bool:
     return 60 * (g - b) / (max(r, g, b) - min(r, g, b)) >= YELLOW_LENS_HUE
 
 
-def texel_sampler(atlases):
+def texel_sampler(atlases, reduce=None):
     """(section, sub, triangle) -> the mean Forza texel (r, g, b, a) under one
     triangle of a Lights-texture subsection, else None. atlases: a
-    forza_materials.AtlasCache of the car (dsf_materials.Texturing.atlases)."""
+    forza_materials.AtlasCache of the car (dsf_materials.Texturing.atlases).
+    reduce: texels (n, 4) -> the result instead of their mean."""
     from dsfforza.convert import dsf_materials, trim_art
     from dsfforza.convert import forza_materials as fm
 
@@ -403,9 +404,27 @@ def texel_sampler(atlases):
         texels = trim_art.triangle_texels(image, [(u * w, v * h) for u, v in uvs])
         if not len(texels):
             return None
+        if reduce is not None:
+            return reduce(texels)
         return tuple(float(c) for c in texels.mean(0))
 
     return sample
+
+
+def _seen(texels) -> str | None:
+    """texel_class of a triangle's mean texel, whatever its alpha (the Lights alpha is the glow
+    mask; a baked lens texel already holds what shows through the glass). The mean, as the eye
+    averages a lamp's pattern: most texels of the Ford Raptor's red tail bowls are pale
+    highlights, while a triangle across its white reverse window and the red is red on the
+    whole, as before."""
+    return texel_class((*texels[:, :3].mean(0), 255))
+
+
+def seen_sampler(atlases):
+    """(section, sub, triangle) -> the class (red, amber, white) of most of the texels under one
+    triangle of a Lights-texture subsection, else None (LampPlan.build `seen`). atlases: the
+    ones the car is drawn from, lenses baked (dsf_materials.Texturing.atlases)."""
+    return texel_sampler(atlases, _seen)
 
 
 @dataclass
@@ -421,6 +440,7 @@ class Tri:
     normal: tuple
     lod: int
     pts: tuple = ()  # corners (lamp-technique triangles; _red_lens_indicators)
+    seen: str | None = None  # texel class of the drawn texels at the rear (LampPlan.build `seen`)
 
 
 def _hull_xy(points):
@@ -644,6 +664,12 @@ def _red_lens_indicators(records, from_lens: set, red_indicators: list, red_by_t
             indicate(records[n])
 
 
+# A rear indicator lamp with this share of its area drawn red is a red indicator that brakes too
+# (LampPlan._place_clear); with less, its clear or amber part stays an amber indicator (the
+# Mercedes S65 AMG's clear strip).
+RED_INDICATOR_SHARE = 0.9
+
+
 REFLECTORS = ("textured_reflector", "reflector")
 LAMP_COVERS = ("glass", "lights_glass", "lights_gls_noemit")  # = glass.LAMP_MATERIALS
 HEAD_UNIT_DEPTH = 0.3  # m behind a headlight section's cover (dsf_materials.COVER_DEPTH)
@@ -740,7 +766,7 @@ class LampPlan:
     slots: list = field(default_factory=list)  # per host light entry: (offset, id, Lamp | None)
 
     @classmethod
-    def build(cls, sections, place, mid_z: float, lenses=frozenset(), texel=None) -> LampPlan:
+    def build(cls, sections, place, mid_z: float, lenses=frozenset(), texel=None, seen=None) -> LampPlan:
         """sections: Forza body sections (all LODs). place: forza2dsf.Placement.
         mid_z: DSF z of the wheelbase midpoint (front lamps are ahead of it).
         lenses: id(sub) of lamp-cover glass subsections drawn as lamp texels
@@ -749,7 +775,10 @@ class LampPlan:
         indicator and reverse cells over one reflector).
         texel: (section, sub, triangle) -> mean Forza texel or None
         (texel_sampler); rear lens triangles on red texels are tail lamps
-        whatever their technique says (_lens_classes)."""
+        whatever their technique says (_lens_classes).
+        seen: (section, sub, triangle) -> the class of the texels the car draws it with
+        (seen_sampler over the lens bake's atlas, dsf_materials.Texturing.atlases): rear lamp
+        triangles on red ones light only with a red lamp (_place_clear)."""
         plan = cls()
         records, clear = [], []  # clear lenses are placed after the lamps
         front_reflectors = []  # unlit, but a lamp a lens in front of them shows (_place_clear)
@@ -787,13 +816,16 @@ class LampPlan:
                     normals = [place.normal(pool[i].normal) for i in t]
                     area, centre, normal = _tri_geometry(pts, normals)
                     front = centre[2] > mid_z
+                    shown = None if front or seen is None else seen(section, sub, t)
                     if rear_reflector:
                         # A rear lamp's reflector lights with the lamp it belongs to, like a
                         # clear lens: under a clear cover it is what the player sees (the Devon
                         # GTX's red reflectors round a 15-triangle tail_light), and unlit the
                         # tail lamps were dark at night (issue #160). Front reflectors stay
                         # unlit: head lamps glow by day from their lens or bulb (#124).
-                        reflector = Tri(sub, k, LENS, "C", front, WHITE, area, centre, normal, sub.lod, tuple(pts))
+                        reflector = Tri(
+                            sub, k, LENS, "C", front, WHITE, area, centre, normal, sub.lod, tuple(pts), shown
+                        )
                         (front_reflectors if front else clear).append(reflector)
                         continue
                     if named_side:
@@ -832,10 +864,12 @@ class LampPlan:
                         elif c == RED and not front:
                             f = TAIL
                         else:
-                            clear.append(Tri(sub, k, LENS, side, front, c, area, centre, normal, sub.lod, tuple(pts)))
+                            clear.append(
+                                Tri(sub, k, LENS, side, front, c, area, centre, normal, sub.lod, tuple(pts), shown)
+                            )
                             continue
                         from_lens.add(len(records))
-                    records.append(Tri(sub, k, f, side, front, c, area, centre, normal, sub.lod, tuple(pts)))
+                    records.append(Tri(sub, k, f, side, front, c, area, centre, normal, sub.lod, tuple(pts), shown))
         if not any(r.function == HEAD and r.front for r in records):
             # No head-lamp technique (CHE_CorvetteGS_10, DOD_RamSRT10_06,
             # FOR_MustangSVTCobraR_93 and several race cars draw the lamp as a
@@ -974,6 +1008,66 @@ class LampPlan:
             pts, keys = surfaces.get((lod, front), ([], []))
             return np.array(pts, float).reshape(-1, 3, 3), keys
 
+        def red(key) -> bool:
+            return self.lamps[key].colour == RED
+
+        def rename(key, function=None, cluster=None) -> None:
+            """Lamp `key` becomes a red `function` lamp (joining one of that key if there is), or
+            cluster `cluster` of its group."""
+            lamp = self.lamps.pop(key)
+            if function is not None:
+                lamp.function, lamp.colour = function, RED
+            if cluster is not None:
+                lamp.cluster = cluster
+            new = lamp.key
+            into = self.lamps.setdefault(new, lamp)
+            if into is not lamp:
+                for lod, acc in lamp.per_lod.items():
+                    dst = into.per_lod.setdefault(lod, [0.0, [0.0] * 3, [0.0] * 3, 0])
+                    dst[0] += acc[0]
+                    for i in range(3):
+                        dst[1][i] += acc[1][i]
+                        dst[2][i] += acc[2][i]
+                    dst[3] += acc[3]
+            for t, k in self.tri_lamp.items():
+                if k == key:
+                    self.tri_lamp[t] = new
+            for _, keys in surfaces.values():
+                keys[:] = [new if k == key else k for k in keys]
+            for keys in own.values():
+                if key in keys:
+                    keys.discard(key)
+                    keys.add(new)
+            for k in list(options):
+                inside, rs = options[k]
+                options[k] = ({new if x == key else x for x in inside}, rs)
+            centres.pop(key, None)
+
+        def fit(r, key, keys, rs):
+            """key, unless r is a rear triangle on red texels (Tri.seen) and key's lamp isn't
+            red: then the nearest red one of `keys` (the lamps behind or inside its piece), else
+            of its section's (same_section), else the red lamp with a triangle nearest r within
+            CLEAR_LENS_REACH, else None (unlit). Forza draws some reverse and indicator bulbs,
+            the reflectors round them and lenses and covers over them on red texels (the
+            Mercedes S65 AMG's lower tail lamp halves, the Lexus IS F's boot lid lamps, the
+            Dodge Durango's covers). Lit with the reverse or an amber indicator lamp, the red lit
+            white or amber when reversing or indicating (a lamp glows in its entry's colour)
+            and never braked; vanilla draws its reverse lamps white and its indicators amber
+            and lights its red rear lamp texels with the tail and brake lamps (issue #103)."""
+            if key is None or r.front or r.seen != "red" or red(key):
+                return key
+            reds = {k for k in keys if red(k)} or {k for k in same_section(rs) if red(k)}
+            if reds:
+                return nearest(reds, r)
+            corners, all_keys = surface(r.lod, r.front)
+            if not all_keys:
+                return None
+            d = np.linalg.norm(corners.mean(1) - r.centre, axis=1)
+            d = np.where([red(k) for k in all_keys], d, np.inf)
+            i = int(d.argmin())
+            return all_keys[i] if d[i] < CLEAR_LENS_REACH else None
+
+        options: dict = {}  # id(Tri) -> (the lamps behind or inside its piece, the piece): for fit
         by_sub: dict = {}
         for r in clear:
             side = "L" if r.centre[0] > 0 else "R"
@@ -1004,6 +1098,7 @@ class LampPlan:
                     key = nearest(inside, r)
                     if not r.front:
                         self.tri_lamp[(id(r.sub), r.k)] = key
+                        options[id(r)] = (inside, rs)
                     lit.append((r, key))
         for r, key in lit:
             pts, keys = surfaces.setdefault((r.lod, r.front), ([], []))
@@ -1026,6 +1121,39 @@ class LampPlan:
                 key = got.get(id(r)) or (nearest(behind, r) if behind else None)
                 if key is not None:
                     self.tri_lamp[(id(r.sub), r.k)] = key
+                    options[id(r)] = (behind | set(got.values()), rs)
+        # What each lamp triangle, lens, cover and reflector is drawn with, last: lenses found the
+        # lamp behind them by what they lie over (the Honda Integra Type R Mugen's white lenses
+        # over its red-drawn reverse bulbs light with the reverse lamp; the Lamborghini
+        # Countach's amber lenses with the indicator whose bulbs are drawn red).
+        drawn = [r for r in (*records, *clear) if not r.front and r.seen is not None]
+        indicators: dict = {}
+        for r in drawn:
+            key = self.tri_lamp.get((id(r.sub), r.k))
+            if key is not None and key[0] == INDICATOR:
+                indicators.setdefault(key, []).append(r)
+        for key, rs in indicators.items():
+            finest = min(r.lod for r in rs)
+            red_area = sum(r.area for r in rs if r.lod == finest and r.seen == "red")
+            if red_area >= RED_INDICATOR_SHARE * sum(r.area for r in rs if r.lod == finest):
+                rename(key, BRAKE_IND)
+        # The indicators left keep their order, the first cluster 0 (assign ranks the others last:
+        # the Ford Sierra RS500's main amber indicator lost its entry when its red side lamp,
+        # cluster 0, went).
+        for side in ("L", "R"):
+            left = sorted(k for k in self.lamps if k[0] == INDICATOR and k[1] == side and not k[2])
+            for n, k in enumerate(left):
+                if k[3] != n:
+                    rename(k, cluster=n)
+        for r in drawn:
+            key = self.tri_lamp.get((id(r.sub), r.k))
+            if key is None or r.seen != "red" or red(key):
+                continue
+            key = fit(r, key, *options.get(id(r), (set(), [r])))
+            if key is None:
+                del self.tri_lamp[(id(r.sub), r.k)]
+            else:
+                self.tri_lamp[(id(r.sub), r.k)] = key
 
     # -- host light entries --
     def assign(self, upvh: bytes) -> LampPlan:

@@ -16,7 +16,7 @@ in the worktrees of the PRs that made them, not in the repo.
 
 ## Current lamp rules (summary)
 
-What the converter does as of PR #223. The sections after this one are in
+What the converter does as of the seventh lamp pass (after PR #223). The sections after this one are in
 the order the lamp PRs landed (#93 to #223) and hold the evidence; where a
 later PR replaced a rule, the earlier section says so in one line.
 
@@ -39,6 +39,13 @@ later PR replaced a rule, the earlier section says so in one line.
   their own Forza section, else (lenses and covers) with a lamp whose
   outline overlaps theirs, else stay unlit. Front reflectors never light
   ([#174](#clear-covers-over-reflectors-with-no-lamp-issue-174)).
+- Last, what each rear triangle is drawn with (the mean of the baked
+  atlas's texels under it, `lights.seen_sampler`): an indicator lamp drawn
+  90% red brakes and indicates (0x19/0x1A), and any other triangle drawn red
+  on a reverse or amber indicator lamp moves to the nearest red lamp behind
+  or inside its piece, of its section, or within 0.35 m, else stays unlit.
+  Lenses keep the lamp they lie over
+  ([red drawn texels](#red-texels-lit-as-reverse-and-indicator-lamps-issue-103)).
 - Head lamps without a head lamp technique: the front clear lenses, else
   the headlight sections' reflectors, else their cover glass. With one, the
   reflector bowls under a headlight cover that has no head lamp in it light
@@ -1849,6 +1856,77 @@ In game (VM 1, `-Views 'rear,nose,rear+night,nose+night,rear+hitfront' -Palette 
 `out/l6/after3` run `vm1-20261029-084829`): the GTI VR6's bumper fog lamps no longer glow in the dark mood;
 its head lamps do as before (`img/lamps6-gtivr6-bumper-dark-ingame.jpg`).
 
+### Red texels lit as reverse and indicator lamps (issue #103)
+
+Symptom (offline-checked): after #220, 43 cars braked with under half of their visible red rear lamp area
+(#103's recheck); 32 of them had red texels lit as reverse or indicator lamps.
+
+Cause (confirmed-static): Forza draws reverse and indicator bulbs, the reflector bowls round them and the
+lenses and covers over them on red texels as often as on white or amber ones: the Mercedes S65 AMG's lower
+tail lamp halves are a red `textured_reflector` round its reverse and indicator strips, the Lexus IS F's
+boot lid lamps a red bowl round its reverse and fog bulbs, half the Koenigsegg Agera's ring is indicator
+and its lower lamp reverse, half the Ford Raptor's tail lamp is reverse, the Dodge Durango's
+`lights_gls_noemit` covers are red over both. The lamp plan gave each such triangle the lamp it lies over
+or round (#174), whatever it is drawn with. A lamp glows in its entry's colour (`texel.a x colour[b2]`,
+"How a lamp lights"), so the red lit white-pink when reversing (the IS F's whole inner lamp, run
+`vm1-20261029-142330`) or amber when indicating, and never braked. Vanilla draws its reverse lamps white
+and its indicators amber, and lights its red rear lamp texels with the tail and brake lamps (0x18, 0x02,
+0x19/0x1A).
+
+Change (`LampPlan.build` `seen`, `_place_clear`; `forza2dsf.convert` passes `lights.seen_sampler` over the
+lens bake's atlas, `Texturing.atlases`):
+
+- Every rear lamp triangle, lens, cover and reflector gets the texel class of what it is drawn with: the
+  mean of its baked texels, alpha aside (the alpha is the glow mask). The mean, as the eye averages a
+  lamp's pattern: most texels of the Raptor's red bowls are pale highlights (a majority test kept them
+  white), while a triangle across its white reverse window and the red is red on the whole.
+- After the plan is placed, a rear indicator lamp drawn at least 90% red (`RED_INDICATOR_SHARE`, over all
+  its triangles, lenses included) brakes and indicates (BRAKE_IND, 0x19/0x1A), as vanilla's US-style cars
+  and `_red_lens_indicators`' lenses do: the Durango, the Infiniti IPL G coupe, the Tour bus. The
+  indicators left keep cluster 0 first (`assign` ranks second clusters last: the Sierra RS500's main amber
+  indicator lost its entry when its red side lamp, cluster 0, went).
+- Then every rear triangle drawn red on a lamp that isn't red (reverse, indicator) moves to the nearest red
+  lamp among those behind or inside its piece, else of its section, else the red lamp with a triangle
+  within 0.35 m; else it stays unlit.
+- Lenses choose the lamp behind them by what they lie over before any of this (a reflector counts as the
+  lamp it surrounds): the Honda Integra Type R Mugen's and VW Golf R's white lenses over red-drawn reverse
+  bulbs and the Pontiac Trans Am 02's white lens over a red bowl stay reverse lamps; the Countach's amber
+  lenses over red-drawn indicator bulbs stay indicators. Tried first: turning red-drawn reverse bulbs into
+  tail lamps before the lenses were placed lost the Golf R's reverse lamp (284 cm2) and most of the
+  Integra's; deciding red indicators on the bulbs alone made the Countach's amber lenses brake red, and a
+  50% share the S65 AMG's clear indicator strip.
+
+Roster (offline, `out/l7/lamp_survey.py` in this PR's worktree: master's and this `lights.py` on one
+`Texturing.plan` per car, each car's host-picks host, an orthographic view from behind at LOD 3, 5 mm,
+visible Lights pixels by the type of their entry and the class of their triangle's mean baked texel;
+565 cars, NIS_Leaf_11 needs the gamedb the survey doesn't pass):
+
+| | master | this change |
+| --- | ---: | ---: |
+| cars braking with under half of their visible red | 34 | 19 |
+| visible red that brakes | 325,711 cm2 | 351,869 cm2 |
+| visible red on reverse entries (cars over 10 cm2) | 19,701 cm2 (149) | 0 |
+| visible red on indicator-only entries (cars over 10 cm2) | 6,694 cm2 (44) | 0 |
+| visible white on reverse entries | 59,304 cm2 | 59,304 cm2 |
+| visible amber on indicator entries | 18,931 cm2 | 18,931 cm2 |
+| cars whose braking red area changes by over 10 cm2 | | 161 |
+| rear indicators that become red brake-indicators | | 6 cars |
+
+This survey's red test is the triangle's mean texel; #220's (each pixel's texel, red minus the larger of
+green and blue at least 40) counted 43 on master. The 19 left: unlit rear retro-reflectors and NASCAR decal
+lamps (3,538 cm2; Forza lights neither, #174), red fog lamps (495), the BMW M3 E92's `drlred` tails (0x03,
+414; vanilla has 93 red 0x03 tail lamps), the Dodge Stealth Turbo's full-width reflector panel, and
+TOY_6_SC430_08, which has no lamp technique at LOD 3 (Open 10).
+
+In game (VM 1, `-Lights -LightsDriveOnly`: idle, throttle, brake, brake into reverse, by day and in the dark
+mood; vanilla 241 first, then the S65 AMG, Raptor, IS F and Durango; master's lamp code `out/l7/before`
+against this change `out/l7/after`). The final code `vm2-20261029-155636` /
+`vm2-20261029-160154` (`-Palette 0`); an earlier form of the change `vm1-20261029-142330` / `-142909`. On the throttle the tails are dark on both. Braking, the S65 AMG's whole tail
+lamp lights where master lit its upper rows only, and the IS F's lamps light further in. Reversing,
+master's IS F lit its whole inner lamp white-pink, this change only its white reverse window; the Durango
+likewise (`img/lamps7-s65-brake-reverse-ingame.jpg`, `img/lamps7-isf-brake-reverse-ingame.jpg`; the offline
+plan `img/lamps7-red-texels-plan.jpg`).
+
 ### Open
 
 1. Front lamps in the lamp-phase mode (`-Lights`): neither copy faces the
@@ -1904,13 +1982,14 @@ its head lamps do as before (`img/lamps6-gtivr6-bumper-dark-ingame.jpg`).
    "Tiles across edges"), and swatch lenses that are only partly scrambled
    keep a flat tint over part of the lens (Charger SRT8 12, Viper CC, MP4-12C
    and the rest of #141's 14 cars that #164 didn't take). Issue #229.
-10. Brake coverage (#103): 43 of 566 cars brake with under half of their
-    visible red rear lamp area after #220 (red texels lit as reverse or
-    indicator lenses, the M3 E92's 0x03 `drlred` tails, decal lamps, unlit
-    reflectors), and FOR_EscortRSCosworth_92 and TOY_6_SC430_08 have no lamp
+10. Brake coverage (#103): after "Red texels lit as reverse and indicator
+    lamps" 19 of 565 cars brake with under half of their visible red rear
+    lamp area, all by design (unlit retro-reflectors and decal lamps, red fog
+    lamps, the M3 E92's 0x03 `drlred` tails, the Stealth's reflector panel)
+    but FOR_EscortRSCosworth_92 and TOY_6_SC430_08, which have no lamp
     technique at Forza LOD 3, so their full entries have almost no lamps
-    (the Escort only its front indicators). The ZR1's
-    `lindtailside` lamps (#220) weren't driven on the throttle in game.
+    (the Escort only its front indicators). The ZR1's `lindtailside` lamps
+    (#220) weren't driven on the throttle in game.
 11. Lamps on the other end's entries (#146): 37 on 20 cars after #219, 29 of
     them reverse lamps on hosts with no rear entry left. Fog lamps on full
     hosts stay unlit (#219).

@@ -2321,12 +2321,14 @@ def convert(
         lenses = tex_full.texturing.lens_subs if tex_full is not None else frozenset()
         # Lens colours from Forza's own texels: the atlas copy the texturing drew from has
         # the lamps behind the lenses baked into them (src/dsfforza/convert/lenses.py).
-        texel = None
+        texel = seen = None
         if tex_full is not None:
             from dsfforza.convert import forza_materials as fm
 
             texel = lights.texel_sampler(fm.AtlasCache(car.folder))
-        lamps = lights.LampPlan.build(car.body, place, axle_mid, lenses, texel).assign(
+            # What the car is drawn with (lenses baked): red rear texels light with red lamps.
+            seen = lights.seen_sampler(tex_full.texturing.atlases)
+        lamps = lights.LampPlan.build(car.body, place, axle_mid, lenses, texel, seen).assign(
             payload(stream, child(child(full, "NONR"), "UPVH"))
         )
         report["lights"] = lamps.report()
