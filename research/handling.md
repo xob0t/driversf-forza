@@ -1,12 +1,21 @@
 # Handling (VO3D) and generating it from Forza data
 
-Updated: 2026-10-24
+Updated: 2026-10-29
 
 Static analysis of `Driver.exe` 1.04 and the vanilla `dngvehicles.sp`, plus
 the FH1 and FM4 `gamedb.slt` databases, and in-game measurements with the
-sandbox dyno (below). Evidence levels follow `dngvehicles.md`: confirmed-static
-(code read), confirmed-runtime, data (correlation across the 150 vanilla
-vehicles or the Forza pairs below), hypothesis.
+sandbox dyno (below). Evidence levels follow `dngvehicles.md`; here
+offline-checked is mostly a correlation across the 150 vanilla vehicles or
+the Forza pairs below.
+
+Builds from #169 (e9a7f8c, 2026-10-28) until #192 (dd1ec4a, 2026-10-29) have
+no Forza handling at all: #169's rename turned Forza's gamedb column `IsStock`
+into `IsVanilla`, `handling.load_forza` failed on every car, and every port
+kept its host's VO3D unchanged (log line `handling: ... not usable in
+gamedb.slt (no such column: IsVanilla); keeping the host's`; issue #191). The
+main checkout's full-roster `out/build` of 2026-10-29 is one of them (all 573
+logs). Every measurement in this doc is from 2026-10-22 to 2026-10-27, before
+that window, so they are of the Forza-based mapping.
 
 The goal is not Forza-accurate physics. A ported car should drive like a
 car Reflections would have made: DSF's own arcade grip and slides, assists,
@@ -30,6 +39,9 @@ Tools:
   `ParamRefs.java <out> 2960 35EC 6 60`.
 - `tools/ghidra/ExploreAddresses.java` was used with
   `fn:0088D9A0 fn:0088D020 fn:0088BE60 fn:0088BF50 table:00E39654`.
+- The scripts under `out/` named below are untracked one-offs. `out/handling/`
+  and `out/dyno/` are in the main checkout; `out/offroad/` and `out/steer/`
+  (#24, #54) were left in their PR worktrees and are gone.
 
 ## How the engine loads handling (confirmed-static)
 
@@ -228,7 +240,7 @@ Whole sets instead of single values (never blended parameter by parameter):
 
 | Set | Parameters | Donor |
 | --- | --- | --- |
-| steering | 298, 379..391, 470 | the medoid of the host and the next two best-ranked hosts with the car's drivetrain and within 10 model years (was 15: "Rule change" under the Huayra feedback) (the one closest to the other two, fleet-normalised) |
+| steering | 298, 379..391, 470 | the medoid of the host and the next two best-ranked hosts with the car's drivetrain and within 10 model years (was 15: "Rule change" under the Huayra feedback) (the one closest to the other two, fleet-normalised); p298 is then replaced by Forza's lock (rule Z, "Steering lock") |
 | assists | 344, 351..354, 373..375, 411, 496, 510, 511 | medoid (p345 follows the weight distribution, rule W) |
 | tyre falloff | 376, 377, 378 | medoid |
 | suspension geometry | 3, 4, 25, 188, 292, 505..508 | medoid |
@@ -258,6 +270,7 @@ where the in-game runs showed the host's value hurting:
 | Params | Rule |
 | --- | --- |
 | 0 mass; 15, 16, 17 inertia; 42 redline; 160 top speed; 360 tyre radius | Z |
+| 298 steering lock | Z: Forza `SteerMaxAngle`, also on a same-model host (`SAME_MODEL_RULES`; "Steering lock", #54) |
 | 18 peak torque | TP |
 | 30 CoG height (and 599, its copy) | CY |
 | 32 CoG fore/aft | CZ |
@@ -286,7 +299,7 @@ drivetrain, not the drift parameters, and it doesn't track the handbrake
 rotation measured in game (the CTS-V and the 1969 Charger have Drift 1.0 and
 rotate least; the Mito, Drift 0.26, rotates like the 370Z).
 
-### Leave-one-out check (data)
+### Leave-one-out check (offline-checked)
 
 `uv run dsff handling_dsf loo`: for each of the 48 vanilla cars that also
 exist in Forza, build its VO3D from its Forza data as if DSF didn't have it:
@@ -359,7 +372,7 @@ What the check says:
   VO3D) come out worse with any change; the identity score doesn't see
   them as one family.
 
-### Drift and handbrake (data, confirmed-runtime)
+### Drift and handbrake (offline-checked, confirmed-runtime)
 
 46 then 68 handbrake flicks (0.4 s Space + Right at 45 to 80 mph) on 9 vanilla
 cars and the ports give, by leave-one-car-out cross-validation, a rotation
@@ -571,12 +584,13 @@ longer rotates half as much. The rotation is very sensitive to p345 (about
 rotate 20 to 28 deg more than vanilla, the CTS-V 37 less) is within what
 p345's own scatter around the weight rule (sd 0.015) can produce.
 
-### Round 4: closed-loop calibration and a better test (offline part)
+### Round 4: closed-loop calibration and a better test (offline-checked part)
 
 Noise first. Over all sessions so far the same vanilla car's handbrake rotation
 (throttle back on after the flick, entry speed whatever the car reached)
 scatters by 6 to 21 deg (sd): the 370Z 17, the Mito 21, the 1969 Charger 13,
-the CTS-V 10, the GT-R 6 (`out/dyno/vanilla-metrics.json`). Many port-vs-vanilla
+the CTS-V 10, the GT-R 6 (`out/dyno/stock-metrics.json`; the file kept its
+pre-#169 name). Many port-vs-vanilla
 differences in rounds 2 and 3 were inside that. The test is now:
 
 - the throttle is lifted after the flick (`None` steps in `-DynoKeys`), so
@@ -944,6 +958,7 @@ gravity.
 | 275..282 | Forza gears relative to the reference, at most 6. Gears above second are compressed in log space until top gear at redline equals p160 | how the vanilla data is built |
 | 371 | FWD 1, RWD 0, AWD 1 - rear split clamped to 0.15..0.3 | vanilla values |
 | 392 | Forza wheelbase | equals the hub wheelbase that `forza2dsf` patches in |
+| 298 | Forza `SteerMaxAngle` | the body's lock ("Steering lock", #54) |
 | 32 | host axle midpoint + (front weight - 0.5) x wheelbase, front weight clamped to 0.42..0.58 | vanilla range |
 | camera z (opt-in) | host value x wheelbase ratio (`--scale-cameras`) | size only |
 
