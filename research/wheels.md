@@ -913,6 +913,30 @@ shading"); Forza draws a brake disc and caliper there. Scratch scripts in
 - `port_car` drops the rotors before stepping a car down to coarser LODs when an
   entry is over the limits, and `--no-brake-rotors` leaves them out.
 
+### Cost and test set
+
+The six test cars (`out/brakes/cars.txt`: IDs 1 PEU_205T16_84, 2 NIS_370Z_10,
+3 FER_250GTO_64, 4 BUG_VeyronSS_11, 5 VW_BEETLE_68 (closed hubcaps), 6
+SEA_IbizaCupra_09), built from master (`out/brakes/before`) and with this change
+(`out/brakes/after`): each entry's MDXN grows by 14 to 30 KiB; all six lint ok,
+no LOD changes. Over the roster (survey triangles, about 30 bytes each) a car's
+entry grows by 23 KiB (median), 75 (90th percentile), 112 at most; no car of
+master's full build comes near the static read buffer with that. The 250 GTO
+(2944-triangle drilled disc), the Beetle (drums) and the Ibiza get the plain
+disc. Offline renders: `img/brake-rotors-render.jpg` (front left wheel, outside
+and from the front, before | after).
+
+### In game (headless VM 1)
+
+`run-series -Vm -ProbeIds '1,2,3,4,5,6' -Views 'wheel,wheel+night,wheel+mph8,wheels'
+-ShotSeconds 3 -Palette 0`: `vm1-20261029-172424` (before), `vm1-20261029-173123`
+(after), `img/brake-rotors-ingame.jpg`. A grey disc and hat now stand behind the
+spokes of the 370Z, Veyron SS, Ibiza and 250 GTO, at rest and rolling at 8 mph,
+in the wheel's shadow; at night they stay dark (no glow, no white). The Beetle's
+hubcap hides its drum as before; the 205's holes still show the barrel's dark
+(its disc ends inside the hole circle). No flicker between disc and rim in the
+shots.
+
 ### Calipers (not converted, #212)
 
 The caliper has to stay still while the wheel turns, and steer and ride with
