@@ -866,7 +866,11 @@ def bake(
             entry["flat"] = True
         if swatch:
             on_lamp = solid[np.isin(solid, lamp_tris)]
-            if len(on_lamp) >= SWATCH_TINT * len(first):
+            # A clear one over a lamp goes whatever else lies behind it: kept, it was an opaque
+            # grey plate over the lamp, which glowed white by day (the Hennessey Venom GT's lexan
+            # head lamp covers over the projectors and their housing, #250).
+            clear = lights.texel_class(tuple(lens_rgba.mean(0))) == "white"
+            if len(on_lamp) >= SWATCH_TINT * len(first) or (clear and len(on_lamp)):
                 tints.append((np.unique(on_lamp), lens_filter(sub.material, lens_rgba.mean(0), settings)))
                 dropped.add((section.name, sub.material))
                 entry["dropped"] = True
