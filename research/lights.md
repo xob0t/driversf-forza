@@ -1561,6 +1561,38 @@ game (VM 2, `vm2-20261029-073325`, `-Views 'nose,nose+night,nose'`, vanilla 241 
 `img/lamps6-panoz-day-ingame.jpg`) its two bowls show as white discs by day, as 241's lamp reads white
 with its flutes: the white is Forza's flat foil reflector (208, 208, 208) in sun under a lens at
 opacity 0.26, brought to vanilla's median brightness by `white_lens_scale`, not the glow. Left as it is.
+### Rear lamps short of a rear entry (issue #146)
+
+Symptom (offline-checked): after #144, lamps still took a host light entry at the other end of the car
+when the host had fewer entries at their end than the car has lamps there, and broke with that end's
+panels ("Lamps broke with the wrong end", "Tail lamps with the broken-lamp pattern").
+
+Change (`LampPlan.assign`, `lights.SIDELESS`):
+
+- A lamp with no free entry at its end shares the entry of the same function on the other side at its
+  end when the table type has no side (head, position, tail, brake, reverse, fog): the right reverse lamp
+  lights on the left one's entry rather than take a front one. Indicators and the combined types with one
+  are per side and can't.
+- A fog lamp never takes an entry at the other end. No game script sets FogLights (the decompiled Lua sets
+  only Siren through `setLights`), so there it would only break with that end's panel; it stays unlit
+  (its texels draw as before, with no light byte).
+
+Roster (offline, `out/l6/lamp_survey.py` in the #189 worktree, the lamp plan on each car's host-picks host,
+entry places from the vanilla tables; 566 cars):
+
+| Lamps on an entry at the other end | master | this change |
+| --- | ---: | ---: |
+| all | 88 on 52 cars | 37 on 20 cars |
+| rear reverse | 45 | 29 |
+| rear / front fog | 29 / 5 | 0 (unlit) |
+| rear indicators, DRL indicators | 3, 2 | 3, 2 |
+| rear tail, rear brake | 1, 1 | 0, 1 |
+| front reverse, front indicator | 1, 1 | 1, 1 |
+
+Unlit lamps 53 -> 76: the 34 fog lamps, less the ones that now share a twin. The 29 reverse lamps left are
+pairs (or centre lamps) on hosts with no rear entry left for either side, e.g. HON_S2000_03 and LEX_ISF_09
+on 274, AUD_RS4_06, the C5 and C6 Corvettes' centre reverse lamps. Sharing them with a red lamp would light
+them red, and leaving them unlit would lose the reverse light, so they keep the front entry.
 
 ### Open
 
