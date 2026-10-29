@@ -1593,6 +1593,9 @@ eye sees on 70 cars (RS6 2003 and CL65 39%, S4 2004 and Dino 246 33%, Pantera
 4. *Stride-16 needles.* Hosts 250 and 293 draw their Dials material from a
    16-byte buffer (no normal; 145 vanilla interiors use 20). `_needle_vertex`
    writes the host's layout. No car on those hosts had needles before.
+   (Corrected 2026-10-29: that material is each host's `*_Digital_Dials`,
+   whose program doesn't turn needles; "Displays on the steering wheel,
+   placeholder cockpits".)
 
 After (offline, same survey with the new code): 459 cars with both, 111
 missing one. What is left is digital readouts the converter can't place a
@@ -2870,12 +2873,12 @@ straight on a scoop (these runs were overcast), at night.
 
 ## Displays on the steering wheel, placeholder cockpits (2026-10-29, issues #147, #148)
 
-22 cars of `out/build` (2026-10-29 13:18, master `ede81a1`) had no working
-speedometer or tachometer: 7 open-cockpit racers whose only display is on the
-steering wheel and whose dash had no room for #92's virtual display (#147),
-15 FH1 cars with a placeholder or missing cockpit carbin (#148), and the
-Volt, whose scene drives the speed digits but whose host (250) has no gauge
-record for a tachometer.
+23 cars of `out/build` (2026-10-29 13:18, master `ede81a1`) had no working
+speedometer or tachometer for these reasons: 7 open-cockpit racers whose only
+display is on the steering wheel and whose dash had no room for #92's virtual
+display (#147), 15 FH1 cars with a placeholder or missing cockpit carbin
+(#148), and the Volt, whose scene drives the speed digits but whose host (250)
+has no gauge record for a tachometer.
 
 ### Can a display turn with the wheel? (confirmed-static)
 
@@ -2927,29 +2930,39 @@ cluster seen through the rim), then the Beetle 1963, Corvette 1960, Cobra
    wheel display's own size, the largest that fits. The wheel keeps its own
    display (Forza's face, or blank). Report:
    `cockpit.interior.digital_displays.moved_from_wheel`.
-2. **The cowl of an open cockpit** (`pod_display(cowl=True)`, tried only when
-   the dash has no room, for moved displays and #92's dials alike): the
-   bodywork round the wheel (`hood*`, and `a_pillar`, which on the ARX-02a is
-   the cockpit surround) may hold the housing, which may rise into the open
-   sky above it, as long as half of it, and half of its bottom quarter, stands
-   in front of bodywork within reach (the nose beyond 1.375 m counts as
+2. **The cowl of an open cockpit** (`pod_display(cowl=True)`): the bodywork
+   round the wheel (`hood*`, and `a_pillar`, which on the ARX-02a is the
+   cockpit surround) may hold the housing, which may rise into the open sky
+   above it, as long as half of it, and half of its bottom quarter, stands in
+   front of bodywork within reach (the nose beyond 1.375 m counts as
    background). Where nothing fits above the hub, centres go down to the rim's
    bottom. Other virtual displays' housings (`dsf_*`) stay clear.
-3. **Placeholder cockpits** (`is_stub`, the main carbin's cabin): Forza has
+3. **Clear of DSF's HUD** (`pod_display(hud=True)`). In the first VM run
+   (below) the placeholder cockpits' displays sat 25 to 30 degrees to the side
+   and 10 to 11 down, behind the HUD's speed box. The HUD covers the cockpit
+   view's lower corners: from about 13.5 degrees under the eye line, left of
+   7 degrees (the progress bar) and right of 23 degrees (the car and speed box)
+   (`HUD_*_DEG`, measured at 1280 x 720 on the ARX-02a's and R10's displays,
+   whose places are known; the head camera is about 80 degrees wide). The
+   passes (`place_pod`, `POD_PASSES`): the dash clear of the HUD, then the cowl
+   clear of it, then the dash as #92 placed it (report `under_hud`), so no car
+   loses the display it had.
+4. **Placeholder cockpits** (`is_stub`, the main carbin's cabin): Forza has
    no needle and no display there, and the tick tables are mostly empty, but
    these are road cars and trucks with a speedometer and a tachometer
    (`virtual_gauges(assume=)`): #92's virtual display with two dials on the
    dash, scales from Forza's top speed and redline. The Leaf and Prius get a
    tachometer too: Forza models both with gears and a redline (Leaf 6550 rpm,
    5 gears), so nothing in its data tells them apart.
-4. **Hosts without a gauge record** (`add_first_gauge_record`; 250, the
-   Volt's, and 293): the first record comes from `GAUGE_RECORD_TEMPLATE` (a
-   vanilla speedometer record; every vanilla gauge record has the same bytes
-   but the role, the table index and the hinge pops) as the first child of
-   the cluster record (role 185, which both have), with a table entry and the
-   hinge pops recomputed (`damage._tree_fields`); the second follows as on
-   one-gauge hosts. Both hierarchies parse with both slots and every record's
-   pops as vanilla writes them.
+
+**The Volt keeps no tachometer.** Its host (250) has no gauge record, and its
+only dial material is the vanilla Volt's `Chevrolet_Volt_2011_Digital_Dials`
+(as on 293, `Buggy_Boxy_Digital_Dials`): `host_interior` takes it for the needle
+material by name, but its program is a digital one, which reads `g_fDigiData`
+and not `g_InstrumentTransforms`, so a needle on it can't turn whatever record
+the hierarchy gets ("One-gauge hosts" called these stride-16 needles). The
+real Volt has no tachometer and Forza's Volt scene shows no rpm either; its
+speed digits work.
 
 ### Survey
 
