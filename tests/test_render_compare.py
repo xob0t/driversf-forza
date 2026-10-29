@@ -346,3 +346,34 @@ def test_diff_lists_added_geometry():
     added = next(c for c in changes if c["region"] == "added")
     assert added["pixels_before"] == 0 and added["pixels_after"] == 300
     assert render_diff.region_changes(a, a, d) == []
+
+
+def test_diff_frames_both_builds_alike():
+    """A plate moved 3 cm outward changes the car's extent; framed by the union of both
+    builds' extents, only the plate's pixels change (#254)."""
+    from dsfforza.harness import render_diff
+
+    paint = cr.Material("textured", None, np.full(3, 0.4, np.float32))
+    plate = cr.Material("textured", None, np.full(3, 0.9, np.float32))
+
+    def pair(z):
+        body = np.concatenate([_quad(-1, 1, 0, 1, 1.0), _quad(-1, 1, 0, 1, -1.0)])
+        scene = _scene([(body, 0), (_quad(-0.2, 0.2, 0.2, 0.4, z), 1)], [paint, plate])
+        region = np.array([rc.RID[fr.BODY]] * 4 + [rc.RID[fr.PLATES]] * 2, np.uint8)
+        pts = scene.pos.reshape(-1, 3)
+        return rc.Pair(
+            scene, scene, region, region, np.zeros(6, np.uint8), [], np.full(6, -1), (pts.min(0), pts.max(0)), {}
+        )
+
+    a, b = pair(1.01), pair(1.04)
+    view = rc.View("front", cr.Camera(0.0, 0.0, 2.0), modes=("day",))
+    box = rc.union_box(a.box, b.box)
+    ra, rb = rc.render_view(a, view, (120, 80), box), rc.render_view(b, view, (120, 80), box)
+    d = np.linalg.norm(rc._lab(ra["ours"]["day"]) - rc._lab(rb["ours"]["day"]), axis=-1)
+    changed = {c["region"] for c in render_diff.region_changes(ra["regions"]["ours"], rb["regions"]["ours"], d)}
+    assert fr.BODY not in changed, changed
+    # Framed by each build's own extent, the body shifts too.
+    ra, rb = rc.render_view(a, view, (120, 80)), rc.render_view(b, view, (120, 80))
+    d = np.linalg.norm(rc._lab(ra["ours"]["day"]) - rc._lab(rb["ours"]["day"]), axis=-1)
+    changed = {c["region"] for c in render_diff.region_changes(ra["regions"]["ours"], rb["regions"]["ours"], d)}
+    assert fr.BODY in changed, changed

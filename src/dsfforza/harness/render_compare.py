@@ -333,11 +333,20 @@ def tri_map(frame: cr.Frame, values: np.ndarray, see_through: bool = True) -> np
     return out.reshape(frame.view.height, frame.view.width)
 
 
-def render_view(pair: Pair, view: View, size=SIZE) -> dict:
+def union_box(*boxes) -> tuple:
+    """The (lo, hi) corners holding every box: one frame for two builds of a car, so a part
+    that moves outward (a plate 2 cm further out) doesn't shift every pixel (#254)."""
+    lo = np.min([np.asarray(b[0], np.float64) for b in boxes], axis=0)
+    hi = np.max([np.asarray(b[1], np.float64) for b in boxes], axis=0)
+    return lo, hi
+
+
+def render_view(pair: Pair, view: View, size=SIZE, box=None) -> dict:
     """Both scenes in one view, every mode: {"ours": {mode: linear rgb}, "ref": ...,
-    "alpha", "regions", "programs"} (h, w) arrays."""
+    "alpha", "regions", "programs"} (h, w) arrays. box: the car extent to frame instead of
+    the pair's own (render_diff frames both builds alike)."""
     w, h = size
-    box = _view_box(view, pair.box)
+    box = _view_box(view, pair.box if box is None else box)
     out = {"ours": {}, "ref": {}, "alpha": {}, "regions": {}}
     for side, scene, region, rgb_of in (
         ("ours", pair.ours, pair.ours_region, cr.dsf_lamp_rgb),
