@@ -1387,7 +1387,13 @@ POD_PASSES = ((False, True), (True, True), (False, False))
 
 
 def place_pod(static: dict, eye, wheel: Wheel, dials: int, gauges: dict, version: int, sight_sections=None, **kw):
-    """pod_display over POD_PASSES: the first that finds room."""
+    """pod_display over POD_PASSES: the first that finds room. Seen from the head
+    camera as high as camera_eye's rim rule may raise it (up to 12 cm over the Forza
+    eye: GT-R GT1), where the converted car will look from: from the Forza eye, a
+    display placed low on the dash went under the cowl or the HUD in game (runs
+    vm1-20261029-144633, vm1-20261029-151818)."""
+    if "steering_wheel" in static:
+        eye = camera_eye(eye, section_points(static["steering_wheel"]))
     d, housing, report = None, None, {}
     for cowl, hud in POD_PASSES:
         d, housing, report = pod_display(
