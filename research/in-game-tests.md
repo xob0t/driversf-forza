@@ -553,6 +553,27 @@ About half of the VM runs ended at the DriverNGHook fatal-error dialog 20 to
 - The stopped collector around `user_open` (above) is a separate fix; the
   loads peak at about 5 MB, well inside the block.
 
+**A full-roster archive without dsfforza.asi (issue #224, 2026-10-29).**
+
+- Symptom: the fatal-error dialog about 40 s after the window is up, before
+  any Lua line; Driver.exe peaks near 300 MB private (a load climbs past
+  650 MB). It happened in every full-roster VM run from 01:07 to 09:57, while
+  0.5 GB archives loaded.
+- Cause: those series had no `-Asi`, so the run folder's `plugins` held only
+  DriverNGHook. The 573-car `dngvehicles.sp` has 1496 root entries and
+  3.06 GB, past the vanilla reader (1100 entries, 2 GiB;
+  `spool-limits.md`). Every full-roster run since 10-24 with the plugin
+  loaded, and every one without it crashed.
+- Fault, with the plugin's `[archive] enabled=0` and `crash_log=1`
+  (`vm2-20261029-104751`): `C0000005` write at `0x008FC12C`, in the reader's
+  async open (`0x008FC0A0`). The callers are `005A1240 00868F4B 0079B8E9
+  0085D969`, the chain that opens the 1496-entry root with the plugin. The
+  same archive with the plugin loaded and drove ID 420
+  (`vm2-20261029-104202`).
+- `run-series.ps1` now stops before taking a VM when an archive is past the
+  vanilla reader and no `-Asi` is given (`-NoAsi` runs it anyway), as
+  `tools\install.ps1` does for installs.
+
 ## Result: a cloned vehicle works (confirmed-runtime)
 
 `out/dngvehicles.clone.sp` (`clone_vehicle.py --source 266 --id 304`) loads
