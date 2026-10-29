@@ -437,6 +437,30 @@ def test_lenses_keep_the_lamp_they_lie_over():
     assert set(got["taillightL"]) == {lights.TAIL} and lights.REVERSE in got["glassLTL"], got
 
 
+def test_reverse_lamps_take_an_entry_a_tail_pair_frees():
+    # Issue #146: HON_S2000_03 on host 278 has five rear entries (tails, high stop lamp,
+    # indicators) and its reverse lamps took a front one, breaking with the front. The tails, one
+    # table type with no side, share the left one's entry and the reverse lamps take the right's.
+    heads = [_quad("headlightL", "head_light", 0.6, 2.0), _quad("headlightR", "head_light", -0.6, 2.0)]
+    stop = [_quad("stop", "white_brake", 0.0, -1.9)]
+    inds = [_quad("indL", "indicator_left", 0.8, -2.0), _quad("indR", "indicator_right", -0.8, -2.0)]
+    revs = [_quad("revL", "reverse_light", 0.4, -2.0), _quad("revR", "reverse_light", -0.4, -2.0)]
+    places = [(0.6, 2.0), (-0.6, 2.0), (0.6, 2.1)] + [(0.6, -2.0), (-0.6, -2.0), (0.0, -1.9), (0.8, -2.0), (-0.8, -2.0)]
+    plan = _plan(heads + TAILS + stop + inds + revs, len(places), places)
+    rear = {e for e, (x, z) in enumerate(places) if z < 0}
+    got = {(l.function, l.side): l.light_id for l in plan.lamps.values() if not l.front}
+    assert got[(lights.REVERSE, "L")] == got[(lights.REVERSE, "R")] in rear, got
+    assert got[(lights.TAIL, "L")] == got[(lights.TAIL, "R")] in rear, got
+    assert len({got[(lights.INDICATOR, "L")], got[(lights.INDICATOR, "R")], got[(lights.BRAKE, "C")]}) == 3, got
+    # The freed entry carries the reverse lamp; the shared one the tail lamp's type.
+    types = {lid: lamp.flags >> 24 for _, lid, lamp in plan.slots if lamp is not None}
+    assert types[got[(lights.REVERSE, "L")]] == 0x08 and types[got[(lights.TAIL, "L")]] == 0x18, types
+    # With a rear entry to spare the tails keep one each.
+    plan = _plan(heads + TAILS + stop + inds + revs, len(places) + 1, places + [(0.0, -2.0)])
+    got = {(l.function, l.side): l.light_id for l in plan.lamps.values() if not l.front}
+    assert got[(lights.TAIL, "L")] != got[(lights.TAIL, "R")], got
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
