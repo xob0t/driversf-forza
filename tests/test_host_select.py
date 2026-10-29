@@ -62,6 +62,29 @@ def test_platform_mates_and_other_cars_are_not_the_same_vehicle():
     assert hs.same_vehicle(SAVANA, _car("x", "chevrolet", "express", 2005, "pickup", 3.429, 5.741)) is None
 
 
+def test_door_count_from_carbin_parts():
+    # Measured on the cars (LOD 1, z from the wheelbase midpoint backwards): left panes,
+    # body panels behind the front door glass, door handle centres; issue #208.
+    wrx_04 = (
+        [(-0.54, 0.31), (0.29, 1.02)],
+        [(0.21, 0.92, 0.09, 0.37), (0.21, 1.16, 0.37, 0.69)],
+        [(0.03, 0.66), (0.96, 0.7)],
+    )
+    # The rear-door pane starts where the front one ends; the first rule merged them (2 doors).
+    assert hs.door_count(*wrx_04, 2.54, "sedan") == 4
+    rover = ([(-0.42, 0.46), (0.52, 1.32), (1.31, 2.13)], [(0.37, 1.36, 0.45, 0.84)], [(0.2, 0.84), (1.17, 0.86)])
+    assert hs.door_count(*rover, 2.90, "suv") == 4  # front glass ends 0.46 m back, on a 2.90 m wheelbase
+    clio = ([(-0.63, 0.34), (0.43, 1.16)], [(0.31, 1.58, 0.13, 1.27)], [(0.24, 0.64)])
+    assert hs.door_count(*clio, 2.59, "hatch") == 2  # rear quarter past the rear axle
+    gti_vr6 = ([(-0.59, 0.37), (0.49, 1.29)], [(0.40, 1.23, 0.42, 0.82)], [(0.26, 0.65)])
+    assert hs.door_count(*gti_vr6, 2.47, "hatch") is None  # quarter split at the arch, no handle on it
+    p308 = ([(-0.86, 0.22), (0.32, 1.10)], [(0.14, 1.20, 0.12, 1.26)], [(-0.02, 0.67), (0.96, 0.75)])
+    assert hs.door_count(*p308, 2.54, "hatch") == 4
+    assert hs.door_count(*p308, 2.54, "coupe") is None  # 2-door bodies never get 4
+    fiesta = ([(-0.83, -0.69), (-0.62, 0.49), (0.57, 1.23)], [(0.32, 1.61, 0.13, 1.08)], [(0.26, 0.71)])
+    assert hs.door_count(*fiesta, 2.50, "hatch") == 2  # vent pane ahead of the door glass
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
