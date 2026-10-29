@@ -130,8 +130,8 @@ def test_virtual_dials_on_a_blank_display():
 
 
 def test_needles_the_host_cannot_turn_are_dropped():
-    # Vanilla 250 (the Volt's host) has no gauge record, so add_gauge_records can't give
-    # it one: a needle (here a virtual dial) whose id the host can't turn is left out.
+    # A host whose gauge table has no entry for an id (one without a cluster part to hang
+    # a record on): a needle (here a virtual dial) the engine can't turn is left out.
     panel = _display((0.5, 0.0, 0.5, 0.0) * 2, width=0.16, height=0.10)
     dials, report, _ = cockpit.virtual_gauges({"interior": panel}, {}, (0.08, 0.05, 0.7), _Car(), 2)
     cf = cockpit.CockpitFit(None, {}, (0, 0, 0), (0, 0, 0), "", {}, {"interior": panel}, {}, virtual=report)
@@ -616,6 +616,131 @@ def test_digital_dials_are_not_needles():
     assert cockpit.needle_check(None, _needle_interior([2, 1], [1, 5]), h) == ([1], 0)
     # and so is a needle drawn from a buffer without gauge ids.
     assert cockpit.needle_check(None, _needle_interior([2], [1], blind=True), h) == ([], 2)
+
+
+def _recordless_hierarchy() -> bytes:
+    """root > cluster part (role 185, no gauge record under it), then the steering marker,
+    and an empty gauge table: vanilla 250 (the Volt's host) and 293."""
+    head = bytearray(upvh.HEADER_SIZE)
+    head[:4] = b"AWHF"
+    struct.pack_into("<6I", head, 4, 0, 0, 26, 3, 1, 0)
+    struct.pack_into("<H", head, 0x28, 1)
+    records = bytearray()
+    for kind, role, subtree, marker in ((4, 0, 3, -1), (1, cockpit.CLUSTER_ROLE, 1, -1), (3, 47, 1, 0)):
+        rec = bytearray(b"\xff" * upvh.RECORD_SIZE)
+        struct.pack_into("<HHHHHHHH", rec, 0x08, kind, role, 0, 0, 1, 0, subtree, 0)
+        struct.pack_into("<h", rec, 0x1A, marker)
+        records += rec
+    return bytes(head + records + struct.pack("<3f4x4f", 0.3, 0.5, 0.3, 0, 0, 0, 1))
+
+
+def test_recordless_host_gets_gauge_records():
+    # Issue #148: the Volt's host (250) has a cluster part but no gauge record, so its
+    # virtual tachometer was dropped. The first record comes from a vanilla template.
+    from dsfforza.convert import damage
+
+    data = _recordless_hierarchy()
+    out, added = cockpit.add_gauge_records(data, {1, 2})
+    assert added == [2, 1]
+    h = upvh.parse(out)
+    assert len(h.records) == 5 and h.counts["seats"] == 2
+    assert [r.subtree for r in h.records] == [5, 3, 1, 1, 1]
+    assert cockpit.gauge_records(h) == {2: 2, 1: 3}
+    for gid, index in cockpit.gauge_records(h).items():
+        r = h.records[index]
+        assert r.type == 18 and r.role == cockpit.GAUGE_ROLES[gid]
+        assert struct.unpack_from("<I", h.table("seats")[r.seat], 0x20)[0] == gid
+    # The hinge pops of the new records and their ancestors as vanilla writes them.
+    fields = damage._tree_fields([r.raw for r in h.records])
+    for k in (1, 2, 3):
+        assert struct.unpack_from("<HH", h.records[k].raw, 0x16) == fields[k][1:], k
+    assert h.records[4].type == 3 and h.records[4].marker == 0
+    assert h.table("markers") == upvh.parse(data).table("markers")
+    # Only the tachometer: one record.
+    out1, added1 = cockpit.add_gauge_records(data, {1})
+    assert added1 == [1] and cockpit.gauge_records(upvh.parse(out1)) == {1: 2}
+    # No cluster part: nothing to hang one on.
+    no_cluster = bytearray(data)
+    struct.pack_into("<H", no_cluster, upvh.HEADER_SIZE + upvh.RECORD_SIZE + 0x0A, 0)
+    assert cockpit.add_gauge_records(bytes(no_cluster), {1, 2}) == (bytes(no_cluster), [])
+
+
+def _open_cockpit(cowl_name: str = "hooda"):
+    """Eye at the origin, a wheel 0.45 m ahead, and in front only the bodywork round the
+    wheel (`cowl_name`): an open cockpit like the ARX-02a's, no dash."""
+    axis = cockpit._norm((0.0, 0.03, 1.0))
+    wheel = cockpit.Wheel((0.0, -0.25, -0.45), axis, 0.15)
+    cowl = _quad_section(cowl_name, [(-0.8, -0.7, -0.8), (0.8, -0.7, -0.8), (0.8, -0.12, -0.8), (-0.8, -0.12, -0.8)])
+    return {cowl_name: cowl, "steering_wheel": _wheel_disc(wheel.centre, axis, wheel.radius)}, wheel
+
+
+def test_cowl_holds_a_virtual_display_in_an_open_cockpit():
+    # Issue #147: the bodywork round an open cockpit's wheel is the car's outside
+    # (hood*, a_pillar), so the dash search finds no room; the cowl search may use it.
+    eye = (0.0, 0.0, 0.0)
+    for name in ("hooda", "a_pillar"):
+        static, wheel = _open_cockpit(name)
+        d, _, report = cockpit.pod_display(static, eye, wheel, 2, {}, 2)
+        assert d is None and report == {"virtual_display": "no room"}
+        d, housing, report = cockpit.pod_display(static, eye, wheel, 2, {}, 2, cowl=True)
+        assert d is not None and report["virtual_display"]["cowl"] is True, report
+        assert abs(d.centre[2] + 0.8) < 0.05 and d.normal[2] < -0.9
+    # The housing of one virtual display keeps a second one off it.
+    static[housing.name] = housing
+    d2, _, _ = cockpit.pod_display(static, eye, wheel, 2, {}, 2, cowl=True, name="dsf_second")
+    assert d2 is not None
+    corners = [d2.point(u, v) for u in d2.rect[:2] for v in d2.rect[2:]]
+    box = cockpit.section_points(housing)
+    lo = [min(p[i] for p in box) for i in range(2)]
+    hi = [max(p[i] for p in box) for i in range(2)]
+    assert not any(lo[0] < p[0] < hi[0] and lo[1] < p[1] < hi[1] for p in corners)
+    # #92's dials on an open cockpit go there too.
+    dials, report, extra = cockpit.virtual_gauges(_open_cockpit()[0], {}, eye, _Car(), 2, wheel=wheel)
+    assert [g.family for _, _, g, _ in dials] == ["tach", "speed"] and report["virtual_display"]["cowl"]
+
+
+def test_wheel_display_moves_onto_a_virtual_display():
+    # Issue #147: DSF can't draw on the turning wheel, so the wheel's display patches go,
+    # rigidly and with their UVs, onto a virtual display in view.
+    eye = (0.0, 0.0, 0.0)
+    static, wheel = _open_cockpit()
+    on_wheel = cockpit.display_patches(static, eye, on_wheel=True)
+    assert len(on_wheel) == 1 and cockpit.display_patches(static, eye) == []
+    moved, housing, report = cockpit.wheel_display_pod(static, eye, wheel, {}, 2)
+    assert housing.name == cockpit.DASH_PANEL and len(moved) == 1
+    m, w = moved[0], on_wheel[0]
+    assert m.section == cockpit.DASH_PANEL and m.uv0 == w.uv0 and m.transform == w.transform
+    k = report["virtual_display"]["scale"]
+    assert k in cockpit.WHEEL_DISPLAY_SCALES
+    for ta, tb in zip(m.points, w.points):  # the same triangles, scaled by k
+        for i in range(3):
+            assert abs(math.dist(ta[i], ta[(i + 1) % 3]) - k * math.dist(tb[i], tb[(i + 1) % 3])) < 1e-6
+    screen = cockpit.section_points(housing, {"dsf_dial_display"})
+    n = cockpit._scale(m.towards_eye, -1)
+    plane = cockpit._dot(screen[0], n)
+    for tri in m.points:
+        for p in tri:  # just in front of the screen
+            assert abs(plane - cockpit._dot(p, n) - cockpit.WHEEL_DISPLAY_LIFT) < 1e-6
+    assert m.towards_eye[2] > 0.9
+    # Without a display on the wheel there's nothing to move.
+    static["steering_wheel"].subsections = static["steering_wheel"].subsections[:1]
+    assert cockpit.wheel_display_pod(static, eye, wheel, {}, 2)[:2] == ([], None)
+
+
+def test_placeholder_cockpit_gets_virtual_dials():
+    # Issue #148: a placeholder cockpit carbin's cabin (the main carbin's) has no needle
+    # and no display; the car still has a speedometer and a tachometer.
+    eye = (0.0, 0.0, 0.0)
+    axis = cockpit._norm((0.0, 0.36, 0.93))
+    wheel = cockpit.Wheel((0.0, -0.25, -0.45), axis, 0.17)
+    dash = _quad_section(
+        "interior", [(-0.6, -0.6, -0.85), (0.6, -0.6, -0.85), (0.6, -0.02, -0.85), (-0.6, -0.02, -0.85)]
+    )
+    rim = [v.position for v in _wheel_disc(wheel.centre, axis, wheel.radius).lod0_vertices[1:5]]
+    static = {"interior": dash, "steering_wheel": _quad_section("steering_wheel", rim, ("leather",))}
+    assert cockpit.virtual_gauges(static, {}, eye, _Car(), 2, wheel=wheel) == ([], {}, {})
+    dials, report, extra = cockpit.virtual_gauges(static, {}, eye, _Car(), 2, wheel=wheel, assume=("tach", "speed"))
+    assert [g.family for _, _, g, _ in dials] == ["tach", "speed"] and set(extra) == {"dsf_dial_panel"}
 
 
 if __name__ == "__main__":
