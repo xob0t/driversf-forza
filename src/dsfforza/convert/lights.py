@@ -835,6 +835,17 @@ class LampPlan:
                     else:
                         side = "L" if centre[0] > 0 else "R"
                     f, c = function, colour
+                    if f == HEAD and not front:
+                        # A head lamp technique behind the wheelbase midpoint is no head lamp:
+                        # vanilla has no rear 0x01 entry and lights no plate. The 510's coarse
+                        # LOD 2 tail lamps, the Mini 65's plate lamp on its boot, the A4 Avant's
+                        # `fullbeam` tail lamp bulbs (#264): as rear head lamps they took rear
+                        # light entries from the real rear lamps and lit white with the head
+                        # lamps. Placed like a clear lens, with the lamp it lies in or over.
+                        clear.append(
+                            Tri(sub, k, LENS, side, front, WHITE, area, centre, normal, sub.lod, tuple(pts), shown)
+                        )
+                        continue
                     if f == POSITION:
                         c = WHITE if front else RED  # front parking / DRL, rear tail marker
                     # What the player sees at the rear is the lens texture: red

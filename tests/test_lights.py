@@ -466,3 +466,24 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
             print(f"ok  {name}")
+
+
+def test_head_lamp_technique_at_the_rear_is_no_head_lamp():
+    # Issue #264: a head lamp technique behind the wheelbase midpoint (the 510's coarse LOD 2 tail
+    # lamps, the A4 Avant's `fullbeam` tail bulbs) was a rear head lamp that took a rear entry
+    # and lit white with the head lamps. It lights with the tail lamp it lies over; one with no
+    # lamp behind it or in its section (the Mini 65's plate lamp on its boot) stays unlit.
+    heads = [_quad("headlightL", "head_light", 0.6, 2.0), _quad("headlightR", "head_light", -0.6, 2.0)]
+    tails = [_quad("taillightL", "tail_light", 0.6, -1.95), _quad("taillightR", "tail_light", -0.6, -1.95)]
+    bulbs = [_quad("taillightL", "fullbeam", 0.6, -2.0), _quad("taillightR", "fullbeam", -0.6, -2.0)]
+    plate = _quad("trunk", "oldhead", 0.0, -1.5)
+    plan = lights.LampPlan.build(heads + tails + bulbs + [plate], _Place(), 0.0)
+    assert sorted((l.function, l.front) for l in plan.lamps.values() if l.function == lights.HEAD) == [
+        (lights.HEAD, True),
+        (lights.HEAD, True),
+    ]
+    got = _functions(heads + tails + bulbs + [plate], {})
+    assert got["trunk"] is None, got
+    for sec in bulbs:
+        keys = {plan.tri_lamp.get((id(sec.subsections[0]), k)) for k in range(2)}
+        assert {k[0] for k in keys} == {lights.TAIL}, keys
