@@ -39,6 +39,7 @@ param(
     [string]$Override,            # game files to replace, repo-relative: 'Install\gui.sp=out\gui\gui.sp;media\Fonts.fchunk=out\gui\Fonts.fchunk';
                                   # root files too ('dsf_enhanced.asi=out\x\dsf_enhanced.asi;dsf_enhanced.ini=out\x\test.ini')
     [string]$Asi,                 # repo-relative plugin, e.g. out\asi\dsfforza.asi (its .ini is copied too)
+    [switch]$NoAsi,               # run an archive past the vanilla reader without -Asi anyway (it crashes; see below)
     [string]$LuaFiles,            # UserLuaScripts files replaced after the repo copy: 'dsfforza\hud.lua=out\x\hud.lua;dsfforza\ported.lua=out\x\dngvehicles.lua'
     [switch]$ArchiveOnly,         # an archive named dngvehicles.sp goes with its build's dngvehicles.lua and gui\ (each car's
                                   # vehicleStats entry, badge and plate) unless this is set (run-test.ps1)
@@ -100,6 +101,28 @@ if ($OnHost -and $Vm) { throw '-OnHost and -Vm exclude each other' }
 # OnHost, Vm, GamePath, HostRunPath and Resolution are this script's own.
 if (-not $GamePath) { throw 'Set DSF_GAME_DIR (or pass -GamePath) to your Driver: San Francisco folder, the one with Driver.exe.' }
 if (-not $HostRunPath) { $HostRunPath = Join-Path ([IO.Path]::GetPathRoot($GamePath)) 'dsfforza-run' }
+
+# The vanilla reader holds 1100 root entries and seeks below 2 GiB (research/spool-limits.md); a
+# larger archive needs dsfforza.asi's [archive] module, which a run loads only with -Asi. Without it
+# the game shows DriverNGHook's fatal-error dialog ~40 s into the load (issue #224), so stop here,
+# before waiting for a VM. tools\install.ps1 refuses such an install the same way.
+if (-not $Asi -and -not $NoAsi) {
+    foreach ($archive in $Archives) {
+        $path = Join-Path $repo $archive.Trim()
+        if (-not (Test-Path -LiteralPath $path)) { continue }   # Get-SeenPath reports it
+        $stream = [IO.File]::OpenRead($path)
+        try {
+            $header = New-Object byte[] 16
+            $entries = if ($stream.Read($header, 0, 16) -eq 16 -and [Text.Encoding]::ASCII.GetString($header, 0, 4) -eq 'CHNK') {
+                [BitConverter]::ToUInt32($header, 8) } else { 0 }
+            $bytes = $stream.Length
+        } finally { $stream.Dispose() }
+        if ($entries -gt 1100 -or $bytes -ge 2GB) {
+            throw ("$archive has $entries root entries and $([math]::Round($bytes / 1MB)) MB; the vanilla game reads at most 1100 " +
+                   'entries and 2 GiB. Add -Asi out\asi\dsfforza.asi (tools\asi\build.ps1), or -NoAsi to run it without the plugin anyway.')
+        }
+    }
+}
 $seriesArgs = $PSBoundParameters
 $ownParameters = $MyInvocation.MyCommand.Parameters
 $passThrough = @((Get-Command $runTest).Parameters.Keys | Where-Object {
