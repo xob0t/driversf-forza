@@ -893,8 +893,8 @@ bare metal at LOD 1: 74,593 triangles, 33.5 m2 (247 cars at LOD 3, 84 at LOD 5).
 draws it at greys of 130 to 228 (p5 to p95; median 168), above vanilla's lightest chrome
 on 95% of the triangles, so 30.9 m2 takes the 156 block. The rest takes the ramp: 103
 (2.4 m2), 92, 87, 82 and 74 (0.2 m2 together), on 89 cars. Before, all of it drew at 98.
-Bare metal is lighter on every one of these cars, and Forza's chrome techniques are
-unchanged.
+So bare metal draws lighter on all but small parts (the ramp greys under 98, about
+0.2 m2 on the roster); Forza's chrome techniques are unchanged.
 
 **render_compare (`out/rc/metal`, 9 cars built from master 62736c2 and this change).**
 Five cars draw differently, all in their trims region: the Monte Carlo SS 11's rear wing
