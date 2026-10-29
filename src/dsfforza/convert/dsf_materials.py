@@ -335,15 +335,16 @@ def is_atlas_kind(kind) -> bool:
 # grey level, times the vehicle's g_vec4WheelBlurColour (its tint, Texturing.wheel_blur_tint;
 # paint.set_wheel_blur_colour), green the gloss (WHEEL_BLUR_GLOSS x grey, the vanilla
 # disc's ratio: means 136 red, 60 green), blue the coverage. The picture is laid over
-# WHEEL_BLUR_BACKDROP, the dark inside of the wheel, so the disc is opaque once faded in and
-# hides the port's sharp rim, which cannot fade (research/wheels.md, "Speed blur"). It is
+# WHEEL_BLUR_BACKDROP (a mid grey for what shows between the spokes: with the port's dark
+# barrel, 20, open wheels came out darker at speed than at rest, vanilla's brighter), so the
+# disc is opaque once faded in and hides the port's sharp rim, which cannot fade (research/wheels.md, "Speed blur"). It is
 # blurred, so WHEEL_BLUR_TEXELS across are enough (a 256-texel picture weighted 0.5, which
 # the atlas's uniform scale takes down to 50 to 120 texels).
 WHEEL_BLUR_MAT = "wheel_blur"
 SPOKE_DISC_MATERIALS = (bytes.fromhex("001262258aa7c428"), bytes.fromhex("10122b9e53b14e2a"))  # full, exterior
 SPOKE_DISC_TEXTURE = bytes.fromhex("0012622354a4c428")  # the vanilla disc picture they sample
 WHEEL_BLUR_TEXELS = 128
-WHEEL_BLUR_BACKDROP = 20
+WHEEL_BLUR_BACKDROP = 60
 WHEEL_BLUR_GLOSS = 0.44
 WHEEL_BLUR_LAYOUT = (20, 7)  # stride, MODL flag (alpha-blended)
 

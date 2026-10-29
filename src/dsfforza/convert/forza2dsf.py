@@ -692,10 +692,10 @@ WHEEL_BLUR_RINGS = 6  # rings of the dish, centre to rim edge (fewer where the f
 WHEEL_BLUR_FLAT = 0.001  # m: a ring this close to the line through its neighbours is left out
 WHEEL_BLUR_SEGMENTS = 24
 WHEEL_BLUR_LIFT = 0.003  # m in front of the rim face
-# Baked sky of the disc's vertices: the converted rim's outward faces (0.56, "Wheel shading"),
-# so the faded-in disc is lit like the rim it covers (vanilla discs carry 0.9 to 1.0 over
-# rims on 0.64).
-WHEEL_BLUR_SKY = 0.56
+# Baked sky of the disc's vertices, as on vanilla discs (0.9 to 1.0; their rims 0.64). With the
+# converted rim's 0.56 the faded-in disc came out darker than the rim it covers (370Z in game:
+# mean grey of the wheel face 90 at rest, 70 at 60 mph; the vanilla 370Z's 103 and 146).
+WHEEL_BLUR_SKY = 0.9
 # Barycentric samples of each triangle for the rim face's envelope: corners, edge midpoints,
 # centroid.
 _FACE_SAMPLES = (
