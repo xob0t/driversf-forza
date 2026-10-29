@@ -1,6 +1,6 @@
 # Licence plates
 
-Updated: 2026-10-28
+Updated: 2026-10-29
 
 How vanilla DSF cars draw their plates, what the Forza cars have, and what
 `src/dsfforza/convert/plates.py` adds to converted cars (`ConvertOptions.plates`, on by
@@ -188,7 +188,7 @@ fixed): `img/plates-render-build.png` against the hosts
 `img/plates-render-hosts.png`: "DRV SF" reads the same way as on the vanilla
 cars.
 
-### In game (confirmed-runtime, one car)
+### In game (confirmed-runtime, the first car)
 
 Run `20261022-203012` (another agent's `out/glassfix/dngvehicles.sp`, built
 19:50-19:58 with this converter, so with plates): the ported BMW_M5_12 (304,
@@ -265,20 +265,30 @@ plate on its bumper pad instead of over the Z28 badge. The RS2's rear was not
 seen (the car was wrecked in that shot); the Golf's rear plate is invisible
 before and after (a recess under the bumper, tilt -0.73: #179).
 
+**Full-roster build** (main checkout's `out/build`, 2026-10-29, 573 cars with
+this converter; log lines `plates: front|rear <source> on <section>`): front
+98 recess, 86 flat face, 14 Forza plate, 311 host fallback; rear 439 recess,
+34 flat face, 17 Forza plate, 79 host fallback (offline-checked). Four cars
+get none, as their hosts have none (215 Miura: both Miuras and the 330 P4;
+252 F-350). 7 plates tilt below -0.5 (#179).
+
 ## Open
 
-1. In game: front plates (not yet seen), the other cars of the test build,
-   z-fighting with recesses (3 mm proud), a plate on a bumper that falls off.
+1. In game: front plates are seen since #180's run (`vm1-20261028-184904`:
+   the Mazda 2's in its lower grille, the Golf GTI's on its bumper). Not
+   checked: z-fighting with recesses (3 mm proud), a plate on a bumper that
+   falls off.
 2. Paint-material plates on hosts whose paint palette gives an odd tint:
    vanilla uses the same material, so the plate should look as on vanilla cars;
    assumed, not checked.
 3. Front fallbacks float in front of curved bumpers (up to a few cm at the
    edges); real cars use brackets too. A pad/bracket search (protruding
    faces) would place some better. Still 66 front and 32 rear fallbacks
-   float (#159 survey); race prototypes make up many of them.
-6. Recess plates tilted under the bumper, facing the road (#179).
+   float (#159 survey); race prototypes make up many of them (#213).
 4. Plate lamps (`numplate`) are trim; they could light with the tail lamps
    (vanilla has no plate lamp entries; not done).
 5. Plate size follows the host (0.25..0.37 m wide). A fixed 0.26 x 0.122
    would make all ports alike; the host's is closer to what that vanilla car
    shows.
+6. Recess plates tilted under the bumper, facing the road (#179; 7 in
+   `out/build`).

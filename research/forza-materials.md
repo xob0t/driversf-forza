@@ -1,6 +1,6 @@
 # Forza materials and textures, and their DSF counterparts
 
-Updated: 2026-10-28
+Updated: 2026-10-29
 
 Code: `src/dsfforza/convert/forza_materials.py` (Forza side), `src/dsfforza/convert/dsf_materials.py`
 (DSF side, atlas, preview), `--textures` in `src/dsfforza/convert/forza2dsf.py` and
@@ -98,9 +98,17 @@ the converter squashes the Forza window UVs into that band
 | window | nodamage | textured | glass | shared GLASS |
 | glass (headlight cover) | Lights | textured | glass | shared GLASS |
 | black_glass | nodamage | textured | trim | shared TRIM |
-| black, frame, bottom, plastic2, weatherstrip, matte_colors, misc, rubber_trim, bumper_frame, undercarriage, race_kit_red | nodamage | mostly swatch | trim | shared TRIM (`--swatch-trims`: Chassis with the swatch colour); textured triangles seen from outside on light artwork, dark detail or flat mid-grey: host Chassis, texels times the technique's PaintScale ("Trim artwork", "Forza's trim shaders and flat black grilles" below) |
+| black, frame, bottom, plastic2, weatherstrip, matte_colors, misc, rubber_trim, bumper_frame, undercarriage, race_kit_red | nodamage | mostly swatch | trim | shared TRIM (`--swatch-trims`: Chassis with the swatch colour); textured triangles seen from outside on light artwork, dark detail or flat mid-grey: host Chassis, texels times the technique's PaintScale ("Trim artwork", "Forza's trim shaders and flat black grilles" below); with a Forza specular or reflection a gloss copy of host Lights instead ("Gloss") |
 | chrome, chrome_2, chrome_3, chrome_bump, lights_chrome | nodamage (lights) | textured or swatch | chrome | shared CHROME: GLOBAL_LOD_Chrome (full), GLOBAL_Chassis_Chrome (exterior); "Chrome trim" below |
 | carbon_fiber | global | tiling | trim | shared TRIM |
+| interior | nodamage | textured | textured | host **Chassis** (stride 28) |
+| emblem | nodamage | textured, alpha-tested | textured | host Chassis, or a gloss copy of host Lights ("Gloss"); fully transparent triangles dropped |
+| badge | nodamage | alpha 0 everywhere | textured | dropped |
+| taillight2S, tail_light, reverse_light, textured_reflector, indicator_left/right, hidhead, oldhead, slorange, drlwhite, detail_glass_red, detail_glass_clear | Lights | textured | textured | host **Lights** (stride 32, UV1 = UV0); `detail_glass_*` lenses are glass in Forza and get the lamp behind them baked in (`lights.md`, "Lamp lenses drawn opaque") |
+| fogred | Lights | swatch | textured | host Lights, solid cell |
+| tire | global | tiling | tyre | shared TYRE (unwrapped onto the vanilla tread and sidewall, `research/wheels.md`) |
+| rim, chrome_rim, outer_rim, inner_rim, wheel_black, wheel_emblem (`wheel` section) | the car's `wheel.xds` | textured (inner_rim sometimes a swatch) | textured | host **Chassis**, or a gloss copy of host Lights where Forza has a specular or reflection ("Gloss"), in the wheel MODL part (`wheels.md`, "Rim textures") |
+| blur_rim, blur_lip, chrome_blur_* | | | skip | dropped |
 
 Shared TRIM (`GLOBAL_Chassis_Simple`) samples DSF's global chassis texture
 (SSIC `00122b73d1fa1227`, 1024x512: engine bay, undercarriage, grilles,
@@ -114,14 +122,6 @@ trims drawn from a single texel use most (46 hosts). With `--damage`, the
 trims a missing bonnet or boot lid exposes (bay walls and floor, panel
 undersides) are projected onto the texture's engine-bay pictures instead,
 and panel undersides use the paint material (`damage.md`, step 6).
-| interior | nodamage | textured | textured | host **Chassis** (stride 28) |
-| emblem | nodamage | textured, alpha-tested | textured | host Chassis; fully transparent triangles dropped |
-| badge | nodamage | alpha 0 everywhere | textured | dropped |
-| taillight2S, tail_light, reverse_light, textured_reflector, indicator_left/right, hidhead, oldhead, slorange, drlwhite, detail_glass_red, detail_glass_clear | Lights | textured | textured | host **Lights** (stride 32, UV1 = UV0); `detail_glass_*` lenses are glass in Forza and get the lamp behind them baked in (`lights.md`, "Lamp lenses drawn opaque") |
-| fogred | Lights | swatch | textured | host Lights, solid cell |
-| tire | global | tiling | tyre | shared TYRE (unwrapped onto the vanilla tread and sidewall, `research/wheels.md`) |
-| rim, chrome_rim, outer_rim, inner_rim, wheel_black, wheel_emblem (`wheel` section) | the car's `wheel.xds` | textured (inner_rim sometimes a swatch) | textured | host **Chassis**, in the wheel MODL part (`wheels.md`, "Rim textures") |
-| blur_rim, blur_lip, chrome_blur_* | | | skip | dropped |
 
 `liveryBadge` (livery decal slots; of the 40 testdrive cars only the Agera
 has them: a strip on the rear wing in the main carbin, one on the dash top
@@ -583,7 +583,7 @@ with its bars at full texel (centre grille 60 to 120, the doors 40 to 90). Two
 things make ours dead flat: the bars are gone (one dark texel), and DSF's
 materials have almost no specular (shared trim `GLOBAL_Chassis_Simple`
 intensity 0.01 x tex.G, host Chassis 0.03 at power 24). Only the first is fixed
-here; the second is issue #87.
+here; the second is issue #87 (fixed by #143, "Gloss" below).
 
 **Fix (`trim_art.classify_texels`, `split_trim_art`).** Every textured trim
 triangle seen from outside (unchanged test) is classified on its texels after
@@ -644,14 +644,17 @@ Volt, 4 Cougar Eliminator, plus vanilla 175, the Cougar's host): before
 shows its slats instead of one black block; its headlamp doors stay dark, their
 bars only a shade lighter at the in-game distance. The Range Rover looks the
 same at that distance (its bars were already chrome; the mesh is a few atlas
-texels). The scoop is unchanged: black without a highlight, issue #87
+texels). The scoop is unchanged: black without a highlight, issue #87 (since: "Gloss")
 (`img/black-trims-ingame.jpg`). The after run ran out of time before IDs 1 and 3;
 all four cars spooled and drove in the before run and IDs 175, 4 and 2 in the
 after run, no crash.
 
 Not changed: the scoop's `badge` decal is cut at alpha 128 (`cutout`) where
 Forza blends it into the paint; the hidden-headlamp doors are drawn open and
-closed at once (both vanilla sections, issue #88).
+closed at once (both vanilla sections; issue #88, fixed since by #123: only the
+lowered state is drawn). The grey colour cells were among
+the subsections that rebuilt sections lost until #177 (#173; "Gloss", after the
+calibration runs); the detail grilles above are textured and were not affected.
 
 ## Gloss: Forza's specular and reflection on trims and rims (2026-10-27)
 
@@ -711,8 +714,8 @@ The shared materials sample the shared 1024 x 512 chassis texture
 trims with the shared trim (148 vehicles), 2.7% of its area on a gloss-black
 swatch of that texture (R 20, G 252; 90 vehicles: specular 0.01, still next to
 none), and their rim faces with their own Chassis material on their chassis
-texture (111 of 150 vehicles' wheel parts; texel alpha median 21: no reflection
-either). No vanilla material gives a dark texel a reflection except the chrome
+texture (109 of the 140 four-wheeled vehicles' wheel parts, recounted in
+`wheels.md`; texel alpha median 21: no reflection either). No vanilla material gives a dark texel a reflection except the chrome
 ones, which draw the R channel as grey and reflect alike at every angle. The
 Lights material is the only per-car one with a reflection and an unmasked
 specular; its glow is `tex.a` times the colour of the vertex's lamp (semantic 9
@@ -733,11 +736,14 @@ instead of the Chassis material:
   Forza technique, `dsf_trim_detail@0.2~misc`), badges and emblems;
 - the rims (`wheel.xds`); `chrome_rim`'s texel takes its `ChromeDiffuseScale`.
 
-The parameters (`gloss_material`): specular intensity `GLOSS_SPECULAR_SCALE` (0.04) `x
-SpecularAmount`, at most 0.25; power `SpecularPower / 4` (`(N.H)^p` is about
-`(R.V)^(p/4)`; both changed by #176: below); reflection with Schlick's Fresnel (power 5, bias F0 of FresnelIndex;
-chrome: power 16, bias 1, alike at every angle) of amount `GLOSS_REFLECTION_SCALE`
-(0.5) `x CubeScale x FresnelScalar x 255 / green`, the green the subsection's texels
+The parameters (`gloss_material`, as the code has them now, after the calibration
+below and #176): specular intensity `GLOSS_SPECULAR_SCALE` (0.01) `x SpecularAmount x
+SpecularColor`, at most `GLOSS_INTENSITY_MAX` (0.0625); power `SpecularPower`
+(`GLOSS_POWER_RATIO` 1; #143 divided it by 4, taking Forza's for `(N.H)^p`),
+clamped to 4..150; below `GLOSS_MIN` (0.005) no specular. Reflection with Schlick's
+Fresnel (power 5, bias F0 of FresnelIndex; chrome: power 16, bias 1, alike at every
+angle) of amount `GLOSS_REFLECTION_SCALE` (0.5) `x CubeScale x FresnelScalar x 255 /
+green`, at most 16, the green the subsection's texels
 average as drawn (the program masks the reflection by it; at least 16 on atlas
 regions, whose texels vary, and 2 on colour cells, which are one exact colour). Each
 on a geometric grid (`GLOSS_STEPS`: intensity x2, power x1.41, reflection x4), so a car
@@ -770,6 +776,16 @@ this is Forza's look drawn with a vanilla program rather than vanilla's look.
 
 The 300SL shows a white glint on its side window in every build (the first and the
 last, a 16 times different specular): DSF's glass, not the gloss materials.
+
+These runs were made before #177 (2026-10-28). Until then a flat-colour gloss or grey
+trim (a colour cell: the flat near-black trims, `dsf_trim_grey`, flattened artwork)
+in a section that the plates pass or `damage.split_exposed` rebuilt drew as plain
+shared trim, in the exterior entry on about 370 cars and in the full entry's LODs on
+about 390 (#173; #177's survey). Textured gloss subsections (detail grilles, badges,
+emblems, rims) were not affected. So the calibration was judged partly on cars
+missing some of their flat gloss trims; #177's runs (`vm1-20261028-155614` before,
+`-160123` after: the Camaro ZL1's and XB Falcon's flat trims on gloss) and #178's
+(below) are the first with all of them.
 
 **Cost.** Each copy is a Lights MACO (about 11 KB in the full entry, 12 KB in the
 exterior), and the trims and rims that move to it take stride-32 vertices instead of
@@ -839,8 +855,9 @@ already removed the Camaro's band in these views.
 
 ## Open
 
-1. In game: whether the Chassis material lights badges well (the Lights
-   glow on Forza lamp alpha ran in game: `lights.md`).
+1. In game, badges on the Chassis material: seen since ("Badge plates": the
+   205's lettering and the Firebird's "TRANS AM", `vm-20261024-105751`), and
+   since #143 the glossy ones draw on gloss copies of Lights.
 2. A real alpha test: the Chassis material has none. The Dials material
    (interior entry, `g_hAlphaTestRefValue`) is a candidate template for
    cut-out emblems and grilles. Exterior badges are now cut as geometry
@@ -851,9 +868,8 @@ already removed the Camaro's band in these views.
    Whether DSF's glass is transparent enough is unchecked. `detail_glass_*`
    lenses are opaque Lights texels with the lamp behind baked in
    (`lights.md`, "Lamp lenses drawn opaque").
-4. Done: the interior entry (N+1000) gets the converted
-   `<car>_cockpit.carbin` by default (`cockpit.md`; `port_car.py
-   --no-cockpit` keeps the host's).
+4. (Done and dropped: the converted cockpit in the interior entry,
+   `cockpit.md`.)
 5. Damage textures (`damage`, `damagelights`) and DSF's damage decal path.
 6. Parsing the `.fxobj` effect's technique tables (technique → pixel
    shader → sampler set) would make the atlas choice authoritative for custom
@@ -865,17 +881,19 @@ already removed the Camaro's band in these views.
    its atlas; vanilla interiors have `GLOBAL_LOD_Chrome` (host 193 uses it for
    3,700 triangles), which the interior entry could use the same way.
 8. Trim artwork ("Trim artwork", "Forza's trim shaders and flat black
-   grilles"), issue #58: `PaintScale` / `PristinePaintScale` are decoded
-   (they scale the texel) and mid-grey and dark detailed trims go through the
-   atlas. Open: which technique runs which shader (the effect's technique
+   grilles"), issue #58 (closed 2026-10-28 by #91 and #143): `PaintScale` /
+   `PristinePaintScale` are decoded (they scale the texel) and mid-grey and
+   dark detailed trims go through the atlas. Open: which technique runs which shader (the effect's technique
    tables aren't decoded; `plastic2` sets both parameters on some cars), the
    `black*` techniques (still the shared dark trim whatever their texels),
-   DSF's shared chrome can't take the Forza grey as a tint, and the visibility
+   DSF's shared chrome can't take the Forza grey as a tint (#154), and the visibility
    test is orthographic from around and above: artwork seen only from below or
-   through a narrow gap counts as hidden.
+   through a narrow gap counts as hidden (no car known to show it, #58).
 9. Gloss ("Gloss: Forza's specular and reflection on trims and rims"): the cockpit
    (interior entry) draws the outside sections it holds (bonnet scoops, A-pillars)
-   without it (issue #136); the reflection on atlas regions is masked by their texel
+   with its own Texturing, and `cockpit.py` installs no gloss materials; #136 was
+   closed on 2026-10-28 after the user saw glossy exterior trims from the cockpit
+   on v0.1.2, but which change did that isn't traced (unverified); the reflection on atlas regions is masked by their texel
    green (a grille's bars reflect more than its gaps, unlike Forza); `black*`,
    `frame` and `undercarriage` have none in Forza and stay flat; the calibration
    (`GLOSS_SPECULAR_SCALE`, `GLOSS_REFLECTION_SCALE`) was judged on five cars by day.
