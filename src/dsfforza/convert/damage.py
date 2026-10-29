@@ -88,18 +88,21 @@ ROLES = {
     155: "front hub +x",
     136: "exhaust -x",
     15: "exhaust +x",
-    53: "sill -x",
-    52: "sill +x",
+    53: "side door -x",
+    52: "side door +x",
     0: "misc",
 }
-DOORS = (31, 32, 54, 55)
+# Side doors 52/53 hinge like the front doors (vertical axis, limit 0): the Vista
+# Cruiser's rear doors (231, which has no 54/55), the vans' side doors (198, 200) and
+# the airport fire truck's lockers (186). Issue #209; they used to be called sills.
+DOORS = (31, 32, 54, 55, 52, 53)
 # Roles that come in +x/-x pairs.
 SIDE_PARTNER = {
     a: b
     for x, y in ((31, 32), (54, 55), (33, 34), (50, 51), (40, 41), (15, 136), (52, 53), (155, 156))
     for a, b in ((x, y), (y, x))
 }
-BODY = (38, 37, 33, 34, 52, 53) + DOORS
+BODY = (38, 37, 33, 34) + DOORS
 # Records whose hinges/bodies other code owns or that have no Forza geometry.
 NOT_MOVED = {1, 185, 188, 190, 155, 156}
 
@@ -2344,7 +2347,7 @@ class DamagePlan:
 
     def _rigid(self, pair) -> bool:
         """A panel that only crushes on a converted car (chassis, front
-        structure, doors, wings, sills), so its seams with others can be kept
+        structure, doors, wings), so its seams with others can be kept
         shut; bound() keeps it from swinging."""
         p = self.panels.get(pair)
         return p is not None and p.role in BODY

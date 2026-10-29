@@ -139,7 +139,7 @@ x/y/z normalised by the part-0 box, +z front, +x the car's left):
 | 188 / 190 | 143 / 146 | front / rear suspension (struts, arms) | x axis at the axle |
 | 155 / 156 | 130 / 130 | front hubs (brake disc) +x / -x | at the hub |
 | 15 / 136 | 91 / 99 | exhausts +x / -x | none |
-| 52 / 53 | 4 / 7 | side doors: the Vista Cruiser's rear doors (231), the vans' side doors (198, 200), the airport fire truck's lockers (186). `damage.py` calls them sills and holds them like the chassis (#209) | vertical, limit 0 |
+| 52 / 53 | 4 / 7 | side doors: the Vista Cruiser's rear doors (231), the vans' side doors (198, 200), the airport fire truck's lockers (186). Doors in `damage.py` (`DOORS`) since #209 ("Side doors 52/53" below) | vertical, limit 0 |
 | 0 | 209 | miscellaneous | |
 
 (The "+x/-x" naming is ours; DSF's +x is the car's left, the driver's side
