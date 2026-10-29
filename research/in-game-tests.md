@@ -685,6 +685,17 @@ and 2, `-HoldMph 60`.
   car there, then `localPlayer:SetZapLevel(1, nil, false, {forcedOut = true})`
   and `localPlayer:ZapIntoVehicle(car, false, false, false, nil,
   {disableZapFlash = true})` possess it.
+- **Paint (confirmed-runtime, 2026-10-29, issue #227):** `create` takes
+  `ShaderParams`, the table `Spawn.Spawn` takes as `shaderParams`; the game's
+  vehicle manager passes it on as `create{Model_Id = params.model_id,
+  ShaderParams = params.shaderParams, ...}` (strings of
+  `ScriptsLuaScripts.fchunk`). `{ [0] = N }` picks palette entry N; without it
+  the game picks one at random. clonetest.lua passes `-Palette` that way, so
+  the first probed car (spawned here) keeps it too: vanilla 241 near-black
+  (entry 0) in `vm2-20261029-180521` and `vm2-20261029-180855`, red (entry 4)
+  in `vm1-20261029-181722`, where before it came out white, green and grey
+  (`img/probe-palette-first-car.jpg`). `getShaderParamSet` returned nil for
+  the car and for `{gameVehicle = car}`.
 - **Lua can't write files:** the game's `io` resolves paths through its
   `COM:` layer and refuses writes everywhere. Use `print`; DriverNGHook
   writes it to `Driver.log` next to the exe.
