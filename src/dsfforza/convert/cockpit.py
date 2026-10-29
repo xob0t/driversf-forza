@@ -2349,6 +2349,15 @@ class InteriorMaterials:
     cabin_part: int
 
 
+def local_material_kind(info: dict) -> str | None:
+    """'dials' or 'interior' for an interior MACO (dsf_materials.material_info), by its
+    MATX name or alpha test, else None."""
+    base = info["path"].lower().replace("\\", "/").rsplit("/", 1)[-1]
+    if "_dials" in base or "g_hAlphaTestRefValue" in info["params"]:
+        return "dials"
+    return "interior" if "_interior" in base else None
+
+
 def host_interior(stream, interior, known: dict | None = None) -> InteriorMaterials:
     """Read the host interior's materials, strides and MODL flags. known: the
     conversion's material layouts (forza2dsf.Builder.layout; default
@@ -2362,12 +2371,7 @@ def host_interior(stream, interior, known: dict | None = None) -> InteriorMateri
     for e in drsp.children:
         if e.tag == "MACO":
             info = dm.material_info(stream, e)
-            base = info["path"].lower().replace("\\", "/").rsplit("/", 1)[-1]
-            kind = (
-                "dials"
-                if "_dials" in base or "g_hAlphaTestRefValue" in info["params"]
-                else ("interior" if "_interior" in base else None)
-            )
+            kind = local_material_kind(info)
             if kind and kind not in local:
                 local[kind] = info
         elif e.tag == "TEXC":
@@ -3411,51 +3415,89 @@ def vb_needle(mesh, sub) -> bool:
     return bool(vb and vb.stride in (16, 20) and vb.element(8))
 
 
-def needle_gauge_ids(stream, interior) -> dict[float, int]:
+def dials_material(stream, interior) -> bytes | None:
+    """UID of the interior's needle material, as host_interior picks it: its first
+    local MACO named _Dials or alpha-tested. The digital dials' material (a copy of
+    digital_dash.VANILLA_MATERIAL, also named _Dials) is only added after the host's
+    materials, and only when the host has a needle material."""
+    from dsfforza.convert import dsf_materials as dm
+    from dsfforza.formats.vehicle_mesh import child
+
+    for e in child(child(interior, "MDXN"), "DRSP").children:
+        if e.tag == "MACO":
+            info = dm.material_info(stream, e)
+            if local_material_kind(info) == "dials":
+                return info["uid"]
+    return None
+
+
+def needle_gauge_ids(stream, interior, dials_only: bool = False) -> dict[float, int]:
     """Semantic-8 gauge id (component 2) -> vertex count over the interior's
     needle buffers (DashboardInstrument). Anything but the integer ids of the
     gauge table leaves a needle unturned: a later pass that writes UV1 into
-    these buffers (damage.interior_uv1 did) silently breaks the gauges."""
+    these buffers (damage.interior_uv1 did) silently breaks the gauges.
+
+    With `dials_only`, only the vertices drawn with the needle material
+    (dials_material) count. The digital dials (digital_dash) draw g_fDigiData
+    vertices with ids 1..7 through the same declaration, sometimes from the same
+    buffer as the needles (hosts 250, 293), but the engine reads those through no
+    gauge record (issue #234)."""
     from dsfforza.formats import vehicle_mesh as vm
     from dsfforza.formats.vehicle_mesh import child, payload
 
+    drsp = child(child(interior, "MDXN"), "DRSP").children
+    drawn = None  # buffer UID -> indices of the vertices the needle material draws
+    if dials_only:
+        dials = dials_material(stream, interior)
+        indices = {}
+        for e in drsp:
+            if e.tag == "IXCK":
+                uid, count, size = struct.unpack_from("<8sII", payload(stream, child(e, "IXHD")))
+                if size == 2:
+                    indices[uid] = payload(stream, child(e, "IXDT"))[: count * 2]
+        drawn = {}
+        for e in drsp:
+            if e.tag != "SBMC" or dials is None:
+                continue
+            d = payload(stream, child(e, "SBBH"))
+            if d[8:16] != dials or d[0x30:0x38] not in indices:
+                continue
+            (base,) = struct.unpack_from("<I", d, 0x20)
+            first, count = struct.unpack_from("<II", d, 0x38)
+            ib = indices[d[0x30:0x38]]
+            drawn.setdefault(d[16:24], set()).update(base + i for i in struct.unpack_from(f"<{count}H", ib, first * 2))
     counts: dict[float, int] = {}
-    for e in child(child(interior, "MDXN"), "DRSP").children:
+    for e in drsp:
         if e.tag != "VXCK":
             continue
         elements = vm.parse_vdcl(payload(stream, child(e, "VDCL")))
         e8 = next((x for x in elements if x.semantic == 8), None)
         if e8 is None or e8.name_hash != DASHBOARD_INSTRUMENT or e8.components < 3 or e8.type != 8:
             continue
-        count, stride = struct.unpack_from("<II", payload(stream, child(e, "VXHD")), 8)
+        header = payload(stream, child(e, "VXHD"))
+        count, stride = struct.unpack_from("<II", header, 8)
         data = payload(stream, child(e, "VXDT"))
-        for v in range(count):
+        verts = range(count) if drawn is None else sorted(v for v in drawn.get(header[:8], ()) if v < count)
+        for v in verts:
             gid = struct.unpack_from("<e", data, v * stride + e8.offset + 4)[0]
             counts[gid] = counts.get(gid, 0) + 1
     return counts
 
 
 def needle_check(stream, interior, h) -> tuple[list[int], int]:
-    """What would leave a needle of a built car unturned: the gauge ids its
-    interior needles carry that hierarchy `h` has no gauge record for, and the
-    vertices drawn with the interior's Dials material from a buffer whose
-    declaration has no DashboardInstrument (the engine reads no gauge id)."""
-    from dsfforza.convert import dsf_materials as dm
+    """What would leave a needle of a built car unturned: the gauge ids the
+    needles drawn with the interior's Dials material carry that hierarchy `h`
+    has no gauge record for, and the vertices drawn with that material from a
+    buffer whose declaration has no DashboardInstrument (the engine reads no
+    gauge id). The digital dials' vertices need no record (needle_gauge_ids)."""
     from dsfforza.formats import vehicle_mesh as vm
     from dsfforza.formats.vehicle_mesh import child, payload
 
-    ids = needle_gauge_ids(stream, interior)
+    ids = needle_gauge_ids(stream, interior, dials_only=True)
     records = gauge_records(h)
-    # Ids 3..7 are digital displays' (digital_dash: g_fDigiData), which need no record.
     unturned = sorted(int(k) for k, n in ids.items() if n and k in GAUGE_IDS.values() and k not in records)
     drsp = child(child(interior, "MDXN"), "DRSP").children
-    dials = None
-    for e in drsp:
-        if e.tag == "MACO" and dials is None:
-            info = dm.material_info(stream, e)  # as host_interior finds it
-            base = info["path"].lower().replace("\\", "/").rsplit("/", 1)[-1]
-            if "_dials" in base or "g_hAlphaTestRefValue" in info["params"]:
-                dials = info["uid"]
+    dials = dials_material(stream, interior)
     declared = {}
     for e in drsp:
         if e.tag == "VXCK":
@@ -3493,7 +3535,7 @@ def needle_survey(archive: Path, manifest: Path | None = None, cars: list[int] |
                 continue
             kinds = upvh.entries_for(stream, root.entries, sid, None)
             h = upvh.parse(payload(stream, child(child(kinds[0], "NONR"), "UPVH")))
-            ids = needle_gauge_ids(stream, kinds[1]) if 1 in kinds else {}
+            ids = needle_gauge_ids(stream, kinds[1], dials_only=True) if 1 in kinds else {}
             unturned, blind = needle_check(stream, kinds[1], h) if 1 in kinds else ([], 0)
             interior = car.get("cockpit", {}).get("interior", {})
             rows.append(
