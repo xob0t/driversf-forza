@@ -1237,7 +1237,8 @@ class Texturing:
     dropped: set = field(default_factory=set)  # (id(sub), triangle index) cut out by alpha
     cutout: set = field(default_factory=set)  # id(sub) entirely cut out by alpha
     lens_subs: set = field(default_factory=set)  # id(sub): rear lamp lenses moved from glass to the atlas (is_lens)
-    lamp_tris: list = field(default_factory=list)  # (lod, positions, atlas uvs) of Lights-atlas triangles
+    # (lod, positions, atlas uvs, (section name, technique)) of Lights-atlas triangles
+    lamp_tris: list = field(default_factory=list)
     lamp_swatch_tris: list = field(default_factory=list)  # (lod, positions) of Lights swatch triangles
     _covers: dict = field(default_factory=dict)  # id(sub) -> clear_cover
     wheel_ids: set = field(default_factory=set)  # id(section) of the Forza wheel model (plan(wheels=...))
@@ -1349,7 +1350,9 @@ class Texturing:
                         tris[m.family].append(uvs)
                         keys[m.family].append((id(sub), k))
                         if m.family == fm.LIGHTS:
-                            self.lamp_tris.append((sub.lod, [pool[i].position for i in tri], uvs))
+                            self.lamp_tris.append(
+                                (sub.lod, [pool[i].position for i in tri], uvs, (section.name, sub.material))
+                            )
                         tested[m.family].append(alpha_tested)
                         self.atlas_subs.add(id(sub))
                     if id(sub) not in self.atlas_subs:
@@ -2053,7 +2056,13 @@ class Texturing:
         lod = min(t[0] for t in self.lamp_tris)
         tris = [t for t in self.lamp_tris if t[0] == lod]
         if front:  # Forza's front is -z; the camera looks down +z, nearest = largest -z
-            tris = [(t[0], [(x, y, -z) for x, y, z in t[1]], t[2]) for t in tris if sum(p[2] for p in t[1]) < 0]
+            # Lenses left out (dropped_lenses) aren't drawn: kept in the view they hid the lamps
+            # behind them, and the Venom GT's head lamps got no day glow under its lexan (#250).
+            tris = [
+                (t[0], [(x, y, -z) for x, y, z in t[1]], t[2])
+                for t in tris
+                if sum(p[2] for p in t[1]) < 0 and t[3] not in self.dropped_lenses
+            ]
             if not tris:
                 return None
         P = np.array([t[1] for t in tris], float)  # (n, 3, 3)

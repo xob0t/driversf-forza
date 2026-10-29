@@ -668,3 +668,23 @@ def test_plain_glass_cover_in_a_lamp_section():
         m = dataclasses.replace(fm.resolve(cover, cover.subsections[0]), role=fm.GLASS, family=fm.LIGHTS)
         assert dm.COVER_LAMP_SECTION_SHARE < t._over_lamp(cover, cover.subsections[0]) < dm.COVER_MIN_SHARE
         assert t.clear_cover(cover, cover.subsections[0], m) == left_out, name
+
+
+def test_front_lamp_view_leaves_out_dropped_lenses():
+    # Issue #250: a lens left out (dropped_lenses) isn't drawn. Kept in the front view it hid the
+    # lamp behind it, so the Venom GT's head lamps got no day glow under their left-out lexan.
+    lens = _quad("lexanLHL", "detail_glass_clear", -2.0, 0.0, 0.5, normal=(0.0, 0.0, -1.0))
+    lamp = _quad("headlightL", "head_light", -1.9, 0.5, 1.0, normal=(0.0, 0.0, -1.0))
+    t = dm.Texturing(Path())
+    t.atlases = _ClearAtlases()
+    for sec in (lens, lamp):
+        sub = sec.subsections[0]
+        for tri in sub.triangles():
+            pts = [sec.lod_vertices[i].position for i in tri]
+            uvs = [sec.lod_vertices[i].uv0 for i in tri]
+            t.lamp_tris.append((1, pts, uvs, (sec.name, sub.material)))
+    _, u = t._lamp_view(front=True)
+    assert (u < SIZE // 2).all()  # the lens's texels: it is in front
+    t.dropped_lenses = {("lexanLHL", "detail_glass_clear")}
+    _, u = t._lamp_view(front=True)
+    assert (u >= SIZE // 2).all()  # the lamp's
