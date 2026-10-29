@@ -896,7 +896,7 @@ already removed the Camaro's band in these views.
    from the driver's seat painted panels reflect (the interior paints with the
    exterior's `GLOBAL_Chassis_LOD1`) but trims, scoops and chrome don't: #136's
    closing observation was the paint or `_Interior`'s specular, not a change
-   (`cockpit.md`, "What DSF draws"; issue ISSUE_GLOSS); the reflection on atlas regions is masked by their texel
+   (`cockpit.md`, "What DSF draws"; issue #232); the reflection on atlas regions is masked by their texel
    green (a grille's bars reflect more than its gaps, unlike Forza); `black*`,
    `frame` and `undercarriage` have none in Forza and stay flat; the calibration
    (`GLOSS_SPECULAR_SCALE`, `GLOSS_REFLECTION_SCALE`) was judged on five cars by day.

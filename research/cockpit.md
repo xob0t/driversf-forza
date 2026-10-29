@@ -53,7 +53,7 @@ and so are their materials.
   layout (`vehicle-model.md`, "Interior glass"). The exterior's gloss copies
   and chrome materials aren't used: from the cockpit, painted panels reflect
   as they do outside, while trims, scoops and chrome have only `_Interior`'s
-  specular and no reflection (issue #136, "What DSF draws").
+  specular and no reflection (issues #136 and #232, "What DSF draws").
 - Gauges: Forza's speed and tach needles go on the host's `_Dials` material
   with gauge ids 2 and 1, swept per the `CarAttribs.xml` tick table ("Gauges").
   A host missing a gauge record gets one (`add_gauge_records`, issue #62).
@@ -132,7 +132,7 @@ a Texturing with a classifier, as the cockpit's is).
 What looked glossy is the paint (its reflection on the Cougar's bonnet shows
 in observe-16), or `_Interior`'s specular, which on the DXT1 atlas may be
 unmasked (Risks 3) (hypothesis: the user's screenshot isn't on record). Chrome and gloss trims seen from inside
-still have no reflection: issue ISSUE_GLOSS.
+still have no reflection: issue #232.
 
 Interior materials (Desanne): two local MACOs, `_Interior` (stride 28,
 MODL value 5) and `_Dials` (stride 20, MODL value 1,
@@ -1616,7 +1616,10 @@ On 12 cars of the full roster (`out/final3`) a speed or tach needle was drawn
 and never turned. `uv run dsff cockpit needles <archive>` (`needle_survey`)
 lists, per ported car, the gauge ids its interior needles carry against the
 gauge records its hierarchy has, and the needle triangles in a buffer that
-declares no gauge id. `upvh lint` now checks the same per car.
+declares no gauge id. `upvh lint` now checks the same per car. (Both also
+count a digital dash's rpm bar and mph digits, ids 1 and 2 of `g_fDigiData`,
+as needles: in `out/build` the Spark and the Volt fail lint for that alone,
+issue #234.)
 
 **Gauge records (confirmed-static).** `FUN_0088E310` keeps, per gauge-table
 index (seat byte +0x26), the index of every type-18 record whose role isn't
