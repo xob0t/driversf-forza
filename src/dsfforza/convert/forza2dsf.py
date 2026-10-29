@@ -1282,6 +1282,18 @@ def add_geometry(
     return added
 
 
+def lights_template(stream, full: Entry):
+    """(Lights MACO, its texture UID) of the full entry, the template of the interior
+    entry's gloss materials (cockpit.convert_interior; most host interiors have no Lights
+    MACO of their own); None without one."""
+    from dsfforza.convert import dsf_materials
+
+    found = dsf_materials.host_materials(stream, child(child(full, "MDXN"), "DRSP")).get(dsf_materials.LIGHTS_MAT)
+    if found is None or not found[1]["textures"]:
+        return None
+    return found[0], next(iter(found[1]["textures"]))
+
+
 def entry_like(template: Entry, payload_bytes: bytes | None = None, children: list[Entry] | None = None) -> Entry:
     e = copy.deepcopy(template)
     e.payload = payload_bytes
@@ -2542,6 +2554,7 @@ def convert(
             glass_links=links,
             glass_skin=interior_glass_skin(dmg, car, opts),
             layout=layout,
+            lights_template=lights_template(stream, full) if opts.textures else None,
         )
         if dmg is not None:  # the shell's paint samples the decal atlas at UV1 too
             dmg.interior_uv1(stream, interior)

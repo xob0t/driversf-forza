@@ -341,5 +341,96 @@ class TrimArtGloss(unittest.TestCase):
         self.assertEqual(out.subsections[1].uv_transform, swatch)
 
 
+class CockpitGloss(unittest.TestCase):
+    """The outside parts the interior entry draws (the cockpit carbin's bonnet, A-pillars and
+    mirrors, the shell) take gloss materials and the shared chrome, as the exterior does; the
+    cabin doesn't (#232)."""
+
+    def test_binding(self):
+        from dsfforza.convert import cockpit
+
+        corners = [
+            _Vertex((0.0, 0.0, 0.0), (0.1, 0.1)),
+            _Vertex((0.1, 0.0, 0.0), (0.9, 0.1)),
+            _Vertex((0.1, 0.1, 0.0), (0.9, 0.9)),
+        ]
+        misc, chrome, black = _Sub("misc", [(0, 1, 2)]), _Sub("chrome_2", [(0, 1, 2)]), _Sub("black", [(0, 1, 2)])
+        hood = _Section("hooda", corners, [misc, chrome, black])
+        cabin_misc, cabin_chrome = _Sub("misc", [(0, 1, 2)]), _Sub("chrome", [(0, 1, 2)])
+        cabin = _Section("interior", corners, [cabin_misc, cabin_chrome])
+        shell_chrome = _Sub("chrome", [(0, 1, 2)], lod=5)
+        shell = _Section("doorL", corners, [shell_chrome])
+
+        class FakeTexturing:
+            def material(self, section, sub):
+                return "gloss0" if sub is misc else (fm.TRIM if section is shell else dm.CHASSIS)
+
+            def triangle_uvs(self, section, sub, k, raw_uvs):
+                return raw_uvs, None
+
+            def solid_uv(self, key):
+                return (0.25, 0.25)
+
+        mats = cockpit.InteriorMaterials(b"I" * 8, None, b"T" * 8, {}, {}, None, 0)
+        shared = {"paint": b"P" * 8, "glass": b"G" * 8, "trim": b"R" * 8, "chrome": forza2dsf.CHROME}
+        outside = {id(hood), id(shell)}.__contains__
+        binding = cockpit.CockpitBinding(
+            FakeTexturing(), mats, (0.5, 0.5), {"gloss0": b"g" * 8}, lambda s: outside(id(s))
+        )
+        self.assertEqual(binding.material(hood, misc, shared), b"g" * 8)
+        self.assertEqual(binding.material(hood, chrome, shared), forza2dsf.CHROME)
+        self.assertEqual(binding.material(hood, black, shared), b"I" * 8)  # no gloss: the atlas
+        self.assertEqual(binding.material(shell, shell_chrome, shared), forza2dsf.CHROME)
+        # The shell's chrome isn't drawn as a flat trim cell (add_geometry puts it on CHROME_UV).
+        _uvs, key = binding.triangle_uvs(shell, shell_chrome, 0, [v.uv0 for v in corners])
+        self.assertIsNone(key)
+        # The cabin keeps its atlas: Forza draws it with the cockpit_ variants on interior_LOD0.
+        self.assertEqual(binding.material(cabin, cabin_misc, shared), b"I" * 8)
+        self.assertEqual(binding.material(cabin, cabin_chrome, shared), b"I" * 8)
+
+    def test_gloss_filter(self):
+        size = 32
+        nodamage = bytearray(bytes((6, 6, 6, 255)) * size * size)
+        atlases = {fm.NODAMAGE: (size, size, nodamage), fm.LIGHTS: (size, size, bytearray(size * size * 4))}
+
+        class FakeAtlases:
+            def __init__(self, car_dir=None, lod0=False):
+                pass
+
+            def get(self, family):
+                return atlases[family]
+
+        corners = [
+            _Vertex((0.0, 0.0, 0.0), (0.1, 0.1)),
+            _Vertex((0.1, 0.0, 0.0), (0.9, 0.1)),
+            _Vertex((0.1, 0.1, 0.0), (0.9, 0.9)),
+        ]
+        outside = _Sub("misc", [(0, 1, 2)], lod=0)
+        inside = _Sub("misc", [(0, 1, 2)], lod=0)
+        hood, cabin = _Section("hooda", corners, [outside]), _Section("dash", corners, [inside])
+
+        def classifier(name):
+            return fm.TEXTURED, fm.NODAMAGE
+
+        def on_hood(section, sub):
+            return section is hood
+
+        with mock.patch.object(fm, "AtlasCache", FakeAtlases), mock.patch.object(fm, "shader_settings", lambda d: {}):
+            t = dm.Texturing(Path(), size=(64, 64), classifier=classifier, gloss_filter=on_hood)
+            t.plan([hood, cabin], {0})
+            self.assertTrue(t.material(hood, outside).startswith(dm.GLOSS_PREFIX))
+            self.assertEqual(t.material(cabin, inside), dm.CHASSIS)
+            gloss = t.gloss_materials[0]
+            # The cockpit lifts its trims (CockpitOptions.trim_lift): the reflection is
+            # scaled by the green as drawn, so a lifted trim reflects less.
+            t = dm.Texturing(Path(), size=(64, 64), classifier=classifier, gloss_filter=on_hood, lift={fm.NODAMAGE: 40})
+            t.plan([hood], {0})
+            self.assertLess(t.gloss_materials[0].reflection, gloss.reflection)
+            # Without a filter a classifier's Texturing (the cockpit) plans none.
+            t = dm.Texturing(Path(), size=(64, 64), classifier=classifier)
+            t.plan([hood], {0})
+            self.assertEqual(t.material(hood, outside), dm.CHASSIS)
+
+
 if __name__ == "__main__":
     unittest.main()

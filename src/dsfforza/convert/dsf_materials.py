@@ -1223,9 +1223,12 @@ class Texturing:
     lens_report: dict = field(default_factory=dict)  # lenses.bake's report
     # (section name, technique) of swatch lenses left out, their tint on the lamp behind (lenses.bake)
     dropped_lenses: set = field(default_factory=set)
-    # Exterior only: atlas trims and rims with Forza's specular and reflection draw with
-    # copies of the host Lights material (GLOSS_PREFIX, _plan_gloss).
+    # Atlas trims and rims with Forza's specular and reflection draw with copies of the
+    # host Lights material (GLOSS_PREFIX, _plan_gloss). With a classifier (the cockpit),
+    # only the subsections gloss_filter(section, sub) accepts (the outside parts it holds).
     gloss_enabled: bool = True
+    gloss_filter: object = None
+    gloss_max: int = GLOSS_MAX_MATERIALS
     gloss: dict = field(default_factory=dict)  # id(sub) -> index into gloss_materials
     gloss_materials: list = field(default_factory=list)  # [GlossMaterial]
     gloss_report: dict = field(default_factory=dict)  # technique -> {material index: triangles}
@@ -1375,8 +1378,11 @@ class Texturing:
         Chassis material from nodamage (trims, badges) or the wheel texture (rims) whose
         Forza technique has a specular or a reflection (fm.gloss_params with the car's
         ShaderSettings): Forza's terms on the green its texels average as drawn. At most
-        GLOSS_MAX_MATERIALS distinct ones (merge_gloss). Exterior only (no classifier)."""
-        if not self.gloss_enabled or self.classifier is not None or self.atlases is None:
+        gloss_max distinct ones (merge_gloss). With a classifier (the cockpit), only where
+        gloss_filter allows; the green is then taken after lift and tone, as drawn."""
+        if not self.gloss_enabled or self.atlases is None:
+            return
+        if self.classifier is not None and self.gloss_filter is None:
             return
         from dsfforza.convert import trim_art
 
@@ -1389,6 +1395,8 @@ class Texturing:
         for section, section_lods in work:
             for sub in section.subsections:
                 if sub.lod not in section_lods or id(sub) in picks or self.material(section, sub) != CHASSIS:
+                    continue
+                if self.gloss_filter is not None and not self.gloss_filter(section, sub):
                     continue
                 m = self.submaterial(section, sub)
                 if fm.base_family(m.family) not in (fm.NODAMAGE, fm.WHEEL):
@@ -1419,13 +1427,17 @@ class Texturing:
                         opaque = texels[texels[:, 3] >= trim_art.ALPHA_OPAQUE]
                         texels = opaque if len(opaque) else texels
                     green = float(texels[:, 1].mean())
+                    base = fm.base_family(m.family)
+                    if self.lift.get(base) or self.tone.get(base):  # the cockpit's lifted trims
+                        mean = [int(round(c)) for c in texels.mean(0)]
+                        green = float(self._convert_texel(m.family, *mean)[1])
                 mat = gloss_material(g, green, floor)
                 if mat is not None:
                     picks[id(sub)] = (mat, technique, len(sub.triangles()))
         counts: dict[GlossMaterial, int] = {}
         for mat, _, n in picks.values():
             counts[mat] = counts.get(mat, 0) + n
-        merged = merge_gloss(counts)
+        merged = merge_gloss(counts, self.gloss_max)
         self.gloss_materials = sorted(set(merged.values()))
         index = {mat: n for n, mat in enumerate(self.gloss_materials)}
         self.gloss, self.gloss_report = {}, {}
