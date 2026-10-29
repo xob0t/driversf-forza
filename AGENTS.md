@@ -36,11 +36,11 @@ Research notes are in `research/` (read the ones for your area first).
   trailers end up on `master`.
 - Visual changes (anything that changes how a car looks in game or in a
   render): put before/after images in the PR when possible, same view and
-  framing side by side, cropped to what changed. Commit them under
-  `research/img/` (PNG or JPG, under ~500 KB each) and embed them in the PR
-  description by commit SHA, not branch name (branches are deleted on merge):
-  `https://github.com/xob0t/driversf-forza/blob/<commit-sha>/research/img/<file>?raw=true`
-  with the SHA of a commit on your branch that contains the image.
+  framing side by side, cropped to what changed. Never commit images to the
+  repo. Upload them with `gh`'s `--attach` (on `gh pr create`, `gh pr edit`,
+  `gh pr comment`, and the same `gh issue` commands), which hosts them on
+  GitHub: a body that references `![alt](./before-after.jpg)` gets that link
+  rewritten to the uploaded file. Keep them under ~500 KB each (JPG).
 - Converter changes: say which cars draw differently, not only the ones you
   meant to change. Build master and your branch for the cars you touch (or
   the roster survey's list), run
@@ -57,8 +57,8 @@ Research notes are in `research/` (read the ones for your area first).
   Otherwise open one with `gh issue create --label bug` (`enhancement` for a
   missing feature). The issue says what is wrong and on which cars (spool ids
   or Forza names), how to reproduce it, and the evidence: the run folder,
-  log lines, numbers, and screenshots committed under `research/img/` and
-  linked by commit SHA (as for PRs). Also say what you ruled out and where you
+  log lines, numbers, and screenshots attached with `--attach` (as for PRs).
+  Also say what you ruled out and where you
   would start. Mention the issue numbers in your PR and in your report.
   Only file what differs from the vanilla game or from Forza. Behaviour the
   vanilla game has too (its layouts, its UI quirks) is not an issue; check a

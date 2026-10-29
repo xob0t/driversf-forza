@@ -7,3 +7,8 @@ tools/game/lua/dsfforza/hud.lua
 .claude/worktrees/
 .venv/
 dist/
+# Images go to GitHub with gh --attach, not into the repo (AGENTS.md).
+research/img/
+*.png
+*.jpg
+*.jpeg
