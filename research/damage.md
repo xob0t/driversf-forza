@@ -1114,7 +1114,19 @@ Still kept: the BMW V12 LMR's -x mirror (under its bonnet, slot 7, ahead of
 the +x mirror that stays there) and the Radical SR8's two (on the front bumper,
 slot 14, but under the front structure ahead of its headlights and exhausts).
 Both need the mirror records renumbered (vertex s9 bytes 0 and 1 in every
-entry), issue #NNN.
+entry), issue #269.
+
+In game (headless VMs, `-Damage -DamagePanels`; before = master's rule, after =
+this fix, same 24-car builds `out/m193/before` and `out/m193/after`, all runs
+clean): IDs 1, 3, 7, 9, 11, 16 (DB9, Z4, Challenger, 2-Eleven, Elise, Cougar)
+with left and right views, before `vm2-20261029-174814`, after
+`vm2-20261029-175452`; IDs 1, 3, 7, 16 with a shot a second, before
+`vm1-20261029-180206`, after `vm1-20261029-180536`. Under `forceOpenPanels`
+the Z4's mirrors swing out with its open doors before and stay on the body
+after; the 2-Eleven's, on doors held shut, stand off the body before and sit
+on it after (`img/damage-mirrors-193-forceopen.jpg`); the DB9's stay at the
+A-pillars beside its open doors after (observe-02). `render_compare diff`
+(`out/rc/mirrors-193`): the 22 cars' data differ, none draws differently.
 
 ## Side doors 52/53 (issue #209, 2026-10-29)
 
