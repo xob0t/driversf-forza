@@ -2136,8 +2136,8 @@ E63's and DB9's lamps that the bare lamp doesn't.
 
 In game (VM 2, `-Views 'nose,nose+night' -Palette 0`, vanilla 241 first, then the R8, 458 Spider,
 Stealth and Cadillac; master `vm2-20261029-195645`, this change `vm2-20261029-200749`;
-`img/lamps8-r8-ingame.jpg`, `img/lamps8-stealth-ingame.jpg`): in the dark mood the R8's and Stealth's
-head lamps glow brighter and larger; the 458's and the Cadillac's look about as on master. By day the
+`img/lamps8-r8-ingame.jpg`, `img/lamps8-stealth-ingame.jpg`, `img/lamps8-cadillac-ingame.jpg`): in the dark mood the R8's and Stealth's
+head lamps glow brighter and larger, and so do the Cadillac's; the 458's look about as on master. By day the
 lamp units look as on master (the 458's housing a little lighter without the dark glass); no hole or gap.
 
 ### Open
