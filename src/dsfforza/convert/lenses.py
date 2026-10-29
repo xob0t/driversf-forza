@@ -135,11 +135,18 @@ GLOW_SHARED = 0.01  # m: a texel whose surfaces lie further apart than this has 
 DAY_HEAD_ALPHA = (0, 0, 5, 14, 24, 37, 55, 74, 97, 135, 157, 180, 199, 215, 235, 247, 254, 255, 255)
 
 
-def _resolve(section, sub) -> fm.SubMaterial:
+def _resolve(section, sub, atlases: fm.AtlasCache | None = None) -> fm.SubMaterial:
     """A subsection's material, tiling lamp parts laid on the atlas as Texturing draws them."""
     from dsfforza.convert import dsf_materials
 
-    return dsf_materials.resolve_lamp(section, sub)
+    return dsf_materials.resolve_lamp(section, sub, atlases=atlases)
+
+
+def _tri_uv(m: fm.SubMaterial, pool, tri) -> list:
+    """One triangle's UVs as Texturing lays them (dsf_materials.triangle_uv)."""
+    from dsfforza.convert import dsf_materials
+
+    return dsf_materials.triangle_uv(m, [pool[i].uv0 for i in tri])
 
 
 def is_lens_technique(technique: str) -> bool:
@@ -278,7 +285,7 @@ class _Surfaces:
             for sub in section.subsections:
                 if sub.lod != lod:
                     continue
-                m = _resolve(section, sub)
+                m = _resolve(section, sub, atlases)
                 tris = sub.triangles()
                 if not tris:
                     continue
@@ -296,7 +303,7 @@ class _Surfaces:
                         colour = (*m.colour[:3], 0)
                 for t in tris:
                     pts.append([pool[i].position for i in t])
-                    uvs.append([m.uv(pool[i].uv0) for i in t] if textured else [(0.0, 0.0)] * 3)
+                    uvs.append(_tri_uv(m, pool, t) if textured else [(0.0, 0.0)] * 3)
                     kinds.append(2 if lens else (1 if textured else 0))
                     fams.append(m.family if textured else None)
                     lamps.append(not lens and (m.family == fm.LIGHTS or m.role == fm.CHROME))
@@ -483,14 +490,14 @@ def lamp_glow(sections, lods, atlases: fm.AtlasCache, glow: np.ndarray, owners: 
         for sub in section.subsections:
             if sub.lod != lod or sub.material not in head:
                 continue
-            m = _resolve(section, sub)
+            m = _resolve(section, sub, atlases)
             if m.family != fm.LIGHTS or m.kind != "textured":
                 continue
             pool = section.vertices_for(sub)
             cols, rows, pos = [], [], []
             for t in sub.triangles():
                 P = np.array([pool[i].position for i in t], float)
-                ix, iy, bary = _texels(np.array([m.uv(pool[i].uv0) for i in t]) * (w, h))
+                ix, iy, bary = _texels(np.array(_tri_uv(m, pool, t)) * (w, h))
                 ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
                 cols.append(ix[ok])
                 rows.append(iy[ok])
@@ -632,7 +639,7 @@ def _lens_samples(section, sub, m, w: int, h: int):
         P = np.array([pool[i].position for i in t], float)
         N = np.array([pool[i].normal for i in t], float)
         area += 0.5 * float(np.linalg.norm(np.cross(P[1] - P[0], P[2] - P[0])))
-        ix, iy, bary = _texels(np.array([m.uv(pool[i].uv0) for i in t]) * (w, h))
+        ix, iy, bary = _texels(np.array(_tri_uv(m, pool, t)) * (w, h))
         ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
         ix, iy, bary = ix[ok], iy[ok], bary[ok]
         if not len(ix):
@@ -754,12 +761,12 @@ def bake(
         for sub in section.subsections:
             if sub.lod not in lods or id(sub) in lens_ids:
                 continue
-            m = _resolve(section, sub)
+            m = _resolve(section, sub, atlases)
             if m.family != fm.LIGHTS or m.kind != "textured" or m.role not in (fm.TEXTURED, fm.TRIM, fm.PAINT):
                 continue
             pool = section.vertices_for(sub)
             for t in sub.triangles():
-                ix, iy, _ = _texels(np.array([m.uv(pool[i].uv0) for i in t]) * (w, h))
+                ix, iy, _ = _texels(np.array(_tri_uv(m, pool, t)) * (w, h))
                 used[iy.clip(0, h - 1), ix.clip(0, w - 1)] = True
     lamp_tris = np.nonzero((surf.kind == 1) & np.array([f == fm.LIGHTS for f in surf.family], bool))[0]
     total = np.zeros((h, w, 4))
