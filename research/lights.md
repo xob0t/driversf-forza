@@ -115,7 +115,8 @@ later PR replaced a rule, the earlier section says so in one line.
   lamp texels behind it. A flat front lens stays, baked as a filter, and
   glows with the lamp behind it ([#164](#lamp-glass-issues-89-145), #190,
   #218).
-- Plain `glass` covers over a lamp are left out. Textured covers
+- Plain `glass` covers over a lamp are left out (in a lamp unit's own section
+  from 5% of their area over a lamp, [#247](#head-lamp-covers-over-a-whole-head-lamp-unit-issue-247)). Textured covers
   (`lights_glass`, `lights_gls_noemit`) over a lamp are baked at Forza's
   opacity and glow with the lamp behind; `lights_gls_*` lamp glass with a
   cap under 1 is baked at that cap; a cover over its own lenses' texels (a
@@ -2075,6 +2076,69 @@ In game (VM 1, `-Lights -LightsDriveOnly -Palette 0`, vanilla 241 first, then th
 Mini 65; master `vm1-20261029-200145`, this change `vm1-20261029-200533`;
 `img/lamps8-mini-plate-ingame.jpg`, `img/lamps8-a4-tails-ingame.jpg`): the A4 Avant's tails light and
 brake as on master; the Mini's plate area no longer lights white in the dark mood.
+
+### Head lamp covers over a whole head lamp unit (issue #247)
+
+Symptom (offline-checked, `dsff render_compare` roster on master ede81a1): the Audi R8 race car's
+(`AUD_2_R8_06`) head lamps glowed at about 4% of Forza's level. Four of the five worst-ranked lamp
+cars of that roster also had their head lamps "drawn as glass": FER_458Spider_12, DOD_StealthTurbo_96,
+CAD_6_LMP_02 (78 to 100% of the front lamp region) and the R8.
+
+Cause (confirmed-static). Their head lamp covers are plain `glass` in the lamp unit's own section
+(`lexanLHL/RHL`, `glassLHL/RHL`, `headlightL/R`) and span the unit's housing as well as its lamp:
+`Texturing._over_lamp` puts the R8's lexan at 0.2999 over a lamp, the 458's glass at 0.18 and 0.21,
+the Stealth's 0.23, the Cadillac's 0.28. `clear_cover` leaves out a plain glass cover from
+`COVER_MIN_SHARE` (0.3, kept that high for the cars that draw windows with the technique), so these
+stayed DSF's window glass in front of a 0x1D lamp whose texels glow at a fifth (`DAYTIME_GLOW`).
+
+What vanilla does (offline, `out/l8/vanilla_glow.py` in the t3-a7c21235 worktree: render_compare's
+renderer, front view, dark mood, the glow over the pixels whose opaque triangle is a head lamp).
+Vanilla draws window glass over its head lamps too, but its 0x1D lamps glow through it at p95 4.6 to
+5.2 (241, 130, 198; 0x01 lamps 229, 227, 266: 0.45 to 0.82). Ports whose covers are left out glow at
+p95 1.65 to 1.69 (the converter's level for a 0x1D lamp); under the glass the R8 was at 0.38, the
+Cadillac 0.90, the 458 1.06. So the glass over these lamps put them at a tenth of vanilla's and a
+quarter of the other ports'.
+
+Change (`dsf_materials.LAMP_SECTION`, `COVER_LAMP_SECTION_SHARE`): in a section named for a lamp unit
+(`headlight`, `taillight`, `glass`/`lexan` + `HL`/`TL`, with or without the side letter) a plain glass
+cover is left out from 5% of its area over a lamp; elsewhere the 30% rule stays.
+
+Roster (offline, `out/l8/plan_survey.py` in the t3-a7c21235-b worktree: `Texturing.plan` at LODs 1,
+3, 5 on each car's host-picks host, every plain glass subsection on the Lights atlas at LOD 1 outside
+the window sections with a lamp behind; 566 cars): 168 such covers on 88 cars stayed window glass on
+master; 156 of them, on 79 cars, are in a lamp unit's section and are now left out (`glassLHL/RHL`
+104, `lexanLHL/RHL` 37, `headlightL/R` 8, `glassLTL/RTL` 7 on the Reventons' and Sagaris' tails and the
+Prius). The 12 left are outside lamp sections (`body` on the RS6 03 and Insignia VXR, `trunk` on the
+Mini 65s and Axela, the Volt's `bumperFa` and mirrors) and stay as before.
+
+Vanilla's covers (offline, `out/l8/vanilla_covers.py`): 241, 130, 198, 229, 227, 266 and 147 all draw
+the glass over their head lamps with `GLOBAL_Glass_LOD1` at the flat window texel (UVs u 0.13 to 0.98,
+v 0 to 0.12, 75% opaque), the same as these covers on master. Their lamps glow through it because their
+texel alpha is high and unscaled (0x1D median 149 to 172 on 241 and 130; 0x01 46 to 123). The ports'
+0x1D texels are a fifth of their glow by design (`DAYTIME_GLOW`, #167), so the same glass over them
+gives a tenth of vanilla's glow. DSF's shared glass has one other, less opaque patch, the interior
+windows' grey smear (u 0 to 0.12, v 0 to 0.06, alpha 0.35, streaked); a cover drawn on it would keep a
+reflection, but it is untried on the outside and `render_compare` ignores the glass texture, so only an
+in-game run could judge it.
+
+`render_compare diff` (master 1481ae6 against this change; the R8, 458 Spider, Stealth and Cadillac in
+`out/rc/l8-247`, 8 more of the 79 in `out/rc/l8-247x`; `img/lamps8-covers-look.jpg`): all 12 draw
+differently, front lamps 76 to 100% of the region. Scores 17.4 -> 10.7 (R8), 19.5 -> 15.9 (458), 17.6
+-> 12.3 (Stealth), 17.8 -> 12.8 (Cadillac), 9.5 -> 6.9 (DB9), 5.2 -> 2.3 (Gallardo), 18.4 -> 15.4 (GT-R
+GT1), 5.0 -> 2.1 (Evora), 3.7 -> 0.8 (E63 AMG), 7.9 -> 2.3 (Golf R), 13.1 -> 5.5 (Prius), 17.8 -> 14.9
+(Sagaris). Non-lamp regions that change are the chrome and trims inside the lamp units, seen through
+where the cover was: chrome on the R8, Prius, Gallardo, Evora, Golf R (100%), Sagaris (98%), GT-R GT1
+(86%), E63 (12%); trims 3 to 47% on all but the GT-R. The reference labels a plain cover's pixels as
+lamp, so these come up as "chrome extra" and "trims extra" flags. No hole or gap shows: the housing,
+bowls and projectors are what Forza draws through its clear cover. What is lost is the cover's
+reflection by day: master's window glass and Forza's clear glass both draw a highlight on the Golf R's,
+E63's and DB9's lamps that the bare lamp doesn't.
+
+In game (VM 2, `-Views 'nose,nose+night' -Palette 0`, vanilla 241 first, then the R8, 458 Spider,
+Stealth and Cadillac; master `vm2-20261029-195645`, this change `vm2-20261029-200749`;
+`img/lamps8-r8-ingame.jpg`, `img/lamps8-stealth-ingame.jpg`, `img/lamps8-cadillac-ingame.jpg`): in the dark mood the R8's and Stealth's
+head lamps glow brighter and larger, and so do the Cadillac's; the 458's look about as on master. By day the
+lamp units look as on master (the 458's housing a little lighter without the dark glass); no hole or gap.
 
 ### Open
 

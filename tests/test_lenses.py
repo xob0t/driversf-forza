@@ -6,6 +6,7 @@ uv run python tests/test_lenses.py     # or every test: uv run python -m tests
 
 from __future__ import annotations
 
+import dataclasses
 import itertools
 import tempfile
 from pathlib import Path
@@ -580,3 +581,20 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             test()
             print(f"{name}: ok")
+
+
+def test_plain_glass_cover_in_a_lamp_section():
+    # Issue #247: a plain glass cover over a whole head lamp unit, a fifth of it over the lamp
+    # (the Audi R8 race car's lexanLHL, the Ferrari 458 Spider's glassLHL), is a lamp cover and
+    # left out; the same glass in another section (a window drawn with the technique) stays
+    # unless a lamp lies behind COVER_MIN_SHARE of it.
+    lamp = _quad("headlightL", "head_light", -1.9, 0.5, 1.0, normal=(0.0, 0.0, -1.0))
+    for v in lamp.lod_vertices:  # a fifth of the cover's width
+        v.position = (-0.1 + (v.position[0] + 0.1) * 0.2, *v.position[1:])
+    t = dm.Texturing(Path())
+    t.lamp_tris = [(1, [lamp.lod_vertices[i].position for i in tri], None) for tri in lamp.subsections[0].triangles()]
+    for name, left_out in (("lexanLHL", True), ("glassLHL", True), ("body", False)):
+        cover = _grid(name, "glass", lambda x, y: -2.0, 0.0, 0.5, n=10)
+        m = dataclasses.replace(fm.resolve(cover, cover.subsections[0]), role=fm.GLASS, family=fm.LIGHTS)
+        assert dm.COVER_LAMP_SECTION_SHARE < t._over_lamp(cover, cover.subsections[0]) < dm.COVER_MIN_SHARE
+        assert t.clear_cover(cover, cover.subsections[0], m) == left_out, name
