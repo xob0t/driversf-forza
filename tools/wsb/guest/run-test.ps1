@@ -37,7 +37,9 @@ param(
     [int]$ShotSeconds = 10, # screenshot interval while observing
     [int]$BurstShots = 1, # with -HoldMph or -DriveSeconds: shots per sample, as fast as they save (observe-NN-b2.png...; shimmer, flicker)
     [string]$ProbeIds,   # comma-separated, e.g. 266,304
-    [string]$TrafficIds, # comma-separated IDs for TrafficSpooler.RequestTrafficVehicles
+    [string]$TrafficIds, # comma-separated IDs for TrafficSpooler.RequestTrafficVehicles (keeps traffic on)
+    [switch]$Traffic,    # probe: leave traffic, parked cars and interesting vehicles on; by default clonetest.lua
+                         # switches them off and clears the road around each probe car (no incidental crash damage)
     [string]$AheadIds,   # comma-separated IDs spawned in front without zapping
     [switch]$KeepRunning,
     [switch]$Detach,
@@ -526,6 +528,7 @@ try {
                     $fields = @()
                     if ($ProbeIds) { $fields += "ids = { $(& $luaList $ProbeIds) }" }
                     if ($TrafficIds) { $fields += "traffic = { $(& $luaList $TrafficIds) }" }
+                    if ($Traffic) { $fields += "traffic_on = true" }
                     if ($AheadIds) { $fields += "ahead = { $(& $luaList $AheadIds) }" }
                     if ($DriveSeconds) { $fields += "drive = $DriveSeconds" }
                     if ($HoldMph) { $fields += "hold_mph = { $(& $luaList $HoldMph) }" }

@@ -404,6 +404,8 @@ function M.configure(config)
 	if found and type(cfg) == "table" then
 		for key, value in pairs(cfg) do OPTIONS[key] = value end
 	end
+	-- clonetest.lua switches traffic off for the probe unless the module asks for it.
+	M.trafficOn = OPTIONS.mode ~= "lineup"
 	log("mode " .. tostring(OPTIONS.mode))
 end
 

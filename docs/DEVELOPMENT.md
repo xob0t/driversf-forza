@@ -114,6 +114,10 @@ An archive named `dngvehicles.sp` goes with its build's `dngvehicles.lua`
 and `gui\` (as `tools\install.ps1` installs them), so each car has its
 vehicleStats entry, badge and nameplate; `-ArchiveOnly` leaves them out.
 
+The probe switches traffic, parked cars and interesting vehicles off and
+clears the road around each probe car, so traffic can't ram the stopped car
+between shots; `-Traffic` leaves them on (`-TrafficIds` implies it).
+
 Screenshots and logs land in `%LOCALAPPDATA%\Temp\dsfforza-wsb\runs\`.
 Options and the other modes (host, sandbox): `research/in-game-tests.md`.
 
