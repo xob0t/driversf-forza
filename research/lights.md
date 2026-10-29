@@ -2093,8 +2093,8 @@ mood the Venom glowed from its two projectors only (render p95 0.35 against mast
 That was a fourth fault: the left-out lexan stayed in the front lamp view (`Texturing._lamp_view`,
 `lamp_tris`), so it hid the head lamps from `day_glow` and `visible_white`, and they kept their dim
 converted alpha (median 20, 4 by day) and a white scale set by the grey lexan (0.66). Lenses left out
-(`dropped_lenses`) now stay out of the front views (the rear view, `visible_red`, is unchanged: 94
-cars' left-out rear lenses still count there, open). Cars with a front lens left out: the Venom, BMW
+(`dropped_lenses`) now stay out of the front views (the rear view, `visible_red`, is unchanged: the
+left-out rear lenses of the 98 cars with a lens left out still count there, open). Cars with a front lens left out: the Venom, BMW
 M635CSi 84, Dodge Viper CC 03, Hyundai ix20 11 (`out/l8/day_survey.py`, `wscale.py`):
 
 | Car | 0x1D lamp mean alpha (LOD 1) | day emission, cm2 | white scale |
