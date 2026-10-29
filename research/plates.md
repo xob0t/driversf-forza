@@ -121,17 +121,20 @@ Forza cars mostly have no plate. In `tools/batches/testdrive.txt` (40 cars):
      while cells stay within 4 mm of the plane) and the plate shrunk (aspect
      kept, at least 0.7x) if the face is smaller than the host plate;
    - else (**host** fallback, `fallback_height`) x = 0 within 0.3 m of the
-     host's height, at the height where the plate covers the car's face at
-     the lowest cost: the mean gap between plate and face once it rests on
-     the face (m, each cell's gap counted up to 10 cm), plus 0.1 x the
-     distance from the host's height, plus 0.5 x the share of the plate over
-     a badge, lamp, glass or exhaust section, plus 0.1 x the share over
-     another section or material class than its main one (bonnet shut line,
-     grille edge). The plate **rests** on the face (`rest`, #213): tilted
-     (up to 14 degrees, a plate on a pad or bracket) and bent back at its
-     centre line (each half up to 11 degrees, as vanilla bends plates on
-     curved bumpers) so that it touches the nearest cell and stands off the
-     rest least on average.
+     host's height, at the height and size where the plate covers the car's
+     face at the lowest cost: 2 x the mean gap between plate and face once it
+     rests on the face (m, each cell's gap counted up to 10 cm), plus 0.1 x
+     the distance from the host's height, plus 1.0 x the share of the plate
+     over a badge, lamp, glass or exhaust section, plus 0.02 if it covers more
+     than 0.5% of an emblem (a badge narrower than 0.4 m), plus 0.1 x the
+     share over another section or material class than its main one (bonnet
+     shut line, grille edge), plus 0.05 x the shrink: the plate may shrink to
+     0.9 or 0.8 of the host's (not under 0.23 m wide, vanilla's narrowest) to
+     fit between an emblem and an edge (#159, #213, #241). The plate **rests**
+     on the face (`rest`, #213): tilted (up to 14 degrees, a plate on a pad or
+     bracket) and bent back at its centre line (each half up to 11 degrees, as
+     vanilla bends plates on curved bumpers) so that it touches the nearest
+     cell and stands off the rest least on average.
      A grille may lie behind the plate (real cars mount plates over bumper
      grilles); badge-technique runs wider than 0.4 m are grille artwork
      (the BMW M1's nose band), not emblems (#159).
@@ -140,9 +143,10 @@ Forza cars mostly have no plate. In `tools/batches/testdrive.txt` (40 cars):
    most 8 cm).
 3. **Geometry.** One synthetic body section per plate,
    `<surface section>_plate_front|rear`, with a quad (2 triangles; a bent
-   plate two quads, the UV split at its centre line) on every body LOD, technique `dsf_plate`, UV0 = the vanilla plate rect oriented as
-   above, normal along the plate (each half's on a bent plate), AO bytes giving a sky term of about 0.48
-   (vertical). The section joins `car.body` (a copy; `ForzaCar` is not
+   plate two quads, the UV split at its centre line) on every body LOD,
+   technique `dsf_plate`, UV0 = the vanilla plate rect oriented as
+   above, normal along the plate (each half's on a bent plate), AO bytes
+   giving a sky term of about 0.48 (vertical). The section joins `car.body` (a copy; `ForzaCar` is not
    mutated), so everything downstream treats it as Forza geometry:
    `forza2dsf.material_for` / `forza_materials.classify` give it the shared
    paint material, `add_geometry` keeps its UVs (`PLATE_TECHNIQUE` branch),
