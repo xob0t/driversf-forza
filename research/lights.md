@@ -1534,6 +1534,17 @@ rays along their normal, as on master.
 | flat rear lenses left out (two more meet a lamp along the axis) | 253 | 255 (MCL_MP412C_11's clear tail lenses) |
 | cars whose baked Lights texels change (4x4 blocks, more than 8 in a channel) | | 274 |
 
+**Panoz Esperante head lamps by day (after #190's axis rays).** A report had them close to a white
+glow. Built (`out/l6/front_emission.py`: the full entry from straight ahead, 4 mm, the day-lit types'
+alpha / 255 x type scale x area): day-lit emission 652 over 1,113 cm2, glow alpha mean 15, lamp texels'
+brightest channel median 138. Vanilla (#167): emission p75 311, p90 1254; vanilla 241's 0x1D lamps
+2355 at alpha mean 95, vanilla 198's 1658 at 79. The Panoz is inside vanilla's range, and per unit of
+area it glows far less than 241 (its lamps are large: the area is above vanilla's p90 of 454 cm2). In
+game (VM 2, `vm2-20261029-073325`, `-Views 'nose,nose+night,nose'`, vanilla 241 and 151 first;
+`img/lamps6-panoz-day-ingame.jpg`) its two bowls show as white discs by day, as 241's lamp reads white
+with its flutes: the white is Forza's flat foil reflector (208, 208, 208) in sun under a lens at
+opacity 0.26, brought to vanilla's median brightness by `white_lens_scale`, not the glow. Left as it is.
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and
