@@ -130,7 +130,7 @@ def _lookup_reference(field: damage.Uv1Field, q, pair, material, local, any_pane
     keys = (
         ([("chart", chart)] if chart is not None else [])
         + ([] if any_panel else [("pm", pair, material), ("pc", pair, local)])
-        + [("c", local), ("all",), ("degenerate",), ("tiled",)]
+        + [("c", local), ("all",), ("tiled",)]
     )
     for key in keys:
         grid = field.groups.get(key)

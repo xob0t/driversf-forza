@@ -284,10 +284,12 @@ build and release has it. With the option:
    UV1 at the closest point of the nearest host triangle (normalised
    coordinates, barycentric interpolation), searching the same panel and
    material first, then the same panel and material class (shared vs the
-   entry's own), then any panel. Host triangles whose UV1 collapses to a
-   texel (hidden faces) or leaves 0..1 (tiled chrome) are used only as a
-   last resort, and a normal-mismatch penalty keeps outer faces on outer
-   faces. The rebuilt interior's 32-byte vertices (its outer shell, seen
+   entry's own), then any panel. Host triangles whose UV1 leaves 0..1
+   (tiled chrome) are used only as a last resort, and a normal-mismatch
+   penalty keeps outer faces on outer faces. Host triangles whose UV1
+   collapses to one texel (vanilla's unscratched surfaces: hidden faces,
+   and everything above the waist) are candidates like the rest since
+   #298 ("Scratches above the waist" below). The rebuilt interior's 32-byte vertices (its outer shell, seen
    through the windscreen) get the host interior's UV1 the same way, any
    panel (`DamagePlan.interior_uv1`, called after `cockpit.convert_interior`).
    A Forza triangle whose corners land on different host charts (UV1
