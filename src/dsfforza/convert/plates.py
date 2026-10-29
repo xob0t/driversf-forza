@@ -133,14 +133,13 @@ LAMP_MARGIN = 0.02
 # place at that end and gets none, as the Forza car has none (#251: the ARX-01b's and
 # Mazda B09's rear plates covered their rain lights between the diffusers, the face near
 # the host's plate height).
-LAMP_DROP = 0.05
-# ... nor one that the lamp margin moves onto more than this share of an emblem's area
-# (its strokes grown by a cell, so lettering counts whole) where the plate scored with
-# the lamps' own cells alone covered less: kept clear of its rain light, the Evora Type
-# 124's rear plate went over its LOTUS letters (24% of their area, 5% of strokes). A
-# plate that covers an emblem anyway keeps its place: the Zonda Cinque's sits on a decal
-# where the vanilla Zonda Cinque has its plate.
-EMBLEM_DROP = 0.15
+LAMP_DROP = 0.1
+# The lamp margin doesn't move a plate onto more than this share of an emblem's area (its
+# strokes grown by a cell, so lettering counts whole) than the plate scored with the
+# lamps' own cells alone covers: that plate stays. Kept clear of its rain light's edge,
+# the Evora Type 124's rear plate went up over its EVORA letters (24% of their area, 5%
+# of strokes) from its bumper face under the lamp.
+EMBLEM_AREA = 0.15
 # A fallback plate may shrink to fit between a badge and an edge: scales tried, the
 # cost per unit of shrink, and the narrowest plate (vanilla's: 0.23 m front, 0.226 rear).
 FALLBACK_SCALES = (1.0, 0.9, 0.8)
@@ -521,7 +520,9 @@ def fallback_height(dm: DepthMap, prior_y: float, base: tuple[float, float]) -> 
     wide) where that fits it between them (#241). A grille may sit behind it, as
     on the real cars (the Mazda 2's lower bumper grille); the emblem slot above it
     may not (#159: the host's height alone put the plate over the Mazda's emblem
-    and bonnet edge)."""
+    and bonnet edge). It keeps LAMP_MARGIN clear of lamps unless that only moves it
+    onto lettering (EMBLEM_AREA); still over a lamp by more than LAMP_DROP, the end
+    gets no plate (ValueError; #251, #259)."""
     height, width = dm.depth.shape
     face = face_cells(dm)
     # Badge cells in a run wider than BADGE_BAND are grille artwork drawn with a badge
@@ -534,7 +535,7 @@ def fallback_height(dm: DepthMap, prior_y: float, base: tuple[float, float]) -> 
     lamp = dm.feat == FEAT_LAMP
     near_lamp = dilate(lamp, int(round(LAMP_MARGIN / PX)))
     hidden = emblem | near_lamp | (dm.feat == FEAT_EXHAUST) | (dm.cls == CLASS["glass"])
-    # ... and the plate the search picks with the lamps' own cells alone (EMBLEM_DROP).
+    # ... and the plate the search picks with the lamps' own cells alone (EMBLEM_AREA).
     hidden_cells = emblem | lamp | (dm.feat == FEAT_EXHAUST) | (dm.cls == CLASS["glass"])
     lettering = dilate(emblem, 1)
     best = plain = None
@@ -563,22 +564,21 @@ def fallback_height(dm: DepthMap, prior_y: float, base: tuple[float, float]) -> 
             if float(emblem[r, c_].mean()) > HIDE_NONE:
                 cost += HIDE_STEP
             on_emblem = float(lettering[r, c_].mean())
+            pick = (y, size, hide, mixed, float(lamp[r, c_].mean()), on_emblem)
             key = (round(cover, 1), -(cost + HIDE_COST * hide))
             if best is None or key > best[0]:
-                best = (key, y, size, hide, mixed, float(lamp[r, c_].mean()), on_emblem)
-            key = (round(cover, 1), -(cost + HIDE_COST * float(hidden_cells[r, c_].mean())))
+                best = (key, *pick)
+            cells_hide = float(hidden_cells[r, c_].mean())
+            key = (round(cover, 1), -(cost + HIDE_COST * cells_hide))
             if plain is None or key > plain[0]:
-                plain = (key, on_emblem)
+                plain = (key, y, size, cells_hide, mixed, *pick[4:])
     if best is None:  # the host's height maps outside the depth map (plan() skips the end)
         raise ValueError(f"{dm.end} plate: no body surface near y {prior_y:.2f}")
-    _, y, size, hide, mixed, on_lamp, on_emblem = best
+    if best[6] > max(EMBLEM_AREA, plain[6]):
+        best = plain
+    _, y, size, hide, mixed, on_lamp, _ = best
     if on_lamp > LAMP_DROP:
         raise ValueError(f"{dm.end} plate: no face clear of the lamps near y {prior_y:.2f} ({on_lamp:.0%} on a lamp)")
-    if on_emblem > max(EMBLEM_DROP, plain[1]):
-        raise ValueError(
-            f"{dm.end} plate: kept clear of the lamps, it covers an emblem near y {prior_y:.2f} "
-            f"({on_emblem:.0%} of its area)"
-        )
     note = "no flat face of plate size"
     if size != base:
         note += f", shrunk to {size[0] / base[0]:.1f}"
