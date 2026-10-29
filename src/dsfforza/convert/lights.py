@@ -370,7 +370,7 @@ def texel_sampler(atlases):
     def sample(section, sub, tri):
         key = id(sub)
         if key not in materials:
-            materials[key] = dsf_materials.resolve_lamp(section, sub, fm.classify)
+            materials[key] = dsf_materials.resolve_lamp(section, sub, fm.classify, atlases)
         m = materials[key]
         if m.family != fm.LIGHTS or m.kind not in ("textured", "swatch"):
             return None
@@ -388,7 +388,8 @@ def texel_sampler(atlases):
             return None
         h, w = image.shape[:2]
         pool = section.vertices_for(sub)
-        texels = trim_art.triangle_texels(image, [((u := m.uv(pool[i].uv0))[0] * w, u[1] * h) for i in tri])
+        uvs = dsf_materials.triangle_uv(m, [pool[i].uv0 for i in tri])
+        texels = trim_art.triangle_texels(image, [(u * w, v * h) for u, v in uvs])
         if not len(texels):
             return None
         return tuple(float(c) for c in texels.mean(0))

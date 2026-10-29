@@ -398,26 +398,44 @@ def test_flat_rear_lens_tints_the_lamp_behind():
     got = atlases.texel(SIZE * 3 // 4, SIZE // 2)
     assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
     assert got[3] == LAMP[3]
-    # A flat front lens is baked as before.
+    # A flat front lens stays (its texels carry the day glow), its colour a filter over the lamp
+    # and its glow the lamp's (issue #189).
     lens = _quad("glassLHL", "detail_glass_red", -2.0, 0.0, 0.5, normal=(0.0, 0.0, -1.0))
     lamp = _quad("headlightL", "textured_reflector", -1.9, 0.5, 1.0, normal=(0.0, 0.0, -1.0))
     dropped = set()
     atlases, _ = _bake([lens, lamp], [lens], dropped=dropped)
     assert not dropped
-    assert atlases.texel(SIZE // 4, SIZE // 2) != LENS
+    got = atlases.texel(SIZE // 4, SIZE // 2)
+    assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
+    assert abs(dm.lamp_score(*got) - dm.lamp_score(*LAMP)) < 0.01, (got, LAMP)
 
 
 def test_laid_back_front_lens_sees_the_lamp_along_the_axis():
     # A front lens facing up (the Panoz Esperante's head lamps): along its normal nothing, along
     # the car's axis the lamp behind it.
-    lens = _quad("glassLHL", "detail_glass_clear", -2.0, 0.0, 0.5, normal=(0.0, 1.0, 0.0))
+    lens = _quad("glassLHL", "detail_glass_clear", -2.0, 0.0, 0.5, normal=(0.0, 0.95, -0.31))
     lamp = _quad("headlightL", "textured_reflector", -1.9, 0.5, 1.0, normal=(0.0, 0.0, -1.0))
+    atlases, report = _bake([lens, lamp], [lens])
+    rgb = [round(b * l / 255) for l, b in zip(LENS[:3], LAMP[:3])]  # one flat colour: a filter
+    got = atlases.texel(SIZE // 4, SIZE // 2)
+    assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
+    assert report["glassLHL/detail_glass_clear"]["behind"] == 1.0
+    # A lens facing sideways or straight up (a side marker) doesn't look along the axis.
+    lens = _quad("glassLHL", "detail_glass_clear", -2.0, 0.0, 0.5, normal=(0.0, 1.0, 0.0))
+    _, report = _bake([lens, lamp], [lens])
+    assert report["glassLHL/detail_glass_clear"]["behind"] == 0.0
+
+
+def test_laid_back_rear_lens_sees_the_lamp_along_the_axis():
+    # The same at the rear (issue #189): into the car is -z there.
+    lens = _quad("glassLTL", "detail_glass_clear", 2.0, 0.0, 0.5, normal=(0.0, 0.95, 0.31))
+    lamp = _quad("taillightL", "textured_reflector", 1.9, 0.5, 1.0, normal=(0.0, 0.0, 1.0))
     atlases, report = _bake([lens, lamp], [lens])
     a = LENS[3] / 255
     rgb = [round(a * l + (1 - a) * b) for l, b in zip(LENS[:3], LAMP[:3])]
     got = atlases.texel(SIZE // 4, SIZE // 2)
     assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
-    assert report["glassLHL/detail_glass_clear"]["behind"] == 1.0
+    assert report["glassLTL/detail_glass_clear"]["axis"] > 0
 
 
 def test_cover_over_its_lenses_is_left_out():
@@ -456,9 +474,15 @@ def test_tiling_lamp_part_unwrapped():
     us = sorted({round(got.uv(v.uv0)[0], 6) for v in pool})
     assert us == [0.1, 0.4], us
     assert abs(got.bounds[0] - 0.1) < 1e-6 and abs(got.bounds[2] - 0.4) < 1e-6
-    # Triangles across a tile edge (both of this quad's) can't be laid on the atlas.
-    edge = _quad("body", "textured_reflector", -1.0, 2.9, 3.4)
+    # Triangles mostly across a tile edge can't be laid on the atlas: one flat colour.
+    edge = _strip([2.6, 3.4], (-0.4, 0.4))
     assert dm.unwrap_tiles(edge, edge.subsections[0], fm.resolve(edge, edge.subsections[0])) is None
+    # A little past the edge (a fifth of the quad's UV area): clamped into the tile.
+    edge = _quad("body", "textured_reflector", -1.0, 2.9, 3.4)
+    got = dm.unwrap_tiles(edge, edge.subsections[0], fm.resolve(edge, edge.subsections[0]))
+    assert got is not None
+    raw = [[edge.lod_vertices[i].uv0 for i in t] for t in edge.subsections[0].triangles()]
+    assert [round(u, 6) for u, _ in got.triangle(raw[0])] == [0.0, 0.4, 0.0]
     # One of many is clamped into its tile.
     sections = [_quad("body", "textured_reflector", -1.0, 3.1 + 0.01 * k, 3.2 + 0.01 * k) for k in range(10)]
     sections.append(_quad("body", "textured_reflector", -1.0, 3.9, 4.05))
@@ -471,6 +495,58 @@ def test_tiling_lamp_part_unwrapped():
     got = dm.unwrap_tiles(many, sub, fm.resolve(many, sub))
     assert got is not None
     assert all(0.0 <= got.uv(v.uv0)[0] <= 1.0 for v in verts)
+
+
+def _strip(us, vs) -> carbin.Section:
+    """Quads side by side along x sharing their edges: corner k at u us[k] (v vs[0] below,
+    vs[1] above)."""
+    verts = []
+    for k, u in enumerate(us):
+        verts += [carbin.Vertex((0.1 * k, 0.4, -1.0), (u, vs[0]), (0, 0), (0, 0, 1))]
+        verts += [carbin.Vertex((0.1 * k, 0.6, -1.0), (u, vs[1]), (0, 0), (0, 0, 1))]
+    idx = []
+    for k in range(len(us) - 1):
+        a, b, c, d = 2 * k, 2 * k + 1, 2 * k + 2, 2 * k + 3
+        idx += [a, c, b, b, c, d]
+    sub = carbin.SubSection("textured_reflector", 1, 4, (0.0, 1.0, 0.0, 1.0) * 2, idx)
+    return carbin.Section("body", (0, 0, 0), (0, 0, 0), (0, 0, 0), lod_vertices=verts, subsections=[sub])
+
+
+def test_tiling_mesh_across_a_tile_edge():
+    # A reflector mesh continuous across u = 1 (the KIA Forte Koup's bowls, issue #189): the
+    # vertex on the edge is in triangles of tiles 0 and 1. Each triangle is laid from its own
+    # tile, and the vertex has a UV in each (the tile is in the vertex tag).
+    strip = _strip([0.8, 1.0, 1.2, 1.4], (1.1, 1.3))
+    sub = strip.subsections[0]
+    m = fm.resolve(strip, sub)
+    assert m.kind == "tiling"
+    got = dm.unwrap_tiles(strip, sub, m)
+    assert got is not None and got.collapse is None
+    raw = [[strip.lod_vertices[i].uv0 for i in t] for t in sub.triangles()]
+    assert got.tile(raw[0]) == (0, 1) and got.tile(raw[2]) == (1, 1)
+    assert [round(u, 6) for u, _ in got.triangle(raw[0])] == [0.8, 1.0, 0.8]
+    assert [round(u, 6) for u, _ in got.triangle(raw[2])] == [0.0, 0.2, 0.0]
+    assert [round(v, 6) for _, v in got.triangle(raw[2])] == [0.1, 0.1, 0.3]
+
+
+def test_tiling_streak_laid_on_one_column():
+    # The Shelby GT500 13's tail strips: a band repeated many times along u (here 5 tiles a
+    # triangle), inside one tile along v. Laid on the column closest to each row's mean.
+    strip = _strip([0.0, 5.0, 10.0, 15.0], (0.5, 0.75))
+    sub = strip.subsections[0]
+    m = fm.resolve(strip, sub)
+    image = np.zeros((8, 8, 4), np.uint8)
+    image[4:6, :, 0] = 100
+    image[4:6, 3, 0] = 80
+    image[4:6, 5, 0] = 98  # nearest the rows' mean (89.75)
+    image[4:6, 6, 0] = 40
+    got = dm.unwrap_tiles(strip, sub, m, image)
+    assert got is not None and got.collapse == (0, 5.5 / 8), got.collapse
+    raw = [[strip.lod_vertices[i].uv0 for i in t] for t in sub.triangles()]
+    assert all(u == 5.5 / 8 for u, _ in got.triangle(raw[1]))
+    assert sorted({round(v, 6) for _, v in got.triangle(raw[1])}) == [0.5, 0.75]
+    # Without the atlas: the middle column.
+    assert dm.unwrap_tiles(strip, sub, m).collapse == (0, 0.5)
 
 
 if __name__ == "__main__":

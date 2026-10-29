@@ -310,11 +310,11 @@ COVER_MIN_SHARE, COVER_DEPTH = 0.3, 0.3
 # A lamp cover whose Lights texels are this share or more of its lenses' texels is a second skin
 # over them (_bake_lenses): left out.
 COVER_ON_LENS = 0.9
-TILE_EPS = 1e-4  # UV: a triangle corner this close past a tile edge is on it (unwrap_tiles)
-# A tiling lamp part with at most this share of its triangles across a tile edge is unwrapped all
-# the same, those triangles clamped into the tile of their lowest corner (the Range Rover 12's head
-# lamp bowls: 3 of 304).
-TILE_CROSS_SHARE = 0.1
+# A tiling lamp part with at most this share of its UV area past the tiles its triangles are laid
+# from (each triangle's UV centroid's) is unwrapped, that area clamped into the tile (unwrap_tiles).
+# Roster (out/l6/tile_area.py): the KIA Forte Koup's bowls 0.4%, the Mini JCW's reflector 0.9%,
+# the Shelby GT500 13's boot tail lamp 14 to 22%; parts past it are LOD 5's few large triangles.
+TILE_CROSS_SHARE = 0.25
 WINDOW_SECTIONS = ("glassf", "glassr", "glasslf", "glassrf", "glasslm", "glassrm", "glasslr", "glassrr", "glasst")
 
 CHASSIS, LIGHTS_MAT = "chassis", "lights"
@@ -928,58 +928,151 @@ def skyline_pack(sizes: list[tuple[int, int]], width: int, height: int) -> list[
 
 @dataclass
 class TileWrapped(fm.SubMaterial):
-    """A tiling subsection laid on the atlas: each vertex's UV less the whole tiles of its
-    triangles (`shift`: raw UV0 -> (du, dv)), so every triangle samples the texels Forza's
-    wrapping sampler reads, inside 0..1 (a triangle across a tile edge clamped into it)."""
+    """A tiling subsection laid on the atlas triangle by triangle (triangle()): each
+    triangle's UVs less the whole tile its UV centroid lies in, so it samples the texels
+    Forza's wrapping sampler reads, inside 0..1 (a triangle across a tile edge clamped into
+    it). Vertices of triangles in different tiles get UVs apart: the tile goes into the
+    vertex tag (Texturing.triangle_uvs). collapse: (axis, value) of a streak part, whose
+    triangles run over many tiles along that axis: every UV there is `value` (one texel
+    column or row, unwrap_tiles). uv() of one vertex alone is its first triangle's (shift:
+    raw UV0 -> (du, dv)); per triangle, use triangle()."""
 
     shift: dict = field(default_factory=dict)
+    collapse: tuple | None = None
+
+    def _place(self, u: float, v: float, tile) -> tuple[float, float]:
+        out = [min(1.0, max(0.0, c - t)) for c, t in zip((u, v), tile)]
+        if self.collapse is not None:
+            out[self.collapse[0]] = self.collapse[1]
+        return out[0], out[1]
 
     def uv(self, raw: tuple[float, float]) -> tuple[float, float]:
-        u, v = super().uv(raw)
-        du, dv = self.shift.get(tuple(raw), (0.0, 0.0))
-        return min(1.0, max(0.0, u - du)), min(1.0, max(0.0, v - dv))
+        return self._place(*super().uv(raw), self.shift.get(tuple(raw), (0.0, 0.0)))
+
+    def tile(self, raw_tri) -> tuple[int, int]:
+        """The tile a triangle (its raw UV0s) is laid from: its UV centroid's (0 along a
+        collapsed axis)."""
+        uvs = [super(TileWrapped, self).uv(r) for r in raw_tri]
+        tile = [math.floor(sum(c[a] for c in uvs) / len(uvs)) for a in (0, 1)]
+        if self.collapse is not None:
+            tile[self.collapse[0]] = 0
+        return tile[0], tile[1]
+
+    def triangle(self, raw_tri) -> list[tuple[float, float]]:
+        """The UVs of one triangle (its raw UV0s), inside the 0..1 tile."""
+        tile = self.tile(raw_tri)
+        return [self._place(*super(TileWrapped, self).uv(r), tile) for r in raw_tri]
 
 
-def unwrap_tiles(section, sub, m: fm.SubMaterial) -> TileWrapped | None:
-    """A tiling lamp part (UVs past 0..1) whose every triangle lies inside one tile, moved
-    into the 0..1 tile triangle by triangle (TileWrapped): an ordinary textured part. The FM4
-    Mustang GT's round head lamp bowls (`textured_reflector`, u -2.9 to 3.9) sit in tiles -3,
-    0 and 3; drawn as one flat colour (_tiling_swatch) they were plain white domes. Triangles
-    across a tile edge (TILE_CROSS_SHARE of them at most) are clamped into the tile of their
-    lowest corner. None when more cross an edge or a vertex is in triangles of two tiles (one
-    UV a vertex: the emitter shares vertices by region)."""
+def triangle_uv(m: fm.SubMaterial, raw_tri) -> list[tuple[float, float]]:
+    """The UVs of one triangle (its raw UV0s) as Texturing lays it on the atlas: a tiling lamp
+    part's per triangle (TileWrapped.triangle), else each vertex's own."""
+    if isinstance(m, TileWrapped):
+        return m.triangle(raw_tri)
+    return [m.uv(r) for r in raw_tri]
+
+
+def _tile_samples(n: int = 8) -> np.ndarray:
+    """Barycentric points a triangle is sampled at for the share of it outside its tile
+    (unwrap_tiles): the centres of its n x n sub-triangles, one per equal area."""
+    pts = [(i + 1 / 3, j + 1 / 3) for i in range(n) for j in range(n - i)]
+    pts += [(i + 2 / 3, j + 2 / 3) for i in range(n) for j in range(n - i - 1)]
+    a = np.array(pts) / n
+    return np.stack([a[:, 0], a[:, 1], 1 - a.sum(1)], 1)
+
+
+_TILE_SAMPLES = _tile_samples()
+
+
+def _outside_share(uv: np.ndarray, axes) -> float:
+    """Share of the UV area of triangles `uv` (n, 3, 2) that lies outside the tile of each
+    triangle's UV centroid along `axes` (all triangles alike when none has an area)."""
+    tile = np.floor(uv.mean(1))
+    pts = np.einsum("sk,tkc->tsc", _TILE_SAMPLES, uv) - tile[:, None, :]
+    out = ((pts[..., axes] < 0) | (pts[..., axes] > 1)).any(2).mean(1)
+    d1, d2 = uv[:, 1] - uv[:, 0], uv[:, 2] - uv[:, 0]
+    area = np.abs(d1[:, 0] * d2[:, 1] - d1[:, 1] * d2[:, 0])
+    if area.sum() <= 0:
+        area = np.ones(len(uv))
+    return float((out * area).sum() / area.sum())
+
+
+def _streak_value(uv: np.ndarray, axis: int, image: np.ndarray | None) -> float:
+    """The atlas coordinate a streak part's long axis is laid on (unwrap_tiles): the texel
+    column (axis 0; a row for axis 1) closest to the mean of each row it crosses over the
+    whole atlas, which is what Forza's sampler shows of a texture repeated many times along
+    that axis (the lowest mip). 0.5 without the atlas."""
+    if image is None:
+        return 0.5
+    img = image.astype(float) if axis == 0 else image.transpose(1, 0, 2).astype(float)
+    n = img.shape[0]
+    other = uv[..., 1 - axis] - np.floor(uv[..., 1 - axis].mean(1))[:, None]
+    lo = int(np.clip(math.floor(other.min() * n), 0, n - 1))
+    hi = int(np.clip(math.ceil(other.max() * n), lo + 1, n))
+    rows = img[lo:hi]  # (rows, columns, 4)
+    err = ((rows - rows.mean(1, keepdims=True)) ** 2).sum((0, 2))
+    return (int(err.argmin()) + 0.5) / img.shape[1]
+
+
+def unwrap_tiles(section, sub, m: fm.SubMaterial, image: np.ndarray | None = None) -> TileWrapped | None:
+    """A tiling lamp part (UVs past 0..1) laid into the 0..1 tile triangle by triangle
+    (TileWrapped): an ordinary textured part. The FM4 Mustang GT's round head lamp bowls
+    (`textured_reflector`, u -2.9 to 3.9) sit in tiles -3, 0 and 3; drawn as one flat colour
+    (_tiling_swatch) they were plain white domes. Each triangle takes the tile its UV
+    centroid is in, and what lies past that tile is clamped into it: at most
+    TILE_CROSS_SHARE of the part's UV area (the KIA Forte Koup's bowls 0.4%, a mesh
+    continuous across a tile edge). A streak part, whose triangles run over many tiles along
+    one axis (median span a tile or more) and stay inside one along the other, is laid on
+    one texel column or row (_streak_value; `image`: the Lights atlas, (h, w, 4)): the Ford
+    Shelby GT500 13's tail strips repeat a red band 187 times along u, which Forza draws as
+    the band's rows. None otherwise (_tiling_swatch: one flat colour)."""
     import dataclasses
 
     pool = section.vertices_for(sub)
-    shift: dict = {}
-    lo = [math.inf, math.inf]
-    hi = [-math.inf, -math.inf]
     tris = sub.triangles()
-    crossing = 0
-    for tri in tris:
-        uvs = [m.uv(pool[i].uv0) for i in tri]
-        tile = tuple(math.floor(min(c[a] for c in uvs) + TILE_EPS) for a in (0, 1))
-        crossing += any(math.floor(max(c[a] for c in uvs) - TILE_EPS) != tile[a] for a in (0, 1))
-        for i, c in zip(tri, uvs):
-            if shift.setdefault(tuple(pool[i].uv0), tile) != tile:
-                return None
-            for a in (0, 1):
-                lo[a] = min(lo[a], max(0.0, c[a] - tile[a]))
-                hi[a] = max(hi[a], min(1.0, c[a] - tile[a]))
-    if not shift or crossing > TILE_CROSS_SHARE * len(tris):
+    if not tris:
         return None
+    uv = np.array([[m.uv(pool[i].uv0) for i in t] for t in tris], float)
+    collapse = None
+    if _outside_share(uv, [0, 1]) > TILE_CROSS_SHARE:
+        long = np.median(uv.max(1) - uv.min(1), 0) >= 1.0
+        if long.sum() != 1:
+            return None
+        axis = int(np.argmax(long))
+        if _outside_share(uv, [1 - axis]) > TILE_CROSS_SHARE:
+            return None
+        collapse = (axis, _streak_value(uv, axis, image))
     base = {f.name: getattr(m, f.name) for f in dataclasses.fields(fm.SubMaterial)}
-    base.update(kind="textured", bounds=(lo[0], lo[1], hi[0], hi[1]))
-    return TileWrapped(**base, shift={k: (float(du), float(dv)) for k, (du, dv) in shift.items()})
+    base["kind"] = "textured"
+    wrapped = TileWrapped(**base, collapse=collapse)
+    laid = np.array([wrapped.triangle([pool[i].uv0 for i in t]) for t in tris], float)
+    for t in tris:
+        tile = wrapped.tile([pool[i].uv0 for i in t])
+        for i in t:
+            wrapped.shift.setdefault(tuple(pool[i].uv0), tile)
+    wrapped.bounds = (*laid.reshape(-1, 2).min(0).tolist(), *laid.reshape(-1, 2).max(0).tolist())
+    return wrapped
 
 
-def resolve_lamp(section, sub, classifier=None) -> fm.SubMaterial:
+def resolve_lamp(section, sub, classifier=None, atlases: fm.AtlasCache | None = None) -> fm.SubMaterial:
     """fm.resolve, with a tiling Lights subsection unwrapped (unwrap_tiles) when it can be: what
-    lenses and lights sample of a lamp part is what Texturing draws."""
+    lenses and lights sample of a lamp part is what Texturing draws (atlases: the car's, for a
+    streak part's texel column)."""
     m = fm.resolve(section, sub, classifier or fm.classify)
     if m.kind == "tiling" and fm.base_family(m.family or "") == fm.LIGHTS:
-        return unwrap_tiles(section, sub, m) or m
+        return unwrap_tiles(section, sub, m, lights_image(atlases)) or m
     return m
+
+
+def lights_image(atlases: fm.AtlasCache | None) -> np.ndarray | None:
+    """The Lights atlas of `atlases` as (h, w, 4) uint8 (None without it)."""
+    if atlases is None:
+        return None
+    try:
+        w, h, rgba = atlases.get(fm.LIGHTS)
+    except (FileNotFoundError, OSError):
+        return None
+    return np.frombuffer(bytes(rgba), np.uint8).reshape(h, w, 4)
 
 
 @dataclass
@@ -1123,7 +1216,7 @@ class Texturing:
                         detail_ids.add(id(sub))
                     pool = section.vertices_for(sub)
                     for k, tri in enumerate(sub.triangles()):
-                        uvs = [m.uv(pool[i].uv0) for i in tri]
+                        uvs = triangle_uv(m, [pool[i].uv0 for i in tri])
                         if alpha_tested and fm.triangle_alpha_cut(self.atlases.get(m.family), uvs):
                             self.dropped.add((id(sub), k))
                             continue
@@ -1524,7 +1617,7 @@ class Texturing:
             return self._art_swatch(section, sub, m)
         tiling_lamp = m.role == fm.TEXTURED and fm.base_family(m.family) == fm.LIGHTS and m.kind == "tiling"
         if tiling_lamp and self.atlases is not None and self.classifier is None:
-            return unwrap_tiles(section, sub, m) or self._tiling_swatch(section, sub, m)
+            return unwrap_tiles(section, sub, m, lights_image(self.atlases)) or self._tiling_swatch(section, sub, m)
         if self.classifier is None and self.is_lens(section, sub, m):
             import dataclasses
 
@@ -1732,7 +1825,7 @@ class Texturing:
         if (id(sub), triangle_index) in self.dropped:
             return None, DROP
         m = self.submaterial(section, sub)
-        uvs = [m.uv(uv) for uv in raw_uvs]
+        uvs = triangle_uv(m, raw_uvs)
         if not is_atlas_kind(self.material(section, sub)):
             return uvs, None
         if m.kind == "swatch":
@@ -1746,6 +1839,9 @@ class Texturing:
             )
             for u, v in uvs
         ]
+        if isinstance(m, TileWrapped):
+            # A vertex in triangles laid from two tiles has a UV in each.
+            return mapped, (m.family, n, m.tile(raw_uvs))
         return mapped, (m.family, n)
 
     # -- rendering --
@@ -1922,7 +2018,7 @@ class Texturing:
                     continue
                 pool = section.vertices_for(sub)
                 for k in lit:
-                    ix, iy, _ = lenses._texels(np.array([m.uv(pool[i].uv0) for i in tris[k]]) * (w, h))
+                    ix, iy, _ = lenses._texels(np.array(triangle_uv(m, [pool[i].uv0 for i in tris[k]])) * (w, h))
                     ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
                     day[iy[ok], ix[ok]] = True
         if self.lamp_raw is not None:
