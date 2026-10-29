@@ -359,9 +359,10 @@ right, wheel part on the UPVH hubs: all wheels in their arches), `eyes.png`
 2. Whether moving the wheel bodies changes anything (they were left at the
    Desanne's hubs before).
 3. Collision (PDL): with `--damage` (on in `port_batch`) each panel's
-   collision boxes are moved and scaled onto the Forza panel; the root hull
-   stays the host's shape unless `--damage hull`, which is untested in game
-   (`damage.md`, #210).
+   collision boxes are moved and scaled onto the Forza panel, and since #210
+   the root hull is mapped onto the Forza body too, so contacts register at
+   the Forza car's ends, not the host's (in game, `damage.md` "Collision
+   hull"; `--damage panels` keeps the host's).
 
 The host's SPSR paint sets, open here before, are replaced by the car's
 Forza factory colours (`paint.py`, table above).

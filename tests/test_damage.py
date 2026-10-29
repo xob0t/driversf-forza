@@ -368,5 +368,31 @@ class MirrorMount(unittest.TestCase):
         self.assertEqual([damage._read_tree_fields(r.raw) for r in h.records], fields)
 
 
+class Hull(unittest.TestCase):
+    def test_stray_points_dont_stretch_the_box(self):
+        # The Spark's 8 vertices 0.4 m above its roof made its hull that tall (#210).
+        body = [(x / 10, y / 10, z / 10) for x in range(-9, 10) for y in range(13) for z in range(-17, 20)]
+        box = damage.trimmed_box(body + [(0.0, 1.67, -0.14)] * 8)
+        self.assertAlmostEqual(box.hi[1], 1.2)
+        self.assertAlmostEqual(box.lo[2], -1.7)
+        self.assertAlmostEqual(box.hi[2], 1.9)
+
+    def test_root_hull_maps_onto_the_forza_box(self):
+        # One box primitive the size of the host box, mapped onto a longer and narrower body.
+        model = bytearray(0x10 + 0x60)
+        struct.pack_into("<IIfI", model, 0, 0x70, 0x60, 2.5, 1)
+        struct.pack_into("<16f", model, 0x10, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.0, 0.1, 0.0, 1)
+        struct.pack_into("<3f", model, 0x10 + 0x50, 1.0, 0.6, 2.2)
+        host = damage.Box((-1.0, -0.5, -2.2), (1.0, 0.7, 2.2))
+        forza = damage.Box((-0.9, -0.5, -2.8), (0.9, 0.7, 2.6))
+        damage._map_collision(model, 0, host, forza)
+        centre = struct.unpack_from("<3f", model, 0x10 + 0x30)
+        extent = struct.unpack_from("<3f", model, 0x10 + 0x50)
+        for got, want in zip(centre, (0.0, 0.1, -0.1), strict=True):
+            self.assertAlmostEqual(got, want, places=5)
+        for got, want in zip(extent, (0.9, 0.6, 2.7), strict=True):
+            self.assertAlmostEqual(got, want, places=5)
+
+
 if __name__ == "__main__":
     unittest.main()

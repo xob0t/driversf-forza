@@ -111,6 +111,9 @@ LAYOUT = {32: (16, 20, 24), 28: (12, 16, 20)}
 K_NEAREST = 6
 VOTES = 7  # host vertices voting on a body triangle's panel
 COLLISION_SCALE = (0.67, 1.5)  # clamp for a panel's collision box scale
+# The root hull is mapped between boxes that leave out this share of the vertices at each
+# end per axis: 8 stray vertices 0.4 m above the Spark's roof made its hull that tall (#210).
+HULL_TRIM = 0.002
 DEGENERATE_UV = 0.004  # host UV1 triangles smaller than this are hidden faces
 FACING_WEIGHT = 0.15  # normalised-distance penalty per unit of normal mismatch (UV1 lookup)
 MAX_HINGE_MOVE = 0.35  # m; a panel hinge mapped further than this keeps the host's
@@ -1692,7 +1695,7 @@ def _set_idle_priority() -> None:
 
 @dataclass
 class DamageOptions:
-    hull: bool = False  # also scale the root collision hull (PDL) to the Forza body
+    hull: bool = False  # also map the root collision hull (PDL) onto the Forza body (port_car --damage, #210)
     k: int = K_NEAREST
 
 
@@ -1744,6 +1747,7 @@ class DamagePlan:
             for v in (s.vertices_for(sub)[i] for i in t)
         ]
         self.forza_box = Box.of(pts)
+        self.forza_hull_box = trimmed_box(set(pts))
         # Projection boxes for exposed inner geometry (split_exposed, _expose).
         self.exposed_boxes: dict[str, Box] = {}
         for name in ("hood", "trunk"):
@@ -3030,9 +3034,12 @@ class DamagePlan:
         if self.opts.hull:
             root = h.records[0]
             if root.collision >= 0:
-                host_box, forza_box = self.full_field.box, self.forza_box
+                host_box, forza_box = trimmed_box(self.full_field.points), self.forza_hull_box
                 _map_collision(out, pdl + 0x10 + root.collision, host_box, forza_box)
-                report["hull"] = {"host": [host_box.lo, host_box.hi], "forza": [forza_box.lo, forza_box.hi]}
+                report["hull"] = {
+                    k: [[round(c, 3) for c in b.lo], [round(c, 3) for c in b.hi]]
+                    for k, b in (("host", host_box), ("forza", forza_box))
+                }
         self.report["upvh"] = report
         return bytes(out), report
 
@@ -3323,6 +3330,15 @@ def robust_box(points, trim: float = 0.02) -> Box | None:
         lo.append(v[k])
         hi.append(v[len(v) - 1 - k])
     return Box(tuple(lo), tuple(hi))
+
+
+def trimmed_box(points, trim: float = HULL_TRIM) -> Box | None:
+    """Box leaving out `trim` of the points at each end per axis (stray vertices)."""
+    p = np.array(list(points), dtype=float).reshape(-1, 3)
+    if not len(p):
+        return None
+    lo, hi = np.percentile(p, (100 * trim, 100 * (1 - trim)), axis=0)
+    return Box(tuple(float(c) for c in lo), tuple(float(c) for c in hi))
 
 
 def _scale_collision(data: bytearray, at: int, scale) -> None:

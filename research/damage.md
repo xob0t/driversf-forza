@@ -253,8 +253,9 @@ build and release has it. With the option:
    by the size ratio, collision box and translation scaled (clamped to
    0.67-1.5x). Steering, gauges, suspension and hubs are left to the
    cockpit and wheel code; the chassis body/box only with the hull option.
-   `--damage hull` also maps the root collision hull from the host's body
-   box to the Forza one.
+   The hull option (`--damage`, the default since #210; `--damage panels`
+   leaves it out) also maps the root collision hull from the host's body
+   box to the Forza one ("Collision hull" below).
 6. **Exposed inner geometry** (`split_exposed`, `DamagePlan._expose`). Before
    the lamp plan, `forza2dsf.convert` splits trim subsections into their own:
    trim triangles of `hood*`/`trunk*` facing away from the section's nearest
@@ -348,12 +349,12 @@ parts without part 0), `img/damage-305-exterior-crushed.png` against
 ### In-game test plan (2026-10-22)
 
 The panels variant ran as the r7 and later builds below, with this probe;
-`damage-hull.sp` has no recorded run (risk 6, #210). Archives in `out/damage/` (IDs 304 370Z, 305 M5, 306 Skyline; the same
+`damage-hull.sp` has no recorded run (the hull ran in game later, #210, "Collision hull" below). Archives in `out/damage/` (IDs 304 370Z, 305 M5, 306 Skyline; the same
 three builds apart from the damage option):
 
 - `damage-panels.sp`: `--damage`.
 - `baseline.sp`: no damage option (control).
-- `damage-hull.sp`: `--damage hull`.
+- `damage-hull.sp`: `--damage hull` (bare `--damage` since #210).
 
 `run-test.ps1 -Damage` makes the probe call
 `GameVehicleResource.fullVisualDamage` on each car 3 s into its chase view
@@ -1179,6 +1180,97 @@ this change, same builds otherwise), all runs clean:
   stays on the body; after, both doors are gone, as on vanilla 231
   (`img/damage-side-doors-a4on231.jpg`: observe-01, -01, -07).
 
+## Collision hull (issue #210, 2026-10-29)
+
+The root record's collision model (PDL, 5 boxes: a bounding box with flags 0,
+then the lower body, the cabin and the two deck slopes, tilted) follows the
+host's part-0 box closely (Desanne: hull z +-2.50, body +-2.56). Until #210 a
+port kept it, so it collided with its host's outline: the T440 truck
+(11.6 m on the 8.4 m GMC C5500) registered hits 1.5 m inside its nose and
+1.3 m inside its tail. `DamageOptions.hull` maps each primitive's centre by
+its relative position from the host's box to the Forza body's and scales
+its extents (`_map_collision`), and moves and scales the chassis record's
+body and box like the other panels'. It is on by default now: bare
+`--damage` (port_car, port_batch's default options) means `hull`;
+`--damage panels` keeps the host's hull.
+
+Both boxes leave out 0.2% of the vertices at each end per axis
+(`trimmed_box`, `HULL_TRIM`): 8 stray vertices 0.4 m above the Spark's roof
+(x 0, z -0.14) made its hull's top 1.64 m instead of 1.29. On the roster
+the untrimmed box's top is 0.25 m or more above the trimmed one on 23
+cars, most of them race cars (SC430, DBR9, Z4 GT3, R8 LMS: 0.44 to 0.47 m).
+
+### In game (confirmed-runtime)
+
+Test cars (IDs 1-5): MAS_MC12_04 (long, 5.35 m on the 4.49 m Zonda, host
+232), LOT_ElanSprint_72 (shorter than its host, 129), CHE_Spark_11 (small
+car, longer than the Cygnet, 249), KEN_T440_12 (truck, 197) and
+AUD_2_R10_08 (prototype, 232). Builds `out/hull/before` (`--damage
+panels`), `out/hull/after` (the hull with untrimmed boxes) and
+`out/hull/final` (this change).
+
+Where contacts register: `tools/game/lua/dsfforza/ramtest.lua` (run with
+`-Dyno`, put in place of `dyno.lua` through `-LuaFiles` as its header
+says; the ordinary dyno runs follow) parks a copy of the car side-on 12 m
+ahead on the dyno straight, pushes the car into it at 4 m/s (velocity set
+every update), nose first, then tail first, and logs the distance between
+the two centres along the car when the copy first moves (1 cm). That gap is
+the car's hull extent ahead (or behind) plus the copy's half width,
+predicted offline from the archive's hull (scratch `out/hull/extent.py` in
+the #210 worktree). The car's speed is no use as the signal: `gameVehicle.velocity` reads change only at physics
+steps (every ~5 Lua updates), and the 232-host cars lose 0.6 m/s a step
+reversing (runs `vm2-20261029-185122`, `-190839`).
+
+| Car | front gap: host hull (predicted) | mapped, untrimmed | final | rear: host hull | mapped, untrimmed | final |
+| --- | --- | --- | --- | --- | --- | --- |
+| MC12 | 3.114 (3.171) | 3.458 (3.518) | 3.472 (3.531) | 3.228 (3.234) | 3.618 (3.645) | 3.623 (3.651) |
+| Elan Sprint | 2.713 (2.773) | 2.317 (2.371) | 2.279 (2.337) | 2.868 (2.905) | 2.466 (2.504) | 2.425 (2.462) |
+| Spark | 2.305 (2.366) | 2.683 (2.746) | 2.675 (2.737) | 2.290 (2.333) | 2.420 (2.441) | 2.441 (2.454) |
+| T440 | 5.362 (5.368) | 6.597 (6.617) | 6.630 (6.649) | 5.484 (5.494) | 6.689 (6.756) | 6.628 (6.691) |
+| R10 | 3.113 (3.171) | 3.087 (3.142) | 3.126 (3.183) | 3.193 (3.234) | 3.286 (3.310) | 3.286 (3.320) |
+
+(m, measured (predicted); the Forza body's own extents would give 3.665 /
+3.724 for the MC12 and 7.018 / 6.995 for the T440.)
+
+Runs (both archives in one series; all clean, no crash):
+`vm1-20261029-191736` (before) and `vm1-20261029-192419` (after), final
+`vm2-20261029-193826`. Contacts register 1 to 6 cm short of the prediction on every
+car and hull alike, so the root hull is what car-to-car contacts use, and
+mapped, it puts them at the Forza body's ends.
+
+No sinking or hovering: the rest height of each car on the straight is the
+same to 0.2 mm before and after (e.g. MC12 30.2759 / 30.2758, T440 30.1043
+/ 30.1044). `gameVehicle.height` follows the hull's top (MC12 1.076 ->
+1.087, Elan 0.971 -> 0.876, Spark 1.281 -> 1.404 (1.713 untrimmed), T440
+2.849 -> 3.054). Handling doesn't change: 0-30 and 0-60 mph within 0.05 s and
+braking within 0.1 g over three series (`vm2-20261029-185122`/`-185941`,
+`vm1-20261029-191736`/`-192419`, `vm2-20261029-193826`; the MC12's run in
+the last is spoilt, its start not found), as expected with mass,
+inertia and CoG from the handling parameters (`handling.md`), not the
+chassis record's body. `-Damage -DamagePanels -Traffic -DriveSeconds 10`
+(before `vm1-20261029-185304`, after `vm1-20261029-185925`):
+`fullVisualDamage`, `forceOpenPanels` and `removeAllPanels` ran on every
+car, no crash, the drives in traffic look as before. `render_compare diff
+--before out/hull/before --after out/hull/final` (`out/rc/hull-210`): 5
+changed, 0 drawn differently (only the hierarchy differs).
+
+### Roster survey (master build of 2026-10-29, 573 cars; scratch `out/hull/survey.py`)
+
+Each car's host hull mapped from the host's part-0 box to the built car's
+(both trimmed), against the host hull:
+
+- The Forza body reaches more than 0.25 m past the host hull at the front
+  on 73 cars and at the rear on 103 (the tour bus 2.65 / 1.48 m, the T440
+  1.50 / 1.28 m, the Commodore VE race cars 0.85 m at the rear, the
+  Thunderbird 0.63 m); past the mapped hull on 3 and 0.
+- Hull extents change by more than 0.1 m at the front on 213 cars, at the
+  rear on 282, on top on 139, in half width on 35 and at the bottom on 19
+  (at most 0.17 m).
+- The hull's bottom stays above the ground (the hubs' height less the tyre
+  radius) on every car: 5.1 cm at least (R8 LMS, 12.6 cm with the host's
+  hull), 9.3 cm at the 5th percentile, median 19 cm; the host hulls' least
+  is 8.2 cm.
+
 ## Risks and open questions
 
 1. Crush, panel swing and removal (`-DamagePanels`), decals and seams have
@@ -1207,8 +1299,12 @@ this change, same builds otherwise), all runs clean:
 5. Lamp light entries hang under the host's records (lights work,
    `lights.md`); a lamp on a bumper that falls off may leave its light
    behind (hypothesis; #146 tracks rear lamps on front light entries).
-6. `--damage hull` changes the car's collision hull, i.e. physics; test it
-   separately from plain `--damage` (#210).
+6. The collision hull (default since #210) is the host's five boxes mapped
+   by relative position, so it keeps the host's shape (cabin box, deck
+   slopes) on the Forza car's box; a Forza car shaped very differently from
+   its host (a cab-over truck on a bonneted host) still collides with the
+   host's profile. Not run in game: car against wall and kerbs, and the
+   low race cars whose hull bottom ends 5 to 8 cm above the ground.
 7. Exposed geometry is found by geometry (under a cover, behind a bumper
    skin, facing away from the panel's paint). Trims outside every panel's
    map (walls above a cover's lowest edge, wheel-arch liners, the RX-7's
