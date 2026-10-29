@@ -48,7 +48,8 @@ param(
     [int]$ShotSeconds = 10,
     [int]$BurstShots = 1,         # with -HoldMph or -DriveSeconds: shots per sample in quick succession (observe-NN-bK.png)
     [string]$AheadIds,
-    [string]$TrafficIds,          # IDs for TrafficSpooler.RequestTrafficVehicles after the probe IDs (clonetest.lua); none of the probe IDs (the game traps: research/in-game-tests.md, "Traffic")
+    [string]$TrafficIds,          # IDs for TrafficSpooler.RequestTrafficVehicles after the probe IDs (clonetest.lua); none of the probe IDs (the game traps: research/in-game-tests.md, "Traffic"); keeps traffic on
+    [switch]$Traffic,             # leave traffic on during the probe (default: off, and the road cleared around each probe car)
     [int]$DriveSeconds = 0,       # hold the throttle this long in each cockpit view
     [string]$DriveKey = 'Up',
     [string]$HoldMph,             # e.g. '30,60,90': speeds forced in turn in each cockpit view

@@ -15,9 +15,13 @@
 --      before and after VehicleLodSpooler.RequestVehicle(N)
 --   5. if config.traffic is set, TrafficSpooler.RequestTrafficVehicles(those
 --      IDs) and count model_id among nearby traffic for a while
+--
+-- Traffic, parked cars and interesting vehicles are off for the whole probe unless
+-- config.traffic_on (run-test -Traffic) or config.traffic is set (quietRoad below).
 
 local TEST_IDS = { 304 }      -- the clone; overridden by dsfforza\config.lua (run-test -ProbeIds)
-local TRAFFIC_IDS = {}        -- overridden by config.traffic (run-test -TrafficIds)
+local TRAFFIC_IDS = {}        -- overridden by config.traffic (run-test -TrafficIds); keeps traffic on
+local TRAFFIC_ON = false      -- config.traffic_on (run-test -Traffic): leave traffic on, as before 2026-10-29
 local AHEAD_IDS = {}          -- spawned in front without zapping, to see the full (traffic) model
 local CONFIG_IDS = false      -- true when config.lua set TEST_IDS
 local DRIVE_SECONDS = 0       -- config.drive (run-test -DriveSeconds): the harness holds the throttle
@@ -48,7 +52,8 @@ do
 	local found, config = user_open("dsfforza\\config.lua")
 	if found and type(config) == "table" then
 		if type(config.ids) == "table" then TEST_IDS, CONFIG_IDS = config.ids, true end
-		if type(config.traffic) == "table" then TRAFFIC_IDS = config.traffic end
+		if type(config.traffic) == "table" then TRAFFIC_IDS, TRAFFIC_ON = config.traffic, true end
+		if config.traffic_on then TRAFFIC_ON = true end
 		if type(config.ahead) == "table" then AHEAD_IDS = config.ahead end
 		if type(config.drive) == "number" then DRIVE_SECONDS = config.drive end
 		if type(config.hold_mph) == "table" then HOLD_MPH = config.hold_mph end
@@ -72,6 +77,7 @@ do
 			if loaded and type(module) == "table" then
 				LIGHTS = module
 				LIGHTS.configure(config.lights)
+				if LIGHTS.trafficOn then TRAFFIC_ON = true end  -- drawdist.lua's traffic mode
 			else
 				print("[dsfforza] lightstest.lua did not load: " .. tostring(module))
 			end
@@ -311,6 +317,37 @@ local function trafficSample()
 	end
 	table.sort(parts)
 	return string.format("%d cars: %s", total, table.concat(parts, " "))
+end
+
+-- No traffic for the probe's shots. Each probe car stands still in a live lane (spawned in
+-- front of the previous one, or under the Shift camera on the save's road), and traffic rammed
+-- it between views, so one archive's shots showed crash damage and the other's didn't (the
+-- Shelby GT500 13's rear in run vm2-20261029-061539, PR #218). The same switches as dyno.lua
+-- and drawdist.lua; ClearAreaOfVehicles ("non-essential vehicles", so not the player's car)
+-- removes the cars already near the new probe car. Damage the probe applies itself
+-- (config.damage, +hitfront/+hitrear) is unaffected.
+local CLEAR_RADIUS = 150
+local trafficOff = false
+local function quietRoad(id, car)
+	if TRAFFIC_ON then return end
+	if not trafficOff then
+		trafficOff = true
+		local results = {}
+		for _, switch in ipairs({
+			{ "traffic", function() civilianTraffic.setTrafficOnOff(false) end },
+			{ "parked", function() ParkedVehicles.SetEnabled(false) end },
+			{ "interesting", function() InterestingVehicleManager.Enable(false) end },
+		}) do
+			local ok, err = pcall(switch[2])
+			table.insert(results, switch[1] .. "=" .. (ok and "off" or tostring(err)))
+		end
+		log("traffic: " .. table.concat(results, " "))
+	end
+	if car ~= nil then
+		local ok, err = pcall(function() GameVehicleResource.ClearAreaOfVehicles(car.position, CLEAR_RADIUS) end)
+		log(string.format("id %d: cleared %d m around the car %s; traffic now %s", id, CLEAR_RADIUS,
+			ok and "ok" or tostring(err), trafficSample()))
+	end
 end
 
 -- gameVehicle.speed is m/s (game scripts set 17.88 for 40 mph).
@@ -793,6 +830,7 @@ local function step()
 			state.phase, state.ticks = "spawn", 0
 		end
 	elseif state.phase == "spawn" then
+		quietRoad(id, nil)
 		local current = playerVehicle()
 		local spawned
 		if current ~= nil then
@@ -817,6 +855,7 @@ local function step()
 		if current ~= nil and current == state.spawned then
 			log(string.format("id %d: PLAYER IS DRIVING IT after %d ticks (inZap: %s)", id, state.ticks,
 				tostring(localPlayer.inZap)))
+			quietRoad(id, current)
 			state.phase, state.ticks = "chase_view", 0
 			if DYNO then
 				DYNO.start(id, current, state.previous)

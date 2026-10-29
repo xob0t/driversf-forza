@@ -615,6 +615,34 @@ and 2, `-HoldMph 60`.
   writes it to `Driver.log` next to the exe.
 - **DriverNGHook needs the VC++ 2015+ x86 runtime** (`msvcp140.dll`,
   `vcruntime140.dll`), which the sandbox image lacks.
+- **Traffic rammed the probe cars** (2026-10-29): the probe spawns the first
+  car under the Shift camera (on the save, a multi-lane highway near
+  (-819, 78, 1836)) and each next car 25 m in front of the previous one in a
+  random lane, all standing still. Traffic ran into them between views, so
+  one archive's shots showed crash damage and the other's didn't: PR #218's
+  Shelby GT500 13 (`vm2-20261029-061539`, id 1: clean at zap, rear crushed
+  by the chase view). With traffic on (`-Traffic`, series A3:
+  `vm1-20261029-095934`, `-100754`, the same archive twice, IDs
+  241,1,2,3,4,5) each run damaged a different car: the Devon GTX (id 5)
+  rear-ended in the first, the Mustang (id 1) in the second.
+  - Now `clonetest.lua` switches traffic, parked cars and interesting
+    vehicles off before the first spawn (`civilianTraffic.setTrafficOnOff(false)`,
+    `ParkedVehicles.SetEnabled(false)`, `InterestingVehicleManager.Enable(false)`,
+    as `dyno.lua` and `drawdist.lua` do; logged as `traffic: traffic=off
+    parked=off interesting=off`) and clears 150 m around each probe car once
+    the player is in it (`GameVehicleResource.ClearAreaOfVehicles`, which
+    leaves the player's car). Its log line then counts the cars left within
+    250 m: the probe car and the previous one only.
+  - `-Traffic` (`run-series.ps1`, `run-test.ps1`; `config.traffic_on`)
+    leaves traffic on, as before. `-TrafficIds` implies it, and
+    `drawdist.lua`'s traffic mode asks for it (`M.trafficOn`).
+  - Damage the probe applies itself is unaffected: `+hitfront`/`+hitrear`,
+    `-Damage`, `-DamagePanels`, `-DamageSide`, `-GlassLadder` call
+    `GameVehicleResource` directly; `+hitfront` and the `+night` views were
+    checked in series B3. `-Lights` (`lightstest.lua`, whose drives had hit
+    traffic: `lights.md`, 370Z) and the dyno (`dyno.lua`, which switched
+    traffic off already) now run without traffic too; not rerun for this
+    change.
 
 ## Lua API reference
 
