@@ -3,16 +3,18 @@
 Updated: 2026-10-29
 
 `dsff render_compare` (`src/dsfforza/harness/render_compare.py`, `render_match.py`,
-`forza_render.py`, `render_sheet.py`; the renderer
+`forza_render.py`, `render_diff.py`, `render_sheet.py`; the renderer
 `src/dsfforza/game/car_render.py`) renders every car of a build as the game draws it,
 next to a reference render of the same Forza car with Forza's own materials, at the
 same cameras, and scores the difference per region (lamps, trims, plates, body...).
-It finds conversion problems roster-wide, offline, before players see them.
+It finds conversion problems roster-wide, offline, before players see them; its
+before/after mode lists every car a converter change touches and how.
 
 ```powershell
 uv run dsff render_compare run --build out\build --out out\rc\master --jobs 4 --entries exterior,interior,full --keep
 uv run dsff render_compare sheet out\rc\master [--top 80]       # out\rc\master\sheet.html
 uv run dsff render_compare rescore out\rc\master                 # new limits on stored renders (--keep)
+uv run dsff render_compare diff --before outuild --after <pr>\outuild --out outc\pr --jobs 2
 uv run dsff render_compare thumbnail --build out\build --cars BMW_X6M_10 --out out\rc\thumbs
 ```
 
@@ -259,6 +261,29 @@ Esperante's lamps lighter than Forza's.
 The ranking of master's full build is in the PR that adds this note (its run over the
 573 cars of the build of 2026-10-29, master ede81a1). A sample of ten cars, ours | Forza
 (`img/render-compare-sample.jpg`).
+
+## Before/after
+
+`render_compare diff --before A --after B` (`render_diff.py`): the cars whose drawn
+data differ are found by hashing, in both archives, each car's three VEHC entries: their
+MDXN and NONR's MODL, UPVH and paint palette (SPSR). VO3D (handling, cameras) and VSRT
+are left out, so a handling change touches no car. Hashing 573 cars in both archives
+reads a few GB; on 17 cars it takes 4 s. Only those cars are rendered, from both builds
+against the same Forza reference. Per view, mode and region it reports the share of the
+region's pixels that changed (moved, or delta E 6 or more), the delta E, what draws the
+region before and after, and the flags each build raises against Forza (fixed, new).
+`diff.html` shows before | after (changed pixels outlined) | Forza.
+
+On #190 (the 17 calibration cars built from 50b7cb6 and from d1fbc57 at the same IDs,
+`out/rc/diff-190`): all 17 cars' drawn data changed, 6 are drawn differently: the X6 M's
+tails (82 to 88% of the region's pixels; "no glow by day and dark" fixed, score 7.4 to
+2.7), the Mustang GT 05's head lamps (68 to 79%; 4.4 to 2.6), the Esperante GTLM's head
+lamps (91 to 94%), the Golf R's and Mazda 2's tails, the X5 M a little (8 to 15% in the
+lit modes). The other 11 render alike: their data differ because #192's handling change
+moves the settled hubs (UPVH, a few bytes) and the full entry's atlas is not built byte
+for byte the same twice (#84); `diff.json` lists them as `renders_alike`
+(`img/render-compare-diff-190.jpg`). 359 s for the 17 cars at 2 jobs (21 s a car
+and build pair).
 
 ## Runtime
 
