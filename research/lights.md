@@ -1,6 +1,6 @@
 # Lamps and paint
 
-Updated: 2026-10-28
+Updated: 2026-10-29
 
 How vanilla DSF cars light their lamps and pick a paint colour, and what the
 converter does about both. Code: `src/dsfforza/convert/lights.py` (lamps), `src/dsfforza/convert/paint.py`
@@ -1485,6 +1485,54 @@ slow and the probe stopped after it; `vm1-20261029-022411` / `-023026` for IDs 2
 - Sprinter 85, GTI VR6 (its tail covers left out as lens skins), Range Rover 12, IS300: as on master
   by day and in the dark mood, the IS300's bumper fog lenses with a little more detail.
 
+### Tiles across edges, streak parts, flat front lenses, rear axis rays (issue #189)
+
+Left open by the previous section: tiling lamp parts that `unwrap_tiles` gave up on stayed one flat
+colour, flat front lenses were baked as plates, and only front lenses looked along the axis.
+
+**Tiles laid per triangle (offline-checked).** `unwrap_tiles` needed one UV per vertex, so a mesh
+continuous across a tile edge (a vertex in triangles of two tiles) or one with more than 10% of its
+triangles across an edge stayed `_tiling_swatch`'s one colour. Now each triangle is laid from the
+tile its UV centroid is in (`TileWrapped.triangle`, `dsf_materials.triangle_uv`), and the tile goes
+into the vertex tag (`Texturing.triangle_uvs`), so a vertex on the edge gets a UV in each tile. What
+lies past the tile is clamped into it; a part is unwrapped when that is at most `TILE_CROSS_SHARE`
+(25%) of its UV area (`_outside_share`, sampled at the centres of 64 equal sub-triangles; the KIA
+Forte Koup's bowls 0.4%, the Mini JCW's reflector 0.9%, the Shelby GT500 13's boot tail lamp 14%;
+`out/l6/tile_area.py`). Every lamp consumer reads the per-triangle UVs (the lens bake's surfaces and
+samples, `lamp_glow`, the lamp plan's `texel_sampler`, `daytime_mask`, `plan()`).
+
+**Streak parts.** The Shelby GT500 13's tail strips (`taillightst`) repeat a red band 187 times along
+u (u -2.5 to 185, v 0.91 to 1.0), and every triangle spans several tiles. Forza's sampler shows the
+lowest mip there: the band's rows. A part whose triangles' median span is a tile or more along one
+axis and that fits one tile along the other is laid on one texel column (`_streak_value`: the column
+closest to each row's mean over the whole atlas; rows 460 to 511 of the Shelby's atlas run from a
+dark edge (30) to red (176)).
+
+**Flat front lenses (offline-checked).** A front lens of one flat colour (`lenses._flat`) stays (its
+clear texels carry the day glow, `lens_glow`), but is baked as a filter over what lies behind it
+(`lens_filter`, as a swatch lens's), and glows with the lamp behind it as a cover does, not with its
+own flat alpha. Before, `a x lens + (1 - a) x behind` drew it as a flat plate at its opacity.
+
+**Rear axis rays.** `_axis_fallback` now runs for rear lenses too, along -z. Only for a lens that faces
+out of the car's end (`AXIS_MIN_FACING` 0.25, the mean z of its normals; the Panoz Esperante's
+laid-back head lamp lens 0.59, the Maserati MC12's tails 0.57), and only its outward-facing points. A
+per-ray guard first tried lost the Fiat 595's round rear lamps' bulb: they are glass balls (mean 0.0)
+whose texels the front indicators share. Side markers and domes (the Dino 246's tails, 0.2) keep the
+rays along their normal, as on master.
+
+**Roster (offline; `out/l6/bake_survey.py`, `Texturing.plan` with the lens bake on LODs 1, 3, 5, master
+`out/l6/bk_master` against this change `out/l6/bk_branch2`, `bake_compare.py`; 566 cars):**
+
+| | master | this change |
+| --- | --- | --- |
+| tiling lamp parts as one flat colour, LODs 1/3/5 | 68 subsections on 34 cars | 9 on 6 (LOD 5 parts with few large triangles) |
+| of them at LOD 1 (the exterior entry) | 6 on 3 (Shelby, Forte, JCW) | 0 |
+| streak parts laid on one column | | 7 (Shelby GT500 13, LODs 1/3/5) |
+| flat front lenses baked as a filter, LOD 1 | | 48 subsections on 27 cars |
+| rear lens rays along the axis | | 26,187 rays on 309 cars (before the per-lens guard) |
+| flat rear lenses left out (two more meet a lamp along the axis) | 253 | 255 (MCL_MP412C_11's clear tail lenses) |
+| cars whose baked Lights texels change (4x4 blocks, more than 8 in a channel) | | 272 |
+
 ### Open
 
 1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and
@@ -1525,10 +1573,8 @@ slow and the probe stopped after it; `vm1-20261029-022411` / `-023026` for IDs 2
    plates by day"). Clear rear lenses over reverse
    lamps still glow by their opacity, and so do front lenses with no lamp
    behind them within 0.4 m.
-9. Issue #189: tiling lamp parts with many triangles across a tile edge or a vertex in two tiles
-   stay one colour (FOR_ShelbyGT500_13's tails, KIA_ForteKoup_10's bowls, MIN_JohnCooperWorks_09;
-   104 subsections on 39 cars at any LOD); flat front lenses (74 on 32 cars) are still baked as
-   plates; rear lenses have no axis fallback.
+9. Tiling lamp parts with more than a quarter of their UV area across a tile edge stay one colour
+   (9 subsections on 6 cars at LODs 1/3/5, all LOD 5; "Tiles across edges").
 
 ## Paint
 

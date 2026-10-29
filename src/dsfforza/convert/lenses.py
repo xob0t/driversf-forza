@@ -15,7 +15,7 @@ lens keeps its triangles and the atlas gets what Forza shows through it: for eac
 lens texel (finest planned LOD), a ray from its point on the lens straight in
 along the lens normal composites the lens over every lens layer behind it and the
 first opaque surface it meets (lamp, reflector, housing; their texels, or their
-flat colour; a front lens ray that meets no lamp that way looks in along the car's axis,
+flat colour; a lens ray that meets no lamp that way looks in along the car's axis,
 _axis_fallback), with Forza's blend:
 
     out = a * lens + (1 - a) * behind
