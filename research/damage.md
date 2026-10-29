@@ -209,7 +209,7 @@ build and release has it. With the option:
    right voting together), side windows their door or the chassis,
    `interior`/seats/undercarriage the chassis, the steering wheel its
    record. Everything else (`body`, skirts) goes per triangle to the
-   nearest body-type panel (chassis, front structure, doors, wings, sills):
+   nearest body-type panel (chassis, front structure, doors, wings, side doors 52/53):
    a vote of the 3 host part-0 triangles nearest to its centroid, in
    coordinates normalised by each car's box, scored by surface distance
    plus 0.15 per unit of normal mismatch; a paint triangle asks the host's
@@ -227,7 +227,7 @@ build and release has it. With the option:
    vertices (normalised coordinates), scaled per axis by the car size
    ratio. A position that triangles of two or more never-swinging panels
    share (a seam inside one Forza surface: chassis, front structure, doors,
-   wings, sills), or that lies within 3 mm of another rigid panel's
+   wings, side doors 52/53), or that lies within 3 mm of another rigid panel's
    vertex, gets the mean of those panels' displacements on every copy
    (`_seam_map`). Since 2026-10-23 the seam is also pinned: on body paint
    always, on trim where the host's own border of those two roles stays
