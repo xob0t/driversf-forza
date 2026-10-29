@@ -46,7 +46,8 @@ local VIEWS = {}              -- config.views (run-test -Views): extra views bet
                               -- camera holds the car at N mph through the view and moves the camera with it
                               -- ("wheel+mph60": wheel speed blur, research/wheels.md)
 local PALETTE = nil           -- config.palette (run-test -Palette): paint palette entry of the spawned cars
-                              -- (Spawn's shaderParams[0], as the game's grid spawns set it); nil: the game's pick
+                              -- (Spawn's shaderParams[0], as the game's grid spawns set it, and
+                              -- GameVehicleResource.create's ShaderParams, as its vehicle manager does); nil: the game's pick
 local DYNO = nil              -- config.dyno (run-test -Dyno): the dyno.lua module, acceleration and braking runs
 local LIGHTS = nil            -- config.lights (run-test -Lights): the lightstest.lua module, lamp phases per car
 
@@ -184,6 +185,11 @@ local function playerVehicle()
 	return nil
 end
 
+-- The paint of a spawned car: nil lets the game pick a palette entry.
+local function shaderParams()
+	return PALETTE and { [0] = PALETTE } or nil
+end
+
 local function spawnInFront(id, playerGameVehicle)
 	local vehicles = Spawn.Spawn({
 		type = "InFrontOfVehicle",
@@ -193,7 +199,7 @@ local function spawnInFront(id, playerGameVehicle)
 		position = "randomLane",
 		heading = playerGameVehicle.heading,
 		desiredSpeed = 0,
-		vehicles = { { modelID = id, shaderParams = PALETTE and { [0] = PALETTE } or nil } },
+		vehicles = { { modelID = id, shaderParams = shaderParams() } },
 	})
 	return vehicles and vehicles[1]
 end
@@ -234,6 +240,9 @@ local function spawnUnderCamera(id)
 	return GameVehicleResource.create({
 		SnapToTerrain = true,
 		Model_Id = id,
+		-- The game's vehicle manager passes its shaderParams here as ShaderParams (issue #227:
+		-- without it the first probed car took a random paint).
+		ShaderParams = shaderParams(),
 		Position = position,
 		Heading = 0,
 		InitialVelocity = 0,
@@ -464,8 +473,8 @@ local function spawnSideCopy(id, car)
 		local pos = vec.vector(p.x + fx * SIDE_AHEAD + rx * SIDE_LATERAL, p.y + 0.5,
 			p.z + fz * SIDE_AHEAD + rz * SIDE_LATERAL, 1)
 		local c = GameVehicleResource.create({
-			SnapToTerrain = true, Model_Id = id, NoOccupants = true, InitialVelocity = 0,
-			Position = pos, Heading = vec.vector(math.sin(hc), 0, math.cos(hc), 0),
+			SnapToTerrain = true, Model_Id = id, ShaderParams = shaderParams(), NoOccupants = true,
+			InitialVelocity = 0, Position = pos, Heading = vec.vector(math.sin(hc), 0, math.cos(hc), 0),
 		})
 		pcall(function()
 			local m = setYRotation(hc)
@@ -874,6 +883,9 @@ local function step()
 			nextId()
 			return
 		end
+		log(string.format("id %d: shader param set %s / %s", id,
+			try(GameVehicleResource.getShaderParamSet, spawned),
+			try(GameVehicleResource.getShaderParamSet, { gameVehicle = spawned })))
 		state.previous, state.spawned = current, spawned
 		localPlayer:SetZapLevel(1, nil, false, { forcedOut = true })
 		localPlayer:ZapIntoVehicle(spawned, false, false, false, nil, { disableZapFlash = true })
