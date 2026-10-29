@@ -96,9 +96,11 @@ later PR replaced a rule, the earlier section says so in one line.
   [#115](#head-lamps-white-blobs-by-day-issue-115)).
 - Clear front lenses and head lamp surfaces glow from the lamp behind them,
   hot where the reflector is deep, ranked per lamp onto vanilla's 0x1D
-  distribution ([#124](#head-lamp-glow-by-day-issue-124)). Every texel a
-  0x1D lamp samples then glows at 0.2 of that (`DAYTIME_GLOW`), a 0x01
-  lamp's level ([#167](#head-lamps-white-plates-by-day-after-164)): every
+  distribution ([#124](#head-lamp-glow-by-day-issue-124)), following the
+  lamp's own picture (its bright and dark detail,
+  [#286](#head-lamps-at-a-fifth-of-vanilla-at-night-issue-286)). Every texel a
+  0x1D lamp samples then glows at 0.45 of that (`DAYTIME_GLOW`; 0.2 from #167
+  to #286, [#167](#head-lamps-white-plates-by-day-after-164)): every
   source texel under the DSF texels its triangles sample, and the lamps that
   share a 0x1D entry too ([#250](#head-lamps-white-plates-by-day-volvo-s60-11-venom-gt-12-boss-429-issue-250)).
 
@@ -2236,6 +2238,61 @@ Stealth and Cadillac; master `vm2-20261029-195645`, this change `vm2-20261029-20
 `img/lamps8-r8-ingame.jpg`, `img/lamps8-stealth-ingame.jpg`, `img/lamps8-cadillac-ingame.jpg`): in the dark mood the R8's and Stealth's
 head lamps glow brighter and larger, and so do the Cadillac's; the 458's look about as on master. By day the
 lamp units look as on master (the 458's housing a little lighter without the dark glass); no hole or gap.
+
+### Head lamps at a fifth of vanilla at night (issue #286)
+
+Symptom (offline-checked, `out/l8/head_survey.py` in the t3-a7c21235 worktree: render_compare's
+renderer, front view, the head lamp pixels' glow in the dark mood): ported head lamps glowed at
+night at a third to a fifth of vanilla's. Vanilla's 0x1D head lamps (28 vehicles), under their window
+glass: p95 2.5 / 3.8 / 5.3 (p10 / median / p90), lit area 266 / 1227 / 3322 px; vanilla 0x01 lamps
+(105): p95 median 0.83. 15 ports (S60, Venom GT, X6 M, Mustang GT 05, Esperante GTLM #51, GTI VR6,
+Evo VI, M3 E30, Carlton, Yellowbird, Golf R, E63 AMG, Thunderbird 57, 458 Spider, R8 race car) on
+master: p95 1.60 / 1.69 / 1.92. Likely the "painted on" reports.
+
+Cause (confirmed-static). The game lights a 0x1D lamp at its type's 10 by day and in the dark mood
+alike ("How a lamp lights"); texel alpha is its only glow input, so one alpha serves both. #167 set it
+at a fifth of #124's day glow (`DAYTIME_GLOW` 0.2), against white plates by day, measured against
+every vanilla vehicle with a day-lit front lamp, most of which light only a small 0x03 lamp by day.
+Vanilla's own 0x1D lamps glow at p95 3.8 (median) by day too, above the white-plate limit #167
+calibrated on ports (3.0). In game vanilla 241's lamps by day are bright discs that keep their lens
+flutes; 130's are near-white discs.
+
+The other levers, ruled out (`lights.md` "The light table", "How a lamp lights"): no head lamp type
+lights at a different level by day and at night. 0x01 is 2 (a fifth of 0x1D) in both; the other
+types at 10 are sirens; 0x0A (`DippedHeadlights`) is never used by vanilla and nothing shows the game
+setting that mask.
+
+Structure (render_compare's renderer, dark mood, over the lit pixels: the glow's local contrast,
+std over 5 x 5 / mean, and the share of lit pixels at 90% of p95 or more): vanilla 0x1D contrast 0.21
+/ 0.31 / 0.46, top share 0.11 / 0.17 / 0.23; the 15 ports on master 0.19 / 0.30 / 0.40 and 0.14 /
+0.16 / 0.25. So the ports' lamps are already structured like vanilla's; what differs is the level.
+Scaling big lamps down by area (tried: a lamp seen over more than 120 cm2 a side scaled by its area)
+cut the GTI VR6's, Evo VI's, Carlton's and Esperante's round lamps to p95 0.8; vanilla 241 lights its
+big round lamps over 3,416 px at 5.2, so the area rule was dropped.
+
+Change:
+
+- `lenses.day_glow(glow, view, colour)`: before the ranking, each lamp's raw glow is multiplied by its
+  visible texels' brightness against their neighbourhood's (`_detail`, over `GLOW_DETAIL_RADIUS` 15
+  mm, squared, clipped to 0.25 to 2): the bright parts of the lamp's own picture (flutes, the bulb,
+  LED dots) rank high, the smooth stretches between them low.
+- `DAYTIME_GLOW` 0.2 -> 0.45: 0.45 puts the 15 ports' median p95 (1.69 at 0.2) at vanilla's 3.8.
+
+Results, 15 ports (render_compare's renderer, dark mood; master 62736c2's lamp code against this):
+p95 1.60 / 1.69 / 1.92 -> 2.46 / 3.41 / 4.27 (vanilla 2.5 / 3.8 / 5.3); contrast 0.19 / 0.30 / 0.40 ->
+0.18 / 0.28 / 0.39; top share 0.14 / 0.16 / 0.25 -> 0.15 / 0.18 / 0.26. The Golf R's head lamps are
+0x01 (it has running lights of its own), unchanged at 1.4 to 1.7, above vanilla's 0x01 cars.
+
+Roster (offline, `out/l8/day_survey.py`: 514 cars with day-lit head lamps, the area-weighted p95 of
+the DSF alpha their 0x1D triangles sample at LOD 1, times 10 / 255 x 1.33 to render_compare's p95,
+the factor from the 15 rendered ports, correlation 0.57): p10 / 50 / 90 1.18 / 1.78 / 2.29 -> 2.12 /
+3.29 / 4.65; cars inside vanilla's p10 to p90 19 -> 391; 27 above 5.3 (at most 6.6, VW_RabbitGTI_84),
+96 below 2.5. The median sits about 13% under vanilla's; 0.5 would centre it (an estimated 2.4 / 3.7
+/ 5.2).
+
+Rear lamps at night (the same measure, rear view, red lamp pixels): vanilla, 141 vehicles, p95 0.04 /
+0.10 / 0.29; the 15 ports 0.02 / 0.05 / 0.12, over larger areas (the X6 M 2,912 px at 0.04): the same
+problem at the rear, #290.
 
 ### Open
 
