@@ -1117,6 +1117,21 @@ on a converted car, AUD_A4Avant_04 was built on 231 (`--host 231`): both
 rear doors become swinging parts (0.75 m2 each), held before. `damage check`:
 0 problems on both.
 
+In game (headless VMs, `-Damage -DamagePanels`, before = master, after =
+this change, same builds otherwise), all runs clean:
+
+- Express (ID 1) and vanilla 198: before `vm1-20261029-113635`, after
+  `vm1-20261029-115305`. Under `forceOpenPanels` the after build's right-side
+  cargo doors swing out past the body (seen nearly edge-on from the chase
+  camera), as vanilla 198's do; before, nothing moved on that side
+  (`img/damage-side-doors-express.jpg`: before observe-26, after observe-30,
+  vanilla 198 observe-39).
+- A4 Avant on 231 (ID 1) and vanilla 231, with the `wheels` view (left side,
+  after `removeAllPanels`): before `vm2-20261029-132300`, after
+  `vm2-20261029-132540`. Before, the front door is gone and the rear door
+  stays on the body; after, both doors are gone, as on vanilla 231
+  (`img/damage-side-doors-a4on231.jpg`: observe-01, -01, -07).
+
 ## Risks and open questions
 
 1. Crush, panel swing and removal (`-DamagePanels`), decals and seams have
