@@ -3,12 +3,132 @@
 Updated: 2026-10-29
 
 How vanilla DSF cars light their lamps and pick a paint colour, and what the
-converter does about both. Code: `src/dsfforza/convert/lights.py` (lamps), `src/dsfforza/convert/paint.py`
-(palettes), `dsf_materials.PAINT_TEXEL_UV` and `LIGHTS_ALPHA`; lamps and
-palettes run inside `forza2dsf.convert` (`ConvertOptions.lights`,
-`ConvertOptions.paint`, on by default). Evidence tags as elsewhere. Survey
-scripts: `out/lights/` (`fleet_flags.py`, `fleet_bytes.py`, `spsr_fleet.py`,
-`verify.py`, `lamp_alpha.py`, `global_paint_uv.py`).
+converter does about both. Code: `src/dsfforza/convert/lights.py` (the lamp
+plan and light table), `src/dsfforza/convert/lenses.py` (lens and lamp glass
+bake, day glow), the lamp parts of `dsf_materials.py` (`LIGHTS_ALPHA`, the
+lamp curves and scales, `Texturing` lens, cover and tiling rules,
+`DAYTIME_GLOW`), `src/dsfforza/convert/paint.py` (palettes) and
+`dsf_materials.PAINT_TEXEL_UV`; lamps and palettes run inside
+`forza2dsf.convert` (`ConvertOptions.lights`, `ConvertOptions.paint`, on by
+default). Evidence levels as defined in `dngvehicles.md`. The survey scripts
+named below (`out/lights/`, `out/lamps/`, `out/l6/`...) are scratch scripts
+in the worktrees of the PRs that made them, not in the repo.
+
+## Current lamp rules (summary)
+
+What the converter does as of PR #223. The sections after this one are in
+the order the lamp PRs landed (#93 to #223) and hold the evidence; where a
+later PR replaced a rule, the earlier section says so in one line.
+
+**Planning: which Forza triangles light, and as what** (`LampPlan.build`).
+
+- A triangle whose technique is in `lights.TECHNIQUE_FUNCTION` is a lamp:
+  head, position, tail/stop (0x18), stop, reverse, indicator, fog,
+  brake + indicator (`brinl`/`brinr`, and `lindtailside`/`rindtailside`
+  since #220) or DRL + indicator ([converter](#the-converter-srcdsfforzaconvertlightspy-offline-checked),
+  [lindtailside](#tail-lamps-that-brake-and-indicate-lindtailside-issue-103)).
+- Lenses (`detail_glass_*`, `linred`/`rinred`) and the red covers
+  `Texturing.is_lens` moves to the atlas take their function from their
+  place and texels. At the rear a triangle on red texels is a tail lamp, and
+  one over an indicator bulb brakes and indicates (0x19/0x1A); amber lenses
+  are indicators, but a front selective-yellow one with a head lamp behind
+  it is a head lamp ([Carlton](#the-lotus-carlton-showed-no-brake-light-user-report-on-outfinal4-spool-495),
+  [covers](#lamp-covers-drawn-as-window-glass-issue-160)).
+- Clear lenses, baked covers and rear reflectors light with the lamp right
+  behind them (for a reflector, inside its outline), else with a lamp of
+  their own Forza section, else (lenses and covers) with a lamp whose
+  outline overlaps theirs, else stay unlit. Front reflectors never light
+  ([#174](#clear-covers-over-reflectors-with-no-lamp-issue-174)).
+- Head lamps without a head lamp technique: the front clear lenses, else
+  the headlight sections' reflectors, else their cover glass. With one, the
+  reflector bowls under a headlight cover that has no head lamp in it light
+  as head lamps too ([#158](#head-lamp-units-with-no-lamp-technique-issue-158)).
+  Pop-up lamps are planned in their lowered state, the only one drawn
+  ([#88](#pop-up-head-lamps-drawn-raised-and-lowered-at-once-issue-88)).
+- Side from the technique or x (a subsection within 0.3 m of the centre
+  line is a centre lamp); each (function, side, end) group splits into lamps
+  0.2 m apart; a centre tail lamp more than 8 cm above the side tails is the
+  high stop lamp (0x02).
+
+**Light entries** (`LampPlan.assign`, `patch_upvh`).
+
+- The host's table keeps its size, ids and records. Lamps take entries in
+  priority order (head, tail, stop, indicator, reverse, brake + indicator,
+  position, fog; second clusters after every first one), each an entry the
+  host ships at the lamp's own end, on its side if one is free (else a
+  centre one, else any) ([#132](#lamps-broke-with-the-wrong-end-issue-132)).
+- A lamp with no entry left at its end shares one there: same function and
+  side, else the other side's for types with no side, else its fallback's
+  (brake + indicator: the tail lamp; position: head or tail lamp). Only then
+  does it take a free entry at the other end; fog lamps never do and stay
+  unlit ([#146](#rear-lamps-short-of-a-rear-entry-issue-146)).
+- Head lamps on a front side whose own position or DRL-indicator lamps
+  (with an entry) are under a quarter of their area are 0x1D, Headlights +
+  DaytimeRunning, so they light by day as on 33 vanilla vehicles
+  ([day](#head-lamps-dark-by-day-player-report)).
+- Used entries get the lamp's position, direction and flags; spare ones
+  flags 0, parked on the nearest lamp. Every lamp triangle of the full and
+  exterior entries gets id + 1 in byte 2 of vertex semantic 9.
+
+**Glow and colour** (Lights texels; `dsf_materials`, `lenses`).
+
+- Texel alpha is the glow. "matched" (`LIGHTS_ALPHA`) ranks
+  `a x (0.6 + 0.4 x brightest channel)` onto vanilla's lamp alpha per hue,
+  red on a curve fitted per car
+  ([matched](#vanilla-lamp-alpha-and-the-matched-rule-offline-checked)).
+- Red lamp texels are darkened (shared curve, then per car) until the
+  visible red median is at most vanilla's 92; white ones until the visible
+  white front median is at most 137; amber ones keep Forza's brightness
+  ([TT RS](#red-lenses-too-bright-when-unlit-user-report-on-outtestdrive9-audi-tt-rs),
+  [#115](#head-lamps-white-blobs-by-day-issue-115)).
+- Clear front lenses and head lamp surfaces glow from the lamp behind them,
+  hot where the reflector is deep, ranked per lamp onto vanilla's 0x1D
+  distribution ([#124](#head-lamp-glow-by-day-issue-124)). Every texel a
+  0x1D lamp samples then glows at 0.2 of that (`DAYTIME_GLOW`), a 0x01
+  lamp's level ([#167](#head-lamps-white-plates-by-day-after-164)).
+
+**Glass over lamps** (`lenses.bake`, `Texturing._bake_lenses`).
+
+- A `detail_glass_*` lens keeps its triangles; each texel becomes
+  `a x lens + (1 - a) x behind`, behind being what a ray straight in meets
+  (a = the texel alpha, capped by the car's `GlassMaxOpacity`). Rays that
+  meet no lamp along the normal are cast again along the car's axis, for
+  lenses that face out of the car's end
+  ([#93](#lamp-lenses-drawn-opaque-user-report-on-outfinal4),
+  [#190](#flat-lenses-lens-skins-laid-back-head-lamp-lenses-and-tiling-bowls-player-reports-on-3ca28fd),
+  [#218](#tiles-across-edges-streak-parts-flat-front-lenses-rear-axis-rays-issue-189)).
+- A rear lens of one flat colour, or a tint swatch stretched over the lens,
+  is left out when half its rays meet a lamp, and its colour filters the
+  lamp texels behind it. A flat front lens stays, baked as a filter, and
+  glows with the lamp behind it ([#164](#lamp-glass-issues-89-145), #190,
+  #218).
+- Plain `glass` covers over a lamp are left out. Textured covers
+  (`lights_glass`, `lights_gls_noemit`) over a lamp are baked at Forza's
+  opacity and glow with the lamp behind; `lights_gls_*` lamp glass with a
+  cap under 1 is baked at that cap; a cover over its own lenses' texels (a
+  second skin) is left out; covers over no lamp stay DSF window glass (the
+  red rear ones `is_lens` takes, opaque lamp texels)
+  ([#160](#lamp-covers-drawn-as-window-glass-issue-160), #164, #190).
+- Tiling lamp parts are laid triangle by triangle into one tile when at
+  most 25% of their UV area falls outside it, streak parts onto one texel
+  column, the rest as one colour (#218). Lamp parts keep `plan()`'s material
+  in the sections later passes rebuild, so the exterior entry draws them as
+  planned ([#175](#no-front-lamp-on-the-players-car-lamp-parts-drawn-as-trim-in-the-exterior-entry-issue-158)).
+
+**Breaking.** A lamp breaks when the part its type-17 record hangs under is
+damaged (`0x8E84A0`); the broken bit darkens it and lays the damage decal's
+broken-lamp blobs over it ([How a lamp lights](#how-a-lamp-lights-confirmed-static-driverexe-104),
+[#141](#tail-lamps-with-the-broken-lamp-pattern-issue-141)). Records stay
+where the host has them, so a lamp breaks with the end its entry is at; 37
+lamps on 20 cars, mostly reverse lamps, still sit on an entry at the other
+end (#146). With `--damage` the lamp geometry rides on its panel's record
+(`damage.section_rule`, `damage.md`).
+
+**Open** ([list](#open)): #89 (lamp glass colour and reflection), #103
+(cars under half braking, the Escort and SC430 with no lamp at LOD 3), #122
+(pop-ups can't rise), #146 (lamps on the other end's entries), #166 (red
+lamps darkened below a light body colour), #229 (lamp texture leftovers of
+#145 and #189).
 
 ## Lamps
 
@@ -25,7 +145,7 @@ the boot lid (role 5). Fleet: 0 to 27 lamps per vehicle, 15 on the Desanne.
 | ---: | --- | --- |
 | 0x00 | vec4 | position, car space (+z forward, +x the car's left, w 1) |
 | 0x10 | vec4 | direction (unit, w 0): (0, 0, 1) on headlamps, roughly the lens normal elsewhere |
-| 0x20 | f32, f32 | pi, pi in all 2,281 vanilla entries (cone angles?) |
+| 0x20 | f32, f32 | pi, pi in all 2,179 vanilla entries (cone angles?) |
 | 0x28 | u32 | id: a permutation of 0..n-1 per vehicle |
 | 0x2C | u32 | flags, below |
 | 0x30 | 16 bytes | the same constant in every entry (exporter leftover) |
@@ -47,19 +167,23 @@ Flags, little-endian bytes b0..b3:
   | 0x04 / 0x05 | Left / RightIndicator | amber indicators, front and rear (292 / 279) |
   | 0x06 / 0x07 | Brakes + Left/Right | US-style red rear indicators (14 / 14) |
   | 0x08 | Reverse | rear white (257) |
-  | 0x09, 0x0D..0x0F | Siren | emergency lights, b0 = flash phase |
-  | 0x0B | Siren + Headlights | wig-wag headlamps |
+  | 0x09, 0x0D..0x0F | Siren | emergency lights, b0 = flash phase (54; 25 / 15 / 26) |
+  | 0x0B | Siren + Headlights | wig-wag headlamps (6) |
   | 0x0C | FogLights | (23) |
+  | 0x10, 0x11 | 2048, 4096 (no Lua name) | (2, 1) |
   | 0x12 | DaytimeRunning | (107; front and rear) |
-  | 0x14..0x17 | DaytimeRunning + Left/Right | |
+  | 0x13 | DaytimeRunning + Siren | (2) |
+  | 0x14..0x17 | DaytimeRunning + Left/Right | (21 / 21 / 22 / 22) |
   | 0x18 | DaytimeRunning + Brakes | the normal tail/stop lamp (138) |
-  | 0x19..0x1C | DaytimeRunning + Brakes + Left/Right | |
+  | 0x19..0x1C | DaytimeRunning + Brakes + Left/Right | (47 / 47 / 3 / 3) |
   | 0x1D | Headlights + DaytimeRunning | (65) |
 
-  Type 0x0A (DippedHeadlights) is never used. "DaytimeRunning" is what lights
-  tail and position lamps, so it is effectively "lights on".
+  Type 0x0A (DippedHeadlights) is never used; two entries have type 0.
+  "DaytimeRunning" is what lights tail and position lamps, so it is
+  effectively "lights on". (Counts rechecked over the 150 full entries of
+  the vanilla archive on 2026-10-29.)
 - **b2 is the colour**: 4 amber, 6 red, 8 white, 9 a second white (xenon), 0
-  on sirens; 5, 0x0A, 0x0B rare.
+  on sirens; 5 (23 entries), 0x0A, 0x0B and 0x02 rare.
 - **b0 is a variant**: 2 or 3 on indicators, 1 on centre stop lamps and a few
   others, flash phases (0x0A..0x11, 0x26..0x28) on sirens.
 
@@ -97,20 +221,23 @@ on a shorter or longer car).
 
 ### The converter (`src/dsfforza/convert/lights.py`, offline-checked)
 
-`LampPlan.build(car.body, place, axle_mid)`:
+`LampPlan.build(car.body, place, axle_mid, lenses, texel)`:
 
 1. Each Forza triangle whose technique is a lamp gets a function
    (`TECHNIQUE_FUNCTION`): `head_light`, `hidhead`, `xenonhead`, `oldhead`,
-   `fullbeam` to headlamp; `drlwhite`, `slorange` to position lamp;
-   `tail_light`, `taillightst`, `taillight2S` to tail/stop; `reverse_light` to
+   `fullbeam` (and their `lights_gls_*` glass) to headlamp; `drlwhite`,
+   `drlred`, `slorange` to position lamp; `tail_light`, `taillightst`,
+   `taillight2S` to tail/stop; `white_brake` to stop; `reverse_light` to
    reverse; `indicator_left/right` to indicator; `fogwhite/fogred` to fog;
-   `brinl/brinr`, `drlinl*/drlinr*`, `lindtailside` to the combined types.
+   `brinl/brinr` and, since #220, `lindtailside/rindtailside` to brake +
+   indicator; `drlinl*/drlinr*` to DRL + indicator.
    Lenses take a function from their colour: `detail_glass_amber` to
    indicator (a selective-yellow one at the front over a head lamp lights
    with it, "Lamp covers drawn as window glass" below), `detail_glass_red`
-   at the rear to tail; `detail_glass_clear` lights with the lamp of the
-   nearest lamp triangle behind it (0.35 m), and so do rear reflectors
-   (`textured_reflector`, `reflector`); front reflectors and housings stay
+   at the rear to tail; `detail_glass_clear` and rear reflectors
+   (`textured_reflector`, `reflector`) light with the lamp behind or inside
+   them ("Clear covers over reflectors with no lamp", #223; before it, with
+   the nearest lamp within 0.35 m); front reflectors and housings stay
    unlit. At the rear the lens texels decide
    over the technique: a lens triangle on red texels is a tail lamp, and a
    red lens over an indicator brakes and indicates (0x19/0x1A; "The Lotus
@@ -119,29 +246,37 @@ on a shorter or longer car).
    A car with no headlamp technique at the front takes its front clear
    lenses as headlamps. Without those it takes the reflectors of its
    `headlight*`/`glass[LR]HL` sections, else their lamp-cover glass (`glass`,
-   `lights_glass`). In the full roster that applies to 10 of 562 cars:
+   `lights_glass`). A car that has a head lamp technique also lights the
+   reflectors under a headlight cover with no head lamp in it
+   (`_bare_head_units`, #168). In the full roster (562 cars then) the
+   fallback applies to 10 cars:
    CHE_CorvetteGS_10, DOD_RamSRT10_06 and FOR_MustangSVTCobraR_93, plus the
    race cars CHE_3_CorvetteC5R_04, MCL_41_McLarenF1GTR_98, MER_CLKGTR_98,
    MIT_HKS_06 and PEU_3_905EVO_93. The NASCARs CHE_2_MonteCarloSS_11 and
    FOR_1_Fusion_11 have decal headlights (`badge`) and stay dark.
-2. Side from the technique (`_left/_right`) or the triangle's x; a group
-   whose |x| stays under 0.3 m is a centre lamp. A centre tail lamp 8 cm or
-   more above the side tails becomes a stop-only lamp (type 0x02).
+2. Side from the technique (`_left/_right`) or the triangle's x; a
+   subsection whose |x| stays under 0.3 m is a centre lamp. A centre tail
+   lamp more than 8 cm above the side tails becomes a stop-only lamp (type
+   0x02).
 3. Triangles are grouped by (function, side, end) and each group is split
    into lamps 0.2 m apart on its finest LOD, so a side repeater is not the
    headlamp indicator and a bumper driving lamp is not the headlamp
    (indicators: the cluster nearest the car's end is the main one).
 4. `assign(upvh)` gives lamps the host's light entries in priority order
-   (headlamps, tails, stop, indicators, reverse, position, fog; secondary
-   clusters last), each an entry at its own end and side of the host
-   (`entry_place`; "Lamps broke with the wrong end" below). Lamps left over
-   share an entry of the same function, end and side (their geometry still
-   lights), else a fallback lamp's at their end, else take a free entry at
-   the other end, else stay unlit (the 370Z's rear fog lamp). The table keeps
-   its size and ids, so the hierarchy is untouched.
+   (`PRIORITY`: headlamps, tails, stop, indicators, reverse, brake +
+   indicator, position, fog; secondary clusters last), each an entry at its
+   own end and side of the host (`entry_place`; "Lamps broke with the wrong
+   end" below). A lamp with none left at its end shares a lamp's entry
+   there: same function and side, else the other side's when the type has
+   no side (`SIDELESS`, #219), else its fallback's. Only then does it take a
+   free entry at the other end; a fog lamp never does (#219) and stays
+   unlit, as the 370Z's rear fog lamp does. The table keeps its size and
+   ids, so the hierarchy is untouched. Head lamps become 0x1D where the side
+   has no position lamp of its own ("Head lamps dark by day").
 5. `patch_upvh` writes each used entry's position (area-weighted centroid),
    direction (headlamps (0, 0, 1), else the area-weighted lens normal) and
-   flags (type, colour 8/9/4/6, variant 2 on indicators, 1 on the stop lamp);
+   flags (type, colour 8/9/4/6, variant 2 on indicators and the combined
+   indicator types, 1 on the stop lamp);
    spare entries get flags 0 (type 0, never lit) and park on the nearest lamp.
 6. `add_geometry` sets byte 2 of semantic 9 on every lamp triangle (full and
    exterior entries, all LODs and the shadow LOD), keeping bytes 0 and 1.
@@ -204,14 +339,15 @@ Since 2026-10-23 the mode does more per car (`lightstest.lua`, driven by
    `0idle`, `6throttle` (rolling, lamps off), `1brake`, `2brake`,
    `3reverse`, `4brakeup`, `5idle`. The Lua logs the distance moved per
    update and `isReversing`. With traffic on, a drive can hit a traffic car
-   and break lamps (370Z in run 124438). `-LightsDriveOnly` skips the
+   and break lamps (370Z in run 124438); since #228 the probe switches
+   traffic off unless `-Traffic` is given. `-LightsDriveOnly` skips the
    `setLights` phases (`lights = { phases = false }`).
 3. Phases 1 to 18 as before, on the player's car and both copies.
 4. No traffic phase. Two tries in `lightstest.lua` (sync 92 to 94, since
    removed): `Spawn.Spawn` plus `civilianTraffic.AddVehicleToCarrier`
    returned false and the car stayed parked (run 20261023-115652);
    `GameVehicleResource.swapWithModel` on the nearest live traffic car
-   crashed the game (run 20261023-123840). Traffic is left on (switched
+   crashed the game (run 20261023-123840). Traffic was left on then (switched
    off, the probe counted 0 cars and nothing to swap, run 121707).
 
 `lightsync.lua` writes retry for 5 s on a sharing violation (the game reads
@@ -261,7 +397,11 @@ Fix (`dsf_materials.Texturing.is_lens`, `lights.LampPlan.build(lenses=...)`):
 a lamp-cover glass subsection behind Forza z 0.5 whose mean texel has red
 minus max(green, blue) of at least 80 and alpha of at least 128 is drawn from
 the atlas with the Lights material, and its triangles light with the lamp
-behind them like a clear `detail_glass_clear` lens (within 0.35 m). Front
+behind them like a clear `detail_glass_clear` lens (within 0.35 m). Later PRs
+narrowed this: since #163 `is_lens` takes only the textured covers
+(`lights_glass`, `lights_gls_noemit`), since #164 such a cover over a lamp is
+baked over it ("Lamp glass"), and since #223 its triangles light with the lamp
+right behind them. Front
 covers stay glass: on the Challenger SRT8, S65, 300C and Golf R their UVs land
 on red texels that Forza doesn't show. Survey of the 40 testdrive cars
 (`out/dmc/lensurvey.py`, `out/dmc/lenses.py`): the rule takes the tail lenses
@@ -339,7 +479,8 @@ runs:
   stop lamp mean 1.9, tails 10.2; in `out/testdrive5` 17 of 40 cars had a
   brake or tail mean below 10 (S2000 and Durango high stop lamps 0.0).
   Vanilla red lamp texels average 20 (75 vehicles, `fleet_alpha.py`; per car
-  9 to 58). Fix (`dsf_materials`): the "value" rule (brightest channel) and
+  9 to 58). Fix at the time (`dsf_materials`; replaced by "matched" the next
+  day, below, and since removed): the "value" rule (brightest channel) and
   a floor of 64 for lenses that are near black, which Forza lights by its
   glow mask alone (S2000 (31, 2, 2), Durango (19, 0, 0)). Means now: 370Z
   tails 49, high stop 54; S2000 high stop 37; Durango 19; DMC-12 tails 78;
@@ -553,7 +694,9 @@ Fix (`lights.LampPlan.build(..., texel=texel_sampler(atlases))`):
 - **Clear lenses** still light with the nearest lamp centre, but the centre
   leaves out lens triangles that are red by their texels: with them the
   JAG_XFR_10's tail centre moved onto its lens and its clear lens went to the
-  reverse lamp.
+  reverse lamp. (Since #223 a clear lens lights with the lamp right behind
+  it; the nearest centre, still without those triangles, only picks among the
+  lamps its piece has behind it.)
 - **Entries.** The new brake-and-indicator lamps (52 cars) come after the
   reverse lamps; one without an entry shares its side's tail entry, and a
   position lamp without one shares the head lamp (front) or tail lamp
@@ -586,16 +729,16 @@ Result (offline, master -> branch, at the built LOD 3):
   brake. The 207 RC's side tails don't glow on master or branch: their
   Lights texels have alpha median 0 (glow mask, #103).
 
-Two cars have no lamp at all in the full entry: FOR_EscortRSCosworth_92
-and TOY_6_SC430_08 draw their lamps at Forza LOD 3 only as `lights_glass`
+Two cars have almost no lamp in the full entry (the Escort only its front
+indicators): FOR_EscortRSCosworth_92 and TOY_6_SC430_08 draw their lamps at Forza LOD 3 only as `lights_glass`
 cover glass, with no lamp technique (#103).
 
 The cars still under half (LOD 1 list): rear fog lamps (`fogred`, ASC_KZ1R_12,
 LAM_Countach_88), tail-only position lamps (`drlred`, BMW_M3E92_08; vanilla
 uses 0x03 red tails too), `reverse_light` drawn on red texels
 (PEU_207Super2000_07, TOY_Aygo_11), and CHE_CorvetteZR1_09, whose four round
-lamps are `lindtailside/rindtailside` (DRL + indicator; whether Forza brakes
-them is unknown).
+lamps are `lindtailside/rindtailside` (then DRL + indicator; they brake since
+#220, "Tail lamps that brake and indicate"). #103 tracks the rest.
 
 ### Head lamps dark by day (player report)
 
@@ -605,7 +748,12 @@ vehicles): 140 have a front lamp that lights with DaytimeRunning: white
 position lamps 0x03 in the head-lamp cluster (99 vehicles, next to 0x01 head
 lamps; vanilla 229 at x ±0.60 beside its ±0.44 head lamps), or head lamps of
 type 0x1D, Headlights + DaytimeRunning (33; 31 of them have no 0x01 at
-all). Only 10 have neither. The converter gave Forza's head lamps 0x01 and
+all). Only 10 have neither. Recount (2026-10-29, the vanilla archive's
+light tables, front = entry z > 0, not `vanillafront.py`'s rule): 99
+vehicles have a front 0x03 lamp, 33 have 0x1D head lamps (31 with no front
+0x01), 131 one or the other; counting 0x12 and the DRL-indicator types too,
+146 have a front lamp that DaytimeRunning lights and 4 none. The 140 and 10
+above weren't reproduced. The converter gave Forza's head lamps 0x01 and
 made position lamps only from position-lamp techniques (`drlwhite`...), so
 in the front survey 66 of 573 ported cars had a visible front lamp lit by
 DaytimeRunning.
@@ -615,7 +763,7 @@ Fix (`LampPlan.assign`): head lamps on a front side without a position lamp
 (CHR_Cuda426_71's 10-triangle position lamps beside 109 head-lamp triangles
 don't count). Front survey (LOD 1): 554 of 573 cars show a DaytimeRunning lamp from
 the front (512 through 0x1D head lamps); 515 cars change at the front. At the
-built LOD 3: 64 -> 549. In game (`vm1-20261027-051849` master,
+built LOD 3: 64 -> 549. In game (confirmed-runtime, `vm1-20261027-051849` master,
 `vm1-20261027-052118` branch, `-Views fq`; `research/img/headlamps-day.jpg`):
 the Carlton's head lamps are dark by day on master and lit on the branch,
 like vanilla 198's 0x1D lamps in the same run. So the game lights DaytimeRunning
@@ -674,13 +822,15 @@ a `GlassMaxOpacity` in the car's `ShaderSettings.xml`). One ray per 2 x 2
 texels or more (about 3,000 a lens); the lens's own pattern stays per texel.
 The baked alpha keeps the lens texel's lamp score (`lamp_score`), so the lit
 lens glows as before: blending the reflector's glow mask in as well made the
-Subaru's lens blotchy again (alpha p10/50/90 7/27/32). Texels other triangles
-also sample are left alone (11% of the lens texels over the roster). The
+Subaru's lens blotchy again (alpha p10/50/90 7/27/32). (Still so for coloured
+and rear lenses; clear front lenses take the day glow since #142, and baked
+covers and flat front lenses glow with the lamp behind since #164 and #218.)
+Texels other triangles also sample are left alone (11% of the lens texels over the roster). The
 `lights_gls_*` lamp glass is left as it was: its opacity is a material setting
 (`GlassMaxOpacity`) and baked with its alpha the Evo's red tail glass came out
 mostly white; so are the coloured covers `is_lens` moves to the atlas (the
-DMC-12, checked in game). `red_lamp_curve` keeps knots of different alphas at
-least 0.01 apart (`RED_CURVE_MIN_GAP`, about the score noise of a flat DXT
+DMC-12, checked in game); both are baked since #164 ("Lamp glass").
+`red_lamp_curve` keeps knots of different alphas at least 0.01 apart (`RED_CURVE_MIN_GAP`, about the score noise of a flat DXT
 texel): the Subaru's lens alpha is now 8/9/13 (p10/50/90), standard deviation
 1.9 (was 6.1). Planning a car's atlas takes 2 to 7 s longer (CCXR, 240,000
 lens texels: 7 s). Offline (`img/lenses-offline.jpg`: Forza blend, master,
@@ -870,7 +1020,7 @@ were the open part (issue #124, next section).
 
 ### Head lamp glow by day (issue #124)
 
-Symptom (confirmed-static, confirmed-runtime in #115's runs): the ported head
+Symptom (offline-checked, confirmed-runtime in #115's runs): the ported head
 lamps' daytime glow followed the lens, not the lamp. The M3 E30's round lamps
 barely glowed where vanilla 241's and 130's round 0x1D lamps glow white, and over
 the roster the visible daytime glow was spread wider than vanilla's both ways.
@@ -997,7 +1147,9 @@ its side (centre entries next, then any side); one with none left at its end
 shares a lamp's at its end if it can (same function and side, or its
 fallback), else takes one at the other end, so a rear reverse lamp still
 outranks a front fog lamp as before. Sharing (twins, fallbacks) stays at
-the lamp's end.
+the lamp's end. Since #219 a lamp of a type with no side can also share its
+other side's entry at its end, and a fog lamp never takes an entry at the
+other end ("Rear lamps short of a rear entry").
 
 Survey (offline, `out/lampside/survey.py` and `summary.py` in the
 `driversf-forza-wt-lampside` worktree; the 573 cars of
@@ -1013,7 +1165,8 @@ places from the vanilla tables; NIS_Leaf_11 has no car data):
 
 The 85 left are rear reverse (45) and rear fog lamps (32) and a few
 indicators on hosts with fewer rear entries than the car has rear lamps;
-they light, and break with the front.
+they light, and break with the front. After #219: 37 lamps on 20 cars
+(#146).
 
 ### Tail lamps with the broken-lamp pattern (issue #141)
 
@@ -1038,7 +1191,8 @@ logged `FUN_008A78E0`'s lamp objects, below):
    lit. Nothing breaks at spawn: with no hit, `0x8E84A0` is never called and every lamp
    object's bit 0 is clear (run 231606, call 1 of each car). With the #132 assignment
    (`LampPlan.assign`) 2 tail/brake lamps on 2 cars are left on front entries
-   (CHE_CorvetteGrandSport_96, LEX_SC430_02); in game the Veyron's tails stay lit after
+   (CHE_CorvetteGrandSport_96, LEX_SC430_02; one brake lamp after #219); in game the Veyron's
+   tails stay lit after
    the front hit (lamps 1, 3, 4, 6 flags 0x9E, brightness 1) and break with the rear
    one, and its head lamps no longer break with the rear (master: lamps 5, 6 bit 0 set
    after `+hitrear`; branch: 14, 15 clear).
@@ -1053,6 +1207,8 @@ logged `FUN_008A78E0`'s lamp objects, below):
    of the 573 cars at their finest LOD): 14 cars change, 2,378 texels (X5 M whole lenses;
    Charger SRT8 12, Viper CC, Ultima GTR, MP4-12C, Scirocco and 8 more in part); the
    X5 M's tails are Forza's flat red in game (`img/taillamps-x5m-swatch-ingame.jpg`).
+   Since #164 the X5 M's whole swatch lenses are left out and their tint filters the
+   lamp behind them ("Lamp glass").
 
 The user's Veyron showed the blobs on its outer round lamps: their centres are the
 reverse lamps, which master hung under host 279's wing indicator records (entries 14,
@@ -1080,7 +1236,7 @@ texels (the Devon's covers sit on flat red ones, its front covers on
 Lights atlas: texel x `PaintScale` x `GlassColor`, opacity from the texel alpha,
 capped by `GlassMaxOpacity`.
 
-**What the ports had (confirmed-static, `out/lamps/survey.py`: the main carbin of
+**What the ports had (offline-checked, `out/lamps/survey.py`: the main carbin of
 the 573 cars of `tools/batches/all.txt`, finest LOD; a cover is over a lamp when a
 Lights-atlas surface lies 0 to 0.3 m behind 30% of its area or more).**
 
@@ -1120,13 +1276,15 @@ footprint, and `Texturing.material` drew it in the shared trim's dark texel.
   (`TEXTURED_COVERS`: `lights_glass`, `lights_gls_noemit`; the DMC-12's grid lens).
 - `Texturing._tiling_swatch`: a tiling lamp part is one Lights colour, the mean
   texel at its corners and centres with the UVs wrapped (the Mustang's bowls
-  (160, 145, 149)).
+  (160, 145, 149)). Since #190 and #218 only parts that `unwrap_tiles` can't
+  lay into one tile.
 - `lights.yellow_lens`, `_yellow_head_covers`: a front amber lens whose mean texel
   hue is 45 or more lights as a head lamp when a head lamp triangle lies within
   0.15 m (the Panoz; FER_83_F430GT_10's yellow bumper lens has none and stays an
   indicator), and the lens bake gives it the day glow of a clear lens.
 - Rear reflectors light with the nearest rear lamp within 0.35 m, like clear
-  lenses (`LampPlan.build`): rear lamp triangles with a light byte 674,063 ->
+  lenses (`LampPlan.build`; since #223 with the lamps inside their outline):
+  rear lamp triangles with a light byte 674,063 ->
   1,197,438 over the roster (host 266 plan, `out/lamps/plan_survey.py`).
 
 In game (confirmed-runtime, `-Views 'nose,rear,nose+night,rear+night' -Palette 0
@@ -1318,7 +1476,7 @@ In game (VM 1, `-Views 'nose,rear,nose+night,rear+night' -Palette 0 -ShotSeconds
 the dark mood. The Mustang GT 05 shows no front lamp at all in the dark mood, on master and
 with this change alike (bumper lamps included), while its tails light; its light table has
 the head lamps on host 192's front entries 14 and 15 (0x1D), under the headlamp part records
-(roles 50, 51). That is outside the lamp plan and open (#158).
+(roles 50, 51). The cause was outside the lamp plan; #175 fixed it (next section).
 
 ### No front lamp on the player's car: lamp parts drawn as trim in the exterior entry (issue #158)
 
@@ -1415,17 +1573,18 @@ leaves it out (`dropped_lenses`) before the bake.
 wing: its normal is (-0.13, 0.65, -0.58). Rays along the normal met the housing floor (`body/misc`,
 1,743 of 2,484 rays through the see-through circles), so the bowls baked black. Along the car's axis
 2,179 of them meet the bowls (`body/head_light`, the foil texels (208, 208, 208)). A front lens ray
-that meets no lamp surface along the normal is cast again along +z (`lenses._axis_fallback`) and
-takes that result when it meets a lamp. Rear lenses are unchanged.
+that meets no lamp surface along the normal is cast again along the car's axis, into the car (Forza's
++z; `lenses._axis_fallback`) and takes that result when it meets a lamp. Rear lenses were unchanged
+until #218, which also limited the axis rays to lenses facing out of the car's end.
 
 **Mustang GT 05 bowls: tiles unwrapped (offline-checked).** The bowls (`body/textured_reflector`,
 LOD 1, u -2.9 to 3.9) sit in tiles -3, 0 and 3 with no triangle across a tile edge.
 `dsf_materials.unwrap_tiles` moves each triangle into the 0..1 tile (`TileWrapped`: a vertex's
 shift by its raw UV); a tiling lamp part that unwraps is an ordinary textured part. Up to 10% of its
-triangles may cross a tile edge (`TILE_CROSS_SHARE`; the Range Rover 12's head lamp bowls, 3 of 304):
-they are clamped into the tile of their lowest corner. `_tiling_swatch` (#168) stays for parts with
-more, or with a vertex in triangles of two tiles: the emitter shares a vertex within a region, so it
-has one UV.
+triangles could cross a tile edge (`TILE_CROSS_SHARE` then; the Range Rover 12's head lamp bowls, 3 of
+304): they were clamped into the tile of their lowest corner. `_tiling_swatch` (#163) stayed for parts
+with more, or with a vertex in triangles of two tiles: the emitter shares a vertex within a region, so
+it has one UV. #218 replaced both limits (next section).
 `resolve_lamp` gives lenses (`_Surfaces`, the bake's shared-texel pass, `lamp_glow`) and the lamp
 plan's texel sampler the same unwrapped material (the Mustang's lamp plan is unchanged by it).
 
@@ -1561,6 +1720,7 @@ game (VM 2, `vm2-20261029-073325`, `-Views 'nose,nose+night,nose'`, vanilla 241 
 `img/lamps6-panoz-day-ingame.jpg`) its two bowls show as white discs by day, as 241's lamp reads white
 with its flutes: the white is Forza's flat foil reflector (208, 208, 208) in sun under a lens at
 opacity 0.26, brought to vanilla's median brightness by `white_lens_scale`, not the glow. Left as it is.
+
 ### Rear lamps short of a rear entry (issue #146)
 
 Symptom (offline-checked): after #144, lamps still took a host light entry at the other end of the car
@@ -1592,7 +1752,10 @@ entry places from the vanilla tables; 566 cars):
 Unlit lamps 53 -> 76: the 34 fog lamps, less the ones that now share a twin. The 29 reverse lamps left are
 pairs (or centre lamps) on hosts with no rear entry left for either side, e.g. HON_S2000_03 and LEX_ISF_09
 on 274, AUD_RS4_06, the C5 and C6 Corvettes' centre reverse lamps. Sharing them with a red lamp would light
-them red, and leaving them unlit would lose the reverse light, so they keep the front entry.
+them red, and leaving them unlit would lose the reverse light, so they keep the front entry. They
+stay open in #146; the fix would be hosts with more rear entries (`host_select`). Not checked in game
+on the cars it changes (#220's and #223's runs include it).
+
 ### Tail lamps that brake and indicate: lindtailside (issue #103)
 
 Symptom (offline-checked): the Corvette ZR1 09's four round tail lamps never braked; of its 883 cm2 of
@@ -1635,9 +1798,10 @@ first; master's lamp code `out/l6/before3` run `vm1-20261029-073318`, this chang
 the ZR1's four round lamps and the Explorer's tails glow as on master (`img/lamps6-zr1-tails-dark-ingame.jpg`):
 master lit them at full as DaytimeRunning lamps whatever the brakes did. The difference is on the throttle
 (0x19/0x1A dim to a tail lamp's 0.2 off the brakes), which these runs don't drive; not checked in game.
+
 ### Clear covers over reflectors with no lamp (issue #174)
 
-Symptom (confirmed-runtime since #158): the VW GTI VR6's bumper fog lamps glowed with its head lamps, by
+Symptom (confirmed-runtime, #175's run `vm1-20261028-153451`): the VW GTI VR6's bumper fog lamps glowed with its head lamps, by
 day and in the dark mood. In Forza they never glow: `bumperFa` holds `lights_glass` covers over a
 `reflector` and a `textured_reflector`, with no lamp technique.
 
@@ -1687,46 +1851,70 @@ its head lamps do as before (`img/lamps6-gtivr6-bumper-dark-ingame.jpg`).
 
 ### Open
 
-1. Front lamps: neither copy faces the camera (`setYRotation(h + pi)` and
-   negating the matrix rows both left it showing its rear; the matrix
-   write may set only the position), so headlamps and front position lamps
-   of converted cars are unchecked in game. Traffic never sets Headlights
-   or DaytimeRunning in daylight (`draw-distance.md`), so in normal play
-   they stay off for vanilla and converted traffic alike.
-2. b0 and the pi, pi pair; whether the flare sprite uses the direction.
+1. Front lamps in the lamp-phase mode (`-Lights`): neither copy faces the
+   camera (`setYRotation(h + pi)` and negating the matrix rows both left it
+   showing its rear; the matrix write may set only the position). Answered
+   another way: since #104 and #123 front lamps are checked with the fixed
+   views (`-Views nose`, `nose+lit`, `nose+night`), which show the converted
+   head lamps lit by day and at night. Traffic never sets Headlights or
+   DaytimeRunning in daylight (`draw-distance.md`, hypothesis from the
+   decompile), so in normal play traffic's front lamps stay off by day for
+   vanilla and converted cars alike.
+2. b0 and the pi, pi pair. The flare sprite does use the direction: it draws
+   only while the entry's direction faces the camera (`draw-distance.md`,
+   "The flare system").
 3. Lamps under detachable parts: the light records hang under the host's
    bumper and boot records (a lamp breaks when its record's part is damaged,
    `0x8E84A0`). With `--damage` (the port_batch default) the lamp triangles
    sit on their panel's record like the rest of the body (`damage.py`
    `section_rule`: tail lights vote between boot, rear bumper and chassis);
    without it they are chassis-bound, so the geometry stays while the lamp
-   breaks. Whether a converted lamp's glow and its panel break together is
-   unchecked in game.
+   breaks. Partly answered in game by #141's runs (`+hitfront`, `+hitrear`,
+   runs `vm1-20261027-231924`, `-233940`): a lamp on an entry at its own end breaks with
+   that end, as the Veyron's tails and head lamps did. A panel that falls off
+   with its lamp is unchecked (`damage.md`, "Risks and open questions" 5).
 4. Converted cars in traffic (above). `swapWithModel` on a live traffic car
    crashed run 123840 (the nearest traffic car ahead, to the player's own
    model 227); register.lua's experimental `swapTraffic` and `carrier` paths
    were removed for that reason (they were off by default).
 5. Converted amber lenses keep Forza's brightness; red lenses are darkened
    (`red_lens_scale`) and white ones too since issue #115
-   (`white_lens_scale`). The S5S Raptor's tails (mean 91) sit above vanilla's
-   per-vehicle p90 (81).
+   (`white_lens_scale`). The S5S Raptor's tails (alpha mean 91) sit above
+   vanilla's per-vehicle p90 (81). The other way, #166: the Devon GTX's
+   darkened tails read dark maroon by day on its bright red body (a roster
+   survey there kept the rule).
 6. In a run, cars after the fifth sometimes don't spool ("NOT spooled after
    40 ticks", run host-20261024-003943); keep lamp runs to five IDs.
 7. Lens bake ("Lamp lenses drawn opaque"): the view is straight in along the
-   lens normal, so the lamp inside doesn't shift with the camera (vanilla lamps
-   are flat textures too). Since "Lamp glass" the `lights_gls_*` glass and the
-   textured covers are baked too; covers not over a lamp stay DSF's window glass.
-   The lenses keep the texel's colour and alpha: Forza's race shaders scale the lens
-   colour by `GlassColor x PaintScale` (a twentieth of the texel by default) and add a
-   reflection the bake doesn't draw, and the pass tables (blend states) of the effects
-   aren't decoded. Issue #89.
+   lens normal (or the car's axis, #190 and #218), so the lamp inside doesn't
+   shift with the camera (vanilla lamps are flat textures too). Since "Lamp
+   glass" the `lights_gls_*` glass and the textured covers are baked too;
+   covers not over a lamp stay DSF's window glass. The lenses keep the
+   texel's colour and alpha: Forza's race shaders scale the lens colour by
+   `GlassColor x PaintScale` (a twentieth of the texel by default) and add a
+   reflection the bake doesn't draw, and the pass tables (blend states) of
+   the effects aren't decoded. Issue #89.
 8. Head lamp glow by day (issue #124, "Head lamp glow by day"): only clear
-   front lenses and head lamp surfaces get it; on 0x1D lamps at a fifth ("Head lamps white
-   plates by day"). Clear rear lenses over reverse
-   lamps still glow by their opacity, and so do front lenses with no lamp
-   behind them within 0.4 m.
-9. Tiling lamp parts with more than a quarter of their UV area across a tile edge stay one colour
-   (9 subsections on 6 cars at LODs 1/3/5, all LOD 5; "Tiles across edges").
+   front lenses and head lamp surfaces get it; on 0x1D lamps at a fifth
+   ("Head lamps white plates by day"). Clear rear lenses over reverse lamps
+   still glow by their own lamp score, and so do front lenses that meet no
+   lamp within 0.4 m along the normal or the axis.
+9. Tiling lamp parts with more than a quarter of their UV area across a tile
+   edge stay one colour (9 subsections on 6 cars at LODs 1/3/5, all LOD 5;
+   "Tiles across edges"), and swatch lenses that are only partly scrambled
+   keep a flat tint over part of the lens (Charger SRT8 12, Viper CC, MP4-12C
+   and the rest of #141's 14 cars that #164 didn't take). Issue #229.
+10. Brake coverage (#103): 43 of 566 cars brake with under half of their
+    visible red rear lamp area after #220 (red texels lit as reverse or
+    indicator lenses, the M3 E92's 0x03 `drlred` tails, decal lamps, unlit
+    reflectors), and FOR_EscortRSCosworth_92 and TOY_6_SC430_08 have no lamp
+    technique at Forza LOD 3, so their full entries have almost no lamps
+    (the Escort only its front indicators). The ZR1's
+    `lindtailside` lamps (#220) weren't driven on the throttle in game.
+11. Lamps on the other end's entries (#146): 37 on 20 cars after #219, 29 of
+    them reverse lamps on hosts with no rear entry left. Fog lamps on full
+    hosts stay unlit (#219).
+12. Pop-up head lamps can't rise with the lights (#122).
 
 ## Paint
 
@@ -1984,7 +2172,8 @@ M5's door shuts and wing vents, the Skyline's wings), not a second colour.
 
 ### Open
 
-1. In game: the factory colours after the paint-UV fix (`out/lights/ab2/`).
+1. Answered: ports show their factory colours in game since the paint-UV fix
+   (the DMC-12's and S5S Raptor's runs above, `vm-20261024-060602`).
 2. Which entry a spawn picks (deterministic per car in the runs so far) and
    whether the garage lists all entries.
 3. Answered: paint UV1 is the damage-decal UV (`damage.md`).
