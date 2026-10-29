@@ -7,11 +7,12 @@ A DSF vehicle's full entry holds NONR/SPSR (research/lights.md, "Paint"):
           one per spawned car (garageSpawnVehicle passes the index as `shader`)
           SPSP  9 MARP render parameters (7 on two vehicles):
                 g_vec4TintColour1_Alpha  (x, 1, z, 1) metallic, (0, 0, 0, 1) solid
-                g_vec3TintColour2        base colour, linear RGB (white ~0.9-1.0)
-                g_vec3TintColour3        second colour; with a low g_fresnelpower
-                                         (< 1) a dark edge tint, with a high one
-                                         (5 to 15) the main colour, colour 2 the
-                                         facing tint
+                g_vec3TintColour2        first colour, linear RGB (shown where the
+                                         fresnel term is 0; white ~0.9-1.0)
+                g_vec3TintColour3        second colour, mixed in by the fresnel term:
+                                         with a low g_fresnelpower (< 1) it is what
+                                         shows almost everywhere, with a high one (5
+                                         to 15) only at grazing angles
                 g_fresnelpower, g_fresnelbias, g_hCustomFresnelPower,
                 g_hCustomReflectionAmount, g_hSecondSpecularIntensity,
                 g_hSecondSpecularPower
@@ -22,24 +23,29 @@ These override the shared paint material GLOBAL_Chassis. A ported car keeps
 its host's palette (the Desanne's ten colours). This module builds one from the
 car's factory colours in the Forza game database (gamedb.slt Combo_Colors:
 Ordinal = Data_Car.Id, Sequence, Metallic, RGB): each colour takes the shading
-parameters of the most similar vanilla paint of the same finish (all 150 vanilla
-palettes, 948 entries), and its base colour; the second colour keeps the vanilla
-entry's brightness ratio in the Forza colour's hue.
+parameters of the vanilla paint of the same finish (all 150 vanilla palettes, 948
+entries) whose shown colour (the fresnel mix of colours 2 and 3, `apparent`) is
+nearest the colour's DSF target (the swatch at DSF's paint brightness, SHOWN_GAIN),
+and colours 2 and 3 in the target's hue so that it shows the target.
 
     uv run dsff paint colours out/cache/fh1/gamedb.slt NIS_370Z_10
     uv run dsff paint palette <archive> --id 304 [--gamedb ... --media ...]
+    uv run dsff paint survey [--list tools/batches/all.txt]
 """
 
 from __future__ import annotations
 
 import argparse
 import copy
+import json
+import math
 import sqlite3
 import struct
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from dsfforza import REPO
 from dsfforza.formats.chnk import Entry, entry_size
 from dsfforza.formats.vehicle_mesh import child, payload
 from dsfforza.game import game_paths
@@ -467,6 +473,74 @@ def find_gamedb(car_folder: Path) -> Path | None:
     return candidate if candidate.exists() else None
 
 
+def _chromaticity(c) -> tuple[float, ...]:
+    total = sum(c) + 1e-6
+    return tuple(x / total for x in c)
+
+
+def twin_ratios(vanilla: list[dict], gamedbs: list[Path], gain: float) -> list[float]:
+    """For each Forza colour of the vanilla cars Forza also has (handling_dsf.PAIRS), the
+    shown luminance of the vanilla entry of that car nearest it (chromaticity, and
+    luminance against `gain` x the swatch's) over the swatch's linear luminance."""
+    from dsfforza.build.handling_dsf import PAIRS
+
+    out = []
+    for sid, media in PAIRS.items():
+        colours = next((c for db in gamedbs if (c := forza_colours(db, media))), [])
+        shown = [apparent(v["params"]) for v in vanilla if v["sid"] == sid and is_template(v["params"])]
+        for colour in colours if shown else []:
+            lum = _lum(colour.linear)
+            if lum < NEAR_BLACK:
+                continue
+            hue = _chromaticity(colour.linear)
+
+            def cost(s, hue=hue, lum=lum):
+                d = sum((a - b) ** 2 for a, b in zip(_chromaticity(s), hue))
+                return 20 * d + abs(math.log((_lum(s) + 1e-3) / (gain * lum + 1e-3)))
+
+            out.append(_lum(min(shown, key=cost)) / lum)
+    return out
+
+
+def survey(vanilla: list[dict], cars: list[str], cache: Path, gamedbs: list[Path]) -> dict:
+    """Shown luminance against the DSF target over the cars' palettes, vanilla's own
+    entries taken as targets, and the twin-car gain."""
+    rows = []
+    for media in cars:
+        name, _, game = media.partition("@")
+        # the game the build takes it from: its cache folder, FH1 first (port_batch)
+        found = [db for db in gamedbs if (db.parent / name).is_dir()]
+        dbs = [cache / game / "gamedb.slt"] if game else found[:1] or gamedbs
+        colours = next((c for db in dbs if (c := forza_colours(db, name))), [])
+        for colour in pick_colours(colours):
+            if colour.finish or _lum(colour.linear) < NEAR_BLACK:
+                continue
+            q = shade(colour, vanilla)
+            rows.append((media, _lum(apparent(q)) / _lum(target_colour(colour))))
+    own = []
+    for v in vanilla:
+        shown = apparent(v["params"])
+        rgb = tuple(round(linear_to_srgb(c / SHOWN_GAIN) * 255) for c in shown)
+        colour = ForzaColour(0, rgb, is_metallic(v["params"]), "")
+        if not is_template(v["params"]) or max(shown) > SHOWN_GAIN or _lum(colour.linear) < NEAR_BLACK:
+            continue
+        own.append(_lum(apparent(shade(colour, vanilla))) / _lum(shown))
+
+    def off(ratios):
+        return sum(1 for r in ratios if not 0.75 <= r <= 1.25)
+
+    fits = {g: sorted(twin_ratios(vanilla, gamedbs, g)) for g in (0.2, 0.3, 0.4, 1.0)}
+    return {
+        "entries": len(rows),
+        "cars": len({m for m, _ in rows}),
+        "outside_25pc": off([r for _, r in rows]),
+        "cars_outside": len({m for m, r in rows if not 0.75 <= r <= 1.25}),
+        "vanilla_entries": len(own),
+        "vanilla_outside_25pc": off(own),
+        "twin_median_ratio": {g: round(r[len(r) // 2], 3) for g, r in fits.items() if r},
+    }
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -474,11 +548,14 @@ def main(argv: list[str] | None = None) -> None:
     c.add_argument("gamedb", type=Path)
     c.add_argument("media")
     c.add_argument("--dsf", type=Path, default=None, help="vanilla dngvehicles.sp (default: from $DSF_GAME_DIR)")
+    v = sub.add_parser("survey", help="shown colour against the target over a car list, and vanilla's own")
+    v.add_argument("--list", type=Path, default=REPO / "tools" / "batches" / "all.txt")
+    v.add_argument("--dsf", type=Path, default=None, help="vanilla dngvehicles.sp (default: from $DSF_GAME_DIR)")
     p = sub.add_parser("palette", help="print a vehicle's palette")
     p.add_argument("archive", type=Path)
     p.add_argument("--id", type=int, required=True)
     args = parser.parse_args(argv)
-    if args.cmd == "colours":
+    if args.cmd in ("colours", "survey"):
         args.dsf = game_paths.vanilla(args.dsf)  # the original when a dsfforza install replaced it
 
     from dsfforza.formats import upvh as uv
@@ -500,6 +577,16 @@ def main(argv: list[str] | None = None) -> None:
         return
     with args.dsf.open("rb") as stream:
         vanilla = vanilla_paints(stream, read_chunk(stream, 0).entries)
+    if args.cmd == "survey":
+        cache = REPO / "out" / "cache"
+        cars = [x.split("#")[0].strip() for x in args.list.read_text(encoding="utf-8").splitlines()]
+        print(
+            json.dumps(
+                survey(vanilla, [c for c in cars if c], cache, [cache / g / "gamedb.slt" for g in ("fh1", "fm4")]),
+                indent=1,
+            )
+        )
+        return
     for colour in pick_colours(forza_colours(args.gamedb, args.media)):
         q = shade(colour, vanilla)
         dimmed = q.get("_dimmed", 1.0)
