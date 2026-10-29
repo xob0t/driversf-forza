@@ -98,7 +98,9 @@ later PR replaced a rule, the earlier section says so in one line.
   hot where the reflector is deep, ranked per lamp onto vanilla's 0x1D
   distribution ([#124](#head-lamp-glow-by-day-issue-124)). Every texel a
   0x1D lamp samples then glows at 0.2 of that (`DAYTIME_GLOW`), a 0x01
-  lamp's level ([#167](#head-lamps-white-plates-by-day-after-164)).
+  lamp's level ([#167](#head-lamps-white-plates-by-day-after-164)): every
+  source texel under the DSF texels its triangles sample, and the lamps that
+  share a 0x1D entry too ([#250](#head-lamps-white-plates-by-day-volvo-s60-11-venom-gt-12-boss-429-issue-250)).
 
 **Glass over lamps** (`lenses.bake`, `Texturing._bake_lenses`).
 
@@ -111,8 +113,8 @@ later PR replaced a rule, the earlier section says so in one line.
   [#190](#flat-lenses-lens-skins-laid-back-head-lamp-lenses-and-tiling-bowls-player-reports-on-3ca28fd),
   [#218](#tiles-across-edges-streak-parts-flat-front-lenses-rear-axis-rays-issue-189)).
 - A rear lens of one flat colour, or a tint swatch stretched over the lens,
-  is left out when half its rays meet a lamp, and its colour filters the
-  lamp texels behind it. A flat front lens stays, baked as a filter, and
+  is left out when half its rays meet a lamp (a clear swatch lens when any
+  ray does, #250), and its colour filters the lamp texels behind it. A flat front lens stays, baked as a filter, and
   glows with the lamp behind it ([#164](#lamp-glass-issues-89-145), #190,
   #218).
 - Plain `glass` covers over a lamp are left out (in a lamp unit's own section
@@ -2015,6 +2017,66 @@ lens (Spark 9, Genesis Coupe 8, Volvo 242 1, Forte Koup 6); the only sizeable on
 head lamp lens (343 of about 1,000 texels) and the Scirocco R's tail lenses (39 of about 1,400). The lens
 texels that no lamp lies behind (Venom GT's and Noble M600's lexan, the MP4-12C's wing lens) are scrambled
 with nothing to bake, so they keep their own texels as before.
+### Head lamps white plates by day: Volvo S60 11, Venom GT 12, Boss 429 (issue #250)
+
+Symptom (offline-checked, `dsff render_compare` roster run on master ede81a1): after #167 two ports'
+head lamps still glowed as white plates with the running lights on: `VOL_S60_11` (glow p95 7.7x a full
+0x01 lamp texel) and `HEN_VenomGT_12` (6.1x); `FOR_MustangBOSS429_70` was at the limit (3.1 in one
+view).
+
+Cause (confirmed-static, `out/l8/plandiag.py` and `glowdiag.py` in the t3-a7c21235 worktree). Three
+ways a day-lit (0x1D) lamp's texels kept their full alpha:
+
+- **The DSF texel, not the source texel.** `Texturing.daytime_mask` marked the source (Forza) texels
+  inside each 0x1D triangle's UVs, else its centre's; `render` averages a box of source texels into
+  each DSF texel (2 x 2 at the S60's scale 0.40). 79 of the S60's 437 head lamp reflector triangles
+  are slivers whose UVs fall on one texel of alpha 255 (u 0.835, v 0.301): one marked source texel
+  in a box of unmarked ones, so the DSF texel kept 0.8 to 1 of its alpha. Built: those triangles
+  sampled alpha 255 by day; 0.2 of it is 51.
+- **A clear swatch lens kept as an opaque plate.** The Venom's `lexanLHL/RHL` `detail_glass_clear`
+  covers the whole head lamp unit with 71 triangles on a flat grey swatch (every texel scrambled,
+  `lenses._scrambled`). A swatch lens is left out with its tint on the lamp behind when half its rays
+  meet a lamp; these rays meet the projectors' housing more than the projectors, so the lens stayed
+  drawn as its own Lights texel (136, 137, 136, converted alpha 155): an opaque grey plate over the
+  lamp by day (Forza draws it see-through), lit by day as 0x1D. Its swatch texel is shared with the
+  indicator part of the lens, and was averaged with its unmarked neighbours as above.
+- **A lamp on a head lamp's entry.** The Boss 429's amber `slorange` side markers (position lamps)
+  share the left head lamp's 0x1D entry when host 193 has no entry left for them (#146's fallback).
+  `LampPlan.is_daytime` asked the lamp's own type (0x03), so their texels (alpha up to 254) glowed at
+  0x1D's level (p95 9.9).
+
+Change:
+
+- `Texturing.daytime_mask(sections, daytime, lit)` (`_dsf_boxes`): besides the texels inside each
+  0x1D triangle's UVs, every source texel under the DSF texels it samples (its DSF UVs through its
+  region's mapping; for a triangle covering 4 DSF texels or fewer, the 2 x 2 a bilinear sample at
+  its centre reads), less the source texels that other lamps' triangles sample (`lit`:
+  `LampPlan.light_byte`). Unlit triangles don't glow (a lamp glows by its texel alpha only), so the
+  wider mask changes nothing else.
+- `lenses.bake`: a clear swatch lens (`texel_class` white) is left out, its tint on the Lights
+  surfaces its rays meet, when any ray meets a lamp; coloured ones keep the half-the-rays rule (a red
+  lens over a small bulb is the tail lamp surface).
+- `LampPlan.is_daytime` takes the type of the entry the lamp lights with (its owner in `slots`).
+
+Roster (offline, `out/l8/day_survey.py`: `Texturing.plan` at LODs 1, 3, 5 and the lamp plan on each
+car's host-picks host, set_daytime's mask, the rendered DSF atlas; per car the 0x1D triangles of LOD 1
+(chosen by their entry's type both times) and the DSF texels each samples; 566 cars, 514 with day-lit
+head lamps; master 62999f2 against this change):
+
+| | master | this change |
+| --- | ---: | ---: |
+| cars with over 1 cm2 of day-lit lamp sampling alpha over 60 (0.2 x 255 = 51) | 93 | 21 |
+| cars whose area-weighted p95 alpha is over 60 | 9 | 1 |
+| per-car p95 alpha, p10 / 50 / 90 | 24 / 35 / 45 | 23 / 34 / 44 |
+| per-car day emission (sum area x alpha / 255 x 10, cm2), p10 / 50 / 90 | 85 / 410 / 1226 | 79 / 392 / 1147 |
+| cars whose emission changes by over 5% or p95 by over 5 | | 125 |
+
+Largest changes (p95 alpha; area over 60 cm2): RUF_Yellowbird_87 184 -> 37 (692 -> 0), the Venom 124 ->
+9 (618 -> 0), REN_5Turbo_80 57 -> 44 (191 -> 0), CHE_Express2500Cargo_05 91 -> 18 (167 -> 0, a lamp on a
+head lamp's entry), the S60 153 -> 51 (156 -> 4), SAT_Ion_06 66 -> 23. Lenses newly left out: the
+Venom's lexan, and the clear rear swatch lenses of ACU_TSX_10, SUZ_SX4_11, VW_Fox_11 (`glassLTL/RTL`)
+and MCL_MP412C_11 (`winga`), over their reverse and tail lamps. Left over 60: VW_RabbitGTI_84 (p95 82;
+its `oldhead` mean 43).
 
 ### Head lamp techniques at the rear (issue #264)
 
