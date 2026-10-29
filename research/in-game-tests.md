@@ -1,9 +1,9 @@
 # In-game tests
 
-Updated: 2026-10-26
+Updated: 2026-10-29
 
 Runs up to 2026-10-22 used the persistent Windows Sandbox harness in
-`tools/wsb/` (see the README); later ones run on the host (`-OnHost`) or in
+`tools/wsb/` (`sandbox.ps1`); later ones run on the host (`-OnHost`) or in
 the headless VM (`-Vm`), both below. All of them: the vanilla game folder
 mapped read-only, DriverNGHook 0.7.2, the
 probe in `tools/game/lua/`, and the player's own save. Run folders are under
@@ -16,8 +16,9 @@ DirectX use (microsoft/Windows-Sandbox #131/#132), so runs from
 `host-20261023-*` on are on the host while nobody uses the PC. Same probe and
 run script (`run-test.ps1 -OnHost`); what differs:
 
-- the run folder is `D:\dsfforza-run` (on the game's volume: hard links
-  instead of symlinks, which need admin);
+- the run folder is `<game drive>\dsfforza-run` (`-HostRunPath`; here
+  `D:\dsfforza-run`), on the game's volume: hard links instead of symlinks,
+  which need admin;
 - the Driver profile in Documents is backed up to
   `dsfforza-wsb\host-session` and switched to a 1280x720 window for the
   series, then restored file by file and compared by hash (the folder itself
@@ -75,7 +76,7 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
   small ISO built with IMAPI2FS. The media answer file replaces the one
   MicroWin bakes into the image. The account is created in specialize and put
   in Administrators by SID (S-1-5-32-544), because the Russian image names
-  the group "РђРґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂС‹". First logon installs the VC++ x86 runtime and
+  the group "Администраторы". First logon installs the VC++ x86 runtime and
   VMware Tools (`setup.exe /S /v"/qn REBOOT=R ADDLOCAL=ALL"`; Tools 13 has only a 64-bit
   `setup.exe`, no `setup64.exe`). The whole build takes about 35 minutes
   (Install about 30, Provision about 1, copying 5.9 GB of game).
@@ -216,8 +217,10 @@ the missing MAC don't matter; the clone gets new UUIDs at its first power-on.
 | 4 GB / 1 GB | `vm2-20261025-090258` | 2.92 GB, 1.18 GB available | 981 / 687 / 1219 MB | not sampled | not sampled | 162 s |
 | 4 GB / 512 MB (chosen) | `vm2-20261025-085007`, `-085255` | 2.92 GB, 1.17 GB available | 989 / 691 / 1229 MB | 5.5 GB | 7.03 GB | 160, 160 s |
 
-- The game needs about 1 GB private and 1.2 GB of address space, far from
-  the 32-bit 4 GB. The whole guest peaks under 3 GB committed.
+- The game needs about 1 GB private and 1.2 GB of address space, inside
+  the 2 GB that vanilla 1.04 has: its Driver.exe is not large-address aware.
+  The copy on this PC, and so the VMs' `C:\Game`, has the flag set by a 4 GB
+  patch (`exe-vehicles.md`). The whole guest peaks under 3 GB committed.
 - **Graphics memory is guest RAM:** the guest reports no dedicated GPU
   memory and 300 to 340 MB shared (Driver.exe 250 MB) with any setting.
 - **Host side:** the vmware-vmx working set is the whole guest RAM within
@@ -353,7 +356,7 @@ that VM 2 session was running at half speed.
   error dialog while the world loaded, with no minidump. The next two
   identical runs passed, and host runs of this archive have died the same way
   (`host-20261023-174440`, exit -1), so it isn't VM-specific. Driver.exe stayed
-  near 1.17 GB virtual and 0.96 GB private, far from the 32-bit limit.
+  near 1.17 GB virtual and 0.96 GB private, inside vanilla 1.04's 2 GB.
 - Frame rate (PresentMon, 30 s of `vm-20261024-020519` from 35 s after
   launch, Shift zoom and driving, host CPU loaded by port_batch builds): mean
   45 fps, median 46.8, 1 % low 28.1. Present mode "Composed: Copy with GPU GDI".
@@ -430,8 +433,8 @@ About half of the VM runs ended at the DriverNGHook fatal-error dialog 20 to
 **Lua VM while a big user file loads (0x005F078A / 0x005F078D / 0x005EE811).**
 
 - Where: luaV_execute reads an upvalue through a bad pointer. It runs inside
-  `user_open` (ScriptLoader.ri_dofilefromdisk в†’ luaL_loadfile + lua_call,
-  FUN_0065A7D0 в†’ FUN_00607800), right after a log line "loading user file
+  `user_open` (ScriptLoader.ri_dofilefromdisk → luaL_loadfile + lua_call,
+  FUN_0065A7D0 → FUN_00607800), right after a log line "loading user file
   'dsfforza\ported.lua'". The test bootstrap loads ported.lua three times
   (register, garagetest, clonetest).
 - When: only with the full roster's generated files (`ported.lua` 117 KB,
@@ -519,7 +522,7 @@ and "Desanne" on the HUD: `img/clone-304-with-stats.jpg`. The control run
 What this confirms:
 
 - the game accepts a rebuilt `dngvehicles.sp` with 151 vehicles;
-- a new ID (304, outside the vanilla 62вЂ“303 range) spools through
+- a new ID (304, outside the vanilla 62–303 range) spools through
   `TrafficSpooler.RequestMissionVehicle`, so the SSLP/VSCT edits are enough
   for the spool system;
 - `GameVehicleResource.create{Model_Id = 304}` builds a drivable car from the
@@ -598,7 +601,7 @@ and 2, `-HoldMph 60`.
   `currentVehicle` is `false`). `localPlayer.position` is (0, 0, 0) there and
   zapping into a car fails until the camera is down at street level. The
   harness presses Up (extended scan code 0x48) five times; the probe waits
-  until `zapcontroller.getZapLevel()` is в‰¤ 1, or 120 ticks pass, then spawns.
+  until `zapcontroller.getZapLevel()` is ≤ 1, or 120 ticks pass, then spawns.
   The level is only logged every 4 ticks and the last logged value was 3, so
   which condition fired isn't recorded; either way the spawn and zap worked.
 - **Placement:** `zapcontroller.ZapCameraGetTargetPos()` (global table
@@ -657,6 +660,13 @@ player's own car). The game probably rebuilds the traffic set from its own
 district/time-of-day Lua (compiled in `ScriptsLuaScripts.fchunk`). Felony
 Rework's readable `trafficspoolingdata.lua` only lists mission vehicle pots.
 
+Answered since: traffic spawns from the active set plus the
+interesting-vehicle regions, and `register.lua` adds the ported IDs to those
+regions. Its traffic samples counted ported cars near the player in run
+`20261022-025601` ("Fix4" below; `game-lua.md`). The harness turns that off
+when a run brings a build's `ported.lua`, so later VM censuses show no ported
+cars in traffic.
+
 **Don't put a probe ID in `-TrafficIds`.** Runs `vm1-20261028-230138` and
 `vm2-20261028-230155` (`-ProbeIds '420,488,296,11,540' -TrafficIds
 '488,296,369,11,61,169,218,540'`) ended with a breakpoint exception (exit
@@ -671,7 +681,7 @@ is not known (not seen in play).
 
 ## Forza geometry in game (confirmed-runtime)
 
-Converter: `src/dsfforza/convert/forza2dsf.py` (FH1 carbin в†’ DSF VEHC), `src/dsfforza/convert/exp_hollow.py`
+Converter: `src/dsfforza/convert/forza2dsf.py` (FH1 carbin → DSF VEHC), `src/dsfforza/convert/exp_hollow.py`
 (the layout that currently works for the full entry).
 
 - **Geometry writing works**: stretching the clone's vertices 1.3x in x shows
@@ -688,7 +698,7 @@ Converter: `src/dsfforza/convert/forza2dsf.py` (FH1 carbin в†’ DSF VEHC), `
   runs `-002224` and `-004928` the chase camera sees the 370Z's headlights
   and grille, so the car sits backwards on its chassis (the vanilla Desanne
   shows its tail lights from the same camera). `forza2dsf.Placement` now
-  turns the body 180В° about y (confirmed in run `20261022-015851`, below).
+  turns the body 180° about y (confirmed in run `20261022-015851`, below).
 - **Paint UV0** samples the vehicle's chassis texture; Forza UVs on the host's
   texture gave stripes. Pinned to a plain texel for now.
 - **Full entry crash** (DriverNGHook fatal-error dialog while spooling,
@@ -859,9 +869,9 @@ vanilla vehicleStats entry by Picture1: the HUD shows the Nissan badge and
 Desanne's (`img/fix6-370z-hud-name.png`). The HUD reads the numeric
 Manufacturer/Model fields; ManufacturerName/ModelName strings don't reach it.
 
-Cockpit camera too low: vanilla head cameras see the steering rim's top 7.9В°
-below eye level (median of 146, `out/eye/wheel_view.py`); ours were 6.5В°
-(370Z), 3.3В° (M5), 1.9В° (Skyline), so the wheel filled half the screen.
+Cockpit camera too low: vanilla head cameras see the steering rim's top 7.9°
+below eye level (median of 146, `out/eye/wheel_view.py`); ours were 6.5°
+(370Z), 3.3° (M5), 1.9° (Skyline), so the wheel filled half the screen.
 `cockpit.camera_eye` now raises the camera only (in game: "Head camera"
 below).
 
@@ -907,9 +917,9 @@ the speed every frame) with `-ProbeIds '266,304,305,306'`.
   third of the screen with the dials above it, not across half the screen
   (`img/gauges-m5-111mph.png`, `img/gauges-skyline-50mph.png`); still a
   little higher than the vanilla Desanne's (`img/fix3-desanne-vanilla-cockpit.png`).
-  `out/eye/wheel_view.py`: rim top 6.5В° (370Z), 4.6В° (M5), 5.2В° (Skyline)
+  `out/eye/wheel_view.py`: rim top 6.5° (370Z), 4.6° (M5), 5.2° (Skyline)
   below the eye; the hosts 227, 147, 229 have 8.3, 8.3, 9.1, the Desanne
-  13.7. `camera_eye` aims for 7.9В° using the rim's centre-line radius and
+  13.7. `camera_eye` aims for 7.9° using the rim's centre-line radius and
   the wheel centre's depth, while `wheel_view.py` measures the topmost rim
   vertex (tube thickness, rim tilt toward the driver), hence the shortfall.
 - Digital readouts are blank dark panels (M5 centre display, 370Z).
@@ -921,7 +931,7 @@ the speed every frame) with `-ProbeIds '266,304,305,306'`.
 `out/r7/ported-r7.sp`: 304 370Z (host 227), 305 M5 (147 CTS-V), 306 Skyline
 R32 (229 R33), 307 Mustang Boss 429 (193), 308 Raptor (251); auto hosts,
 `--damage panels`, gauges, lights, factory paint, camera at the vanilla
-7.9В° rim angle (all five, `out/eye/wheel_view.py`).
+7.9° rim angle (all five, `out/eye/wheel_view.py`).
 
 - All five spool, drive (throttle held, up to 100 mph) and switch to the
   cockpit; HUD shows each host's badge and name (Nissan 370Z, Cadillac
@@ -1174,11 +1184,15 @@ Results: `handling.md`, "Off road". Harness notes:
 ## Open
 
 1. A damaged ported car while the host is loaded (no damage in the fix4
-   and fix5 runs), and how converted cars deform: their bodies are one
-   part, so bumpers can't hang off (`vehicle-model.md`).
+   and fix5 runs). How converted cars deform is answered: `damage.py` gives
+   them the vanilla panels, crush and detachable parts (`damage.md`).
 2. M5 cockpit: white button blocks, dark dials (dial faces vary with lighting).
+   Seen on 2026-10-22 and not rechecked since; the cockpit and digital-dash
+   work since then (`cockpit.md`, #171) may have changed it.
 3. HUD name and badge for ported cars: done (numeric `Manufacturer`/`Model`
    fields, then `hud.lua` glyphs; `gui-assets.md`).
-4. Raising the per-vehicle size limits.
+4. Raising the per-vehicle size limits (`spool-limits.md`). Not done and so
+   far not needed: in the full roster (`out/build`, 2026-10-28) 572 of 573
+   cars keep the full entry's Forza LODs 3/4/5; KOE_CCXR_09 drops to 4/5/5.
 5. Garage and vehicle-select screens with a new ID: done for IDs 1-40 and,
    with dsfforza.asi, 304+ (`asi.md`, "In game").
