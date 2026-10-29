@@ -120,8 +120,10 @@ later PR replaced a rule, the earlier section says so in one line.
   red rear ones `is_lens` takes, opaque lamp texels)
   ([#160](#lamp-covers-drawn-as-window-glass-issue-160), #164, #190).
 - Tiling lamp parts are laid triangle by triangle into one tile when at
-  most 25% of their UV area falls outside it, streak parts onto one texel
-  column, the rest as one colour (#218). Lamp parts keep `plan()`'s material
+  most 25% of their UV area falls outside it, or when they are a coarse
+  LOD's copy of a part whose finer LODs lie in one tile; streak parts onto
+  one texel column; the rest as one colour (#218,
+  [coarse LODs](#coarse-lod-lamp-parts-drifting-over-a-tile-edge-issue-229)). Lamp parts keep `plan()`'s material
   in the sections later passes rebuild, so the exterior entry draws them as
   planned ([#175](#no-front-lamp-on-the-players-car-lamp-parts-drawn-as-trim-in-the-exterior-entry-issue-158)).
 
@@ -1970,6 +1972,46 @@ the right indicator, which ranks higher).
 In game (VM, `-Lights -LightsDriveOnly -Palette 0`, vanilla 241 first, then the S2000, Javelin AMX, 2002
 Turbo and Miata 94; master's lamp code `out/l7/before` against this change `out/l7/after`): master `vm1-20261029-162920`, this change `vm1-20261029-163437`. The 2002 Turbo, which had no reverse light, lights white reverse lamps (`img/lamps7-2002turbo-reverse-ingame.jpg`); the S2000 and Javelin look the same (their reverse lamps lit on master too, from a front entry). A lamp breaking with its new end (`+hitfront`, `+hitrear`) is not checked in game.
 
+### Coarse LOD lamp parts drifting over a tile edge (issue #229)
+
+Symptom (offline-checked): after #218, 9 tiling lamp subsections on 7 cars stayed one flat colour
+(`_tiling_swatch`): the Dodge Viper SRT-10 03's LOD 5 reflector, the Ferrari F50's LOD 3 `oldhead` bumper
+lamps (left and right), the Mazda 2's (`MAZ_16_B09_09`, `_10`) LOD 5 tail reflectors, the Mazdaspeed3 10's
+LOD 5 head lamp reflectors and the Nissan 510's LOD 5 `tail_light` (`out/l7/lamp_survey.py`, which records
+each `_tiling_swatch` call; #218 counted 9 on 6 and all at LOD 5). The F50's is drawn in the full entry
+(mask 4, traffic's nearest LOD).
+
+Cause (confirmed-static): none of them tiles. Their finer LODs lie inside tile 0 (the Viper's u 0.01 to
+0.84, the Mazda 2's 0.02 to 0.98, the 510's 0.01 to 0.96); decimated, the coarse copy's UVs drift over the
+edge (the Viper's LOD 5: u -0.06 to 0.15; the F50's LOD 3: u 0.8 to 2.6, v -0.43 to 0.97), and 27 to 41% of
+their UV area lies outside each triangle's tile, over `TILE_CROSS_SHARE` (25%).
+
+Change (`dsf_materials.unwrap_tiles`, `_finer_in_a_tile`): a part whose finer LODs (same section and
+technique, a lower LOD) lie in one tile, every triangle inside it, is laid triangle by triangle whatever it
+clamps, as the finer LODs are. Its texels don't count as ones other parts sample in the lens bake
+(`TileWrapped.drifted`, `lenses.bake`): the F50's LOD 3 part's drifted UVs land on its left tail lens's
+texels, which then went unbaked (18,468 to 13,645 texels) and changed the exterior's tail lamps.
+
+Roster: the 9 subsections on 7 cars are laid textured; no other car can change (the rule only runs for
+parts `_tiling_swatch` took). In the F50's atlas the two Lights regions merge into one and the pack scale
+goes from 0.518 to 0.516.
+
+Checked offline only (the parts are drawn far away or by traffic):
+- `render_compare run --entries full` on master's and this build (`out/rc/full-before`, `full-after`):
+  the F50's bumper head lamp at LOD 3 shows its reflector as Forza's does, where master drew it flat grey
+  (`img/lamps7-f50-lod3-bumper-lamp.jpg`: master, this change, Forza). Its amber half is dark brown on both
+  (not this change).
+- `render_compare diff` of the exterior (`out/rc/lamps7-229`): 3 of the 5 cars drawn differently, all
+  resampling of the repacked atlas (the F50's and Viper's front badges 45% and 16% of the region's pixels,
+  the Mazda 2's side markers 19%), alike to the eye; scores unchanged (F50 2.525 to 2.524).
+
+Not done: swatch lenses that are only partly scrambled (the issue's first item). Recounted on the roster
+after #190 and #218 (`lens_report` "scrambled", lenses not dropped): most are a few texels on a clear front
+lens (Spark 9, Genesis Coupe 8, Volvo 242 1, Forte Koup 6); the only sizeable ones are the Viper CC's left
+head lamp lens (343 of about 1,000 texels) and the Scirocco R's tail lenses (39 of about 1,400). The lens
+texels that no lamp lies behind (Venom GT's and Noble M600's lexan, the MP4-12C's wing lens) are scrambled
+with nothing to bake, so they keep their own texels as before.
+
 ### Open
 
 1. Front lamps in the lamp-phase mode (`-Lights`): neither copy faces the
@@ -2020,11 +2062,11 @@ Turbo and Miata 94; master's lamp code `out/l7/before` against this change `out/
    ("Head lamps white plates by day"). Clear rear lenses over reverse lamps
    still glow by their own lamp score, and so do front lenses that meet no
    lamp within 0.4 m along the normal or the axis.
-9. Tiling lamp parts with more than a quarter of their UV area across a tile
-   edge stay one colour (9 subsections on 6 cars at LODs 1/3/5, all LOD 5;
-   "Tiles across edges"), and swatch lenses that are only partly scrambled
-   keep a flat tint over part of the lens (Charger SRT8 12, Viper CC, MP4-12C
-   and the rest of #141's 14 cars that #164 didn't take). Issue #229.
+9. Swatch lenses that are only partly scrambled keep a flat tint over part of
+   the lens: after #190 and #218 only the Viper CC's left head lamp lens (a
+   third of its texels) and the Scirocco R's tails (3%) more than a few texels
+   ("Coarse LOD lamp parts"). The tiling parts that stayed one colour are laid
+   textured since then. Issue #229.
 10. Brake coverage (#103): after "Red texels lit as reverse and indicator
     lamps" 19 of 565 cars brake with under half of their visible red rear
     lamp area, all by design (unlit retro-reflectors and decal lamps, red fog

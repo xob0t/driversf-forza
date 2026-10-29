@@ -776,6 +776,8 @@ def bake(
             m = _resolve(section, sub, atlases)
             if m.family != fm.LIGHTS or m.kind != "textured" or m.role not in (fm.TEXTURED, fm.TRIM, fm.PAINT):
                 continue
+            if getattr(m, "drifted", False):
+                continue  # a coarse LOD's drifted UVs (dsf_materials.unwrap_tiles): the Ferrari F50's lens kept them
             pool = section.vertices_for(sub)
             for t in sub.triangles():
                 ix, iy, _ = _texels(np.array(_tri_uv(m, pool, t)) * (w, h))
