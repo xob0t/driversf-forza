@@ -17,7 +17,10 @@ to `Install\dngvehicles.sp` under its own ID:
 
 DriverNGHook runs the Lua that registers the cars. The native plugin
 `tools/asi` (`dsfforza.asi`) lifts the archive, garage, save, HUD and Lua heap
-limits. Research notes for each area are in `research/`.
+limits, puts the driver's hands on each car's own steering rim, shows km/h on
+the converted digital dashboards, and drops draws past the per-frame draw
+queue instead of letting the game end (`research/asi.md`). Research notes for
+each area are in `research/`.
 
 The Python package is `src/dsfforza/` (`formats/`, `convert/`, `build/`,
 `game/`, `harness/`). Every tool runs as `uv run dsff <tool> ...`
@@ -49,10 +52,12 @@ uv run dsff install --uninstall
 ```
 
 Stages: preflight (game 1.04, vanilla archive, discs, disk space, and for an
-install: game not running, VC++ x86 runtime, other mods' files), prepare
+install: game not running, VC++ x86 runtime, DriverNGHook and an ASI loader
+present or downloadable, other mods' files), prepare
 (`game_data prepare` when its files are missing or stale; vgmstream), plugin
 (`out/asi/dsfforza.asi`, rebuilt with `tools/asi/build.ps1 -Test` when
-`out/asi/dsfforza.build.json` doesn't match the sources; a release uses its
+`out/asi/dsfforza.build.json` doesn't match the sources and Visual Studio
+Build Tools are installed, else used as it is; a release uses its
 bundled `plugin/dsfforza.asi`), build and pack (`port_batch build` into
 `out/build.new`, renamed to `out/build` when it finishes), install (save
 backup, then `tools/install.ps1`). Each car is reused from `out/build`, an
@@ -78,7 +83,7 @@ uv run dsff port_batch build --list tools/batches/all.txt --gui --wide-glyphs --
     --root-limit 3003 --out out/final4 --reuse out/final3 --jobs 8
 
 # One car into an archive (--car NAME@fh1 / @fm4 picks the game when a car is on both)
-uv run dsff port_car --out out/one.sp --car NIS_370Z_10
+uv run dsff port_car --dsf "$env:DSF_GAME_DIR\Install\dngvehicles.sp" --out out/one.sp --car NIS_370Z_10
 
 # The plugin
 .\tools\asi\build.ps1 -Test       # out\asi\dsfforza.asi, patch-tested against Driver.exe
@@ -132,7 +137,8 @@ Making a release (master keeps taking PRs meanwhile):
    steps find.
 2. Verify from the branch: `uv run dsff install` (a full build and an install
    into the game), then a VM series on its `out\build` with a few changed cars
-   (`run-series.ps1 -Vm`, with the build's gui.sp, fonts, locale and Lua).
+   (`run-series.ps1 -Vm -Archives out\build\dngvehicles.sp`, which brings the
+   build's gui.sp, fonts, locale and Lua with it).
 3. Tag the branch head and push the tag: `git tag -a vX.Y.Z -m vX.Y.Z; git push
    origin vX.Y.Z`. Check the release run (`gh run list --workflow
    release.yml`); it leaves a draft release with the zip.
@@ -146,5 +152,6 @@ Making a release (master keeps taking PRs meanwhile):
 The zip holds the git-tracked files a player's install needs (the package,
 `pyproject.toml`, `uv.lock`, `tools/install.ps1`, the registration Lua, the car
 lists, `install.cmd` and `tools/release/launcher.ps1`), the built
-`plugin/dsfforza.asi` with its ini, and an empty `assets/` folder. Check what
+`plugin/dsfforza.asi` with its ini and `dsfforza.build.json`, and an `assets/`
+folder that holds only `PUT-YOUR-FORZA-ISOS-HERE.txt`. Check what
 goes in with `uv run dsff package --list --version x`.
