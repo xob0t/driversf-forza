@@ -1018,10 +1018,21 @@ LAMP_COLOURS = {
     4: (1.0, 0.45, 0.05),
     6: (1.0, 0.06, 0.03),
 }
-TYPE_BRIGHTNESS = {1: 2, 2: 1, 3: 2, 8: 1, 18: 3, 19: 10, 29: 10, 30: 0.2}
-TYPE_BRIGHTNESS.update(dict.fromkeys(range(4, 8), 0.5))
-TYPE_BRIGHTNESS.update(dict.fromkeys(range(9, 18), 10))
-TYPE_BRIGHTNESS.update(dict.fromkeys(range(20, 29), 1))
+# (one assignment: statements other than definitions would change the module's
+# top-level code unit, which every car's build fingerprint holds; build/fingerprint.py)
+TYPE_BRIGHTNESS = {
+    1: 2,
+    2: 1,
+    3: 2,
+    **dict.fromkeys(range(4, 8), 0.5),
+    8: 1,
+    **dict.fromkeys(range(9, 18), 10),
+    18: 3,
+    19: 10,
+    **dict.fromkeys(range(20, 29), 1),
+    29: 10,
+    30: 0.2,
+}
 COMBINED_TYPES = {0x13, *range(0x18, 0x1E)}
 
 
