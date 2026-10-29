@@ -3080,6 +3080,20 @@ corners move inwards. At 4:3 that is about 5 left, 16 right and 12 down, so disp
 near the 16:9 edge (FLM09's bottom edge, 13 down) could go partly under the bar
 (computed only, not run).
 
+**At 4:3 (VM, 2026-10-29).** The guest doesn't take a 4:3 window: with
+`run-series.ps1 -Resolution 1200x900` the game still drew 1280x720
+(`vm1-20261029-210324`, which serves as the 16:9 reference here). So the run used
+the 21:9 method with `TargetAspect=1.3333` (`vm1-20261029-210735`). That gives the
+4:3 projection DSF Enhanced's scaling makes, about 60 degrees wide, squeezed into the
+16:9 window, with the HUD where a 16:9 screen has it. Whether a real 4:3 window lays
+the HUD out the same way is not checked.
+
+At 4:3 the screen's edge, not the HUD, is what hides displays:
+- The moved displays far to the left leave the view: the GT-R's (34 degrees left),
+  the Skyline 2003's (33) and the FLM09's (30, cut at the edge).
+- The Durango's and the Prius's dials (25 and 17 left) stay in sight.
+- `img/gauges-hud-43-ingame.jpg`: 16:9 | 4:3, GT-R 10, Skyline 2003, FLM09, Durango.
+
 **In game (VM, confirmed-runtime).** `run-series.ps1 -Vm -Asi -HoldMph 40
 -ShotSeconds 3`, cars 147 (not compared), R15 TDI, GT-R 10, Skyline 2003, Panoz
 LMP, FLM09, Durango, at the same IDs:
@@ -3105,6 +3119,37 @@ Still open:
 - The hands aren't kept out of #92's virtual displays or of the moved displays at
   their regular sizes. Before this, the FLM09's and the placeholder cockpits'
   displays were checked in game only for the HUD.
+
+## The interior draws only with the head camera near the hull (2026-10-29, issue #255, confirmed-runtime)
+
+The FH1 tour bus (`BUS_TOUR_12`, host 246, the school bus) showed no cabin, wheel or
+hands in the cockpit view. That held in small test builds and in the full build, on
+both VMs. The probe's `-Views` log put the DriverEye camera where the converter sets it,
+at (0.638, 1.920, 6.467): the Forza bus's driver sits 6.4 m ahead of its centre.
+`VehicleLodSpooler.IsInteriorLoaded` was true.
+
+Ruled out, each by a VM run with the change alone:
+- the ID and the size of the build (`vm1-20261029-190636`, `-190931`);
+- the MODL part boxes. The bus kept vanilla 246's: the interior's ends at z 5.74, the
+  full and exterior part 0 boxes near 4.95. In all 147 vanilla interiors the head
+  camera is inside the cabin box. Refitting the interior box, and then the full and
+  exterior ones too, changed nothing (`vm1-20261029-193353`, `-194144`).
+
+What did change it:
+- Moving only the camera back to z 5.66 (VO3D p432) brought the cabin back
+  (`vm1-20261029-195857`).
+- So did #276, which maps the collision hull onto the Forza body: the bus's root hull
+  grew from vanilla 246's (radius 5.24 m, front at z 4.94) to the Forza body's (radius
+  7.43 m, front at 7.59). With the camera unchanged at z 6.47 the cockpit draws
+  (`vm1-20261029-205243`).
+
+So the engine draws the interior entry only while the head camera is inside the car's
+collision hull, or near it. The check has some slack: the camera at z 5.66 drew with
+the old hull, 0.7 m past its front face. It may be a bounding sphere, or a test about
+another point. The check in `Driver.exe` hasn't been found. Of all the cars, only the
+bus had its eye past vanilla's furthest-forward one (ID 201, z 5.64).
+
+## Risks and open questions
 
 
 1. Answered: the cockpit view draws only the interior entry
