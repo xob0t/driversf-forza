@@ -220,6 +220,12 @@ VISIBLE_WHITE_VANILLA_MEDIAN = 137
 # lamp readable by glowing in fine stripes with dark texels between. A fifth gives the ported
 # 0x1D lamps a 0x01 or 0x03 lamp's glow, by day and in the dark mood.
 DAYTIME_GLOW = 0.2
+# The day glow of 0x1D lamps (lenses.day_glow: ranked, its structure and area set per lamp) times
+# this, by day and in the dark mood alike (#286): vanilla's 0x1D head lamps, under their window
+# glass, glow at p95 2.5 / 3.8 / 5.3 (p10 / median / p90 over 28 vehicles, render_compare's
+# renderer, front view); the ports' lamps have no glass. The other texels of 0x1D lamps (no day
+# glow: reflectors hidden behind a lens, tiling swatches) keep DAYTIME_GLOW.
+DAY_GLOW_LEVEL = 0.4
 
 
 def white_lens_scale(visible: list[int]) -> float | None:
@@ -2134,9 +2140,11 @@ class Texturing:
         from dsfforza.convert import lenses
 
         view = self._lamp_view(front=True, grid=True)
-        self._lamp_glow = None if view is None else lenses.day_glow(self.lamp_raw, view)
+        sw, sh, src = self.atlases.get(fm.LIGHTS)
+        colour = np.frombuffer(bytes(src), np.uint8).reshape(sh, sw, 4)
+        self._lamp_glow = None if view is None else lenses.day_glow(self.lamp_raw, view, colour)
         if self._lamp_glow is not None and self.daytime_texels is not None:
-            self._lamp_glow[self.daytime_texels] *= DAYTIME_GLOW
+            self._lamp_glow[self.daytime_texels] *= DAY_GLOW_LEVEL
         self._glow_done = True
         return self._lamp_glow
 
