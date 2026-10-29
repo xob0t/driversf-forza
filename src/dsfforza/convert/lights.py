@@ -125,10 +125,14 @@ _add(BRAKE, "white_brake")
 _add(REVERSE, "reverse_light reverse_light_lod0 brkreverse lights_gls_reverse_light")
 _add(INDICATOR, "indicator_left slinlorange lights_gls_indicator_left", "L")
 _add(INDICATOR, "indicator_right slinrorange lights_gls_indicator_right", "R")
-_add(BRAKE_IND, "brinl", "L")
-_add(BRAKE_IND, "brinr", "R")
-_add(DRL_IND, "drlinlorange drlinlred drlinlwhite lindtailside", "L")
-_add(DRL_IND, "drlinrorange drlinrred drlinrwhite rindtailside", "R")
+# lindtailside/rindtailside (tail, brake and indicator in one: the Corvette ZR1 09's four round
+# lamps) brake: the cars that set them in ShaderSettings.xml give them a BrakeColor (Camaro ZL1
+# 12, Cuda 426 71, Charger R/T 69, Explorer 10...; issue #103). As DRL + indicator (0x14/0x15)
+# the ZR1 braked with 50 of its 630 cm2 of red lamps.
+_add(BRAKE_IND, "brinl lindtailside", "L")
+_add(BRAKE_IND, "brinr rindtailside", "R")
+_add(DRL_IND, "drlinlorange drlinlred drlinlwhite", "L")
+_add(DRL_IND, "drlinrorange drlinrred drlinrwhite", "R")
 _add(FOG, "fogwhite fogred")
 # Lenses take their function from their colour and position: red at the rear
 # is a tail lamp, amber an indicator, clear the nearest lamp of its cluster.

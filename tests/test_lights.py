@@ -328,6 +328,14 @@ def test_rear_lamps_short_of_rear_entries_stay_at_the_rear():
     assert all(i in rear for k, i in got.items() if k[0] != lights.FOG), got
 
 
+def test_tailside_lamps_brake():
+    # CHE_CorvetteZR1_09 (issue #103): its four round tail lamps are lindtailside/rindtailside,
+    # which the cars that set them give a BrakeColor: tail, brake and indicator (0x19/0x1A).
+    car = [_quad("taillightL", "lindtailside", 0.6, -2.0), _quad("taillightR", "rindtailside", -0.6, -2.0)]
+    got = _assigned(car, 8)
+    assert got[(lights.BRAKE_IND, "L", False)] == 0x19 and got[(lights.BRAKE_IND, "R", False)] == 0x1A, got
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
