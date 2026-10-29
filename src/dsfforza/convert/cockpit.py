@@ -852,15 +852,16 @@ def _touching_groups(tris: list[list[tuple]], cell: float = 0.01) -> list[list[i
     return list(groups.values())
 
 
-def display_patches(static: dict, eye) -> list:
+def display_patches(static: dict, eye, on_wheel: bool = False) -> list:
     """The digital displays a dash scene is drawn on (digital_dash.DisplayPatch): every
     LOD-0 digital_gauge subsection (or its textured face, display_face) in the cabin,
-    not on the steering wheel (the digital dials aren't skinned to it)."""
+    not on the steering wheel (the digital dials aren't skinned to it). With
+    `on_wheel`, the steering wheel's instead (wheel_display_pod moves them)."""
     from dsfforza.convert import digital_dash
 
     out = []
     for name, s in static.items():
-        if fm.COCKPIT_EXTERIOR_SECTIONS.match(name) or name.lower() == "steering_wheel":
+        if fm.COCKPIT_EXTERIOR_SECTIONS.match(name) or (name.lower() == "steering_wheel") != on_wheel:
             continue
         for ui, sub in enumerate(s.subsections):
             m = sub.material.lower()
@@ -1158,6 +1159,9 @@ POD_SIDE_DEG = 35.0  # to either side of the wheel's centre, at most
 POD_BELOW_EYE = -0.05  # the line of sight's y: at least 3 degrees down (the dashboard, not the roof)
 POD_RESOLUTION = 256  # pixels across the 90-degree view the search runs on
 POD_STEP = 3  # pixels between candidate centres
+POD_COWL_SUPPORT = 0.5  # share of a cowl display (and of its bottom quarter) in front of the cowl
+# An open cockpit's bodywork round the wheel (ARX-02a: a_pillar; R10: hood): pod_display(cowl=True).
+COWL_SECTIONS = re.compile(r"^(hood|a_pillar)", re.I)
 
 
 def _disc_mask(rays, eye, centre, normal, radius):
@@ -1174,20 +1178,39 @@ def _disc_mask(rays, eye, centre, normal, radius):
     return (t > 0) & ((off * off).sum(axis=1) < radius * radius)
 
 
-def pod_display(static: dict, eye, wheel: Wheel, dials: int, gauges: dict, version: int, sight_sections=None, avoid=()):
-    """A virtual display for `dials` (1 or 2) dials: the largest of POD_SIZES that
-    fits, nearest the point just above the steering wheel's rim, in front of the
-    dashboard and facing the eye. Every line of sight to it must reach the cabin
-    within POD_DEPTH behind it (not the windscreen, the bonnet or an A-pillar),
-    pass outside the rim (and POD_WHEEL_CLEAR) and clear of Forza's own dials,
-    digital displays and gauge faces. Found on a depth image from the eye.
+def pod_display(
+    static: dict,
+    eye,
+    wheel: Wheel,
+    dials: int,
+    gauges: dict,
+    version: int,
+    sight_sections=None,
+    avoid=(),
+    sizes=None,
+    cowl: bool = False,
+    name: str = "dsf_dial_panel",
+):
+    """A virtual display for `dials` (1 or 2) dials: the largest of POD_SIZES (or
+    `sizes`, (width, height) in m, largest first) that fits, nearest the point just
+    above the steering wheel's rim, in front of the dashboard and facing the eye.
+    Every line of sight to it must reach the cabin within POD_DEPTH behind it (not
+    the windscreen, the bonnet or an A-pillar), pass outside the rim (and
+    POD_WHEEL_CLEAR) and clear of Forza's own dials, digital displays and gauge
+    faces. Found on a depth image from the eye.
+
+    With `cowl` (open cockpits, issue #147), the bodywork in front of the driver
+    (the cockpit carbin's `hood*` and `a_pillar` sections, which close round the
+    wheel there) holds it too, and it may rise above that bodywork into the open
+    sky: it stands on the cowl when POD_COWL_SUPPORT of it, and of its bottom
+    quarter, is in front of the cowl. `name`: the housing section's.
     Returns (Display, housing section, report) or (None, None, report)."""
     import numpy as np
 
     sections = list(sight_sections if sight_sections is not None else static.values())
     points, flags = [], []
     for s in sections:
-        name = s.name.lower()
+        section = s.name.lower()
         pool = None
         for sub in s.subsections:
             role = fm.classify_cockpit(sub.material)[0]
@@ -1198,8 +1221,9 @@ def pod_display(static: dict, eye, wheel: Wheel, dials: int, gauges: dict, versi
             t = np.array(sub.triangles(), dtype=np.int64).reshape(-1, 3)
             m = sub.material.lower()
             bad = (
-                name == "steering_wheel"
-                or bool(fm.COCKPIT_EXTERIOR_SECTIONS.match(name))
+                section == "steering_wheel"
+                or section.startswith("dsf_")  # another virtual display's housing
+                or (bool(fm.COCKPIT_EXTERIOR_SECTIONS.match(section)) and not (cowl and COWL_SECTIONS.match(section)))
                 or m in DIGITAL_TECHNIQUES
                 or m == DISPLAY_FACE
                 or m.startswith(("gauge", "z_gauge"))
@@ -1226,13 +1250,18 @@ def pod_display(static: dict, eye, wheel: Wheel, dials: int, gauges: dict, versi
     hit = depth > 0
     z = np.where(hit, 1 / np.where(hit, depth, 1), np.inf)
     hits = np.stack((a.ravel() * z, b.ravel() * z, -z), axis=-1)  # eye-relative
-    bad = ~hit | (ids < 0) | flags[np.maximum(ids, 0)]
-    bad |= np.linalg.norm(np.where(hit[:, None], hits, 0), axis=1) > POD_RANGE[1] / 0.8
+    far = np.linalg.norm(np.where(hit[:, None], hits, 0), axis=1) > POD_RANGE[1] / 0.8
+    if cowl:  # the nose beyond the cowl is background, like the sky
+        hit &= ~far
+    # Nothing in view there (the windscreen, the sky): only an open cockpit's cowl
+    # display may stand in front of it.
+    bad = (~hit & (not cowl)) | (hit & ((ids < 0) | flags[np.maximum(ids, 0)])) | (far & (not cowl))
     bad |= _disc_mask(rays, eye, wheel.centre, wheel.axis, wheel.radius + POD_WHEEL_CLEAR)
     for g in gauges.values():
         reach = max((math.dist(p, g.pivot) for p in section_points(g.rest)), default=0.0)
         bad |= _disc_mask(rays, eye, g.pivot, g.normal, reach * POD_GAUGE_CLEAR)
     bad = bad.reshape(res, res)
+    hit = hit.reshape(res, res)
     hits = hits.reshape(res, res, 3)
     report = {"virtual_display": "no room"}
 
@@ -1264,7 +1293,12 @@ def pod_display(static: dict, eye, wheel: Wheel, dials: int, gauges: dict, versi
                 inside &= side * ((px[1] - px[0]) * (py[2] - py[0]) - (py[1] - py[0]) * (px[2] - px[0])) >= 0
             if not inside.any() or bad[y0:y1, x0:x1][inside].any():
                 return None
-            d = hits[y0:y1, x0:x1][inside] @ n
+            held = hit[y0:y1, x0:x1]
+            if cowl:  # standing on the cowl, not floating in front of the sky
+                base = inside & (gy >= y1 - 0.25 * (y1 - y0))
+                if held[inside].mean() < POD_COWL_SUPPORT or held[base].mean() < POD_COWL_SUPPORT:
+                    return None
+            d = hits[y0:y1, x0:x1][inside & held] @ n
             if d.min() - POD_LIFT < s - 1e-4:
                 s = float(d.min()) - POD_LIFT
                 continue
@@ -1287,9 +1321,13 @@ def pod_display(static: dict, eye, wheel: Wheel, dials: int, gauges: dict, versi
         (float(score[y, x]), int(x), int(y))
         for y in pix
         for x in pix
-        if not bad[y, x] and not low[y, x] and abs(side[y, x]) <= POD_SIDE_DEG and score[y, x] <= POD_MAX_DEG
+        if hit[y, x]
+        and not bad[y, x]
+        and not low[y, x]
+        and abs(side[y, x]) <= POD_SIDE_DEG
+        and score[y, x] <= POD_MAX_DEG
     )
-    for w, h in POD_SIZES[dials]:
+    for w, h in sizes or POD_SIZES[dials]:
         for ang, x, y in scored:
             n = rays[y * res + x]
             got = fits(n, float(hits[y, x] @ n), w, h)
@@ -1300,7 +1338,7 @@ def pod_display(static: dict, eye, wheel: Wheel, dials: int, gauges: dict, versi
             up = _norm(_sub((0.0, 1.0, 0.0), _scale(n, n[1])))
             right = _cross(n, up)
             centre = _add(eye, _scale(n, front))
-            d = Display("dsf_dial_panel", centre, n, up, right, (-w / 2, w / 2, -h / 2, h / 2), kind="virtual")
+            d = Display(name, centre, n, up, right, (-w / 2, w / 2, -h / 2, h / 2), kind="virtual")
             housing = _housing(d, back - front, version)
             report = {
                 "virtual_display": {
@@ -1311,6 +1349,8 @@ def pod_display(static: dict, eye, wheel: Wheel, dials: int, gauges: dict, versi
                     "from_rim_top_deg": round(ang, 1),
                 }
             }
+            if cowl:
+                report["virtual_display"]["cowl"] = True
             return d, housing, report
     return None, None, report
 
@@ -1331,7 +1371,7 @@ def _housing(d: Display, depth: float, version: int) -> carbin.Section:
         q = [bezel[k], bezel[(k + 1) % 4], back[(k + 1) % 4], back[k]]
         sides.append((q, _norm(_cross(_sub(q[1], q[0]), _sub(q[3], q[0])))))
     return _dial_section(
-        "dsf_dial_panel", version, {"dsf_dial_display": [(screen, nrm)], "dsf_dial_bezel": [(bezel, nrm)] + sides}
+        d.section, version, {"dsf_dial_display": [(screen, nrm)], "dsf_dial_bezel": [(bezel, nrm)] + sides}
     )
 
 
@@ -1369,6 +1409,7 @@ def virtual_gauges(
     atlas=None,
     readout=(),
     provided=(),
+    assume=(),
 ) -> tuple[list, dict, dict]:
     """Virtual dials for the speedometer and tachometer Forza has no needle
     for, on the largest blank display the driver can read (pick_display); else
@@ -1379,7 +1420,9 @@ def virtual_gauges(
     along the long side when both are missing (tachometer first: left or
     top). `readout`: the triangles of displays a dash scene is drawn on
     (digital_displays), which count as a digital readout and stay clear;
-    `provided`: the readouts that scene drives (no dial for those). Returns
+    `provided`: the readouts that scene drives (no dial for those); `assume`: readouts
+    the car has though nothing in its cockpit shows them (a placeholder cockpit
+    carbin's cabin): dials on a virtual display. Returns
     ([(needle, face, Gauge, GaugeCalibration)], report, extra static sections (the
     virtual display's housing))."""
     missing = [f for f in ("tach", "speed") if f not in gauges and f not in provided]
@@ -1391,7 +1434,7 @@ def virtual_gauges(
         if not fm.COCKPIT_EXTERIOR_SECTIONS.match(name)
         for sub in s.subsections
     )
-    if not digital and not readout:
+    if not digital and not readout and not set(missing) & set(assume):
         return [], {}, {}
     sight = GaugeSight(list(sight_sections if sight_sections is not None else static.values()), [])
     report: dict = {"missing": missing}
@@ -1414,9 +1457,12 @@ def virtual_gauges(
                     "front_mm": round(1000 * front, 1),
                 }
     if d is None and wheel is not None:
-        d, housing, why = pod_display(
-            static, eye, wheel, len(missing), gauges, version, sight_sections, avoid=list(readout)
-        )
+        for cowl in (False, True):  # an open cockpit's cowl only where the dash has no room (#147)
+            d, housing, why = pod_display(
+                static, eye, wheel, len(missing), gauges, version, sight_sections, avoid=list(readout), cowl=cowl
+            )
+            if d is not None:
+                break
         report.update(why)
         if d is not None:
             extra[housing.name] = housing
@@ -1497,12 +1543,88 @@ def dash_needles(plan, version: int) -> list:
     return out
 
 
-def digital_displays(static: dict, eye, folder: Path, forza) -> tuple:
+# A display only on the steering wheel (LMP, GT racers) moves onto a virtual display of
+# its own shape, tried at these sizes (x its own) from the largest down: further away
+# than the wheel, it keeps about the size it has there.
+WHEEL_DISPLAY_SCALES = (1.5, 1.25, 1.0, 0.8)
+WHEEL_DISPLAY_LIFT = 0.001  # m: the moved display in front of the housing's screen
+DASH_PANEL = "dsf_dash_panel"  # the housing of a moved wheel display (pod_display name)
+
+
+def wheel_display_pod(static: dict, eye, wheel: Wheel, gauges: dict, version: int, sight_sections=None) -> tuple:
+    """The steering wheel's digital displays (display_patches(on_wheel=True)) moved onto a
+    virtual display in view (pod_display: on the dashboard, else on an open cockpit's
+    cowl), so the dash scene can be drawn on them live. DSF's digital dials can't follow
+    the wheel: their shader has no skin input and transforms by g_ObjectToWorld alone,
+    and the needles' by g_InstrumentTransforms alone (research/cockpit.md, "Displays on
+    the steering wheel", issue #147). The patches keep their UVs, so they show the same
+    window of the scene; their points move rigidly (and scale) from the wheel display's
+    plane onto the virtual display's. Returns (moved patches, housing section, report)
+    or ([], None, report)."""
+    from dsfforza.convert import digital_dash
+
+    patches = display_patches(static, eye, on_wheel=True)
+    if not patches:
+        return [], None, {"virtual_display": "no display on the steering wheel"}
+    towards = _norm(_mean([p.towards_eye for p in patches]))
+    n = _scale(towards, -1)  # into the wheel, as Display.normal
+    up = _norm(_sub((0.0, 1.0, 0.0), _scale(n, n[1])))
+    right = _cross(n, up)
+    pts = [q for p in patches for tri in p.points for q in tri]
+    centre = _mean(pts)
+    us = [_dot(_sub(q, centre), right) for q in pts]
+    vs = [_dot(_sub(q, centre), up) for q in pts]
+    w, h = max(us) - min(us), max(vs) - min(vs)
+    centre = _add(_add(centre, _scale(right, (max(us) + min(us)) / 2)), _scale(up, (max(vs) + min(vs)) / 2))
+    sizes = tuple((w * k, h * k) for k in WHEEL_DISPLAY_SCALES)
+    d, housing, report = None, None, {}
+    for cowl in (False, True):  # an open cockpit's cowl only where the dash has no room
+        d, housing, report = pod_display(
+            static, eye, wheel, 1, gauges, version, sight_sections, sizes=sizes, cowl=cowl, name=DASH_PANEL
+        )
+        if d is not None:
+            break
+    if d is None:
+        return [], None, report
+    k = d.size[0] / w
+    report["virtual_display"]["scale"] = round(k, 2)
+    report["virtual_display"]["wheel_display_cm"] = [round(100 * w, 1), round(100 * h, 1)]
+
+    def move(q):
+        rel = _sub(q, centre)
+        return d.point(k * _dot(rel, right), k * _dot(rel, up), WHEEL_DISPLAY_LIFT)
+
+    moved = [
+        digital_dash.DisplayPatch(
+            DASH_PANEL,
+            p.subsection,
+            p.transform,
+            [[move(q) for q in tri] for tri in p.points],
+            p.uv0,
+            _scale(d.normal, -1),
+        )
+        for p in patches
+    ]
+    return moved, housing, report
+
+
+def digital_displays(
+    static: dict,
+    eye,
+    folder: Path,
+    forza,
+    wheel: Wheel | None = None,
+    gauges=None,
+    version: int = 3,
+    sight_sections=None,
+) -> tuple:
     """The car's dash scene (folder/digitalgauge, formats/anark.py; shared textures and
     fonts in <cache>/<game>/dash_media) drawn live on its digital displays
     (digital_dash.build_plan): the displays' subsections leave the cabin (the plan draws
-    them). Returns (plan or None, report: "provides" lists the speed/tach readouts it
-    drives)."""
+    them). A car whose only display is on the steering wheel gets it on a virtual
+    display (wheel_display_pod, needs `wheel`; the wheel keeps its own). Returns (plan
+    or None, report: "provides" lists the speed/tach readouts it drives, extra static
+    sections: the virtual display's housing)."""
     import copy
 
     from dsfforza.convert import dash_scene, digital_dash
@@ -1510,25 +1632,31 @@ def digital_displays(static: dict, eye, folder: Path, forza) -> tuple:
     dash_dir = Path(folder) / "digitalgauge"
     media = Path(folder).parent / "dash_media"
     if not dash_dir.is_dir() or not media.is_dir():
-        return None, {"skipped": "no dash scene"}
+        return None, {"skipped": "no dash scene"}, {}
     stems = [p for p in dash_dir.iterdir() if p.suffix.lower() == ".bsg"]
     own = [p for p in stems if p.stem.lower() == f"dash_{Path(folder).name}".lower()] or stems
     if len(own) != 1:
-        return None, {"skipped": f"{len(stems)} dash scenes"}
+        return None, {"skipped": f"{len(stems)} dash scenes"}, {}
     patches = display_patches(static, eye)
+    extra, moved = {}, {}
+    if not patches and wheel is not None:
+        patches, housing, moved = wheel_display_pod(static, eye, wheel, gauges or {}, version, sight_sections)
+        if housing is not None:
+            extra[housing.name] = housing
     if not patches:
-        return None, {"skipped": "no display off the steering wheel"}
+        return None, {"skipped": "no display off the steering wheel", **moved}, {}
     try:
         dash = dash_scene.Dash(own[0].with_suffix(""), media)
         redline = getattr(forza, "redline", 0.0) or 7000.0
         plan = digital_dash.build_plan(dash, patches, redline)
     except Exception as error:  # a scene this decoder can't draw: the display stays as it was
-        return None, {"skipped": f"{type(error).__name__}: {error}"[:200]}
+        return None, {"skipped": f"{type(error).__name__}: {error}"[:200]}, {}
     if plan is None:
-        return None, {"skipped": "no room in the texture"}
+        return None, {"skipped": "no room in the texture"}, {}
     drawn: dict = {}
-    for p in patches:  # the plan draws these now
-        drawn.setdefault(p.section, set()).add(p.subsection)
+    for p in patches:  # the plan draws these now (a moved wheel display: the wheel keeps its own)
+        if p.section in static:
+            drawn.setdefault(p.section, set()).add(p.subsection)
     for name, subs in drawn.items():
         sec = copy.copy(static[name])
         sec.subsections = [sub for k, sub in enumerate(sec.subsections) if k not in subs]
@@ -1538,7 +1666,9 @@ def digital_displays(static: dict, eye, folder: Path, forza) -> tuple:
         {f for f, k in (("speed", "speed"), ("tach", "bar_pieces")) if rep.get(k)} | {n["family"] for n in plan.needles}
     )
     rep["missing"] = sorted(dash.assets.missing)
-    return plan, rep
+    if moved:
+        rep["moved_from_wheel"] = moved["virtual_display"]
+    return plan, rep, extra
 
 
 def is_stub(sections: list[carbin.Section]) -> bool:
@@ -1633,7 +1763,8 @@ def fit(
     virtual_report = {}
     digital_plan, digital_report = None, {}
     forza = None
-    if lod0:
+    version = next((s.version for s in static.values()), 3)
+    if virtual or lod0:
         from dsfforza.build import handling
 
         try:
@@ -1641,20 +1772,23 @@ def fit(
         except (SystemExit, Exception):
             forza = None
     if lod0 and folder is not None:
-        # Forza's digital displays, live through DSF's digital dials (digital_dash).
-        digital_plan, digital_report = digital_displays(static, eye_point(wheel, offset), folder, forza)
+        # Forza's digital displays, live through DSF's digital dials (digital_dash); a
+        # display only on the steering wheel on a virtual display (wheel_display_pod).
+        sight = [s for n, s in static.items() if n not in SKIP_SECTIONS and not LIGHT_SECTIONS.search(n)]
+        digital_plan, digital_report, extra = digital_displays(
+            static, eye_point(wheel, offset), folder, forza, wheel, gauges, version, sight
+        )
+        static.update(extra)
         if digital_plan is not None:
-            version = next((s.version for s in static.values()), 3)
             for g, cal in dash_needles(digital_plan, version):
                 if g.family not in gauges:  # Forza's own needle first
                     gauges[g.family], calibration[g.family] = g, cal
                     needles[g.family] = {"min": g.rest}
     provided = set(digital_report.get("provides", ()))
-    if lod0 and virtual:
-        version = next((s.version for s in static.values()), 3)
+    if virtual:
         drawn = [s for n, s in static.items() if n not in SKIP_SECTIONS and not LIGHT_SECTIONS.search(n)]
         try:
-            atlas = fm.AtlasCache(folder, lod0=True).get(fm.INTERIOR) if folder is not None else None
+            atlas = fm.AtlasCache(folder, lod0=True).get(fm.INTERIOR) if folder is not None and lod0 else None
         except FileNotFoundError:
             atlas = None
         # Readouts the dash scene drives (digital_displays) need no virtual dial.
@@ -1670,6 +1804,9 @@ def fit(
             atlas=atlas,
             readout=readout,
             provided=provided,
+            # A placeholder cockpit carbin (the main carbin's cabin, issue #148) has no
+            # needle and no display; the car has a speedometer and a tachometer all the same.
+            assume=() if lod0 else ("tach", "speed"),
         )
         if dials and "face" in virtual_report:
             faces -= flatten_face(static, virtual_report["face"])
@@ -1793,6 +1930,14 @@ GAUGE_RECORD_TYPE = 18
 CLUSTER_ROLE = 185
 GAUGE_ROLES = {2: 0, 1: 187}  # gauge id -> the vanilla record's role
 MAX_GAUGES = 7
+# A vanilla speedometer record (232's record 27; every vanilla gauge record has these
+# bytes but the role, the gauge-table index at +0x26 and the hinge pops at +0x16/+0x18),
+# for hosts without any (add_gauge_records). The table entry's pivot, dial and sweep are
+# patch_hierarchy's.
+GAUGE_RECORD_TEMPLATE = bytes.fromhex(
+    "ffffffffffffffff120000000000000000000000010000000000ffffffffffffffffffffffff"
+    "00ffff00ffff0300ffffffffffffffffffffffffffff0000ffffffffffff010000000400000010d81800"
+)
 
 
 def gauge_records(h) -> dict[int, int]:
@@ -1815,16 +1960,25 @@ def add_gauge_records(upvh_data: bytes, ids) -> tuple[bytes, list[int]]:
     (same parent, the cluster part; the vanilla role for the id), the speedometer's
     before the tachometer's as in vanilla hierarchies; its entry is a copy of
     that record's entry with the new id, appended to the table (patch_hierarchy
-    sets the pivot, dial and sweep). A host without any gauge record (250,
-    the Volt's) gets none: there is no cluster record to hang one on.
+    sets the pivot, dial and sweep). A host without any gauge record (250, the
+    Volt's, and 293) gets the first one from GAUGE_RECORD_TEMPLATE under its
+    cluster part (add_first_gauge_record), the rest as above.
     Returns the new hierarchy and the ids added."""
     from dsfforza.formats import upvh
 
     h = upvh.parse(upvh_data)
     have = gauge_records(h)
     missing = sorted(set(ids) - set(have), reverse=True)  # speedometer (2) first
-    if not have or not missing:
+    if not missing:
         return upvh_data, []
+    first = []
+    if not have:
+        upvh_data, first = add_first_gauge_record(upvh_data, missing[0])
+        h = upvh.parse(upvh_data)
+        have = gauge_records(h)
+        missing = missing[1:] if first else []
+        if not missing:
+            return upvh_data, first
     data = upvh_data
     added = []
     for gid in missing:
@@ -1857,7 +2011,53 @@ def add_gauge_records(upvh_data: bytes, ids) -> tuple[bytes, list[int]]:
         out[0x2C] = seat + 1
         data = bytes(out)
         added.append(gid)
-    return data, added
+    return data, first + added
+
+
+def add_first_gauge_record(upvh_data: bytes, gid: int) -> tuple[bytes, list[int]]:
+    """A gauge record for `gid` on a hierarchy that has none: GAUGE_RECORD_TEMPLATE
+    (the vanilla role for the id, gauge-table index 0) as the first child of the
+    cluster part (role 185, every vanilla hierarchy has one), and a table entry with
+    the id (patch_hierarchy sets the pivot, dial and sweep). Its hinge pop counts
+    (+0x16, +0x18) and its ancestors' are recomputed as vanilla writes them
+    (damage._tree_fields). Returns the new hierarchy and [gid], or the hierarchy and []
+    when there is no cluster part."""
+    from dsfforza.convert import damage
+    from dsfforza.formats import upvh
+
+    h = upvh.parse(upvh_data)
+    cluster = next((r for r in h.records if r.type == 1 and r.role == CLUSTER_ROLE), None)
+    if cluster is None or gid not in GAUGE_ROLES or h.counts["seats"]:
+        return upvh_data, []
+    rec = bytearray(GAUGE_RECORD_TEMPLATE)
+    struct.pack_into("<H", rec, 0x0A, GAUGE_ROLES[gid])
+    struct.pack_into("<b", rec, 0x26, 0)
+    at = cluster.index + 1
+    raw = [bytearray(r.raw) for r in h.records]
+    raw.insert(at, rec)
+    p = cluster.index
+    while p is not None:  # the cluster and its ancestors hold one more record
+        struct.pack_into("<H", raw[p], 0x14, struct.unpack_from("<H", raw[p], 0x14)[0] + 1)
+        p = parent_of(h, p)
+    fields = damage._tree_fields([bytes(r) for r in raw])
+    p = cluster.index
+    touched = {at}
+    while p is not None:
+        touched.add(p)
+        p = parent_of(h, p)
+    for k in touched:
+        _bit, leaf, pops = fields[k]
+        struct.pack_into("<HH", raw[k], 0x16, leaf, pops)
+    entry = bytearray(0x30)
+    struct.pack_into("<4f4fII", entry, 0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, gid, 100)
+    tables = upvh.HEADER_SIZE + len(h.records) * upvh.RECORD_SIZE
+    seats_at = h.offsets["seats"]
+    out = bytearray(
+        upvh_data[: upvh.HEADER_SIZE] + b"".join(raw) + upvh_data[tables:seats_at] + entry + upvh_data[seats_at:]
+    )
+    struct.pack_into("<I", out, 0x10, len(raw))
+    out[0x2C] = 1
+    return bytes(out), [gid]
 
 
 # --- driver's hands -------------------------------------------------------------------
