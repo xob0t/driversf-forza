@@ -19,6 +19,15 @@ and the interior entry (kind 1), which shows through the glass. numpy only:
 
 The camera matches the vanilla garage pictures (`VANILLA_CAMERA`; measured with
 `dsff gui_assets camera`, research/gui-assets.md "Camera").
+
+The same renderer draws the comparison renders of `dsff render_compare`
+(research/render-compare.md): `load_scene(..., physical=True)` shades each
+material with its DSF program's terms and its own parameters (`dsf_shading`),
+gives every triangle its lamp (vertex semantic 9 byte 2 and the UPVH light table)
+and loads any entry (the clean exterior, the full entry at one LOD mask, the
+interior); `rasterize` keeps which triangle each pixel shows (the ID buffer) and
+`shade` lights the same frame by day, with the lamps lit by day, or in the dark
+mood (`Lighting`).
 """
 
 from __future__ import annotations
@@ -51,6 +60,11 @@ class Camera:
     yaw: float
     pitch: float
     distance: float
+    # A camera at a point instead (the cockpit view): car-space eye, view direction and
+    # horizontal field of view in degrees; yaw, pitch and distance are then unused.
+    eye: tuple[float, float, float] | None = None
+    look: tuple[float, float, float] | None = None
+    fov: float = 70.0
 
 
 VANILLA_CAMERA = Camera(yaw=36.5, pitch=13.0, distance=1.3)  # median of 24 vanilla pictures (gui-assets.md, "Camera")
@@ -66,6 +80,14 @@ class Shading:
     gloss: float  # 0 = the environment blurred to the normal, 1 = a mirror
     highlight: float  # key-light specular strength
     power: float  # key-light specular exponent
+    # Compare renders (dsf_shading, harness/forza_render.py): Phong's (R.L)^power, as
+    # DSF's and Forza's programs have it, instead of Blinn's (N.H)^power; the specular and
+    # reflection times a texel channel ("g" green, "a" alpha; DSF's programs mask them so);
+    # Schlick's Fresnel power.
+    phong: bool = False
+    mask: str | None = None  # the reflection's
+    fresnel_power: float = 5.0
+    spec_mask: str | None = None  # the specular's
 
 
 # Tone calibrated against the vanilla garage pictures (research/gui-assets.md, "Tone"):
@@ -115,15 +137,49 @@ class Material:
     colour: np.ndarray  # linear RGB, the base without a texture (paint: the paint's colour 2)
     packed: bool = False  # a shared SSIC texture: channel-packed, red is the grey level
     paint: Paint | None = None  # paint kinds: the palette entry (colour by the view angle)
+    # Compare renders only (the garage picture leaves these as they are):
+    shading: Shading | None = None  # instead of SHADING[kind]
+    scale: float = 1.0  # the texel colour times this (linear light)
+    paint_blend: bool = False  # texel x alpha + paint x (1 - alpha): Forza's paint shaders
+    alpha_test: bool = False  # texels with alpha under one half are holes
+    emissive: bool = False  # glows by texel alpha x the triangle's lamp colour (lit modes)
+    lens: Lens | None = None  # kind "lens": see-through lamp glass, opacity from the texel
+    program: str = ""  # what draws it, for the reports: a DSF material class or a Forza role
+    name: str = ""  # the DSF material's name or the Forza technique
+    uid: bytes = b""  # the DSF material's UID
+
+
+@dataclass(frozen=True)
+class Lens:
+    """See-through lamp glass (kind "lens"): opacity min(max(texel alpha x alpha,
+    floor), cap); what is behind is filtered by (1 - opacity) + opacity x tint x texel."""
+
+    floor: float = 0.0
+    cap: float = 1.0
+    alpha: float = 1.0
+    tint: float = 1.0
 
 
 PAINT_KINDS = ("paint", "metallic")
+TRANSPARENT_KINDS = ("glass", "lens")
+
+
+@dataclass
+class LampInfo:
+    """One lamp a scene's triangles light with: DSF's light-table type (flags b3) and
+    colour (b2) bytes, or a Forza lamp function (harness/forza_render.py)."""
+
+    type: int = 0
+    colour: int = 8
+    function: str = ""
 
 
 @dataclass
 class Scene:
     """Triangles (T): positions (T, 3, 3), normals (T, 3, 3), UV0 (T, 3, 2),
-    sky / AO term (T, 3), material index (T,); inside (T,): from the interior entry."""
+    sky / AO term (T, 3), material index (T,); inside (T,): from the interior entry.
+    Compare renders add lamp (T,): index into lamps, -1 for none; tag (T,): an index
+    the caller keeps its own per-triangle data under (the Forza origin, render_compare)."""
 
     pos: np.ndarray
     nrm: np.ndarray
@@ -132,14 +188,77 @@ class Scene:
     mat: np.ndarray
     materials: list[Material]
     inside: np.ndarray | None = None
+    lamp: np.ndarray | None = None
+    lamps: list[LampInfo] | None = None
+    tag: np.ndarray | None = None
+    info: dict | None = None  # what load_scene read: hubs, entry kinds, paint
 
     @property
     def glass(self) -> np.ndarray:
         kinds = np.array([m.kind == "glass" for m in self.materials])
         return kinds[self.mat]
 
+    @property
+    def transparent(self) -> np.ndarray:
+        kinds = np.array([m.kind in TRANSPARENT_KINDS for m in self.materials])
+        return kinds[self.mat]
+
+    def subset(self, keep: np.ndarray) -> Scene:
+        """The triangles where keep (T,) is true (materials and lamps shared)."""
+
+        def cut(a):
+            return None if a is None else a[keep]
+
+        return Scene(
+            self.pos[keep],
+            self.nrm[keep],
+            self.uv[keep],
+            self.ao[keep],
+            self.mat[keep],
+            self.materials,
+            cut(self.inside),
+            cut(self.lamp),
+            self.lamps,
+            cut(self.tag),
+            self.info,
+        )
+
+    @staticmethod
+    def join(scenes: list[Scene]) -> Scene:
+        """One scene of several (their materials and lamps appended; tags kept)."""
+        materials, lamps, parts = [], [], []
+        for s in scenes:
+            m0, l0 = len(materials), len(lamps)
+            materials += s.materials
+            lamps += s.lamps or []
+            n = len(s.mat)
+            lamp = s.lamp if s.lamp is not None else np.full(n, -1, np.int32)
+            parts.append(
+                (
+                    s.pos,
+                    s.nrm,
+                    s.uv,
+                    s.ao,
+                    s.mat + m0,
+                    s.inside if s.inside is not None else np.zeros(n, bool),
+                    np.where(lamp >= 0, lamp + l0, -1).astype(np.int32),
+                    s.tag if s.tag is not None else np.full(n, -1, np.int64),
+                )
+            )
+        cols = list(zip(*parts))
+        return Scene(
+            *(np.concatenate(c) for c in cols[:5]),
+            materials,
+            np.concatenate(cols[5]),
+            np.concatenate(cols[6]),
+            lamps,
+            np.concatenate(cols[7]),
+            scenes[0].info if scenes else None,
+        )
+
 
 _SHARED: dict = {}
+SHARED_KEEP = 2  # archives whose shared materials stay read (render_compare diff reads two)
 
 
 def _decode_texture(stream, texc) -> np.ndarray:
@@ -158,7 +277,8 @@ def _shared(archive: Path, stream, entries) -> tuple[dict, dict]:
     st = archive.stat()
     key = (str(archive.resolve()), st.st_size, st.st_mtime_ns)
     if key not in _SHARED:
-        _SHARED.clear()
+        while len(_SHARED) >= SHARED_KEEP:
+            del _SHARED[next(iter(_SHARED))]
         materials, textures = {}, {}
         ssic = next(e for e in entries if e.tag == "SSIC")
         for _, e in walk(ssic.children):
@@ -341,16 +461,117 @@ def _rest_hubs(stream, full, hubs: list) -> list:
     return [(hub + np.float32([0, up["front" if hub[2] > mid else "rear"], 0]), q) for hub, q in hubs]
 
 
-def load_scene(archive: Path, spool_id: int, entries=None, interior: bool = True) -> Scene:
+def load_scene(
+    archive: Path,
+    spool_id: int,
+    entries=None,
+    interior: bool = True,
+    entry: str = "exterior",
+    mask: int | None = None,
+    physical: bool = False,
+) -> Scene:
     """The clean exterior (kind 2) with its wheel part on every UPVH hub, and the
-    interior (kind 1) without its glass and gauge needles."""
+    interior (kind 1) without its glass and gauge needles.
+
+    entry "full": the full entry (kind 0) instead, part 0 and the wheel parts at LOD
+    mask `mask` (default FULL_MASK; the per-panel damage parts repeat part 0);
+    "interior": the interior entry alone, with its glass and needles (the cockpit view).
+    physical: materials as their DSF programs draw them (dsf_shading) and every
+    triangle's lamp (Scene.lamp, from vertex semantic 9 byte 2 and the full entry's
+    light table), for render_compare."""
 
     archive = Path(archive)
     with archive.open("rb") as stream:
-        return _load_scene(archive, stream, spool_id, entries, interior)
+        return _load_scene(archive, stream, spool_id, entries, interior, entry, mask, physical)
 
 
-def _load_scene(archive: Path, stream, spool_id: int, entries, interior: bool) -> Scene:
+FULL_MASK = 4  # the full entry's finest detail LOD (masks 4, 8, 16; 1 is the shadow)
+# DSF programs' sun specular per unit of g_hSpecularIntensity (and of the fixed terms of
+# the shared programs), in this renderer's light. harness/forza_render.FORZA_SPECULAR is
+# this times dsf_materials.GLOSS_SPECULAR_SCALE, so a converted gloss trim draws as its
+# Forza technique does (research/render-compare.md, "Shading").
+DSF_SPECULAR = 25.0
+
+
+def _marp_floats(stream, maco) -> dict[str, float]:
+    """A MACO's float parameters (type 1; the first pass that has each)."""
+    from dsfforza.convert import dsf_materials as dm
+
+    out = {}
+    for marc in maco.children:
+        if marc.tag != "MARC":
+            continue
+        for p in marc.children:
+            if p.tag == "MARP":
+                param = dm.parse_marp(dm.current(stream, p))
+                if param.type == 1 and param.name not in out:
+                    out[param.name] = struct.unpack_from("<f", param.value)[0]
+    return out
+
+
+def dsf_shading(program: str, params: dict[str, float] | None = None) -> Shading:
+    """How a DSF material program lights a texel (research/forza-materials.md, "Gloss":
+    the vanilla programs disassembled): light x texel plus
+
+    - trim (GLOBAL_Chassis_Simple): 0.01 x tex.G x (R.V)^7.5, no reflection;
+    - chassis (<car>_Chassis, the interior's): 0.03 x tex.a x (R.V)^24;
+    - chrome: tex.G x (R.V)^150 + env x tex.G, alike at every angle;
+    - tyre: tex.G x (R.V)^30 + env x tex.G x 0.5 x max(0.2, 1 - N.V);
+    - lights (<car>_Lights and its gloss copies): g_hSpecularIntensity x
+      (R.V)^g_hSpecularPower + env x tex.G x g_hReflectionAmount x Fresnel
+      (g_hFresnelPower, g_hReflectionFresnelBias), plus tex.a x the lamp's colour."""
+    if program == "trim":
+        return Shading(1.0, 0.0, 0.0, 1.0, 0.01 * DSF_SPECULAR, 7.5, True, None, 5.0, "g")
+    if program == "chrome":
+        return Shading(1.0, 1.0, 1.0, 1.0, DSF_SPECULAR, 150.0, True, "g", 5.0, "g")
+    if program == "tyre":
+        return Shading(1.0, 0.2, 0.5, 1.0, DSF_SPECULAR, 30.0, True, "g", 1.0, "g")
+    if program in ("lights", "gloss"):
+        p = params or {}
+        return Shading(
+            1.0,
+            float(min(1.0, max(0.0, p.get("g_hReflectionFresnelBias", 0.0)))),
+            float(max(0.0, p.get("g_hReflectionAmount", 1.0))),
+            1.0,
+            float(max(0.0, p.get("g_hSpecularIntensity", 1.0))) * DSF_SPECULAR,
+            float(max(1.0, p.get("g_hSpecularPower", 150.0))),
+            True,
+            "g",
+            float(max(0.5, p.get("g_hFresnelPower", 1.0))),
+        )
+    return Shading(1.0, 0.0, 0.0, 1.0, 0.03 * DSF_SPECULAR, 24.0, True, None, 5.0, "a")  # chassis, interior
+
+
+def _submodel_s9(mesh, sub, cache: dict) -> np.ndarray | None:
+    """Vertex semantic 9 per triangle corner of one submodel (n, 3, 4), in
+    _submodel_triangles' order; None without it."""
+    vb = mesh.vertex_buffers[sub.vertex_buffer]
+    if vb.uid not in cache:
+        cache[vb.uid] = _elements(vb)
+    el = cache[vb.uid]
+    if 9 not in el:
+        return None
+    idx = np.frombuffer(mesh.index_buffers[sub.index_buffer], "<u2")[
+        sub.first_index : sub.first_index + sub.index_count
+    ].astype(np.int64)
+    idx = idx[: len(idx) // 3 * 3] + sub.base_vertex
+    idx = idx[(idx < vb.count).reshape(-1, 3).all(axis=1).repeat(3)]
+    return el[9][idx].reshape(-1, 3, el[9].shape[1])
+
+
+def light_table(stream, full) -> dict[int, LampInfo]:
+    """Light byte (light id + 1) -> its lamp, from the full entry's UPVH light table."""
+    from dsfforza.convert import lights
+
+    out = {}
+    for row in lights.read_table(payload(stream, child(child(full, "NONR"), "UPVH"))):
+        out[row["id"] + 1] = LampInfo(row["flags"] >> 24, (row["flags"] >> 16) & 0xFF)
+    return out
+
+
+def _load_scene(
+    archive: Path, stream, spool_id: int, entries, interior: bool, entry="exterior", mask=None, physical=False
+) -> Scene:
     from dsfforza.convert import dsf_materials as dm
     from dsfforza.formats import upvh as uv
     from dsfforza.formats import vehicle_mesh as vm
@@ -367,6 +588,8 @@ def _load_scene(archive: Path, stream, spool_id: int, entries, interior: bool) -
                 textures[payload(stream, child(e, "UIDC"))[:8]] = _decode_texture(stream, e)
             elif e.tag == "MACO":
                 info = dm.material_info(stream, e)
+                if physical:
+                    info["floats"] = _marp_floats(stream, e)
                 infos[info["uid"]] = info
 
     def texture_of(uid: bytes):
@@ -392,16 +615,19 @@ def _load_scene(archive: Path, stream, spool_id: int, entries, interior: bool) -
             (np.array(struct.unpack_from("<3f", h.data, o), np.float32), struct.unpack_from("<4f", h.data, o + 16))
         )
     hubs = _rest_hubs(stream, kinds[0], hubs)
-    # Which hubs each exterior wheel part goes on: the wheel records' LOD links (hosts with
-    # front and rear wheel parts, forza2dsf.split_rear_wheel); a part no record names, all.
+    # Which hubs each wheel part goes on: the wheel records' LOD links (hosts with front
+    # and rear wheel parts, forza2dsf.split_rear_wheel); a part no record names, all.
+    # A link is (full entry part, exterior part).
     links = h.lod_links()
-    ext_ids = uv.modl_part_uids(payload(stream, child(child(kinds[2], "NONR"), "MODL")))
+    wheel_kind = 0 if entry == "full" else 2
+    part_ids = uv.modl_part_uids(payload(stream, child(child(kinds[wheel_kind], "NONR"), "MODL")))
     part_hubs: dict[int, list[int]] = {}
     for r in h.records:
-        link = links[r.lod_link][1] if 0 <= r.lod_link < len(links) else None
-        if r.type == 2 and 0 <= r.wheel < len(hubs) and link in ext_ids:
-            part_hubs.setdefault(ext_ids.index(link), []).append(r.wheel)
+        link = links[r.lod_link][1 if wheel_kind == 2 else 0] if 0 <= r.lod_link < len(links) else None
+        if r.type == 2 and 0 <= r.wheel < len(hubs) and link in part_ids:
+            part_hubs.setdefault(part_ids.index(link), []).append(r.wheel)
     paint_lin = np.array(car_paint.c2, np.float32)
+    lamp_of = light_table(stream, kinds[0]) if physical else {}
 
     materials: list[Material] = []
     mat_index: dict = {}
@@ -438,53 +664,83 @@ def _load_scene(archive: Path, stream, spool_id: int, entries, interior: bool) -
                 "chrome": np.array([0.85, 0.86, 0.88]),
             }.get(kind, np.array([0.3, 0.3, 0.3]))
             mat_index[key] = len(materials)
-            materials.append(
-                Material(kind, tex, np.asarray(base, np.float32), packed, car_paint if kind in PAINT_KINDS else None)
-            )
+            m = Material(kind, tex, np.asarray(base, np.float32), packed, car_paint if kind in PAINT_KINDS else None)
+            if physical:
+                _physical(m, uid, info, name, texture_of)
+            materials.append(m)
         return mat_index[key]
 
-    parts_pos, parts_nrm, parts_uv, parts_ao, parts_mat, parts_in = [], [], [], [], [], []
+    parts_pos, parts_nrm, parts_uv, parts_ao, parts_mat, parts_in, parts_lamp = [], [], [], [], [], [], []
+    parts_wheel = []
+    lamps: list[LampInfo] = []
+    lamp_index: dict[int, int] = {}
 
-    def add(pos, nrm, uvs, ao, m, inside=False):
+    def add(pos, nrm, uvs, ao, m, inside=False, s9=None, wheel=False):
         if not len(pos):
             return
         parts_in.append(np.full(len(pos), inside))
+        parts_wheel.append(np.full(len(pos), wheel))
         parts_pos.append(pos)
         parts_nrm.append(nrm if nrm is not None else _face_normals(pos))
         parts_uv.append(uvs)
         parts_ao.append(ao)
         parts_mat.append(np.full(len(pos), m, np.int32))
+        lamp = np.full(len(pos), -1, np.int32)
+        if s9 is not None and lamp_of:
+            byte = s9[:, :, 2].max(axis=1)
+            for b in np.unique(byte[byte > 0]):
+                b = int(b)
+                if b in lamp_of and b not in lamp_index:
+                    lamp_index[b] = len(lamps)
+                    lamps.append(lamp_of[b])
+                if b in lamp_index:
+                    lamp[byte == b] = lamp_index[b]
+        parts_lamp.append(lamp)
 
-    for kind in (2, 1) if interior and 1 in index else (2,):
+    if entry == "interior":
+        order = (1,) if 1 in index else ()
+    elif entry == "full":
+        order = (0, 1) if interior and 1 in index else (0,)
+    else:
+        order = (2, 1) if interior and 1 in index else (2,)
+    for kind in order:
         _, mesh = vm.load(archive, index[kind], entries)
         cache, seen = {}, set()
         for p, part in enumerate(mesh.parts):
-            subs = [mesh.submodels[n] for lod in part.lods for n in lod.submodels]
-            wheel = kind == 2 and any(
+            lods = [lod for lod in part.lods if lod.mask == (mask or FULL_MASK)] if kind == 0 else part.lods
+            subs = [mesh.submodels[n] for lod in lods for n in lod.submodels]
+            wheel = kind in (0, 2) and any(
                 s.material in TYRE_UIDS or mesh.vertex_buffers[s.vertex_buffer].stride == 20 for s in subs
             )
+            if kind == 0 and p != 0 and not wheel:
+                continue  # damage panel parts and chassis variants: part 0 again
             on = [hubs[i] for i in sorted(set(part_hubs[p]))] if wheel and p in part_hubs else hubs
             for sub in subs:
                 key = (sub.vertex_buffer, sub.index_buffer, sub.first_index, sub.index_count, sub.base_vertex)
                 if key in seen:
                     continue  # parts that list the same geometry (exterior parts 0 and 1)
                 seen.add(key)
-                if kind == 1 and (
-                    sub.material in GLASS_UIDS
-                    or sub.material in INTERIOR_GLASS_UIDS
-                    or mesh.vertex_buffers[sub.vertex_buffer].stride == 20
+                if (
+                    kind == 1
+                    and entry != "interior"
+                    and (
+                        sub.material in GLASS_UIDS
+                        or sub.material in INTERIOR_GLASS_UIDS
+                        or mesh.vertex_buffers[sub.vertex_buffer].stride == 20
+                    )
                 ):
                     continue  # the exterior glass covers the cabin; needles are tiny
                 if wheel and _fades_in(mesh, sub, cache):
                     continue  # the speed-blur disc: drawn only as the wheel spins (#221)
                 pos, nrm, uvs, ao = _submodel_triangles(mesh, sub, cache)
+                s9 = _submodel_s9(mesh, sub, cache) if physical else None
                 m = material(sub.material, kind == 1, wheel)
                 if wheel:
                     for hub, q in on:
                         r = _quat_matrix(q)
-                        add(pos @ r.T + hub, None if nrm is None else nrm @ r.T, uvs, ao, m)
+                        add(pos @ r.T + hub, None if nrm is None else nrm @ r.T, uvs, ao, m, wheel=True)
                 else:
-                    add(pos, nrm, uvs, ao, m, kind == 1)
+                    add(pos, nrm, uvs, ao, m, kind == 1, s9)
     return Scene(
         np.concatenate(parts_pos).astype(np.float32),
         np.concatenate(parts_nrm).astype(np.float32),
@@ -493,7 +749,45 @@ def _load_scene(archive: Path, stream, spool_id: int, entries, interior: bool) -
         np.concatenate(parts_mat),
         materials,
         np.concatenate(parts_in),
+        np.concatenate(parts_lamp) if physical else None,
+        lamps if physical else None,
+        None,
+        {
+            "hubs": hubs,
+            "part_hubs": part_hubs,
+            "paint": car_paint,
+            "entry": entry,
+            "mask": mask,
+            "wheel": np.concatenate(parts_wheel),  # (T,): on a wheel part (set on the hubs)
+        },
     )
+
+
+def _physical(m: Material, uid: bytes, info: dict, name: str, texture_of) -> None:
+    """Material m as its DSF program draws it (dsf_shading), in place."""
+    if m.kind in PAINT_KINDS:
+        m.program = "paint"
+    elif m.kind == "glass":
+        m.program = "glass"
+    elif m.kind in ("trim", "tyre", "chrome"):
+        m.program = m.kind
+        if m.kind == "chrome":
+            m.texture, m.packed = texture_of(uid)
+    elif "_lights" in name or "g_texDecalNormalMap" in info.get("params", ()):
+        floats = info.get("floats", {})
+        # The host's Lights material keeps specular 1; its gloss copies (dsf_materials
+        # GlossMaterial) take 0.0625 at most.
+        m.program = "lights" if floats.get("g_hSpecularIntensity", 1.0) >= 0.5 else "gloss"
+        m.emissive = True
+    else:
+        m.program = "chassis"
+    m.name, m.uid = info.get("path", ""), uid
+    if m.program == "paint":
+        # The garage tone's paint, through the same terms as every other material here.
+        sh = SHADING[m.kind]
+        m.shading = Shading(sh.diffuse, sh.f0, sh.reflect, sh.gloss, sh.highlight, sh.power)
+    elif m.program != "glass":
+        m.shading = dsf_shading(m.program, info.get("floats"))
 
 
 def _srgb_to_linear(c):
@@ -614,11 +908,28 @@ def _sample(tex: np.ndarray, uv: np.ndarray) -> np.ndarray:
 
 
 class _View:
-    def __init__(self, scene: Scene, camera: Camera, width: int, height: int):
-        pts = scene.pos.reshape(-1, 3)
-        lo, hi = pts.min(axis=0), pts.max(axis=0)
+    def __init__(self, scene: Scene, camera: Camera, width: int, height: int, box=None):
+        """box: the (lo, hi) corners to frame instead of the scene's own (render_compare
+        frames our car and Forza's alike)."""
+        if box is None:
+            pts = scene.pos.reshape(-1, 3)
+            lo, hi = pts.min(axis=0), pts.max(axis=0)
+        else:
+            lo, hi = (np.asarray(c, np.float64) for c in box)
         self.centre = (lo + hi) / 2
         length = float(max(hi - lo))
+        self.width, self.height = width, height
+        self.ground = float(lo[1])
+        self.lo, self.hi = lo, hi
+        if camera.eye is not None:
+            self.eye = np.asarray(camera.eye, np.float64)
+            self.fwd = np.asarray(camera.look, np.float64) / np.linalg.norm(camera.look)
+            self.eye_dir = -self.fwd
+            self.right = np.cross(self.fwd, [0.0, 1.0, 0.0])
+            self.right /= np.linalg.norm(self.right)
+            self.up = np.cross(self.right, self.fwd)
+            self.focal = width / 2 / math.tan(math.radians(camera.fov) / 2)
+            return
         ya, pa = math.radians(camera.yaw), math.radians(camera.pitch)
         # DSF: +z forward, +y up, +x the car's left: the camera on the front right.
         self.eye_dir = np.array([-math.sin(ya) * math.cos(pa), math.sin(pa), math.cos(ya) * math.cos(pa)])
@@ -631,9 +942,6 @@ class _View:
         # Field of view: the car's bounding sphere fills the frame's width.
         radius = float(np.linalg.norm(hi - lo)) / 2
         self.focal = width / 2 / math.tan(math.asin(min(0.99, radius / dist)))
-        self.width, self.height = width, height
-        self.ground = float(lo[1])
-        self.lo, self.hi = lo, hi
 
     def project(self, p: np.ndarray):
         d = p - self.eye
@@ -657,8 +965,8 @@ def _light(view: _View) -> np.ndarray:
     return d / np.linalg.norm(d)
 
 
-def _surface(scene: Scene, view: _View, sx, sy, sw, k: np.ndarray, tri: np.ndarray):
-    """Interpolated attributes at pixels k on triangles tri: (normal, uv, ao, view ray)."""
+def _barycentrics(view: _View, sx, sy, sw, k: np.ndarray, tri: np.ndarray) -> np.ndarray:
+    """Perspective-correct barycentrics (n, 3) of pixels k on triangles tri."""
     px, py = (k % view.width) + 0.5, (k // view.width) + 0.5
     ax, ay, bx, by, cx, cy = sx[tri, 0], sy[tri, 0], sx[tri, 1], sy[tri, 1], sx[tri, 2], sy[tri, 2]
     a = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
@@ -666,6 +974,12 @@ def _surface(scene: Scene, view: _View, sx, sy, sw, k: np.ndarray, tri: np.ndarr
     l1 = ((cx - px) * (ay - py) - (cy - py) * (ax - px)) / a
     lam = np.stack((l0, l1, 1 - l0 - l1), axis=1) * sw[tri]
     lam /= np.maximum(lam.sum(axis=1, keepdims=True), 1e-12)
+    return lam
+
+
+def _surface(scene: Scene, view: _View, sx, sy, sw, k: np.ndarray, tri: np.ndarray):
+    """Interpolated attributes at pixels k on triangles tri: (normal, uv, ao, view ray)."""
+    lam = _barycentrics(view, sx, sy, sw, k, tri)
     n = np.einsum("nc,nci->ni", lam, scene.nrm[tri])
     n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-9)
     uv = np.einsum("nc,nci->ni", lam, scene.uv[tri])
@@ -677,8 +991,181 @@ def _surface(scene: Scene, view: _View, sx, sy, sw, k: np.ndarray, tri: np.ndarr
     return n, uv, ao, ray
 
 
-def _shade(scene: Scene, view: _View, light, n, uv, ao, ray, mats) -> tuple[np.ndarray, np.ndarray]:
-    """Linear colour of opaque surface points, and their Fresnel term."""
+@dataclass(frozen=True)
+class Lighting:
+    """The light a frame is shaded in: scales of the environment (sky and reflections),
+    the sky ambient and the key light, and the lamps that are on (a Lua light mask:
+    1 Headlights, 2 Brakes, 4 DaytimeRunning; research/lights.md, "The light table")."""
+
+    name: str = "day"
+    env: float = 1.0
+    ambient: float = 1.0
+    key: float = 1.0
+    lamps: int = 0
+
+
+DAY = Lighting()
+DAY_LIT = Lighting("day_lit", lamps=4)  # the running lights, as DSF lights them by day
+DARK = Lighting("dark", 0.05, 0.05, 0.0, 5)  # the dark mood: running lights and head lamps
+LIGHTINGS = {lt.name: lt for lt in (DAY, DAY_LIT, DARK)}
+EMISSION = 2.0  # linear light of a lamp texel of alpha 1 at brightness 1 (exposure follows)
+
+# DSF's lamp colours by the light table's colour byte (b2) and brightness per type byte
+# (b3; 0xF3FB68, research/lights.md "How a lamp lights"), over a 0x01 head lamp's 2.
+LAMP_COLOURS = {
+    8: (1.0, 0.95, 0.85),
+    9: (0.85, 0.92, 1.0),
+    4: (1.0, 0.45, 0.05),
+    6: (1.0, 0.06, 0.03),
+}
+# (one assignment: statements other than definitions would change the module's
+# top-level code unit, which every car's build fingerprint holds; build/fingerprint.py)
+TYPE_BRIGHTNESS = {
+    1: 2,
+    2: 1,
+    3: 2,
+    **dict.fromkeys(range(4, 8), 0.5),
+    8: 1,
+    **dict.fromkeys(range(9, 18), 10),
+    18: 3,
+    19: 10,
+    **dict.fromkeys(range(20, 29), 1),
+    29: 10,
+    30: 0.2,
+}
+COMBINED_TYPES = {0x13, *range(0x18, 0x1E)}
+
+
+def lamp_level(type_byte: int, on: int) -> float:
+    """How bright a DSF lamp of this type shows with the light mask `on` (0..1 target
+    times the type's brightness, over a 0x01 head lamp's): the combined types light at
+    full when braking, with the running lights alone at 0.2 (0x18..0x1C) or 1 (0x13, 0x1D)."""
+    from dsfforza.convert import lights
+
+    if not 0 < type_byte < len(lights.LIGHT_TYPE_MASK):
+        return 0.0
+    mask = lights.LIGHT_TYPE_MASK[type_byte]
+    if not mask & on:
+        return 0.0
+    level = 1.0
+    if type_byte in COMBINED_TYPES and not (mask & on & 3):
+        level = 0.2 if 0x18 <= type_byte <= 0x1C else 1.0
+    return level * TYPE_BRIGHTNESS.get(type_byte, 1) / TYPE_BRIGHTNESS[1]
+
+
+def dsf_lamp_rgb(lamps: list[LampInfo] | None, lighting: Lighting) -> np.ndarray | None:
+    """(L, 3) linear emission colour of each lamp in this light (None without lamps)."""
+    if not lamps:
+        return None
+    return np.array(
+        [np.array(LAMP_COLOURS.get(lp.colour, LAMP_COLOURS[8])) * lamp_level(lp.type, lighting.lamps) for lp in lamps],
+        np.float32,
+    ).reshape(-1, 3)
+
+
+@dataclass
+class Frame:
+    """One view rasterised: per pixel the nearest opaque triangle (tri, -1 for none) and
+    its 1 / z (depth), and up to `layers` see-through layers in front of it (pixels,
+    triangles), nearest first. tri and the layers are the ID buffer."""
+
+    view: _View
+    sx: np.ndarray
+    sy: np.ndarray
+    sw: np.ndarray
+    depth: np.ndarray
+    tri: np.ndarray
+    layers: list
+
+
+def _alpha_cut(scene: Scene, view: _View, sx, sy, sw, k, w, t):
+    """Drop the fragments of alpha-tested materials on texels with alpha under 0.5."""
+    tested = np.array([m.alpha_test and m.texture is not None for m in scene.materials])
+    if not tested.any():
+        return k, w, t
+    sel = np.flatnonzero(tested[scene.mat[t]])
+    if not len(sel):
+        return k, w, t
+    lam = _barycentrics(view, sx, sy, sw, k[sel], t[sel])
+    uv = np.einsum("nc,nci->ni", lam, scene.uv[t[sel]])
+    drop = np.zeros(len(sel), bool)
+    mats = scene.mat[t[sel]]
+    for m in np.unique(mats):
+        on = mats == m
+        drop[on] = _sample(scene.materials[m].texture, uv[on])[:, 3] < 0.5
+    keep = np.ones(len(k), bool)
+    keep[sel[drop]] = False
+    return k[keep], w[keep], t[keep]
+
+
+def rasterize(scene: Scene, view: _View, layers: int = 2) -> Frame:
+    """The frame's ID buffer: nearest opaque triangle per pixel and the see-through
+    layers in front of it."""
+    width, height = view.width, view.height
+    sx, sy, sz = view.project(scene.pos)
+    ok = sz.min(axis=1) > 1e-3
+    sw = np.where(ok[:, None], 1 / np.maximum(sz, 1e-3), 0)
+    size = width * height
+    glass = scene.transparent
+    opaque_t = np.flatnonzero(ok & ~glass)
+    glass_t = np.flatnonzero(ok & glass)
+    k, w, t = _fragments(sx[opaque_t], sy[opaque_t], sw[opaque_t], width, height)
+    gk, gw, gt = _fragments(sx[glass_t], sy[glass_t], sw[glass_t], width, height)
+    gt = glass_t[gt]
+    if len(k):
+        k, w, t = _alpha_cut(scene, view, sx, sy, sw, k, w, opaque_t[t])
+        t = np.searchsorted(opaque_t, t)
+    # Surfaces are drawn from both sides, but a back face loses a tie: a panel's
+    # underside (paint, on the engine-bay picture: damage.md) lies on the panel itself
+    # and the game culls it.
+    centre = scene.pos.mean(axis=1)
+    back = np.einsum("ni,ni->n", scene.nrm.mean(axis=1), centre - view.eye) > 0
+    w = np.where(back[opaque_t[t]], w * (1 - BACK_FACE_BIAS), w)
+    # The interior entry holds the cockpit's own copy of the body shell, close to the
+    # exterior and in places outside it (a dark bonnet patch on the S2000, RX-7, Cuda):
+    # interior surfaces lose to the exterior unless clearly nearer, by a little behind
+    # glass (the cabin), by a lot elsewhere (an open car's seats are).
+    if scene.inside is not None and scene.inside.any() and not scene.inside.all():
+        glass_w = np.full(size, -np.inf, np.float32)
+        np.maximum.at(glass_w, gk, gw)
+        bias = np.where(glass_w[k] > w, INTERIOR_BIAS[0], INTERIOR_BIAS[1])
+        w = np.where(scene.inside[opaque_t[t]], w * (1 - bias), w)
+    depth, tri = _nearest(k, w, opaque_t[t], size)
+    out = []
+    # See-through surfaces: the nearest layer in front of the opaque surface, then
+    # the ones behind it.
+    if len(gk):
+        front = gw > depth[gk]
+        gk, gw, gt = gk[front], gw[front], gt[front]
+        for _ in range(layers):
+            if not len(gk):
+                break
+            gdepth, gtri = _nearest(gk, gw, gt, size)
+            on = np.flatnonzero(gtri >= 0)
+            out.append((on, gtri[on]))
+            behind = gw < gdepth[gk] * (1 - 1e-4)
+            gk, gw, gt = gk[behind], gw[behind], gt[behind]
+    return Frame(view, sx, sy, sw, depth, tri, out)
+
+
+def _base(mat: Material, t: np.ndarray | None, colour: np.ndarray, n: int) -> np.ndarray:
+    """Linear base colour of n points of a material (t: their texels, or None)."""
+    if mat.kind in PAINT_KINDS:
+        if t is not None:
+            return _srgb_to_linear(t[:, 0:1]) * (1 + (colour - 1) * t[:, 2:3])
+        return colour
+    if mat.packed and t is not None and (mat.kind != "chrome" or mat.shading is not None):
+        return np.repeat(_srgb_to_linear(t[:, 0:1]), 3, axis=1)  # compare renders: chrome's texel too
+    if t is not None and mat.kind not in ("chrome",):
+        return _srgb_to_linear(t[:, :3])
+    return np.broadcast_to(mat.colour, (n, 3))
+
+
+def _shade(
+    scene: Scene, view: _View, light, n, uv, ao, ray, mats, lighting: Lighting = DAY, lamp=None, lamp_rgb=None
+) -> tuple[np.ndarray, np.ndarray]:
+    """Linear colour of opaque surface points, and their Fresnel term. lamp (N,): each
+    point's lamp index (-1 none) into lamp_rgb (L, 3) for the emissive materials."""
     out = np.zeros((len(n), 3), np.float32)
     fres = np.zeros(len(n), np.float32)
     # The baked term is Forza's AO times 0.25 + 0.55 (1 + n_y) / 2 (vehicle-model.md): undo the second factor.
@@ -686,6 +1173,14 @@ def _shade(scene: Scene, view: _View, light, n, uv, ao, ray, mats) -> tuple[np.n
     for m in np.unique(mats):
         sel = np.flatnonzero(mats == m)
         mat = scene.materials[m]
+        if mat.shading is not None:
+            out[sel], fres[sel] = _shade_physical(mat, view, light, n[sel], uv[sel], occlusion[sel], ray[sel], lighting)
+            if mat.emissive and lamp_rgb is not None and lamp is not None and mat.texture is not None:
+                on = lamp[sel] >= 0
+                if on.any():
+                    a = _sample(mat.texture, uv[sel[on]])[:, 3:4]
+                    out[sel[on]] += a * lamp_rgb[lamp[sel[on]]] * EMISSION
+            continue
         sh = SHADING[mat.kind]
         nn, rr = n[sel], ray[sel]
         cos_v = np.clip(-np.einsum("ni,ni->n", nn, rr), 0, 1)
@@ -694,28 +1189,20 @@ def _shade(scene: Scene, view: _View, light, n, uv, ao, ray, mats) -> tuple[np.n
             # paint shader does; tinted = tex.r * lerp(1, paint, tex.b) (lights.md): the
             # shared atlas is channel-packed, red the grey level, blue the paint mask.
             colour = mat.paint.at(cos_v) if mat.paint is not None else np.broadcast_to(mat.colour, (len(sel), 3))
-            if mat.texture is not None:
-                t = _sample(mat.texture, uv[sel])
-                base = _srgb_to_linear(t[:, 0:1]) * (1 + (colour - 1) * t[:, 2:3])
-            else:
-                base = colour
-        elif mat.packed and mat.texture is not None and mat.kind != "chrome":
-            base = np.repeat(_srgb_to_linear(_sample(mat.texture, uv[sel])[:, 0:1]), 3, axis=1)
-        elif mat.texture is not None and mat.kind not in ("chrome",):
-            base = _srgb_to_linear(_sample(mat.texture, uv[sel])[:, :3])
         else:
-            base = np.broadcast_to(mat.colour, (len(sel), 3))
+            colour = mat.colour
+        base = _base(mat, _sample(mat.texture, uv[sel]) if mat.texture is not None else None, colour, len(sel))
         f = sh.f0 + (1 - sh.f0) * (1 - cos_v) ** 5
         refl = rr - 2 * np.einsum("ni,ni->n", rr, nn)[:, None] * nn
         blur = refl * sh.gloss + nn * (1 - sh.gloss)
         blur /= np.maximum(np.linalg.norm(blur, axis=1, keepdims=True), 1e-9)
-        env = _environment(blur)
+        env = _environment(blur) * lighting.env
         occ = occlusion[sel, None]
-        ambient = (GROUND_AMBIENT + (SKY_AMBIENT - GROUND_AMBIENT) * (1 + nn[:, 1:2]) / 2) * occ
-        lambert = np.clip(nn @ light, 0, None)[:, None] * KEY_POWER
+        ambient = (GROUND_AMBIENT + (SKY_AMBIENT - GROUND_AMBIENT) * (1 + nn[:, 1:2]) / 2) * occ * lighting.ambient
+        lambert = np.clip(nn @ light, 0, None)[:, None] * KEY_POWER * lighting.key
         half = light[None] - rr
         half /= np.linalg.norm(half, axis=1, keepdims=True)
-        spec = sh.highlight * np.clip(np.einsum("ni,ni->n", nn, half), 0, None) ** sh.power
+        spec = sh.highlight * np.clip(np.einsum("ni,ni->n", nn, half), 0, None) ** sh.power * lighting.key
         diffuse = base * (ambient + lambert * np.clip(occ * 1.6, 0, 1)) * sh.diffuse
         r = (f * sh.reflect)[:, None]
         if mat.kind == "chrome":
@@ -727,7 +1214,64 @@ def _shade(scene: Scene, view: _View, light, n, uv, ao, ray, mats) -> tuple[np.n
     return out, fres
 
 
-def _shade_glass(view: _View, light, n, ray) -> tuple[np.ndarray, np.ndarray]:
+def _channel(t: np.ndarray | None, mask: str | None, n: int) -> np.ndarray:
+    if mask is None or t is None:
+        return np.ones(n, np.float32)
+    return t[:, {"r": 0, "g": 1, "b": 2, "a": 3}[mask]]
+
+
+SUN_ELEVATION = 25.0  # degrees: compare renders' sun, beyond the car as the camera sees it
+SUN_POWER = 1.0  # its specular against the key light's (no diffuse: the tone stays the garage's)
+
+
+def _sun(view: _View) -> np.ndarray:
+    """Towards the sun: from beyond the car, SUN_ELEVATION above the horizon."""
+    away = -view.eye_dir * np.array([1.0, 0.0, 1.0])
+    away /= max(np.linalg.norm(away), 1e-9)
+    e = math.radians(SUN_ELEVATION)
+    return away * math.cos(e) + np.array([0.0, math.sin(e), 0.0])
+
+
+def _shade_physical(mat: Material, view: _View, light, nn, uv, occlusion, rr, lighting: Lighting):
+    """A material with its own Shading (dsf_shading, forza_render): light x base plus
+    Phong specular and a Fresnel reflection, each masked by a texel channel."""
+    sh = mat.shading
+    cos_v = np.clip(-np.einsum("ni,ni->n", nn, rr), 0, 1)
+    t = _sample(mat.texture, uv) if mat.texture is not None else None
+    colour = mat.paint.at(cos_v) if mat.kind in PAINT_KINDS and mat.paint is not None else mat.colour
+    base = _base(mat, t, colour, len(nn)) * mat.scale
+    if mat.paint_blend and t is not None:
+        paint = mat.paint.at(cos_v) if mat.paint is not None else mat.colour
+        a = t[:, 3:4]
+        base = base * a + paint * (1 - a)
+    f = sh.f0 + (1 - sh.f0) * (1 - cos_v) ** sh.fresnel_power
+    refl = rr - 2 * np.einsum("ni,ni->n", rr, nn)[:, None] * nn
+    blur = refl * sh.gloss + nn * (1 - sh.gloss)
+    blur /= np.maximum(np.linalg.norm(blur, axis=1, keepdims=True), 1e-9)
+    env = _environment(blur) * lighting.env
+    occ = occlusion[:, None]
+    ambient = (GROUND_AMBIENT + (SKY_AMBIENT - GROUND_AMBIENT) * (1 + nn[:, 1:2]) / 2) * occ * lighting.ambient
+    lambert = np.clip(nn @ light, 0, None)[:, None] * KEY_POWER * lighting.key
+    if sh.phong:
+        lobe = np.clip(refl @ light, 0, None)
+    else:
+        half = light[None] - rr
+        half /= np.linalg.norm(half, axis=1, keepdims=True)
+        lobe = np.clip(np.einsum("ni,ni->n", nn, half), 0, None)
+    spec = sh.highlight * lobe**sh.power * lighting.key
+    if sh.phong:  # compare renders: the sun ahead of the camera too (glints on flat panels, #176)
+        spec = spec + sh.highlight * np.clip(refl @ _sun(view), 0, None) ** sh.power * SUN_POWER * lighting.key
+    spec = spec * _channel(t, sh.spec_mask, len(nn))
+    r = f * sh.reflect * _channel(t, sh.mask, len(nn))
+    out = (
+        base * (ambient + lambert * np.clip(occ * 1.6, 0, 1)) * sh.diffuse
+        + env * r[:, None] * np.clip(occ * 1.6, 0, 1)
+        + spec[:, None] * occ
+    )
+    return out, f
+
+
+def _shade_glass(view: _View, light, n, ray, lighting: Lighting = DAY) -> tuple[np.ndarray, np.ndarray]:
     """(reflected light added on top, fraction of the light behind let through)."""
     sh = SHADING["glass"]
     cos_v = np.clip(-np.einsum("ni,ni->n", n, ray), 0, 1)
@@ -735,10 +1279,42 @@ def _shade_glass(view: _View, light, n, ray) -> tuple[np.ndarray, np.ndarray]:
     refl = ray - 2 * np.einsum("ni,ni->n", ray, n)[:, None] * n
     half = light[None] - ray
     half /= np.linalg.norm(half, axis=1, keepdims=True)
-    spec = sh.highlight * np.clip(np.einsum("ni,ni->n", n, half), 0, None) ** sh.power
-    add = _environment(refl) * f[:, None] * sh.reflect + spec[:, None] + GLASS_HAZE
+    spec = sh.highlight * np.clip(np.einsum("ni,ni->n", n, half), 0, None) ** sh.power * lighting.key
+    add = _environment(refl) * lighting.env * f[:, None] * sh.reflect + spec[:, None] + GLASS_HAZE * lighting.ambient
     through = (1 - f)[:, None] * GLASS_TINT
     return add, through
+
+
+def _shade_lens(mat: Material, view: _View, light, n, uv, ray, occlusion, lighting: Lighting, lamp, lamp_rgb):
+    """See-through lamp glass (Material.lens): (light added on top, light behind let
+    through (N, 3)). The texel's opaque share is lit like a surface and tints what is
+    behind; an emissive lens glows by its texel alpha."""
+    lens = mat.lens or Lens()
+    sh = mat.shading or SHADING["glass"]
+    if mat.texture is not None:
+        t = _sample(mat.texture, uv)
+        o = np.clip(np.maximum(t[:, 3] * lens.alpha, lens.floor), 0, lens.cap)[:, None]
+    else:  # untextured glass: the opacity floor (GlassColor.w), its colour the material's
+        t = np.concatenate([np.broadcast_to(mat.colour, (len(n), 3)), np.zeros((len(n), 1))], axis=1)
+        t = t.astype(np.float32)
+        o = np.full((len(n), 1), min(lens.floor, lens.cap), np.float32)
+    texel = _srgb_to_linear(t[:, :3])
+    lin = texel * mat.scale
+    cos_v = np.clip(-np.einsum("ni,ni->n", n, ray), 0, 1)
+    f = sh.f0 + (1 - sh.f0) * (1 - cos_v) ** sh.fresnel_power
+    refl = ray - 2 * np.einsum("ni,ni->n", ray, n)[:, None] * n
+    lobe = np.clip(refl @ light, 0, None)
+    spec = sh.highlight * lobe**sh.power * lighting.key
+    occ = occlusion[:, None]
+    ambient = (GROUND_AMBIENT + (SKY_AMBIENT - GROUND_AMBIENT) * (1 + n[:, 1:2]) / 2) * occ * lighting.ambient
+    lambert = np.clip(n @ light, 0, None)[:, None] * KEY_POWER * lighting.key
+    add = o * lin * (ambient + lambert) * sh.diffuse + _environment(refl) * lighting.env * (f * sh.reflect)[:, None]
+    add += spec[:, None]
+    if mat.emissive and lamp_rgb is not None and lamp is not None:
+        on = lamp >= 0
+        add[on] += t[on, 3:4] * lamp_rgb[lamp[on]] * EMISSION
+    through = ((1 - o) + o * np.clip(texel * lens.tint, 0, 1)) * (1 - f)[:, None]
+    return add, np.clip(through, 0, 1)
 
 
 def _shadow(view: _View, k: np.ndarray) -> np.ndarray:
@@ -789,74 +1365,69 @@ def fit_camera(scene: Scene, score, size: tuple[int, int] = (360, 240)) -> tuple
     return best
 
 
-def render(scene: Scene, camera: Camera = VANILLA_CAMERA, width: int = 900, height: int = 480) -> np.ndarray:
-    """(height, width, 4) uint8 straight-alpha RGBA: the car, its glass and its
-    floor shadow on a transparent background."""
-    view = _View(scene, camera, width, height)
+def shade(
+    scene: Scene, frame: Frame, lighting: Lighting = DAY, lamp_rgb: np.ndarray | None = None, shadow: bool = True
+) -> tuple[np.ndarray, np.ndarray]:
+    """Linear colour (size, 3) and straight alpha (size,) of a rasterised frame.
+    lamp_rgb (L, 3): each of scene.lamps' emission in this light (dsf_lamp_rgb)."""
+    view = frame.view
     light = _light(view)
-    sx, sy, sz = view.project(scene.pos)
-    ok = sz.min(axis=1) > 1e-3
-    sw = np.where(ok[:, None], 1 / np.maximum(sz, 1e-3), 0)
-    size = width * height
-    glass = scene.glass
-    opaque_t = np.flatnonzero(ok & ~glass)
-    glass_t = np.flatnonzero(ok & glass)
-    k, w, t = _fragments(sx[opaque_t], sy[opaque_t], sw[opaque_t], width, height)
-    gk, gw, gt = _fragments(sx[glass_t], sy[glass_t], sw[glass_t], width, height)
-    gt = glass_t[gt]
-    # Surfaces are drawn from both sides, but a back face loses a tie: a panel's
-    # underside (paint, on the engine-bay picture: damage.md) lies on the panel itself
-    # and the game culls it.
-    centre = scene.pos.mean(axis=1)
-    back = np.einsum("ni,ni->n", scene.nrm.mean(axis=1), centre - view.eye) > 0
-    w = np.where(back[opaque_t[t]], w * (1 - BACK_FACE_BIAS), w)
-    # The interior entry holds the cockpit's own copy of the body shell, close to the
-    # exterior and in places outside it (a dark bonnet patch on the S2000, RX-7, Cuda):
-    # interior surfaces lose to the exterior unless clearly nearer, by a little behind
-    # glass (the cabin), by a lot elsewhere (an open car's seats are).
-    if scene.inside is not None:
-        glass_w = np.full(size, -np.inf, np.float32)
-        np.maximum.at(glass_w, gk, gw)
-        bias = np.where(glass_w[k] > w, INTERIOR_BIAS[0], INTERIOR_BIAS[1])
-        w = np.where(scene.inside[opaque_t[t]], w * (1 - bias), w)
-    depth, tri = _nearest(k, w, opaque_t[t], size)
+    sx, sy, sw = frame.sx, frame.sy, frame.sw
+    size = view.width * view.height
+    tri = frame.tri
     colour = np.zeros((size, 3), np.float32)
     alpha = np.zeros(size, np.float32)
     hit = np.flatnonzero(tri >= 0)
     if len(hit):
         n, uv, ao, ray = _surface(scene, view, sx, sy, sw, hit, tri[hit])
-        c, _ = _shade(scene, view, light, n, uv, ao, ray, scene.mat[tri[hit]])
+        lamp = scene.lamp[tri[hit]] if scene.lamp is not None else None
+        c, _ = _shade(scene, view, light, n, uv, ao, ray, scene.mat[tri[hit]], lighting, lamp, lamp_rgb)
         colour[hit] = c
         alpha[hit] = 1
     # Floor shadow under everything else.
-    pix = np.arange(size)
-    shadow = _shadow(view, pix)
-    empty = alpha == 0
-    alpha[empty] = shadow[empty]
-    # Glass: the nearest layer in front of the opaque surface, then one behind it.
-    if len(gk):
-        front = gw > depth[gk]
-        gk, gw, gt = gk[front], gw[front], gt[front]
-        layers = []
-        for _ in range(2):
-            if not len(gk):
-                break
-            gdepth, gtri = _nearest(gk, gw, gt, size)
-            on = np.flatnonzero(gtri >= 0)
-            layers.append((on, gtri[on]))
-            behind = gw < gdepth[gk] * (1 - 1e-4)
-            gk, gw, gt = gk[behind], gw[behind], gt[behind]
-        for on, gtri in reversed(layers):  # far layer first
-            n, _, _, ray = _surface(scene, view, sx, sy, sw, on, gtri)
-            add, through = _shade_glass(view, light, n, ray)
-            # Premultiplied: what is behind (or nothing) dimmed by the glass, plus its reflection.
-            a = alpha[on]
-            new_a = 1 - (1 - a) * through.mean(axis=1)
-            premul = colour[on] * a[:, None] * through + add
-            colour[on] = premul / np.maximum(new_a[:, None], 1e-6)
-            alpha[on] = new_a
+    if shadow:
+        pix = np.arange(size)
+        shadow_a = _shadow(view, pix)
+        empty = alpha == 0
+        alpha[empty] = shadow_a[empty]
+    # See-through layers, far first.
+    for on, gtri in reversed(frame.layers):
+        n, uv, ao, ray = _surface(scene, view, sx, sy, sw, on, gtri)
+        add = np.zeros((len(on), 3), np.float32)
+        through = np.zeros((len(on), 3), np.float32)
+        mats = scene.mat[gtri]
+        for m in np.unique(mats):
+            sel = np.flatnonzero(mats == m)
+            mat = scene.materials[m]
+            if mat.kind == "lens":
+                occ = np.clip(ao[sel] / (0.25 + 0.55 * (1 + n[sel, 1]) / 2), 0.15, 1.0)
+                lamp = scene.lamp[gtri[sel]] if scene.lamp is not None else None
+                add[sel], through[sel] = _shade_lens(
+                    mat, view, light, n[sel], uv[sel], ray[sel], occ, lighting, lamp, lamp_rgb
+                )
+            else:
+                add[sel], through[sel] = _shade_glass(view, light, n[sel], ray[sel], lighting)
+        # Premultiplied: what is behind (or nothing) dimmed by the glass, plus its reflection.
+        a = alpha[on]
+        new_a = 1 - (1 - a) * through.mean(axis=1)
+        premul = colour[on] * a[:, None] * through + add
+        colour[on] = premul / np.maximum(new_a[:, None], 1e-6)
+        alpha[on] = new_a
+    return colour, alpha
+
+
+def to_rgba(colour: np.ndarray, alpha: np.ndarray, width: int, height: int) -> np.ndarray:
+    """(height, width, 4) uint8 straight-alpha RGBA of shade()'s linear colour."""
     rgb = _linear_to_srgb(colour * EXPOSURE)
-    out = np.zeros((size, 4), np.uint8)
+    out = np.zeros((width * height, 4), np.uint8)
     out[:, :3] = np.clip(rgb * 255 + 0.5, 0, 255).astype(np.uint8)
     out[:, 3] = np.clip(alpha * 255 + 0.5, 0, 255).astype(np.uint8)
     return out.reshape(height, width, 4)
+
+
+def render(scene: Scene, camera: Camera = VANILLA_CAMERA, width: int = 900, height: int = 480) -> np.ndarray:
+    """(height, width, 4) uint8 straight-alpha RGBA: the car, its glass and its
+    floor shadow on a transparent background."""
+    frame = rasterize(scene, _View(scene, camera, width, height))
+    colour, alpha = shade(scene, frame)
+    return to_rgba(colour, alpha, width, height)
