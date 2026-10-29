@@ -2290,6 +2290,21 @@ the factor from the 15 rendered ports, correlation 0.57): p10 / 50 / 90 1.18 / 1
 96 below 2.5. The median sits about 13% under vanilla's; 0.5 would centre it (an estimated 2.4 / 3.7
 / 5.2).
 
+`render_compare diff` (master 62736c2's lamp code against this, the 15 ports, `out/rc/l8-286`): 15 drawn
+differently, all in the front lamps (13 to 80% of the region, most in the dark mood); no other region
+changes. Its "white plate by day" flag (#167's glare limit, 3.0) now fires on 11 of them at 3.0 to
+4.5. Vanilla's 0x1D lamps measure 2.5 / 3.8 / 5.3 on the same glow, so the limit sits below vanilla's
+median; vanilla's p90 (5.3) would be the limit that matches the acceptance here.
+
+In game (VM 1 and 2, `-Views 'nose,nose+night,rear,rear+night' -Palette 0`, vanilla 241 and 130 first;
+master `vm1-20261029-230737` / `vm2-20261029-230813`, this change `vm1-20261029-231717` /
+`vm2-20261029-231715`; `img/lamps8-headlamps-night-a.jpg`, `-b.jpg`, each with Forza's render of the
+same front from the diff): in the dark mood the ports' head lamps glow larger and brighter, as vanilla
+241's and 130's do (GTI VR6, M3 E30, Carlton, Thunderbird, X6 M, S60, Yellowbird, R8); the Venom's
+projectors and the E63's lamps a little brighter. By day the round and wide lamps (GTI VR6, Evo VI,
+Carlton) are whiter than on master, about as bright as vanilla 241's and 130's own day lamps, and keep
+their lens pattern; no lamp reads as a flat plate.
+
 Rear lamps at night (the same measure, rear view, red lamp pixels): vanilla, 141 vehicles, p95 0.04 /
 0.10 / 0.29; the 15 ports 0.02 / 0.05 / 0.12, over larger areas (the X6 M 2,912 px at 0.04): the same
 problem at the rear, #290.
