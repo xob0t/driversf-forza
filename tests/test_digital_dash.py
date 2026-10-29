@@ -99,10 +99,10 @@ def test_bar_cells_are_coarse_and_smooth():
     assert np.allclose(colours2[0][:, :20], colours[0][:, :20], atol=1e-4)
 
 
-def test_small_lights_on_their_own_displays_stay():
+def test_lights_and_segments_are_one_piece_each():
     # Round shift lights on display triangles of their own (the Zonda Cinque's): every cell
-    # round them is mostly off the display, so each light is one piece of its own over its
-    # box, mostly on the display.
+    # round them is mostly off the display, so each light is one piece over its convex
+    # hull (round, not a box), on the display and over nothing else.
     yy, xx = np.mgrid[0:40, 0:120]
     shown = np.zeros((40, 120), bool)
     steps = np.full((40, 120), -1)
@@ -116,11 +116,16 @@ def test_small_lights_on_their_own_displays_stay():
     base = np.zeros((40, 120, 3), np.float32)
     _, _, _, drawn = dd.bar_cells(base, ev_step, ev_col, shown, 10)
     assert not drawn.any()
-    pieces = dd.bar_lights(base, ev_step, ev_col, shown, 10)
+    detail = np.zeros((40, 120), bool)
+    pieces, covered = dd.bar_segments(base, ev_step, ev_col, shown, detail, 10)
     assert [p[3][0] for p in pieces] == [0, 1, 2]
-    for (x0, x1, y0, y1), rest, colours, _ in pieces:
-        assert shown[y0:y1, x0:x1].mean() >= dd.EDGE_SHOWN and min(x1 - x0, y1 - y0) >= 5
-        assert colours[0][1] > 0.6 and rest.max() == 0
+    for outline, rest, colours, _ in pieces:
+        assert abs(dd._area(outline) - np.pi * 8**2) < 0.15 * np.pi * 8**2  # a disc, not its box
+        assert colours[0][1] > 0.85 and rest.max() == 0
+    assert not (covered & ~shown).sum() > 0.05 * covered.sum()
+    # a segment the cells must stay off: no cell over a covered pixel
+    _, _, _, drawn = dd.bar_cells(base, ev_step, ev_col, np.ones((40, 120), bool), 10, covered)
+    assert not drawn.any()
 
 
 def test_a_bar_along_a_display_edge_leaves_no_slivers():

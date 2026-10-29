@@ -193,10 +193,11 @@ DIGIT_LIFT = 0.0016
 # blurred the Viper 2013's fan more.
 PIECE_SIZE = 0.001
 CELL_SHOWN = 0.9  # share of a cell on the displays' triangles for it to be drawn
-EDGE_SHOWN = (
-    0.6  # share of a light's or edge piece's box on the display (the Zonda Cinque's round shift lights: 0.67 to 0.71)
-)
-LIGHT_CELLS = 5  # a group lit at one step no wider or taller than this many cells is a light
+EDGE_SHOWN = 0.6  # share of an edge piece's box on the display
+SEGMENT_STEPS = 6  # rpm steps a segment may light over (it lights at their median; GranTurismo S: 4 to 5)
+SEGMENT_HULL = 1.3  # a group lit at one step is a segment when its convex hull is at most this x its area
+SEGMENT_FOREIGN = 0.08  # share of a segment's hull that may be other lit pixels (antialiased rims)
+SEGMENT_DETAIL = 0.02  # ... and static detail or pixels off the display
 STATIC_DETAIL = 0.2  # rest luminance (0..1) off the bar's that makes a never-lit pixel detail
 STATIC_SHARE = 0.05  # share of a cell that may be static detail for it to be drawn
 CELL_BLUR = 0.4  # cell colours are blurred first, by a Gaussian this many cells wide (sigma)
@@ -395,7 +396,7 @@ def static_detail(base, ev_step, shown, c: int):
     return shown & (ev_step[0] < 0) & seen & (np.abs(lum - near) >= STATIC_DETAIL)
 
 
-def bar_cells(base, ev_step, ev_col, shown, c: int):
+def bar_cells(base, ev_step, ev_col, shown, c: int, blocked=None):
     """What the rpm changes, filtered onto cells of c x c render-target pixels: (rest,
     colours, steps, drawn). Per cell, `rest` and each `colours[level]` are the mean colours
     of its shown pixels at rest and after each change (pixels that don't change keep their
@@ -403,7 +404,8 @@ def bar_cells(base, ev_step, ev_col, shown, c: int):
     apart in cells of 4) would otherwise beat with the cells into a mottle of two shades.
     `steps[0]` is the median step its pixels first change at, and
     `steps[1]` the step of the second change if at least half of them have one (else -1).
-    A cell is `drawn` when it is CELL_SHOWN on the displays and changes visibly."""
+    A cell is `drawn` when it is CELL_SHOWN on the displays, changes visibly, holds no more
+    than STATIC_SHARE of static detail and no `blocked` pixel."""
     weight = shown.astype(np.float32)
     n = _blocks(weight, c)
     per = np.maximum(n, 1)[..., None]
@@ -429,6 +431,8 @@ def bar_cells(base, ev_step, ev_col, shown, c: int):
     change = np.abs(colours[0] - rest).max(-1)
     detail = static_detail(base, ev_step, shown, c)
     covers = _blocks(detail.astype(np.float32), c) > STATIC_SHARE * c * c
+    if blocked is not None:  # pixels another piece covers: no overlap at all
+        covers |= _blocks(blocked.astype(np.float32), c) > 0
     drawn = (count > 0) & (n >= CELL_SHOWN * c * c) & (change > LIT_DIFFERENCE) & ~covers
     steps[:, ~drawn] = -1
     return rest, np.stack(colours), steps, drawn
@@ -453,33 +457,82 @@ def cell_runs(step, column, drawn) -> list:
     return rows
 
 
-def _components(mask) -> list:
-    """Bounding boxes (x0, x1, y0, y1) of the 8-connected groups of a boolean mask."""
-    seen = np.zeros(mask.shape, bool)
+def _labels(mask):
+    """The 8-connected groups of a boolean mask: (label image, -1 off the mask; their
+    bounding boxes (x0, x1, y0, y1) by label)."""
+    labels = np.full(mask.shape, -1, np.int32)
     boxes = []
     for y, x in zip(*np.nonzero(mask), strict=True):
-        if seen[y, x]:
+        if labels[y, x] >= 0:
             continue
-        seen[y, x] = True
+        n = len(boxes)
+        labels[y, x] = n
         todo, box = [(y, x)], [x, x + 1, y, y + 1]
         while todo:
             cy, cx = todo.pop()
             box = [min(box[0], cx), max(box[1], cx + 1), min(box[2], cy), max(box[3], cy + 1)]
             for ny in range(max(0, cy - 1), min(mask.shape[0], cy + 2)):
                 for nx in range(max(0, cx - 1), min(mask.shape[1], cx + 2)):
-                    if mask[ny, nx] and not seen[ny, nx]:
-                        seen[ny, nx] = True
+                    if mask[ny, nx] and labels[ny, nx] < 0:
+                        labels[ny, nx] = n
                         todo.append((ny, nx))
-        boxes.append(tuple(box))
-    return boxes
+        boxes.append(tuple(int(v) for v in box))
+    return labels, boxes
 
 
-def _piece(base, ev_step, ev_col, shown, rect, k: int):
-    """(rect, rest, colours, steps) of one piece over `rect` (x0, x1, y0, y1) lit at step
-    k: the mean colours of its shown pixels, like bar_cells' cells; None if it hardly
-    changes."""
-    x0, x1, y0, y1 = rect
-    on = shown[y0:y1, x0:x1].reshape(-1)
+def _components(mask) -> list:
+    """Bounding boxes (x0, x1, y0, y1) of the 8-connected groups of a boolean mask."""
+    return _labels(mask)[1]
+
+
+def _hull(group, x0: int, y0: int, corners: bool = True) -> list:
+    """Convex hull of the True pixels of `group` (a mask whose top left pixel is (x0, y0)):
+    of their corners (a polygon covering them), or of their centres."""
+    g = np.pad(group, 1)
+    edge = group & ~(g[:-2, 1:-1] & g[2:, 1:-1] & g[1:-1, :-2] & g[1:-1, 2:])
+    ys, xs = np.nonzero(edge)
+    offsets = ((0, 0), (0, 1), (1, 0), (1, 1)) if corners else ((0.5, 0.5),)
+    pts = sorted(
+        {(x0 + x + dx, y0 + y + dy) for x, y in zip(xs.tolist(), ys.tolist(), strict=True) for dx, dy in offsets}
+    )
+    if len(pts) < 3:
+        return pts
+
+    def turn(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    def half(points):
+        out = []
+        for q in points:
+            while len(out) >= 2 and turn(out[-2], out[-1], q) <= 0:
+                out.pop()
+            out.append(q)
+        return out
+
+    lower, upper = half(pts), half(pts[::-1])
+    return lower[:-1] + upper[:-1]
+
+
+def _area(poly) -> float:
+    return abs(sum(a[0] * b[1] - b[0] * a[1] for a, b in zip(poly, poly[1:] + poly[:1], strict=True))) / 2
+
+
+def _polygon_mask(poly, box):
+    """Pixels of `box` (x0, x1, y0, y1) whose centres are inside the polygon."""
+    from PIL import Image, ImageDraw
+
+    x0, x1, y0, y1 = box
+    img = Image.new("L", (x1 - x0, y1 - y0), 0)
+    ImageDraw.Draw(img).polygon([(x - x0 - 0.5, y - y0 - 0.5) for x, y in poly], fill=255)
+    return np.asarray(img) > 0
+
+
+def _means(base, ev_step, ev_col, on, box, k: int):
+    """(rest, colours, steps) of a piece lit at step k over the pixels `on` (a mask of
+    `box`): their mean colours at rest and after each change, like bar_cells' cells; None
+    if they hardly change."""
+    x0, x1, y0, y1 = box
+    on = on.reshape(-1)
     if not on.any():
         return None
     rest = base[y0:y1, x0:x1, :3].reshape(-1, 3)[on].mean(0)
@@ -489,60 +542,107 @@ def _piece(base, ev_step, ev_col, shown, rect, k: int):
         colours.append(state.reshape(-1, 3)[on].mean(0))
     if np.abs(colours[0] - rest).max() <= LIT_DIFFERENCE:
         return None
-    first = ev_step[0][y0:y1, x0:x1]
+    first = ev_step[0][y0:y1, x0:x1].reshape(-1)[on]
     steps, lit = [int(k)], first >= 0
     for level in range(1, CHANGES):
-        later = ev_step[level][y0:y1, x0:x1]
+        later = ev_step[level][y0:y1, x0:x1].reshape(-1)[on]
         has = lit & (later >= 0)
         steps.append(int(k + np.median(later[has] - first[has])) if has.sum() * 2 >= max(1, lit.sum()) else -1)
-    return (rect, rest, np.stack(colours), steps)
+    return rest, np.stack(colours), steps
 
 
-def bar_lights(base, ev_step, ev_col, shown, c: int) -> list:
-    """Lights: groups of pixels the rpm lights together (within one step), no wider or
-    taller than LIGHT_CELLS cells and no smaller than half a cell (shift lights, LEDs),
-    each one piece over its box,
-    grown to a cell a side where that stays EDGE_SHOWN on the display and off the other
-    lights. Cells would cut a light into parts, each mostly off a light that has a
-    display of its own. [(rect, rest, colours, steps)] like edge_pieces."""
+def _rect(box) -> list:
+    x0, x1, y0, y1 = box
+    return [(x0, y1), (x1, y1), (x1, y0), (x0, y0)]
+
+
+def _segment_labels(mask):
+    """The parts of a boolean mask joined only by bridges a pixel or two wide (the
+    antialiased pixels under a segmented bar's separators): the mask opened (eroded by a
+    pixel, labelled, grown back by two inside the mask). Pixels of no part are -1."""
+    m = np.pad(mask, 1)
+    core = mask & m[:-2, 1:-1] & m[2:, 1:-1] & m[1:-1, :-2] & m[1:-1, 2:]
+    labels, _ = _labels(core)
+    for _ in range(2):
+        grown = labels.copy()
+        for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            shifted = np.full(labels.shape, -1, np.int32)
+            ys = slice(max(0, dy), labels.shape[0] + min(0, dy))
+            yd = slice(max(0, -dy), labels.shape[0] + min(0, -dy))
+            xs = slice(max(0, dx), labels.shape[1] + min(0, dx))
+            xd = slice(max(0, -dx), labels.shape[1] + min(0, -dx))
+            shifted[yd, xd] = labels[ys, xs]
+            take = mask & (grown < 0) & (shifted >= 0)
+            grown[take] = shifted[take]
+        labels = grown
+    count = int(labels.max()) + 1
+    ys, xs = np.nonzero(labels >= 0)
+    ns = labels[ys, xs]
+    lo_x, lo_y = np.full(count, labels.shape[1]), np.full(count, labels.shape[0])
+    hi_x, hi_y = np.zeros(count, int), np.zeros(count, int)
+    np.minimum.at(lo_x, ns, xs)
+    np.minimum.at(lo_y, ns, ys)
+    np.maximum.at(hi_x, ns, xs + 1)
+    np.maximum.at(hi_y, ns, ys + 1)
+    return labels, [(int(a), int(b), int(c), int(d)) for a, b, c, d in zip(lo_x, hi_x, lo_y, hi_y, strict=True)]
+
+
+def bar_segments(base, ev_step, ev_col, shown, detail, c: int):
+    """Segments: parts of what the rpm lights (`_segment_labels`: joined to the rest by
+    bridges a pixel or two wide at most) lit within SEGMENT_STEPS steps and nearly convex,
+    each one piece over its convex hull, lit at its median step: shift lights and LEDs (the Zonda
+    Cinque's, on displays of their own), the segments of segmented bars (GranTurismo S,
+    599XX, LP700-4). Cells would cut a segment into parts, each mostly off a light's
+    display or over the separators between segments. The hull is the segment's core's
+    (its rim may reach over a separator); it takes in at most SEGMENT_FOREIGN of other
+    lit pixels or earlier segments and SEGMENT_DETAIL of static detail or pixels off the
+    display. Specks under half a cell (a needle's trace) are left to the cells,
+    which average them as the eye would. Returns ([(outline, rest, colours, steps)], the
+    pixels the segments cover)."""
     first = ev_step[0]
-    taken = np.zeros(first.shape, bool)
+    labels, boxes = _segment_labels(first >= 0)
+    covered = np.zeros(first.shape, bool)
     out = []
-    for box in _components(first >= 0):
-        x0, x1, y0, y1 = box
-        s = first[y0:y1, x0:x1]
-        s = s[s >= 0]
-        if max(x1 - x0, y1 - y0) > LIGHT_CELLS * c or s.max() - s.min() > 1:
+    for n, (x0, x1, y0, y1) in enumerate(boxes):
+        group = labels[y0:y1, x0:x1] == n
+        s = first[y0:y1, x0:x1][group]
+        if s.max() - s.min() > SEGMENT_STEPS or min(x1 - x0, y1 - y0) < c / 2 or group.sum() < c * c / 4:
             continue
-        if min(x1 - x0, y1 - y0) < c / 2 or len(s) < c * c / 4:
-            continue  # a speck (a needle's trace): the cells average it as the eye would
-        gx, gy = max(0, c - (x1 - x0)), max(0, c - (y1 - y0))
-        grown = (
-            max(0, x0 - gx // 2),
-            min(first.shape[1], x1 + gx - gx // 2),
-            max(0, y0 - gy // 2),
-            min(first.shape[0], y1 + gy - gy // 2),
-        )
-        for x0, x1, y0, y1 in (grown, box):
-            if taken[y0:y1, x0:x1].any() or shown[y0:y1, x0:x1].mean() < EDGE_SHOWN:
-                continue
-            if ((first[y0:y1, x0:x1] >= 0) & ~np.isin(first[y0:y1, x0:x1], s)).any():
-                continue  # another group's pixels
-            piece = _piece(base, ev_step, ev_col, shown, (x0, x1, y0, y1), int(np.median(s)))
-            if piece is not None:
-                taken[y0:y1, x0:x1] = True
-                out.append(piece)
-            break
-    return out
+        outline = _hull(group, x0, y0)
+        if len(outline) < 3 or _area(outline) > SEGMENT_HULL * group.sum():
+            continue  # not convex (an arc lit at one step): cells
+        # The piece covers the segment's core (pixels whose 4 neighbours are lit too): its
+        # antialiased rim may reach over a separator.
+        lit = np.pad(first >= 0, 1)[y0 : y1 + 2, x0 : x1 + 2]
+        core = group & lit[:-2, 1:-1] & lit[2:, 1:-1] & lit[1:-1, :-2] & lit[1:-1, 2:]
+        if core.sum() < 3:
+            continue
+        hull = _hull(core, x0, y0)
+        box = (x0, x1, y0, y1)
+        inside = _polygon_mask(_hull(core, x0, y0, corners=False), box) | core
+        if (
+            len(hull) < 3
+            or (inside & (detail[y0:y1, x0:x1] | ~shown[y0:y1, x0:x1])).sum() > SEGMENT_DETAIL * inside.sum()
+        ):
+            continue
+        other = (labels[y0:y1, x0:x1] != n) & (first[y0:y1, x0:x1] >= 0) | covered[y0:y1, x0:x1]
+        if (inside & other).sum() > SEGMENT_FOREIGN * inside.sum():
+            continue
+        m = _means(base, ev_step, ev_col, group, box, int(np.median(s)))
+        if m is None:
+            continue
+        covered[y0:y1, x0:x1] |= inside | group
+        out.append((hull, *m))
+    return out, covered
 
 
 def edge_pieces(base, ev_step, ev_col, shown, in_cell, c: int) -> list:
-    """The rpm's changes the lights and cells leave out (a bar along a display's edge,
+    """The rpm's changes the segments and cells leave out (a bar along a display's edge,
     where cells are mostly off the display), per step and connected group as one
     rectangle: its box if EDGE_SHOWN of it is on the display, else the rows and columns of
     the box CELL_SHOWN shown. Each is off every drawn cell and earlier piece, a cell or
     more on each side (no slivers), and takes the mean colours of its shown pixels:
-    [(rect (x0, x1, y0, y1), rest, colours, steps)] like bar_cells' cells."""
+    [(outline, rest, colours, steps)] like bar_segments."""
     first = ev_step[0]
     taken = in_cell | static_detail(base, ev_step, shown, c)  # drawn cells, detail, then each edge piece
     left = (first >= 0) & ~taken
@@ -558,11 +658,11 @@ def edge_pieces(base, ev_step, ev_col, shown, in_cell, c: int) -> list:
                     continue
             if min(x1 - x0, y1 - y0) < c:
                 continue
-            piece = _piece(base, ev_step, ev_col, shown, (x0, x1, y0, y1), int(k))
-            if piece is None:
+            m = _means(base, ev_step, ev_col, shown[y0:y1, x0:x1], (x0, x1, y0, y1), int(k))
+            if m is None:
                 continue
             taken[y0:y1, x0:x1] = True
-            out.append(piece)
+            out.append((_rect((x0, x1, y0, y1)), *m))
     return out
 
 
@@ -950,16 +1050,16 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
     # The bar pieces are drawn from cells no finer than PIECE_SIZE, box-filtered.
     size = pixel_size(patches)
     cell_px = max(1, math.ceil(PIECE_SIZE / size - 1e-6)) if size else 1
-    lights = bar_lights(base1, ev_step, ev_col, shown, cell_px)
-    rest_step, rest_shown = ev_step.copy(), shown.copy()  # what the lights leave to the cells
-    for (x0, x1, y0, y1), *_ in lights:
-        rest_step[:, y0:y1, x0:x1] = -1
-        rest_shown[y0:y1, x0:x1] = False
-    g_rest, g_col, g_step, lit = bar_cells(base1, rest_step, ev_col, rest_shown, cell_px)
+    detail = static_detail(base1, ev_step, shown, cell_px)
+    segments, covered = bar_segments(base1, ev_step, ev_col, shown, detail, cell_px)
+    rest_step = ev_step.copy()  # what the segments leave to the cells
+    rest_step[:, covered] = -1
+    g_rest, g_col, g_step, lit = bar_cells(base1, rest_step, ev_col, shown, cell_px, covered)
     # lit pixels in no drawn cell (cells mostly off the display, or hardly changing)
-    in_cell = np.repeat(np.repeat(lit, cell_px, 0), cell_px, 1)[:hgt, :wid] | ~rest_shown & shown
-    edges = lights + edge_pieces(base1, rest_step, ev_col, rest_shown, in_cell, cell_px)
-    for (x0, x1, y0, y1), *_ in edges:
+    in_cell = np.repeat(np.repeat(lit, cell_px, 0), cell_px, 1)[:hgt, :wid] | covered
+    edges = segments + edge_pieces(base1, rest_step, ev_col, shown, in_cell, cell_px)
+    for outline, *_ in edges[len(segments) :]:
+        (x0, y1), (x1, _), _, (_, y0) = outline
         in_cell[y0:y1, x0:x1] = True
     report["rpm_pixels_left_out"] = int(((ev_step[0] >= 0) & ~in_cell).sum())
 
@@ -1137,20 +1237,23 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
                 plan.quads.append(Quad(corners, [(u, v)] * len(rt), RPM, zipper(above, below)))
                 plan.quads[-1].rt = rt
                 pieces += 1
-        for ((x0, x1, y0, y1), _, _, e_steps), s_idx in zip(edges, edge_sig, strict=True):
+        for (outline, _, _, e_steps), s_idx in zip(edges, edge_sig, strict=True):
             if int(s_idx) not in col_of:
                 continue
-            rect = (float(ux0 + x0), float(ux0 + x1), float(uy0 + y0), float(uy0 + y1))
-            p = patch_for((rect[0] + rect[1]) / 2, (rect[2] + rect[3]) / 2)
+            rt = [(float(ux0 + x), float(uy0 + y)) for x, y in outline]
+            p = patch_for(sum(q[0] for q in rt) / len(rt), sum(q[1] for q in rt) / len(rt))
             if p is None:
                 continue
             v = BAR_LIT_FROM - min(BAR_MAX, 0.5 * steps[e_steps[0]] / max(1.0, redline))
             u = (bar_x + col_of[int(s_idx)] * COLUMN + COLUMN / 2) / W
-            rect_quad(p, rect, (u, v, u, v), RPM, PIECE_LIFT)
+            corners = [p.point(x, y, PIECE_LIFT) for x, y in rt]
+            fan = [(0, i, i + 1) for i in range(1, len(rt) - 1)]
+            plan.quads.append(Quad(corners, [(u, v)] * len(rt), RPM, fan))
+            plan.quads[-1].rt = rt
             pieces += 1
         report["bar_pieces"] = pieces
-        report["bar_lights"] = len(lights)
-        report["bar_edge_pieces"] = len(edges) - len(lights)
+        report["bar_segments"] = len(segments)
+        report["bar_edge_pieces"] = len(edges) - len(segments)
         report["bar_cell_mm"] = round(cell_px * size * 1000, 2)
     # Dim pale and glaring displays (DISPLAY_MEAN_LUMINANCE); dark ones stay as they are.
     big = np.repeat(np.repeat(shown, SCALE, 0), SCALE, 1)[: base.shape[0], : base.shape[1]]
