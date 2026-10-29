@@ -14,7 +14,8 @@ before/after mode lists every car a converter change touches and how.
 uv run dsff render_compare run --build out\build --out out\rc\master --jobs 4 --entries exterior,interior,full --keep
 uv run dsff render_compare sheet out\rc\master [--top 80]       # out\rc\master\sheet.html
 uv run dsff render_compare rescore out\rc\master                 # new limits on stored renders (--keep)
-uv run dsff render_compare diff --before outuild --after <pr>\outuild --out outc\pr --jobs 2
+uv run dsff render_compare diff --before out\build --after <pr>\out\build --out out\rc\pr --jobs 2
+c\pr --jobs 2
 uv run dsff render_compare thumbnail --build out\build --cars BMW_X6M_10 --out out\rc\thumbs
 ```
 
