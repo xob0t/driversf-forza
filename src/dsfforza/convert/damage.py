@@ -114,7 +114,6 @@ COLLISION_SCALE = (0.67, 1.5)  # clamp for a panel's collision box scale
 # The root hull is mapped between boxes that leave out this share of the vertices at each
 # end per axis: 8 stray vertices 0.4 m above the Spark's roof made its hull that tall (#210).
 HULL_TRIM = 0.002
-DEGENERATE_UV = 0.004  # host UV1 triangles smaller than this are hidden faces
 FACING_WEIGHT = 0.15  # normalised-distance penalty per unit of normal mismatch (UV1 lookup)
 MAX_HINGE_MOVE = 0.35  # m; a panel hinge mapped further than this keeps the host's
 PANEL_FACING = 0.15  # normalised-distance penalty per unit of normal mismatch (panel vote)
@@ -590,12 +589,13 @@ class Uv1Field:
         keys = defaultdict(list)
         for n, t in enumerate(tris):
             uvs = t[1]
-            if max(abs(uvs[i][k] - uvs[0][k]) for i in (1, 2) for k in (0, 1)) < DEGENERATE_UV:
-                # Hidden faces (wheel arches, undersides) all sit on one texel in a
-                # corner of the atlas; a vertex projected there drags its triangles
-                # across the whole atlas.
-                keys[("degenerate",)].append(n)
-                continue
+            # Triangles whose UV1 collapses to one texel are the surfaces
+            # vanilla never scratches: hidden faces, and on the outside everything above
+            # the waist (pillars, window frames, roof; host 239: all paint above 1.0 m),
+            # all on one clean texel in a corner of the atlas. They are candidates like
+            # the rest: kept back for a last resort, the X6 M's upper doors and roof took
+            # the nearest scratch tile, clamped at its edge into long streaks (#298).
+            # _split_seams keeps a triangle from spanning the clean texel and a tile.
             if any(not -0.01 <= uv[k] <= 1.01 for uv in uvs for k in (0, 1)):
                 # Tiled UV1 (vanilla interiors' GLOBAL_LOD_Chrome runs to -4..5): not the
                 # panel atlas layout.
@@ -690,7 +690,7 @@ class Uv1Field:
         return (
             ([("chart", chart)] if chart is not None else [])
             + ([] if any_panel else [("pm", pair, material), ("pc", pair, local)])
-            + [("c", local), ("all",), ("degenerate",), ("tiled",)]
+            + [("c", local), ("all",), ("tiled",)]
         )
 
     def lookup_many(self, items) -> list:

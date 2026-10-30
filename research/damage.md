@@ -1,6 +1,6 @@
 # Damage: panels, crush morph, hinges
 
-Updated: 2026-10-29
+Updated: 2026-10-30
 
 How a vanilla DSF car's body damages, from static analysis of the vanilla
 archive and the shared vehicle shaders, and what `src/dsfforza/convert/damage.py` builds
@@ -284,10 +284,12 @@ build and release has it. With the option:
    UV1 at the closest point of the nearest host triangle (normalised
    coordinates, barycentric interpolation), searching the same panel and
    material first, then the same panel and material class (shared vs the
-   entry's own), then any panel. Host triangles whose UV1 collapses to a
-   texel (hidden faces) or leaves 0..1 (tiled chrome) are used only as a
-   last resort, and a normal-mismatch penalty keeps outer faces on outer
-   faces. The rebuilt interior's 32-byte vertices (its outer shell, seen
+   entry's own), then any panel. Host triangles whose UV1 leaves 0..1
+   (tiled chrome) are used only as a last resort, and a normal-mismatch
+   penalty keeps outer faces on outer faces. Host triangles whose UV1
+   collapses to one texel (vanilla's unscratched surfaces: hidden faces,
+   and everything above the waist) are candidates like the rest since
+   #298 ("Scratches above the waist" below). The rebuilt interior's 32-byte vertices (its outer shell, seen
    through the windscreen) get the host interior's UV1 the same way, any
    panel (`DamagePlan.interior_uv1`, called after `cockpit.convert_interior`).
    A Forza triangle whose corners land on different host charts (UV1
@@ -1292,6 +1294,97 @@ Each car's host hull mapped from the host's part-0 box to the built car's
   the floor, 9.5 cm at least (the Furai, its host's own), 13 cm at the 5th
   percentile, median 20 cm. The floor cuts 214 cars' hulls, by 2.6 cm
   (median) to 13.4 cm.
+
+## Scratches above the waist (issue #298, 2026-10-30)
+
+User report (full-roster release candidate): after side damage, the black
+BMW X6 M (BMW_X6M_10, host 239) showed large bright scratch patches over its
+side and roof. Scratch: `out/d298/` (`scripts/sidearea.py` paint area per
+damage index, `uvdens.py` UV1 density, `degen.py` where the one-texel UV1
+sits, `survey.py` the roster survey below).
+
+### The report itself is vanilla (confirmed-runtime)
+
+The pixel shader (program 1, `Vehicles_Functions.hlsl` lines 191-256)
+samples the decal at UV1 and fades the paint toward the decal's green
+channel (bare metal) where the scratch mask's alpha plus the per-vertex
+scratch amount drops below 1. The scratch amount is per panel and linear in
+x, as the crush is (vertex shader `UnpackData_VS::fScratchOffset`). On a dark
+paint the bare metal is bright whatever the car. With every panel at full
+damage (`-Damage -Views left,wheels -Palette 0`, palette 0 is black on 239),
+vanilla 239 (run `vm1-20261030-025250` observe-06, -07) shows the same
+scrape marks on both doors and the rear quarter, the same size and
+brightness, as the X6 M (`vm1-20261030-024423` observe-06, -07). The bright
+"roof patches" in the user's shot are the sun's specular highlight on the
+C-pillar and roof.
+
+### What does differ: surfaces vanilla never scratches (cause confirmed-static)
+
+Vanilla UV1 puts everything above the waist (pillars, window frames, roof,
+spoiler, the tailgate band) and the hidden faces on one clean texel near
+(0.98, 0.01): on 239, all paint above 1.0 m, 71% of the chassis panel's
+side paint and 32-37% of each door's (`degen.py`, `uvdens.py`). `Uv1Field`
+used those one-texel triangles only as a last resort, so every converted
+surface took the nearest scratch tile instead; a vertex beyond the tile's
+triangles took the closest point on its edge, which squashes the tile into
+streaks. Survey of master's build (`survey.py`, full entry part 0 mask 4,
+paint triangles whose UV1 is not on one of the host's clean texels): the
+X6 M had 99% of its side paint on tiles (host 50%), 20% of it above the
+height under which 98% of the host's tile area lies; its chassis panel had
+2.9 m2 of side paint on tiles up to the roof (host 0.9 m2, all at 0.4-0.9 m).
+
+### Fix (`Uv1Field.__init__`)
+
+One-texel host triangles are candidates like the rest (same panel and
+material first, the normal-mismatch penalty as before); only tiled UV1
+(outside 0..1) stays a last resort. `_split_seams`, added after the
+last-resort rule, already puts a Forza triangle that spans a tile and the
+clean texel on one of them, which was the reason for keeping them back.
+
+| X6 M (full entry) | master | fix | host 239 |
+| --- | ---: | ---: | ---: |
+| side paint on tiles | 99% | 68% | 50% |
+| side paint on tiles above the host's line | 20% | 4% | 0% |
+| chassis panel side paint on tiles | 2.86 m2 | 0.85 m2 | 0.92 m2 |
+| lamp area on tiles (broken-lamp tile) | 0.380 m2 | 0.380 m2 | 0.246 m2 |
+
+The survey's simulation of the lookup on master's vertices matches the real
+builds (X6 M: simulated 100% / 20% for master, 69% / 4% for the fix,
+against 99% / 20% and 68% / 4% built).
+
+Roster survey (`survey.py`, all 573 cars of master's `out/build` against
+their hosts; paint triangles by facing, shares of area on scratch tiles;
+"above the line": side paint on tiles above the height under which 98% of
+the host's tile area lies; medians over the roster):
+
+| Full entry (exterior in brackets) | hosts | master | fix |
+| --- | ---: | ---: | ---: |
+| side paint on tiles | 59% (67%) | 96% (87%) | 80% (80%) |
+| side paint on tiles above the host's line | 0% (0%) | 8.7% (6.8%) | 1.7% (1.5%) |
+| roof-facing paint on tiles | 53% (51%) | 97% (82%) | 55% (54%) |
+| front- and rear-facing paint on tiles | 49% (47%) | 91% (77%) | 68% (65%) |
+| cars with > 5% of side paint above the line | | 463 (375) | 78 (73) |
+| cars with roof-facing tiles > host + 20 points | | 503 (388) | 33 (36) |
+
+Every car changes. The cars left with the most side paint above the line
+are low or open cars on taller hosts (250 Testa Rossa and GT40 on 248: 25%
+and 23%; DBR1 on 132, Elise on 129, Pantera on 161, Celica and tC on 258:
+14-18%); not looked into (hypothesis: an open or low body puts the
+host's line, a share of the box height, in the wrong place on it).
+
+### In game (headless VM, `-Damage -Views left,wheels -Palette 0`)
+
+Master's converter (`out/d298/set-before`, run `vm1-20261030-024423`)
+against the fix (`out/d298/set-after`, run `vm1-20261030-024752`), IDs 1
+X6 M, 2 Express 2500 Cargo, 3 TT RS, 4 Range Rover 2012: the 2012 Range
+Rover's tailgate band, spoiler and roof edge lose the grey scratch wash
+(observe-25), as vanilla 239's tailgate stays clean at full damage
+(`vm1-20261030-025250` observe-05). The doors, quarters and sills of all
+four look the same before and after (observe-06/07, -13/14, -19/20,
+-25/26): those were already on the host's tiles. The side hits of
+`-DamageSide` (runs `vm1-20261030-023246`, `-023624`) mostly crush the
+near front corner and showed no scratch difference at that distance. No
+crash in any of the runs.
 
 ## Risks and open questions
 
