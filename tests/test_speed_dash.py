@@ -1,6 +1,7 @@
 """digital_dash's faster blur and static detail (slices instead of np.take copies; one
-channel instead of three equal ones) give exactly what the code before them gave. The
-references below are that code, kept here only to compare against, on random images.
+channel instead of three equal ones) and dash_scene.Canvas.image (only the rows drawn
+on box-filtered) give exactly what the code before them gave. The references below
+are that code, kept here only to compare against, on random images.
 
 uv run python tests/test_speed_dash.py     # or: uv run python -m tests speed_dash
 """
@@ -11,6 +12,7 @@ import math
 
 import numpy as np
 
+from dsfforza.convert import dash_scene as ds
 from dsfforza.convert import digital_dash as dd
 
 
@@ -64,6 +66,37 @@ def test_static_detail_matches_three_channels():
     for h, w, c in ((40, 120, 1), (60, 90, 4), (33, 71, 6)):
         base, ev_step, shown = _scene(rng, h, w)
         assert (dd.static_detail(base, ev_step, shown, c) == _static_detail_reference(base, ev_step, shown, c)).all()
+
+
+def _image_reference(canvas: ds.Canvas, alpha: bool):
+    """The original: the whole canvas box-filtered."""
+    from PIL import Image
+
+    c = canvas
+    img = c.rgb.reshape(c.H // c.ss, c.ss, c.W // c.ss, c.ss, 3).mean((1, 3))
+    if not alpha:
+        return Image.fromarray((np.clip(img, 0, 1) * 255 + 0.5).astype(np.uint8))
+    a = c.alpha.reshape(c.H // c.ss, c.ss, c.W // c.ss, c.ss).mean((1, 3))
+    rgb = np.where(a[..., None] > 1e-6, img / np.maximum(a[..., None], 1e-6), 0.0)
+    out = np.concatenate([np.clip(rgb, 0, 1), np.clip(a, 0, 1)[..., None]], -1)
+    return Image.fromarray((out * 255 + 0.5).astype(np.uint8), "RGBA")
+
+
+def test_canvas_image_matches_the_whole_canvas():
+    rng = np.random.default_rng(4)
+    for case in range(60):
+        ss = (1, 2, 4)[case % 3]
+        canvas = ds.Canvas(int(rng.integers(40, 700)), ss)
+        for _ in range(int(rng.integers(0, 5))):  # boxes of every size, one pixel up to the canvas
+            h, w = int(rng.integers(1, canvas.H + 1)), int(rng.integers(1, canvas.W + 1))
+            if rng.random() < 0.4:
+                h, w = int(rng.integers(1, 4)), int(rng.integers(1, 4))
+            y0, x0 = int(rng.integers(0, canvas.H - h + 1)), int(rng.integers(0, canvas.W - w + 1))
+            a = rng.random((h, w), dtype=np.float32) * (rng.random((h, w)) < 0.8)
+            canvas.blend(y0, x0, rng.random((h, w, 3), dtype=np.float32) * 1.2, a.astype(np.float32))
+        for alpha in (False, True):
+            got, want = canvas.image(alpha), _image_reference(canvas, alpha)
+            assert got.mode == want.mode and got.size == want.size and got.tobytes() == want.tobytes()
 
 
 if __name__ == "__main__":
