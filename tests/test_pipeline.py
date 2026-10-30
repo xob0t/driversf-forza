@@ -88,6 +88,29 @@ def test_longest_cars_start_first():
         assert [j["media"] for j in port_batch.longest_first(jobs, cache)] == ["C", "A", "B", "D"]
 
 
+def test_attempts_are_remembered_only_for_full_entry_retries():
+    def report(media, problems, ok=True):
+        attempts = [{"problems": p} for p in problems]
+        return {"media": media, "game": "FH1", "ok": ok, "entry": {"attempts": attempts}}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cache = Path(tmp) / "car-attempts.json"
+        port_batch.remember_attempts(
+            [
+                report("A", [{"0": ["over"]}, {"0": ["over"]}, {}]),  # the full entry retried: kept
+                report("B", [{}]),  # one attempt: nothing to keep
+                report("C", [{"2": ["over"]}, {}]),  # the exterior was over too: not kept
+                report("D", [{"0": ["x"]}, {}], ok=False),  # failed: not kept
+            ],
+            cache,
+        )
+        assert json.loads(cache.read_text()) == {"a@fh1": 3}
+        assert port_batch.remembered_attempts({"media": "A", "game": "FH1"}, cache) == 3
+        assert port_batch.remembered_attempts({"media": "B", "game": "FH1"}, cache) is None
+        port_batch.remember_attempts([report("A", [{}])], cache)  # fits at once now: forgotten
+        assert json.loads(cache.read_text()) == {}
+
+
 def test_merge_leaves_out_cars_with_uid_clashes():
     """A UID clash fails the clashing cars, not the batch: the rest are merged again."""
     calls = []
