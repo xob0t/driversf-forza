@@ -1,5 +1,5 @@
-"""Things that glow or are too bright on converted cars: paint brighter than any vanilla
-paint, livery decal slots drawn from the car atlases."""
+"""Things that glow or are too bright on converted cars: paint past the knee, livery decal
+slots drawn from the car atlases."""
 
 from __future__ import annotations
 
@@ -7,62 +7,20 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import numpy as np
+
 from dsfforza.convert import forza_materials as fm
 from dsfforza.convert import paint
 
 
-def _entry(c2, c3, power, bias=0.01, metallic=True):
-    return {
-        "g_vec4TintColour1_Alpha": (0.0, 1.0 if metallic else 0.0, 0.0, 1.0),
-        "g_vec3TintColour2": tuple(c2) + (1.0,),
-        "g_vec3TintColour3": tuple(c3) + (1.0,),
-        "g_fresnelpower": power,
-        "g_fresnelbias": bias,
-        "g_hCustomFresnelPower": 1.0,
-        "g_hCustomReflectionAmount": 0.1,
-        "g_hSecondSpecularIntensity": 1.0,
-        "g_hSecondSpecularPower": 100.0,
-    }
-
-
-# A small vanilla set: the security van's yellow (the S5S Raptor's template), a flat grey
-# with bright rims (the brightest vanilla kind) and a white with a dark edge tint.
-VANILLA = [
-    {"sid": 301, "params": _entry((0.567, 0.302, 0.032), (0.267, 0.125, 0.045), 1.0)},
-    {"sid": 136, "params": _entry((0.384, 0.384, 0.384), (0.789, 0.789, 0.789), 15.0)},
-    {"sid": 176, "params": _entry((0.899, 0.974, 1.0), (0.02, 0.023, 0.024), 0.1)},
-]
-
-
 class PaintBrightness(unittest.TestCase):
-    def test_yellow_stays_under_vanilla(self):
-        # FH1 S5S Raptor: #ffbf19 metallic, linear (1.0, 0.52, 0.01). It glowed when the
-        # swatch went in as is; at DSF's paint brightness (paint.SHOWN_GAIN) it shows below
-        # the brightest vanilla paint without the cap.
-        q = paint.shade(paint.ForzaColour(1, (0xFF, 0xBF, 0x19), True, "Yellow"), VANILLA)
-        self.assertEqual(q["_dimmed"], 1.0)
-        for got, limit in zip(paint.brightness(q), paint.brightness_cap(VANILLA)):
-            self.assertLessEqual(got, limit + 1e-6)
-
-    def test_too_bright_colour_is_dimmed_to_vanilla(self):
-        # The cap still holds where a target passes the vanilla maximum (the swatch taken
-        # as linear, as before SHOWN_GAIN).
-        with mock.patch.object(paint, "SHOWN_GAIN", 1.0):
-            q = paint.shade(paint.ForzaColour(1, (0xFF, 0xBF, 0x19), True, "Yellow"), VANILLA)
-        self.assertEqual(q["_template"], 301)
-        self.assertLess(q["_dimmed"], 0.8)
-        for got, limit in zip(paint.brightness(q), paint.brightness_cap(VANILLA)):
-            self.assertLessEqual(got, limit + 1e-6)
-        # hue kept: both colours scaled alike
-        c2 = q["g_vec3TintColour2"]
-        self.assertAlmostEqual(c2[1] / c2[0], paint.srgb_to_linear(0xBF / 255), places=3)
-
-    def test_ordinary_colour_untouched(self):
-        q = paint.shade(paint.ForzaColour(1, (0xF5, 0xF5, 0xF5), True, "White"), VANILLA)
-        self.assertEqual(q["_dimmed"], 1.0)
-        want = paint.SHOWN_GAIN * paint.srgb_to_linear(0xF5 / 255)
-        for got in paint.apparent(q):
-            self.assertAlmostEqual(got, want, places=4)
+    def test_yellow_stops_at_the_knee(self):
+        # FH1 S5S Raptor: #ffbf19 metallic. It glowed when the swatch went in as the albedo
+        # (1.0, 0.52, 0.01); the albedo that shows it stops at the knee (0.3 for a saturated
+        # colour), where the median sunlit panel is as bright as the screen shows it.
+        a = np.array(paint.shade(paint.ForzaColour(1, (0xFF, 0xBF, 0x19), True, "Yellow"))["g_vec3TintColour2"][:3])
+        self.assertLessEqual(a.max(), paint.knee(a) + 2e-3)
+        self.assertGreater(a[1] / a[0], 0.5)  # still yellow, not orange
 
 
 class LiveryDecals(unittest.TestCase):
@@ -97,7 +55,6 @@ class RedLensScale(unittest.TestCase):
 
     def test_visible_red_sees_the_outer_lens(self):
         """Two stacked quads behind the car: only the outer one (larger Forza z) counts."""
-        from unittest import mock
 
         from dsfforza.convert import dsf_materials as dm
 
@@ -179,7 +136,6 @@ class WhiteLensScale(unittest.TestCase):
     def test_visible_white_sees_the_front_lens(self):
         """Two stacked quads in front of the car (Forza -z) and one at the rear: only the
         outer front one counts."""
-        from unittest import mock
 
         from dsfforza.convert import dsf_materials as dm
 

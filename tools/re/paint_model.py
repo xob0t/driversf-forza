@@ -25,7 +25,7 @@ followed by the colour grade fitted across channels here (paint_grade.json) and 
     uv run python tools/re/paint_model.py frames --log PROBE.log --dumps DIR --archive SP \\
         --sids 126,224,... [--out DIR]                                    model against frames
     uv run python tools/re/paint_model.py grade --dumps DIR               fit paint_grade.json
-    uv run python tools/re/paint_model.py target '#c00000,#999999'        albedo for a swatch
+    uv run python tools/re/paint_model.py target '#c00000,#999999'        albedo for a swatch (the converter's)
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lamp_model as lm
 
 from dsfforza import REPO
+from dsfforza.convert import paint
 
 # --- the game's numbers ----------------------------------------------------------------
 
@@ -89,7 +90,6 @@ def unit(v) -> np.ndarray:
 
 def palette(archive: Path, sid: int) -> list[dict]:
     """A vehicle's palette entries as {name: value} (paint.spsp_params)."""
-    from dsfforza.convert import paint
     from dsfforza.formats import vehicles
     from dsfforza.formats.chnk import read_root
     from dsfforza.formats.vehicle_mesh import payload
@@ -178,146 +178,43 @@ def shade(
     return out
 
 
-# The colour grade (PostProcessing.fx: a 16^3 LUT lookup after the Reinhard curve), node
-# [r, g, b] at input (r, g, b) / 15, output display-linear. The game's own: a 16 x 16 x 16
-# A8R8G8B8 DDS in media/SfxMisc.fchunk (one of 64 there), the chunk with UID GRADE_UID,
-# which the tone map samples as both g_samColourGradingFrom and To in ClearDay (paintprobe,
-# run vm1-20261030-163744: the managed volume texture at samplers 3 and 4, byte for byte).
-# Read from DSF_GAME_DIR when it is set; otherwise the fit across channels from dumped frame
-# pairs (`grade`, paint_grade.json), within 10 / 255 of it. lamp_model's per-channel fit can't
-# desaturate: a red paint's green and blue came out 25 to 35 / 255 too dark with it.
-GRADE_FILE = Path(__file__).resolve().parent / "paint_grade.json"
-GRADE_UID = bytes.fromhex("0012e109a4d88c2d")
-_GRADE: list = []
-
-
-def game_grade(game_dir: str | None = None) -> np.ndarray | None:
-    """The ClearDay grade LUT from the game's media/SfxMisc.fchunk, as [r, g, b, 3] floats."""
-    import os
-
-    root = game_dir or os.environ.get("DSF_GAME_DIR")
-    path = Path(root, "media", "SfxMisc.fchunk") if root else None
-    if path is None or not path.exists():
-        return None
-    data = path.read_bytes()
-    at = data.find(GRADE_UID)
-    dds = data.find(b"DDS ", at) if at >= 0 else -1
-    if dds < 0 or dds - at > 64:
-        return None
-    vol = np.frombuffer(data, np.uint8, 16 * 16 * 16 * 4, dds + 128).reshape(16, 16, 16, 4)  # [b, g, r, BGRA]
-    return np.transpose(vol[..., [2, 1, 0]], (2, 1, 0, 3)).astype(np.float64) / 255
+# The colour grade (PostProcessing.fx: a 16^3 LUT lookup after the Reinhard curve), the
+# screen and the albedo for a swatch are the converter's (dsfforza.convert.paint: grade_lut,
+# grade3d, screen, albedo_for, knee). The grade is the game's own (media/SfxMisc.fchunk, the
+# chunk with GRADE_UID, which the tone map samples as both g_samColourGradingFrom and To in
+# ClearDay: paintprobe, run vm1-20261030-163744) when DSF_GAME_DIR is set, else the fit across
+# channels `grade` writes (paint_grade.json), within 10 / 255 of it. lamp_model's per-channel
+# fit can't desaturate: a red paint's green and blue came out 25 to 35 / 255 too dark with it.
+GRADE_FILE = paint.GRADE_FIT
+GRADE_UID = paint.GRADE_UID
+_GRADE: list = []  # a grade `grade` has just fitted, for its held-out report
+LIGHT_REF, LIGHT_SUN, LIGHT_AWAY, LA_REF = paint.LIGHT_REF, paint.LIGHT_SUN, paint.LIGHT_AWAY, paint.LA_REF
+albedo_for, knee = paint.albedo_for, paint.knee
 
 
 def grade3d(c: np.ndarray) -> np.ndarray:
-    """Trilinear lookup in the 16^3 grade: the game's (game_grade), else the fitted one, else
-    lamp_model's per-channel fit."""
-    if not _GRADE:
-        lut = game_grade()
-        if lut is None and GRADE_FILE.exists():
-            lut = np.array(json.loads(GRADE_FILE.read_text())["lut"])
-        _GRADE.append(lut)
-    lut = _GRADE[0]
-    if lut is None:
-        return lm.grade(c)
-    n = lut.shape[0] - 1
-    x = np.clip(np.asarray(c, np.float64), 0, 1) * n
-    i0 = np.minimum(np.floor(x).astype(int), n - 1)
-    f = x - i0
-    out = 0
-    for dr in (0, 1):
-        for dg in (0, 1):
-            for db in (0, 1):
-                w = (
-                    (f[..., 0] if dr else 1 - f[..., 0])
-                    * (f[..., 1] if dg else 1 - f[..., 1])
-                    * (f[..., 2] if db else 1 - f[..., 2])
-                )
-                out = out + w[..., None] * lut[i0[..., 0] + dr, i0[..., 1] + dg, i0[..., 2] + db]
-    return out
+    return paint.grade3d(c, _GRADE[0] if _GRADE else None)
 
 
 def screen(hdr, light: dict = CLEAR_DAY, la: float = 0.17) -> np.ndarray:
     """sRGB (0..1) on screen of HDR values at adapted luminance la: exposure, Reinhard on
-    luminance (research/lights-re.md), the fitted 3D grade, sRGB."""
+    luminance (research/lights-re.md), the 3D grade, sRGB."""
     e = lm.exposure(la, light["LC"], light["MG"])
     return lm.srgb(grade3d(lm.tonemap(np.asarray(hdr, np.float64), e, light["W"])))
 
 
-# --- target: the albedo that shows a given colour ---------------------------------------------
-
-# The light on sunlit paint (HDR of the sun and ambient terms over the albedo) in the 33 sunlit
-# dumps of run vm1-20261030-152849 (out/re/lightfactor.py): p10 0.80, p25 1.27, median 2.13,
-# p75 2.66, p90 2.91, max 3.25. A palette colour shows on the median sunlit panel as
-# screen(LIGHT_REF x A); panels facing the sun get up to LIGHT_SUN x A, turned away LIGHT_AWAY.
-LIGHT_REF = 2.13
-LIGHT_SUN = 3.0
-LIGHT_AWAY = 0.8
-LA_REF = 0.2  # the adapted luminance of those frames (0.07 to 0.32; e = 1.6 at 0.2)
-
-
-def _solve(t_lin: np.ndarray, light: float, la: float, iters: int) -> np.ndarray:
-    a = np.clip(t_lin / max(light, 1e-3), 1e-4, 1)
-    for _ in range(iters):
-        s = screen(light * a, la=la)
-        s_lin = np.where(s <= 0.04045, s / 12.92, ((s + 0.055) / 1.055) ** 2.4)
-        a = np.clip(a * ((t_lin + 1e-4) / (s_lin + 1e-4)) ** 0.7, 1e-4, 1)
-    return a
-
-
-def albedo_for(srgb, light: float = LIGHT_REF, la: float = LA_REF, iters: int = 60) -> np.ndarray:
-    """The linear albedo A (0..1 per channel) whose screen colour at `light` x A is nearest the
-    sRGB colour `srgb` (0..1): a fixed-point search through the exposure, Reinhard, the grade
-    and sRGB. A colour the screen can't show (the solution passes the knee) is dimmed in linear
-    light, its hue kept, until the solution fits under the knee."""
-    target = np.asarray(srgb, np.float64)
-    t_lin = np.where(target <= 0.04045, target / 12.92, ((target + 0.055) / 1.055) ** 2.4)
-    a = _solve(t_lin, light, la, iters)
-    if a.max() <= knee(a) + 1e-3:
-        return a
-    lo, hi = 0.0, 1.0
-    best = a * knee(a) / a.max()
-    for _ in range(14):
-        k = (lo + hi) / 2
-        b = _solve(t_lin * k, light, la, iters)
-        if b.max() <= knee(b) + 1e-3:
-            lo, best = k, b
-        else:
-            hi = k
-    return best
-
-
-def knee(a) -> float:
-    """The largest albedo channel worth having: past it the median sunlit panel gets no brighter
-    on screen, only the shading across the body flattens (a sun-facing panel and the median one
-    show the same value). From the model's response (`paint_model.py target`): a neutral grey
-    stops gaining near 0.5, a saturated colour (one strong channel) near 0.3."""
-    a = np.asarray(a, np.float64)
-    sat = 1 - a.min() / max(a.max(), 1e-6)
-    return 0.5 - 0.2 * sat
-
-
 def cmd_target(args) -> None:
-    """For sRGB swatches: the albedo the model gives against today's SHOWN_GAIN x swatch, and
-    what each shows on the median sunlit panel, a panel facing the sun and one turned away."""
-    from dsfforza.convert import paint
-
-    print(
-        "swatch   albedo (model)          0.3 x swatch            on screen: model ref / sun / away;  "
-        "SHOWN_GAIN ref / sun / away"
-    )
+    """For sRGB swatches: the albedo the converter gives (paint.albedo_for) and what it shows
+    on the median sunlit panel, a panel facing the sun and one turned away."""
+    print("swatch   albedo                  on screen: ref / sun / away")
     for hexrgb in args.colours.split(","):
         h = hexrgb.strip().lstrip("#")
-        s = np.array([int(h[i : i + 2], 16) for i in (0, 2, 4)]) / 255
-        a = albedo_for(s)
-        g = np.array([paint.SHOWN_GAIN * paint.srgb_to_linear(x) for x in s])
+        a = albedo_for(np.array([int(h[i : i + 2], 16) for i in (0, 2, 4)]) / 255)
 
         def show(x, light):
             return tuple(int(round(255 * v)) for v in screen(light * x, la=LA_REF))
 
-        print(
-            f"#{h}  {fmt(a)}  {fmt(g)}  {show(a, LIGHT_REF)} {show(a, LIGHT_SUN)} {show(a, LIGHT_AWAY)};  "
-            f"{show(g, LIGHT_REF)} {show(g, LIGHT_SUN)} {show(g, LIGHT_AWAY)}"
-        )
+        print(f"#{h}  {fmt(a)}  {show(a, LIGHT_REF)} {show(a, LIGHT_SUN)} {show(a, LIGHT_AWAY)}")
 
 
 # --- curve: one entry by angle --------------------------------------------------------------
