@@ -56,38 +56,6 @@ from dsfforza.formats.vehicle_mesh import child, payload
 
 MAX_COLOURS = 14  # the largest vanilla palette
 
-# Finishes Combo_Colors can't express (it only has RGB and a metallic flag):
-# media name -> finish. Each finish is a preset built from a vanilla DSF palette entry.
-SPECIAL_FINISHES = {
-    # Brushed stainless body panels. Forza paints it solid #999999 under the default clear
-    # coat, which the mapping turns into glossy mid-grey paint; brushed steel has no clear
-    # coat, and DSF's own DeLorean (spool 171) has one steel entry.
-    "DEL_DMC12_82": "stainless",
-}
-FINISH_PRESETS = {
-    # From vanilla 171 (DMC_DeLorean_DMC_12_1981) palette entry 0: mid grey facing
-    # the camera (colour 2 0.267), fresnel power 0.75, little reflection (0.1), a
-    # broad second specular (0.3, power 5). Its edge tint (colour 3 0.004) is not
-    # kept: the fresnel term is applied literally (power 0.75 mixes far toward
-    # colour 3; research/lights.md, "The DMC-12 came out black"), and the Forza
-    # body shows the chase camera its stainless mostly at grazing angles (paint
-    # n.v 0.25 against the vanilla model's 0.54, whose rear panel and bumper are
-    # paint where Forza's are black trim and grey plastic), so 0.004 drew the port
-    # near black. Brushed steel stays light at grazing angles: colour 3 is 0.2
-    # (run host-20261023-094153 against -094028, 0.13, and the vanilla edge tint).
-    "stainless": {
-        "g_vec4TintColour1_Alpha": (2.3328e-05, 1.0, 0.0738278, 1.0),
-        "g_vec3TintColour2": (0.267358, 0.267358, 0.267358, 1.0),
-        "g_vec3TintColour3": (0.2, 0.2, 0.2, 1.0),
-        "g_fresnelpower": 0.75,
-        "g_fresnelbias": 0.01,
-        "g_hCustomFresnelPower": 1.0,
-        "g_hCustomReflectionAmount": 0.1,
-        "g_hSecondSpecularIntensity": 0.3,
-        "g_hSecondSpecularPower": 5.0,
-    },
-}
-
 
 @dataclass
 class ForzaColour:
@@ -95,7 +63,6 @@ class ForzaColour:
     rgb: tuple[int, int, int]  # sRGB bytes: the swatch
     metallic: bool
     colour_class: str
-    finish: str = ""  # a FINISH_PRESETS key, or "" for paint
 
 
 def srgb_to_linear(c: float) -> float:
@@ -112,8 +79,7 @@ def forza_colours(gamedb: Path, media: str) -> list[ForzaColour]:
 
     Repeats are dropped: some cars list each colour once per livery texture
     (BaseTexture: stripes), e.g. the FH1 Challenger SRT8 392's 26 rows are 7
-    colours, the 500 Abarth's 13 are 5. Cars in SPECIAL_FINISHES get their
-    finish on every colour."""
+    colours, the 500 Abarth's 13 are 5."""
     db = sqlite3.connect(f"file:{Path(gamedb).as_posix()}?mode=ro", uri=True)
     try:
         row = db.execute("SELECT Id FROM Data_Car WHERE lower(MediaName) = lower(?)", (media,)).fetchone()
@@ -129,14 +95,13 @@ def forza_colours(gamedb: Path, media: str) -> list[ForzaColour]:
         return []
     finally:
         db.close()
-    finish = SPECIAL_FINISHES.get(next((k for k in SPECIAL_FINISHES if k.lower() == media.lower()), ""), "")
     out, seen = [], set()
     for seq, rgb, metallic, cls in rows:
         key = (rgb & 0xFFFFFF, bool(metallic))
         if key in seen:
             continue
         seen.add(key)
-        out.append(ForzaColour(seq, ((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255), bool(metallic), cls, finish))
+        out.append(ForzaColour(seq, ((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255), bool(metallic), cls))
     return out
 
 
@@ -419,12 +384,9 @@ def clear_coat(body: dict[str, float]) -> dict[str, float]:
 
 
 def shade(colour: ForzaColour) -> dict:
-    """Palette parameters for one Forza colour: a special finish's preset as is; else one
-    albedo at every angle (colour 2 = colour 3 = albedo_for(swatch); the fresnel power and
+    """Palette parameters for one Forza colour: one albedo at every angle (colour 2 = colour 3 = albedo_for(swatch); the fresnel power and
     bias then change nothing and are the vanilla flat entries' 10 / 0.01) under Forza's
     clear coat (clear_coat)."""
-    if colour.finish in FINISH_PRESETS:
-        return dict(FINISH_PRESETS[colour.finish])
     a = swatch_albedo(tuple(colour.rgb)) + (1.0,)
     return {
         "g_vec4TintColour1_Alpha": (0.0, 1.0 if colour.metallic else 0.0, 0.0, 1.0),
@@ -481,7 +443,6 @@ def install(stream, full: Entry, colours: list[ForzaColour], nonr_limit: int | N
                 "rgb": "#{:02x}{:02x}{:02x}".format(*c.rgb),
                 "metallic": c.metallic,
                 "class": c.colour_class,
-                "finish": c.finish,
                 "colour2": [round(x, 3) for x in p["g_vec3TintColour2"][:3]],
                 "colour3": [round(x, 3) for x in p["g_vec3TintColour3"][:3]],
                 "reflection": p["g_hCustomReflectionAmount"],
@@ -566,7 +527,7 @@ def build_palettes(build: Path) -> dict[str, list[dict]]:
 def survey(cars: list[str], cache: Path, build: Path | None = None) -> dict:
     """Per roster colour, what its entry shows against Forza's swatch: from this code
     (shade) or from a build's palettes (--build: the entries it holds, in pick_colours
-    order). Special finishes are left out."""
+    order)."""
     gamedbs = [cache / g / "gamedb.slt" for g in ("fh1", "fm4")]
     palettes = build_palettes(build) if build else None
     rows = []
@@ -577,8 +538,7 @@ def survey(cars: list[str], cache: Path, build: Path | None = None) -> dict:
         colours = pick_colours(next((c for db in dbs if (c := forza_colours(db, name))), []))
         entries = [shade(c) for c in colours] if palettes is None else palettes.get(name, [])
         for colour, params in zip(colours, entries):
-            if not colour.finish:
-                rows.append({"car": name, "metallic": colour.metallic, **survey_entry(colour, params)})
+            rows.append({"car": name, "metallic": colour.metallic, **survey_entry(colour, params)})
 
     def stats(sel):
         de = np.array([r["dE"] for r in sel]) if sel else np.zeros(1)
@@ -644,7 +604,7 @@ def main(argv: list[str] | None = None) -> None:
         q = shade(colour)
         print(
             f"{colour.sequence:2} #{'{:02x}{:02x}{:02x}'.format(*colour.rgb)} {'metallic' if colour.metallic else 'solid   '} "
-            f"{colour.colour_class:8} {colour.finish or ''} shows #{'{:02x}{:02x}{:02x}'.format(*shows(q))} "
+            f"{colour.colour_class:8} shows #{'{:02x}{:02x}{:02x}'.format(*shows(q))} "
             f"(sun #{'{:02x}{:02x}{:02x}'.format(*shows(q, LIGHT_SUN))}) "
             f"c2 {tuple(round(x, 3) for x in q['g_vec3TintColour2'][:3])} "
             f"refl {q['g_hCustomReflectionAmount']:.2f} sheen {q['g_hSecondSpecularIntensity']:.2f} "

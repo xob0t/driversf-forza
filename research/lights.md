@@ -2552,16 +2552,21 @@ template; every MARP gets an explicit payload) and drops colours from the end
 if the full entry's NONR would pass the SSLP buffer (0x6D000) less 0x400 for
 handling edits. `forza_colours` drops repeated (RGB, metallic) rows, and
 `pick_colours` keeps the 14 most distinct colours (in Forza's order) when a car has more.
-`SPECIAL_FINISHES` maps a car to a `FINISH_PRESETS` entry used as is
-(`DEL_DMC12_82` -> `stainless`, the vanilla DeLorean's (spool 171) single
-entry). Forza paints the DMC-12 as `#999999` under its default clear coat, which the
-mapping would turn into glossy grey paint; brushed steel has no clear coat.
+
+The DMC-12 has no preset any more (`SPECIAL_FINISHES` / `FINISH_PRESETS`, the vanilla
+DeLorean's stainless entry, are gone). Forza paints it `#999999` under its default clear
+coat, and the mapping gives that: A (0.144, 0.162, 0.165), flat, reflection 1.0. In game by
+day (VM 2, `-ProbeIds '171,9' -Palette 0 -Views 'nose,left,rear'`; preset
+`vm2-20261030-180017`, mapping `vm2-20261030-180252`) the left door's median is (203, 190,
+177) with the preset, which reads near-white (dE76 16.8 to `#999999`), and (142, 143, 135)
+with the mapping (dE 6.1). The vanilla 171 reads (190, 177, 165), dE 12.7. The mapped body
+reads mid grey with the clear coat's reflections; brushed steel would have none.
 
 `uv run dsff paint survey` measures what each roster colour's entry shows against
 its swatch: dE76 on the median sunlit panel, and the L* a sun-facing panel adds over it
 (`sun_gain`; under 1 the body's shading is flat). `--build` reads a build's palettes
 instead. Master at 268cfce (its `out/build`) against this mapping, 3230 entries of
-572 cars:
+572 cars (the DMC-12's preset left out on both sides):
 
 | Group | Entries | dE median | dE p90 | dE > 10 | L* median vs swatch | flat |
 | --- | ---: | --- | --- | --- | --- | --- |

@@ -101,10 +101,6 @@ class Apparent(unittest.TestCase):
         }
         self.assertLess(paint.apparent(q)[0], 0.05)
 
-    def test_stainless_preset_untouched(self):
-        q = paint.shade(paint.ForzaColour(1, (0x99, 0x99, 0x99), False, "Gray", "stainless"))
-        self.assertEqual(q, paint.FINISH_PRESETS["stainless"])
-
 
 class Survey(unittest.TestCase):
     def test_entry_measures(self):
