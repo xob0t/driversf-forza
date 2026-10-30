@@ -83,7 +83,7 @@ def parse_body(text: str) -> dict:
     m = re.search(r"<body\s*>(.*?)</body\s*>", re.sub(r"<!--.*?-->", "", text, flags=re.S), re.S | re.I)
     out: dict = {}
     for name, attrs in re.findall(r"<(\w+)\s+([^<>]*?)/>", m.group(1) if m else ""):
-        kv = dict(re.findall(r'(\w+)\s*=\s*"([^"]*)"', attrs))
+        kv = dict(re.findall(r"""(\w+)\s*=\s*["']([^"']*)["']""", attrs))
         try:
             if "value" in kv:
                 out[name] = float(kv["value"])

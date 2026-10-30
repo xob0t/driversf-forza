@@ -459,8 +459,8 @@ glass techniques: `ShaderSettings` XML per technique layered over `Normal.xml`, 
 
 What the converter should set for each Forza colour (swatch S = `Combo_Colors.RGB`, metallic
 flag M, the colour's layered `body` settings), and the confidence of each rule. The converter
-implements it (`convert/paint.py`, `lights.md` "The converter"), without the per-colour files
-yet (#380).
+implements it (`convert/paint.py`, `lights.md` "The converter"), the per-colour files
+included (#380).
 
 | Palette parameter | Rule | Replaces | Confidence |
 | --- | --- | --- | --- |
