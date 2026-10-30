@@ -1856,10 +1856,24 @@ def plan_wide_glyphs(
 _RECORDING: dict = {}  # a render process's fingerprint.Recorder (build(record=...))
 
 
-def _start_recording() -> None:
-    from dsfforza.build import fingerprint
+def _start_render_process(record: bool) -> None:
+    """A render process: one BLAS thread (one_blas_thread), recording when `record`."""
+    one_blas_thread()
+    if record:
+        from dsfforza.build import fingerprint
 
-    _RECORDING["recorder"] = fingerprint.Recorder().start()
+        _RECORDING["recorder"] = fingerprint.Recorder().start()
+
+
+def one_blas_thread():
+    """Limit numpy's BLAS to one thread in this process (threadpoolctl; returns the limiter,
+    whose restore_original_limits() undoes it). Its default, a thread per logical CPU,
+    made Image.resize's matrix products ten times slower at Idle priority or beside the
+    render processes (the threads wait for each other's CPU time), for the same result."""
+    import numpy  # noqa: F401  (threadpoolctl limits the libraries loaded so far)
+    from threadpoolctl import threadpool_limits
+
+    return threadpool_limits(limits=1, user_api="blas")
 
 
 def _render_recorded(archive: Path, spool_id: int) -> tuple[Image, dict]:
@@ -1898,7 +1912,9 @@ class _Renders:
             from concurrent.futures import ProcessPoolExecutor
 
             self.pool = ProcessPoolExecutor(
-                max_workers=min(jobs, len(self.order)), initializer=_start_recording if record is not None else None
+                max_workers=min(jobs, len(self.order)),
+                initializer=_start_render_process,
+                initargs=(record is not None,),
             )
 
     def ahead(self, n: int) -> None:
@@ -1925,7 +1941,17 @@ class _Renders:
             self.pool.shutdown(cancel_futures=True)
 
 
-def build(
+def build(*args, **kwargs) -> dict:
+    """_build with numpy's BLAS on one thread in this process and the render processes
+    (one_blas_thread)."""
+    limits = one_blas_thread()
+    try:
+        return _build(*args, **kwargs)
+    finally:
+        limits.restore_original_limits()
+
+
+def _build(
     manifest: Path,
     out_dir: Path,
     names: dict[str, str] | None = None,
