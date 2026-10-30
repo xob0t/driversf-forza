@@ -602,6 +602,9 @@ local FIXED_VIEWS = {
 	-- three-quarter, and from ahead at hub height (the tyre swept by the steering).
 	fq = { { 2.9, 1.1, 3.9 }, { 0.6, 0.4, 1.1 } },
 	lock = { { 1.3, 0.55, 4.2 }, { 0.8, 0.35, 1.3 } },
+	-- The rear deck from above and behind, as the high chase camera sees it: a mid-engined
+	-- car's engine through its cover window (the F50's, issue #299).
+	deck = { { 0.0, 2.9, -3.4 }, { 0.0, 0.8, -0.9 } },
 }
 local fixedCamera = nil
 local followView = nil        -- "+mph<N>" views: { car, view } the camera follows every frame

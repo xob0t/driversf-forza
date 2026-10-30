@@ -1,6 +1,6 @@
 # Forza materials and textures, and their DSF counterparts
 
-Updated: 2026-10-29
+Updated: 2026-10-30
 
 Code: `src/dsfforza/convert/forza_materials.py` (Forza side), `src/dsfforza/convert/dsf_materials.py`
 (DSF side, atlas, preview), `--textures` in `src/dsfforza/convert/forza2dsf.py` and
@@ -924,6 +924,70 @@ The Veyron's roof scoops are lighter and flat, no halo (median 109 to 118, p99 2
 236, none at 245); the One-77's grille, the Monte Carlo's rear wing, the Q7's skid plate
 and the Crossfire's strakes read a shade lighter. Vanilla 230's chrome on the 156 block,
 in the same run, for comparison.
+
+## Large pictures outside the cabin (2026-10-30, issue #299)
+
+User report on the full-roster release candidate (c4ee059): the Ferrari F50's (FER_F50_95,
+host 224) engine, seen through the rear window from the chase camera above, is
+low-resolution and muddy. Scratch scripts in `out/w299/` (left in the PR's worktree):
+`density.py`, `region.py`, `dsurvey.py`, `rsurvey.py`, `deck.py`.
+
+### What the engine is (confirmed-static)
+
+- FH1's F50 has no modelled engine. Its main carbin has LODs 1 to 5 only; the engine bay
+  under the rear window (`glassR`) is `body` triangles of `matte_colors` over 1.37 m2
+  (LOD 1, 152 triangles; LODs 2 to 3 the same UVs) on a 210 x 150 picture of the V12 in
+  `Nodamage.xds` (1024²). `trim_art` moves them to the atlas (`dsf_trim_art~matte_colors`,
+  `dsf_trim_detail~matte_colors`). `nodamage_LOD0.xds` (2048²) has no engine picture, and
+  the cockpit carbin (the other LOD 0 model) holds only the cabin and the front.
+- So Forza draws it at 131 texels per metre on the car (the picture over the bay). The
+  LOD the converter takes (exterior LOD 1, full entry LOD 3) is the same picture: the LOD
+  is not the cause.
+
+### What was wrong
+
+The atlas is the host's chassis texture (512² DXT5, `replace` keeps its size). The
+converter packs every region at one uniform scale (`_pack`), the F50's at 0.516: the
+engine came out 108 x 78 texels, 68 per metre on the car, half of Forza's. The same
+scale gave the 2 cm badges 500 to 1800 texels per metre. The biggest single region is the
+exterior's low-detail cabin (`interior`, `seatL/R`, `steering_wheel`: 690 x 445 source
+texels, 9 m2 at 131 to 159 per metre in Forza), which, like vanilla exteriors, has to be
+there.
+
+### Fix (`dsf_materials.Texturing._floors`, `_pack`)
+
+A nodamage region whose triangles outside the cabin (`CABIN_SECTIONS`) cover
+`FLOOR_MIN_AREA` (0.25 m2) or more at the finest LOD planned, and use `FLOOR_MIN_COVER`
+(40%) or more of its texels, is packed at no fewer than `FLOOR_DENSITY` (120) DSF texels
+per metre over them, never above its Forza resolution (`Region.floor`, `Region.scale`);
+the uniform scale of the rest is searched as before around it. Raised regions take at most
+`FLOOR_MAX_SHARE` (15%) of the atlas. The cabin, the Lights family (lamps) and the
+cockpit's atlases keep the uniform scale. Atlas size, entry sizes and LODs don't change.
+The build log's atlas line names the raised regions (`nodamage: 13 regions at 0.469x (1
+raised to 0.913x)`).
+
+The coverage rule keeps out regions where `find_regions` merged the picture with other
+artwork (it cuts only along empty seams): raising those would cost a quarter to half the
+atlas for a few percent of their texels (PAG_ZondaR_10's 236 x 818, 4% used outside the
+cabin; LAM_Murcielago_05's 594 x 268, 5%; FOR_GT_05's engine, 269 x 245, 16%).
+
+### Test set
+
+Built with master (`out/w299/build-before`) and this change (`out/w299/build-after`), all
+lint ok, LODs and sizes unchanged (nodamage scale before -> after, raised region):
+
+| ID | Car | Uniform scale | Raised region |
+| ---: | --- | --- | --- |
+| 1 | FER_F50_95 | 0.516 -> 0.469 | engine 0.913 (68 -> 120 texels/m) |
+| 2 | FER_F430_04 | 0.602 -> 0.594 | engine 0.919 |
+| 3 | FER_F430Scuderia_07 | 0.512 -> 0.490 | engine 0.625 |
+| 4 | FER_F40_87 | 0.666 -> 0.666 | engine-cover louvres 0.971 |
+| 5 | LAM_GallardoLP570_11 | 0.506 -> 0.502 | engine 0.623 |
+| 6 | FOR_GT40_66 | 0.654 -> 0.654 | rear deck 0.687 |
+| 7 | CHE_Corvette_60 | 0.434 -> 0.434 | trim artwork 0.966 |
+| 8 | PAG_ZondaR_10 | 0.525 -> 0.525 | wing artwork 0.626 |
+| 9 | FER_Enzo_02 | 0.572 (unchanged) | none |
+| 10 | FER_F50GT_96 | 0.621 (unchanged) | none |
 
 ## Open
 
