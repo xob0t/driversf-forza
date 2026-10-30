@@ -269,21 +269,26 @@ def test_missing_region_and_plate_over_badge():
 
 
 def test_no_glow_flag():
-    """Forza's lamp glows in the dark mood, ours doesn't."""
+    """Forza's lamp glows with the running lights, ours doesn't."""
     h, w = 60, 80
     region = np.zeros((h, w), np.uint8)
     region[20:40, 20:60] = rc.RID[fr.REAR_LAMPS]
-    dark_ref = np.zeros((h, w, 3), np.float32)
-    dark_ref[25:35, 25:55, 0] = 0.8
-    dark_ours = np.zeros((h, w, 3), np.float32)
+    base = np.full((h, w, 3), 0.2, np.float32)
+    lit_ref = base.copy()
+    lit_ref[25:35, 25:55, 0] += 0.8
+    lit_ours = base.copy()
     day = np.full((h, w, 3), 0.2, np.float32)
-    r = _views(region, region, day, day, lit=({"dark": dark_ours}, {"dark": dark_ref}))
-    g = rc.glow_scores(r, "dark")
-    flags = rc.flags_for({"rear": {"day": rc.region_scores(r), "glow_dark": g}})
-    assert any(f["what"] == "no_glow_dark" for f in flags), flags
+
+    def lit(ours, ref):
+        return ({"day_lit": ours, "day_lit_base": base}, {"day_lit": ref, "day_lit_base": base})
+
+    r = _views(region, region, day, day, lit=lit(lit_ours, lit_ref))
+    g = rc.glow_scores(r, "day_lit")
+    flags = rc.flags_for({"rear": {"day": rc.region_scores(r), "glow_day_lit": g}})
+    assert any(f["what"] == "no_glow_day_lit" for f in flags), flags
     # and alike: no glow flag
-    r = _views(region, region, day, day, lit=({"dark": dark_ref}, {"dark": dark_ref}))
-    flags = rc.flags_for({"rear": {"day": rc.region_scores(r), "glow_dark": rc.glow_scores(r, "dark")}})
+    r = _views(region, region, day, day, lit=lit(lit_ref, lit_ref))
+    flags = rc.flags_for({"rear": {"day": rc.region_scores(r), "glow_day_lit": rc.glow_scores(r, "day_lit")}})
     assert not any(f["what"].startswith(("no_glow", "glow_place")) for f in flags), flags
 
 

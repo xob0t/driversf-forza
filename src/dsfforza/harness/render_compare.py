@@ -362,9 +362,9 @@ def render_view(pair: Pair, view: View, size=SIZE, box=None) -> dict:
             colour, alpha = cr.shade(scene, frame, lt, cr.dsf_lamp_rgb(scene.lamps, lt), shadow=False)
             out[side][mode] = colour.reshape(h, w, 3)
             out["alpha"][side] = alpha.reshape(h, w)
-            if mode == "dark":  # the dark mood with every lamp off: what the lamps add is the rest
+            if lt.lamps:  # the same light with every lamp off: what the lamps add is the rest
                 base, _ = cr.shade(scene, frame, lt, None, shadow=False)
-                out[side]["dark_base"] = base.reshape(h, w, 3)
+                out[side][f"{mode}_base"] = base.reshape(h, w, 3)
     return out
 
 
@@ -514,13 +514,9 @@ def _lum(rgb: np.ndarray) -> np.ndarray:
 
 def _glow(r: dict, side: str, mode: str) -> np.ndarray:
     """(h, w) light a side's lamps add in a lit mode, its brightest channel (a red lamp
-    glows with little luminance): the day_lit render less the day render (the same frame
-    and light, lamps off); the dark render itself (no other light to speak of)."""
-    if mode == "day_lit":
-        return np.maximum(r[side]["day_lit"] - r[side]["day"], 0).max(axis=-1)
-    if f"{mode}_base" in r[side]:
-        return np.maximum(r[side][mode] - r[side][f"{mode}_base"], 0).max(axis=-1)
-    return r[side][mode].max(axis=-1)  # runs from before dark_base: the dark render itself
+    glows with little luminance): the lit render less the same frame and light with the
+    lamps off (render_view's "<mode>_base")."""
+    return np.maximum(r[side][mode] - r[side][f"{mode}_base"], 0).max(axis=-1)
 
 
 GLOW_FLOOR = 0.03  # linear luminance: a lamp pixel glowing less than this is unlit
@@ -561,8 +557,8 @@ def glow_scores(r: dict, mode: str) -> dict:
             m["spread_ours"], m["spread_ref"] = round(so, 3), round(sf, 3)
             both = lit_f & lit_o
             if both.sum() >= 30:
-                co = r["ours"][mode][both] - (r["ours"]["day"][both] if mode == "day_lit" else 0)
-                cf = r["ref"][mode][both] - (r["ref"]["day"][both] if mode == "day_lit" else 0)
+                co = r["ours"][mode][both] - r["ours"][f"{mode}_base"][both]
+                cf = r["ref"][mode][both] - r["ref"][f"{mode}_base"][both]
                 m["green_red_ours"] = round(float(co[:, 1].sum() / max(1e-6, co[:, 0].sum())), 3)
                 m["green_red_ref"] = round(float(cf[:, 1].sum() / max(1e-6, cf[:, 0].sum())), 3)
         out[name] = m
@@ -937,7 +933,7 @@ def load_renders(path: Path) -> dict:
     }
     for key in z.files:
         side, _, mode = key.partition("_")
-        if side in ("ours", "ref") and (mode in cr.LIGHTINGS or mode == "dark_base"):
+        if side in ("ours", "ref") and mode.removesuffix("_base") in cr.LIGHTINGS:
             r[side][mode] = z[key].astype(np.float32) / HDR_SCALE
     return r
 

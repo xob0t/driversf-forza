@@ -689,7 +689,8 @@ def _load_scene(
         if uid in PAINT_UIDS:
             kind = "metallic" if metallic else "paint"
         elif uid in GLASS_UIDS or uid in INTERIOR_GLASS_UIDS:
-            kind, tex = "glass", None
+            # The shared glass texture: its blue is the pane's opacity in game (_shade_glass).
+            kind, tex = "glass", tex if physical else None
         elif uid in TRIM_UIDS:
             kind = "trim"
         elif uid in TYRE_UIDS:
@@ -1356,8 +1357,14 @@ def _shade_paint(p: Paint, view: _View, light, nn, a, mask, occlusion, refl, cos
     return out, f
 
 
-def _shade_glass(view: _View, light, n, ray, lighting: Lighting = DAY) -> tuple[np.ndarray, np.ndarray]:
-    """(reflected light added on top, fraction of the light behind let through)."""
+def _shade_glass(
+    mat: Material, view: _View, light, n, uv, ray, lighting: Lighting = DAY
+) -> tuple[np.ndarray, np.ndarray]:
+    """(reflected light added on top, fraction of the light behind let through). In the game's
+    light (lighting.exposure set) DSF glass is drawn as the game draws GLOBAL_Glass: opaque by
+    its texel's blue (the windows' 192: 75%), raised by the glint, with no tint, so a lamp
+    under a window keeps 25% of its glow (research/lights-re.md, "Glass and lenses over a
+    lamp"). Otherwise, and for Forza's glass, the garage pictures' clear glass."""
     sh = SHADING["glass"]
     cos_v = np.clip(-np.einsum("ni,ni->n", n, ray), 0, 1)
     f = sh.f0 + (1 - sh.f0) * (1 - cos_v) ** 5
@@ -1367,6 +1374,9 @@ def _shade_glass(view: _View, light, n, ray, lighting: Lighting = DAY) -> tuple[
     spec = sh.highlight * np.clip(np.einsum("ni,ni->n", n, half), 0, None) ** sh.power * lighting.key
     add = _environment(refl) * lighting.env * f[:, None] * sh.reflect + spec[:, None] + GLASS_HAZE * lighting.ambient
     through = (1 - f)[:, None] * GLASS_TINT
+    if lighting.exposure is not None and mat.texture is not None:
+        opacity = np.maximum(_sample(mat.texture, uv)[:, 2], np.clip(spec, 0, 1))
+        through = np.repeat((1 - opacity)[:, None], 3, axis=1)
     return add, through
 
 
@@ -1500,7 +1510,7 @@ def shade(
                     mat, view, light, n[sel], uv[sel], ray[sel], occ, lighting, lamp, lamp_rgb
                 )
             else:
-                add[sel], through[sel] = _shade_glass(view, light, n[sel], ray[sel], lighting)
+                add[sel], through[sel] = _shade_glass(mat, view, light, n[sel], uv[sel], ray[sel], lighting)
         # Premultiplied: what is behind (or nothing) dimmed by the glass, plus its reflection.
         a = alpha[on]
         new_a = 1 - (1 - a) * through.mean(axis=1)
