@@ -535,53 +535,6 @@ def merge_gloss(counts: dict[GlossMaterial, int], limit: int = GLOSS_MAX_MATERIA
 # --- DXT5 ------------------------------------------------------------------------
 
 
-def _q565(r: int, g: int, b: int) -> int:
-    return ((r * 31 + 127) // 255) << 11 | ((g * 63 + 127) // 255) << 5 | ((b * 31 + 127) // 255)
-
-
-def _x565(c: int) -> tuple[int, int, int]:
-    r, g, b = (c >> 11) & 31, (c >> 5) & 63, c & 31
-    return (r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)
-
-
-def _colour_block(px: list[tuple[int, int, int]]) -> bytes:
-    lo = [min(p[c] for p in px) for c in range(3)]
-    hi = [max(p[c] for p in px) for c in range(3)]
-    # Pick the bounding-box diagonal that follows the colours' correlation.
-    axis = max(range(3), key=lambda c: hi[c] - lo[c])
-    mean = [sum(p[c] for p in px) / 16 for c in range(3)]
-    e0, e1 = list(hi), list(lo)
-    for c in range(3):
-        if c != axis and sum((p[axis] - mean[axis]) * (p[c] - mean[c]) for p in px) < 0:
-            e0[c], e1[c] = lo[c], hi[c]
-    inset = [(e0[c] - e1[c]) / 16 for c in range(3)]
-    e0 = [max(0, min(255, round(e0[c] - inset[c]))) for c in range(3)]
-    e1 = [max(0, min(255, round(e1[c] + inset[c]))) for c in range(3)]
-    c0, c1 = _q565(*e0), _q565(*e1)
-    if c0 < c1:
-        c0, c1 = c1, c0
-    if c0 == c1:
-        return struct.pack("<HHI", c0, c1, 0)
-    p0, p1 = _x565(c0), _x565(c1)
-    pal = [p0, p1, tuple((2 * a + b) // 3 for a, b in zip(p0, p1)), tuple((a + 2 * b) // 3 for a, b in zip(p0, p1))]
-    bits = 0
-    for i, p in enumerate(px):
-        best = min(range(4), key=lambda k: (p[0] - pal[k][0]) ** 2 + (p[1] - pal[k][1]) ** 2 + (p[2] - pal[k][2]) ** 2)
-        bits |= best << (2 * i)
-    return struct.pack("<HHI", c0, c1, bits)
-
-
-def _alpha_block(alpha: list[int]) -> bytes:
-    a0, a1 = max(alpha), min(alpha)
-    if a0 == a1:
-        return bytes((a0, a1)) + bytes(6)
-    pal = [a0, a1] + [((7 - k) * a0 + k * a1) // 7 for k in range(1, 7)]
-    bits = 0
-    for i, a in enumerate(alpha):
-        bits |= min(range(8), key=lambda k: abs(a - pal[k])) << (3 * i)
-    return bytes((a0, a1)) + bits.to_bytes(6, "little")
-
-
 def _blocks(rgba: bytes | bytearray, width: int, height: int):
     """RGBA8 (width, height multiples of 4) as (blocks, 16 texels, 4) int64, blocks row-major."""
     px = np.frombuffer(bytes(rgba), dtype=np.uint8, count=width * height * 4).reshape(height // 4, 4, width // 4, 4, 4)
@@ -589,8 +542,8 @@ def _blocks(rgba: bytes | bytearray, width: int, height: int):
 
 
 def _colour_blocks(px) -> np.ndarray:
-    """_colour_block for every block at once (px: (blocks, 16, 3) ints): (blocks, 8) uint8.
-    The covariance sums are exact (multiples of 1/256), so their order doesn't matter."""
+    """DXT1 colour blocks (px: (blocks, 16, 3) ints): (blocks, 8) uint8, the same bytes as the
+    per-block reference in tests/test_speed_dds.py. The covariance sums are exact (multiples of 1/256), so their order doesn't matter."""
     lo, hi = px.min(axis=1), px.max(axis=1)
     axis = (hi - lo).argmax(axis=1)  # the first widest channel, as max(range(3), key=...)
     mean = px.sum(axis=1) / 16
@@ -627,7 +580,8 @@ def _colour_blocks(px) -> np.ndarray:
 
 
 def _alpha_blocks(alpha) -> np.ndarray:
-    """_alpha_block for every block at once (alpha: (blocks, 16) ints): (blocks, 8) uint8."""
+    """DXT5 alpha blocks (alpha: (blocks, 16) ints): (blocks, 8) uint8, the same bytes as the
+    per-block reference in tests/test_speed_dds.py."""
     a0, a1 = alpha.max(axis=1), alpha.min(axis=1)
     k = np.arange(1, 7)
     pal = np.concatenate((a0[:, None], a1[:, None], ((7 - k) * a0[:, None] + k * a1[:, None]) // 7), axis=1)
@@ -643,7 +597,7 @@ def _alpha_blocks(alpha) -> np.ndarray:
 
 def encode_dxt5(rgba: bytes | bytearray, width: int, height: int) -> bytes:
     """Encode RGBA8 (width, height multiples of 4) as DXT5 blocks, row-major
-    (_alpha_block + _colour_block per block, computed for all blocks at once)."""
+    (an alpha block and a colour block each)."""
     px = _blocks(rgba, width, height)
     return np.concatenate((_alpha_blocks(px[:, :, 3]), _colour_blocks(px[:, :, :3])), axis=1).tobytes()
 

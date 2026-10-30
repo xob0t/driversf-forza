@@ -22,8 +22,6 @@ from dsfforza.formats import anark, xds
 from dsfforza.formats.anark import h24
 
 PRES_W, PRES_H = 1280, 720
-CURVE_SIGN = -1
-UV_SIGN = -1
 
 P = {
     name: h24(name)
@@ -742,7 +740,7 @@ class Canvas:
             if not cv:
                 dr.polygon(pts, fill=255)
             else:
-                rasterize_curve(cov, np.array(pts), tuv, cv)
+                rasterize_curve(cov, np.array(pts), tuv)
         cov = np.maximum(cov, np.asarray(mask, np.float32) / 255.0)
         cov = cov.reshape(y1 - y0, k, x1 - x0, k).mean((1, 3))
         self.blend(y0, x0, np.broadcast_to(np.array(rgb, np.float32), cov.shape + (3,)), cov * a_total)
@@ -768,7 +766,7 @@ class Canvas:
         return Image.fromarray(out, "RGBA")
 
 
-def rasterize_curve(cov, pts, tuv, wind=1):
+def rasterize_curve(cov, pts, tuv):
     x0, y0 = np.floor(pts.min(0)).astype(int)
     x1, y1 = np.ceil(pts.max(0)).astype(int) + 1
     x0, y0 = max(x0, 0), max(y0, 0)
@@ -898,15 +896,3 @@ def render(
             _, m, tcol, op, text, o, v, i, _ = d
             draw_text(cv, dash, m, tcol, op, text, o, v, (only or {}).get(i))
     return cv.image(alpha)
-
-
-def crop_t1(img: Image.Image, t1, out_w: int = 512, aspect: float | None = None) -> Image.Image:
-    """The part of the render target a display shows: UV0 in 0..1 -> RT uv = uv0 * scale + offset."""
-    xo, xs, yo, ys = t1
-    W, H = img.size
-    box = (xo * W, yo * H, (xo + xs) * W, (yo + ys) * H)
-    if aspect is None:
-        aspect = (xs * W) / (ys * H)
-    return img.crop(tuple(int(round(b)) for b in box)).resize(
-        (out_w, max(1, int(round(out_w / aspect)))), Image.LANCZOS
-    )

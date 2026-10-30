@@ -1320,7 +1320,7 @@ def add_glyphs(fonts: Path, out: Path, glyphs: dict[int, Image], textures: dict[
     (WIDE_FIRST) go on extra texture pages the size of page 0, each a new TEXC
     in the font's DRSP with its UID in MDID and in FNTD's page table.
     `textures` ({u64 UID: DDS}, e.g. the garage card emblem) ride along as
-    more TEXCs in the DRSP (in MDID, not in FNTD), as add_textures does."""
+    more TEXCs in the DRSP (in MDID, not in FNTD)."""
     from dsfforza.convert import dsf_materials as dm
 
     with fonts.open("rb") as stream:
@@ -1492,36 +1492,6 @@ def forza_emblem_image(logo: Image, margin: int = 2) -> Image:
     fitted = logo.fit(x1 - x0 - 2 * margin, y1 - y0 - 2 * margin)
     out.paste(fitted, x0 + (x1 - x0 - fitted.w) // 2, y0 + (y1 - y0 - fitted.h) // 2)
     return out
-
-
-def add_textures(fonts: Path, out: Path, textures: dict[bytes, bytes]) -> dict:
-    """Write a copy of Fonts.fchunk (vanilla or already patched) whose
-    vehicles_font package also carries `textures` ({u64 UID: DDS}): a TEXC
-    each in its DRSP, UIDs added to MDID. The font doesn't use them (FNTD is
-    unchanged); the package just keeps them loaded for the plugin."""
-    with fonts.open("rb") as stream:
-        root = chnk.read_chunk(stream, 0)
-        index, pk = font_package(stream, root)
-        pk = copy.deepcopy(pk)
-        drsp = child(child(pk, "MDXN"), "DRSP")
-        texc = child(drsp, "TEXC")
-        mdid = child(drsp, "MDID")
-        uids = bytearray(payload(stream, mdid))
-        present = {payload(stream, child(t, "UIDC"))[:8] for t in drsp.children if t.tag == "TEXC"}
-        data = bytearray(fonts.read_bytes())
-    new = []
-    for uid, dds in textures.items():
-        if uid in present:
-            raise ValueError(f"{fonts}: texture {uid.hex()} is already in vehicles_font")
-        t = copy.deepcopy(texc)
-        child(t, "UIDC").payload = uid
-        child(t, "DXTC").payload = dds
-        new.append(t)
-        uids += uid
-    drsp.children = [c for c in drsp.children if c.tag != "MDID"] + new + [mdid]
-    mdid.payload = bytes(uids)
-    out.write_bytes(append_patch(fonts, data, root, {index: pk}, []))
-    return {"textures": [uid.hex() for uid in textures]}
 
 
 def emblem_dds(ui: ForzaUI, template: bytes | None = None) -> tuple[bytes, Image]:

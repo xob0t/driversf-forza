@@ -338,7 +338,6 @@ MAN_COLUMNS = [
 # the game slower than that, so only game-time figures are used: launch times, the
 # largest braking deceleration, the yaw response once the steer acts.
 DIRT_START = "-3908.5,36,3396.4,-1.4798"
-DIRT_KEYS = "Up:2,Down:5;Up:1,Up+Right:3,Down:4"
 DIRT_END = -3945.0
 DIRT_COLUMNS = ["car", "t10", "t20", "peak_mph", "x_peak", "brake_g", "turn_mph", "yaw_dps", "lat_g", "slip_deg"]
 

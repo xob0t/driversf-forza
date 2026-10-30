@@ -3,8 +3,7 @@
 Updated: 2026-10-30
 
 Code: `src/dsfforza/convert/forza_materials.py` (Forza side), `src/dsfforza/convert/dsf_materials.py`
-(DSF side, atlas, preview), `--textures` in `src/dsfforza/convert/forza2dsf.py` and
-`src/dsfforza/convert/exp_hollow.py`. Checked on NIS_370Z_10 (FH1) and the Desanne host.
+(DSF side, atlas, preview), `--textures` in `src/dsfforza/convert/forza2dsf.py`. Checked on NIS_370Z_10 (FH1) and the Desanne host.
 
 ## How FH1 binds textures (confirmed-static)
 
@@ -181,7 +180,8 @@ car, is `TECHNIQUES` / `classify()` in `forza_materials.py`.
   261, and lod_max_subs from 52 to 5, all below the vanilla maxima (kind 0:
   374 SBMC, kind 2: 41).
 
-Results for the 370Z on the hollow layout (`exp_hollow.py --complete`):
+Results for the 370Z on the hollow layout (the `exp_hollow.py --complete` experiment, since
+removed):
 
 | Build | kind 0 MDXN | kind 2 MDXN | SBMC 0 / 2 |
 | --- | --- | --- | --- |

@@ -109,7 +109,6 @@ NOT_MOVED = {1, 185, 188, 190, 155, 156}
 # Vertex layout of the converter's damage-capable strides: offsets of s9, s5, s12.
 LAYOUT = {32: (16, 20, 24), 28: (12, 16, 20)}
 K_NEAREST = 6
-VOTES = 7  # host vertices voting on a body triangle's panel
 COLLISION_SCALE = (0.67, 1.5)  # clamp for a panel's collision box scale
 # The root hull is mapped between boxes that leave out this share of the vertices at each
 # end per axis: 8 stray vertices 0.4 m above the Spark's roof made its hull that tall (#210).

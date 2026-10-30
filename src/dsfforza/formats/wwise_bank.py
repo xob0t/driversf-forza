@@ -418,7 +418,7 @@ def encode_ima_many(sounds: list) -> list[bytes]:
     return [data[bounds[i] : bounds[i + 1]] for i in range(len(sounds))]
 
 
-# --------------------------------------------------------------------------- WEM (RIFF)
+# --------------------------------------------------------------------------- WEM, a RIFF file
 
 
 @dataclass

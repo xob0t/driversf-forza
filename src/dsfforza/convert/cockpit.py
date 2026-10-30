@@ -541,10 +541,6 @@ class GaugeCalibration:
     residual_deg: float  # worst tick off the linear fit
     source: str
 
-    @property
-    def deg_per_unit(self) -> float:
-        return self.sweep / GAUGE_UNITS[self.family]
-
 
 def calibrate_gauge(g: Gauge, ticks: list[tuple[float, float]] | None) -> GaugeCalibration:
     """Fit angle = a + b x value over the tick table (angle = param x the
@@ -822,14 +818,9 @@ class Display:
         return _add(_add(_add(self.centre, _scale(self.right, u)), _scale(self.up, v)), _scale(self.normal, -lift))
 
 
-def _touching(tris: list[list[tuple]], cell: float = 0.01) -> list[list[tuple]]:
-    """Points of each group of triangles that touch: union-find over triangles
-    with a vertex in the same `cell` grid cell."""
-    return [[p for i in group for p in tris[i]] for group in _touching_groups(tris, cell)]
-
-
 def _touching_groups(tris: list[list[tuple]], cell: float = 0.01) -> list[list[int]]:
-    """Indices of each group of triangles that touch (_touching)."""
+    """Indices of each group of triangles that touch: union-find over triangles with a
+    vertex in the same `cell` grid cell."""
     parent = list(range(len(tris)))
 
     def find(a: int) -> int:

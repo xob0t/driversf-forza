@@ -794,7 +794,7 @@ In game (confirmed-runtime; dirt start of the off-road challenge, method in
 times and deceleration are game time; "turn" is the yaw rate once
 Up+Right acts on the dirt (0 when the car never turns there):
 
-Before / after: run vm-20261024-104232 (the installed testdrive11 archive, keys `Up:2.5,Down:3;Up:1.2,Up+Right:2,Down:3`) and vm-20261024-113608 (the same archive with each port's VO3D as the fixed generator builds it, `out/offroad/patch_after.py`, equal to the rebuilt testdrive12; the vanilla 196 there has p526 0 as a check; keys as in `DIRT_KEYS`). Brake and turn figures of the same vanilla car scatter between sessions (A4 1.54 / 0.82 g: how long the brake acted depends on the VM's speed); the launch times repeat to 0.04 s.
+Before / after: run vm-20261024-104232 (the installed testdrive11 archive, keys `Up:2.5,Down:3;Up:1.2,Up+Right:2,Down:3`) and vm-20261024-113608 (the same archive with each port's VO3D as the fixed generator builds it, `out/offroad/patch_after.py`, equal to the rebuilt testdrive12; the vanilla 196 there has p526 0 as a check; keys `Up:2,Down:5;Up:1,Up+Right:3,Down:4`). Brake and turn figures of the same vanilla car scatter between sessions (A4 1.54 / 0.82 g: how long the brake acted depends on the VM's speed); the launch times repeat to 0.04 s.
 
 | Car | 0-10 mph s | 0-20 mph s | brake g | turn yaw deg/s |
 | --- | --- | --- | --- | --- |

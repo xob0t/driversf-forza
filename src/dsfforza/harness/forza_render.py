@@ -48,7 +48,6 @@ TILING_FLAT = 8.0  # |UV scale| above this on the Lights atlas: flat too
 TILING_COLOUR = (0.006, 0.006, 0.007)  # linear
 TYRE_COLOUR = (0.018, 0.018, 0.018)
 LAMP_SHADING = cr.Shading(1.0, 0.04, 0.5, 1.0, 4.0 * FORZA_SPECULAR, 128.0, True)
-GLASS_SHADING = cr.Shading(0.0, 0.06, 0.3, 1.0, 2.5, 300.0)  # car_render's window glass
 
 # Lamp glass (research/lights.md, "Lamp glass"): shared GlassColor (rgb, w), GlassMaxOpacity
 # and PaintScale per technique; cars override GlassMaxOpacity.

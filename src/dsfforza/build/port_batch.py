@@ -1388,11 +1388,6 @@ class Reuse:
                 f"--rebuild-where {self.where!r} on {job['media']}: {type(error).__name__}: {error}"
             ) from error
 
-    def decide(self, job: dict) -> tuple[dict | None, str]:
-        """(the earlier report, "") when the car can be reused, else (None, why not)."""
-        report, _source, why = self.decide_from(job)
-        return report, why
-
     def decide_from(self, job: dict) -> tuple[dict | None, Path | None, str]:
         """(the earlier report, the build it is in, "") for the first --reuse build that
         has a matching copy of the car, else (None, None, why the first build's doesn't)."""
