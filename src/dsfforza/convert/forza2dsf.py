@@ -3032,9 +3032,7 @@ def convert(
         gamedb = next((Path(g) for g in opts.gamedbs if g and Path(g).exists()), None) or paint.find_gamedb(car.folder)
         colours = paint.forza_colours(gamedb, car.name) if gamedb else []
         # Leave room under the NONR buffer for handling edits made after this.
-        report["paint"] = paint.install(
-            stream, full, colours, paint.vanilla_paints(stream), nonr_limit=NONR_LIMIT[0] - 0x400
-        )
+        report["paint"] = paint.install(stream, full, colours, nonr_limit=NONR_LIMIT[0] - 0x400)
         log(f"paint: {report['paint'].get('installed')} factory colours (host had {report['paint'].get('host_count')})")
     tint = tex_full.texturing.wheel_blur_tint if tex_full is not None else None
     if blur_disc is not None:

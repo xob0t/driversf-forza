@@ -32,7 +32,7 @@ Tools added with this note (`tools/re/`):
   dumped frame; `target` gives the albedo that shows a Forza swatch (the mapping in section
   6); `grade` fits the colour grade across channels from dumped frame pairs
   (`paint_grade.json`). `screen` uses the game's own grade LUT, read from `DSF_GAME_DIR`
-  (`game_grade`), and falls back to that fit.
+  (`dsfforza.convert.paint.grade_lut`), and falls back to that fit.
 - `forza_paint.py`: Forza's paint settings per car colour, read from the disc images in place
   (`survey`).
 
@@ -361,7 +361,7 @@ cars as above, `-ProbeIds '126,1' -Views 'nose,left'`; log in
 (`g_samColourGradingFrom` / `To`) are the same managed 16 x 16 x 16 A8R8G8B8 volume. Its
 16,384 bytes are, byte for byte, the DDS at offset 4,343,664 of `media/SfxMisc.fchunk`, right
 after a chunk header with UID `0012e109a4d88c2d`; the file holds 64 such 16³ DDS volumes
-(the other grades). `paint_model.game_grade` reads it from `DSF_GAME_DIR`; the repo ships no
+(the other grades). `paint.grade_lut` (the converter's) reads it from `DSF_GAME_DIR`; the repo ships no
 copy. This answers round 1's open item ("the exact 3D colour-grade LUTs were not found").
 Which `idColourGrading` picks which of the 64 was not traced.
 
@@ -458,12 +458,13 @@ glass techniques: `ShaderSettings` XML per technique layered over `Normal.xml`, 
 ## 6. From a Forza colour to the palette
 
 What the converter should set for each Forza colour (swatch S = `Combo_Colors.RGB`, metallic
-flag M, the colour's layered `body` settings), and the confidence of each rule. Nothing here
-is implemented.
+flag M, the colour's layered `body` settings), and the confidence of each rule. The converter
+implements it (`convert/paint.py`, `lights.md` "The converter"), without the per-colour files
+yet (#380).
 
 | Palette parameter | Rule | Replaces | Confidence |
 | --- | --- | --- | --- |
-| `g_vec3TintColour2` | `paint_model.albedo_for(S)`: the albedo whose median sunlit panel (`screen(2.13 x A)`, ClearDay) shows S, capped at the knee (0.3 for a saturated colour, 0.5 for a grey: past it the body only flattens) | `SHOWN_GAIN` 0.3, the brightness cap | model confirmed-runtime; the reference panel a choice |
+| `g_vec3TintColour2` | `paint.albedo_for(S)`: the albedo whose median sunlit panel (`screen(2.13 x A)`, ClearDay) shows S, capped at the knee (0.3 for a saturated colour, 0.5 for a grey: past it the body only flattens) | `SHOWN_GAIN` 0.3, the brightness cap | model confirmed-runtime; the reference panel a choice |
 | `g_vec3TintColour3` | = colour 2 (a flat entry), unless the colour's file sets `TwoToneScale` > 0 (then `TwoToneColor` through `albedo_for`) | the template's colour 3 ratio, `recolour`, `HEADROOM` | confirmed-static (Forza factory paint has no view-angle colour) |
 | `g_fresnelpower` / `g_fresnelbias` | any (unused when colour 3 = colour 2); 10 / 0.01 like the vanilla flat entries | the template's | |
 | `g_hCustomReflectionAmount` | 1.0 x `FresnelScalar` / 0.9 (0 for satin colours) | the template's (0.5 on 917 of 946 vanilla entries) | inferred, test in game |
