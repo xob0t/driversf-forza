@@ -376,11 +376,12 @@ class _Surfaces:
                 for t in tris:
                     pts.append([pool[i].position for i in t])
                     uvs.append(_tri_uv(m, pool, t) if textured else [(0.0, 0.0)] * 3)
-                    kinds.append(2 if lens else (1 if textured else 0))
-                    fams.append(m.family if textured else None)
-                    lamps.append(not lens and (m.family == fm.LIGHTS or m.role == fm.CHROME))
-                    colours.append(colour)
-                    rules.append(opacity_rule(m.technique, settings))
+                # The same for every triangle of the subsection.
+                kinds += [2 if lens else (1 if textured else 0)] * len(tris)
+                fams += [m.family if textured else None] * len(tris)
+                lamps += [not lens and (m.family == fm.LIGHTS or m.role == fm.CHROME)] * len(tris)
+                colours += [colour] * len(tris)
+                rules += [opacity_rule(m.technique, settings)] * len(tris)
         self.pts = np.array(pts, float).reshape(-1, 3, 3)
         self.uvs = np.array(uvs, float).reshape(-1, 3, 2)
         self.kind = np.array(kinds, int)  # 0 flat, 1 textured, 2 lens (textured on Lights)
