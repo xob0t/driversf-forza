@@ -2328,6 +2328,10 @@ class ConvertOptions:
     host_axle_mid: float | None = None  # None: from the host's wheel table (Desanne 0.1155)
     skip_full: bool = False
     skip_exterior: bool = False
+    # Only the full entry, as the whole conversion leaves it: no exterior entry and no
+    # interior conversion (the cockpit's edits of the full entry's UPVH and VO3D stay), for
+    # a size check before the rest is converted (port_car's LOD retries).
+    full_only: bool = False
     no_hubs: bool = False
     keep_host_materials: bool = False
     fill_empty_parts: bool = False
@@ -2818,7 +2822,7 @@ def convert(
             "hubs_patched": hubs,
         }
 
-    if not opts.skip_exterior:
+    if not opts.skip_exterior and not opts.full_only:
         # Clean exterior entry: body in part 0, the wheel in the part(s) the wheel records'
         # LOD links name (the last part on the Desanne).
         ext_builder = Builder(seed[:3] + bytes([seed[3] ^ 0xFF]), layout=layout)
@@ -2921,39 +2925,42 @@ def convert(
         vo3d.payload = cockpit.patch_vo3d(
             payload(stream, vo3d), {**camera, **gauge_vo3d, **cockpit.hand_params(hier["steering"])}
         )
-        paint_uv = tex_ext.paint_uv if tex_ext is not None else PAINT_UV
-        interior_report = cockpit.convert_interior(
-            stream,
-            interior,
-            car,
-            cf,
-            place,
-            seed,
-            paint_uv,
-            opts.cockpit_opts or cockpit.CockpitOptions(),
-            host_cp.wheel_skin,
-            log=log,
-            glass_links=links,
-            glass_skin=interior_glass_skin(dmg, car, opts),
-            layout=layout,
-            lights_template=lights_template(stream, full) if opts.textures else None,
-        )
-        if dmg is not None:  # the shell's paint samples the decal atlas at UV1 too
-            dmg.interior_uv1(stream, interior)
-        # The engine picks each needle's transform by semantic 8's gauge id; any
-        # pass that rewrites it leaves the needles static.
-        needle_ids = cockpit.needle_gauge_ids(stream, interior)
-        # Digital displays (digital_dash) draw from the needle buffer with ids 1..7.
-        allowed = set(cockpit.GAUGE_IDS.values()) | (
-            set(range(1, 8)) if "digital_displays" in interior_report else set()
-        )
-        stray = sorted(k for k in needle_ids if k not in allowed)
-        if stray:
-            raise ValueError(
-                f"interior needle vertices with gauge ids {stray[:6]} (not in "
-                f"{sorted(cockpit.GAUGE_IDS.values())}): the needles would not turn"
+        if opts.full_only:  # the interior entry stays the host's (a size check of the full entry)
+            interior_report = {"skipped": "full_only"}
+        else:
+            paint_uv = tex_ext.paint_uv if tex_ext is not None else PAINT_UV
+            interior_report = cockpit.convert_interior(
+                stream,
+                interior,
+                car,
+                cf,
+                place,
+                seed,
+                paint_uv,
+                opts.cockpit_opts or cockpit.CockpitOptions(),
+                host_cp.wheel_skin,
+                log=log,
+                glass_links=links,
+                glass_skin=interior_glass_skin(dmg, car, opts),
+                layout=layout,
+                lights_template=lights_template(stream, full) if opts.textures else None,
             )
-        interior_report["needle_ids"] = {str(int(k)): n for k, n in sorted(needle_ids.items())}
+            if dmg is not None:  # the shell's paint samples the decal atlas at UV1 too
+                dmg.interior_uv1(stream, interior)
+            # The engine picks each needle's transform by semantic 8's gauge id; any
+            # pass that rewrites it leaves the needles static.
+            needle_ids = cockpit.needle_gauge_ids(stream, interior)
+            # Digital displays (digital_dash) draw from the needle buffer with ids 1..7.
+            allowed = set(cockpit.GAUGE_IDS.values()) | (
+                set(range(1, 8)) if "digital_displays" in interior_report else set()
+            )
+            stray = sorted(k for k in needle_ids if k not in allowed)
+            if stray:
+                raise ValueError(
+                    f"interior needle vertices with gauge ids {stray[:6]} (not in "
+                    f"{sorted(cockpit.GAUGE_IDS.values())}): the needles would not turn"
+                )
+            interior_report["needle_ids"] = {str(int(k)): n for k, n in sorted(needle_ids.items())}
         log(
             f"cockpit: eye {tuple(round(c, 3) for c in eye)} (offset {cf.offset}, {cf.offset_source}); "
             f"wheel {hier['steering']['centre']}; VO3D 430..432 = "
@@ -3013,8 +3020,8 @@ def convert(
     report["chassis_variants"] = chassis_variants.fill(
         stream,
         full,
-        interior if cf is not None else None,
-        None if opts.skip_exterior else exterior,
+        interior if cf is not None and not opts.full_only else None,
+        None if opts.skip_exterior or opts.full_only else exterior,
         seed,
         log=log,
         full_rebuilt=not opts.skip_full,
