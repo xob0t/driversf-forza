@@ -455,7 +455,8 @@ Sheet of the frames with the lamp boxes and numbers: attached to the PR
 ## Open
 
 - The exact 3D colour-grade LUTs (`g_samColourGradingFrom/To`, `idColourGrading`) were not
-  found in the data; `lamp_model` uses a per-channel fit.
+  found in the data; `lamp_model` uses a per-channel fit. Found since: ClearDay's is a 16³ DDS
+  in `media/SfxMisc.fchunk` (`paint-re.md`, "The grade"; `paint_model.game_grade` reads it).
 - `F02445F9` (the luminance adaptation step) was not found as bytecode; its formula is
   inferred from inputs and constant.
 - The glass blend factors were not read from the effect states (inferred `SrcAlpha /

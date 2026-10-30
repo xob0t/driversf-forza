@@ -178,18 +178,44 @@ def shade(
     return out
 
 
-# The colour grade (PostProcessing.fx: a 16^3 LUT lookup after the Reinhard curve) fitted
-# across channels from dumped frame pairs (`grade`): node [r, g, b] at input (r, g, b) / 15,
-# output display-linear. lamp_model's per-channel fit can't desaturate: a red paint's green
-# and blue came out 25 to 35 / 255 too dark on screen with it (research/paint-re.md).
+# The colour grade (PostProcessing.fx: a 16^3 LUT lookup after the Reinhard curve), node
+# [r, g, b] at input (r, g, b) / 15, output display-linear. The game's own: a 16 x 16 x 16
+# A8R8G8B8 DDS in media/SfxMisc.fchunk (one of 64 there), the chunk with UID GRADE_UID,
+# which the tone map samples as both g_samColourGradingFrom and To in ClearDay (paintprobe,
+# run vm1-20261030-163744: the managed volume texture at samplers 3 and 4, byte for byte).
+# Read from DSF_GAME_DIR when it is set; otherwise the fit across channels from dumped frame
+# pairs (`grade`, paint_grade.json), within 10 / 255 of it. lamp_model's per-channel fit can't
+# desaturate: a red paint's green and blue came out 25 to 35 / 255 too dark with it.
 GRADE_FILE = Path(__file__).resolve().parent / "paint_grade.json"
+GRADE_UID = bytes.fromhex("0012e109a4d88c2d")
 _GRADE: list = []
 
 
+def game_grade(game_dir: str | None = None) -> np.ndarray | None:
+    """The ClearDay grade LUT from the game's media/SfxMisc.fchunk, as [r, g, b, 3] floats."""
+    import os
+
+    root = game_dir or os.environ.get("DSF_GAME_DIR")
+    path = Path(root, "media", "SfxMisc.fchunk") if root else None
+    if path is None or not path.exists():
+        return None
+    data = path.read_bytes()
+    at = data.find(GRADE_UID)
+    dds = data.find(b"DDS ", at) if at >= 0 else -1
+    if dds < 0 or dds - at > 64:
+        return None
+    vol = np.frombuffer(data, np.uint8, 16 * 16 * 16 * 4, dds + 128).reshape(16, 16, 16, 4)  # [b, g, r, BGRA]
+    return np.transpose(vol[..., [2, 1, 0]], (2, 1, 0, 3)).astype(np.float64) / 255
+
+
 def grade3d(c: np.ndarray) -> np.ndarray:
-    """Trilinear lookup in the fitted 16^3 grade (falls back to lamp_model.grade)."""
+    """Trilinear lookup in the 16^3 grade: the game's (game_grade), else the fitted one, else
+    lamp_model's per-channel fit."""
     if not _GRADE:
-        _GRADE.append(np.array(json.loads(GRADE_FILE.read_text())["lut"]) if GRADE_FILE.exists() else None)
+        lut = game_grade()
+        if lut is None and GRADE_FILE.exists():
+            lut = np.array(json.loads(GRADE_FILE.read_text())["lut"])
+        _GRADE.append(lut)
     lut = _GRADE[0]
     if lut is None:
         return lm.grade(c)
@@ -229,18 +255,35 @@ LIGHT_AWAY = 0.8
 LA_REF = 0.2  # the adapted luminance of those frames (0.07 to 0.32; e = 1.6 at 0.2)
 
 
-def albedo_for(srgb, light: float = LIGHT_REF, la: float = LA_REF, iters: int = 60) -> np.ndarray:
-    """The linear albedo A (0..1 per channel) whose screen colour at `light` x A is nearest the
-    sRGB colour `srgb` (0..1): a fixed-point search through the exposure, Reinhard, the 3D
-    grade and sRGB. Colours the screen can't show come back at the nearest it can."""
-    target = np.asarray(srgb, np.float64)
-    t_lin = np.where(target <= 0.04045, target / 12.92, ((target + 0.055) / 1.055) ** 2.4)
+def _solve(t_lin: np.ndarray, light: float, la: float, iters: int) -> np.ndarray:
     a = np.clip(t_lin / max(light, 1e-3), 1e-4, 1)
     for _ in range(iters):
         s = screen(light * a, la=la)
         s_lin = np.where(s <= 0.04045, s / 12.92, ((s + 0.055) / 1.055) ** 2.4)
         a = np.clip(a * ((t_lin + 1e-4) / (s_lin + 1e-4)) ** 0.7, 1e-4, 1)
-    return np.minimum(a, knee(a))
+    return a
+
+
+def albedo_for(srgb, light: float = LIGHT_REF, la: float = LA_REF, iters: int = 60) -> np.ndarray:
+    """The linear albedo A (0..1 per channel) whose screen colour at `light` x A is nearest the
+    sRGB colour `srgb` (0..1): a fixed-point search through the exposure, Reinhard, the grade
+    and sRGB. A colour the screen can't show (the solution passes the knee) is dimmed in linear
+    light, its hue kept, until the solution fits under the knee."""
+    target = np.asarray(srgb, np.float64)
+    t_lin = np.where(target <= 0.04045, target / 12.92, ((target + 0.055) / 1.055) ** 2.4)
+    a = _solve(t_lin, light, la, iters)
+    if a.max() <= knee(a) + 1e-3:
+        return a
+    lo, hi = 0.0, 1.0
+    best = a * knee(a) / a.max()
+    for _ in range(14):
+        k = (lo + hi) / 2
+        b = _solve(t_lin * k, light, la, iters)
+        if b.max() <= knee(b) + 1e-3:
+            lo, best = k, b
+        else:
+            hi = k
+    return best
 
 
 def knee(a) -> float:

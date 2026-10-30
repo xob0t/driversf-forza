@@ -29,8 +29,10 @@ Tools added with this note (`tools/re/`):
 - `paint_model.py`: the formulas as code. `curve` prints one palette entry's colour by angle,
   sun and shade; `log` the constants the probe read; `frames` rasterises the car's clean
   exterior with the game's own matrices, predicts every paint pixel and compares it with the
-  dumped frame; `grade` fits the colour grade across channels from dumped frame pairs
-  (`paint_grade.json`).
+  dumped frame; `target` gives the albedo that shows a Forza swatch (the mapping in section
+  6); `grade` fits the colour grade across channels from dumped frame pairs
+  (`paint_grade.json`). `screen` uses the game's own grade LUT, read from `DSF_GAME_DIR`
+  (`game_grade`), and falls back to that fit.
 - `forza_paint.py`: Forza's paint settings per car colour, read from the disc images in place
   (`survey`).
 
@@ -47,13 +49,14 @@ spec   = D x 0.565 x vehSpec x ( (R.E)^1500  +  s2i x (R.E)^s2p x A )   R = refl
 refl   = sat(0.565 x max(0.025, sat(1 - N.E)^cfp - 0.5) x reflAmount
              x (0.638 D + 0.112 ao + 0.25) x 3 x env(R))               env = last frame's scene
 HDR    = min(light x A + spec + refl, 6)
-screen = sRGB(grade(Reinhard(e x HDR)))                                e 1.5..2 (lights-re.md)
+screen = sRGB(LUT16(Reinhard(e x HDR)))                                e 1.5..2 (lights-re.md)
 ```
 
 With the ClearDay values (`sun` (3, 2.92, 2.55), `vehSpec` (40, 39.1, 30.2), ambient
 `lower` (0.307, 0.347, 0.4) / `upper` (0.602, 0.687, 0.8)), a panel facing the sun gets about
-3 times its albedo in linear light and one turned away about 0.5 times; the reflection is a
-few percent of the pixel until the panel is seen at a steep angle. The palette colours are
+3 times its albedo in linear light and one turned away from it 0.3 to 0.8 times (`ao` is
+the vertex AO; the player car's light map is white, so the ambient amount is `ao`); the
+reflection is a few percent of the pixel until the panel is seen at a steep angle. The palette colours are
 linear albedos; nothing between the palette and the pixel gamma-corrects them.
 
 ## 1. The paint shaders
@@ -95,7 +98,7 @@ fresnel   = g_fresnelbias + g_OneMinusFresnelbias x max(1e-4, 1 - sat(N.E))^g_fr
 paint     = Tint2 + fresnel x (Tint3 - Tint2)                        c16, c17 = Tint3 - Tint2
 tex       = g_samDiffuseMap(UV0)                                     the atlas paint block
 A         = tex.r x (1 + tex.b x (paint - 1))                        CustomBRDFTinting_PS
-A         = lerp(dirt colour, A, dirt mask); lerp(A, rust, rust mask)   0 on a clean car
+A         = lerp(dirt colour, A, dirt mask); lerp(A, rust, rust mask)   no effect on a clean car
 specMask  = tex.g x (1 - max(dirt, rust))
 lm        = g_samLightMap(v3)
 ambAmount = (lm.x x 0.4 + 0.6) x ao
@@ -194,12 +197,13 @@ So, for the clear coat (#345):
   `max(0.025, (1 - N.E)^cfp - 0.5)`: the floor 0.025 until N.E drops under 0.5, then at most
   0.5 at grazing. With the usual `reflAmount` 0.5, a facing panel reflects about 2% of the
   environment (0.565 x 0.025 x 0.5 x 1 x 3), an edge-on one about 42%. Forza's clear coat
-  reflects about 4.7% facing (Schlick with `FresnelIndex` 1.55) rising to all of it at grazing,
-  and most of what makes a Forza paint look glossy is that facing sky reflection.
+  (section 5; its formula inferred) reflects about 4.2% facing (Schlick with `FresnelIndex`
+  1.55, times `FresnelScalar` 0.9) and 90% at grazing: twice DSF's facing reflection, on
+  every panel.
 - **The "sheen" is the second specular**, and it is tinted by the paint: `s2i x (R.E)^s2p x
   A x 40 x 0.565` around the mirror direction of `vehSpecularLightDirection`. With the common
-  0.1 / power 5 it adds up to 2.3 A at the lobe's centre (the sun adds about 2.3 A to a panel
-  facing it), so near the highlight a panel shows its own colour at up to twice the
+  0.1 / power 5 it adds up to 2.3 A at the lobe's centre (sun and sky give the median sunlit
+  panel 2.1 A), so near the highlight a panel shows its own colour at up to twice the
   brightness, not white.
 - **The glint** (`(R.E)^1500 x 22.6`, white) is a point. With the sheen, the specular is
   more than half the diffuse on 0 to 13% of a frame's sunlit paint pixels (median 2%, 33
@@ -264,11 +268,10 @@ buildings), s3 dirt.
   La))` with ClearDay's `HDRTonemapOffset` 2 and `middlegrey` 1.5. In these frames La (the log
   average of the scene) was 0.07 to 0.32, so e = 1.5 to 1.9. Then Reinhard on Rec. 709
   luminance with white W = 5: `c = HDR x e (1 + e L / 25) / (1 + e L)`.
-- **The colour grade desaturates.** Round 1 fitted the 16³ grade per channel. On saturated
-  paint that fit is off by 25 to 35 / 255: a red pixel's green and blue come out on screen
-  at 67 to 87 where the per-channel grade gives 45 to 62 (126 and the F40, every angle). The
-  real LUT mixes channels. `paint_model.py grade` fits it as a 3D table from the dumped frame
-  pairs (results below, "The grade").
+- **The colour grade desaturates** (confirmed-runtime). The grade is a 16³ A8R8G8B8 volume in
+  `media/SfxMisc.fchunk` ("The grade" below); it mixes channels. Round 1's per-channel fit of
+  it is off by 25 to 45 / 255 on saturated paint: a red pixel's green and blue come out on
+  screen at 67 to 110, where the per-channel fit gives 36 to 87 (126 and the F40, every angle).
 - **What "the shown colour" is.** On screen a paint shows its albedo times the light on each
   panel, through the exposure, the Reinhard curve and the grade. The light factor (HDR of the
   sun and ambient terms over A) on the sunlit paint pixels of the 33 sunlit dumps is p10 0.80
@@ -278,25 +281,26 @@ buildings), s3 dirt.
   the light and dark ends of its shading. `paint_model.LIGHT_REF`, `LIGHT_SUN`, `LIGHT_AWAY`.
 - **Why bright reds look flat (#345).** The Reinhard curve works on luminance, so a saturated
   colour of low luminance is barely compressed and its strong channel runs into the grade's
-  top. Pure red (A, 0, 0) on screen (`paint_model.screen`, La 0.2):
+  top. Pure red (A, 0, 0) on screen (`paint_model.screen` with the game's LUT, La 0.2):
 
   | A | panel turned away (0.8) | median sunlit (2.13) | facing the sun (3.0) |
   | ---: | --- | --- | --- |
-  | 0.1 | 71, 37, 48 | 145, 57, 65 | 189, 71, 79 |
-  | 0.2 | 115, 45, 58 | 216, 83, 90 | 229, 89, 94 |
-  | 0.3 | 160, 62, 70 | 232, 90, 95 | 234, 91, 97 |
-  | 0.5 | 213, 81, 88 | 234, 91, 97 | 234, 91, 97 |
+  | 0.1 | 69, 38, 49 | 142, 56, 65 | 188, 70, 79 |
+  | 0.2 | 111, 45, 57 | 216, 83, 89 | 229, 89, 94 |
+  | 0.3 | 158, 61, 70 | 231, 89, 94 | 233, 91, 97 |
+  | 0.5 | 212, 81, 88 | 233, 91, 97 | 233, 91, 97 |
 
   Above A = 0.2 to 0.3 the median and sun-facing panels show the same red: the shading across
-  the body is gone. And the most saturated red DSF can show by day is about (234, 91, 97):
-  the grade lifts green and blue under a strong red. Vanilla 126 (colour 2 0.111) and the
-  F40 port (0.143) sit just under that knee; any red with more light gets flatter, not
-  redder. A grey stops gaining near A = 0.5 (233 on the median panel, 236 facing the sun).
+  the body is gone. And the most saturated red DSF can show by day is (233, 91, 97): the
+  LUT's own top for pure red is (209, 27, 31) display-linear, so the grade lifts green and
+  blue under a strong red. Vanilla 126 (colour 2 0.111) and the F40 port (0.143) sit just
+  under that knee; any red with more albedo gets flatter, not redder. A grey keeps gaining
+  slowly: 215, 233 and 245 on the median panel at A 0.3, 0.5 and 1.0.
 
 ## 4. Validation: `paint_model.py frames` (confirmed-runtime)
 
 `uv run python tools/re/paint_model.py frames --log <probe log> --dumps <dumps>
---archive out/re/build/dngvehicles.sp --sids 126,224,133,147,205,1,3 --out out/re/frames2`
+--archive out/re/build/dngvehicles.sp --sids 126,224,133,147,205,1,3 --out out/re/frames3`
 
 For each dump it takes the player car's largest GPCH 26 draw, identifies the car by the
 colour 2 the draw received, rasterises the car's clean exterior (`car_render.load_scene`,
@@ -310,65 +314,63 @@ dumped back buffer (the 1280 x 720 scene centred in the 1600 x 900 window) with
 `screen(prediction)` at the frame's own La. The projection lands on the frame to the pixel
 (`sid126-f003468.png`, `sid1-f011938.png` in the PR).
 
-Result, 36 dumps of 7 cars, sunlit pixels (`out/re/frames2/frames.json`; the median of each
+Result, 36 dumps of 7 cars, sunlit pixels (`out/re/frames3/frames.json`; the median of each
 angle bin, weighted over the car's dumps; lum = observed / predicted Rec. 709 luminance;
-predicted sRGB through the fitted 3D grade, with round 1's per-channel grade in brackets where
-it differs by more than 10):
+predicted sRGB through the game's own grade LUT, nothing fitted; round 1's per-channel grade
+in brackets where it differs by more than 10):
 
 | Car | Bin | Pixels | HDR observed | HDR predicted | lum | sRGB observed | sRGB predicted |
 | --- | --- | ---: | --- | --- | ---: | --- | --- |
-| 126 red | facing | 184,069 | 0.233, 0.014, 0.013 | 0.232, 0.013, 0.012 | 1.02 | 163, 67, 74 | 160, 66, 74 (163, 45, 52) |
-|  | oblique | 194,774 | 0.304, 0.018, 0.017 | 0.305, 0.017, 0.016 | 1.02 | 192, 75, 81 | 195, 77, 83 (199, 47, 53) |
-|  | steep | 121,445 | 0.355, 0.059, 0.056 | 0.355, 0.057, 0.055 | 1.01 | 205, 87, 90 | 206, 87, 90 |
-|  | edge-on | 25,195 | 0.479, 0.145, 0.147 | 0.484, 0.141, 0.142 | 1.03 | 219, 110, 113 | 216, 107, 109 |
-| 224 white | facing | 262,450 | 0.743, 0.746, 0.690 | 0.739, 0.742, 0.686 | 1.00 | 216, 207, 198 | 208, 198, 190 |
-|  | oblique | 272,142 | 0.500, 0.504, 0.475 | 0.500, 0.504, 0.475 | 1.00 | 188, 177, 169 | 180, 169, 162 |
-|  | edge-on | 50,960 | 0.718, 0.724, 0.682 | 0.724, 0.731, 0.689 | 1.00 | 222, 213, 206 | 217, 208, 200 |
-| 133 black | facing | 322,047 | 0.018, 0.020, 0.022 | 0.017, 0.019, 0.021 | 1.06 | 39, 46, 53 | 42, 48, 54 |
-|  | edge-on | 31,529 | 0.091, 0.090, 0.086 | 0.088, 0.086, 0.082 | 1.04 | 81, 79, 81 | 87, 82, 83 |
-| 147 silver | facing | 431,628 | 0.402, 0.424, 0.426 | 0.401, 0.423, 0.426 | 1.00 | 173, 165, 164 | 173, 167, 165 |
-|  | edge-on | 53,871 | 0.208, 0.218, 0.221 | 0.211, 0.220, 0.222 | 0.99 | 117, 113, 114 | 125, 120, 119 |
-| 205 blue | facing | 225,099 | 0.426, 0.638, 0.777 | 0.423, 0.634, 0.772 | 1.01 | 175, 199, 208 | 174, 198, 208 |
-|  | edge-on | 31,726 | 0.230, 0.308, 0.367 | 0.230, 0.315, 0.378 | 1.00 | 124, 142, 159 | 129, 148, 166 |
-| F40 port (`#c00000`) | facing | 338,606 | 0.266, 0.003, 0.003 | 0.265, 0.002, 0.002 | 1.02 | 170, 68, 76 | 174, 69, 77 (177, 36, 44) |
-|  | edge-on | 43,789 | 0.591, 0.073, 0.067 | 0.591, 0.069, 0.064 | 1.04 | 229, 96, 97 | 229, 96, 97 (236, 64, 68) |
-| 370Z port (`#036be3`) | facing | 426,646 | 0.004, 0.095, 0.441 | 0.003, 0.095, 0.441 | 1.01 | 78, 98, 199 | 78, 99, 201 (32, 78, 210) |
-|  | edge-on | 43,222 | 0.072, 0.146, 0.440 | 0.071, 0.145, 0.450 | 1.01 | 88, 108, 200 | 88, 109, 202 |
+| 126 red | facing | 184,069 | 0.233, 0.014, 0.013 | 0.232, 0.013, 0.012 | 1.02 | 163, 67, 74 | 159, 65, 73 (163, 45, 52) |
+|  | oblique | 194,774 | 0.304, 0.018, 0.017 | 0.305, 0.017, 0.016 | 1.02 | 192, 75, 81 | 194, 76, 82 (199, 47, 53) |
+|  | steep | 121,445 | 0.355, 0.059, 0.056 | 0.355, 0.057, 0.055 | 1.01 | 205, 87, 90 | 205, 86, 89 |
+|  | edge-on | 25,195 | 0.479, 0.145, 0.147 | 0.484, 0.141, 0.142 | 1.03 | 219, 110, 113 | 217, 107, 109 |
+| 224 white | facing | 262,450 | 0.743, 0.746, 0.690 | 0.739, 0.742, 0.686 | 1.00 | 216, 207, 198 | 206, 196, 188 |
+|  | oblique | 272,142 | 0.500, 0.504, 0.475 | 0.500, 0.504, 0.475 | 1.00 | 188, 177, 169 | 179, 168, 161 |
+|  | edge-on | 50,960 | 0.718, 0.724, 0.682 | 0.724, 0.731, 0.689 | 1.00 | 222, 213, 206 | 217, 207, 199 |
+| 133 black | facing | 322,047 | 0.018, 0.020, 0.022 | 0.017, 0.019, 0.021 | 1.06 | 39, 46, 53 | 38, 45, 51 |
+|  | edge-on | 31,529 | 0.091, 0.090, 0.086 | 0.088, 0.086, 0.082 | 1.04 | 81, 79, 81 | 77, 76, 78 |
+| 147 silver | facing | 431,628 | 0.402, 0.424, 0.426 | 0.401, 0.423, 0.426 | 1.00 | 173, 165, 164 | 173, 167, 164 |
+|  | edge-on | 53,871 | 0.208, 0.218, 0.221 | 0.211, 0.220, 0.222 | 0.99 | 117, 113, 114 | 118, 114, 114 |
+| 205 blue | facing | 225,099 | 0.426, 0.638, 0.777 | 0.423, 0.634, 0.772 | 1.01 | 175, 199, 208 | 169, 195, 205 |
+|  | edge-on | 31,726 | 0.230, 0.308, 0.367 | 0.230, 0.315, 0.378 | 1.00 | 124, 142, 159 | 124, 144, 164 |
+| F40 port (`#c00000`) | facing | 338,606 | 0.266, 0.003, 0.003 | 0.265, 0.002, 0.002 | 1.02 | 170, 68, 76 | 172, 68, 77 (177, 36, 44) |
+|  | edge-on | 43,789 | 0.591, 0.073, 0.067 | 0.591, 0.069, 0.064 | 1.04 | 229, 96, 97 | 229, 95, 96 (236, 64, 68) |
+| 370Z port (`#036be3`) | facing | 426,646 | 0.004, 0.095, 0.441 | 0.003, 0.095, 0.441 | 1.01 | 78, 98, 199 | 77, 97, 198 (32, 78, 210) |
+|  | edge-on | 43,222 | 0.072, 0.146, 0.440 | 0.071, 0.145, 0.450 | 1.01 | 88, 108, 200 | 86, 107, 203 |
 
 - **Linear light:** all 28 sunlit bins (7 cars x 4 angles) are within x0.99 to x1.07. The
   shaded bins (0.3 to 1% of the pixels: the cars stood in the sun) are within x0.92 to x1.22,
   the model's shade a little too blue (the hemisphere ambient; open).
-- **On screen:** over the 28 sunlit bins the mean error is 3.1, 2.3, 2.4 / 255 (largest 9).
-  Most of these frames also fed the grade fit, so this is partly in-sample; the held-out
-  frames give 4.5, 3.0, 3.4 on saturated pixels (above, "The grade"). With round 1's
+- **On screen:** over the 28 sunlit bins the mean error is 2.5, 2.3, 2.3 / 255, the largest
+  10 (the white's facing panels, slightly dark: bloom, which the model leaves out, lifts the
+  brightest pixels). Nothing in this chain is fitted to these frames. With round 1's
   per-channel grade the saturated paints' weak channels were 25 to 45 / 255 too dark.
 
 Not covered: traffic paint (GPCH 14, the city light map and the cube map; same paint maths,
 not compared pixel by pixel), the shadow map (each pixel is called lit or shaded from its
 own luminance), other moods (all dumps are ClearDay), dirt and damage.
 
-### The grade (fitted; the LUT itself not found)
+### The grade (confirmed-static and confirmed-runtime)
 
-`uv run python tools/re/paint_model.py grade --dumps <dumps> --per-frame 8000` takes every
-dump with a scene PFM and a back buffer, the central three quarters of each frame (the
-vignette darkens the edges), the Reinhard output at the frame's own exposure as input and the
-back buffer's display-linear value as output, and solves a 16³ table (trilinear, least
-squares with a small smoothness term) over 98 frames; 24 frames are held out. Result on the
-held-out frames (`out/re/grade1.txt`), mean absolute error per channel on screen:
+The tone map's grade textures, dumped by `paintprobe` at the tone map's draw (`2F0359F4`) in
+run `vm1-20261030-163744` (`hooks=vtable`, `paintprobe.ini` in `out/re/p3/`; archive and
+cars as above, `-ProbeIds '126,1' -Views 'nose,left'`; log in
+`%LOCALAPPDATA%\Temp\dsfforza-wsb\re-paint4`): samplers 3 and 4
+(`g_samColourGradingFrom` / `To`) are the same managed 16 x 16 x 16 A8R8G8B8 volume. Its
+16,384 bytes are, byte for byte, the DDS at offset 4,343,664 of `media/SfxMisc.fchunk`, right
+after a chunk header with UID `0012e109a4d88c2d`; the file holds 64 such 16³ DDS volumes
+(the other grades). `paint_model.game_grade` reads it from `DSF_GAME_DIR`; the repo ships no
+copy. This answers round 1's open item ("the exact 3D colour-grade LUTs were not found").
+Which `idColourGrading` picks which of the 64 was not traced.
 
-| Pixels | 3D fit | round 1's per-channel fit |
-| --- | --- | --- |
-| all (192,000) | 7.0, 6.0, 5.7 / 255 (p90 16, 14, 12) | 8.9, 8.4, 7.9 (p90 20, 21, 18) |
-| saturated (22,124; brightest channel 2.5 x the weakest) | 4.5, 3.0, 3.4 (p90 10, 6, 7) | 17.8, 20.5, 17.9 (p90 50, 40, 39) |
-
-The residual on all pixels is mostly film grain and bloom, which the fit leaves out. The table
-is in `tools/re/paint_grade.json`; `paint_model.screen` uses it. It is fitted on what the
-frames hold: road greys, sky, the five vanilla paints and two ports' red and blue. Hues the
-frames lack (yellows, greens, purples) come from the smoothness term, so treat them as
-extrapolated. The real grade textures (`g_samColourGradingFrom/To`) were not dumped: a probe
-run that dumps the tone map's samplers (`paintprobe` does it at its tone-map draw) stalled
-twice in the story load with the probe's `hooks=chain` (`vm1-20261030-154458` and its retry).
-The vtable-hook rerun is in "Open".
+Before the dump, `paint_model.py grade` fitted a 16³ table from 98 dumped frame pairs (Reinhard
+output against the back buffer, central three quarters of the frame; `tools/re/paint_grade.json`,
+used when `DSF_GAME_DIR` isn't set). Where the frames had colours it agrees with the game's:
+the grey diagonal within 10 / 255 and the red axis within 2 ((211, 27, 31) against
+(209, 27, 31) at full red). Elsewhere in the cube it is extrapolation (mean 21 / 255 off in
+sRGB over all nodes). On 24 held-out frames' saturated pixels it gave 4.5, 3.0, 3.4 / 255
+against round 1's per-channel fit's 17.8, 20.5, 17.9 (`out/re/grade1.txt`).
 
 ## 5. Forza's paint data
 
@@ -405,17 +407,18 @@ first (FH1): `PaintScale` 94, `PaintColor` 92, `SpecularAmount2` 91, `SpecularPo
 
 ### What `Combo_Colors.RGB` means (confirmed-static; the CPU side inferred)
 
-- It is the colour's **swatch**: the colour the game shows for it. Where a colour has no file
-  of its own, the shader's `PaintColor` is that RGB / 255. `Normal.xml`'s own default
-  `PaintColor` (0.0588, 0.0784, 0.051) is `#0f140d` / 255.
+- It is the colour's **swatch**: the colour the database lists for that paint choice. Where a
+  colour has no file of its own, the shader's `PaintColor` is that RGB / 255 (inferred: the
+  files that set it mostly repeat it, and `Normal.xml`'s own default `PaintColor`
+  (0.0588, 0.0784, 0.051) is `#0f140d` / 255, a `Combo_Colors` value).
 - Where a colour has a file, its `PaintColor` is often **not** the swatch. FH1 has 92 files
   that set it; against their `Combo_Colors` row (`forza_paint_survey.json` "colours"), 46 are
   equal within 3 / 255 (TVR Sagaris, Camry, GT-R, Mini, MC12), 24 darker and 22 shifted in
-  hue. The darker ones are mostly bright metallics (Beetle `#e0e2e2` to (138, 150, 161), RAV4 `#fffff5` to (178, 178, 184),
-  `#bec8d7` to (117, 117, 122)), and some solids moved (Beetle `#9c002e` to (122, 0, 8),
-  `#ffc53e` to (247, 174, 42)). FM4's 4 such files are all equal. The artists darkened the paint the shader gets, mostly where
-  the metallic lobes add light. So the swatch is the look (what a car of that colour should
-  look like) and `PaintColor` is the means; for a port the swatch is the target.
+  hue. The darker ones are mostly bright metallics (Beetle `#e0e2e2` to (138, 150, 161), RAV4
+  `#fffff5` to (178, 178, 184), `#bec8d7` to (117, 117, 122)); some solids moved too (Beetle
+  `#9c002e` to (122, 0, 8), `#ffc53e` to (247, 174, 42)). FM4's 4 such files are all equal.
+  The artists darkened the paint the shader gets, mostly where the metallic lobes add light.
+  So the swatch is the look and `PaintColor` the means; for a port the swatch is the target.
 - The metallic flag is the Metallic.xml layer above: half the diffuse paint, two broad lobes
   (7 x lobe^6 + 6 x lobe^4) and the cube reflection on.
 - Forza's car shaders work in gamma 2 (`shaders_v16.fxobj`, the body pixel shader at 0x7a3e8:
@@ -441,13 +444,13 @@ out    = sqrt(lit paint + spec + refl, fogged)
 The two-tone and metal mixes have DSF's shape (a bias, power and scale on the view angle
 toward a second colour): DSF's `g_fresnelpower` / `g_fresnelbias` / colour 3 are the same
 idea as Forza's `TwoTone*`, and its second specular (tinted by A) is Forza's lobes. Factory
-colours have `TwoToneScale` and `MetalScale` 0 unless their file sets them (10 and 80 files
-do), so **a factory Forza paint has no colour change with the view angle** apart from the
-reflection.
+colours have `TwoToneScale` and `MetalScale` 0 unless their file sets them (`TwoToneScale`
+on 5 FH1 and 4 FM4 files, `MetalScale` on 80 and 7, mostly 0.03 to 0.05), so **a factory
+Forza paint has almost no colour change with the view angle** apart from the reflection.
 
-The material format is the one round 1's lens worker reads too (`ShaderSettings` XML per
-technique, `fxobj` constant tables): the same parser (`forza_paint.parse_settings`) covers
-the lens and glass techniques.
+The material format is the one the Forza lens and glass work reads too (`ShaderSettings` XML
+per technique layered over `Normal.xml`, `fxobj` constant tables): `forza_paint.parse_settings`
+and `shared_settings` read any technique, not only `body`.
 
 ## 6. From a Forza colour to the palette
 
@@ -469,40 +472,44 @@ Why these values:
 
 - **Colour 2.** `albedo_for` inverts the chain this note confirms (the shader is linear in A,
   then exposure, Reinhard and the grade). Against today's `SHOWN_GAIN` x swatch
-  (`paint_model.py target`, `out/re/target1.txt`), on the median sunlit panel:
+  (`paint_model.py target` with the game's LUT, `out/re/target2.txt`), on the median sunlit panel:
 
   | Swatch | A, model | A, 0.3 x swatch | Shows (model) | Shows (today) |
   | --- | --- | --- | --- | --- |
-  | `#c00000` (F50 GT, F40) | 0.144, 0, 0 | 0.158, 0, 0 | 192, 72, 80 | 201, 76, 84 |
-  | `#e10d12` (370Z red) | 0.241, 0, 0 | 0.226, 0, 0 | 225, 87, 93 | 223, 86, 92 |
-  | `#fcfcfc` (white) | 0.5 (knee) | 0.292 | 234, 226, 222 | 215, 205, 202 |
-  | `#c5c4c3` (silver) | 0.239, 0.266, 0.273 | 0.168 | 197, 196, 195 | 167, 153, 149 |
-  | `#999999` (grey) | 0.140, 0.158, 0.162 | 0.096 | 153, 153, 153 | 134, 122, 119 |
-  | `#808080` | 0.109, 0.118, 0.121 | 0.065 | 128, 128, 128 | 101, 94, 96 |
-  | `#585c61` | 0.054, 0.064, 0.069 | 0.029, 0.032, 0.036 | 88, 92, 97 | 66, 66, 73 |
-  | `#060606` (black) | 0 | 0.001 | 35, 40, 48 | 36, 40, 48 |
+  | `#c00000` (F50 GT, F40) | 0.146, 0, 0 | 0.158, 0, 0 | 192, 72, 80 | 200, 75, 83 |
+  | `#e10d12` (370Z red) | 0.246, 0, 0 | 0.226, 0, 0 | 225, 88, 93 | 222, 85, 91 |
+  | `#036be3` (370Z blue) | 0, 0.047, 0.301 (knee) | 0, 0.044, 0.230 | 87, 105, 222 | 80, 98, 211 |
+  | `#ffbf19` (S5S Raptor) | 0.301, 0.192, 0 (knee) | 0.300, 0.156, 0.003 | 220, 165, 86 | 223, 148, 88 |
+  | `#fcfcfc` (white) | 0.373, 0.437, 0.462 (knee) | 0.292 | 221, 221, 221 | 214, 204, 200 |
+  | `#c5c4c3` (silver) | 0.231, 0.256, 0.264 | 0.168 | 197, 196, 195 | 171, 155, 151 |
+  | `#999999` (grey) | 0.144, 0.162, 0.165 | 0.096 | 153, 153, 153 | 117, 110, 110 |
+  | `#808080` | 0.110, 0.120, 0.123 | 0.065 | 128, 128, 128 | 93, 89, 92 |
+  | `#585c61` | 0.058, 0.071, 0.074 | 0.029, 0.032, 0.036 | 88, 92, 97 | 59, 65, 71 |
+  | `#060606` (black) | 0 | 0.001 | 34, 38, 46 | 34, 39, 46 |
 
   So `SHOWN_GAIN` 0.3 is right for bright saturated reds (where it was fitted: the F50 and the
-  twin cars), and under-shows mid tones by 20 to 30 / 255 and greys with a blue-grey cast:
-  the curve isn't linear (Reinhard's toe and the grade), and the grade's blue toe needs a
-  slightly warmer albedo for a neutral grey. Whites gain from 0.3 to 0.5 on the median panel
-  (215 to 234), with less shading. Blacks bottom out at the grade's floor (35, 40, 48) either
-  way. The brightness cap (#S5S Raptor) becomes the knee.
+  twin cars), and under-shows mid tones and greys by 25 to 36 / 255, with a warm cast: the
+  curve isn't linear (Reinhard's toe and the grade), and the grade warms neutrals, so a grey
+  needs a slightly blue albedo. Yellows and oranges keep more of their green (`#ffbf19`
+  165 against 148). Whites stop at the knee (221 on the median panel, 231 facing the sun);
+  colours the screen can't show are dimmed in their own hue until they fit under it. Blacks
+  bottom out at the grade's floor (34, 38, 46) either way. The brightness cap (S5S Raptor)
+  becomes the knee.
 - **Colour 3.** The dark rims of most vanilla entries (low power, colour 3 at 0.02) are DSF's
   art, and the reason #289's reds went maroon. Forza's factory paint is one colour at every
   angle, so a flat entry is the faithful one; the view-angle darkening that remains is DSF's
   own lighting (ambient against sun, the reflection).
 - **Reflection.** DSF's reflection on a facing panel is `0.565 x 0.025 x reflAmount x 3` of
   the environment (with `shadowMod` about 1 in the sun): 0.042 x `reflAmount`; at grazing
-  `0.565 x 0.5 x reflAmount x 3` = 0.85 x `reflAmount`. Forza's clear coat (Schlick with
-  n = 1.55, F0 0.0465, times `FresnelScalar` 0.9) is 0.042 facing and 0.9 at grazing. So
+  `0.565 x 0.5 x reflAmount x 3` = 0.85 x `reflAmount`. Forza's clear coat (inferred: Schlick
+  with n = 1.55, F0 0.0465, times `FresnelScalar` 0.9) is 0.042 facing and 0.9 at grazing. So
   `reflAmount` 1.0 matches Forza at both ends (DSF's middle, N.E 0.3 to 0.5, stays at the
   floor where Forza rises to 7%). That doubles the vanilla value: the strongest lever for
   #345's missing gloss. `g_hCustomFresnelPower` below 1 lifts the middle but overshoots
   (0.5 gives 0.35 at N.E 0.5), so 1.0. The in-game check is open.
 - **Second specular.** DSF's sheen is `s2i x 22.6 x A x lobe^s2p` against a sun term of about
   `3 x A x N.L`; Forza's metallic lobes are `(7 lobe^6 + 6 lobe^4) x paint` against a diffuse
-  halved by `PaintScale` 0.5. Matching the ratio literally would need `s2i` near 3, far above
+  halved by `PaintScale` 0.5. Matching the ratio literally would need `s2i` near 3.5, far above
   any vanilla entry (median 0.15, p75 0.3; 10 at most) and Forza's light units are unknown,
   so the rule keeps vanilla's scale and makes it relative: `s2i` = 0.1 for a Forza colour
   without lobes, and 0.3 x ((Amount2 + Amount3) / 13) x (0.5 / `PaintScale`) with them (0.3
@@ -528,10 +535,11 @@ Three things made `paintprobe` harder than `lampprobe`:
 - **The device's vtable entries go back to the d3d9 functions** about every 200 ms (the
   probe's own log, `hooks (watch)` lines in run `vm1-20261030-152849`; most likely d3d9's own
   table swaps). The default (`hooks=vtable`) re-applies the hooks every 200 ms from a thread;
-  it sees most frames and every dump came out whole. `hooks=chain` re-points the 5-byte
-  jumps DSF Enhanced puts at the d3d9 functions to the probe instead (every frame seen), but
-  both runs with it stalled in the story load (`vm1-20261030-154458` and its retry), so it is
-  off by default.
+  it misses some frames, but the dumps it caught came out whole (run `vm1-20261030-152849` used an
+  earlier build that slowed to every 2 s after two minutes; `vm1-20261030-163744` the final
+  one). `hooks=chain` re-points the 5-byte jumps DSF Enhanced puts at the d3d9 functions to
+  the probe instead (every frame seen), but both runs with it stalled in the story load
+  (`vm1-20261030-154458` and its retry), so it is off by default.
 - **The back buffer is 1600 x 900 with the 1280 x 720 3D view centred in it** (offset 160,
   90, not scaled: found by correlating the two), so the final image of a pixel is
   `bmp[y + 90, x + 160]`.
@@ -542,9 +550,8 @@ shader, which DSF Enhanced leaves alone.
 
 ## Open
 
-- The real colour-grade LUT: a probe run with `hooks=vtable` dumps the tone map's samplers
-  (volume textures included) at 60, 120 and 180 s after the first frame; queued, not yet run
-  when this note was written.
+- Which of the 64 grade LUTs in `SfxMisc.fchunk` each mood's `idColourGrading` selects
+  (ClearDay's is UID `0012e109a4d88c2d`).
 - Shade: the shaded bins (few pixels in these frames) come out a little bluer in the model
   than in the frame. A run with the cars parked in a building's shadow would test the
   hemisphere ambient and the shadow map's edge.
