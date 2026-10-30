@@ -33,7 +33,7 @@ LOD for the chase views; cockpit.fit_wheel_points) and reports:
 - the chase views' grips: the driver there is a full-body occupant posed in the
   driver seat marker's frame, his grips the same circle about the vanilla
   steering marker's place in that frame (rig_grips). The same `grip_vanilla` and
-  `grip_asi` (dsfforza.asi [hands] moves him too since issue #117), and
+  `grip_asi` (dsfforza.asi [hands] moves him too), and
   `turn_off`, how far from the rim's column the animations turn his hands
   (the plugin keeps each hand's angle about that centre, so they turn with the
   wheel, and moves them by up to `asi_move` over a full turn).

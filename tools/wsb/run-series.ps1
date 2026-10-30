@@ -78,7 +78,7 @@ param(
     [int]$StallSeconds = 120,     # Story stage: a load whose Driver.exe private bytes make no new high this long is hung
     [int]$StorySeconds = 900,     # Story stage: the cap for a slow but progressing load
     [int]$CpuGate = 70,           # before each game launch, wait until the host's competing CPU (processes above below-normal
-                                  # priority) stays under this percent for 15 s; 0: don't wait (issue #70)
+                                  # priority) stays under this percent for 15 s; 0: don't wait
     [int]$CpuGateSeconds = 600,   # longest wait at the CPU gate; the run starts anyway after it
     [switch]$OnHost,
     [switch]$Vm,
@@ -108,7 +108,7 @@ if (-not $HostRunPath) { $HostRunPath = Join-Path ([IO.Path]::GetPathRoot($GameP
 
 # The vanilla reader holds 1100 root entries and seeks below 2 GiB (research/spool-limits.md); a
 # larger archive needs dsfforza.asi's [archive] module, which a run loads only with -Asi. Without it
-# the game shows DriverNGHook's fatal-error dialog ~40 s into the load (issue #224), so stop here,
+# the game shows DriverNGHook's fatal-error dialog ~40 s into the load, so stop here,
 # before waiting for a VM. tools\install.ps1 refuses such an install the same way.
 if (-not $Asi -and -not $NoAsi) {
     foreach ($archive in $Archives) {
@@ -323,7 +323,7 @@ function Get-HostCpu([double]$Seconds = 5) {
 }
 
 function Wait-CpuGate {
-    # Issue #70: on a busy host the game's load slows to a crawl in the VM (the guest gets little
+    # On a busy host the game's load slows to a crawl in the VM (the guest gets little
     # CPU). Wait until three 5 s samples in a row have the competing CPU under -CpuGate, at most
     # -CpuGateSeconds. Returns the line to log.
     if ($CpuGate -le 0) { return $null }
@@ -345,7 +345,7 @@ function Test-LoadFailure($r) {
 try {
     if (-not $OnHost) { Restore-DeadHostSession }
     if ($OnHost) { Wait-HostPause; Enter-HostSession } elseif ($Vm) { Confirm-Vm } else { Confirm-Sandbox }
-    # Each archive once; a run that fails while the world loads (issue #70) is retried once,
+    # Each archive once; a run that fails while the world loads is retried once,
     # right after, from a new game start.
     $queue = [System.Collections.Generic.List[object]]::new()
     foreach ($a in $Archives) { $queue.Add([pscustomobject]@{ Archive = $a; Retry = $false }) }
@@ -373,8 +373,8 @@ try {
             New-Item -ItemType Directory -Force -Path $runDir | Out-Null
             Set-Content (Join-Path $outputHost 'runs\latest.txt') $runDir
             # The host game folder's current dsf_enhanced.asi and .ini, copied into the run folder:
-            # the guest's C:\Game is a copy from when the VM was provisioned and goes stale
-            # (issue #59). -Override still wins. result.json "dsfEnhanced" has the hashes.
+            # the guest's C:\Game is a copy from when the VM was provisioned and goes stale.
+            # -Override still wins. result.json "dsfEnhanced" has the hashes.
             $hostGame = New-Item -ItemType Directory -Force -Path (Join-Path $runDir 'host-game')
             foreach ($name in $hostRootFiles) {
                 $path = Join-Path $GamePath $name

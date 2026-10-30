@@ -690,7 +690,7 @@ def forza_info(
     """What host selection needs about a Forza car, from gamedb.slt ({game: path}, the
     game the car is taken from first; None: out/db). `folder`: the extracted car, for a
     door-count hint from the carbin's glass sections. `doors_memo` (door_memo()): the
-    door counts of earlier runs, for port_batch's plan (issue #297)."""
+    door counts of earlier runs, for port_batch's plan."""
     dbs = gamedbs if isinstance(gamedbs, dict) else dict(DEFAULT_GAMEDBS)
     order = sorted(dbs.items(), key=lambda kv: (kv[0] != game,))
     row = body = None
@@ -874,9 +874,8 @@ def _carbin_doors(folder: Path, media: str, body: str | None = None) -> int | No
     T16's side intake carries something handle-like), or there is no rear door and the
     front glass ends 0.4 m or more behind the midpoint (2-doors 0.40 to 1.11, saloons up
     to 0.38) or a rear quarter starts behind it. Coupe, muscle, supercar, convertible and race bodies never get 4 (side
-    intakes ahead of a mid-engine's rear wheel look like rear doors). Issue #208: the
-    first rule merged a rear-door pane touching the front one into it and called the
-    2004 WRX STi, S204, Carlton, Rapide ... 2-door."""
+    intakes ahead of a mid-engine's rear wheel look like rear doors). A rear-door pane that
+    touches the front one is still a rear door (2004 WRX STi, S204, Carlton, Rapide)."""
     if body not in DOOR_RULE_BODIES:
         return None  # vans, buses, trucks: their glass and doors don't follow a car's
     try:

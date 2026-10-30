@@ -92,7 +92,7 @@ def changed_cars(before: Path, after: Path) -> tuple[list[dict], dict]:
 
 
 # Regions a change is listed in. "other" is ours with no Forza counterpart: what the
-# converter adds (virtual displays' housings, moved wheel displays: #249).
+# converter adds (virtual displays' housings, moved wheel displays).
 LISTED = [*rc.SCORED, "cabin", "other", "displays", "glass"]
 ADDED = "added"  # how "other" is named in the report
 
@@ -151,7 +151,7 @@ def compare_builds(
             cb = rc.build_cockpit_pair(Path(after) / "dngvehicles.sp", roots_b, car["spool_id"], media, rep_b)
             jobs.append(("cockpit", rc.View("cockpit", camera, modes=("day", "dark")), ca, cb))
         for vname, view, qa, qb in jobs:
-            # One frame for both builds: their own extents differ when a part moves (#254).
+            # One frame for both builds: their own extents differ when a part moves.
             box = rc.union_box(qa.box, qb.box)
             ra = rc.render_view(qa, view, size, box)
             rb = rc.render_view(qb, view, size, box)

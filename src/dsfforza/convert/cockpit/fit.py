@@ -166,7 +166,7 @@ def fit(
             atlas=atlas,
             readout=readout,
             provided=provided,
-            # A placeholder cockpit carbin (the main carbin's cabin, issue #148) has no
+            # A placeholder cockpit carbin (the main carbin's cabin) has no
             # needle and no display; the car has a speedometer and a tachometer all the same.
             assume=() if lod0 else ("tach", "speed"),
         )

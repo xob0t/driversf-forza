@@ -66,7 +66,7 @@ def rebuild_drsp(
     # drawn from, where the host has one of that stride; else from the host's last
     # buffer of the stride. Hosts 119, 146 and 208 keep a second stride-20 layout
     # after the needles' in the interior: the needles got it, its semantic 8 has no
-    # gauge id (DashboardInstrument), and they never turned (issue #62).
+    # gauge id (DashboardInstrument), and they would never turn.
     own = {}  # (material, stride) -> index in `old` of the host buffer it is drawn from
     for e in old:
         if e.tag == "SBMC":
@@ -421,7 +421,7 @@ def patch_hubs(
     hinges 3 to 6, 14, 15), which move with their hub, and the wheel records'
     bodies, whose position is the negated hub (they move by minus the hub's
     offset). Hubs come from the host's own wheel table, so this works for any
-    host (it used to match the Desanne's hub height, -0.398, by value).
+    host.
     rear_half_track / rear_hub_y: the rear axle's, when it differs (Veyron: rear
     track outer 2.003 with 365 mm tyres against 1.999 with 265 mm at the front)."""
     from dsfforza.formats import upvh as upvh_mod
@@ -470,7 +470,7 @@ def fit_wheel_collision(upvh: bytes, front: tuple[float, float], rear: tuple[flo
     front/rear = (radius, width). The engine places a drawn wheel where its cylinder meets
     the road, so a port drawing a Forza tyre on its host's cylinder had the tyre reach below
     the road by the radius difference: the Hummer H1 Alpha's 0.468 m tyres on the Audi Q7's
-    0.386 m cylinders sank 8 cm (issue #317; research/wheels.md, "Tyres in the
+    0.386 m cylinders sank 8 cm (research/wheels.md, "Tyres in the
     road"). Vanilla sizes them to its own tyres: radius equal on 132 of 140 vehicles, width
     1.005 x the tyre's (median). The header radius is the primitive's bounding sphere,
     sqrt(x^2 + 2 y^2), as vanilla's. A model of another shape is left as it is. Returns the
@@ -556,8 +556,8 @@ def settle_wheels(stream, full: Entry, log=print) -> dict:
         vo3d.params[599] -= drop
     # The car's frame (where the VO3D camera mounts are measured from) follows the physics:
     # it sinks against the body with the CoG, so the mounts the VO3D sets go up with the body
-    # (runs vm-20261025-074146 / -074620: the head camera, a hierarchy marker, logged 40 mm
-    # higher in that frame after a 36 mm drop).
+    # (the head camera, a hierarchy marker, logs 40 mm higher in that frame after a 36 mm
+    # drop).
     for pid in CAMERA_MOUNT_Y:
         if pid in vo3d.params:
             vo3d.params[pid] += drop

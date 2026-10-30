@@ -9,7 +9,7 @@ Squash-merges a pull request and cleans up after it, safely.
 2. gh pr merge --squash --delete-branch (refuses a PR that isn't mergeable).
 3. Removes the worktree folder if it is still there, deletes the local branch, prunes.
    Then sweeps the links out of folders that are no longer worktrees (worktree-setup.ps1
-   -Sweep: worktrees the agent host removed without -Unlink, issue #265).
+   -Sweep: worktrees the agent host removed without -Unlink).
 4. Fast-forwards the main checkout's master, unless a build or install is running from
    the main checkout (its workers import the code as they start, so pulling under them
    mixes two versions); then it says so and leaves master where it is.

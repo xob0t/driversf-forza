@@ -188,8 +188,8 @@ DIGIT_LIFT = 0.0016
 # Bar pieces are cells this size (m) at the least, each with its pixels' mean colours.
 # Forza's bars have detail finer than a screen pixel (the S2000's arc is radial stripes
 # 1 to 2 render-target pixels wide, 0.27 mm). Drawn as pieces, those were thinner than
-# the 0.24 mm position step and than a pixel, and shimmered as the head camera moved
-# (issue #188). 1 mm is about a pixel in the cockpit view at 1600 x 900 (the S2000's
+# the 0.24 mm position step and than a pixel, and shimmered as the head camera moved.
+# 1 mm is about a pixel in the cockpit view at 1600 x 900 (the S2000's
 # 255 mm display spans 340 pixels) and 4 position steps; the vanilla Zonda's rpm
 # segments are 1.6 mm at their thinnest. Coarser cells (1.5 mm) shimmered no less and
 # blurred the Viper 2013's fan more.

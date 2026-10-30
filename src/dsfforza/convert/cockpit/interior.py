@@ -118,7 +118,7 @@ def host_interior(stream, interior, known: dict | None = None) -> InteriorMateri
     # one (193: Chassis_LOD1); keep the engine trim, MATERIAL_LAYOUT has its layout.
     trim = forza2dsf.TRIM
     # Outside chrome seen from the seat (A-pillar trim, window frames, bonnet strips): the
-    # shared chrome vanilla interiors use (host 193: 3,700 triangles), issue #232.
+    # shared chrome vanilla interiors use (host 193: 3,700 triangles).
     chrome = forza2dsf.CHROME
     for uid in (glass, paint, trim, chrome):
         layout.setdefault(uid, (forza2dsf.MATERIAL_LAYOUT if known is None else known).get(uid, (28, 5)))
@@ -152,7 +152,7 @@ def _needle_vertex(pos, uv, gauge_id: int, normal, stride: int = 20, comp: int =
 
 
 # Gloss materials (copies of the car's Lights material, about 11 KB each) the interior
-# entry takes at most for the outside parts it holds (issue #232).
+# entry takes at most for the outside parts it holds.
 COCKPIT_GLOSS_MATERIALS = 6
 # Vertex-cluster cells (m) tried in turn until the interior MDXN fits.
 DECIMATE_LADDER = (0.0, 0.004, 0.007, 0.01, 0.015, 0.02, 0.03)
@@ -203,7 +203,7 @@ class CockpitBinding:
     outside parts (`outside(section)`: the cockpit carbin's bonnet, A-pillars and
     mirrors, and the shell), chrome takes the shared chrome and the atlas trims
     Texturing gave a gloss material take its copy of the Lights material (`gloss`:
-    Texturing kind -> UID), as on the exterior (issue #232)."""
+    Texturing kind -> UID), as on the exterior."""
 
     def __init__(self, texturing, materials: InteriorMaterials, paint_uv, gloss: dict | None = None, outside=None):
         self.texturing, self.materials, self._paint_uv = texturing, materials, paint_uv
@@ -300,7 +300,7 @@ def convert_interior(
     cells (DECIMATE_LADDER), then the shell drops to its coarsest LOD.
     lights_template: (Lights MACO, its texture UID) of the car (forza2dsf.lights_template):
     the outside parts the cockpit holds then take Forza's specular and reflection from
-    copies of it, as on the exterior (issue #232); None: no gloss."""
+    copies of it, as on the exterior; None: no gloss."""
     from dsfforza.convert import dsf_materials as dm
     from dsfforza.convert import forza2dsf
     from dsfforza.formats.chnk import entry_size

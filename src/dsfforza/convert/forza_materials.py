@@ -118,7 +118,7 @@ _add(
 # Forza's chrome techniques (ChromeDiffuseScale 0.1, CubeScale 2 in the cars'
 # ShaderSettings.xml: mostly cube-map reflection). As trim they drew in DSF's
 # flat dark trim colour: the Mustang Boss 429's bumpers and window frames came
-# out black (user report on out/testdrive11).
+# out black.
 _add(CHROME, NODAMAGE, "chrome chrome_2 chrome_3 chrome_bump")
 _add(CHROME, LIGHTS, "lights_chrome")
 _add(
@@ -225,7 +225,7 @@ _add(TRIM, None, "dsf_needle dsf_needle_hub")
 # seat artwork's edge in nodamage (blue and white, half of it opaque), its cockpit
 # carbin's dash-top strip on interior_LOD0's yellow and blue stitching bands; drawn from
 # the atlas they showed as bright yellow/blue streaks on the dashboard and blue patches
-# behind the windscreen (user report on out/testdrive9). No livery: nothing to draw.
+# behind the windscreen. No livery: nothing to draw.
 _add(SKIP, None, "liveryBadge")
 _add(
     TYRE,
@@ -727,7 +727,7 @@ CHROME_GLOSS_DEFAULTS = {
     "chrome_rim_v2": (1.0, 0.5),
 }
 # SpecularColor (the mean of its RGB) of the techniques Normal.xml doesn't give white;
-# the shaders multiply the specular by it (issue #176). Ignored, the large black trims
+# the shaders multiply the specular by it. Ignored, the large black trims
 # (plastic2, matte_colors, rubber_trim) drew two to three times Forza's specular.
 SPECULAR_COLOUR_DEFAULTS = {
     "plastic": 0.4,

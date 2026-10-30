@@ -477,7 +477,7 @@ def job_key(job: dict) -> dict:
 # splits work over its threads and adds the parts up in an order that can vary from run
 # to run, so a car converted twice could come out a few hundred bytes different (vertex
 # positions, a texture; BMW_Z4_11: three runs, three different chunks; one thread: the
-# same chunk; issues #84, #133). One thread each: the workers are the parallelism. Not
+# same chunk). One thread each: the workers are the parallelism. Not
 # part of the fingerprint: a car built with BLAS threads is as good, just not repeatable.
 WORKER_ENV = {"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
 
@@ -619,7 +619,7 @@ class Memo:
     for the memo, not just the result's own: one can skip code another ran (an import,
     a cache hit). Only where nothing else records (no Recorder of a worker or a pack runs
     in the process; then `get` just computes): port_batch's plan keeps the carbin door
-    counts in one (host_select.DOORS_MEMO, issue #297)."""
+    counts in one (host_select.DOORS_MEMO)."""
 
     def __init__(self, path: Path):
         self.path = path

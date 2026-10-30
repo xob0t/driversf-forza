@@ -502,7 +502,7 @@ def pod_display(
     faces, and with `hud` out from under DSF's HUD (HUD_DOWN_DEG...). Found on a
     depth image from the eye.
 
-    With `cowl` (open cockpits, issue #147), the bodywork in front of the driver
+    With `cowl` (open cockpits), the bodywork in front of the driver
     (the cockpit carbin's `hood*` and `a_pillar` sections, which close round the
     wheel there) holds it too, and it may rise above that bodywork into the open
     sky: it stands on the cowl when POD_COWL_SUPPORT of it, and of its bottom
@@ -677,8 +677,8 @@ def pod_display(
 
 
 # pod_display's passes, (cowl, hud): the dashboard clear of DSF's HUD, else an open
-# cockpit's cowl clear of it (#147), else the dashboard as before the HUD rule (#92's
-# placement: the display may sit under the HUD's lower corners).
+# cockpit's cowl clear of it, else the dashboard with the display allowed under the HUD's
+# lower corners.
 POD_PASSES = ((False, True), (True, True), (False, False))
 POD_HUD_PASSES = POD_PASSES[:2]  # the passes clear of DSF's HUD
 
@@ -902,7 +902,7 @@ def dash_needles(plan, version: int) -> list:
 WHEEL_DISPLAY_SCALES = (1.5, 1.25, 1.0, 0.8, 0.6)
 # Tried when those find room only under DSF's HUD, in the passes clear of it and clear of
 # the hands: a smaller display in sight beats a larger one behind the progress bar or the
-# speed box (#147: the R15 TDI's, on its cowl at 0.5). Where the only smaller spot is
+# speed box (the R15 TDI's, on its cowl at 0.5). Where the only smaller spot is
 # behind a hand (the GT-R's, the Skyline 2003's), the larger one stays: at 21:9 it shows
 # past the HUD's corner (research/cockpit.md, "The leftovers").
 WHEEL_DISPLAY_SMALL_SCALES = (0.5, 0.4)
@@ -916,7 +916,7 @@ def wheel_display_pod(static: dict, eye, wheel: Wheel, gauges: dict, version: in
     cowl), so the dash scene can be drawn on them live. DSF's digital dials can't follow
     the wheel: their shader has no skin input and transforms by g_ObjectToWorld alone,
     and the needles' by g_InstrumentTransforms alone (research/cockpit.md, "Displays on
-    the steering wheel", issue #147). The patches keep their UVs, so they show the same
+    the steering wheel"). The patches keep their UVs, so they show the same
     window of the scene; their points move rigidly (and scale) from the wheel display's
     plane onto the virtual display's. Returns (moved patches, housing section, report)
     or ([], None, report)."""

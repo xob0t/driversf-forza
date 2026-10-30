@@ -444,7 +444,7 @@ GLOSS_SPECULAR_SCALE = float(os.environ.get("DSFFORZA_GLOSS_SPEC", "0.01"))  # D
 GLOSS_REFLECTION_SCALE = float(os.environ.get("DSFFORZA_GLOSS_REFL", "0.5"))  # DSF reflection per Forza's
 # Forza's power over DSF's for the same highlight: 1, both are (R.V)^p. A ratio of 4
 # (Forza taken as Blinn's (N.H)^p) made every lobe four times broader, and a flat black
-# trim lit end to end in the sun (the Camaro ZL1 12's splitter, issue #176).
+# trim lit end to end in the sun (the Camaro ZL1 12's splitter).
 GLOSS_POWER_RATIO = 1.0
 GLOSS_POWER_RANGE = (4.0, 150.0)  # broader lobes light whole panels in the sun
 GLOSS_INTENSITY_MAX = 0.0625  # some cars set SpecularAmount 12 (the Boss 429's plastic2)
@@ -724,7 +724,7 @@ SOLID_CELL = 8  # destination texels per solid-colour cell
 PAD = 4  # destination texels of real neighbouring content around each region
 ALIGN = 4  # DXT block alignment
 MIN_GAP = 2  # source texels of empty seam needed to cut regions apart
-# Large nodamage pictures drawn over the outside of the car (issue #299). The atlas packs every
+# Large nodamage pictures drawn over the outside of the car. The atlas packs every
 # region at one scale, so a picture spread over a large surface gets as few texels per
 # metre as Forza gave it relative to the rest, halved or worse by the pack: the F50's
 # engine, a 198 x 137 picture over 1.37 m2 under the rear window, came out at 68 texels/m
@@ -1122,8 +1122,8 @@ def unwrap_tiles(section, sub, m: fm.SubMaterial, image: np.ndarray | None = Non
     the band's rows. A coarse LOD's part whose finer LODs lie in one tile (_finer_in_a_tile) is
     laid triangle by triangle whatever it clamps: decimated, its UVs drift over the tile's edge
     (the Dodge Viper SRT-10 03's LOD 5 reflector, u -0.06 to 0.15 against its finer LODs' 0.01
-    to 0.84, 41% of its UV area past the edge; the Ferrari F50's LOD 3 head lamps 27%; issue
-    #229). None otherwise (_tiling_swatch: one flat colour)."""
+    to 0.84, 41% of its UV area past the edge; the Ferrari F50's LOD 3 head lamps 27%).
+    None otherwise (_tiling_swatch: one flat colour)."""
     import dataclasses
 
     pool = section.vertices_for(sub)
@@ -1466,8 +1466,8 @@ class Texturing:
                     {f: [tris[f][n] for n in kept[f]] for f in self.families},
                     {f: [keys[f][n] for n in kept[f]] for f in self.families},
                     {f: [tested[f][n] for n in kept[f]] for f in self.families},
-                    # In art_subs' (the carbin's) order: flat_ids holds id()s, whose set order
-                    # changes from run to run, and so did the swatch cells' places (issue #84).
+                    # In art_subs' (the carbin's) order, not flat_ids': a set of id()s, whose order
+                    # changes from run to run and would move the swatch cells with it.
                     swatches + [(art_subs[sid][1], flat[sid]) for sid in art_subs if sid in flat_ids],
                     extra_solids,
                 )

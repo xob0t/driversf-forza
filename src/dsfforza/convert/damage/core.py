@@ -49,7 +49,7 @@ ROLES = {
 }
 # Side doors 52/53 hinge like the front doors (vertical axis, limit 0): the Vista
 # Cruiser's rear doors (231, which has no 54/55), the vans' side doors (198, 200) and
-# the airport fire truck's lockers (186). Issue #209; they used to be called sills.
+# the airport fire truck's lockers (186).
 DOORS = (31, 32, 54, 55, 52, 53)
 # Roles that come in +x/-x pairs.
 SIDE_PARTNER = {
@@ -66,7 +66,7 @@ LAYOUT = {32: (16, 20, 24), 28: (12, 16, 20)}
 K_NEAREST = 6
 COLLISION_SCALE = (0.67, 1.5)  # clamp for a panel's collision box scale
 # The root hull is mapped between boxes that leave out this share of the vertices at each
-# end per axis: 8 stray vertices 0.4 m above the Spark's roof made its hull that tall (#210).
+# end per axis: 8 stray vertices 0.4 m above the Spark's roof made its hull that tall.
 HULL_TRIM = 0.002
 FACING_WEIGHT = 0.15  # normalised-distance penalty per unit of normal mismatch (UV1 lookup)
 MAX_HINGE_MOVE = 0.35  # m; a panel hinge mapped further than this keeps the host's

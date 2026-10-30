@@ -427,7 +427,7 @@ def space_needed(cars: int, reusing: bool) -> tuple[int, int]:
 def prepare_status(game: Path, out_root: Path, games: set[str] | None = None) -> tuple[bool, bool, str]:
     """(run game_data prepare, with --force, why) from the files it writes under out/.
     `games` ({"FH1", "FM4"}, those with a disc among the images): a game whose disc isn't
-    there has no database to write, so its missing one doesn't count (issue #102)."""
+    there has no database to write, so its missing one doesn't count."""
     package = Path(game) / "media" / "ScriptsLuaScripts.fchunk"
     for variant in ("LuaScripts", "LuaScripts.copy"):
         target = Path(out_root) / "lua-src" / variant / "vehiclestats" / "vehiclestats.lua"
@@ -691,7 +691,7 @@ class Tracker:
         elif event == "verify":
             self.phase = "verify"
             self.verify = set(data.get("cars", []))
-        elif event == "verify_mismatch":  # port_batch --verify-mismatch rebuild (issue #133)
+        elif event == "verify_mismatch":  # port_batch --verify-mismatch rebuild
             bad, redo = data.get("cars", []), data.get("redo", [])
             notes.append(
                 (
@@ -1475,7 +1475,7 @@ class Run:
             argv += ["--reuse", str(source)]
         argv += ["--jobs", str(args.jobs), "--verify-reuse", str(args.verify_reuse if sources else 0)]
         # A reused car that comes out different when built again doesn't stop a player's build:
-        # its fresh copy is used and its build's other cars are converted again (issue #133).
+        # its fresh copy is used and its build's other cars are converted again.
         argv += ["--verify-mismatch", "rebuild"]
         if args.verify_pack:
             argv += ["--verify-pack"]

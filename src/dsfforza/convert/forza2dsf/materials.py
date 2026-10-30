@@ -55,7 +55,7 @@ SHADOW_MASK, DEFAULT_SHADOW_LOD = 1, 5
 EXTERIOR_MASK = 2
 POSITION_SCALE = 4096
 # Largest MDXN among vanilla VEHC entries per kind. Spooling a bigger one crashed
-# the game (run 20261021-233936, MDXN 0x21D800), so the converter refuses.
+# the game (MDXN 0x21D800), so the converter refuses.
 MDXN_LIMIT = {0: 0x138800, 1: 0x12D000, 2: 0xDD800}
 NONR_LIMIT = {0: 0x6D000, 1: 0x1000, 2: 0x1000}  # SSLP per-kind NONR buffers (spool-limits.md)
 

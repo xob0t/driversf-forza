@@ -329,7 +329,7 @@ def foreign_uids(
 
     UIDs no vehicle defines (the engine's shared materials) are fine. Vanilla
     vehicles never share part or resource UIDs; clones that kept the host's
-    part UIDs turned into the host in game (run 20261022-024010). `owners`:
+    part UIDs turned into the host in game. `owners`:
     uid_owners of the archive (made here when not given). `facts` (a dict) gets
     "refs_ext", the UIDs the vehicle references but doesn't define (hex): what another
     vehicle's change must not define for this result to hold, and, when it has a
@@ -553,8 +553,8 @@ def lint_vehicle(
     missing = [r.index for r in h.records if r.uid and r.uid not in parts[0]]
     report(not missing, f"every record UID is a MODL part of the full entry (missing: records {missing})")
     # +0x0C bit 0 and the hinge pop counts +0x16/+0x18 follow the tree's shape; an
-    # inserted or moved record that left them stale crashed the game (research/damage.md,
-    # #266). Hosts 210 and 217 keep a vanilla exporter quirk on three headlight records.
+    # inserted or moved record that left them stale crashed the game (research/damage.md).
+    # Hosts 210 and 217 keep a vanilla exporter quirk on three headlight records.
     from dsfforza.convert import damage
 
     stray = [
@@ -620,7 +620,7 @@ def lint_vehicle(
         )
     if 1 in kinds:
         # The engine turns a needle only through a gauge record for the gauge id its
-        # vertices carry, read through a DashboardInstrument declaration (issue #62).
+        # vertices carry, read through a DashboardInstrument declaration.
         from dsfforza.convert import cockpit
 
         unturned, blind = cockpit.needle_check(stream, kinds[1], h)

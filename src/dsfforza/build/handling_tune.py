@@ -7,7 +7,7 @@ sandbox dyno and nudges two values per car toward targets, a few iterations:
 
     p18   peak torque, a scale within +-25% of the rule's value, toward the 0-60 target
     p345  axle balance (FUN_008BD9B0), within +-0.05 of rule W, toward the handbrake
-          rotation target (about -7 deg per +0.01, run 20261022-123844)
+          rotation target (about -7 deg per +0.01)
 
 Targets: for a car DSF has, the vanilla car's own measurement (--vanilla 305=227); else
 from the vanilla fleet: 0-60 from a fit of measured vanilla cars on power-to-weight and
@@ -43,7 +43,7 @@ from dsfforza.harness import dyno
 
 CACHE = REPO / "out" / "cache" / "handling-tune.json"
 VANILLA_DB = REPO / "out" / "cache" / "vanilla-dyno.json"
-_LEGACY_DB = REPO / "out" / "cache" / "stock-dyno.json"  # its name before #169
+_LEGACY_DB = REPO / "out" / "cache" / "stock-dyno.json"  # the file's older name, still read
 if not VANILLA_DB.exists() and _LEGACY_DB.is_file():
     _LEGACY_DB.rename(VANILLA_DB)
 RUNS = Path.home() / "AppData" / "Local" / "Temp" / "dsfforza-wsb" / "runs"

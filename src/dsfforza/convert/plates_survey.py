@@ -12,7 +12,7 @@ every version: "now" (the working tree) and each --ref NAME=GITREF (git show
 GITREF:src/dsfforza/convert/plates.py). The per-LOD push is skipped (only LOD 1
 is measured). One JSON row per car goes to <work>/rows.jsonl.
 
-What lies under a plate, on the LOD-1 depth map of its end (#159, #213): the gap
+What lies under a plate, on the LOD-1 depth map of its end: the gap
 between plate and face per cell; a cell over OPENING behind the plate, or with no
 surface, is an opening. Flags: floating (median gap over 3 cm, or over 25% of the
 plate over an opening), corner off (a 3 x 3-cell corner block's median gap over

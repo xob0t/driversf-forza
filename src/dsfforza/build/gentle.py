@@ -4,8 +4,7 @@ On while the file out/gentle exists (or DSFFORZA_GENTLE=1): the calling process 
 every process it starts run at Idle priority, and port_batch runs at most CORES
 workers (jobs). No CPU affinity: Windows spreads the Idle processes over whatever
 cores are free, and Idle threads only get CPU time no thread of a higher priority
-wants. (Until issue #325 every gentle process was pinned to the last two logical
-CPUs, so every agent's gentle builds queued on the same two while the rest idled.)
+wants.
 
 On Windows the process joins a job object whose priority-class limit is Idle, so its
 children stay at Idle even when they ask for another class (port_batch workers set

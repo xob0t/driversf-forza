@@ -35,7 +35,7 @@ Install:
 -Force over an earlier install removes it first. With -Build, the archive, gui.sp and
 Fonts.fchunk stay where the new build's file is the one installed (the game file
 unchanged since the install, the build's the same file or the same bytes): no copy
-and no hashing of a few GB again (issue #129); install.json keeps their entries.
+and no hashing of a few GB again; install.json keeps their entries.
 
 -Uninstall puts every replaced file back from the backup and checks that its
 SHA-256 matches the original, and deletes every file it created (only if it is
@@ -345,12 +345,12 @@ function Get-Stamp([string]$Path) {
     return '{0}:{1}' -f $item.Length, $item.LastWriteTimeUtc.Ticks
 }
 
-# A reinstall (-Force -Build) of a build whose big files are the ones installed (issue #129):
+# A reinstall (-Force -Build) of a build whose big files are the ones installed:
 # the entries of the earlier install whose game file is still the copy it made (size and
 # modification time as recorded after the copy) and whose new source is the same file (the
 # recorded size and time, or else the same size and the installed SHA-256). Their game files
-# and backups stay; the rest is uninstalled and installed again as before. A record from
-# before #129 has no stamps: nothing is kept. Returns {relative path: entry}.
+# and backups stay; the rest is uninstalled and installed again as before. A record
+# without stamps (an older install's) keeps nothing. Returns {relative path: entry}.
 function Get-UnchangedEntries($Existing, [hashtable]$Sources) {
     $kept = @{}
     foreach ($e in @($Existing.entries)) {

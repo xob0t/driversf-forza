@@ -285,7 +285,7 @@ def ridge_fit(xs: list[list[float]], ys: list[float], ridge: float) -> list[floa
 
 
 # Largest log change rule F may make (the fleet fit's year term moved a 1969 Charger's
-# tyre stiffness 30% below its host in run 20261022-071526).
+# tyre stiffness 30% below its host).
 F_LIMIT = 0.22
 
 
@@ -361,7 +361,7 @@ RULES: dict[int, str] = {
     # Steering lock (rule Z: Data_Car.SteerMaxAngle): the body's limit, not a feel value.
     # The port has Forza's body and wheels, and Forza leaves room in the arches for its
     # own lock only; the 72 cars whose host or steering donor had a larger one (40 or 45
-    # deg against 30 or 36) turned their tyres into the arches (issue #54). The engine
+    # deg against 30 or 36) turned their tyres into the arches. The engine
     # steers the front wheels by p298 x the input at walking pace, blends towards the
     # speed-sensitive angle (p379 x a tyre term) by 1 + p470 m/s and clamps at p298; the
     # steering wheel and hands turn by angle / p298 (FUN_008AF790), the same at any lock
@@ -452,7 +452,7 @@ TORQUE_SCALED = (355, 358)
 # axle load, from p32: 0.5 + (p32 - axle midpoint) / wheelbase), fitted over the fleet.
 # p345 is the base of the axle balance in FUN_008BD9B0 (r = -0.93 with fw, residual sd
 # 0.015 over 136 cars): swapping a GT-R port's 0.58 for the vanilla 0.51 brought its
-# handbrake rotation from 41 to 90 deg (vanilla 72 to 82; run 20261022-123844).
+# handbrake rotation from 41 to 90 deg (vanilla 72 to 82).
 WEIGHT_BALANCE = {345: (0.9448, -0.8298), 505: (3.035, -3.812)}
 
 
@@ -566,9 +566,9 @@ FEEL_GROUPS = {
 # shaping (517, 519..521, 525, 526, used together on AWD cars), 497 (read with the
 # drive split in FUN_008C0DF0). Taken whole from the best-ranked host with the car's
 # own drivetrain, with the launch/burnout block (24, 166, 239, 365, 393, FUN_008BCBB0):
-# taken with the other assists from a RWD donor it cost the FWD Mito 1.5 s to 60 mph
-# (run 20261022-083248). (The shift time went with it at first; the GT-R then took the R33
-# drift car's 0.25 s and launched slowly, so p516 now follows the fleet model, rule A.)
+# taken with the other assists from a RWD donor it cost the FWD Mito 1.5 s to 60 mph.
+# The shift time (p516) is not in the group: it follows the fleet model (rule A); taken
+# from a donor, the GT-R got the R33 drift car's 0.25 s and launched slowly.
 DRIVE_GROUP = (371, 497, 517, 519, 520, 521, 525, 526, 529, 530, 531, 24, 166, 239, 365, 393)
 
 
@@ -647,9 +647,9 @@ def build(
         # Engine friction: the drivetrain donor's (best-ranked host with the car's
         # drivetrain), x new p18 / donor p18. The fleet ratio (R) gave the 370Z and the
         # GT-R 50 to 90% more friction than their vanilla cars and cost them 1.5 to 2 s to
-        # 100 mph (run 20261022-100024); the engine-set medoid gave the Mito a 1971-style
+        # 100 mph; the engine-set medoid gave the Mito a 1971-style
         # Fiat 500's 0.0055 against its own 0.003, and a weak engine can't afford it
-        # (Mito with the vanilla engine set: 0-60 9.5 -> 6.6 s, run 20261022-123030). Over
+        # (Mito with the vanilla engine set: 0-60 9.5 -> 6.6 s). Over
         # the 48 pairs the drivetrain donor is as close as the medoid (1.199 vs 1.201).
         donor = ctx.drive_donor or ctx.host
         p18_new, p18_donor = new.get(18, value(b, 18)), value(donor["params"], 18)
@@ -732,7 +732,7 @@ def context(
 
     # Set donors: the host and the next best-ranked hosts of the car's drivetrain and era
     # (within 10 years); the Mito's second-best host, a 1971 Fiat 500, gave it a launch
-    # 3 s slower than its host's (run 20261022-095156), and the Huayra (2012) took the 1997
+    # 3 s slower than its host's, and the Huayra (2012) took the 1997
     # McLaren F1's steering (auto counter-steer p380 0.4, no correction rate at big slip,
     # p390 0) and "can't exit a drift" (driving feedback). LOO: 10 years 0.638, 15 years 0.641.
     def fits(i: int) -> bool:
