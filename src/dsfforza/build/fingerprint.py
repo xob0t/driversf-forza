@@ -541,6 +541,36 @@ def read(path: Path) -> dict | None:
 # --- results kept between runs -------------------------------------------------------------
 
 
+_MEMO_RECORDER: list = []  # a Memo.fill process's Recorder and CodeUnits
+
+
+def _memo_task(func: str, args: tuple) -> tuple:
+    """In a Memo.fill process: func(*args) recorded as Memo.get records it: (value, file
+    stamps, folder digests, {module: units}, complete)."""
+    import importlib
+
+    if not _MEMO_RECORDER:
+        _MEMO_RECORDER.extend((Recorder().start(), CodeUnits()))
+    rec, units = _MEMO_RECORDER
+    del rec.opened[:]
+    del rec.listed[:]
+    rec.codes.clear()
+    sys.monitoring.restart_events()  # report code an earlier task of this process ran too
+    module, name = func.split(":")
+    value = getattr(importlib.import_module(module), name)(*args)
+    opened, listed, codes = list(rec.opened), list(rec.listed), set(rec.codes)
+    files, dirs = rec._inputs(opened, listed)
+    wanted, complete = rec._wanted(units, codes)
+    # (a package source changed meanwhile: Memo.save compares the package before and after)
+    return (
+        value,
+        {p: stamp(p) for p in sorted(files)},
+        {p: dir_digest(p) for p in sorted(dirs)},
+        {m: sorted(u) for m, u in wanted.items()},
+        complete,
+    )
+
+
 def stamp(path: str) -> str:
     """A file's size and modification time, or "missing"."""
     try:
@@ -567,6 +597,7 @@ class Memo:
         self.units = CodeUnits()
         self.recorder: Recorder | None = None
         self.code: dict[str, set[str]] = {}  # every unit a computation of this process depended on
+        self.tree: dict | None = None  # package_hashes() when fill() started
         self.checked: dict[str, bool] = {}  # code block -> unchanged
 
     def _load(self) -> tuple[dict, dict]:
@@ -585,10 +616,12 @@ class Memo:
         return self.checked[block]
 
     def _valid(self, entry: dict) -> bool:
+        """Its inputs unchanged, and its code (an entry computed in this process, not saved
+        yet, has no code block: it ran the current code)."""
         return (
             all(stamp(p) == s for p, s in entry.get("files", {}).items())
             and all(dir_digest(p) == d for p, d in entry.get("dirs", {}).items())
-            and self._code_ok(entry.get("code", ""))
+            and ("code" not in entry or self._code_ok(entry["code"]))
         )
 
     def get(self, key: str, compute):
@@ -621,14 +654,40 @@ class Memo:
             }
         return value
 
+    def valid(self, key: str) -> bool:
+        """Whether a kept result for `key` can be used (get returns it without computing)."""
+        entry = self.new.get(key) or self.entries.get(key)
+        return entry is not None and self._valid(entry)
+
+    def fill(self, tasks: list[tuple[str, str, tuple]], jobs: int) -> None:
+        """Compute the results get() would compute for `tasks` ((key, "module:function",
+        args): get(key, lambda: function(*args))) in `jobs` processes, each recording what
+        its computations read and ran as get does; the ones still valid are skipped. Only
+        where get records (see the class)."""
+        todo = [(key, func, args) for key, func, args in tasks if not self.valid(key)]
+        if not todo or self.recorder is not None or any(sys.monitoring.get_tool(t) == TOOL_NAME for t in range(6)):
+            return
+        from concurrent.futures import ProcessPoolExecutor
+
+        self.tree = self.tree or package_hashes()
+        with ProcessPoolExecutor(max_workers=max(1, min(jobs, len(todo)))) as pool:
+            results = pool.map(_memo_task, [f for _, f, _ in todo], [a for _, _, a in todo], chunksize=4)
+            for (key, _, _), (value, files, dirs, wanted, complete) in zip(todo, results, strict=True):
+                for module, names in wanted.items():
+                    self.code.setdefault(module, set()).update(names)
+                if complete:
+                    self.new[key] = {"value": value, "files": files, "dirs": dirs}
+
     def save(self) -> None:
         """Stop recording and keep the new results (with the entries another process kept
         meanwhile), unless a package source changed while they were computed."""
         rec, self.recorder = self.recorder, None
-        if rec is None:
+        if rec is None and self.tree is None:
             return
-        rec.stop()
-        if not self.new or package_hashes() != rec.tree:
+        if rec is not None:
+            rec.stop()
+        tree = self.tree if self.tree is not None else rec.tree
+        if not self.new or package_hashes() != tree or (rec is not None and rec.tree != tree):
             return
         code = {}
         for module in sorted(self.code):

@@ -184,6 +184,26 @@ def test_memo_keeps_a_result_until_what_it_read_or_ran_changes():
         assert len(calls) == 4 and "other" not in json.loads(path.read_text())["entries"]
 
 
+def test_memo_fill_computes_in_processes_what_get_would():
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        data, path = folder / "input.bin", folder / "memo.json"
+        data.write_bytes(bytes(64))
+        from dsfforza.build import pack_reuse
+
+        task = ("car", "dsfforza.build.pack_reuse:sha256_file", (data,))
+        memo = fingerprint.Memo(path)
+        memo.fill([task], 2)
+        assert fingerprint.norm(data) in memo.new["car"]["files"] and memo.valid("car")
+        assert memo.get("car", lambda: "computed again") == pack_reuse.sha256_file(data)
+        assert "sha256_file" in memo.code["dsfforza.build.pack_reuse"]
+        memo.save()
+        kept = fingerprint.Memo(path)
+        assert kept.get("car", lambda: "computed again") == pack_reuse.sha256_file(data)
+        data.write_bytes(bytes(65))  # an input changed: computed again
+        assert not kept.valid("car") and kept.get("car", lambda: "computed again") == "computed again"
+
+
 def test_a_moved_vanilla_archive_with_the_same_digest_is_the_same_input():
     """dsff install builds from the game's dngvehicles.sp the first time and from the install's
     backup of it after that (issue #95: every car was converted again on each later run)."""

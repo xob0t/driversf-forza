@@ -788,8 +788,7 @@ def forza_info(
         engine.aspiration = "diesel"
     doors = None
     if folder is not None and doors_memo is not None and b in DOOR_RULE_BODIES:
-        key = f"{os.path.normcase(os.path.realpath(folder))}|{media}|{b}"
-        doors = doors_memo.get(key, lambda: _carbin_doors(folder, media, b))
+        doors = doors_memo.get(door_key(folder, media, b), lambda: _carbin_doors(folder, media, b))
     elif folder is not None:
         doors = _carbin_doors(folder, media, b)
     notes = []
@@ -860,6 +859,11 @@ REAR_DOOR_END = 0.08  # m behind the rear axle: a rear door ends ahead of it, a 
 
 
 DOORS_MEMO = REPO / "out" / "cache" / "carbin-doors.json"
+
+
+def door_key(folder: Path, media: str, body: str) -> str:
+    """The door memo's key for a car's door count."""
+    return f"{os.path.normcase(os.path.realpath(folder))}|{media}|{body}"
 
 
 def door_memo():
