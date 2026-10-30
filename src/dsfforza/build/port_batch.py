@@ -255,7 +255,7 @@ def describe_cars(
     """A Pick per (media, game or None) with body class, best host and the vanilla
     counterpart; unknown names become picks with a note. The host is picked as
     port_car.pick_hosts picks it: the source game's gamedb and the car's extracted
-    folder under `cache` (its carbin's door count, issue #239)."""
+    folder under `cache` (its carbin's door count)."""
     from dsfforza.build import host_select as hs
 
     hosts = hs.survey(dsf)
@@ -1460,7 +1460,7 @@ class Reuse:
         """Convert a random few of the reused cars again into work/verify/ and require the
         same bytes. When any differs (or fails), on_mismatch "stop" raises SystemExit
         (before the merge: port_batch build, for developers); "rebuild" (dsff install, for
-        players: issue #133) keeps going: a car that came out different takes its fresh
+        players) keeps going: a car that came out different takes its fresh
         copy, and the cars to convert again are returned: the other reused cars of the
         builds the bad ones came from (a mismatch can't be pinned to its car: a missed
         input may be shared) and the ones whose fresh conversion failed."""
@@ -1508,7 +1508,7 @@ class Reuse:
             raise SystemExit(
                 f"--verify-reuse (seed {seed}): {len(bad)} of {len(sample)} reused cars came out different when built "
                 f"again: {'; '.join(bad)}. Either their fingerprints missed a change or the conversion isn't "
-                f"repeatable (issue #84; research/batch.md, 'Selective rebuild'); build without --reuse, or with "
+                f"repeatable (research/batch.md, 'Selective rebuild'); build without --reuse, or with "
                 f"--rebuild-where covering them."
             )
         if not bad:

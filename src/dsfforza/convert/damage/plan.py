@@ -737,9 +737,8 @@ class DamagePlan:
         return p is not None and p.role in BODY
 
     # Doors and wings swing on vanilla cars. Their hinge limit is 0, but
-    # forceOpenPanels opens vanilla doors wide (run host-20261023-093807: 227,
-    # 266) and the converted RX-7's and Mustang's door panels too (run
-    # host-20261023-101158), and a crash knocks them ajar. A converted door or
+    # forceOpenPanels opens vanilla doors wide (227, 266) and the converted RX-7's
+    # and Mustang's door panels too, and a crash knocks them ajar. A converted door or
     # wing is a patch of the one-piece Forza skin cut along the host's panel
     # layout, not a Forza shut line, with no jamb or door card behind it (the
     # door cards are on the chassis): swung, its border opens into a jagged
@@ -1436,7 +1435,7 @@ class DamagePlan:
     # sail ahead of the window, which the converted car draws through the chassis
     # (or on a door held shut, DamagePlan.bound). Under the host's door record they
     # swung out with the door whenever a crash knocked it ajar, and floated beside the
-    # body (issue #187: Devon GTX, Lancer Evo X). Such a mirror goes under the record
+    # body (Devon GTX, Lancer Evo X). Such a mirror goes under the record
     # that moves its mount as drawn.
 
     def _mirror_mount(self, pair) -> tuple | None:
@@ -1531,7 +1530,7 @@ class DamagePlan:
 
     # On 22 hosts the door record holds a door-glass record after the mirror (the DB9's
     # host 133: door slot 8 / index 10, mirror 9 / 11, glass index 12), so the mirror
-    # alone has no place outside the door that keeps both orders (issue #193). The
+    # alone has no place outside the door that keeps both orders. The
     # converted car draws nothing through those glass records (the side windows are on
     # their door's or the chassis' panel, section_rule), so they go under the chassis
     # first, last one first, then the mirror between the door and them. Markers (the

@@ -30,9 +30,8 @@ from dsfforza.formats.vehicle_mesh import child, payload
 # components 2-3 of the 32-byte buffers (paint and lamps). Vanilla cars unwrap
 # each panel onto its own tile of that atlas (front bumper top left, rear
 # bumper top right, bonnet, boot, sides in the rows below; lamps on the
-# small broken-lamp tile). Converted vertices carried Forza's UV1 (paint) or
-# the lamp atlas UV, so damaged cars showed scratch tiles in the wrong places
-# as bright white shapes (run 20261022-040545). Uv1Field projects each new
+# small broken-lamp tile). Forza's own UV1 (paint) or the lamp atlas UV would show
+# scratch tiles in the wrong places as bright white shapes. Uv1Field projects each new
 # vertex onto the nearest host triangle of the same panel and material and
 # interpolates the host's UV1 there.
 
@@ -150,8 +149,8 @@ class Uv1Field:
             # vanilla never scratches: hidden faces, and on the outside everything above
             # the waist (pillars, window frames, roof; host 239: all paint above 1.0 m),
             # all on one clean texel in a corner of the atlas. They are candidates like
-            # the rest: kept back for a last resort, the X6 M's upper doors and roof took
-            # the nearest scratch tile, clamped at its edge into long streaks (#298).
+            # the rest (kept back for a last resort, the X6 M's upper doors and roof would
+            # take the nearest scratch tile, clamped at its edge into long streaks).
             # _split_seams keeps a triangle from spanning the clean texel and a tile.
             if any(not -0.01 <= uv[k] <= 1.01 for uv in uvs for k in (0, 1)):
                 # Tiled UV1 (vanilla interiors' GLOBAL_LOD_Chrome runs to -4..5): not the

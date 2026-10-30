@@ -218,7 +218,7 @@ def _collision_bottom(data, at: int) -> float:
 def _floor_collision(data: bytearray, at: int, floor: float) -> float:
     """Raise the bottom of every primitive that reaches below `floor` to it, keeping its top:
     the box shrinks and moves up along its most vertical axis. Returns the largest raise.
-    The mapped root hull may end no lower than the host's own (#210: mapped onto a low
+    The mapped root hull may end no lower than the host's own (mapped onto a low
     race car's sill, the R8 LMS's ended 5 cm above the ground, lower than any vanilla
     hull's 8 cm)."""
     n = struct.unpack_from("<I", data, at + 12)[0]

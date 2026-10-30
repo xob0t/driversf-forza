@@ -147,8 +147,8 @@ def section_rule(name: str) -> tuple[str, tuple]:
         return "fixed", (1,)
     # The bumper frames sit right behind the bumper skins. On the chassis or
     # front structure they crushed less than the skin and poked through it
-    # (the M5's rear frame showed as a white chevron on the damaged bumper,
-    # run 20261022-062852), so they go with their bumper, as vanilla bumper
+    # (the M5's rear frame showed as a white chevron on the damaged bumper),
+    # so they go with their bumper, as vanilla bumper
     # parts carry their own trim.
     if n.startswith("bumperframef"):
         return "fixed", (35, 37, 38)

@@ -89,7 +89,7 @@ def open_url(url: str):
     only trusts the root certificates already in the Windows store, and Windows fetches most
     roots the first time something of its own needs them: on a fresh Windows the download from
     GitHub's release host (release-assets.githubusercontent.com) failed with
-    CERTIFICATE_VERIFY_FAILED while github.com itself passed (issue #95)."""
+    CERTIFICATE_VERIFY_FAILED while github.com itself passed."""
     import truststore
 
     return urllib.request.urlopen(url, context=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT), timeout=120)

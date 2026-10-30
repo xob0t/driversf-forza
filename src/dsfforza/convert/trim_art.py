@@ -6,13 +6,13 @@ plastic2...) with DSF's shared trim material on one dark texel
 them sample, wrong where a trim technique's UVs land on light artwork. The Alfa
 Romeo GTA's quadrifoglio badges (a white triangle with the green cloverleaf on
 each front wing, one on the tail) are `misc` triangles on opaque white and green
-texels of `nodamage.xds`; drawn as trim they were solid black triangles (user
-report on out/final-gui2, research/forza-materials.md, "Trim artwork").
+texels of `nodamage.xds`; drawn as trim they are solid black triangles
+(research/forza-materials.md, "Trim artwork").
 
 `split_trim_art` moves the trim triangles that can be seen from outside the car
 and that the shared trim misdraws into subsections of their own
 (classify_texels): light artwork to ART_TECHNIQUE[family] and dark detail (the
-Cougar Eliminator's grille bars, flat black on out/final4) to DETAIL_TECHNIQUE,
+Cougar Eliminator's grille bars, flat black as trim) to DETAIL_TECHNIQUE,
 both of which `forza_materials` classifies as textured, so `dsf_materials.Texturing`
 draws them through the atlas (host Chassis or Lights material) like badges; flat
 mid-grey to GREY_TECHNIQUE (one colour cell); bare metal to METAL_TECHNIQUE (the
@@ -56,7 +56,7 @@ ALPHA_OPAQUE = 128
 # on the host Chassis material (specular 0.03, no reflection) the Veyron's grey 177
 # scoops read as flat white in game. Each triangle on the chrome texel nearest its Forza
 # grey as drawn (metal_grey; forza2dsf.CHROME_GREYS, vanilla's chrome greys), named
-# "dsf_trim_metal#<grey>" (fm.with_grey; issue #154: one shared grey for every car).
+# "dsf_trim_metal#<grey>" (fm.with_grey), not one shared grey for every car.
 METAL_TECHNIQUE = "dsf_trim_metal"
 METAL_WORDS = ("metal", "alum", "steel")
 METAL_MAX_CHROMA = 24  # brightest minus darkest channel of the mean colour

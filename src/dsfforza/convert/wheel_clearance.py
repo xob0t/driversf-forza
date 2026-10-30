@@ -33,7 +33,7 @@ change in rest pose between VO3D variants of one car follows this within 1 mm
 converter builds it now (`as_fixed`), so a survey of the old full-roster archive
 shows the effect without converting 573 cars again. `--forza-lock` does the same for
 the steering lock: the `lock` pose at Data_Car.SteerMaxAngle, the p298 the converter
-writes since issue #54, instead of the archive's p298.
+writes, instead of the archive's p298.
 
 Usage:
     uv run dsff wheel_clearance survey out/final/dngvehicles.sp --manifest out/final/dngvehicles.json --out out/wc/survey.tsv
@@ -298,7 +298,7 @@ def gap(points: np.ndarray, wheel: Wheel, up: float = 0.0, steer_deg: float = 0.
     # Not inboard of the unsteered tyre's inner wall either: steered past about 35 deg,
     # the trailing inner corner swings over body points under the car (suspension, the
     # liner's back), outboard of the turned tyre's centre plane but hidden behind the
-    # tyre (AUD_TTRS_10: -83 mm at 36 deg, 3 at 30; issue #54).
+    # tyre (AUD_TTRS_10: -83 mm at 36 deg, 3 at 30).
     beside = (d[:, 0] - wheel.offset[0]) * (1.0 if wheel.hub[0] > 0 else -1.0)
     keep = (r > TYRE_CORE * wheel.radius) & (out >= 0) & (beside >= -wheel.width / 2)
     if not keep.any():
@@ -530,7 +530,7 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument("ids", type=int, nargs="+")
     a.add_argument("--manifest", type=Path)
     fixed = "measure a build from before the wheel-clearance fix as the converter builds it now (as_fixed)"
-    lock = "steer the lock pose to Forza's SteerMaxAngle, as the converter does since issue #54"
+    lock = "steer the lock pose to Forza's SteerMaxAngle, as the converter does"
     a.add_argument("--as-fixed", action="store_true", help=fixed)
     a.add_argument("--forza-lock", action="store_true", help=lock)
     a.set_defaults(func=cmd_car)

@@ -31,16 +31,16 @@ not the plate. So the plate is placed on the Forza body:
    behind / in front (1 cm cells, LOD 1), searched for a flat (plane fit
    under 3 mm RMS), paint/trim-covered window of plate size near the
    centreline, facing out of the end (up by at most 39 degrees, down by at
-   most 22: never under a bumper's overhang, #179), preferring windows whose border steps outwards (a recess) and
+   most 22: never under a bumper's overhang), preferring windows whose border steps outwards (a recess) and
    heights near the host's plate (the host's plate height mapped by the body
    boxes; a recess up to WIDE_BAND away when there is neither a recess nor a
    flat face nearer); the window is then centred on the recess and the plate
    shrunk to fit it;
 3. else near the host's plate height, x = 0, pushed out to the nearest surface
    in front (a plate on a bracket), tilted and bent back at its centre line to
-   rest on the face as closely as it can (rest; #213): the height where the
+   rest on the face as closely as it can (rest): the height where the
    plate hugs the face, hides no badge, lamp, glass or exhaust and sits on one
-   section and material (fallback_height; #159).
+   section and material (fallback_height).
 
 An end gets a plate only if the host has one there (vanilla trucks and buggies
 have none at the front, a few cars none at the front: the host is the most
@@ -95,13 +95,13 @@ RECESS_STEP = 0.004  # border cells this much nearer than the plane: recess wall
 MAX_TILT = 0.8  # dd/dy of a plate facing up (about 39 degrees)
 # ... and of one facing the road: vanilla plates face down by at most 0.36 (the '68
 # Camaro's rear, the Countach's front) but one (the Stratos's front, 0.70), so a window
-# under a bumper's overhang is no mounting face (#179: the Golf GTI 16v Mk2's rear
+# under a bumper's overhang is no mounting face (the Golf GTI 16v Mk2's rear
 # plate, -0.73, was invisible in game). A host whose own plate faces down further
 # allows its own tilt.
 FACE_DOWN = 0.4  # about 22 degrees
 BRACKET_TILT = 0.25  # |dz/dy| of a fallback plate on a bracket (about 14 degrees)
 # A fallback plate on a bumper that curves back towards the sides bends at its centre
-# line, each half turned back by up to this dd/ds (about 11 degrees; #213). Vanilla
+# line, each half turned back by up to this dd/ds (about 11 degrees). Vanilla
 # bends plates so: 25 of 120 front plates in two halves turn by over 2 degrees, the
 # '68 Camaro's by 24, the Eldorado's by 14 (research/plates.md, "Bent plates").
 BEND_MAX = 0.2
@@ -112,14 +112,14 @@ FLAT_BAND = 0.15  # plain flat faces (no recess walls) only within this
 MIN_FIT = 0.7  # smallest plate scale when fitting a small recess
 # Fallback plates (fallback_height): cost per share of the plate over a badge, lamp or
 # glass, and per share over other sections than its main one, against the gap (m)
-# between plate and face (#159; the hide cost doubled with the gap's in #213).
+# between plate and face.
 HIDE_COST = 1.0
 # The gap counts twice: a plate standing off its face by a few centimetres shows more
-# than one across a section edge or a little off the host's height (#213: with the gap
+# than one across a section edge or a little off the host's height (with the gap
 # at 1, shrinking or clearing an emblem's edge moved plates 3 to 7 cm off their faces).
 GAP_COST = 2.0
 # ... plus this once it hides more of a badge than HIDE_NONE (a cell or two of edge):
-# even a sliver of an emblem shows (#241: the Delta S4's front plate took its grille
+# even a sliver of an emblem shows (the Delta S4's front plate took its grille
 # band over the Lancia shield's lower edge, 1.7% of it, for a cost of 0.008). Lamp and
 # exhaust edges keep the share cost alone: the step put plates under bumpers, standing
 # off by 3 to 7 cm, to clear the corner of a tail lamp (the Cougar Eliminator's rear).
@@ -127,10 +127,10 @@ HIDE_STEP = 0.02
 HIDE_NONE = 0.005
 # A fallback plate keeps this clear of lamps and their covers (about a plate frame):
 # cells this near a lamp count as hidden. The Viper GTS-R's front plate sat between its
-# lamp covers, touching both (#259).
+# lamp covers, touching both.
 LAMP_MARGIN = 0.02
 # A fallback plate whose best height still covers more than this share of a lamp has no
-# place at that end and gets none, as the Forza car has none (#251: the ARX-01b's and
+# place at that end and gets none, as the Forza car has none (the ARX-01b's and
 # Mazda B09's rear plates covered their rain lights between the diffusers, the face near
 # the host's plate height).
 LAMP_DROP = 0.1
@@ -260,8 +260,8 @@ def body_triangles(sections, lod: int, place) -> list:
             if role == fm.SKIP:
                 continue
             # trim_art's flat-colour trims (dsf_trim_gloss~misc, dsf_trim_grey~...) are
-            # the Forza trim they came from: mounting faces (#159: the Mazda 2's rear
-            # bumper recess, gloss trim since #176, was no face, and its plate fell
+            # the Forza trim they came from: mounting faces (the Mazda 2's rear
+            # bumper recess, gloss trim, would be no face, and its plate would fall
             # back onto the boot lid). Detail trims are grille bars and the like (the
             # Challenger SRT8's upper grille): no face, but no badge either.
             c, f = CLASS.get(role, 0), feature(sub.material)
@@ -533,7 +533,7 @@ def rest(dm: DepthMap, rows: slice, cols: slice, centre: tuple[float, float], ok
     """(tilt, bend, d, gaps) of a plate with no face of its own resting on the cells
     `ok` of a window: the surface d + tilt (y - cy) + bend |s - cs| (flat, or bent
     back at its centre line) that touches the nearest cell and stands off the others
-    least on average, each gap counted up to OPENING (#213: a flat plate stood off
+    least on average, each gap counted up to OPENING (a flat plate stood off
     a bumper curving back towards its sides by several centimetres at its corners).
     Tilt within BRACKET_TILT, bend within BEND_MAX."""
     cs, cy = centre
@@ -562,12 +562,12 @@ def fallback_height(dm: DepthMap, prior_y: float, base: tuple[float, float]) -> 
     face and hugs it best once rested on it (rest: a plate on a mounting pad or
     bracket, near-vertical, bent round a curved bumper), on one panel, and hiding
     no badge, lamp, glass or exhaust; shrunk (FALLBACK_SCALES, at least MIN_WIDTH
-    wide) where that fits it between them (#241). A grille may sit behind it, as
+    wide) where that fits it between them. A grille may sit behind it, as
     on the real cars (the Mazda 2's lower bumper grille); the emblem slot above it
-    may not (#159: the host's height alone put the plate over the Mazda's emblem
+    may not (the host's height alone put the plate over the Mazda's emblem
     and bonnet edge). It keeps LAMP_MARGIN clear of lamps unless that only moves it
     onto lettering (EMBLEM_AREA); still over a lamp by more than LAMP_DROP, the end
-    gets no plate (ValueError; #251, #259)."""
+    gets no plate (ValueError)."""
     height, width = dm.depth.shape
     face = face_cells(dm)
     # Badge cells in a run wider than BADGE_BAND are grille artwork drawn with a badge
@@ -575,7 +575,7 @@ def fallback_height(dm: DepthMap, prior_y: float, base: tuple[float, float]) -> 
     badge = dm.feat == FEAT_BADGE
     emblem = badge & (run_widths(badge) * PX < BADGE_BAND)
     # Lamps and their covers (glass techniques of the lights family) get the margin;
-    # windows only their own cells (#251: a margin under the F430 GT's rear window moved
+    # windows only their own cells (a margin under the F430 GT's rear window moved
     # its plate off the boot lid).
     lamp = dm.feat == FEAT_LAMP
     near_lamp = dilate(lamp, int(round(LAMP_MARGIN / PX)))
@@ -691,7 +691,7 @@ def plan_end(
         # over its bumper's mounting pad): only near the host's height.
         near = [k for k in cands if abs(k[2] - prior_y) <= FLAT_BAND]
         # Then the car's own recess further from the host's height, before a plate on
-        # no face (#159: the Audi RS2's rear bumper recess under its tail lamp band,
+        # no face (the Audi RS2's rear bumper recess under its tail lamp band,
         # the host's plate on its boot lid).
         far = [k for k in cands if k[0] >= 0.3]
         if recess or (far and not near):

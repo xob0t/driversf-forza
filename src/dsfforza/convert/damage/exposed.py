@@ -126,7 +126,7 @@ def engine_placement(name: str, gamedbs=(), folder=None) -> str | None:
                 (name,),
             ).fetchone()
         except sqlite3.Error:
-            continue  # a gamedb without these tables (the connection used to stay open)
+            continue  # a gamedb without these tables
         finally:
             con.close()
         if row and row[0]:
@@ -135,8 +135,7 @@ def engine_placement(name: str, gamedbs=(), folder=None) -> str | None:
 
 
 # tag -> (picture in the shared chassis texture (u0, u1, v0, v1), axis along u, axis along v);
-# an axis "y" runs up the picture. Pictures read off out/dmgfix/trimtex-grid-*.png and
-# out/underside/atlas-boot.png.
+# an axis "y" runs up the picture. Measured on the shared chassis texture's grid.
 _TUB = (0.420, 0.495, 0.170, 0.300)  # boot tub panels, the part vanilla boot wells use (147: R ~48)
 _BEAM = (0.310, 0.500, 0.365, 0.530)  # rear panel and crash beam (vanilla 147/229 behind the bumper)
 _SUBFRAME = (0.495, 0.598, 0.560, 0.875)  # subframe from below
@@ -395,8 +394,7 @@ def split_exposed(body, place, log=None, engine: str | None = None, visible: boo
     triangle of its LOD as occluders) keeps its trim: no panel hides it, and
     Forza draws it as the trim it is. FER_355Challenge_95's black tail panel
     lies under the rear edge of its engine cover and drew the bay pictures,
-    blurred over the panel between the tail lamps (user report on out/final4;
-    research/damage.md, "Visible trims keep their trim")."""
+    blurred over the panel between the tail lamps (research/damage.md, "Visible trims keep their trim")."""
     from dsfforza.convert import forza_materials as fm
     from dsfforza.formats import carbin
 

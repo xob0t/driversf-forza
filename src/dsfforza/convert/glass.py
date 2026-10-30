@@ -20,14 +20,11 @@ cracks and the hole line up with the window:
     rear          0.17-0.62    0.125-0.25   rear window (defroster lines in band 0)
     side_rear     0.67-1       0.125-0.25   rear door / quarter glass
 
-Converted glass used to squash Forza's own window UVs into u 0.14-0.98,
-v 0.004-0.12: across both upper slots, in whatever orientation Forza's UVs
-had. Clean glass looked right, but any crack state drew the slot layouts
-across the window: on the M5 (FH1, host 147) in state 3 the rear window was a
-hole with a band of shattered glass across its lower part, where the gap
-between two hole slots fell (sandbox run 20261022-191859, observe-21..29).
-`slot_uvs` maps each converted window by its own geometry onto its slot
-instead, so state k looks like a vanilla window in state k.
+`slot_uvs` maps each converted window by its own geometry onto its slot, so state k
+looks like a vanilla window in state k. Forza's own window UVs, squashed into the
+slots, draw the slot layouts across the window in any crack state (the M5's rear
+window in state 3: a hole with a band of shattered glass where the gap between two
+hole slots fell).
 
     uv run dsff glass check <archive> --id N      # lint one converted vehicle
     uv run dsff glass survey <chunk-or-archive>... # state-3 look of every glass panel
@@ -227,9 +224,8 @@ class SlotMapper:
 #            v 0.06-0.125: smear-coloured; u 0.06-0.12, v 0.125-0.25: bright):
 #            state 3 only, so a shattered window is an empty frame with shards.
 #
-# Converted interiors used to squash every window into a 10 x 10 texel smear
-# patch: uniform in states 0-2, gone in 3, so cracks never showed from inside.
-# InteriorGlass rebuilds that layout on each converted window.
+# InteriorGlass rebuilds that layout on each converted window, so cracks show from
+# inside too.
 SMEAR_RECT = (0.012, 0.108, 0.008, 0.052)  # surface, inset from the strip edges (bilinear and wrap bleed)
 CRACK_LIGHT = (0.008, 0.052, 0.190, 0.244)  # visible in states 1 and 2
 CRACK_HEAVY = (0.008, 0.052, 0.131, 0.174)  # visible in state 2 only
@@ -323,7 +319,7 @@ class _Pane:
         if not self.cells:
             # Every triangle too small to cover a cell centre (a sliver of lamp
             # glass): no area, so the window gets its surface only (max() over
-            # the empty grid used to raise).
+            # the empty grid would raise).
             self.area, self.rim, self.filled = 0.0, [], set()
             return
         # Outside = empty cells reachable from the grid's border; gaps inside the

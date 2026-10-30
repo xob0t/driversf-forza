@@ -117,7 +117,7 @@ def shell_lids_cockpit(shell: list[carbin.Section], lod: int, eye, wheel: Wheel,
     """How many rays from the eye to the steering wheel (wheel_targets) the
     shell at `lod` stops before they reach it, glass included. Open cars' main
     carbins close the cockpit with a lid at their coarsest LOD (Audi R10, R15:
-    a flat body panel at the height of the wheel's top, issue #157), which the
+    a flat body panel at the height of the wheel's top), which the
     windscreen rays pass over."""
     targets = wheel_targets(wheel)
     lo = [min(p[k] for p in [eye, *targets]) for k in range(3)]
@@ -387,8 +387,8 @@ def visible_triangles(
     neighbours (triangles sharing a vertex with a visible one) so slivers
     along visible surfaces stay. Glass (fm role glass) neither occludes nor
     is culled. Triangles crossing a face's near plane are clipped, not
-    skipped (large dash and floor triangles next to the head used to be
-    dropped: holes in the IS F and M3); triangles too small to cover a pixel
+    skipped (large dash and floor triangles next to the head, the IS F's and M3's);
+    triangles too small to cover a pixel
     centre count as seen when they are within `tiny_slack` (relative depth)
     of what the pixel shows. Returns {(section index, subsection index):
     kept triangle indices}. Forza space."""

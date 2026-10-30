@@ -74,7 +74,7 @@ function Exit-VmMutexes($Held) {
 # hold up a later one that can use VM 2. Only that oldest waiter waits on the VM's mutex (kernel
 # waits of a few seconds, then it looks at the queue again); the rest poll the queue. (Waiting
 # on the mutex alone was not fair: PowerShell runs scripts on an STA thread, whose waits pump
-# messages, and a waiter woken by an APC loses its place; issue #60.) Tickets of dead processes
+# messages, and a waiter woken by an APC loses its place.) Tickets of dead processes
 # are dropped. Series from checkouts without the queue still take the mutexes directly
 # (Local\dsfforza-vm-run for VM 1), so they exclude queued series but don't queue themselves.
 # queue.log in $VmOutputHost\vm records each ticket and which VM it got.

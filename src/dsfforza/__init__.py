@@ -21,7 +21,7 @@ REPO = Path(__file__).resolve().parents[2]
 def safe_stdio() -> None:
     """Make print() survive any text: stdout and stderr redirected to a file or pipe
     write UTF-8 (Python would use the console's code page, cp437/cp1252, and raise on
-    a Forza name with a letter outside it: issue #128); on a console, characters it
+    a Forza name with a letter outside it); on a console, characters it
     can't show become '?'."""
     for stream in (sys.stdout, sys.stderr):
         try:

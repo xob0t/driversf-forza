@@ -2,7 +2,7 @@
 
 DSF's camera modes (LuaScripts cameraselection.lua: Normal, DriverEye, Bonnet,
 Bumper) take their mounts from VO3D (research/cockpit.md, "Cameras"). Measured in
-game (clonetest.lua logs the camera in the car's frame, run vm-20261024-053821):
+game (clonetest.lua logs the camera in the car's frame):
 
 - Bonnet: (p535, p536 + 0.30, p537) above the ground, +z forward (147: p536 0.91,
   p537 0.87 -> (0, 1.21, 0.87)). 140 vanilla cars set p536/p537 per car: the camera

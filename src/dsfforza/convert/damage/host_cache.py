@@ -240,5 +240,5 @@ def _set_idle_priority() -> None:
 
 @dataclass
 class DamageOptions:
-    hull: bool = False  # also map the root collision hull (PDL) onto the Forza body (port_car --damage, #210)
+    hull: bool = False  # also map the root collision hull (PDL) onto the Forza body (port_car --damage hull)
     k: int = K_NEAREST

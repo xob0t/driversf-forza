@@ -21,7 +21,7 @@ delete tools (PowerShell 5.1's Remove-Item -Recurse among them) follow
 junctions and would empty the main checkout's folders.
 
 Worktrees removed without -Unlink (the agent host deletes a finished worker's
-checkout but leaves its folder and links, issue #265) are cleaned up from the
+checkout but leaves its folder and links) are cleaned up from the
 main checkout with
 
     .\tools\worktree-setup.ps1 -Sweep [-DryRun]

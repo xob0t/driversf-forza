@@ -1183,7 +1183,7 @@ SPARE_CODES = (
     76,
     75,
     74,
-)  # glyphs no vehicle uses; not 160 (0xA0, no-break space: drawn blank, M5 in out/testdrive3)
+)  # glyphs no vehicle uses; not 160 (0xA0, no-break space: drawn blank)
 UNTESTED_CODES = tuple(range(128, 160))  # cp1252 differs from Latin-1 here
 # No badge or plate, in any font: the renderer drops a text whose bytes are all 0x20 or
 # less ("Why the 16-bit glyphs drew nothing", research/gui-assets.md), so " " draws
@@ -1241,9 +1241,8 @@ def glyph_images(fonts: Path | None = None) -> tuple[Image, dict]:
 # Vanilla glyph metrics (vehicles_font, 186 glyphs): maker badges sit on the
 # cell's bottom (y offset + h = 99, about 56 x 56), model nameplates are
 # centred on y = 25 (y offset = 25 - h / 2, median 97 x 21, up to 47 high);
-# both are centred across the 99-wide cell. The first ported glyphs were all
-# bottom-aligned, so their nameplates sat about 60 units low, over the HUD's
-# boost bar (user report, out/testdrive).
+# both are centred across the 99-wide cell (bottom-aligned, a nameplate sits about 60
+# units low, over the HUD's boost bar).
 BADGE_SIZE = 58
 PLATE_CENTRE_Y = 25
 

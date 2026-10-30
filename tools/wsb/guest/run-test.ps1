@@ -81,7 +81,7 @@ param(
                          # VMware shared folder; tools\wsb\run-series.ps1 -Vm)
     [int]$MemorySeconds = 5, # memory.csv sample interval (0: none); peaks go into result.json "memory"
     [int]$StallSeconds = 120, # Story stage: give up once Driver.exe's private bytes have made no new high (+4 MB) for this
-                         # long (a hung load); a slow load that still grows is waited for (issue #70)
+                         # long (a hung load); a slow load that still grows is waited for
     [int]$StorySeconds = 900, # Story stage: give up after this long in any case
     [string]$GameRootFrom, # folder whose files replace the game folder's root files of the same name (run-series.ps1 -Vm:
                          # the host game folder's current dsf_enhanced.asi and .ini); -Override wins. result.json
@@ -318,7 +318,7 @@ function Clear-ReadOnly([string]$Path) {
 # the primary one, and nothing without admin rights can close it.
 $targetScreen = if ($OnHost) { [System.Windows.Forms.Screen]::AllScreens | Where-Object { -not $_.Primary } | Select-Object -First 1 }
 # With one monitor, the game goes to its top-left corner, clear of the centred prompt
-# (run host-20261023-084934: the prompt covered the chase car in every shot).
+# (else the prompt covers the chase car in every shot).
 if ($OnHost -and -not $targetScreen) { $targetScreen = [System.Windows.Forms.Screen]::PrimaryScreen }
 
 function Get-GameWindow {
@@ -726,7 +726,7 @@ try {
     Start-Sleep -Seconds 5
     $pulses = 0
     # No fixed deadline (it was 150 s): on a busy host a healthy load took up to 156 s and the
-    # 150 s cut killed loads that were still growing (issue #70). A load counts as progressing
+    # 150 s cut killed loads that were still growing. A load counts as progressing
     # while Driver.exe's private bytes make a new high (+4 MB); in 361 VM loads that loaded
     # (2026-10-26 to -29) the longest gap between highs was 49 s, while hung loads sat flat
     # for 87 s and more. -StorySeconds caps the stage in any case.
@@ -788,7 +788,7 @@ try {
     if ($ZoomPresses) { Note "pressed Up $ZoomPresses times" }
     # The probe spawns its first car once this file exists (clonetest.lua harnessGo): before, it did
     # as soon as the camera was at street level, so the first car's chase view and -Views were over
-    # before the first shot below, and the last Up presses drove it (issue #305).
+    # before the first shot below, and the last Up presses drove it.
     if ($Probe) {
         [IO.File]::WriteAllText((Join-Path $RunPath 'Common\UserLuaScripts\dsfforza\go.lua'), "return { go = 1 }`r`n")
         Note 'probe go'
@@ -890,7 +890,7 @@ try {
     # shots per phase 0.7 s apart (indicators blink), then tell it to finish (-1).
     $lightSync = Join-Path $RunPath 'Common\UserLuaScripts\dsfforza\lightsync.lua'
     # The game reads lightsync.lua every update (io.open), so a write can hit a sharing
-    # violation (run host-20261023-095111 died on one at vanilla 171 phase 10). Retry for up
+    # violation (a run died on one at vanilla 171 phase 10). Retry for up
     # to 5 s, then note the miss and go on: the Lua advances by itself after its timeout.
     function Set-LightSync([int]$phase) {
         $text = "return { phase = $phase }`r`n"
@@ -967,8 +967,7 @@ try {
             Note "lights: id $id phase $k of $count"
         }
         # No traffic phase (removed from lightstest.lua): swapWithModel on a live traffic car
-        # crashed the game (run host-20261023-123840) and AddVehicleToCarrier on a spawned
-        # car returned false (run 20261023-115652). Check converted traffic with
+        # crashed the game and AddVehicleToCarrier on a spawned car returned false. Check converted traffic with
         # -TrafficIds instead (research/lights.md).
         Set-LightSync -1 | Out-Null
         Start-Sleep -Seconds 2
@@ -1066,7 +1065,7 @@ try {
             # after its cockpit view shows up in the log.
             $driving = @($lines | Where-Object { $_ -match '\[dsfforza\] id (\d+): PLAYER IS DRIVING IT' })
             # Not $views: PowerShell names are case-insensitive, and the [string] -Views parameter would
-            # turn the list into a string ("" with no match, so $views[-1] was null: run vm-20261025-070010).
+            # turn the list into a string ("" with no match, so $views[-1] would be null).
             $cockpitViews = @($lines | Where-Object { $_ -match '\[dsfforza\] id (\d+): cockpit view on' })
             if ($DriveSeconds -gt 0 -and $driving.Count -gt $cockpitViews.Count) {
                 if (-not $holdUntil -or $holdUntil -lt [datetime]::MaxValue) { Note "throttle ($DriveKey) on: $($driving[-1].Trim())" }

@@ -17,9 +17,8 @@ from dsfforza.formats import carbin
 # which is the car's left in Forza space. DSF wheel models face +x: the UPVH wheel table gives
 # the +x wheels the identity and the -x wheels a 180-degree turn about y ((0, 1, 0, 0)), so one
 # model serves both sides (vanilla 227 and 266: centre cap and spoke disc at x +0.05..+0.12). The
-# converter used to copy the Forza wheel unturned, so all four wheels showed the back of the rim
-# outwards. Now it is turned 180 degrees about y like the body (Placement), which puts the face
-# at +x. Vanilla wheels use the shared tyre texture (GLOBAL_Tyre, 512x512 DXT1: red is the grey
+# Forza wheel is turned 180 degrees about y like the body (Placement), which puts the face at +x
+# (unturned, all four wheels would show the back of the rim outwards). Vanilla wheels use the shared tyre texture (GLOBAL_Tyre, 512x512 DXT1: red is the grey
 # level, green the gloss, blue 255), never Forza's tiling tyre/rim UVs; the tyre is unwrapped onto
 # the texture's tread strip and sidewall ring like vanilla tyres (TyreMap; the "tyre" swatch is only
 # the fallback). Forza's rims sample the car's own wheel.xds (media/wheels/<car>, port_car.
@@ -432,7 +431,7 @@ def wheel_blur_section(sections, lods, centre=(0.0, 0.0, 0.0)) -> carbin.Section
 # barrel. A rotor of more than BRAKE_ROTOR_MAX_TRIANGLES (drums, drilled discs: 145 of the 1146
 # front and rear rotors, up to 9410 triangles) is replaced by a plain disc of its size
 # (plain_rotor). Only on each entry's finest LOD (the exterior, the full entry's mask 4). The calipers, which
-# don't turn, are left out (#212).
+# don't turn, are left out.
 ROTOR_CARBINS = {"front": "rotorLF_LOD0.carbin", "rear": "rotorLR_LOD0.carbin"}  # port_car.extract_brakes
 BRAKE_ROTOR_SECTION = "dsf_brake_rotor"
 BRAKE_ROTOR_MAX_TRIANGLES = 2000

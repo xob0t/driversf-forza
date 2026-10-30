@@ -179,7 +179,7 @@ def gamedb_body(gamedb: Path, name: str) -> tuple[float, float, float, float] | 
 # their body. CIT_C1_11 carries PEU_107_11's MAXData.xml value for value
 # (BottomCenterWheelbasePos z -0.151, wheelbase 2.340), but its body sits 0.17 m further
 # forward in the model than the 107's (body length midpoint -0.124 against +0.048), so its
-# wheels stood 0.17 m behind its arches (issue #301; the arches centre on -0.024, the 107's
+# wheels stood 0.17 m behind its arches (the arches centre on -0.024, the 107's
 # 5 mm off its own midpoint the same way). The only car of the roster's 573 whose arches
 # both lie more than 60 mm off MAXData's hubs the same way (research/wheels.md, "Wheels off
 # their arches").
@@ -201,7 +201,7 @@ def car_dims(car: ForzaCar, gamedb: Path | None = None) -> CarDims:
     midpoint by that much. Forza draws the model unturned at each hub, so its tyres stand
     that far behind the physics' hubs on both sides, and the body's arches are cut round
     them: the five Commodore VE race cars' tyres are 0.300 m behind their origin, and their
-    arches 0.295 to 0.310 m behind MAXData's hubs (issue #301). The converter turns the
+    arches 0.295 to 0.310 m behind MAXData's hubs. The converter turns the
     wheel about the tyre's centre (tyre_centre), so it takes the hubs to the tyres instead.
     Across (x) and up (y) the tyre stays on the hub: TOY_6_Supra_05's, MER_ML63AMG_09's
     and VW_BEETLE_68's arches centre on the hub, not on their models' offsets. A car of

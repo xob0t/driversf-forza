@@ -61,10 +61,9 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
 
 - **VM:** `C:\VMs\dsfforza-test\dsfforza-test.vmx` (VM 1) and its linked clone
   `C:\VMs\dsfforza-test2\dsfforza-test2.vmx` (VM 2; "VM pool" below): 4 vCPU,
-  4 GB (8 GB until 2026-10-25), 80 GB growable
+  4 GB, 80 GB growable
   SATA disk, BIOS firmware (no TPM or Secure Boot; a vTPM needs VM encryption,
-  which vmrun can't start headless), SVGA 3D with 512 MB graphics memory (2 GB
-  until 2026-10-25), no
+  which vmrun can't start headless), SVGA 3D with 512 MB graphics memory, no
   network adapter, no USB, an HD audio card muted inside the guest. Guest:
   `D:\windows_microwin_ru.iso` (Windows 11 Pro 25H2, build 26200, ru-RU,
   MicroWin-debloated), local admin `dsf` / `dsfforza`, autologon, UAC off,
@@ -157,9 +156,8 @@ the missing MAC don't matter; the clone gets new UUIDs at its first power-on.
   VM's mutex (5 s kernel waits between looks at the queue); the others poll
   every 2 s. Tickets of dead processes are dropped. `dsfforza-wsb\vm\queue.log`
   logs each ticket and the VM it took. `vm.ps1 Stop` and `Revert` and
-  `vm-build.ps1 -Step Clone` queue the same way. Clone now also waits for
-  the old clone's own series before deleting it; it used to hold only VM 1's
-  mutexes.
+  `vm-build.ps1 -Step Clone` queue the same way. Clone also waits for
+  the old clone's own series before deleting it.
   - Before, a waiter blocked on the mutex alone (`WaitHandle.WaitAny`). On
     2026-10-25 a series queued at 07:09 was still waiting at 07:50 while
     series started after it took VM 1. Likely cause: PowerShell runs scripts

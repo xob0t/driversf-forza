@@ -118,7 +118,7 @@ def needle_gauge_ids(stream, interior, dials_only: bool = False) -> dict[float, 
     (dials_material) count. The digital dials (digital_dash) draw g_fDigiData
     vertices with ids 1..7 through the same declaration, sometimes from the same
     buffer as the needles (hosts 250, 293), but the engine reads those through no
-    gauge record (issue #234)."""
+    gauge record."""
     from dsfforza.formats import vehicle_mesh as vm
     from dsfforza.formats.vehicle_mesh import child, payload
 
@@ -193,7 +193,7 @@ def needle_survey(archive: Path, manifest: Path | None = None, cars: list[int] |
     """Per ported car of a built archive: the gauge ids its interior needles
     carry (semantic 8) and the ids its hierarchy has a gauge record for
     (gauge_records, as FUN_0088E310 keeps them). A needle id without a record
-    is drawn and never turns (issue #62). The manifest (default: the archive's
+    is drawn and never turns. The manifest (default: the archive's
     .json) names the cars and gives the parked speed and tach needles (drawn
     static because the host interior has no needle material)."""
     import json

@@ -87,8 +87,7 @@ at fDamage = 1 is within 2.0° (median) of the face normal of the s12 mesh,
 against 10.7° for the undamaged normal (`out/damage/s5delta.py`, 4,750
 moved vertices).
 
-`vehicle-model.md` used to say s12 is "the position again"; it is only on
-vertices that don't crush (glass, cabin, the middle of the body: about a
+s12 equals the position only on vertices that don't crush (glass, cabin, the middle of the body: about a
 third of all vertices).
 
 ## Crush targets on vanilla cars (confirmed-static)
@@ -169,9 +168,8 @@ On the Desanne (`uv run dsff damage panels <vanilla> --id 266`):
 panel's s9 and its own crush targets (14,181 vertices), so the driven car
 crushes and swings like the full entry. Its other parts are the front and
 rear suspension (records 31, 63), a 6-vertex part on the gauge record and
-the wheel, linked through the UPVH LOD links. `vehicle-model.md` used to
-call the two suspension parts the bumpers; renders show struts and arms
-(`out/damage/desanne-ext-parts.png`).
+the wheel, linked through the UPVH LOD links. The two suspension parts are struts
+and arms, not bumpers (renders: `out/damage/desanne-ext-parts.png`).
 
 ## Hypotheses (not traced in the exe)
 
