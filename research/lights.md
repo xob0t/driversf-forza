@@ -2507,10 +2507,11 @@ nodamage / nodamageBlackStripe...): the FH1 Challenger SRT8 392's 26 rows
 are 7 colours, the 500 Abarth's 13 are 5, the SVT Raptor's 10 are 5. Single
 colours are common (30 FH1 cars, 144 FM4, mostly race cars and special
 editions). Per-colour shader tweaks live in the car zip's
-`ColorShaderSettings<N>.xml` (`body` `PaintColor` (= the Combo_Colors RGB),
+`ColorShaderSettings<N>.xml` (`body` `PaintColor` (often the Combo_Colors RGB, darker on
+bright metallics: `paint-re.md`),
 `PaintScale`, `SpecularAmount2/3`, `MetalColor/Scale`, `FresnelIndex`...;
 12 of the 40 testdrive cars have some, e.g. the Focus RS500's satin grey:
-`PaintScale` 0.3, `MetalScale` 1, `SpecularAmount3` 40); not used yet.
+`PaintScale` 0.3, `MetalScale` 1, `SpecularAmount3` 40); not read yet (#380).
 
 The FM4 DMC-12 has one colour, solid `#999999` (Gray). Its body is plain
 `body` paint (3,782 LOD1 triangles, all on alpha-0 white texels of
@@ -2519,32 +2520,66 @@ stainless body as flat grey paint.
 
 ### The converter (`src/dsfforza/convert/paint.py`, offline-checked)
 
-For each Forza colour: its DSF target is the swatch in linear RGB times
-`SHOWN_GAIN` (0.3, DSF's paint brightness against Forza's; "Paint shows darker
-than Forza" below). Pick the vanilla palette entry of the same finish
-(metallic: `TintColour1.y` = 1) whose shown colour (`apparent`: the fresnel
-mix of colours 2 and 3 averaged over the projected area) is closest to the
-target in sRGB, luminance weighted; copy its nine parameters; set colours 2
-and 3 to the target's hue so that the entry shows the target, colour 3 at the
-template's luminance ratio to colour 2 (where that would need a colour above
-1, the brighter one is the hue at full scale and the other makes up the
-rest). Near-black colours (linear luminance under 0.01) show as bright as
-the vanilla black they matched, in their own hue (not the template's: vanilla
-200's black has a green rim). Before issue #289 the main colour was the swatch as is and
-`apparent` read colour 2 or colour 3, not the mix.
+Since the paint rewrite (#345) the converter sets every palette parameter from the game's paint formulas
+(`paint-re.md`, "From a Forza colour to the palette"). It no longer copies a vanilla
+template. For each Forza colour (swatch S = `Combo_Colors.RGB`, metallic flag M):
+
+| Parameter | Set to |
+| --- | --- |
+| `g_vec3TintColour2`, `g_vec3TintColour3` | both `albedo_for(S)`: the albedo whose median sunlit panel (`screen(2.13 x A)`: ClearDay's exposure at La 0.2, Reinhard on luminance with W 5, the game's grade LUT from `media/SfxMisc.fchunk`, sRGB) shows S, capped at the knee (0.3 for a saturated colour, 0.5 for a grey). Past the knee more albedo only flattens the body. One colour at every angle, as Forza's factory paint is |
+| `g_fresnelpower`, `g_fresnelbias` | 10 / 0.01, the vanilla flat entries' (no effect when colour 3 = colour 2) |
+| `g_hCustomReflectionAmount` | 1.0 x `FresnelScalar` / 0.9 (Normal.xml's 0.9: 1.0; `reflectionScaler` is 1 in both games, #379) |
+| `g_hCustomFresnelPower` | 1.0 |
+| `g_hSecondSpecularIntensity`, `Power` | without lobes 0.1 / 5. With Forza's lobes 0.3 x (`SpecularAmount2` + `3`) / 13 x 0.5 / `PaintScale`, at the lobes' powers weighted by amount. Metallic.xml (M = 1) gives 0.3 / 5.08 |
+| `g_vec4TintColour1_Alpha` | (0, 1, 0, 1) metallic, (0, 0, 0, 1) solid (no shader reads it; `is_metallic`) |
+
+Without `DSF_GAME_DIR` (CI), `grade_lut` falls back to the fit in
+`tools/re/paint_grade.json` (within 10 / 255 of the game's on the grey axis). Builds read
+the game's LUT. The removed constants: `SHOWN_GAIN` (0.3), the brightness cap, the template
+match (`is_template`, `_distance`, `vanilla_paints`), `recolour` and `NEAR_BLACK`.
+`SHOWN_GAIN` was right for bright reds and under-showed greys and mid tones by 25 to 36 /
+255. The brightness cap is now the knee. The dark template rims (colour 3 at 0.02 on
+low-power entries) were DSF's art, not Forza's.
+
+What it does not read yet: the car zips' `ColorShaderSettings<N>.xml` (64 roster cars, 148
+files: satin `FresnelScalar` 0 on 12 colours, lobe amounts, the TVR Sagaris's two-tone).
+The extraction doesn't take them (`port_car.WANTED`; issue #380). Their colours (`PaintColor`,
+`TwoToneColor`, `MetalColor`) are sRGB as written: Forza converts them to linear before upload
+(#379). The swatch stays the target.
+
 `install` replaces the host's SPSPs (the host's first SPSP is the chunk
 template; every MARP gets an explicit payload) and drops colours from the end
 if the full entry's NONR would pass the SSLP buffer (0x6D000) less 0x400 for
-handling edits.
-
-Since the DMC-12 report (below), `forza_colours` drops repeated
-(RGB, metallic) rows, `pick_colours` keeps the 14 most distinct colours (in
-Forza's order) when a car has more, instead of the first 14 (the FM4 Charger
-Daytona's 20 lost its white, grey and black), templates exclude the 40
-vanilla entries whose colour 1 is an RGB colour (`is_template`), and
+handling edits. `forza_colours` drops repeated (RGB, metallic) rows, and
+`pick_colours` keeps the 14 most distinct colours (in Forza's order) when a car has more.
 `SPECIAL_FINISHES` maps a car to a `FINISH_PRESETS` entry used as is
 (`DEL_DMC12_82` -> `stainless`, the vanilla DeLorean's (spool 171) single
-entry).
+entry). Forza paints the DMC-12 as `#999999` under its default clear coat, which the
+mapping would turn into glossy grey paint; brushed steel has no clear coat.
+
+`uv run dsff paint survey` measures what each roster colour's entry shows against
+its swatch: dE76 on the median sunlit panel, and the L* a sun-facing panel adds over it
+(`sun_gain`; under 1 the body's shading is flat). `--build` reads a build's palettes
+instead. Master at 268cfce (its `out/build`) against this mapping, 3230 entries of
+572 cars:
+
+| Group | Entries | dE median | dE p90 | dE > 10 | L* median vs swatch | flat |
+| --- | ---: | --- | --- | --- | --- | --- |
+| all | 3230 | 16.0 -> 8.6 | 36.4 -> 31.6 | 3001 -> 1493 | -8.3 -> 0.0 | 514 -> 554 |
+| grey | 673 | 15.2 -> 0.0 | 16.1 -> 0.0 | 622 -> 0 | -14.2 -> 0.0 | 0 -> 0 |
+| blue | 535 | 15.0 -> 6.3 | 24.4 -> 16.4 | 478 -> 118 | -3.2 -> 1.5 | 41 -> 39 |
+| red | 585 | 32.0 -> 28.9 | 39.4 -> 39.1 | 584 -> 562 | 4.9 -> 6.5 | 43 -> 69 |
+| white | 429 | 15.8 -> 8.4 | 17.1 -> 11.3 | 429 -> 163 | -15.2 -> -8.4 | 0 -> 0 |
+| black | 488 | 14.2 -> 13.7 | 17.0 -> 15.4 | 370 -> 342 | 13.2 -> 12.3 | 405 -> 427 |
+| yellow | 236 | 34.9 -> 24.8 | 42.1 -> 35.0 | 236 -> 170 | -14.0 -> -6.5 | 0 -> 0 |
+| orange | 113 | 34.2 -> 29.7 | 41.9 -> 37.9 | 112 -> 86 | -5.6 -> 0.0 | 2 -> 5 |
+| green | 162 | 18.6 -> 4.8 | 34.1 -> 20.9 | 161 -> 48 | -12.4 -> 0.2 | 22 -> 13 |
+
+Reds, oranges, saturated yellows and blacks keep a large dE. These are the screen's
+limits, not the mapping's: no red on screen is purer than (233, 91, 97), and blacks bottom
+out at the grade's floor (34, 38, 46) (`paint-re.md`, "Why bright reds look flat"). The
+"flat" count grows on reds (43 -> 69): bright reds now sit at the knee, where the median
+and the sun-facing panel show the same red, as on vanilla's brightest reds.
 
 ### What the paint shader does with the palette (confirmed-static)
 
@@ -2795,5 +2830,5 @@ M5's door shuts and wing vents, the Skyline's wings), not a second colour.
 5. A brushed grain: the paint shader has no detail or normal map of its own
    (UV0 samples one flat block of the shared atlas; UV1 the shared damage
    decal), so a brushed-steel pattern would need a non-paint material.
-6. `ColorShaderSettings<N>.xml` (paint scale, metal flake, specular) could
-   choose the template look (satin, pearl) instead of RGB distance alone.
+6. `ColorShaderSettings<N>.xml` (satin `FresnelScalar` 0, lobe amounts, two-tone)
+   feed `clear_coat` once the extraction takes them (#380).
