@@ -1231,6 +1231,83 @@ def lights_image(atlases: fm.AtlasCache | None) -> np.ndarray | None:
     return np.frombuffer(bytes(rgba), np.uint8).reshape(h, w, 4)
 
 
+ZBUFFER_CHUNK = 1 << 21  # _zbuffer: bounding-box samples tested at a time
+
+
+def _zbuffer(pos: np.ndarray, uvs: np.ndarray, x0: float, y0: float, width: int, height: int):
+    """Texturing._lamp_view's orthographic z-buffer of triangles `pos` (n, 3, 3) with UVs `uvs`
+    (n, 3, 2) on a (height, width) grid of VISIBLE_STEP cells from (x0, y0): per sample, the largest z of the
+    triangles over its centre (-inf if none) and the UV there. Drawn in order one triangle at a
+    time, a sample keeps the first triangle with the largest z (a later one must be nearer):
+    the same here, from every triangle's samples at once (each sample's z and UV the same
+    arithmetic)."""
+    P, U, W, H = pos, uvs, width, height
+    depth = np.full((H, W), -np.inf)
+    uv = np.zeros((H, W, 2))
+    n = len(P)
+    if not n:
+        return depth, uv
+    X = (P[:, :, 0] - x0) / VISIBLE_STEP
+    Y = (P[:, :, 1] - y0) / VISIBLE_STEP
+    Z = P[:, :, 2]
+    if not (np.isfinite(X).all() and np.isfinite(Y).all()):
+        raise ValueError("cannot convert float NaN to integer")  # as int() of the one-at-a-time grid
+    area = (X[:, 1] - X[:, 0]) * (Y[:, 2] - Y[:, 0]) - (Y[:, 1] - Y[:, 0]) * (X[:, 2] - X[:, 0])
+    gx0 = np.trunc(X.min(1))  # int(): towards 0
+    gy0 = np.trunc(Y.min(1))
+    bw = np.ceil(X.max(1)) + 1 - gx0
+    bh = np.ceil(Y.max(1)) + 1 - gy0
+    drawn = ~(np.abs(area) < 1e-9) & (bw > 0) & (bh > 0)
+    bw = np.where(drawn, bw, 0).astype(np.int64)
+    size = bw * np.where(drawn, bh, 0).astype(np.int64)
+    gx0, gy0 = np.where(drawn, gx0, 0).astype(np.int64), np.where(drawn, gy0, 0).astype(np.int64)
+    found = []  # (sample, z, triangle, u, v)
+    done = 0
+    while done < n:
+        end = done + max(1, int(np.searchsorted(np.cumsum(size[done:]), ZBUFFER_CHUNK, "right")))
+        sel = np.arange(done, end)[size[done:end] > 0]
+        done = end
+        if not len(sel):
+            continue
+        k = size[sel]
+        tri = np.repeat(sel, k)
+        local = np.arange(int(k.sum())) - np.repeat(np.cumsum(k) - k, k)
+        w = bw[tri]
+        gx = (local % w + gx0[tri]) + 0.5
+        gy = (local // w + gy0[tri]) + 0.5
+        Xt, Yt, a = X[tri], Y[tri], area[tri]
+        w0 = ((Xt[:, 1] - gx) * (Yt[:, 2] - gy) - (Yt[:, 1] - gy) * (Xt[:, 2] - gx)) / a
+        w1 = ((Xt[:, 2] - gx) * (Yt[:, 0] - gy) - (Yt[:, 2] - gy) * (Xt[:, 0] - gx)) / a
+        w2 = 1 - w0 - w1
+        Zt = Z[tri]
+        z = w0 * Zt[:, 0] + w1 * Zt[:, 1] + w2 * Zt[:, 2]
+        ix, iy = gx.astype(int), gy.astype(int)
+        # z > -inf: the test a first triangle passes against the empty buffer (NaN never does)
+        ok = np.nonzero((w0 >= 0) & (w1 >= 0) & (w2 >= 0) & (ix < W) & (iy < H) & (z > -np.inf))[0]
+        Ut = U[tri[ok]]
+        w0, w1, w2 = w0[ok], w1[ok], w2[ok]
+        found.append(
+            (
+                iy[ok] * W + ix[ok],
+                z[ok],
+                tri[ok],
+                w0 * Ut[:, 0, 0] + w1 * Ut[:, 1, 0] + w2 * Ut[:, 2, 0],
+                w0 * Ut[:, 0, 1] + w1 * Ut[:, 1, 1] + w2 * Ut[:, 2, 1],
+            )
+        )
+    if not found:
+        return depth, uv
+    sample, z, tri, u, v = (np.concatenate(c) for c in zip(*found))
+    order = np.lexsort((tri, -z, sample))  # per sample: the largest z, the first triangle of those
+    sample, z, u, v = sample[order], z[order], u[order], v[order]
+    first = np.ones(len(sample), bool)
+    first[1:] = sample[1:] != sample[:-1]
+    depth.reshape(-1)[sample[first]] = z[first]
+    uv.reshape(-1, 2)[sample[first], 0] = u[first]
+    uv.reshape(-1, 2)[sample[first], 1] = v[first]
+    return depth, uv
+
+
 @dataclass
 class Texturing:
     """Decides, for one Forza car, which DSF material and UVs each subsection
@@ -2171,11 +2248,22 @@ class Texturing:
     def _lamp_view(self, front: bool, grid: bool = False, rear_half: bool = False):
         """(rows, columns) of the Lights-atlas texels _visible_lamp_texels sees, one per sample
         (grid: ((rows, columns), the (H, W) mask of the view's samples in their order, the
-        view's origin x, y, its step)); None without lamps."""
+        view's origin x, y, its step)); None without lamps. Drawn once per view while the lamp
+        triangles and the lenses left out are the same (plan() lays the atlas out up to four
+        times, and each layout asks for the views again)."""
         if not self.lamp_tris or self.atlases is None:
             return None
-        import numpy as np
+        sw, sh, _ = self.atlases.get(fm.LIGHTS)
+        key = (front, grid, rear_half, id(self.lamp_tris), len(self.lamp_tris), frozenset(self.dropped_lenses), sw, sh)
+        views = getattr(self, "_lamp_views", None)
+        if views is None or views[0] != key[3:]:
+            views = self._lamp_views = (key[3:], {})
+        if key[:3] not in views[1]:
+            views[1][key[:3]] = self._draw_lamp_view(front, grid, rear_half)
+        return views[1][key[:3]]
 
+    def _draw_lamp_view(self, front: bool, grid: bool, rear_half: bool):
+        """_lamp_view, drawn."""
         lod = min(t[0] for t in self.lamp_tris)
         tris = [t for t in self.lamp_tris if t[0] == lod]
         if rear_half:  # behind the car: the rear half's lamps only (the body hides the rest)
@@ -2200,30 +2288,7 @@ class Texturing:
         H = int((P[..., 1].max() - y0) / VISIBLE_STEP) + 2
         if W * H > 4_000_000:
             return None
-        depth = np.full((H, W), -np.inf)
-        uv = np.zeros((H, W, 2))
-        for n in range(len(tris)):
-            X = (P[n, :, 0] - x0) / VISIBLE_STEP
-            Y = (P[n, :, 1] - y0) / VISIBLE_STEP
-            Z = P[n, :, 2]
-            area = (X[1] - X[0]) * (Y[2] - Y[0]) - (Y[1] - Y[0]) * (X[2] - X[0])
-            if abs(area) < 1e-9:
-                continue
-            gx, gy = np.meshgrid(
-                np.arange(int(X.min()), int(np.ceil(X.max())) + 1) + 0.5,
-                np.arange(int(Y.min()), int(np.ceil(Y.max())) + 1) + 0.5,
-            )
-            w0 = ((X[1] - gx) * (Y[2] - gy) - (Y[1] - gy) * (X[2] - gx)) / area
-            w1 = ((X[2] - gx) * (Y[0] - gy) - (Y[2] - gy) * (X[0] - gx)) / area
-            w2 = 1 - w0 - w1
-            z = w0 * Z[0] + w1 * Z[1] + w2 * Z[2]
-            ix, iy = gx.astype(int), gy.astype(int)
-            ok = (w0 >= 0) & (w1 >= 0) & (w2 >= 0) & (ix < W) & (iy < H)
-            ok &= z > depth[iy.clip(0, H - 1), ix.clip(0, W - 1)]
-            ix, iy = ix[ok], iy[ok]
-            depth[iy, ix] = z[ok]
-            uv[iy, ix, 0] = (w0 * U[n, 0, 0] + w1 * U[n, 1, 0] + w2 * U[n, 2, 0])[ok]
-            uv[iy, ix, 1] = (w0 * U[n, 0, 1] + w1 * U[n, 1, 1] + w2 * U[n, 2, 1])[ok]
+        depth, uv = _zbuffer(P, U, x0, y0, W, H)
         hit = np.isfinite(depth)
         sw, sh, _ = self.atlases.get(fm.LIGHTS)
         u = (uv[hit, 0].clip(0, 1) * sw).astype(int).clip(0, sw - 1)
