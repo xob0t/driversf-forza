@@ -608,10 +608,15 @@ def test_front_lamp_view_leaves_out_dropped_lenses():
     assert (u >= SIZE // 2).all()  # the lamp's
 
 
-def test_tail_glow_ranks_each_tail_lamp_onto_vanilla():
-    # #290: two tail lamps seen from behind, the left one's texels brighter than the right's (the
-    # Panoz Esperante's sides differed): each is ranked on its own onto vanilla's visible tail alpha,
-    # so both glow alike; texels nobody sees from behind, and white ones, keep their alpha (NaN).
+def _quad_uv(u0, u1, w):
+    return [[(u0 / w, 0.0), (u1 / w, 0.0), (u0 / w, 1.0)], [(u1 / w, 0.0), (u1 / w, 1.0), (u0 / w, 1.0)]]
+
+
+def test_rear_lamp_glow_ranks_each_planned_lamp_onto_vanilla():
+    # #290, #391: two planned tail lamps seen from behind, the left one's texels brighter than the
+    # right's (the Panoz Esperante's sides differed): each is ranked on its own onto vanilla's
+    # visible tail alpha, so both glow alike; a texel no planned tail lamp holds (the white reverse
+    # lamp) keeps its alpha (NaN).
     h, w = 8, 64
     atlas = np.zeros((h, w, 4))
     atlas[:, :20] = (220, 10, 10, 250)  # left lamp's texels
@@ -623,7 +628,9 @@ def test_tail_glow_ranks_each_tail_lamp_onto_vanilla():
     # columns 13 to 15 see the white reverse lamp between the two red ones
     cols = np.where(gx < 13, gx, np.where(gx > 15, 20 + gx - 16, 40 + gx % 10))[grid]
     rows = (gy % h)[grid]
-    out = lenses.tail_glow(atlas.astype(np.uint8), ((rows, cols), grid, (0.0, 0.0), 0.005))
+    tris = _quad_uv(0, 20, w) + _quad_uv(20, 40, w)
+    view = ((rows, cols), grid, (0.0, 0.0), 0.005)
+    out = lenses.rear_lamp_glow(atlas.astype(np.uint8), view, tris, [0, 0, 1, 1])
     left, right = out[:, :13], out[:, 20:34]
     assert np.isfinite(left).all() and np.isfinite(right).all()
     assert abs(np.percentile(left, 95) - np.percentile(right, 95)) < 25, (
@@ -631,3 +638,21 @@ def test_tail_glow_ranks_each_tail_lamp_onto_vanilla():
         np.percentile(right, 95),
     )
     assert np.isnan(out[:, 40:]).all()
+
+
+def test_rear_lamp_glow_takes_grey_tail_texels():
+    # #391: an FM4 tail lamp's texels are often grey (BrakeColor lights them red), and a clear lens
+    # over a tail bakes grey too (the Aston Martin V12 Vantage): the planned lamp's texels are ranked
+    # whatever their colour, in the order given (FM4: the texel's red).
+    h, w = 8, 64
+    atlas = np.zeros((h, w, 4))
+    atlas[:, :40, :3] = (100 + 3 * np.arange(40))[:, None]  # grey texels, brighter to the right
+    atlas[:, :40, 3] = 6  # at FM4's unread alpha
+    gy, gx = np.mgrid[0:12, 0:30]
+    grid = np.ones((12, 30), bool)
+    view = ((gy[grid] % h, gx[grid]), grid, (0.0, 0.0), 0.005)
+    order = atlas[..., 0] / 255
+    out = lenses.rear_lamp_glow(atlas.astype(np.uint8), view, _quad_uv(0, 40, w), [3, 3], order=order)
+    assert out is not None and np.isfinite(out[:, :30]).all()
+    assert np.percentile(out[:, :30], 95) > 100  # on vanilla's tail alpha, not at FM4's alpha 6
+    assert out[:, 25:30].mean() > out[:, 5:10].mean()  # brighter texels first
