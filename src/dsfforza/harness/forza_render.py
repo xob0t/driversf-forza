@@ -56,7 +56,7 @@ LENS_DEFAULTS = {
     "detail_glass_clear": ((0.2, 0.2, 0.2), 0.6, 0.7, 0.2),
     "detail_glass_amber": ((0.0, 0.0, 0.0), 0.8, 0.7, 0.2),
     "lights_glass": ((0.5, 0.5, 0.5), 0.0, 1.0, 1.0),
-    "glass": ((0.0, 0.0, 0.0), 0.0, 1.0, 1.0),  # no texture: GlassColor (0) and the reflection (#160)
+    "glass": ((0.0, 0.0, 0.0), 0.3, 1.0, 1.0),  # no texture: GlassColor (w 0.3) and the reflection (#160, #379)
     "lights_gls_noemit": ((0.5, 0.5, 0.5), 0.0, 1.0, 1.0),
 }
 # The black frit round the windows: on the atlas's white body area (alpha 0) in its UVs,
@@ -285,6 +285,9 @@ class _Materials:
         if lens is not None or t.startswith(LAMP_GLASS_PREFIX):
             colour, floor, cap, scale = lens or ((1.0, 1.0, 1.0), 1.0, 1.0, 0.7)
             cap = float(own.get("GlassMaxOpacity", cap))
+            colour_w = self.glass_settings.get(t, {}).get("GlassColor")
+            if colour_w is not None:  # the car's GlassColor.w: the opacity floor (alpha isn't converted)
+                floor = min(1.0, max(0.0, float(colour_w[3])))
             if lens is None:  # lights_gls_*: the lamp shaders start the opacity at 1 (GlassMaxOpacity)
                 floor = cap
             m.kind = "lens"

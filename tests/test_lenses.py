@@ -449,12 +449,13 @@ def test_lamp_glass_at_its_max_opacity():
 
 
 def test_cover_passes_the_lamp_glow():
-    # A cover (lights_glass) has no glow of its own: the lamp's behind it.
+    # A cover (lights_glass) has no glow of its own: (1 - opacity)^2 of the lamp's behind it
+    # passes (Forza's blend in its square light space, research/forza-lenses-re.md section 7).
     cover = _quad("glassLTL", "lights_glass", 2.0, 0.0, 0.5)
     lamp = _quad("taillightL", "textured_reflector", 1.9, 0.5, 1.0)
     atlases, _ = _bake([cover, lamp], [cover])
     got = atlases.texel(SIZE // 4, SIZE // 2)
-    want = dm.lamp_score(*LAMP)
+    want = dm.lamp_score(*LAMP) * (1 - LENS[3] / 255) ** 2
     assert abs(dm.lamp_score(*got) - want) < 0.01, (got, dm.lamp_score(*got), want)
 
 
@@ -682,25 +683,16 @@ if __name__ == "__main__":
             print(f"{name}: ok")
 
 
-def test_plain_glass_cover_in_a_lamp_section():
-    # Issue #247: a plain glass cover over a whole head lamp unit, a fifth of it over the lamp
-    # (the Audi R8 race car's lexanLHL, the Ferrari 458 Spider's glassLHL), is a lamp cover and
-    # left out; the same glass in another section (a window drawn with the technique) stays
-    # unless a lamp lies behind COVER_MIN_SHARE of it.
+def test_plain_glass_over_a_lamp_stays_window_glass():
+    # Plain glass over a lamp (the Audi R8 race car's lexanLHL, the Mustang GT 05's head lamp
+    # glass) is drawn as DSF window glass: Forza's one layer keeps 26% of the lamp head-on, DSF's
+    # window glass about half; left out (#160, #247) the lamp showed whole (#379).
     lamp = _quad("headlightL", "head_light", -1.9, 0.5, 1.0, normal=(0.0, 0.0, -1.0))
-    for v in lamp.lod_vertices:  # a fifth of the cover's width
-        v.position = (-0.1 + (v.position[0] + 0.1) * 0.2, *v.position[1:])
     t = dm.Texturing(Path())
     t.lamp_tris = [(1, [lamp.lod_vertices[i].position for i in tri], None) for tri in lamp.subsections[0].triangles()]
-    for name, left_out in (("lexanLHL", True), ("glassLHL", True), ("body", False)):
-        cover = _grid(name, "glass", lambda x, y: -2.0, 0.0, 0.5, n=10)
-        m = dataclasses.replace(fm.resolve(cover, cover.subsections[0]), role=fm.GLASS, family=fm.LIGHTS)
-        assert dm.COVER_LAMP_SECTION_SHARE < t._over_lamp(cover, cover.subsections[0]) < dm.COVER_MIN_SHARE
-        assert t.clear_cover(cover, cover.subsections[0], m) == left_out, name
-    # A cached answer for another subsection that had the same id() isn't reused (CI flake:
-    # the loop's covers are freed and a new one can get the old one's id).
-    t._covers[id(cover.subsections[0])] = (object(), True)
-    assert t.clear_cover(cover, cover.subsections[0], m) is False
+    cover = _grid("lexanLHL", "glass", lambda x, y: -2.0, 0.0, 0.5, n=10)
+    assert t._over_lamp(cover, cover.subsections[0]) > 0.1
+    assert not hasattr(t, "clear_cover")
 
 
 def test_front_lamp_view_leaves_out_dropped_lenses():

@@ -157,7 +157,7 @@ class Material:
 @dataclass(frozen=True)
 class Lens:
     """See-through lamp glass (kind "lens"): opacity min(max(texel alpha x alpha,
-    floor), cap); what is behind is filtered by (1 - opacity) + opacity x tint x texel.
+    floor), cap); (1 - opacity)^2 of what is behind passes (Forza's blend).
     A Forza detail_glass_* lens (technique set) is a filter instead: what is behind times
     lenses.lens_filter of its texel and the car's glass settings (lenses.glass_settings),
     with no colour or glow of its own (research/forza-lenses-re.md)."""
@@ -1451,8 +1451,10 @@ def _shade_lens(mat: Material, view: _View, light, n, uv, ray, occlusion, lighti
     if mat.emissive and lamp_rgb is not None and lamp is not None:
         on = lamp >= 0
         add[on] += t[on, 3:4] * lamp_rgb[lamp[on]]
-    through = ((1 - o) + o * np.clip(texel * lens.tint, 0, 1)) * (1 - f)[:, None]
-    return add, np.clip(through, 0, 1)
+    # Forza blends glass at its opacity in its square light space (SRCALPHA, INVSRCALPHA on sqrt
+    # output; research/forza-lenses-re.md section 7): (1 - opacity)^2 of what is behind passes.
+    through = (1 - o) ** 2 * (1 - f)[:, None]
+    return add, np.clip(np.broadcast_to(through, (len(n), 3)), 0, 1).astype(np.float32)
 
 
 def _shadow(view: _View, k: np.ndarray) -> np.ndarray:

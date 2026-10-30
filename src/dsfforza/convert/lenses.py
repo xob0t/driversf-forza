@@ -250,8 +250,8 @@ def lens_filter(technique: str, rgb, settings: dict) -> np.ndarray:
 
 def emits(technique: str) -> bool:
     """Whether the glass glows by its own texel alpha: the lamp glass (a lamp itself) but
-    lights_gls_noemit. Lenses pass the glow of the lamp behind, filtered; covers (COVERS) pass
-    it whole (#164; pending the blend Forza draws them with, #370)."""
+    lights_gls_noemit. Lenses pass the glow of the lamp behind, filtered; covers (COVERS)
+    (1 - opacity)^2 of it."""
     t = technique.lower()
     return t.startswith(LAMP_GLASS) and t != NO_GLOW_GLASS
 
@@ -1244,12 +1244,10 @@ def bake(
             # Lamp glass without a glow: only what its opacity lets through of the lamp behind.
             baked[:, 3] = mask[inverse] * _weight(behind[inverse]) / _weight(baked) * (1 - lens_a)
         else:
-            # A cover has no glow of its own: the lamp behind glows through it. Forza's lamp
-            # emission is HDR (BrakeColor 2 to 4 times its mask) and outshines a cover at 0.9;
-            # passing only (1 - opacity) of it left the VW GTI VR6's tails darker in the dark mood
-            # than under DSF's window glass (VM run vm1-20261028-103705). The lamp's whole glow
-            # (pending the blend Forza draws covers with, #370).
-            baked[:, 3] = mask[inverse] * _weight(behind[inverse]) / _weight(baked)
+            # A cover has no glow of its own: Forza blends it over the lamp at its opacity in its
+            # square light space (SRCALPHA, INVSRCALPHA on sqrt output; research/forza-lenses-re.md
+            # section 7), so (1 - opacity)^2 of the lamp's glow passes (a median 4% over the roster).
+            baked[:, 3] = mask[inverse] * _weight(behind[inverse]) / _weight(baked) * (1 - lens_a) ** 2
         entry["texels"] += int(free.sum())
         entry["behind"] += int(hit_any[free].sum())
         # Rays that met nothing keep the lens texel: a lens with nothing behind it in
@@ -1273,9 +1271,10 @@ def bake(
             sel = ~red & ~amber
             if through is not None:  # a lens: the lamp's glow through its filter
                 passed = through[sel]
-            else:  # a cover: through its opacity, plus its own mask where it glows
-                lens_mask = lens_rgba[sel, 3] if emits(sub.material) else np.zeros(int(sel.sum()))
-                passed = lens_a[sel] * lens_mask / 255 + (1 - lens_a[sel])
+            elif emits(sub.material):  # lamp glass: its own mask where it glows, the lamp behind through it
+                passed = lens_a[sel] * lens_rgba[sel, 3] / 255 + (1 - lens_a[sel]) ** 2
+            else:  # a cover: (1 - opacity)^2 of the lamp behind
+                passed = (1 - lens_a[sel]) ** 2
             raw = lens_glow(passed, inverse[sel], origins, depth, mask, lamp)
             if raw is not None:
                 lit.add(iy[sel], ix[sel], raw, pos[sel], (section, sub))

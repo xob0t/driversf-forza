@@ -305,15 +305,13 @@ LENS_REAR_Z, LENS_MIN_RED, LENS_MIN_ALPHA = 0.5, 80, 128
 # tail covers sit on flat red texels, and moved to the atlas they hid the lamp as a flat red
 # plate (issue #160).
 TEXTURED_COVERS = ("lights_glass",)  # lights_gls_noemit is lamp glass (lenses.NO_GLOW_GLASS)
-# Plain glass lamp covers (Texturing.clear_cover): left out when a Lights-atlas surface lies up
-# to COVER_DEPTH behind this share of their area; never in the window sections.
+# Textured lamp covers (Texturing.lamp_cover) are baked over the lamp when a Lights-atlas surface
+# lies up to COVER_DEPTH behind this share of their area. Plain `glass` over a lamp stays DSF window
+# glass: Forza draws it at opacity GlassColor.w (0.3) plus the Fresnel term, blended in its square
+# light space, so one layer keeps (1 - opacity)^2, 26% of the lamp head-on; DSF window glass keeps
+# about half (research/forza-lenses-re.md section 7, research/lights-re.md). Left out (#160, #247,
+# #284) the lamp showed whole, about four times Forza's.
 COVER_MIN_SHARE, COVER_DEPTH = 0.3, 0.3
-# In a lamp unit's own section (headlightL, glassLHL, lexanRHL, taillightR) a plain glass cover
-# is a lamp cover from this share: it often covers the unit's housing as well as its lamp (the
-# Audi R8 race car's lexan 30%, the Ferrari 458 Spider's glass 18 to 21%, the Gumpert Apollo S's
-# lexan 9.9%), and left as window glass it hid the head lamps (#247).
-COVER_LAMP_SECTION_SHARE = 0.05
-LAMP_SECTION = re.compile(r"^(head|tail)light[lr]?$|^(glass|lexan)[lr]?(hl|tl)$", re.I)
 # A lamp cover whose Lights texels are this share or more of its lenses' texels is a second skin
 # over them (_bake_lenses): left out.
 COVER_ON_LENS = 0.9
@@ -1324,7 +1322,7 @@ class Texturing:
     # (lod, positions, atlas uvs, (section name, technique)) of Lights-atlas triangles
     lamp_tris: list = field(default_factory=list)
     lamp_swatch_tris: list = field(default_factory=list)  # (lod, positions) of Lights swatch triangles
-    _covers: dict = field(default_factory=dict)  # id(sub) -> (sub, clear_cover): sub kept so its id can't be reused
+    _covers: dict = field(default_factory=dict)  # id(sub) -> (sub, lamp_cover): sub kept so its id can't be reused
     wheel_ids: set = field(default_factory=set)  # id(section) of the Forza wheel model (plan(wheels=...))
     art_flat: set = field(default_factory=set)  # id(sub): trim artwork drawn flat (ART_MIN_SCALE_SHARE)
     pack_scale: float = 0.0  # the uniform scale _pack found (before family weights)
@@ -1908,31 +1906,6 @@ class Texturing:
             self.lens_subs.add(id(sub))
         return m
 
-    def clear_cover(self, section, sub, m: fm.SubMaterial) -> bool:
-        """A lamp cover of Forza's plain `glass` technique, left out. Forza draws it as
-        texture-less, nearly clear glass (TEXTURED_COVERS); DSF's shared glass is a dark
-        pane (glass texture blue = alpha 192) and hid the lamp behind it: the Mustang GT
-        05's head lamps were a black strip (issue #158), and at night the Veyron's and
-        300C's tail lamps barely glowed through it while they glowed red without it (VM
-        runs vm1-20261028-092017 and -092416; issue #160). Vanilla lamps are opaque Lights
-        texels, so the lamp itself is what shows. A cover is plain glass on the Lights
-        atlas, outside the window sections, with a Lights-atlas lamp surface behind at
-        least COVER_MIN_SHARE of its area: some cars draw their windows, windscreen
-        included, with the same technique (BUS_TOUR_12, DOD_RamSRT10_06, TOY_Prius_11)."""
-        if (
-            self.classifier is not None
-            or m.role != fm.GLASS
-            or fm.base_family(m.family) != fm.LIGHTS
-            or m.technique.lower() != "glass"
-            or section.name.lower() in WINDOW_SECTIONS
-        ):
-            return False
-        key = id(sub)
-        if key not in self._covers or self._covers[key][0] is not sub:
-            share = COVER_LAMP_SECTION_SHARE if LAMP_SECTION.match(section.name) else COVER_MIN_SHARE
-            self._covers[key] = (sub, self._over_lamp(section, sub) >= share)
-        return self._covers[key][1]
-
     def _over_lamp(self, section, sub, shapes=None) -> float:
         """Share of a subsection's area whose triangle centres, seen along z towards the car,
         lie on a Lights triangle (shapes: (lod, positions); default lamp_tris and
@@ -2078,7 +2051,7 @@ class Texturing:
 
     def material(self, section, sub) -> str:
         m = self.submaterial(section, sub)
-        if id(sub) in self.cutout or self.clear_cover(section, sub, m) or self.dropped_lens(section, sub):
+        if id(sub) in self.cutout or self.dropped_lens(section, sub):
             return fm.SKIP
         if self._uses_atlas(m) and (
             (m.kind == "textured" and id(sub) in self.atlas_subs) or (m.kind == "swatch" and self._has_cell(m))
