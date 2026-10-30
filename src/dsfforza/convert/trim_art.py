@@ -193,16 +193,20 @@ def local_contrast(image):
     lum = np.rint(image[..., :3].astype(np.float64) @ (0.299, 0.587, 0.114)).astype(np.int64)
     opaque = image[..., 3] >= ALPHA_OPAQUE
     r = DETAIL_WINDOW // 2
-    hi_src = np.where(opaque, lum, -1)
-    lo_src = np.where(opaque, lum, 256)
-    hi, lo = hi_src.copy(), lo_src.copy()
-    padded_hi = np.pad(hi_src, r, mode="edge")
-    padded_lo = np.pad(lo_src, r, mode="edge")
     h, w = lum.shape
-    for dy in range(DETAIL_WINDOW):
-        for dx in range(DETAIL_WINDOW):
-            hi = np.maximum(hi, padded_hi[dy : dy + h, dx : dx + w])
-            lo = np.minimum(lo, padded_lo[dy : dy + h, dx : dx + w])
+    # The window's max (min) as the max over its rows of the max over its columns: the same
+    # values (-1..256 fit int16), a tenth of the passes.
+    out = []
+    for src, reduce in ((np.where(opaque, lum, -1), np.maximum), (np.where(opaque, lum, 256), np.minimum)):
+        padded = np.pad(src.astype(np.int16), r, mode="edge")
+        rows = padded[:h].copy()
+        for dy in range(1, DETAIL_WINDOW):
+            reduce(rows, padded[dy : dy + h], out=rows)
+        win = rows[:, :w].copy()
+        for dx in range(1, DETAIL_WINDOW):
+            reduce(win, rows[:, dx : dx + w], out=win)
+        out.append(win.astype(np.int64))
+    hi, lo = out
     hi = np.where(hi < 0, lum, hi)
     lo = np.where(lo > 255, lum, lo)
     return np.stack((hi, lo), axis=-1)
