@@ -170,6 +170,21 @@ def test_cabin_copy_behind_a_lamp_lens_loses_to_the_lamp():
         assert centre in (0, 1), recess  # the reflector, under the lens
 
 
+def test_cabin_copy_behind_lamp_glass_loses_to_the_lamp():
+    """The same under plain glass kept over a lamp (#379): the lamp bowl wins over the interior
+    entry's copy of the panel in front of it."""
+    bowl = cr.Material("textured", None, np.ones(3, np.float32), emissive=True)
+    copy = cr.Material("paint", None, np.full(3, 0.2, np.float32))
+    glass = cr.Material("glass", None, np.ones(3, np.float32))
+    for recess in (0.015, 0.15):
+        scene = _scene(
+            [(_quad(-1, 1, -1, 1, 0.0), 0), (_quad(-1, 1, -1, 1, recess), 1), (_quad(-1, 1, -1, 1, 0.2), 2)],
+            [bowl, copy, glass],
+        )
+        scene.inside = np.array([False, False, True, True, False, False])
+        assert _frame(scene).tri.reshape(60, 80)[30, 40] in (0, 1), recess
+
+
 def test_lamp_levels():
     """The colour multiplier the game gives each lamp type (research/lights-re.md)."""
     from dsfforza.convert import lights

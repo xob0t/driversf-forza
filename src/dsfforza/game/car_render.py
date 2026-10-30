@@ -1219,7 +1219,13 @@ def rasterize(scene: Scene, view: _View, layers: int = 2) -> Frame:
         lens_w = np.full(size, -np.inf, np.float32)
         np.maximum.at(lens_w, gk[kinds == "lens"], gw[kinds == "lens"])
         bias = np.where(glass_w[k] > w, INTERIOR_BIAS[0], INTERIOR_BIAS[1])
-        bias = np.where(lens_w[k] > w, INTERIOR_LENS_BIAS, bias)
+        # Nor through glass over a lamp (plain glass kept over the lamps, #379): where the
+        # nearest exterior surface is a lamp's, the interior loses as behind a lens.
+        outside = ~scene.inside[opaque_t[t]]
+        _, ext = _nearest(k[outside], w[outside], opaque_t[t][outside], size)
+        lamp_mat = np.array([m.emissive for m in scene.materials] + [False])
+        behind_lamp = lamp_mat[np.where(ext >= 0, scene.mat[np.maximum(ext, 0)], -1)]
+        bias = np.where((lens_w[k] > w) | ((glass_w[k] > w) & behind_lamp[k]), INTERIOR_LENS_BIAS, bias)
         w = np.where(scene.inside[opaque_t[t]], w * (1 - bias), w)
     depth, tri = _nearest(k, w, opaque_t[t], size)
     out = []
