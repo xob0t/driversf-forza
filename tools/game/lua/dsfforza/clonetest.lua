@@ -50,6 +50,7 @@ local PALETTE = nil           -- config.palette (run-test -Palette): paint palet
                               -- GameVehicleResource.create's ShaderParams, as its vehicle manager does); nil: the game's pick
 local DYNO = nil              -- config.dyno (run-test -Dyno): the dyno.lua module, acceleration and braking runs
 local LIGHTS = nil            -- config.lights (run-test -Lights): the lightstest.lua module, lamp phases per car
+local HIDE_UI = false         -- config.hide_ui (run-test without -Ui): no HUD, prompts or minimap from the first spawn on
 
 do
 	local found, config = user_open("dsfforza\\config.lua")
@@ -66,6 +67,7 @@ do
 		if config.glass_ladder then GLASS_LADDER = true end
 		if type(config.views) == "table" then VIEWS = config.views end
 		if type(config.palette) == "number" then PALETTE = config.palette end
+		if config.hide_ui then HIDE_UI = true end
 		if config.dyno then
 			local loaded, module = user_open("dsfforza\\dyno.lua")
 			if loaded and type(module) == "table" then
@@ -162,7 +164,7 @@ local function registerCloneStats()
 	return true
 end
 
-local state = { index = 1, phase = "request", ticks = 0 }
+local state = { index = 1, phase = "request", ticks = 0, shot = "start" }  -- shot: the view, for shot captions
 
 local function describe(value)
 	if type(value) == "userdata" or type(value) == "table" then
@@ -359,6 +361,65 @@ local function quietRoad(id, car)
 		log(string.format("id %d: cleared %d m around the car %s; traffic now %s", id, CLEAR_RADIUS,
 			ok and "ok" or tostring(err), trafficSample()))
 	end
+end
+
+-- config.hide_ui: the screenshots show the car without the game's UI (hint bar, speed box with the
+-- car's badge and plate, minimap, progress bar, button prompts), which covered rear plates, lower
+-- bumpers and the cockpit's lower corners. Menu.HideUI = 1 is the pause menu's own screenshot mode
+-- (gamepausemenu.lua HideMenusForScreenshot: "Menus Master rendering is disabled"), Menu.ShowHUD = 0
+-- the free camera's (cameraselection.lua createFreeCam). The game sets ShowHUD back when the player
+-- leaves the Shift view (localplayer.lua) and HideUI after a pause, so both are held every frame,
+-- from the first spawn on: before it the frontend and the Shift overview keep their menus.
+-- The car's own dials are model parts and stay.
+local UI_FLAGS = { { "HideUI", 1 }, { "ShowHUD", 0 } }
+local uiHidden, uiResets = false, 0
+local function holdUiHidden()
+	if not uiHidden then return end
+	for _, flag in ipairs(UI_FLAGS) do
+		local ok, value = pcall(function() return Menu[flag[1]] end)
+		if not ok or tonumber(value) ~= flag[2] then
+			pcall(function() Menu[flag[1]] = flag[2] end)
+			-- HideUI reads back nil (write-only), so it is written every frame and not counted.
+			if ok and value ~= nil then uiResets = uiResets + 1 end
+		end
+	end
+end
+
+local function hideUi()
+	if not HIDE_UI or uiHidden then return end
+	uiHidden = true
+	local before = {}
+	for _, flag in ipairs(UI_FLAGS) do
+		local ok, value = pcall(function() return Menu[flag[1]] end)
+		table.insert(before, flag[1] .. "=" .. (ok and tostring(value) or "err"))
+	end
+	holdUiHidden()
+	uiResets = 0
+	addUserUpdateFunction("dsfforza_noui", function() pcall(holdUiHidden) end, 1)
+	log("ui hidden (was " .. table.concat(before, " ") .. ")")
+end
+
+local function uiNote()
+	return uiHidden and string.format(" (ui flags set back %d times so far)", uiResets) or ""
+end
+
+-- What the screen shows, for the harness's shot captions (run-test.ps1 Save-Shot): the model of the
+-- car the player is in and the probe's view (state.shot), as a "shot <n>: ..." line whenever it changes.
+-- DriverNGHook opens, appends and closes Driver.log for every line (LoggerImpl.cpp), so the harness
+-- reads it right before and after each frame copy.
+local shotText, shotSeq = nil, 0
+local function logShotState(id)
+	local model = nil
+	local car = playerVehicle()
+	if car ~= nil then
+		local ok, value = pcall(function() return car.model_id end)
+		model = ok and tonumber(value) or nil
+	end
+	local text = string.format("id=%s probe=%s view=%s phase=%s", tostring(model or ""), tostring(id or ""),
+		state.shot, state.phase)
+	if text == shotText then return end
+	shotText, shotSeq = text, shotSeq + 1
+	log("shot " .. shotSeq .. ": " .. text)
 end
 
 -- gameVehicle.speed is m/s (game scripts set 17.88 for 40 mph).
@@ -734,6 +795,7 @@ local function showView(id, car, name)
 			localPlayer:resetCameraMode()
 		end)
 	end
+	state.shot = name .. (mode and "+" .. mode or "") .. (mph and "+mph" .. mph or "")
 	log(string.format("id %d: view %s %s (cameraMode %s)", id, name, ok and "on" or ("failed: " .. tostring(err)),
 		tostring(localPlayer.cameraMode)))
 end
@@ -869,6 +931,7 @@ local function step()
 		end
 	elseif state.phase == "spawn" then
 		quietRoad(id, nil)
+		hideUi()
 		local current = playerVehicle()
 		local spawned
 		if current ~= nil then
@@ -887,6 +950,7 @@ local function step()
 		localPlayer:SetZapLevel(1, nil, false, { forcedOut = true })
 		localPlayer:ZapIntoVehicle(spawned, false, false, false, nil, { disableZapFlash = true })
 		log(string.format("id %d: zapping into it", id))
+		state.shot = "zap"
 		state.phase, state.ticks = "verify", 0
 	elseif state.phase == "verify" then
 		local current = playerVehicle()
@@ -895,12 +959,13 @@ local function step()
 				tostring(localPlayer.inZap)))
 			quietRoad(id, current)
 			state.phase, state.ticks = "chase_view", 0
+			state.shot = "chase"
 			if DYNO then
 				DYNO.start(id, current, state.previous)
-				state.phase = "dyno"
+				state.phase, state.shot = "dyno", "dyno"
 			elseif LIGHTS then
 				LIGHTS.start(id, current, state.previous)
-				state.phase = "lights"
+				state.phase, state.shot = "lights", "lights"
 			end
 		elseif state.ticks >= VERIFY_TIMEOUT then
 			log(string.format("id %d: zap not confirmed after %d ticks (vehicle: %s, inZap: %s)", id,
@@ -929,6 +994,7 @@ local function step()
 			localPlayer.cameraMode = "DriverEye"
 			localPlayer:resetCameraMode()
 		end)
+		state.shot = "cockpit"
 		log(string.format("id %d: cockpit view %s (cameraMode %s)", id, ok and "on" or ("failed: " .. tostring(err)),
 			tostring(localPlayer.cameraMode)))
 		removeSideCopy()
@@ -956,13 +1022,15 @@ local function step()
 			localPlayer.cameraMode = "Normal"
 			localPlayer:resetCameraMode()
 		end)
-		log(string.format("id %d: chase view restored", id))
+		log(string.format("id %d: chase view restored%s", id, uiNote()))
+		state.shot = "chase"
 		nextId()
 	end
 end
 
 local function safeStep()
 	local ok, err = pcall(step)
+	pcall(logShotState, TEST_IDS[state.index])
 	if not ok then
 		log("error: " .. tostring(err))
 		removeUserUpdateFunction("dsfforza_clonetest")

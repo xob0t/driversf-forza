@@ -82,6 +82,21 @@ def shrink(w: int, h: int, px: bytearray, scale: int) -> tuple[int, int, bytearr
     return W, H, out
 
 
+def caption_rows(run: Path) -> int:
+    """Rows of the caption strip run-test.ps1 puts below each probe shot (result.json "shotCaptionPx")."""
+    try:
+        return int(json.loads((run / "result.json").read_text(encoding="utf-8-sig")).get("shotCaptionPx") or 0)
+    except (OSError, ValueError, AttributeError):
+        return 0
+
+
+def read_frame(path: Path, caption: int) -> tuple[int, int, bytearray]:
+    """A shot without its caption strip: the game's frame only."""
+    w, h, px = read_png(path)
+    h -= caption
+    return w, h, px[: w * h * 3]
+
+
 def phase_names(run: Path) -> dict[tuple[int, int], str]:
     names = {}
     log = run / "Driver.log"
@@ -102,6 +117,7 @@ def main(argv: list[str] | None = None) -> None:
     from dsfforza.formats import vehicle_mesh as vm
 
     names = phase_names(args.run)
+    caption = caption_rows(args.run)
     shots: dict[int, dict[int, list[Path]]] = {}
     for p in sorted(args.run.glob("lights-*-*.png")):
         m = re.match(r"lights-(\d+)-(\d+)([ab])\.png", p.name)
@@ -111,7 +127,7 @@ def main(argv: list[str] | None = None) -> None:
     for car, phases in sorted(shots.items()):
         frames = {}
         for k, files in sorted(phases.items()):
-            imgs = [shrink(*read_png(f), args.scale) for f in files]
+            imgs = [shrink(*read_frame(f, caption), args.scale) for f in files]
             # The brighter of the pair, per pixel (an indicator may be off in one).
             w, h, px = imgs[0]
             for _, _, other in imgs[1:]:

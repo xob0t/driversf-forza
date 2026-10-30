@@ -55,6 +55,9 @@ param(
                          # cameras on the driver's seat (left, right, front), the tailgate (rear), the tailpipes (exhaust), the left wheels
                          # (wheels), the front left wheel (fq, lock) and the headlamps (nose), e.g. 'Bonnet,Bumper,left'
     [int]$Palette = -1,  # probe: paint palette entry of every probed car (shaderParams[0]); -1: the game's pick
+    [switch]$Ui,         # probe: keep the game's UI (HUD, prompts, minimap) in the shots; by default clonetest.lua hides it
+                         # from the first spawn on (-MenuKeys keeps it too: the garage menus are UI)
+    [string]$ShotLabel,  # probe: the archive's name in each shot's caption (run-series.ps1 -Labels); default its path
     [switch]$LightsDriveOnly, # with -Lights: only the day and dark drives, no setLights phases
     [switch]$Lights,     # probe: lamp phases per car (dsfforza\lightstest.lua, research/lights.md); the harness
                          # picks each phase through dsfforza\lightsync.lua and saves lights-<id>-<k>a/b.png
@@ -350,6 +353,89 @@ function Test-CrashDialog {
     return $true
 }
 
+# Shot captions: once the probe's observe stage starts, each screenshot (not the menu-NN.png menu
+# shots) gets a strip of $captionPx rows below the frame, so the game's pixels stay where they
+# were: the shot's name, the car the player is in (spool ID and name), the probe's view and the
+# archive. The car and view come from clonetest.lua's latest "shot <n>: id=.. view=.." line in
+# Driver.log, read just before and just after the frame is copied (DriverNGHook closes the log after
+# every line); result.json "shots" has every caption, "shotCaptionPx" the strip's height.
+$captionPx = 22
+$script:captionShots = $false
+$script:shotCaptions = [ordered]@{}
+$carNames = @{}   # spool ID -> name for captions (Set-CarNames)
+$captionFont = New-Object System.Drawing.Font('Consolas', 13, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
+
+function Set-CarNames([string]$PortedLua) {
+    # Vanilla: research\hosts.tsv's model, else vehicles.tsv's first. Ported: the build's dngvehicles.lua
+    # (ported.lua) entries '[id] = { host = N, media = "...", name = "..." ...'.
+    foreach ($tsv in 'vehicles.tsv', 'hosts.tsv') {
+        $path = Join-Path $RepoDir "research\$tsv"
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $rows = @(Import-Csv -LiteralPath $path -Delimiter "`t")
+        foreach ($row in $rows) {
+            $id = if ($tsv -eq 'hosts.tsv') { $row.id } else { $row.spool_id }
+            if ($id -match '^\d+$' -and $row.model) { $carNames[[int]$id] = "$(($row.model -split '\|')[0]) (vanilla)" }
+        }
+    }
+    if ($PortedLua -and (Test-Path -LiteralPath $PortedLua)) {
+        foreach ($m in [regex]::Matches((Get-Content -LiteralPath $PortedLua -Raw), '\[(\d+)\] = \{ host = (\d+), media = "([^"]*)", name = "([^"]*)"')) {
+            $carNames[[int]$m.Groups[1].Value] = "$($m.Groups[4].Value) [$($m.Groups[3].Value)] (ported, host $($m.Groups[2].Value))"
+        }
+    }
+}
+
+$script:shotLogPos = 0
+$script:shotState = @{}
+function Read-ShotState {
+    # The probe's latest shot line, reading on from where the last call stopped.
+    try {
+        $stream = [IO.File]::Open((Join-Path $RunPath 'Driver.log'), 'Open', 'Read', 'ReadWrite')
+        try {
+            if ($stream.Length -lt $script:shotLogPos) { $script:shotLogPos = 0 }
+            [void]$stream.Seek($script:shotLogPos, 'Begin')
+            $bytes = New-Object byte[] ($stream.Length - $script:shotLogPos)
+            $read = $stream.Read($bytes, 0, $bytes.Length)
+        } finally { $stream.Dispose() }
+        $cut = if ($read -gt 0) { [Array]::LastIndexOf($bytes, [byte]10, $read - 1) } else { -1 }
+        if ($cut -ge 0) {
+            $script:shotLogPos += $cut + 1
+            $last = [regex]::Matches([Text.Encoding]::UTF8.GetString($bytes, 0, $cut + 1), '\[dsfforza\] shot (\d+): ([^\r\n]*)') |
+                Select-Object -Last 1
+            if ($last) {
+                $state = @{ seq = $last.Groups[1].Value }
+                foreach ($pair in ($last.Groups[2].Value -split ' ')) { $k, $v = $pair -split '=', 2; if ($k) { $state[$k] = $v } }
+                $script:shotState = $state
+            }
+        }
+    } catch { }
+    return $script:shotState
+}
+
+function Get-CarText([string]$id) {
+    if ($id -notmatch '^\d+$') { return $null }
+    $name = $carNames[[int]$id]
+    return "ID $id $(if ($name) { $name } else { '(no name)' })"
+}
+
+function Get-ShotCaption([string]$Name, $before, $after) {
+    $parts = @([IO.Path]::GetFileNameWithoutExtension($Name))
+    if ($after.seq) {
+        $car = Get-CarText $after.id
+        $parts += $(if ($car) { $car } elseif ($after.probe) { "no car (probe ID $($after.probe) next)" } else { 'no car' })
+        $parts += "view $($after.view)"
+        if ($before.seq -and $before.seq -ne $after.seq) {
+            $parts += "changed during the shot (was $(if ($before.id) { "ID $($before.id)" } else { 'no car' }), view $($before.view))"
+        }
+    }
+    else {
+        # No shot state (a probe from before it): the probe's latest "id N:" line, which lags.
+        $line = if (Test-Path $log) { Select-String -LiteralPath $log -Pattern '\[dsfforza\] id (\d+): ' | Select-Object -Last 1 }
+        $parts += $(if ($line) { "$(Get-CarText $line.Matches[0].Groups[1].Value) (from Driver.log, may lag)" } else { 'car unknown' })
+    }
+    $parts += $ShotLabel
+    return $parts -join '  |  '
+}
+
 function Save-Shot([string]$Name) {
     try {
         $window = Get-GameWindow
@@ -361,9 +447,24 @@ function Save-Shot([string]$Name) {
         $w = [math]::Min($rect.Right, $screen.Right) - $left; $h = [math]::Min($rect.Bottom, $screen.Bottom) - $top
         if ($w -le 0 -or $h -le 0) { Note "screenshot $Name skipped: window $window rect $($rect.Left),$($rect.Top),$($rect.Right),$($rect.Bottom)"; return }
         $rect.Left = $left; $rect.Top = $top
-        $bitmap = New-Object System.Drawing.Bitmap $w, $h
+        $caption = $script:captionShots -and $Name -notlike 'menu-*'
+        if ($caption) { $before = Read-ShotState }
+        $bitmap = New-Object System.Drawing.Bitmap $w, ($h + $(if ($caption) { $captionPx } else { 0 }))
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
         $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, (New-Object System.Drawing.Size $w, $h))
+        if ($caption) {
+            $text = Get-ShotCaption $Name $before (Read-ShotState)
+            $script:shotCaptions[$Name] = $text
+            $graphics.FillRectangle([System.Drawing.Brushes]::Black, 0, $h, $w, $captionPx)
+            $graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+            $format = New-Object System.Drawing.StringFormat
+            $format.Trimming = [System.Drawing.StringTrimming]::EllipsisCharacter
+            $format.FormatFlags = [System.Drawing.StringFormatFlags]::NoWrap
+            $format.LineAlignment = [System.Drawing.StringAlignment]::Center
+            $graphics.DrawString($text, $captionFont, [System.Drawing.Brushes]::White,
+                (New-Object System.Drawing.RectangleF 6, $h, ($w - 12), $captionPx), $format)
+            $format.Dispose()
+        }
         $bitmap.Save((Join-Path $RunDir $Name), [System.Drawing.Imaging.ImageFormat]::Png)
         $graphics.Dispose(); $bitmap.Dispose()
     }
@@ -376,6 +477,7 @@ function Save-Shot([string]$Name) {
 if ($OnHost) { [DsfGuest]::SetThreadExecutionState([uint32]2147483651) | Out-Null }
 
 $result = [ordered]@{ archive = $Archive; hook = [bool]$Hook; probe = [bool]$Probe; stage = 'start' }
+if (-not $ShotLabel) { $ShotLabel = $Archive -replace "^$([regex]::Escape($RepoDir))\\", '' }
 try {
     Get-Process Driver -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Milliseconds 500
@@ -459,6 +561,14 @@ try {
         Note "build files from ${buildFolder}: $(($buildFiles | ForEach-Object { $_.Substring($buildFolder.Length + 1) }) -join ', ')"
     }
     $result.buildFiles = $buildFiles
+    # Car names for the shot captions: the ported.lua the probe gets (-LuaFiles, else the build's
+    # dngvehicles.lua beside the archive, -ArchiveOnly too: its IDs are the archive's cars).
+    $portedLua = Join-Path $buildFolder 'dngvehicles.lua'
+    foreach ($pair in ($LuaFiles -split ';' | Where-Object { $_ })) {
+        $name, $path = $pair -split '=', 2
+        if ($name.Trim() -eq 'dsfforza\ported.lua') { $portedLua = $path.Trim() }
+    }
+    if ($Probe) { Set-CarNames $(if ((Split-Path $Archive -Leaf) -eq 'dngvehicles.sp' -or $LuaFiles -match 'ported\.lua') { $portedLua }) }
     # A dsfforza install on the host (tools\install.ps1) replaces some game files. Tests use
     # the repo's copy of the originals (out\vanilla, see src\dsfforza\game\game_paths.py) unless -Override
     # names a file. Never link the install's own dsfforza-backup: a running test would hold
@@ -540,6 +650,7 @@ try {
                     if ($DamageSide) { $fields += "damage_side = true" }
                     if ($GlassLadder) { $fields += "glass_ladder = true" }
                     if ($Palette -ge 0) { $fields += "palette = $Palette" }
+                    if (-not $Ui -and -not $MenuKeys) { $fields += "hide_ui = true" }
                     if ($buildLua.Contains('dsfforza\ported.lua')) { $fields += "register = { interesting = false }" }
                     if ($Views) { $fields += "views = { " + (($Views -split ',' | Where-Object { $_ } | ForEach-Object { "`"$($_.Trim())`"" }) -join ', ') + " }" }
                     if ($Lights) {
@@ -677,6 +788,11 @@ try {
 
     # Wait for the probe (or just watch the game for -WaitSeconds).
     $result.stage = 'observe'
+    if ($Probe) {
+        $script:captionShots = $true
+        $result.shotCaptionPx = $captionPx
+        $result.ui = if ($Ui -or $MenuKeys) { 'shown' } else { 'hidden' }
+    }
     $log = Join-Path $run 'Driver.log'
     $deadline = (Get-Date).AddSeconds($WaitSeconds)
     $shot = 0
@@ -1020,5 +1136,6 @@ finally {
     $result.keysSkipped = [DsfGuest]::Skipped   # presses dropped: the game wasn't in the foreground
     $result.lastClick = [DsfGuest]::LastClick
     $result.seconds = [math]::Round(((Get-Date) - $started).TotalSeconds, 1)
+    if ($script:shotCaptions.Count) { $result.shots = $script:shotCaptions }
     $result | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $RunDir 'result.json')
 }

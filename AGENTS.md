@@ -101,6 +101,8 @@ Research notes are in `research/` (read the ones for your area first).
   - with more than two or three probe IDs or extra `-Views`, use
     `-ShotSeconds 3` and a longer `-WaitSeconds` (300 to 600), or the probe
     ends before it reaches the last cars;
+  - probe shots have no game UI (`-Ui` keeps it) and a caption strip below
+    the frame naming the shot, car, view and archive (`-Labels before,after`);
   - a run that fails before the world loads (no desktop session, a hang on
     the way to Story mode, a slow load on a busy host) is usually the VM,
     not your change. `run-series.ps1` waits for spare host CPU before each
