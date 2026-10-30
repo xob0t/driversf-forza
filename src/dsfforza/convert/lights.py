@@ -368,16 +368,51 @@ def yellow_lens(texel) -> bool:
     return 60 * (g - b) / (max(r, g, b) - min(r, g, b)) >= YELLOW_LENS_HUE
 
 
-def texel_sampler(atlases, reduce=None):
+def texel_sampler(atlases, reduce=None, of_mean=None):
     """(section, sub, triangle) -> the mean Forza texel (r, g, b, a) under one
     triangle of a Lights-texture subsection, else None. atlases: a
     forza_materials.AtlasCache of the car (dsf_materials.Texturing.atlases).
-    reduce: texels (n, 4) -> the result instead of their mean."""
+    reduce: texels (n, 4) -> the result instead of their mean; of_mean: the mean (r, g, b, a)
+    -> the result instead of it."""
+    import numpy as np
+
     from dsfforza.convert import dsf_materials, trim_art
     from dsfforza.convert import forza_materials as fm
 
     images: dict = {}
     materials: dict = {}
+    # (id(section), id(sub)) -> (section, sub, {triangle: (its texels, their mean)}): the texels
+    # of all a subsection's triangles from one lookup (trim_art.triangles_texels: the same texels
+    # as triangle_texels one by one), the first time one of them is asked for, and their means
+    # (integer sums, exact in any order, over the count: what texels.mean(0) gives).
+    found: dict = {}
+
+    def _texels(section, sub, m, image, tri):
+        """(texels, their mean as floats or None) of one triangle."""
+        h, w = image.shape[:2]
+        pool = section.vertices_for(sub)
+        key = (id(section), id(sub))
+        if key not in found or found[key][0] is not section or found[key][1] is not sub:
+            tris = [tuple(t) for t in sub.triangles()]
+            pts = [[(u * w, v * h) for u, v in dsf_materials.triangle_uv(m, [pool[i].uv0 for i in t])] for t in tris]
+            every, at = trim_art.triangles_texels(image, pts)
+            counts = np.diff(at)
+            full = np.nonzero(counts)[0]
+            means = {}
+            if len(full):
+                sums = np.add.reduceat(every, at[:-1][full], axis=0).astype(np.float64)
+                means = dict(zip(full.tolist(), (sums / counts[full, None]).tolist(), strict=True))
+            found[key] = (
+                section,
+                sub,
+                {t: (every[at[k] : at[k + 1]], means.get(k)) for k, t in enumerate(tris)},
+            )
+        got = found[key][2].get(tri)
+        if got is None:  # not one of the subsection's own triangles
+            uvs = dsf_materials.triangle_uv(m, [pool[i].uv0 for i in tri])
+            texels = trim_art.triangle_texels(image, [(u * w, v * h) for u, v in uvs])
+            got = (texels, texels.mean(0).tolist() if len(texels) else None)
+        return got
 
     def sample(section, sub, tri):
         key = id(sub)
@@ -398,15 +433,12 @@ def texel_sampler(atlases, reduce=None):
         image = images[fm.LIGHTS]
         if image is None:
             return None
-        h, w = image.shape[:2]
-        pool = section.vertices_for(sub)
-        uvs = dsf_materials.triangle_uv(m, [pool[i].uv0 for i in tri])
-        texels = trim_art.triangle_texels(image, [(u * w, v * h) for u, v in uvs])
+        texels, mean = _texels(section, sub, m, image, tuple(tri))
         if not len(texels):
             return None
         if reduce is not None:
             return reduce(texels)
-        return tuple(float(c) for c in texels.mean(0))
+        return tuple(mean) if of_mean is None else of_mean(mean)
 
     return sample
 
@@ -420,11 +452,16 @@ def _seen(texels) -> str | None:
     return texel_class((*texels[:, :3].mean(0), 255))
 
 
+def _seen_mean(mean) -> str | None:
+    """_seen from the triangle's mean texel (texel_sampler's: the same mean)."""
+    return texel_class((*mean[:3], 255))
+
+
 def seen_sampler(atlases):
     """(section, sub, triangle) -> the class (red, amber, white) of most of the texels under one
     triangle of a Lights-texture subsection, else None (LampPlan.build `seen`). atlases: the
     ones the car is drawn from, lenses baked (dsf_materials.Texturing.atlases)."""
-    return texel_sampler(atlases, _seen)
+    return texel_sampler(atlases, of_mean=_seen_mean)
 
 
 @dataclass
