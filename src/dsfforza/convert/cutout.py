@@ -46,46 +46,48 @@ ALPHA_PASS = 128
 # --- mask -> polygons ----------------------------------------------------------------
 
 
+# Marching-squares crossings per cell code (tl 8, tr 4, br 2, bl 1), as (from, to) edges of
+# the cell (0 top, 1 right, 2 bottom, 3 left), the filled side on the walker's right as
+# seen in the texture (x right, y down); saddles (5, 10) join the filled corners.
+_CROSSINGS = {
+    1: ((3, 2),),
+    2: ((2, 1),),
+    3: ((3, 1),),
+    4: ((1, 0),),
+    5: ((3, 0), (1, 2)),
+    6: ((2, 0),),
+    7: ((3, 0),),
+    8: ((0, 3),),
+    9: ((0, 2),),
+    10: ((0, 1), (2, 3)),
+    11: ((0, 1),),
+    12: ((1, 3),),
+    13: ((1, 2),),
+    14: ((2, 3),),
+}
+
+
 def _loops(mask) -> list[list[tuple[float, float]]]:
     """Closed outlines of a boolean grid (mask[y][x], sampled at texel centres
     x + 0.5, y + 0.5), counter-clockwise around filled areas (y down: as seen in
     the texture), clockwise around holes. Marching squares with the outline
-    through the midpoints between samples; saddles join the filled corners."""
+    through the midpoints between samples; saddles join the filled corners. The
+    cell codes come from numpy; the cells on an outline are walked in row order."""
+    import numpy as np
+
     h = len(mask)
     w = len(mask[0]) if h else 0
-
-    def at(x, y):
-        return 0 <= x < w and 0 <= y < h and bool(mask[y][x])
-
+    padded = np.zeros((h + 2, w + 2), np.int64)
+    if h and w:
+        padded[1:-1, 1:-1] = np.asarray(mask, dtype=bool)
+    # cell (x, y), x and y from -1: corners at(x, y), at(x + 1, y), at(x + 1, y + 1), at(x, y + 1)
+    code = padded[:-1, :-1] * 8 + padded[:-1, 1:] * 4 + padded[1:, 1:] * 2 + padded[1:, :-1]
+    rows, cols = np.nonzero((code != 0) & (code != 15))
     # Segment keys: doubled coordinates of edge midpoints between sample points.
     nxt: dict = {}
-    for y in range(-1, h):
-        for x in range(-1, w):
-            a, b, c, d = at(x, y), at(x + 1, y), at(x + 1, y + 1), at(x, y + 1)  # tl tr br bl
-            if a == b == c == d:
-                continue
-            top, right = (2 * x + 1, 2 * y), (2 * x + 2, 2 * y + 1)
-            bottom, left = (2 * x + 1, 2 * y + 2), (2 * x, 2 * y + 1)
-            # Each crossing as (from, to) with the filled side on the walker's right as
-            # seen in the texture (x right, y down); saddles join the filled corners.
-            code = a * 8 + b * 4 + c * 2 + d
-            table = {
-                1: [(left, bottom)],
-                2: [(bottom, right)],
-                3: [(left, right)],
-                4: [(right, top)],
-                5: [(left, top), (right, bottom)],  # saddle: tr and bl filled
-                6: [(bottom, top)],
-                7: [(left, top)],
-                8: [(top, left)],
-                9: [(top, bottom)],
-                10: [(top, right), (bottom, left)],  # saddle: tl and br filled
-                11: [(top, right)],
-                12: [(right, left)],
-                13: [(right, bottom)],
-                14: [(bottom, left)],
-            }
-            nxt.update(table[code])
+    for y, x, k in zip((rows - 1).tolist(), (cols - 1).tolist(), code[rows, cols].tolist(), strict=True):
+        edges = ((2 * x + 1, 2 * y), (2 * x + 2, 2 * y + 1), (2 * x + 1, 2 * y + 2), (2 * x, 2 * y + 1))
+        nxt.update((edges[f], edges[t]) for f, t in _CROSSINGS[k])
     loops = []
     while nxt:
         start, cur = next(iter(nxt.items()))
@@ -179,6 +181,28 @@ def _point_in_tri(p, a, b, c) -> bool:
     return _cross(a, b, p) >= -1e-12 and _cross(b, c, p) >= -1e-12 and _cross(c, a, p) >= -1e-12
 
 
+def _blocks_ear(poly, idx, i0, i1, i2, a, b, c) -> bool:
+    """Whether a vertex of idx other than i0, i1, i2 (and other than a point equal to a, b
+    or c) lies in triangle abc: _point_in_tri's arithmetic, written out for speed."""
+    ax, ay = a
+    bx, by = b
+    cx, cy = c
+    abx, aby, bcx, bcy, cax, cay = bx - ax, by - ay, cx - bx, cy - by, ax - cx, ay - cy
+    for j in idx:
+        if j in (i0, i1, i2):
+            continue
+        p = poly[j]
+        px, py = p
+        if (
+            abx * (py - ay) - aby * (px - ax) >= -1e-12
+            and bcx * (py - by) - bcy * (px - bx) >= -1e-12
+            and cax * (py - cy) - cay * (px - cx) >= -1e-12
+            and p not in (a, b, c)
+        ):
+            return True
+    return False
+
+
 def _drop_collinear(poly):
     """The loop without vertices on a straight line between their neighbours."""
     out = list(poly)
@@ -209,7 +233,7 @@ def _ear_clip(poly):
             a, b, c = poly[i0], poly[i1], poly[i2]
             if _cross(a, b, c) <= 1e-12:
                 continue  # reflex or flat
-            if any(_point_in_tri(poly[j], a, b, c) and poly[j] not in (a, b, c) for j in idx if j not in (i0, i1, i2)):
+            if _blocks_ear(poly, idx, i0, i1, i2, a, b, c):
                 continue
             tris.append((a, b, c))
             idx.pop(k)
