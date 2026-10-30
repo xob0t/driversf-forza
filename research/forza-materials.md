@@ -513,6 +513,51 @@ black: shaded, with the chrome's reflections (scoop on screen p10/p50/p90
 65/210/221, against 104/233/239 on the atlas path), the engine detail between
 the scoops stays on the atlas (`img/trim-art-veyron-ingame-before-after.jpg`).
 
+## Pictures split over triangles (issue #307, 2026-10-30)
+
+User report: on the F40 (FER_F40_87, host 225) the engine under the louvred
+rear cover was drawn in two diagonal halves, one dark, in game and in
+`car_render` of the built exterior.
+
+**Cause (confirmed-static; `out/i307/` in the worktree).** Not the bay's sky
+term (`damage.exposed_sky`). The engine is a picture on one `body/frame` quad
+of four triangles round a centre vertex (x ±0.52, y 0.15 to 0.52, z -1.86 to
+-0.80, tilted towards the rear). `split_trim_art` classed each triangle on its
+own texels: two passed the dark-detail test (median window maximum 112 and 56,
+over DETAIL_MIN_LEVEL 40) and went through the atlas, two fell short (18 and
+35) and stayed on the shared trim's one dark texel (`TRIM_UV`). Each half of
+the picture lost the detail of one triangle, along its diagonal.
+
+**Fix (`trim_art.whole_charts`).** After the per-triangle classes, the
+triangles of each UV chart of the subsection (`uv_charts`: joined by shared
+vertices, or corners with the same position and UV0) are judged together: in a
+chart with triangles for the atlas (art or detail) whose texels together pass
+`classify_texels` as art or detail, the chart's other opaque triangles that
+would stay trim or take a flat grey cell take that class too. A chart that is
+mostly flat black with one triangle of detail fails the pooled test and stays
+as it was. The seen test still runs per triangle.
+
+**Survey (every roster car, LODs 1, 3 and 5; `out/i307/survey.py`).** UV
+charts split between the atlas and the trim (or grey cells), seen or not:
+7,852 on 535 cars before, 4,874 on 494 after. The triangles `split_trim_art`
+moves change on 324 cars: 1,634,218 to 1,649,636 triangles, 2,630 to 2,745 m²
+over the three LODs (median 0.16 m² a changed car; the most, 5.1 m², the
+Corvette Stingray 67's side pipes (`body/misc`) and seats). By technique: `frame` (269
+subsections), `matte_colors` (248), `misc` (68), the rest few. Of the cars the
+report named: F40 (`body/frame` engine, `hooda`/`trunk`/`bumperRa` frames), F50
+and Murciélago 05 (`hooda/frame`), Enzo, Gallardo 05, F430 Scuderia, F430 GT
+06, GT40, CCX, Countach change; F430, F430 GT 10, XJ220, Ford GT 05,
+MP4-12C and Veyron don't (no split chart whose texels pass together).
+
+**Build (16 cars, `out/b/after` against master).** The atlas scale is the
+same on 15 cars; the Cobalt SS's goes from 0.629 to 0.611. `render_compare
+diff` (`out/rc/f40-bay-307`): 6 of 16 drawn differently. The Corvette
+Stingray 67 gets closer to Forza (4.206 to 4.045: its side pipes light grey as
+in Forza instead of dark trim), the Cobalt SS's lamps and badges are the same
+pictures at the lower scale, the GT-One, Civic VTi, Gallardo and R8 08 change
+by 2 to 4% of a region's pixels. The F40's deck from above (`car_render` of
+both builds, `out/i307/f40-deck-offline.jpg`): the engine picture is whole.
+
 ## Forza's trim shaders and flat black grilles (2026-10-26)
 
 User report on `out/final4` (MRC_CougarEliminator_70, FM4, spool 565, host
