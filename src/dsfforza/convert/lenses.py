@@ -272,6 +272,17 @@ def _texels(uv_px: np.ndarray):
 
 TEXELS_CHUNK = 1 << 21  # _texels_many: bounding-box texels tested at a time
 TEXELS_ONE_BY_ONE = 256  # _texels_many: boxes of more texels go through _texels
+TEXELS_BATCH_MIN = 8  # _texels_many: fewer small boxes than this and every triangle goes through _texels
+
+
+def _texels_each(uv_px: np.ndarray):
+    """_texels_many by _texels, one triangle at a time."""
+    got = [_texels(t) for t in uv_px]
+    offsets = np.zeros(len(uv_px) + 1, np.int64)
+    np.cumsum([len(g[0]) for g in got], out=offsets[1:])
+    if not got:
+        return np.zeros(0, np.int64), np.zeros(0, np.int64), np.zeros((0, 3)), offsets
+    return (*(np.concatenate([g[c] for g in got]) for c in range(3)), offsets)
 
 
 def _texels_many(uv_px: np.ndarray):
@@ -280,16 +291,12 @@ def _texels_many(uv_px: np.ndarray):
     _texels' order, and the offsets (n + 1) where each triangle's start; the same arithmetic
     per texel, without numpy calls per triangle. Triangles with a non-finite corner go
     through _texels one by one (which raises, as it did), and so do triangles whose box
-    holds more than TEXELS_ONE_BY_ONE texels (its broadcast grid costs less per texel)."""
+    holds more than TEXELS_ONE_BY_ONE texels (its broadcast grid costs less per texel). With
+    fewer than TEXELS_BATCH_MIN boxes to batch, all of them do (the batch's fixed cost)."""
     uv_px = np.asarray(uv_px, dtype=np.float64).reshape(-1, 3, 2)
     n = len(uv_px)
     if not np.isfinite(uv_px).all():
-        got = [_texels(t) for t in uv_px]
-        offsets = np.zeros(n + 1, np.int64)
-        np.cumsum([len(g[0]) for g in got], out=offsets[1:])
-        if not got:
-            return np.zeros(0, np.int64), np.zeros(0, np.int64), np.zeros((0, 3)), offsets
-        return (*(np.concatenate([g[c] for g in got]) for c in range(3)), offsets)
+        return _texels_each(uv_px)
     xs, ys = uv_px[:, :, 0], uv_px[:, :, 1]
     area = (xs[:, 1] - xs[:, 0]) * (ys[:, 2] - ys[:, 0]) - (ys[:, 1] - ys[:, 0]) * (xs[:, 2] - xs[:, 0])
     x0, x1 = np.floor(xs.min(1)), np.ceil(xs.max(1))
@@ -297,6 +304,8 @@ def _texels_many(uv_px: np.ndarray):
     boxed = (np.abs(area) > 1e-9) & (x1 > x0) & (y1 > y0)
     bw = np.where(boxed, x1 - x0, 0).astype(np.int64)
     size = bw * np.where(boxed, y1 - y0, 0).astype(np.int64)
+    if int(((size > 0) & (size <= TEXELS_ONE_BY_ONE)).sum()) < TEXELS_BATCH_MIN:
+        return _texels_each(uv_px)
     x0, y0 = np.where(boxed, x0, 0).astype(np.int64), np.where(boxed, y0, 0).astype(np.int64)
     count = np.zeros(n, np.int64)
     ix, iy, bary, owner = [], [], [], []

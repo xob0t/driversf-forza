@@ -31,8 +31,10 @@ def test_texels_many_matches_texels():
             lenses.TEXELS_CHUNK, chunk = 40, lenses.TEXELS_CHUNK  # many chunks, triangles bigger than one
         # big boxes one by one (the default), every box one by one, none
         lenses.TEXELS_ONE_BY_ONE, one_by_one = (256, 0, 10**9)[case % 3], lenses.TEXELS_ONE_BY_ONE
+        # and with any number of small boxes batched (the default needs TEXELS_BATCH_MIN)
+        lenses.TEXELS_BATCH_MIN, batch_min = (8, 0, 1)[case % 3], lenses.TEXELS_BATCH_MIN
         ix, iy, bary, at = lenses._texels_many(pts)
-        lenses.TEXELS_ONE_BY_ONE = one_by_one
+        lenses.TEXELS_ONE_BY_ONE, lenses.TEXELS_BATCH_MIN = one_by_one, batch_min
         if case == 2:
             lenses.TEXELS_CHUNK = chunk
         assert len(at) == len(pts) + 1 and at[0] == 0 and at[-1] == len(ix) == len(iy) == len(bary)
