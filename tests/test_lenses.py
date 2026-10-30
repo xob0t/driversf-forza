@@ -453,7 +453,6 @@ def test_cover_over_its_lenses_is_left_out():
 
 
 def _textured(section, sub):
-    import dataclasses
 
     return dataclasses.replace(fm.resolve(section, sub), role=fm.TEXTURED, family=fm.LIGHTS)
 
