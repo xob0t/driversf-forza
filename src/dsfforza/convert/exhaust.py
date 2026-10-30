@@ -245,11 +245,12 @@ def find_tips(body, place) -> list[Tip]:
     in x order; without any, those of the pipes modelled in other sections
     (find_pipes)."""
     others = [s for s in body if not SECTION.match(s.name)]
-    tips = _tips(_triangles(exhaust_sections(body), place), _triangles(others, place).reshape(-1, 3))
+    points = _triangles(others, place).reshape(-1, 3)
+    tips = _tips(_triangles(exhaust_sections(body), place), points)
     if tips:
         return tips
     pipes = find_pipes(others, place)
-    return _tips(pipes, _triangles(others, place).reshape(-1, 3)) if len(pipes) else []
+    return _tips(pipes, points) if len(pipes) else []
 
 
 def _section_triangles(section, sub, place) -> np.ndarray:
