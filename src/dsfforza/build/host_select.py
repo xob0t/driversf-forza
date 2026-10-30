@@ -43,6 +43,7 @@ import functools
 import hashlib
 import json
 import math
+import os
 import re
 import sqlite3
 import struct
@@ -702,11 +703,16 @@ class ForzaInfo:
 
 
 def forza_info(
-    media: str, gamedbs: dict[str, Path] | None = None, game: str | None = None, folder: Path | None = None
+    media: str,
+    gamedbs: dict[str, Path] | None = None,
+    game: str | None = None,
+    folder: Path | None = None,
+    doors_memo=None,
 ) -> ForzaInfo:
     """What host selection needs about a Forza car, from gamedb.slt ({game: path}, the
     game the car is taken from first; None: out/db). `folder`: the extracted car, for a
-    door-count hint from the carbin's glass sections."""
+    door-count hint from the carbin's glass sections. `doors_memo` (door_memo()): the
+    door counts of earlier runs, for port_batch's plan (issue #297)."""
     dbs = gamedbs if isinstance(gamedbs, dict) else dict(DEFAULT_GAMEDBS)
     order = sorted(dbs.items(), key=lambda kv: (kv[0] != game,))
     row = body = None
@@ -780,7 +786,12 @@ def forza_info(
     b = _forza_body(fb, model, engine, make_code=make_code, year=year, mass=mass, length=length, height=height)
     if b in ("bus", "truck") and engine.aspiration == "turbo":  # Forza has no fuel field; trucks and buses are diesel
         engine.aspiration = "diesel"
-    doors = _carbin_doors(folder, media, b) if folder is not None else None
+    doors = None
+    if folder is not None and doors_memo is not None and b in DOOR_RULE_BODIES:
+        key = f"{os.path.normcase(os.path.realpath(folder))}|{media}|{b}"
+        doors = doors_memo.get(key, lambda: _carbin_doors(folder, media, b))
+    elif folder is not None:
+        doors = _carbin_doors(folder, media, b)
     notes = []
     if doors is not None:
         notes.append(f"{doors} doors from the carbin's side glass")
@@ -846,6 +857,18 @@ FRONT_GLASS_2DOOR = 0.4  # m behind the wheelbase midpoint: the front door glass
 FRONT_GLASS_4DOOR = 0.175  # x wheelbase: on 4-doors it ends before it (Rapide 0.167, the 3-doors from 0.185)
 REAR_DOOR_START = (-0.2, 0.12)  # m from the front door glass's end: where the rear door's (or quarter's) skin starts
 REAR_DOOR_END = 0.08  # m behind the rear axle: a rear door ends ahead of it, a rear quarter past it
+
+
+DOORS_MEMO = REPO / "out" / "cache" / "carbin-doors.json"
+
+
+def door_memo():
+    """The door counts port_batch's plan keeps between runs (fingerprint.Memo; a full
+    roster's take minutes to measure). Call save() on it when done. Workers don't use it:
+    they measure the car anyway, and the memo file would be an input of their fingerprint."""
+    from dsfforza.build import fingerprint
+
+    return fingerprint.Memo(DOORS_MEMO)
 
 
 @functools.lru_cache(maxsize=32)  # forza_info asks up to three times per car (host, sound, same vehicle)

@@ -218,9 +218,19 @@ def describe_cars(
     port_car.pick_hosts picks it: the source game's gamedb and the car's extracted
     folder under `cache` (its carbin's door count, issue #239)."""
     from dsfforza.build import host_select as hs
-    from dsfforza.build.port_car import CarRequest, car_folder, pick_source
 
     hosts = hs.survey(dsf)
+    memo = hs.door_memo()
+    try:
+        return _describe(cars, requests, dbs, cache, hosts, memo)
+    finally:
+        memo.save()
+
+
+def _describe(cars: dict, requests, dbs: dict[str, Path], cache: Path | None, hosts: list, memo) -> list[Pick]:
+    from dsfforza.build import host_select as hs
+    from dsfforza.build.port_car import CarRequest, car_folder, pick_source
+
     picks = []
     for media, game in requests:
         car = cars.get(media.lower())
@@ -235,7 +245,9 @@ def describe_cars(
         folder = car_folder(cache, source.game, rcar.name) if cache is not None else None
         extracted = folder is not None and folder.is_dir()
         db = dbs.get(source.game)
-        info = hs.forza_info(rcar.name, {source.game: db} if db else None, source.game, folder if extracted else None)
+        info = hs.forza_info(
+            rcar.name, {source.game: db} if db else None, source.game, folder if extracted else None, memo
+        )
         ranking = hs.rank(info, hosts)
         best = ranking[0]
         counterpart = None

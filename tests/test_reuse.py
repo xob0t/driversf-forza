@@ -142,6 +142,48 @@ def test_fingerprint_records_inputs_and_code():
         assert fingerprint.Checker().check(changed, job, code=False) is None
 
 
+def test_memo_keeps_a_result_until_what_it_read_or_ran_changes():
+    from dsfforza.formats import xds
+
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        data, path = folder / "input.bin", folder / "memo.json"
+        data.write_bytes(bytes(64))
+        calls = []
+
+        def compute():
+            calls.append(1)
+            return list(xds.parse_header(data.read_bytes()))
+
+        def get(key: str = "car"):
+            memo = fingerprint.Memo(path)
+            try:
+                return memo.get(key, compute)
+            finally:
+                memo.save()
+
+        first = get()
+        assert get() == first and len(calls) == 1  # kept
+        stored = json.loads(path.read_text())
+        assert fingerprint.norm(data) in stored["entries"]["car"]["files"]
+        assert any("parse_header" in c.get("dsfforza.formats.xds", {}) for c in stored["codes"].values())
+        data.write_bytes(bytes(65))  # an input changed
+        get()
+        assert len(calls) == 2
+        stored = json.loads(path.read_text())
+        for code in stored["codes"].values():  # the code it ran changed
+            code["dsfforza.formats.xds"]["parse_header"] = "0" * 24
+        path.write_text(json.dumps(stored))
+        get()
+        assert len(calls) == 3 and get() and len(calls) == 3
+        recorder = fingerprint.Recorder().start()  # another recording in the process: compute only
+        try:
+            get("other")
+        finally:
+            recorder.stop()
+        assert len(calls) == 4 and "other" not in json.loads(path.read_text())["entries"]
+
+
 def test_a_moved_vanilla_archive_with_the_same_digest_is_the_same_input():
     """dsff install builds from the game's dngvehicles.sp the first time and from the install's
     backup of it after that (issue #95: every car was converted again on each later run)."""

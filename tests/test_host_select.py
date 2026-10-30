@@ -145,6 +145,7 @@ def test_plan_picks_the_host_the_build_picks():
         with (
             mock.patch.object(hs, "survey", lambda *a, **k: hosts),
             mock.patch.object(hs, "_carbin_doors", carbin_doors),
+            mock.patch.object(hs, "DOORS_MEMO", tmp / "carbin-doors.json"),
         ):
             [before] = port_batch.describe_cars(cars, [(media, None)], None, {"FH1": db}, cache)
             assert (before.host, before.host_guess) == (10, True)  # not extracted: 4 doors from the class
