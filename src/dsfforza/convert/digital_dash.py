@@ -379,8 +379,8 @@ def _blur(a, weight, sigma: float):
         pad[axis] = (r, r)
         pn, pd = np.pad(num, pad), np.pad(den, pad)
         n = a.shape[axis]
-        num = sum(k[t] * np.take(pn, range(t, t + n), axis=axis) for t in range(2 * r + 1))
-        den = sum(k[t] * np.take(pd, range(t, t + n), axis=axis) for t in range(2 * r + 1))
+        num = sum(k[t] * (pn[t : t + n] if axis == 0 else pn[:, t : t + n]) for t in range(2 * r + 1))
+        den = sum(k[t] * (pd[t : t + n] if axis == 0 else pd[:, t : t + n]) for t in range(2 * r + 1))
     return num / np.maximum(den, 1e-6)
 
 
@@ -391,12 +391,12 @@ def static_detail(base, ev_step, shown, c: int):
     mean rest luminance of the lit pixels near them (5 cells round)."""
     lum = base[..., :3] @ np.array([0.299, 0.587, 0.114], np.float32)
     lit = (ev_step[0] >= 0).astype(np.float32)
-    near = _blur((lum * lit)[..., None].repeat(3, -1), lit, 2.5 * c)[..., 0]
-    seen = _blur(lit[..., None].repeat(3, -1), np.ones_like(lit), 2.5 * c)[..., 0] > 0.01
+    near = _blur((lum * lit)[..., None], lit, 2.5 * c)[..., 0]  # one channel: _blur's are independent
+    seen = _blur(lit[..., None], np.ones_like(lit), 2.5 * c)[..., 0] > 0.01
     return shown & (ev_step[0] < 0) & seen & (np.abs(lum - near) >= STATIC_DETAIL)
 
 
-def bar_cells(base, ev_step, ev_col, shown, c: int, blocked=None):
+def bar_cells(base, ev_step, ev_col, shown, c: int, blocked=None, detail=None):
     """What the rpm changes, filtered onto cells of c x c render-target pixels: (rest,
     colours, steps, drawn). Per cell, `rest` and each `colours[level]` are the mean colours
     of its shown pixels at rest and after each change (pixels that don't change keep their
@@ -405,7 +405,8 @@ def bar_cells(base, ev_step, ev_col, shown, c: int, blocked=None):
     `steps[0]` is the median step its pixels first change at, and
     `steps[1]` the step of the second change if at least half of them have one (else -1).
     A cell is `drawn` when it is CELL_SHOWN on the displays, changes visibly, holds no more
-    than STATIC_SHARE of static detail and no `blocked` pixel."""
+    than STATIC_SHARE of static detail and no `blocked` pixel. `detail`: static_detail of
+    these, if made already."""
     weight = shown.astype(np.float32)
     n = _blocks(weight, c)
     per = np.maximum(n, 1)[..., None]
@@ -429,7 +430,7 @@ def bar_cells(base, ev_step, ev_col, shown, c: int, blocked=None):
             steps.append(np.where(has & (count > 0), steps[0] + mid, np.nan))
     steps = np.stack([np.where(np.isnan(s), -1, s) for s in steps]).astype(np.int32)
     change = np.abs(colours[0] - rest).max(-1)
-    detail = static_detail(base, ev_step, shown, c)
+    detail = static_detail(base, ev_step, shown, c) if detail is None else detail
     covers = _blocks(detail.astype(np.float32), c) > STATIC_SHARE * c * c
     if blocked is not None:  # pixels another piece covers: no overlap at all
         covers |= _blocks(blocked.astype(np.float32), c) > 0
@@ -636,15 +637,18 @@ def bar_segments(base, ev_step, ev_col, shown, detail, c: int):
     return out, covered
 
 
-def edge_pieces(base, ev_step, ev_col, shown, in_cell, c: int) -> list:
+def edge_pieces(base, ev_step, ev_col, shown, in_cell, c: int, detail=None) -> list:
     """The rpm's changes the segments and cells leave out (a bar along a display's edge,
     where cells are mostly off the display), per step and connected group as one
     rectangle: its box if EDGE_SHOWN of it is on the display, else the rows and columns of
     the box CELL_SHOWN shown. Each is off every drawn cell and earlier piece, a cell or
     more on each side (no slivers), and takes the mean colours of its shown pixels:
-    [(outline, rest, colours, steps)] like bar_segments."""
+    [(outline, rest, colours, steps)] like bar_segments. `detail`: static_detail of these,
+    if made already."""
     first = ev_step[0]
-    taken = in_cell | static_detail(base, ev_step, shown, c)  # drawn cells, detail, then each edge piece
+    if detail is None:
+        detail = static_detail(base, ev_step, shown, c)
+    taken = in_cell | detail  # drawn cells, detail, then each edge piece
     left = (first >= 0) & ~taken
     out = []
     for k in np.unique(first[left]):
@@ -1054,10 +1058,11 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
     segments, covered = bar_segments(base1, ev_step, ev_col, shown, detail, cell_px)
     rest_step = ev_step.copy()  # what the segments leave to the cells
     rest_step[:, covered] = -1
-    g_rest, g_col, g_step, lit = bar_cells(base1, rest_step, ev_col, shown, cell_px, covered)
+    rest_detail = static_detail(base1, rest_step, shown, cell_px)  # for bar_cells and edge_pieces
+    g_rest, g_col, g_step, lit = bar_cells(base1, rest_step, ev_col, shown, cell_px, covered, rest_detail)
     # lit pixels in no drawn cell (cells mostly off the display, or hardly changing)
     in_cell = np.repeat(np.repeat(lit, cell_px, 0), cell_px, 1)[:hgt, :wid] | covered
-    edges = segments + edge_pieces(base1, rest_step, ev_col, shown, in_cell, cell_px)
+    edges = segments + edge_pieces(base1, rest_step, ev_col, shown, in_cell, cell_px, rest_detail)
     for outline, *_ in edges[len(segments) :]:
         (x0, y1), (x1, _), _, (_, y0) = outline
         in_cell[y0:y1, x0:x1] = True
