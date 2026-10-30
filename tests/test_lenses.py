@@ -266,112 +266,6 @@ def test_head_lamp_glow_only_on_clear_front_lenses():
     assert np.isfinite(glow[:, : SIZE // 2]).all()
 
 
-def test_daytime_head_lamps_glow_at_a_fifth():
-    # A clear lens over a head lamp bowl whose left half lights by day (0x1D) and right half
-    # doesn't (an indicator behind the same lens, the Lancer Evo VI's): only the left half's
-    # glow is scaled (DAYTIME_GLOW).
-    lens = _grid("glassLHL", "detail_glass_clear", lambda x, y: -2.0, 0.0, 0.5)
-    bowl = _grid("headlightL", "head_light", lambda x, y: -2.0 + 0.1 - 4.5 * (x * x + (y - 0.5) ** 2), 0.5, 1.0)
-    t = dm.Texturing(Path(), size=(32, 32))
-    t.atlases, t.families = _ClearAtlases(), (fm.LIGHTS,)
-    t.lamp_raw = lenses.new_glow(SIZE, SIZE)
-    with tempfile.TemporaryDirectory() as car_dir:
-        ids = {id(s) for s in lens.subsections}
-        lenses.bake([lens, bowl], {1}, _ClearAtlases(), ids, Path(car_dir), glow=t.lamp_raw, owners=t.glow_owners)
-    sub = lens.subsections[0]
-    assert {id(s) for _, s in t.glow_owners.values()} == {id(sub)}
-    t.resolved = {(id(sec), id(s)): fm.resolve(sec, s) for sec in (lens, bowl) for s in sec.subsections}
-    assert t.daytime_mask([lens, bowl], lambda s, k: False) == (None, set())
-    # Triangle k of the 8 x 8 grid is in column (k // 2) % 8: columns 0-3 are u 0 to 0.25.
-    day, cells = t.daytime_mask([lens, bowl], lambda s, k: s is sub and (k // 2) % 8 < 4)
-    assert not cells and day[:, :6].all() and not day[:, 12:].any(), day[0]
-
-    t.regions = {fm.LIGHTS: [None]}
-    t._lamp_view = lambda front, grid, rear_half=False: None if rear_half else "view"
-    flat = np.where(np.isfinite(t.lamp_raw[..., 0]), 100.0, np.nan)
-    real, lenses.day_glow = lenses.day_glow, lambda glow, view, colour=None: flat.copy()
-    try:
-        t.daytime_texels = day
-        out = t._glow()
-    finally:
-        lenses.day_glow = real
-    assert (out[day] == 100.0 * dm.DAYTIME_GLOW).all()
-    assert (out[:, 12:16] == 100.0).all()
-    # A day-lit lamp surface without a glow (a reflector, the bowl here) keeps its texels
-    # but a fifth of their converted alpha; a tiling one, its swatch cell.
-    day, _ = t.daytime_mask([lens, bowl], lambda s, k: s is bowl.subsections[0])
-    assert day[:, 16:].all() and not day[:, 12:16].any()
-
-
-def test_render_scales_daytime_alpha():
-    t = dm.Texturing(Path(), size=(32, 32))
-    t.families = (fm.LIGHTS,)
-    src = bytearray(bytes((180, 180, 180, 100)) * (SIZE * SIZE))
-
-    class Atl:
-        def get(self, family):
-            return SIZE, SIZE, src
-
-    t.atlases = Atl()
-    t.regions = {fm.LIGHTS: [dm.Region(fm.LIGHTS, (8, 4, 16, 12))]}
-    t.regions[fm.LIGHTS][0].dst, t.regions[fm.LIGHTS][0].size = (0, 0), (8 + 2 * dm.PAD, 8 + 2 * dm.PAD)
-    t.scale = {fm.LIGHTS: 1.0}
-    t.daytime_texels = np.zeros((SIZE, SIZE), bool)
-    t.daytime_texels[:, 8:12] = True
-    out = np.frombuffer(bytes(t.render()), np.uint8).reshape(32, 32, 4)
-    plain = t._convert_texel(fm.LIGHTS, 180, 180, 180, 100)[3]
-    assert out[dm.PAD + 2, dm.PAD + 1, 3] == round(plain * dm.DAYTIME_GLOW)  # source x 9: day-lit
-    assert out[dm.PAD + 2, dm.PAD + 6, 3] == plain  # source x 14: as converted
-
-
-def test_daytime_mask_takes_the_dsf_texel_box():
-    # Issue #250: a day-lit triangle whose UVs fall on one source texel (the Volvo S60 11's head
-    # lamp reflector slivers) samples the DSF texel that averages a 2 x 2 box of source texels
-    # (scale 0.5): the whole box is day-lit, or the DSF texel kept most of its alpha. A texel
-    # another lamp's triangle samples (an indicator) keeps its own.
-    t = dm.Texturing(Path(), size=(32, 32))
-    t.families = (fm.LIGHTS,)
-    src = bytearray(bytes((180, 180, 180, 100)) * (SIZE * SIZE))
-
-    class Atl:
-        def get(self, family):
-            return SIZE, SIZE, src
-
-    t.atlases = Atl()
-    region = dm.Region(fm.LIGHTS, (8, 4, 16, 12))
-    region.dst, region.size = (0, 0), (4 + 2 * dm.PAD, 4 + 2 * dm.PAD)
-    t.regions, t.scale, t.src_sizes = {fm.LIGHTS: [region]}, {fm.LIGHTS: 0.5}, {fm.LIGHTS: (SIZE, SIZE)}
-    point = (10.5 / SIZE, 6.5 / SIZE)  # source texel (10, 6): DSF texel (PAD + 1, PAD + 1)
-    sliver = _quad("headlightL", "reflector", -2.0, *(point[0],) * 2)
-    for v in sliver.lod_vertices:
-        v.uv0 = point
-    indicator = _quad("headlightL", "indicator_left", -2.0, 14.5 / SIZE, 14.5 / SIZE)
-    for v in indicator.lod_vertices:
-        v.uv0 = (14.5 / SIZE, 6.5 / SIZE)  # source texel (14, 6): DSF texel (PAD + 3, PAD + 1)
-    subs = [sliver.subsections[0], indicator.subsections[0]]
-    # Textured parts (their other triangles cover texels): only these triangles are slivers.
-    t.resolved = {
-        (id(sec), id(sec.subsections[0])): dataclasses.replace(fm.resolve(sec, sec.subsections[0]), kind="textured")
-        for sec in (sliver, indicator)
-    }
-    for sub in subs:
-        for k in range(2):
-            t.owners[(id(sub), k)] = 0
-    day, _ = t.daytime_mask([sliver, indicator], lambda s, k: s is subs[0], lambda s, k: True)
-    assert day[6, 10] and day[6:8, 10:12].all()  # the texel and the box around it
-    assert not day[6:8, 14:16].any()  # the indicator's
-    t.daytime_texels = day
-    out = np.frombuffer(bytes(t.render()), np.uint8).reshape(32, 32, 4)
-    plain = t._convert_texel(fm.LIGHTS, 180, 180, 180, 100)[3]
-    assert out[dm.PAD + 1, dm.PAD + 1, 3] == round(plain * dm.DAYTIME_GLOW)
-    assert out[dm.PAD + 1, dm.PAD + 3, 3] == plain
-    # Without the box (the source texel alone) the DSF texel kept most of its alpha.
-    t.daytime_texels = np.zeros((SIZE, SIZE), bool)
-    t.daytime_texels[6, 10] = True
-    out = np.frombuffer(bytes(t.render()), np.uint8).reshape(32, 32, 4)
-    assert out[dm.PAD + 1, dm.PAD + 1, 3] > 0.75 * plain
-
-
 def test_render_takes_the_lens_glow():
     t = dm.Texturing(Path(), size=(32, 32))
     t.families = (fm.LIGHTS,)
@@ -449,12 +343,13 @@ def test_lamp_glass_at_its_max_opacity():
 
 
 def test_cover_passes_the_lamp_glow():
-    # A cover (lights_glass) has no glow of its own: the lamp's behind it.
+    # A cover (lights_glass) has no glow of its own: (1 - opacity)^2 of the lamp's behind it
+    # passes (Forza's blend in its square light space, research/forza-lenses-re.md section 7).
     cover = _quad("glassLTL", "lights_glass", 2.0, 0.0, 0.5)
     lamp = _quad("taillightL", "textured_reflector", 1.9, 0.5, 1.0)
     atlases, _ = _bake([cover, lamp], [cover])
     got = atlases.texel(SIZE // 4, SIZE // 2)
-    want = dm.lamp_score(*LAMP)
+    want = dm.lamp_score(*LAMP) * (1 - LENS[3] / 255) ** 2
     assert abs(dm.lamp_score(*got) - want) < 0.01, (got, dm.lamp_score(*got), want)
 
 
@@ -558,7 +453,6 @@ def test_cover_over_its_lenses_is_left_out():
 
 
 def _textured(section, sub):
-    import dataclasses
 
     return dataclasses.replace(fm.resolve(section, sub), role=fm.TEXTURED, family=fm.LIGHTS)
 
@@ -682,25 +576,16 @@ if __name__ == "__main__":
             print(f"{name}: ok")
 
 
-def test_plain_glass_cover_in_a_lamp_section():
-    # Issue #247: a plain glass cover over a whole head lamp unit, a fifth of it over the lamp
-    # (the Audi R8 race car's lexanLHL, the Ferrari 458 Spider's glassLHL), is a lamp cover and
-    # left out; the same glass in another section (a window drawn with the technique) stays
-    # unless a lamp lies behind COVER_MIN_SHARE of it.
+def test_plain_glass_over_a_lamp_stays_window_glass():
+    # Plain glass over a lamp (the Audi R8 race car's lexanLHL, the Mustang GT 05's head lamp
+    # glass) is drawn as DSF window glass: Forza's one layer keeps 26% of the lamp head-on, DSF's
+    # window glass about half; left out (#160, #247) the lamp showed whole (#379).
     lamp = _quad("headlightL", "head_light", -1.9, 0.5, 1.0, normal=(0.0, 0.0, -1.0))
-    for v in lamp.lod_vertices:  # a fifth of the cover's width
-        v.position = (-0.1 + (v.position[0] + 0.1) * 0.2, *v.position[1:])
     t = dm.Texturing(Path())
     t.lamp_tris = [(1, [lamp.lod_vertices[i].position for i in tri], None) for tri in lamp.subsections[0].triangles()]
-    for name, left_out in (("lexanLHL", True), ("glassLHL", True), ("body", False)):
-        cover = _grid(name, "glass", lambda x, y: -2.0, 0.0, 0.5, n=10)
-        m = dataclasses.replace(fm.resolve(cover, cover.subsections[0]), role=fm.GLASS, family=fm.LIGHTS)
-        assert dm.COVER_LAMP_SECTION_SHARE < t._over_lamp(cover, cover.subsections[0]) < dm.COVER_MIN_SHARE
-        assert t.clear_cover(cover, cover.subsections[0], m) == left_out, name
-    # A cached answer for another subsection that had the same id() isn't reused (CI flake:
-    # the loop's covers are freed and a new one can get the old one's id).
-    t._covers[id(cover.subsections[0])] = (object(), True)
-    assert t.clear_cover(cover, cover.subsections[0], m) is False
+    cover = _grid("lexanLHL", "glass", lambda x, y: -2.0, 0.0, 0.5, n=10)
+    assert t._over_lamp(cover, cover.subsections[0]) > 0.1
+    assert not hasattr(t, "clear_cover")
 
 
 def test_front_lamp_view_leaves_out_dropped_lenses():

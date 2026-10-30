@@ -509,8 +509,7 @@ def test_a_lamp_the_red_move_empties_takes_no_entry():
 
 def test_a_lamp_on_a_day_lit_head_lamps_entry_glows_by_day():
     # Issue #250: the Mustang Boss 429's amber side markers (slorange, position lamps) share the
-    # left head lamp's 0x1D entry when the host has none left; they glow with it, so their texels
-    # take the day-lit glow (is_daytime by the entry's type, not the lamp's).
+    # left head lamp's 0x1D entry when the host has none left; they glow with it by day.
     heads = [_quad("headlightL", "head_light", 0.6, 2.0), _quad("headlightR", "head_light", -0.6, 2.0)]
     marker = _quad("body", "slorange", 0.8, 1.9)
     for v in marker.lod_vertices:  # 4 x 4 cm: under a quarter of the head lamp
@@ -521,5 +520,3 @@ def test_a_lamp_on_a_day_lit_head_lamps_entry_glows_by_day():
     head = next(l for l in plan.lamps.values() if l.function == lights.HEAD and l.side == "L")
     assert lamp.function == lights.POSITION and lamp.light_id == head.light_id, (lamp.function, lamp.light_id)
     assert head.type == lights.HEAD_DAYTIME
-    assert plan.is_daytime(sub, 0) and plan.is_daytime(heads[0].subsections[0], 0)
-    assert not plan.is_daytime(TAILS[0].subsections[0], 0)

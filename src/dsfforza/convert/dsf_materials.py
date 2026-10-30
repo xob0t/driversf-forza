@@ -211,16 +211,6 @@ def red_lens_scale(visible: list[int]) -> float | None:
 # over a white reflector, baked by lenses.py) 206, the Lancer Evo VI's 173, the M3 E30's 197.
 VISIBLE_WHITE_VANILLA_MEDIAN = 137
 
-# Head lamps lit by day (0x1D, lights.LampPlan.assign): their glow (lenses.day_glow, ranked onto
-# vanilla's head lamp alpha, following the lamp's own picture) and their other texels times this.
-# The game lights a 0x1D lamp at its type's 10 by day and in the dark mood alike (0xF3FB68;
-# research/lights.md "How a lamp lights"), so one alpha serves both. #167 set a fifth (a 0x01 or
-# 0x03 lamp's level) against the VW GTI VR6's white plates by day; at night that left the ports'
-# head lamps at p95 1.6 to 2.0 in render_compare's renderer, where vanilla's 0x1D lamps glow at
-# 2.5 / 3.8 / 5.3 (p10 / median / p90 over 28 vehicles, front view, under their window glass;
-# #286). 0.45 puts the median of 15 ports (1.69 at 0.2) on vanilla's 3.8.
-DAYTIME_GLOW = 0.45
-
 
 def white_lens_scale(visible: list[int]) -> float | None:
     """One car's darkening of its white lamp texels: the factor that brings the median
@@ -305,15 +295,13 @@ LENS_REAR_Z, LENS_MIN_RED, LENS_MIN_ALPHA = 0.5, 80, 128
 # tail covers sit on flat red texels, and moved to the atlas they hid the lamp as a flat red
 # plate (issue #160).
 TEXTURED_COVERS = ("lights_glass",)  # lights_gls_noemit is lamp glass (lenses.NO_GLOW_GLASS)
-# Plain glass lamp covers (Texturing.clear_cover): left out when a Lights-atlas surface lies up
-# to COVER_DEPTH behind this share of their area; never in the window sections.
+# Textured lamp covers (Texturing.lamp_cover) are baked over the lamp when a Lights-atlas surface
+# lies up to COVER_DEPTH behind this share of their area. Plain `glass` over a lamp stays DSF window
+# glass: Forza draws it at opacity GlassColor.w (0.3) plus the Fresnel term, blended in its square
+# light space, so one layer keeps (1 - opacity)^2, 26% of the lamp head-on; DSF window glass keeps
+# about half (research/forza-lenses-re.md section 7, research/lights-re.md). Left out (#160, #247,
+# #284) the lamp showed whole, about four times Forza's.
 COVER_MIN_SHARE, COVER_DEPTH = 0.3, 0.3
-# In a lamp unit's own section (headlightL, glassLHL, lexanRHL, taillightR) a plain glass cover
-# is a lamp cover from this share: it often covers the unit's housing as well as its lamp (the
-# Audi R8 race car's lexan 30%, the Ferrari 458 Spider's glass 18 to 21%, the Gumpert Apollo S's
-# lexan 9.9%), and left as window glass it hid the head lamps (#247).
-COVER_LAMP_SECTION_SHARE = 0.05
-LAMP_SECTION = re.compile(r"^(head|tail)light[lr]?$|^(glass|lexan)[lr]?(hl|tl)$", re.I)
 # A lamp cover whose Lights texels are this share or more of its lenses' texels is a second skin
 # over them (_bake_lenses): left out.
 COVER_ON_LENS = 0.9
@@ -1324,7 +1312,7 @@ class Texturing:
     # (lod, positions, atlas uvs, (section name, technique)) of Lights-atlas triangles
     lamp_tris: list = field(default_factory=list)
     lamp_swatch_tris: list = field(default_factory=list)  # (lod, positions) of Lights swatch triangles
-    _covers: dict = field(default_factory=dict)  # id(sub) -> (sub, clear_cover): sub kept so its id can't be reused
+    _covers: dict = field(default_factory=dict)  # id(sub) -> (sub, lamp_cover): sub kept so its id can't be reused
     wheel_ids: set = field(default_factory=set)  # id(section) of the Forza wheel model (plan(wheels=...))
     art_flat: set = field(default_factory=set)  # id(sub): trim artwork drawn flat (ART_MIN_SCALE_SHARE)
     pack_scale: float = 0.0  # the uniform scale _pack found (before family weights)
@@ -1354,9 +1342,6 @@ class Texturing:
     # alpha, which render() takes over the converted alpha.
     lamp_raw: np.ndarray | None = None
     glow_owners: dict = field(default_factory=dict)  # lamp number in lamp_raw -> (section, sub) (lenses._GlowSum)
-    # Lights atlas texels of the head lamps that light by day (0x1D; Binding.set_daytime): their
-    # glow, or their converted alpha, is scaled by DAYTIME_GLOW. None: no lamp plan, no scaling.
-    daytime_texels: np.ndarray | None = None
 
     # -- planning --
     def plan(
@@ -1908,31 +1893,6 @@ class Texturing:
             self.lens_subs.add(id(sub))
         return m
 
-    def clear_cover(self, section, sub, m: fm.SubMaterial) -> bool:
-        """A lamp cover of Forza's plain `glass` technique, left out. Forza draws it as
-        texture-less, nearly clear glass (TEXTURED_COVERS); DSF's shared glass is a dark
-        pane (glass texture blue = alpha 192) and hid the lamp behind it: the Mustang GT
-        05's head lamps were a black strip (issue #158), and at night the Veyron's and
-        300C's tail lamps barely glowed through it while they glowed red without it (VM
-        runs vm1-20261028-092017 and -092416; issue #160). Vanilla lamps are opaque Lights
-        texels, so the lamp itself is what shows. A cover is plain glass on the Lights
-        atlas, outside the window sections, with a Lights-atlas lamp surface behind at
-        least COVER_MIN_SHARE of its area: some cars draw their windows, windscreen
-        included, with the same technique (BUS_TOUR_12, DOD_RamSRT10_06, TOY_Prius_11)."""
-        if (
-            self.classifier is not None
-            or m.role != fm.GLASS
-            or fm.base_family(m.family) != fm.LIGHTS
-            or m.technique.lower() != "glass"
-            or section.name.lower() in WINDOW_SECTIONS
-        ):
-            return False
-        key = id(sub)
-        if key not in self._covers or self._covers[key][0] is not sub:
-            share = COVER_LAMP_SECTION_SHARE if LAMP_SECTION.match(section.name) else COVER_MIN_SHARE
-            self._covers[key] = (sub, self._over_lamp(section, sub) >= share)
-        return self._covers[key][1]
-
     def _over_lamp(self, section, sub, shapes=None) -> float:
         """Share of a subsection's area whose triangle centres, seen along z towards the car,
         lie on a Lights triangle (shapes: (lod, positions); default lamp_tris and
@@ -2078,7 +2038,7 @@ class Texturing:
 
     def material(self, section, sub) -> str:
         m = self.submaterial(section, sub)
-        if id(sub) in self.cutout or self.clear_cover(section, sub, m) or self.dropped_lens(section, sub):
+        if id(sub) in self.cutout or self.dropped_lens(section, sub):
             return fm.SKIP
         if self._uses_atlas(m) and (
             (m.kind == "textured" and id(sub) in self.atlas_subs) or (m.kind == "swatch" and self._has_cell(m))
@@ -2280,9 +2240,6 @@ class Texturing:
         if self.atlases is None or not self.regions:
             return None
         front, rear = self._glow_parts()
-        if front is not None and self.daytime_texels is not None:
-            front = front.copy()
-            front[self.daytime_texels] *= DAYTIME_GLOW
         if front is None:
             self._lamp_glow = rear
         elif rear is None:
@@ -2293,10 +2250,9 @@ class Texturing:
         return self._lamp_glow
 
     def _glow_parts(self):
-        """_glow's head lamp glow by day before the day-lit lamps' scaling, and its red lamp glow
-        from behind. Kept for the next _glow while the Lights texels, the lamp glow map and the
-        lamp triangles are the same (set_daytime renders the atlas again with only the day-lit
-        texels changed); _layout drops them."""
+        """_glow's head lamp glow by day and its red lamp glow from behind. Kept for the next
+        _glow while the Lights texels, the lamp glow map and the lamp triangles are the same;
+        _layout drops them."""
         import hashlib
 
         from dsfforza.convert import lenses
@@ -2338,121 +2294,6 @@ class Texturing:
                 rear[ys, xs] = np.maximum(rear[ys, xs], conv)
         self._glow_kept = (key, front, rear)
         return front, rear
-
-    def daytime_mask(self, sections, daytime, lit=None) -> tuple[np.ndarray | None, set]:
-        """The Lights texels of the head lamps that light by day: daytime(sub, k) says whether
-        the lamp plan lights triangle k of `sub` so (lights.LampPlan.is_daytime). Returns the
-        atlas texels their triangles sample (None: none) and the swatch cells of their tiling
-        parts (_tiling_swatch: the Mustang GT 05's bowls), for Binding.set_daytime.
-
-        The texels are those inside each triangle's UVs and every source texel under the DSF
-        texels it samples (_dsf_boxes): render() averages a box of source texels into each DSF
-        texel, and a triangle whose UVs fall on one texel (the Volvo S60 11's head lamp
-        reflector slivers) samples the box, not the texel: it glowed at full alpha by day
-        (#250). lit(sub, k): whether triangle k lights with any lamp (LampPlan.light_byte); the
-        texels other lamps' triangles sample are left out of those boxes."""
-        from dsfforza.convert import lenses
-
-        if self.atlases is None or fm.LIGHTS not in self.families:
-            return None, set()
-        w, h, _ = self.atlases.get(fm.LIGHTS)
-        day = np.zeros((h, w), bool)
-        boxes = np.zeros((h, w), bool)
-        other = np.zeros((h, w), bool)
-        cells = set()
-        # By subsection: the plates and damage passes replace the section objects after plan().
-        by_sub = {sub_id: m for (_, sub_id), m in self.resolved.items()}
-        for section in sections:
-            for sub in section.subsections:
-                m = by_sub.get(id(sub))
-                if m is None or m.family != fm.LIGHTS or m.kind not in ("textured", "swatch"):
-                    continue
-                tris = list(sub.triangles())
-                on = [daytime(sub, k) for k in range(len(tris))]
-                others = [k for k in range(len(tris)) if not on[k] and lit is not None and lit(sub, k)]
-                if not any(on) and not others:
-                    continue
-                if m.kind == "swatch":
-                    if any(on):
-                        cells.add(("swatch",) + self._convert_texel(m.family, *m.colour))
-                    continue
-                pool = section.vertices_for(sub)
-                listed = set(others)
-                todo = [k for k in range(len(tris)) if on[k] or k in listed]
-                uvs = [triangle_uv(m, [pool[i].uv0 for i in tris[k]]) for k in todo]
-                every_x, every_y, _, at = lenses._texels_many(np.array(uvs, float).reshape(-1, 3, 2) * (w, h))
-                for n, k in enumerate(todo):
-                    ix, iy = every_x[at[n] : at[n + 1]], every_y[at[n] : at[n + 1]]
-                    ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
-                    (day if on[k] else other)[iy[ok], ix[ok]] = True
-                lit_by_day = [n for n, k in enumerate(todo) if on[k]]
-                self._dsf_boxes(m, sub, [todo[n] for n in lit_by_day], [uvs[n] for n in lit_by_day], boxes)
-        day |= boxes & ~other
-        if self.lamp_raw is not None:
-            # The bake spreads a lens's glow lenses.DILATE texels into unused neighbours.
-            glow = np.isfinite(self.lamp_raw[..., 0])
-            grown = day & glow
-            for _ in range(lenses.DILATE):
-                g = grown.copy()
-                g[1:] |= grown[:-1]
-                g[:-1] |= grown[1:]
-                g[:, 1:] |= grown[:, :-1]
-                g[:, :-1] |= grown[:, 1:]
-                grown = g
-            day |= grown & glow
-        return (day if day.any() else None), cells
-
-    def _dsf_boxes(self, m: fm.SubMaterial, sub, ks, uvs, out: np.ndarray) -> None:
-        """Mark in `out` (source atlas texels) the box render() averages into each DSF atlas
-        texel that triangles `ks` of `sub` (their atlas UVs `uvs`, triangle_uv) sample: the
-        texels inside their DSF UVs, and for a triangle that covers few of them the 2 x 2
-        texels a bilinear sample at its centre reads. All the triangles at once, each with its
-        region's numbers per texel (the same arithmetic as one by one)."""
-        from dsfforza.convert import lenses
-
-        picked = [
-            (self.regions[m.family][n], tri)
-            for k, tri in zip(ks, uvs)
-            if (n := self.owners.get((id(sub), k))) is not None
-        ]
-        if not picked:
-            return
-        src_size = self.src_sizes[m.family]
-        sh, sw = out.shape
-        width, height = self.size
-        pts = np.array(
-            [
-                [
-                    r.map(min(1.0, max(0.0, u)), min(1.0, max(0.0, v)), src_size, self._scale_of(r), self.size)
-                    for u, v in tri
-                ]
-                for r, tri in picked
-            ]
-        ).reshape(-1, 3, 2) * (width, height)
-        ix, iy, _, at = lenses._texels_many(pts)
-        owner = np.repeat(np.arange(len(picked)), np.diff(at))
-        # A triangle with 4 texels or fewer: also the 2 x 2 around its centre.
-        few = np.nonzero(np.diff(at) <= 4)[0]
-        centre = np.floor(((pts[few, 0] + pts[few, 1]) + pts[few, 2]) / 3 - 0.5).astype(np.int64)
-        cx, cy = centre[:, 0, None] + (0, 1, 0, 1), centre[:, 1, None] + (0, 0, 1, 1)
-        ix, iy = np.concatenate([ix, cx.ravel()]), np.concatenate([iy, cy.ravel()])
-        owner = np.concatenate([owner, np.repeat(few, 4)])
-        dst = np.array([r.dst for r, _ in picked], np.int64).reshape(-1, 2)[owner]
-        size = np.array([r.size for r, _ in picked], np.int64).reshape(-1, 2)[owner]
-        src = np.array([r.src[:2] for r, _ in picked], np.int64).reshape(-1, 2)[owner]
-        s = np.array([self._scale_of(r) for r, _ in picked], np.float64)[owner]
-        dx, dy = ix - dst[:, 0], iy - dst[:, 1]
-        ok = (dx >= 0) & (dx < size[:, 0]) & (dy >= 0) & (dy < size[:, 1])
-        s = s[ok]
-        fx, fy = src[ok, 0] + (dx[ok] - PAD) / s, src[ok, 1] + (dy[ok] - PAD) / s
-        x0 = np.clip(np.floor(fx).astype(int), 0, sw - 1)
-        y0 = np.clip(np.floor(fy).astype(int), 0, sh - 1)
-        x1 = np.maximum(x0 + 1, np.minimum(sw, np.floor(fx + 1 / s).astype(int)))
-        y1 = np.maximum(y0 + 1, np.minimum(sh, np.floor(fy + 1 / s).astype(int)))
-        for oy in range(int((y1 - y0).max(initial=0))):
-            for ox in range(int((x1 - x0).max(initial=0))):
-                sel = (y0 + oy < y1) & (x0 + ox < x1)
-                out[y0[sel] + oy, x0[sel] + ox] = True
 
     def _convert_texel(self, family: str, r: int, g: int, b: int, a: int) -> tuple[int, int, int, int]:
         """Forza texel -> DSF conventions (alpha = specular / glow mask)."""
@@ -2497,7 +2338,7 @@ class Texturing:
         out = np.empty((height, width, 4), dtype=np.uint8)
         out[:, :] = self.plain
         # The converted blocks of the last render, by region, kept while the region and its
-        # source texels are the same: set_daytime renders again for the Lights alpha only.
+        # source texels are the same.
         kept = getattr(self, "_render_kept", None) or {}
         self._render_kept = {}
         for family in self.families:
@@ -2522,18 +2363,14 @@ class Texturing:
                         family, r, s, texels_in, converted
                     )
                     self._render_kept[key] = (block.copy(), top, left, shape, (y0, y1, x0, x1), n, cut_mask)
-                if family == fm.LIGHTS and (self._glow() is not None or self.daytime_texels is not None):
-                    # Clear front lens texels: their glow (lens_glow) over the converted alpha;
-                    # the other texels of day-lit head lamps: the converted alpha x DAYTIME_GLOW.
-                    # Averaged over the source texels under each DSF texel like the colour.
+                if family == fm.LIGHTS and self._glow() is not None:
+                    # Clear front lens texels: their glow (lens_glow) over the converted alpha,
+                    # averaged over the source texels under each DSF texel like the colour.
                     window = (slice(top, top + shape[0] - 1), slice(left, left + shape[1] - 1))
-                    glow = self._glow()
-                    g = glow[window] if glow is not None else np.full((shape[0] - 1, shape[1] - 1), np.nan)
+                    g = self._glow()[window]
                     lit = np.isfinite(g)
                     keep = np.where(lit, 0.0, 1.0)
-                    if self.daytime_texels is not None:
-                        keep[self.daytime_texels[window] & ~lit] = DAYTIME_GLOW
-                    if lit.any() or (keep[~lit] < 1).any():
+                    if lit.any():
                         sums = np.zeros(shape[:2] + (2,))
                         sums[1:, 1:] = np.stack([np.where(lit, g, 0.0), keep], -1).cumsum(0).cumsum(1)
                         box = sums[y1, x1] - sums[y0, x1] - sums[y1, x0] + sums[y0, x0]
@@ -2612,14 +2449,11 @@ class Texturing:
                                 acc[c] += sum(row[c::4])
                         n = (y1 - y0) * (x1 - x0)
                         texel = self._convert_texel(family, *(v // n for v in acc))
-                        if family == fm.LIGHTS and (self._glow() is not None or self.daytime_texels is not None):
-                            glow = self._glow()
-                            g = glow[y0:y1, x0:x1] if glow is not None else np.full((y1 - y0, x1 - x0), np.nan)
+                        if family == fm.LIGHTS and self._glow() is not None:
+                            g = self._glow()[y0:y1, x0:x1]
                             lit = np.isfinite(g)
                             keep = np.where(lit, 0.0, 1.0)
-                            if self.daytime_texels is not None:
-                                keep[self.daytime_texels[y0:y1, x0:x1] & ~lit] = DAYTIME_GLOW
-                            if keep.sum() < n - 1e-9:
+                            if lit.any():
                                 a = (g[lit].sum() + texel[3] * keep.sum()) / n
                                 texel = (*texel[:3], max(0, min(255, int(round(a)))))
                         if cut and acc[3] // n < 128:
@@ -2635,7 +2469,7 @@ class Texturing:
 
     def dds(self, template: bytes | None = None) -> bytes:
         if getattr(self, "_dds_reuse", None) is None:
-            self._dds_reuse = {}  # dds_file's blocks of the last encoding (set_daytime encodes again)
+            self._dds_reuse = {}  # dds_file's blocks of the last encoding
         return dds_file(self.render(), *self.size, self.mips, template, self.fourcc, reuse=self._dds_reuse)
 
     def summary(self) -> str:
@@ -2969,33 +2803,6 @@ class Binding:
 
     def triangle_uvs(self, section, sub, triangle_index: int, raw_uvs):
         return self.texturing.triangle_uvs(section, sub, triangle_index, raw_uvs)
-
-    def set_daytime(self, stream, vehc: Entry, sections, daytime, lit=None) -> bool:
-        """daytime(sub, k): whether the lamp plan lights triangle k of `sub` (of `sections`)
-        with a head lamp that also lights by day (0x1D; lights.LampPlan.is_daytime); lit(sub,
-        k): with any lamp (LampPlan.light_byte). Their
-        Lights texels (Texturing.daytime_mask) glow at DAYTIME_GLOW: the atlas installed in
-        `vehc` (this binding's full entry) is rendered again. It is rendered in prepare(),
-        before the lamp plan exists (the plan keys on the subsections damage.split_exposed
-        makes later)."""
-        t = self.texturing
-        day, cells = t.daytime_mask(sections, daytime, lit)
-        if day is None and not cells:
-            return False
-        t.daytime_texels = day
-        for key in cells:
-            r, g, b, a = t.solid_colours[key]
-            t.solid_colours[key] = (r, g, b, int(round(a * DAYTIME_GLOW)))
-        t._glow_done = False
-        drsp = child(child(vehc, "MDXN"), "DRSP")
-        texc = next(
-            e
-            for e in drsp.children
-            if e.tag == "TEXC" and payload(stream, child(e, "UIDC"))[:8] == self.installed.texture
-        )
-        dxtc = child(texc, "DXTC")
-        dxtc.payload = t.dds(template=payload(stream, dxtc))
-        return True
 
     @property
     def paint_uv(self) -> tuple[float, float]:

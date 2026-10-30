@@ -157,7 +157,7 @@ class Material:
 @dataclass(frozen=True)
 class Lens:
     """See-through lamp glass (kind "lens"): opacity min(max(texel alpha x alpha,
-    floor), cap); what is behind is filtered by (1 - opacity) + opacity x tint x texel.
+    floor), cap); (1 - opacity)^2 of what is behind passes (Forza's blend).
     A Forza detail_glass_* lens (technique set) is a filter instead: what is behind times
     lenses.lens_filter of its texel and the car's glass settings (lenses.glass_settings),
     with no colour or glow of its own (research/forza-lenses-re.md)."""
@@ -1219,7 +1219,13 @@ def rasterize(scene: Scene, view: _View, layers: int = 2) -> Frame:
         lens_w = np.full(size, -np.inf, np.float32)
         np.maximum.at(lens_w, gk[kinds == "lens"], gw[kinds == "lens"])
         bias = np.where(glass_w[k] > w, INTERIOR_BIAS[0], INTERIOR_BIAS[1])
-        bias = np.where(lens_w[k] > w, INTERIOR_LENS_BIAS, bias)
+        # Nor through glass over a lamp (plain glass kept over the lamps, #379): where the
+        # nearest exterior surface is a lamp's, the interior loses as behind a lens.
+        outside = ~scene.inside[opaque_t[t]]
+        _, ext = _nearest(k[outside], w[outside], opaque_t[t][outside], size)
+        lamp_mat = np.array([m.emissive for m in scene.materials] + [False])
+        behind_lamp = lamp_mat[np.where(ext >= 0, scene.mat[np.maximum(ext, 0)], -1)]
+        bias = np.where((lens_w[k] > w) | ((glass_w[k] > w) & behind_lamp[k]), INTERIOR_LENS_BIAS, bias)
         w = np.where(scene.inside[opaque_t[t]], w * (1 - bias), w)
     depth, tri = _nearest(k, w, opaque_t[t], size)
     out = []
@@ -1451,8 +1457,10 @@ def _shade_lens(mat: Material, view: _View, light, n, uv, ray, occlusion, lighti
     if mat.emissive and lamp_rgb is not None and lamp is not None:
         on = lamp >= 0
         add[on] += t[on, 3:4] * lamp_rgb[lamp[on]]
-    through = ((1 - o) + o * np.clip(texel * lens.tint, 0, 1)) * (1 - f)[:, None]
-    return add, np.clip(through, 0, 1)
+    # Forza blends glass at its opacity in its square light space (SRCALPHA, INVSRCALPHA on sqrt
+    # output; research/forza-lenses-re.md section 7): (1 - opacity)^2 of what is behind passes.
+    through = (1 - o) ** 2 * (1 - f)[:, None]
+    return add, np.clip(np.broadcast_to(through, (len(n), 3)), 0, 1).astype(np.float32)
 
 
 def _shadow(view: _View, k: np.ndarray) -> np.ndarray:

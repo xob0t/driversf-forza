@@ -137,10 +137,20 @@ def test_lens_tints_and_lamp_glows():
     assert f.layers and len(f.layers[0][0])
     day, _ = cr.shade(scene, f, cr.DAY, cr.dsf_lamp_rgb(scene.lamps, cr.DAY), shadow=False)
     px = 30 * 80 + 40
-    assert day[px, 0] > 1.5 * day[px, 1]  # red through the lens
+    assert day[px, 0] > 1.5 * day[px, 1]  # the lens's red over the lamp
+    # Glass at opacity 0.6 passes (1 - 0.6)^2 of the lamp's glow (Forza's blend, #379); a Forza
+    # detail_glass_red lens filters it by its red instead.
     dark_off, _ = cr.shade(scene, f, cr.DARK, None, shadow=False)
     dark, _ = cr.shade(scene, f, cr.DARK, cr.dsf_lamp_rgb(scene.lamps, cr.DARK), shadow=False)
-    assert dark[px, 0] > dark_off[px, 0] + 0.1  # the tail lamp glows (0x18: running lights, 0.2)
+    bare = _scene([(_quad(-1, 1, -1, 1, 0.0), 0)], [lamp], lamp=np.array([0, 0], np.int32), lamps=scene.lamps)
+    fb = _frame(bare)
+    on, _ = cr.shade(bare, fb, cr.DARK, cr.dsf_lamp_rgb(bare.lamps, cr.DARK), shadow=False)
+    off, _ = cr.shade(bare, fb, cr.DARK, None, shadow=False)
+    glow, through = on[px, 0] - off[px, 0], dark[px, 0] - dark_off[px, 0]
+    assert abs(through - 0.16 * glow) < 0.03 * glow, (through, glow)
+    lens.lens = cr.Lens(technique="detail_glass_red")
+    red, _ = cr.shade(scene, f, cr.DARK, cr.dsf_lamp_rgb(scene.lamps, cr.DARK), shadow=False)
+    assert red[px, 0] > dark[px, 0] and red[px, 1] < 0.01  # the lamp's red through the red filter
 
 
 def test_cabin_copy_behind_a_lamp_lens_loses_to_the_lamp():
@@ -158,6 +168,21 @@ def test_cabin_copy_behind_a_lamp_lens_loses_to_the_lamp():
         scene.inside = np.array([False, False, True, True, False, False])
         centre = _frame(scene).tri.reshape(60, 80)[30, 40]
         assert centre in (0, 1), recess  # the reflector, under the lens
+
+
+def test_cabin_copy_behind_lamp_glass_loses_to_the_lamp():
+    """The same under plain glass kept over a lamp (#379): the lamp bowl wins over the interior
+    entry's copy of the panel in front of it."""
+    bowl = cr.Material("textured", None, np.ones(3, np.float32), emissive=True)
+    copy = cr.Material("paint", None, np.full(3, 0.2, np.float32))
+    glass = cr.Material("glass", None, np.ones(3, np.float32))
+    for recess in (0.015, 0.15):
+        scene = _scene(
+            [(_quad(-1, 1, -1, 1, 0.0), 0), (_quad(-1, 1, -1, 1, recess), 1), (_quad(-1, 1, -1, 1, 0.2), 2)],
+            [bowl, copy, glass],
+        )
+        scene.inside = np.array([False, False, True, True, False, False])
+        assert _frame(scene).tri.reshape(60, 80)[30, 40] in (0, 1), recess
 
 
 def test_lamp_levels():

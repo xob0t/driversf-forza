@@ -356,7 +356,10 @@ def render_view(pair: Pair, view: View, size=SIZE, box=None) -> dict:
         frame = cr.rasterize(scene, v)
         out["regions"][side] = region_map(scene, frame, region)
         if side == "ours":
-            out["programs"] = tri_map(frame, pair.ours_program)
+            # What draws each pixel; under DSF window glass (plain glass kept over the lamps,
+            # #379) the surface behind it, not the glass.
+            programs, behind = tri_map(frame, pair.ours_program), tri_map(frame, pair.ours_program, False)
+            out["programs"] = np.where((programs == PID["glass"]) & (behind != PID["none"]), behind, programs)
         for mode in view.modes:
             lt = cr.LIGHTINGS[mode]
             colour, alpha = cr.shade(scene, frame, lt, cr.dsf_lamp_rgb(scene.lamps, lt), shadow=False)

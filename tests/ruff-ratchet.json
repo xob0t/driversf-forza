@@ -56,7 +56,7 @@
   "tests/test_gui_badges.py": {"ARG005": 1},
   "tests/test_host_select.py": {"ARG001": 1, "ARG005": 3},
   "tests/test_install.py": {"ARG005": 7, "FBT002": 2},
-  "tests/test_lenses.py": {"ARG002": 4, "ARG005": 23},
+  "tests/test_lenses.py": {"ARG002": 2, "ARG005": 10},
   "tests/test_lights.py": {"ARG005": 12},
   "tests/test_pack_reuse.py": {"ARG001": 1, "ARG002": 7, "ARG005": 1, "FBT002": 2},
   "tests/test_pipeline.py": {"ARG001": 5, "ARG005": 2, "FBT002": 1},

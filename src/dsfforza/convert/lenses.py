@@ -250,8 +250,8 @@ def lens_filter(technique: str, rgb, settings: dict) -> np.ndarray:
 
 def emits(technique: str) -> bool:
     """Whether the glass glows by its own texel alpha: the lamp glass (a lamp itself) but
-    lights_gls_noemit. Lenses pass the glow of the lamp behind, filtered; covers (COVERS) pass
-    it whole (#164; pending the blend Forza draws them with, #370)."""
+    lights_gls_noemit. Lenses pass the glow of the lamp behind, filtered; covers (COVERS)
+    (1 - opacity)^2 of it."""
     t = technique.lower()
     return t.startswith(LAMP_GLASS) and t != NO_GLOW_GLASS
 
@@ -723,28 +723,31 @@ def lamp_glow(sections, lods, atlases: fm.AtlasCache, glow: np.ndarray, owners: 
 
 def new_glow(h: int, w: int) -> np.ndarray:
     """An empty glow map for bake and lamp_glow, the size of the Lights atlas: per texel the raw
-    glow, its lamp (a number per lens or head lamp subsection) and where the surface it covers
-    sits in a front view: |x| (the left and right lamps often share their texels) and y, in
-    Forza model space; NaN where none."""
-    return np.full((h, w, 4), np.nan)
+    glow, its lamp (a number per lens or head lamp subsection), where the surface it covers
+    sits in a front view (|x|: the left and right lamps often share their texels, and y, in
+    Forza model space) and the share of the lamp's light the glass in front of it passes (a
+    lens's filter, a cover's (1 - opacity)^2; 1 bare), applied after day_glow's ranking; NaN
+    where none."""
+    return np.full((h, w, 5), np.nan)
 
 
 class _GlowSum:
     """Raw glow and positions summed over the triangles sampling each texel, one lamp number per
     add() (after those already in `glow`). owners: gets lamp number -> (section, sub) each lamp
-    comes from (dsf_materials.Binding.set_daytime)."""
+    comes from."""
 
     def __init__(self, h: int, w: int, glow: np.ndarray, owners: dict | None = None):
-        self.total = np.zeros((h, w, 5))  # raw, |x|, y, |x|^2, y^2
+        self.total = np.zeros((h, w, 6))  # raw, |x|, y, |x|^2, y^2, passed
         self.count = np.zeros((h, w))
         self.lamp = np.full((h, w), np.nan)
         self.owners = owners if owners is not None else {}
         lamps = glow[..., 1]
         self.next = int(np.nanmax(lamps)) + 1 if np.isfinite(lamps).any() else 0
 
-    def add(self, iy, ix, raw, pos, owner=None) -> None:
+    def add(self, iy, ix, raw, pos, owner=None, passed=None) -> None:
         x, y = np.abs(pos[:, 0]), pos[:, 1]
-        np.add.at(self.total, (iy, ix), np.stack([raw, x, y, x * x, y * y], 1))
+        passed = np.ones(len(raw)) if passed is None else passed
+        np.add.at(self.total, (iy, ix), np.stack([raw, x, y, x * x, y * y, passed], 1))
         np.add.at(self.count, (iy, ix), 1)
         self.lamp[iy, ix] = self.next
         self.owners[self.next] = owner
@@ -762,7 +765,8 @@ class _GlowSum:
         # lenses, two a side) has no one place: no rim fade (NaN).
         spread = mean[:, 3] - mean[:, 1] ** 2 + mean[:, 4] - mean[:, 2] ** 2
         one = spread < GLOW_SHARED**2
-        glow[where, 2:] = np.where(one[:, None], mean[:, 1:3], np.nan)
+        glow[where, 2:4] = np.where(one[:, None], mean[:, 1:3], np.nan)
+        glow[where, 4] = mean[:, 5]
 
 
 def _rim(mask: np.ndarray) -> np.ndarray:
@@ -861,7 +865,7 @@ def day_glow(glow: np.ndarray, view, colour: np.ndarray | None = None) -> np.nda
         # The share of the lamp's visible samples below each value (ties: the middle).
         rank = (np.searchsorted(pool, r, "left") + np.searchsorted(pool, r, "right")) / (2 * len(pool))
         alpha = np.where(r > 0, np.interp(rank * 100, dm.LAMP_PERCENTILES, DAY_HEAD_ALPHA), 0.0)
-        out[mine] = alpha
+        out[mine] = alpha * np.nan_to_num(glow[..., 4][mine], nan=1.0)
     return out if np.isfinite(out).any() else None
 
 
@@ -1244,12 +1248,10 @@ def bake(
             # Lamp glass without a glow: only what its opacity lets through of the lamp behind.
             baked[:, 3] = mask[inverse] * _weight(behind[inverse]) / _weight(baked) * (1 - lens_a)
         else:
-            # A cover has no glow of its own: the lamp behind glows through it. Forza's lamp
-            # emission is HDR (BrakeColor 2 to 4 times its mask) and outshines a cover at 0.9;
-            # passing only (1 - opacity) of it left the VW GTI VR6's tails darker in the dark mood
-            # than under DSF's window glass (VM run vm1-20261028-103705). The lamp's whole glow
-            # (pending the blend Forza draws covers with, #370).
-            baked[:, 3] = mask[inverse] * _weight(behind[inverse]) / _weight(baked)
+            # A cover has no glow of its own: Forza blends it over the lamp at its opacity in its
+            # square light space (SRCALPHA, INVSRCALPHA on sqrt output; research/forza-lenses-re.md
+            # section 7), so (1 - opacity)^2 of the lamp's glow passes (a median 4% over the roster).
+            baked[:, 3] = mask[inverse] * _weight(behind[inverse]) / _weight(baked) * (1 - lens_a) ** 2
         entry["texels"] += int(free.sum())
         entry["behind"] += int(hit_any[free].sum())
         # Rays that met nothing keep the lens texel: a lens with nothing behind it in
@@ -1273,12 +1275,13 @@ def bake(
             sel = ~red & ~amber
             if through is not None:  # a lens: the lamp's glow through its filter
                 passed = through[sel]
-            else:  # a cover: through its opacity, plus its own mask where it glows
-                lens_mask = lens_rgba[sel, 3] if emits(sub.material) else np.zeros(int(sel.sum()))
-                passed = lens_a[sel] * lens_mask / 255 + (1 - lens_a[sel])
-            raw = lens_glow(passed, inverse[sel], origins, depth, mask, lamp)
+            elif emits(sub.material):  # lamp glass: its own mask where it glows, the lamp behind through it
+                passed = lens_a[sel] * lens_rgba[sel, 3] / 255 + (1 - lens_a[sel]) ** 2
+            else:  # a cover: (1 - opacity)^2 of the lamp behind
+                passed = (1 - lens_a[sel]) ** 2
+            raw = lens_glow(np.ones(int(sel.sum())), inverse[sel], origins, depth, mask, lamp)
             if raw is not None:
-                lit.add(iy[sel], ix[sel], raw, pos[sel], (section, sub))
+                lit.add(iy[sel], ix[sel], raw, pos[sel], (section, sub), passed)
     glowing = lit.done if lit is not None else np.zeros((h, w), bool)
     if lit is not None:
         lit.write(glow, glowing)
@@ -1293,7 +1296,7 @@ def bake(
     for _ in range(DILATE):
         acc = np.zeros((h, w, 4))
         n = np.zeros((h, w))
-        g_acc, g_n = np.zeros((h, w, 4)), np.zeros((h, w))
+        g_acc, g_n = np.zeros((h, w, glow.shape[2] if glow is not None else 5)), np.zeros((h, w))
         for dy, dx in ((0, 1), (0, -1), (1, 0), (-1, 0)):
             shifted = np.roll(np.roll(grown, dy, 0), dx, 1)
             vals = np.roll(np.roll(out, dy, 0), dx, 1)
