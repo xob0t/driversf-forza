@@ -42,10 +42,11 @@ import copy
 import functools
 import json
 import os
+import re
 import sqlite3
 import struct
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -63,6 +64,7 @@ class ForzaColour:
     rgb: tuple[int, int, int]  # sRGB bytes: the swatch
     metallic: bool
     colour_class: str
+    body: dict = field(default_factory=dict)  # the colour's own `body` settings (colour_settings)
 
 
 def srgb_to_linear(c: float) -> float:
@@ -74,8 +76,36 @@ def linear_to_srgb(c: float) -> float:
     return c * 12.92 if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055
 
 
-def forza_colours(gamedb: Path, media: str) -> list[ForzaColour]:
-    """The car's factory colours, in the game's order (Combo_Colors.Sequence).
+def parse_body(text: str) -> dict:
+    """A ShaderSettings XML's `body` technique as {parameter: value}: scalars as floats,
+    colours (r, g, b[, a]) as linear RGB, converted from sRGB as Forza converts them before
+    the upload (unclamped; forza-lenses-re.md section 7, #379)."""
+    m = re.search(r"<body\s*>(.*?)</body\s*>", re.sub(r"<!--.*?-->", "", text, flags=re.S), re.S | re.I)
+    out: dict = {}
+    for name, attrs in re.findall(r"<(\w+)\s+([^<>]*?)/>", m.group(1) if m else ""):
+        kv = dict(re.findall(r'(\w+)\s*=\s*"([^"]*)"', attrs))
+        try:
+            if "value" in kv:
+                out[name] = float(kv["value"])
+            elif all(c in kv for c in "rgb"):
+                out[name] = tuple(srgb_to_linear(float(kv[c])) for c in "rgb")
+        except ValueError:
+            continue
+    return out
+
+
+def colour_settings(folder: Path | None, sequence: int) -> dict:
+    """The colour's `body` settings from the car's ColorShaderSettings<sequence>.xml
+    (port_car.extract_colour_settings puts it beside the car's files); {} without one."""
+    want = f"colorshadersettings{sequence}.xml"
+    folder = Path(folder) if folder is not None else None
+    path = next((q for q in folder.iterdir() if q.name.lower() == want), None) if folder and folder.is_dir() else None
+    return parse_body(path.read_text(encoding="utf-8", errors="replace")) if path else {}
+
+
+def forza_colours(gamedb: Path, media: str, folder: Path | None = None) -> list[ForzaColour]:
+    """The car's factory colours, in the game's order (Combo_Colors.Sequence), each with its
+    own `body` settings from the car folder (colour_settings).
 
     Repeats are dropped: some cars list each colour once per livery texture
     (BaseTexture: stripes), e.g. the FH1 Challenger SRT8 392's 26 rows are 7
@@ -101,7 +131,8 @@ def forza_colours(gamedb: Path, media: str) -> list[ForzaColour]:
         if key in seen:
             continue
         seen.add(key)
-        out.append(ForzaColour(seq, ((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255), bool(metallic), cls))
+        swatch = ((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255)
+        out.append(ForzaColour(seq, swatch, bool(metallic), cls, colour_settings(folder, seq)))
     return out
 
 
@@ -361,9 +392,23 @@ LOBE_SHEEN = 0.3
 LOBE_AMOUNT = FORZA_METALLIC_BODY["SpecularAmount2"] + FORZA_METALLIC_BODY["SpecularAmount3"]
 
 
-def body_settings(colour: ForzaColour) -> dict[str, float]:
-    """The colour's `body` parameters, layered as Forza layers them."""
-    return FORZA_BODY | (FORZA_METALLIC_BODY if colour.metallic else {})
+def body_settings(colour: ForzaColour) -> dict:
+    """The colour's `body` parameters, layered as Forza layers them: Normal.xml, Metallic.xml
+    for a metallic colour, the colour's own file."""
+    return FORZA_BODY | (FORZA_METALLIC_BODY if colour.metallic else {}) | colour.body
+
+
+# Forza's two-tone (TwoToneScale > 0: the TVR Sagaris's flip colours) mixes the paint toward
+# TwoToneColor by TwoToneScale x sat(N.E + TwoToneBias)^TwoTonePower: toward the second colour
+# facing the camera (the body pixel shader run in tools/re/xenos.py: the weight is
+# (N.E + bias)^power, (0.99)^28 = 0.755 at N.E 0.98). DSF's fresnel mixes colour 2 toward
+# colour 3 by (1 - N.E)^power, toward the edges: colour 2 takes the facing mix, colour 3 the
+# swatch, and the power is fitted to Forza's curve over the projected area.
+def two_tone_power(power: float, bias: float) -> float:
+    """DSF g_fresnelpower whose (1 - N.E)^p best follows 1 - sat(N.E + bias)^power."""
+    ndv = np.array(_AREA_NDV)
+    want = 1 - np.clip(ndv + bias, 0, 1) ** power
+    return float(min(np.geomspace(0.02, 20, 300), key=lambda q: float(np.sum(ndv * ((1 - ndv) ** q - want) ** 2))))
 
 
 def clear_coat(body: dict[str, float]) -> dict[str, float]:
@@ -384,17 +429,26 @@ def clear_coat(body: dict[str, float]) -> dict[str, float]:
 
 
 def shade(colour: ForzaColour) -> dict:
-    """Palette parameters for one Forza colour: one albedo at every angle (colour 2 = colour 3 = albedo_for(swatch); the fresnel power and
-    bias then change nothing and are the vanilla flat entries' 10 / 0.01) under Forza's
-    clear coat (clear_coat)."""
-    a = swatch_albedo(tuple(colour.rgb)) + (1.0,)
+    """Palette parameters for one Forza colour: one albedo at every angle (colour 2 = colour 3
+    = albedo_for(swatch); the fresnel power and bias then change nothing and are the vanilla
+    flat entries' 10 / 0.01), or with a two-tone the facing mix as colour 2 (two_tone_power);
+    under Forza's clear coat (clear_coat)."""
+    body = body_settings(colour)
+    c2 = c3 = swatch_albedo(tuple(colour.rgb))
+    power, bias = 10.0, 0.01
+    scale = min(float(body.get("TwoToneScale", 0.0)), 1.0)
+    if scale > 0 and "TwoToneColor" in body:
+        swatch = np.array([srgb_to_linear(c / 255) for c in colour.rgb])
+        facing = swatch + scale * (np.array(body["TwoToneColor"][:3]) - swatch)
+        c2 = tuple(round(float(x), 5) for x in albedo_for(encode_srgb(facing)))
+        power, bias = round(two_tone_power(body.get("TwoTonePower", 1.0), body.get("TwoToneBias", 0.0)), 3), 0.0
     return {
         "g_vec4TintColour1_Alpha": (0.0, 1.0 if colour.metallic else 0.0, 0.0, 1.0),
-        "g_vec3TintColour2": a,
-        "g_vec3TintColour3": a,
-        "g_fresnelpower": 10.0,
-        "g_fresnelbias": 0.01,
-        **clear_coat(body_settings(colour)),
+        "g_vec3TintColour2": c2 + (1.0,),
+        "g_vec3TintColour3": c3 + (1.0,),
+        "g_fresnelpower": power,
+        "g_fresnelbias": bias,
+        **clear_coat(body),
     }
 
 
@@ -535,7 +589,7 @@ def survey(cars: list[str], cache: Path, build: Path | None = None) -> dict:
         name, _, game = media.partition("@")
         found = [db for db in gamedbs if (db.parent / name).is_dir()]
         dbs = [cache / game / "gamedb.slt"] if game else found[:1] or gamedbs
-        colours = pick_colours(next((c for db in dbs if (c := forza_colours(db, name))), []))
+        colours = pick_colours(next((c for db in dbs if (c := forza_colours(db, name, db.parent / name))), []))
         entries = [shade(c) for c in colours] if palettes is None else palettes.get(name, [])
         for colour, params in zip(colours, entries):
             rows.append({"car": name, "metallic": colour.metallic, **survey_entry(colour, params)})
@@ -600,7 +654,7 @@ def main(argv: list[str] | None = None) -> None:
             args.out.write_text(json.dumps(result, indent=1))
         print(json.dumps({k: v for k, v in result.items() if k != "rows"}, indent=1))
         return
-    for colour in pick_colours(forza_colours(args.gamedb, args.media)):
+    for colour in pick_colours(forza_colours(args.gamedb, args.media, args.gamedb.parent / args.media)):
         q = shade(colour)
         print(
             f"{colour.sequence:2} #{'{:02x}{:02x}{:02x}'.format(*colour.rgb)} {'metallic' if colour.metallic else 'solid   '} "
