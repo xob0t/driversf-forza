@@ -185,6 +185,15 @@ def _settings(folder: Path) -> dict:
         return {}
 
 
+def _glass_settings(folder: Path) -> dict:
+    from dsfforza.convert import lenses
+
+    try:
+        return {k.lower(): v for k, v in lenses.glass_settings(folder).items()}
+    except OSError:
+        return {}
+
+
 def _gloss_shading(gloss, base: cr.Shading | None = None) -> cr.Shading:
     if gloss is None:
         return base or cr.Shading(1.0, 0.04, 0.0, 1.0, 0.0, 1.0, True)
@@ -210,6 +219,7 @@ class _Materials:
         self.paint_trims = paint_trims
         self.atlases = _Atlases(folder, lod0)
         self.settings = _settings(folder)
+        self.glass_settings = _glass_settings(folder)
         self.paint = paint
         self.classifier = classifier or fm.classify
         self.materials: list[cr.Material] = []
@@ -280,6 +290,8 @@ class _Materials:
                 floor = cap
             m.kind = "lens"
             m.lens = cr.Lens(floor=float(floor), cap=cap, tint=1.0)
+            if t.startswith("detail_glass"):  # a filter (research/forza-lenses-re.md)
+                m.lens = cr.Lens(technique=t, settings=self.glass_settings)
             if t in UNTEXTURED_GLASS:
                 m.texture = None
             m.scale = float(own.get("PaintScale", scale)) * (max(colour) if lens is not None and max(colour) else 1.0)
