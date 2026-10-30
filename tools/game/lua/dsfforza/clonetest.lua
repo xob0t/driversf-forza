@@ -765,7 +765,7 @@ local function setViewLamps(id, car, mode)
 	lampMode = mode
 	lampModule.setLights(car, { All = false, Headlights = mode == "lit", DaytimeRunning = true })
 	lampModule.setDark(mode == "night")
-	log(string.format("id %d: lamps %s", id, mode or "off"))
+	log(string.format("id %d: lamps %s", id, mode or "running"))
 end
 
 -- Switch to extra view `name`: a camera mode, or a fixed camera made the way
