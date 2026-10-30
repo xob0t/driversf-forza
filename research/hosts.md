@@ -20,6 +20,9 @@ sounds and behaves. The first ports all used 266 (ASYM Desanne, a V6 saloon).
 | Category, flags | SSIC/VSCT record | copied |
 | HUD badge, name, stat bars | Lua `vehicleStats` | copied by `register.lua`; stat bars generated (`handling_dsf.stat_bars`) |
 
+Field by field (UPVH, VO3D, the other chunks), with a plan to generate the hierarchy
+instead: `host-free.md`.
+
 ## The engine sound (confirmed-static)
 
 `VSRT` holds `VSVH` (0x9C bytes), `SBAK` and, on 19 vehicles, `GRBK`:
