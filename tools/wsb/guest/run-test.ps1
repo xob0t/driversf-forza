@@ -53,7 +53,7 @@ param(
     [switch]$GlassLadder, # probe: damage in steps during each cockpit view (clonetest.lua GLASS_STEPS, ~21 s)
     [string]$Views,      # probe: extra views after the chase view, ~6 s each: camera modes (Bonnet, Bumper) and fixed
                          # cameras on the driver's seat (left, right, front), the tailgate (rear), the tailpipes (exhaust), the left wheels
-                         # (wheels), the front left wheel (fq, lock) and the headlamps (nose), e.g. 'Bonnet,Bumper,left'
+                         # (wheels), the front left wheel (fq, lock), the headlamps (nose) and the rear deck from above (deck), e.g. 'Bonnet,Bumper,left'
     [int]$Palette = -1,  # probe: paint palette entry of every probed car (shaderParams[0]); -1: the game's pick
     [switch]$Ui,         # probe: keep the game's UI (HUD, prompts, minimap) in the shots; by default clonetest.lua hides it
                          # from the first spawn on (-MenuKeys keeps it too: the garage menus are UI)

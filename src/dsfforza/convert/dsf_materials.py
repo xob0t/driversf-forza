@@ -751,6 +751,26 @@ SOLID_CELL = 8  # destination texels per solid-colour cell
 PAD = 4  # destination texels of real neighbouring content around each region
 ALIGN = 4  # DXT block alignment
 MIN_GAP = 2  # source texels of empty seam needed to cut regions apart
+# Large nodamage pictures drawn over the outside of the car (issue #299). The atlas packs every
+# region at one scale, so a picture spread over a large surface gets as few texels per
+# metre as Forza gave it relative to the rest, halved or worse by the pack: the F50's
+# engine, a 198 x 137 picture over 1.37 m2 under the rear window, came out at 68 texels/m
+# (Forza's own LOD 1 texture: 131), while its 2 cm badges kept 500 to 1800. A region whose
+# triangles outside the cabin (CABIN_SECTIONS) cover FLOOR_MIN_AREA or more of the car is
+# packed at no fewer than FLOOR_DENSITY DSF texels per metre over them, never above its
+# Forza resolution; the rest of the atlas pays for it through the uniform scale. Only a
+# region whose outside triangles use FLOOR_MIN_COVER of its texels or more: one that
+# merges the picture with other artwork (find_regions cuts only along empty seams) would
+# raise all of it (the Zonda R's 236 x 818, 4% used by the outside triangles, would take
+# half the atlas). At most FLOOR_MAX_SHARE of the atlas goes to raised regions (their
+# floors shrink together past that). The cabin stays at the uniform scale: the exterior's
+# low-detail cabin covers 3 to 9 m2 at Forza's lowest densities and doesn't fit raised
+# (the F50's would take more than the whole atlas at Forza's resolution).
+FLOOR_DENSITY = 120.0
+FLOOR_MIN_AREA = 0.25
+FLOOR_MIN_COVER = 0.4
+FLOOR_MAX_SHARE = 0.15
+CABIN_SECTIONS = re.compile(r"(interior|seat[lr]?|steering_wheel|cage\w*|driver\w*)", re.I)
 
 
 @dataclass
@@ -761,6 +781,8 @@ class Region:
     src: tuple[int, int, int, int]  # x0, y0, x1, y1 in source texels
     dst: tuple[int, int] = (0, 0)  # top-left of the padded block in the DSF atlas
     size: tuple[int, int] = (0, 0)  # padded block size in DSF texels
+    scale: float = 0.0  # DSF texels per source texel (Texturing._pack)
+    floor: float = 0.0  # the least scale it may get (Texturing._floors; 0: the family's)
 
     def map(
         self, u: float, v: float, src_size: tuple[int, int], scale: float, atlas: tuple[int, int]
@@ -1244,6 +1266,10 @@ class Texturing:
     wheel_ids: set = field(default_factory=set)  # id(section) of the Forza wheel model (plan(wheels=...))
     art_flat: set = field(default_factory=set)  # id(sub): trim artwork drawn flat (ART_MIN_SCALE_SHARE)
     pack_scale: float = 0.0  # the uniform scale _pack found (before family weights)
+    # (id(sub), triangle index) -> (LOD, area in m2, outside the cabin) of atlas triangles (_floors)
+    tri_area: dict = field(default_factory=dict)
+    raised: dict = field(default_factory=dict)  # (family, region index) -> its floor's DSF texels per m
+    use_floors: bool = True  # plan() lays out without the floors while it judges the artwork budget
     wheel_paint: dict = field(default_factory=dict)  # rim technique -> PaintScale applied (_wheel_paint_scale)
     # The wheel's blur disc (WHEEL_BLUR_MAT): plan(wheel_blur=True) puts the picture in the atlas.
     wheel_blur_tint: tuple | None = None  # g_vec4WheelBlurColour RGB (wheel_blur_texels)
@@ -1349,6 +1375,15 @@ class Texturing:
                             continue
                         tris[m.family].append(uvs)
                         keys[m.family].append((id(sub), k))
+                        a, b, c = (pool[i].position for i in tri)
+                        u = (b[0] - a[0], b[1] - a[1], b[2] - a[2])
+                        v = (c[0] - a[0], c[1] - a[1], c[2] - a[2])
+                        cross = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
+                        self.tri_area[(id(sub), k)] = (
+                            sub.lod,
+                            0.5 * math.sqrt(sum(x * x for x in cross)),
+                            not CABIN_SECTIONS.fullmatch(section.name),
+                        )
                         if m.family == fm.LIGHTS:
                             self.lamp_tris.append(
                                 (sub.lod, [pool[i].position for i in tri], uvs, (section.name, sub.material))
@@ -1363,6 +1398,10 @@ class Texturing:
                         pool = section.vertices_for(sub)
                         self.lamp_swatch_tris += [(sub.lod, [pool[i].position for i in t]) for t in sub.triangles()]
         art = {key for f in self.families for key in keys[f] if key[0] in art_subs}
+        # The artwork budget below is judged without the density floors (_floors): raised,
+        # an engine picture that is itself artwork would push the rest of the car's
+        # artwork flat (JAG_XJ220_93: 21 subsections).
+        self.use_floors = not art
         self._layout(tris, keys, tested, swatches, extra_solids)
         if art:
             # Trim artwork and detail (trim_art) may not cost the rest of the car much
@@ -1392,6 +1431,7 @@ class Texturing:
                 chosen = details
             else:
                 chosen = set(flat)
+            self.use_floors = True
             layout(chosen)
             for sid in chosen:
                 section, sub = art_subs[sid][:2]
@@ -1714,6 +1754,7 @@ class Texturing:
                 self.owners[key] = n
             mixed = {n for n, t in zip(owner, tested[family]) if not t}
             self.alpha_only |= {(family, n) for n in set(owner) - mixed}
+        self._floors(tris, keys)
         # Swatch cells only once the regions are known: a red lamp swatch's
         # alpha comes from the car's own red curve (_red_lamp_curve, sampled
         # over the lights regions), and triangle_uvs converts the colour again
@@ -1735,6 +1776,48 @@ class Texturing:
         for key, colour in (extra_solids or {}).items():
             self.solid_colours[key] = tuple(colour)
         self._pack()
+
+    def _floors(self, tris, keys) -> None:
+        """Region.floor for the regions drawn over a large surface outside the cabin
+        (FLOOR_DENSITY, FLOOR_MIN_AREA, FLOOR_MAX_SHARE): from each region's triangles at
+        the finest LOD planned, its source texels per metre on the car. Exterior atlases
+        only (no classifier: the cockpit weights its own families)."""
+        self.raised = {}
+        if self.classifier is not None or not self.use_floors:
+            return
+        lods = [v[0] for v in self.tri_area.values()]
+        if not lods:
+            return
+        finest = min(lods)
+        width, height = self.size
+        demand = []
+        for family in self.families:
+            if fm.base_family(family) != fm.NODAMAGE:  # the car's artwork; lamps keep the uniform scale
+                continue
+            w, h = self.src_sizes[family]
+            area = [0.0] * len(self.regions[family])
+            texels = [0.0] * len(self.regions[family])
+            for uvs, key in zip(tris[family], keys[family]):
+                lod, a, outside = self.tri_area.get(key, (None, 0.0, False))
+                if lod != finest or not outside:
+                    continue
+                n = self.owners[key]
+                (u0, v0), (u1, v1), (u2, v2) = uvs[:3]
+                area[n] += a
+                texels[n] += 0.5 * abs((u1 - u0) * (v2 - v0) - (u2 - u0) * (v1 - v0)) * w * h
+            for n, r in enumerate(self.regions[family]):
+                rect = (r.src[2] - r.src[0]) * (r.src[3] - r.src[1])
+                if area[n] < FLOOR_MIN_AREA or texels[n] <= 0 or texels[n] < FLOOR_MIN_COVER * rect:
+                    continue
+                density = math.sqrt(texels[n] / area[n])  # source texels per metre
+                r.floor = min(1.0, FLOOR_DENSITY / density)
+                demand.append((family, n, r))
+        cost = sum((r.src[2] - r.src[0]) * (r.src[3] - r.src[1]) * r.floor**2 for _, _, r in demand)
+        if cost > FLOOR_MAX_SHARE * width * height:
+            for _, _, r in demand:
+                r.floor *= math.sqrt(FLOOR_MAX_SHARE * width * height / cost)
+        for family, n, r in demand:
+            self.raised[(family, n)] = r.floor
 
     def wheel_texture(self) -> bool:
         """Whether the car folder holds the wheel texture (port_car.extract_wheel)."""
@@ -1874,8 +1957,8 @@ class Texturing:
         def attempt(s: float):
             sizes = [
                 (
-                    _round_up((r.src[2] - r.src[0]) * self._family_scale(s, r.family)) + 2 * PAD,
-                    _round_up((r.src[3] - r.src[1]) * self._family_scale(s, r.family)) + 2 * PAD,
+                    _round_up((r.src[2] - r.src[0]) * self._region_scale(s, r)) + 2 * PAD,
+                    _round_up((r.src[3] - r.src[1]) * self._region_scale(s, r)) + 2 * PAD,
                 )
                 for r in regions
             ]
@@ -1897,11 +1980,19 @@ class Texturing:
                 hi = s
         s, sizes, pos = best
         for r, size, p in zip(regions, sizes, pos):
-            r.dst, r.size = p, size
+            r.dst, r.size, r.scale = p, size, self._region_scale(s, r)
         for key, p in zip(solid_keys, pos[len(regions) :]):
             self.solids[key] = p
         self.scale = {family: self._family_scale(s, family) for family in self.families}
         self.pack_scale = s
+
+    def _scale_of(self, r: Region) -> float:
+        """The scale _pack gave a region; its family's for one laid out by hand."""
+        return r.scale or self.scale[r.family]
+
+    def _region_scale(self, s: float, r: Region) -> float:
+        """A region's scale: its family's, or its floor (_floors) where that is higher."""
+        return max(self._family_scale(s, r.family), r.floor)
 
     def _family_scale(self, s: float, family: str) -> float:
         """DSF texels per source texel for a family: the weighted uniform
@@ -1981,7 +2072,11 @@ class Texturing:
         region = self.regions[m.family][n]
         mapped = [
             region.map(
-                min(1.0, max(0.0, u)), min(1.0, max(0.0, v)), self.src_sizes[m.family], self.scale[m.family], self.size
+                min(1.0, max(0.0, u)),
+                min(1.0, max(0.0, v)),
+                self.src_sizes[m.family],
+                self._scale_of(region),
+                self.size,
             )
             for u, v in uvs
         ]
@@ -2254,7 +2349,7 @@ class Texturing:
         if n is None:
             return
         r = self.regions[m.family][n]
-        s, src_size = self.scale[m.family], self.src_sizes[m.family]
+        s, src_size = self._scale_of(r), self.src_sizes[m.family]
         sh, sw = out.shape
         width, height = self.size
         pts = np.array(
@@ -2319,7 +2414,6 @@ class Texturing:
         out[:, :] = self.plain
         for family in self.families:
             sw, sh, src = self.atlases.get(family)
-            s = self.scale[family]
             if not self.regions[family]:
                 continue
             texels_in = np.frombuffer(src, dtype=np.uint8).reshape(sh, sw, 4)
@@ -2327,6 +2421,7 @@ class Texturing:
             for n_region, r in enumerate(self.regions[family]):
                 if r.size[0] <= 0 or r.size[1] <= 0:
                     continue
+                s = self._scale_of(r)
                 cut = self.cutout_colour is not None and (family, n_region) in self.alpha_only
                 rows, cols = [], []
                 for dy in range(r.size[1]):
@@ -2388,8 +2483,8 @@ class Texturing:
         out = bytearray(bytes(self.plain) * (width * height))
         for family in self.families:
             sw, sh, src = self.atlases.get(family)
-            s = self.scale[family]
             for n_region, r in enumerate(self.regions[family]):
+                s = self._scale_of(r)
                 cut = self.cutout_colour is not None and (family, n_region) in self.alpha_only
                 for dy in range(r.size[1]):
                     y = r.dst[1] + dy
@@ -2436,7 +2531,11 @@ class Texturing:
     def summary(self) -> str:
         parts = []
         for family in self.families:
-            parts.append(f"{family}: {len(self.regions[family])} regions at {self.scale[family]:.3f}x")
+            raised = [r.scale for n, r in enumerate(self.regions[family]) if r.scale > self.scale[family] + 1e-9]
+            parts.append(
+                f"{family}: {len(self.regions[family])} regions at {self.scale[family]:.3f}x"
+                + (f" ({len(raised)} raised to {', '.join(f'{s:.3f}x' for s in raised)})" if raised else "")
+            )
         if self.wheel_blur_tint is not None:
             parts.append("wheel blur tint " + "/".join(f"{c:.2f}" for c in self.wheel_blur_tint))
         paint = {t: k for t, k in self.wheel_paint.items() if k != 1.0}

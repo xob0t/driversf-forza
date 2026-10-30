@@ -868,3 +868,84 @@ class WheelSource(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DensityFloor(unittest.TestCase):
+    """A picture spread over a large surface outside the cabin keeps FLOOR_DENSITY texels per
+    metre in the atlas (the F50's engine under its rear window, issue #299); badges, the
+    cabin and the cockpit's atlas keep the uniform scale."""
+
+    def setUp(self):
+        size = 512
+        nodamage = bytearray()
+        for y in range(size):
+            for x in range(size):
+                nodamage += bytes(((x * 7 + y * 13) % 256, (x * 3) % 256, (y * 5) % 256, 255))  # artwork, not a swatch
+        atlases = {fm.NODAMAGE: (size, size, nodamage), fm.LIGHTS: (size, size, bytearray(size * size * 4))}
+
+        class FakeAtlases:
+            def __init__(self, car_dir=None, lod0=False):
+                self.car_dir = None
+
+            def get(self, family):
+                return atlases[family]
+
+        self.patches = [
+            mock.patch.object(fm, "AtlasCache", FakeAtlases),
+            mock.patch.object(fm, "shader_settings", lambda car_dir: {}),
+        ]
+        for p in self.patches:
+            p.start()
+        self.addCleanup(lambda: [p.stop() for p in self.patches])
+
+    @staticmethod
+    def _section(name, size_m, uv0, uv1, technique="interior"):
+        """A square of size_m metres (two triangles) mapped onto the UV square uv0..uv1."""
+        (u0, v0), (u1, v1) = uv0, uv1
+        corners = [((0.0, 0.0, 0.0), (u0, v0)), ((size_m, 0.0, 0.0), (u1, v0)), ((size_m, size_m, 0.0), (u1, v1))]
+        corners.append(((0.0, size_m, 0.0), (u0, v1)))
+        verts = [carbin.Vertex(p, uv, (0.0, 0.0), (0.0, 0.0, 1.0)) for p, uv in corners]
+        sub = carbin.SubSection(technique, 1, 4, (0.0, 1.0, 0.0, 1.0), [0, 1, 2, 0, 2, 3])
+        return carbin.Section(name, (0, 0, 0), (0, 0, 0), (1, 1, 1), verts, [], [sub])
+
+    def _plan(self, picture_section="body", **kwargs):
+        # 41 x 41 texels over 1 m2 (41 texels/m) and 384 x 384 texels over 4 cm2
+        picture = self._section(picture_section, 1.0, (0.0, 0.0), (0.08, 0.08))
+        badge = self._section("bumperFa", 0.02, (0.25, 0.25), (1.0, 1.0), "badge")
+        t = dm.Texturing(Path(), size=(128, 128), gloss_enabled=False, bake_lenses=False, **kwargs)
+        t.plan([picture, badge], {1})
+        regions = sorted(t.regions[fm.NODAMAGE], key=lambda r: r.src)
+        return t, regions[0], regions[1]
+
+    def test_picture_raised_badge_pays(self):
+        t, picture, badge = self._plan()
+        uniform = t.scale[fm.NODAMAGE]
+        self.assertAlmostEqual(badge.scale, uniform)
+        self.assertLess(uniform, 0.25)
+        # 41 source texels per metre, under FLOOR_DENSITY: at its Forza resolution
+        self.assertAlmostEqual(picture.floor, 1.0)
+        self.assertGreater(picture.scale, uniform)
+        self.assertLessEqual(picture.scale, 1.0)
+        self.assertIn((fm.NODAMAGE, t.regions[fm.NODAMAGE].index(picture)), t.raised)
+        self.assertIn("raised to", t.summary())
+        # the picture's atlas UVs span its region at its own scale
+        section = self._section("body", 1.0, (0.0, 0.0), (0.08, 0.08))
+        t.plan([section, self._section("bumperFa", 0.02, (0.25, 0.25), (1.0, 1.0), "badge")], {1})
+        uvs, _ = t.triangle_uvs(section, section.subsections[0], 0, [v.uv0 for v in section.lod_vertices[:3]])
+        r = next(r for r in t.regions[fm.NODAMAGE] if r.src[0] <= 0)
+        self.assertAlmostEqual((uvs[1][0] - uvs[0][0]) * 128, 0.08 * 512 * r.scale, places=3)
+
+    def test_cabin_and_cockpit_keep_the_uniform_scale(self):
+        t, picture, _ = self._plan(picture_section="interior")
+        self.assertEqual(picture.floor, 0.0)
+        self.assertAlmostEqual(picture.scale, t.scale[fm.NODAMAGE])
+        t, picture, _ = self._plan(classifier=fm.classify)
+        self.assertEqual(picture.floor, 0.0)
+        self.assertEqual(t.raised, {})
+
+    def test_floor_share_is_capped(self):
+        with mock.patch.object(dm, "FLOOR_MAX_SHARE", 0.05):
+            _, picture, _ = self._plan()
+        rect = (picture.src[2] - picture.src[0]) * (picture.src[3] - picture.src[1])
+        self.assertLessEqual(rect * picture.floor**2, 0.05 * 128 * 128 + 1e-6)
+        self.assertLess(picture.floor, 1.0)
