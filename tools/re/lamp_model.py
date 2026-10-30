@@ -164,8 +164,9 @@ def compare(args) -> None:
     rows = []
     for fr in frames:
         name, car = fr["frame"], fr["car"]
-        if car not in texels:
-            texels[car] = lamp_texels(archive, car)
+        end = fr.get("facing", "rear")
+        if (car, end) not in texels:
+            texels[car, end] = lamp_texels(archive, car, (0.0, 0.0, 1.0) if end == "front" else (0.0, 0.0, -1.0))
         hdr = read_pfm(dumps / f"{name}-scene-end.pfm")
         from PIL import Image
 
@@ -188,9 +189,9 @@ def compare(args) -> None:
             # Predicted per texel: D x t + a x C, the lamps of the group pooled by area.
             a, t, w, cs = [], [], [], []
             for lid in g["lamps"]:
-                if lid not in texels[car]:
+                if lid not in texels[car, end]:
                     continue
-                al, lin, ww, info = texels[car][lid]
+                al, lin, ww, info = texels[car, end][lid]
                 # The renderer's colour for the frame's light mask, at the frame's tint; the
                 # probe's reading of the same lamp must agree.
                 lit = cr.Lighting(lamps=fr["mask"])
@@ -203,7 +204,8 @@ def compare(args) -> None:
                 w.append(ww)
                 cs.append(np.broadcast_to(C, (len(al), 3)))
             a, t, w, cs = (np.concatenate(v) for v in (a, t, w, cs))
-            emis = a[:, None] * cs
+            # Under DSF window glass the lamp keeps (1 - opacity) of its glow (lights-re.md).
+            emis = a[:, None] * cs * g.get("through", 1.0)
             ec = emis[:, 0] if ch == 0 else emis @ REC709
             tc = t[:, 0] if ch == 0 else t @ REC709
             # D: the diffuse light, fitted so the predicted median matches the observed one.

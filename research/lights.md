@@ -2452,6 +2452,11 @@ Change (no converter change):
   lit modes. `day_lit` is ClearDay with the running lights (e 1.7, white 5); `dark` is LastChapter
   (sun 7%, ambient 1.4 times, reflections half, e 1, white 2) with the running lights. The `day`
   scores and the garage pictures keep the garage tone.
+- DSF glass in the lit modes is drawn as the game draws `GLOBAL_Glass`: opaque by the shared glass
+  texel's blue read as sRGB (the windows' (13, 232, 191): 52%), raised by the glint, untinted, so
+  a lamp under a window keeps about half its glow (measured below; it kept about 60%, the garage
+  pictures' clear glass, which the `day` mode and Forza's glass keep). A lit mode's glow is the render less the same light with
+  the lamps off (`<mode>_base`), not less the `day` render.
 - A lamp's glow is now the same in every gameplay mood (tint 5, the running lights); only the tone
   map differs. render_compare's exterior views drop their `dark` mode, which repeated `day_lit`'s
   glow; the cockpit keeps its dark render. The white plate limit (`glare`) is vanilla's p90 (below).
