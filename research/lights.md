@@ -2361,6 +2361,15 @@ merged) `vm2-20261030-025201`): at night the X6 M's, Mustang GT 05's, S60's and 
 brighter, along their lamp graphics; the Esperante's two sides glow alike; the TT RS's and Devon GTX's
 as before. By day the tails look as on master.
 
+Roster (offline, `out/l8/rear_survey.py` in the t3-a7c21235-c worktree: `Texturing.plan` at LODs 1, 3, 5
+per car, the same rear view of the rear half's lamps both times, each red texel it sees at its
+effective alpha, the glow where there is one, else the converted alpha; master 5b346c0's lamp code
+against this; 552 cars with visible red rear lamps): p95 p10 / 50 / 90 29 / 106 / 171 -> 70 / 130 /
+183 (vanilla's visible 0x18 tails per vehicle 52 / 106 / 210); share over alpha 46 0.01 / 0.22 / 0.41
+-> 0.15 / 0.33 / 0.47. 319 cars rise by more than 5, none falls; inside vanilla's p10 to p90 423 ->
+512; below it 121 -> 22 (race cars with decal or hidden lamps: RAD_SR8LM_10, BEN_7_Speed8_03, the
+ARX-01bs, LOT_Evora_09, NIS_GTR_12, NIS_Versa_09, the Viper CCs); above it 8 -> 18.
+
 Not this: the F50's starburst and white patches and the Commodore VE race cars' flat red block with a
 white patch (#300) are the same in both builds by day: their tail lens and cover bake, not the glow.
 
