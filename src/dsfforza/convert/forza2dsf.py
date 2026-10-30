@@ -2117,6 +2117,8 @@ class CarDims:
     # front is at -z: the wheel arches of the Cuda, Mustang Boss 429 and Veyron
     # centre on -z (-0.24 / -0.20 / -0.12 against z = +0.203 / +0.213 / +0.122).
     # Taking +z put those cars' wheels 2 x z (0.25 to 0.43 m) off their arches.
+    # Plus the wheel model's own z offset (tyre_centre[2], car_dims): the arches centre on
+    # where Forza draws the tyre, not on the physics' hub.
     mid_z: float
     track_outer: float  # front track, outer tyre wall to outer tyre wall
     radius: float  # tyre radius, measured on the wheel model
@@ -2184,6 +2186,17 @@ def gamedb_body(gamedb: Path, name: str) -> tuple[float, float, float, float] | 
     return tuple(row) if row else None
 
 
+# Wheelbase midpoints (Forza model z, CarDims.mid_z) of cars whose MAXData.xml doesn't fit
+# their body. CIT_C1_11 carries PEU_107_11's MAXData.xml value for value
+# (BottomCenterWheelbasePos z -0.151, wheelbase 2.340), but its body sits 0.17 m further
+# forward in the model than the 107's (body length midpoint -0.124 against +0.048), so its
+# wheels stood 0.17 m behind its arches (issue #301; the arches centre on -0.024, the 107's
+# 5 mm off its own midpoint the same way). The only car of the roster's 573 whose arches
+# both lie more than 60 mm off MAXData's hubs the same way (research/wheels.md, "Wheels off
+# their arches").
+MID_Z_FIXES = {"cit_c1_11": 0.151 - 0.170}
+
+
 def car_dims(car: ForzaCar, gamedb: Path | None = None) -> CarDims:
     """Wheel placement data, from the first source that has it (ride height:
     mean of the front and rear StockRideHeight):
@@ -2193,16 +2206,27 @@ def car_dims(car: ForzaCar, gamedb: Path | None = None) -> CarDims:
        FH1's NIS_Leaf_11. FM4 cars carry the same file as FH1 (lower-case path).
     2. gamedb.slt Data_CarBody (ModelWheelbase, ModelFrontTrackOuter,
        BottomCenterWheelbasePosZ), when a gamedb is given.
-    Tyre radius, width and centre always come from the car's own wheel model."""
+    Tyre radius, width and centre always come from the car's own wheel model.
+
+    A wheel model whose tyre sits off its origin along the car (z) moves the wheelbase
+    midpoint by that much. Forza draws the model unturned at each hub, so its tyres stand
+    that far behind the physics' hubs on both sides, and the body's arches are cut round
+    them: the five Commodore VE race cars' tyres are 0.300 m behind their origin, and their
+    arches 0.295 to 0.310 m behind MAXData's hubs (issue #301). The converter turns the
+    wheel about the tyre's centre (tyre_centre), so it takes the hubs to the tyres instead.
+    Across (x) and up (y) the tyre stays on the hub: TOY_6_Supra_05's, MER_ML63AMG_09's
+    and VW_BEETLE_68's arches centre on the hub, not on their models' offsets. A car of
+    MID_Z_FIXES takes its midpoint from there instead of MAXData's."""
     radius, width = tyre_size(car.wheel)
     centre = tyre_centre(car.wheel)
     maxdata = find_file(car.folder, "Physics/MAXData.xml")
     if maxdata is not None:
         misc = ET.parse(maxdata).getroot().find("Misc")
         ride = [float(misc.get(k)) for k in ("FrontStockRideHeight", "RearStockRideHeight") if misc.get(k)]
+        mid_z = MID_Z_FIXES.get(car.name.lower(), -float(misc.find("BottomCenterWheelbasePos").get("z")))
         return CarDims(
             float(misc.get("Wheelbase")),
-            -float(misc.find("BottomCenterWheelbasePos").get("z")),
+            mid_z + centre[2],
             float(misc.get("FrontTrackOuter")),
             radius,
             width,
@@ -2215,7 +2239,9 @@ def car_dims(car: ForzaCar, gamedb: Path | None = None) -> CarDims:
         row = gamedb_body(gamedb, car.name)
         if row:
             source = f"{Path(gamedb).name} Data_CarBody"
-            return CarDims(row[0], -row[2], row[1], radius, width, source, row[3] or 0.0, tyre_centre=centre)
+            return CarDims(
+                row[0], -row[2] + centre[2], row[1], radius, width, source, row[3] or 0.0, tyre_centre=centre
+            )
     raise ValueError(f"{car.name}: no Physics/MAXData.xml and no gamedb Data_CarBody row")
 
 

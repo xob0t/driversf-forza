@@ -110,3 +110,53 @@ def test_settle_lowers_hubs_and_cog():
     assert 301 not in params  # mounts the VO3D leaves out stay out
     # the physics sees the hubs from the CoG: unchanged on average
     assert abs((hubs[0][1] + hubs[3][1]) / 2 - params[30] - ((-0.3963 - 0.4043) / 2 + 0.3709)) < 2e-4
+
+
+def _maxdata_car(folder, name: str, wheel_z: float):
+    """A ForzaCar with a MAXData.xml (BottomCenterWheelbasePos z 0.1) and a tyre-only wheel
+    model of radius 0.3 and width 0.2 whose centre sits wheel_z along the car."""
+    from dsfforza.formats import carbin
+
+    (folder / "Physics").mkdir()
+    (folder / "Physics" / "MAXData.xml").write_text(
+        '<MAXData><Misc Wheelbase="2.6" FrontTrackOuter="1.8" FrontStockRideHeight="0.12" '
+        'RearStockRideHeight="0.12"><BottomCenterWheelbasePos x="0" y="0" z="0.1"/></Misc></MAXData>'
+    )
+    verts = [
+        carbin.Vertex((x, 0.3 * np.sin(a), wheel_z + 0.3 * np.cos(a)), (0.0, 0.0), (0.0, 0.0), (0.0, 1.0, 0.0))
+        for a in np.linspace(0, 2 * np.pi, 16, endpoint=False)
+        for x in (-0.1, 0.1)
+    ]
+    tris = [i for k in range(16) for i in (2 * k, 2 * k + 1, (2 * k + 2) % 32)]
+    sub = carbin.SubSection("tire", 1, 4, (0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0), tris)
+    wheel = [carbin.Section("wheel", (0.0, 0.0, wheel_z), (0.0,) * 3, (0.0,) * 3, verts, [], [sub], 3)]
+    return forza2dsf.ForzaCar(name, folder, wheel, [], wheel)
+
+
+def test_wheel_model_z_offset_moves_the_midpoint():
+    """Forza draws its wheel model unturned at the hubs, so a tyre 0.3 m behind the model's
+    origin (the Commodore VE race cars) stands 0.3 m behind the physics' hubs, where the
+    arches are; the converter centres the tyre on the hub, so the hubs go there (#301)."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "a").mkdir()
+        (Path(tmp) / "b").mkdir()
+        plain = forza2dsf.car_dims(_maxdata_car(Path(tmp) / "a", "X", 0.0))
+        moved = forza2dsf.car_dims(_maxdata_car(Path(tmp) / "b", "X", 0.3))
+    assert abs(plain.mid_z + 0.1) < 1e-9
+    assert abs(moved.tyre_centre[2] - 0.3) < 1e-6
+    assert abs(moved.mid_z - (plain.mid_z + 0.3)) < 1e-6
+    assert abs(moved.radius - plain.radius) < 1e-9 and moved.wheelbase == plain.wheelbase
+
+
+def test_mid_z_fix_replaces_maxdata():
+    """CIT_C1_11 carries the 107's MAXData.xml; its own midpoint is MID_Z_FIXES' (#301)."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        dims = forza2dsf.car_dims(_maxdata_car(Path(tmp), "CIT_C1_11", 0.0))
+    assert abs(dims.mid_z - forza2dsf.MID_Z_FIXES["cit_c1_11"]) < 1e-9
+    assert abs(dims.mid_z - (-0.019)) < 1e-9
