@@ -11,14 +11,16 @@ The model, per lamp texel (texel alpha a, linear texel colour t):
 
 D is the light falling on the lamp (sun, sky, AO): one number per frame and lamp group,
 fitted on the group's median (the diffuse part); the emission term has no free parameter.
-LUT is colour grade 1 (ClearDay and the harness's dark mood), fitted per channel from
-dumped frames (scene-end PFM against the final BMP); bloom is left out.
+LUT is ClearDay's colour grade, the game's 3D LUT (car_render.grade); bloom is left out.
+The lamp colours, levels and the post chain are
+car_render's (render_compare's renderer), so `compare` checks the renderer against the game.
 
     uv run python tools/re/lamp_model.py levels                       the brightness table
     uv run python tools/re/lamp_model.py compare --dumps DIR --log TRACE.log [--frames F.json]
 
-Frames (tools/re/lamp_frames.json): the dump name, the car, the lamps' brightness at that
-moment (lampprobe log), vehColourBoost, and lamp groups (box in pixels, light ids).
+Frames (tools/re/lamp_frames.json): the dump name, the car, the Lua light mask and the lamps'
+brightness at that moment (lampprobe log), vehColourBoost, and lamp groups (box in pixels,
+light ids).
 """
 
 from __future__ import annotations
@@ -33,98 +35,31 @@ from pathlib import Path
 import numpy as np
 
 from dsfforza import REPO
+from dsfforza.convert import lights
+from dsfforza.game import car_render as cr
 
-# --- the game's numbers (research/lights-re.md) ---------------------------------------
+# --- the game's numbers (research/lights-re.md; dsfforza.convert.lights) -------------------
+# The renderer the converter is measured with (car_render, render_compare) takes its lamp
+# colours, levels and post chain from the same place, so `compare` checks both.
 
-# 0x00F3FB68: per-type scale, by the light table's type byte (flags b3).
-TYPE_SCALE = [0, 2, 1, 2, 0.5, 0.5, 0.5, 0.5, 1, *[10] * 9, 3, 10, *[1] * 9, 10, 0.2, 1]
-# Lights manager colour table (0x008E6F00: sRGB bytes / 255, then ~x^2.2 by 0x0049E160),
-# by the colour byte (flags b2), as read back in game (lampprobe).
-COLOURS = {
-    0: (0, 0.0687686, 0.587755),
-    1: (0, 0, 0.587755),
-    2: (0.0591351, 0.411908, 0),
-    3: (0, 0.587755, 0),
-    4: (1, 0.229057, 0.00124854),
-    5: (1, 0.36075, 0),
-    6: (0.587755, 0, 0),
-    7: (0.620376, 0, 0.0502853),
-    8: (1, 0.957607, 0.760489),
-    9: (0.875801, 0.891845, 1),
-    10: (1, 0.640408, 0.000514284),
-    11: (1, 0.916208, 0.000183946),
-}
-# Lua light masks per type (0x00E3A998) and the combined types' "secondary" set (0x00E3AA98).
-HEAD, BRAKE, DRL, LIND, RIND, REV, SIREN, DIP, FOG = 1, 2, 4, 8, 16, 32, 64, 128, 256
-TYPE_MASK = {
-    1: HEAD,
-    2: BRAKE,
-    3: DRL,
-    4: LIND,
-    5: RIND,
-    6: BRAKE | LIND,
-    7: BRAKE | RIND,
-    8: REV,
-    9: SIREN,
-    10: DIP,
-    11: HEAD | SIREN,
-    12: FOG,
-    13: SIREN,
-    14: SIREN,
-    15: SIREN,
-    16: 0x800,
-    17: 0x1000,
-    18: DRL,
-    19: DRL | SIREN,
-    20: DRL | LIND,
-    21: DRL | RIND,
-    22: DRL | LIND,
-    23: DRL | RIND,
-    24: BRAKE | DRL,
-    25: BRAKE | DRL | LIND,
-    26: BRAKE | DRL | RIND,
-    27: BRAKE | DRL | LIND,
-    28: BRAKE | DRL | RIND,
-    29: HEAD | DRL,
-}
-COMBINED = {0x13, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D}
-# 0x008E6C80: a combined lamp with only DaytimeRunning on goes to this absolute level.
-DRL_ONLY = {**dict.fromkeys(range(0x18, 0x1D), 0.2), 0x13: 1.0, 0x1D: 1.0}
+TYPE_SCALE = lights.TYPE_SCALE
+COLOURS = lights.LAMP_COLOUR
+HEAD, BRAKE, DRL, REV = 1, 2, 4, 32
 
 
 def level(type_byte: int, mask: int) -> float:
-    """Steady colour multiplier (scale x brightness) of a lamp with the Lua mask `mask` on
-    (blinking left out): 0x008E7AD0 sets the flags, 0x008E6640 picks the target."""
-    m = TYPE_MASK.get(type_byte, 0) & mask
-    if not m:
-        return 0.0
-    if type_byte in COMBINED and m == DRL:
-        return DRL_ONLY[type_byte]
-    return float(TYPE_SCALE[type_byte])
+    """Steady colour multiplier (scale x brightness) of a lamp with the Lua mask `mask` on."""
+    return lights.lamp_level(type_byte, mask)
 
 
-def emission(type_byte: int, colour: int, brightness_or_mask, tint: float, *, mask: bool = False) -> np.ndarray:
-    """c160 entry: tint x colour x scale x brightness (brightness as read, or from a mask)."""
-    rgb = np.array(COLOURS.get(colour, COLOURS[8]), np.float64)
-    if mask:
-        return tint * rgb * level(type_byte, brightness_or_mask)
-    return tint * rgb * TYPE_SCALE[type_byte] * brightness_or_mask
+def emission(type_byte: int, colour: int, brightness: float, tint: float) -> np.ndarray:
+    """c160 entry: tint x colour x scale x brightness (brightness as the probe read it)."""
+    return tint * np.array(COLOURS.get(colour, COLOURS[8]), np.float64) * TYPE_SCALE[type_byte] * brightness
 
 
-# --- post chain -------------------------------------------------------------------------
+# --- post chain (car_render) ---------------------------------------------------------------
 
-REC709 = np.array([0.2125, 0.7154, 0.0721])
-# Colour grade 1 (ClearDay, the harness dark mood), per channel: display-linear in (the tone
-# map's output) -> display-linear out; binned medians of five dumped frames (vm1-20261030-142442,
-# f02984 f03109 f04039 day, f03497 f05094 dark), central 780 x 420 px.
-LUT_X = np.array([0.0, 0.013, 0.113, 0.213, 0.312, 0.413, 0.512, 0.613, 0.713, 0.812, 0.913, 1.0])
-LUT_Y = np.array(
-    [
-        [0.012, 0.018, 0.056, 0.133, 0.270, 0.497, 0.640, 0.733, 0.818, 0.86, 0.87, 0.88],
-        [0.016, 0.024, 0.060, 0.122, 0.234, 0.395, 0.573, 0.680, 0.777, 0.83, 0.85, 0.86],
-        [0.024, 0.032, 0.068, 0.131, 0.233, 0.392, 0.556, 0.651, 0.758, 0.81, 0.85, 0.86],
-    ]
-)
+REC709 = cr.REC709.astype(np.float64)
 
 
 def exposure(la: float, lc, mg: float) -> float:
@@ -132,23 +67,13 @@ def exposure(la: float, lc, mg: float) -> float:
     return lc[1] + (mg - lc[1]) * min(1.0, max(0.0, 1.5 - lc[3] / (2 * la)))
 
 
-def tonemap(hdr: np.ndarray, e: float, white: float) -> np.ndarray:
-    lum = hdr @ REC709
-    return hdr * (e * (1 + e * lum / white**2) / (1 + e * lum))[..., None]
-
-
-def grade(c: np.ndarray) -> np.ndarray:
-    c = np.clip(c, 0, 1)
-    return np.stack([np.interp(c[..., k], LUT_X, LUT_Y[k]) for k in range(3)], -1)
-
-
-def srgb(x: np.ndarray) -> np.ndarray:
-    x = np.clip(x, 0, 1)
-    return np.where(x <= 0.0031308, 12.92 * x, 1.055 * np.power(x, 1 / 2.4) - 0.055)
+tonemap = cr.tonemap
+grade = cr.grade  # ClearDay's 3D LUT (research/paint-re.md, "The grade")
+srgb = cr._linear_to_srgb
 
 
 def screen(hdr: np.ndarray, e: float, white: float) -> np.ndarray:
-    return srgb(grade(tonemap(hdr, e, white)))
+    return srgb(cr.display(hdr, cr.Lighting(exposure=e, white=white)))
 
 
 # --- inputs -----------------------------------------------------------------------------
@@ -196,8 +121,6 @@ def trace_constants(log: Path) -> dict[str, dict]:
 def lamp_texels(archive: Path, spool_id: int, facing=(0.0, 0.0, -1.0), per_m2: float = 4e6) -> dict:
     """{light id: (alpha (n,), linear rgb (n, 3), weights (n,), lamp info)} sampled
     area-weighted over the exterior entry's lamp triangles that face `facing`."""
-    from dsfforza.game import car_render as cr
-
     scene = cr.load_scene(archive, spool_id, entry="exterior", physical=True)
     rng = np.random.default_rng(0)
     out = {}
@@ -246,8 +169,9 @@ def compare(args) -> None:
     rows = []
     for fr in frames:
         name, car = fr["frame"], fr["car"]
-        if car not in texels:
-            texels[car] = lamp_texels(archive, car)
+        end = fr.get("facing", "rear")
+        if (car, end) not in texels:
+            texels[car, end] = lamp_texels(archive, car, (0.0, 0.0, 1.0) if end == "front" else (0.0, 0.0, -1.0))
         hdr = read_pfm(dumps / f"{name}-scene-end.pfm")
         from PIL import Image
 
@@ -270,16 +194,23 @@ def compare(args) -> None:
             # Predicted per texel: D x t + a x C, the lamps of the group pooled by area.
             a, t, w, cs = [], [], [], []
             for lid in g["lamps"]:
-                if lid not in texels[car]:
+                if lid not in texels[car, end]:
                     continue
-                al, lin, ww, info = texels[car][lid]
-                C = emission(info.type, info.colour, fr["brightness"].get(f"{info.type:#04x}", 0.0), fr["tint"])
+                al, lin, ww, info = texels[car, end][lid]
+                # The renderer's colour for the frame's light mask, at the frame's tint; the
+                # probe's reading of the same lamp must agree.
+                lit = cr.Lighting(lamps=fr["mask"])
+                C = cr.dsf_lamp_rgb([info], lit)[0] * fr["tint"] / lights.VEH_COLOUR_BOOST
+                probe = emission(info.type, info.colour, fr["brightness"].get(f"{info.type:#04x}", 0.0), fr["tint"])
+                if not np.allclose(C, probe, rtol=1e-4, atol=1e-6):
+                    print(f"{name} light {lid} ({info.type:#04x}): render {C.round(4)} != probe {probe.round(4)}")
                 a.append(al)
                 t.append(lin)
                 w.append(ww)
                 cs.append(np.broadcast_to(C, (len(al), 3)))
             a, t, w, cs = (np.concatenate(v) for v in (a, t, w, cs))
-            emis = a[:, None] * cs
+            # Under DSF window glass the lamp keeps (1 - opacity) of its glow (lights-re.md).
+            emis = a[:, None] * cs * g.get("through", 1.0)
             ec = emis[:, 0] if ch == 0 else emis @ REC709
             tc = t[:, 0] if ch == 0 else t @ REC709
             # D: the diffuse light, fitted so the predicted median matches the observed one.
@@ -341,7 +272,7 @@ def compare(args) -> None:
 def cmd_levels(_args) -> None:
     masks = {"DRL (free roam)": DRL, "DRL+Brake": DRL | BRAKE, "DRL+Head": DRL | HEAD, "DRL+Rev": DRL | REV}
     print("type  " + "  ".join(f"{k:>16s}" for k in masks))
-    for t in sorted(TYPE_MASK):
+    for t in range(1, len(lights.LIGHT_TYPE_MASK)):
         print(f"{t:#04x}  " + "  ".join(f"{level(t, m):16g}" for m in masks.values()))
 
 

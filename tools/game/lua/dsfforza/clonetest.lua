@@ -39,8 +39,9 @@ local VIEWS = {}              -- config.views (run-test -Views): extra views bet
                               -- front left wheel from the front three-quarter; "lock": that wheel
                               -- from ahead, for steering in place with run-test -DriveKey Left; "nose": the headlamps; "grille": grille and bonnet).
                               -- A "+lit" suffix ("nose+lit") switches the head lamps on (Headlights, DaytimeRunning) for
-                              -- that view, "+night" also darkens the scene (lightstest.lua's dark mood); views
-                              -- without one switch them off again (pop-up head lamps, research/lights.md);
+                              -- that view, which free roam never does; "+night" puts the scene in the story's dark
+                              -- mood (lightstest.lua) with the running lights the game keeps on; views without one
+                              -- go back to the game's lamps, running lights only (research/lights-re.md);
                               -- "+hitfront" / "+hitrear" damage the front or rear bumper first (lamps that
                               -- break with it, issue #132), e.g. "nose+night+hitrear"; "+mph<N>" on a fixed
                               -- camera holds the car at N mph through the view and moves the camera with it
@@ -762,10 +763,9 @@ local function setViewLamps(id, car, mode)
 		return
 	end
 	lampMode = mode
-	local on = mode == "lit" or mode == "night"
-	lampModule.setLights(car, { All = false, Headlights = on, DaytimeRunning = on })
+	lampModule.setLights(car, { All = false, Headlights = mode == "lit", DaytimeRunning = true })
 	lampModule.setDark(mode == "night")
-	log(string.format("id %d: lamps %s", id, mode or "off"))
+	log(string.format("id %d: lamps %s", id, mode or "running"))
 end
 
 -- Switch to extra view `name`: a camera mode, or a fixed camera made the way

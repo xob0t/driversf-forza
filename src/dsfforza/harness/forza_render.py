@@ -556,25 +556,6 @@ def join(a: ForzaScene, b: ForzaScene) -> ForzaScene:
     return ForzaScene(cr.Scene.join([a.scene, b_scene]), a.origins + b.origins, a.lod, {**b.notes, **a.notes})
 
 
-# --- lamps in the lit modes --------------------------------------------------------------
-
-
-def forza_lamp_rgb(lamps: list[cr.LampInfo], lighting: cr.Lighting) -> np.ndarray | None:
-    """(L, 3) emission colour of each reference lamp in this light: DSF's level for its
-    type (car_render.lamp_level). A 0x1D head lamp glows like a 0x01 one: the converter
-    draws the texels of those lamps at DAYTIME_GLOW (a fifth) against the type's five
-    times higher level (research/lights.md, "Head lamps white plates by day")."""
-    if not lamps:
-        return None
-    out = []
-    for lp in lamps:
-        level = cr.lamp_level(lp.type, lighting.lamps)
-        if lp.type == 0x1D:
-            level *= cr.TYPE_BRIGHTNESS[1] / cr.TYPE_BRIGHTNESS[0x1D]
-        out.append(np.array(cr.LAMP_COLOURS.get(lp.colour, cr.LAMP_COLOURS[8])) * level)
-    return np.array(out, np.float32).reshape(-1, 3)
-
-
 # --- the cockpit -----------------------------------------------------------------------------
 
 GAUGE_TECHNIQUE = re.compile(r"^(cockpit_)?(z_)?(digital_)?gauge|needle", re.I)

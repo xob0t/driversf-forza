@@ -130,7 +130,7 @@ So:
 - GPCH 155 and 173 (the exterior entry, the player's car) add the shadow-map lookup to the
   direct light; the emission term is the same.
 
-### Glass and lenses over a lamp (confirmed-static, blend mode inferred)
+### Glass and lenses over a lamp (confirmed-static; the share kept confirmed-runtime)
 
 DSF has no lens program. A vanilla lamp is one opaque Lights surface; its lens look is in
 the texture. Glass is `GLOBAL_Glass` (GPCH 46/47), drawn in the blended pass:
@@ -147,9 +147,17 @@ rgb     = (amb + dir) x tex.r + spec x specColour x dirAmount + refl
 With the usual `SrcAlpha / InvSrcAlpha` blend (inferred: the output alpha is an opacity, and
 DSF Enhanced's Trace shows blending on for these draws), a lamp seen through glass keeps
 `(1 - alpha)` of its glow and gets the glass's lit grey, glint and reflection on top. The
-window texels of the shared glass texture are blue 192 (`dsf_materials`, the Mustang GT note),
-so a lamp under window glass keeps 25% of its glow. There is no colour filter: `tex.r` is a
-grey level, so DSF glass cannot tint a lamp.
+window texels of the shared glass texture are blue 191 to 192 (`dsf_materials`, the Mustang GT
+note). There is no colour filter: `tex.r` is a grey level, so DSF glass cannot tint a lamp.
+
+Measured (confirmed-runtime; run `vm1-20261030-163312`, vanilla 241's nose by day, DSF Enhanced
+dump `f05477` in `re-lamps\dumps5`; `out/re/glassfit.py` in the lamp-model PR's worktree): the
+HDR pixels of each head lamp disc (0x1D under window glass, running lights, so the uploaded
+colour is 5 x white x 1) against the lamp's own texels' `a x C`, quantiles p30 to p99 fitted as
+`T x a x C + c`: T 0.500 and 0.512 (the two lamps), c 0.06 and -0.09. So a lamp under a window
+keeps half its glow, not 25%: the texture is read as sRGB (its RGB decoded, its alpha not), and
+blue 191 is an opacity of 0.52 (T 0.48 with the glint). `car_render` draws DSF glass that way
+in the game's light (`lights.md`, "The lamp model the renderer and the harness use").
 
 ### Bloom threshold (confirmed-static, constants confirmed-runtime)
 
@@ -447,10 +455,10 @@ Sheet of the frames with the lamp boxes and numbers: attached to the PR
 | `TAIL_RED_ALPHA` (`lenses`) | vanilla 0x18 visible alpha percentiles | 56 vanilla cars, rear view | Right in kind: same type, same `C`, so matching the alpha distribution gives vanilla's glow. Note vanilla also uses 0x03 tails (level 2 at running lights, 10 times a 0x18's 0.2): pooling those with 0x18 overstates the 0x18 target. |
 | `LAMP_CURVES` / per-car red curve ("matched", `dsf_materials`) | quantile match of Forza score to vanilla alpha per hue | vanilla texels pooled over lamp types | Linear emission makes alpha matching the right lever, but per type, not per hue: vanilla red pools 0x02 (1), 0x03 (2), 0x06/07 (0.5), 0x18..0x1C (0.2 / 1). A converted lamp should match the vanilla distribution of the type it is given. |
 | `VISIBLE_RED_VANILLA_MEDIAN` 92, `_LENS_X/Y_RED`, `VISIBLE_WHITE_VANILLA_MEDIAN` 137 | texel brightness caps | vanilla visible texel RGB | Texel RGB never enters the glow; it is only the lit lens (`light x t`). These set the unlit look and are the right lever for it; the target (vanilla's distribution) has no game constant. |
-| Cover shares `COVER_MIN_SHARE` 0.3, `COVER_LAMP_SECTION_SHARE` 0.05 (#247, #284) | a cover over a lamp from 30% (5% in a lamp section) of its area is left out | screenshots of hidden lamps | No counterpart. What the game does: a cover drawn as DSF window glass (blue 192) passes 25% of the lamp's glow and adds grey, glint and reflection; DSF glass can't tint. Any cover part that overlaps lamp texels with alpha above 0 costs 75% of their glow, whatever share of the cover it is. |
-| `car_render` lamp model (render_compare, #313) | `EMISSION` 2 over a 0x01's level 2; colours red (1, .06, .03), white (1, .95, .85), amber (1, .45, .05), xenon (.85, .92, 1); `DARK` = Headlights + DaytimeRunning; no tint, no tone map | guesses | Game: colours red (0.588, 0, 0), white (1, .958, .760), amber b2 4 (1, .229, .001), b2 5 (1, .361, 0), xenon (.876, .892, 1); tint `vehColourBoost` (5 by day, 1 in the harness dark); levels from the table above (0x1D at 1, not 10, unless Headlights are on; 0x01 at 0 in free roam); then Reinhard with W 5 and e about 1.7 by day, the grade, bloom. #313 itself is about the Forza reference's lens shading (Forza shaders, not DSF): DSF has no lens program to compare it with. |
+| Cover shares `COVER_MIN_SHARE` 0.3, `COVER_LAMP_SECTION_SHARE` 0.05 (#247, #284) | a cover over a lamp from 30% (5% in a lamp section) of its area is left out | screenshots of hidden lamps | No counterpart. What the game does: a cover drawn as DSF window glass (blue 191) passes half of the lamp's glow (0.50 measured; 25% before the measurement) and adds grey, glint and reflection; DSF glass can't tint. Any cover part that overlaps lamp texels with alpha above 0 costs half their glow, whatever share of the cover it is. |
+| `car_render` lamp model (render_compare, #313) | `EMISSION` 2 over a 0x01's level 2; colours red (1, .06, .03), white (1, .95, .85), amber (1, .45, .05), xenon (.85, .92, 1); `DARK` = Headlights + DaytimeRunning; no tint, no tone map | guesses | Game: colours red (0.588, 0, 0), white (1, .958, .760), amber b2 4 (1, .229, .001), b2 5 (1, .361, 0), xenon (.876, .892, 1); tint `vehColourBoost` (5 by day, 1 in the harness dark); levels from the table above (0x1D at 1, not 10, unless Headlights are on; 0x01 at 0 in free roam); then Reinhard with W 5 and e about 1.7 by day, the grade, bloom. #313 itself is about the Forza reference's lens shading (Forza shaders, not DSF): DSF has no lens program to compare it with. Done: `lights.md`, "The lamp model the renderer and the harness use". |
 | `DAYTIME_SHARE` 0.25 / `HEAD_DAYTIME` 0x1D (`lights`) | head lamps become 0x1D where their side has little position lamp | 33 vanilla cars with 0x1D | Agrees with the game: in free roam 0x01 is always dark, 0x1D glows at 1 and 0x03 at 2. The choice is the whole day look of the front. |
-| Harness dark mood (`lightstest.lua darkLighting`) | `vehColourBoost` 1, `middlegrey` 0.5, `bloomThreshold` 0.15, bloom tint 0.3 | written for the harness | The "night" calibrations (#286, #290, #312) were made in it. Lamps are 5 times dimmer in linear light than in every gameplay mood; the exposure there is the offset 2 (La below 0.1). Comparisons of ports with vanilla in the same mood stay valid as ratios; absolute levels and bloom do not carry over. A dark mood with `vehColourBoost` 5 would match the game's lamp tint. |
+| Harness dark mood (`lightstest.lua darkLighting`) | `vehColourBoost` 1, `middlegrey` 0.5, `bloomThreshold` 0.15, bloom tint 0.3 | written for the harness | The "night" calibrations (#286, #290, #312) were made in it. Lamps are 5 times dimmer in linear light than in every gameplay mood; the exposure there is the offset 2 (La below 0.1). Comparisons of ports with vanilla in the same mood stay valid as ratios; absolute levels and bloom do not carry over. A dark mood with `vehColourBoost` 5 would match the game's lamp tint. Done: the harness's dark mood is now the story's LastChapter (`vehColourBoost` 5), with the running lights only (`lights.md`, same section). |
 
 ## Open
 

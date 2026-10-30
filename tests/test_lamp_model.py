@@ -35,7 +35,15 @@ class Levels(unittest.TestCase):
         np.testing.assert_allclose(lm.emission(0x19, 6, 1, 5), (2.939, 0, 0), atol=1e-3)
         np.testing.assert_allclose(lm.emission(0x03, 6, 1, 5), (5.878, 0, 0), atol=1e-3)
         np.testing.assert_allclose(lm.emission(0x1D, 8, 0.1, 5), (5, 4.788, 3.802), atol=1e-3)
-        np.testing.assert_allclose(lm.emission(0x18, 6, lm.DRL, 1, mask=True), (0.1176, 0, 0), atol=1e-3)
+
+    def test_renderer_uploads_the_same(self):
+        # render_compare's renderer: car 130's tails with the running lights by day (0.2 x 5 x
+        # 0.588), its 0x1D lamps (brightness 0.1 x scale 10).
+        from dsfforza.game import car_render as cr
+
+        rgb = cr.dsf_lamp_rgb([cr.LampInfo(0x19, 6), cr.LampInfo(0x1D, 8)], cr.DAY_LIT)
+        np.testing.assert_allclose(rgb[0], lm.emission(0x19, 6, 0.2, 5), atol=1e-4)
+        np.testing.assert_allclose(rgb[1], (5, 4.788, 3.802), atol=1e-3)
 
 
 class Post(unittest.TestCase):
@@ -48,7 +56,9 @@ class Post(unittest.TestCase):
     def test_tonemap_white_point(self):
         # Reinhard extended: luminance W maps to 1.
         w = 5.0
-        c = lm.tonemap(np.array([[w, w, w]]), 1.0, w)
+        from dsfforza.game import car_render as cr
+
+        c = cr.tonemap(np.array([[w, w, w]]), 1.0, w)
         np.testing.assert_allclose(c, [[1, 1, 1]], atol=1e-6)
 
 

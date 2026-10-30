@@ -5,10 +5,10 @@ drives, the full entry's finest LOD that traffic shows, and later the interior f
 the driver's eye) are rendered from the built `dngvehicles.sp` with their own DSF
 materials, textures and lamps (car_render, physical), next to a reference render of
 the same Forza LOD with Forza's materials (forza_render), at the same cameras, by day,
-with the lamps lit by day and in the dark mood. Both renders keep which triangle each
-pixel shows (car_render.Frame); every built triangle is matched to the Forza triangle
-it was made from (render_match), so both ID buffers say which Forza section, technique,
-region and lamp function each pixel is. Per region the scores compare coverage,
+lamps off and with the running lights on (as the game lights them in free roam). Both
+renders keep which triangle each pixel shows (car_render.Frame); every built triangle is
+matched to the Forza triangle it was made from (render_match), so both ID buffers say which
+Forza section, technique, region and lamp function each pixel is. Per region the scores compare coverage,
 brightness and colour, detail (structure and contrast: "painted on" is detail
 collapsing), what draws it on our side (the DSF program) and, in the lit modes, the
 glow; flags above calibrated limits rank the roster (research/render-compare.md).
@@ -79,7 +79,9 @@ class View:
     name: str
     camera: cr.Camera
     zoom: str = ""  # "front" / "rear": frame that end of the car only (ZOOM_DEPTH)
-    modes: tuple[str, ...] = ("day", "day_lit", "dark")
+    # The lamps glow the same in every mood (tint 5, the running lights): day_lit is the lamp
+    # check; a dark exterior mode would repeat its glow under another tone map.
+    modes: tuple[str, ...] = ("day", "day_lit")
 
 
 ZOOM_DEPTH = 0.75  # m of the car's end the front and rear views frame
@@ -349,10 +351,7 @@ def render_view(pair: Pair, view: View, size=SIZE, box=None) -> dict:
     w, h = size
     box = _view_box(view, pair.box if box is None else box)
     out = {"ours": {}, "ref": {}, "alpha": {}, "regions": {}}
-    for side, scene, region, rgb_of in (
-        ("ours", pair.ours, pair.ours_region, cr.dsf_lamp_rgb),
-        ("ref", pair.ref, pair.ref_region, fr.forza_lamp_rgb),
-    ):
+    for side, scene, region in (("ours", pair.ours, pair.ours_region), ("ref", pair.ref, pair.ref_region)):
         v = cr._View(scene, view.camera, w, h, box=box)
         frame = cr.rasterize(scene, v)
         out["regions"][side] = region_map(scene, frame, region)
@@ -360,21 +359,21 @@ def render_view(pair: Pair, view: View, size=SIZE, box=None) -> dict:
             out["programs"] = tri_map(frame, pair.ours_program)
         for mode in view.modes:
             lt = cr.LIGHTINGS[mode]
-            colour, alpha = cr.shade(scene, frame, lt, rgb_of(scene.lamps, lt), shadow=False)
+            colour, alpha = cr.shade(scene, frame, lt, cr.dsf_lamp_rgb(scene.lamps, lt), shadow=False)
             out[side][mode] = colour.reshape(h, w, 3)
             out["alpha"][side] = alpha.reshape(h, w)
-            if mode == "dark":  # the dark mood with every lamp off: what the lamps add is the rest
+            if lt.lamps:  # the same light with every lamp off: what the lamps add is the rest
                 base, _ = cr.shade(scene, frame, lt, None, shadow=False)
-                out[side]["dark_base"] = base.reshape(h, w, 3)
+                out[side][f"{mode}_base"] = base.reshape(h, w, 3)
     return out
 
 
 # --- scores ------------------------------------------------------------------------------------
 
 
-def _lab(rgb_linear: np.ndarray) -> np.ndarray:
-    """CIE L*a*b* (D65) of linear sRGB after the renderer's exposure, values clipped to 1."""
-    c = np.clip(rgb_linear * cr.EXPOSURE, 0, 1)
+def _lab(rgb_linear: np.ndarray, mode: str = "day") -> np.ndarray:
+    """CIE L*a*b* (D65) of linear sRGB as the mode shows it (car_render.display)."""
+    c = cr.display(rgb_linear, cr.LIGHTINGS[mode])
     m = np.array([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]])
     xyz = c @ m.T / np.array([0.9505, 1.0, 1.089])
     f = np.where(xyz > 0.008856, np.cbrt(xyz), 7.787 * xyz + 16 / 116)
@@ -405,7 +404,6 @@ def _gradient(lum: np.ndarray) -> np.ndarray:
 
 
 MIN_PIXELS = 150  # a region smaller than this in a view is not scored there
-GLOW_ON = 0.08  # linear luminance a pixel's glow must reach to count as glowing
 DETAIL_RADIUS = 3  # px: the local-contrast window (7 x 7)
 
 
@@ -425,7 +423,7 @@ def _crop(*masks) -> tuple[slice, slice]:
 def region_scores(r: dict, mode: str = "day") -> dict:
     """{region: metrics} for one view in one mode (render_view's output)."""
     ro_full, rf_full = r["regions"]["ours"], r["regions"]["ref"]
-    lo_full, lf_full = _lab(r["ours"][mode]), _lab(r["ref"][mode])
+    lo_full, lf_full = _lab(r["ours"][mode], mode), _lab(r["ref"][mode], mode)
     out = {}
     for name in SCORED:
         rid = RID[name]
@@ -516,13 +514,9 @@ def _lum(rgb: np.ndarray) -> np.ndarray:
 
 def _glow(r: dict, side: str, mode: str) -> np.ndarray:
     """(h, w) light a side's lamps add in a lit mode, its brightest channel (a red lamp
-    glows with little luminance): the day_lit render less the day render (the same frame
-    and light, lamps off); the dark render itself (no other light to speak of)."""
-    if mode == "day_lit":
-        return np.maximum(r[side]["day_lit"] - r[side]["day"], 0).max(axis=-1)
-    if f"{mode}_base" in r[side]:
-        return np.maximum(r[side][mode] - r[side][f"{mode}_base"], 0).max(axis=-1)
-    return r[side][mode].max(axis=-1)  # runs from before dark_base: the dark render itself
+    glows with little luminance): the lit render less the same frame and light with the
+    lamps off (render_view's "<mode>_base")."""
+    return np.maximum(r[side][mode] - r[side][f"{mode}_base"], 0).max(axis=-1)
 
 
 GLOW_FLOOR = 0.03  # linear luminance: a lamp pixel glowing less than this is unlit
@@ -563,8 +557,8 @@ def glow_scores(r: dict, mode: str) -> dict:
             m["spread_ours"], m["spread_ref"] = round(so, 3), round(sf, 3)
             both = lit_f & lit_o
             if both.sum() >= 30:
-                co = r["ours"][mode][both] - (r["ours"]["day"][both] if mode == "day_lit" else 0)
-                cf = r["ref"][mode][both] - (r["ref"]["day"][both] if mode == "day_lit" else 0)
+                co = r["ours"][mode][both] - r["ours"][f"{mode}_base"][both]
+                cf = r["ref"][mode][both] - r["ref"][f"{mode}_base"][both]
                 m["green_red_ours"] = round(float(co[:, 1].sum() / max(1e-6, co[:, 0].sum())), 3)
                 m["green_red_ref"] = round(float(cf[:, 1].sum() / max(1e-6, cf[:, 0].sum())), 3)
         out[name] = m
@@ -598,10 +592,12 @@ LIMITS = {
     "structure": 0.25,  # correlation of the region's fine structure below this
     "drawn_as": 0.3,  # share of a lamp region drawn by a program that can't draw lamps
     "glow_place": 0.3,  # share of Forza's lit lamp pixels ours lights (and of ours Forza's) below this
-    "glow_hue": 1.2,
-    # Our daytime glow's 95th percentile over this (linear; a 0x01 lamp's texel of alpha 1
-    # glows 2): white plates by day (#167: GTI VR6 7.2, Evo VI 8.5 before, 1.6 after).
-    "glare": 3.0,  # |log| of the ratio of the glow's green/red, ours against Forza's
+    "glow_hue": 1.2,  # |log| of the ratio of the glow's green/red, ours against Forza's
+    # Our daytime glow's 95th percentile over this (the game's linear light, the running
+    # lights on): white plates by day (#167). Vanilla's front lamps (140 vehicles with day-lit
+    # ones, front view) glow at p95 0.88 / 2.3 / 4.25 (p10 / median / p90); a 0x03 white lamp's
+    # texel of alpha 1 glows 10, a 0x1D lamp's 5, half that under a window. Vanilla's p90.
+    "glare": 4.3,
     "flat_glow": 0.45,  # our glow spread under this share of Forza's
     "plate_over": 0.1,  # share of a plate over badges, lamps or chrome
 }
@@ -746,7 +742,7 @@ def flags_for(metrics: dict) -> list[dict]:
                         "glare_day_lit",
                         g["ours_p95"],
                         min(2.0, g["ours_p95"] / L["glare"]),
-                        f"{region}: white plate by day (glow {g['ours_p95']:.1f}x a 0x01 lamp's full alpha)",
+                        f"{region}: white plate by day (glow p95 {g['ours_p95']:.1f})",
                     )
                 if mode == "day_lit" and g.get("spread_ref") and g["ours_lit_px"] >= 60:
                     flat = g["spread_ours"] / g["spread_ref"]
@@ -790,8 +786,8 @@ def car_score(flags: list[dict]) -> float:
 BACKDROP = 58  # sRGB grey behind the cars
 
 
-def to_srgb8(rgb_linear: np.ndarray, alpha: np.ndarray) -> np.ndarray:
-    srgb = cr._linear_to_srgb(rgb_linear * cr.EXPOSURE) * 255
+def to_srgb8(rgb_linear: np.ndarray, alpha: np.ndarray, mode: str = "day") -> np.ndarray:
+    srgb = cr._linear_to_srgb(cr.display(rgb_linear, cr.LIGHTINGS[mode])) * 255
     a = alpha[..., None]
     return np.clip(srgb * a + BACKDROP * (1 - a) + 0.5, 0, 255).astype(np.uint8)
 
@@ -811,8 +807,8 @@ def save_jpeg(path: Path, img: np.ndarray, quality: int = 85) -> None:
 
 def pair_image(r: dict, mode: str, outline_regions=()) -> np.ndarray:
     """Ours | Forza side by side, flagged regions outlined on both."""
-    a = to_srgb8(r["ours"][mode], r["alpha"]["ours"])
-    b = to_srgb8(r["ref"][mode], r["alpha"]["ref"])
+    a = to_srgb8(r["ours"][mode], r["alpha"]["ours"], mode)
+    b = to_srgb8(r["ref"][mode], r["alpha"]["ref"], mode)
     for name in outline_regions:
         outline(a, r["regions"]["ours"] == RID[name])
         outline(b, r["regions"]["ref"] == RID[name])
@@ -937,7 +933,7 @@ def load_renders(path: Path) -> dict:
     }
     for key in z.files:
         side, _, mode = key.partition("_")
-        if side in ("ours", "ref") and (mode in cr.LIGHTINGS or mode == "dark_base"):
+        if side in ("ours", "ref") and mode.removesuffix("_base") in cr.LIGHTINGS:
             r[side][mode] = z[key].astype(np.float32) / HDR_SCALE
     return r
 
@@ -986,7 +982,7 @@ def compare_car(
                     continue
                 view = VIEWS[vname]
                 if entry == "full":
-                    view = View(view.name, view.camera, view.zoom, ("day", "dark"))
+                    view = View(view.name, view.camera, view.zoom, ("day", "day_lit"))
                 r = render_view(pair, view, size)
                 key = vname if entry == "exterior" else f"{entry}-{vname}"
                 metrics[key] = score_view(r, view.modes)

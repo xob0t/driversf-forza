@@ -161,7 +161,7 @@ def compare_builds(
                 if mode != "day":
                     metrics_a[vname][f"glow_{mode}"] = rc.glow_scores(ra, mode)
                     metrics_b[vname][f"glow_{mode}"] = rc.glow_scores(rb, mode)
-                la, lb = rc._lab(ra["ours"][mode]), rc._lab(rb["ours"][mode])
+                la, lb = rc._lab(ra["ours"][mode], mode), rc._lab(rb["ours"][mode], mode)
                 d = np.linalg.norm(la - lb, axis=-1)
                 ga, gb = ra["regions"]["ours"], rb["regions"]["ours"]
                 for entry in region_changes(ra["regions"]["ours"], rb["regions"]["ours"], d):
@@ -177,9 +177,9 @@ def compare_builds(
                             entry["drawn_as_before"], entry["drawn_as_after"] = sa.get("drawn_as"), sb.get("drawn_as")
                     changes.append(entry)
                 if any(c["view"] == vname and c["mode"] == mode for c in changes):
-                    a_img = rc.to_srgb8(ra["ours"][mode], ra["alpha"]["ours"])
-                    b_img = rc.to_srgb8(rb["ours"][mode], rb["alpha"]["ours"])
-                    f_img = rc.to_srgb8(rb["ref"][mode], rb["alpha"]["ref"])
+                    a_img = rc.to_srgb8(ra["ours"][mode], ra["alpha"]["ours"], mode)
+                    b_img = rc.to_srgb8(rb["ours"][mode], rb["alpha"]["ours"], mode)
+                    f_img = rc.to_srgb8(rb["ref"][mode], rb["alpha"]["ref"], mode)
                     mark = (d > CHANGED) | (ga != gb)
                     b_mark = b_img.copy()
                     rc.outline(b_mark, _grow(mark, 2), (255, 200, 40))

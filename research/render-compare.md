@@ -41,10 +41,16 @@ camera is the converter's eye (`cockpit.eye` in the report, raised by `camera_ri
 DSF's camera is), looking ahead and 11 degrees down, 75 degrees wide. 800 x 450 by
 default.
 
-Three lights (`car_render.Lighting`): `day` (the garage picture's studio, lamps off),
-`day_lit` (the same light, the running lights on, Lua mask 4: what DSF lights by day) and
-`dark` (environment and ambient at 5%, no key light; running lights and head lamps on,
-mask 5). The game has no night; the dark mood is what it has.
+Three lights (`car_render.Lighting`): `day` (the garage picture's studio, lamps off, the
+garage tone), `day_lit` (the same light with the running lights on, Lua mask 4, as every
+car drives in free roam) and `dark` (the story's darkest mood, LastChapter: the sun at 7%,
+ambient 1.4 times ClearDay's, reflections at half; running lights only). DSF has no night
+in free roam, so `day_lit` is the look players see; `dark` is a secondary check. The lit
+modes draw the lamps as the game does (`dsf_lamp_rgb`: vehColourBoost 5 x the colour
+table x the type's level, `lights.lamp_level`) and show the frame through the game's tone
+map and colour grade (`car_render.display`: Reinhard with ClearDay's e 1.7 and white 5;
+LastChapter's e 1 and white 2), so a glow value is the game's linear light
+(research/lights-re.md). The `day` scores keep the garage tone.
 
 ## Our side: the built entry with its own materials
 
