@@ -616,39 +616,51 @@ def _segment_distance(px, py, a, b) -> float:
     return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
 
 
+PLATE_TILE = (8, 24)  # rows x columns of samples' pixels measured together in _plate_coverage
+
+
 def _plate_coverage(segs, width: int, height: int, ss: int, stroke: float, outline: float, reach: float):
-    """[row][column] -> (core, edge): how many of a pixel's ss x ss samples lie within
-    `stroke` of the nearest stroke segment, and how many within the outline beyond it.
-    The distances come from numpy over the segments near each row; a sample within
-    1e-9 of either limit is measured again with _segment_distance over the pixel's
-    nearby segments (math.hypot), as the per-sample loop did, so every count is the
-    loop's. Segments farther than `reach` from a pixel never decide it either way."""
+    """(core, edge), (height, width) int arrays: how many of a pixel's ss x ss samples lie
+    within `stroke` of the nearest stroke segment, and how many within the outline beyond
+    it. The distances come from numpy, a tile of PLATE_TILE pixels at a time, over the
+    segments whose box is within `reach` of the tile. A segment farther than `reach` from
+    a pixel never decides it either way (it is more than stroke + outline away), so the
+    tile's segments give each sample the decision the segments near its row would. A
+    sample within 1e-9 of either limit is measured again with _segment_distance over the
+    segments near its pixel (math.hypot), as the per-sample loop did, so every count is
+    the loop's."""
     import numpy as np
 
+    core_count = np.zeros((height, width), np.int64)
+    edge_count = np.zeros((height, width), np.int64)
+    if not segs:
+        return core_count, edge_count
+    seg = np.array([(a[0], a[1], b[0], b[1]) for a, b in segs], dtype=np.float64)
+    ylo, yhi = np.minimum(seg[:, 1], seg[:, 3]) - reach, np.maximum(seg[:, 1], seg[:, 3]) + reach
+    xlo, xhi = np.minimum(seg[:, 0], seg[:, 2]) - reach, np.maximum(seg[:, 0], seg[:, 2]) + reach
     offsets = np.array([(sx + 0.5) / ss for sx in range(ss)])
-    block = 24  # columns measured together, against the segments within reach of them
-    out = []
-    for py in range(height):
-        near = [(a, b) for a, b in segs if min(a[1], b[1]) - reach <= py + 1 and max(a[1], b[1]) + reach >= py]
-        row = [(0, 0)] * width
-        out.append(row)
-        if not near:
+    tile_rows, tile_cols = PLATE_TILE
+    for r0 in range(0, height, tile_rows):
+        r1 = min(height, r0 + tile_rows)
+        rows = np.flatnonzero((ylo <= r1) & (yhi >= r0))  # near any row r0..r1 - 1 (row py: ylo <= py + 1, yhi >= py)
+        if not len(rows):
             continue
-        seg = np.array([(a[0], a[1], b[0], b[1]) for a, b in near], dtype=np.float64)
-        lo, hi = np.minimum(seg[:, 0], seg[:, 2]) - reach, np.maximum(seg[:, 0], seg[:, 2]) + reach
-        for c0 in range(0, width, block):
-            c1 = min(width, c0 + block)
-            pick = np.flatnonzero((lo <= c1) & (hi >= c0))
+        fy_rows = np.arange(r0, r1, dtype=np.float64)[:, None, None, None] + offsets[None, None, :, None]
+        for c0 in range(0, width, tile_cols):
+            c1 = min(width, c0 + tile_cols)
+            pick = rows[(xlo[rows] <= c1) & (xhi[rows] >= c0)]
             if not len(pick):
                 continue
             ax, ay, bx, by = (seg[pick, k] for k in range(4))
             dx, dy = bx - ax, by - ay
             length = dx * dx + dy * dy
-            # samples (column, sy, sx) along the first axis, segments along the second
-            n = c1 - c0
-            fx = (np.arange(c0, c1, dtype=np.float64)[:, None, None] + offsets[None, None, :]) * np.ones((1, ss, 1))
-            fy = np.zeros((n, ss, ss)) + (py + offsets)[None, :, None]
-            fx, fy = fx.reshape(-1, 1), fy.reshape(-1, 1)
+            # samples (row, column, sy, sx) along the first axis, segments along the second
+            nr, nc = r1 - r0, c1 - c0
+            shape = (nr, nc, ss, ss)
+            fx = np.broadcast_to(
+                np.arange(c0, c1, dtype=np.float64)[None, :, None, None] + offsets[None, None, None, :], shape
+            ).reshape(-1, 1)
+            fy = np.broadcast_to(fy_rows, shape).reshape(-1, 1)
             with np.errstate(divide="ignore", invalid="ignore"):
                 t = np.where(length == 0, 0.0, np.clip(((fx - ax) * dx + (fy - ay) * dy) / length, 0.0, 1.0))
             d = np.hypot(fx - (ax + t * dx), fy - (ay + t * dy)).min(axis=1)
@@ -656,18 +668,22 @@ def _plate_coverage(segs, width: int, height: int, ss: int, stroke: float, outli
             edge = ~core & (d <= stroke + outline)
             unsure = np.flatnonzero((np.abs(d - stroke) < 1e-9) | (np.abs(d - (stroke + outline)) < 1e-9))
             for i in unsure.tolist():
-                k, rest = divmod(i, ss * ss)
-                px = c0 + k
-                sy, sx = divmod(rest, ss)
-                local = [(a, b) for a, b in near if min(a[0], b[0]) - reach <= px + 1 and max(a[0], b[0]) + reach >= px]
+                row, col, sy, sx = np.unravel_index(i, shape)
+                px, py = c0 + int(col), r0 + int(row)
+                local = [
+                    (a, b)
+                    for a, b in segs
+                    if min(a[1], b[1]) - reach <= py + 1
+                    and max(a[1], b[1]) + reach >= py
+                    and min(a[0], b[0]) - reach <= px + 1
+                    and max(a[0], b[0]) + reach >= px
+                ]
                 fxi, fyi = px + (sx + 0.5) / ss, py + (sy + 0.5) / ss
                 exact = min(_segment_distance(fxi, fyi, a, b) for a, b in local)
                 core[i], edge[i] = exact <= stroke, stroke < exact <= stroke + outline
-            counts = zip(
-                core.reshape(n, -1).sum(axis=1).tolist(), edge.reshape(n, -1).sum(axis=1).tolist(), strict=True
-            )
-            row[c0:c1] = list(counts)
-    return out
+            core_count[r0:r1, c0:c1] = core.reshape(nr, nc, -1).sum(axis=2)
+            edge_count[r0:r1, c0:c1] = edge.reshape(nr, nc, -1).sum(axis=2)
+    return core_count, edge_count
 
 
 _TEXT_PLATES: dict = {}
@@ -714,20 +730,20 @@ def _text_plate(text: str, height: int, italic: float) -> Image:
     img = Image(width, height)
     ss = 3
     reach = stroke + outline + 1
-    counts = _plate_coverage(segs, width, height, ss, stroke, outline, reach)
+    core, edge = _plate_coverage(segs, width, height, ss, stroke, outline, reach)
+    shades = []
     for py in range(height):
-        for px in range(width):
-            core, edge = counts[py][px]
-            if not core and not edge:
-                continue
-            t = (py - origin_y) / (6 * cell)  # 0 top .. 1 bottom of the letters
-            # chrome: bright top, a dark band just under the middle, bright again below
-            shade = 235 - 150 * math.exp(-(((t - 0.55) / 0.18) ** 2)) - 40 * max(0.0, t)
-            c, e = core / (ss * ss), edge / (ss * ss)
-            alpha = min(1.0, c + e)
-            lum = max(0.0, (shade * c + 20 * e) / max(alpha, 1e-6))
-            o = (py * width + px) * 4
-            img.px[o : o + 4] = bytes((int(lum), int(lum), int(min(255, lum * 1.03)), int(alpha * 255)))
+        t = (py - origin_y) / (6 * cell)  # 0 top .. 1 bottom of the letters
+        # chrome: bright top, a dark band just under the middle, bright again below
+        shades.append(235 - 150 * math.exp(-(((t - 0.55) / 0.18) ** 2)) - 40 * max(0.0, t))
+    # Per covered pixel, as numpy over the image (the same float operations per pixel):
+    # alpha = min(1, c + e), lum = max(0, (shade * c + 20 * e) / max(alpha, 1e-6)), int().
+    drawn = (core != 0) | (edge != 0)
+    c, e = core / (ss * ss), edge / (ss * ss)
+    alpha = np.minimum(1.0, c + e)
+    lum = np.maximum(0.0, (np.array(shades)[:, None] * c + 20 * e) / np.maximum(alpha, 1e-6))
+    pixels = np.stack([lum, lum, np.minimum(255, lum * 1.03), alpha * 255], axis=-1).astype(np.int64)
+    img.array()[drawn] = pixels[drawn].astype(np.uint8)
     return img
 
 
@@ -930,6 +946,18 @@ def compose_picture(car: Image, logo: Image | None, plate: Image | None, backdro
             f = img.fit(x1 - x0, y1 - y0)
             out.paste(f, x0 + (x1 - x0 - f.w) // 2, y0 + (y1 - y0 - f.h) // 2)
     return out
+
+
+def preview_rgba(picture: Image) -> bytearray:
+    """The picture over a grey checkerboard (16-pixel squares of 140 and 90), opaque: the
+    PNG preview. Per channel int(value * a + grey * (1 - a)), a = alpha / 255, in numpy."""
+    rgba = picture.array()
+    a = rgba[..., 3] / 255
+    ys, xs = np.indices((picture.h, picture.w))
+    grey = np.where((xs // 16 + ys // 16) % 2, 90, 140)
+    out = np.full_like(rgba, 255)
+    out[..., :3] = (rgba[..., :3] * a[..., None] + (grey * (1 - a))[..., None]).astype(np.int64)
+    return bytearray(out.tobytes())
 
 
 def picture_dds(img: Image, template: bytes | None = None) -> bytes:
@@ -2060,17 +2088,10 @@ def build(
         entry["Picture1"] = name
         entry[EMBLEM_FIELD] = 1  # Forza logo instead of the SF disc on the garage card (dsfforza.asi)
         hud[sid] = entry
-        preview = Image(picture.w, picture.h, picture.px)
-        flat = bytearray(preview.px)
-        for i in range(preview.w * preview.h):
-            a = flat[i * 4 + 3] / 255
-            bg = 90 if ((i % preview.w) // 16 + (i // preview.w) // 16) % 2 else 140
-            for c in range(3):
-                flat[i * 4 + c] = int(flat[i * 4 + c] * a + bg * (1 - a))
-            flat[i * 4 + 3] = 255
+        flat = preview_rgba(picture)
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / f"{name}.png").unlink(missing_ok=True)  # maybe a hard link to an earlier build's
-        write_png(out_dir / f"{name}.png", preview.w, preview.h, flat)
+        write_png(out_dir / f"{name}.png", picture.w, picture.h, flat)
         if cache is not None:
             png = (out_dir / f"{name}.png").read_bytes()
             cache.put(car, {"text": t, "thumbnails": thumbnails}, pictures[name], png, source)
