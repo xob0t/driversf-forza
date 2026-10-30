@@ -720,18 +720,49 @@ def dds_file(
     mips: int = DEFAULT_MIPS,
     template: bytes | None = None,
     fourcc: bytes = b"DXT5",
+    reuse: dict | None = None,
 ) -> bytes:
-    """DXT5 (or DXT1) DDS with `mips` levels (top level included), box-filtered."""
+    """DXT5 (or DXT1) DDS with `mips` levels (top level included), box-filtered.
+    reuse: a dict kept between calls (Texturing.dds): each level's texels and blocks, so a
+    texture drawn again with a few texels changed encodes only the 4 x 4 blocks that changed
+    (each block's encoding depends on its own texels only)."""
     encode = encode_dxt1 if fourcc == b"DXT1" else encode_dxt5
     levels, level = [], (rgba, width, height)
     for n in range(mips):
-        levels.append(encode(*level))
+        levels.append(encode(*level) if reuse is None else _encode_reusing(reuse, n, level, fourcc))
         if n + 1 < mips:
             level = downsample(*level)
             if level[1] < 4 or level[2] < 4:
                 mips = n + 1
                 break
     return dds_header(width, height, mips, template, fourcc) + b"".join(levels[:mips])
+
+
+def _encode_reusing(reuse: dict, n: int, level, fourcc: bytes) -> bytes:
+    """dds_file's level n (rgba, width, height) encoded as encode_dxt5 / encode_dxt1 would, from
+    the blocks reuse holds for the same level where their texels are the same."""
+    rgba, width, height = level
+    texels = bytes(rgba[: width * height * 4])
+    key = (n, width, height, fourcc)
+    prev = reuse.get(key)
+    if prev is None:
+        data = encode_dxt1(texels, width, height) if fourcc == b"DXT1" else encode_dxt5(texels, width, height)
+    else:
+        shape = (height // 4, 4, width // 4, 4, 4)
+        new = np.frombuffer(texels, dtype=np.uint8).reshape(shape)
+        changed = (new != np.frombuffer(prev[0], dtype=np.uint8).reshape(shape)).any(axis=(1, 3, 4)).reshape(-1)
+        if not changed.any():
+            data = prev[1]
+        else:
+            blocks = np.frombuffer(prev[1], dtype=np.uint8).reshape(len(changed), -1).copy()
+            px = new.transpose(0, 2, 1, 3, 4).reshape(-1, 16, 4)[changed].astype(np.int64)
+            if fourcc == b"DXT1":
+                blocks[changed] = _colour_blocks(px[:, :, :3])
+            else:
+                blocks[changed] = np.concatenate((_alpha_blocks(px[:, :, 3]), _colour_blocks(px[:, :, :3])), axis=1)
+            data = blocks.tobytes()
+    reuse[key] = (texels, data)
+    return data
 
 
 def dds_size(width: int, height: int, mips: int) -> int:
@@ -1739,6 +1770,7 @@ class Texturing:
         self.regions, self.owners, self.alpha_only = {}, {}, set()
         self.solids, self.solid_colours, self.scale = {}, {}, {}
         self._red_curve_done = self._lens_scale_done = self._white_scale_done = self._glow_done = False
+        self._glow_kept = self._render_kept = None  # _glow_parts', render's blocks
         for family in self.families:
             w, h, _ = self.atlases.get(family)
             self.src_sizes[family] = (w, h)
@@ -2228,16 +2260,38 @@ class Texturing:
             return self._lamp_glow
         if self.atlases is None or not self.regions:
             return None
+        front, rear = self._glow_parts()
+        if front is not None and self.daytime_texels is not None:
+            front = front.copy()
+            front[self.daytime_texels] *= DAYTIME_GLOW
+        if front is None:
+            self._lamp_glow = rear
+        elif rear is None:
+            self._lamp_glow = front
+        else:
+            self._lamp_glow = np.where(np.isfinite(front), front, rear)
+        self._glow_done = True
+        return self._lamp_glow
+
+    def _glow_parts(self):
+        """_glow's head lamp glow by day before the day-lit lamps' scaling, and its red lamp glow
+        from behind. Kept for the next _glow while the Lights texels, the lamp glow map and the
+        lamp triangles are the same (set_daytime renders the atlas again with only the day-lit
+        texels changed); _layout drops them."""
+        import hashlib
+
         from dsfforza.convert import lenses
 
         sw, sh, src = self.atlases.get(fm.LIGHTS)
+        key = (hashlib.blake2b(src).digest(), id(self.lamp_raw), len(self.lamp_tris), frozenset(self.dropped_lenses))
+        kept = getattr(self, "_glow_kept", None)
+        if kept is not None and kept[0] == key:
+            return kept[1], kept[2]
         colour = np.frombuffer(bytes(src), np.uint8).reshape(sh, sw, 4)
         front = None
         if self.lamp_raw is not None:
             view = self._lamp_view(front=True, grid=True)
             front = None if view is None else lenses.day_glow(self.lamp_raw, view, colour)
-            if front is not None and self.daytime_texels is not None:
-                front[self.daytime_texels] *= DAYTIME_GLOW
         # The red lamps seen from behind (#290): where the front has no glow of its own.
         view = self._lamp_view(front=False, grid=True, rear_half=True)
         rear = None
@@ -2252,23 +2306,19 @@ class Texturing:
             if rear is not None:
                 # Never dimmer than the converted alpha: the tails that already glowed at vanilla's
                 # level (the GTI VR6's, M3 E30's, Evo VI's) keep it; the ranking only raises.
+                # Each distinct texel converted once.
                 ys, xs = np.nonzero(np.isfinite(rear))
-                cache: dict = {}
-                conv = np.empty(len(ys))
-                for n, (y, x) in enumerate(zip(ys, xs)):
-                    key = tuple(int(c) for c in colour[y, x])
-                    if key not in cache:
-                        cache[key] = self._convert_texel(fm.LIGHTS, *key)[3]
-                    conv[n] = cache[key]
+                px = colour[ys, xs].astype(np.int64)
+                packed = px[:, 0] << 24 | px[:, 1] << 16 | px[:, 2] << 8 | px[:, 3]
+                texels, inverse = np.unique(packed, return_inverse=True)
+                alpha = [
+                    self._convert_texel(fm.LIGHTS, k >> 24, k >> 16 & 255, k >> 8 & 255, k & 255)[3]
+                    for k in texels.tolist()
+                ]
+                conv = np.array(alpha, dtype=np.float64)[inverse.reshape(-1)]
                 rear[ys, xs] = np.maximum(rear[ys, xs], conv)
-        if front is None:
-            self._lamp_glow = rear
-        elif rear is None:
-            self._lamp_glow = front
-        else:
-            self._lamp_glow = np.where(np.isfinite(front), front, rear)
-        self._glow_done = True
-        return self._lamp_glow
+        self._glow_kept = (key, front, rear)
+        return front, rear
 
     def daytime_mask(self, sections, daytime, lit=None) -> tuple[np.ndarray | None, set]:
         """The Lights texels of the head lamps that light by day: daytime(sub, k) says whether
@@ -2404,72 +2454,98 @@ class Texturing:
         )
         if not inside:  # a region past the atlas edge: the texel loop (it wraps into the next row)
             return self._render_texels()
+        import hashlib
+
         out = np.empty((height, width, 4), dtype=np.uint8)
         out[:, :] = self.plain
+        # The converted blocks of the last render, by region, kept while the region and its
+        # source texels are the same: set_daytime renders again for the Lights alpha only.
+        kept = getattr(self, "_render_kept", None) or {}
+        self._render_kept = {}
         for family in self.families:
             sw, sh, src = self.atlases.get(family)
             if not self.regions[family]:
                 continue
             texels_in = np.frombuffer(src, dtype=np.uint8).reshape(sh, sw, 4)
+            digest = hashlib.blake2b(src).digest()
             converted: dict[int, tuple] = {}  # packed RGBA average -> texel
             for n_region, r in enumerate(self.regions[family]):
                 if r.size[0] <= 0 or r.size[1] <= 0:
                     continue
                 s = self._scale_of(r)
                 cut = self.cutout_colour is not None and (family, n_region) in self.alpha_only
-                rows, cols = [], []
-                for dy in range(r.size[1]):
-                    fy0 = r.src[1] + (dy - PAD) / s
-                    y0 = max(0, min(sh - 1, int(math.floor(fy0))))
-                    rows.append((y0, max(y0 + 1, min(sh, int(math.floor(fy0 + 1 / s))))))
-                for dx in range(r.size[0]):
-                    fx0 = r.src[0] + (dx - PAD) / s
-                    x0 = max(0, min(sw - 1, int(math.floor(fx0))))
-                    cols.append((x0, max(x0 + 1, min(sw, int(math.floor(fx0 + 1 / s))))))
-                (y0, y1), (x0, x1) = np.array(rows).T, np.array(cols).T
-                # The summed-area table of the source texels under this region only:
-                # the same integer box sums as a table of the whole atlas.
-                top, left = int(y0.min()), int(x0.min())
-                table = np.zeros((int(y1.max()) - top + 1, int(x1.max()) - left + 1, 4), dtype=np.int64)
-                table[1:, 1:] = texels_in[top : int(y1.max()), left : int(x1.max())].cumsum(0).cumsum(1)
-                y0, y1, x0, x1 = y0[:, None] - top, y1[:, None] - top, x0[None, :] - left, x1[None, :] - left
-                acc = table[y1, x1] - table[y0, x1] - table[y1, x0] + table[y0, x0]  # (h, w, 4)
-                n = ((y1 - y0) * (x1 - x0))[:, :, None]
-                mean = acc // n
-                packed = mean[:, :, 0] << 24 | mean[:, :, 1] << 16 | mean[:, :, 2] << 8 | mean[:, :, 3]
-                keys, index = np.unique(packed.reshape(-1), return_inverse=True)
-                texels = []
-                for key in keys.tolist():
-                    if key not in converted:
-                        converted[key] = tuple(
-                            self._convert_texel(family, key >> 24, key >> 16 & 255, key >> 8 & 255, key & 255)
-                        )
-                    texels.append(converted[key])
-                block = np.array(texels, dtype=np.uint8)[index.reshape(-1)].reshape(mean.shape)
+                key = (family, n_region, r.src, r.dst, r.size, s, cut, digest)
+                if key in kept:
+                    block, top, left, shape, (y0, y1, x0, x1), n, cut_mask = kept[key]
+                    self._render_kept[key] = kept[key]
+                    block = block.copy()
+                else:
+                    block, top, left, shape, (y0, y1, x0, x1), n, cut_mask = self._render_block(
+                        family, r, s, texels_in, converted
+                    )
+                    self._render_kept[key] = (block.copy(), top, left, shape, (y0, y1, x0, x1), n, cut_mask)
                 if family == fm.LIGHTS and (self._glow() is not None or self.daytime_texels is not None):
                     # Clear front lens texels: their glow (lens_glow) over the converted alpha;
                     # the other texels of day-lit head lamps: the converted alpha x DAYTIME_GLOW.
                     # Averaged over the source texels under each DSF texel like the colour.
-                    window = (slice(top, top + table.shape[0] - 1), slice(left, left + table.shape[1] - 1))
+                    window = (slice(top, top + shape[0] - 1), slice(left, left + shape[1] - 1))
                     glow = self._glow()
-                    g = glow[window] if glow is not None else np.full((table.shape[0] - 1, table.shape[1] - 1), np.nan)
+                    g = glow[window] if glow is not None else np.full((shape[0] - 1, shape[1] - 1), np.nan)
                     lit = np.isfinite(g)
                     keep = np.where(lit, 0.0, 1.0)
                     if self.daytime_texels is not None:
                         keep[self.daytime_texels[window] & ~lit] = DAYTIME_GLOW
                     if lit.any() or (keep[~lit] < 1).any():
-                        sums = np.zeros(table.shape[:2] + (2,))
+                        sums = np.zeros(shape[:2] + (2,))
                         sums[1:, 1:] = np.stack([np.where(lit, g, 0.0), keep], -1).cumsum(0).cumsum(1)
                         box = sums[y1, x1] - sums[y0, x1] - sums[y1, x0] + sums[y0, x0]
                         k = box[:, :, 1] < n[:, :, 0] - 1e-9
                         a = (box[:, :, 0] + block[:, :, 3] * box[:, :, 1]) / n[:, :, 0]
                         block[:, :, 3][k] = np.clip(np.rint(a[k]), 0, 255).astype(np.uint8)
                 if cut:
-                    block[mean[:, :, 3] < 128] = self.cutout_colour
+                    block[cut_mask] = self.cutout_colour
                 out[r.dst[1] : r.dst[1] + r.size[1], r.dst[0] : r.dst[0] + r.size[0]] = block
         for key, (x0, y0) in self.solids.items():
             out[y0 : y0 + SOLID_CELL, x0 : x0 + SOLID_CELL] = self.solid_colours[key]
         return bytearray(out.tobytes())
+
+    def _render_block(self, family: str, r: Region, s: float, texels_in: np.ndarray, converted: dict):
+        """One region's texels for render(), converted (_convert_texel; `converted`: packed
+        RGBA average -> texel, the family's so far) before the Lights glow and the cutout
+        colour: (block, the window of source texels under it: top, left, the summed-area
+        table's shape, the box bounds (y0, y1, x0, x1) in the window, the texels per box n,
+        the boxes whose mean alpha is under 128)."""
+        sh, sw = texels_in.shape[:2]
+        rows, cols = [], []
+        for dy in range(r.size[1]):
+            fy0 = r.src[1] + (dy - PAD) / s
+            y0 = max(0, min(sh - 1, int(math.floor(fy0))))
+            rows.append((y0, max(y0 + 1, min(sh, int(math.floor(fy0 + 1 / s))))))
+        for dx in range(r.size[0]):
+            fx0 = r.src[0] + (dx - PAD) / s
+            x0 = max(0, min(sw - 1, int(math.floor(fx0))))
+            cols.append((x0, max(x0 + 1, min(sw, int(math.floor(fx0 + 1 / s))))))
+        (y0, y1), (x0, x1) = np.array(rows).T, np.array(cols).T
+        # The summed-area table of the source texels under this region only:
+        # the same integer box sums as a table of the whole atlas.
+        top, left = int(y0.min()), int(x0.min())
+        table = np.zeros((int(y1.max()) - top + 1, int(x1.max()) - left + 1, 4), dtype=np.int64)
+        table[1:, 1:] = texels_in[top : int(y1.max()), left : int(x1.max())].cumsum(0).cumsum(1)
+        y0, y1, x0, x1 = y0[:, None] - top, y1[:, None] - top, x0[None, :] - left, x1[None, :] - left
+        acc = table[y1, x1] - table[y0, x1] - table[y1, x0] + table[y0, x0]  # (h, w, 4)
+        n = ((y1 - y0) * (x1 - x0))[:, :, None]
+        mean = acc // n
+        packed = mean[:, :, 0] << 24 | mean[:, :, 1] << 16 | mean[:, :, 2] << 8 | mean[:, :, 3]
+        keys, index = np.unique(packed.reshape(-1), return_inverse=True)
+        texels = []
+        for key in keys.tolist():
+            if key not in converted:
+                converted[key] = tuple(
+                    self._convert_texel(family, key >> 24, key >> 16 & 255, key >> 8 & 255, key & 255)
+                )
+            texels.append(converted[key])
+        block = np.array(texels, dtype=np.uint8)[index.reshape(-1)].reshape(mean.shape)
+        return block, top, left, table.shape, (y0, y1, x0, x1), n, mean[:, :, 3] < 128
 
     def _render_texels(self) -> bytearray:
         """render() texel by texel (for layouts past the atlas edge)."""
@@ -2520,7 +2596,9 @@ class Texturing:
         return out
 
     def dds(self, template: bytes | None = None) -> bytes:
-        return dds_file(self.render(), *self.size, self.mips, template, self.fourcc)
+        if getattr(self, "_dds_reuse", None) is None:
+            self._dds_reuse = {}  # dds_file's blocks of the last encoding (set_daytime encodes again)
+        return dds_file(self.render(), *self.size, self.mips, template, self.fourcc, reuse=self._dds_reuse)
 
     def summary(self) -> str:
         parts = []
