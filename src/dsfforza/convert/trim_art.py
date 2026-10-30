@@ -428,7 +428,10 @@ def seen_from_outside(occluders, candidates):
     of it (centroid, or a corner pulled a quarter of the way in) is in front of or
     within VIEW_SLACK of what an orthographic depth buffer of `occluders` (array
     (m, 3, 3), the candidates among them) shows, from any of the views of
-    _view_directions."""
+    _view_directions. A candidate is seen if any view sees it, so the views go in an
+    order of their own: those whose screen x axis (`right`) comes out the same, bit for bit
+    (each azimuth level and from above), one after the other, and the second reuses the
+    first's pixel columns."""
     import numpy as np
 
     if len(candidates) == 0:
@@ -437,24 +440,36 @@ def seen_from_outside(occluders, candidates):
     centroid = candidates.mean(1, keepdims=True)
     probes = np.concatenate([centroid, candidates + (centroid - candidates) * 0.25], axis=1)  # (n, 4, 3)
     seen = np.zeros(len(candidates), bool)
+    views = []
     for d in _view_directions():
         d = np.array(d)
         up = np.array([0.0, 1.0, 0.0]) if abs(d[1]) < 0.99 else np.array([0.0, 0.0, 1.0])
         right = np.cross(up, d)
         right /= np.linalg.norm(right)
-        up = np.cross(d, right)
-        sx, sy, depth = surface @ right, surface @ up, surface @ d
+        views.append((d, right, np.cross(d, right)))
+    first = {}  # right's bytes -> its first view's place
+    order = sorted(range(len(views)), key=lambda k: (first.setdefault(views[k][1].tobytes(), k), k))
+    columns = None  # (right's bytes, x0, w, each point's pixel column) of the last view
+    for d, right, up in (views[k] for k in order):
+        if columns is not None and columns[0] == right.tobytes():
+            _, x0, w, ix = columns
+        else:
+            sx = surface @ right
+            x0 = sx.min()
+            w = int((sx.max() - x0) / VIEW_PIXEL) + 1
+            sx -= x0  # the pixel of each point, ((sx - x0) / VIEW_PIXEL) as int, in place
+            sx /= VIEW_PIXEL
+            ix = sx.astype(int)
+            columns = (right.tobytes(), x0, w, ix)
+        sy, depth = surface @ up, surface @ d
         np.negative(depth, out=depth)  # smaller depth: nearer the camera
-        x0, y0 = sx.min(), sy.min()
-        w = int((sx.max() - x0) / VIEW_PIXEL) + 1
+        y0 = sy.min()
         h = int((sy.max() - y0) / VIEW_PIXEL) + 1
-        sx -= x0  # the pixel of each point, ((sx - x0) / VIEW_PIXEL) as int, in place
-        sx /= VIEW_PIXEL
         sy -= y0
         sy /= VIEW_PIXEL
         flat = sy.astype(int)
         flat *= w
-        flat += sx.astype(int)
+        flat += ix
         buffer = np.full(w * h, np.inf)
         np.minimum.at(buffer, flat, depth)
         buffer = buffer.reshape(h, w)
