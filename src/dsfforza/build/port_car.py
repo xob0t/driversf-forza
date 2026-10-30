@@ -1351,7 +1351,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
-    gentle.apply()  # out/gentle: Idle on two CPUs (src/dsfforza/build/gentle.py)
+    gentle.apply()  # out/gentle: Idle priority (src/dsfforza/build/gentle.py)
     args = build_parser().parse_args(argv)
     args.dsf = game_paths.vanilla(args.dsf)  # the original when a dsfforza install replaced it
 
