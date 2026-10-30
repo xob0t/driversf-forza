@@ -883,6 +883,8 @@ TAIL_MIN_SAMPLES = 40
 # drawn over about 2.5 times vanilla's red area (render_compare's rear view: median 7,108 px against
 # 2,867; reflectors, bezels and lens edges), so ranked whole onto vanilla's distribution 56% of it
 # lit where vanilla lights 26% of its own, an even glow. The rest is ranked onto TAIL_RED_ALPHA.
+# A geometry heuristic: the game thresholds nothing (each texel glows alpha x the lamp's colour,
+# research/lights-re.md); it stands for the lamp's lit area, which DSF can't otherwise match.
 TAIL_DARK = 0.4
 # Vanilla's 0x18 tail lamps (DaytimeRunning + Brakes, the converter's tail type): the texel alpha
 # of the visible red lamp pixels at dsf_materials.LAMP_PERCENTILES (render_compare's renderer,
