@@ -346,24 +346,30 @@ class Grid:
                     cap = int(last[part].max()) + 1
                 else:
                     # Per query cell, the occupied cells within rmax rings (its cube
-                    # of offsets looked up by code, or for a large cube every
-                    # occupied cell's ring), then their points.
+                    # by rows: the occupied cells of a row along z are one run of
+                    # the sorted codes; or for a large cube every occupied cell's
+                    # ring), then their points.
                     ukeys, inv = np.unique(qkey[part], axis=0, return_inverse=True)
                     inv = inv.reshape(-1)
                     pu, pc = [], []
                     if (2 * rmax + 1) ** 3 <= NEAREST_CUBE * len(codes):
                         span = np.arange(-rmax, rmax + 1)
-                        offs = np.stack(np.meshgrid(span, span, span, indexing="ij"), axis=-1).reshape(-1, 3)
+                        offs = np.stack(np.meshgrid(span, span, indexing="ij"), axis=-1).reshape(-1, 2)
                         step = max(1, NEAREST_CHUNK // len(offs))
                         for u0 in range(0, len(ukeys), step):
-                            near = ukeys[u0 : u0 + step, None, :] + offs[None, :, :]
-                            inside = ((near >= lo) & (near <= hi)).all(axis=2)
-                            near = near - lo
-                            c = (near[:, :, 0] * size[1] + near[:, :, 1]) * size[2] + near[:, :, 2]
-                            at = np.minimum(np.searchsorted(codes, c), len(codes) - 1)
-                            ku, ko = np.nonzero(inside & (codes[at] == c))
-                            pu.append(ku + u0)
-                            pc.append(sort[at[ku, ko]])
+                            u = ukeys[u0 : u0 + step]
+                            near = u[:, None, :2] + offs[None, :, :]
+                            inside = ((near >= lo[:2]) & (near <= hi[:2])).all(axis=2)
+                            near = near - lo[:2]
+                            row = (near[:, :, 0] * size[1] + near[:, :, 1]) * size[2]
+                            z0 = np.maximum(u[:, 2] - rmax, lo[2]) - lo[2]
+                            z1 = np.minimum(u[:, 2] + rmax, hi[2]) - lo[2]
+                            a = np.searchsorted(codes, row + z0[:, None], "left")
+                            n = np.where(
+                                inside & (z0 <= z1)[:, None], np.searchsorted(codes, row + z1[:, None], "right") - a, 0
+                            )
+                            pu.append(np.repeat(np.arange(u0, u0 + len(u)), n.sum(axis=1)))
+                            pc.append(sort[_ranges(a.reshape(-1), n.reshape(-1))])
                     else:
                         step = max(1, NEAREST_CHUNK // len(ckeys))
                         for u0 in range(0, len(ukeys), step):
