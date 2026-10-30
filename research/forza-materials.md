@@ -966,10 +966,30 @@ cockpit's atlases keep the uniform scale. Atlas size, entry sizes and LODs don't
 The build log's atlas line names the raised regions (`nodamage: 13 regions at 0.469x (1
 raised to 0.913x)`).
 
+The artwork budget (`ART_MIN_SCALE_SHARE`, "Trim artwork") is judged without the floors
+(`Texturing.use_floors`), and the floors apply to the final layout only: judged with them,
+a raised engine picture that is itself artwork pushed the rest of the car's artwork flat
+(JAG_XJ220_93: 21 subsections; FER_F430_04, NIS_32_R390GT1_98 likewise in the first
+survey).
+
 The coverage rule keeps out regions where `find_regions` merged the picture with other
 artwork (it cuts only along empty seams): raising those would cost a quarter to half the
 atlas for a few percent of their texels (PAG_ZondaR_10's 236 x 818, 4% used outside the
 cabin; LAM_Murcielago_05's 594 x 268, 5%; FOR_GT_05's engine, 269 x 245, 16%).
+
+### Roster survey (all 573 cars, `out/w299/rsurvey.py`)
+
+The exterior atlas planned as the converter plans it (LODs 1, 3, 4, 5, the wheel; the
+lens bake left out, it touches only the Lights family), with and without the floors.
+49 of 573 cars get a raised region (47 in the survey, plus FER_F430_04 and
+NIS_32_R390GT1_98, whose artwork the first version flattened; the rebuilt cars raise
+theirs). Their uniform scale is unchanged on 28 (slack in the packing), median ratio
+1.00, below 0.95 on three: HYU_GenesisCoupeRMR_10 0.909 (its engine through the bonnet
+cut-out), FER_F50_95 0.920, BMW_Z4sDrive28i_12 0.940 (up-facing trim artwork the open
+roadster shows). What is raised: engines under glass or louvres (F50, F40, F430, F430
+Scuderia, F430 GTs, Gallardo LP570, XJ220, GT40's and R390 GT1's rear decks, Genesis
+Coupe RMR), large trim and detail artwork (Viper, Cobra and Skyline sills and arches,
+Boss 429's hood decal, Corvette 60). No car lost artwork to the budget.
 
 ### Test set
 
@@ -988,6 +1008,31 @@ lint ok, LODs and sizes unchanged (nodamage scale before -> after, raised region
 | 8 | PAG_ZondaR_10 | 0.525 -> 0.525 | wing artwork 0.626 |
 | 9 | FER_Enzo_02 | 0.572 (unchanged) | none |
 | 10 | FER_F50GT_96 | 0.621 (unchanged) | none |
+
+Rebuilt on master b32d758 with six more cars (`out/w299/b2-before`, `b2-after`, IDs 11 to 16:
+HYU_GenesisCoupeRMR_10 0.516 -> 0.469, BMW_Z4sDrive28i_12 0.518 -> 0.492,
+NIS_SkylineGTR_93 0.676, FOR_MustangBOSS429_70 0.652 (both unchanged), JAG_XJ220_93
+0.576 -> 0.531, NIS_32_R390GT1_98 0.674 -> 0.645); all 16 lint ok, LODs and entry sizes
+unchanged.
+
+`render_compare diff --before out/w299/b2-before --after out/w299/b2-after --out
+out/rc/engine-bay-299b`: 14 changed, 8 drawn differently (F430 Scuderia, F50, F430,
+R390 GT1, Z4, XJ220, Gallardo LP570, Genesis Coupe RMR), 6 alike in its views (F40, GT40,
+Corvette 60, Zonda R, Skyline, Boss 429), the Enzo and the F50 GT unchanged. What it
+lists is the cost: badges, rims and lamps a little softer at the lower uniform scale
+(the XJ220's tail lamps most: structure 0.30 -> 0.26, its score 3.53 -> 3.63; the others
+within 0.1). The raised pictures are mostly out of its views (the engine under the
+F50's rear window shows in `rear3q`).
+
+In game (headless VM 2, new probe view `deck`: the rear deck from above and behind):
+`run-series -Vm -ProbeIds '9,1,2,3,4' -Views deck -ShotSeconds 2`, runs
+`vm2-20261030-034103` (`out/w299/build-before`) and `vm2-20261030-034405`
+(`build-after`). The F50's V12 shows its valve covers, intake runners and pipes where
+before they were blocks; the F40's engine under the louvres is sharper; the F430
+Scuderia's change is small (0.625x). At 120 texels/m the F50's engine is at about
+Forza's own LOD 1 density, so what blur remains is Forza's picture. The F40's engine is
+drawn in two diagonal halves of different brightness in both runs (issue #307, not this
+change).
 
 ## Open
 
