@@ -899,9 +899,9 @@ def rear_lamp_glow(atlas: np.ndarray, view, tris, lamp_ids, order: np.ndarray | 
     each triangle's planned lamp; order (h, w): the glow order of the texels within a lamp (default
     the matched score, dsf_materials.lamp_score). A lamp's pool is what the view sees of it (the
     samples on its texels, TAIL_MIN_SAMPLES or more), each sample's order times its picture's
-    detail; every texel of its triangles is ranked in that pool by its own order times the
-    triangle's mean detail, onto TAIL_RED_ALPHA, the dimmest TAIL_DARK of the lamp at 0. A texel of
-    several triangles takes their mean."""
+    detail; every texel of its triangles is ranked in that pool by its own order times its detail
+    (its samples', else the triangle's mean), onto TAIL_RED_ALPHA, the dimmest TAIL_DARK of the lamp
+    at 0. A texel of several triangles takes their mean."""
     from dsfforza.convert import dsf_materials as dm
 
     seen, grid, _, step = view
@@ -953,8 +953,11 @@ def rear_lamp_glow(atlas: np.ndarray, view, tris, lamp_ids, order: np.ndarray | 
         ix, iy = ix[ok], iy[ok]
         if not len(ix):
             continue
+        # A texel the view sees takes its own samples' detail (as the pool does); the others the
+        # triangle's mean over its seen texels.
         on = seen_count[iy, ix] > 0
-        f = (seen_factor[iy, ix][on] / seen_count[iy, ix][on]).mean() if on.any() else 1.0
+        own = np.where(on, seen_factor[iy, ix] / np.maximum(seen_count[iy, ix], 1), 0.0)
+        f = np.where(on, own, own[on].mean() if on.any() else 1.0)
         values = order[iy, ix] * f
         r = (np.searchsorted(pool, values, "left") + np.searchsorted(pool, values, "right")) / (2 * len(pool))
         r = np.clip((r - TAIL_DARK) / (1 - TAIL_DARK), 0.0, 1.0)
