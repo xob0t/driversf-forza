@@ -1882,11 +1882,14 @@ def plan_wide_glyphs(
 
 
 _RECORDING: dict = {}  # a render process's fingerprint.Recorder (build(record=...))
+_PICTURE: dict = {}  # a render process's backdrop and DDS template (_start_render_process)
 
 
-def _start_render_process(record: bool) -> None:
-    """A render process: one BLAS thread (one_blas_thread), recording when `record`."""
+def _start_render_process(record: bool, backdrop=None, template: bytes | None = None) -> None:
+    """A render process: one BLAS thread (one_blas_thread), the backdrop and template its
+    pictures are made on, recording when `record`."""
     one_blas_thread()
+    _PICTURE.update(backdrop=backdrop, template=template)
     if record:
         from dsfforza.build import fingerprint
 
@@ -1904,18 +1907,63 @@ def one_blas_thread():
     return threadpool_limits(limits=1, user_api="blas")
 
 
-def _render_recorded(archive: Path, spool_id: int) -> tuple[Image, dict]:
-    """render_car in a recording process: the image and what the process read and ran
-    since its last task."""
-    return render_car(archive, spool_id), _RECORDING["recorder"].drain()
+def finish_picture(image: Image, logo, plate, backdrop: Image, template: bytes | None, png: Path) -> bytes:
+    """A car's garage picture from its render (or thumbnail), logo and nameplate: the DXT5
+    picture for gui.sp, and its preview written to `png`."""
+    picture = compose_picture(image, logo, plate, backdrop)
+    dds = picture_dds(picture, template)
+    png.parent.mkdir(parents=True, exist_ok=True)
+    png.unlink(missing_ok=True)  # maybe a hard link to an earlier build's
+    write_png(png, picture.w, picture.h, preview_rgba(picture))
+    return dds
+
+
+def _recorded(result):
+    """A task's result, with what its process read and ran since its last task when recording."""
+    return (result, _RECORDING["recorder"].drain()) if "recorder" in _RECORDING else result
+
+
+def _plate_task(key: tuple):
+    """In a render process: a nameplate (text_plate's key)."""
+    return _recorded(_text_plate(*key))
+
+
+def _logo_task(isos: list[Path] | None, make: str):
+    """In a render process: build()'s logos(make), from this process's own ForzaUI."""
+    if "ui" not in _PICTURE:
+        _PICTURE["ui"] = ForzaUI.of(isos)
+    ui = _PICTURE["ui"]
+    return _recorded(logo_image(ui, make.title()) or logo_image(ui, make))
+
+
+def picture_plate_keys(text: str) -> list[tuple]:
+    """The text_plate keys nameplate(text, 124, 38) may draw: the text on one line and,
+    for more than one word, the two lines it would split it into."""
+    render_h = max(2 * 38, PLATE_RENDER_H)
+    lines = [text]
+    words = text.split()
+    if len(words) > 1:
+        best = min(range(1, len(words)), key=lambda k: abs(len(" ".join(words[:k])) - len(" ".join(words[k:]))))
+        lines += [" ".join(words[:best]), " ".join(words[best:])]
+    return [(line.upper().translate(TEXT_FOLD), render_h, 0.22) for line in lines]
+
+
+def _picture_task(archive: Path, spool_id: int, logo, plate, png: Path):
+    """In a render process: render_car and finish_picture; with recording, also what the
+    process read and ran since its last task."""
+    image = render_car(archive, spool_id)
+    return _recorded(finish_picture(image, logo, plate, _PICTURE["backdrop"], _PICTURE["template"], png))
 
 
 class _Renders:
-    """render_car for the cars build() will render (all, or with `thumbnails` those
-    without an FH1 thumbnail; not the `cached` spool IDs), in `jobs` processes a few
-    cars ahead of the loop that uses them; with jobs 1 (or a car not foreseen, e.g. an
-    empty thumbnail) in this process when asked. `record` (a list): the processes record
-    what they read and run (fingerprint.Recorder.drain records appended to it)."""
+    """The garage pictures of the cars build() renders (all, or with `thumbnails` those
+    without an FH1 thumbnail; not the `cached` spool IDs) made in `jobs` processes: each
+    renders the car and finishes the picture (finish_picture: the DDS returned, the
+    preview written). submit() hands them every car at once, its logo and nameplate drawn
+    here, so they render while build() draws the HUD's plates. With jobs 1 (or a car not
+    foreseen, e.g. an empty thumbnail) build() makes the picture itself. `record` (a
+    list): the processes record what they read and run (fingerprint.Recorder.drain
+    records appended to it)."""
 
     def __init__(
         self,
@@ -1926,43 +1974,61 @@ class _Renders:
         thumbnails: bool = False,
         cached: set | frozenset = frozenset(),
         record: list | None = None,
+        backdrop: Image | None = None,
+        template: bytes | None = None,
     ):
-        self.archive, self.jobs, self.futures, self.pool, self.record = archive, jobs, {}, None, record
-        self.order = []  # (car index, spool ID) of the cars that will need a render
+        self.archive, self.futures, self.pool, self.record = archive, {}, None, record
+        self.order = []  # the cars (manifest entries) that will need a render
         if jobs > 1:
-            for n, car in enumerate(cars):
+            for car in cars:
                 if car["spool_id"] in cached:
                     continue
                 car_id = forza_car_id(car["media"])
                 if not thumbnails or not car_id or f"thumbnails/thumbnail_{car_id}.xds" not in ui.names:
-                    self.order.append((n, car["spool_id"]))
+                    self.order.append(car)
         if len(self.order) > 1:
             from concurrent.futures import ProcessPoolExecutor
 
             self.pool = ProcessPoolExecutor(
                 max_workers=min(jobs, len(self.order)),
                 initializer=_start_render_process,
-                initargs=(record is not None,),
+                initargs=(record is not None, backdrop, template),
             )
 
-    def ahead(self, n: int) -> None:
-        """Start the renders of the cars up to a few past car index n."""
+    def prefetch(self, plate_keys, makes, isos) -> tuple[dict, dict]:
+        """({text_plate key: plate}, {make: logo or None}) drawn in the render processes
+        (text_plate and logos are the same wherever they run); empty without them."""
+        if self.pool is None:
+            return {}, {}
+        plate_keys, makes = list(dict.fromkeys(plate_keys)), list(dict.fromkeys(makes))
+        plates = list(self.pool.map(_plate_task, plate_keys, chunksize=8))
+        logos = list(self.pool.map(_logo_task, [isos] * len(makes), makes))
+        if self.record is not None:  # (result, what the process read and ran)
+            self.record.extend(d for _, d in plates + logos)
+            plates, logos = [r for r, _ in plates], [r for r, _ in logos]
+        return dict(zip(plate_keys, plates, strict=True)), dict(zip(makes, logos, strict=True))
+
+    def submit(self, parts, png) -> None:
+        """Start every picture: `parts(car)` gives its (logo, nameplate), `png(car)` the
+        preview's path."""
         if self.pool is None:
             return
-        while self.order and self.order[0][0] <= n + 2 * self.jobs:
-            _, sid = self.order.pop(0)
-            task = render_car if self.record is None else _render_recorded
-            self.futures[sid] = self.pool.submit(task, self.archive, sid)
+        for car in self.order:
+            logo, plate = parts(car)
+            self.futures[car["spool_id"]] = self.pool.submit(
+                _picture_task, self.archive, car["spool_id"], logo, plate, png(car)
+            )
 
-    def get(self, sid: int) -> Image:
+    def picture(self, sid: int) -> bytes | None:
+        """The DDS of a submitted car's picture (its preview is written), or None."""
         future = self.futures.pop(sid, None)
         if future is None:
-            return render_car(self.archive, sid)
+            return None
         if self.record is None:
             return future.result()
-        image, drained = future.result()
+        dds, drained = future.result()
         self.record.append(drained)
-        return image
+        return dds
 
     def close(self) -> None:
         if self.pool is not None:
@@ -2054,6 +2120,32 @@ def _build(
             logo_cache[make] = logo_image(ui, make.title()) or logo_image(ui, make)
         return logo_cache[make]
 
+    for t in texts.values():  # plan_glyphs sets the same; the pictures' logos need it first
+        t["dsf_make"] = dsf_make(t["make"], t["model"])
+    cached = {}
+    if cache is not None:
+        for car in data["cars"]:
+            hit = cache.get(car, {"text": texts[car["media"]], "thumbnails": thumbnails})
+            if hit is not None:
+                cached[car["spool_id"]] = hit
+
+    def parts(car: dict):
+        """The picture's logo and nameplate."""
+        t = texts[car["media"]]
+        return logos(t["dsf_make"]) or logos(t["make"]) or maker_badge(t["dsf_make"]), nameplate(t["model"], 124, 38)
+
+    def png(car: dict) -> Path:
+        return out_dir / f"dsfforza_{car['media'].lower()}.png"
+
+    renders = _Renders(Path(archive), data["cars"], ui, jobs, thumbnails, set(cached), record, backdrop, template)
+    # The pictures' nameplates and the logos, drawn in the render processes first.
+    wanted = [k for t in texts.values() for k in picture_plate_keys(t["model"]) if k not in _TEXT_PLATES]
+    logo_makes = [m for t in texts.values() for m in (t["dsf_make"], t["make"]) if m not in logo_cache]
+    plates, found = renders.prefetch(wanted, logo_makes, isos)
+    _TEXT_PLATES.update(plates)
+    logo_cache.update(found)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    renders.submit(parts, png)  # they render while the plates below are drawn
     planned, glyphs, notes = plan_glyphs(data["cars"], texts, makes, models, free, logos)
     pictures, hud, report = {}, {}, {"_codes": notes}
     # Names whose nameplate would lose characters (glyph_strokes has no strokes for them).
@@ -2071,16 +2163,8 @@ def _build(
         for media, fields in wide.items():
             planned[media].update(fields)
         glyphs.update(wide_glyph_images)
-    cached = {}
-    if cache is not None:
-        for car in data["cars"]:
-            hit = cache.get(car, {"text": texts[car["media"]], "thumbnails": thumbnails})
-            if hit is not None:
-                cached[car["spool_id"]] = hit
-    renders = _Renders(Path(archive), data["cars"], ui, jobs, thumbnails, set(cached), record)
-    for n, car in enumerate(data["cars"]):
+    for car in data["cars"]:
         media, sid = car["media"], car["spool_id"]
-        renders.ahead(n)
         t = texts[media]
         model_text = t["model"]
         entry = dict(planned[media])
@@ -2102,22 +2186,19 @@ def _build(
                 f"Model {entry.get('Model')} ({model_text}){wide_text}"
             )
             continue
-        logo = logos(t["dsf_make"]) or logos(t["make"]) or maker_badge(t["dsf_make"])
-        # Picture: a render of the converted car (or, with 	humbnails, Forza's own).
-        car_id = forza_car_id(media) if thumbnails else None
-        image = forza_car_image(ui, car_id) if car_id else None
-        source = "FH1 thumbnail"
-        if image is None:
-            image, source = renders.get(sid), "render"
-        picture = compose_picture(image, logo, nameplate(model_text, 124, 38), backdrop)
-        pictures[name] = picture_dds(picture, template)
+        # Picture: a render of the converted car (or, with thumbnails, Forza's own).
+        dds, source = renders.picture(sid), "render"
+        if dds is None:
+            car_id = forza_car_id(media) if thumbnails else None
+            image = forza_car_image(ui, car_id) if car_id else None
+            source = "FH1 thumbnail"
+            if image is None:
+                image, source = render_car(Path(archive), sid), "render"
+            dds = finish_picture(image, *parts(car), backdrop, template, png(car))
+        pictures[name] = dds
         entry["Picture1"] = name
         entry[EMBLEM_FIELD] = 1  # Forza logo instead of the SF disc on the garage card (dsfforza.asi)
         hud[sid] = entry
-        flat = preview_rgba(picture)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / f"{name}.png").unlink(missing_ok=True)  # maybe a hard link to an earlier build's
-        write_png(out_dir / f"{name}.png", picture.w, picture.h, flat)
         if cache is not None:
             png = (out_dir / f"{name}.png").read_bytes()
             cache.put(car, {"text": t, "thumbnails": thumbnails}, pictures[name], png, source)
