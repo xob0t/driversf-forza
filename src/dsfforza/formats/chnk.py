@@ -92,6 +92,32 @@ def read_chunk(stream: BinaryIO, base: int = 0, depth: int | None = None) -> Chu
         view.close()
 
 
+_ROOTS: dict = {}
+
+
+def read_root(stream: BinaryIO) -> Chunk:
+    """read_chunk(stream, 0) for code that only looks at the tree: read once per file
+    (path, size and modification time) in this process and shared, so several lookups in
+    one archive (a port_batch worker's vanilla materials, buffer and paints) parse its
+    230,000 entries once. Other streams are read every time. Don't change what it returns."""
+    import os
+
+    name = getattr(stream, "name", None)
+    try:
+        st = os.fstat(stream.fileno())
+        key = (os.path.realpath(name), st.st_size, st.st_mtime_ns) if isinstance(name, str) else None
+    except (AttributeError, OSError, ValueError):
+        key = None
+    if key is None:
+        return read_chunk(stream, 0)
+    if key not in _ROOTS:
+        position = stream.tell()
+        _ROOTS.clear()  # one archive at a time
+        _ROOTS[key] = read_chunk(stream, 0)
+        stream.seek(position)
+    return _ROOTS[key]
+
+
 def _mapped(stream):
     """A read-only memory map of the file behind `stream`, or None (not a plain file)."""
     import io
