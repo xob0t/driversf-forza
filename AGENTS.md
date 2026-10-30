@@ -76,9 +76,14 @@ Research notes are in `research/` (read the ones for your area first).
   repo paths from `dsfforza.REPO`. Dependencies: `uv add <pkg>` (`--group
   dev` for tools only developers need).
 - Lint and format: ruff (config in `pyproject.toml`). Run `uv run ruff check
-  --fix` and `uv run ruff format` before committing.
-- Tests: `uv run python -m tests` runs `ruff check`, `ruff format --check` and
-  every Python test file (`tests/test_*.py`; `--no-lint` skips ruff). New
+  --fix` and `uv run ruff format` before committing. Stricter rules (blind
+  `except`, unused arguments, boolean positionals, complexity, ...) run as a
+  ratchet: older code's findings are counted per file in
+  `tests/ruff-ratchet.json` and new code must pass them
+  (`uv run python -m tests.ruff_ratchet --show <file>` lists them; after a fix,
+  `--update` lowers the counts).
+- Tests: `uv run python -m tests` runs `ruff check`, `ruff format --check`, the
+  ratchet and every Python test file (`tests/test_*.py`; `--no-lint` skips ruff). New
   tests go in `tests/test_<area>.py`.
 
 ## Machine rules

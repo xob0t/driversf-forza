@@ -53,6 +53,8 @@ select = [
     "PL",       # pylint
     "N",        # pep8-naming
 ]
+# The ratchet's rules (tests/ruff_ratchet.py): a `# noqa: <code>` for one is kept (RUF100).
+external = ["BLE001", "ARG", "ERA001", "TRY", "FBT001", "FBT002", "C901", "PLR0912", "PLR0915"]
 ignore = [
     "PLR2004",  # magic values: binary formats are full of offsets, tags and sizes
     "PLR0911",  # too many returns: format and command dispatchers
@@ -73,6 +75,16 @@ ignore = [
     "RUF046",   # int(round(x)): keeps a Python int when x is a numpy scalar
     "PERF401",  # append loops over comprehensions: the loops carry conditions and comments; no hot paths
 ]
+
+# Limits for the stricter rules that tests/ruff_ratchet.py checks (BLE001, ARG, ERA001, TRY,
+# FBT001/2, C901, PLR0912, PLR0915). Code from before them is grandfathered per file in
+# tests/ruff-ratchet.json; new code must pass.
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.ruff.lint.pylint]
+max-branches = 15
+max-statements = 60
 
 [tool.ruff.lint.isort]
 known-first-party = ["dsfforza"]
