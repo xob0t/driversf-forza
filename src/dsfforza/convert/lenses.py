@@ -273,17 +273,43 @@ def _intersect(origins, dirs, tris):
     dx, dy, dz = (dirs[:, c : c + 1] for c in range(3))
     ax, ay, az = (e1[None, :, c] for c in range(3))
     bx, by, bz = (e2[None, :, c] for c in range(3))
-    px, py, pz = dy * bz - dz * by, dz * bx - dx * bz, dx * by - dy * bx  # d x e2
-    det = ax * px + ay * py + az * pz
+
+    def diff(a, b, c, d):  # a * b - c * d, in place (the same products and difference)
+        out = a * b
+        out -= c * d
+        return out
+
+    def dot(a, b, c, d, e, f):  # a * b + c * d + e * f, summed left to right
+        out = a * b
+        out += c * d
+        out += e * f
+        return out
+
+    px, py, pz = diff(dy, bz, dz, by), diff(dz, bx, dx, bz), diff(dx, by, dy, bx)  # d x e2
+    det = dot(ax, px, ay, py, az, pz)
     ok = np.abs(det) > 1e-12
     inv = 1.0 / np.where(ok, det, 1.0)
     sx, sy, sz = (origins[:, c : c + 1] - v0[None, :, c] for c in range(3))
-    u = (sx * px + sy * py + sz * pz) * inv
-    qx, qy, qz = sy * az - sz * ay, sz * ax - sx * az, sx * ay - sy * ax  # s x e1
-    v = (dx * qx + dy * qy + dz * qz) * inv
-    t = (bx * qx + by * qy + bz * qz) * inv
-    hit = ok & (u >= 0) & (v >= 0) & (u + v <= 1) & (t > 0) & (t <= RAY_DEPTH)
-    return np.where(hit, t, np.inf), u, v
+    u = dot(sx, px, sy, py, sz, pz)
+    u *= inv
+    # v, t only where u can hit: v >= 0 and u + v <= 1 need 0 <= u <= 1 (rounding too).
+    i, j = np.nonzero(ok & (u >= 0) & (u <= 1))
+    sx, sy, sz = sx[i, j], sy[i, j], sz[i, j]
+    ax, ay, az, bx, by, bz = (a[0, j] for a in (ax, ay, az, bx, by, bz))
+    qx, qy, qz = diff(sy, az, sz, ay), diff(sz, ax, sx, az), diff(sx, ay, sy, ax)  # s x e1
+    inv = inv[i, j]
+    vs = dot(dirs[i, 0], qx, dirs[i, 1], qy, dirs[i, 2], qz)
+    vs *= inv
+    ts = dot(bx, qx, by, qy, bz, qz)
+    ts *= inv
+    us = u[i, j]
+    hit = (vs >= 0) & (us + vs <= 1) & (ts > 0) & (ts <= RAY_DEPTH)
+    i, j = i[hit], j[hit]
+    t = np.full(u.shape, np.inf)
+    t[i, j] = ts[hit]
+    v = np.zeros(u.shape)
+    v[i, j] = vs[hit]
+    return t, u, v
 
 
 class _Surfaces:
@@ -452,15 +478,36 @@ def _axis_fallback(surf: _Surfaces, origins, dirs, found, front: bool = True) ->
     return changed
 
 
+def _neighbours(pos: np.ndarray, radius: float) -> list:
+    """The points (pos: (n, 3)) within `radius` of each other, as np.linalg.norm of their
+    difference finds them, each point with itself: (rows, columns, mask (rows, columns))
+    per chunk of RAY_CHUNK rows. Rows go in spatial chunks (sorted by cells of two radii),
+    each tested against the points inside its chunk's box widened by the radius rather
+    than against every point. Points with a NaN or inf are near nothing, not even
+    themselves."""
+    finite = np.nonzero(np.isfinite(pos).all(1))[0]
+    cell = np.floor(pos[finite] / (2 * radius)).astype(np.int64)
+    order = finite[np.lexsort((cell[:, 2], cell[:, 1], cell[:, 0]))]
+    margin = radius * (1 + 1e-6)  # a point outside the box is farther than the radius, rounding and all
+    out = []
+    for c0 in range(0, len(order), RAY_CHUNK):
+        rows = order[c0 : c0 + RAY_CHUNK]
+        p = pos[rows]
+        lo, hi = p.min(0) - margin, p.max(0) + margin
+        cols = np.nonzero(np.all((pos >= lo) & (pos <= hi), 1))[0]
+        out.append((rows, cols, np.linalg.norm(p[:, None] - pos[cols][None], axis=2) < radius))
+    return out
+
+
 def _closing(pos: np.ndarray, values: np.ndarray, radius: float) -> np.ndarray:
     """Morphological closing of per-ray values over the lens (max, then min, of the rays
     within `radius` of each): fills dips narrower than the radius, keeps the rim's falloff."""
+    chunks = _neighbours(pos, radius)
     out = values
     for reduce, fill in ((np.max, -np.inf), (np.min, np.inf)):
-        res = np.empty_like(out)
-        for c0 in range(0, len(pos), RAY_CHUNK):
-            near = np.linalg.norm(pos[c0 : c0 + RAY_CHUNK, None] - pos[None], axis=2) < radius
-            res[c0 : c0 + RAY_CHUNK] = reduce(np.where(near, out[None], fill), axis=1)
+        res = np.full_like(out, fill)  # rays near nothing (non-finite) get the fill
+        for rows, cols, near in chunks:
+            res[rows] = reduce(np.where(near, out[cols][None], fill), axis=1)
         out = res
     return out
 
