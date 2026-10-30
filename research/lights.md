@@ -6,8 +6,8 @@ How vanilla DSF cars light their lamps and pick a paint colour, and what the
 converter does about both. Code: `src/dsfforza/convert/lights.py` (the lamp
 plan and light table), `src/dsfforza/convert/lenses.py` (lens and lamp glass
 bake, day glow), the lamp parts of `dsf_materials.py` (`LIGHTS_ALPHA`, the
-lamp curves and scales, `Texturing` lens, cover and tiling rules,
-`DAYTIME_GLOW`), `src/dsfforza/convert/paint.py` (palettes) and
+lamp curves and scales, `Texturing` lens, cover and tiling rules),
+`src/dsfforza/convert/paint.py` (palettes) and
 `dsf_materials.PAINT_TEXEL_UV`; lamps and palettes run inside
 `forza2dsf.convert` (`ConvertOptions.lights`, `ConvertOptions.paint`, on by
 default). Evidence levels as defined in `dngvehicles.md`. The survey scripts
@@ -103,9 +103,10 @@ later PR replaced a rule, the earlier section says so in one line.
   distribution ([#124](#head-lamp-glow-by-day-issue-124)), following the
   lamp's own picture (its bright and dark detail,
   [#286](#head-lamps-at-a-fifth-of-vanilla-at-night-issue-286)), times what
-  the glass or lens in front of it passes. Day-lit (0x1D) lamps keep that alpha
-  since [glass over lamps as Forza blends it](#glass-over-lamps-as-forza-blends-it-379)
-  (`DAYTIME_GLOW` scaled them, 0.2 from #167 to #286, then 0.45).
+  the glass or lens in front of it passes. Day-lit (0x1D) lamps keep that alpha,
+  unscaled. History: until [glass over lamps as Forza blends it](#glass-over-lamps-as-forza-blends-it-379)
+  (#389) a `DAYTIME_GLOW` factor scaled them (0.2 from #167 to #286, then 0.45);
+  it and the second render of the atlas it needed are gone.
 
 **Glass over lamps** (`lenses.bake`, `Texturing._bake_lenses`). What Forza's race shaders actually compute for lenses, covers and
 glass, and which of these rules that confirms or replaces: `forza-lenses-re.md`.
@@ -2540,6 +2541,61 @@ lights; before: #385's build):
 - In game by day (VM 1, `-Views 'nose,rear,nose+night'`, before `vm1-20261030-185809`, after
   `vm1-20261030-190326`): the Carlton's head lamps brighter, as bright as vanilla 241's; the Golf
   R's running lamps dimmer; the Mustang's, S60's, X6 M's and M5's about as before.
+
+### Lamp alpha per type, measured by day
+
+`research/lights-re.md` asked for the lamp alpha curves per lamp type rather than per hue, for
+FM4's glow mask from the texel colour, for `TAIL_DARK` and for 0x03 against 0x18 tails. Measured
+with render_compare's renderer under the game's lamp model (#372), the converter as of #389, by
+day: vanilla's 142 vehicles against the 16 usual ports and 60 random ones (`out/ls/lamp_survey.py`,
+`pertype.py` in the PR's worktree), glow p95 over each vehicle's pixels of the type:
+
+| Type | Mode | Vanilla p10 / median / p90 (vehicles) | Ports, 60 random: median (cars), below / above vanilla's p10 / p90 |
+| --- | --- | --- | --- |
+| 0x1D head | running lights | 1.10 / 1.85 / 2.32 (21) | 1.44 (50), 13 / 5 |
+| 0x03 white front | running lights | 1.51 / 3.53 / 4.79 (66) | 2.20 (7), 1 / 0 |
+| 0x18 tail | running lights | 0.13 / 0.24 / 0.47 (56) | 0.19 (60), 14 / 1 |
+| 0x18 tail | braking | 0.64 / 1.19 / 2.34 | 0.93, 14 / 1 |
+| 0x02 high stop | braking | 0.32 / 0.80 / 2.17 (86) | 0.90 (31), 4 / 5 |
+| 0x19 / 0x1A | braking | 0.36 / 1.19 / 2.66 (40) | 1.13 (3), 0 / 0 |
+
+- **Curves per type:** the per-hue curves convert every Lights texel before the lamp plan
+  exists. After that, two rankings override them where a camera sees the lamp: `day_glow` ranks
+  the front head lamp surfaces onto vanilla's 0x1D alpha (`DAY_HEAD_ALPHA`), and `tail_glow`
+  ranks every visible red patch of the rear `lamp_tris` onto vanilla's 0x18 alpha
+  (`TAIL_RED_ALPHA`), whatever lamp type the plan later gives it (0x18, 0x02, 0x19/0x1A, a red
+  0x03). There the per-hue conversion is only the floor (`never below the converted alpha`). The
+  per-hue curves alone decide the texels no camera straight ahead or behind sees, and the
+  white and amber ones (indicators, reverse). All these types glow inside vanilla's per-type
+  ranges by day (the table). Vanilla's white types share one alpha
+  distribution (per vehicle p50 / p90: 0x01 0.20 / 0.59, 0x1D 0.23 / 0.67, front 0x03 0.18 / 0.57,
+  0x08 0.14 / 0.53). Per-type curves would need the lamp plan before the texels are converted
+  (the second render #389 removed), with no measured gain: not done.
+- **Dim head and tail lamps:** the 0x1D cars below vanilla's p10 (Aston Martin V12 Vantage 0.42,
+  CL65 AMG 0.55, Audi A4 0.64, Jaguar XFR 0.79...) have their texel alpha at vanilla's but
+  multiplied by the clear lens's filter (#385) and sit under the plain glass Forza has there
+  (#389): head lamp alpha p90 42 to 76 where vanilla's is 97 / 171 / 232. That is what Forza draws
+  in front of those lamps; not tuned. The dim tails (14 of 60, as many FM4 as FH1 cars by share)
+  are mostly not the lens and glass rules: of three checked, the Nissan Versa (0.041 before #385,
+  0.021 after) and the Aston Martin V12 Vantage (0.018 before, 0.035 after) were as dim before,
+  their visible tail texels at alpha 4 to 19 (the Versa's red, the V12 Vantage's grey under a clear
+  lens, so `tail_glow`'s red-texel pool doesn't take them); the Mazda Axela's (0.177 -> 0.061) is
+  its kept glass and lens. #391.
+- **FM4's glow mask:** FM4's lamp shaders glow by the texel colour (`BrakeColor x L`), its
+  `tail_light` alpha is 255 on 92% of the texels (`forza-lenses-re.md`), and the "matched" score
+  `a x (0.6 + 0.4 x brightest channel)` at alpha 255 ranks a tail's texels by their brightest
+  channel, on a red texel its red: the same order. The texels under 255 are where it moves: the
+  V12 Vantage's grey tail texels at alpha 4 to 8 glow by their colour in Forza and stay dark here
+  (#391). FM4's reflectors don't glow in Forza (lit by the lamp plan here): the `reflector`
+  shader reads their texel alpha as opacity (`min(max(A, GlassColor.w) + Fresnel,
+  GlassMaxOpacity)`), not as a glow mask, so the change needs a rule for them too: not done
+  here.
+- **`TAIL_DARK`:** no counterpart in the game (each texel glows alpha x colour); it stands for a
+  ported tail lamp's lit area, 2.5 times vanilla's red area. Kept, documented as the heuristic.
+- **0x03 against 0x18 tails:** vanilla uses both (44 vehicles 0x03, at 2 with the running lights,
+  glow 0.92; 56 vehicles 0x18, at 0.2, glow 0.24). Forza by day keeps the running tail lamps near
+  0 (FH1's `SwitchOnLights` about 0 from 08:00 to 19:00, `forza-lenses-re.md` section 2), so 0x18,
+  dim with the running lights and full when braking, is the closer day look; the converter keeps it.
 
 ### Open
 

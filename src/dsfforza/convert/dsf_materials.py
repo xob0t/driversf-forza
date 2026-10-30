@@ -75,7 +75,11 @@ if LIGHTS_ALPHA not in LIGHTS_ALPHA_MODES:
     raise ValueError(f"DSFFORZA_LIGHTS_ALPHA={LIGHTS_ALPHA!r}: one of {', '.join(LIGHTS_ALPHA_MODES)}")
 # "matched" curves: score knots -> vanilla alpha knots (vanilla percentiles 0, 5, 10, 20,
 # ..., 90, 93, 95, 97, 98, 99, 99.5 of amber and of white lamps; red lamps also have
-# 85 and 100, LAMP_PERCENTILES).
+# 85 and 100, LAMP_PERCENTILES). Per hue, not per lamp type: the texels are converted before
+# the lamp plan exists, and the two types whose glow players see most have rankings of their own
+# (lenses.day_glow onto vanilla's 0x1D alpha, lenses.tail_glow onto its 0x18 alpha). The other
+# types the converter gives lamps glow inside vanilla's per-type ranges by day (research/lights.md,
+# "Lamp alpha per type, measured by day").
 _LAMP_X_RED = (
     0.0,
     0.199,
