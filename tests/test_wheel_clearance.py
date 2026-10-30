@@ -160,3 +160,50 @@ def test_mid_z_fix_replaces_maxdata():
         dims = forza2dsf.car_dims(_maxdata_car(Path(tmp), "CIT_C1_11", 0.0))
     assert abs(dims.mid_z - forza2dsf.MID_Z_FIXES["cit_c1_11"]) < 1e-9
     assert abs(dims.mid_z - (-0.019)) < 1e-9
+
+
+def test_wheel_collision_takes_the_drawn_tyre():
+    """Each wheel record's collision cylinder (PDL extents: half width, radius) takes its axle's
+    drawn tyre, as vanilla's do; the engine places the drawn wheel where its cylinder meets the
+    road, so the H1 Alpha's 0.468 m tyres on the Q7's 0.386 m cylinders sank 8 cm (#317)."""
+    import math
+    from unittest import mock
+
+    wheels = struct.pack("<4f4f", 0.8, -0.5, 1.5, 1, 0, 0, 0, 1) + struct.pack("<4f4f", 0.8, -0.5, -1.5, 1, 0, 0, 0, 1)
+
+    def model(ext, n=1):
+        prim = bytearray(0x60)
+        struct.pack_into("<3f", prim, 0x50, *ext)
+        return struct.pack("<IIfI", 0x10 + n * 0x60, n * 0x60, 0.559, n) + bytes(prim) * n
+
+    models = [model((0.117, 0.386, 0.0)), model((0.117, 0.386, 0.0)), model((0.5, 0.2, 0.3))]
+    offsets, at = [], 0
+    for m in models:
+        offsets.append(at)
+        at += len(m)
+    pdl = struct.pack("<4I", 1, len(models), at, 0x10) + b"".join(models)
+    data = wheels + pdl
+
+    def record(index, wheel, collision):
+        return upvh.Record(index, None, 2, 27, 1, -1, -1, -1, collision, -1, -1, 0, -1, 0, -1, -1, wheel, b"")
+
+    h = upvh.Hierarchy(b"\0" * 8, 0, 0, 1, len(pdl), {"wheels": 2}, {"wheels": 0}, data=data)
+    h.records = [
+        record(0, 0, offsets[0]),
+        record(1, 1, offsets[1]),
+        record(2, 1, offsets[2]),
+        record(3, -1, offsets[2]),
+    ]
+    with mock.patch.object(upvh, "parse", lambda _data: h):
+        out, sized = forza2dsf.fit_wheel_collision(data, (0.468, 0.295), (0.47, 0.31))
+    assert sized == 2
+
+    def ext(k):
+        at = len(wheels) + 0x10 + offsets[k]
+        return struct.unpack_from("<f", out, at + 8)[0], struct.unpack_from("<3f", out, at + 0x10 + 0x50)
+
+    radius, e = ext(0)  # the front wheel: the front tyre
+    assert abs(e[0] - 0.1475) < 1e-6 and abs(e[1] - 0.468) < 1e-6 and e[2] == 0.0
+    assert abs(radius - math.sqrt(0.1475**2 + 2 * 0.468**2)) < 1e-5
+    assert abs(ext(1)[1][1] - 0.47) < 1e-6 and abs(ext(1)[1][0] - 0.155) < 1e-6  # the rear wheel: the rear tyre
+    assert all(abs(a - b) < 1e-6 for a, b in zip(ext(2)[1], (0.5, 0.2, 0.3)))  # not a cylinder: left as it is
