@@ -153,12 +153,17 @@ class Material:
 @dataclass(frozen=True)
 class Lens:
     """See-through lamp glass (kind "lens"): opacity min(max(texel alpha x alpha,
-    floor), cap); what is behind is filtered by (1 - opacity) + opacity x tint x texel."""
+    floor), cap); what is behind is filtered by (1 - opacity) + opacity x tint x texel.
+    A Forza detail_glass_* lens (technique set) is a filter instead: what is behind times
+    lenses.lens_filter of its texel and the car's glass settings (lenses.glass_settings),
+    with no colour or glow of its own (research/forza-lenses-re.md)."""
 
     floor: float = 0.0
     cap: float = 1.0
     alpha: float = 1.0
     tint: float = 1.0
+    technique: str = ""
+    settings: dict | None = None
 
 
 PAINT_KINDS = ("paint", "metallic")
@@ -1369,6 +1374,15 @@ def _shade_lens(mat: Material, view: _View, light, n, uv, ray, occlusion, lighti
     behind; an emissive lens glows by its texel alpha."""
     lens = mat.lens or Lens()
     sh = mat.shading or SHADING["glass"]
+    if lens.technique and mat.texture is not None:
+        from dsfforza.convert import lenses
+
+        f = lenses.lens_filter(lens.technique, _sample(mat.texture, uv)[:, :3] * 255, lens.settings or {})
+        cos_v = np.clip(-np.einsum("ni,ni->n", n, ray), 0, 1)
+        fres = sh.f0 + (1 - sh.f0) * (1 - cos_v) ** sh.fresnel_power
+        refl = ray - 2 * np.einsum("ni,ni->n", ray, n)[:, None] * n
+        add = _environment(refl) * lighting.env * (fres * sh.reflect)[:, None]
+        return add, np.clip(f * (1 - fres)[:, None], 0, 1).astype(np.float32)
     if mat.texture is not None:
         t = _sample(mat.texture, uv)
         o = np.clip(np.maximum(t[:, 3] * lens.alpha, lens.floor), 0, lens.cap)[:, None]

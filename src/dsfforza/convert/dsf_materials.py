@@ -304,7 +304,7 @@ LENS_REAR_Z, LENS_MIN_RED, LENS_MIN_ALPHA = 0.5, 80, 128
 # opacity from the Fresnel term), so its UVs' texels are never seen: the Devon GTX's clear
 # tail covers sit on flat red texels, and moved to the atlas they hid the lamp as a flat red
 # plate (issue #160).
-TEXTURED_COVERS = ("lights_glass", "lights_gls_noemit")
+TEXTURED_COVERS = ("lights_glass",)  # lights_gls_noemit is lamp glass (lenses.NO_GLOW_GLASS)
 # Plain glass lamp covers (Texturing.clear_cover): left out when a Lights-atlas surface lies up
 # to COVER_DEPTH behind this share of their area; never in the window sections.
 COVER_MIN_SHARE, COVER_DEPTH = 0.3, 0.3
@@ -1788,7 +1788,7 @@ class Texturing:
         return out
 
     def lamp_cover(self, section, sub, m: fm.SubMaterial, shapes=None) -> bool:
-        """A textured lamp cover (TEXTURED_COVERS: lights_glass, lights_gls_noemit) on the
+        """A textured lamp cover (TEXTURED_COVERS: lights_glass) on the
         Lights atlas, outside the window sections, with a Lights surface behind at least
         COVER_MIN_SHARE of its area: baked over the lamp (_bake_lenses) instead of drawn as
         DSF's dark window glass, which hid the lamp (127 cars, issue #89), or moved to the
@@ -2014,7 +2014,7 @@ class Texturing:
 
     def is_lens(self, section, sub, m: fm.SubMaterial) -> bool:
         """A coloured rear lamp lens drawn with a textured lamp-cover glass technique
-        (lights_glass, lights_gls_noemit on the Lights atlas; not plain glass,
+        (lights_glass on the Lights atlas; not plain glass,
         TEXTURED_COVERS). DSF's
         shared glass would draw it clear, with the glass texture's crack
         bands, over whatever lies behind: the DMC-12's tail lamps are a white

@@ -111,24 +111,26 @@ later PR replaced a rule, the earlier section says so in one line.
 **Glass over lamps** (`lenses.bake`, `Texturing._bake_lenses`). What Forza's race shaders actually compute for lenses, covers and
 glass, and which of these rules that confirms or replaces: `forza-lenses-re.md`.
 
-- A `detail_glass_*` lens keeps its triangles; each texel becomes
-  `a x lens + (1 - a) x behind`, behind being what a ray straight in meets
-  (a = the texel alpha, capped by the car's `GlassMaxOpacity`). Rays that
-  meet no lamp along the normal are cast again along the car's axis, for
+- A `detail_glass_*` lens keeps its triangles; each texel becomes what a ray
+  straight in meets (lamp, reflector, trim, paint) times the lens's filter, the
+  lens texel plus the car's GlassColor (sRGB to linear), the red remap on red
+  lenses (`lenses.lens_filter`), and glows with the lamp behind times the filter;
+  its own colour and alpha don't count ([lenses as Forza draws them](#lenses-as-forza-draws-them-issues-300-340)).
+  Rays that meet no lamp along the normal are cast again along the car's axis, for
   lenses that face out of the car's end
   ([#93](#lamp-lenses-drawn-opaque-user-report-on-outfinal4),
   [#190](#flat-lenses-lens-skins-laid-back-head-lamp-lenses-and-tiling-bowls-player-reports-on-3ca28fd),
   [#218](#tiles-across-edges-streak-parts-flat-front-lenses-rear-axis-rays-issue-189)).
-- A rear lens of one flat colour, or a tint swatch stretched over the lens,
-  is left out when half its rays meet a lamp (a clear swatch lens when any
-  ray does, #250), and its colour filters the lamp texels behind it. A flat front lens stays, baked as a filter, and
-  glows with the lamp behind it ([#164](#lamp-glass-issues-89-145), #190,
-  #218).
+- A tint swatch stretched over a lens (its texels scrambled: each stands for lens
+  points far apart) is left out when half its rays meet a lamp (a clear one when
+  any ray does, #250), and its filter goes onto the lamp texels behind it. A lens
+  of one flat colour is baked like any other since "Lenses as Forza draws them".
 - Plain `glass` covers over a lamp are left out (in a lamp unit's own section
   from 5% of their area over a lamp, [#247](#head-lamp-covers-over-a-whole-head-lamp-unit-issue-247)). Textured covers
-  (`lights_glass`, `lights_gls_noemit`) over a lamp are baked at Forza's
+  (`lights_glass`) over a lamp are baked at Forza's
   opacity and glow with the lamp behind; `lights_gls_*` lamp glass with a
-  cap under 1 is baked at that cap; a cover over its own lenses' texels (a
+  cap under 1 is baked at that cap (`lights_gls_noemit` too, lamp glass
+  without a glow, not a cover); a cover over its own lenses' texels (a
   second skin) is left out; covers over no lamp stay DSF window glass (the
   red rear ones `is_lens` takes, opaque lamp texels)
   ([#160](#lamp-covers-drawn-as-window-glass-issue-160), #164, #190).
@@ -2378,6 +2380,52 @@ ARX-01bs, LOT_Evora_09, NIS_GTR_12, NIS_Versa_09, the Viper CCs); above it 8 -> 
 
 Not this: the F50's starburst and white patches and the Commodore VE race cars' flat red block with a
 white patch (#300) are the same in both builds by day: their tail lens and cover bake, not the glow.
+
+### Lenses as Forza draws them (issues #300, #340)
+
+`research/forza-lenses-re.md` (#369, #379) decoded Forza's race lens shaders: a `detail_glass_*` lens
+multiplies whatever lies behind it (reflector, bulb, the lamp's glow, a trim, paint) by
+`L + GlassColor` (clear, amber; the car's GlassColor converted from sRGB to linear as Forza uploads
+it, shared 0.2 = 0.033 on clear lenses) or by its red remap `DarkValues + (LightValues -
+DarkValues) L.r` (red), in Forza's square light space, then adds a faint reflection. It reads no
+alpha, has no colour of its own and doesn't glow. The bake mixed the lens texel in at its alpha
+(`a x lens + (1 - a) x behind`, off by a median delta E of 15 to 39 against the decoded maths): a
+red lens over a white bulb came out pale pink, a clear lens over a red lamp grey.
+
+Change (`lenses.bake`, `lens_filter`):
+
+- A lens texel is what its ray meets times the filter (bytes: behind x sqrt(filter)); its glow is
+  the lamp behind's times the filter in the channel the result shows brightest (a red lamp under a
+  red lens: its red). The clear front lenses' head lamp glow (`lens_glow`) passes the filter too
+  (`day_glow` ranks it, so only its shape counts). A lens ray that meets nothing keeps the lens
+  texel, unlit.
+- Lenses of one flat colour are no longer left out (`_flat`, `FLAT_SHARE`, `FLAT_SPREAD` gone):
+  baked as filters, they show the lamp behind as Forza does and, over a trim, the trim through
+  the filter (#340: the Commodore VE's trim under its red tail glass is red in Forza). Scrambled
+  swatch lenses still put their filter onto the lamp behind (one texel can't hold many points).
+- `lens_filter` follows the shader: linear, `L + GlassColor` with the car's or the shared value
+  converted, clipped at 1; `opacity_rule` no longer has a lens case.
+- `lights_gls_noemit` is lamp glass without a glow, not a cover (`COVERS`, `TEXTURED_COVERS`,
+  `forza_materials` classify it with the other `lights_gls_*`): baked at its cap when it is under
+  1, its glow only what the cap lets through of the lamp behind.
+- render_compare's Forza reference draws `detail_glass_*` lenses as the same filter (it drew the
+  lens picture at its opacity: milky lenses, #313).
+
+Not this: the covers' glow and plain glass over lamps (`forza-lenses-re.md` section 7, next PR);
+FM4's glow mask (the texel colour, not its alpha) with the lamp curves per type.
+
+Roster (the build reports of the 573 cars): 499 cars have `detail_glass_*` lenses, every one baked
+differently (42 M lens texels sampled); 85 cars get back 238 flat lens subsections that were left
+out; 3 scrambled swatch lenses keep the drop. `render_compare diff` on 16 cars (the usual 9 and
+the Commodore VE #1 and #88, F50, X5 M, Q7, M5 E39, R390; render_compare with #372's renderer and
+this reference; `out/rc/lens`): 15 drawn differently, all in the lamp regions; flags fixed 8 (rear
+lamps "colour off" on the X6 M, Venom, both Commodores; "washed out" on the M5 E39's rear and the
+R390's front; the F50's "glows elsewhere"; the Mustang's "different detail"), new 0; scores fall
+on 13 (M5 E39 3.14 -> 0.72, Venom 2.29 -> 0.67, X6 M 1.60 -> 0.27, Commodore #88 7.40 -> 5.78),
+none rises. In game by day (VM 1, `-Views 'rear,rear+night'`, before `vm1-20261030-175324`, after
+`vm1-20261030-175726`): the M5 E39's tails red where they were pale pink, the Commodore VE's
+cluster red over its trim with its clear reverse strip, the F50's inner lamps red (#300), the
+X6 M's flat red lens kept over its lamp graphics; the Venom and vanilla 130 as before.
 
 ### Open
 

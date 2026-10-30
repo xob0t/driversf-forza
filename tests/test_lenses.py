@@ -23,6 +23,13 @@ LENS = (200, 0, 0, 128)  # a red lens, half opaque
 LAMP = (255, 255, 255, 200)  # a white reflector with a glow mask
 
 
+def _filtered(lens, behind, technique, settings=None):
+    """What Forza shows of `behind` through `lens` (bytes), and the share of its glow it passes."""
+    f = lenses.lens_filter(technique, np.array(lens[:3], float), settings or {})
+    rgb = [round(b * f[c] ** 0.5) for c, b in enumerate(behind[:3])]
+    return rgb, float(f[int(np.argmax(rgb))])
+
+
 class _Atlases:
     """fm.AtlasCache stand-in: the Lights atlas's left half lens texels, right half lamp."""
 
@@ -66,12 +73,13 @@ def test_lens_over_lamp():
     lens = _quad("glassLHL", "detail_glass_red", 2.0, 0.0, 0.5)
     lamp = _quad("headlightL", "textured_reflector", 1.9, 0.5, 1.0)
     atlases, report = _bake([lens, lamp], [lens])
-    a = LENS[3] / 255
-    rgb = [round(a * l + (1 - a) * b) for l, b in zip(LENS[:3], LAMP[:3])]
+    # Forza's lens is a filter: the lamp behind through it, never the lens's own colour or alpha
+    # (research/forza-lenses-re.md).
+    rgb, through = _filtered(LENS, LAMP, "detail_glass_red")
     got = atlases.texel(SIZE // 4, SIZE // 2)
     assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
-    # The glow stays the lens's: the same lamp score as the lens texel.
-    assert abs(dm.lamp_score(*got) - dm.lamp_score(*LENS)) < 0.01, (got, LENS)
+    # The glow is the lamp's, through the filter.
+    assert abs(dm.lamp_score(*got) - dm.lamp_score(*LAMP) * through) < 0.01, (got, LAMP, through)
     assert report["glassLHL/detail_glass_red"]["behind"] == 1.0
     assert atlases.texel(SIZE * 3 // 4, SIZE // 2) == LAMP  # the lamp's own texels stay
 
@@ -80,7 +88,7 @@ def test_nothing_behind_keeps_the_lens():
     lens = _quad("glassLHL", "detail_glass_clear", 2.0, 0.0, 0.5)
     far = _quad("headlightL", "textured_reflector", 2.0 - 2 * lenses.RAY_DEPTH, 0.5, 1.0)
     atlases, report = _bake([lens, far], [lens])
-    assert atlases.texel(SIZE // 4, SIZE // 2) == LENS
+    assert atlases.texel(SIZE // 4, SIZE // 2) == LENS[:3] + (0,)  # its own texel, unlit
     assert report["glassLHL/detail_glass_clear"]["behind"] == 0.0
 
 
@@ -181,7 +189,8 @@ def test_head_lamp_glow_follows_the_reflector_bowl():
     assert np.isfinite(raw[:, : SIZE // 2]).all()
     assert np.isnan(raw[:, SIZE // 2 :]).all()  # the reflector's own texels: lamp_glow's
     centre, rim = raw[SIZE // 2, SIZE // 4], raw[1, 1]
-    assert centre > 150 and rim < centre / 3, (centre, rim)
+    # through the lens's filter (its red texel passes 0.65 of a white lamp's brightest channel)
+    assert centre > 120 and rim < centre / 3, (centre, rim)
 
 
 def test_day_glow_on_vanilla_distribution_with_a_dark_rim():
@@ -398,8 +407,8 @@ def test_red_curve_knots_apart():
 
 
 def test_opacity_rules():
-    # Lenses: the texel alpha, capped by the car's GlassMaxOpacity only. Lamp glass: Forza's
-    # opacity starts at 1, so it is GlassMaxOpacity. Covers: max(texel alpha, GlassColor.w).
+    # Lamp glass: Forza's opacity starts at 1, so it is GlassMaxOpacity. Covers: max(texel
+    # alpha, GlassColor.w). Lenses have none (they filter).
     settings = {
         "lights_gls_tail_light": {"GlassMaxOpacity": 0.8},
         "lights_glass": {"GlassMaxOpacity": 0.9, "GlassColor": (0.5, 0.5, 0.5, 0.25)},
@@ -410,11 +419,19 @@ def test_opacity_rules():
     assert lenses.opacity_rule("lights_glass", settings) == (0.25, 0.9)
     assert lenses.opacity_rule("lights_glass", {}) == (0.0, 1.0)
     assert lenses.is_glass_technique("lights_gls_oldhead") and lenses.is_glass_technique("lights_glass")
-    # The red lens filter: red remapped by DarkValues / LightValues (detail_glass_red.fxobj).
+    # The red lens filter: red remapped by DarkValues / LightValues, in Forza's square space.
     red = {"detail_glass_red": {"DarkValues": 0.4, "LightValues": 1.5}}
     f = lenses.lens_filter("detail_glass_red", (155, 0, 2), red)
-    assert abs(f[0] - (0.4 + 1.1 * (155 / 255) ** 2) ** 0.5) < 1e-9 and f[1] == 0.0
+    assert abs(f[0] - (0.4 + 1.1 * (155 / 255) ** 2)) < 1e-9 and f[1] == 0.0
+    # Clear and amber: the texel plus GlassColor (shared 0.2 grey on clear), its RGB converted
+    # from sRGB to linear as Forza uploads it (0.2 -> 0.033), at most 1.
+    grey = ((0.2 + 0.055) / 1.055) ** 2.4
+    f = lenses.lens_filter("detail_glass_clear", (128, 255, 0), {})
+    assert np.allclose(f, ((128 / 255) ** 2 + grey, 1.0, grey))
+    f = lenses.lens_filter("detail_glass_amber", (0, 0, 0), {"detail_glass_amber": {"GlassColor": (0.5, 0.0, 0.0, 1)}})
+    assert np.allclose(f, (((0.5 + 0.055) / 1.055) ** 2.4, 0.0, 0.0))
     assert not lenses.emits("lights_glass") and lenses.emits("lights_gls_reverse_light")
+    assert not lenses.emits("lights_gls_noemit") and not lenses.emits("detail_glass_red")
 
 
 def test_lamp_glass_at_its_max_opacity():
@@ -478,28 +495,20 @@ def test_clear_swatch_lens_over_a_lamp_is_left_out():
         assert (("lexan0", "detail_glass_clear") in dropped) == left_out, (colour, dropped)
 
 
-def test_flat_rear_lens_tints_the_lamp_behind():
-    # A rear lens of one flat colour however fine its texels (the BMW X6 M's red tail glass, 40,000
-    # texels of (183, 0, 0, 118)) is a swatch lens: left out, its tint over the lamp behind.
-    lens = _quad("glassLTL", "detail_glass_red", 2.0, 0.0, 0.5)
-    lamp = _quad("taillightL", "textured_reflector", 1.9, 0.5, 1.0)
-    dropped = set()
-    atlases, _ = _bake([lens, lamp], [lens], dropped=dropped)
-    assert dropped == {("glassLTL", "detail_glass_red")}
-    rgb = [round(b * l / 255) for l, b in zip(LENS[:3], LAMP[:3])]
-    got = atlases.texel(SIZE * 3 // 4, SIZE // 2)
-    assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
-    assert got[3] == LAMP[3]
-    # A flat front lens stays (its texels carry the day glow), its colour a filter over the lamp
-    # and its glow the lamp's (issue #189).
-    lens = _quad("glassLHL", "detail_glass_red", -2.0, 0.0, 0.5, normal=(0.0, 0.0, -1.0))
-    lamp = _quad("headlightL", "textured_reflector", -1.9, 0.5, 1.0, normal=(0.0, 0.0, -1.0))
-    dropped = set()
-    atlases, _ = _bake([lens, lamp], [lens], dropped=dropped)
-    assert not dropped
-    got = atlases.texel(SIZE // 4, SIZE // 2)
-    assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
-    assert abs(dm.lamp_score(*got) - dm.lamp_score(*LAMP)) < 0.01, (got, LAMP)
+def test_flat_lens_is_baked_as_a_filter():
+    # A lens of one flat colour (the BMW X6 M's red tail glass, 40,000 texels of (183, 0, 0, 118))
+    # is kept and baked like any lens: the lamp behind through its filter, the lamp's glow
+    # through it (#145 left the rear ones out; Forza filters whatever lies behind, #340).
+    for z, normal, name in ((2.0, (0.0, 0.0, 1.0), "glassLTL"), (-2.0, (0.0, 0.0, -1.0), "glassLHL")):
+        lens = _quad(name, "detail_glass_red", z, 0.0, 0.5, normal=normal)
+        lamp = _quad("lampL", "textured_reflector", z - 0.1 if z > 0 else z + 0.1, 0.5, 1.0, normal=normal)
+        dropped = set()
+        atlases, _ = _bake([lens, lamp], [lens], dropped=dropped)
+        assert not dropped
+        rgb, through = _filtered(LENS, LAMP, "detail_glass_red")
+        got = atlases.texel(SIZE // 4, SIZE // 2)
+        assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (z, got, rgb)
+        assert abs(dm.lamp_score(*got) - dm.lamp_score(*LAMP) * through) < 0.01, (z, got)
 
 
 def test_laid_back_front_lens_sees_the_lamp_along_the_axis():
@@ -508,7 +517,7 @@ def test_laid_back_front_lens_sees_the_lamp_along_the_axis():
     lens = _quad("glassLHL", "detail_glass_clear", -2.0, 0.0, 0.5, normal=(0.0, 0.95, -0.31))
     lamp = _quad("headlightL", "textured_reflector", -1.9, 0.5, 1.0, normal=(0.0, 0.0, -1.0))
     atlases, report = _bake([lens, lamp], [lens])
-    rgb = [round(b * l / 255) for l, b in zip(LENS[:3], LAMP[:3])]  # one flat colour: a filter
+    rgb, _ = _filtered(LENS, LAMP, "detail_glass_clear")
     got = atlases.texel(SIZE // 4, SIZE // 2)
     assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
     assert report["glassLHL/detail_glass_clear"]["behind"] == 1.0
@@ -523,8 +532,7 @@ def test_laid_back_rear_lens_sees_the_lamp_along_the_axis():
     lens = _quad("glassLTL", "detail_glass_clear", 2.0, 0.0, 0.5, normal=(0.0, 0.95, 0.31))
     lamp = _quad("taillightL", "textured_reflector", 1.9, 0.5, 1.0, normal=(0.0, 0.0, 1.0))
     atlases, report = _bake([lens, lamp], [lens])
-    a = LENS[3] / 255
-    rgb = [round(a * l + (1 - a) * b) for l, b in zip(LENS[:3], LAMP[:3])]
+    rgb, _ = _filtered(LENS, LAMP, "detail_glass_clear")
     got = atlases.texel(SIZE // 4, SIZE // 2)
     assert all(abs(g - w) <= 1 for g, w in zip(got[:3], rgb)), (got, rgb)
     assert report["glassLTL/detail_glass_clear"]["axis"] > 0

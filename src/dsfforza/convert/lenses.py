@@ -1,9 +1,10 @@
 """Forza lamp lenses baked over the lamp behind them, for DSF's opaque Lights material.
 
-Forza draws its lamp lenses as glass: `detail_glass_clear`, `_red` and `_amber`
-(fluted, dotted or tinted lens covers on the Lights atlas) are alpha-blended over
-the reflector, bulb and housing behind them, with the texel's alpha as the lens's
-opacity (research/lights.md, "Lamp lenses").
+Forza draws its lamp lenses as filters: `detail_glass_clear`, `_red` and `_amber`
+(fluted, dotted or tinted lens covers on the Lights atlas) multiply the reflector,
+bulb, housing or trim behind them by the lens texel plus the car's GlassColor (the red
+lens by a remap of its red); they read no alpha, have no colour of their own and don't
+glow (research/forza-lenses-re.md, decoded from Forza's shader microcode).
 The converter draws them with the host's Lights material, which is opaque, so
 each lens hid its lamp and showed its own texture as a flat plate: the Lancer
 Evo VI's fluted headlamp covers as white frosted plates, the Lotus Carlton's as
@@ -13,19 +14,16 @@ white blobs, the Panoz Esperante GTLM's yellow lexan covers as solid yellow
 Vanilla DSF lamps are opaque Lights texels with the lens pattern painted in, so the
 lens keeps its triangles and the atlas gets what Forza shows through it: for each
 lens texel (finest planned LOD), a ray from its point on the lens straight in
-along the lens normal composites the lens over every lens layer behind it and the
-first opaque surface it meets (lamp, reflector, housing; their texels, or their
-flat colour; a lens ray that meets no lamp that way looks in along the car's axis,
-_axis_fallback), with Forza's blend:
+along the lens normal meets every lens layer behind it and the first opaque surface
+(lamp, reflector, housing, trim; their texels, or their flat colour; a lens ray that
+meets no lamp that way looks in along the car's axis, _axis_fallback), and
 
-    out = a * lens + (1 - a) * behind
+    out = behind x filter        (lens_filter, in Forza's square light space)
 
-a = the lens texel's alpha / 255 (capped by a GlassMaxOpacity in the car's
-ShaderSettings.xml, if the technique has one). Coloured lenses (red, amber) glow as
-before: the baked texel's alpha keeps the lens texel's lamp score
-(dsf_materials.lamp_score). Lens texels that non-lens triangles also sample are left
-alone, and so are rays that meet nothing within RAY_DEPTH (they keep the lens's own
-texel).
+The glow is the lamp behind's, times the filter. The lamp glass (lights_gls_*) and the
+lights_glass covers are blended at their opacity (opacity_rule). Lens texels that
+non-lens triangles also sample are left alone, and so are rays that meet nothing within
+RAY_DEPTH (they keep the lens's own texel, unlit).
 
 Head lamps by day (issue #124) glow from the lamp, not from the lens: clear front lenses
 get a raw glow from the lamp behind them (lens_glow), head lamp surfaces seen directly
@@ -45,27 +43,33 @@ import numpy as np
 
 from dsfforza.convert import forza_materials as fm
 
-# Lens techniques on the Lights atlas that Forza alpha-blends with the texel alpha as the
-# lens's opacity (glass with a lens texture: flutes, dots, a tint).
+# Lens techniques on the Lights atlas: filters over what lies behind (lens_filter).
 LENS_PREFIXES = ("detail_glass",)
-# The other lamp glass on the Lights atlas is baked the same way, with Forza's own opacity
-# (research/lights.md, "Lamp glass"). In a race Forza draws all its lamp glass with the glass
-# shaders of shaders_v16.fxobj (CustomCarShaders.xml loads its custom detail_glass_* shaders in
-# the UI only, inraceload false): colour from the texel, opacity max(texel alpha, GlassColor.w)
-# (plus Fresnel and specular) capped by GlassMaxOpacity. The lamp glass (lights_gls_tail_light,
-# _oldhead...) starts from 1 instead of the texel alpha, so its opacity is GlassMaxOpacity (0.8 on
-# most cars) and its texel alpha is the lamp's glow mask; baked with the texel alpha as opacity,
-# the Lancer Evo VI's red tail glass came out mostly white. The covers (lights_glass,
-# lights_gls_noemit) have no glow of their own: the lamp behind glows through them.
-COVERS = ("lights_glass", "lights_gls_noemit")  # = dsf_materials.TEXTURED_COVERS
+# The other lamp glass on the Lights atlas is blended over what lies behind at Forza's opacity
+# (research/forza-lenses-re.md): the cover lights_glass at max(texel alpha, GlassColor.w) capped by
+# GlassMaxOpacity, with no glow of its own (the lamp behind glows through it); the lamp glass
+# (lights_gls_tail_light, _oldhead...) at GlassMaxOpacity (1 unless the car sets less), its texel
+# alpha the lamp's glow mask (baked with the texel alpha as opacity, the Lancer Evo VI's red tail
+# glass came out mostly white); lights_gls_noemit is lamp glass without a glow.
+COVERS = ("lights_glass",)  # = dsf_materials.TEXTURED_COVERS
 LAMP_GLASS = "lights_gls_"
+NO_GLOW_GLASS = "lights_gls_noemit"
 # technique prefix -> (GlassColor.w, GlassMaxOpacity) when the car's ShaderSettings.xml sets
-# none: media/cars/Shared.zip ShaderSettings/Normal.xml, the same on FH1 and FM4. The lenses
-# (detail_glass_*) keep their texel alpha, capped only by the car's own GlassMaxOpacity: the
-# shared defaults (GlassColor.w 0.6 on clear and 0.8 on amber lenses, cap 0.7) go with a lens
-# colour of texel x GlassColor x PaintScale (a twentieth of the texel) and Forza's reflection,
-# which the bake doesn't draw; with the texel's own colour they would make milky plates.
+# none: media/cars/Shared.zip ShaderSettings/Normal.xml, the same on FH1 and FM4.
 GLASS_DEFAULTS = {"lights_glass": (0.0, 1.0), LAMP_GLASS: (1.0, 1.0)}
+# A clear or amber lens's GlassColor.rgb when the car sets none (Normal.xml): the filter's floor.
+# As written in the settings: Forza converts the RGB of every four-component setting from sRGB to
+# linear before it uploads it (research/forza-lenses-re.md, section 7), so the clear lens's 0.2
+# is 0.033 in the shader (_linear_setting).
+LENS_GLASS_COLOUR = {"detail_glass_clear": 0.2, "detail_glass_amber": 0.0}
+
+
+def _linear_setting(rgb) -> np.ndarray:
+    """A ShaderSettings colour's RGB as Forza's shaders get it: sRGB to linear, unclamped."""
+    c = np.asarray(rgb, float)
+    return np.where(c <= 0.04045, c / 12.92, ((np.abs(c) + 0.055) / 1.055) ** 2.4 * np.sign(c))
+
+
 RAY_DEPTH = 0.4  # m: how deep a lamp housing can be behind its lens
 SAME_LAYER = 0.004  # m: a lens hit this close to the ray's start is the lens's own other face
 MAX_LAYERS = 4  # lens layers composited before the opaque surface
@@ -84,11 +88,6 @@ SWATCH_SHARE = 0.5  # a coarse lens with more of its texel samples scrambled kee
 # Such a swatch lens is left out and its tint laid over the Lights surfaces behind it
 # (_tint_behind) when this share of its rays meets one; else it keeps its flat tint.
 SWATCH_TINT = 0.5
-# A rear lens whose texels are one colour (FLAT_SHARE of them within FLAT_SPREAD of the median,
-# each channel) is a flat tint over the whole lamp too, however fine its texels: the BMW X6 M's
-# red tail glass is 40,000 texels of (183, 0, 0, 118). Taken as a swatch lens (issue #145).
-FLAT_SHARE = 0.9
-FLAT_SPREAD = 6
 RAY_CHUNK = 256
 # A lens whose points face out of the car's end at least this much on average (the z component of
 # their normals: the Panoz Esperante's laid-back head lamp lens 0.59, the Maserati MC12's tails 0.57)
@@ -217,12 +216,10 @@ def glass_max_opacity(car_dir: Path) -> dict[str, float]:
 
 
 def opacity_rule(technique: str, settings: dict) -> tuple[float, float]:
-    """(floor, cap) of a lamp glass technique's opacity, max(texel alpha, floor) capped by cap:
-    lenses their texel alpha under the car's GlassMaxOpacity, the rest Forza's rule with the
-    shared defaults (GLASS_DEFAULTS). settings: glass_settings."""
+    """(floor, cap) of a lamp glass or cover technique's opacity, max(texel alpha, floor) capped
+    by cap: Forza's rule with the shared defaults (GLASS_DEFAULTS). Lenses have none (they
+    filter: lens_filter). settings: glass_settings."""
     own = settings.get(technique, {})
-    if is_lens_technique(technique):
-        return 0.0, own.get("GlassMaxOpacity", 1.0)
     t = technique.lower()
     floor, cap = next((v for k, v in GLASS_DEFAULTS.items() if t.startswith(k)), (0.0, 1.0))
     colour = own.get("GlassColor")
@@ -230,24 +227,33 @@ def opacity_rule(technique: str, settings: dict) -> tuple[float, float]:
 
 
 def lens_filter(technique: str, rgb, settings: dict) -> np.ndarray:
-    """What a lens lets through per channel (0..1) as the custom detail_glass_* shaders draw it
-    (detail_glass_red.fxobj, its first pass: the texel, red remapped as sqrt(DarkValues +
-    (LightValues - DarkValues) x red^2), with no lighting and no texel alpha, multiplied over
-    what lies behind; defaults 0 and 1). Used for swatch lenses (_tint_behind): their texel alpha
-    is low (the X5 M's red tail glass 61), and blended by it a red lens over a pale reflector
-    came out pink."""
-    f = np.asarray(rgb[:3], float) / 255
-    if technique.startswith("detail_glass_red"):
-        own = settings.get(technique, {})
+    """What a lens passes per channel, in Forza's square light space (byte / 255, squared), for
+    lens texels rgb (..., 3+): L + GlassColor.rgb on clear and amber lenses (LENS_GLASS_COLOUR
+    unless the car sets its own, linear: _linear_setting), DarkValues + (LightValues -
+    DarkValues) L.r with L.g and L.b
+    as they are on red ones (defaults 0 and 1); clipped at 1 (research/forza-lenses-re.md:
+    detail_glass_clear, _amber, _red, their first pass). The baked colour in bytes is the one
+    behind times its square root."""
+    lin = (np.asarray(rgb, float)[..., :3] / 255) ** 2
+    own = settings.get(technique, {})
+    t = technique.lower()
+    if t.startswith("detail_glass_red"):
         dark, light = own.get("DarkValues", 0.0), own.get("LightValues", 1.0)
-        f[0] = math.sqrt(max(0.0, dark + (light - dark) * f[0] ** 2))
+        f = lin.copy()
+        f[..., 0] = dark + (light - dark) * lin[..., 0]
+    else:
+        base = next((v for k, v in LENS_GLASS_COLOUR.items() if t.startswith(k)), 0.0)
+        colour = own.get("GlassColor")
+        f = lin + _linear_setting(colour[:3] if colour else base)
     return np.clip(f, 0.0, 1.0)
 
 
 def emits(technique: str) -> bool:
-    """Whether the glass glows by its own texel alpha (lenses keep their lamp score, the lamp
-    glass is a lamp); covers (COVERS) glow with the lamp behind them."""
-    return technique.lower() not in COVERS
+    """Whether the glass glows by its own texel alpha: the lamp glass (a lamp itself) but
+    lights_gls_noemit. Lenses pass the glow of the lamp behind, filtered; covers (COVERS) pass
+    it whole (#164; pending the blend Forza draws them with, #370)."""
+    t = technique.lower()
+    return t.startswith(LAMP_GLASS) and t != NO_GLOW_GLASS
 
 
 def _texels(uv_px: np.ndarray):
@@ -649,21 +655,22 @@ def _shape(pos: np.ndarray, depth: np.ndarray, lamp: np.ndarray) -> np.ndarray:
     return np.clip(closed / ref, 0.0, 1.0)
 
 
-def lens_glow(a, lens_mask, ray, ray_pos, depth, mask, lamp) -> np.ndarray | None:
+def lens_glow(passed, ray, ray_pos, depth, mask, lamp) -> np.ndarray | None:
     """Raw glow (0..255, Forza's scale) of one clear front lens's texels from the lamp behind
     them, or None when too little of the lens lies over a lamp (it keeps its own score).
-    Per texel: lens opacity a, lens glow mask, ray index; per ray: start point, the distance to
-    its first opaque surface, that surface's glow mask and whether it is a lamp (bulb,
-    reflector: _Surfaces.lamp).
+    Per texel: the share of the lamp's light it passes (a lens's filter, a cover's 1 - opacity
+    plus its own mask), ray index; per ray: start point, the distance to its first opaque
+    surface, that surface's glow mask and whether it is a lamp (bulb, reflector:
+    _Surfaces.lamp).
 
-    The lamp's glow (its mask, at least GLOW_REFLECTOR) as the lens passes it, (1 - a), and
-    scatters it by its own mask, a x lens; times the reflector's shape (_shape: the depth of the
-    lamp behind each texel). Over a housing, paint or trim it is 0."""
+    The lamp's glow (its mask, at least GLOW_REFLECTOR) as the glass passes it, times the
+    reflector's shape (_shape: the depth of the lamp behind each texel). Over a housing, paint
+    or trim it is 0."""
     if len(ray) == 0 or lamp[ray].mean() < GLOW_MIN_SHARE:
         return None
     shape = _shape(ray_pos, depth, lamp)
     light = np.where(lamp, np.maximum(mask, GLOW_REFLECTOR), 0.0) * shape
-    return light[ray] * (a * lens_mask / 255 + (1 - a))
+    return light[ray] * passed
 
 
 def lamp_glow(sections, lods, atlases: fm.AtlasCache, glow: np.ndarray, owners: dict | None = None) -> int:
@@ -1062,17 +1069,8 @@ def _scrambled(samples, h: int, w: int) -> np.ndarray:
     return out.reshape(h, w)
 
 
-def _flat(rgba: np.ndarray) -> bool:
-    """Whether a lens's texel samples (n, 4) are one colour: FLAT_SHARE of them within
-    FLAT_SPREAD of the median in every channel."""
-    if not len(rgba):
-        return False
-    median = np.median(rgba, 0)
-    return float((np.abs(rgba - median).max(1) <= FLAT_SPREAD).mean()) >= FLAT_SHARE
-
-
 def _tint_behind(surf: _Surfaces, tris, tint: np.ndarray, out, w: int, h: int, tinted) -> int:
-    """A swatch lens's flat tint (lens_filter: per channel, 0..1) multiplied into every texel of
+    """A swatch lens's flat tint (the root of lens_filter: per channel in bytes) multiplied into every texel of
     the Lights surfaces behind it (surf triangles `tris`), into `out` (h, w, 4), once a texel
     (`tinted` marks those). The texels keep their alpha (their glow mask). Returns the texels
     tinted."""
@@ -1158,16 +1156,11 @@ def bake(
         if mixed.any():
             entry["scrambled"] = entry.get("scrambled", 0) + int(mixed.sum())
         floor, cap = opacity_rule(sub.material, settings)
-        # A swatch lens (most of its texels scrambled) is one flat tint over the whole lamp, as
-        # Forza draws it over the lamp's graphics. Kept as the lens's own texels it hid them and
-        # their glow (the BMW X5 M's tails: only the LED strip lit, issue #145), so its filter
-        # (lens_filter) goes onto the Lights surfaces behind it and the lens is left out.
-        # So is a rear lens of one flat colour (_flat: the BMW X6 M's red tail glass).
-        swatch = (
-            dropped is not None
-            and is_lens_technique(sub.material)
-            and (scrambled[iy, ix].mean() > SWATCH_SHARE or (pos[:, 2].mean() >= GLOW_FRONT_Z and _flat(src[iy, ix])))
-        )
+        # A swatch lens (most of its texels scrambled: each stands for lens points far apart, so
+        # no one ray says what is behind it) is one flat filter over the whole lamp, as Forza
+        # draws it over the lamp's graphics. Its filter (lens_filter) goes onto the Lights
+        # surfaces behind it and the lens is left out (the BMW X5 M's tails, issue #145).
+        swatch = dropped is not None and is_lens_technique(sub.material) and scrambled[iy, ix].mean() > SWATCH_SHARE
         # A front lens's glow covers its shared texels too (the AST DB5 Vantage's lens shares
         # 95% of its texels with its reflector's coarser LODs): the same lamp. Not its
         # scrambled ones: they hold no one lamp. The lamp glass is a lamp itself (lamp_glow).
@@ -1217,9 +1210,7 @@ def bake(
         if axis:
             entry["axis"] = entry.get("axis", 0) + axis
             entry["front"] = bool(pos[:, 2].mean() < GLOW_FRONT_Z)
-        flat = is_lens_technique(sub.material) and _flat(src[iy, ix])
-        if flat:
-            entry["flat"] = True
+        lens = is_lens_technique(sub.material)
         if swatch:
             on_lamp = solid[np.isin(solid, lamp_tris)]
             # A clear one over a lamp goes whatever else lies behind it: kept, it was an opaque
@@ -1227,20 +1218,21 @@ def bake(
             # head lamp covers over the projectors and their housing, #250).
             clear = lights.texel_class(tuple(lens_rgba.mean(0))) == "white"
             if len(on_lamp) >= SWATCH_TINT * len(first) or (clear and len(on_lamp)):
-                tints.append((np.unique(on_lamp), lens_filter(sub.material, lens_rgba.mean(0), settings)))
+                tints.append((np.unique(on_lamp), np.sqrt(lens_filter(sub.material, lens_rgba.mean(0), settings))))
                 dropped.add((section.name, sub.material))
                 entry["dropped"] = True
             continue
         hit_any = met[inverse]
         baked = lens_a[:, None] * lens_rgba + (1 - lens_a[:, None]) * behind[inverse]
-        if flat and pos[:, 2].mean() < GLOW_FRONT_Z:
-            # A front lens of one flat colour (the Audi Q7's bumper lens, the Ferrari 599's amber
-            # head lamp lenses; issue #189) stays: its clear texels carry the head lamps' day glow
-            # (lens_glow). Blended by its alpha it was a flat plate over the lamp, and its glow the
-            # lens's flat alpha: its colour is a filter over what lies behind (lens_filter, as a
-            # swatch lens's over its lamp), and it glows with the lamp behind, as a cover does.
-            baked[:, :3] = behind[inverse][:, :3] * lens_filter(sub.material, lens_rgba.mean(0), settings)
-            baked[:, 3] = mask[inverse] * _weight(behind[inverse]) / _weight(baked)
+        through = None
+        if lens:
+            # What lies behind (lamp, reflector, trim, paint) through the lens's filter, and the
+            # glow of the lamp behind times the filter in the channel the result shows brightest
+            # (a red lamp under a red lens: its red); the lens's own colour and alpha don't count.
+            f = lens_filter(sub.material, lens_rgba, settings)
+            baked[:, :3] = behind[inverse][:, :3] * np.sqrt(f)
+            through = f[np.arange(len(f)), np.argmax(baked[:, :3], 1)]
+            baked[:, 3] = mask[inverse] * _weight(behind[inverse]) / _weight(baked) * through
         elif emits(sub.material):
             # The glow stays the lens's: the alpha is set so the converter's lamp score
             # (dsf_materials.lamp_score: alpha x (0.6 + 0.4 x brightest channel)) is the lens
@@ -1248,18 +1240,25 @@ def bake(
             # flat red tail lens (85% opaque) blotches of 7 to 32 when lit: the car's red
             # curve stretches small differences over vanilla's whole range.
             baked[:, 3] = lens_rgba[:, 3] * _weight(lens_rgba) / _weight(baked)
+        elif sub.material.lower() == NO_GLOW_GLASS:
+            # Lamp glass without a glow: only what its opacity lets through of the lamp behind.
+            baked[:, 3] = mask[inverse] * _weight(behind[inverse]) / _weight(baked) * (1 - lens_a)
         else:
             # A cover has no glow of its own: the lamp behind glows through it. Forza's lamp
             # emission is HDR (BrakeColor 2 to 4 times its mask) and outshines a cover at 0.9;
             # passing only (1 - opacity) of it left the VW GTI VR6's tails darker in the dark mood
-            # than under DSF's window glass (VM run vm1-20261028-103705). The lamp's whole glow.
+            # than under DSF's window glass (VM run vm1-20261028-103705). The lamp's whole glow
+            # (pending the blend Forza draws covers with, #370).
             baked[:, 3] = mask[inverse] * _weight(behind[inverse]) / _weight(baked)
         entry["texels"] += int(free.sum())
         entry["behind"] += int(hit_any[free].sum())
         # Rays that met nothing keep the lens texel: a lens with nothing behind it in
-        # reach (a lamp outside the body's shell, a side marker) is drawn as Forza's texel.
+        # reach (a lamp outside the body's shell, a side marker) is drawn as Forza's texel,
+        # unlit (a lens has no glow of its own).
         keep = ~hit_any
         baked[keep] = lens_rgba[keep]
+        if lens:
+            baked[keep, 3] = 0
         np.add.at(total, (iy[free], ix[free]), baked[free])
         np.add.at(count, (iy[free], ix[free]), 1)
         if front:
@@ -1272,8 +1271,12 @@ def bake(
             if lights.yellow_lens(tuple(lens_rgba.mean(0))):
                 amber[:] = False
             sel = ~red & ~amber
-            lens_mask = lens_rgba[sel, 3] if emits(sub.material) else np.zeros(int(sel.sum()))
-            raw = lens_glow(lens_a[sel], lens_mask, inverse[sel], origins, depth, mask, lamp)
+            if through is not None:  # a lens: the lamp's glow through its filter
+                passed = through[sel]
+            else:  # a cover: through its opacity, plus its own mask where it glows
+                lens_mask = lens_rgba[sel, 3] if emits(sub.material) else np.zeros(int(sel.sum()))
+                passed = lens_a[sel] * lens_mask / 255 + (1 - lens_a[sel])
+            raw = lens_glow(passed, inverse[sel], origins, depth, mask, lamp)
             if raw is not None:
                 lit.add(iy[sel], ix[sel], raw, pos[sel], (section, sub))
     glowing = lit.done if lit is not None else np.zeros((h, w), bool)
