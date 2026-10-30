@@ -1045,6 +1045,73 @@ after, behind it, as in Forza's reference. The Commodores' scores rise (HOL_1 12
 ones (`wheels: washed out`). The C1's falls (3.34 to 2.61).
 
 
+## Tyres in the road (2026-10-30, issue #317)
+
+User report on the v0.1.3 release candidate: the Hummer H1 Alpha's (HUM_H1Alpha_06, host 138
+Audi Q7) tyres sink into the road at rest, their bottoms cut flat by it. Scratch scripts in
+`out/w317/` (left in the PR's worktree): `rest.py` (the probe's rest lines against the
+archive), `pdl.py`, `vsurvey.py`, `rsurvey.py`, `patch_vo3d.py`, `patch_cyl.py`.
+
+### What sets where a drawn wheel meets the road (confirmed-runtime)
+
+- **Not `p360`.** The H1 with VO3D p360 (driven wheel radius, Forza's 0.468) set back to the
+  Q7's 0.39 rests at the same height to 0.1 mm, its tyres drawn the same
+  (`vm1-20261030-071831` against `-072121`). p360 is the gearing's radius only.
+- **Not the visual travel.** p188 raised from 0.09 to 0.30: the same
+  (`vm1-20261030-073401`).
+- **The wheel record's collision model.** Every wheel record (type 2, +0x20) has its own PDL
+  model: one primitive, flags 2305, extents (half width, radius, 0) about the hub, header
+  radius sqrt(x² + 2y²). With the H1's four set to its tyre (0.468, half width 0.1475;
+  `vm1-20261030-073020`, `-075915`) the tyres stand on the road, round, and in the
+  `wheels` view (a camera fixed in the car's frame) the wheels and the body rise together
+  by the same 30 px (hub cap 295 -> 265, the H badge 158 -> 130): the car stands on its
+  wheels' cylinders, and with the host's under Forza's tyres it was drawn the radius
+  difference too low, body and wheels alike. The frame the probe's rest line logs doesn't
+  move (77.8455 in every variant), so it is no measure of the drawn height.
+- Two variants on top of the sized cylinders, to rule them out: the body raised another
+  82 mm (`Placement.dy`; `vm1-20261030-080916`) stood that much too high; the hub table
+  raised 82 mm (`vm1-20261030-081116`) left the body where it was and put the wheels up in
+  the arches.
+- **Vanilla** (all 140 four-wheeled vehicles, `vsurvey.py`): the cylinder's radius is the
+  drawn tyre's on 132 to 1 mm (the other 8 are the survey picking up a bigger part), its
+  width 1.005 x the tyre's (median), the header radius sqrt(x² + 2y²).
+
+### What was wrong
+
+`convert` draws Forza's tyre (Data_Car size, "Wheel clearance") on hubs whose collision
+cylinders stay the host's. Over the roster (`rsurvey.py` on the full build, the drawn tyre
+against the cylinder per axle): 544 of 573 cars have a cylinder more than 1 mm off their
+drawn tyre's radius. 168 have a tyre more than 10 mm bigger (into the road; 49 more than 20,
+23 more than 30: KEN_T440_12 113 mm on host 197, HUM_H1Alpha_06 82, LAM_Miura_06 48 at the
+rear, FER_250GTO_64 44, BUS_TOUR_12 38), 197 one more than 10 mm smaller (AUS_MiniCooperS_65
+86 mm, GMC_Syclone_92 68, MER_C32AMG_04 54).
+
+### Fix (`forza2dsf.fit_wheel_collision`)
+
+After `patch_hubs`, each wheel record's cylinder takes its axle's drawn tyre: extents (width
+/ 2, radius), the header radius recomputed. A model of another shape (not one primitive, or
+z extent other than 0) is left alone; `--no-wheel` leaves them all. The log names the sizes
+(`wheel collision cylinders: 4 sized to the tyres (front r 0.468 w 0.315, ...)`). Entry
+sizes don't change.
+
+### Test set and in game
+
+`out/w317/cars.txt`: IDs 1 HUM_H1Alpha_06 (host 138), 2 KEN_T440_12 (197), 3
+FOR_SVTRaptor_12 (251), 4 BUS_TOUR_12 (246), 5 LR_RangeRover_12 (239), 6
+AUS_MiniCooperS_65 (249), built from master (`out/w317/build-master`) and with the fix
+(`out/w317/build-after`); all lint ok, entry sizes unchanged. `render_compare diff`
+(`out/rc/tyres-317`): 6 changed, none drawn differently (the cylinders aren't drawn).
+
+Headless VM 1, `-Views wheels`, the cars standing: `vm1-20261030-065913` (master, with
+vanilla 138 and 197) and `vm1-20261030-075915` (the fix). The H1's tyres stood about 8 cm
+in the road, cut flat by it; with the fix they stand on it, round, the car 8 cm higher on
+them. The Raptor rises a little (26 mm). The Mini (0.229 m tyres on the Cygnet's 0.315 m
+cylinders) floated above its shadow and now stands on the road. The Range Rover (22 mm)
+changes little; vanilla 138 and 197 are the same in both runs. The bus's and the T440's
+side shots show no wheel (the view's camera sits too low for them). Driving
+(`vm1-20261030-074743` master, `-075253` the fix, throttle held 4 s): all six drive off,
+no crash.
+
 ## Open
 
 1. Brake calipers (Forza `_caliper*` carbins) are not converted: they must not

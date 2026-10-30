@@ -1953,6 +1953,42 @@ def patch_hubs(
     return bytes(data), patched
 
 
+def fit_wheel_collision(upvh: bytes, front: tuple[float, float], rear: tuple[float, float]) -> tuple[bytes, int]:
+    """Size each wheel record's collision model (PDL, record +0x20: one cylinder primitive,
+    extents (half width, radius, 0) about the hub) to the tyre drawn on that axle,
+    front/rear = (radius, width). The engine places a drawn wheel where its cylinder meets
+    the road, so a port drawing a Forza tyre on its host's cylinder had the tyre reach below
+    the road by the radius difference: the Hummer H1 Alpha's 0.468 m tyres on the Audi Q7's
+    0.386 m cylinders sank 8 cm (issue #317; research/wheels.md, "Tyres in the
+    road"). Vanilla sizes them to its own tyres: radius equal on 132 of 140 vehicles, width
+    1.005 x the tyre's (median). The header radius is the primitive's bounding sphere,
+    sqrt(x^2 + 2 y^2), as vanilla's. A model of another shape is left as it is. Returns the
+    patched UPVH and the number of models sized."""
+    from dsfforza.formats import upvh as upvh_mod
+
+    h = upvh_mod.parse(upvh)
+    data = bytearray(upvh)
+    hubs = [w[:3] for w in h.vec4s("wheels")]
+    mid = sum(w[2] for w in hubs) / len(hubs) if hubs else 0.0
+    base = h.pdl_offset + 0x10
+    done = set()
+    for r in h.records:
+        if r.wheel < 0 or r.wheel >= len(hubs) or r.collision < 0:
+            continue
+        at = base + r.collision
+        if at in done:
+            continue
+        n = struct.unpack_from("<I", data, at + 12)[0]
+        ext = struct.unpack_from("<3f", data, at + 0x10 + 0x50)
+        if n != 1 or ext[2] != 0.0:
+            continue
+        radius, width = front if hubs[r.wheel][2] > mid else rear
+        struct.pack_into("<2f", data, at + 0x10 + 0x50, width / 2, radius)
+        struct.pack_into("<f", data, at + 8, math.sqrt((width / 2) ** 2 + 2 * radius**2))
+        done.add(at)
+    return bytes(data), len(done)
+
+
 # y of the VO3D camera mounts (a vec3 per camera index, research/handling.md "Driver aids,
 # steering, cameras"): chase 300..302, bumper 327..329, bonnet 535..537 and the unmeasured ones.
 CAMERA_MOUNT_Y = (301, 304, 328, 338, 341, 395, 536, 550, 553)
@@ -2721,6 +2757,13 @@ def convert(
                 rear_half_track,
                 rear_hub_y,
             )
+            if not opts.no_wheel:
+                rear_size = (dims.radius * rear_fit[1], dims.tyre_width * rear_fit[0])
+                upvh.payload, sized = fit_wheel_collision(upvh.payload, (front_radius, front_width), rear_size)
+                log(
+                    f"wheel collision cylinders: {sized} sized to the tyres (front r {front_radius:.3f} "
+                    f"w {front_width:.3f}, rear r {rear_size[0]:.3f} w {rear_size[1]:.3f})"
+                )
         if lamps is not None:
             upvh = child(nonr, "UPVH")
             upvh.payload = lamps.patch_upvh(payload(stream, upvh))
