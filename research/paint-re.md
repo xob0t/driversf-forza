@@ -197,8 +197,9 @@ So, for the clear coat (#345):
   `max(0.025, (1 - N.E)^cfp - 0.5)`: the floor 0.025 until N.E drops under 0.5, then at most
   0.5 at grazing. With the usual `reflAmount` 0.5, a facing panel reflects about 2% of the
   environment (0.565 x 0.025 x 0.5 x 1 x 3), an edge-on one about 42%. Forza's clear coat
-  (section 5; its formula inferred) reflects about 4.2% facing (Schlick with `FresnelIndex`
-  1.55, times `FresnelScalar` 0.9) and 90% at grazing: twice DSF's facing reflection, on
+  (section 5) reflects about 4.2% facing (Schlick with `FresnelIndex` 1.55, times
+  `FresnelScalar` 0.9; round 3 confirmed the Schlick form by emulation for the glass shaders)
+  and 90% at grazing, if the game's `reflectionScaler` is 1: twice DSF's facing reflection, on
   every panel.
 - **The "sheen" is the second specular**, and it is tinted by the paint: `s2i x (R.E)^s2p x
   A x 40 x 0.565` around the mirror direction of `vehSpecularLightDirection`. With the common
@@ -421,11 +422,12 @@ first (FH1): `PaintScale` 94, `PaintColor` 92, `SpecularAmount2` 91, `SpecularPo
   So the swatch is the look and `PaintColor` the means; for a port the swatch is the target.
 - The metallic flag is the Metallic.xml layer above: half the diffuse paint, two broad lobes
   (7 x lobe^6 + 6 x lobe^4) and the cube reflection on.
-- Forza's car shaders work in gamma 2 (`shaders_v16.fxobj`, the body pixel shader at 0x7a3e8:
-  textures are squared after the fetch, the output is `sqrt(colour)`), and `PaintColor` goes
-  into the lighting without being squared in the shader. Whether the game squares it on the
-  CPU first (the XEX wasn't read) decides how bright a given `PaintColor` draws; it doesn't
-  change that the swatch is the target.
+- Forza's car shaders light in linear and write `sqrt(colour)` (the body pixel shader at
+  0x7a3e8; round 3, `forza-lenses-re.md` section 2, found the same in every car shader, with
+  the textures gamma-decoded by the hardware and the environment map squared in the shader).
+  `PaintColor` goes into the lighting without being squared in the shader. Whether the game
+  squares it on the CPU first (the XEX wasn't read) decides how bright a given `PaintColor`
+  draws; it doesn't change that the swatch is the target.
 
 ### Forza's body shader, in outline (inferred from the microcode; stretch goal)
 
@@ -437,7 +439,7 @@ paint  = paint + twoTone(view) x (TwoToneColor - paint)       TwoTonePower / Bia
 paint  = paint + metal(view) x (MetalColor - paint)           MetalPower / Bias / Scale
 spec   = (SpecularAmount2 x (R.L)^SpecularPower2 + SpecularAmount3 x (..)^SpecularPower3)
            x shDirectionalColour x paint                      the lobes take the paint's colour
-refl   = env cube (squared) x fresnel(FresnelIndex: (n - 1) / (n + 1) ...) x FresnelScalar
+refl   = env cube (squared) x sat(FresnelScalar x reflectionScaler x Schlick(FresnelIndex))
 out    = sqrt(lit paint + spec + refl, fogged)
 ```
 
@@ -448,9 +450,10 @@ colours have `TwoToneScale` and `MetalScale` 0 unless their file sets them (`Two
 on 5 FH1 and 4 FM4 files, `MetalScale` on 80 and 7, mostly 0.03 to 0.05), so **a factory
 Forza paint has almost no colour change with the view angle** apart from the reflection.
 
-The material format is the one the Forza lens and glass work reads too (`ShaderSettings` XML
-per technique layered over `Normal.xml`, `fxobj` constant tables): `forza_paint.parse_settings`
-and `shared_settings` read any technique, not only `body`.
+The material format is the one round 3 (`forza-lenses-re.md`, #369) reads for the lamp and
+glass techniques: `ShaderSettings` XML per technique layered over `Normal.xml`, and the
+`shaders_v16.fxobj` effect (`tools/re/fxl.py`). `forza_paint.parse_settings` and
+`shared_settings` read any technique, not only `body`.
 
 ## 6. From a Forza colour to the palette
 
@@ -501,8 +504,10 @@ Why these values:
   own lighting (ambient against sun, the reflection).
 - **Reflection.** DSF's reflection on a facing panel is `0.565 x 0.025 x reflAmount x 3` of
   the environment (with `shadowMod` about 1 in the sun): 0.042 x `reflAmount`; at grazing
-  `0.565 x 0.5 x reflAmount x 3` = 0.85 x `reflAmount`. Forza's clear coat (inferred: Schlick
-  with n = 1.55, F0 0.0465, times `FresnelScalar` 0.9) is 0.042 facing and 0.9 at grazing. So
+  `0.565 x 0.5 x reflAmount x 3` = 0.85 x `reflAmount`. Forza's clear coat (Schlick with
+  n = 1.55, F0 0.0465, times `FresnelScalar` 0.9 and the game constant `reflectionScaler`,
+  `forza-lenses-re.md`; its runtime value is unknown, 1 assumed here) is 0.042 facing and 0.9
+  at grazing. So
   `reflAmount` 1.0 matches Forza at both ends (DSF's middle, N.E 0.3 to 0.5, stays at the
   floor where Forza rises to 7%). That doubles the vanilla value: the strongest lever for
   #345's missing gloss. `g_hCustomFresnelPower` below 1 lifts the middle but overshoots
@@ -559,4 +564,8 @@ shader, which DSF Enhanced leaves alone.
   not compared pixel by pixel.
 - The Forza side of the mapping (reflection 1.0, the sheen rule) is inferred; the next step is
   an in-game A/B of a port with the section 6 palette against today's, by day, the same views.
-- Forza's CPU-side treatment of `PaintColor` (squared or not before the gamma-2 shader).
+- Forza's CPU-side treatment of `PaintColor` (squared or not before the shader) and the
+  runtime `reflectionScaler` (round 3's open item 2): the reflection rule assumes 1.
+- The Forza body shader (0x7a3e8) could be run in round 3's emulator (`tools/re/xenos.py`)
+  the way `forza_lens.py` runs the lens shaders, which would turn section 5's outline into
+  checked closed forms.
