@@ -114,7 +114,7 @@ def triangle_cells(shape, pts):
     y0, y1 = max(0, int(math.floor(min(ys)))), min(height, int(math.ceil(max(ys))) + 1)
     area = (xs[1] - xs[0]) * (ys[2] - ys[0]) - (ys[1] - ys[0]) * (xs[2] - xs[0])
     if x0 < x1 and y0 < y1 and abs(area) > 1e-12:
-        gy, gx = np.mgrid[y0:y1, x0:x1] + 0.5
+        gy, gx = np.arange(y0, y1)[:, None] + 0.5, np.arange(x0, x1) + 0.5  # np.mgrid's values, broadcast
         w0 = ((xs[1] - gx) * (ys[2] - gy) - (ys[1] - gy) * (xs[2] - gx)) / area
         w1 = ((xs[2] - gx) * (ys[0] - gy) - (ys[2] - gy) * (xs[0] - gx)) / area
         inside = (w0 >= 0) & (w1 >= 0) & (w0 + w1 <= 1)
