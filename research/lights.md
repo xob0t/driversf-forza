@@ -2477,12 +2477,15 @@ Vanilla under the game's model (render_compare's renderer, front and rear views,
 
 | | running lights | braking |
 | --- | --- | --- |
-| front, vehicles with day-lit lamps (140) | 0.98 / 2.56 / 4.95 | the same |
-| rear (139) | 0.105 / 0.255 / 0.95 | 0.46 / 0.945 / 2.2 |
-| front 0x03 white (66) | 1.67 / 3.96 / 5.37 | |
-| front 0x1D white (21) | 1.23 / 1.92 / 2.66 | |
-| rear 0x18 red (56) | 0.133 / 0.237 / 0.469 | 0.665 / 1.19 / 2.34 |
-| rear 0x03 red (44) | 0.21 / 0.94 / 2.78 | the same |
+| front, vehicles with day-lit lamps (140) | 0.88 / 2.3 / 4.25 | the same |
+| rear (139) | 0.105 / 0.244 / 0.95 | 0.44 / 0.93 / 2.13 |
+| front 0x03 white (66) | 1.51 / 3.53 / 4.79 | |
+| front 0x1D white (21, all under window glass) | 1.1 / 1.85 / 2.32 | |
+| rear 0x18 red (56) | 0.128 / 0.239 / 0.469 | 0.64 / 1.19 / 2.34 |
+| rear 0x03 red (44) | 0.21 / 0.92 / 2.62 | the same |
+
+render_compare's white plate limit (`glare`) is vanilla's front p90, 4.3 (it was 3.0 in the old
+units, where a 0x01 texel glowed 2).
 
 The ported head lamps that #286 raised to vanilla's 0x1D level "at night" were measured against a
 0x1D lamp drawn at 10; by day, which is what players see, it glows at 1, as vanilla's do.

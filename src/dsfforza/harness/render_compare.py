@@ -594,10 +594,10 @@ LIMITS = {
     "glow_place": 0.3,  # share of Forza's lit lamp pixels ours lights (and of ours Forza's) below this
     "glow_hue": 1.2,  # |log| of the ratio of the glow's green/red, ours against Forza's
     # Our daytime glow's 95th percentile over this (the game's linear light, the running
-    # lights on): white plates by day (#167). Vanilla's front lamps (142 vehicles, front view)
-    # glow at p95 0.98 / 2.56 / 4.95 (p10 / median / p90); a 0x03 white lamp's texel of alpha
-    # 1 glows 10, a 0x1D lamp's 5. The limit is vanilla's p90.
-    "glare": 5.0,
+    # lights on): white plates by day (#167). Vanilla's front lamps (140 vehicles with day-lit
+    # ones, front view) glow at p95 0.88 / 2.3 / 4.25 (p10 / median / p90); a 0x03 white lamp's
+    # texel of alpha 1 glows 10, a 0x1D lamp's 5, half that under a window. Vanilla's p90.
+    "glare": 4.3,
     "flat_glow": 0.45,  # our glow spread under this share of Forza's
     "plate_over": 0.1,  # share of a plate over badges, lamps or chrome
 }
