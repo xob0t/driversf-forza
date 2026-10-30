@@ -29,7 +29,10 @@ def test_texels_many_matches_texels():
         pts = _random_triangles(rng, int(rng.choice([0, 1, 2, 500, 3000])), width, height)
         if case == 2:
             lenses.TEXELS_CHUNK, chunk = 40, lenses.TEXELS_CHUNK  # many chunks, triangles bigger than one
+        # big boxes one by one (the default), every box one by one, none
+        lenses.TEXELS_ONE_BY_ONE, one_by_one = (256, 0, 10**9)[case % 3], lenses.TEXELS_ONE_BY_ONE
         ix, iy, bary, at = lenses._texels_many(pts)
+        lenses.TEXELS_ONE_BY_ONE = one_by_one
         if case == 2:
             lenses.TEXELS_CHUNK = chunk
         assert len(at) == len(pts) + 1 and at[0] == 0 and at[-1] == len(ix) == len(iy) == len(bary)

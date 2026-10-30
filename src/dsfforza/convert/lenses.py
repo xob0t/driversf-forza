@@ -271,6 +271,7 @@ def _texels(uv_px: np.ndarray):
 
 
 TEXELS_CHUNK = 1 << 21  # _texels_many: bounding-box texels tested at a time
+TEXELS_ONE_BY_ONE = 256  # _texels_many: boxes of more texels go through _texels
 
 
 def _texels_many(uv_px: np.ndarray):
@@ -278,7 +279,8 @@ def _texels_many(uv_px: np.ndarray):
     barycentric weights of every triangle's texels one after the other, each triangle's in
     _texels' order, and the offsets (n + 1) where each triangle's start; the same arithmetic
     per texel, without numpy calls per triangle. Triangles with a non-finite corner go
-    through _texels one by one (which raises, as it did)."""
+    through _texels one by one (which raises, as it did), and so do triangles whose box
+    holds more than TEXELS_ONE_BY_ONE texels (its broadcast grid costs less per texel)."""
     uv_px = np.asarray(uv_px, dtype=np.float64).reshape(-1, 3, 2)
     n = len(uv_px)
     if not np.isfinite(uv_px).all():
@@ -298,6 +300,13 @@ def _texels_many(uv_px: np.ndarray):
     x0, y0 = np.where(boxed, x0, 0).astype(np.int64), np.where(boxed, y0, 0).astype(np.int64)
     count = np.zeros(n, np.int64)
     ix, iy, bary, owner = [], [], [], []
+    for k in np.nonzero(size > TEXELS_ONE_BY_ONE)[0].tolist():
+        got = _texels(uv_px[k])
+        for out, part in zip((ix, iy, bary), got, strict=True):
+            out.append(part)
+        owner.append(np.full(len(got[0]), k, np.int64))
+        count[k] = len(got[0])
+    size = np.where(size > TEXELS_ONE_BY_ONE, 0, size)
     done = 0
     while done < n:  # triangles in chunks of about TEXELS_CHUNK box texels
         end = done + max(1, int(np.searchsorted(np.cumsum(size[done:]), TEXELS_CHUNK, "right")))
