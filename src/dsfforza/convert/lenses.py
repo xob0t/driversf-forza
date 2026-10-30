@@ -58,7 +58,18 @@ NO_GLOW_GLASS = "lights_gls_noemit"
 # none: media/cars/Shared.zip ShaderSettings/Normal.xml, the same on FH1 and FM4.
 GLASS_DEFAULTS = {"lights_glass": (0.0, 1.0), LAMP_GLASS: (1.0, 1.0)}
 # A clear or amber lens's GlassColor.rgb when the car sets none (Normal.xml): the filter's floor.
+# As written in the settings: Forza converts the RGB of every four-component setting from sRGB to
+# linear before it uploads it (research/forza-lenses-re.md, section 7), so the clear lens's 0.2
+# is 0.033 in the shader (_linear_setting).
 LENS_GLASS_COLOUR = {"detail_glass_clear": 0.2, "detail_glass_amber": 0.0}
+
+
+def _linear_setting(rgb) -> np.ndarray:
+    """A ShaderSettings colour's RGB as Forza's shaders get it: sRGB to linear, unclamped."""
+    c = np.asarray(rgb, float)
+    return np.where(c <= 0.04045, c / 12.92, ((np.abs(c) + 0.055) / 1.055) ** 2.4 * np.sign(c))
+
+
 RAY_DEPTH = 0.4  # m: how deep a lamp housing can be behind its lens
 SAME_LAYER = 0.004  # m: a lens hit this close to the ray's start is the lens's own other face
 MAX_LAYERS = 4  # lens layers composited before the opaque surface
@@ -218,7 +229,8 @@ def opacity_rule(technique: str, settings: dict) -> tuple[float, float]:
 def lens_filter(technique: str, rgb, settings: dict) -> np.ndarray:
     """What a lens passes per channel, in Forza's square light space (byte / 255, squared), for
     lens texels rgb (..., 3+): L + GlassColor.rgb on clear and amber lenses (LENS_GLASS_COLOUR
-    unless the car sets its own), DarkValues + (LightValues - DarkValues) L.r with L.g and L.b
+    unless the car sets its own, linear: _linear_setting), DarkValues + (LightValues -
+    DarkValues) L.r with L.g and L.b
     as they are on red ones (defaults 0 and 1); clipped at 1 (research/forza-lenses-re.md:
     detail_glass_clear, _amber, _red, their first pass). The baked colour in bytes is the one
     behind times its square root."""
@@ -232,7 +244,7 @@ def lens_filter(technique: str, rgb, settings: dict) -> np.ndarray:
     else:
         base = next((v for k, v in LENS_GLASS_COLOUR.items() if t.startswith(k)), 0.0)
         colour = own.get("GlassColor")
-        f = lin + (np.asarray(colour[:3], float) if colour else base)
+        f = lin + _linear_setting(colour[:3] if colour else base)
     return np.clip(f, 0.0, 1.0)
 
 

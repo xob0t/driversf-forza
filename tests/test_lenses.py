@@ -189,7 +189,8 @@ def test_head_lamp_glow_follows_the_reflector_bowl():
     assert np.isfinite(raw[:, : SIZE // 2]).all()
     assert np.isnan(raw[:, SIZE // 2 :]).all()  # the reflector's own texels: lamp_glow's
     centre, rim = raw[SIZE // 2, SIZE // 4], raw[1, 1]
-    assert centre > 150 and rim < centre / 3, (centre, rim)
+    # through the lens's filter (its red texel passes 0.65 of a white lamp's brightest channel)
+    assert centre > 120 and rim < centre / 3, (centre, rim)
 
 
 def test_day_glow_on_vanilla_distribution_with_a_dark_rim():
@@ -422,11 +423,13 @@ def test_opacity_rules():
     red = {"detail_glass_red": {"DarkValues": 0.4, "LightValues": 1.5}}
     f = lenses.lens_filter("detail_glass_red", (155, 0, 2), red)
     assert abs(f[0] - (0.4 + 1.1 * (155 / 255) ** 2)) < 1e-9 and f[1] == 0.0
-    # Clear and amber: the texel plus GlassColor (shared 0.2 grey on clear), at most 1.
+    # Clear and amber: the texel plus GlassColor (shared 0.2 grey on clear), its RGB converted
+    # from sRGB to linear as Forza uploads it (0.2 -> 0.033), at most 1.
+    grey = ((0.2 + 0.055) / 1.055) ** 2.4
     f = lenses.lens_filter("detail_glass_clear", (128, 255, 0), {})
-    assert np.allclose(f, ((128 / 255) ** 2 + 0.2, 1.0, 0.2))
-    f = lenses.lens_filter("detail_glass_amber", (0, 0, 0), {"detail_glass_amber": {"GlassColor": (0.1, 0.2, 0.3, 1)}})
-    assert np.allclose(f, (0.1, 0.2, 0.3))
+    assert np.allclose(f, ((128 / 255) ** 2 + grey, 1.0, grey))
+    f = lenses.lens_filter("detail_glass_amber", (0, 0, 0), {"detail_glass_amber": {"GlassColor": (0.5, 0.0, 0.0, 1)}})
+    assert np.allclose(f, (((0.5 + 0.055) / 1.055) ** 2.4, 0.0, 0.0))
     assert not lenses.emits("lights_glass") and lenses.emits("lights_gls_reverse_light")
     assert not lenses.emits("lights_gls_noemit") and not lenses.emits("detail_glass_red")
 
