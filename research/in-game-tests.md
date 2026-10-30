@@ -1,6 +1,6 @@
 # In-game tests
 
-Updated: 2026-10-29
+Updated: 2026-10-30
 
 Runs up to 2026-10-22 used the persistent Windows Sandbox harness in
 `tools/wsb/` (`sandbox.ps1`); later ones run on the host (`-OnHost`) or in
@@ -669,6 +669,78 @@ and 2, `-HoldMph 60`.
 - The same archive as `bare.sp` (no build files), run
   `vm1-20261028-213136`: `vehicleStats[1]: none; blank badge and plate`,
   and no badge, plate or stray row.
+
+## Shots without the game's UI, with a caption (2026-10-30)
+
+Until then every probe shot had the game's UI over it: the hint bar, the
+speed box with the car's badge and plate, the minimap, the progress bar,
+button prompts and the "Y" icon. It covered rear plates, lower bumpers and
+the cockpit's lower corners, and cluttered before/after crops. Now:
+
+- **No UI by default.** `clonetest.lua` (config `hide_ui`, which
+  `run-test.ps1` writes unless `-Ui` or `-MenuKeys`) sets `Menu.HideUI = 1`
+  and `Menu.ShowHUD = 0` when it spawns its first car, and holds both every
+  frame from then on (update function `dsfforza_noui`). `HideUI` is the
+  pause menu's own screenshot mode (`gamepausemenu.lua`
+  `HideMenusForScreenshot`; lua-api.tsv: "Menus Master rendering flag"),
+  `ShowHUD = 0` what the debug free camera does (`cameraselection.lua`
+  `createFreeCam`). The game sets `ShowHUD` back to 1 when the player leaves
+  the Shift view (`localplayer.lua`) and `HideUI` back after a pause
+  (`gamestatuscore.lua`), hence the hold; each car's "chase view restored"
+  line counts how often a flag had to be set back. The frontend and the
+  Shift overview before the first spawn keep their menus (the harness
+  presses Enter and Up through them). The car's own dials are model parts
+  and stay.
+- **`-Ui`** (`run-series.ps1`, `run-test.ps1`) keeps the UI, for checks that
+  need the HUD (gauges against the HUD speed, HUD keep-out: #147, #281).
+  `-MenuKeys` runs keep it too: the garage menus are UI.
+- **A caption under every probe shot.** From the observe stage on, each
+  screenshot except `menu-NN.png` gets a black strip of 22 rows below the
+  frame (result.json `shotCaptionPx`); the frame's own pixels stay where
+  they were, so crop boxes measured on older shots still fit. The caption:
+  `observe-07  |  ID 2 Nissan 370Z (2010) [NIS_370Z_10] (ported, host 227)  |  view rear  |  after: out\vmtest\after\dngvehicles.sp`:
+  the shot's name; the car the player is in, by its `model_id`, named from
+  the build's `dngvehicles.lua` (ported) or `research/hosts.tsv` /
+  `vehicles.tsv` (vanilla); the probe's view (`chase`, a `-Views` name with
+  its `+lit`/`+night`/`+mph` suffix, `cockpit`, `zap`, `lights`, `dyno`);
+  the archive, as `run-series.ps1 -Labels before,after` names it (default
+  its path). result.json `shots` has every caption.
+- **Where the caption comes from.** `clonetest.lua` logs
+  `[dsfforza] shot <n>: id=<model> probe=<id> view=<view> phase=<phase>`
+  whenever one of them changes; `run-test.ps1` reads the newest such line
+  just before and just after copying the frame. If they differ, the caption
+  says "changed during the shot (was ...)". DriverNGHook opens, appends to
+  and closes `Driver.log` for every line (`LoggerImpl.cpp` in
+  `_ref/DriverNGToolkit`, the source of the 0.7.2 build; hypothesis that the
+  build matches), so the line is on disk as soon as it is printed; in these
+  runs every caption matched the log. The "Driver.log reaches the disk
+  seconds late" of the gauge runs below was more likely the harness reading
+  the log only once per `-ShotSeconds`. A probe without these lines gets
+  the car from its latest `id N:` line, marked "from Driver.log, may lag".
+- `lights_diff` leaves the strip out (reads `shotCaptionPx`).
+
+In game (confirmed-runtime): the brake-rotor worker's 6-car builds
+(`out/brakes/before`, `after`, copied to `out/vmtest/`), IDs 266 (vanilla
+Desanne), 1 (Peugeot 205 T16) and 2 (Nissan 370Z), `-Views
+'rear,front,nose+night' -Palette 0 -ShotSeconds 3`, with the #305 fix:
+
+- `vm2-20261030-043943` (before) and `vm2-20261030-044307` (after), no UI:
+  no HUD, minimap, hint bar, speed box or prompts in any chase, fixed-camera,
+  night or cockpit shot; the cockpits keep their own dials and displays. Each
+  caption names the car and view the probe's log has for that moment
+  (checked against all 25 shots of each run), and the zap shot between two
+  cars names the car still on screen.
+- `vm1-20261030-043919` (after, `-Ui`): the UI as before, the same captions.
+- `Menu.HideUI` reads back nil (a write-only property), so the hold writes
+  it every frame; `ShowHUD` reads 1 before the first spawn.
+- Night: vanilla 266's `nose+night` shot has the same brightness with and
+  without UI (car box mean 41.5 in all three runs). The 370Z's `-Ui` night
+  shot caught the dark mood still fading in (lamps on, scene light); the
+  shot just after it is dark.
+- Spawn lanes still vary between runs (`position = "randomLane"`): in the
+  no-UI "after" run the 205 stood one lane over (x -779.9 against -783.6)
+  on white litter decals that show under its bumper. Compare cars' rears
+  with that in mind.
 
 ## Game behaviour the harness had to handle
 

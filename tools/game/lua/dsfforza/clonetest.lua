@@ -379,7 +379,8 @@ local function holdUiHidden()
 		local ok, value = pcall(function() return Menu[flag[1]] end)
 		if not ok or tonumber(value) ~= flag[2] then
 			pcall(function() Menu[flag[1]] = flag[2] end)
-			uiResets = uiResets + 1
+			-- HideUI reads back nil (write-only), so it is written every frame and not counted.
+			if ok and value ~= nil then uiResets = uiResets + 1 end
 		end
 	end
 end
