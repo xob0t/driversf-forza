@@ -163,6 +163,11 @@ def _tri_uv(m: fm.SubMaterial, pool, tri) -> list:
     return dsf_materials.triangle_uv(m, [pool[i].uv0 for i in tri])
 
 
+def _sub_texels(m: fm.SubMaterial, pool, tris, w: int, h: int):
+    """_texels_many of triangles `tris` of a subsection resolved as m on a (w, h) atlas."""
+    return _texels_many(np.array([_tri_uv(m, pool, t) for t in tris], float).reshape(-1, 3, 2) * (w, h))
+
+
 def is_lens_technique(technique: str) -> bool:
     return technique.startswith(LENS_PREFIXES)
 
@@ -263,6 +268,94 @@ def _texels(uv_px: np.ndarray):
             return ix, iy, np.stack([w0[inside], w1[inside], w2[inside]], 1)
     cx, cy = xs.mean(), ys.mean()
     return np.array([int(cx)]), np.array([int(cy)]), np.array([[1 / 3, 1 / 3, 1 / 3]])
+
+
+TEXELS_CHUNK = 1 << 21  # _texels_many: bounding-box texels tested at a time
+TEXELS_ONE_BY_ONE = 256  # _texels_many: boxes of more texels go through _texels
+TEXELS_BATCH_MIN = 8  # _texels_many: fewer small boxes than this and every triangle goes through _texels
+
+
+def _texels_each(uv_px: np.ndarray):
+    """_texels_many by _texels, one triangle at a time."""
+    got = [_texels(t) for t in uv_px]
+    offsets = np.zeros(len(uv_px) + 1, np.int64)
+    np.cumsum([len(g[0]) for g in got], out=offsets[1:])
+    if not got:
+        return np.zeros(0, np.int64), np.zeros(0, np.int64), np.zeros((0, 3)), offsets
+    return (*(np.concatenate([g[c] for g in got]) for c in range(3)), offsets)
+
+
+def _texels_many(uv_px: np.ndarray):
+    """_texels of many UV triangles in pixel units (n, 3, 2) at once: ix, iy and the
+    barycentric weights of every triangle's texels one after the other, each triangle's in
+    _texels' order, and the offsets (n + 1) where each triangle's start; the same arithmetic
+    per texel, without numpy calls per triangle. Triangles with a non-finite corner go
+    through _texels one by one (which raises, as it did), and so do triangles whose box
+    holds more than TEXELS_ONE_BY_ONE texels (its broadcast grid costs less per texel). With
+    fewer than TEXELS_BATCH_MIN boxes to batch, all of them do (the batch's fixed cost)."""
+    uv_px = np.asarray(uv_px, dtype=np.float64).reshape(-1, 3, 2)
+    n = len(uv_px)
+    if not np.isfinite(uv_px).all():
+        return _texels_each(uv_px)
+    xs, ys = uv_px[:, :, 0], uv_px[:, :, 1]
+    area = (xs[:, 1] - xs[:, 0]) * (ys[:, 2] - ys[:, 0]) - (ys[:, 1] - ys[:, 0]) * (xs[:, 2] - xs[:, 0])
+    x0, x1 = np.floor(xs.min(1)), np.ceil(xs.max(1))
+    y0, y1 = np.floor(ys.min(1)), np.ceil(ys.max(1))
+    boxed = (np.abs(area) > 1e-9) & (x1 > x0) & (y1 > y0)
+    bw = np.where(boxed, x1 - x0, 0).astype(np.int64)
+    size = bw * np.where(boxed, y1 - y0, 0).astype(np.int64)
+    if int(((size > 0) & (size <= TEXELS_ONE_BY_ONE)).sum()) < TEXELS_BATCH_MIN:
+        return _texels_each(uv_px)
+    x0, y0 = np.where(boxed, x0, 0).astype(np.int64), np.where(boxed, y0, 0).astype(np.int64)
+    count = np.zeros(n, np.int64)
+    ix, iy, bary, owner = [], [], [], []
+    for k in np.nonzero(size > TEXELS_ONE_BY_ONE)[0].tolist():
+        got = _texels(uv_px[k])
+        for out, part in zip((ix, iy, bary), got, strict=True):
+            out.append(part)
+        owner.append(np.full(len(got[0]), k, np.int64))
+        count[k] = len(got[0])
+    size = np.where(size > TEXELS_ONE_BY_ONE, 0, size)
+    done = 0
+    while done < n:  # triangles in chunks of about TEXELS_CHUNK box texels
+        end = done + max(1, int(np.searchsorted(np.cumsum(size[done:]), TEXELS_CHUNK, "right")))
+        sel = np.arange(done, end)[size[done:end] > 0]
+        done = end
+        if not len(sel):
+            continue
+        k = size[sel]
+        tri = np.repeat(sel, k)
+        local = np.arange(int(k.sum())) - np.repeat(np.cumsum(k) - k, k)
+        w = bw[tri]
+        gy = (local // w + y0[tri]) + 0.5
+        gx = (local % w + x0[tri]) + 0.5
+        X, Y, a = xs[tri], ys[tri], area[tri]
+        w0 = ((X[:, 1] - gx) * (Y[:, 2] - gy) - (Y[:, 1] - gy) * (X[:, 2] - gx)) / a
+        w1 = ((X[:, 2] - gx) * (Y[:, 0] - gy) - (Y[:, 2] - gy) * (X[:, 0] - gx)) / a
+        w2 = 1 - w0 - w1
+        inside = np.nonzero((w0 >= 0) & (w1 >= 0) & (w2 >= 0))[0]
+        ix.append((gx[inside] - 0.5).astype(np.int64))
+        iy.append((gy[inside] - 0.5).astype(np.int64))
+        bary.append(np.stack([w0[inside], w1[inside], w2[inside]], 1))
+        owner.append(tri[inside])
+        count += np.bincount(tri[inside], minlength=n)
+    # No texel centre inside: the centroid's texel (int() truncates; clipped first, the same
+    # comparisons and clips downstream).
+    centre = np.nonzero(count == 0)[0]
+    if len(centre):
+        cx = ((xs[centre, 0] + xs[centre, 1]) + xs[centre, 2]) / 3
+        cy = ((ys[centre, 0] + ys[centre, 1]) + ys[centre, 2]) / 3
+        ix.append(np.trunc(np.clip(cx, -(2.0**62), 2.0**62)).astype(np.int64))
+        iy.append(np.trunc(np.clip(cy, -(2.0**62), 2.0**62)).astype(np.int64))
+        bary.append(np.full((len(centre), 3), 1 / 3))
+        owner.append(centre)
+        count[centre] = 1
+    offsets = np.zeros(n + 1, np.int64)
+    np.cumsum(count, out=offsets[1:])
+    if not owner:
+        return np.zeros(0, np.int64), np.zeros(0, np.int64), np.zeros((0, 3)), offsets
+    order = np.argsort(np.concatenate(owner), kind="stable")  # by triangle, each one's in the order found
+    return np.concatenate(ix)[order], np.concatenate(iy)[order], np.concatenate(bary)[order], offsets
 
 
 RAY_GROUP = 32  # _intersect: rays tested together against the triangles near them
@@ -596,9 +689,11 @@ def lamp_glow(sections, lods, atlases: fm.AtlasCache, glow: np.ndarray, owners: 
                 continue
             pool = section.vertices_for(sub)
             cols, rows, pos = [], [], []
-            for t in sub.triangles():
+            tris = sub.triangles()
+            every_x, every_y, every_b, at = _sub_texels(m, pool, tris, w, h)
+            for k, t in enumerate(tris):
                 P = np.array([pool[i].position for i in t], float)
-                ix, iy, bary = _texels(np.array(_tri_uv(m, pool, t)) * (w, h))
+                ix, iy, bary = (a[at[k] : at[k + 1]] for a in (every_x, every_y, every_b))
                 ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
                 cols.append(ix[ok])
                 rows.append(iy[ok])
@@ -866,8 +961,9 @@ def tail_glow(atlas: np.ndarray, view, tris=()) -> np.ndarray | None:
         return np.interp(r * 100, dm.LAMP_PERCENTILES, TAIL_RED_ALPHA)
 
     covered = np.zeros((h, w), bool)
-    for uv in tris:
-        ix, iy, _ = _texels(np.asarray(uv, float) * (w, h))
+    every_x, every_y, _, at = _texels_many(np.asarray(tris, float).reshape(-1, 3, 2) * (w, h))
+    for n in range(len(tris)):
+        ix, iy = every_x[at[n] : at[n + 1]], every_y[at[n] : at[n + 1]]
         ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
         ix, iy = ix[ok], iy[ok]
         if not len(ix):
@@ -906,11 +1002,13 @@ def _lens_samples(section, sub, m, w: int, h: int):
     pool = section.vertices_for(sub)
     cols, rows, pos, nrm = [], [], [], []
     area = 0.0
-    for t in sub.triangles():
+    tris = sub.triangles()
+    every_x, every_y, every_b, at = _sub_texels(m, pool, tris, w, h)
+    for k, t in enumerate(tris):
         P = np.array([pool[i].position for i in t], float)
         N = np.array([pool[i].normal for i in t], float)
         area += 0.5 * float(np.linalg.norm(np.cross(P[1] - P[0], P[2] - P[0])))
-        ix, iy, bary = _texels(np.array(_tri_uv(m, pool, t)) * (w, h))
+        ix, iy, bary = (a[at[k] : at[k + 1]] for a in (every_x, every_y, every_b))
         ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
         ix, iy, bary = ix[ok], iy[ok], bary[ok]
         if not len(ix):
@@ -979,10 +1077,10 @@ def _tint_behind(surf: _Surfaces, tris, tint: np.ndarray, out, w: int, h: int, t
     (`tinted` marks those). The texels keep their alpha (their glow mask). Returns the texels
     tinted."""
     count = 0
-    for k in tris:
-        if surf.kind[k] != 1 or surf.family[k] != fm.LIGHTS:
-            continue
-        ix, iy, _ = _texels(surf.uvs[k] * (w, h))
+    tris = [k for k in tris if surf.kind[k] == 1 and surf.family[k] == fm.LIGHTS]
+    every_x, every_y, _, at = _texels_many(surf.uvs[np.array(tris, np.int64)] * (w, h))
+    for n in range(len(tris)):
+        ix, iy = every_x[at[n] : at[n + 1]], every_y[at[n] : at[n + 1]]
         ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
         ix, iy = ix[ok], iy[ok]
         new = ~tinted[iy, ix]
@@ -1038,9 +1136,8 @@ def bake(
             if getattr(m, "drifted", False):
                 continue  # a coarse LOD's drifted UVs (dsf_materials.unwrap_tiles): the Ferrari F50's lens kept them
             pool = section.vertices_for(sub)
-            for t in sub.triangles():
-                ix, iy, _ = _texels(np.array(_tri_uv(m, pool, t)) * (w, h))
-                used[iy.clip(0, h - 1), ix.clip(0, w - 1)] = True
+            ix, iy, _, _ = _sub_texels(m, pool, sub.triangles(), w, h)
+            used[iy.clip(0, h - 1), ix.clip(0, w - 1)] = True
     lamp_tris = np.nonzero((surf.kind == 1) & np.array([f == fm.LIGHTS for f in surf.family], bool))[0]
     total = np.zeros((h, w, 4))
     count = np.zeros((h, w))

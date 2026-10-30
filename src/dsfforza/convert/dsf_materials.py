@@ -2423,15 +2423,16 @@ class Texturing:
                         cells.add(("swatch",) + self._convert_texel(m.family, *m.colour))
                     continue
                 pool = section.vertices_for(sub)
-                for k in range(len(tris)):
-                    if not on[k] and k not in others:
-                        continue
-                    uvs = triangle_uv(m, [pool[i].uv0 for i in tris[k]])
-                    ix, iy, _ = lenses._texels(np.array(uvs) * (w, h))
+                listed = set(others)
+                todo = [k for k in range(len(tris)) if on[k] or k in listed]
+                uvs = [triangle_uv(m, [pool[i].uv0 for i in tris[k]]) for k in todo]
+                every_x, every_y, _, at = lenses._texels_many(np.array(uvs, float).reshape(-1, 3, 2) * (w, h))
+                for n, k in enumerate(todo):
+                    ix, iy = every_x[at[n] : at[n + 1]], every_y[at[n] : at[n + 1]]
                     ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
                     (day if on[k] else other)[iy[ok], ix[ok]] = True
-                    if on[k]:
-                        self._dsf_boxes(m, sub, k, uvs, boxes)
+                lit_by_day = [n for n, k in enumerate(todo) if on[k]]
+                self._dsf_boxes(m, sub, [todo[n] for n in lit_by_day], [uvs[n] for n in lit_by_day], boxes)
         day |= boxes & ~other
         if self.lamp_raw is not None:
             # The bake spreads a lens's glow lenses.DILATE texels into unused neighbours.
@@ -2447,31 +2448,49 @@ class Texturing:
             day |= grown & glow
         return (day if day.any() else None), cells
 
-    def _dsf_boxes(self, m: fm.SubMaterial, sub, k: int, uvs, out: np.ndarray) -> None:
+    def _dsf_boxes(self, m: fm.SubMaterial, sub, ks, uvs, out: np.ndarray) -> None:
         """Mark in `out` (source atlas texels) the box render() averages into each DSF atlas
-        texel that triangle k of `sub` (its atlas UVs `uvs`, triangle_uv) samples: the texels
-        inside its DSF UVs, and for a triangle that covers few of them the 2 x 2 texels a
-        bilinear sample at its centre reads."""
+        texel that triangles `ks` of `sub` (their atlas UVs `uvs`, triangle_uv) sample: the
+        texels inside their DSF UVs, and for a triangle that covers few of them the 2 x 2
+        texels a bilinear sample at its centre reads. All the triangles at once, each with its
+        region's numbers per texel (the same arithmetic as one by one)."""
         from dsfforza.convert import lenses
 
-        n = self.owners.get((id(sub), k))
-        if n is None:
+        picked = [
+            (self.regions[m.family][n], tri)
+            for k, tri in zip(ks, uvs)
+            if (n := self.owners.get((id(sub), k))) is not None
+        ]
+        if not picked:
             return
-        r = self.regions[m.family][n]
-        s, src_size = self._scale_of(r), self.src_sizes[m.family]
+        src_size = self.src_sizes[m.family]
         sh, sw = out.shape
         width, height = self.size
         pts = np.array(
-            [r.map(min(1.0, max(0.0, u)), min(1.0, max(0.0, v)), src_size, s, self.size) for u, v in uvs]
-        ) * (width, height)
-        ix, iy, _ = lenses._texels(pts)
-        if len(ix) <= 4:
-            cx, cy = (int(math.floor(c - 0.5)) for c in pts.mean(0))
-            ix = np.concatenate([ix, [cx, cx + 1, cx, cx + 1]])
-            iy = np.concatenate([iy, [cy, cy, cy + 1, cy + 1]])
-        dx, dy = ix - r.dst[0], iy - r.dst[1]
-        ok = (dx >= 0) & (dx < r.size[0]) & (dy >= 0) & (dy < r.size[1])
-        fx, fy = r.src[0] + (dx[ok] - PAD) / s, r.src[1] + (dy[ok] - PAD) / s
+            [
+                [
+                    r.map(min(1.0, max(0.0, u)), min(1.0, max(0.0, v)), src_size, self._scale_of(r), self.size)
+                    for u, v in tri
+                ]
+                for r, tri in picked
+            ]
+        ).reshape(-1, 3, 2) * (width, height)
+        ix, iy, _, at = lenses._texels_many(pts)
+        owner = np.repeat(np.arange(len(picked)), np.diff(at))
+        # A triangle with 4 texels or fewer: also the 2 x 2 around its centre.
+        few = np.nonzero(np.diff(at) <= 4)[0]
+        centre = np.floor(((pts[few, 0] + pts[few, 1]) + pts[few, 2]) / 3 - 0.5).astype(np.int64)
+        cx, cy = centre[:, 0, None] + (0, 1, 0, 1), centre[:, 1, None] + (0, 0, 1, 1)
+        ix, iy = np.concatenate([ix, cx.ravel()]), np.concatenate([iy, cy.ravel()])
+        owner = np.concatenate([owner, np.repeat(few, 4)])
+        dst = np.array([r.dst for r, _ in picked], np.int64).reshape(-1, 2)[owner]
+        size = np.array([r.size for r, _ in picked], np.int64).reshape(-1, 2)[owner]
+        src = np.array([r.src[:2] for r, _ in picked], np.int64).reshape(-1, 2)[owner]
+        s = np.array([self._scale_of(r) for r, _ in picked], np.float64)[owner]
+        dx, dy = ix - dst[:, 0], iy - dst[:, 1]
+        ok = (dx >= 0) & (dx < size[:, 0]) & (dy >= 0) & (dy < size[:, 1])
+        s = s[ok]
+        fx, fy = src[ok, 0] + (dx[ok] - PAD) / s, src[ok, 1] + (dy[ok] - PAD) / s
         x0 = np.clip(np.floor(fx).astype(int), 0, sw - 1)
         y0 = np.clip(np.floor(fy).astype(int), 0, sh - 1)
         x1 = np.maximum(x0 + 1, np.minimum(sw, np.floor(fx + 1 / s).astype(int)))
