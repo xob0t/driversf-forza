@@ -445,6 +445,11 @@ The DMC's lamps do respond in real driving (next sections).
 
 ### How a lamp lights (confirmed-static, Driver.exe 1.04)
 
+`lights-re.md` has the full chain with runtime values and corrects two points here: the
+colour is also multiplied by the mood's `vehColourBoost` (5 by day, 1 in the harness's dark
+mood), and a 0x1D lamp with the running lights alone glows at 1 (brightness 0.1 x 10), not 10;
+it reaches 10 only with Headlights, which free roam never turns on.
+
 - **Shader.** The Lights vertex shader (GPCH 130 and its variants) reads
   semantic 9 as `(panel, panel data, light, 1)` and passes on
   `g_v4LightColours[light]` (c160, 32 entries). The pixel shader adds
