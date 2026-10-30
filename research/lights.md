@@ -108,7 +108,8 @@ later PR replaced a rule, the earlier section says so in one line.
   source texel under the DSF texels its triangles sample, and the lamps that
   share a 0x1D entry too ([#250](#head-lamps-white-plates-by-day-volvo-s60-11-venom-gt-12-boss-429-issue-250)).
 
-**Glass over lamps** (`lenses.bake`, `Texturing._bake_lenses`).
+**Glass over lamps** (`lenses.bake`, `Texturing._bake_lenses`). What Forza's race shaders actually compute for lenses, covers and
+glass, and which of these rules that confirms or replaces: `forza-lenses-re.md`.
 
 - A `detail_glass_*` lens keeps its triangles; each texel becomes
   `a x lens + (1 - a) x behind`, behind being what a ray straight in meets
