@@ -306,7 +306,18 @@ def _surface_points(tris, spacing: float):
     s = (local % (k1 + 1)[tri]) / k1[tri]
     t = (local // (k1 + 1)[tri]) / k2[tri]
     s, t = s[:, None], t[:, None]
-    return (1 - t) * (a[tri] + s * (b[tri] - a[tri])) + t * c[tri]
+    # (1 - t) * (a + s * (b - a)) + t * c, in place (each product and sum as written:
+    # x * y and x + y are the same either way round)
+    at = a[tri]
+    out = b[tri]
+    out -= at
+    out *= s
+    out += at
+    out *= 1 - t
+    ct = c[tri]
+    ct *= t
+    out += ct
+    return out
 
 
 def seen_from_outside(occluders, candidates):
@@ -329,20 +340,28 @@ def seen_from_outside(occluders, candidates):
         right = np.cross(up, d)
         right /= np.linalg.norm(right)
         up = np.cross(d, right)
-        sx, sy, depth = surface @ right, surface @ up, -(surface @ d)  # smaller depth: nearer the camera
+        sx, sy, depth = surface @ right, surface @ up, surface @ d
+        np.negative(depth, out=depth)  # smaller depth: nearer the camera
         x0, y0 = sx.min(), sy.min()
         w = int((sx.max() - x0) / VIEW_PIXEL) + 1
         h = int((sy.max() - y0) / VIEW_PIXEL) + 1
-        ix = ((sx - x0) / VIEW_PIXEL).astype(int)
-        iy = ((sy - y0) / VIEW_PIXEL).astype(int)
+        sx -= x0  # the pixel of each point, ((sx - x0) / VIEW_PIXEL) as int, in place
+        sx /= VIEW_PIXEL
+        sy -= y0
+        sy /= VIEW_PIXEL
+        flat = sy.astype(int)
+        flat *= w
+        flat += sx.astype(int)
         buffer = np.full(w * h, np.inf)
-        np.minimum.at(buffer, iy * w + ix, depth)
+        np.minimum.at(buffer, flat, depth)
         buffer = buffer.reshape(h, w)
         # Pixels the points missed take the nearest of their neighbours (no see-through gaps).
         holes = np.isinf(buffer)
         if holes.any():
             padded = np.pad(buffer, 1, constant_values=np.inf)
-            near = np.min([padded[dy : dy + h, dx : dx + w] for dy in range(3) for dx in range(3)], axis=0)
+            near = padded[:h, :w].copy()
+            for dy, dx in ((dy, dx) for dy in range(3) for dx in range(3) if dy or dx):
+                np.minimum(near, padded[dy : dy + h, dx : dx + w], out=near)
             buffer[holes] = near[holes]
         todo = ~seen
         p = probes[todo].reshape(-1, 3)
