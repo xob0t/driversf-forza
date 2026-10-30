@@ -189,8 +189,10 @@ How a build runs:
   so nothing is copied twice. It registers the clones (SSLP, VSCT), checks
   the root entry limit (`--root-limit`, default 1100; more needs dsfforza.asi's
   `archive` module) and UID clashes, and writes the archive.
-- Every car is linted, in `--jobs` (at most 4) `upvh lint-many` processes
-  that each read the archive once for their share of the cars.
+- Every car is linted, in `upvh lint-many` processes that each read the
+  archive once for their share of the cars (64 or more each): up to `--jobs`
+  of them, as many as the free RAM holds at 2.6 GB each (`lint_jobs`). The
+  573 cars of a full build: 73 s with 4 processes, 42 s with 9, 39 s with 16.
 - With `--gui` the build also runs `gui_assets.build`; every car's garage
   picture is rendered, in `--jobs` processes.
 

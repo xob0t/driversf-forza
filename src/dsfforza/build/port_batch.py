@@ -97,6 +97,7 @@ WORKER_TIMEOUT = 45 * 60
 # cars). Peaks of the job objects, 32- and 30-car builds, 2026-10-30.
 WORKER_RAM = 1900 << 20
 RENDER_RAM = 1700 << 20
+LINT_RAM = 2600 << 20  # a lint-many process: the archive's tree and its tables, 2.5 GB at 573 cars
 FREE_RAM_FOR_WORKER = WORKER_RAM
 BELOW_NORMAL = 0x00004000
 DEFAULT_PORT_OPTIONS = "--mdxn-limit 0x2C0000 --damage"
@@ -145,6 +146,15 @@ def render_jobs(jobs: int, free: int | None = None) -> int:
     the RAM free when the gui step starts."""
     free = free if free is not None else free_ram()
     return max(1, min(jobs, free // RENDER_RAM)) if free else max(1, jobs)
+
+
+def lint_jobs(jobs: int, free: int | None = None) -> int:
+    """upvh lint-many processes for `jobs`: at most as many as LINT_RAM each fits in the RAM
+    free when the lint starts. Each reads the whole archive first, so more processes add
+    that once more each, but the cars' lints spread: the 573 cars of a full build linted in
+    73 s with 4 processes, 42 s with 9 and 39 s with 16 (2026-10-30)."""
+    free = free if free is not None else free_ram()
+    return max(1, min(jobs, free // LINT_RAM)) if free else max(1, jobs)
 
 
 def _memory_status(field: str) -> int | None:
@@ -1767,7 +1777,7 @@ def finish(
             write_report(out_dir, archive, [], failed, timings, started, args, results)
             raise SystemExit("no car could be merged")
         t = time.time()
-        parallel = max(1, min(args.jobs, 4))
+        parallel = lint_jobs(args.jobs)
         if pack is None:
             emit(progress, "lint", cars=len(cars_out), total=len(cars_out))
             lint_all(archive, dsf, cars_out, parallel)
