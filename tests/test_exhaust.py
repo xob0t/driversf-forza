@@ -90,13 +90,13 @@ def test_quaternion_turns_minus_z_onto_the_flow():
 # --- Forza geometry (Forza space: front at -z; Placement(0, 0) turns it to DSF) -----------
 
 
-def _section(name: str, tris: list[tuple]) -> carbin.Section:
+def _section(name: str, tris: list[tuple], material: str = "chrome") -> carbin.Section:
     verts, idx = [], []
     for tri in tris:
         for p in tri:
             idx.append(len(verts))
             verts.append(carbin.Vertex(p, (0.0, 0.0), (0.0, 0.0), (0.0, 1.0, 0.0)))
-    sub = carbin.SubSection("chrome", 1, 4, (0, 1, 0, 1, 0, 1, 0, 1), idx)
+    sub = carbin.SubSection(material, 1, 4, (0, 1, 0, 1, 0, 1, 0, 1), idx)
     return carbin.Section(name, (0, 0, 0), (0, 0, 0), (0, 0, 0), lod_vertices=verts, subsections=[sub])
 
 
@@ -199,6 +199,65 @@ def test_no_tip_keeps_or_maps_the_host_markers():
     out, report = exhaust.patch_upvh(data, [], boxes)
     xs = sorted(round(m.position[0], 4) for m in exhaust.host_markers(out))
     assert xs == [round(-0.49 / 0.9, 4), round(0.49 / 0.9, 4)]
+
+
+def test_pipes_in_the_bumper():
+    # No exhaust section (the F40): the chrome tubes of the rear bumper are the tailpipes.
+    pipes = _tube((0.1, 0.17), 0.03, 1.95, 2.12) + _tube((-0.1, 0.17), 0.03, 1.95, 2.12)
+    body = [_body(), _section("bumperRa", pipes)]
+    tips = exhaust.find_tips(body, Placement(0.0, 0.0))
+    assert [round(t.centre[0], 3) for t in tips] == [-0.1, 0.1], tips
+    assert all(t.direction == exhaust.BACK and abs(t.centre[2] + 2.12) < 1e-6 for t in tips)
+    # A side exit under the door, flush with the body's side.
+    side = _section("body_2", _tube((0.0, 0.15, 0.6), 0.04, 0.7, 0.9, axis=0), "black")
+    (tip,) = exhaust.find_tips([_body(), side], Placement(0.0, 0.0))
+    assert tip.direction == (-1.0, 0.0, 0.0) and abs(tip.centre[2] + 0.6) < 1e-3
+
+
+def test_round_parts_that_are_no_pipes():
+    def tips(*sections):
+        return exhaust.find_tips([_body(), *sections], Placement(0.0, 0.0))
+
+    # A lamp's bezel: the lamp inside it.
+    bezel = _section("trunk", _tube((0.6, 0.35), 0.05, 2.08, 2.12))
+    lamp = _section("trunk", [((0.6, 0.35, 2.1), (0.62, 0.35, 2.1), (0.6, 0.37, 2.1))], "taillight2S")
+    assert tips(bezel, lamp) == []
+    assert len(tips(bezel)) == 1
+    # High on the body (a wing mount), far ahead of the rear, or in the underbody.
+    assert tips(_section("trunk", _tube((0.0, 0.9), 0.03, 1.95, 2.12))) == []
+    assert tips(_section("bumperRa", _tube((0.3, 0.2), 0.03, 1.2, 1.4))) == []
+    assert tips(_section("undercarriagea", _tube((0.1, 0.17), 0.03, 1.95, 2.12), "undercarriage")) == []
+    # Exhaust sections come first: a pipe elsewhere doesn't add to theirs.
+    found = tips(
+        _section("exhausta", _tube((0.45, 0.2), 0.04, 1.6, 2.15)),
+        _section("bumperRa", _tube((-0.1, 0.17), 0.03, 1.95, 2.12)),
+    )
+    assert [round(t.centre[0], 3) for t in found] == [-0.45]
+
+
+def test_copied_markers_pop_the_hinge_once():
+    from dsfforza.convert import damage
+
+    # A rear bumper part with a hinge (role 36, +0x1C >= 0) whose last child is the exhaust
+    # marker: that leaf pops the hinge, (0, 1, 1); a copy after it takes that over.
+    data = bytearray(_host([(36, [(-0.49, -0.04, -1.96)])]))
+    struct.pack_into("<h", data, upvh.HEADER_SIZE + upvh.RECORD_SIZE + 0x1C, 15)
+
+    def fields(d):
+        return [damage._read_tree_fields(r.raw) for r in upvh.parse(d).records]
+
+    def tree(d):
+        return damage._tree_fields([r.raw for r in upvh.parse(d).records])
+
+    for k, (bit, leaf, pops) in enumerate(tree(data)):  # as vanilla writes them
+        o = upvh.HEADER_SIZE + k * upvh.RECORD_SIZE
+        struct.pack_into("<H", data, o + 0x0C, bit)
+        struct.pack_into("<HH", data, o + 0x16, leaf, pops)
+    data = bytes(data)
+    assert fields(data)[2] == (0, 1, 1)
+    out = exhaust.insert_marker(data, 2)
+    assert fields(out) == tree(out) and fields(out)[2:4] == [(0, 0, 0), (0, 1, 1)]
+    assert exhaust.remove_marker(out, 3) == data
 
 
 if __name__ == "__main__":
