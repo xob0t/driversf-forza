@@ -651,6 +651,7 @@ try {
                     if ($GlassLadder) { $fields += "glass_ladder = true" }
                     if ($Palette -ge 0) { $fields += "palette = $Palette" }
                     if (-not $Ui -and -not $MenuKeys) { $fields += "hide_ui = true" }
+                    $fields += "wait_go = true"   # the first car waits for dsfforza\go.lua (below, after the Up presses)
                     if ($buildLua.Contains('dsfforza\ported.lua')) { $fields += "register = { interesting = false }" }
                     if ($Views) { $fields += "views = { " + (($Views -split ',' | Where-Object { $_ } | ForEach-Object { "`"$($_.Trim())`"" }) -join ', ') + " }" }
                     if ($Lights) {
@@ -785,6 +786,13 @@ try {
         Save-Shot ("zoom-{0:D2}.png" -f $zoom)
     }
     if ($ZoomPresses) { Note "pressed Up $ZoomPresses times" }
+    # The probe spawns its first car once this file exists (clonetest.lua harnessGo): before, it did
+    # as soon as the camera was at street level, so the first car's chase view and -Views were over
+    # before the first shot below, and the last Up presses drove it (issue #305).
+    if ($Probe) {
+        [IO.File]::WriteAllText((Join-Path $RunPath 'Common\UserLuaScripts\dsfforza\go.lua'), "return { go = 1 }`r`n")
+        Note 'probe go'
+    }
 
     # Wait for the probe (or just watch the game for -WaitSeconds).
     $result.stage = 'observe'

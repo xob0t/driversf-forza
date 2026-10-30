@@ -50,6 +50,7 @@ local PALETTE = nil           -- config.palette (run-test -Palette): paint palet
                               -- GameVehicleResource.create's ShaderParams, as its vehicle manager does); nil: the game's pick
 local DYNO = nil              -- config.dyno (run-test -Dyno): the dyno.lua module, acceleration and braking runs
 local LIGHTS = nil            -- config.lights (run-test -Lights): the lightstest.lua module, lamp phases per car
+local WAIT_GO = false         -- config.wait_go (run-test): spawn the first car only once the harness writes dsfforza\go.lua
 local HIDE_UI = false         -- config.hide_ui (run-test without -Ui): no HUD, prompts or minimap from the first spawn on
 
 do
@@ -68,6 +69,7 @@ do
 		if type(config.views) == "table" then VIEWS = config.views end
 		if type(config.palette) == "number" then PALETTE = config.palette end
 		if config.hide_ui then HIDE_UI = true end
+		if config.wait_go then WAIT_GO = true end
 		if config.dyno then
 			local loaded, module = user_open("dsfforza\\dyno.lua")
 			if loaded and type(module) == "table" then
@@ -99,6 +101,7 @@ local VIEW_TICKS = 26          -- about 13 s per camera view, so a 10 s screensh
 local HOLD_TICKS = 10         -- ticks per forced speed (config.hold_mph)
 local MPH = 2.23704           -- m/s -> mph, as the speedometer converts (FUN_00891670)
 local LEVEL_TIMEOUT = 120     -- ticks to wait for street-level Shift before trying anyway
+local GO_TIMEOUT = 240        -- config.wait_go: ticks to wait for the harness's go before spawning anyway
 
 local function log(message)
 	print("[dsfforza] " .. message)
@@ -471,6 +474,24 @@ local function cockpitTicks()
 	if DRIVE_SECONDS > 0 then ticks = math.max(ticks, DRIVE_SECONDS * 2 + 10) end
 	if #HOLD_MPH > 0 then ticks = math.max(ticks, #HOLD_MPH * HOLD_TICKS + 4) end
 	return ticks
+end
+
+-- config.wait_go: the first car is spawned only once the harness has done pressing Up (which
+-- drove a car already spawned) and starts its shots: it writes dsfforza\go.lua. Before, the first
+-- car's chase view and -Views were over before the first screenshot (issue #305). After GO_TIMEOUT
+-- ticks in wait_level the probe goes on without it.
+local function harnessGo()
+	if not WAIT_GO or state.go then return true end
+	local ok, found = pcall(user_fileExists, "dsfforza\\go.lua")
+	if ok and found then
+		log(string.format("harness go after %d ticks (zap level %s)", state.ticks, tostring(zapLevel())))
+	elseif state.ticks >= GO_TIMEOUT then
+		log(string.format("no go from the harness after %d ticks; spawning anyway", state.ticks))
+	else
+		return false
+	end
+	state.go = true
+	return true
 end
 
 local function nextId()
@@ -922,11 +943,12 @@ local function step()
 		-- A loaded save starts in the Shift overview, where the city under the
 		-- cursor isn't simulated; wait until the camera is down at street level
 		-- (the harness presses Up) or the player has a car.
+		-- config.wait_go: and until the harness says go (harnessGo).
 		local level = zapLevel()
 		if state.ticks % 4 == 1 then
 			log(string.format("zap level %s, inZap %s", tostring(level), tostring(localPlayer.inZap)))
 		end
-		if playerVehicle() ~= nil or (level ~= nil and level <= 1) or state.ticks >= LEVEL_TIMEOUT then
+		if (playerVehicle() ~= nil or (level ~= nil and level <= 1) or state.ticks >= LEVEL_TIMEOUT) and harnessGo() then
 			state.phase, state.ticks = "spawn", 0
 		end
 	elseif state.phase == "spawn" then

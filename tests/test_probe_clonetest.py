@@ -1,6 +1,7 @@
-"""clonetest.lua against stubbed game APIs (lupa, Lua 5.1): the probe hides the game's UI from
+r"""clonetest.lua against stubbed game APIs (lupa, Lua 5.1): the probe hides the game's UI from
 the first spawn on (config.hide_ui) and logs what each shot shows ("shot <n>: ..." lines for the
-harness's captions). The game's Lua is 5.1 too: a function with more than 60 upvalues doesn't
+harness's captions), and with config.wait_go spawns the first car only once the harness has written
+dsfforza\go.lua (issue #305). The game's Lua is 5.1 too: a function with more than 60 upvalues doesn't
 load. Offline, under a second.
 
     uv run python -m tests probe_clonetest
@@ -42,7 +43,7 @@ function localPlayer:ZapIntoVehicle(car) self.currentVehicle = { gameVehicle = c
 """
 
 
-def _probe(config: str):
+def _probe(config: str, go: list[bool] | None = None):
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
     g = lua.globals()
     out: list[str] = []
@@ -57,6 +58,7 @@ def _probe(config: str):
         return loader(path.read_text(encoding="utf-8"), name) if path.exists() else (False, "missing")
 
     g.user_open = user_open
+    g.user_fileExists = lambda name: str(name) == f"dsfforza{BS}go.lua" and bool(go and go[0])
     lua.execute(STUBS)
     loaded = user_open(f"dsfforza{BS}clonetest.lua")  # pcall's true, or false and the error
     assert loaded is True, loaded
@@ -103,3 +105,28 @@ def test_ui_kept_without_hide_ui():
     assert any("id 266: PLAYER IS DRIVING IT" in line for line in out), out
     assert g.Menu.HideUI == 0 and g.Menu.ShowHUD == 1
     assert g.updates["dsfforza_noui"] is None
+
+
+def _go_probe(config: str, go: list[bool]):
+    lua, out = _probe(config, go)
+    lua.globals().zapLevelNow = 1
+    return lua, out
+
+
+def test_first_car_waits_for_the_harness_go():
+    # Issue #305: at street level, the first car is spawned only once the harness writes dsfforza\go.lua.
+    go = [False]
+    lua, out = _go_probe("return { ids = { 266 }, wait_go = true }", go)
+    _ticks(lua, 40)
+    assert not any("spawn returned" in line for line in out), out
+    go[0] = True
+    _ticks(lua, 4)
+    assert any("harness go after" in line for line in out), out
+    assert any("id 266: PLAYER IS DRIVING IT" in line for line in out), out
+
+
+def test_no_go_spawns_after_the_timeout():
+    lua, out = _go_probe("return { ids = { 266 }, wait_go = true }", [False])
+    _ticks(lua, 260)
+    assert any("no go from the harness after 240 ticks; spawning anyway" in line for line in out), out
+    assert any("id 266: PLAYER IS DRIVING IT" in line for line in out), out
