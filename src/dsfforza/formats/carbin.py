@@ -73,8 +73,26 @@ class SubSection:
     index_type: int
     uv_transform: tuple[float, ...]  # (x_off, x_scale, y_off, y_scale) for uv0, then uv1
     indices: list[int]
+    # (indices list, index type, length, triangles) of the last triangles() call
+    _triangles: tuple | None = field(default=None, init=False, repr=False, compare=False)
 
     def triangles(self) -> list[tuple[int, int, int]]:
+        """The index buffer's triangles, a new list each call. Worked out once per index
+        list (the converter asks for one subsection's dozens of times): assigning other
+        indices or another index type makes them again; don't change `indices` in place."""
+        cached = self._triangles
+        if (
+            cached is not None
+            and cached[0] is self.indices
+            and cached[1] == self.index_type
+            and cached[2] == len(self.indices)
+        ):
+            return list(cached[3])
+        tris = self._decode_triangles()
+        self._triangles = (self.indices, self.index_type, len(self.indices), tuple(tris))
+        return tris
+
+    def _decode_triangles(self) -> list[tuple[int, int, int]]:
         idx = self.indices
         if self.index_type == 4:
             return [(idx[i], idx[i + 1], idx[i + 2]) for i in range(0, len(idx) - 2, 3)]
