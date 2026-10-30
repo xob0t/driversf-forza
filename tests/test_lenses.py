@@ -278,7 +278,7 @@ def test_daytime_head_lamps_glow_at_a_fifth():
     assert not cells and day[:, :6].all() and not day[:, 12:].any(), day[0]
 
     t.regions = {fm.LIGHTS: [None]}
-    t._lamp_view = lambda front, grid: "view"
+    t._lamp_view = lambda front, grid, rear_half=False: None if rear_half else "view"
     flat = np.where(np.isfinite(t.lamp_raw[..., 0]), 100.0, np.nan)
     real, lenses.day_glow = lenses.day_glow, lambda glow, view, colour=None: flat.copy()
     try:
