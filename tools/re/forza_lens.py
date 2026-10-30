@@ -5,8 +5,8 @@ Xenos emulator (`xenos.py`) on one pixel: a texel (Lights atlas RGBA), the techn
 material parameters (the car's ShaderSettings.xml over the shared Normal.xml, over the
 shader's own defaults), a day scene (sun, sky ambient, sky reflection) and the lamp's state.
 Every pass of the technique is run and blended over what lies behind with the pass's blend
-(the effect's render states; techniques that set none are taken as SRCALPHA, INVSRCALPHA,
-the game's transparent bucket, which is inferred). Colours are in the shaders' output
+(the effect's render states; techniques that set none draw with SRCALPHA, INVSRCALPHA, the
+state the lens techniques' Cleanup passes restore, forza-lenses-re.md section 7). Colours are in the shaders' output
 encoding, sqrt of linear (every car shader ends with sqrt), which is also the space the
 render target blends in.
 
@@ -34,7 +34,7 @@ import fxl
 import xenos
 
 DATA = REPO / "out" / "re3"
-BLEND_DEFAULT = (6, 7)  # SRCALPHA, INVSRCALPHA for techniques whose passes set no blend (inferred)
+BLEND_DEFAULT = (6, 7)  # SRCALPHA, INVSRCALPHA for techniques whose passes set no blend (section 7)
 
 
 @dataclass
@@ -49,7 +49,7 @@ class Scene:
     env: tuple[float, float, float] = (0.55, 0.6, 0.7)  # env map texel (encoded: shaders square it)
     shadow: float = 1.0  # shadow mask: 1 lit
     direct: float = 1.0  # VS direct-light term (oT2.w)
-    reflection: float = 1.0  # reflectionScaler
+    reflection: float = 1.0  # reflectionScaler: 1 in both games (forza-lenses-re.md section 7)
     cube_dampner: float = 1.0  # oT4.w
 
 
@@ -72,8 +72,17 @@ def _norm(v):
     return tuple(x / n for x in v)
 
 
-def parse_settings(text: str) -> dict[str, dict[str, list[float]]]:
-    """A ShaderSettings XML as {technique: {param: [4 floats]}}."""
+def srgb_to_linear(c: float) -> float:
+    """The sRGB transfer function the game applies on the CPU to the RGB of every float4
+    material parameter before upload (forza-lenses-re.md section 7: FH1 0x8244d220, FM4
+    0x82346b90; skipped only with the `lineargammaout` switch, off in retail). Alpha is kept."""
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def parse_settings(text: str, linear: bool = True) -> dict[str, dict[str, list[float]]]:
+    """A ShaderSettings XML as {technique: {param: [4 floats]}}. With `linear` (the default),
+    float4 parameters (written r g b a) are converted as the game uploads them: RGB through
+    sRGB -> linear, alpha as written; `linear=False` keeps the authored values."""
     out: dict[str, dict[str, list[float]]] = {}
     for m in re.finditer(r"<([A-Za-z0-9_]+)>((?:(?!<[A-Za-z0-9_]+>).)*?)</\1>", text, re.S):
         params = {}
@@ -83,7 +92,8 @@ def parse_settings(text: str) -> dict[str, dict[str, list[float]]]:
                 if "value" in attrs:
                     params[p.group(1)] = [float(attrs["value"])] + [0.0] * 3
                 elif "r" in attrs:
-                    params[p.group(1)] = [float(attrs.get(k, 0)) for k in "rgba"]
+                    v = [float(attrs.get(k, 0)) for k in "rgba"]
+                    params[p.group(1)] = [srgb_to_linear(x) for x in v[:3]] + v[3:] if linear else v
             except ValueError:
                 continue
         out[m.group(1).lower()] = params
@@ -654,7 +664,7 @@ def survey(out: Path, cars: list[str] | None = None, lod: int = 1) -> None:
         sampler = lights.texel_sampler(fm.AtlasCache(folder))
         settings = {}
         if (folder / "ShaderSettings.xml").exists():
-            settings = parse_settings((folder / "ShaderSettings.xml").read_bytes().decode("latin-1"))
+            settings = parse_settings((folder / "ShaderSettings.xml").read_bytes().decode("latin-1"), linear=False)
         subs = []
         for section in car.body:
             for sub in section.subsections:

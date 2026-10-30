@@ -51,9 +51,10 @@ STATES = {
 }
 
 
-# The blend of passes that set none (glass, window, lights_glass, lights_gls_*, the lamps): the
-# game's transparent bucket, not in the effect. "alpha" (SRCALPHA, INVSRCALPHA) is the
-# assumption; "add" (SRCALPHA, ONE) is the alternative the R8 race car's thumbnail suggests.
+# The blend of passes that set none (glass, window, lights_glass, lights_gls_*, the lamps): not in
+# the effect. "alpha" (SRCALPHA, INVSRCALPHA) is what the game draws with (forza-lenses-re.md
+# section 7: the state the lenses' Cleanup passes restore); "add" (SRCALPHA, ONE) is kept to
+# show what an additive bucket would do.
 BUCKET_BLENDS = {"alpha": (6, 7), "add": (6, 1)}
 
 
@@ -266,7 +267,7 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("cars", nargs="+")
     r.add_argument("--camera", default="rear34", choices=sorted(CAMERAS))
     r.add_argument("--state", default="off", choices=sorted(STATES))
-    r.add_argument("--reflection", type=float, default=1.0, help="reflectionScaler (a game constant)")
+    r.add_argument("--reflection", type=float, default=1.0, help="reflectionScaler (1 in the game)")
     r.add_argument("--size", default="768,432")
     r.add_argument("--out", type=Path, default=fl.DATA / "cluster")
     c = sub.add_parser("compare")
@@ -274,7 +275,15 @@ def main(argv: list[str] | None = None) -> None:
     c.add_argument("--reflection", type=float, default=1.0)
     c.add_argument("--bucket", default="alpha", choices=sorted(BUCKET_BLENDS))
     c.add_argument("--out", type=Path, default=fl.DATA / "cluster")
+    for p in (r, c):
+        p.add_argument(
+            "--authored",
+            action="store_true",
+            help="colour parameters as written (round 3), not as the game uploads them",
+        )
     args = ap.parse_args(argv)
+    if args.authored:
+        fl.srgb_to_linear = lambda c: c
     fl._idle()
     args.out.mkdir(parents=True, exist_ok=True)
     if args.cmd == "render":

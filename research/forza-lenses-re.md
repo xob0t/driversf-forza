@@ -1,6 +1,6 @@
 # What Forza draws for lamp lenses, covers and glass (reverse engineering, round 3)
 
-Updated: 2026-10-30
+Updated: 2026-10-30 (round 3b: section 7)
 
 Round 1 (`lights-re.md`) gave the DSF side: a lamp is one opaque Lights texel, its RGB the unlit
 look and its alpha the glow; glass over a lamp keeps 25% of the glow and can't tint it. This
@@ -8,9 +8,18 @@ note gives the target: what Forza Horizon 1 and Forza Motorsport 4 compute for e
 lens, lamp-glass and glass technique the roster uses, read out of the race shaders on the
 discs, and what that means for the DSF texels. Nothing here changes the converter.
 
-Confidence levels: `confirmed-static` (read in the shader microcode or the data, and checked
-by running that microcode), `confirmed-runtime` (seen in a running Forza; nothing here is, as
-no emulator is on this PC), `inferred` (follows from the above, not checked).
+Confidence levels: `confirmed-static` (read in the shader microcode, the data or the game's
+executable, and checked by running that microcode where it is shader code), `confirmed-runtime`
+(seen in a running Forza; nothing here is, as no emulator is on this PC), `inferred` (follows
+from the above, not checked).
+
+**Round 3b (section 7, issue #370), read out of `default.xex`:** the techniques whose passes
+set no blend draw with **`SRCALPHA, INVSRCALPHA`** (the state the lens techniques' `Cleanup`
+passes restore, and the only blend the game's code sets itself); **`reflectionScaler` is 1** in
+both games (0 only in one special lens draw); and the game converts the RGB of **every float4
+material parameter** (`GlassColor`, `BrakeColor`, `PaintColor`...) **from sRGB to linear** on
+the CPU before upload, so the values the shaders see are not the XML's. Sections 1 to 6 are
+updated for these.
 
 Tools added with this note (`tools/re/`; inputs extracted to `out/re3` by
 `forza_lens.py extract`, which reads the FH1 disc and FM4 disc 1):
@@ -24,7 +33,13 @@ Tools added with this note (`tools/re/`; inputs extracted to `out/re3` by
   emulator (`verify`), and surveys the roster (`survey`).
 - `forza_cluster.py`: renders a car's lamp clusters with Forza's own shaders, every lamp
   pixel shaded by the emulator (`render`), and compares head lamps with Forza's thumbnails
-  (`compare`).
+  (`compare`; `--authored` uses the XML's colours as written, round 3's inputs).
+- `xex.py` (round 3b): reads FH1's and FM4's `default.xex` (XEX2, AES with the retail key,
+  basic compression) and writes the loaded image (`out/re3b/<game>/image.bin`).
+- `ppc.py` (round 3b): PowerPC helpers over that image: functions from `.pdata`, `lis`-pair
+  cross-references, callers, a capstone disassembly annotated with strings and floats.
+- `forza_blend.py` (round 3b): `evidence` re-derives section 7's findings from both
+  executables; `predict` recomputes section 5's numbers from the roster survey.
 
 ## 1. Where the shaders are, and how they are bound (confirmed-static)
 
@@ -58,10 +73,12 @@ and glass techniques split in two:
 | everything else: `glass`, `window`, `red_glass`, `black_glass`, `lights_glass`, `lights_gls_*`, every lamp, `textured_reflector`, `reflector` | one pass, **no render states at all** |
 
 So the lenses carry their own blend, and every other lamp and glass technique takes the
-blend of whatever draw bucket the game puts it in, which is not in the effect (Open, item 1).
-The `Cleanup` pass is shared by 30 FM4 and most FH1 paint techniques (a full paint shader
-writing `alphaDirtAmount` as alpha); it is taken here as a pass the race view does not
-composite for the lenses (inferred: for `body` it is an opaque pass that would replace p0).
+blend that is current when it draws: `SRCALPHA, INVSRCALPHA` (section 7, confirmed-static).
+The `Cleanup` pass (on the lenses and on 30 FM4 and most FH1 paint techniques) is never drawn:
+the game finds it by name when it loads the effect and applies its render states when the
+car's material switches away from that technique, to put back the state the next draws expect
+(section 7, confirmed-static). For the lenses that is `ALPHABLENDENABLE 1, SRCALPHA,
+INVSRCALPHA`; for the paint techniques, state `0xF0` back to 0.
 
 **Texture fetch (confirmed-static).** The Lights and nodamage atlases' fetch constants
 (`.xds` header +0x1C, dword 0 `0x840000FE`) set `sign_x/y/z = 3` (gamma) and `sign_w = 0`:
@@ -82,10 +99,13 @@ for the target format).
 
 Notation: linear light; `hl = sat(0.5 n.l + 0.5)^2` (a wrapped diffuse); `F = F0 + (1 - F0)
 (1 - n.v)^5`, `F0 = ((FresnelIndex - 1) / (FresnelIndex + 1))^2` (Schlick);
-`Fr = sat(FresnelScalar x reflectionScaler x F)`; `S` the sun colour (`shDirectionalColour`),
-`H` the SH ambient interpolant at the normal, `E^2` the environment; `A`, `L` the texel.
-Output `sqrt(c)` with alpha `a`. A pixel in sun (shadow 1), no specular highlight
-(`SpecularAmount`'s Phong term, small and view-dependent, left out), no fog.
+`Fr = sat(FresnelScalar x reflectionScaler x F)`, `reflectionScaler` = 1 (section 7); `S` the
+sun colour (`shDirectionalColour`), `H` the SH ambient interpolant at the normal, `E^2` the
+environment; `A`, `L` the texel. Output `sqrt(c)` with alpha `a`. A pixel in sun (shadow 1),
+no specular highlight (`SpecularAmount`'s Phong term, small and view-dependent, left out), no
+fog. Every material parameter below is the value **as uploaded**: for float4 parameters (written
+`r g b a` in ShaderSettings) that is `srgb_to_linear` of the written RGB with the alpha as
+written (section 7); scalars (`value=`) as written.
 
 | Family (FH1) | Colour `c` | Alpha `a` |
 | --- | --- | --- |
@@ -102,9 +122,16 @@ Output `sqrt(c)` with alpha `a`. A pixel in sun (shadow 1), no specular highligh
 `head_light` and `head_light2` have no SH interpolant (their VS doesn't write it), so their
 `AmbientColor H` term is 0.
 
-**Glow (FH1)**, added to `c`: `colour x state x A`, the texel alpha as the glow mask:
+**Glow (FH1)**, added to `c`: `colour x state x A`, the texel alpha as the glow mask. The
+colours below are as written in the shared ShaderSettings; the shader gets them linearised
+(section 7): `BrakeColor` 2 -> 4.95, 3.6 -> 19.7, 1.5 -> 2.54, 0.7 -> 0.45, 0.6 -> 0.32,
+`TailLightColor` 0.4 -> 0.13, 0.5 -> 0.21, `IndicatorLightColor` (1, 0.28, 0) -> (1, 0.064, 0),
+`HidHeadlightColor` (1, 0.8, 0.8) -> (1, 0.60, 0.60), `OldHeadlightColor` (1.4, 0.9, 0.6) ->
+(2.16, 0.79, 0.32), `XenonHeadlightColor` (1, 1, 1.1) -> (1, 1, 1.24), `SideLightsOrangeColor`
+(1, 0.66, 0) -> (1, 0.39, 0); 0 and 1 are unchanged. A brake lamp's glow is therefore about
+2.5 times what round 3 read, and the coloured lamps more saturated.
 
-| Technique | Colour (shared default) | State constant |
+| Technique | Colour (shared default, as written) | State constant |
 | --- | --- | --- |
 | `tail_light`, `_lod0` | `BrakeColor` (2, 0, 0) | `dynamicLightsAmount.x` (brake) |
 | `tail_light_on` | `BrakeColor` (3.6, 0, 0) | brake |
@@ -156,8 +183,8 @@ write mask still feed the next op's `ps`; `cexec_pc` is a bool-constant branch) 
 - *Does a lens tint the light behind it?* Yes, all of it: a `detail_glass_*` lens multiplies
   everything behind it (the reflector, the bulb, the lamp's glow, a trim) by `L + GlassColor`
   (red: its red remap), then adds a faint environment reflection. It has no lit colour of its
-  own, its texel alpha is never read, and it can't glow. With the clear lens's GlassColor 0.2,
-  a white clear-lens texel passes 1.2: it brightens what is behind.
+  own, its texel alpha is never read, and it can't glow. The clear lens's shared GlassColor 0.2
+  is uploaded as 0.033, so a white clear-lens texel passes 1.03 (round 3 read 1.2).
 - *Covers.* `lights_glass` is a lit, texel-coloured surface (GlassColor x PaintScale, default
   0.5 x 1) with the texel alpha as opacity; `lights_gls_*` is opaque lamp glass (alpha
   GlassMaxOpacity, 1 unless the car sets less) that glows by its own texel alpha;
@@ -222,10 +249,13 @@ the semicolon):
 | `head_light` CubeScale | 15 | 0.5 / 1.5 / 5 |
 
 The lens filters this gives over the roster's lens texels (linear, per channel, p10 / p50 /
-p90): clear 0.30 / 0.59 / 1.01 (11% of the texels pass more than 1, so they brighten what is
-behind), amber red channel 0.17 / 0.51 / 1.07, green 0.01 / 0.10 / 0.55, blue near 0; red lens
-red channel 0.15 / 0.44 / 0.91, green and blue under 0.02. So Forza's clear lenses typically
-halve the light behind them, a red lens passes 15% to 90% of the red and almost nothing else.
+p90; `forza_blend.py predict`, GlassColor as the game uploads it): clear red 0.14 / 0.41 / 0.81,
+green 0.10 / 0.40 / 0.79 (5% of the texels pass more than 1); amber red 0.17 / 0.50 / 0.99,
+green 0.01 / 0.09 / 0.35, blue near 0; red lens red channel 0.15 / 0.44 / 0.91, green and blue
+under 0.02 (DarkValues and LightValues are scalars, not converted). So Forza's clear lenses
+pass about 40% of the light behind them, a red lens 15% to 90% of the red and almost nothing
+else. (Round 3, with GlassColor as written: clear 0.30 / 0.59 / 1.01 with 11% over 1, amber
+red 0.17 / 0.51 / 1.07, green 0.01 / 0.10 / 0.55.)
 
 ## 4. Ground truth and validation
 
@@ -286,9 +316,14 @@ head lamps sit behind two plain `glass` layers (the lamp unit's and the `lexan` 
 the inferred alpha blend and the shared GlassColor.w 0.3, the two layers veil the lamp to a
 dark plate; Forza's thumbnail shows the lamp clearly. With an additive bucket (`--bucket add`,
 `SRCALPHA, ONE`) the render's contrast moves toward the thumbnail's (0.25 to 0.38, Forza 0.44;
-the S60, also under plain glass, 0.28 to 0.35, Forza 0.61). That is weak evidence that the
-game's transparent bucket doesn't darken what is behind as an alpha blend would, or that
-`reflectionScaler` is low; it stays open (section 6).
+the S60, also under plain glass, 0.28 to 0.35, Forza 0.61). Round 3 read that as weak evidence
+for an additive bucket. Section 7 rules that out: the blend is `SRCALPHA, INVSRCALPHA` and
+`reflectionScaler` 1. What closes part of the gap instead is the colour upload: with the
+glass and lamp colours linearised as the game uploads them (the shared plain glass tint 0.1
+becomes 0.01, so the veil is a dark grey rather than a milky one), the alpha model's contrast is
+R8 0.32 (was 0.25), S60 0.34 (0.29), F50 0.27 (0.23), against Forza's 0.44 / 0.61 / 0.45
+(`forza_cluster.py compare` with and without `--authored`; out/re3b/cl-game, cl-authored). The
+rest is the studio environment, as above.
 
 ## 5. Mapping to DSF
 
@@ -301,12 +336,12 @@ from what DSF can't do:
 | --- | --- | --- | --- |
 | opaque lamp, FH1 (`tail_light`, `taillight2S`, `indicator_*`, `hidhead`...) | Lights texel | `t = L x K_t / K_dsf`, `K_t = PaintScale S hl + AmbientColor H + CubeScale E^2` with the car's values; `a` from the texel alpha `A`, scaled from Forza's `colour x state` to DSF's level for the lamp's type | the `CubeScale E^2` term (0.9 to 1 by default, up to 5 on car settings) is a view-dependent sky reflection that DSF's Lights reflection (`tex.g` mask x cube map) only approximates; glow hue is DSF's lamp colour, Forza's is the technique's (the same hue for the standard colours) |
 | opaque lamp, FM4 | Lights texel | `t` as above with FM4's flat ambient; `a` from the **texel colour**: `BrakeColor x L` (its red channel) on `tail_light*`, `ReverseLightColor x L` on `reverse_light*`; none on `head_light` | none beyond the row above; an alpha-based glow mask is a flat plate on FM4 tails (their alpha is 255 on 92% of texels) |
-| lens `detail_glass_*` over a lamp | the lens keeps its triangles, its texels baked from what is behind it | `t' = t_behind x filter`, `filter = L + GlassColor` (clear, amber) or `(D + (Lv - D) L.r, L.g, L.b)` (red), clipped at 1; `a' = a_behind x filter` in the lamp's colour channel (a red lamp under a red lens: x 0.15 / 0.44 / 0.91 over the roster) | the lens's own reflection (`E^2 x 0.1` straight on, up to `x 0.4` grazing) is left to DSF's Lights reflection; a lamp whose colour differs from the filtered glow (a white reverse lamp behind red glass) glows in its own colour unless the lamp plan types it by the drawn colour (`lights.seen_sampler`); 11% of clear-lens texels would brighten (filter over 1) |
+| lens `detail_glass_*` over a lamp | the lens keeps its triangles, its texels baked from what is behind it | `t' = t_behind x filter`, `filter = L + GlassColor` (clear, amber) or `(D + (Lv - D) L.r, L.g, L.b)` (red), clipped at 1; `a' = a_behind x filter` in the lamp's colour channel (a red lamp under a red lens: x 0.15 / 0.44 / 0.91 over the roster) | the lens's own reflection (`E^2 x 0.1` straight on, up to `x 0.4` grazing) is left to DSF's Lights reflection; a lamp whose colour differs from the filtered glow (a white reverse lamp behind red glass) glows in its own colour unless the lamp plan types it by the drawn colour (`lights.seen_sampler`); 5% of clear-lens texels brighten (filter over 1; 11% with GlassColor as written) |
 | lens over a non-lamp surface (trim, paint, housing) | the same bake | `t' = (that surface's colour) x filter` | none beyond the above: this is the red the Commodore VE's gloss trim takes under its tail glass in Forza (#340) |
 | lamp glass `lights_gls_<lamp>` | Lights texel, its own glow | `t = L x K_gls / K_dsf`, `K_gls = GlassColor (PaintScale S hl (1 - Fr) + AmbientColor H) + Fr E^2`; `a` from `A x colour x state`; with GlassMaxOpacity under 1, `(1 - GlassMaxOpacity)` of what is behind blended in the sqrt space | small; the Fresnel share `Fr` is 0.06 straight on |
 | `lights_gls_noemit` | Lights texel, no glow | as above without glow; opaque at GlassMaxOpacity 1 (26 of its 39 cars) | none: today it is baked as a texel-alpha cover over the lamp |
-| cover `lights_glass` over a lamp | lamp texels baked | `sqrt(t') = alpha sqrt(c_cover) + (1 - alpha) sqrt(t_behind)`, `c_cover = L x GlassColor x PaintScale x (lit)`, `alpha = min(max(A, GlassColor.w) + FresnelScalar reflectionScaler F, GlassMaxOpacity)`; glow `a' ~ a_behind (1 - alpha)^2` | depends on the bucket (section 6): with the alpha bucket covers keep 0.7% / 3.8% / 20% (p10 / p50 / p90) of the lamp's glow over the roster, today 100%; with an additive bucket all of it |
-| plain `glass` over a lamp | (a) left out; (b) DSF window glass; (c) a veil baked into the lamp texels | (c): `sqrt(t') = alpha sqrt(GlassColor (0.4 + 0.6 hl)) + (1 - alpha) sqrt(t_behind)`, `alpha = GlassColor.w + FresnelScalar reflectionScaler F` (0.3 to 0.49 with the shared values) | with the alpha bucket Forza keeps `(1 - alpha)^2` = 0.26 to 0.49 of a lamp's glow under one plain glass layer, which is DSF window glass's 0.25 at `reflectionScaler` 1: (b) matches it, (a) is 2 to 4 times brighter; with an additive bucket (a) is right |
+| cover `lights_glass` over a lamp | lamp texels baked (**decided**: bake the fraction; neither leave the cover out nor keep it as DSF glass) | `sqrt(t') = alpha sqrt(c_cover) + (1 - alpha) sqrt(t_behind)`, `c_cover = L x GlassColor x PaintScale x (lit)` (GlassColor as uploaded: the shared 0.5 is 0.21), `alpha = min(max(A, GlassColor.w) + FresnelScalar F, GlassMaxOpacity)` (`reflectionScaler` 1); glow `a' = a_behind (1 - alpha)^2` | the blend is `SRCALPHA, INVSRCALPHA` (section 7): covers keep 0.7% / 3.8% / 20% (p10 / p50 / p90) of the lamp's glow over the roster's 96 cover cars, today 100%; DSF window glass (25%, untinted) would be 1.3 to 36 times too bright and can't follow the texel alpha |
+| plain `glass` over a lamp | **decided**: (b) DSF window glass; (c) a veil baked into the lamp texels where the glass can't stay; not (a) left out | (c): `sqrt(t') = alpha sqrt(GlassColor (0.4 + 0.6 hl)) + (1 - alpha) sqrt(t_behind)`, `alpha = GlassColor.w + FresnelScalar F` (`reflectionScaler` 1; 0.49 straight on with the shared values: w 0.3, FresnelIndex 3.55, FresnelScalar 0.6; more toward grazing) | Forza keeps `(1 - alpha)^2` = 0.26 of a lamp's glow under one plain glass layer straight on (less at grazing), DSF window glass 0.25: (b) matches within 1%; (a) is 4 times too bright. The veil colour is GlassColor as uploaded (shared 0.1 -> 0.01, a dark grey), which DSF glass, untinted, matches too |
 | `reflector` | Lights texel | `t = L x K_r / K_dsf`, `K_r = GlassColor (PaintScale S hl + AmbientColor H) + CubeScale E^2` (0.75, 0.5 shared) | opaque unless the car sets GlassColor.w under 1 (none of the 5 cars that set it) |
 | `black_glass` | gloss trim | black with the environment at `Fr` | none |
 | `red_glass` (2 cars) | DSF window glass, or a veil as plain glass | an unlit red `GlassColor` (0.85, 0, 0) at opacity 0.6 or more | DSF glass can't be red |
@@ -317,11 +352,15 @@ grey reflector (170), a red lamp (200, 40, 40) or a white bulb (235)):
 
 | Technique (today's rule) | grey reflector | red lamp | white bulb | glow |
 | --- | --- | --- | --- | --- |
-| `detail_glass_clear` (`a x lens + (1 - a) x behind`) | 14.9 / 21.8 | 38.8 / 70.8 | 8.0 / 30.7 | Forza passes x 0.31 / 0.59 / 1.01 (p10 / 50 / 90) of a red lamp's light |
+| `detail_glass_clear` (`a x lens + (1 - a) x behind`) | 14.9 / 21.8 | 38.8 / 70.8 | 8.0 / 30.7 | Forza passes x 0.14 / 0.41 / 0.81 (p10 / 50 / 90) of a red lamp's light (0.31 / 0.59 / 1.01 with GlassColor as written) |
 | `detail_glass_red` (same) | 26.0 / 62.0 | 19.4 / 31.1 | 30.7 / 83.7 | x 0.15 / 0.44 / 0.91 |
-| `detail_glass_amber` (same) | 27.8 / 52.9 | 22.1 / 41.6 | 23.3 / 69.0 | x 0.17 / 0.51 / 1.07 |
-| `lights_glass` (blend at `min(max(A, w), cap)` in byte space, the texel's own colour) | 11.0 / 20.9 | 11.2 / 21.3 | 11.1 / 21.5 | today 1; Forza (alpha bucket) 0.007 / 0.038 / 0.197 |
-| plain `glass` (left out) | 17.6 | 40.3 | 25.9 | today 1; Forza (alpha bucket, shared values) 0.26 |
+| `detail_glass_amber` (same) | 27.8 / 52.9 | 22.1 / 41.6 | 23.3 / 69.0 | x 0.17 / 0.50 / 0.99 |
+| `lights_glass` (blend at `min(max(A, w), cap)` in byte space, the texel's own colour) | 11.0 / 20.9 | 11.2 / 21.3 | 11.1 / 21.5 | today 1; Forza 0.007 / 0.038 / 0.197 |
+| plain `glass` (left out) | 17.6 | 40.3 | 25.9 | today 1; Forza (shared values, straight on) 0.26 |
+
+The delta E columns use the colour parameters as written (round 3); with the game's linearised
+GlassColor the clear and amber lens results are darker still, so the errors against today's
+bakes grow. The glow column is recomputed with the uploaded values (`forza_blend.py predict`).
 
 The lens errors are large because today's bake mixes the lens texel's own colour in at its
 alpha: a red lens texel (155, 1, 2) at alpha 190 over a white bulb comes out a pale pink,
@@ -341,8 +380,9 @@ For the lamp rewrite (#300, #340) and the reference (#313). "Confirm": the maths
   multiplies, `t' = t_behind x filter` in linear light, and never reads its alpha or
   `GlassMaxOpacity`. The baked glow follows the lamp behind times the filter, not the lens
   texel's `lamp_score`.
-- **Replace** `lens_filter`: for clear and amber lenses the filter is `L + GlassColor` (shared
-  0.2 grey on clear, 0 on amber, car overrides on 84 and 34 cars), which `lens_filter` leaves
+- **Replace** `lens_filter`: for clear and amber lenses the filter is `L + GlassColor`, with
+  GlassColor's RGB as the game uploads it, `srgb_to_linear` of the written value (shared 0.2
+  grey on clear, i.e. 0.033; 0 on amber; car overrides on 84 and 34 cars), which `lens_filter` leaves
   out, and it may pass more than 1. Its red remap `sqrt(D + (L - D) red^2)` on bytes is the
   shader's `D + (L - D) PWL(red)` in the sqrt space with the PWL curve taken as a square: it
   **confirms** above byte 64 (within 2 codes) and reads darker below (Forza's byte 16 passes
@@ -354,9 +394,10 @@ For the lamp rewrite (#300, #340) and the reference (#313). "Confirm": the maths
 - **Replace** `COVERS = ("lights_glass", "lights_gls_noemit")` (and
   `dsf_materials.TEXTURED_COVERS`): `lights_gls_noemit` is lamp glass, opacity
   `GlassMaxOpacity`, no glow; only `lights_glass` is a texel-alpha cover.
-- **Replace (pending the bucket)** the covers' "whole glow of the lamp behind" (#164): under
-  the alpha bucket a `lights_glass` cover passes `(1 - alpha)^2` of it, a median 4% over the
-  roster.
+- **Replace** the covers' "whole glow of the lamp behind" (#164): a `lights_glass` cover passes
+  `(1 - alpha)^2` of it (blend confirmed, section 7), a median 4% over the roster; bake that
+  fraction into the lamp texels' glow, and the cover's veil (`L x GlassColor x PaintScale`, the
+  GlassColor linearised) into their colour.
 - **Confirm** `GLASS_DEFAULTS` (`lights_glass` (0, 1), `lights_gls_` (1, 1): Normal.xml), lamp
   glass baked at its cap with its own glow (#164), and that covers have no glow of their own
   (`emits`).
@@ -382,9 +423,14 @@ For the lamp rewrite (#300, #340) and the reference (#313). "Confirm": the maths
   `lamp_score`): FM4's lamp shaders glow by `BrakeColor x L` / `ReverseLightColor x L`, the
   texel colour, and FM4's `tail_light` alpha is 255 on 92% of the texels. **Confirm for FH1**:
   every FH1 lamp glows by its texel alpha.
-- **Pending the bucket**, `Texturing.clear_cover` (plain `glass` over a lamp left out, #160,
-  #247): under the alpha bucket one plain glass layer keeps 26% to 49% of the lamp, about DSF
-  window glass (25%), plus a GlassColor veil; under an additive bucket leaving it out is right.
+- **Replace** `Texturing.clear_cover` (plain `glass` over a lamp left out, #160, #247): one plain
+  glass layer keeps 26% of the lamp straight on (blend and `reflectionScaler` confirmed,
+  section 7), DSF window glass 25%, so keep the glass as DSF window glass (or, where it can't
+  stay, bake the veil); leaving it out draws the lamp 4 times too bright. The veil's colour
+  (shared GlassColor 0.1, uploaded 0.01) is a dark grey, which untinted DSF glass also is.
+- **Replace** the lamp glow levels' Forza side: the shaders get the lamp colours linearised
+  (`BrakeColor` 2 is 4.95, section 2), so a Forza brake lamp is 2.5 times brighter relative to
+  its unlit look than the XML suggests, and indicators and old-style heads more saturated.
 - The unlit look of the lamp texels: Forza's lamp techniques differ in brightness by their
   `PaintScale`, `CubeScale`, `AmbientColor` (defaults: `tail_light`, `reverse_light`,
   `head_light`, `textured_reflector` 0.3 / 0.9 / 0.1; `hidhead`, `oldhead`, `indicator_*`,
@@ -401,18 +447,122 @@ picture at `PaintScale x GlassColor` over the lamp, opacity `max(alpha, GlassCol
 silver; `tools/re/forza_lens.spec` holds the decoded passes and `forza_cluster.py` shows them
 in render_compare's renderer.
 
+## 7. The game's side: blend, `reflectionScaler`, colour upload (round 3b, confirmed-static)
+
+Read in FH1's and FM4's `default.xex` (`xex.py extract`: XEX2, AES-128 with the retail key,
+"basic" compression, so no LZX; the image loads at 0x82000000), disassembled with `ppc.py`
+(capstone; the Xenon's VMX128 instructions decoded by hand from xenia's opcode masks: `lvx128`
+0x100000C3, `stvx128` 0x100001C3, `vmulfp128` op 5 xo 144). `forza_blend.py evidence` prints
+every address and constant below for both games.
+
+**Render states.** D3D keeps a table of `{getter, setter, default}` per render state, indexed
+by state x 3 (FH1 0x8328ce00, FM4 0x82d74820), and the device copies the setters to
+`device + 0x40 + state`. The blend setters write the device's shadow of `RB_BLENDCONTROL`
+(`device + 0x2ff8`; the hardware copies at `+0x2938` and `+0x2958..0x2960` for the four render
+targets) and confirm the ids `fxl.py` uses:
+
+| State | Name | FH1 setter | Writes | Default |
+| --- | --- | --- | --- | --- |
+| `0x3C` | ALPHABLENDENABLE | 0x8244ccd8 | `+0x2ffc` bit 31 (off: the hardware gets ONE, ZERO) | 0 |
+| `0x40` | SEPARATEALPHABLENDENABLE | 0x82456bb0 | `+0x2ffc` bit 30 (off: the alpha fields copy the colour ones) | 0 |
+| `0x48` / `0x4C` / `0x50` | SRCBLEND / DESTBLEND / BLENDOP | 0x824562c8 / 0x82456348 / 0x823ee5e0 | bits 0-4 / 8-12 / 5-7 | ONE / ZERO / ADD |
+| `0x54` / `0x58` / `0x5C` | the alpha ones | 0x823ff428 / 0x823ff3c8 / 0x823e63c8 | bits 16-20 / 24-28 / 21-23 | ONE / ZERO / ADD |
+| `0x134` | HIGHPRECISIONBLENDENABLE | 0x8244cd80 | `RB_COLOR_INFO`'s format (2_10_10_10 or its 16-bit variant) | 0 |
+
+**Who sets the blend.** The game's own code calls SRCBLEND and DESTBLEND directly only with
+`SRCALPHA, INVSRCALPHA` (six and seven calls in each game), plus constant-alpha fades
+(`CONSTANTALPHA, INVCONSTANTALPHA`: the ghost car, FH1 0x82d83350, which saves and restores the
+blend around it), a blend-factor pass, one premultiplied `ONE, INVSRCALPHA` and FH1's one
+`ONE, ONE` with BLENDOP MIN (not a car pass). `ONE, ONE` additive exists only in the effect's
+lens p1 passes. Under the car passes (FH1 0x82ddb3a0 and below: the per-object draw 0x82da8cb0,
+the technique substitution for the shadow, ghost and drop-shadow passes 0x82da1758, the draw
+0x82da1148) the code sets only ALPHABLENDENABLE and HIGHPRECISIONBLENDENABLE: draw buckets
+0x2a to 0x3e (and a few others) turn blending on (0x82daa960 sets the object flag
+`+0x2e4 & 0x80`, which 0x82da8cb0 turns into ALPHABLENDENABLE 1), pass types 1, 2, 3, 5 and 8
+turn it off. The factors are whatever is current.
+
+**The `Cleanup` passes restore it.** When the game loads a car effect it looks up, for every
+technique, a pass named `"Cleanup"` and stores its index (FH1 0x82c5c078, the string at
+0x82c5c300; FM4 0x8286a688). When the car's material switches technique (FH1 0x82d9cdc8, which
+reads that index for the previous technique, kept at `+0x4d4`), it applies the previous
+technique's `Cleanup` pass's render states (0x8244c590 runs a pass's state block through
+`device + 0x40 + state`) and commits them before setting up the next technique; the pass is
+never drawn. A lens's `Cleanup` sets `ALPHABLENDENABLE 1, SRCALPHA, INVSRCALPHA`: after a lens's
+multiply (p0) and add (p1), the game puts back alpha blending for what follows. A paint
+technique's sets state `0xF0` back to 0 after p0's 4.
+
+**So** `glass`, `window`, `red_glass`, `lights_glass`, `lights_gls_*` and the lamps, which set
+no blend, draw with **`SRCALPHA, INVSRCALPHA`** where their bucket enables blending.
+Confirmed-static: it is the only blend the car code establishes, and the state every lens
+leaves behind. Inferred: that it is also current before the first lens of a frame (the frame
+level was not traced; the only other blends the game sets directly are the special ones
+above, and an opaque `ONE, ZERO` would draw glass solid), and that plain glass and
+`lights_glass` are in a blending bucket (they write an opacity; in a non-blending bucket the
+car's windows would be solid). Additive is ruled out.
+
+**`reflectionScaler`** is pixel shader constant `c52.x` in every car technique of both games, a
+register the game sets itself (FH1's executable doesn't even name it). Its only writes are in
+the car draw (FH1 0x82da1148, FM4 0x828fa8a8), into the device's shadow of `c52`
+(`device + 0x1780 + 52 x 16 = +0x1ac0`, dirty bit 50 of `+8`; the same layout puts the vertex
+constant written there at `c124`). For one special draw of a `detail_glass_*` lens in the
+blending buckets (object flag `+0x2e7 & 4`; depth writes on, `c55.x` set) it loads
+`c52 = (0, 0, 0, 0)`, and after it restores **`c52 = (1, 1, 1, 1)`** (FH1 0x82001120, FM4
+0x820017e0), unconditionally. So **`reflectionScaler` = 1 in both games, in every view and
+mode, for every material and car**, and 0 only for that one lens draw (its purpose isn't
+decoded; it doesn't involve plain glass, covers or paint). FH1's `HoodReflectionAmount`
+(`GlobalCarAttribs.xml` `ReflectionSettings`, default 0.3 at 0x832b3968) is read only from XML
+version 7 up (both games ship version 6), and no reader of the value was found. Confidence:
+high. The restore is the renderer's stated invariant; whether FXL could commit the effect's
+default 0 into `c52` before the first such draw of a session was not traced.
+
+**Colour upload.** Before a float4 material parameter goes to the shader, the game converts its
+RGB with the **sRGB transfer function**: `c / 12.92` up to 0.04045, else
+`((c + 0.055) / 1.055)^2.4`; alpha untouched, no clamp (no `vmaxfp` or `vminfp` in the routine,
+so 2 becomes 4.95). The routine is FH1 0x8244d220, FM4 0x82346b90 (constants 0.055, 1/1.055,
+2.4, 1/12.92, 0.04045 and log2/exp2 polynomials). It runs on:
+
+- every float4 ShaderSettings parameter, in the loader that also turns `D3DRS_*` entries into
+  render states (FH1 0x82c44740: type float, class vector; FM4 0x8285cfd0): `GlassColor`,
+  `BrakeColor`, `AmbientColor`, `SpecularColor`, `TintColor`, the lamp colours... Scalars
+  (`value=`: `PaintScale`, `DarkValues`, `GlassMaxOpacity`...) go up as written;
+- `PaintColor` and the other car colours (FH1 0x82dae960, called from 0x82daec98; FM4
+  0x82905c80): the car's colour, sRGB to linear, times `(s, s, s, 1)` with `s` = 1 there. Not a
+  square: the exact piecewise curve.
+
+Both games skip it only when the developer switch `lineargammaout` is set (FH1 byte 0x83444ba0,
+FM4 0x82dfda5c, 0 in the retail image; set from the command line, next to `rebootoncrash` and
+`e3demo`). For the paint (`paint-re.md`): `PaintColor` reaches the shader as
+`srgb_to_linear(colour)`, alpha as is.
+
+**Predictions** (`forza_blend.py predict` over round 3's survey, 566 cars):
+
+| | Round 3 | Round 3b |
+| --- | --- | --- |
+| cover glow kept, p10 / 50 / 90 (96 cars, 31,870 texels) | 0.007 / 0.038 / 0.197 if the bucket is alpha | the same, confirmed (opacities are scalars or alphas, not converted) |
+| plain glass keeps, one layer, straight on (468 cars) | 0.26 to 0.49 if alpha | 0.26 (shared values; less toward grazing) |
+| clear lens filter, red, p10 / 50 / 90 | 0.31 / 0.59 / 1.01, 11% over 1 | 0.14 / 0.41 / 0.81, 5% over 1 |
+| amber lens filter, red / green p50 | 0.51 / 0.10 | 0.50 / 0.09 |
+| brake glow colour (`tail_light`) | 2 | 4.95 |
+| head lamp contrast against Forza's thumbnail (R8 / S60 / F50) | 0.25 / 0.29 / 0.23 | 0.32 / 0.34 / 0.27 (Forza 0.44 / 0.61 / 0.45) |
+
+**DSF mapping (section 5).** Covers: bake the fraction `(1 - alpha)^2` of the lamp's glow (a
+median 4%) and the cover's veil into the lamp texels; neither leave them out (100%) nor keep
+them as DSF glass (25%). Plain glass over a lamp: keep it as DSF window glass (25% against
+Forza's 26%); leaving it out is 4 times too bright. Every colour parameter the converter reads
+from ShaderSettings must be linearised as above before it enters these formulas.
+
 ## Open
 
-1. **The blend of the passes that set none** (plain glass, `lights_glass`, `lights_gls_*`,
-   the lamps): the game's transparent bucket, not in the effect. Taken as `SRCALPHA,
-   INVSRCALPHA` (the shaders write an opacity as alpha); the R8 race car's thumbnail leans
-   toward a blend that doesn't darken (section 4). It decides the cover and plain-glass rows
-   of section 5. Settling it needs Forza running (Xenia, a lamp cluster close up by day, with
-   and without the glass) or the draw code in `default.xex`.
-2. **`reflectionScaler`**, a game constant (shader default 0), scales the Fresnel term of every
-   glass opacity and colour. Not found in the time-of-day data. The renders here use 1.
-3. **The `Cleanup` pass** of the lenses (and of the paint techniques) is taken as not drawn in
-   the race view (inferred).
+1. **Settled by section 7**: the blend of the passes that set none (`SRCALPHA, INVSRCALPHA`),
+   `reflectionScaler` (1), the `Cleanup` passes (never drawn; a state restore). Left from them:
+   the frame-level blend before the first lens of a frame, and which bucket each technique is
+   assigned (both inferred, section 7); the special lens draw with `c52` 0 (FH1 0x82da1148, FM4
+   0x828fa8a8) is not decoded.
+2. **Round 3's renders and delta E tables** used the colour parameters as written;
+   `forza_lens.py` and `forza_cluster.py` now linearise them like the game (`--authored` for
+   the old inputs). The delta E columns of section 5 are not recomputed.
+3. **The car colours' source**: `PaintColor` is linearised at upload; whether the colour
+   stored for the car (from the database) was already transformed on load is not traced.
 4. **No tail lamp ground truth** on the discs: the thumbnails show the front only. A
    confirmed-runtime check of the F50's and the Commodore VE's tails needs Forza running.
 5. **Unlit-look calibration**: FH1's noon sun (0.74, 0.64, 0.42 with `SunColorMult`), hemisphere
