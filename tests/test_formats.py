@@ -65,6 +65,26 @@ def test_chnk_round_trip() -> None:
     assert again.getvalue() == raw
 
 
+def test_chnk_read_root_reads_a_file_once() -> None:
+    def archive(payload: bytes) -> bytes:
+        out = io.BytesIO()
+        chnk.write_chunk(out, None, [_leaf("SSIC", payload, 2), _leaf("BINF", b"x" * 40, 6)])
+        return out.getvalue()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "a.sp"
+        path.write_bytes(archive(b"abc"))
+        with path.open("rb") as one, path.open("rb") as two:
+            one.seek(5)
+            first = chnk.read_root(one)
+            assert one.tell() == 5 and chnk.read_root(two) is first  # the same file: read once
+            assert [e.tag for e in first.entries] == [e.tag for e in chnk.read_chunk(two, 0).entries]
+        path.write_bytes(archive(b"abcdefgh"))  # another size: read again
+        with path.open("rb") as stream:
+            assert chnk.read_root(stream) is not first
+        assert chnk.read_root(io.BytesIO(archive(b"abc"))) is not chnk.read_root(io.BytesIO(archive(b"abc")))
+
+
 # --- LZX (a minimal verbatim-block encoder) -------------------------------------------
 
 

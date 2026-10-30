@@ -111,7 +111,7 @@ def vanilla_buffer(stream):
         from dsfforza.formats import chnk
         from dsfforza.formats.vehicle_mesh import child
 
-        root = chnk.read_chunk(stream, 0)
+        root = chnk.read_root(stream)
         vb, found = None, None
         for e in root.entries:
             for _, c in chnk.walk([e]):
@@ -137,7 +137,7 @@ def vanilla_material(stream):
         from dsfforza.convert import dsf_materials as dm
         from dsfforza.formats import chnk
 
-        root = chnk.read_chunk(stream, 0)
+        root = chnk.read_root(stream)
         found = None
         for e in root.entries:
             for _, c in chnk.walk([e]):

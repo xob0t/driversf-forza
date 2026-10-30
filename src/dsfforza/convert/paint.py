@@ -241,11 +241,9 @@ def vanilla_paints(stream, entries=None) -> list[dict]:
     from dsfforza.formats import vehicles
 
     if entries is None:
-        from dsfforza.formats.chnk import read_chunk
+        from dsfforza.formats.chnk import read_root
 
-        position = stream.tell()
-        entries = read_chunk(stream, 0).entries
-        stream.seek(position)
+        entries = read_root(stream).entries
     ssic = vehicles.find(entries, "SSIC")
     records = vehicles.parse_sslp(payload(stream, vehicles.find(vehicles.find(ssic.children, "NONR").children, "SSLP")))
     out = []
