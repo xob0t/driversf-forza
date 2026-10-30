@@ -10,6 +10,7 @@ import random
 
 import numpy as np
 
+from dsfforza.convert import forza_materials as fm
 from dsfforza.convert import trim_art
 
 
@@ -134,6 +135,36 @@ def test_seen_from_outside_matches_the_original_buffers():
             trim_art.seen_from_outside(occluders, candidates) == _seen_from_outside_reference(occluders, candidates)
         ).all()
     assert len(trim_art.seen_from_outside(_scene(rng, 5), np.zeros((0, 3, 3)))) == 0
+
+
+def _rows(n: int, grey: int, high: int, low: int, alpha: int = 255) -> np.ndarray:
+    """n texel rows as triangles_texels gives them from with_contrast: RGBA, the
+    window's largest and smallest luminance."""
+    return np.tile(np.array([grey, grey, grey, alpha, high, low], dtype=np.int64), (n, 1))
+
+
+def test_a_picture_split_over_triangles_goes_whole():
+    from dsfforza.formats import carbin
+
+    # The F40's engine picture: one quad of four triangles round a centre vertex, two with
+    # detail past DETAIL_MIN_LEVEL and two just short; and a lone dark triangle apart.
+    corners = [(0, 0, 0), (1, 0, 0), (1, 0, 1), (0, 0, 1), (0.5, 0, 0.5), (3, 0, 0), (4, 0, 0), (3, 0, 1)]
+    pool = [carbin.Vertex(p, (p[0] / 4, p[2]), (0.0, 0.0), (0.0, 1.0, 0.0)) for p in corners]
+    tris = [[0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4], [5, 6, 7]]
+    rows = [_rows(40, 19, 18, 7), _rows(40, 58, 112, 40), _rows(40, 28, 35, 13), _rows(40, 41, 56, 22)]
+    rows.append(_rows(40, 20, 24, 10))
+    every = np.concatenate(rows)
+    offsets = np.arange(0, 41 * 5, 40)[:6]
+    classes = [trim_art.classify_texels("frame", r) for r in rows]
+    assert classes == [None, trim_art.DETAIL, None, trim_art.DETAIL, None]
+    assert [len(c) for c in sorted(trim_art.uv_charts(pool, tris), key=len)] == [1, 4]
+    trim_art.whole_charts(classes, pool, tris, every, offsets, "frame", 1.0, fm.NODAMAGE)
+    assert classes == [trim_art.DETAIL] * 4 + [None]
+    # A chart that is mostly flat black with one triangle of detail stays as it was.
+    flat = [_rows(40, 19, 18, 7), _rows(40, 58, 112, 40), _rows(40, 19, 18, 7), _rows(40, 19, 18, 7)]
+    classes = [trim_art.classify_texels("frame", r) for r in flat]
+    trim_art.whole_charts(classes, pool, tris[:4], np.concatenate(flat), offsets[:5], "frame", 1.0, fm.NODAMAGE)
+    assert classes == [None, trim_art.DETAIL, None, None]
 
 
 if __name__ == "__main__":

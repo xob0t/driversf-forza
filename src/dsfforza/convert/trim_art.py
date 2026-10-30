@@ -88,6 +88,7 @@ DETAIL_WINDOW = 5  # texels (odd)
 DETAIL_MIN_LEVEL = 40
 DETAIL_MIN_SPREAD = 20
 GREY_MIN_LEVEL = 48
+CHART_WELD = 1e-4  # uv_charts: corners this close in position (m) and UV0 are one
 KEEP_TRIM = frozenset({"undercarriage", "engine", "cage", "bottom", "bottom_2"})
 # black, black_glass, black_glass_breakable; mirror glass (a render target in Forza).
 KEEP_TRIM_PREFIX = ("black", "mirror")
@@ -351,6 +352,64 @@ def classify_texels(technique: str, texels, scale: float = 1.0) -> str | None:
     return None
 
 
+def uv_charts(pool, tris) -> list[list[int]]:
+    """The triangles (indices into tris) of a subsection's UV charts: joined where they
+    share a vertex, or a corner with the same position and UV0 (CHART_WELD apart at most)."""
+    import numpy as np
+
+    index = np.array(tris, dtype=np.int64).reshape(-1, 3)
+    if not len(index):
+        return []
+    used, inverse = np.unique(index, return_inverse=True)
+    corners = np.array([(*pool[i].position, *pool[i].uv0) for i in used.tolist()], dtype=np.float64)
+    _, weld = np.unique(np.round(corners / CHART_WELD).astype(np.int64), axis=0, return_inverse=True)
+    vid = weld.reshape(-1)[inverse].reshape(-1, 3)
+    parent = list(range(int(vid.max()) + 1))
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for a, b, c in vid.tolist():
+        ra = find(a)
+        for v in (b, c):
+            rv = find(v)
+            if rv != ra:
+                parent[rv] = ra
+    charts: dict[int, list[int]] = {}
+    for k, a in enumerate(vid[:, 0].tolist()):
+        charts.setdefault(find(a), []).append(k)
+    return list(charts.values())
+
+
+def whole_charts(classes, pool, tris, every, offsets, technique: str, scale: float, family) -> None:
+    """Draw a picture whole: in a UV chart (uv_charts) with triangles for the atlas (ART,
+    DETAIL) whose texels together pass classify_texels as ART or DETAIL, the chart's
+    other opaque triangles that would stay on the shared trim or take a flat grey cell
+    take that class too (`classes`, per triangle, in place). Judged per triangle, the
+    F40's engine picture under its rear cover (one `frame` quad of four triangles, two
+    with detail past DETAIL_MIN_LEVEL and two just short) was drawn half from the atlas
+    and half as the trim's dark texel, split along the diagonals."""
+    import numpy as np
+
+    atlas = (ART, DETAIL) if family == fm.NODAMAGE else (ART,)
+    for chart in uv_charts(pool, tris):
+        if len(chart) < 2 or not any(classes[k] in atlas for k in chart):
+            continue
+        rest = [k for k in chart if classes[k] in (None, GREY)]
+        if not rest:
+            continue
+        texels = np.concatenate([every[offsets[k] : offsets[k + 1]] for k in chart])
+        kind = classify_texels(technique, texels, scale)
+        if kind not in atlas:
+            continue
+        for k in rest:
+            if is_opaque(every[offsets[k] : offsets[k + 1]]):
+                classes[k] = kind
+
+
 def has_gloss(settings, technique: str) -> bool:
     """Whether Forza gives this trim technique a specular or a reflection that DSF's gloss
     materials draw (fm.gloss_params with the car's ShaderSettings, dsf_materials.gloss_material):
@@ -568,14 +627,22 @@ def split_trim_art(sections, atlases: fm.AtlasCache, lods=None, settings: dict |
             pool = section.vertices_for(sub)
             tris = sub.triangles()
             every, offsets = triangles_texels(image, texel_points(m, pool, tris, width, height))
-            for k, tri in enumerate(tris):
+            classes = []
+            for k in range(len(tris)):
                 texels = every[offsets[k] : offsets[k + 1]]
                 if m.kind == "swatch":  # one texel for the whole subsection: only its gloss
                     kind = GLOSS if is_opaque(texels) else None
                 else:
                     kind = classify_texels(sub.material, texels, scale)
-                    if kind is None and glossy and is_opaque(texels):
-                        kind = GLOSS
+                classes.append(kind)
+            if m.kind != "swatch":
+                whole_charts(classes, pool, tris, every, offsets, sub.material, scale, m.family)
+            for k, tri in enumerate(tris):
+                kind = classes[k]
+                texels = every[offsets[k] : offsets[k + 1]]
+                # The gloss fallback after whole_charts: a glossy picture goes whole too.
+                if kind is None and glossy and m.kind != "swatch" and is_opaque(texels):
+                    kind = GLOSS
                 if kind is None or (m.family != fm.NODAMAGE and kind in (DETAIL, GREY)):
                     continue
                 entry = found.setdefault((si, ui), (m.family, scale, [], [], {}))
