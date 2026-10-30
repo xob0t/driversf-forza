@@ -103,10 +103,12 @@ later PR replaced a rule, the earlier section says so in one line.
   distribution ([#124](#head-lamp-glow-by-day-issue-124)), following the
   lamp's own picture (its bright and dark detail,
   [#286](#head-lamps-at-a-fifth-of-vanilla-at-night-issue-286)). Every texel a
-  0x1D lamp samples then glows at 0.45 of that (`DAYTIME_GLOW`; 0.2 from #167
-  to #286, [#167](#head-lamps-white-plates-by-day-after-164)): every
-  source texel under the DSF texels its triangles sample, and the lamps that
-  share a 0x1D entry too ([#250](#head-lamps-white-plates-by-day-volvo-s60-11-venom-gt-12-boss-429-issue-250)).
+  day-lit front lamp (a 0x1D head lamp, a front 0x03 position lamp) samples then
+  glows at 0.48 of that (`DAYTIME_GLOW`: what the window glass vanilla draws
+  those lamps under keeps; 0.2 from #167 to #286, 0.45 on 0x1D alone until
+  [day-lit front lamps](#day-lit-front-lamps-at-what-vanillas-show-through-window-glass)):
+  every source texel under the DSF texels its triangles sample, and the lamps that
+  share such an entry too ([#250](#head-lamps-white-plates-by-day-volvo-s60-11-venom-gt-12-boss-429-issue-250)).
 
 **Glass over lamps** (`lenses.bake`, `Texturing._bake_lenses`). What Forza's race shaders actually compute for lenses, covers and
 glass, and which of these rules that confirms or replaces: `forza-lenses-re.md`.
@@ -2378,6 +2380,37 @@ ARX-01bs, LOT_Evora_09, NIS_GTR_12, NIS_Versa_09, the Viper CCs); above it 8 -> 
 
 Not this: the F50's starburst and white patches and the Commodore VE race cars' flat red block with a
 white patch (#300) are the same in both builds by day: their tail lens and cover bake, not the glow.
+
+### Day-lit front lamps at what vanilla's show through window glass
+
+Measured with render_compare's renderer under the game's lamp model (#372: the lamps at tint 5 and
+the game's levels, DSF glass keeping half a lamp's glow as measured in game; scratch scripts
+`out/ls/lamp_survey.py` and `cmp.py` in the PR's worktree), by day with the running lights:
+
+- Vanilla draws its day-lit front lamps under DSF window glass: every 0x1D head lamp (28 of 28
+  vehicles, all their pixels in the front view under a window layer) and most front 0x03 position
+  lamps (80 of 97 vehicles; 15 have none). Its rear lamps mostly not (0x18 tails: 40 of 56 have
+  no glass), nor its front DRL + indicator lamps (0x14 to 0x17: 17 of 29 bare).
+- The converter leaves a plain glass cover over a lamp out (#160, #247), so a port's lamp is
+  drawn bare. At vanilla's texel alpha it glows twice vanilla's: the 9 usual ports' 0x1D lamps
+  without any scaling glow p95 2.7 to 5.0 by day, vanilla's 1.1 / 1.85 / 2.32 (p10 / median /
+  p90); the VW Golf R's front 0x03 running lamps (its own entries, unscaled) 7.2, vanilla's
+  front 0x03 1.51 / 3.53 / 4.79.
+
+Change: `DAYTIME_GLOW` is what the window glass keeps, `1 - sRGB(191 / 255)` = 0.479 (measured
+0.50), and applies to every texel a day-lit front lamp samples: a 0x1D head lamp's, as before, and
+a front 0x03 position lamp's (`LampPlan.is_daytime`). The #286 value (0.45) was set at night
+against a 0x1D lamp drawn at 10 by the renderer of the time; the game draws it at 1 by day and in
+any mood.
+
+Results, the 9 ports (render_compare's renderer, front view, glow p95 by day): 0x1D lamps 1.22 to
+2.25 -> 1.29 to 2.55 (median 1.74 -> 1.82; vanilla 1.85); the Golf R's 0x03 lamps 7.18 -> 3.61.
+Rear unchanged. Roster (the build reports of 573 cars): 524 cars have 0x1D front lamps (their
+texels x 1.064), 78 front 0x03 lamps (x 0.479), 569 change. `render_compare diff` (`out/rc/dg`): only
+the Golf R draws differently (front lamps, by day, 8 to 12% of the region; score 6.42 -> 2.26,
+its white plate flag gone); the 0x1D lamps' 6% is below the diff's threshold. In game (VM 1,
+`-Views 'nose,nose+night'`, before `vm1-20261030-170852`, after `vm1-20261030-171156`): the Golf R's
+lower running lamps a little dimmer, the S60's and GTI VR6's head lamps as before.
 
 ### Open
 
