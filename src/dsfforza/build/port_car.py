@@ -497,6 +497,49 @@ def extract_brakes(source: Source, media: str, cache: Path, log=print) -> list[s
     return written
 
 
+# The car's per-colour paint settings (paint.colour_settings): ColorShaderSettings<N>.xml in
+# the car's folder of its zip, N = Combo_Colors.Sequence (64 roster cars have them). Their own
+# stamp, so caches made before stay valid.
+COLOUR_SETTINGS = re.compile(r"colorshadersettings\d+\.xml")
+COLOUR_SETTINGS_STAMP = "colour_settings_source.json"
+
+
+def extract_colour_settings(source: Source, media: str, cache: Path, log=print) -> list[str]:
+    """Put the car's ColorShaderSettings<N>.xml into its cache folder. Returns the files
+    written (cached: the stamp's list; none for most cars)."""
+    folder = cache / source.game.lower() / media
+    stamp = folder / COLOUR_SETTINGS_STAMP
+    try:
+        old = json.loads(stamp.read_text())
+    except (OSError, ValueError):
+        old = {}
+    if old.get("path") == source.path and old.get("wanted") == COLOUR_SETTINGS.pattern:
+        return old.get("files", [])
+    image, archive, prefix = open_car_zip(source)
+    written = []
+    try:
+        for info in archive.entries():
+            name = info.filename.replace("\\", "/")
+            relative = name[len(prefix) :] if name.lower().startswith(prefix) else ""
+            if info.is_dir() or not COLOUR_SETTINGS.fullmatch(relative.lower()):
+                continue
+            folder.mkdir(parents=True, exist_ok=True)
+            write_atomic(folder / relative, archive.read(info))
+            written.append(relative)
+    finally:
+        image.close()
+    folder.mkdir(parents=True, exist_ok=True)
+    write_atomic(
+        stamp,
+        json.dumps(
+            {"path": source.path, "files": sorted(written), "wanted": COLOUR_SETTINGS.pattern}, indent=1
+        ).encode(),
+    )
+    if written:
+        log(f"{media}: colour settings {', '.join(sorted(written))}")
+    return written
+
+
 DASH_STAMP = "dash_source.json"
 DASH_FOLDER = "digitalgauge"  # the car's Anark dash scene (cockpit digital displays)
 DASH_MEDIA = "dash_media"  # per game: shared dashboard textures and the vector fonts
@@ -1130,6 +1173,7 @@ def prepare_car(args, source: Source, media: str, isos, log=print) -> PreparedCa
     # rim textures (forza_materials.WHEEL), and the wheel for cars whose main carbin has none
     extract_wheel(source, media, args.cache, log)
     extract_brakes(source, media, args.cache, log)  # brake rotors behind the spokes
+    extract_colour_settings(source, media, args.cache, log)  # per-colour paint (paint.colour_settings)
     if not args.no_cockpit and extract_dash(source, media, args.cache, log):  # cockpit digital displays
         extract_dash_media(isos, source.game, args.cache)
     car = forza2dsf.load_car(folder, media)

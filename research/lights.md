@@ -2511,7 +2511,7 @@ editions). Per-colour shader tweaks live in the car zip's
 bright metallics: `paint-re.md`),
 `PaintScale`, `SpecularAmount2/3`, `MetalColor/Scale`, `FresnelIndex`...;
 12 of the 40 testdrive cars have some, e.g. the Focus RS500's satin grey:
-`PaintScale` 0.3, `MetalScale` 1, `SpecularAmount3` 40); not read yet (#380).
+`PaintScale` 0.3, `MetalScale` 1, `SpecularAmount3` 40); read since #380.
 
 The FM4 DMC-12 has one colour, solid `#999999` (Gray). Its body is plain
 `body` paint (3,782 LOD1 triangles, all on alpha-0 white texels of
@@ -2541,11 +2541,34 @@ match (`is_template`, `_distance`, `vanilla_paints`), `recolour` and `NEAR_BLACK
 255. The brightness cap is now the knee. The dark template rims (colour 3 at 0.02 on
 low-power entries) were DSF's art, not Forza's.
 
-What it does not read yet: the car zips' `ColorShaderSettings<N>.xml` (64 roster cars, 148
-files: satin `FresnelScalar` 0 on 12 colours, lobe amounts, the TVR Sagaris's two-tone).
-The extraction doesn't take them (`port_car.WANTED`; issue #380). Their colours (`PaintColor`,
-`TwoToneColor`, `MetalColor`) are sRGB as written: Forza converts them to linear before upload
-(#379). The swatch stays the target.
+**Per-colour settings (#380).** A colour's own `ColorShaderSettings<Sequence>.xml` in the
+car zip is layered over Normal.xml and Metallic.xml (`body_settings`). `port_car.extract_colour_settings`
+puts the files beside the car's other files, with their own stamp
+(`colour_settings_source.json`), so caches made before stay valid; 66 roster cars have them
+(147 files). `parse_body` reads the `body` technique. Its colours are converted from sRGB to
+linear as Forza converts them before the upload (unclamped; #379); `PaintColor` isn't used
+(the swatch is the target). What the files change, over the roster's picked colours (129
+entries on 56 cars):
+
+- `FresnelScalar`: the reflection follows it (1.0 x FresnelScalar / 0.9). 9 colours are satin
+  (0: Focus RS500 #1, LP700-4 #4, #6, #10, Reventon #1, Sesto Elemento #1, GranTurismo S #6, #11,
+  C63 AMG #5); 19 others take 0.03 to 1.11.
+- The lobes and `PaintScale` set the second specular on 82 entries (median 0.3 -> 0.18; up to
+  1.85 at power 5.3 on the Focus RS500's and the GranTurismo S's `SpecularAmount3` 40 over
+  `PaintScale` 0.3).
+- The two-tone (`TwoToneScale` > 0: TVR Sagaris #1, #8, TVR Tuscan S #1). Forza's body
+  shader mixes the paint toward `TwoToneColor` by `TwoToneScale x sat(N.E + TwoToneBias)^TwoTonePower`.
+  That is toward the second colour facing the camera, the opposite of DSF's fresnel. The
+  body pixel shader was run in `tools/re/xenos.py` (`forza_lens.Forza.run("body", ...)`, the
+  paint black, the two-tone white, the sun off): with power 2 and bias 0 the output is
+  (N.E)^2 at every angle, and with the Sagaris's 28 / 0.01 it is 0.755 at N.E 0.98 and 0.071
+  at 0.9 (= (N.E + 0.01)^28). So colour 2 (DSF's facing colour) is `albedo_for` of the facing mix
+  (swatch + TwoToneScale x (TwoToneColor - swatch), linear), colour 3 the swatch's albedo,
+  and `g_fresnelpower` is fitted to Forza's curve over the projected area
+  (`two_tone_power`: 0.098 for 28 / 0.01, bias 0).
+
+`MetalColor` / `MetalScale` (Forza's other view-angle mix, 80 FH1 files, mostly 0.03 to 0.05)
+isn't mapped: DSF has one second colour.
 
 `install` replaces the host's SPSPs (the host's first SPSP is the chunk
 template; every MARP gets an explicit payload) and drops colours from the end
@@ -2835,5 +2858,5 @@ M5's door shuts and wing vents, the Skyline's wings), not a second colour.
 5. A brushed grain: the paint shader has no detail or normal map of its own
    (UV0 samples one flat block of the shared atlas; UV1 the shared damage
    decal), so a brushed-steel pattern would need a non-paint material.
-6. `ColorShaderSettings<N>.xml` (satin `FresnelScalar` 0, lobe amounts, two-tone)
-   feed `clear_coat` once the extraction takes them (#380).
+6. Answered (#380): `ColorShaderSettings<N>.xml` feed `body_settings` (satin, lobes,
+   two-tone); `MetalColor` isn't mapped.
