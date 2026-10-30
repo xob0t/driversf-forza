@@ -1,6 +1,6 @@
 # Lamps and paint
 
-Updated: 2026-10-29
+Updated: 2026-10-30
 
 How vanilla DSF cars light their lamps and pick a paint colour, and what the
 converter does about both. Code: `src/dsfforza/convert/lights.py` (the lamp
@@ -975,7 +975,9 @@ until a switch exists (issue #122).
 Harness: a `-Views` entry with `+lit` (`nose+lit`) switches the car's
 Headlights and DaytimeRunning on for that view, `+night` also lays
 `lightstest.lua`'s dark mood over the scene; the next view without a suffix
-switches both off (`clonetest.lua` `setViewLamps`). Note that the shot
+switches both off (`clonetest.lua` `setViewLamps`). Since "The lamp model the
+renderer and the harness use" `+night` is the story's dark mood with the
+running lights only, and a view without a suffix goes back to the running lights. Note that the shot
 labels in `events.json` come from Driver.log and can lag the screen by
 several shots.
 
@@ -2426,6 +2428,59 @@ none rises. In game by day (VM 1, `-Views 'rear,rear+night'`, before `vm1-202610
 `vm1-20261030-175726`): the M5 E39's tails red where they were pale pink, the Commodore VE's
 cluster red over its trim with its clear reverse strip, the F50's inner lamps red (#300), the
 X6 M's flat red lens kept over its lamp graphics; the Venom and vanilla 130 as before.
+
+### The lamp model the renderer and the harness use
+
+`research/lights-re.md` decoded how the game draws a lamp. Two of the tools every lamp change above
+was measured with drew lamps otherwise:
+
+- **The harness's dark mood** (`lightstest.lua` `darkLighting`, the `+night` views and the `-Lights`
+  dark phases) set `vehColourBoost` 1, where every gameplay mood has 5 (10 in Fog): its lamps were 5
+  times dimmer in linear light than any mood a player sees. The `+night` views also switched
+  Headlights on, which free roam never does. DSF has no night in free roam; the darkest mood a
+  player meets is the story's LastChapter (dusk light, `vehColourBoost` 5).
+- **render_compare's renderer** (`car_render`) drew a lamp texel at `2 x alpha x level / 2` with
+  guessed colours (red 1, 0.06, 0.03), no tint, a 0x1D lamp at 10 with the running lights alone
+  (the game: 1), its dark mode with Headlights on, and the garage tone instead of the game's.
+
+Change (no converter change):
+
+- `lights.TYPE_SCALE`, `LAMP_COLOUR`, `RUNNING_LEVEL`, `VEH_COLOUR_BOOST` and `lamp_level(type,
+  mask)`: the game's tables (lights-re.md), one copy for the renderer and `tools/re/lamp_model.py`.
+- `car_render.dsf_lamp_rgb`: each lamp at 5 x its colour x its level; `Lighting` carries the mood's
+  exposure and white, `display()` the game's tone map and colour grade (the fitted grade 1) for the
+  lit modes. `day_lit` is ClearDay with the running lights (e 1.7, white 5); `dark` is LastChapter
+  (sun 7%, ambient 1.4 times, reflections half, e 1, white 2) with the running lights. The `day`
+  scores and the garage pictures keep the garage tone.
+- A lamp's glow is now the same in every gameplay mood (tint 5, the running lights); only the tone
+  map differs. render_compare's exterior views drop their `dark` mode, which repeated `day_lit`'s
+  glow; the cockpit keeps its dark render. The white plate limit (`glare`) is vanilla's p90 (below).
+- `lightstest.lua` `darkLighting` is LastChapter's own table from `moods.lua`; `+night` shows it
+  with the running lights only, and a view without a suffix goes back to the running lights (it
+  switched every lamp off). `+lit` (Headlights by day) stays for a check of 0x01 lamps.
+
+Check against the game (`lamp_model.py compare`, now with the renderer's colours, levels and post
+chain, on run `vm1-20261030-142442`'s dumped frames of vanilla 130, 241, 266): brightest 1% of the
+lamp pixels median x1.11, worst x1.28; on screen median 5/255, worst 25/255, as the note's model.
+The renderer's own rear render of the three cars against the same frames (`out/re/render_vs_game.py`
+in the PR's worktree; the dark frames rendered in a light like the old dark mood's): p99 median
+x1.18, worst x1.44 (car 241's tails 1.4 times the game's by day and dark alike: which texels the
+view sees, not the lamp term).
+
+Vanilla under the game's model (render_compare's renderer, front and rear views, 142 vehicles;
+`out/ls/lamp_survey.py`): glow p95 over each vehicle's lamp pixels by day, p10 / median / p90:
+
+| | running lights | braking |
+| --- | --- | --- |
+| front, vehicles with day-lit lamps (140) | 0.98 / 2.56 / 4.95 | the same |
+| rear (139) | 0.105 / 0.255 / 0.95 | 0.46 / 0.945 / 2.2 |
+| front 0x03 white (66) | 1.67 / 3.96 / 5.37 | |
+| front 0x1D white (21) | 1.23 / 1.92 / 2.66 | |
+| rear 0x18 red (56) | 0.133 / 0.237 / 0.469 | 0.665 / 1.19 / 2.34 |
+| rear 0x03 red (44) | 0.21 / 0.94 / 2.78 | the same |
+
+The ported head lamps that #286 raised to vanilla's 0x1D level "at night" were measured against a
+0x1D lamp drawn at 10; by day, which is what players see, it glows at 1, as vanilla's do.
 
 ### Open
 

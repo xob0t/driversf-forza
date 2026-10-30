@@ -10,7 +10,7 @@
 --      the harness asks for in dsfforza\lightsync.lua ("return k"; 0 = wait,
 --      -1 = finish), re-reading that file every update, to both cars with
 --      GameVehicleResource.setLights{gameVehicle, LightType, State};
---      phases 1..#PHASES in daylight, then the same again under a dark mood;
+--      phases 1..#PHASES in daylight, then the same again under the story's dark mood;
 --   3. without a sync file change for SYNC_TIMEOUT updates it advances by
 --      itself, so it also works without the harness;
 --   4. logs "[dsfforza.lights] done", removes the copy and returns control.
@@ -38,7 +38,7 @@ local TYPES = { "Headlights", "Brakes", "DaytimeRunning", "LeftIndicator", "Righ
 	"Siren", "DippedHeadlights", "FogLights" }
 
 local OPTIONS = {
-	dark = true,            -- repeat the phases under a dark mood
+	dark = true,            -- repeat the phases under the story's dark mood (LastChapter)
 	distance = 10,          -- metres ahead to the rear-facing copy (the facing one is 8 m further)
 	copy = true,            -- spawn the facing copy
 	syncTimeout = 40,       -- updates without a sync change before advancing alone (about 20 s)
@@ -76,38 +76,36 @@ local function setLights(car, set)
 	end
 end
 
--- DSF's free roam has no night; a user mood with ClearDay's keys and the
--- light, sky and fog turned down stands in for it. moods.lua is loaded into a
--- module, so the values are written out here instead of copied.
+-- DSF's free roam has no night, and the story's darkest mood is LastChapter (dusk light, the
+-- lamps at the gameplay tint vehColourBoost 5; research/lights-re.md, "The moods"). Its
+-- values from moods.lua, which loads into a module, so they are written out here.
 local function darkLighting()
 	local v = vec.vector
 	return {
-		ambientColourLowerBound = v(0.01, 0.012, 0.02, 1), ambientColourUpperBound = v(0.03, 0.035, 0.05, 1),
-		directionalLightColour = v(0.05, 0.055, 0.08, 1), directionalLightDirection = v(-1.25, -3.8, 3, 1),
-		emissiveColMod = v(1.5, 1.5, 1.5, 1),
-		specularLightDirection = v(-1.5, -0.9, 4, 1), specularLightColour = v(0.2, 0.2, 0.3, 1),
-		secondspeculargloss = 1, secondspecularmultiplier = 1, speculargloss = 1,
-		difftextureintensity = 1, difftextureoffset = 0, specularmaskcontrast = 1, ambientlowerlimit = 0,
-		envmapmultiplier = 0.1, middlegrey = 0.5, maxluminance = 5, tonemappingalgorithm = 2, lumadaptionrate = 0.05,
-		cutsceneEffectBlend = 0, cutsceneEffectGreyscale = v(0.2176376, 0.2176376, 0.2176376, 1),
-		PostProcessParameters_HDRTonemapOffset = 2, PostProcessParameters_HDRTonemapClampMax = 0.3,
-		PostProcessParameters_HDRTonemapClampMin = -1,
-		SkyParameters_vBlendingTargetColour = v(0.005, 0.006, 0.012, 1), SkyParameters_fBlendingLevel = 1,
-		SkyParameters_fDbgExposureControl = 0.3,
-		fogNearDistance = 0, fogFarDistance = 600, fogFarValue = 40, fogPower = 1, fogColour = v(0.005, 0.006, 0.012, 1),
-		waterDiffuseTilingMult = 0.01, waterTilingMult1 = 0.1, waterTilingMult2 = 0.006,
-		waterWaveSpeedUv1 = v(-0.1, 0.02, 0, 0), waterWaveSpeedUv2 = v(-0.008, 0.008, 0, 0),
-		waterYAxisBias = 0.1, waterReflectionAmount = 0.2, waterDynReflectionAmount = 0.2,
-		bloomThreshold = 0.15, bloomTintColour = v(0.3, 0.3, 0.3, 1), idColourGrading = 1, saturationDesatScale = 0.4,
-		ppeFilmGrain = 0, ppeFilmGrainThreshold = 0.3, ppeEdgeVignette = 0.6, ppeEdgeVignetteBorder = 40,
-		vignetteInnerRadius = 1, vignetteOutterRadius = 1, vignetteColour = v(0, 0, 0, 1),
-		vignetteCentreX = 0.5, vignetteCentreY = 0.5,
-		godRaysLightSourcePos = v(65000, 10000, -140000, 1), godRaysColour = v(0, 0, 0, 1), godRaysIntensity = 0,
-		godRaysStretchReduction = 0.9, godRaysBlurWidth = 0.06,
+		ambientColourLowerBound = v(0.4, 0.4, 0.4, 1), ambientColourUpperBound = v(1.5, 1.206839, 0.5160385, 1),
+		directionalLightColour = v(0.21, 0.1975261, 0.153283, 1), directionalLightDirection = v(-1.25, -3.8, 3, 1),
+		emissiveColMod = v(1.5, 1.5, 1.5, 1), specularLightDirection = v(-1.5, -0.9, 4, 1),
+		specularLightColour = v(1, 1, 1, 1), secondspeculargloss = 1, secondspecularmultiplier = 1,
+		speculargloss = 1, difftextureintensity = 1, difftextureoffset = 0, specularmaskcontrast = 1,
+		ambientlowerlimit = 0, envmapmultiplier = 0.1, middlegrey = 1, maxluminance = 2, tonemappingalgorithm = 2,
+		lumadaptionrate = 0.05, cutsceneEffectBlend = 0,
+		cutsceneEffectGreyscale = v(0.2176376, 0.2176376, 0.2176376, 1), PostProcessParameters_HDRTonemapOffset = 1,
+		PostProcessParameters_HDRTonemapClampMax = 0.3, PostProcessParameters_HDRTonemapClampMin = -1,
+		SkyParameters_vBlendingTargetColour = v(0.2, 0.1914739, 0.1184876, 1), SkyParameters_fBlendingLevel = 1,
+		SkyParameters_fDbgExposureControl = 4, fogNearDistance = 0, fogFarDistance = 500, fogFarValue = 50,
+		fogPower = 1, fogColour = v(0.6, 0.5744218, 0.5107511, 1), waterDiffuseTilingMult = 0.02,
+		waterTilingMult1 = 0.1, waterTilingMult2 = 0.006, waterWaveSpeedUv1 = v(0.02, 0.02, 0, 0),
+		waterWaveSpeedUv2 = v(0.008, -0.008, 0, 0), waterYAxisBias = 1, waterReflectionAmount = 0.5,
+		waterDynReflectionAmount = 0.5, bloomThreshold = 0, bloomTintColour = v(0.04, 0.04, 0.03565048, 1),
+		idColourGrading = 7, saturationDesatScale = 0, ppeFilmGrain = 0.5, ppeFilmGrainThreshold = 0.3,
+		ppeEdgeVignette = 0.6, ppeEdgeVignetteBorder = 40, vignetteInnerRadius = 1, vignetteOutterRadius = 1,
+		vignetteColour = v(0.04995053, 0.04995053, 0.04995053, 1), vignetteCentreX = 0.5, vignetteCentreY = 0.5,
+		godRaysLightSourcePos = v(65000, 110000, -140000, 1), godRaysColour = v(0.4518888, 0.3792589, 0.2906037, 1),
+		godRaysIntensity = 0, godRaysStretchReduction = 0.9, godRaysBlurWidth = 0.06,
 		ProgressionLockedZoneCol = v(0.007751024, 0.007751024, 0.007751024, 1),
-		vehSpecularLightDirection = v(-0.75, -1.5, 1, 1), vehSpecularLightColour = v(2, 2, 2.5, 1),
-		vehColourBoost = v(1, 1, 1, 1), vehSpeculargloss = 1, vehSecondspeculargloss = 1,
-		vehSecondspecularmultiplier = 1, vehEnvmapmultiplier = 0.3,
+		vehSpecularLightDirection = v(-0.75, -1.5, 1, 1), vehSpecularLightColour = v(20, 11.97884, 3.739771, 1),
+		vehColourBoost = v(5, 5, 5, 1), vehSpeculargloss = 1, vehSecondspeculargloss = 1,
+		vehSecondspecularmultiplier = 1, vehEnvmapmultiplier = 1.5,
 	}
 end
 

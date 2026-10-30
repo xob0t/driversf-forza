@@ -138,7 +138,7 @@ def test_lens_tints_and_lamp_glows():
     day, _ = cr.shade(scene, f, cr.DAY, cr.dsf_lamp_rgb(scene.lamps, cr.DAY), shadow=False)
     px = 30 * 80 + 40
     assert day[px, 0] > 1.5 * day[px, 1]  # red through the lens
-    dark_off, _ = cr.shade(scene, f, cr.Lighting("dark_off", 0.05, 0.05, 0.0, 0), None, shadow=False)
+    dark_off, _ = cr.shade(scene, f, cr.DARK, None, shadow=False)
     dark, _ = cr.shade(scene, f, cr.DARK, cr.dsf_lamp_rgb(scene.lamps, cr.DARK), shadow=False)
     assert dark[px, 0] > dark_off[px, 0] + 0.1  # the tail lamp glows (0x18: running lights, 0.2)
 
@@ -161,15 +161,30 @@ def test_cabin_copy_behind_a_lamp_lens_loses_to_the_lamp():
 
 
 def test_lamp_levels():
-    # over a 0x01 head lamp's brightness (2): a 0x18 tail/stop lamp's type brightness is 1
-    assert cr.lamp_level(0x18, 4) == 0.1  # tail/stop with the running lights: 0.2
-    assert cr.lamp_level(0x18, 2) == 0.5  # braking: 1
-    assert cr.lamp_level(0x01, 4) == 0.0  # head lamp: off by day
-    assert cr.lamp_level(0x01, 1) == 1.0
-    assert cr.lamp_level(0x1D, 4) == 5.0  # day-lit head lamp: 10 / 2
-    assert cr.lamp_level(0x02, 4) == 0.0  # high stop lamp: brakes only
-    rgb = fr.forza_lamp_rgb([cr.LampInfo(0x1D, 8)], cr.DAY_LIT)
-    assert np.allclose(rgb[0], np.array(cr.LAMP_COLOURS[8]) * 1.0)  # at a 0x01 lamp's level
+    """The colour multiplier the game gives each lamp type (research/lights-re.md)."""
+    from dsfforza.convert import lights
+
+    run, brake, head = 4, 6, 5
+    assert lights.lamp_level(0x18, run) == 0.2  # tail/stop with the running lights
+    assert lights.lamp_level(0x18, brake) == 1.0
+    assert lights.lamp_level(0x03, run) == 2.0  # tail / position lamp
+    assert lights.lamp_level(0x01, run) == 0.0  # head lamp: never lit in free roam
+    assert lights.lamp_level(0x01, head) == 2.0
+    assert lights.lamp_level(0x1D, run) == 1.0  # day-lit head lamp: 10 only with Headlights
+    assert lights.lamp_level(0x1D, head) == 10.0
+    assert lights.lamp_level(0x02, run) == 0.0  # high stop lamp: brakes only
+    assert lights.lamp_level(0x14, run) == 1.0  # DRL + indicator
+    rgb = cr.dsf_lamp_rgb([cr.LampInfo(0x18, lights.RED), cr.LampInfo(0x1D, lights.WHITE)], cr.DAY_LIT)
+    assert np.allclose(rgb[0], (5 * 0.587755 * 0.2, 0, 0))  # as car 130's tails upload by day
+    assert np.allclose(rgb[1], 5 * np.array(lights.LAMP_COLOUR[lights.WHITE]))
+
+
+def test_game_tone_map():
+    """The game's post chain: Reinhard with white W, then the grade; the garage tone by day."""
+    assert np.allclose(cr.tonemap(np.array([[5.0, 5.0, 5.0]]), 1.0, 5.0), 1.0, atol=1e-3)  # W maps to 1
+    lit = cr.display(np.array([[0.2, 0.2, 0.2], [3.0, 3.0, 3.0]], np.float32), cr.DAY_LIT)
+    assert 0.1 < lit[0, 0] < 0.3 and 0.8 < lit[1, 0] <= 0.88  # the grade tops out near 0.88
+    assert np.allclose(cr.display(np.array([[0.5, 0.5, 0.5]]), cr.DAY), 0.5 * cr.EXPOSURE)
 
 
 def test_garage_render_unchanged_by_compare_fields():

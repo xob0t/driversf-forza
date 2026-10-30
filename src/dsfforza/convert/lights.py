@@ -80,6 +80,45 @@ LIGHT_TYPE_MASK = [
     0x16,
     0x5,
 ]
+# How bright the game draws a lamp (research/lights-re.md, "Lamp state in Driver.exe"): the
+# colour it uploads is vehColourBoost x LAMP_COLOUR[b2] x TYPE_SCALE[b3] x brightness, and
+# the glow of a texel is its alpha times that.
+TYPE_SCALE = [0, 2, 1, 2, 0.5, 0.5, 0.5, 0.5, 1, *[10] * 9, 3, 10, *[1] * 9, 10]  # 0x00F3FB68
+# The lights manager's colour table (0x008E6F00), linear, as read back in game.
+LAMP_COLOUR = {
+    0: (0, 0.0687686, 0.587755),
+    1: (0, 0, 0.587755),
+    2: (0.0591351, 0.411908, 0),
+    3: (0, 0.587755, 0),
+    4: (1, 0.229057, 0.00124854),
+    5: (1, 0.36075, 0),
+    6: (0.587755, 0, 0),
+    7: (0.620376, 0, 0.0502853),
+    8: (1, 0.957607, 0.760489),
+    9: (0.875801, 0.891845, 1),
+    10: (1, 0.640408, 0.000514284),
+    11: (1, 0.916208, 0.000183946),
+}
+# A combined type (0x00E3AA98) with only DaytimeRunning of its functions on is drawn at this
+# level (scale x brightness; 0x008E6C80); with another of its functions on, at its scale.
+RUNNING_LEVEL = {**dict.fromkeys(range(0x18, 0x1D), 0.2), 0x13: 1.0, 0x1D: 1.0}
+VEH_COLOUR_BOOST = 5.0  # the mood's lamp tint: 5 in every gameplay mood (10 in Fog)
+
+
+def lamp_level(type_byte: int, mask: int) -> float:
+    """Scale x brightness of a lamp of this type with the Lua light mask `mask` on, steady
+    (blinking left out). In free roam the mask is DaytimeRunning (4), plus Brakes (2) or
+    Reverse (32) from the driver; nothing sets Headlights (1)."""
+    if not 0 < type_byte < len(LIGHT_TYPE_MASK):
+        return 0.0
+    on = LIGHT_TYPE_MASK[type_byte] & mask
+    if not on:
+        return 0.0
+    if type_byte in RUNNING_LEVEL and on == 4:
+        return RUNNING_LEVEL[type_byte]
+    return float(TYPE_SCALE[type_byte])
+
+
 MASK_NAMES = {
     1: "Headlights",
     2: "Brakes",

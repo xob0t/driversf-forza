@@ -1041,71 +1041,73 @@ def _surface(scene: Scene, view: _View, sx, sy, sw, k: np.ndarray, tri: np.ndarr
 @dataclass(frozen=True)
 class Lighting:
     """The light a frame is shaded in: scales of the environment (sky and reflections),
-    the sky ambient and the key light, and the lamps that are on (a Lua light mask:
-    1 Headlights, 2 Brakes, 4 DaytimeRunning; research/lights.md, "The light table")."""
+    the sky ambient and the key light, the lamps that are on (a Lua light mask: 1
+    Headlights, 2 Brakes, 4 DaytimeRunning; lights.lamp_level), and how the frame is
+    shown: the garage pictures' tone (exposure None) or the game's post chain with the
+    mood's exposure e and white W (research/lights-re.md, "The tone map and exposure")."""
 
     name: str = "day"
     env: float = 1.0
     ambient: float = 1.0
     key: float = 1.0
     lamps: int = 0
+    exposure: float | None = None
+    white: float = 5.0
 
 
 DAY = Lighting()
-DAY_LIT = Lighting("day_lit", lamps=4)  # the running lights, as DSF lights them by day
-DARK = Lighting("dark", 0.05, 0.05, 0.0, 5)  # the dark mood: running lights and head lamps
+# ClearDay with the running lights, as every car drives in free roam. Its exposure: e
+# measured 1.64 to 1.75 in day frames (La 0.15 to 0.19); maxluminance 5.
+DAY_LIT = Lighting("day_lit", lamps=4, exposure=1.7)
+# The story's darkest mood, LastChapter (moods.lua; DSF has no night): directional light 0.21
+# against ClearDay's 3, ambient about 1.4 times ClearDay's, vehEnvmapmultiplier 1.5 against 3;
+# the running lights; middlegrey 1, HDRTonemapOffset 1 (so e = 1 at any La), maxluminance 2.
+DARK = Lighting("dark", 0.5, 1.4, 0.07, 4, exposure=1.0, white=2.0)
 LIGHTINGS = {lt.name: lt for lt in (DAY, DAY_LIT, DARK)}
-EMISSION = 2.0  # linear light of a lamp texel of alpha 1 at brightness 1 (exposure follows)
 
-# DSF's lamp colours by the light table's colour byte (b2) and brightness per type byte
-# (b3; 0xF3FB68, research/lights.md "How a lamp lights"), over a 0x01 head lamp's 2.
-LAMP_COLOURS = {
-    8: (1.0, 0.95, 0.85),
-    9: (0.85, 0.92, 1.0),
-    4: (1.0, 0.45, 0.05),
-    6: (1.0, 0.06, 0.03),
-}
-# (one assignment: statements other than definitions would change the module's
-# top-level code unit, which every car's build fingerprint holds; build/fingerprint.py)
-TYPE_BRIGHTNESS = {
-    1: 2,
-    2: 1,
-    3: 2,
-    **dict.fromkeys(range(4, 8), 0.5),
-    8: 1,
-    **dict.fromkeys(range(9, 18), 10),
-    18: 3,
-    19: 10,
-    **dict.fromkeys(range(20, 29), 1),
-    29: 10,
-    30: 0.2,
-}
-COMBINED_TYPES = {0x13, *range(0x18, 0x1E)}
+# The game's colour grade 1 (ClearDay), per channel: the tone map's output -> display linear,
+# fitted from dumped frames (research/lights-re.md; the 3D LUT itself was not found). The
+# story's dark mood uses grade 7, not decoded; it is drawn with this one.
+GRADE_X = np.array([0.0, 0.013, 0.113, 0.213, 0.312, 0.413, 0.512, 0.613, 0.713, 0.812, 0.913, 1.0])
+GRADE_Y = np.array(
+    [
+        [0.012, 0.018, 0.056, 0.133, 0.270, 0.497, 0.640, 0.733, 0.818, 0.86, 0.87, 0.88],
+        [0.016, 0.024, 0.060, 0.122, 0.234, 0.395, 0.573, 0.680, 0.777, 0.83, 0.85, 0.86],
+        [0.024, 0.032, 0.068, 0.131, 0.233, 0.392, 0.556, 0.651, 0.758, 0.81, 0.85, 0.86],
+    ]
+)
+REC709 = np.array([0.2125, 0.7154, 0.0721], np.float32)
 
 
-def lamp_level(type_byte: int, on: int) -> float:
-    """How bright a DSF lamp of this type shows with the light mask `on` (0..1 target
-    times the type's brightness, over a 0x01 head lamp's): the combined types light at
-    full when braking, with the running lights alone at 0.2 (0x18..0x1C) or 1 (0x13, 0x1D)."""
-    from dsfforza.convert import lights
+def tonemap(colour: np.ndarray, e: float, white: float) -> np.ndarray:
+    """The game's Reinhard (PostProcessing.fx): c x e (1 + e L / W^2) / (1 + e L)."""
+    lum = colour @ REC709
+    return colour * (e * (1 + e * lum / white**2) / (1 + e * lum))[..., None]
 
-    if not 0 < type_byte < len(lights.LIGHT_TYPE_MASK):
-        return 0.0
-    mask = lights.LIGHT_TYPE_MASK[type_byte]
-    if not mask & on:
-        return 0.0
-    level = 1.0
-    if type_byte in COMBINED_TYPES and not (mask & on & 3):
-        level = 0.2 if 0x18 <= type_byte <= 0x1C else 1.0
-    return level * TYPE_BRIGHTNESS.get(type_byte, 1) / TYPE_BRIGHTNESS[1]
+
+def display(colour: np.ndarray, lighting: Lighting = DAY) -> np.ndarray:
+    """Display-linear colour (0..1) of shade()'s linear colour in this lighting: the garage
+    tone, or the game's tone map and colour grade (bloom and grain left out)."""
+    if lighting.exposure is None:
+        return np.clip(colour * EXPOSURE, 0, 1)
+    c = np.clip(tonemap(colour, lighting.exposure, lighting.white), 0, 1)
+    return np.stack([np.interp(c[..., k], GRADE_X, GRADE_Y[k]) for k in range(3)], -1).astype(np.float32)
 
 
 def dsf_lamp_rgb(lamps: list[LampInfo] | None, lighting: Lighting) -> np.ndarray | None:
-    """(L, 3) linear emission colour of each lamp in this light (None without lamps)."""
+    """(L, 3) linear colour each lamp's texel of alpha 1 adds in this light, as the game
+    uploads it: vehColourBoost x colour x level (research/lights-re.md)."""
+    from dsfforza.convert import lights
+
     if not lamps:
         return None
     return np.array(
-        [np.array(LAMP_COLOURS.get(lp.colour, LAMP_COLOURS[8])) * lamp_level(lp.type, lighting.lamps) for lp in lamps],
+        [
+            lights.VEH_COLOUR_BOOST
+            * np.array(lights.LAMP_COLOUR.get(lp.colour, lights.LAMP_COLOUR[lights.WHITE]))
+            * lights.lamp_level(lp.type, lighting.lamps)
+            for lp in lamps
+        ],
         np.float32,
     ).reshape(-1, 3)
 
@@ -1234,7 +1236,7 @@ def _shade(
                 on = lamp[sel] >= 0
                 if on.any():
                     a = _sample(mat.texture, uv[sel[on]])[:, 3:4]
-                    out[sel[on]] += a * lamp_rgb[lamp[sel[on]]] * EMISSION
+                    out[sel[on]] += a * lamp_rgb[lamp[sel[on]]]
             continue
         sh = SHADING[mat.kind]
         nn, rr = n[sel], ray[sel]
@@ -1404,7 +1406,7 @@ def _shade_lens(mat: Material, view: _View, light, n, uv, ray, occlusion, lighti
     add += spec[:, None]
     if mat.emissive and lamp_rgb is not None and lamp is not None:
         on = lamp >= 0
-        add[on] += t[on, 3:4] * lamp_rgb[lamp[on]] * EMISSION
+        add[on] += t[on, 3:4] * lamp_rgb[lamp[on]]
     through = ((1 - o) + o * np.clip(texel * lens.tint, 0, 1)) * (1 - f)[:, None]
     return add, np.clip(through, 0, 1)
 
@@ -1508,9 +1510,9 @@ def shade(
     return colour, alpha
 
 
-def to_rgba(colour: np.ndarray, alpha: np.ndarray, width: int, height: int) -> np.ndarray:
+def to_rgba(colour: np.ndarray, alpha: np.ndarray, width: int, height: int, lighting: Lighting = DAY) -> np.ndarray:
     """(height, width, 4) uint8 straight-alpha RGBA of shade()'s linear colour."""
-    rgb = _linear_to_srgb(colour * EXPOSURE)
+    rgb = _linear_to_srgb(display(colour, lighting))
     out = np.zeros((width * height, 4), np.uint8)
     out[:, :3] = np.clip(rgb * 255 + 0.5, 0, 255).astype(np.uint8)
     out[:, 3] = np.clip(alpha * 255 + 0.5, 0, 255).astype(np.uint8)
