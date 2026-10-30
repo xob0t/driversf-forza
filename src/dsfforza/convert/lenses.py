@@ -734,7 +734,7 @@ def new_glow(h: int, w: int) -> np.ndarray:
 class _GlowSum:
     """Raw glow and positions summed over the triangles sampling each texel, one lamp number per
     add() (after those already in `glow`). owners: gets lamp number -> (section, sub) each lamp
-    comes from (dsf_materials.Binding.set_daytime)."""
+    comes from."""
 
     def __init__(self, h: int, w: int, glow: np.ndarray, owners: dict | None = None):
         self.total = np.zeros((h, w, 6))  # raw, |x|, y, |x|^2, y^2, passed

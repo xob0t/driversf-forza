@@ -95,8 +95,8 @@ def test_dds_reuse_matches_a_fresh_encoding():
 
 
 def test_render_again_matches_a_fresh_render():
-    # set_daytime renders the atlas again with the day-lit texels set: the regions kept from the
-    # first render give what a render with them set from the start gives.
+    # A second render with the lamp glow changed: the regions kept from the first render give
+    # what a render with that glow from the start gives.
     from pathlib import Path
 
     from dsfforza.convert import forza_materials as fm
@@ -120,13 +120,13 @@ def test_render_again_matches_a_fresh_render():
         t.scale = {fm.LIGHTS: 1.0, fm.NODAMAGE: 0.5}
         return t
 
-    day = np.zeros((size, size), bool)
-    day[:, 8:12] = True
+    glow = np.full((size, size), np.nan)
+    glow[:, 8:12] = 77.0
     again = texturing()
     first = bytes(again.render())
-    again.daytime_texels, again._glow_done = day, False
+    again._lamp_glow, again._glow_done = glow, True
     fresh = texturing()
-    fresh.daytime_texels = day
+    fresh._lamp_glow, fresh._glow_done = glow, True
     assert bytes(again.render()) == bytes(fresh.render()) != first
 
 
