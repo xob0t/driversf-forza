@@ -73,6 +73,23 @@ def test_normal_sections():
     assert [len(s.lod_vertices) for s in result.sections] == [3, 4]
 
 
+def test_triangles_are_kept_per_index_list():
+    import dataclasses
+
+    sub = carbin.SubSection("body", 1, 6, (0.0, 1.0) * 4, [0, 1, 2, 3, 0xFFFF, 4, 5, 6])
+    first = sub.triangles()
+    assert first == [(0, 1, 2), (2, 1, 3), (4, 5, 6)]
+    first.append((9, 9, 9))  # the caller's own list
+    assert sub.triangles() == [(0, 1, 2), (2, 1, 3), (4, 5, 6)] and sub.triangles() is not sub.triangles()
+    sub.index_type = 4
+    assert sub.triangles() == [(0, 1, 2), (3, 0xFFFF, 4)]
+    sub.indices = [5, 6, 7]
+    assert sub.triangles() == [(5, 6, 7)]
+    other = dataclasses.replace(sub, indices=[1, 2, 3])
+    assert other.triangles() == [(1, 2, 3)] and sub.triangles() == [(5, 6, 7)]
+    assert other == dataclasses.replace(other)  # the kept triangles don't count in ==
+
+
 def test_empty_first_section():
     # FIA_595_68: roof1 has no vertices and the bounds of an empty box. Without
     # accepting those bounds no start position looks like a section.
