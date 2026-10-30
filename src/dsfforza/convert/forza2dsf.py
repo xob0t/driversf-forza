@@ -232,6 +232,7 @@ def spherical(n: tuple[float, float, float]) -> tuple[int, int]:
 
 
 RIGID = bytes((0, 0, 0, 1))  # vertex semantic 9: follow the chassis
+_PACK_4H, _PACK_4E, _PACK_2E = (struct.Struct(f).pack for f in ("<4h", "<4e", "<2e"))
 
 
 def encode_vertex(stride: int, pos, uv0, uv1, normal, s9: bytes = RIGID, sky: float = 0.0) -> bytes:
@@ -243,16 +244,26 @@ def encode_vertex(stride: int, pos, uv0, uv1, normal, s9: bytes = RIGID, sky: fl
     sky (0..1) goes into the fourth position component (x 4096): a baked
     ambient/sky-light term (vertex_sky). 0 renders the vertex nearly black
     except for specular (research/vehicle-model.md)."""
-    q = [max(-32768, min(32767, round(c * POSITION_SCALE))) for c in pos]
-    p0, p1 = spherical(normal)
-    head = struct.pack("<4h", q[0], q[1], q[2], max(0, min(4096, round(sky * 4096))))
+    # spherical() and the clamps written out, the structs made once: the same operations
+    # (add_geometry encodes every vertex of every entry through here).
+    x, y, z = pos
+    q0, q1, q2 = round(x * POSITION_SCALE), round(y * POSITION_SCALE), round(z * POSITION_SCALE)
+    q0 = -32768 if q0 < -32768 else 32767 if q0 > 32767 else q0
+    q1 = -32768 if q1 < -32768 else 32767 if q1 > 32767 else q1
+    q2 = -32768 if q2 < -32768 else 32767 if q2 > 32767 else q2
+    nx, ny, nz = normal
+    length = math.sqrt(nx * nx + ny * ny + nz * nz) or 1.0
+    nx, ny, nz = nx / length, ny / length, nz / length
+    p0 = max(0, min(255, round(128 + math.acos(max(-1.0, min(1.0, ny))) / math.pi * 127)))
+    p1 = round(128 + math.atan2(nx, nz) / math.pi * 128) & 0xFF
+    head = _PACK_4H(q0, q1, q2, max(0, min(4096, round(sky * 4096))))
     s5 = bytes((p0, p1, 128, 128))
     if stride == 32:
-        return head + struct.pack("<4e", uv0[0], uv0[1], uv1[0], uv1[1]) + s9 + s5 + struct.pack("<4e", *pos, 1.0)
+        return head + _PACK_4E(uv0[0], uv0[1], uv1[0], uv1[1]) + s9 + s5 + _PACK_4E(x, y, z, 1.0)
     if stride == 28:
-        return head + struct.pack("<2e", uv0[0], uv0[1]) + s9 + s5 + struct.pack("<4e", *pos, 1.0)
+        return head + _PACK_2E(uv0[0], uv0[1]) + s9 + s5 + _PACK_4E(x, y, z, 1.0)
     if stride == 20:
-        return head + struct.pack("<2e", uv0[0], uv0[1]) + s9 + s5
+        return head + _PACK_2E(uv0[0], uv0[1]) + s9 + s5
     raise ValueError(stride)
 
 
