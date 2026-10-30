@@ -164,7 +164,7 @@ local function registerCloneStats()
 	return true
 end
 
-local state = { index = 1, phase = "request", ticks = 0 }
+local state = { index = 1, phase = "request", ticks = 0, shot = "start" }  -- shot: the view, for shot captions
 
 local function describe(value)
 	if type(value) == "userdata" or type(value) == "table" then
@@ -398,11 +398,15 @@ local function hideUi()
 	log("ui hidden (was " .. table.concat(before, " ") .. ")")
 end
 
+local function uiNote()
+	return uiHidden and string.format(" (ui flags set back %d times so far)", uiResets) or ""
+end
+
 -- What the screen shows, for the harness's shot captions (run-test.ps1 Save-Shot): the model of the
--- car the player is in and the probe's view, as a "shot <n>: ..." line whenever it changes.
+-- car the player is in and the probe's view (state.shot), as a "shot <n>: ..." line whenever it changes.
 -- DriverNGHook opens, appends and closes Driver.log for every line (LoggerImpl.cpp), so the harness
 -- reads it right before and after each frame copy.
-local shotView, shotText, shotSeq = "start", nil, 0
+local shotText, shotSeq = nil, 0
 local function logShotState(id)
 	local model = nil
 	local car = playerVehicle()
@@ -411,7 +415,7 @@ local function logShotState(id)
 		model = ok and tonumber(value) or nil
 	end
 	local text = string.format("id=%s probe=%s view=%s phase=%s", tostring(model or ""), tostring(id or ""),
-		shotView, state.phase)
+		state.shot, state.phase)
 	if text == shotText then return end
 	shotText, shotSeq = text, shotSeq + 1
 	log("shot " .. shotSeq .. ": " .. text)
@@ -790,7 +794,7 @@ local function showView(id, car, name)
 			localPlayer:resetCameraMode()
 		end)
 	end
-	shotView = name .. (mode and "+" .. mode or "") .. (mph and "+mph" .. mph or "")
+	state.shot = name .. (mode and "+" .. mode or "") .. (mph and "+mph" .. mph or "")
 	log(string.format("id %d: view %s %s (cameraMode %s)", id, name, ok and "on" or ("failed: " .. tostring(err)),
 		tostring(localPlayer.cameraMode)))
 end
@@ -945,7 +949,7 @@ local function step()
 		localPlayer:SetZapLevel(1, nil, false, { forcedOut = true })
 		localPlayer:ZapIntoVehicle(spawned, false, false, false, nil, { disableZapFlash = true })
 		log(string.format("id %d: zapping into it", id))
-		shotView = "zap"
+		state.shot = "zap"
 		state.phase, state.ticks = "verify", 0
 	elseif state.phase == "verify" then
 		local current = playerVehicle()
@@ -954,13 +958,13 @@ local function step()
 				tostring(localPlayer.inZap)))
 			quietRoad(id, current)
 			state.phase, state.ticks = "chase_view", 0
-			shotView = "chase"
+			state.shot = "chase"
 			if DYNO then
 				DYNO.start(id, current, state.previous)
-				state.phase, shotView = "dyno", "dyno"
+				state.phase, state.shot = "dyno", "dyno"
 			elseif LIGHTS then
 				LIGHTS.start(id, current, state.previous)
-				state.phase, shotView = "lights", "lights"
+				state.phase, state.shot = "lights", "lights"
 			end
 		elseif state.ticks >= VERIFY_TIMEOUT then
 			log(string.format("id %d: zap not confirmed after %d ticks (vehicle: %s, inZap: %s)", id,
@@ -989,7 +993,7 @@ local function step()
 			localPlayer.cameraMode = "DriverEye"
 			localPlayer:resetCameraMode()
 		end)
-		shotView = "cockpit"
+		state.shot = "cockpit"
 		log(string.format("id %d: cockpit view %s (cameraMode %s)", id, ok and "on" or ("failed: " .. tostring(err)),
 			tostring(localPlayer.cameraMode)))
 		removeSideCopy()
@@ -1017,9 +1021,8 @@ local function step()
 			localPlayer.cameraMode = "Normal"
 			localPlayer:resetCameraMode()
 		end)
-		log(string.format("id %d: chase view restored%s", id,
-			uiHidden and string.format(" (ui flags set back %d times so far)", uiResets) or ""))
-		shotView = "chase"
+		log(string.format("id %d: chase view restored%s", id, uiNote()))
+		state.shot = "chase"
 		nextId()
 	end
 end
