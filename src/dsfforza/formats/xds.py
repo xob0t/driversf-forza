@@ -128,10 +128,6 @@ def dds_bytes(blocks: bytes, width: int, height: int, fourcc: bytes) -> bytes:
     return header + blocks
 
 
-def _rgb565(c: int) -> tuple[int, int, int]:
-    return ((c >> 11) & 31) * 255 // 31, ((c >> 5) & 63) * 255 // 63, (c & 31) * 255 // 31
-
-
 def decode_rgba(blocks: bytes, width: int, height: int, fourcc: bytes) -> bytearray:
     """Minimal DXT1/DXT5 decoder for previews (DXT3 and ATI2 blocks are read as DXT5)."""
     block_size = 8 if fourcc == b"DXT1" else 16

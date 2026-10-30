@@ -857,7 +857,7 @@ vehicles_font package (`add_glyphs(..., textures=)`; MDID lists it, FNTD
 doesn't): `FORZA_LOGO_UID` = `f012ef7ef05a2e2d`, 512 x 256 DXT5, FH1's
 `UI4/Common/forza_logo3.xds` (the orange and silver logo with alpha) fitted
 into `CARD_SF_BOX` (242, 2, 345, 75), transparent elsewhere
-(`forza_emblem_image`, preview `garage_emblem.png`). `add_textures` adds it to
+(`forza_emblem_image`, preview `garage_emblem.png`). `add_textures` (since removed) added it to
 an existing Fonts.fchunk copy (how `out/emblem/td3/Fonts.fchunk` was made from
 out/testdrive3's). The font package is always loaded, so the texture is
 resident before the garage opens.

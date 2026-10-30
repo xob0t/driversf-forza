@@ -876,8 +876,8 @@ is not known (not seen in play).
 
 ## Forza geometry in game (confirmed-runtime)
 
-Converter: `src/dsfforza/convert/forza2dsf.py` (FH1 carbin → DSF VEHC), `src/dsfforza/convert/exp_hollow.py`
-(the layout that currently works for the full entry).
+Converter: `src/dsfforza/convert/forza2dsf.py` (FH1 carbin → DSF VEHC). The hollow-layout
+experiment (`exp_hollow.py`) this section first used has since been removed.
 
 - **Geometry writing works**: stretching the clone's vertices 1.3x in x shows
   a 1.3x wider car with correct shading (`img/clone-304-wide.jpg`).

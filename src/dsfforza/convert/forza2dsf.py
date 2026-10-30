@@ -101,9 +101,6 @@ POSITION_SCALE = 4096
 MDXN_LIMIT = {0: 0x138800, 1: 0x12D000, 2: 0xDD800}
 NONR_LIMIT = {0: 0x6D000, 1: 0x1000, 2: 0x1000}  # SSLP per-kind NONR buffers (spool-limits.md)
 
-# DSF hub height in the Desanne hierarchy (front z > 0). Only src/dsfforza/convert/exp_hollow.py uses it now;
-# the converter reads each host's hubs from its wheel table (host_wheels).
-HOST_HUB_Y = -0.398
 # The paint shader overlays the vehicle's chassis texture through UV0. Until
 # Forza textures are converted, point every paint vertex at a plain texel the
 # Desanne's large paint panels use.

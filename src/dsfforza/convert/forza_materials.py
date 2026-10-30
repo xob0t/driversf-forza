@@ -677,7 +677,7 @@ def texel_scale(settings: dict[str, dict[str, float]], technique: str) -> float:
 # technique the file gives none of them to (black, wheel_black, grille1) has no
 # specular and no reflection. A car's ShaderSettings.xml overrides them (the Cougar
 # Eliminator's `misc`: SpecularAmount 0.5, SpecularPower 5, FresnelScalar 0.2).
-# technique: (SpecularAmount, SpecularPower, FresnelScalar, CubeScale, FresnelIndex)
+# Per technique: SpecularAmount, SpecularPower, FresnelScalar, CubeScale, FresnelIndex.
 GLOSS_DEFAULTS = {
     "misc": (0.2, 20.0, 0.1, 1.0, 1.65),
     "plastic": (1.0, 120.0, 0.0, 1.0, 1.65),

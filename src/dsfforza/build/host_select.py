@@ -262,28 +262,6 @@ SUV_CODES = {
     "HON": ("crv",),
 }  # make -> model prefixes
 CONVERTIBLE_WORDS = ("convertible", "volante", "spyder", "spider", "roadster", "cabrio", "speedster")
-HATCH_WORDS = (
-    "golf",
-    "beetle",
-    "mini",
-    "cooper",
-    "fiesta",
-    "civic",
-    "scirocco",
-    "mito",
-    "giulietta",
-    "cygnet",
-    "volt",
-    "pacer",
-    "abarth",
-    "500",
-    "focus",
-    "megane",
-    "clio",
-    "polo",
-    "fit",
-    "yaris",
-)
 
 # Forza Data_Car.FamilyBodyID -> body class (labels are string IDs; classes read off the cars in
 # each family, research/hosts.md). 12+ are race cars. FH1's family 1 is a catch-all (Corolla,

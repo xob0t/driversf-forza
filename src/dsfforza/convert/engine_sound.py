@@ -1506,7 +1506,7 @@ def lint(
     return rows
 
 
-# --------------------------------------------------------------------------- apply (CLI)
+# --------------------------------------------------------------------------- apply, the CLI
 
 
 def apply(archive: Path, target: Path, spool: int, sound: Path) -> dict:

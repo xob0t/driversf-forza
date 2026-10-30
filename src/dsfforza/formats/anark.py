@@ -188,10 +188,6 @@ class Node:
     flags: bytes
     children: list = field(default_factory=list)
 
-    @property
-    def kind_name(self):
-        return BSG_KIND.get(self.kind, f"k{self.kind}")
-
 
 def parse_bsg(data: bytes):
     r = Reader(data)
@@ -325,7 +321,7 @@ def _model(r: Reader):
 FBF_BODY = {0: lambda r: {}, 1: _text, 2: _camera, 3: _layer, 4: _model, 5: _material, 6: _light, 7: _image}
 
 
-def parse_fbf(data: bytes, strict=True):
+def parse_fbf(data: bytes):
     r = Reader(data)
     ver = r.u32()
     n = r.u32()
