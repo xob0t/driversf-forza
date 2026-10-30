@@ -1240,7 +1240,7 @@ class Texturing:
     # (lod, positions, atlas uvs, (section name, technique)) of Lights-atlas triangles
     lamp_tris: list = field(default_factory=list)
     lamp_swatch_tris: list = field(default_factory=list)  # (lod, positions) of Lights swatch triangles
-    _covers: dict = field(default_factory=dict)  # id(sub) -> clear_cover
+    _covers: dict = field(default_factory=dict)  # id(sub) -> (sub, clear_cover): sub kept so its id can't be reused
     wheel_ids: set = field(default_factory=set)  # id(section) of the Forza wheel model (plan(wheels=...))
     art_flat: set = field(default_factory=set)  # id(sub): trim artwork drawn flat (ART_MIN_SCALE_SHARE)
     pack_scale: float = 0.0  # the uniform scale _pack found (before family weights)
@@ -1657,9 +1657,9 @@ class Texturing:
         ):
             return False
         key = ("textured", id(sub))
-        if key not in self._covers:
-            self._covers[key] = self._over_lamp(section, sub, shapes) >= COVER_MIN_SHARE
-        return self._covers[key]
+        if key not in self._covers or self._covers[key][0] is not sub:
+            self._covers[key] = (sub, self._over_lamp(section, sub, shapes) >= COVER_MIN_SHARE)
+        return self._covers[key][1]
 
     def _art_swatch(self, section, sub, m: fm.SubMaterial) -> fm.SubMaterial:
         """A trim-artwork subsection as one flat colour: the mean of the opaque
@@ -1788,10 +1788,10 @@ class Texturing:
         ):
             return False
         key = id(sub)
-        if key not in self._covers:
+        if key not in self._covers or self._covers[key][0] is not sub:
             share = COVER_LAMP_SECTION_SHARE if LAMP_SECTION.match(section.name) else COVER_MIN_SHARE
-            self._covers[key] = self._over_lamp(section, sub) >= share
-        return self._covers[key]
+            self._covers[key] = (sub, self._over_lamp(section, sub) >= share)
+        return self._covers[key][1]
 
     def _over_lamp(self, section, sub, shapes=None) -> float:
         """Share of a subsection's area whose triangle centres, seen along z towards the car,

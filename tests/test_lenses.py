@@ -689,6 +689,10 @@ def test_plain_glass_cover_in_a_lamp_section():
         m = dataclasses.replace(fm.resolve(cover, cover.subsections[0]), role=fm.GLASS, family=fm.LIGHTS)
         assert dm.COVER_LAMP_SECTION_SHARE < t._over_lamp(cover, cover.subsections[0]) < dm.COVER_MIN_SHARE
         assert t.clear_cover(cover, cover.subsections[0], m) == left_out, name
+    # A cached answer for another subsection that had the same id() isn't reused (CI flake:
+    # the loop's covers are freed and a new one can get the old one's id).
+    t._covers[id(cover.subsections[0])] = (object(), True)
+    assert t.clear_cover(cover, cover.subsections[0], m) is False
 
 
 def test_front_lamp_view_leaves_out_dropped_lenses():
