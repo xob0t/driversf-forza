@@ -23,6 +23,7 @@ glow; flags above calibrated limits rank the roster (research/render-compare.md)
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import math
 import os
@@ -873,17 +874,11 @@ def thumbnail_check(build: Path, media: str, out: Path, size=(640, 300)) -> Path
     with archive.open("rb") as stream:
         roots = _root_entries(archive, stream)
     pair = build_pair(archive, roots, report["entry"]["spool_id"], media, report)
-    paint = cr.Paint.flat(tuple(int(c) for c in colour))
+    flat = cr.Paint.flat(tuple(int(c) for c in colour))
     for scene in (pair.ours, pair.ref):
         for m in scene.materials:
             if m.paint is not None:
-                m.paint = (
-                    paint
-                    if m.kind in cr.PAINT_KINDS
-                    else cr.Paint(
-                        tuple(c * fr.PAINT_TEXEL for c in paint.c2), tuple(c * fr.PAINT_TEXEL for c in paint.c3)
-                    )
-                )
+                m.paint = dataclasses.replace(m.paint, c2=flat.c2, c3=flat.c3, power=1.0, bias=0.0)
     view = View("thumb", THUMB_CAMERA, modes=("day",))
     r = render_view(pair, view, size)
     from PIL import Image

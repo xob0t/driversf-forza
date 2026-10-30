@@ -2483,9 +2483,11 @@ Paint UV0 does **not** sample the vehicle's chassis texture: both paint
 materials (`GLOBAL_Chassis`, `GLOBAL_Chassis_LOD1`) have `g_texDiffuseMap` =
 `00122b73d1fa1227`, a shared 1024 x 512 DXT1 atlas in SSIC (parts, plates
 and colour-coded mask blocks). On every vanilla car checked (266, 227, 229,
-147) 57 to 91% of the paint triangles' UV0 lands in its (240, 192, 240)
+147) 57 to 91% of the paint triangles' UV0 lands in its (255, 198, 255)
 block (50 x 50 texels centred at (0.848, 0.712); `global_paint_uv.py`), the
-rest on other mask colours (panel details). UV1 is the damage-decal UV
+rest on other mask colours (panel details). The game samples it with sRGB
+decoding, so the albedo is the palette colour exactly (`paint-re.md`, "The
+atlas texel"). UV1 is the damage-decal UV
 (`damage.md`, "Scratch and dent decal: UV1"); converted cars take the
 host's.
 
@@ -2553,7 +2555,7 @@ out/vanilla/Install/dngvehicles.sp 27 p`, saved in
 `Vehicles_Functions.hlsl` / `PixelShader.hlsl`:
 
 ```text
-tex      = g_samDiffuseMap(UV0)            // the shared atlas paint block (240, 192, 240)
+tex      = g_samDiffuseMap(UV0)            // the shared atlas paint block (255, 198, 255)
 fresnel  = g_fresnelbias + g_OneMinusFresnelbias * pow(1 - sat(dot(v1, v2)), g_fresnelpower)  // two interpolated vectors, presumably normal and eye
 paint    = TintColour2 + fresnel * (TintColour3 - TintColour2)
 tinted   = tex.r * fColourShift * lerp(1, paint, tex.b)          // CustomBRDFTinting_PS
@@ -2771,7 +2773,7 @@ the shared paint texture is black (0, 0, 0) for the 370Z's cell at (0.586,
 Desanne-hosted ports were coloured because they used the constant
 (0.835, 0.703), which lies in the paint block. Fix: paint UV0 is always
 `dsf_materials.PAINT_TEXEL_UV` (0.8481, 0.7119); the rebuilt archives in
-`out/lights/ab2/` sample (240, 192, 240) on 100% of paint triangles.
+`out/lights/ab2/` sample the paint block ((255, 198, 255)) on 100% of paint triangles.
 
 ### Trim and two-tone
 

@@ -48,7 +48,7 @@ TRIM_UIDS = {bytes.fromhex("0012833b12fe1027"), bytes.fromhex("10122b9753b14e2a"
 TYRE_UIDS = {bytes.fromhex("00128337b2fd1027"), bytes.fromhex("10122b9b53b14e2a")}
 CHROME_UIDS = {bytes.fromhex("a012f01306d57a2a"), bytes.fromhex("00128338d7fd1027")}
 SHARED_CHASSIS_TEXTURE = bytes.fromhex("00122b73d1fa1227")  # paint, trim and chrome sample it (lights.md)
-PAINT_BLOCK_UV = (0.848, 0.712)  # the (240, 192, 240) paint block of the shared atlas
+PAINT_BLOCK_UV = (0.848, 0.712)  # the (255, 198, 255) paint block of the shared atlas (paint-re.md)
 
 
 @dataclass(frozen=True)
@@ -88,6 +88,7 @@ class Shading:
     mask: str | None = None  # the reflection's
     fresnel_power: float = 5.0
     spec_mask: str | None = None  # the specular's
+    paint: bool = False  # DSF's paint program instead (_shade_paint), its terms from Material.paint
 
 
 # Tone calibrated against the vanilla garage pictures (research/gui-assets.md, "Tone"):
@@ -372,21 +373,47 @@ def _face_normals(pos: np.ndarray) -> np.ndarray:
 
 @dataclass(frozen=True)
 class Paint:
-    """A palette entry as the paint shader uses it (lights.md, "What the paint
-    shader does"): colour 2 mixed toward colour 3 by bias + (1 - bias) (1 - n.v)^power,
-    linear RGB. Most vanilla entries are a dark colour 2 with a lighter colour 3 at
-    grazing angles only (power 5 to 15); a flat colour has colour 2 = colour 3."""
+    """A palette entry as the paint shader uses it (research/paint-re.md, "The pixel
+    shader"): colour 2 mixed toward colour 3 by bias + (1 - bias) (1 - n.v)^power,
+    linear RGB, the albedo itself. Most vanilla entries are a dark colour 2 with a
+    lighter colour 3 at grazing angles only (power 5 to 15); a flat colour has
+    colour 2 = colour 3. The rest is the clear coat: the reflection
+    (g_hCustomReflectionAmount, g_hCustomFresnelPower) and the second specular, tinted by
+    the paint (g_hSecondSpecularIntensity, g_hSecondSpecularPower)."""
 
     c2: tuple[float, float, float]
     c3: tuple[float, float, float]
     power: float = 1.0
     bias: float = 0.0
     metallic: bool = False
+    reflection: float = 0.5
+    reflection_power: float = 1.0
+    sheen: float = 0.1
+    sheen_power: float = 5.0
 
     @classmethod
     def flat(cls, srgb: tuple[int, int, int], metallic: bool = False) -> Paint:
         lin = tuple(float(_srgb_to_linear(c / 255)) for c in srgb)
         return cls(lin, lin, 1.0, 0.0, metallic)
+
+    @classmethod
+    def entry(cls, params: dict) -> Paint:
+        """A palette entry (paint.spsp_params) as stored; the shared material's clear coat
+        where the entry has none (the two vehicles with 7 parameters)."""
+        from dsfforza.convert import paint
+
+        d = cls((0.0,) * 3, (0.0,) * 3)
+        return cls(
+            tuple(float(x) for x in params["g_vec3TintColour2"][:3]),
+            tuple(float(x) for x in params["g_vec3TintColour3"][:3]),
+            float(params.get("g_fresnelpower", d.power)),
+            float(params.get("g_fresnelbias", d.bias)),
+            "g_vec4TintColour1_Alpha" in params and paint.is_metallic(params),
+            float(params.get("g_hCustomReflectionAmount", d.reflection)),
+            float(params.get("g_hCustomFresnelPower", d.reflection_power)),
+            float(params.get("g_hSecondSpecularIntensity", d.sheen)),
+            float(params.get("g_hSecondSpecularPower", d.sheen_power)),
+        )
 
     def at(self, ndv: np.ndarray) -> np.ndarray:
         """(N, 3) linear paint colour at the cosines ndv between normal and view."""
@@ -416,14 +443,19 @@ def picture_paint(c2, c3, power: float, bias: float, metallic: bool) -> Paint:
 LOW_POWER_FLOOR, LOW_POWER_BIAS = 2.0, 0.05
 
 
-def paint_colour(stream, full) -> Paint:
-    """The palette's most colourful entry (vanilla pictures rarely show black or
-    grey), chosen by the colour it mostly shows (paint.apparent)."""
+def paint_colour(stream, full, index: int | None = None) -> Paint:
+    """Palette entry `index` as the game draws it (compare renders: entry 0, like the
+    probes' `-Palette 0`, so two builds draw the same entry), or for the garage picture
+    the palette's most colourful entry (vanilla pictures rarely show black or grey),
+    chosen by the colour it mostly shows (paint.apparent), in the picture's model
+    (picture_paint)."""
     from dsfforza.convert import paint
 
     spss = paint.palette_set(stream, full)
     if spss is None or not spss.children:
         return Paint.flat(DEFAULT_PAINT_SRGB)
+    if index is not None:
+        return Paint.entry(paint.spsp_params(stream, spss.children[min(index, len(spss.children) - 1)]))
     options = []
     for e in spss.children:
         params = paint.spsp_params(stream, e)
@@ -492,6 +524,16 @@ FULL_MASK = 4  # the full entry's finest detail LOD (masks 4, 8, 16; 1 is the sh
 # Forza technique does (research/render-compare.md, "Shading").
 DSF_SPECULAR = 25.0
 
+# The paint program (GPCH 14 / 26, GLOBAL_Chassis(_LOD1); research/paint-re.md, "The pixel
+# shader"): the sun glint's power, the reflection's Fresnel floor and bias, its multiplier
+# (g_fTexMul2.z: ClearDay's vehEnvmapmultiplier), and the paint block's green sRGB-decoded
+# (198 / 255), the specular and reflection mask where the texel isn't the shared atlas's
+# (the Forza reference).
+PAINT_SPECULAR_POWER = 1500.0
+PAINT_FRESNEL_MIN, PAINT_FRESNEL_BIAS = 0.025, -0.5
+PAINT_ENV_MULTIPLIER = 3.0
+PAINT_SPEC_MASK = 0.565
+
 
 def _marp_floats(stream, maco) -> dict[str, float]:
     """A MACO's float parameters (type 1; the first pass that has each)."""
@@ -519,7 +561,10 @@ def dsf_shading(program: str, params: dict[str, float] | None = None) -> Shading
     - tyre: tex.G x (R.V)^30 + env x tex.G x 0.5 x max(0.2, 1 - N.V);
     - lights (<car>_Lights and its gloss copies): g_hSpecularIntensity x
       (R.V)^g_hSpecularPower + env x tex.G x g_hReflectionAmount x Fresnel
-      (g_hFresnelPower, g_hReflectionFresnelBias), plus tex.a x the lamp's colour."""
+      (g_hFresnelPower, g_hReflectionFresnelBias), plus tex.a x the lamp's colour;
+    - paint (GLOBAL_Chassis(_LOD1)): the palette entry's own terms (_shade_paint)."""
+    if program == "paint":
+        return Shading(1.0, 0.0, 0.0, 1.0, DSF_SPECULAR, PAINT_SPECULAR_POWER, True, "g", 1.0, "g", paint=True)
     if program == "trim":
         return Shading(1.0, 0.0, 0.0, 1.0, 0.01 * DSF_SPECULAR, 7.5, True, None, 5.0, "g")
     if program == "chrome":
@@ -605,7 +650,7 @@ def _load_scene(
             return decoded[t], True
         return None, False
 
-    car_paint = paint_colour(stream, kinds[0])
+    car_paint = paint_colour(stream, kinds[0], 0 if physical else None)
     metallic = car_paint.metallic
     h = uv.parse(payload(stream, child(child(kinds[0], "NONR"), "UPVH")))
     hubs = []
@@ -782,11 +827,7 @@ def _physical(m: Material, uid: bytes, info: dict, name: str, texture_of) -> Non
     else:
         m.program = "chassis"
     m.name, m.uid = info.get("path", ""), uid
-    if m.program == "paint":
-        # The garage tone's paint, through the same terms as every other material here.
-        sh = SHADING[m.kind]
-        m.shading = Shading(sh.diffuse, sh.f0, sh.reflect, sh.gloss, sh.highlight, sh.power)
-    elif m.program != "glass":
+    if m.program != "glass":
         m.shading = dsf_shading(m.program, info.get("floats"))
 
 
@@ -1253,8 +1294,12 @@ def _shade_physical(mat: Material, view: _View, light, nn, uv, occlusion, rr, li
         paint = mat.paint.at(cos_v) if mat.paint is not None else mat.colour
         a = t[:, 3:4]
         base = base * a + paint * (1 - a)
-    f = sh.f0 + (1 - sh.f0) * (1 - cos_v) ** sh.fresnel_power
     refl = rr - 2 * np.einsum("ni,ni->n", rr, nn)[:, None] * nn
+    if sh.paint:
+        mask = _channel(t, sh.mask, len(nn)) if mat.packed else np.full(len(nn), PAINT_SPEC_MASK, np.float32)
+        p = mat.paint or Paint(tuple(mat.colour), tuple(mat.colour))
+        return _shade_paint(p, view, light, nn, base, mask, occlusion, refl, cos_v, lighting)
+    f = sh.f0 + (1 - sh.f0) * (1 - cos_v) ** sh.fresnel_power
     blur = refl * sh.gloss + nn * (1 - sh.gloss)
     blur /= np.maximum(np.linalg.norm(blur, axis=1, keepdims=True), 1e-9)
     env = _environment(blur) * lighting.env
@@ -1277,6 +1322,30 @@ def _shade_physical(mat: Material, view: _View, light, nn, uv, occlusion, rr, li
         + env * r[:, None] * np.clip(occ * 1.6, 0, 1)
         + spec[:, None] * occ
     )
+    return out, f
+
+
+def _shade_paint(p: Paint, view: _View, light, nn, a, mask, occlusion, refl, cos_v, lighting: Lighting):
+    """DSF's paint program (research/paint-re.md, "The pixel shader") in this renderer's
+    light, for the albedo a (N, 3) and the texel's green `mask` (N,):
+
+        light x A + DSF_SPECULAR x mask x ((R.L)^1500 + sheen x (R.L)^sheen_power x A)
+          + env x sat(mask x max(0.025, (1 - N.E)^reflection_power - 0.5) x reflection x 3)
+
+    The sheen takes the paint's colour; the reflection is almost off on panels facing the
+    camera and grows past N.E 0.5. Returns (colour, the reflection's Fresnel term)."""
+    occ = occlusion[:, None]
+    ambient = (GROUND_AMBIENT + (SKY_AMBIENT - GROUND_AMBIENT) * (1 + nn[:, 1:2]) / 2) * occ * lighting.ambient
+    lambert = np.clip(nn @ light, 0, None)[:, None] * KEY_POWER * lighting.key
+    spec = np.zeros_like(a)
+    for towards, power in ((light, 1.0), (_sun(view), SUN_POWER)):
+        lobe = np.clip(refl @ towards, 1e-4, None)[:, None]
+        spec = spec + (lobe**PAINT_SPECULAR_POWER + p.sheen * lobe**p.sheen_power * a) * power
+    spec = spec * (DSF_SPECULAR * lighting.key) * mask[:, None]
+    f = np.maximum(PAINT_FRESNEL_MIN, (1 - cos_v) ** p.reflection_power + PAINT_FRESNEL_BIAS)
+    r = (mask * f * p.reflection * PAINT_ENV_MULTIPLIER)[:, None]
+    lit = np.clip(occ * 1.6, 0, 1)
+    out = a * (ambient + lambert * lit) + np.clip(_environment(refl) * lighting.env * r, 0, 1) * lit + spec * occ
     return out, f
 
 

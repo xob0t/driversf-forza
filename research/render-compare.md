@@ -54,7 +54,7 @@ vanilla ones disassembled in `forza-materials.md`, "Gloss"):
 
 | Program | Materials | Terms beyond light x texel |
 | --- | --- | --- |
-| `paint` | shared paint | the garage tone's paint (palette entry by the view angle) |
+| `paint` | shared paint | palette entry 0 as stored (colour 2 to 3 by the stored fresnel power and bias), and the paint program's clear coat (`paint-re.md`): DSF_SPECULAR x tex.G x ((R.L)^1500 + `g_hSecondSpecularIntensity` x (R.L)^`g_hSecondSpecularPower` x A) + env x sat(tex.G x max(0.025, (1 - N.V)^`g_hCustomFresnelPower` - 0.5) x `g_hCustomReflectionAmount` x 3) |
 | `trim` | `GLOBAL_Chassis_Simple(_LOD1)` | 0.01 x tex.G x (R.V)^7.5 |
 | `chrome` | the shared chrome | tex.G x (R.V)^150 + env x tex.G at every angle (texel R as the grey) |
 | `tyre` | `GLOBAL_Tyre` | tex.G x (R.V)^30 + env x tex.G x 0.5 x max(0.2, 1 - N.V) |
@@ -91,7 +91,10 @@ geometry for a build without reports), the pop-up lamps lowered as the converter
 them. The Forza wheel model sits on the built car's rest hubs, sized per axle as the
 converter sizes it (`front_fit`, `rear_fit`, `tyre_centre`). The reference sees our cabin
 through its windows (the same triangles: the cabin never differs). The paint is the
-built car's palette entry in both renders, so paint conversion isn't what is compared.
+built car's palette entry 0 in both renders, drawn by DSF's paint program, so paint
+conversion isn't what is compared; a `diff` of two builds shows which way a paint change
+moves the game's paint (#291). The garage pictures keep their own model
+(`car_render.picture_paint`: the most colourful entry, low fresnel powers raised to 2).
 
 Each subsection is drawn as Forza's shaders draw its technique, from what is decoded of
 them (`forza-materials.md`, `lights.md` "Lamp glass", "Lamp covers drawn as window
@@ -99,7 +102,7 @@ glass"):
 
 | Technique | Drawn as |
 | --- | --- |
-| paint (`body`...) | texel x alpha + paint x (1 - alpha), the paint at the shared atlas's plain texel's level, so a correct body matches |
+| paint (`body`...) | texel x alpha + paint x (1 - alpha), the paint as ours draws it (the shared atlas's paint texel is (255, 198, 255): the albedo is the palette colour, #373), so a correct body matches |
 | paint-shader trims (`misc`, `plastic2`...) | the same blend on their texels; trims' texel x `texel_scale` (PristinePaintScale or PaintScale) |
 | trims, badges, emblems | `forza_materials.gloss_params` (the car's ShaderSettings.xml over Normal.xml's defaults): SpecularAmount x SpecularColor, SpecularPower, CubeScale x FresnelScalar with FresnelIndex's F0; alpha-tested ones (`ALPHA_TESTED`) cut at 128 |
 | chrome | texel x ChromeDiffuseScale (0.1) under CubeScale (2) at every angle |
