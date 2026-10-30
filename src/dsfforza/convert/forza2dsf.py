@@ -116,6 +116,46 @@ TRIM_UV = (0.969, 0.496)
 # most (texels 972-980 x 404-424 on both chrome materials, 150 vehicles; red,
 # the grey level, ~98). One texel: Forza's chrome UVs land on its own atlas.
 CHROME_UV = (0.9536, 0.8135)
+# Vanilla chrome takes its grey per part by where UV0 lands (149 vehicles: the mean R of a
+# vehicle's chrome 43 to 156, median 80; most cars span over 30 levels between their
+# darker and lighter parts; research/forza-materials.md, "Bare-metal greys"): columns
+# x 972 to 1021 of rows 392 to 443, a ramp falling from R 103 (G 126) to 45 (G 58), and
+# for its lightest parts a block of R 135, G 135 at x 904 to 941, y 229 to 266 (6 vehicles:
+# the Impala taxi, the RS6 Avant...) or one of R 156, G 198 (103 vehicles, small parts).
+# Bare-metal trims (trim_art.METAL) take the one nearest their Forza grey; G, the gloss and
+# reflection, comes with it. Not 156: its G of 198 made large panels (the Veyron's roof
+# scoops, the One-77's grille) bloom in the sky's reflection; 135's G is near CHROME_UV's
+# 122. grey -> UV0 (texel centres; ramp columns whose neighbours are within 3).
+CHROME_GREYS = {
+    135: (922.5 / 1024, 247.5 / 512),
+    103: (973.5 / 1024, 416.5 / 512),
+    98: (976.5 / 1024, 416.5 / 512),
+    92: (981.5 / 1024, 416.5 / 512),
+    87: (984.5 / 1024, 416.5 / 512),
+    82: (987.5 / 1024, 416.5 / 512),
+    74: (992.5 / 1024, 416.5 / 512),
+    68: (995.5 / 1024, 416.5 / 512),
+    65: (997.5 / 1024, 416.5 / 512),
+    62: (1000.5 / 1024, 416.5 / 512),
+    57: (1005.5 / 1024, 416.5 / 512),
+    49: (1014.5 / 1024, 416.5 / 512),
+    45: (1019.5 / 1024, 416.5 / 512),
+}
+
+
+def chrome_grey(grey: float) -> int:
+    """The CHROME_GREYS grey nearest an sRGB grey level (0..255)."""
+    return min(CHROME_GREYS, key=lambda g: (abs(g - grey), g))
+
+
+def chrome_uv(technique: str) -> tuple[float, float]:
+    """UV0 of a shared-chrome subsection: its grey's texel (dsf_trim_metal#<grey>,
+    trim_art), else CHROME_UV (Forza's chrome techniques)."""
+    from dsfforza.convert import forza_materials as fm
+
+    return CHROME_GREYS.get(fm.technique_grey(technique), CHROME_UV)
+
+
 # Licence plates (src/dsfforza/convert/plates.py): vanilla plates are paint-material quads whose
 # UV0 covers the plate in the same shared atlas; the synthetic plate sections
 # carry those UVs and keep them (add_geometry).
@@ -1329,6 +1369,9 @@ def add_geometry(
                 pool = section.vertices_for(sub)
                 x_off, x_scale, y_off, y_scale = sub.uv_transform[:4]
                 role = wheel_role(sub.material) if wheel else None
+                # Shared chrome: its grey's texel (bare metal's own, chrome_uv); in the vertex
+                # key, so metal of two greys on one vertex pool keeps both.
+                grey_uv = chrome_uv(sub.material) if material == CHROME or material == shared.get("chrome") else None
                 for k, tri in enumerate(sub.triangles()):
                     if keep is not None and not keep(section, sub, k, tri):
                         continue  # damage.DamagePlan: another panel's triangle
@@ -1394,6 +1437,7 @@ def add_geometry(
                             pane,
                             tyre_uv[n] if tyre_uv else None,
                             shown,
+                            grey_uv,
                         )
                         if key not in remap:
                             v = pool[i]
@@ -1424,7 +1468,7 @@ def add_geometry(
                                 # Shared chrome: a grey texel of the same texture; the
                                 # reflection does the rest. UV1 as for paint (the
                                 # damage decal; damage.DamagePlan takes the host's).
-                                uv0 = CHROME_UV
+                                uv0 = grey_uv
                             elif tag is not None:
                                 uv1 = uv0  # atlas-textured; the Lights material's UV1 feeds its decal map
                             if shown:
