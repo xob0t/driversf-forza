@@ -306,6 +306,29 @@ def triangle_alpha_cut(atlas: tuple[int, int, bytearray], uvs) -> bool:
     return passed < max(1, ALPHA_KEEP_SHARE * len(inside))
 
 
+def triangles_alpha_cut(atlas: tuple[int, int, bytearray], uvs) -> list[bool]:
+    """triangle_alpha_cut of many UV triangles (uvs: (n, 3, 2)) at once: the texels inside
+    each (trim_art.triangles_cells, the same texels and the same corner-and-centroid texels
+    when it holds no centre) against Forza's alpha test. Triangles with a non-finite UV go
+    through triangle_alpha_cut one by one (which raises, as it did)."""
+    import numpy as np
+
+    from dsfforza.convert import trim_art
+
+    width, height, rgba = atlas
+    uv = np.asarray(uvs, dtype=np.float64).reshape(-1, 3, 2)
+    if not np.isfinite(uv).all():
+        return [triangle_alpha_cut(atlas, tri) for tri in uvs]
+    alpha = np.frombuffer(rgba, dtype=np.uint8)[3::4].reshape(height, width)
+    pts = uv * (width, height)
+    ys, xs, offsets = trim_art.triangles_cells((height, width), pts)
+    running = np.zeros(len(ys) + 1, np.int64)
+    np.cumsum(alpha[ys, xs] >= 128, out=running[1:])
+    passed = running[offsets[1:]] - running[offsets[:-1]]  # texels passing the test, per triangle
+    total = np.diff(offsets)
+    return [int(p) < max(1, ALPHA_KEEP_SHARE * int(n)) for p, n in zip(passed.tolist(), total.tolist())]
+
+
 def classify(name: str) -> tuple[str, str | None]:
     """(role, texture family) for a technique name. Exact names first, then
     the prefix conventions of the technique list and CustomCarShaders.xml."""

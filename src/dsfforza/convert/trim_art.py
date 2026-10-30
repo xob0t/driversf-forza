@@ -128,11 +128,110 @@ def triangle_cells(shape, pts):
     )
 
 
+CELLS_CHUNK = 1 << 21  # triangles_cells: bounding-box texels tested at a time
+CELLS_ONE_BY_ONE = 256  # triangles_cells: boxes of more texels go through triangle_cells
+
+
+def triangles_cells(shape, pts):
+    """triangle_cells of many texel-space triangles at once (pts: (n, 3, 2)): the
+    (rows, columns) of every triangle's texels one after the other, each triangle's in
+    triangle_cells' order, and the offsets (n + 1) where each triangle's start; the same
+    arithmetic per texel, without a numpy call per triangle. Triangles whose box holds more
+    than CELLS_ONE_BY_ONE texels go through triangle_cells itself (its broadcast grid costs
+    less per texel there)."""
+    import numpy as np
+
+    height, width = shape[:2]
+    pts = np.asarray(pts, dtype=np.float64).reshape(-1, 3, 2)
+    n = len(pts)
+    finite = np.isfinite(pts).all((1, 2))  # non-finite UVs (a GMC_YukonXL_01 trim): no texels
+    pts = np.where(finite[:, None, None], pts, 0.0)
+    xs, ys = pts[:, :, 0], pts[:, :, 1]
+    # The box (x0, x1) x (y0, y1), clamped as triangle_cells does (clipped first: no overflow).
+    x0 = np.maximum(0, np.clip(np.floor(xs.min(1)), -1, width + 1)).astype(np.int64)
+    x1 = np.minimum(width, np.clip(np.ceil(xs.max(1)), -2, width) + 1).astype(np.int64)
+    y0 = np.maximum(0, np.clip(np.floor(ys.min(1)), -1, height + 1)).astype(np.int64)
+    y1 = np.minimum(height, np.clip(np.ceil(ys.max(1)), -2, height) + 1).astype(np.int64)
+    area = (xs[:, 1] - xs[:, 0]) * (ys[:, 2] - ys[:, 0]) - (ys[:, 1] - ys[:, 0]) * (xs[:, 2] - xs[:, 0])
+    boxed = finite & (x0 < x1) & (y0 < y1) & (np.abs(area) > 1e-12)
+    bw = np.where(boxed, x1 - x0, 0)
+    size = bw * np.where(boxed, y1 - y0, 0)
+    count = np.zeros(n, np.int64)
+    rows, cols, owner = [], [], []
+    for k in np.nonzero(size > CELLS_ONE_BY_ONE)[0].tolist():
+        r, c = triangle_cells(shape, [tuple(p) for p in pts[k].tolist()])
+        rows.append(r)
+        cols.append(c)
+        owner.append(np.full(len(r), k, np.int64))
+        count[k] = len(r)
+    size = np.where(size > CELLS_ONE_BY_ONE, 0, size)
+    done = 0
+    while done < n:  # triangles in chunks of about CELLS_CHUNK box texels
+        end = done + max(1, int(np.searchsorted(np.cumsum(size[done:]), CELLS_CHUNK, "right")))
+        sel = np.arange(done, end)[size[done:end] > 0]
+        done = end
+        if not len(sel):
+            continue
+        k = size[sel]
+        tri = np.repeat(sel, k)
+        local = np.arange(int(k.sum())) - np.repeat(np.cumsum(k) - k, k)
+        w = bw[tri]
+        gy = (local // w + y0[tri]) + 0.5
+        gx = (local % w + x0[tri]) + 0.5
+        X, Y, a = xs[tri], ys[tri], area[tri]
+        w0 = ((X[:, 1] - gx) * (Y[:, 2] - gy) - (Y[:, 1] - gy) * (X[:, 2] - gx)) / a
+        w1 = ((X[:, 2] - gx) * (Y[:, 0] - gy) - (Y[:, 2] - gy) * (X[:, 0] - gx)) / a
+        inside = np.nonzero((w0 >= 0) & (w1 >= 0) & (w0 + w1 <= 1))[0]
+        rows.append((gy[inside] - 0.5).astype(np.int64))
+        cols.append((gx[inside] - 0.5).astype(np.int64))
+        owner.append(tri[inside])
+        count += np.bincount(tri[inside], minlength=n)
+    # A finite triangle with no texel centre inside: its corners' and centroid's texels.
+    corner = np.nonzero(finite & (count == 0))[0]
+    if len(corner):
+        cx = np.concatenate([xs[corner], ((xs[corner, 0] + xs[corner, 1]) + xs[corner, 2])[:, None] / 3], 1)
+        cy = np.concatenate([ys[corner], ((ys[corner, 0] + ys[corner, 1]) + ys[corner, 2])[:, None] / 3], 1)
+        # int() truncates towards 0, then the clamp: clipped first, the same texel
+        rows.append(np.minimum(height - 1, np.maximum(0, np.trunc(np.clip(cy, -1, height)).astype(np.int64))).ravel())
+        cols.append(np.minimum(width - 1, np.maximum(0, np.trunc(np.clip(cx, -1, width)).astype(np.int64))).ravel())
+        owner.append(np.repeat(corner, 4))
+        count[corner] = 4
+    if not owner:
+        return np.zeros(0, np.int64), np.zeros(0, np.int64), np.zeros(n + 1, np.int64)
+    owner = np.concatenate(owner)
+    order = np.argsort(owner, kind="stable")  # by triangle, each one's texels in the order found
+    offsets = np.zeros(n + 1, np.int64)
+    np.cumsum(count, out=offsets[1:])
+    return np.concatenate(rows)[order], np.concatenate(cols)[order], offsets
+
+
+def texel_points(m, pool, tris, width: int, height: int):
+    """(n, 3, 2) texel-space corners of triangles `tris` (indices into `pool`) of a subsection
+    resolved as `m` (fm.SubMaterial): m.uv of each vertex's UV0 times the image size, each
+    vertex's m.uv worked out once."""
+    import numpy as np
+
+    index = np.array(tris, dtype=np.int64).reshape(-1, 3)
+    used, inverse = np.unique(index, return_inverse=True)
+    uv = np.array([m.uv(pool[i].uv0) for i in used.tolist()], dtype=np.float64).reshape(-1, 2)
+    pts = uv[inverse.reshape(-1)].reshape(-1, 3, 2)
+    pts[:, :, 0] *= width
+    pts[:, :, 1] *= height
+    return pts
+
+
 def triangle_texels(image, pts):
     """RGBA rows (numpy, int) of the texels whose centres lie inside a texel-space
     triangle; its corners' and centroid's texels if it covers no centre."""
     ys, xs = triangle_cells(image.shape, pts)
     return image[ys, xs].astype(int)
+
+
+def triangles_texels(image, pts):
+    """triangle_texels of many triangles (triangles_cells): the RGBA rows of all of them one
+    after the other and the offsets where each triangle's start."""
+    ys, xs, offsets = triangles_cells(image.shape, pts)
+    return image[ys, xs].astype(int), offsets
 
 
 def is_artwork(texels) -> bool:
@@ -380,11 +479,15 @@ def lod_triangles(sections, lod):
     import numpy as np
 
     out = []
+    pools = {}  # id(vertex list) -> (the list, kept so the id stays its own; positions)
     for section in sections:
         for sub in section.subsections:
             if sub.lod != lod or fm.classify(sub.material)[0] in (fm.GLASS, fm.SKIP):
                 continue
-            pool = np.array([v.position for v in section.vertices_for(sub)], dtype=np.float64).reshape(-1, 3)
+            pool = section.vertices_for(sub)
+            if id(pool) not in pools:  # a section's subsections share its pool: converted once
+                pools[id(pool)] = (pool, np.array([v.position for v in pool], dtype=np.float64).reshape(-1, 3))
+            pool = pools[id(pool)][1]
             tris = np.array(sub.triangles(), dtype=np.int64).reshape(-1, 3)
             if len(tris):
                 out.append(pool[tris])
@@ -444,9 +547,10 @@ def split_trim_art(sections, atlases: fm.AtlasCache, lods=None, settings: dict |
             scale = fm.texel_scale(settings, sub.material) if m.family == fm.NODAMAGE else 1.0
             height, width = image.shape[:2]
             pool = section.vertices_for(sub)
-            for k, tri in enumerate(sub.triangles()):
-                pts = [((u := m.uv(pool[i].uv0))[0] * width, u[1] * height) for i in tri]
-                texels = triangle_texels(image, pts)
+            tris = sub.triangles()
+            every, offsets = triangles_texels(image, texel_points(m, pool, tris, width, height))
+            for k, tri in enumerate(tris):
+                texels = every[offsets[k] : offsets[k + 1]]
                 if m.kind == "swatch":  # one texel for the whole subsection: only its gloss
                     kind = GLOSS if is_opaque(texels) else None
                 else:

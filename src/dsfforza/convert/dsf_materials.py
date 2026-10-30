@@ -1368,9 +1368,12 @@ class Texturing:
                     if technique in DETAIL_TECHNIQUES:
                         detail_ids.add(id(sub))
                     pool = section.vertices_for(sub)
-                    for k, tri in enumerate(sub.triangles()):
-                        uvs = triangle_uv(m, [pool[i].uv0 for i in tri])
-                        if alpha_tested and fm.triangle_alpha_cut(self.atlases.get(m.family), uvs):
+                    sub_tris = sub.triangles()
+                    sub_uvs = [triangle_uv(m, [pool[i].uv0 for i in tri]) for tri in sub_tris]
+                    cut = fm.triangles_alpha_cut(self.atlases.get(m.family), sub_uvs) if alpha_tested else None
+                    for k, tri in enumerate(sub_tris):
+                        uvs = sub_uvs[k]
+                        if alpha_tested and cut[k]:
                             self.dropped.add((id(sub), k))
                             continue
                         tris[m.family].append(uvs)
@@ -1488,14 +1491,10 @@ class Texturing:
                     image = images[m.family]
                     h, w = image.shape[:2]
                     pool = section.vertices_for(sub)
-                    rows = [
-                        trim_art.triangle_texels(image, [((u := m.uv(pool[i].uv0))[0] * w, u[1] * h) for i in tri])
-                        for k, tri in enumerate(sub.triangles())
-                        if (id(sub), k) not in self.dropped
-                    ]
-                    if not rows:
+                    kept = [tri for k, tri in enumerate(sub.triangles()) if (id(sub), k) not in self.dropped]
+                    if not kept:
                         continue
-                    texels = np.concatenate(rows)
+                    texels, _ = trim_art.triangles_texels(image, trim_art.texel_points(m, pool, kept, w, h))
                     if m.family != fm.WHEEL:  # paint-through filler is drawn as the plain texel
                         opaque = texels[texels[:, 3] >= trim_art.ALPHA_OPAQUE]
                         texels = opaque if len(opaque) else texels
@@ -1552,9 +1551,8 @@ class Texturing:
         label = np.full((h, w), -1, dtype=np.int64)
         order = sorted(triangles, key=lambda k: -len(triangles[k]))  # the fewer triangles drawn last, on top
         for n, k in enumerate(order):
-            for pts in triangles[k]:
-                ys, xs = trim_art.triangle_cells((h, w), pts)
-                label[ys, xs] = n
+            ys, xs, _ = trim_art.triangles_cells((h, w), np.array(triangles[k], dtype=np.float64).reshape(-1, 3, 2))
+            label[ys, xs] = n
         covered = label[label >= 0]
         base = int(np.bincount(covered).argmax()) if len(covered) else 0
         label[label < 0] = base
@@ -1709,13 +1707,9 @@ class Texturing:
         from dsfforza.convert import trim_art
 
         w, h, rgba = self.atlases.get(m.family)
-        image = np.frombuffer(bytes(rgba), dtype=np.uint8).reshape(h, w, 4)
+        image = np.frombuffer(rgba, dtype=np.uint8).reshape(h, w, 4)  # read only here: no copy
         pool = section.vertices_for(sub)
-        texels = [
-            trim_art.triangle_texels(image, [((u := m.uv(pool[i].uv0))[0] * w, u[1] * h) for i in tri])
-            for tri in sub.triangles()
-        ]
-        texels = np.concatenate(texels)
+        texels, _ = trim_art.triangles_texels(image, trim_art.texel_points(m, pool, sub.triangles(), w, h))
         opaque = texels[texels[:, 3] >= trim_art.ALPHA_OPAQUE]
         colour = tuple(int(round(c)) for c in (opaque if len(opaque) else texels).mean(0))
         return dataclasses.replace(m, kind="swatch", colour=colour)
