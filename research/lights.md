@@ -2512,12 +2512,16 @@ than Forza" below). Pick the vanilla palette entry of the same finish
 (metallic: `TintColour1.y` = 1) whose shown colour (`apparent`: the fresnel
 mix of colours 2 and 3 averaged over the projected area) is closest to the
 target in sRGB, luminance weighted; copy its nine parameters; set colours 2
-and 3 to the target's hue so that the entry shows the target, colour 3 at the
-template's luminance ratio to colour 2 (where that would need a colour above
-1, the brighter one is the hue at full scale and the other makes up the
-rest). Near-black colours (linear luminance under 0.01) show as bright as
-the vanilla black they matched, in their own hue (not the template's: vanilla
-200's black has a green rim). Before issue #289 the main colour was the swatch as is and
+and 3 so that the entry shows the target: the slot that shows less (a high
+power's rim, a low power's facing tint) keeps its chroma (the colour above its
+smallest channel) and its grey (the smallest channel) in the template's ratio
+to those of the colour the template shows, and the slot that shows more makes
+up the target channel by channel. No slot passes its headroom (`headroom`:
+the template slot's own peak, at least `HEADROOM` 0.6); one that would is
+scaled down whole, off-channels kept (issue #345, below). Near-black colours
+(linear luminance under 0.01) show as bright as the vanilla black they
+matched, in their own hue (not the template's: vanilla 200's black has a
+green rim), the rim at the template's luminance ratio. Before issue #289 the main colour was the swatch as is and
 `apparent` read colour 2 or colour 3, not the mix.
 `install` replaces the host's SPSPs (the host's first SPSP is the chunk
 template; every MARP gets an explicit payload) and drops colours from the end
@@ -2730,6 +2734,63 @@ faint green (Forza's `#0f140d` is green-tinted). The TSX's `#a6abab`
 silver goes from near white to a mid grey: on the twin cars light metallic
 greys show 0.32 of the swatch (median of 54), so 0.3 is right on average
 for silvers, but no vanilla silver was in the run to compare (open).
+
+### Saturated colours at 1.0 (issue #345)
+
+Report: since #289 the F40 (`FER_F40_87`, `#c00000`) draws bright red but flat,
+with no visible gloss.
+
+What was built (confirmed-static): `recolour` put both colours in the
+target's hue and, where the template's colour 3 / colour 2 ratio needed a
+channel above 1, the hue at full scale. On vanilla 126's red (power 15,
+colour 2 (0.111, 0.003, 0.003), colour 3 (0.494, 0.117, 0.117)) the F40 got
+colour 2 (0.143, 0, 0) and colour 3 (1, 0, 0). Over the roster (`dsff paint
+survey`, 2,807 measured entries) 258 entries on 212 cars had a channel at
+1.0 (204 reds, 19 oranges, 18 blues, 17 greys), 241 of them in a slot whose
+template has none, and 1,075 had a rim (the slot that shows less) with under
+half its template's off-channel share. Vanilla puts 1.0 only in slots that
+show 2 to 13% (the MP4-12C's red colour 2 (1, 0, 0), the power-0.1 whites'
+colour 2). Its slots that show 40% or more peak at 0.57 (the security van's
+yellow, 301), most under 0.45, and its saturated rims keep their
+off-channels (208: (0.974, 0.114, 0.114)). Peak shown channel per hue over
+vanilla's 906 car paints: red 0.18, orange 0.47, yellow 0.32, green 0.25,
+blue 0.36.
+
+Fix (`paint.recolour`): the slot that shows more makes up the target channel
+by channel; the other keeps its chroma and grey in the template's ratio to
+those of the colour the template shows (a pastel target adds its own grey).
+No slot passes `headroom` (the template slot's own peak, at least
+`HEADROOM` 0.6); one that would is scaled down whole and the other makes up
+the rest. The F40 gets colour 2 (0.150, 0, 0) and colour 3 (0.6, 0.123,
+0.123). Roster after: 0 entries clipped past their template (the 23 with a
+1.0 channel are in slots whose template is at 1.0), 74 rims under half the
+template's off-channel share (deep blues whose chroma grows more than the
+kept grey), shown / target still 1.00 median, none outside ±25% (p99 1.09:
+the rim's grey adds a little luminance).
+
+In game (confirmed-runtime; master and branch builds of 7 cars, `-Palette
+0`, chase, `nose` and `deck` views, vanilla 126, 208 and 224 for reference;
+runs `vm1-20261030-125515` (master), `-130403` (branch); images
+`out/p345/pr-f40.jpg`, `pr-others.jpg` in the PR): **no visible change**.
+On the F40's nose view the red pixels are R median 194 / 95th percentile 224
+on master and 196 / 223 on the branch, none at 255. Vanilla 126, the template,
+measures 193 / 224 and looks as flat. The 370Z, S5S Raptor (no glow), Boss
+429, R8 white and El Camino black are unchanged. The F40's flatness is how DSF
+draws vanilla 126's red too.
+
+Colour 3 at power 15 shows only at grazing angles (confirmed-runtime): master's
+F40 with colour 3 set to blue (0, 0, 0.6), run `vm1-20261030-131017`, turns
+purple only along the flank and the pillars seen edge-on; the bonnet and nose
+stay red. So the full-scale rim reached only those edges, and the fresnel mix
+is literal at power 15 as at 0.75 (above, "The DMC-12 came out black").
+
+Specular (runs `vm1-20261030-132701` / `-133319`): the F40 with the second
+specular of vanilla 182 and 276 (1.0, power 100) in place of 126's (0.1, power
+5) gets a slightly sharper highlight on the nose (red median 200 to 177),
+nothing like Forza's clear coat. Vanilla 182, 230 (2.0 / 100) and 126 read as
+similarly flat reds in the same light. On 182 only the black stripes show the
+sky's reflection clearly. A bright red hides the reflection
+(`g_hCustomReflectionAmount` 0.5, added to the lit colour) in vanilla too.
 
 ### Survey of the 40 testdrive cars (`out/testdrive3`, offline)
 

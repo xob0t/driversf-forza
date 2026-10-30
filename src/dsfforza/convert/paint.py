@@ -342,27 +342,82 @@ def target_colour(colour: ForzaColour) -> tuple[float, float, float]:
     return tuple(SHOWN_GAIN * c for c in colour.linear)
 
 
-def recolour(params: dict, target) -> tuple[tuple[float, ...], tuple[float, ...]]:
-    """Colours 2 and 3 in the target's hue so that the entry shows the target (apparent),
-    with colour 3 at the template's brightness ratio to colour 2. Where that ratio would
-    need a colour above 1 (the MP4-12C's red: colour 3 at 0.03 of colour 2 and 98% of
-    colour 3 showing), the brighter one is the target's hue at full scale and the other
-    makes up the rest."""
+def _split(c) -> tuple[float, tuple[float, ...]]:
+    """A colour's grey (its smallest channel) and its chroma (what is left above it)."""
+    g = min(c)
+    return g, tuple(x - g for x in c)
+
+
+# Below this share of chroma in the shown colour's luminance a template counts as grey: the
+# rim's chroma ratio blends into its luminance ratio, so a faint tint isn't multiplied up.
+CHROMA_FLOOR = 0.1
+
+
+def recolour(params: dict, target, own_hue: bool = False) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Colours 2 and 3 for an entry that shows the target (apparent) with the template's
+    saturation. The slot that shows less (a high power's rim, a low power's facing tint)
+    keeps its chroma and grey (`_split`) in the template's ratio to the chroma and grey of
+    the colour the template shows; the slot that shows more makes up the target, channel by
+    channel. Vanilla 126's red shows (0.118, 0.005, 0.005) with a colour 3 rim of (0.494,
+    0.117, 0.117), 3.3x the chroma and a grey of 0.117: the F40's #c00000 gets a rim of
+    (0.6, 0.09, 0.09) where it got the hue at full scale, (1, 0, 0), and drew flat (issue
+    #345). `own_hue`: the rim in the target's hue at the template's luminance ratio (near
+    black). A slot past its `headroom` is scaled down as a whole, keeping its off-channels,
+    and the other makes up the rest."""
     w = min(max(shown_weight(params), 1e-6), 1 - 1e-6)
-    l2, l3 = _lum(params["g_vec3TintColour2"][:3]), _lum(params["g_vec3TintColour3"][:3])
-    if l2 > 1e-4:
-        k2 = 1 / ((1 - w) + w * l3 / l2)
-        k3 = k2 * l3 / l2
+    slots = (params["g_vec3TintColour2"][:3], params["g_vec3TintColour3"][:3])
+    shares = (1 - w, w)
+    shown = apparent(params)
+    la, lt = _lum(shown), _lum(target)
+    if la < 1e-6 or lt < 1e-9:
+        return tuple(target), tuple(target)
+    minor = 0 if shares[0] < shares[1] else 1
+    main = 1 - minor
+    slot, k = slots[minor], _lum(slots[minor]) / la
+    pa = _split(shown)[1]
+    gt, pt = _split(target)
+    if own_hue:
+        rim = tuple(k * c for c in target)
     else:
-        k2, k3 = 0.0, 1 / w
-    top = 1 / max(*target, 1e-6)
-    if k2 > top and k2 >= k3:
-        k2 = top
-        k3 = (1 - (1 - w) * top) / w
-    elif k3 > top:
-        k3 = top
-        k2 = (1 - w * top) / (1 - w)
-    return tuple(min(1.0, k2 * c) for c in target), tuple(min(1.0, k3 * c) for c in target)
+        # chroma at the template's ratio (its luminance ratio where the shown colour is near
+        # grey), grey at its ratio to the shown luminance, plus the target's own grey beyond
+        # the template's (a pastel's rim is pastel too; a purer colour's keeps the template's)
+        t = min(1.0, _lum(pa) / (CHROMA_FLOOR * la))
+        rho = t * _lum(_split(slot)[1]) / _lum(pa) + (1 - t) * k if t > 0 else k
+        greys = [_split(c)[0] * lt / la for c in slots]
+        extra = gt - sum(s * g for s, g in zip(shares, greys))
+        rim = tuple(rho * c + greys[minor] + k * max(0.0, extra) for c in pt)
+    tops = [headroom(c) for c in slots]
+    new = [None, None]
+
+    def solve(i):  # slot i so that the entry shows the target, given the other
+        o = new[1 - i]
+        return tuple(max(0.0, (target[c] - shares[1 - i] * o[c]) / shares[i]) for c in range(3))
+
+    def fit(i):
+        top = max(new[i])
+        return new[i] if top <= tops[i] else tuple(x * tops[i] / top for x in new[i])
+
+    new[minor] = rim
+    new[minor] = fit(minor)
+    new[main] = solve(main)
+    if max(new[main]) > tops[main]:  # too bright for the main slot: the other carries more
+        new[main] = fit(main)
+        new[minor] = solve(minor)
+        new[minor] = fit(minor)
+    return new[0], new[1]
+
+
+# The brightest channel a recoloured slot may take: its template's own, or this. Vanilla's
+# slots that show 40% or more of an entry stay at or under 0.57 (the security van's yellow,
+# 301), most under 0.45; the channels at 1.0 are all in slots that show 2 to 13% (the
+# MP4-12C's red colour 2 (1, 0, 0), the power-0.1 whites' colour 2), and its saturated rims
+# keep their off-channels (126: (0.494, 0.117, 0.117), 208: (0.974, 0.114, 0.114)).
+HEADROOM = 0.6
+
+
+def headroom(slot) -> float:
+    return max(HEADROOM, *slot[:3])
 
 
 _CAP_CACHE: dict = {}
@@ -377,6 +432,15 @@ def brightness_cap(vanilla: list[dict]) -> tuple[float, ...]:
     return _CAP_CACHE[key]
 
 
+def template_for(colour: ForzaColour, vanilla: list[dict]) -> dict:
+    """The vanilla car-paint entry of the colour's finish (any finish if none) whose shown
+    colour (apparent) is nearest the colour's DSF target (target_colour)."""
+    target = target_colour(colour)
+    vanilla = [s for s in vanilla if is_template(s["params"])] or vanilla
+    same = [s for s in vanilla if is_metallic(s["params"]) == colour.metallic] or vanilla
+    return min(same, key=lambda s: _distance(apparent(s["params"]), target))
+
+
 def shade(colour: ForzaColour, vanilla: list[dict]) -> dict:
     """Parameters for one Forza colour: a special finish's preset as is, else the vanilla
     car-paint entry of the same finish (any finish if none) whose shown colour (apparent)
@@ -385,11 +449,11 @@ def shade(colour: ForzaColour, vanilla: list[dict]) -> dict:
     if colour.finish in FINISH_PRESETS:
         return dict(FINISH_PRESETS[colour.finish])
     target = target_colour(colour)
+    best = template_for(colour, vanilla)
     vanilla = [s for s in vanilla if is_template(s["params"])] or vanilla
-    same = [s for s in vanilla if is_metallic(s["params"]) == colour.metallic] or vanilla
-    best = min(same, key=lambda s: _distance(apparent(s["params"]), target))
     params = dict(best["params"])
-    if _lum(colour.linear) < NEAR_BLACK:
+    near_black = _lum(colour.linear) < NEAR_BLACK
+    if near_black:
         # Below this the twin-car gain isn't measured (vanilla blacks show 0 to 0.01): the
         # vanilla black's brightness, in the Forza colour's hue, not the vanilla one's (the
         # Firebird's #0f140d kept vanilla 200's green rim, colour 3 (0.02, 0.04, 0.02), and
@@ -397,7 +461,7 @@ def shade(colour: ForzaColour, vanilla: list[dict]) -> dict:
         lum, want = _lum(target), _lum(apparent(params))
         target = tuple(c * want / lum for c in target) if lum > 0 else (want,) * 3
     c2, c3 = params["g_vec3TintColour2"], params["g_vec3TintColour3"]
-    new2, new3 = recolour(params, target)
+    new2, new3 = recolour(params, target, own_hue=near_black)
     params["g_vec3TintColour2"], params["g_vec3TintColour3"] = new2 + tuple(c2[3:]), new3 + tuple(c3[3:])
     # Never brighter than the brightest vanilla car paint. Forza's swatch RGB taken as linear
     # was far above anything vanilla DSF paints: the S5S Raptor's #ffbf19 on the security
@@ -477,6 +541,11 @@ def find_gamedb(car_folder: Path) -> Path | None:
     return candidate if candidate.exists() else None
 
 
+def _share(c) -> float:
+    """A colour's off-channel share: its smallest channel over its largest."""
+    return min(c) / max(c) if max(c) > 1e-6 else 1.0
+
+
 def _chromaticity(c) -> tuple[float, ...]:
     total = sum(c) + 1e-6
     return tuple(x / total for x in c)
@@ -507,9 +576,11 @@ def twin_ratios(vanilla: list[dict], gamedbs: list[Path], gain: float) -> list[f
 
 
 def survey(vanilla: list[dict], cars: list[str], cache: Path, gamedbs: list[Path]) -> dict:
-    """Shown luminance against the DSF target over the cars' palettes, vanilla's own
-    entries taken as targets, and the twin-car gain."""
-    rows = []
+    """Shown luminance against the DSF target over the cars' palettes, the entries with a
+    channel at 1.0 where their template has none, those whose rim kept under half the
+    template's off-channel share (issue #345), vanilla's own entries taken as targets, and
+    the twin-car gain."""
+    rows, clipped, pale_rim_lost = [], set(), 0
     for media in cars:
         name, _, game = media.partition("@")
         # the game the build takes it from: its cache folder, FH1 first (port_batch)
@@ -521,6 +592,15 @@ def survey(vanilla: list[dict], cars: list[str], cache: Path, gamedbs: list[Path
                 continue
             q = shade(colour, vanilla)
             rows.append((media, _lum(apparent(q)) / _lum(target_colour(colour))))
+            t = template_for(colour, vanilla)["params"]
+            for name in ("g_vec3TintColour2", "g_vec3TintColour3"):
+                if max(q[name][:3]) >= 0.99 and max(t[name][:3]) < 0.99:
+                    clipped.add((media, colour.sequence))
+            # the slot that shows less: a template's off-channel share kept at least half
+            rim = "g_vec3TintColour3" if shown_weight(t) < 0.5 else "g_vec3TintColour2"
+            kept, had = _share(q[rim][:3]), _share(t[rim][:3])
+            if had >= 0.05 and _share(target_colour(colour)) < had and kept < 0.5 * had:
+                pale_rim_lost += 1
     own = []
     for v in vanilla:
         shown = apparent(v["params"])
@@ -539,6 +619,8 @@ def survey(vanilla: list[dict], cars: list[str], cache: Path, gamedbs: list[Path
         "cars": len({m for m, _ in rows}),
         "outside_25pc": off([r for _, r in rows]),
         "cars_outside": len({m for m, r in rows if not 0.75 <= r <= 1.25}),
+        "clipped_past_template": len(clipped),
+        "rim_off_channels_halved": pale_rim_lost,
         "vanilla_entries": len(own),
         "vanilla_outside_25pc": off(own),
         "twin_median_ratio": {g: round(r[len(r) // 2], 3) for g, r in fits.items() if r},

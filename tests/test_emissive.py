@@ -46,16 +46,16 @@ class PaintBrightness(unittest.TestCase):
 
     def test_too_bright_colour_is_dimmed_to_vanilla(self):
         # The cap still holds where a target passes the vanilla maximum (the swatch taken
-        # as linear, as before SHOWN_GAIN).
-        with mock.patch.object(paint, "SHOWN_GAIN", 1.0):
+        # as linear, as before SHOWN_GAIN, and no slot headroom).
+        with mock.patch.object(paint, "SHOWN_GAIN", 1.0), mock.patch.object(paint, "HEADROOM", 1.0):
             q = paint.shade(paint.ForzaColour(1, (0xFF, 0xBF, 0x19), True, "Yellow"), VANILLA)
         self.assertEqual(q["_template"], 301)
         self.assertLess(q["_dimmed"], 0.8)
         for got, limit in zip(paint.brightness(q), paint.brightness_cap(VANILLA)):
             self.assertLessEqual(got, limit + 1e-6)
-        # hue kept: both colours scaled alike
+        # hue kept: both colours scaled alike (the main one gives up a little green to the rim's)
         c2 = q["g_vec3TintColour2"]
-        self.assertAlmostEqual(c2[1] / c2[0], paint.srgb_to_linear(0xBF / 255), places=3)
+        self.assertAlmostEqual(c2[1] / c2[0], paint.srgb_to_linear(0xBF / 255), delta=0.02)
 
     def test_ordinary_colour_untouched(self):
         q = paint.shade(paint.ForzaColour(1, (0xF5, 0xF5, 0xF5), True, "White"), VANILLA)
