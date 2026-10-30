@@ -103,7 +103,7 @@ _add(
     "inside_window cockpit_glass glass_2 red_glass",
 )
 # `glass` on FH1 cars is the clear headlight cover; its UVs land on the Lights atlas.
-_add(GLASS, LIGHTS, "glass lights_glass lights_gls_noemit")
+_add(GLASS, LIGHTS, "glass lights_glass")
 _add(
     TRIM,
     NODAMAGE,
@@ -139,7 +139,7 @@ _add(
     "drlinrwhite brinl brinr lindtailside rindtailside slorange slinlorange slinrorange "
     "detail_glass_red detail_glass_clear detail_glass_amber lights_gls_tail_light "
     "lights_gls_reverse_light lights_gls_indicator_left lights_gls_indicator_right "
-    "lights_gls_hidhead lights_gls_oldhead lights_gls_taillightst lights_gls_taillight2S",
+    "lights_gls_hidhead lights_gls_oldhead lights_gls_taillightst lights_gls_taillight2S lights_gls_noemit",
 )
 # Synthetic plate sections (src/dsfforza/convert/plates.py): paint material, UVs on the
 # shared atlas's plate (not a Forza technique).
