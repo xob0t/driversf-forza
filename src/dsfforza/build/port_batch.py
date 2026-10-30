@@ -577,7 +577,7 @@ def worker(job_path: Path) -> int:
     try:
         from dsfforza.build import clone_vehicle, port_car
         from dsfforza.build.forza_roster import Source
-        from dsfforza.formats.chnk import read_chunk, write_chunk
+        from dsfforza.formats.chnk import read_root, write_chunk
 
         dsf = Path(job["dsf"])
         args = port_car_args(
@@ -598,7 +598,9 @@ def worker(job_path: Path) -> int:
         prep = port_car.prepare_car(args, source, job["media"], isos, log)
         host, sound = prep.host, prep.sound
         with dsf.open("rb") as stream:
-            root = read_chunk(stream, 0)
+            # The one parse of the vanilla archive this worker makes: the dials' and paints'
+            # lookups share it (chnk.read_root); the conversion copies what it changes.
+            root = read_root(stream)
             entries = root.entries
             nonr_limit, mdxn_max = port_car.vanilla_limits(stream, entries, args.mdxn_limit)
             names = {s: entries[i].name for s, i, k in clone_vehicle.sslp_records(stream, entries) if k == 0}
