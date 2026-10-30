@@ -171,9 +171,13 @@ How a build runs:
 - Each car runs in a worker process (`port_car.build_car`) at Below Normal
   priority.
   While the file `out/gentle` exists (`src/dsfforza/build/gentle.py`), builds run at
-  Idle priority pinned to the last two logical CPUs, with at most two
-  workers, so a game on the same PC keeps its CPU. Delete the file to build
-  at full speed.
+  Idle priority with at most two workers, so a game on the same PC keeps its
+  CPU: Idle threads only get CPU time no other thread wants. A job object
+  holds every process of the build at Idle (workers ask for Below Normal), and
+  nothing is pinned to a CPU: until issue #325 gentle builds were pinned to the
+  last two logical CPUs, so every agent's queued on the same two while the rest
+  idled (the same 10-car build at 2 jobs: 447 s pinned, 287 s not, the same output;
+  issue #325). Delete the file to build at full speed.
 - A new worker starts only while 1.5 GB of RAM is free. One worker peaks at
   about 420 MB.
 - Each worker writes the car's three VEHC entries to `work/<media>.chnk`.

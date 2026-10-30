@@ -64,8 +64,8 @@ backup, then `tools/install.ps1`). Each car is reused from `out/build`, an
 interrupted `out/build.partial` or `--reuse DIR` when its inputs and code are
 unchanged (`research/batch.md`, "Selective rebuild"); a first run on a machine
 that built by hand reuses the earlier build under `out/` with the most cars.
-Tool output goes to `out/logs/install-<time>.log`. `out/gentle` (Idle priority
-on two CPUs) is honoured. `uv run dsff install --help` lists every option.
+Tool output goes to `out/logs/install-<time>.log`. `out/gentle` (Idle priority,
+at most two workers) is honoured. `uv run dsff install --help` lists every option.
 
 Third-party tools are downloaded on first use, pinned by version and SHA-256,
 into `out/tools-dl` (`src/dsfforza/build/thirdparty.py`; `uv run dsff

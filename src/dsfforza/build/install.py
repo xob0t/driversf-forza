@@ -37,7 +37,7 @@ Stages, each skipped when there is nothing to do:
 
 The terminal shows the stages, a per-car progress bar and the cars each worker is
 converting; everything the tools print goes to out/logs/install-<time>.log.
-Builds run at Below Normal priority; with out/gentle at Idle on two CPUs.
+Builds run at Below Normal priority; with out/gentle at Idle with at most two workers.
 """
 
 from __future__ import annotations
@@ -851,7 +851,7 @@ class Reporter:
                 f"{t.todo} to convert, {t.reused} reused"
                 + (f" ({why})" if why else "")
                 + f"; {t.jobs} at a time"
-                + (", Idle on 2 CPUs (out/gentle)" if t.gentle else ""),
+                + (", Idle, 2 workers at most (out/gentle)" if t.gentle else ""),
             )
         elif event == "verify":
             self.states["build"] = (
@@ -905,7 +905,7 @@ class PlainReporter(Reporter):
     def show_event(self, event: str, data: dict) -> None:
         t = self.tracker
         if event == "convert":
-            mode = "Idle priority on 2 CPUs (out/gentle)" if t.gentle else "Below Normal priority"
+            mode = "Idle priority, 2 workers at most (out/gentle)" if t.gentle else "Below Normal priority"
             self.line(f"  {t.total} cars: {t.reused} reused, {t.todo} to convert, {t.jobs} at a time ({mode})")
         elif event == "car_start" and not data.get("verify"):
             self.line(f"  start {data['media']}")

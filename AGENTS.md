@@ -86,7 +86,8 @@ Research notes are in `research/` (read the ones for your area first).
 - Tools read the game folder from `DSF_GAME_DIR` (set for the user on this PC);
   never hard-code a machine path in code or docs.
 - The user uses this PC. Builds: if `out\gentle` exists, `port_batch` runs at
-  Idle priority on two cores; keep `--jobs` low then.
+  Idle priority with at most two workers (no CPU pinning: Windows spreads Idle
+  processes over the free cores); keep `--jobs` low then.
 - In-game tests go through `tools\wsb\run-series.ps1` (read it and
   `tools\wsb\guest\run-test.ps1`). Runs are serialised by a mutex; never kill
   `Driver.exe` or another run's processes. Prefer `-Vm` (headless VMware

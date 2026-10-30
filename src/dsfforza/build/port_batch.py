@@ -148,7 +148,7 @@ def lower_priority() -> None:
             os.nice(5)
     except (OSError, AttributeError):
         pass
-    gentle.apply()  # out/gentle: Idle on two CPUs (src/dsfforza/build/gentle.py)
+    gentle.apply()  # out/gentle: Idle, held for the children too (src/dsfforza/build/gentle.py)
 
 
 def emit(progress, event: str, **data) -> None:
@@ -1568,7 +1568,7 @@ def cmd_build(args) -> None:
     args.jobs = gentle.jobs(args.jobs)
     print(
         f"building {len(todo)} cars, {args.jobs} at a time ("
-        + ("Idle priority on two CPUs: out/gentle" if gentle.enabled() else "Below Normal priority")
+        + ("Idle priority: out/gentle" if gentle.enabled() else "Below Normal priority")
         + ")"
         + (
             f"; {len(reused)} reused"
