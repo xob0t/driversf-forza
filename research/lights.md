@@ -102,11 +102,10 @@ later PR replaced a rule, the earlier section says so in one line.
   hot where the reflector is deep, ranked per lamp onto vanilla's 0x1D
   distribution ([#124](#head-lamp-glow-by-day-issue-124)), following the
   lamp's own picture (its bright and dark detail,
-  [#286](#head-lamps-at-a-fifth-of-vanilla-at-night-issue-286)). Every texel a
-  0x1D lamp samples then glows at 0.45 of that (`DAYTIME_GLOW`; 0.2 from #167
-  to #286, [#167](#head-lamps-white-plates-by-day-after-164)): every
-  source texel under the DSF texels its triangles sample, and the lamps that
-  share a 0x1D entry too ([#250](#head-lamps-white-plates-by-day-volvo-s60-11-venom-gt-12-boss-429-issue-250)).
+  [#286](#head-lamps-at-a-fifth-of-vanilla-at-night-issue-286)), times what
+  the glass or lens in front of it passes. Day-lit (0x1D) lamps keep that alpha
+  since [glass over lamps as Forza blends it](#glass-over-lamps-as-forza-blends-it-379)
+  (`DAYTIME_GLOW` scaled them, 0.2 from #167 to #286, then 0.45).
 
 **Glass over lamps** (`lenses.bake`, `Texturing._bake_lenses`). What Forza's race shaders actually compute for lenses, covers and
 glass, and which of these rules that confirms or replaces: `forza-lenses-re.md`.
@@ -125,10 +124,10 @@ glass, and which of these rules that confirms or replaces: `forza-lenses-re.md`.
   points far apart) is left out when half its rays meet a lamp (a clear one when
   any ray does, #250), and its filter goes onto the lamp texels behind it. A lens
   of one flat colour is baked like any other since "Lenses as Forza draws them".
-- Plain `glass` covers over a lamp are left out (in a lamp unit's own section
-  from 5% of their area over a lamp, [#247](#head-lamp-covers-over-a-whole-head-lamp-unit-issue-247)). Textured covers
-  (`lights_glass`) over a lamp are baked at Forza's
-  opacity and glow with the lamp behind; `lights_gls_*` lamp glass with a
+- Plain `glass` over a lamp stays DSF window glass, as Forza draws it over
+  the lamp ([#379](#glass-over-lamps-as-forza-blends-it-379); left out from #160
+  to then). Textured covers (`lights_glass`) over a lamp are baked at Forza's
+  opacity and pass (1 - opacity)^2 of the lamp's glow; `lights_gls_*` lamp glass with a
   cap under 1 is baked at that cap (`lights_gls_noemit` too, lamp glass
   without a glow, not a cover); a cover over its own lenses' texels (a
   second skin) is left out; covers over no lamp stay DSF window glass (the
@@ -2490,6 +2489,57 @@ units, where a 0x01 texel glowed 2).
 
 The ported head lamps that #286 raised to vanilla's 0x1D level "at night" were measured against a
 0x1D lamp drawn at 10; by day, which is what players see, it glows at 1, as vanilla's do.
+
+### Glass over lamps as Forza blends it (#379)
+
+`research/forza-lenses-re.md` section 7 (#379) read Forza's blend out of `default.xex`: plain `glass`,
+`lights_glass` and `lights_gls_*` draw with `SRCALPHA, INVSRCALPHA` on Forza's square-root output,
+so a layer at opacity `a` keeps `(1 - a)^2` of what is behind. Plain glass is at `GlassColor.w`
+(0.3 shared) plus the Fresnel term: one layer keeps 26% of a lamp head-on. A `lights_glass` cover
+keeps `(1 - a)^2` of its lamp's glow, a = `min(max(texel alpha, GlassColor.w), GlassMaxOpacity)`
+(p10 / median / p90 over the roster 0.7% / 3.8% / 20%).
+
+What the converter did: plain glass over a lamp left out (#160, #247, #284: a cover from 30% of
+its area over a lamp, 5% in a lamp unit's own section), so the lamp showed whole, about four times
+Forza's; `lights_glass` covers passed the lamp's whole glow (#164). And the day-lit head lamps
+glowed at `DAYTIME_GLOW` (0.45) of vanilla's alpha, against a 0x1D lamp drawn at 10 by the renderer
+of the time (#286).
+
+Change:
+
+- Plain `glass` over a lamp stays DSF window glass (`Texturing.clear_cover`,
+  `COVER_LAMP_SECTION_SHARE` and its section pattern removed): it keeps about half a lamp's glow
+  (measured, `lights-re.md`), against Forza's 26%, the closest DSF has.
+- A `lights_glass` cover baked over its lamp passes `(1 - opacity)^2` of the lamp's glow, with
+  the cover's colour blended in at its opacity as before.
+- The day-lit head lamps glow at vanilla's 0x1D alpha (`DAYTIME_GLOW`, `Binding.set_daytime`,
+  `Texturing.daytime_mask`, `_dsf_boxes`, `LampPlan.is_daytime` removed: the atlas is rendered
+  once). Vanilla's are seen through window glass (all 28 vehicles with 0x1D lamps); with the
+  plain glass kept, the ports' are too, wherever Forza has it.
+- What the glass or lens in front of a head lamp passes (a lens's filter, a cover's
+  `(1 - opacity)^2`) multiplies its day glow after `day_glow`'s ranking (the ranking onto
+  vanilla's distribution used to cancel it); the glow map holds it as a fifth channel.
+- render_compare: Forza's plain glass at `GlassColor.w` (the car's or 0.3) and every alpha-blended
+  glass passing `(1 - a)^2` in the reference; behind window glass the interior's copy of a panel
+  loses to a lamp as behind a lens (it hid recessed bowls under the kept glass); a lamp region's
+  pixel under DSF glass is "drawn as" the surface behind it.
+
+Results, 16 cars (render_compare's renderer with the game's lamp model, by day, the running
+lights; before: #385's build):
+
+- The 0x1D head lamps' glow p95 over the front view: p10 / median / p90 0.82 / 1.75 / 2.48
+  (vanilla's 1.1 / 1.85 / 2.32). Under kept glass (X6 M, Mustang, S60, both Commodores, F50, X5 M,
+  Q7, M5) about what they were; without glass in Forza (Carlton 1.63 -> 2.53, Venom 1.22 -> 2.27,
+  M3 E30 1.75 -> 2.65, Esperante 1.43 -> 2.08, R390 1.45 -> 1.86) up to vanilla's alpha; behind a
+  clear lens that passes little (GTI VR6 1.73 -> 0.67, X5 M 0.97) lower. The Golf R's front 0x03
+  running lamps 6.71 -> 3.91 under their glass (vanilla's front 0x03 1.51 / 3.53 / 4.79).
+- `render_compare diff` (`out/rc/cov`): all 16 drawn differently, in the lamp regions; fixed 6
+  flags (the Golf R's white plate by day, "chrome extra" on 5 cars, the F50's front "colour off"),
+  new 2 ("drawn as" paint or trim under the F50's and Mustang's kept covers, where they lie over
+  bodywork or housing). Q7 rear braking 1.83 -> 0.89 under its kept rear glass.
+- In game by day (VM 1, `-Views 'nose,rear,nose+night'`, before `vm1-20261030-185809`, after
+  `vm1-20261030-190326`): the Carlton's head lamps brighter, as bright as vanilla 241's; the Golf
+  R's running lamps dimmer; the Mustang's, S60's, X6 M's and M5's about as before.
 
 ### Open
 
