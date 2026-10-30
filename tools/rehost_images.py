@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import re
 import subprocess
@@ -441,7 +442,7 @@ def verify(args) -> None:
         local = next((IMAGES / key).iterdir())
         try:
             _status, data = fetch_url(url)
-        except Exception as e:
+        except (OSError, http.client.HTTPException) as e:  # URLError, HTTPError and timeouts are OSErrors
             print(f"FAIL {url}: {e}")
             bad += 1
             continue

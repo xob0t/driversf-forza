@@ -98,15 +98,15 @@ def dxt5_dds(width: int, height: int, rgba: bytes | bytearray, template: bytes |
 
 VANILLA_STRIDE = 16  # the Volt's digital buffer: s0 position 4 x i16, s8 4 x f16 (u, v, id, comp)
 
-_VANILLA: dict = {}
-_VANILLA_VB: dict = {}
+_VANILLA: dict = {}  # id(stream) -> (the stream, so its id stays its own; its MACO)
+_VANILLA_VB: dict = {}  # id(stream) -> (the stream; its VXCK)
 
 
 def vanilla_buffer(stream):
     """The VXCK the vanilla Volt draws its digital dials from: its vertex declaration
     (no normal) is the one the digital-dials shaders are drawn with."""
-    key = id(stream)
-    if key not in _VANILLA_VB:
+    hit = _VANILLA_VB.get(id(stream))
+    if hit is None or hit[0] is not stream:
         from dsfforza.convert import dsf_materials as dm
         from dsfforza.formats import chnk
         from dsfforza.formats.vehicle_mesh import child
@@ -126,14 +126,15 @@ def vanilla_buffer(stream):
                 break
         if found is None:
             raise ValueError("the vanilla Volt's digital-dials buffer is not in the source archive")
-        _VANILLA_VB[key] = found
-    return _VANILLA_VB[key]
+        _VANILLA_VB.clear()  # one source archive at a time
+        hit = _VANILLA_VB[id(stream)] = (stream, found)
+    return hit[1]
 
 
 def vanilla_material(stream):
     """The vanilla Volt digital MACO (Entry) and its TEXC, from the source archive."""
-    key = id(stream)
-    if key not in _VANILLA:
+    hit = _VANILLA.get(id(stream))
+    if hit is None or hit[0] is not stream:
         from dsfforza.convert import dsf_materials as dm
         from dsfforza.formats import chnk
 
@@ -148,8 +149,9 @@ def vanilla_material(stream):
                 break
         if found is None:
             raise ValueError("vanilla digital material e012cc80f0aa8829 (Volt) not in the source archive")
-        _VANILLA[key] = found
-    return _VANILLA[key]
+        _VANILLA.clear()
+        hit = _VANILLA[id(stream)] = (stream, found)
+    return hit[1]
 
 
 def vertices(plan: DigitalPlan, place, stride: int) -> tuple[list[bytes], list[tuple[int, int, int]]]:

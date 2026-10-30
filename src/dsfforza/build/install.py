@@ -144,9 +144,9 @@ def exe_build(path: Path) -> tuple[int, int] | None:
             return None
         stamp = struct.unpack_from("<I", data, pe + 8)[0]
         size = struct.unpack_from("<I", data, pe + 24 + 56)[0]  # OptionalHeader.SizeOfImage
-        return stamp, size
     except (OSError, struct.error):
         return None
+    return stamp, size
 
 
 def running_processes(name: str) -> list[Path | None]:
@@ -1763,7 +1763,7 @@ def execute(run: Run) -> int:
         reporter.note("Interrupted. Run the same command again to continue (built cars are kept).", "warn")
         log("interrupted")
         return 130
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - the run's last stop: shown with its traceback and logged
         traceback.print_exc()
         reporter.stage(current, "failed", f"{type(error).__name__}: {error}"[:100])
         reporter.note(f"{type(error).__name__}: {error} (traceback in {run.summary.log})", "error")

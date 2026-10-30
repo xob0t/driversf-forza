@@ -332,7 +332,7 @@ def main(argv: list[str] | None = None) -> None:
         for sid, name, host in cars:
             try:
                 row = survey_vehicle(args.archive, stream, root, sid)
-            except Exception as error:  # a vanilla car without a steering marker, ...
+            except Exception as error:  # noqa: BLE001 - a row of the survey (a vanilla car without a steering marker, ...)
                 row = {"error": f"{type(error).__name__}: {error}"}
             row.update({"id": sid, "name": name, "host": host})
             rows.append(row)

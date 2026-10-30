@@ -307,9 +307,11 @@ class Recorder:
         elif event == "sqlite3.connect":
             self.opened.append((args[0], "sqlite", 0))
 
-    def _started(self, code, offset):
+    def _started(self, code, offset, disable=sys.monitoring.DISABLE):
+        # DISABLE bound at definition: a recorder still running at interpreter exit is called
+        # after this module's globals (sys among them) are cleared.
         self.codes.add(code)
-        return sys.monitoring.DISABLE
+        return disable
 
     def stop(self) -> None:
         self.active = False

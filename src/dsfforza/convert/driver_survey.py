@@ -226,7 +226,7 @@ def cmd_cars(args) -> None:
                 continue
             try:
                 row = survey_car(media, hosts[media], stream, root)
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - one car's failure is a row of the survey
                 row = {"media": media, "host": hosts[media], "error": f"{type(error).__name__}: {error}"}
             rows.append(row)
             if "error" in row:

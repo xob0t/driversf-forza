@@ -269,15 +269,18 @@ def encode_vertex(stride: int, pos, uv0, uv1, normal, s9: bytes = RIGID, sky: fl
 FORZA_AO_FULL = 105  # Forza AO byte for a fully open vertex
 DEFAULT_AO = 0.8  # sections whose AO byte is garbage (FM4 glass: constant 0 or 255)
 SKY_FLOOR, SKY_RANGE = 0.25, 0.55
-_ao_valid: dict[int, bool] = {}
+_ao_valid: dict[int, tuple[list, bool]] = {}  # id(pool) -> (the pool, so its id stays its own; valid)
+AO_VALID_KEEP = 1024  # pools remembered (a car has a few hundred)
 
 
 def _pool_has_ao(pool) -> bool:
-    key = id(pool)
-    if key not in _ao_valid:
+    hit = _ao_valid.get(id(pool))
+    if hit is None or hit[0] is not pool:
+        if len(_ao_valid) >= AO_VALID_KEEP:
+            _ao_valid.clear()
         values = {v.extra[0] for v in pool if v.extra}
-        _ao_valid[key] = bool(values) and max(values) <= FORZA_AO_FULL + 10 and len(values) >= 3
-    return _ao_valid[key]
+        hit = _ao_valid[id(pool)] = (pool, bool(values) and max(values) <= FORZA_AO_FULL + 10 and len(values) >= 3)
+    return hit[1]
 
 
 def vertex_sky(vertex, pool, normal_dsf) -> float:

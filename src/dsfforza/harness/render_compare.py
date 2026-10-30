@@ -1000,7 +1000,7 @@ def compare_car(
             for key, r in images.items():
                 save_renders(folder / f"{key}.npz", r)
         result["seconds"] = round(time.time() - t0, 1)
-    except Exception as error:  # one car's failure is a result, not the run's end
+    except Exception as error:  # noqa: BLE001 - one car's failure is a result, not the run's end
         import traceback
 
         result["error"] = f"{type(error).__name__}: {error}"
@@ -1144,20 +1144,12 @@ def run(
 def idle_priority() -> None:
     """Run at Idle priority (Windows; nice 19 elsewhere): the renders are background work
     beside builds and VM runs, and the worker processes inherit it."""
-    import ctypes
+    from dsfforza.build import gentle
 
-    try:
-        if os.name == "nt":
-            from ctypes import wintypes
-
-            kernel32 = ctypes.windll.kernel32
-            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-            kernel32.SetPriorityClass.argtypes = (wintypes.HANDLE, wintypes.DWORD)
-            kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), 0x00000040)  # IDLE_PRIORITY_CLASS
-        else:
-            os.nice(19)
-    except (OSError, AttributeError):
-        pass
+    if os.name == "nt":
+        gentle.set_priority(gentle.IDLE)
+    else:
+        os.nice(19)
 
 
 def _done(out: Path, media: str) -> bool:
