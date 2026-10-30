@@ -37,6 +37,7 @@ BIG = 64 << 20  # files above this get a partial digest
 EDGE = 4 << 20
 PACKAGE = Path(dsfforza.__file__).resolve().parent
 MODULE_UNIT = "<module>"
+TOOL_NAME = "dsfforza-fingerprint"  # the sys.monitoring tool a Recorder registers
 
 
 # --- digests ------------------------------------------------------------------------
@@ -259,7 +260,7 @@ class Recorder:
         mon.restart_events()  # code an earlier recorder in this process saw once (DISABLE)
         for tool in (4, 3, mon.COVERAGE_ID):
             if mon.get_tool(tool) is None:
-                mon.use_tool_id(tool, "dsfforza-fingerprint")
+                mon.use_tool_id(tool, TOOL_NAME)
                 mon.register_callback(tool, mon.events.PY_START, self._started)
                 mon.set_events(tool, mon.events.PY_START)
                 self.tool = tool
@@ -535,3 +536,116 @@ def read(path: Path) -> dict | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+
+# --- results kept between runs -------------------------------------------------------------
+
+
+def stamp(path: str) -> str:
+    """A file's size and modification time, or "missing"."""
+    try:
+        st = Path(path).stat()
+    except OSError:
+        return "missing"
+    return f"{st.st_size}:{st.st_mtime_ns}"
+
+
+class Memo:
+    """Small results kept between runs in one JSON file, each with what computing it read
+    and ran: the files' size and modification time, the folders' names and the code units
+    (as a worker's fingerprint, but files by stamp, not digest). A result is used while
+    all of that is unchanged. The code is that of every computation this process made
+    for the memo, not just the result's own: one can skip code another ran (an import,
+    a cache hit). Only where nothing else records (no Recorder of a worker or a pack runs
+    in the process; then `get` just computes): port_batch's plan keeps the carbin door
+    counts in one (host_select.DOORS_MEMO, issue #297)."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.entries, self.codes = self._load()
+        self.new: dict[str, dict] = {}
+        self.units = CodeUnits()
+        self.recorder: Recorder | None = None
+        self.code: dict[str, set[str]] = {}  # every unit a computation of this process depended on
+        self.checked: dict[str, bool] = {}  # code block -> unchanged
+
+    def _load(self) -> tuple[dict, dict]:
+        data = read(self.path)
+        if not isinstance(data, dict) or data.get("format") != FORMAT or data.get("env") != environment():
+            return {}, {}
+        return dict(data.get("entries", {})), dict(data.get("codes", {}))
+
+    def _code_ok(self, block: str) -> bool:
+        if block not in self.checked:
+            units = self.codes.get(block)
+            self.checked[block] = units is not None and all(
+                (table := self.units.get(module)) is not None and all(table.get(u) == d for u, d in names.items())
+                for module, names in units.items()
+            )
+        return self.checked[block]
+
+    def _valid(self, entry: dict) -> bool:
+        return (
+            all(stamp(p) == s for p, s in entry.get("files", {}).items())
+            and all(dir_digest(p) == d for p, d in entry.get("dirs", {}).items())
+            and self._code_ok(entry.get("code", ""))
+        )
+
+    def get(self, key: str, compute):
+        """The kept result for `key` when nothing it depended on changed, else compute()
+        (a JSON-able value), recorded and kept by save()."""
+        entry = self.new.get(key) or self.entries.get(key)
+        if entry is not None and self._valid(entry):
+            return entry["value"]
+        if self.recorder is None:
+            mon = sys.monitoring
+            if any(mon.get_tool(t) == TOOL_NAME for t in range(6)):  # a worker or pack records here
+                return compute()
+            self.recorder = Recorder().start()
+        rec = self.recorder
+        del rec.opened[:]
+        del rec.listed[:]
+        rec.codes.clear()
+        sys.monitoring.restart_events()  # report code an earlier computation ran too
+        value = compute()
+        opened, listed, codes = list(rec.opened), list(rec.listed), set(rec.codes)
+        files, dirs = rec._inputs(opened, listed)
+        wanted, complete = rec._wanted(self.units, codes)
+        for module, names in wanted.items():
+            self.code.setdefault(module, set()).update(names)
+        if complete:
+            self.new[key] = {
+                "value": value,
+                "files": {p: stamp(p) for p in sorted(files)},
+                "dirs": {p: dir_digest(p) for p in sorted(dirs)},
+            }
+        return value
+
+    def save(self) -> None:
+        """Stop recording and keep the new results (with the entries another process kept
+        meanwhile), unless a package source changed while they were computed."""
+        rec, self.recorder = self.recorder, None
+        if rec is None:
+            return
+        rec.stop()
+        if not self.new or package_hashes() != rec.tree:
+            return
+        code = {}
+        for module in sorted(self.code):
+            table = self.units.get(module)
+            if table is None:
+                return
+            code[module] = {u: table[u] for u in sorted(self.code[module]) if u in table}
+        block = hashlib.sha256(json.dumps(code, sort_keys=True).encode()).hexdigest()[:24]
+        entries, codes = self._load()
+        codes[block] = code
+        entries.update({k: {**v, "code": block} for k, v in self.new.items()})
+        used = {e.get("code") for e in entries.values()}
+        codes = {b: c for b, c in codes.items() if b in used}
+        from dsfforza.build.port_car import write_atomic
+
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        data = {"format": FORMAT, "env": environment(), "codes": codes, "entries": dict(sorted(entries.items()))}
+        write_atomic(self.path, json.dumps(data, indent=0).encode())
+        self.entries, self.codes, self.new = entries, codes, {}
+        self.checked.clear()
