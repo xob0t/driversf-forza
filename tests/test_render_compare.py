@@ -6,6 +6,9 @@ uv run python -m tests render_compare
 
 from __future__ import annotations
 
+import dataclasses
+import math
+
 import numpy as np
 
 from dsfforza.game import car_render as cr
@@ -394,3 +397,56 @@ def test_diff_frames_both_builds_alike():
     d = np.linalg.norm(rc._lab(ra["ours"]["day"]) - rc._lab(rb["ours"]["day"]), axis=-1)
     changed = {c["region"] for c in render_diff.region_changes(ra["regions"]["ours"], rb["regions"]["ours"], d)}
     assert fr.BODY in changed, changed
+
+
+# --- paint (research/paint-re.md) ------------------------------------------------------------
+
+ENTRY = {
+    "g_vec4TintColour1_Alpha": (0.0, 0.0, 0.0, 1.0),
+    "g_vec3TintColour2": (0.111, 0.003, 0.003, 1.0),
+    "g_vec3TintColour3": (0.494, 0.117, 0.117, 1.0),
+    "g_fresnelpower": 0.25,
+    "g_fresnelbias": 0.01,
+    "g_hCustomFresnelPower": 1.0,
+    "g_hCustomReflectionAmount": 0.5,
+    "g_hSecondSpecularIntensity": 0.1,
+    "g_hSecondSpecularPower": 5.0,
+}
+
+
+def test_paint_entry_is_drawn_as_stored():
+    """A low-power entry shows colour 3 almost everywhere, as the game draws it (#291): no
+    picture-model floor on the power in the compare renders."""
+    p = cr.Paint.entry(ENTRY)
+    facing = p.at(np.array([0.9]))[0]
+    assert facing[0] > 0.3  # mostly colour 3 (0.494) even facing the camera
+    assert (p.reflection, p.reflection_power, p.sheen, p.sheen_power) == (0.5, 1.0, 0.1, 5.0)
+    picture = cr.picture_paint(p.c2, p.c3, p.power, p.bias, False)
+    assert picture.at(np.array([0.9]))[0][0] < 0.12  # the garage picture keeps its model
+
+
+def _paint_terms(p, cos_v):
+    scene = _scene([(_quad(-1, 1, -1, 1, 0.0), 0)], [cr.Material("paint", None, np.ones(3, np.float32))])
+    view = cr._View(scene, FRONT, 80, 60)
+    s = math.sqrt(1 - cos_v**2)
+    n = np.array([[0.0, s, cos_v]], np.float32)
+    ray = np.array([[0.0, 0.0, -1.0]], np.float32)
+    refl = ray - 2 * (ray @ n[0])[:, None] * n
+    light = np.array([0.0, 0.0, -1.0], np.float32)  # behind the camera's back: no lobe
+    a = np.array([[0.2, 0.0, 0.0]], np.float32)
+    mask = np.array([cr.PAINT_SPEC_MASK], np.float32)
+    return cr._shade_paint(p, view, light, n, a, mask, np.ones(1, np.float32), refl, np.array([cos_v]), cr.DAY)
+
+
+def test_paint_reflection_is_off_facing_and_scales_with_the_amount():
+    """The reflection's Fresnel term is max(0.025, (1 - N.E)^cfp - 0.5): the floor facing the
+    camera, rising at grazing angles; twice g_hCustomReflectionAmount, twice the reflection."""
+    p = cr.Paint.entry(ENTRY)
+    _, f_facing = _paint_terms(p, 0.9)
+    _, f_grazing = _paint_terms(p, 0.1)
+    assert abs(f_facing[0] - cr.PAINT_FRESNEL_MIN) < 1e-6
+    assert abs(f_grazing[0] - 0.4) < 1e-5
+    c1, _ = _paint_terms(p, 0.1)
+    c2, _ = _paint_terms(dataclasses.replace(p, reflection=1.0), 0.1)
+    c0, _ = _paint_terms(dataclasses.replace(p, reflection=0.0), 0.1)
+    assert np.allclose(c2 - c0, 2 * (c1 - c0), atol=1e-5) and (c1 - c0).min() > 0

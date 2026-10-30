@@ -11,7 +11,7 @@ research/lights.md "Lamp glass"):
 - the texel from the technique's atlas (nodamage, Lights, wheel.xds) through
   m_UVOffsetScale, wrapped like Forza's sampler; one flat colour for swatches;
 - paint techniques: texel x alpha + paint x (1 - alpha), the paint the built car's
-  palette gives (the same paint in both renders);
+  palette gives, through DSF's paint program (the same paint in both renders);
 - trims: the texel times the technique's texel scale (PristinePaintScale or
   PaintScale), specular and reflection from `forza_materials.gloss_params` (the
   car's ShaderSettings.xml over the shared Normal.xml defaults);
@@ -44,9 +44,6 @@ from dsfforza.game import car_render as cr
 FORZA_SPECULAR = cr.DSF_SPECULAR * 0.01
 FORZA_REFLECTION = 0.5
 CHROME_DEFAULTS = (2.0, 0.1)  # CubeScale, ChromeDiffuseScale (Shared.zip Normal.xml, the chrome techniques)
-# The built car's paint is the shared atlas's plain texel (red about 240) times the
-# palette colour (car_render._base): the Forza paint takes the same factor.
-PAINT_TEXEL = float(cr._srgb_to_linear(240 / 255))
 TILING_FLAT = 8.0  # |UV scale| above this on the Lights atlas: flat too
 TILING_COLOUR = (0.006, 0.006, 0.007)  # linear
 TYRE_COLOUR = (0.018, 0.018, 0.018)
@@ -292,16 +289,12 @@ class _Materials:
             return m
         gloss = fm.gloss_params(self.settings, tech)
         if sm.role == fm.PAINT:
-            base = cr.SHADING["metallic" if self.paint.metallic else "paint"]
+            # The built car's palette entry through DSF's paint program, as ours: the shared
+            # atlas's paint texel is (255, 198, 255), so the albedo is the palette colour
+            # itself (research/paint-re.md, "The atlas texel").
             m.kind = "metallic" if self.paint.metallic else "paint"
-            m.paint = cr.Paint(
-                tuple(c * PAINT_TEXEL for c in self.paint.c2),
-                tuple(c * PAINT_TEXEL for c in self.paint.c3),
-                self.paint.power,
-                self.paint.bias,
-                self.paint.metallic,
-            )
-            m.shading = cr.Shading(base.diffuse, base.f0, base.reflect, base.gloss, base.highlight, base.power)
+            m.paint = self.paint
+            m.shading = cr.dsf_shading("paint")
             m.paint_blend, m.texture = tex is not None, tex
             m.scale = fm.texel_scale(self.settings, tech) if tex is not None else 1.0
             if t.startswith("body") or tex is None:
