@@ -32,13 +32,17 @@ mood (`Lighting`).
 
 from __future__ import annotations
 
+import functools
+import json
 import math
+import os
 import struct
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
+from dsfforza import REPO
 from dsfforza.formats.vehicle_mesh import child, payload
 
 PAINT_UIDS = {bytes.fromhex("001283358afd1027"), bytes.fromhex("10122b9653b14e2a")}
@@ -1066,17 +1070,47 @@ DAY_LIT = Lighting("day_lit", lamps=4, exposure=1.7)
 DARK = Lighting("dark", 0.5, 1.4, 0.07, 4, exposure=1.0, white=2.0)
 LIGHTINGS = {lt.name: lt for lt in (DAY, DAY_LIT, DARK)}
 
-# The game's colour grade 1 (ClearDay), per channel: the tone map's output -> display linear,
-# fitted from dumped frames (research/lights-re.md; the 3D LUT itself was not found). The
-# story's dark mood uses grade 7, not decoded; it is drawn with this one.
-GRADE_X = np.array([0.0, 0.013, 0.113, 0.213, 0.312, 0.413, 0.512, 0.613, 0.713, 0.812, 0.913, 1.0])
-GRADE_Y = np.array(
-    [
-        [0.012, 0.018, 0.056, 0.133, 0.270, 0.497, 0.640, 0.733, 0.818, 0.86, 0.87, 0.88],
-        [0.016, 0.024, 0.060, 0.122, 0.234, 0.395, 0.573, 0.680, 0.777, 0.83, 0.85, 0.86],
-        [0.024, 0.032, 0.068, 0.131, 0.233, 0.392, 0.556, 0.651, 0.758, 0.81, 0.85, 0.86],
-    ]
-)
+# The game's colour grade (PostProcessing.fx: a 16^3 LUT after the Reinhard curve; node [r, g, b]
+# at input (r, g, b) / 15, output display linear): ClearDay's is a 16 x 16 x 16 A8R8G8B8 DDS in
+# media/SfxMisc.fchunk, the chunk with UID GRADE_UID (research/paint-re.md, "The grade"), read
+# from DSF_GAME_DIR; without the game, tools/re/paint_grade.json, a fit of it from dumped frames
+# (within 10 / 255). The story's dark mood uses grade 7, not traced; it is drawn with ClearDay's.
+GRADE_UID = bytes.fromhex("0012e109a4d88c2d")
+GRADE_FIT = REPO / "tools" / "re" / "paint_grade.json"
+
+
+@functools.cache
+def grade_lut() -> np.ndarray:
+    """The grade as [r, g, b, 3] floats: the game's, else the fit."""
+    root = os.environ.get("DSF_GAME_DIR")
+    path = Path(root, "media", "SfxMisc.fchunk") if root else None
+    if path is not None and path.exists():
+        data = path.read_bytes()
+        at = data.find(GRADE_UID)
+        dds = data.find(b"DDS ", at) if at >= 0 else -1
+        if 0 <= dds - at <= 64:
+            vol = np.frombuffer(data, np.uint8, 16 * 16 * 16 * 4, dds + 128).reshape(16, 16, 16, 4)  # [b, g, r, BGRA]
+            return np.transpose(vol[..., [2, 1, 0]], (2, 1, 0, 3)).astype(np.float32) / 255
+    return np.array(json.loads(GRADE_FIT.read_text())["lut"], np.float32)
+
+
+def grade(c: np.ndarray) -> np.ndarray:
+    """Trilinear lookup of colours c (..., 3) in 0..1 in the grade."""
+    lut = grade_lut()
+    n = lut.shape[0] - 1
+    x = np.clip(np.asarray(c, np.float32), 0, 1) * n
+    i0 = np.minimum(np.floor(x).astype(int), n - 1)
+    f = x - i0
+    out = np.zeros(x.shape, np.float32)
+    for dr in (0, 1):
+        for dg in (0, 1):
+            for db in (0, 1):
+                w = (f[..., 0] if dr else 1 - f[..., 0]) * (f[..., 1] if dg else 1 - f[..., 1])
+                w = w * (f[..., 2] if db else 1 - f[..., 2])
+                out += w[..., None] * lut[i0[..., 0] + dr, i0[..., 1] + dg, i0[..., 2] + db]
+    return out
+
+
 REC709 = np.array([0.2125, 0.7154, 0.0721], np.float32)
 
 
@@ -1091,8 +1125,7 @@ def display(colour: np.ndarray, lighting: Lighting = DAY) -> np.ndarray:
     tone, or the game's tone map and colour grade (bloom and grain left out)."""
     if lighting.exposure is None:
         return np.clip(colour * EXPOSURE, 0, 1)
-    c = np.clip(tonemap(colour, lighting.exposure, lighting.white), 0, 1)
-    return np.stack([np.interp(c[..., k], GRADE_X, GRADE_Y[k]) for k in range(3)], -1).astype(np.float32)
+    return grade(tonemap(colour, lighting.exposure, lighting.white))
 
 
 def dsf_lamp_rgb(lamps: list[LampInfo] | None, lighting: Lighting) -> np.ndarray | None:

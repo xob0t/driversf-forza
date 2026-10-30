@@ -2448,7 +2448,8 @@ Change (no converter change):
 - `lights.TYPE_SCALE`, `LAMP_COLOUR`, `RUNNING_LEVEL`, `VEH_COLOUR_BOOST` and `lamp_level(type,
   mask)`: the game's tables (lights-re.md), one copy for the renderer and `tools/re/lamp_model.py`.
 - `car_render.dsf_lamp_rgb`: each lamp at 5 x its colour x its level; `Lighting` carries the mood's
-  exposure and white, `display()` the game's tone map and colour grade (the fitted grade 1) for the
+  exposure and white, `display()` the game's tone map and colour grade (ClearDay's 3D LUT from
+  `SfxMisc.fchunk`, research/paint-re.md, "The grade") for the
   lit modes. `day_lit` is ClearDay with the running lights (e 1.7, white 5); `dark` is LastChapter
   (sun 7%, ambient 1.4 times, reflections half, e 1, white 2) with the running lights. The `day`
   scores and the garage pictures keep the garage tone.

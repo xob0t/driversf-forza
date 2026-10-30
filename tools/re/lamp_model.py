@@ -11,8 +11,8 @@ The model, per lamp texel (texel alpha a, linear texel colour t):
 
 D is the light falling on the lamp (sun, sky, AO): one number per frame and lamp group,
 fitted on the group's median (the diffuse part); the emission term has no free parameter.
-LUT is colour grade 1 (ClearDay), fitted per channel from dumped frames (scene-end PFM
-against the final BMP); bloom is left out. The lamp colours, levels and the post chain are
+LUT is ClearDay's colour grade, the game's 3D LUT (car_render.grade); bloom is left out.
+The lamp colours, levels and the post chain are
 car_render's (render_compare's renderer), so `compare` checks the renderer against the game.
 
     uv run python tools/re/lamp_model.py levels                       the brightness table
@@ -67,8 +67,13 @@ def exposure(la: float, lc, mg: float) -> float:
     return lc[1] + (mg - lc[1]) * min(1.0, max(0.0, 1.5 - lc[3] / (2 * la)))
 
 
+tonemap = cr.tonemap
+grade = cr.grade  # ClearDay's 3D LUT (research/paint-re.md, "The grade")
+srgb = cr._linear_to_srgb
+
+
 def screen(hdr: np.ndarray, e: float, white: float) -> np.ndarray:
-    return cr._linear_to_srgb(cr.display(hdr, cr.Lighting(exposure=e, white=white)))
+    return srgb(cr.display(hdr, cr.Lighting(exposure=e, white=white)))
 
 
 # --- inputs -----------------------------------------------------------------------------

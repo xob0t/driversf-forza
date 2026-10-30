@@ -182,8 +182,9 @@ def test_lamp_levels():
 def test_game_tone_map():
     """The game's post chain: Reinhard with white W, then the grade; the garage tone by day."""
     assert np.allclose(cr.tonemap(np.array([[5.0, 5.0, 5.0]]), 1.0, 5.0), 1.0, atol=1e-3)  # W maps to 1
-    lit = cr.display(np.array([[0.2, 0.2, 0.2], [3.0, 3.0, 3.0]], np.float32), cr.DAY_LIT)
-    assert 0.1 < lit[0, 0] < 0.3 and 0.8 < lit[1, 0] <= 0.88  # the grade tops out near 0.88
+    lit = cr.display(np.array([[0.2, 0.2, 0.2], [3.0, 3.0, 3.0], [0.5, 0.02, 0.02]], np.float32), cr.DAY_LIT)
+    assert 0.1 < lit[0, 0] < 0.3 and 0.8 < lit[1, 0] < 0.95
+    assert lit[2, 0] > 3 * lit[2, 1] > 0.05  # a red stays red, but the grade lifts its weak channels
     assert np.allclose(cr.display(np.array([[0.5, 0.5, 0.5]]), cr.DAY), 0.5 * cr.EXPOSURE)
 
 
