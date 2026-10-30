@@ -216,6 +216,91 @@ def test_texture_files():
     assert dxt[84:88] == b"DXT5" and len(dxt) == 128 + 64 * 64
 
 
+# --- dash_scene.sample_bilinear -----------------------------------------------------------
+
+
+def _sample_bilinear_reference(tex, u, v):
+    """The original four-gather form."""
+    import numpy as np
+
+    h, w = tex.shape[:2]
+    x = np.clip(u, 0, 1) * w - 0.5
+    y = np.clip(v, 0, 1) * h - 0.5
+    xi = np.floor(x).astype(int)
+    yi = np.floor(y).astype(int)
+    fx = (x - xi)[..., None]
+    fy = (y - yi)[..., None]
+    x0, x1 = np.clip(xi, 0, w - 1), np.clip(xi + 1, 0, w - 1)
+    y0, y1 = np.clip(yi, 0, h - 1), np.clip(yi + 1, 0, h - 1)
+    return (
+        tex[y0, x0] * (1 - fx) * (1 - fy)
+        + tex[y0, x1] * fx * (1 - fy)
+        + tex[y1, x0] * (1 - fx) * fy
+        + tex[y1, x1] * fx * fy
+    )
+
+
+def test_sample_bilinear_matches_the_four_gathers():
+    import numpy as np
+
+    from dsfforza.convert import dash_scene
+
+    rng = np.random.default_rng(11)
+    for (h, w), shape, dtype in (
+        ((32, 64), (5000,), np.float32),
+        ((4, 16), (5000,), np.float32),
+        ((16, 8), (40, 70), np.float64),
+    ):
+        tex = rng.random((h, w, 4), dtype=np.float32)
+        u = (rng.random(shape) * 1.4 - 0.2).astype(dtype)
+        v = (rng.random(shape) * 1.4 - 0.2).astype(dtype)
+        u.flat[:6] = [0.0, 1.0, 0.5, -0.0, 1.0 / w, 1.5 / w]
+        new, old = dash_scene.sample_bilinear(tex, u, v), _sample_bilinear_reference(tex, u, v)
+        assert new.dtype == old.dtype and new.shape == old.shape and new.tobytes() == old.tobytes()
+        clamped = dash_scene.sample_bilinear(tex, u, v, clamp=False)
+        inside = ((u >= 0) & (u <= 1) & (v >= 0) & (v <= 1))[..., None]
+        assert clamped.tobytes() == np.where(inside, old, 0.0).tobytes()
+
+
+def test_cached_quads_draw_what_drawn_quads_draw():
+    import numpy as np
+
+    from dsfforza.convert import dash_scene
+
+    rng = np.random.default_rng(12)
+    textures = [rng.random((16, 32, 4), dtype=np.float32) for _ in range(2)]
+
+    def quads():
+        out = []
+        for k in range(12):
+            m = np.eye(4)
+            m[:2, :2] = rng.uniform(-3, 3, (2, 2))
+            m[3, :2] = rng.uniform(-400, 400, 2)
+            tex = [None, textures[k % 2], ("xform", textures[0], (0.1, 0.0, 2.0, 1.0))][k % 3]
+            out.append((m, [float(c) for c in rng.random(4)], float(rng.random()), tex))
+        return out
+
+    scene = quads()
+    cache = dash_scene.QuadCache()
+    for view in (None, (100, 700, 50, 400)):
+        for _ in range(2):  # the second pass draws from the cache
+            plain, cached = dash_scene.Canvas(320, 2, view), dash_scene.Canvas(320, 2, view, cache)
+            for args in scene:
+                plain.quad(*args)
+                cached.quad(*args)
+            assert plain.rgb.tobytes() == cached.rgb.tobytes() and plain.alpha.tobytes() == cached.alpha.tobytes()
+    textures[1] = textures[1].copy()  # another texture object: not the cached quads
+    scene = [
+        (m, c, o, textures[1] if isinstance(t, np.ndarray) and t is not textures[0] else t) for m, c, o, t in scene
+    ]
+    plain, cached = dash_scene.Canvas(320, 2, None), dash_scene.Canvas(320, 2, None, cache)
+    for args in scene:
+        plain.quad(*args)
+        cached.quad(*args)
+    assert plain.rgb.tobytes() == cached.rgb.tobytes()
+    assert cache.size == sum(dash_scene._layer_bytes(layer) for _, layer in cache.layers.values())
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

@@ -244,6 +244,7 @@ class Dash:
         self.fbf = anark.parse_fbf(files[".fbf"].read_bytes())
         self.bgf = anark.parse_bgf(files[".bgf"].read_bytes())
         self.assets = Assets(base, media)
+        self.quad_cache = QuadCache()  # render(): quads drawn by earlier renders
         self.objs = {o.id: o for o in self.fbf["objects"]}
         self.nodes = {n.id: n for n in self.bsg["nodes"]}
         self.E = self.bgf["elems"]
@@ -547,10 +548,50 @@ class Dash:
 # ------------------------------------------------------------------ raster
 
 
+class QuadCache:
+    """Quads a scene's renders drew already, as blended layers (top-left corner, colour,
+    coverage), least recently used first: digital_dash renders one scene dozens of times
+    with a few elements changed (the Impreza: 716 quads, 112 different), and the texture
+    sampling is most of the time. Each key holds everything Canvas.quad reads; layers
+    above MAX_LAYER bytes aren't kept, nor more than MAX_BYTES in all."""
+
+    MAX_BYTES = 48 << 20
+    MAX_LAYER = 8 << 20
+
+    def __init__(self):
+        self.layers: dict = {}  # key -> (texture, layer); insertion order = use order
+        self.size = 0
+
+    def get(self, key, tex):
+        hit = self.layers.pop(key, None)
+        if hit is None or hit[0] is not tex:  # the texture object itself (its id is in the key)
+            if hit is not None:
+                self.size -= _layer_bytes(hit[1])
+            return None
+        self.layers[key] = hit
+        return hit[1]
+
+    def put(self, key, tex, layer) -> None:
+        size = _layer_bytes(layer)
+        if size > self.MAX_LAYER:
+            return
+        self.layers[key] = (tex, layer)
+        self.size += size
+        while self.size > self.MAX_BYTES:
+            _, old = self.layers.pop(next(iter(self.layers)))
+            self.size -= _layer_bytes(old)
+
+
+def _layer_bytes(layer) -> int:
+    return layer[2].nbytes + layer[3].nbytes if len(layer) == 4 else 0
+
+
 class Canvas:
-    def __init__(self, width: int, ss: int = 2, view=None):
+    def __init__(self, width: int, ss: int = 2, view=None, cache: QuadCache | None = None):
         """`width` pixels for the whole presentation; `view` (x0, x1, y0, y1, in
-        presentation pixels from the top left) draws only that part."""
+        presentation pixels from the top left) draws only that part. `cache`: quad
+        layers of earlier renders of the scene (QuadCache)."""
+        self.cache = cache
         self.scale = width / PRES_W * ss
         self.ss = ss
         self.view = view or (0, PRES_W, 0, PRES_H)
@@ -574,6 +615,32 @@ class Canvas:
         cov += a
 
     def quad(self, m, colour, op, tex):
+        if self.cache is None:
+            layer = self._quad_layer(m, colour, op, tex)
+        else:
+            image = tex[1] if isinstance(tex, tuple) else tex  # ("xform", image, (pu, pv, su, sv))
+            key = (
+                m[:2, :2].tobytes(),
+                m[3, :2].tobytes(),
+                tuple(float(c) for c in colour),
+                float(op),
+                id(image),
+                tex[2] if isinstance(tex, tuple) else None,
+                self.scale,
+                self.ox,
+                self.oy,
+                self.W,
+                self.H,
+            )
+            layer = self.cache.get(key, image)
+            if layer is None:
+                layer = self._quad_layer(m, colour, op, tex)
+                self.cache.put(key, image, layer)
+        if layer is not None and layer[0] != "empty":
+            self.blend(*layer)
+
+    def _quad_layer(self, m, colour, op, tex):
+        """(y0, x0, rgb, a) for blend, or ("empty",) when the quad draws nothing."""
         A = m[:2, :2]  # local (x, y) -> world (x, y) rows
         t = m[3, :2]
         corners = np.array([[-50, -50], [50, -50], [50, 50], [-50, 50]], float) @ A + t
@@ -583,10 +650,10 @@ class Canvas:
         x0, y0 = max(x0, 0), max(y0, 0)
         x1, y1 = min(x1, self.W), min(y1, self.H)
         if x1 <= x0 or y1 <= y0:
-            return
+            return ("empty",)
         det = np.linalg.det(A)
         if abs(det) < 1e-9:
-            return
+            return ("empty",)
         Ai = np.linalg.inv(A)
         gx, gy = np.meshgrid(np.arange(x0, x1) + 0.5, np.arange(y0, y1) + 0.5)
         wx = (gx + self.ox) / self.scale - PRES_W / 2
@@ -596,7 +663,7 @@ class Canvas:
         vm = (loc[..., 1] + 50) / 100
         inside = (u >= 0) & (u <= 1) & (vm >= 0) & (vm <= 1)
         if not inside.any():
-            return
+            return ("empty",)
         col = np.array(colour, np.float32)
         rgb = np.zeros(u.shape + (3,), np.float32)
         a = np.zeros(u.shape, np.float32)
@@ -607,7 +674,7 @@ class Canvas:
         else:
             rgb[inside] = col[:3]
             a[inside] = col[3] * op
-        self.blend(y0, x0, rgb, a)
+        return y0, x0, rgb, a
 
     def mesh(self, m, colour, op, tex, mesh):
         """A non-rectangle model mesh (FH1 Zagato tach arc, old Celica needle): triangles with
@@ -726,6 +793,10 @@ def tex_sample(tex, u, v):
 
 
 def sample_bilinear(tex, u, v, clamp=True):
+    """Bilinear samples of `tex` (h, w, channels) at u, v in 0..1. The four texels are
+    gathered from the flat image (one take each) and weighed in place, in the same
+    order and types as (t00 * (1 - fx) * (1 - fy) + t01 * fx * (1 - fy) + ...), so the
+    samples are the same (tests/test_speed.py keeps that form as the reference)."""
     h, w = tex.shape[:2]
     if not clamp:  # outside 0..1: transparent (clamp-to-border)
         out = sample_bilinear(tex, u, v)
@@ -737,13 +808,21 @@ def sample_bilinear(tex, u, v, clamp=True):
     fx = (x - xi)[..., None]
     fy = (y - yi)[..., None]
     x0, x1 = np.clip(xi, 0, w - 1), np.clip(xi + 1, 0, w - 1)
-    y0, y1 = np.clip(yi, 0, h - 1), np.clip(yi + 1, 0, h - 1)
-    return (
-        tex[y0, x0] * (1 - fx) * (1 - fy)
-        + tex[y0, x1] * fx * (1 - fy)
-        + tex[y1, x0] * (1 - fx) * fy
-        + tex[y1, x1] * fx * fy
-    )
+    row0, row1 = np.clip(yi, 0, h - 1) * w, np.clip(yi + 1, 0, h - 1) * w
+    flat = tex.reshape(h * w, *tex.shape[2:])
+    gx, gy = 1 - fx, 1 - fy
+    out = flat.take(row0 + x0, axis=0) * gx
+    out *= gy
+    part = flat.take(row0 + x1, axis=0) * fx
+    part *= gy
+    out += part
+    np.multiply(flat.take(row1 + x0, axis=0), gx, out=part)
+    part *= fy
+    out += part
+    np.multiply(flat.take(row1 + x1, axis=0), fx, out=part)
+    part *= fy
+    out += part
+    return out
 
 
 def draw_text(canvas: Canvas, dash: Dash, m, tcol, op, text, o, v, only=None):
@@ -796,7 +875,7 @@ def render(
     """The scene in its current state. `keep(element index)` picks the drawables (all by
     default); `only` maps a text element to the character indices drawn; with `alpha`
     an RGBA image over a transparent background; `view` (Canvas) a part of it."""
-    cv = Canvas(width, ss, view)
+    cv = Canvas(width, ss, view, getattr(dash, "quad_cache", None))
     for d in dash.drawables():
         if keep is not None and not keep(d[-2]):
             continue
