@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest import mock
 
 from dsfforza.convert import damage
+from dsfforza.convert.damage import host_cache
 
 PAIRS = [(0, 0), (1, 2), (3, 4), (5, 6)]
 
@@ -95,9 +96,9 @@ def _run(folder: Path, seed: int, uids: list, separate_exterior: bool):
     """host_setup for one car with host_key, _host_compute and local_materials faked."""
     fresh = _car(seed, uids, b"shared01", separate_exterior)
     with (
-        mock.patch.object(damage, "host_key", return_value=(f"key{seed}{separate_exterior}", list(uids))),
-        mock.patch.object(damage, "_host_compute", return_value=fresh),
-        mock.patch.object(damage, "local_materials", return_value=set(uids[:3])),
+        mock.patch.object(host_cache, "host_key", return_value=(f"key{seed}{separate_exterior}", list(uids))),
+        mock.patch.object(host_cache, "_host_compute", return_value=fresh),
+        mock.patch.object(host_cache, "local_materials", return_value=set(uids[:3])),
     ):
         got = damage.host_setup(None, object(), object() if separate_exterior else None, object(), folder)
     return got, _car(seed, uids, b"shared01", separate_exterior)

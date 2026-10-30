@@ -1,4 +1,4 @@
-"""Checks for src/dsfforza/convert/cockpit.py that need no game files (a fraction of a second).
+"""Checks for src/dsfforza/convert/cockpit/ that need no game files (a fraction of a second).
 
 uv run python tests/test_cockpit.py     # or every test: uv run python -m tests cockpit
 """
@@ -11,6 +11,7 @@ import types
 
 from dsfforza.convert import cockpit, damage
 from dsfforza.convert import forza_materials as fm
+from dsfforza.convert.cockpit import displays
 from dsfforza.formats import carbin, chnk, upvh
 
 
@@ -745,7 +746,7 @@ def test_wheel_display_found_only_under_the_hud_tries_smaller_sizes():
     # when no smaller one fits either.
     eye = (0.0, 0.0, 0.0)
     static, wheel = _open_cockpit()
-    real = cockpit.place_pod
+    real = displays.place_pod  # patched where wheel_display_pod looks it up
     for small_fits in (True, False):
         calls = []
 
@@ -758,11 +759,11 @@ def test_wheel_display_found_only_under_the_hud_tries_smaller_sizes():
                 return None, None, {"virtual_display": "no room"}
             return d, housing, report
 
-        cockpit.place_pod = fake
+        displays.place_pod = fake
         try:
             moved, housing, report = cockpit.wheel_display_pod(static, eye, wheel, {}, 2)
         finally:
-            cockpit.place_pod = real
+            displays.place_pod = real
         assert [c[0] for c in calls] == [cockpit.POD_PASSES, cockpit.POD_HUD_PASSES]
         w = calls[0][1][0][0] / cockpit.WHEEL_DISPLAY_SCALES[0]
         assert [round(s[0] / w, 3) for s in calls[1][1]] == list(cockpit.WHEEL_DISPLAY_SMALL_SCALES)

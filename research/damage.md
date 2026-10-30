@@ -3,14 +3,14 @@
 Updated: 2026-10-30
 
 How a vanilla DSF car's body damages, from static analysis of the vanilla
-archive and the shared vehicle shaders, and what `src/dsfforza/convert/damage.py` builds
+archive and the shared vehicle shaders, and what `src/dsfforza/convert/damage/` builds
 for converted Forza cars. Evidence levels follow `dngvehicles.md`
 (confirmed-static, confirmed-runtime, hypothesis). Hosts checked: Saloon 15
 (ASYM Desanne, 266), Sports Car 06 (vanilla 370Z, 227), Saloon 03 (147),
 DriftCar 03 (229), Old 01 (130), Tanner (62), plus fleet surveys of all 150.
 
 Scratch scripts: `out/damage/` (`fleet.py`, `roles.py`, `s5delta.py`,
-`gpdis.py`, `overlap.py`). Tool: `src/dsfforza/convert/damage.py` (`panels`, `render`,
+`gpdis.py`, `overlap.py`). Tool: `src/dsfforza/convert/damage/` (`panels`, `render`,
 `check`).
 
 ## The vertex shader (confirmed-static)
@@ -190,7 +190,7 @@ call the two suspension parts the bumpers; renders show struts and arms
    bound to, chassis included (`vehicle-model.md`, "Glass"; `src/dsfforza/convert/glass.py`).
    What sets `.y` on the CPU side is still untraced.
 
-## What `src/dsfforza/convert/damage.py` does (ConvertOptions.damage, `port_car.py --damage`)
+## What `src/dsfforza/convert/damage/` does (ConvertOptions.damage, `port_car.py --damage`)
 
 Converted cars used to put every body triangle on the chassis panel with
 s12 = position: no crush, no swinging or falling parts, and the panel parts
@@ -542,7 +542,7 @@ vanilla 147's tub and beam pictures. Normals, sky (0.2-0.45) and material
 binding were fine (`view.py --mode backface`: the stored normals face the
 viewer); the surface was just one dark texel.
 
-### Fix (`src/dsfforza/convert/damage.py`, `src/dsfforza/convert/forza2dsf.py`)
+### Fix (`src/dsfforza/convert/damage/`, `src/dsfforza/convert/forza2dsf/`)
 
 `split_exposed` now finds four zones (`exposed_zones`, `zone_maps`,
 `zone_vote`), each from a 5 cm map of the covering panel's sections:
@@ -650,7 +650,7 @@ are in the panels' middles. Wings against the front structure move
 by up to 5-8 cm with uneven damage; they are real shut lines with jambs and
 inner panels behind them, so no hole shows.
 
-### Fix (`src/dsfforza/convert/damage.py`)
+### Fix (`src/dsfforza/convert/damage/`)
 
 - `_seam_map`: positions of different rigid panels within 3 mm
   (`SEAM_NEAR`) join one seam group (union-find); every copy takes the

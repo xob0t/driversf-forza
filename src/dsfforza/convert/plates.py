@@ -48,7 +48,7 @@ similar vanilla car). The plate becomes a synthetic body section
 `<surface section>_plate_front|rear` (technique PLATE_TECHNIQUE) on every body
 LOD, so the rest of the converter treats it like Forza geometry: paint
 material (forza2dsf), damage panels by the surface section's rule
-(src/dsfforza/convert/damage.py: bumper, boot lid or nearest body panel), crush targets and
+(src/dsfforza/convert/damage/: bumper, boot lid or nearest body panel), crush targets and
 decal UV1 from the host. Per LOD the plate moves out if that LOD's surface
 comes forward of it.
 

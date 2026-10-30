@@ -18,6 +18,7 @@ from collections import Counter
 from types import SimpleNamespace
 
 from dsfforza.convert import damage
+from dsfforza.convert.damage import core as damage_core
 
 # --- Grid.nearest ---------------------------------------------------------------------
 
@@ -80,7 +81,7 @@ def test_nearest_many_matches_nearest():
     several settings: the default, small chunks, a first look at ring 0, 1 or 4,
     mostly the cube of offsets or always every occupied cell, no one-by-one."""
     rng = random.Random(41)
-    saved = damage.NEAREST_RINGS, damage.NEAREST_CHUNK, damage.NEAREST_CUBE, damage.NEAREST_FEW
+    saved = damage_core.NEAREST_RINGS, damage_core.NEAREST_CHUNK, damage_core.NEAREST_CUBE, damage_core.NEAREST_FEW
     settings = [saved, (2, 50, 4, 32), (0, 400_000, 64, 0), (4, 1000, 0, 0), (1, 300, 4, 1)]
     try:
         for scene in range(40):
@@ -92,11 +93,16 @@ def test_nearest_many_matches_nearest():
                 if scene % 5 == 0 and k == 6:  # nearest itself against the ring search (a few: it is slow)
                     assert want[:8] == [_nearest_reference(grid, q, k) for q in qs[:8]]
                 for setting in settings:
-                    damage.NEAREST_RINGS, damage.NEAREST_CHUNK, damage.NEAREST_CUBE, damage.NEAREST_FEW = setting
+                    (
+                        damage_core.NEAREST_RINGS,
+                        damage_core.NEAREST_CHUNK,
+                        damage_core.NEAREST_CUBE,
+                        damage_core.NEAREST_FEW,
+                    ) = setting
                     fresh = damage.Grid(pts, list(range(len(pts))), cell=cell)
                     assert fresh.nearest_many(qs, k) == want, (scene, k, setting)
     finally:
-        damage.NEAREST_RINGS, damage.NEAREST_CHUNK, damage.NEAREST_CUBE, damage.NEAREST_FEW = saved
+        damage_core.NEAREST_RINGS, damage_core.NEAREST_CHUNK, damage_core.NEAREST_CUBE, damage_core.NEAREST_FEW = saved
     assert damage.Grid([], []).nearest_many([(0.0, 0.0, 0.0)]) == [[]]
     assert damage.Grid([(0.0, 0.0, 0.0)], [0]).nearest_many([]) == []
 
@@ -104,9 +110,9 @@ def test_nearest_many_matches_nearest():
 def test_nearest_many_on_exact_ring_distances():
     """Points exactly t * cell away along an axis (the stop test's <= decides),
     and a k-th and (k + 1)-th at the same distance from different positions."""
-    saved = damage.NEAREST_FEW
+    saved = damage_core.NEAREST_FEW
     try:
-        damage.NEAREST_FEW = 0
+        damage_core.NEAREST_FEW = 0
         cell = 0.08
         pts = [(t * cell, 0.0, 0.0) for t in range(-6, 7)] + [(0.0, t * cell, 0.0) for t in range(-6, 7)]
         pts += [(0.0, 0.0, t * cell) for t in range(-6, 7)] + [(0.0, 0.0, 0.0)] * 3
@@ -119,7 +125,7 @@ def test_nearest_many_on_exact_ring_distances():
                 == [_nearest_reference(grid, q, k) for q in qs]
             )
     finally:
-        damage.NEAREST_FEW = saved
+        damage_core.NEAREST_FEW = saved
 
 
 # --- Uv1Field.lookup --------------------------------------------------------------------
@@ -213,7 +219,7 @@ def _uv1_items(rng: random.Random, field: damage.Uv1Field, count: int) -> list:
 
 def test_lookup_many_matches_lookup():
     rng = random.Random(43)
-    saved = damage.NEAREST_FEW
+    saved = damage_core.NEAREST_FEW
     try:
         for scene in range(8):
             field = _uv1_scene(rng)
@@ -221,11 +227,11 @@ def test_lookup_many_matches_lookup():
             want = [field.lookup(*item) for item in items]
             assert want == [_lookup_reference(field, *item) for item in items]
             for few in (32, 0):
-                damage.NEAREST_FEW = few
+                damage_core.NEAREST_FEW = few
                 fresh = damage.Uv1Field(field.tris, field.box)
                 assert fresh.lookup_many(items) == want, (scene, few)
     finally:
-        damage.NEAREST_FEW = saved
+        damage_core.NEAREST_FEW = saved
     assert damage.Uv1Field([], damage.Box((-1, -1, -1), (1, 1, 1))).lookup_many(items[:3]) == [None] * 3
 
 

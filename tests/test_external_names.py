@@ -8,7 +8,7 @@ from dsfforza import REPO
 # Forza's own names: gamedb columns and CarAttribs fields.
 FORZA_NAMES = {
     "src/dsfforza/build/handling.py": ["IsStock = 1"],
-    "src/dsfforza/convert/forza2dsf.py": ["FrontStockRideHeight", "RearStockRideHeight"],
+    "src/dsfforza/convert/forza2dsf/car.py": ["FrontStockRideHeight", "RearStockRideHeight"],
 }
 
 

@@ -12,6 +12,7 @@ import math
 import random
 
 from dsfforza.convert import cockpit, damage
+from dsfforza.convert.damage import plan as damage_plan
 from dsfforza.formats import carbin
 
 # --- damage.Grid.nearest ------------------------------------------------------------
@@ -192,7 +193,7 @@ def test_batched_panel_votes_match_the_ring_search():
     from collections import defaultdict
 
     rng = random.Random(31)
-    saved = damage.VOTE_RINGS, damage.VOTE_CHUNK
+    saved = damage_plan.VOTE_RINGS, damage_plan.VOTE_CHUNK
     try:
         for scene in range(6):
             f = _vote_scene(rng)
@@ -237,10 +238,10 @@ def test_batched_panel_votes_match_the_ring_search():
                 for reach in (None, 0.12):
                     want = [_vote_reference(cells, 0.08, f, q, n, reach) for q, n in zip(qs, normals, strict=True)]
                     for rings, chunk in (((1, 2, 3, 5, 7), 400_000), ((7,), 50), ((2, 4), 1000), ((1,), 400_000)):
-                        damage.VOTE_RINGS, damage.VOTE_CHUNK = rings, chunk
+                        damage_plan.VOTE_RINGS, damage_plan.VOTE_CHUNK = rings, chunk
                         assert plan._votes(index, f, qs, normals, reach) == want, (scene, paint, reach, rings)
     finally:
-        damage.VOTE_RINGS, damage.VOTE_CHUNK = saved
+        damage_plan.VOTE_RINGS, damage_plan.VOTE_CHUNK = saved
 
 
 def test_batched_panel_vote_stops_on_an_exact_ring_score():
@@ -289,7 +290,8 @@ def test_nearest_pairs_match_nearest_pair():
 
 def _visible_reference(sections, eyes, resolution=256, near_keep=0.25, tiny_slack=0.03):
     """The original per-pixel loops of cockpit.visible_triangles."""
-    fm = cockpit.fm
+    from dsfforza.convert import forza_materials as fm
+
     tris, glass = [], set()
     for si, s in enumerate(sections):
         for ui, sub in enumerate(s.subsections):
@@ -357,7 +359,8 @@ def _visible_reference(sections, eyes, resolution=256, near_keep=0.25, tiny_slac
 
 def _sight_reference(sections, eye, resolution=128):
     """The original depth loops of cockpit.GlassSight: {face: depth list}."""
-    fm = cockpit.fm
+    from dsfforza.convert import forza_materials as fm
+
     half = resolution / 2
     tris = []
     for s in sections:

@@ -10,6 +10,7 @@ import struct
 
 from dsfforza.convert import forza2dsf
 from dsfforza.formats import chnk, upvh
+from dsfforza.formats.vehicle_mesh import child
 
 HUBS = [(-0.76, 0.0, 1.37), (0.76, 0.0, 1.37), (-0.76, 0.0, -1.37), (0.76, 0.0, -1.37)]
 BODY, WHEEL, EXT_BODY, EXT_WHEEL = (bytes([n, 0x12, 0, 0, 0, 0, 0x28, 0x2D]) for n in (0x10, 0x20, 0x30, 0x40))
@@ -96,7 +97,7 @@ def _host(rear_wheel: bytes = WHEEL, rear_ext: bytes = EXT_WHEEL):
 
 
 def _payload(vehc: chnk.Entry, tag: str) -> bytes:
-    return forza2dsf.child(forza2dsf.child(vehc, "NONR"), tag).payload
+    return child(child(vehc, "NONR"), tag).payload
 
 
 def test_add_modl_part_copies_the_part_and_keeps_the_others():

@@ -28,7 +28,7 @@ For each --car NAME[@fh1|@fm4]:
    submodels. This is the configuration confirmed in game for the 370Z.
    If an entry is over the size limits, coarser LODs are tried in turn.
    The interior entry is rebuilt from the car's cockpit carbin, with the
-   steering hinge, gauges and head camera moved (src/dsfforza/convert/cockpit.py; not yet
+   steering hinge, gauges and head camera moved (src/dsfforza/convert/cockpit/; not yet
    tested in game; --no-cockpit keeps the host's interior). If that interior
    can't fit, the host's is kept.
 5. Engine sound (src/dsfforza/convert/engine_sound.py, research/engine-sound.md; untested in
@@ -93,7 +93,7 @@ from dsfforza.convert import (
 from dsfforza.formats import stfs
 from dsfforza.formats.chnk import ENTRY_LIMIT, entry_size, layout, read_chunk, write_chunk
 from dsfforza.formats.forzazip import ForzaZip
-from dsfforza.formats.vehicle_mesh import child
+from dsfforza.formats.vehicle_mesh import child, payload
 from dsfforza.formats.xiso import XIso
 from dsfforza.game import game_paths
 
@@ -111,7 +111,7 @@ WANTED = (
     "physics/maxdata.xml",
     "carattribs.xml",
     "shadersettings.xml",
-    # cockpit (src/dsfforza/convert/cockpit.py): interior entry, gauges, head camera
+    # cockpit (src/dsfforza/convert/cockpit/): interior entry, gauges, head camera
     "{name}_cockpit.carbin",
     "nodamage_lod0.xds",
     "lights_lod0.xds",
@@ -875,7 +875,7 @@ def build_car(
             blur_materials=dsf_materials.shared_macos(stream, entries, dsf_materials.SPOKE_DISC_MATERIALS),
             full_only=probe,
         )
-        if args.damage:  # src/dsfforza/convert/damage.py
+        if args.damage:  # src/dsfforza/convert/damage/
             from dsfforza.convert import damage
 
             opts.damage, opts.damage_opts = True, damage.DamageOptions(hull=args.damage == "hull")
@@ -985,14 +985,14 @@ def apply_handling(
     if mode == "dsf" and host is not None:
         from dsfforza.build import handling_dsf
 
-        base = handling.VO3D.parse(forza2dsf.payload(stream, vo3d_entry))
+        base = handling.VO3D.parse(payload(stream, vo3d_entry))
         params, report = handling_dsf.apply(dict(base.params), host, media, [gamedb], log=log)
         vo3d_entry.payload = handling.VO3D(base.spool_id, params, base.version).build()
         return report
     host = handling.Host(
         spool_id,
-        handling.VO3D.parse(forza2dsf.payload(stream, vo3d_entry)),
-        *handling.hub_geometry(forza2dsf.payload(stream, upvh_entry)),
+        handling.VO3D.parse(payload(stream, vo3d_entry)),
+        *handling.hub_geometry(payload(stream, upvh_entry)),
     )
     vo3d, changes = handling.build_vo3d(host, forza)
     vo3d_entry.payload = vo3d.build()
@@ -1343,7 +1343,7 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         const="hull",
         choices=("panels", "hull"),
-        help="vanilla-like damage (src/dsfforza/convert/damage.py): body on the host's panels, crush "
+        help="vanilla-like damage (src/dsfforza/convert/damage/): body on the host's panels, crush "
         "targets, panel parts, hinges moved, and (default, 'hull') the root collision hull mapped "
         "onto the Forza body; 'panels' keeps the host's hull",
     )
@@ -1382,7 +1382,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-cockpit",
         action="store_true",
         help="keep the host's interior entry, steering hinge and head camera "
-        "(default: rebuild them from <car>_cockpit.carbin, src/dsfforza/convert/cockpit.py)",
+        "(default: rebuild them from <car>_cockpit.carbin, src/dsfforza/convert/cockpit/)",
     )
     parser.add_argument(
         "--no-settle",

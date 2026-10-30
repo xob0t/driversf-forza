@@ -23,6 +23,7 @@ import numpy as np
 from dsfforza.convert import cockpit, engine_sound
 from dsfforza.convert import dsf_materials as dm
 from dsfforza.convert import forza_materials as fm
+from dsfforza.convert.cockpit import visibility
 from dsfforza.formats import carbin
 from dsfforza.formats import wwise_bank as wb
 
@@ -109,7 +110,6 @@ def _raster_reference(parts, owner, resolution, depth, ids=None, chunk=1 << 20):
 
 
 def _visible_reference(sections, eyes, resolution=256, near_keep=0.25, tiny_slack=0.03):
-    fm = cockpit.fm
     tris, glass = [], set()
     for si, s in enumerate(sections):
         for ui, sub in enumerate(s.subsections):
@@ -159,7 +159,6 @@ def _visible_reference(sections, eyes, resolution=256, near_keep=0.25, tiny_slac
 
 def _sight_reference(sections, eye, resolution=128, triangles=None):
     """GlassSight's depth faces, as GlassSight built them."""
-    fm = cockpit.fm
     half = resolution / 2
     tris = [[tuple(p[a] - eye[a] for a in range(3)) for p in t] for t in (triangles or [])]
     for s in sections:
@@ -222,7 +221,6 @@ def _cabin(rng: random.Random, triangles: int, spread: float = 1.2) -> list[carb
 
 
 def _scene_parts(rng: random.Random, sections, eye, half):
-    fm = cockpit.fm
     tris, skip = [], []
     for s in sections:
         for sub in s.subsections:
@@ -249,7 +247,7 @@ def test_screen_parts_match_the_clip_loop():
 
 def test_raster_matches_the_chunked_raster():
     rng = random.Random(7)
-    tile, chunk = cockpit.RASTER_TILE, 1 << 16
+    tile, chunk = visibility.RASTER_TILE, 1 << 16
     try:
         for resolution, triangles in ((24, 60), (48, 200), (72, 100)):
             sections = _cabin(rng, triangles)
@@ -258,7 +256,7 @@ def test_raster_matches_the_chunked_raster():
                 parts, owner = cockpit._screen_parts(rel, axis, sign, resolution / 2, skip)
                 if rng.random() < 0.3:  # equal depths: every part at the same 1 / z
                     parts[:, :, 2] = 0.5
-                for cockpit.RASTER_TILE, chunk in ((1, 1 << 16), (2, 300), (8, 1 << 16), (16, 1000), (64, 1 << 20)):
+                for visibility.RASTER_TILE, chunk in ((1, 1 << 16), (2, 300), (8, 1 << 16), (16, 1000), (64, 1 << 20)):
                     depth = np.zeros(resolution * resolution)
                     ids = np.full(resolution * resolution, -1, dtype=np.int64)
                     depth[::7] = 0.3  # a depth to beat
@@ -268,7 +266,7 @@ def test_raster_matches_the_chunked_raster():
                     assert all(np.array_equal(a, b) for a, b in zip(got, want, strict=True))
                     assert depth.tobytes() == want_depth.tobytes() and np.array_equal(ids, want_ids)
     finally:
-        cockpit.RASTER_TILE = tile
+        visibility.RASTER_TILE = tile
 
 
 def test_visible_triangles_match_the_numpy_raster():
