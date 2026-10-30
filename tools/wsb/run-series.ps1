@@ -39,6 +39,9 @@ param(
     [string]$Override,            # game files to replace, repo-relative: 'Install\gui.sp=out\gui\gui.sp;media\Fonts.fchunk=out\gui\Fonts.fchunk';
                                   # root files too ('dsf_enhanced.asi=out\x\dsf_enhanced.asi;dsf_enhanced.ini=out\x\test.ini')
     [string]$Asi,                 # repo-relative plugin, e.g. out\asi\dsfforza.asi (its .ini is copied too)
+    [string]$ProfileFiles,        # -Vm: files copied into the guest's Driver profile in Documents, repo-relative:
+                                  # 'reloaded\replays\dng.replay=out\capture\clip.replay' (a Film Director replay)
+    [switch]$NoProbe,             # no probe Lua (clonetest.lua): the game runs as it starts, e.g. into a replay
     [string]$LuaFiles,            # UserLuaScripts files replaced after the repo copy: 'dsfforza\hud.lua=out\x\hud.lua;dsfforza\ported.lua=out\x\dngvehicles.lua'
     [switch]$ArchiveOnly,         # an archive named dngvehicles.sp goes with its build's dngvehicles.lua and gui\ (each car's
                                   # vehicleStats entry, badge and plate) unless this is set (run-test.ps1)
@@ -94,6 +97,7 @@ $runTest = Join-Path $PSScriptRoot 'guest\run-test.ps1'
 $hostState = Join-Path $outputHost 'host-session'
 $pauseFlag = Join-Path $repo 'out\wsb-pause'
 if ($OnHost -and $Vm) { throw '-OnHost and -Vm exclude each other' }
+if ($ProfileFiles -and -not $Vm) { throw '-ProfileFiles needs -Vm (it writes into the Driver profile in Documents)' }
 
 # run-test.ps1 options with the same name here are passed on as given, so a new option needs
 # only its two param lines. Archive, Asi, Override and LuaFiles become guest paths (Get-GuestArgs);
@@ -103,7 +107,7 @@ if (-not $HostRunPath) { $HostRunPath = Join-Path ([IO.Path]::GetPathRoot($GameP
 $seriesArgs = $PSBoundParameters
 $ownParameters = $MyInvocation.MyCommand.Parameters
 $passThrough = @((Get-Command $runTest).Parameters.Keys | Where-Object {
-    $ownParameters.ContainsKey($_) -and $_ -notin 'Archive', 'Asi', 'Override', 'LuaFiles', 'OnHost' })
+    $ownParameters.ContainsKey($_) -and $_ -notin 'Archive', 'Asi', 'Override', 'LuaFiles', 'ProfileFiles', 'OnHost' })
 
 # One series at a time: the guest runs one game and runs\latest.txt names the
 # newest run, so concurrent series would read each other's results. Callers
@@ -192,7 +196,7 @@ function Get-SeenPath([string]$path) {
     "$repoSeen\$($full.Substring($repo.Length).TrimStart('\'))"
 }
 function Get-SeenPairs([string]$pairs) {
-    # 'key=repo path;...' -> 'key=seen path;...' (-Override, -LuaFiles)
+    # 'key=repo path;...' -> 'key=seen path;...' (-Override, -LuaFiles, -ProfileFiles)
     @(foreach ($pair in ($pairs -split ';' | Where-Object { $_ })) {
         $name, $path = $pair -split '=', 2
         "$($name.Trim())=$(Get-SeenPath $path)"
@@ -201,12 +205,13 @@ function Get-SeenPairs([string]$pairs) {
 
 function Get-GuestArgs([string]$archive) {
     # run-test.ps1's arguments for one archive, by name; run-series' own defaults always go.
-    $values = [ordered]@{ Archive = (Get-SeenPath $archive); Hook = $true; Probe = $true
+    $values = [ordered]@{ Archive = (Get-SeenPath $archive); Hook = $true; Probe = -not $NoProbe
         ProbeIds = $ProbeIds; ZoomPresses = $ZoomPresses; ShotSeconds = $ShotSeconds; WaitSeconds = $WaitSeconds }
     foreach ($name in $passThrough) { if ($seriesArgs.ContainsKey($name)) { $values[$name] = $seriesArgs[$name] } }
     if ($Asi) { $values.Asi = Get-SeenPath $Asi }
     if ($Override) { $values.Override = Get-SeenPairs $Override }   # game files, repo-relative replacements
     if ($LuaFiles) { $values.LuaFiles = Get-SeenPairs $LuaFiles }   # UserLuaScripts files
+    if ($ProfileFiles) { $values.ProfileFiles = Get-SeenPairs $ProfileFiles }   # Driver profile files
     return $values
 }
 
