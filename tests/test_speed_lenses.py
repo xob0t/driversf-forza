@@ -86,7 +86,11 @@ def test_intersect_matches_at_every_hit():
         if case % 4 == 0 and n:
             dirs = np.tile([0.0, 0.0, 1.0], (n, 1))  # along an axis
         centre = origins.mean(0) if n else np.zeros(3)
-        a = centre + rng.uniform(-0.3, 0.3, (m, 3))
+        reach = 0.3
+        if case % 6 == 5 and n:  # rays and triangles spread over the car: most pairs culled
+            origins = origins + rng.uniform(-1.5, 1.5, (n, 3))
+            reach = 1.8
+        a = centre + rng.uniform(-reach, reach, (m, 3))
         b, c = a + rng.normal(0, 0.05, (m, 3)), a + rng.normal(0, 0.05, (m, 3))
         if case % 3 == 1 and m:
             a, b, c = (np.round(x / 0.01) * 0.01 for x in (a, b, c))  # a lattice: hits on edges

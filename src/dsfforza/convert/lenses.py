@@ -265,11 +265,48 @@ def _texels(uv_px: np.ndarray):
     return np.array([int(cx)]), np.array([int(cy)]), np.array([[1 / 3, 1 / 3, 1 / 3]])
 
 
+RAY_GROUP = 32  # _intersect: rays tested together against the triangles near them
+GROUP_MARGIN = 0.001  # m: a triangle this far outside a group's reach can't be hit, rounding and all
+
+
 def _intersect(origins, dirs, tris):
     """Möller-Trumbore for every ray against every triangle of `tris` (v0, e1, e2:
     (m, 3) each): distances (n, m), inf where a ray misses or the hit is beyond
-    RAY_DEPTH, and the barycentrics (b1, b2) of the hits."""
+    RAY_DEPTH, and the barycentrics (b1, b2) of the hits. Each group of RAY_GROUP rays
+    (in their order: _behind's are in spatial chunks) is tested only against the triangles
+    whose box meets the box of its rays' segments (0 to RAY_DEPTH) widened by GROUP_MARGIN:
+    the others can't be hit. Triangles with a non-finite corner are tested by every ray."""
     v0, e1, e2 = tris
+    n, m = len(origins), len(v0)
+    t = np.full((n, m), np.inf)
+    u, v = np.zeros((n, m)), np.zeros((n, m))
+    if not n or not m:
+        return t, u, v
+    with np.errstate(invalid="ignore"):
+        corners = np.stack([v0, v0 + e1, v0 + e2])
+        lo, hi = corners.min(0), corners.max(0)
+    odd = ~(np.isfinite(lo).all(1) & np.isfinite(hi).all(1))
+    ends = origins + dirs * RAY_DEPTH
+    for g0 in range(0, n, RAY_GROUP):
+        rows = np.arange(g0, min(n, g0 + RAY_GROUP))
+        seg = np.concatenate([origins[rows], ends[rows]])
+        seg = seg[np.isfinite(seg).all(1)]  # a non-finite ray hits nothing; it widens no box
+        if len(seg):
+            g_lo, g_hi = seg.min(0) - GROUP_MARGIN, seg.max(0) + GROUP_MARGIN
+            cols = np.nonzero(odd | (np.all(hi >= g_lo, 1) & np.all(lo <= g_hi, 1)))[0]
+        else:
+            cols = np.nonzero(odd)[0]
+        if not len(cols):
+            continue
+        i, j, ts, us, vs = _hits(origins[rows], dirs[rows], v0[cols], e1[cols], e2[cols])
+        i, j = rows[i], cols[j]
+        t[i, j], u[i, j], v[i, j] = ts, us, vs
+    return t, u, v
+
+
+def _hits(origins, dirs, v0, e1, e2):
+    """Möller-Trumbore of rays against triangles (_intersect): the (ray, triangle) of every hit
+    and its distance and barycentrics; v and t only where u can hit."""
     dx, dy, dz = (dirs[:, c : c + 1] for c in range(3))
     ax, ay, az = (e1[None, :, c] for c in range(3))
     bx, by, bz = (e2[None, :, c] for c in range(3))
@@ -292,7 +329,7 @@ def _intersect(origins, dirs, tris):
     sx, sy, sz = (origins[:, c : c + 1] - v0[None, :, c] for c in range(3))
     u = dot(sx, px, sy, py, sz, pz)
     u *= inv
-    # v, t only where u can hit: v >= 0 and u + v <= 1 need 0 <= u <= 1 (rounding too).
+    # v >= 0 and u + v <= 1 need 0 <= u <= 1 (rounding too).
     i, j = np.nonzero(ok & (u >= 0) & (u <= 1))
     sx, sy, sz = sx[i, j], sy[i, j], sz[i, j]
     ax, ay, az, bx, by, bz = (a[0, j] for a in (ax, ay, az, bx, by, bz))
@@ -304,12 +341,7 @@ def _intersect(origins, dirs, tris):
     ts *= inv
     us = u[i, j]
     hit = (vs >= 0) & (us + vs <= 1) & (ts > 0) & (ts <= RAY_DEPTH)
-    i, j = i[hit], j[hit]
-    t = np.full(u.shape, np.inf)
-    t[i, j] = ts[hit]
-    v = np.zeros(u.shape)
-    v[i, j] = vs[hit]
-    return t, u, v
+    return i[hit], j[hit], ts[hit], us[hit], vs[hit]
 
 
 class _Surfaces:
