@@ -1,6 +1,6 @@
 # UPVH vehicle hierarchy, and why converted cars crashed
 
-Updated: 2026-10-29
+Updated: 2026-10-30
 
 Static analysis of build 1.04. File offsets are relative to the UPVH payload
 (Saloon 15, VEHC 3, spool 266, 0x42B0 bytes, unless stated). Code addresses
@@ -343,6 +343,52 @@ from the changed record counts. Runs `vm-20261025-080435`/`-080641`,
 `vm-20261025-090734`, `vm-20261026-115910`/`-120124`, `-121526`, `-125136`
 (`img/exhaust-focusst-before-after.jpg`, `img/exhaust-ingame-before-after.jpg`;
 offline markers per car: `img/exhaust-offline-markers.png`).
+
+**Pipes outside the exhaust sections (issue #65).** 29 cars model their
+pipes in the bumper or body (no `exhaust*` section), 8 have exhaust sections
+with no opening the rules accept. Seen on the F40 in game: the box-mapped
+host markers put the smoke either side of the plate, the car's three pipes
+sit together low in the centre. Those pipes are three chrome tubes of
+`bumperRa` (x -0.08, 0, +0.08; 10 x 5 and 6 x 6 cm; 3.7 cm long), each its
+own connected piece whose walls face every way round z. `exhaust.find_pipes`
+takes such pieces when the exhaust sections give no tip: a trim or chrome
+subsection's connected piece (finest LOD) whose wall triangles (|n . axis|
+< 0.5, 30% of its area or more) cover at least 10 of 12 directions round the
+flow axis (back, or x for a side exit), 2 to 25 cm across, 1.5 cm long or
+more, in the lower 45% of the body (side exits the lower 25%), ending within
+0.3 m of the body's rear nearby or within 8 cm of its side, with no lamp or
+glass triangle inside its cross-section (a lamp's bezel); not
+`undercarriage` (springs and dampers are tubes too) or `weatherstrip`.
+The pieces then go through the same opening rules as exhaust sections.
+
+Survey (`dsff exhaust survey` of `out/build/work`, master against this
+change): tipless cars 37 to 17, every other car's tips as before. The 20 cars
+(contact sheet: rear, rear three-quarter and side renders of the Forza body
+with the openings marked, `out/e65/sheet/`): rear pipes on the F40 (3
+markers, host 225 has 2), 360 and 360 Challenge (4), Corvette 60 (bumper
+ends; host 161 has no exhaust marker, #64), Genesis Coupe RMR, Exige 240,
+Speedster (two stacked in the centre), R390 (bumper corners), R390 GT1,
+Speed 8, RAV4 Sport; side exits under the doors on the Cerbera (4), Astra V8,
+C5-R, both Fairlady Z race cars, C-Class DTM (one, right), Esperante GTLM and
+both 908s (ahead of the rear wheels; not checked against photos). Ruled out by
+the length and side-height limits on the first contact sheet: a 3 x 2 cm
+chrome ring by the R390's badge (0.6 cm long), the Esperante's front-fender
+vents (47% up the body), two 1.4 cm `matte_colors` rings on the 908 11's tail.
+Still tipless, no tube found (not looked into car by car): Viper SRT-10,
+SLR, Continental, TT-R, CC8, HKS, Eliminator, Skyline 03, LMP 03 and 905, and
+of the 8 with unaccepted exhaust sections all but the RAV4 (Leaf, CT200h, R15
+TDI, Sagaris, Corvette Stingray 67, Kenworth, tour bus). They keep the
+box-mapped host markers.
+
+**Copied markers and the tree fields (issue #273).** `insert_marker` copied
+the record whole, so under a hinged rear bumper (role 36) whose last leaf was
+the marker, both the old leaf and the copy popped the hinge (0, 1, 1); vanilla
+writes (0, 0, 0) on a leaf before the last. `insert_marker` and
+`remove_marker` now write +0x0C bit 0 and +0x16/+0x18 again from
+`damage._tree_fields` on every record that followed them (`exhaust._retree`,
+as `damage.move_subtree` does). AUD_R8_08 (host 139): `upvh lint` failed on
+record 71 in master's build, passes now; inserting and then removing a copy
+gives back the host's bytes (hosts 139, 214, 127, 225).
 
 ### PDL (collision)
 

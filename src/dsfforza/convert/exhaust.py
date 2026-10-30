@@ -33,10 +33,16 @@ variant the body uses) and moves the host's markers onto them:
    corners), flat ones and ones too big for a pipe don't count. The flow is
    straight back or straight out: vanilla markers are identity on rear pipes
    too, and the wall normals of these low-poly tips gave no stable axis.
+   A car whose exhaust sections give no opening (or that has none: the F40,
+   the 360, the Corvette 60 model their pipes in the bumper or body) takes
+   the openings of its pipes elsewhere (find_pipes: tubes round the flow at
+   the body's rear or flush with its side, low on the body, no lamp inside).
 2. Markers (patch_upvh): as many as the openings, up to the 4 the game has
    room for. A host with fewer gets copies of its own exhaust marker records
    (inserted next to the one copied, same parent); a host with more loses the
-   extra records (innermost first). Markers go to the openings in x order; a
+   extra records (innermost first). Both write the fields that follow the
+   tree's shape again (_retree: the hinge pop counts), so a copy after the
+   last leaf of a hinged bumper pops its hinge once. Markers go to the openings in x order; a
    wide opening (twin tip) gets two at the centres of its halves when the
    host has the markers; more tips than 4 share markers between neighbours.
 3. No tip found: the host's markers are moved by the host-body-to-Forza-body
@@ -93,6 +99,10 @@ PIPE_SECTOR_SHARE = 0.02  # of the wall area a direction needs
 PIPE_SECTORS_MISSED = 2  # directions a tube may miss (the F40's: none; the 360's oval housings: one)
 PIPE_MAX_SIZE = 0.25  # m across: larger round parts are no pipes
 PIPE_MAX_HEIGHT = 0.45  # of the body's height above its lowest point (F40 0.19, Corvette 60 0.31)
+PIPE_MAX_SIDE_HEIGHT = (
+    0.25  # side exits sit in the sill (Cerbera 0.13 and 0.2, C5-R 0.11); the Esperante GTLM's fender vents 0.47
+)
+PIPE_MIN_LENGTH = 0.015  # m along the flow (Corvette 60's bumper ends 0.02, F40 0.037); R390's badge ring 0.006
 PIPE_REAR = 0.3  # m: a rear pipe's end this far ahead of the body's rearmost point nearby at most
 PIPE_LAMP_DEPTH = 0.15  # m: lamp triangles this close along the axis, inside its cross-section: a bezel
 PIPE_SKIP_SECTIONS = ("wheel", "interior")
@@ -267,6 +277,8 @@ def _is_pipe(tris: np.ndarray, body: np.ndarray, lamps: np.ndarray, floor: float
         size = (hi - lo)[list(across)]
         if not (size.min() >= MIN_THICK and MIN_SIZE <= size.max() <= PIPE_MAX_SIZE):
             continue
+        if (hi - lo)[axis] < PIPE_MIN_LENGTH:
+            continue
         wall = np.abs(n[:, axis]) < PIPE_WALL
         if area[wall].sum() < PIPE_WALL_SHARE * area.sum():
             continue
@@ -286,6 +298,8 @@ def _is_pipe(tris: np.ndarray, body: np.ndarray, lamps: np.ndarray, floor: float
         else:
             beside = near[(near[:, 2] >= lo[2] - 0.1) & (near[:, 2] <= hi[2] + 0.1)]
             if abs(centre[0]) < SIDE_MIN_X or not len(beside):
+                continue
+            if centre[1] > floor + PIPE_MAX_SIDE_HEIGHT * (top - floor):
                 continue
             if (side * beside[:, 0]).max() - (side * tris[:, :, 0]).max() > SIDE_GAP:
                 continue
