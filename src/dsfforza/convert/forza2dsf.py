@@ -1105,6 +1105,7 @@ WHEEL_SKY_SIDE = 0.5
 WHEEL_AO_RAYS = 24
 WHEEL_AO_VOXEL = 0.003  # metres
 WHEEL_AO_SKIP = 3  # voxels
+WHEEL_AO_BLOCK = 16  # ray steps at a time
 
 
 def _hemisphere(count: int):
@@ -1135,6 +1136,7 @@ def wheel_sky(points, normals, triangles) -> list[float]:
     lo = corners.min(0) - 2 * h
     dims = np.ceil((corners.max(0) + 2 * h - lo) / h).astype(int) + 1
     grid = np.zeros(dims, bool)
+    solid = grid.reshape(-1)
     if len(tri):  # each triangle sampled at half-voxel spacing
         a, b, c = tri[:, 0], tri[:, 1], tri[:, 2]
         longest = np.max(
@@ -1145,10 +1147,19 @@ def wheel_sky(points, normals, triangles) -> list[float]:
             sel = steps == n
             i, j = np.mgrid[0 : n + 1, 0 : n + 1]
             keep = i + j <= n
-            fu, fv = (i[keep] / n)[None, :, None], (j[keep] / n)[None, :, None]
-            s = a[sel][:, None] + fu * (b[sel] - a[sel])[:, None] + fv * (c[sel] - a[sel])[:, None]
-            q = np.floor((s.reshape(-1, 3) - lo) / h).astype(int)
-            grid[q[:, 0], q[:, 1], q[:, 2]] = True
+            fu, fv = (i[keep] / n)[None, :], (j[keep] / n)[None, :]
+            # Per axis, a + fu (b - a) + fv (c - a) and its voxel, in place.
+            cell = None
+            for x in range(3):
+                ax, bx, cx = a[sel, x][:, None], b[sel, x][:, None], c[sel, x][:, None]
+                s = fu * (bx - ax)
+                s += ax
+                s += fv * (cx - ax)
+                s -= lo[x]
+                s /= h
+                k = np.floor(s, out=s).astype(np.int64)
+                cell = k if cell is None else cell * dims[x] + k
+            solid[cell.reshape(-1)] = True
     hemi = _hemisphere(WHEEL_AO_RAYS)
     helper = np.where(np.abs(nrm[:, :1]) < 0.9, [[1.0, 0.0, 0.0]], [[0.0, 1.0, 0.0]])
     t = np.cross(nrm, helper)
@@ -1159,20 +1170,45 @@ def wheel_sky(points, normals, triangles) -> list[float]:
     ).reshape(-1, 3)
     pos = np.repeat(pts + nrm * h, WHEEL_AO_RAYS, 0)
     light = np.zeros(len(dirs))  # per ray: 1 out of the wheel's face, WHEEL_SKY_SIDE out of its side
-    alive = dirs[:, 0] >= 0  # inboard: the car
-    travelled, length = 0.0, float(np.linalg.norm(dims * h))
-    while travelled < length and alive.any():
-        idx = np.nonzero(alive)[0]
-        q = np.floor((pos[idx] - lo) / h).astype(int)
-        inside = np.all((q >= 0) & (q < dims), 1)
-        gone = idx[~inside]
-        light[gone] = np.where(q[~inside, 0] >= dims[0], 1.0, WHEEL_SKY_SIDE)
-        alive[gone] = False
-        idx, q = idx[inside], q[inside]
-        if travelled >= WHEEL_AO_SKIP * h:
-            alive[idx[grid[q[:, 0], q[:, 1], q[:, 2]]]] = False  # hit the wheel
-        pos[idx] += dirs[idx] * h
+    # Each ray steps h along its direction until it leaves the grid, or (once
+    # WHEEL_AO_SKIP voxels out) enters a wheel voxel, for at most the grid's
+    # diagonal; inboard rays are the car's (closed). The steps go WHEEL_AO_BLOCK
+    # at a time: add.accumulate adds `step` in order, as one step after another.
+    ticks, travelled, length = [], 0.0, float(np.linalg.norm(dims * h))
+    while travelled < length:
+        ticks.append(travelled >= WHEEL_AO_SKIP * h)  # per step: hits count
         travelled += h
+    ticks = np.array(ticks, bool)
+    idx = np.flatnonzero(dirs[:, 0] >= 0)
+    pos = [np.ascontiguousarray(pos[idx, x]) for x in range(3)]
+    step = [dirs[idx, x] * h for x in range(3)]
+    for s0 in range(0, len(ticks), WHEEL_AO_BLOCK):
+        if not len(idx):
+            break
+        m = min(WHEEL_AO_BLOCK, len(ticks) - s0)
+        inside, cell, front = np.ones((len(idx), m), bool), np.zeros((len(idx), m)), None
+        for x in range(3):  # per axis: the positions of the next m steps, their voxel
+            path = np.empty((len(idx), m))
+            path[:, 0], path[:, 1:] = pos[x], step[x][:, None]
+            np.add.accumulate(path, axis=1, out=path)
+            pos[x] = path[:, m - 1] + step[x]
+            path -= lo[x]
+            path /= h
+            np.floor(path, out=path)
+            inside &= (path >= 0) & (path < dims[x])
+            if x == 0:
+                front = path >= dims[0]
+            cell *= dims[x]
+            cell += path
+        hit = solid[np.where(inside, cell, 0).astype(np.int64)]
+        end = ~inside | (hit & inside & ticks[None, s0 : s0 + m])
+        stops = end.any(1)
+        rays = np.flatnonzero(stops)
+        at = end.argmax(1)[rays]
+        out = ~inside[rays, at]
+        light[idx[rays[out]]] = np.where(front[rays[out], at[out]], 1.0, WHEEL_SKY_SIDE)
+        go = ~stops
+        idx, pos, step = idx[go], [c[go] for c in pos], [c[go] for c in step]
     vis = light.reshape(-1, WHEEL_AO_RAYS).mean(1)
     return [round(float(WHEEL_SKY_OPEN * v), 4) for v in vis]
 
