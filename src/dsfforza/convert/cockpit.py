@@ -2555,15 +2555,20 @@ class GaugeSight:
         if not len(points):
             return 1.0
         eye = np.array(eye, dtype=np.float64)
-        p0, e1, e2 = self.tris[:, 0], self.e1, self.e2
+        # Only triangles in the box between the eye and a point can stop its ray: those
+        # in the box round the eye and every point first (each point's box is inside
+        # it), then each point's own, the same test on fewer triangles.
+        lo, hi = np.minimum(eye, points.min(axis=0)) - 1e-4, np.maximum(eye, points.max(axis=0)) + 1e-4
+        near = np.flatnonzero(((self.hi >= lo) & (self.lo <= hi)).all(axis=1))
+        p0, e1, e2 = self.tris[near, 0], self.e1[near], self.e2[near]
+        tlo, thi = self.lo[near], self.hi[near]
         seen = 0
         for p in points:
             d = p - eye
             length = float(np.sqrt(d @ d))
             d = d / length
-            # Only triangles in the box between the eye and the point can stop the ray.
             lo, hi = np.minimum(eye, p) - 1e-4, np.maximum(eye, p) + 1e-4
-            box = ((self.hi >= lo) & (self.lo <= hi)).all(axis=1)
+            box = ((thi >= lo) & (tlo <= hi)).all(axis=1)
             h = np.cross(d, e2[box])
             a = (e1[box] * h).sum(axis=1)
             ok = np.abs(a) > 1e-12

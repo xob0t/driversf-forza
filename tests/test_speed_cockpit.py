@@ -292,6 +292,51 @@ def test_glass_sight_matches_the_numpy_raster():
         assert sight.faces == want
 
 
+def _gauge_fraction_reference(sight: cockpit.GaugeSight, eye, points) -> float:
+    """The original GaugeSight.fraction: each point's box test over every triangle."""
+    points = np.array(points, dtype=np.float64).reshape(-1, 3)
+    if not len(points):
+        return 1.0
+    eye = np.array(eye, dtype=np.float64)
+    p0, e1, e2 = sight.tris[:, 0], sight.e1, sight.e2
+    seen = 0
+    for p in points:
+        d = p - eye
+        length = float(np.sqrt(d @ d))
+        d = d / length
+        lo, hi = np.minimum(eye, p) - 1e-4, np.maximum(eye, p) + 1e-4
+        box = ((sight.hi >= lo) & (sight.lo <= hi)).all(axis=1)
+        h = np.cross(d, e2[box])
+        a = (e1[box] * h).sum(axis=1)
+        ok = np.abs(a) > 1e-12
+        f = np.where(ok, 1 / np.where(ok, a, 1), 0)
+        sv = eye - p0[box]
+        u = f * (sv * h).sum(axis=1)
+        q = np.cross(sv, e1[box])
+        v = f * (q @ d)
+        t = f * (e2[box] * q).sum(axis=1)
+        clear = length - cockpit.GAUGE_SIGHT_CLEARANCE
+        hit = ok & (u >= 0) & (u <= 1) & (v >= 0) & (u + v <= 1) & (t > 1e-4) & (t < clear)
+        seen += not hit.any()
+    return seen / len(points)
+
+
+def test_gauge_sight_matches_every_triangle():
+    rng = random.Random(9)
+    for triangles in (30, 200, 600):
+        sections = _cabin(rng, triangles, spread=0.6)
+        points = [tuple(rng.uniform(-0.5, 0.5) for _ in range(3)) for _ in range(rng.choice([1, 12, 40]))]
+        sight = cockpit.GaugeSight(sections, points)
+        for _ in range(6):
+            eye = tuple(rng.uniform(-0.6, 0.6) for _ in range(3))
+            if rng.random() < 0.3:
+                eye = points[0]  # a point at the eye
+            with np.errstate(invalid="ignore"):
+                got, want = sight(eye), _gauge_fraction_reference(sight, eye, points)
+            assert got == want
+        assert sight.fraction((0.0, 0.0, 0.0), []) == 1.0
+
+
 # --- dsf_materials: region cut, atlas render, decoded atlases ----------------------------
 
 
