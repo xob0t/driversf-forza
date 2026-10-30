@@ -114,7 +114,6 @@ def _record(folder: Path, job: dict) -> dict:
     return fp
 
 
-
 def test_module_units_are_kept_by_source_and_not_recorded():
     with tempfile.TemporaryDirectory() as tmp:
         saved = fingerprint.UNITS_CACHE
@@ -132,6 +131,7 @@ def test_module_units_are_kept_by_source_and_not_recorded():
     recorder = fingerprint.Recorder()
     recorder.opened.append((str(real), "r", 0))
     assert fingerprint.norm(real) not in recorder._inputs()[0]  # never an input
+
 
 def test_fingerprint_records_inputs_and_code():
     with tempfile.TemporaryDirectory() as tmp:
