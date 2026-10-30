@@ -523,3 +523,17 @@ def test_a_lamp_on_a_day_lit_head_lamps_entry_glows_by_day():
     assert head.type == lights.HEAD_DAYTIME
     assert plan.is_daytime(sub, 0) and plan.is_daytime(heads[0].subsections[0], 0)
     assert not plan.is_daytime(TAILS[0].subsections[0], 0)
+
+
+def test_front_position_lamps_glow_by_day_as_under_window_glass():
+    # A front position lamp on its own 0x03 entry lights by day under vanilla's window glass, as
+    # 0x1D head lamps do; head lamps that keep 0x01 (their side's position lamps are large) don't.
+    heads = [_quad("headlightL", "head_light", 0.6, 2.0), _quad("headlightR", "head_light", -0.6, 2.0)]
+    drl = [_quad("bumperF", "drlwhite", 0.6, 2.1), _quad("bumperF", "drlwhite", -0.6, 2.1)]
+    places = [(0.6, 2.0), (-0.6, 2.0), (0.6, 2.1), (-0.6, 2.1), (0.6, -2.0), (-0.6, -2.0)]
+    plan = _plan(heads + drl + TAILS, 6, places)
+    position = [l for l in plan.lamps.values() if l.function == lights.POSITION]
+    assert position and all(l.type == 0x03 and l.light_id is not None for l in position)
+    assert all(l.type == 0x01 for l in plan.lamps.values() if l.function == lights.HEAD)
+    assert plan.is_daytime(drl[0].subsections[0], 0)
+    assert not plan.is_daytime(heads[0].subsections[0], 0)

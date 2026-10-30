@@ -2703,7 +2703,7 @@ def convert(
             payload(stream, child(child(full, "NONR"), "UPVH"))
         )
         report["lights"] = lamps.report()
-        # Head lamps lit by day (0x1D) glow at a fifth of a 0x01 lamp's (dsf_materials.DAYTIME_GLOW).
+        # Front lamps lit by day glow at what vanilla's show through window glass (dsf_materials.DAYTIME_GLOW).
         if tex_full is not None and tex_full.set_daytime(stream, full, car.body, lamps.is_daytime, lamps.light_byte):
             log("lights: atlas rendered again with the day-lit head lamps' glow scaled")
         log(f"lights: {len(lamps.lamps)} lamps on {len(lamps.slots)} host light entries, {len(lamps.unlit)} unlit")

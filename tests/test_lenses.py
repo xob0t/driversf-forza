@@ -289,7 +289,7 @@ def test_daytime_head_lamps_glow_at_a_fifth():
     assert (out[day] == 100.0 * dm.DAYTIME_GLOW).all()
     assert (out[:, 12:16] == 100.0).all()
     # A day-lit lamp surface without a glow (a reflector, the bowl here) keeps its texels
-    # but a fifth of their converted alpha; a tiling one, its swatch cell.
+    # but DAYTIME_GLOW of their converted alpha; a tiling one, its swatch cell.
     day, _ = t.daytime_mask([lens, bowl], lambda s, k: s is bowl.subsections[0])
     assert day[:, 16:].all() and not day[:, 12:16].any()
 

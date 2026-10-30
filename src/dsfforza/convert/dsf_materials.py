@@ -211,15 +211,16 @@ def red_lens_scale(visible: list[int]) -> float | None:
 # over a white reflector, baked by lenses.py) 206, the Lancer Evo VI's 173, the M3 E30's 197.
 VISIBLE_WHITE_VANILLA_MEDIAN = 137
 
-# Head lamps lit by day (0x1D, lights.LampPlan.assign): their glow (lenses.day_glow, ranked onto
-# vanilla's head lamp alpha, following the lamp's own picture) and their other texels times this.
-# The game lights a 0x1D lamp at its type's 10 by day and in the dark mood alike (0xF3FB68;
-# research/lights.md "How a lamp lights"), so one alpha serves both. #167 set a fifth (a 0x01 or
-# 0x03 lamp's level) against the VW GTI VR6's white plates by day; at night that left the ports'
-# head lamps at p95 1.6 to 2.0 in render_compare's renderer, where vanilla's 0x1D lamps glow at
-# 2.5 / 3.8 / 5.3 (p10 / median / p90 over 28 vehicles, front view, under their window glass;
-# #286). 0.45 puts the median of 15 ports (1.69 at 0.2) on vanilla's 3.8.
-DAYTIME_GLOW = 0.45
+# Front lamps lit by day (0x1D head lamps, front 0x03 position lamps: lights.LampPlan.is_daytime):
+# their glow (lenses.day_glow, ranked onto vanilla's head lamp alpha) and their other texels
+# times this. Vanilla draws those lamps under DSF window glass (every 0x1D one, 80 of 97 front
+# 0x03 ones), which keeps 1 - opacity of their glow, the opacity being the window texel's blue
+# 191 read as sRGB: 0.48 (0.50 measured in game; research/lights-re.md, "Glass and lenses over
+# a lamp"). The converter leaves the plain covers over a lamp out, so at vanilla's alpha a port's
+# lamp glowed twice vanilla's (render_compare's renderer, the game's lamp model: 9 ports' 0x1D
+# lamps glow p95 2.7 to 5.0 unscaled, vanilla's 1.1 / 1.85 / 2.3). (#286 set 0.45 at night
+# against a 0x1D lamp drawn at 10 by the renderer of the time; the game draws it at 1.)
+DAYTIME_GLOW = 1 - ((191 / 255 + 0.055) / 1.055) ** 2.4
 
 
 def white_lens_scale(visible: list[int]) -> float | None:
@@ -1400,7 +1401,7 @@ class Texturing:
     # alpha, which render() takes over the converted alpha.
     lamp_raw: np.ndarray | None = None
     glow_owners: dict = field(default_factory=dict)  # lamp number in lamp_raw -> (section, sub) (lenses._GlowSum)
-    # Lights atlas texels of the head lamps that light by day (0x1D; Binding.set_daytime): their
+    # Lights atlas texels of the front lamps that light by day (Binding.set_daytime): their
     # glow, or their converted alpha, is scaled by DAYTIME_GLOW. None: no lamp plan, no scaling.
     daytime_texels: np.ndarray | None = None
 
@@ -2570,7 +2571,7 @@ class Texturing:
                     self._render_kept[key] = (block.copy(), top, left, shape, (y0, y1, x0, x1), n, cut_mask)
                 if family == fm.LIGHTS and (self._glow() is not None or self.daytime_texels is not None):
                     # Clear front lens texels: their glow (lens_glow) over the converted alpha;
-                    # the other texels of day-lit head lamps: the converted alpha x DAYTIME_GLOW.
+                    # the other texels of day-lit front lamps: the converted alpha x DAYTIME_GLOW.
                     # Averaged over the source texels under each DSF texel like the colour.
                     window = (slice(top, top + shape[0] - 1), slice(left, left + shape[1] - 1))
                     glow = self._glow()
@@ -3018,8 +3019,8 @@ class Binding:
 
     def set_daytime(self, stream, vehc: Entry, sections, daytime, lit=None) -> bool:
         """daytime(sub, k): whether the lamp plan lights triangle k of `sub` (of `sections`)
-        with a head lamp that also lights by day (0x1D; lights.LampPlan.is_daytime); lit(sub,
-        k): with any lamp (LampPlan.light_byte). Their
+        with a front lamp that lights by day under vanilla's window glass
+        (lights.LampPlan.is_daytime); lit(sub, k): with any lamp (LampPlan.light_byte). Their
         Lights texels (Texturing.daytime_mask) glow at DAYTIME_GLOW: the atlas installed in
         `vehc` (this binding's full entry) is rendered again. It is rendered in prepare(),
         before the lamp plan exists (the plan keys on the subsections damage.split_exposed
