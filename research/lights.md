@@ -2451,6 +2451,11 @@ white patch (#300) are the same in both builds by day: their tail lens and cover
 
 ## Paint
 
+`paint-re.md` has the paint shaders' full maths with runtime values, a model checked against
+dumped frames, and Forza's paint data. It corrects one point here: the atlas paint block is
+(255, 198, 255), sampled with sRGB decoding, so the shader's albedo is the palette colour
+exactly (not 240 x ...). It confirms the fresnel reading of "The DMC-12 came out black".
+
 ### The palette (confirmed-static)
 
 `NONR/SPSR` in each full entry: `SPID` (u32 spool ID), then three `SPSS`
