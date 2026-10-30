@@ -191,8 +191,8 @@ The wheel hubs appear twice, as hinges 4, 6, 14 and 15 (0x1930, 0x1990,
 0x1B10, 0x1B40) and as the wheel table (0x35B0 to 0x3610).
 `forza2dsf.patch_hubs` takes the hubs from the host's own wheel table and
 moves every hinge pivot within 10 cm of a hub with it (on the Desanne
-hinges 3 to 6, 14 and 15; it used to match the Desanne's hub height by
-value). Hinges 3 and 5 (0x1900, 0x1960, records 32 and 34, roles 156 and
+hinges 3 to 6, 14 and 15; `hosts.md`, "What used to assume the Desanne").
+Hinges 3 and 5 (0x1900, 0x1960, records 32 and 34, roles 156 and
 155) pivot next to the front hubs, so moving them with the wheels is
 probably right.
 

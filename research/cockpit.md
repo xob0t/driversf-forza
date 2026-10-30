@@ -151,7 +151,7 @@ samples the shared paint atlas, not the vehicle texture: `lights.md`,
 "Paint"), `0012cc8576953429` `GLOBAL_Glass_LOD5` (glass, MODL value 7),
 `0012833b12fe1027` `GLOBAL_Chassis_Simple` (TRIM), `10122b9753b14e2a`
 `GLOBAL_Chassis_Simple_LOD1` and `00128338d7fd1027` `GLOBAL_Chassis_Chrome`
-(not a trim, as this line used to say). One submodel uses the full entry's
+(not a trim). One submodel uses the full entry's
 Chassis material. Of these, `GLOBAL_Chassis_LOD1` (specular power 1500, a
 second specular, sky and cube-map reflection), `GLOBAL_Glass_LOD5` and
 `GLOBAL_Chassis_Chrome` reflect; `_Interior` has only `g_hSpecularIntensity`
@@ -265,15 +265,14 @@ needles can't get a gauge without new UPVH records, and would get no input
 anyway (ids 3 to 7 stay at 0). They stay static: fuel, oil, water,
 temperature and voltage at their mid pose, boost and others at rest
 (`PARK_MID`). Forza's `digital_gauge` subsections (370Z 56 triangles, M5
-24, Raptor 4) draw digits with a shader. Since PR #131 the converter draws
-their dash scene on them live ("Digital displays"); a display with no scene
-stays a textured face ("Digital clusters") or a blank near-black display
-(`DISPLAY_COLOUR`). (This paragraph used to call the first UV transform a
-label sheet; it is the display's window into the scene's render target.)
-A car whose cockpit has no speed or tach needle used to have no vertices with
-that gauge id, so the host's entry drew nothing; such a readout now gets a
-scene-drawn display, a virtual dial or a virtual display ("Gauges under the
-cowl", "Digital displays").
+24, Raptor 4) draw digits with a shader. The converter draws their dash scene
+on them live ("Digital displays"; the first UV transform is the display's window
+into the scene's render target); a display with no scene stays a textured face
+("Digital clusters") or a blank near-black display (`DISPLAY_COLOUR`). A car
+whose cockpit has no speed or tach needle has no vertices with that gauge id,
+so the host's entry would draw nothing there; such a readout gets a scene-drawn
+display, a virtual dial or a virtual display ("Gauges under the cowl",
+"Digital displays").
 
 `uv run dsff cockpit gauges <archive> --id N --png out.png --at 0,0 --at 60,4000`
 renders the cluster from the head camera with the needles turned exactly
@@ -1947,7 +1946,7 @@ scene is decomposed into what `g_fDigiData` can drive:
 4. **The rpm.**
    - The scene is rendered at 40 rpm steps (`RPM_STEPS`: each 1/40 of the
      smaller of the Forza redline and the scene's `TACH_MAX`), not steps of
-     40 rpm as this line used to read.
+     40 rpm.
    - Per pixel: the first step it changes at and its colour, plus a second
      change (the LFA's ring goes white -> green -> orange).
    - Pixels that go back to their rest colour are left at rest; a needle
@@ -2218,8 +2217,7 @@ Ruled out:
   0 to 255) inside the bar (pixels whose 3 x 3 neighbourhood is all bar). Pixels on the
   bar's outline alias on any polygon and are left out.
 - S2000 at 60% of the redline: 7.13 before, with 14.9% of bar pixels over 20 (the
-  survey below; the 10.1 and 23% this line used to give were measured with the 7000
-  rpm fallback redline of #191).
+  survey below, with Forza's redline, not the 7000 rpm fallback of #191).
 
 **Fix (`digital_dash.build_plan`).**
 
