@@ -663,6 +663,8 @@ def _lens_classes(section, sub, tris, pts_all, texel, colour: int, mid_z: float)
 
 
 INDICATING = (INDICATOR, BRAKE_IND, DRL_IND)
+# Rear red lamps ranked per planned lamp onto vanilla's visible tail alpha (LampPlan.rear_tail_lamp).
+REAR_TAIL_FUNCTIONS = (TAIL, BRAKE, BRAKE_IND)
 
 
 def _red_lens_indicators(records, from_lens: set, red_indicators: list, red_by_texel: set) -> None:
@@ -1369,6 +1371,16 @@ class LampPlan:
             ):
                 lamp.daytime = True
         return self
+
+    def rear_tail_lamp(self, sub, k) -> int | None:
+        """The number of triangle k of `sub`'s lamp when it is a rear red lamp with an entry (tail,
+        brake, brake and indicator: 0x18, 0x02, 0x19 / 0x1A), for dsf_materials.Binding.set_rear_lamps; None
+        for any other triangle."""
+        key = self.tri_lamp.get((id(sub), k))
+        lamp = self.lamps.get(key)
+        if lamp is None or lamp.front or lamp.light_id is None or lamp.function not in REAR_TAIL_FUNCTIONS:
+            return None
+        return list(self.lamps).index(key)
 
     def light_byte(self, sub, k) -> int:
         key = self.tri_lamp.get((id(sub), k))

@@ -216,6 +216,36 @@ def red_lens_scale(visible: list[int]) -> float | None:
 VISIBLE_WHITE_VANILLA_MEDIAN = 137
 
 
+def fm4_car(car_dir) -> bool:
+    """Whether the car comes from FM4 (its folder under out/cache/fm4)."""
+    return "fm4" in (p.lower() for p in Path(car_dir).parts)
+
+
+# FM4 techniques Forza draws without a glow (research/forza-lenses-re.md: their texel alpha is an
+# opacity or unread, not a glow mask).
+FM4_NO_GLOW = ("head_light", "textured_reflector", "reflector")
+
+
+def fm4_order(colour: np.ndarray, uvs: np.ndarray, dark: np.ndarray) -> np.ndarray:
+    """The glow order of an FM4 car's rear lamp texels (lenses.rear_lamp_glow): FM4's lamp shaders
+    glow by the texel colour, BrakeColor x L (research/forza-lenses-re.md), so the texel's linear
+    red; texels only the no-glow techniques' triangles (`dark`, FM4_NO_GLOW: reflectors, head lamp
+    bowls the plan lights with a tail) sample come last."""
+    from dsfforza.convert import lenses
+
+    h, w = colour.shape[:2]
+    order = ((colour[..., 0] / 255 + 0.055) / 1.055) ** 2.4
+    glowing = np.zeros((h, w), bool)
+    sampled = np.zeros((h, w), bool)
+    ix, iy, _, at = lenses._texels_many(uvs * (w, h))
+    owner = np.repeat(np.arange(len(uvs)), np.diff(at))
+    ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
+    sampled[iy[ok], ix[ok]] = True
+    lit = ok & ~dark[owner]
+    glowing[iy[lit], ix[lit]] = True
+    return np.where(sampled & ~glowing, 0.0, order)
+
+
 def white_lens_scale(visible: list[int]) -> float | None:
     """One car's darkening of its white lamp texels: the factor that brings the median
     brightness of its visible white front lamp surface (Forza values seen from ahead, lenses
@@ -1346,6 +1376,9 @@ class Texturing:
     # alpha, which render() takes over the converted alpha.
     lamp_raw: np.ndarray | None = None
     glow_owners: dict = field(default_factory=dict)  # lamp number in lamp_raw -> (section, sub) (lenses._GlowSum)
+    # The planned rear tail lamps' triangles at the finest lamp LOD: (atlas UVs (n, 3, 2), lamp
+    # number (n,)), set after the lamp plan (Binding.set_rear_lamps); None: no rear ranking.
+    rear_lamps: tuple | None = None
 
     # -- planning --
     def plan(
@@ -2233,8 +2266,8 @@ class Texturing:
 
     def _glow(self):
         """Glow alpha of the head lamps by day (lenses.day_glow of lamp_raw, ranked per lamp
-        over the surface a camera straight ahead sees) and of the red lamps a camera straight
-        behind sees (lenses.tail_glow), a float array the size of the Lights atlas, NaN where the
+        over the surface a camera straight ahead sees) and of the planned rear tail lamps a camera
+        straight behind sees (lenses.rear_lamp_glow), a float array the size of the Lights atlas, NaN where the
         converted alpha stays; None when there is none, until planned, and under LIGHTS_ALPHA
         "raw" (Forza's alpha as is)."""
         if LIGHTS_ALPHA != "matched":
@@ -2262,7 +2295,13 @@ class Texturing:
         from dsfforza.convert import lenses
 
         sw, sh, src = self.atlases.get(fm.LIGHTS)
-        key = (hashlib.blake2b(src).digest(), id(self.lamp_raw), len(self.lamp_tris), frozenset(self.dropped_lenses))
+        key = (
+            hashlib.blake2b(src).digest(),
+            id(self.lamp_raw),
+            len(self.lamp_tris),
+            frozenset(self.dropped_lenses),
+            id(self.rear_lamps),
+        )
         kept = getattr(self, "_glow_kept", None)
         if kept is not None and kept[0] == key:
             return kept[1], kept[2]
@@ -2271,17 +2310,15 @@ class Texturing:
         if self.lamp_raw is not None:
             view = self._lamp_view(front=True, grid=True)
             front = None if view is None else lenses.day_glow(self.lamp_raw, view, colour)
-        # The red lamps seen from behind (#290): where the front has no glow of its own.
-        view = self._lamp_view(front=False, grid=True, rear_half=True)
+        # The planned rear tail lamps seen from behind (#290, #391): where the front has no glow
+        # of its own. FM4's lamps glow by the texel colour, not its alpha (research/forza-lenses-re.md):
+        # their texels' red orders them within a lamp.
+        view = self._lamp_view(front=False, grid=True, rear_half=True) if self.rear_lamps else None
         rear = None
         if view is not None:
-            lod = min(t[0] for t in self.lamp_tris)
-            tris = [
-                t[2]
-                for t in self.lamp_tris
-                if t[0] == lod and sum(p[2] for p in t[1]) > 0 and t[3] not in self.dropped_lenses
-            ]
-            rear = lenses.tail_glow(colour, view, tris)
+            uvs, ids, dark = self.rear_lamps
+            order = fm4_order(colour, uvs, dark) if fm4_car(self.car_dir) else None
+            rear = lenses.rear_lamp_glow(colour, view, uvs, ids, order=order)
             if rear is not None:
                 # Never dimmer than the converted alpha: the tails that already glowed at vanilla's
                 # level (the GTI VR6's, M3 E30's, Evo VI's) keep it; the ranking only raises.
@@ -2298,6 +2335,35 @@ class Texturing:
                 rear[ys, xs] = np.maximum(rear[ys, xs], conv)
         self._glow_kept = (key, front, rear)
         return front, rear
+
+    def rear_lamp_tris(self, sections, lamp_of) -> tuple | None:
+        """(atlas UVs (n, 3, 2), lamp numbers (n,), whether Forza draws the triangle without a glow
+        (n,): FM4_NO_GLOW techniques) of the Lights atlas triangles at the finest lamp LOD whose
+        planned lamp is a rear red lamp: lamp_of(sub, k) gives triangle k of `sub`'s lamp number,
+        None for none (lights.LampPlan.rear_tail_lamp). None without any."""
+        if not self.lamp_tris or self.atlases is None:
+            return None
+        lod = min(t[0] for t in self.lamp_tris)
+        # By subsection: the plates and damage passes replace the section objects after plan().
+        by_sub = {sub_id: m for (_, sub_id), m in self.resolved.items()}
+        uvs, ids, dark = [], [], []
+        for section in sections:
+            for sub in section.subsections:
+                m = by_sub.get(id(sub))
+                if sub.lod != lod or m is None or m.family != fm.LIGHTS or m.kind != "textured":
+                    continue
+                if (section.name, sub.material) in self.dropped_lenses:
+                    continue
+                pool = section.vertices_for(sub)
+                for k, tri in enumerate(sub.triangles()):
+                    lamp = lamp_of(sub, k)
+                    if lamp is not None:
+                        uvs.append(triangle_uv(m, [pool[i].uv0 for i in tri]))
+                        ids.append(lamp)
+                        dark.append(sub.material.lower().startswith(FM4_NO_GLOW))
+        if not ids:
+            return None
+        return np.array(uvs, float).reshape(-1, 3, 2), np.array(ids, int), np.array(dark, bool)
 
     def _convert_texel(self, family: str, r: int, g: int, b: int, a: int) -> tuple[int, int, int, int]:
         """Forza texel -> DSF conventions (alpha = specular / glow mask)."""
@@ -2807,6 +2873,28 @@ class Binding:
 
     def triangle_uvs(self, section, sub, triangle_index: int, raw_uvs):
         return self.texturing.triangle_uvs(section, sub, triangle_index, raw_uvs)
+
+    def set_rear_lamps(self, stream, vehc: Entry, sections, lamp_of) -> bool:
+        """Rank the planned rear tail lamps' texels (Texturing.rear_lamp_tris, lenses.rear_lamp_glow)
+        and install the atlas in `vehc` (this binding's full entry; the exterior entry draws the same
+        texture) again. The atlas is rendered in prepare(), before the lamp plan exists (the plan keys
+        on the subsections damage.split_exposed makes later); the second render reuses the regions
+        whose source and glow didn't change, and dds_file re-encodes only the changed DXT blocks.
+        False when the plan has no rear tail lamp."""
+        t = self.texturing
+        t.rear_lamps = t.rear_lamp_tris(sections, lamp_of)
+        if t.rear_lamps is None:
+            return False
+        t._glow_done = False
+        drsp = child(child(vehc, "MDXN"), "DRSP")
+        texc = next(
+            e
+            for e in drsp.children
+            if e.tag == "TEXC" and payload(stream, child(e, "UIDC"))[:8] == self.installed.texture
+        )
+        dxtc = child(texc, "DXTC")
+        dxtc.payload = t.dds(template=payload(stream, dxtc))
+        return True
 
     @property
     def paint_uv(self) -> tuple[float, float]:

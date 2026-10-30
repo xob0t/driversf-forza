@@ -35,7 +35,7 @@
   "src/dsfforza/convert/forza2dsf/wheels.py": {"C901": 1, "PLR0912": 1, "PLR0915": 2},
   "src/dsfforza/convert/forza_materials.py": {"FBT001": 3, "FBT002": 3},
   "src/dsfforza/convert/glass.py": {"C901": 1, "FBT001": 1, "PLR0912": 1},
-  "src/dsfforza/convert/lenses.py": {"C901": 1, "FBT001": 1, "FBT002": 1, "PLR0912": 1, "PLR0915": 2},
+  "src/dsfforza/convert/lenses.py": {"C901": 1, "FBT001": 1, "FBT002": 1, "PLR0912": 1, "PLR0915": 1},
   "src/dsfforza/convert/lights.py": {"C901": 3, "FBT001": 1, "FBT002": 1, "PLR0912": 2, "PLR0915": 2},
   "src/dsfforza/convert/plates.py": {"C901": 1, "FBT001": 1, "FBT002": 1, "PLR0912": 1, "PLR0915": 2},
   "src/dsfforza/convert/plates_survey.py": {"ARG005": 3},

@@ -89,10 +89,14 @@ later PR replaced a rule, the earlier section says so in one line.
   `a x (0.6 + 0.4 x brightest channel)` onto vanilla's lamp alpha per hue,
   red on a curve fitted per car
   ([matched](#vanilla-lamp-alpha-and-the-matched-rule-offline-checked)).
-- The red lamps a camera straight behind the car sees are ranked per lamp
-  onto vanilla's visible 0x18 tail alpha, following each lamp's picture, the
-  dimmest 40% dark, never below the converted alpha
-  ([#290](#tail-lamps-at-half-vanilla-at-night-issue-290)).
+- After the lamp plan, each rear red lamp it makes (tail 0x18, brake 0x02,
+  brake and indicator 0x19/0x1A) is ranked on its own onto vanilla's visible
+  0x18 tail alpha: every texel of its triangles (lenses included, any colour),
+  in the pool of what a camera straight behind sees of it, following the
+  lamp's picture, the dimmest 40% dark, never below the converted alpha; FM4
+  cars' texels ordered by their red (Forza's glow mask), their reflectors last
+  ([#290](#tail-lamps-at-half-vanilla-at-night-issue-290),
+  [rear lamps ranked per planned lamp](#rear-lamps-ranked-per-planned-lamp-issue-391)).
 - Red lamp texels are darkened (shared curve, then per car) until the
   visible red median is at most vanilla's 92; white ones until the visible
   white front median is at most 137; amber ones keep Forza's brightness
@@ -2336,7 +2340,8 @@ Cause (confirmed-static). A red lamp texel's alpha is its rank among every red t
 ranks, so the surface a camera behind the car sees sat in the middle of vanilla's range. Vanilla's
 visible 0x18 tails (56 vehicles, 137,610 pixels, rear view) are alpha p50 49, p90 141, p95 186.
 
-Change (`lenses.tail_glow`, `Texturing._glow`, `_lamp_view(rear_half=True)`):
+Change (`lenses.tail_glow`, `Texturing._glow`, `_lamp_view(rear_half=True)`; replaced by the ranking per
+planned lamp, #391):
 
 - The red lamps seen from behind (the rear half's Lights triangles, lenses left out excluded as from
   the front) are split into lamps, each a connected patch of red samples (`TAIL_MIN_SAMPLES` 40 or
@@ -2561,10 +2566,9 @@ day: vanilla's 142 vehicles against the 16 usual ports and 60 random ones (`out/
 
 - **Curves per type:** the per-hue curves convert every Lights texel before the lamp plan
   exists. After that, two rankings override them where a camera sees the lamp: `day_glow` ranks
-  the front head lamp surfaces onto vanilla's 0x1D alpha (`DAY_HEAD_ALPHA`), and `tail_glow`
-  ranks every visible red patch of the rear `lamp_tris` onto vanilla's 0x18 alpha
-  (`TAIL_RED_ALPHA`), whatever lamp type the plan later gives it (0x18, 0x02, 0x19/0x1A, a red
-  0x03). There the per-hue conversion is only the floor (`never below the converted alpha`). The
+  the front head lamp surfaces onto vanilla's 0x1D alpha (`DAY_HEAD_ALPHA`), and (#391)
+  `rear_lamp_glow` ranks each planned rear red lamp (0x18, 0x02, 0x19/0x1A) onto vanilla's 0x18
+  alpha (`TAIL_RED_ALPHA`). There the per-hue conversion is only the floor (`never below the converted alpha`). The
   per-hue curves alone decide the texels no camera straight ahead or behind sees, and the
   white and amber ones (indicators, reverse). All these types glow inside vanilla's per-type
   ranges by day (the table). Vanilla's white types share one alpha
@@ -2580,7 +2584,7 @@ day: vanilla's 142 vehicles against the 16 usual ports and 60 random ones (`out/
   0.021 after) and the Aston Martin V12 Vantage (0.018 before, 0.035 after) were as dim before,
   their visible tail texels at alpha 4 to 19 (the Versa's red, the V12 Vantage's grey under a clear
   lens, so `tail_glow`'s red-texel pool doesn't take them); the Mazda Axela's (0.177 -> 0.061) is
-  its kept glass and lens. #391.
+  its kept glass and lens. #391, since fixed by [ranking per planned lamp](#rear-lamps-ranked-per-planned-lamp-issue-391).
 - **FM4's glow mask:** FM4's lamp shaders glow by the texel colour (`BrakeColor x L`), its
   `tail_light` alpha is 255 on 92% of the texels (`forza-lenses-re.md`), and the "matched" score
   `a x (0.6 + 0.4 x brightest channel)` at alpha 255 ranks a tail's texels by their brightest
@@ -2588,14 +2592,69 @@ day: vanilla's 142 vehicles against the 16 usual ports and 60 random ones (`out/
   V12 Vantage's grey tail texels at alpha 4 to 8 glow by their colour in Forza and stay dark here
   (#391). FM4's reflectors don't glow in Forza (lit by the lamp plan here): the `reflector`
   shader reads their texel alpha as opacity (`min(max(A, GlassColor.w) + Fresnel,
-  GlassMaxOpacity)`), not as a glow mask, so the change needs a rule for them too: not done
-  here.
+  GlassMaxOpacity)`), not as a glow mask, so the change needs a rule for them too. Since #391 the
+  colour orders an FM4 lamp's texels within its ranking, its reflectors last
+  ([ranking per planned lamp](#rear-lamps-ranked-per-planned-lamp-issue-391)).
 - **`TAIL_DARK`:** no counterpart in the game (each texel glows alpha x colour); it stands for a
   ported tail lamp's lit area, 2.5 times vanilla's red area. Kept, documented as the heuristic.
 - **0x03 against 0x18 tails:** vanilla uses both (44 vehicles 0x03, at 2 with the running lights,
   glow 0.92; 56 vehicles 0x18, at 0.2, glow 0.24). Forza by day keeps the running tail lamps near
   0 (FH1's `SwitchOnLights` about 0 from 08:00 to 19:00, `forza-lenses-re.md` section 2), so 0x18,
   dim with the running lights and full when braking, is the closer day look; the converter keeps it.
+
+### Rear lamps ranked per planned lamp (issue #391)
+
+Symptom (render_compare's renderer under the game's lamp model, by day, the visible 0x18 tail pixels'
+glow p95): 15 of 76 ports below vanilla's p10 (0.13; vanilla 0.13 / 0.24 / 0.47 over 56 vehicles),
+the Nissan Versa at 0.021 and the Aston Martin V12 Vantage at 0.035.
+
+Cause. The tails' glow came from `lenses.tail_glow`, which ran before the lamp plan existed and took a
+lamp to be a connected patch of red texels seen from behind. It missed what isn't red: grey FM4 tail
+texels (FM4 lights them red with `BrakeColor x L`), a clear lens's texels over a tail (the V12 Vantage:
+28,793 lens texels over a 38-triangle `tail_light`), and red texels at the bottom of a flat pool (the
+Versa's 18). On FM4 cars it also ordered by the texel alpha, which FM4's shaders don't read
+(`forza-lenses-re.md`). Changing FM4's alpha to the colour mask before the plan (#391's first try)
+moved cars both ways: the hue curves were fitted on alpha scores.
+
+Change (`lenses.rear_lamp_glow`, `Texturing.rear_lamp_tris`, `Binding.set_rear_lamps`,
+`LampPlan.rear_tail_lamp`):
+
+- After the lamp plan, each rear red lamp it makes (tail 0x18, brake 0x02, brake and indicator
+  0x19/0x1A; `lights.REAR_TAIL_FUNCTIONS`) is ranked on its own onto `TAIL_RED_ALPHA`: every texel
+  of its triangles at the finest lamp LOD (lenses included, any colour), in the pool of what the
+  converter's straight-behind view sees of that lamp, by its picture's detail. A texel the view sees
+  takes its own samples' detail (the pool's), the others their triangle's mean (with the triangle's
+  mean for every texel, a lens of a few large triangles over a whole lamp squeezed every rank to the
+  middle). The rest as before: the dimmest `TAIL_DARK` dark, never below the converted alpha.
+- The order within a lamp: the matched score; on FM4 cars the texel's linear red (Forza's
+  `BrakeColor x L`), and the texels only `head_light`, `textured_reflector` or `reflector` triangles
+  sample last (`dsf_materials.fm4_order`): Forza never glows them, and ordered by colour a bright
+  grey reflector outranked the red tail graphics (the Toyota SC430 race car's tails fell from 0.36
+  to 0.12 until then).
+- The Lights atlas is rendered again after the plan (`set_rear_lamps`): the regions whose source and
+  glow didn't change are kept and `dds_file` re-encodes only the changed DXT blocks. The first render
+  has no rear ranking (no lamp glows before the plan). `tail_glow` and `_components` are removed.
+  Cost: 0.56 s a car (median; p10 0.32, p90 0.97, max 3.78 over 76 cars, one Idle worker next to a
+  running game).
+
+Results, 76 cars (the 16 usual and 60 random), master against this, vanilla's 142 vehicles:
+
+| | vanilla p10 / median / p90 | master: median, below / above | this: median, below / above |
+| --- | --- | --- | --- |
+| 0x18 tails, running lights | 0.13 / 0.24 / 0.47 | 0.19, 15 / 1 | 0.23, 3 / 1 |
+| 0x18 tails, braking | 0.64 / 1.19 / 2.34 | 0.96, 15 / 1 | 1.16, 3 / 1 |
+| 0x02 high stops, braking | 0.32 / 0.80 / 2.17 | 0.92, 4 / 5 | 1.11, 0 / 6 |
+| 0x1D head lamps | 1.10 / 1.85 / 2.32 | 1.46, 16 / 9 | unchanged |
+
+Every car that changes range: tails (running lights and braking alike) 12 into it from below (Alfa
+Brera 0.113 -> 0.277, Aston Martin One-77 0.095 -> 0.136, V12 Vantage 0.035 -> 0.191, Audi A4
+0.124 -> 0.254, Sport Quattro 0.108 -> 0.251, BMW M5 E39 0.120 -> 0.219, Falcon FG 0.081 -> 0.152,
+Jaguar XFR 0.096 -> 0.130, Mazda Axela 0.061 -> 0.128, Versa 0.021 -> 0.148, Radical SR8 0.122 ->
+0.402, Audi R8 V10 0.120 -> 0.196), none out; high stops 4 into it from below (V12 Vantage, Ford
+Ka, Koenigsegg CCX, Versa), one above it (the Lexus SC430 02, 1.31 -> 2.61). Still below vanilla's
+p10: the Lexus SC430 02 (0.127 -> 0.095), the Pagani Zonda R (0.074 -> 0.081) and the Lamborghini
+Sesto Elemento (0.122 -> 0.124). Cars that dropped but stayed in range: both SC430 race cars
+(0.362 -> 0.209 and 0.161), the GTI VR6 (0.332 -> 0.164).
 
 ### Open
 

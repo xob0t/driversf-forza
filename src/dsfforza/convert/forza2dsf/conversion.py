@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import struct
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -431,6 +432,12 @@ def convert(
             payload(stream, child(child(full, "NONR"), "UPVH"))
         )
         report["lights"] = lamps.report()
+        if tex_full is not None:
+            t0 = time.perf_counter()
+            if tex_full.set_rear_lamps(stream, full, car.body, lamps.rear_tail_lamp):
+                log(
+                    f"lights: rear tail lamps ranked per planned lamp, atlas rendered again ({time.perf_counter() - t0:.2f} s)"
+                )
         log(f"lights: {len(lamps.lamps)} lamps on {len(lamps.slots)} host light entries, {len(lamps.unlit)} unlit")
 
     dmg = None
