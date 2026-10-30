@@ -46,6 +46,16 @@ def test_default_jobs_follow_the_cpus_ram_and_gentle():
     assert install.default_jobs(16, True, 32 * gb) == 2
 
 
+def test_lint_and_render_processes_follow_the_free_ram():
+    from dsfforza.build import port_batch
+
+    gb = 1 << 30
+    assert port_batch.lint_jobs(16, 30 * gb) == 11  # 2.6 GB each
+    assert port_batch.lint_jobs(4, 30 * gb) == 4
+    assert port_batch.lint_jobs(16, 1 * gb) == 1
+    assert port_batch.render_jobs(16, 30 * gb) == 16 and port_batch.render_jobs(16, 8 * gb) == 4
+
+
 def test_count_cars_merges_lists_and_names():
     with _tmp() as tmp:
         lst = Path(tmp) / "cars.txt"
