@@ -862,58 +862,68 @@ Issue #154: the bare-metal trims (`trim_art.is_metal`, "Trim artwork") all drew 
 grey Forza gives them: the Veyron's roof scoops (`misc`, grey 177) and its fuel cap and
 window frames (`frame`, 227) alike.
 
-**How vanilla does it (confirmed-static; `out/s154/vanilla_chrome.py` in the
-`t3-48861189` worktree: every vanilla vehicle's exterior chrome, the shared texture
-sampled at each triangle's UV0, by area).** One shared material (`GLOBAL_Chassis_Chrome`,
-`GLOBAL_LOD_Chrome`) and one texture, but the grey is chosen per part by where UV0
-lands: 156 chrome materials on 149 vehicles, the mean R of a vehicle's chrome 43 to 156
-(median 80), and on 117 of them the lighter and darker parts (p10 to p90) lie more than
-30 levels apart. The texels are a ramp at x 904 to 1023, rows 392 to 443, constant down
-each column: x 972 to 1021 falls smoothly from R 103 (G 126) to 45 (G 58), G about 1.25 R
-(x 904 to 963 is a second, rougher ramp from 90 to 41), and a block of R 156, G 198 at
-x 838 to 869, y 420 to 445, which 8 vehicles use for all their chrome (RS200, Savana,
-LP670-4 SV, the 1967 and 2010 Shelby GT500, the prison and security vans, the tour bus).
-No vanilla chrome is lighter than 156. R is the grey the program lights, G its
-specular and reflection mask ("Gloss", the table of programs).
+**How vanilla does it (confirmed-static; `out/s154/vanilla_chrome.py`,
+`vanilla_light.py` in the `t3-48861189` worktree: every vanilla vehicle's exterior
+chrome, the shared texture sampled at each triangle's UV0, by area).** One shared
+material (`GLOBAL_Chassis_Chrome`, `GLOBAL_LOD_Chrome`) and one texture, but the grey is
+chosen per part by where UV0 lands: 156 chrome materials on 149 vehicles, the mean R of a
+vehicle's chrome 43 to 156 (median 80), and on 117 of them the lighter and darker parts
+(p10 to p90) lie more than 30 levels apart. R is the grey the program lights, G its
+specular and reflection mask ("Gloss", the table of programs). The texels:
+
+- a ramp at x 904 to 1023, rows 392 to 443, constant down each column: x 972 to 1021
+  falls smoothly from R 103 (G 126) to 45 (G 58), G about 1.25 R (x 904 to 963 is a
+  second, rougher ramp from 90 to 41);
+- a block of R 135, G 135 at x 904 to 941, y 229 to 266 (6 vehicles, 1.2 m2: the 2006
+  Impala taxis, the RS6 Avant);
+- a block of R 156, G 198 at x 838 to 869, y 420 to 445 (103 vehicles, 8.4 m2, mostly
+  small parts; 8 use it for all their chrome: RS200, Savana, LP670-4 SV, the Shelby
+  GT500s, the prison and security vans, the tour bus).
+
+No vanilla chrome is lighter than 156.
 
 **Fix (`trim_art.metal_grey`, `forza2dsf.CHROME_GREYS`, `chrome_grey`, `chrome_uv`).**
-Each bare-metal triangle takes the vanilla chrome texel whose R is nearest the grey
-Forza draws it at: the luminance of its opaque texels' mean, times the technique's
-texel scale in linear light (`fm.texel_scale`; the Veyron's `frame` at
-PristinePaintScale 0.3 is drawn at 133). `split_trim_art` puts each grey in its own
-subsection, `dsf_trim_metal#<grey>` (`fm.with_grey`, `technique_grey`), and
-`add_geometry` puts UV0 on that grey's texel (the grey is in the vertex key, so two
+Each bare-metal triangle takes the texel whose R is nearest the grey Forza draws it at:
+the luminance of its opaque texels' mean, times the technique's texel scale in linear
+light (`fm.texel_scale`; the Veyron's `frame` at PristinePaintScale 0.3 is drawn at
+133). The choice is the ramp's columns and the 135 block. `split_trim_art` puts each
+grey in its own subsection, `dsf_trim_metal#<grey>` (`fm.with_grey`, `technique_grey`),
+and `add_geometry` puts UV0 on that grey's texel (the grey is in the vertex key, so two
 greys sharing a vertex keep their own). Forza's own chrome techniques keep `CHROME_UV`.
-DSF's chrome draws R lit as a diffuse grey plus the reflection, so R is matched to
-Forza's diffuse grey; the reflection comes on top of it, as on vanilla chrome.
+DSF's chrome draws R lit as a diffuse grey plus the reflection, so R follows Forza's
+diffuse grey, as near as these texels allow.
+
+**Not 156 (review of the first version, #302).** The first version had the 156 block as
+the light grey. In game (VM 1, master 62736c2 `vm1-20261030-011801` against
+`vm1-20261030-012144`) the Veyron's roof scoops bloomed with a halo where they face the
+sky (1.6% of their pixels at 245 or more) and the One-77's grille glowed near white.
+That is the block's G of 198, which masks the reflection: on large panels the sky
+reflection blooms, as on the vanilla parts that use it, which are small. The 135 block
+keeps a light grey with G near `CHROME_UV`'s 122.
 
 **Roster (offline, all 573 cars, `out/s154/survey.py` in the `t3-48861189` worktree:
 cutout and `split_trim_art` at LODs 1, 3, 5 as `port_car` runs them).** 303 cars have
 bare metal at LOD 1: 74,593 triangles, 33.5 m2 (247 cars at LOD 3, 84 at LOD 5). Forza
-draws it at greys of 130 to 228 (p5 to p95; median 168), above vanilla's lightest chrome
-on 95% of the triangles, so 30.9 m2 takes the 156 block. The rest takes the ramp: 103
-(2.4 m2), 92, 87, 82 and 74 (0.2 m2 together), on 89 cars. Before, all of it drew at 98.
-So bare metal draws lighter on all but small parts (the ramp greys under 98, about
-0.2 m2 on the roster); Forza's chrome techniques are unchanged.
+draws it at greys of 130 to 228 (p5 to p95; median 168), 135 or more on 90% of the
+triangles, so 33.25 m2 takes the 135 block; 0.2 m2 on 11 cars takes the ramp (74 to
+103). Before, all of it drew at 98: bare metal is a little lighter, with about the same
+reflection. Forza's chrome techniques are unchanged.
 
-**render_compare (`out/rc/metal`, 9 cars built from master 62736c2 and this change).**
+**render_compare (`out/rc/metal135`, 9 cars built from master a9c7127 and this change).**
 Five cars draw differently, all in their trims region: the Monte Carlo SS 11's rear wing
-(82% of the region's pixels; "trims too dark, L* 27.6 against Forza's 46.1" fixed, 40.8
-now), the One-77's grille (58%), the Veyron's roof scoops (47%), the Crossfire's
-strakes, window frames and A-pillar strip (32%; the strip also from the cockpit), the
-Q7's rear trims (33%). The ARX-01b's data differ but it renders alike (the full entry's
-atlas, #84); the other three are unchanged (images: PR #302).
+(82% of the region's pixels; "trims too dark, L* 27.6 against Forza's 46.1" fixed, 35.4
+now), the One-77's grille (57%; "too dark, 36.5 against 56.8" fixed, 44.2), the Veyron's
+roof scoops (46%), the Crossfire's strakes, window frames and A-pillar strip (32%), the
+Q7's rear trims (22%). The ARX-01b's data differ but it renders alike (the full entry's
+atlas, #84); the R10, R390 GT1 and CLK GTR are unchanged (images: PR #302).
 
-**In game (VM 1, `-Views grille,rear,left -Palette 0 -ShotSeconds 3 -ZoomPresses 0`, IDs 5
-Veyron 09, 6 One-77 10, 7 Q7 09, 8 Monte Carlo SS 11, 9 Crossfire 06).** Master
-`vm1-20261030-011801`, this change `vm1-20261030-012144` (images: PR #302).
-The One-77's grille, the Monte Carlo's rear wing and the Q7's skid plate read as light
-bare metal instead of dark grey; the Crossfire's strakes and window frames are a shade
-lighter. The Veyron's roof scoops are the brightest case: near white with a halo where
-they face the sky. That is the 156 texel's G (198): vanilla chrome reflects that much
-on the 8 vehicles that use it. If it reads as too bright, the block of R 135, G 135 at
-x 904 to 941, y 229 to 266 would keep the lighter grey with about the old reflection;
-it is not vanilla chrome and was not tried.
+**In game (VM 2, `-Views grille,rear,left -Palette 0 -ShotSeconds 3 -ZoomPresses 0`, IDs 5
+Veyron 09, 6 One-77 10, 8 Monte Carlo SS 11, 7 Q7 09, 9 Crossfire 06, vanilla 230).**
+Master a9c7127 `vm2-20261030-023320`, this change `vm2-20261030-023757` (images: PR #302).
+The Veyron's roof scoops are lighter and flat, no halo (median 109 to 118, p99 218 to
+236, none at 245); the One-77's grille, the Monte Carlo's rear wing, the Q7's skid plate
+and the Crossfire's strakes read a shade lighter. Vanilla 230's chrome on the 156 block,
+in the same run, for comparison.
 
 ## Open
 
@@ -948,8 +958,8 @@ it is not vanilla chrome and was not tried.
    dark detailed trims go through the atlas. Open: which technique runs which shader (the effect's technique
    tables aren't decoded; `plastic2` sets both parameters on some cars), the
    `black*` techniques (still the shared dark trim whatever their texels),
-   bare metal's greys above vanilla's lightest chrome (156) and their tint ("Bare-metal
-   greys"), and the visibility
+   bare metal's greys above 135 (most of it: Forza draws it at 130 to 235) and its tint
+   ("Bare-metal greys"), and the visibility
    test is orthographic from around and above: artwork seen only from below or
    through a narrow gap counts as hidden (no car known to show it, #58).
 9. Gloss ("Gloss: Forza's specular and reflection on trims and rims"): the cockpit
