@@ -32,6 +32,11 @@ Install:
   autosave.dat; that file is save data and stays after -Uninstall (the game
   ignores it).
 
+-Force over an earlier install removes it first. With -Build, the archive, gui.sp and
+Fonts.fchunk stay where the new build's file is the one installed (the game file
+unchanged since the install, the build's the same file or the same bytes): no copy
+and no hashing of a few GB again (issue #129); install.json keeps their entries.
+
 -Uninstall puts every replaced file back from the backup and checks that its
 SHA-256 matches the original, and deletes every file it created (only if it is
 still the file it installed). -Status shows what is installed.
@@ -328,8 +333,59 @@ function Install-File([string]$Source, [string]$Relative) {
     Copy-Item -LiteralPath $Source -Destination $target -Force
     $entry.installed_sha256 = Get-Sha256 $target
     if ($entry.installed_sha256 -ne (Get-Sha256 $Source)) { Fail "copy of $Relative failed (hash mismatch)" }
+    # Size and modification time of the game file and its source, for Get-UnchangedEntries.
+    $entry.installed_stamp = Get-Stamp $target
+    $entry.source_stamp = Get-Stamp $Source
     if ($script:Manifest) { Write-Manifest $script:Manifest }
     Say ("  {0,-8} {1}" -f $entry.action, $Relative)
+}
+
+function Get-Stamp([string]$Path) {
+    $item = Get-Item -LiteralPath $Path -Force
+    return '{0}:{1}' -f $item.Length, $item.LastWriteTimeUtc.Ticks
+}
+
+# A reinstall (-Force -Build) of a build whose big files are the ones installed (issue #129):
+# the entries of the earlier install whose game file is still the copy it made (size and
+# modification time as recorded after the copy) and whose new source is the same file (the
+# recorded size and time, or else the same size and the installed SHA-256). Their game files
+# and backups stay; the rest is uninstalled and installed again as before. A record from
+# before #129 has no stamps: nothing is kept. Returns {relative path: entry}.
+function Get-UnchangedEntries($Existing, [hashtable]$Sources) {
+    $kept = @{}
+    foreach ($e in @($Existing.entries)) {
+        $relative = Get-Field $e 'path'
+        if (-not $relative -or -not $Sources.ContainsKey($relative) -or (Get-Field $e 'done')) { continue }
+        $installedStamp, $sourceStamp = (Get-Field $e 'installed_stamp'), (Get-Field $e 'source_stamp')
+        if (-not $installedStamp -or -not (Get-Field $e 'installed_sha256')) { continue }
+        $target = Join-Path $Game $relative
+        $source = $Sources[$relative]
+        if (-not (Test-Path -LiteralPath $target) -or -not (Test-Path -LiteralPath $source)) { continue }
+        if ((Get-Stamp $target) -ne $installedStamp) { continue }   # changed since the install
+        if ($e.action -eq 'replaced' -and -not (Test-Path -LiteralPath (Join-Path $BackupDir $e.backup))) { continue }
+        $now = Get-Stamp $source
+        if ($now -ne $sourceStamp) {
+            if ($now.Split(':')[0] -ne $installedStamp.Split(':')[0]) { continue }   # another size
+            if ((Get-Sha256 $source) -ne $e.installed_sha256) { continue }
+        }
+        $kept[$relative] = $e
+    }
+    return $kept
+}
+
+# Install-File, or for a file Get-UnchangedEntries kept: its earlier entry as it was (no copy,
+# no hashing of a file of a few GB).
+function Install-Or-Keep([string]$Source, [string]$Relative, [hashtable]$Kept) {
+    if (-not $Kept.ContainsKey($Relative)) { Install-File $Source $Relative; return }
+    $e = $Kept[$Relative]
+    $entry = [ordered]@{}
+    foreach ($name in @('path', 'action', 'original_sha256', 'backup', 'installed_sha256', 'installed_stamp')) {
+        $entry[$name] = Get-Field $e $name
+    }
+    $entry.source_stamp = Get-Stamp $Source
+    [void]$script:Entries.Add($entry)
+    if ($script:Manifest) { Write-Manifest $script:Manifest }
+    Say ("  {0,-8} {1} (the same file as installed: not copied again)" -f 'kept', $Relative)
 }
 
 function Install-Text([string]$Text, [string]$Relative) {
@@ -345,7 +401,7 @@ function Install-Text([string]$Text, [string]$Relative) {
 # Resumable: each entry is marked done in install.json as soon as it is handled, a
 # replaced file that already has its original bytes counts as restored (backup or
 # not), and the manifest is marked "uninstalled" before the backup folder goes.
-function Invoke-Uninstall([switch]$Keep) {
+function Invoke-Uninstall([switch]$Keep, [hashtable]$Skip = @{}) {
     $manifest = Read-Manifest
     if (-not (Test-Installed $manifest)) {
         Say "Nothing to uninstall (no install recorded in $ManifestPath)."
@@ -360,6 +416,7 @@ function Invoke-Uninstall([switch]$Keep) {
     [array]::Reverse($entries)
     foreach ($e in $entries) {
         if (Get-Field $e 'done') { continue }
+        if ($Skip.ContainsKey($e.path)) { Say "  kept     $($e.path) (the new build's is the same file)"; continue }
         $target = Join-Path $Game $e.path
         $done = $null
         if ($e.action -eq 'replaced') {
@@ -422,12 +479,13 @@ function Invoke-Uninstall([switch]$Keep) {
 # could not delete everything, or an install that died before writing its record).
 # Its files are only safe to drop when the game files are vanilla; with -Force a game
 # file that isn't vanilla is put back from a leftover backup that is.
-function Resolve-LeftoverBackup {
+function Resolve-LeftoverBackup([hashtable]$Kept = @{}) {
     if (-not (Test-Path -LiteralPath $BackupDir)) { return }
-    Say "Found $BackupDir without an install in place:"
+    if (-not $Kept.Count) { Say "Found $BackupDir without an install in place:" }
     foreach ($file in @(Get-ChildItem -LiteralPath $BackupDir -Recurse -File -Force)) {
         $relative = $file.FullName.Substring($BackupDir.Length + 1)
         if ($relative -like 'install*.json*') { continue }
+        if ($Kept.ContainsKey($relative)) { continue }   # its game file stays installed (Get-UnchangedEntries)
         $target = Join-Path $Game $relative
         $vanilla = $VanillaHashes[$relative]
         $backupHash = Get-Sha256 $file.FullName
@@ -456,8 +514,9 @@ function Resolve-LeftoverBackup {
 # The replaced files must be vanilla: the build was made from the vanilla files and the
 # backups are what -Uninstall restores. gui.sp, Fonts.fchunk and global.fchunk from
 # another mod are replaced (and restored on uninstall) only with -Force.
-function Test-VanillaFiles {
+function Test-VanillaFiles([hashtable]$Kept = @{}) {
     foreach ($relative in $VanillaHashes.Keys) {
+        if ($Kept.ContainsKey($relative)) { continue }   # stays installed; its backup is the checked original
         $path = Join-Path $Game $relative
         if (-not (Test-Path -LiteralPath $path)) { continue }
         $hash = Get-Sha256 $path
@@ -634,15 +693,24 @@ function Invoke-Build([string]$RootLimit) {
 
 function Invoke-Install {
     $existing = Read-Manifest
+    $kept = @{}
     if (Test-Installed $existing) {
         if (-not $Force) { Fail "dsfforza is already installed ($ManifestPath). Run -Uninstall first, or add -Force to reinstall." }
         $earlier = @($existing.cars | Where-Object { $_ })
         Say "Removing the earlier install first (-Force): its $($earlier.Count) cars ($((@($earlier | Select-Object -First 6) -join ', '))$(if ($earlier.Count -gt 6) { ', ...' })) are replaced by this build's, not added to."
         Say '  To have several cars, install them in one build: -Car A,B,... (or uv run dsff install --car A --car B).'
-        Invoke-Uninstall
+        if ($Build) {   # (a build made here reads the vanilla archive: then everything comes out first)
+            $folder = (Resolve-Path -LiteralPath $Build).Path
+            $kept = Get-UnchangedEntries $existing @{
+                'Install\dngvehicles.sp' = (Join-Path $folder 'dngvehicles.sp')
+                'Install\gui.sp'         = (Join-Path $folder 'gui\gui.sp')
+                'media\Fonts.fchunk'     = (Join-Path $folder 'gui\Fonts.fchunk')
+            }
+        }
+        if ($kept.Count) { Invoke-Uninstall -Keep -Skip $kept } else { Invoke-Uninstall }
     }
-    Resolve-LeftoverBackup
-    Test-VanillaFiles
+    Resolve-LeftoverBackup $kept
+    Test-VanillaFiles $kept
 
     $lua = Join-Path $Repo 'tools\game\lua'
     $bootstrapTarget = Join-Path $Game 'Common\UserLuaScripts\bootstrap.lua'
@@ -714,10 +782,10 @@ function Invoke-Install {
     $script:Manifest = $manifest
     Write-Manifest $manifest
     try {
-        Install-File $archive 'Install\dngvehicles.sp'
+        Install-Or-Keep $archive 'Install\dngvehicles.sp' $kept
         $gui = Join-Path $buildFolder 'gui'
-        if (Test-Path -LiteralPath (Join-Path $gui 'gui.sp')) { Install-File (Join-Path $gui 'gui.sp') 'Install\gui.sp' }
-        if (Test-Path -LiteralPath (Join-Path $gui 'Fonts.fchunk')) { Install-File (Join-Path $gui 'Fonts.fchunk') 'media\Fonts.fchunk' }
+        if (Test-Path -LiteralPath (Join-Path $gui 'gui.sp')) { Install-Or-Keep (Join-Path $gui 'gui.sp') 'Install\gui.sp' $kept }
+        if (Test-Path -LiteralPath (Join-Path $gui 'Fonts.fchunk')) { Install-Or-Keep (Join-Path $gui 'Fonts.fchunk') 'media\Fonts.fchunk' $kept }
         # Name strings for the garage (gui_assets: Locale\<language>\global.fchunk with "ID:7xxxxx" entries).
         if (Test-Path -LiteralPath (Join-Path $gui 'Locale')) {
             foreach ($file in Get-ChildItem -LiteralPath (Join-Path $gui 'Locale') -Recurse -File -Filter 'global.fchunk') {
