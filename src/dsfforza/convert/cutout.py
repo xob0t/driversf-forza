@@ -181,9 +181,10 @@ def _point_in_tri(p, a, b, c) -> bool:
     return _cross(a, b, p) >= -1e-12 and _cross(b, c, p) >= -1e-12 and _cross(c, a, p) >= -1e-12
 
 
-def _blocks_ear(poly, idx, i0, i1, i2, a, b, c) -> bool:
-    """Whether a vertex of idx other than i0, i1, i2 (and other than a point equal to a, b
-    or c) lies in triangle abc: _point_in_tri's arithmetic, written out for speed."""
+def _blocks_ear(poly, idx, i0, i1, i2, a, b, c):
+    """A vertex of idx other than i0, i1, i2 (and other than a point equal to a, b or c)
+    that lies in triangle abc (the first in idx order), else None: _point_in_tri's
+    arithmetic, written out for speed."""
     ax, ay = a
     bx, by = b
     cx, cy = c
@@ -199,8 +200,8 @@ def _blocks_ear(poly, idx, i0, i1, i2, a, b, c) -> bool:
             and cax * (py - cy) - cay * (px - cx) >= -1e-12
             and p not in (a, b, c)
         ):
-            return True
-    return False
+            return j
+    return None
 
 
 def _drop_collinear(poly):
@@ -222,6 +223,10 @@ def _ear_clip(poly):
     idx = list(range(len(poly)))
     tris = []
     guard = 0
+    # (i0, i1, i2) -> a vertex found in that ear: while it is left, the ear is still blocked
+    # (the same test on the same points), so later rounds needn't look again.
+    blocker: dict = {}
+    left = [True] * len(poly)
     while len(idx) > 3:
         guard += 1
         if guard > 4 * len(poly) * len(poly):
@@ -233,10 +238,15 @@ def _ear_clip(poly):
             a, b, c = poly[i0], poly[i1], poly[i2]
             if _cross(a, b, c) <= 1e-12:
                 continue  # reflex or flat
-            if _blocks_ear(poly, idx, i0, i1, i2, a, b, c):
+            j = blocker.get((i0, i1, i2))
+            if j is not None and left[j]:
+                continue
+            j = _blocks_ear(poly, idx, i0, i1, i2, a, b, c)
+            if j is not None:
+                blocker[(i0, i1, i2)] = j
                 continue
             tris.append((a, b, c))
-            idx.pop(k)
+            left[idx.pop(k)] = False
             found = True
             break
         if not found:
@@ -244,7 +254,7 @@ def _ear_clip(poly):
             flat = [k for k in range(n) if abs(_cross(poly[idx[k - 1]], poly[idx[k]], poly[idx[(k + 1) % n]])) <= 1e-12]
             if not flat:
                 return None
-            idx.pop(flat[0])
+            left[idx.pop(flat[0])] = False
     if len(idx) == 3 and _cross(poly[idx[0]], poly[idx[1]], poly[idx[2]]) > 1e-12:
         tris.append(tuple(poly[i] for i in idx))
     return tris
