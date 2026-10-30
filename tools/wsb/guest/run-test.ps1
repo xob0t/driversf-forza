@@ -30,6 +30,8 @@ param(
     [switch]$Hook,
     [string]$Asi,        # guest path of a plugin .asi copied into plugins with the .ini beside it; plugins\*.log is collected
     [string]$LuaFiles,   # 'dsfforza\hud.lua=C:\Repo\out\x\hud.lua;...': UserLuaScripts files replaced after the repo copy (-Probe)
+    [string]$ProfileFiles, # 'reloaded\replays\dng.replay=C:\Repo\out\x\clip.replay;...': files copied into the Driver profile in
+                         # Documents before launch (a Film Director replay, say); not with -OnHost (the user's own profile)
     [switch]$ArchiveOnly, # only the archive, not its build's dngvehicles.lua and gui\ (below: "The build's files")
     [switch]$Probe,
     [int]$WaitSeconds = 120,
@@ -586,6 +588,20 @@ try {
     Clear-ReadOnly $run
     $result.archiveSize = (Get-Item $Archive).Length
     Note 'run folder built'
+
+    # -ProfileFiles: into the guest's Driver profile (Documents), e.g. a replay for Film Director.
+    if ($ProfileFiles) {
+        if ($OnHost) { throw '-ProfileFiles writes into the Driver profile in Documents; not on the host' }
+        $profileDir = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Ubisoft\Driver San Francisco'
+        foreach ($pair in ($ProfileFiles -split ';' | Where-Object { $_ })) {
+            $name, $path = $pair -split '=', 2
+            $dest = Join-Path $profileDir $name.Trim()
+            New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+            Copy-Item -LiteralPath $path.Trim() $dest -Force
+            (Get-Item -LiteralPath $dest).IsReadOnly = $false
+            Note "profile file $($name.Trim()) from $($path.Trim())"
+        }
+    }
 
     # Launch and wait for the window.
     $result.stage = 'launch'
