@@ -601,12 +601,14 @@ class Canvas:
         self.H = int(round((vy1 - vy0) * width / PRES_W)) * ss
         self.rgb = np.zeros((self.H, self.W, 3), np.float32)
         self.alpha = np.zeros((self.H, self.W), np.float32)
+        self.rows = (self.H, 0)  # the rows blend has drawn on (first, end); the rest stays 0
 
     def to_px(self, x, y):
         return (x + PRES_W / 2) * self.scale - self.ox, (PRES_H / 2 - y) * self.scale - self.oy
 
     def blend(self, y0, x0, rgb, a):
         h, w = a.shape
+        self.rows = (min(self.rows[0], y0), max(self.rows[1], y0 + h))
         dst = self.rgb[y0 : y0 + h, x0 : x0 + w]
         dst *= 1 - a[..., None]
         dst += rgb * a[..., None]
@@ -748,13 +750,22 @@ class Canvas:
     def image(self, alpha: bool = False):
         """The canvas, box-filtered down by the supersampling. With `alpha`, RGBA with
         straight (unpremultiplied) colour over a transparent background."""
-        img = self.rgb.reshape(self.H // self.ss, self.ss, self.W // self.ss, self.ss, 3).mean((1, 3))
+        # Only the rows blend drew on, the whole width: rows of zeros give zeros. (The
+        # mean of a band of whole rows sums each pixel's ss x ss values as the mean of
+        # the whole canvas does; a band narrower than the canvas need not.)
+        ss, h, w = self.ss, self.H // self.ss, self.W // self.ss
+        r0, r1 = min(self.rows[0] // ss, h), min(-(-self.rows[1] // ss), h)
+        r1 = max(r0, r1)
+        out = np.zeros((h, w, 4 if alpha else 3), np.uint8)
+        img = self.rgb[r0 * ss : r1 * ss].reshape(r1 - r0, ss, w, ss, 3).mean((1, 3))
         if not alpha:
-            return Image.fromarray((np.clip(img, 0, 1) * 255 + 0.5).astype(np.uint8))
-        a = self.alpha.reshape(self.H // self.ss, self.ss, self.W // self.ss, self.ss).mean((1, 3))
+            out[r0:r1] = (np.clip(img, 0, 1) * 255 + 0.5).astype(np.uint8)
+            return Image.fromarray(out)
+        a = self.alpha[r0 * ss : r1 * ss].reshape(r1 - r0, ss, w, ss).mean((1, 3))
         rgb = np.where(a[..., None] > 1e-6, img / np.maximum(a[..., None], 1e-6), 0.0)
-        out = np.concatenate([np.clip(rgb, 0, 1), np.clip(a, 0, 1)[..., None]], -1)
-        return Image.fromarray((out * 255 + 0.5).astype(np.uint8), "RGBA")
+        band = np.concatenate([np.clip(rgb, 0, 1), np.clip(a, 0, 1)[..., None]], -1)
+        out[r0:r1] = (band * 255 + 0.5).astype(np.uint8)
+        return Image.fromarray(out, "RGBA")
 
 
 def rasterize_curve(cov, pts, tuv, wind=1):
