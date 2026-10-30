@@ -805,6 +805,7 @@ def _linear_to_srgb(c):
 TILE = 16  # largest tile side, pixels
 BACK_FACE_BIAS = 4e-4  # relative depth: about 2 mm at the camera's distance
 INTERIOR_BIAS = (2e-3, 3e-2)  # behind glass, elsewhere: about 1.3 cm and 20 cm
+INTERIOR_LENS_BIAS = 0.5  # behind lamp glass (kind "lens"): the interior loses to any exterior surface
 
 
 def _fragments(sx, sy, sw, width: int, height: int, chunk: int = 1 << 18):
@@ -1124,11 +1125,19 @@ def rasterize(scene: Scene, view: _View, layers: int = 2) -> Frame:
     # The interior entry holds the cockpit's own copy of the body shell, close to the
     # exterior and in places outside it (a dark bonnet patch on the S2000, RX-7, Cuda):
     # interior surfaces lose to the exterior unless clearly nearer, by a little behind
-    # glass (the cabin), by a lot elsewhere (an open car's seats are).
+    # glass (the cabin), by a lot elsewhere (an open car's seats are). The cabin is never
+    # seen through a lamp lens (render_compare's Forza reference draws them see-through):
+    # behind one it loses to any exterior surface. With the window bias there, the cockpit's
+    # copy of the front and rear panels won over the lamp bowls and reflectors recessed 1 to
+    # 10 cm behind it, and their pixels came out empty (#313).
     if scene.inside is not None and scene.inside.any() and not scene.inside.all():
+        kinds = np.array([m.kind for m in scene.materials])[scene.mat[gt]]
         glass_w = np.full(size, -np.inf, np.float32)
-        np.maximum.at(glass_w, gk, gw)
+        np.maximum.at(glass_w, gk[kinds == "glass"], gw[kinds == "glass"])
+        lens_w = np.full(size, -np.inf, np.float32)
+        np.maximum.at(lens_w, gk[kinds == "lens"], gw[kinds == "lens"])
         bias = np.where(glass_w[k] > w, INTERIOR_BIAS[0], INTERIOR_BIAS[1])
+        bias = np.where(lens_w[k] > w, INTERIOR_LENS_BIAS, bias)
         w = np.where(scene.inside[opaque_t[t]], w * (1 - bias), w)
     depth, tri = _nearest(k, w, opaque_t[t], size)
     out = []

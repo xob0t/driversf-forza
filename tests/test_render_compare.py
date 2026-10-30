@@ -140,6 +140,23 @@ def test_lens_tints_and_lamp_glows():
     assert dark[px, 0] > dark_off[px, 0] + 0.1  # the tail lamp glows (0x18: running lights, 0.2)
 
 
+def test_cabin_copy_behind_a_lamp_lens_loses_to_the_lamp():
+    """The interior entry's copy of the rear panel in front of a lamp reflector recessed
+    1.5 cm and 15 cm behind it, a lamp lens over both: the copy loses to the reflector (the
+    cabin is seen through window glass, not through lamp lenses; #313's empty lamps)."""
+    bowl = cr.Material("textured", None, np.ones(3, np.float32))
+    copy = cr.Material("paint", None, np.full(3, 0.2, np.float32))
+    lens = cr.Material("lens", None, np.ones(3, np.float32), lens=cr.Lens(cap=0.7))
+    for recess in (0.015, 0.15):
+        scene = _scene(
+            [(_quad(-1, 1, -1, 1, 0.0), 0), (_quad(-1, 1, -1, 1, recess), 1), (_quad(-1, 1, -1, 1, 0.2), 2)],
+            [bowl, copy, lens],
+        )
+        scene.inside = np.array([False, False, True, True, False, False])
+        centre = _frame(scene).tri.reshape(60, 80)[30, 40]
+        assert centre in (0, 1), recess  # the reflector, under the lens
+
+
 def test_lamp_levels():
     # over a 0x01 head lamp's brightness (2): a 0x18 tail/stop lamp's type brightness is 1
     assert cr.lamp_level(0x18, 4) == 0.1  # tail/stop with the running lights: 0.2

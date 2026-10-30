@@ -1,6 +1,6 @@
 # Render comparison: every port against Forza's own look
 
-Updated: 2026-10-29
+Updated: 2026-10-30
 
 `dsff render_compare` (`src/dsfforza/harness/render_compare.py`, `render_match.py`,
 `forza_render.py`, `render_diff.py`, `render_sheet.py`; the renderer
@@ -124,6 +124,33 @@ that type, a 0x1D head lamp like a 0x01 one (the converter draws those texels at
 `DAYTIME_GLOW`, a fifth, against the type's five times higher level). How much each texel
 glows is Forza's alpha. So the reference says where Forza's glow mask puts the light, at
 DSF's level; the plan's choices themselves are not judged.
+
+**Lamp units behind their lenses (#313).** Until #313 the reference drew some cars' head
+lamps as dark patches: the Lotus Carlton's as dark grey with white slivers, the Thunderbird
+57's as dark discs with a white crescent, the GTI VR6's as dark with white patches. Forza
+draws bright reflector bowls there (its own FM4 thumbnails of the three cars, brightened:
+chrome bowls with highlights behind clear fluted glass). It wasn't the lens shading. Behind
+most of each lens the reference drew nothing: the dark grey was the backdrop seen through the
+glass, and the slivers were the parts of the bowl left over (front view, Thunderbird: 1,339
+of the left lens's 1,830 pixels empty, 490 on the `head_light` bowl). The reference sees our
+interior entry through its windows, and that entry holds the cockpit's copy of the front and
+rear panels, 1 to 10 cm in front of the recessed bowls and reflectors. `car_render.rasterize`
+lets interior surfaces lose to the exterior unless clearly nearer: by 0.2% of the depth
+behind glass (the cabin through the windows), 3% elsewhere. A lamp lens counted as glass,
+so the copy won over the bowl by its 1.3 cm. The float64 depth the bias makes then left the
+pixel without a triangle (#320, both sides elsewhere). Only the reference draws lamp lenses
+see-through (kind `lens`; ours bakes them), so now `rasterize` makes the interior lose to any
+exterior surface behind a lens (`INTERIOR_LENS_BIAS`). Our side's renders are pixel-identical
+(253 stored views of 30 cars). Holes under the reference's lamp glass: 2,411 to 317 pixels
+over the five views on the X6 M, 1,269 to 154 on the Carlton; the rest is where the copy
+stands in front of the lens itself.
+
+Lens shading was tried too, on the three cars against Forza's thumbnails: the lens texel at
+its own colour and its alpha as opacity (the converter's bake), and the custom shader's
+filter (the texel multiplied over what is behind). With the bowls drawn, both made the
+Carlton's lamp a milky plate where Forza shows the bowl's structure, so the lens model stays
+as it was (the lens picture at PaintScale x GlassColor over the lamp, opacity
+max(alpha, GlassColor.w) capped).
 
 **The cockpit** (`forza_render.cockpit_scene`): the cockpit carbin's static sections and
 its needles at rest, as `cockpit.fit` measures them (the main carbin's cabin standing in
@@ -257,6 +284,40 @@ darkened to vanilla's, #166), front lamps glowing where Forza's mask doesn't (th
 converter lights reflectors and gives head lamps vanilla's daytime glow, #124), the
 Esperante's lamps lighter than Forza's.
 
+**Rerun after #313 (2026-10-30).** The 17 cases again, master 6c02916's code against #313's
+on the same builds: `out/master` and `out/rc/b-head` (worktree t3-1b4e7c10), and the three
+builds that are gone rebuilt from their commits (50b7cb6, c5fce5c and 5e6ce2d, the case's
+cars only; `out/r313/b-<commit>` in worktree t3-47f7edee). Runs `out/r313/cal-master` and
+`cal-mine`, table `out/r313/calib-table.md` (`out/r313/calib.py`). Every case that separates
+on master's code still separates, with the same flag on the bad build: #158, #190 domes, #145,
+#190 X6 M, #160, #176 (3), #167 (3), #159, #173. What changed:
+
+- #190 domes: the fixed Mustang's "glows elsewhere than Forza's mask" (29%) is gone: its
+  front lamps now have no flag. The domes are inside the reference's bowls, which glow now.
+- #190 Esperante head lamps now separate: the bad build is "colour off, delta E 34" on top
+  of washed out, the fixed one only washed out (L* +22 against +26 to +29 before). The tails
+  still don't.
+- #157 (R10 lid) doesn't separate on master's code either: the fixed builds are flagged at
+  5.1% and 4.3% (#245: none). It's older than #313, which gives the same numbers (#321).
+- New flags on lamps the reference used to draw empty, now lit: the fixed Devon's head
+  lamps "no glow" by day and dark (its covers are DSF window glass, #160 above); the
+  Oct-27 Mazda 2's the same (window-glass covers); the Mustang's tails "no glow" (ours 0.027
+  against the 0.03 floor, Open 8) and too dark. Rear lamps "too dark" go 5 to 7 L* deeper on
+  the X5 M, the M3 E30 and the bad Devon (the reference's tails now draw their recessed
+  reflectors).
+  Car scores move with them (fixed Mustang 2.6 to 10.6, Devon 6.5 to 12.2).
+
+#294's 15 ports (its after-build `out/l8/n2` in worktree t3-a7c21235; `out/r313/s15-master`
+against `s15-mine`, flag diff `out/r313/s15-flagdiff.txt`): "glows elsewhere than Forza's
+mask" goes on 6 cars: the R8, the 458 Spider (rear), the Mustang, the Thunderbird, the
+Carlton, the Esperante (rear). Also gone: "detail lost" on the Carlton's and Thunderbird's
+head lamps and the Carlton's tails, "washed out" on the Evo VI's and Esperante's head lamps
+and the 458's tails, "colour off" on the Thunderbird's and S60's tails. New:
+rear lamps "too dark" on the Carlton (L* -31) and Esperante (-33), deeper on the S60 (-22 to
+-36); "no glow" on the Golf R's tails (0.016) and the Mustang's (0.027); "colour off" on the
+Esperante's head lamps (delta E 27). The white plate by day flags (glare) don't change: they
+measure ours.
+
 ## Roster
 
 Master ede81a1's full build (the main checkout's `out/build` of 2026-10-29 13:33, copied
@@ -374,3 +435,7 @@ itself, its workers inherit it). `--keep` stores 6.6 MB a car (3.8 GB for the ro
    running lights in this renderer (266 0.04, 182 0.06, 147 0.20, 227 0.03, 229 0.04,
    171 0.09, 205 0, 241 0.24). A limit taken from vanilla's distribution per light type
    would make it a test of "darker than vanilla".
+9. `rasterize` leaves 2 to 8% of a car's pixels empty on both sides (the cabin behind the
+   windows, plates, window frames): where an interior surface is nearest, its float64 depth
+   matches no fragment (#320). #313 removed it only under the reference's lamp glass.
+10. #157's cockpit cover case no longer separates on today's code (#321).
