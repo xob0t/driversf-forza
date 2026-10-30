@@ -1963,11 +1963,20 @@ class HostCockpit:
 
     wheel_record: int
     wheel_hinge: int
-    wheel_marker: int
+    wheel_marker: int  # the first steering marker: the head camera's (FUN_0088D3B0)
     wheel_skin: bytes  # vertex semantic 9 for steering-wheel vertices
     gauge_slots: dict[int, int]  # gauge id -> gauge ("seat") table index
     gauge_parent_hinge: int | None
     mirror_slots: list[int]
+    # Every steering marker, in record order. FUN_0088E310 keeps the last one for the
+    # wheel, the cockpit arms and the chase views' driver; the head camera reads the
+    # first. Host 132 has two (research/cockpit.md, "Hosts with two steering markers").
+    wheel_markers: tuple[int, ...] = ()
+
+    @property
+    def engine_marker(self) -> int:
+        """The steering marker the engine turns the wheel and the hands about."""
+        return self.wheel_markers[-1] if self.wheel_markers else self.wheel_marker
 
 
 def parent_of(h, index: int) -> int | None:
@@ -2015,6 +2024,7 @@ def host_cockpit(upvh_data: bytes) -> HostCockpit:
         gauge_slots,
         parent_hinge,
         list(range(h.counts["mirrors"])),
+        tuple(r.marker for r in markers),
     )
 
 
@@ -2297,15 +2307,19 @@ def patch_hierarchy(upvh_data: bytes, host: HostCockpit, place, cf: CockpitFit) 
     # The vanilla marker quaternion turns (0, 0, -1) onto the column (Desanne: 24.4 deg about x);
     # the engine turns the wheel and hands about it.
     q = quat_from_to((0, 0, -1), axis)
-    marker_at = h.offsets["markers"] + host.wheel_marker * 0x20
-    struct.pack_into("<3f", data, marker_at, *pivot)
-    struct.pack_into("<4f", data, marker_at + 0x10, *q)
+    # Every steering marker: the head camera reads the first, the wheel and the hands the
+    # last (host 132 has two; moving only the first left them at the host's wheel).
+    for marker in host.wheel_markers or (host.wheel_marker,):
+        marker_at = h.offsets["markers"] + marker * 0x20
+        struct.pack_into("<3f", data, marker_at, *pivot)
+        struct.pack_into("<4f", data, marker_at + 0x10, *q)
     along = _dot(shift, axis)
     seat = seat_anchor(centre, axis, cf.wheel.radius)
     report["steering"] = {
         "record": host.wheel_record,
         "hinge": host.wheel_hinge,
         "marker": host.wheel_marker,
+        **({"markers": list(host.wheel_markers)} if len(host.wheel_markers) > 1 else {}),
         "centre": [round(c, 4) for c in centre],
         "axis": [round(c, 4) for c in axis],
         "radius": round(cf.wheel.radius, 4),
@@ -2422,7 +2436,8 @@ def patch_seats(upvh_data: bytes, eye_dsf=None, anchor=None) -> tuple[bytes, dic
     report = {}
     if DRIVER_SEAT_ROLE not in slots:
         return bytes(data), report
-    rec = next(r for r in h.records if r.type == 3 and r.role == STEERING_MARKER_ROLE and r.marker >= 0)
+    # The last steering marker: the one the engine turns the hands about (FUN_0088E310).
+    rec = [r for r in h.records if r.type == 3 and r.role == STEERING_MARKER_ROLE and r.marker >= 0][-1]
     marker = anchor or struct.unpack_from("<3f", h.table("markers")[rec.marker])
     driver_at = h.offsets["markers"] + slots[DRIVER_SEAT_ROLE] * 0x20
     quat = struct.unpack_from("<4f", data, driver_at + 0x10)

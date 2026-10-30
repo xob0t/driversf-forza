@@ -16,6 +16,11 @@ LOD for the chase views; cockpit.fit_wheel_points) and reports:
 - hinge_tilt: the same for the hinge axis (not what the engine turns about,
   checked as well);
 - radius: the drawn rim's radius;
+- shift: how far A is from the hinge, so how far the engine draws the wheel (and the
+  hands with it) from where its mesh puts it. The engine keeps the last steering
+  marker for A and the head camera hangs from the first (research/cockpit.md, "Hosts
+  with two steering markers"); `eye_off` is the head camera's sideways distance from
+  the hub the cockpit view draws;
 - grip: where the driver's hands hold it in the cockpit view. DSF's hand rig grips
   0.176 m from the column, 45 degrees either side of the top, centred on A
   (cockpit.hand_grips; an in-game probe of the arms' fists agrees,
@@ -189,28 +194,36 @@ def survey_vehicle(archive: Path, stream, root, spool_id: int) -> dict:
     hinge = h.table("hinges")[host.wheel_hinge]
     pivot = struct.unpack_from("<3f", hinge)
     hinge_axis = struct.unpack_from("<3f", hinge, 0x10)
-    marker_raw = h.table("markers")[host.wheel_marker]
+    # The engine keeps the last steering marker for the wheel and the hands (FUN_0088E310).
+    marker_raw = h.table("markers")[host.engine_marker]
     q = struct.unpack_from("<4f", marker_raw, 0x10)
     direction = cockpit.quat_rotate(q, (0.0, 0.0, -1.0))
     row: dict = {"pivot": pivot, "direction": direction}
     # The hand rig's anchor A and the rim dsfforza.asi reads (cockpit.GRIP_PARAMS).
     from dsfforza.build import handling
 
-    vo3d = handling.VO3D.parse(vm.payload(stream, vm.child(vm.child(kinds[0], "NONR"), "VO3D")))
+    vo3d_data = vm.payload(stream, vm.child(vm.child(kinds[0], "NONR"), "VO3D"))
+    vo3d = handling.VO3D.parse(vo3d_data)
     marker = struct.unpack_from("<3f", marker_raw)
     anchor = (marker[0], marker[1] + vo3d.params.get(538, 0.0), marker[2] + vo3d.params.get(559, 0.0))
+    # The wheel is drawn at A + R(v - hinge): `shift` from where the mesh has it. The
+    # hands go with A, so everything below is measured in the mesh's frame (minus shift).
+    shift = cockpit._sub(anchor, pivot)
     asi_rim = None
     radius = vo3d.params.get(cockpit.GRIP_RADIUS_PARAM, 0.0)
     if 0.05 < radius < 0.4:
         engine_dir = cockpit.quat_rotate(q, (0.0, 0.0, 1.0))  # spec + 0x37F0
         along = vo3d.params.get(cockpit.GRIP_ALONG_PARAM, 0.0)
-        asi_rim = (cockpit._add(marker, cockpit._scale(engine_dir, along)), cockpit._norm(engine_dir), radius)
+        centre = cockpit._sub(cockpit._add(marker, cockpit._scale(engine_dir, along)), shift)
+        asi_rim = (centre, cockpit._norm(engine_dir), radius)
+    # The head camera hangs from the first steering marker (FUN_0088D3B0).
+    eye, _ = cockpit.head_camera(data, vo3d_data)
     # The chase views' driver sits on the driver seat marker (role 10, cockpit.patch_seats).
     seats = cockpit.seat_markers(data)
     seat = None
     if cockpit.DRIVER_SEAT_ROLE in seats:
         raw = h.table("markers")[seats[cockpit.DRIVER_SEAT_ROLE]]
-        seat = (struct.unpack_from("<3f", raw), struct.unpack_from("<4f", raw, 0x10))
+        seat = (cockpit._sub(struct.unpack_from("<3f", raw), shift), struct.unpack_from("<4f", raw, 0x10))
     index = {id(e): n for n, e in enumerate(root.entries)}
     for kind, view in ((1, "cockpit"), (0, "chase")):
         if kind not in kinds:
@@ -227,8 +240,11 @@ def survey_vehicle(archive: Path, stream, root, spool_id: int) -> dict:
         if len(pts) < 12:
             continue
         row[view] = turn_error(pts, pivot, direction, hinge_axis)
+        row[view]["shift"] = math.dist(anchor, pivot)
         if view == "cockpit":
-            row[view].update(grip_error(anchor, row[view], asi_rim))
+            # Sideways from the head camera to the hub the view draws.
+            row[view]["eye_off"] = abs(eye[0] - (row[view]["centre"][0] + shift[0]))
+            row[view].update(grip_error(pivot, row[view], asi_rim))
         elif seat is not None:
             pos, quat = seat
             at = cockpit._add(pos, cockpit.quat_rotate(quat, cockpit.VANILLA_MARKER_FROM_SEAT))
@@ -265,6 +281,7 @@ def summary(rows: list[dict], view: str) -> None:
         ("off", "hub off the turn line", "cm", 100.0, (0.005, 0.01, 0.02)),
         ("tilt", "marker direction vs rim normal", "deg", 1.0, (1.0, 2.0, 5.0)),
         ("hinge_tilt", "hinge axis vs rim normal", "deg", 1.0, (1.0, 2.0, 5.0)),
+        ("shift", "wheel drawn off its modelled place (A - hinge)", "cm", 100.0, (0.005, 0.01, 0.05)),
     ):
         col = sorted(r[view][key] for r in ok)
         worst = max(ok, key=lambda r: r[view][key])
@@ -276,6 +293,7 @@ def summary(rows: list[dict], view: str) -> None:
     radii = [r[view]["radius"] for r in ok]
     print(f"  rim radius: median {statistics.median(radii):.3f} m, {min(radii):.3f} to {max(radii):.3f}")
     for key, label in (
+        ("eye_off", "head camera sideways off the drawn hub"),
         ("grip_vanilla", "grips off the rim, vanilla hands"),
         ("grip_asi", "grips off the rim, with dsfforza.asi [hands]"),
         ("asi_rim", "dsfforza.asi's rim vs the drawn rim"),
@@ -326,9 +344,10 @@ def main(argv: list[str] | None = None) -> None:
                 if view in row:
                     v = row[view]
                     grip = f" grip {fmt(v['grip_vanilla'])} -> {fmt(v['grip_asi'])} cm" if "grip_vanilla" in v else ""
+                    eye = f" eye {fmt(v['eye_off'])} cm" if "eye_off" in v else ""
                     parts.append(
                         f"{view} off {fmt(v['off'])} cm tilt {v['tilt']:.1f} (hinge {v['hinge_tilt']:.1f}) "
-                        f"r {v['radius']:.3f}{grip}"
+                        f"shift {fmt(v['shift'])} cm{eye} r {v['radius']:.3f}{grip}"
                     )
             print(f"{sid:5} {name[:30]:30} " + "  ".join(parts))
     print()
@@ -344,6 +363,8 @@ def main(argv: list[str] | None = None) -> None:
             "along",
             "tilt",
             "hinge_tilt",
+            "shift",
+            "eye_off",
             "radius",
             "grip_vanilla",
             "grip_asi",

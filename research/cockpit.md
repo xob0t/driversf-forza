@@ -1,6 +1,6 @@
 # Cockpit view: interior entry, steering wheel, gauges, head camera
 
-Updated: 2026-10-29
+Updated: 2026-10-30
 
 How DSF draws the cockpit view, where Forza keeps the same data, and what
 `src/dsfforza/convert/cockpit.py` (`--cockpit` in `forza2dsf.py`, on by default in
@@ -10,7 +10,7 @@ per car (`hosts.md`). Evidence levels follow `dngvehicles.md`. The sections
 after "Current rules" are in the order the work was done, and later sections
 replace rules in earlier ones; each replaced rule says where it went.
 
-## Current rules (2026-10-29)
+## Current rules (2026-10-30)
 
 **What the cockpit view draws.** The interior entry (N+1000) alone
 (confirmed-runtime 2026-10-29, "What DSF draws"). The bonnet, wipers, mirrors
@@ -76,6 +76,9 @@ and so are their materials.
   and keeps Forza's size in both views. The hinge and the steering marker sit
   on the Forza wheel's hub, shifted along the column only (at most 12 cm), so
   the wheel turns about its hub ("The steering wheel turns about its hub").
+  Every steering marker of the host moves: the head camera hangs from the
+  first, the wheel and the hands from the last (host 132 has two; "Hosts with
+  two steering markers", #318).
   p538/p559 are 0. VO3D p95 and p87 carry the rim to dsfforza.asi `[hands]`,
   which moves the cockpit arms' and the chase-view and AI drivers' hands onto
   it ("Hands on Forza's rim", "Hands in the chase views"). The driver seat
@@ -3149,6 +3152,84 @@ the old hull, 0.7 m past its front face. It may be a bounding sphere, or a test 
 another point. The check in `Driver.exe` hasn't been found. Of all the cars, only the
 bus had its eye past vanilla's furthest-forward one (ID 201, z 5.64).
 
+## Hosts with two steering markers (2026-10-30, issue #318)
+
+User report: on the EAE Speedster (EAE_Speedster_12, host 132, right-hand drive)
+the cockpit view shows the gauges straight ahead but the wheel cut off at the far
+left, a hand beside it; in the chase view Tanner sits on the right with his hands
+off the rim.
+
+**Cause (confirmed-static, confirmed-runtime).** Vanilla host 132 (Aston DB5) has
+two marker records with role 0x2F, records 10 and 11, both at (0.326, 0.505, 0.078).
+No other vanilla car has two at the wheel (243, the RUF RT12, has a second one 3 m
+up; `out/t318/scripts/dup_markers.py`). The engine reads them differently:
+
+- the head camera (`FUN_0088DF80` case 0x14) takes the first, through
+  `FUN_0088D3B0` ("Head camera" above);
+- the UPVH parser (`FUN_0088E310`, `out/ghidra/steer4`) walks every record and
+  writes spec+0x37E0 and +0x37F0 at each role-0x2F marker, so the last one wins.
+  That is A, the point the wheel is drawn at (A + R(v - hinge)) and the cockpit arms
+  and the chase views' driver turn about, and the marker dsfforza.asi `[hands]`
+  reads the rim from.
+
+`host_cockpit` kept the first marker and `patch_hierarchy` moved only it. On host
+132 the camera went to the Forza eye, while the wheel and both drivers' hands stayed
+at the DB5's left-hand-drive wheel: shifted by the host marker minus the Forza hub.
+On the Speedster that's 0.74 m, from x -0.347 to +0.326, so the cockpit view showed
+the passenger-side dash with the wheel and arms at its left edge, and the chase-view
+driver, seated on the right (the seat follows `seat_anchor`), reached across the car.
+The plugin's rim move (12 cm at most) couldn't bridge it, so the hands stayed in the
+air. The FG Falcon (host 189, one marker) was right for that reason, not for being
+right-hand drive.
+
+**Fix** (`cockpit.py`): `HostCockpit.wheel_markers` lists every steering marker, and
+`patch_hierarchy` writes the hub and column into all of them. `engine_marker` is the
+last one; `patch_seats` reads it. The hinge is still found from the first marker, so
+which hosts can be used doesn't change (243 stays out: no hinge at its first marker).
+
+**Survey** (`uv run dsff steering_axle`, now modelling the engine's marker: `shift`
+is |A - hinge|, how far the wheel and hands are drawn from where the mesh puts them,
+and `eye_off` the head camera's sideways distance from the hub the cockpit draws).
+Master's full build (`out/build`, 573 cars, `out/t318/roster-before.tsv`): 9 cars with
+a shift over 5 cm. Six are the host-132 ports. The other three are the Express, F-350
+and Taurus SHO, which keep their same-vehicle host's interior and its vanilla
+p538/p559 ("Placeholder cockpits on a same-vehicle host"), as vanilla does.
+
+| Car (host 132) | Drive | shift before | eye_off before | chase grips before (with the plugin) | after |
+| --- | --- | ---: | ---: | ---: | --- |
+| EAE_Speedster_12 | right | 73.6 cm | 67.3 cm | 56.1 cm | 0 / 0 / 0.0 cm |
+| AST_DBR1_58 | right | 69.6 | 59.7 | 48.2 | 0 / 0 / 0.0 |
+| AST_DB5Vantage_64 | right | 65.9 | 65.7 | 49.3 | 0 / 0 / 0.0 |
+| BMW_M635CSi_84 | left | 26.4 | 3.1 | 13.9 | 0 / 0 / 0.0 |
+| BMW_E36M3_97 | left | 23.2 | 2.5 | 11.1 | 0 / 0 / 1.0 |
+| BMW_MCoupe_02 | left | 13.1 | 0.0 | 1.2 | 0 / 0 / 0.5 |
+
+(`out/t318/before8` from master and `out/t318/after` from this branch, the same eight
+cars.) `render_compare diff` on the two builds: the six host-132 ports changed (their
+UPVH), all drawn alike offline, and the FG Falcon and Opel Speedster (one marker each)
+unchanged. The offline renders draw the wheel where its mesh puts it, not at A, so
+they can't show this fault; `steering_axle`'s `shift` does. The left-hand-drive BMWs had the wheel 13 to 26 cm
+forward and up of their Forza place, the hands with it. The E36 M3 and M Coupe still
+have their chase-view main-carbin wheel 3 to 4 cm off the turn line (#86, a separate
+fit problem).
+
+**In game** (VM 1, confirmed-runtime; `run-series.ps1 -Vm -Asi out\asi\dsfforza.asi
+-Views right,left -ShotSeconds 3`):
+
+- Reproduced on master (`out/t318/before`, Speedster, FG Falcon, Opel Speedster): run
+  `vm1-20261030-071449`. The Speedster's cockpit view shows the dials with no wheel or
+  hands in front of them; from the side, Tanner sits on the right and reaches across to
+  a wheel drawn on the left. The FG Falcon and the Opel hold their rims.
+- Before and after on the six host-132 ports and the FG Falcon (IDs 1, 4 to 8, 2):
+  before `vm1-20261030-073719` (`out/t318/before8`), after `vm1-20261030-074229`
+  (`out/t318/after`). After: the Speedster, DB5 Vantage, DBR1, E36 M3 and M635CSi
+  show their wheel in front of the dials with both hands on the rim (before, none of
+  the five showed a wheel in the cockpit view); the M Coupe's hands, off its rim
+  before, hold it. In the side views the Speedster's driver holds the rim in front of
+  him. The FG Falcon (same archive bytes) is unchanged.
+- The head camera stays where it was: the probe logs the Speedster's DriverEye at
+  (-0.347, 1.003, -0.615) in both runs.
+
 ## Risks and open questions
 
 
@@ -3180,7 +3261,9 @@ bus had its eye past vanilla's furthest-forward one (ID 201, z 5.64).
    eye on the right. The vanilla fleet has no right-hand-drive car. Seen in
    game since: the FG Falcon's right-hand-drive cockpit with the hands on the
    rim (run `vm-20261026-122057`, "Hands on small race wheels"), so the head
-   camera and the hand rig take a negative marker x.
+   camera and the hand rig take a negative marker x. The EAE Speedster's
+   wasn't, for a host reason, not a drive-side one ("Hosts with two steering
+   markers").
 7. Door cards in the interior entry don't follow the doors (vanilla door-card
    vertices are skinned to the door records; the converter leaves them on the
    chassis). The full entry's door cards go with doors that are Forza parts

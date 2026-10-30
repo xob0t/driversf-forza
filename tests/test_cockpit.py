@@ -515,6 +515,46 @@ def test_seat_follows_the_steering_marker():
     assert report["driver"]["from"] == [0.3, -0.4, -0.12] and "body_eye_from_camera" in report
 
 
+def test_every_steering_marker_moves_to_the_wheel():
+    # Host 132 (Aston DB5) has two steering markers at its wheel. The head camera hangs from
+    # the first, the wheel and the hands from the last (FUN_0088E310): moving only the first
+    # left the EAE Speedster's wheel and arms 0.7 m from its right-hand-drive cockpit (#318).
+    host_wheel, column_q = (0.326, 0.505, 0.078), (0.211, 0.0, 0.0, 0.977)
+    head = bytearray(upvh.HEADER_SIZE)
+    head[:4] = b"AWHF"
+    struct.pack_into("<6I", head, 4, 0, 0, 26, 3, 1, 0)
+    head[0x2A] = 1  # one hinge
+    struct.pack_into("<H", head, 0x28, 2)  # two markers
+    records = bytearray()
+    for kind, role, marker, hinge in ((1, 30, -1, 0), (3, 47, 0, -1), (3, 47, 1, -1)):
+        rec = bytearray(upvh.RECORD_SIZE)
+        rec[:8] = upvh.NONE_UID
+        struct.pack_into("<HH", rec, 0x08, kind, role)
+        struct.pack_into("<hhh", rec, 0x1A, marker, hinge, -1)
+        struct.pack_into("<hh", rec, 0x2A, 1 if kind == 1 else -1, 0)
+        struct.pack_into("<h", rec, 0x34, 1 if kind == 1 else -1)
+        records += rec
+    hinges = struct.pack("<3f4x3f4x16x", *host_wheel, 0.0, 0.41, -0.91)
+    markers = struct.pack("<3f4x4f", *host_wheel, *column_q) * 2
+    data = bytes(head + records + hinges + markers)
+    host = cockpit.host_cockpit(data)
+    assert host.wheel_markers == (0, 1) and host.wheel_marker == 0 and host.engine_marker == 1
+    wheel = cockpit.Wheel((0.347, 0.443, 0.215), (0.0, 0.425, 0.905), 0.165)  # Forza space: RHD at +x
+    cf = types.SimpleNamespace(wheel=wheel, gauges={}, calibration={}, mirrors={})
+    place = types.SimpleNamespace(point=lambda p: (-p[0], p[1], -p[2]), normal=lambda n: (-n[0], n[1], -n[2]))
+    out, report = cockpit.patch_hierarchy(data, host, place, cf)
+    h = upvh.parse(out)
+    first, last = (struct.unpack_from("<3f4x4f", m) for m in h.table("markers"))
+    assert first == last and abs(first[0] + 0.347) < 1e-6, (first, last)
+    assert report["steering"]["markers"] == [0, 1]
+    # The head camera (first marker) and the wheel (last) agree, so the eye sits behind the wheel.
+    from dsfforza.build import handling
+
+    vo3d = handling.VO3D(1, {430: 0.0, 431: 0.67, 432: 0.61}).build()
+    eye, marker = cockpit.head_camera(out, vo3d)
+    assert abs(eye[0] - last[0]) < 1e-6 and marker == first[:3]
+
+
 def _shell(quads: dict[int, list]) -> carbin.Section:
     """A main-carbin body section: per LOD, quads given by their four corners."""
     verts, subs = [], []
