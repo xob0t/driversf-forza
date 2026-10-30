@@ -178,8 +178,12 @@ How a build runs:
   last two logical CPUs, so every agent's queued on the same two while the rest
   idled (the same 10-car build at 2 jobs: 447 s pinned, 287 s not, the same output;
   issue #325). Delete the file to build at full speed.
-- A new worker starts only while 1.5 GB of RAM is free. One worker peaks at
-  about 420 MB.
+- A new worker starts only while 1.9 GB of RAM is free (`FREE_RAM_FOR_WORKER`). A
+  worker peaks under 1.8 GB, the slowest supercars at about 3.1 GB (32- and 30-car
+  builds, 2026-10-30; the job object's peak per process), the garage-picture
+  render processes at about 1.55 GB on the full roster (each holds the archive's
+  tree), so the gui step runs at most as many of them as the free RAM holds at
+  1.7 GB each (`render_jobs`).
 - Each worker writes the car's three VEHC entries to `work/<media>.chnk`.
 - The merge reads the vanilla archive and every car file as one address space,
   so nothing is copied twice. It registers the clones (SSLP, VSCT), checks
@@ -337,9 +341,11 @@ Batch-level costs at full-roster scale:
 - **Worker start-up** is about 3 s per car (imports, the vanilla archive's
   root, host survey and sound index from `out/cache`), small next to the
   conversion.
-- **`--jobs` above the physical cores**: not measured here (the machine was
-  never idle). The workers are pure CPU, so SMT gives at most a few tens of
-  percent more; at about 420 MB per worker, 16 workers fit in 32 GB.
+- **`--jobs` above the physical cores** (8 cores, 16 threads, 32 GB; 32 cars, Idle,
+  2026-10-30): convert 374 s with 8 workers, 345 s with 12, 323 s with 16 (whole
+  build 7.0, 10.0 and 12.9 GB at its peak). So `--jobs` (and `dsff install`) default
+  to one worker per logical CPU, as many as 1.9 GB each fits in the RAM
+  (`port_batch.default_jobs`: 16 on this PC; `out/gentle` caps it at 2).
 
 ### Selective rebuild
 

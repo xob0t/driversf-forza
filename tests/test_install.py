@@ -34,13 +34,16 @@ def _touch(path: Path, data: bytes = b"x") -> Path:
 # --- jobs, selection ---------------------------------------------------------------------------
 
 
-def test_default_jobs_follow_the_cpus_and_gentle():
-    assert install.default_jobs(16, False) == 8
-    assert install.default_jobs(32, False) == 8
-    assert install.default_jobs(6, False) == 3
-    assert install.default_jobs(1, False) == 1
-    assert install.default_jobs(None, False) == 1
-    assert install.default_jobs(16, True) == 2
+def test_default_jobs_follow_the_cpus_ram_and_gentle():
+    gb = 1 << 30
+    assert install.default_jobs(16, False, 32 * gb) == 16  # a worker per logical CPU
+    assert install.default_jobs(32, False, 32 * gb) == 17  # 32 GB at 1.9 GB each
+    assert install.default_jobs(6, False, 32 * gb) == 6
+    assert install.default_jobs(16, False, 8 * gb) == 4
+    assert install.default_jobs(1, False, 32 * gb) == 1
+    assert install.default_jobs(None, False, 32 * gb) == 1
+    assert install.default_jobs(16, False, 1 * gb) == 1
+    assert install.default_jobs(16, True, 32 * gb) == 2
 
 
 def test_count_cars_merges_lists_and_names():

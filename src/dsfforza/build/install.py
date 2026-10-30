@@ -308,10 +308,12 @@ class Probes:
 # --- selection, jobs, reuse ---------------------------------------------------------------------
 
 
-def default_jobs(cpus: int | None, gentle_on: bool) -> int:
-    """Half the logical CPUs, 1..8 (each worker needs ~1.5 GB of RAM; port_batch waits for
-    it), and at most gentle.CORES while out/gentle is there."""
-    jobs = max(1, min(8, (cpus or 2) // 2))
+def default_jobs(cpus: int | None, gentle_on: bool, ram: int | None = None) -> int:
+    """port_batch.default_jobs (a worker per logical CPU, 1.9 GB of RAM each), and at most
+    gentle.CORES while out/gentle is there."""
+    from dsfforza.build import port_batch
+
+    jobs = port_batch.default_jobs(cpus or 1, ram)
     return min(jobs, gentle.CORES) if gentle_on else jobs
 
 
@@ -1803,8 +1805,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--jobs",
         type=int,
         default=None,
-        help=f"cars converted at a time (default: half the CPUs, at most 8: {default_jobs(os.cpu_count(), False)} "
-        "here; out/gentle caps it at 2)",
+        help="cars converted at a time (default: one per logical CPU, as many as 1.9 GB of RAM each fits: "
+        f"{default_jobs(os.cpu_count(), False)} here; out/gentle caps it at 2)",
     )
     build.add_argument("--out", type=Path, default=DEFAULT_OUT, help="the build folder (default: out/build)")
     build.add_argument("--reuse", type=Path, action="append", metavar="DIR", help="an earlier build to reuse cars from")

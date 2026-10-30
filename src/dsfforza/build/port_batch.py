@@ -15,7 +15,7 @@ Selection (combinable; a list keeps its order, filters keep roster order):
     --exclude NAME ...          --diverse N (round-robin over body classes, N cars)  --max N
 
 Every car is built by port_car.build_car in its own worker process (Below
-Normal priority, at most --jobs at a time, a new one only while 1.5 GB of RAM
+Normal priority, at most --jobs at a time, a new one only while 1.9 GB of RAM
 is free), which writes the car's three VEHC entries to work/<media>.chnk and
 a report. The merge then registers them into one copy of the vanilla archive
 (SSLP/VSCT records), checks the root entry limit (--root-limit, default 1100:
@@ -92,7 +92,12 @@ from dsfforza.game import game_paths
 GARAGE_IDS = range(1, 62)  # garage loop covers 0..303; 0 is left alone, vanilla starts at 62
 HIGH_FIRST_ID = 304
 WORKER_TIMEOUT = 45 * 60
-FREE_RAM_FOR_WORKER = 1536 << 20
+# Most conversion workers peak under 1.8 GB, the slowest supercars (KOE_CCXR_09 and the like) at
+# about 3.1 GB; a garage-picture render process at about 1.6 GB (it holds the archive's tree, 573
+# cars). Peaks of the job objects, 32- and 30-car builds, 2026-10-30.
+WORKER_RAM = 1900 << 20
+RENDER_RAM = 1700 << 20
+FREE_RAM_FOR_WORKER = WORKER_RAM
 BELOW_NORMAL = 0x00004000
 DEFAULT_PORT_OPTIONS = "--mdxn-limit 0x2C0000 --damage"
 
@@ -115,6 +120,34 @@ def set_game_env(dsf: Path) -> None:
 
 
 def free_ram() -> int | None:
+    """Bytes of RAM free now (None outside Windows)."""
+    return _memory_status("avail")
+
+
+def total_ram() -> int | None:
+    """Bytes of RAM in the PC (None outside Windows)."""
+    return _memory_status("total")
+
+
+def default_jobs(cpus: int | None = None, ram: int | None = None) -> int:
+    """Worker processes: one per logical CPU, as many as WORKER_RAM each fits in the PC's
+    RAM. More than one per core still helps: 32 cars converted in 374 s with 8 workers,
+    345 s with 12 and 323 s with 16 on an 8-core, 16-thread PC (2026-10-30). A new worker
+    also waits for FREE_RAM_FOR_WORKER, so other programs' memory is left alone."""
+    cpus = cpus if cpus is not None else os.cpu_count()
+    ram = ram if ram is not None else total_ram()
+    jobs = max(1, cpus or 2)
+    return max(1, min(jobs, ram // WORKER_RAM)) if ram else jobs
+
+
+def render_jobs(jobs: int, free: int | None = None) -> int:
+    """Garage-picture render processes for `jobs`: at most as many as RENDER_RAM each fits in
+    the RAM free when the gui step starts."""
+    free = free if free is not None else free_ram()
+    return max(1, min(jobs, free // RENDER_RAM)) if free else max(1, jobs)
+
+
+def _memory_status(field: str) -> int | None:
     if os.name != "nt":
         return None
 
@@ -135,7 +168,7 @@ def free_ram() -> int | None:
     status.length = ctypes.sizeof(MemoryStatus)
     if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
         return None
-    return status.avail
+    return getattr(status, field)
 
 
 def lower_priority() -> None:
@@ -1768,7 +1801,7 @@ def finish(
                 # The same CHNK reader limit: with dsfforza.asi [archive] gui.sp gets one
                 # SPOI per picture too, not shared SPOIs past 177 (research/gui-assets.md).
                 root_limit=getattr(args, "root_limit", None) or ENTRY_LIMIT,
-                jobs=max(1, args.jobs),
+                jobs=render_jobs(args.jobs),
                 # The disc images by title (logos, names): any file names, FH1 not needed.
                 isos=gui_isos(args),
                 cache=pack.picture_cache() if pack is not None else None,
@@ -2073,8 +2106,9 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument(
                 "--jobs",
                 type=int,
-                default=max(1, min(6, (os.cpu_count() or 2) // 2)),
-                help="worker processes (default: half the logical CPUs, at most 6)",
+                default=default_jobs(),
+                help="worker processes (default: one per logical CPU, as many as 1.9 GB each fits in the RAM: "
+                f"{default_jobs()} here; out/gentle caps it at 2)",
             )
             p.add_argument("--port", help=f"port_car options for every car (default: {DEFAULT_PORT_OPTIONS!r})")
             p.add_argument("--gui", action="store_true", help="also build gui.sp, Fonts.fchunk and hud.lua")
