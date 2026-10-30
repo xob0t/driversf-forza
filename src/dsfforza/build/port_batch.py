@@ -222,9 +222,46 @@ def describe_cars(
     hosts = hs.survey(dsf)
     memo = hs.door_memo()
     try:
+        _fill_doors(cars, requests, dbs, cache, memo)
         return _describe(cars, requests, dbs, cache, hosts, memo)
     finally:
         memo.save()
+
+
+DOOR_FILL_MIN = 16  # door counts to measure before they are worth a process pool
+
+
+def _fill_doors(cars: dict, requests, dbs: dict[str, Path], cache: Path | None, memo) -> None:
+    """Measure the door counts _describe will ask the memo for and it doesn't hold (a
+    full roster's take minutes one after the other: after any change to the carbin
+    reader or the door rule) in a process pool first (fingerprint.Memo.fill), so the
+    loop finds them. The keys and bodies are forza_info's."""
+    from dsfforza.build import host_select as hs
+    from dsfforza.build.port_car import CarRequest, car_folder, pick_source
+
+    if cache is None:
+        return
+    tasks = []
+    for media, game in requests:
+        car = cars.get(media.lower())
+        if car is None:
+            continue
+        try:
+            rcar, source = pick_source(cars, CarRequest(car.name, game))
+        except SystemExit:
+            continue
+        folder = car_folder(cache, source.game, rcar.name)
+        if not folder.is_dir():
+            continue
+        db = dbs.get(source.game)
+        body = hs.forza_info(rcar.name, {source.game: db} if db else None, source.game).body
+        if body in hs.DOOR_RULE_BODIES:
+            key = hs.door_key(folder, rcar.name, body)
+            tasks.append((key, "dsfforza.build.host_select:_carbin_doors", (folder, rcar.name, body)))
+    tasks = [t for t in {t[0]: t for t in tasks}.values() if not memo.valid(t[0])]
+    if len(tasks) >= DOOR_FILL_MIN:
+        print(f"measuring {len(tasks)} cars' door counts (their carbins or the door code changed)")
+        memo.fill(tasks, gentle.jobs(os.cpu_count() or 2))
 
 
 def _describe(cars: dict, requests, dbs: dict[str, Path], cache: Path | None, hosts: list, memo) -> list[Pick]:
