@@ -634,14 +634,15 @@ def split_trim_art(sections, atlases: fm.AtlasCache, lods=None, settings: dict |
                     kind = GLOSS if is_opaque(texels) else None
                 else:
                     kind = classify_texels(sub.material, texels, scale)
-                    if kind is None and glossy and is_opaque(texels):
-                        kind = GLOSS
                 classes.append(kind)
             if m.kind != "swatch":
                 whole_charts(classes, pool, tris, every, offsets, sub.material, scale, m.family)
             for k, tri in enumerate(tris):
                 kind = classes[k]
                 texels = every[offsets[k] : offsets[k + 1]]
+                # The gloss fallback after whole_charts: a glossy picture goes whole too.
+                if kind is None and glossy and m.kind != "swatch" and is_opaque(texels):
+                    kind = GLOSS
                 if kind is None or (m.family != fm.NODAMAGE and kind in (DETAIL, GREY)):
                     continue
                 entry = found.setdefault((si, ui), (m.family, scale, [], [], {}))
