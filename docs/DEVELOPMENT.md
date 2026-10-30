@@ -97,7 +97,7 @@ uv run dsff port_car --dsf "$env:DSF_GAME_DIR\Install\dngvehicles.sp" --out out/
 ## Tests
 
 ```powershell
-uv run python -m tests                 # ruff check, ruff format --check, offline tests
+uv run python -m tests                 # ruff check, ruff format --check, ruff ratchet, offline tests
 uv run python -m tests --ci            # without tests/ci-skip.txt (they need game files)
 .\tools\asi\build.ps1 -Test           # build the plugin and patch-test it
 ```

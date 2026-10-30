@@ -1,5 +1,6 @@
-"""Run every Python test file of the repo (tests/test_*.py) after `ruff check` and
-`ruff format --check`. From the repo root:
+"""Run every Python test file of the repo (tests/test_*.py) after `ruff check`,
+`ruff format --check` and the stricter rules' ratchet (tests/ruff_ratchet.py). From the repo
+root:
 
     uv run python -m tests                 # lint, format check, all tests
     uv run python -m tests formats asi     # only files whose name contains a word
@@ -22,6 +23,8 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+
+from tests import ruff_ratchet
 
 REPO = Path(__file__).resolve().parents[1]
 TEST_DIR = REPO / "tests"
@@ -80,7 +83,8 @@ def load(path: Path) -> unittest.TestSuite:
 
 
 def lint() -> bool:
-    """ruff check + ruff format --check over the repo (config in pyproject.toml)."""
+    """ruff check + ruff format --check over the repo (config in pyproject.toml), then the
+    stricter rules' ratchet (tests/ruff_ratchet.py)."""
     if importlib.util.find_spec("ruff") is None:
         print("ruff not found (uv sync installs the dev group); lint skipped")
         return True
@@ -88,7 +92,8 @@ def lint() -> bool:
     for args in (["check"], ["format", "--check"]):
         print(f"ruff {' '.join(args)}", flush=True)
         ok &= subprocess.run([sys.executable, "-m", "ruff", *args], cwd=REPO, check=False).returncode == 0
-    return ok
+    print("ruff ratchet", flush=True)
+    return ruff_ratchet.check() and ok
 
 
 def main(argv: list[str]) -> int:
