@@ -79,7 +79,7 @@ def test_chnk_read_root_reads_a_file_once() -> None:
             first = chnk.read_root(one)
             assert one.tell() == 5 and chnk.read_root(two) is first  # the same file: read once
             assert [e.tag for e in first.entries] == [e.tag for e in chnk.read_chunk(two, 0).entries]
-        path.write_bytes(archive(b"abcdefgh"))  # another size: read again
+        path.write_bytes(archive(b"x" * 300))  # another size (past the chunk padding): read again
         with path.open("rb") as stream:
             assert chnk.read_root(stream) is not first
         assert chnk.read_root(io.BytesIO(archive(b"abc"))) is not chnk.read_root(io.BytesIO(archive(b"abc")))
