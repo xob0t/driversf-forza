@@ -751,6 +751,15 @@ Desanne), 1 (Peugeot 205 T16) and 2 (Nissan 370Z), `-Views
   until `zapcontroller.getZapLevel()` is ≤ 1, or 120 ticks pass, then spawns.
   The level is only logged every 4 ticks and the last logged value was 3, so
   which condition fired isn't recorded; either way the spawn and zap worked.
+  Since 2026-10-30 (issue #305) the first car also waits for the harness's
+  go: `run-test.ps1` writes `dsfforza\go.lua` after its last Up press, and
+  `clonetest.lua` (config `wait_go`) spawns only then, or after 240 ticks
+  without it. Before, the probe reached level 1 during the Up presses, so
+  the first car's chase view and `-Views` were over before the first
+  screenshot and the last presses drove it. In runs `vm2-20261030-043943`,
+  `vm2-20261030-044307` and `vm1-20261030-043919` the go came 93 to 97 ticks
+  into `wait_level`, and the first car (266) got its chase, `rear`,
+  `front`, `nose+night` and cockpit shots.
 - **Placement:** `zapcontroller.ZapCameraGetTargetPos()` (global table
   `zapcontroller`) gives the world position under the Shift cursor.
   `GameVehicleResource.create{SnapToTerrain = true, Position = ...}` puts the
