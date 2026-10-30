@@ -24,6 +24,7 @@ reusable only when every recorded input and unit is unchanged.
 from __future__ import annotations
 
 import ast
+import functools
 import hashlib
 import json
 import os
@@ -36,6 +37,9 @@ FORMAT = 1
 BIG = 64 << 20  # files above this get a partial digest
 EDGE = 4 << 20
 PACKAGE = Path(dsfforza.__file__).resolve().parent
+# module_units of every source text met, by its SHA-256 (CodeUnits): a worker would parse
+# some 50 modules again for each car's fingerprint. Not an input of any fingerprint.
+UNITS_CACHE = dsfforza.REPO / "out" / "cache" / "code-units"
 MODULE_UNIT = "<module>"
 TOOL_NAME = "dsfforza-fingerprint"  # the sys.monitoring tool a Recorder registers
 
@@ -165,6 +169,7 @@ def module_units(source: str) -> dict[str, str]:
     return out
 
 
+@functools.cache  # a car's code objects come from some 60 files; resolve() is slow on Windows
 def module_name(path: str) -> str | None:
     """dsfforza.<group>.<module> for a source file of the package, else None."""
     try:
@@ -198,10 +203,30 @@ class CodeUnits:
             path = PACKAGE.joinpath(*module.split(".")[1:])
             source = path / "__init__.py" if path.is_dir() else path.with_suffix(".py")
             try:
-                self._units[module] = module_units(source.read_text(encoding="utf-8"))
+                self._units[module] = cached_module_units(source.read_text(encoding="utf-8"))
             except (OSError, SyntaxError):
                 self._units[module] = None
         return self._units[module]
+
+
+def cached_module_units(source: str) -> dict[str, str]:
+    """module_units, kept in UNITS_CACHE by the source text's SHA-256 (and the Python
+    version, whose ast.dump the digests come from)."""
+    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    path = UNITS_CACHE / f"{FORMAT}-py{sys.version_info[0]}{sys.version_info[1]}-{digest}.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    units = module_units(source)
+    temp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp.write_text(json.dumps(units), encoding="utf-8")
+        temp.replace(path)
+    except OSError:  # another process wrote it meanwhile, or no room: the units are still right
+        temp.unlink(missing_ok=True)
+    return units
 
 
 def package_hashes() -> dict[str, str]:
@@ -236,7 +261,11 @@ def combine(a: dict, b: dict) -> dict:
 # --- recording in a worker ----------------------------------------------------------------
 
 _SKIP_PREFIXES = tuple(
-    sorted({norm(p) for p in (sys.prefix, sys.base_prefix, sys.exec_prefix, PACKAGE) if p}, key=len, reverse=True)
+    sorted(
+        {norm(p) for p in (sys.prefix, sys.base_prefix, sys.exec_prefix, PACKAGE, UNITS_CACHE) if p},
+        key=len,
+        reverse=True,
+    )
 )
 
 
