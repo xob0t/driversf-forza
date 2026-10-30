@@ -686,6 +686,7 @@ def worker(job_path: Path) -> int:
             names = {s: entries[i].name for s, i, k in clone_vehicle.sslp_records(stream, entries) if k == 0}
             if job.get("sound_dir"):
                 args.forza_sound_dir = Path(job["sound_dir"])
+            args.probe_attempts = job.get("probe_attempts")
             clones, built = port_car.convert_car(
                 stream, entries, prep, job["spool_id"], args, nonr_limit, mdxn_max, names, isos, log
             )
@@ -909,6 +910,46 @@ def longest_first(jobs: list[dict], cache: Path | None = None) -> list[dict]:
         return list(jobs)
     median = known[len(known) // 2]
     return sorted(jobs, key=lambda j: -seconds.get(_car_key(j), median))  # stable: list order among equals
+
+
+ATTEMPTS_CACHE = REPO / "out" / "cache" / "car-attempts.json"
+
+
+def remembered_attempts(job: dict, cache: Path | None = None) -> int | None:
+    """How many conversion attempts the job's car took in an earlier build (remember_attempts),
+    or None: port_car.build_car converts the attempts before that one's full entry alone."""
+    try:
+        return json.loads((cache or ATTEMPTS_CACHE).read_text(encoding="utf-8")).get(_car_key(job))
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def remember_attempts(reports, cache: Path | None = None) -> None:
+    """Keep how many attempts each built car took (port_car.build_car's size retries), for
+    the cars whose retries were all of the full entry (a later build's size checks only
+    look at it); forget the rest. Of 573 cars, KOE_CCXR_09 retries (4 attempts)."""
+    changes = {}
+    for r in reports:
+        if not (r.get("ok") and r.get("game")):
+            continue
+        attempts = (r.get("entry") or {}).get("attempts") or []
+        retried = len(attempts) > 1 and all(set(a.get("problems", {})) <= {"0"} for a in attempts)
+        changes[_car_key(r)] = len(attempts) if retried else None
+    path = cache or ATTEMPTS_CACHE
+    try:
+        known = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        known = {}
+    updated = {k: v for k, v in {**known, **changes}.items() if v}
+    if updated == known:
+        return
+    from dsfforza.build.port_car import write_atomic
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_atomic(path, json.dumps(dict(sorted(updated.items())), indent=0).encode())
+    except OSError as error:  # only how a later build converts it depends on it, not what
+        print(f"note: {path.name} not written: {error}")
 
 
 def remember_seconds(reports, cache: Path | None = None) -> None:
@@ -1670,8 +1711,11 @@ def cmd_build(args) -> None:
         jobs=args.jobs,
         gentle=gentle.enabled(),
     )
+    for job in todo:
+        job["probe_attempts"] = remembered_attempts(job)
     converted = run_workers(longest_first(todo), work, args.jobs, progress=progress)
     remember_seconds(converted.values())
+    remember_attempts(converted.values())
     results = {**reused, **converted}
     timings["convert"] = round(time.time() - t, 1)
     if reuse is not None:

@@ -782,8 +782,17 @@ def build_car(
     three VEHC entries (not yet registered) and a report. forza_sound (an
     engine_sound.Plan from forza_sound_plan) replaces the clone's engine sound.
     same_vehicle (host_select.same_vehicle): why the host is the Forza car's own
-    vehicle; its interior then stays when the Forza cockpit is a placeholder."""
+    vehicle; its interior then stays when the Forza cockpit is a placeholder.
+
+    args.probe_attempts (port_batch: how many attempts the car took last time, kept only
+    when only its full entry was ever over): the attempts before that one convert the full
+    entry alone (forza2dsf full_only: byte for byte the whole conversion's full entry,
+    without the interior and exterior work) and check it; the decisions are the same, the
+    interior and exterior being under their limits at those attempts as they were then. The
+    attempt where the full entry fits (the remembered one or earlier) is converted whole, and
+    the loop goes on as before if that one doesn't fit."""
     available = {sub.lod for s in car.body for sub in s.subsections if sub.lod > 0}
+    probes = max(0, (getattr(args, "probe_attempts", None) or 1) - 1)
     full_ladder = [args.lods] if args.lods else list(FULL_LADDER)
     ext_ladder = [args.exterior_lod] if args.exterior_lod else list(EXTERIOR_LADDER)
     fi = ei = 0
@@ -791,6 +800,7 @@ def build_car(
     use_cockpit = not args.no_cockpit
     use_rotors = not getattr(args, "no_brake_rotors", False)
     while True:
+        probe = len(attempts) < probes  # the full entry alone (see above)
         lods = clamp_lods(full_ladder[fi], available)
         shadow = clamp_lods(f"1:{SHADOW_LOD}", available)[1]
         exterior_lod = clamp_lods(f"2:{ext_ladder[ei]}", available)[2]
@@ -820,6 +830,7 @@ def build_car(
             wheel_blur=not getattr(args, "no_wheel_blur", False),
             brake_rotors=use_rotors,
             blur_materials=dsf_materials.shared_macos(stream, entries, dsf_materials.SPOKE_DISC_MATERIALS),
+            full_only=probe,
         )
         if args.damage:  # src/dsfforza/convert/damage.py
             from dsfforza.convert import damage
@@ -835,7 +846,13 @@ def build_car(
         forza_report = dict(forza_sound_report or {"ok": False, "reason": "disabled (--no-forza-sound)"})
         if forza_sound is not None:
             forza_report = fit_forza_sound(stream, clones[0], forza_sound, nonr_limit, mdxn_max, log)
-        checks = {kind: check_entry(clones[kind], kind, nonr_limit, mdxn_max) for kind in (0, 1, 2)}
+        checks = {
+            kind: check_entry(clones[kind], kind, nonr_limit, mdxn_max) for kind in ((0,) if probe else (0, 1, 2))
+        }
+        if probe and not checks[0][1]:  # the full entry fits: convert this attempt whole
+            log(f"{car.name}: the full entry fits at LODs {lods} (size check); converting the car")
+            probes = len(attempts)
+            continue
         attempts.append(
             {
                 "lods": {str(m): v for m, v in lods.items()},
@@ -846,7 +863,8 @@ def build_car(
         )
         for kind, (sizes, problems) in checks.items():
             log(
-                f"  kind {kind}: "
+                ("  (size check) " if probe else "")
+                + f"  kind {kind}: "
                 + ", ".join(f"{t} {v:#x}" for t, v in sizes.items())
                 + (f"  OVER: {'; '.join(problems)}" if problems else "")
             )
