@@ -66,6 +66,28 @@ def test_a_worker_that_dies_is_a_failed_car():
         assert not (work / "DEAD.first-try.log").exists()  # no option fallback was tried
 
 
+def test_longest_cars_start_first():
+    with tempfile.TemporaryDirectory() as tmp:
+        cache = Path(tmp) / "car-seconds.json"
+        jobs = [{"media": m, "game": "FH1"} for m in ("A", "B", "C", "D")]
+        assert port_batch.longest_first(jobs, cache) == jobs  # nothing known: list order
+        port_batch.remember_seconds(
+            [
+                {"media": "B", "game": "FH1", "ok": True, "seconds": 300.0},
+                {"media": "C", "game": "FH1", "ok": True, "seconds": 50.0},
+                {"media": "D", "game": "FH1", "ok": True, "seconds": 100.0},
+                {"media": "A", "game": "FH1", "ok": False, "seconds": 999.0},  # failed: not kept
+            ],
+            cache,
+        )
+        assert json.loads(cache.read_text()) == {"b@fh1": 300.0, "c@fh1": 50.0, "d@fh1": 100.0}
+        # A, never built, counts as the median (100): after B, before C, beside D in list order
+        assert [j["media"] for j in port_batch.longest_first(jobs, cache)] == ["B", "A", "D", "C"]
+        port_batch.remember_seconds([{"media": "C", "game": "FH1", "ok": True, "seconds": 400.0}], cache)
+        # the median is now 300: A ties with B and keeps its place in the list
+        assert [j["media"] for j in port_batch.longest_first(jobs, cache)] == ["C", "A", "B", "D"]
+
+
 def test_merge_leaves_out_cars_with_uid_clashes():
     """A UID clash fails the clashing cars, not the batch: the rest are merged again."""
     calls = []
