@@ -230,6 +230,31 @@ def test_fit_camera_finds_the_camera():
     assert abs(cam.yaw - truth.yaw) <= 2 and abs(cam.pitch - truth.pitch) <= 2
 
 
+def test_garage_pictures_use_one_blas_thread():
+    """build() and its render processes run numpy's BLAS on one thread (issue #326)."""
+    from threadpoolctl import threadpool_info
+
+    from dsfforza.game import gui_assets as g
+
+    def blas_threads():
+        return {i["num_threads"] for i in threadpool_info() if i["user_api"] == "blas"}
+
+    before = blas_threads()
+    limits = g.one_blas_thread()
+    try:
+        assert blas_threads() == {1}
+    finally:
+        limits.restore_original_limits()
+    assert blas_threads() == before
+    g._start_render_process(False)  # a render process's initializer: limited for good
+    try:
+        assert blas_threads() == {1}
+    finally:
+        from threadpoolctl import threadpool_limits
+
+        threadpool_limits(limits=max(before), user_api="blas")
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):
