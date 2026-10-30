@@ -6,6 +6,8 @@ roof1) and a skinned section tail (the wheel archives' carbins).
 
 from __future__ import annotations
 
+import math
+import random
 import struct
 
 from dsfforza.formats import carbin
@@ -140,6 +142,97 @@ def test_load_car_no_wheel():
         assert "no wheel section" in str(error)
     else:
         raise AssertionError("a car without any wheel must fail")
+
+
+# --- carbin._decode_pool ----------------------------------------------------------------
+
+
+def _decode_pool_reference(raw: bytes, count: int, size: int, section: carbin.Section) -> list:
+    """The original per-vertex loop."""
+    import struct
+
+    def shortn(v):
+        return v / 32767.0
+
+    def quat_row0(x, y, z, w):
+        if w < 0:
+            x, y, z, w = -x, -y, -z, -w
+        n = (1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y))
+        length = math.sqrt(sum(c * c for c in n)) or 1.0
+        return (n[0] / length, n[1] / length, n[2] / length)
+
+    if count == 0:
+        return []
+    spos, rest = [], []
+    for i in range(count):
+        base = i * size
+        x, y, z, s, u0, v0, u1, v1, qx, qy, qz, qw = struct.unpack_from(">4h4H4h", raw, base)
+        scale = shortn(s)
+        spos.append((shortn(x) * scale, shortn(y) * scale, shortn(z) * scale))
+        rest.append(
+            (
+                (u0 / 65535, v0 / 65535),
+                (u1 / 65535, v1 / 65535),
+                quat_row0(shortn(qx), shortn(qy), shortn(qz), shortn(qw)),
+                raw[base + 24 : base + size],
+            )
+        )
+    lo = [min(p[a] for p in spos) for a in range(3)]
+    hi = [max(p[a] for p in spos) for a in range(3)]
+    vertices = []
+    for p, (uv0, uv1, normal, extra) in zip(spos, rest):
+        world = []
+        for a in range(3):
+            span = hi[a] - lo[a]
+            t = (p[a] - lo[a]) / span if abs(span) > 1e-12 else 0.0
+            world.append(
+                section.target_min[a] + t * (section.target_max[a] - section.target_min[a]) + section.offset[a]
+            )
+        vertices.append(carbin.Vertex(tuple(world), uv0, uv1, normal, extra))
+    return vertices
+
+
+def _bits(vertices: list) -> list:
+    """Every float as its bit pattern (0.0 and -0.0 differ), and the extra bytes."""
+    import struct
+
+    out = []
+    for v in vertices:
+        floats = (*v.position, *v.uv0, *v.uv1, *v.normal)
+        assert all(type(f) is float for f in floats)
+        out.append((struct.pack(f"<{len(floats)}d", *floats), v.extra))
+    return out
+
+
+def test_decode_pool_matches_the_vertex_loop():
+    import struct
+
+    rng = random.Random(5)
+    picks = (0, 1, -1, 32767, -32767, -32768, 16384, -16384)
+
+    def short(spread: int) -> int:
+        return rng.choice(picks) if rng.random() < 0.3 else rng.randint(-spread, spread)
+
+    for trial in range(60):
+        size = rng.choice(carbin.VERTEX_SIZES)
+        count = rng.choice((1, 2, 3, 17, 400))
+        flat = rng.random() < 0.2  # an axis with a single value (span 0)
+        raw = b""
+        for _ in range(count):
+            x, y, z = (0 if flat and a == 1 else short(rng.choice((3, 32768))) for a in range(3))
+            s = rng.choice((32767, -32767, 0, 1, rng.randint(-32768, 32767)))
+            uv = [rng.choice((0, 65535, rng.randint(0, 65535))) for _ in range(4)]
+            quat = [short(32768) for _ in range(4)]
+            if rng.random() < 0.1:
+                quat = [0, 0, 0, 0]
+            raw += struct.pack(">4h4H4h", x, y, z, s, *uv, *quat) + rng.randbytes(size - 24)
+        bounds = [rng.uniform(-3, 3) for _ in range(6)] if trial % 5 else [0.0, -0.0, 1.0, -0.0, 0.0, 2.0]
+        section = carbin.Section(
+            "body", tuple(rng.uniform(-1, 1) for _ in range(3)), tuple(bounds[:3]), tuple(bounds[3:])
+        )
+        assert _bits(carbin._decode_pool(raw, count, size, section)) == _bits(
+            _decode_pool_reference(raw, count, size, section)
+        ), trial
 
 
 if __name__ == "__main__":

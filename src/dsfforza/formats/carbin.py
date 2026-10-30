@@ -141,50 +141,62 @@ class _Reader:
         return struct.unpack(f">{n}f", self.take(4 * n))
 
 
-def _shortn(v: int) -> float:
-    return v / 32767.0
-
-
-def _quat_row0(x: float, y: float, z: float, w: float) -> tuple[float, float, float]:
-    if w < 0:
-        x, y, z, w = -x, -y, -z, -w
-    n = (1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y))
-    length = math.sqrt(sum(c * c for c in n)) or 1.0
-    return (n[0] / length, n[1] / length, n[2] / length)
-
-
 def _decode_pool(raw: bytes, count: int, size: int, section: Section) -> list[Vertex]:
+    """The pool's vertices, decoded with numpy over the whole pool. Every value is the
+    one the per-vertex loop gave (tests/test_speed.py keeps it as the reference): the
+    same IEEE double operations in the same order, sum()'s Neumaier summation for the
+    normal's length, and min()/max()'s first-of-equals for the bounds (0.0 vs -0.0)."""
     if count == 0:
         return []
     if size not in VERTEX_SIZES:
         raise CarbinError(f"{section.name}: unsupported vertex size {size}")
-    spos, rest = [], []
-    for i in range(count):
-        base = i * size
-        x, y, z, s, u0, v0, u1, v1, qx, qy, qz, qw = struct.unpack_from(">4h4H4h", raw, base)
-        scale = _shortn(s)
-        spos.append((_shortn(x) * scale, _shortn(y) * scale, _shortn(z) * scale))
-        rest.append(
-            (
-                (u0 / 65535, v0 / 65535),
-                (u1 / 65535, v1 / 65535),
-                _quat_row0(_shortn(qx), _shortn(qy), _shortn(qz), _shortn(qw)),
-                raw[base + 24 : base + size],
-            )
-        )
-    lo = [min(p[a] for p in spos) for a in range(3)]
-    hi = [max(p[a] for p in spos) for a in range(3)]
-    vertices = []
-    for p, (uv0, uv1, normal, extra) in zip(spos, rest):
-        world = []
-        for a in range(3):
-            span = hi[a] - lo[a]
-            t = (p[a] - lo[a]) / span if abs(span) > 1e-12 else 0.0
-            world.append(
-                section.target_min[a] + t * (section.target_max[a] - section.target_min[a]) + section.offset[a]
-            )
-        vertices.append(Vertex(tuple(world), uv0, uv1, normal, extra))
-    return vertices
+    import numpy as np
+
+    if len(raw) < count * size:
+        raise struct.error(f"unpack_from requires a buffer of at least {count * size} bytes")
+    rows = np.frombuffer(raw, np.uint8, count * size).reshape(count, size)
+    shorts = rows[:, :24].copy().view(">i2").astype(np.float64)  # x y z s, (uv as int16), quaternion
+    words = rows[:, 8:16].copy().view(">u2").astype(np.float64)  # uv0, uv1
+    scale = shorts[:, 3] / 32767.0
+    spos = [shorts[:, a] / 32767.0 * scale for a in range(3)]
+    uv = words / 65535
+    qx, qy, qz, qw = (shorts[:, 8 + k] / 32767.0 for k in range(4))
+    flip = qw < 0
+    qx, qy, qz, qw = (np.where(flip, -q, q) for q in (qx, qy, qz, qw))
+    n0 = 1 - 2 * (qy * qy + qz * qz)
+    n1 = 2 * (qx * qy + qw * qz)
+    n2 = 2 * (qx * qz - qw * qy)
+    length = np.sqrt(_neumaier3(n0 * n0, n1 * n1, n2 * n2))
+    length = np.where(length == 0.0, 1.0, length)  # math.sqrt(...) or 1.0
+    normals = np.stack([n0 / length, n1 / length, n2 / length], axis=1).tolist()
+    world = []
+    for a in range(3):
+        values = spos[a]
+        lo = values[np.flatnonzero(values == values.min())[0]]  # min(): the first of equal values
+        hi = values[np.flatnonzero(values == values.max())[0]]
+        span = hi - lo
+        t = (values - lo) / span if abs(span) > 1e-12 else np.zeros(count)
+        tmin, tmax = section.target_min[a], section.target_max[a]
+        world.append(tmin + t * (tmax - tmin) + section.offset[a])
+    positions = np.stack(world, axis=1).tolist()
+    uvs = uv.tolist()
+    return [
+        Vertex(tuple(p), (u[0], u[1]), (u[2], u[3]), tuple(n), raw[i * size + 24 : (i + 1) * size])
+        for i, (p, u, n) in enumerate(zip(positions, uvs, normals))
+    ]
+
+
+def _neumaier3(a, b, c):
+    """sum((a, b, c)) element-wise as Python (3.12+) adds floats: Neumaier's compensated
+    sum, the compensation added at the end when it is non-zero and finite."""
+    import numpy as np
+
+    total, comp = a, np.zeros_like(a)
+    for x in (b, c):
+        t = total + x
+        comp = comp + np.where(np.abs(total) >= np.abs(x), (total - t) + x, (x - t) + total)
+        total = t
+    return np.where((comp != 0) & np.isfinite(comp), total + comp, total)
 
 
 # An empty section (no vertices, e.g. FIA_595_68's roof1) has the bounds of an empty
