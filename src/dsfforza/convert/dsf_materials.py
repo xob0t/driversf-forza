@@ -1368,9 +1368,12 @@ class Texturing:
                     if technique in DETAIL_TECHNIQUES:
                         detail_ids.add(id(sub))
                     pool = section.vertices_for(sub)
-                    for k, tri in enumerate(sub.triangles()):
-                        uvs = triangle_uv(m, [pool[i].uv0 for i in tri])
-                        if alpha_tested and fm.triangle_alpha_cut(self.atlases.get(m.family), uvs):
+                    sub_tris = sub.triangles()
+                    sub_uvs = [triangle_uv(m, [pool[i].uv0 for i in tri]) for tri in sub_tris]
+                    cut = fm.triangles_alpha_cut(self.atlases.get(m.family), sub_uvs) if alpha_tested else None
+                    for k, tri in enumerate(sub_tris):
+                        uvs = sub_uvs[k]
+                        if alpha_tested and cut[k]:
                             self.dropped.add((id(sub), k))
                             continue
                         tris[m.family].append(uvs)
