@@ -686,6 +686,15 @@ try {
             default { Add-LinkTree $dir.FullName $target $dir.Name.ToLower() }
         }
     }
+    # -Override files in folders the game doesn't have ('dlss5\dsf-dlss5-helper.exe=...', a mod's
+    # own subfolder): the folders are made in the run folder only.
+    $gameDirs = @(Get-ChildItem $GameDir -Directory | ForEach-Object { $_.Name.ToLower() })
+    foreach ($key in @($overrides.Keys | Where-Object { $_ -match '\\' -and ($_ -split '\\')[0] -notin $gameDirs })) {
+        $path = Join-Path $run $key
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+        New-FileLink $path $overrides[$key]
+        Note "new file $key <- $($overrides[$key])"
+    }
     Clear-ReadOnly $run
     $result.archiveSize = (Get-Item $Archive).Length
     Note 'run folder built'
@@ -1112,9 +1121,10 @@ catch {
     Note "error: $($result.error)"
 }
 finally {
-    foreach ($path in (Join-Path $RunPath 'Driver.log'), (Join-Path $RunPath 'dsf_enhanced.log')) {
-        if (Test-Path $path) { Copy-Item $path $RunDir }
-    }
+    # Every log the run wrote beside Driver.exe: Driver.log, dsf_enhanced.log and those of root
+    # files from -Override (ReShade.log, DXVK's Driver_d3d9.log; the game folder's own logs are not
+    # copied into the run folder).
+    Get-ChildItem -LiteralPath $RunPath -Filter *.log -File -ErrorAction SilentlyContinue | Copy-Item -Destination $RunDir
     if ($Asi) { Get-ChildItem (Join-Path $RunPath 'plugins') -Filter *.log -ErrorAction SilentlyContinue | Copy-Item -Destination $RunDir }
     # The guest's save folder (the host profile's copy, kept until the sandbox restarts): autosave.dat
     # and dsfforza.asi's side file dsfforza-garage.dat (research/asi.md).
