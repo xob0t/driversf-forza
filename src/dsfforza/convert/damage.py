@@ -1696,9 +1696,9 @@ def part_trim(tris, areas, comps, labels, span: dict, fallback) -> list:
 # The host's fields (host_field, Uv1Field.read) take 2 to 3 s a car and depend only on the
 # host's entries, which every car on that host clones. A clone differs from its host by the
 # UIDs renew_uids gives its resources (per car), and by the materials (MACO) the car's
-# texturing adds before the damage plan. So the cache key hashes only what host_setup reads
-# (MODL, the submodel, vertex and index buffer chunks, and per submodel whether its material
-# is the entry's own), with each entry-defined UID numbered by its first appearance there,
+# texturing adds before the damage plan (and a rear wheel part, split_rear_wheel). So the
+# cache key hashes only what host_setup reads (MODL part 0's LODs at its masks, their
+# submodels and buffers, and per submodel whether its material is the entry's own), with each entry-defined UID numbered by its first appearance there,
 # and the cached fields hold the material UIDs (the only UIDs in them) as those numbers,
 # put back to the car's on loading. Two clones with the same key read the same bytes up to
 # that numbering, so host_setup made the same fields for both. Files are written under a
@@ -1707,8 +1707,8 @@ def part_trim(tris, areas, comps, labels, span: dict, fallback) -> list:
 
 HOST_CACHE_ENV = "DSFF_DAMAGE_CACHE"  # a folder, or "off"; default out/cache/damage-host
 HOST_CACHE_VERSION = 1  # raise when what host_setup makes changes through code outside the files hashed
-HOST_CACHE_TAGS = {"VXHD", "VDCL", "VXDT", "IXHD", "IXDT", "SBBH"}  # the chunks load_mesh reads
-HOST_CACHE_HEADERS = {"VXHD", "IXHD", "SBBH"}  # of them, the ones holding UIDs
+HOST_CACHE_TAGS = {"VXHD", "VDCL", "VXDT", "IXHD", "IXDT"}  # the buffer chunks load_mesh reads
+HOST_CACHE_HEADERS = {"VXHD", "IXHD"}  # of them, the ones holding UIDs
 _HOST_CODE: dict = {}  # "digest": _host_code()
 
 
@@ -1754,7 +1754,10 @@ def _canonical(data: bytes, renewed: set, order: dict) -> bytes:
 
 def host_key(stream, entries) -> tuple[str, list]:
     """(cache key, the entries' own UIDs by number) of host_setup over `entries`
-    (full, exterior, interior; None for an absent one)."""
+    (full, exterior, interior; None for an absent one): per entry, MODL part 0's LODs at
+    the mask host_setup reads (4, 2, 64) with their submodels' SBBH (and whether each
+    material is the entry's own) and, on its first use, each buffer's chunks; nothing
+    else (another part the conversion added, materials it added) changes the key."""
     import hashlib
 
     from dsfforza.build import clone_vehicle as cv
@@ -1771,23 +1774,39 @@ def host_key(stream, entries) -> tuple[str, list]:
         h.update(tag + len(data).to_bytes(8, "little"))
         h.update(data)
 
-    for e in entries:
+    for e, mask in zip(entries, (4, 2, 64), strict=True):
         if e is None:
             put(b"-", b"")
             continue
         local = local_materials(stream, e)
-        put(b"MODL", _canonical(payload(stream, child(child(e, "NONR"), "MODL")), renewed, order))
+        sbbh, buffers = [], {}  # SBBH of each SBMC in DRSP order (load_mesh's); buffer chunks by UID
         for c in child(child(e, "MDXN"), "DRSP").children:
-            if c.tag not in ("VXCK", "IXCK", "SBMC"):
+            if c.tag == "SBMC":
+                sbbh.append(payload(stream, child(c, "SBBH")))
+            elif c.tag in ("VXCK", "IXCK"):
+                buffers.setdefault(payload(stream, child(c, "VXHD" if c.tag == "VXCK" else "IXHD"))[:8], c)
+        mesh = load_mesh(stream, e)
+        done = set()
+        for lod in mesh.parts[0].lods if mesh.parts else ():
+            if lod.mask != mask:
                 continue
-            put(c.tag.encode(), b"")
-            for k in c.children or ():
-                if k.tag not in HOST_CACHE_TAGS:
-                    continue
-                data = payload(stream, k)
-                if k.tag == "SBBH":
-                    put(b"local", b"1" if data[8:16] in local else b"0")
-                put(k.tag.encode(), _canonical(data, renewed, order) if k.tag in HOST_CACHE_HEADERS else data)
+            put(b"LOD", len(lod.submodels).to_bytes(4, "little"))
+            for n in lod.submodels:
+                sub = mesh.submodels[n]
+                put(b"local", b"1" if sub.material in local else b"0")
+                put(b"SBBH", _canonical(sbbh[n], renewed, order))
+                for uid in (sub.vertex_buffer, sub.index_buffer):
+                    if uid in done:
+                        continue
+                    done.add(uid)
+                    c = buffers.get(uid)
+                    for k in c.children if c is not None else ():
+                        if k.tag in HOST_CACHE_TAGS:
+                            data = payload(stream, k)
+                            put(
+                                k.tag.encode(),
+                                _canonical(data, renewed, order) if k.tag in HOST_CACHE_HEADERS else data,
+                            )
     return h.hexdigest(), list(order)
 
 
