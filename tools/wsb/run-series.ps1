@@ -60,6 +60,9 @@ param(
     [switch]$GlassLadder,         # probe damages each car in steps during its cockpit view (~21 s; glass crack states)
     [string]$Views,               # extra views after each chase view, ~6 s each: 'Bonnet,Bumper,left,right,front' (clonetest.lua)
     [int]$Palette = -1,           # paint palette entry of every probed car (clonetest.lua shaderParams[0]); -1: the game's pick
+    [switch]$Ui,                  # keep the game's UI (HUD, prompts, minimap) in the shots; by default the probe hides it
+                                  # (-MenuKeys keeps it too). Every probe shot gets a caption strip below the frame either way.
+    [string[]]$Labels,            # one per archive, for the shot captions (e.g. before,after); default the archive's path
     [switch]$LightsDriveOnly,     # with -Lights: only the day and dark drives (no setLights phases)
     [switch]$Lights,              # lamp phases per car, two shots each (dsfforza\lightstest.lua); allow ~120 s per car
     [switch]$Dyno,                # standing-start runs (dsfforza\dyno.lua); analyse with src/dsfforza/harness/dyno.py
@@ -95,6 +98,7 @@ $runTest = Join-Path $PSScriptRoot 'guest\run-test.ps1'
 $hostState = Join-Path $outputHost 'host-session'
 $pauseFlag = Join-Path $repo 'out\wsb-pause'
 if ($OnHost -and $Vm) { throw '-OnHost and -Vm exclude each other' }
+if ($Labels -and $Labels.Count -ne $Archives.Count) { throw "-Labels has $($Labels.Count) names for $($Archives.Count) archives" }
 
 # run-test.ps1 options with the same name here are passed on as given, so a new option needs
 # only its two param lines. Archive, Asi, Override and LuaFiles become guest paths (Get-GuestArgs);
@@ -226,6 +230,8 @@ function Get-GuestArgs([string]$archive) {
     # run-test.ps1's arguments for one archive, by name; run-series' own defaults always go.
     $values = [ordered]@{ Archive = (Get-SeenPath $archive); Hook = $true; Probe = $true
         ProbeIds = $ProbeIds; ZoomPresses = $ZoomPresses; ShotSeconds = $ShotSeconds; WaitSeconds = $WaitSeconds }
+    $index = [array]::IndexOf($Archives, $archive)
+    $values.ShotLabel = if ($Labels -and $index -ge 0 -and $index -lt $Labels.Count) { "$($Labels[$index]): $($archive.Trim())" } else { $archive.Trim() }
     foreach ($name in $passThrough) { if ($seriesArgs.ContainsKey($name)) { $values[$name] = $seriesArgs[$name] } }
     if ($Asi) { $values.Asi = Get-SeenPath $Asi }
     if ($Override) { $values.Override = Get-SeenPairs $Override }   # game files, repo-relative replacements
