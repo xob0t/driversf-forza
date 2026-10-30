@@ -1269,6 +1269,7 @@ class Texturing:
     # (id(sub), triangle index) -> (LOD, area in m2, outside the cabin) of atlas triangles (_floors)
     tri_area: dict = field(default_factory=dict)
     raised: dict = field(default_factory=dict)  # (family, region index) -> its floor's DSF texels per m
+    use_floors: bool = True  # plan() lays out without the floors while it judges the artwork budget
     wheel_paint: dict = field(default_factory=dict)  # rim technique -> PaintScale applied (_wheel_paint_scale)
     # The wheel's blur disc (WHEEL_BLUR_MAT): plan(wheel_blur=True) puts the picture in the atlas.
     wheel_blur_tint: tuple | None = None  # g_vec4WheelBlurColour RGB (wheel_blur_texels)
@@ -1397,6 +1398,10 @@ class Texturing:
                         pool = section.vertices_for(sub)
                         self.lamp_swatch_tris += [(sub.lod, [pool[i].position for i in t]) for t in sub.triangles()]
         art = {key for f in self.families for key in keys[f] if key[0] in art_subs}
+        # The artwork budget below is judged without the density floors (_floors): raised,
+        # an engine picture that is itself artwork would push the rest of the car's
+        # artwork flat (JAG_XJ220_93: 21 subsections).
+        self.use_floors = not art
         self._layout(tris, keys, tested, swatches, extra_solids)
         if art:
             # Trim artwork and detail (trim_art) may not cost the rest of the car much
@@ -1426,6 +1431,7 @@ class Texturing:
                 chosen = details
             else:
                 chosen = set(flat)
+            self.use_floors = True
             layout(chosen)
             for sid in chosen:
                 section, sub = art_subs[sid][:2]
@@ -1777,7 +1783,7 @@ class Texturing:
         the finest LOD planned, its source texels per metre on the car. Exterior atlases
         only (no classifier: the cockpit weights its own families)."""
         self.raised = {}
-        if self.classifier is not None:
+        if self.classifier is not None or not self.use_floors:
             return
         lods = [v[0] for v in self.tri_area.values()]
         if not lods:
