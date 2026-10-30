@@ -656,3 +656,16 @@ def test_rear_lamp_glow_takes_grey_tail_texels():
     assert out is not None and np.isfinite(out[:, :30]).all()
     assert np.percentile(out[:, :30], 95) > 100  # on vanilla's tail alpha, not at FM4's alpha 6
     assert out[:, 25:30].mean() > out[:, 5:10].mean()  # brighter texels first
+
+
+def test_fm4_order_puts_no_glow_techniques_last():
+    # FM4 glows a tail by its texels' colour (BrakeColor x L) and never its reflectors: within a
+    # planned lamp the grey reflector texels rank below the red tail graphics, however bright.
+    h, w = 4, 64
+    colour = np.zeros((h, w, 4), np.uint8)
+    colour[:, :20, :3] = (93, 12, 16)  # tail_light graphics
+    colour[:, 20:40, :3] = (139, 139, 139)  # reflector the plan lights with the tail
+    uvs = np.array(_quad_uv(0, 20, w) + _quad_uv(20, 40, w), float)
+    order = dm.fm4_order(colour, uvs, np.array([False, False, True, True]))
+    assert order[:, 5].min() > 0 and (order[:, 25] == 0).all()
+    assert dm.fm4_car(Path("out/cache/fm4/AST_V12Vantage_10")) and not dm.fm4_car(Path("out/cache/fh1/X"))

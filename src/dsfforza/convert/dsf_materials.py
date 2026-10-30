@@ -221,6 +221,31 @@ def fm4_car(car_dir) -> bool:
     return "fm4" in (p.lower() for p in Path(car_dir).parts)
 
 
+# FM4 techniques Forza draws without a glow (research/forza-lenses-re.md: their texel alpha is an
+# opacity or unread, not a glow mask).
+FM4_NO_GLOW = ("head_light", "textured_reflector", "reflector")
+
+
+def fm4_order(colour: np.ndarray, uvs: np.ndarray, dark: np.ndarray) -> np.ndarray:
+    """The glow order of an FM4 car's rear lamp texels (lenses.rear_lamp_glow): FM4's lamp shaders
+    glow by the texel colour, BrakeColor x L (research/forza-lenses-re.md), so the texel's linear
+    red; texels only the no-glow techniques' triangles (`dark`, FM4_NO_GLOW: reflectors, head lamp
+    bowls the plan lights with a tail) sample come last."""
+    from dsfforza.convert import lenses
+
+    h, w = colour.shape[:2]
+    order = ((colour[..., 0] / 255 + 0.055) / 1.055) ** 2.4
+    glowing = np.zeros((h, w), bool)
+    sampled = np.zeros((h, w), bool)
+    ix, iy, _, at = lenses._texels_many(uvs * (w, h))
+    owner = np.repeat(np.arange(len(uvs)), np.diff(at))
+    ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
+    sampled[iy[ok], ix[ok]] = True
+    lit = ok & ~dark[owner]
+    glowing[iy[lit], ix[lit]] = True
+    return np.where(sampled & ~glowing, 0.0, order)
+
+
 def white_lens_scale(visible: list[int]) -> float | None:
     """One car's darkening of its white lamp texels: the factor that brings the median
     brightness of its visible white front lamp surface (Forza values seen from ahead, lenses
@@ -2291,10 +2316,9 @@ class Texturing:
         view = self._lamp_view(front=False, grid=True, rear_half=True) if self.rear_lamps else None
         rear = None
         if view is not None:
-            order = None
-            if fm4_car(self.car_dir):
-                order = ((colour[..., 0] / 255 + 0.055) / 1.055) ** 2.4
-            rear = lenses.rear_lamp_glow(colour, view, *self.rear_lamps, order=order)
+            uvs, ids, dark = self.rear_lamps
+            order = fm4_order(colour, uvs, dark) if fm4_car(self.car_dir) else None
+            rear = lenses.rear_lamp_glow(colour, view, uvs, ids, order=order)
             if rear is not None:
                 # Never dimmer than the converted alpha: the tails that already glowed at vanilla's
                 # level (the GTI VR6's, M3 E30's, Evo VI's) keep it; the ranking only raises.
@@ -2313,15 +2337,16 @@ class Texturing:
         return front, rear
 
     def rear_lamp_tris(self, sections, lamp_of) -> tuple | None:
-        """(atlas UVs (n, 3, 2), lamp numbers (n,)) of the Lights atlas triangles at the finest
-        lamp LOD whose planned lamp is a rear tail lamp: lamp_of(sub, k) gives triangle k of `sub`'s
-        lamp number, None for none (lights.LampPlan.rear_tail_lamp). None without any."""
+        """(atlas UVs (n, 3, 2), lamp numbers (n,), whether Forza draws the triangle without a glow
+        (n,): FM4_NO_GLOW techniques) of the Lights atlas triangles at the finest lamp LOD whose
+        planned lamp is a rear red lamp: lamp_of(sub, k) gives triangle k of `sub`'s lamp number,
+        None for none (lights.LampPlan.rear_tail_lamp). None without any."""
         if not self.lamp_tris or self.atlases is None:
             return None
         lod = min(t[0] for t in self.lamp_tris)
         # By subsection: the plates and damage passes replace the section objects after plan().
         by_sub = {sub_id: m for (_, sub_id), m in self.resolved.items()}
-        uvs, ids = [], []
+        uvs, ids, dark = [], [], []
         for section in sections:
             for sub in section.subsections:
                 m = by_sub.get(id(sub))
@@ -2335,9 +2360,10 @@ class Texturing:
                     if lamp is not None:
                         uvs.append(triangle_uv(m, [pool[i].uv0 for i in tri]))
                         ids.append(lamp)
+                        dark.append(sub.material.lower().startswith(FM4_NO_GLOW))
         if not ids:
             return None
-        return np.array(uvs, float).reshape(-1, 3, 2), np.array(ids, int)
+        return np.array(uvs, float).reshape(-1, 3, 2), np.array(ids, int), np.array(dark, bool)
 
     def _convert_texel(self, family: str, r: int, g: int, b: int, a: int) -> tuple[int, int, int, int]:
         """Forza texel -> DSF conventions (alpha = specular / glow mask)."""
