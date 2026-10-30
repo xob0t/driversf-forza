@@ -50,6 +50,12 @@ def test_no_option_fallback_for_a_dead_worker():
         ["--mdxn-limit", "1"],
         "without --damage (src/dsfforza/convert/damage.py failed)",
     )
+    # A frame in a package's submodule counts as the package (convert/damage/plan.py).
+    text = 'File "C:\\r\\src\\dsfforza\\convert\\damage\\plan.py", line 9, in _votes\nValueError: x'
+    assert port_batch.cause_of(text) == "damage.py: ValueError"
+    assert port_batch.fallback_for({**failed, "traceback": text, "error": ""}, ["--damage"])[0] == []
+    assert port_batch.cause_of('File "/r/src/dsfforza/convert/lights.py", line 3\nKeyError: k') == "lights.py: KeyError"
+    assert port_batch.cause_of('File "/r/src/dsfforza/cli.py", line 3\nKeyError: k') == "cli.py: KeyError"
 
 
 def test_a_worker_that_dies_is_a_failed_car():

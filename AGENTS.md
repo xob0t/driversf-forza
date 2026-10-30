@@ -130,7 +130,7 @@ For the session that hands tasks to worker agents (`.claude/agents/dsff-worker.m
 - At most four workers at once. More collide on the two VMs and the CPU, and
   a usage limit stops them all together.
 - Hand out work by code area, not by symptom: one worker owns a module
-  (`convert/lights.py`, `convert/cockpit.py`, `tools/asi/src/mod_*.cpp`, ...)
+  (`convert/lights.py`, `convert/cockpit/`, `tools/asi/src/mod_*.cpp`, ...)
   until its PR merges. A task that needs a module another worker owns waits,
   or goes to that worker. Name the areas other workers own in each brief.
 - The brief holds the task only (goal, cars, evidence, what's ruled out,

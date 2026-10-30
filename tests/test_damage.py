@@ -1,4 +1,4 @@
-"""Regression tests for src/dsfforza/convert/damage.py panel binding, on synthetic data (no game
+"""Regression tests for src/dsfforza/convert/damage/ panel binding, on synthetic data (no game
 or Forza files).
 
     uv run python tests/test_damage.py     # or every test: uv run python -m tests damage

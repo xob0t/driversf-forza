@@ -3,7 +3,7 @@
 Updated: 2026-10-30
 
 How DSF draws the cockpit view, where Forza keeps the same data, and what
-`src/dsfforza/convert/cockpit.py` (`--cockpit` in `forza2dsf.py`, on by default in
+`src/dsfforza/convert/cockpit/` (`--cockpit` in `forza2dsf.py`, on by default in
 `port_car.py`) builds from it. The vanilla examples use the first test host,
 Saloon 15 (ASYM Desanne, spool 266, VEHC 3/4/5); ports now take a host picked
 per car (`hosts.md`). Evidence levels follow `dngvehicles.md`. The sections

@@ -22,7 +22,7 @@ a report. The merge then registers them into one copy of the vanilla archive
 150 vanilla cars plus at most 215 new ones; dsfforza.asi's archive module lifts
 it, research/spool-limits.md) and UID clashes (a car that clashes is left out
 and the rest merged again), writes the archive, and lints every car.
-A car that fails in src/dsfforza/convert/damage.py is retried once without --damage, one
+A car that fails in src/dsfforza/convert/damage/ is retried once without --damage, one
 that fails in the cockpit step once with --no-cockpit (the host's interior),
 and a worker that times out or dies without a report is not retried; a car
 that still fails is left out and listed with its cause (the innermost
@@ -587,13 +587,14 @@ CAUSES = (
 
 def cause_of(text: str) -> str:
     """A short failure cause: a known message, else "<dsfforza module>: <exception>"
-    from the innermost frame in src/dsfforza/ of the traceback."""
+    from the innermost frame in src/dsfforza/ of the traceback (a package's submodule counts
+    as the package: convert/damage/plan.py is damage.py)."""
     import re
 
     for needle, cause in CAUSES:
         if needle in text:
             return cause
-    frames = re.findall(r'dsfforza[\\/](?:\w+[\\/])?(\w+)\.py", line \d+', text)
+    frames = re.findall(r'dsfforza[\\/](?:\w+[\\/])?(\w+)(?:[\\/]\w+)?\.py", line \d+', text)
     frames = [f for f in frames if f not in ("vehicle_mesh", "chnk")] or frames  # the step, not a helper
     error = re.findall(r"^(\w+(?:Error|Exception|Exit)):", text, re.M)
     if frames:
@@ -603,14 +604,16 @@ def cause_of(text: str) -> str:
 
 def fallback_for(report: dict, options: list[str]) -> tuple[list[str], str] | None:
     """Options for one retry after a failure that a lesser build avoids: without
-    --damage when src/dsfforza/convert/damage.py failed, with --no-cockpit (the host's interior)
-    when src/dsfforza/convert/cockpit.py or the cockpit carbin failed. None: no retry, also for a
+    --damage when src/dsfforza/convert/damage/ failed, with --no-cockpit (the host's interior)
+    when src/dsfforza/convert/cockpit/ or the cockpit carbin failed. None: no retry, also for a
     worker that timed out or died without a report (its "error" is the log tail,
     which names every step the car got through, so it says nothing about the cause)."""
     if report.get("cause") in WORKER_DEATHS:
         return None
+    import re
+
     text = (report.get("traceback") or "") + (report.get("error") or "")
-    if "damage.py" in text and "--damage" in options:
+    if re.search(r"damage(?:[\\/]\w+)?\.py", text) and "--damage" in options:
         out, skip = [], False
         for o in options:
             if skip:

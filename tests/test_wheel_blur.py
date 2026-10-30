@@ -17,6 +17,7 @@ from unittest import mock
 from dsfforza.convert import dsf_materials as dm
 from dsfforza.convert import forza2dsf, paint
 from dsfforza.convert import forza_materials as fm
+from dsfforza.convert.forza2dsf import wheels as f2d_wheels
 from dsfforza.formats import carbin
 from dsfforza.formats.chnk import Entry
 
@@ -148,10 +149,10 @@ class Disc(unittest.TestCase):
 
     def test_left_out_of_the_wheels_sky(self):
         """The disc must not shade the rim it covers (wheel_skies' voxel march)."""
-        with mock.patch.object(forza2dsf, "wheel_sky", side_effect=lambda pts, nrm, tris: [len(tris)] * len(pts)):
-            forza2dsf._wheel_sky_cache.clear()
+        with mock.patch.object(f2d_wheels, "wheel_sky", side_effect=lambda pts, nrm, tris: [len(tris)] * len(pts)):
+            f2d_wheels._wheel_sky_cache.clear()
             with_disc = forza2dsf.wheel_skies([self.wheel, self.disc], 1)
-            forza2dsf._wheel_sky_cache.clear()
+            f2d_wheels._wheel_sky_cache.clear()
             alone = forza2dsf.wheel_skies([self.wheel], 1)
         self.assertEqual(with_disc, alone)
 

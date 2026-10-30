@@ -3,7 +3,7 @@
 Updated: 2026-10-30
 
 Code: `src/dsfforza/convert/forza_materials.py` (Forza side), `src/dsfforza/convert/dsf_materials.py`
-(DSF side, atlas, preview), `--textures` in `src/dsfforza/convert/forza2dsf.py`. Checked on NIS_370Z_10 (FH1) and the Desanne host.
+(DSF side, atlas, preview), `--textures` in `src/dsfforza/convert/forza2dsf/`. Checked on NIS_370Z_10 (FH1) and the Desanne host.
 
 ## How FH1 binds textures (confirmed-static)
 

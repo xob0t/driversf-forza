@@ -146,7 +146,7 @@ still gives 46 sections. The FM4 and FH1 370Z LOD1 exports both have
 41,118 triangles, and their preview PNGs are byte-identical. Renders of all
 the cars above look right (`out/fm4/render/*.png`).
 
-## Wheel placement data (src/dsfforza/convert/forza2dsf.py car_dims)
+## Wheel placement data (src/dsfforza/convert/forza2dsf/ car_dims)
 
 FM4 cars carry the same `physics/maxdata.xml` as FH1 (lower-case path; the
 370Z's values are identical in both games): `<Misc Wheelbase

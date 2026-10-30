@@ -14,6 +14,7 @@ import math
 import numpy as np
 
 from dsfforza.convert import forza2dsf as f2d
+from dsfforza.convert.forza2dsf import wheels as f2d_wheels
 
 
 def _wheel_sky_reference(points, normals, triangles) -> list[float]:
@@ -103,17 +104,17 @@ def _wheel(rng: np.random.Generator, spokes: int, segments: int):
 
 def test_wheel_sky_matches_the_voxel_loop():
     rng = np.random.default_rng(3)
-    block = f2d.WHEEL_AO_BLOCK
+    block = f2d_wheels.WHEEL_AO_BLOCK
     try:
         for case in range(8):
-            f2d.WHEEL_AO_BLOCK = (1, 5, 16, block)[case % 4]
+            f2d_wheels.WHEEL_AO_BLOCK = (1, 5, 16, block)[case % 4]
             points, normals, tris = _wheel(rng, int(rng.integers(0, 9)), int(rng.integers(6, 40)))
             assert f2d.wheel_sky(points, normals, tris) == _wheel_sky_reference(points, normals, tris)
         assert f2d.wheel_sky([], [], []) == _wheel_sky_reference([], [], []) == []
         lone = ([(0.0, 0.0, 0.0)], [(1.0, 0.0, 0.0)], [])
         assert f2d.wheel_sky(*lone) == _wheel_sky_reference(*lone)
     finally:
-        f2d.WHEEL_AO_BLOCK = block
+        f2d_wheels.WHEEL_AO_BLOCK = block
 
 
 if __name__ == "__main__":

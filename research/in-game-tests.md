@@ -876,7 +876,7 @@ is not known (not seen in play).
 
 ## Forza geometry in game (confirmed-runtime)
 
-Converter: `src/dsfforza/convert/forza2dsf.py` (FH1 carbin → DSF VEHC). The hollow-layout
+Converter: `src/dsfforza/convert/forza2dsf/` (FH1 carbin → DSF VEHC). The hollow-layout
 experiment (`exp_hollow.py`) this section first used has since been removed.
 
 - **Geometry writing works**: stretching the clone's vertices 1.3x in x shows

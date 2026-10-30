@@ -1271,7 +1271,7 @@ class Texturing:
     swatch_trims: bool = False  # give swatch trims (black, frame...) their Forza colour
     plain: tuple[int, int, int, int] = DEFAULT_PLAIN
     weights: dict[str, float] = field(default_factory=lambda: {fm.NODAMAGE: 1.0, fm.LIGHTS: 1.0, fm.INTERIOR: 1.0})
-    # Cockpit carbins (src/dsfforza/convert/cockpit.py): the _LOD0 atlases, fm.classify_cockpit,
+    # Cockpit carbins (src/dsfforza/convert/cockpit/): the _LOD0 atlases, fm.classify_cockpit,
     # and interior_LOD0 as a third family.
     lod0: bool = False
     classifier: object = None
