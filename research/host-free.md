@@ -311,7 +311,9 @@ where vanilla tilts it.
 
 ### Light entries
 
-One type-17 record and entry per Forza lamp, up to 31 (the spike). The parent is
+One type-17 record and entry per Forza lamp. The engine holds 31; the spike stops at
+27 (`MAX_LAMPS`, the vanilla maximum) and leaves any lamp past that unlit, so 28 to
+31 lamps are untested. The parent is
 the panel record the lamp's geometry rides (`damage.section_rule`), so a lamp
 breaks with the panel it's drawn on. Without damage panels: the head lamp part of
 its side at the front, the chassis part at the rear, the boot for a centre stop
@@ -390,14 +392,15 @@ one area to generated data, so each can be built and tested alone.
   the other-end fallback, `entry_place`, `_best_entry`) and the spare-entry
   parking in `patch_upvh`, about 150 lines; host picking that weighs light
   entries (#146's suggestion) won't be needed.
-- Closes: #146 (the rest: the reverse lamps of the Miata 94, Elise, Series 1,
+- Targets (offline result only; the game hasn't run it, see the spike): #146 (the
+  rest: the reverse lamps of the Miata 94, Elise, Series 1,
   the Express's left reverse lamp, the Boss 429's front indicator, the Grand
   Sport and SC430 on host 161), the 58 fog lamps left unlit for want of an
   entry, and 103 cars lighting several lamps through one entry placed at their
   middle (up to 0.5 m from some of them, `check` below).
 - Crash risks: record indices change, so the rebuild runs last, after every
   edit that holds record indices (the spike does). Stale tree fields (rewritten
-  from the tree); more than 31 lamps (capped); a lamp record under a panel the
+  from the tree); more than 27 lamps (the spike's cap; the engine's is 31); a lamp record under a panel the
   damage code moves.
 - VM test: `-Lights` (phases and drives), `-Damage -DamagePanels` (the
   `forceOpenPanels` walk over the new records), `-DamageSide`, on cars whose
@@ -410,7 +413,7 @@ one area to generated data, so each can be built and tested alone.
   hinge-at-first-marker host exclusion (#334), exhaust `insert_marker` /
   `remove_marker` / `set_count`, `_map_collision`, `_scale_collision` and
   `_floor_collision`.
-- Closes: #334, #273 (no copied markers to renumber), the box-mapped exhaust
+- Would close: #334, #273 (no copied markers to renumber), the box-mapped exhaust
   markers of the 37 cars without a Forza tip (#65), and the
   host's hull outline for the rest of #210's class.
 - Crash risks: the PDL changes size, so the collision offsets and the header PDL
@@ -425,7 +428,7 @@ one area to generated data, so each can be built and tested alone.
   host panel box to Forza panel box mapping of hinges and bodies, door-count
   matching in `host_select` (#239, #243), `split_rear_wheel` (a generated tree
   gives rear wheels their own part).
-- Closes: #193, #269 (mirrors placed under their mount), #209-class door cases.
+- Would close: #193, #269 (mirrors placed under their mount), #209-class door cases.
   The scratch map (#306) moves to the template's UV1, so it would need checking
   again.
 - Crash risks: the biggest. An out-of-order slot or panel-data index crashed

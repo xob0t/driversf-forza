@@ -26,6 +26,7 @@ import argparse
 import itertools
 import json
 import math
+import statistics
 import struct
 import sys
 from collections import Counter, defaultdict
@@ -387,7 +388,11 @@ def vanilla_rules(path: Path) -> dict:
     }
     out["slotless_roles"] = {str(k): [slotless[k], slotted[k]] for k in sorted(slotless, key=lambda k: -slotless[k])}
     out["sibling_orders"] = sibling_orders.most_common(25)
-    out["light_counts"] = {"min": min(light_counts), "max": max(light_counts), "median": sorted(light_counts)[75]}
+    out["light_counts"] = {
+        "min": min(light_counts),
+        "max": max(light_counts),
+        "median": statistics.median(light_counts),
+    }
     return out
 
 
