@@ -36,7 +36,10 @@ def test_triangles_cells_match_triangle_cells():
         pts = _random_triangles(rng, int(rng.choice([0, 1, 3, 400, 3000])), width, height)
         if case == 3:
             trim_art.CELLS_CHUNK, chunk = 50, trim_art.CELLS_CHUNK  # many chunks, triangles bigger than one
+        # big boxes one by one (the default), every box one by one, none
+        trim_art.CELLS_ONE_BY_ONE, one_by_one = (256, 0, 10**9)[case % 3], trim_art.CELLS_ONE_BY_ONE
         rows, cols, offsets = trim_art.triangles_cells((height, width), pts)
+        trim_art.CELLS_ONE_BY_ONE = one_by_one
         if case == 3:
             trim_art.CELLS_CHUNK = chunk
         assert len(offsets) == len(pts) + 1 and offsets[0] == 0

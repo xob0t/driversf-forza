@@ -129,13 +129,16 @@ def triangle_cells(shape, pts):
 
 
 CELLS_CHUNK = 1 << 21  # triangles_cells: bounding-box texels tested at a time
+CELLS_ONE_BY_ONE = 256  # triangles_cells: boxes of more texels go through triangle_cells
 
 
 def triangles_cells(shape, pts):
     """triangle_cells of many texel-space triangles at once (pts: (n, 3, 2)): the
     (rows, columns) of every triangle's texels one after the other, each triangle's in
     triangle_cells' order, and the offsets (n + 1) where each triangle's start; the same
-    arithmetic per texel, without a numpy call per triangle."""
+    arithmetic per texel, without a numpy call per triangle. Triangles whose box holds more
+    than CELLS_ONE_BY_ONE texels go through triangle_cells itself (its broadcast grid costs
+    less per texel there)."""
     import numpy as np
 
     height, width = shape[:2]
@@ -155,6 +158,13 @@ def triangles_cells(shape, pts):
     size = bw * np.where(boxed, y1 - y0, 0)
     count = np.zeros(n, np.int64)
     rows, cols, owner = [], [], []
+    for k in np.nonzero(size > CELLS_ONE_BY_ONE)[0].tolist():
+        r, c = triangle_cells(shape, [tuple(p) for p in pts[k].tolist()])
+        rows.append(r)
+        cols.append(c)
+        owner.append(np.full(len(r), k, np.int64))
+        count[k] = len(r)
+    size = np.where(size > CELLS_ONE_BY_ONE, 0, size)
     done = 0
     while done < n:  # triangles in chunks of about CELLS_CHUNK box texels
         end = done + max(1, int(np.searchsorted(np.cumsum(size[done:]), CELLS_CHUNK, "right")))
