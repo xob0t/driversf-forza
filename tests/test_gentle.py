@@ -48,6 +48,28 @@ def test_gentle_is_idle_for_the_children_and_pins_no_cpu():
     assert child.split() == [str(gentle.IDLE), "True"], out.stdout + out.stderr  # held at Idle, every CPU
 
 
+# set_priority in a child (it changes the process for good), then its priority class.
+SET_PRIORITY = r"""
+import ctypes
+from ctypes import wintypes
+from dsfforza.build import gentle
+k = ctypes.WinDLL("kernel32")
+k.GetCurrentProcess.restype = wintypes.HANDLE
+k.GetPriorityClass.argtypes = (wintypes.HANDLE,)
+print(gentle.set_priority(gentle.BELOW_NORMAL), k.GetPriorityClass(k.GetCurrentProcess()))
+"""
+
+
+def test_set_priority_changes_the_class():
+    if os.name != "nt":
+        return
+    env = {k: v for k, v in os.environ.items() if k != "DSFFORZA_GENTLE"}
+    out = subprocess.run([sys.executable, "-c", SET_PRIORITY], capture_output=True, text=True, env=env, check=True)
+    ok, priority = out.stdout.split()
+    # Idle when this test itself runs in an Idle job (a gentle build), which holds its children.
+    assert ok == "True" and int(priority) in (gentle.BELOW_NORMAL, gentle.IDLE), out.stdout + out.stderr
+
+
 def test_gentle_caps_the_jobs():
     saved = os.environ.get("DSFFORZA_GENTLE")
     try:

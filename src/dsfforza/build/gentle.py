@@ -25,6 +25,7 @@ from dsfforza import REPO
 FLAG = REPO / "out" / "gentle"
 CORES = 2  # processes doing heavy work at once (port_batch --jobs)
 IDLE = 0x00000040
+BELOW_NORMAL = 0x00004000
 JOB_OBJECT_LIMIT_PRIORITY_CLASS = 0x00000020
 JOB_OBJECT_BASIC_LIMIT_INFORMATION = 2
 _JOB: list = []  # the job object's handle, kept open for the life of the process
@@ -46,6 +47,20 @@ def apply() -> bool:
     except (OSError, AttributeError):
         pass
     return True
+
+
+def set_priority(priority_class: int) -> bool:
+    """This process at a Windows priority class (IDLE, BELOW_NORMAL). False if that failed or
+    this isn't Windows. The handle needs its real type: GetCurrentProcess()'s -1 passed as a
+    C int is not the pseudo-handle, and SetPriorityClass fails with ERROR_INVALID_HANDLE."""
+    if os.name != "nt":
+        return False
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.SetPriorityClass.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    return bool(kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), priority_class))
 
 
 def _idle_job() -> None:

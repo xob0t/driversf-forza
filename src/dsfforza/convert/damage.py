@@ -1852,7 +1852,7 @@ def host_setup(stream, full, exterior, interior, cache: Path | bool | None = Tru
     path = folder / f"{key}.z"
     try:
         stored = pickle.loads(zlib.decompress(path.read_bytes()))
-    except Exception:  # none yet, or unreadable: made again below
+    except (OSError, EOFError, zlib.error, pickle.UnpicklingError):  # none yet, or unreadable: made again below
         stored = None
     if stored is not None:
 
@@ -1910,11 +1910,9 @@ def _prune_host_cache(cache: Path, keep: Path) -> None:
 
 
 def _set_idle_priority() -> None:
-    if sys.platform == "win32":
-        import ctypes
+    from dsfforza.build import gentle
 
-        k = ctypes.windll.kernel32
-        k.SetPriorityClass(k.GetCurrentProcess(), 0x40)  # IDLE_PRIORITY_CLASS
+    gentle.set_priority(gentle.IDLE)
 
 
 @dataclass
@@ -3128,7 +3126,10 @@ class DamagePlan:
 
         if self.int_uv1 is None:
             return 0
-        f = HostField([], [], [], self.int_uv1.box, uv1=self.int_uv1, local=self.int_local)
+        # One field for the plan: _uv1's cache keys on id(f), which a field made per call could reuse.
+        f = self.__dict__.get("_int_field")
+        if f is None:
+            f = self._int_field = HostField([], [], [], self.int_uv1.box, uv1=self.int_uv1, local=self.int_local)
         drsp = child(child(interior, "MDXN"), "DRSP")
         buffers, index_buffers, users = {}, {}, defaultdict(dict)
         for e in drsp.children:

@@ -676,7 +676,7 @@ def cmd_lint_many(args: argparse.Namespace) -> None:
                 try:
                     problems = lint_vehicle(ctx, int(spool_id), None, one, emit=lines.append, facts=facts)
                     lines.append(f"{problems} problem(s)")
-                except Exception:  # this car's lint crashed; the others still run
+                except Exception:  # noqa: BLE001 - this car's lint crashed (traceback shown); the others still run
                     problems = 1
                     lines.append(traceback.format_exc().rstrip())
                 failed += bool(problems)

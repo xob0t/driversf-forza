@@ -49,19 +49,10 @@ def load_exe() -> tuple[bytes, int, int, int]:
 
 
 def idle() -> None:
-    try:
-        from dsfforza.build import gentle
+    from dsfforza.build import gentle
 
-        if hasattr(gentle, "apply"):
-            gentle.apply()
-    except Exception:
-        pass
-    try:
-        import ctypes
-
-        ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x40)
-    except Exception:
-        pass
+    gentle.apply()
+    gentle.set_priority(gentle.IDLE)
 
 
 def build() -> dict:

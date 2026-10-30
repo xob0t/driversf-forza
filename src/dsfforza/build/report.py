@@ -632,7 +632,7 @@ def dump_summary(path: Path) -> str:
     try:
         with contextlib.redirect_stdout(buffer):
             minidump.main([str(path), "--stack", "32"])
-    except (SystemExit, Exception) as error:  # a damaged dump must not stop the report
+    except (SystemExit, Exception) as error:  # noqa: BLE001 - written into the report; a damaged dump must not stop it
         buffer.write(f"\n(could not read the dump: {type(error).__name__}: {error})\n")
     return buffer.getvalue()
 
@@ -812,7 +812,7 @@ def collect(repo: Path = REPO, game: Path | None = None, now: datetime.datetime 
     def part(name: str, fn, *args, default=None):
         try:
             return fn(*args)
-        except Exception as error:  # a report is wanted most when something is broken
+        except Exception as error:  # noqa: BLE001 - noted in the report, wanted most when something is broken
             errors[name] = f"{type(error).__name__}: {error}"
             return default
 

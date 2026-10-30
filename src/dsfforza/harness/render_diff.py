@@ -201,7 +201,7 @@ def compare_builds(
                 "seconds": round(time.time() - t0, 1),
             }
         )
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - one car's failure is a result, not the run's end
         import traceback
 
         res["error"] = f"{type(error).__name__}: {error}"

@@ -1710,7 +1710,7 @@ def car_texts(cars: list[dict], isos: list[Path] | None = None) -> dict[str, dic
                     found.update({k: v for k, v in names.items() if v.get("display")})
                 except LookupError:  # that game's disc (or its gamedb) isn't there
                     continue
-                except Exception as error:  # names then come from the media names
+                except Exception as error:  # noqa: BLE001 - printed; names then come from the media names
                     print(f"warning: {other.upper()} car names: {type(error).__name__}: {error}")
                     continue
     except ImportError:

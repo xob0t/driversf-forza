@@ -1748,7 +1748,7 @@ def digital_displays(
         dash = dash_scene.Dash(own[0].with_suffix(""), media)
         redline = getattr(forza, "redline", 0.0) or 7000.0
         plan = digital_dash.build_plan(dash, patches, redline)
-    except Exception as error:  # a scene this decoder can't draw: the display stays as it was
+    except Exception as error:  # noqa: BLE001 - a scene this decoder can't draw: logged (convert_interior), the display stays
         return None, {"skipped": f"{type(error).__name__}: {error}"[:200]}, {}
     if plan is None:
         return None, {"skipped": "no room in the texture"}, {}
@@ -1868,7 +1868,7 @@ def fit(
 
         try:
             forza = handling.load_forza(name, [Path(db) for db in gamedbs if db and Path(db).exists()])
-        except (SystemExit, Exception):
+        except (SystemExit, LookupError, ValueError, sqlite3.Error):  # not in the gamedbs (as port_car's handling)
             forza = None
     if lod0 and folder is not None:
         # Forza's digital displays, live through DSF's digital dials (digital_dash); a
@@ -3354,9 +3354,10 @@ def _needle_colour(atlases, section, sub) -> tuple[int, int, int, int]:
     if m.family is not None:
         try:
             r, g, b, _ = fm.footprint_colour(atlases.get(m.family), m.bounds)
-            return (r, g, b, 255)
         except FileNotFoundError:
             pass
+        else:
+            return (r, g, b, 255)
     return (200, 200, 200, 255)
 
 
@@ -3592,6 +3593,8 @@ def convert_interior(
             if tris:
                 needle_subs.append(builder.add(mats.needles, verts, tris))
         digital_report, digital_templates = None, None
+        if "skipped" in cf.digital_displays:
+            log(f"digital displays: not drawn ({cf.digital_displays['skipped']})")
         if cf.digital_plan is not None and mats.needles is not None:
             from dsfforza.convert import digital_dash as dd
 

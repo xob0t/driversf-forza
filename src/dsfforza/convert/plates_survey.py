@@ -26,7 +26,6 @@ Runs at idle priority with --jobs processes (AGENTS.md: heavy offline jobs).
 from __future__ import annotations
 
 import argparse
-import ctypes
 import importlib.util
 import json
 import pickle
@@ -45,9 +44,9 @@ PLATES = "src/dsfforza/convert/plates.py"
 
 
 def idle() -> None:
-    if sys.platform == "win32":
-        k = ctypes.windll.kernel32
-        k.SetPriorityClass(k.GetCurrentProcess(), 0x40)  # IDLE_PRIORITY_CLASS
+    from dsfforza.build import gentle
+
+    gentle.set_priority(gentle.IDLE)
 
 
 def module(path: Path, name: str):
@@ -196,9 +195,9 @@ def survey_one(job) -> dict:
         row = {"media": media, "host": spool}
         for name, path in versions:
             row[name] = plan_with(module(path, f"plates_{name}"), body, place, ground, hp, lods)
-        return row
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - one car's failure is a row of the survey
         return {"media": media, "host": spool, "error": repr(error), "traceback": traceback.format_exc()}
+    return row
 
 
 # --- summary ------------------------------------------------------------------------------

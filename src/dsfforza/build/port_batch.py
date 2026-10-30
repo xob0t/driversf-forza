@@ -183,14 +183,10 @@ def _memory_status(field: str) -> int | None:
 
 def lower_priority() -> None:
     """This process at Below Normal (workers are started that way too)."""
-    try:
-        if os.name == "nt":
-            handle = ctypes.windll.kernel32.GetCurrentProcess()
-            ctypes.windll.kernel32.SetPriorityClass(handle, BELOW_NORMAL)
-        else:
-            os.nice(5)
-    except (OSError, AttributeError):
-        pass
+    if os.name == "nt":
+        gentle.set_priority(BELOW_NORMAL)
+    else:
+        os.nice(5)
     gentle.apply()  # out/gentle: Idle, held for the children too (src/dsfforza/build/gentle.py)
 
 
@@ -717,7 +713,7 @@ def worker(job_path: Path) -> int:
                 "port_args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
             }
         )
-    except BaseException as error:  # SystemExit from port_car included
+    except BaseException as error:  # noqa: BLE001 - SystemExit from port_car included: the car's report holds it
         text = f"{type(error).__name__}: {error}"
         report.update(
             {
@@ -738,7 +734,7 @@ def worker(job_path: Path) -> int:
             temp = out_chunk.with_suffix(".fp.json.tmp")
             temp.write_text(json.dumps(fp, indent=1) + "\n", encoding="utf-8")
             temp.replace(out_chunk.with_suffix(".fp.json"))
-        except Exception as error:  # no fingerprint: a later --reuse builds the car again
+        except Exception as error:  # noqa: BLE001 - logged; no fingerprint: a later --reuse builds the car again
             log(f"fingerprint: {type(error).__name__}: {error}")
     return 0 if report["ok"] else 1
 
@@ -1268,7 +1264,7 @@ def string_tables(isos: list[Path]) -> None:
         if game in ("FH1", "FM4"):
             try:
                 forza_strings.Strings(game.lower(), iso=iso)
-            except Exception as error:  # names then come from the media names
+            except Exception as error:  # noqa: BLE001 - printed; names then come from the media names
                 print(f"warning: {game} string tables from {iso.name}: {type(error).__name__}: {error}")
 
 
@@ -1898,7 +1894,7 @@ def finish(
                 cache=pack.picture_cache() if pack is not None else None,
                 record=pack.records if pack is not None else None,
             )
-        except Exception as error:  # the archive is still usable without pictures and badges
+        except Exception as error:  # noqa: BLE001 - reported; the archive is still usable without pictures
             print(f"gui assets failed: {type(error).__name__}: {error}")
             timings["gui_error"] = f"{type(error).__name__}: {error}"
             emit(progress, "gui_failed", error=timings["gui_error"])

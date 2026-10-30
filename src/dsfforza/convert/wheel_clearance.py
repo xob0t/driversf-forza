@@ -512,7 +512,7 @@ def cmd_survey(args) -> None:
                 if args.forza_lock:
                     car = _with_forza_lock(car, _steer(angles, entry))
                 rows = measure(car, entry["media"] if entry else str(sid), entry, _steer(angles, entry))
-            except Exception as error:  # one broken car must not stop a 573-car survey
+            except Exception as error:  # noqa: BLE001 - printed; one broken car must not stop a 573-car survey
                 print(f"{sid}: {error}", file=sys.stderr)
                 continue
             for row in rows:

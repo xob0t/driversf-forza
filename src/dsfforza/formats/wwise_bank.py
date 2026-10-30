@@ -1019,7 +1019,7 @@ def main(argv: list[str] | None = None) -> None:
             try:
                 b = Bank.parse(path.read_bytes())
                 problems = b.validate()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - a bank that doesn't parse is a check failure
                 problems = [str(e)]
             if problems:
                 bad += 1
