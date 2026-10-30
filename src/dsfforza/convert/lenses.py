@@ -265,25 +265,83 @@ def _texels(uv_px: np.ndarray):
     return np.array([int(cx)]), np.array([int(cy)]), np.array([[1 / 3, 1 / 3, 1 / 3]])
 
 
+RAY_GROUP = 32  # _intersect: rays tested together against the triangles near them
+GROUP_MARGIN = 0.001  # m: a triangle this far outside a group's reach can't be hit, rounding and all
+
+
 def _intersect(origins, dirs, tris):
     """Möller-Trumbore for every ray against every triangle of `tris` (v0, e1, e2:
     (m, 3) each): distances (n, m), inf where a ray misses or the hit is beyond
-    RAY_DEPTH, and the barycentrics (b1, b2) of the hits."""
+    RAY_DEPTH, and the barycentrics (b1, b2) of the hits. Each group of RAY_GROUP rays
+    (in their order: _behind's are in spatial chunks) is tested only against the triangles
+    whose box meets the box of its rays' segments (0 to RAY_DEPTH) widened by GROUP_MARGIN:
+    the others can't be hit. Triangles with a non-finite corner are tested by every ray."""
     v0, e1, e2 = tris
+    n, m = len(origins), len(v0)
+    t = np.full((n, m), np.inf)
+    u, v = np.zeros((n, m)), np.zeros((n, m))
+    if not n or not m:
+        return t, u, v
+    with np.errstate(invalid="ignore"):
+        corners = np.stack([v0, v0 + e1, v0 + e2])
+        lo, hi = corners.min(0), corners.max(0)
+    odd = ~(np.isfinite(lo).all(1) & np.isfinite(hi).all(1))
+    ends = origins + dirs * RAY_DEPTH
+    for g0 in range(0, n, RAY_GROUP):
+        rows = np.arange(g0, min(n, g0 + RAY_GROUP))
+        seg = np.concatenate([origins[rows], ends[rows]])
+        seg = seg[np.isfinite(seg).all(1)]  # a non-finite ray hits nothing; it widens no box
+        if len(seg):
+            g_lo, g_hi = seg.min(0) - GROUP_MARGIN, seg.max(0) + GROUP_MARGIN
+            cols = np.nonzero(odd | (np.all(hi >= g_lo, 1) & np.all(lo <= g_hi, 1)))[0]
+        else:
+            cols = np.nonzero(odd)[0]
+        if not len(cols):
+            continue
+        i, j, ts, us, vs = _hits(origins[rows], dirs[rows], v0[cols], e1[cols], e2[cols])
+        i, j = rows[i], cols[j]
+        t[i, j], u[i, j], v[i, j] = ts, us, vs
+    return t, u, v
+
+
+def _hits(origins, dirs, v0, e1, e2):
+    """Möller-Trumbore of rays against triangles (_intersect): the (ray, triangle) of every hit
+    and its distance and barycentrics; v and t only where u can hit."""
     dx, dy, dz = (dirs[:, c : c + 1] for c in range(3))
     ax, ay, az = (e1[None, :, c] for c in range(3))
     bx, by, bz = (e2[None, :, c] for c in range(3))
-    px, py, pz = dy * bz - dz * by, dz * bx - dx * bz, dx * by - dy * bx  # d x e2
-    det = ax * px + ay * py + az * pz
+
+    def diff(a, b, c, d):  # a * b - c * d, in place (the same products and difference)
+        out = a * b
+        out -= c * d
+        return out
+
+    def dot(a, b, c, d, e, f):  # a * b + c * d + e * f, summed left to right
+        out = a * b
+        out += c * d
+        out += e * f
+        return out
+
+    px, py, pz = diff(dy, bz, dz, by), diff(dz, bx, dx, bz), diff(dx, by, dy, bx)  # d x e2
+    det = dot(ax, px, ay, py, az, pz)
     ok = np.abs(det) > 1e-12
     inv = 1.0 / np.where(ok, det, 1.0)
     sx, sy, sz = (origins[:, c : c + 1] - v0[None, :, c] for c in range(3))
-    u = (sx * px + sy * py + sz * pz) * inv
-    qx, qy, qz = sy * az - sz * ay, sz * ax - sx * az, sx * ay - sy * ax  # s x e1
-    v = (dx * qx + dy * qy + dz * qz) * inv
-    t = (bx * qx + by * qy + bz * qz) * inv
-    hit = ok & (u >= 0) & (v >= 0) & (u + v <= 1) & (t > 0) & (t <= RAY_DEPTH)
-    return np.where(hit, t, np.inf), u, v
+    u = dot(sx, px, sy, py, sz, pz)
+    u *= inv
+    # v >= 0 and u + v <= 1 need 0 <= u <= 1 (rounding too).
+    i, j = np.nonzero(ok & (u >= 0) & (u <= 1))
+    sx, sy, sz = sx[i, j], sy[i, j], sz[i, j]
+    ax, ay, az, bx, by, bz = (a[0, j] for a in (ax, ay, az, bx, by, bz))
+    qx, qy, qz = diff(sy, az, sz, ay), diff(sz, ax, sx, az), diff(sx, ay, sy, ax)  # s x e1
+    inv = inv[i, j]
+    vs = dot(dirs[i, 0], qx, dirs[i, 1], qy, dirs[i, 2], qz)
+    vs *= inv
+    ts = dot(bx, qx, by, qy, bz, qz)
+    ts *= inv
+    us = u[i, j]
+    hit = (vs >= 0) & (us + vs <= 1) & (ts > 0) & (ts <= RAY_DEPTH)
+    return i[hit], j[hit], ts[hit], us[hit], vs[hit]
 
 
 class _Surfaces:
@@ -318,11 +376,12 @@ class _Surfaces:
                 for t in tris:
                     pts.append([pool[i].position for i in t])
                     uvs.append(_tri_uv(m, pool, t) if textured else [(0.0, 0.0)] * 3)
-                    kinds.append(2 if lens else (1 if textured else 0))
-                    fams.append(m.family if textured else None)
-                    lamps.append(not lens and (m.family == fm.LIGHTS or m.role == fm.CHROME))
-                    colours.append(colour)
-                    rules.append(opacity_rule(m.technique, settings))
+                # The same for every triangle of the subsection.
+                kinds += [2 if lens else (1 if textured else 0)] * len(tris)
+                fams += [m.family if textured else None] * len(tris)
+                lamps += [not lens and (m.family == fm.LIGHTS or m.role == fm.CHROME)] * len(tris)
+                colours += [colour] * len(tris)
+                rules += [opacity_rule(m.technique, settings)] * len(tris)
         self.pts = np.array(pts, float).reshape(-1, 3, 3)
         self.uvs = np.array(uvs, float).reshape(-1, 3, 2)
         self.kind = np.array(kinds, int)  # 0 flat, 1 textured, 2 lens (textured on Lights)
@@ -452,15 +511,36 @@ def _axis_fallback(surf: _Surfaces, origins, dirs, found, front: bool = True) ->
     return changed
 
 
+def _neighbours(pos: np.ndarray, radius: float) -> list:
+    """The points (pos: (n, 3)) within `radius` of each other, as np.linalg.norm of their
+    difference finds them, each point with itself: (rows, columns, mask (rows, columns))
+    per chunk of RAY_CHUNK rows. Rows go in spatial chunks (sorted by cells of two radii),
+    each tested against the points inside its chunk's box widened by the radius rather
+    than against every point. Points with a NaN or inf are near nothing, not even
+    themselves."""
+    finite = np.nonzero(np.isfinite(pos).all(1))[0]
+    cell = np.floor(pos[finite] / (2 * radius)).astype(np.int64)
+    order = finite[np.lexsort((cell[:, 2], cell[:, 1], cell[:, 0]))]
+    margin = radius * (1 + 1e-6)  # a point outside the box is farther than the radius, rounding and all
+    out = []
+    for c0 in range(0, len(order), RAY_CHUNK):
+        rows = order[c0 : c0 + RAY_CHUNK]
+        p = pos[rows]
+        lo, hi = p.min(0) - margin, p.max(0) + margin
+        cols = np.nonzero(np.all((pos >= lo) & (pos <= hi), 1))[0]
+        out.append((rows, cols, np.linalg.norm(p[:, None] - pos[cols][None], axis=2) < radius))
+    return out
+
+
 def _closing(pos: np.ndarray, values: np.ndarray, radius: float) -> np.ndarray:
     """Morphological closing of per-ray values over the lens (max, then min, of the rays
     within `radius` of each): fills dips narrower than the radius, keeps the rim's falloff."""
+    chunks = _neighbours(pos, radius)
     out = values
     for reduce, fill in ((np.max, -np.inf), (np.min, np.inf)):
-        res = np.empty_like(out)
-        for c0 in range(0, len(pos), RAY_CHUNK):
-            near = np.linalg.norm(pos[c0 : c0 + RAY_CHUNK, None] - pos[None], axis=2) < radius
-            res[c0 : c0 + RAY_CHUNK] = reduce(np.where(near, out[None], fill), axis=1)
+        res = np.full_like(out, fill)  # rays near nothing (non-finite) get the fill
+        for rows, cols, near in chunks:
+            res[rows] = reduce(np.where(near, out[cols][None], fill), axis=1)
         out = res
     return out
 
