@@ -312,47 +312,92 @@ def view_coords(end: str, p) -> tuple[float, float, float]:
     return (-p[0], p[1], p[2]) if end == "rear" else (p[0], p[1], -p[2])
 
 
+DEPTH_CHUNK = 1 << 18  # fragments (triangle x box cell) rasterised at once
+
+
 def depth_map(tris, end: str, s_range, y_range) -> DepthMap:
+    """The body seen from `end` on PX cells over s_range x y_range: per cell the
+    nearest triangle covering its centre, the earliest of equals (a z-buffer of
+    the triangles in order with a strict `<`). All triangles' box cells are
+    tested at once, DEPTH_CHUNK fragments at a time, with the loop's float
+    operations; `names` lists sections in the order their first triangle that
+    won a cell came."""
     s0, s1 = s_range
     y0, y1 = y_range
     width, height = max(1, int(round((s1 - s0) / PX))), max(1, int(round((y1 - y0) / PX)))
-    depth = np.full((height, width), np.inf)
-    cls = np.zeros((height, width), np.int8)
-    sec = np.full((height, width), -1, np.int32)
-    feat = np.zeros((height, width), np.int8)
+    depth = np.full(height * width, np.inf)
+    cls = np.zeros(height * width, np.int8)
+    sec = np.full(height * width, -1, np.int32)
+    feat = np.zeros(height * width, np.int8)
     names: list = []
     index: dict = {}
-    for pts, c, name, f in tris:
-        v = [view_coords(end, p) for p in pts]
-        q = [(a[0] - s0) / PX for a in v]
-        r = [(y1 - a[1]) / PX for a in v]
-        area = (q[1] - q[0]) * (r[2] - r[0]) - (r[1] - r[0]) * (q[2] - q[0])
-        if abs(area) < 1e-9:
-            continue
-        cx0, cx1 = max(int(min(q)), 0), min(int(max(q)) + 1, width)
-        cy0, cy1 = max(int(min(r)), 0), min(int(max(r)) + 1, height)
-        if cx0 >= cx1 or cy0 >= cy1:
-            continue
-        xs, ys = np.meshgrid(np.arange(cx0, cx1) + 0.5, np.arange(cy0, cy1) + 0.5)
-        w0 = ((q[1] - xs) * (r[2] - ys) - (r[1] - ys) * (q[2] - xs)) / area
-        w1 = ((q[2] - xs) * (r[0] - ys) - (r[2] - ys) * (q[0] - xs)) / area
-        w2 = 1 - w0 - w1
-        inside = (w0 >= -1e-6) & (w1 >= -1e-6) & (w2 >= -1e-6)
-        if not inside.any():
-            continue
-        d = w0 * v[0][2] + w1 * v[1][2] + w2 * v[2][2]
-        win = depth[cy0:cy1, cx0:cx1]
-        better = inside & (d < win)
-        if not better.any():
-            continue
-        win[better] = d[better]
-        cls[cy0:cy1, cx0:cx1][better] = c
-        feat[cy0:cy1, cx0:cx1][better] = f
-        if name not in index:
-            index[name] = len(names)
-            names.append(name)
-        sec[cy0:cy1, cx0:cx1][better] = index[name]
-    return DepthMap(end, s0, y1, depth, cls, sec, names, feat)
+    if tris:
+        v = np.array([[view_coords(end, p) for p in pts] for pts, *_ in tris], float).reshape(-1, 3, 3)
+        q = (v[:, :, 0] - s0) / PX
+        r = (y1 - v[:, :, 1]) / PX
+        area = (q[:, 1] - q[:, 0]) * (r[:, 2] - r[:, 0]) - (r[:, 1] - r[:, 0]) * (q[:, 2] - q[:, 0])
+        cx0 = np.maximum(np.trunc(q.min(1)), 0)
+        cx1 = np.minimum(np.trunc(q.max(1)) + 1, width)
+        cy0 = np.maximum(np.trunc(r.min(1)), 0)
+        cy1 = np.minimum(np.trunc(r.max(1)) + 1, height)
+        live = np.flatnonzero(~(np.abs(area) < 1e-9) & (cx0 < cx1) & (cy0 < cy1))
+        bw = (cx1 - cx0)[live].astype(np.int64)
+        count = bw * (cy1 - cy0)[live].astype(np.int64)
+        tri_cls = np.array([t[1] for t in tris]).astype(np.int8)
+        tri_feat = np.array([t[3] for t in tris]).astype(np.int8)
+        writes = []
+        ends = np.cumsum(count)
+        start = 0
+        while start < len(live):
+            stop = int(np.searchsorted(ends, (ends[start - 1] if start else 0) + DEPTH_CHUNK, "right"))
+            stop = max(stop, start + 1)
+            t = np.repeat(live[start:stop], count[start:stop])
+            k = np.arange(len(t)) - np.repeat(np.cumsum(count[start:stop]) - count[start:stop], count[start:stop])
+            w = np.repeat(bw[start:stop], count[start:stop])
+            px, py = cx0[t] + k % w, cy0[t] + k // w
+            xs, ys = px + 0.5, py + 0.5
+            qt, rt = q[t], r[t]
+            w0 = ((qt[:, 1] - xs) * (rt[:, 2] - ys) - (rt[:, 1] - ys) * (qt[:, 2] - xs)) / area[t]
+            w1 = ((qt[:, 2] - xs) * (rt[:, 0] - ys) - (rt[:, 2] - ys) * (qt[:, 0] - xs)) / area[t]
+            w2 = 1 - w0 - w1
+            d = w0 * v[t, 0, 2] + w1 * v[t, 1, 2] + w2 * v[t, 2, 2]
+            cell = (py * width + px).astype(np.int64)
+            ok = (w0 >= -1e-6) & (w1 >= -1e-6) & (w2 >= -1e-6) & (d < depth[cell])
+            t, d, cell = t[ok], d[ok], cell[ok]
+            start = stop
+            if not len(t):
+                continue
+            # Which triangles wrote a cell when their turn came: nearer than the
+            # cell's depth before this chunk and than every earlier fragment of it.
+            order = np.lexsort((t, cell))
+            ts, ds, cs = t[order], d[order], cell[order]
+            rank = np.unique(ds, return_inverse=True)[1].astype(np.int64)
+            group = np.cumsum(np.r_[True, cs[1:] != cs[:-1]])
+            key = (group[-1] + 1 - group) * (int(rank.max()) + 1) + rank
+            before = np.r_[np.iinfo(np.int64).max, np.minimum.accumulate(key)[:-1]]
+            writes.append(np.unique(ts[key < before]))
+            # Each cell's final fragment of this chunk: the nearest, the earliest of equals.
+            order = np.lexsort((t, d, cell))
+            cs = cell[order]
+            first = order[np.r_[True, cs[1:] != cs[:-1]]]
+            depth[cell[first]] = d[first]
+            cls[cell[first]] = tri_cls[t[first]]
+            feat[cell[first]] = tri_feat[t[first]]
+            sec[cell[first]] = -2 - t[first]  # the triangle for now, its name's index below
+        for i in np.unique(np.concatenate(writes)).tolist() if writes else ():
+            name = tris[i][2]
+            if name not in index:
+                index[name] = len(names)
+                names.append(name)
+        won = sec <= -2
+        tri_name = np.full(len(tris), -1, np.int32)
+        for i in np.unique(-2 - sec[won]).tolist():
+            tri_name[i] = index[tris[i][2]]
+        sec[won] = tri_name[-2 - sec[won]]
+    shape = (height, width)
+    return DepthMap(
+        end, s0, y1, depth.reshape(shape), cls.reshape(shape), sec.reshape(shape), names, feat.reshape(shape)
+    )
 
 
 def fit_plane(dm: DepthMap, rows: slice, cols: slice, mask=None):
@@ -730,17 +775,21 @@ def plan_end(
     )
 
 
-def lod_depths(plate: Plate, sections, lods, place) -> None:
+def lod_depths(plate: Plate, sections, lods, place, cache: dict | None = None) -> None:
     """Per LOD: the plate's d, moved out if that LOD's surface is nearer than
-    the plate anywhere under it."""
+    the plate anywhere under it. `cache` keeps each LOD's body triangles (and
+    their corners as an array) for the other end's plate."""
     s, y = plate.centre
     w, h = plate.size
+    cache = {} if cache is None else cache
     for lod in lods:
-        tris = [
-            t
-            for t in body_triangles(sections, lod, place)
-            if any(abs(view_coords(plate.end, p)[0] - s) < w and abs(p[1] - y) < h for p in t[0])
-        ]
+        if lod not in cache:
+            all_tris = body_triangles(sections, lod, place)
+            cache[lod] = (all_tris, np.array([t[0] for t in all_tris], float).reshape(-1, 3, 3))
+        all_tris, corners = cache[lod]
+        across = -corners[:, :, 0] if plate.end == "rear" else corners[:, :, 0]
+        near = ((np.abs(across - s) < w) & (np.abs(corners[:, :, 1] - y) < h)).any(1)
+        tris = [all_tris[i] for i in np.flatnonzero(near).tolist()]
         dm = depth_map(tris, plate.end, (s - w / 2, s + w / 2), (y - h / 2, y + h / 2))
         ok = np.isfinite(dm.depth)
         d = plate.depth
@@ -765,9 +814,11 @@ class PlatePlan:
 
 def plan(car_body, place, ground: float, host: HostPlates, lods, log=print) -> PlatePlan:
     """Plates for the converted car: one per end the host has a plate at."""
-    tris = body_triangles(car_body, 1 if 1 in lods else min(lods), place)
+    first = 1 if 1 in lods else min(lods)
+    tris = body_triangles(car_body, first, place)
     if not tris:
         return PlatePlan([], [], {"plates": {}})
+    by_lod = {first: (tris, np.array([t[0] for t in tris], float).reshape(-1, 3, 3))}  # for lod_depths
     pts = [p for t, *_ in tris for p in t]
     ys = [p[1] for p in pts]
     zs = [p[2] for p in pts]
@@ -794,7 +845,7 @@ def plan(car_body, place, ground: float, host: HostPlates, lods, log=print) -> P
             report[end] = {"source": "none", "note": str(error)}
             log(f"plates: {error}")
             continue
-        lod_depths(p, car_body, sorted(lods), place)
+        lod_depths(p, car_body, sorted(lods), place, by_lod)
         plates.append(p)
         report[end] = {
             **p.report(),
