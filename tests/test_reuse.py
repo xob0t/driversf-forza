@@ -114,6 +114,25 @@ def _record(folder: Path, job: dict) -> dict:
     return fp
 
 
+def test_module_units_are_kept_by_source_and_not_recorded():
+    with tempfile.TemporaryDirectory() as tmp:
+        saved = fingerprint.UNITS_CACHE
+        fingerprint.UNITS_CACHE = Path(tmp) / "code-units"
+        try:
+            assert fingerprint.cached_module_units(SOURCE) == fingerprint.module_units(SOURCE)  # made and kept
+            assert len(list(fingerprint.UNITS_CACHE.iterdir())) == 1
+            assert fingerprint.cached_module_units(SOURCE) == units(SOURCE)  # read back
+            changed = SOURCE.replace("LIMIT = 4", "LIMIT = 5")
+            assert fingerprint.cached_module_units(changed) == units(changed) != units(SOURCE)
+            assert len(list(fingerprint.UNITS_CACHE.iterdir())) == 2
+        finally:
+            fingerprint.UNITS_CACHE = saved
+    real = fingerprint.UNITS_CACHE / "x.json"
+    recorder = fingerprint.Recorder()
+    recorder.opened.append((str(real), "r", 0))
+    assert fingerprint.norm(real) not in recorder._inputs()[0]  # never an input
+
+
 def test_fingerprint_records_inputs_and_code():
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
