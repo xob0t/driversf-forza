@@ -3331,10 +3331,13 @@ as from the driver's seat, and the main carbin's LOD-1 cabin (765 to 2,791
 triangles) is its far stand-in. All 570 cockpit carbins hold LOD 0 only
 (`cklods.py`): Forza has nothing between the two.
 
-**In the chase views (`ConvertOptions.chase_cabin`, `port_car --chase-cabin`; off
-by default).** The clean exterior draws the cockpit's cabin instead of the LOD-1
-cabin. That is the cockpit carbin's static sections without the outside parts,
-the upgrades, the lamps and the glass (`cockpit/chase.py`). The cabin is culled
+**In the chase views (`ConvertOptions.chase_cabin`, on by default since #429;
+`port_car --no-chase-cabin` turns it off).** The clean exterior draws the cockpit's
+cabin instead of the LOD-1 cabin. That is the cockpit carbin's static sections
+without the outside parts, the upgrades, the lamps, the glass (`glass*`, `lexan*`)
+and the converter's own `dsf_*` sections, its virtual displays and panels
+(`cockpit/chase.py`). One of those panels stood up through the ARX-02a's bodywork
+from outside. The cabin is culled
 to what a ring of 12 eyes sees through the LOD-1 body's windows. The ring sits at
 the chase camera's distance and height (5.8 m out, 1.7 m up, from the probe's
 logs), all round the car, since Shift and replays show every side. It is drawn on
@@ -3372,6 +3375,36 @@ parts. VM chase and side views by day (`vm1-20261031-103919` master,
 `-104549` with the option): every cabin draws, no fault. The Skyline's dash
 shows its cage and race cabin, not the livery art. The EAE Speedster (12th car)
 didn't spool in either run.
+
+**The interior atlas stays the head view's.** Planned with the chase cabin's
+triangles, 17 of 555 cars lost interior atlas scale, which costs the cockpit view.
+The largest losses were the Panoz LMP 03's outside parts (1.0 to 0.25), the Speed 8's
+(0.87 to 0.25), the ARX-02a's (0.68 to 0.23) and the Agera's cabin (0.92 to 0.82).
+The atlas is therefore planned for the head-culled cockpit alone. A chase triangle
+whose texels a planned region holds maps into it (`region_of`). The others draw flat,
+one cell per subsection, in the converted mean of their own texels (`chase_flats`,
+`ChaseBinding`). Built with and without the cabin, the Skyline, Panoz LMP 03, Speed 8,
+ARX-02a and Agera keep identical interior scales (`out/i410/at_off`, `at_on`). They
+gain 0 to 6 solid cells; 0 to 7 subsections draw flat.
+
+**Roster survey** (`roster_cabin.py`, all 573 cars, offline; 555 with their own
+cockpit, the 18 placeholder cockpits keep the LOD-1 cabin):
+- **Size estimate:** pool vertices x 28 plus 6 bytes a triangle, minus the LOD-1 cabin.
+  It matches the builds within 0.01 MB (Skyline 0.79 vs 0.80, E36 M3 0.85 vs 0.86).
+- **Clean exterior:** median 0x1e8bb8, largest 0x27b708. No car goes over the
+  build's 0x2C0000 cap, so the fallbacks (the ring's rear half, then the LOD-1 cabin)
+  don't come into play. The rear half keeps 95 to 97% of the ring's triangles on the
+  survey's first three cars and would save little anyway.
+- **Archive:** +0.83 MB a car, +0.46 GB over the roster. From 3.156 GB (`out/build`,
+  2026-10-31) to about 3.62 GB, against dsfforza.asi's 4 GiB `large_files` limit
+  (4.295 GB). That leaves about 0.68 GB: about 107 more cars at the roster's mean with
+  the cabin (3.62 GB / 573 = 6.3 MB a car).
+
+**Garage and Shift** (VM, confirmed-runtime). The probe zaps between cars, so the
+entries are unloaded and loaded again, and every cabin draws (runs above). The garage
+(`garagetest_on.lua`, `-MenuKeys`) lists the ported cars. Selecting the BMW E36 M3 and
+leaving the garage spawns it, and it drives out drawn (`vm1-20261031-113304`). No fault
+in any run. Replays: not checked, the harness can't drive one.
 
 ## Risks and open questions
 
