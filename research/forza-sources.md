@@ -157,8 +157,11 @@ games' `gamedb.slt` also have `Data_CarBody` (`ModelWheelbase`,
 `ModelFrontTrackOuter`, `BottomCenterWheelbasePosZ`, pristine bounding box),
 keyed by `Data_Car.Id * 1000`: 503 rows in FM4's, 176 in FH1's. Both have
 the 370Z (row 1103000, wheelbase 2.5516) and the Leaf (2.690).
-`car_dims` reads `maxdata.xml` first and the gamedb only as the fallback
-(the Leaf's). `CarPartPositions`
+Since #406 `car_dims` takes the wheelbase and its midpoint from the gamedb's
+`Data_CarBody` (the body's arches centre there on the 35 cars where the two
+differ; research/wheels.md, "Body height and wheelbase"), track and ride height
+from `maxdata.xml` (the gamedb's tracks are off some bodies by up to 0.32 m), and
+everything from the gamedb for the Leaf. `CarPartPositions`
 rows 5 to 8 sit near the hubs (the 370Z's are 2.5516 apart, its wheelbase),
 but what the part IDs mean isn't known. Tyre radius and width are measured
 on the car's own `wheel` section.
@@ -166,7 +169,10 @@ on the car's own `wheel` section.
 **Forza y = 0 is not the ground (confirmed-static, 2026-10-22).** It is the
 bottom of the body at the wheelbase centre (`BottomCenterWheelbasePos` y = 0);
 the ground is `StockRideHeight` below it (`<Misc FrontStockRideHeight
-RearStockRideHeight>`, gamedb `ModelFront/RearStockRideHeight`). Evidence on
+RearStockRideHeight>`, gamedb `ModelFront/RearStockRideHeight`). On 15 cars
+`BottomCenterWheelbasePos` y is negative and the body's bottom is that far below
+0 (VW_BEETLE_68 -0.158, its ground 0.316 m down); see research/wheels.md,
+"Body height and wheelbase". Evidence on
 the 370Z / Skyline R32 / M5: body vertices reach y = -0.055 / -0.091 / -0.049
 (below a ground at 0 is impossible); MAXData's collision box reaches MinY
 -0.14 / -0.2355 / -0.14 against ride heights 0.144 / 0.231 / 0.164; MaxY +
@@ -182,7 +188,7 @@ body sat 0.14 to 0.23 m too low on its wheels (eye and roof with it);
 **`BottomCenterWheelbasePos` z counts towards the front (confirmed-static,
 2026-10-22).** The model's front is at -z, so the wheelbase midpoint sits at
 model z = -BottomCenterWheelbasePos.z (gamedb `BottomCenterWheelbasePosZ`
-has the same value and sign). Evidence: the body's wheel-arch cut-outs
+is that model z itself: MAXData's value negated, on 558 of the 573 roster cars). Evidence: the body's wheel-arch cut-outs
 (lowest outer body vertices per 10 cm of z) centre on -z within a few cm on
 the Cuda (-0.23 against z = +0.203), Mustang Boss 429 (-0.20 / +0.213),
 Veyron (-0.12 / +0.122), Charger 69, 300SL, Range Rover, 250 GTO, Fiat 500
