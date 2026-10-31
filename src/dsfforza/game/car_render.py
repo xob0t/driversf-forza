@@ -455,9 +455,9 @@ LOW_POWER_FLOOR, LOW_POWER_BIAS = 2.0, 0.05
 def paint_colour(stream, full, index: int | None = None) -> Paint:
     """Palette entry `index` as the game draws it (compare renders: entry 0, like the
     probes' `-Palette 0`, so two builds draw the same entry), or for the garage picture
-    the palette's most colourful entry (vanilla pictures rarely show black or grey),
-    chosen by the colour it mostly shows (paint.apparent), in the picture's model
-    (picture_paint)."""
+    entry 0, the car's first Forza colour (Sequence 1, the maker's lead colour:
+    paint.install keeps Forza's order; research/gui-assets.md, "Paint colour"), in the
+    picture's model (picture_paint)."""
     from dsfforza.convert import paint
 
     spss = paint.palette_set(stream, full)
@@ -465,23 +465,18 @@ def paint_colour(stream, full, index: int | None = None) -> Paint:
         return Paint.flat(DEFAULT_PAINT_SRGB)
     if index is not None:
         return Paint.entry(paint.spsp_params(stream, spss.children[min(index, len(spss.children) - 1)]))
-    options = []
-    for e in spss.children:
-        params = paint.spsp_params(stream, e)
-        colour = tuple(int(255 * paint.linear_to_srgb(x)) for x in paint.apparent(params))
-        metallic = "g_vec4TintColour1_Alpha" in params and paint.is_metallic(params)
-        try:
-            entry = picture_paint(
-                tuple(params["g_vec3TintColour2"][:3]),
-                tuple(params["g_vec3TintColour3"][:3]),
-                float(params.get("g_fresnelpower", 1.0)),
-                float(params.get("g_fresnelbias", 0.0)),
-                metallic,
-            )
-        except (KeyError, TypeError):
-            entry = Paint.flat(colour, metallic)
-        options.append((colour, entry))
-    return max(options, key=lambda o: (max(o[0]) - min(o[0]), -abs(sum(o[0]) / 3 - 128)))[1]
+    params = paint.spsp_params(stream, spss.children[0])
+    metallic = "g_vec4TintColour1_Alpha" in params and paint.is_metallic(params)
+    try:
+        return picture_paint(
+            tuple(params["g_vec3TintColour2"][:3]),
+            tuple(params["g_vec3TintColour3"][:3]),
+            float(params.get("g_fresnelpower", 1.0)),
+            float(params.get("g_fresnelbias", 0.0)),
+            metallic,
+        )
+    except (KeyError, TypeError):
+        return Paint.flat(tuple(int(255 * paint.linear_to_srgb(x)) for x in paint.apparent(params)), metallic)
 
 
 def _rest_hubs(stream, full, hubs: list) -> list:

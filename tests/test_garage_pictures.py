@@ -281,3 +281,31 @@ def test_blur_disc_fades_in():
     assert cr._fades_in(*mesh(2), {})
     assert not cr._fades_in(*mesh(1), {})
     assert not cr._fades_in(*mesh(0), {})
+
+
+def test_garage_picture_shows_sequence_1():
+    """The garage picture draws palette entry 0, Forza's Sequence 1 (a Ferrari's red, not its
+    brighter yellow, #402), even when it is black; pick_colours keeps it first on long lists."""
+    from types import SimpleNamespace
+    from unittest import mock
+
+    from dsfforza.convert import paint
+
+    def colours(*swatches):
+        return [paint.ForzaColour(k + 1, rgb, False, "") for k, rgb in enumerate(swatches)]
+
+    def drawn(*swatches):
+        entries = [paint.shade(c) for c in colours(*swatches)]
+        spss = SimpleNamespace(children=list(range(len(entries))))
+        with (
+            mock.patch.object(paint, "palette_set", return_value=spss),
+            mock.patch.object(paint, "spsp_params", side_effect=lambda _stream, k: entries[k]),
+        ):
+            return cr.paint_colour(None, None).c2, entries[0]["g_vec3TintColour2"][:3]
+
+    red, giallo, black = (192, 0, 0), (254, 215, 50), (5, 5, 5)
+    for swatches in ((red, giallo, (220, 231, 237)), (black, giallo, red)):
+        got, want = drawn(*swatches)
+        assert np.allclose(got, want)
+    many = colours(*[(k * 12, 255 - k * 12, (k * 37) % 256) for k in range(20)])
+    assert paint.pick_colours(many)[0].sequence == 1
