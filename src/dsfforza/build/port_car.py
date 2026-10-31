@@ -78,6 +78,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 from dsfforza import REPO
 from dsfforza.build import (
@@ -85,14 +86,13 @@ from dsfforza.build import (
     gentle,
     handling,
 )
-from dsfforza.build.forza_roster import Source, default_images, roster
+from dsfforza.build.forza_roster import Source, default_images, open_package, roster
 from dsfforza.convert import (
     cockpit,
     dsf_materials,
     forza2dsf,
 )
 from dsfforza.convert import forza_materials as fm
-from dsfforza.formats import stfs
 from dsfforza.formats.chnk import ENTRY_LIMIT, entry_size, layout, read_chunk, write_chunk
 from dsfforza.formats.forzazip import ForzaZip
 from dsfforza.formats.vehicle_mesh import child, payload
@@ -242,7 +242,13 @@ def car_entry(
         "year": year,
         "game": source.game,
         "games_available": games,
-        "source": {"iso": Path(source.iso).name, "where": source.where, "package": source.package, "path": source.path},
+        "source": {
+            "iso": Path(source.iso).name,
+            "where": source.where,
+            # a DLC package by its file name, like the disc image (any folder under assets/)
+            "package": Path(source.package).name if source.dlc else source.package,
+            "path": source.path,
+        },
         "cache": str(Path(cache) / source.game.lower() / media),
         "spool_id": spool_id,
         "interior_id": spool_id + 1000,
@@ -281,14 +287,14 @@ def pick_source(cars: dict, request: CarRequest):
     raise SystemExit(f"{request.media}: not on the {request.game} discs (only {car.games})")
 
 
-def open_car_zip(source: Source) -> tuple[XIso, ForzaZip, str]:
-    """(image, zip, folder prefix inside the zip) for a roster source."""
-    image = XIso(source.iso)
+def open_car_zip(source: Source) -> tuple[XIso | BinaryIO, ForzaZip, str]:
+    """(handle to close, zip, folder prefix inside the zip) for a roster source: a car zip
+    on a disc, or a car folder in a pack (on disc 2, or a DLC package file)."""
     if source.package:
-        entry = image.find(source.package)
-        package = stfs.in_image(image, entry)
+        handle, package = open_package(source)
         inner, folder = source.path.split("::", 1)
-        return image, ForzaZip(package.open(inner)), folder.lower()
+        return handle, ForzaZip(package.open(inner)), folder.lower()
+    image = XIso(source.iso)
     return image, ForzaZip(image.open(image.find(source.path))), ""
 
 
@@ -420,11 +426,14 @@ def extract_wheel(source: Source, media: str, cache: Path, log=print) -> list[st
         old = {}
     if old.get("path") == path and old.get("prefix") == prefix and old.get("wanted") == list(WHEEL_FILES):
         return old.get("files", [])
-    image = XIso(source.iso)
+    if source.package:
+        image, package = open_package(source)
+    else:
+        image = XIso(source.iso)
     written = []
     try:
         if source.package:
-            archive = ForzaZip(stfs.in_image(image, image.find(source.package)).open(path))
+            archive = ForzaZip(package.open(path))
         else:
             try:
                 archive = ForzaZip(image.open(image.find(path)))

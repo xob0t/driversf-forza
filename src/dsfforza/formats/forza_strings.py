@@ -23,6 +23,7 @@ rotate-left-7 xor hashes of the lower-cased table name and string id (init
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import struct
 import sys
 from pathlib import Path
@@ -86,17 +87,30 @@ class Strings:
             extract(game, folder, iso, isos)
         for name in STRING_FILES:
             path = folder / name
-            if not path.exists():
-                continue
-            table = parse(path.read_bytes())
-            stem = name.rsplit(".", 1)[0]
-            # Pick the hash version that reproduces the first id's hash.
-            version = 1
-            for h, (sid, _) in table.items():
-                if sid:
-                    version = 1 if str_hash(sid, 1) == h else 0
-                    break
-            self.tables[str_hash(stem, version)] = table
+            if path.exists():
+                self.add(name, path.read_bytes())
+
+    @classmethod
+    def of(cls, files: dict[str, bytes]) -> Strings:
+        """The tables given as {"Data_Car.str": bytes, ...} (a DLC pack's EN/ folder),
+        nothing read from a disc or the cache."""
+        strings = cls.__new__(cls)
+        strings.tables = {}
+        for name, data in files.items():
+            strings.add(name, data)
+        return strings
+
+    def add(self, name: str, data: bytes) -> None:
+        """Table `name` ("Data_Car.str") from its bytes; replaces a table of that name."""
+        table = parse(data)
+        stem = name.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        # Pick the hash version that reproduces the first id's hash.
+        version = 1
+        for h, (sid, _) in table.items():
+            if sid:
+                version = 1 if str_hash(sid, 1) == h else 0
+                break
+        self.tables[str_hash(stem, version)] = table
 
     def get(self, ref: str | None) -> str | None:
         if not ref or not str(ref).startswith("_&"):
@@ -149,34 +163,71 @@ def car_names(
     """{media: {make, display, model_short, family, year}} from Data_Car, List_CarMake, List_FamilyModel
     (the string tables from `iso`, the game's disc image (disc 1), else the game's disc
     among `isos` (default assets/*.iso), found by content)."""
-    import sqlite3
-
     gamedb = gamedb or REPO / "out" / "cache" / game / "gamedb.slt"
     if not Path(gamedb).is_file():  # written by the build from the game's disc (port_car.extract_gamedb)
         raise LookupError(f"no {gamedb}")
     strings = Strings(game, iso=iso, isos=isos)
     db = sqlite3.connect(f"file:{Path(gamedb).as_posix()}?mode=ro", uri=True)
-    out = {}
     try:
-        for name in media:
-            row = db.execute(
-                "SELECT c.DisplayName, c.ModelShort, c.Year, m.DisplayName, f.DisplayName "
-                "FROM Data_Car c LEFT JOIN List_CarMake m ON m.ID = c.MakeID "
-                "LEFT JOIN List_FamilyModel f ON f.Id = c.FamilyModelID "
-                "WHERE lower(c.MediaName) = lower(?)",
-                (name,),
-            ).fetchone()
-            if row:
-                out[name] = {
-                    "display": strings.get(row[0]),
-                    "model_short": strings.get(row[1]),
-                    "year": row[2],
-                    "make": strings.get(row[3]),
-                    "family": strings.get(row[4]),
-                }
+        return names_from([db], [strings], media)
     finally:
         db.close()
+
+
+def names_from(dbs: list, strings: list[Strings], media: list[str]) -> dict[str, dict]:
+    """car_names over several databases and string tables, each looked up in order: a DLC
+    pack's merge database and EN tables first, then the disc's (a pack's cars keep the
+    disc's makers: Porsche's List_CarMake row is in the Porsche pack, Alfa Romeo's only on
+    the disc). `dbs`: sqlite3 connections with Data_Car (the first that has the car gives
+    its row), List_CarMake and List_FamilyModel."""
+
+    def text(ref):
+        if not str(ref or "").startswith("_&"):
+            return ref  # plain text (or none), as Strings.get gives it
+        return next((found for table in strings if (found := table.get(ref)) is not None), None)
+
+    def lookup(sql, key):
+        if key is None:
+            return None
+        for db in dbs:
+            try:
+                row = db.execute(sql, (key,)).fetchone()
+            except sqlite3.OperationalError:  # a pack database without that table
+                continue
+            if row:
+                return row[0]
+        return None
+
+    out = {}
+    for name in media:
+        row = lookup_row(dbs, name)
+        if row is None:
+            continue
+        display, model_short, year, make_id, family_id = row
+        out[name] = {
+            "display": text(display),
+            "model_short": text(model_short),
+            "year": year,
+            "make": text(lookup("SELECT DisplayName FROM List_CarMake WHERE ID = ?", make_id)),
+            "family": text(lookup("SELECT DisplayName FROM List_FamilyModel WHERE Id = ?", family_id)),
+        }
     return out
+
+
+def lookup_row(dbs: list, media: str):
+    """(DisplayName, ModelShort, Year, MakeID, FamilyModelID) of the first Data_Car row named `media`."""
+    for db in dbs:
+        try:
+            row = db.execute(
+                "SELECT DisplayName, ModelShort, Year, MakeID, FamilyModelID FROM Data_Car "
+                "WHERE lower(MediaName) = lower(?)",
+                (media,),
+            ).fetchone()
+        except sqlite3.OperationalError:  # a pack database without Data_Car (the track pack's)
+            continue
+        if row:
+            return row
+    return None
 
 
 def main(argv: list[str] | None = None) -> None:
