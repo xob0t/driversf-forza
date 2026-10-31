@@ -925,6 +925,7 @@ def test_chase_cabin_is_the_cockpit_cabin_without_outside_parts_or_glass():
         "headlightL": section("headlightL", "head_light"),
         "cagerace": section("cagerace", "metal"),
         "lexanF": section("lexanF", "window", "black"),  # FM4's windscreen with its frit (#441: lexan is glass)
+        "dsf_dash_panel": section("dsf_dash_panel", "dsf_dial_display"),  # the converter's virtual display
     }
     cabin = {s.name: [u.material for u in s.subsections] for s in chase.cabin_sections(static)}
     assert cabin == {"interior": ["plastic"], "steering_wheel": ["leather"], "seatL": ["leather"]}

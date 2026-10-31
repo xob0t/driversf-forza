@@ -72,7 +72,10 @@ def cabin_sections(static: dict) -> list:
     """The cockpit carbin's cabin: its static sections minus the outside parts
     (fm.COCKPIT_EXTERIOR_SECTIONS), the upgrades (SKIP_SECTIONS), the lamps, the glass
     sections (glass* and FM4's lexan*, damage.host.glass_name) and every glass
-    subsection: the exterior entry has the main carbin's."""
+    subsection: the exterior entry has the main carbin's. Sections the converter makes
+    for the cockpit view (dsf_*: virtual displays and their panels, moved wheel displays)
+    stay out too: they stand in for Forza's displays from the driver's seat, and a panel
+    on the ARX-02a's dash stood up through its bodywork from outside."""
     from dsfforza.convert.damage.host import glass_name
 
     out = []
@@ -82,6 +85,7 @@ def cabin_sections(static: dict) -> list:
             or name in SKIP_SECTIONS
             or LIGHT_SECTIONS.search(name)
             or glass_name(name).startswith("glass")
+            or name.lower().startswith("dsf_")
         ):
             continue
         subs = [u for u in s.subsections if u.lod == 0 and fm.classify_cockpit(u.material, name)[0] != fm.GLASS]
@@ -130,3 +134,101 @@ def cull_for_chase(chase: ChaseCabin, static: dict, resolution: int = 512) -> tu
         "lod1_cabin_triangles": lod1,
     }
     return out[0], out[1]
+
+
+# --- the interior atlas, planned for the head view alone ---------------------------------
+#
+# The cockpit view keeps its atlas as it was: plan() lays out the regions the head-culled
+# cockpit needs, at the scale they get without the chase cabin (on 17 of 555 cars the
+# chase cabin's texels would have shrunk it: the Panoz LMP 03's outside parts from 1.0 to
+# 0.25, the Agera's cabin from 0.92 to 0.82; roster survey, research/cockpit.md). A chase
+# triangle whose texels a planned region holds maps into it; the others draw flat, in the
+# converted mean of their own texels (one cell per subsection).
+
+
+def region_of(t, family: str, uvs):
+    """The planned region of `family` whose source rectangle holds every UV of a triangle
+    (atlas UVs, clamped as Texturing.triangle_uvs clamps them), else None."""
+    w, h = t.src_sizes[family]
+    pts = [(min(1.0, max(0.0, u)) * w, min(1.0, max(0.0, v)) * h) for u, v in uvs]
+    for r in t.regions.get(family, ()):
+        if all(r.src[0] <= x <= r.src[2] and r.src[1] <= y <= r.src[3] for x, y in pts):
+            return r
+    return None
+
+
+def _atlas_textured(t, section, sub):
+    """Texturing's SubMaterial when the subsection samples a planned atlas family as a
+    picture (not a swatch, tiling, flat, digital display), else None."""
+    from dsfforza.convert.cockpit.geometry import DIGITAL_TECHNIQUES, FORCE_FLAT
+
+    if sub.material.lower() in DIGITAL_TECHNIQUES or FORCE_FLAT.match(sub.material) or getattr(section, "flat", False):
+        return None
+    m = t.submaterial(section, sub)
+    return m if m.kind == "textured" and t._uses_atlas(m) else None
+
+
+def chase_flats(t, sections) -> dict[int, tuple]:
+    """id(subsection) -> its flat cell key ("flat", r, g, b, a): the converted mean of the
+    source texels at the corners and centre of each triangle no planned region holds,
+    for every chase subsection that has such triangles. `t` is planned for the head view."""
+    from dsfforza.convert import dsf_materials as dm
+
+    out = {}
+    for s in sections:
+        for sub in s.subsections:
+            m = _atlas_textured(t, s, sub)
+            if m is None:
+                continue
+            w, h, rgba = t.atlases.get(m.family)
+            pool = s.vertices_for(sub)
+            acc, n = [0, 0, 0, 0], 0
+            for tri in sub.triangles():
+                uvs = dm.triangle_uv(m, [pool[i].uv0 for i in tri])
+                if region_of(t, m.family, uvs) is not None:
+                    continue
+                centre = (sum(u for u, _ in uvs) / 3, sum(v for _, v in uvs) / 3)
+                for u, v in [*uvs, centre]:
+                    x = min(w - 1, max(0, int(min(1.0, max(0.0, u)) * w)))
+                    y = min(h - 1, max(0, int(min(1.0, max(0.0, v)) * h)))
+                    o = (y * w + x) * 4
+                    for c in range(4):
+                        acc[c] += rgba[o + c]
+                    n += 1
+            if n:
+                out[id(sub)] = ("flat", *t._convert_texel(m.family, *(round(a / n) for a in acc)))
+    return out
+
+
+class ChaseBinding:
+    """add_geometry's binding for the chase cabin: CockpitBinding (the interior's materials
+    and atlas), with textured triangles mapped into the head view's regions or onto their
+    subsection's flat cell (chase_flats)."""
+
+    def __init__(self, inner, flats: dict):
+        self.inner, self.texturing, self.flats = inner, inner.texturing, flats
+
+    def material(self, section, sub, shared):
+        if _atlas_textured(self.texturing, section, sub) is not None:
+            return self.inner.materials.textured
+        return self.inner.material(section, sub, shared)
+
+    def triangle_uvs(self, section, sub, triangle_index, raw_uvs):
+        from dsfforza.convert import dsf_materials as dm
+
+        t = self.texturing
+        m = _atlas_textured(t, section, sub)
+        if m is None:
+            return self.inner.triangle_uvs(section, sub, triangle_index, raw_uvs)
+        uvs = dm.triangle_uv(m, raw_uvs)
+        r = region_of(t, m.family, uvs)
+        if r is None:
+            key = self.flats[id(sub)]
+            return [t.solid_uv(key)] * len(uvs), key
+        size, scale = t.src_sizes[m.family], t._scale_of(r)
+        mapped = [r.map(min(1.0, max(0.0, u)), min(1.0, max(0.0, v)), size, scale, t.size) for u, v in uvs]
+        return mapped, (m.family, t.regions[m.family].index(r))
+
+    @property
+    def paint_uv(self):
+        return self.inner.paint_uv

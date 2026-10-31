@@ -437,25 +437,39 @@ def convert_interior(
         current = [decimate_section(s, cell) for s in sections] if cell > 0 else sections
         chase_current = [decimate_section(s, cell) for s in chase_sections] if cell > 0 else chase_sections
         rear_current = [decimate_section(s, cell) for s in chase_rear] if cell > 0 else chase_rear
-        t = dm.Texturing(
-            car.folder,
-            size=opts.atlas_size or (width, height),
-            mips=mips,
-            plain=(40, 40, 42, 0),
-            lod0=cf.lod0_atlases,
-            classifier=classifier,
-            families=families,
-            weights=dict(opts.atlas_weights),
-            fourcc=opts.atlas_format.encode(),
-            lift={fm.NODAMAGE: opts.trim_lift} if opts.trim_lift else {},
-            tone={fm.NODAMAGE: opts.trim_tone} if opts.trim_tone else {},
-            filler={fm.NODAMAGE: opts.filler} if opts.filler else {},
-            cutout_colour=(34, 34, 36, 0),
-            gloss_enabled=lights_template is not None,
-            gloss_filter=gloss_filter,
-            gloss_max=COCKPIT_GLOSS_MATERIALS,
-        )
-        t.plan(current + chase_current + rear_current, {0}, extra_solids=needle_colours)
+
+        def texturing():
+            return dm.Texturing(
+                car.folder,
+                size=opts.atlas_size or (width, height),
+                mips=mips,
+                plain=(40, 40, 42, 0),
+                lod0=cf.lod0_atlases,
+                classifier=classifier,
+                families=families,
+                weights=dict(opts.atlas_weights),
+                fourcc=opts.atlas_format.encode(),
+                lift={fm.NODAMAGE: opts.trim_lift} if opts.trim_lift else {},
+                tone={fm.NODAMAGE: opts.trim_tone} if opts.trim_tone else {},
+                filler={fm.NODAMAGE: opts.filler} if opts.filler else {},
+                cutout_colour=(34, 34, 36, 0),
+                gloss_enabled=lights_template is not None,
+                gloss_filter=gloss_filter,
+                gloss_max=COCKPIT_GLOSS_MATERIALS,
+            )
+
+        # Planned for the head view alone: the chase cabin maps into those regions or draws
+        # flat (chase.chase_flats), so it never costs the cockpit view resolution.
+        t = texturing()
+        t.plan(current, {0}, extra_solids=needle_colours)
+        flats = {}
+        if chase_current or rear_current:
+            from dsfforza.convert.cockpit.chase import chase_flats
+
+            flats = chase_flats(t, chase_current + rear_current)
+            if flats:
+                t = texturing()
+                t.plan(current, {0}, extra_solids={**needle_colours, **{k: k[1:] for k in flats.values()}})
         child(texc, "DXTC").payload = t.dds(template=host_dds)
         gloss = {}
         if t.gloss_materials:
@@ -570,12 +584,11 @@ def convert_interior(
         if size <= opts.mdxn_limit:
             break
     if chase is not None:
-        chase.sections, chase.rear_sections, chase.binding, chase.shared = (
-            chase_current,
-            rear_current,
-            binding,
-            mats.shared,
-        )
+        from dsfforza.convert.cockpit.chase import ChaseBinding
+
+        chase.sections, chase.rear_sections = chase_current, rear_current
+        chase.binding, chase.shared = ChaseBinding(binding, flats), mats.shared
+        chase.report["flat_subsections"] = len(flats)
         chase.layout = dict(layout)
     log(f"interior atlas: {t.summary()}")
     if t.gloss_materials:
