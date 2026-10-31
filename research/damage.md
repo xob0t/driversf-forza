@@ -1474,6 +1474,37 @@ windscreen from ahead. Runs `vm2-20261031-111156` (before) and `vm2-20261031-111
   the same hits (observe-39 / -46).
 - The Speed 8's black cabin shows little difference in either run (observe-17 / -25).
 
+### The other readers of glass names (issue #439, 2026-10-31)
+
+`glass_name` moved to `forza_materials` (`damage.host` re-exports it). It is now
+also used by the bonnet camera (`vehicle_cameras.forza_windscreen`), the glass
+crack slots (`glass.slot_for`: the lookup goes through it, and groups keep the
+section's own name), the lamp-cover check (`dsf_materials.lamp_cover`,
+`WINDOW_SECTIONS`), the head lamp sections (`lights.HEAD_SECTION`), the
+side-glass door count (`host_select._carbin_doors`) and render_compare's window
+and lamp regions (`forza_render`).
+
+Built before (master e8e0c1b) and after, the 90 cars with a lexan section
+(`out/i439/before`, `out/i439/after`; `out/i439/compare.py`):
+
+| | Before | After |
+| --- | --- | --- |
+| Bonnet camera kept from the host | 82 cars | 16 |
+| Interior glass window groups | 989 | 571 |
+| Exterior glass triangles on another slot or UV | | 17,325 of 46,708, on 78 cars |
+| Lamps (function, side, triangles) | | unchanged on all 90 |
+| Doors counted from side glass (simulated, `out/i439/doors.py`) | | unchanged on all 90 |
+
+66 cars now place the bonnet camera on their own windscreen (median 0.20 m from
+the host's spot; up to 0.99 m on the Toyota GT-One). Of the 16 still on the
+host's camera, 12 have no windscreen to place from: open prototypes, or a small
+one-sided deflector pane called lexanF (FLM09 Corvettes, ARX-02a, Panoz LMP).
+The other 4 are the GT-R GT500s, whose lexanF is two halves with a 2 cm gap on
+the centre line, so `windscreen_centre`'s centre-line rays miss it (#450).
+No lexan window section holds `lights_glass`, so the lamp-cover check changes
+nothing on the roster; lexan head lamp covers hold no reflectors, and no car
+gains or loses a lamp.
+
 ## Risks and open questions
 
 1. Crush, panel swing and removal (`-DamagePanels`), decals and seams have
