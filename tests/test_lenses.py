@@ -427,6 +427,29 @@ def test_flat_lens_is_baked_as_a_filter():
         assert abs(dm.lamp_score(*got) - dm.lamp_score(*LAMP) * through) < 0.01, (z, got)
 
 
+def test_lens_reads_a_finer_surface_filtered():
+    # A lens over a reflector whose picture is finer than the lens's texels (the Holden
+    # Commodore's 2.75 mm red lens texels over a dimpled 0.9 mm bowl): each lens texel shows the
+    # picture's mean under it, as Forza's sampler does on screen, not one texel of it (a black
+    # and white mottle, #403). Here a lens of 4 x 4 texels over a checker of 16 x 32.
+    atlases = _Atlases()
+    rgba = atlases.lights[2]
+    for y in range(SIZE):
+        for x in range(SIZE // 2, SIZE):
+            o = (y * SIZE + x) * 4
+            rgba[o : o + 4] = bytes((255, 255, 255, 255) if (x + y) % 2 else (0, 0, 0, 255))
+    lens = _quad("glassLTL", "detail_glass_clear", 2.0, 0.0, 0.125)
+    lens = dataclasses.replace(
+        lens, lod_vertices=[dataclasses.replace(v, uv0=(v.uv0[0], v.uv0[1] * 0.125)) for v in lens.lod_vertices]
+    )
+    lamp = _quad("taillightL", "textured_reflector", 1.9, 0.5, 1.0)
+    with tempfile.TemporaryDirectory() as car_dir:
+        lenses.bake([lens, lamp], {1}, atlases, {id(lens.subsections[0])}, Path(car_dir))
+    got = np.array([atlases.texel(x, y)[0] for x in range(4) for y in range(4)], float)
+    want = _filtered(LENS, (127.5,) * 3, "detail_glass_clear")[0][0]
+    assert np.abs(got - want).max() < 25, (got, want)
+
+
 def test_laid_back_front_lens_sees_the_lamp_along_the_axis():
     # A front lens facing up (the Panoz Esperante's head lamps): along its normal nothing, along
     # the car's axis the lamp behind it.

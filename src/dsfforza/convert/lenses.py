@@ -500,6 +500,18 @@ class _Surfaces:
         self.lo = self.pts.min(1) if len(self.pts) else np.zeros((0, 3))
         self.hi = self.pts.max(1) if len(self.pts) else np.zeros((0, 3))
         self.images = {}
+        self.pyramids = {}
+        # Texels per metre of each textured triangle on its atlas (0 for flat ones): with a
+        # lens texel's size on the car, how many texels of the surface one lens texel covers.
+        self.density = np.zeros(len(self.pts))
+        for family in {f for f in fams if f is not None}:
+            sel = np.array([f == family for f in fams], bool)
+            w, h, _ = atlases.get(family)
+            p, q = self.pts[sel], self.uvs[sel] * (w, h)
+            area = 0.5 * np.linalg.norm(np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0]), axis=1)
+            e1, e2 = q[:, 1] - q[:, 0], q[:, 2] - q[:, 0]
+            uv_area = 0.5 * np.abs(e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0])
+            self.density[sel] = np.sqrt(uv_area / np.maximum(area, 1e-12))
 
     def image(self, family: str) -> np.ndarray:
         if family not in self.images:
@@ -507,10 +519,17 @@ class _Surfaces:
             self.images[family] = np.frombuffer(bytes(rgba), np.uint8).reshape(h, w, 4).astype(float)
         return self.images[family]
 
-    def sample(self, tri: np.ndarray, b1: np.ndarray, b2: np.ndarray) -> np.ndarray:
+    def pyramid(self, family: str) -> list:
+        if family not in self.pyramids:
+            self.pyramids[family] = _pyramid(self.image(family).astype(np.float32))
+        return self.pyramids[family]
+
+    def sample(self, tri: np.ndarray, b1: np.ndarray, b2: np.ndarray, footprint=None) -> np.ndarray:
         """RGBA (n, 4) of hits on triangles `tri` at barycentrics (b1, b2): texels of
         textured surfaces (nodamage alpha is no glow mask: 0; paint-through texels are
-        paint), flat colours otherwise."""
+        paint), flat colours otherwise. footprint (n,): the size on the car (m) of the lens
+        texel each hit is for: a Lights surface is then read filtered over that size (its
+        mipmaps, _fetch), as Forza's sampler reads it on screen; without it, its texel."""
         out = self.colour[tri].copy()
         for family in (fm.LIGHTS, fm.NODAMAGE):
             sel = np.array([self.family[k] == family for k in tri], bool) & (self.kind[tri] > 0)
@@ -524,6 +543,13 @@ class _Surfaces:
                 + b1[sel][:, None] * self.uvs[t, 1]
                 + b2[sel][:, None] * self.uvs[t, 2]
             )
+            if family == fm.LIGHTS and footprint is not None:
+                # The surface's texels one lens texel covers, as a mip level: point samples of a
+                # finer picture (a dimpled bowl's 0.9 mm texels under 2.75 mm lens texels) alias
+                # into mottle (issue #403).
+                level = np.log2(np.maximum(np.asarray(footprint, float)[sel] * self.density[t], 1.0))
+                out[sel] = _fetch(self.pyramid(family), uv, level)
+                continue
             px = img[(uv[:, 1] * h).astype(int).clip(0, h - 1), (uv[:, 0] * w).astype(int).clip(0, w - 1)]
             if family == fm.NODAMAGE:
                 through = (px[:, 3] < 16) & (px[:, :3].min(1) > 200)
@@ -538,11 +564,54 @@ class _Surfaces:
         return np.nonzero(np.all(self.hi >= lo, 1) & np.all(self.lo <= hi, 1))[0]
 
 
-def _behind(surf: _Surfaces, origins, dirs, cand):
+def _pyramid(img: np.ndarray) -> list:
+    """Box-filtered mipmaps of an (h, w, c) image, down to one texel: level k averages 2^k x 2^k
+    texels (an odd edge repeats its last row or column)."""
+    levels = [img]
+    while max(levels[-1].shape[:2]) > 1:
+        a = levels[-1]
+        if a.shape[0] % 2:
+            a = np.concatenate([a, a[-1:]], 0)
+        if a.shape[1] % 2:
+            a = np.concatenate([a, a[:, -1:]], 1)
+        levels.append(0.25 * (a[0::2, 0::2] + a[1::2, 0::2] + a[0::2, 1::2] + a[1::2, 1::2]))
+    return levels
+
+
+def _bilinear(img: np.ndarray, uv: np.ndarray) -> np.ndarray:
+    """img (h, w, c) read bilinearly at uv (n, 2) (0..1 over the image, edges clamped)."""
+    h, w = img.shape[:2]
+    x = np.clip(uv[:, 0] * w - 0.5, 0, w - 1)
+    y = np.clip(uv[:, 1] * h - 0.5, 0, h - 1)
+    x0, y0 = np.floor(x).astype(int), np.floor(y).astype(int)
+    x1, y1 = np.minimum(x0 + 1, w - 1), np.minimum(y0 + 1, h - 1)
+    fx, fy = (x - x0)[:, None], (y - y0)[:, None]
+    top = img[y0, x0] * (1 - fx) + img[y0, x1] * fx
+    bottom = img[y1, x0] * (1 - fx) + img[y1, x1] * fx
+    return top * (1 - fy) + bottom * fy
+
+
+def _fetch(levels: list, uv: np.ndarray, level: np.ndarray) -> np.ndarray:
+    """A mip pyramid (_pyramid) read trilinearly at uv (n, 2) and mip level (n,) (0: the image)."""
+    level = np.clip(level, 0, len(levels) - 1)
+    lo = np.floor(level).astype(int)
+    frac = (level - lo)[:, None]
+    out = np.zeros((len(uv), levels[0].shape[2]))
+    for k in np.unique(lo).tolist():
+        sel = lo == k
+        a = _bilinear(levels[k], uv[sel])
+        if k + 1 < len(levels):
+            a = a + (_bilinear(levels[k + 1], uv[sel]) - a) * frac[sel]
+        out[sel] = a
+    return out
+
+
+def _behind(surf: _Surfaces, origins, dirs, cand, footprint=None):
     """What each ray sees behind its lens: the lens layers and the first opaque surface
     (HOUSING if none) composited front to back. Returns the RGBA, whether the ray met
     anything, and the distance to the first opaque surface, its glow mask, whether it is
-    a lamp (_Surfaces.lamp; RAY_DEPTH, 0 and False if none) and its triangle (-1 if none)."""
+    a lamp (_Surfaces.lamp; RAY_DEPTH, 0 and False if none) and its triangle (-1 if none).
+    footprint (n,): each ray's lens texel size on the car (_Surfaces.sample)."""
     n = len(origins)
     acc = np.zeros((n, 4))
     trans = np.ones(n)
@@ -573,7 +642,7 @@ def _behind(surf: _Surfaces, origins, dirs, cand):
             if not live.any():
                 continue
             r = np.nonzero(live)[0]
-            rgba = surf.sample(tri[r], u[r, k[r]], v[r, k[r]])
+            rgba = surf.sample(tri[r], u[r, k[r]], v[r, k[r]], None if footprint is None else footprint[r])
             hits[r] = True
             solid = surf.kind[tri[r]] != 2
             rule = surf.opacity[tri[r]]
@@ -588,7 +657,7 @@ def _behind(surf: _Surfaces, origins, dirs, cand):
     return acc, hits, solid_at, solid_mask, solid_lamp, solid_tri
 
 
-def _axis_fallback(surf: _Surfaces, origins, dirs, found, front: bool = True) -> int:
+def _axis_fallback(surf: _Surfaces, origins, dirs, found, front: bool = True, footprint=None) -> int:
     """A lens's rays that met no lamp along the lens normal, again along the car's axis into
     the car (+z from the front, -z from the rear: Forza's front is -z): a laid-back head lamp
     lens (the Panoz Esperante's, its normal 65% up) sees the housing floor along its normal
@@ -597,7 +666,7 @@ def _axis_fallback(surf: _Surfaces, origins, dirs, found, front: bool = True) ->
     results (`found`: _behind's arrays, in place) take the axis ray's where that meets a lamp.
     Only a lens facing out of the car's end (AXIS_MIN_FACING on average over its rays: along the
     axis, a side marker's would run along the flank), and only its points that face out. Returns
-    the rays changed."""
+    the rays changed. footprint: each ray's lens texel size (_behind)."""
     outward = dirs[:, 2] if front else -dirs[:, 2]  # dirs point in: -normal
     if not len(outward) or outward.mean() < AXIS_MIN_FACING:
         return 0
@@ -611,7 +680,13 @@ def _axis_fallback(surf: _Surfaces, origins, dirs, found, front: bool = True) ->
         rows = redo[c0 : c0 + RAY_CHUNK]
         o, d = start[c0 : c0 + RAY_CHUNK], axis[: len(rows)]
         ends = o + d * RAY_DEPTH
-        got = _behind(surf, o, d, surf.near(np.minimum(o.min(0), ends.min(0)), np.maximum(o.max(0), ends.max(0))))
+        got = _behind(
+            surf,
+            o,
+            d,
+            surf.near(np.minimum(o.min(0), ends.min(0)), np.maximum(o.max(0), ends.max(0))),
+            None if footprint is None else footprint[rows],
+        )
         take = got[4]
         for out, new in zip(found, (got[0], got[1], got[2], got[3], got[4], got[5])):
             out[rows[take]] = new[take]
@@ -979,17 +1054,20 @@ def rear_lamp_glow(atlas: np.ndarray, view, tris, lamp_ids, order: np.ndarray | 
 
 def _lens_samples(section, sub, m, w: int, h: int):
     """A lens subsection's texel samples on the (w, h) Lights atlas: (ix, iy, position,
-    normal) arrays, one row per texel centre inside each triangle, and the size of its texels
-    on the car (m, sqrt(area / distinct texels)); None without any."""
+    normal) arrays, one row per texel centre inside each triangle, the size of its texels
+    on the car (m, sqrt(area / distinct texels)) and each sample's (its triangle's: a lens
+    subsection may hold fine and coarse lenses, m); None without any."""
     pool = section.vertices_for(sub)
-    cols, rows, pos, nrm = [], [], [], []
+    cols, rows, pos, nrm, size = [], [], [], [], []
     area = 0.0
     tris = sub.triangles()
-    every_x, every_y, every_b, at = _sub_texels(m, pool, tris, w, h)
+    uv_px = np.array([_tri_uv(m, pool, t) for t in tris], float).reshape(-1, 3, 2) * (w, h)
+    every_x, every_y, every_b, at = _texels_many(uv_px)
     for k, t in enumerate(tris):
         P = np.array([pool[i].position for i in t], float)
         N = np.array([pool[i].normal for i in t], float)
-        area += 0.5 * float(np.linalg.norm(np.cross(P[1] - P[0], P[2] - P[0])))
+        tri_area = 0.5 * float(np.linalg.norm(np.cross(P[1] - P[0], P[2] - P[0])))
+        area += tri_area
         ix, iy, bary = (a[at[k] : at[k + 1]] for a in (every_x, every_y, every_b))
         ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
         ix, iy, bary = ix[ok], iy[ok], bary[ok]
@@ -1006,11 +1084,14 @@ def _lens_samples(section, sub, m, w: int, h: int):
         rows.append(iy)
         pos.append(bary @ P)
         nrm.append(n)
+        q = np.array(uv_px[k], float)
+        uv_area = 0.5 * abs((q[1, 0] - q[0, 0]) * (q[2, 1] - q[0, 1]) - (q[1, 1] - q[0, 1]) * (q[2, 0] - q[0, 0]))
+        size.append(np.full(len(ix), math.sqrt(tri_area / max(uv_area, 1.0))))
     if not cols:
         return None
     ix, iy = np.concatenate(cols), np.concatenate(rows)
     texel = math.sqrt(area / len(np.unique(iy * w + ix)))
-    return ix, iy, np.concatenate(pos), np.concatenate(nrm), texel
+    return ix, iy, np.concatenate(pos), np.concatenate(nrm), texel, np.concatenate(size)
 
 
 def _scrambled(samples, h: int, w: int) -> np.ndarray:
@@ -1024,7 +1105,7 @@ def _scrambled(samples, h: int, w: int) -> np.ndarray:
     for *_, got in samples:
         if got is None:
             continue
-        ix, iy, pos, _, _ = got
+        ix, iy, pos = got[:3]
         folded = pos.copy()
         folded[:, 0] = np.abs(folded[:, 0])
         k = iy * w + ix
@@ -1036,7 +1117,7 @@ def _scrambled(samples, h: int, w: int) -> np.ndarray:
     for *_, got in samples:
         if got is None:
             continue
-        ix, iy, _, _, texel = got
+        ix, iy, _, _, texel, _ = got
         k = iy * w + ix
         far = spread[k] > SCRAMBLED_SPREAD
         if texel > COARSE_TEXEL and far.any():
@@ -1122,7 +1203,7 @@ def bake(
     for section, sub, _m, got in samples:
         if got is None:
             continue
-        ix, iy, pos, nrm, _ = got
+        ix, iy, pos, nrm, _, size = got
         free = ~used[iy, ix] & ~scrambled[iy, ix]
         key = f"{section.name}/{sub.material}"
         entry = report.setdefault(key, {"texels": 0, "behind": 0, "shared": 0})
@@ -1141,28 +1222,36 @@ def bake(
         # scrambled ones: they hold no one lamp. The lamp glass is a lamp itself (lamp_glow).
         front = glow is not None and pos[:, 2].mean() < GLOW_FRONT_Z and not sub.material.lower().startswith(LAMP_GLASS)
         keep = np.ones(len(ix), bool) if swatch else (~scrambled[iy, ix] if front else free)
-        ix, iy, pos, nrm, free = ix[keep], iy[keep], pos[keep], nrm[keep], free[keep]
+        ix, iy, pos, nrm, free, size = ix[keep], iy[keep], pos[keep], nrm[keep], free[keep], size[keep]
         if not len(ix):
             continue
         lens_rgba = src[iy, ix]
         lens_a = np.minimum(np.maximum(lens_rgba[:, 3] / 255.0, floor), cap)
-        # One ray per block of RAY_STEP x RAY_STEP texels or more (about RAYS_PER_LENS
-        # rays a lens): what lies behind a lens is softer than the lens's own pattern
-        # (flutes, dots), which stays per texel, and the DSF atlas holds the Lights texels
-        # at about half their size anyway. A swatch lens's texels stand for points far
-        # apart: one ray per lens point, RAYS_PER_LENS at most.
+        # One ray per lens texel, each reading what it meets filtered over the lens texel's size
+        # on the car (_Surfaces.sample): what lies behind a lens is often finer than the lens's
+        # texels (a dimpled bowl's 0.9 mm texels behind the Holden Commodore's 2.75 mm red lens
+        # texels), and one point sample per block of RAY_STEP x RAY_STEP texels turned it into
+        # mottle (#403). The head lamp glow's shape (lens_glow) is a smooth field: it keeps one
+        # ray per such block (`shape`). A swatch lens's texels stand for points far apart: one
+        # ray per lens point, RAYS_PER_LENS at most.
+        footprint = None
         if swatch:
             first = np.arange(0, len(ix), max(1, math.ceil(len(ix) / RAYS_PER_LENS)))
             inverse = np.zeros(len(ix), int)
         else:
+            _, first, inverse = np.unique(iy * w + ix, return_index=True, return_inverse=True)
             step = max(RAY_STEP, math.ceil(math.sqrt(len(ix) / RAYS_PER_LENS)))
-            block = (iy // step) * w + ix // step
-            _, first, inverse = np.unique(block, return_index=True, return_inverse=True)
+            _, shape_first, shape_inverse = np.unique(
+                (iy // step) * w + ix // step, return_index=True, return_inverse=True
+            )
         # Rays in compact spatial chunks, so each chunk tests few triangles.
         cell = np.floor(pos[first] / RAY_CELL).astype(np.int64)
         order = np.lexsort((cell[:, 2], cell[:, 1], cell[:, 0]))
         first = first[order]
         inverse = np.argsort(order)[inverse]
+        if not swatch:
+            footprint = size[first]
+            shape = inverse[shape_first]  # the ray of each block's first sample
         dirs = -nrm[first]
         origins = pos[first] + nrm[first] * 0.001
         behind = np.zeros((len(first), 4))
@@ -1177,10 +1266,15 @@ def bake(
             lo = np.minimum(origins[c0:c1].min(0), ends.min(0))
             hi = np.maximum(origins[c0:c1].max(0), ends.max(0))
             behind[c0:c1], met[c0:c1], depth[c0:c1], mask[c0:c1], lamp[c0:c1], solid[c0:c1] = _behind(
-                surf, origins[c0:c1], dirs[c0:c1], surf.near(lo, hi)
+                surf, origins[c0:c1], dirs[c0:c1], surf.near(lo, hi), None if footprint is None else footprint[c0:c1]
             )
         axis = _axis_fallback(
-            surf, origins, dirs, (behind, met, depth, mask, lamp, solid), front=pos[:, 2].mean() < GLOW_FRONT_Z
+            surf,
+            origins,
+            dirs,
+            (behind, met, depth, mask, lamp, solid),
+            front=pos[:, 2].mean() < GLOW_FRONT_Z,
+            footprint=footprint,
         )
         if axis:
             entry["axis"] = entry.get("axis", 0) + axis
@@ -1250,7 +1344,9 @@ def bake(
                 passed = lens_a[sel] * lens_rgba[sel, 3] / 255 + (1 - lens_a[sel]) ** 2
             else:  # a cover: (1 - opacity)^2 of the lamp behind
                 passed = (1 - lens_a[sel]) ** 2
-            raw = lens_glow(np.ones(int(sel.sum())), inverse[sel], origins, depth, mask, lamp)
+            raw = lens_glow(
+                np.ones(int(sel.sum())), shape_inverse[sel], origins[shape], depth[shape], mask[shape], lamp[shape]
+            )
             if raw is not None:
                 lit.add(iy[sel], ix[sel], raw, pos[sel], (section, sub), passed)
     glowing = lit.done if lit is not None else np.zeros((h, w), bool)
