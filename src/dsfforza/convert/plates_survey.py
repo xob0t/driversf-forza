@@ -303,7 +303,7 @@ def distance(plate: dict, forza: dict) -> float | None:
 def forza_table(rows: list[dict], runs: list[str]) -> None:
     """Per end: Forza's evidence x each run's source, with how many plates sit on
     Forza's place (within NEAR) and the median distance of the rest."""
-    rows = [r for r in rows if "forza" in r]
+    rows = [r for r in rows if "forza" in r and all(n in r for n in runs)]
     if not rows:
         return
     for end in ("rear", "front"):
