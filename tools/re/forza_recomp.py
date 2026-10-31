@@ -318,11 +318,18 @@ def read_fh1frame(path: Path) -> list[dict]:
         p += 8 + length
 
     def memory(address: int, size: int) -> bytes:
+        """Guest physical bytes, from as many recorded blocks as the range crosses (pages
+        recorded by separate packets are separate blocks)."""
         address &= 0x1FFFFFFF
-        for start, chunk in blocks:
-            if start <= address and address + size <= start + len(chunk):
-                return chunk[address - start : address - start + size]
-        raise KeyError(f"{address:08X}+{size} not in the dump")
+        out = b""
+        while len(out) < size:
+            at = address + len(out)
+            block = next(((s, c) for s, c in blocks if s <= at < s + len(c)), None)
+            if block is None:
+                raise KeyError(f"{at:08X} (of {address:08X}+{size}) not in the dump")
+            s, c = block
+            out += c[at - s : at - s + size - len(out)]
+        return out
 
     def floats(base: int) -> dict[int, list[float]]:
         out = {}
@@ -918,6 +925,7 @@ def fh1_run(steps: Path, run: Path, game_args: list[str], *, opening: str = "fh1
         "900",
         f"--game-argument=--fh1_frame_dump_path={dump}",
         "--game-argument=--pinyon_shift_cheats=true",
+        "--game-argument=--gpu_record_thread=false",  # frame dumps need it (fh1_frame_dump.cpp)
         *(f"--game-argument={a}" for a in game_args),
     ]
     env = dict(os.environ, REX_WINDOW_HIDDEN="1", SDL_WINDOW_ACTIVATE_WHEN_SHOWN="0")
