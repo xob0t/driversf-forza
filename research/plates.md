@@ -1,6 +1,6 @@
 # Licence plates
 
-Updated: 2026-10-29
+Updated: 2026-10-31
 
 How vanilla DSF cars draw their plates, what the Forza cars have, and what
 `src/dsfforza/convert/plates.py` adds to converted cars (`ConvertOptions.plates`, on by
@@ -106,6 +106,10 @@ Forza cars mostly have no plate. In `tools/batches/testdrive.txt` (40 cars):
    - a Forza `numberplate` quad at that end: its centre, its tilt, its size
      (host aspect, scaled 0.7..1.3 to fit), 2 mm in front of it; the Forza
      quads are dropped;
+   - else, at the rear, **Forza's plate pocket** (#408, below): rays from the
+     centre line of the depth map out to the pocket's walls; the plate goes in
+     the pocket a plate lamp lights, else the one seen from the most rows,
+     centred or moved up or down in it off an emblem or lamp;
    - else a depth map of the body's end (LOD 1, 1 cm cells, nearest surface
      seen from behind / in front, with each cell's material class and
      section) is searched with a plate-sized window at x = 0 (offsets up to
@@ -115,7 +119,8 @@ Forza cars mostly have no plate. In `tools/batches/testdrive.txt` (40 cars):
      ring is at least 4 mm nearer the viewer on 30% or more of its cells;
      the best recess within 0.3 m of the host's plate height wins (height =
      the host plate's height fraction of its body box mapped onto the Forza
-     body box), else the best within 0.5 m (#159). Else a plain flat face
+     body box; at the rear, the height just under Forza's plate lamp where the
+     car has one), else the best within 0.5 m (#159). Else a plain flat face
      within 0.15 m of that height. The
      window is then centred on the face (walk out along its row and column
      while cells stay within 4 mm of the plane) and the plate shrunk (aspect
@@ -466,6 +471,97 @@ rear; `img/plates-251-ingame.jpg`): the ARX-01b's rain light shows, the B09 has 
 plate, both Vipers' plates sit on the lower nose under the lamp covers, the Zonda C12's
 under its centre lamp. Neither run crashed.
 
+### Forza's plate pocket (#408, 2026-10-31)
+
+Three ports had their rear plate away from where the Forza car puts it (#408, the user's
+in-game test of the 5fef56e build): the BMW M3 E46 (`BMW_E46M3_05`, 117, host 227), the
+Joss JT1 (`JOS_JT1_10`, 462, host 162) and the Focus RS500 (`FOR_FocusRS500_10`, 39,
+host 274). The issue named spool 122 for the M3, the M3 GTR road car (`BMW_M3GTR_05`,
+host 125), but its shot has no rear wing and matches 117's render; 122's plate was in its
+boot-lid pocket already, 4.5 cm off the pocket's centre, and moves there too.
+
+**Where Forza's plate is** (confirmed-static). None of the three has a `numberplate`
+quad. Their bodies have the real car's plate pocket, a recess with walls round it
+(high-pass depth reliefs of the LOD-1 depth map):
+
+| Car | Forza's pocket | Plate lamp | Master's path, plate centre | Why it differs |
+| --- | --- | --- | --- | --- |
+| E46 M3 | boot lid, 0.54 x 0.18 m at y +0.10; walls 1.4 / 1.2 cm at the sides, 4.2 cm above, the lid's edge below | none | recess window on `bumperRa`, y -0.11 (0.21 m low) | the pocket is twice the host plate's width, so a host-sized window in it has a wall on its upper border only (border share 0.36), as a crease in the bumper has (0.36); the host's plate height (the 370Z's, on its bumper: prior y -0.03) chose the crease. Windows reaching the pocket's top lip fail the 3 mm flatness test (9-12 mm RMS) |
+| Joss JT1 | lower bumper, 0.50 x 0.14 m at y -0.275; walls 4 mm at the sides, 1.5 cm above | none | recess window on the black `frame` band between the tail lamps, y -0.01 (0.26 m high) | the band is a recessed flat trim quad (6 triangles; Forza draws a vent mesh on it from its texture) with walls 2-4 cm above and below: border share 0.73, against 0.38 for the pocket, whose side walls are under the 4 mm step |
+| Focus RS500 | tailgate, 0.70 x 0.15 m at y +0.47 (a trapezoid); walls 1.3 cm at the sides, 4.7 cm above, 3.1 cm below | `numplate` strip, x +-0.16, y 0.554-0.560: in the pocket's upper wall | recess window on `trunk`, y +0.376 (0.10 m low), half on the lip under the pocket | as the E46: wider than the window (border share 0.38 inside it, 0.37 straddling its lower edge); the host's plate height (prior 0.32) chose the lower window. The plate lamp was not read |
+
+So the window search measures how well a host-plate-sized window fits a recess, not
+the recess; where the pocket is larger than the host's plate, or a vent band has
+stronger walls, the host's plate height decides. And Forza's plate lamps (`numplate`
+on 70 cars) were not read.
+
+**Change** (`plates.pockets`, `usable_pockets`, `choose_pocket`, `place_in_pocket`,
+`lamp_height`). From every paint or trim cell on the centre line whose 5-cell column
+is flat, rays go left, right, up and down to the first boundary: a **wall** (the
+surface comes 4 mm nearer within 3 cells, the floor's tilt taken off up and down), a
+**gap** (a hole or a cell 2 cm farther: a shut line, the boot lid's edge), a stop
+(lamp, glass, grille, exhaust) or nothing within 0.45 / 0.3 m; badges and artwork
+decals are seen past. A pocket has walls left and right and a wall above or below
+(the other side a wall or a gap), is 0.24-0.80 x 0.08-0.32 m, centred within 8 cm,
+and faces out within the recess search's tilts. Seeds whose rays end on the same walls
+above and below are one pocket (median width). Usable: it holds the host's plate at
+0.7 clear of its walls (2 cm across, 1.5 cm up and down), and its side walls come out
+by at most 0.2 m (diffuser channels and exhaust surrounds: the M3 GTR race car's
+1.4 m, the ARX-02a's 0.36, the Corvette Z06's 0.21; bumper pockets run to about 0.1:
+the Syclone's, the Chevelle's). Of several, the one a plate lamp lights (the strip
+within 2 cm across and 6 cm up or down of it), else the one seen from the most
+centre-line rows (the DBS's boot lid, 14, against the channel between its exhausts,
+2), then the nearest the host's height. The plate is the host's size, shrunk to fit,
+centred in the pocket or moved up or down within it to cover the least emblem or lamp
+(the ix20's pocket holds its badge too). Without a usable pocket, a rear plate lamp
+sets the height the window search and the fallback start from: just under a strip
+across (on every car with a pocket and a lamp, the strip is in the pocket's upper
+wall), level with upright strips.
+
+**Rear only.** At the front the closed openings are air intakes and grilles drawn as
+texture on flat trim (the RSX's and F40's lower intakes, the 135i's kidneys, the Focus
+ST's lower grille, the Mini's panel above its grille: all 16 front pockets that would
+have moved a plate in the first half of the roster), which depth can't tell from a
+plate pocket. Front plates are unchanged.
+
+**Roster** (`dsff plates_survey --build <main checkout>\out\build --ref master=origin/master`,
+572 cars of the 2026-10-31 build on their hosts; NIS_Leaf_11 doesn't load in a worktree:
+no MAXData and no gamedb body row). "Forza" is the evidence the survey reads per end
+(`plates_survey.forza_plates`): `quad` (Forza's numberplate quads), `pocket+lamp`,
+`pocket` (one), `pockets` (several; `choose_pocket`'s), `lamp` (plate lamp only;
+`lamp_height`), `none`. On / off: the plate's centre within 5 cm of Forza's or not.
+
+| Rear, Forza | master | this change |
+| --- | --- | --- |
+| pocket (303) | recess 229 on / 48 off, flat 7 / 6, host 10 / 2, none 1 | pocket 302 on, none 1 (as master) |
+| pocket+lamp (39) | recess 29 / 7, flat 1 / 0, host 1 / 0, none 1 | pocket 38 on, none 1 |
+| pockets (42) | recess 26 / 12, flat 1 / 1, host 1 / 1 | pocket 42 on |
+| lamp (17) | 9 on / 8 off | 12 on / 5 off |
+| quad (17) | forza-mesh 16 on, none 1 | same |
+| none (154) | recess 77, host 58, flat 13, none 6 | same |
+
+Fronts: 555 none, 16 quad (unchanged), 1 lamp. So 85 rear plates were off Forza's place
+on master (median 0.23 m, p90 0.36, at most 0.45): 67 recess windows on another face, 7
+flat faces, 3 fallbacks next to a pocket, 8 away from the plate lamp. With this change 5
+are, all lamp-only: the 2002 Turbo's lamps are in its bumper under the plate, which stays
+on the panel above (1 cm lower); the Exige 240's, Speedster's, Yellowbird's and D-Type's
+are as on master. 393 rear plates move: 83 by 5 cm or more, 95 by 1-5 cm, 215 by under 1
+cm (centred on the pocket instead of the window's walk). Rear plates over a badge: 5 and
+5 (the Twingo's and WRX STi 04's leave their lettering; the Z4 GT3's and Corvette ZR1
+70's pockets hold an emblem the plate can't clear); host fallbacks 76 -> 62; floating
+host fallbacks 21 -> 21 (#277's cause is another: no face near the host's height).
+
+Every plate that moves 5 cm or more was checked on the reliefs (master's plate, this
+one, the pockets and lamps): the bumper pockets of the WRX STi 04/05, Skyline R32s,
+Lancer Evo VIII/IX/X, Genesis Coupe 10/13, SC430s, Ka, Twingo, C1, 107, Agila, Syclone,
+RGT8; the boot lids and tailgates of the Ion, tC, IS F, IS350, Fusion, Civic Si 99,
+Civic Type R 97, TSX, 8C, 135i, Celica, Focus ST/SVT, 207 S2000, ix20, Fiesta; the
+Mustang Cobra R 93's tail panel; the 288 GTO's and Gallardo LP570's lower panels. Master
+had several on lettering, vent bands, grilles or exhaust panels (Ultima GTR, Gallardo
+LP570, Twingo). Doubtful: the NASCAR Monte Carlo SS 11 (a 0.25 x 0.10 m pocket on its
+rear deck, the plate shrunk to 0.7) and the Cobra 427 (the lower of two pockets,
+between its bumperettes).
+
 ## Open
 
 1. In game: front plates are seen since #180's run (`vm1-20261028-184904`:
@@ -475,7 +571,8 @@ under its centre lamp. Neither run crashed.
 2. Paint-material plates on hosts whose paint palette gives an odd tint:
    vanilla uses the same material, so the plate should look as on vanilla cars;
    assumed, not checked.
-3. Fallbacks still float on 35 front and 21 rear plates (#251's survey, #277), most
+3. Fallbacks still float on 35 front and 21 rear plates (#251's survey, #277; the
+   same 21 rear after #408: none of them has a plate pocket), most
    on race prototypes with an open nose or diffuser at the centre line (Acura
    ARX, Audi R10/R15, Lola); the 905 Evo's rear plate is on its wing, the Furai's on
    its exhaust section. Some trade a badge for a gap: the 2-Eleven's rear

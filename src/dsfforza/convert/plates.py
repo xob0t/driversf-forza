@@ -27,7 +27,11 @@ not the plate. So the plate is placed on the Forza body:
 
 1. a Forza `numberplate` quad at that end, if there is one (its place and
    size; the Forza quad is dropped);
-2. else the plate recess or mounting face: a depth map of the body seen from
+2. else, at the rear, Forza's plate pocket: a recess with walls on both sides and
+   above or below, measured by rays from the centre line (pockets); the one a
+   plate lamp (`numplate`) lights, else the one seen from the most rows; a plate
+   lamp without a pocket sets the height the next steps start from (#408);
+3. else the plate recess or mounting face: a depth map of the body seen from
    behind / in front (1 cm cells, LOD 1), searched for a flat (plane fit
    under 3 mm RMS), paint/trim-covered window of plate size near the
    centreline, facing out of the end (up by at most 39 degrees, down by at
@@ -36,7 +40,7 @@ not the plate. So the plate is placed on the Forza body:
    boxes; a recess up to WIDE_BAND away when there is neither a recess nor a
    flat face nearer); the window is then centred on the recess and the plate
    shrunk to fit it;
-3. else near the host's plate height, x = 0, pushed out to the nearest surface
+4. else near the host's plate height, x = 0, pushed out to the nearest surface
    in front (a plate on a bracket), tilted and bent back at its centre line to
    rest on the face as closely as it can (rest): the height where the
    plate hugs the face, hides no badge, lamp, glass or exhaust and sits on one
