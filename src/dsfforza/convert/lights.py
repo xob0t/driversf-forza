@@ -41,6 +41,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dsfforza.convert.forza_materials import glass_name
 from dsfforza.game import game_paths
 
 # Lamp functions: (type byte, colour byte, variant byte). Type bytes index the
@@ -775,6 +776,9 @@ REFLECTORS = ("textured_reflector", "reflector")
 LAMP_COVERS = ("glass", "lights_glass", "lights_gls_noemit")  # = glass.LAMP_MATERIALS
 HEAD_UNIT_DEPTH = 0.3  # m behind a headlight section's cover (dsf_materials.COVER_DEPTH)
 HEAD_UNIT_PAD = 0.02  # m round its outline
+# Head lamp sections: headlightL/R and their covers glassLHL/RHL (lexanLHL/RHL on race cars,
+# forza_materials.glass_name), matched on the lower-case name.
+HEAD_SECTION = re.compile(r"headlight|glass[lr]hl")
 
 
 def _headlight_reflectors(sections, place, mid_z: float) -> list[Tri]:
@@ -782,7 +786,7 @@ def _headlight_reflectors(sections, place, mid_z: float) -> list[Tri]:
     lenses: the reflectors of its headlight sections (headlightL/R, glassLHL/RHL)
     ahead of the wheelbase midpoint, else their lamp-cover glass (MIT_HKS_06,
     PEU_3_905EVO_93). Race cars whose headlights are decals (badge) get none."""
-    lamp_sections = [s for s in sections if re.match(r"headlight|glass[lr]hl", s.name.lower())]
+    lamp_sections = [s for s in sections if HEAD_SECTION.match(glass_name(s.name))]
     for materials in (REFLECTORS, LAMP_COVERS):
         out = _front_tris(lamp_sections, materials, place, mid_z)
         if out:
@@ -803,7 +807,7 @@ def _bare_head_units(sections, place, mid_z: float, records) -> list[Tri]:
     heads = np.array([r.centre for r in records if r.function == HEAD and r.front]).reshape(-1, 3)
     boxes = []
     for section in sections:
-        if not re.match(r"headlight|glass[lr]hl", section.name.lower()):
+        if not HEAD_SECTION.match(glass_name(section.name)):
             continue
         for sub in section.subsections:
             if sub.material not in LAMP_COVERS:

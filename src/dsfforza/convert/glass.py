@@ -43,6 +43,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from dsfforza import REPO
+from dsfforza.convert.forza_materials import glass_name
 
 # Shared glass materials (SSIC): GLOBAL_Glass, _LOD1 (vanilla exteriors), _LOD5 (interiors).
 EXTERIOR_GLASS = {bytes.fromhex("001283369afd1027"), bytes.fromhex("10122b9953b14e2a")}
@@ -78,10 +79,11 @@ def slot_for(section: str, centroid, normal, material: str | None = None) -> tup
     sections (body, trunk, headlight*, bumper*) hold lamp covers or the odd
     window, which go by position and facing. `material` (the Forza technique)
     marks lamp covers outside the lamp sections (`glass` on a trunk lid; the
-    same technique on a glassF section is a windscreen). `group` names the
-    window the triangle belongs to: the triangles of one group share one
-    mapping."""
+    same technique on a glassF section is a windscreen). Race cars name them
+    lexan<suffix> (forza_materials.glass_name). `group` names the window the
+    triangle belongs to: the triangles of one group share one mapping."""
     n = section.lower()
+    key = glass_name(section)  # the name's window; groups keep the section's own name
     side = "l" if centroid[0] > 0 else "r"
     named = {
         "glassf": "windscreen",
@@ -94,10 +96,10 @@ def slot_for(section: str, centroid, normal, material: str | None = None) -> tup
         "glassrr": "side_rear",
         "glasst": "side_front",
     }
-    if n in named:
-        return named[n], f"{n}/{named[n]}"
+    if key in named:
+        return named[key], f"{n}/{named[key]}"
     lamp = (
-        re.fullmatch(r"glass[lr](hl|tl)", n)
+        re.fullmatch(r"glass[lr](hl|tl)", key)
         or "light" in n
         or n.startswith(("bumper", "hood", "mirror"))
         or (material or "").lower() in LAMP_MATERIALS
