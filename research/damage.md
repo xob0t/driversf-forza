@@ -1489,15 +1489,18 @@ Built before (master e8e0c1b) and after, the 90 cars with a lexan section
 
 | | Before | After |
 | --- | --- | --- |
-| Bonnet camera kept from the host | 82 cars | 16 |
+| Bonnet camera kept from the host | 82 cars | 17 |
 | Interior glass window groups | 989 | 571 |
 | Exterior glass triangles on another slot or UV | | 17,325 of 46,708, on 78 cars |
 | Lamps (function, side, triangles) | | unchanged on all 90 |
 | Doors counted from side glass (simulated, `out/i439/doors.py`) | | unchanged on all 90 |
 
-66 cars now place the bonnet camera on their own windscreen (median 0.20 m from
-the host's spot; up to 0.99 m on the Toyota GT-One). Of the 16 still on the
-host's camera, 12 have no windscreen to place from: open prototypes, or a small
+65 cars now place the bonnet camera on their own windscreen (median 0.20 m from
+the host's spot; up to 0.99 m on the Toyota GT-One). The FG Falcon #19's lexanF
+is all of its glazing in one section, so its windscreen centre fell inside the
+cabin: `bonnet_position`'s rays hit 0.12 m above and 0.21 m ahead, which no
+glassF car does (0 of 482). Such a placement now keeps the host's camera
+(`kept: blocked`). Of the 16 others still on the host's camera, 12 have no windscreen to place from: open prototypes, or a small
 one-sided deflector pane called lexanF (FLM09 Corvettes, ARX-02a, Panoz LMP).
 The other 4 are the GT-R GT500s, whose lexanF is two halves with a 2 cm gap on
 the centre line, so `windscreen_centre`'s centre-line rays miss it (#450).
