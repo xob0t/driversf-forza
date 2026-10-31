@@ -947,6 +947,31 @@ def test_chase_eyes_ring_the_car_at_the_chase_camera():
     assert len(rear) == 7 and all(place.point(e)[2] <= 1e-9 for e in rear)
 
 
+def test_cull_for_chase_keeps_what_the_ring_sees():
+    # A seat in a box open only at the front is seen from the ring's front eyes but from
+    # none of its rear half (beside and behind the car). Forza space: the front is -z.
+    from dsfforza.convert.cockpit import chase
+    from dsfforza.convert.forza2dsf.vertices import Placement
+
+    def quad(name, technique, pts, lod):
+        verts = [carbin.Vertex(p, (0.0, 0.0), (0.0, 0.0), (0.0, 0.0, 1.0)) for p in pts]
+        sub = carbin.SubSection(technique, lod, 4, (0, 1, 0, 1, 0, 1, 0, 1), [0, 1, 2, 0, 2, 3])
+        kw = {"lod0_vertices": verts} if lod == 0 else {"lod_vertices": verts}
+        return carbin.Section(name, (0, 0, 0), (0, 0, 0), (0, 0, 0), subsections=[sub], **kw)
+
+    seat = quad("seatL", "leather", [(-0.3, 0.3, -1.0), (0.3, 0.3, -1.0), (0.3, 0.9, -1.0), (-0.3, 0.9, -1.0)], 0)
+    box = [
+        quad("body", "body", [(-1, -1, 0), (1, -1, 0), (1, 3, 0), (-1, 3, 0)], 1),  # rear wall
+        quad("doorL", "body", [(-1, -1, -2), (-1, -1, 0), (-1, 3, 0), (-1, 3, -2)], 1),
+        quad("doorR", "body", [(1, -1, -2), (1, -1, 0), (1, 3, 0), (1, 3, -2)], 1),
+        quad("roof", "body", [(-1, 3, -2), (1, 3, -2), (1, 3, 0), (-1, 3, 0)], 1),
+    ]
+    c = chase.ChaseCabin(Placement(dy=-0.6, dz=0.0), box, 1)
+    ring, rear = chase.cull_for_chase(c, {"seatL": seat}, resolution=64)
+    assert [s.name for s in ring] == ["seatL"] and rear == []
+    assert c.report["seen_from_the_ring"] == 2 and c.report["seen_from_its_rear_half"] == 0
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

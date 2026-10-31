@@ -105,11 +105,17 @@ def cull_for_chase(chase: ChaseCabin, static: dict, resolution: int = 512) -> tu
         p = promote_lod(s, chase.lod) if any(u.lod == chase.lod for u in s.subsections) else None
         if p is not None:
             occluders.append(p)
-    kept = visible_triangles(cabin + occluders, chase_eyes(chase.place), resolution, near_keep=0.0, tiny_slack=0.005)
-    kept = {k: v for k, v in kept.items() if k[0] < len(cabin)}
-    culled = cull_sections(cabin, kept)
-    before = sum(len(u.triangles()) for s in cabin for u in s.subsections)
-    after = sum(len(u.triangles()) for s in culled for u in s.subsections)
+    out = []
+    for rear in (False, True):
+        kept = visible_triangles(
+            cabin + occluders, chase_eyes(chase.place, rear), resolution, near_keep=0.0, tiny_slack=0.005
+        )
+        culled = cull_sections(cabin, {k: v for k, v in kept.items() if k[0] < len(cabin)})
+        out.append([s for s in culled if s.subsections])
+
+    def count(sections):
+        return sum(len(u.triangles()) for s in sections for u in s.subsections if u.lod == 0)
+
     lod1 = sum(
         len(u.triangles())
         for s in chase.body
@@ -117,5 +123,10 @@ def cull_for_chase(chase: ChaseCabin, static: dict, resolution: int = 512) -> tu
         for u in s.subsections
         if u.lod == chase.lod
     )
-    chase.report = {"cockpit_cabin_triangles": before, "seen_from_outside": after, "lod1_cabin_triangles": lod1}
-    return [s for s in culled if s.subsections]
+    chase.report = {
+        "cockpit_cabin_triangles": count(cabin),
+        "seen_from_the_ring": count(out[0]),
+        "seen_from_its_rear_half": count(out[1]),
+        "lod1_cabin_triangles": lod1,
+    }
+    return out[0], out[1]
