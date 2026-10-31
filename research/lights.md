@@ -94,7 +94,8 @@ later PR replaced a rule, the earlier section says so in one line.
   brake and indicator 0x19/0x1A) is ranked on its own onto vanilla's visible
   0x18 tail alpha: every texel of its triangles (lenses included, any colour),
   in the pool of what a camera straight behind sees of it, following the
-  lamp's picture, the dimmest 40% dark, never below the converted alpha; FM4
+  lamp's picture, the dimmest 40% dark (no floor at the converted alpha since
+  [#404](#no-floor-at-the-converted-alpha-issue-404)); FM4
   cars' texels ordered by their red (Forza's glow mask), their reflectors last
   ([#290](#tail-lamps-at-half-vanilla-at-night-issue-290),
   [rear lamps ranked per planned lamp](#rear-lamps-ranked-per-planned-lamp-issue-391)).
@@ -2795,6 +2796,36 @@ running lights, but Forza's tail_light glows only braking, so these are the refe
 assumption, not a miss. The 7 alike: the BMW LMR, F430 GT #89, H1 Alpha, Dino, Kenworth and Delta S4 (centre pieces that
 kept their lamp type, entries moved) and the XC70, whose new high stop lamp is 4 triangles too small
 to show.
+
+### No floor at the converted alpha (issue #404)
+
+Symptom (user's build of master 5fef56e, by day): the Ford Focus RS500 10's tails far brighter than
+vanilla's.
+
+Cause (offline-checked; `out/survey_all.py` in this PR's worktree, master's code, the lamp plan on
+host 274, the converter's straight-behind view):
+- The RS500's tails are FH1 lamp glass (`lights_gls_taillight2S`, `lights_gls_noemit`,
+  `lights_gls_taillightst`) over white texels.
+- The rear ranking (#391) kept a floor from #290: never below the texel's converted alpha.
+  That alpha is the per-hue "matched" curves' rank, a fit onto vanilla's lamps, and white texels
+  take the white curve, fitted on vanilla's white lamps.
+- On the RS500 the floor raised 79% of the visible tail samples (60% white ones): alpha p50 19 to
+  70, p95 150 to 251, mean 40 to 95. Vanilla's per-vehicle tail p95 is 52 / 106 / 210 (p10 / median /
+  p90).
+
+Change (`Texturing._glow_parts`): no floor. The floor came from a fit, not from either game's
+maths; the rear glow is the per-lamp ranking's alone.
+
+Roster (573 cars, master's code): the floor raised more than 10% of the visible samples on 519
+cars, white texels on 135 (the AST DBS 98%, both Peugeot 908s, the Astra V8, the Mazdaspeed3, the
+SLR Stirling Moss). It put the visible alpha p95 over vanilla's per-vehicle p90 (210) on 45 cars;
+without it, 3 (the MC12s and the CTS-V coupe, at 214). The mean over the visible samples, median
+over cars, falls from 47.6 (p90 70) to 40.1 on every car.
+
+Left (#404): the RS500's tail texels stay near white by day (brightest channel median 208, vanilla's
+red tails 98). How Forza draws a clear `lights_gls_*` tail red is the next RE round. Also left: the
+ranking itself is a fit onto vanilla's distribution; replacing it by Forza's mask
+through DSF's lamp maths waits on the same round (#403, the WIP branch `wip/tail-glow-mask`).
 
 ### Open
 
