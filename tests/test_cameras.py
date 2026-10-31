@@ -31,6 +31,26 @@ def test_windscreen_centre_is_on_the_glass():
     assert vc.windscreen_centre(quad((0.3, 0, 0), (0.6, 0, 0), (0.6, 1, 0), (0.3, 1, 0))) is None  # off centre
 
 
+def test_lexan_windscreen_is_the_windscreen():
+    # Race cars name the windscreen lexanF, Forza's glassF (#439); other sections don't count.
+    from dsfforza.formats import carbin
+
+    def section(name):
+        pts = [(-0.6, 0.3, 0.8), (0.6, 0.3, 0.8), (0.6, 0.7, 0.2), (-0.6, 0.7, 0.2)]
+        verts = [carbin.Vertex(p, (0, 0), (0, 0), (0.0, 1.0, 0.0)) for p in pts]
+        sub = carbin.SubSection("window", 1, 4, (0.0, 1.0, 0.0, 1.0) * 2, [0, 1, 2, 0, 2, 3])
+        return carbin.Section(name, (0, 0, 0), (0, 0, 0), (0, 0, 0), lod_vertices=verts, subsections=[sub])
+
+    class Place:
+        @staticmethod
+        def point(p):
+            return tuple(p)
+
+    assert len(vc.forza_windscreen([section("lexanF"), section("lexanR")], Place())) == 2
+    assert len(vc.forza_windscreen([section("glassF"), section("body")], Place())) == 2
+    assert vc.forza_windscreen([section("lexanLF")], Place()) == []
+
+
 def test_bonnet_position_clears_the_glass():
     w = vc.windscreen_centre(WINDSCREEN)
     cam, rays = vc.bonnet_position(w, WINDSCREEN + BONNET)
