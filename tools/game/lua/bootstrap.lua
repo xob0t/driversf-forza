@@ -11,8 +11,11 @@ if not rawget(_G, "dsfforzaUserOpen") then
 	rawset(_G, "dsfforzaUserOpen", original)
 	rawset(_G, "user_open", function(name, ...)
 		collectgarbage("stop")
-		local ok, value = original(name, ...)
-		collectgarbage("restart")
+		local called, ok, value = pcall(original, name, ...)
+		collectgarbage("restart")   -- also when the file raised: a stopped collector fills the Lua heap
+		if not called then
+			error(ok, 0)   -- the caller sees the same error as without the wrapper
+		end
 		return ok, value
 	end)
 end
@@ -43,9 +46,24 @@ function Bootstrapper.Init()
 	callChained("Init")
 end
 
+-- As the player bootstrap: the chained Launch without its own user_open of register.lua.
+local REGISTER = "dsfforza\\register.lua"
+local function launchChained()
+	local open = rawget(_G, "user_open")
+	rawset(_G, "user_open", function(name, ...)
+		if type(name) == "string" and string.lower((string.gsub(name, "/", "\\"))) == REGISTER then
+			print("[dsfforza] " .. CHAINED .. " opens register.lua; skipped, this bootstrap loads it next")
+			return true, nil
+		end
+		return open(name, ...)
+	end)
+	callChained("Launch")
+	rawset(_G, "user_open", open)
+end
+
 -- called when the game runs launchScripts()
 function Bootstrapper.Launch()
-	callChained("Launch")
+	launchChained()
 	user_open("dsfforza\\docdump.lua")
 	user_open("dsfforza\\register.lua")  -- HUD names, garage flag, traffic regions (research/game-lua.md)
 	user_open("dsfforza\\garagetest.lua")  -- logs garage getVehicleStats calls; opens a garage with garagetest_on.lua

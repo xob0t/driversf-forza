@@ -58,6 +58,8 @@ def run(
 
     def user_open(name):
         name = str(name)
+        if name == "raise.lua":  # a user script that raises
+            raise RuntimeError("script error in raise.lua")
         if name in over:
             return (False, "missing") if over[name] is None else loader(over[name], name)
         path = LUA_DIR / name.replace(BS, "/")
@@ -190,9 +192,29 @@ def test_other_mods_placeholders_past_303_stay_out_of_the_plugins_garage():
     assert lua.globals().vehicleStats[622].Selectable
 
 
+def test_registers_gc_wrapper_restarts_the_collector_when_a_file_raises():
+    """register.lua wraps user_open itself (without the player bootstrap): the collector is
+    restarted when a file raises, and the caller still gets the error."""
+    lua, _ = run(True, cars=ported(10))
+    lua.execute("""
+    gc_calls = {}
+    local gc = collectgarbage
+    collectgarbage = function(what, ...) table.insert(gc_calls, what) return gc(what, ...) end
+    raised_ok, raised = pcall(user_open, "raise.lua")
+    """)
+    g = lua.globals()
+    assert g.raised_ok is False and "script error in raise.lua" in str(g.raised), g.raised
+    assert list(g.gc_calls.values()) == ["stop", "restart"], list(g.gc_calls.values())
+
+
 if __name__ == "__main__":
     print("one make, 55 cars:", dict(big_group(1000)), "without the window:", dict(big_group(None)))
-    problems = check(False) + check(True) + check(True, per_group=None)
-    for p in problems:
-        print("FAIL", p)
-    sys.exit(1 if problems else 0)
+    failed = []
+    for name, test in sorted(globals().items()):  # every test_* function, as `python -m tests` runs them
+        if name.startswith("test_") and callable(test):
+            try:
+                test()
+            except AssertionError as error:
+                failed.append(name)
+                print("FAIL", name, error)
+    sys.exit(1 if failed else 0)

@@ -267,6 +267,20 @@ function Test-VcRuntimeX86 {
             (Test-Path -LiteralPath (Join-Path $sys32 'msvcp140.dll')))
 }
 
+# One of our own bootstraps, any version: every player bootstrap install.ps1 has installed
+# (tools\game\lua\player\bootstrap.lua, from its first commit) and the test ones start with
+# one of these lines. A mention of dsfforza doesn't count: another mod's bootstrap may
+# load register.lua itself (INSTALL.md).
+$OurBootstrapHeaders = @(
+    '-- dsfforza player bootstrap: registers the added Forza cars with the game.',
+    '-- DriverNGHook user bootstrapper for dsfforza tests.',
+    '-- Test bootstrap for dsfforza.asi garage/save runs (tools/asi/test): the')
+function Test-OurBootstrap([string]$Path) {
+    $first = @([IO.File]::ReadAllLines($Path) | Where-Object { $_.Trim() } | Select-Object -First 1)
+    if (-not $first) { return $false }
+    return $OurBootstrapHeaders -contains $first[0].TrimStart([char]0xFEFF).Trim()
+}
+
 function Find-AsiLoader {
     foreach ($name in $LoaderNames) {
         $path = Join-Path $Game $name
@@ -718,7 +732,8 @@ function Invoke-Install {
     $bootstrapTarget = Join-Path $Game 'Common\UserLuaScripts\bootstrap.lua'
     # Another mod's bootstrap (Felony Rework's, ...) is replaced only with -Force. It is backed up,
     # and kept as dsfforza\chained-bootstrap.lua, which ours runs first (player\bootstrap.lua),
-    # unless it is a dsfforza bootstrap itself (an older one would load register.lua twice).
+    # unless it is one of our own bootstraps, an older version (Test-OurBootstrap). One that only
+    # calls user_open("dsfforza\\register.lua") (INSTALL.md) is chained too: ours skips that call.
     $chainBootstrap = $false
     if ((Test-Path -LiteralPath $bootstrapTarget) -and
         (Get-Sha256 $bootstrapTarget) -ne (Get-Sha256 (Join-Path $lua 'player\bootstrap.lua'))) {
@@ -726,7 +741,7 @@ function Invoke-Install {
             Fail ("Common\UserLuaScripts\bootstrap.lua belongs to another mod. Add -Force to replace it: it is backed up " +
                   "and restored by -Uninstall, and ours runs it first, so that mod still loads.")
         }
-        $chainBootstrap = -not (Select-String -LiteralPath $bootstrapTarget -Pattern 'dsfforza' -SimpleMatch -Quiet)
+        $chainBootstrap = -not (Test-OurBootstrap $bootstrapTarget)
     }
 
     # Hook prerequisites first, so nothing is changed when they are missing.

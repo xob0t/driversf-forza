@@ -17,8 +17,11 @@ if not rawget(_G, "dsfforzaUserOpen") then
 	rawset(_G, "dsfforzaUserOpen", original)
 	rawset(_G, "user_open", function(name, ...)
 		collectgarbage("stop")
-		local ok, value = original(name, ...)
-		collectgarbage("restart")
+		local called, ok, value = pcall(original, name, ...)
+		collectgarbage("restart")   -- also when the file raised: a stopped collector fills the Lua heap
+		if not called then
+			error(ok, 0)   -- the caller sees the same error as without the wrapper
+		end
 		return ok, value
 	end)
 end
@@ -53,9 +56,25 @@ function Bootstrapper.Init()
 	callChained("Init")
 end
 
+-- The chained bootstrap's Launch, without its own user_open of register.lua: a player who
+-- added that line to the other mod's bootstrap (INSTALL.md) would otherwise register twice.
+local REGISTER = "dsfforza\\register.lua"
+local function launchChained()
+	local open = rawget(_G, "user_open")
+	rawset(_G, "user_open", function(name, ...)
+		if type(name) == "string" and string.lower((string.gsub(name, "/", "\\"))) == REGISTER then
+			print("[dsfforza] " .. CHAINED .. " opens register.lua; skipped, this bootstrap loads it next")
+			return true, nil
+		end
+		return open(name, ...)
+	end)
+	callChained("Launch")
+	rawset(_G, "user_open", open)
+end
+
 -- called when the game runs launchScripts()
 function Bootstrapper.Launch()
-	callChained("Launch")
+	launchChained()
 	local ok, err = user_open("dsfforza\\register.lua")  -- "\\": "\r" would be a carriage return
 	if not ok then
 		print("[dsfforza] register.lua failed: " .. tostring(err))

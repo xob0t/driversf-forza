@@ -203,13 +203,21 @@ def _fake_setup(root: Path) -> tuple[Path, Path, Path]:
 
 
 def test_other_mods_notes_a_chained_bootstrap():
-    """install.ps1 -Force keeps another mod's bootstrap.lua as dsfforza/chained-bootstrap.lua."""
+    """install.ps1 -Force keeps another mod's bootstrap.lua as dsfforza/chained-bootstrap.lua; it
+    counts as chained only while the active bootstrap is ours and loads it."""
     with tempfile.TemporaryDirectory() as tmp:
         repo, game, _ = _fake_setup(Path(tmp))
         assert report.other_mods(game, None, repo)["bootstrap_lua"] == "dsfforza's"
+        ours = b'-- ours\nlocal CHAINED = "dsfforza\\\\chained-bootstrap.lua"\n'
+        _touch(repo / "tools" / "game" / "lua" / "player" / "bootstrap.lua", ours)
+        _touch(game / "Common" / "UserLuaScripts" / "bootstrap.lua", ours)
         _touch(game / "Common" / "UserLuaScripts" / "dsfforza" / "chained-bootstrap.lua", b"-- Felony Rework")
         state = report.other_mods(game, None, repo)["bootstrap_lua"]
         assert state == "dsfforza's, chaining another mod's", state
+        # Another installer put its bootstrap back over ours: the chained copy no longer runs.
+        _touch(game / "Common" / "UserLuaScripts" / "bootstrap.lua", b'user_open("felonyrework.lua")')
+        state = report.other_mods(game, None, repo)["bootstrap_lua"]
+        assert state == "another mod's, stale dsfforza\\chained-bootstrap.lua (not run)", state
 
 
 def test_collect_and_zip_a_fake_setup():

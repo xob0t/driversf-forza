@@ -39,8 +39,11 @@ if not rawget(_G, "dsfforzaUserOpen") then
 	rawset(_G, "dsfforzaUserOpen", original)
 	rawset(_G, "user_open", function(name, ...)
 		collectgarbage("stop")
-		local ok, value = original(name, ...)
-		collectgarbage("restart")
+		local called, ok, value = pcall(original, name, ...)
+		collectgarbage("restart")   -- also when the file raised: a stopped collector fills the Lua heap
+		if not called then
+			error(ok, 0)   -- the caller sees the same error as without the wrapper
+		end
 		return ok, value
 	end)
 end

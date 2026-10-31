@@ -94,14 +94,21 @@ Now (this PR):
 - `install.ps1 -Force` keeps the foreign file as
   `Common\UserLuaScripts\dsfforza\chained-bootstrap.lua` (a created file;
   `-Uninstall` deletes it and restores the original `bootstrap.lua` from the
-  backup). It doesn't chain a bootstrap that mentions `dsfforza`, since an old
-  copy of ours would load `register.lua` twice.
+  backup). It doesn't chain one of our own bootstraps of an older version,
+  which it recognises by the first line every player and test bootstrap has
+  had (`Test-OurBootstrap`). A mention of dsfforza doesn't count: a foreign
+  bootstrap with the INSTALL.md line `user_open("dsfforza\\register.lua")`
+  added is chained like any other.
 - The player bootstrap (and the test one) calls the chained bootstrap's
   `Init`, `Launch` and `Shutdown` before its own work, each in `pcall`. An
   error in Felony's `Launch` is logged and no longer skips the game's own
   `launchScripts()`, which DriverNGHook's wrapper calls right after it.
+  While the chained `Launch` runs, a `user_open` of `register.lua` from it is
+  skipped and logged; ours loads it right after, so it registers once.
 - `register.lua` installs the garbage-collector guard around `user_open`
-  itself (the same `rawget` guard as the bootstrap). So the manual route, one
+  itself (the same `rawget` guard as the bootstrap). The guard calls the
+  original in `pcall`, restarts the collector, then raises the same error, so
+  a script that raises no longer leaves the collector stopped. So the manual route, one
   `user_open("dsfforza\\register.lua")` line in Felony's `Launch()`, also
   loads `ported.lua` and `hud.lua` the safe way
   (`in-game-tests.md`, "Lua crashes loading big user files").
@@ -115,8 +122,9 @@ Checked: `tests/test_bootstrap.py` (lupa, the Felony bootstrap's shape) and
 six `install.ps1` runs against a fake game folder (a 16-byte archive, Felony's
 real `bootstrap.lua`): no `-Force` stops; `-Force` chains; a reinstall
 re-chains; `-Uninstall` restores Felony's file byte for byte and removes the
-chained copy; a bootstrap that mentions dsfforza isn't chained; no bootstrap,
-no chain. Also our install first, then Felony's bootstrap copied over it,
+chained copy; old player bootstraps (LF, and CRLF with a BOM) and the test
+bootstrap aren't chained; Felony's with the INSTALL.md register line added
+is; no bootstrap, no chain. Also our install first, then Felony's bootstrap copied over it,
 then a reinstall: the reinstall keeps Felony's file ("changed since the
 install"), chains it, and `-Uninstall` leaves Felony's in place.
 
@@ -225,8 +233,9 @@ the real table at game start, so:
 - **Felony's bootstrap** opens `mo.lua`, which it doesn't ship. DriverNGHook
   prints an error line in `Driver.log`, harmless.
 - **Report and status**: `install.cmd --report` now says
-  `bootstrap.lua dsfforza's, chaining another mod's` when a chained bootstrap
-  is present. It already lists every loader DLL and the UserLuaScripts files.
+  `bootstrap.lua dsfforza's, chaining another mod's` when the active bootstrap
+  is ours and loads the chained copy, and `stale dsfforza\chained-bootstrap.lua
+  (not run)` when another installer has replaced ours since. It already lists every loader DLL and the UserLuaScripts files.
 
 ## In-game check (to do)
 
