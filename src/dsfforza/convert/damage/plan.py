@@ -1271,9 +1271,12 @@ class DamagePlan:
             str(mask), {self.label(p): sum(s.index_count // 3 for s in subs) for p, subs in panel_subs.items()}
         )
 
-    def exterior(self, builder, lod: int, **kwargs) -> list:
-        """Exterior entry: the merged body only (vanilla exteriors have no panel parts)."""
-        panel_subs = self._geometry(builder, self.car.body, lod, self.ext_field, **kwargs)
+    def exterior(self, builder, lod: int, sections=None, **kwargs) -> list:
+        """Exterior entry: the merged body only (vanilla exteriors have no panel parts).
+        sections: the body's sections to draw (default all; cockpit.chase leaves out the LOD-1 cabin)."""
+        panel_subs = self._geometry(
+            builder, self.car.body if sections is None else sections, lod, self.ext_field, **kwargs
+        )
         merged = self._merge(builder, panel_subs)
         drop = {id(s) for subs in panel_subs.values() for s in subs}
         compact(builder, [s for s in builder.subs if id(s) not in drop])

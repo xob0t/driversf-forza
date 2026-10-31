@@ -904,6 +904,48 @@ def test_host_wheel_reads_the_skinned_rim():
     assert cockpit.host_wheel(mesh, bytes((2, 2, 0, 1)), place.forza) is None
 
 
+def test_chase_cabin_is_the_cockpit_cabin_without_outside_parts_or_glass():
+    # Issue #429: the exterior entry draws the cockpit carbin's cabin; the bonnet, the
+    # A-pillars, the mirrors and the glass are the exterior's own (the main carbin's).
+    from dsfforza.convert.cockpit import chase
+
+    def section(name, *techniques):
+        s = _point_section(name, [(0.0, 0.0, 0.0), (0.1, 0.0, 0.0), (0.0, 0.1, 0.0)], techniques[0], lod=0)
+        for t in techniques[1:]:
+            s.subsections.append(carbin.SubSection(t, 0, 4, (0, 1, 0, 1, 0, 1, 0, 1), [0, 1, 2]))
+        return s
+
+    static = {
+        "interior": section("interior", "plastic", "window"),
+        "steering_wheel": section("steering_wheel", "leather"),
+        "seatL": section("seatL", "leather"),
+        "a_pillar": section("a_pillar", "black"),
+        "hooda": section("hooda", "body"),
+        "mirrorL": section("mirrorL", "chrome"),
+        "headlightL": section("headlightL", "head_light"),
+        "cagerace": section("cagerace", "metal"),
+    }
+    cabin = {s.name: [u.material for u in s.subsections] for s in chase.cabin_sections(static)}
+    assert cabin == {"interior": ["plastic"], "steering_wheel": ["leather"], "seatL": ["leather"]}
+
+
+def test_chase_eyes_ring_the_car_at_the_chase_camera():
+    # The probe logs DSF's chase camera 5.5 to 5.8 m behind the car's origin, 1.65 to 1.77 m
+    # up (cameraMode Normal); the ring is at that distance and height all round, in Forza space.
+    from dsfforza.convert.cockpit import chase
+    from dsfforza.convert.forza2dsf.vertices import Placement
+
+    place = Placement(dy=-0.6, dz=0.05)
+    eyes = chase.chase_eyes(place)
+    assert len(eyes) == chase.CHASE_AZIMUTHS
+    for e in eyes:
+        d = place.point(e)
+        assert abs(math.hypot(d[0], d[2]) - chase.CHASE_DISTANCE) < 1e-9 and abs(d[1] - chase.CHASE_HEIGHT) < 1e-9
+    assert any(place.point(e)[2] < -5.7 for e in eyes)  # one behind the car (DSF -z), the chase view's
+    rear = chase.chase_eyes(place, rear=True)  # an exterior over its cap: beside and behind the car only
+    assert len(rear) == 7 and all(place.point(e)[2] <= 1e-9 for e in rear)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

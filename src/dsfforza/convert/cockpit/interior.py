@@ -289,6 +289,7 @@ def convert_interior(
     glass_skin: dict | None = None,
     layout: dict | None = None,
     lights_template=None,
+    chase=None,
 ) -> dict:
     """Rebuild the interior entry (kind 1) from the Forza cockpit, in place.
 
@@ -300,7 +301,9 @@ def convert_interior(
     cells (DECIMATE_LADDER), then the shell drops to its coarsest LOD.
     lights_template: (Lights MACO, its texture UID) of the car (forza2dsf.lights_template):
     the outside parts the cockpit holds then take Forza's specular and reflection from
-    copies of it, as on the exterior; None: no gloss."""
+    copies of it, as on the exterior; None: no gloss.
+    chase: a chase.ChaseCabin. The cockpit's cabin culled for the chase views is planned
+    into the same atlas, and handed back in it with the binding, for the exterior entry."""
     from dsfforza.convert import dsf_materials as dm
     from dsfforza.convert import forza2dsf
     from dsfforza.formats.chnk import entry_size
@@ -348,6 +351,18 @@ def convert_interior(
         culled_report = {"triangles_before": before, "triangles_after": after}
         log(f"cockpit visibility: {after} of {before} triangles seen from the head")
 
+    chase_sections, chase_rear = [], []
+    if chase is not None:
+        from dsfforza.convert.cockpit.chase import cull_for_chase
+
+        chase_sections, chase_rear = cull_for_chase(chase, cf.static)
+        r = chase.report
+        log(
+            f"chase cabin: {r['seen_from_the_ring']} of {r['cockpit_cabin_triangles']} cockpit cabin triangles seen "
+            f"from the chase ring, {r['seen_from_its_rear_half']} from its rear half (the LOD-1 cabin had "
+            f"{r['lod1_cabin_triangles']})"
+        )
+
     atlases = fm.AtlasCache(car.folder, lod0=cf.lod0_atlases)
     needle_colours = {
         ("needle",) + c: c
@@ -364,7 +379,7 @@ def convert_interior(
     # The flat cells every interior's atlas has; a virtual dial's dark marks and a
     # virtual display add theirs only where they are drawn (other cars' atlases stay
     # as they were).
-    used = {sub.material for s in sections for sub in s.subsections}
+    used = {sub.material for s in [*sections, *chase_sections, *chase_rear] for sub in s.subsections}
     flat = {
         c
         for pattern, c in FLAT_COCKPIT
@@ -420,6 +435,8 @@ def convert_interior(
     for cell, shell_lod in ladder:
         drsp.children = list(original_children)
         current = [decimate_section(s, cell) for s in sections] if cell > 0 else sections
+        chase_current = [decimate_section(s, cell) for s in chase_sections] if cell > 0 else chase_sections
+        rear_current = [decimate_section(s, cell) for s in chase_rear] if cell > 0 else chase_rear
         t = dm.Texturing(
             car.folder,
             size=opts.atlas_size or (width, height),
@@ -438,7 +455,7 @@ def convert_interior(
             gloss_filter=gloss_filter,
             gloss_max=COCKPIT_GLOSS_MATERIALS,
         )
-        t.plan(current, {0}, extra_solids=needle_colours)
+        t.plan(current + chase_current + rear_current, {0}, extra_solids=needle_colours)
         child(texc, "DXTC").payload = t.dds(template=host_dds)
         gloss = {}
         if t.gloss_materials:
@@ -552,6 +569,14 @@ def convert_interior(
         )
         if size <= opts.mdxn_limit:
             break
+    if chase is not None:
+        chase.sections, chase.rear_sections, chase.binding, chase.shared = (
+            chase_current,
+            rear_current,
+            binding,
+            mats.shared,
+        )
+        chase.layout = dict(layout)
     log(f"interior atlas: {t.summary()}")
     if t.gloss_materials:
         log(

@@ -3312,6 +3312,67 @@ The Skyline's 20 cm leaves the LOD-1 dash 37 cm ahead of its hub. The same LOD-1
 cabin samples `nodamage.xds`, where the Skyline's livery covered the road car's
 interior artwork. The wheel fit is right on this car and nothing here changes it.
 
+## Forza's LOD 0 is the lod0 carbin and the cockpit carbin (2026-10-31, confirmed-static; #429)
+
+Every car zip holds `<car>_lod0.carbin` next to the main and cockpit carbins (the
+converter doesn't extract it). On the Calsonic Skyline (FM4), the 370Z and the
+XKR-S (FH1) its sections and the cockpit carbin's partition the main carbin's
+LOD-1 set exactly (`out/i410/py/partition.py` in the `t3-63e58ca0` worktree):
+
+- the lod0 carbin has the outside without the cabin, the bonnet, the mirrors and
+  the front glass (the Skyline's: no `interior`, `seatR`, `steering_wheel`,
+  `mirrorL/R`, `lexanF/LF/RF`, `hooda`);
+- the cockpit carbin holds exactly those, plus `a_pillar` and the needles (FH1:
+  also `headlightL/R` and `cagerace`);
+- no section is in both.
+
+So the cockpit carbin is Forza's LOD-0 cabin, drawn in the near outside views as well
+as from the driver's seat, and the main carbin's LOD-1 cabin (765 to 2,791
+triangles) is its far stand-in. All 570 cockpit carbins hold LOD 0 only
+(`cklods.py`): Forza has nothing between the two.
+
+**In the chase views (`ConvertOptions.chase_cabin`, `port_car --chase-cabin`; off
+by default).** The clean exterior draws the cockpit's cabin instead of the LOD-1
+cabin. That is the cockpit carbin's static sections without the outside parts,
+the upgrades, the lamps and the glass (`cockpit/chase.py`). The cabin is culled
+to what a ring of 12 eyes sees through the LOD-1 body's windows. The ring sits at
+the chase camera's distance and height (5.8 m out, 1.7 m up, from the probe's
+logs), all round the car, since Shift and replays show every side. It is drawn on
+the interior entry's own materials and atlas, which `convert_interior` plans for
+these triangles too. The steering wheel is the cockpit's, skinned to the steering
+record, on the hinge: its column and dash come with it, and nothing is aligned.
+
+- **Material reference.** The exterior's cabin submodels name the interior
+  entry's local `_Interior` MACO. `renew_uids` maps the three entries of a car
+  together, as it already does for the interior's reference to the full entry's
+  Chassis material.
+- **In game** (VM, confirmed-runtime): run `vm1-20261031-101345` zaps into the
+  Skyline, out to vanilla 228 and back. Both times the cabin draws textured in
+  the chase and side views and the driver holds the race wheel on its column. No
+  fault.
+- **What culling saves** (11 cars, `feasible.py`, `feas_chase.py`):
+
+  | Eyes | Cabin triangles kept |
+  | --- | ---: |
+  | chase camera only, ±20 degrees | 38 to 62% |
+  | the chase ring | 70 to 80% (28k to 35k) |
+  | all around at 4 m, up to 2.8 m high | 93 to 98% |
+
+**11-car build** (`out/i410/cb_before` without the option, `cb_after` with it).
+The clean exterior grows from 0.93–1.42 MB to 1.73–2.31 MB, every car under the
+build's 0x2C0000 cap (vanilla's largest exterior: 0.91 MB). Triangles go from 24k–37k
+to 51k–67k, submodels change by −1 to +2. The three entries together gain 0.87 MB per
+car, about 0.5 GB over the roster. The interior entries keep their size and their
+atlas scale on all 11. `render_compare diff` (`out/rc/chase-cabin`): all 11 change,
+no score moves, and the changes stay in the cabin seen through the windows
+(`added`, `cabin`, `glass` behind the glass). Small shifts in `trims` and `chrome`
+(dE about 0) are where the LOD-1 cabin used to be. The Range Rover's `rear_lamps`
+pixels are the cockpit's `reflector` switches, which the scoring counts as lamp
+parts. VM chase and side views by day (`vm1-20261031-103919` master,
+`-104549` with the option): every cabin draws, no fault. The Skyline's dash
+shows its cage and race cabin, not the livery art. The EAE Speedster (12th car)
+didn't spool in either run.
+
 ## Risks and open questions
 
 

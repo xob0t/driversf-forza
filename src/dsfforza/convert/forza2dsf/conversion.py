@@ -79,6 +79,10 @@ class ConvertOptions:
     # gauges, mirrors and head camera moved to the Forza cockpit (src/dsfforza/convert/cockpit/).
     cockpit: bool = False
     cockpit_opts: object = None  # cockpit.CockpitOptions; defaults when None
+    # The clean exterior draws the cockpit carbin's cabin (Forza's LOD 0) with the interior
+    # entry's materials instead of the main carbin's LOD-1 cabin (cockpit.chase, #429).
+    chase_cabin: bool = True
+    exterior_mdxn_limit: int | None = None  # the clean exterior's MDXN cap (port_car: the batch's --mdxn-limit)
     # Why the host is the same vehicle as the Forza car (host_select.same_vehicle),
     # or None. When Forza's cockpit carbin is a placeholder (cockpit.is_stub), such a
     # host keeps its own vanilla interior (cockpit, gauges, wheel, hands, head camera)
@@ -588,7 +592,15 @@ def convert(
             "hubs_patched": hubs,
         }
 
-    if not opts.skip_exterior and not opts.full_only:
+    def build_exterior(chase=None, cabin_sections=None) -> None:
+        """The clean exterior entry. chase: a filled cockpit.ChaseCabin; with
+        `cabin_sections` (one of its cullings) the cockpit's cabin, on the interior entry's
+        materials, replaces the main carbin's LOD-1 cabin."""
+        from dsfforza.convert.cockpit.chase import LOD1_CABIN
+
+        body_sections = car.body
+        if cabin_sections:
+            body_sections = [sec for sec in car.body if sec.name.lower() not in LOD1_CABIN]
         # Clean exterior entry: body in part 0, the wheel in the part(s) the wheel records'
         # LOD links name (the last part on the Desanne).
         ext_builder = Builder(seed[:3] + bytes([seed[3] ^ 0xFF]), layout=layout)
@@ -599,6 +611,7 @@ def convert(
             ext_body = dmg.exterior(
                 ext_builder,
                 opts.exterior_lod,
+                sections=body_sections,
                 textures=tex_ext,
                 merge=opts.merge_submodels,
                 skin=skin,
@@ -608,7 +621,7 @@ def convert(
         else:
             ext_body = add_geometry(
                 ext_builder,
-                car.body,
+                body_sections,
                 opts.exterior_lod,
                 place,
                 wheel=False,
@@ -619,6 +632,20 @@ def convert(
                 lamps=lamps,
                 shared=SHARED_EXTERIOR,
             )
+        if cabin_sections:
+            ext_builder.layout.update(chase.layout)
+            cabin = add_geometry(
+                ext_builder,
+                cabin_sections,
+                0,
+                place,
+                wheel=False,
+                textures=chase.binding,
+                merge=True,
+                shared=chase.shared,
+                skin={"steering_wheel": host_cp.wheel_skin},
+            )
+            ext_body = ext_body + cabin
         ext_lods = {0: {EXTERIOR_MASK: ext_body}}
         for wheel_part in hw.exterior_parts or [ext_parts - 1]:
             ext_lods[wheel_part] = {
@@ -639,6 +666,31 @@ def convert(
         ext_modl_entry.payload = rebuild_modl(ext_template, ext_lods)
         log(f"exterior entry: {len(ext_builder.subs)} submodels")
         report["exterior"] = {"submodels": len(ext_builder.subs)}
+
+    def build_exterior_with_cabin(chase) -> None:
+        """build_exterior with the cockpit's cabin culled to the chase ring; where that puts
+        the entry over `opts.exterior_mdxn_limit`, culled to the ring's rear half (the eyes
+        the chase camera looks from); over it still, the LOD-1 cabin (cockpit.chase)."""
+        from dsfforza.formats.chnk import entry_size
+
+        drsp = child(child(exterior, "MDXN"), "DRSP")
+        original = list(drsp.children)
+        tries = [("chase ring", chase.sections), ("rear half of the chase ring", chase.rear_sections), ("LOD 1", None)]
+        for name, sections in tries:
+            drsp.children = list(original)
+            build_exterior(chase, sections)
+            size = entry_size(child(exterior, "MDXN"))
+            limit = opts.exterior_mdxn_limit
+            if sections is None or limit is None or size <= limit:
+                report["chase_cabin"] = {**chase.report, "cabin": name, "mdxn": size}
+                log(f"exterior entry: the cabin from {name}, MDXN {size:#x}")
+                return
+            log(f"exterior entry: the cockpit's cabin culled to the {name} puts the MDXN at {size:#x} > {limit:#x}")
+
+    chase = None
+    exterior_first = not (opts.chase_cabin and cf is not None and cf.lod0_atlases and not opts.full_only)
+    if not opts.skip_exterior and not opts.full_only and exterior_first:
+        build_exterior()
 
     if cf is not None:
         from dsfforza.convert import cockpit
@@ -691,6 +743,10 @@ def convert(
         vo3d.payload = cockpit.patch_vo3d(
             payload(stream, vo3d), {**camera, **gauge_vo3d, **cockpit.hand_params(hier["steering"])}
         )
+        if not exterior_first:
+            from dsfforza.convert.cockpit.chase import ChaseCabin
+
+            chase = ChaseCabin(place, car.body, opts.exterior_lod)
         if opts.full_only:  # the interior entry stays the host's (a size check of the full entry)
             interior_report = {"skipped": "full_only"}
         else:
@@ -710,6 +766,7 @@ def convert(
                 glass_skin=interior_glass_skin(dmg, car, opts),
                 layout=layout,
                 lights_template=lights_template(stream, full) if opts.textures else None,
+                chase=chase,
             )
             if dmg is not None:  # the shell's paint samples the decal atlas at UV1 too
                 dmg.interior_uv1(stream, interior)
@@ -742,6 +799,8 @@ def convert(
             "hierarchy": hier,
             "interior": interior_report,
         }
+    if not opts.skip_exterior and not opts.full_only and not exterior_first:
+        build_exterior_with_cabin(chase)  # after the interior: its cabin's atlas is planned there
     if not opts.skip_full:
         # The Bonnet camera: in front of the Forza windscreen, where vanilla cars have it
         # relative to theirs (the host's sat inside lower cars' cabins).
