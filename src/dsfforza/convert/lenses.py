@@ -869,20 +869,21 @@ def day_glow(glow: np.ndarray, view, colour: np.ndarray | None = None) -> np.nda
     return out if np.isfinite(out).any() else None
 
 
-# Tail and brake lamps seen from behind (#290, #391). Each rear lamp the lamp plan makes a tail
-# lamp (0x18) or a brake and indicator lamp (0x19 / 0x1A) is ranked on its own onto vanilla's
-# visible 0x18 tail alpha (TAIL_RED_ALPHA): every texel of its triangles (lenses included), in the
-# pool of what a camera straight behind sees of that lamp, by its picture's detail (GLOW_DETAIL_*)
-# and its glow order (the matched score; FM4's lamps by the texel's red, the mask Forza glows them
-# with). The game glows each lamp as a whole (lights-re.md); before the plan, the red patches a view
-# saw stood in for lamps and missed grey FM4 tail texels and lenses over a tail (the V12 Vantage).
+# Tail and brake lamps seen from behind (#290, #391, #403). Each rear lamp the lamp plan makes a
+# tail lamp (0x18), a brake lamp (0x02) or a brake and indicator lamp (0x19 / 0x1A) glows on its own,
+# every texel of its triangles (lenses included) in proportion to its glow order (the matched score;
+# FM4's lamps by the texel's red, the mask Forza glows them with), at a level set on what a camera
+# straight behind sees of that lamp (TAIL_MEAN). Forza's glow is linear in its mask (glow colour x
+# state x mask, research/forza-lenses-re.md); ranked onto vanilla's distribution (#391 to #398),
+# every lamp came out with the same alpha spread whatever its mask (p10 / 50 / 90 0 / 19 / 116), so
+# an even lens (the Joss JT1's tails, its mask within 11% of its median) lit only its top-ranked
+# texels, an ellipse, and the Holden Commodore's and Citroen DS3's lit as blotches (#403).
 TAIL_MIN_SAMPLES = 40
-# The dimmest share of each ported tail lamp's visible pixels that stays dark: a ported tail lamp is
-# drawn over about 2.5 times vanilla's red area (render_compare's rear view: median 7,108 px against
-# 2,867; reflectors, bezels and lens edges), so ranked whole onto vanilla's distribution 56% of it
-# lit where vanilla lights 26% of its own, an even glow. The rest is ranked onto TAIL_RED_ALPHA.
-# A geometry heuristic: the game thresholds nothing (each texel glows alpha x the lamp's colour,
-# research/lights-re.md); it stands for the lamp's lit area, which DSF can't otherwise match.
+# The dimmest share of each ported tail lamp's visible pixels that stayed dark under #391's ranking:
+# a ported tail lamp is drawn over about 2.5 times vanilla's red area (render_compare's rear view:
+# median 7,108 px against 2,867; reflectors, bezels and lens edges). A geometry heuristic: the game
+# thresholds nothing (each texel glows alpha x the lamp's colour, research/lights-re.md). It now only
+# sets TAIL_MEAN.
 TAIL_DARK = 0.4
 # Vanilla's 0x18 tail lamps (DaytimeRunning + Brakes, the converter's tail type): the texel alpha
 # of the visible red lamp pixels at dsf_materials.LAMP_PERCENTILES (render_compare's renderer,
@@ -891,25 +892,50 @@ TAIL_DARK = 0.4
 TAIL_RED_ALPHA = (0, 3, 12, 23, 33, 41, 49, 62, 80, 103, 122, 141, 158, 186, 243, 243, 247, 247, 255)
 
 
+def _tail_mean() -> float:
+    """The mean alpha over a lamp's visible samples that #391's ranking gave every lamp (its dimmest
+    TAIL_DARK dark, the rest ranked onto TAIL_RED_ALPHA): the lamp's summed glow per sample, the
+    quantity that matches vanilla (research/lights-re.md, TAIL_DARK), which the tails' day glow was
+    measured in vanilla's range at (lights.md, "Rear lamps ranked per planned lamp")."""
+    from dsfforza.convert import dsf_materials as dm
+
+    rank = (np.arange(10000) + 0.5) / 10000
+    r = np.clip((rank - TAIL_DARK) / (1 - TAIL_DARK), 0.0, 1.0)
+    return float(np.interp(r * 100, dm.LAMP_PERCENTILES, TAIL_RED_ALPHA).mean())
+
+
+TAIL_MEAN = _tail_mean()
+
+
+def _gain(pool: np.ndarray, mean: float) -> float:
+    """g with mean(min(g x pool, 255)) = mean (pool >= 0); 0 when the pool is all 0."""
+    top = float(pool.max()) if len(pool) else 0.0
+    if top <= 0:
+        return 0.0
+    lo, hi = 0.0, 255.0 / top
+    while np.minimum(hi * pool, 255).mean() < mean and hi < 1e9:
+        lo, hi = hi, hi * 2
+    for _ in range(40):
+        mid = 0.5 * (lo + hi)
+        lo, hi = (mid, hi) if np.minimum(mid * pool, 255).mean() < mean else (lo, mid)
+    return hi
+
+
 def rear_lamp_glow(atlas: np.ndarray, view, tris, lamp_ids, order: np.ndarray | None = None) -> np.ndarray | None:
     """Glow alpha (DSF, 0..255) of the planned rear lamps a camera straight behind the car sees, a
     float array the size of the Lights atlas, NaN elsewhere; None without any. atlas: the Lights
     atlas (h, w, 4) the car is drawn with (lenses baked); view: Texturing._lamp_view(front=False,
     grid=True, rear_half=True); tris: atlas UVs (n, 3, 2) of the lamps' triangles; lamp_ids (n,):
-    each triangle's planned lamp; order (h, w): the glow order of the texels within a lamp (default
-    the matched score, dsf_materials.lamp_score). A lamp's pool is what the view sees of it (the
-    samples on its texels, TAIL_MIN_SAMPLES or more), each sample's order times its picture's
-    detail; every texel of its triangles is ranked in that pool by its own order times its detail
-    (its samples', else the triangle's mean), onto TAIL_RED_ALPHA, the dimmest TAIL_DARK of the lamp
-    at 0. A texel of several triangles takes their mean."""
-    from dsfforza.convert import dsf_materials as dm
-
-    seen, grid, _, step = view
+    each triangle's planned lamp; order (h, w): the glow mask of the texels (default the matched
+    score, dsf_materials.lamp_score). A lamp the view sees (TAIL_MIN_SAMPLES samples or more) glows
+    at g x its texels' order, capped at 255, g set so its visible samples' mean is TAIL_MEAN. A texel
+    of several triangles takes their mean."""
+    seen, grid, _, _ = view
     rows, cols = seen
     h, w = atlas.shape[:2]
-    rgb = atlas[..., :3].astype(float)
     if order is None:
-        order = atlas[..., 3] / 255 * (0.6 + 0.4 * rgb.max(-1) / 255)
+        order = atlas[..., 3] / 255 * (0.6 + 0.4 * atlas[..., :3].astype(float).max(-1) / 255)
+    order = np.asarray(order, float)
     tris = np.asarray(tris, float).reshape(-1, 3, 2)
     lamp_ids = np.asarray(lamp_ids, int)
     every_x, every_y, _, at = _texels_many(tris * (w, h))
@@ -921,47 +947,24 @@ def rear_lamp_glow(atlas: np.ndarray, view, tris, lamp_ids, order: np.ndarray | 
         texel_lamp[iy[ok], ix[ok]] = lamp_ids[n]
     image = np.full(grid.shape, -1)
     image[grid] = texel_lamp[rows, cols]
-    bright = np.zeros(grid.shape)
-    bright[grid] = rgb[rows, cols].max(-1)
     score = np.zeros(grid.shape)
     score[grid] = order[rows, cols]
-    radius = max(1, round(GLOW_DETAIL_RADIUS / step))
-    factor = np.ones(grid.shape)
-    pools = {}
+    gains = {}
     for k in np.unique(lamp_ids):
         lamp = image == k
-        if lamp.sum() < TAIL_MIN_SAMPLES:
-            continue
-        if GLOW_DETAIL_GAMMA:
-            f = np.clip(_detail(bright, lamp, radius), *GLOW_DETAIL_CLIP) ** GLOW_DETAIL_GAMMA
-            factor[lamp] = f[lamp]
-        pools[int(k)] = np.sort((score * factor)[lamp])
-    if not pools:
+        if lamp.sum() >= TAIL_MIN_SAMPLES:
+            gains[int(k)] = _gain(score[lamp], TAIL_MEAN)
+    if not gains:
         return None
-    # The detail factor of the atlas texel each sample sees, for the triangles' texels below.
-    seen_factor = np.zeros((h, w))
-    seen_count = np.zeros((h, w))
-    np.add.at(seen_factor, (rows, cols), factor[grid])
-    np.add.at(seen_count, (rows, cols), 1)
     acc, cnt = np.zeros((h, w)), np.zeros((h, w))
     for n in range(len(tris)):
-        pool = pools.get(int(lamp_ids[n]))
-        if pool is None:
+        g = gains.get(int(lamp_ids[n]))
+        if g is None:
             continue
         ix, iy = every_x[at[n] : at[n + 1]], every_y[at[n] : at[n + 1]]
         ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
         ix, iy = ix[ok], iy[ok]
-        if not len(ix):
-            continue
-        # A texel the view sees takes its own samples' detail (as the pool does); the others the
-        # triangle's mean over its seen texels.
-        on = seen_count[iy, ix] > 0
-        own = np.where(on, seen_factor[iy, ix] / np.maximum(seen_count[iy, ix], 1), 0.0)
-        f = np.where(on, own, own[on].mean() if on.any() else 1.0)
-        values = order[iy, ix] * f
-        r = (np.searchsorted(pool, values, "left") + np.searchsorted(pool, values, "right")) / (2 * len(pool))
-        r = np.clip((r - TAIL_DARK) / (1 - TAIL_DARK), 0.0, 1.0)
-        np.add.at(acc, (iy, ix), np.interp(r * 100, dm.LAMP_PERCENTILES, TAIL_RED_ALPHA))
+        np.add.at(acc, (iy, ix), np.minimum(g * order[iy, ix], 255.0))
         np.add.at(cnt, (iy, ix), 1)
     if not cnt.any():
         return None
