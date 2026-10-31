@@ -180,7 +180,7 @@ def is_glass_technique(technique: str) -> bool:
 def glass_settings(car_dir: Path) -> dict[str, dict]:
     """technique -> {"GlassMaxOpacity": 0..1 (values above 1: no cap), "GlassColor": (r, g, b,
     a), "DarkValues", "LightValues"} from the car's ShaderSettings.xml, the parameters it sets;
-    {} without the file. Read leniently, as forza_materials.parse_shader_settings reads it: 29
+    {} without the file. Read leniently, as forza_materials.parse_shader_settings reads it: 30
     roster files aren't well-formed XML (Latin-1 no-break spaces in the indentation, a
     technique closed with another's tag: the Ferrari F50's, Lamborghini Diablo SV's, Lexus IS F's),
     and a strict parse dropped every lens and cover setting of 13 of those cars."""

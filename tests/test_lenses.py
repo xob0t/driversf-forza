@@ -139,7 +139,7 @@ def test_glass_max_opacity():
 
 
 def test_glass_settings_read_leniently():
-    # 29 roster ShaderSettings.xml aren't well-formed (the Ferrari F50's indentation holds Latin-1
+    # 30 roster ShaderSettings.xml aren't well-formed (the Ferrari F50's indentation holds Latin-1
     # no-break spaces, the Ferrari GTO's closes a technique with another's tag); Forza reads them,
     # and a strict parse lost every lens and cover setting of 13 cars.
     xml = (

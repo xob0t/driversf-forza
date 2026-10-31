@@ -2658,10 +2658,11 @@ Sesto Elemento (0.122 -> 0.124). Cars that dropped but stayed in range: both SC4
 
 ### Lens and cover settings of ShaderSettings.xml that don't parse
 
-Found while tracing #405: 30 of the 503 cars' `ShaderSettings.xml` aren't well-formed XML. 27 have
-Latin-1 no-break spaces in their indentation (the Ferrari F50's, Koenigsegg Agera's, Lexus IS F's).
-Two close a technique with another's tag (Ferrari GTO 84, SRT Viper 13). One has a block after the
-root: the Viper GTS-R #126's `lights_glass`. `lenses.glass_settings` parsed strictly and dropped
+Found while tracing #405: 30 of the 503 cars' `ShaderSettings.xml` aren't well-formed XML.
+- 25 have Latin-1 no-break spaces in their indentation (the Ferrari F50's, Koenigsegg Agera's,
+  Lexus IS F's), one another stray byte (Viper SRT-10 ACR-X 12).
+- Three close a technique with another's tag (Mini Cooper S 65, Ferrari GTO 84, SRT Viper 13).
+- One has a block after the root: the Viper GTS-R #126's `lights_glass`. `lenses.glass_settings` parsed strictly and dropped
 the whole file. `forza_materials.parse_shader_settings` (#58) already reads these leniently,
 as Forza does, but keeps no colours.
 
