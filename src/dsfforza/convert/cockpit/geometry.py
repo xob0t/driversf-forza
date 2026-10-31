@@ -300,7 +300,7 @@ CIRCLE_REFITS = 10  # rim picked again about the new circle; it settles in 2 to 
 CIRCLE_SETTLED = 1e-4  # m: the centre moved less than this
 
 
-def _solve3(m, rhs):
+def solve3(m, rhs):
     """m x = rhs for a 3x3 m (Gaussian elimination, partial pivoting)."""
     a = [list(row) + [r] for row, r in zip(m, rhs)]
     for i in range(3):
@@ -323,7 +323,7 @@ def _plane_circle(xs, ys) -> tuple[float, float, float]:
     mx, my = sum(xs) / len(xs), sum(ys) / len(ys)  # centred, for the conditioning
     rows = [(2 * (x - mx), 2 * (y - my), 1.0, (x - mx) ** 2 + (y - my) ** 2) for x, y in zip(xs, ys)]
     m = [[sum(r[i] * r[j] for r in rows) for j in range(3)] for i in range(3)]
-    a, b, c = _solve3(m, [sum(r[i] * r[3] for r in rows) for i in range(3)])
+    a, b, c = solve3(m, [sum(r[i] * r[3] for r in rows) for i in range(3)])
     return mx + a, my + b, math.sqrt(max(0.0, c + a * a + b * b))
 
 

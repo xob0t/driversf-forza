@@ -109,6 +109,7 @@ from dsfforza.convert.cockpit.geometry import (
     quat_from_to,
     quat_rotate,
     section_points,
+    solve3,
     uv_map_stats,
     with_display_faces,
 )
@@ -287,6 +288,7 @@ __all__ = [
     "shell_blocks_view",
     "shell_closes",
     "shell_lids_cockpit",
+    "solve3",
     "uv_map_stats",
     "virtual_gauges",
     "visible_triangles",

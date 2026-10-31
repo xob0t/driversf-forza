@@ -11,6 +11,10 @@ LOD for the chase views; cockpit.fit_wheel_points) and reports:
 
 - off: the rim centre's distance from that line (the hub circles with this
   radius while steering; 2 off sin(angle / 2) away at an angle);
+- ring_off, ring_radius: the same without fitting a wheel (ring_error: the rim's
+  radii about the line by angle). The fit can be wrong where `off` reads it: on
+  coarse main-carbin rims and hub badges cut to their letters it put the E36 M3's
+  chase wheel 6.3 cm off a line it is on (issue #86);
 - tilt: the angle between the marker's direction and the rim's normal (the
   wheel wobbles out of its plane);
 - hinge_tilt: the same for the hinge axis (not what the engine turns about,
@@ -86,6 +90,45 @@ def skinned_points(mesh, skin: bytes) -> dict[int, list[tuple]]:
     return {mask: sorted(p) for mask, p in out.items() if p}
 
 
+RING_BINS = 16  # angle bins of ring_error: one mean radius each, so dense patches don't weigh more
+
+
+def ring_error(pts: list[tuple], pivot, direction) -> tuple[float, float] | None:
+    """(off, radius) of the drawn rim about the turn line, without fitting a wheel: the
+    rim's points (75% of the largest radius from the line or more, as the fits take
+    them) in RING_BINS angle bins about the line, one mean radius per bin, and
+    r(angle) = R + a cos + b sin through them; off = hypot(a, b), the hub's distance
+    from the line. The wheel fits (cockpit.fit_wheel_points, fit_rim_circle) can't
+    judge themselves: aligned by a fit, a wheel is on the line by that fit. None with
+    fewer than half the bins filled (a rim far off the line)."""
+    d = cockpit._norm(direction)
+    u = cockpit._norm(cockpit._cross(d, (1.0, 0.0, 0.0)) if abs(d[0]) < 0.9 else cockpit._cross(d, (0.0, 1.0, 0.0)))
+    v = cockpit._cross(d, u)
+    polar = []
+    for p in pts:
+        rel = cockpit._sub(p, pivot)
+        x, y = cockpit._dot(rel, u), cockpit._dot(rel, v)
+        polar.append((math.atan2(y, x), math.hypot(x, y)))
+    r_max = max(r for _, r in polar)
+    bins: dict[int, list] = {}
+    for a, r in polar:
+        if r >= 0.75 * r_max:
+            bins.setdefault(int((a + math.pi) / (2 * math.pi) * RING_BINS) % RING_BINS, []).append((a, r))
+    if len(bins) < RING_BINS // 2:
+        return None
+    rows = [(sum(a for a, _ in b) / len(b), sum(r for _, r in b) / len(b)) for b in bins.values()]
+    m = [[0.0] * 3 for _ in range(3)]
+    rhs = [0.0] * 3
+    for a, r in rows:
+        f = (1.0, math.cos(a), math.sin(a))
+        for i in range(3):
+            rhs[i] += f[i] * r
+            for j in range(3):
+                m[i][j] += f[i] * f[j]
+    radius, ca, sb = cockpit.solve3(m, rhs)
+    return math.hypot(ca, sb), radius
+
+
 def turn_error(pts: list[tuple], pivot, direction, hinge_axis) -> dict:
     """The fitted rim against the turn line (pivot, direction)."""
 
@@ -103,8 +146,11 @@ def turn_error(pts: list[tuple], pivot, direction, hinge_axis) -> dict:
     def angle(a, b):
         return math.degrees(math.acos(min(1.0, abs(cockpit._dot(cockpit._norm(a), cockpit._norm(b))))))
 
+    ring = ring_error(pts, pivot, d)
     return {
         "off": off,
+        "ring_off": None if ring is None else ring[0],
+        "ring_radius": None if ring is None else ring[1],
         "along": along,
         "tilt": angle(d, w.axis),
         "hinge_tilt": angle(hinge_axis, w.axis),
@@ -279,12 +325,14 @@ def summary(rows: list[dict], view: str) -> None:
     print(f"{view}: {len(ok)} cars")
     for key, label, unit, scale, limits in (
         ("off", "hub off the turn line", "cm", 100.0, (0.005, 0.01, 0.02)),
+        ("ring_off", "hub off the turn line, rim radii by angle (ring_error)", "cm", 100.0, (0.005, 0.01, 0.02)),
         ("tilt", "marker direction vs rim normal", "deg", 1.0, (1.0, 2.0, 5.0)),
         ("hinge_tilt", "hinge axis vs rim normal", "deg", 1.0, (1.0, 2.0, 5.0)),
         ("shift", "wheel drawn off its modelled place (A - hinge)", "cm", 100.0, (0.005, 0.01, 0.05)),
     ):
-        col = sorted(r[view][key] for r in ok)
-        worst = max(ok, key=lambda r: r[view][key])
+        # ring_error is None for a rim far off the line: counted as 1 m.
+        col = sorted(1.0 if r[view][key] is None else r[view][key] for r in ok)
+        worst = max(ok, key=lambda r: 1.0 if r[view][key] is None else r[view][key])
         over = ", ".join(f"{sum(1 for v in col if v > lim)} over {lim * scale:g}" for lim in limits)
         print(
             f"  {label}: median {col[len(col) // 2] * scale:.2f} {unit}, 90th pct "
@@ -346,7 +394,7 @@ def main(argv: list[str] | None = None) -> None:
                     grip = f" grip {fmt(v['grip_vanilla'])} -> {fmt(v['grip_asi'])} cm" if "grip_vanilla" in v else ""
                     eye = f" eye {fmt(v['eye_off'])} cm" if "eye_off" in v else ""
                     parts.append(
-                        f"{view} off {fmt(v['off'])} cm tilt {v['tilt']:.1f} (hinge {v['hinge_tilt']:.1f}) "
+                        f"{view} off {fmt(v['off'])} cm (ring {fmt(v['ring_off'])}) tilt {v['tilt']:.1f} (hinge {v['hinge_tilt']:.1f}) "
                         f"shift {fmt(v['shift'])} cm{eye} r {v['radius']:.3f}{grip}"
                     )
             print(f"{sid:5} {name[:30]:30} " + "  ".join(parts))
@@ -360,6 +408,8 @@ def main(argv: list[str] | None = None) -> None:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         measures = (
             "off",
+            "ring_off",
+            "ring_radius",
             "along",
             "tilt",
             "hinge_tilt",
