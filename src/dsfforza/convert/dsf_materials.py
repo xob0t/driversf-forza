@@ -1780,7 +1780,7 @@ class Texturing:
             or fm.base_family(m.family or "") != fm.LIGHTS
             or m.kind != "textured"
             or m.technique.lower() not in TEXTURED_COVERS
-            or section.name.lower() in WINDOW_SECTIONS
+            or fm.glass_name(section.name) in WINDOW_SECTIONS  # lexanF..: race cars' windows
         ):
             return False
         key = ("textured", id(sub))

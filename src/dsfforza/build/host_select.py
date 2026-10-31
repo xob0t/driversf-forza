@@ -880,6 +880,7 @@ def _carbin_doors(folder: Path, media: str, body: str | None = None) -> int | No
         return None  # vans, buses, trucks: their glass and doors don't follow a car's
     try:
         from dsfforza.convert import forza2dsf
+        from dsfforza.convert.forza_materials import glass_name
 
         car = forza2dsf.load_car(Path(folder), media)
         dims = forza2dsf.car_dims(car)
@@ -888,7 +889,7 @@ def _carbin_doors(folder: Path, media: str, body: str | None = None) -> int | No
     sign = 0.0
     panes = []
     for s in car.sections:
-        if not re.fullmatch(r"glassL[FMR]", s.name):
+        if not re.fullmatch(r"glassl[fmr]", glass_name(s.name)):  # lexanLF..: race cars' (#439)
             continue
         subs = [sub for sub in s.subsections if sub.lod > 0]
         if not subs:

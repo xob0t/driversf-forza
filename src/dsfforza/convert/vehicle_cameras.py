@@ -17,7 +17,7 @@ game (clonetest.lua logs the camera in the car's frame):
 A converted car kept the host's p535..537, so on a car lower than its host the
 camera sat inside the cabin behind the glass (the Agera on host 163: 6 cm under
 its roof top). bonnet_params puts it at the same place relative to the Forza
-windscreen (`glassF`) as vanilla cars have it relative to theirs.
+windscreen (`glassF`; `lexanF` on race cars) as vanilla cars have it relative to theirs.
 """
 
 from __future__ import annotations
@@ -25,13 +25,15 @@ from __future__ import annotations
 import math
 import struct
 
+from dsfforza.convert.forza_materials import glass_name
+
 BONNET = (535, 536, 537)
 BONNET_LIFT = 0.30  # in game: p536 + 0.30 above the ground
 BONNET_OFFSET = (0.0, 0.058, 0.085)  # camera - windscreen centre, vanilla fleet median (DSF model space)
 WINDSCREEN_HEIGHT = 0.57  # the role-63 marker's place up the windscreen (vanilla median)
 CENTRE_BAND = 0.15  # m either side of the centre line
 MIN_CLEARANCE = 0.09  # m over the car below it (vanilla: 10th percentile 0.087, median 0.12)
-WINDSCREEN_SECTION = "glassF"
+WINDSCREEN_SECTION = "glassF"  # or lexanF on race cars (forza_materials.glass_name, #439)
 
 
 def _sub(a, b):
@@ -119,8 +121,10 @@ def section_triangles(sections, place, lod: int | None = None) -> list[tuple]:
 
 
 def forza_windscreen(body_sections, place) -> list[tuple]:
-    """The Forza windscreen (`glassF`) at its finest LOD, in DSF model space."""
-    return section_triangles([s for s in body_sections if s.name == WINDSCREEN_SECTION], place)
+    """The Forza windscreen (`glassF`, or `lexanF` on race cars) at its finest LOD, in DSF
+    model space."""
+    name = WINDSCREEN_SECTION.lower()
+    return section_triangles([s for s in body_sections if glass_name(s.name) == name], place)
 
 
 def bonnet_position(windscreen, body_tris) -> tuple[tuple[float, float, float], dict]:

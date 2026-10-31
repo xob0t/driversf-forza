@@ -755,17 +755,23 @@ def convert(
         else:
             body = vehicle_cameras.section_triangles(car.body, place, opts.exterior_lod)
             cam, rays = vehicle_cameras.bonnet_position(windscreen, body)
-            params = vehicle_cameras.bonnet_params(cam, camera_ground)
-            vo3d.payload = vehicle_cameras.patch_vo3d(payload(stream, vo3d), params)
-            cam_report.update(
-                {
-                    "windscreen": [round(c, 4) for c in windscreen],
-                    "camera": [round(c, 4) for c in cam],
-                    "rays": rays,
-                    "vo3d": {str(k): round(v, 4) for k, v in params.items()},
-                }
-            )
-            log(f"bonnet camera: {tuple(round(c, 3) for c in cam)} (host's {tuple(round(c, 3) for c in host_cam)})")
+            cam_report.update({"windscreen": [round(c, 4) for c in windscreen], "rays": rays})
+            if rays["above"] is not None or rays["ahead"] is not None:
+                # Inside the cabin or a blocked view (bonnet_position): vanilla cameras never
+                # are, nor is any glassF port's. The FG Falcon #19's lexanF is all its glazing
+                # in one section, so its "windscreen centre" fell under the roof glass (#439).
+                cam_report["kept"] = "blocked: " + ", ".join(k for k in ("above", "ahead") if rays[k] is not None)
+                log(f"bonnet camera: {tuple(round(c, 3) for c in cam)} is blocked ({rays}); the host's stays")
+            else:
+                params = vehicle_cameras.bonnet_params(cam, camera_ground)
+                vo3d.payload = vehicle_cameras.patch_vo3d(payload(stream, vo3d), params)
+                cam_report.update(
+                    {
+                        "camera": [round(c, 4) for c in cam],
+                        "vo3d": {str(k): round(v, 4) for k, v in params.items()},
+                    }
+                )
+                log(f"bonnet camera: {tuple(round(c, 3) for c in cam)} (host's {tuple(round(c, 3) for c in host_cam)})")
         report["bonnet_camera"] = cam_report
     if opts.exhaust and not opts.skip_full:
         # Smoke, backfire and the exhaust sound come out of the Forza tailpipes, not the

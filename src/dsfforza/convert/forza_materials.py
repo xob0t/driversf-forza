@@ -329,6 +329,16 @@ def triangles_alpha_cut(atlas: tuple[int, int, bytearray], uvs) -> list[bool]:
     return [int(p) < max(1, ALPHA_KEEP_SHARE * int(n)) for p, n in zip(passed.tolist(), total.tolist())]
 
 
+def glass_name(name: str) -> str:
+    """A Forza section name, lower case, with `lexan` read as `glass`. Forza's
+    race cars name their polycarbonate glazing lexan<suffix> with the suffixes
+    of glass<suffix> (master build of 2026-10-31: lexanF on 76 cars, lexanR 44,
+    lexanLF/RF 69/70, lexanLR/RR 42/41, lexanLM/RM 13, lexanLHL/RHL 65,
+    lexanLTL/RTL 39, lexanT 1), on glass materials."""
+    n = name.lower()
+    return "glass" + n[5:] if n.startswith("lexan") else n
+
+
 def classify(name: str) -> tuple[str, str | None]:
     """(role, texture family) for a technique name. Exact names first, then
     the prefix conventions of the technique list and CustomCarShaders.xml."""
