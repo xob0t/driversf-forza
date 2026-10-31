@@ -275,8 +275,9 @@ def car_dims(car: ForzaCar, gamedb: Path | None = None) -> CarDims:
       vanilla cars' range (arch_fit; a tie keeps MAXData.xml). Neither source fits every car:
       SAL_S7_04's MAXData.xml is another car's (track 1.613 against the gamedb's 1.935, its
       tyres 0.16 m inboard of the fenders and 0.13 m under the arch tops), while the gamedb's
-      ride heights would sink AUD_A4Avant_04's and CHR_JeepGCSRT8_12's bodies onto the tyres
-      (research/wheels.md, "Track and ride height per car", #417).
+      track would put AUD_A4Avant_04's tyres 30 mm outside its fenders and its ride height
+      would lift CHR_JeepGCSRT8_12's body 110 mm higher over its wheels (research/wheels.md,
+      "Track and ride height per car", #417).
     Tyre radius, width and centre always come from the car's own wheel model.
 
     A wheel model whose tyre sits off its origin along the car (z): Forza draws the model
