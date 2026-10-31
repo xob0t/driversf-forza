@@ -67,6 +67,26 @@ ARCH_CELL = 0.005  # m: the side view's depth cells
 ARCH_SIDE_HEIGHTS = (0.3, 0.91, 0.05)  # fore/aft: the arch's sides at these heights (tyre radii above its centre)
 
 
+# The 5th and 95th percentiles of the vanilla cars and SUVs (120 of the 140 four-wheeled
+# vehicles: no trucks, buses, vans, pickups or the trailer), per axle, from `wheel_fit survey`
+# on the vanilla archive (research/wheels.md, "Wheel fit"): the range a wheel's reading is
+# compared with (in_band).
+VANILLA_BAND = {
+    ("fore_aft_mm", "front"): (-12.5, 16.6),
+    ("fore_aft_mm", "rear"): (-17.5, 12.5),
+    ("top_gap_mm", "front"): (-18.2, 117.8),
+    ("top_gap_mm", "rear"): (3.4, 141.3),
+    ("lateral_mm", "front"): (-99.9, 16.2),
+    ("lateral_mm", "rear"): (-90.7, 20.2),
+}
+
+
+def in_band(measure: str, axle: str, value_mm) -> bool:
+    """Whether a reading (mm) lies within vanilla's range (VANILLA_BAND)."""
+    lo, hi = VANILLA_BAND[(measure, axle)]
+    return value_mm is not None and lo <= value_mm <= hi
+
+
 @dataclass
 class Fit:
     media: str

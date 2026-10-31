@@ -175,18 +175,20 @@ def tyre_centre(wheel_sections) -> tuple[float, float, float]:
     return tuple(0.0 if abs(c) < 0.001 else c for c in centre)
 
 
-def gamedb_body(gamedb: Path, name: str) -> tuple[float, float, float, float, float] | None:
-    """(wheelbase, front track outer, wheelbase midpoint z, body bottom y, ride height) from
-    a game's gamedb.slt: Data_CarBody row Data_Car.Id * 1000 (ModelWheelbase,
-    ModelFrontTrackOuter, BottomCenterWheelbasePosZ and y, the mean of
-    ModelFront/RearStockRideHeight). Every roster car has its row in its own game's gamedb."""
+def gamedb_body(gamedb: Path, name: str) -> tuple[float, float, float, float, float, float] | None:
+    """(wheelbase, front track outer, wheelbase midpoint z, body bottom y, ride height, rear
+    track outer) from a game's gamedb.slt: Data_CarBody row Data_Car.Id * 1000
+    (ModelWheelbase, ModelFrontTrackOuter, BottomCenterWheelbasePosZ and y, the mean of
+    ModelFront/RearStockRideHeight, ModelRearTrackOuter). Every roster car has its row in its
+    own game's gamedb."""
     import sqlite3
 
     db = sqlite3.connect(f"file:{Path(gamedb).as_posix()}?mode=ro", uri=True)
     try:
         row = db.execute(
             "SELECT b.ModelWheelbase, b.ModelFrontTrackOuter, b.BottomCenterWheelbasePosZ, "
-            "b.BottomCenterWheelbasePosy, (b.ModelFrontStockRideHeight + b.ModelRearStockRideHeight) / 2 "
+            "b.BottomCenterWheelbasePosy, (b.ModelFrontStockRideHeight + b.ModelRearStockRideHeight) / 2, "
+            "b.ModelRearTrackOuter "
             "FROM Data_Car c JOIN Data_CarBody b ON b.Id = c.Id * 1000 "
             "WHERE lower(c.MediaName) = lower(?)",
             (name,),
@@ -208,6 +210,51 @@ def cached_gamedb(folder: Path) -> Path | None:
     return path if path.exists() else None
 
 
+_FIT_CACHE: dict = {}
+
+
+def arch_fit(car: ForzaCar, gamedb, mid_z: float, wheelbase: float, track: tuple, ride_height: float, radius, width):
+    """How many of the car's wheel readings fall within vanilla's range (wheel_fit.in_band:
+    each wheel's top gap and lateral offset against its arch, wheel_fit.measure_wheel) with
+    the wheels at `track` (front, rear track outer) and `ride_height`, on the Forza body
+    (LOD 1, the exterior's) at Forza's static pose, which settle_wheels keeps at rest in game.
+    The tyres are the axles' Data_Car sizes as convert draws them (axle_fits)."""
+    import numpy as np
+
+    from dsfforza.convert import wheel_fit
+    from dsfforza.convert.forza2dsf.wheels import axle_fits, axle_tyres
+
+    key = (str(car.folder), car.name, round(mid_z, 5), round(wheelbase, 5), tuple(round(t, 5) for t in track))
+    key += (round(ride_height, 5),)
+    if key in _FIT_CACHE:
+        return _FIT_CACHE[key]
+    lod = min((sub.lod for s in car.body for sub in s.subsections if sub.lod > 0), default=1)
+    tris = np.array(
+        [
+            [s.vertices_for(sub)[i].position for i in t]
+            for s in car.body
+            for sub in s.subsections
+            if sub.lod == lod
+            for t in sub.triangles()
+        ],
+        dtype=np.float64,
+    ).reshape(-1, 3, 3)
+    fits = axle_fits(radius, width, axle_tyres(car.name, [gamedb] if gamedb else []))
+    count = 0
+    for k, axle in enumerate(("front", "rear")):
+        r, w = radius * fits[axle][1], width * fits[axle][0]
+        z = mid_z + (-1 if axle == "front" else 1) * wheelbase / 2  # Forza's front is at -z
+        for side in (1.0, -1.0):
+            centre = np.array([side * (track[k] - w) / 2, -ride_height + r, z])
+            m = wheel_fit.measure_wheel(tris, centre, r, w, side)
+            if m is None:
+                continue
+            count += wheel_fit.in_band("top_gap_mm", axle, None if m[3] is None else m[3] * 1000)
+            count += wheel_fit.in_band("lateral_mm", axle, None if m[4] is None else m[4] * 1000)
+    _FIT_CACHE[key] = count
+    return count
+
+
 def car_dims(car: ForzaCar, gamedb: Path | None = None) -> CarDims:
     """Wheel placement data. `gamedb`: the car's game's gamedb.slt (default: the cached
     one, cached_gamedb).
@@ -222,8 +269,14 @@ def car_dims(car: ForzaCar, gamedb: Path | None = None) -> CarDims:
       (research/wheels.md, "Body height and wheelbase", #406).
     - Track and ride height: MAXData.xml (<Misc FrontTrackOuter RearTrackOuter
       Front/RearStockRideHeight>, the ride height the mean of both, plus a negative
-      BottomCenterWheelbasePos.y: CarDims.ride_height), else the gamedb's. The gamedb's
-      track widths are off the bodies on some cars (SAL_S7_04 0.32 m wider).
+      BottomCenterWheelbasePos.y: CarDims.ride_height), or the gamedb's (ModelFront/
+      RearTrackOuter, the ModelStockRideHeights) when its wheels fit the car's arches better:
+      more of their readings (each wheel's top gap and lateral offset, wheel_fit) within the
+      vanilla cars' range (arch_fit; a tie keeps MAXData.xml). Neither source fits every car:
+      SAL_S7_04's MAXData.xml is another car's (track 1.613 against the gamedb's 1.935, its
+      tyres 0.16 m inboard of the fenders and 0.13 m under the arch tops), while the gamedb's
+      ride heights would sink AUD_A4Avant_04's and CHR_JeepGCSRT8_12's bodies onto the tyres
+      (research/wheels.md, "Track and ride height per car", #417).
     Tyre radius, width and centre always come from the car's own wheel model.
 
     A wheel model whose tyre sits off its origin along the car (z): Forza draws the model
@@ -244,25 +297,26 @@ def car_dims(car: ForzaCar, gamedb: Path | None = None) -> CarDims:
         bottom = misc.find("BottomCenterWheelbasePos")
         ride = [float(misc.get(k)) for k in ("FrontStockRideHeight", "RearStockRideHeight") if misc.get(k)]
         ride_height = (sum(ride) / len(ride) if ride else 0.0) - min(0.0, float(bottom.get("y") or 0.0))
+        track = (float(misc.get("FrontTrackOuter")), float(misc.get("RearTrackOuter") or misc.get("FrontTrackOuter")))
         if body is not None:
             wheelbase, mid_z, source = body[0], body[2], f"MAXData.xml, {Path(gamedb).name} wheelbase"
+            own = ((body[1], body[5] or body[1]), (body[4] or 0.0) - min(0.0, body[3] or 0.0))
+            if max(abs(own[0][0] - track[0]), abs(own[0][1] - track[1]), abs(own[1] - ride_height)) > 0.0005:
+                here = arch_fit(car, gamedb, mid_z, wheelbase, track, ride_height, radius, width)
+                there = arch_fit(car, gamedb, mid_z, wheelbase, own[0], own[1], radius, width)
+                if there > here:  # the gamedb's wheels fit the arches better: its track and ride height
+                    track, ride_height = own
+                    source = (
+                        f"{Path(gamedb).name} Data_CarBody (track and ride height: {there} of the wheels' "
+                        f"readings in vanilla's range, MAXData.xml's {here})"
+                    )
         else:
             wheelbase, mid_z, source = float(misc.get("Wheelbase")), -float(bottom.get("z")) + centre[2], "MAXData.xml"
-        return CarDims(
-            wheelbase,
-            mid_z,
-            float(misc.get("FrontTrackOuter")),
-            radius,
-            width,
-            source,
-            ride_height,
-            float(misc.get("RearTrackOuter")) if misc.get("RearTrackOuter") else None,
-            centre,
-        )
+        return CarDims(wheelbase, mid_z, track[0], radius, width, source, ride_height, track[1], centre)
     if body is not None:
-        wheelbase, track, mid_z, y, ride = body
+        wheelbase, track, mid_z, y, ride, rear = body
         source = f"{Path(gamedb).name} Data_CarBody"
         return CarDims(
-            wheelbase, mid_z, track, radius, width, source, (ride or 0.0) - min(0.0, y or 0.0), tyre_centre=centre
+            wheelbase, mid_z, track, radius, width, source, (ride or 0.0) - min(0.0, y or 0.0), rear, tyre_centre=centre
         )
     raise ValueError(f"{car.name}: no Physics/MAXData.xml and no gamedb Data_CarBody row")

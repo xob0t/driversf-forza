@@ -251,3 +251,39 @@ def test_wheel_collision_takes_the_drawn_tyre():
     assert abs(radius - math.sqrt(0.1475**2 + 2 * 0.468**2)) < 1e-5
     assert abs(ext(1)[1][1] - 0.47) < 1e-6 and abs(ext(1)[1][0] - 0.155) < 1e-6  # the rear wheel: the rear tyre
     assert all(abs(a - b) < 1e-6 for a, b in zip(ext(2)[1], (0.5, 0.2, 0.3)))  # not a cylinder: left as it is
+
+
+def test_track_and_ride_height_per_car():
+    """Track and ride height come from the source whose wheels fit the car's arches better
+    (forza2dsf.car.arch_fit: readings within vanilla's range): the gamedb's only when it has
+    more of them, a tie keeps MAXData.xml's (#417)."""
+    import tempfile
+    from pathlib import Path
+    from unittest import mock
+
+    from dsfforza.convert.forza2dsf import car as fcar
+
+    def dims(counts):
+        """car_dims with arch_fit counting `counts[ride_height]` for each source."""
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp) / "fm4"
+            (game / "X").mkdir(parents=True)
+            _gamedb(game / "gamedb.slt", "X", 2.6, -0.1, ride=0.2)  # track 2.1, ride height 0.2
+            car = _maxdata_car(game / "X", "X", 0.0)  # MAXData: track 1.8, ride height 0.12
+            calls = []
+
+            def fit(_car, _db, _mid, _wb, track, ride, *_):
+                calls.append((track, ride))
+                return counts[round(ride, 3)]
+
+            with mock.patch.object(fcar, "arch_fit", fit):
+                return forza2dsf.car_dims(car), calls
+
+    better, calls = dims({0.12: 5, 0.2: 8})
+    assert abs(better.track_outer - 2.1) < 1e-9 and abs(better.rear_track_outer - 2.1) < 1e-9
+    assert abs(better.ride_height - 0.2) < 1e-9 and "8 of the wheels' readings" in better.source
+    assert len(calls) == 2
+    tie, _ = dims({0.12: 6, 0.2: 6})
+    assert abs(tie.track_outer - 1.8) < 1e-9 and abs(tie.ride_height - 0.12) < 1e-9
+    worse, _ = dims({0.12: 8, 0.2: 4})
+    assert abs(worse.track_outer - 1.8) < 1e-9 and abs(worse.ride_height - 0.12) < 1e-9
