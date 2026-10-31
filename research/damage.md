@@ -1409,11 +1409,12 @@ for those triangles, neither of them vanilla:
   record (0, 5) moves 1 mm. The seam with the chassis glass is pinned
   (`_pin_map`), so the windscreen bends there rather than opening.
 - Glass draws the crack state of the record its vertices are bound to
-  (`g_v4PerPanelData[s9 byte 1].y`, "Hypotheses" 3 above). A front hit
-  damages the front structure before the chassis, so that band cracks and
-  shatters on its own. In state 3 the glass texture is mostly holes
-  (`glass.py`), which leaves a cut-out with the triangles' straight edges
-  while the chassis glass next to it stays clear.
+  (`g_v4PerPanelData[s9 byte 1].y`, "Hypotheses" 3 above), so that band
+  cracks on the front structure's damage, not the windscreen's. In state 3
+  the glass texture is mostly holes (`glass.py`). After two front hits the
+  band was shattered and the chassis glass next to it was still whole, with
+  the triangles' straight edges between them: the cut-out of the report
+  (confirmed-runtime, "In game" below).
 
 Host 162's damage records are not the cause. Its glass record (rec 21, pair
 0, 5, 53 vertices) is the windscreen (box z -0.17 to 0.79) and crushes
@@ -1453,6 +1454,25 @@ Built before and after (`out/i411/before`, `out/i411/after`; IDs 1 JT1,
 
 The lamp covers now crush with their headlight record (0.16 to 0.32 m), as the
 lamps under them do.
+
+`render_compare diff` (`out/rc/i411`): the three cars' data changed, none
+draws differently intact (the change is in s9 and s12 only).
+
+### In game (headless VM, confirmed-runtime)
+
+`run-series.ps1 -Vm -Archives out\i411efore\dngvehicles.sp,out\i411fter\dngvehicles.sp
+-ProbeIds '1,2,3,162' -Views 'front+hitfront,grille+hitfront,front,fq' -ShotSeconds 3
+-WaitSeconds 600 -Palette 0`: two `applyDamage` 0.3 hits on the front bumper, then the
+windscreen from ahead. Runs `vm2-20261031-111156` (before) and `vm2-20261031-111806`
+(after), no crash.
+
+- Before: the JT1's lower windscreen band is shattered and its upper part
+  whole, with a sharp V between them (observe-07). The Apollo S looks the same
+  way with the bands the other way round (observe-28).
+- After: both windscreens shatter as one pane, with a shattered rim at the
+  pillars (observe-13, -36). Vanilla 162 (the JT1's host) does the same after
+  the same hits (observe-39 / -46).
+- The Speed 8's black cabin shows little difference in either run (observe-17 / -25).
 
 ## Risks and open questions
 
