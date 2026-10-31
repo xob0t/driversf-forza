@@ -2770,7 +2770,31 @@ corners). A piece within `CENTRE_X` is a centre lamp, so the emblem is the Viper
 16 cm above the side tails, its high stop lamp (0x02, Brakes): dark rolling, lit braking, as in
 Forza.
 
-{{ROSTER_D}}
+Roster (573 cars, master's code; `out/survey_all.py` and `plan_dump.py` in this PR's worktree, the
+lamp plan on each car's host-picks host): 52 planned lamps on 25 cars lie within `CENTRE_X` but had a
+side. With this change the plan differs on 22 of them (the NSX 05's, Z8's and F430 GT #83's lamps
+come from clear lenses and reflectors placed with the lamp behind them, which keep their place):
+- 15 cars gain a centre high stop lamp (0x02, Brakes) where a left and a right tail cluster
+  (0x18) were: Corvette C5-R 04, C6-R 06, Z06 02, Z06 06; both Viper GTS-Rs (#126, #91); Ferrari 575;
+  Lamborghini Gallardo 05; Mazda RX-7 Spirit R and MX-5 07; Opel Speedster; both Peugeot 908s;
+  Volvo XC70 12; Kenworth T440. All sit 0.1 to 0.5 m above the side tails, as high stop lamps do.
+- 2 merge their centre pieces into the high stop lamp they had (Morgan Aero SS, Shelby Series 1).
+- Front pieces within 0.3 m become centre head lamps (BMW V12 LMR, Ferrari F430 GT #89, both
+  Viper GTS-Rs' bumper lamps), still 0x1D.
+- Rear centre pieces of other lamps become centre lamps: the Ferrari Dino's and Hummer H1 Alpha's
+  middle tail pieces, the Delta S4's reverse lamps (one centre lamp; its rear fog lamps lose their
+  entry, and free roam never sets FogLights), the Kenworth's front marker lamps.
+- Light entries move between lamps on these cars as `assign` hands them out again.
+
+`render_compare diff` (master's and this build of the 22 cars, `out/rc/D`): 22 changed, 15 drawn differently, all in the rear lamps
+with the running lights (day_lit): the new high stop lamps dark rolling where master lit them as
+0x18 tails (Peugeot 908s 20 to 24% of the rear lamp region, Series 1, Aero SS, 575, Vipers, MX-5 6 to
+8%, the rest 2 to 4%). New flags on 3 cars: the Opel Speedster's "no glow" and both Viper GTS-Rs'
+"glows elsewhere than Forza's lamp". render_compare's reference lights a `tail_light` with the
+running lights, but Forza's tail_light glows only braking, so these are the reference's
+assumption, not a miss. The 7 alike: the front and rear centre pieces that kept their lamp type
+(BMW LMR, F430 GT #89, H1 Alpha, Dino, Kenworth, Delta S4, XC70: entries moved, nothing drawn
+differently).
 
 ### Open
 
