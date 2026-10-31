@@ -47,6 +47,7 @@ def run(
     cars: str | None = None,
     hud: str | None = None,
     per_group: int | None = 1000,
+    stats_extra: str = "",
 ):
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
     g = lua.globals()
@@ -57,6 +58,8 @@ def run(
 
     def user_open(name):
         name = str(name)
+        if name == "raise.lua":  # a user script that raises
+            raise RuntimeError("script error in raise.lua")
         if name in over:
             return (False, "missing") if over[name] is None else loader(over[name], name)
         path = LUA_DIR / name.replace(BS, "/")
@@ -82,6 +85,7 @@ def run(
     if not STATS.exists():
         raise FileNotFoundError(f"{STATS}: run uv run dsff game_data prepare")
     lua.execute(STATS.read_text(encoding="utf-8"))
+    lua.execute(stats_extra)
     lua.execute("""
     calls = {}
     ProfileSettings = {
@@ -163,9 +167,54 @@ def test_big_group():
     assert old == Counter({"ID:900001": 20, "FORZA": 20, "FORZA 2": 15}), old
 
 
+# Felony Rework's vehicleStats dummies (its whole-file vehiclestats.lua, research/felony-rework.md):
+# Selectable placeholders above 303 with no model behind them.
+FELONY_DUMMIES = """
+for _, id in ipairs({622, 623}) do
+  vehicleStats[id] = { ManufacturerName = "", ModelName = "NOTHING", Picture1 = "default_ability",
+    Price = 1, Tier = 1, UnlockByActivity = "ClassicSurvival", Selectable = true }
+end
+"""
+
+
+def test_other_mods_placeholders_past_303_stay_out_of_the_plugins_garage():
+    """The plugin's garage walks IDs up to 999; only our cars are models there, so another
+    mod's Selectable entry above 303 is hidden (the vanilla garage never reaches it) and takes
+    no maker group. Without the plugin it is left alone."""
+    cars = ported(100)  # IDs 304..403: port_batch never gives out 622 and 623 (RESERVED_IDS)
+    lua, out = run(True, cars=cars, stats_extra=FELONY_DUMMIES)
+    stats = lua.globals().vehicleStats
+    assert not stats[622].Selectable and not stats[623].Selectable
+    assert stats[622].UnlockByActivity == "ClassicSurvival"  # its unlock reward is untouched
+    assert sum(1 for line in out if "is not a model" in line) == 2
+    assert stats[304].Selectable  # our cars past 303 still are
+    lua, _ = run(False, cars=cars, stats_extra=FELONY_DUMMIES)
+    assert lua.globals().vehicleStats[622].Selectable
+
+
+def test_registers_gc_wrapper_restarts_the_collector_when_a_file_raises():
+    """register.lua wraps user_open itself (without the player bootstrap): the collector is
+    restarted when a file raises, and the caller still gets the error."""
+    lua, _ = run(True, cars=ported(10))
+    lua.execute("""
+    gc_calls = {}
+    local gc = collectgarbage
+    collectgarbage = function(what, ...) table.insert(gc_calls, what) return gc(what, ...) end
+    raised_ok, raised = pcall(user_open, "raise.lua")
+    """)
+    g = lua.globals()
+    assert g.raised_ok is False and "script error in raise.lua" in str(g.raised), g.raised
+    assert list(g.gc_calls.values()) == ["stop", "restart"], list(g.gc_calls.values())
+
+
 if __name__ == "__main__":
     print("one make, 55 cars:", dict(big_group(1000)), "without the window:", dict(big_group(None)))
-    problems = check(False) + check(True) + check(True, per_group=None)
-    for p in problems:
-        print("FAIL", p)
-    sys.exit(1 if problems else 0)
+    failed = []
+    for name, test in sorted(globals().items()):  # every test_* function, as `python -m tests` runs them
+        if name.startswith("test_") and callable(test):
+            try:
+                test()
+            except AssertionError as error:
+                failed.append(name)
+                print("FAIL", name, error)
+    sys.exit(1 if failed else 0)

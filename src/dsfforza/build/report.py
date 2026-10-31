@@ -538,6 +538,28 @@ def archive_state(game: Path, status: dict) -> str:
     return f"not vanilla, not installed by dsfforza ({size_text(size)}): another mod?"
 
 
+def bootstrap_lua_state(game: Path, created: set, repo: Path) -> str:
+    """Whose Common\\UserLuaScripts\\bootstrap.lua is installed, and whether it runs the chained one."""
+    bootstrap = game / "Common" / "UserLuaScripts" / "bootstrap.lua"
+    ours_lua = Path(repo) / "tools" / "game" / "lua" / "player" / "bootstrap.lua"
+    state = "none"
+    if bootstrap.is_file():
+        if ours_lua.is_file() and install.sha256(bootstrap) == install.sha256(ours_lua):
+            state = "dsfforza's"
+        elif "common\\userluascripts\\bootstrap.lua" in created:
+            state = "dsfforza's (another version)"
+        else:
+            state = "another mod's"
+    if (game / "Common" / "UserLuaScripts" / "dsfforza" / "chained-bootstrap.lua").is_file():  # install.ps1 kept it
+        # Only a bootstrap of ours that loads it runs it; one another installer put there since doesn't.
+        runs_it = bootstrap.is_file() and b"chained-bootstrap.lua" in bootstrap.read_bytes()
+        if runs_it and state.startswith("dsfforza's"):
+            state += ", chaining another mod's"
+        else:
+            state += ", stale dsfforza\\chained-bootstrap.lua (not run)"
+    return state
+
+
 def other_mods(game: Path, record: dict | None, repo: Path) -> dict:
     game = Path(game)
     created = {
@@ -569,16 +591,6 @@ def other_mods(game: Path, record: dict | None, repo: Path) -> dict:
                 continue
             asis.append({"path": rel, "bytes": path.stat().st_size, "modified": stamp(path)})
     hook = game / "plugins" / "DriverNGHook.asi"
-    bootstrap = game / "Common" / "UserLuaScripts" / "bootstrap.lua"
-    ours_lua = Path(repo) / "tools" / "game" / "lua" / "player" / "bootstrap.lua"
-    bootstrap_state = "none"
-    if bootstrap.is_file():
-        if ours_lua.is_file() and install.sha256(bootstrap) == install.sha256(ours_lua):
-            bootstrap_state = "dsfforza's"
-        elif "common\\userluascripts\\bootstrap.lua" in created:
-            bootstrap_state = "dsfforza's (another version)"
-        else:
-            bootstrap_state = "another mod's"
     user_lua = game / "Common" / "UserLuaScripts"
     vanilla = {}
     for relative, digest in install.VANILLA_FILES.items():
@@ -598,7 +610,7 @@ def other_mods(game: Path, record: dict | None, repo: Path) -> dict:
             "installed_by_dsfforza": "plugins\\drivernghook.asi" in created,
         },
         "other_asi": asis,
-        "bootstrap_lua": bootstrap_state,
+        "bootstrap_lua": bootstrap_lua_state(game, created, repo),
         "user_lua_scripts": sorted(
             str(p.relative_to(user_lua))
             for p in user_lua.rglob("*")

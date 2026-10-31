@@ -1324,8 +1324,8 @@ class Run:
             ours_lua = REPO / "tools" / "game" / "lua" / "player" / "bootstrap.lua"
             if bootstrap.is_file() and sha256(bootstrap) != sha256(ours_lua):
                 problems.append(
-                    "Common\\UserLuaScripts\\bootstrap.lua belongs to another mod. Add --force to replace it "
-                    "(it is backed up and put back by --uninstall)."
+                    "Common\\UserLuaScripts\\bootstrap.lua belongs to another mod. Add --force to replace it: it is "
+                    "backed up and put back by --uninstall, and ours runs it first, so that mod still loads."
                 )
             for relative, digest in VANILLA_FILES.items():
                 path = game / relative

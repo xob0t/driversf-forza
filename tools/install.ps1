@@ -18,7 +18,9 @@ Install:
      runtime, x86 (32-bit); the script checks for it.
   5. Installs the Lua that registers the cars with the game (names, badges, stat
      bars, garage, traffic): Common\UserLuaScripts\bootstrap.lua plus
-     dsfforza\register.lua, ported.lua and hud.lua. No test probes.
+     dsfforza\register.lua, ported.lua and hud.lua. No test probes. Another mod's
+     bootstrap.lua (replaced only with -Force) is kept as dsfforza\chained-bootstrap.lua,
+     which ours runs first.
   6. With -Asi, installs the dsfforza.asi plugin (plugins\dsfforza.asi and
      dsfforza.ini; default out\asi, built by tools\asi\build.ps1, or -AsiPath):
      runtime patches of Driver.exe 1.04 (no file is changed) that raise the
@@ -263,6 +265,20 @@ function Test-VcRuntimeX86 {
     if (-not (Test-Path -LiteralPath $sys32)) { $sys32 = Join-Path $env:WINDIR 'System32' }   # 32-bit Windows
     return ((Test-Path -LiteralPath (Join-Path $sys32 'vcruntime140.dll')) -and
             (Test-Path -LiteralPath (Join-Path $sys32 'msvcp140.dll')))
+}
+
+# One of our own bootstraps, any version: every player bootstrap install.ps1 has installed
+# (tools\game\lua\player\bootstrap.lua, from its first commit) and the test ones start with
+# one of these lines. A mention of dsfforza doesn't count: another mod's bootstrap may
+# load register.lua itself (INSTALL.md).
+$OurBootstrapHeaders = @(
+    '-- dsfforza player bootstrap: registers the added Forza cars with the game.',
+    '-- DriverNGHook user bootstrapper for dsfforza tests.',
+    '-- Test bootstrap for dsfforza.asi garage/save runs (tools/asi/test): the')
+function Test-OurBootstrap([string]$Path) {
+    $first = @([IO.File]::ReadAllLines($Path) | Where-Object { $_.Trim() } | Select-Object -First 1)
+    if (-not $first) { return $false }
+    return $OurBootstrapHeaders -contains $first[0].TrimStart([char]0xFEFF).Trim()
 }
 
 function Find-AsiLoader {
@@ -714,9 +730,18 @@ function Invoke-Install {
 
     $lua = Join-Path $Repo 'tools\game\lua'
     $bootstrapTarget = Join-Path $Game 'Common\UserLuaScripts\bootstrap.lua'
+    # Another mod's bootstrap (Felony Rework's, ...) is replaced only with -Force. It is backed up,
+    # and kept as dsfforza\chained-bootstrap.lua, which ours runs first (player\bootstrap.lua),
+    # unless it is one of our own bootstraps, an older version (Test-OurBootstrap). One that only
+    # calls user_open("dsfforza\\register.lua") (INSTALL.md) is chained too: ours skips that call.
+    $chainBootstrap = $false
     if ((Test-Path -LiteralPath $bootstrapTarget) -and
-        (Get-Sha256 $bootstrapTarget) -ne (Get-Sha256 (Join-Path $lua 'player\bootstrap.lua')) -and -not $Force) {
-        Fail "Common\UserLuaScripts\bootstrap.lua belongs to another mod. Add -Force to replace it (it is backed up and restored by -Uninstall)."
+        (Get-Sha256 $bootstrapTarget) -ne (Get-Sha256 (Join-Path $lua 'player\bootstrap.lua'))) {
+        if (-not $Force) {
+            Fail ("Common\UserLuaScripts\bootstrap.lua belongs to another mod. Add -Force to replace it: it is backed up " +
+                  "and restored by -Uninstall, and ours runs it first, so that mod still loads.")
+        }
+        $chainBootstrap = -not (Test-OurBootstrap $bootstrapTarget)
     }
 
     # Hook prerequisites first, so nothing is changed when they are missing.
@@ -814,6 +839,10 @@ function Invoke-Install {
             $manifest.runtime_files = @('plugins\dsfforza.log')
         }
 
+        if ($chainBootstrap) {
+            Install-File $bootstrapTarget 'Common\UserLuaScripts\dsfforza\chained-bootstrap.lua'
+            Say "  another mod's bootstrap.lua kept as dsfforza\chained-bootstrap.lua; ours runs it first"
+        }
         Install-File (Join-Path $lua 'player\bootstrap.lua') 'Common\UserLuaScripts\bootstrap.lua'
         Install-File (Join-Path $lua 'dsfforza\register.lua') 'Common\UserLuaScripts\dsfforza\register.lua'
         Install-File $portedLua 'Common\UserLuaScripts\dsfforza\ported.lua'
