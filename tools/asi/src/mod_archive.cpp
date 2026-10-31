@@ -29,6 +29,7 @@
 #include <intrin.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "patch.h"
@@ -293,6 +294,262 @@ uint32_t entry_span(const Entry* e)
     return align_up(name + e->size, a);
 }
 
+// ---- car packages ([archive] packages, off by default) ----------------------
+// research/car-packages.md. A car package is a CHNK file of its own holding one
+// car's three VEHC entries (kinds 0, 1, 2: full, interior, exterior), with its
+// model ID already in VSVH/VO3D/SPID/UPVH. A list file names the packages and
+// their IDs, one "id path" per line (path relative to the game folder).
+//
+// How the game finds a car (confirmed-static): the vehicle spool object's root
+// reader (spool object +0x14) holds dngvehicles.sp's root table; the SSLP
+// records {u16 id, u16 root index, u16 kind} map a model ID to a root index
+// (0x005A0A80, 0x005A0B80, 0x005A0BD0 read them through the pointers at spool
+// object +0x72F8/+0x72FC); a slot handler then reads the whole entry with the
+// root reader's read entry(i) (SceneModelType2 0x00858870 -> 0x008FBE90) into
+// the shared spool buffer and parses it in memory. So the packages need three
+// things here, all in code this module already owns:
+//   1. the root table of the vehicle archive gets three entries per package
+//      after its own (h_poll, once the open completes);
+//   2. read entry(i) and name(i) of those entries read from the package file
+//      (synchronously, with the plugin's own handle) instead of the archive;
+//   3. the SSLP the spool object uses gets three records per package (a copy
+//      with the records appended; FUN_005A0B50 sets the two pointers).
+// The vehicle archive's reader is the one FUN_005A11E0 opens (call 0x005A13C4)
+// with a file name ending in dngvehicles.sp.
+struct Pkg {
+    HANDLE file;
+    uint16_t id;
+    bool listed;      // its SSLP records are in (no ID clash, NONR fits)
+    Entry e[3];       // offsets relative to the package file
+    uint32_t nonr[3];  // NONR size of each VEHC (the slot's buffer must hold it)
+    char path[MAX_PATH];
+};
+Pkg* g_pkgs = nullptr;
+uint32_t g_pkg_count = 0;
+Reader* g_veh_reader = nullptr;  // the vehicle archive's root reader
+uint32_t g_pkg_first = 0;        // root index of the first package entry (0: none injected)
+uint8_t* g_sslp = nullptr;       // the extended SSLP (header + records)
+volatile LONG g_pkg_reads = 0;
+
+void* __fastcall h_ptr(Reader* r, void*, uint32_t i);
+
+const uint32_t kVEHC = 0x43484556;
+const uint32_t kNONR = 0x524E4F4E;
+
+bool pread(HANDLE h, uint32_t pos, void* buf, uint32_t n, uint32_t* got)
+{
+    OVERLAPPED o = {};
+    o.Offset = pos;
+    DWORD read = 0;
+    BOOL ok = ReadFile(h, buf, n, &read, &o);
+    if (got) *got = read;
+    return ok || GetLastError() == ERROR_HANDLE_EOF;
+}
+
+// The package of root entry i of r, and the entry's kind; nullptr when i isn't one.
+Pkg* pkg_of(Reader* r, uint32_t i, uint32_t* kind)
+{
+    if (!g_pkg_first || r != g_veh_reader || i < g_pkg_first) return nullptr;
+    uint32_t k = i - g_pkg_first;
+    if (k / 3 >= g_pkg_count) return nullptr;
+    if (kind) *kind = k % 3;
+    return &g_pkgs[k / 3];
+}
+
+// Reads one package: a CHNK of three VEHC entries; also each VEHC's NONR size.
+bool pkg_open(Pkg* p)
+{
+    p->file = CreateFileA(p->path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
+                          nullptr);
+    if (p->file == INVALID_HANDLE_VALUE) {
+        dsf_log("packages: %s: can't open (error %lu)", p->path, GetLastError());
+        return false;
+    }
+    uint32_t hdr[4];
+    uint32_t got = 0;
+    if (!pread(p->file, 0, hdr, sizeof hdr, &got) || got != sizeof hdr || hdr[0] != kCHNK || hdr[2] != 3 ||
+        (hdr[3] & 0x7FFFFFFF) != 3 || (hdr[3] >> 31)) {
+        dsf_log("packages: %s: not a CHNK of three entries (version 3, not compressed)", p->path);
+        return false;
+    }
+    if (!pread(p->file, 16, p->e, sizeof p->e, &got) || got != sizeof p->e) return false;
+    for (int k = 0; k < 3; k++) {
+        Entry* e = &p->e[k];
+        if (e->tag != kVEHC) {
+            dsf_log("packages: %s: entry %d is not a VEHC", p->path, k);
+            return false;
+        }
+        // A VEHC is a CHNK; its NONR (if any) is copied into a fixed slot buffer.
+        uint32_t sub[4];
+        if (!pread(p->file, e->offset, sub, sizeof sub, &got) || got != sizeof sub || sub[0] != kCHNK ||
+            sub[2] > 64) {
+            dsf_log("packages: %s: VEHC %d is not a CHNK", p->path, k);
+            return false;
+        }
+        Entry kids[64];
+        if (!pread(p->file, e->offset + 16, kids, sub[2] * sizeof(Entry), &got) || got != sub[2] * sizeof(Entry))
+            return false;
+        p->nonr[k] = 0;
+        for (uint32_t j = 0; j < sub[2]; j++)
+            if (kids[j].tag == kNONR) p->nonr[k] = kids[j].size;
+    }
+    return true;
+}
+
+// Reads the list file ([archive] packages_list) and opens every package in it.
+void pkg_load_list()
+{
+    char exe[MAX_PATH];
+    DWORD n = GetModuleFileNameA(nullptr, exe, MAX_PATH);
+    if (!n || n >= MAX_PATH) return;
+    char* slash = strrchr(exe, '\\');
+    if (slash) slash[1] = 0;
+    char rel[MAX_PATH], list[MAX_PATH];
+    cfg_str("archive", "packages_list", "dsfforza\\cars\\cars.txt", rel, sizeof rel);
+    _snprintf_s(list, sizeof list, _TRUNCATE, "%s%s", exe, rel);
+    FILE* f = nullptr;
+    if (fopen_s(&f, list, "r") || !f) {
+        dsf_log("packages: no list %s; no car packages", list);
+        return;
+    }
+    const uint32_t kMaxPkgs = 2000;
+    g_pkgs = (Pkg*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, kMaxPkgs * sizeof(Pkg));
+    char line[512];
+    while (g_pkgs && g_pkg_count < kMaxPkgs && fgets(line, sizeof line, f)) {
+        char* s = line;
+        while (*s == ' ' || *s == '\t') s++;
+        if (*s == '#' || *s == '\r' || *s == '\n' || !*s) continue;
+        char* end = nullptr;
+        long id = strtol(s, &end, 10);
+        while (*end == ' ' || *end == '\t') end++;
+        size_t len = strcspn(end, "\r\n");
+        end[len] = 0;
+        if (id < 1 || id > 999 || !*end) {
+            dsf_log("packages: bad line '%s' (\"id path\", 1 <= id <= 999)", s);
+            continue;
+        }
+        Pkg* p = &g_pkgs[g_pkg_count];
+        p->id = (uint16_t)id;
+        _snprintf_s(p->path, sizeof p->path, _TRUNCATE, "%s%s", exe, end);
+        if (!pkg_open(p)) {
+            if (p->file != INVALID_HANDLE_VALUE && p->file) CloseHandle(p->file);
+            memset(p, 0, sizeof *p);
+            continue;
+        }
+        dsf_log("packages: %u %s: VEHC %u/%u/%u bytes, NONR %#x/%#x/%#x", p->id, end, p->e[0].size, p->e[1].size,
+                p->e[2].size, p->nonr[0], p->nonr[1], p->nonr[2]);
+        g_pkg_count++;
+    }
+    fclose(f);
+    dsf_log("packages: %u car packages from %s", g_pkg_count, list);
+}
+
+// After the vehicle archive's root table is read: three entries per package
+// after the archive's own. Their offsets stay relative to the package file;
+// h_read_entry and h_name read them from there.
+void pkg_inject(Reader* r)
+{
+    if (!g_pkg_count) return;
+    uint32_t base = r->count;
+    uint32_t count = base + 3 * g_pkg_count;
+    if (count > g_max_entries || (count > kInline && !ext_ensure(r, count, r->ptr_count))) {
+        dsf_log("packages: %u root entries would pass max_entries %u; no car packages", count, g_max_entries);
+        return;
+    }
+    for (uint32_t j = r->ptr_count; j < kInline && j < count; j++) r->ptrs[j] = nullptr;
+    r->count = count;
+    r->ptr_count = count;
+    for (uint32_t j = 0; j < g_pkg_count; j++)
+        for (uint32_t k = 0; k < 3; k++) {
+            *E(r, base + 3 * j + k) = g_pkgs[j].e[k];
+            *P(r, base + 3 * j + k) = nullptr;
+        }
+    g_pkg_first = base;
+    dsf_log("packages: reader %p: root entries %u..%u are the %u car packages", r, base, count - 1, g_pkg_count);
+}
+
+// FUN_005A0B50 (thiscall: self = spool object + 4; reader, entry index): SSLP
+// loaded. The vanilla function points self+0x72F4 at the SSLP header and
+// self+0x72F8 at its records. For the vehicle package (root reader at self+0x10)
+// a copy with three records per package goes there instead; a package whose ID
+// (or +1000/+2000) the archive already has, or whose NONR is larger than the
+// slot buffer the SSLP header gives (+0x08 + 4 * kind), is left out.
+void __fastcall h_sslp_load(uint8_t* self, void*, Reader* reader, uint32_t index)
+{
+    uint8_t* p = (uint8_t*)h_ptr(reader, nullptr, index);
+    *(uint8_t**)(self + 0x72F4) = p;
+    *(uint8_t**)(self + 0x72F8) = p + 0x1C;
+    if (!g_pkg_first || *(Reader**)(self + 0x10) != g_veh_reader) return;
+    uint32_t count = *(uint16_t*)(p + 2);
+    const uint16_t* rec = (const uint16_t*)(p + 0x1C);
+    uint32_t add = 0;
+    for (uint32_t j = 0; j < g_pkg_count; j++) {
+        Pkg* q = &g_pkgs[j];
+        q->listed = false;
+        bool clash = false;
+        for (uint32_t i = 0; i < count && !clash; i++)
+            for (int k = 0; k < 3; k++)
+                if (rec[i * 3] == q->id + 1000 * k) clash = true;
+        for (uint32_t i = 0; i < j && !clash; i++)
+            if (g_pkgs[i].listed && g_pkgs[i].id == q->id) clash = true;
+        if (clash) {
+            dsf_log("packages: %u (%s) is already in the archive or another package; left out", q->id, q->path);
+            continue;
+        }
+        bool fits = true;
+        for (int k = 0; k < 3; k++)
+            if (q->nonr[k] > *(uint32_t*)(p + 8 + 4 * k)) fits = false;
+        if (!fits) {
+            dsf_log("packages: %u: a NONR is larger than its slot buffer (SSLP %#x/%#x/%#x); left out", q->id,
+                    *(uint32_t*)(p + 8), *(uint32_t*)(p + 12), *(uint32_t*)(p + 16));
+            continue;
+        }
+        q->listed = true;
+        add++;
+    }
+    if (count + 3 * add > 0xFFFF) {
+        dsf_log("packages: %u SSLP records would pass 65535; no car packages", count + 3 * add);
+        return;
+    }
+    uint8_t* sslp = (uint8_t*)HeapAlloc(GetProcessHeap(), 0, 0x1C + (count + 3 * add) * 6);
+    if (!sslp) return;
+    memcpy(sslp, p, 0x1C + count * 6);
+    uint16_t* out = (uint16_t*)(sslp + 0x1C) + count * 3;
+    for (uint32_t j = 0; j < g_pkg_count; j++) {
+        if (!g_pkgs[j].listed) continue;
+        for (uint16_t k = 0; k < 3; k++) {
+            out[0] = (uint16_t)(g_pkgs[j].id + 1000 * k);
+            out[1] = (uint16_t)(g_pkg_first + 3 * j + k);
+            out[2] = k;
+            out += 3;
+        }
+    }
+    *(uint16_t*)(sslp + 2) = (uint16_t)(count + 3 * add);
+    if (g_sslp) HeapFree(GetProcessHeap(), 0, g_sslp);
+    g_sslp = sslp;
+    *(uint8_t**)(self + 0x72F4) = sslp;
+    *(uint8_t**)(self + 0x72F8) = sslp + 0x1C;
+    dsf_log("packages: SSLP at %p: %u records + %u for %u car packages", self, count, 3 * add, add);
+}
+
+typedef uint32_t(__fastcall* ReaderOpen)(Reader* r, void*, const char* name, int async, int flag);
+const ReaderOpen reader_open = (ReaderOpen)0x008FC530;
+
+// Call 0x005A13C4 in FUN_005A11E0 (the unified spool loader, state 1): the
+// package's root reader opens its file. Remembers the vehicle archive's reader.
+uint32_t __fastcall h_spool_open(Reader* r, void*, const char* name, int async, int flag)
+{
+    uint32_t ok = reader_open(r, nullptr, name, async, flag);
+    size_t n = strlen(name);
+    const char kName[] = "dngvehicles.sp";
+    if (n >= sizeof kName - 1 && _stricmp(name + n - (sizeof kName - 1), kName) == 0) {
+        g_veh_reader = r;
+        g_pkg_first = 0;
+        dsf_log("packages: vehicle archive '%s' opens in reader %p (%s)", name, r, (ok & 0xFF) ? "ok" : "failed");
+    }
+    return ok;
+}
+
 // ---- replacements ----------------------------------------------------------
 // 0x008FB340: tag of entry i
 uint32_t __fastcall h_tag(Reader* r, void*, uint32_t i) { return E(r, i)->tag; }
@@ -333,6 +590,14 @@ void __fastcall h_seek(Reader* r, void*, int pos)
             return;
         }
         if (r->mode != 3) return;
+        if (pkg_of(r->parent, r->parent_index, nullptr)) {
+            // A nested reader over a package entry would read the archive at the
+            // package-relative offset. No vanilla path does this for a VEHC (the
+            // slot reads it whole); log it if one ever does.
+            static volatile LONG warned = 0;
+            if (InterlockedExchange(&warned, 1) == 0)
+                dsf_log("packages: nested reader %p over package entry %u: not supported", r, r->parent_index);
+        }
         pos += (int)E(r->parent, r->parent_index)->offset;
         r = r->parent;
     }
@@ -361,6 +626,7 @@ void __fastcall h_close(Reader* r, void*)
     r->mode = 0;
     r->count = 0;
     r->ptr_count = 0;
+    if (r == g_veh_reader) g_pkg_first = 0;
     ext_drop(r);
 }
 
@@ -384,6 +650,12 @@ void __fastcall h_name(Reader* r, void*, uint32_t i, char* buf)
     Entry* e = E(r, i);
     uint32_t size = e->size;
     uint8_t len = e->name_len;
+    if (Pkg* p = pkg_of(r, i, nullptr)) {
+        uint32_t got = 0;
+        pread(p->file, e->offset + size, buf, len, &got);
+        buf[got] = 0;
+        return;
+    }
     if (r->mode == 0) {
         memcpy(buf, (const char*)*P(r, i) + size, len);
     } else if (r->mode == 1) {
@@ -422,6 +694,20 @@ void* __fastcall h_read_entry(Reader* r, void*, uint32_t i, void* buf, int store
     uint32_t sector = sector_size();
     Entry* e = E(r, i);
     uint32_t size = align_up(entry_span(e), sector);
+    if (Pkg* p = pkg_of(r, i, nullptr)) {
+        // Synchronous: the caller then polls the archive's own handle
+        // (h_poll state 0 -> 0x008FB2D0), which this read doesn't use, so the
+        // data must be in buf when this returns.
+        uint32_t got = 0;
+        if (!pread(p->file, e->offset, buf, size, &got) || got < entry_span(e))
+            dsf_log("packages: %u: read of entry %u failed (%u of %u bytes, error %lu)", p->id, i, got, size,
+                    GetLastError());
+        if (got < size) memset((uint8_t*)buf + got, 0, size - got);
+        if (InterlockedIncrement(&g_pkg_reads) <= 64)
+            dsf_log("packages: %u: entry %u (%u bytes) read from its package", p->id, i, got);
+        if (store == 1) *P(r, i) = buf;
+        return buf;
+    }
     h_seek(r, nullptr, (int)e->offset);
     if (r->mode == 1)
         file_read(r->file, buf, size);
@@ -525,6 +811,7 @@ uint32_t __fastcall h_poll(Reader* r, void*)
         *g_busy = nullptr;
         result = 0;
         r->ok = 1;
+        if (r == g_veh_reader) pkg_inject(r);
         break;
     }
     default:
@@ -749,13 +1036,13 @@ void patch_spool_lists()
 }  // namespace
 
 // All or nothing: the replacements only work together.
-static void patch_readers()
+static bool patch_readers()
 {
     for (const Site& s : kSites) {
         if (!bytes_equal(s.va, s.expect, s.n)) {
             dsf_log("archive: %08X (%s) is not the vanilla code (another plugin?); CHNK readers stay at %u entries",
                     s.va, s.what, kInline);
-            return;
+            return false;
         }
     }
     const int nsites = (int)(sizeof kSites / sizeof kSites[0]);
@@ -765,11 +1052,34 @@ static void patch_readers()
             for (int j = 0; j < i; j++) patch_bytes(kSites[j].va, kSites[j].expect, 5);
             dsf_log("archive: patching %08X failed after the check passed; the %d sites before it are undone, "
                     "no reader patches", s.va, i);
-            return;
+            return false;
         }
         dsf_log("archive: %08X %s -> %p", s.va, s.what, s.target);
     }
     dsf_log("archive: CHNK readers hold up to %u entries (vanilla %u)", g_max_entries, kInline);
+    return true;
+}
+
+// [archive] packages=1: car packages beside dngvehicles.sp (see "car packages"
+// above). Two sites besides the reader functions: the spool loader's open call
+// (to know the vehicle archive's reader) and the SSLP load. Both or neither.
+static void patch_packages()
+{
+    static const uint8_t open_expect[] = {0xE8, 0x67, 0xB1, 0x35, 0x00};  // call 0x008FC530
+    static const uint8_t sslp_expect[] = {0x8B, 0x44, 0x24, 0x08, 0x56};  // mov eax,[esp+8]; push esi
+    if (!check_bytes(0x005A13C4, open_expect, sizeof open_expect) ||
+        !check_bytes(0x005A0B50, sslp_expect, sizeof sslp_expect)) {
+        dsf_log("packages: 005A13C4/005A0B50 are not the vanilla code; no car packages");
+        return;
+    }
+    pkg_load_list();
+    if (!g_pkg_count) return;
+    if (!patch_call(0x005A13C4, (void*)h_spool_open, open_expect)) return;
+    if (!patch_jmp(0x005A0B50, (void*)h_sslp_load, sizeof sslp_expect, sslp_expect)) {
+        patch_bytes(0x005A13C4, open_expect, sizeof open_expect);
+        return;
+    }
+    dsf_log("packages: 005A13C4 spool open, 005A0B50 SSLP load hooked; %u car packages", g_pkg_count);
 }
 
 void mod_archive_init()
@@ -778,8 +1088,14 @@ void mod_archive_init()
     if (max_entries < (int)kInline) max_entries = kInline;
     if (max_entries > 1 << 20) max_entries = 1 << 20;
     g_max_entries = (uint32_t)max_entries;
-    patch_readers();
+    bool readers = patch_readers();
     if (cfg_bool("archive", "spool_lists", true)) patch_spool_lists();
+    if (cfg_bool("archive", "packages", false)) {
+        if (readers)
+            patch_packages();
+        else
+            dsf_log("packages: need the reader patches; no car packages");
+    }
 
     // Files past 2 GiB. The file layer's seek (0x0085A970) clamps a position
     // with the sign bit set to 0 (`CMP [ECX+0x30],0; JGE`), so every entry of
