@@ -613,13 +613,6 @@ def test_tiling_streak_laid_on_one_column():
     assert dm.unwrap_tiles(strip, sub, m).collapse == (0, 0.5)
 
 
-if __name__ == "__main__":
-    for name, test in list(globals().items()):
-        if name.startswith("test_"):
-            test()
-            print(f"{name}: ok")
-
-
 def test_plain_glass_over_a_lamp_stays_window_glass():
     # Plain glass over a lamp (the Audi R8 race car's lexanLHL, the Mustang GT 05's head lamp
     # glass) is drawn as DSF window glass: Forza's one layer keeps 26% of the lamp head-on, DSF's
@@ -738,3 +731,10 @@ def test_rear_glow_has_no_floor_at_the_converted_alpha():
     lit = np.isfinite(ranked)
     assert lit.any() and np.array_equal(rear[lit], ranked[lit])
     assert rear[lit].max() < 100  # the white curve puts these texels at 255
+
+
+if __name__ == "__main__":
+    for name, test in list(globals().items()):
+        if name.startswith("test_"):
+            test()
+            print(f"{name}: ok")
