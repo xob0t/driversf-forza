@@ -90,13 +90,13 @@ later PR replaced a rule, the earlier section says so in one line.
   red on a curve fitted per car
   ([matched](#vanilla-lamp-alpha-and-the-matched-rule-offline-checked)).
 - After the lamp plan, each rear red lamp it makes (tail 0x18, brake 0x02,
-  brake and indicator 0x19/0x1A) is ranked on its own onto vanilla's visible
-  0x18 tail alpha: every texel of its triangles (lenses included, any colour),
-  in the pool of what a camera straight behind sees of it, following the
-  lamp's picture, the dimmest 40% dark, never below the converted alpha; FM4
-  cars' texels ordered by their red (Forza's glow mask), their reflectors last
+  brake and indicator 0x19/0x1A) glows on its own: every texel of its triangles
+  (lenses included, any colour) in proportion to Forza's glow mask (the matched
+  score; on FM4 cars the texel's linear red, their reflectors 0), at the mean
+  alpha #391's ranking gave a lamp over what a camera straight behind sees of it
   ([#290](#tail-lamps-at-half-vanilla-at-night-issue-290),
-  [rear lamps ranked per planned lamp](#rear-lamps-ranked-per-planned-lamp-issue-391)).
+  [rear lamps ranked per planned lamp](#rear-lamps-ranked-per-planned-lamp-issue-391),
+  [in proportion to Forza's mask](#rear-lamps-glow-in-proportion-to-forzas-mask-issues-403-404)).
 - Red lamp texels are darkened (shared curve, then per car) until the
   visible red median is at most vanilla's 92; white ones until the visible
   white front median is at most 137; amber ones keep Forza's brightness
@@ -2655,6 +2655,56 @@ Ka, Koenigsegg CCX, Versa), one above it (the Lexus SC430 02, 1.31 -> 2.61). Sti
 p10: the Lexus SC430 02 (0.127 -> 0.095), the Pagani Zonda R (0.074 -> 0.081) and the Lamborghini
 Sesto Elemento (0.122 -> 0.124). Cars that dropped but stayed in range: both SC430 race cars
 (0.362 -> 0.209 and 0.161), the GTI VR6 (0.332 -> 0.164).
+
+### Rear lamps glow in proportion to Forza's mask (issues #403, #404)
+
+Symptoms (user's build of master 5fef56e, by day, the player's car at rest with its brakes on):
+- the Commodore VE #88's, DS3 Racing's, M3 GTR's and Viper GTS-R's tails lit as blotches and stripes;
+- the Joss JT1's round tails squashed, a smaller red ellipse inside each lens (#403);
+- the Focus RS500's tails far brighter than vanilla's (#404).
+
+**Cause 1: the ranking stretches every lamp to one spread.** #391 ranked each planned lamp's
+texels onto vanilla's tail alpha distribution: a quantile map, which gives every lamp the same
+alpha spread whatever its mask. Forza's glow is linear in its mask (`colour x state x mask`,
+`forza-lenses-re.md` section 2), so an even lens glows evenly there. Over the visible samples
+(`out/survey_all.py`, `rankamp.py` in this PR's worktree; CV = standard deviation over mean):
+
+| Lamp | Forza's mask (the order) p90/p50, CV | Ranked alpha p10 / 50 / 90, CV |
+| --- | --- | --- |
+| Joss JT1 tail | 1.11, 0.08 | 0 / 19 / 117, 1.36 |
+| DS3 Racing brake and indicator | 1.09, 0.11 | 0 / 25 / 111, 1.29 |
+| Commodore VE #88 tail | 2.80, 0.75 | 0 / 19 / 116, 1.36 |
+| M3 GTR tail | 2.07, 0.56 | 0 / 19 / 116, 1.36 |
+
+Small differences of an even lens (a bake's few levels, DXT noise) became the whole 0..255
+range: blotches, and on the JT1 only the top-ranked texels lit, the ellipse.
+
+**Cause 2: the floor at the converted alpha.** The rear glow was never below the texel's
+converted alpha (#290: "the tails that already glowed at vanilla's level keep it"). That alpha is
+the per-hue "matched" curves' rank, the white curve on white texels, fitted on vanilla's white
+lamps. The RS500's tails are clear `lights_gls_*` lamp glass over white texels: the floor raised 79%
+of their visible samples (60% white ones), alpha p95 150 to 251, over vanilla's per-vehicle tail
+p95 p90 of 210. Under the linear glow below it raises 66% of them (p95 70 to 250) and the Viper's
+40% (58 to 136): it puts the per-hue curves' blotches back over an even lamp.
+
+Change (`lenses.rear_lamp_glow`, `Texturing._glow_parts`):
+- Each planned rear red lamp glows at `g x` its texels' mask, capped at 255, `g` set so the mean
+  over its visible samples is `TAIL_MEAN`, 40.1: the mean #391's ranking gave every lamp (its
+  dimmest `TAIL_DARK` dark, the rest on `TAIL_RED_ALPHA`). So each lamp's summed glow, the quantity
+  that matches vanilla (`lights-re.md`, `TAIL_DARK`), is #391's, spread as Forza's mask spreads it.
+  The detail factor (`GLOW_DETAIL_*`) no longer enters: the mask is the lamp's picture.
+- No floor at the converted alpha.
+- FM4 cars: the mask is the texel's linear red (`fm4_order`); the texels only no-glow techniques
+  sample (reflectors, head lamp bowls) are 0, as Forza never glows them.
+
+{{ROSTER_G}}
+
+In game (VM 1, by day, `-Views 'rear,nose' -ShotSeconds 3`, vanilla 130 first; master
+`vm1-20261031-054752`, the four #403/#404/#405 changes together `vm1-20261031-055429`):
+- the Commodore's, Viper's, M3's and DS3's tails glow as even red lenses;
+- the JT1's inner round tails glow as whole discs (master: dim ellipses);
+- the RS500's tails a little dimmer at rest. Its tail texels are near white in sunlight (brightest
+  channel median 208, vanilla's red tails 98), and that, not the glow, is most of their look by day.
 
 ### Open
 
