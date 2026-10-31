@@ -52,8 +52,9 @@ later PR replaced a rule, the earlier section says so in one line.
   as head lamps too ([#158](#head-lamp-units-with-no-lamp-technique-issue-158)).
   Pop-up lamps are planned in their lowered state, the only one drawn
   ([#88](#pop-up-head-lamps-drawn-raised-and-lowered-at-once-issue-88)).
-- Side from the technique or x (a subsection within 0.3 m of the centre
-  line is a centre lamp); each (function, side, end) group splits into lamps
+- Side from the technique or x (a piece of a subsection, its triangles joined
+  by their corners, within 0.3 m of the centre line is a centre lamp,
+  [#405](#centre-lamp-pieces-in-side-subsections-issue-405)); each (function, side, end) group splits into lamps
   0.2 m apart; a centre tail lamp more than 8 cm above the side tails is the
   high stop lamp (0x02). A head lamp technique behind the wheelbase
   midpoint is placed like a clear lens, not as a head lamp, and a lamp the
@@ -2745,6 +2746,31 @@ In game (VM 1, by day, the player's car at rest, `-Views 'rear,nose' -ShotSecond
 `vm1-20261031-074840`. The E46's and GTR's grids lose master's scramble. What stays blotchy when lit
 (the Commodore's swirl, part of the DS3's mottle) is the rear glow's ranking onto vanilla's
 distribution, a fit (#422).
+
+### Centre lamp pieces in side subsections (issue #405)
+
+Symptom (user's build of master 5fef56e, by day): the Dodge #126 Viper GTS-R 03's red rear
+emblem glowed like a tail lamp.
+
+Cause (offline-checked; `out/b/an_plan.py` in this PR's worktree, the lamp plan on host 182):
+- Forza draws the emblem (the Viper fangs on a red shield, Lights atlas texels 440..510 x 49..119)
+  with `tail_light`: 24 triangles at x within 0.025 m of the centre line, y 0.666, 16 cm above the
+  side tails' 0.505. They are in the `body` section's `tail_light` subsection, beside the two side
+  tails.
+- `LampPlan.build` decided "centre" per subsection: a subsection whose |x| stays under `CENTRE_X`
+  (0.3 m). This one reaches 0.8 m, so each emblem triangle took the side of its x. The emblem became
+  a second tail cluster on each side, `('tail', 'L', 1)` and `('tail', 'R', 1)`: 0x18 tails, lit at
+  0.2 with the running lights. `_high_brake`, which makes a centre tail above the side tails the high
+  stop lamp, never saw it.
+- In Forza, FM4's `tail_light` glows by `BrakeColor x brake x L` only (`forza-lenses-re.md`
+  section 2): the emblem lights when braking, never as a running tail.
+
+Change (`LampPlan.build`): the centre test is per piece (`_pieces`, triangles joined by their
+corners). A piece within `CENTRE_X` is a centre lamp, so the emblem is the Viper's centre tail and,
+16 cm above the side tails, its high stop lamp (0x02, Brakes): dark rolling, lit braking, as in
+Forza.
+
+{{ROSTER_D}}
 
 ### Open
 
