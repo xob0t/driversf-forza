@@ -37,7 +37,7 @@ CHASE_HEIGHT = 1.7
 CHASE_AZIMUTHS = 12
 
 
-def chase_eyes(place, rear: bool = False) -> list[tuple]:
+def chase_eyes(place, *, rear: bool = False) -> list[tuple]:
     """Eyes (Forza space) on a ring CHASE_DISTANCE about the car's origin at CHASE_HEIGHT;
     `rear`: only those beside and behind the car (DSF z <= 0), where the chase camera
     looks from as it swings with the steering."""
@@ -112,7 +112,7 @@ def cull_for_chase(chase: ChaseCabin, static: dict, resolution: int = 512) -> tu
     out = []
     for rear in (False, True):
         kept = visible_triangles(
-            cabin + occluders, chase_eyes(chase.place, rear), resolution, near_keep=0.0, tiny_slack=0.005
+            cabin + occluders, chase_eyes(chase.place, rear=rear), resolution, near_keep=0.0, tiny_slack=0.005
         )
         culled = cull_sections(cabin, {k: v for k, v in kept.items() if k[0] < len(cabin)})
         out.append([s for s in culled if s.subsections])
