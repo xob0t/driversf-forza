@@ -90,6 +90,32 @@ DETAIL_MIN_SPREAD = 20
 GREY_MIN_LEVEL = 48
 CHART_WELD = 1e-4  # uv_charts: corners this close in position (m) and UV0 are one
 KEEP_TRIM = frozenset({"undercarriage", "engine", "cage", "bottom", "bottom_2"})
+# Techniques whose Forza shaders never sample the car's atlas, so their UVs say nothing about
+# what they look like: the carbon-fibre and grille ones draw their own shared textures. In
+# media/cars/Shared.zip ShaderSettings/Normal.xml these techniques, and only these, list
+# CarbonFiberSampler or Grille1Sampler/Grille2Sampler; every pixel shader of
+# media/shaders/Cars/shaders_v16.fxobj that binds those samplers (the ten with
+# CarbonFiberSampler, 0x991c8 to 0xb0194, and the four with a grille sampler, 0xd7ae0 to
+# 0xd8af4) fetches from tf1 / tf2 and the environment and shadow slots, never from tf0, the
+# baseSampler the trim and paint shaders read the atlas through (0x86914: tfetch ... tf0).
+# Their UVs usually tile far past the atlas (carbon_fiber x246), but LOT_2Eleven_09's wing
+# `carbon_fiber` spans it at about x1 and landed on livery: classified by those texels, it drew
+# white and brown streaks (research/forza-materials.md, "Techniques that don't sample the
+# atlas", #409). They stay on the shared trim.
+OWN_TEXTURE = frozenset(
+    {
+        "carbon_fiber",
+        "carbon_fiber2",
+        "carbon_fiber3",
+        "carbon_fiber_aniso",
+        "grille1",
+        "grille1_alpha",
+        "grille1_simple",
+        "grille2",
+        "grille2_alpha",
+        "grille2_simple",
+    }
+)
 # black, black_glass, black_glass_breakable; mirror glass (a render target in Forza).
 KEEP_TRIM_PREFIX = ("black", "mirror")
 
@@ -426,11 +452,11 @@ def is_opaque(texels) -> bool:
 
 
 def keeps_trim(technique: str) -> bool:
-    """Techniques left as they are: KEEP_TRIM, KEEP_TRIM_PREFIX, and the plates
-    (plates.apply replaces Forza's numberplate quads by name; numplate is the plate
-    lamp strip)."""
+    """Techniques left as they are: KEEP_TRIM, KEEP_TRIM_PREFIX, OWN_TEXTURE (their shaders
+    don't sample the atlas), and the plates (plates.apply replaces Forza's numberplate quads
+    by name; numplate is the plate lamp strip)."""
     n = technique.lower()
-    return n in KEEP_TRIM or n.startswith(KEEP_TRIM_PREFIX) or "plate" in n
+    return n in KEEP_TRIM or n in OWN_TEXTURE or n.startswith(KEEP_TRIM_PREFIX) or "plate" in n
 
 
 def _view_directions():
