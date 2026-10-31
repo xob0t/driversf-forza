@@ -227,10 +227,10 @@ FM4_NO_GLOW = ("head_light", "textured_reflector", "reflector")
 
 
 def fm4_order(colour: np.ndarray, uvs: np.ndarray, dark: np.ndarray) -> np.ndarray:
-    """The glow order of an FM4 car's rear lamp texels (lenses.rear_lamp_glow): FM4's lamp shaders
+    """The glow mask of an FM4 car's rear lamp texels (lenses.rear_lamp_glow): FM4's lamp shaders
     glow by the texel colour, BrakeColor x L (research/forza-lenses-re.md), so the texel's linear
     red; texels only the no-glow techniques' triangles (`dark`, FM4_NO_GLOW: reflectors, head lamp
-    bowls the plan lights with a tail) sample come last."""
+    bowls the plan lights with a tail) sample are 0 (Forza never glows them)."""
     from dsfforza.convert import lenses
 
     h, w = colour.shape[:2]
@@ -2312,27 +2312,17 @@ class Texturing:
             front = None if view is None else lenses.day_glow(self.lamp_raw, view, colour)
         # The planned rear tail lamps seen from behind (#290, #391): where the front has no glow
         # of its own. FM4's lamps glow by the texel colour, not its alpha (research/forza-lenses-re.md):
-        # their texels' red orders them within a lamp.
+        # their texels' linear red is the mask they glow by.
         view = self._lamp_view(front=False, grid=True, rear_half=True) if self.rear_lamps else None
         rear = None
         if view is not None:
             uvs, ids, dark = self.rear_lamps
             order = fm4_order(colour, uvs, dark) if fm4_car(self.car_dir) else None
+            # The glow is the lamp's own at vanilla's level, not raised to the converted alpha: that
+            # floor (#290) is the per-hue curves' rank, the white one on clear tail glass (the Ford
+            # Focus RS500's lights_gls_ tails: 66% of their visible samples raised, alpha p95 70 to
+            # 250 over vanilla's per-vehicle p90 of 210, #404) and blotches over an even lens.
             rear = lenses.rear_lamp_glow(colour, view, uvs, ids, order=order)
-            if rear is not None:
-                # Never dimmer than the converted alpha: the tails that already glowed at vanilla's
-                # level (the GTI VR6's, M3 E30's, Evo VI's) keep it; the ranking only raises.
-                # Each distinct texel converted once.
-                ys, xs = np.nonzero(np.isfinite(rear))
-                px = colour[ys, xs].astype(np.int64)
-                packed = px[:, 0] << 24 | px[:, 1] << 16 | px[:, 2] << 8 | px[:, 3]
-                texels, inverse = np.unique(packed, return_inverse=True)
-                alpha = [
-                    self._convert_texel(fm.LIGHTS, k >> 24, k >> 16 & 255, k >> 8 & 255, k & 255)[3]
-                    for k in texels.tolist()
-                ]
-                conv = np.array(alpha, dtype=np.float64)[inverse.reshape(-1)]
-                rear[ys, xs] = np.maximum(rear[ys, xs], conv)
         self._glow_kept = (key, front, rear)
         return front, rear
 
