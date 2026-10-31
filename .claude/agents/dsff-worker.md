@@ -19,6 +19,9 @@ How to work:
 2. Find the cause before changing code. Prefer one systemic fix for every car with the same
    cause over a per-car fix. Compare against Forza (its assets under `out/cache`) and against
    a vanilla DSF car (on the same host where it matters): change only what differs from them.
+   Every conversion rule you write comes from Forza's or DSF's data and maths, never from fitting
+   (AGENTS.md, "Rules come from data, never from fitting"). If the maths is unknown, decode
+   it or stop and say so in your report; don't tune a constant until the output looks right.
 3. Measure the roster (the 573 cars of `tools/batches/all.txt`) before and after: how many
    cars change, and the numbers that show it. Survey offline where you can.
 4. Verify in game with `tools\wsb\run-series.ps1 -Vm` (never `-OnHost`), before and after,

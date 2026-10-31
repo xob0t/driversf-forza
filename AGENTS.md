@@ -6,6 +6,37 @@ Ports Xbox 360 Forza (FH1/FM4) cars into Driver: San Francisco PC 1.04.
 The repo ships code and manifests only, never game or Forza assets.
 Research notes are in `research/` (read the ones for your area first).
 
+## Rules come from data, never from fitting
+
+Every conversion rule must follow from what Forza and DSF actually do: their
+data (car files, `gamedb.slt`, ShaderSettings, textures, vanilla archives) and
+their maths (shaders, engine code). For each rule you can say where it comes
+from; "it looked right" is not an answer.
+
+- Fitting is not a fix. Don't choose a constant, threshold, gain, curve or
+  floor because the output then looks right or lands in a target range. That
+  includes matching means or quantiles to a reference, and per-car exceptions.
+  A rule tuned on a few cars breaks others.
+- When the maths is unknown, find it out: decode it (shader disassembly,
+  engine code, file fields) and record it in `research/` as confirmed-static
+  or confirmed-runtime, with the evidence (function address, shader excerpt,
+  field) and a prediction checked against what fits the domain (a render, an
+  in-game shot, an audio capture, a measured runtime value). If you can't,
+  leave the code as it is and file an issue with what you know, or ask the
+  coordinator for an RE round. A guess doesn't ship as a fix.
+- A constant in the code is a fact with its source in a comment: a value the
+  game or Forza uses, a field, a measured size of a vanilla part, an engine
+  limit.
+- Where the data doesn't say a thing directly (which recess holds the plate,
+  which of two wheel models is the real one), a rule may choose among Forza's
+  own evidence. Its criteria are physical properties measured across the
+  whole roster, and every car it changes is reviewed (render or contact sheet),
+  with the misses listed in the PR.
+- Vanilla is a check, not a target. Compare with vanilla cars to find what's
+  wrong; don't calibrate onto vanilla's distribution unless the game itself
+  defines the value that way.
+- The PR says, for each new or changed rule, where it comes from.
+
 ## Agent workflow
 
 - Work in your own git worktree on a branch named for the task
@@ -144,6 +175,9 @@ For the session that hands tasks to worker agents (`.claude/agents/dsff-worker.m
   where to start). The standing rules are this file and the agent definition.
 - Before merging, check that CodeRabbit's review is in and each of its
   threads has an answer from the worker.
+- Before merging, check each rule against "Rules come from data, never from
+  fitting". A fitted rule goes back, or waits on an RE round; a PR can ship
+  its derived part alone.
 - Merge with `.\tools\merge-pr.ps1 <number>` (unlinks the worktree, squash-
   merges, cleans up, and pulls master unless a build runs from the main
   checkout). After a merge, tell the workers whose areas it touched to rebase.
