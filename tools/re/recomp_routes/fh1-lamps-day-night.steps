@@ -1,0 +1,20 @@
+# Appended by `forza_recomp.py fh1-run` to Pinyon Shift's config/render-tests/fh1-opening-sync.fh1test
+# (its new-player opening, up to the Viper drive; its own captures and stop dropped). Output
+# frames, as theirs. Trainer on (--pinyon_shift_cheats=true): cheat_time_of_day holds the hour.
+# Each stop: a capture and a frame dump (fh1_frame_dump_frame -1: the next complete frame, to
+# --fh1_frame_dump_path; the runner copies each dump as it is written).
+cvar 5000 cheat_time_of_day 13
+capture 5600 day
+cvar 5610 fh1_frame_dump_frame -1
+input 5800 0000 255 0 0 0 0 0
+capture 5900 day-brake
+cvar 5910 fh1_frame_dump_frame -1
+input 6100 0000 0 0 0 0 0 0
+cvar 6150 cheat_time_of_day 23
+capture 6500 night
+cvar 6510 fh1_frame_dump_frame -1
+input 6700 0000 255 0 0 0 0 0
+capture 6800 night-brake
+cvar 6810 fh1_frame_dump_frame -1
+input 7000 0000 0 0 0 0 0 0
+stop 7200
