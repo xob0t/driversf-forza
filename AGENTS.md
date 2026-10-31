@@ -21,8 +21,9 @@ from; "it looked right" is not an answer.
   engine code, file fields) and record it in `research/` as confirmed-static
   or confirmed-runtime, with the evidence (function address, shader excerpt,
   field) and a prediction checked against what fits the domain (a render, an
-  in-game shot, an audio capture, a measured runtime value). If you can't, leave the code as it is and file an issue with what you know, or ask
-  the coordinator for an RE round. A guess doesn't ship as a fix.
+  in-game shot, an audio capture, a measured runtime value). If you can't,
+  leave the code as it is and file an issue with what you know, or ask the
+  coordinator for an RE round. A guess doesn't ship as a fix.
 - A constant in the code is a fact with its source in a comment: a value the
   game or Forza uses, a field, a measured size of a vanilla part, an engine
   limit.
