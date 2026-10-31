@@ -158,8 +158,9 @@ The installer copies your save folder first (step 3). Then:
     `media\Fonts.fchunk` conflict with this one.
   - Felony Rework 2.3 Hotfix 1 works alongside (tested with the full roster;
     [research/felony-rework.md](research/felony-rework.md)). Install Felony
-    Rework as its readme says, then run this installer with `--force` (or run
-    `.\install.cmd --install-only` again if the cars were installed first).
+    Rework as its readme says, then run this installer with `--force`. If the
+    cars were installed first, run `.\install.cmd --install-only --force` after
+    Felony Rework: its files replace our bootstrap.lua, and ours then runs it.
     Felony Rework's own DriverNGHook build and its second ASI loader
     (`version.dll`) stay. Leave the plugin's `[lua]` section switched on in
     `plugins\dsfforza.ini`: with both mods the game needs more Lua memory
