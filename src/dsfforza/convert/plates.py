@@ -434,11 +434,14 @@ POCKET_GAP = 0.02  # a cell this much farther than the last: a gap (shut line, p
 POCKET_WALL = 8  # cells beyond a wall's foot searched for its top
 POCKET_REACH = (0.45, 0.3)  # rays across and up / down (m)
 # The smallest plate a pocket must hold: vanilla's smallest rear plate, 0.226 x 0.101 m
-# (vanilla 199; host_plates over the 140 vanilla rear plates). The C5R's lower valance
-# slot (0.66 x 0.08) and the Chevelle's bumper slot (0.28 x 0.08) hold none.
+# (vanilla 199; host_plates over the 140 vanilla rear plates). Rays stop at the first
+# wall cell, so a pocket measured n cells across is n + 1 between its walls' feet on
+# average (half a cell at each wall): it holds the plate from one cell under its size.
+# The C5R's lower valance slot and the Chevelle's bumper slot (0.08 m) hold none; the
+# Skyline R32's bumper pad (0.40 x 0.10) does.
 VANILLA_MIN_PLATE = (0.226, 0.101)
-POCKET_WIDTH = (VANILLA_MIN_PLATE[0], 0.80)
-POCKET_HEIGHT = (VANILLA_MIN_PLATE[1], 0.32)
+POCKET_WIDTH = (VANILLA_MIN_PLATE[0] - PX, 0.80)
+POCKET_HEIGHT = (VANILLA_MIN_PLATE[1] - PX, 0.32)
 POCKET_OFF_CENTRE = 0.08  # pocket centre within this of x = 0
 POCKET_MERGE = 0.03  # seeds whose pockets agree within this are one pocket
 # Rear plates only: at the front the closed openings are air intakes and grilles whose
