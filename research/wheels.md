@@ -1,6 +1,6 @@
 # Wheels: the Forza wheel model in DSF
 
-Updated: 2026-10-30
+Updated: 2026-10-31
 
 User report from driving the testdrive build (`out/testdrive`, 40 cars): the
 wheels look broken on every car, the Veyron worst. The first sections are
@@ -995,12 +995,13 @@ models off their origin across or up (TOY_6_Supra_05 49 mm out and 80 mm down,
 MER_ML63AMG_09 and VW_BEETLE_68 39 mm across) have their arches on the hub, so the
 tyre stays centred there.
 
-FM4's gamedb `Data_CarBody.BottomCenterWheelbasePosZ` is no better source: it differs
-from MAXData's by more than 30 mm on 461 of the 572 cars that have both, while
-MAXData's midpoint fits the arches on all but the C1 (the gamedb's is 51 mm off the
-C1's arches, 410 off the Commodores').
+FM4's gamedb `Data_CarBody.BottomCenterWheelbasePosZ` was judged no better source: it
+differs from MAXData's by more than 30 mm on 461 of the 572 cars that have both. That
+compared it with MAXData's sign flipped; as it is, it equals the converter's midpoint on
+558 cars and fits the C1's and the Commodores' arches, and since #406 it is the source
+("Body height and wheelbase").
 
-### Fix (`forza2dsf.car_dims`, `MID_Z_FIXES`)
+### Fix (`forza2dsf.car_dims`, `MID_Z_FIXES`; replaced by the gamedb's midpoint since #406)
 
 - Forza draws the wheel model unturned at each hub, so a tyre that sits off its origin
   along the car stands that far from the physics' hubs, on both sides, and the arches
@@ -1112,11 +1113,134 @@ side shots show no wheel (the view's camera sits too low for them). Driving
 (`vm1-20261030-074743` master, `-075253` the fix, throttle held 4 s): all six drive off,
 no crash.
 
+## Body height and wheelbase (2026-10-31, issue #406)
+
+User report on the full-roster build of master 5fef56e: VW_BEETLE_68 (FH1, host 257) has
+all four wheels tucked up into its fenders, the body sitting on the tyres;
+AST_V8Vantage_77 (FM4, host 125) has its front wheels too far back in their arches.
+Scratch scripts in `out/w406/` (left in the PR's worktree): `arch.py` (arch fits),
+`sources.py`, `arch_after.py`, `maxdata_y.py`, `dims_diff.py`, `rest_model.py`.
+
+### What the converter placed, and where Forza's arches are (confirmed-static)
+
+`arch.py` fits each wheel arch of the Forza body (LOD 1, vanilla sections): body points
+outboard of the tyre's centre plane seen from the side, the nearest one per 5-degree ray
+from -70 to +70 degrees about straight up (the arch lip), a circle fitted to them, the
+centre moved there, four rounds. Over the roster (master's hubs, mean of both sides) the
+arch centres lie along the car within -6..+4 mm of the hub (quartiles; median -1), so a
+miss along the car is reliable; their height spreads -25..+8 mm (median -7), since arches
+are not concentric with the tyre, so only large height misses count.
+
+| Car | Hub (master) | Arches against it | Cause |
+| --- | --- | --- | --- |
+| VW_BEETLE_68 | y 0.164 above the model's 0 (ground at -StockRideHeight -0.158, tyre 0.3145) | centres 171 mm (front) and 156 mm (rear) below | MAXData's `BottomCenterWheelbasePos` y is -0.158: the body's bottom (its floor reaches -0.143 to -0.169, below the ground master used) |
+| AST_V8Vantage_77 | front z -1.334, rear +1.218 (MAXData wheelbase 2.551, midpoint -0.058) | front 78 mm ahead, rear 5 mm ahead | MAXData's wheelbase and midpoint are not the body's: gamedb `Data_CarBody` has 2.602 and -0.099, 11 / -11 mm off the arches |
+
+The engine's rest offset is not the cause: on both cars `settle_wheels` raises the hubs
+by what the rest model says the engine draws them low (`rest_model.py`: Beetle 43 / 38 mm,
+Vantage 23 / 37 mm), and the renders of master's build with Forza's own geometry on those
+hubs (`render_compare`, `out/rc/w406-master`) show the same tuck and offset as the game.
+Forza's own thumbnails show the Beetle high on its wheels and the Vantage's front wheel
+centred in its arch.
+
+### The two sources (all 573 roster cars)
+
+- `Data_CarBody.BottomCenterWheelbasePosZ` (gamedb.slt) is MAXData's z negated on 558
+  cars, the converter's `mid_z` as it is. "Wheels off their arches" (#301) compared it
+  without the sign flip and wrote that it differed on 461 cars; it differs on 15, the
+  wheelbase on 22.
+- Where they differ (35 cars more than 10 mm apart on an axle), the arches pick the
+  gamedb on 23 (PAG_Huayra_12 -94 / -154 mm to -2 / 3, ASC_KZ1R_12 -78 / -133 to -1 / 6,
+  SAL_S7_04 -178 / -380 to 6 / 9, BUS_TOUR_12 -158 to -2, CIT_C1_11 166 / 186 to -12 / 8,
+  AST_V8Vantage_77 78 / 5 to 11 / -11, VIP_Viper_13, JAG_XKRS_12, LEX_CT200h_11,
+  LAM_LP7004_12 rear -71 to -12, ...), 4 alike, 3 off by up to 20 mm (the two 1965
+  Minis' rear -15, EAE_Speedster_12 front -20, the Beetle's front -19), and the five
+  Commodores alike once the gamedb's midpoint is taken as it is: it already sits at the
+  tyre (-0.068 against MAXData's +0.300 offset's -0.053).
+- The handling's wheelbase (VO3D p392) has been the gamedb's `ModelWheelbase` all along
+  (`handling.py`); vanilla has it equal to the hub wheelbase on 140 of 140 vehicles, so on
+  those 22 cars it didn't match the hubs.
+- Height: on the 15 cars with a negative y, the gamedb either has the same y and ride
+  height or folds y into its ride height (y 0): VW_BEETLE_68 0.314 against 0.158 + 0.158,
+  AUD_A4Avant_04 0.170 against 0.161, FIA_595_68, FOR_FocusZX4_05, TOY_Camry_07,
+  TOY_RAV4Sport_04 the same way within 20 mm; CHE_CobaltSS_10 drops y (30 mm). The 9 with
+  a positive y (+0.024 to +0.031: BUG_Veyron_09, BMW_Z4_11, FER_575_02, MAZ_Furai_08,
+  RAD_SR8LM_10, FOR_40_GTR_09, ...) have their floors below 0, not at y; raised by y, the
+  Furai's floor would be 8 mm into its ground. Elsewhere the gamedb's ride heights differ
+  from MAXData's on 62 cars, and the arches don't decide between them (35 for the gamedb,
+  15 for MAXData, mostly race cars, 30 alike): left open (#417).
+- Track: the gamedb's differs from MAXData's by more than 10 mm on 67 cars, by up to
+  0.32 m (SAL_S7_04), off the bodies: not used.
+
+### Fix (`forza2dsf.car_dims`, `cached_gamedb`)
+
+- Wheelbase and midpoint from the car's game's gamedb `Data_CarBody` (`port_car` now
+  extracts the gamedb before measuring the car; other callers find the cached copy beside
+  the game's car folders), MAXData's (plus the wheel model's own z offset) without a row.
+  `MID_Z_FIXES` (the C1) is gone: the gamedb has the C1's own midpoint.
+- The ground is the ride height plus a negative `BottomCenterWheelbasePos.y` below the
+  model's 0 (`CarDims.ride_height`).
+- Track and ride height otherwise stay MAXData's.
+
+58 cars change (`dims_diff.py`): 47 by more than 10 mm or a wheel swap; 38 along the car
+by more than 10 mm, 15 in height (the cars with a negative y: the Beetle 158 mm,
+TOY_RAV4Sport_04 70, AUD_A4Avant_04 55, ...). The arch survey
+(`arch_after.py`, master's build against the new hubs): cars with an axle more than 40 mm
+off its arch along the car 13 -> 3 (HUM_H1Alpha_06, KEN_T440_12, SHE_GT500KR_68: both
+sources agree there; square arches), more than 25 mm 28 -> 13; the Beetle's arch centres
+-171 / -156 mm -> -13 / 2 mm. A little worse: the five Commodore VEs -5 / 6 -> -20 / -9 mm
+(the gamedb's midpoint is 15 mm behind MAXData's plus the wheel model's offset), the two
+1965 Minis' rear 2 -> -15, EAE_Speedster_12's front 2 -> -20, the Beetle's front -6 -> -19.
+
+SAL_S7_04 (FH1, host 162; added to #406: wheels off-centre, a large gap behind the rear
+wheel) is the same cause: MAXData's wheelbase is 204 mm short and its midpoint 287 mm off;
+its arches lay -178 / -380 mm off master's hubs, 6 / 9 mm off the gamedb's. The host is not
+it: of the 56 ports on host 162, 53 were within 25 mm of their arches along the car on
+master; the others are ASC_KZ1R_12 (-78 / -133 -> -1 / 6, the same cause) and SAL_2_S7_03
+(25 / 25 -> 7 / 7).
+
+### In game (headless VM 1)
+
+Built from master (`out/w406/vm-before`, `vm2-before`) and with the fix (`vm-after`,
+`vm2-after`), `-Views wheels,wheel,wheel+mph35[,wheel+mph60] -Palette 0`: IDs 1
+VW_BEETLE_68, 2 AST_V8Vantage_77, 3 MER_SLR_05, 4 MER_SLRStirlingMoss_10, 5
+FOR_FocusRS500_10 and vanilla 257: `vm1-20261031-045849` (master), `vm1-20261031-050530`
+(fix); IDs 1 SAL_S7_04, 2 FOR_FocusRS500_10 and vanilla 162: `vm1-20261031-054026`
+(master), `vm1-20261031-054347` (fix). The fix's builds also carried the blur-disc change
+then under review for #407 (branch `fix/wheel-blur-disc`), which changes only the disc. The Beetle stands on its wheels (master: body on the
+tyres, wheels in the fenders); the V8 Vantage's front wheels move forward to the arch
+centre; the S7's wheels sit centred in both arches, no gap behind the rear wheel; the SLR's
+wheels draw their rims and tyres instead of grey discs; the vanilla cars are the same in
+both runs.
+
+## Wheels without a tyre in the main carbin (2026-10-31, issue #407)
+
+MER_SLR_05 (FM4, host 226) drew grey discs for wheels. Its main carbin's `wheel` section
+is one mesh per LOD on the technique `4_MER_SLR_05_damage`: no tyre, rim or blur_rim, so
+the rims got no texture in the atlas (`wheel: 0 regions`) and the blur disc the vanilla
+map. AST_V12Zagato_12's is `body` and `interior` at every LOD. Both cars' wheel archives
+(`wheel.carbin`) hold the real wheel (tire, rim, inner_rim, blur_rim, the same tyre size).
+Survey of the 573 main carbins (`wheel_sections.py`): these two have no tyre technique at
+any LOD; DOD_StealthTurbo_96 has a tyre and draws its rim as `wheel_emblem` (handled,
+"Speed blur"). MER_SLRStirlingMoss_10 has a proper wheel.
+
+Fix (`forza2dsf.load_car`): a main-carbin wheel without a tyre at any LOD gives way to the
+wheel archive's.
+
 ## Open
 
 1. Brake calipers (Forza `_caliper*` carbins) are not converted: they must not
    turn with the wheel, and the exterior entry has no hierarchy part on the hubs
    to carry them ("Brake rotors", "Calipers").
+2. Blur disc brightness (#407): the disc takes Forza's picture times the rim's
+   PaintScale over a fixed mid-grey backdrop, so FOR_FocusRS500_10's disc is near
+   white on black rims and dark rims' discs are grey. A rule waits on how Forza draws
+   `blur_rim` and how DSF draws its disc (RE in progress; branch `fix/wheel-blur-disc`
+   holds a fitted rule, not merged). VW_BEETLE_68's disc lays out its brightness
+   unlike its rim (#419).
+3. Ride height: MAXData's and the gamedb's disagree on 80 cars; a positive
+   `BottomCenterWheelbasePos.y` is unexplained; the gamedb's tracks (#417; "Body height
+   and wheelbase").
 
 Done since and dropped from this list: brake rotors (#212, "Brake rotors"); speed blur (#211, "Speed blur"); rim gloss (issue #108, PR #143). Rims
 draw with gloss copies of the host's Lights material (its lamp glow needs a
