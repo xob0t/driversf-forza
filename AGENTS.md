@@ -13,6 +13,12 @@ data (car files, `gamedb.slt`, ShaderSettings, textures, vanilla archives) and
 their maths (shaders, engine code). For each rule you can say where it comes
 from; "it looked right" is not an answer.
 
+A port is a DSF car built from a Forza car. Forza supplies what the car is:
+geometry, textures, colours, materials, dimensions, how a lamp looks lit.
+DSF supplies how it behaves, as for its vanilla cars: when lamps light,
+damage, cameras, the garage, the HUD. Study Forza's behaviour only to read
+its data correctly, never to copy it.
+
 - Fitting is not a fix. Don't choose a constant, threshold, gain, curve or
   floor because the output then looks right or lands in a target range. That
   includes matching means or quantiles to a reference, and per-car exceptions.
@@ -32,8 +38,9 @@ from; "it looked right" is not an answer.
   own evidence. Its criteria are physical properties measured across the
   whole roster, and every car it changes is reviewed (render or contact sheet),
   with the misses listed in the PR.
-- Vanilla is a check, not a target. Compare with vanilla cars to find what's
-  wrong; don't calibrate onto vanilla's distribution unless the game itself
+- For behaviour, vanilla is the target. For values (a colour, a level, a
+  size), vanilla is a check: compare with vanilla cars to find what's wrong,
+  but don't calibrate onto vanilla's distribution unless the game itself
   defines the value that way.
 - The PR says, for each new or changed rule, where it comes from.
 
