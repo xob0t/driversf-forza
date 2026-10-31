@@ -810,6 +810,100 @@ def test_placeholder_cockpit_gets_virtual_dials():
     assert [g.family for _, _, g, _ in dials] == ["tach", "speed"] and set(extra) == {"dsf_dial_panel"}
 
 
+def _coarse_wheel(centre, radius: float, tilt_deg: float):
+    """A main-carbin LOD wheel (Forza space, the driver at +z): a 16-gon rim 3 cm
+    either side of its plane with one vertex 3 cm out, three flat spokes and a hub."""
+    t = math.radians(tilt_deg)
+    axis = (0.0, math.sin(t), math.cos(t))
+    u, v = (1.0, 0.0, 0.0), (0.0, math.cos(t), -math.sin(t))
+
+    def at(r, a, d=0.0, w=0.0):
+        side = [-math.sin(a) * u[i] + math.cos(a) * v[i] for i in range(3)]
+        return tuple(
+            centre[i] + r * (math.cos(a) * u[i] + math.sin(a) * v[i]) + d * axis[i] + w * side[i] for i in range(3)
+        )
+
+    pts = []
+    for k in range(16):
+        a = 2 * math.pi * k / 16
+        out = radius + 0.015 + (0.03 if k == 8 else 0.0)
+        pts += [at(out, a), at(radius - 0.015, a), at(radius, a, 0.03), at(radius, a, -0.03)]
+    for spoke in (0, 180, 270):
+        a = math.radians(spoke)
+        pts += [at(f * radius, a, 0.0, w) for f in (0.25, 0.45, 0.65) for w in (-0.025, 0.025)]
+    pts += [at(0.04, 2 * math.pi * k / 8, 0.02) for k in range(8)]
+    return pts, axis
+
+
+def _point_section(name, pts, technique="interior", lod=1):
+    """A section of degenerate triangles, one per point (section_points sees each)."""
+    verts = [carbin.Vertex(p, (0.0, 0.0), (0.0, 0.0), (0.0, 0.0, 1.0)) for p in pts]
+    sub = carbin.SubSection(technique, lod, 4, (0, 1, 0, 1, 0, 1, 0, 1), [i for i in range(len(pts)) for _ in range(3)])
+    return carbin.Section(name, (0, 0, 0), (0, 0, 0), (0, 0, 0), lod_vertices=verts, subsections=[sub])
+
+
+def test_main_wheel_rim_is_a_circle_through_the_rim():
+    # Issue #86: a main-carbin LOD wheel is a coarse polygon; the middle of its rim's
+    # extent follows the vertex that sticks out furthest (E36 M3: the fit walked 6 cm
+    # off the ring). The least-squares circle through the rim stays on the hub.
+    centre = (-0.35, 0.62, -0.48)
+    pts, axis = _coarse_wheel(centre, 0.19, 18.0)
+    near = cockpit.Wheel((-0.35, 0.65, -0.40), cockpit._norm((0.0, 0.38, 0.925)), 0.162)
+    w = cockpit.fit_main_wheel(_point_section("steering_wheel", pts), near)
+    assert math.dist(w.centre, centre) < 0.005, w
+    assert abs(w.radius - 0.19) < 0.005 and cockpit._dot(w.axis, axis) > 0.999, w
+
+
+def test_main_wheel_fit_leaves_out_the_hub_badge():
+    # Issue #86: cutout.cut_alpha_tested makes the hub badge's letters (the XKR-S's 4
+    # triangles became 160); their points pulled the fit in to a 2 cm "rim".
+    centre = (-0.38, 0.707, -0.205)
+    pts, _ = _coarse_wheel(centre, 0.16, 21.0)
+    wheel = _point_section("steering_wheel", pts)
+    badge = [(centre[0] + 0.03 * math.cos(k), centre[1] + 0.03 * math.sin(k), centre[2] + 0.025) for k in range(400)]
+    wheel.subsections.append(_point_section("x", badge, "badge").subsections[0])
+    wheel.subsections[1].indices = [len(pts) + i for i in wheel.subsections[1].indices]
+    wheel.lod_vertices += _point_section("x", badge).lod_vertices
+    near = cockpit.Wheel(centre, cockpit._norm((0.0, 0.37, 0.93)), 0.161)
+    w, bare = cockpit.fit_main_wheel(wheel, near), cockpit.fit_main_wheel(_point_section("steering_wheel", pts), near)
+    assert math.dist(w.centre, bare.centre) < 1e-9 and w.radius == bare.radius, (w, bare)
+    assert math.dist(w.centre, centre) < 0.005, w
+
+
+def test_placement_forza_is_the_inverse_of_point():
+    from dsfforza.convert.forza2dsf.vertices import Placement
+
+    place = Placement(dy=-0.6324, dz=-0.0218)
+    p = (0.4086, 0.8501, 0.2739)
+    assert math.dist(place.forza(place.point(p)), p) < 1e-12
+
+
+def test_host_wheel_reads_the_skinned_rim():
+    # Issue #86: a placeholder cockpit keeps the host's interior; the chase views' wheel
+    # goes onto the wheel that interior draws (its vertices bound to the steering record).
+    from dsfforza.convert.forza2dsf.vertices import Placement
+    from dsfforza.formats import vehicle_mesh as vm
+
+    place = Placement(dy=-0.6, dz=0.05)
+    centre = (0.37, 0.95, -0.30)  # Forza space
+    rim = _ring(centre, 0.18, 20.0)
+    other = [(x + 0.3, y, z) for x, y, z in rim]  # a door card: another binding
+    skin, chassis = bytes((1, 1, 0, 1)), bytes((0, 0, 0, 1))
+    data = b""
+    for p, s in [*((p, skin) for p in rim), *((p, chassis) for p in other)]:
+        dsf = place.point(p)
+        data += struct.pack("<4h", *(round(c / vm.POSITION_SCALE) for c in dsf), 0) + s
+    elements = [vm.VertexElement(0, 4, 1, 0, 0), vm.VertexElement(9, 4, 2, 0, 8)]
+    n = len(rim) + len(other)
+    mesh = vm.Mesh()
+    mesh.vertex_buffers[b"v"] = vm.VertexBuffer(b"v", n, 12, elements, data)
+    mesh.index_buffers[b"i"] = struct.pack(f"<{3 * n}H", *(i for i in range(n) for _ in range(3)))
+    mesh.submodels.append(vm.SubModel(b"s", b"m", b"v", 0, b"i", 0, 3 * n))
+    w = cockpit.host_wheel(mesh, skin, place.forza)
+    assert math.dist(w.centre, centre) < 0.002 and abs(w.radius - 0.18) < 0.002, w
+    assert cockpit.host_wheel(mesh, bytes((2, 2, 0, 1)), place.forza) is None
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

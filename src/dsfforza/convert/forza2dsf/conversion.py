@@ -335,6 +335,31 @@ def convert(
     # so the body's steering wheel can be skinned to it as well.
     cf = host_cp = None
     skin: dict[str, bytes] = {}
+
+    def align_steering_wheel(target, onto: str) -> bool:
+        """The main carbin's steering wheel (the chase views') moved, turned and scaled
+        onto `target` (cockpit.align_main_wheel); False when it can't be fitted."""
+        import dataclasses
+
+        from dsfforza.convert import cockpit
+
+        nonlocal car
+        body, moved = [], False
+        for section in car.body:
+            if section.name == "steering_wheel":
+                aligned, wheel_report = cockpit.align_main_wheel(section, target)
+                report["main_steering_wheel"] = {**wheel_report, "onto": onto}
+                log(
+                    f"main-carbin steering wheel: moved {wheel_report.get('move')} m, turned "
+                    f"{wheel_report.get('turn_deg')} deg, scaled {wheel_report.get('scale')} onto the "
+                    f"{onto}" + (f" ({wheel_report['kept']}: kept)" if aligned is None else "")
+                )
+                moved = aligned is not None
+                section = aligned or section
+            body.append(section)
+        car = dataclasses.replace(car, body=body)
+        return moved
+
     if opts.cockpit:
         from dsfforza.convert import cockpit
 
@@ -360,6 +385,21 @@ def convert(
                     )
                     report["cockpit_host"] = {"forza": cf.source, "same_vehicle": opts.same_vehicle_host}
                     cf = None
+                    # The chase views draw the main carbin's wheel and the host's vanilla
+                    # rig turns it and holds it: it goes onto the host interior's own wheel,
+                    # skinned to the host's steering record (issue #86).
+                    from dsfforza.convert.damage import load_mesh
+
+                    try:
+                        wheel_host = cockpit.host_cockpit(payload(stream, child(child(full, "NONR"), "UPVH")))
+                    except ValueError as error:
+                        log(f"main-carbin steering wheel: {error}; kept where Forza has it")
+                    else:
+                        target = cockpit.host_wheel(load_mesh(stream, interior), wheel_host.wheel_skin, place.forza)
+                        if target is None:
+                            log("main-carbin steering wheel: the host's interior has no wheel; kept where Forza has it")
+                        elif align_steering_wheel(target, "host interior's"):
+                            skin = {"steering_wheel": wheel_host.wheel_skin}
                 else:
                     host_cp = cockpit.host_cockpit(payload(stream, child(child(full, "NONR"), "UPVH")))
                     skin = {"steering_wheel": host_cp.wheel_skin}
@@ -367,21 +407,7 @@ def convert(
                     # the main carbin's, which Forza models elsewhere (up to 17 cm away): it
                     # goes onto the cockpit wheel, at its size (dsfforza.asi [hands] moves the
                     # chase views' driver onto that rim too).
-                    import dataclasses
-
-                    body = []
-                    for section in car.body:
-                        if section.name == "steering_wheel":
-                            aligned, wheel_report = cockpit.align_main_wheel(section, cf.wheel)
-                            report["main_steering_wheel"] = wheel_report
-                            log(
-                                f"main-carbin steering wheel: moved {wheel_report.get('move')} m, turned "
-                                f"{wheel_report.get('turn_deg')} deg, scaled {wheel_report.get('scale')} onto the "
-                                f"cockpit's" + (f" ({wheel_report['kept']}: kept)" if aligned is None else "")
-                            )
-                            section = aligned or section
-                        body.append(section)
-                    car = dataclasses.replace(car, body=body)
+                    align_steering_wheel(cf.wheel, "cockpit's")
 
     links = host_glass_links(stream, full) if opts.glass_links else None
     if links is not None:

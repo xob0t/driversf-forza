@@ -13,12 +13,14 @@ from dsfforza.convert.cockpit.geometry import (
     GAUGE_UNITS,
     STEERING_MARKER_ROLE,
     CockpitFit,
+    Wheel,
     _add,
     _dot,
     _mean,
     _norm,
     _scale,
     _sub,
+    fit_wheel_points,
     quat_from_to,
     quat_rotate,
     rotate_about,
@@ -49,6 +51,27 @@ class HostCockpit:
     def engine_marker(self) -> int:
         """The steering marker the engine turns the wheel and the hands about."""
         return self.wheel_markers[-1] if self.wheel_markers else self.wheel_marker
+
+
+def host_wheel(mesh, skin: bytes, to_forza) -> Wheel | None:
+    """The steering wheel a vanilla interior entry draws (`mesh`, damage.load_mesh): its
+    vertices bound to the steering record (vertex semantic 9 == `skin`), fitted
+    (fit_wheel_points) in Forza space (`to_forza`: DSF point -> Forza point). The
+    placeholder-cockpit path keeps the host's interior; the chase views' wheel goes
+    onto this one (issue #86). None when no vertex carries the binding."""
+    from dsfforza.formats import vehicle_mesh as vm
+
+    pts = set()
+    for sub in mesh.submodels:
+        vb = mesh.vertex_buffers.get(sub.vertex_buffer)
+        e9 = vb and vb.element(9)
+        if not e9:
+            continue
+        for _, tri in vm.triangles(mesh, sub):
+            for i in tri:
+                if bytes(vb.read(e9, i)) == skin:
+                    pts.add(to_forza(vm.position(vb, i)))
+    return fit_wheel_points(sorted(pts)) if len(pts) >= 12 else None
 
 
 def parent_of(h, index: int) -> int | None:

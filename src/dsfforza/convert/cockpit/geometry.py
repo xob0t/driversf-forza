@@ -296,21 +296,101 @@ def fit_wheel_points(pts: list[tuple]) -> Wheel:
 
 MAIN_WHEEL_RADIUS = (0.08, 0.30)  # a plausible main-carbin wheel fit (FH1 Mustang Boss 429's: 0.013)
 MAIN_WHEEL_MAX_MOVE = 0.5
+CIRCLE_REFITS = 10  # rim picked again about the new circle; it settles in 2 to 4 on the roster
+CIRCLE_SETTLED = 1e-4  # m: the centre moved less than this
+
+
+def _solve3(m, rhs):
+    """m x = rhs for a 3x3 m (Gaussian elimination, partial pivoting)."""
+    a = [list(row) + [r] for row, r in zip(m, rhs)]
+    for i in range(3):
+        p = max(range(i, 3), key=lambda k: abs(a[k][i]))
+        a[i], a[p] = a[p], a[i]
+        if abs(a[i][i]) < 1e-18:
+            raise ZeroDivisionError("singular")
+        for k in range(i + 1, 3):
+            f = a[k][i] / a[i][i]
+            a[k] = [x - f * y for x, y in zip(a[k], a[i])]
+    x = [0.0, 0.0, 0.0]
+    for i in (2, 1, 0):
+        x[i] = (a[i][3] - sum(a[i][j] * x[j] for j in range(i + 1, 3))) / a[i][i]
+    return x
+
+
+def _plane_circle(xs, ys) -> tuple[float, float, float]:
+    """(x, y, radius) of the least-squares circle through 2D points (Kasa: x² + y² =
+    2ax + 2by + c, linear in a, b, c)."""
+    mx, my = sum(xs) / len(xs), sum(ys) / len(ys)  # centred, for the conditioning
+    rows = [(2 * (x - mx), 2 * (y - my), 1.0, (x - mx) ** 2 + (y - my) ** 2) for x, y in zip(xs, ys)]
+    m = [[sum(r[i] * r[j] for r in rows) for j in range(3)] for i in range(3)]
+    a, b, c = _solve3(m, [sum(r[i] * r[3] for r in rows) for i in range(3)])
+    return mx + a, my + b, math.sqrt(max(0.0, c + a * a + b * b))
+
+
+def fit_rim_circle(pts: list[tuple], axis) -> Wheel:
+    """A steering wheel's rim as the least-squares circle through it. The rim is
+    every point at 75% of the largest radius from the current axis line or more
+    (as _fit_rim); the axis is the rim's plane (its least-spread direction), the
+    centre the circle's, at the rim's mean depth; repeated about each new circle
+    until it settles. Main-carbin wheels are coarse polygons (the E36 M3's: a
+    16-gon rim, three flat spokes): the middle of the rim's extent, which
+    _fit_rim takes, follows the vertex that sticks out furthest, and its refits
+    walked 6 cm off the E36's ring; a circle through all rim points doesn't."""
+    centre, axis = _mean(pts), _norm(axis)
+    r = 0.0
+    for _ in range(CIRCLE_REFITS):
+        u = _norm(_cross(axis, (1, 0, 0)) if abs(axis[0]) < 0.9 else _cross(axis, (0, 1, 0)))
+        v = _cross(axis, u)
+        rel = [_sub(p, centre) for p in pts]
+        radial = [math.sqrt(max(0.0, _dot(d, d) - _dot(d, axis) ** 2)) for d in rel]
+        r_max = max(radial)
+        rim = [d for d, q in zip(rel, radial) if q >= 0.75 * r_max]
+        if len(rim) < 3:
+            break
+        try:
+            cu, cv, r = _plane_circle([_dot(d, u) for d in rim], [_dot(d, v) for d in rim])
+        except ZeroDivisionError:
+            break
+        depth = sum(_dot(d, axis) for d in rim) / len(rim)
+        moved = _add(_add(_scale(u, cu), _scale(v, cv)), _scale(axis, depth))
+        centre = _add(centre, moved)
+        plane = _norm(_eigen_sym3(_covariance(rim, _mean(rim)))[0][1])
+        axis = plane if _dot(plane, axis) >= 0 else _scale(plane, -1)
+        if math.sqrt(_dot(moved, moved)) < CIRCLE_SETTLED:
+            break
+    return _wheel(centre, axis, r)
+
+
+def main_wheel_points(section: carbin.Section) -> list[tuple]:
+    """The shape of a main-carbin steering wheel at its finest LOD: its points without
+    the decals (fm.ALPHA_TESTED techniques: the hub badge). cutout.cut_alpha_tested
+    turns a badge quad into its letters' outline before the cockpit is fitted (the FH1
+    XKR-S's 4 triangles into 160, the Camaro ZL1's 5 into 114, the M Coupe's 2 into 37),
+    all of them at the hub, which pulled the rim fit in to 0.022, 0.139 and 0.143 m
+    (0.161, 0.171 and 0.176 m without them; issue #86)."""
+    from dsfforza.convert import forza_materials as fm
+
+    promoted = promote_lod(section)
+    if promoted is None:
+        return []
+    shape = {sub.material for sub in promoted.subsections if sub.material not in fm.ALPHA_TESTED}
+    return list(set(section_points(promoted, shape)))
 
 
 def fit_main_wheel(section: carbin.Section, near: Wheel) -> Wheel | None:
-    """fit_wheel on a main-carbin steering wheel at its finest LOD. A column or boss
-    modelled with it spoils the fit (FH1 Mustang Boss 429: radius 0.013 m); then only
-    the points around the cockpit's wheel (`near`) are fitted."""
-    promoted = promote_lod(section)
-    if promoted is None:
+    """The rim of a main-carbin steering wheel at its finest LOD (main_wheel_points,
+    fit_rim_circle from the cockpit wheel's axis, `near`: the same wheel, modelled
+    apart). A column or boss modelled with it can still spoil the fit (FH1 Mustang
+    Boss 429: radius 0.013 m); then only the points around the cockpit's wheel are
+    fitted."""
+    pts = main_wheel_points(section)
+    if len(pts) < 3:
         return None
-    pts = list(set(section_points(promoted)))
-    main = fit_wheel_points(pts)
+    main = fit_rim_circle(pts, near.axis)
     if not MAIN_WHEEL_RADIUS[0] <= main.radius <= MAIN_WHEEL_RADIUS[1]:
         close = [p for p in pts if math.dist(p, near.centre) < 1.3 * near.radius + 0.05]
         if len(close) >= 12:
-            main = fit_wheel_points(close)
+            main = fit_rim_circle(close, near.axis)
     return main
 
 
