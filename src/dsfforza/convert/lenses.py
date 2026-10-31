@@ -96,7 +96,13 @@ RAY_CHUNK = 256
 AXIS_MIN_FACING = 0.25
 RAY_CELL = 0.04  # m: rays are chunked by these cells
 RAY_STEP = 2  # texels per ray, each way, at least
-RAYS_PER_LENS = 3000
+RAYS_PER_LENS = 3000  # the head lamp glow's shape (lens_glow): one ray per block of RAY_STEP texels or more
+# What lies behind a lens: one ray per lens texel up to this many rays a lens, else per block of
+# texels, read filtered over the block (bake). The DSF atlas holds the Lights texels at 0.33 to 0.77
+# of their size (512 atlases), so finer rays draw nothing more; a lens of 104,000 texels (the
+# Corvette Grand Sport's tails) takes 3 x 3 blocks, and a bake about 1.5 s more than one ray per
+# RAY_STEP block with RAYS_PER_LENS (#403).
+FINE_RAYS_PER_LENS = 20000
 DILATE = 2  # texels: baked values spread into unused neighbours (the atlas box filter reads them)
 # Flat colours of what lies behind a lens when it isn't a textured surface (alpha: no glow).
 HOUSING = (22, 22, 24, 0)  # nothing within RAY_DEPTH: a dark housing
@@ -1227,7 +1233,8 @@ def bake(
             continue
         lens_rgba = src[iy, ix]
         lens_a = np.minimum(np.maximum(lens_rgba[:, 3] / 255.0, floor), cap)
-        # One ray per lens texel, each reading what it meets filtered over the lens texel's size
+        # One ray per lens texel (per block of `fine` x `fine` on the largest lenses,
+        # FINE_RAYS_PER_LENS), each reading what it meets filtered over the texel's (block's) size
         # on the car (_Surfaces.sample): what lies behind a lens is often finer than the lens's
         # texels (a dimpled bowl's 0.9 mm texels behind the Holden Commodore's 2.75 mm red lens
         # texels), and one point sample per block of RAY_STEP x RAY_STEP texels turned it into
@@ -1239,7 +1246,8 @@ def bake(
             first = np.arange(0, len(ix), max(1, math.ceil(len(ix) / RAYS_PER_LENS)))
             inverse = np.zeros(len(ix), int)
         else:
-            _, first, inverse = np.unique(iy * w + ix, return_index=True, return_inverse=True)
+            fine = max(1, math.ceil(math.sqrt(len(ix) / FINE_RAYS_PER_LENS)))
+            _, first, inverse = np.unique((iy // fine) * w + ix // fine, return_index=True, return_inverse=True)
             step = max(RAY_STEP, math.ceil(math.sqrt(len(ix) / RAYS_PER_LENS)))
             _, shape_first, shape_inverse = np.unique(
                 (iy // step) * w + ix // step, return_index=True, return_inverse=True
@@ -1250,7 +1258,7 @@ def bake(
         first = first[order]
         inverse = np.argsort(order)[inverse]
         if not swatch:
-            footprint = size[first]
+            footprint = size[first] * fine
             shape = inverse[shape_first]  # the ray of each block's first sample
         dirs = -nrm[first]
         origins = pos[first] + nrm[first] * 0.001
