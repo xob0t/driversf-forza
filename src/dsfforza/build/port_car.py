@@ -56,11 +56,12 @@ without a check), and MDXN stays at or under the largest vanilla MDXN of its
 kind (a bigger one crashed; the cause is still open).
 
 Wheel placement (research/forza-sources.md): Forza's front is at -z and
-DSF's at +z, so the car is turned 180 degrees about y and translated. Wheelbase, front track and the wheelbase midpoint come
-from Physics/MAXData.xml, which every FH1 and FM4 car on the discs has
-(except FH1's NIS_Leaf_11); otherwise from gamedb.slt Data_CarBody (row
-Data_Car.Id * 1000; covers 503 FM4 cars). Tyre radius and width are measured
-on the car's wheel model. The hubs in the host's UPVH are moved to match.
+DSF's at +z, so the car is turned 180 degrees about y and translated. The wheelbase and
+its midpoint come from the game's gamedb.slt Data_CarBody (row Data_Car.Id * 1000; every
+roster car), track and ride height from Physics/MAXData.xml, which every FH1 and FM4 car
+on the discs has (except FH1's NIS_Leaf_11: all from the gamedb); forza2dsf.car_dims.
+Tyre radius and width are measured on the car's wheel model. The hubs in the host's UPVH
+are moved to match.
 """
 
 from __future__ import annotations
@@ -1177,14 +1178,9 @@ def prepare_car(args, source: Source, media: str, isos, log=print) -> PreparedCa
     if not args.no_cockpit and extract_dash(source, media, args.cache, log):  # cockpit digital displays
         extract_dash_media(isos, source.game, args.cache)
     car = forza2dsf.load_car(folder, media)
-    gamedb = None
-    try:
-        dims = forza2dsf.car_dims(car)
-    except ValueError:  # no MAXData.xml: fall back to the game's gamedb.slt
-        gamedb = extract_gamedb(isos, source.game, args.cache)
-        dims = forza2dsf.car_dims(car, gamedb)
-    if (not args.no_cockpit or not args.no_handling) and gamedb is None:  # eye point, handling
-        gamedb = extract_gamedb(isos, source.game, args.cache)
+    # Wheelbase and its midpoint (car_dims), the cockpit eye point and the handling
+    gamedb = extract_gamedb(isos, source.game, args.cache)
+    dims = forza2dsf.car_dims(car, gamedb)
     host, sound, choice = pick_hosts(args, media, source.game, folder, gamedb, isos, log)
     return PreparedCar(media, source, folder, car, dims, gamedb, host, sound, choice)
 

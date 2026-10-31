@@ -151,15 +151,59 @@ def test_wheel_model_z_offset_moves_the_midpoint():
     assert abs(moved.radius - plain.radius) < 1e-9 and moved.wheelbase == plain.wheelbase
 
 
-def test_mid_z_fix_replaces_maxdata():
-    """CIT_C1_11 carries the 107's MAXData.xml; its own midpoint is MID_Z_FIXES' (#301)."""
+def _gamedb(path, name: str, wheelbase: float, z: float, y: float = 0.0, ride: float = 0.12):
+    """A gamedb.slt with the car's Data_Car and Data_CarBody rows."""
+    import sqlite3
+
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE Data_Car (Id INTEGER, MediaName TEXT)")
+    con.execute(
+        "CREATE TABLE Data_CarBody (Id INTEGER, ModelWheelbase REAL, ModelFrontTrackOuter REAL, "
+        "ModelRearTrackOuter REAL, ModelFrontStockRideHeight REAL, ModelRearStockRideHeight REAL, "
+        "BottomCenterWheelbasePosx REAL, BottomCenterWheelbasePosy REAL, BottomCenterWheelbasePosZ REAL)"
+    )
+    con.execute("INSERT INTO Data_Car VALUES (7, ?)", (name,))
+    con.execute("INSERT INTO Data_CarBody VALUES (7000, ?, 2.1, 2.1, ?, ?, 0, ?, ?)", (wheelbase, ride, ride, y, z))
+    con.commit()
+    con.close()
+
+
+def test_gamedb_wheelbase_and_midpoint():
+    """The wheelbase and its midpoint come from the gamedb's Data_CarBody, the model's own z
+    (MAXData's negated on 558 of 573 cars), with the wheel model's offset already in it: the
+    arches of AST_V8Vantage_77, CIT_C1_11 (the 107's MAXData.xml) and the Commodores centre
+    there (#301, #406). Track and ride height stay MAXData's; the cached gamedb (beside the
+    game's car folders) is the default."""
     import tempfile
     from pathlib import Path
 
     with tempfile.TemporaryDirectory() as tmp:
-        dims = forza2dsf.car_dims(_maxdata_car(Path(tmp), "CIT_C1_11", 0.0))
-    assert abs(dims.mid_z - forza2dsf.MID_Z_FIXES["cit_c1_11"]) < 1e-9
-    assert abs(dims.mid_z - (-0.019)) < 1e-9
+        game = Path(tmp) / "fm4"
+        (game / "X").mkdir(parents=True)
+        _gamedb(game / "gamedb.slt", "X", 2.65, -0.12)
+        car = _maxdata_car(game / "X", "X", 0.3)
+        dims = forza2dsf.car_dims(car)
+        assert forza2dsf.cached_gamedb(car.folder) == game / "gamedb.slt"
+    assert abs(dims.wheelbase - 2.65) < 1e-9 and abs(dims.mid_z + 0.12) < 1e-9
+    assert abs(dims.track_outer - 1.8) < 1e-9 and abs(dims.ride_height - 0.12) < 1e-9
+
+
+def test_body_bottom_y_lowers_the_ground():
+    """MAXData's BottomCenterWheelbasePos.y is the body's bottom in the model: the ground is
+    StockRideHeight below it. VW_BEETLE_68's y -0.158 and ride height 0.158 put its ground
+    0.316 m below y = 0 (the gamedb: ride height 0.314, y 0), where its arches are (#406)."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        car = _maxdata_car(Path(tmp), "X", 0.0)
+        xml = car.folder / "Physics" / "MAXData.xml"
+        xml.write_text(xml.read_text().replace('y="0"', 'y="-0.158"').replace("0.12", "0.158"))
+        dims = forza2dsf.car_dims(car)
+        xml.write_text(xml.read_text().replace('y="-0.158"', 'y="0.028"'))
+        raised = forza2dsf.car_dims(car)  # a positive y is not the floor (MAZ_Furai_08's): left out
+    assert abs(dims.ride_height - 0.316) < 1e-9
+    assert abs(raised.ride_height - 0.158) < 1e-9
 
 
 def test_wheel_collision_takes_the_drawn_tyre():
