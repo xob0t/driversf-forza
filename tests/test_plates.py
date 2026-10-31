@@ -288,14 +288,22 @@ def test_pocket_wider_than_the_host_plate():
 
 
 def test_deep_opening_is_no_pocket():
-    # An intake or a diffuser channel: walls 15 cm deep.
+    # A diffuser channel or an exhaust surround: walls 30 cm deep.
     host = P.HostPlate("rear", (0.0, 0.45, -2.1), SIZE, (0, 0), 2)
-    plate = P.plan_end(boot_lid_pocket(depth=0.15), "rear", host, 0.45, 0.0, 0.9)
+    plate = P.plan_end(boot_lid_pocket(depth=0.3), "rear", host, 0.45, 0.0, 0.9)
     assert plate.source != "pocket", plate
 
 
+def test_pocket_lower_than_the_plate_is_none():
+    # A slot 8 cm tall (the C5R's lower valance) can't hold a 12 cm plate.
+    dm = P.depth_map(boot_lid_pocket(y0=0.75, y1=0.83), "rear", (-0.9, 0.9), (0.0, 1.2))
+    found = P.pockets(dm, 0.0)
+    assert len(found) == 1 and P.usable_pockets(found, SIZE) == [], found
+
+
 def test_plate_lamp_picks_its_pocket():
-    # Two pockets; the plate lamp strip above the upper one says which holds the plate.
+    # Two pockets: the boot lid's, seen from more centre-line rows, holds the plate
+    # unless a plate lamp lights the other (a strip in its upper wall).
     upper = boot_lid_pocket()[:2] + framed(-0.27, 0.27, 0.70, 0.88, -2.0)
     lower = rear_quad(-0.2, 0.2, 0.33, 0.43, -2.065, name="bumperRa") + framed(
         -0.2, 0.2, 0.33, 0.43, -2.08, outer=(-0.8, 0.8, 0.30, 0.60), name="bumperRa"
@@ -303,6 +311,6 @@ def test_plate_lamp_picks_its_pocket():
     dm = P.depth_map(upper + lower, "rear", (-0.9, 0.9), (0.0, 1.2))
     found = P.pockets(dm, 0.0)
     assert len(found) == 2, found
-    assert abs(P.choose_pocket(found, 0.40).centre[1] - 0.38) < 0.015
-    lamp = (-0.15, 0.15, 0.885, 0.895)
-    assert abs(P.choose_pocket(found, 0.40, [lamp]).centre[1] - 0.79) < 0.015
+    assert abs(P.choose_pocket(found, 0.40).centre[1] - 0.79) < 0.015
+    lamp = (-0.15, 0.15, 0.435, 0.445)
+    assert abs(P.choose_pocket(found, 0.40, [lamp]).centre[1] - 0.38) < 0.015

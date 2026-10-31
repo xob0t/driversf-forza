@@ -433,8 +433,15 @@ POCKET_WIDTH = (0.24, 0.80)
 POCKET_HEIGHT = (0.08, 0.32)
 POCKET_OFF_CENTRE = 0.08  # pocket centre within this of x = 0
 POCKET_MERGE = 0.03  # seeds whose pockets agree within this are one pocket
+# Rear plates only: at the front the closed openings are air intakes and grilles whose
+# mesh is texture, not geometry (the RSX's and F40's lower intakes, the 135i's kidneys,
+# the Focus ST's lower grille), which depth alone can't tell from a plate pocket.
+POCKET_ENDS = ("rear",)
 POCKET_ROOM = (0.02, 0.015)  # plate clear of the pocket's walls across and up / down (m)
-POCKET_DEEP = 0.08  # walls coming out further: an intake or a diffuser, no plate pocket
+# Side walls coming out further than this: a diffuser channel or an exhaust surround
+# (the M3 GTR race car's 1.4 m, the ARX-02a's 0.36, the Corvette Z06's 0.21), not a
+# plate pocket (bumper pockets' run to about 0.1: the Syclone's, the Chevelle's).
+POCKET_DEEP = 0.2
 LAMP_REACH = (0.02, 0.06)  # a plate lamp this near a pocket lights it (across, up / down)
 
 
@@ -572,14 +579,26 @@ def lamp_beside(pocket: Pocket, lamps) -> bool:
     )
 
 
+def usable_pockets(found: list[Pocket], base: tuple[float, float]) -> list[Pocket]:
+    """Pockets that can hold the host's plate (at MIN_FIT, clear of the walls by
+    POCKET_ROOM) and whose side walls are no deeper than POCKET_DEEP."""
+    return [
+        p
+        for p in found
+        if max(p.walls[:2]) <= POCKET_DEEP and all(p.size[k] - POCKET_ROOM[k] >= MIN_FIT * base[k] for k in (0, 1))
+    ]
+
+
 def choose_pocket(found: list[Pocket], prior_y: float, lamps=()) -> Pocket | None:
-    """The plate's pocket: one a plate lamp lights if there is one, else the nearest
-    the host's plate height."""
-    found = [p for p in found if max(p.walls) <= POCKET_DEEP]
+    """The plate's pocket of `found` (usable_pockets): of those a plate lamp lights if
+    any, the one seen from the most centre-line rows (a pocket's whole floor; a crease
+    or a valance under a bumper is seen from a row or two: the Aston DBS's boot lid, 14
+    rows, against the diffuser below it, 2), then the nearest the host's plate
+    height."""
     if not found:
         return None
     lit = [p for p in found if lamp_beside(p, lamps)]
-    return min(lit or found, key=lambda p: abs(p.centre[1] - prior_y))
+    return max(lit or found, key=lambda p: (p.seeds, -abs(p.centre[1] - prior_y)))
 
 
 def plate_lamps(sections, end: str, place, z_mid: float, lod: int = 1) -> list[tuple[float, float, float, float]]:
@@ -599,6 +618,16 @@ def plate_lamps(sections, end: str, place, z_mid: float, lod: int = 1) -> list[t
             v = np.array([view_coords(end, p) for p in pts])
             out.append((float(v[:, 0].min()), float(v[:, 0].max()), float(v[:, 1].min()), float(v[:, 1].max())))
     return out
+
+
+def lamp_height(lamps, plate_height: float) -> float:
+    """The plate's height by Forza's plate lamps: just under a strip across (in the
+    pocket's upper wall on every car with both, shining down), or level with
+    upright strips beside it (the Firebird's)."""
+    s0, s1, y0, y1 = max(lamps, key=lambda b: (b[1] - b[0]) * max(b[3] - b[2], PX))
+    if y1 - y0 > s1 - s0:
+        return (y0 + y1) / 2
+    return y0 - plate_height / 2 - PX
 
 
 # --- planning ----------------------------------------------------------------------------
@@ -934,7 +963,9 @@ def plan_end(
     dm = depth_map(tris, end, (-half_width, half_width), (ground + 0.05, ground + 1.6))
     height, width = dm.depth.shape
     face_down = max(FACE_DOWN, -host.tilt)
-    pocket = choose_pocket(pockets(dm, ground, face_down), prior_y, lamps)
+    pocket = None
+    if end in POCKET_ENDS:
+        pocket = choose_pocket(usable_pockets(pockets(dm, ground, face_down), base), prior_y, lamps)
     found = window_search(dm, base, prior_y, ground, face_down) if pocket is None else None
     if pocket is not None:
         source, (cs, cy), b = "pocket", pocket.centre, pocket.tilt
@@ -1050,6 +1081,9 @@ def plan(car_body, place, ground: float, host: HostPlates, lods, log=print) -> P
         prior_y = min(ys) + t * (max(ys) - min(ys))
         mesh = _forza_mesh(car_body, end, place, z_mid)
         lamps = plate_lamps(car_body, end, place, z_mid, first)
+        host_y = prior_y
+        if lamps and end in POCKET_ENDS:
+            prior_y = lamp_height(lamps, hp.size[1])
         try:
             p = plan_end(by_end[end], end, hp, prior_y, ground, half_width, mesh, lamps)
         except ValueError as error:
@@ -1067,6 +1101,7 @@ def plan(car_body, place, ground: float, host: HostPlates, lods, log=print) -> P
                 "tilt": round(hp.tilt, 3),
             },
             "prior_y": round(prior_y, 3),
+            **({"host_y": round(host_y, 3), "plate_lamps": [[round(c, 3) for c in b] for b in lamps]} if lamps else {}),
         }
     dropped = sorted({s.name for s in car_body for sub in s.subsections if sub.material in FORZA_PLATE_TECHNIQUES})
     return PlatePlan(plates, dropped, {"plates": report, "dropped_forza_plates": dropped})
