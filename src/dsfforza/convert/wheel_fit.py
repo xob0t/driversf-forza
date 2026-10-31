@@ -12,7 +12,9 @@ entry's body, the drawn wheel part's radius, width and tyre centre, the hub tabl
   outer face hiding what lies inside it and inboard of that face (side_depth); along
   each ray from the tyre's centre (ARCH_BIN_DEG apart, ARCH_RAY_DEG behind to ahead of straight
   up, from ARCH_INNER to ARCH_REACH tyre radii) the arch's edge is where the visible surface
-  steps out from the wheel well to the fender, at half the step (arch_edge). That is the
+  first steps out from the wheel well to the fender, at half the step (step_edge, arch_edge;
+  the first climb at least half as high as the ray's biggest, so a wider body farther out,
+  the cabin's sides of a mid-engined car, isn't taken for the fender). That is the
   outline the eye sees; the nearest body point per ray was often the well liner, inside it, and
   read the S7 04's arch top 43 mm low against the game. A circle fitted to the edge points
   (least squares), the rays cast again from its centre, ARCH_ROUNDS rounds;
@@ -23,8 +25,8 @@ entry's body, the drawn wheel part's radius, width and tyre centre, the hub tabl
   - `top_gap_mm`: from the tyre's top to the arch's edge straight above its centre; negative
     is a tyre over the edge;
   - `lateral_mm`: the tyre's outer face outboard (+) or inboard (-) of the fender line: the
-    outermost fender surface behind the arch's edge on the rays within ARCH_LIP_DEG of
-    straight up from the tyre's centre;
+    outermost crest of the arch's edge step on the rays within ARCH_LIP_DEG of straight up
+    from the tyre's centre;
   - `arch_up_mm`, `arch_radius`, `lip_rms_mm`, `lips`: the fitted circle's centre above the
     tyre's centre, its radius, the edge points' spread about it (a large one: no round arch),
     their number.
@@ -123,12 +125,38 @@ def side_depth(pts: np.ndarray, centre: np.ndarray, outboard: float, extent: flo
     return depth, origin
 
 
+def step_edge(v: np.ndarray):
+    """(edge index, crest value) of the first step out along a depth profile (NaN: nothing
+    there): the profile split into climbs (runs where the surface keeps stepping out), the
+    first climb that rises at least half as much as the profile's biggest one, and in it the
+    first cell at least halfway up; the crest is the climb's top, the fender's surface. None
+    without a climb."""
+    idx = np.flatnonzero(np.isfinite(v))
+    if len(idx) < 2:
+        return None
+    w = v[idx]
+    climbs, start = [], 0
+    for k in range(1, len(w) + 1):
+        if k == len(w) or w[k] < w[k - 1]:
+            if k - 1 > start:
+                climbs.append((start, k - 1, w[k - 1] - w[start]))
+            start = k
+    if not climbs:
+        return None
+    biggest = max(c[2] for c in climbs)
+    if biggest <= 0:
+        return None
+    a, b, rise = next(c for c in climbs if c[2] >= 0.5 * biggest)
+    half = w[a] + rise / 2
+    k = a + int(np.flatnonzero(w[a : b + 1] >= half)[0])
+    return int(idx[k]), float(w[b])
+
+
 def arch_edge(depth, origin, centre2, radius: float, angles) -> np.ndarray:
     """Per ray from `centre2` (forward, up) at each angle (degrees from straight up, + forward),
-    the arch's visible edge, from ARCH_INNER to ARCH_REACH tyre radii out: the step from the
-    wheel well to the fender, at half its height (an edge's usual 50% point). The fender is the
-    ray's outermost surface, the well the median of the surface before it; the edge is the
-    first cell at least halfway between them. Rows (forward, up, the fender's x, the edge's x)."""
+    the arch's visible edge, from ARCH_INNER to ARCH_REACH tyre radii out: the first step from
+    the wheel well out to the fender, at half its height (step_edge). Rows (forward, up, the
+    fender's x at the step's crest, the edge's x)."""
     n = depth.shape[0]
     radii = np.arange(ARCH_INNER * radius, ARCH_REACH * radius, ARCH_CELL)
     out = []
@@ -140,15 +168,11 @@ def arch_edge(depth, origin, centre2, radius: float, angles) -> np.ndarray:
         ok = (i >= 0) & (i < n) & (j >= 0) & (j < n)
         v = np.full(len(radii), np.nan)
         v[ok] = depth[i[ok], j[ok]]
-        if not np.isfinite(v).any():
-            continue
-        top = int(np.nanargmax(v))
-        before = v[:top][np.isfinite(v[:top])]
-        if not len(before):
-            continue  # the ray starts on the fender: no opening here
-        half = (float(np.median(before)) + v[top]) / 2
-        k = int(np.flatnonzero(np.nan_to_num(v, nan=-np.inf) >= half)[0])
-        out.append((f[k], u[k], v[top], v[k]))
+        found = step_edge(v)
+        if found is None:
+            continue  # no step out along the ray: no opening here
+        k, crest = found
+        out.append((f[k], u[k], crest, v[k]))
     return np.array(out).reshape(-1, 4)
 
 
@@ -171,15 +195,10 @@ def arch_sides(depth, origin, centre2, radius: float, heights) -> np.ndarray:
             ok = (i >= 0) & (i < n)
             v = np.full(len(reach), np.nan)
             v[ok] = depth[i[ok], j]
-            if not np.isfinite(v).any():
+            found = step_edge(v)
+            if found is None:
                 break
-            top = int(np.nanargmax(v))
-            before = v[:top][np.isfinite(v[:top])]
-            if not len(before):
-                break
-            half = (float(np.median(before)) + v[top]) / 2
-            k = int(np.flatnonzero(np.nan_to_num(v, nan=-np.inf) >= half)[0])
-            edges.append(f[k])
+            edges.append(f[found[0]])
         if len(edges) == 2:
             out.append((h, edges[0], edges[1]))
     return np.array(out).reshape(-1, 3)
