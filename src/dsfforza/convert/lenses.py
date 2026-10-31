@@ -180,33 +180,42 @@ def is_glass_technique(technique: str) -> bool:
 def glass_settings(car_dir: Path) -> dict[str, dict]:
     """technique -> {"GlassMaxOpacity": 0..1 (values above 1: no cap), "GlassColor": (r, g, b,
     a), "DarkValues", "LightValues"} from the car's ShaderSettings.xml, the parameters it sets;
-    {} without the file or when it doesn't parse."""
-    import xml.etree.ElementTree as ET
-
+    {} without the file. Read leniently, as forza_materials.parse_shader_settings reads it: 30
+    roster files aren't well-formed XML (Latin-1 no-break spaces in the indentation, a
+    technique closed with another's tag: the Ferrari F50's, Lamborghini Diablo SV's, Lexus IS F's),
+    and a strict parse dropped every lens and cover setting of 13 of those cars."""
     path = next((p for p in Path(car_dir).iterdir() if p.name.lower() == "shadersettings.xml"), None)
     if path is None:
         return {}
-    try:
-        root = ET.fromstring(path.read_bytes())
-    except ET.ParseError:
-        return {}
-    out = {}
-    for element in root.iter():
-        got = {}
-        setting = element.find("GlassMaxOpacity")
-        colour = element.find("GlassColor")
-        try:
-            if setting is not None:
-                got["GlassMaxOpacity"] = min(1.0, max(0.0, float(setting.get("value", ""))))
-            for name in ("DarkValues", "LightValues"):
-                if element.find(name) is not None:
-                    got[name] = float(element.find(name).get("value", ""))
-            if colour is not None:
-                got["GlassColor"] = tuple(float(colour.get(c, "")) for c in "rgba")
-        except ValueError:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    out: dict[str, dict] = {}
+    stack: list[str] = []
+    for m in fm._SETTINGS_TOKEN.finditer(text):
+        if m.group(0).startswith("<!--"):
             continue
-        if got:
-            out[element.tag] = got
+        close, name, attrs, selfclose = m.groups()
+        if close:
+            if stack and stack[-1].lower() == name.lower():
+                stack.pop()
+            continue
+        values = dict(fm._SETTINGS_ATTR.findall(attrs))
+        if not (selfclose or values):
+            stack.append(name)
+            continue
+        if len(stack) < 2:  # <ShaderSettings><technique><Param .../>
+            continue
+        try:
+            if name == "GlassMaxOpacity":
+                got = {name: min(1.0, max(0.0, float(values["value"])))}
+            elif name in ("DarkValues", "LightValues"):
+                got = {name: float(values["value"])}
+            elif name == "GlassColor":
+                got = {name: tuple(float(values[c]) for c in "rgba")}
+            else:
+                continue
+        except (KeyError, ValueError):
+            continue
+        out.setdefault(stack[-1], {}).update(got)
     return out
 
 

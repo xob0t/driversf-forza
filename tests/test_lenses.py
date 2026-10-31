@@ -138,6 +138,27 @@ def test_glass_max_opacity():
         assert lenses.glass_max_opacity(Path(car_dir)) == {"lights_glass": 0.75, "glass": 1.0}
 
 
+def test_glass_settings_read_leniently():
+    # 30 roster ShaderSettings.xml aren't well-formed (the Ferrari F50's indentation holds Latin-1
+    # no-break spaces, the Ferrari GTO's closes a technique with another's tag); Forza reads them,
+    # and a strict parse lost every lens and cover setting of 13 cars.
+    xml = (
+        b'\r\n<ShaderSettings>\r\n  <cockpit_x>\r\n\xa0\xa0 <FresnelScalar value="0.2"/>\r\n  </cockpit_x>\r\n'
+        b'  <lights_glass>\r\n\xa0 <GlassMaxOpacity value="0.85"/>\r\n'
+        b'    <GlassColor r="0.5" g="0.5" b="0.5" a="1.0"/>\r\n  </lights_glass>\r\n'
+        b'  <lights_gls_taillight2S>\r\n    <GlassMaxOpacity value="1.0"/>\r\n  </lights_gls_tail_light>\r\n'
+        b'  <detail_glass_red><DarkValues value="0.321"/><LightValues value="1.143"/></detail_glass_red>\r\n'
+        b"</ShaderSettings>\r\n"
+    )
+    with tempfile.TemporaryDirectory() as car_dir:
+        (Path(car_dir) / "shadersettings.xml").write_bytes(xml)
+        got = lenses.glass_settings(Path(car_dir))
+    assert got["lights_glass"] == {"GlassMaxOpacity": 0.85, "GlassColor": (0.5, 0.5, 0.5, 1.0)}, got
+    assert got["lights_gls_taillight2S"] == {"GlassMaxOpacity": 1.0}, got
+    assert got["detail_glass_red"] == {"DarkValues": 0.321, "LightValues": 1.143}, got
+    assert "cockpit_x" not in got
+
+
 def _grid(name: str, material: str, z, u0: float, u1: float, n: int = 8, sign: float = -1.0) -> carbin.Section:
     """An n x n grid 0.2 m wide facing Forza's front (-z: sign -1) or rear; z(x, y) gives
     each vertex's z (a reflector bowl)."""

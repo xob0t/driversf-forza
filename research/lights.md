@@ -2656,6 +2656,41 @@ p10: the Lexus SC430 02 (0.127 -> 0.095), the Pagani Zonda R (0.074 -> 0.081) an
 Sesto Elemento (0.122 -> 0.124). Cars that dropped but stayed in range: both SC430 race cars
 (0.362 -> 0.209 and 0.161), the GTI VR6 (0.332 -> 0.164).
 
+### Lens and cover settings of ShaderSettings.xml that don't parse
+
+Found while tracing #405: 30 of the 503 cars' `ShaderSettings.xml` aren't well-formed XML.
+- 25 have Latin-1 no-break spaces in their indentation (the Ferrari F50's, Koenigsegg Agera's,
+  Lexus IS F's), one another stray byte (Viper SRT-10 ACR-X 12).
+- Three close a technique with another's tag (Mini Cooper S 65, Ferrari GTO 84, SRT Viper 13).
+- One has a block after the root: the Viper GTS-R #126's `lights_glass`. `lenses.glass_settings` parsed strictly and dropped
+the whole file. `forza_materials.parse_shader_settings` (#58) already reads these leniently,
+as Forza does, but keeps no colours.
+
+13 cars lost lens or cover settings that way:
+- Ferrari F50 and F50 GT: clear lens GlassColor, cover GlassMaxOpacity 0.85, lamp glass 0.8;
+- Diablo SV, McLaren F1 GT, Ferrari GTO 84: cover and lamp glass caps;
+- Alfa 8C, F430 Scuderia, Gallardo LP570, SRT Viper 13: red lens DarkValues / LightValues;
+- Audi RS4 06, Ferrari 250 GTO, Lexus IS F: clear or amber lens GlassColor;
+- Ultima GTR: cover GlassColor and cap.
+
+Change: `glass_settings` reads the file with `parse_shader_settings`'s tokens and stack (a
+parameter belongs to the innermost open technique under the root). On the 547 well-formed files it
+reads the same values as the strict parse, but the Peugeot 205 T16's: its two
+`lights_gls_tail_light` blocks now merge (the first one's GlassColor kept), which gives the same
+opacity. The Viper GTS-R's block after `</ShaderSettings>` stays unread, as `parse_shader_settings`
+leaves it; whether Forza reads it is not known (#416).
+
+`render_compare diff` (master's and this build of the 13 cars, `out/rc/H`): all 13 drawn
+differently, in their lamps:
+- lamp glass now baked at its cap where master left it unbaked (F50, F50 GT, Diablo SV, F1 GT, GTO);
+- red lenses through their own DarkValues / LightValues (8C, F430 Scuderia, Gallardo LP570,
+  SRT Viper 13, 250 GTO's red and amber);
+- clear lenses through their GlassColor (RS4 front 73 to 80% of the region, IS F).
+
+The F50, F50 GT, Ultima GTR, IS F and GTO 84 also differ in the cockpit view, dE 0.3 to 3.9 on the
+lamps and bonnet seen over the dash. Flags: the Diablo SV's "trims: 35% not drawn" fixed, none new.
+Scores within 0.6 either way.
+
 ### Open
 
 1. Front lamps in the lamp-phase mode (`-Lights`): neither copy faces the
