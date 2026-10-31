@@ -295,25 +295,25 @@ def test_deep_opening_is_no_pocket():
 
 
 def test_pocket_lower_than_the_plate_is_none():
-    # A slot 8 cm tall (the C5R's lower valance) can't hold a 12 cm plate.
+    # A slot 8 cm tall (the C5R's lower valance) holds no plate: vanilla's smallest is
+    # 0.101 m tall.
     dm = P.depth_map(boot_lid_pocket(y0=0.75, y1=0.83), "rear", (-0.9, 0.9), (0.0, 1.2))
-    found = P.pockets(dm, 0.0)
-    assert len(found) == 1 and P.usable_pockets(found, SIZE) == [], found
+    assert P.pockets(dm, 0.0) == []
 
 
 def test_plate_lamp_picks_its_pocket():
     # Two pockets: the boot lid's, seen from more centre-line rows, holds the plate
     # unless a plate lamp lights the other (a strip in its upper wall).
     upper = boot_lid_pocket()[:2] + framed(-0.27, 0.27, 0.70, 0.88, -2.0)
-    lower = rear_quad(-0.2, 0.2, 0.33, 0.43, -2.065, name="bumperRa") + framed(
-        -0.2, 0.2, 0.33, 0.43, -2.08, outer=(-0.8, 0.8, 0.30, 0.60), name="bumperRa"
+    lower = rear_quad(-0.2, 0.2, 0.33, 0.45, -2.065, name="bumperRa") + framed(
+        -0.2, 0.2, 0.33, 0.45, -2.08, outer=(-0.8, 0.8, 0.30, 0.60), name="bumperRa"
     )
     dm = P.depth_map(upper + lower, "rear", (-0.9, 0.9), (0.0, 1.2))
     found = P.pockets(dm, 0.0)
     assert len(found) == 2, found
     assert abs(P.choose_pocket(found, 0.40).centre[1] - 0.79) < 0.015
-    lamp = (-0.15, 0.15, 0.435, 0.445)
-    assert abs(P.choose_pocket(found, 0.40, [lamp]).centre[1] - 0.38) < 0.015
+    lamp = (-0.15, 0.15, 0.455, 0.465)
+    assert abs(P.choose_pocket(found, 0.40, [lamp]).centre[1] - 0.39) < 0.015
 
 
 def test_plate_slides_off_a_badge_in_its_pocket():
@@ -322,6 +322,6 @@ def test_plate_slides_off_a_badge_in_its_pocket():
     badge = rear_quad(-0.05, 0.05, 0.86, 0.92, -1.99, cls=4, feat=P.FEAT_BADGE)
     tris = badge + boot_lid_pocket(y0=0.65, y1=0.95)
     dm = P.depth_map(tris, "rear", (-0.9, 0.9), (0.0, 1.2))
-    (pocket,) = P.usable_pockets(P.pockets(dm, 0.0), SIZE)
+    (pocket,) = P.usable_pockets(P.pockets(dm, 0.0))
     s, y = P.place_in_pocket(dm, pocket, SIZE)
     assert abs(s) < 0.01 and y + SIZE[1] / 2 <= 0.86 + 0.006, (y, pocket)

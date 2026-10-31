@@ -433,15 +433,21 @@ POCKET_RISE = 3  # cells: a wall comes RECESS_STEP nearer within this many
 POCKET_GAP = 0.02  # a cell this much farther than the last: a gap (shut line, panel edge)
 POCKET_WALL = 8  # cells beyond a wall's foot searched for its top
 POCKET_REACH = (0.45, 0.3)  # rays across and up / down (m)
-POCKET_WIDTH = (0.24, 0.80)
-POCKET_HEIGHT = (0.08, 0.32)
+# The smallest plate a pocket must hold: vanilla's smallest rear plate, 0.226 x 0.101 m
+# (vanilla 199; host_plates over the 140 vanilla rear plates). The C5R's lower valance
+# slot (0.66 x 0.08) and the Chevelle's bumper slot (0.28 x 0.08) hold none.
+VANILLA_MIN_PLATE = (0.226, 0.101)
+POCKET_WIDTH = (VANILLA_MIN_PLATE[0], 0.80)
+POCKET_HEIGHT = (VANILLA_MIN_PLATE[1], 0.32)
 POCKET_OFF_CENTRE = 0.08  # pocket centre within this of x = 0
 POCKET_MERGE = 0.03  # seeds whose pockets agree within this are one pocket
 # Rear plates only: at the front the closed openings are air intakes and grilles whose
 # mesh is texture, not geometry (the RSX's and F40's lower intakes, the 135i's kidneys,
 # the Focus ST's lower grille), which depth alone can't tell from a plate pocket.
 POCKET_ENDS = ("rear",)
-POCKET_ROOM = (0.02, 0.015)  # plate clear of the pocket's walls across and up / down (m)
+# The plate clear of the pocket's walls across and up / down (m): the margins the window
+# search leaves round the face it found (room_w, room_h).
+POCKET_ROOM = (0.02, 0.015)
 # Side walls coming out further than this: a diffuser channel or an exhaust surround
 # (the M3 GTR race car's 1.4 m, the ARX-02a's 0.36, the Corvette Z06's 0.21), not a
 # plate pocket (bumper pockets' run to about 0.1: the Syclone's, the Chevelle's).
@@ -604,14 +610,9 @@ def lamp_beside(pocket: Pocket, lamps) -> bool:
     )
 
 
-def usable_pockets(found: list[Pocket], base: tuple[float, float]) -> list[Pocket]:
-    """Pockets that can hold the host's plate (at MIN_FIT, clear of the walls by
-    POCKET_ROOM) and whose side walls are no deeper than POCKET_DEEP."""
-    return [
-        p
-        for p in found
-        if max(p.walls[:2]) <= POCKET_DEEP and all(p.size[k] - POCKET_ROOM[k] >= MIN_FIT * base[k] for k in (0, 1))
-    ]
+def usable_pockets(found: list[Pocket]) -> list[Pocket]:
+    """Pockets whose side walls are no deeper than POCKET_DEEP."""
+    return [p for p in found if max(p.walls[:2]) <= POCKET_DEEP]
 
 
 def choose_pocket(found: list[Pocket], prior_y: float, lamps=()) -> Pocket | None:
@@ -990,7 +991,7 @@ def plan_end(
     face_down = max(FACE_DOWN, -host.tilt)
     pocket = None
     if end in POCKET_ENDS:
-        pocket = choose_pocket(usable_pockets(pockets(dm, ground, face_down), base), prior_y, lamps)
+        pocket = choose_pocket(usable_pockets(pockets(dm, ground, face_down)), prior_y, lamps)
     found = window_search(dm, base, prior_y, ground, face_down) if pocket is None else None
     if pocket is not None:
         source, b = "pocket", pocket.tilt

@@ -213,7 +213,7 @@ def forza_plates(body, place, ground, hp) -> dict:
         mesh = pm._forza_mesh(body, end, place, z_mid)
         kind, centre, size = "none", None, None
         base = hplate.size if hplate is not None and 0.15 < hplate.size[0] <= 0.45 else pm.DEFAULT_SIZE
-        usable = pm.usable_pockets(found, base)
+        usable = pm.usable_pockets(found)
         if lamps and end in pm.POCKET_ENDS:
             prior = pm.lamp_height(lamps, hplate.size[1] if hplate is not None else base[1])
         if mesh is not None:
