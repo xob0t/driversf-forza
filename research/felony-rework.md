@@ -236,7 +236,7 @@ The VM harness can't lay a mod over the guest's game folder yet. The
 `-Override` replaces only existing files, plus root files, and `-LuaFiles`
 can't create `felonyrework\`. PR #319's `-ProfileFiles` writes into the
 guest's Documents profile, not the game folder, so it doesn't help either.
-The run needs an overlay option (issue filed, see the PR). With one, the
+The run needs an overlay option (#400). With one, the
 run would be:
 
 ```powershell
