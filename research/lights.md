@@ -2697,7 +2697,31 @@ Change (`lenses.rear_lamp_glow`, `Texturing._glow_parts`):
 - FM4 cars: the mask is the texel's linear red (`fm4_order`); the texels only no-glow techniques
   sample (reflectors, head lamp bowls) are 0, as Forza never glows them.
 
-{{ROSTER_G}}
+Roster (offline, master's code, 573 cars; `out/survey_all.py` in this PR's worktree: the lamp plan on
+each car's host-picks host, the converter's straight-behind view; 570 cars have ranked rear lamps,
+1,327 lamps over 40 visible samples):
+
+- Ranked (master), every lamp's alpha CV was 1.36 (median; the same for every lamp), its mask's
+  0.61. 494 lamps on 316 cars have an even mask (CV under 0.5), and on 443 of them the ranking made
+  the alpha spread more than the mask's twofold or more (CV over 1). With this change each lamp's
+  alpha CV is its mask's.
+- The floor raised more than 10% of the visible samples on 519 cars, white texels on 135 (the AST DBS
+  98%, both Peugeot 908s, the Astra V8, the Mazdaspeed3, the SLR Stirling Moss). It put the visible
+  tail alpha p95 over vanilla's per-vehicle p90 (210) on 45 cars; ranked without it, 3 (the MC12s,
+  the CTS-V coupe, at 214).
+
+Visible rear alpha per car, the mean (the summed glow per sample) and the p95 against vanilla's
+per-vehicle tail p95 (p10 / median / p90 52 / 106 / 210):
+
+| | mean, median over cars | p95 median | cars over 210 | cars under 52 |
+| --- | ---: | ---: | ---: | ---: |
+| master (ranked, floor) | 47.6 (p90 70) | 153 | 45 | 0 |
+| this change (linear, no floor) | 40.1 (every lamp) | 87 | 22 | 27 |
+
+The 27 under 52 are even lamps at the same mean, lit evenly (the JT1 49, the TT RS 50, the Veyron SS
+50). The 22 over 210 are lamps whose mask is mostly 0 (FM4 reflectors and grey surround), so the few
+lit texels carry the lamp's mean and some reach the 255 cap: the VW Golf GTI 06, both SC430 race cars,
+the Corsa VXR, the Z4 M Coupe (open).
 
 In game (VM 1, by day, `-Views 'rear,nose' -ShotSeconds 3`, vanilla 130 first; master
 `vm1-20261031-054752`, the four #403/#404/#405 changes together `vm1-20261031-055429`):
