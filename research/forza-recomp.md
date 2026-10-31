@@ -294,7 +294,7 @@ are from `forza_recomp.py draws`.
   `Tire/Normal.xml`'s `<technique>_V2`, overlaid by the archive's `<technique>_V2`. Of FM4 disc
   1's 30 archives with their own settings, 11 have `_V2` sections. FH1's `Tire/Normal.xml` has
   the same `_V2` sections, and 29 of its 37 such archives set `_V2` sections. That FH1 races draw
-  `_V2` too is inferred, not run. Issue: see the PR.
+  `_V2` too is inferred, not run. Comment on #424.
 
 **Not answered here:**
 
@@ -358,11 +358,11 @@ A round's check costs a few minutes and no VM. Next uses:
 - `--fh1_debug_dump_range` for vertex data where the carbin parsing is in doubt.
 
 **As a reference renderer:** add showroom and grid captures to `render_compare`'s sheet as a
-third column, "Forza, in game", for the cars of a check. Score nothing against it; use it to
+third column, "Forza, in game", for the cars of a check (#434). Score nothing against it; use it to
 review the reconstructed reference's technique models.
 
-**FH1:** see 1.1. The useful first step is the `.rdata` test of our disc. It needs the Visual
-Studio decision.
+**FH1:** see 1.1 and #433. The useful first step is the `.rdata` test of our disc. It needs
+the Visual Studio decision.
 
 ## Open
 
