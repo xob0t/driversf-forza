@@ -140,9 +140,9 @@ def section_rule(name: str) -> tuple[str, tuple]:
     roles) the panel most of its triangles are nearest to; ("nearest", roles)
     per triangle."""
     # lexanF is a windscreen like glassF. Read as a body section, the JT1's was
-    # split between the chassis and the front structure, whose crush tore a
-    # triangle out of it (#411); vanilla windscreens are on the glass record,
-    # which doesn't crush.
+    # split between the chassis and the front structure: that band crushed and
+    # cracked on its own, a triangle of glass missing after a front hit (#411).
+    # Vanilla windscreens are on the glass record, which doesn't crush.
     n = glass_name(name)
     plate = re.fullmatch(r"(.*)_plate_(front|rear)", n)
     if plate:

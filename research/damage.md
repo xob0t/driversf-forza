@@ -1,6 +1,6 @@
 # Damage: panels, crush morph, hinges
 
-Updated: 2026-10-30
+Updated: 2026-10-31
 
 How a vanilla DSF car's body damages, from static analysis of the vanilla
 archive and the shared vehicle shaders, and what `src/dsfforza/convert/damage/` builds
@@ -1383,6 +1383,76 @@ four look the same before and after (observe-06/07, -13/14, -19/20,
 `-DamageSide` (runs `vm1-20261030-023246`, `-023624`) mostly crush the
 near front corner and showed no scratch difference at that distance. No
 crash in any of the runs.
+
+## Lexan glazing (issue #411, 2026-10-31)
+
+User report (full-roster build of master 5fef56e): the Joss JT1 10
+(JOS_JT1_10, FM4, host 162 DriftCar 01) showed a triangular cut-out in its
+windscreen after a front hit. Scratch: `out/i411/` (`survey.py`, `summ2.py`,
+`hosts.py`, `glasscrush.py`, `glassrender.py`).
+
+### Cause (confirmed-static)
+
+Forza's race cars name their polycarbonate glazing `lexan<suffix>` with the
+suffixes of `glass<suffix>`: in the master build, lexanF on 76 cars, lexanR 44,
+lexanLF/RF 69/70, lexanLR/RR 42/41, lexanLM/RM 13, lexanLHL/RHL 65,
+lexanLTL/RTL 39, lexanT 1, on glass materials (the survey reads their
+subsections' techniques). `section_rule` knew only the `glass*` names, so
+every lexan section went per triangle to the nearest body panel ("nearest").
+The JT1's windscreen (lexanF, LOD 1) went 30 triangles to the chassis and 20 to
+the front structure (0, 13). Its exterior entry has 78 glass triangles on the
+front structure: the lower band of the windscreen, with a triangular tooth of
+chassis glass reaching into it (`glassrender.py`, top view). Two things follow
+for those triangles, neither of them vanilla:
+
+- They crush with the front structure, by up to 0.19 m, where the host's glass
+  record (0, 5) moves 1 mm. The seam with the chassis glass is pinned
+  (`_pin_map`), so the windscreen bends there rather than opening.
+- Glass draws the crack state of the record its vertices are bound to
+  (`g_v4PerPanelData[s9 byte 1].y`, "Hypotheses" 3 above). A front hit
+  damages the front structure before the chassis, so that band cracks and
+  shatters on its own. In state 3 the glass texture is mostly holes
+  (`glass.py`), which leaves a cut-out with the triangles' straight edges
+  while the chassis glass next to it stays clear.
+
+Host 162's damage records are not the cause. Its glass record (rec 21, pair
+0, 5, 53 vertices) is the windscreen (box z -0.17 to 0.79) and crushes
+0.001 m. The JT1 had no vertices on it.
+
+### Fix (`damage.host.glass_name`, `section_rule`)
+
+`section_rule` reads `lexan<suffix>` as `glass<suffix>`, so lexan sections
+take the glass rules: lexanF the host's front glass record, lexanR the rear
+one (or the hatch, boot lid or chassis by majority where the host has none),
+lexanLHL/RHL their side's headlight record, lexanLTL/RTL the tail-lamp
+majority vote, side windows their door or the chassis. The interior entry's
+glass binding (`forza2dsf.interior_glass_skin`) uses the same names, so the
+cockpit windscreen shows the exterior windscreen's crack state.
+
+### Survey (master build of 2026-10-31, 566 cars with a Forza cache; `out/i411/survey-master.jsonl`)
+
+Before: 430 lexan sections on 87 cars went to the nearest body panel. lexanF
+was split over two panels on 29 cars (the JT1, Speed 8, Apollo S, R390 GT1,
+S7, F430 GTs, Viper GTS-Rs, Commodores, SC430s, ...) and on 4 more it lay
+wholly on the front structure. lexanLHL/RHL were on the front structure on
+52 cars, and on a wing on 5. After: no lexan section is read as a body
+section. 75 of the 76 lexanF cars have a host with a front glass record. The
+other one (SHE_CobraDaytona_65, host 248, which has no front glass record)
+takes the majority of bonnet, front structure and chassis, as glassF would.
+Only 2 of the 44 lexanR cars have a host with a rear glass record; the rest
+go whole to the hatch, boot lid or chassis.
+
+Built before and after (`out/i411/before`, `out/i411/after`; IDs 1 JT1,
+2 Speed 8, 3 Apollo S), the windscreen glass's crush at fDamage 1:
+
+| Car (host) | Before: windscreen on, max crush | After |
+| --- | --- | --- |
+| JT1 (162) | chassis and front structure (0, 13), 0.19 m | glass (0, 5), 0.001 m |
+| Speed 8 (226) | chassis and front structure (0, 11), 0.29 m | glass (0, 3), 0.001 m |
+| Apollo S (163) | chassis and front structure (0, 13), 0.32 m | glass (0, 5), 0.001 m |
+
+The lamp covers now crush with their headlight record (0.16 to 0.32 m), as the
+lamps under them do.
 
 ## Risks and open questions
 
