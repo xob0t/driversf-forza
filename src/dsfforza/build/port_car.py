@@ -91,6 +91,7 @@ from dsfforza.convert import (
     dsf_materials,
     forza2dsf,
 )
+from dsfforza.convert import forza_materials as fm
 from dsfforza.formats import stfs
 from dsfforza.formats.chnk import ENTRY_LIMIT, entry_size, layout, read_chunk, write_chunk
 from dsfforza.formats.forzazip import ForzaZip
@@ -387,8 +388,11 @@ def extract_car(source: Source, media: str, cache: Path, log=print) -> Path:
 # The archive's carbin ({name}.carbin) is cached as wheel.carbin (the main carbin has
 # the car's name too): forza2dsf.load_car takes its wheel when the main carbin has none.
 # wheel2.xds, the middle blur picture, is the wheel's speed-blur disc (fm.WHEEL_BLUR).
-WHEEL_FILES = ("wheel.xds", "{name}.carbin", "wheel2.xds")
-WHEEL_RENAME = {"{name}.carbin": forza2dsf.WHEEL_CARBIN}
+# The wheel's shader settings (forza_materials.wheel_shader_settings: Forza reads the wheel
+# archive's own ShaderSettings.xml for a wheel, not the car's; #424), under a name of its own
+# beside the car's ShaderSettings.xml.
+WHEEL_FILES = ("wheel.xds", "{name}.carbin", "wheel2.xds", "ShaderSettings.xml")
+WHEEL_RENAME = {"{name}.carbin": forza2dsf.WHEEL_CARBIN, "ShaderSettings.xml": fm.WHEEL_SETTINGS_FILE}
 WHEEL_STAMP = "wheel_source.json"
 
 

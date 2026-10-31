@@ -251,40 +251,47 @@ class WheelAtlas(unittest.TestCase):
         self.assertEqual(key, (fm.WHEEL, 0))
         rgba = t.render()
         x, y = (int(c * n) for c, n in zip(uvs[2], t.size))
-        # times the rim technique's default PaintScale, 0.75 (fm.WHEEL_PAINT_SCALE)
-        self.assertEqual(tuple(rgba[(y * t.size[0] + x) * 4 : (y * t.size[0] + x) * 4 + 3]), (150, 45, 8))
+        # times the rim's race PaintScale, Tire/Normal.xml's rim_V2 0.65 (fm.WHEEL_PAINT_SCALE)
+        self.assertEqual(tuple(rgba[(y * t.size[0] + x) * 4 : (y * t.size[0] + x) * 4 + 3]), (130, 39, 6))
 
     def test_paint_scale_per_technique(self):
-        """Forza's rim shaders scale the texel by PaintScale: rim 0.75, inner_rim 1;
-        texels no triangle covers take the scale covering the most texels (the rim's)."""
+        """Forza's rim shaders scale the texel by PaintScale, a race's from Tire/Normal.xml's
+        `_V2` sections: rim 0.65, inner_rim 0.4 (#424); texels no triangle covers take the
+        scale covering the most texels (the rim's)."""
         rim = _Sub("rim", [(0, 1, 2), (0, 2, 3)], uv_transform=(0.0, 0.5, 0.0, 0.5))  # u, v 0.05..0.45
         inner = _Sub("inner_rim", [(0, 1, 2)], uv_transform=(0.5, 0.5, 0.5, 0.5))  # u, v 0.55..0.95
         wheel = _Section("wheel", self.wheel.vertices, [rim, inner, self.tire])
         t = dm.Texturing(Path(__file__).parent)
         t.plan([], {1}, wheels=([wheel], {1}))
-        self.assertEqual(t.wheel_paint, {"rim": 0.75, "inner_rim": 1.0})
+        self.assertEqual(t.wheel_paint, {"rim": 0.65, "inner_rim": 0.4})
         _, _, rgba = t.atlases.get(fm.WHEEL)
 
         def texel(x, y):
             return tuple(rgba[(y * 32 + x) * 4 : (y * 32 + x) * 4 + 3])
 
-        self.assertEqual(texel(8, 8), (150, 45, 8))  # rim
-        self.assertEqual(texel(28, 20), (200, 60, 10))  # inner_rim (its lower right triangle)
-        self.assertEqual(texel(31, 0), (150, 45, 8))  # no triangle: the rim's scale
+        self.assertEqual(texel(8, 8), (130, 39, 6))  # rim
+        self.assertEqual(texel(28, 20), (80, 24, 4))  # inner_rim (its lower right triangle)
+        self.assertEqual(texel(31, 0), (130, 39, 6))  # no triangle: the rim's scale
 
-    def test_paint_scale_from_the_car(self):
-        """A car's ShaderSettings.xml overrides the default (FOR_FocusRS500_10's near-black
-        rim texels at 7.5); techniques without the parameter (wheel_emblem) stay at 1."""
+    def test_paint_scale_from_the_wheel_archive(self):
+        """A wheel takes its settings from Tire/Normal.xml and the wheel archive's own
+        ShaderSettings.xml, its race (`_V2`) sections (#424): the archive's rim_V2 0.5 is
+        used, its plain rim (a showroom's) and the car's own ShaderSettings.xml (the Focus
+        RS500's rim 7.5) are not; techniques without the parameter (wheel_emblem) stay at 1."""
         import tempfile
 
-        xml = '<ShaderSettings>\n  <rim>\n    <PaintScale value="0.500000" />\n'
-        xml += '    <SpecularColor r="1" g="1" b="1" a="0"/>\n  </rim>\n</ShaderSettings>\n'
+        wheel_xml = '<ShaderSettings>\n  <rim>\n    <PaintScale value="2.0" />\n  </rim>\n'
+        wheel_xml += '  <rim_V2>\n    <PaintScale value="0.500000" />\n'
+        wheel_xml += '    <SpecularColor r="1" g="1" b="1" a="0"/>\n  </rim_V2>\n</ShaderSettings>\n'
+        car_xml = '<ShaderSettings>\n  <rim>\n    <PaintScale value="7.5" />\n  </rim>\n</ShaderSettings>\n'
         with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "ShaderSettings.xml").write_text(xml)
-            settings = fm.shader_settings(Path(tmp))
-            self.assertEqual(settings, {"rim": {"PaintScale": 0.5, "SpecularColor": 1.0}})
+            (Path(tmp) / "ShaderSettings.xml").write_text(car_xml)
+            (Path(tmp) / fm.WHEEL_SETTINGS_FILE).write_text(wheel_xml)
+            settings = fm.wheel_shader_settings(Path(tmp))
+            race = {"PaintScale": 0.5, "SpecularColor": 1.0}
+            self.assertEqual(settings, {"rim": race, "rim_v2": race})
             self.assertEqual(fm.wheel_paint_scale("rim", settings), 0.5)
-            self.assertEqual(fm.wheel_paint_scale("inner_rim", settings), 1.0)
+            self.assertEqual(fm.wheel_paint_scale("inner_rim", settings), 0.4)
             self.assertEqual(fm.wheel_paint_scale("wheel_emblem", {"wheel_emblem": {"PaintScale": 3.0}}), 1.0)
             t = dm.Texturing(Path(tmp))
             t.plan([], {1}, wheels=([self.wheel], {1}))

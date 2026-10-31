@@ -1413,7 +1413,7 @@ class Texturing:
             w, h, rgba = self.atlases.get(fm.WHEEL_BLUR)
             self.weights.setdefault(fm.WHEEL_BLUR, min(1.0, WHEEL_BLUR_TEXELS / max(w, h)))
             try:
-                scale = fm.wheel_paint_scale("rim", fm.shader_settings(self.car_dir))
+                scale = fm.wheel_paint_scale("rim", fm.wheel_shader_settings(self.car_dir))
             except OSError:
                 scale = fm.WHEEL_PAINT_SCALE["rim"]
             rgba[:], self.wheel_blur_tint = wheel_blur_texels(rgba, scale)
@@ -1540,7 +1540,8 @@ class Texturing:
         """Pick a gloss material (GlossMaterial) for every subsection drawn with the
         Chassis material from nodamage (trims, badges) or the wheel texture (rims) whose
         Forza technique has a specular or a reflection (fm.gloss_params with the car's
-        ShaderSettings): Forza's terms on the green its texels average as drawn. At most
+        ShaderSettings; a wheel's with its own chain, fm.wheel_shader_settings): Forza's terms
+        on the green its texels average as drawn. At most
         gloss_max distinct ones (merge_gloss). With a classifier (the cockpit), only where
         gloss_filter allows; the green is then taken after lift and tone, as drawn."""
         if not self.gloss_enabled or self.atlases is None:
@@ -1551,8 +1552,9 @@ class Texturing:
 
         try:
             settings = fm.shader_settings(self.car_dir)
+            wheel_settings = fm.wheel_shader_settings(self.car_dir)  # a wheel's own chain (#424)
         except OSError:
-            settings = {}
+            settings = wheel_settings = {}
         picks: dict[int, tuple[GlossMaterial, str, int]] = {}  # id(sub) -> (material, technique, triangles)
         images: dict[str, np.ndarray] = {}
         for section, section_lods in work:
@@ -1565,7 +1567,7 @@ class Texturing:
                 if fm.base_family(m.family) not in (fm.NODAMAGE, fm.WHEEL):
                     continue
                 technique = fm.technique_source(m.technique)
-                g = fm.gloss_params(settings, technique)
+                g = fm.gloss_params(wheel_settings if fm.base_family(m.family) == fm.WHEEL else settings, technique)
                 if g is None:
                     continue
                 floor = GLOSS_GREEN_FLOOR
@@ -1614,7 +1616,7 @@ class Texturing:
         most texels. Without it a light grey rim texture (the Lotus Carlton's 182,
         the median rim 156) drew near white (research/wheels.md, "Rim
         brightness"). Returns {technique: scale} of the wheel's techniques."""
-        settings = fm.shader_settings(self.car_dir)
+        settings = fm.wheel_shader_settings(self.car_dir)
         w, h, rgba = self.atlases.get(fm.WHEEL)
         scales: dict[str, float] = {}
         triangles: dict[float, list] = {}

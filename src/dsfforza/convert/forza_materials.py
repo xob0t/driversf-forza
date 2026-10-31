@@ -435,22 +435,54 @@ def classify_wheel(name: str) -> tuple[str, str | None]:
 
 
 # Rim shaders draw the wheel texture's colour times the technique's PaintScale
-# (research/wheels.md, "Rim brightness"). Defaults from the shared
-# media/cars/Shared.zip ShaderSettings/Normal.xml, the same on FH1 and FM4;
-# the techniques listed are the wheel ones that have the parameter (chrome_rim,
-# wheel_emblem and wheel_black have none). A car's ShaderSettings.xml
-# overrides them: FOR_FocusRS500_10's near-black rim texels (about 4) at 7.5,
-# BEN_CONTINENTALGT_11's near-white ones (213) at 0.5.
+# (research/wheels.md, "Rim brightness"). Forza takes a wheel's shader settings from
+# media/cars/Shared.zip ShaderSettings/Tire/Normal.xml (FH1 and FM4 alike) and the wheel
+# archive's own ShaderSettings.xml (media/wheels/<car>, WHEEL_SETTINGS_FILE), never the car's
+# ShaderSettings.xml or the shared Normal.xml (FH1 0x82543558, FM4 0x82407848; research/
+# forza-lamps-blur-re.md section 2.5, #424). Races draw the `_V2` techniques (rim_V2,
+# inner_rim_V2, blur_rim_V2...: the uploaded constants in FM4 and FH1 race frames, research/
+# forza-recomp.md section 4), so a technique's values are Tire/Normal.xml's `<technique>_V2`
+# section (its plain one where it has no `_V2`: outer_rim, rim_simple, rim_bump_metal), over
+# which the archive's same section lies (wheel_shader_settings). The defaults below are those
+# race sections of Tire/Normal.xml: rim 0.65 (Normal.xml has 0.75), inner_rim 0.4 (1.0),
+# outer_rim 0, rim_simple and rim_bump_metal 0.5; wheel_emblem and chrome_rim have none.
 WHEEL_PAINT_SCALE = {
-    "rim": 0.75,
+    "rim": 0.65,
+    "rim_v2": 0.65,
     "rim_simple": 0.5,
-    "rim_V2": 1.0,
-    "rim_bump_metal": 1.0,
-    "inner_rim": 1.0,
-    "inner_rim_V2": 1.0,
-    "outer_rim": 1.0,
+    "rim_bump_metal": 0.5,
+    "inner_rim": 0.4,
+    "inner_rim_v2": 0.4,
+    "outer_rim": 0.0,
+    "blur_rim": 0.65,
+    "blur_rim_v2": 0.65,
+    "blur_lip": 0.65,
+    "blur_lip_v2": 0.65,
     "caliper": 1.0,
 }
+# The wheel techniques Tire/Normal.xml draws races with through their `_V2` section.
+WHEEL_RACE_V2 = frozenset(
+    {"rim", "inner_rim", "chrome_rim", "wheel_emblem", "blur_rim", "blur_lip", "chrome_blur_rim", "chrome_blur_lip"}
+)
+WHEEL_SETTINGS_FILE = "wheel_shadersettings.xml"  # port_car.extract_wheel's copy of the archive's ShaderSettings.xml
+
+
+def wheel_shader_settings(car_dir: Path) -> dict[str, dict[str, float]]:
+    """The wheel archive's own shader settings as a race draws them: per wheel technique
+    (lower case, plain and `_v2` names alike) its `_v2` section where Tire/Normal.xml has one
+    (WHEEL_RACE_V2), else the plain one; {} without the archive's file. The defaults
+    (WHEEL_PAINT_SCALE, GLOSS_DEFAULTS, CHROME_GLOSS_DEFAULTS) are Tire/Normal.xml's race
+    sections: pass this, not the car's shader_settings, for wheel techniques."""
+    path = next((q for q in Path(car_dir).iterdir() if q.name.lower() == WHEEL_SETTINGS_FILE), None)
+    if path is None:
+        return {}
+    own = parse_shader_settings(path.read_text(encoding="utf-8", errors="replace"))
+    out = {}
+    for name in {n[:-3] if n.endswith("_v2") else n for n in own}:
+        race = f"{name}_v2" if name in WHEEL_RACE_V2 else name
+        if race in own:
+            out[name] = out[race] = own[race]
+    return out
 
 
 def shader_settings(car_dir: Path) -> dict[str, dict[str, float]]:
@@ -504,8 +536,9 @@ def parse_shader_settings(text: str) -> dict[str, dict[str, float]]:
 
 
 def wheel_paint_scale(technique: str, settings: dict[str, dict[str, float]]) -> float:
-    """The PaintScale Forza applies to a wheel technique's texel colour: the
-    car's own setting, else WHEEL_PAINT_SCALE, else 1 (the technique has none)."""
+    """The PaintScale Forza applies to a wheel technique's texel colour: the wheel
+    archive's race setting (wheel_shader_settings), else Tire/Normal.xml's
+    (WHEEL_PAINT_SCALE), else 1 (the technique has none)."""
     chrome = chrome_diffuse_scale(settings, technique)
     if chrome is not None:  # chrome_rim: the texel times ChromeDiffuseScale under its reflection
         return chrome
@@ -600,7 +633,7 @@ def texture_path(car_dir: Path, family: str, lod0: bool = False, damaged: bool =
 # fxobj), by the parameters the technique has in the shared Shared.zip
 # ShaderSettings/Normal.xml (FH1 and FM4 alike for these):
 # - with PaintScale and no PaintColor (rim, badge, smooth_metal, rubber...): the texel
-#   times PaintScale (WHEEL_PAINT_SCALE for the wheel ones);
+#   times PaintScale (WHEEL_PAINT_SCALE for the wheel ones, Tire/Normal.xml's);
 # - with PaintColor (PAINT_TECHNIQUES: misc, plastic2, matte_colors, weatherstrip...):
 #   the paint shaders, texel x PristinePaintScale + paint x PaintScale where the
 #   texel's alpha is low. PaintScale there scales the paint: the Cougar Eliminator's
@@ -708,23 +741,27 @@ GLOSS_DEFAULTS = {
     "badge2": (4.0, 128.0, 1.0, 1.0, 1.65),
     "brake_badge": (4.0, 128.0, 0.0, 1.0, 1.65),
     "emblem": (0.0, 75.0, 1.0, 0.8, 1.65),
-    # wheel techniques (classify_wheel)
-    "rim": (0.0, 1.5, 1.0, 1.5, 1.65),
-    "rim_v2": (4.0, 128.0, 1.0, 1.5, 1.65),
+    # wheel techniques (classify_wheel): Tire/Normal.xml's race sections (WHEEL_RACE_V2), not
+    # Normal.xml's; values it doesn't set (FresnelIndex on inner_rim, wheel_emblem and
+    # outer_rim, FresnelScalar on wheel_emblem and rim_simple, CubeScale on rim_simple and
+    # rim_bump_metal2) keep Normal.xml's
+    "rim": (5.5, 6.5, 0.7, 0.2, 2.05),
+    "rim_v2": (5.5, 6.5, 0.7, 0.2, 2.05),
     "rim_bump_metal": (4.0, 128.0, 1.0, 1.0, 1.65),
     "rim_bump_metal2": (4.0, 128.0, 1.0, 1.0, 1.65),
     "rim_simple": (4.0, 9.0, 0.0, 1.0, 1.65),
-    "inner_rim": (4.0, 128.0, 0.0, 1.5, 1.65),
-    "inner_rim_v2": (4.0, 128.0, 0.0, 1.5, 1.65),
-    "outer_rim": (4.0, 128.0, 1.0, 1.5, 1.65),
+    "inner_rim": (0.0, 128.0, 0.0, 1.0, 1.65),
+    "inner_rim_v2": (0.0, 128.0, 0.0, 1.0, 1.65),
+    "outer_rim": (0.0, 128.0, 0.0, 1.0, 1.65),
     "wheel_emblem": (4.0, 128.0, 1.0, 1.0, 1.65),
     "wheel_emblem_v2": (4.0, 128.0, 1.0, 1.0, 1.65),
 }
 # Chrome shaders: no specular, the cube map times CubeScale at every angle, the texel
-# times ChromeDiffuseScale. technique: (CubeScale, ChromeDiffuseScale)
+# times ChromeDiffuseScale. technique: (CubeScale, ChromeDiffuseScale): Tire/Normal.xml's
+# chrome_rim_V2 (Normal.xml's chrome_rim has 1.0 and 0.5).
 CHROME_GLOSS_DEFAULTS = {
-    "chrome_rim": (1.0, 0.5),
-    "chrome_rim_v2": (1.0, 0.5),
+    "chrome_rim": (0.75, 0.1),
+    "chrome_rim_v2": (0.75, 0.1),
 }
 # SpecularColor (the mean of its RGB) of the techniques Normal.xml doesn't give white;
 # the shaders multiply the specular by it. Ignored, the large black trims
@@ -739,7 +776,10 @@ SPECULAR_COLOUR_DEFAULTS = {
     "rubber_trim_2": 0.5,
     "frame": 0.04,
     "rotor": 0.917,
-    "rim": 0.0,
+    "rim": 1.0,  # Tire/Normal.xml's rim_V2 (Normal.xml's rim: 0)
+    "inner_rim": 0.78,
+    "inner_rim_v2": 0.78,
+    "outer_rim": 0.78,
 }
 
 
