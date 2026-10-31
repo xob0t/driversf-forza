@@ -520,3 +520,21 @@ def test_a_lamp_on_a_day_lit_head_lamps_entry_glows_by_day():
     head = next(l for l in plan.lamps.values() if l.function == lights.HEAD and l.side == "L")
     assert lamp.function == lights.POSITION and lamp.light_id == head.light_id, (lamp.function, lamp.light_id)
     assert head.type == lights.HEAD_DAYTIME
+
+
+def test_centre_piece_of_a_side_subsection_is_a_centre_lamp():
+    # The Viper GTS-R's rear emblem is drawn with the `body` section's tail_light, the subsection
+    # of the side tails too (#405): as a piece within CENTRE_X of the centre line it is a centre
+    # lamp, the high stop lamp above the side tails, not a left and a right tail cluster.
+    pts, indices = [], []
+    for x0, y0, size in ((0.5, 0.4, 0.2), (-0.7, 0.4, 0.2), (-0.03, 0.62, 0.06)):
+        n = len(pts)
+        pts += [(x0, y0, -2.0), (x0 + size, y0, -2.0), (x0, y0 + size, -2.0), (x0 + size, y0 + size, -2.0)]
+        indices += [n, n + 1, n + 2, n + 2, n + 1, n + 3]
+    verts = [carbin.Vertex(p, (0, 0), (0, 0), (0.0, 0.0, -1.0)) for p in pts]
+    sub = carbin.SubSection("tail_light", 1, 4, (0.0, 1.0, 0.0, 1.0) * 2, indices)
+    body = carbin.Section("body", (0, 0, 0), (0, 0, 0), (0, 0, 0), lod_vertices=verts, subsections=[sub])
+    plan = lights.LampPlan.build([body], _Place(), 0.0)
+    got = [plan.tri_lamp.get((id(sub), k)) for k in range(6)]
+    assert got[0][:2] == (lights.TAIL, "L") and got[2][:2] == (lights.TAIL, "R"), got
+    assert got[4][:2] == got[5][:2] == (lights.BRAKE, "C"), got
