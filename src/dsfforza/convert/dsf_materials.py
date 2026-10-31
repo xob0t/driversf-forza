@@ -2318,21 +2318,11 @@ class Texturing:
         if view is not None:
             uvs, ids, dark = self.rear_lamps
             order = fm4_order(colour, uvs, dark) if fm4_car(self.car_dir) else None
+            # No floor at the converted alpha (#290's "the ranking only raises"): that alpha is the
+            # per-hue "matched" curves' rank, a fit onto vanilla's lamps, and the white curve on a
+            # clear tail glass's white texels (the Ford Focus RS500's lights_gls_ tails: 79% of their
+            # visible samples raised, alpha p95 150 to 251, #404).
             rear = lenses.rear_lamp_glow(colour, view, uvs, ids, order=order)
-            if rear is not None:
-                # Never dimmer than the converted alpha: the tails that already glowed at vanilla's
-                # level (the GTI VR6's, M3 E30's, Evo VI's) keep it; the ranking only raises.
-                # Each distinct texel converted once.
-                ys, xs = np.nonzero(np.isfinite(rear))
-                px = colour[ys, xs].astype(np.int64)
-                packed = px[:, 0] << 24 | px[:, 1] << 16 | px[:, 2] << 8 | px[:, 3]
-                texels, inverse = np.unique(packed, return_inverse=True)
-                alpha = [
-                    self._convert_texel(fm.LIGHTS, k >> 24, k >> 16 & 255, k >> 8 & 255, k & 255)[3]
-                    for k in texels.tolist()
-                ]
-                conv = np.array(alpha, dtype=np.float64)[inverse.reshape(-1)]
-                rear[ys, xs] = np.maximum(rear[ys, xs], conv)
         self._glow_kept = (key, front, rear)
         return front, rear
 

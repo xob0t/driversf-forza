@@ -613,13 +613,6 @@ def test_tiling_streak_laid_on_one_column():
     assert dm.unwrap_tiles(strip, sub, m).collapse == (0, 0.5)
 
 
-if __name__ == "__main__":
-    for name, test in list(globals().items()):
-        if name.startswith("test_"):
-            test()
-            print(f"{name}: ok")
-
-
 def test_plain_glass_over_a_lamp_stays_window_glass():
     # Plain glass over a lamp (the Audi R8 race car's lexanLHL, the Mustang GT 05's head lamp
     # glass) is drawn as DSF window glass: Forza's one layer keeps 26% of the lamp head-on, DSF's
@@ -713,3 +706,35 @@ def test_fm4_order_puts_no_glow_techniques_last():
     order = dm.fm4_order(colour, uvs, np.array([False, False, True, True]))
     assert order[:, 5].min() > 0 and (order[:, 25] == 0).all()
     assert dm.fm4_car(Path("out/cache/fm4/AST_V12Vantage_10")) and not dm.fm4_car(Path("out/cache/fh1/X"))
+
+
+def test_rear_glow_has_no_floor_at_the_converted_alpha():
+    # #404: the rear glow was never below the texel's converted alpha (#290), the per-hue "matched"
+    # curves' rank: white tail glass texels (the Focus RS500's) took the white curve's alpha, over
+    # vanilla's tail range. The planned rear lamp's glow is the ranking's own.
+    lamp = _quad("glassLTL", "lights_gls_taillight2S", 2.0, 0.5, 1.0)
+    t = dm.Texturing(Path())
+    t.atlases = _ClearAtlases(lamp=(240, 235, 235, 255))  # white, alpha 255: a high converted alpha
+    sub = lamp.subsections[0]
+    uvs = []
+    for tri in sub.triangles():
+        pts = [lamp.lod_vertices[i].position for i in tri]
+        uv = [lamp.lod_vertices[i].uv0 for i in tri]
+        t.lamp_tris.append((1, pts, uv, (lamp.name, sub.material)))
+        uvs.append(uv)
+    t.rear_lamps = (np.array(uvs, float), np.zeros(len(uvs), int), np.zeros(len(uvs), bool))
+    _, rear = t._glow_parts()
+    w, h, rgba = t.atlases.get(fm.LIGHTS)
+    colour = np.frombuffer(bytes(rgba), np.uint8).reshape(h, w, 4)
+    view = t._lamp_view(front=False, grid=True, rear_half=True)
+    ranked = lenses.rear_lamp_glow(colour, view, t.rear_lamps[0], t.rear_lamps[1])
+    lit = np.isfinite(ranked)
+    assert lit.any() and np.array_equal(rear[lit], ranked[lit])
+    assert rear[lit].max() < 100  # the white curve puts these texels at 255
+
+
+if __name__ == "__main__":
+    for name, test in list(globals().items()):
+        if name.startswith("test_"):
+            test()
+            print(f"{name}: ok")
