@@ -19,6 +19,8 @@ visible or minimized mode).
 
     uv run python tools/re/forza_recomp.py discs                     our ISOs against the recomps' lists
     uv run python tools/re/forza_recomp.py extract                   FM4 disc 1 and the disc 2 packages
+    uv run python tools/re/forza_recomp.py extract-fh1               the FH1 disc for Pinyon Shift's build
+    uv run --with pycryptodome --with xxhash python tools/re/forza_recomp.py image   our code against the supported
     uv run --with xxhash python tools/re/forza_recomp.py hashes      shader hash -> technique, pass
     uv run --with xxhash python tools/re/forza_recomp.py run ROUTE RUN [-- GAME_ARGS]
     uv run --with xxhash python tools/re/forza_recomp.py draws LOG [--technique RE] [--json OUT]
@@ -68,6 +70,12 @@ def xex_identity(data: bytes) -> str:
     return f"title {title:08X} media {media:08X} version {version:#x} disc {disc}/{discs}"
 
 
+def title_id(data: bytes) -> str:
+    n = struct.unpack_from(">I", data, 20)[0]
+    headers = dict(struct.unpack_from(">II", data, 24 + 8 * i) for i in range(n))
+    return f"{struct.unpack_from('>I', data, headers[EXECUTION_INFO] + 12)[0]:08X}"
+
+
 def discs() -> None:
     from dsfforza.formats.xiso import XIso
 
@@ -82,6 +90,152 @@ def discs() -> None:
             x.close()
         digest = hashlib.sha256(data).hexdigest().upper()
         print(f"{iso.name}: {xex_identity(data)}, default.xex {digest[:16]}: {SUPPORTED.get(digest, 'not supported')}")
+
+
+# The supported FH1 image (Pinyon Shift MS-2505), as its repo records it: site/findings/
+# executable.toml ("image extent and entry point", "section map", "function table and size
+# profile", "largest function") and config/rexglue/accepted-codegen-warnings.json (two bdz).
+FH1_SUPPORTED_IMAGE = {
+    "size_of_image": 0x18A3400,
+    "entry": 0x82A6FBC0,
+    "sections": {
+        ".rdata": 0x82000600,
+        ".pdata": 0x82366E00,
+        ".text": 0x823E0000,
+        ".data": 0x831F0000,
+        ".reloc": 0x83540200,
+    },
+    "section_count": 14,
+    "tls_size": 0x3069,
+    "functions": 57127,
+    "median_function": 120,
+    "functions_under_64": 7676,
+    "functions_over_4k": 122,
+    "largest": [(0x8241A370, 110012), (0x82BE1880, 30196)],
+}
+FH1_BDZ = [(0x82AD8138, 0x82AD836C), (0x82AD813C, 0x82AD836C)]
+# xenia-canary game-patches, patches/4D5309C9 - Forza Horizon.patch.toml and 4D530910 - Forza
+# Motorsport 4.patch.toml: the base default.xex module hash (media 2DC7007B, 4000D145 and
+# 2B7A1346 for FH1; disc 1 for FM4). Pinyon Shift's fh1-post-processing.toml names the same FH1 hash.
+XENIA_HASH = {"4D5309C9": 0xD48ABF1704CE5C4A, "4D530910": 0x06DEF37749E2CEAC}
+IMPORT_LIBRARIES = 0x000103FF  # XEX2 optional header
+XEX_SECTION_CODE = 1  # xenia xex2_info.h page descriptor info
+
+
+def xenia_module_hash(data: bytes, image: bytes) -> int:
+    """xenia's module hash (kernel/user_module.cc UserModule::CalculateHash): XXH3-64 over the
+    loaded image from the first to the last code page descriptor, the descriptor index times the
+    0x80000000 heap's 64 KB page; the import thunks rewritten first, as XexModule::
+    SetupLibraryImports does for kernel imports (sc 2; blr; nop; nop)."""
+    import xxhash
+
+    sec = struct.unpack_from(">I", data, 16)[0]
+    count = struct.unpack_from(">I", data, sec + 0x180)[0]
+    code = [
+        i for i in range(count) if struct.unpack_from(">I", data, sec + 0x184 + 24 * i)[0] & 0xF == XEX_SECTION_CODE
+    ]
+    start, end = code[0] * 0x10000, (code[-1] + 1) * 0x10000
+    img = bytearray(image) + bytes(max(0, end - len(image)))
+    n = struct.unpack_from(">I", data, 20)[0]
+    headers = dict(struct.unpack_from(">II", data, 24 + 8 * i) for i in range(n))
+    off = headers[IMPORT_LIBRARIES]
+    _size, str_size, libs = struct.unpack_from(">III", data, off)
+    p = off + 12 + str_size
+    for _ in range(libs):
+        lib_size = struct.unpack_from(">I", data, p)[0]
+        for k in range(struct.unpack_from(">H", data, p + 0x26)[0]):
+            rec = struct.unpack_from(">I", data, p + 0x28 + 4 * k)[0] - 0x82000000
+            if struct.unpack_from(">I", img, rec)[0] >> 24 == 1:  # a thunk record
+                struct.pack_into(">4I", img, rec, 0x44000042, 0x4E800020, 0x60000000, 0x60000000)
+        p += lib_size
+    return xxhash.xxh3_64_intdigest(bytes(img[start:end]))
+
+
+def image_facts(image: bytes) -> dict:
+    """The structural facts FH1_SUPPORTED_IMAGE lists, of a decrypted PE image."""
+    import statistics
+
+    import xex
+
+    pe = struct.unpack_from("<I", image, 0x3C)[0]
+    opt = pe + 24
+    secs = xex.sections(image)
+    pdata = next(s for s in secs if s[0] == ".pdata")
+    funcs = []
+    for k in range(pdata[2] // 8):
+        begin, info = struct.unpack_from(">II", image, pdata[1] + 8 * k)
+        if begin:
+            funcs.append((begin, ((info >> 8) & 0x3FFFFF) * 4))
+    sizes = [s for _, s in funcs]
+    return {
+        "size_of_image": struct.unpack_from("<I", image, opt + 56)[0],
+        "entry": struct.unpack_from("<I", image, opt + 16)[0] + struct.unpack_from("<I", image, opt + 28)[0],
+        "sections": {n: 0x82000000 + va for n, va, _, _ in secs if n in FH1_SUPPORTED_IMAGE["sections"]},
+        "section_count": len(secs),
+        "tls_size": next((vs for n, _, vs, _ in secs if n == ".tls"), None),
+        "functions": len(funcs),
+        "median_function": statistics.median(sizes),
+        "functions_under_64": sum(s < 64 for s in sizes),
+        "functions_over_4k": sum(s > 4096 for s in sizes),
+        "largest": sorted(funcs, key=lambda f: -f[1])[:2],
+    }
+
+
+def image_check() -> None:
+    """Each disc's default.xex: xenia's module hash against xenia's patch lists, and for FH1 the
+    structural facts of Pinyon Shift's supported image and its two bdz instructions."""
+    import xex
+
+    from dsfforza.formats.xiso import XIso
+
+    for iso in sorted((REPO / "assets").glob("*.iso")):
+        x = XIso(iso)
+        try:
+            data = x.read(x.find("default.xex"))
+        except KeyError:
+            continue
+        finally:
+            x.close()
+        title = title_id(data)
+        if title not in XENIA_HASH or "disc 1/" not in xex_identity(data):  # FM4 DVD2's is its installer
+            continue
+        image = xex.Xex(data).image()
+        h = xenia_module_hash(data, image)
+        print(
+            f"{iso.name}: xenia module hash {h:016X}: {'same as' if h == XENIA_HASH[title] else 'NOT'} xenia's {XENIA_HASH[title]:016X}"
+        )
+        if title != "4D5309C9":
+            continue
+        facts = image_facts(image)
+        for key, want in FH1_SUPPORTED_IMAGE.items():
+            print(f"  {key}: {'same' if facts[key] == want else f'DIFFERS: {facts[key]} against {want}'}")
+        for at, target in FH1_BDZ:
+            w = struct.unpack_from(">I", image, at - 0x82000000)[0]
+            bd = w & 0xFFFC
+            to = at + (bd - 0x10000 if bd & 0x8000 else bd)
+            ok = w >> 26 == 16 and (w >> 21) & 31 in (18, 19, 26, 27) and to == target
+            print(f"  bdz at {at:08X} to {target:08X}: {'same' if ok else f'DIFFERS ({w:08X})'}")
+
+
+def extract_fh1(dest: Path = OUT / "pinyon-v071" / ".local" / "game" / "base") -> None:
+    """The FH1 disc's files (no $SystemUpdate) where Pinyon Shift's build reads them."""
+    from dsfforza.build import forza_roster
+    from dsfforza.formats.xiso import XIso
+
+    iso = forza_roster.game_discs(sorted((REPO / "assets").glob("*.iso"))).get("FH1")
+    x = XIso(iso)
+    count = 0
+    for e in x.files():
+        p = e.path.strip("/")
+        if e.is_dir or p.startswith("$SystemUpdate"):
+            continue
+        target = dest / p
+        if not (target.exists() and target.stat().st_size == e.size):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            x.extract(e, target)
+            count += 1
+    x.close()
+    print(f"{iso.name}: {count} files to {dest}")
 
 
 def extract() -> None:
@@ -113,6 +267,128 @@ def extract() -> None:
             count += 1
         x.close()
         print(f"{iso.name}: {count} files to {dest}")
+
+
+# --- Pinyon Shift (FH1) frame dumps ----------------------------------------------------------------
+
+FH1 = OUT / "fh1"
+FH1_HASHES = FH1 / "shader-hashes.json"
+FH1_GAME = OUT / "pinyon-v071" / ".local" / "game" / "base"
+# Xenos registers (xenia register_table.inc): shader constants c0 (vertex c0, pixel c256), fetch
+# constants, bool and loop constants; RB_BLENDCONTROL0.
+REG_ALU, REG_FETCH, REG_BOOL, REG_LOOP, REG_BLEND0 = 0x4000, 0x4800, 0x4900, 0x4908, 0x2201
+# PM4 type-3 opcodes (xenia xenos.h)
+PM4_DRAW_INDX, PM4_DRAW_INDX_2, PM4_IM_LOAD, PM4_IM_LOAD_IMMEDIATE = 0x22, 0x36, 0x27, 0x2B
+PM4_SET_CONSTANT, PM4_LOAD_ALU_CONSTANT, PM4_SET_CONSTANT2 = 0x2D, 0x2F, 0x55
+SET_CONSTANT_BASE = {0: REG_ALU, 1: REG_FETCH, 2: REG_BOOL, 3: REG_LOOP, 4: 0x2000}
+
+
+def read_fh1frame(path: Path) -> list[dict]:
+    """The draws of a Pinyon Shift frame dump (`--fh1_frame_dump_path`, `fh1_frame_dump_frame`;
+    ShiftGlue graphics/fh1_frame_dump.cpp: magic FH1FRM01, frame, the register file at the frame's
+    start, the shaders then active, the frame's PM4 packets, the memory blocks they read). The
+    packets' register and constant writes are replayed; each draw keeps its shader hashes, blend
+    and float constants (vertex c0..255 as `vc`, pixel as `pc`), in parse_draws' form."""
+    import xxhash
+
+    data = path.read_bytes()
+    if data[:8] != b"FH1FRM01":
+        raise ValueError(f"{path}: not an FH1 frame dump")
+    p = 16
+    (nregs,) = struct.unpack_from("<I", data, p)
+    regs = list(struct.unpack_from(f"<{nregs}I", data, p + 4))
+    p += 4 + 4 * nregs
+    active = {}
+    (nshaders,) = struct.unpack_from("<I", data, p)
+    p += 4
+    for _ in range(nshaders):
+        kind, n = struct.unpack_from("<II", data, p)
+        words = struct.unpack_from(f"<{n}I", data, p + 8)  # host order: the guest's are big-endian
+        active[kind] = f"{xxhash.xxh3_64_intdigest(struct.pack(f'>{n}I', *words)):016X}"
+        p += 8 + 4 * n
+    (npackets,) = struct.unpack_from("<I", data, p)
+    packets = struct.unpack_from(f">{npackets}I", data, p + 4)
+    p += 4 + 4 * npackets
+    (nblocks,) = struct.unpack_from("<I", data, p)
+    p += 4
+    blocks = []
+    for _ in range(nblocks):
+        address, length = struct.unpack_from("<II", data, p)
+        blocks.append((address, data[p + 8 : p + 8 + length]))
+        p += 8 + length
+
+    def memory(address: int, size: int) -> bytes:
+        """Guest physical bytes, from as many recorded blocks as the range crosses (pages
+        recorded by separate packets are separate blocks)."""
+        address &= 0x1FFFFFFF
+        out = b""
+        while len(out) < size:
+            at = address + len(out)
+            block = next(((s, c) for s, c in blocks if s <= at < s + len(c)), None)
+            if block is None:
+                raise KeyError(f"{at:08X} (of {address:08X}+{size}) not in the dump")
+            s, c = block
+            out += c[at - s : at - s + size - len(out)]
+        return out
+
+    def floats(base: int) -> dict[int, list[float]]:
+        out = {}
+        for c in range(256):
+            v = struct.unpack("<4f", struct.pack("<4I", *regs[base + 4 * c : base + 4 * c + 4]))
+            if any(v):
+                out[c] = [round(x, 6) for x in v]
+        return out
+
+    draws = []
+    i = 0
+    while i < len(packets):
+        h = packets[i]
+        kind = h >> 30
+        if kind == 0:
+            count, base, one = ((h >> 16) & 0x3FFF) + 1, h & 0x7FFF, (h >> 15) & 1
+            for k in range(count):
+                regs[base if one else base + k] = packets[i + 1 + k]
+            i += 1 + count
+        elif kind == 1:
+            regs[h & 0x7FF], regs[(h >> 11) & 0x7FF] = packets[i + 1], packets[i + 2]
+            i += 3
+        elif kind == 2:
+            i += 1
+        else:
+            op, count = (h >> 8) & 0x7F, ((h >> 16) & 0x3FFF) + 1
+            d = packets[i + 1 : i + 1 + count]
+            if op == PM4_SET_CONSTANT:
+                base = SET_CONSTANT_BASE.get((d[0] >> 16) & 0xFF, 0) + (d[0] & 0x7FF)
+                for k, v in enumerate(d[1:]):
+                    regs[base + k] = v
+            elif op == PM4_SET_CONSTANT2:
+                for k, v in enumerate(d[1:]):
+                    regs[(d[0] & 0xFFFF) + k] = v
+            elif op == PM4_LOAD_ALU_CONSTANT:
+                base = SET_CONSTANT_BASE.get((d[1] >> 16) & 0xFF, 0) + (d[1] & 0x7FF)
+                n = d[2] & 0xFFF
+                for k, v in enumerate(struct.unpack(f">{n}I", memory(d[0] & 0x3FFFFFFF, 4 * n))):
+                    regs[base + k] = v
+            elif op == PM4_IM_LOAD:
+                n = d[1] & 0xFFFF
+                active[d[0] & 3] = f"{xxhash.xxh3_64_intdigest(memory(d[0] & ~3, 4 * n)):016X}"
+            elif op == PM4_IM_LOAD_IMMEDIATE:
+                n = d[1] & 0xFFFF
+                active[d[0] & 3] = f"{xxhash.xxh3_64_intdigest(struct.pack(f'>{n}I', *d[2 : 2 + n])):016X}"
+            elif op in (PM4_DRAW_INDX, PM4_DRAW_INDX_2):
+                draws.append(
+                    {
+                        "draw": len(draws),
+                        "vs": active.get(0, "?"),
+                        "ps": active.get(1, "?"),
+                        "blend0": f"{regs[REG_BLEND0]:08X}",
+                        "vc": floats(REG_ALU),
+                        "pc": floats(REG_ALU + 4 * 256),
+                        "fetch": [],
+                    }
+                )
+            i += 1 + count
+    return draws
 
 
 def ucode_hash(code: bytes) -> str:
@@ -188,6 +464,14 @@ def parse_draws(log: Path) -> list[dict]:
     return draws
 
 
+UNNAMED = re.compile(r"c(\d+)@c\1")  # named_draws' label for a register no constant table names
+
+
+def named_only(constants: dict) -> dict:
+    """The constants a shader's table names (`c_eyePosWS@c59` stays; `c12@c12` goes)."""
+    return {k: v for k, v in constants.items() if not UNNAMED.fullmatch(k)}
+
+
 def named_draws(draws: list[dict], table: dict) -> list[dict]:
     """Each draw with its techniques (by the pixel shader's hash) and its constants by name."""
     out = []
@@ -222,47 +506,70 @@ PRESS_LEAD = 0.3  # s ahead of now that a press starts (the game re-reads the sc
 IDLE, BELOW_NORMAL = 0x40, 0x4000
 
 
-class Game:
-    """One fm4_static_recomp process on the shared state (one at a time), on a desktop of its own
-    with its window never shown, watched so that it ends if a window of it ever reaches the user's
-    desktop; held in a job that ends it with this script, at Idle CPU priority."""
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9  # JOBOBJECTINFOCLASS
+RESUME_FAILED = 0xFFFFFFFF  # ResumeThread's (DWORD)-1
 
-    def __init__(self, run: Path, args: list[str], *, desktop: str = "dsff-recomp", priority: int = IDLE):
+
+def make_job(k32) -> int:
+    """A job object that ends its processes when its last handle closes (the script ends);
+    OSError if either call fails, so nothing is launched without that guarantee."""
+    import ctypes
+    from ctypes import wintypes
+
+    k32.CreateJobObjectW.restype = wintypes.HANDLE
+    job = k32.CreateJobObjectW(None, None)
+    if not job:
+        raise OSError(f"CreateJobObjectW: {ctypes.get_last_error()}; not launching")
+    limits = (ctypes.c_byte * 144)()  # JOBOBJECT_EXTENDED_LIMIT_INFORMATION; LimitFlags at +16
+    ctypes.c_uint32.from_buffer(limits, 16).value = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    if not k32.SetInformationJobObject(wintypes.HANDLE(job), JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, limits, 144):
+        error = ctypes.get_last_error()
+        k32.CloseHandle(wintypes.HANDLE(job))
+        raise OSError(f"SetInformationJobObject: {error}; not launching")
+    return job
+
+
+def join_job_and_resume(k32, job: int, process: int, thread: int) -> None:
+    """Puts a process created suspended into the job, then lets it run. If it can't join, it is
+    ended before it ever runs (OSError): outside the job it would have no kill and no watchdog."""
+    import ctypes
+    from ctypes import wintypes
+
+    try:
+        if not k32.AssignProcessToJobObject(wintypes.HANDLE(job), wintypes.HANDLE(process)):
+            error = ctypes.get_last_error()
+            k32.TerminateProcess(wintypes.HANDLE(process), 1)
+            raise OSError(f"AssignProcessToJobObject: {error}; the process was ended before it ran")
+        if k32.ResumeThread(wintypes.HANDLE(thread)) == RESUME_FAILED:
+            error = ctypes.get_last_error()
+            k32.TerminateJobObject(wintypes.HANDLE(job), 1)
+            raise OSError(f"ResumeThread: {error}; the job was ended")
+    except OSError:
+        k32.CloseHandle(wintypes.HANDLE(process))
+        raise
+    finally:
+        k32.CloseHandle(wintypes.HANDLE(thread))
+
+
+class Isolated:
+    """A command run on a desktop of its own, in a job that ends it (and every process it starts)
+    with this script, at a low CPU priority, and watched: if a window of any process in the job is
+    ever on the user's desktop, the whole job ends at once (research/forza-recomp.md 3.1).
+
+    Windows shows only the input desktop, and this one is never switched to, so nothing a process
+    there opens can appear on the user's screen or take their focus or input. Children inherit
+    the desktop and the job. Never add a visible or minimized mode."""
+
+    def __init__(self, argv: list[str], env: dict, cwd: Path, *, desktop: str = "dsff-recomp", priority: int = IDLE):
         import ctypes
+        import threading
+        import time
         from ctypes import wintypes
 
-        run = run.resolve()
-        self.run, self.state = run, STATE
-        for d in (STATE / "user", STATE / "update", STATE / "cache", run / "logs", run / "dumps"):
-            d.mkdir(parents=True, exist_ok=True)
-        self.log_path = run / "logs" / "runtime.log"
-        self.log_path.unlink(missing_ok=True)
-        self.dumps = run / "dumps"
-        self.script = run / "live.input"
-        self.script.write_text("# forza_recomp.py\n", encoding="ascii")
-        argv = [
-            str(EXE),
-            f"--game_data_root={DISC1}",
-            f"--user_data_root={self.state / 'user'}",
-            f"--update_data_root={self.state / 'update'}",
-            f"--cache_root={self.state / 'cache'}",
-            f"--log_file={self.log_path}",
-            # where --fh1_debug_dump_range and --fh1_debug_log_vs write; frame -1 (on a `trigger`
-            # file only), as 0 would write every resolve of every frame
-            f"--fh1_resolve_dump_dir={self.dumps}",
-            "--fh1_resolve_dump_frame=-1",
-            *BASE_ARGS,
-            *args,
-        ]
-        env = dict(
-            __import__("os").environ,
-            FM4_STATIC_RECOMP_INPUT_SCRIPT=str(self.script),
-            SDL_WINDOW_ACTIVATE_WHEN_SHOWN="0",
-            REX_WINDOW_HIDDEN="1",  # ShiftGlue window_sdl.cpp: the window is created, never shown
-        )
-        block = "".join(f"{k}={v}\0" for k, v in env.items()) + "\0"
-        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        self.k32, self.u32, self.ct, self.wt = k32, ctypes.WinDLL("user32", use_last_error=True), ctypes, wintypes
+        self.ct, self.wt = ctypes, wintypes
+        self.k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.u32 = ctypes.WinDLL("user32", use_last_error=True)
 
         class STARTUPINFO(ctypes.Structure):
             _fields_ = [
@@ -294,16 +601,20 @@ class Game:
                 ("dwThreadId", wintypes.DWORD),
             ]
 
-        # A desktop of our own: Windows shows only the input desktop, so nothing the game opens
-        # there can appear on the user's screen or take their focus or input. Never switched to.
         self.u32.CreateDesktopW.restype = wintypes.HANDLE
         self.desktop_handle = self.u32.CreateDesktopW(desktop, None, None, 0, 0x10000000, None)  # GENERIC_ALL
         if not self.desktop_handle:
             raise OSError(f"CreateDesktopW: {ctypes.get_last_error()}; not launching")
+        try:
+            self.job = make_job(self.k32)
+        except OSError:
+            self.u32.CloseDesktop(wintypes.HANDLE(self.desktop_handle))
+            raise
         si = STARTUPINFO(cb=ctypes.sizeof(STARTUPINFO), lpDesktop=f"WinSta0\\{desktop}")
         pi = ProcessInformation()
         command = " ".join(f'"{a}"' if " " in a else a for a in argv)
-        k32.CreateProcessW.argtypes = [
+        block = "".join(f"{k}={v}\0" for k, v in env.items()) + "\0"
+        self.k32.CreateProcessW.argtypes = [
             wintypes.LPCWSTR,
             wintypes.LPWSTR,
             ctypes.c_void_p,
@@ -316,51 +627,49 @@ class Game:
             ctypes.c_void_p,
         ]
         flags = priority | 0x400 | 0x4  # CREATE_UNICODE_ENVIRONMENT, CREATE_SUSPENDED (joined to the job first)
-        if not k32.CreateProcessW(
-            str(EXE),
-            ctypes.create_unicode_buffer(command),
-            None,
-            None,
-            False,
-            flags,
-            block,
-            str(EXE.parent),
-            ctypes.byref(si),
-            ctypes.byref(pi),
-        ):
-            raise OSError(f"CreateProcessW: {ctypes.get_last_error()}")
+        command_buffer = ctypes.create_unicode_buffer(command)
+        try:
+            if not self.k32.CreateProcessW(
+                None, command_buffer, None, None, False, flags, block, str(cwd), ctypes.byref(si), ctypes.byref(pi)
+            ):
+                raise OSError(f"CreateProcessW: {ctypes.get_last_error()}")
+            join_job_and_resume(self.k32, self.job, pi.hProcess, pi.hThread)
+        except OSError:
+            self.k32.CloseHandle(wintypes.HANDLE(self.job))
+            self.u32.CloseDesktop(wintypes.HANDLE(self.desktop_handle))
+            raise
         self.process, self.pid = pi.hProcess, pi.dwProcessId
-        k32.CreateJobObjectW.restype = wintypes.HANDLE
-        self.job = k32.CreateJobObjectW(None, None)
-        limits = (ctypes.c_byte * 144)()  # JOBOBJECT_EXTENDED_LIMIT_INFORMATION; LimitFlags at +16
-        ctypes.c_uint32.from_buffer(limits, 16).value = 0x2000  # KILL_ON_JOB_CLOSE
-        k32.SetInformationJobObject(wintypes.HANDLE(self.job), 9, limits, 144)
-        k32.AssignProcessToJobObject(wintypes.HANDLE(self.job), wintypes.HANDLE(self.process))
-        k32.ResumeThread(wintypes.HANDLE(pi.hThread))
-        k32.CloseHandle(wintypes.HANDLE(pi.hThread))
-        self.started = __import__("time").monotonic()
+        self.started = time.monotonic()
         self.breached = False
-        __import__("threading").Thread(target=self._watchdog, daemon=True).start()
-        self.lines: list[str] = []
-        self._log_pos = 0
-        self.mark = 0
+        threading.Thread(target=self._watchdog, daemon=True).start()
 
-    # process
     def alive(self) -> bool:
         return self.k32.WaitForSingleObject(self.wt.HANDLE(self.process), 0) == 0x102
 
+    def wait(self, timeout: float) -> bool:
+        """Whether the command ended within `timeout` seconds."""
+        return self.k32.WaitForSingleObject(self.wt.HANDLE(self.process), int(timeout * 1000)) == 0
+
+    def exit_code(self) -> int | None:
+        """The command's exit code, None while it runs (STILL_ACTIVE)."""
+        code = self.wt.DWORD()
+        if not self.k32.GetExitCodeProcess(self.wt.HANDLE(self.process), self.ct.byref(code)):
+            raise OSError(f"GetExitCodeProcess: {self.ct.get_last_error()}")
+        return None if code.value == 259 else code.value
+
     def stop(self) -> None:
-        self.k32.TerminateProcess(self.wt.HANDLE(self.process), 1)
+        """Ends every process of the job and closes the desktop."""
+        self.k32.TerminateJobObject(self.wt.HANDLE(self.job), 1)
         self.k32.WaitForSingleObject(self.wt.HANDLE(self.process), 10000)
         self.k32.CloseHandle(self.wt.HANDLE(self.process))
         self.k32.CloseHandle(self.wt.HANDLE(self.job))
-        if self.desktop_handle:
-            self.u32.CloseDesktop(self.wt.HANDLE(self.desktop_handle))
+        self.u32.CloseDesktop(self.wt.HANDLE(self.desktop_handle))
 
     def windows_on_user_desktop(self) -> int:
-        """The game's top-level windows on this script's (the user's) desktop: EnumWindows lists the
-        calling thread's desktop. With the game on its own desktop there are none."""
-        ct, wt, u32 = self.ct, self.wt, self.u32
+        """Top-level windows of the job's processes on this script's (the user's) desktop:
+        EnumWindows lists the calling thread's desktop. With the job on its own desktop, none."""
+        ct, wt, u32, k32 = self.ct, self.wt, self.u32, self.k32
+        k32.OpenProcess.restype = wt.HANDLE
         found = []
         proc = ct.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
 
@@ -369,22 +678,81 @@ class Game:
             u32.GetWindowThreadProcessId(hwnd, ct.byref(pid))
             if pid.value == self.pid:
                 found.append(hwnd)
+                return True
+            h = k32.OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if h:
+                inside = wt.BOOL()
+                if k32.IsProcessInJob(wt.HANDLE(h), wt.HANDLE(self.job), ct.byref(inside)) and inside.value:
+                    found.append(hwnd)
+                k32.CloseHandle(wt.HANDLE(h))
             return True
 
         u32.EnumWindows(proc(each), 0)
         return len(found)
 
     def _watchdog(self) -> None:
-        """Ends the game the moment any window of it is on the user's desktop."""
         import time
 
         while self.alive():
             if self.windows_on_user_desktop():
-                self.k32.TerminateProcess(self.wt.HANDLE(self.process), 1)
+                self.k32.TerminateJobObject(self.wt.HANDLE(self.job), 1)
                 self.breached = True
-                print("WATCHDOG: a game window reached the user's desktop; the game was ended", flush=True)
+                print("WATCHDOG: a window reached the user's desktop; every process of the run was ended", flush=True)
                 return
             time.sleep(0.05)
+
+
+class Game:
+    """One fm4_static_recomp process on the shared state (one at a time), run Isolated with its
+    window hidden as well (ShiftGlue's REX_WINDOW_HIDDEN)."""
+
+    def __init__(self, run: Path, args: list[str], *, desktop: str = "dsff-recomp", priority: int = IDLE):
+        import os
+
+        run = run.resolve()
+        self.run, self.state = run, STATE
+        for d in (STATE / "user", STATE / "update", STATE / "cache", run / "logs", run / "dumps"):
+            d.mkdir(parents=True, exist_ok=True)
+        self.log_path = run / "logs" / "runtime.log"
+        self.log_path.unlink(missing_ok=True)
+        self.dumps = run / "dumps"
+        self.script = run / "live.input"
+        self.script.write_text("# forza_recomp.py\n", encoding="ascii")
+        argv = [
+            str(EXE),
+            f"--game_data_root={DISC1}",
+            f"--user_data_root={self.state / 'user'}",
+            f"--update_data_root={self.state / 'update'}",
+            f"--cache_root={self.state / 'cache'}",
+            f"--log_file={self.log_path}",
+            # where --fh1_debug_dump_range and --fh1_debug_log_vs write; frame -1 (on a `trigger`
+            # file only), as 0 would write every resolve of every frame
+            f"--fh1_resolve_dump_dir={self.dumps}",
+            "--fh1_resolve_dump_frame=-1",
+            *BASE_ARGS,
+            *args,
+        ]
+        env = dict(
+            os.environ,
+            FM4_STATIC_RECOMP_INPUT_SCRIPT=str(self.script),
+            SDL_WINDOW_ACTIVATE_WHEN_SHOWN="0",
+            REX_WINDOW_HIDDEN="1",  # ShiftGlue window_sdl.cpp: the window is created, never shown
+        )
+        self.iso = Isolated(argv, env, EXE.parent, desktop=desktop, priority=priority)
+        self.pid, self.started = self.iso.pid, self.iso.started
+        self.lines: list[str] = []
+        self._log_pos = 0
+        self.mark = 0
+
+    @property
+    def breached(self) -> bool:
+        return self.iso.breached
+
+    def alive(self) -> bool:
+        return self.iso.alive()
+
+    def stop(self) -> None:
+        self.iso.stop()
 
     # log
     def poll(self) -> list[str]:
@@ -584,37 +952,131 @@ def run_route(route: Path, run: Path, args: list[str]) -> None:
         print(f"stopped; windows seen on the user's desktop: {'yes' if game.breached else 'none'}")
 
 
+PINYON = OUT / "pinyon-v071"  # Pinyon Shift's release tag, built by tools/re/fh1_recomp_build.ps1
+
+
+def fh1_run(steps: Path, run: Path, game_args: list[str], *, opening: str = "fh1-opening-sync.fh1test") -> None:
+    """Pinyon Shift's render-test runner on a route: its new-player opening (`opening`, read from
+    its checkout, its captures and stop dropped) and then `steps`, from a fresh profile with the
+    trainer on. The runner, its launcher and the game run Isolated (they inherit the desktop and
+    the job) with the window hidden as well (`--hidden`, REX_WINDOW_HIDDEN). Captures go to
+    <run>/out; each frame dump (`--fh1_frame_dump_path`) is copied to <run>/frames/<n>.fh1frame."""
+    import os
+    import shutil
+    import time
+
+    run = run.resolve()
+    (run / "frames").mkdir(parents=True, exist_ok=True)
+    seed = run / "seed"
+    for d in ("user", "config"):
+        (seed / d).mkdir(parents=True, exist_ok=True)
+    theirs = (PINYON / "config" / "render-tests" / opening).read_text().splitlines()
+    ours = [x for x in steps.read_text().splitlines() if x.strip() and not x.startswith("#")]
+    route = run / "route.fh1test"
+    route.write_text("\n".join([x for x in theirs if not x.startswith(("capture", "stop"))] + ours) + "\n")
+    dump = run / "dump.fh1frame"
+    argv = [
+        str(PINYON / ".local" / "toolchain" / "python-3.13.15" / "python.exe"),
+        str(PINYON / "tools" / "run-fh1-render-test.py"),
+        str(route),
+        "--state-root",
+        str(seed),
+        "--fresh-profile",
+        "--hidden",
+        "--output",
+        str(run / "out"),
+        "--timeout",
+        "900",
+        f"--game-argument=--fh1_frame_dump_path={dump}",
+        "--game-argument=--pinyon_shift_cheats=true",
+        "--game-argument=--gpu_record_thread=false",  # frame dumps need it (fh1_frame_dump.cpp)
+        *(f"--game-argument={a}" for a in game_args),
+    ]
+    env = dict(os.environ, REX_WINDOW_HIDDEN="1", SDL_WINDOW_ACTIVATE_WHEN_SHOWN="0")
+    iso = Isolated(argv, env, PINYON)
+    print(f"started the runner (pid {iso.pid}) on {run}, on its own desktop")
+    copied, seen = 0, None
+
+    def copy_new_dump(settle: float) -> None:
+        nonlocal copied, seen
+        if dump.exists():
+            st = dump.stat()
+            if (st.st_mtime, st.st_size) != seen and time.time() - st.st_mtime > settle:  # written and settled
+                seen = (st.st_mtime, st.st_size)
+                shutil.copyfile(dump, run / "frames" / f"{copied}.fh1frame")
+                print(f"  frame dump {copied}: {st.st_size >> 20} MB")
+                copied += 1
+
+    code = None
+    try:
+        while not iso.wait(1.0):
+            copy_new_dump(3)
+            if iso.breached:
+                raise RuntimeError("the watchdog ended the run: a window reached the user's desktop")
+        copy_new_dump(0)  # one written just before the runner ended
+        code = iso.exit_code()
+    finally:
+        iso.stop()
+        print(f"stopped; windows seen on the user's desktop: {'yes' if iso.breached else 'none'}")
+    if iso.breached:
+        raise RuntimeError("the watchdog ended the run: a window reached the user's desktop")
+    if code != 0:
+        raise RuntimeError(f"the render-test runner failed (exit code {code}); see {run / 'out'}")
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("discs")
     sub.add_parser("extract")
+    sub.add_parser("extract-fh1")
+    sub.add_parser("image")
     h = sub.add_parser("hashes")
     h.add_argument("--root", type=Path, default=DISC1 / "Media" / "Shaders")
-    d = sub.add_parser("draws")
-    d.add_argument("log", type=Path)
-    d.add_argument("--technique", help="regex on the pixel shader's technique names")
-    d.add_argument("--json", type=Path)
+    h.add_argument("--fh1", action="store_true", help="the FH1 disc's shaders (Pinyon Shift's game folder)")
+    for name in ("draws", "fh1frame"):
+        d = sub.add_parser(name)
+        d.add_argument("log", type=Path, help="a runtime.log (draws) or an .fh1frame dump (fh1frame)")
+        d.add_argument("--technique", help="regex on the pixel shader's technique names")
+        d.add_argument("--json", type=Path)
     r = sub.add_parser("run", help=run_route.__doc__.split("\n\n")[0])
     r.add_argument("route", type=Path)
     r.add_argument("run", type=Path, help="run folder (state, shots, frames)")
     r.add_argument("game_args", nargs="*", help="recomp options after --, e.g. -- --resolution_scale=2")
+    f = sub.add_parser("fh1-run", help=fh1_run.__doc__.split("\n\n")[0])
+    f.add_argument("steps", type=Path)
+    f.add_argument("run", type=Path)
+    f.add_argument("game_args", nargs="*", help="game options after --")
     args = ap.parse_args(argv)
     if args.cmd == "run":
         run_route(args.route, args.run, args.game_args)
+        return
+    if args.cmd == "fh1-run":
+        fh1_run(args.steps, args.run, args.game_args)
         return
     if args.cmd == "discs":
         discs()
     elif args.cmd == "extract":
         extract()
+    elif args.cmd == "extract-fh1":
+        extract_fh1()
+    elif args.cmd == "image":
+        image_check()
     elif args.cmd == "hashes":
-        table = hashes(args.root)
-        HASHES.parent.mkdir(parents=True, exist_ok=True)
-        HASHES.write_text(json.dumps(table))
-        print(f"{len(table)} shader hashes -> {HASHES}")
+        root, out = (FH1_GAME / "media" / "shaders", FH1_HASHES) if args.fh1 else (args.root, HASHES)
+        table = hashes(root)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(table))
+        print(f"{len(table)} shader hashes -> {out}")
     else:
-        table = json.loads(HASHES.read_text()) if HASHES.exists() else hashes()
-        draws = named_draws(parse_draws(args.log), table)
+        if args.cmd == "fh1frame":
+            table = json.loads(FH1_HASHES.read_text())
+            draws = named_draws(read_fh1frame(args.log), table)
+            for x in draws:  # a dump holds every constant register: keep the shader's named ones
+                x["pc"] = named_only(x["pc"])
+        else:
+            table = json.loads(HASHES.read_text()) if HASHES.exists() else hashes()
+            draws = named_draws(parse_draws(args.log), table)
         if args.technique:
             draws = [x for x in draws if any(re.search(args.technique, t) for t in x["ps_techniques"])]
         if args.json:

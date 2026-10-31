@@ -1,6 +1,6 @@
 # Native recompilations of Forza as a runtime probe and reference renderer (spike)
 
-Updated: 2026-10-31
+Updated: 2026-10-31 (FH1: sections 1.1 and 4.2)
 
 Four native PC recompilations of Forza exist (statically translated PowerPC code, a Vulkan or
 D3D12 renderer for the Xenos GPU commands). This spike checks four things:
@@ -35,22 +35,35 @@ tagged source and its own `setup` script, run unmodified.
 - **FM4 works.** Our DVD1 is fm4-static-recomp's "1.0 USA"; DVD2's four content packages install.
   Its own `setup.ps1` built it at Idle priority with 2 jobs (section 3). One launch reaches the
   main menu in about 20 s and a race grid in about 90 s.
-- **FH1 does not, today.** Our FH1 disc is not the dump Pinyon Shift supports (section 1). Its
-  build also needs a system-wide Visual Studio Build Tools install, which this spike did not
-  make (section 1.1).
+- **FH1 works too, from our disc.** It isn't the dump Pinyon Shift accepts, but its code is the
+  same program: xenia's module hash of our `default.xex` is the supported dump's
+  (`D48ABF1704CE5C4A`), and every published fact of that image matches (section 1). Pinyon Shift's
+  own build steps, run by hand past its file-hash check and with none of its files edited, built
+  it. Its code generator logged exactly the warnings the supported image gives (section 1.1).
+  The game runs, on a desktop of its own, from a fresh profile into free roam (section 4.2).
 - **Unattended runs work, on a desktop of their own** (section 3): a hidden window on a
   separate desktop, scripted input, guest-output captures, and a watchdog. The first runs of this
   spike showed the game window on the user's screen; section 3.1 says how and what prevents it.
 - **Per-draw constants work** with the Vulkan backend (section 2): every draw's shaders, textures,
   blend and every constant its shader reads, for one whole frame on request. `gpu_backend=null`
   logs no constants.
-- **#423, checked at runtime on FM4** (section 4):
+- **#423, checked at runtime on FM4** (section 4.1):
   - confirmed: the lamp colour upload, the brake state, the default blend, the blur constants
     and the shared tyre settings file;
   - corrected: which wheel technique a race draws. Races draw the `_V2` wheel techniques, so a
     wheel archive's `rim_V2`, not its `rim`, sets the race rim. The Chevelle 70's race rim is
     0.65, not #423's 0.175.
-  - not answered: the FH1 day/night lamp question, because FH1 doesn't run.
+- **FH1 at runtime** (section 4.2, the opening's Viper by day and by night):
+  - FH1's lamps are off by day: the lamps-on value `dynamicLights2.x` is 0 at 13:00 and 1 at
+    23:00, and the tail lamps show dark by day and red at night. That is Forza's behaviour, read
+    for its data only: ports keep DSF's lamp behaviour (#442), and what it tells the converter is
+    that a tail's lit colour is its technique's `TailLightColor`;
+  - the brake value `dynamicLightsAmount.x` is 1 under the brake;
+  - the lamp colours upload linearised: the Viper's 0.7 and 1.36 arrive as 0.447988 and 2.02302;
+  - FH1 races draw the `_V2` wheel techniques too (their own shaders), with the wheel archive's
+    `_V2` values.
+  - The Focus RS500 itself was not reached (it needs the festival's autoshow). The same rule
+    predicts its uploads: `TailLightColor` 1.516837, `BrakeColor` 2.163044.
 - **Reference pictures:** FM4 captures at the game's own cameras work (showroom, race chase
   camera, braking). They can check `render_compare`'s technique models and lamp states; they
   can't replace its reconstructed reference pixel for pixel (section 5).
@@ -64,7 +77,7 @@ tagged source and its own `setup` script, run unmodified.
 | --- | --- | --- | --- |
 | `Forza 4 [NTSCU][DVD1].iso` | 4D530910, 26FF1101, 0.0.0.8, disc 1/2 | `3618E85A...` | **fm4-static-recomp "1.0 USA"** |
 | `Forza 4 [NTSCU][DVD2].iso` | 4D530910, 0F5C87F9, disc 2/2 | | its four content packages: `--fm4_disc2_packages` |
-| `Forza.Horizon.XBOX360.iso` | 4D5309C9, **2B7A1346**, 0.0.0.7, region free | `B95C1E02...` | **none**: Pinyon Shift wants media 2DC7007B, 0.0.0.10 (`DB40DF60...`) |
+| `Forza.Horizon.XBOX360.iso` | 4D5309C9, **2B7A1346**, 0.0.0.7, region free | `B95C1E02...` | **none by file**: Pinyon Shift wants media 2DC7007B, 0.0.0.10 (`DB40DF60...`); the code is the same (below) |
 
 Our FH1 disc is not the USA MS-2505 dump Pinyon Shift supports (ISO `BE910E6D...` against
 `83DFC7D0...`). Against Pinyon Shift's catalogue of the supported disc's 2,400 files
@@ -75,36 +88,83 @@ Our FH1 disc is not the USA MS-2505 dump Pinyon Shift supports (ISO `BE910E6D...
 - differs in the three executables (`default.xex`, the two facades: same sizes) and three
   FMV `.def` files.
 
-So the game data is the same release and the executables differ at least in their headers
-(media id, version, region). There are signs that the code is the same:
+So the game data is the same release, and the executables differ in their containers (header,
+media id, version, region, signature, and so the key the payload is encrypted with).
 
-- Pinyon Shift's symbol table (`config/mod/fh1-symbols.toml`) addresses fall on our image's
-  function starts (33 of 40);
-- `time_of_day.from_world` 0x82486CF0, documented as `[world + 232]`, is `lwz r3, 0xE8(r3)` in
-  our image.
+**The code is the same program** (`uv run --with pycryptodome --with xxhash python
+tools/re/forza_recomp.py image`, on the decrypted, decompressed images):
 
-Not proven. Pinyon Shift hashes the folded `.rdata` bytes of the image at load and refuses a
-different image, so a build from our disc would show it.
+- **xenia's module hash.** It is XXH3-64 over the loaded image from the first to the last code
+  page, after the loader rewrites the import thunks (xenia `kernel/user_module.cc`
+  `CalculateHash`, `cpu/xex_module.cc` `SetupLibraryImports`).
+  - Ours is `D48ABF1704CE5C4A`, the hash xenia-canary's game-patches give FH1's base
+    `default.xex`. That file lists media 2DC7007B (USA), 4000D145 and 2B7A1346 (ours) under it,
+    and Pinyon Shift's `fh1-post-processing.toml` cites the same hash as its source.
+  - The method checked on FM4: our DVD1 gives `06DEF37749E2CEAC`, xenia's FM4 hash.
+  - The code region (0x823E0000 to 0x831F0000) is therefore byte for byte the supported dump's.
+- **Pinyon Shift's records of its image** (`site/findings/executable.toml`, the codegen warning
+  list) all match:
+  - SizeOfImage 0x18A3400 and entry 0x82A6FBC0;
+  - the 14 sections at the same addresses, `.tls` 0x3069;
+  - `.pdata`: 57,127 functions, median 120 bytes, 7,676 under 64 bytes, 122 over 4 KB;
+  - the two largest functions (110,012 bytes at 0x8241A370, 30,196 at 0x82BE1880);
+  - the `bdz` at 0x82AD8138 and 0x82AD813C to 0x82AD836C.
 
-### 1.1 What FH1 would take
+  Their note ranks `sub_82D505C0` fourth largest; it is third in ours (21,808 bytes against the
+  fourth's 21,712), a counting detail.
+- **Its symbol table** (`config/mod/fh1-symbols.toml`): the addresses fall on function starts,
+  and `time_of_day.from_world` 0x82486CF0, documented as `[world + 232]`, is
+  `lwz r3, 0xE8(r3)`.
 
-1. **A supported dump, or a build past the dump check.** `setup-preview.ps1` accepts only the
-   MS-2505 ISO, or an extracted folder whose every file matches the catalogue. Our files don't
-   match (the executables, languages and FMVs differ), so the check has to be bypassed. That
-   means putting our extracted disc in `.local/game/base` and running `build-preview.ps1` and
-   `prepare-fh1-shaders.ps1` directly, which is a local change to their setup. Whether the
-   recompiled code then runs is exactly the `.rdata` test above.
-2. **Visual Studio.** Pinyon Shift's `Enter-PinyonBuildEnvironment` runs `VsDevCmd.bat` from
-   an installed Visual Studio 2022 C++ Build Tools (17.1 or newer); its setup installs them when
-   missing. That is a system-wide, administrator install, and this spike did not make it.
-   fm4-static-recomp instead downloads a portable MSVC 14.44 runtime and Windows SDK into its own
-   folder. Pointing Pinyon Shift's build at those would be a second local change, untested.
-3. **Cost.** About 30 GB and a 20 to 60 minute build at full speed (several hours at Idle with
-   2 jobs), as for FM4.
+Not covered: the data sections byte for byte. Pinyon Shift's load-time check of the folded
+`.rdata` bytes can't tell, because the folds are computed at codegen from the image it is given.
 
-Pinyon Shift has what the FH1 questions need: a trainer with time of day
-(`time_of_day.request`), a free camera (`camera.set_mode` 6), and a scripted render-test
-harness with vehicle poses and guest-output captures.
+### 1.1 Building Pinyon Shift from our disc
+
+Pinyon Shift's `tools/build-preview.ps1` refuses any `default.xex` but the supported file
+(SHA-256 of the container). With the code the same (above), its build steps were run by hand,
+after that check, with none of its files edited:
+
+1. **Visual Studio.** Pinyon Shift's build runs `VsDevCmd.bat` from Visual Studio 2022 C++ Build
+   Tools 17.1 or newer (its `config/release-toolchain.json`: workload
+   `Microsoft.VisualStudio.Workload.VCTools`, component `VC.Tools.x86.x64`, a Windows SDK with
+   `D3D12_OPTIONS8`). This PC already had them, so nothing was installed:
+   - Build Tools 2022 17.14.42, installed 2026-04-06;
+   - MSVC 14.44.35207;
+   - Windows SDK 10.0.26100.
+
+   (This note's first version said they were missing; a misread `vswhere` query.)
+2. **The source:** its release tag, `git clone --depth 1 --branch v0.7.1
+   https://github.com/arcanite24/pinyon-shift out\recomp\pinyon-v071`.
+3. **Our disc** where its build reads it:
+   `uv run python tools/re/forza_recomp.py extract-fh1` (2,414 files to
+   `out\recomp\pinyon-v071\.local\game\base`, no `$SystemUpdate`).
+4. **The build,** at Idle priority with 2 jobs:
+
+   ```powershell
+   powershell -File tools\re\fh1_recomp_build.ps1 -Root out\recomp\pinyon-v071 -Parallel 2
+   ```
+
+   It dot-sources their `release-common.ps1` and runs:
+   - `setup-preview.ps1`'s steps before extraction: `provision-toolchain.ps1` (pinned CMake,
+     Ninja, LLVM 20, Python, git, xz) and `prepare-rexglue.ps1` (ShiftGlue `8e32080b`);
+   - `build-preview.ps1`'s steps after its hash check, with the same commands:
+     - CMake preset `win-amd64` and the `rexglue` code generator;
+     - `mt.exe` adding its Unicode manifest;
+     - `rexglue codegen config/rexglue/pinyon_shift_manifest.toml`;
+     - their `verify-codegen-log.ps1`;
+     - CMake preset `win-amd64-release` and the build.
+
+   It took about 75 minutes and wrote `out\build\win-amd64-release\pinyon_shift.exe`.
+5. **Left out:** `prepare-fh1-shaders.ps1`. It starts the game in a visible window for a shader
+   preparation run. The game compiles shaders as it meets them instead.
+
+**Codegen confirms the image.**
+- Their `verify-codegen-log.ps1` fails on any warning not in their list and on any listed
+  warning that doesn't appear. It passed: the generator logged exactly the oversized
+  `0x8241A370` and the two `bdz`.
+- The generator found 22,968 functions with a `__savegprlr_N` prologue and 56,799 that save LR.
+  Those are the totals their NN-1.2 and NN-1.3 notes give for the supported image.
 
 ## 2. What the debug options log (confirmed-static, ShiftGlue `72b7dd6f`)
 
@@ -210,6 +270,17 @@ Each run writes to its folder:
 The save and the shader cache are shared in `out/recomp/fm4/state`. Runs go one at a time; the
 game process is at Idle priority and in a job that ends it with the script.
 
+**FH1** (section 1.1 for the build): `forza_recomp.py fh1-run <steps> <run>` writes a route
+(Pinyon Shift's opening plus the steps) and a fresh-profile seed. It runs Pinyon Shift's
+render-test runner (`tools/run-fh1-render-test.py --hidden --fresh-profile`) under `Isolated`.
+The runner, the launcher it starts and the game all inherit the desktop and the job. Captures
+(PPM) go to `<run>/out`; each frame dump is copied to `<run>/frames/<n>.fh1frame`. Decode one:
+
+```powershell
+uv run --with xxhash python tools/re/forza_recomp.py hashes --fh1
+uv run --with xxhash python tools/re/forza_recomp.py fh1frame out/recomp/runs/<run>/frames/0.fh1frame --technique "taillight"
+```
+
 ### 3.1 Never on the user's screen (the window incident)
 
 **What happened.** The first runs of this spike put the game's window on the user's screen.
@@ -252,7 +323,9 @@ so every one of those runs showed a normal window. The user saw it.
 Rendering on a non-displayed desktop works: Vulkan makes its swapchain and the guest output
 captures are complete.
 
-## 4. Runtime results (FM4)
+## 4. Runtime results
+
+### 4.1 FM4
 
 Runs (out/recomp/runs, not kept in the repo):
 
@@ -293,15 +366,70 @@ are from `forza_recomp.py draws`.
 - **#423 section 2.5's survey therefore reads the wrong section.** The in-game rim is
   `Tire/Normal.xml`'s `<technique>_V2`, overlaid by the archive's `<technique>_V2`. Of FM4 disc
   1's 30 archives with their own settings, 11 have `_V2` sections. FH1's `Tire/Normal.xml` has
-  the same `_V2` sections, and 29 of its 37 such archives set `_V2` sections. That FH1 races draw
-  `_V2` too is inferred, not run. Comment on #424.
+  the same `_V2` sections, and 29 of its 37 such archives set `_V2` sections. FH1 races draw
+  `_V2` too (confirmed-runtime, section 4.2). Comment on #424.
 
-**Not answered here:**
+FM4 has no lamps-on state: its tails glow only under the brake.
 
-- FH1's `dynamicLights2.x` by day (#423 "Open"). FM4 has no such state: its tails glow only
-  under the brake.
-- The FH1 Focus RS500. FM4 has only the Focus RS 09, whose `tail_light` follows the FM4 rule
-  above.
+### 4.2 FH1 (Pinyon Shift, our disc)
+
+**The run.** `out/recomp/runs/fh1-viper2`:
+
+```powershell
+uv run --with xxhash python tools/re/forza_recomp.py fh1-run tools/re/recomp_routes/fh1-lamps-day-night.steps out/recomp/runs/fh1-viper2
+```
+
+- **The route:** Pinyon Shift's own new-player opening (`fh1-opening-sync.fh1test`, read from
+  its checkout, its captures dropped), from a fresh profile, ends in free roam in the SRT Viper
+  (`VIP_Viper_13`).
+- **Our steps** (`fh1-lamps-day-night.steps`), with the trainer's `cheat_time_of_day` (and so
+  `--pinyon_shift_cheats=true`, which plays a separate modded profile): 13:00 standing, then
+  braking at about 17 mph; 23:00 standing, then braking at about 28 mph.
+- **At each stop:** a capture and a frame dump. The trainer's draw log (`fh1_debug_log_draws`)
+  in Pinyon Shift's ShiftGlue (`8e32080b`) lists shaders and textures but no constants. A frame
+  dump (`--fh1_frame_dump_path`, `fh1_frame_dump_frame -1`, which needs
+  `--gpu_record_thread=false`) records the frame's packets. `forza_recomp.py fh1frame` replays
+  their register writes to get each draw's shaders and constants.
+- **Time:** about 2.5 minutes for the launch.
+
+**Tail lamps** (confirmed-runtime). The Viper's `taillight2S` draws (its rear lamp unit):
+
+| State | `dynamicLights2.x` (lamps on) | `dynamicLightsAmount.x` (brake) | `TailLightColor` | `BrakeColor` | Capture |
+| --- | --- | --- | --- | --- | --- |
+| 13:00, standing | 0 | 0 | 0.447988 | 2.02302 | tails dark |
+| 13:00, braking | 0 | 1 | 0.447988 | 2.02302 | tails red |
+| 23:00, standing | 1 | 0 | 0.447988 | 2.02302 | tails red, head lamps on |
+| 23:00, braking | 1 | 1 | 0.447988 | 2.02302 | tails brighter, high stop lamp |
+
+- **FH1's lamps are off by day.** This settles #423's open item (`dynamicLights2.x` by day was
+  inferred from `TimeOfDayA.xml`): by day a tail technique glows only under the brake. So FH1's
+  running lamps follow the time of day, as `forza-lenses-re.md` section 2 inferred.
+- **This is Forza's behaviour, read only to read its data** (AGENTS.md, #442: a port is a DSF car
+  built from a Forza car; Forza supplies what the car is, DSF how it behaves). Ports keep DSF's
+  lamp behaviour, as vanilla cars: a running tail glows by day at DSF's running level. What the
+  result tells the converter is about the data: a tail's lit colour is its technique's
+  `TailLightColor` (and `BrakeColor` under the brake), not the texel. It is not that ports
+  should go dark by day.
+- **The upload is linearised as #423 decoded.** The Viper's file sets `TailLightColor` 0.7 and
+  `BrakeColor` 1.359986; `forza_lens.srgb_to_linear` gives 0.447988 and 2.023016.
+- **The other glass techniques carry the same state:** `lights_gls_taillight2S` (`TailLightColor`
+  0.214041, `BrakeColor` 0.447988: 0.5 and 0.7 linearised), `lights_gls_taillightst` and
+  `lights_gls_oldhead`.
+- **`dynamicLightsAmount.y` is 1 at 23:00 standing,** when the capture shows the car creeping
+  backwards in reverse (gear R). That it is the reverse lamps is inferred.
+- **The RS500 was not reached.** It needs the festival's autoshow, beyond this route. Its file's
+  `TailLightColor` 1.2 and `BrakeColor` 1.4 upload by the same rule as 1.516837 and 2.163044.
+
+**Wheels** (confirmed-runtime).
+- **FH1 races draw the `_V2` techniques,** with shaders of their own: the race wheel draws' pixel
+  shaders hash to `rim_V2`, `inner_rim_V2`, `blur_rim_V2`, `blur_lip_V2` and `tire_V2` alone.
+- **The archive's `_V2` values apply:** the Viper's `rim_V2` and `blur_rim_V2` upload its wheel
+  archive's `PaintScale` 1.2.
+- **The blur constants at speed** are `blurRimGeomTexBlend` (1, 0.7301, 0.8651, 0.2595) and
+  `blurRimTexBlendAmounts` (0, 0.2699, 0.7301, 0). That is #423 section 2.6's FH1 form with
+  step 2t: t 0.8651, frac(2t) 0.7301, 0.3t 0.2595.
+
+The captures aren't kept in the repo (game imagery); the PR shows them.
 
 ## 5. Reference pictures and `render_compare`
 
@@ -361,14 +489,16 @@ A round's check costs a few minutes and no VM. Next uses:
 third column, "Forza, in game", for the cars of a check (#434). Score nothing against it; use it to
 review the reconstructed reference's technique models.
 
-**FH1:** see 1.1 and #433. The useful first step is the `.rdata` test of our disc. It needs
-the Visual Studio decision.
+**FH1:** it runs (sections 1.1 and 4.2). Next uses:
+- the RS500 itself, through the autoshow (the trainer's credits, `cheat_set_credits`, and a
+  route to the festival);
+- any car's lamp and glass constants by day and by night;
+- the time of day for reference pictures.
 
 ## Open
 
-- The FH1 build (section 1.1): a supported dump or a bypass of the dump check, and Visual
-  Studio Build Tools or a port to the portable toolchain.
-- FH1's wheel techniques in races (`_V2`, inferred from FM4 and the data).
+- A route to the FH1 Focus RS500 (autoshow), for its own captures and constants.
+- `dynamicLightsAmount.y` as the reverse lamps (inferred from one capture).
 - FM4 `tail_light_on`: which cars draw it, and when (seen on one AI car per grid, `BrakeColor`
   3.6 with a = 1).
 - Photo mode or another fixed camera for references.
