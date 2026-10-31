@@ -257,3 +257,35 @@ def test_preflight_lists_the_packs_and_says_they_are_not_built():
         assert "Test Car Pack" in lines[0] and "Tracks" in lines[0] and "#170" in lines[0]
         assert any("other title" in line and "skipped" in line for line in lines[1:])
         assert install.dlc_preflight([]) == []
+
+
+def test_a_car_in_fh1_and_a_dlc_pack_is_built_from_the_version_with_its_files():
+    from tests.test_discs import _disc
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assets = _assets(root)
+        files = {name.format(name="por_959_87"): b"x" for name in port_car.WANTED}
+        full = {"media/cars/POR_959_87.zip": _zip({"POR_959_87.carbin": b"c", **files})}
+        fh1 = _disc(root / "fh1.iso", FH1, files=full)
+        cars, _ = forza_roster.roster([fh1], forza_roster.dlc_packages(assets))
+        car = cars["por_959_87"]
+        assert car.games == "FM4,FH1" and [s.dlc for s in car.sources] == [False, True]
+        # the pack's version lacks most converter inputs: FH1's is built, also when asked for none
+        _, source = port_car.pick_source(cars, port_car.CarRequest("POR_959_87", None))
+        assert source.game == "FH1"
+        _, source = port_car.pick_source(cars, port_car.CarRequest("POR_959_87", "FM4"))
+        assert source.dlc  # @fm4: the only FM4 version
+
+
+def test_choose_source_takes_the_complete_version_then_the_game_order():
+    fh1 = forza_roster.Source("FH1", "FH1", "media/cars/x.zip", 0, 0, "car", "fh1.iso")
+    dlc = forza_roster.Source("FM4", "FM4 DLC / Pack", "a.zip::media/cars/x/", 0, 0, "car", "", "pkg")
+    disc = forza_roster.Source("FM4", "FM4 disc 1", "media/cars/x.zip", 0, 0, "car", "fm4.iso")
+    wanted = ["x.carbin", "x_cockpit.carbin"]
+    listing = {id(fh1): {"x.carbin"}, id(dlc): {"x.carbin", "x_cockpit.carbin"}, id(disc): set(wanted)}
+    best, notes = forza_roster.choose_source([fh1, dlc], wanted, ("FH1", "FM4"), lambda s: listing[id(s)])
+    assert best is dlc and notes == ["FH1: no x_cockpit.carbin", "FM4 DLC / Pack: all 2 inputs"]
+    listing[id(fh1)] = set(wanted)  # a tie: the game order, a disc before a pack
+    assert forza_roster.choose_source([dlc, fh1], wanted, ("FH1", "FM4"), lambda s: listing[id(s)])[0] is fh1
+    assert forza_roster.choose_source([dlc, disc], wanted, ("FH1", "FM4"), lambda s: listing[id(s)])[0] is disc

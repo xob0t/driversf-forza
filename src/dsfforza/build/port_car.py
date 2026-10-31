@@ -86,7 +86,7 @@ from dsfforza.build import (
     gentle,
     handling,
 )
-from dsfforza.build.forza_roster import Source, default_images, open_package, roster
+from dsfforza.build.forza_roster import Source, choose_source, default_images, open_package, roster
 from dsfforza.convert import (
     cockpit,
     dsf_materials,
@@ -280,6 +280,13 @@ def pick_source(cars: dict, request: CarRequest):
     if car is None or car.kind != "car":
         raise SystemExit(f"{request.media}: not a car on the discs (see research/forza-roster.tsv)")
     sources = [s for s in car.sources if s.kind == "car"]
+    if request.game:
+        sources = [s for s in sources if s.game == request.game]
+    if len(sources) > 1 and any(s.dlc for s in sources):
+        # A DLC car also on a disc: the version by its files (forza_roster.choose_source). Disc
+        # cars keep the game order below: by files, NIS_Leaf_11 would move from FH1 to FM4.
+        wanted = [w.format(name=car.name).lower() for w in WANTED]
+        return car, choose_source(sources, wanted, GAME_PREFERENCE)[0]
     for game in [request.game] if request.game else GAME_PREFERENCE:
         for source in sources:
             if source.game == game:

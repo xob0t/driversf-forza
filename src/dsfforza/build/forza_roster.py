@@ -336,6 +336,44 @@ def unique_packages(packages: list[Package]) -> list[Package]:
     return out
 
 
+def source_files(source: Source) -> set[str]:
+    """The files of a car source (its zip, or its folder in a pack), relative and lower case;
+    only the zip directories are read."""
+    if source.package:
+        handle, package = open_package(source)
+        inner, folder = source.path.split("::", 1)
+        opened = package.open(inner)
+    else:
+        handle = XIso(source.iso)
+        folder, opened = "", handle.open(handle.find(source.path))
+    prefix = folder.lower()
+    try:
+        with zipfile.ZipFile(opened) as archive:
+            names = [n.replace("\\", "/").lower() for n in archive.namelist()]
+    finally:
+        handle.close()
+    return {n[len(prefix) :] for n in names if n.startswith(prefix) and not n.endswith("/")}
+
+
+def choose_source(
+    sources: list[Source], wanted: list[str], order: tuple[str, ...], files=source_files
+) -> tuple[Source, list[str]]:
+    """The version of a car to build when it is in several sources, and why. First the
+    source missing the fewest of `wanted` (the files the conversion reads, lower case:
+    port_car.WANTED for the car); on a tie, `order`'s game first (port_car.GAME_PREFERENCE),
+    a disc before a DLC pack. On the 28 cars in both FH1 and the FM4 DLC, both versions
+    hold every wanted file, so they tie and keep FH1's (research/forza-sources.md, "Cars in
+    several sources")."""
+    missing = {id(s): [w for w in wanted if w not in files(s)] for s in sources}
+    notes = [
+        f"{s.where}: " + (f"no {', '.join(missing[id(s)])}" if missing[id(s)] else f"all {len(wanted)} inputs")
+        for s in sources
+    ]
+    rank = {g: i for i, g in enumerate(order)}
+    best = min(sources, key=lambda s: (len(missing[id(s)]), rank.get(s.game, len(rank)), s.dlc))
+    return best, notes
+
+
 def scan_dlc(package: Package) -> list[Source]:
     """The cars of one DLC package file (none for a pack without cars, e.g. the track pack)."""
     with package.path.open("rb") as stream:
