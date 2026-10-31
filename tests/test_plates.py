@@ -314,3 +314,14 @@ def test_plate_lamp_picks_its_pocket():
     assert abs(P.choose_pocket(found, 0.40).centre[1] - 0.79) < 0.015
     lamp = (-0.15, 0.15, 0.435, 0.445)
     assert abs(P.choose_pocket(found, 0.40, [lamp]).centre[1] - 0.38) < 0.015
+
+
+def test_plate_slides_off_a_badge_in_its_pocket():
+    # The ix20's tailgate pocket: 0.30 m tall, its badge in the upper part; the plate
+    # goes below the badge, not over it at the pocket's centre.
+    badge = rear_quad(-0.05, 0.05, 0.86, 0.92, -1.99, cls=4, feat=P.FEAT_BADGE)
+    tris = badge + boot_lid_pocket(y0=0.65, y1=0.95)
+    dm = P.depth_map(tris, "rear", (-0.9, 0.9), (0.0, 1.2))
+    (pocket,) = P.usable_pockets(P.pockets(dm, 0.0), SIZE)
+    s, y = P.place_in_pocket(dm, pocket, SIZE)
+    assert abs(s) < 0.01 and y + SIZE[1] / 2 <= 0.86 + 0.006, (y, pocket)

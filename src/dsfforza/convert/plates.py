@@ -566,6 +566,27 @@ def pockets(dm: DepthMap, ground: float, face_down: float = FACE_DOWN) -> list[P
     return found
 
 
+def place_in_pocket(dm: DepthMap, pocket: Pocket, size: tuple[float, float]) -> tuple[float, float]:
+    """(s, y) of the plate in its pocket: centred, or moved up or down within the
+    pocket's room to the height that covers the least of an emblem or lamp in it (the
+    ix20's tailgate pocket holds its badge above the plate's place, the CLK55's its
+    third brake lamp's foot)."""
+    (s, y), (w, h) = pocket.centre, size
+    height, width = dm.depth.shape
+    free = max(0.0, (pocket.size[1] - POCKET_ROOM[1] - h) / 2)
+    badge = dm.feat == FEAT_BADGE
+    hidden = (badge & (run_widths(badge) * PX < BADGE_BAND)) | (dm.feat == FEAT_LAMP)
+    cols = slice(max(0, int(round(dm.col(s - w / 2)))), min(width, int(round(dm.col(s + w / 2))) + 1))
+    best = None
+    for dy in np.arange(-free, free + 1e-9, PX) if free > 0 else (0.0,):
+        cy = y + float(dy)
+        rows = slice(max(0, int(round(dm.row(cy + h / 2)))), min(height, int(round(dm.row(cy - h / 2))) + 1))
+        key = (round(float(hidden[rows, cols].mean()), 3) if rows.stop > rows.start else 0.0, abs(float(dy)))
+        if best is None or key < best[0]:
+            best = (key, cy)
+    return s, best[1]
+
+
 def lamp_beside(pocket: Pocket, lamps) -> bool:
     """A plate lamp (numplate box) on or next to the pocket: in its walls or just
     outside them."""
@@ -968,8 +989,9 @@ def plan_end(
         pocket = choose_pocket(usable_pockets(pockets(dm, ground, face_down), base), prior_y, lamps)
     found = window_search(dm, base, prior_y, ground, face_down) if pocket is None else None
     if pocket is not None:
-        source, (cs, cy), b = "pocket", pocket.centre, pocket.tilt
+        source, b = "pocket", pocket.tilt
         size = _fit_size(base, (pocket.size[0] - POCKET_ROOM[0], pocket.size[1] - POCKET_ROOM[1]))
+        cs, cy = place_in_pocket(dm, pocket, size)
         note = (
             f"pocket {pocket.size[0]:.2f} x {pocket.size[1]:.2f}, walls "
             + "/".join("-" if w == 0 else f"{w * 100:.0f}" for w in pocket.walls)
