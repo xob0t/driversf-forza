@@ -655,7 +655,7 @@ def test_rear_lamp_glow_follows_the_mask_linearly():
     lit = out[:, :40]
     assert abs(lit[:, :30].mean() - lenses.TAIL_MEAN) < 1
     assert np.allclose(lit / order[:, :40], lit[0, 0] / order[0, 0])  # in proportion to the mask
-    assert lit.min() > 0.85 * lit.max()
+    assert lit.min() > 0.8 * lit.max()  # the mask's own +-10%
 
 
 def test_rear_lamp_glow_takes_grey_tail_texels():
