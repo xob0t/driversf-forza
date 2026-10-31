@@ -740,6 +740,36 @@ Desanne), 1 (Peugeot 205 T16) and 2 (Nissan 370Z), `-Views
   on white litter decals that show under its bumper. Compare cars' rears
   with that in mind.
 
+## Another mod over the game (`-Overlay`, 2026-10-31)
+
+`run-series.ps1 -Overlay <folder>` lays another mod's unpacked folder (its
+game-folder tree) over a run's game folder, as a player has it after
+installing that mod and then ours with `install.ps1 -Force`. One folder per
+archive, `''` for none, so one call runs the same archive with and without
+the mod: `-Archives a.sp, a.sp -Labels felony, plain -Overlay <mod>, ''`.
+With `-Vm` the folder is copied into each run folder (`overlay\`, read by
+the guest as `C:\Output\runs\<run>\overlay`); with `-OnHost` it is read in
+place. The source folder is only read.
+
+`run-test.ps1 -Overlay` (after the run folder is built):
+
+- the mod's files replace the game's: root files (`version.dll`), `media`,
+  `Common\LuaScripts`, `Common\fmv`, ... A junction on the way into
+  `C:\Game` is first split into a real folder of links, and a linked file is
+  unlinked before the copy, so nothing reaches the game folder;
+- ours win: the archive and its build files, `-Override`, `-GameRootFrom`,
+  and what the run put in `plugins` and `Common\UserLuaScripts`;
+- with `-Probe`, the mod's `Common\UserLuaScripts\bootstrap.lua` goes in as
+  `dsfforza\chained-bootstrap.lua`; the test bootstrap runs it first, as the
+  player bootstrap does;
+- a mod that brings `plugins\DriverNGHook.asi` keeps it, and `-Hook`'s 0.7.2
+  stays out (`install.ps1` leaves a hook it finds alone).
+
+`result.json` has `overlay` (folder, files laid, ours kept, hook from the
+overlay, the chained bootstrap) and `driverNGHook` (hash and size of the
+build the run had). An events.json line says the same. First use: Felony
+Rework 2.3 (`felony-rework.md`, "In-game check").
+
 ## Game behaviour the harness had to handle
 
 - **The save loads into the Shift overview** (zap level 7, `inZap` true,
