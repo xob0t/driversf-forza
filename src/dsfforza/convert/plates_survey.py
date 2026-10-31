@@ -185,6 +185,60 @@ def plan_with(pm, body, place, ground, hp, lods) -> dict:
     return out
 
 
+def forza_plates(body, place, ground, hp) -> dict:
+    """{end: Forza's own plate place} by the working tree's plates.py evidence: its
+    numberplate quads ("quad"), else the pocket a plate lamp lights ("pocket+lamp"),
+    else its one pocket ("pocket"), else the one plates.choose_pocket takes of several
+    ("pockets"), else its plate lamp's height ("lamp", plates.lamp_height); "none"
+    without any of them. Pockets count at the ends plates.py looks for them
+    (POCKET_ENDS); every pocket and lamp is listed."""
+    from dsfforza.convert import plates as pm
+
+    tris = pm.body_triangles(body, 1, place)
+    pts = [p for t, *_ in tris for p in t]
+    ys, zs = [p[1] for p in pts], [p[2] for p in pts]
+    z_mid = (max(zs) + min(zs)) / 2
+    hw = min(0.9, max(abs(p[0]) for p in pts) + 0.02)
+    out = {}
+    for end in ("rear", "front"):
+        part = [t for t in tris if (sum(q[2] for q in t[0]) / 3 > z_mid) == (end == "front")]
+        dm = pm.depth_map(part, end, (-hw, hw), (ground + 0.05, ground + 1.6))
+        hplate = hp.plates.get(end)
+        prior = None
+        if hplate is not None:
+            hy0, hy1 = hp.body_y
+            prior = min(ys) + (hplate.centre[1] - hy0) / max(1e-6, hy1 - hy0) * (max(ys) - min(ys))
+        found = pm.pockets(dm, ground, max(pm.FACE_DOWN, -hplate.tilt) if hplate else pm.FACE_DOWN)
+        lamps = pm.plate_lamps(body, end, place, z_mid)
+        mesh = pm._forza_mesh(body, end, place, z_mid)
+        kind, centre, size = "none", None, None
+        base = hplate.size if hplate is not None and 0.15 < hplate.size[0] <= 0.45 else pm.DEFAULT_SIZE
+        usable = pm.usable_pockets(found)
+        if lamps and end in pm.POCKET_ENDS:
+            prior = pm.lamp_height(lamps, hplate.size[1] if hplate is not None else base[1])
+        if mesh is not None:
+            v = np.array([pm.view_coords(end, q) for t in mesh[1] for q in t])
+            kind = "quad"
+            centre = [float(v[:, 0].min() + v[:, 0].max()) / 2, float(v[:, 1].min() + v[:, 1].max()) / 2]
+            size = [float(v[:, 0].max() - v[:, 0].min()), float(v[:, 1].max() - v[:, 1].min())]
+        elif usable and end in pm.POCKET_ENDS:
+            lit = [p for p in usable if pm.lamp_beside(p, lamps)]
+            kind = "pocket+lamp" if lit else "pocket" if len(usable) == 1 else "pockets"
+            chosen = pm.choose_pocket(usable, prior if prior is not None else 0.0, lamps)
+            centre, size = list(chosen.centre), list(chosen.size)
+        elif lamps:
+            kind, centre = "lamp", [0.0, pm.lamp_height(lamps, base[1])]
+        out[end] = {
+            "kind": kind,
+            "centre_s_y": centre and [round(c, 4) for c in centre],
+            "size": size and [round(c, 3) for c in size],
+            "prior_y": prior and round(prior, 4),
+            "pockets": [{**p.report(), "tilt": round(p.tilt, 3)} for p in found],
+            "lamps": [[round(c, 3) for c in b] for b in lamps],
+        }
+    return out
+
+
 def survey_one(job) -> dict:
     idle()
     media, folder, spool, versions, cache = job
@@ -192,7 +246,7 @@ def survey_one(job) -> dict:
         body, place, ground = load(folder, spool, cache)
         _, hp = host(spool)
         lods = sorted({sub.lod for s in body for sub in s.subsections if sub.lod > 0})
-        row = {"media": media, "host": spool}
+        row = {"media": media, "host": spool, "forza": forza_plates(body, place, ground, hp)}
         for name, path in versions:
             row[name] = plan_with(module(path, f"plates_{name}"), body, place, ground, hp, lods)
     except Exception as error:  # noqa: BLE001 - one car's failure is a row of the survey
@@ -202,7 +256,7 @@ def survey_one(job) -> dict:
 
 # --- summary ------------------------------------------------------------------------------
 
-SOURCES = ("recess", "flat", "forza-mesh", "host", "none")
+SOURCES = ("forza-mesh", "pocket", "recess", "flat", "host", "none")
 FLAGS = (
     "floating",
     "corner off > 3 cm",
@@ -235,7 +289,45 @@ def flags(p: dict) -> set:
     return f
 
 
+NEAR = 0.05  # a plate within this of Forza's (centre to centre, m) is on it
+
+
+def distance(plate: dict, forza: dict) -> float | None:
+    """Centre-to-centre distance (m, across and up) of a plate from Forza's."""
+    if not forza.get("centre_s_y") or "centre_s_y" not in plate:
+        return None
+    (a, b), (c, d) = plate["centre_s_y"], forza["centre_s_y"]
+    return float(np.hypot(a - c, b - d))
+
+
+def forza_table(rows: list[dict], runs: list[str]) -> None:
+    """Per end: Forza's evidence x each run's source, with how many plates sit on
+    Forza's place (within NEAR) and the median distance of the rest."""
+    rows = [r for r in rows if "forza" in r and all(n in r for n in runs)]
+    if not rows:
+        return
+    for end in ("rear", "front"):
+        print(f"\n{end}: Forza's plate x converter path (on Forza's place within {NEAR * 100:.0f} cm / off it)")
+        print("| Forza | " + " | ".join(runs) + " |")
+        print("| --- |" + " --- |" * len(runs))
+        kinds = sorted({r["forza"][end]["kind"] for r in rows})
+        for kind in kinds:
+            cells = []
+            for n in runs:
+                c = Counter()
+                for r in rows:
+                    if r["forza"][end]["kind"] != kind:
+                        continue
+                    p = r[n].get(end, {})
+                    d = distance(p, r["forza"][end])
+                    tag = "" if d is None else (" on" if d <= NEAR else " off")
+                    c[p.get("source", "none") + tag] += 1
+                cells.append(", ".join(f"{k} {v}" for k, v in sorted(c.items())))
+            print(f"| {kind} | " + " | ".join(cells) + " |")
+
+
 def summary(rows: list[dict], runs: list[str]) -> None:
+    forza_table(rows, runs)
     rows = [r for r in rows if all(n in r for n in runs)]
     print(f"{len(rows)} cars")
     ends = ("front", "rear")
@@ -292,7 +384,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.summary:
         rows = [json.loads(line) for line in args.summary.read_text(encoding="utf-8").splitlines() if line.strip()]
         rows = [r for r in rows if "error" not in r]
-        runs = args.runs.split(",") if args.runs else [k for k in rows[0] if k not in ("media", "host")]
+        runs = args.runs.split(",") if args.runs else [k for k in rows[0] if k not in ("media", "host", "forza")]
         summary(rows, runs)
         return
     if not args.build:

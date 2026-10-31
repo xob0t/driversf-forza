@@ -27,7 +27,11 @@ not the plate. So the plate is placed on the Forza body:
 
 1. a Forza `numberplate` quad at that end, if there is one (its place and
    size; the Forza quad is dropped);
-2. else the plate recess or mounting face: a depth map of the body seen from
+2. else, at the rear, Forza's plate pocket: a recess with walls on both sides and
+   above or below, measured by rays from the centre line (pockets); the one a
+   plate lamp (`numplate`) lights, else the one seen from the most rows; a plate
+   lamp without a pocket sets the height the next steps start from (#408);
+3. else the plate recess or mounting face: a depth map of the body seen from
    behind / in front (1 cm cells, LOD 1), searched for a flat (plane fit
    under 3 mm RMS), paint/trim-covered window of plate size near the
    centreline, facing out of the end (up by at most 39 degrees, down by at
@@ -36,7 +40,7 @@ not the plate. So the plate is placed on the Forza body:
    boxes; a recess up to WIDE_BAND away when there is neither a recess nor a
    flat face nearer); the window is then centred on the recess and the plate
    shrunk to fit it;
-3. else near the host's plate height, x = 0, pushed out to the nearest surface
+4. else near the host's plate height, x = 0, pushed out to the nearest surface
    in front (a plate on a bracket), tilted and bent back at its centre line to
    rest on the face as closely as it can (rest): the height where the
    plate hugs the face, hides no badge, lamp, glass or exhaust and sits on one
@@ -60,6 +64,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import dataclasses
 import math
 import sys
 from collections import Counter
@@ -415,6 +420,245 @@ def fit_plane(dm: DepthMap, rows: slice, cols: slice, mask=None):
     return float(b), float(c), float(math.sqrt(float((res**2).mean()))), res
 
 
+# --- Forza's plate pocket -----------------------------------------------------------------
+# Forza draws no plate on most cars, but their bodies are modelled with the real car's
+# plate pocket: a recess with walls on both sides and above or below it, about plate
+# size, on the centre line (the E46 M3's in its boot lid, 0.55 x 0.18 m; the Focus
+# RS500's in its tailgate; the Joss JT1's in its lower bumper). The window search
+# (plan_end) scores a host-plate-sized window by its border ring, which can't tell a
+# pocket wider than the host's plate (walls on one side of the ring) from a crease in
+# a bumper, so the host's plate height chose between them (research/plates.md, #408).
+# Here the pocket is measured itself: rays from the centre line out to its walls.
+POCKET_RISE = 3  # cells: a wall comes RECESS_STEP nearer within this many
+POCKET_GAP = 0.02  # a cell this much farther than the last: a gap (shut line, panel edge)
+POCKET_WALL = 8  # cells beyond a wall's foot searched for its top
+POCKET_REACH = (0.45, 0.3)  # rays across and up / down (m)
+# The smallest plate a pocket must hold: vanilla's smallest rear plate, 0.226 x 0.101 m
+# (vanilla 199; host_plates over the 140 vanilla rear plates). Rays stop at the first
+# wall cell, so a pocket measured n cells across is n + 1 between its walls' feet on
+# average (half a cell at each wall): it holds the plate from one cell under its size.
+# The C5R's lower valance slot and the Chevelle's bumper slot (0.08 m) hold none; the
+# Skyline R32's bumper pad (0.40 x 0.10) does.
+VANILLA_MIN_PLATE = (0.226, 0.101)
+POCKET_WIDTH = (VANILLA_MIN_PLATE[0] - PX, 0.80)
+POCKET_HEIGHT = (VANILLA_MIN_PLATE[1] - PX, 0.32)
+POCKET_OFF_CENTRE = 0.08  # pocket centre within this of x = 0
+POCKET_MERGE = 0.03  # seeds whose pockets agree within this are one pocket
+# Rear plates only: at the front the closed openings are air intakes and grilles whose
+# mesh is texture, not geometry (the RSX's and F40's lower intakes, the 135i's kidneys,
+# the Focus ST's lower grille), which depth alone can't tell from a plate pocket.
+POCKET_ENDS = ("rear",)
+# The plate clear of the pocket's walls across and up / down (m): the margins the window
+# search leaves round the face it found (room_w, room_h).
+POCKET_ROOM = (0.02, 0.015)
+# Side walls coming out further than this: a diffuser channel or an exhaust surround
+# (the M3 GTR race car's 1.4 m, the ARX-02a's 0.36, the Corvette Z06's 0.21), not a
+# plate pocket (bumper pockets' run to about 0.1: the Syclone's, the Chevelle's).
+POCKET_DEEP = 0.2
+LAMP_REACH = (0.02, 0.06)  # a plate lamp this near a pocket lights it (across, up / down)
+
+
+@dataclass
+class Pocket:
+    centre: tuple[float, float]  # (s, y)
+    size: tuple[float, float]  # between its walls
+    bounds: tuple[str, str, str, str]  # left, right, up, down: wall / gap
+    tilt: float
+    paint: float  # share of its floor on paint
+    walls: tuple[float, float, float, float]  # how far each wall comes out (m; 0: a gap)
+    seeds: int = 1
+
+    def report(self) -> dict:
+        return {
+            "centre_s_y": [round(c, 3) for c in self.centre],
+            "size": [round(c, 3) for c in self.size],
+            "bounds": list(self.bounds),
+            "walls": [round(w, 3) for w in self.walls],
+            "paint": round(self.paint, 2),
+            "seeds": self.seeds,
+        }
+
+
+def pocket_ray(dm: DepthMap, start: tuple[int, int], step: tuple[int, int], limit: int, tilt: float):
+    """(cells, kind, rise) from `start` along `step` to the first boundary: "wall" (the
+    surface comes RECESS_STEP nearer within POCKET_RISE cells, the plane of `tilt`
+    taken off; rise: how much nearer its top is, within POCKET_WALL cells), "gap" (a
+    hole, or a cell POCKET_GAP farther than the last), "stop" (a lamp, glass, grille or
+    exhaust: no pocket wall) or "open" (none within `limit`). Badges and artwork decals
+    are seen past."""
+    height, width = dm.depth.shape
+    i0, j0 = start
+    y0 = float(dm.y_of(i0))
+
+    def residual(k):
+        i, j = i0 + step[0] * k, j0 + step[1] * k
+        if not (0 <= i < height and 0 <= j < width):
+            return None, 0, 0
+        return float(dm.depth[i, j]) - tilt * (float(dm.y_of(i)) - y0), int(dm.feat[i, j]), int(dm.cls[i, j])
+
+    floor = [float(dm.depth[i0, j0])]
+    for k in range(1, limit + 1):
+        r, feat, cls = residual(k)
+        if r is None:
+            return k, "open", 0.0
+        if feat == FEAT_BADGE or (cls == CLASS["textured"] and feat == 0):
+            floor.append(floor[-1])
+            continue
+        if feat in (FEAT_LAMP, FEAT_GRILLE, FEAT_EXHAUST) or cls == CLASS["glass"]:
+            return k, "stop", 0.0
+        if not math.isfinite(r) or r - floor[-1] > POCKET_GAP:
+            return k, "gap", 0.0
+        base = max(floor[-POCKET_RISE:])
+        if r < base - RECESS_STEP:
+            top = r
+            for n in range(k + 1, k + POCKET_WALL + 1):
+                q = residual(n)[0]
+                if q is None or not math.isfinite(q) or q - top > POCKET_GAP:
+                    break
+                top = min(top, q)
+            return k, "wall", base - top
+        floor.append(r)
+    return limit + 1, "open", 0.0
+
+
+def pockets(dm: DepthMap, ground: float, face_down: float = FACE_DOWN) -> list[Pocket]:
+    """Plate pockets of an end: from each paint or trim cell on the centre line, rays
+    left, right, up and down; a pocket has walls left and right and a wall above or
+    below it (the other side may be a gap: the boot lid's edge under the E46 M3's),
+    is POCKET_WIDTH x POCKET_HEIGHT and centred within POCKET_OFF_CENTRE, and its
+    floor faces out within the recess search's tilts. Seeds of one pocket merge."""
+    height = dm.depth.shape[0]
+    j0 = int(round(dm.col(0.0)))
+    reach_s, reach_y = (int(round(r / PX)) for r in POCKET_REACH)
+    seeds: list = []  # (pocket, top row, bottom row)
+    for i in range(2, height - 2):
+        y = float(dm.y_of(i))
+        if not 0.15 <= y - ground <= 1.45:
+            continue
+        if dm.cls[i, j0] not in SURFACE_CLASSES or dm.feat[i, j0] in (FEAT_LAMP, FEAT_GRILLE, FEAT_EXHAUST):
+            continue
+        column = dm.depth[i - 2 : i + 3, j0]
+        if not np.isfinite(column).all() or float(np.abs(np.diff(column)).max()) > RECESS_STEP:
+            continue  # on a wall or an edge, not a floor
+        tilt = float(np.polyfit(dm.y_of(np.arange(i - 2, i + 3)), column, 1)[0])
+        if not -face_down <= tilt <= MAX_TILT:
+            continue
+        kl, left, rl = pocket_ray(dm, (i, j0), (0, -1), reach_s, 0.0)
+        kr, right, rr = pocket_ray(dm, (i, j0), (0, 1), reach_s, 0.0)
+        if left != "wall" or right != "wall":
+            continue
+        ku, up, ru = pocket_ray(dm, (i, j0), (-1, 0), reach_y, tilt)
+        kd, down, rd = pocket_ray(dm, (i, j0), (1, 0), reach_y, tilt)
+        if not ({up, down} <= {"wall", "gap"} and "wall" in (up, down)):
+            continue
+        size = ((kl + kr - 1) * PX, (ku + kd - 1) * PX)
+        centre = (float(dm.s_of(j0 + (kr - kl) / 2)), float(dm.y_of(i + (kd - ku) / 2)))
+        if not (POCKET_WIDTH[0] <= size[0] <= POCKET_WIDTH[1] and POCKET_HEIGHT[0] <= size[1] <= POCKET_HEIGHT[1]):
+            continue
+        if abs(centre[0]) > POCKET_OFF_CENTRE:
+            continue
+        inside = dm.cls[i - ku + 1 : i + kd, j0 - kl + 1 : j0 + kr]
+        pocket = Pocket(
+            centre, size, (left, right, up, down), tilt, float(np.mean(inside == CLASS["paint"])), (rl, rr, ru, rd)
+        )
+        seeds.append((pocket, i - ku, i + kd))
+    # Seeds whose rays end on the same walls above and below are one pocket; its width
+    # is their median (rays near a rounded corner or a sloping side wall stop short).
+    groups: list[list] = []
+    for seed in seeds:
+        for g in groups:
+            if abs(g[0][1] - seed[1]) * PX < POCKET_MERGE and abs(g[0][2] - seed[2]) * PX < POCKET_MERGE:
+                g.append(seed)
+                break
+        else:
+            groups.append([seed])
+    found = []
+    for g in groups:
+        middle = sorted(g, key=lambda k: k[0].size[0])[len(g) // 2][0]
+        found.append(dataclasses.replace(middle, seeds=len(g)))
+    return found
+
+
+def place_in_pocket(dm: DepthMap, pocket: Pocket, size: tuple[float, float]) -> tuple[float, float]:
+    """(s, y) of the plate in its pocket: centred, or moved up or down within the
+    pocket's room to the height that covers the least of an emblem or lamp in it (the
+    ix20's tailgate pocket holds its badge above the plate's place, the CLK55's its
+    third brake lamp's foot)."""
+    (s, y), (w, h) = pocket.centre, size
+    height, width = dm.depth.shape
+    free = max(0.0, (pocket.size[1] - POCKET_ROOM[1] - h) / 2)
+    badge = dm.feat == FEAT_BADGE
+    hidden = (badge & (run_widths(badge) * PX < BADGE_BAND)) | (dm.feat == FEAT_LAMP)
+    cols = slice(max(0, int(round(dm.col(s - w / 2)))), min(width, int(round(dm.col(s + w / 2))) + 1))
+    best = None
+    for dy in np.arange(-free, free + 1e-9, PX) if free > 0 else (0.0,):
+        cy = y + float(dy)
+        rows = slice(max(0, int(round(dm.row(cy + h / 2)))), min(height, int(round(dm.row(cy - h / 2))) + 1))
+        key = (round(float(hidden[rows, cols].mean()), 3) if rows.stop > rows.start else 0.0, abs(float(dy)))
+        if best is None or key < best[0]:
+            best = (key, cy)
+    return s, best[1]
+
+
+def lamp_beside(pocket: Pocket, lamps) -> bool:
+    """A plate lamp (numplate box) on or next to the pocket: in its walls or just
+    outside them."""
+    (s, y), (w, h) = pocket.centre, pocket.size
+    return any(
+        s1 >= s - w / 2 - LAMP_REACH[0]
+        and s0 <= s + w / 2 + LAMP_REACH[0]
+        and y1 >= y - h / 2 - LAMP_REACH[1]
+        and y0 <= y + h / 2 + LAMP_REACH[1]
+        for s0, s1, y0, y1 in lamps
+    )
+
+
+def usable_pockets(found: list[Pocket]) -> list[Pocket]:
+    """Pockets whose side walls are no deeper than POCKET_DEEP."""
+    return [p for p in found if max(p.walls[:2]) <= POCKET_DEEP]
+
+
+def choose_pocket(found: list[Pocket], prior_y: float, lamps=()) -> Pocket | None:
+    """The plate's pocket of `found` (usable_pockets): of those a plate lamp lights if
+    any, the one seen from the most centre-line rows (a pocket's whole floor; a crease
+    or a valance under a bumper is seen from a row or two: the Aston DBS's boot lid, 14
+    rows, against the diffuser below it, 2), then the nearest the host's plate
+    height."""
+    if not found:
+        return None
+    lit = [p for p in found if lamp_beside(p, lamps)]
+    return max(lit or found, key=lambda p: (p.seeds, -abs(p.centre[1] - prior_y)))
+
+
+def plate_lamps(sections, end: str, place, z_mid: float, lod: int = 1) -> list[tuple[float, float, float, float]]:
+    """Boxes (s0, s1, y0, y1) of Forza's plate lamps (technique numplate) at one end:
+    the strips that light the plate, beside or above it."""
+    from dsfforza.convert import forza_materials as fm
+
+    out = []
+    for s in sections:
+        for sub in s.subsections:
+            if sub.lod != lod or fm.technique_source(sub.material) != "numplate":
+                continue
+            pool = s.vertices_for(sub)
+            pts = [place.point(pool[i].position) for t in sub.triangles() for i in t]
+            if not pts or (sum(p[2] for p in pts) / len(pts) > z_mid) != (end == "front"):
+                continue
+            v = np.array([view_coords(end, p) for p in pts])
+            out.append((float(v[:, 0].min()), float(v[:, 0].max()), float(v[:, 1].min()), float(v[:, 1].max())))
+    return out
+
+
+def lamp_height(lamps, plate_height: float) -> float:
+    """The plate's height by Forza's plate lamps: just under a strip across (in the
+    pocket's upper wall on every car with both, shining down), or level with
+    upright strips beside it (the Firebird's)."""
+    s0, s1, y0, y1 = max(lamps, key=lambda b: (b[1] - b[0]) * max(b[3] - b[2], PX))
+    if y1 - y0 > s1 - s0:
+        return (y0 + y1) / 2
+    return y0 - plate_height / 2 - PX
+
+
 # --- planning ----------------------------------------------------------------------------
 
 
@@ -634,29 +878,13 @@ def fallback_height(dm: DepthMap, prior_y: float, base: tuple[float, float]) -> 
     return y, size, note
 
 
-def plan_end(
-    tris, end: str, host: HostPlate, prior_y: float, ground: float, half_width: float, forza_mesh=None
-) -> Plate:
-    base = host.size if host.size[0] > 0.15 else DEFAULT_SIZE
-    if base[0] > 0.45:  # a vanilla oddity (Super Car 01's front: 0.99 m, several pieces)
-        base = DEFAULT_SIZE
-    if forza_mesh is not None:
-        _, mesh, name = forza_mesh
-        v = np.array([view_coords(end, p) for t in mesh for p in t])
-        lo, hi = v.min(axis=0), v.max(axis=0)
-        a = np.c_[v[:, 1], np.ones(len(v))]
-        (b, c), *_ = np.linalg.lstsq(a, v[:, 2], rcond=None)
-        b = float(np.clip(b, -MAX_TILT, MAX_TILT))
-        cs, cy = float(lo[0] + hi[0]) / 2, float(lo[1] + hi[1]) / 2
-        size = _fit_size(base, (float(hi[0] - lo[0]), float(hi[1] - lo[1])), allow_up=True)
-        depth = float(min(v[:, 2] - b * (v[:, 1] - cy))) - 0.002
-        return Plate(end, (cs, cy), size, b, depth, "forza-mesh", name)
-
-    dm = depth_map(tris, end, (-half_width, half_width), (ground + 0.05, ground + 1.6))
+def window_search(dm: DepthMap, base: tuple[float, float], prior_y: float, ground: float, face_down: float):
+    """(source, (s, y), tilt, size, note) of a plate-sized window on a flat face near the
+    host's plate height: "recess" when its border ring steps out, else "flat"; None
+    when there is neither."""
+    height, width = dm.depth.shape
     wcols, wrows = int(round(base[0] / PX)), int(round(base[1] / PX))
     centre_col = dm.col(0.0)
-    height, width = dm.depth.shape
-    face_down = max(FACE_DOWN, -host.tilt)
     cands = []
     for top in range(height - wrows):
         cy = float(dm.y_of(top + (wrows - 1) / 2))
@@ -700,47 +928,85 @@ def plan_end(
         elif near:
             source = "flat"
             pick = min(near, key=lambda k: abs(k[2] - prior_y) + 2.0 * abs(k[3]))
-    if cands and pick is not None:
-        proud, rms, cy, cs, b, c, top, c0 = pick
-        # Centre on the face: walk out from the window centre along its row and
-        # column while the cells stay on the plane.
-        ci, cj = int(round(dm.row(cy))), int(round(dm.col(cs)))
+    if pick is None:
+        return None
+    proud, rms, cy, cs, b, c, top, c0 = pick
+    # Centre on the face: walk out from the window centre along its row and
+    # column while the cells stay on the plane.
+    ci, cj = int(round(dm.row(cy))), int(round(dm.col(cs)))
 
-        def on(i, j):
-            if not (0 <= i < height and 0 <= j < width):
-                return False
-            d = dm.depth[i, j]
-            return (
-                np.isfinite(d) and dm.cls[i, j] in SURFACE_CLASSES and abs(d - (b * float(dm.y_of(i)) + c)) < COPLANAR
-            )
+    def on(i, j):
+        if not (0 <= i < height and 0 <= j < width):
+            return False
+        d = dm.depth[i, j]
+        return np.isfinite(d) and dm.cls[i, j] in SURFACE_CLASSES and abs(d - (b * float(dm.y_of(i)) + c)) < COPLANAR
 
-        def walk(di, dj, limit):
-            n = 0
-            while n < limit and on(ci + di * (n + 1), cj + dj * (n + 1)):
-                n += 1
-            return n, n < limit
+    def walk(di, dj, limit):
+        n = 0
+        while n < limit and on(ci + di * (n + 1), cj + dj * (n + 1)):
+            n += 1
+        return n, n < limit
 
-        left, lb = walk(0, -1, 45)
-        right, rb = walk(0, 1, 45)
-        up, ub = walk(-1, 0, 25)
-        down, db = walk(1, 0, 25)
-        room_w = (left + right + 1) * PX - 0.02 if lb and rb else None
-        room_h = (up + down + 1) * PX - 0.015 if ub and db else None
-        # A face much smaller than the window that found it is a walk stopped
-        # by a seam or a hole, not the recess's walls.
-        if room_w is not None and room_w < 0.75 * base[0]:
-            room_w = None
-        if room_h is not None and room_h < 0.6 * base[1]:
-            room_h = None
-        if room_w is not None:
-            cs = float(dm.s_of(cj + (right - left) / 2))
-        if room_h is not None:
-            cy = float(dm.y_of(ci + (down - up) / 2))
-        size = _fit_size(base, (room_w, room_h))
+    left, lb = walk(0, -1, 45)
+    right, rb = walk(0, 1, 45)
+    up, ub = walk(-1, 0, 25)
+    down, db = walk(1, 0, 25)
+    room_w = (left + right + 1) * PX - 0.02 if lb and rb else None
+    room_h = (up + down + 1) * PX - 0.015 if ub and db else None
+    # A face much smaller than the window that found it is a walk stopped
+    # by a seam or a hole, not the recess's walls.
+    if room_w is not None and room_w < 0.75 * base[0]:
+        room_w = None
+    if room_h is not None and room_h < 0.6 * base[1]:
+        room_h = None
+    if room_w is not None:
+        cs = float(dm.s_of(cj + (right - left) / 2))
+    if room_h is not None:
+        cy = float(dm.y_of(ci + (down - up) / 2))
+    size = _fit_size(base, (room_w, room_h))
+    note = (
+        f"window rms {rms * 1000:.1f} mm, recess border {proud:.2f}, room "
+        f"{'-' if room_w is None else f'{room_w:.2f}'} x {'-' if room_h is None else f'{room_h:.2f}'}"
+    )
+    return source, (cs, cy), b, size, note
+
+
+def plan_end(
+    tris, end: str, host: HostPlate, prior_y: float, ground: float, half_width: float, forza_mesh=None, lamps=()
+) -> Plate:
+    base = host.size if host.size[0] > 0.15 else DEFAULT_SIZE
+    if base[0] > 0.45:  # a vanilla oddity (Super Car 01's front: 0.99 m, several pieces)
+        base = DEFAULT_SIZE
+    if forza_mesh is not None:
+        _, mesh, name = forza_mesh
+        v = np.array([view_coords(end, p) for t in mesh for p in t])
+        lo, hi = v.min(axis=0), v.max(axis=0)
+        a = np.c_[v[:, 1], np.ones(len(v))]
+        (b, _), *_ = np.linalg.lstsq(a, v[:, 2], rcond=None)
+        b = float(np.clip(b, -MAX_TILT, MAX_TILT))
+        cs, cy = float(lo[0] + hi[0]) / 2, float(lo[1] + hi[1]) / 2
+        size = _fit_size(base, (float(hi[0] - lo[0]), float(hi[1] - lo[1])), allow_up=True)
+        depth = float(min(v[:, 2] - b * (v[:, 1] - cy))) - 0.002
+        return Plate(end, (cs, cy), size, b, depth, "forza-mesh", name)
+
+    dm = depth_map(tris, end, (-half_width, half_width), (ground + 0.05, ground + 1.6))
+    height, width = dm.depth.shape
+    face_down = max(FACE_DOWN, -host.tilt)
+    pocket = None
+    if end in POCKET_ENDS:
+        pocket = choose_pocket(usable_pockets(pockets(dm, ground, face_down)), prior_y, lamps)
+    found = window_search(dm, base, prior_y, ground, face_down) if pocket is None else None
+    if pocket is not None:
+        source, b = "pocket", pocket.tilt
+        size = _fit_size(base, (pocket.size[0] - POCKET_ROOM[0], pocket.size[1] - POCKET_ROOM[1]))
+        cs, cy = place_in_pocket(dm, pocket, size)
         note = (
-            f"window rms {rms * 1000:.1f} mm, recess border {proud:.2f}, room "
-            f"{'-' if room_w is None else f'{room_w:.2f}'} x {'-' if room_h is None else f'{room_h:.2f}'}"
+            f"pocket {pocket.size[0]:.2f} x {pocket.size[1]:.2f}, walls "
+            + "/".join("-" if w == 0 else f"{w * 100:.0f}" for w in pocket.walls)
+            + " cm"
         )
+    elif found is not None:
+        source, (cs, cy), b, size, note = found
     else:
         source, cs = "host", 0.0
         b = 0.0
@@ -754,6 +1020,11 @@ def plan_end(
     win = dm.depth[rows, cols]
     ok = np.isfinite(win)
     bend = 0.0
+    if source == "pocket":
+        # The floor under the plate itself (the seed's column saw a few cells of it).
+        fit = fit_plane(dm, rows, cols, ok & np.isin(dm.cls[rows, cols], SURFACE_CLASSES))
+        if fit is not None:
+            b = float(np.clip(fit[0], -face_down, MAX_TILT))
     if source == "host":
         on_face = ok & face_cells(dm)[rows, cols]
         b, bend, nearest, _ = rest(dm, rows, cols, (cs, cy), on_face if on_face.sum() >= 6 else ok)
@@ -839,8 +1110,12 @@ def plan(car_body, place, ground: float, host: HostPlates, lods, log=print) -> P
         t = (hp.centre[1] - hy0) / max(1e-6, hy1 - hy0)
         prior_y = min(ys) + t * (max(ys) - min(ys))
         mesh = _forza_mesh(car_body, end, place, z_mid)
+        lamps = plate_lamps(car_body, end, place, z_mid, first)
+        host_y = prior_y
+        if lamps and end in POCKET_ENDS:
+            prior_y = lamp_height(lamps, hp.size[1])
         try:
-            p = plan_end(by_end[end], end, hp, prior_y, ground, half_width, mesh)
+            p = plan_end(by_end[end], end, hp, prior_y, ground, half_width, mesh, lamps)
         except ValueError as error:
             report[end] = {"source": "none", "note": str(error)}
             log(f"plates: {error}")
@@ -856,6 +1131,7 @@ def plan(car_body, place, ground: float, host: HostPlates, lods, log=print) -> P
                 "tilt": round(hp.tilt, 3),
             },
             "prior_y": round(prior_y, 3),
+            **({"host_y": round(host_y, 3), "plate_lamps": [[round(c, 3) for c in b] for b in lamps]} if lamps else {}),
         }
     dropped = sorted({s.name for s in car_body for sub in s.subsections if sub.material in FORZA_PLATE_TECHNIQUES})
     return PlatePlan(plates, dropped, {"plates": report, "dropped_forza_plates": dropped})
