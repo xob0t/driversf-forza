@@ -1165,13 +1165,16 @@ def bake(
     glow: np.ndarray | None = None,
     dropped: set | None = None,
     owners: dict | None = None,
+    filters: np.ndarray | None = None,
 ) -> dict:
     """Bake every lamp glass subsection (id(sub) in lens_ids, Lights atlas: lenses, lamp glass,
     covers; is_glass_technique) of the finest of `lods` over what lies behind it, into atlases'
     Lights texels (in place). glow: a glow map (new_glow) that gets the raw glow of the clear
     front lens and cover texels (lens_glow, one lamp per lens, for day_glow); without it they
     keep their lamp score like the coloured ones; owners: gets their lamps' subsections
-    (_GlowSum). dropped: gets (section name, technique) of the
+    (_GlowSum). filters: an (h, w, 3) array (NaN) that gets each lens texel's filter (lens_filter,
+    linear RGB: what the lens multiplies the light behind it by). dropped: gets (section name,
+    technique) of the
     swatch lenses left out (their tint goes onto the lamp behind them, SWATCH_TINT).
     Returns a report: {"<section>/<technique>": {"texels", "behind" (share of rays that met
     something), "shared" (texels left alone)}}."""
@@ -1307,6 +1310,8 @@ def bake(
             # glow of the lamp behind times the filter in the channel the result shows brightest
             # (a red lamp under a red lens: its red); the lens's own colour and alpha don't count.
             f = lens_filter(sub.material, lens_rgba, settings)
+            if filters is not None:
+                filters[iy, ix] = f[:, :3]
             baked[:, :3] = behind[inverse][:, :3] * np.sqrt(f)
             through = f[np.arange(len(f)), np.argmax(baked[:, :3], 1)]
             baked[:, 3] = mask[inverse] * _weight(behind[inverse]) / _weight(baked) * through

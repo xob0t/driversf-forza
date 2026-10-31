@@ -80,6 +80,10 @@ later PR replaced a rule, the earlier section says so in one line.
   (with an entry) are under a quarter of their area are 0x1D, Headlights +
   DaytimeRunning, so they light by day as on 33 vanilla vehicles
   ([day](#head-lamps-dark-by-day-player-report)).
+- A front head lamp's colour (b2) is the colour table entry nearest in hue to
+  its colour times the lens filter its glow passes: white behind a
+  selective-yellow lens is b2 11, yellow
+  ([#416](#head-lamps-behind-coloured-lenses-glow-in-the-lenss-colour-issue-416)).
 - Used entries get the lamp's position, direction and flags; spare ones
   flags 0, parked on the nearest lamp. Every lamp triangle of the full and
   exterior entries gets id + 1 in byte 2 of vertex semantic 9.
@@ -2828,6 +2832,86 @@ ranking itself is a fit onto vanilla's distribution: every lamp comes out with t
 spread whatever Forza's mask (the blotches of #403). Replacing it by Forza's mask through DSF's lamp
 maths needs Forza's glow units against DSF's and the per-technique colour, which wait on the same
 round (#422, the WIP branch `wip/tail-glow-mask`).
+
+### Head lamps behind coloured lenses glow in the lens's colour (issue #416)
+
+Symptom (user's build of master 5fef56e, by day): the Dodge #126 Viper GTS-R 03's head lamps and bumper lamps
+were large white blobs; Forza draws them yellow behind their selective-yellow lexan.
+
+What makes the head lamps' look (offline; `heads.py`, `survey_416.py` in this PR's worktree, the lamp plan on
+host 182, the converter's straight-ahead view at 5 mm), per side:
+
+| Cluster | Parts | Area | Lens | Alpha from |
+| --- | --- | ---: | --- | --- |
+| 0 | the bumper squares (`bumperFa/head_light` behind `bumperFa/detail_glass_clear`) | 417 cm2 | yellow (229, 220, 0), 4.2 mm texels | the amber per-hue curve, p50 / p90 29 / 42 (8% from the day glow) |
+| 1 | the main lamps (`body/head_light` behind `lexanLHL/RHL/detail_glass_clear`) | 309 cm2 | yellow (230, 220, 0), 3.8 mm texels | the day glow, p50 / p90 46 / 151 |
+| 2 | the round bumper lamps (`bumperFa/head_light` behind a clear lens) | 88 cm2 | clear | the day glow, 21 / 157 |
+
+All three are 0x1D (Headlights + DaytimeRunning) on white (b2 8).
+
+**Why the yellow lenses glowed white.** A DSF lamp texel glows `alpha x C`, with C the light entry's colour
+b2 (`lights-re.md`). The texel's RGB never enters the glow. The plan gave every head lamp white (8). In Forza
+a lens multiplies every light behind it by its filter `L + GlassColor` (`forza-lenses-re.md` section 2). The
+Viper's lexan texel (230, 220, 0) plus the shared 0.033 is (0.85, 0.78, 0.03), so whatever lights behind it
+reaches the eye yellow.
+
+DSF's colour table has the colour (lampprobe's read-back, `lights.LAMP_COLOUR`): b2 11 is (1, 0.916, 0.0002)
+and b2 10 is (1, 0.640, 0.0005). Both are siren yellows today. White x the lexan's filter, scaled to its
+brightest channel, is (1, 0.88, 0.03): b2 11.
+
+Change (`lenses.bake` `filters`, `Texturing.head_filters`, `LampPlan.front_head_lamp`, `tint_heads`,
+`lights.glow_colour`):
+- The bake records each lens texel's filter.
+- After the lamp plan, each front head lamp's mean filter over what a camera straight ahead sees of it is
+  taken, weighted by each texel's glow alpha.
+- The lamp takes the table entry nearest in hue to its colour x that filter. Under a clear lens or none the
+  white lamp stays white (8): the table holds no lighter tint of it.
+
+**Rule source:** the filter (Forza's lens maths); the lamp colours (DSF's colour table as the game uploads
+it); a choice among the table's own entries by hue (no threshold).
+
+**Roster** (573 cars, `survey_416.py`): 18 head lamps on 8 cars change colour, all race cars with coloured
+head lamp lenses:
+- to b2 11: both Viper GTS-Rs, 4 lamps each;
+- to b2 10:
+  - Corvette C5-R 04 (filter 0.42, 0.24, 0.19) and C6-R 06 (0.92, 0.67, 0.08);
+  - Saleen S7 #2 (0.98, 0.74, 0.03);
+  - Esperante #51 (0.37, 0.26, 0.03);
+  - M3 GT2 #79's right lamp (0.75, 0.55, 0.03);
+- to b2 4: one Toyota MR2 GT lamp (0.70, 0.14, 0.03).
+
+A host entry shared by several lamps takes the slot owner's colour: the Viper's right round bumper lamp
+shares the yellow main lamp's entry.
+
+`render_compare diff` (master b5091fb and this branch, the 8 cars, `out/rc/h8`): all 8 drawn differently, in
+their front lamps with the running lights only:
+- 70 to 75% of the region: both Vipers and the Esperante #51;
+- 55 to 86%: M3 GT2;
+- 54 to 57%: MR2 GT;
+- 31%: C6-R;
+- 12 to 20%: S7 #2 and C5-R.
+
+No flags fixed or new; scores unchanged. The MR2's and Esperante's "added" region also differs, by 27 and 2 pixels at dE 0.2 to 0.4 in the
+rear 3/4 view: their cabin seen through the side window, which this change (light entry colours and a filter
+map) doesn't touch.
+
+**Left open** (#416):
+- **The lit area.** 85 of the 522 ports with day-lit head lamps have two or more day-lit clusters a side. The
+  Viper's 1,631 cm2 is the fourth largest; the median is 372 cm2, p90 822. Each cluster is ranked onto
+  vanilla's 0x1D distribution (`DAY_HEAD_ALPHA`, a fit), and the day glow itself is DSF's choice: FM4's
+  `head_light` never glows, and FH1's heads glow with SwitchOnLights, about 0 by day. A derived level or
+  type waits on #422's glow units.
+- **The bumper squares' alpha.** They take the amber per-hue curve, because the bake's front path drops
+  amber-hued lens texels from the head glow, and `yellow_lens` tests the subsection's mean, which mixes the
+  clear round lenses and the yellow squares. Choosing that by what lies behind the lens would follow from
+  Forza's maths, but it moves the squares onto the same fitted day glow and brightens them. It waits with
+  the level.
+- **Coarse lens texels.** The lexan is 3.8 mm a texel over 1.5 to 1.9 mm projectors, the squares 4.2 over 2.1.
+  The bake can't hold the projector's picture in a lens texel that size. Leaving the lens out and tinting
+  the lamp (`_tint_behind`) is exact only for a flat lens whose rays all meet Lights surfaces with texels of
+  their own. That fits 3 of the 272 lens pieces with texels twice those behind them or more (82 cars; the
+  Viper's lexan meets 20% Lights, 80% housing). The general fix is a lens region baked finer than Forza's
+  lens texture, an atlas copy of its own, like #418's.
 
 ### Open
 
