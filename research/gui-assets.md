@@ -211,7 +211,18 @@ Forza's `Combo_Colors.Sequence` order), unless it shows black, grey or white
 (`paint.colour_group` of `paint.shows`); then the entry whose on-screen colour by day
 (`paint.shows`) has the most sRGB chroma, nearest mid grey on a tie.
 
-Why (2026-10-31; scripts and data in the PR for #402):
+Forza has no per-car default colour: `Combo_Colors` holds `Ordinal`, `Sequence`,
+`Metallic`, `RGB`, `BaseTexture`, `DamageTexture` and `ColorClassId`, `Data_Car` nothing
+on colour, and `NewProfile_Career_Garage.DefaultManufacturerColorIndex` (an index into
+the car's colour list) has no rows in either game. Sequence 1 is the maker's lead colour
+(Ferraris: `#c00000`, `#930017` or `#ff0001`). Entry 0 is Sequence 1 on all 573 roster
+cars: every car's lowest Sequence is 1, `pick_colours` keeps the first colour, NONR
+truncation (2 palettes) drops from the end, and the v0.1.5 build's entry 0 is
+`shade(Sequence 1)` on every car. The fallback applies to 166 cars with more than one
+colour (Sequence 1 grey 77, white 54, black 35); strict entry 0 would give 115 grey, 89
+white and 56 black pictures.
+
+Why (2026-10-31; method and numbers in the PR for #402):
 
 - **The game spawns a random entry.** Every garage spawn in the VM runs' Driver.log
   reads `spawnVehicle( FISHERMANS WHARF, <model>, nil)` (`garagesystem.lua` sets
@@ -250,7 +261,14 @@ v0.1.5 moved 87 pictures to another Forza colour against v0.1.4 (45 red or orang
 yellow); this rule moves 174 against v0.1.5. The palettes themselves (count, order) are
 the same in all three; entry 0's on-screen hue moved on 23 cars with #382, 22 of them
 toward their swatch (the Durango's near-black navy `#0f0c26` now shows a neutral
-`#22262e`).
+`#22262e`; #414).
+
+In game (confirmed-runtime, VM 1, garage 1 opened by `garagetest_on.lua`, `-MenuKeys`
+down the maker list; a 5-car build: 250 California, 250 GTO, F40, 458 Spider, M3 E30,
+the same archive with master's and this picker's gui.sp): `vm1-20261031-043658`
+(before: the FERRARI card stack yellow) and `vm1-20261031-044737` (after: red; the M3
+card the same in both). Spawns (`vm2-20261031-043650`, the game's pick): red 250
+California, light blue 250 GTO, black F40, dark red 458, red M3.
 
 ## Badge and model name: media/Fonts.fchunk "vehicles_font" (confirmed-static)
 
