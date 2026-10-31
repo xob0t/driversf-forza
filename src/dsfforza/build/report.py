@@ -580,6 +580,8 @@ def other_mods(game: Path, record: dict | None, repo: Path) -> dict:
         else:
             bootstrap_state = "another mod's"
     user_lua = game / "Common" / "UserLuaScripts"
+    if (user_lua / "dsfforza" / "chained-bootstrap.lua").is_file():  # install.ps1 kept another mod's; ours runs it
+        bootstrap_state += ", chaining another mod's"
     vanilla = {}
     for relative, digest in install.VANILLA_FILES.items():
         path = game / relative

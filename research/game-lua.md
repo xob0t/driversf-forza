@@ -239,7 +239,9 @@ changelog credits this to "Klancnik's garage mod". So a `vehicleStats`
 entry with `Selectable = true` and an unlock is enough for a vanilla model to
 show up in the garage. The engine walks a fixed ID range, not the table:
 FUN_006C57D0 loops IDs 0..303 (`gui-assets.md`, `asi.md`), so the dummies
-622 and 623 are never listed.
+622 and 623 are never listed (dsfforza.asi's garage walks 0..999, so
+`register.lua` hides them there). Running Felony Rework together with the
+Forza cars: `felony-rework.md`.
 
 Unlock flow, all in Lua:
 

@@ -23,11 +23,39 @@ if not rawget(_G, "dsfforzaUserOpen") then
 	end)
 end
 
+-- Another mod's bootstrap.lua that tools\install.ps1 replaced (Felony Rework's, for one) is
+-- kept as dsfforza\chained-bootstrap.lua. Its Init, Launch and Shutdown run before ours, so
+-- that mod still loads (research/felony-rework.md). An error in it is logged and doesn't stop
+-- ours, nor the game's launchScripts() that DriverNGHook calls after Launch.
+local CHAINED = "dsfforza\\chained-bootstrap.lua"
+local chained = nil
+
+local function callChained(name)
+	local fn = chained and chained[name]
+	if type(fn) == "function" then
+		local ok, err = pcall(fn)
+		if not ok then
+			print("[dsfforza] " .. CHAINED .. " " .. name .. " failed: " .. tostring(err))
+		end
+	end
+end
+
 function Bootstrapper.Init()
+	chained = nil
+	if type(user_fileExists) == "function" and user_fileExists(CHAINED) then
+		local ok, other = user_open(CHAINED)
+		if ok and type(other) == "table" then
+			chained = other
+		else
+			print("[dsfforza] " .. CHAINED .. " returned no bootstrapper: " .. tostring(other))
+		end
+	end
+	callChained("Init")
 end
 
 -- called when the game runs launchScripts()
 function Bootstrapper.Launch()
+	callChained("Launch")
 	local ok, err = user_open("dsfforza\\register.lua")  -- "\\": "\r" would be a carriage return
 	if not ok then
 		print("[dsfforza] register.lua failed: " .. tostring(err))
@@ -35,6 +63,7 @@ function Bootstrapper.Launch()
 end
 
 function Bootstrapper.Shutdown()
+	callChained("Shutdown")
 end
 
 return Bootstrapper

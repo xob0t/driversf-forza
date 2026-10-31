@@ -18,7 +18,9 @@ Install:
      runtime, x86 (32-bit); the script checks for it.
   5. Installs the Lua that registers the cars with the game (names, badges, stat
      bars, garage, traffic): Common\UserLuaScripts\bootstrap.lua plus
-     dsfforza\register.lua, ported.lua and hud.lua. No test probes.
+     dsfforza\register.lua, ported.lua and hud.lua. No test probes. Another mod's
+     bootstrap.lua (replaced only with -Force) is kept as dsfforza\chained-bootstrap.lua,
+     which ours runs first.
   6. With -Asi, installs the dsfforza.asi plugin (plugins\dsfforza.asi and
      dsfforza.ini; default out\asi, built by tools\asi\build.ps1, or -AsiPath):
      runtime patches of Driver.exe 1.04 (no file is changed) that raise the
@@ -714,9 +716,17 @@ function Invoke-Install {
 
     $lua = Join-Path $Repo 'tools\game\lua'
     $bootstrapTarget = Join-Path $Game 'Common\UserLuaScripts\bootstrap.lua'
+    # Another mod's bootstrap (Felony Rework's, ...) is replaced only with -Force. It is backed up,
+    # and kept as dsfforza\chained-bootstrap.lua, which ours runs first (player\bootstrap.lua),
+    # unless it is a dsfforza bootstrap itself (an older one would load register.lua twice).
+    $chainBootstrap = $false
     if ((Test-Path -LiteralPath $bootstrapTarget) -and
-        (Get-Sha256 $bootstrapTarget) -ne (Get-Sha256 (Join-Path $lua 'player\bootstrap.lua')) -and -not $Force) {
-        Fail "Common\UserLuaScripts\bootstrap.lua belongs to another mod. Add -Force to replace it (it is backed up and restored by -Uninstall)."
+        (Get-Sha256 $bootstrapTarget) -ne (Get-Sha256 (Join-Path $lua 'player\bootstrap.lua'))) {
+        if (-not $Force) {
+            Fail ("Common\UserLuaScripts\bootstrap.lua belongs to another mod. Add -Force to replace it: it is backed up " +
+                  "and restored by -Uninstall, and ours runs it first, so that mod still loads.")
+        }
+        $chainBootstrap = -not (Select-String -LiteralPath $bootstrapTarget -Pattern 'dsfforza' -SimpleMatch -Quiet)
     }
 
     # Hook prerequisites first, so nothing is changed when they are missing.
@@ -814,6 +824,10 @@ function Invoke-Install {
             $manifest.runtime_files = @('plugins\dsfforza.log')
         }
 
+        if ($chainBootstrap) {
+            Install-File $bootstrapTarget 'Common\UserLuaScripts\dsfforza\chained-bootstrap.lua'
+            Say "  another mod's bootstrap.lua kept as dsfforza\chained-bootstrap.lua; ours runs it first"
+        }
         Install-File (Join-Path $lua 'player\bootstrap.lua') 'Common\UserLuaScripts\bootstrap.lua'
         Install-File (Join-Path $lua 'dsfforza\register.lua') 'Common\UserLuaScripts\dsfforza\register.lua'
         Install-File $portedLua 'Common\UserLuaScripts\dsfforza\ported.lua'

@@ -55,7 +55,7 @@ checked against its SHA-256 (they are not in the zip):
 | `dinput8.dll` | Ultimate ASI Loader, only if no ASI loader is installed |
 | `plugins\DriverNGHook.asi`, `plugins\DriverNGHook\` | DriverNGHook, only if not installed |
 | `plugins\dsfforza.asi`, `plugins\dsfforza.ini` | the dsfforza plugin (below) |
-| `Common\UserLuaScripts\bootstrap.lua` | loads `dsfforza\register.lua` (no test or debug scripts) |
+| `Common\UserLuaScripts\bootstrap.lua` | loads `dsfforza\register.lua` (no test or debug scripts), after another mod's bootstrap it replaced (`dsfforza\chained-bootstrap.lua`) |
 | `Common\UserLuaScripts\dsfforza\` | `register.lua`, `ported.lua` (the car list), `hud.lua` (names, badges, pictures), `config.lua` |
 
 **The dsfforza plugin** (`dsfforza.asi`, in the zip) patches `Driver.exe` 1.04
@@ -69,10 +69,12 @@ and says so in the log. Details: [research/asi.md](research/asi.md).
 
 Some mods also use `Common\UserLuaScripts\bootstrap.lua`. If another mod's
 file is already there, the installer stops. With `--force` it backs that file
-up, replaces it, and restores it on uninstall. While the cars are installed,
-the other mod's Lua does not load. To run both, add
-`user_open("dsfforza\\register.lua")` to that mod's `Bootstrapper.Launch()`
-yourself.
+up, keeps a copy as `dsfforza\chained-bootstrap.lua` and installs its own,
+which runs the other mod's bootstrap first, so both mods load. Uninstalling
+puts the other mod's file back. If another mod's installer replaces the
+bootstrap later, run `.\install.cmd --install-only` again. Instead, you can add
+`user_open("dsfforza\\register.lua")` to the other mod's
+`Bootstrapper.Launch()` yourself.
 
 ## Uninstall
 
@@ -154,8 +156,13 @@ The installer copies your save folder first (step 3). Then:
 - **Other mods:**
   - Mods that replace `Install\dngvehicles.sp`, `Install\gui.sp` or
     `media\Fonts.fchunk` conflict with this one.
-  - Not tested together with Felony Rework. Its garage changes would use up
-    some of the maker-group room; `register.lua` counts what is actually
-    there at game start.
+  - Felony Rework 2.3 Hotfix 1 should work alongside, going by its files, but
+    hasn't been tested in game yet
+    ([research/felony-rework.md](research/felony-rework.md)). Install Felony
+    Rework as its readme says, then run this installer with `--force` (or run
+    `.\install.cmd --install-only` again if the cars were installed first).
+    Felony Rework's own DriverNGHook build and its second ASI loader
+    (`version.dll`) stay. Its garage changes use some of the maker-group
+    room; `register.lua` counts what is actually there at game start.
 
 Build details, the ID policy and what was tested: [research/batch.md](research/batch.md).

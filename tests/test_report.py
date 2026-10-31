@@ -202,6 +202,16 @@ def _fake_setup(root: Path) -> tuple[Path, Path, Path]:
     return repo, game, docs
 
 
+def test_other_mods_notes_a_chained_bootstrap():
+    """install.ps1 -Force keeps another mod's bootstrap.lua as dsfforza/chained-bootstrap.lua."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, game, _ = _fake_setup(Path(tmp))
+        assert report.other_mods(game, None, repo)["bootstrap_lua"] == "dsfforza's"
+        _touch(game / "Common" / "UserLuaScripts" / "dsfforza" / "chained-bootstrap.lua", b"-- Felony Rework")
+        state = report.other_mods(game, None, repo)["bootstrap_lua"]
+        assert state == "dsfforza's, chaining another mod's", state
+
+
 def test_collect_and_zip_a_fake_setup():
     with tempfile.TemporaryDirectory() as tmp:
         repo, game, docs = _fake_setup(Path(tmp))

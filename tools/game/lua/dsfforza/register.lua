@@ -29,6 +29,22 @@
 
 local M = {}
 
+-- Keep the Lua garbage collector stopped while a user file is compiled and run, as the
+-- player bootstrap does (research/in-game-tests.md, "Lua crashes loading big user files"):
+-- here too, so another mod's bootstrap that only adds user_open("dsfforza\\register.lua")
+-- loads ported.lua and hud.lua the safe way. user_open is read-only in DriverNGHook's _G
+-- metatable, hence rawset; the rawget guard keeps it to one wrapper.
+if not rawget(_G, "dsfforzaUserOpen") then
+	local original = user_open
+	rawset(_G, "dsfforzaUserOpen", original)
+	rawset(_G, "user_open", function(name, ...)
+		collectgarbage("stop")
+		local ok, value = original(name, ...)
+		collectgarbage("restart")
+		return ok, value
+	end)
+end
+
 -- Per-car settings, from dsfforza\ported.lua (src/dsfforza/build/port_car.py or
 -- src/dsfforza/build/port_batch.py) or config.lua's register.cars. Empty without either, so
 -- nothing is registered for cars that aren't in the installed archive.
@@ -103,7 +119,8 @@ end
 
 local GARAGE_MAX_GROUPS = ASI.garage and ASI.groups or 40
 local GARAGE_MAX_PER_GROUP = ASI.garage and ASI.cars or 20
-local GARAGE_MAX_ID = ASI.garage and ASI.maxId or 303
+local VANILLA_MAX_ID = 303   -- the vanilla garage lists IDs 0..303
+local GARAGE_MAX_ID = ASI.garage and ASI.maxId or VANILLA_MAX_ID
 local SAVE_MAX_ID = ASI.save and 999 or 303   -- highest ID whose save flags are safe to set
 local OVERFLOW_GROUP = "FORZA"   -- makes without a group of their own share FORZA, FORZA 2, ...
 
@@ -363,6 +380,19 @@ function M.registerStats()
 		return false
 	end
 	resolvePorted()
+	-- Only dsfforza.asi's garage walks past ID 303, and every model there is one of ours, so
+	-- another mod's Selectable entry above 303 is a placeholder, not a car: Felony Rework's
+	-- 622 and 623 (activity rewards, ManufacturerName "", research/felony-rework.md) would
+	-- list as an empty maker group of "NOTHING" cards that spool a model the archive
+	-- doesn't have. The vanilla garage (0..303) never lists them, so neither does this one.
+	for id, entry in pairs(vehicleStats) do
+		if type(id) == "number" and id > VANILLA_MAX_ID and id <= GARAGE_MAX_ID and CARS[id] == nil
+			and type(entry) == "table" and entry.Selectable then
+			entry.Selectable = false
+			log(string.format("vehicleStats[%d] (%s / %s) is not a model: not listed in the garage", id,
+				tostring(entry.ManufacturerName), tostring(entry.ModelName)))
+		end
+	end
 	-- Selectable vanilla (or other mods') cars per garage group, before ours.
 	local counts = {}
 	for id, entry in pairs(vehicleStats) do
