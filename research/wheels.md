@@ -642,6 +642,40 @@ white, the Continental's (PaintScale 0.5) mid grey, the Focus RS500's (7.5)
 black rims a little lighter, with the blue cap; next to vanilla 229's silver
 rims they now look alike (`img/rims-paintscale-ingame.jpg`).
 
+### Wheel shader settings (2026-10-31, issue #424)
+
+The rim brightness above took the car's `ShaderSettings.xml` over `Normal.xml`'s defaults. Forza
+doesn't read either for a wheel. A wheel model's settings list is built from `Shared.zip`
+`ShaderSettings/Tire/Normal.xml` (`Tire/Slod.xml` for the far LOD) and the wheel archive's own
+`ShaderSettings.xml` (FH1 0x82543558, FM4 0x82407848; research/forza-lamps-blur-re.md section
+2.5). Races draw the `_V2` techniques; the constants uploaded per draw in FM4 and FH1 race frames
+show it: LAM_SestoElemento_11's rim 2.15 (its archive's `rim_V2`, not its `rim` 2.0),
+CHE_Chevelle_70's 0.65 (`Tire/Normal.xml`'s `rim_V2`; its archive sets only `rim`), VIP_Viper_13's
+1.2 (research/forza-recomp.md section 4). Showrooms draw the plain techniques under `Tire/ui.xml`;
+the look in game is the race's.
+
+Fix (`forza_materials.wheel_shader_settings`, `WHEEL_RACE_V2`, the wheel rows of
+`WHEEL_PAINT_SCALE`, `GLOSS_DEFAULTS`, `CHROME_GLOSS_DEFAULTS`, `SPECULAR_COLOUR_DEFAULTS`;
+`port_car.WHEEL_FILES`; `dsf_materials` and `harness/forza_render` use the wheel chain for wheel
+techniques):
+- the defaults are `Tire/Normal.xml`'s race sections (FH1 and FM4 alike): rim PaintScale 0.65,
+  SpecularAmount 5.5, SpecularPower 6.5, FresnelScalar 0.7, CubeScale 0.2, FresnelIndex 2.05;
+  inner_rim 0.4 (CubeScale 1, no specular); chrome_rim ChromeDiffuseScale 0.1, CubeScale 0.75;
+  outer_rim PaintScale 0; values the race section doesn't set keep Normal.xml's (listed in
+  `GLOSS_DEFAULTS`);
+- over them the wheel archive's own file, extracted as `wheel_shadersettings.xml`, its `_V2`
+  section for the techniques that have one in `Tire/Normal.xml` (`WHEEL_RACE_V2`), else the plain
+  one;
+- the car's `ShaderSettings.xml` no longer reaches a wheel.
+
+Survey (all 573 cars, `out/w424/survey.py` in the PR's worktree): 56 wheel archives have their
+own file, 35 with race sections. The rim's PaintScale changes on 571 cars (0.75 -> 0.65 on 546),
+by more than x1.5 on 23 (FOR_FocusRS500_10 7.5 -> 0.65, FOR_ShelbyGT500_13 6.75 -> 0.65,
+AUS_MiniCooperS_65 1.45 -> 0.65, JAG_XKRS_12 0.75 -> 2.5, LAM_SestoElemento_11 -> 2.15,
+TVR_Sagaris_05 -> 1.8, PON_FirebirdTransAm_77 -> 1.4, VW_BEETLE_68 0.73 -> 1.33, VIP_Viper_13 ->
+1.2, JAG_Etype_61 -> 0.25, ...); inner_rim 1.0 -> 0.4 on 572; chrome_rim's ChromeDiffuseScale
+0.5 -> 0.1 on 571.
+
 ## Steering lock (2026-10-27, issue #54)
 
 The ports now steer their front wheels to Forza's lock, `Data_Car.SteerMaxAngle`
