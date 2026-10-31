@@ -2792,9 +2792,9 @@ with the running lights (day_lit): the new high stop lamps dark rolling where ma
 8%, the rest 2 to 4%). New flags on 3 cars: the Opel Speedster's "no glow" and both Viper GTS-Rs'
 "glows elsewhere than Forza's lamp". render_compare's reference lights a `tail_light` with the
 running lights, but Forza's tail_light glows only braking, so these are the reference's
-assumption, not a miss. The 7 alike: the front and rear centre pieces that kept their lamp type
-(BMW LMR, F430 GT #89, H1 Alpha, Dino, Kenworth, Delta S4, XC70: entries moved, nothing drawn
-differently).
+assumption, not a miss. The 7 alike: the BMW LMR, F430 GT #89, H1 Alpha, Dino, Kenworth and Delta S4 (centre pieces that
+kept their lamp type, entries moved) and the XC70, whose new high stop lamp is 4 triangles too small
+to show.
 
 ### Open
 
