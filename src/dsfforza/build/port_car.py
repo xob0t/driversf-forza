@@ -868,6 +868,8 @@ def build_car(
             merge_submodels=True,
             uid_seed=uid_prefix("geometry", car.name, spool_id),
             cockpit=use_cockpit,
+            chase_cabin=not args.no_chase_cabin and use_cockpit,
+            exterior_mdxn_limit=mdxn_max[2],
             gamedbs=[gamedb] if gamedb else [],
             glass_links=args.glass_links,
             same_vehicle_host=same_vehicle,
@@ -1383,6 +1385,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="keep the host's interior entry, steering hinge and head camera "
         "(default: rebuild them from <car>_cockpit.carbin, src/dsfforza/convert/cockpit/)",
+    )
+    parser.add_argument(
+        "--no-chase-cabin",
+        action="store_true",
+        help="the clean exterior keeps the main carbin's LOD-1 cabin (default: the cockpit carbin's "
+        "cabin, Forza's LOD 0, on the interior entry's materials; src/dsfforza/convert/cockpit/chase.py)",
     )
     parser.add_argument(
         "--no-settle",
