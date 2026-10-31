@@ -148,7 +148,12 @@ class Forza:
         scene: Scene | None = None,
         lamp: float = 0.0,
         car: dict | None = None,
+        textures: dict[str, tuple] | None = None,
+        consts: dict[str, list[float]] | None = None,
     ) -> list[PassResult]:
+        """textures: sampler name -> 0-1 RGBA texel for samplers other than the Lights/base one
+        (gamma-fetched like the atlases: RGB through pwl); consts: game-set constants by name
+        (blurRimGeomTexBlend, blurRimTexBlendAmounts...)."""
         scene = scene or Scene()
         t = self.techs[tech.lower()]
         mat = self.params(tech, car)
@@ -174,6 +179,7 @@ class Forza:
                 "brakeReverseAmount": [lamp, 0.0, 0.0, 0.0],
                 "psLightMapColour": [0.0] * 4,
             }
+            game.update(consts or {})
             for name, value in list(game.items()) + list(mat.items()):
                 c = names.get(name)
                 if c is not None and c.register_set == "float4":
@@ -183,6 +189,9 @@ class Forza:
 
             def fetch(slot, coords, samplers=samplers):
                 name = samplers.get(slot, "")
+                if textures and name in textures:
+                    t = textures[name]
+                    return [pwl(t[0]), pwl(t[1]), pwl(t[2]), t[3]]
                 if name in ("LightsSampler", "baseSampler"):
                     return [pwl(texel[0]), pwl(texel[1]), pwl(texel[2]), texel[3]]
                 if name.startswith("env"):
