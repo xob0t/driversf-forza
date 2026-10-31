@@ -430,7 +430,7 @@ def main(argv: list[str] | None = None) -> None:
                 flat = {k: r.get(k) for k in ("id", "name", "host", "error")}
                 for view in ("cockpit", "chase"):
                     for k in measures:
-                        if view in r and k in r[view]:
+                        if view in r and r[view].get(k) is not None:  # ring_error: None for a rim far off the line
                             flat[f"{view}_{k}"] = round(r[view][k], 5)
                 w.writerow(flat)
 
