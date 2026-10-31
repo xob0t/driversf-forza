@@ -1168,7 +1168,7 @@ centred in its arch.
   RAD_SR8LM_10, FOR_40_GTR_09, ...) have their floors below 0, not at y; raised by y, the
   Furai's floor would be 8 mm into its ground. Elsewhere the gamedb's ride heights differ
   from MAXData's on 62 cars, and the arches don't decide between them (35 for the gamedb,
-  15 for MAXData, mostly race cars, 30 alike): left open (#issue).
+  15 for MAXData, mostly race cars, 30 alike): left open (#417).
 - Track: the gamedb's differs from MAXData's by more than 10 mm on 67 cars, by up to
   0.32 m (SAL_S7_04), off the bodies: not used.
 
@@ -1187,7 +1187,29 @@ centred in its arch.
 (`arch_after.py`, master's build against the new hubs): cars with an axle more than 40 mm
 off its arch along the car 13 -> 3 (HUM_H1Alpha_06, KEN_T440_12, SHE_GT500KR_68: both
 sources agree there; square arches), more than 25 mm 28 -> 13; the Beetle's arch centres
--171 / -156 mm -> -13 / 2 mm.
+-171 / -156 mm -> -13 / 2 mm. A little worse: the five Commodore VEs -5 / 6 -> -20 / -9 mm
+(the gamedb's midpoint is 15 mm behind MAXData's plus the wheel model's offset), the two
+1965 Minis' rear 2 -> -15, EAE_Speedster_12's front 2 -> -20, the Beetle's front -6 -> -19.
+
+SAL_S7_04 (FH1, host 162; added to #406: wheels off-centre, a large gap behind the rear
+wheel) is the same cause: MAXData's wheelbase is 204 mm short and its midpoint 287 mm off;
+its arches lay -178 / -380 mm off master's hubs, 6 / 9 mm off the gamedb's. The host is not
+it: of the 56 ports on host 162, 53 were within 25 mm of their arches along the car on
+master; the others are ASC_KZ1R_12 (-78 / -133 -> -1 / 6, the same cause) and SAL_2_S7_03
+(25 / 25 -> 7 / 7).
+
+### In game (headless VM 1)
+
+Built from master (`out/w406/vm-before`, `vm2-before`) and with the fix (`vm-after`,
+`vm2-after`), `-Views wheels,wheel,wheel+mph35[,wheel+mph60] -Palette 0`: IDs 1
+VW_BEETLE_68, 2 AST_V8Vantage_77, 3 MER_SLR_05, 4 MER_SLRStirlingMoss_10, 5
+FOR_FocusRS500_10 and vanilla 257: `vm1-20261031-045849` (master), `vm1-20261031-050530`
+(fix); IDs 1 SAL_S7_04, 2 FOR_FocusRS500_10 and vanilla 162: `vm1-20261031-054026`
+(master), `vm1-20261031-054347` (fix). The Beetle stands on its wheels (master: body on the
+tyres, wheels in the fenders); the V8 Vantage's front wheels move forward to the arch
+centre; the S7's wheels sit centred in both arches, no gap behind the rear wheel; the SLR's
+wheels draw their rims and tyres instead of grey discs; the vanilla cars are the same in
+both runs.
 
 ## Wheels without a tyre in the main carbin (2026-10-31, issue #407)
 
@@ -1233,7 +1255,16 @@ in. 1.2 is the 370Z's: its offline ratio 1.28 drew the disc 7% brighter than the
 game (#211, `vm2-20261029-102813`: 96 at 60 mph, 90 at rest); the offline face lacks the
 rims' gloss and reflection. The build log's atlas line gives the gain (`wheel blur gain
 0.28` on the Focus, 0.64 to 0.71 on grey rims). Every car with a picture changes its
-disc's brightness (the disc is not drawn in garage pictures or `render_compare`).
+disc's brightness (the disc is not drawn in garage pictures or `render_compare`): on the
+median car the drawn disc goes from 1.69 to 1.2 times the face (darker by about 30%), on
+486 of the 499 the gain is under 1.
+
+In game (the runs above, `wheel+mph35` and `wheel+mph60`): the Focus's disc, near white on
+master, is dark like its black rims; the SLR Stirling Moss's disc a little darker than on
+master and alike with its rim at rest. Left open: the disc matches the face's mean, not its
+layout. VW_BEETLE_68's picture is bright in the middle where its converted rim is dark spokes
+inside a white outer ring, so its spinning wheel turns lighter in the middle (the same on
+master).
 
 ## Open
 
