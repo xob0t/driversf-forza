@@ -205,7 +205,7 @@ TECHNIQUE_COLOUR = {
     "drlinrwhite": WHITE,
 }
 
-CENTRE_X = 0.3  # a lamp group whose |x| stays below this is a centre lamp
+CENTRE_X = 0.3  # a lamp piece (_pieces) whose |x| stays below this is a centre lamp
 HIGH_BRAKE_RISE = 0.08  # a centre tail lamp this far above the side tails is the high brake lamp
 
 # Group priority when the host has fewer light entries than the car has lamps;
@@ -880,7 +880,15 @@ class LampPlan:
                 if not tris:
                     continue
                 pts_all = [[place.point(pool[i].position) for i in t] for t in tris]
-                max_x = max(abs(p[0]) for pts in pts_all for p in pts)
+                # A centre lamp is a piece that stays within CENTRE_X of the centre line, not only a
+                # whole subsection: Forza draws the Viper GTS-R's rear emblem with the `body`
+                # section's tail_light, beside the side tails, and per subsection its halves were
+                # left and right tail lamps rather than the high stop lamp (_high_brake, #405).
+                max_x = [0.0] * len(tris)
+                for piece in _pieces(pts_all):
+                    reach = max(abs(p[0]) for k in piece for p in pts_all[k])
+                    for k in piece:
+                        max_x[k] = reach
                 colour = TECHNIQUE_COLOUR.get(sub.material, FUNCTION_COLOUR.get(function, WHITE))
                 classes, red_lens = None, False
                 yellow = False
@@ -908,7 +916,7 @@ class LampPlan:
                         continue
                     if named_side:
                         side = named_side
-                    elif max_x < CENTRE_X:
+                    elif max_x[k] < CENTRE_X:
                         side = "C"
                     else:
                         side = "L" if centre[0] > 0 else "R"
