@@ -283,18 +283,29 @@ def test_blur_disc_fades_in():
     assert not cr._fades_in(*mesh(0), {})
 
 
-def test_picture_entry_first_colour_unless_neutral():
-    """The garage picture shows Forza's first colour (a Ferrari's red, not its brighter
-    yellow, #402); with a black, grey or white first colour, the entry that shows the most
-    colourful paint on screen (not the albedo, which the knee caps for every saturated
-    colour alike)."""
+def test_garage_picture_shows_sequence_1():
+    """The garage picture draws palette entry 0, Forza's Sequence 1 (a Ferrari's red, not its
+    brighter yellow, #402), even when it is black; pick_colours keeps it first on long lists."""
+    from types import SimpleNamespace
+    from unittest import mock
+
     from dsfforza.convert import paint
 
-    def palette(*swatches):
-        return [paint.shade(paint.ForzaColour(k + 1, rgb, False, "")) for k, rgb in enumerate(swatches)]
+    def colours(*swatches):
+        return [paint.ForzaColour(k + 1, rgb, False, "") for k, rgb in enumerate(swatches)]
 
-    red, rosso_corsa, giallo, white, blue = (192, 0, 0), (255, 0, 1), (254, 215, 50), (220, 231, 237), (125, 149, 173)
-    assert cr.picture_entry(palette(red, giallo, white, blue)) == 0
-    assert cr.picture_entry(palette(white, giallo, rosso_corsa, blue)) == 2
-    assert cr.picture_entry(palette(white, blue, giallo)) == 2
-    assert cr.picture_entry(palette((5, 5, 5), (183, 183, 183))) in (0, 1)
+    def drawn(*swatches):
+        entries = [paint.shade(c) for c in colours(*swatches)]
+        spss = SimpleNamespace(children=list(range(len(entries))))
+        with (
+            mock.patch.object(paint, "palette_set", return_value=spss),
+            mock.patch.object(paint, "spsp_params", side_effect=lambda _stream, k: entries[k]),
+        ):
+            return cr.paint_colour(None, None).c2, entries[0]["g_vec3TintColour2"][:3]
+
+    red, giallo, black = (192, 0, 0), (254, 215, 50), (5, 5, 5)
+    for swatches in ((red, giallo, (220, 231, 237)), (black, giallo, red)):
+        got, want = drawn(*swatches)
+        assert np.allclose(got, want)
+    many = colours(*[(k * 12, 255 - k * 12, (k * 37) % 256) for k in range(20)])
+    assert paint.pick_colours(many)[0].sequence == 1

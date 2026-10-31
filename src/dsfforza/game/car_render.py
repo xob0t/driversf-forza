@@ -452,24 +452,12 @@ def picture_paint(c2, c3, power: float, bias: float, metallic: bool) -> Paint:
 LOW_POWER_FLOOR, LOW_POWER_BIAS = 2.0, 0.05
 
 
-def picture_entry(entries: list[dict]) -> int:
-    """The palette entry a garage picture shows (research/gui-assets.md, "Paint colour"):
-    entry 0, the car's first Forza colour (paint.install keeps Forza's order), unless it
-    shows black, grey or white (paint.colour_group); then the most colourful entry, by
-    the sRGB chroma of the colour it shows on screen by day (paint.shows), nearest mid
-    grey on a tie (vanilla pictures rarely show black or grey)."""
-    from dsfforza.convert import paint
-
-    shown = [paint.shows(q) for q in entries]
-    if paint.colour_group(shown[0]) not in ("black", "grey", "white"):
-        return 0
-    return max(range(len(shown)), key=lambda k: (max(shown[k]) - min(shown[k]), -abs(sum(shown[k]) / 3 - 128)))
-
-
 def paint_colour(stream, full, index: int | None = None) -> Paint:
     """Palette entry `index` as the game draws it (compare renders: entry 0, like the
     probes' `-Palette 0`, so two builds draw the same entry), or for the garage picture
-    the entry picture_entry picks, in the picture's model (picture_paint)."""
+    entry 0, the car's first Forza colour (Sequence 1, the maker's lead colour:
+    paint.install keeps Forza's order; research/gui-assets.md, "Paint colour"), in the
+    picture's model (picture_paint)."""
     from dsfforza.convert import paint
 
     spss = paint.palette_set(stream, full)
@@ -477,8 +465,7 @@ def paint_colour(stream, full, index: int | None = None) -> Paint:
         return Paint.flat(DEFAULT_PAINT_SRGB)
     if index is not None:
         return Paint.entry(paint.spsp_params(stream, spss.children[min(index, len(spss.children) - 1)]))
-    entries = [paint.spsp_params(stream, e) for e in spss.children]
-    params = entries[picture_entry(entries)]
+    params = paint.spsp_params(stream, spss.children[0])
     metallic = "g_vec4TintColour1_Alpha" in params and paint.is_metallic(params)
     try:
         return picture_paint(
