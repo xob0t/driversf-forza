@@ -2824,8 +2824,10 @@ over cars, falls from 47.6 (p90 70) to 40.1 on every car.
 
 Left (#404): the RS500's tail texels stay near white by day (brightest channel median 208, vanilla's
 red tails 98). How Forza draws a clear `lights_gls_*` tail red is the next RE round. Also left: the
-ranking itself is a fit onto vanilla's distribution; replacing it by Forza's mask
-through DSF's lamp maths waits on the same round (#403, the WIP branch `wip/tail-glow-mask`).
+ranking itself is a fit onto vanilla's distribution: every lamp comes out with the same alpha
+spread whatever Forza's mask (the blotches of #403). Replacing it by Forza's mask through DSF's lamp
+maths needs Forza's glow units against DSF's and the per-technique colour, which wait on the same
+round (#422, the WIP branch `wip/tail-glow-mask`).
 
 ### Open
 
