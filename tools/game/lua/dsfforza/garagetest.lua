@@ -22,6 +22,7 @@ end
 
 _G.dsfforzaGarage = _G.dsfforzaGarage or { calls = {}, zero = 0, total = 0 }
 local state = _G.dsfforzaGarage
+state.others = state.others or {}   -- non-ported IDs above 303 already logged
 
 local ids = {}
 do
@@ -40,6 +41,13 @@ if not state.wrapped and type(getVehicleStats) == "function" then
 		if id == 0 then
 			state.zero = state.zero + 1
 			if state.zero == 1 then log("garage list built (getVehicleStats(0) called)") end
+		end
+		if type(id) == "number" and id > 303 and not state.ids[id] and type(entry) == "table" and not state.others[id] then
+			-- Another mod's entry the plugin's garage walk reaches (Felony Rework's 622 and 623):
+			-- register.lua keeps it out of the list (Selectable false).
+			state.others[id] = true
+			log(string.format("getVehicleStats(%d) (not a ported car) first call: Selectable %s, ManufacturerName %q, ModelName %s",
+				id, tostring(entry.Selectable), tostring(entry.ManufacturerName), tostring(entry.ModelName)))
 		end
 		if state.ids[id] then
 			local n = (state.calls[id] or 0) + 1

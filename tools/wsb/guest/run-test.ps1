@@ -8,6 +8,9 @@ probe when -Probe) and plugins (DriverNGHook when -Hook). Launches Driver,
 presses Enter until the Story world has loaded, then waits for the probe
 to finish, taking screenshots. Results go to C:\Output\runs\<stamp>\.
 
+-Overlay <folder> lays another mod over the run folder, as a player who installed that mod
+and then ours would have it (below, "-Overlay"; research/felony-rework.md, "In-game check").
+
 -Detach starts the same script hidden and returns immediately; poll
 C:\Output\runs\latest.txt and the run's result.json.
 
@@ -31,6 +34,8 @@ param(
     [string]$Asi,        # guest path of a plugin .asi copied into plugins with the .ini beside it; plugins\*.log is collected
     [string]$LuaFiles,   # 'dsfforza\hud.lua=C:\Repo\out\x\hud.lua;...': UserLuaScripts files replaced after the repo copy (-Probe)
     [switch]$ArchiveOnly, # only the archive, not its build's dngvehicles.lua and gui\ (below: "The build's files")
+    [string]$Overlay,    # a mod's folder (its game-folder tree) laid over the run folder, then ours over it as
+                         # tools\install.ps1 -Force lays them (below, "-Overlay"); result.json "overlay"
     [switch]$Probe,
     [int]$WaitSeconds = 120,
     [int]$ZoomPresses = 0,
@@ -612,6 +617,7 @@ try {
         }
     }
 
+    $overlayHook = $Overlay -and (Test-Path -LiteralPath (Join-Path $Overlay 'plugins\DriverNGHook.asi'))
     foreach ($dir in Get-ChildItem $GameDir -Directory) {
         $target = Join-Path $run $dir.Name
         switch ($dir.Name) {
@@ -675,7 +681,9 @@ try {
             }
             'plugins' {
                 New-Item -ItemType Directory -Path $target | Out-Null
-                if ($Hook) { Copy-Item (Join-Path $RepoDir '_ref\downloads\dnghook-0.7.2\extracted\plugins\*') $target -Recurse }
+                # install.ps1 leaves a DriverNGHook it finds alone: an -Overlay that brings its own build
+                # (Felony Rework's) keeps it, and 0.7.2 stays out.
+                if ($Hook -and -not $overlayHook) { Copy-Item (Join-Path $RepoDir '_ref\downloads\dnghook-0.7.2\extracted\plugins\*') $target -Recurse }
                 if ($Asi) {
                     Copy-Item $Asi $target
                     $asiIni = [IO.Path]::ChangeExtension($Asi, '.ini')
@@ -685,6 +693,72 @@ try {
             'dsfforza-backup' { }
             default { Add-LinkTree $dir.FullName $target $dir.Name.ToLower() }
         }
+    }
+
+    # -Overlay: another mod's files, as a player has them after installing that mod and then ours
+    # with install.ps1 -Force (research/felony-rework.md):
+    #   - the mod's files replace the game's (root files, media, Common\LuaScripts, fmv, ...);
+    #   - ours win: the archive and build files, -Override, -GameRootFrom, and whatever this script
+    #     put in plugins (dsfforza.asi) and Common\UserLuaScripts (the bootstrap, register.lua, ...);
+    #   - with -Probe, the mod's Common\UserLuaScripts\bootstrap.lua becomes
+    #     dsfforza\chained-bootstrap.lua, which the test bootstrap runs first like the player one;
+    #   - its plugins\DriverNGHook.asi replaces 0.7.2 (above), as install.ps1 keeps a hook it finds.
+    # Every file is a copy. A junction on the way into the game folder is split into a real folder
+    # of links first, and a linked file is unlinked before the copy, so nothing reaches C:\Game.
+    if ($Overlay) {
+        $overlayRoot = (Resolve-Path -LiteralPath $Overlay).Path
+        function Split-RunJunction([string]$dir) {
+            $from = @((Get-Item -LiteralPath $dir -Force).Target)[0] -replace '^\\(\?\?|\\\?)\\', ''
+            [IO.Directory]::Delete($dir)   # the junction only
+            New-Item -ItemType Directory -Path $dir | Out-Null
+            foreach ($item in Get-ChildItem -LiteralPath $from -Force) {
+                $path = Join-Path $dir $item.Name
+                if ($item.PSIsContainer) { New-Item -ItemType Junction -Path $path -Target $item.FullName | Out-Null }
+                else { New-FileLink $path $item.FullName }
+            }
+        }
+        function Use-RunFolder([string]$relative) {
+            $path = $run
+            foreach ($part in ($relative -split '\\' | Where-Object { $_ })) {
+                $path = Join-Path $path $part
+                $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+                if (-not $item) { New-Item -ItemType Directory -Path $path | Out-Null }
+                elseif ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { Split-RunJunction $path }
+            }
+        }
+        $laid = 0; $kept = @(); $chained = $null
+        foreach ($file in Get-ChildItem -LiteralPath $overlayRoot -Recurse -File -Force) {
+            $relative = $file.FullName.Substring($overlayRoot.Length + 1)
+            if ($Probe -and $relative -eq 'Common\UserLuaScripts\bootstrap.lua') {
+                $relative = 'Common\UserLuaScripts\dsfforza\chained-bootstrap.lua'
+                $chained = $file.FullName
+            }
+            $key = $relative.ToLower()
+            $dest = Join-Path $run $relative
+            $ourFolder = $key -like 'common\userluascripts\*' -or $key -like 'plugins\*'
+            if ($overrides.ContainsKey($key) -or $rootFrom.ContainsKey($key) -or ($ourFolder -and (Test-Path -LiteralPath $dest))) {
+                $kept += $relative
+                continue
+            }
+            $parent = Split-Path $relative
+            if ($parent) { Use-RunFolder $parent }
+            if (Test-Path -LiteralPath $dest) {
+                # The link (or the run's copy), never its target; a read-only copy loses the flag first.
+                try { [IO.File]::Delete($dest) } catch { [IO.File]::SetAttributes($dest, 'Normal'); [IO.File]::Delete($dest) }
+            }
+            Copy-Item -LiteralPath $file.FullName -Destination $dest
+            $laid++
+        }
+        $result.overlay = [ordered]@{ path = $Overlay; files = $laid; keptOurs = $kept; hookFromOverlay = [bool]$overlayHook
+            chainedBootstrap = $chained }
+        Note ("overlay ${Overlay}: $laid files laid over the run folder; ours kept: " +
+              "$(if ($kept) { $kept -join ', ' } else { 'none' }); DriverNGHook from the overlay: $([bool]$overlayHook); " +
+              "chained bootstrap: $([bool]$chained)")
+    }
+    # Which DriverNGHook build the run has (0.7.2, or an -Overlay's own).
+    $hookFile = Join-Path $run 'plugins\DriverNGHook.asi'
+    if (Test-Path -LiteralPath $hookFile) {
+        $result.driverNGHook = [ordered]@{ sha256 = (Get-FileHash -LiteralPath $hookFile).Hash; bytes = (Get-Item -LiteralPath $hookFile).Length }
     }
     Clear-ReadOnly $run
     $result.archiveSize = (Get-Item $Archive).Length

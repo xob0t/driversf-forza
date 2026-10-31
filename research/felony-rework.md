@@ -8,14 +8,16 @@ run in one game folder, and what breaks. Read from the mod's unpacked files
 (83 files, its `readme.txt` and `changelog.txt`), its decompiled script
 packages, the DriverNGToolkit and Ultimate ASI Loader sources, and our code.
 Tags as elsewhere: `confirmed-static` (read in data, code or binaries),
-`hypothesis` (not yet seen in game). **Nothing here has been run in game.**
+`hypothesis` (not yet seen in game), `confirmed-runtime` (seen in the VM runs below).
 
-**Verdict: compatible with steps** (static). Install Felony Rework as its
-readme says, then run our installer with `--force`. If our cars were
-installed first, run `install.cmd --install-only` again after Felony Rework.
-Our bootstrap then runs Felony's first (below). No ID collides. With
-dsfforza.asi, two of Felony's placeholder entries would have shown up in our
-extended garage; `register.lua` now hides them.
+**Verdict: compatible with steps** (static, and seen in game: "In-game
+check" below). Install Felony Rework as its readme says, then run our
+installer with `--force`. If our cars were installed first, run
+`install.cmd --install-only` again after Felony Rework. Our bootstrap then
+runs Felony's first (below). No ID collides. With dsfforza.asi, two of
+Felony's placeholder entries would have shown up in our extended garage;
+`register.lua` hides them. Keep the plugin's `[lua]` module on: with Felony
+and the full roster the game's Lua passes the vanilla 10 MB.
 
 ## What the mod ships
 
@@ -237,38 +239,66 @@ the real table at game start, so:
   is ours and loads the chained copy, and `stale dsfforza\chained-bootstrap.lua
   (not run)` when another installer has replaced ours since. It already lists every loader DLL and the UserLuaScripts files.
 
-## In-game check (to do)
+## In-game check (2026-10-31, confirmed-runtime)
 
-The VM harness can't lay a mod over the guest's game folder yet. The
-`plugins` folder gets only the 0.7.2 hook (`-Hook`) and `-Asi`.
-`Common\LuaScripts` and `Common\fmv` are junctions to the guest's copies.
-`-Override` replaces only existing files, plus root files, and `-LuaFiles`
-can't create `felonyrework\`. PR #319's `-ProfileFiles` writes into the
-guest's Documents profile, not the game folder, so it doesn't help either.
-The run needs an overlay option (#400). With one, the
-run would be:
+The VM harness lays a mod over the guest's game folder with
+`run-series.ps1 -Overlay` (#400; `in-game-tests.md`, "Another mod over the
+game"). The run folder then looks like a player's after installing Felony
+Rework and then our cars with `install.ps1 -Force`: Felony's files over
+the game; its `DriverNGHook.asi` (and `scripts\`) instead of 0.7.2, and its
+`version.dll` next to the guest's loader; our plugin, build files and Lua on
+top; Felony's `bootstrap.lua` as `dsfforza\chained-bootstrap.lua`. The
+one difference from a player's install is the bootstrap: a run has the test
+bootstrap (probe, `garagetest.lua`), which chains the same way as the
+player one.
+
+Runs: master's full roster (v0.1.5's 573 cars, `out\build\dngvehicles.sp`,
+1496 archive entries), the shipped `dsfforza.asi`, probe IDs 1 (BMW M3 E30,
+FH1), 450 (Hyundai ix20, a make DSF lacks, ID 304+) and 267 (vanilla
+Desanne cop), traffic on (`-Traffic`, `-LuaFiles` with the build's
+`ported.lua` so `register.lua` adds the cars to traffic), 8 s of throttle in
+each cockpit view:
 
 ```powershell
-# one VM series, Felony's files laid over the run folder, its bootstrap chained
-.\tools\wsb\run-series.ps1 -Vm -Asi out\asi\dsfforza.asi `
-  -Archives <build>\dngvehicles.sp -Labels felony -ProbeIds '<3 ids, one below 62, one in 62..303, one 304+>' `
-  -Overlay "$env:DSF_GAME_DIR\Felony_Rework_2.3_Hotfix_1" `
-  -LuaFiles "dsfforza\chained-bootstrap.lua=$env:DSF_GAME_DIR\Felony_Rework_2.3_Hotfix_1\Common\UserLuaScripts\bootstrap.lua" `
-  -ShotSeconds 3 -WaitSeconds 600
+.\tools\wsb\run-series.ps1 -Vm -Archives "$b\dngvehicles.sp", "$b\dngvehicles.sp" -Labels felony, plain `
+  -Overlay "$env:DSF_GAME_DIR\Felony_Rework_2.3_Hotfix_1", '' -Asi out\asi\dsfforza.asi -ProbeIds '1,450,267' `
+  -LuaFiles "dsfforza\ported.lua=$b\dngvehicles.lua" -Traffic -DriveSeconds 8 -ShotSeconds 3 -WaitSeconds 600
 ```
 
-The overlay must leave the test bootstrap in place: Felony's `bootstrap.lua`
-goes in as the chained copy. What to read from the run:
+| | `vm1-20261031-034636` (felony) | `vm1-20261031-035011` (plain) |
+| --- | --- | --- |
+| DriverNGHook | Felony's (1,184,256 bytes, 2E85725F...), "Custom game scripts are allowed" | 0.7.2 (791,552 bytes, DD0AC645...) |
+| Hook initialisations | 1 | 1 |
+| Felony's Lua | chained bootstrap loaded, its "Bootstrapper init" and "Launch scripts", `felonyrework.lua`, then its seven `felonyrework\*.lua` modules | none |
+| `register.lua` | loaded once; 622 and 623 "not a model: not listed in the garage" | loaded once |
+| Traffic | `SetInterestingVehicleRegions: 17 regions, 406 entries added` | the same |
+| Probe cars | all three spool, spawn, take the player and drive; top 97.5 mph | the same; top 75 mph |
+| 267 when requested | already loaded (Felony's "All chapters" pot) | spooled on request |
+| `dsfforza.log` | every module patched; nothing skipped | the same, apart from addresses |
+| Lua heap | passed 10 MB (the plugin's arena is 32 MB) | passed 9 MB |
+| Crash | none | none |
 
-- `Driver.log`: one "DriverNG Hook initialization"; "Custom game scripts are
-  allowed"; Felony's "Bootstrapper init" and "[NOTE] loading user file
-  'felonyrework.lua'" before the `[dsfforza.register]` lines; "vehicleStats[622]
-  ... is not a model" and 623; no Lua errors after the chapter loads;
-- `plugins\dsfforza.log`: every module patched, none skipped for changed
-  bytes;
-- the probe cars spawn, with their names and badges;
-- `garagetest_on.lua`: no group with an empty name; ASYM listed;
-- by hand later: a felony chase with a Forza car in traffic.
+Garage (`vm2-20261031-034907`, felony overlay, `garagetest_on.lua`,
+`-MenuKeys` into VEHICLES and down the maker list): the plugin's walk asks
+for 622 and 623 and gets `Selectable false`
+("getVehicleStats(622) (not a ported car) first call: Selectable false,
+ManufacturerName "", ModelName NOTHING"). The maker list starts at ABARTH,
+with no empty-name group, and lists Felony's ASYM group (266-268). Header
+"713/720 OWNED", the ported cars listed with their own names, badges and
+pictures. No crash.
+
+Not checked: a felony chase with a ported car (the probe can't start one
+cheaply), and how often the cars show up in traffic (the probe's nearby
+count is 0 in both runs, with and without Felony, so it says nothing
+here). Felony's older DriverNGHook doesn't wrap user update functions in
+`xpcall`, so a Lua error in one would not show in `Driver.log` the way it
+does with 0.7.2 (the plain run's `regionArtStatus.lua` error, a 2012 game
+file, is missing from the felony run for that reason).
+
+**Lua heap.** With Felony and the full roster, the game's Lua passed 10 MB,
+the vanilla heap's size. The plugin's `[lua]` module (on by default) is
+what holds it; with `[lua]` switched off the game would run out of Lua
+memory (issue #56's failure).
 
 ## Reproduce
 

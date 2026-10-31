@@ -156,13 +156,15 @@ The installer copies your save folder first (step 3). Then:
 - **Other mods:**
   - Mods that replace `Install\dngvehicles.sp`, `Install\gui.sp` or
     `media\Fonts.fchunk` conflict with this one.
-  - Felony Rework 2.3 Hotfix 1 should work alongside, going by its files, but
-    hasn't been tested in game yet
-    ([research/felony-rework.md](research/felony-rework.md)). Install Felony
+  - Felony Rework 2.3 Hotfix 1 works alongside (tested with the full roster;
+    [research/felony-rework.md](research/felony-rework.md)). Install Felony
     Rework as its readme says, then run this installer with `--force` (or run
     `.\install.cmd --install-only` again if the cars were installed first).
     Felony Rework's own DriverNGHook build and its second ASI loader
-    (`version.dll`) stay. Its garage changes use some of the maker-group
-    room; `register.lua` counts what is actually there at game start.
+    (`version.dll`) stay. Leave the plugin's `[lua]` section switched on in
+    `plugins\dsfforza.ini`: with both mods the game needs more Lua memory
+    than it has without the plugin. Its garage changes use some of the
+    maker-group room; `register.lua` counts what is actually there at game
+    start. A felony chase in one of the added cars hasn't been tried yet.
 
 Build details, the ID policy and what was tested: [research/batch.md](research/batch.md).
