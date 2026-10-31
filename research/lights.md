@@ -2680,6 +2680,17 @@ reads the same values as the strict parse, but the Peugeot 205 T16's: its two
 opacity. The Viper GTS-R's block after `</ShaderSettings>` stays unread, as `parse_shader_settings`
 leaves it; whether Forza reads it is not known (#416).
 
+`render_compare diff` (master's and this build of the 13 cars, `out/rc/H`): all 13 drawn
+differently, in their lamps:
+- lamp glass now baked at its cap where master left it unbaked (F50, F50 GT, Diablo SV, F1 GT, GTO);
+- red lenses through their own DarkValues / LightValues (8C, F430 Scuderia, Gallardo LP570,
+  SRT Viper 13, 250 GTO's red and amber);
+- clear lenses through their GlassColor (RS4 front 73 to 80% of the region, IS F).
+
+The F50, F50 GT, Ultima GTR, IS F and GTO 84 also differ in the cockpit view, dE 0.3 to 3.9 on the
+lamps and bonnet seen over the dash. Flags: the Diablo SV's "trims: 35% not drawn" fixed, none new.
+Scores within 0.6 either way.
+
 ### Open
 
 1. Front lamps in the lamp-phase mode (`-Lights`): neither copy faces the
