@@ -452,12 +452,24 @@ def picture_paint(c2, c3, power: float, bias: float, metallic: bool) -> Paint:
 LOW_POWER_FLOOR, LOW_POWER_BIAS = 2.0, 0.05
 
 
+def picture_entry(entries: list[dict]) -> int:
+    """The palette entry a garage picture shows (research/gui-assets.md, "Paint colour"):
+    entry 0, the car's first Forza colour (paint.install keeps Forza's order), unless it
+    shows black, grey or white (paint.colour_group); then the most colourful entry, by
+    the sRGB chroma of the colour it shows on screen by day (paint.shows), nearest mid
+    grey on a tie (vanilla pictures rarely show black or grey)."""
+    from dsfforza.convert import paint
+
+    shown = [paint.shows(q) for q in entries]
+    if paint.colour_group(shown[0]) not in ("black", "grey", "white"):
+        return 0
+    return max(range(len(shown)), key=lambda k: (max(shown[k]) - min(shown[k]), -abs(sum(shown[k]) / 3 - 128)))
+
+
 def paint_colour(stream, full, index: int | None = None) -> Paint:
     """Palette entry `index` as the game draws it (compare renders: entry 0, like the
     probes' `-Palette 0`, so two builds draw the same entry), or for the garage picture
-    the palette's most colourful entry (vanilla pictures rarely show black or grey),
-    chosen by the colour it mostly shows (paint.apparent), in the picture's model
-    (picture_paint)."""
+    the entry picture_entry picks, in the picture's model (picture_paint)."""
     from dsfforza.convert import paint
 
     spss = paint.palette_set(stream, full)
@@ -465,23 +477,19 @@ def paint_colour(stream, full, index: int | None = None) -> Paint:
         return Paint.flat(DEFAULT_PAINT_SRGB)
     if index is not None:
         return Paint.entry(paint.spsp_params(stream, spss.children[min(index, len(spss.children) - 1)]))
-    options = []
-    for e in spss.children:
-        params = paint.spsp_params(stream, e)
-        colour = tuple(int(255 * paint.linear_to_srgb(x)) for x in paint.apparent(params))
-        metallic = "g_vec4TintColour1_Alpha" in params and paint.is_metallic(params)
-        try:
-            entry = picture_paint(
-                tuple(params["g_vec3TintColour2"][:3]),
-                tuple(params["g_vec3TintColour3"][:3]),
-                float(params.get("g_fresnelpower", 1.0)),
-                float(params.get("g_fresnelbias", 0.0)),
-                metallic,
-            )
-        except (KeyError, TypeError):
-            entry = Paint.flat(colour, metallic)
-        options.append((colour, entry))
-    return max(options, key=lambda o: (max(o[0]) - min(o[0]), -abs(sum(o[0]) / 3 - 128)))[1]
+    entries = [paint.spsp_params(stream, e) for e in spss.children]
+    params = entries[picture_entry(entries)]
+    metallic = "g_vec4TintColour1_Alpha" in params and paint.is_metallic(params)
+    try:
+        return picture_paint(
+            tuple(params["g_vec3TintColour2"][:3]),
+            tuple(params["g_vec3TintColour3"][:3]),
+            float(params.get("g_fresnelpower", 1.0)),
+            float(params.get("g_fresnelbias", 0.0)),
+            metallic,
+        )
+    except (KeyError, TypeError):
+        return Paint.flat(tuple(int(255 * paint.linear_to_srgb(x)) for x in paint.apparent(params)), metallic)
 
 
 def _rest_hubs(stream, full, hubs: list) -> list:

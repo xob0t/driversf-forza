@@ -136,8 +136,9 @@ from `VANILLA_CAMERA` = yaw 36.5, pitch 13, distance 1.3
   textures are channel-packed (red is the grey level, blue the paint mask:
   plates, trim block, tyre sidewalls), so they are read as the paint shader
   does (`tex.r * lerp(1, paint, tex.b)`, "What the paint shader does" in
-  `lights.md`); the local textures as colour. Paint is the palette's most
-  colourful entry, metallic when the palette entry is. Chrome reflects the
+  `lights.md`); the local textures as colour. Paint is one palette entry
+  (`car_render.picture_entry`, "Paint colour" below), metallic when the
+  palette entry is. Chrome reflects the
   environment, lamps are their texture with a glossy cover.
 - Light: a studio environment (bright sky, dark horizon and floor, a soft box
   above and beyond the car for the bonnet streak), a key light from the
@@ -202,6 +203,54 @@ Speed (one process, out/testdrive11): `render_car` 0.78 to 1.27 s a car
 before (24 thumbnails, 16 renders), 44 s after (40 renders). `Image.resize`,
 `paste`, `flip_h`, `bbox` and `crop` are numpy now
 (`tests/test_garage_pictures.py` compares them with the old loops).
+
+### Paint colour: which palette entry a picture shows (issue #402)
+
+The picture shows **entry 0**, the car's first Forza colour (`paint.install` keeps
+Forza's `Combo_Colors.Sequence` order), unless it shows black, grey or white
+(`paint.colour_group` of `paint.shows`); then the entry whose on-screen colour by day
+(`paint.shows`) has the most sRGB chroma, nearest mid grey on a tie.
+
+Why (2026-10-31; scripts and data in the PR for #402):
+
+- **The game spawns a random entry.** Every garage spawn in the VM runs' Driver.log
+  reads `spawnVehicle( FISHERMANS WHARF, <model>, nil)` (`garagesystem.lua` sets
+  `shader = { [0] = chosenShader }` only when one is passed), and a spawn without
+  `ShaderParams` picks one at random (in-game-tests.md, "Paint"). The picture can't
+  match a spawn, so it shows the car as Forza presents it.
+- **Forza's own pictures favour the first colour.** For the 126 built FH1 cars with an
+  FH1 UI thumbnail, the thumbnail's body colour (CIELAB median) was matched to the
+  car's colours; of the 74 with a clear match (next colour at least 5 dE further),
+  32 show entry 0, against 1/9 by chance. Rules scored on those 74 (a pick is right
+  when its on-screen colour is within 10 dE of the matched entry's): entry 0 33, this
+  rule 28, the most colourful entry 12 to 17 (by albedo, screen sRGB or Lab chroma).
+  Entry 0 alone gives 115 grey, 89 white and 56 black pictures over the roster, which
+  the vanilla pictures don't have, hence the fallback.
+- **The fallback scores what the entry shows.** The picker used to score the sRGB
+  encoding of the albedo (`paint.apparent`). Up to v0.1.4 the albedo was 0.3 x the
+  swatch in linear light (`recolour`), so that ranked the swatches. Since #382 the
+  albedo is `albedo_for(swatch)` capped at the knee: every saturated colour ends at
+  about 0.30 in its strongest channel, the scores tie (149 for Rosso Corsa `#ff0001`
+  and Giallo Modena `#fed732` alike) and the mid-grey tie-break takes the brighter
+  yellow. On the vanilla pictures (126 cars, 63 with a clear match) the screen-chroma
+  pick is right on 24, the albedo one on 26; entry 0 on 8 (vanilla's order is DSF's own).
+
+Roster (573 cars, palettes rebuilt offline with each version's `paint.py` and checked
+against the v0.1.5 build's archive; garage-picture colour group):
+
+| | red | yellow | blue | orange | grey | white | black | green |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| v0.1.4 | 246 | 101 | 72 | 46 | 42 | 36 | 21 | 9 |
+| v0.1.5 | 199 | 153 | 78 | 29 | 42 | 36 | 22 | 14 |
+| this rule | 249 | 64 | 114 | 33 | 40 | 36 | 23 | 14 |
+
+Ferraris (33): v0.1.4 21 red, 7 yellow; v0.1.5 22 yellow, 6 red; this rule 29 red, 2
+white and 1 green race liveries, the 612 Scaglietti dark blue (its first colour).
+v0.1.5 moved 87 pictures to another Forza colour against v0.1.4 (45 red or orange to
+yellow); this rule moves 174 against v0.1.5. The palettes themselves (count, order) are
+the same in all three; entry 0's on-screen hue moved on 23 cars with #382, 22 of them
+toward their swatch (the Durango's near-black navy `#0f0c26` now shows a neutral
+`#22262e`).
 
 ## Badge and model name: media/Fonts.fchunk "vehicles_font" (confirmed-static)
 
