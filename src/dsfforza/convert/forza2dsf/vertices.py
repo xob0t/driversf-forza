@@ -231,6 +231,10 @@ class Placement:
     def point(self, p) -> tuple[float, float, float]:
         return (-p[0], p[1] + self.dy, -p[2] + self.dz)
 
+    def forza(self, p) -> tuple[float, float, float]:
+        """point's inverse: a host-space point in Forza body space."""
+        return (-p[0], p[1] - self.dy, -(p[2] - self.dz))
+
     @staticmethod
     def normal(n) -> tuple[float, float, float]:
         return (-n[0], n[1], -n[2])

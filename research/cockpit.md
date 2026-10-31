@@ -1,6 +1,6 @@
 # Cockpit view: interior entry, steering wheel, gauges, head camera
 
-Updated: 2026-10-30
+Updated: 2026-10-31
 
 How DSF draws the cockpit view, where Forza keeps the same data, and what
 `src/dsfforza/convert/cockpit/` (`--cockpit` in `forza2dsf.py`, on by default in
@@ -83,8 +83,11 @@ and so are their materials.
   which moves the cockpit arms' and the chase-view and AI drivers' hands onto
   it ("Hands on Forza's rim", "Hands in the chase views"). The driver seat
   stays at `seat_anchor` (PR #90's placement). The main carbin's wheel, which
-  the chase views draw, is aligned onto the cockpit wheel (`align_main_wheel`);
-  seven cars still differ (#86). The wheel turns by the steering angle's share
+  the chase views draw, is aligned onto the cockpit wheel (`align_main_wheel`,
+  its rim a least-squares circle without the hub decals; "The chase views'
+  wheel", #86); with a placeholder cockpit on a same-vehicle host, onto the host
+  interior's wheel and skinned to it. Forza's LOD-1 cabin mounts that wheel
+  on its dash, so the move can leave it in the air (#429). The wheel turns by the steering angle's share
   of p298, so the lock from Forza's `SteerMaxAngle` (PR #138) doesn't change
   its pose at full lock.
 
@@ -3227,6 +3230,87 @@ fit problem).
   him. The FG Falcon (same archive bytes) is unchanged.
 - The head camera stays where it was: the probe logs the Speedster's DriverEye at
   (-0.347, 1.003, -0.615) in both runs.
+
+## The chase views' wheel: the main-carbin fit (2026-10-31, issue #86)
+
+Issue #86 listed seven cars whose chase-view wheel (the main carbin's
+`steering_wheel`, aligned onto the cockpit wheel by `align_main_wheel`) wasn't on the
+turn line. Two causes, neither in the cockpit wheel's own fit (offline-checked).
+
+**Hub badges cut to their letters.** `cutout.cut_alpha_tested` runs before the
+cockpit code and turns the hub badge quad into the letters' outline: the FH1 XKR-S's
+4 triangles into 160, the Camaro ZL1's 5 into 114, the M Coupe's 2 into 37. All
+of those points are at the hub, and they pulled `fit_main_wheel` in to a 0.022,
+0.139 and 0.143 m rim. On Forza's raw section the same fit gives 0.161, 0.171 and
+0.176 m, within 1 cm of each cockpit wheel. Decals are drawn over the surface
+under them, so they aren't the wheel's shape: `main_wheel_points` leaves out
+the `fm.ALPHA_TESTED` techniques.
+
+**Coarse rims.** The E36 M3's main-carbin wheel is a 16-sided ring 6 cm thick with
+three flat spokes (no badge). `_fit_rim` takes the centre as the middle of the
+rim's extent, which follows whichever vertex sticks out furthest. Its refits then
+pick the rim about a centre already off it, and they walked 6 cm off the ring
+(rim scatter 4.7 cm for both candidates). `fit_rim_circle` takes the
+least-squares circle through the rim points instead (Kasa), with the rim's plane
+and points picked again about each new circle until it settles. It starts from
+the cockpit wheel's axis, so a modelled column (Boss 429) is never taken for the
+rim. On the cockpit wheels both methods agree within 1 cm (E36 M3, Camaro,
+XKR-S, Skyline). Only the main-carbin fit changes; the cockpit fit, which places
+the hinge, keeps `fit_wheel_points`.
+
+**Placeholder cockpits on a same-vehicle host** (Express, F-350, Taurus SHO): the
+host's interior stays, and its hierarchy isn't patched. The chase views' wheel
+was neither aligned nor skinned: it stayed where Forza has it and didn't turn.
+Now `cockpit.host_wheel` fits the host interior's own skinned wheel (vertex
+semantic 9 = the steering record's binding), the main wheel goes onto it
+(`Placement.forza` maps the host's space back to Forza's), and it is skinned to
+that record, so the host's vanilla rig turns it and holds it. The Taurus SHO
+gains nothing: its main-carbin wheel is all `blur_lip`, which the converter
+drops as wheel blur, so its chase views draw no wheel on master either (#431).
+
+**Measure.** The tool's own fit can't judge a fit: a wheel aligned by a fit is on
+the line by that fit. And `steering_axle`'s chase `off` used `fit_wheel_points`,
+the method that walks off these rims. `ring_error` (`ring_off`, `ring_radius`)
+takes the drawn rim's radii about the turn line in 16 angle bins (one mean radius
+each, so tessellation doesn't weigh), fits r = R + a cos + b sin through them, and
+gives off = hypot(a, b).
+
+| | Hub off the cockpit hub, median | 99th pct | worst | over 1 cm |
+| --- | ---: | ---: | ---: | ---: |
+| master, roster survey (555 cars with their own cockpit) | 0.13 cm | 1.51 | 5.46 | 13 |
+| this change | 0.04 cm | 0.43 | 0.84 | 0 |
+
+The survey (`out/i410/py/survey.py` in the #86 worktree, `t3-63e58ca0`) aligns each
+car's main wheel after the cutout, as the converter does, with master's fit and
+with this one, and measures it with the same angle bins. 30 cars improve by more
+than 5 mm (E36 M3, Camaro ZL1 and Panoz LMP 03 from a rim too far off to measure;
+FTO 5.5 cm, CL65 5.2, S4 4.0, M Coupe 3.4, both Jeep GC SRT8s 1.5 to 1.6, the
+A4s 1.5). 3 get worse by 5 to 8 mm, all under 1 cm: JAG_33_XKR_10 0.84, both
+Peugeot 908s 0.62.
+
+Built (`out/i410/before`, master 4668a8d; `out/i410/after`; the 37 cars that
+change, the Skyline and the three placeholder cockpits), `steering_axle`'s
+`ring_off` in the chase view: median 1.04 to 0.08 cm, over 1 cm 18 to 0. Express
+too far off to measure to 0.0 cm, F-350 2.9 to 0.1, Camaro 5.0 to 0.1, M Coupe
+1.8 to 0.0, E36 M3 too far off to measure to 0.0, XKR-S 0.5 to 0.0. The cockpit
+view is the same in both builds. `ring_off` there is a median 0.38 cm, at most
+1.3, because the hinge sits on `fit_wheel_points` (not changed here).
+
+`render_compare diff` (`out/rc/i86`): 36 of 37 cars change, 32 drawn
+differently. The changes are only the wheel seen through the glass (region
+`added`, the converter's own parts), the cabin around it and, on the S4 and the
+Panoz LMP, the wheel's own chrome (3 to 5% of the chrome pixels, dE 0). No car's
+score changes.
+
+**Not fixed here: the wheel floats off Forza's LOD-1 dash (#429, #410).** The
+chase views draw the clean exterior's cabin, Forza's LOD-1 stand-in. It has no
+steering column and puts its wheel on the dash: from the main wheel's hub along
+the column to the LOD-1 `interior`, a median 10 cm over 551 cars, 1.9 cm on the
+Calsonic Skyline. Moving that wheel onto the cockpit wheel pulls it back along the
+column, where the hands are: more than 5 cm on 126 cars, more than 10 cm on 61.
+The Skyline's 20 cm leaves the LOD-1 dash 37 cm ahead of its hub. The same LOD-1
+cabin samples `nodamage.xds`, where the Skyline's livery covered the road car's
+interior artwork. The wheel fit is right on this car and nothing here changes it.
 
 ## Risks and open questions
 
