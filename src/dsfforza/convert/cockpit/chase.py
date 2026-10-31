@@ -70,11 +70,19 @@ class ChaseCabin:
 
 def cabin_sections(static: dict) -> list:
     """The cockpit carbin's cabin: its static sections minus the outside parts
-    (fm.COCKPIT_EXTERIOR_SECTIONS), the upgrades (SKIP_SECTIONS), the lamps, and every
-    glass subsection (the exterior entry has the main carbin's)."""
+    (fm.COCKPIT_EXTERIOR_SECTIONS), the upgrades (SKIP_SECTIONS), the lamps, the glass
+    sections (glass* and FM4's lexan*, damage.host.glass_name) and every glass
+    subsection: the exterior entry has the main carbin's."""
+    from dsfforza.convert.damage.host import glass_name
+
     out = []
     for name, s in static.items():
-        if fm.COCKPIT_EXTERIOR_SECTIONS.match(name) or name in SKIP_SECTIONS or LIGHT_SECTIONS.search(name):
+        if (
+            fm.COCKPIT_EXTERIOR_SECTIONS.match(name)
+            or name in SKIP_SECTIONS
+            or LIGHT_SECTIONS.search(name)
+            or glass_name(name).startswith("glass")
+        ):
             continue
         subs = [u for u in s.subsections if u.lod == 0 and fm.classify_cockpit(u.material, name)[0] != fm.GLASS]
         if subs:
