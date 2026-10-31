@@ -40,10 +40,11 @@ class ForzaGloss(unittest.TestCase):
         # chrome: the cube map at every angle, no specular
         chrome = fm.gloss_params({}, "chrome_rim")
         self.assertIsNone(chrome.fresnel_scalar)
-        self.assertEqual((chrome.specular, chrome.reflection), (0.0, 1.0))
-        self.assertEqual(fm.chrome_diffuse_scale({}, "chrome_rim"), 0.5)
+        # Tire/Normal.xml's chrome_rim_V2 (#424): CubeScale 0.75, ChromeDiffuseScale 0.1
+        self.assertEqual((chrome.specular, chrome.reflection), (0.0, 0.75))
+        self.assertEqual(fm.chrome_diffuse_scale({}, "chrome_rim"), 0.1)
         self.assertIsNone(fm.chrome_diffuse_scale({}, "rim"))
-        self.assertEqual(fm.wheel_paint_scale("chrome_rim", {}), 0.5)
+        self.assertEqual(fm.wheel_paint_scale("chrome_rim", {}), 0.1)
 
     def test_source_names(self):
         name = fm.with_source(fm.with_scale(trim_art.GLOSS_TECHNIQUE, 0.2), "plastic2")

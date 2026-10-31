@@ -218,6 +218,10 @@ class _Materials:
         self.paint_trims = paint_trims
         self.atlases = _Atlases(folder, lod0)
         self.settings = _settings(folder)
+        try:  # a wheel's own chain: Tire/Normal.xml's race sections and its archive's file (#424)
+            self.wheel_settings = fm.wheel_shader_settings(folder)
+        except OSError:
+            self.wheel_settings = {}
         self.glass_settings = _glass_settings(folder)
         self.paint = paint
         self.classifier = classifier or fm.classify
@@ -267,7 +271,8 @@ class _Materials:
             tex = (np.array(swatch, np.float32) / 255).reshape(1, 1, 4)
         if flat:
             tex = None
-        own = self._own(tech)
+        settings = self.wheel_settings if wheel else self.settings
+        own = settings.get(t, {})
         grey = np.array(TILING_COLOUR, np.float32)
         m = cr.Material("textured", tex, grey, program=f"forza_{sm.role}", name=tech)
         if sm.role == fm.TYRE:
@@ -301,7 +306,7 @@ class _Materials:
             m.emissive = lens is None
             m.program = "forza_lens"
             return m
-        gloss = fm.gloss_params(self.settings, tech)
+        gloss = fm.gloss_params(settings, tech)
         if sm.role == fm.PAINT:
             # The built car's palette entry through DSF's paint program, as ours: the shared
             # atlas's paint texel is (255, 198, 255), so the albedo is the palette colour
@@ -310,7 +315,7 @@ class _Materials:
             m.paint = self.paint
             m.shading = cr.dsf_shading("paint")
             m.paint_blend, m.texture = tex is not None, tex
-            m.scale = fm.texel_scale(self.settings, tech) if tex is not None else 1.0
+            m.scale = fm.texel_scale(settings, tech) if tex is not None else 1.0
             if t.startswith("body") or tex is None:
                 m.packed = False
             # _base draws a paint kind from its texture as tex.r x lerp(1, paint, tex.b);
@@ -319,20 +324,20 @@ class _Materials:
                 m.kind = "textured"
             m.alpha_test = t in fm.ALPHA_TESTED
             return m
-        if sm.role == fm.CHROME or (wheel and fm.chrome_diffuse_scale(self.settings, tech) is not None):
+        if sm.role == fm.CHROME or (wheel and fm.chrome_diffuse_scale(settings, tech) is not None):
             cube = float(own.get("CubeScale", CHROME_DEFAULTS[0]))
             diffuse = float(own.get("ChromeDiffuseScale", CHROME_DEFAULTS[1]))
             if wheel:
-                diffuse = fm.wheel_paint_scale(tech, self.settings)
-                cube = fm.gloss_params(self.settings, tech).cube if fm.gloss_params(self.settings, tech) else 1.0
+                diffuse = fm.wheel_paint_scale(tech, settings)
+                cube = fm.gloss_params(settings, tech).cube if fm.gloss_params(settings, tech) else 1.0
             m.scale = diffuse
             m.shading = cr.Shading(1.0, 1.0, cube * FORZA_REFLECTION, 1.0, 0.0, 1.0, True)
             m.program = "forza_chrome"
             return m
         if wheel:
-            m.scale = fm.wheel_paint_scale(tech, self.settings)
+            m.scale = fm.wheel_paint_scale(tech, settings)
         elif sm.role in (fm.TRIM, fm.TEXTURED) and sm.family != fm.LIGHTS:
-            m.scale = fm.texel_scale(self.settings, tech)
+            m.scale = fm.texel_scale(settings, tech)
         if sm.family == fm.LIGHTS:
             m.shading = LAMP_SHADING
             m.emissive = True
