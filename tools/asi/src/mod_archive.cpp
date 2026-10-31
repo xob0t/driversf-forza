@@ -313,7 +313,13 @@ uint32_t entry_span(const Entry* e)
 //   2. read entry(i) and name(i) of those entries read from the package file
 //      (synchronously, with the plugin's own handle) instead of the archive;
 //   3. the SSLP the spool object uses gets three records per package (a copy
-//      with the records appended; FUN_005A0B50 sets the two pointers).
+//      with the records appended; FUN_005A0B50 sets the two pointers);
+//   4. the VSCT table gets the package's three records (FUN_0086C630 loads it
+//      into [Engine+0x780]+0x2C; FUN_0086C5B0 looks a model ID up in it for
+//      11 callers, so it is used at run time, not only by the stripped VEdit).
+// A package may carry a fourth entry, VSCT: its three 28-byte VSCT records
+// (the host's, as clone_vehicle.register_clones makes them); the plugin writes
+// the package's ID into them.
 // The vehicle archive's reader is the one FUN_005A11E0 opens (call 0x005A13C4)
 // with a file name ending in dngvehicles.sp.
 struct Pkg {
@@ -322,6 +328,8 @@ struct Pkg {
     bool listed;      // its SSLP records are in (no ID clash, NONR fits)
     Entry e[3];       // offsets relative to the package file
     uint32_t nonr[3];  // NONR size of each VEHC (the slot's buffer must hold it)
+    bool has_vsct;
+    uint8_t vsct[3][28];
     char path[MAX_PATH];
 };
 Pkg* g_pkgs = nullptr;
@@ -329,12 +337,14 @@ uint32_t g_pkg_count = 0;
 Reader* g_veh_reader = nullptr;  // the vehicle archive's root reader
 uint32_t g_pkg_first = 0;        // root index of the first package entry (0: none injected)
 uint8_t* g_sslp = nullptr;       // the extended SSLP (header + records)
+uint8_t* g_vsct = nullptr;       // the extended VSCT
 volatile LONG g_pkg_reads = 0;
 
 void* __fastcall h_ptr(Reader* r, void*, uint32_t i);
 
 const uint32_t kVEHC = 0x43484556;
 const uint32_t kNONR = 0x524E4F4E;
+const uint32_t kVSCT = 0x54435356;
 
 bool pread(HANDLE h, uint32_t pos, void* buf, uint32_t n, uint32_t* got)
 {
@@ -367,12 +377,23 @@ bool pkg_open(Pkg* p)
     }
     uint32_t hdr[4];
     uint32_t got = 0;
-    if (!pread(p->file, 0, hdr, sizeof hdr, &got) || got != sizeof hdr || hdr[0] != kCHNK || hdr[2] != 3 ||
-        (hdr[3] & 0x7FFFFFFF) != 3 || (hdr[3] >> 31)) {
-        dsf_log("packages: %s: not a CHNK of three entries (version 3, not compressed)", p->path);
+    if (!pread(p->file, 0, hdr, sizeof hdr, &got) || got != sizeof hdr || hdr[0] != kCHNK || hdr[2] < 3 ||
+        hdr[2] > 4 || (hdr[3] & 0x7FFFFFFF) != 3 || (hdr[3] >> 31)) {
+        dsf_log("packages: %s: not a CHNK of three or four entries (version 3, not compressed)", p->path);
         return false;
     }
-    if (!pread(p->file, 16, p->e, sizeof p->e, &got) || got != sizeof p->e) return false;
+    Entry all[4];
+    if (!pread(p->file, 16, all, hdr[2] * sizeof(Entry), &got) || got != hdr[2] * sizeof(Entry)) return false;
+    memcpy(p->e, all, sizeof p->e);
+    p->has_vsct = false;
+    if (hdr[2] == 4) {
+        if (all[3].tag != kVSCT || all[3].size != sizeof p->vsct ||
+            !pread(p->file, all[3].offset, p->vsct, sizeof p->vsct, &got) || got != sizeof p->vsct) {
+            dsf_log("packages: %s: entry 3 is not a VSCT of three records", p->path);
+            return false;
+        }
+        p->has_vsct = true;
+    }
     for (int k = 0; k < 3; k++) {
         Entry* e = &p->e[k];
         if (e->tag != kVEHC) {
@@ -530,6 +551,44 @@ void __fastcall h_sslp_load(uint8_t* self, void*, Reader* reader, uint32_t index
     *(uint8_t**)(self + 0x72F4) = sslp;
     *(uint8_t**)(self + 0x72F8) = sslp + 0x1C;
     dsf_log("packages: SSLP at %p: %u records + %u for %u car packages", self, count, 3 * add, add);
+}
+
+// FUN_0086C630 (thiscall: VSCT resource; reader, entry index): stores the
+// payload at resource+4 and, when none is set yet, at [Engine+0x780]+0x2C (the
+// table FUN_0086C550/FUN_0086C5B0 search: "VSCT" u16 version, u16 count, then
+// 28-byte records whose first u16 is the model ID). FUN_0086C670 clears the
+// global when it equals resource+4, so the copy goes to both places.
+void __fastcall h_vsct_load(uint8_t* self, void*, Reader* reader, uint32_t index)
+{
+    uint8_t* p = (uint8_t*)h_ptr(reader, nullptr, index);
+    *(uint8_t**)(self + 4) = p;
+    uint32_t add = 0;
+    for (uint32_t j = 0; j < g_pkg_count; j++)
+        if (g_pkgs[j].listed && g_pkgs[j].has_vsct) add++;
+    uint32_t count = *(uint16_t*)(p + 6);
+    if (add && *(uint32_t*)p == kVSCT && count + 3 * add <= 0xFFFF) {
+        uint8_t* v = (uint8_t*)HeapAlloc(GetProcessHeap(), 0, 8 + (count + 3 * add) * 28);
+        if (v) {
+            memcpy(v, p, 8 + count * 28);
+            uint8_t* out = v + 8 + count * 28;
+            for (uint32_t j = 0; j < g_pkg_count; j++) {
+                if (!g_pkgs[j].listed || !g_pkgs[j].has_vsct) continue;
+                memcpy(out, g_pkgs[j].vsct, sizeof g_pkgs[j].vsct);
+                for (int k = 0; k < 3; k++) *(uint16_t*)(out + 28 * k) = g_pkgs[j].id;
+                out += sizeof g_pkgs[j].vsct;
+            }
+            *(uint16_t*)(v + 6) = (uint16_t)(count + 3 * add);
+            if (g_vsct) HeapFree(GetProcessHeap(), 0, g_vsct);
+            g_vsct = v;
+            *(uint8_t**)(self + 4) = v;
+            dsf_log("packages: VSCT: %u records + %u from car packages", count, 3 * add);
+        }
+    }
+    uint8_t** engine = (uint8_t**)0x00FE7228;
+    typedef uint8_t*(__cdecl * GetEngine)();
+    if (!*engine) *engine = ((GetEngine)0x0040A690)();
+    uint8_t* holder = *(uint8_t**)(*engine + 0x780);
+    if (!*(uint8_t**)(holder + 0x2C)) *(uint8_t**)(holder + 0x2C) = *(uint8_t**)(self + 4);
 }
 
 typedef uint32_t(__fastcall* ReaderOpen)(Reader* r, void*, const char* name, int async, int flag);
@@ -1067,9 +1126,11 @@ static void patch_packages()
 {
     static const uint8_t open_expect[] = {0xE8, 0x67, 0xB1, 0x35, 0x00};  // call 0x008FC530
     static const uint8_t sslp_expect[] = {0x8B, 0x44, 0x24, 0x08, 0x56};  // mov eax,[esp+8]; push esi
+    static const uint8_t vsct_expect[] = {0x8B, 0x44, 0x24, 0x08, 0x56};  // same prologue at 0x0086C630
     if (!check_bytes(0x005A13C4, open_expect, sizeof open_expect) ||
-        !check_bytes(0x005A0B50, sslp_expect, sizeof sslp_expect)) {
-        dsf_log("packages: 005A13C4/005A0B50 are not the vanilla code; no car packages");
+        !check_bytes(0x005A0B50, sslp_expect, sizeof sslp_expect) ||
+        !check_bytes(0x0086C630, vsct_expect, sizeof vsct_expect)) {
+        dsf_log("packages: 005A13C4/005A0B50/0086C630 are not the vanilla code; no car packages");
         return;
     }
     pkg_load_list();
@@ -1079,7 +1140,13 @@ static void patch_packages()
         patch_bytes(0x005A13C4, open_expect, sizeof open_expect);
         return;
     }
-    dsf_log("packages: 005A13C4 spool open, 005A0B50 SSLP load hooked; %u car packages", g_pkg_count);
+    if (!patch_jmp(0x0086C630, (void*)h_vsct_load, sizeof vsct_expect, vsct_expect)) {
+        patch_bytes(0x005A0B50, sslp_expect, sizeof sslp_expect);
+        patch_bytes(0x005A13C4, open_expect, sizeof open_expect);
+        return;
+    }
+    dsf_log("packages: 005A13C4 spool open, 005A0B50 SSLP load, 0086C630 VSCT load hooked; %u car packages",
+            g_pkg_count);
 }
 
 void mod_archive_init()
