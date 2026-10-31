@@ -1,0 +1,8 @@
+# Title -> main menu on the warm-up profile (fm4-static-recomp config/warm-up/user, copied to
+# out/recomp/fm4/state/user); one capture and one frame's draw log. START skips the intro movie,
+# A leaves the title; the profile is read when it is left (tools/warm-up.ps1).
+until START|A "root=\"B13EBABEBABEBABE\"" 240 0.6
+until A "String: AUTOVISTA" 60 3
+sleep 6
+shot main-menu
+frame main-menu

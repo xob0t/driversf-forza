@@ -1,0 +1,88 @@
+# One launch: the showrooms of two FM4 cars whose wheel archives set their own rim PaintScale
+# (Sesto Elemento 2.0, 599 GTO 0.3; Tire/ui.xml says 0.8): which layer the wheels upload.
+# Menu strings: fm4-static-recomp tools/render_tests/routes.py; manufacturer numbers (Ferrari
+# 21, Lamborghini 36): tools/warm-up.ps1 and a walk of the list.
+until START|A "root=\"B13EBABEBABEBABE\"" 240 0.6
+until A "String: AUTOVISTA" 60 3
+sleep 4
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press RIGHT
+press RIGHT
+press RIGHT
+until A "String: QUICK RACE" 30 5
+press LEFT
+press LEFT
+press LEFT
+until A "String: MANUFACTURER SELECT" 30 5
+sleep 3
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+sleep 1
+until A "String: CAR SELECT" 20 5
+sleep 2
+until RIGHT "String: 599 GTO$" 60 1.5
+until A "String: COLOR SELECT" 30 10
+sleep 6
+shot 599gto-showroom
+frame 599gto-showroom
+until B "String: CAR SELECT" 30 5
+until B "String: MANUFACTURER SELECT" 30 5
+sleep 2
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+sleep 1
+until A "String: CAR SELECT" 20 5
+sleep 2
+until RIGHT "String: Sesto Elemento$" 60 1.5
+until A "String: COLOR SELECT" 30 10
+sleep 6
+shot sesto-showroom
+frame sesto-showroom
