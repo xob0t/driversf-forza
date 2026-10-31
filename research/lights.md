@@ -2724,7 +2724,17 @@ Change (`lenses.bake`, `_Surfaces.sample`):
 Cost: a bake 1.9 to 2.1 s on master, 2.9 to 3.6 s now (Commodore, Viper, Corvette Grand Sport;
 one bake a conversion).
 
-{{ROSTER_A}}
+Roster (offline, master's code, the 573 cars of `tools/batches/all.txt`; `out/survey_all.py` in this
+PR's worktree): per lens the bake takes, one ray per lens texel (up to 4,000 sampled) finds the Lights
+surface it meets and its texels a metre, against master's ray spacing. 533 cars have baked lenses
+(3,149 lens subsections). On 492 of them (1,991 lenses; 449 cars at the rear) at least 10% of a
+lens's texels had master's rays two or more texels of the surface behind apart. Over all lenses the
+share of such texels is p50 40%, p90 98.5%; 1,404 lenses have half or more. This change bakes every
+lens of the 533 cars differently. With one ray per texel and the read filtered to the texel's size,
+no texel is undersampled: the bake reads the surface at the coarsest detail the lens can show.
+Examples (rear lenses, share undersampled on master): Commodore #88 red lenses 24%, clear 43%;
+M3 GTR red 80%, boot lenses 81%; DS3 Racing inner red lens 48%; Joss JT1 100%; Viper GTS-R #126's
+rear covers 78%.
 
 In game (VM 1, by day, `-Views 'rear,nose' -ShotSeconds 3`, vanilla 130 first; master
 `vm1-20261031-054752`, the four #403/#404/#405 changes together `vm1-20261031-055429`): the
