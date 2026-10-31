@@ -241,3 +241,68 @@ def test_lamp_margin_moves_no_plate_onto_lettering():
     )
     y, _, _ = P.fallback_height(front_map(tris), 0.37, SIZE)
     assert abs(y - 0.37) < 0.015, y
+
+
+def rear_quad(x0, x1, y0, y1, z, cls=1, name="trunk", feat=0):
+    """Two triangles of a vertical rectangle facing -z (the rear), DSF coordinates."""
+    a, b, c, d = (x0, y0, z), (x1, y0, z), (x1, y1, z), (x0, y1, z)
+    return [([a, b, c], cls, name, feat), ([a, c, d], cls, name, feat)]
+
+
+def framed(x0, x1, y0, y1, z, outer=(-0.8, 0.8, 0.6, 1.2), name="trunk"):
+    """A face at z (rear) over `outer` (x0, x1, y0, y1) with a hole x0..x1 x y0..y1."""
+    ox0, ox1, oy0, oy1 = outer
+    return (
+        rear_quad(ox0, ox1, y1, oy1, z, name=name)
+        + rear_quad(ox0, ox1, oy0, y0, z, name=name)
+        + rear_quad(ox0, x0, y0, y1, z, name=name)
+        + rear_quad(x1, ox1, y0, y1, z, name=name)
+    )
+
+
+def boot_lid_pocket(depth=0.015, width=0.54, y0=0.70, y1=0.88):
+    """A rear face at z -2.0 with a pocket `depth` deep in it (the E46 M3's boot lid:
+    0.54 x 0.18 m), and a bumper face below standing 8 cm further out with a crease
+    (a 1 cm step back) at the host's plate height."""
+    floor = rear_quad(-width / 2, width / 2, y0, y1, -2.0 + depth)
+    bumper = rear_quad(-0.8, 0.8, 0.30, 0.45, -2.08, name="bumperRa") + rear_quad(
+        -0.8, 0.8, 0.45, 0.60, -2.07, name="bumperRa"
+    )
+    return floor + bumper + framed(-width / 2, width / 2, y0, y1, -2.0)
+
+
+def test_pocket_wider_than_the_host_plate():
+    # #408: the E46 M3's boot-lid pocket is twice the host's plate width; a window of
+    # the host's size touches its wall above only, as a crease in the bumper does, and
+    # the host's bumper plate height chose the crease. The pocket is measured whole.
+    dm = P.depth_map(boot_lid_pocket(), "rear", (-0.9, 0.9), (0.0, 1.2))
+    found = P.pockets(dm, 0.0)
+    assert len(found) == 1, found
+    pocket = found[0]
+    assert abs(pocket.centre[1] - 0.79) < 0.015 and abs(pocket.centre[0]) < 0.01, pocket
+    assert abs(pocket.size[0] - 0.54) < 0.025 and abs(pocket.size[1] - 0.18) < 0.025, pocket
+    host = P.HostPlate("rear", (0.0, 0.45, -2.1), SIZE, (0, 0), 2)
+    plate = P.plan_end(boot_lid_pocket(), "rear", host, 0.45, 0.0, 0.9)
+    assert plate.source == "pocket" and abs(plate.centre[1] - 0.79) < 0.015, plate
+    assert plate.surface == "trunk" and abs(plate.depth - (-2.0 + 0.015 - P.PROUD)) < 0.002, plate
+
+
+def test_deep_opening_is_no_pocket():
+    # An intake or a diffuser channel: walls 15 cm deep.
+    host = P.HostPlate("rear", (0.0, 0.45, -2.1), SIZE, (0, 0), 2)
+    plate = P.plan_end(boot_lid_pocket(depth=0.15), "rear", host, 0.45, 0.0, 0.9)
+    assert plate.source != "pocket", plate
+
+
+def test_plate_lamp_picks_its_pocket():
+    # Two pockets; the plate lamp strip above the upper one says which holds the plate.
+    upper = boot_lid_pocket()[:2] + framed(-0.27, 0.27, 0.70, 0.88, -2.0)
+    lower = rear_quad(-0.2, 0.2, 0.33, 0.43, -2.065, name="bumperRa") + framed(
+        -0.2, 0.2, 0.33, 0.43, -2.08, outer=(-0.8, 0.8, 0.30, 0.60), name="bumperRa"
+    )
+    dm = P.depth_map(upper + lower, "rear", (-0.9, 0.9), (0.0, 1.2))
+    found = P.pockets(dm, 0.0)
+    assert len(found) == 2, found
+    assert abs(P.choose_pocket(found, 0.40).centre[1] - 0.38) < 0.015
+    lamp = (-0.15, 0.15, 0.885, 0.895)
+    assert abs(P.choose_pocket(found, 0.40, [lamp]).centre[1] - 0.79) < 0.015
