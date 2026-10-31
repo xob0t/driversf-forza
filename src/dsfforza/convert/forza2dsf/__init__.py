@@ -39,9 +39,9 @@ from dsfforza.convert.forza2dsf.builder import (
     NewSub,
 )
 from dsfforza.convert.forza2dsf.car import (
-    MID_Z_FIXES,
     WHEEL_CARBIN,
     ForzaCar,
+    cached_gamedb,
     car_dims,
     find_file,
     load_car,
@@ -135,7 +135,6 @@ __all__ = [
     "GLASS",
     "INTERIOR_GLASS_RECT",
     "MATERIAL_LAYOUT",
-    "MID_Z_FIXES",
     "PAINT",
     "POSITION_SCALE",
     "ROTOR_CARBINS",
@@ -172,6 +171,7 @@ __all__ = [
     "axle_fits",
     "blur_picture_map",
     "brake_rotor_section",
+    "cached_gamedb",
     "car_dims",
     "chrome_grey",
     "convert",
