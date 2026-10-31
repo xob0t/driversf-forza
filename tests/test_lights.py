@@ -461,13 +461,6 @@ def test_reverse_lamps_take_an_entry_a_tail_pair_frees():
     assert got[(lights.TAIL, "L")] != got[(lights.TAIL, "R")], got
 
 
-if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-            print(f"ok  {name}")
-
-
 def test_head_lamp_technique_at_the_rear_is_no_head_lamp():
     # Issue #264: a head lamp technique behind the wheelbase midpoint (the 510's coarse LOD 2 tail
     # lamps, the A4 Avant's `fullbeam` tail bulbs) was a rear head lamp that took a rear entry
@@ -538,3 +531,10 @@ def test_centre_piece_of_a_side_subsection_is_a_centre_lamp():
     got = [plan.tri_lamp.get((id(sub), k)) for k in range(6)]
     assert got[0][:2] == (lights.TAIL, "L") and got[2][:2] == (lights.TAIL, "R"), got
     assert got[4][:2] == got[5][:2] == (lights.BRAKE, "C"), got
+
+
+if __name__ == "__main__":
+    for name, fn in sorted(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            fn()
+            print(f"ok  {name}")
