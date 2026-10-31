@@ -464,6 +464,14 @@ def convert(
                 log(
                     f"lights: rear tail lamps ranked per planned lamp, atlas rendered again ({time.perf_counter() - t0:.2f} s)"
                 )
+            # Head lamps glow in the colour their lenses pass (a selective-yellow lens: yellow).
+            tinted = lamps.tint_heads(tex_full.texturing.head_filters(car.body, lamps.front_head_lamp))
+            if tinted:
+                report["lights"] = lamps.report()
+                log(
+                    "lights: head lamp colour through their lenses: "
+                    + ", ".join(f"{'/'.join(map(str, k[:2]))}#{k[3]} {a} -> {b}" for k, (a, b) in tinted.items())
+                )
         log(f"lights: {len(lamps.lamps)} lamps on {len(lamps.slots)} host light entries, {len(lamps.unlit)} unlit")
 
     dmg = None

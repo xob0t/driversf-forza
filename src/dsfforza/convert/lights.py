@@ -99,6 +99,29 @@ LAMP_COLOUR = {
     10: (1, 0.640408, 0.000514284),
     11: (1, 0.916208, 0.000183946),
 }
+
+
+def glow_colour(colour: int, filt) -> int:
+    """The colour table entry (LAMP_COLOUR) nearest in hue to entry `colour`'s light passed through a
+    lens filter `filt` (linear RGB): both scaled to their brightest channel, nearest by RGB distance.
+    A white head lamp (8) behind the Viper GTS-R #126's selective-yellow lexan, filter (0.85, 0.78,
+    0.03), is (1, 0.88, 0.03) of white: entry 11, (1, 0.92, 0). Under a clear lens or none it keeps
+    its own entry (the table holds no lighter tint of it)."""
+    import numpy as np
+
+    light = np.asarray(LAMP_COLOUR[colour], float) * np.asarray(filt, float)[:3]
+    if light.max() <= 0:
+        return colour
+    light = light / light.max()
+
+    def distance(k: int) -> float:
+        c = np.asarray(LAMP_COLOUR[k], float)
+        return float(((c / c.max() - light) ** 2).sum())
+
+    best = min(LAMP_COLOUR, key=distance)
+    return colour if distance(colour) <= distance(best) else best
+
+
 # A combined type (0x00E3AA98) with only DaytimeRunning of its functions on is drawn at this
 # level (scale x brightness; 0x008E6C80); with another of its functions on, at its scale.
 RUNNING_LEVEL = {**dict.fromkeys(range(0x18, 0x1D), 0.2), 0x13: 1.0, 0x1D: 1.0}
@@ -1389,6 +1412,30 @@ class LampPlan:
         if lamp is None or lamp.front or lamp.light_id is None or lamp.function not in REAR_TAIL_FUNCTIONS:
             return None
         return list(self.lamps).index(key)
+
+    def front_head_lamp(self, sub, k) -> int | None:
+        """The number of triangle k of `sub`'s lamp when it is a front head lamp with an entry, for
+        dsf_materials.Texturing.head_filters; None for any other triangle."""
+        key = self.tri_lamp.get((id(sub), k))
+        lamp = self.lamps.get(key)
+        if lamp is None or not lamp.front or lamp.light_id is None or lamp.function != HEAD:
+            return None
+        return list(self.lamps).index(key)
+
+    def tint_heads(self, filters: dict) -> dict:
+        """Each front head lamp's colour b2 from the lens filters its glow passes (filters: lamp
+        number -> mean linear RGB, Texturing.head_filters): the colour table entry nearest to its
+        colour times the filter (glow_colour). Returns {lamp key: (old b2, new b2)} of the lamps
+        that change."""
+        keys = list(self.lamps)
+        changed = {}
+        for n, rgb in filters.items():
+            lamp = self.lamps[keys[n]]
+            new = glow_colour(lamp.colour, rgb)
+            if new != lamp.colour:
+                changed[keys[n]] = (lamp.colour, new)
+                lamp.colour = new
+        return changed
 
     def light_byte(self, sub, k) -> int:
         key = self.tri_lamp.get((id(sub), k))

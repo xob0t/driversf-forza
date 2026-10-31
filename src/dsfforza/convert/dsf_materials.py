@@ -1376,6 +1376,9 @@ class Texturing:
     # alpha, which render() takes over the converted alpha.
     lamp_raw: np.ndarray | None = None
     glow_owners: dict = field(default_factory=dict)  # lamp number in lamp_raw -> (section, sub) (lenses._GlowSum)
+    # Each lens texel's filter (lenses.bake `filters`, (h, w, 3) linear RGB, NaN elsewhere): the colour
+    # the lens passes the light behind it in (head_filters); None before the bake.
+    lens_filters: np.ndarray | None = None
     # The planned rear tail lamps' triangles at the finest lamp LOD: (atlas UVs (n, 3, 2), lamp
     # number (n,)), set after the lamp plan (Binding.set_rear_lamps); None: no rear ranking.
     rear_lamps: tuple | None = None
@@ -1692,6 +1695,7 @@ class Texturing:
         # The head lamps' raw glow (clear front lenses and head lamp surfaces), for _glow.
         w, h, _ = self.atlases.get(fm.LIGHTS)
         glow = lenses.new_glow(h, w)
+        self.lens_filters = np.full((h, w, 3), np.nan)
         if ids:
             self.lens_report = lenses.bake(
                 body,
@@ -1702,6 +1706,7 @@ class Texturing:
                 glow=glow,
                 dropped=self.dropped_lenses,
                 owners=self.glow_owners,
+                filters=self.lens_filters,
             )
         lenses.lamp_glow(body, set(lods), self.atlases, glow, self.glow_owners)
         self.lamp_raw = glow if np.isfinite(glow[..., 0]).any() else None
@@ -2354,6 +2359,51 @@ class Texturing:
         if not ids:
             return None
         return np.array(uvs, float).reshape(-1, 3, 2), np.array(ids, int), np.array(dark, bool)
+
+    def head_filters(self, sections, lamp_of) -> dict[int, tuple[float, float, float]]:
+        """{lamp number: the mean colour (linear RGB) of the lens filters its glow passes} for the
+        planned front head lamps, over what a camera straight ahead sees of each (its glow alpha as
+        the weight: each texel's light): lamp_of(sub, k) gives triangle k of `sub`'s lamp number,
+        None for none (lights.LampPlan.front_head_lamp). A texel behind no lens passes white (1, 1, 1).
+        A Forza lens multiplies every light behind it by its filter (research/forza-lenses-re.md
+        section 2), so a lamp seen through a selective-yellow lens glows yellow."""
+        tris = self.rear_lamp_tris(sections, lamp_of)
+        view = self._lamp_view(front=True, grid=True)
+        if tris is None or view is None:
+            return {}
+        uvs, ids, _ = tris
+        (rows, cols), _, _, _ = view
+        from dsfforza.convert import lenses
+
+        sw, sh, src = self.atlases.get(fm.LIGHTS)
+        colour = np.frombuffer(bytes(src), np.uint8).reshape(sh, sw, 4)
+        texel_lamp = np.full((sh, sw), -1)
+        ex, ey, _, at = lenses._texels_many(uvs * (sw, sh))
+        for n in range(len(ids)):
+            ix, iy = ex[at[n] : at[n + 1]], ey[at[n] : at[n + 1]]
+            ok = (ix >= 0) & (ix < sw) & (iy >= 0) & (iy < sh)
+            texel_lamp[iy[ok], ix[ok]] = ids[n]
+        front, _ = self._glow_parts()
+        lamp = texel_lamp[rows, cols]
+        seen = lamp >= 0
+        rows, cols, lamp = rows[seen], cols[seen], lamp[seen]
+        alpha = front[rows, cols] if front is not None else np.full(len(rows), np.nan)
+        unset = ~np.isfinite(alpha)
+        if unset.any():  # texels with no day glow glow by their converted alpha
+            alpha[unset] = [
+                self._convert_texel(fm.LIGHTS, *map(int, colour[y, x]))[3] for y, x in zip(rows[unset], cols[unset])
+            ]
+        filt = np.ones((len(rows), 3))
+        if self.lens_filters is not None:
+            got = self.lens_filters[rows, cols]
+            filt = np.where(np.isfinite(got), got, 1.0)
+        out = {}
+        for n in np.unique(lamp).tolist():
+            sel = lamp == n
+            w = alpha[sel]
+            if w.sum() > 0:
+                out[n] = tuple(float(c) for c in (filt[sel] * w[:, None]).sum(0) / w.sum())
+        return out
 
     def _convert_texel(self, family: str, r: int, g: int, b: int, a: int) -> tuple[int, int, int, int]:
         """Forza texel -> DSF conventions (alpha = specular / glow mask)."""

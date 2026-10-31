@@ -533,6 +533,28 @@ def test_centre_piece_of_a_side_subsection_is_a_centre_lamp():
     assert got[4][:2] == got[5][:2] == (lights.BRAKE, "C"), got
 
 
+def test_head_lamp_glows_in_the_colour_its_lens_passes():
+    # #416: a Forza lens multiplies the light behind it by its filter, so a white head lamp behind
+    # the Viper GTS-R #126's selective-yellow lexan (filter 0.85, 0.78, 0.03) glows yellow: the
+    # colour table's entry 11 (1, 0.92, 0), where DSF drew it white (8). The Panoz Esperante #51's
+    # amber lexan (0.36, 0.24, 0): entry 10 (1, 0.64, 0). Behind a clear lens or none: unchanged.
+    assert lights.glow_colour(lights.WHITE, (0.847, 0.777, 0.033)) == 11
+    assert lights.glow_colour(lights.WHITE, (0.355, 0.24, 0.0)) == 10
+    assert lights.glow_colour(lights.WHITE, (0.73, 0.74, 0.73)) == lights.WHITE
+    assert lights.glow_colour(lights.WHITE, (1.0, 1.0, 1.0)) == lights.WHITE
+    assert lights.glow_colour(lights.XENON, (1.0, 1.0, 1.0)) == lights.XENON
+    cars = [_quad("headlightL", "head_light", 0.6, 2.0), _quad("headlightR", "head_light", -0.6, 2.0)] + TAILS
+    plan = lights.LampPlan.build(cars, _Place(), 0.0)
+    for lamp in plan.lamps.values():
+        lamp.light_id = 1  # as if assigned
+    n = {k[1]: list(plan.lamps).index(k) for k in plan.lamps if k[0] == lights.HEAD}
+    sub = cars[0].subsections[0]
+    assert plan.front_head_lamp(sub, 0) == n["L"]
+    changed = plan.tint_heads({n["L"]: (0.847, 0.777, 0.033), n["R"]: (1.0, 1.0, 1.0)})
+    assert list(changed.values()) == [(lights.WHITE, 11)], changed
+    assert plan.lamps[list(plan.lamps)[n["L"]]].flags >> 16 & 0xFF == 11
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

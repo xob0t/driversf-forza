@@ -733,6 +733,20 @@ def test_rear_glow_has_no_floor_at_the_converted_alpha():
     assert rear[lit].max() < 100  # the white curve puts these texels at 255
 
 
+def test_bake_records_each_lens_texels_filter():
+    # #416: the colour a lens passes the light behind it in (its filter) per lens texel, for the
+    # head lamps' glow colour (Texturing.head_filters).
+    lens = _quad("glassLHL", "detail_glass_red", 2.0, 0.0, 0.5)
+    lamp = _quad("headlightL", "textured_reflector", 1.9, 0.5, 1.0)
+    atlases = _Atlases()
+    filters = np.full((SIZE, SIZE, 3), np.nan)
+    with tempfile.TemporaryDirectory() as car_dir:
+        lenses.bake([lens, lamp], {1}, atlases, {id(lens.subsections[0])}, Path(car_dir), filters=filters)
+    want = lenses.lens_filter("detail_glass_red", np.array(LENS, float), {})
+    assert np.allclose(filters[SIZE // 2, SIZE // 4], want[:3])
+    assert np.isnan(filters[:, SIZE // 2 :]).all()  # not the lamp's texels
+
+
 if __name__ == "__main__":
     for name, test in list(globals().items()):
         if name.startswith("test_"):
