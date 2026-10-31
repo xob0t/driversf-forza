@@ -63,6 +63,9 @@ param(
     [switch]$Ui,                  # keep the game's UI (HUD, prompts, minimap) in the shots; by default the probe hides it
                                   # (-MenuKeys keeps it too). Every probe shot gets a caption strip below the frame either way.
     [string[]]$Labels,            # one per archive, for the shot captions (e.g. before,after); default the archive's path
+    [string[]]$Overlay,           # a mod's folder laid over the run's game folder before ours, one per archive ('' for none;
+                                  # one folder alone goes with every archive), e.g. "$env:DSF_GAME_DIR\Felony_Rework_2.3_Hotfix_1",'';
+                                  # read in place, copied into each -Vm run folder (run-test.ps1 -Overlay)
     [switch]$LightsDriveOnly,     # with -Lights: only the day and dark drives (no setLights phases)
     [switch]$Lights,              # lamp phases per car, two shots each (dsfforza\lightstest.lua); allow ~120 s per car
     [switch]$Dyno,                # standing-start runs (dsfforza\dyno.lua); analyse with src/dsfforza/harness/dyno.py
@@ -99,9 +102,12 @@ $hostState = Join-Path $outputHost 'host-session'
 $pauseFlag = Join-Path $repo 'out\wsb-pause'
 if ($OnHost -and $Vm) { throw '-OnHost and -Vm exclude each other' }
 if ($Labels -and $Labels.Count -ne $Archives.Count) { throw "-Labels has $($Labels.Count) names for $($Archives.Count) archives" }
+if ($Overlay -and $Overlay.Count -ne 1 -and $Overlay.Count -ne $Archives.Count) { throw "-Overlay has $($Overlay.Count) folders for $($Archives.Count) archives" }
+foreach ($folder in @($Overlay | Where-Object { $_ })) { if (-not (Test-Path -LiteralPath $folder -PathType Container)) { throw "-Overlay: no folder $folder" } }
+if (@($Overlay | Where-Object { $_ }).Count -and -not $OnHost -and -not $Vm) { throw '-Overlay needs -Vm (or -OnHost)' }
 
 # run-test.ps1 options with the same name here are passed on as given, so a new option needs
-# only its two param lines. Archive, Asi, Override and LuaFiles become guest paths (Get-GuestArgs);
+# only its two param lines. Archive, Asi, Override and LuaFiles become guest paths (Get-GuestArgs), Overlay a copy per run;
 # OnHost, Vm, GamePath, HostRunPath and Resolution are this script's own.
 if (-not $GamePath) { throw 'Set DSF_GAME_DIR (or pass -GamePath) to your Driver: San Francisco folder, the one with Driver.exe.' }
 if (-not $HostRunPath) { $HostRunPath = Join-Path ([IO.Path]::GetPathRoot($GamePath)) 'dsfforza-run' }
@@ -130,7 +136,7 @@ if (-not $Asi -and -not $NoAsi) {
 $seriesArgs = $PSBoundParameters
 $ownParameters = $MyInvocation.MyCommand.Parameters
 $passThrough = @((Get-Command $runTest).Parameters.Keys | Where-Object {
-    $ownParameters.ContainsKey($_) -and $_ -notin 'Archive', 'Asi', 'Override', 'LuaFiles', 'OnHost' })
+    $ownParameters.ContainsKey($_) -and $_ -notin 'Archive', 'Asi', 'Override', 'LuaFiles', 'Overlay', 'OnHost' })
 
 # One series at a time: the guest runs one game and runs\latest.txt names the
 # newest run, so concurrent series would read each other's results. Callers
@@ -226,11 +232,10 @@ function Get-SeenPairs([string]$pairs) {
     }) -join ';'
 }
 
-function Get-GuestArgs([string]$archive) {
+function Get-GuestArgs([string]$archive, [int]$index) {
     # run-test.ps1's arguments for one archive, by name; run-series' own defaults always go.
     $values = [ordered]@{ Archive = (Get-SeenPath $archive); Hook = $true; Probe = $true
         ProbeIds = $ProbeIds; ZoomPresses = $ZoomPresses; ShotSeconds = $ShotSeconds; WaitSeconds = $WaitSeconds }
-    $index = [array]::IndexOf($Archives, $archive)
     $values.ShotLabel = if ($Labels -and $index -ge 0 -and $index -lt $Labels.Count) { "$($Labels[$index]): $($archive.Trim())" } else { $archive.Trim() }
     foreach ($name in $passThrough) { if ($seriesArgs.ContainsKey($name)) { $values[$name] = $seriesArgs[$name] } }
     if ($Asi) { $values.Asi = Get-SeenPath $Asi }
@@ -348,18 +353,20 @@ try {
     # Each archive once; a run that fails while the world loads is retried once,
     # right after, from a new game start.
     $queue = [System.Collections.Generic.List[object]]::new()
-    foreach ($a in $Archives) { $queue.Add([pscustomobject]@{ Archive = $a; Retry = $false }) }
+    for ($ai = 0; $ai -lt $Archives.Count; $ai++) { $queue.Add([pscustomobject]@{ Archive = $Archives[$ai]; Index = $ai; Retry = $false }) }
     for ($qi = 0; $qi -lt $queue.Count; $qi++) {
         $archive = $queue[$qi].Archive
         if ($OnHost) { Wait-HostPause }
         $gate = if ($OnHost -or $Vm) { Wait-CpuGate }
         if ($gate) { "  $gate" }
-        $guestValues = Get-GuestArgs $archive
+        $guestValues = Get-GuestArgs $archive $queue[$qi].Index
+        $overlayDir = if ($Overlay.Count -eq 1) { $Overlay[0] } elseif ($Overlay) { $Overlay[$queue[$qi].Index] }
         if ($OnHost) {
             # Same script, run here and waited for.
             $runDir = Join-Path $outputHost "runs\host-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
             New-Item -ItemType Directory -Force -Path $runDir | Out-Null
             Set-Content (Join-Path $outputHost 'runs\latest.txt') $runDir
+            if ($overlayDir) { $guestValues.Overlay = (Resolve-Path -LiteralPath $overlayDir).Path }   # read in place
             $hostArgs = @(ConvertTo-ArgList $guestValues) + @('-OnHost', '-RunDir', $runDir,
                 '-GameDir', $GamePath, '-RepoDir', $repo, '-OutputDir', $outputHost, '-RunPath', $HostRunPath)
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runTest @hostArgs *>> (Join-Path $runDir 'host.log')
@@ -379,6 +386,11 @@ try {
             foreach ($name in $hostRootFiles) {
                 $path = Join-Path $GamePath $name
                 if (Test-Path -LiteralPath $path) { Copy-Item -LiteralPath $path -Destination $hostGame.FullName }
+            }
+            # -Overlay: a copy of the mod's folder in the run folder, which the guest reads as C:\Output.
+            if ($overlayDir) {
+                Copy-Item -LiteralPath $overlayDir -Destination (Join-Path $runDir 'overlay') -Recurse
+                $guestValues.Overlay = "C:\Output\runs\$stamp\overlay"
             }
             $vmArgs = @(ConvertTo-ArgList $guestValues -CommandLine) + @('-RunDir', "C:\Output\runs\$stamp", '-CopyRepoFiles',
                 '-GameRootFrom', "C:\Output\runs\$stamp\host-game")
@@ -417,7 +429,7 @@ try {
         Show-GameFiles $r
         if ((Test-LoadFailure $r) -and -not $queue[$qi].Retry -and ($OnHost -or $Vm)) {
             "  the world didn't load; retrying once"
-            $queue.Insert($qi + 1, [pscustomobject]@{ Archive = $archive; Retry = $true })
+            $queue.Insert($qi + 1, [pscustomobject]@{ Archive = $archive; Index = $queue[$qi].Index; Retry = $true })
         }
         $r.probeLines | Where-Object { $_ -match 'id \d+:' -and $_ -notmatch 'cockpit t\d+ speed' -and $_ -notmatch '\] dy \d' } | ForEach-Object { "  $_" }
         $speeds = @($r.probeLines | Where-Object { $_ -match 'cockpit t\d+ speed ([\d.]+) m/s ([\d.]+) mph' } |
