@@ -75,6 +75,7 @@ from dsfforza.convert.damage.exposed import (
 from dsfforza.convert.damage.host import (
     HostField,
     Panel,
+    glass_name,
 )
 from dsfforza.convert.damage.host_cache import (
     HOST_CACHE_KEEP_DAYS,
@@ -146,6 +147,7 @@ __all__ = [
     "closest_on_triangles",
     "engine_placement",
     "exposed_zones",
+    "glass_name",
     "host_setup",
     "load_mesh",
     "main",

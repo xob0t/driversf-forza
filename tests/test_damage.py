@@ -112,6 +112,19 @@ class PanelBinding(unittest.TestCase):
         self.assertAlmostEqual(right[2], left[2])
 
 
+class LexanGlass(unittest.TestCase):
+    def test_lexan_sections_follow_their_glass_names(self):
+        # Race cars name their glazing lexan<suffix> (Joss JT1: lexanF, lexanR, lexanLF,
+        # lexanLHL, ...). As body sections the JT1's windscreen was split between the
+        # chassis and the crushing front structure, and lost a triangle (#411).
+        rule = damage.host.section_rule
+        for suffix in ("F", "R", "LF", "RF", "LR", "RR", "LM", "RM", "T", "LHL", "RHL", "LTL", "RTL"):
+            self.assertEqual(rule("lexan" + suffix), rule("glass" + suffix), suffix)
+        self.assertEqual(rule("lexanF"), ("glass", ("front",)))
+        self.assertEqual(damage.glass_name("lexanLF"), "glasslf")
+        self.assertEqual(damage.glass_name("body"), "body")
+
+
 def _quad_section(name: str, quads: list) -> carbin.Section:
     """A section with one subsection per (technique, four corners) quad (LOD 1)."""
     verts, subs = [], []

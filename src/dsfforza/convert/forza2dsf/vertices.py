@@ -203,8 +203,11 @@ def interior_glass_skin(dmg, car, opts) -> dict[str, bytes]:
         return {}
     from collections import Counter
 
+    from dsfforza.convert.damage.host import glass_name
+
     lod = min(opts.lods.values())
-    glass_sections = [s for s in car.body if s.name.lower().startswith("glass")]
+    # lexan* too: the exterior puts lexanF on the glass record like glassF (#411)
+    glass_sections = [s for s in car.body if glass_name(s.name).startswith("glass")]
     assign = dmg.assignment(car.body, lod)
     owner = {id(sub): s.name for s in glass_sections for sub in s.subsections}
     votes: dict[str, Counter] = {}
