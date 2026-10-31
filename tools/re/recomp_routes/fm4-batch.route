@@ -1,0 +1,131 @@
+# One launch: the showrooms of four FM4 cars (a capture and one frame's draw log each), then a
+# Quick Race with the last one: the grid from the chase camera, brakes held, driving, braking.
+# Run with `-- --fm4_log_file_opens=true` to see which ShaderSettings files each car opens.
+# Menu strings: fm4-static-recomp tools/render_tests/routes.py; manufacturer numbers (Abarth 1,
+# Chevrolet 13, Ford 23, Holden 26, Joss 33): tools/warm-up.ps1 and a walk of the list.
+until START|A "root=\"B13EBABEBABEBABE\"" 240 0.6
+until A "String: AUTOVISTA" 60 3
+sleep 4
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press RIGHT
+press RIGHT
+press RIGHT
+until A "String: QUICK RACE" 30 5
+press LEFT
+press LEFT
+press LEFT
+until A "String: MANUFACTURER SELECT" 30 5
+sleep 3
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+sleep 1
+until A "String: CAR SELECT" 20 5
+sleep 2
+until RIGHT "String: Chevelle SS-454$" 60 1.5
+until A "String: COLOR SELECT" 30 10
+sleep 6
+shot chevelle-showroom
+frame chevelle-showroom
+until B "String: CAR SELECT" 30 5
+until B "String: MANUFACTURER SELECT" 30 5
+sleep 2
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+sleep 1
+until A "String: CAR SELECT" 20 5
+sleep 2
+until RIGHT "String: #88 TeamVodafone Commodore VE$" 60 1.5
+until A "String: COLOR SELECT" 30 10
+sleep 6
+shot commodore88-showroom
+frame commodore88-showroom
+until B "String: CAR SELECT" 30 5
+until B "String: MANUFACTURER SELECT" 30 5
+sleep 2
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+sleep 1
+until A "String: CAR SELECT" 20 5
+sleep 2
+until RIGHT "String: JT1$" 60 1.5
+until A "String: COLOR SELECT" 30 10
+sleep 6
+shot jt1-showroom
+frame jt1-showroom
+until B "String: CAR SELECT" 30 5
+until B "String: MANUFACTURER SELECT" 30 5
+sleep 2
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+sleep 1
+until A "String: CAR SELECT" 20 5
+sleep 2
+until RIGHT "String: Focus RS$" 60 1.5
+until A "String: COLOR SELECT" 30 10
+sleep 6
+shot focusrs-showroom
+frame focusrs-showroom
+until A "String: ASSISTS & DIFFICULTY" 20 8
+until A "String: ENVIRONMENT SELECT" 20 8
+sleep 1.2
+until A "String: TRACK SELECT" 20 8
+press A
+wait "String: PRE-RACE" 180
+sleep 2
+until A "Input context: driving$" 60 3
+wait "Present interval: 1" 60
+sleep 1
+shot focusrs-grid
+frame focusrs-grid
+hold LT=1 6
+sleep 2
+shot focusrs-grid-brake
+frame focusrs-grid-brake

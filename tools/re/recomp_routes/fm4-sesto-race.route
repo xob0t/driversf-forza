@@ -1,0 +1,86 @@
+# One launch: a Quick Race with the Lamborghini Sesto Elemento, whose wheel archive sets rim
+# PaintScale 2.0 and rim_V2 2.15 (Tire/Normal.xml: 0.65 both): which the race wheels upload.
+# Menu strings: fm4-static-recomp tools/render_tests/routes.py; Lamborghini is manufacturer 36.
+until START|A "root=\"B13EBABEBABEBABE\"" 240 0.6
+until A "String: AUTOVISTA" 60 3
+sleep 4
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press RIGHT
+press RIGHT
+press RIGHT
+until A "String: QUICK RACE" 30 5
+press LEFT
+press LEFT
+press LEFT
+until A "String: MANUFACTURER SELECT" 30 5
+sleep 3
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press LEFT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+press RIGHT
+sleep 1
+until A "String: CAR SELECT" 20 5
+sleep 2
+until RIGHT "String: Sesto Elemento$" 60 1.5
+until A "String: COLOR SELECT" 30 10
+sleep 2
+until A "String: ASSISTS & DIFFICULTY" 20 8
+until A "String: ENVIRONMENT SELECT" 20 8
+sleep 1.2
+until A "String: TRACK SELECT" 20 8
+press A
+wait "String: PRE-RACE" 180
+sleep 2
+until A "Input context: driving$" 60 3
+wait "Present interval: 1" 60
+sleep 1
+shot sesto-grid
+frame sesto-grid
