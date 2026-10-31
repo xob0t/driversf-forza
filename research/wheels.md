@@ -1343,6 +1343,45 @@ gamedb's track and ride height the same wheels would read lateral +4 / -1 and to
   BUS_TOUR_12, OPE_5_AstraV8_03, VAU_VX220_04) and the same on 85. Neither source is right
   for every car, so no converter change here (#417).
 
+## Track and ride height per car (2026-10-31, issue #417)
+
+After #421 the wheelbase and its midpoint come from the gamedb's `Data_CarBody`; track and
+ride height still came from `Physics/MAXData.xml`. `wheel_fit` ("Wheel fit") showed where
+that fails: SAL_S7_04's tyres 0.16 m inboard of its fenders and 0.13 m under its arch tops,
+because its MAXData.xml is another car's. But the gamedb isn't right everywhere either: of
+the 122 cars whose two sources differ by more than 10 mm, the gamedb's values put more wheel
+readings within vanilla's range on 28 cars, fewer on 9 (AUD_A4Avant_04's tyres 30 mm outside
+its fenders with the gamedb's track, CHR_JeepGCSRT8_12's body 110 mm higher over its wheels
+with its ride height) and the same on 85 (`out/wf/` of #436's worktree).
+
+### Rule (`forza2dsf.car.arch_fit`, `car_dims`)
+
+When the two sources' track (front, rear) or ride height differ, `car_dims` measures both:
+the wheels at each source's track and ride height (the axles' Data_Car tyres as `convert`
+draws them) against the Forza body (LOD 1, the exterior's) with `wheel_fit.measure_wheel`,
+at Forza's static pose (which `settle_wheels` keeps at rest in game). Each wheel's top gap
+and lateral offset is a reading; it counts if it lies within the vanilla cars' 5-95 %
+(`wheel_fit.VANILLA_BAND`, "Wheel fit"). The gamedb's track and ride height are taken only
+when they give more readings in range; a tie keeps MAXData.xml's (the build log's placement
+line names the source and both counts). No margin is tuned: the band is vanilla's, the
+decision a count.
+
+### Roster (offline, all 573 cars)
+
+38 cars take the gamedb's track and ride height. Built with master and with the change
+(`out/w417/before`, `after`; NIS_370Z_10 and VW_BEETLE_68 as controls) and measured with
+`wheel_fit` on the built archives: 32 have more readings in range (or fewer mm outside), none
+fewer, 6 were in range and stay there (CAD_CTSV_09, CHR_Crossfire_06, FER_Enzo_02,
+MER_SL65AMG_09, VAU_VX220_04, VIP_Viper_13); the controls are unchanged. SAL_S7_04: 2 of 8
+readings in range (282 mm outside) -> 8 of 8, front lateral -156 -> +5 mm, top gap 130 -> 56;
+ASC_KZ1R_12 6/8 -> 8/8 (-97 / 103 -> 13 / 38); RUF_Yellowbird_87 2/8 -> 8/8 (rear top gap
+273 -> 13); AST_V8Vantage_77 4/8 -> 8/8 (top gap -42 -> 38). Still outside after the change:
+AUD_8_TTR_04's rear top gap (-5, 6/8), FER_Enzo_02's front lateral (-146, not a source
+question: both agree there) and PAG_Huayra_12 (7/8). Cars where neither source brings the
+wheels into range keep MAXData.xml: AST_DB5Vantage_64, BUS_TOUR_12, EAE_Speedster_12,
+JAG_Etype_61, PEU_205T16_84 (and its ShowCase copy), and the others of #436's list whose
+sources agree.
+
 ## Open
 
 1. Brake calipers (Forza `_caliper*` carbins) are not converted: they must not
@@ -1354,9 +1393,8 @@ gamedb's track and ride height the same wheels would read lateral +4 / -1 and to
    `blur_rim` and how DSF draws its disc (RE in progress; branch `fix/wheel-blur-disc`
    holds a fitted rule, not merged). VW_BEETLE_68's disc lays out its brightness
    unlike its rim (#419).
-3. Ride height: MAXData's and the gamedb's disagree on 80 cars; a positive
-   `BottomCenterWheelbasePos.y` is unexplained; the gamedb's tracks (#417; "Body height
-   and wheelbase").
+3. A positive `BottomCenterWheelbasePos.y` is unexplained ("Body height and wheelbase");
+   track and ride height are chosen per car since #417 ("Track and ride height per car").
 
 Done since and dropped from this list: brake rotors (#212, "Brake rotors"); speed blur (#211, "Speed blur"); rim gloss (issue #108, PR #143). Rims
 draw with gloss copies of the host's Lights material (its lamp glow needs a
