@@ -1460,7 +1460,7 @@ draws differently intact (the change is in s9 and s12 only).
 
 ### In game (headless VM, confirmed-runtime)
 
-`run-series.ps1 -Vm -Archives out\i411efore\dngvehicles.sp,out\i411fter\dngvehicles.sp
+`run-series.ps1 -Vm -Archives out\i411\before\dngvehicles.sp,out\i411\after\dngvehicles.sp
 -ProbeIds '1,2,3,162' -Views 'front+hitfront,grille+hitfront,front,fq' -ShotSeconds 3
 -WaitSeconds 600 -Palette 0`: two `applyDamage` 0.3 hits on the front bumper, then the
 windscreen from ahead. Runs `vm2-20261031-111156` (before) and `vm2-20261031-111806`
