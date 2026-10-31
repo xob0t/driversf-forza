@@ -415,6 +415,105 @@ def wheel_blur_section(sections, lods, centre=(0.0, 0.0, 0.0)) -> carbin.Section
     return carbin.Section(WHEEL_BLUR_SECTION, (0.0, 0.0, 0.0), lo, hi, verts, [], subs, version)
 
 
+# The disc's brightness against the wheel it covers (research/wheels.md, "Blur disc
+# brightness", #407). Faded in, the disc stands for the spinning wheel, so it should keep the
+# wheel's mean brightness. Forza's picture alone doesn't give it: FOR_FocusRS500_10's rim
+# texels are near black (about 4, PaintScale 7.5) but its wheel2.xds averages 77 grey where it
+# covers; times the rim's 7.5 it saturated white. And the mid-grey backdrop between the
+# blurred spokes makes the disc of a black rim grey. wheel_face_brightness measures both as
+# drawn, seen from outside out to the disc's edge on a WHEEL_FACE_STEP grid: the face is the
+# frontmost (most outboard) non-tyre triangle per cell, its texel (the atlas's, PaintScale
+# applied) times its baked sky (wheel_skies); a cell with nothing in front shows the inside of
+# the wheel, WHEEL_FACE_GAP (the brake rotor's grey, 106, at the 0.15 sky vanilla bakes inside
+# the barrel). The disc is its texel times WHEEL_BLUR_SKY.
+WHEEL_FACE_STEP = 0.003  # m
+WHEEL_FACE_GAP = 0.15 * 106
+LUMA = (0.2126, 0.7152, 0.0722)
+
+
+def _face_raster(tris, depth, colours, edge: float, cy: float, cz: float):
+    """Per WHEEL_FACE_STEP cell of the square round the axle (face plane: y, z), the colour of
+    the triangle nearest -x (the outboard side in Forza's frame) at its centre, NaN where no
+    triangle covers it; and the mask of cells within `edge` of the axle."""
+    import numpy as np
+
+    n = max(1, int(math.ceil(2 * edge / WHEEL_FACE_STEP)))
+    origin = np.array([cy - edge, cz - edge])
+    grid = origin + (np.arange(n) + 0.5)[:, None] * WHEEL_FACE_STEP
+    zbuf = np.full((n, n), np.inf)
+    out = np.full((n, n, 3), np.nan)
+    for t, d, v in zip(tris, depth, colours):
+        lo = np.floor((t.min(0) - origin) / WHEEL_FACE_STEP).astype(int).clip(0, n - 1)
+        hi = np.ceil((t.max(0) - origin) / WHEEL_FACE_STEP).astype(int).clip(0, n - 1)
+        a, b, c = t
+        den = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1])
+        if abs(den) < 1e-12:
+            continue
+        y, z = np.meshgrid(grid[lo[0] : hi[0] + 1, 0], grid[lo[1] : hi[1] + 1, 1], indexing="ij")
+        w0 = ((b[1] - c[1]) * (y - c[0]) + (c[0] - b[0]) * (z - c[1])) / den
+        w1 = ((c[1] - a[1]) * (y - c[0]) + (a[0] - c[0]) * (z - c[1])) / den
+        w2 = 1 - w0 - w1
+        dd = w0 * d[0] + w1 * d[1] + w2 * d[2]
+        zs = zbuf[lo[0] : hi[0] + 1, lo[1] : hi[1] + 1]
+        win = (w0 >= 0) & (w1 >= 0) & (w2 >= 0) & (dd < zs)
+        if not win.any():
+            continue
+        zs[win] = dd[win]
+        col = w0[..., None] * v[0] + w1[..., None] * v[1] + w2[..., None] * v[2]
+        out[lo[0] : hi[0] + 1, lo[1] : hi[1] + 1][win] = col[win]
+    y, z = np.meshgrid(grid[:, 0], grid[:, 1], indexing="ij")
+    return out, np.hypot(y - cy, z - cz) <= edge
+
+
+def wheel_face_brightness(sections, lod: int, centre, texel, disc_texel) -> tuple[float, float] | None:
+    """(the wheel face's, the blur disc's) mean drawn luminance at Forza wheel LOD `lod` (see
+    above), or None without a disc there. texel(section, sub, uvs (n, 2)) -> RGB (n, 3): the
+    rim texels as the atlas holds them; disc_texel(uvs) -> RGB: the disc's converted texels."""
+    import numpy as np
+
+    disc = [
+        (s, sub) for s in sections for sub in s.subsections if sub.lod == lod and is_blur_disc(sub) and sub.triangles()
+    ]
+    if not disc:
+        return None
+    _, cy, cz = centre
+    section, _ = disc[0]
+    edge = max(math.hypot(v.position[1] - cy, v.position[2] - cz) for v in section.vertices_for(disc[0][1]))
+    skies = wheel_skies([s for s in sections if not any(is_blur_disc(sub) for sub in s.subsections)], lod)
+    from dsfforza.convert import forza_materials as fm
+
+    tris, depth, cols = [], [], []
+    for s in sections:
+        for sub in s.subsections:
+            if sub.lod != lod or is_blur_disc(sub) or fm.classify_wheel(sub.material)[0] in (fm.SKIP, fm.TYRE):
+                continue
+            pool = s.vertices_for(sub)
+            for t in sub.triangles():
+                p = np.array([pool[i].position for i in t], dtype=np.float64)
+                rgb = np.asarray(texel(s, sub, np.array([pool[i].uv0 for i in t], dtype=np.float64)), dtype=np.float64)
+                sky = np.array([skies.get((id(pool), i), WHEEL_SKY_OPEN) for i in t])[:, None]
+                tris.append(p[:, 1:])
+                depth.append(p[:, 0])
+                cols.append(rgb * sky)
+    face, inside = _face_raster(tris, depth, cols, edge, cy, cz)
+    face = np.where(np.isnan(face), WHEEL_FACE_GAP, face)
+    tris, depth, cols = [], [], []
+    for s, sub in disc:
+        pool = s.vertices_for(sub)
+        for t in sub.triangles():
+            p = np.array([pool[i].position for i in t], dtype=np.float64)
+            tris.append(p[:, 1:])
+            depth.append(p[:, 0])
+            uvs = np.array([pool[i].uv0 for i in t], dtype=np.float64)
+            cols.append(np.asarray(disc_texel(uvs), dtype=np.float64) * WHEEL_BLUR_SKY)
+    drawn, _ = _face_raster(tris, depth, cols, edge, cy, cz)
+    covered = inside & ~np.isnan(drawn[..., 0])
+    if not covered.any():
+        return None
+    luma = np.array(LUMA)
+    return float(face[inside].mean(0) @ luma), float(drawn[covered].mean(0) @ luma)
+
+
 # Brake rotors (research/wheels.md, "Brake rotors"). Forza draws the disc and hub behind the
 # spokes from separate carbins, <car>_rotor{LF,RF,LR,RR}_LOD0.carbin (LOD 0 only, in the hub's
 # frame: spin axis x, the hub face at -x like the wheel's rim face; 567 of the 573 roster cars

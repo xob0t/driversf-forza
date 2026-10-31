@@ -364,11 +364,22 @@ def is_atlas_kind(kind) -> bool:
 # grey level, times the vehicle's g_vec4WheelBlurColour (its tint, Texturing.wheel_blur_tint;
 # paint.set_wheel_blur_colour), green the gloss (WHEEL_BLUR_GLOSS x grey, the vanilla
 # disc's ratio: means 136 red, 60 green), blue the coverage. The picture is laid over
-# WHEEL_BLUR_BACKDROP (a mid grey for what shows between the spokes: with the port's dark
-# barrel, 20, open wheels came out darker at speed than at rest, vanilla's brighter), so the
-# disc is opaque once faded in and hides the port's sharp rim, which cannot fade (research/wheels.md, "Speed blur"). It is
-# blurred, so WHEEL_BLUR_TEXELS across are enough (a 256-texel picture weighted 0.5, which
-# the atlas's uniform scale takes down to 50 to 120 texels).
+# WHEEL_BLUR_BACKDROP (for what shows between the spokes), so the disc is opaque once faded
+# in and hides the port's sharp rim, which cannot fade (research/wheels.md, "Speed blur").
+# It is blurred, so WHEEL_BLUR_TEXELS across are enough (a 256-texel picture weighted 0.5,
+# which the atlas's uniform scale takes down to 50 to 120 texels).
+#
+# Its brightness (research/wheels.md, "Blur disc brightness", #407): the picture as Forza draws
+# it (times blur_rim's PaintScale: the car's ShaderSettings, else Normal.xml's 1.0) and the
+# backdrop, both times one gain per car (Texturing._wheel_blur_gain) that brings the disc's
+# drawn mean to WHEEL_BLUR_MATCH times the wheel face's (forza2dsf.wheel_face_brightness).
+# Taking the rim's PaintScale instead (until #407) assumed the picture was painted like the
+# rim's texels: FOR_FocusRS500_10's rim texels are near black (4) with PaintScale 7.5, its
+# picture 77 grey, so its disc came out near white on black rims; with the fixed backdrop the
+# discs of black rims were grey (the disc 1.7 times the face on the roster's median car, 4 to
+# 6 times on dark rims). WHEEL_BLUR_MATCH is the 370Z's: an offline ratio of 1.28 drew its disc
+# 7% brighter than its rim in game (run vm2-20261029-102813: 96 at 60 mph, 90 at rest; the
+# offline face has no gloss or reflection, which the rims draw with).
 WHEEL_BLUR_MAT = "wheel_blur"
 SPOKE_DISC_MATERIALS = (bytes.fromhex("001262258aa7c428"), bytes.fromhex("10122b9e53b14e2a"))  # full, exterior
 SPOKE_DISC_TEXTURE = bytes.fromhex("0012622354a4c428")  # the vanilla disc picture they sample
@@ -376,17 +387,28 @@ WHEEL_BLUR_TEXELS = 128
 WHEEL_BLUR_BACKDROP = 60
 WHEEL_BLUR_GLOSS = 0.44
 WHEEL_BLUR_LAYOUT = (20, 7)  # stride, MODL flag (alpha-blended)
+WHEEL_BLUR_MATCH = 1.28 / 1.07
+BLUR_RIM_PAINT_SCALE = 1.0  # Normal.xml's blur_rim (FH1 and FM4)
 
 
-def wheel_blur_texels(rgba: bytearray, paint_scale: float = 1.0) -> tuple[bytearray, tuple[float, float, float]]:
+def wheel_blur_colour(rgba: bytearray, paint_scale: float = 1.0) -> np.ndarray:
+    """(n, 3) colour of Forza's spinning-wheel picture (RGBA, alpha the coverage) as the disc
+    shows it: the picture times `paint_scale` over WHEEL_BLUR_BACKDROP."""
+    px = np.frombuffer(bytes(rgba), dtype=np.uint8).reshape(-1, 4).astype(np.float64)
+    a = px[:, 3:4] / 255.0
+    return np.clip(px[:, :3] * paint_scale, 0, 255) * a + WHEEL_BLUR_BACKDROP * (1 - a)
+
+
+def wheel_blur_texels(
+    rgba: bytearray, paint_scale: float = 1.0, gain: float = 1.0
+) -> tuple[bytearray, tuple[float, float, float]]:
     """Forza's spinning-wheel picture (RGBA, alpha the coverage) -> the SpokeDisc material's
     texels (red grey, green gloss, blue coverage 255) and the tint g_vec4WheelBlurColour
     takes: the coverage-weighted mean colour of the picture over the backdrop, its largest
-    channel 1. The colour is scaled by the rim's PaintScale first, as the rim's own texels
-    are (Texturing._wheel_paint_scale), so the faded-in disc matches the rim it covers."""
-    px = np.frombuffer(bytes(rgba), dtype=np.uint8).reshape(-1, 4).astype(np.float64)
-    a = px[:, 3:4] / 255.0
-    colour = np.clip(px[:, :3] * paint_scale, 0, 255) * a + WHEEL_BLUR_BACKDROP * (1 - a)
+    channel 1. The colour (wheel_blur_colour) is times `gain` (Texturing._wheel_blur_gain)."""
+    px = np.frombuffer(bytes(rgba), dtype=np.uint8).reshape(-1, 4)
+    a = px[:, 3:4].astype(np.float64) / 255.0
+    colour = np.clip(wheel_blur_colour(rgba, paint_scale) * gain, 0, 255)
     weight = a[:, 0] + 1e-6
     mean = (colour * weight[:, None]).sum(0) / weight.sum()
     tint = mean / max(mean.max(), 1e-6)
@@ -1357,6 +1379,7 @@ class Texturing:
     wheel_paint: dict = field(default_factory=dict)  # rim technique -> PaintScale applied (_wheel_paint_scale)
     # The wheel's blur disc (WHEEL_BLUR_MAT): plan(wheel_blur=True) puts the picture in the atlas.
     wheel_blur_tint: tuple | None = None  # g_vec4WheelBlurColour RGB (wheel_blur_texels)
+    wheel_blur_gain: float | None = None  # the disc's gain (_wheel_blur_gain); None: not measured
     # Exterior only: lamp lenses baked over what lies behind them (src/dsfforza/convert/lenses.py).
     bake_lenses: bool = True
     lens_report: dict = field(default_factory=dict)  # lenses.bake's report
@@ -1410,10 +1433,13 @@ class Texturing:
             w, h, rgba = self.atlases.get(fm.WHEEL_BLUR)
             self.weights.setdefault(fm.WHEEL_BLUR, min(1.0, WHEEL_BLUR_TEXELS / max(w, h)))
             try:
-                scale = fm.wheel_paint_scale("rim", fm.shader_settings(self.car_dir))
+                settings = fm.shader_settings(self.car_dir)
             except OSError:
-                scale = fm.WHEEL_PAINT_SCALE["rim"]
-            rgba[:], self.wheel_blur_tint = wheel_blur_texels(rgba, scale)
+                settings = {}
+            scale = settings.get("blur_rim", {}).get("PaintScale", BLUR_RIM_PAINT_SCALE)
+            self.wheel_blur_gain = self._wheel_blur_gain(wheels, (w, h, rgba), scale)
+            gain = 1.0 if self.wheel_blur_gain is None else self.wheel_blur_gain
+            rgba[:], self.wheel_blur_tint = wheel_blur_texels(rgba, scale, gain)
             if not self.wheel_ids:
                 self.wheel_ids |= {id(section) for section in wheels[0]}
                 work += [(section, set(wheels[1])) for section in wheels[0]]
@@ -1602,6 +1628,48 @@ class Texturing:
             self.gloss[sid] = k
             per = self.gloss_report.setdefault(technique, {})
             per[k] = per.get(k, 0) + n
+
+    def _wheel_blur_gain(self, wheels, picture, paint_scale: float) -> float | None:
+        """The gain that brings the blur disc's drawn mean to WHEEL_BLUR_MATCH times the wheel
+        face's (forza2dsf.wheel_face_brightness) at the finest LOD where the disc fades in;
+        the face's texels are the wheel atlas's (PaintScale applied). None without the wheel
+        texture or a disc to measure."""
+        from dsfforza.convert.forza2dsf import car as fcar
+        from dsfforza.convert.forza2dsf import wheels as fw
+
+        sections, lods = wheels
+        if fm.WHEEL not in self.families:
+            return None
+        fading = sorted(
+            sub.lod
+            for s in sections
+            for sub in s.subsections
+            if sub.lod in set(lods) and fw.is_blur_disc(sub) and not getattr(sub, "always", False)
+        )
+        if not fading:
+            return None
+        w, h, rgba = self.atlases.get(fm.WHEEL)
+        rim = np.frombuffer(bytes(rgba), dtype=np.uint8).reshape(h, w, 4)[..., :3].astype(np.float64)
+        pw, ph, prgba = picture
+        disc = wheel_blur_colour(prgba, paint_scale).reshape(ph, pw, 3)
+
+        def at(img, uvs):
+            uvs = np.asarray(uvs, dtype=np.float64)
+            x = np.floor((uvs[:, 0] % 1.0) * img.shape[1]).astype(int).clip(0, img.shape[1] - 1)
+            y = np.floor((uvs[:, 1] % 1.0) * img.shape[0]).astype(int).clip(0, img.shape[0] - 1)
+            return img[y, x]
+
+        def texel(section, sub, uvs):
+            m = fm.resolve(section, sub, fm.classify_wheel)
+            return at(rim, [m.uv(uv) for uv in uvs])
+
+        rims = [s for s in sections if not any(fw.is_blur_disc(sub) for sub in s.subsections)]
+        measured = fw.wheel_face_brightness(
+            sections, fading[0], fcar.tyre_centre(rims), texel, lambda uvs: at(disc, uvs)
+        )
+        if measured is None or measured[1] <= 0:
+            return None
+        return WHEEL_BLUR_MATCH * measured[0] / measured[1]
 
     def _wheel_paint_scale(self, sections, lods) -> dict[str, float]:
         """Scale, in place, the RGB of the wheel texture's texels by the PaintScale
@@ -2552,6 +2620,8 @@ class Texturing:
             )
         if self.wheel_blur_tint is not None:
             parts.append("wheel blur tint " + "/".join(f"{c:.2f}" for c in self.wheel_blur_tint))
+        if self.wheel_blur_gain is not None:
+            parts.append(f"wheel blur gain {self.wheel_blur_gain:.2f}")
         paint = {t: k for t, k in self.wheel_paint.items() if k != 1.0}
         if paint:
             parts.append("rim PaintScale " + ", ".join(f"{t} {round(k, 3):g}" for t, k in sorted(paint.items())))

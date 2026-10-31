@@ -222,7 +222,7 @@ class Picture(unittest.TestCase):
 
     def test_paint_scale_and_tint(self):
         """An orange picture (the Veyron's): the tint carries the hue, red the brightness, so
-        red x tint gives the colour back; the rim's PaintScale scales it first."""
+        red x tint gives the colour back; a PaintScale scales it first."""
         px = bytearray(bytes((240, 80, 0, 255)) * 4)
         out, tint = dm.wheel_blur_texels(px, paint_scale=0.75)
         self.assertAlmostEqual(tint[0], 1.0)
@@ -283,8 +283,38 @@ class Atlas(unittest.TestCase):
         rgba = t.render()
         x, y = (int(c * n) for c, n in zip(uvs[0], t.size))
         o = (y * t.size[0] + x) * 4
-        grey = 120 * fm.WHEEL_PAINT_SCALE["rim"]  # the rim's PaintScale, as the rim's texels
+        # the picture as Forza draws it (blur_rim's PaintScale 1.0), times the gain that matches
+        # the wheel face
+        grey = min(255.0, 120 * t.wheel_blur_gain)
         self.assertEqual(tuple(rgba[o : o + 4]), (round(grey), round(grey * dm.WHEEL_BLUR_GLOSS), 255, 255))
+
+    def test_gain_matches_the_face(self):
+        """The faded-in disc keeps the wheel face's brightness (#407): with the gain, the disc's
+        drawn mean is WHEEL_BLUR_MATCH times the face's, whatever the picture's own brightness.
+        FOR_FocusRS500_10: near-black rim texels at PaintScale 7.5, a light grey picture; the
+        rim's PaintScale on the picture drew its disc near white."""
+        dark = bytearray(bytes((4, 4, 4, 0)) * (32 * 32))
+        self.atlases[fm.WHEEL] = (32, 32, dark)
+        settings = {"rim": {"PaintScale": 7.5}}
+        with mock.patch.object(fm, "shader_settings", lambda _car_dir: settings):
+            t = self.plan({fm.WHEEL, fm.WHEEL_BLUR})
+        self.assertIsNotNone(t.wheel_blur_gain)
+        self.assertLess(t.wheel_blur_gain, 0.5)
+        rgba = self.atlases[fm.WHEEL][2]
+        rim = [rgba[k] for k in range(0, len(rgba), 4)]
+        self.assertEqual(max(rim), 30)  # 4 x 7.5: the rim's texels as the atlas holds them
+
+        def texel(_section, _sub, uvs):
+            return [(30.0, 30.0, 30.0)] * len(uvs)
+
+        pic = self.atlases[fm.WHEEL_BLUR][2]
+        grey = [pic[k] for k in range(0, len(pic), 4)]
+        disc = sum(grey) / len(grey)
+        face, drawn = f2d_wheels.wheel_face_brightness(
+            [self.wheel, self.disc], 1, (0.0, 0.0, 0.0), texel, lambda uvs: [(disc, disc, disc)] * len(uvs)
+        )
+        self.assertAlmostEqual(drawn / face, dm.WHEEL_BLUR_MATCH / t.wheel_blur_gain * (disc / 120), places=6)
+        self.assertGreater(face, 0)
 
     def test_without_the_picture(self):
         t = self.plan({fm.WHEEL})
