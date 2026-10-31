@@ -502,21 +502,38 @@ surface comes 4 mm nearer within 3 cells, the floor's tilt taken off up and down
 **gap** (a hole or a cell 2 cm farther: a shut line, the boot lid's edge), a stop
 (lamp, glass, grille, exhaust) or nothing within 0.45 / 0.3 m; badges and artwork
 decals are seen past. A pocket has walls left and right and a wall above or below
-(the other side a wall or a gap), is 0.24-0.80 x 0.08-0.32 m, centred within 8 cm,
-and faces out within the recess search's tilts. Seeds whose rays end on the same walls
-above and below are one pocket (median width). Usable: it holds the host's plate at
-0.7 clear of its walls (2 cm across, 1.5 cm up and down), and its side walls come out
-by at most 0.2 m (diffuser channels and exhaust surrounds: the M3 GTR race car's
-1.4 m, the ARX-02a's 0.36, the Corvette Z06's 0.21; bumper pockets run to about 0.1:
-the Syclone's, the Chevelle's). Of several, the one a plate lamp lights (the strip
-within 2 cm across and 6 cm up or down of it), else the one seen from the most
-centre-line rows (the DBS's boot lid, 14, against the channel between its exhausts,
-2), then the nearest the host's height. The plate is the host's size, shrunk to fit,
-centred in the pocket or moved up or down within it to cover the least emblem or lamp
-(the ix20's pocket holds its badge too). Without a usable pocket, a rear plate lamp
-sets the height the window search and the fallback start from: just under a strip
-across (on every car with a pocket and a lamp, the strip is in the pocket's upper
-wall), level with upright strips.
+(the other side a wall or a gap), centred within 8 cm, at most 0.80 x 0.32 m, and
+faces out within the recess search's tilts. Seeds whose rays end on the same walls
+above and below are one pocket (median width). It must hold vanilla's smallest rear
+plate, 0.226 x 0.101 m (vanilla 199, of the 140 vanilla rear plates), from one cell
+under its measured size (rays stop at the first wall cell, so a pocket measured n cells
+is n + 1 between its walls' feet on average). Usable: its side walls come out by at
+most 0.2 m (diffuser channels and exhaust surrounds: the M3 GTR race car's 1.4 m, the
+ARX-02a's 0.36, the Corvette Z06's 0.21; plate pockets to 0.18, the A4 race cars', then
+the Stingray 67's 0.16). Of several, the one a plate lamp lights (the strip within 2 cm
+across and 6 cm up or down of it), else the one seen from the most centre-line rows (the
+DBS's boot lid, 14, against the channel between its exhausts, 2), then the nearest the
+host's height. The plate is the host's size, shrunk to fit (clear of the walls by the
+window search's own margins, 2 cm across and 1.5 up and down), centred in the pocket or
+moved up or down within it to cover the least emblem or lamp (the ix20's pocket holds
+its badge too). Without a usable pocket, a rear plate lamp sets the height the window
+search and the fallback start from: just under a strip across (30 of the 38 strips
+across that light a pocket are in its upper wall, 6 level with it, 2 below it: the
+Skyline 2000GT-R's, the Delta S4's), level with upright strips.
+
+**Where each limit comes from** (rear ends of the 568 surveyed cars with a host plate;
+392 have a usable pocket):
+
+| Limit | Source | Roster |
+| --- | --- | --- |
+| side walls <= 0.2 m | measured: plate pockets' side walls run to 0.177 m (the five A4 11 race cars), then 0.163 (Stingray 67), 0.154 (E-type 61); the first non-pockets are 0.208 (Corvette Z06's exhaust surround), 0.363 (ARX-02a's diffuser, twice), 0.376 (250 GTO's lower channel), 1.397 (M3 GTR race cars' diffuser) | any limit from 0.18 to 0.36 picks the same pocket on every car; 0.15 loses the Stingray's and E-type's, none at all puts four plates in diffusers |
+| plate fit 0.226 x 0.101 m less a cell | vanilla's smallest rear plate (the plate the converter places is a vanilla one), the cell the rays' stop costs | drops the C5R's valance slot and the Chevelle's bumper slot (0.08 m tall); keeps the Skyline R32s' bumper pads (0.10). Against the earlier 0.7 x host plate it changes 3 cars: the Mustang Mach 1 71 (1.6 cm, same bumper pocket), the 77 Impreza (to its bumper slot, where the WRX road cars carry theirs), the CC8 (to its lower trapezoid: a miss, below) |
+| most seed rows first | measured: in the 42 ends with several usable pockets the one chosen is seen from a median of 10 rows, the others from 1 to 2 (a crease, a valance, a channel under a bumper is seen from a row or two) | choosing by host height alone changes 19 of them; reviewed, it is wrong on the DBS (boot lid 14 rows against a diffuser channel 2), Camaro Z28 69 and SS 69 (bumper pockets 7 and 4 against valances 1); 4 ties (Z4 GT3, JT1, CC8 then, Yaris S) go to the host height |
+| plate lamp within 6 cm | measured: 30 of 38 strips across are in the pocket's upper wall (0 to 1.2 cm off its top) | 4 or 8 cm: no change; ignoring lamps changes one (the Apollo S: its lamp lights the paint pocket, not the trim one below) |
+| search: wall 4 mm in 3 cells, gap 2 cm, merge 3 cm, off centre 8 cm, reach 0.45 / 0.3 m, at most 0.80 x 0.32 m | RECESS_STEP is the window search's (master); the rest are search settings, not facts | each varied: wall in 2 / 4 cells changes 6 / 3 cars, gap 1.5 / 3 cm 12 / 13, merge 2 / 4 cm none, off centre 5 / 12 cm 1 / 0, reach 0.40 / 0.50 2 / 0; width cap 0.70 loses 24 real pockets (Continental GT, 599, XFR, Focus ST 06, Gallardo...), 0.90 or 1.20 adds 10, half of them vent bands, diffusers or exhaust panels (JT1, FXX, R390, S7, Ibiza Cupra); height cap 0.28 loses 13, 0.40 adds 4 |
+
+The sweep (`out/p408/scripts/sweep.py` in the #408 worktree) ran on the bound before
+its one-cell correction; the 3 cars that correction changes are above.
 
 **Rear only.** At the front the closed openings are air intakes and grilles drawn as
 texture on flat trim (the RSX's and F40's lower intakes, the 135i's kidneys, the Focus
@@ -548,7 +565,8 @@ on the panel above (1 cm lower); the Exige 240's, Speedster's, Yellowbird's and 
 are as on master. 393 rear plates move: 83 by 5 cm or more, 95 by 1-5 cm, 215 by under 1
 cm (centred on the pocket instead of the window's walk). Rear plates over a badge: 5 and
 5 (the Twingo's and WRX STi 04's leave their lettering; the Z4 GT3's and Corvette ZR1
-70's pockets hold an emblem the plate can't clear); host fallbacks 76 -> 62; floating
+70's pockets hold an emblem the plate can't clear). The table is survey 2 (the 0.7 x
+host plate fit); the vanilla-plate fit moves the 3 cars above; host fallbacks 76 -> 62; floating
 host fallbacks 21 -> 21 (#277's cause is another: no face near the host's height).
 
 Every plate that moves 5 cm or more was checked on the reliefs (master's plate, this
@@ -558,9 +576,11 @@ RGT8; the boot lids and tailgates of the Ion, tC, IS F, IS350, Fusion, Civic Si 
 Civic Type R 97, TSX, 8C, 135i, Celica, Focus ST/SVT, 207 S2000, ix20, Fiesta; the
 Mustang Cobra R 93's tail panel; the 288 GTO's and Gallardo LP570's lower panels. Master
 had several on lettering, vent bands, grilles or exhaust panels (Ultima GTR, Gallardo
-LP570, Twingo). Doubtful: the NASCAR Monte Carlo SS 11 (a 0.25 x 0.10 m pocket on its
-rear deck, the plate shrunk to 0.7) and the Cobra 427 (the lower of two pockets,
-between its bumperettes).
+LP570, Twingo). Misses and doubtful ones: the Koenigsegg CC8 (its lower trapezoid, 10
+rows, wins over the panel between its lamps, 7 rows, where the real car carries its
+plate), the Z4 GT3 and Corvette ZR1 70 (over an emblem in the pocket), the NASCAR Monte
+Carlo SS 11 (a 0.25 x 0.10 m pocket on its rear deck) and the Cobra 427 (the lower of two
+pockets, between its bumperettes).
 
 ## Open
 
