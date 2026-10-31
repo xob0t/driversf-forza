@@ -120,6 +120,8 @@ glass, and which of these rules that confirms or replaces: `forza-lenses-re.md`.
   lens texel plus the car's GlassColor (sRGB to linear), the red remap on red
   lenses (`lenses.lens_filter`), and glows with the lamp behind times the filter;
   its own colour and alpha don't count ([lenses as Forza draws them](#lenses-as-forza-draws-them-issues-300-340)).
+  One ray per lens texel, reading what it meets filtered over the lens texel's size
+  ([#403](#lenses-read-what-lies-behind-them-filtered-issue-403)).
   Rays that meet no lamp along the normal are cast again along the car's axis, for
   lenses that face out of the car's end
   ([#93](#lamp-lenses-drawn-opaque-user-report-on-outfinal4),
@@ -2690,6 +2692,59 @@ differently, in their lamps:
 The F50, F50 GT, Ultima GTR, IS F and GTO 84 also differ in the cockpit view, dE 0.3 to 3.9 on the
 lamps and bonnet seen over the dash. Flags: the Diablo SV's "trims: 35% not drawn" fixed, none new.
 Scores within 0.6 either way.
+
+### Lenses read what lies behind them filtered (issue #403)
+
+Symptom (user's build of master 5fef56e, by day): the Holden #88 Commodore VE 11's tails a dark
+starburst, the BMW M3 GTR 05's a dark scramble, the Citroen DS3 Racing 11's a mottle, where Forza
+shows a dimpled bowl, a grid reflector and a lined reflector behind the red lenses.
+
+Cause (offline-checked; `render_compare run --views rear --size 2400x1350`, the bake's own atlas):
+the bake cast one ray per block of `RAY_STEP` x `RAY_STEP` lens texels (more on lenses over
+`RAYS_PER_LENS`, 3,000 rays) and each ray read one texel of the surface it met. What lies behind a
+lens is often finer than that:
+- the Commodore's `tail_light` bowl is 0.87 mm a texel behind its 2.75 mm red lens texels, with
+  rays 5.5 mm apart (six bowl texels between two rays);
+- the M3's bowl and reflector are 1.8 mm a texel behind 1.46 mm lens texels, rays 4.4 mm apart.
+
+Each ray picked one texel of the dimples, so the picture aliased into noise, and its glow mask
+with it. Baked with one ray per lens texel, the Commodore's bowl already shows its rings
+(`out/b/exp1.py` in this PR's worktree); the moiré left goes when the bowl is read filtered.
+
+Change (`lenses.bake`, `_Surfaces.sample`):
+- One ray per lens texel. The largest lenses (over `FINE_RAYS_PER_LENS`, 20,000 rays: the
+  Corvette Grand Sport's 104,000-texel tails) take one ray per small block. The DSF atlas holds
+  the Lights texels at 0.33 to 0.77 of their size, so finer rays draw nothing more.
+- Each ray reads the Lights surface it meets from its mipmaps (`_pyramid`, trilinear `_fetch`) at
+  the lens texel's (block's) size on the car, `_Surfaces.density` texels a metre, as Forza's
+  sampler reads it on screen. Nodamage surfaces keep the point read (their paint-through rule).
+- The head lamp glow's shape (`lens_glow`) keeps one ray per old block: a smooth field, and the
+  closing over per-texel rays cost 8 s a car.
+
+Cost: a bake 1.9 to 2.1 s on master, 2.9 to 3.6 s now (Commodore, Viper, Corvette Grand Sport;
+one bake a conversion).
+
+Roster (offline, master's code, the 573 cars of `tools/batches/all.txt`; `out/survey_all.py` in this
+PR's worktree): per lens the bake takes, one ray per lens texel (up to 4,000 sampled) finds the Lights
+surface it meets and its texels a metre, against master's ray spacing. 533 cars have baked lenses
+(3,149 lens subsections). On 492 of them (1,991 lenses; 449 cars at the rear) at least 10% of a
+lens's texels had master's rays two or more texels of the surface behind apart. Over all lenses the
+share of such texels is p50 40%, p90 98.5%; 1,404 lenses have half or more. This change bakes every
+lens of the 533 cars differently. With one ray per texel and the read filtered to the texel's size,
+no texel is undersampled: the bake reads the surface at the finest detail the lens can hold.
+Examples (rear lenses, share undersampled on master): Commodore #88 red lenses 24%, clear 43%;
+M3 GTR red 80%, boot lenses 81%; DS3 Racing inner red lens 48%; Joss JT1 100%; Viper GTS-R #126's
+rear covers 78%.
+
+The M3 of the issue's screenshot is the BMW E46 M3 05 (spool 117): the GTR's lenses, 95% of its red
+tail lens texels and 92 to 94% of its boot lens texels undersampled on master. With this change its
+tails show Forza's LED dot grid where master drew a blotchy scramble.
+
+In game (VM 1, by day, the player's car at rest, `-Views 'rear,nose' -ShotSeconds 3 -WaitSeconds
+900`, vanilla 130 first): master `vm1-20261031-074318`, this with #425, #426, #427 together
+`vm1-20261031-074840`. The E46's and GTR's grids lose master's scramble. What stays blotchy when lit
+(the Commodore's swirl, part of the DS3's mottle) is the rear glow's ranking onto vanilla's
+distribution, a fit (#422).
 
 ### Open
 
