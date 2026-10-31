@@ -226,15 +226,26 @@ def fm4_car(car_dir) -> bool:
 FM4_NO_GLOW = ("head_light", "textured_reflector", "reflector")
 
 
+def pwl_to_linear(byte: np.ndarray) -> np.ndarray:
+    """Texel bytes (0..255) as linear light, the way the Lights and nodamage atlases' fetch
+    constants read them (sign 3, gamma: the Xenos piecewise-linear curve, xenia PWLGammaToLinear;
+    research/forza-lenses-re.md, section 1): byte b to b, 2b - 64, 4b - 256 or 8b - 1024 over 1023,
+    by segment (0..63, 64..95, 96..191, 192..255)."""
+    b = np.asarray(byte, float)
+    v = np.where(b < 64, b, np.where(b < 96, 2 * b - 64, np.where(b < 192, 4 * b - 256, 8 * b - 1024)))
+    return v / 1023.0
+
+
 def fm4_order(colour: np.ndarray, uvs: np.ndarray, dark: np.ndarray) -> np.ndarray:
-    """The glow mask of an FM4 car's rear lamp texels (lenses.rear_lamp_glow): FM4's lamp shaders
-    glow by the texel colour, BrakeColor x L (research/forza-lenses-re.md), so the texel's linear
-    red; texels only the no-glow techniques' triangles (`dark`, FM4_NO_GLOW: reflectors, head lamp
-    bowls the plan lights with a tail) sample are 0 (Forza never glows them)."""
+    """The glow mask (0..1) of an FM4 car's rear lamp texels (lenses.rear_lamp_glow): FM4's lamp
+    shaders glow by the texel colour, BrakeColor x L (research/forza-lenses-re.md, section 2), L the
+    texel as the Lights atlas fetch reads it (pwl_to_linear), so the texel's linear red; texels only
+    the no-glow techniques' triangles (`dark`, FM4_NO_GLOW: reflectors, head lamp bowls the plan
+    lights with a tail) sample are 0 (Forza never glows them)."""
     from dsfforza.convert import lenses
 
     h, w = colour.shape[:2]
-    order = ((colour[..., 0] / 255 + 0.055) / 1.055) ** 2.4
+    order = pwl_to_linear(colour[..., 0])
     glowing = np.zeros((h, w), bool)
     sampled = np.zeros((h, w), bool)
     ix, iy, _, at = lenses._texels_many(uvs * (w, h))
@@ -2310,19 +2321,17 @@ class Texturing:
         if self.lamp_raw is not None:
             view = self._lamp_view(front=True, grid=True)
             front = None if view is None else lenses.day_glow(self.lamp_raw, view, colour)
-        # The planned rear tail lamps seen from behind (#290, #391): where the front has no glow
-        # of its own. FM4's lamps glow by the texel colour, not its alpha (research/forza-lenses-re.md):
-        # their texels' linear red is the mask they glow by.
-        view = self._lamp_view(front=False, grid=True, rear_half=True) if self.rear_lamps else None
+        # The planned rear red lamps (#290, #391, #403): where the front has no glow of its own, each
+        # texel glows by Forza's glow mask (lenses.rear_lamp_glow). FM4's lamps glow by the texel
+        # colour, not its alpha (research/forza-lenses-re.md): their texels' linear red is the mask.
+        # No floor at the converted alpha (#290): that is the per-hue "matched" curves' rank, a fit
+        # onto vanilla, the white one on clear tail glass (the Ford Focus RS500's lights_gls_ tails:
+        # 79% of their visible samples raised, alpha p95 150 to 251, #404).
         rear = None
-        if view is not None:
-            uvs, ids, dark = self.rear_lamps
+        if self.rear_lamps:
+            uvs, _, dark = self.rear_lamps
             order = fm4_order(colour, uvs, dark) if fm4_car(self.car_dir) else None
-            # The glow is the lamp's own at vanilla's level, not raised to the converted alpha: that
-            # floor (#290) is the per-hue curves' rank, the white one on clear tail glass (the Ford
-            # Focus RS500's lights_gls_ tails: 66% of their visible samples raised, alpha p95 70 to
-            # 250 over vanilla's per-vehicle p90 of 210, #404) and blotches over an even lens.
-            rear = lenses.rear_lamp_glow(colour, view, uvs, ids, order=order)
+            rear = lenses.rear_lamp_glow(colour, uvs, order=order)
         self._glow_kept = (key, front, rear)
         return front, rear
 

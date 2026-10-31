@@ -869,106 +869,37 @@ def day_glow(glow: np.ndarray, view, colour: np.ndarray | None = None) -> np.nda
     return out if np.isfinite(out).any() else None
 
 
-# Tail and brake lamps seen from behind (#290, #391, #403). Each rear lamp the lamp plan makes a
-# tail lamp (0x18), a brake lamp (0x02) or a brake and indicator lamp (0x19 / 0x1A) glows on its own,
-# every texel of its triangles (lenses included) in proportion to its glow order (the matched score;
-# FM4's lamps by the texel's red, the mask Forza glows them with), at a level set on what a camera
-# straight behind sees of that lamp (TAIL_MEAN). Forza's glow is linear in its mask (glow colour x
-# state x mask, research/forza-lenses-re.md); ranked onto vanilla's distribution (#391 to #398),
-# every lamp came out with the same alpha spread whatever its mask (p10 / 50 / 90 0 / 19 / 116), so
-# an even lens (the Joss JT1's tails, its mask within 11% of its median) lit only its top-ranked
-# texels, an ellipse, and the Holden Commodore's and Citroen DS3's lit as blotches (#403).
-TAIL_MIN_SAMPLES = 40
-# The dimmest share of each ported tail lamp's visible pixels that stayed dark under #391's ranking:
-# a ported tail lamp is drawn over about 2.5 times vanilla's red area (render_compare's rear view:
-# median 7,108 px against 2,867; reflectors, bezels and lens edges). A geometry heuristic: the game
-# thresholds nothing (each texel glows alpha x the lamp's colour, research/lights-re.md). It now only
-# sets TAIL_MEAN.
-TAIL_DARK = 0.4
-# Vanilla's 0x18 tail lamps (DaytimeRunning + Brakes, the converter's tail type): the texel alpha
-# of the visible red lamp pixels at dsf_materials.LAMP_PERCENTILES (render_compare's renderer,
-# rear view, 56 vehicles, 137,610 pixels; out/l8/head_survey.py HEAD_REAR, HEAD_ALPHA_DUMP; per vehicle
-# p95 52 / 106 / 210).
-TAIL_RED_ALPHA = (0, 3, 12, 23, 33, 41, 49, 62, 80, 103, 122, 141, 158, 186, 243, 243, 247, 247, 255)
+# Tail and brake lamps (#290, #391, #403). Each rear lamp the lamp plan makes a tail lamp (0x18), a
+# brake lamp (0x02) or a brake and indicator lamp (0x19 / 0x1A) glows by Forza's own glow mask, the
+# texel's alpha carried over as DSF's: Forza's lamp glow is `colour x state x mask` (FH1: the texel
+# alpha; FM4: the texel colour, BrakeColor x L; research/forza-lenses-re.md section 2) and DSF's is
+# `texel alpha x C`, C the lamp's colour x 5 x level (research/lights-re.md, "A lamp texel's glow").
+# The mask maps to the alpha; the colour and state map to the lamp entry. Not yet derived, so not
+# applied: how Forza's glow units (BrakeColor 2 uploads as 4.95) compare with DSF's (5 x 0.588 x
+# level) in each game's HDR scene, and that Forza's tail_light glows only braking where the 0x18 type
+# also lights at 0.2 with the running lights.
+# Until #403, each lamp's texels were ranked onto vanilla's tail alpha distribution (#391), a fit:
+# every lamp came out with the same alpha spread (p10 / 50 / 90 0 / 19 / 116) whatever its mask, so
+# an even lens (the Joss JT1's tails, the mask within 11% of its median) lit only its top-ranked
+# texels, an ellipse, and the Holden Commodore's and Citroen DS3's lit as blotches.
 
 
-def _tail_mean() -> float:
-    """The mean alpha over a lamp's visible samples that #391's ranking gave every lamp (its dimmest
-    TAIL_DARK dark, the rest ranked onto TAIL_RED_ALPHA): the lamp's summed glow per sample, the
-    quantity that matches vanilla (research/lights-re.md, TAIL_DARK), which the tails' day glow was
-    measured in vanilla's range at (lights.md, "Rear lamps ranked per planned lamp")."""
-    from dsfforza.convert import dsf_materials as dm
-
-    rank = (np.arange(10000) + 0.5) / 10000
-    r = np.clip((rank - TAIL_DARK) / (1 - TAIL_DARK), 0.0, 1.0)
-    return float(np.interp(r * 100, dm.LAMP_PERCENTILES, TAIL_RED_ALPHA).mean())
-
-
-TAIL_MEAN = _tail_mean()
-
-
-def _gain(pool: np.ndarray, mean: float) -> float:
-    """g with mean(min(g x pool, 255)) = mean (pool >= 0); 0 when the pool is all 0."""
-    top = float(pool.max()) if len(pool) else 0.0
-    if top <= 0:
-        return 0.0
-    lo, hi = 0.0, 255.0 / top
-    while np.minimum(hi * pool, 255).mean() < mean and hi < 1e9:
-        lo, hi = hi, hi * 2
-    for _ in range(40):
-        mid = 0.5 * (lo + hi)
-        lo, hi = (mid, hi) if np.minimum(mid * pool, 255).mean() < mean else (lo, mid)
-    return hi
-
-
-def rear_lamp_glow(atlas: np.ndarray, view, tris, lamp_ids, order: np.ndarray | None = None) -> np.ndarray | None:
-    """Glow alpha (DSF, 0..255) of the planned rear lamps a camera straight behind the car sees, a
-    float array the size of the Lights atlas, NaN elsewhere; None without any. atlas: the Lights
-    atlas (h, w, 4) the car is drawn with (lenses baked); view: Texturing._lamp_view(front=False,
-    grid=True, rear_half=True); tris: atlas UVs (n, 3, 2) of the lamps' triangles; lamp_ids (n,):
-    each triangle's planned lamp; order (h, w): the glow mask of the texels (default the matched
-    score, dsf_materials.lamp_score). A lamp the view sees (TAIL_MIN_SAMPLES samples or more) glows
-    at g x its texels' order, capped at 255, g set so its visible samples' mean is TAIL_MEAN. A texel
-    of several triangles takes their mean."""
-    seen, grid, _, _ = view
-    rows, cols = seen
+def rear_lamp_glow(atlas: np.ndarray, tris, order: np.ndarray | None = None) -> np.ndarray | None:
+    """Glow alpha (DSF, 0..255) of the planned rear lamps' texels, a float array the size of the
+    Lights atlas, NaN elsewhere; None without any. atlas: the Lights atlas (h, w, 4) the car is drawn
+    with (lenses baked); tris: atlas UVs (n, 3, 2) of the lamps' triangles; order (h, w): Forza's
+    glow mask of the texels, 0..1 (FM4: dsf_materials.fm4_order); default the texel alpha, FH1's
+    mask. Each texel of the lamps' triangles glows at 255 x its mask."""
     h, w = atlas.shape[:2]
-    if order is None:
-        order = atlas[..., 3] / 255 * (0.6 + 0.4 * atlas[..., :3].astype(float).max(-1) / 255)
-    order = np.asarray(order, float)
+    mask = atlas[..., 3] / 255.0 if order is None else np.clip(np.asarray(order, float), 0.0, 1.0)
     tris = np.asarray(tris, float).reshape(-1, 3, 2)
-    lamp_ids = np.asarray(lamp_ids, int)
-    every_x, every_y, _, at = _texels_many(tris * (w, h))
-    # Each texel's lamp (the last triangle's where lamps share it: mirrored sides share pictures).
-    texel_lamp = np.full((h, w), -1)
-    for n in range(len(tris)):
-        ix, iy = every_x[at[n] : at[n + 1]], every_y[at[n] : at[n + 1]]
-        ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
-        texel_lamp[iy[ok], ix[ok]] = lamp_ids[n]
-    image = np.full(grid.shape, -1)
-    image[grid] = texel_lamp[rows, cols]
-    score = np.zeros(grid.shape)
-    score[grid] = order[rows, cols]
-    gains = {}
-    for k in np.unique(lamp_ids):
-        lamp = image == k
-        if lamp.sum() >= TAIL_MIN_SAMPLES:
-            gains[int(k)] = _gain(score[lamp], TAIL_MEAN)
-    if not gains:
+    if not len(tris):
         return None
-    acc, cnt = np.zeros((h, w)), np.zeros((h, w))
-    for n in range(len(tris)):
-        g = gains.get(int(lamp_ids[n]))
-        if g is None:
-            continue
-        ix, iy = every_x[at[n] : at[n + 1]], every_y[at[n] : at[n + 1]]
-        ok = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
-        ix, iy = ix[ok], iy[ok]
-        np.add.at(acc, (iy, ix), np.minimum(g * order[iy, ix], 255.0))
-        np.add.at(cnt, (iy, ix), 1)
-    if not cnt.any():
-        return None
-    return np.where(cnt > 0, acc / np.maximum(cnt, 1), np.nan)
+    every_x, every_y, _, _ = _texels_many(tris * (w, h))
+    ok = (every_x >= 0) & (every_x < w) & (every_y >= 0) & (every_y < h)
+    out = np.full((h, w), np.nan)
+    out[every_y[ok], every_x[ok]] = 255.0 * mask[every_y[ok], every_x[ok]]
+    return out if np.isfinite(out).any() else None
 
 
 def _lens_samples(section, sub, m, w: int, h: int):

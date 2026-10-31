@@ -612,68 +612,43 @@ def _quad_uv(u0, u1, w):
     return [[(u0 / w, 0.0), (u1 / w, 0.0), (u0 / w, 1.0)], [(u1 / w, 0.0), (u1 / w, 1.0), (u0 / w, 1.0)]]
 
 
-def test_rear_lamp_glow_sets_each_planned_lamp_on_vanilla():
-    # #290, #391: two planned tail lamps seen from behind, the left one's texels brighter than the
-    # right's (the Panoz Esperante's sides differed): each glows on its own at vanilla's level, so
-    # both alike; a texel no planned tail lamp holds (the white reverse lamp) keeps its alpha (NaN).
+def test_rear_lamp_glow_is_forzas_mask():
+    # #403: DSF's lamp glow is texel alpha x the lamp's colour and level, Forza's is mask x colour x
+    # state (research/lights-re.md, research/forza-lenses-re.md): each planned rear lamp texel's alpha
+    # is Forza's mask, the texel alpha on FH1. Ranked onto vanilla's distribution (#391) every lamp
+    # came out with the same spread; an even lens lit its top-ranked texels only. A texel no planned
+    # lamp holds (the white reverse lamp) keeps its converted alpha (NaN).
     h, w = 8, 64
     atlas = np.zeros((h, w, 4))
-    atlas[:, :20] = (220, 10, 10, 250)  # left lamp's texels
-    atlas[:, 20:40] = (120, 5, 5, 90)  # right lamp's: dimmer
+    atlas[:, :20] = (220, 10, 10, 250)
+    atlas[:, 20:40] = (120, 5, 5, 90)
     atlas[:, 40:50] = (230, 230, 230, 200)  # a white reverse lamp
-    atlas[:, 0:40:2, 3] *= 0.6  # some detail
-    gy, gx = np.mgrid[0:12, 0:30]
-    grid = np.ones((12, 30), bool)
-    # columns 13 to 15 see the white reverse lamp between the two red ones
-    cols = np.where(gx < 13, gx, np.where(gx > 15, 20 + gx - 16, 40 + gx % 10))[grid]
-    rows = (gy % h)[grid]
-    tris = _quad_uv(0, 20, w) + _quad_uv(20, 40, w)
-    view = ((rows, cols), grid, (0.0, 0.0), 0.005)
-    out = lenses.rear_lamp_glow(atlas.astype(np.uint8), view, tris, [0, 0, 1, 1])
-    left, right = out[:, :13], out[:, 20:34]
-    assert np.isfinite(left).all() and np.isfinite(right).all()
-    assert abs(left.mean() - lenses.TAIL_MEAN) < 3 and abs(right.mean() - lenses.TAIL_MEAN) < 3, (
-        left.mean(),
-        right.mean(),
-    )
+    atlas[:, 0:40:2, 3] *= 0.6
+    out = lenses.rear_lamp_glow(atlas.astype(np.uint8), _quad_uv(0, 20, w) + _quad_uv(20, 40, w))
+    assert np.allclose(out[:, :40], atlas.astype(np.uint8)[:, :40, 3]), out[0, :40]
     assert np.isnan(out[:, 40:]).all()
 
 
-def test_rear_lamp_glow_follows_the_mask_linearly():
-    # #403: Forza's glow is linear in its mask. An even lamp (the Joss JT1's tails: the mask within
-    # 11% of its median) glows evenly; ranked onto vanilla's distribution it lit its top-ranked
-    # texels only (alpha 0 / 19 / 117 at p10 / 50 / 90), a squashed ellipse and blotches.
+def test_rear_lamp_glow_follows_the_mask_given():
+    # FM4 glows a tail by its texel colour (BrakeColor x L): with that mask, a grey FM4 tail texel (the
+    # Aston Martin V12 Vantage's, at FM4's unread alpha 6) glows by its colour, and an even lens (the
+    # Joss JT1's) glows evenly.
     h, w = 8, 64
     atlas = np.zeros((h, w, 4), np.uint8)
-    rng = np.random.default_rng(1)
-    order = np.zeros((h, w))
-    order[:, :40] = 0.5 * (1 + 0.1 * rng.uniform(-1, 1, (h, 40)))
-    gy, gx = np.mgrid[0:12, 0:30]
-    grid = np.ones((12, 30), bool)
-    view = ((gy[grid] % h, gx[grid]), grid, (0.0, 0.0), 0.005)
-    out = lenses.rear_lamp_glow(atlas, view, _quad_uv(0, 40, w), [3, 3], order=order)
-    lit = out[:, :40]
-    assert abs(lit[:, :30].mean() - lenses.TAIL_MEAN) < 1
-    assert np.allclose(lit / order[:, :40], lit[0, 0] / order[0, 0])  # in proportion to the mask
-    assert lit.min() > 0.8 * lit.max()  # the mask's own +-10%
+    atlas[:, :40, :3] = (100 + 3 * np.arange(40))[:, None]
+    atlas[:, :40, 3] = 6
+    order = dm.pwl_to_linear(atlas[..., 0])
+    out = lenses.rear_lamp_glow(atlas, _quad_uv(0, 40, w), order=order)
+    assert np.allclose(out[:, :40], 255 * order[:, :40])
+    assert out[:, 35:40].mean() > out[:, 5:10].mean() > 6
 
 
-def test_rear_lamp_glow_takes_grey_tail_texels():
-    # #391: an FM4 tail lamp's texels are often grey (BrakeColor lights them red), and a clear lens
-    # over a tail bakes grey too (the Aston Martin V12 Vantage): the planned lamp's texels glow
-    # whatever their colour, by the order given (FM4: the texel's red).
-    h, w = 8, 64
-    atlas = np.zeros((h, w, 4))
-    atlas[:, :40, :3] = (100 + 3 * np.arange(40))[:, None]  # grey texels, brighter to the right
-    atlas[:, :40, 3] = 6  # at FM4's unread alpha
-    gy, gx = np.mgrid[0:12, 0:30]
-    grid = np.ones((12, 30), bool)
-    view = ((gy[grid] % h, gx[grid]), grid, (0.0, 0.0), 0.005)
-    order = atlas[..., 0] / 255
-    out = lenses.rear_lamp_glow(atlas.astype(np.uint8), view, _quad_uv(0, 40, w), [3, 3], order=order)
-    assert out is not None and np.isfinite(out[:, :30]).all()
-    assert abs(out[:, :30].mean() - lenses.TAIL_MEAN) < 1  # at vanilla's tail level, not at FM4's alpha 6
-    assert out[:, 25:30].mean() > out[:, 5:10].mean()  # brighter texels brighter
+def test_pwl_to_linear():
+    # The Xenos piecewise-linear gamma of the Lights atlas fetch (research/forza-lenses-re.md, section 1).
+    b = np.arange(256)
+    v = dm.pwl_to_linear(b) * 1023
+    assert v[0] == 0 and v[63] == 63 and v[64] == 64 and v[96] == 128 and v[192] == 512 and v[255] == 1016
+    assert (np.diff(v) > 0).all()
 
 
 def test_fm4_order_puts_no_glow_techniques_last():
