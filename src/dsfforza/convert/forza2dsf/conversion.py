@@ -678,12 +678,24 @@ def convert(
         tries = [("chase ring", chase.sections), ("rear half of the chase ring", chase.rear_sections), ("LOD 1", None)]
         for name, sections in tries:
             drsp.children = list(original)
+            chase.binding.atlas_triangles = chase.binding.flat_triangles = 0
             build_exterior(chase, sections)
             size = entry_size(child(exterior, "MDXN"))
             limit = opts.exterior_mdxn_limit
             if sections is None or limit is None or size <= limit:
-                report["chase_cabin"] = {**chase.report, "cabin": name, "mdxn": size}
-                log(f"exterior entry: the cabin from {name}, MDXN {size:#x}")
+                flat = {
+                    "atlas_triangles": chase.binding.atlas_triangles,
+                    "flat_triangles": chase.binding.flat_triangles,
+                }
+                report["chase_cabin"] = {**chase.report, "cabin": name, "mdxn": size, **(flat if sections else {})}
+                log(
+                    f"exterior entry: the cabin from {name}, MDXN {size:#x}"
+                    + (
+                        f"; textured triangles {flat['atlas_triangles']} from the atlas, {flat['flat_triangles']} flat"
+                        if sections
+                        else ""
+                    )
+                )
                 return
             log(f"exterior entry: the cockpit's cabin culled to the {name} puts the MDXN at {size:#x} > {limit:#x}")
 

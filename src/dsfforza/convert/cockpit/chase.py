@@ -207,6 +207,7 @@ class ChaseBinding:
 
     def __init__(self, inner, flats: dict):
         self.inner, self.texturing, self.flats = inner, inner.texturing, flats
+        self.atlas_triangles = self.flat_triangles = 0  # textured triangles drawn, from the atlas / flat
 
     def material(self, section, sub, shared):
         if _atlas_textured(self.texturing, section, sub) is not None:
@@ -223,8 +224,10 @@ class ChaseBinding:
         uvs = dm.triangle_uv(m, raw_uvs)
         r = region_of(t, m.family, uvs)
         if r is None:
+            self.flat_triangles += 1
             key = self.flats[id(sub)]
             return [t.solid_uv(key)] * len(uvs), key
+        self.atlas_triangles += 1
         size, scale = t.src_sizes[m.family], t._scale_of(r)
         mapped = [r.map(min(1.0, max(0.0, u)), min(1.0, max(0.0, v)), size, scale, t.size) for u, v in uvs]
         return mapped, (m.family, t.regions[m.family].index(r))
