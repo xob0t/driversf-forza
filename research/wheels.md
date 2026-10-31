@@ -1227,6 +1227,122 @@ any LOD; DOD_StealthTurbo_96 has a tyre and draws its rim as `wheel_emblem` (han
 Fix (`forza2dsf.load_car`): a main-carbin wheel without a tyre at any LOD gives way to the
 wheel archive's.
 
+## Wheel fit (2026-10-31)
+
+The user found SAL_S7_04's wheels still misaligned in #421's after shot and asked for a
+measure instead of judging by eye. `dsff wheel_fit` (`src/dsfforza/convert/wheel_fit.py`)
+measures each wheel of a **built** archive against its arch as the game draws it. Scripts in
+the PR's worktree, `out/wf/`: `validate.py` (the in-game check), `analyse.py` (flags and
+the sources' what-if), `grid.py`.
+
+### What it measures
+
+- The wheel at rest: the hub table's hub moved up by the engine's static wheel offset
+  (`wheel_clearance.rest_offsets`, the model `settle_wheels` uses), plus the tyre's centre
+  offset; radius, width and centre from the drawn wheel part (`wheel_clearance.load_car`).
+- The arch as seen from the side: an orthographic side view of the clean exterior entry's
+  body, per 5 mm cell the outermost surface, the tyre a disc at its outer face hiding what
+  lies inside it and inboard of that face (`side_depth`). Along a ray out from the tyre's
+  centre the surface steps out from the wheel well (or nothing) to the fender; the edge is the
+  first climb at least half as high as the ray's biggest, at half its height (`step_edge`):
+  the 50% point of a step, with no tuned depth. Two earlier definitions failed in the shots:
+  the nearest body point per ray was often the well's liner, 43 mm inside the S7's visible
+  arch top; the largest step per ray jumped to wider bodywork farther out (shoulder lines,
+  a mid-engined car's cabin sides: the Gallardo LP570's front read -151 mm lateral, -20 with
+  the first-step rule).
+- Per wheel: `fore_aft_mm` (the median midpoint of the arch's front and rear edges at 0.3 to
+  0.9 tyre radii above the tyre's centre, against the tyre's centre; + ahead), `top_gap_mm`
+  (tyre top to the edge straight above), `lateral_mm` (the tyre's outer face against the
+  crest of the edge step, the fender line, within 60 degrees of straight up; + outboard), and
+  a circle fitted to the edge (centre height, radius, rms) as a description of its shape.
+
+### Against the game (confirmed-runtime)
+
+Headless VM 1, `run-series -Vm -ProbeIds '313,51,9,162,257' -Views 'wheel,wheels'
+-ShotSeconds 3 -Palette 2` on the #421 build of the S7 04, Beetle 68 and V8 Vantage 77
+(`out/w406/rc-after`): `vm1-20261031-075759` (light paints: yellow, blue, light yellow); the
+white vanilla 162 from `vm1-20261031-054347` (palette 0). The probe's `wheel` view is a fixed
+camera in the car's frame, from (2.5, 0.5, 1.3) to (0.75, 0.35, 1.3); its field of view is
+the camera system's current one and the car frame's height against the model isn't known, so
+each shot fits its own camera to the tyre where wheel_fit puts it (3 unknowns: the frame's y
+and z offset, the focal length; from the rim's centre and the tyre's ground contact picked in
+the shot). Then the body's visible edge is predicted from that camera (a z-buffer of the body,
+the same first-step rule in the camera's view) and compared ray by ray (every 5 degrees from
+80 behind to 80 ahead of straight up) with the shot's edge (the first strong rise in
+brightness out of the dark well). Over the arch's top (within 30 degrees of straight up),
+seen minus predicted, median per car:
+
+| Car | Rest offset (front) | Over the top | All rays (median, MAD) |
+| --- | ---: | ---: | --- |
+| VW_BEETLE_68 (port) | -43 mm | +14 mm | +30, 18 |
+| vanilla 257 (VW Beetle 1963) | -43 | +19 | +22, 2 |
+| AST_V8Vantage_77 (port) | -23 | +18 | +29, 9 |
+| SAL_S7_04 (port) | +5 | +22 | +33, 10 |
+| vanilla 162 (Corvette Z06) | +20 | +51 | +59, 15 |
+
+- A common +14..22 mm: the shot's brightness edge (dark well to lit paint, where the lip's
+  curl turns to the light) lies outside the geometric half-step on every car, vanilla
+  included. On the Corvette the lip is a grey flange about 50 mm wide; the shot's edge is its
+  outer border, the geometric edge its inner one (`out/wf/overlay-vanilla162.png`).
+- The rest-pose model: from rest offsets of -43 to +5 mm the over-the-top offset moves 8 mm
+  (14 -> 22); were the engine drawing the wheels at the hub table (no rest offset), it would
+  move by the full 48 mm. The model holds to about 8 mm, a sixth of the offset.
+- The predicted tyre circle, the predicted arch outline and the shots overlay closely
+  (`out/wf/overlay-*.png`); fore/aft and lateral are not checked separately (a side view
+  doesn't show lateral).
+
+### Vanilla yardstick
+
+`wheel_fit survey` of the 140 four-wheeled vanilla vehicles; the cars and SUVs (120, without
+trucks, buses, vans, pickups and the trailer), 5 / 50 / 95 %:
+
+| Measure | Front | Rear |
+| --- | --- | --- |
+| fore_aft_mm | -12.5 / 0 / +16.6 | -17.5 / -1.2 / +12.5 |
+| top_gap_mm | -18.2 / +29.3 / +117.8 | +3.4 / +40.1 / +141.3 |
+| lateral_mm | -99.9 / -21.3 / +16.2 | -90.7 / -23.8 / +20.2 |
+
+The upper tails are SUVs and 1950s-60s cars (skirts, tall arches); vanilla's lateral reaches
+-180 mm (Countach, Diablo VT flares).
+
+### The S7 04 after #421
+
+| Wheel | fore_aft | top_gap | lateral |
+| --- | ---: | ---: | ---: |
+| front | +25 (just past the 95%) | +131 (vanilla 95%: 118) | -156 (5%: -100) |
+| rear | +5 | +129 | -162 (5%: -91) |
+
+Fore/aft is fixed since #421; its tyres sit 0.16 m inboard of the fenders and 0.13 m below
+the arch tops (`out/wf/overlay-S7_04.png` and the side view: wheel well around the whole
+tyre). Cause (confirmed-static): SAL_S7_04's `Physics/MAXData.xml` isn't the S7's. Its
+wheelbase 2.470, track outer 1.613 and ride height 0.190 / 0.177 match neither its own gamedb
+row (2.674, 1.935, 0.107) nor the car (wheelbase 2.667 m, 1.99 m wide); #421 took wheelbase
+and midpoint from the gamedb, track and ride height still come from this file. With the
+gamedb's track and ride height the same wheels would read lateral +4 / -1 and top gap +48 /
++59, inside vanilla's range.
+
+### The roster (#421's cars, `out/w406/rc-after`, over master's build for the rest)
+
+148 of 573 ports have a wheel outside vanilla's 5-95 % on a measure:
+
+- 47 have MAXData and gamedb track or ground more than 10 mm apart; on 37 of them the
+  gamedb's values would bring every flagged lateral and top-gap reading inside (SAL_S7_04,
+  ASC_KZ1R_12, AST_V8Vantage_77, the five Commodore VEs' front lateral, KEN_T440_12,
+  PAG_ZondaC12_99's rear, FOR_ShelbyGT500_13, TOY_6_Supra_05, ...), on 10 not
+  (`out/wf/flagged.json`).
+- 101 have agreeing sources: 45 only fore/aft, mostly within 10 mm of the band (-15 to -28);
+  31 only top gap, mostly rear wheels a few mm under 0 (the F430 GTs' -17, Miura -34) and the
+  tall SUVs (Raptor +170 / +240, Yukon +120 / +150); a few large fore/aft readings on square
+  or skirted arches (FOR_Explorer_10 -192, VOL_XC70_12 -155, TOY_CorollaDX_95 -128,
+  AUD_RS2_95 -118, FER_250TestaRossa_57 -200) and the muscle cars' rear lateral (-95 to -113:
+  Cuda, Charger Daytona, 442, GTO Judge, Cougar Eliminator, Mustang King Cobra), where the
+  two sources agree; not explained here.
+- Taking the gamedb's track and ride height for every car that has both would put more wheel
+  readings in range on 28 of the 122 cars where they differ by more than 10 mm, fewer on 9
+  (AUD_A4Avant_04, CHR_JeepGCSRT8_12, the BMW M3 GTRs, KOE_CCGT_08, PAN_51_Esperante_05,
+  BUS_TOUR_12, OPE_5_AstraV8_03, VAU_VX220_04) and the same on 85. Neither source is right
+  for every car, so no converter change here (#417).
+
 ## Open
 
 1. Brake calipers (Forza `_caliper*` carbins) are not converted: they must not
