@@ -123,13 +123,27 @@ def host_panels(upvh_data: bytes, modl_data: bytes) -> dict[tuple, Panel]:
 # --- section rules ----------------------------------------------------------------
 
 
+def glass_name(name: str) -> str:
+    """A Forza section name, lower case, with `lexan` read as `glass`. Forza's
+    race cars name their polycarbonate glazing lexan<suffix> with the suffixes
+    of glass<suffix> (master build of 2026-10-31: lexanF on 76 cars, lexanR 44,
+    lexanLF/RF 69/70, lexanLR/RR 42/41, lexanLM/RM 13, lexanLHL/RHL 65,
+    lexanLTL/RTL 39, lexanT 1), on glass materials."""
+    n = name.lower()
+    return "glass" + n[5:] if n.startswith("lexan") else n
+
+
 def section_rule(name: str) -> tuple[str, tuple]:
     """How a Forza main-carbin section is put on host panels:
     ("fixed", roles) the first role the host has; ("side", roles) the record of
     those roles on the section's side; ("glass", (front|rear)); ("majority",
     roles) the panel most of its triangles are nearest to; ("nearest", roles)
     per triangle."""
-    n = name.lower()
+    # lexanF is a windscreen like glassF. Read as a body section, the JT1's was
+    # split between the chassis and the front structure: that band crushed and
+    # cracked on its own, a triangle of glass missing after a front hit (#411).
+    # Vanilla windscreens are on the glass record, which doesn't crush.
+    n = glass_name(name)
     plate = re.fullmatch(r"(.*)_plate_(front|rear)", n)
     if plate:
         # Licence plates (src/dsfforza/convert/plates.py): the panel of the section they sit
