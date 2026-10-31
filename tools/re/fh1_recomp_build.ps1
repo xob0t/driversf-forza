@@ -2,7 +2,7 @@
 # running its own build steps by hand, without editing any of its files. research/forza-recomp.md
 # section 1.1. Its tools/build-preview.ps1 refuses any default.xex but the supported USA file
 # (exact SHA-256 of the container: header, signature, encryption key). Ours is media 2B7A1346
-# with the same code: xenia's module hash D48ABF1704CE5C4A (forza_recomp.py fh1-image). So this
+# with the same code: xenia's module hash D48ABF1704CE5C4A (forza_recomp.py image). So this
 # script runs the steps after that check: the same commands, in the same order.
 #
 #   powershell -File tools\re\fh1_recomp_build.ps1 -Root out\recomp\pinyon-v071 [-Parallel 2]

@@ -464,6 +464,14 @@ def parse_draws(log: Path) -> list[dict]:
     return draws
 
 
+UNNAMED = re.compile(r"c(\d+)@c\1")  # named_draws' label for a register no constant table names
+
+
+def named_only(constants: dict) -> dict:
+    """The constants a shader's table names (`c_eyePosWS@c59` stays; `c12@c12` goes)."""
+    return {k: v for k, v in constants.items() if not UNNAMED.fullmatch(k)}
+
+
 def named_draws(draws: list[dict], table: dict) -> list[dict]:
     """Each draw with its techniques (by the pixel shader's hash) and its constants by name."""
     out = []
@@ -496,6 +504,52 @@ BASE_ARGS = [
 ]
 PRESS_LEAD = 0.3  # s ahead of now that a press starts (the game re-reads the script every 0.1 s)
 IDLE, BELOW_NORMAL = 0x40, 0x4000
+
+
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9  # JOBOBJECTINFOCLASS
+RESUME_FAILED = 0xFFFFFFFF  # ResumeThread's (DWORD)-1
+
+
+def make_job(k32) -> int:
+    """A job object that ends its processes when its last handle closes (the script ends);
+    OSError if either call fails, so nothing is launched without that guarantee."""
+    import ctypes
+    from ctypes import wintypes
+
+    k32.CreateJobObjectW.restype = wintypes.HANDLE
+    job = k32.CreateJobObjectW(None, None)
+    if not job:
+        raise OSError(f"CreateJobObjectW: {ctypes.get_last_error()}; not launching")
+    limits = (ctypes.c_byte * 144)()  # JOBOBJECT_EXTENDED_LIMIT_INFORMATION; LimitFlags at +16
+    ctypes.c_uint32.from_buffer(limits, 16).value = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    if not k32.SetInformationJobObject(wintypes.HANDLE(job), JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, limits, 144):
+        error = ctypes.get_last_error()
+        k32.CloseHandle(wintypes.HANDLE(job))
+        raise OSError(f"SetInformationJobObject: {error}; not launching")
+    return job
+
+
+def join_job_and_resume(k32, job: int, process: int, thread: int) -> None:
+    """Puts a process created suspended into the job, then lets it run. If it can't join, it is
+    ended before it ever runs (OSError): outside the job it would have no kill and no watchdog."""
+    import ctypes
+    from ctypes import wintypes
+
+    try:
+        if not k32.AssignProcessToJobObject(wintypes.HANDLE(job), wintypes.HANDLE(process)):
+            error = ctypes.get_last_error()
+            k32.TerminateProcess(wintypes.HANDLE(process), 1)
+            raise OSError(f"AssignProcessToJobObject: {error}; the process was ended before it ran")
+        if k32.ResumeThread(wintypes.HANDLE(thread)) == RESUME_FAILED:
+            error = ctypes.get_last_error()
+            k32.TerminateJobObject(wintypes.HANDLE(job), 1)
+            raise OSError(f"ResumeThread: {error}; the job was ended")
+    except OSError:
+        k32.CloseHandle(wintypes.HANDLE(process))
+        raise
+    finally:
+        k32.CloseHandle(wintypes.HANDLE(thread))
 
 
 class Isolated:
@@ -551,11 +605,11 @@ class Isolated:
         self.desktop_handle = self.u32.CreateDesktopW(desktop, None, None, 0, 0x10000000, None)  # GENERIC_ALL
         if not self.desktop_handle:
             raise OSError(f"CreateDesktopW: {ctypes.get_last_error()}; not launching")
-        self.k32.CreateJobObjectW.restype = wintypes.HANDLE
-        self.job = self.k32.CreateJobObjectW(None, None)
-        limits = (ctypes.c_byte * 144)()  # JOBOBJECT_EXTENDED_LIMIT_INFORMATION; LimitFlags at +16
-        ctypes.c_uint32.from_buffer(limits, 16).value = 0x2000  # KILL_ON_JOB_CLOSE
-        self.k32.SetInformationJobObject(wintypes.HANDLE(self.job), 9, limits, 144)
+        try:
+            self.job = make_job(self.k32)
+        except OSError:
+            self.u32.CloseDesktop(wintypes.HANDLE(self.desktop_handle))
+            raise
         si = STARTUPINFO(cb=ctypes.sizeof(STARTUPINFO), lpDesktop=f"WinSta0\\{desktop}")
         pi = ProcessInformation()
         command = " ".join(f'"{a}"' if " " in a else a for a in argv)
@@ -574,14 +628,17 @@ class Isolated:
         ]
         flags = priority | 0x400 | 0x4  # CREATE_UNICODE_ENVIRONMENT, CREATE_SUSPENDED (joined to the job first)
         command_buffer = ctypes.create_unicode_buffer(command)
-        if not self.k32.CreateProcessW(
-            None, command_buffer, None, None, False, flags, block, str(cwd), ctypes.byref(si), ctypes.byref(pi)
-        ):
-            raise OSError(f"CreateProcessW: {ctypes.get_last_error()}")
+        try:
+            if not self.k32.CreateProcessW(
+                None, command_buffer, None, None, False, flags, block, str(cwd), ctypes.byref(si), ctypes.byref(pi)
+            ):
+                raise OSError(f"CreateProcessW: {ctypes.get_last_error()}")
+            join_job_and_resume(self.k32, self.job, pi.hProcess, pi.hThread)
+        except OSError:
+            self.k32.CloseHandle(wintypes.HANDLE(self.job))
+            self.u32.CloseDesktop(wintypes.HANDLE(self.desktop_handle))
+            raise
         self.process, self.pid = pi.hProcess, pi.dwProcessId
-        self.k32.AssignProcessToJobObject(wintypes.HANDLE(self.job), wintypes.HANDLE(self.process))
-        self.k32.ResumeThread(wintypes.HANDLE(pi.hThread))
-        self.k32.CloseHandle(wintypes.HANDLE(pi.hThread))
         self.started = time.monotonic()
         self.breached = False
         threading.Thread(target=self._watchdog, daemon=True).start()
@@ -592,6 +649,13 @@ class Isolated:
     def wait(self, timeout: float) -> bool:
         """Whether the command ended within `timeout` seconds."""
         return self.k32.WaitForSingleObject(self.wt.HANDLE(self.process), int(timeout * 1000)) == 0
+
+    def exit_code(self) -> int | None:
+        """The command's exit code, None while it runs (STILL_ACTIVE)."""
+        code = self.wt.DWORD()
+        if not self.k32.GetExitCodeProcess(self.wt.HANDLE(self.process), self.ct.byref(code)):
+            raise OSError(f"GetExitCodeProcess: {self.ct.get_last_error()}")
+        return None if code.value == 259 else code.value
 
     def stop(self) -> None:
         """Ends every process of the job and closes the desktop."""
@@ -932,20 +996,32 @@ def fh1_run(steps: Path, run: Path, game_args: list[str], *, opening: str = "fh1
     iso = Isolated(argv, env, PINYON)
     print(f"started the runner (pid {iso.pid}) on {run}, on its own desktop")
     copied, seen = 0, None
+
+    def copy_new_dump(settle: float) -> None:
+        nonlocal copied, seen
+        if dump.exists():
+            st = dump.stat()
+            if (st.st_mtime, st.st_size) != seen and time.time() - st.st_mtime > settle:  # written and settled
+                seen = (st.st_mtime, st.st_size)
+                shutil.copyfile(dump, run / "frames" / f"{copied}.fh1frame")
+                print(f"  frame dump {copied}: {st.st_size >> 20} MB")
+                copied += 1
+
+    code = None
     try:
         while not iso.wait(1.0):
-            if dump.exists():
-                st = dump.stat()
-                if (st.st_mtime, st.st_size) != seen and time.time() - st.st_mtime > 3:  # written and settled
-                    seen = (st.st_mtime, st.st_size)
-                    shutil.copyfile(dump, run / "frames" / f"{copied}.fh1frame")
-                    print(f"  frame dump {copied}: {st.st_size >> 20} MB")
-                    copied += 1
+            copy_new_dump(3)
             if iso.breached:
                 raise RuntimeError("the watchdog ended the run: a window reached the user's desktop")
+        copy_new_dump(0)  # one written just before the runner ended
+        code = iso.exit_code()
     finally:
         iso.stop()
         print(f"stopped; windows seen on the user's desktop: {'yes' if iso.breached else 'none'}")
+    if iso.breached:
+        raise RuntimeError("the watchdog ended the run: a window reached the user's desktop")
+    if code != 0:
+        raise RuntimeError(f"the render-test runner failed (exit code {code}); see {run / 'out'}")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -997,7 +1073,7 @@ def main(argv: list[str] | None = None) -> None:
             table = json.loads(FH1_HASHES.read_text())
             draws = named_draws(read_fh1frame(args.log), table)
             for x in draws:  # a dump holds every constant register: keep the shader's named ones
-                x["pc"] = {k: v for k, v in x["pc"].items() if not k.startswith("c")}
+                x["pc"] = named_only(x["pc"])
         else:
             table = json.loads(HASHES.read_text()) if HASHES.exists() else hashes()
             draws = named_draws(parse_draws(args.log), table)

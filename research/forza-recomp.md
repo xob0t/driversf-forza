@@ -55,7 +55,9 @@ tagged source and its own `setup` script, run unmodified.
     0.65, not #423's 0.175.
 - **FH1 at runtime** (section 4.2, the opening's Viper by day and by night):
   - FH1's lamps are off by day: the lamps-on value `dynamicLights2.x` is 0 at 13:00 and 1 at
-    23:00, and the tail lamps show dark by day and red at night;
+    23:00, and the tail lamps show dark by day and red at night. That is Forza's behaviour, read
+    for its data only: ports keep DSF's lamp behaviour (#442), and what it tells the converter is
+    that a tail's lit colour is its technique's `TailLightColor`;
   - the brake value `dynamicLightsAmount.x` is 1 under the brake;
   - the lamp colours upload linearised: the Viper's 0.7 and 1.36 arrive as 0.447988 and 2.02302;
   - FH1 races draw the `_V2` wheel techniques too (their own shaders), with the wheel archive's
@@ -364,8 +366,8 @@ are from `forza_recomp.py draws`.
 - **#423 section 2.5's survey therefore reads the wrong section.** The in-game rim is
   `Tire/Normal.xml`'s `<technique>_V2`, overlaid by the archive's `<technique>_V2`. Of FM4 disc
   1's 30 archives with their own settings, 11 have `_V2` sections. FH1's `Tire/Normal.xml` has
-  the same `_V2` sections, and 29 of its 37 such archives set `_V2` sections. That FH1 races draw
-  `_V2` too is inferred, not run. Comment on #424.
+  the same `_V2` sections, and 29 of its 37 such archives set `_V2` sections. FH1 races draw
+  `_V2` too (confirmed-runtime, section 4.2). Comment on #424.
 
 FM4 has no lamps-on state: its tails glow only under the brake.
 
@@ -402,6 +404,12 @@ uv run --with xxhash python tools/re/forza_recomp.py fh1-run tools/re/recomp_rou
 - **FH1's lamps are off by day.** This settles #423's open item (`dynamicLights2.x` by day was
   inferred from `TimeOfDayA.xml`): by day a tail technique glows only under the brake. So FH1's
   running lamps follow the time of day, as `forza-lenses-re.md` section 2 inferred.
+- **This is Forza's behaviour, read only to read its data** (AGENTS.md, #442: a port is a DSF car
+  built from a Forza car; Forza supplies what the car is, DSF how it behaves). Ports keep DSF's
+  lamp behaviour, as vanilla cars: a running tail glows by day at DSF's running level. What the
+  result tells the converter is about the data: a tail's lit colour is its technique's
+  `TailLightColor` (and `BrakeColor` under the brake), not the texel. It is not that ports
+  should go dark by day.
 - **The upload is linearised as #423 decoded.** The Viper's file sets `TailLightColor` 0.7 and
   `BrakeColor` 1.359986; `forza_lens.srgb_to_linear` gives 0.447988 and 2.023016.
 - **The other glass techniques carry the same state:** `lights_gls_taillight2S` (`TailLightColor`
