@@ -19,6 +19,8 @@ visible or minimized mode).
 
     uv run python tools/re/forza_recomp.py discs                     our ISOs against the recomps' lists
     uv run python tools/re/forza_recomp.py extract                   FM4 disc 1 and the disc 2 packages
+    uv run python tools/re/forza_recomp.py extract-fh1               the FH1 disc for Pinyon Shift's build
+    uv run --with pycryptodome --with xxhash python tools/re/forza_recomp.py image   our code against the supported
     uv run --with xxhash python tools/re/forza_recomp.py hashes      shader hash -> technique, pass
     uv run --with xxhash python tools/re/forza_recomp.py run ROUTE RUN [-- GAME_ARGS]
     uv run --with xxhash python tools/re/forza_recomp.py draws LOG [--technique RE] [--json OUT]
@@ -68,6 +70,12 @@ def xex_identity(data: bytes) -> str:
     return f"title {title:08X} media {media:08X} version {version:#x} disc {disc}/{discs}"
 
 
+def title_id(data: bytes) -> str:
+    n = struct.unpack_from(">I", data, 20)[0]
+    headers = dict(struct.unpack_from(">II", data, 24 + 8 * i) for i in range(n))
+    return f"{struct.unpack_from('>I', data, headers[EXECUTION_INFO] + 12)[0]:08X}"
+
+
 def discs() -> None:
     from dsfforza.formats.xiso import XIso
 
@@ -82,6 +90,152 @@ def discs() -> None:
             x.close()
         digest = hashlib.sha256(data).hexdigest().upper()
         print(f"{iso.name}: {xex_identity(data)}, default.xex {digest[:16]}: {SUPPORTED.get(digest, 'not supported')}")
+
+
+# The supported FH1 image (Pinyon Shift MS-2505), as its repo records it: site/findings/
+# executable.toml ("image extent and entry point", "section map", "function table and size
+# profile", "largest function") and config/rexglue/accepted-codegen-warnings.json (two bdz).
+FH1_SUPPORTED_IMAGE = {
+    "size_of_image": 0x18A3400,
+    "entry": 0x82A6FBC0,
+    "sections": {
+        ".rdata": 0x82000600,
+        ".pdata": 0x82366E00,
+        ".text": 0x823E0000,
+        ".data": 0x831F0000,
+        ".reloc": 0x83540200,
+    },
+    "section_count": 14,
+    "tls_size": 0x3069,
+    "functions": 57127,
+    "median_function": 120,
+    "functions_under_64": 7676,
+    "functions_over_4k": 122,
+    "largest": [(0x8241A370, 110012), (0x82BE1880, 30196)],
+}
+FH1_BDZ = [(0x82AD8138, 0x82AD836C), (0x82AD813C, 0x82AD836C)]
+# xenia-canary game-patches, patches/4D5309C9 - Forza Horizon.patch.toml and 4D530910 - Forza
+# Motorsport 4.patch.toml: the base default.xex module hash (media 2DC7007B, 4000D145 and
+# 2B7A1346 for FH1; disc 1 for FM4). Pinyon Shift's fh1-post-processing.toml names the same FH1 hash.
+XENIA_HASH = {"4D5309C9": 0xD48ABF1704CE5C4A, "4D530910": 0x06DEF37749E2CEAC}
+IMPORT_LIBRARIES = 0x000103FF  # XEX2 optional header
+XEX_SECTION_CODE = 1  # xenia xex2_info.h page descriptor info
+
+
+def xenia_module_hash(data: bytes, image: bytes) -> int:
+    """xenia's module hash (kernel/user_module.cc UserModule::CalculateHash): XXH3-64 over the
+    loaded image from the first to the last code page descriptor, the descriptor index times the
+    0x80000000 heap's 64 KB page; the import thunks rewritten first, as XexModule::
+    SetupLibraryImports does for kernel imports (sc 2; blr; nop; nop)."""
+    import xxhash
+
+    sec = struct.unpack_from(">I", data, 16)[0]
+    count = struct.unpack_from(">I", data, sec + 0x180)[0]
+    code = [
+        i for i in range(count) if struct.unpack_from(">I", data, sec + 0x184 + 24 * i)[0] & 0xF == XEX_SECTION_CODE
+    ]
+    start, end = code[0] * 0x10000, (code[-1] + 1) * 0x10000
+    img = bytearray(image) + bytes(max(0, end - len(image)))
+    n = struct.unpack_from(">I", data, 20)[0]
+    headers = dict(struct.unpack_from(">II", data, 24 + 8 * i) for i in range(n))
+    off = headers[IMPORT_LIBRARIES]
+    _size, str_size, libs = struct.unpack_from(">III", data, off)
+    p = off + 12 + str_size
+    for _ in range(libs):
+        lib_size = struct.unpack_from(">I", data, p)[0]
+        for k in range(struct.unpack_from(">H", data, p + 0x26)[0]):
+            rec = struct.unpack_from(">I", data, p + 0x28 + 4 * k)[0] - 0x82000000
+            if struct.unpack_from(">I", img, rec)[0] >> 24 == 1:  # a thunk record
+                struct.pack_into(">4I", img, rec, 0x44000042, 0x4E800020, 0x60000000, 0x60000000)
+        p += lib_size
+    return xxhash.xxh3_64_intdigest(bytes(img[start:end]))
+
+
+def image_facts(image: bytes) -> dict:
+    """The structural facts FH1_SUPPORTED_IMAGE lists, of a decrypted PE image."""
+    import statistics
+
+    import xex
+
+    pe = struct.unpack_from("<I", image, 0x3C)[0]
+    opt = pe + 24
+    secs = xex.sections(image)
+    pdata = next(s for s in secs if s[0] == ".pdata")
+    funcs = []
+    for k in range(pdata[2] // 8):
+        begin, info = struct.unpack_from(">II", image, pdata[1] + 8 * k)
+        if begin:
+            funcs.append((begin, ((info >> 8) & 0x3FFFFF) * 4))
+    sizes = [s for _, s in funcs]
+    return {
+        "size_of_image": struct.unpack_from("<I", image, opt + 56)[0],
+        "entry": struct.unpack_from("<I", image, opt + 16)[0] + struct.unpack_from("<I", image, opt + 28)[0],
+        "sections": {n: 0x82000000 + va for n, va, _, _ in secs if n in FH1_SUPPORTED_IMAGE["sections"]},
+        "section_count": len(secs),
+        "tls_size": next((vs for n, _, vs, _ in secs if n == ".tls"), None),
+        "functions": len(funcs),
+        "median_function": statistics.median(sizes),
+        "functions_under_64": sum(s < 64 for s in sizes),
+        "functions_over_4k": sum(s > 4096 for s in sizes),
+        "largest": sorted(funcs, key=lambda f: -f[1])[:2],
+    }
+
+
+def image_check() -> None:
+    """Each disc's default.xex: xenia's module hash against xenia's patch lists, and for FH1 the
+    structural facts of Pinyon Shift's supported image and its two bdz instructions."""
+    import xex
+
+    from dsfforza.formats.xiso import XIso
+
+    for iso in sorted((REPO / "assets").glob("*.iso")):
+        x = XIso(iso)
+        try:
+            data = x.read(x.find("default.xex"))
+        except KeyError:
+            continue
+        finally:
+            x.close()
+        title = title_id(data)
+        if title not in XENIA_HASH or "disc 1/" not in xex_identity(data):  # FM4 DVD2's is its installer
+            continue
+        image = xex.Xex(data).image()
+        h = xenia_module_hash(data, image)
+        print(
+            f"{iso.name}: xenia module hash {h:016X}: {'same as' if h == XENIA_HASH[title] else 'NOT'} xenia's {XENIA_HASH[title]:016X}"
+        )
+        if title != "4D5309C9":
+            continue
+        facts = image_facts(image)
+        for key, want in FH1_SUPPORTED_IMAGE.items():
+            print(f"  {key}: {'same' if facts[key] == want else f'DIFFERS: {facts[key]} against {want}'}")
+        for at, target in FH1_BDZ:
+            w = struct.unpack_from(">I", image, at - 0x82000000)[0]
+            bd = w & 0xFFFC
+            to = at + (bd - 0x10000 if bd & 0x8000 else bd)
+            ok = w >> 26 == 16 and (w >> 21) & 31 in (18, 19, 26, 27) and to == target
+            print(f"  bdz at {at:08X} to {target:08X}: {'same' if ok else f'DIFFERS ({w:08X})'}")
+
+
+def extract_fh1(dest: Path = OUT / "pinyon-v071" / ".local" / "game" / "base") -> None:
+    """The FH1 disc's files (no $SystemUpdate) where Pinyon Shift's build reads them."""
+    from dsfforza.build import forza_roster
+    from dsfforza.formats.xiso import XIso
+
+    iso = forza_roster.game_discs(sorted((REPO / "assets").glob("*.iso"))).get("FH1")
+    x = XIso(iso)
+    count = 0
+    for e in x.files():
+        p = e.path.strip("/")
+        if e.is_dir or p.startswith("$SystemUpdate"):
+            continue
+        target = dest / p
+        if not (target.exists() and target.stat().st_size == e.size):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            x.extract(e, target)
+            count += 1
+    x.close()
+    print(f"{iso.name}: {count} files to {dest}")
 
 
 def extract() -> None:
@@ -589,6 +743,8 @@ def main(argv: list[str] | None = None) -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("discs")
     sub.add_parser("extract")
+    sub.add_parser("extract-fh1")
+    sub.add_parser("image")
     h = sub.add_parser("hashes")
     h.add_argument("--root", type=Path, default=DISC1 / "Media" / "Shaders")
     d = sub.add_parser("draws")
@@ -607,6 +763,10 @@ def main(argv: list[str] | None = None) -> None:
         discs()
     elif args.cmd == "extract":
         extract()
+    elif args.cmd == "extract-fh1":
+        extract_fh1()
+    elif args.cmd == "image":
+        image_check()
     elif args.cmd == "hashes":
         table = hashes(args.root)
         HASHES.parent.mkdir(parents=True, exist_ok=True)
