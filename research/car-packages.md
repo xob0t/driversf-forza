@@ -453,6 +453,28 @@ name from the generated global.fchunk and its 16-bit badge, and the Supra
 RZ's card shows its package's picture. The card has the SF disc, not the
 Forza emblem: the vanilla Fonts.fchunk has no emblem texture (see above).
 
+## Pipeline (phase 4, #454; opt-in)
+
+- `port_batch build --packages` writes `<build>\packages\<key>.dsfcar`
+  for every car of the build (`dsfcar.pack`), after the pack step has
+  saved its pictures and images and before `--clean-work` drops the work
+  chunks. Packages of cars no longer in the build are deleted. A failure
+  is reported (`packages_failed`) and the build stands, as for the GUI
+  step.
+- `install.ps1 -Packages` (needs `-Asi`) installs DriverNGHook, the
+  plugin with `[archive] packages=1`, `bootstrap.lua` and `register.lua`,
+  and hands `<build>\packages` to the car manager. It doesn't install the
+  archive, gui.sp, Fonts.fchunk, global.fchunk, `ported.lua` or `hud.lua`,
+  so it doesn't check that those are vanilla either: another mod's
+  archive or GUI files can stay (#149). `install.json` records
+  `packages: true` and the package keys; `-Status` names them.
+  `-Uninstall` removes what install.ps1 installed and leaves the
+  manager's files (#455).
+- `dsff install --packages` builds with `--packages` and installs with
+  `-Packages`; with `--no-plugin` it stops in the preflight.
+- The manager makes the GUI copies once per command (`Manager.batch`),
+  not once per package: gui.sp alone is 80 to 160 MB.
+
 ## Phased plan (PRs)
 
 1. **Plugin loader** (the spike's code, proven for one car): build and offline test
