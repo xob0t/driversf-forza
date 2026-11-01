@@ -474,6 +474,16 @@ Forza emblem: the vanilla Fonts.fchunk has no emblem texture (see above).
   `-Packages`; with `--no-plugin` it stops in the preflight.
 - The manager makes the GUI copies once per command (`Manager.batch`),
   not once per package: gui.sp alone is 80 to 160 MB.
+- Verified end to end: `port_batch build --gui --packages` of three cars
+  (packages in 2.9 s), `install.ps1 -Packages -Build` into a temp copy of
+  the vanilla files (no game file changed; `packages=1` in the installed
+  ini; IDs 1 to 3; one GUI generation), and in game with that plugin, ini
+  and the manager's files (`runs\vm1-20261101-150003`): all three spawn,
+  chase and cockpit, the redirect serves the generated files, and the HUD
+  shows each car's badge and plate (`hud: model 3 ManufacturerGlyph 260
+  ModelGlyph 261`). `install.ps1 -Status` names the packages; `-Force`
+  reinstalls keep every car's ID; `-Uninstall` restores the game and
+  leaves `dsfforza\cars`, `dsfforza\generated` and the two Lua files.
 
 ## Phased plan (PRs)
 
