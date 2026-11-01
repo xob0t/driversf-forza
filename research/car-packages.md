@@ -19,11 +19,12 @@ their reads from the car's own file. With SSLP and VSCT records added for
 them, the game sees one archive. Four hook sites besides the existing reader
 replacements; the vanilla archive is never written.
 
-Status: the plugin code is drafted (`[archive] packages`, off by default)
-and a one-car package is made (`dsff car_package`). The plugin draft has not
-been compiled or run: the coordinator held builds and VM runs while the
-user plays. **Nothing here is confirmed-runtime yet**; the proof run is
-"Proof" below.
+Status: **confirmed-runtime for one car** (VM run 2026-11-01, "Proof"
+below): the M3 E30 spawns as ID 700 from its own package beside the
+vanilla `dngvehicles.sp`, its three VEHC entries (700, 1700, 2700) are read
+from the package file, and without a list the plugin hooks nothing and the
+run is as before. Several packages at once, the hitch of the synchronous
+read and file name logging are phase 1 (#451).
 
 ## 1. How the game finds a car's data today (confirmed-static)
 
@@ -55,7 +56,7 @@ reader and the index, so a redirect keyed on (reader, index) catches any
 of them. Only a nested reader (mode 3) over a VEHC entry would bypass it,
 because `seek` adds the parent entry's offset to a position in the parent's
 file. No vanilla path was found that opens a VEHC that way: the slot reads
-it whole. The draft logs it if one ever does.
+it whole. The plugin logs it if one ever does.
 
 ## 2. Options
 
@@ -71,7 +72,7 @@ small sites. Notes on the risks the brief named:
 
 - **Async I/O.** The slot polls the archive's own handle after `read entry`
   (FUN_008FB2D0). A package read on another handle would look complete
-  before it is, so the draft reads synchronously (ReadFile with an offset,
+  before it is, so the plugin reads synchronously (ReadFile with an offset,
   plugin-owned handle) before returning; the data is in the buffer when
   the poll runs. Cost: one 1 to 2 MiB read per VEHC load on the thread that
   polls the spooler (likely the main thread): a hitch of a few ms from an SSD
@@ -109,8 +110,8 @@ small sites. Notes on the risks the brief named:
 
 | Need | Today | From a package at run time? |
 | --- | --- | --- |
-| SSLP records | merged into SSIC | **yes**: hook FUN_005A0B50 (draft) |
-| VSCT records | merged into SSIC (host's three records) | **yes**: hook FUN_0086C630 (draft); the package carries them as a 4th entry |
+| SSLP records | merged into SSIC | **yes**: hook FUN_005A0B50 (proven, 2026-11-01) |
+| VSCT records | merged into SSIC (host's three records) | **yes**: hook FUN_0086C630 (proven); the package carries them as a 4th entry |
 | `vehicleStats` entry | `UserLuaScripts\dsfforza\ported.lua`, read by `register.lua` | yes. These are loose Lua files, so the manager writes them from the enabled packages' metadata (no archive). `register.lua` should drop IDs the plugin left out (it already queries the plugin, `asi.md` "Telling Lua the plugin is there") |
 | HUD badge and plate (`ManufacturerGlyph`/`ModelGlyph`, `hud.lua`) | glyphs merged into `media\Fonts.fchunk` (vehicles_font atlas) | not yet. A font's glyphs are records into page textures of one FNTD, and all pages are sized like page 0 (`gui-assets.md`). Runtime glyph pages would need new texture resources; recommended instead: a **generated** Fonts.fchunk in the manager's folder, opened in place of the vanilla one (below) |
 | garage picture | SPOIs merged into `Install\gui.sp` (UIDL, SPOL, SSLP) | possible with the same root-entry injection (gui.sp also loads through FUN_005A11E0 and has an SSLP), plus UIDL and SPOL records. Simpler first: a generated gui.sp, opened in place of the vanilla one |
@@ -166,9 +167,7 @@ change is not measured.
 All sites are checked byte for byte before writing, and are all-or-nothing,
 as for the other modules. Without the reader patches there are no packages.
 
-## Proof (held)
-
-Made, not run:
+## Proof (confirmed-runtime, 2026-11-01)
 
 ```sh
 uv run dsff car_package make --chnk <main>/out/build/work/BMW_M3E30_91.chnk --id 700 --host 205 \
@@ -176,28 +175,62 @@ uv run dsff car_package make --chnk <main>/out/build/work/BMW_M3E30_91.chnk --id
 # 0: VEHC 0x1000 size 0x17D000 (ID 1 -> 700); 1: VEHC 0x17F000; 2: VEHC 0x317000; 3: VSCT 0x54
 ```
 
-The run, once builds and VMs are free again:
-
 ```powershell
 $env:PATH = "C:\Program Files (x86)\Microsoft Visual Studio\Installer;$env:PATH"
 .\tools\asi\build.ps1 -Test
 # a copy of out\asi\dsfforza.asi + dsfforza.ini with [archive] packages=1 in out\cp\asi\
 .\tools\wsb\run-series.ps1 -Vm -Asi out\cp\asi\dsfforza.asi -ArchiveOnly `
     -Archives out\vanilla\Install\dngvehicles.sp,out\vanilla\Install\dngvehicles.sp `
-    -Overlay '',out\cp\game -Labels without-package,with-package -ProbeIds '266,700'
+    -Overlay '',out\cp\game -Labels without-package,with-package -ProbeIds '266,700' `
+    -LuaFiles 'dsfforza\ported.lua=out\cp\lua\ported.lua' -WaitSeconds 240
 ```
 
-Expected: without the overlay, 700 is refused (not in SSLP) and 266 spawns.
-With it, the log shows the vehicle archive's reader, `root entries
-453..455`, `SSLP ... + 3`, `VSCT ... + 3` and `700: entry 453 ... read from
-its package`, and the probe spawns the M3 E30 as 700. The run also tests the
-cockpit view (the 1700 interior), the chase view (2700) and a respawn after
-release. The HUD shows no name without a `vehicleStats` entry
-(`-LuaFiles 'dsfforza\ported.lua=...'` with an entry for 700 fixes that).
+`out\cp\lua\ported.lua` is the main build's `dngvehicles.lua` cut to one
+entry, `[700]` (host 205), so the car has a `vehicleStats` entry.
+
+- **Without the package** (`runs\vm1-20261101-120510`): the log says `no list
+  ...; no car packages` and no package site is hooked. 266 spawns; the 700
+  request finds no SSLP record and the player stays in Tanner's car (62).
+- **With it** (`runs\vm1-20261101-120730`), `dsfforza.log`:
+
+  ```
+  packages: 700 dsfforza\cars\BMW_M3E30_91.sp: VEHC 1560576/1667072/2097152 bytes, NONR 0x59060/0x360/0x410
+  packages: 005A13C4 spool open, 005A0B50 SSLP load, 0086C630 VSCT load hooked; 1 car packages
+  packages: vehicle archive 'Install\dngvehicles.sp' opens in reader 11D7BDC4 (ok)
+  packages: reader 11D7BDC4: root entries 453..455 are the 1 car packages
+  packages: SSLP at 11D7BDB4: 450 records + 3 for 1 car packages
+  packages: VSCT: 450 records + 3 from car packages
+  packages: 700: entry 453 (1564672 bytes) read from its package
+  packages: 700: entry 454 (1671168 bytes) read from its package
+  packages: 700: entry 455 (2101248 bytes) read from its package
+  ```
+
+  The probe spawns the M3 E30 as 700 (chase view shot; the car list then
+  reads `266x1 700x1`), switches to the cockpit view (1700 read from the
+  package) and back, and releases it; no crash. The interval of the shots
+  (10 s) missed the cockpit view; phase 1's series takes it.
+
+**A bug found before the run.** The first draft compared
+`*(Reader**)(self + 0x10)` with the vehicle reader in the SSLP hook. The
+reader is *embedded* at spool object +0x14: the constructor 0x005A10F0 sets
+the vtables at +0 (0x00DE4D60), +4 (0x00DE4D48, whose slot 0 is
+FUN_005A0B50, so `self` = spool object + 4) and +0xC (0x00DE4D3C, whose
+FUN_005A11E0 opens `lea ecx, [esi+8]`), and builds the reader in place
+(`lea ecx, [esi+0x14]; call 0x008FB9D0` at 0x005A112F). The pointer read
+from it is the reader's vtable, so the check never matched and the packages
+would have been silently missing. Fixed: `(Reader*)(self + 0x10)`.
+
+**Call sites, byte-checked** (`dsff xref dis`): 0x005A13C4 `E8 67 B1 35 00`
+(`push 0; push 1; push edi=[esi+0x72F8] name; lea ecx,[esi+8]; call
+0x008FC530`); 0x005A0B50 and 0x0086C630 `8B 44 24 08 56` (both reached only
+through their vtables, 0x00DE4D48 and 0x00E3967C: `xref call` finds no
+direct caller). SSLP records are `{u16 id, u16 root index, u16 kind}`:
+FUN_005A0B80 returns +2, FUN_005A0BD0 returns +4 (as
+`clone_vehicle.register_clones` writes them).
 
 ## Phased plan (PRs)
 
-1. **Plugin loader** (this draft, made real): build and offline test
+1. **Plugin loader** (the spike's code, proven for one car): build and offline test
    (`offline.cpp`: inject into a fake reader, SSLP/VSCT copies, clash and
    NONR refusals), the VM proof above, then several packages at once (IDs
    past entry 1100), async reads if the sync hitch shows, file name logging
@@ -221,7 +254,8 @@ release. The HUD shows no name without a `vehicleStats` entry
 
 ## Open
 
-- Everything in "Proof": the draft has not been compiled or run.
+- Several packages at once, entries past 1100 (side table), a respawn after
+  release, the cockpit shot (phase 1).
 - The sync read's cost on the main thread (phase 1).
 - Whether every open of gui.sp, Fonts.fchunk and global.fchunk goes through
   FUN_00857370 (phase 1 logs it).
