@@ -28,7 +28,7 @@ def vehc(car: int | None, nonr_pad: int = 0) -> Entry:
     return node("VEHC", [node("NONR", kids, align=4)])
 
 
-def car_sp(path: Path, car: int = 1, host: int = 205, nonr_pad: int = 0, vsct: bool = True) -> bytes:
+def car_sp(path: Path, car: int = 1, host: int = 205, nonr_pad: int = 0, *, vsct: bool = True) -> bytes:
     records = b"".join(VSCT_RECORD.pack(host, 1, 2, 3, b"host", *range(6)) for _ in range(3))
     entries = [vehc(car, nonr_pad), vehc(None), vehc(None)]
     if vsct:

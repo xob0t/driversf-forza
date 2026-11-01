@@ -349,8 +349,9 @@ formats.
 **Verified:** the four cars of the loader runs, packed from the main build
 (5.2 to 6.2 MB each, about 3.6 s for four) and installed as 700 to 703 with
 `install_sp`, are byte for byte the `.sp` files that ran in
-`runs\vm1-20261101-122452`. Run from the packages (`ported.lua` entries
-from their manifests): `runs\` in the PR.
+`runs\vm1-20261101-122452`. Run from the packages, with `ported.lua`
+entries written from their manifests (`runs\vm2-20261101-124716`): all
+four spawn as 700 to 703, in the chase and cockpit views.
 
 **Open (phase 3):** shared assets (engine sound templates, the Forza emblem
 texture) stay with the manager, not in a package; a pack (several cars)
