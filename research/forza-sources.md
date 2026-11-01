@@ -16,17 +16,78 @@ disc 1" out of the build's images (`assets/*.iso` or `--iso`). A file that is
 no Forza disc is skipped with a note, and a game without its disc just has no
 cars (issue #113).
 
-Two more sources sit in `assets/` on this PC and aren't used yet (#162; its
-offline survey of 2026-10-28, not rechecked here):
+Two more sources sit in `assets/` on this PC (#162):
 
 - `Forza Horizon 2 (USA).iso`, the Xbox 360 version (title 4D530AA4, one
   disc). `forza_roster` doesn't know the title and skips it as another game.
-  Its 215 main and cockpit carbins parse with the FH1 parser.
+  Its 215 main and cockpit carbins parse with the FH1 parser (#162's survey
+  of 2026-10-28, not rechecked here).
 - `Forza Motorsport 4 Full DLC Collection/`: 16 LIVE packages, one folder
-  per pack, laid out like the disc 2 packs below; `stfs.py` and `ForzaZip`
-  read them. 176 cars, 148 of them not in the roster.
+  per pack. `forza_roster` reads them as a source when asked to (below,
+  "FM4 DLC packs"). 176 cars, 148 of them not in the roster.
 
 Together they add 177 cars the roster doesn't have (29 only on FH2).
+
+## FM4 DLC packs
+
+Surveyed 2026-11-01 on the user's 16 packages (`out/scratch` scripts of the
+#162 PR, not kept).
+
+**Identification (confirmed-static).** Every package is an STFS `LIVE` file:
+title ID 0x4D530910 at header 0x360, content type 0x00000002 (marketplace
+content) at 0x344, header size 0xAD0E, the read-only ("female") layout. The
+file names are hashes without an extension (`E3470A83...4D`) and the folders
+are the collection's own. So `forza_roster.identify_package` goes by the
+header only: magic, title and content type. `dlc_packages` finds them under
+`assets/` in any folder and under any name (disc images are left to
+`identify`). The display name in the header (0x411) names the pack: 15 car
+packs, plus the Limited Collector's Edition's second package, "Launch Track
+Pack" (tracks only, no `Data_Car`).
+
+**Layout.** It is the same as the disc 2 packs:
+
+- `Media/DLCZips/<N>_pri_65.zip` holds the cars as `media/cars/<NAME>/`
+  folders, `media/wheels/<NAME>/` and, new against disc 2:
+  - `media/db/patch/<N>_merge.slt`: SQLite, the pack's rows for gamedb.slt.
+    `Data_Car` holds one row per car of the pack (the Porsche pack: 30 rows
+    for 30 cars). Next to it are `Data_CarBody`, `Combo_Colors`, `Data_Engine`,
+    `CarPartPositions`, the upgrade tables and so on, and `List_CarMake` /
+    `List_FamilyModel` rows for the pack's makers (Porsche's row 39 is in
+    the Porsche pack).
+  - The Porsche pack also has a `100001_execute.sql` (UPDATEs to career
+    events only).
+  - `media/audio/cars/Engines/EngineTuning/<car>_ET.xml` and
+    `HarmonicTuning/*_HT.xml` as loose files.
+- The engine banks sit outside the zip, as loose files in the package:
+  `Media/DLCZips/<N>_pri_65/Media/audio/cars/Engines/Soundbanks/LOD1/*.fsb`.
+- `Media/DLCZips/StringTables_pri_<M>.zip` holds one folder per language
+  (`EN/`, `DE/`, ...), each with `Data_Car.str`, `List_CarMake.str` and
+  `List_FamilyModel.str`, among others. These are whole tables, not only the
+  pack's strings: the Porsche pack's EN `Data_Car.str` has 1275 strings and
+  its `List_CarMake.str` 173, against 159 in disc 1's.
+
+**What the cars carry (confirmed-static, all 176).** Every car has its main
+carbin, `<car>_lod0.carbin` and `<car>_cockpit.carbin`. Every car's `_ET.xml`
+is in its own pack and in none of disc 1's `enginetuning.zip`. 3 more
+folders are Autovista `_SLOD` models.
+
+**Names and years.** `forza_roster.pack_info` reads them from the pack:
+`Data_Car` of its merge database (Year, DisplayName, ModelShort, MakeID,
+FamilyModelID), and the text from its EN tables. A maker or family row the
+pack doesn't carry is taken from FM4's disc gamedb, and its text from the
+disc's tables (`forza_strings.names_from`, pack first).
+
+**Overlaps.** None of the 176 cars is on an FM4 disc. 28 are on the FH1 disc
+(Veyron SS, Agera, Huayra, Venom GT, ZL1, ...). See "Cars in several
+sources" below.
+
+**Not used yet.** The cars join the roster only when asked to
+(`forza_roster.roster(isos, packages)`, `dsff forza_roster --dlc`). The
+default roster, the car lists and the installer's build stay the discs'
+until the car manager can install cars beside the one vehicle archive
+(#170). The preflight lists the packs it finds. Building a DLC car also
+needs the pack's merge rows in the gamedb the converter reads, and the pack's
+ET, HT and banks in the engine-sound lookup (#457).
 
 ## Where the cars are
 
@@ -69,6 +130,47 @@ The Autovista pack holds `_SLOD` cars only. Each one has
 engine bay modelled), `<car>_cockpit_s.carbin`, `.gr2` skeleton and
 animation files, `camanim_*.xml` and the narration audio. None of them has
 an LOD1-4 main carbin.
+
+## Cars in several sources
+
+Since #162, a car in a DLC pack and on a disc is built from the version that holds
+more of the 10 files the conversion reads (`port_car.WANTED`: the main and
+cockpit carbins, `nodamage.xds` and `lights.xds` with their `_lod0`,
+`interior_lod0.xds`, MAXData.xml, CarAttribs.xml, ShaderSettings.xml). On a tie the game order decides
+(`GAME_PREFERENCE`, FH1 first), and a disc comes before a pack
+(`forza_roster.choose_source`, used by `port_car.pick_source`).
+
+**The 28 cars in FH1 and the FM4 DLC (confirmed-static, 2026-11-01).** For each
+car, both versions were opened and compared:
+
+- **Inputs.** Both versions hold all 10 files the conversion reads, on 28 of
+  28 cars, so the rule gives a tie and FH1 everywhere. The default roster
+  doesn't change.
+- **Same model.** The two versions are the same model, packed to each game's
+  convention:
+  - The main carbins have the same sections and LOD 1-5 index counts within
+    a few percent. Larger differences: Veyron SS LOD 1, 58,259 (FH1) against
+    45,985 (DLC); SVT Raptor 96,792 / 88,139; Camaro ZL1 53,080 / 57,479.
+  - FH1 keeps the `headlightL`/`headlightR` sections in the cockpit carbin and
+    FM4 in `<car>_lod0.carbin`. The section names were listed on 5 cars (M5 12,
+    Agera, FR-S, Veyron SS, 205 T16). FH1's cockpit carbin has more vertices on
+    28 of 28.
+- **Other files.**
+  - FH1 adds `interior_emissive_lod0.xds` on 27 cars, which the conversion
+    doesn't read.
+  - Engine sound: FH1's `_ET.xml` is in its disc's `EngineTuning.zip`.
+    The DLC's is only in the pack, which the engine-sound lookup doesn't read
+    yet.
+
+The data picks neither version on these cars, so they keep the version they
+are built from today.
+
+**Disc overlaps keep the game order.** The same rule over the 102 cars on
+both FH1 and the FM4 discs would move one built car: `NIS_Leaf_11`. Its FH1
+zip has no `physics/maxdata.xml` and its FM4 one does (car_dims falls back to
+the gamedb for it). On 11 others the FM4 version lacks `ShaderSettings.xml`,
+and the rule keeps them on FH1. So `pick_source` uses the rule only where a
+DLC version is one of the candidates, and disc cars keep FH1-first as before.
 
 ## Roster
 
@@ -210,6 +312,7 @@ uv run dsff stfs list    <package> [pattern]
 uv run dsff stfs extract <package> out/dir [pattern] [--verify]
 uv run dsff stfs verify  <package> [--data]
 uv run dsff forza_roster [--tsv research/forza-roster.tsv] [--all]
+uv run dsff forza_roster --dlc [DIR]   # also the FM4 DLC packages under DIR (default assets/)
 uv run dsff carbin out/fm4/NIS_370Z_10/nis_370z_10.carbin --lod 1 --obj out/370z.obj
 ```
 

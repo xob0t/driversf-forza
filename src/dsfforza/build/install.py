@@ -317,6 +317,21 @@ def default_jobs(cpus: int | None, gentle_on: bool, ram: int | None = None) -> i
     return min(jobs, gentle.CORES) if gentle_on else jobs
 
 
+def dlc_preflight(packages: list) -> list[str]:
+    """Preflight lines for the FM4 DLC packages found under assets/ (forza_roster.dlc_packages,
+    identified by their STFS headers). They are listed only: their cars aren't built until the
+    car manager can install them beside the vehicle archive (#170)."""
+    from dsfforza.build import forza_roster
+
+    found, notes = forza_roster.package_summary(packages)
+    if not found:
+        return notes
+    return [
+        f"FM4 DLC packs: {len(found)} ({', '.join(found)}); not built yet (they wait for the car manager, #170)",
+        *notes,
+    ]
+
+
 def count_cars(lists: list[Path], cars: list[str]) -> int:
     """Cars a --list/--car selection names (port_batch.read_list's format)."""
     from dsfforza.build.port_batch import read_list
@@ -1241,6 +1256,7 @@ class Run:
                 else:
                     info.append("discs " + " + ".join(found))
                     info += notes
+            info += dlc_preflight(forza_roster.dlc_packages())
             lists = self.lists()
             gone = [p for p in lists if not Path(p).is_file()]
             if gone:

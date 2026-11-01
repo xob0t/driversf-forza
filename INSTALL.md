@@ -32,6 +32,19 @@ built. Everything the tools print goes to `out\logs\install-<date-time>.log`.
 | `--report` | a zip for a bug report ([below](#reporting-a-bug)) |
 | `--force` | replace files another mod changed (they are backed up and put back on uninstall) |
 
+### Forza Motorsport 4 DLC packages (not built yet)
+
+The installer also looks for your downloaded FM4 car packs: Xbox 360 LIVE packages
+(the hash-named files without an extension, such as
+`E3470A83732B9093D220BF7D6506FB30517900064D`). Put them anywhere under `assets`, in any
+folders and under any names. A package is recognised by its header (Forza Motorsport 4,
+title ID 4D530910, marketplace content), not by its name. The check in step 1 lists the
+packs it found and skips other games' packages, saves and second copies of a pack.
+
+Their cars aren't built or installed yet. They will be once the car manager can add cars
+beside the game's vehicle archive ([#170](https://github.com/xob0t/driversf-forza/issues/170)).
+Until then the installer builds the cars from your discs only, with or without the packs.
+
 ### Downloads
 
 The installer downloads these on first use, each pinned to one version and
