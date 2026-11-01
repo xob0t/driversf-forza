@@ -179,6 +179,18 @@ do
 	if found and type(hud) == "table" then
 		HUD = hud
 	end
+	-- Car packages' entries (dsff car_manager, src/dsfforza/build/car_gui.py): the same
+	-- fields, for the IDs hud.lua doesn't have. Their pictures, glyphs and strings are in
+	-- dsfforza\generated\, which dsfforza.asi opens in place of the game's files.
+	local foundPackages, packages = user_open("dsfforza\\packages_hud.lua")
+	if foundPackages and type(packages) == "table" then
+		HUD = HUD or {}
+		for id, entry in pairs(packages) do
+			if HUD[id] == nil then
+				HUD[id] = entry
+			end
+		end
+	end
 end
 
 local PORTED

@@ -112,10 +112,11 @@ def _lua_string(text) -> str:
 class Manager:
     """The state of one game folder; every change writes the state and the outputs again."""
 
-    def __init__(self, game: Path, archive: Path | None = None, log=print):
+    def __init__(self, game: Path, archive: Path | None = None, log=print, gui_base: Path | None = None):
         self.game = Path(game)
         self.cars_dir = self.game / CARS_DIR
         self.archive = archive or self.game / ARCHIVE
+        self.gui_base = Path(gui_base) if gui_base else self.game  # the game files car_gui starts from
         self.log = log
         path = self.cars_dir / STATE
         if path.exists():
@@ -186,6 +187,21 @@ class Manager:
         _write_text(self.cars_dir / LIST, "\n".join(lines) + "\n")
         by_id = {c["id"]: k for k, c in self.state["cars"].items()}
         _write_text(self.game / LUA, self.lua([(i, by_id[i]) for i in sorted(listed)]))
+        self.generate_gui([(i, by_id[i]) for i in sorted(listed)])
+
+    def generate_gui(self, enabled: list[tuple[int, str]]) -> None:
+        """The enabled cars' pictures, badges, plates and names (car_gui), when the game's GUI
+        files are there to start from."""
+        from dsfforza.build import car_gui
+
+        if not ((self.gui_base / car_gui.GUI).exists() and (self.gui_base / car_gui.FONTS).exists()):
+            self.log(f"no {car_gui.GUI} and {car_gui.FONTS} in {self.gui_base}: no garage pictures, badges or plates")
+            return
+        cars = [
+            {"id": i, "key": k, "manifest": self.state["cars"][k]["manifest"], "folder": self.cars_dir / k}
+            for i, k in enabled
+        ]
+        car_gui.generate(self.game, cars, base=self.gui_base, log=self.log)
 
     def lua(self, enabled: list[tuple[int, str]]) -> str:
         """packages.lua: what ported.lua gives register.lua per car, for the enabled packages."""
@@ -373,9 +389,11 @@ def main(argv: list[str] | None = None) -> None:
     common.add_argument(
         "--archive", type=Path, default=argparse.SUPPRESS, help="the vehicle archive to keep IDs apart from"
     )
+    common.add_argument("--gui-base", type=Path, default=argparse.SUPPRESS, help="the GUI files' source folder")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--game", type=Path, help="the game folder (default $DSF_GAME_DIR)")
     parser.add_argument("--archive", type=Path, help="the vehicle archive to keep IDs apart from (default the game's)")
+    parser.add_argument("--gui-base", type=Path, help="the folder whose GUI files the generated ones start from")
     sub = parser.add_subparsers(dest="cmd", required=True)
     i = sub.add_parser("install", parents=[common], help="install or upgrade .dsfcar packages")
     i.add_argument("packages", type=Path, nargs="+")
@@ -394,7 +412,7 @@ def main(argv: list[str] | None = None) -> None:
 
         if game_running(args.game):
             raise SystemExit("Driver.exe is running from this folder; close the game first")
-    m = Manager(args.game, args.archive)
+    m = Manager(args.game, args.archive, gui_base=args.gui_base)
     if args.cmd == "install":
         for path in args.packages:
             m.install(path, force=args.force)

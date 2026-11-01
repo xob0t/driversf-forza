@@ -180,6 +180,55 @@ def write_png(path: Path, width: int, height: int, rgba: bytearray) -> None:
     path.write_bytes(png_bytes(width, height, rgba))
 
 
+def png_rgba(data: bytes) -> tuple[int, int, bytearray]:
+    """(width, height, RGBA pixels) of an 8-bit RGBA, non-interlaced PNG (png_bytes' kind;
+    every row filter, as other writers use them)."""
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("not a PNG")
+    pos, idat, width, height = 8, b"", 0, 0
+    while pos + 8 <= len(data):
+        length, kind = struct.unpack_from(">I4s", data, pos)
+        body = data[pos + 8 : pos + 8 + length]
+        if kind == b"IHDR":
+            width, height, depth, colour, _, _, interlace = struct.unpack(">IIBBBBB", body)
+            if depth != 8 or colour != 6 or interlace:
+                raise ValueError(f"unsupported PNG (depth {depth}, colour type {colour}, interlace {interlace})")
+        elif kind == b"IDAT":
+            idat += body
+        elif kind == b"IEND":
+            break
+        pos += 12 + length
+    raw = zlib.decompress(idat)
+    stride = width * 4
+    if len(raw) < height * (stride + 1):
+        raise ValueError("PNG data cut short")
+    rows = np.frombuffer(raw, np.uint8)[: height * (stride + 1)].reshape(height, stride + 1)
+    out = np.zeros((height, stride), np.int32)
+    prev = np.zeros(stride, np.int32)
+    for y in range(height):
+        f, line = rows[y, 0], rows[y, 1:].astype(np.int32)
+        if f == 0:
+            cur = line
+        elif f == 2:
+            cur = (line + prev) & 255
+        else:  # Sub, Average, Paeth: each byte depends on the one 4 to its left
+            cur = np.zeros(stride, np.int32)
+            for i in range(stride):
+                a = cur[i - 4] if i >= 4 else 0
+                b = prev[i]
+                if f == 1:
+                    cur[i] = (line[i] + a) & 255
+                elif f == 3:
+                    cur[i] = (line[i] + (a + b) // 2) & 255
+                else:
+                    c = prev[i - 4] if i >= 4 else 0
+                    p = a + b - c
+                    pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                    cur[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+        out[y], prev = cur, cur
+    return width, height, bytearray(out.astype(np.uint8).tobytes())
+
+
 def png_bytes(width: int, height: int, rgba: bytearray) -> bytes:
     """An 8-bit RGBA PNG of the pixels (row-major)."""
     rows = b"".join(b"\0" + bytes(rgba[y * width * 4 : (y + 1) * width * 4]) for y in range(height))
