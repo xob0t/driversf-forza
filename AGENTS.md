@@ -190,8 +190,10 @@ For the session that hands tasks to worker agents (`.claude/agents/dsff-worker.m
 - Before merging, check each rule against "Rules come from data, never from
   fitting". A fitted rule goes back, or waits on an RE round; a PR can ship
   its derived part alone.
-- Merge with `.\tools\merge-pr.ps1 <number>` (unlinks the worktree, squash-
-  merges, cleans up, and pulls master unless a build runs from the main
-  checkout). After a merge, tell the workers whose areas it touched to rebase.
+- Merge with `.\tools\merge-pr.ps1 <number>` (squash-merges, cleans up, and
+  pulls master unless a build runs from the main checkout). It leaves the PR's
+  worktree alone, because its worker may still be using it: the worker removes
+  it when done (`-RemoveWorktree` removes a clean one of your own). After a
+  merge, tell the workers whose areas it touched to rebase.
 - Releases: freeze on a release branch first (`docs/DEVELOPMENT.md`,
   "Releases"); master keeps taking PRs while the release is verified.
