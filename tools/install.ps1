@@ -582,7 +582,11 @@ function Show-Status {
     }
     $state = Get-Field $manifest 'state'
     if (-not $state) { $state = 'installed' }
-    Say "dsfforza:  $state $($manifest.installed) ($(@($manifest.cars).Count) cars, IDs $($manifest.ids))"
+    if ($manifest.packages) {
+        Say "dsfforza:  $state $($manifest.installed) ($(@($manifest.cars).Count) car packages; IDs: uv run dsff car_manager --game '$Game' status)"
+    } else {
+        Say "dsfforza:  $state $($manifest.installed) ($(@($manifest.cars).Count) cars, IDs $($manifest.ids))"
+    }
     foreach ($e in @($manifest.entries)) {
         $target = Join-Path $Game $e.path
         $now = 'missing'
@@ -844,7 +848,8 @@ function Invoke-Install {
     }
     $manifest = [ordered]@{
         state = 'installing'; installed = (Get-Date -Format 's'); build = $buildFolder; ids = ($ids -join ',')
-        cars = @($buildManifest['cars'] | ForEach-Object { $_['media'] })
+        cars = $(if ($Packages) { @($packageFiles | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_) }) }
+                 else { @($buildManifest['cars'] | ForEach-Object { $_['media'] }) })
         entries = $script:Entries; created_dirs = $createdDirs; runtime_files = @()
         packages = [bool]$Packages
     }
