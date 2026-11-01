@@ -491,6 +491,58 @@ Forza emblem: the vanilla Fonts.fchunk has no emblem texture (see above).
   reinstalls keep every car's ID; `-Uninstall` restores the game and
   leaves `dsfforza\cars`, `dsfforza\generated` and the two Lua files.
 
+## Uninstall, migration and save safety (phase 5, #455)
+
+**Uninstall.** `car_manager uninstall` removes every file the manager
+wrote: the cars' `.sp` files and folders, `cars.txt`,
+`dsfforza\generated\`, `packages.lua` and `packages_hud.lua`. It keeps
+`dsfforza\cars\manager.json` with the key → ID map (no cars in it), because
+the save keeps its flags per model ID (`autosave.dat` below 304,
+`dsfforza-garage.dat` above): a later install gives every car the ID its
+flags are for. `--forget-ids` removes the map too. `install.ps1
+-Uninstall` of a `-Packages` install runs it first (without uv it removes
+the same files itself and leaves the map), then removes what install.ps1
+installed. A merged install over a package install (`-Force`) does the
+same, so no `packages.lua` is left to give vehicleStats entries to cars
+the merged archive doesn't have.
+
+**Migration from a merged install.** `install.ps1 -Packages -Force` over
+a merged install runs `car_manager seed` first: the merged install's
+`ported.lua` IDs go into the map. Then the merged install is removed as
+usual (every replaced file restored from its backup; none kept, as
+`-Packages` installs none of them), and the packages take the IDs the map
+has. Checked on a fake game with a three-car merged build (BMW 1, Toyota 2,
+Mazda 3): after the migration the packages are BMW 1, Toyota 2, Mazda 3,
+where a fresh package install gives Mazda 2 and Toyota 3 (key order); the
+archive is vanilla again and `ported.lua` is gone. `-Uninstall` then
+leaves only `manager.json`, and a reinstall gets the same IDs again.
+
+**Another archive takes an ID.** `verify` reports a car whose ID the
+installed archive now has (another mod's: the plugin leaves the package
+out); `car_manager reassign KEY` gives it a new free ID (its old flags
+stay with the old ID, which isn't ours any more).
+
+**A save that names cars that aren't there** (confirmed-runtime). Every
+package run used the VM's save, which carries flags for the 573-car
+roster: `garage: loaded 420 added-car entries` from `dsfforza-garage.dat`,
+and IDs below 304 owned in `autosave.dat`, with only 3 or 4 cars
+installed. `runs\vm1-20261101-151827`: four packages installed and one
+removed with the manager (the RX-7, ID 3; its ID reserved, its flags in
+the save). The probe asks for ID 3: no SSLP record, the player stays in
+Tanner's car (62), as for any unknown ID. The garage opens, the whole
+maker list scrolls to its end (VOLKSWAGEN, Y.A.R.E, BMW, HONDA, TOYOTA:
+no MAZDA group, so no card for the removed car), a group's cards open
+(the Supra RZ, OWNED, its picture). No fault and no crash. Earlier runs
+(`vm1-20261101-142300`, `-144831`, `-150003`) did the same with hundreds
+of flagged IDs that have no car. A car that is disabled, removed or
+uninstalled is simply absent: the garage lists only what vehicleStats has
+(`register.lua` adds entries only for the packages it is given), and the
+request path refuses an ID without an SSLP record.
+
+**The garage header** ("x/y OWNED") is 140 + the added cars in every run
+(713 with the merged roster, 144 with four packages, 143 with three):
+package cars are counted like merged ones (#478, closed).
+
 ## Phased plan (PRs)
 
 1. **Plugin loader** (the spike's code, proven for one car): build and offline test
@@ -521,4 +573,3 @@ Forza emblem: the vanilla Fonts.fchunk has no emblem texture (see above).
   through FUN_008FB2D0 if it shows.
 - A runtime string source for `"ID:n"` (FUN_00835250/FUN_008352B0) and
   runtime glyph pages, which would remove the generated GUI files.
-- The garage and the owned list with an ID that has no car (after a remove).

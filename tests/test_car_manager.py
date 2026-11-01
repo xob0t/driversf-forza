@@ -255,6 +255,57 @@ class ManagerTest(unittest.TestCase):
                 car_manager.main(["--game", str(self.game), "install", pkgs[0], str(bad)])
             self.assertEqual(gen.call_count, 3)  # still made once, for what was saved
 
+    def test_uninstall_keeps_the_ids(self):
+        m = self.manager()
+        a = m.install(self.package("CAR_A_10"))
+        b = m.install(self.package("CAR_B_10"))
+        (self.game / "dsfforza" / "generated").mkdir(parents=True)
+        (self.game / "dsfforza" / "generated" / "gui.sp").write_bytes(b"x")
+        car_manager.main(["--game", str(self.game), "uninstall"])
+        cars = self.game / car_manager.CARS_DIR
+        self.assertEqual(sorted(p.name for p in cars.iterdir()), [car_manager.STATE])
+        self.assertFalse((self.game / "dsfforza" / "generated").exists())
+        self.assertFalse((self.game / car_manager.LUA).exists())
+        # A later install: the same IDs, so the save's flags are still each car's.
+        m = self.manager()
+        self.assertEqual(m.state["cars"], {})
+        m.install(self.package("CAR_B_10"))
+        m.install(self.package("CAR_A_10"))
+        self.assertEqual((m.state["cars"][a]["id"], m.state["cars"][b]["id"]), (3, 5))
+        car_manager.main(["--game", str(self.game), "uninstall", "--forget-ids"])
+        self.assertFalse((self.game / "dsfforza").exists())  # nothing of ours left
+
+    def test_seed_carries_a_merged_install_over(self):
+        ported = self.game / car_manager.PORTED
+        ported.parent.mkdir(parents=True)
+        row = '\t\t[{i}] = {{ host = 205, media = "{m}", name = "A", make = "A", model = "A", year = "", game = "FH1" }},\n'
+        ported.write_text("local ported = {\n\tcars = {\n" + row.format(i=40, m="CAR_A_10") + "\t},\n}\n")
+        car_manager.main(["--game", str(self.game), "seed"])
+        ported.unlink()  # the merged install is uninstalled
+        m = self.manager()
+        self.assertEqual(m.state["merged"], {})
+        a = m.install(self.package("CAR_A_10"))
+        self.assertEqual(m.state["cars"][a]["id"], 40)  # the merged car's ID, so its save flags
+        b = m.install(self.package("CAR_B_10"))
+        self.assertEqual(m.state["cars"][b]["id"], 3)
+
+    def test_reassign_after_another_archive_takes_an_id(self):
+        m = self.manager()
+        a = m.install(self.package("CAR_A_10"))
+        with self.assertRaises(SystemExit):  # no clash: nothing to do
+            m.reassign(a)
+        archive(self.game / "Install" / "dngvehicles.sp", [1, 2, 3, 4, 62])  # another mod's archive has 3
+        m = self.manager()
+        self.assertTrue(m.verify())
+        car_manager.main(["--game", str(self.game), "reassign", a])
+        m = self.manager()
+        self.assertEqual(m.state["cars"][a]["id"], 5)
+        self.assertEqual(m.verify(), [])
+        with (self.game / car_manager.CARS_DIR / f"{a}.sp").open("rb") as f:
+            from dsfforza.formats.chnk import read_chunk
+
+            self.assertEqual(car_package.car_id(f, read_chunk(f, 0).entries[0]), 5)
+
 
 if __name__ == "__main__":
     unittest.main()
