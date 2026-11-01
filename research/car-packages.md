@@ -458,9 +458,15 @@ Forza emblem: the vanilla Fonts.fchunk has no emblem texture (see above).
 - `port_batch build --packages` writes `<build>\packages\<key>.dsfcar`
   for every car of the build (`dsfcar.pack`), after the pack step has
   saved its pictures and images and before `--clean-work` drops the work
-  chunks. Packages of cars no longer in the build are deleted. A failure
-  is reported (`packages_failed`) and the build stands, as for the GUI
-  step.
+  chunks. They are written to `packages.new` and swapped in whole, so
+  `packages\` is always one build's complete set. A failure is reported
+  (`packages_failed`, `packages_error` in the report) and the build
+  stands, as for the GUI step, but no packages are left (the earlier
+  ones don't match the new build). `install.ps1 -Packages` and
+  `dsff install --packages` (`package_problem`) refuse a build whose
+  packaging failed or whose packages aren't exactly one per car of its
+  manifest, and with `-Build` they check before an earlier install is
+  removed.
 - `install.ps1 -Packages` (needs `-Asi`) installs DriverNGHook, the
   plugin with `[archive] packages=1`, `bootstrap.lua` and `register.lua`,
   and hands `<build>\packages` to the car manager. It doesn't install the

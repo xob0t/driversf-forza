@@ -1937,25 +1937,40 @@ PACKAGES = "packages"  # <build>/packages/<key>.dsfcar (--packages)
 def write_packages(args, out_dir: Path, cars: list[dict], timings: dict, progress) -> None:
     """--packages: one .dsfcar per car (src/dsfforza/build/dsfcar.py) in <build>/packages, from
     work/<media>.chnk, the manifest, and the pack step's pictures and images (so after
-    pack.save and before --clean-work). Old packages of cars no longer in the build go.
-    A failure is reported; the build itself stands (as for the GUI step)."""
-    from dsfforza.build import dsfcar
+    pack.save and before --clean-work). They are written to packages.new and swapped in
+    whole, so <build>/packages is always one build's complete set. On a failure the build
+    stands (as for the GUI step), but the packages go, the earlier ones included (they don't
+    match this build), and the report says why (timings packages_error): install.ps1 -Packages
+    and dsff install --packages refuse such a build."""
+    import shutil
 
     t = time.time()
     folder = out_dir / PACKAGES
+    staged = out_dir / (PACKAGES + ".new")
+    shutil.rmtree(staged, ignore_errors=True)
     emit(progress, "packages", cars=len(cars))
     try:
-        written = dsfcar.pack(out_dir, [c["media"] for c in cars], folder, isos=gui_isos(args))
-        keep = {p.name for p in written}
-        for old in folder.glob(f"*{dsfcar.SUFFIX}"):
-            if old.name not in keep:
-                old.unlink()
+        written = pack_all(out_dir, [c["media"] for c in cars], staged, gui_isos(args))
+        shutil.rmtree(folder, ignore_errors=True)
+        staged.replace(folder)
         timings["packages"] = len(written)
     except Exception as error:  # noqa: BLE001 - reported; the archive and gui/ are still usable
-        print(f"packages failed: {type(error).__name__}: {error}")
+        shutil.rmtree(staged, ignore_errors=True)
+        shutil.rmtree(folder, ignore_errors=True)
+        print(f"packages failed: {type(error).__name__}: {error} (no packages for this build)")
         timings["packages_error"] = f"{type(error).__name__}: {error}"
         emit(progress, "packages_failed", error=timings["packages_error"])
     timings["packages_s"] = round(time.time() - t, 1)
+
+
+def pack_all(out_dir: Path, media: list[str], folder: Path, isos: list[Path]) -> list[Path]:
+    """dsfcar.pack for every car, or ValueError when a car got no package."""
+    from dsfforza.build import dsfcar
+
+    written = dsfcar.pack(out_dir, media, folder, isos=isos)
+    if len(written) != len(media):
+        raise ValueError(f"{len(written)} packages for {len(media)} cars")
+    return written
 
 
 def gui_isos(args) -> list[Path]:

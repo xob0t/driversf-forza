@@ -582,7 +582,7 @@ function Show-Status {
     }
     $state = Get-Field $manifest 'state'
     if (-not $state) { $state = 'installed' }
-    if ($manifest.packages) {
+    if (Get-Field $manifest 'packages') {   # (installs before -Packages have no such field)
         Say "dsfforza:  $state $($manifest.installed) ($(@($manifest.cars).Count) car packages; IDs: uv run dsff car_manager --game '$Game' status)"
     } else {
         Say "dsfforza:  $state $($manifest.installed) ($(@($manifest.cars).Count) cars, IDs $($manifest.ids))"
@@ -735,15 +735,51 @@ function Install-CarPackages([string[]]$Files) {
     if ($LASTEXITCODE -ne 0) { Fail "the car manager failed (exit code $LASTEXITCODE); see the output above" }
 }
 
+# -Packages: a build's car packages, checked: only one build's complete set (port_batch writes a
+# packaging error to its report and removes the packages), one package per car of its manifest
+# and no more (install.py package_problem checks the same). Called before an earlier install is
+# removed when -Build is given, so a bad build leaves the game as it was.
+function Get-BuildPackages([string]$Folder) {
+    $packageFiles = @(Get-ChildItem -LiteralPath (Join-Path $Folder 'packages') -Filter '*.dsfcar' -File -ErrorAction SilentlyContinue |
+                      ForEach-Object { $_.FullName })
+    if (-not $packageFiles) { Fail "no car packages in $Folder\packages: build with port_batch --packages (or uv run dsff install --packages)." }
+    if (-not (Test-Path -LiteralPath (Join-Path $Folder 'dngvehicles.json'))) { Fail "build folder incomplete: $Folder\dngvehicles.json missing" }
+    $buildManifest = Read-BuildManifest (Join-Path $Folder 'dngvehicles.json')
+    # Only one build's complete set: its packaging must have worked (port_batch writes the
+    # error to its report and removes the packages), and there must be one package per car
+    # of its manifest, no more (install.py package_problem checks the same).
+    $reportPath = Join-Path $Folder 'batch-report.json'
+    if (Test-Path -LiteralPath $reportPath) {
+        $timings = Get-Field (Read-BuildManifest $reportPath) 'timings_s'   # (no ConvertFrom-Json size limit)
+        $packError = if ($timings) { Get-Field $timings 'packages_error' } else { $null }
+        if ($packError) { Fail "the build's car packages failed ($packError): build again with --packages." }
+    }
+    $want = @($buildManifest['cars'] | ForEach-Object { 'forza.{0}.{1}' -f ([string]$_['game']).ToLower(), $_['media'] }) | Sort-Object
+    $have = @($packageFiles | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_) }) | Sort-Object
+    $diff = @(Compare-Object -ReferenceObject $want -DifferenceObject $have)
+    if ($diff.Count) {
+        $missing = @($diff | Where-Object { $_.SideIndicator -eq '<=' } | ForEach-Object { $_.InputObject })
+        $extra = @($diff | Where-Object { $_.SideIndicator -eq '=>' } | ForEach-Object { $_.InputObject })
+        Fail ("$Folder\packages doesn't match the build: $($missing.Count) cars without a package " +
+              "($(($missing | Select-Object -First 3) -join ', ')), $($extra.Count) packages of other cars " +
+              "($(($extra | Select-Object -First 3) -join ', ')). Build again with --packages.")
+    }
+    return ,$packageFiles
+}
+
 function Invoke-Install {
     $existing = Read-Manifest
     $kept = @{}
+    if ($Packages -and $Build) { [void](Get-BuildPackages (Resolve-Path -LiteralPath $Build).Path) }   # before anything is removed
     if (Test-Installed $existing) {
         if (-not $Force) { Fail "dsfforza is already installed ($ManifestPath). Run -Uninstall first, or add -Force to reinstall." }
         $earlier = @($existing.cars | Where-Object { $_ })
         Say "Removing the earlier install first (-Force): its $($earlier.Count) cars ($((@($earlier | Select-Object -First 6) -join ', '))$(if ($earlier.Count -gt 6) { ', ...' })) are replaced by this build's, not added to."
         Say '  To have several cars, install them in one build: -Car A,B,... (or uv run dsff install --car A --car B).'
-        if ($Build) {   # (a build made here reads the vanilla archive: then everything comes out first)
+        # (a build made here reads the vanilla archive: then everything comes out first; -Packages
+        # installs none of these files, so an earlier install's all come out too, restored from
+        # their backups, and the package install's install.json doesn't have to carry them)
+        if ($Build -and -not $Packages) {
             $folder = (Resolve-Path -LiteralPath $Build).Path
             $kept = Get-UnchangedEntries $existing @{
                 'Install\dngvehicles.sp' = (Join-Path $folder 'dngvehicles.sp')
@@ -813,10 +849,7 @@ function Invoke-Install {
     if ($Packages) {
         # The car packages (port_batch --packages) go through the car manager: no archive, GUI files
         # or ported.lua/hud.lua of the build are installed (research/car-packages.md).
-        $packageFiles = @(Get-ChildItem -LiteralPath (Join-Path $buildFolder 'packages') -Filter '*.dsfcar' -File -ErrorAction SilentlyContinue |
-                          ForEach-Object { $_.FullName })
-        if (-not $packageFiles) { Fail "no car packages in $buildFolder\packages: build with port_batch --packages (or uv run dsff install --packages)." }
-        if (-not (Test-Path -LiteralPath $buildManifestPath)) { Fail "build folder incomplete: $buildManifestPath missing" }
+        $packageFiles = Get-BuildPackages $buildFolder
         $buildManifest = Read-BuildManifest $buildManifestPath
     } else {
         foreach ($f in @($archive, $buildManifestPath, $portedLua)) { if (-not (Test-Path -LiteralPath $f)) { Fail "build folder incomplete: $f missing" } }

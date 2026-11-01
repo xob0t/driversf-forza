@@ -1,6 +1,7 @@
 """port_batch --packages (write_packages) and install.py --packages, without a real build."""
 
 import argparse
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,37 +15,76 @@ class WritePackagesTest(unittest.TestCase):
         self.out = Path(tempfile.mkdtemp())
         (self.out / port_batch.PACKAGES).mkdir()
         self.args = argparse.Namespace(iso=None, packages=True)
+        self.cars = [{"media": "CAR_A_10"}, {"media": "CAR_B_10"}]
         self.events = []
 
     def progress(self, event, **data):
         self.events.append((event, data))
 
-    def test_writes_and_drops_old_packages(self):
-        folder = self.out / port_batch.PACKAGES
-        stale = folder / "forza.fh1.GONE_10.dsfcar"
-        stale.write_bytes(b"old")
-        keep = folder / "forza.fh1.CAR_A_10.dsfcar"
-
-        def fake_pack(build, media, out_dir, isos=None):
-            self.assertEqual((build, media, out_dir), (self.out, ["CAR_A_10"], folder))
+    def fake_pack(self, written: list[str]):
+        def pack(build, media, out_dir, isos=None):
+            self.assertEqual((build, media), (self.out, ["CAR_A_10", "CAR_B_10"]))
+            self.assertEqual(out_dir, self.out / (port_batch.PACKAGES + ".new"))  # staged, swapped in whole
             self.assertIsInstance(isos, list)  # the build's disc images (gui_isos): names and logos
-            keep.write_bytes(b"new")
-            return [keep]
+            out_dir.mkdir(parents=True, exist_ok=True)
+            paths = []
+            for name in written:
+                (out_dir / name).write_bytes(b"new")
+                paths.append(out_dir / name)
+            return paths
 
-        timings = {}
-        with mock.patch.object(dsfcar, "pack", side_effect=fake_pack):
-            port_batch.write_packages(self.args, self.out, [{"media": "CAR_A_10"}], timings, self.progress)
-        self.assertFalse(stale.exists())
-        self.assertTrue(keep.exists())
-        self.assertEqual(timings["packages"], 1)
-        self.assertEqual(self.events[0], ("packages", {"cars": 1}))
+        return pack
 
-    def test_a_failure_is_reported_not_raised(self):
+    def test_writes_a_whole_new_set(self):
+        folder = self.out / port_batch.PACKAGES
+        (folder / "forza.fh1.GONE_10.dsfcar").write_bytes(b"old")
+        names = ["forza.fh1.CAR_A_10.dsfcar", "forza.fh1.CAR_B_10.dsfcar"]
         timings = {}
-        with mock.patch.object(dsfcar, "pack", side_effect=ValueError("no VO3D")):
-            port_batch.write_packages(self.args, self.out, [{"media": "CAR_A_10"}], timings, self.progress)
-        self.assertIn("no VO3D", timings["packages_error"])
-        self.assertEqual(self.events[-1][0], "packages_failed")
+        with mock.patch.object(dsfcar, "pack", side_effect=self.fake_pack(names)):
+            port_batch.write_packages(self.args, self.out, self.cars, timings, self.progress)
+        self.assertEqual(sorted(p.name for p in folder.iterdir()), names)
+        self.assertFalse((self.out / (port_batch.PACKAGES + ".new")).exists())
+        self.assertEqual(timings["packages"], 2)
+        self.assertEqual(self.events[0], ("packages", {"cars": 2}))
+
+    def test_a_failure_leaves_no_packages(self):
+        """Reported, not raised (the build stands); no package of this or an earlier build is
+        left for an install to take, and the report says why."""
+        folder = self.out / port_batch.PACKAGES
+        (folder / "forza.fh1.CAR_A_10.dsfcar").write_bytes(b"old")
+        for side_effect in (ValueError("no VO3D"), self.fake_pack(["forza.fh1.CAR_A_10.dsfcar"])):
+            timings = {}
+            with mock.patch.object(dsfcar, "pack", side_effect=side_effect):
+                port_batch.write_packages(self.args, self.out, self.cars, timings, self.progress)
+            self.assertIn("packages_error", timings)
+            self.assertFalse(folder.exists())
+            self.assertFalse((self.out / (port_batch.PACKAGES + ".new")).exists())
+            self.assertEqual(self.events[-1][0], "packages_failed")
+        self.assertIn("1 packages for 2 cars", timings["packages_error"])
+
+
+class PackageProblemTest(unittest.TestCase):
+    def setUp(self):
+        self.build = Path(tempfile.mkdtemp())
+        cars = [{"media": "CAR_A_10", "game": "FH1"}, {"media": "CAR_B_10", "game": "FM4"}]
+        (self.build / "dngvehicles.json").write_text(json.dumps({"cars": cars}))
+        (self.build / "batch-report.json").write_text(json.dumps({"timings_s": {"packages": 2}}))
+        (self.build / "packages").mkdir()
+
+    def add(self, key: str) -> None:
+        (self.build / "packages" / f"{key}.dsfcar").write_bytes(b"x")
+
+    def test_problems(self):
+        self.assertIn("no car packages", install.package_problem(self.build))
+        self.add("forza.fh1.CAR_A_10")
+        self.assertIn("1 cars without a package", install.package_problem(self.build))
+        self.add("forza.fm4.CAR_B_10")
+        self.assertIsNone(install.package_problem(self.build))
+        self.add("forza.fh1.OTHER_10")
+        self.assertIn("1 packages of other cars", install.package_problem(self.build))
+        (self.build / "packages" / "forza.fh1.OTHER_10.dsfcar").unlink()
+        (self.build / "batch-report.json").write_text(json.dumps({"timings_s": {"packages_error": "ValueError: x"}}))
+        self.assertIn("failed (ValueError: x)", install.package_problem(self.build))
 
 
 class InstallFlagsTest(unittest.TestCase):
