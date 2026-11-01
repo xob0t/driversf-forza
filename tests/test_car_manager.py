@@ -147,6 +147,94 @@ class ManagerTest(unittest.TestCase):
         car_manager.main(["--game", str(self.game), "disable", "forza.fh1.CAR_A_10"])
         state = json.loads((self.game / car_manager.CARS_DIR / car_manager.STATE).read_text())
         self.assertFalse(state["cars"]["forza.fh1.CAR_A_10"]["enabled"])
+        # --game after the command, as the usage lines write it
+        car_manager.main(["enable", "forza.fh1.CAR_A_10", "--game", str(self.game)])
+        state = json.loads((self.game / car_manager.CARS_DIR / car_manager.STATE).read_text())
+        self.assertTrue(state["cars"]["forza.fh1.CAR_A_10"]["enabled"])
+
+    def test_lua_strings(self):
+        self.assertEqual(car_manager._lua_string('a"b\\c'), '"a\\"b\\\\c"')
+        self.assertEqual(car_manager._lua_string("x\r\ny\t1"), '"x\\013\\010y\\0091"')
+        m = self.manager()
+        pkg = self.package("CAR_A_10")
+        m.install(pkg)
+        lua = (self.game / car_manager.LUA).read_text()
+        self.assertNotIn("\r", lua)
+
+    def test_merged_install_changes(self):
+        ported = self.game / car_manager.PORTED
+        ported.parent.mkdir(parents=True)
+        row = '\t\t[{i}] = {{ host = 205, media = "{m}", name = "A", make = "A", model = "A", year = "", game = "FH1" }},\n'
+        ported.write_text("local ported = {\n\tcars = {\n" + row.format(i=7, m="CAR_A_10") + "\t},\n}\n")
+        self.manager().save()
+        ported.unlink()  # the merged install is gone
+        m = self.manager()
+        self.assertEqual(m.state["merged"], {})
+        a = m.install(self.package("CAR_A_10"))  # no longer refused, and on the ID it had
+        self.assertEqual(m.state["cars"][a]["id"], 7)
+        # A merged install that now has an installed package's car (at another ID): the
+        # archive's copy wins, the package is left out of the outputs and verify says so.
+        b = m.install(self.package("CAR_B_10"))
+        ported.write_text("local ported = {\n\tcars = {\n" + row.format(i=40, m="CAR_B_10") + "\t},\n}\n")
+        m = self.manager()
+        m.save()
+        self.assertNotIn(m.state["cars"][b]["id"], self.listed())
+        self.assertIn(7, self.listed())
+        self.assertTrue(any("left out" in p for p in m.verify()))
+
+    def test_case_folded_keys(self):
+        m = self.manager()
+        m.install(self.package("CAR_A_10"))
+        with self.assertRaises(SystemExit):
+            m.install(self.package("car_a_10"))
+        self.assertEqual(len(m.state["cars"]), 1)
+
+    def test_upgrade_failure_keeps_the_installed_package(self):
+        from unittest import mock
+
+        m = self.manager()
+        a = m.install(self.package("CAR_A_10"))
+        sp = self.game / car_manager.CARS_DIR / f"{a}.sp"
+        before = sp.read_bytes()
+        state = json.loads(json.dumps(m.state))
+        with mock.patch.object(car_package, "install_sp", side_effect=OSError("disk full")), self.assertRaises(OSError):
+            m.install(self.package("CAR_A_10", version=2))
+        self.assertEqual(sp.read_bytes(), before)
+        self.assertEqual(m.state, state)
+        # A failure after the swap (writing the state) puts the old files and state back.
+        real_save, calls = m.save, []
+
+        def failing_save():
+            calls.append(1)
+            if len(calls) == 1:
+                raise OSError("disk full")
+            real_save()
+
+        with mock.patch.object(m, "save", side_effect=failing_save), self.assertRaises(OSError):
+            m.install(self.package("CAR_A_10", version=2))
+        self.assertEqual(sp.read_bytes(), before)
+        self.assertEqual(m.state["cars"][a]["version"], 1)
+        self.assertEqual(
+            sorted(p.name for p in (self.game / car_manager.CARS_DIR).iterdir()),
+            sorted([a, f"{a}.sp", car_manager.LIST, car_manager.STATE]),
+        )
+        self.assertEqual(m.verify(), [])
+        # A new key whose install fails doesn't keep the ID it was about to get.
+        with mock.patch.object(car_package, "install_sp", side_effect=OSError("disk full")), self.assertRaises(OSError):
+            m.install(self.package("CAR_B_10"))
+        self.assertNotIn("forza.fh1.CAR_B_10", m.state["ids"])
+
+    def test_verify_compares_the_list(self):
+        m = self.manager()
+        m.install(self.package("CAR_A_10"))
+        path = self.game / car_manager.CARS_DIR / car_manager.LIST
+        good = path.read_text()
+        path.write_text(good.replace("CAR_A_10.sp", "OTHER.sp"))
+        self.assertTrue(any("ID 3 lists" in p for p in m.verify()))
+        path.write_text(good + "9 dsfforza\\cars\\stray.sp\n")
+        self.assertTrue(any("ID 9 lists" in p for p in m.verify()))
+        path.write_text(good)
+        self.assertEqual(m.verify(), [])
 
 
 if __name__ == "__main__":
