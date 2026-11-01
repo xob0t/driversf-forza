@@ -354,6 +354,66 @@ class Manager:
         self.save()
         self.log(f"{key}: removed; ID {car['id']} stays reserved for it")
 
+    def uninstall(self, *, forget_ids: bool = False) -> None:
+        """Every file the manager wrote goes: the cars' .sp files and folders, the plugin's
+        list, the generated GUI copies, packages.lua and packages_hud.lua. The key -> ID map
+        stays in manager.json (unless `forget_ids`): the save keeps its flags per model ID
+        (autosave.dat below 304, dsfforza-garage.dat above), so a later install gives every
+        car the ID those flags are for."""
+        from dsfforza.build import car_gui
+
+        for key in list(self.state["cars"]):
+            self.sp_path(key).unlink(missing_ok=True)
+            shutil.rmtree(self.cars_dir / key, ignore_errors=True)
+        self.state["cars"] = {}
+        (self.cars_dir / LIST).unlink(missing_ok=True)
+        (self.game / LUA).unlink(missing_ok=True)
+        car_gui.clear(self.game)
+        state = self.cars_dir / STATE
+        if forget_ids:
+            state.unlink(missing_ok=True)
+            self.log("car packages uninstalled; the ID map is gone too (--forget-ids)")
+        else:
+            _write_text(state, json.dumps(self.state, indent=1, sort_keys=True) + "\n")
+            self.log(f"car packages uninstalled; {len(self.state['ids'])} IDs kept in {state} for a later install")
+        for folder in (self.cars_dir, self.cars_dir.parent):  # dsfforza\cars, dsfforza: when empty
+            with contextlib.suppress(OSError):
+                folder.rmdir()
+
+    def seed(self) -> int:
+        """Record the merged install's IDs in the map (__init__ read them from its ported.lua),
+        so they outlive it: run before a merged install is uninstalled for packages, the same
+        cars then get the same IDs and keep their save flags. Returns the number recorded."""
+        _write_text(self.cars_dir / STATE, json.dumps(self.state, indent=1, sort_keys=True) + "\n")
+        self.log(
+            f"{len(self.state['merged'])} IDs of the merged install recorded ({len(self.state['ids'])} in the map)"
+        )
+        return len(self.state["merged"])
+
+    def reassign(self, key: str) -> int:
+        """A new free ID for an installed car whose ID another archive took (verify reports
+        it): the plugin leaves a clashing package out. The car's save flags stay with the old
+        ID, which isn't ours any more. Returns the new ID."""
+        car = self._car(key)
+        old = car["id"]
+        if old not in archive_ids(self.archive):
+            raise SystemExit(f"{key}: ID {old} doesn't clash with {self.archive}; nothing to do")
+        del self.state["ids"][key]
+        try:
+            new = self.allocate(key)
+            sp = self.sp_path(key)
+            staged = sp.with_name(sp.name + ".new")
+            car_package.install_sp(sp, new, staged)
+            staged.replace(sp)
+        except BaseException:
+            self.state["ids"][key] = old
+            raise
+        car["id"] = new
+        car["sha256"] = dsfcar.sha256(self.sp_path(key).read_bytes())
+        self.save()
+        self.log(f"{key}: ID {old} -> {new} (another archive has {old}; its save flags stay with {old})")
+        return new
+
     def status(self) -> list[str]:
         out = []
         for key, car in sorted(self.state["cars"].items(), key=lambda kv: kv[1]["id"]):
@@ -396,7 +456,7 @@ class Manager:
         return out
 
 
-def main(argv: list[str] | None = None) -> None:
+def build_parser() -> argparse.ArgumentParser:
     # --game and --archive before or after the command: the commands' copies default to
     # SUPPRESS, so they don't overwrite a value given before the command.
     common = argparse.ArgumentParser(add_help=False)
@@ -413,16 +473,45 @@ def main(argv: list[str] | None = None) -> None:
     i = sub.add_parser("install", parents=[common], help="install or upgrade .dsfcar packages")
     i.add_argument("packages", type=Path, nargs="+")
     i.add_argument("--force", action="store_true", help="install over a newer version")
-    for name in ("enable", "disable", "remove"):
-        sub.add_parser(name, parents=[common], help=f"{name} installed cars by key").add_argument("keys", nargs="+")
+    for name, text in KEY_COMMANDS.items():
+        sub.add_parser(name, parents=[common], help=text).add_argument("keys", nargs="+")
     sub.add_parser("status", parents=[common], help="list the installed cars")
     sub.add_parser("verify", parents=[common], help="check the installed cars")
-    args = parser.parse_args(argv)
+    u = sub.add_parser("uninstall", parents=[common], help="remove every car package and file the manager wrote")
+    u.add_argument(
+        "--forget-ids", action="store_true", help="also drop the key -> ID map (save flags then may not match)"
+    )
+    sub.add_parser("seed", parents=[common], help="record a merged install's IDs before it is uninstalled")
+    return parser
+
+
+KEY_COMMANDS = {
+    "enable": "enable installed cars by key",
+    "disable": "disable installed cars by key (they keep their IDs)",
+    "remove": "remove installed cars by key (their IDs stay reserved)",
+    "reassign": "new IDs for installed cars whose IDs another archive took",
+}
+
+
+def run_key_command(m: Manager, cmd: str, keys: list[str]) -> None:
+    """enable, disable, remove or reassign each key; one GUI generation for all of them."""
+    with m.batch():
+        for key in keys:
+            if cmd in ("enable", "disable"):
+                m.set_enabled(key, enabled=cmd == "enable")
+            elif cmd == "remove":
+                m.remove(key)
+            else:
+                m.reassign(key)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = build_parser().parse_args(argv)
     if args.game is None:
         from dsfforza.game import game_paths
 
         args.game = game_paths.game_dir()
-    if args.cmd in ("install", "enable", "disable", "remove"):
+    if args.cmd not in ("status", "verify"):
         from dsfforza.build.install import game_running
 
         if game_running(args.game):
@@ -432,14 +521,12 @@ def main(argv: list[str] | None = None) -> None:
         with m.batch():
             for path in args.packages:
                 m.install(path, force=args.force)
-    elif args.cmd in ("enable", "disable"):
-        with m.batch():
-            for key in args.keys:
-                m.set_enabled(key, enabled=args.cmd == "enable")
-    elif args.cmd == "remove":
-        with m.batch():
-            for key in args.keys:
-                m.remove(key)
+    elif args.cmd in KEY_COMMANDS:
+        run_key_command(m, args.cmd, args.keys)
+    elif args.cmd == "uninstall":
+        m.uninstall(forget_ids=args.forget_ids)
+    elif args.cmd == "seed":
+        m.seed()
     elif args.cmd == "status":
         print("\n".join(m.status()) or "no car packages installed")
     else:
