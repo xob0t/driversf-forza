@@ -39,8 +39,11 @@ Install:
 file is replaced; dsfforza.asi gets [archive] packages=1, and the car manager (dsff car_manager)
 installs the packages: dsfforza\cars\ (the cars' own files, stable IDs), dsfforza\generated\
 (copies of gui.sp, Fonts.fchunk and global.fchunk the plugin opens in place of the game's) and
-dsfforza\packages.lua / packages_hud.lua (research/car-packages.md). -Uninstall doesn't remove
-the manager's files yet.
+dsfforza\packages.lua / packages_hud.lua (research/car-packages.md). -Uninstall has the manager
+remove all of them but its key -> ID map (dsfforza\cars\manager.json), so a later install gives
+every car the ID the save's flags are for. -Packages -Force over a merged (non-package) install
+first records that install's car IDs in the map (car_manager seed), then removes it as usual:
+the same cars come back as packages on the same IDs.
 
 -Force over an earlier install removes it first. With -Build, the archive, gui.sp and
 Fonts.fchunk stay where the new build's file is the one installed (the game file
@@ -437,6 +440,7 @@ function Invoke-Uninstall([switch]$Keep, [hashtable]$Skip = @{}) {
         }
         return
     }
+    if (Get-Field $manifest 'packages') { Uninstall-CarPackages }
     $problems = 0
     $entries = @($manifest.entries)
     [array]::Reverse($entries)
@@ -722,17 +726,52 @@ function Invoke-Build([string]$RootLimit) {
     return $out
 }
 
-# -Packages: hand the build's car packages to the car manager (src/dsfforza/build/car_manager.py),
-# which picks their IDs (stable per car), writes dsfforza\cars\ (the plugin's list and the cars'
-# files), the generated GUI copies in dsfforza\generated\ and packages.lua / packages_hud.lua.
-# It writes no game file; its files are its own (-Uninstall leaves them for now: issue #455).
-function Install-CarPackages([string[]]$Files) {
+# The car manager (src/dsfforza/build/car_manager.py) owns everything of a -Packages install
+# besides what install.json records: dsfforza\cars\ (the cars' files, the plugin's list and its
+# key -> ID map), the generated GUI copies in dsfforza\generated\ and packages.lua /
+# packages_hud.lua. It writes no game file.
+function Invoke-CarManager([string[]]$Arguments, [switch]$Optional) {
     $uv = Find-Uv
-    if (-not $uv) { Fail 'uv is needed for the car manager: install it from https://docs.astral.sh/uv/getting-started/installation/ and run this again.' }
-    $pyArgs = @('run', '--project', $Repo, '--frozen', '--no-dev', 'dsff', 'car_manager', '--game', $Game, 'install') + $Files
-    Say "  car manager: $($Files.Count) packages"
+    if (-not $uv) {
+        if ($Optional) { return $false }
+        Fail 'uv is needed for the car manager: install it from https://docs.astral.sh/uv/getting-started/installation/ and run this again.'
+    }
+    $pyArgs = @('run', '--project', $Repo, '--frozen', '--no-dev', 'dsff', 'car_manager', '--game', $Game) + $Arguments
     & $uv @pyArgs | Out-Host
     if ($LASTEXITCODE -ne 0) { Fail "the car manager failed (exit code $LASTEXITCODE); see the output above" }
+    return $true
+}
+
+# -Packages: hand the build's car packages to the car manager, which picks their IDs (stable
+# per car: an earlier install's, or a merged install's after Save-MergedIds).
+function Install-CarPackages([string[]]$Files) {
+    Say "  car manager: $($Files.Count) packages"
+    [void](Invoke-CarManager (@('install') + $Files))
+}
+
+# Uninstalling a -Packages install: the manager removes its files and keeps its key -> ID map
+# (dsfforza\cars\manager.json), so a later install gives each car the ID the save's flags are
+# for. Without uv (the repo gone), its files are removed here and the map is left as it is.
+function Uninstall-CarPackages {
+    if (Invoke-CarManager @('uninstall') -Optional) { return }
+    Say '  uv not found: removing the car manager''s files directly (its ID map stays)'
+    $cars = Join-Path $Game 'dsfforza\cars'
+    if (Test-Path -LiteralPath $cars) {
+        Get-ChildItem -LiteralPath $cars | Where-Object { $_.Name -ne 'manager.json' } | Remove-Item -Recurse -Force
+    }
+    foreach ($relative in 'dsfforza\generated', 'Common\UserLuaScripts\dsfforza\packages.lua', 'Common\UserLuaScripts\dsfforza\packages_hud.lua') {
+        $path = Join-Path $Game $relative
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force; Say "  removed  $relative" }
+    }
+}
+
+# Before a merged install is uninstalled for -Packages: its cars' IDs go into the manager's map
+# (car_manager seed reads its ported.lua), so the same cars come back as packages on the same IDs
+# and the save's owned/unlocked flags (kept per model ID) stay theirs.
+function Save-MergedIds {
+    if (-not (Test-Path -LiteralPath (Join-Path $Game 'Common\UserLuaScripts\dsfforza\ported.lua'))) { return }
+    Say '  recording the merged install''s car IDs for the packages (car_manager seed)'
+    [void](Invoke-CarManager @('seed'))
 }
 
 # -Packages: a build's car packages, checked: only one build's complete set (port_batch writes a
@@ -787,6 +826,7 @@ function Invoke-Install {
                 'media\Fonts.fchunk'     = (Join-Path $folder 'gui\Fonts.fchunk')
             }
         }
+        if ($Packages -and -not (Get-Field $existing 'packages')) { Save-MergedIds }   # merged -> packages
         if ($kept.Count) { Invoke-Uninstall -Keep -Skip $kept } else { Invoke-Uninstall }
     }
     Resolve-LeftoverBackup $kept
