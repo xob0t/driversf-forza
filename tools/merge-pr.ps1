@@ -6,7 +6,8 @@ Squash-merges a pull request and cleans up after it, safely.
 1. Finds the PR's branch and, if a local worktree has it checked out, runs that worktree's
    tools\worktree-setup.ps1 -Unlink and checks no junction is left (some delete tools
    follow junctions into the main checkout's folders).
-2. gh pr merge --squash --delete-branch (refuses a PR that isn't mergeable).
+2. Points open PRs stacked on this one at master (deleting their base would close
+   them), then gh pr merge --squash --delete-branch (refuses a PR that isn't mergeable).
 3. Removes the worktree folder if it is still there, deletes the local branch, prunes.
    Then sweeps the links out of folders that are no longer worktrees (worktree-setup.ps1
    -Sweep: worktrees the agent host removed without -Unlink).
@@ -48,6 +49,15 @@ if ($worktree) {
     if (Test-Path -LiteralPath $setup) { & $setup -Unlink | ForEach-Object { Say $_ } }
     $links = Get-ChildItem -LiteralPath $wt -Recurse -Depth 3 -Force -Attributes ReparsePoint -ErrorAction SilentlyContinue
     if ($links) { throw "junctions left in ${wt}: $(($links | ForEach-Object FullName) -join ', ')" }
+}
+
+# PRs stacked on this one: point them at master first. Deleting their base branch
+# closes them, and a closed PR's base can't be changed.
+$stacked = gh pr list --state open --base $pr.headRefName --json number --jq '.[].number'
+foreach ($n in $stacked) {
+    gh pr edit $n --base master | Out-Null
+    if ($LASTEXITCODE) { throw "could not retarget stacked PR #$n to master" }
+    Say "retargeted stacked PR #$n to master (rebase it onto master after this merge)"
 }
 
 gh pr merge $Number --squash --delete-branch | Out-Null
