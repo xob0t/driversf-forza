@@ -306,7 +306,7 @@ uint32_t entry_span(const Entry* e)
 // (0x005A0A80, 0x005A0B80, 0x005A0BD0 read them through the pointers at spool
 // object +0x72F8/+0x72FC); a slot handler then reads the whole entry with the
 // root reader's read entry(i) (SceneModelType2 0x00858870 -> 0x008FBE90) into
-// the shared spool buffer and parses it in memory. So the packages need three
+// the shared spool buffer and parses it in memory. So the packages need four
 // things here, all in code this module already owns:
 //   1. the root table of the vehicle archive gets three entries per package
 //      after its own (h_poll, once the open completes);
@@ -317,9 +317,10 @@ uint32_t entry_span(const Entry* e)
 //   4. the VSCT table gets the package's three records (FUN_0086C630 loads it
 //      into [Engine+0x780]+0x2C; FUN_0086C5B0 looks a model ID up in it for
 //      11 callers, so it is used at run time, not only by the stripped VEdit).
-// A package may carry a fourth entry, VSCT: its three 28-byte VSCT records
-// (the host's, as clone_vehicle.register_clones makes them); the plugin writes
-// the package's ID into them.
+// A package's fourth entry, VSCT, holds its three 28-byte VSCT records (the
+// host's, as clone_vehicle.register_clones makes them); the plugin writes the
+// package's ID into them. It is required: two callers of FUN_0086C5B0
+// (0x0080942B, 0x00890949) use the lookup's result without a NULL check.
 // The vehicle archive's reader is the one FUN_005A11E0 opens (call 0x005A13C4)
 // with a file name ending in dngvehicles.sp.
 struct Pkg {
@@ -377,23 +378,20 @@ bool pkg_open(Pkg* p)
     }
     uint32_t hdr[4];
     uint32_t got = 0;
-    if (!pread(p->file, 0, hdr, sizeof hdr, &got) || got != sizeof hdr || hdr[0] != kCHNK || hdr[2] < 3 ||
-        hdr[2] > 4 || (hdr[3] & 0x7FFFFFFF) != 3 || (hdr[3] >> 31)) {
-        dsf_log("packages: %s: not a CHNK of three or four entries (version 3, not compressed)", p->path);
+    if (!pread(p->file, 0, hdr, sizeof hdr, &got) || got != sizeof hdr || hdr[0] != kCHNK || hdr[2] != 4 ||
+        (hdr[3] & 0x7FFFFFFF) != 3 || (hdr[3] >> 31)) {
+        dsf_log("packages: %s: not a CHNK of four entries, three VEHC and a VSCT (version 3, not compressed)", p->path);
         return false;
     }
     Entry all[4];
     if (!pread(p->file, 16, all, hdr[2] * sizeof(Entry), &got) || got != hdr[2] * sizeof(Entry)) return false;
     memcpy(p->e, all, sizeof p->e);
-    p->has_vsct = false;
-    if (hdr[2] == 4) {
-        if (all[3].tag != kVSCT || all[3].size != sizeof p->vsct ||
-            !pread(p->file, all[3].offset, p->vsct, sizeof p->vsct, &got) || got != sizeof p->vsct) {
-            dsf_log("packages: %s: entry 3 is not a VSCT of three records", p->path);
-            return false;
-        }
-        p->has_vsct = true;
+    if (all[3].tag != kVSCT || all[3].size != sizeof p->vsct ||
+        !pread(p->file, all[3].offset, p->vsct, sizeof p->vsct, &got) || got != sizeof p->vsct) {
+        dsf_log("packages: %s: entry 3 is not a VSCT of three records", p->path);
+        return false;
     }
+    p->has_vsct = true;
     for (int k = 0; k < 3; k++) {
         Entry* e = &p->e[k];
         if (e->tag != kVEHC) {
@@ -1133,8 +1131,9 @@ static bool patch_readers()
 }
 
 // [archive] packages=1: car packages beside dngvehicles.sp (see "car packages"
-// above). Two sites besides the reader functions: the spool loader's open call
-// (to know the vehicle archive's reader) and the SSLP load. Both or neither.
+// above). Three sites besides the reader functions: the spool loader's open
+// call (to know the vehicle archive's reader), the SSLP load and the VSCT load.
+// All or none.
 static void patch_packages()
 {
     static const uint8_t open_expect[] = {0xE8, 0x67, 0xB1, 0x35, 0x00};  // call 0x008FC530

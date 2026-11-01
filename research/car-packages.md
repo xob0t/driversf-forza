@@ -151,7 +151,7 @@ change is not measured.
   written by the manager. Disable = drop the line (the file stays); remove
   = drop the line and the file (the ID stays reserved in the map).
 - **Plugin (`[archive] packages=1`):** at start, open every listed package,
-  check it (CHNK v3, uncompressed, 3 VEHC + optional VSCT, NONR sizes) and
+  check it (CHNK v3, uncompressed, 3 VEHC + VSCT, NONR sizes) and
   log it. Hooks:
 
 | Site | Original bytes | New | Purpose |
