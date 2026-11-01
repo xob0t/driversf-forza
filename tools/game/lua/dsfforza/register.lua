@@ -182,19 +182,40 @@ do
 end
 
 local PORTED
+local function portedCar(car)
+	return {
+		source = car.host, media = car.media,
+		make = car.make, model = car.model, yearText = car.year,
+		year = car.year ~= "" and car.year or nil,
+		speed = car.speed, strength = car.strength, drift = car.drift,  -- handling_dsf.stat_bars
+		traffic = true,
+	}
+end
 do
 	local found, ported = user_open("dsfforza\\ported.lua")
 	if found and type(ported) == "table" and type(ported.cars) == "table" then
 		PORTED = ported
 		CARS = {}
 		for id, car in pairs(ported.cars) do
-			CARS[id] = {
-				source = car.host, media = car.media,
-				make = car.make, model = car.model, yearText = car.year,
-				year = car.year ~= "" and car.year or nil,
-				speed = car.speed, strength = car.strength, drift = car.drift,  -- handling_dsf.stat_bars
-				traffic = true,
-			}
+			CARS[id] = portedCar(car)
+		end
+	end
+end
+
+-- Car packages (dsff car_manager writes dsfforza\packages.lua; dsfforza.asi [archive]
+-- packages loads the cars): the same fields as ported.lua's, for the IDs it doesn't have
+-- (the manager gives packages IDs a merged install doesn't use).
+do
+	local found, packages = user_open("dsfforza\\packages.lua")
+	if found and type(packages) == "table" and type(packages.cars) == "table" and next(packages.cars) then
+		if not PORTED then
+			PORTED = packages
+			CARS = {}
+		end
+		for id, car in pairs(packages.cars) do
+			if CARS[id] == nil then
+				CARS[id] = portedCar(car)
+			end
 		end
 	end
 end

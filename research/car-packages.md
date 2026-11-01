@@ -357,6 +357,44 @@ four spawn as 700 to 703, in the chase and cockpit views.
 texture) stay with the manager, not in a package; a pack (several cars)
 is a folder of `.dsfcar` files for now, without a manifest of its own.
 
+## Manager, part 1 (phase 3, #453)
+
+`src/dsfforza/build/car_manager.py`, `dsff car_manager install | enable |
+disable | remove | status | verify [--game G] [--archive A]`. It refuses
+to change anything while Driver.exe runs from that folder, and writes only
+under the game folder's `dsfforza\cars\` and
+`Common\UserLuaScripts\dsfforza\packages.lua`:
+
+| File | What |
+| --- | --- |
+| `dsfforza\cars\manager.json` | the state: `ids` (key → model ID, for good), `cars` (installed: ID, version, enabled, SHA-256 of the installed `.sp`, manifest), `merged` (a merged install's cars) |
+| `dsfforza\cars\cars.txt` | the plugin's list: `id path` per enabled car |
+| `dsfforza\cars\<key>.sp` | the installed form, the car's ID written in (`car_package.install_sp`) |
+| `dsfforza\cars\<key>\` | the package's `car.json` and images, for part 2's GUI files |
+| `Common\UserLuaScripts\dsfforza\packages.lua` | `ported.lua`'s fields per enabled car; `register.lua` adds them to its cars for the IDs `ported.lua` doesn't have |
+
+**IDs.** A key keeps its ID across upgrades (a higher version replaces the
+package in place; a lower one needs `--force`), disable and enable, and
+after a remove: the ID stays reserved, so no new car inherits the old one's
+save flags (the game and dsfforza.asi keep them per model ID). A new key
+takes the first ID in port_batch's "asi" order (1..303, then 304 up; base
+IDs below 1000) that the installed `Install\dngvehicles.sp`'s SSLP doesn't
+use (kind 0 records: 150 in the vanilla archive, 62..303; 723 in the
+573-car build), that isn't `RESERVED_IDS` (Felony Rework's 622/623) and
+that no key holds. A merged install's cars (its `ported.lua`) are seeded
+with their IDs, and a package of one of them is refused, because the
+archive already has that car. `verify` reports an installed `.sp` that is
+missing or changed, a car whose ID the installed archive now uses (another
+mod's archive: the plugin leaves the package out), and a list that doesn't
+match the state.
+
+**Part 2 (open):** the garage picture, badge, plate and names in game:
+generated gui.sp, Fonts.fchunk and global.fchunk from the vanilla files and
+the enabled packages' images and names, and `hud.lua`, opened in place of
+the game's through FUN_00857370 (all three open there: "Phase 1"). Until
+then a package car has its host's picture and its maker's vanilla badge (or
+none), as a car without a hud.lua entry has today.
+
 ## Phased plan (PRs)
 
 1. **Plugin loader** (the spike's code, proven for one car): build and offline test
