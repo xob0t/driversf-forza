@@ -25,7 +25,7 @@ class WritePackagesTest(unittest.TestCase):
         stale.write_bytes(b"old")
         keep = folder / "forza.fh1.CAR_A_10.dsfcar"
 
-        def fake_pack(build, media, out_dir, version=1, isos=None, log=print):
+        def fake_pack(build, media, out_dir, isos=None):
             self.assertEqual((build, media, out_dir), (self.out, ["CAR_A_10"], folder))
             keep.write_bytes(b"new")
             return [keep]
