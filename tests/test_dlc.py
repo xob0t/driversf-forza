@@ -289,3 +289,27 @@ def test_choose_source_takes_the_complete_version_then_the_game_order():
     listing[id(fh1)] = set(wanted)  # a tie: the game order, a disc before a pack
     assert forza_roster.choose_source([dlc, fh1], wanted, ("FH1", "FM4"), lambda s: listing[id(s)])[0] is fh1
     assert forza_roster.choose_source([dlc, disc], wanted, ("FH1", "FM4"), lambda s: listing[id(s)])[0] is disc
+
+
+def test_a_damaged_package_is_skipped_and_the_others_still_read():
+    with tempfile.TemporaryDirectory() as tmp:
+        assets = _assets(Path(tmp))
+        bad = assets / "damaged"
+        # a valid header and file table, but the inner zip is no zip
+        bad.write_bytes(_live({"Media/DLCZips/40_pri_65.zip": b"not a zip" * 100}, "Damaged Pack"))
+        cars, notes = forza_roster.roster([], forza_roster.dlc_packages(assets))
+        assert set(cars) == {"por_959_87"}
+        assert any(n.startswith("damaged: FM4 DLC / Damaged Pack; skipped (BadZipFile") for n in notes)
+
+
+def test_choose_source_reads_each_listing_once():
+    a = forza_roster.Source("FH1", "FH1", "media/cars/x.zip", 0, 0, "car", "fh1.iso")
+    b = forza_roster.Source("FM4", "FM4 DLC / Pack", "a.zip::media/cars/x/", 0, 0, "car", "", "pkg")
+    calls = []
+
+    def files(source):
+        calls.append(source.where)
+        return {"x.carbin"}
+
+    forza_roster.choose_source([a, b], ["x.carbin", "y", "z"], ("FH1", "FM4"), files)
+    assert calls == ["FH1", "FM4 DLC / Pack"]

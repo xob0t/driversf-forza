@@ -134,16 +134,16 @@ an LOD1-4 main carbin.
 ## Cars in several sources
 
 Since #162, a car in a DLC pack and on a disc is built from the version that holds
-more of the files the conversion reads (`port_car.WANTED`: main and cockpit
-carbins, nodamage, lights and interior textures with their LOD 0, MAXData.xml,
-CarAttribs.xml, ShaderSettings.xml). On a tie the game order decides
+more of the 10 files the conversion reads (`port_car.WANTED`: the main and
+cockpit carbins, `nodamage.xds` and `lights.xds` with their `_lod0`,
+`interior_lod0.xds`, MAXData.xml, CarAttribs.xml, ShaderSettings.xml). On a tie the game order decides
 (`GAME_PREFERENCE`, FH1 first), and a disc comes before a pack
 (`forza_roster.choose_source`, used by `port_car.pick_source`).
 
 **The 28 cars in FH1 and the FM4 DLC (confirmed-static, 2026-11-01).** For each
 car, both versions were opened and compared:
 
-- **Inputs.** Both versions hold all 11 files the conversion reads, on 28 of
+- **Inputs.** Both versions hold all 10 files the conversion reads, on 28 of
   28 cars, so the rule gives a tie and FH1 everywhere. The default roster
   doesn't change.
 - **Same model.** The two versions are the same model, packed to each game's

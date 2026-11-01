@@ -364,7 +364,8 @@ def choose_source(
     a disc before a DLC pack. On the 28 cars in both FH1 and the FM4 DLC, both versions
     hold every wanted file, so they tie and keep FH1's (research/forza-sources.md, "Cars in
     several sources")."""
-    missing = {id(s): [w for w in wanted if w not in files(s)] for s in sources}
+    listings = {id(s): files(s) for s in sources}  # each source's zip directory, read once
+    missing = {id(s): [w for w in wanted if w not in listings[id(s)]] for s in sources}
     notes = [
         f"{s.where}: " + (f"no {', '.join(missing[id(s)])}" if missing[id(s)] else f"all {len(wanted)} inputs")
         for s in sources
@@ -464,8 +465,13 @@ def roster(isos: list[Path], packages: list[Package] | None = None) -> tuple[dic
             car = cars.setdefault(name.lower(), Car(name))
             car.sources.append(source)
     for package in unique_packages(packages or []):
-        found = scan_dlc(package)
-        dlc_years.update({k: v["year"] for k, v in pack_info(package).items() if v.get("year")})
+        try:  # a damaged package is skipped, as scan_packages skips one on a disc
+            found = scan_dlc(package)
+            info = pack_info(package)
+        except (OSError, LookupError, ValueError, sqlite3.Error, struct.error, zipfile.BadZipFile) as error:
+            notes.append(f"{package.path.name}: {package.where}; skipped ({type(error).__name__}: {error})")
+            continue
+        dlc_years.update({k: v["year"] for k, v in info.items() if v.get("year")})
         notes.append(
             f"{package.path.name}: {package.where}, {sum(s.kind == 'car' for s in found)} cars, "
             f"{sum(s.kind == 'autovista' for s in found)} Autovista models"
