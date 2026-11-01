@@ -71,8 +71,11 @@ pointer at `[Engine+0x780]+0x2C`.
 - FUN_0086C600: `record(i) = VSCT + 8 + i * 0x1C`
 
 `VEdit.GetNumVehicles` and `VEdit.GetVehicleTypes` use these. Nothing else
-calls them directly (ExploreAddresses `calls:` scan); other users may read
-`+0x2C` directly.
+calls them directly (ExploreAddresses `calls:` scan). The table is still used
+in play: FUN_0086C5B0 (via FUN_0086C550) looks a record up by `id & 0xFFF`
+for 11 callers, and two of them dereference the result without a NULL check
+(0x0080942B, 0x00890949), so every car needs its VSCT records
+(`car-packages.md`).
 
 Other resource vtables found from their `GetType` stubs:
 
