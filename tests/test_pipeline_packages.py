@@ -27,6 +27,7 @@ class WritePackagesTest(unittest.TestCase):
 
         def fake_pack(build, media, out_dir, isos=None):
             self.assertEqual((build, media, out_dir), (self.out, ["CAR_A_10"], folder))
+            self.assertIsInstance(isos, list)  # the build's disc images (gui_isos): names and logos
             keep.write_bytes(b"new")
             return [keep]
 
