@@ -491,8 +491,11 @@ void pkg_inject(Reader* r)
 
 // FUN_005A0B50 (thiscall: self = spool object + 4; reader, entry index): SSLP
 // loaded. The vanilla function points self+0x72F4 at the SSLP header and
-// self+0x72F8 at its records. For the vehicle package (root reader at self+0x10)
-// a copy with three records per package goes there instead; a package whose ID
+// self+0x72F8 at its records. self is the spool object's second base (vtable
+// 0x00DE4D48 at spool object +4, set by the constructor 0x005A10F0), and the root
+// reader is embedded at spool object +0x14 (constructed in place: `lea ecx,
+// [esi+0x14]` at 0x005A112F), so it is self+0x10 itself, not a pointer there.
+// For the vehicle package a copy with three records per package goes there instead; a package whose ID
 // (or +1000/+2000) the archive already has, or whose NONR is larger than the
 // slot buffer the SSLP header gives (+0x08 + 4 * kind), is left out.
 void __fastcall h_sslp_load(uint8_t* self, void*, Reader* reader, uint32_t index)
@@ -500,7 +503,7 @@ void __fastcall h_sslp_load(uint8_t* self, void*, Reader* reader, uint32_t index
     uint8_t* p = (uint8_t*)h_ptr(reader, nullptr, index);
     *(uint8_t**)(self + 0x72F4) = p;
     *(uint8_t**)(self + 0x72F8) = p + 0x1C;
-    if (!g_pkg_first || *(Reader**)(self + 0x10) != g_veh_reader) return;
+    if (!g_pkg_first || (Reader*)(self + 0x10) != g_veh_reader) return;
     uint32_t count = *(uint16_t*)(p + 2);
     const uint16_t* rec = (const uint16_t*)(p + 0x1C);
     uint32_t add = 0;
@@ -553,6 +556,16 @@ void __fastcall h_sslp_load(uint8_t* self, void*, Reader* reader, uint32_t index
     dsf_log("packages: SSLP at %p: %u records + %u for %u car packages", self, count, 3 * add, add);
 }
 
+// The engine singleton, as FUN_0086C630 gets it (0x0086C644..0x0086C652): the
+// global at 0x00FE7228, made by 0x0040A690 when still unset.
+uint8_t* engine_ptr()
+{
+    uint8_t** engine = (uint8_t**)0x00FE7228;
+    typedef uint8_t*(__cdecl * GetEngine)();
+    if (!*engine) *engine = ((GetEngine)0x0040A690)();
+    return *engine;
+}
+
 // FUN_0086C630 (thiscall: VSCT resource; reader, entry index): stores the
 // payload at resource+4 and, when none is set yet, at [Engine+0x780]+0x2C (the
 // table FUN_0086C550/FUN_0086C5B0 search: "VSCT" u16 version, u16 count, then
@@ -578,16 +591,16 @@ void __fastcall h_vsct_load(uint8_t* self, void*, Reader* reader, uint32_t index
                 out += sizeof g_pkgs[j].vsct;
             }
             *(uint16_t*)(v + 6) = (uint16_t)(count + 3 * add);
-            if (g_vsct) HeapFree(GetProcessHeap(), 0, g_vsct);
+            // An earlier copy may still be the engine's table (FUN_0086C670
+            // clears it only for its own resource); keep it then.
+            uint8_t* holder = *(uint8_t**)(engine_ptr() + 0x780);
+            if (g_vsct && *(uint8_t**)(holder + 0x2C) != g_vsct) HeapFree(GetProcessHeap(), 0, g_vsct);
             g_vsct = v;
             *(uint8_t**)(self + 4) = v;
             dsf_log("packages: VSCT: %u records + %u from car packages", count, 3 * add);
         }
     }
-    uint8_t** engine = (uint8_t**)0x00FE7228;
-    typedef uint8_t*(__cdecl * GetEngine)();
-    if (!*engine) *engine = ((GetEngine)0x0040A690)();
-    uint8_t* holder = *(uint8_t**)(*engine + 0x780);
+    uint8_t* holder = *(uint8_t**)(engine_ptr() + 0x780);
     if (!*(uint8_t**)(holder + 0x2C)) *(uint8_t**)(holder + 0x2C) = *(uint8_t**)(self + 4);
 }
 
