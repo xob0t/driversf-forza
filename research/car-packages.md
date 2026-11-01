@@ -23,8 +23,9 @@ Status: **confirmed-runtime for one car** (VM run 2026-11-01, "Proof"
 below): the M3 E30 spawns as ID 700 from its own package beside the
 vanilla `dngvehicles.sp`, its three VEHC entries (700, 1700, 2700) are read
 from the package file, and without a list the plugin hooks nothing and the
-run is as before. Several packages at once, the hitch of the synchronous
-read and file name logging are phase 1 (#451).
+run is as before. Phase 1 (#451) adds the checks, several packages at once
+(entries past 1100), a respawn, the read timing and the file name log
+("Phase 1" below).
 
 ## 1. How the game finds a car's data today (confirmed-static)
 
@@ -162,7 +163,7 @@ change is not measured.
 | `h_seek` (0x008FB5E0), already replaced | – | log | a nested reader over a package entry (not supported) |
 | 0x005A0B50 | `8B 44 24 08 56` | `jmp h_sslp_load` | an SSLP copy with 3 records per package (clash and NONR checks) |
 | 0x0086C630 | `8B 44 24 08 56` | `jmp h_vsct_load` | a VSCT copy with the packages' records; sets `[Engine+0x780]+0x2C` as the original does |
-| later: 0x00857370 | `A1 C4 D1 43 01` | `jmp` | file name redirection for generated gui.sp / Fonts.fchunk / global.fchunk |
+| 0x00857370 | `A1 C4 D1 43 01` | `jmp h_file_open` (trampoline back to 0x00857375) | `[archive] open_log` logs every name (phase 1); phase 3 adds the redirection for generated gui.sp / Fonts.fchunk / global.fchunk |
 
 All sites are checked byte for byte before writing, and are all-or-nothing,
 as for the other modules. Without the reader patches there are no packages.
@@ -228,6 +229,62 @@ direct caller). SSLP records are `{u16 id, u16 root index, u16 kind}`:
 FUN_005A0B80 returns +2, FUN_005A0BD0 returns +4 (as
 `clone_vehicle.register_clones` writes them).
 
+## Phase 1: the loader (confirmed-runtime, 2026-11-01)
+
+**Checks at start** (`pkg_open`, `pkg_load_list`): a package is a CHNK v3
+(not compressed) of exactly four entries, three VEHC and a VSCT of three
+28-byte records, every entry inside the file (file size at most 4 GiB),
+each VEHC a CHNK whose child entries lie inside it, and its NONR sizes
+noted. The VSCT is required: two callers of FUN_0086C5B0 (0x0080942B,
+0x00890949) dereference the lookup without a NULL check. A list line whose
+ID isn't 1..999 or is already listed, or whose package fails a check, is
+left out with a log line saying why. At the SSLP load a package whose ID
+(or +1000/+2000) the archive already has, or whose NONR is larger than
+the slot buffer, is left out too. When none is left, nothing is hooked.
+
+**Offline selftest** (`tools\asi\build.ps1 -Test`,
+`mod_archive_pkg_selftest`): a list of good and bad lines (bad line, ID 0,
+1000, a duplicate ID, a missing file, not a CHNK, no VSCT, cut short, a
+NONR past its VEHC) keeps 5 of them. Injection into a fake reader of 453
+root entries and one of 1098 (the packages cross into the side table),
+`pkg_of`, reads with a zeroed tail, `h_name`, the SSLP copy (the clash
+and the NONR-too-big package left out, another spool object's SSLP left
+alone), the VSCT copy (IDs written into the host's records), and the
+three sites: a changed byte at 0x0086C630 leaves all three vanilla.
+
+**VM series** (`run-series.ps1 -Vm`, vanilla `dngvehicles.sp`, `-ProbeIds
+'266,700,701,702,703,700' -ShotSeconds 3`):
+
+- **four packages** (`runs\vm1-20261101-122452`): the M3 E30 (700), Supra
+  RZ (701), RX-7 (702) and S2000 (703) from their packages, each in the
+  chase and cockpit views (1700 to 1703 read from the packages), then 700
+  again after its release (the full car stayed resident, the 1700/2700
+  entries were read again). Root entries 453..464, SSLP and VSCT 450 + 12.
+- **past 1100** (`runs\vm1-20261101-122800`): 230 filler lines on one
+  package file (IDs 704..933; their VEHCs say 703, but no filler is
+  requested), then 266 (a clash), a missing file, 700 and 701. 233
+  packages, root entries 453..1151, so 700 and 701 are entries
+  1146..1151, in the side table. Both spawn, cockpit included. 266 is left
+  out (`already in the archive`) and the vanilla Desanne spawns as 266;
+  the missing file is left out at start. 702 and 703 aren't listed, so
+  the probe stays in Tanner's car (62), as an unknown ID does.
+
+**The synchronous read's cost** (`pkg_read`, QueryPerformanceCounter
+around ReadFile): 1.5 to 2.4 MB a read. Run A, 14 reads: 0.37 to 7.9 ms,
+median 3.3 ms. Run B, 8 reads of the same files: 0.31 to 0.49 ms (in the
+cache by then). A first read from a hard disk would take longer (2 MB at
+100 MB/s is 20 ms, more than a frame). Not made async here: the runs
+showed no hitch, and the hook it needs (FUN_008FB2D0, `8B 41 04 85 C0`)
+waits for a measurement on a real disk.
+
+**File names through FUN_00857370** (`[archive] open_log=1`): 47 opens in
+the run, among them `install\gui.sp` (early) and `Install\GUI.sp` (the
+spool), `Media\fonts.fchunk` and `TEXT:global.fchunk` (a device prefix;
+`TEXT:loc.sp`, `TEXT:billboards.sp` too). So all three GUI files of
+phase 3 open through this function, under names that differ in case and,
+for the locale file, by a device prefix rather than a path: a redirect
+table must match without case and know the `TEXT:` device.
+
 ## Phased plan (PRs)
 
 1. **Plugin loader** (the spike's code, proven for one car): build and offline test
@@ -254,11 +311,8 @@ FUN_005A0B80 returns +2, FUN_005A0BD0 returns +4 (as
 
 ## Open
 
-- Several packages at once, entries past 1100 (side table), a respawn after
-  release, the cockpit shot (phase 1).
-- The sync read's cost on the main thread (phase 1).
-- Whether every open of gui.sp, Fonts.fchunk and global.fchunk goes through
-  FUN_00857370 (phase 1 logs it).
+- The sync read on a slow disk (a first read from a hard disk); async
+  through FUN_008FB2D0 if it shows.
 - A runtime string source for `"ID:n"` (FUN_00835250/FUN_008352B0) and
   runtime glyph pages, which would remove the generated GUI files.
 - The garage and the owned list with an ID that has no car (after a remove).
