@@ -143,11 +143,10 @@ change is not measured.
   install; the plugin writes it into the SSLP and VSCT records. (Patching
   the VEHC in memory after the read would make the installed file ID-free
   too; possible, not needed while IDs are stable.)
-- **Distributed form (#170):** a zip per car with the 4-entry `.sp`
-  (no ID, or any ID), the garage picture, badge and plate images, metadata
-  (names, year, stats, maker group hint, handling summary), requirements
-  (host ID, plugin version). The manager unpacks, patches the ID, and writes
-  the list.
+- **Distributed form (#170):** a `.dsfcar` zip per car with the 4-entry
+  `.sp` (any ID), the garage picture, badge and plate images, metadata
+  (names, year, stats, maker group) and requirements ("Package format 1"
+  below). The manager unpacks, patches the ID, and writes the list.
 - **List:** `<game>\dsfforza\cars\cars.txt`, one `id path` per enabled car,
   written by the manager. Disable = drop the line (the file stays); remove
   = drop the line and the file (the ID stays reserved in the map).
@@ -284,6 +283,78 @@ spool), `Media\fonts.fchunk` and `TEXT:global.fchunk` (a device prefix;
 phase 3 open through this function, under names that differ in case and,
 for the locale file, by a device prefix rather than a path: a redirect
 table must match without case and know the `TEXT:` device.
+
+## Package format 1 (phase 2, #452)
+
+`src/dsfforza/build/dsfcar.py` writes and checks it; `dsff car_package pack`
+makes one per car of a port_batch build, `validate` checks them.
+
+**`<key>.dsfcar`**, a zip (stored, not deflated: car.sp is mostly DXT
+textures, the picture is DXT5), members at its root and nothing else:
+
+| Member | What | Where the rule comes from |
+| --- | --- | --- |
+| `car.json` | the manifest (below) | |
+| `car.sp` | the installed form: CHNK v3, not compressed, entries VEHC, VEHC, VEHC, VSCT (84 bytes, three records, all for `car.host`); each VEHC's entries inside it; NONR at most 0x6D000 / 0x1000 / 0x1000 | dsfforza.asi `pkg_open` and `h_sslp_load`; the slot buffers are the vanilla SSLP header's (+0x08 + 4 × kind) |
+| `picture.dds` (optional) | the garage picture, 512 × 256 DXT5, no mips | gui.sp's car pictures (`gui-assets.md`; `gui_assets.picture_dds`) |
+| `badge.png` (optional) | the maker badge as the HUD and the maker list draw it: 8-bit RGBA, at most 98 × 58 | `gui_assets.badge_glyph`: a logo fitted to BADGE_SIZE (58) square, a text badge to CELL − 1 (98) × TEXT_BADGE_H (30) |
+| `plate.png` (optional) | the model nameplate: 8-bit RGBA, at most 98 × 34 | `gui_assets.nameplate` defaults |
+
+**Manifest:**
+
+```json
+{
+  "format": "dsfforza-car", "format_version": 1,
+  "key": "forza.fh1.BMW_M3E30_91",
+  "version": 1,
+  "car": {"file": "car.sp", "sha256": "…", "model_id": 1, "host": 205, "sound_host": 205},
+  "names": {"display": "BMW M3E30 (1991)", "make": "BMW", "model": "M3", "family": "M3",
+            "year": 1991, "maker_group": "BMW"},
+  "garage": {"speed": 0.48, "strength": 0.3, "drift": 0.65},
+  "images": {"picture": "picture.dds", "badge": "badge.png", "plate": "plate.png"},
+  "requires": ["archive.packages"],
+  "source": {"pipeline": "dsfforza", "game": "FH1", "media": "BMW_M3E30_91"}
+}
+```
+
+- `key` is `<source>.<game>.<name>` and stays the same across versions; the
+  manager keys its ID map and save flags on it. `version` is the
+  package's (a higher one replaces a lower one in place, keeping the ID).
+- `car.model_id` is the ID car.sp holds, nothing more: the manager writes
+  its own into the full VEHC at install (`car_package.install_sp`, the same
+  `clone_vehicle.patch_ids` as the merge). Base IDs are 1..999 (the LOD
+  requests add 1000 and 2000 as `short`). `host` and `sound_host` are
+  vanilla IDs (0..303): the host's `vehicleStats` entry is the base of the
+  car's, its VSCT records are car.sp's fourth entry.
+- `names`: Forza's names (`gui_assets.car_texts`), the display name of the
+  build's manifest, and `maker_group`, the DSF maker key (`dsf_make`) the
+  garage groups and the vanilla badge reuse go by.
+- `garage`: the stat bars (`vehicleStats` Speed, Strength, Drift, 0..1;
+  `handling_dsf.stat_bars`).
+- **Nothing global.** No model ID the game will use, no glyph code, string
+  ID (`"ID:7000xx"`), picture name (`Picture1`) or garage group number:
+  the manager allocates those against what is installed. Unknown fields
+  are refused, at every level.
+- `requires`: capabilities of dsfforza.asi, today only `archive.packages`.
+- Images are what the build drew (the Forza logo or a text badge, the
+  chrome plate, the rendered picture), not glyph codes. Without one the
+  manager uses the game's own badge or plate for that maker or model, or
+  the host's picture.
+
+**Checked** (`dsff car_package validate`, also on read): the members, the
+manifest's fields and types, car.sp against the loader's checks and the
+manifest (SHA-256, the ID in VO3D, the VSCT host), the images' sizes and
+formats.
+
+**Verified:** the four cars of the loader runs, packed from the main build
+(5.2 to 6.2 MB each, about 3.6 s for four) and installed as 700 to 703 with
+`install_sp`, are byte for byte the `.sp` files that ran in
+`runs\vm1-20261101-122452`. Run from the packages (`ported.lua` entries
+from their manifests): `runs\` in the PR.
+
+**Open (phase 3):** shared assets (engine sound templates, the Forza emblem
+texture) stay with the manager, not in a package; a pack (several cars)
+is a folder of `.dsfcar` files for now, without a manifest of its own.
 
 ## Phased plan (PRs)
 
