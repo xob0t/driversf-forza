@@ -784,7 +784,8 @@ function Save-MergedIds {
 # and no more (install.py package_problem checks the same). Called before an earlier install is
 # removed when -Build is given, so a bad build leaves the game as it was.
 function Get-BuildPackages([string]$Folder) {
-    $packageFiles = @(Get-ChildItem -LiteralPath (Join-Path $Folder 'packages') -Filter '*.dsfcar' -File -ErrorAction SilentlyContinue |
+    # -Force: hidden files too, as the car manager installs every .dsfcar file in the folder.
+    $packageFiles = @(Get-ChildItem -LiteralPath (Join-Path $Folder 'packages') -Filter '*.dsfcar' -File -Force -ErrorAction SilentlyContinue |
                       ForEach-Object { $_.FullName })
     if (-not $packageFiles) { Fail "no car packages in $Folder\packages: build with port_batch --packages (or uv run dsff install --packages)." }
     if (-not (Test-Path -LiteralPath (Join-Path $Folder 'dngvehicles.json'))) { Fail "build folder incomplete: $Folder\dngvehicles.json missing" }

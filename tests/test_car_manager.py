@@ -161,6 +161,7 @@ class ManagerTest(unittest.TestCase):
             pkg = self.package(f"CAR_{c}_10")
             pkg.rename(folder / pkg.name)
         (folder / "notes.txt").write_text("not a package")
+        (folder / "old.dsfcar").mkdir()  # a folder named like a package is not one
         car_manager.main(["--game", str(self.game), "install", str(folder)])
         state = json.loads((self.game / car_manager.CARS_DIR / car_manager.STATE).read_text())
         self.assertEqual(sorted(state["cars"]), ["forza.fh1.CAR_A_10", "forza.fh1.CAR_B_10"])

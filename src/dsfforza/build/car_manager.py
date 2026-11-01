@@ -506,7 +506,7 @@ def package_paths(paths: list[Path]) -> list[Path]:
     out: list[Path] = []
     for path in paths:
         if path.is_dir():
-            found = sorted(path.glob("*" + dsfcar.SUFFIX))
+            found = sorted(p for p in path.glob("*" + dsfcar.SUFFIX) if p.is_file())
             if not found:
                 raise SystemExit(f"{path}: no {dsfcar.SUFFIX} packages in this folder")
             out += found
