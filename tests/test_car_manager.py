@@ -152,6 +152,23 @@ class ManagerTest(unittest.TestCase):
         state = json.loads((self.game / car_manager.CARS_DIR / car_manager.STATE).read_text())
         self.assertTrue(state["cars"]["forza.fh1.CAR_A_10"]["enabled"])
 
+    def test_install_from_a_folder(self):
+        """A folder stands for every .dsfcar in it (install.ps1 passes the build's packages
+        folder: a roster's paths don't fit on one Windows command line)."""
+        folder = self.tmp / "packages"
+        folder.mkdir()
+        for c in "AB":
+            pkg = self.package(f"CAR_{c}_10")
+            pkg.rename(folder / pkg.name)
+        (folder / "notes.txt").write_text("not a package")
+        car_manager.main(["--game", str(self.game), "install", str(folder)])
+        state = json.loads((self.game / car_manager.CARS_DIR / car_manager.STATE).read_text())
+        self.assertEqual(sorted(state["cars"]), ["forza.fh1.CAR_A_10", "forza.fh1.CAR_B_10"])
+        empty = self.tmp / "empty"
+        empty.mkdir()
+        with self.assertRaises(SystemExit):
+            car_manager.main(["--game", str(self.game), "install", str(empty)])
+
     def test_lua_strings(self):
         self.assertEqual(car_manager._lua_string('a"b\\c'), '"a\\"b\\\\c"')
         self.assertEqual(car_manager._lua_string("x\r\ny\t1"), '"x\\013\\010y\\0091"')

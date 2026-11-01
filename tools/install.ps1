@@ -744,9 +744,14 @@ function Invoke-CarManager([string[]]$Arguments, [switch]$Optional) {
 
 # -Packages: hand the build's car packages to the car manager, which picks their IDs (stable
 # per car: an earlier install's, or a merged install's after Save-MergedIds).
+# The folder goes to the manager, not the files: a roster's 573 paths are longer than a
+# Windows command line (32767 characters). Get-BuildPackages has checked that the folder
+# holds exactly the build's packages.
 function Install-CarPackages([string[]]$Files) {
-    Say "  car manager: $($Files.Count) packages"
-    [void](Invoke-CarManager (@('install') + $Files))
+    $folders = @($Files | ForEach-Object { Split-Path -Parent $_ } | Sort-Object -Unique)
+    if ($folders.Count -ne 1) { Fail "the car packages are in more than one folder: $($folders -join ', ')" }
+    Say "  car manager: $($Files.Count) packages from $($folders[0])"
+    [void](Invoke-CarManager @('install', $folders[0]))
 }
 
 # Uninstalling a -Packages install: the manager removes its files and keeps its key -> ID map
