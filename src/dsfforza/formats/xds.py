@@ -177,12 +177,17 @@ def decode_rgba(blocks: bytes, width: int, height: int, fourcc: bytes) -> bytear
 
 
 def write_png(path: Path, width: int, height: int, rgba: bytearray) -> None:
+    path.write_bytes(png_bytes(width, height, rgba))
+
+
+def png_bytes(width: int, height: int, rgba: bytearray) -> bytes:
+    """An 8-bit RGBA PNG of the pixels (row-major)."""
     rows = b"".join(b"\0" + bytes(rgba[y * width * 4 : (y + 1) * width * 4]) for y in range(height))
 
     def chunk(tag: bytes, data: bytes) -> bytes:
         return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
 
-    path.write_bytes(
+    return (
         b"\x89PNG\r\n\x1a\n"
         + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
         + chunk(b"IDAT", zlib.compress(rows, 6))
