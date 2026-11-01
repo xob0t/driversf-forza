@@ -471,7 +471,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gui-base", type=Path, help="the folder whose GUI files the generated ones start from")
     sub = parser.add_subparsers(dest="cmd", required=True)
     i = sub.add_parser("install", parents=[common], help="install or upgrade .dsfcar packages")
-    i.add_argument("packages", type=Path, nargs="+")
+    i.add_argument(
+        "packages",
+        type=Path,
+        nargs="+",
+        help=".dsfcar files, or folders: every .dsfcar in them (a roster's 573"
+        " paths don't fit on one Windows command line)",
+    )
     i.add_argument("--force", action="store_true", help="install over a newer version")
     for name, text in KEY_COMMANDS.items():
         sub.add_parser(name, parents=[common], help=text).add_argument("keys", nargs="+")
@@ -491,6 +497,22 @@ KEY_COMMANDS = {
     "remove": "remove installed cars by key (their IDs stay reserved)",
     "reassign": "new IDs for installed cars whose IDs another archive took",
 }
+
+
+def package_paths(paths: list[Path]) -> list[Path]:
+    """The .dsfcar files to install: each file as given, each folder's *.dsfcar (sorted).
+    install.ps1 passes a build's packages folder, as 573 file paths are longer than a
+    Windows command line can be (32767 characters)."""
+    out: list[Path] = []
+    for path in paths:
+        if path.is_dir():
+            found = sorted(p for p in path.glob("*" + dsfcar.SUFFIX) if p.is_file())
+            if not found:
+                raise SystemExit(f"{path}: no {dsfcar.SUFFIX} packages in this folder")
+            out += found
+        else:
+            out.append(path)
+    return out
 
 
 def run_key_command(m: Manager, cmd: str, keys: list[str]) -> None:
@@ -519,7 +541,7 @@ def main(argv: list[str] | None = None) -> None:
     m = Manager(args.game, args.archive, gui_base=args.gui_base)
     if args.cmd == "install":
         with m.batch():
-            for path in args.packages:
+            for path in package_paths(args.packages):
                 m.install(path, force=args.force)
     elif args.cmd in KEY_COMMANDS:
         run_key_command(m, args.cmd, args.keys)

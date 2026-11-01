@@ -744,9 +744,14 @@ function Invoke-CarManager([string[]]$Arguments, [switch]$Optional) {
 
 # -Packages: hand the build's car packages to the car manager, which picks their IDs (stable
 # per car: an earlier install's, or a merged install's after Save-MergedIds).
+# The folder goes to the manager, not the files: a roster's 573 paths are longer than a
+# Windows command line (32767 characters). Get-BuildPackages has checked that the folder
+# holds exactly the build's packages.
 function Install-CarPackages([string[]]$Files) {
-    Say "  car manager: $($Files.Count) packages"
-    [void](Invoke-CarManager (@('install') + $Files))
+    $folders = @($Files | ForEach-Object { Split-Path -Parent $_ } | Sort-Object -Unique)
+    if ($folders.Count -ne 1) { Fail "the car packages are in more than one folder: $($folders -join ', ')" }
+    Say "  car manager: $($Files.Count) packages from $($folders[0])"
+    [void](Invoke-CarManager @('install', $folders[0]))
 }
 
 # Uninstalling a -Packages install: the manager removes its files and keeps its key -> ID map
@@ -779,7 +784,8 @@ function Save-MergedIds {
 # and no more (install.py package_problem checks the same). Called before an earlier install is
 # removed when -Build is given, so a bad build leaves the game as it was.
 function Get-BuildPackages([string]$Folder) {
-    $packageFiles = @(Get-ChildItem -LiteralPath (Join-Path $Folder 'packages') -Filter '*.dsfcar' -File -ErrorAction SilentlyContinue |
+    # -Force: hidden files too, as the car manager installs every .dsfcar file in the folder.
+    $packageFiles = @(Get-ChildItem -LiteralPath (Join-Path $Folder 'packages') -Filter '*.dsfcar' -File -Force -ErrorAction SilentlyContinue |
                       ForEach-Object { $_.FullName })
     if (-not $packageFiles) { Fail "no car packages in $Folder\packages: build with port_batch --packages (or uv run dsff install --packages)." }
     if (-not (Test-Path -LiteralPath (Join-Path $Folder 'dngvehicles.json'))) { Fail "build folder incomplete: $Folder\dngvehicles.json missing" }
