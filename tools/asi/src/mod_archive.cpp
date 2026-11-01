@@ -329,7 +329,6 @@ struct Pkg {
     bool listed;      // its SSLP records are in (no ID clash, NONR fits)
     Entry e[3];       // offsets relative to the package file
     uint32_t nonr[3];  // NONR size of each VEHC (the slot's buffer must hold it)
-    bool has_vsct;
     uint8_t vsct[3][28];
     char path[MAX_PATH];
 };
@@ -340,6 +339,7 @@ uint32_t g_pkg_first = 0;        // root index of the first package entry (0: no
 uint8_t* g_sslp = nullptr;       // the extended SSLP (header + records)
 uint8_t* g_vsct = nullptr;       // the extended VSCT
 volatile LONG g_pkg_reads = 0;
+uint32_t g_pkg_read_max_us = 0;  // slowest package read so far
 
 void* __fastcall h_ptr(Reader* r, void*, uint32_t i);
 
@@ -367,91 +367,129 @@ Pkg* pkg_of(Reader* r, uint32_t i, uint32_t* kind)
     return &g_pkgs[k / 3];
 }
 
-// Reads one package: a CHNK of three VEHC entries; also each VEHC's NONR size.
+// Reads one package and checks it: a CHNK (version 3, not compressed) of four
+// root entries, three VEHC (kinds 0, 1, 2) and a VSCT of three 28-byte records,
+// each inside the file; each VEHC a CHNK whose NONR size is noted (the slot
+// copies it into a fixed buffer). The VSCT is required: FUN_0086C5B0 looks a
+// model ID up in it, and two of its callers (0x0080942B, 0x00890949) use the
+// result without a NULL check, so a car without records would crash there.
+// Logs why a package is refused.
 bool pkg_open(Pkg* p)
 {
     p->file = CreateFileA(p->path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
                           nullptr);
     if (p->file == INVALID_HANDLE_VALUE) {
-        dsf_log("packages: %s: can't open (error %lu)", p->path, GetLastError());
+        dsf_log("packages: %s: can't open (error %lu); left out", p->path, GetLastError());
         return false;
     }
+    LARGE_INTEGER fsize = {};
+    if (!GetFileSizeEx(p->file, &fsize) || fsize.QuadPart > 0xFFFFFFFFLL) {
+        dsf_log("packages: %s: no size, or larger than 4 GiB; left out", p->path);
+        return false;
+    }
+    uint64_t file_size = (uint64_t)fsize.QuadPart;
     uint32_t hdr[4];
     uint32_t got = 0;
     if (!pread(p->file, 0, hdr, sizeof hdr, &got) || got != sizeof hdr || hdr[0] != kCHNK || hdr[2] != 4 ||
         (hdr[3] & 0x7FFFFFFF) != 3 || (hdr[3] >> 31)) {
-        dsf_log("packages: %s: not a CHNK of four entries, three VEHC and a VSCT (version 3, not compressed)", p->path);
+        dsf_log("packages: %s: not a CHNK of four entries (version 3, not compressed); left out", p->path);
         return false;
     }
     Entry all[4];
-    if (!pread(p->file, 16, all, hdr[2] * sizeof(Entry), &got) || got != hdr[2] * sizeof(Entry)) return false;
+    if (!pread(p->file, 16, all, sizeof all, &got) || got != sizeof all) {
+        dsf_log("packages: %s: entry table cut short; left out", p->path);
+        return false;
+    }
+    for (int k = 0; k < 4; k++) {
+        if ((uint64_t)all[k].offset + entry_span(&all[k]) > file_size) {
+            dsf_log("packages: %s: entry %d (%#x + %#x) ends past the file (%#llx bytes); left out", p->path, k,
+                    all[k].offset, entry_span(&all[k]), (unsigned long long)file_size);
+            return false;
+        }
+    }
     memcpy(p->e, all, sizeof p->e);
     if (all[3].tag != kVSCT || all[3].size != sizeof p->vsct ||
         !pread(p->file, all[3].offset, p->vsct, sizeof p->vsct, &got) || got != sizeof p->vsct) {
-        dsf_log("packages: %s: entry 3 is not a VSCT of three records", p->path);
+        dsf_log("packages: %s: entry 3 is not a VSCT of three 28-byte records; left out", p->path);
         return false;
     }
-    p->has_vsct = true;
     for (int k = 0; k < 3; k++) {
         Entry* e = &p->e[k];
         if (e->tag != kVEHC) {
-            dsf_log("packages: %s: entry %d is not a VEHC", p->path, k);
+            dsf_log("packages: %s: entry %d is not a VEHC; left out", p->path, k);
             return false;
         }
         // A VEHC is a CHNK; its NONR (if any) is copied into a fixed slot buffer.
         uint32_t sub[4];
         if (!pread(p->file, e->offset, sub, sizeof sub, &got) || got != sizeof sub || sub[0] != kCHNK ||
-            sub[2] > 64) {
-            dsf_log("packages: %s: VEHC %d is not a CHNK", p->path, k);
+            16 + (uint64_t)sub[2] * sizeof(Entry) > e->size) {
+            dsf_log("packages: %s: VEHC %d is not a CHNK; left out", p->path, k);
             return false;
         }
-        Entry kids[64];
-        if (!pread(p->file, e->offset + 16, kids, sub[2] * sizeof(Entry), &got) || got != sub[2] * sizeof(Entry))
-            return false;
+        uint32_t n = sub[2] * (uint32_t)sizeof(Entry);
+        Entry* kids = (Entry*)HeapAlloc(GetProcessHeap(), 0, n ? n : 1);
+        bool ok = kids && (n == 0 || (pread(p->file, e->offset + 16, kids, n, &got) && got == n));
         p->nonr[k] = 0;
-        for (uint32_t j = 0; j < sub[2]; j++)
+        for (uint32_t j = 0; ok && j < sub[2]; j++) {
+            if ((uint64_t)kids[j].offset + kids[j].size > e->size) ok = false;
             if (kids[j].tag == kNONR) p->nonr[k] = kids[j].size;
+        }
+        if (kids) HeapFree(GetProcessHeap(), 0, kids);
+        if (!ok) {
+            dsf_log("packages: %s: VEHC %d: entry table cut short, or an entry past its end; left out", p->path, k);
+            return false;
+        }
     }
     return true;
 }
 
-// Reads the list file ([archive] packages_list) and opens every package in it.
-void pkg_load_list()
+// Reads a list file (one "id path" per line, # comments; paths relative to
+// base, the game folder with a trailing backslash) and opens every package in
+// it. A line whose ID is out of range or already listed, or whose package fails
+// pkg_open, is left out (logged). Returns the number of packages kept.
+uint32_t pkg_load_list(const char* base, const char* list)
 {
-    char exe[MAX_PATH];
-    DWORD n = GetModuleFileNameA(nullptr, exe, MAX_PATH);
-    if (!n || n >= MAX_PATH) return;
-    char* slash = strrchr(exe, '\\');
-    if (slash) slash[1] = 0;
-    char rel[MAX_PATH], list[MAX_PATH];
-    cfg_str("archive", "packages_list", "dsfforza\\cars\\cars.txt", rel, sizeof rel);
-    _snprintf_s(list, sizeof list, _TRUNCATE, "%s%s", exe, rel);
     FILE* f = nullptr;
     if (fopen_s(&f, list, "r") || !f) {
         dsf_log("packages: no list %s; no car packages", list);
-        return;
+        return 0;
     }
-    const uint32_t kMaxPkgs = 2000;
-    g_pkgs = (Pkg*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, kMaxPkgs * sizeof(Pkg));
+    const uint32_t kMaxPkgs = 999;  // one per base model ID (1..999)
+    if (!g_pkgs) g_pkgs = (Pkg*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, kMaxPkgs * sizeof(Pkg));
     char line[512];
-    while (g_pkgs && g_pkg_count < kMaxPkgs && fgets(line, sizeof line, f)) {
+    int lineno = 0;
+    while (g_pkgs && fgets(line, sizeof line, f)) {
+        lineno++;
         char* s = line;
         while (*s == ' ' || *s == '\t') s++;
         if (*s == '#' || *s == '\r' || *s == '\n' || !*s) continue;
         char* end = nullptr;
         long id = strtol(s, &end, 10);
+        if (end == s) id = 0;
         while (*end == ' ' || *end == '\t') end++;
         size_t len = strcspn(end, "\r\n");
         end[len] = 0;
+        while (len && (end[len - 1] == ' ' || end[len - 1] == '\t')) end[--len] = 0;
         if (id < 1 || id > 999 || !*end) {
-            dsf_log("packages: bad line '%s' (\"id path\", 1 <= id <= 999)", s);
+            dsf_log("packages: %s line %d: '%s' is not \"id path\" with 1 <= id <= 999; left out", list, lineno, s);
+            continue;
+        }
+        bool dup = false;
+        for (uint32_t j = 0; j < g_pkg_count && !dup; j++) dup = g_pkgs[j].id == id;
+        if (dup) {
+            dsf_log("packages: %s line %d: ID %ld is listed twice; %s left out", list, lineno, id, end);
+            continue;
+        }
+        if (g_pkg_count >= kMaxPkgs) {
+            dsf_log("packages: more than %u packages; %s left out", kMaxPkgs, end);
             continue;
         }
         Pkg* p = &g_pkgs[g_pkg_count];
+        memset(p, 0, sizeof *p);
         p->id = (uint16_t)id;
-        _snprintf_s(p->path, sizeof p->path, _TRUNCATE, "%s%s", exe, end);
+        _snprintf_s(p->path, sizeof p->path, _TRUNCATE, "%s%s", base, end);
         if (!pkg_open(p)) {
-            if (p->file != INVALID_HANDLE_VALUE && p->file) CloseHandle(p->file);
+            if (p->file && p->file != INVALID_HANDLE_VALUE) CloseHandle(p->file);
             memset(p, 0, sizeof *p);
             continue;
         }
@@ -461,6 +499,47 @@ void pkg_load_list()
     }
     fclose(f);
     dsf_log("packages: %u car packages from %s", g_pkg_count, list);
+    return g_pkg_count;
+}
+
+// The list [archive] packages_list names, relative to the game folder.
+void pkg_load_config()
+{
+    char base[MAX_PATH];
+    DWORD n = GetModuleFileNameA(nullptr, base, MAX_PATH);
+    if (!n || n >= MAX_PATH) return;
+    char* slash = strrchr(base, '\\');
+    if (slash) slash[1] = 0;
+    char rel[MAX_PATH], list[MAX_PATH];
+    cfg_str("archive", "packages_list", "dsfforza\\cars\\cars.txt", rel, sizeof rel);
+    _snprintf_s(list, sizeof list, _TRUNCATE, "%s%s", base, rel);
+    pkg_load_list(base, list);
+}
+
+// Reads package entry e of p (offset relative to the package file) into buf:
+// size bytes, the caller's sector-aligned read size; what the file doesn't
+// hold is zeroed. Synchronous, on the plugin's own handle; timed for the log
+// (the read runs on the thread that polls the spooler). Returns bytes read.
+uint32_t pkg_read(Pkg* p, const Entry* e, void* buf, uint32_t size)
+{
+    LARGE_INTEGER t0, t1, freq;
+    QueryPerformanceCounter(&t0);
+    uint32_t got = 0;
+    bool ok = pread(p->file, e->offset, buf, size, &got);
+    DWORD err = ok ? 0 : GetLastError();
+    if (!ok || got < entry_span(e))
+        dsf_log("packages: %u: read at %#x came short: %u of %u bytes, entry %u (error %lu)", p->id, e->offset, got,
+                size, entry_span(e), err);
+    if (got < size) memset((uint8_t*)buf + got, 0, size - got);
+    QueryPerformanceCounter(&t1);
+    QueryPerformanceFrequency(&freq);
+    uint32_t us = (uint32_t)((t1.QuadPart - t0.QuadPart) * 1000000 / freq.QuadPart);
+    if (us > g_pkg_read_max_us) g_pkg_read_max_us = us;
+    LONG n = InterlockedIncrement(&g_pkg_reads);
+    if (n <= 64 || us > 50000)
+        dsf_log("packages: %u: %u bytes at %#x read from its package in %u.%03u ms (read %ld, slowest %u.%03u ms)",
+                p->id, got, e->offset, us / 1000, us % 1000, n, g_pkg_read_max_us / 1000, g_pkg_read_max_us % 1000);
+    return got;
 }
 
 // After the vehicle archive's root table is read: three entries per package
@@ -493,9 +572,10 @@ void pkg_inject(Reader* r)
 // 0x00DE4D48 at spool object +4, set by the constructor 0x005A10F0), and the root
 // reader is embedded at spool object +0x14 (constructed in place: `lea ecx,
 // [esi+0x14]` at 0x005A112F), so it is self+0x10 itself, not a pointer there.
-// For the vehicle package a copy with three records per package goes there instead; a package whose ID
-// (or +1000/+2000) the archive already has, or whose NONR is larger than the
-// slot buffer the SSLP header gives (+0x08 + 4 * kind), is left out.
+// For the vehicle package a copy with three records per package goes there
+// instead; a package whose ID (or +1000/+2000) the archive already has, or
+// whose NONR is larger than the slot buffer the SSLP header gives (+0x08 +
+// 4 * kind), is left out. Its root entries stay (nothing names them).
 void __fastcall h_sslp_load(uint8_t* self, void*, Reader* reader, uint32_t index)
 {
     uint8_t* p = (uint8_t*)h_ptr(reader, nullptr, index);
@@ -529,12 +609,16 @@ void __fastcall h_sslp_load(uint8_t* self, void*, Reader* reader, uint32_t index
         q->listed = true;
         add++;
     }
-    if (count + 3 * add > 0xFFFF) {
+    uint8_t* sslp = nullptr;
+    if (count + 3 * add > 0xFFFF)
         dsf_log("packages: %u SSLP records would pass 65535; no car packages", count + 3 * add);
+    else if (!(sslp = (uint8_t*)HeapAlloc(GetProcessHeap(), 0, 0x1C + (count + 3 * add) * 6)))
+        dsf_log("packages: out of memory for the SSLP copy; no car packages");
+    if (!sslp) {
+        // None listed, so the VSCT hook adds none either.
+        for (uint32_t j = 0; j < g_pkg_count; j++) g_pkgs[j].listed = false;
         return;
     }
-    uint8_t* sslp = (uint8_t*)HeapAlloc(GetProcessHeap(), 0, 0x1C + (count + 3 * add) * 6);
-    if (!sslp) return;
     memcpy(sslp, p, 0x1C + count * 6);
     uint16_t* out = (uint16_t*)(sslp + 0x1C) + count * 3;
     for (uint32_t j = 0; j < g_pkg_count; j++) {
@@ -575,7 +659,7 @@ void __fastcall h_vsct_load(uint8_t* self, void*, Reader* reader, uint32_t index
     *(uint8_t**)(self + 4) = p;
     uint32_t add = 0;
     for (uint32_t j = 0; j < g_pkg_count; j++)
-        if (g_pkgs[j].listed && g_pkgs[j].has_vsct) add++;
+        if (g_pkgs[j].listed) add++;
     uint32_t count = *(uint16_t*)(p + 6);
     if (add && *(uint32_t*)p == kVSCT && count + 3 * add <= 0xFFFF) {
         uint8_t* v = (uint8_t*)HeapAlloc(GetProcessHeap(), 0, 8 + (count + 3 * add) * 28);
@@ -583,7 +667,7 @@ void __fastcall h_vsct_load(uint8_t* self, void*, Reader* reader, uint32_t index
             memcpy(v, p, 8 + count * 28);
             uint8_t* out = v + 8 + count * 28;
             for (uint32_t j = 0; j < g_pkg_count; j++) {
-                if (!g_pkgs[j].listed || !g_pkgs[j].has_vsct) continue;
+                if (!g_pkgs[j].listed) continue;
                 memcpy(out, g_pkgs[j].vsct, sizeof g_pkgs[j].vsct);
                 for (int k = 0; k < 3; k++) *(uint16_t*)(out + 28 * k) = g_pkgs[j].id;
                 out += sizeof g_pkgs[j].vsct;
@@ -768,13 +852,7 @@ void* __fastcall h_read_entry(Reader* r, void*, uint32_t i, void* buf, int store
         // Synchronous: the caller then polls the archive's own handle
         // (h_poll state 0 -> 0x008FB2D0), which this read doesn't use, so the
         // data must be in buf when this returns.
-        uint32_t got = 0;
-        if (!pread(p->file, e->offset, buf, size, &got) || got < entry_span(e))
-            dsf_log("packages: %u: read of entry %u failed (%u of %u bytes, error %lu)", p->id, i, got, size,
-                    GetLastError());
-        if (got < size) memset((uint8_t*)buf + got, 0, size - got);
-        if (InterlockedIncrement(&g_pkg_reads) <= 64)
-            dsf_log("packages: %u: entry %u (%u bytes) read from its package", p->id, i, got);
+        pkg_read(p, e, buf, size);
         if (store == 1) *P(r, i) = buf;
         return buf;
     }
@@ -1133,32 +1211,94 @@ static bool patch_readers()
 // [archive] packages=1: car packages beside dngvehicles.sp (see "car packages"
 // above). Three sites besides the reader functions: the spool loader's open
 // call (to know the vehicle archive's reader), the SSLP load and the VSCT load.
-// All or none.
-static void patch_packages()
+// All or none; none when no package is listed. Bytes from `dsff xref dis`:
+//   0x005A13C4  E8 67 B1 35 00   call 0x008FC530 (push 0; push 1; push edi = name; lea ecx, [esi+8])
+//   0x005A0B50  8B 44 24 08 56   mov eax, [esp+8]; push esi  (vtable 0x00DE4D48 slot 0)
+//   0x0086C630  8B 44 24 08 56   the same prologue           (vtable 0x00E3967C)
+static const uint8_t kOpenExpect[] = {0xE8, 0x67, 0xB1, 0x35, 0x00};
+static const uint8_t kSslpExpect[] = {0x8B, 0x44, 0x24, 0x08, 0x56};
+static const uint8_t kVsctExpect[] = {0x8B, 0x44, 0x24, 0x08, 0x56};
+
+static bool patch_package_sites()
 {
-    static const uint8_t open_expect[] = {0xE8, 0x67, 0xB1, 0x35, 0x00};  // call 0x008FC530
-    static const uint8_t sslp_expect[] = {0x8B, 0x44, 0x24, 0x08, 0x56};  // mov eax,[esp+8]; push esi
-    static const uint8_t vsct_expect[] = {0x8B, 0x44, 0x24, 0x08, 0x56};  // same prologue at 0x0086C630
-    if (!check_bytes(0x005A13C4, open_expect, sizeof open_expect) ||
-        !check_bytes(0x005A0B50, sslp_expect, sizeof sslp_expect) ||
-        !check_bytes(0x0086C630, vsct_expect, sizeof vsct_expect)) {
+    if (!check_bytes(0x005A13C4, kOpenExpect, 5) || !check_bytes(0x005A0B50, kSslpExpect, 5) ||
+        !check_bytes(0x0086C630, kVsctExpect, 5)) {
         dsf_log("packages: 005A13C4/005A0B50/0086C630 are not the vanilla code; no car packages");
-        return;
+        return false;
     }
-    pkg_load_list();
-    if (!g_pkg_count) return;
-    if (!patch_call(0x005A13C4, (void*)h_spool_open, open_expect)) return;
-    if (!patch_jmp(0x005A0B50, (void*)h_sslp_load, sizeof sslp_expect, sslp_expect)) {
-        patch_bytes(0x005A13C4, open_expect, sizeof open_expect);
-        return;
+    if (!patch_call(0x005A13C4, (void*)h_spool_open, kOpenExpect)) return false;
+    if (!patch_jmp(0x005A0B50, (void*)h_sslp_load, 5, kSslpExpect)) {
+        patch_bytes(0x005A13C4, kOpenExpect, 5);
+        return false;
     }
-    if (!patch_jmp(0x0086C630, (void*)h_vsct_load, sizeof vsct_expect, vsct_expect)) {
-        patch_bytes(0x005A0B50, sslp_expect, sizeof sslp_expect);
-        patch_bytes(0x005A13C4, open_expect, sizeof open_expect);
-        return;
+    if (!patch_jmp(0x0086C630, (void*)h_vsct_load, 5, kVsctExpect)) {
+        patch_bytes(0x005A0B50, kSslpExpect, 5);
+        patch_bytes(0x005A13C4, kOpenExpect, 5);
+        return false;
     }
     dsf_log("packages: 005A13C4 spool open, 005A0B50 SSLP load, 0086C630 VSCT load hooked; %u car packages",
             g_pkg_count);
+    return true;
+}
+
+// Drops every package (handles closed): no list, or the sites didn't patch.
+static void pkg_drop_all()
+{
+    for (uint32_t j = 0; j < g_pkg_count; j++)
+        if (g_pkgs[j].file && g_pkgs[j].file != INVALID_HANDLE_VALUE) CloseHandle(g_pkgs[j].file);
+    g_pkg_count = 0;
+    g_pkg_first = 0;
+    g_veh_reader = nullptr;
+}
+
+static void patch_packages()
+{
+    pkg_load_config();
+    if (g_pkg_count && !patch_package_sites()) pkg_drop_all();
+}
+
+// ---- file open log ([archive] open_log, off by default) --------------------
+// FUN_00857370(name, flags), cdecl, the file layer's open (18 call sites):
+// starts with `mov eax, [0x0143D1C4]` (A1 C4 D1 43 01), the slot table's
+// singleton. A jump there to h_file_open, which calls the original through a
+// trampoline (those 5 bytes, then a jump to 0x00857375), logs every name the
+// game opens this way: phase 3 of research/car-packages.md needs to know
+// whether gui.sp, Fonts.fchunk and global.fchunk all go through it.
+typedef int(__cdecl* FileOpen)(const char* name, int flags);
+static FileOpen g_file_open = nullptr;
+static volatile LONG g_open_logged = 0;
+
+static void log_open(const char* name, int flags, int result)
+{
+    __try {
+        dsf_log("open: '%s' flags %#x -> %d", name ? name : "(null)", flags, result);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        dsf_log("open: name %p (unreadable) flags %#x -> %d", name, flags, result);
+    }
+}
+
+static int __cdecl h_file_open(const char* name, int flags)
+{
+    int result = g_file_open(name, flags);
+    if (InterlockedIncrement(&g_open_logged) <= 4000) log_open(name, flags, result);
+    return result;
+}
+
+static void patch_open_log()
+{
+    static const uint8_t expect[] = {0xA1, 0xC4, 0xD1, 0x43, 0x01};
+    if (!check_bytes(0x00857370, expect, sizeof expect)) {
+        dsf_log("archive: 00857370 is not the vanilla code; no open log");
+        return;
+    }
+    uint8_t* t = (uint8_t*)alloc_exec(16);
+    if (!t) return;
+    memcpy(t, expect, 5);
+    t[5] = 0xE9;
+    *(int32_t*)(t + 6) = (int32_t)(0x00857375 - (uint32_t)(uintptr_t)(t + 10));
+    g_file_open = (FileOpen)(void*)t;
+    if (patch_jmp(0x00857370, (void*)h_file_open, 5, expect))
+        dsf_log("archive: 00857370 file open -> %p (open_log: every name is logged, up to 4000)", (void*)h_file_open);
 }
 
 void mod_archive_init()
@@ -1175,6 +1315,7 @@ void mod_archive_init()
         else
             dsf_log("packages: need the reader patches; no car packages");
     }
+    if (cfg_bool("archive", "open_log", false)) patch_open_log();
 
     // Files past 2 GiB. The file layer's seek (0x0085A970) clamps a position
     // with the sign bit set to 0 (`CMP [ECX+0x30],0; JGE`), so every entry of
@@ -1192,4 +1333,267 @@ void mod_archive_init()
         else
             dsf_log("archive: 0085A9AE file seek is not the vanilla code; archives must stay below 2 GiB");
     }
+}
+
+// ---- offline selftest of the car packages (tools/asi/test/offline.cpp) ------
+// Writes small packages into dir, loads a list of good and bad lines, injects
+// them into fake vehicle readers (one below 1100 entries, one crossing it into
+// the side table), reads entries and names back, runs the SSLP and VSCT hooks
+// on fake tables, and patches the three sites (after a changed byte at the last
+// one leaves all three vanilla). Returns the number of failed checks.
+namespace {
+
+int g_st_fail = 0;
+#define ST_CHECK(c)                                                    \
+    do {                                                               \
+        if (!(c)) {                                                    \
+            printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #c);          \
+            g_st_fail++;                                               \
+        }                                                              \
+    } while (0)
+
+enum StFlaw { kGood, kNotChnk, kNoVsct, kCut, kBadKid };
+
+// A package: CHNK header, 4 entries; VEHC k at 0x100 + 0x100 * k (0x80 bytes: a
+// CHNK of one NONR of nonr bytes at +0x20, then the name "Pnnk"), VSCT at 0x400
+// (3 records of 28 bytes; first u16 205, the host).
+void st_write(const char* path, int tag_id, uint32_t nonr, StFlaw flaw)
+{
+    static uint8_t buf[0x500];
+    memset(buf, 0, sizeof buf);
+    uint32_t* h = (uint32_t*)buf;
+    h[0] = flaw == kNotChnk ? 0x12345678 : kCHNK;
+    h[1] = sizeof buf;
+    h[2] = flaw == kNoVsct ? 3 : 4;
+    h[3] = 3;
+    Entry* e = (Entry*)(buf + 16);
+    for (int k = 0; k < 3; k++) {
+        e[k].tag = kVEHC;
+        e[k].offset = 0x100 + 0x100 * k;
+        e[k].version = 1;
+        e[k].name_len = 4;
+        e[k].align_log2 = 4;
+        e[k].size = 0x80;
+        uint32_t* v = (uint32_t*)(buf + e[k].offset);
+        v[0] = kCHNK;
+        v[1] = 0x80;
+        v[2] = 1;
+        v[3] = 3;
+        Entry* kid = (Entry*)(v + 4);
+        kid->tag = kNONR;
+        kid->offset = 0x20;
+        kid->size = flaw == kBadKid && k == 1 ? 0x100 : nonr;
+        v[8] = 0xC0DE0000u | (uint32_t)(tag_id * 4 + k);  // marker at the NONR's start
+        char* name = (char*)buf + e[k].offset + 0x80;
+        name[0] = 'P';
+        name[1] = (char)('0' + tag_id / 10 % 10);
+        name[2] = (char)('0' + tag_id % 10);
+        name[3] = (char)('0' + k);
+    }
+    if (flaw != kNoVsct) {
+        e[3].tag = kVSCT;
+        e[3].offset = 0x400;
+        e[3].align_log2 = 4;
+        e[3].size = 84;
+        for (int k = 0; k < 3; k++) {
+            *(uint16_t*)(buf + 0x400 + 28 * k) = 205;
+            buf[0x400 + 28 * k + 0x1B] = (uint8_t)(0x10 + k);
+        }
+    }
+    FILE* f = nullptr;
+    if (fopen_s(&f, path, "wb") || !f) return;
+    fwrite(buf, 1, flaw == kCut ? 0x250 : sizeof buf, f);
+    fclose(f);
+}
+
+void st_write_list(const char* path, const char* text)
+{
+    FILE* f = nullptr;
+    if (fopen_s(&f, path, "wb") || !f) return;
+    fputs(text, f);
+    fclose(f);
+}
+
+// A fake vehicle spool object: self = spool object + 4 (the SSLP hook's this),
+// the root reader embedded at self + 0x10, the SSLP pointers at +0x72F4/+0x72F8.
+struct StSpool {
+    uint8_t* self;
+    Reader* root;
+};
+
+StSpool st_spool()
+{
+    StSpool s;
+    s.self = (uint8_t*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 0x7400);
+    s.root = (Reader*)(s.self + 0x10);
+    return s;
+}
+
+// Runs inject, reads, SSLP and VSCT on one fake archive of base root entries.
+void st_archive(uint32_t base)
+{
+    StSpool sp = st_spool();
+    Reader* r = sp.root;
+    if (base > kInline) ext_ensure(r, base, 0);
+    r->mode = 1;
+    r->count = base;
+    r->ptr_count = base;
+    g_veh_reader = r;
+    g_pkg_first = 0;
+    pkg_inject(r);
+    ST_CHECK(g_pkg_first == base && r->count == base + 3 * g_pkg_count && r->ptr_count == r->count);
+    // Packages in list order: 700, 701, 706 (NONR too big), 266 (clash), 707.
+    ST_CHECK(g_pkg_count == 5);
+    uint32_t kind = 9;
+    Pkg* p = pkg_of(r, base + 4, &kind);
+    ST_CHECK(p == &g_pkgs[1] && kind == 1 && p->id == 701);
+    ST_CHECK(pkg_of(r, base - 1, nullptr) == nullptr && pkg_of(r, base + 3 * g_pkg_count, nullptr) == nullptr);
+    Reader other = {};
+    ST_CHECK(pkg_of(&other, base + 4, nullptr) == nullptr);
+    Entry* e = E(r, base + 4);
+    ST_CHECK(e->tag == kVEHC && e->offset == 0x200 && e->size == 0x80);
+    ST_CHECK(*P(r, base + 4) == nullptr);
+    // read entry: the sector-aligned size, the tail zeroed
+    static uint8_t buf[0x800];
+    memset(buf, 0xAA, sizeof buf);
+    uint32_t got = pkg_read(p, e, buf, 0x800);
+    ST_CHECK(got == 0x300 && buf[0x7FF] == 0 && *(uint32_t*)buf == kCHNK && *(uint32_t*)(buf + 0x20) == (0xC0DE0000u | (1 * 4 + 1)));
+    ST_CHECK(buf[0x80] == 'P' && buf[0x83] == '1');
+    char name[260];
+    h_name(r, nullptr, base + 4, name);
+    ST_CHECK(strcmp(name, "P011") == 0);
+    // A package entry read past the file's end: zeroed, logged, no overrun.
+    Entry far_e = *e;
+    far_e.offset = 0x480;
+    memset(buf, 0xAA, sizeof buf);
+    got = pkg_read(p, &far_e, buf, 0x800);
+    ST_CHECK(got == 0x80 && buf[0x80] == 0 && buf[0x7FF] == 0);
+
+    // SSLP: 266 is in the archive (base, +1000, +2000); slot buffers 0x50/0x50/0x50.
+    static uint8_t sslp[0x1C + 6 * 4];
+    memset(sslp, 0, sizeof sslp);
+    *(uint16_t*)(sslp + 2) = 4;
+    for (int k = 0; k < 3; k++) *(uint32_t*)(sslp + 8 + 4 * k) = 0x50;
+    uint16_t* rec = (uint16_t*)(sslp + 0x1C);
+    const uint16_t vanilla[4][3] = {{266, 0, 0}, {1266, 1, 1}, {2266, 2, 2}, {5, 3, 0}};
+    memcpy(rec, vanilla, sizeof vanilla);
+    Reader* ssic = (Reader*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(Reader));
+    ssic->count = 2;
+    ssic->ptr_count = 2;
+    ssic->ptrs[1] = sslp;
+    h_sslp_load(sp.self, nullptr, ssic, 1);
+    uint8_t* out = *(uint8_t**)(sp.self + 0x72F4);
+    ST_CHECK(out && out != sslp && *(uint8_t**)(sp.self + 0x72F8) == out + 0x1C);
+    if (out) {
+        ST_CHECK(*(uint16_t*)(out + 2) == 4 + 3 * 3);  // 700, 701, 707
+        uint16_t* o = (uint16_t*)(out + 0x1C);
+        ST_CHECK(memcmp(o, vanilla, sizeof vanilla) == 0);
+        ST_CHECK(o[12] == 700 && o[13] == base + 0 && o[14] == 0);
+        ST_CHECK(o[15] == 1700 && o[16] == base + 1 && o[17] == 1);
+        ST_CHECK(o[18] == 2700 && o[19] == base + 2 && o[20] == 2);
+        ST_CHECK(o[21] == 701 && o[22] == base + 3);
+        ST_CHECK(o[30] == 707 && o[31] == base + 12 && o[36] == 2707 && o[37] == base + 14 && o[38] == 2);
+    }
+    ST_CHECK(g_pkgs[0].listed && g_pkgs[1].listed && !g_pkgs[2].listed && !g_pkgs[3].listed && g_pkgs[4].listed);
+    // Another spool object (gui.sp's): its SSLP is left alone.
+    StSpool gui = st_spool();
+    h_sslp_load(gui.self, nullptr, ssic, 1);
+    ST_CHECK(*(uint8_t**)(gui.self + 0x72F4) == sslp);
+
+    // VSCT: 2 vanilla records; the engine's table at [[0x00FE7228]+0x780]+0x2C.
+    static uint8_t vsct[8 + 28 * 2];
+    memset(vsct, 0, sizeof vsct);
+    *(uint32_t*)vsct = kVSCT;
+    *(uint16_t*)(vsct + 6) = 2;
+    *(uint16_t*)(vsct + 8) = 205;
+    *(uint16_t*)(vsct + 8 + 28) = 1205;
+    ssic->ptrs[0] = vsct;
+    static uint8_t engine[0x800], holder[0x40];
+    memset(holder, 0, sizeof holder);
+    *(uint8_t**)(engine + 0x780) = holder;
+    void* saved = *(void**)0x00FE7228;
+    *(void**)0x00FE7228 = engine;
+    static uint8_t res[8];
+    memset(res, 0, sizeof res);
+    h_vsct_load(res, nullptr, ssic, 0);
+    uint8_t* v = *(uint8_t**)(res + 4);
+    ST_CHECK(v && v != vsct && *(uint8_t**)(holder + 0x2C) == v);
+    if (v) {
+        ST_CHECK(*(uint32_t*)v == kVSCT && *(uint16_t*)(v + 6) == 2 + 9);
+        ST_CHECK(*(uint16_t*)(v + 8) == 205 && *(uint16_t*)(v + 8 + 28) == 1205);
+        const uint16_t ids[9] = {700, 700, 700, 701, 701, 701, 707, 707, 707};
+        bool ok = true;
+        for (int i = 0; i < 9; i++) {
+            const uint8_t* q = v + 8 + 28 * (2 + i);
+            if (*(uint16_t*)q != ids[i] || q[0x1B] != 0x10 + i % 3) ok = false;
+        }
+        ST_CHECK(ok);
+    }
+    *(void**)0x00FE7228 = saved;
+    r->mode = 5;  // no file or payloads to free (the game's close and free need its heap)
+    h_close(r, nullptr);
+    ST_CHECK(g_pkg_first == 0 && r->count == 0);
+}
+
+}  // namespace
+
+int mod_archive_pkg_selftest(const char* dir)
+{
+    g_st_fail = 0;
+    char d[MAX_PATH], path[MAX_PATH], list[MAX_PATH];
+    _snprintf_s(d, sizeof d, _TRUNCATE, "%s\\pkgtest\\", dir);
+    CreateDirectoryA(d, nullptr);
+    struct {
+        const char* name;
+        int id;
+        uint32_t nonr;
+        StFlaw flaw;
+    } files[] = {
+        {"a.sp", 0, 0x40, kGood},       {"b.sp", 1, 0x40, kGood},     {"c.sp", 7, 0x40, kGood},
+        {"big.sp", 6, 0x60, kGood},     {"clash.sp", 66, 0x40, kGood}, {"corrupt.sp", 3, 0x40, kNotChnk},
+        {"novsct.sp", 4, 0x40, kNoVsct}, {"cut.sp", 5, 0x40, kCut},    {"badkid.sp", 8, 0x40, kBadKid},
+    };
+    for (auto& f : files) {
+        _snprintf_s(path, sizeof path, _TRUNCATE, "%s%s", d, f.name);
+        st_write(path, f.id, f.nonr, f.flaw);
+    }
+    _snprintf_s(list, sizeof list, _TRUNCATE, "%scars.txt", d);
+    st_write_list(list,
+                  "# test list\n"
+                  "700 a.sp\n"
+                  "  701\tb.sp  \r\n"
+                  "\n"
+                  "bad line\n"
+                  "0 a.sp\n"
+                  "1000 a.sp\n"
+                  "700 c.sp\n"
+                  "702 missing.sp\n"
+                  "703 corrupt.sp\n"
+                  "704 novsct.sp\n"
+                  "705 cut.sp\n"
+                  "708 badkid.sp\n"
+                  "706 big.sp\n"
+                  "266 clash.sp\n"
+                  "707 c.sp\n");
+    // The sites: a changed byte at the last one leaves all three vanilla.
+    uint32_t n = pkg_load_list(d, list);
+    ST_CHECK(n == 5);
+    *(uint8_t*)0x0086C630 ^= 0xFF;
+    ST_CHECK(!patch_package_sites());
+    ST_CHECK(bytes_equal(0x005A13C4, kOpenExpect, 5) && bytes_equal(0x005A0B50, kSslpExpect, 5));
+    *(uint8_t*)0x0086C630 ^= 0xFF;
+    st_archive(453);
+    st_archive(1098);  // the packages' entries cross 1100 into the side table
+    ST_CHECK(patch_package_sites());
+    ST_CHECK(*(uint8_t*)0x005A13C4 == 0xE8 && !bytes_equal(0x005A13C4, kOpenExpect, 5));
+    ST_CHECK(*(uint8_t*)0x005A0B50 == 0xE9 && *(uint8_t*)0x0086C630 == 0xE9);
+    pkg_drop_all();
+    ST_CHECK(g_pkg_count == 0);
+    // An empty or missing list: nothing loaded.
+    st_write_list(list, "# nothing\n");
+    ST_CHECK(pkg_load_list(d, list) == 0);
+    _snprintf_s(list, sizeof list, _TRUNCATE, "%snone.txt", d);
+    ST_CHECK(pkg_load_list(d, list) == 0);
+    printf("archive packages selftest: %d failures\n", g_st_fail);
+    return g_st_fail;
 }

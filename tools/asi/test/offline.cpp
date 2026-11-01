@@ -18,6 +18,7 @@ void dsf_core_init();
 #include "../src/modules.h"
 #undef DSF_MODULE
 int mod_hands_selftest();
+int mod_archive_pkg_selftest(const char* dir);
 long mod_render_dropped();
 
 static int failures = 0;
@@ -415,6 +416,8 @@ int main(int argc, char** argv)
     CHECK(*(BYTE*)0x005652FB == 0xE8 && *(int*)0x005652FC != (int)(0x00BCA840 - 0x00565300));
     CHECK(*(BYTE*)0x00565910 == 0xE8 && *(int*)0x00565911 != (int)(0x00BCA840 - 0x00565915));
     CHECK(mod_hands_selftest() == 0);
+    // Car packages ([archive] packages): list, checks, injection, reads, SSLP/VSCT copies, the sites.
+    CHECK(mod_archive_pkg_selftest(dsf_plugin_dir()) == 0);
     // Draw queue: the three pushes go through the plugin, the trap branch is gone, and a
     // full queue drops the entry (FUN_00BB5710's thiscall, through the patched site).
     {
