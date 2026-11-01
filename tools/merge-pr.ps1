@@ -8,7 +8,8 @@ Squash-merges a pull request and cleans up after it, safely.
    follow junctions into the main checkout's folders).
 2. Points open PRs stacked on this one at master (deleting their base would close
    them), then gh pr merge --squash --delete-branch (refuses a PR that isn't mergeable).
-3. Removes the worktree folder if it is still there, deletes the local branch, prunes.
+3. Removes the worktree folder if it is still there and clean (one with uncommitted or
+   untracked files is kept), deletes the local branch, prunes.
    Then sweeps the links out of folders that are no longer worktrees (worktree-setup.ps1
    -Sweep: worktrees the agent host removed without -Unlink).
 4. Fast-forwards the main checkout's master, unless a build or install is running from
@@ -66,6 +67,12 @@ $merged = (gh pr view $Number --json state,mergeCommit | ConvertFrom-Json)
 if ($merged.state -ne 'MERGED') { throw "PR #$Number is $($merged.state) after the merge" }
 Say "merged as $($merged.mergeCommit.oid.Substring(0, 7))"
 
+# A worktree with uncommitted or untracked files stays: an agent may still be working in
+# it (a merge once deleted a worker's next task, started in the same folder).
+if ($worktree -and -not $KeepWorktree -and (Test-Path -LiteralPath $worktree) -and (git -C $worktree status --porcelain)) {
+    Say "kept the worktree: it has uncommitted or untracked files (remove it by hand when its agent is done)"
+    $KeepWorktree = $true
+}
 if ($worktree -and -not $KeepWorktree -and (Test-Path -LiteralPath $worktree)) {
     git -C $main worktree remove --force $worktree 2>$null
     if (Test-Path -LiteralPath $worktree) { [IO.Directory]::Delete($worktree, $true) }
