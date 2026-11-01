@@ -1301,6 +1301,137 @@ static void patch_open_log()
         dsf_log("archive: 00857370 file open -> %p (open_log: every name is logged, up to 4000)", (void*)h_file_open);
 }
 
+// ---- file redirection ([archive] packages: the manager's generated files) --
+// The car manager writes copies of gui.sp, Fonts.fchunk and each language's
+// global.fchunk with the enabled packages' pictures, glyphs and names, and a
+// table of them (redirect_list, "game path|replacement" per line, both
+// relative to the game folder). The game's own files are never written.
+// Every open through the file layer (FUN_00857370 -> 0x00857270 -> 0x0085ACD0
+// -> 0x0085AB80) resolves its device path first (0x0085B070: "TEXT:global.fchunk"
+// becomes "Locale\<language>\global.fchunk") and then calls CreateFileA at
+// 0x0085AC1E (`FF 15 60 92 DC 00`, call [0x00DC9260], the import of
+// KERNEL32.CreateFileA; GetFileSizeEx follows). A call to h_create_file there
+// (E8 rel32 + NOP) opens the replacement for a listed path, compared without
+// case and without a leading ".\" or the game folder, so devices and languages
+// need nothing of their own. A replacement that won't open falls back to the
+// game's file (logged). Phase 1's open log showed gui.sp (twice), fonts.fchunk
+// and TEXT:global.fchunk all going through FUN_00857370.
+struct Redirect {
+    char from[MAX_PATH];  // normalised game-relative path
+    char to[MAX_PATH];    // full path of the replacement
+};
+static Redirect* g_redirects = nullptr;
+static uint32_t g_redirect_count = 0;
+static char g_redirect_base[MAX_PATH];  // game folder, lower-case, trailing backslash
+static volatile LONG g_redirected = 0;
+
+// Lower-case, '/' -> '\', without a leading ".\" or the game folder.
+static void redirect_key(const char* in, char* out, size_t n)
+{
+    char tmp[MAX_PATH];
+    size_t i = 0;
+    for (; in[i] && i + 1 < sizeof tmp; i++) {
+        char c = in[i] == '/' ? '\\' : in[i];
+        tmp[i] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+    }
+    tmp[i] = 0;
+    const char* s = tmp;
+    size_t base = strlen(g_redirect_base);
+    if (base && strncmp(s, g_redirect_base, base) == 0) s += base;
+    while (s[0] == '.' && s[1] == '\\') s += 2;
+    strncpy_s(out, n, s, _TRUNCATE);
+}
+
+// Reads the table (base: the game folder with a trailing backslash). A line whose
+// replacement doesn't exist is left out (logged). Returns the number kept.
+static uint32_t pkg_load_redirects(const char* base, const char* list)
+{
+    g_redirect_count = 0;
+    g_redirect_base[0] = 0;  // nothing to strip while the folder itself is normalised
+    redirect_key(base, g_redirect_base, sizeof g_redirect_base);
+    FILE* f = nullptr;
+    if (fopen_s(&f, list, "r") || !f) return 0;
+    const uint32_t kMax = 64;
+    if (!g_redirects) g_redirects = (Redirect*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, kMax * sizeof(Redirect));
+    char line[2 * MAX_PATH + 8];
+    while (g_redirects && g_redirect_count < kMax && fgets(line, sizeof line, f)) {
+        line[strcspn(line, "\r\n")] = 0;
+        if (!line[0] || line[0] == '#') continue;
+        char* bar = strchr(line, '|');
+        if (!bar || bar == line || !bar[1]) {
+            dsf_log("redirect: '%s' is not \"game path|replacement\"; left out", line);
+            continue;
+        }
+        *bar = 0;
+        Redirect* r = &g_redirects[g_redirect_count];
+        redirect_key(line, r->from, sizeof r->from);
+        _snprintf_s(r->to, sizeof r->to, _TRUNCATE, "%s%s", base, bar + 1);
+        if (GetFileAttributesA(r->to) == INVALID_FILE_ATTRIBUTES) {
+            dsf_log("redirect: %s -> %s: no such file; left out", line, r->to);
+            continue;
+        }
+        dsf_log("redirect: %s -> %s", line, bar + 1);
+        g_redirect_count++;
+    }
+    fclose(f);
+    return g_redirect_count;
+}
+
+// The replacement for a path the file layer opens, or nullptr.
+static const char* redirect_of(const char* name)
+{
+    if (!name || !g_redirect_count) return nullptr;
+    char key[MAX_PATH];
+    redirect_key(name, key, sizeof key);
+    for (uint32_t i = 0; i < g_redirect_count; i++)
+        if (strcmp(key, g_redirects[i].from) == 0) return g_redirects[i].to;
+    return nullptr;
+}
+
+static HANDLE WINAPI h_create_file(LPCSTR name, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES sa, DWORD disposition,
+                                   DWORD flags, HANDLE templ)
+{
+    const char* to = redirect_of(name);
+    if (to) {
+        HANDLE h = CreateFileA(to, access, share, sa, disposition, flags, templ);
+        if (h != INVALID_HANDLE_VALUE) {
+            if (InterlockedIncrement(&g_redirected) <= 256) dsf_log("redirect: '%s' opened as %s", name, to);
+            return h;
+        }
+        dsf_log("redirect: %s won't open (error %lu); '%s' as it is", to, GetLastError(), name);
+    }
+    return CreateFileA(name, access, share, sa, disposition, flags, templ);
+}
+
+static const uint8_t kCreateFileExpect[] = {0xFF, 0x15, 0x60, 0x92, 0xDC, 0x00};  // call [0x00DC9260]
+
+static bool patch_redirect_site()
+{
+    if (!check_bytes(0x0085AC1E, kCreateFileExpect, sizeof kCreateFileExpect)) {
+        dsf_log("redirect: 0085AC1E is not the vanilla code; the game's own GUI files are used");
+        return false;
+    }
+    uint8_t code[6] = {0xE8, 0, 0, 0, 0, 0x90};
+    *(int32_t*)(code + 1) = (int32_t)((uint32_t)(uintptr_t)h_create_file - (0x0085AC1E + 5));
+    if (!patch_bytes(0x0085AC1E, code, sizeof code, kCreateFileExpect)) return false;
+    dsf_log("redirect: 0085AC1E CreateFileA -> %p; %u files replaced", (void*)h_create_file, g_redirect_count);
+    return true;
+}
+
+// [archive] redirect_list, relative to the game folder; patched only when it lists a file.
+static void patch_redirects()
+{
+    char base[MAX_PATH];
+    DWORD n = GetModuleFileNameA(nullptr, base, MAX_PATH);
+    if (!n || n >= MAX_PATH) return;
+    char* slash = strrchr(base, '\\');
+    if (slash) slash[1] = 0;
+    char rel[MAX_PATH], list[MAX_PATH];
+    cfg_str("archive", "redirect_list", "dsfforza\\generated\\redirect.txt", rel, sizeof rel);
+    _snprintf_s(list, sizeof list, _TRUNCATE, "%s%s", base, rel);
+    if (pkg_load_redirects(base, list)) patch_redirect_site();
+}
+
 void mod_archive_init()
 {
     int max_entries = cfg_int("archive", "max_entries", 16384);
@@ -1314,6 +1445,7 @@ void mod_archive_init()
             patch_packages();
         else
             dsf_log("packages: need the reader patches; no car packages");
+        patch_redirects();
     }
     if (cfg_bool("archive", "open_log", false)) patch_open_log();
 
@@ -1594,6 +1726,40 @@ int mod_archive_pkg_selftest(const char* dir)
     ST_CHECK(pkg_load_list(d, list) == 0);
     _snprintf_s(list, sizeof list, _TRUNCATE, "%snone.txt", d);
     ST_CHECK(pkg_load_list(d, list) == 0);
+
+    // File redirection: the table, the matching, the open, the site.
+    char gen[MAX_PATH];
+    _snprintf_s(gen, sizeof gen, _TRUNCATE, "%sgen", d);
+    CreateDirectoryA(gen, nullptr);
+    _snprintf_s(path, sizeof path, _TRUNCATE, "%sgen\\gui.sp", d);
+    st_write_list(path, "GEN");
+    _snprintf_s(list, sizeof list, _TRUNCATE, "%sredirect.txt", d);
+    st_write_list(list,
+                  "# test\n"
+                  "Install\\GUI.sp|gen\\gui.sp\n"
+                  "TEXT:x|gen\\missing.fchunk\n"
+                  "no bar here\n"
+                  "|gen\\gui.sp\n");
+    ST_CHECK(pkg_load_redirects(d, list) == 1);
+    const char* to = redirect_of("Install\\gui.sp");
+    ST_CHECK(to && strcmp(to, path) == 0);
+    ST_CHECK(redirect_of("install/GUI.SP") == to && redirect_of(".\\Install\\gui.sp") == to);
+    char full[MAX_PATH];
+    _snprintf_s(full, sizeof full, _TRUNCATE, "%sInstall\\gui.sp", d);
+    ST_CHECK(redirect_of(full) == to);
+    ST_CHECK(!redirect_of("Install\\gui.sp2") && !redirect_of("Media\\fonts.fchunk") && !redirect_of(nullptr));
+    HANDLE h = h_create_file("Install\\gui.sp", GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    char got3[4] = {};
+    DWORD n3 = 0;
+    ST_CHECK(h != INVALID_HANDLE_VALUE && ReadFile(h, got3, 3, &n3, nullptr) && n3 == 3 && memcmp(got3, "GEN", 3) == 0);
+    if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+    ST_CHECK(h_create_file("Media\\none.fchunk", GENERIC_READ, 0, nullptr, OPEN_EXISTING, 0, nullptr) ==
+             INVALID_HANDLE_VALUE);  // not listed: as it is
+    ST_CHECK(patch_redirect_site());
+    ST_CHECK(*(uint8_t*)0x0085AC1E == 0xE8 && *(uint8_t*)0x0085AC23 == 0x90 &&
+             *(int32_t*)0x0085AC1F == (int32_t)((uint32_t)(uintptr_t)h_create_file - 0x0085AC23));
+    ST_CHECK(!patch_redirect_site());  // patched already: not the vanilla bytes
+    g_redirect_count = 0;
     printf("archive packages selftest: %d failures\n", g_st_fail);
     return g_st_fail;
 }
