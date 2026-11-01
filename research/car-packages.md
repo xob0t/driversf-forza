@@ -383,7 +383,13 @@ use (kind 0 records: 150 in the vanilla archive, 62..303; 723 in the
 573-car build), that isn't `RESERVED_IDS` (Felony Rework's 622/623) and
 that no key holds. A merged install's cars (its `ported.lua`) are seeded
 with their IDs, and a package of one of them is refused, because the
-archive already has that car. `verify` reports an installed `.sp` that is
+archive already has that car. The merged list is read again on every run:
+a car no longer there is no longer refused (its key keeps its ID), and an
+installed package whose car a merged install now has is left out of the
+outputs (the archive's copy wins; `verify` reports it). Keys that differ
+only in case are refused (they would share a file on Windows). An install
+or upgrade is staged beside the installed package and swapped in with the
+state; a failure at any step puts the installed files and state back. `verify` reports an installed `.sp` that is
 missing or changed, a car whose ID the installed archive now uses (another
 mod's archive: the plugin leaves the package out), and a list that doesn't
 match the state.
