@@ -388,6 +388,14 @@ missing or changed, a car whose ID the installed archive now uses (another
 mod's archive: the plugin leaves the package out), and a list that doesn't
 match the state.
 
+**Verified in game** (`runs\vm2-20261101-125804`, vanilla archive): the
+four `.dsfcar` packages installed with the manager took IDs 1 to 4 (free
+in the vanilla SSLP), and the RX-7 (3) was disabled. The plugin listed 1, 2
+and 4 and loaded them, chase and cockpit. `register.lua` took their entries
+from `packages.lua` (`id 4 (TOYOTA SUPRA RZ)`, host 229). 3 is not in the
+archive, so it doesn't load. Reads: 1.0 to 14.6 ms (the 14.6 ms one is a
+first read of the Supra's interior).
+
 **Part 2 (open):** the garage picture, badge, plate and names in game:
 generated gui.sp, Fonts.fchunk and global.fchunk from the vanilla files and
 the enabled packages' images and names, and `hud.lua`, opened in place of
