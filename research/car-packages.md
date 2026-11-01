@@ -402,12 +402,56 @@ from `packages.lua` (`id 4 (TOYOTA SUPRA RZ)`, host 229). 3 is not in the
 archive, so it doesn't load. Reads: 1.0 to 14.6 ms (the 14.6 ms one is a
 first read of the Supra's interior).
 
-**Part 2 (open):** the garage picture, badge, plate and names in game:
-generated gui.sp, Fonts.fchunk and global.fchunk from the vanilla files and
-the enabled packages' images and names, and `hud.lua`, opened in place of
-the game's through FUN_00857370 (all three open there: "Phase 1"). Until
-then a package car has its host's picture and its maker's vanilla badge (or
-none), as a car without a hud.lua entry has today.
+## Manager, part 2: pictures, badges, plates and names (phase 3, #453)
+
+**Generated files** (`src/dsfforza/build/car_gui.py`; the manager writes
+them on every change). Copies of the game's current `Install\gui.sp`,
+`media\Fonts.fchunk` and each language's `Locale\<lang>\global.fchunk`
+(vanilla, or a merged install's) with the enabled packages' parts appended
+by gui_assets' own writers (`add_pictures`, `add_glyphs`, `add_strings`),
+under `dsfforza\generated\`, plus `redirect.txt` and
+`Common\UserLuaScripts\dsfforza\packages_hud.lua` (`hud.lua`'s fields per
+car; `register.lua` adds them for the IDs `hud.lua` doesn't have). What a
+car gets is what `gui_assets.build --wide-glyphs` gives a ported car, from
+the package's images: a maker or model DSF has keeps its vanilla badge or
+plate (`vanilla_codes`), others get a 16-bit badge (one per maker group)
+or plate (one per text) from `badge.png` / `plate.png` and a name string;
+the picture is `dsfforza_<media>`; `GarageEmblem` only when the game's
+Fonts.fchunk already has the emblem texture (a merged install's: the
+manager has no disc to make it). Codes and strings are taken where the
+current files have none: 16-bit codes past every vehicles_font code from
+256 up, strings from 700000 up, reusing an ID that already has the same
+text (cars of a maker share the ManufacturerName, so the garage group, a
+merged install gave it), and the maker list's one-character strings at
+900000 + code.
+
+**Redirect** (`[archive] redirect_list`, with `packages=1`). The opens
+of all three files go through FUN_00857370 ("Phase 1"), whose path is
+resolved further down: 0x00857270 → 0x0085ACD0 → 0x0085AB80, which turns
+the device path into a file path (0x0085B070) and calls CreateFileA at
+0x0085AC1E (`FF 15 60 92 DC 00`, `call [0x00DC9260]`, the
+KERNEL32.CreateFileA import; GetFileSizeEx follows at 0x0085AC31). That
+call becomes `call h_create_file` + NOP: a listed path (compared without
+case, a leading `.\` or the game folder) opens its replacement, and one
+that won't open falls back to the game's file. So `TEXT:global.fchunk`
+needs nothing of its own: it reaches CreateFileA as
+`locale\english\global.fchunk` (`runs\vm1-20261101-141311`). The
+game's files are never written.
+
+**Verified in game** (`runs\vm1-20261101-141311`, vanilla archive and
+GUI files, the four packages installed by the manager with `--gui-base`
+the vanilla files): the plugin replaced all three files (`redirect:
+'media\fonts.fchunk' opened as ...\generated\Fonts.fchunk`, the same for
+`locale\english\global.fchunk` and both opens of `install\gui.sp`);
+`hud: model 1 ManufacturerGlyph 256 ModelGlyph 257`; the driving HUD
+shows the M3's BMW badge and "M3" plate from the package's images.
+`register.lua` made the four cars selectable under their own groups
+(ID:700000 BMW, ...). In the garage (`runs\vm1-20261101-142300`,
+`garagetest_on.lua` and `-MenuKeys`) the maker list ends with BMW, HONDA,
+MAZDA and TOYOTA (added groups come after the vanilla ones), each with its
+name from the generated global.fchunk and its 16-bit badge, and the Supra
+RZ's card shows its package's picture. The card has the SF disc, not the
+Forza emblem: the vanilla Fonts.fchunk has no emblem texture (see above).
 
 ## Phased plan (PRs)
 
