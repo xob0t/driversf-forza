@@ -193,7 +193,8 @@ def lower_priority() -> None:
 def emit(progress, event: str, **data) -> None:
     """Report a build event to `progress` (args.progress, set by a caller such as
     src/dsfforza/build/install.py; None from the command line). Events: plan, convert,
-    car_start, car_retry, car_done, verify, merge, lint, gui, gui_log, done."""
+    car_start, car_retry, car_done, verify, merge, lint, gui, gui_log, packages,
+    packages_failed, done."""
     if progress is not None:
         progress(event, **data)
 
@@ -1917,6 +1918,8 @@ def finish(
         )
         timings["pack_record"] = round(time.time() - t, 1)
         timings["pack_reuse_stats"] = pack.stats
+    if getattr(args, "packages", False):
+        write_packages(args, out_dir, cars_out, timings, progress)
     if verify is not None:
         t = time.time()
         verify_pack(args, dsf, out_dir, work, verify[0], verify[1], port_args, port_options, results)
@@ -1926,6 +1929,33 @@ def finish(
     if getattr(args, "clean_work", False):
         for c in cars_out:
             (work / f"{c['media']}.chnk").unlink(missing_ok=True)
+
+
+PACKAGES = "packages"  # <build>/packages/<key>.dsfcar (--packages)
+
+
+def write_packages(args, out_dir: Path, cars: list[dict], timings: dict, progress) -> None:
+    """--packages: one .dsfcar per car (src/dsfforza/build/dsfcar.py) in <build>/packages, from
+    work/<media>.chnk, the manifest, and the pack step's pictures and images (so after
+    pack.save and before --clean-work). Old packages of cars no longer in the build go.
+    A failure is reported; the build itself stands (as for the GUI step)."""
+    from dsfforza.build import dsfcar
+
+    t = time.time()
+    folder = out_dir / PACKAGES
+    emit(progress, "packages", cars=len(cars))
+    try:
+        written = dsfcar.pack(out_dir, [c["media"] for c in cars], folder, isos=gui_isos(args))
+        keep = {p.name for p in written}
+        for old in folder.glob(f"*{dsfcar.SUFFIX}"):
+            if old.name not in keep:
+                old.unlink()
+        timings["packages"] = len(written)
+    except Exception as error:  # noqa: BLE001 - reported; the archive and gui/ are still usable
+        print(f"packages failed: {type(error).__name__}: {error}")
+        timings["packages_error"] = f"{type(error).__name__}: {error}"
+        emit(progress, "packages_failed", error=timings["packages_error"])
+    timings["packages_s"] = round(time.time() - t, 1)
 
 
 def gui_isos(args) -> list[Path]:
@@ -2197,6 +2227,12 @@ def build_parser() -> argparse.ArgumentParser:
             )
             p.add_argument("--port", help=f"port_car options for every car (default: {DEFAULT_PORT_OPTIONS!r})")
             p.add_argument("--gui", action="store_true", help="also build gui.sp, Fonts.fchunk and hud.lua")
+            p.add_argument(
+                "--packages",
+                action="store_true",
+                help="also write one car package per car to <out>/packages (<key>.dsfcar; with --gui for "
+                "their garage pictures; research/car-packages.md)",
+            )
             p.add_argument(
                 "--wide-glyphs",
                 action="store_true",

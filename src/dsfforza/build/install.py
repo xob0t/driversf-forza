@@ -631,6 +631,7 @@ class Tracker:
     pack_source: str = ""
     lint_failed: int = 0
     gui_total: int = 0
+    packages_total: int = 0
     gui_done: int = 0
     gui_last: str = ""
 
@@ -743,11 +744,18 @@ class Tracker:
             self.gui_last = " ".join(str(data.get("text", "")).split()[:2]).rstrip(":")
         elif event == "gui_failed":
             notes.append(("warn", f"garage pictures and badges failed: {data.get('error')} (the cars still work)"))
+        elif event == "packages":
+            self.phase = "packages"
+            self.packages_total = data.get("cars", 0)
+        elif event == "packages_failed":
+            notes.append(("warn", f"car packages failed: {data.get('error')} (the build itself is usable)"))
         elif event == "done":
             self.phase = "done"
         return notes
 
     def pack_detail(self) -> str:
+        if self.phase == "packages":
+            return f"writing {self.packages_total} car packages"
         if self.phase == "merge":
             return f"merging {self.merge_cars} cars into one archive"
         if self.phase == "pack_reused":
@@ -1218,6 +1226,10 @@ class Run:
                 problems.append(text + "; dsfforza.asi only patches 1.04. Update the game to 1.04.")
             else:
                 info.append("not 1.04?")
+        if args.packages and args.no_plugin:
+            problems.append(
+                "--packages needs dsfforza.asi (its [archive] packages loads the cars): leave out --no-plugin."
+            )
         from dsfforza.game import game_paths
 
         self.record = read_install_record(game)
@@ -1343,7 +1355,7 @@ class Run:
                     "Common\\UserLuaScripts\\bootstrap.lua belongs to another mod. Add --force to replace it: it is "
                     "backed up and put back by --uninstall, and ours runs it first, so that mod still loads."
                 )
-            for relative, digest in VANILLA_FILES.items():
+            for relative, digest in {} if args.packages else VANILLA_FILES.items():  # --packages replaces none
                 path = game / relative
                 if path.is_file() and sha256(path) != digest:
                     problems.append(
@@ -1490,6 +1502,8 @@ class Run:
         for source in sources:
             argv += ["--reuse", str(source)]
         argv += ["--jobs", str(args.jobs), "--verify-reuse", str(args.verify_reuse if sources else 0)]
+        if args.packages:
+            argv += ["--packages"]  # <build>/packages/*.dsfcar for install.ps1 -Packages
         # A reused car that comes out different when built again doesn't stop a player's build:
         # its fresh copy is used and its build's other cars are converted again.
         argv += ["--verify-mismatch", "rebuild"]
@@ -1605,6 +1619,25 @@ class Run:
         log(f"save folder {save} copied to {target}")
         return target
 
+    def install_flags(self, hook, loader) -> list[str]:
+        """tools/install.ps1's switches for this run, after -GamePath, -Build and -IdPolicy."""
+        args, flags = self.args, []
+        if self.plugin is not None:
+            flags += ["-Asi", "-AsiPath", str(self.plugin)]
+        if hook:
+            flags += ["-HookArchive", str(hook)]
+        if loader:
+            flags += ["-AsiLoader", str(loader)]
+        if args.skip_hook:
+            flags += ["-SkipHook"]
+        if args.packages:
+            flags += ["-Packages"]  # the build's car packages through the car manager
+        if not args.no_write_profile:
+            flags += ["-WriteProfile"]
+        if args.force or installed(self.record):
+            flags += ["-Force"]  # replaces the earlier dsfforza install (and, with --force, other mods' files)
+        return flags
+
     def install(self) -> str:
         args, game = self.args, self.game
         build = Path(args.build) if args.build else (self.build_dir or args.out)
@@ -1648,18 +1681,7 @@ class Run:
             "-IdPolicy",
             policy,
         ]
-        if self.plugin is not None:
-            command += ["-Asi", "-AsiPath", str(self.plugin)]
-        if hook:
-            command += ["-HookArchive", str(hook)]
-        if loader:
-            command += ["-AsiLoader", str(loader)]
-        if args.skip_hook:
-            command += ["-SkipHook"]
-        if not args.no_write_profile:
-            command += ["-WriteProfile"]
-        if args.force or installed(self.record):
-            command += ["-Force"]  # replaces the earlier dsfforza install (and, with --force, other mods' files)
+        command += self.install_flags(hook, loader)
         log("install: " + " ".join(command))
         result = subprocess.run(command, cwd=str(REPO), capture_output=True, text=True, check=False)
         print(result.stdout, end="")
@@ -1856,6 +1878,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-write-profile", action="store_true", help="don't let the mod mark garage cars owned in the save"
     )
     inst.add_argument("--force", action="store_true", help="replace other mods' bootstrap.lua, gui.sp, fonts")
+    inst.add_argument(
+        "--packages",
+        action="store_true",
+        help="experimental: install the cars as car packages through the car manager (no game file replaced; "
+        "needs the plugin; research/car-packages.md)",
+    )
     inst.add_argument(
         "--no-download", action="store_true", help="download nothing (vgmstream, DriverNGHook, the ASI loader)"
     )
