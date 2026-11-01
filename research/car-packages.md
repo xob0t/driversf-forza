@@ -446,7 +446,12 @@ the vanilla files): the plugin replaced all three files (`redirect:
 `hud: model 1 ManufacturerGlyph 256 ModelGlyph 257`; the driving HUD
 shows the M3's BMW badge and "M3" plate from the package's images.
 `register.lua` made the four cars selectable under their own groups
-(ID:700000 BMW, ...).
+(ID:700000 BMW, ...). In the garage (`runs\vm1-20261101-142300`,
+`garagetest_on.lua` and `-MenuKeys`) the maker list ends with BMW, HONDA,
+MAZDA and TOYOTA (added groups come after the vanilla ones), each with its
+name from the generated global.fchunk and its 16-bit badge, and the Supra
+RZ's card shows its package's picture. The card has the SF disc, not the
+Forza emblem: the vanilla Fonts.fchunk has no emblem texture (see above).
 
 ## Phased plan (PRs)
 
