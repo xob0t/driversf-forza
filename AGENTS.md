@@ -66,8 +66,8 @@ its data correctly, never to copy it.
   changed, why, how it was verified (run folders, screenshots), what is open.
   CI runs the offline tests on the PR (`.github/workflows/tests.yml`).
 - Link issues in the PR body: `Fixes #N` for each issue the PR fully fixes
-  (GitHub closes it on merge), `Part of #N` for one it only partly fixes,
-  with a line saying what is left. A bare `#N` in a title only links.
+  (GitHub closes it on merge), `Part of #N` for each issue it only partly
+  fixes, with a line saying what is left. A bare `#N` in a title only links.
 - CodeRabbit reviews every PR within a few minutes. Wait for its review, then
   check each comment against the code: fix what holds, and reply on its thread
   with what you changed or why it doesn't apply. Its comments are input, not
@@ -185,7 +185,8 @@ For the session that hands tasks to worker agents (`.claude/agents/dsff-worker.m
   where to start). The standing rules are this file and the agent definition.
 - Before merging, check that CodeRabbit's review is in and each of its
   threads has an answer from the worker, and that the PR body says
-  `Fixes #N` or `Part of #N` for each issue it touches.
+  `Fixes #N` or `Part of #N` for each issue it touches, with what is left
+  for every `Part of #N`.
 - Before merging, check each rule against "Rules come from data, never from
   fitting". A fitted rule goes back, or waits on an RE round; a PR can ship
   its derived part alone.
