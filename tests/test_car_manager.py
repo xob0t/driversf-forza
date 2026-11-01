@@ -236,6 +236,25 @@ class ManagerTest(unittest.TestCase):
         path.write_text(good)
         self.assertEqual(m.verify(), [])
 
+    def test_batch_generates_the_gui_once(self):
+        """Installing, disabling or removing several cars makes the GUI copies once (each
+        is a rewrite of gui.sp), after the last change, and also when one fails."""
+        from unittest import mock
+
+        pkgs = [str(self.package(f"CAR_{c}_10")) for c in "ABC"]
+        with mock.patch.object(car_manager.Manager, "generate_gui") as gen:
+            car_manager.main(["--game", str(self.game), "install", *pkgs])
+            self.assertEqual(gen.call_count, 1)
+            self.assertEqual([i for i, _ in gen.call_args.args[0]], [3, 5, 6])
+            car_manager.main(["--game", str(self.game), "disable", "forza.fh1.CAR_A_10", "forza.fh1.CAR_B_10"])
+            self.assertEqual(gen.call_count, 2)
+            self.assertEqual([i for i, _ in gen.call_args.args[0]], [6])
+            bad = self.tmp / "bad.dsfcar"
+            bad.write_bytes(b"x")
+            with self.assertRaises(ValueError):
+                car_manager.main(["--game", str(self.game), "install", pkgs[0], str(bad)])
+            self.assertEqual(gen.call_count, 3)  # still made once, for what was saved
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -453,6 +453,44 @@ name from the generated global.fchunk and its 16-bit badge, and the Supra
 RZ's card shows its package's picture. The card has the SF disc, not the
 Forza emblem: the vanilla Fonts.fchunk has no emblem texture (see above).
 
+## Pipeline (phase 4, #454; opt-in)
+
+- `port_batch build --packages` writes `<build>\packages\<key>.dsfcar`
+  for every car of the build (`dsfcar.pack`), after the pack step has
+  saved its pictures and images and before `--clean-work` drops the work
+  chunks. They are written to `packages.new` and swapped in whole, so
+  `packages\` is always one build's complete set. A failure is reported
+  (`packages_failed`, `packages_error` in the report) and the build
+  stands, as for the GUI step, but no packages are left (the earlier
+  ones don't match the new build). `install.ps1 -Packages` and
+  `dsff install --packages` (`package_problem`) refuse a build whose
+  packaging failed or whose packages aren't exactly one per car of its
+  manifest, and with `-Build` they check before an earlier install is
+  removed.
+- `install.ps1 -Packages` (needs `-Asi`) installs DriverNGHook, the
+  plugin with `[archive] packages=1`, `bootstrap.lua` and `register.lua`,
+  and hands `<build>\packages` to the car manager. It doesn't install the
+  archive, gui.sp, Fonts.fchunk, global.fchunk, `ported.lua` or `hud.lua`,
+  so it doesn't check that those are vanilla either: another mod's
+  archive or GUI files can stay (#149). `install.json` records
+  `packages: true` and the package keys; `-Status` names them.
+  `-Uninstall` removes what install.ps1 installed and leaves the
+  manager's files (#455).
+- `dsff install --packages` builds with `--packages` and installs with
+  `-Packages`; with `--no-plugin` it stops in the preflight.
+- The manager makes the GUI copies once per command (`Manager.batch`),
+  not once per package: gui.sp alone is 80 to 160 MB.
+- Verified end to end: `port_batch build --gui --packages` of three cars
+  (packages in 2.9 s), `install.ps1 -Packages -Build` into a temp copy of
+  the vanilla files (no game file changed; `packages=1` in the installed
+  ini; IDs 1 to 3; one GUI generation), and in game with that plugin, ini
+  and the manager's files (`runs\vm1-20261101-150003`): all three spawn,
+  chase and cockpit, the redirect serves the generated files, and the HUD
+  shows each car's badge and plate (`hud: model 3 ManufacturerGlyph 260
+  ModelGlyph 261`). `install.ps1 -Status` names the packages; `-Force`
+  reinstalls keep every car's ID; `-Uninstall` restores the game and
+  leaves `dsfforza\cars`, `dsfforza\generated` and the two Lua files.
+
 ## Phased plan (PRs)
 
 1. **Plugin loader** (the spike's code, proven for one car): build and offline test

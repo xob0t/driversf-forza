@@ -34,6 +34,14 @@ Install:
   autosave.dat; that file is save data and stays after -Uninstall (the game
   ignores it).
 
+-Packages (experimental, needs -Asi): the build's car packages (<build>\packages, port_batch
+--packages) instead of its merged archive and GUI files. Steps 2 and 3 are skipped and no game
+file is replaced; dsfforza.asi gets [archive] packages=1, and the car manager (dsff car_manager)
+installs the packages: dsfforza\cars\ (the cars' own files, stable IDs), dsfforza\generated\
+(copies of gui.sp, Fonts.fchunk and global.fchunk the plugin opens in place of the game's) and
+dsfforza\packages.lua / packages_hud.lua (research/car-packages.md). -Uninstall doesn't remove
+the manager's files yet.
+
 -Force over an earlier install removes it first. With -Build, the archive, gui.sp and
 Fonts.fchunk stay where the new build's file is the one installed (the game file
 unchanged since the install, the build's the same file or the same bytes): no copy
@@ -89,7 +97,9 @@ param(
     [Parameter(ParameterSetName = 'Install')]
     [switch]$WriteProfile,                # let register.lua mark the garage cars unlocked/owned in the save
     [Parameter(ParameterSetName = 'Install')]
-    [switch]$Force,                       # reinstall over an earlier install; replace a foreign bootstrap.lua
+    [switch]$Packages,                    # experimental: the build's car packages through the car manager, no game file replaced (needs -Asi)
+    [Parameter(ParameterSetName = 'Install')]
+    [switch]$Force,                      # reinstall over an earlier install; replace a foreign bootstrap.lua
 
     [Parameter(ParameterSetName = 'Uninstall', Mandatory = $true)]
     [switch]$Uninstall,
@@ -572,7 +582,11 @@ function Show-Status {
     }
     $state = Get-Field $manifest 'state'
     if (-not $state) { $state = 'installed' }
-    Say "dsfforza:  $state $($manifest.installed) ($(@($manifest.cars).Count) cars, IDs $($manifest.ids))"
+    if (Get-Field $manifest 'packages') {   # (installs before -Packages have no such field)
+        Say "dsfforza:  $state $($manifest.installed) ($(@($manifest.cars).Count) car packages; IDs: uv run dsff car_manager --game '$Game' status)"
+    } else {
+        Say "dsfforza:  $state $($manifest.installed) ($(@($manifest.cars).Count) cars, IDs $($manifest.ids))"
+    }
     foreach ($e in @($manifest.entries)) {
         $target = Join-Path $Game $e.path
         $now = 'missing'
@@ -686,6 +700,7 @@ function Invoke-Build([string]$RootLimit) {
                  '--out', $out, '--gui', '--id-policy', $IdPolicy)
     # dsfforza.asi's archive module reads more than the vanilla reader's 1100 root entries.
     if ($RootLimit) { $pyArgs += @('--root-limit', $RootLimit) }
+    if ($Packages) { $pyArgs += '--packages' }   # <out>\packages\*.dsfcar
     $isos = $Iso
     if (-not $isos) { $isos = @(Get-ChildItem -LiteralPath (Join-Path $Repo 'assets') -Filter '*.iso' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }) }
     if (-not $isos) { Fail 'No Forza disc images: pass -Iso <FH1 iso>,<FM4 disc 1>,<FM4 disc 2> (or put them in assets\).' }
@@ -707,15 +722,64 @@ function Invoke-Build([string]$RootLimit) {
     return $out
 }
 
+# -Packages: hand the build's car packages to the car manager (src/dsfforza/build/car_manager.py),
+# which picks their IDs (stable per car), writes dsfforza\cars\ (the plugin's list and the cars'
+# files), the generated GUI copies in dsfforza\generated\ and packages.lua / packages_hud.lua.
+# It writes no game file; its files are its own (-Uninstall leaves them for now: issue #455).
+function Install-CarPackages([string[]]$Files) {
+    $uv = Find-Uv
+    if (-not $uv) { Fail 'uv is needed for the car manager: install it from https://docs.astral.sh/uv/getting-started/installation/ and run this again.' }
+    $pyArgs = @('run', '--project', $Repo, '--frozen', '--no-dev', 'dsff', 'car_manager', '--game', $Game, 'install') + $Files
+    Say "  car manager: $($Files.Count) packages"
+    & $uv @pyArgs | Out-Host
+    if ($LASTEXITCODE -ne 0) { Fail "the car manager failed (exit code $LASTEXITCODE); see the output above" }
+}
+
+# -Packages: a build's car packages, checked: only one build's complete set (port_batch writes a
+# packaging error to its report and removes the packages), one package per car of its manifest
+# and no more (install.py package_problem checks the same). Called before an earlier install is
+# removed when -Build is given, so a bad build leaves the game as it was.
+function Get-BuildPackages([string]$Folder) {
+    $packageFiles = @(Get-ChildItem -LiteralPath (Join-Path $Folder 'packages') -Filter '*.dsfcar' -File -ErrorAction SilentlyContinue |
+                      ForEach-Object { $_.FullName })
+    if (-not $packageFiles) { Fail "no car packages in $Folder\packages: build with port_batch --packages (or uv run dsff install --packages)." }
+    if (-not (Test-Path -LiteralPath (Join-Path $Folder 'dngvehicles.json'))) { Fail "build folder incomplete: $Folder\dngvehicles.json missing" }
+    $buildManifest = Read-BuildManifest (Join-Path $Folder 'dngvehicles.json')
+    # Only one build's complete set: its packaging must have worked (port_batch writes the
+    # error to its report and removes the packages), and there must be one package per car
+    # of its manifest, no more (install.py package_problem checks the same).
+    $reportPath = Join-Path $Folder 'batch-report.json'
+    if (Test-Path -LiteralPath $reportPath) {
+        $timings = Get-Field (Read-BuildManifest $reportPath) 'timings_s'   # (no ConvertFrom-Json size limit)
+        $packError = if ($timings) { Get-Field $timings 'packages_error' } else { $null }
+        if ($packError) { Fail "the build's car packages failed ($packError): build again with --packages." }
+    }
+    $want = @($buildManifest['cars'] | ForEach-Object { 'forza.{0}.{1}' -f ([string]$_['game']).ToLower(), $_['media'] }) | Sort-Object
+    $have = @($packageFiles | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_) }) | Sort-Object
+    $diff = @(Compare-Object -ReferenceObject $want -DifferenceObject $have)
+    if ($diff.Count) {
+        $missing = @($diff | Where-Object { $_.SideIndicator -eq '<=' } | ForEach-Object { $_.InputObject })
+        $extra = @($diff | Where-Object { $_.SideIndicator -eq '=>' } | ForEach-Object { $_.InputObject })
+        Fail ("$Folder\packages doesn't match the build: $($missing.Count) cars without a package " +
+              "($(($missing | Select-Object -First 3) -join ', ')), $($extra.Count) packages of other cars " +
+              "($(($extra | Select-Object -First 3) -join ', ')). Build again with --packages.")
+    }
+    return ,$packageFiles
+}
+
 function Invoke-Install {
     $existing = Read-Manifest
     $kept = @{}
+    if ($Packages -and $Build) { [void](Get-BuildPackages (Resolve-Path -LiteralPath $Build).Path) }   # before anything is removed
     if (Test-Installed $existing) {
         if (-not $Force) { Fail "dsfforza is already installed ($ManifestPath). Run -Uninstall first, or add -Force to reinstall." }
         $earlier = @($existing.cars | Where-Object { $_ })
         Say "Removing the earlier install first (-Force): its $($earlier.Count) cars ($((@($earlier | Select-Object -First 6) -join ', '))$(if ($earlier.Count -gt 6) { ', ...' })) are replaced by this build's, not added to."
         Say '  To have several cars, install them in one build: -Car A,B,... (or uv run dsff install --car A --car B).'
-        if ($Build) {   # (a build made here reads the vanilla archive: then everything comes out first)
+        # (a build made here reads the vanilla archive: then everything comes out first; -Packages
+        # installs none of these files, so an earlier install's all come out too, restored from
+        # their backups, and the package install's install.json doesn't have to carry them)
+        if ($Build -and -not $Packages) {
             $folder = (Resolve-Path -LiteralPath $Build).Path
             $kept = Get-UnchangedEntries $existing @{
                 'Install\dngvehicles.sp' = (Join-Path $folder 'dngvehicles.sp')
@@ -726,7 +790,9 @@ function Invoke-Install {
         if ($kept.Count) { Invoke-Uninstall -Keep -Skip $kept } else { Invoke-Uninstall }
     }
     Resolve-LeftoverBackup $kept
-    Test-VanillaFiles $kept
+    # -Packages replaces no game file (the cars come from their own files, the GUI parts from the
+    # manager's generated copies), so another mod's archive or GUI files are no reason to stop.
+    if (-not $Packages) { Test-VanillaFiles $kept }
 
     $lua = Join-Path $Repo 'tools\game\lua'
     $bootstrapTarget = Join-Path $Game 'Common\UserLuaScripts\bootstrap.lua'
@@ -767,6 +833,7 @@ function Invoke-Install {
     if ($IdPolicy -eq 'asi' -and -not $asiFile) {
         Fail '-IdPolicy asi needs the dsfforza.asi plugin: add -Asi (without it cars at 304+ are never in the garage).'
     }
+    if ($Packages -and -not $asiFile) { Fail '-Packages needs the dsfforza.asi plugin ([archive] packages loads the cars): add -Asi.' }
 
     $buildFolder = $Build
     if (-not $buildFolder) {
@@ -778,21 +845,34 @@ function Invoke-Install {
     $archive = Join-Path $buildFolder 'dngvehicles.sp'
     $buildManifestPath = Join-Path $buildFolder 'dngvehicles.json'
     $portedLua = Join-Path $buildFolder 'dngvehicles.lua'
-    foreach ($f in @($archive, $buildManifestPath, $portedLua)) { if (-not (Test-Path -LiteralPath $f)) { Fail "build folder incomplete: $f missing" } }
-    # The vanilla reader holds 1100 root entries and seeks below 2 GiB; more needs the plugin's archive module.
-    $rootEntries = Get-ArchiveRootCount $archive
-    $archiveBytes = (Get-Item -LiteralPath $archive).Length
-    if (-not $asiFile -and ($rootEntries -gt 1100 -or $archiveBytes -ge 2GB)) {
-        Fail ("the archive has $rootEntries root entries and $([math]::Round($archiveBytes / 1MB)) MB; the vanilla game reads at most " +
-              "1100 entries and 2 GiB. Add -Asi to install the dsfforza.asi plugin with it (tools\asi\build.ps1).")
+    $packageFiles = @()
+    if ($Packages) {
+        # The car packages (port_batch --packages) go through the car manager: no archive, GUI files
+        # or ported.lua/hud.lua of the build are installed (research/car-packages.md).
+        $packageFiles = Get-BuildPackages $buildFolder
+        $buildManifest = Read-BuildManifest $buildManifestPath
+    } else {
+        foreach ($f in @($archive, $buildManifestPath, $portedLua)) { if (-not (Test-Path -LiteralPath $f)) { Fail "build folder incomplete: $f missing" } }
+        # The vanilla reader holds 1100 root entries and seeks below 2 GiB; more needs the plugin's archive module.
+        $rootEntries = Get-ArchiveRootCount $archive
+        $archiveBytes = (Get-Item -LiteralPath $archive).Length
+        if (-not $asiFile -and ($rootEntries -gt 1100 -or $archiveBytes -ge 2GB)) {
+            Fail ("the archive has $rootEntries root entries and $([math]::Round($archiveBytes / 1MB)) MB; the vanilla game reads at most " +
+                  "1100 entries and 2 GiB. Add -Asi to install the dsfforza.asi plugin with it (tools\asi\build.ps1).")
+        }
+        $buildManifest = Read-BuildManifest $buildManifestPath
+        $builtFrom = $buildManifest['vanilla_sha256']
+        if (-not $builtFrom) { $builtFrom = $buildManifest['stock_sha256'] }   # builds before v0.1.3 name it so
+        if ($builtFrom -and $builtFrom -ne $VanillaArchiveHash) { Fail 'the build was made from a different vanilla archive' }
+        Test-BuildGui $buildFolder $buildManifest
     }
-    $buildManifest = Read-BuildManifest $buildManifestPath
-    $builtFrom = $buildManifest['vanilla_sha256']
-    if (-not $builtFrom) { $builtFrom = $buildManifest['stock_sha256'] }   # builds before v0.1.3 name it so
-    if ($builtFrom -and $builtFrom -ne $VanillaArchiveHash) { Fail 'the build was made from a different vanilla archive' }
-    Test-BuildGui $buildFolder $buildManifest
     $ids = @($buildManifest['cars'] | ForEach-Object { $_['spool_id'] })
-    Say "Installing $($ids.Count) cars (IDs $($ids -join ', ')) into $Game"
+    if ($Packages) {
+        $ids = @()   # the car manager picks the IDs (dsfforza\cars\manager.json)
+        Say "Installing $($packageFiles.Count) car packages into $Game (the car manager picks their IDs)"
+    } else {
+        Say "Installing $($ids.Count) cars (IDs $($ids -join ', ')) into $Game"
+    }
 
     New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
     $createdDirs = New-Object System.Collections.ArrayList
@@ -801,18 +881,22 @@ function Invoke-Install {
     }
     $manifest = [ordered]@{
         state = 'installing'; installed = (Get-Date -Format 's'); build = $buildFolder; ids = ($ids -join ',')
-        cars = @($buildManifest['cars'] | ForEach-Object { $_['media'] })
+        cars = $(if ($Packages) { @($packageFiles | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_) }) }
+                 else { @($buildManifest['cars'] | ForEach-Object { $_['media'] }) })
         entries = $script:Entries; created_dirs = $createdDirs; runtime_files = @()
+        packages = [bool]$Packages
     }
     $script:Manifest = $manifest
     Write-Manifest $manifest
     try {
-        Install-Or-Keep $archive 'Install\dngvehicles.sp' $kept
         $gui = Join-Path $buildFolder 'gui'
-        if (Test-Path -LiteralPath (Join-Path $gui 'gui.sp')) { Install-Or-Keep (Join-Path $gui 'gui.sp') 'Install\gui.sp' $kept }
-        if (Test-Path -LiteralPath (Join-Path $gui 'Fonts.fchunk')) { Install-Or-Keep (Join-Path $gui 'Fonts.fchunk') 'media\Fonts.fchunk' $kept }
+        if (-not $Packages) {
+            Install-Or-Keep $archive 'Install\dngvehicles.sp' $kept
+            if (Test-Path -LiteralPath (Join-Path $gui 'gui.sp')) { Install-Or-Keep (Join-Path $gui 'gui.sp') 'Install\gui.sp' $kept }
+            if (Test-Path -LiteralPath (Join-Path $gui 'Fonts.fchunk')) { Install-Or-Keep (Join-Path $gui 'Fonts.fchunk') 'media\Fonts.fchunk' $kept }
+        }
         # Name strings for the garage (gui_assets: Locale\<language>\global.fchunk with "ID:7xxxxx" entries).
-        if (Test-Path -LiteralPath (Join-Path $gui 'Locale')) {
+        if (-not $Packages -and (Test-Path -LiteralPath (Join-Path $gui 'Locale'))) {
             foreach ($file in Get-ChildItem -LiteralPath (Join-Path $gui 'Locale') -Recurse -File -Filter 'global.fchunk') {
                 $relative = 'Locale\' + $file.FullName.Substring((Join-Path $gui 'Locale').Length).TrimStart('\')
                 if (Test-Path -LiteralPath (Join-Path $Game $relative)) { Install-File $file.FullName $relative }
@@ -835,7 +919,14 @@ function Invoke-Install {
             Install-File $asiFile 'plugins\dsfforza.asi'
             $asiIni = [IO.Path]::ChangeExtension($asiFile, '.ini')
             if (-not (Test-Path -LiteralPath $asiIni)) { $asiIni = Join-Path $Repo 'tools\asi\dsfforza.ini' }
-            Install-File $asiIni 'plugins\dsfforza.ini'
+            if ($Packages) {
+                # [archive] packages=1: the cars from dsfforza\cars, the GUI copies from dsfforza\generated.
+                $iniText = [IO.File]::ReadAllText($asiIni) -replace '(?m)^packages=0', 'packages=1'
+                if ($iniText -notmatch '(?m)^packages=1') { Fail "$asiIni has no [archive] packages switch: an older plugin?" }
+                Install-Text $iniText 'plugins\dsfforza.ini'
+            } else {
+                Install-File $asiIni 'plugins\dsfforza.ini'
+            }
             $manifest.runtime_files = @('plugins\dsfforza.log')
         }
 
@@ -845,11 +936,14 @@ function Invoke-Install {
         }
         Install-File (Join-Path $lua 'player\bootstrap.lua') 'Common\UserLuaScripts\bootstrap.lua'
         Install-File (Join-Path $lua 'dsfforza\register.lua') 'Common\UserLuaScripts\dsfforza\register.lua'
-        Install-File $portedLua 'Common\UserLuaScripts\dsfforza\ported.lua'
-        if (Test-Path -LiteralPath (Join-Path $gui 'hud.lua')) { Install-File (Join-Path $gui 'hud.lua') 'Common\UserLuaScripts\dsfforza\hud.lua' }
+        if (-not $Packages) {
+            Install-File $portedLua 'Common\UserLuaScripts\dsfforza\ported.lua'
+            if (Test-Path -LiteralPath (Join-Path $gui 'hud.lua')) { Install-File (Join-Path $gui 'hud.lua') 'Common\UserLuaScripts\dsfforza\hud.lua' }
+        }
         if ($WriteProfile) {
             Install-Text "-- written by tools\install.ps1 -WriteProfile`nreturn { register = { writeProfile = true } }`n" 'Common\UserLuaScripts\dsfforza\config.lua'
         }
+        if ($Packages) { Install-CarPackages $packageFiles }
         $manifest.state = 'installed'
     } finally {
         $manifest.entries = $script:Entries

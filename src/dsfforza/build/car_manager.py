@@ -30,6 +30,7 @@ their IDs; their keys are "in the archive" and a package of the same car is refu
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import re
 import shutil
@@ -117,6 +118,7 @@ class Manager:
         self.cars_dir = self.game / CARS_DIR
         self.archive = archive or self.game / ARCHIVE
         self.gui_base = Path(gui_base) if gui_base else self.game  # the game files car_gui starts from
+        self.defer_gui = False  # batch(): the GUI copies are made once, at its end
         self.log = log
         path = self.cars_dir / STATE
         if path.exists():
@@ -187,7 +189,20 @@ class Manager:
         _write_text(self.cars_dir / LIST, "\n".join(lines) + "\n")
         by_id = {c["id"]: k for k, c in self.state["cars"].items()}
         _write_text(self.game / LUA, self.lua([(i, by_id[i]) for i in sorted(listed)]))
-        self.generate_gui([(i, by_id[i]) for i in sorted(listed)])
+        if not self.defer_gui:
+            self.generate_gui([(i, by_id[i]) for i in sorted(listed)])
+
+    @contextlib.contextmanager
+    def batch(self):
+        """Several changes, one generation of the GUI copies (gui.sp alone is 80 to 160 MB): the
+        state and the plugin's list are still saved after each change, the copies at the end,
+        also when a change fails (they then match what was saved)."""
+        self.defer_gui = True
+        try:
+            yield self
+        finally:
+            self.defer_gui = False
+            self.save()
 
     def generate_gui(self, enabled: list[tuple[int, str]]) -> None:
         """The enabled cars' pictures, badges, plates and names (car_gui), when the game's GUI
@@ -414,14 +429,17 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit("Driver.exe is running from this folder; close the game first")
     m = Manager(args.game, args.archive, gui_base=args.gui_base)
     if args.cmd == "install":
-        for path in args.packages:
-            m.install(path, force=args.force)
+        with m.batch():
+            for path in args.packages:
+                m.install(path, force=args.force)
     elif args.cmd in ("enable", "disable"):
-        for key in args.keys:
-            m.set_enabled(key, enabled=args.cmd == "enable")
+        with m.batch():
+            for key in args.keys:
+                m.set_enabled(key, enabled=args.cmd == "enable")
     elif args.cmd == "remove":
-        for key in args.keys:
-            m.remove(key)
+        with m.batch():
+            for key in args.keys:
+                m.remove(key)
     elif args.cmd == "status":
         print("\n".join(m.status()) or "no car packages installed")
     else:

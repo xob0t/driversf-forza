@@ -193,7 +193,8 @@ def lower_priority() -> None:
 def emit(progress, event: str, **data) -> None:
     """Report a build event to `progress` (args.progress, set by a caller such as
     src/dsfforza/build/install.py; None from the command line). Events: plan, convert,
-    car_start, car_retry, car_done, verify, merge, lint, gui, gui_log, done."""
+    car_start, car_retry, car_done, verify, merge, lint, gui, gui_log, packages,
+    packages_failed, done."""
     if progress is not None:
         progress(event, **data)
 
@@ -1917,6 +1918,8 @@ def finish(
         )
         timings["pack_record"] = round(time.time() - t, 1)
         timings["pack_reuse_stats"] = pack.stats
+    if getattr(args, "packages", False):
+        write_packages(args, out_dir, cars_out, timings, progress)
     if verify is not None:
         t = time.time()
         verify_pack(args, dsf, out_dir, work, verify[0], verify[1], port_args, port_options, results)
@@ -1926,6 +1929,48 @@ def finish(
     if getattr(args, "clean_work", False):
         for c in cars_out:
             (work / f"{c['media']}.chnk").unlink(missing_ok=True)
+
+
+PACKAGES = "packages"  # <build>/packages/<key>.dsfcar (--packages)
+
+
+def write_packages(args, out_dir: Path, cars: list[dict], timings: dict, progress) -> None:
+    """--packages: one .dsfcar per car (src/dsfforza/build/dsfcar.py) in <build>/packages, from
+    work/<media>.chnk, the manifest, and the pack step's pictures and images (so after
+    pack.save and before --clean-work). They are written to packages.new and swapped in
+    whole, so <build>/packages is always one build's complete set. On a failure the build
+    stands (as for the GUI step), but the packages go, the earlier ones included (they don't
+    match this build), and the report says why (timings packages_error): install.ps1 -Packages
+    and dsff install --packages refuse such a build."""
+    import shutil
+
+    t = time.time()
+    folder = out_dir / PACKAGES
+    staged = out_dir / (PACKAGES + ".new")
+    shutil.rmtree(staged, ignore_errors=True)
+    emit(progress, "packages", cars=len(cars))
+    try:
+        written = pack_all(out_dir, [c["media"] for c in cars], staged, gui_isos(args))
+        shutil.rmtree(folder, ignore_errors=True)
+        staged.replace(folder)
+        timings["packages"] = len(written)
+    except Exception as error:  # noqa: BLE001 - reported; the archive and gui/ are still usable
+        shutil.rmtree(staged, ignore_errors=True)
+        shutil.rmtree(folder, ignore_errors=True)
+        print(f"packages failed: {type(error).__name__}: {error} (no packages for this build)")
+        timings["packages_error"] = f"{type(error).__name__}: {error}"
+        emit(progress, "packages_failed", error=timings["packages_error"])
+    timings["packages_s"] = round(time.time() - t, 1)
+
+
+def pack_all(out_dir: Path, media: list[str], folder: Path, isos: list[Path]) -> list[Path]:
+    """dsfcar.pack for every car, or ValueError when a car got no package."""
+    from dsfforza.build import dsfcar
+
+    written = dsfcar.pack(out_dir, media, folder, isos=isos)
+    if len(written) != len(media):
+        raise ValueError(f"{len(written)} packages for {len(media)} cars")
+    return written
 
 
 def gui_isos(args) -> list[Path]:
@@ -2197,6 +2242,12 @@ def build_parser() -> argparse.ArgumentParser:
             )
             p.add_argument("--port", help=f"port_car options for every car (default: {DEFAULT_PORT_OPTIONS!r})")
             p.add_argument("--gui", action="store_true", help="also build gui.sp, Fonts.fchunk and hud.lua")
+            p.add_argument(
+                "--packages",
+                action="store_true",
+                help="also write one car package per car to <out>/packages (<key>.dsfcar; with --gui for "
+                "their garage pictures; research/car-packages.md)",
+            )
             p.add_argument(
                 "--wide-glyphs",
                 action="store_true",
