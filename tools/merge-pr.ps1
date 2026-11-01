@@ -9,8 +9,8 @@ Squash-merges a pull request and cleans up after it, safely.
    uncommitted or untracked files is left as it is.
 2. Points open PRs stacked on this one at master (deleting their base would close
    them), then gh pr merge --squash (refuses a PR that isn't mergeable; not
-   --delete-branch, which also removes the local worktree) and deletes the remote
-   branch through the API.
+   --delete-branch, which also removes the local worktree); GitHub deletes the remote
+   branch (the repo's delete_branch_on_merge).
 3. Removes the clean worktree's folder, deletes the local branch (unless a kept worktree
    has it checked out), prunes.
    Then sweeps the links out of folders that are no longer worktrees (worktree-setup.ps1
@@ -72,15 +72,13 @@ foreach ($n in $stacked) {
 }
 
 # Not --delete-branch: with it, gh also removes the local worktree that has the branch
-# checked out, whatever is in it. The remote branch is deleted through the API instead,
-# and the worktree is handled below.
+# checked out, whatever is in it. GitHub deletes the remote branch itself (the repo's
+# delete_branch_on_merge is on), and the worktree is handled below.
 gh pr merge $Number --squash | Out-Null
 if ($LASTEXITCODE) { throw "gh pr merge $Number failed" }
 $merged = (gh pr view $Number --json state,mergeCommit | ConvertFrom-Json)
 if ($merged.state -ne 'MERGED') { throw "PR #$Number is $($merged.state) after the merge" }
 Say "merged as $($merged.mergeCommit.oid.Substring(0, 7))"
-gh api -X DELETE "repos/{owner}/{repo}/git/refs/heads/$($pr.headRefName)" 2>$null | Out-Null
-if ($LASTEXITCODE) { Say "could not delete the remote branch $($pr.headRefName)" } else { Say "deleted the remote branch" }
 
 if ($worktree -and -not $KeepWorktree -and (Test-Path -LiteralPath $worktree)) {
     git -C $main worktree remove --force $worktree 2>$null
