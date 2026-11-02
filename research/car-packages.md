@@ -625,7 +625,7 @@ car spawned, chase and cockpit, the player driving it, no crash; ID 2 is
 the Supra RZ with its Toyota badge and "SUPRA RZ" plate, so the migrated
 IDs are the merged install's.
 
-## Model ID in memory (#TBD)
+## Model ID in memory (confirmed-runtime, 2026-11-02)
 
 The installed car.sp is the package's own file; dsfforza.asi writes the
 listed ID (`cars.txt`) into the full VEHC as it serves the read, whatever
@@ -683,7 +683,43 @@ packages with one builder ID, kinds 1 and 2 untouched, and bounds.
 under their own listed IDs: nothing in the plugin keys on the file's ID.
 Their UIDs are a separate matter ("UIDs" above).
 
-RUNTIME_PLACEHOLDER
+**In game (confirmed-runtime).** Vanilla archive and GUI files, the
+plugin with `packages=1`, six packages installed by the manager into a
+fake game folder laid over the run (`-Overlay`), car.sp unchanged for five
+of them:
+
+| Listed ID | Car | ID in its car.sp | Note |
+| --- | --- | --- | --- |
+| 1 | Honda S2000 (2003) | 4 | another car's builder ID |
+| 2 | BMW M3 E30 (1991) | 1 | |
+| 3 | Toyota Supra RZ (1998) | 2 | |
+| 4 | Lamborghini Countach (1988) | 470 | |
+| 5 | VW Golf GTi 16v Mk2 (1992) | 1 | rewritten to the M3's builder ID: a package from another build |
+| 6 | Mazda RX-7 (1997) | 6 | installed as today's installs are, the ID written into the file |
+
+- `runs\vm1-20261102-164116` (probes 1 to 6, then the garage with
+  `garagetest_on.lua` and `-MenuKeys`): every full VEHC read whole, in one
+  read, and rewritten, e.g. `packages: 2: VEHC 0 read whole (1560576
+  bytes); model ID 1 -> 2 in 4 fields (VSVH+0x124b60 VO3D+0x177080
+  UPVH+0x1774a4 SPID+0x17b000)`, `5: ... model ID 1 -> 5`, `1: ... 4 ->
+  1`, `4: ... 470 -> 4`, `6: ... 6 -> 6`. Each car spawns as its listed
+  ID, the right car, chase and cockpit (the interior and exterior entries
+  read from the package), and the HUD shows its badge and plate (`hud:
+  model N`). In the garage `getVehicleStats(1..6)` gives each its own
+  entry (Selectable, the package's picture); the MAZDA, TOYOTA, BMW and
+  HONDA groups show the RX-7, Supra RZ, M3 and S2000 cards, OWNED, and the
+  VOLKSWAGEN group holds the Golf GTi 16v Mk2 (the Countach's LAMBORGHINI
+  group wasn't opened).
+- `runs\vm1-20261102-170022` (probes 2, 5, 1, 3, 4, 6, 2, 5): 2 and 5 are
+  released and requested again (`loaded before: true`): both spawn as the
+  M3 and the Golf, chase and cockpit. The full VEHC stayed resident (no
+  second read of it); the interior and exterior were read again.
+- Reads 0.3 to 8.4 ms; no nested reader over a package entry, no field
+  count other than four, no crash, in either run.
+
+Not covered: a full VEHC read a second time (the game kept it resident in
+both runs; the write is the same on every read, `st_set_ids`), and a slow
+disk.
 
 **Reading car.sp straight out of the `.dsfcar`** (not done; would work as
 far as the loader is concerned). The zip is stored, not deflated, so
