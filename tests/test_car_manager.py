@@ -69,7 +69,7 @@ class ManagerTest(unittest.TestCase):
         for key in (a, b):
             installed = (self.game / car_manager.CARS_DIR / key / "car.sp").read_bytes()
             self.assertEqual(installed, dsfcar.read(self.tmp / f"{key.split('.')[-1]}-v1.dsfcar")[1])
-            self.assertEqual(dsfcar.sha256(installed), m.state["cars"][key]["manifest"]["car"]["sha256"])
+            self.assertEqual(dsfcar.sha256(installed), m.manifest(key)["car"]["sha256"])
             with (self.game / car_manager.CARS_DIR / key / "car.sp").open("rb") as f:
                 from dsfforza.formats.chnk import read_chunk
 
@@ -505,6 +505,79 @@ class ManagerTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as refused:
             self.manager().install(self.package("CAR_A_10"))
         self.assertIn("archive.packages", str(refused.exception))
+
+    def state_on_disk(self) -> dict:
+        return json.loads((self.game / car_manager.CARS_DIR / car_manager.STATE).read_text())
+
+    def test_state_keeps_what_the_manager_owns(self):
+        """The state holds ID, version, enabled and car.sp's checksum per car; the manifest
+        is the car's car.json, read where it is needed (packages.lua, status, verify)."""
+        m = self.manager()
+        a = m.install(self.package("CAR_A_10"))
+        state = self.state_on_disk()
+        self.assertEqual(state["format"], 2)
+        self.assertEqual(set(state["cars"][a]), {"id", "version", "enabled", "sha256"})
+        folder = self.game / car_manager.CARS_DIR / a
+        self.assertEqual(self.manager().manifest(a), json.loads((folder / "car.json").read_text()))
+        self.assertIn("Test Car (2010)", self.manager().status()[0])
+        # car.json gone: the car is left out of the outputs, and verify says why.
+        (folder / "car.json").unlink()
+        m = self.manager()
+        m.save()
+        self.assertEqual(self.listed(), {})
+        self.assertNotIn("[3]", (self.game / car_manager.LUA).read_text())
+        self.assertTrue(any("car.json is missing" in p for p in m.verify()))
+        self.assertIn("(no car.json)", m.status()[0])
+        m.install(self.package("CAR_A_10", version=2))  # installing it again puts it back
+        self.assertEqual(self.listed(), {3: rf"dsfforza\cars\{a}\car.sp"})
+        self.assertEqual(m.verify(), [])
+
+    def test_format_1_state_is_upgraded_in_place(self):
+        """A format-1 state (each car's manifest in it) loads as format 2 and is written back:
+        the outputs stay the same, a car.json missing from a car's folder is written from the
+        state's copy, and a patched car.sp (format 1's installs) still verifies."""
+        m = self.manager()
+        a = m.install(self.package("CAR_A_10"))
+        b = m.install(self.package("CAR_B_10"))
+        m.set_enabled(b, enabled=False)
+        lua, listed = (self.game / car_manager.LUA).read_text(), self.listed()
+        # The state as format 1 wrote it: the manifests in it, car.sp with the ID written in.
+        state = self.state_on_disk()
+        state["format"] = 1
+        for key in (a, b):
+            folder = self.game / car_manager.CARS_DIR / key
+            state["cars"][key]["manifest"] = json.loads((folder / "car.json").read_text())
+            patched = car_sp(self.tmp / f"{key}.sp", car=state["cars"][key]["id"])
+            (folder / "car.sp").write_bytes(patched)
+            state["cars"][key]["sha256"] = dsfcar.sha256(patched)
+        manifest_b = (self.game / car_manager.CARS_DIR / b / "car.json").read_text()
+        (self.game / car_manager.CARS_DIR / b / "car.json").unlink()
+        (self.game / car_manager.CARS_DIR / car_manager.STATE).write_text(json.dumps(state))
+        m = self.manager()
+        self.assertTrue(any("state format 1 -> 2" in line for line in self.lines))
+        on_disk = self.state_on_disk()
+        self.assertEqual(on_disk["format"], 2)
+        self.assertEqual(on_disk["ids"], state["ids"])
+        for key in (a, b):
+            expected = {k: state["cars"][key][k] for k in ("id", "version", "enabled", "sha256")}
+            self.assertEqual(on_disk["cars"][key], expected)
+        self.assertEqual(
+            json.loads((self.game / car_manager.CARS_DIR / b / "car.json").read_text()), json.loads(manifest_b)
+        )
+        self.assertEqual(m.verify(), [])
+        m.save()
+        self.assertEqual(((self.game / car_manager.LUA).read_text(), self.listed()), (lua, listed))
+        m.set_enabled(b, enabled=True)  # and it goes on working
+        self.assertEqual(sorted(self.listed()), [3, 5])
+
+    def test_unknown_state_format_refused(self):
+        self.manager().install(self.package("CAR_A_10"))
+        path = self.game / car_manager.CARS_DIR / car_manager.STATE
+        state = json.loads(path.read_text())
+        state["format"] = 3
+        path.write_text(json.dumps(state))
+        with self.assertRaises(SystemExit):
+            self.manager()
 
 
 if __name__ == "__main__":

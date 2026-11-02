@@ -12,6 +12,8 @@ src/dsfforza/build/dsfcar.py) in the game folder, for dsfforza.asi [archive] pac
 What it owns, all under the game folder (no game file is written):
 
     dsfforza\\cars\\manager.json       its state: the key -> model ID map and the installed cars
+                                     (what the manager owns of each: ID, version, enabled, the
+                                     installed car.sp's SHA-256; the rest is the car's car.json)
     dsfforza\\cars\\cars.txt           the plugin's list, "id path" per enabled car
     dsfforza\\cars\\<key>\\            one car: the package's car.sp, manifest and images as they
                                      are (car.sp, car.json, *.png, *.dds). car.sp holds its
@@ -42,7 +44,8 @@ from pathlib import Path
 
 from dsfforza.build import dsfcar
 
-STATE_FORMAT = 1
+STATE_FORMAT = 2  # 2: a car's manifest is its car.json only, no longer copied into the state
+CAR_FIELDS = ("id", "version", "enabled", "sha256")  # what the state keeps of an installed car
 CARS_DIR = Path("dsfforza") / "cars"
 STATE = "manager.json"
 LIST = "cars.txt"
@@ -159,16 +162,44 @@ class Manager:
         self.gui_base = Path(gui_base) if gui_base else self.game  # the game files car_gui starts from
         self.defer_gui = False  # batch(): the GUI copies are made once, at its end
         self.log = log
+        self._manifests: dict[str, dict | None] = {}  # key -> its car.json, read once
         path = self.cars_dir / STATE
         if path.exists():
             self.state = json.loads(path.read_text(encoding="utf-8"))
+            self.state.pop("merged", None)  # a state from before packages-only installs: its IDs are in "ids"
+            if self.state.get("format") == 1:
+                self._upgrade_from_1(path)
             if self.state.get("format") != STATE_FORMAT:
                 raise SystemExit(f"{path}: state format {self.state.get('format')}, this manager knows {STATE_FORMAT}")
         else:
             self.state = {"format": STATE_FORMAT, "ids": {}, "cars": {}}
-        self.state.pop("merged", None)  # a state from before packages-only installs: its IDs are in "ids"
 
     # --- state ---
+
+    def _upgrade_from_1(self, path: Path) -> None:
+        """Format 1 kept each car's whole manifest in the state, a copy of the car's car.json.
+        Format 2 keeps what the manager owns (CAR_FIELDS) and reads the rest from car.json. The
+        upgrade writes car.json from the state where a car's folder lacks it, then the state."""
+        for key, car in self.state["cars"].items():
+            manifest = car.get("manifest")
+            folder = self.cars_dir / key
+            if isinstance(manifest, dict) and folder.is_dir() and not (folder / dsfcar.MANIFEST).exists():
+                _write_text(folder / dsfcar.MANIFEST, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+            self.state["cars"][key] = {k: car[k] for k in CAR_FIELDS if k in car}
+        self.state["format"] = STATE_FORMAT
+        _write_text(path, json.dumps(self.state, indent=1, sort_keys=True) + "\n")
+        self.log(f"{path}: state format 1 -> {STATE_FORMAT} ({len(self.state['cars'])} cars; manifests in car.json)")
+
+    def manifest(self, key: str) -> dict | None:
+        """The installed car's manifest, its folder's car.json; None when it is missing or
+        isn't JSON (verify reports it, and the car is left out of the outputs)."""
+        if key not in self._manifests:
+            try:
+                m = json.loads((self.cars_dir / key / dsfcar.MANIFEST).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                m = None
+            self._manifests[key] = m if isinstance(m, dict) else None
+        return self._manifests[key]
 
     def key_clash(self, key: str) -> str | None:
         """A known key that differs from `key` only in case: on Windows both name the same
@@ -195,15 +226,19 @@ class Manager:
         return self.cars_dir / key / dsfcar.CAR
 
     def listed(self) -> dict[int, str]:
-        """{ID: path} the plugin's list should hold: the enabled packages."""
+        """{ID: path} the plugin's list should hold: the enabled packages, less those without a
+        readable car.json (packages.lua and the GUI files are made from it)."""
         return {
             c["id"]: str(CARS_DIR / k / dsfcar.CAR).replace("/", "\\")
             for k, c in self.state["cars"].items()
-            if c["enabled"]
+            if c["enabled"] and self.manifest(k) is not None
         }
 
     def save(self) -> None:
         """The state, the plugin's list and packages.lua."""
+        for key in self.state["cars"]:
+            if self.manifest(key) is None:
+                self.log(f"{key}: no readable {dsfcar.MANIFEST} in its folder; left out (install the package again)")
         _write_text(self.cars_dir / STATE, json.dumps(self.state, indent=1, sort_keys=True) + "\n")
         listed = self.listed()
         lines = ["# written by dsff car_manager; one line per enabled car: model ID, package (game folder relative)"]
@@ -234,17 +269,14 @@ class Manager:
         if not ((self.gui_base / car_gui.GUI).exists() and (self.gui_base / car_gui.FONTS).exists()):
             self.log(f"no {car_gui.GUI} and {car_gui.FONTS} in {self.gui_base}: no garage pictures, badges or plates")
             return
-        cars = [
-            {"id": i, "key": k, "manifest": self.state["cars"][k]["manifest"], "folder": self.cars_dir / k}
-            for i, k in enabled
-        ]
+        cars = [{"id": i, "key": k, "manifest": self.manifest(k), "folder": self.cars_dir / k} for i, k in enabled]
         car_gui.generate(self.game, cars, base=self.gui_base, log=self.log)
 
     def lua(self, enabled: list[tuple[int, str]]) -> str:
         """packages.lua: what ported.lua gives register.lua per car, for the enabled packages."""
         rows = []
         for i, key in enabled:
-            m = self.state["cars"][key]["manifest"]
+            m = self.manifest(key)
             n, g, src = m["names"], m.get("garage", {}), m.get("source", {})
             fields = [
                 f"host = {m['car']['host']}",
@@ -303,7 +335,6 @@ class Manager:
             "version": manifest["version"],
             "enabled": old["enabled"] if old else True,
             "sha256": "",
-            "manifest": manifest,
         }
         try:
             self._commit(key, manifest, car_sp, images, entry, old)
@@ -338,6 +369,7 @@ class Manager:
                 moved = True
             staged.replace(folder)
             self.state["cars"][key] = entry
+            self._manifests[key] = manifest
             self.save()
         except BaseException:
             # The new folder goes if it got in place; the old one comes back.
@@ -346,6 +378,7 @@ class Manager:
             if moved:
                 backup.replace(folder)
             shutil.rmtree(staged, ignore_errors=True)
+            self._manifests.pop(key, None)  # read again from the folder that is back
             if old is not None:
                 self.state["cars"][key] = old
             else:
@@ -371,7 +404,8 @@ class Manager:
 
     def requires(self, key: str) -> list[str]:
         """What an installed car's package asks of the plugin (its manifest's `requires`)."""
-        return list(self._car(key)["manifest"].get("requires") or [])
+        self._car(key)
+        return list((self.manifest(key) or {}).get("requires") or [])
 
     def set_enabled(self, key: str, *, enabled: bool) -> None:
         if enabled:
@@ -471,17 +505,19 @@ class Manager:
         out = []
         for key, car in sorted(self.state["cars"].items(), key=lambda kv: kv[1]["id"]):
             flag = "on " if car["enabled"] else "off"
-            out.append(f"{car['id']:4} {flag} {key} v{car['version']}  {car['manifest']['names']['display']}")
+            m = self.manifest(key)
+            name = m["names"]["display"] if m else f"(no {dsfcar.MANIFEST})"
+            out.append(f"{car['id']:4} {flag} {key} v{car['version']}  {name}")
         removed = sorted(set(self.state["ids"]) - set(self.state["cars"]))
         out += [f"{self.state['ids'][k]:4} --  {k} (removed; ID reserved)" for k in removed]
         return out
 
-    @staticmethod
-    def good_sha256(car: dict) -> set[str]:
-        """The checksums an installed car.sp may have: the package's own (its manifest's
+    def good_sha256(self, key: str) -> set[str]:
+        """The checksums an installed car.sp may have: the package's own (its car.json's
         car.sha256), or the one recorded at install by a manager that wrote the car's ID
         into the file (an install from before the plugin wrote it in memory)."""
-        return {car["manifest"]["car"]["sha256"], car["sha256"]}
+        m = self.manifest(key) or {}
+        return {m.get("car", {}).get("sha256"), self.state["cars"][key]["sha256"]} - {None}
 
     def verify(self) -> list[str]:
         """What is wrong with the installed packages (empty: all is well)."""
@@ -498,8 +534,10 @@ class Manager:
             sp = self.sp_path(key)
             if not sp.exists():
                 out.append(f"{key}: {sp} is missing")
-            elif dsfcar.sha256(sp.read_bytes()) not in self.good_sha256(car):
+            elif dsfcar.sha256(sp.read_bytes()) not in self.good_sha256(key):
                 out.append(f"{key}: {sp} is not the package's car.sp (changed since it was installed)")
+            if self.manifest(key) is None:
+                out.append(f"{key}: {self.cars_dir / key / dsfcar.MANIFEST} is missing or not JSON (left out)")
             if car["id"] in in_archive:
                 out.append(f"{key}: ID {car['id']} is in {self.archive} now (the plugin leaves the package out)")
         expected = self.listed()
