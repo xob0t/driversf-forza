@@ -188,9 +188,12 @@ The installer copies your save folder first (step 3). Then:
 - **Other mods:**
   - A mod that replaces `Install\dngvehicles.sp`, `Install\gui.sp`,
     `media\Fonts.fchunk` or `global.fchunk` can stay: the cars are added
-    beside those files (not yet tried with such a mod). Install that mod first: the GUI copies are made from
-    the game's files as they are at install time, so install the cars again
-    after such a mod changes them. A car whose ID the other mod's archive
+    beside those files (not yet tried with such a mod). The build reads the
+    game's original vehicle archive, so build first, then install that mod,
+    then install the cars: `.\install.cmd --build-only`, the other mod,
+    `.\install.cmd --install-only`. The GUI copies are made from the game's
+    files as they are at install time, so install the cars again
+    (`--install-only --force`) after such a mod changes them. A car whose ID the other mod's archive
     also uses is left out; `uv run dsff car_manager verify` names it and
     `uv run dsff car_manager reassign <car>` gives it a free ID (its save
     flags stay with the old ID).
