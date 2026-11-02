@@ -24,11 +24,14 @@ _G.dsfforzaGarage = _G.dsfforzaGarage or { calls = {}, zero = 0, total = 0 }
 local state = _G.dsfforzaGarage
 state.others = state.others or {}   -- non-ported IDs above 303 already logged
 
+-- The ported cars: a merged install's (ported.lua) and the car manager's packages (packages.lua).
 local ids = {}
-do
-	local found, ported = user_open("dsfforza\\ported.lua")
-	if found and type(ported) == "table" and type(ported.cars) == "table" then
-		for id in pairs(ported.cars) do ids[id] = true end
+for _, name in ipairs({ "dsfforza\\ported.lua", "dsfforza\\packages.lua" }) do
+	local exists = type(user_fileExists) ~= "function" or user_fileExists(name)
+	local found, list
+	if exists then found, list = user_open(name) end
+	if found and type(list) == "table" and type(list.cars) == "table" then
+		for id in pairs(list.cars) do ids[id] = true end
 	end
 end
 state.ids = ids

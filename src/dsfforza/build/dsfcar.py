@@ -12,8 +12,8 @@
 
 The manifest says what the car is and nothing the manager allocates: no model ID the game
 will use, no glyph code, string ID, picture name or garage group. The model ID inside
-car.sp is whatever the builder had (`car.model_id` says which); the manager patches its own
-into it at install (car_package.make). Images are optional: without one the manager leaves
+car.sp is whatever the builder had (`car.model_id` says which); the manager installs car.sp
+as it is and dsfforza.asi writes the listed ID into the data it serves. Images are optional: without one the manager leaves
 that part as the host's (picture) or the game's own for the maker or model.
 
     {
@@ -25,7 +25,7 @@ that part as the host's (picture) or the game's own for the maker or model.
                 "family": null, "year": 1991, "maker_group": "BMW"},
       "garage": {"speed": 0.48, "strength": 0.3, "drift": 0.65},
       "images": {"picture": "picture.dds", "badge": "badge.png", "plate": "plate.png"},
-      "requires": ["archive.packages"],
+      "requires": ["archive.packages", "archive.ids"],
       "source": {"pipeline": "dsfforza", "game": "FH1", "media": "BMW_M3E30_91"}
     }
 
@@ -56,9 +56,13 @@ PLATE = "plate.png"
 MEMBERS = {MANIFEST, CAR, PICTURE, BADGE, PLATE}
 SUFFIX = ".dsfcar"
 
-# Capabilities a package can ask of dsfforza.asi. "archive.packages": [archive]
-# packages, the loader of car.sp (research/car-packages.md).
-CAPABILITIES = {"archive.packages"}
+# Capabilities a package can ask of dsfforza.asi; the plugin lists its own in its DLL
+# (tools/asi/src/patch.h DSF_CAPABILITIES; car_manager.plugin_capabilities reads them).
+# "archive.packages": [archive] packages, the loader of car.sp (research/car-packages.md).
+# "archive.ids": the plugin writes the listed model ID into car.sp's data as it serves it, so
+# car.sp holds its builder's ID ("Model ID in memory"). Packages from this pipeline need both.
+CAPABILITIES = {"archive.packages", "archive.ids"}
+PIPELINE_REQUIRES = ["archive.packages", "archive.ids"]
 
 KEY = re.compile(r"^[a-z0-9]+\.[a-z0-9]+\.[A-Za-z0-9_\-]+$")
 TOP_KEYS = {"format", "format_version", "key", "version", "car", "names", "garage", "images", "requires", "source"}
@@ -136,15 +140,21 @@ def _vehc_problems(k: int, e) -> list[str]:
 
 
 def _model_id_problems(stream, vehc, model_id: int | None) -> list[str]:
-    from dsfforza.build.car_package import car_id
+    """The full VEHC holds model_id once in each of clone_vehicle.ID_FIELDS (VSVH, VO3D, SPID,
+    UPVH), as a vanilla car's kind 0 entry does: dsfforza.asi writes the listed ID into
+    exactly these fields."""
+    from dsfforza.build.car_package import id_fields
+    from dsfforza.build.clone_vehicle import ID_FIELDS
 
     if model_id is None or not vehc.children:
         return []
-    try:
-        found = car_id(stream, vehc)
-    except ValueError as error:
-        return [f"{CAR}: {error}"]
-    return [] if found == model_id else [f"{CAR}: VO3D holds model ID {found}, the manifest says {model_id}"]
+    found = id_fields(stream, vehc)
+    tags = sorted(tag for tag, _ in found)
+    out = []
+    if tags != sorted(ID_FIELDS):
+        out.append(f"{CAR}: the full VEHC's model-ID fields are {tags}, not {sorted(ID_FIELDS)} once each")
+    out += [f"{CAR}: {tag} holds model ID {v}, the manifest says {model_id}" for tag, v in found if v != model_id]
+    return out
 
 
 def car_sp_problems(data: bytes, model_id: int | None = None, host: int | None = None) -> list[str]:
@@ -355,6 +365,18 @@ def validate(path: Path) -> list[str]:
     return out
 
 
+def requires_of(path: Path) -> set[str]:
+    """The capabilities a package's manifest asks for, read without checking the rest (a
+    first look before anything is installed; read() checks the whole package). Empty when
+    the manifest can't be read."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            req = json.loads(z.read(MANIFEST).decode("utf-8")).get("requires")
+    except (OSError, KeyError, ValueError, AttributeError, zipfile.BadZipFile):
+        return set()
+    return {r for r in req if isinstance(r, str)} if isinstance(req, list) else set()
+
+
 def read(path: Path) -> tuple[dict, bytes, dict[str, bytes]]:
     """(manifest, car.sp, {image member: bytes}) of a valid package; ValueError otherwise."""
     problems = validate(path)
@@ -458,7 +480,7 @@ def pack(build: Path, media: list[str], out_dir: Path, version: int = 1, isos=No
                 "maker_group": group,
             },
             "garage": {k.lower(): v for k, v in bars.items() if k.lower() in GARAGE_KEYS},
-            "requires": ["archive.packages"],
+            "requires": list(PIPELINE_REQUIRES),
             "source": {"pipeline": "dsfforza", "game": car["game"], "media": car["media"]},
         }
         sound_host = (car.get("sound") or {}).get("sound_host")

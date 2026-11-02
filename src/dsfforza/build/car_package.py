@@ -12,9 +12,11 @@ src/dsfforza/build/dsfcar.py.
 A package is a CHNK of four root entries: the car's three VEHC entries (kinds 0, 1, 2:
 the full car, the interior, the clean exterior; port_batch's work/<media>.chnk) and a VSCT
 entry with the car's three VSCT records (the host's, as clone_vehicle.register_clones
-makes them). The model ID is written into the full VEHC (VSVH, VO3D, SPID, UPVH:
-clone_vehicle.ID_FIELDS); the plugin writes it into the VSCT records and the SSLP
-records itself, from the list file's "id path" line.
+makes them). The full VEHC holds a model ID in four fields (VSVH, VO3D, SPID, UPVH:
+clone_vehicle.ID_FIELDS): the builder's in a distributed package, which the car manager
+installs as it is. dsfforza.asi writes the listed ID (the list file's "id path" line) into
+those fields of the data it serves, and into the SSLP and VSCT records it adds
+(research/car-packages.md, "Model ID in memory").
 """
 
 from __future__ import annotations
@@ -41,6 +43,17 @@ def car_id(stream, vehc: Entry) -> int:
     raise ValueError("no VO3D in the full VEHC")
 
 
+def id_fields(stream, vehc: Entry) -> list[tuple[str, int]]:
+    """(tag, value) of every model-ID field in a VEHC (clone_vehicle.ID_FIELDS), in tree
+    order: what dsfforza.asi's pkg_set_ids writes the listed ID into."""
+    out = []
+    for _, entry in walk(vehc.children or []):
+        at = ID_FIELDS.get(entry.tag)
+        if at is not None and entry.children is None and at + 4 <= entry.size:
+            out.append((entry.tag, struct.unpack_from("<I", read_leaf(stream, entry), at)[0]))
+    return out
+
+
 def host_vsct(archive: Path, host: int) -> bytes:
     """The three VSCT records of host in the vanilla archive."""
     with archive.open("rb") as stream:
@@ -58,7 +71,7 @@ def host_vsct(archive: Path, host: int) -> bytes:
 
 def make(chnk: Path, new_id: int | None, host: int, archive: Path, out: Path) -> int:
     """Write the package; returns the ID the car had in chnk. new_id None keeps that ID
-    (a distributed package: the manager patches its own at install)."""
+    (a distributed package: dsfforza.asi writes the listed ID in memory)."""
     if new_id is not None and not 1 <= new_id <= 999:
         raise ValueError("a base model ID is 1..999 (the LOD request adds 1000 and 2000)")
     vsct = host_vsct(archive, host)
@@ -75,27 +88,6 @@ def make(chnk: Path, new_id: int | None, host: int, archive: Path, out: Path) ->
         temp = out.with_name(out.name + ".tmp")
         with temp.open("wb") as handle:
             write_chunk(handle, stream, [*entries, table], root.version)
-        temp.replace(out)
-    return old_id
-
-
-def install_sp(car_sp: Path, new_id: int, out: Path) -> int:
-    """The installed form of a package's car.sp (dsfcar.CAR) with the model new_id written
-    into its full VEHC (the entries are kept as they are); returns the ID it had."""
-    if not 1 <= new_id <= 999:
-        raise ValueError("a base model ID is 1..999 (the LOD request adds 1000 and 2000)")
-    with car_sp.open("rb") as stream:
-        root = read_chunk(stream, 0)
-        entries = root.entries
-        if [e.tag for e in entries] != ["VEHC"] * KINDS + ["VSCT"]:
-            raise ValueError(f"{car_sp} is not three VEHC entries and a VSCT")
-        old_id = car_id(stream, entries[0])
-        if old_id != new_id:
-            patch_ids(stream, entries[0], old_id, new_id)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        temp = out.with_name(out.name + ".tmp")
-        with temp.open("wb") as handle:
-            write_chunk(handle, stream, entries, root.version)
         temp.replace(out)
     return old_id
 

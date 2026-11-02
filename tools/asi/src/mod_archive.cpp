@@ -296,9 +296,11 @@ uint32_t entry_span(const Entry* e)
 
 // ---- car packages ([archive] packages, off by default) ----------------------
 // research/car-packages.md. A car package is a CHNK file of its own holding one
-// car's three VEHC entries (kinds 0, 1, 2: full, interior, exterior), with its
-// model ID already in VSVH/VO3D/SPID/UPVH. A list file names the packages and
-// their IDs, one "id path" per line (path relative to the game folder).
+// car's three VEHC entries (kinds 0, 1, 2: full, interior, exterior). A list
+// file names the packages and their IDs, one "id path" per line (path relative
+// to the game folder). The model ID inside the file is whatever its builder
+// gave it; the plugin writes the listed one into the full VEHC as it serves the
+// read (pkg_set_ids), and into the SSLP and VSCT records it adds.
 //
 // How the game finds a car (confirmed-static): the vehicle spool object's root
 // reader (spool object +0x14) holds dngvehicles.sp's root table; the SSLP
@@ -327,6 +329,7 @@ struct Pkg {
     HANDLE file;
     uint16_t id;
     bool listed;      // its SSLP records are in (no ID clash, NONR fits)
+    bool ids_logged;  // pkg_set_ids has logged this package's fields once
     Entry e[3];       // offsets relative to the package file
     uint32_t nonr[3];  // NONR size of each VEHC (the slot's buffer must hold it)
     uint8_t vsct[3][28];
@@ -540,6 +543,106 @@ uint32_t pkg_read(Pkg* p, const Entry* e, void* buf, uint32_t size)
         dsf_log("packages: %u: %u bytes at %#x read from its package in %u.%03u ms (read %ld, slowest %u.%03u ms)",
                 p->id, got, e->offset, us / 1000, us % 1000, n, g_pkg_read_max_us / 1000, g_pkg_read_max_us % 1000);
     return got;
+}
+
+// The full VEHC's model-ID fields, a u32 each (clone_vehicle.ID_FIELDS, the four
+// places a vanilla car's kind 0 entry holds its ID; research/car-packages.md,
+// "Model ID in memory"): VSVH +0 (sound header), VO3D +0 (handling), SPID +0
+// (shader params), UPVH +0x14 (hierarchy). The interior and exterior hold none.
+constexpr uint32_t tag4(char a, char b, char c, char d)
+{
+    return (uint32_t)(uint8_t)a | (uint32_t)(uint8_t)b << 8 | (uint32_t)(uint8_t)c << 16 | (uint32_t)(uint8_t)d << 24;
+}
+struct IdField {
+    uint32_t tag;
+    uint32_t at;
+    const char* name;
+};
+const IdField kIdFields[] = {
+    {tag4('V', 'S', 'V', 'H'), 0x00, "VSVH"},
+    {tag4('V', 'O', '3', 'D'), 0x00, "VO3D"},
+    {tag4('S', 'P', 'I', 'D'), 0x00, "SPID"},
+    {tag4('U', 'P', 'V', 'H'), 0x14, "UPVH"},
+};
+const int kIdFieldCount = (int)(sizeof kIdFields / sizeof kIdFields[0]);
+
+struct IdScan {
+    uint32_t at[8];       // buffer offsets of the fields written (the first 8)
+    int field[8];         // their kIdFields index
+    uint32_t count;       // fields written
+    uint32_t old_id;      // the first field's value before
+    bool mixed;           // the fields held different values
+};
+
+// Writes id into every model-ID field of the CHNK at buf + base (size bytes)
+// and of the CHNKs nested in it. A child whose payload starts with "CHNK" (16
+// bytes or more) is a nested CHNK, as dsfforza.formats.chnk reads them; the
+// others are leaves. Offsets are relative to the CHNK they are in; every table
+// and child is checked against the bytes it lies in.
+void set_ids_in(uint8_t* buf, uint32_t base, uint32_t size, uint16_t id, IdScan* s, int depth)
+{
+    if (depth > 16 || size < 16 || *(uint32_t*)(buf + base) != kCHNK) return;
+    uint32_t n = *(uint32_t*)(buf + base + 8);
+    if (16 + (uint64_t)n * sizeof(Entry) > size) return;
+    const Entry* kids = (const Entry*)(buf + base + 16);
+    for (uint32_t j = 0; j < n; j++) {
+        const Entry* k = &kids[j];
+        if ((uint64_t)k->offset + k->size > size) continue;
+        uint32_t at = base + k->offset;
+        if (k->size >= 16 && *(uint32_t*)(buf + at) == kCHNK) {
+            set_ids_in(buf, at, k->size, id, s, depth + 1);
+            continue;
+        }
+        for (int f = 0; f < kIdFieldCount; f++) {
+            if (k->tag != kIdFields[f].tag || kIdFields[f].at + 4 > k->size) continue;
+            uint32_t* v = (uint32_t*)(buf + at + kIdFields[f].at);
+            if (s->count == 0)
+                s->old_id = *v;
+            else if (*v != s->old_id)
+                s->mixed = true;
+            if (s->count < 8) {
+                s->at[s->count] = at + kIdFields[f].at;
+                s->field[s->count] = f;
+            }
+            s->count++;
+            *v = id;
+        }
+    }
+}
+
+// After a package's entry is read into buf (size bytes, the entry at its
+// start): the listed ID goes into the full VEHC's model-ID fields, whatever ID
+// the file holds (its builder's; car.json's car.model_id). The game parses the
+// buffer only after read entry returns (the slot's poll, state 3), so it sees
+// the listed ID only. A file with the listed ID in it already (an install
+// that patched it) is unchanged. Returns the number of fields written.
+uint32_t pkg_set_ids(Pkg* p, uint32_t kind, uint8_t* buf, uint32_t size)
+{
+    if (kind != 0) return 0;
+    IdScan s = {};
+    set_ids_in(buf, 0, size, p->id, &s, 0);
+    bool odd = s.count != (uint32_t)kIdFieldCount || s.mixed;
+    if (!p->ids_logged || odd) {
+        p->ids_logged = true;
+        char where[160];
+        size_t o = 0;
+        where[0] = 0;
+        for (uint32_t j = 0; j < s.count && j < 8; j++) {
+            int n = _snprintf_s(where + o, sizeof where - o, _TRUNCATE, "%s%s+%#x", j ? " " : "",
+                                kIdFields[s.field[j]].name, s.at[j]);
+            if (n < 0) break;
+            o += n;
+        }
+        if (!s.count)
+            dsf_log("packages: %u: VEHC 0 read whole (%u bytes); no model-ID field found, nothing written", p->id,
+                    size);
+        else
+            dsf_log("packages: %u: VEHC 0 read whole (%u bytes); model ID %u -> %u in %u fields (%s)%s", p->id, size,
+                    s.old_id, p->id, s.count, where,
+                    odd ? (s.mixed ? "; the fields held different IDs" : "; expected VSVH, VO3D, SPID and UPVH once")
+                        : "");
+    }
+    return s.count;
 }
 
 // After the vehicle archive's root table is read: three entries per package
@@ -848,11 +951,16 @@ void* __fastcall h_read_entry(Reader* r, void*, uint32_t i, void* buf, int store
     uint32_t sector = sector_size();
     Entry* e = E(r, i);
     uint32_t size = align_up(entry_span(e), sector);
-    if (Pkg* p = pkg_of(r, i, nullptr)) {
+    uint32_t kind = 0;
+    if (Pkg* p = pkg_of(r, i, &kind)) {
         // Synchronous: the caller then polls the archive's own handle
         // (h_poll state 0 -> 0x008FB2D0), which this read doesn't use, so the
-        // data must be in buf when this returns.
+        // data must be in buf when this returns. Whole: this is the only path
+        // to an entry's bytes (seek and chain read are called only from the
+        // reader's own functions, which this module replaces), so the ID
+        // written here is the one the slot parses.
         pkg_read(p, e, buf, size);
+        pkg_set_ids(p, kind, (uint8_t*)buf, e->size);
         if (store == 1) *P(r, i) = buf;
         return buf;
     }
@@ -1546,6 +1654,99 @@ void st_write_list(const char* path, const char* text)
     fclose(f);
 }
 
+// A CHNK of n children at buf + at, each child `size` bytes after the table, in
+// order; returns the child's offset (relative to this CHNK) for each.
+uint32_t st_chnk(uint8_t* buf, uint32_t at, uint32_t n, const uint32_t* tags, const uint32_t* sizes, uint32_t* offs)
+{
+    uint32_t* h = (uint32_t*)(buf + at);
+    h[0] = kCHNK;
+    h[2] = n;
+    h[3] = 3;
+    Entry* e = (Entry*)(buf + at + 16);
+    uint32_t pos = 16 + 16 * n;
+    for (uint32_t j = 0; j < n; j++) {
+        e[j].tag = tags[j];
+        e[j].offset = pos;
+        e[j].size = sizes[j];
+        e[j].align_log2 = 4;
+        offs[j] = pos;
+        pos += (sizes[j] + 15) & ~15u;
+    }
+    h[1] = pos;
+    return pos;
+}
+
+// A full VEHC as the roster's are (the 573 packages: NONR/VSRT/VSVH, NONR/VO3D,
+// NONR/UPVH, NONR/SPSR/SPID): an MDXN leaf, then the NONR CHNK. Returns its size.
+uint32_t st_vehc(uint8_t* buf, uint32_t id)
+{
+    memset(buf, 0, 0x400);
+    uint32_t top_tags[2] = {tag4('M', 'D', 'X', 'N'), kNONR}, top_sizes[2] = {0x20, 0x200}, top[2];
+    uint32_t size = st_chnk(buf, 0, 2, top_tags, top_sizes, top);
+    uint32_t nonr_tags[4] = {tag4('V', 'S', 'R', 'T'), tag4('V', 'O', '3', 'D'), tag4('U', 'P', 'V', 'H'),
+                             tag4('S', 'P', 'S', 'R')};
+    uint32_t nonr_sizes[4] = {0x40, 0x10, 0x20, 0x40}, nonr[4];
+    st_chnk(buf, top[1], 4, nonr_tags, nonr_sizes, nonr);
+    uint32_t vsvh_tag = tag4('V', 'S', 'V', 'H'), vsvh_size = 0x10, spid_tag = tag4('S', 'P', 'I', 'D'), off;
+    st_chnk(buf, top[1] + nonr[0], 1, &vsvh_tag, &vsvh_size, &off);
+    *(uint32_t*)(buf + top[1] + nonr[0] + off) = id;
+    *(uint32_t*)(buf + top[1] + nonr[1]) = id;
+    *(uint32_t*)(buf + top[1] + nonr[2] + 0x14) = id;
+    *(uint32_t*)(buf + top[1] + nonr[2]) = 0x1234;  // UPVH +0 is not the ID
+    st_chnk(buf, top[1] + nonr[3], 1, &spid_tag, &vsvh_size, &off);
+    *(uint32_t*)(buf + top[1] + nonr[3] + off) = id;
+    *(uint32_t*)(buf + top[0]) = id;  // an MDXN word equal to the ID is not a field
+    return size;
+}
+
+// pkg_set_ids on a VEHC like the roster's: the four fields get the listed ID,
+// whatever the file had; nothing else changes; kinds 1 and 2 are left alone.
+void st_set_ids()
+{
+    static uint8_t buf[0x400], before[0x400];
+    Pkg p = {};
+    p.id = 701;
+    uint32_t size = st_vehc(buf, 1);
+    memcpy(before, buf, sizeof buf);
+    ST_CHECK(pkg_set_ids(&p, 0, buf, size) == 4);
+    uint32_t changed = 0, wrong = 0;
+    for (uint32_t i = 0; i + 4 <= sizeof buf; i += 4)
+        if (*(uint32_t*)(buf + i) != *(uint32_t*)(before + i)) {
+            changed++;
+            if (*(uint32_t*)(buf + i) != 701 || *(uint32_t*)(before + i) != 1) wrong++;
+        }
+    ST_CHECK(changed == 4 && wrong == 0);
+    ST_CHECK(*(uint32_t*)(buf + 0x30) == 1);  // the MDXN payload
+    // A file that holds the listed ID already (an install that patched it): unchanged.
+    memcpy(before, buf, sizeof buf);
+    ST_CHECK(pkg_set_ids(&p, 0, buf, size) == 4 && memcmp(before, buf, sizeof buf) == 0);
+    // Two packages with the same builder ID: each gets its own.
+    Pkg q = {};
+    q.id = 702;
+    static uint8_t buf2[0x400];
+    st_vehc(buf2, 1);
+    ST_CHECK(pkg_set_ids(&q, 0, buf2, size) == 4);
+    ST_CHECK(*(uint32_t*)(buf2 + 0x30) == 1 && memcmp(buf, buf2, sizeof buf) != 0);
+    // The interior and exterior: nothing written.
+    st_vehc(buf2, 1);
+    memcpy(before, buf2, sizeof buf2);
+    ST_CHECK(pkg_set_ids(&q, 1, buf2, size) == 0 && pkg_set_ids(&q, 2, buf2, size) == 0);
+    ST_CHECK(memcmp(before, buf2, sizeof buf2) == 0);
+    // A child past its CHNK, a table past the buffer: skipped, no write out of bounds.
+    st_vehc(buf2, 1);
+    Entry* top = (Entry*)(buf2 + 16);
+    top[1].size = 0x10000;  // the NONR runs past the VEHC
+    ST_CHECK(pkg_set_ids(&q, 0, buf2, size) == 0);
+    st_vehc(buf2, 1);
+    *(uint32_t*)(buf2 + 8) = 0x10000;  // more entries than the VEHC holds
+    ST_CHECK(pkg_set_ids(&q, 0, buf2, size) == 0);
+    // Fields that disagree are all written (and logged). VO3D: NONR at 0x50, VO3D at +0x90.
+    st_vehc(buf2, 1);
+    ST_CHECK(*(uint32_t*)(buf2 + 0x50 + 0x90) == 1);
+    *(uint32_t*)(buf2 + 0x50 + 0x90) = 3;
+    ST_CHECK(pkg_set_ids(&q, 0, buf2, size) == 4 && *(uint32_t*)(buf2 + 0x50 + 0x90) == 702);
+}
+
 // A fake vehicle spool object: self = spool object + 4 (the SSLP hook's this),
 // the root reader embedded at self + 0x10, the SSLP pointers at +0x72F4/+0x72F8.
 struct StSpool {
@@ -1591,6 +1792,8 @@ void st_archive(uint32_t base)
     uint32_t got = pkg_read(p, e, buf, 0x800);
     ST_CHECK(got == 0x300 && buf[0x7FF] == 0 && *(uint32_t*)buf == kCHNK && *(uint32_t*)(buf + 0x20) == (0xC0DE0000u | (1 * 4 + 1)));
     ST_CHECK(buf[0x80] == 'P' && buf[0x83] == '1');
+    // These test VEHCs have no ID fields: nothing written.
+    ST_CHECK(pkg_set_ids(p, 0, buf, e->size) == 0 && *(uint32_t*)(buf + 0x20) == (0xC0DE0000u | (1 * 4 + 1)));
     char name[260];
     h_name(r, nullptr, base + 4, name);
     ST_CHECK(strcmp(name, "P011") == 0);
@@ -1716,6 +1919,7 @@ int mod_archive_pkg_selftest(const char* dir)
     *(uint8_t*)0x0086C630 ^= 0xFF;
     st_archive(453);
     st_archive(1098);  // the packages' entries cross 1100 into the side table
+    st_set_ids();
     ST_CHECK(patch_package_sites());
     ST_CHECK(*(uint8_t*)0x005A13C4 == 0xE8 && !bytes_equal(0x005A13C4, kOpenExpect, 5));
     ST_CHECK(*(uint8_t*)0x005A0B50 == 0xE9 && *(uint8_t*)0x0086C630 == 0xE9);

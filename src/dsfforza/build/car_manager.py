@@ -13,8 +13,10 @@ What it owns, all under the game folder (no game file is written):
 
     dsfforza\\cars\\manager.json       its state: the key -> model ID map and the installed cars
     dsfforza\\cars\\cars.txt           the plugin's list, "id path" per enabled car
-    dsfforza\\cars\\<key>\\            one car: car.sp, its installed form (its ID written in),
-                                     and the package's manifest and images (car.json, *.png, *.dds)
+    dsfforza\\cars\\<key>\\            one car: the package's car.sp, manifest and images as they
+                                     are (car.sp, car.json, *.png, *.dds). car.sp holds its
+                                     builder's model ID; dsfforza.asi writes the listed one into
+                                     the data it serves (research/car-packages.md)
     Common\\UserLuaScripts\\dsfforza\\packages.lua   vehicleStats entries of the enabled cars
 
 IDs. A key keeps its model ID for good: across upgrades, disable and enable, and after a
@@ -38,7 +40,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from dsfforza.build import car_package, dsfcar
+from dsfforza.build import dsfcar
 
 STATE_FORMAT = 1
 CARS_DIR = Path("dsfforza") / "cars"
@@ -48,6 +50,41 @@ LUA = Path("Common") / "UserLuaScripts" / "dsfforza" / "packages.lua"
 PORTED = Path("Common") / "UserLuaScripts" / "dsfforza" / "ported.lua"
 ARCHIVE = Path("Install") / "dngvehicles.sp"
 MAX_BASE_ID = dsfcar.MAX_BASE_ID
+PLUGIN = Path("plugins") / "dsfforza.asi"
+# The plugin's capability marker (tools/asi/src/patch.h DSF_CAPABILITIES_MARKER): then
+# space-separated names up to a NUL. A plugin from before it has none.
+CAPABILITIES_MARKER = b"DSFFORZA-CAPABILITIES: "
+# What every car this manager lists needs of the plugin, whatever its package says: car.sp
+# is installed as it is, so the plugin must write the listed ID into its data.
+MANAGER_NEEDS = {"archive.packages", "archive.ids"}
+
+
+def plugin_capabilities(plugin: Path) -> set[str] | None:
+    """The capabilities an installed dsfforza.asi names in its file; None when there is no
+    plugin, an empty set for one from before the marker."""
+    try:
+        data = plugin.read_bytes()
+    except OSError:
+        return None
+    at = data.find(CAPABILITIES_MARKER)
+    if at < 0:
+        return set()
+    end = data.find(b"\0", at)
+    return set(data[at + len(CAPABILITIES_MARKER) : end if end >= 0 else None].decode("ascii", "replace").split())
+
+
+def check_plugin(plugin: Path, requires, what: str) -> None:
+    """SystemExit unless the plugin file has MANAGER_NEEDS and everything in `requires`."""
+    caps = plugin_capabilities(plugin)
+    missing = (MANAGER_NEEDS | set(requires)) - (caps or set())
+    if not missing:
+        return
+    state = "isn't there" if caps is None else f"is older (it has {sorted(caps) or 'no capability list'})"
+    raise SystemExit(
+        f"{what}: {plugin} {state}; these cars need {sorted(missing)}. Update dsfforza.asi with"
+        r" tools\install.ps1 (it installs the plugin and the packages of one checkout), then run this again."
+        " Nothing was changed."
+    )
 
 
 def reserved_ids() -> set[int]:
@@ -234,12 +271,21 @@ class Manager:
             ]
         )
 
+    # --- the plugin ---
+
+    def require_plugin(self, requires, what: str) -> None:
+        """Refuse (before anything is written) unless the installed dsfforza.asi has what the
+        cars need: MANAGER_NEEDS for every car, and what their packages' `requires` list. A
+        plugin from before "archive.ids" would serve car.sp's builder ID under the listed one."""
+        check_plugin(self.game / PLUGIN, requires, what)
+
     # --- commands ---
 
     def install(self, package: Path, *, force: bool = False) -> str:
         """Install or upgrade one package; returns its key."""
         manifest, car_sp, images = dsfcar.read(package)
         key = manifest["key"]
+        self.require_plugin(manifest["requires"], key)
         clash = self.key_clash(key)
         if clash:
             raise SystemExit(f"{key}: {clash} differs only in case and would share its files; not installed")
@@ -280,14 +326,8 @@ class Manager:
         shutil.rmtree(staged, ignore_errors=True)
         staged.mkdir(parents=True)
         try:
-            source = staged / (dsfcar.CAR + ".package")  # the package's car.sp, before its ID is written in
-            source.write_bytes(car_sp)
-            car_package.install_sp(source, entry["id"], staged / dsfcar.CAR)
-            source.unlink()
-            for name, data in images.items():
-                (staged / name).write_bytes(data)
-            _write_text(staged / dsfcar.MANIFEST, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
-            entry["sha256"] = dsfcar.sha256((staged / dsfcar.CAR).read_bytes())
+            self._stage(staged, manifest, car_sp, images)
+            entry["sha256"] = dsfcar.sha256(car_sp)
         except BaseException:
             shutil.rmtree(staged, ignore_errors=True)
             raise
@@ -314,12 +354,28 @@ class Manager:
             raise
         shutil.rmtree(backup, ignore_errors=True)
 
+    @staticmethod
+    def _stage(folder: Path, manifest: dict, car_sp: bytes, images: dict) -> None:
+        """The package's files as they are. car.sp keeps its builder's model ID (the plugin
+        writes the listed ID into the data it serves), so it stays the package's own bytes
+        and its car.sha256 checks it."""
+        (folder / dsfcar.CAR).write_bytes(car_sp)
+        for name, data in images.items():
+            (folder / name).write_bytes(data)
+        _write_text(folder / dsfcar.MANIFEST, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+
     def _car(self, key: str) -> dict:
         if key not in self.state["cars"]:
             raise SystemExit(f"{key} is not installed")
         return self.state["cars"][key]
 
+    def requires(self, key: str) -> list[str]:
+        """What an installed car's package asks of the plugin (its manifest's `requires`)."""
+        return list(self._car(key)["manifest"].get("requires") or [])
+
     def set_enabled(self, key: str, *, enabled: bool) -> None:
+        if enabled:
+            self.require_plugin(self.requires(key), key)
         self._car(key)["enabled"] = enabled
         self.save()
         self.log(f"{key}: {'enabled' if enabled else 'disabled'} (ID {self.state['cars'][key]['id']})")
@@ -393,23 +449,20 @@ class Manager:
     def reassign(self, key: str) -> int:
         """A new free ID for an installed car whose ID another archive took (verify reports
         it): the plugin leaves a clashing package out. The car's save flags stay with the old
-        ID, which isn't ours any more. Returns the new ID."""
+        ID, which isn't ours any more. Only the state and the outputs change: the plugin
+        writes the listed ID into the car's data. Returns the new ID."""
         car = self._car(key)
+        self.require_plugin(self.requires(key), key)
         old = car["id"]
         if old not in archive_ids(self.archive):
             raise SystemExit(f"{key}: ID {old} doesn't clash with {self.archive}; nothing to do")
         del self.state["ids"][key]
         try:
             new = self.allocate(key)
-            sp = self.sp_path(key)
-            staged = sp.with_name(sp.name + ".new")
-            car_package.install_sp(sp, new, staged)
-            staged.replace(sp)
         except BaseException:
             self.state["ids"][key] = old
             raise
         car["id"] = new
-        car["sha256"] = dsfcar.sha256(self.sp_path(key).read_bytes())
         self.save()
         self.log(f"{key}: ID {old} -> {new} (another archive has {old}; its save flags stay with {old})")
         return new
@@ -422,6 +475,13 @@ class Manager:
         removed = sorted(set(self.state["ids"]) - set(self.state["cars"]))
         out += [f"{self.state['ids'][k]:4} --  {k} (removed; ID reserved)" for k in removed]
         return out
+
+    @staticmethod
+    def good_sha256(car: dict) -> set[str]:
+        """The checksums an installed car.sp may have: the package's own (its manifest's
+        car.sha256), or the one recorded at install by a manager that wrote the car's ID
+        into the file (an install from before the plugin wrote it in memory)."""
+        return {car["manifest"]["car"]["sha256"], car["sha256"]}
 
     def verify(self) -> list[str]:
         """What is wrong with the installed packages (empty: all is well)."""
@@ -438,8 +498,8 @@ class Manager:
             sp = self.sp_path(key)
             if not sp.exists():
                 out.append(f"{key}: {sp} is missing")
-            elif dsfcar.sha256(sp.read_bytes()) != car["sha256"]:
-                out.append(f"{key}: {sp} changed since it was installed")
+            elif dsfcar.sha256(sp.read_bytes()) not in self.good_sha256(car):
+                out.append(f"{key}: {sp} is not the package's car.sp (changed since it was installed)")
             if car["id"] in in_archive:
                 out.append(f"{key}: ID {car['id']} is in {self.archive} now (the plugin leaves the package out)")
         expected = self.listed()
@@ -486,6 +546,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "seed", parents=[common], help="record a merged install's IDs (its ported.lua) before it is uninstalled"
     )
+    c = sub.add_parser(
+        "check-plugin",
+        parents=[common],
+        help="check a dsfforza.asi against what the packages need (install.ps1, before the game folder changes)",
+    )
+    c.add_argument("--plugin", type=Path, help="the plugin file (default the game's plugins\\dsfforza.asi)")
+    c.add_argument("packages", type=Path, nargs="*", help=".dsfcar files or folders whose requires count too")
     return parser
 
 
@@ -514,7 +581,11 @@ def package_paths(paths: list[Path]) -> list[Path]:
 
 
 def run_key_command(m: Manager, cmd: str, keys: list[str]) -> None:
-    """enable, disable, remove or reassign each key; one GUI generation for all of them."""
+    """enable, disable, remove or reassign each key; one GUI generation for all of them.
+    enable and reassign check the plugin for all of them first, so a refusal writes nothing."""
+    if cmd in ("enable", "reassign"):
+        known = [k for k in keys if k in m.state["cars"]]
+        m.require_plugin({r for k in known for r in m.requires(k)}, cmd)
     with m.batch():
         for key in keys:
             if cmd in ("enable", "disable"):
@@ -531,6 +602,12 @@ def main(argv: list[str] | None = None) -> None:
         from dsfforza.game import game_paths
 
         args.game = game_paths.game_dir()
+    if args.cmd == "check-plugin":  # reads no state and writes nothing
+        paths = package_paths(args.packages)
+        plugin = args.plugin or Path(args.game) / PLUGIN
+        check_plugin(plugin, {r for p in paths for r in dsfcar.requires_of(p)}, "check-plugin")
+        print(f"{plugin}: {' '.join(sorted(plugin_capabilities(plugin)))}")
+        return
     if args.cmd not in ("status", "verify"):
         from dsfforza.build.install import game_running
 
@@ -538,8 +615,11 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit("Driver.exe is running from this folder; close the game first")
     m = Manager(args.game, args.archive, gui_base=args.gui_base)
     if args.cmd == "install":
+        paths = package_paths(args.packages)
+        # The plugin first, for every package: a refusal then writes nothing.
+        m.require_plugin({r for p in paths for r in dsfcar.requires_of(p)}, "install")
         with m.batch():
-            for path in package_paths(args.packages):
+            for path in paths:
                 m.install(path, force=args.force)
     elif args.cmd in KEY_COMMANDS:
         run_key_command(m, args.cmd, args.keys)

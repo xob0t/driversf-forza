@@ -56,3 +56,14 @@ void* alloc_exec(size_t n);
 
 // Shown in the log header; bump when patches change.
 #define DSF_VERSION "0.1"
+
+// What this plugin can do for car packages, as the car manager reads it from the DLL file
+// without running the game (src/dsfforza/build/car_manager.py, plugin_capabilities): the
+// marker, then space-separated names, NUL-terminated (main.cpp keeps it in .rdata). A .dsfcar
+// manifest's "requires" names them (dsfcar.CAPABILITIES).
+//   archive.packages  [archive] packages: cars from their own files beside dngvehicles.sp
+//   archive.ids       the listed model ID is written into a package's data as it is read
+//                     (mod_archive.cpp, pkg_set_ids), so car.sp is installed as it is
+#define DSF_CAPABILITIES_MARKER "DSFFORZA-CAPABILITIES: "
+#define DSF_CAPABILITIES "archive.packages archive.ids"
+extern const char dsf_capabilities[];

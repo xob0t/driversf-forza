@@ -23,11 +23,21 @@ def archive(path: Path, ids: list[int]) -> None:
         write_chunk(f, None, [node("SSIC", [node("NONR", [leaf("SSLP", head + records)], align=4)])])
 
 
+def plugin(game: Path, capabilities: str | None = "archive.packages archive.ids") -> None:
+    """A stand-in plugins/dsfforza.asi: some DLL-like bytes with the capability marker
+    (tools/asi/src/patch.h); None: a plugin from before the marker."""
+    path = game / car_manager.PLUGIN
+    path.parent.mkdir(parents=True, exist_ok=True)
+    marker = b"" if capabilities is None else car_manager.CAPABILITIES_MARKER + capabilities.encode() + b"\0"
+    path.write_bytes(b"MZ" + b"\0" * 200 + b"dsfforza.asi %s, ini %s\0" + marker + b"\0" * 64)
+
+
 class ManagerTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.game = self.tmp / "game"
         archive(self.game / "Install" / "dngvehicles.sp", [1, 2, 4, 62])
+        plugin(self.game)
         self.lines = []
 
     def package(self, media: str, version: int = 1, car: int = 1, host: int = 205) -> Path:
@@ -54,10 +64,16 @@ class ManagerTest(unittest.TestCase):
             self.listed(),
             {3: r"dsfforza\cars\forza.fh1.CAR_A_10\car.sp", 5: r"dsfforza\cars\forza.fh1.CAR_B_10\car.sp"},
         )
-        with (self.game / car_manager.CARS_DIR / a / "car.sp").open("rb") as f:
-            from dsfforza.formats.chnk import read_chunk
+        # car.sp is the package's, byte for byte: both hold their builder's ID 1, and the
+        # plugin writes 3 and 5 into the data it serves.
+        for key in (a, b):
+            installed = (self.game / car_manager.CARS_DIR / key / "car.sp").read_bytes()
+            self.assertEqual(installed, dsfcar.read(self.tmp / f"{key.split('.')[-1]}-v1.dsfcar")[1])
+            self.assertEqual(dsfcar.sha256(installed), m.state["cars"][key]["manifest"]["car"]["sha256"])
+            with (self.game / car_manager.CARS_DIR / key / "car.sp").open("rb") as f:
+                from dsfforza.formats.chnk import read_chunk
 
-            self.assertEqual(car_package.car_id(f, read_chunk(f, 0).entries[0]), 3)
+                self.assertEqual(car_package.car_id(f, read_chunk(f, 0).entries[0]), 1)
         folder = self.game / car_manager.CARS_DIR / a
         self.assertEqual(
             sorted(p.name for p in folder.iterdir()), ["badge.png", "car.json", "car.sp", "picture.dds", "plate.png"]
@@ -206,7 +222,10 @@ class ManagerTest(unittest.TestCase):
         sp = self.game / car_manager.CARS_DIR / a / "car.sp"
         before = sp.read_bytes()
         state = json.loads(json.dumps(m.state))
-        with mock.patch.object(car_package, "install_sp", side_effect=OSError("disk full")), self.assertRaises(OSError):
+        with (
+            mock.patch.object(car_manager.Manager, "_stage", side_effect=OSError("disk full")),
+            self.assertRaises(OSError),
+        ):
             m.install(self.package("CAR_A_10", version=2))
         self.assertEqual(sp.read_bytes(), before)
         self.assertEqual(m.state, state)
@@ -229,7 +248,10 @@ class ManagerTest(unittest.TestCase):
         )
         self.assertEqual(m.verify(), [])
         # A new key whose install fails doesn't keep the ID it was about to get.
-        with mock.patch.object(car_package, "install_sp", side_effect=OSError("disk full")), self.assertRaises(OSError):
+        with (
+            mock.patch.object(car_manager.Manager, "_stage", side_effect=OSError("disk full")),
+            self.assertRaises(OSError),
+        ):
             m.install(self.package("CAR_B_10"))
         self.assertNotIn("forza.fh1.CAR_B_10", m.state["ids"])
 
@@ -243,7 +265,10 @@ class ManagerTest(unittest.TestCase):
         folder = self.game / car_manager.CARS_DIR / a
         before = (folder / "car.sp").read_bytes()
         folder.replace(folder.with_name(a + ".old"))
-        with mock.patch.object(car_package, "install_sp", side_effect=OSError("disk full")), self.assertRaises(OSError):
+        with (
+            mock.patch.object(car_manager.Manager, "_stage", side_effect=OSError("disk full")),
+            self.assertRaises(OSError),
+        ):
             m.install(self.package("CAR_A_10", version=2))
         self.assertEqual((folder / "car.sp").read_bytes(), before)
         self.assertFalse(folder.with_name(a + ".old").exists())
@@ -364,6 +389,8 @@ class ManagerTest(unittest.TestCase):
     def test_reassign_after_another_archive_takes_an_id(self):
         m = self.manager()
         a = m.install(self.package("CAR_A_10"))
+        sp = self.game / car_manager.CARS_DIR / a / "car.sp"
+        before = sp.read_bytes()
         with self.assertRaises(SystemExit):  # no clash: nothing to do
             m.reassign(a)
         archive(self.game / "Install" / "dngvehicles.sp", [1, 2, 3, 4, 62])  # another mod's archive has 3
@@ -373,10 +400,111 @@ class ManagerTest(unittest.TestCase):
         m = self.manager()
         self.assertEqual(m.state["cars"][a]["id"], 5)
         self.assertEqual(m.verify(), [])
-        with (self.game / car_manager.CARS_DIR / a / "car.sp").open("rb") as f:
-            from dsfforza.formats.chnk import read_chunk
+        self.assertEqual(sp.read_bytes(), before)  # only the list changes; the plugin writes 5 in memory
+        self.assertEqual(self.listed(), {5: rf"dsfforza\cars\{a}\car.sp"})
 
-            self.assertEqual(car_package.car_id(f, read_chunk(f, 0).entries[0]), 5)
+    def test_two_packages_with_one_builder_id(self):
+        """Packages from different builds can hold the same model ID: each is installed as it
+        is, under its own ID (the plugin writes that one into the data it serves)."""
+        m = self.manager()
+        a = m.install(self.package("CAR_A_10", car=7))
+        b = m.install(self.package("CAR_B_10", car=7))
+        self.assertEqual((m.state["cars"][a]["id"], m.state["cars"][b]["id"]), (3, 5))
+        self.assertEqual(sorted(self.listed()), [3, 5])
+        self.assertEqual(m.verify(), [])
+
+    def test_a_car_sp_patched_by_an_earlier_manager_still_verifies(self):
+        """Installs from before the plugin wrote the ID in memory hold car.sp with the car's ID
+        written in (state sha256 = that file's): verify takes it, and any other bytes not."""
+        m = self.manager()
+        a = m.install(self.package("CAR_A_10"))
+        sp = self.game / car_manager.CARS_DIR / a / "car.sp"
+        patched = car_sp(self.tmp / "patched.sp", car=m.state["cars"][a]["id"])
+        sp.write_bytes(patched)
+        self.assertTrue(any("not the package's car.sp" in p for p in m.verify()))
+        m.state["cars"][a]["sha256"] = dsfcar.sha256(patched)
+        m.save()
+        m = self.manager()
+        self.assertEqual(m.verify(), [])
+        sp.write_bytes(patched + b"x")
+        self.assertTrue(any("not the package's car.sp" in p for p in m.verify()))
+
+    def test_plugin_capabilities(self):
+        self.assertEqual(car_manager.plugin_capabilities(self.game / car_manager.PLUGIN), car_manager.MANAGER_NEEDS)
+        plugin(self.game, None)
+        self.assertEqual(car_manager.plugin_capabilities(self.game / car_manager.PLUGIN), set())
+        self.assertIsNone(car_manager.plugin_capabilities(self.tmp / "none" / "dsfforza.asi"))
+
+    def test_marker_matches_the_plugin_source(self):
+        """The marker and names the manager reads are the ones patch.h defines, and the plugin
+        has every capability a package may ask for."""
+        import re
+
+        from dsfforza import REPO
+
+        header = (REPO / "tools" / "asi" / "src" / "patch.h").read_text(encoding="utf-8")
+        marker = re.search(r'#define DSF_CAPABILITIES_MARKER "([^"]*)"', header).group(1)
+        names = set(re.search(r'#define DSF_CAPABILITIES "([^"]*)"', header).group(1).split())
+        self.assertEqual(marker.encode(), car_manager.CAPABILITIES_MARKER)
+        self.assertTrue(names >= car_manager.MANAGER_NEEDS)
+        self.assertEqual(dsfcar.CAPABILITIES, names)
+
+    def test_a_missing_or_older_plugin_is_refused_before_anything_is_written(self):
+        """A plugin from before archive.ids serves car.sp's builder ID under the listed one:
+        install, enable and reassign refuse, and nothing is written."""
+        pkg = self.package("CAR_A_10")
+        cars = self.game / car_manager.CARS_DIR
+        for caps, words in ((False, "isn't there"), (None, "is older"), ("archive.packages", "is older")):
+            with self.subTest(caps=caps):
+                if caps is False:
+                    (self.game / car_manager.PLUGIN).unlink(missing_ok=True)
+                else:
+                    plugin(self.game, caps)
+                with self.assertRaises(SystemExit) as refused:
+                    car_manager.main(["--game", str(self.game), "install", str(pkg)])
+                self.assertIn(words, str(refused.exception))
+                self.assertIn("install.ps1", str(refused.exception))
+                self.assertIn("archive.ids", str(refused.exception))
+                self.assertFalse(cars.exists())
+        # Installed with a current plugin, then the plugin goes back to an older one.
+        plugin(self.game)
+        a = self.manager().install(pkg)
+        self.manager().set_enabled(a, enabled=False)
+        before = {p.name: p.read_bytes() for p in cars.iterdir() if p.is_file()}
+        plugin(self.game, None)
+        with self.assertRaises(SystemExit):
+            car_manager.main(["--game", str(self.game), "enable", a])
+        archive(self.game / "Install" / "dngvehicles.sp", [1, 2, 3, 4, 62])  # another archive takes 3
+        with self.assertRaises(SystemExit):
+            car_manager.main(["--game", str(self.game), "reassign", a])
+        self.assertEqual({p.name: p.read_bytes() for p in cars.iterdir() if p.is_file()}, before)
+        # Disabling and removing list no car, so an older plugin doesn't stop them.
+        car_manager.main(["--game", str(self.game), "disable", a])
+        car_manager.main(["--game", str(self.game), "remove", a])
+        self.assertEqual(self.listed(), {})
+
+    def test_check_plugin_command(self):
+        """install.ps1's preflight: a plugin file is checked against a build's packages without
+        reading or writing the manager's state."""
+        folder = self.tmp / "packages"
+        folder.mkdir()
+        self.package("CAR_A_10").rename(folder / "forza.fh1.CAR_A_10.dsfcar")
+        good = self.game / car_manager.PLUGIN
+        car_manager.main(["--game", str(self.game), "check-plugin", "--plugin", str(good), str(folder)])
+        older = self.tmp / "older.asi"
+        older.write_bytes(b"MZ no marker")
+        for plugin_file in (older, self.tmp / "none.asi"):
+            with self.assertRaises(SystemExit):
+                car_manager.main(["--game", str(self.game), "check-plugin", "--plugin", str(plugin_file), str(folder)])
+        self.assertFalse((self.game / car_manager.CARS_DIR).exists())
+
+    def test_a_package_asks_for_what_the_plugin_lacks(self):
+        """A package's own `requires` is checked too (here a plugin that lists only
+        archive.ids, so a package asking for archive.packages is refused)."""
+        plugin(self.game, "archive.ids")
+        with self.assertRaises(SystemExit) as refused:
+            self.manager().install(self.package("CAR_A_10"))
+        self.assertIn("archive.packages", str(refused.exception))
 
 
 if __name__ == "__main__":

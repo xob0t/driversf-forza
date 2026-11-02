@@ -138,15 +138,15 @@ change is not measured.
 
 - **Package (installed form):** `<game>\dsfforza\cars\<key>\car.sp`, a CHNK of 4
   root entries: the car's three VEHC entries (port_batch's `work/<media>.chnk`)
-  and `VSCT` (3 × 28 bytes). The model ID is patched into the full VEHC
-  (VSVH, VO3D, SPID, UPVH; `clone_vehicle.ID_FIELDS`) by the manager at
-  install; the plugin writes it into the SSLP and VSCT records. (Patching
-  the VEHC in memory after the read would make the installed file ID-free
-  too; possible, not needed while IDs are stable.)
+  and `VSCT` (3 × 28 bytes). It is the package's car.sp byte for byte,
+  with its builder's model ID in the full VEHC (VSVH, VO3D, SPID, UPVH;
+  `clone_vehicle.ID_FIELDS`). The plugin writes the listed ID into those
+  four fields as it serves the read, and into the SSLP and VSCT records it
+  adds ("Model ID in memory" below).
 - **Distributed form (#170):** a `.dsfcar` zip per car with the 4-entry
   `.sp` (any ID), the garage picture, badge and plate images, metadata
   (names, year, stats, maker group) and requirements ("Package format 1"
-  below). The manager unpacks, patches the ID, and writes the list.
+  below). The manager unpacks it as it is and writes the list.
 - **List:** `<game>\dsfforza\cars\cars.txt`, one `id path` per enabled car,
   written by the manager. Disable = drop the line (the file stays); remove
   = drop the line and the file (the ID stays reserved in the map).
@@ -158,7 +158,7 @@ change is not measured.
 | --- | --- | --- | --- |
 | 0x005A13C4 (in FUN_005A11E0) | `E8 67 B1 35 00` (call 0x008FC530) | `call h_spool_open` | calls the original; remembers the reader whose file name ends in `dngvehicles.sp` |
 | `h_poll` state 3 (0x008FC0A0, already replaced) | – | `pkg_inject` | appends 3 entries per package to that reader's root table (side table past 1100) |
-| `h_read_entry` (0x008FBE90) and `h_name` (0x008FB770), already replaced | – | branch | for package entries, a synchronous read from the package file |
+| `h_read_entry` (0x008FBE90) and `h_name` (0x008FB770), already replaced | – | branch | for package entries, a synchronous read from the package file; for a full VEHC, the listed ID written into its four ID fields (`pkg_set_ids`) |
 | `h_seek` (0x008FB5E0), already replaced | – | log | a nested reader over a package entry (not supported) |
 | 0x005A0B50 | `8B 44 24 08 56` | `jmp h_sslp_load` | an SSLP copy with 3 records per package (clash and NONR checks) |
 | 0x0086C630 | `8B 44 24 08 56` | `jmp h_vsct_load` | a VSCT copy with the packages' records; sets `[Engine+0x780]+0x2C` as the original does |
@@ -312,7 +312,7 @@ textures, the picture is DXT5), members at its root and nothing else:
             "year": 1991, "maker_group": "BMW"},
   "garage": {"speed": 0.48, "strength": 0.3, "drift": 0.65},
   "images": {"picture": "picture.dds", "badge": "badge.png", "plate": "plate.png"},
-  "requires": ["archive.packages"],
+  "requires": ["archive.packages", "archive.ids"],
   "source": {"pipeline": "dsfforza", "game": "FH1", "media": "BMW_M3E30_91"}
 }
 ```
@@ -320,9 +320,11 @@ textures, the picture is DXT5), members at its root and nothing else:
 - `key` is `<source>.<game>.<name>` and stays the same across versions; the
   manager keys its ID map and save flags on it. `version` is the
   package's (a higher one replaces a lower one in place, keeping the ID).
-- `car.model_id` is the ID car.sp holds, nothing more: the manager writes
-  its own into the full VEHC at install (`car_package.install_sp`, the same
-  `clone_vehicle.patch_ids` as the merge). Base IDs are 1..999 (the LOD
+- `car.model_id` is the ID car.sp holds, nothing more: the plugin writes
+  the listed ID over it in memory ("Model ID in memory"), and two packages
+  may hold the same one (packages from different builds do). The full VEHC
+  must hold it once in each of VSVH, VO3D, SPID and UPVH, as a vanilla
+  car's does (`clone_vehicle.make_clones` checks the same four). Base IDs are 1..999 (the LOD
   requests add 1000 and 2000 as `short`). `host` and `sound_host` are
   vanilla IDs (0..303): the host's `vehicleStats` entry is the base of the
   car's, its VSCT records are car.sp's fourth entry.
@@ -335,7 +337,11 @@ textures, the picture is DXT5), members at its root and nothing else:
   ID (`"ID:7000xx"`), picture name (`Picture1`) or garage group number:
   the manager allocates those against what is installed. Unknown fields
   are refused, at every level.
-- `requires`: capabilities of dsfforza.asi, today only `archive.packages`.
+- `requires`: capabilities of dsfforza.asi: `archive.packages` (the loader;
+  always required) and `archive.ids` (the plugin writes the listed ID into
+  the data, "Model ID in memory"; port_batch's packages list both). The
+  manager checks them against the installed plugin ("The plugin's
+  capabilities").
 - Images are what the build drew (the Forza logo or a text badge, the
   chrome plate, the rendered picture), not glyph codes. Without one the
   manager uses the game's own badge or plate for that maker or model, or
@@ -343,13 +349,13 @@ textures, the picture is DXT5), members at its root and nothing else:
 
 **Checked** (`dsff car_package validate`, also on read): the members, the
 manifest's fields and types, car.sp against the loader's checks and the
-manifest (SHA-256, the ID in VO3D, the VSCT host), the images' sizes and
-formats.
+manifest (SHA-256, `car.model_id` in each of the four ID fields, the VSCT
+host), the images' sizes and formats.
 
 **Verified:** the four cars of the loader runs, packed from the main build
 (5.2 to 6.2 MB each, about 3.6 s for four) and installed as 700 to 703 with
-`install_sp`, are byte for byte the `.sp` files that ran in
-`runs\vm1-20261101-122452`. Run from the packages, with `ported.lua`
+`install_sp` (the ID written into the file; removed since), are byte for
+byte the `.sp` files that ran in `runs\vm1-20261101-122452`. Run from the packages, with `ported.lua`
 entries written from their manifests (`runs\vm2-20261101-124716`): all
 four spawn as 700 to 703, in the chase and cockpit views.
 
@@ -369,7 +375,7 @@ under the game folder's `dsfforza\cars\` and
 | --- | --- |
 | `dsfforza\cars\manager.json` | the state: `ids` (key → model ID, for good), `cars` (installed: ID, version, enabled, SHA-256 of the installed `.sp`, manifest); until "Packages only" also `merged` (a merged install's cars), dropped on load since |
 | `dsfforza\cars\cars.txt` | the plugin's list: `id path` per enabled car |
-| `dsfforza\cars\<key>\` | one car: `car.sp`, the installed form with the car's ID written in (`car_package.install_sp`), and the package's `car.json` and images (for part 2's GUI files) |
+| `dsfforza\cars\<key>\` | one car: the package's `car.sp`, `car.json` and images as they are (car.sp keeps its builder's ID; the plugin writes the car's ID in memory) |
 | `Common\UserLuaScripts\dsfforza\packages.lua` | `ported.lua`'s fields per enabled car; `register.lua` adds them to its cars for the IDs `ported.lua` doesn't have |
 
 **IDs.** A key keeps its ID across upgrades (a higher version replaces the
@@ -387,7 +393,9 @@ was refused, because the archive had that car; now `seed` reads
 only in case are refused (they would share a file on Windows). An install
 or upgrade is staged as a folder beside the installed one and swapped in with the
 state; a failure at any step puts the installed files and state back. `verify` reports an installed `.sp` that is
-missing or changed, a car whose ID the installed archive now uses (another
+missing or isn't the package's (its `car.sha256`; an install from before
+"Model ID in memory" holds the file with the car's ID written in, whose
+checksum the state recorded), a car whose ID the installed archive now uses (another
 mod's archive: the plugin leaves the package out), and a list that doesn't
 match the state.
 
@@ -517,7 +525,8 @@ leaves only `manager.json`, and a reinstall gets the same IDs again.
 **Another archive takes an ID.** `verify` reports a car whose ID the
 installed archive now has (another mod's: the plugin leaves the package
 out); `car_manager reassign KEY` gives it a new free ID (its old flags
-stay with the old ID, which isn't ours any more).
+stay with the old ID, which isn't ours any more). Only the state and the
+list change; no file is rewritten.
 
 **A save that names cars that aren't there** (confirmed-runtime). Every
 package run used the VM's save, which carries flags for the 573-car
@@ -620,6 +629,139 @@ car spawned, chase and cockpit, the player driving it, no crash; ID 2 is
 the Supra RZ with its Toyota badge and "SUPRA RZ" plate, so the migrated
 IDs are the merged install's.
 
+## Model ID in memory (confirmed-runtime, 2026-11-02)
+
+The installed car.sp is the package's own file; dsfforza.asi writes the
+listed ID (`cars.txt`) into the full VEHC as it serves the read, whatever
+ID the file holds. Before, the manager wrote it into a copy of the file at
+install (`install_sp`, removed).
+
+**How a package entry is read (confirmed-static).** The plugin serves it
+itself: `h_read_entry` (the replacement of 0x008FBE90) reads the whole
+entry, `align_up(entry_span, sector size)` bytes from the entry's offset,
+into the caller's buffer with one synchronous `ReadFile` on the plugin's
+own handle, and returns ("Async I/O" above). It is the only way to an
+entry's bytes: the reader's seek (0x008FB5E0) is called only from
+0x008FB79D (name), 0x008FBEDA (read entry), 0x008FC1D9 and 0x008FC26B
+(the async open, position 0), and its chain read (0x008FB260) only from
+0x008FB273, 0x008FB7AD, 0x008FBEF8, 0x008FC1EC and 0x008FC27D, all inside
+the reader's functions this module replaces (`dsff xref call 0x8fb5e0`,
+`0x8fb260`; `xref imm` finds no table holding either address). A nested
+reader over a package entry is logged and was never seen. The slot parses
+the buffer only after read entry returns (SceneModelType2_Poll state 3 →
+FUN_008FC400; 0x008588B7 is the call, the state is set to 2 right after it),
+and FUN_00858A70 copies the NONR from that buffer into the slot's own. So
+the patch goes at the end of the read, on the buffer.
+
+**The fields.** A u32 each, `clone_vehicle.ID_FIELDS`: VSVH +0, VO3D +0,
+SPID +0, UPVH +0x14, the four places a vanilla car's kind 0 entry holds
+its ID (`clone_vehicle.make_clones` patches them for a clone and checks
+the interior and exterior hold none). Roster survey of the 573 packages of
+the main checkout's package build (`out/build-pkg/packages`): every full
+VEHC holds each field once, at `NONR/VSRT/VSVH`, `NONR/VO3D`, `NONR/UPVH`
+and `NONR/SPSR/SPID`, all four equal to `car.model_id`; no interior or
+exterior holds one; no nested CHNK is compressed; the 573 builder IDs are
+distinct (one build). A VEHC has 964 to 2118 entries, so the plugin finds
+the fields by walking the buffer, not the file at start.
+
+**The hook.** `pkg_set_ids(package, kind, buffer, entry size)` after
+`pkg_read` in `h_read_entry`, kind 0 only: walks the VEHC's CHNK in the
+buffer (a child whose payload starts with `CHNK` and is 16 bytes or more is
+nested, as `dsfforza.formats.chnk` reads it; every table and child is
+bounds-checked against the CHNK it is in; depth at most 16) and writes the
+listed ID at each field. It logs the first read of each package's full
+VEHC, with the fields' offsets in the entry, and every read whose fields
+aren't VSVH, VO3D, SPID and UPVH once with one value.
+
+**Existing installs** hold car.sp with the listed ID written in: the
+fields already hold it, so the write changes nothing. `verify` accepts the
+checksum the state recorded for them, as well as the package's.
+
+**Checks.** `dsfcar` refuses a package whose full VEHC doesn't hold
+`car.model_id` once in each field (the 573 pass). The offline selftest
+(`st_set_ids`) writes into a VEHC laid out as the roster's, checks only the
+four words change, that a file holding the listed ID is left as it is, two
+packages with one builder ID, kinds 1 and 2 untouched, and bounds.
+
+**Two packages with one builder ID** (packages from different builds) work
+under their own listed IDs: nothing in the plugin keys on the file's ID.
+Their UIDs are a separate matter ("UIDs" above).
+
+**In game (confirmed-runtime).** Vanilla archive and GUI files, the
+plugin with `packages=1`, six packages installed by the manager into a
+fake game folder laid over the run (`-Overlay`), car.sp unchanged for five
+of them:
+
+| Listed ID | Car | ID in its car.sp | Note |
+| --- | --- | --- | --- |
+| 1 | Honda S2000 (2003) | 4 | another car's builder ID |
+| 2 | BMW M3 E30 (1991) | 1 | |
+| 3 | Toyota Supra RZ (1998) | 2 | |
+| 4 | Lamborghini Countach (1988) | 470 | |
+| 5 | VW Golf GTi 16v Mk2 (1992) | 1 | rewritten to the M3's builder ID: a package from another build |
+| 6 | Mazda RX-7 (1997) | 6 | installed as today's installs are, the ID written into the file |
+
+- `runs\vm1-20261102-164116` (probes 1 to 6, then the garage with
+  `garagetest_on.lua` and `-MenuKeys`): every full VEHC read whole, in one
+  read, and rewritten, e.g. `packages: 2: VEHC 0 read whole (1560576
+  bytes); model ID 1 -> 2 in 4 fields (VSVH+0x124b60 VO3D+0x177080
+  UPVH+0x1774a4 SPID+0x17b000)`, `5: ... model ID 1 -> 5`, `1: ... 4 ->
+  1`, `4: ... 470 -> 4`, `6: ... 6 -> 6`. Each car spawns as its listed
+  ID, the right car, chase and cockpit (the interior and exterior entries
+  read from the package), and the HUD shows its badge and plate (`hud:
+  model N`). In the garage `getVehicleStats(1..6)` gives each its own
+  entry (Selectable, the package's picture); the MAZDA, TOYOTA, BMW and
+  HONDA groups show the RX-7, Supra RZ, M3 and S2000 cards, OWNED, and the
+  VOLKSWAGEN group holds the Golf GTi 16v Mk2 (the Countach's LAMBORGHINI
+  group wasn't opened).
+- `runs\vm1-20261102-170022` (probes 2, 5, 1, 3, 4, 6, 2, 5): 2 and 5 are
+  released and requested again (`loaded before: true`): both spawn as the
+  M3 and the Golf, chase and cockpit. The full VEHC stayed resident (no
+  second read of it); the interior and exterior were read again.
+- Reads 0.3 to 8.4 ms; no nested reader over a package entry, no field
+  count other than four, no crash, in either run.
+
+Not covered: a full VEHC read a second time (the game kept it resident in
+both runs; the write is the same on every read, `st_set_ids`), and a slow
+disk.
+
+**The plugin's capabilities.** A plugin from before this change serves
+car.sp's builder ID, so the VEHC would say one ID and the SSLP record
+another. The manager reads what the installed plugin can do from the DLL
+file, without running the game: `tools/asi/src/patch.h` defines the marker
+`DSFFORZA-CAPABILITIES: ` and the names (`archive.packages archive.ids`),
+`main.cpp` keeps the string in the DLL by logging it at start, and
+`car_manager.plugin_capabilities` reads it from `<game>\plugins\dsfforza.asi`
+(no plugin: none; no marker: an older plugin). `install`, `enable` and
+`reassign` refuse before writing anything unless the plugin has
+`archive.packages` and `archive.ids` (what every car the manager lists
+needs, as it installs car.sp unchanged) and everything the packages'
+`requires` list; the message says to update dsfforza.asi with
+`tools\install.ps1`. `disable`, `remove`, `uninstall` and `seed` list no
+new car and aren't checked. install.ps1 checks the plugin it will install
+(`-AsiPath`) with `car_manager check-plugin --plugin <file> <build>\packages`
+among its other checks, before the game folder changes, and writes
+`plugins\dsfforza.asi` before it hands the packages to the manager, so the
+manager's own check then sees the new plugin. `tests/test_install_packages.py`
+runs install.ps1 with a plugin file without the marker: refused, the game
+folder unchanged. Before #485, on a scratch game folder with a three-car
+build, install.ps1 with the main checkout's older plugin stopped at the
+manager's refusal and wrote no `dsfforza\cars`; with this branch's plugin
+it installed, and a `-Force` reinstall worked. The game's installed plugin
+and the main checkout's build read as having no capability list.
+
+**Reading car.sp straight out of the `.dsfcar`** (not done; would work as
+far as the loader is concerned). The zip is stored, not deflated, so
+car.sp is one contiguous byte range: at the local header's offset + 30 +
+its name and extra lengths (the local header's own, which may differ from
+the central directory's). CHNK offsets are relative to car.sp's start, so
+`pkg_open` would add that base to every `pread`; the plugin's handle is
+buffered, so an unaligned base costs nothing. It would need: the end of
+central directory and the member's entry parsed at start, method 0 and no
+encryption checked, no ZIP64 (one car is far below 4 GiB). The manager
+would still unpack the images (car_gui reads them) and would check the
+member's checksum in place of the file's.
+
 ## Phased plan (PRs)
 
 1. **Plugin loader** (the spike's code, proven for one car): build and offline test
@@ -629,7 +771,7 @@ IDs are the merged install's.
    at FUN_00857370. Off by default.
 2. **Package format**: the distributed zip (layout, manifest schema with a
    validator in `src/`), `research/` spec. `car_package make` grows from
-   the proof's tool; the VEHC IDs are patched at install.
+   the proof's tool; the VEHC IDs are written in memory by the plugin.
 3. **Manager CLI**: `install`, `enable`, `disable`, `remove`, `status`,
    `verify`; the stable key → ID map next to the game (seeded from today's
    `ported.lua` so existing saves keep their cars), IDs chosen against the

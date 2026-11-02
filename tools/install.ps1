@@ -750,6 +750,13 @@ function Invoke-Install {
     # [archive] packages=1: the cars from dsfforza\cars, the GUI copies from dsfforza\generated.
     $iniText = [IO.File]::ReadAllText($asiIni) -replace '(?m)^packages=0', 'packages=1'
     if ($iniText -notmatch '(?m)^packages=1') { Fail "$asiIni has no [archive] packages switch: an older plugin?" }
+    # car.sp is installed as the package has it: the plugin writes each car's model ID into its data
+    # (archive.ids). The car manager reads the plugin's capabilities from its file and checks them
+    # against what the build's packages need (research/car-packages.md, "The plugin's capabilities"),
+    # here, before the game folder changes, as it does again when it installs the cars.
+    $checkArgs = @('check-plugin', '--plugin', $asiFile)
+    if ($Build) { $checkArgs += Join-Path (Resolve-Path -LiteralPath $Build).Path 'packages' }
+    [void](Invoke-CarManager $checkArgs)
 
     $bootstrapTarget = Join-Path $Game 'Common\UserLuaScripts\bootstrap.lua'
     $ourBootstrap = Get-Sha256 (Join-Path $lua 'player\bootstrap.lua')
