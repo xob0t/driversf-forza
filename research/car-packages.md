@@ -136,7 +136,7 @@ change is not measured.
 
 ## Design
 
-- **Package (installed form):** `<game>\dsfforza\cars\<key>.sp`, a CHNK of 4
+- **Package (installed form):** `<game>\dsfforza\cars\<key>\car.sp`, a CHNK of 4
   root entries: the car's three VEHC entries (port_batch's `work/<media>.chnk`)
   and `VSCT` (3 × 28 bytes). The model ID is patched into the full VEHC
   (VSVH, VO3D, SPID, UPVH; `clone_vehicle.ID_FIELDS`) by the manager at
@@ -369,8 +369,7 @@ under the game folder's `dsfforza\cars\` and
 | --- | --- |
 | `dsfforza\cars\manager.json` | the state: `ids` (key → model ID, for good), `cars` (installed: ID, version, enabled, SHA-256 of the installed `.sp`, manifest), `merged` (a merged install's cars) |
 | `dsfforza\cars\cars.txt` | the plugin's list: `id path` per enabled car |
-| `dsfforza\cars\<key>.sp` | the installed form, the car's ID written in (`car_package.install_sp`) |
-| `dsfforza\cars\<key>\` | the package's `car.json` and images, for part 2's GUI files |
+| `dsfforza\cars\<key>\` | one car: `car.sp`, the installed form with the car's ID written in (`car_package.install_sp`), and the package's `car.json` and images (for part 2's GUI files) |
 | `Common\UserLuaScripts\dsfforza\packages.lua` | `ported.lua`'s fields per enabled car; `register.lua` adds them to its cars for the IDs `ported.lua` doesn't have |
 
 **IDs.** A key keeps its ID across upgrades (a higher version replaces the
@@ -388,7 +387,7 @@ a car no longer there is no longer refused (its key keeps its ID), and an
 installed package whose car a merged install now has is left out of the
 outputs (the archive's copy wins; `verify` reports it). Keys that differ
 only in case are refused (they would share a file on Windows). An install
-or upgrade is staged beside the installed package and swapped in with the
+or upgrade is staged as a folder beside the installed one and swapped in with the
 state; a failure at any step puts the installed files and state back. `verify` reports an installed `.sp` that is
 missing or changed, a car whose ID the installed archive now uses (another
 mod's archive: the plugin leaves the package out), and a list that doesn't

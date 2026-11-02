@@ -51,15 +51,16 @@ class ManagerTest(unittest.TestCase):
         b = m.install(self.package("CAR_B_10"))
         self.assertEqual((m.state["cars"][a]["id"], m.state["cars"][b]["id"]), (3, 5))  # 1, 2, 4 are the archive's
         self.assertEqual(
-            self.listed(), {3: r"dsfforza\cars\forza.fh1.CAR_A_10.sp", 5: r"dsfforza\cars\forza.fh1.CAR_B_10.sp"}
+            self.listed(),
+            {3: r"dsfforza\cars\forza.fh1.CAR_A_10\car.sp", 5: r"dsfforza\cars\forza.fh1.CAR_B_10\car.sp"},
         )
-        with (self.game / car_manager.CARS_DIR / f"{a}.sp").open("rb") as f:
+        with (self.game / car_manager.CARS_DIR / a / "car.sp").open("rb") as f:
             from dsfforza.formats.chnk import read_chunk
 
             self.assertEqual(car_package.car_id(f, read_chunk(f, 0).entries[0]), 3)
         folder = self.game / car_manager.CARS_DIR / a
         self.assertEqual(
-            sorted(p.name for p in folder.iterdir()), ["badge.png", "car.json", "picture.dds", "plate.png"]
+            sorted(p.name for p in folder.iterdir()), ["badge.png", "car.json", "car.sp", "picture.dds", "plate.png"]
         )
         lua = (self.game / car_manager.LUA).read_text()
         self.assertIn('[3] = { host = 205, key = "forza.fh1.CAR_A_10", media = "CAR_A_10"', lua)
@@ -79,7 +80,7 @@ class ManagerTest(unittest.TestCase):
         m.set_enabled(a, enabled=False)
         self.assertNotIn(3, self.listed())
         self.assertNotIn("[3]", (self.game / car_manager.LUA).read_text())
-        self.assertTrue((self.game / car_manager.CARS_DIR / f"{a}.sp").exists())
+        self.assertTrue((self.game / car_manager.CARS_DIR / a / "car.sp").exists())
         self.assertEqual(self.manager().state["cars"][a]["enabled"], False)  # the state is on disk
         m.set_enabled(a, enabled=True)
         self.assertIn(3, self.listed())
@@ -90,7 +91,7 @@ class ManagerTest(unittest.TestCase):
         m = self.manager()
         a = m.install(self.package("CAR_A_10"))
         m.remove(a)
-        self.assertFalse((self.game / car_manager.CARS_DIR / f"{a}.sp").exists())
+        self.assertFalse((self.game / car_manager.CARS_DIR / a / "car.sp").exists())
         self.assertFalse((self.game / car_manager.CARS_DIR / a).exists())
         self.assertEqual(self.listed(), {})
         b = m.install(self.package("CAR_B_10"))
@@ -121,7 +122,7 @@ class ManagerTest(unittest.TestCase):
     def test_verify(self):
         m = self.manager()
         a = m.install(self.package("CAR_A_10"))
-        sp = self.game / car_manager.CARS_DIR / f"{a}.sp"
+        sp = self.game / car_manager.CARS_DIR / a / "car.sp"
         sp.write_bytes(sp.read_bytes() + b"x")
         self.assertTrue(any("changed" in p for p in m.verify()))
         sp.unlink()
@@ -212,7 +213,7 @@ class ManagerTest(unittest.TestCase):
 
         m = self.manager()
         a = m.install(self.package("CAR_A_10"))
-        sp = self.game / car_manager.CARS_DIR / f"{a}.sp"
+        sp = self.game / car_manager.CARS_DIR / a / "car.sp"
         before = sp.read_bytes()
         state = json.loads(json.dumps(m.state))
         with mock.patch.object(car_package, "install_sp", side_effect=OSError("disk full")), self.assertRaises(OSError):
@@ -234,7 +235,7 @@ class ManagerTest(unittest.TestCase):
         self.assertEqual(m.state["cars"][a]["version"], 1)
         self.assertEqual(
             sorted(p.name for p in (self.game / car_manager.CARS_DIR).iterdir()),
-            sorted([a, f"{a}.sp", car_manager.LIST, car_manager.STATE]),
+            sorted([a, car_manager.LIST, car_manager.STATE]),
         )
         self.assertEqual(m.verify(), [])
         # A new key whose install fails doesn't keep the ID it was about to get.
@@ -247,7 +248,7 @@ class ManagerTest(unittest.TestCase):
         m.install(self.package("CAR_A_10"))
         path = self.game / car_manager.CARS_DIR / car_manager.LIST
         good = path.read_text()
-        path.write_text(good.replace("CAR_A_10.sp", "OTHER.sp"))
+        path.write_text(good.replace("CAR_A_10", "OTHER"))
         self.assertTrue(any("ID 3 lists" in p for p in m.verify()))
         path.write_text(good + "9 dsfforza\\cars\\stray.sp\n")
         self.assertTrue(any("ID 9 lists" in p for p in m.verify()))
@@ -319,7 +320,7 @@ class ManagerTest(unittest.TestCase):
         m = self.manager()
         self.assertEqual(m.state["cars"][a]["id"], 5)
         self.assertEqual(m.verify(), [])
-        with (self.game / car_manager.CARS_DIR / f"{a}.sp").open("rb") as f:
+        with (self.game / car_manager.CARS_DIR / a / "car.sp").open("rb") as f:
             from dsfforza.formats.chnk import read_chunk
 
             self.assertEqual(car_package.car_id(f, read_chunk(f, 0).entries[0]), 5)
