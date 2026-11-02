@@ -20,6 +20,24 @@ install.cmd --report
 install.cmd --help
 #>
 $ErrorActionPreference = 'Stop'
+
+# Windows PowerShell 5.1 started from PowerShell 7 through another process (install.cmd from a
+# pwsh terminal, dsff install from one, CI's pwsh shell) inherits pwsh's PSModulePath: 5.1 then
+# autoloads PowerShell 7's Microsoft.PowerShell.Utility and Management (7.0.0.0, first on the
+# path) and Get-FileHash, Invoke-WebRequest, ... are missing. pwsh cleans the path only for a
+# powershell.exe it starts itself. So under Windows PowerShell the PowerShell 7 module folders go
+# (pwsh's own $PSHOME\Modules, beside pwsh.exe, and the ...\PowerShell\Modules folders of
+# Program Files and Documents; Windows PowerShell's are ...\WindowsPowerShell\Modules), for this
+# script and the processes it starts. .NET only: a cmdlet here could autoload the wrong module.
+if ($PSVersionTable.PSEdition -eq 'Desktop' -and $env:PSModulePath) {
+    $env:PSModulePath = (@($env:PSModulePath.Split(';') | Where-Object {
+        $folder = $_.Trim().TrimEnd('\')
+        if (-not $folder) { return $false }
+        if ($folder -match '\\PowerShell\\Modules$') { return $false }
+        try { $home7 = [IO.Path]::GetDirectoryName($folder) } catch { return $true }   # (not a path: left as is)
+        -not ($home7 -and [IO.File]::Exists([IO.Path]::Combine($home7, 'pwsh.exe')))
+    }) -join ';')
+}
 $UvVersion = '0.13.5'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $Forward = @($args)
