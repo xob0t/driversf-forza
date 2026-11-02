@@ -12,8 +12,9 @@ Collects unittest.TestCase classes and plain module-level test_* functions
 (assert-based; pytest collects the same files too). A test file whose import
 needs a package that isn't installed (lupa for the register.lua test, in the
 `test` dependency group) is reported as skipped, not passed. The PowerShell
-tests (tools/wsb/test-host-session.ps1, tools/asi/test/test_install_asi.ps1)
-and the plugin's offline test (tools/asi/build.ps1 -Test) are run on their own.
+test tools/wsb/test-host-session.ps1 and the plugin's offline test
+(tools/asi/build.ps1 -Test) are run on their own; tools/install.ps1 is run by
+tests/test_install_packages.py.
 """
 
 from __future__ import annotations
