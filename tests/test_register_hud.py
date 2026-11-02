@@ -85,7 +85,25 @@ def test_the_builds_own_hud_lua_wins():
     assert stats[500] == (145, 150, "dsfforza_koe_agera_11")
 
 
+def test_car_packages_alone_register_their_cars():
+    """An install: packages.lua and packages_hud.lua (dsff car_manager), no ported.lua or
+    hud.lua (a merged install's, removed when it moved to packages)."""
+    hud = _hud({404: ("FOR_Ka_11", FORD, 158), 500: ("KOE_Agera_11", 145, 150)})
+    files = {
+        "dsfforza\\ported.lua": None,
+        "dsfforza\\hud.lua": None,
+        "dsfforza\\packages.lua": _ported({i: CARS[i] for i in (404, 500)}),
+        "dsfforza\\packages_hud.lua": hud,
+    }
+    lua, _ = _harness.run(True, cars="return {}", files=files)
+    stats = lua.globals().vehicleStats
+    assert (stats[404].Manufacturer, stats[404].Model, stats[404].Picture1) == (FORD, 158, "dsfforza_for_ka_11")
+    assert (stats[500].Manufacturer, stats[500].Model) == (145, 150)
+    assert stats[412] is None  # not in packages.lua: not registered
+
+
 if __name__ == "__main__":
+    test_car_packages_alone_register_their_cars()
     test_no_hud_lua_gives_no_other_cars_plate()
     test_another_builds_hud_lua_is_not_used()
     test_the_builds_own_hud_lua_wins()

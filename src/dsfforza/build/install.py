@@ -10,30 +10,32 @@
 
 Stages, each skipped when there is nothing to do:
 
-1. preflight: DSF_GAME_DIR (or --game) is Driver: San Francisco 1.04 with its vanilla
-   vehicle archive, the Forza disc images are there (assets/*.iso or --iso), there is
-   disk space, and for an install: the game isn't running, the VC++ x86 runtime,
-   DriverNGHook and an ASI loader are there or can be downloaded, and no other mod's
-   files would be replaced (--force replaces them; -Uninstall restores them).
+1. preflight: DSF_GAME_DIR (or --game) is Driver: San Francisco 1.04, with its vanilla
+   vehicle archive when building (the build reads it), the Forza disc images are there
+   (assets/*.iso or --iso), there is disk space, and for an install: the game isn't
+   running, the VC++ x86 runtime, DriverNGHook and an ASI loader are there or can be
+   downloaded, and another mod's bootstrap.lua is replaced only with --force.
 2. prepare: src/dsfforza/game/game_data.py prepare, when its files under out/ are
    missing or older than the game's scripts.
 3. plugin: out/asi/dsfforza.asi (tools/asi). Kept when out/asi/dsfforza.build.json
    says it was built from the current tools/asi sources, else built with
    tools/asi/build.ps1 -Test when Visual Studio Build Tools are installed, else a
-   prebuilt one is used as it is. The whole roster needs it (--id-policy asi and
-   more than the vanilla reader's 1100 root entries and 2 GiB); --no-plugin builds for
-   the vanilla game instead (at most 215 cars, garage IDs 1..61).
+   prebuilt one is used as it is. Every install needs it: its [archive] packages loads
+   the cars.
 4. build: src/dsfforza/build/port_batch.py build with --gui --wide-glyphs --id-policy
-   asi --root-limit 3003 (tools/batches/all.txt by default) into out/build.new, reusing
+   asi --root-limit 3003 --packages (tools/batches/all.txt by default) into out/build.new, reusing
    every car the last build (out/build), an interrupted one (out/build.partial) or
    --reuse DIR made from the same inputs and code, so a re-run only converts what
    changed. Without any of those, the earlier build under out/ with the most cars is
    used. When the build finishes, out/build.new becomes out/build.
-5. pack: the merge into one archive, lint, garage pictures and HUD badges (same run).
+5. pack: the merge into one archive (the in-game tests run it; the install doesn't), lint,
+   garage pictures and HUD badges, and one car package per car (<build>/packages/*.dsfcar).
 6. install: the save folder (Documents/Ubisoft/Driver San Francisco/reloaded/savegames)
-   is copied to out/save-backups/<time>/, then tools/install.ps1 installs the build,
-   DriverNGHook, the plugin and the profile switch (-WriteProfile; --no-write-profile
-   leaves it out). An earlier dsfforza install is replaced.
+   is copied to out/save-backups/<time>/, then tools/install.ps1 installs DriverNGHook,
+   the plugin, the profile switch (-WriteProfile; --no-write-profile leaves it out) and
+   the build's car packages through the car manager (src/dsfforza/build/car_manager.py),
+   beside the game's files: no game file is replaced. An earlier dsfforza install is
+   replaced; a merged one (up to v0.1.8) moves to packages on the same IDs.
 
 The terminal shows the stages, a per-car progress bar and the cars each worker is
 converting; everything the tools print goes to out/logs/install-<time>.log.
@@ -70,7 +72,7 @@ from dsfforza.build import gentle
 VANILLA_ARCHIVE_SHA256 = (
     "0DDC885E23028F708A92A2426B643938A6934C99204C780E01755C5B7778AE35"  # Install\dngvehicles.sp 1.04
 )
-VANILLA_FILES = {  # the other files install.ps1 replaces (English install), as tools/install.ps1 $VanillaHashes
+VANILLA_FILES = {  # the other files a merged install (up to v0.1.8) replaced (English install), for dsff report
     "Install/gui.sp": "AADB62925387307AF7E2BC5091D5E583823E553C23D4E71C5DD6BB71936DA11F",
     "media/Fonts.fchunk": "23B1724A878CB9937A764B55F7ADCF0E2D7403C0C63E8504A78566D8EE4602F2",
     "Locale/English/global.fchunk": "BA892E734B66A8AA08B98A19CEC32CE1A540792A02205D0AB3FB38BD599A96B8",
@@ -99,7 +101,6 @@ DEFAULT_OUT = REPO / "out" / "build"
 LOG_DIR = REPO / "out" / "logs"
 SAVE_BACKUPS = REPO / "out" / "save-backups"
 ASI_ROOT_LIMIT = 3003  # every base ID below 1000 (3 entries each) plus SSIC, DMWK, BINF
-VANILLA_ROOM = 215  # (1100 - 453 vanilla root entries) // 3: cars the vanilla archive reader takes
 MIB = 1 << 20
 GIB = 1 << 30
 VS_INSTALLER = Path(r"C:\Program Files (x86)\Microsoft Visual Studio\Installer")
@@ -549,8 +550,8 @@ GUI_FILES = ("gui.sp", "Fonts.fchunk", "hud.lua")  # gui_assets: pictures, glyph
 
 
 def package_problem(build: Path) -> str | None:
-    """Why a build's car packages can't be installed (tools/install.ps1 -Packages checks the
-    same), or None: its packaging failed (batch-report.json timings packages_error), or
+    """Why a build's car packages can't be installed (tools/install.ps1 Get-BuildPackages
+    checks the same), or None: its packaging failed (batch-report.json timings packages_error), or
     <build>/packages doesn't hold exactly one package per car of its manifest."""
     from dsfforza.build import dsfcar
 
@@ -569,7 +570,7 @@ def package_problem(build: Path) -> str | None:
         return f"{build / 'dngvehicles.json'} is missing or unreadable"
     have = {p.name[: -len(dsfcar.SUFFIX)] for p in (build / "packages").glob(f"*{dsfcar.SUFFIX}")}
     if not have:
-        return f"{build} has no car packages (build it with --packages)"
+        return f"{build} has no car packages (built without --packages)"
     if have != want:
         extra, missing = sorted(have - want), sorted(want - have)
         return (
@@ -582,9 +583,9 @@ def package_problem(build: Path) -> str | None:
 
 def gui_problem(build: Path) -> str | None:
     """Why `build`'s gui/ doesn't go with its cars, or None. Without gui/ (built without
-    --gui, or its GUI step failed) register.lua has no hud.lua for the cars, and with
-    one made for other cars (another build's gui/) the HUD would show their names.
-    tools/install.ps1 Test-BuildGui checks the same."""
+    --gui, or its GUI step failed) the build's merged archive, as the in-game tests run it
+    (tools/wsb/guest/run-test.ps1), has no hud.lua for its cars, and with one made for
+    other cars (another build's gui/) the HUD would show their names. dsff report shows it."""
     gui = Path(build) / "gui"
     missing = [name for name in GUI_FILES if not (gui / name).is_file()]
     if missing:
@@ -1254,14 +1255,7 @@ class Run:
             text = f"{game / 'Driver.exe'} is not Driver: San Francisco 1.04" + (
                 f" (PE timestamp {build[0]:#x}, image size {build[1]:#x})" if build else ""
             )
-            if not args.no_plugin:
-                problems.append(text + "; dsfforza.asi only patches 1.04. Update the game to 1.04.")
-            else:
-                info.append("not 1.04?")
-        if args.packages and args.no_plugin:
-            problems.append(
-                "--packages needs dsfforza.asi (its [archive] packages loads the cars): leave out --no-plugin."
-            )
+            problems.append(text + "; dsfforza.asi only patches 1.04. Update the game to 1.04.")
         from dsfforza.game import game_paths
 
         self.record = read_install_record(game)
@@ -1269,9 +1263,9 @@ class Run:
         if not self.vanilla_archive.is_file():
             problems.append(f"{game / 'Install' / 'dngvehicles.sp'} is missing.")
         elif sha256(self.vanilla_archive) != VANILLA_ARCHIVE_SHA256:
-            if not self.building and args.packages:  # packages replace no archive: another mod's can stay
-                info.append("archive not vanilla (kept: --packages)")
-            else:  # a build reads the vanilla archive, and a merged install replaces it
+            if not self.building:  # the cars install beside the archive: another mod's can stay
+                info.append("archive not vanilla (another mod's: kept)")
+            else:  # the build reads the vanilla archive
                 problems.append(
                     f"{self.vanilla_archive} is not the vanilla 1.04 vehicle archive (another mod?). "
                     "Restore the original (Steam/Uplay: verify files) and run again."
@@ -1309,11 +1303,6 @@ class Run:
             if gone:
                 problems.append(f"Car list not found: {', '.join(map(str, gone))}")
             cars = count_cars([p for p in lists if p not in gone], args.car or [])
-            if args.no_plugin and cars > VANILLA_ROOM:
-                problems.append(
-                    f"--no-plugin: the vanilla game reads at most {VANILLA_ROOM} added cars, the selection has {cars}. "
-                    "Pass a shorter --list, or leave out --no-plugin."
-                )
         if self.installing:
             problems += self.install_checks()
         # disk space: the build folder's drive and the game's
@@ -1390,13 +1379,6 @@ class Run:
                     "Common\\UserLuaScripts\\bootstrap.lua belongs to another mod. Add --force to replace it: it is "
                     "backed up and put back by --uninstall, and ours runs it first, so that mod still loads."
                 )
-            for relative, digest in {} if args.packages else VANILLA_FILES.items():  # --packages replaces none
-                path = game / relative
-                if path.is_file() and sha256(path) != digest:
-                    problems.append(
-                        f"{relative} is not the vanilla 1.04 file (another mod?). Add --force to replace it "
-                        "(it is backed up and put back by --uninstall), or restore the original first."
-                    )
         return problems
 
     # 2. prepare ------------------------------------------------------------------------------------
@@ -1436,8 +1418,6 @@ class Run:
 
     def plugin_stage(self) -> tuple[str, str]:
         args = self.args
-        if args.no_plugin:
-            return "skipped", "--no-plugin: vanilla limits, no dsfforza.asi"
         if args.asi:
             if not Path(args.asi).is_file():
                 raise StageError(f"--asi {args.asi}: no such file.")
@@ -1451,7 +1431,7 @@ class Run:
         if not (REPO / ".git").exists() and not args.rebuild_plugin:
             raise StageError(
                 f"This copy has no dsfforza.asi ({rel(BUNDLED_ASI)}).",
-                "Download the release zip again (it holds the plugin), pass --asi FILE, or --no-plugin.",
+                "Download the release zip again (it holds the plugin), or pass --asi FILE.",
             )
         digest = asi_sources_digest()
         state = plugin_state(ASI_OUT, digest)
@@ -1470,13 +1450,11 @@ class Run:
             return "done", f"{rel(ASI_OUT)} (prebuilt, {state}: no Visual Studio to rebuild it)"
         if action == "missing":
             raise StageError(
-                "dsfforza.asi is needed for the whole roster (--id-policy asi, an archive past the vanilla 1100 entries "
-                "and 2 GiB), and it can't be built here: Visual Studio 2022 Build Tools with the C++ workload "
-                "were not found.",
+                "dsfforza.asi is needed (its [archive] packages loads the cars), and it can't be built here: "
+                "Visual Studio 2022 Build Tools with the C++ workload were not found.",
                 "Install them (winget install Microsoft.VisualStudio.2022.BuildTools --override "
                 '"--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"), or copy a '
-                f"built dsfforza.asi to {ASI_OUT.parent} (or pass --asi FILE), or build for the vanilla game: "
-                f"--no-plugin with a --list of at most {VANILLA_ROOM} cars.",
+                f"built dsfforza.asi to {ASI_OUT.parent}, or pass --asi FILE.",
             )
         self.build_plugin(vcvars)
         self.plugin = ASI_OUT
@@ -1523,11 +1501,11 @@ class Run:
         if sources:
             self.reporter.stage("build", "running", "reusing cars from " + ", ".join(rel(s) for s in sources))
             hint = seconds_per_car(sources[0])
-        argv = ["build", "--out", str(dirs.staging), "--dsf", str(self.vanilla_archive), "--gui"]
-        if args.no_plugin:
-            argv += ["--id-policy", "garage"]
-        else:
-            argv += ["--id-policy", "asi", "--root-limit", str(ASI_ROOT_LIMIT), "--wide-glyphs"]
+        # The ID policy, root limit and wide glyphs are for the merged archive the build also writes
+        # (the in-game tests run it: tools/wsb/run-series.ps1 -Archives); the car packages
+        # (--packages, <build>/packages/*.dsfcar) get their IDs from the car manager at install.
+        argv = ["build", "--out", str(dirs.staging), "--dsf", str(self.vanilla_archive), "--gui", "--packages"]
+        argv += ["--id-policy", "asi", "--root-limit", str(ASI_ROOT_LIMIT), "--wide-glyphs"]
         for path in self.lists():
             argv += ["--list", str(path)]
         for car in args.car or []:
@@ -1537,8 +1515,6 @@ class Run:
         for source in sources:
             argv += ["--reuse", str(source)]
         argv += ["--jobs", str(args.jobs), "--verify-reuse", str(args.verify_reuse if sources else 0)]
-        if args.packages:
-            argv += ["--packages"]  # <build>/packages/*.dsfcar for install.ps1 -Packages
         # A reused car that comes out different when built again doesn't stop a player's build:
         # its fresh copy is used and its build's other cars are converted again.
         argv += ["--verify-mismatch", "rebuild"]
@@ -1655,57 +1631,46 @@ class Run:
         return target
 
     def install_flags(self, hook, loader) -> list[str]:
-        """tools/install.ps1's switches for this run, after -GamePath, -Build and -IdPolicy."""
+        """tools/install.ps1's switches for this run, after -GamePath and -Build."""
         args, flags = self.args, []
         if self.plugin is not None:
-            flags += ["-Asi", "-AsiPath", str(self.plugin)]
+            flags += ["-AsiPath", str(self.plugin)]
         if hook:
             flags += ["-HookArchive", str(hook)]
         if loader:
             flags += ["-AsiLoader", str(loader)]
         if args.skip_hook:
             flags += ["-SkipHook"]
-        if args.packages:
-            flags += ["-Packages"]  # the build's car packages through the car manager
         if not args.no_write_profile:
             flags += ["-WriteProfile"]
         if args.force or installed(self.record):
-            flags += ["-Force"]  # replaces the earlier dsfforza install (and, with --force, other mods' files)
+            flags += ["-Force"]  # replaces the earlier dsfforza install (and, with --force, another mod's bootstrap)
         return flags
 
     def install(self) -> str:
         args, game = self.args, self.game
         build = Path(args.build) if args.build else (self.build_dir or args.out)
-        # --packages installs none of the build's archive, Lua or GUI files (install.ps1 -Packages).
-        names = ("dngvehicles.json",) if args.packages else ("dngvehicles.sp", "dngvehicles.json", "dngvehicles.lua")
-        for name in names:
-            if not (build / name).is_file():
-                raise StageError(
-                    f"No finished build in {build} ({name} missing).",
-                    f"Run `{command_name()}` (or with --build-only) first, or pass --build DIR.",
-                )
+        # The car packages, through the car manager: none of the build's archive, Lua or GUI files.
+        if not (build / "dngvehicles.json").is_file():
+            raise StageError(
+                f"No finished build in {build} (dngvehicles.json missing).",
+                f"Run `{command_name()}` (or with --build-only) first, or pass --build DIR.",
+            )
         if self.build_dir is None:
             self.read_report(build)
-        problem = package_problem(build) if args.packages else gui_problem(build)
+        problem = package_problem(build)
         if problem:
-            how = "--packages" if args.packages else "--gui"
             raise StageError(
                 problem + ".",
-                f"Build again with `{command_name()}{' --packages' if args.packages else ''}` (it builds them), "
-                f"or `port_batch build {how}` for your own list.",
+                f"Build again with `{command_name()}` (it builds them), or `port_batch build --gui --packages` "
+                "for your own list.",
             )
         if self.probes.running(game):
             raise StageError("Driver.exe is running from the game folder.", "Close the game and run --install-only.")
-        try:
-            policy = json.loads((build / "dngvehicles.json").read_text(encoding="utf-8"))["batch"]["id_policy"]
-        except (OSError, ValueError, KeyError, TypeError):
-            policy = "garage" if args.no_plugin else "asi"
-        if policy == "asi" and self.plugin is None:
-            raise StageError(f"{build} was built for dsfforza.asi (--id-policy asi), but --no-plugin was given.")
         self.reporter.stage("install", "running", "backing up the save")
         self.summary.save_backup = None if args.no_save_backup else self.backup_save()
         hook, loader = self.hook_files()
-        self.reporter.stage("install", "running", "tools/install.ps1: backing up and copying the game files")
+        self.reporter.stage("install", "running", "tools/install.ps1: the plugin, the Lua and the car packages")
         command = [
             powershell(),
             "-NoProfile",
@@ -1717,8 +1682,6 @@ class Run:
             str(game),
             "-Build",
             str(build),
-            "-IdPolicy",
-            policy,
         ]
         command += self.install_flags(hook, loader)
         log("install: " + " ".join(command))
@@ -1900,11 +1863,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="after a pack that reused the last build's, make a full pack too and stop if they differ",
     )
-    build.add_argument(
-        "--no-plugin",
-        action="store_true",
-        help=f"build and install for the vanilla game, without dsfforza.asi (at most {VANILLA_ROOM} cars)",
-    )
     build.add_argument("--asi", type=Path, help="install this dsfforza.asi instead of out/asi's")
     build.add_argument(
         "--rebuild-plugin", action="store_true", help="build dsfforza.asi here (needs Visual Studio Build Tools)"
@@ -1916,13 +1874,7 @@ def build_parser() -> argparse.ArgumentParser:
     inst.add_argument(
         "--no-write-profile", action="store_true", help="don't let the mod mark garage cars owned in the save"
     )
-    inst.add_argument("--force", action="store_true", help="replace other mods' bootstrap.lua, gui.sp, fonts")
-    inst.add_argument(
-        "--packages",
-        action="store_true",
-        help="experimental: install the cars as car packages through the car manager (no game file replaced; "
-        "needs the plugin; research/car-packages.md)",
-    )
+    inst.add_argument("--force", action="store_true", help="replace another mod's bootstrap.lua (ours runs it first)")
     inst.add_argument(
         "--no-download", action="store_true", help="download nothing (vgmstream, DriverNGHook, the ASI loader)"
     )

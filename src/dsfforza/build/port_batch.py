@@ -1940,8 +1940,8 @@ def write_packages(args, out_dir: Path, cars: list[dict], timings: dict, progres
     pack.save and before --clean-work). They are written to packages.new and swapped in
     whole, so <build>/packages is always one build's complete set. On a failure the build
     stands (as for the GUI step), but the packages go, the earlier ones included (they don't
-    match this build), and the report says why (timings packages_error): install.ps1 -Packages
-    and dsff install --packages refuse such a build."""
+    match this build), and the report says why (timings packages_error): install.ps1 and
+    dsff install refuse such a build (they install only packages)."""
     import shutil
 
     t = time.time()
@@ -2246,7 +2246,7 @@ def build_parser() -> argparse.ArgumentParser:
                 "--packages",
                 action="store_true",
                 help="also write one car package per car to <out>/packages (<key>.dsfcar; with --gui for "
-                "their garage pictures; research/car-packages.md)",
+                "their garage pictures; what install.ps1 installs; research/car-packages.md)",
             )
             p.add_argument(
                 "--wide-glyphs",

@@ -1,6 +1,6 @@
 # Car packages: cars from per-car files beside the vanilla dngvehicles.sp
 
-Updated: 2026-11-01
+Updated: 2026-11-02
 
 Feasibility spike for the car mod manager (#170, #149, #162). The question is
 whether `dsfforza.asi` can make `Driver.exe` 1.04 load cars from a file per
@@ -367,7 +367,7 @@ under the game folder's `dsfforza\cars\` and
 
 | File | What |
 | --- | --- |
-| `dsfforza\cars\manager.json` | the state: `ids` (key → model ID, for good), `cars` (installed: ID, version, enabled, SHA-256 of the installed `.sp`, manifest), `merged` (a merged install's cars) |
+| `dsfforza\cars\manager.json` | the state: `ids` (key → model ID, for good), `cars` (installed: ID, version, enabled, SHA-256 of the installed `.sp`, manifest); until "Packages only" also `merged` (a merged install's cars), dropped on load since |
 | `dsfforza\cars\cars.txt` | the plugin's list: `id path` per enabled car |
 | `dsfforza\cars\<key>\` | one car: `car.sp`, the installed form with the car's ID written in (`car_package.install_sp`), and the package's `car.json` and images (for part 2's GUI files) |
 | `Common\UserLuaScripts\dsfforza\packages.lua` | `ported.lua`'s fields per enabled car; `register.lua` adds them to its cars for the IDs `ported.lua` doesn't have |
@@ -380,12 +380,10 @@ takes the first ID in port_batch's "asi" order (1..303, then 304 up; base
 IDs below 1000) that the installed `Install\dngvehicles.sp`'s SSLP doesn't
 use (kind 0 records: 150 in the vanilla archive, 62..303; 723 in the
 573-car build), that isn't `RESERVED_IDS` (Felony Rework's 622/623) and
-that no key holds. A merged install's cars (its `ported.lua`) are seeded
-with their IDs, and a package of one of them is refused, because the
-archive already has that car. The merged list is read again on every run:
-a car no longer there is no longer refused (its key keeps its ID), and an
-installed package whose car a merged install now has is left out of the
-outputs (the archive's copy wins; `verify` reports it). Keys that differ
+that no key holds. Until "Packages only" (below), a merged install's cars
+(its `ported.lua`) were seeded on every run and a package of one of them
+was refused, because the archive had that car; now `seed` reads
+`ported.lua` once, for the migration, and nothing else does. Keys that differ
 only in case are refused (they would share a file on Windows). An install
 or upgrade is staged as a folder beside the installed one and swapped in with the
 state; a failure at any step puts the installed files and state back. `verify` reports an installed `.sp` that is
@@ -452,7 +450,7 @@ name from the generated global.fchunk and its 16-bit badge, and the Supra
 RZ's card shows its package's picture. The card has the SF disc, not the
 Forza emblem: the vanilla Fonts.fchunk has no emblem texture (see above).
 
-## Pipeline (phase 4, #454; opt-in)
+## Pipeline (phase 4, #454; opt-in until "Packages only" below)
 
 - `port_batch build --packages` writes `<build>\packages\<key>.dsfcar`
   for every car of the build (`dsfcar.pack`), after the pack step has
@@ -490,7 +488,7 @@ Forza emblem: the vanilla Fonts.fchunk has no emblem texture (see above).
   reinstalls keep every car's ID; `-Uninstall` restores the game and
   leaves `dsfforza\cars`, `dsfforza\generated` and the two Lua files.
 
-## Uninstall, migration and save safety (phase 5, #455)
+## Uninstall, migration and save safety (phase 5, #455; the switches as they were then)
 
 **Uninstall.** `car_manager uninstall` removes every file the manager
 wrote: the cars' `.sp` files and folders, `cars.txt`,
@@ -541,6 +539,86 @@ request path refuses an ID without an SSLP record.
 **The garage header** ("x/y OWNED") is 140 + the added cars in every run
 (713 with the merged roster, 144 with four packages, 143 with three):
 package cars are counted like merged ones (#478, closed).
+
+## Packages only (after phase 5)
+
+Car packages are the only install; the merged install mode (the cars in
+copies of `Install\dngvehicles.sp`, `gui.sp`, `Fonts.fchunk` and
+`global.fchunk`, with `ported.lua` and `hud.lua`) is gone from
+`tools\install.ps1` and `dsff install`.
+
+- **install.ps1** has no `-Packages`, `-Asi` or `-IdPolicy`. The plugin is
+  required (`-AsiPath`, default `out\asi\dsfforza.asi`, else a release's
+  `plugin\dsfforza.asi`) and always gets `[archive] packages=1`. A build made
+  here is `port_batch build --gui --wide-glyphs --id-policy asi
+  --root-limit 3003 --packages`, as `dsff install`'s; it still needs the
+  vanilla archive, which it reads. No game file is replaced, so another
+  mod's archive and GUI files are no reason to stop an install;
+  `dsfforza-backup\` holds only `install.json` and, with `-Force`, another
+  mod's `bootstrap.lua`. Everything that can stop an install (the build's
+  packages, uv, the plugin and its ini, a foreign bootstrap without
+  `-Force`, the VC++ runtime, the ASI loader and DriverNGHook as they will
+  be once an earlier install is gone) is checked before the game folder
+  changes.
+- **dsff install** has no `--packages` or `--no-plugin`: it always builds
+  with `--packages` and installs with the plugin. The preflight checks the
+  vanilla archive only when it builds.
+- **Migration.** Over a merged install (an `install.json` in place without
+  `packages`: every release up to v0.1.8) install.ps1 migrates without
+  `-Force`: `car_manager seed` records `ported.lua`'s IDs in the map, the
+  merged install is uninstalled as before (every replaced file restored from
+  its backup and checked by SHA-256), `ported.lua` and `hud.lua` are deleted
+  if its uninstall kept them (changed since that install), and the packages
+  take the map's IDs. A `ported.lua` without an install record is seeded and
+  deleted too. A package install over a package install still needs
+  `-Force`. `-Uninstall` removes a merged install as it always did.
+- **car_manager** no longer reads `ported.lua` on every load: no `merged`
+  state, no `merged_conflicts`, no refusal of a package "already in the
+  archive". An old `manager.json`'s `merged` key is dropped on load (its IDs
+  are in `ids` already). `seed` alone reads `ported.lua`; a key the map has
+  keeps its ID.
+- **register.lua** reads `packages.lua` and `packages_hud.lua` first, then
+  `ported.lua` and `hud.lua` for the IDs they don't have. The latter stay
+  because the in-game tests still run a build's merged archive
+  (`run-series.ps1 -Archives <build>\dngvehicles.sp` installs its
+  `dngvehicles.lua` and `gui\hud.lua` under those names; `clonetest.lua`,
+  `garagetest.lua`, `port_car --install-lua` and `gui_assets --install-lua`
+  use them too), so the build keeps writing the merged archive, `gui\` and
+  `dngvehicles.lua`. Its no-plugin paths (vanilla garage and save limits)
+  stay for the same reason: series without `-Asi`. A player install has
+  neither file after a migration.
+
+**Verified offline** (`tests/test_install_packages.py`, install.ps1 in
+Windows PowerShell on a synthetic game, the car manager through uv): a
+merged install of two cars (IDs 40 and 3) with a changed `hud.lua` moves to
+packages without `-Force`; the three packages get 40, 3 and 5 (a fresh
+install gives 3, 5 and 6); the archive and gui.sp are the originals again;
+`ported.lua` and `hud.lua` are gone; a second install needs `-Force` and
+keeps the IDs; `-Uninstall` leaves the game as it was but for
+`manager.json`, and a later install gets the same IDs. `-Uninstall` of a
+merged install restores the game exactly. A bad `-Build` (a car without a
+package) or a missing plugin changes nothing.
+
+**Verified with real files** (`out\scratch-game`: copies of the vanilla
+1.04 archive, gui.sp, Fonts.fchunk and English global.fchunk): master's
+install.ps1 made a merged install of a three-car build (`out\b3`: BMW M3
+E30 1, Toyota Supra RZ 2, Mazda RX-7 3, `--id-policy asi`). This
+install.ps1 over it, without `-Force`: seed (3 IDs), the four game files
+restored (SHA-256 of `out\vanilla`'s), `ported.lua`, `hud.lua` and
+`config.lua` removed, then the packages installed as BMW 1, Supra 2, RX-7 3
+(a fresh install would give the RX-7 2 and the Supra 3, key order), one GUI
+generation, `packages=1` in the installed ini.
+
+**In game** (`runsm2-20261102-165110`): the vanilla archive with that install's plugin
+and ini (`-Asi out\scratch-game\plugins\dsfforza.asi`) and its car
+manager files laid over the run (`-Overlay`: `dsfforza\` and
+`packages.lua`, `packages_hud.lua`), `-ProbeIds '1,2,3'`. The plugin loaded the three packages from
+`cars.txt` (IDs 1 to 3, root entries 453..461, SSLP and VSCT 450 + 9) and
+served the generated gui.sp, Fonts.fchunk and global.fchunk; `register.lua`
+took its cars from `packages.lua` alone (`id 2 (TOYOTA SUPRA RZ)`). Each
+car spawned, chase and cockpit, the player driving it, no crash; ID 2 is
+the Supra RZ with its Toyota badge and "SUPRA RZ" plate, so the migrated
+IDs are the merged install's.
 
 ## Phased plan (PRs)
 

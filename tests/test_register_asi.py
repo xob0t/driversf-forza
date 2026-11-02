@@ -48,6 +48,7 @@ def run(
     hud: str | None = None,
     per_group: int | None = 1000,
     stats_extra: str = "",
+    files: dict | None = None,
 ):
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
     g = lua.globals()
@@ -55,6 +56,7 @@ def run(
     g.print = lambda *a: out.append(" ".join(str(x) for x in a))
     loader = lua.execute(LOADER)
     over = {f"dsfforza{BS}ported.lua": cars or ported(), f"dsfforza{BS}hud.lua": hud, f"dsfforza{BS}config.lua": None}
+    over.update(files or {})  # other user files ({name: text, or None for missing})
 
     def user_open(name):
         name = str(name)

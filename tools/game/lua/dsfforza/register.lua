@@ -32,8 +32,8 @@ local M = {}
 -- Keep the Lua garbage collector stopped while a user file is compiled and run, as the
 -- player bootstrap does (research/in-game-tests.md, "Lua crashes loading big user files"):
 -- here too, so another mod's bootstrap that only adds user_open("dsfforza\\register.lua")
--- loads ported.lua and hud.lua the safe way. user_open is read-only in DriverNGHook's _G
--- metatable, hence rawset; the rawget guard keeps it to one wrapper.
+-- loads the car lists (packages.lua, packages_hud.lua) the safe way. user_open is read-only
+-- in DriverNGHook's _G metatable, hence rawset; the rawget guard keeps it to one wrapper.
 if not rawget(_G, "dsfforzaUserOpen") then
 	local original = user_open
 	rawset(_G, "dsfforzaUserOpen", original)
@@ -48,9 +48,10 @@ if not rawget(_G, "dsfforzaUserOpen") then
 	end)
 end
 
--- Per-car settings, from dsfforza\ported.lua (src/dsfforza/build/port_car.py or
--- src/dsfforza/build/port_batch.py) or config.lua's register.cars. Empty without either, so
--- nothing is registered for cars that aren't in the installed archive.
+-- Per-car settings, from dsfforza\packages.lua (the installed car packages: dsff
+-- car_manager), dsfforza\ported.lua (in the in-game tests: the merged archive of a build,
+-- src/dsfforza/build/port_car.py or port_batch.py) or config.lua's register.cars. Empty
+-- without any, so nothing is registered for cars the game can't load.
 -- `source` is the vanilla model whose vehicleStats entry is copied; every other
 -- field overrides that copy. Example:
 --	[304] = {
@@ -127,11 +128,10 @@ local GARAGE_MAX_ID = ASI.garage and ASI.maxId or VANILLA_MAX_ID
 local SAVE_MAX_ID = ASI.save and 999 or 303   -- highest ID whose save flags are safe to set
 local OVERFLOW_GROUP = "FORZA"   -- makes without a group of their own share FORZA, FORZA 2, ...
 
--- Cars built by src/dsfforza/build/port_car.py (dsfforza\ported.lua) replace the sample
--- list above. The HUD badge and name come from the numeric Manufacturer and
--- Model fields (vehicles_font glyph codes; ManufacturerName/ModelName strings
--- don't reach it). dsfforza\hud.lua (gui_assets) gives every car its own; for a
--- car it doesn't cover, the vanilla entries are matched on Picture1 ("nissan_370z"):
+-- The cars of packages.lua or ported.lua (below) replace the sample list above. The HUD
+-- badge and name come from the numeric Manufacturer and Model fields (vehicles_font glyph
+-- codes; ManufacturerName/ModelName strings don't reach it). packages_hud.lua (or hud.lua)
+-- gives every car its own; for a car it doesn't cover, the vanilla entries are matched on Picture1 ("nissan_370z"):
 --   same make and model  -> copy that vanilla entry (badge, name, pictures, stats)
 --   same make            -> host entry with that make's badge and no nameplate
 --   make not in DSF      -> host entry with no badge and no nameplate
@@ -169,30 +169,32 @@ local function vanillaMatch(car)
 	return exact, near
 end
 
--- Per-ID vehicleStats overrides from dsff gui_assets build: Picture1,
--- Manufacturer, Model (vehicles_font codes), ManufacturerName, ModelName.
--- Its Picture1 is "dsfforza_<media>": an entry made for another car (a hud.lua
--- of another build) is not used (hudEntry).
+-- Per-ID vehicleStats overrides: Picture1, Manufacturer, Model (vehicles_font codes),
+-- ManufacturerName, ModelName. The installed car packages' are in dsfforza\packages_hud.lua
+-- (dsff car_manager, src/dsfforza/build/car_gui.py; their pictures, glyphs and strings are in
+-- dsfforza\generated\, which dsfforza.asi opens in place of the game's files). In the
+-- in-game tests a build's merged archive brings its gui\hud.lua as dsfforza\hud.lua (dsff
+-- gui_assets build), the same fields. Picture1 is "dsfforza_<media>": an entry made for
+-- another car (a hud.lua of another build) is not used (hudEntry).
 local HUD
-do
-	local found, hud = user_open("dsfforza\\hud.lua")
-	if found and type(hud) == "table" then
-		HUD = hud
-	end
-	-- Car packages' entries (dsff car_manager, src/dsfforza/build/car_gui.py): the same
-	-- fields, for the IDs hud.lua doesn't have. Their pictures, glyphs and strings are in
-	-- dsfforza\generated\, which dsfforza.asi opens in place of the game's files.
-	local foundPackages, packages = user_open("dsfforza\\packages_hud.lua")
-	if foundPackages and type(packages) == "table" then
+local function addHud(name)
+	local found, entries = user_open(name)
+	if found and type(entries) == "table" then
 		HUD = HUD or {}
-		for id, entry in pairs(packages) do
+		for id, entry in pairs(entries) do
 			if HUD[id] == nil then
 				HUD[id] = entry
 			end
 		end
 	end
 end
+addHud("dsfforza\\packages_hud.lua")
+addHud("dsfforza\\hud.lua")
 
+-- The cars: dsfforza\packages.lua (the enabled car packages, written by dsff car_manager;
+-- dsfforza.asi [archive] packages loads them) and, in the in-game tests, dsfforza\ported.lua
+-- (a build's dngvehicles.lua beside its merged archive, tools/wsb/guest/run-test.ps1). The
+-- same fields per car; either replaces the sample list above.
 local PORTED
 local function portedCar(car)
 	return {
@@ -203,35 +205,22 @@ local function portedCar(car)
 		traffic = true,
 	}
 end
-do
-	local found, ported = user_open("dsfforza\\ported.lua")
-	if found and type(ported) == "table" and type(ported.cars) == "table" then
-		PORTED = ported
-		CARS = {}
-		for id, car in pairs(ported.cars) do
-			CARS[id] = portedCar(car)
-		end
-	end
-end
-
--- Car packages (dsff car_manager writes dsfforza\packages.lua; dsfforza.asi [archive]
--- packages loads the cars): the same fields as ported.lua's, for the IDs it doesn't have
--- (the manager gives packages IDs a merged install doesn't use).
-do
-	local found, packages = user_open("dsfforza\\packages.lua")
-	if found and type(packages) == "table" and type(packages.cars) == "table" and next(packages.cars) then
+local function addCars(name)
+	local found, list = user_open(name)
+	if found and type(list) == "table" and type(list.cars) == "table" and next(list.cars) then
 		if not PORTED then
-			PORTED = packages
+			PORTED = list
 			CARS = {}
 		end
-		for id, car in pairs(packages.cars) do
+		for id, car in pairs(list.cars) do
 			if CARS[id] == nil then
 				CARS[id] = portedCar(car)
 			end
 		end
 	end
 end
-
+addCars("dsfforza\\packages.lua")
+addCars("dsfforza\\ported.lua")
 
 do
 	local found, config = user_open("dsfforza\\config.lua")

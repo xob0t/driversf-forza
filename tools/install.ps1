@@ -3,56 +3,53 @@
 Installs (or removes) Forza cars in Driver: San Francisco (PC 1.04).
 
 .DESCRIPTION
+The cars are installed as car packages, one file per car beside the game's own files
+(research/car-packages.md). No game file is replaced: Install\dngvehicles.sp, gui.sp,
+Fonts.fchunk and global.fchunk stay as they are, another mod's included.
+
 Install:
-  1. Builds the cars from your own Forza discs (`uv run dsff port_batch`; uv installs Python 3.13),
-     or takes a finished build folder (-Build).
-  2. Backs up every game file it replaces to <game>\dsfforza-backup\ (with SHA-256
-     hashes): Install\dngvehicles.sp, Install\gui.sp, media\Fonts.fchunk,
-     Locale\<language>\global.fchunk and, if present,
-     Common\UserLuaScripts\bootstrap.lua.
-  3. Copies in the new vehicle archive, the garage pictures (gui.sp), the badge
-     font (Fonts.fchunk) and the name strings (global.fchunk).
-  4. Installs DriverNGHook 0.7.2 (plugins\DriverNGHook.asi and its scripts) unless
+  1. Builds the cars from your own Forza discs (`uv run dsff port_batch --packages`; uv
+     installs Python 3.13), or takes a finished build folder (-Build) with its car
+     packages (<build>\packages\*.dsfcar).
+  2. Installs DriverNGHook 0.7.2 (plugins\DriverNGHook.asi and its scripts) unless
      it is already there, and the Ultimate ASI Loader (dinput8.dll) if no ASI
      loader is present. DriverNGHook needs the Microsoft Visual C++ 2015-2022
      runtime, x86 (32-bit); the script checks for it.
-  5. Installs the Lua that registers the cars with the game (names, badges, stat
+  3. Installs the dsfforza.asi plugin (plugins\dsfforza.asi, and dsfforza.ini with
+     [archive] packages=1; -AsiPath, default out\asi, built by tools\asi\build.ps1, or a
+     release's plugin\): runtime patches of Driver.exe 1.04 (no file is changed) that load
+     the car packages and raise the garage and save limits (research/asi.md). The ASI
+     loader (step 2) loads it, so -SkipHook needs a loader of your own.
+  4. Installs the Lua that registers the cars with the game (names, badges, stat
      bars, garage, traffic): Common\UserLuaScripts\bootstrap.lua plus
-     dsfforza\register.lua, ported.lua and hud.lua. No test probes. Another mod's
-     bootstrap.lua (replaced only with -Force) is kept as dsfforza\chained-bootstrap.lua,
-     which ours runs first.
-  6. With -Asi, installs the dsfforza.asi plugin (plugins\dsfforza.asi and
-     dsfforza.ini; default out\asi, built by tools\asi\build.ps1, or -AsiPath):
-     runtime patches of Driver.exe 1.04 (no file is changed) that raise the
-     archive, garage and save limits (research/asi.md). The ASI loader (step 4)
-     loads it, so -SkipHook needs a loader of your own. An archive past the
-     vanilla reader (more than 1100 root entries, or 2 GiB) and -IdPolicy asi
-     need it.
+     dsfforza\register.lua. No test probes. Another mod's bootstrap.lua (replaced
+     only with -Force, backed up to <game>\dsfforza-backup\) is kept as
+     dsfforza\chained-bootstrap.lua, which ours runs first.
+  5. Hands the packages to the car manager (dsff car_manager), which writes
+     dsfforza\cars\ (the cars' own files, stable IDs), dsfforza\generated\ (copies
+     of gui.sp, Fonts.fchunk and global.fchunk the plugin opens in place of the
+     game's) and dsfforza\packages.lua / packages_hud.lua.
   Everything it did is recorded in <game>\dsfforza-backup\install.json.
   dsfforza.asi writes plugins\dsfforza.log (removed by -Uninstall) and keeps
   the save flags of added cars in <savegames>\dsfforza-garage.dat next to
   autosave.dat; that file is save data and stays after -Uninstall (the game
   ignores it).
 
--Packages (experimental, needs -Asi): the build's car packages (<build>\packages, port_batch
---packages) instead of its merged archive and GUI files. Steps 2 and 3 are skipped and no game
-file is replaced; dsfforza.asi gets [archive] packages=1, and the car manager (dsff car_manager)
-installs the packages: dsfforza\cars\ (the cars' own files, stable IDs), dsfforza\generated\
-(copies of gui.sp, Fonts.fchunk and global.fchunk the plugin opens in place of the game's) and
-dsfforza\packages.lua / packages_hud.lua (research/car-packages.md). -Uninstall has the manager
-remove all of them but its key -> ID map (dsfforza\cars\manager.json), so a later install gives
-every car the ID the save's flags are for. -Packages -Force over a merged (non-package) install
-first records that install's car IDs in the map (car_manager seed), then removes it as usual:
-the same cars come back as packages on the same IDs.
+-Force over an earlier install removes it first.
 
--Force over an earlier install removes it first. With -Build, the archive, gui.sp and
-Fonts.fchunk stay where the new build's file is the one installed (the game file
-unchanged since the install, the build's the same file or the same bytes): no copy
-and no hashing of a few GB again; install.json keeps their entries.
+Over a merged install (what install.ps1 did before car packages: the cars merged into
+copies of dngvehicles.sp, gui.sp, Fonts.fchunk and global.fchunk, with ported.lua and
+hud.lua) the install migrates, -Force or not: it records that install's car IDs in the
+manager's key -> ID map (car_manager seed; the save keeps its flags per model ID),
+removes it (every replaced game file restored from its backup), deletes ported.lua and
+hud.lua, and installs the packages, which take the same IDs.
 
--Uninstall puts every replaced file back from the backup and checks that its
-SHA-256 matches the original, and deletes every file it created (only if it is
-still the file it installed). -Status shows what is installed.
+-Uninstall has the car manager remove its files but its key -> ID map
+(dsfforza\cars\manager.json), so a later install gives every car the ID the save's
+flags are for. Then it puts every replaced file back from the backup, checks that its
+SHA-256 matches the original, and deletes every file it created (only if it is still
+the file it installed). It removes a merged install the same way. -Status shows what
+is installed.
 
 The game folder is only changed by Install and Uninstall; the build reads it.
 
@@ -81,9 +78,6 @@ param(
     [Parameter(ParameterSetName = 'Install')]
     [int]$Jobs = 0,                       # build worker processes (default: port_batch's)
     [Parameter(ParameterSetName = 'Install')]
-    [ValidateSet('garage', 'high', 'asi')]
-    [string]$IdPolicy = 'garage',         # asi: every free ID from 1 up, garage-listed through dsfforza.asi
-    [Parameter(ParameterSetName = 'Install')]
     [string]$BuildDir,                    # where to build (default out\install-build)
     [Parameter(ParameterSetName = 'Install')]
     [string]$HookArchive,                 # DNGHook_072.7z or its unpacked folder (default: the repo's _ref copy, or -Download)
@@ -94,15 +88,11 @@ param(
     [Parameter(ParameterSetName = 'Install')]
     [switch]$SkipHook,                    # don't install DriverNGHook or an ASI loader (you manage them)
     [Parameter(ParameterSetName = 'Install')]
-    [switch]$Asi,                         # also install the dsfforza.asi plugin (research/asi.md)
-    [Parameter(ParameterSetName = 'Install')]
-    [string]$AsiPath,                     # the plugin to install with -Asi (default out\asi\dsfforza.asi)
+    [string]$AsiPath,                     # the dsfforza.asi plugin (default out\asi\dsfforza.asi, else a release's plugin\dsfforza.asi)
     [Parameter(ParameterSetName = 'Install')]
     [switch]$WriteProfile,                # let register.lua mark the garage cars unlocked/owned in the save
     [Parameter(ParameterSetName = 'Install')]
-    [switch]$Packages,                    # experimental: the build's car packages through the car manager, no game file replaced (needs -Asi)
-    [Parameter(ParameterSetName = 'Install')]
-    [switch]$Force,                      # reinstall over an earlier install; replace a foreign bootstrap.lua
+    [switch]$Force,                      # reinstall over an earlier package install; replace a foreign bootstrap.lua
 
     [Parameter(ParameterSetName = 'Uninstall', Mandatory = $true)]
     [switch]$Uninstall,
@@ -115,6 +105,24 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
+
+# Windows PowerShell 5.1 started from PowerShell 7 through another process (install.cmd from a
+# pwsh terminal, dsff install from one, CI's pwsh shell) inherits pwsh's PSModulePath: 5.1 then
+# autoloads PowerShell 7's Microsoft.PowerShell.Utility and Management (7.0.0.0, first on the
+# path) and Get-FileHash, Invoke-WebRequest, ... are missing. pwsh cleans the path only for a
+# powershell.exe it starts itself. So under Windows PowerShell the PowerShell 7 module folders go
+# (pwsh's own $PSHOME\Modules, beside pwsh.exe, and the ...\PowerShell\Modules folders of
+# Program Files and Documents; Windows PowerShell's are ...\WindowsPowerShell\Modules), for this
+# script and the processes it starts. .NET only: a cmdlet here could autoload the wrong module.
+if ($PSVersionTable.PSEdition -eq 'Desktop' -and $env:PSModulePath) {
+    $env:PSModulePath = (@($env:PSModulePath.Split(';') | Where-Object {
+        $folder = $_.Trim().TrimEnd('\')
+        if (-not $folder) { return $false }
+        if ($folder -match '\\PowerShell\\Modules$') { return $false }
+        try { $home7 = [IO.Path]::GetDirectoryName($folder) } catch { return $true }   # (not a path: left as is)
+        -not ($home7 -and [IO.File]::Exists([IO.Path]::Combine($home7, 'pwsh.exe')))
+    }) -join ';')
+}
 
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $VanillaArchiveHash = '0DDC885E23028F708A92A2426B643938A6934C99204C780E01755C5B7778AE35'   # Install\dngvehicles.sp 1.04
@@ -144,40 +152,6 @@ function Read-BuildManifest([string]$Path) {
     return $serializer.DeserializeObject([IO.File]::ReadAllText($Path))
 }
 
-# The build's gui\ goes with its cars: gui.sp (pictures), Fonts.fchunk (badges and nameplates)
-# and hud.lua (which car shows which), made for these IDs. Without it (built without --gui,
-# or its GUI step failed) the cars have no pictures, badges or nameplates of their own, and
-# another build's would show other cars' (src/dsfforza/build/install.py gui_problem).
-function Test-BuildGui([string]$Folder, $BuildManifest) {
-    $gui = Join-Path $Folder 'gui'
-    $missing = @('gui.sp', 'Fonts.fchunk', 'hud.lua' | Where-Object { -not (Test-Path -LiteralPath (Join-Path $gui $_) -PathType Leaf) })
-    if ($missing) {
-        Fail ("$Folder has no gui\$($missing -join ', gui\'): it was built without --gui or its GUI step failed " +
-              "(batch-report.json timings_s.gui_error), so the cars would have no garage pictures, badges or " +
-              "nameplates of their own. Build again with 'uv run dsff install' (or port_batch build --gui).")
-    }
-    $have = @{}
-    foreach ($line in [IO.File]::ReadAllLines((Join-Path $gui 'hud.lua'))) {
-        if ($line -match '^\s*\[(\d+)\]\s*=\s*\{(.*)\}') {
-            $id = [int]$Matches[1]
-            $have[$id] = $null
-            if ($Matches[2] -match 'Picture1\s*=\s*"([^"]*)"') { $have[$id] = $Matches[1] }
-        }
-    }
-    foreach ($car in @($BuildManifest['cars'])) {
-        $id = [int]$car['spool_id']
-        $media = [string]$car['media']
-        if (-not $have.ContainsKey($id)) {
-            Fail "$gui\hud.lua has no entry for ID $id ($media): it is another build's gui\. Build again with 'uv run dsff install'."
-        }
-        $picture = [string]$have[$id]
-        if ($picture.StartsWith('dsfforza_') -and $picture -ne ('dsfforza_' + $media.ToLowerInvariant())) {
-            Fail ("$gui\hud.lua's ID $id is $($picture.Substring(9)), not $media`: it is another build's gui\. " +
-                  "Build again with 'uv run dsff install'.")
-        }
-    }
-}
-
 if (-not (Test-Path -LiteralPath $GamePath -PathType Container)) { Fail "Game folder not found: $GamePath" }
 $Game = (Resolve-Path -LiteralPath $GamePath).Path
 if (-not (Test-Path -LiteralPath (Join-Path $Game 'Driver.exe'))) { Fail "Driver.exe not found in $Game; -GamePath must be the Driver: San Francisco folder." }
@@ -192,8 +166,9 @@ function Test-GameRunning {
     return $false
 }
 
-# Vanilla 1.04 SHA-256 of the files the install replaces (English install; other
-# languages' global.fchunk are not known here and are not checked).
+# Vanilla 1.04 SHA-256 of the files a merged install (an earlier release's) replaced, for its
+# leftover backups (Resolve-LeftoverBackup). English install; other languages' global.fchunk
+# are not known here and are not checked.
 $VanillaHashes = @{
     'Install\dngvehicles.sp'       = $VanillaArchiveHash
     'Install\gui.sp'               = 'AADB62925387307AF7E2BC5091D5E583823E553C23D4E71C5DD6BB71936DA11F'
@@ -362,59 +337,8 @@ function Install-File([string]$Source, [string]$Relative) {
     Copy-Item -LiteralPath $Source -Destination $target -Force
     $entry.installed_sha256 = Get-Sha256 $target
     if ($entry.installed_sha256 -ne (Get-Sha256 $Source)) { Fail "copy of $Relative failed (hash mismatch)" }
-    # Size and modification time of the game file and its source, for Get-UnchangedEntries.
-    $entry.installed_stamp = Get-Stamp $target
-    $entry.source_stamp = Get-Stamp $Source
     if ($script:Manifest) { Write-Manifest $script:Manifest }
     Say ("  {0,-8} {1}" -f $entry.action, $Relative)
-}
-
-function Get-Stamp([string]$Path) {
-    $item = Get-Item -LiteralPath $Path -Force
-    return '{0}:{1}' -f $item.Length, $item.LastWriteTimeUtc.Ticks
-}
-
-# A reinstall (-Force -Build) of a build whose big files are the ones installed:
-# the entries of the earlier install whose game file is still the copy it made (size and
-# modification time as recorded after the copy) and whose new source is the same file (the
-# recorded size and time, or else the same size and the installed SHA-256). Their game files
-# and backups stay; the rest is uninstalled and installed again as before. A record
-# without stamps (an older install's) keeps nothing. Returns {relative path: entry}.
-function Get-UnchangedEntries($Existing, [hashtable]$Sources) {
-    $kept = @{}
-    foreach ($e in @($Existing.entries)) {
-        $relative = Get-Field $e 'path'
-        if (-not $relative -or -not $Sources.ContainsKey($relative) -or (Get-Field $e 'done')) { continue }
-        $installedStamp, $sourceStamp = (Get-Field $e 'installed_stamp'), (Get-Field $e 'source_stamp')
-        if (-not $installedStamp -or -not (Get-Field $e 'installed_sha256')) { continue }
-        $target = Join-Path $Game $relative
-        $source = $Sources[$relative]
-        if (-not (Test-Path -LiteralPath $target) -or -not (Test-Path -LiteralPath $source)) { continue }
-        if ((Get-Stamp $target) -ne $installedStamp) { continue }   # changed since the install
-        if ($e.action -eq 'replaced' -and -not (Test-Path -LiteralPath (Join-Path $BackupDir $e.backup))) { continue }
-        $now = Get-Stamp $source
-        if ($now -ne $sourceStamp) {
-            if ($now.Split(':')[0] -ne $installedStamp.Split(':')[0]) { continue }   # another size
-            if ((Get-Sha256 $source) -ne $e.installed_sha256) { continue }
-        }
-        $kept[$relative] = $e
-    }
-    return $kept
-}
-
-# Install-File, or for a file Get-UnchangedEntries kept: its earlier entry as it was (no copy,
-# no hashing of a file of a few GB).
-function Install-Or-Keep([string]$Source, [string]$Relative, [hashtable]$Kept) {
-    if (-not $Kept.ContainsKey($Relative)) { Install-File $Source $Relative; return }
-    $e = $Kept[$Relative]
-    $entry = [ordered]@{}
-    foreach ($name in @('path', 'action', 'original_sha256', 'backup', 'installed_sha256', 'installed_stamp')) {
-        $entry[$name] = Get-Field $e $name
-    }
-    $entry.source_stamp = Get-Stamp $Source
-    [void]$script:Entries.Add($entry)
-    if ($script:Manifest) { Write-Manifest $script:Manifest }
-    Say ("  {0,-8} {1} (the same file as installed: not copied again)" -f 'kept', $Relative)
 }
 
 function Install-Text([string]$Text, [string]$Relative) {
@@ -430,7 +354,7 @@ function Install-Text([string]$Text, [string]$Relative) {
 # Resumable: each entry is marked done in install.json as soon as it is handled, a
 # replaced file that already has its original bytes counts as restored (backup or
 # not), and the manifest is marked "uninstalled" before the backup folder goes.
-function Invoke-Uninstall([switch]$Keep, [hashtable]$Skip = @{}) {
+function Invoke-Uninstall([switch]$Keep) {
     $manifest = Read-Manifest
     if (-not (Test-Installed $manifest)) {
         Say "Nothing to uninstall (no install recorded in $ManifestPath)."
@@ -446,7 +370,6 @@ function Invoke-Uninstall([switch]$Keep, [hashtable]$Skip = @{}) {
     [array]::Reverse($entries)
     foreach ($e in $entries) {
         if (Get-Field $e 'done') { continue }
-        if ($Skip.ContainsKey($e.path)) { Say "  kept     $($e.path) (the new build's is the same file)"; continue }
         $target = Join-Path $Game $e.path
         $done = $null
         if ($e.action -eq 'replaced') {
@@ -508,14 +431,14 @@ function Invoke-Uninstall([switch]$Keep, [hashtable]$Skip = @{}) {
 # Before an install: a backup folder with no install in place (an uninstall that
 # could not delete everything, or an install that died before writing its record).
 # Its files are only safe to drop when the game files are vanilla; with -Force a game
-# file that isn't vanilla is put back from a leftover backup that is.
-function Resolve-LeftoverBackup([hashtable]$Kept = @{}) {
+# file that isn't vanilla is put back from a leftover backup that is (a merged install's
+# archive left in place would hold the cars the packages add).
+function Resolve-LeftoverBackup {
     if (-not (Test-Path -LiteralPath $BackupDir)) { return }
-    if (-not $Kept.Count) { Say "Found $BackupDir without an install in place:" }
+    Say "Found $BackupDir without an install in place:"
     foreach ($file in @(Get-ChildItem -LiteralPath $BackupDir -Recurse -File -Force)) {
         $relative = $file.FullName.Substring($BackupDir.Length + 1)
         if ($relative -like 'install*.json*') { continue }
-        if ($Kept.ContainsKey($relative)) { continue }   # its game file stays installed (Get-UnchangedEntries)
         $target = Join-Path $Game $relative
         $vanilla = $VanillaHashes[$relative]
         $backupHash = Get-Sha256 $file.FullName
@@ -541,28 +464,6 @@ function Resolve-LeftoverBackup([hashtable]$Kept = @{}) {
     }
 }
 
-# The replaced files must be vanilla: the build was made from the vanilla files and the
-# backups are what -Uninstall restores. gui.sp, Fonts.fchunk and global.fchunk from
-# another mod are replaced (and restored on uninstall) only with -Force.
-function Test-VanillaFiles([hashtable]$Kept = @{}) {
-    foreach ($relative in $VanillaHashes.Keys) {
-        if ($Kept.ContainsKey($relative)) { continue }   # stays installed; its backup is the checked original
-        $path = Join-Path $Game $relative
-        if (-not (Test-Path -LiteralPath $path)) { continue }
-        $hash = Get-Sha256 $path
-        if ($hash -eq $VanillaHashes[$relative]) { continue }
-        if ($relative -eq 'Install\dngvehicles.sp') {
-            Fail ("Install\dngvehicles.sp is not the vanilla 1.04 archive (SHA-256 $hash). " +
-                  "Restore the original (Steam/Uplay: verify files) and run again.")
-        }
-        if (-not $Force) {
-            Fail ("$relative is not the vanilla 1.04 file (SHA-256 $hash; another mod?). Add -Force to replace it " +
-                  "anyway (it is backed up and restored by -Uninstall), or restore the original first.")
-        }
-        Say "  WARNING: $relative is not vanilla (another mod?); replacing it (-Force), -Uninstall restores it"
-    }
-}
-
 # --- status ---------------------------------------------------------------------------------
 
 function Show-Status {
@@ -573,7 +474,7 @@ function Show-Status {
     if ($hash -eq $VanillaArchiveHash) { $state = 'vanilla 1.04' }
     elseif ($manifest) {
         foreach ($e in @($manifest.entries)) {
-            if ($e.path -eq 'Install\dngvehicles.sp' -and $e.installed_sha256 -eq $hash) { $state = 'dsfforza build (as installed)' }
+            if ($e.path -eq 'Install\dngvehicles.sp' -and $e.installed_sha256 -eq $hash) { $state = 'a merged dsfforza build (as installed)' }
         }
     }
     Say "Game:      $Game"
@@ -586,10 +487,10 @@ function Show-Status {
     }
     $state = Get-Field $manifest 'state'
     if (-not $state) { $state = 'installed' }
-    if (Get-Field $manifest 'packages') {   # (installs before -Packages have no such field)
+    if (Get-Field $manifest 'packages') {   # (merged installs, before car packages, have no such field)
         Say "dsfforza:  $state $($manifest.installed) ($(@($manifest.cars).Count) car packages; IDs: uv run dsff car_manager --game '$Game' status)"
     } else {
-        Say "dsfforza:  $state $($manifest.installed) ($(@($manifest.cars).Count) cars, IDs $($manifest.ids))"
+        Say "dsfforza:  $state $($manifest.installed), merged ($(@($manifest.cars).Count) cars, IDs $($manifest.ids)); the next install moves them to car packages on the same IDs"
     }
     foreach ($e in @($manifest.entries)) {
         $target = Join-Path $Game $e.path
@@ -683,28 +584,25 @@ function Get-AsiLoaderDll {
     return (Resolve-Path -LiteralPath $source).Path
 }
 
-# Root entry count of a CHNK archive ('CHNK', size, count, version).
-function Get-ArchiveRootCount([string]$Path) {
-    $stream = [IO.File]::OpenRead($Path)
-    try {
-        $header = New-Object byte[] 16
-        if ($stream.Read($header, 0, 16) -ne 16 -or [Text.Encoding]::ASCII.GetString($header, 0, 4) -ne 'CHNK') { return -1 }
-        return [BitConverter]::ToUInt32($header, 8)
-    } finally { $stream.Dispose() }
-}
-
-function Invoke-Build([string]$RootLimit) {
+function Invoke-Build {
     $uv = Find-Uv
     if (-not $uv) { Fail 'uv is needed to build the cars: install it from https://docs.astral.sh/uv/getting-started/installation/ (winget install astral-sh.uv), open a new PowerShell window and run this again, or pass -Build <folder>. uv installs Python 3.13 and numpy for the build by itself.' }
+    # The build reads the game's vehicle archive (its hosts): it must be the vanilla one.
+    $archive = Join-Path $Game 'Install\dngvehicles.sp'
+    $hash = Get-Sha256 $archive
+    if ($hash -ne $VanillaArchiveHash) {
+        Fail ("Install\dngvehicles.sp is not the vanilla 1.04 archive (SHA-256 $hash; another mod?), and the build reads it. " +
+              "Restore the original (Steam/Uplay: verify files), or build elsewhere and pass -Build <folder>.")
+    }
     $out = $BuildDir
     if (-not $out) { $out = Join-Path $Repo 'out\install-build' }
     $out = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($out)
     # The repo's own Python 3.13 environment (.venv, from uv.lock); --no-dev: no lint/test tools.
-    $pyArgs = @('run', '--project', $Repo, '--frozen', '--no-dev', 'dsff', 'port_batch', 'build', '--dsf', (Join-Path $Game 'Install\dngvehicles.sp'),
-                 '--out', $out, '--gui', '--id-policy', $IdPolicy)
-    # dsfforza.asi's archive module reads more than the vanilla reader's 1100 root entries.
-    if ($RootLimit) { $pyArgs += @('--root-limit', $RootLimit) }
-    if ($Packages) { $pyArgs += '--packages' }   # <out>\packages\*.dsfcar
+    # The same build as dsff install's (src/dsfforza/build/install.py). The ID policy and root
+    # limit are for the merged archive the build also writes (the in-game tests run it); the
+    # packages (<out>\packages\*.dsfcar) get their IDs from the car manager at install.
+    $pyArgs = @('run', '--project', $Repo, '--frozen', '--no-dev', 'dsff', 'port_batch', 'build', '--dsf', $archive,
+                 '--out', $out, '--gui', '--wide-glyphs', '--id-policy', 'asi', '--root-limit', '3003', '--packages')
     $isos = $Iso
     if (-not $isos) { $isos = @(Get-ChildItem -LiteralPath (Join-Path $Repo 'assets') -Filter '*.iso' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }) }
     if (-not $isos) { Fail 'No Forza disc images: pass -Iso <FH1 iso>,<FM4 disc 1>,<FM4 disc 2> (or put them in assets\).' }
@@ -726,8 +624,8 @@ function Invoke-Build([string]$RootLimit) {
     return $out
 }
 
-# The car manager (src/dsfforza/build/car_manager.py) owns everything of a -Packages install
-# besides what install.json records: dsfforza\cars\ (the cars' files, the plugin's list and its
+# The car manager (src/dsfforza/build/car_manager.py) owns everything of an install besides
+# what install.json records: dsfforza\cars\ (the cars' files, the plugin's list and its
 # key -> ID map), the generated GUI copies in dsfforza\generated\ and packages.lua /
 # packages_hud.lua. It writes no game file.
 function Invoke-CarManager([string[]]$Arguments, [switch]$Optional) {
@@ -742,8 +640,8 @@ function Invoke-CarManager([string[]]$Arguments, [switch]$Optional) {
     return $true
 }
 
-# -Packages: hand the build's car packages to the car manager, which picks their IDs (stable
-# per car: an earlier install's, or a merged install's after Save-MergedIds).
+# Hand the build's car packages to the car manager, which picks their IDs (stable per car: an
+# earlier install's, or a merged install's after Save-MergedIds).
 # The folder goes to the manager, not the files: a roster's 573 paths are longer than a
 # Windows command line (32767 characters). Get-BuildPackages has checked that the folder
 # holds exactly the build's packages.
@@ -754,7 +652,7 @@ function Install-CarPackages([string[]]$Files) {
     [void](Invoke-CarManager @('install', $folders[0]))
 }
 
-# Uninstalling a -Packages install: the manager removes its files and keeps its key -> ID map
+# Uninstalling a package install: the manager removes its files and keeps its key -> ID map
 # (dsfforza\cars\manager.json), so a later install gives each car the ID the save's flags are
 # for. Without uv (the repo gone), its files are removed here and the map is left as it is.
 function Uninstall-CarPackages {
@@ -770,16 +668,31 @@ function Uninstall-CarPackages {
     }
 }
 
-# Before a merged install is uninstalled for -Packages: its cars' IDs go into the manager's map
-# (car_manager seed reads its ported.lua), so the same cars come back as packages on the same IDs
-# and the save's owned/unlocked flags (kept per model ID) stay theirs.
+# A merged install (what install.ps1 did up to v0.1.8, before car packages: the cars merged into
+# copies of the game's dngvehicles.sp, gui.sp, Fonts.fchunk and global.fchunk) left these two:
+# ported.lua (each car's ID and vehicleStats fields) and hud.lua (its badge, plate and picture).
+$MergedLua = @('Common\UserLuaScripts\dsfforza\ported.lua', 'Common\UserLuaScripts\dsfforza\hud.lua')
+
+# Before a merged install is removed: its cars' IDs go into the manager's map (car_manager seed
+# reads its ported.lua), so the same cars come back as packages on the same IDs and the save's
+# owned/unlocked flags (kept per model ID) stay theirs.
 function Save-MergedIds {
-    if (-not (Test-Path -LiteralPath (Join-Path $Game 'Common\UserLuaScripts\dsfforza\ported.lua'))) { return }
+    if (-not (Test-Path -LiteralPath (Join-Path $Game $MergedLua[0]))) { return }
     Say '  recording the merged install''s car IDs for the packages (car_manager seed)'
     [void](Invoke-CarManager @('seed'))
 }
 
-# -Packages: a build's car packages, checked: only one build's complete set (port_batch writes a
+# After a merged install is removed: its ported.lua and hud.lua, if they are still there (its
+# uninstall keeps a file that changed since it was installed). register.lua would otherwise give
+# vehicleStats entries to cars no archive has, at IDs the packages now use.
+function Remove-MergedLua {
+    foreach ($relative in $MergedLua) {
+        $path = Join-Path $Game $relative
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force; Say "  removed  $relative (the merged install's)" }
+    }
+}
+
+# A build's car packages, checked: only one build's complete set (port_batch writes a
 # packaging error to its report and removes the packages), one package per car of its manifest
 # and no more (install.py package_problem checks the same). Called before an earlier install is
 # removed when -Build is given, so a bad build leaves the game as it was.
@@ -787,7 +700,7 @@ function Get-BuildPackages([string]$Folder) {
     # -Force: hidden files too, as the car manager installs every .dsfcar file in the folder.
     $packageFiles = @(Get-ChildItem -LiteralPath (Join-Path $Folder 'packages') -Filter '*.dsfcar' -File -Force -ErrorAction SilentlyContinue |
                       ForEach-Object { $_.FullName })
-    if (-not $packageFiles) { Fail "no car packages in $Folder\packages: build with port_batch --packages (or uv run dsff install --packages)." }
+    if (-not $packageFiles) { Fail "no car packages in $Folder\packages: build again (uv run dsff install, or port_batch build --gui --packages)." }
     if (-not (Test-Path -LiteralPath (Join-Path $Folder 'dngvehicles.json'))) { Fail "build folder incomplete: $Folder\dngvehicles.json missing" }
     $buildManifest = Read-BuildManifest (Join-Path $Folder 'dngvehicles.json')
     # Only one build's complete set: its packaging must have worked (port_batch writes the
@@ -814,141 +727,127 @@ function Get-BuildPackages([string]$Folder) {
 
 function Invoke-Install {
     $existing = Read-Manifest
-    $kept = @{}
-    if ($Packages -and $Build) { [void](Get-BuildPackages (Resolve-Path -LiteralPath $Build).Path) }   # before anything is removed
-    if (Test-Installed $existing) {
-        if (-not $Force) { Fail "dsfforza is already installed ($ManifestPath). Run -Uninstall first, or add -Force to reinstall." }
-        $earlier = @($existing.cars | Where-Object { $_ })
-        Say "Removing the earlier install first (-Force): its $($earlier.Count) cars ($((@($earlier | Select-Object -First 6) -join ', '))$(if ($earlier.Count -gt 6) { ', ...' })) are replaced by this build's, not added to."
-        Say '  To have several cars, install them in one build: -Car A,B,... (or uv run dsff install --car A --car B).'
-        # (a build made here reads the vanilla archive: then everything comes out first; -Packages
-        # installs none of these files, so an earlier install's all come out too, restored from
-        # their backups, and the package install's install.json doesn't have to carry them)
-        if ($Build -and -not $Packages) {
-            $folder = (Resolve-Path -LiteralPath $Build).Path
-            $kept = Get-UnchangedEntries $existing @{
-                'Install\dngvehicles.sp' = (Join-Path $folder 'dngvehicles.sp')
-                'Install\gui.sp'         = (Join-Path $folder 'gui\gui.sp')
-                'media\Fonts.fchunk'     = (Join-Path $folder 'gui\Fonts.fchunk')
-            }
-        }
-        if ($Packages -and -not (Get-Field $existing 'packages')) { Save-MergedIds }   # merged -> packages
-        if ($kept.Count) { Invoke-Uninstall -Keep -Skip $kept } else { Invoke-Uninstall }
-    }
-    Resolve-LeftoverBackup $kept
-    # -Packages replaces no game file (the cars come from their own files, the GUI parts from the
-    # manager's generated copies), so another mod's archive or GUI files are no reason to stop.
-    if (-not $Packages) { Test-VanillaFiles $kept }
-
     $lua = Join-Path $Repo 'tools\game\lua'
+
+    # Everything that can stop the install is checked before the game folder changes.
+    if ($Build) { [void](Get-BuildPackages (Resolve-Path -LiteralPath $Build).Path) }
+    if (-not (Find-Uv)) {
+        Fail 'uv is needed for the car manager: install it from https://docs.astral.sh/uv/getting-started/installation/ (winget install astral-sh.uv), open a new PowerShell window and run this again.'
+    }
+    # dsfforza.asi's [archive] packages loads the cars: no install without it.
+    $asiFile = $AsiPath
+    if (-not $asiFile) {
+        $asiFile = Join-Path $Repo 'out\asi\dsfforza.asi'
+        $bundled = Join-Path $Repo 'plugin\dsfforza.asi'   # a release zip's (src/dsfforza/build/package.py)
+        if (-not (Test-Path -LiteralPath $asiFile) -and (Test-Path -LiteralPath $bundled)) { $asiFile = $bundled }
+    }
+    if (-not (Test-Path -LiteralPath $asiFile)) {
+        Fail "dsfforza.asi not found: $asiFile (build it with tools\asi\build.ps1, or pass -AsiPath). It loads the cars."
+    }
+    $asiFile = (Resolve-Path -LiteralPath $asiFile).Path
+    $asiIni = [IO.Path]::ChangeExtension($asiFile, '.ini')
+    if (-not (Test-Path -LiteralPath $asiIni)) { $asiIni = Join-Path $Repo 'tools\asi\dsfforza.ini' }
+    # [archive] packages=1: the cars from dsfforza\cars, the GUI copies from dsfforza\generated.
+    $iniText = [IO.File]::ReadAllText($asiIni) -replace '(?m)^packages=0', 'packages=1'
+    if ($iniText -notmatch '(?m)^packages=1') { Fail "$asiIni has no [archive] packages switch: an older plugin?" }
+
     $bootstrapTarget = Join-Path $Game 'Common\UserLuaScripts\bootstrap.lua'
+    $ourBootstrap = Get-Sha256 (Join-Path $lua 'player\bootstrap.lua')
     # Another mod's bootstrap (Felony Rework's, ...) is replaced only with -Force. It is backed up,
     # and kept as dsfforza\chained-bootstrap.lua, which ours runs first (player\bootstrap.lua),
     # unless it is one of our own bootstraps, an older version (Test-OurBootstrap). One that only
     # calls user_open("dsfforza\\register.lua") (INSTALL.md) is chained too: ours skips that call.
+    # Over an earlier install, the bootstrap that counts is the one its uninstall puts back.
+    $foreignBootstrap = $false
+    $ours = @()   # files the earlier install created, which its uninstall removes
+    if (Test-Installed $existing) {
+        foreach ($e in @($existing.entries)) {
+            $path = [string](Get-Field $e 'path')
+            if ((Get-Field $e 'action') -eq 'created') { $ours += $path.ToLowerInvariant() }
+            elseif ($path -eq 'Common\UserLuaScripts\bootstrap.lua' -and (Get-Field $e 'original_sha256') -ne $ourBootstrap) { $foreignBootstrap = $true }
+        }
+    } elseif (Test-Path -LiteralPath $bootstrapTarget) {
+        $foreignBootstrap = (Get-Sha256 $bootstrapTarget) -ne $ourBootstrap
+    }
+    if ($foreignBootstrap -and -not $Force) {
+        Fail ("Common\UserLuaScripts\bootstrap.lua belongs to another mod. Add -Force to replace it: it is backed up " +
+              "and restored by -Uninstall, and ours runs it first, so that mod still loads.")
+    }
+
+    # Hook prerequisites, as they will be once an earlier install (which may have brought the
+    # loader and DriverNGHook) is removed.
+    $hookDir = $null
+    $loaderNow = Find-AsiLoader
+    $loaderStays = $loaderNow -and ($ours -notcontains $loaderNow.ToLowerInvariant())
+    $hookStays = (Test-Path -LiteralPath (Join-Path $Game 'plugins\DriverNGHook.asi')) -and ($ours -notcontains 'plugins\drivernghook.asi')
+    if (-not $SkipHook) {
+        if (-not (Test-VcRuntimeX86)) {
+            Fail ("DriverNGHook needs the Microsoft Visual C++ 2015-2022 Redistributable (x86, 32-bit; the game is 32-bit, " +
+                  "so the x64 one is not enough). Install it from $VcRedistUrl and run this again.")
+        }
+        if (-not $loaderStays -and -not $AsiLoader -and -not $Download) { [void](Get-AsiLoaderDll) }   # explains and stops
+        if (-not $hookStays) { $hookDir = Get-HookFiles }
+    }
+
+    if (Test-Installed $existing) {
+        $earlier = @($existing.cars | Where-Object { $_ })
+        if (-not (Get-Field $existing 'packages')) {
+            # A merged install of an earlier release: moved to car packages on the same IDs.
+            Say "Moving the merged install of $($earlier.Count) cars to car packages: its IDs are kept (the save's flags are per ID), then it is removed."
+            Save-MergedIds
+        } elseif (-not $Force) {
+            Fail "dsfforza is already installed ($ManifestPath). Run -Uninstall first, or add -Force to reinstall."
+        } else {
+            Say "Removing the earlier install first (-Force): its $($earlier.Count) cars ($((@($earlier | Select-Object -First 6) -join ', '))$(if ($earlier.Count -gt 6) { ', ...' })) are replaced by this build's, not added to."
+            Say '  To have several cars, install them in one build: -Car A,B,... (or uv run dsff install --car A --car B).'
+        }
+        Invoke-Uninstall
+    } else {
+        Save-MergedIds   # a merged install's ported.lua without its record (an interrupted uninstall)
+    }
+    Remove-MergedLua
+    Resolve-LeftoverBackup
+
+    # After the uninstall: what it restored decides whether bootstrap.lua is another mod's.
     $chainBootstrap = $false
-    if ((Test-Path -LiteralPath $bootstrapTarget) -and
-        (Get-Sha256 $bootstrapTarget) -ne (Get-Sha256 (Join-Path $lua 'player\bootstrap.lua'))) {
+    if ((Test-Path -LiteralPath $bootstrapTarget) -and (Get-Sha256 $bootstrapTarget) -ne $ourBootstrap) {
         if (-not $Force) {
             Fail ("Common\UserLuaScripts\bootstrap.lua belongs to another mod. Add -Force to replace it: it is backed up " +
                   "and restored by -Uninstall, and ours runs it first, so that mod still loads.")
         }
         $chainBootstrap = -not (Test-OurBootstrap $bootstrapTarget)
     }
-
-    # Hook prerequisites first, so nothing is changed when they are missing.
     $loader = Find-AsiLoader
     $hookInstalled = Test-Path -LiteralPath (Join-Path $Game 'plugins\DriverNGHook.asi')
-    if (-not $SkipHook) {
-        if (-not (Test-VcRuntimeX86)) {
-            Fail ("DriverNGHook needs the Microsoft Visual C++ 2015-2022 Redistributable (x86, 32-bit; the game is 32-bit, " +
-                  "so the x64 one is not enough). Install it from $VcRedistUrl and run this again.")
-        }
-        if (-not $loader -and -not $AsiLoader -and -not $Download) { [void](Get-AsiLoaderDll) }   # explains and stops
-        if (-not $hookInstalled) { $hookDir = Get-HookFiles }
-    }
-
-    # dsfforza.asi (opt-in, -Asi).
-    $asiFile = $null
-    if ($Asi -or $AsiPath) {
-        $asiFile = $AsiPath
-        if (-not $asiFile) { $asiFile = Join-Path $Repo 'out\asi\dsfforza.asi' }
-        if (-not (Test-Path -LiteralPath $asiFile)) { Fail "dsfforza.asi not found: $asiFile (build it with tools\asi\build.ps1)" }
-        $asiFile = (Resolve-Path -LiteralPath $asiFile).Path
-    }
-    if ($IdPolicy -eq 'asi' -and -not $asiFile) {
-        Fail '-IdPolicy asi needs the dsfforza.asi plugin: add -Asi (without it cars at 304+ are never in the garage).'
-    }
-    if ($Packages -and -not $asiFile) { Fail '-Packages needs the dsfforza.asi plugin ([archive] packages loads the cars): add -Asi.' }
+    if (-not $SkipHook -and -not $hookInstalled -and -not $hookDir) { $hookDir = Get-HookFiles }
 
     $buildFolder = $Build
-    if (-not $buildFolder) {
-        $rootLimit = $null
-        if ($asiFile) { $rootLimit = '3003' }   # every base ID below 1000 (3 entries each) plus SSIC, DMWK, BINF
-        $buildFolder = Invoke-Build $rootLimit
-    }
+    if (-not $buildFolder) { $buildFolder = Invoke-Build }
     $buildFolder = (Resolve-Path -LiteralPath $buildFolder).Path
-    $archive = Join-Path $buildFolder 'dngvehicles.sp'
-    $buildManifestPath = Join-Path $buildFolder 'dngvehicles.json'
-    $portedLua = Join-Path $buildFolder 'dngvehicles.lua'
-    $packageFiles = @()
-    if ($Packages) {
-        # The car packages (port_batch --packages) go through the car manager: no archive, GUI files
-        # or ported.lua/hud.lua of the build are installed (research/car-packages.md).
-        $packageFiles = Get-BuildPackages $buildFolder
-        $buildManifest = Read-BuildManifest $buildManifestPath
-    } else {
-        foreach ($f in @($archive, $buildManifestPath, $portedLua)) { if (-not (Test-Path -LiteralPath $f)) { Fail "build folder incomplete: $f missing" } }
-        # The vanilla reader holds 1100 root entries and seeks below 2 GiB; more needs the plugin's archive module.
-        $rootEntries = Get-ArchiveRootCount $archive
-        $archiveBytes = (Get-Item -LiteralPath $archive).Length
-        if (-not $asiFile -and ($rootEntries -gt 1100 -or $archiveBytes -ge 2GB)) {
-            Fail ("the archive has $rootEntries root entries and $([math]::Round($archiveBytes / 1MB)) MB; the vanilla game reads at most " +
-                  "1100 entries and 2 GiB. Add -Asi to install the dsfforza.asi plugin with it (tools\asi\build.ps1).")
-        }
-        $buildManifest = Read-BuildManifest $buildManifestPath
-        $builtFrom = $buildManifest['vanilla_sha256']
-        if (-not $builtFrom) { $builtFrom = $buildManifest['stock_sha256'] }   # builds before v0.1.3 name it so
-        if ($builtFrom -and $builtFrom -ne $VanillaArchiveHash) { Fail 'the build was made from a different vanilla archive' }
-        Test-BuildGui $buildFolder $buildManifest
-    }
-    $ids = @($buildManifest['cars'] | ForEach-Object { $_['spool_id'] })
-    if ($Packages) {
-        $ids = @()   # the car manager picks the IDs (dsfforza\cars\manager.json)
-        Say "Installing $($packageFiles.Count) car packages into $Game (the car manager picks their IDs)"
-    } else {
-        Say "Installing $($ids.Count) cars (IDs $($ids -join ', ')) into $Game"
-    }
+    # The car packages (port_batch --packages) go through the car manager: no archive, GUI file or
+    # Lua of the build's is installed, and no game file is replaced (research/car-packages.md).
+    $packageFiles = Get-BuildPackages $buildFolder
+    $buildManifest = Read-BuildManifest (Join-Path $buildFolder 'dngvehicles.json')
+    $builtFrom = $buildManifest['vanilla_sha256']
+    if (-not $builtFrom) { $builtFrom = $buildManifest['stock_sha256'] }   # builds before v0.1.3 name it so
+    if ($builtFrom -and $builtFrom -ne $VanillaArchiveHash) { Fail 'the build was made from a different vanilla archive' }
+    Say "Installing $($packageFiles.Count) car packages into $Game (the car manager picks their IDs)"
 
     New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
     $createdDirs = New-Object System.Collections.ArrayList
     foreach ($d in @('plugins', 'plugins\DriverNGHook', 'Common\UserLuaScripts', 'Common\UserLuaScripts\dsfforza')) {
         if (-not (Test-Path -LiteralPath (Join-Path $Game $d))) { [void]$createdDirs.Insert(0, $d) }
     }
+    # packages: true tells this install from a merged one (an earlier release's record has no such field).
     $manifest = [ordered]@{
-        state = 'installing'; installed = (Get-Date -Format 's'); build = $buildFolder; ids = ($ids -join ',')
-        cars = $(if ($Packages) { @($packageFiles | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_) }) }
-                 else { @($buildManifest['cars'] | ForEach-Object { $_['media'] }) })
-        entries = $script:Entries; created_dirs = $createdDirs; runtime_files = @()
-        packages = [bool]$Packages
+        state = 'installing'; installed = (Get-Date -Format 's'); build = $buildFolder; ids = ''
+        cars = @($packageFiles | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_) })
+        entries = $script:Entries; created_dirs = $createdDirs; runtime_files = @('plugins\dsfforza.log')
+        packages = $true
     }
     $script:Manifest = $manifest
     Write-Manifest $manifest
     try {
-        $gui = Join-Path $buildFolder 'gui'
-        if (-not $Packages) {
-            Install-Or-Keep $archive 'Install\dngvehicles.sp' $kept
-            if (Test-Path -LiteralPath (Join-Path $gui 'gui.sp')) { Install-Or-Keep (Join-Path $gui 'gui.sp') 'Install\gui.sp' $kept }
-            if (Test-Path -LiteralPath (Join-Path $gui 'Fonts.fchunk')) { Install-Or-Keep (Join-Path $gui 'Fonts.fchunk') 'media\Fonts.fchunk' $kept }
-        }
-        # Name strings for the garage (gui_assets: Locale\<language>\global.fchunk with "ID:7xxxxx" entries).
-        if (-not $Packages -and (Test-Path -LiteralPath (Join-Path $gui 'Locale'))) {
-            foreach ($file in Get-ChildItem -LiteralPath (Join-Path $gui 'Locale') -Recurse -File -Filter 'global.fchunk') {
-                $relative = 'Locale\' + $file.FullName.Substring((Join-Path $gui 'Locale').Length).TrimStart('\')
-                if (Test-Path -LiteralPath (Join-Path $Game $relative)) { Install-File $file.FullName $relative }
-            }
-        }
-
         if (-not $SkipHook) {
             if (-not $loader) {
                 Install-File (Get-AsiLoaderDll) 'dinput8.dll'
@@ -961,20 +860,8 @@ function Invoke-Install {
             } else { Say '  DriverNGHook already present (left as is)' }
         }
 
-        if ($asiFile) {
-            Install-File $asiFile 'plugins\dsfforza.asi'
-            $asiIni = [IO.Path]::ChangeExtension($asiFile, '.ini')
-            if (-not (Test-Path -LiteralPath $asiIni)) { $asiIni = Join-Path $Repo 'tools\asi\dsfforza.ini' }
-            if ($Packages) {
-                # [archive] packages=1: the cars from dsfforza\cars, the GUI copies from dsfforza\generated.
-                $iniText = [IO.File]::ReadAllText($asiIni) -replace '(?m)^packages=0', 'packages=1'
-                if ($iniText -notmatch '(?m)^packages=1') { Fail "$asiIni has no [archive] packages switch: an older plugin?" }
-                Install-Text $iniText 'plugins\dsfforza.ini'
-            } else {
-                Install-File $asiIni 'plugins\dsfforza.ini'
-            }
-            $manifest.runtime_files = @('plugins\dsfforza.log')
-        }
+        Install-File $asiFile 'plugins\dsfforza.asi'
+        Install-Text $iniText 'plugins\dsfforza.ini'
 
         if ($chainBootstrap) {
             Install-File $bootstrapTarget 'Common\UserLuaScripts\dsfforza\chained-bootstrap.lua'
@@ -982,14 +869,10 @@ function Invoke-Install {
         }
         Install-File (Join-Path $lua 'player\bootstrap.lua') 'Common\UserLuaScripts\bootstrap.lua'
         Install-File (Join-Path $lua 'dsfforza\register.lua') 'Common\UserLuaScripts\dsfforza\register.lua'
-        if (-not $Packages) {
-            Install-File $portedLua 'Common\UserLuaScripts\dsfforza\ported.lua'
-            if (Test-Path -LiteralPath (Join-Path $gui 'hud.lua')) { Install-File (Join-Path $gui 'hud.lua') 'Common\UserLuaScripts\dsfforza\hud.lua' }
-        }
         if ($WriteProfile) {
             Install-Text "-- written by tools\install.ps1 -WriteProfile`nreturn { register = { writeProfile = true } }`n" 'Common\UserLuaScripts\dsfforza\config.lua'
         }
-        if ($Packages) { Install-CarPackages $packageFiles }
+        Install-CarPackages $packageFiles
         $manifest.state = 'installed'
     } finally {
         $manifest.entries = $script:Entries

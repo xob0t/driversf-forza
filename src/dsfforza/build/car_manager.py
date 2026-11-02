@@ -23,8 +23,9 @@ which the game and dsfforza.asi keep per model ID). A new key takes the lowest I
 installed vehicle archive's SSLP doesn't use (its own cars, a merged install's or another
 mod's), that isn't RESERVED (other mods' vehicleStats entries) and that no key holds, in
 port_batch's "asi" order (1..303, then 304 up; base IDs stay below 1000: the LOD requests
-add 1000 and 2000). A merged install's cars (ported.lua) are seeded into the map with
-their IDs; their keys are "in the archive" and a package of the same car is refused.
+add 1000 and 2000). `seed` records a merged install's cars (its ported.lua, from a release
+before packages) with their IDs, once, before install.ps1 removes that install: the same
+cars then come back as packages on the IDs their save flags are for.
 """
 
 from __future__ import annotations
@@ -81,7 +82,8 @@ _PORTED_ROW = re.compile(r'\[(\d+)\]\s*=\s*\{[^}]*?media\s*=\s*"([^"]+)"[^}]*?ga
 
 
 def merged_cars(ported: Path) -> dict[str, int]:
-    """{key: ID} of a merged install's cars (port_car.lua_snippet's ported.lua rows)."""
+    """{key: ID} of a merged install's cars (port_car.lua_snippet's ported.lua rows; a merged
+    install is what install.ps1 did before packages)."""
     if not ported.exists():
         return {}
     text = ported.read_text(encoding="utf-8", errors="replace")
@@ -126,30 +128,16 @@ class Manager:
             if self.state.get("format") != STATE_FORMAT:
                 raise SystemExit(f"{path}: state format {self.state.get('format')}, this manager knows {STATE_FORMAT}")
         else:
-            self.state = {"format": STATE_FORMAT, "ids": {}, "cars": {}, "merged": {}}
-        self._seed_merged()
+            self.state = {"format": STATE_FORMAT, "ids": {}, "cars": {}}
+        self.state.pop("merged", None)  # a state from before packages-only installs: its IDs are in "ids"
 
     # --- state ---
-
-    def _seed_merged(self) -> None:
-        """The merged install's cars as it is now (its ported.lua): a car no longer there
-        is no longer refused. Every key keeps the ID it was given (save flags are keyed by
-        ID), so a merged car's ID stays reserved after the merged install goes."""
-        self.state["merged"] = merged_cars(self.game / PORTED)
-        for key, i in self.state["merged"].items():
-            self.state["ids"].setdefault(key, i)
-
-    def merged_conflicts(self) -> dict[str, tuple[int, int]]:
-        """{key: (package ID, archive ID)}: installed packages whose car the merged install
-        now has too. The archive's copy wins; the package is left out of the outputs."""
-        merged = self.state["merged"]
-        return {k: (c["id"], merged[k]) for k, c in self.state["cars"].items() if k in merged}
 
     def key_clash(self, key: str) -> str | None:
         """A known key that differs from `key` only in case: on Windows both name the same
         package folder."""
         folded = key.casefold()
-        known = set(self.state["ids"]) | set(self.state["cars"]) | set(self.state["merged"])
+        known = set(self.state["ids"]) | set(self.state["cars"])
         return next((k for k in sorted(known) if k != key and k.casefold() == folded), None)
 
     def taken(self) -> set[int]:
@@ -170,19 +158,15 @@ class Manager:
         return self.cars_dir / key / dsfcar.CAR
 
     def listed(self) -> dict[int, str]:
-        """{ID: path} the plugin's list should hold: the enabled packages, less those whose car
-        the merged install has too (merged_conflicts)."""
-        conflicts = self.merged_conflicts()
+        """{ID: path} the plugin's list should hold: the enabled packages."""
         return {
             c["id"]: str(CARS_DIR / k / dsfcar.CAR).replace("/", "\\")
             for k, c in self.state["cars"].items()
-            if c["enabled"] and k not in conflicts
+            if c["enabled"]
         }
 
     def save(self) -> None:
         """The state, the plugin's list and packages.lua."""
-        for key, (pid, aid) in self.merged_conflicts().items():
-            self.log(f"{key}: the merged install has this car as ID {aid}; its package (ID {pid}) is left out")
         _write_text(self.cars_dir / STATE, json.dumps(self.state, indent=1, sort_keys=True) + "\n")
         listed = self.listed()
         lines = ["# written by dsff car_manager; one line per enabled car: model ID, package (game folder relative)"]
@@ -256,8 +240,6 @@ class Manager:
         """Install or upgrade one package; returns its key."""
         manifest, car_sp, images = dsfcar.read(package)
         key = manifest["key"]
-        if key in self.state["merged"]:
-            raise SystemExit(f"{key} is already in the installed archive as ID {self.state['merged'][key]}")
         clash = self.key_clash(key)
         if clash:
             raise SystemExit(f"{key}: {clash} differs only in case and would share its files; not installed")
@@ -396,14 +378,17 @@ class Manager:
                 folder.rmdir()
 
     def seed(self) -> int:
-        """Record the merged install's IDs in the map (__init__ read them from its ported.lua),
-        so they outlive it: run before a merged install is uninstalled for packages, the same
-        cars then get the same IDs and keep their save flags. Returns the number recorded."""
+        """Record a merged install's IDs (its ported.lua) in the map, so they outlive it:
+        install.ps1 runs this once before it removes a merged install (an earlier release's),
+        and the same cars then come back as packages on the same IDs, keeping their save flags
+        (kept per model ID). A key the map already has keeps its ID. Returns the number of
+        the merged install's cars."""
+        merged = merged_cars(self.game / PORTED)
+        for key, i in merged.items():
+            self.state["ids"].setdefault(key, i)
         _write_text(self.cars_dir / STATE, json.dumps(self.state, indent=1, sort_keys=True) + "\n")
-        self.log(
-            f"{len(self.state['merged'])} IDs of the merged install recorded ({len(self.state['ids'])} in the map)"
-        )
-        return len(self.state["merged"])
+        self.log(f"{len(merged)} IDs of the merged install recorded ({len(self.state['ids'])} in the map)")
+        return len(merged)
 
     def reassign(self, key: str) -> int:
         """A new free ID for an installed car whose ID another archive took (verify reports
@@ -434,10 +419,8 @@ class Manager:
         for key, car in sorted(self.state["cars"].items(), key=lambda kv: kv[1]["id"]):
             flag = "on " if car["enabled"] else "off"
             out.append(f"{car['id']:4} {flag} {key} v{car['version']}  {car['manifest']['names']['display']}")
-        removed = sorted(set(self.state["ids"]) - set(self.state["cars"]) - set(self.state["merged"]))
+        removed = sorted(set(self.state["ids"]) - set(self.state["cars"]))
         out += [f"{self.state['ids'][k]:4} --  {k} (removed; ID reserved)" for k in removed]
-        if self.state["merged"]:
-            out.append(f"{len(self.state['merged'])} cars of a merged install (ported.lua) keep their IDs")
         return out
 
     def verify(self) -> list[str]:
@@ -459,8 +442,6 @@ class Manager:
                 out.append(f"{key}: {sp} changed since it was installed")
             if car["id"] in in_archive:
                 out.append(f"{key}: ID {car['id']} is in {self.archive} now (the plugin leaves the package out)")
-        for key, (pid, aid) in self.merged_conflicts().items():
-            out.append(f"{key}: the merged install has this car as ID {aid}; its package (ID {pid}) is left out")
         expected = self.listed()
         for i in sorted(set(expected) | set(listed)):
             if expected.get(i) != listed.get(i):
@@ -502,7 +483,9 @@ def build_parser() -> argparse.ArgumentParser:
     u.add_argument(
         "--forget-ids", action="store_true", help="also drop the key -> ID map (save flags then may not match)"
     )
-    sub.add_parser("seed", parents=[common], help="record a merged install's IDs before it is uninstalled")
+    sub.add_parser(
+        "seed", parents=[common], help="record a merged install's IDs (its ported.lua) before it is uninstalled"
+    )
     return parser
 
 

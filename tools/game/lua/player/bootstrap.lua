@@ -1,13 +1,15 @@
 -- dsfforza player bootstrap: registers the added Forza cars with the game.
 -- Installed to <game>\Common\UserLuaScripts\bootstrap.lua by tools\install.ps1,
--- together with dsfforza\register.lua, dsfforza\ported.lua and dsfforza\hud.lua.
+-- together with dsfforza\register.lua; the car manager writes the cars' dsfforza\packages.lua
+-- and dsfforza\packages_hud.lua.
 -- No test probes run from here (the test bootstrap is tools\game\lua\bootstrap.lua).
 -- Options: dsfforza\config.lua, e.g. return { register = { writeProfile = true } }
 
 local Bootstrapper = {}
 
 -- Keep the Lua garbage collector stopped while a user file is compiled and run.
--- The full roster's ported.lua and hud.lua (about 110 KB and 2,000 constants each)
+-- The full roster's car lists (packages.lua and packages_hud.lua; a build's ported.lua and
+-- hud.lua in the in-game tests), about 110 KB and 2,000 constants each,
 -- crashed the game's Lua VM in about one load in five when a collection step ran
 -- during the load (fault in the VM at 0x005F078A, research/in-game-tests.md,
 -- "Lua crashes loading big user files"); with the collector held off, none did.

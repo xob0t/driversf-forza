@@ -30,13 +30,17 @@ project ships no game or Forza files.
 
 The first time, it asks for your game folder (the one with `Driver.exe`) and
 remembers it. It installs [uv](https://docs.astral.sh/uv/) if you don't have it,
-builds every car, backs up your save and every game file it replaces, and
-installs the cars. Run it again after an update: only what changed is rebuilt.
+builds every car, backs up your save, and installs each car as a file of its own
+beside the game's files: no game file is replaced. Run it again after an update:
+only what changed is rebuilt. Over an install of version 0.1.8 or earlier, which
+replaced game files, it puts those files back and moves the cars to the new
+layout; every car keeps its ID, and with it its unlocked and owned flags in your
+save.
 
 ## Uninstall
 
-In a terminal in the unzipped folder, `.\install.cmd --uninstall` puts every replaced
-game file back.
+In a terminal in the unzipped folder, `.\install.cmd --uninstall` removes the cars and
+everything the installer added.
 
 What the installer changes, your save game, and the known limits:
 [INSTALL.md](INSTALL.md).

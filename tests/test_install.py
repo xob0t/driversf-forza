@@ -309,22 +309,31 @@ def test_preflight_build_only_skips_the_install_checks():
             assert "no FM4 disc: its cars are skipped" in info
 
 
-def test_preflight_no_plugin_caps_the_selection_and_other_mods_need_force():
+def test_preflight_another_mods_bootstrap_needs_force_and_its_archive_stays():
+    """The cars install beside the game's files: another mod's archive is no reason to stop
+    an install (only a build reads the vanilla one), its bootstrap.lua is replaced only with
+    --force, and there is no build or install without the plugin any more."""
     with _tmp() as tmp:
         root = Path(tmp)
-        game = _fake_game(root)
+        game = _fake_game(root)  # an archive that isn't vanilla
         iso = _touch(root / "fh1.iso")
-        lst = root / "many.txt"
-        lst.write_text("\n".join(f"CAR_{n}" for n in range(install.VANILLA_ROOM + 1)), encoding="utf-8")
         _touch(game / "Common" / "UserLuaScripts" / "bootstrap.lua", b"-- another mod")
-        args = _args("--no-plugin", "--game", str(game), "--iso", str(iso), "--list", str(lst), out=root / "b")
+        args = _args("--game", str(game), "--iso", str(iso), "--car", "X_1", out=root / "b")
         text = _problems(_run(args))
-        assert f"at most {install.VANILLA_ROOM} added cars" in text
         assert "bootstrap.lua belongs to another mod" in text
-        forced = _args("--force", "--game", str(game), "--iso", str(iso), "--list", str(lst), out=root / "b")
+        forced = _args("--force", "--game", str(game), "--iso", str(iso), "--car", "X_1", out=root / "b")
         assert "bootstrap.lua" not in _problems(_run(forced))
+        installing = _args("--install-only", "--force", "--game", str(game), out=root / "b")
+        run = _run(installing)
+        assert "archive not vanilla (another mod's: kept)" in run.preflight()
         missing = _args("--game", str(game), "--iso", str(iso), "--list", str(root / "none.txt"), out=root / "b")
         assert "Car list not found" in _problems(_run(missing))
+        for gone in ("--no-plugin", "--packages"):
+            try:
+                _args(gone, out=root / "b")
+                raise AssertionError(f"{gone} still parses")
+            except SystemExit:
+                pass
 
 
 def test_a_reinstall_supplies_the_hook_and_loader_its_uninstall_removes():

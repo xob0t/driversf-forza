@@ -101,23 +101,12 @@ class ManagerTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             m.remove("forza.fh1.NOT_THERE_10")
 
-    def test_reserved_and_merged(self):
-        lua = self.game / car_manager.PORTED
-        lua.parent.mkdir(parents=True)
-        lua.write_text(
-            "local ported = {\n\tcars = {\n"
-            '\t\t[3] = { host = 205, media = "CAR_A_10", name = "A", make = "A", model = "A", year = "2010", game = "FH1" },\n'
-            '\t\t[5] = { host = 205, media = "CAR_M_10", name = "M", make = "M", model = "M", year = "", game = "FM4" },\n'
-            "\t},\n}\n"
-        )
+    def test_reserved_ids(self):
         m = self.manager()
-        self.assertEqual(m.state["merged"], {"forza.fh1.CAR_A_10": 3, "forza.fm4.CAR_M_10": 5})
-        with self.assertRaises(SystemExit):  # that car is in the merged archive already
-            m.install(self.package("CAR_A_10"))
         b = m.install(self.package("CAR_B_10"))
-        self.assertEqual(m.state["cars"][b]["id"], 6)
+        self.assertEqual(m.state["cars"][b]["id"], 3)
         taken = m.taken()
-        self.assertTrue({622, 623} <= taken and {1, 2, 3, 4, 5, 6, 62} <= taken)
+        self.assertTrue({622, 623} <= taken and {1, 2, 3, 4, 62} <= taken)
 
     def test_verify(self):
         m = self.manager()
@@ -180,26 +169,27 @@ class ManagerTest(unittest.TestCase):
         lua = (self.game / car_manager.LUA).read_text()
         self.assertNotIn("\r", lua)
 
-    def test_merged_install_changes(self):
-        ported = self.game / car_manager.PORTED
-        ported.parent.mkdir(parents=True)
-        row = '\t\t[{i}] = {{ host = 205, media = "{m}", name = "A", make = "A", model = "A", year = "", game = "FH1" }},\n'
-        ported.write_text("local ported = {\n\tcars = {\n" + row.format(i=7, m="CAR_A_10") + "\t},\n}\n")
-        self.manager().save()
-        ported.unlink()  # the merged install is gone
+    def test_ported_lua_is_read_only_by_seed(self):
+        """A merged install's ported.lua (an earlier release's) counts only when `seed` reads
+        it: loading the manager neither records nor refuses its cars, and a state written while
+        it was there (its "merged" key) loads as before."""
+        ported = self.write_ported({7: "CAR_A_10"})
         m = self.manager()
-        self.assertEqual(m.state["merged"], {})
-        a = m.install(self.package("CAR_A_10"))  # no longer refused, and on the ID it had
-        self.assertEqual(m.state["cars"][a]["id"], 7)
-        # A merged install that now has an installed package's car (at another ID): the
-        # archive's copy wins, the package is left out of the outputs and verify says so.
-        b = m.install(self.package("CAR_B_10"))
-        ported.write_text("local ported = {\n\tcars = {\n" + row.format(i=40, m="CAR_B_10") + "\t},\n}\n")
+        self.assertEqual(m.state["ids"], {})
+        a = m.install(self.package("CAR_A_10"))  # not refused: install.ps1 removes the merged install first
+        self.assertEqual(m.state["cars"][a]["id"], 3)
+        ported.unlink()
+        state = self.game / car_manager.CARS_DIR / car_manager.STATE
+        old = json.loads(state.read_text())
+        old["merged"] = {"forza.fh1.CAR_Z_10": 9}  # manager.json of the coexistence code
+        old["ids"]["forza.fh1.CAR_Z_10"] = 9
+        state.write_text(json.dumps(old))
         m = self.manager()
+        self.assertNotIn("merged", m.state)
+        self.assertEqual(m.state["ids"]["forza.fh1.CAR_Z_10"], 9)  # its ID stays reserved
         m.save()
-        self.assertNotIn(m.state["cars"][b]["id"], self.listed())
-        self.assertIn(7, self.listed())
-        self.assertTrue(any("left out" in p for p in m.verify()))
+        self.assertNotIn("merged", json.loads(state.read_text()))
+        self.assertEqual(m.verify(), [])
 
     def test_case_folded_keys(self):
         m = self.manager()
@@ -338,19 +328,38 @@ class ManagerTest(unittest.TestCase):
         car_manager.main(["--game", str(self.game), "uninstall", "--forget-ids"])
         self.assertFalse((self.game / "dsfforza").exists())  # nothing of ours left
 
-    def test_seed_carries_a_merged_install_over(self):
+    def write_ported(self, cars: dict[int, str]) -> Path:
+        """A merged install's ported.lua (port_car.lua_snippet's rows)."""
         ported = self.game / car_manager.PORTED
-        ported.parent.mkdir(parents=True)
+        ported.parent.mkdir(parents=True, exist_ok=True)
         row = '\t\t[{i}] = {{ host = 205, media = "{m}", name = "A", make = "A", model = "A", year = "", game = "FH1" }},\n'
-        ported.write_text("local ported = {\n\tcars = {\n" + row.format(i=40, m="CAR_A_10") + "\t},\n}\n")
+        rows = "".join(row.format(i=i, m=m) for i, m in cars.items())
+        ported.write_text("local ported = {\n\tcars = {\n" + rows + "\t},\n}\n")
+        return ported
+
+    def test_seed_carries_a_merged_install_over(self):
+        ported = self.write_ported({40: "CAR_A_10", 3: "CAR_C_10"})
         car_manager.main(["--game", str(self.game), "seed"])
         ported.unlink()  # the merged install is uninstalled
         m = self.manager()
-        self.assertEqual(m.state["merged"], {})
+        self.assertEqual(m.state["ids"], {"forza.fh1.CAR_A_10": 40, "forza.fh1.CAR_C_10": 3})
         a = m.install(self.package("CAR_A_10"))
         self.assertEqual(m.state["cars"][a]["id"], 40)  # the merged car's ID, so its save flags
         b = m.install(self.package("CAR_B_10"))
-        self.assertEqual(m.state["cars"][b]["id"], 3)
+        self.assertEqual(m.state["cars"][b]["id"], 5)  # 3 is CAR_C_10's, 4 the archive's
+        self.assertEqual(m.state["cars"][m.install(self.package("CAR_C_10"))]["id"], 3)
+
+    def test_seed_keeps_the_ids_the_map_has(self):
+        """A car the map already has (installed as a package, then a merged install over it)
+        keeps the map's ID: seeding again or later changes nothing."""
+        m = self.manager()
+        a = m.install(self.package("CAR_A_10"))
+        self.write_ported({40: "CAR_A_10", 41: "CAR_B_10"})
+        self.assertEqual(self.manager().seed(), 2)
+        m = self.manager()
+        self.assertEqual(m.state["ids"], {a: 3, "forza.fh1.CAR_B_10": 41})
+        self.assertEqual(m.seed(), 2)
+        self.assertEqual(self.manager().state["ids"], {a: 3, "forza.fh1.CAR_B_10": 41})
 
     def test_reassign_after_another_archive_takes_an_id(self):
         m = self.manager()
