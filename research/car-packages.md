@@ -373,7 +373,7 @@ under the game folder's `dsfforza\cars\` and
 
 | File | What |
 | --- | --- |
-| `dsfforza\cars\manager.json` | the state: `ids` (key → model ID, for good), `cars` (installed: ID, version, enabled, SHA-256 of the installed `.sp`, manifest); until "Packages only" also `merged` (a merged install's cars), dropped on load since |
+| `dsfforza\cars\manager.json` | the state (format 2): `ids` (key → model ID, for good), `cars` (installed: what the manager owns of each, ID, version, enabled, SHA-256 of the installed `.sp`); until "Packages only" also `merged` (a merged install's cars), dropped on load since. The rest of a car is its folder's `car.json`, read where it is needed (packages.lua, the GUI files, status, verify); a car without a readable one is left out of the outputs and `verify` says so. Format 1 kept a copy of each manifest in `cars`; the manager upgrades such a state in place on load (car.json written from the copy where a folder lacks it). On the 573-car format-1 install: 0.16 s, 609 to 117 KB, `packages.lua` and `cars.txt` byte for byte as before |
 | `dsfforza\cars\cars.txt` | the plugin's list: `id path` per enabled car |
 | `dsfforza\cars\<key>\` | one car: the package's `car.sp`, `car.json` and images as they are (car.sp keeps its builder's ID; the plugin writes the car's ID in memory) |
 | `Common\UserLuaScripts\dsfforza\packages.lua` | `ported.lua`'s fields per enabled car; `register.lua` adds them to its cars for the IDs `ported.lua` doesn't have |
