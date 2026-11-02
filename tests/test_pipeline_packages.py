@@ -1,4 +1,4 @@
-"""port_batch --packages (write_packages) and install.py --packages, without a real build."""
+"""port_batch --packages (write_packages) and install.py's package install, without a real build."""
 
 import argparse
 import json
@@ -88,16 +88,17 @@ class PackageProblemTest(unittest.TestCase):
 
 
 class InstallFlagsTest(unittest.TestCase):
-    def test_packages_flag_reaches_install_ps1(self):
+    def test_install_ps1_gets_the_plugin_and_no_mode_switch(self):
+        """Packages are the only install: install.ps1 has no -Packages, -Asi or -IdPolicy."""
         run = install.Run.__new__(install.Run)
-        run.args = argparse.Namespace(skip_hook=False, packages=True, no_write_profile=False, force=False)
+        run.args = argparse.Namespace(skip_hook=False, no_write_profile=False, force=False)
         run.plugin = Path("out/asi/dsfforza.asi")
         run.record = None
         flags = run.install_flags(None, None)
-        self.assertIn("-Packages", flags)
-        self.assertEqual(flags[:3], ["-Asi", "-AsiPath", str(run.plugin)])
-        run.args.packages = False
-        self.assertNotIn("-Packages", run.install_flags(None, None))
+        self.assertEqual(flags[:2], ["-AsiPath", str(run.plugin)])
+        self.assertFalse({"-Packages", "-Asi", "-IdPolicy"} & set(flags))
+        run.record = {"state": "installed"}  # an earlier install, merged or not: install.ps1 replaces it
+        self.assertIn("-Force", run.install_flags(None, None))
 
     def test_tracker_shows_the_packages_step(self):
         tracker = install.Tracker()
