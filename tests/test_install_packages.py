@@ -95,8 +95,13 @@ class InstallPackagesTest(unittest.TestCase):
                 target.write_bytes(data)
             path = relative.replace("/", "\\")
             entries.append(
-                {"path": path, "action": "replaced", "original_sha256": original, "backup": path,
-                 "installed_sha256": sha(target)}
+                {
+                    "path": path,
+                    "action": "replaced",
+                    "original_sha256": original,
+                    "backup": path,
+                    "installed_sha256": sha(target),
+                }
             )
         rows = "".join(
             f'\t\t[{i}] = {{ host = 205, media = "{m}", name = "A", make = "A", model = "A", year = "", game = "FH1" }},\n'
@@ -115,8 +120,13 @@ class InstallPackagesTest(unittest.TestCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
             entries.append(
-                {"path": relative.replace("/", "\\"), "action": "created", "original_sha256": None, "backup": None,
-                 "installed_sha256": sha(target)}
+                {
+                    "path": relative.replace("/", "\\"),
+                    "action": "created",
+                    "original_sha256": None,
+                    "backup": None,
+                    "installed_sha256": sha(target),
+                }
             )
         record = {
             "state": "installed", "installed": "2026-10-31T12:00:00", "build": "C:\\old\\build",

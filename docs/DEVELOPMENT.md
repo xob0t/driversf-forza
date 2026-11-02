@@ -6,8 +6,10 @@ contributors: read [AGENTS.md](../AGENTS.md) first.
 
 ## What it does
 
-Each Forza car is converted onto a similar vanilla DSF car (the host) and added
-to `Install\dngvehicles.sp` under its own ID:
+Each Forza car is converted onto a similar vanilla DSF car (the host) and packed
+as a car package (`<key>.dsfcar`), which the car manager installs beside the
+game's files under an ID of its own, and `dsfforza.asi` loads beside the vanilla
+`Install\dngvehicles.sp` (`research/car-packages.md`):
 
 - body, cockpit, glass, lamps, plates, wheels and paint from Forza;
 - vanilla-style damage (panels, crush, detachable parts);
@@ -16,7 +18,8 @@ to `Install\dngvehicles.sp` under its own ID:
 - garage pictures, HUD badges and names.
 
 DriverNGHook runs the Lua that registers the cars. The native plugin
-`tools/asi` (`dsfforza.asi`) lifts the archive, garage, save, HUD and Lua heap
+`tools/asi` (`dsfforza.asi`) loads the car packages, opens the car manager's
+GUI copies in place of the game's, lifts the archive, garage, save, HUD and Lua heap
 limits, puts the driver's hands on each car's own steering rim, shows km/h on
 the converted digital dashboards, and drops draws past the per-frame draw
 queue instead of letting the game end (`research/asi.md`). Research notes for
@@ -51,16 +54,21 @@ uv run dsff install --status
 uv run dsff install --uninstall
 ```
 
-Stages: preflight (game 1.04, vanilla archive, discs, disk space, and for an
-install: game not running, VC++ x86 runtime, DriverNGHook and an ASI loader
-present or downloadable, other mods' files), prepare
+Stages: preflight (game 1.04, vanilla archive for a build, discs, disk space,
+and for an install: game not running, VC++ x86 runtime, DriverNGHook and an ASI
+loader present or downloadable, another mod's bootstrap.lua), prepare
 (`game_data prepare` when its files are missing or stale; vgmstream), plugin
 (`out/asi/dsfforza.asi`, rebuilt with `tools/asi/build.ps1 -Test` when
 `out/asi/dsfforza.build.json` doesn't match the sources and Visual Studio
 Build Tools are installed, else used as it is; a release uses its
-bundled `plugin/dsfforza.asi`), build and pack (`port_batch build` into
-`out/build.new`, renamed to `out/build` when it finishes), install (save
-backup, then `tools/install.ps1`). Each car is reused from `out/build`, an
+bundled `plugin/dsfforza.asi`), build and pack (`port_batch build --packages`
+into `out/build.new`, renamed to `out/build` when it finishes), install (save
+backup, then `tools/install.ps1`, which installs the plugin and the Lua and hands
+`out/build/packages` to the car manager). The install replaces no game file;
+over a merged install of v0.1.8 or earlier (the cars in copies of the game's
+archive and GUI files) it records that install's IDs in the car manager's map
+(`car_manager seed`), restores the game's files and installs the packages on
+the same IDs. Each car is reused from `out/build`, an
 interrupted `out/build.partial` or `--reuse DIR` when its inputs and code are
 unchanged (`research/batch.md`, "Selective rebuild"); a first run on a machine
 that built by hand reuses the earlier build under `out/` with the most cars.
@@ -78,9 +86,9 @@ uv run dsff game_data prepare      # derived data under out/ (dsff install does 
 
 # Plan or build a list of cars (one car per line), with garage assets
 uv run dsff port_batch plan --list tools/batches/testdrive.txt
-uv run dsff port_batch build --list tools/batches/testdrive.txt --gui --out out/batch/b1 --jobs 6
+uv run dsff port_batch build --list tools/batches/testdrive.txt --gui --packages --out out/batch/b1 --jobs 6
 uv run dsff port_batch build --list tools/batches/all.txt --gui --wide-glyphs --id-policy asi `
-    --root-limit 3003 --out out/final4 --reuse out/final3 --jobs 8
+    --root-limit 3003 --packages --out out/final4 --reuse out/final3 --jobs 8
 
 # One car into an archive (--car NAME@fh1 / @fm4 picks the game when a car is on both)
 uv run dsff port_car --dsf "$env:DSF_GAME_DIR\Install\dngvehicles.sp" --out out/one.sp --car NIS_370Z_10
@@ -88,10 +96,16 @@ uv run dsff port_car --dsf "$env:DSF_GAME_DIR\Install\dngvehicles.sp" --out out/
 # The plugin
 .\tools\asi\build.ps1 -Test       # out\asi\dsfforza.asi, patch-tested against Driver.exe
 
-# Install a build folder (backs up every replaced file); -Asi adds the plugin
-.\tools\install.ps1 -GamePath $env:DSF_GAME_DIR -Build out\build -IdPolicy asi -Asi -Download -WriteProfile
+# Install a build folder's car packages (<build>\packages, port_batch --packages) with the
+# plugin (-AsiPath, default out\asi\dsfforza.asi); no game file is replaced
+.\tools\install.ps1 -GamePath $env:DSF_GAME_DIR -Build out\build -Download -WriteProfile
 .\tools\install.ps1 -GamePath $env:DSF_GAME_DIR -Status
 .\tools\install.ps1 -GamePath $env:DSF_GAME_DIR -Uninstall
+
+# The installed cars (the car manager; install.ps1 calls it)
+uv run dsff car_manager status
+uv run dsff car_manager disable forza.fh1.BMW_M3E30_91
+uv run dsff car_manager verify
 ```
 
 ## Tests
@@ -102,6 +116,10 @@ uv run python -m tests --ci            # without tests/ci-skip.txt (they need ga
 .\tools\asi\build.ps1 -Test           # build the plugin and patch-test it
 ```
 
+`tests/test_install_packages.py` runs `tools/install.ps1` on a synthetic game
+folder: a fresh install, a merged install of v0.1.8 moved to packages on the
+same IDs, and uninstalls that leave the game as it was.
+
 In-game tests run in a headless VMware VM, so nothing appears on the desktop.
 Build the VM once with `tools/wsb/vm-build.ps1` (set `DSF_VM_ISO` to a
 Windows 10/11 ISO), then:
@@ -110,9 +128,24 @@ Windows 10/11 ISO), then:
 .\tools\wsb\run-series.ps1 -Vm -Archives out\build\dngvehicles.sp -ProbeIds '147,1,2'
 ```
 
-An archive named `dngvehicles.sp` goes with its build's `dngvehicles.lua`
-and `gui\` (as `tools\install.ps1` installs them), so each car has its
-vehicleStats entry, badge and nameplate; `-ArchiveOnly` leaves them out.
+The build still writes the merged archive (`out\build\dngvehicles.sp`, all its
+cars in a copy of the vanilla archive) for these runs; players get the car
+packages. An archive named `dngvehicles.sp` goes with its build's
+`dngvehicles.lua` and `gui\` (as `dsfforza\ported.lua`, `hud.lua` and the GUI
+files, which `register.lua` reads for the tests), so each car has its
+vehicleStats entry, badge and nameplate; `-ArchiveOnly` leaves them out. To
+run the cars as players get them, install the build into a scratch game folder
+(real copies of `out\vanilla`'s files and an empty `Driver.exe`; never the
+installed game), then run the vanilla archive with that folder's plugin and the
+car manager's files laid over the run (`research/car-packages.md`, "Packages
+only"):
+
+```powershell
+.\tools\install.ps1 -GamePath out\scratch-game -Build out\b3 -SkipHook
+# out\vm-overlay: the scratch game's dsfforza\ and Common\UserLuaScripts\dsfforza\packages*.lua
+.\tools\wsb\run-series.ps1 -Vm -Asi out\scratch-game\plugins\dsfforza.asi -ArchiveOnly `
+    -Archives out\vanilla\Install\dngvehicles.sp -Overlay out\vm-overlay -ProbeIds '1,2,3'
+```
 
 The probe switches traffic, parked cars and interesting vehicles off and
 clears the road around each probe car, so traffic can't ram the stopped car
@@ -142,7 +175,10 @@ Making a release (master keeps taking PRs meanwhile):
 2. Verify from the branch: `uv run dsff install` (a full build and an install
    into the game), then a VM series on its `out\build` with a few changed cars
    (`run-series.ps1 -Vm -Archives out\build\dngvehicles.sp`, which brings the
-   build's gui.sp, fonts, locale and Lua with it).
+   build's gui.sp, fonts, locale and Lua with it). Check the upgrade too: the
+   install over the last release's (`car_manager status` gives every car the
+   ID it had: the merged install's `ported.lua`, or the last package install's
+   `manager.json`), and say in the notes whether players must install again.
 3. Tag the branch head and push the tag: `git tag -a vX.Y.Z -m vX.Y.Z; git push
    origin vX.Y.Z`. Check the release run (`gh run list --workflow
    release.yml`); it leaves a draft release with the zip.
