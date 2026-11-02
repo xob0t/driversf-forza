@@ -12,8 +12,8 @@
 
 The manifest says what the car is and nothing the manager allocates: no model ID the game
 will use, no glyph code, string ID, picture name or garage group. The model ID inside
-car.sp is whatever the builder had (`car.model_id` says which); the manager patches its own
-into it at install (car_package.make). Images are optional: without one the manager leaves
+car.sp is whatever the builder had (`car.model_id` says which); the manager installs car.sp
+as it is and dsfforza.asi writes the listed ID into the data it serves. Images are optional: without one the manager leaves
 that part as the host's (picture) or the game's own for the maker or model.
 
     {
@@ -136,15 +136,21 @@ def _vehc_problems(k: int, e) -> list[str]:
 
 
 def _model_id_problems(stream, vehc, model_id: int | None) -> list[str]:
-    from dsfforza.build.car_package import car_id
+    """The full VEHC holds model_id once in each of clone_vehicle.ID_FIELDS (VSVH, VO3D, SPID,
+    UPVH), as a vanilla car's kind 0 entry does: dsfforza.asi writes the listed ID into
+    exactly these fields."""
+    from dsfforza.build.car_package import id_fields
+    from dsfforza.build.clone_vehicle import ID_FIELDS
 
     if model_id is None or not vehc.children:
         return []
-    try:
-        found = car_id(stream, vehc)
-    except ValueError as error:
-        return [f"{CAR}: {error}"]
-    return [] if found == model_id else [f"{CAR}: VO3D holds model ID {found}, the manifest says {model_id}"]
+    found = id_fields(stream, vehc)
+    tags = sorted(tag for tag, _ in found)
+    out = []
+    if tags != sorted(ID_FIELDS):
+        out.append(f"{CAR}: the full VEHC's model-ID fields are {tags}, not {sorted(ID_FIELDS)} once each")
+    out += [f"{CAR}: {tag} holds model ID {v}, the manifest says {model_id}" for tag, v in found if v != model_id]
+    return out
 
 
 def car_sp_problems(data: bytes, model_id: int | None = None, host: int | None = None) -> list[str]:

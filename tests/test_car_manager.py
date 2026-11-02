@@ -54,10 +54,16 @@ class ManagerTest(unittest.TestCase):
             self.listed(),
             {3: r"dsfforza\cars\forza.fh1.CAR_A_10\car.sp", 5: r"dsfforza\cars\forza.fh1.CAR_B_10\car.sp"},
         )
-        with (self.game / car_manager.CARS_DIR / a / "car.sp").open("rb") as f:
-            from dsfforza.formats.chnk import read_chunk
+        # car.sp is the package's, byte for byte: both hold their builder's ID 1, and the
+        # plugin writes 3 and 5 into the data it serves.
+        for key in (a, b):
+            installed = (self.game / car_manager.CARS_DIR / key / "car.sp").read_bytes()
+            self.assertEqual(installed, dsfcar.read(self.tmp / f"{key.split('.')[-1]}-v1.dsfcar")[1])
+            self.assertEqual(dsfcar.sha256(installed), m.state["cars"][key]["manifest"]["car"]["sha256"])
+            with (self.game / car_manager.CARS_DIR / key / "car.sp").open("rb") as f:
+                from dsfforza.formats.chnk import read_chunk
 
-            self.assertEqual(car_package.car_id(f, read_chunk(f, 0).entries[0]), 3)
+                self.assertEqual(car_package.car_id(f, read_chunk(f, 0).entries[0]), 1)
         folder = self.game / car_manager.CARS_DIR / a
         self.assertEqual(
             sorted(p.name for p in folder.iterdir()), ["badge.png", "car.json", "car.sp", "picture.dds", "plate.png"]
@@ -206,7 +212,10 @@ class ManagerTest(unittest.TestCase):
         sp = self.game / car_manager.CARS_DIR / a / "car.sp"
         before = sp.read_bytes()
         state = json.loads(json.dumps(m.state))
-        with mock.patch.object(car_package, "install_sp", side_effect=OSError("disk full")), self.assertRaises(OSError):
+        with (
+            mock.patch.object(car_manager.Manager, "_stage", side_effect=OSError("disk full")),
+            self.assertRaises(OSError),
+        ):
             m.install(self.package("CAR_A_10", version=2))
         self.assertEqual(sp.read_bytes(), before)
         self.assertEqual(m.state, state)
@@ -229,7 +238,10 @@ class ManagerTest(unittest.TestCase):
         )
         self.assertEqual(m.verify(), [])
         # A new key whose install fails doesn't keep the ID it was about to get.
-        with mock.patch.object(car_package, "install_sp", side_effect=OSError("disk full")), self.assertRaises(OSError):
+        with (
+            mock.patch.object(car_manager.Manager, "_stage", side_effect=OSError("disk full")),
+            self.assertRaises(OSError),
+        ):
             m.install(self.package("CAR_B_10"))
         self.assertNotIn("forza.fh1.CAR_B_10", m.state["ids"])
 
@@ -243,7 +255,10 @@ class ManagerTest(unittest.TestCase):
         folder = self.game / car_manager.CARS_DIR / a
         before = (folder / "car.sp").read_bytes()
         folder.replace(folder.with_name(a + ".old"))
-        with mock.patch.object(car_package, "install_sp", side_effect=OSError("disk full")), self.assertRaises(OSError):
+        with (
+            mock.patch.object(car_manager.Manager, "_stage", side_effect=OSError("disk full")),
+            self.assertRaises(OSError),
+        ):
             m.install(self.package("CAR_A_10", version=2))
         self.assertEqual((folder / "car.sp").read_bytes(), before)
         self.assertFalse(folder.with_name(a + ".old").exists())
@@ -364,6 +379,8 @@ class ManagerTest(unittest.TestCase):
     def test_reassign_after_another_archive_takes_an_id(self):
         m = self.manager()
         a = m.install(self.package("CAR_A_10"))
+        sp = self.game / car_manager.CARS_DIR / a / "car.sp"
+        before = sp.read_bytes()
         with self.assertRaises(SystemExit):  # no clash: nothing to do
             m.reassign(a)
         archive(self.game / "Install" / "dngvehicles.sp", [1, 2, 3, 4, 62])  # another mod's archive has 3
@@ -373,10 +390,34 @@ class ManagerTest(unittest.TestCase):
         m = self.manager()
         self.assertEqual(m.state["cars"][a]["id"], 5)
         self.assertEqual(m.verify(), [])
-        with (self.game / car_manager.CARS_DIR / a / "car.sp").open("rb") as f:
-            from dsfforza.formats.chnk import read_chunk
+        self.assertEqual(sp.read_bytes(), before)  # only the list changes; the plugin writes 5 in memory
+        self.assertEqual(self.listed(), {5: rf"dsfforza\cars\{a}\car.sp"})
 
-            self.assertEqual(car_package.car_id(f, read_chunk(f, 0).entries[0]), 5)
+    def test_two_packages_with_one_builder_id(self):
+        """Packages from different builds can hold the same model ID: each is installed as it
+        is, under its own ID (the plugin writes that one into the data it serves)."""
+        m = self.manager()
+        a = m.install(self.package("CAR_A_10", car=7))
+        b = m.install(self.package("CAR_B_10", car=7))
+        self.assertEqual((m.state["cars"][a]["id"], m.state["cars"][b]["id"]), (3, 5))
+        self.assertEqual(sorted(self.listed()), [3, 5])
+        self.assertEqual(m.verify(), [])
+
+    def test_a_car_sp_patched_by_an_earlier_manager_still_verifies(self):
+        """Installs from before the plugin wrote the ID in memory hold car.sp with the car's ID
+        written in (state sha256 = that file's): verify takes it, and any other bytes not."""
+        m = self.manager()
+        a = m.install(self.package("CAR_A_10"))
+        sp = self.game / car_manager.CARS_DIR / a / "car.sp"
+        patched = car_sp(self.tmp / "patched.sp", car=m.state["cars"][a]["id"])
+        sp.write_bytes(patched)
+        self.assertTrue(any("not the package's car.sp" in p for p in m.verify()))
+        m.state["cars"][a]["sha256"] = dsfcar.sha256(patched)
+        m.save()
+        m = self.manager()
+        self.assertEqual(m.verify(), [])
+        sp.write_bytes(patched + b"x")
+        self.assertTrue(any("not the package's car.sp" in p for p in m.verify()))
 
 
 if __name__ == "__main__":

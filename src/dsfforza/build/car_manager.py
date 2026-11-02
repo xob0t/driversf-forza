@@ -13,8 +13,10 @@ What it owns, all under the game folder (no game file is written):
 
     dsfforza\\cars\\manager.json       its state: the key -> model ID map and the installed cars
     dsfforza\\cars\\cars.txt           the plugin's list, "id path" per enabled car
-    dsfforza\\cars\\<key>\\            one car: car.sp, its installed form (its ID written in),
-                                     and the package's manifest and images (car.json, *.png, *.dds)
+    dsfforza\\cars\\<key>\\            one car: the package's car.sp, manifest and images as they
+                                     are (car.sp, car.json, *.png, *.dds). car.sp holds its
+                                     builder's model ID; dsfforza.asi writes the listed one into
+                                     the data it serves (research/car-packages.md)
     Common\\UserLuaScripts\\dsfforza\\packages.lua   vehicleStats entries of the enabled cars
 
 IDs. A key keeps its model ID for good: across upgrades, disable and enable, and after a
@@ -38,7 +40,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from dsfforza.build import car_package, dsfcar
+from dsfforza.build import dsfcar
 
 STATE_FORMAT = 1
 CARS_DIR = Path("dsfforza") / "cars"
@@ -280,14 +282,8 @@ class Manager:
         shutil.rmtree(staged, ignore_errors=True)
         staged.mkdir(parents=True)
         try:
-            source = staged / (dsfcar.CAR + ".package")  # the package's car.sp, before its ID is written in
-            source.write_bytes(car_sp)
-            car_package.install_sp(source, entry["id"], staged / dsfcar.CAR)
-            source.unlink()
-            for name, data in images.items():
-                (staged / name).write_bytes(data)
-            _write_text(staged / dsfcar.MANIFEST, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
-            entry["sha256"] = dsfcar.sha256((staged / dsfcar.CAR).read_bytes())
+            self._stage(staged, manifest, car_sp, images)
+            entry["sha256"] = dsfcar.sha256(car_sp)
         except BaseException:
             shutil.rmtree(staged, ignore_errors=True)
             raise
@@ -313,6 +309,16 @@ class Manager:
             self.save()
             raise
         shutil.rmtree(backup, ignore_errors=True)
+
+    @staticmethod
+    def _stage(folder: Path, manifest: dict, car_sp: bytes, images: dict) -> None:
+        """The package's files as they are. car.sp keeps its builder's model ID (the plugin
+        writes the listed ID into the data it serves), so it stays the package's own bytes
+        and its car.sha256 checks it."""
+        (folder / dsfcar.CAR).write_bytes(car_sp)
+        for name, data in images.items():
+            (folder / name).write_bytes(data)
+        _write_text(folder / dsfcar.MANIFEST, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
 
     def _car(self, key: str) -> dict:
         if key not in self.state["cars"]:
@@ -393,7 +399,8 @@ class Manager:
     def reassign(self, key: str) -> int:
         """A new free ID for an installed car whose ID another archive took (verify reports
         it): the plugin leaves a clashing package out. The car's save flags stay with the old
-        ID, which isn't ours any more. Returns the new ID."""
+        ID, which isn't ours any more. Only the state and the outputs change: the plugin
+        writes the listed ID into the car's data. Returns the new ID."""
         car = self._car(key)
         old = car["id"]
         if old not in archive_ids(self.archive):
@@ -401,15 +408,10 @@ class Manager:
         del self.state["ids"][key]
         try:
             new = self.allocate(key)
-            sp = self.sp_path(key)
-            staged = sp.with_name(sp.name + ".new")
-            car_package.install_sp(sp, new, staged)
-            staged.replace(sp)
         except BaseException:
             self.state["ids"][key] = old
             raise
         car["id"] = new
-        car["sha256"] = dsfcar.sha256(self.sp_path(key).read_bytes())
         self.save()
         self.log(f"{key}: ID {old} -> {new} (another archive has {old}; its save flags stay with {old})")
         return new
@@ -422,6 +424,13 @@ class Manager:
         removed = sorted(set(self.state["ids"]) - set(self.state["cars"]))
         out += [f"{self.state['ids'][k]:4} --  {k} (removed; ID reserved)" for k in removed]
         return out
+
+    @staticmethod
+    def good_sha256(car: dict) -> set[str]:
+        """The checksums an installed car.sp may have: the package's own (its manifest's
+        car.sha256), or the one recorded at install by a manager that wrote the car's ID
+        into the file (an install from before the plugin wrote it in memory)."""
+        return {car["manifest"]["car"]["sha256"], car["sha256"]}
 
     def verify(self) -> list[str]:
         """What is wrong with the installed packages (empty: all is well)."""
@@ -438,8 +447,8 @@ class Manager:
             sp = self.sp_path(key)
             if not sp.exists():
                 out.append(f"{key}: {sp} is missing")
-            elif dsfcar.sha256(sp.read_bytes()) != car["sha256"]:
-                out.append(f"{key}: {sp} changed since it was installed")
+            elif dsfcar.sha256(sp.read_bytes()) not in self.good_sha256(car):
+                out.append(f"{key}: {sp} is not the package's car.sp (changed since it was installed)")
             if car["id"] in in_archive:
                 out.append(f"{key}: ID {car['id']} is in {self.archive} now (the plugin leaves the package out)")
         expected = self.listed()

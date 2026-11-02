@@ -21,16 +21,29 @@ def node(tag: str, children: list[Entry], align: int = 12) -> Entry:
     return Entry(tag=tag, offset=0, size=0, version=0, align_log2=align, name=None, children=children)
 
 
-def vehc(car: int | None, nonr_pad: int = 0) -> Entry:
+def vehc(car: int | None, nonr_pad: int = 0, fields: dict | None = None) -> Entry:
+    """A VEHC; with a car, its model ID in the four fields of a full one, where the roster's
+    573 packages hold them (NONR/VSRT/VSVH +0, NONR/VO3D +0, NONR/UPVH +0x14,
+    NONR/SPSR/SPID +0). `fields` gives one field another value (None: leave it out)."""
     kids = [leaf("MODL", b"\0" * (16 + nonr_pad))]
     if car is not None:
-        kids.append(leaf("VO3D", struct.pack("<I4sII", car, b"VO3D", 1, 0)))
+        ids = {"VSVH": car, "VO3D": car, "UPVH": car, "SPID": car, **(fields or {})}
+        if ids["VSVH"] is not None:
+            kids.append(node("VSRT", [leaf("VSVH", struct.pack("<I12x", ids["VSVH"]))], align=4))
+        if ids["VO3D"] is not None:
+            kids.append(leaf("VO3D", struct.pack("<I4sII", ids["VO3D"], b"VO3D", 1, 0)))
+        if ids["UPVH"] is not None:
+            kids.append(leaf("UPVH", struct.pack("<20sI8x", b"UPVH", ids["UPVH"])))
+        if ids["SPID"] is not None:
+            kids.append(node("SPSR", [leaf("SPID", struct.pack("<I12x", ids["SPID"]))], align=4))
     return node("VEHC", [node("NONR", kids, align=4)])
 
 
-def car_sp(path: Path, car: int = 1, host: int = 205, nonr_pad: int = 0, *, vsct: bool = True) -> bytes:
+def car_sp(
+    path: Path, car: int = 1, host: int = 205, nonr_pad: int = 0, *, vsct: bool = True, fields: dict | None = None
+) -> bytes:
     records = b"".join(VSCT_RECORD.pack(host, 1, 2, 3, b"host", *range(6)) for _ in range(3))
-    entries = [vehc(car, nonr_pad), vehc(None), vehc(None)]
+    entries = [vehc(car, nonr_pad, fields), vehc(None), vehc(None)]
     if vsct:
         entries.append(leaf("VSCT", records))
     with path.open("wb") as f:
@@ -187,19 +200,21 @@ class DsfcarTest(unittest.TestCase):
             with self.subTest(images=list(images)):
                 self.assertTrue(dsfcar.validate(self.write(images=images)))
 
-    def test_install_sp(self):
-        """A package's car.sp installed with the manager's ID: only the ID fields differ."""
-        out = self.tmp / "game" / "dsfforza" / "cars" / "x.sp"
-        self.assertEqual(car_package.install_sp(self.tmp / "car.sp", 700, out), 1)
-        with out.open("rb") as f:
-            from dsfforza.formats.chnk import read_chunk
+    def test_model_id_fields(self):
+        """car.sp's full VEHC holds car.model_id once in each of VSVH, VO3D, SPID and UPVH:
+        the fields dsfforza.asi writes the listed ID into."""
+        import io
 
-            root = read_chunk(f, 0)
-            self.assertEqual([e.tag for e in root.entries], ["VEHC", "VEHC", "VEHC", "VSCT"])
-            self.assertEqual(car_package.car_id(f, root.entries[0]), 700)
-        self.assertEqual(dsfcar.car_sp_problems(out.read_bytes(), 700, 205), [])
-        with self.assertRaises(ValueError):
-            car_package.install_sp(self.tmp / "car.sp", 1000, out)
+        from dsfforza.formats.chnk import read_chunk
+
+        root = read_chunk(io.BytesIO(self.sp), 0)
+        found = car_package.id_fields(io.BytesIO(self.sp), root.entries[0])
+        self.assertEqual(sorted(found), [("SPID", 1), ("UPVH", 1), ("VO3D", 1), ("VSVH", 1)])
+        self.assertEqual(car_package.id_fields(io.BytesIO(self.sp), root.entries[1]), [])
+        mixed = car_sp(self.tmp / "m.sp", fields={"SPID": 7})
+        self.assertEqual(dsfcar.car_sp_problems(mixed, 1, 205), ["car.sp: SPID holds model ID 7, the manifest says 1"])
+        missing = car_sp(self.tmp / "u.sp", fields={"UPVH": None})
+        self.assertTrue(any("model-ID fields" in p for p in dsfcar.car_sp_problems(missing, 1, 205)))
 
     def test_cli_validate(self):
         good = self.write()
