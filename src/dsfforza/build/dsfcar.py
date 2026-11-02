@@ -25,7 +25,7 @@ that part as the host's (picture) or the game's own for the maker or model.
                 "family": null, "year": 1991, "maker_group": "BMW"},
       "garage": {"speed": 0.48, "strength": 0.3, "drift": 0.65},
       "images": {"picture": "picture.dds", "badge": "badge.png", "plate": "plate.png"},
-      "requires": ["archive.packages"],
+      "requires": ["archive.packages", "archive.ids"],
       "source": {"pipeline": "dsfforza", "game": "FH1", "media": "BMW_M3E30_91"}
     }
 
@@ -56,9 +56,13 @@ PLATE = "plate.png"
 MEMBERS = {MANIFEST, CAR, PICTURE, BADGE, PLATE}
 SUFFIX = ".dsfcar"
 
-# Capabilities a package can ask of dsfforza.asi. "archive.packages": [archive]
-# packages, the loader of car.sp (research/car-packages.md).
-CAPABILITIES = {"archive.packages"}
+# Capabilities a package can ask of dsfforza.asi; the plugin lists its own in its DLL
+# (tools/asi/src/patch.h DSF_CAPABILITIES; car_manager.plugin_capabilities reads them).
+# "archive.packages": [archive] packages, the loader of car.sp (research/car-packages.md).
+# "archive.ids": the plugin writes the listed model ID into car.sp's data as it serves it, so
+# car.sp holds its builder's ID ("Model ID in memory"). Packages from this pipeline need both.
+CAPABILITIES = {"archive.packages", "archive.ids"}
+PIPELINE_REQUIRES = ["archive.packages", "archive.ids"]
 
 KEY = re.compile(r"^[a-z0-9]+\.[a-z0-9]+\.[A-Za-z0-9_\-]+$")
 TOP_KEYS = {"format", "format_version", "key", "version", "car", "names", "garage", "images", "requires", "source"}
@@ -361,6 +365,18 @@ def validate(path: Path) -> list[str]:
     return out
 
 
+def requires_of(path: Path) -> set[str]:
+    """The capabilities a package's manifest asks for, read without checking the rest (a
+    first look before anything is installed; read() checks the whole package). Empty when
+    the manifest can't be read."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            req = json.loads(z.read(MANIFEST).decode("utf-8")).get("requires")
+    except (OSError, KeyError, ValueError, AttributeError, zipfile.BadZipFile):
+        return set()
+    return {r for r in req if isinstance(r, str)} if isinstance(req, list) else set()
+
+
 def read(path: Path) -> tuple[dict, bytes, dict[str, bytes]]:
     """(manifest, car.sp, {image member: bytes}) of a valid package; ValueError otherwise."""
     problems = validate(path)
@@ -464,7 +480,7 @@ def pack(build: Path, media: list[str], out_dir: Path, version: int = 1, isos=No
                 "maker_group": group,
             },
             "garage": {k.lower(): v for k, v in bars.items() if k.lower() in GARAGE_KEYS},
-            "requires": ["archive.packages"],
+            "requires": list(PIPELINE_REQUIRES),
             "source": {"pipeline": "dsfforza", "game": car["game"], "media": car["media"]},
         }
         sound_host = (car.get("sound") or {}).get("sound_host")

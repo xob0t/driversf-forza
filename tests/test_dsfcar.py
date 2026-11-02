@@ -122,6 +122,20 @@ class DsfcarTest(unittest.TestCase):
         self.assertEqual(dsfcar.validate(path), [])
         self.assertEqual(dsfcar.read(path)[0]["images"], {})
 
+    def test_requires(self):
+        """Packages from this pipeline ask for archive.ids too (the plugin writes the listed
+        ID); one from before asks for archive.packages only and is still a valid package."""
+        self.assertEqual(dsfcar.PIPELINE_REQUIRES, ["archive.packages", "archive.ids"])
+        path = self.write(manifest(requires=list(dsfcar.PIPELINE_REQUIRES)))
+        self.assertEqual(dsfcar.validate(path), [])
+        self.assertEqual(dsfcar.requires_of(path), {"archive.packages", "archive.ids"})
+        self.assertEqual(dsfcar.requires_of(self.write()), {"archive.packages"})
+        bad = self.tmp / "bad.dsfcar"
+        bad.write_bytes(b"x")
+        self.assertEqual(dsfcar.requires_of(bad), set())
+        with self.assertRaises(ValueError):  # the loader is always needed
+            self.write(manifest(requires=["archive.ids"]))
+
     def test_nothing_global(self):
         for bad in ({"spool_id": 700}, {"glyphs": {"ModelGlyph": 300}}):
             with self.assertRaises(ValueError):

@@ -69,10 +69,14 @@ static LONG CALLBACK crash_handler(EXCEPTION_POINTERS* ep)
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// The capability marker the car manager reads from this file (patch.h); logged at start,
+// which also keeps it in the DLL.
+extern const char dsf_capabilities[] = DSF_CAPABILITIES_MARKER DSF_CAPABILITIES;
+
 static void run_modules()
 {
     dsf_core_init();
-    dsf_log("dsfforza.asi %s, ini %s", DSF_VERSION, dsf_ini_path());
+    dsf_log("dsfforza.asi %s, ini %s; %s", DSF_VERSION, dsf_ini_path(), dsf_capabilities);
     if (!cfg_bool("dsfforza", "enabled", true)) {
         dsf_log("[dsfforza] enabled=0: no patches");
         return;

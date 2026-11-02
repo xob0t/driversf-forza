@@ -23,11 +23,21 @@ def archive(path: Path, ids: list[int]) -> None:
         write_chunk(f, None, [node("SSIC", [node("NONR", [leaf("SSLP", head + records)], align=4)])])
 
 
+def plugin(game: Path, capabilities: str | None = "archive.packages archive.ids") -> None:
+    """A stand-in plugins/dsfforza.asi: some DLL-like bytes with the capability marker
+    (tools/asi/src/patch.h); None: a plugin from before the marker."""
+    path = game / car_manager.PLUGIN
+    path.parent.mkdir(parents=True, exist_ok=True)
+    marker = b"" if capabilities is None else car_manager.CAPABILITIES_MARKER + capabilities.encode() + b"\0"
+    path.write_bytes(b"MZ" + b"\0" * 200 + b"dsfforza.asi %s, ini %s\0" + marker + b"\0" * 64)
+
+
 class ManagerTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.game = self.tmp / "game"
         archive(self.game / "Install" / "dngvehicles.sp", [1, 2, 4, 62])
+        plugin(self.game)
         self.lines = []
 
     def package(self, media: str, version: int = 1, car: int = 1, host: int = 205) -> Path:
@@ -418,6 +428,68 @@ class ManagerTest(unittest.TestCase):
         self.assertEqual(m.verify(), [])
         sp.write_bytes(patched + b"x")
         self.assertTrue(any("not the package's car.sp" in p for p in m.verify()))
+
+    def test_plugin_capabilities(self):
+        self.assertEqual(car_manager.plugin_capabilities(self.game / car_manager.PLUGIN), car_manager.MANAGER_NEEDS)
+        plugin(self.game, None)
+        self.assertEqual(car_manager.plugin_capabilities(self.game / car_manager.PLUGIN), set())
+        self.assertIsNone(car_manager.plugin_capabilities(self.tmp / "none" / "dsfforza.asi"))
+
+    def test_marker_matches_the_plugin_source(self):
+        """The marker and names the manager reads are the ones patch.h defines, and the plugin
+        has every capability a package may ask for."""
+        import re
+
+        from dsfforza import REPO
+
+        header = (REPO / "tools" / "asi" / "src" / "patch.h").read_text(encoding="utf-8")
+        marker = re.search(r'#define DSF_CAPABILITIES_MARKER "([^"]*)"', header).group(1)
+        names = set(re.search(r'#define DSF_CAPABILITIES "([^"]*)"', header).group(1).split())
+        self.assertEqual(marker.encode(), car_manager.CAPABILITIES_MARKER)
+        self.assertTrue(names >= car_manager.MANAGER_NEEDS)
+        self.assertEqual(dsfcar.CAPABILITIES, names)
+
+    def test_a_missing_or_older_plugin_is_refused_before_anything_is_written(self):
+        """A plugin from before archive.ids serves car.sp's builder ID under the listed one:
+        install, enable and reassign refuse, and nothing is written."""
+        pkg = self.package("CAR_A_10")
+        cars = self.game / car_manager.CARS_DIR
+        for caps, words in ((False, "isn't installed"), (None, "is older"), ("archive.packages", "is older")):
+            with self.subTest(caps=caps):
+                if caps is False:
+                    (self.game / car_manager.PLUGIN).unlink(missing_ok=True)
+                else:
+                    plugin(self.game, caps)
+                with self.assertRaises(SystemExit) as refused:
+                    car_manager.main(["--game", str(self.game), "install", str(pkg)])
+                self.assertIn(words, str(refused.exception))
+                self.assertIn("install.ps1", str(refused.exception))
+                self.assertIn("archive.ids", str(refused.exception))
+                self.assertFalse(cars.exists())
+        # Installed with a current plugin, then the plugin goes back to an older one.
+        plugin(self.game)
+        a = self.manager().install(pkg)
+        self.manager().set_enabled(a, enabled=False)
+        before = {p.name: p.read_bytes() for p in cars.iterdir() if p.is_file()}
+        plugin(self.game, None)
+        with self.assertRaises(SystemExit):
+            car_manager.main(["--game", str(self.game), "enable", a])
+        archive(self.game / "Install" / "dngvehicles.sp", [1, 2, 3, 4, 62])  # another archive takes 3
+        with self.assertRaises(SystemExit):
+            car_manager.main(["--game", str(self.game), "reassign", a])
+        self.assertEqual({p.name: p.read_bytes() for p in cars.iterdir() if p.is_file()}, before)
+        # Disabling and removing list no car, so an older plugin doesn't stop them.
+        car_manager.main(["--game", str(self.game), "disable", a])
+        car_manager.main(["--game", str(self.game), "remove", a])
+        self.assertEqual(self.listed(), {})
+
+    def test_a_package_asks_for_what_the_plugin_lacks(self):
+        """A package's own `requires` is checked too (here a plugin that lists only
+        archive.ids, so a package asking for archive.packages is refused)."""
+        plugin(self.game, "archive.ids")
+        with self.assertRaises(SystemExit) as refused:
+            self.manager().install(self.package("CAR_A_10"))
+        self.assertIn("archive.packages", str(refused.exception))
 
 
 if __name__ == "__main__":

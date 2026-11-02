@@ -312,7 +312,7 @@ textures, the picture is DXT5), members at its root and nothing else:
             "year": 1991, "maker_group": "BMW"},
   "garage": {"speed": 0.48, "strength": 0.3, "drift": 0.65},
   "images": {"picture": "picture.dds", "badge": "badge.png", "plate": "plate.png"},
-  "requires": ["archive.packages"],
+  "requires": ["archive.packages", "archive.ids"],
   "source": {"pipeline": "dsfforza", "game": "FH1", "media": "BMW_M3E30_91"}
 }
 ```
@@ -337,7 +337,11 @@ textures, the picture is DXT5), members at its root and nothing else:
   ID (`"ID:7000xx"`), picture name (`Picture1`) or garage group number:
   the manager allocates those against what is installed. Unknown fields
   are refused, at every level.
-- `requires`: capabilities of dsfforza.asi, today only `archive.packages`.
+- `requires`: capabilities of dsfforza.asi: `archive.packages` (the loader;
+  always required) and `archive.ids` (the plugin writes the listed ID into
+  the data, "Model ID in memory"; port_batch's packages list both). The
+  manager checks them against the installed plugin ("The plugin's
+  capabilities").
 - Images are what the build drew (the Forza logo or a text badge, the
   chrome plate, the rendered picture), not glyph codes. Without one the
   manager uses the game's own badge or plate for that maker or model, or
@@ -720,6 +724,27 @@ of them:
 Not covered: a full VEHC read a second time (the game kept it resident in
 both runs; the write is the same on every read, `st_set_ids`), and a slow
 disk.
+
+**The plugin's capabilities.** A plugin from before this change serves
+car.sp's builder ID, so the VEHC would say one ID and the SSLP record
+another. The manager reads what the installed plugin can do from the DLL
+file, without running the game: `tools/asi/src/patch.h` defines the marker
+`DSFFORZA-CAPABILITIES: ` and the names (`archive.packages archive.ids`),
+`main.cpp` keeps the string in the DLL by logging it at start, and
+`car_manager.plugin_capabilities` reads it from `<game>\plugins\dsfforza.asi`
+(no plugin: none; no marker: an older plugin). `install`, `enable` and
+`reassign` refuse before writing anything unless the plugin has
+`archive.packages` and `archive.ids` (what every car the manager lists
+needs, as it installs car.sp unchanged) and everything the packages'
+`requires` list; the message says to update dsfforza.asi with
+`tools\install.ps1`. `disable`, `remove`, `uninstall` and `seed` list no
+new car and aren't checked. install.ps1 writes `plugins\dsfforza.asi`
+before it hands the packages to the manager, so the check sees the new
+plugin there. Checked on a scratch game folder with a three-car build:
+`install.ps1 -Packages` with the main checkout's older plugin stops at the
+manager's refusal with no `dsfforza\cars` written; with this branch's plugin
+it installs, and a `-Force` reinstall works. The game's installed plugin
+and the main checkout's build read as having no capability list.
 
 **Reading car.sp straight out of the `.dsfcar`** (not done; would work as
 far as the loader is concerned). The zip is stored, not deflated, so
