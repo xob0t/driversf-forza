@@ -13,8 +13,8 @@ What it owns, all under the game folder (no game file is written):
 
     dsfforza\\cars\\manager.json       its state: the key -> model ID map and the installed cars
     dsfforza\\cars\\cars.txt           the plugin's list, "id path" per enabled car
-    dsfforza\\cars\\<key>.sp           a car's installed form (its ID written in)
-    dsfforza\\cars\\<key>\\            the package's manifest and images (car.json, *.png, *.dds)
+    dsfforza\\cars\\<key>\\            one car: car.sp, its installed form (its ID written in),
+                                     and the package's manifest and images (car.json, *.png, *.dds)
     Common\\UserLuaScripts\\dsfforza\\packages.lua   vehicleStats entries of the enabled cars
 
 IDs. A key keeps its model ID for good: across upgrades, disable and enable, and after a
@@ -147,7 +147,7 @@ class Manager:
 
     def key_clash(self, key: str) -> str | None:
         """A known key that differs from `key` only in case: on Windows both name the same
-        package folder and .sp file."""
+        package folder."""
         folded = key.casefold()
         known = set(self.state["ids"]) | set(self.state["cars"]) | set(self.state["merged"])
         return next((k for k in sorted(known) if k != key and k.casefold() == folded), None)
@@ -166,14 +166,15 @@ class Manager:
         raise SystemExit(f"no free model ID below {MAX_BASE_ID + 1} for {key}")
 
     def sp_path(self, key: str) -> Path:
-        return self.cars_dir / f"{key}.sp"
+        """The installed form, in the car's folder under the package's name for it."""
+        return self.cars_dir / key / dsfcar.CAR
 
     def listed(self) -> dict[int, str]:
         """{ID: path} the plugin's list should hold: the enabled packages, less those whose car
         the merged install has too (merged_conflicts)."""
         conflicts = self.merged_conflicts()
         return {
-            c["id"]: str(CARS_DIR / f"{k}.sp").replace("/", "\\")
+            c["id"]: str(CARS_DIR / k / dsfcar.CAR).replace("/", "\\")
             for k, c in self.state["cars"].items()
             if c["enabled"] and k not in conflicts
         }
@@ -287,46 +288,42 @@ class Manager:
         return key
 
     def _commit(self, key: str, manifest: dict, car_sp: bytes, images: dict, entry: dict, old: dict | None) -> None:
-        """Stage the package next to the installed one (<key>.new, <key>.sp.new), then swap
-        them in and save the state; on any failure the installed files and state are put back."""
-        folder, sp = self.cars_dir / key, self.sp_path(key)
-        staged, staged_sp = folder.with_name(key + ".new"), sp.with_name(sp.name + ".new")
-        backup, backup_sp = folder.with_name(key + ".old"), sp.with_name(sp.name + ".old")
-        for p in (staged, backup):
-            shutil.rmtree(p, ignore_errors=True)
-        for p in (staged_sp, backup_sp):
-            p.unlink(missing_ok=True)
+        """Stage the car's folder next to the installed one (<key>.new), then swap it in and
+        save the state; on any failure the installed folder and state are put back."""
+        folder = self.cars_dir / key
+        staged, backup = folder.with_name(key + ".new"), folder.with_name(key + ".old")
+        if backup.exists() and not folder.exists():
+            backup.replace(folder)  # an earlier swap stopped half-way: the backup is the installed car
+        shutil.rmtree(backup, ignore_errors=True)
+        shutil.rmtree(staged, ignore_errors=True)
         staged.mkdir(parents=True)
         try:
-            (staged / dsfcar.CAR).write_bytes(car_sp)
-            car_package.install_sp(staged / dsfcar.CAR, entry["id"], staged_sp)
-            (staged / dsfcar.CAR).unlink()
+            source = staged / (dsfcar.CAR + ".package")  # the package's car.sp, before its ID is written in
+            source.write_bytes(car_sp)
+            car_package.install_sp(source, entry["id"], staged / dsfcar.CAR)
+            source.unlink()
             for name, data in images.items():
                 (staged / name).write_bytes(data)
             _write_text(staged / dsfcar.MANIFEST, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
-            entry["sha256"] = dsfcar.sha256(staged_sp.read_bytes())
+            entry["sha256"] = dsfcar.sha256((staged / dsfcar.CAR).read_bytes())
         except BaseException:
             shutil.rmtree(staged, ignore_errors=True)
-            staged_sp.unlink(missing_ok=True)
             raise
-        moved = []
+        moved = False
         try:
-            for live, aside in ((folder, backup), (sp, backup_sp)):
-                if live.exists():
-                    live.replace(aside)
-                    moved.append((live, aside))
+            if folder.exists():
+                folder.replace(backup)
+                moved = True
             staged.replace(folder)
-            staged_sp.replace(sp)
             self.state["cars"][key] = entry
             self.save()
         except BaseException:
-            # Whatever of the new package is in place goes; what was moved aside comes back.
-            shutil.rmtree(folder, ignore_errors=True)
-            sp.unlink(missing_ok=True)
-            for live, aside in moved:
-                aside.replace(live)
+            # The new folder goes if it got in place; the old one comes back.
+            if not staged.exists():
+                shutil.rmtree(folder, ignore_errors=True)
+            if moved:
+                backup.replace(folder)
             shutil.rmtree(staged, ignore_errors=True)
-            staged_sp.unlink(missing_ok=True)
             if old is not None:
                 self.state["cars"][key] = old
             else:
@@ -334,7 +331,6 @@ class Manager:
             self.save()
             raise
         shutil.rmtree(backup, ignore_errors=True)
-        backup_sp.unlink(missing_ok=True)
 
     def _car(self, key: str) -> dict:
         if key not in self.state["cars"]:
@@ -346,26 +342,45 @@ class Manager:
         self.save()
         self.log(f"{key}: {'enabled' if enabled else 'disabled'} (ID {self.state['cars'][key]['id']})")
 
+    def _set_aside(self, key: str) -> Path | None:
+        """Move the car's folder out of the way (<key>.removed) for deleting; returns it. The
+        move fails as a whole while the game has a file in it open, before anything changes."""
+        folder = self.cars_dir / key
+        if not folder.exists():
+            return None
+        gone = folder.with_name(key + ".removed")
+        shutil.rmtree(gone, ignore_errors=True)  # an earlier delete's leftover
+        folder.replace(gone)
+        return gone
+
     def remove(self, key: str) -> None:
         car = self._car(key)
-        self.sp_path(key).unlink(missing_ok=True)
-        shutil.rmtree(self.cars_dir / key, ignore_errors=True)
+        gone = self._set_aside(key)
         del self.state["cars"][key]
         self.save()
+        if gone:
+            shutil.rmtree(gone)
         self.log(f"{key}: removed; ID {car['id']} stays reserved for it")
 
     def uninstall(self, *, forget_ids: bool = False) -> None:
-        """Every file the manager wrote goes: the cars' .sp files and folders, the plugin's
+        """Every file the manager wrote goes: the cars' folders, the plugin's
         list, the generated GUI copies, packages.lua and packages_hud.lua. The key -> ID map
         stays in manager.json (unless `forget_ids`): the save keeps its flags per model ID
         (autosave.dat below 304, dsfforza-garage.dat above), so a later install gives every
         car the ID those flags are for."""
         from dsfforza.build import car_gui
 
-        for key in list(self.state["cars"]):
-            self.sp_path(key).unlink(missing_ok=True)
-            shutil.rmtree(self.cars_dir / key, ignore_errors=True)
-        self.state["cars"] = {}
+        set_aside = []
+        try:
+            for key in list(self.state["cars"]):
+                set_aside.append(self._set_aside(key))
+                del self.state["cars"][key]
+        except BaseException:
+            self.save()  # the cars still in place stay installed and listed
+            raise
+        finally:
+            for gone in filter(None, set_aside):
+                shutil.rmtree(gone)
         (self.cars_dir / LIST).unlink(missing_ok=True)
         (self.game / LUA).unlink(missing_ok=True)
         car_gui.clear(self.game)
