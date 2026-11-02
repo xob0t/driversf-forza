@@ -73,6 +73,20 @@ def plugin_capabilities(plugin: Path) -> set[str] | None:
     return set(data[at + len(CAPABILITIES_MARKER) : end if end >= 0 else None].decode("ascii", "replace").split())
 
 
+def check_plugin(plugin: Path, requires, what: str) -> None:
+    """SystemExit unless the plugin file has MANAGER_NEEDS and everything in `requires`."""
+    caps = plugin_capabilities(plugin)
+    missing = (MANAGER_NEEDS | set(requires)) - (caps or set())
+    if not missing:
+        return
+    state = "isn't there" if caps is None else f"is older (it has {sorted(caps) or 'no capability list'})"
+    raise SystemExit(
+        f"{what}: {plugin} {state}; these cars need {sorted(missing)}. Update dsfforza.asi with"
+        r" tools\install.ps1 (it installs the plugin and the packages of one checkout), then run this again."
+        " Nothing was changed."
+    )
+
+
 def reserved_ids() -> set[int]:
     from dsfforza.build.port_batch import RESERVED_IDS
 
@@ -263,17 +277,7 @@ class Manager:
         """Refuse (before anything is written) unless the installed dsfforza.asi has what the
         cars need: MANAGER_NEEDS for every car, and what their packages' `requires` list. A
         plugin from before "archive.ids" would serve car.sp's builder ID under the listed one."""
-        needs = MANAGER_NEEDS | set(requires)
-        caps = plugin_capabilities(self.game / PLUGIN)
-        missing = needs - (caps or set())
-        if not missing:
-            return
-        state = "isn't installed" if caps is None else f"is older (it has {sorted(caps) or 'no capability list'})"
-        raise SystemExit(
-            f"{what}: {self.game / PLUGIN} {state}; these cars need {sorted(missing)}. Update dsfforza.asi with"
-            r" tools\install.ps1 -Asi -Packages (the plugin and the packages of one checkout), then run this again."
-            " Nothing was changed."
-        )
+        check_plugin(self.game / PLUGIN, requires, what)
 
     # --- commands ---
 
@@ -542,6 +546,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "seed", parents=[common], help="record a merged install's IDs (its ported.lua) before it is uninstalled"
     )
+    c = sub.add_parser(
+        "check-plugin",
+        parents=[common],
+        help="check a dsfforza.asi against what the packages need (install.ps1, before the game folder changes)",
+    )
+    c.add_argument("--plugin", type=Path, help="the plugin file (default the game's plugins\\dsfforza.asi)")
+    c.add_argument("packages", type=Path, nargs="*", help=".dsfcar files or folders whose requires count too")
     return parser
 
 
@@ -591,6 +602,12 @@ def main(argv: list[str] | None = None) -> None:
         from dsfforza.game import game_paths
 
         args.game = game_paths.game_dir()
+    if args.cmd == "check-plugin":  # reads no state and writes nothing
+        paths = package_paths(args.packages)
+        plugin = args.plugin or Path(args.game) / PLUGIN
+        check_plugin(plugin, {r for p in paths for r in dsfcar.requires_of(p)}, "check-plugin")
+        print(f"{plugin}: {' '.join(sorted(plugin_capabilities(plugin)))}")
+        return
     if args.cmd not in ("status", "verify"):
         from dsfforza.build.install import game_running
 

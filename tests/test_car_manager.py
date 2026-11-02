@@ -454,7 +454,7 @@ class ManagerTest(unittest.TestCase):
         install, enable and reassign refuse, and nothing is written."""
         pkg = self.package("CAR_A_10")
         cars = self.game / car_manager.CARS_DIR
-        for caps, words in ((False, "isn't installed"), (None, "is older"), ("archive.packages", "is older")):
+        for caps, words in ((False, "isn't there"), (None, "is older"), ("archive.packages", "is older")):
             with self.subTest(caps=caps):
                 if caps is False:
                     (self.game / car_manager.PLUGIN).unlink(missing_ok=True)
@@ -482,6 +482,21 @@ class ManagerTest(unittest.TestCase):
         car_manager.main(["--game", str(self.game), "disable", a])
         car_manager.main(["--game", str(self.game), "remove", a])
         self.assertEqual(self.listed(), {})
+
+    def test_check_plugin_command(self):
+        """install.ps1's preflight: a plugin file is checked against a build's packages without
+        reading or writing the manager's state."""
+        folder = self.tmp / "packages"
+        folder.mkdir()
+        self.package("CAR_A_10").rename(folder / "forza.fh1.CAR_A_10.dsfcar")
+        good = self.game / car_manager.PLUGIN
+        car_manager.main(["--game", str(self.game), "check-plugin", "--plugin", str(good), str(folder)])
+        older = self.tmp / "older.asi"
+        older.write_bytes(b"MZ no marker")
+        for plugin_file in (older, self.tmp / "none.asi"):
+            with self.assertRaises(SystemExit):
+                car_manager.main(["--game", str(self.game), "check-plugin", "--plugin", str(plugin_file), str(folder)])
+        self.assertFalse((self.game / car_manager.CARS_DIR).exists())
 
     def test_a_package_asks_for_what_the_plugin_lacks(self):
         """A package's own `requires` is checked too (here a plugin that lists only

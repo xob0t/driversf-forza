@@ -56,7 +56,10 @@ class InstallPackagesTest(unittest.TestCase):
         self.build = self.make_build(["CAR_A_10", "CAR_B_10", "CAR_C_10"])
         plugin = self.tmp / "plugin"
         plugin.mkdir()
-        (plugin / "dsfforza.asi").write_bytes(b"plugin")
+        # A plugin that writes the model ID in memory (its capability marker, tools/asi/src/patch.h).
+        (plugin / "dsfforza.asi").write_bytes(
+            b"plugin\0" + car_manager.CAPABILITIES_MARKER + b"archive.packages archive.ids\0"
+        )
         (plugin / "dsfforza.ini").write_text("[archive]\npackages=0\n", encoding="utf-8")
         self.asi = plugin / "dsfforza.asi"
 
@@ -220,6 +223,14 @@ class InstallPackagesTest(unittest.TestCase):
         self.merged_install()
         before = tree(self.game)
         self.run_ps1("-Build", str(self.build), "-AsiPath", str(self.tmp / "none.asi"), "-SkipHook", ok=False)
+        # A plugin from before archive.ids (it would serve car.sp's builder ID): refused up front.
+        older = self.tmp / "older"
+        older.mkdir()
+        (older / "dsfforza.asi").write_bytes(b"an older plugin, no capability list")
+        shutil.copy(self.asi.with_suffix(".ini"), older / "dsfforza.ini")
+        text = self.run_ps1("-Build", str(self.build), "-AsiPath", str(older / "dsfforza.asi"), "-SkipHook", ok=False)
+        self.assertIn("archive.ids", text)
+        self.assertEqual(tree(self.game), before)
         (self.build / "packages" / "forza.fh1.CAR_C_10.dsfcar").unlink()
         text = self.install(ok=False)
         self.assertIn("1 cars without a package", text)

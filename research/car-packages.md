@@ -738,12 +738,16 @@ file, without running the game: `tools/asi/src/patch.h` defines the marker
 needs, as it installs car.sp unchanged) and everything the packages'
 `requires` list; the message says to update dsfforza.asi with
 `tools\install.ps1`. `disable`, `remove`, `uninstall` and `seed` list no
-new car and aren't checked. install.ps1 writes `plugins\dsfforza.asi`
-before it hands the packages to the manager, so the check sees the new
-plugin there. Checked on a scratch game folder with a three-car build:
-`install.ps1 -Packages` with the main checkout's older plugin stops at the
-manager's refusal with no `dsfforza\cars` written; with this branch's plugin
-it installs, and a `-Force` reinstall works. The game's installed plugin
+new car and aren't checked. install.ps1 checks the plugin it will install
+(`-AsiPath`) with `car_manager check-plugin --plugin <file> <build>\packages`
+among its other checks, before the game folder changes, and writes
+`plugins\dsfforza.asi` before it hands the packages to the manager, so the
+manager's own check then sees the new plugin. `tests/test_install_packages.py`
+runs install.ps1 with a plugin file without the marker: refused, the game
+folder unchanged. Before #485, on a scratch game folder with a three-car
+build, install.ps1 with the main checkout's older plugin stopped at the
+manager's refusal and wrote no `dsfforza\cars`; with this branch's plugin
+it installed, and a `-Force` reinstall worked. The game's installed plugin
 and the main checkout's build read as having no capability list.
 
 **Reading car.sp straight out of the `.dsfcar`** (not done; would work as
