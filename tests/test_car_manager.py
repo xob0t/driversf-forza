@@ -243,6 +243,50 @@ class ManagerTest(unittest.TestCase):
             m.install(self.package("CAR_B_10"))
         self.assertNotIn("forza.fh1.CAR_B_10", m.state["ids"])
 
+    def test_interrupted_swap_is_recovered(self):
+        """A swap that stopped after the installed folder went to <key>.old: the next install
+        puts it back before staging, so a failing one leaves the car installed."""
+        from unittest import mock
+
+        m = self.manager()
+        a = m.install(self.package("CAR_A_10"))
+        folder = self.game / car_manager.CARS_DIR / a
+        before = (folder / "car.sp").read_bytes()
+        folder.replace(folder.with_name(a + ".old"))
+        with mock.patch.object(car_package, "install_sp", side_effect=OSError("disk full")), self.assertRaises(OSError):
+            m.install(self.package("CAR_A_10", version=2))
+        self.assertEqual((folder / "car.sp").read_bytes(), before)
+        self.assertFalse(folder.with_name(a + ".old").exists())
+        self.assertEqual(m.verify(), [])
+
+    def test_remove_of_a_folder_in_use_changes_nothing(self):
+        """A folder that can't be moved (the game has a file in it open) stops remove and
+        uninstall before the state changes."""
+        from unittest import mock
+
+        m = self.manager()
+        a = m.install(self.package("CAR_A_10"))
+        b = m.install(self.package("CAR_B_10"))
+        real = Path.replace
+
+        def busy(path, target):
+            if path.name == b:
+                raise PermissionError("in use")
+            return real(path, target)
+
+        with mock.patch.object(Path, "replace", busy):
+            with self.assertRaises(PermissionError):
+                m.remove(b)
+            self.assertIn(b, m.state["cars"])
+            with self.assertRaises(PermissionError):
+                m.uninstall()
+        # The car whose folder moved is uninstalled; the busy one stays installed and listed.
+        self.assertEqual(set(m.state["cars"]), {b})
+        self.assertFalse((self.game / car_manager.CARS_DIR / a).exists())
+        self.assertEqual(m.verify(), [])
+        m.uninstall()
+        self.assertEqual(sorted(p.name for p in (self.game / car_manager.CARS_DIR).iterdir()), [car_manager.STATE])
+
     def test_verify_compares_the_list(self):
         m = self.manager()
         m.install(self.package("CAR_A_10"))

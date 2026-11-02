@@ -292,8 +292,10 @@ class Manager:
         save the state; on any failure the installed folder and state are put back."""
         folder = self.cars_dir / key
         staged, backup = folder.with_name(key + ".new"), folder.with_name(key + ".old")
-        for p in (staged, backup):
-            shutil.rmtree(p, ignore_errors=True)
+        if backup.exists() and not folder.exists():
+            backup.replace(folder)  # an earlier swap stopped half-way: the backup is the installed car
+        shutil.rmtree(backup, ignore_errors=True)
+        shutil.rmtree(staged, ignore_errors=True)
         staged.mkdir(parents=True)
         try:
             source = staged / (dsfcar.CAR + ".package")  # the package's car.sp, before its ID is written in
@@ -340,11 +342,24 @@ class Manager:
         self.save()
         self.log(f"{key}: {'enabled' if enabled else 'disabled'} (ID {self.state['cars'][key]['id']})")
 
+    def _set_aside(self, key: str) -> Path | None:
+        """Move the car's folder out of the way (<key>.removed) for deleting; returns it. The
+        move fails as a whole while the game has a file in it open, before anything changes."""
+        folder = self.cars_dir / key
+        if not folder.exists():
+            return None
+        gone = folder.with_name(key + ".removed")
+        shutil.rmtree(gone, ignore_errors=True)  # an earlier delete's leftover
+        folder.replace(gone)
+        return gone
+
     def remove(self, key: str) -> None:
         car = self._car(key)
-        shutil.rmtree(self.cars_dir / key, ignore_errors=True)
+        gone = self._set_aside(key)
         del self.state["cars"][key]
         self.save()
+        if gone:
+            shutil.rmtree(gone)
         self.log(f"{key}: removed; ID {car['id']} stays reserved for it")
 
     def uninstall(self, *, forget_ids: bool = False) -> None:
@@ -355,9 +370,17 @@ class Manager:
         car the ID those flags are for."""
         from dsfforza.build import car_gui
 
-        for key in list(self.state["cars"]):
-            shutil.rmtree(self.cars_dir / key, ignore_errors=True)
-        self.state["cars"] = {}
+        set_aside = []
+        try:
+            for key in list(self.state["cars"]):
+                set_aside.append(self._set_aside(key))
+                del self.state["cars"][key]
+        except BaseException:
+            self.save()  # the cars still in place stay installed and listed
+            raise
+        finally:
+            for gone in filter(None, set_aside):
+                shutil.rmtree(gone)
         (self.cars_dir / LIST).unlink(missing_ok=True)
         (self.game / LUA).unlink(missing_ok=True)
         car_gui.clear(self.game)
