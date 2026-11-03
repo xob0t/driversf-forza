@@ -2103,7 +2103,7 @@ def _build(
         t = texts[car["media"]]
         return logos(t["dsf_make"]) or logos(t["make"]) or maker_badge(t["dsf_make"]), nameplate(t["model"], 124, 38)
 
-    def png(car: dict) -> Path:
+    def preview_path(car: dict) -> Path:
         return out_dir / f"dsfforza_{car['media'].lower()}.png"
 
     renders = _Renders(Path(archive), data["cars"], ui, jobs, thumbnails, set(cached), record, backdrop, template)
@@ -2114,7 +2114,7 @@ def _build(
     _TEXT_PLATES.update(plates)
     logo_cache.update(found)
     out_dir.mkdir(parents=True, exist_ok=True)
-    renders.submit(parts, png)  # they render while the plates below are drawn
+    renders.submit(parts, preview_path)  # they render while the plates below are drawn
     planned, glyphs, notes = plan_glyphs(data["cars"], texts, makes, models, free, logos)
     pictures, hud, report = {}, {}, {"_codes": notes}
     # Names whose nameplate would lose characters (glyph_strokes has no strokes for them).
@@ -2139,7 +2139,7 @@ def _build(
         entry = dict(planned[media])
         name = f"dsfforza_{media.lower()}"
         if sid in cached:  # the same picture as an earlier build's (pack_reuse.PictureCache)
-            dds, png, source = cached[sid]
+            dds, preview, source = cached[sid]
             pictures[name] = dds
             entry["Picture1"] = name
             entry[EMBLEM_FIELD] = 1
@@ -2147,7 +2147,7 @@ def _build(
             out_dir.mkdir(parents=True, exist_ok=True)
             target = out_dir / f"{name}.png"
             target.unlink(missing_ok=True)  # maybe a hard link to an earlier build's
-            target.write_bytes(png)
+            target.write_bytes(preview)
             report[media] = {"spool_id": sid, "picture": name, "picture_source": source, **entry}
             wide_text = "".join(f", {k} {entry[k]:#x}" for k in ("ManufacturerGlyph", "ModelGlyph") if k in entry)
             log(
@@ -2163,14 +2163,14 @@ def _build(
             source = "FH1 thumbnail"
             if image is None:
                 image, source = render_car(Path(archive), sid), "render"
-            dds = finish_picture(image, *parts(car), backdrop, template, png(car))
+            dds = finish_picture(image, *parts(car), backdrop, template, preview_path(car))
         pictures[name] = dds
         entry["Picture1"] = name
         entry[EMBLEM_FIELD] = 1  # Forza logo instead of the SF disc on the garage card (dsfforza.asi)
         hud[sid] = entry
         if cache is not None:
-            png = (out_dir / f"{name}.png").read_bytes()
-            cache.put(car, {"text": t, "thumbnails": thumbnails}, pictures[name], png, source)
+            preview = (out_dir / f"{name}.png").read_bytes()
+            cache.put(car, {"text": t, "thumbnails": thumbnails}, pictures[name], preview, source)
         report[media] = {"spool_id": sid, "picture": name, "picture_source": source, **entry}
         wide_text = "".join(f", {k} {entry[k]:#x}" for k in ("ManufacturerGlyph", "ModelGlyph") if k in entry)
         log(
