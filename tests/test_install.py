@@ -221,13 +221,21 @@ def test_space_needed_counts_converted_cars_more():
 # --- preflight ----------------------------------------------------------------------------------------
 
 
-def _exe(path: Path, stamp: int = install.EXE_TIMESTAMP, size: int = install.EXE_IMAGE_SIZE) -> None:
+def _exe(
+    path: Path, stamp: int = install.EXE_TIMESTAMP, size: int = install.EXE_IMAGE_SIZE, text=install.EXE_TEXT
+) -> None:
+    """A PE header as Driver.exe 1.04's: timestamp, image size and its first section."""
     data = bytearray(1024)
     data[0:2] = b"MZ"
     struct.pack_into("<I", data, 0x3C, 0x80)
     data[0x80:0x84] = b"PE\0\0"
+    struct.pack_into("<H", data, 0x80 + 6, 1)  # NumberOfSections
     struct.pack_into("<I", data, 0x80 + 8, stamp)
+    struct.pack_into("<H", data, 0x80 + 20, 0xE0)  # SizeOfOptionalHeader (PE32)
     struct.pack_into("<I", data, 0x80 + 24 + 56, size)
+    section = 0x80 + 24 + 0xE0
+    data[section : section + 8] = text[0].encode().ljust(8, b"\0")
+    struct.pack_into("<II", data, section + 8, text[2], text[1])  # VirtualSize, VirtualAddress
     _touch(path, bytes(data))
 
 
@@ -270,6 +278,31 @@ def test_exe_build_reads_the_pe_header():
         assert install.exe_build(Path(tmp) / "missing.exe") is None
 
 
+def test_exe_problem_checks_what_the_plugin_checks():
+    with _tmp() as tmp:
+        exe = Path(tmp) / "Driver.exe"
+        _exe(exe)
+        assert install.exe_text(exe) == install.EXE_TEXT
+        assert install.exe_problem(exe) is None
+        _exe(exe, stamp=0x4E000000)
+        assert "not version 1.04" in install.exe_problem(exe)
+        # #482: the 1.04 timestamp and image size, but another first section: the plugin patches nothing
+        _exe(exe, text=(".text", 0x1000, 0x9C0000))
+        assert "different code section" in install.exe_problem(exe)
+        _touch(exe, b"not a PE file" * 10)
+        assert install.exe_problem(exe) == "not a Windows program file"
+
+
+def test_preflight_refuses_an_exe_the_plugin_would_not_patch():
+    with _tmp() as tmp:
+        game = _fake_game(Path(tmp))
+        _exe(game / "Driver.exe", text=("UPX0", 0x1000, 0x9C7171))
+        run = _run(_args("--game", str(game), out=Path(tmp) / "build"))
+        problems = _problems(run)
+        assert "different code section" in problems
+        assert "leaves any other unpatched" in problems
+
+
 def test_preflight_needs_the_game_folder():
     with _tmp() as tmp, mock.patch.dict(os.environ, {}, clear=False):
         os.environ.pop("DSF_GAME_DIR", None)
@@ -290,7 +323,7 @@ def test_preflight_lists_every_problem_at_once():
         _exe(game / "Driver.exe", stamp=0x12345678)
         args = _args("--game", str(game), "--iso", str(root / "missing.iso"), "--car", "NIS_370Z_10", out=root / "b")
         text = _problems(_run(args, running=True, free=0, vc=False, loader=None))
-        assert "is not Driver: San Francisco 1.04" in text
+        assert "is not version 1.04" in text
         assert "not the vanilla 1.04 vehicle archive" in text
         assert "Disc image not found" in text
         assert "Driver.exe is running" in text

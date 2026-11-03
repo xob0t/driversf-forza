@@ -79,6 +79,7 @@ VANILLA_FILES = {  # the other files a merged install (up to v0.1.8) replaced (E
 }
 EXE_TIMESTAMP = 0x4EC0D92B  # Driver.exe 1.04 (tools/asi/src/patch.cpp's exe check)
 EXE_IMAGE_SIZE = 0x019C0000
+EXE_TEXT = (".text", 0x00001000, 0x009C7171)  # its first section: name, VirtualAddress, VirtualSize
 ASI_LOADER_NAMES = (  # tools/install.ps1 $LoaderNames
     "dinput8.dll",
     "winmm.dll",
@@ -171,6 +172,40 @@ def exe_build(path: Path) -> tuple[int, int] | None:
     except (OSError, struct.error):
         return None
     return stamp, size
+
+
+def exe_text(path: Path) -> tuple[str, int, int] | None:
+    """(Name, VirtualAddress, VirtualSize) of an exe's first section, or None."""
+    try:
+        with Path(path).open("rb") as handle:
+            data = handle.read(4096)
+        pe = struct.unpack_from("<I", data, 0x3C)[0]
+        if data[pe : pe + 4] != b"PE\0\0" or struct.unpack_from("<H", data, pe + 6)[0] == 0:
+            return None
+        section = pe + 24 + struct.unpack_from("<H", data, pe + 20)[0]  # after the optional header
+        name = data[section : section + 8].rstrip(b"\0").decode("latin-1")
+        size, va = struct.unpack_from("<II", data, section + 8)
+    except (OSError, struct.error):
+        return None
+    return name, va, size
+
+
+def exe_problem(path: Path) -> str | None:
+    """Why dsfforza.asi would leave this Driver.exe unpatched, or None: the same checks as
+    tools/asi/src/patch.cpp's dsf_exe_ok (PE timestamp, image size, the first section)."""
+    build = exe_build(path)
+    if build is None:
+        return "not a Windows program file"
+    if build != (EXE_TIMESTAMP, EXE_IMAGE_SIZE):
+        return f"not version 1.04 (PE timestamp {build[0]:#x}, image size {build[1]:#x})"
+    text = exe_text(path)
+    if text != EXE_TEXT:
+        found = f"{text[0]!r} at {text[1]:#x}, {text[2]:#x} bytes" if text else "none"
+        return (
+            "a 1.04 build with a different code section than the 1.04 release "
+            f"(first section {found}; the release has '.text' at {EXE_TEXT[1]:#x}, {EXE_TEXT[2]:#x} bytes)"
+        )
+    return None
 
 
 def running_processes(name: str) -> list[Path | None]:
@@ -1273,12 +1308,12 @@ class Run:
         if not (game / "Driver.exe").is_file():
             raise StageError(f"No Driver.exe in {game}.", "DSF_GAME_DIR (or --game) must be the game folder.")
         self.game = game
-        build = exe_build(game / "Driver.exe")
-        if build != (EXE_TIMESTAMP, EXE_IMAGE_SIZE):
-            text = f"{game / 'Driver.exe'} is not Driver: San Francisco 1.04" + (
-                f" (PE timestamp {build[0]:#x}, image size {build[1]:#x})" if build else ""
+        if problem := exe_problem(game / "Driver.exe"):
+            problems.append(
+                f"{game / 'Driver.exe'} is {problem}. dsfforza.asi patches only the 1.04 release's "
+                "Driver.exe and leaves any other unpatched, and the game then crashes while loading "
+                "the cars. Install the game's 1.04 update, or restore the Driver.exe it installed."
             )
-            problems.append(text + "; dsfforza.asi only patches 1.04. Update the game to 1.04.")
         from dsfforza.game import game_paths
 
         self.record = read_install_record(game)
