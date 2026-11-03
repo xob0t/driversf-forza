@@ -36,8 +36,14 @@ def _exe(path: Path) -> None:
     data[0:2] = b"MZ"
     struct.pack_into("<I", data, 0x3C, 0x80)
     data[0x80:0x84] = b"PE\0\0"
+    struct.pack_into("<H", data, 0x80 + 6, 1)  # NumberOfSections
     struct.pack_into("<I", data, 0x80 + 8, install.EXE_TIMESTAMP)
+    struct.pack_into("<H", data, 0x80 + 20, 0xE0)  # SizeOfOptionalHeader (PE32)
     struct.pack_into("<I", data, 0x80 + 24 + 56, install.EXE_IMAGE_SIZE)
+    section = 0x80 + 24 + 0xE0
+    name, va, size = install.EXE_TEXT
+    data[section : section + 8] = name.encode().ljust(8, b"\0")
+    struct.pack_into("<II", data, section + 8, size, va)
     _touch(path, bytes(data))
 
 

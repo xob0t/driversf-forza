@@ -447,6 +447,8 @@ def exe_info(game: Path) -> dict:
         "pe_timestamp": f"{build[0]:#x}" if build else None,
         "image_size": f"{build[1]:#x}" if build else None,
         "is_1_04": build == (install.EXE_TIMESTAMP, install.EXE_IMAGE_SIZE),
+        "first_section": install.exe_text(exe),
+        "problem": install.exe_problem(exe),  # why dsfforza.asi would not patch it
     }
 
 
@@ -889,7 +891,8 @@ def summary_lines(r: dict) -> list[str]:
         lines.append(f"Game:       {g['path']}: {g['problem']}")
     else:
         exe = g.get("driver_exe") or {}
-        version = "1.04" if exe.get("is_1_04") else f"NOT 1.04 (PE timestamp {exe.get('pe_timestamp')})"
+        problem = exe.get("problem")
+        version = "1.04" if not problem else f"NOT patchable: {problem}"
         lines.append(
             f"Game:       {g['path']} ({g.get('found_by')}); Driver.exe {version}; archive: {g.get('archive')}"
         )
