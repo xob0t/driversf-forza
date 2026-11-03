@@ -124,6 +124,29 @@ class StageError(Exception):
         self.hint = hint
 
 
+RELEASES_URL = "https://github.com/xob0t/driversf-forza/releases"
+
+
+def missing_plugin_error(repo: Path) -> StageError:
+    """No plugin\\dsfforza.asi and no git checkout. A release zip has a VERSION file
+    (src/dsfforza/build/package.py), so without one this is GitHub's source zip
+    ("Code > Download ZIP"), which has no plugin. With one, the release's plugin is
+    missing from the unzipped folder."""
+    asi = BUNDLED_ASI.relative_to(REPO)
+    if not (repo / "VERSION").is_file():
+        return StageError(
+            "This folder is GitHub's source code download (Code > Download ZIP), not a release: "
+            "it has no dsfforza.asi.",
+            f"Download driversf-forza-<version>.zip from the Assets list on {RELEASES_URL}, unzip it, "
+            "and run install.cmd there.",
+        )
+    return StageError(
+        f"This release copy has no dsfforza.asi ({asi}), though the release zip holds it.",
+        "Unzip the whole release zip again. If the file is still missing, check your antivirus's "
+        "quarantine for dsfforza.asi. Or pass --asi FILE.",
+    )
+
+
 # --- small probes (each replaceable in tests) -------------------------------------------------
 
 
@@ -1429,10 +1452,7 @@ class Run:
             self.plugin = BUNDLED_ASI
             return "skipped", f"{rel(BUNDLED_ASI)} (comes with this release)"
         if not (REPO / ".git").exists() and not args.rebuild_plugin:
-            raise StageError(
-                f"This copy has no dsfforza.asi ({rel(BUNDLED_ASI)}).",
-                "Download the release zip again (it holds the plugin), or pass --asi FILE.",
-            )
+            raise missing_plugin_error(REPO)
         digest = asi_sources_digest()
         state = plugin_state(ASI_OUT, digest)
         vcvars = find_vcvars()
