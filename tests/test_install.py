@@ -130,6 +130,17 @@ def test_plugin_action_builds_only_when_it_must_and_can():
     assert install.plugin_action("current", vs=False, rebuild=True) == "missing"
 
 
+def test_missing_plugin_tells_a_source_zip_from_a_release():
+    with _tmp() as d:
+        source = install.missing_plugin_error(Path(d))  # GitHub's "Download ZIP": no VERSION
+        assert "source code download" in str(source)
+        assert install.RELEASES_URL in source.hint
+        _touch(Path(d) / "VERSION", b"v0.1.8 01526c14\n")  # package.py writes it into every release
+        release = install.missing_plugin_error(Path(d))
+        assert "release copy" in str(release)
+        assert "--asi FILE" in release.hint
+
+
 def test_asi_sources_digest_ignores_line_ends():
     with _tmp() as tmp:
         root = Path(tmp)
