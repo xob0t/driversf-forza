@@ -190,8 +190,9 @@ does the same: a DLC car's sources are its pack, then the FM4 discs.
 **Same name, different bytes.** The converter takes the car's own pack's copy (the pack
 comes first), and a disc car never reads a pack. Four cars are affected, and each one's pack
 carries the copy it names:
-- `12T1_Bently_{Exh,Int}_HT.xml`: the ALMS pack's differs from disc 1's in its loops (Int
-  volumes 0/0.4 instead of 0.8). BEN_PMContinental_11 uses them; no disc car's ET names them.
+- `12T1_Bently_{Exh,Int}_HT.xml`: the ALMS pack's differs from disc 1's in its loop volumes
+  (0 to 1 per loop; the disc's are 0.8 throughout) and some rpm_min/rpm_max, with the same 10
+  rpm_sample points. BEN_PMContinental_11 uses them; no disc car's ET names them.
 - `4N1_944_EngAmb_HT.xml`: the September Pennzoil pack's differs from the December IGN and
   Meguiar's packs' (two rpm_sample values and a DSP curve). Used by AH_Sprite_58,
   ALF_Spider_86 and MG_MGA_58.
@@ -199,7 +200,7 @@ carries the copy it names:
   the converter doesn't read. Used by MG_MGA_58 and AH_Sprite_58.
 
 Which copy FM4 itself plays when every pack is installed (the `_pri_65` suffix looks like a
-mount priority) is not confirmed. It would need the xex's file lookup.
+mount priority) is not confirmed. It would need the xex's file lookup (#495).
 
 **Built offline** (`engine_sound.forza_engine(..., package=)` and `build_sound` on the 370Z
 template, as `engine_sound convert --package` does): 174 of 176 cars get 8+8 loops, and
