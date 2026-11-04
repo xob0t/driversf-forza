@@ -240,7 +240,11 @@ def test_gamedb_and_string_tables_come_from_the_disc_of_that_game():
 
 
 def _ui(isos):
-    with mock.patch.object(g, "read_xds_rgba", side_effect=lambda data: (1, 1, bytearray(data))):
+    # the discs only: ForzaUI.of also reads the FM4 DLC packs under assets/ (fm4_dlc.ENV turns them off)
+    with (
+        mock.patch.object(g, "read_xds_rgba", side_effect=lambda data: (1, 1, bytearray(data))),
+        mock.patch.dict(os.environ, {"DSFF_FM4_DLC": "0"}),
+    ):
         ui = g.ForzaUI.of(isos)
         try:
             return {

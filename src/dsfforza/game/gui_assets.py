@@ -286,26 +286,28 @@ LOGO_ALIASES = {
 class ForzaUI:
     """FH1's media/ui/Textures.zip on the disc image; maker logos FH1 lacks
     (Renault) come from FM4's (DVD 1, Media/UI/Textures.zip, same layout),
-    opened on first need. Without the FH1 image FM4's alone (no thumbnails),
+    opened on first need, then from the FM4 DLC `packs` (the build's: `of`). Without the FH1 image FM4's alone (no thumbnails),
     without either nothing: logo() is None, and makers get text badges. `of`
     finds the images by their content (forza_roster.game_discs)."""
 
-    def __init__(self, iso: Path | None = None, fallback: Path | None = None):
+    def __init__(self, iso: Path | None = None, fallback: Path | None = None, packs: list | None = None):
         self.image = self.zip = None
         self.names = {}
         if iso and Path(iso).exists():
             self.image, self.zip, self.names = self._open(iso, "media/ui/Textures.zip")
         self.fallback_path, self.fallback = fallback, None
-        self.packs = None  # fm4_dlc.PackUI, opened on first need (False: no packs)
+        # The FM4 DLC packs' UI textures (fm4_dlc.PackUI), indexed on first need; none when not given
+        self.pack_list, self.packs = list(packs or []), None
 
     @classmethod
     def of(cls, isos: list[Path] | None) -> ForzaUI:
         """From the build's disc images (port_batch --iso; None: assets/*.iso), found by
         their title whatever they are called."""
+        from dsfforza.build import fm4_dlc
         from dsfforza.build.forza_roster import game_discs
 
         discs = game_discs(isos)
-        return cls(discs.get("FH1"), discs.get("FM4"))
+        return cls(discs.get("FH1"), discs.get("FM4"), fm4_dlc.packages())
 
     @staticmethod
     def _open(iso: Path, name: str):
@@ -336,7 +338,7 @@ class ForzaUI:
         if self.packs is None:
             from dsfforza.build import fm4_dlc
 
-            self.packs = fm4_dlc.PackUI.found() or False
+            self.packs = fm4_dlc.PackUI(self.pack_list) if self.pack_list else False
         data = self.packs.read(name) if self.packs else None
         return read_xds_rgba(data) if data else None
 

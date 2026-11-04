@@ -274,12 +274,6 @@ class PackUI:
                 for db in dbs:
                     db.close()
 
-    @classmethod
-    def found(cls) -> PackUI | None:
-        """For the packs the build uses (packages()); None without any."""
-        packs = packages()
-        return cls(packs) if packs else None
-
     def read(self, name: str) -> bytes | None:
         """A texture's bytes by its name under Textures/ (any case), or None."""
         from dsfforza.formats.forzazip import ForzaZip
