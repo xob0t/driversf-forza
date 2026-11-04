@@ -959,8 +959,7 @@ struct PendingRead {
     uint32_t kind;
     uint32_t polls;  // busy answers given so far
     LARGE_INTEGER started;
-    volatile LONG done;
-    HANDLE event;  // manual reset; set when the read is done
+    HANDLE event;  // manual reset; set when the read is done (the only completion signal)
 };
 PendingRead g_pending = {};
 SRWLOCK g_pending_lock = SRWLOCK_INIT;
@@ -971,7 +970,8 @@ void CALLBACK pkg_read_work(PTP_CALLBACK_INSTANCE, void* ctx)
     PendingRead* q = (PendingRead*)ctx;
     pkg_read(q->pkg, &q->entry, q->buf, q->size);
     pkg_set_ids(q->pkg, q->kind, q->buf, q->entry.size);
-    InterlockedExchange(&q->done, 1);
+    // The last touch of q: once the event is seen set, pkg_settle clears it and
+    // pkg_read_async may reuse it for the next read.
     SetEvent(q->event);
 }
 
@@ -985,7 +985,7 @@ bool pkg_settle(Reader* r, bool wait, const char* why)
         ReleaseSRWLockExclusive(&g_pending_lock);
         return true;
     }
-    if (!g_pending.done) {
+    if (WaitForSingleObject(g_pending.event, 0) != WAIT_OBJECT_0) {
         if (!wait) {
             g_pending.polls++;
             ReleaseSRWLockExclusive(&g_pending_lock);
@@ -1023,7 +1023,6 @@ bool pkg_read_async(Reader* r, Pkg* p, uint32_t kind, const Entry* e, void* buf,
         g_pending.size = size;
         g_pending.kind = kind;
         g_pending.polls = 0;
-        g_pending.done = 0;
         ResetEvent(g_pending.event);
         QueryPerformanceCounter(&g_pending.started);
         g_pending.reader = r;
