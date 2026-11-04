@@ -1202,8 +1202,11 @@ def prepare_car(args, source: Source, media: str, isos, log=print) -> PreparedCa
     if not args.no_cockpit and extract_dash(source, media, args.cache, log):  # cockpit digital displays
         extract_dash_media(isos, source.game, args.cache)
     car = forza2dsf.load_car(folder, media)
-    # Wheelbase and its midpoint (car_dims), the cockpit eye point and the handling
-    gamedb = extract_gamedb(isos, source.game, args.cache)
+    # Wheelbase and its midpoint (car_dims), the cockpit eye point and the handling: the
+    # disc gamedb for a disc car, FM4's with the DLC packs' rows for a DLC car (fm4_dlc)
+    from dsfforza.build import fm4_dlc
+
+    gamedb = fm4_dlc.for_source(source, isos, args.cache)
     dims = forza2dsf.car_dims(car, gamedb)
     host, sound, choice = pick_hosts(args, media, source.game, folder, gamedb, isos, log)
     return PreparedCar(media, source, folder, car, dims, gamedb, host, sound, choice)

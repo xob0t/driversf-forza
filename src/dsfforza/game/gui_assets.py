@@ -1657,8 +1657,9 @@ def dsf_make(make: str, model: str = "") -> str:
 def car_texts(cars: list[dict], isos: list[Path] | None = None) -> dict[str, dict]:
     """{media: {make, model, family, year}}: Forza's own names (Data_Car
     DisplayName, List_CarMake, List_FamilyModel via src/dsfforza/formats/forza_strings.py,
-    from `isos`, else assets/*.iso, found by title whatever the files are called),
-    upper-cased; media-name guesses where a game has no entry (its disc is missing)."""
+    from `isos`, else assets/*.iso, found by title whatever the files are called; an FM4 DLC
+    car's from its pack, fm4_dlc.car_names), upper-cased; media-name guesses where a game has
+    no entry (its disc or pack is missing)."""
     from dsfforza.build.port_car import make_model
 
     out = {}
@@ -1682,6 +1683,14 @@ def car_texts(cars: list[dict], isos: list[Path] | None = None) -> dict[str, dic
                 except Exception as error:  # noqa: BLE001 - printed; names then come from the media names
                     print(f"warning: {other.upper()} car names: {type(error).__name__}: {error}")
                     continue
+        missing = [car["media"] for car in cars if car["media"] not in found]
+        if missing:  # FM4 DLC cars: their packs' own names (no disc has their rows)
+            from dsfforza.build import fm4_dlc
+
+            try:
+                found.update({k: v for k, v in fm4_dlc.car_names(missing, isos).items() if v.get("display")})
+            except Exception as error:  # noqa: BLE001 - printed; names then come from the media names
+                print(f"warning: FM4 DLC car names: {type(error).__name__}: {error}")
     except ImportError:
         pass
     for car in cars:

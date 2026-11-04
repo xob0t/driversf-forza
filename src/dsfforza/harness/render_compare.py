@@ -830,12 +830,13 @@ def forza_thumbnail(media: str, game: str | None) -> np.ndarray | None:
     (left two thirds; the right third is a top view)."""
     import sqlite3
 
-    from dsfforza import REPO
     from dsfforza.game import gui_assets as g
 
     ui = g.ForzaUI.of(None)
     found = None
-    db = REPO / "out" / "db" / "fm4_gamedb.slt"
+    from dsfforza.build import fm4_dlc
+
+    db = fm4_dlc.gamedb_path("FM4")  # with the DLC packs' rows when written
     if db.exists():
         con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
         try:
