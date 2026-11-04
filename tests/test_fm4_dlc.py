@@ -34,7 +34,7 @@ def _disc_db(path: Path) -> Path:
     return path
 
 
-def _patch(rows: list[tuple], extra: bool = False) -> bytes:
+def _patch(rows: list[tuple], *, extra: bool = False) -> bytes:
     """A pack patch without keys (as the packs' are), its Data_Car columns in another order."""
     db = sqlite3.connect(":memory:")
     db.execute("CREATE TABLE Data_Car (MediaName, Id, Year, MakeID, DisplayName, ModelShort, FamilyModelID)")
@@ -51,7 +51,7 @@ def _patch(rows: list[tuple], extra: bool = False) -> bytes:
 def _packs(found):
     """fm4_dlc.packages() giving `found` (the packs of a test assets/ folder)."""
     real = fm4_dlc.packages
-    fm4_dlc.packages = lambda root=None: list(found) if fm4_dlc.enabled() else []
+    fm4_dlc.packages = lambda _root=None: list(found) if fm4_dlc.enabled() else []
     try:
         yield
     finally:

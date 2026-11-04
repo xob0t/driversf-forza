@@ -23,7 +23,8 @@ Stages, each skipped when there is nothing to do:
    prebuilt one is used as it is. Every install needs it: its [archive] packages loads
    the cars.
 4. build: src/dsfforza/build/port_batch.py build with --gui --wide-glyphs --id-policy
-   asi --root-limit 3003 --packages (tools/batches/all.txt by default) into out/build.new, reusing
+   asi --root-limit 3003 --packages (tools/batches/all.txt by default, then the cars of the FM4
+   DLC packs under assets/: --fm4-dlc-cars; --no-fm4-dlc leaves them out) into out/build.new, reusing
    every car the last build (out/build), an interrupted one (out/build.partial) or
    --reuse DIR made from the same inputs and code, so a re-run only converts what
    changed. Without any of those, the earlier build under out/ with the most cars is

@@ -6,8 +6,8 @@ Sources scanned, all read in place (nothing is extracted):
   * FM4 disc 2 car packs: STFS (PIRS) packages under content/, each holding
     Media/DLCZips/000N_pri_65.zip, whose media/cars/<NAME>/ folders are cars;
   * FM4 DLC packs (downloaded LIVE packages, files anywhere under assets/), laid out like the
-    disc 2 packs. Only when asked for (`roster(..., packages=)`, --dlc): until the car manager
-    (#170) installs cars beside the one vehicle archive, the default roster stays the discs'.
+    disc 2 packs, when given (`roster(..., packages=)`, --dlc). The build passes the packs it
+    uses (port_batch.load_roster, src/dsfforza/build/fm4_dlc.py).
 
 Each image is identified by its content, never by its file name (`identify`): default.xex's
 title ID (4D530910 = FM4, 4D5309C9 = FH1) and disc number, cached per process by path, size
@@ -435,7 +435,7 @@ def pack_info(package: Package, disc_db: Path | None = None, disc_strings=None) 
 
 def roster(isos: list[Path], packages: list[Package] | None = None) -> tuple[dict[str, Car], list[str]]:
     """{media lower: Car} of the disc images, plus the cars of the DLC `packages` when given
-    (dlc_packages(); none by default: the default roster is the discs')."""
+    (dlc_packages(); the build's: fm4_dlc.packages())."""
     cars: dict[str, Car] = {}
     notes = []
     years: dict[str, dict[str, int]] = {}

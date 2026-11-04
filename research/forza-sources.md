@@ -24,7 +24,7 @@ Two more sources sit in `assets/` on this PC (#162):
   of 2026-10-28, not rechecked here).
 - `Forza Motorsport 4 Full DLC Collection/`: 16 LIVE packages, one folder
   per pack. `forza_roster` reads them as a source when asked to (below,
-  "FM4 DLC packs"). 176 cars, 148 of them not in the roster.
+  "FM4 DLC packs"). 176 cars, 148 of them on no disc (`tools/batches/fm4-dlc.txt`).
 
 Together they add 177 cars the roster doesn't have (29 only on FH2).
 
@@ -81,15 +81,69 @@ disc's tables (`forza_strings.names_from`, pack first).
 (Veyron SS, Agera, Huayra, Venom GT, ZL1, ...). See "Cars in several
 sources" below.
 
-**Not used yet.** The cars join the roster only when asked to
-(`forza_roster.roster(isos, packages)`, `dsff forza_roster --dlc`). The
-default roster, the car lists and the installer's build stay the discs'
-until the car manager can install cars beside the one vehicle archive
-(#170). The preflight lists the packs it finds. Building a DLC car also
-needs the pack's merge rows in the gamedb the converter reads (#457). Its
-engine sound comes from its own pack, then the discs (`port_car` passes the
-car's package to `engine_sound.forza_engine`; `research/engine-sound.md`,
-"FM4 DLC cars").
+**In the build.** The roster has the packs' cars whenever packs are found
+(`port_batch.load_roster` passes `fm4_dlc.packages()`; `DSFF_FM4_DLC=0`, or
+`--no-fm4-dlc` on port_batch, `dsff install` and `-NoFm4Dlc` on install.ps1,
+leaves them out). The 148 cars no disc has are `tools/batches/fm4-dlc.txt`,
+pack by pack; `dsff install` and install.ps1 add the ones of the packs found
+after their list (`port_batch --fm4-dlc-cars`), so they take IDs after the
+disc cars'. Their garage and HUD names are the packs' (`fm4_dlc.car_names`,
+through `pack_info`). Engine sound comes from the car's own pack, then the
+discs (`port_car` passes the car's package to `engine_sound.forza_engine`;
+`research/engine-sound.md`, "FM4 DLC cars").
+
+### The DLC gamedb
+
+Surveyed 2026-11-04 on the user's 16 packs (`dsff fm4_dlc`; the survey
+scripts are not kept).
+
+**How FM4 merges a patch (confirmed-static).** FM4's default.xex
+(`tools/re/xex.py image`) has the merge's SQL next to each other:
+`ATTACH '%s' AS filedb` (0x820D2170), `SELECT tbl_name,sql FROM
+filedb.sqlite_master WHERE type='table';` (0x820D2850), `INSERT INTO [%s%s]
+SELECT * FROM filedb.[%s]` (0x820D281C) and `DETACH DATABASE filedb`
+(0x820D20A8). No `OR REPLACE`/`OR IGNORE`, and none of the disc's
+`CREATE TABLE`s has an `ON CONFLICT` clause: rows are appended. The
+`<N>_execute.sql` file (Porsche's `100001_execute.sql`) is a separate step;
+it only UPDATEs `Events` (88) and `CareerEventTypes` (5).
+
+**The patches.** 16 files, one per pack, `21000` (Launch Track Pack),
+`23000` (LCE), `23552000` (November), `26000` to `39000`: 26,747 rows in 83
+tables, every one a table of the disc gamedb with the same columns. The
+patches' tables declare no keys; most of the disc's have an `INTEGER PRIMARY
+KEY` (`Data_Car.Id`, `Data_CarBody.Id`, `Combo_Colors.ID`, ...).
+
+**Keys that meet (by each table's primary key, else the shortest column
+prefix unique on the disc).** None in `Data_Car`, `Data_CarBody`,
+`Combo_Colors`, `Data_Engine`, `CarPartPositions`, `CameraOverrides` or the
+other tables the converter reads, except `List_FamilyModel` (21 rows of 9
+patches, each the same as the disc's row) and, pack against pack,
+`List_CarMake` (3) and `List_FamilyModel` (11), again the same rows. With
+other values: only `List_UpgradeCarBodyTireWidthRear` Ids 1353001-1353006 of
+the LCE patch, the rear tyre-width upgrades of the DLC SHE_GT500428CJ_69 (car
+body 1353000; the disc carries them with the front widths, 215-265, the
+patch with 255-305). The converter doesn't read that table. The other meeting
+rows (career, track, livery and upgrade rows besides those above) are each the
+same as the row they meet.
+
+**What `fm4_dlc.merge` does.** The disc gamedb, then each patch in N order,
+appended by column name (`INSERT OR IGNORE`): where a disc table's primary
+key already holds the Id, the first row stays. With the plain `INSERT` FM4
+runs, such a row is a constraint error; whether FM4 then drops the row, the
+patch's whole table or something else isn't decoded. On these 16 packs it
+changes no value the converter reads (above). The result:
+`out/cache/fm4/dlc-<key>/gamedb.slt`, 26,278 rows added (469 not, their key
+being held), 679 `Data_Car` rows (503 + 176), every disc row unchanged, and
+every patch row in it as itself or as the same row already there but those 6. The key hashes the disc gamedb's size
+and each pack's name and size; the disc's own files stay as they are.
+
+**Who reads which.** A disc car is built from the disc gamedb, a DLC car
+from the merged one (`fm4_dlc.for_source`, in `port_car.prepare_car`).
+Lookups by media name (port_batch's plan, `host_select`, `handling_dsf`,
+`wheel_clearance`, `render_compare`, `driver_survey`, `cockpit_survey`, the
+gamedb next to a car folder in `car_dims`, `paint` and `damage`) take the
+merged one when it is written for the packs found, which gives a disc car
+the same rows.
 
 ## Where the cars are
 
