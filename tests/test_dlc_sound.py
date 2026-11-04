@@ -147,7 +147,8 @@ def test_a_dlc_car_takes_its_packs_files_first_and_the_rest_from_the_disc():
         assert (exhaust["bank"], [lp.rpm for lp in exhaust["loops"]]) == ("6T0_959_Exh.fsb", [3500])
         # the pack has no intake HT or bank: the disc's
         assert (intake["bank"], [lp.rpm for lp in intake["loops"]]) == ("Shared_Int.fsb", [4000])
-        assert (cache / "fm4" / "dlc" / pack.name / "6T0_959_Exh.fsb").read_bytes() == _fsb("pack exhaust")
+        folder = cache / "fm4" / "dlc" / engine_sound.package_content_id(pack)
+        assert (folder / "6T0_959_Exh.fsb").read_bytes() == _fsb("pack exhaust")
         assert (cache / "fm4" / "Shared_Int.fsb").read_bytes() == _fsb("disc intake")
 
 
@@ -176,3 +177,17 @@ def test_a_bank_missing_everywhere_says_where_it_was_looked_for():
             disc_car = _engine("DISC_Car_00", disc, Path(tmp) / "cache")
         assert forza["missing"]["Exhaust"] == "bank 6T0_959_Exh.fsb not in its pack or on the FM4 discs"
         assert disc_car["missing"]["Exhaust"] == "bank Shared_Exh.fsb not on the FM4 discs"
+
+
+def test_pack_banks_are_cached_by_the_packs_content_id_not_its_file_name():
+    with tempfile.TemporaryDirectory() as tmp:
+        ids = []
+        for n, folder in enumerate(("a", "b")):
+            pack = Path(tmp) / folder / "pack"  # the same file name in two folders
+            pack.parent.mkdir()
+            head = bytearray(0x400)
+            head[:4] = b"LIVE"
+            head[0x32C : 0x32C + 20] = bytes([n + 1]) * 20
+            pack.write_bytes(bytes(head))
+            ids.append(engine_sound.package_content_id(pack))
+        assert ids == ["01" * 20, "02" * 20], ids

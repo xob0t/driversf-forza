@@ -582,6 +582,15 @@ def _engine_tuning(car: str, game: str, isos: list[Path], package: Path | None =
                     s.close()
 
 
+def package_content_id(package: Path) -> str:
+    """A pack's STFS content ID: the header's SHA-1 at 0x32C, in hex. It changes with the
+    pack's content, and the Xbox names the pack file by it (all 16 of the user's FM4 DLC
+    packs are named <content ID>4D), so it tells two packs apart whatever their file names."""
+    with package.open("rb") as stream:
+        stream.seek(0x32C)
+        return stream.read(20).hex().upper()
+
+
 def forza_engine(
     car: str,
     game: str,
@@ -594,7 +603,7 @@ def forza_engine(
     """Idle, redline and the decoded L0 loops of a Forza car's emissions (default:
     every emission its ET file names). package: a DLC car's own pack file (its
     forza_roster.Source.package), read before the discs; the banks taken from it are
-    cached apart, under <cache>/<game>/dlc/<pack file name>/. Raises LookupError when
+    cached apart, under <cache>/<game>/dlc/<pack content ID>/. Raises LookupError when
     the car's audio can't be resolved."""
     from dsfforza.formats import forza_audio as fa
 
@@ -634,7 +643,7 @@ def forza_engine(
                 where = "in its pack or " if pack is not None else ""
                 out["missing"][emission] = f"bank {ht.bank} not {where}on the {game.upper()} discs"
                 continue
-            folder = cache / game / "dlc" / package.name if hits[0][0] is pack else cache / game
+            folder = cache / game / "dlc" / package_content_id(package) if hits[0][0] is pack else cache / game
             fsb_path = folder / ht.bank
             if not fsb_path.is_file():
                 write_atomic(fsb_path, hits[0][1].read())
