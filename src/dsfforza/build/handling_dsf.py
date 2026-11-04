@@ -96,7 +96,15 @@ PAIRS = {
     195: "FOR_RS200EVOLUTION_87",
     142: "AUD_SPORTQUATTRO_83",
 }
-DBS = [REPO / "out" / "db" / "fh1_gamedb.slt", REPO / "out" / "db" / "fm4_gamedb.slt"]
+
+
+def default_dbs() -> list[Path]:
+    """out/db's gamedbs (dsff game_data prepare); FM4's with the DLC packs' rows when written
+    (fm4_dlc.gamedb_path)."""
+    from dsfforza.build import fm4_dlc
+
+    return [fm4_dlc.gamedb_path(game) for game in ("FH1", "FM4")]
+
 
 # Parameters set by other steps or tied to the body geometry and the converter.
 NOT_HANDLING = (
@@ -155,7 +163,7 @@ def specs_from_stats(stats: dict) -> Specs | None:
     return Specs(w, p, t, drive, year)
 
 
-def specs_from_forza(media: str, car: H.ForzaCar, dbs: list[Path] = DBS) -> Specs:
+def specs_from_forza(media: str, car: H.ForzaCar, dbs: list[Path] | None = None) -> Specs:
     """Real-world specs as vehicleStats states them: Data_Car SimPeakPower (100 W),
     SimPeakTorque (100 Nm), the vanilla body mass and year."""
     for db in dbs:
@@ -723,7 +731,7 @@ def context(
     dbs: list[Path] | None = None,
     same_model: bool = False,
 ) -> Context:
-    dbs = dbs or DBS
+    dbs = dbs or default_dbs()
     car = car or H.load_forza(media, dbs)
     specs = specs_from_forza(media, car, dbs)
     host = fleet[host_id]
@@ -899,7 +907,7 @@ def loo(
     drift_err: dict[str, list[float]] = {}
     for sid, media in PAIRS.items():
         try:
-            car = H.load_forza(media, DBS)
+            car = H.load_forza(media, default_dbs())
         except (SystemExit, ValueError, LookupError) as error:
             print(f"skip {media}: {error}", file=sys.stderr)
             continue

@@ -13,7 +13,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from dsfforza.build import forza_roster, install, port_car
+from dsfforza.build import forza_roster, port_car
 from dsfforza.formats import forza_strings, stfs
 
 FM4, FH1 = 0x4D530910, 0x4D5309C9
@@ -247,16 +247,6 @@ def test_a_dlc_car_is_extracted_like_a_disc_car():
         entry = port_car.car_entry("POR_959_87", 1987, "FM4", source, cache, 700, 1, "host", {})
         # the manifest names the package by its file name, not this machine's path
         assert entry["source"]["package"] == "E3470A83732B9093D220BF7D6506FB30517900064D"
-
-
-def test_preflight_lists_the_packs_and_says_they_are_not_built():
-    with tempfile.TemporaryDirectory() as tmp:
-        assets = _assets(Path(tmp))
-        lines = install.dlc_preflight(forza_roster.dlc_packages(assets))
-        assert lines[0].startswith("FM4 DLC packs: 2 (")
-        assert "Test Car Pack" in lines[0] and "Tracks" in lines[0] and "#170" in lines[0]
-        assert any("other title" in line and "skipped" in line for line in lines[1:])
-        assert install.dlc_preflight([]) == []
 
 
 def test_a_car_in_fh1_and_a_dlc_pack_is_built_from_the_version_with_its_files():

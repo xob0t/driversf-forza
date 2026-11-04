@@ -23,7 +23,8 @@ Stages, each skipped when there is nothing to do:
    prebuilt one is used as it is. Every install needs it: its [archive] packages loads
    the cars.
 4. build: src/dsfforza/build/port_batch.py build with --gui --wide-glyphs --id-policy
-   asi --root-limit 3003 --packages (tools/batches/all.txt by default) into out/build.new, reusing
+   asi --root-limit 3003 --packages (tools/batches/all.txt by default, then the cars of the FM4
+   DLC packs under assets/: --fm4-dlc-cars; --no-fm4-dlc leaves them out) into out/build.new, reusing
    every car the last build (out/build), an interrupted one (out/build.partial) or
    --reuse DIR made from the same inputs and code, so a re-run only converts what
    changed. Without any of those, the earlier build under out/ with the most cars is
@@ -376,19 +377,22 @@ def default_jobs(cpus: int | None, gentle_on: bool, ram: int | None = None) -> i
     return min(jobs, gentle.CORES) if gentle_on else jobs
 
 
-def dlc_preflight(packages: list) -> list[str]:
+def dlc_preflight(packages: list, use: str = "build") -> list[str]:
     """Preflight lines for the FM4 DLC packages found under assets/ (forza_roster.dlc_packages,
-    identified by their STFS headers). They are listed only: their cars aren't built until the
-    car manager can install them beside the vehicle archive (#170)."""
+    identified by their STFS headers). `use`: "build" (their cars are built with the default
+    list: port_batch --fm4-dlc-cars), "named" (--list/--car: only the cars named), "off"
+    (--no-fm4-dlc)."""
     from dsfforza.build import forza_roster
 
     found, notes = forza_roster.package_summary(packages)
     if not found:
         return notes
-    return [
-        f"FM4 DLC packs: {len(found)} ({', '.join(found)}); not built yet (they wait for the car manager, #170)",
-        *notes,
-    ]
+    how = {
+        "build": "their cars are built too (--no-fm4-dlc leaves them out)",
+        "named": "only the cars --list/--car names are built",
+        "off": "left out (--no-fm4-dlc)",
+    }[use]
+    return [f"FM4 DLC packs: {len(found)} ({', '.join(found)}); {how}", *notes]
 
 
 def count_cars(lists: list[Path], cars: list[str]) -> int:
@@ -1355,12 +1359,16 @@ class Run:
                 else:
                     info.append("discs " + " + ".join(found))
                     info += notes
-            info += dlc_preflight(forza_roster.dlc_packages())
+            info += dlc_preflight(forza_roster.dlc_packages(), self.dlc_use())
             lists = self.lists()
             gone = [p for p in lists if not Path(p).is_file()]
             if gone:
                 problems.append(f"Car list not found: {', '.join(map(str, gone))}")
-            cars = count_cars([p for p in lists if p not in gone], args.car or [])
+            # the DLC list in full: an upper bound when some packs are missing (for the disk space)
+            from dsfforza.build.port_batch import DLC_LIST
+
+            dlc = [DLC_LIST] if self.dlc_cars() else []
+            cars = count_cars([p for p in lists if p not in gone] + dlc, args.car or [])
         if self.installing:
             problems += self.install_checks()
         # disk space: the build folder's drive and the game's
@@ -1390,6 +1398,19 @@ class Run:
         if self.args.list:
             return list(self.args.list)
         return [] if self.args.car else [DEFAULT_LIST]
+
+    def dlc_use(self) -> str:
+        """How the FM4 DLC packs found are used: "off" (--no-fm4-dlc), "named" (--list/--car
+        pick the cars) or "build" (the default list, plus the packs' cars)."""
+        if getattr(self.args, "no_fm4_dlc", False):
+            return "off"
+        return "named" if self.args.list or self.args.car else "build"
+
+    def dlc_cars(self) -> bool:
+        """Whether the build adds the DLC packs' cars (port_batch --fm4-dlc-cars)."""
+        from dsfforza.build import fm4_dlc
+
+        return self.dlc_use() == "build" and bool(fm4_dlc.packages())
 
     def installed_cars(self) -> list:
         try:
@@ -1563,6 +1584,10 @@ class Run:
         argv += ["--id-policy", "asi", "--root-limit", str(ASI_ROOT_LIMIT), "--wide-glyphs"]
         for path in self.lists():
             argv += ["--list", str(path)]
+        if self.dlc_use() == "off":
+            argv += ["--no-fm4-dlc"]
+        elif self.dlc_cars():
+            argv += ["--fm4-dlc-cars"]  # the FM4 DLC packs' cars, after the list (new IDs)
         for car in args.car or []:
             argv += ["--car", car]
         for iso in self.isos:
@@ -1892,6 +1917,11 @@ def build_parser() -> argparse.ArgumentParser:
     pick = parser.add_argument_group("cars")
     pick.add_argument("--list", type=Path, action="append", help="car list, one per line (default: all.txt)")
     pick.add_argument("--car", action="append", metavar="NAME[@fh1|@fm4]", help="a car (repeatable)")
+    pick.add_argument(
+        "--no-fm4-dlc",
+        action="store_true",
+        help="leave out the FM4 DLC packs under assets/ (by default the default list's build adds their cars)",
+    )
     pick.add_argument(
         "--iso", type=Path, action="append", help="Forza disc images, any file names (default: assets/*.iso)"
     )

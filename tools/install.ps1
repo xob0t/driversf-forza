@@ -76,6 +76,8 @@ param(
     [Parameter(ParameterSetName = 'Install')]
     [string[]]$Car,                       # or single cars, e.g. NIS_370Z_10, BMW_M5_12@fh1
     [Parameter(ParameterSetName = 'Install')]
+    [switch]$NoFm4Dlc,                    # leave out the FM4 DLC packs under assets\ (default: the default list's build adds their cars)
+    [Parameter(ParameterSetName = 'Install')]
     [int]$Jobs = 0,                       # build worker processes (default: port_batch's)
     [Parameter(ParameterSetName = 'Install')]
     [string]$BuildDir,                    # where to build (default out\install-build)
@@ -616,7 +618,11 @@ function Invoke-Build {
         if (-not $listFile) { $listFile = Join-Path $Repo 'tools\batches\first.txt' }
         $pyArgs += @('--list', (Resolve-Path -LiteralPath $listFile).Path)
     }
-    if ($Jobs -gt 0) { $pyArgs += @('--jobs', "$Jobs") }
+    # The FM4 DLC packs under assets\ (src/dsfforza/build/fm4_dlc.py): the default list's build
+    # adds their cars after it (tools\batches\fm4-dlc.txt, only the packs found), as dsff install's.
+    if ($NoFm4Dlc) { $pyArgs += @('--no-fm4-dlc') }
+    elseif (-not $Car -and -not $List) { $pyArgs += @('--fm4-dlc-cars') }
+    if ($Jobs -gt 0){ $pyArgs += @('--jobs', "$Jobs") }
     Say "Building the cars (this takes a while; the build runs at Below Normal priority):"
     Say "  uv $($pyArgs -join ' ')"
     & $uv @pyArgs | Out-Host   # keep the build's output out of the function's return value

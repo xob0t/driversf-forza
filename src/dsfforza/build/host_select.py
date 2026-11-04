@@ -55,7 +55,16 @@ from dsfforza import REPO
 from dsfforza.game import game_paths
 
 DEFAULT_LUA = REPO / "out" / "lua-src" / "LuaScripts" / "vehiclestats" / "vehiclestats.lua"
-DEFAULT_GAMEDBS = {"FH1": REPO / "out" / "db" / "fh1_gamedb.slt", "FM4": REPO / "out" / "db" / "fm4_gamedb.slt"}
+
+
+def default_gamedbs() -> dict[str, Path]:
+    """out/db's gamedbs (dsff game_data prepare); FM4's with the DLC packs' rows when written
+    (fm4_dlc.gamedb_path)."""
+    from dsfforza.build import fm4_dlc
+
+    return {game: fm4_dlc.gamedb_path(game) for game in ("FH1", "FM4")}
+
+
 SURVEY_CACHE = REPO / "out" / "cache" / "host-survey.json"
 SURVEY_VERSION = 7
 
@@ -691,7 +700,7 @@ def forza_info(
     game the car is taken from first; None: out/db). `folder`: the extracted car, for a
     door-count hint from the carbin's glass sections. `doors_memo` (door_memo()): the
     door counts of earlier runs, for port_batch's plan."""
-    dbs = gamedbs if isinstance(gamedbs, dict) else dict(DEFAULT_GAMEDBS)
+    dbs = gamedbs if isinstance(gamedbs, dict) else default_gamedbs()
     order = sorted(dbs.items(), key=lambda kv: (kv[0] != game,))
     row = body = None
     used = None

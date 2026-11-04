@@ -509,8 +509,11 @@ def install(stream, full: Entry, colours: list[ForzaColour], nonr_limit: int | N
 
 
 def find_gamedb(car_folder: Path) -> Path | None:
-    """out/cache/<game>/gamedb.slt next to an extracted car folder."""
-    candidate = Path(car_folder).parent / "gamedb.slt"
+    """out/cache/<game>/gamedb.slt next to an extracted car folder (FM4's with the DLC packs'
+    rows when written: fm4_dlc.beside)."""
+    from dsfforza.build import fm4_dlc
+
+    candidate = fm4_dlc.beside(car_folder)
     return candidate if candidate.exists() else None
 
 
@@ -582,14 +585,18 @@ def survey(cars: list[str], cache: Path, build: Path | None = None) -> dict:
     """Per roster colour, what its entry shows against Forza's swatch: from this code
     (shade) or from a build's palettes (--build: the entries it holds, in pick_colours
     order)."""
-    gamedbs = [cache / g / "gamedb.slt" for g in ("fh1", "fm4")]
+    from dsfforza.build import fm4_dlc
+
+    games = ("fh1", "fm4")
     palettes = build_palettes(build) if build else None
     rows = []
     for media in cars:
         name, _, game = media.partition("@")
-        found = [db for db in gamedbs if (db.parent / name).is_dir()]
-        dbs = [cache / game / "gamedb.slt"] if game else found[:1] or gamedbs
-        colours = pick_colours(next((c for db in dbs if (c := forza_colours(db, name, db.parent / name))), []))
+        # (gamedb, car folder) per game: the gamedb beside the folder (FM4's with the DLC rows)
+        pairs = [(fm4_dlc.beside(cache / g / name), cache / g / name) for g in ([game] if game else games)]
+        found = [pair for pair in pairs if pair[1].is_dir()]
+        pairs = pairs if game else found[:1] or pairs
+        colours = pick_colours(next((c for db, folder in pairs if (c := forza_colours(db, name, folder))), []))
         entries = [shade(c) for c in colours] if palettes is None else palettes.get(name, [])
         for colour, params in zip(colours, entries):
             rows.append({"car": name, "metallic": colour.metallic, **survey_entry(colour, params)})

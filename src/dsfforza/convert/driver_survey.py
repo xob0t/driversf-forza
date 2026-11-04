@@ -34,6 +34,7 @@ import struct
 from pathlib import Path
 
 from dsfforza import REPO
+from dsfforza.build import fm4_dlc
 from dsfforza.convert import cockpit, forza2dsf
 
 VANILLA_ARCHIVE = REPO / "out" / "vanilla" / "Install" / "dngvehicles.sp"
@@ -128,7 +129,7 @@ def survey_car(media: str, host: int, stream, root) -> dict:
         row["error"] = "host has no driver seat marker"
         return row
     car = forza2dsf.load_car(folder, media)
-    gamedb = REPO / "out" / "db" / f"{game}_gamedb.slt"
+    gamedb = fm4_dlc.gamedb_path(game)
     cf = cockpit.fit(
         cockpit.load_cockpit(folder, media) or [],
         media,

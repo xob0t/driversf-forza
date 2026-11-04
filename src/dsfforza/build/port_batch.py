@@ -233,18 +233,37 @@ class Pick:
 
 
 def load_roster(isos: list[Path]):
+    """The cars of the disc images and of the FM4 DLC packs under assets/ (fm4_dlc.packages:
+    none with --no-fm4-dlc)."""
+    from dsfforza.build import fm4_dlc
     from dsfforza.build.forza_roster import roster
 
-    cars, _ = roster(isos)
+    cars, _ = roster(isos, fm4_dlc.packages())
     return {k: c for k, c in cars.items() if c.kind == "car"}
 
 
+DLC_LIST = REPO / "tools" / "batches" / "fm4-dlc.txt"  # the DLC cars no disc has, by pack
+
+
+def dlc_requests(cars: dict, path: Path = DLC_LIST) -> list[tuple[str, str | None]]:
+    """--fm4-dlc-cars: the cars of `path` (tools/batches/fm4-dlc.txt) that the roster has from
+    a DLC pack found, in the list's order (a pack the user lacks adds nothing)."""
+    out = []
+    for media, game in read_list(path):
+        car = cars.get(media.lower())
+        if car is not None and any(s.dlc and s.kind == "car" for s in car.sources):
+            out.append((car.name, game))
+    return out
+
+
 def gamedbs(isos: list[Path], cache: Path) -> dict[str, Path]:
-    from dsfforza.build import port_car
+    """{game: gamedb} for the plan's lookups by media name: FM4's with the DLC packs' rows when
+    they are used (fm4_dlc.gamedb; it holds every disc row as it is)."""
+    from dsfforza.build import fm4_dlc
 
     out = {}
     for game in ("FH1", "FM4"):
-        db = port_car.extract_gamedb(isos, game, cache)
+        db = fm4_dlc.gamedb(isos, game, cache)
         if db:
             out[game] = db
     return out
@@ -312,7 +331,7 @@ def _describe(cars: dict, requests, dbs: dict[str, Path], cache: Path | None, ho
     for media, game in requests:
         car = cars.get(media.lower())
         if car is None:
-            picks.append(Pick(media, game or "?", None, "", {}, notes=["not a car on the discs"]))
+            picks.append(Pick(media, game or "?", None, "", {}, notes=["not a car on the discs or DLC packs found"]))
             continue
         try:
             rcar, source = pick_source(cars, CarRequest(car.name, game))
@@ -370,6 +389,8 @@ def select(args, cars: dict, dsf: Path, dbs: dict[str, Path]) -> list[Pick]:
     explicit = [(m, g.upper() or None) for m, _, g in (c.partition("@") for c in args.car or [])]
     for path in args.list or []:
         explicit += read_list(path)
+    if getattr(args, "fm4_dlc_cars", False):
+        explicit += dlc_requests(cars)
     if explicit:
         requests = explicit
     else:
@@ -1236,6 +1257,10 @@ def lint_all(
 
 def common(args) -> tuple[Path, list[Path], dict, dict[str, Path]]:
     set_game_env(args.dsf)
+    if getattr(args, "no_fm4_dlc", False):
+        from dsfforza.build import fm4_dlc
+
+        fm4_dlc.disable()  # this process and its workers
     lower_priority()
     isos = [p.resolve() for p in (args.iso or forza_roster.default_images())]
     if not isos:
@@ -1248,6 +1273,13 @@ def common(args) -> tuple[Path, list[Path], dict, dict[str, Path]]:
     print(f"disc images: {', '.join(found)}")
     for note in notes:
         print(f"  {note}")
+    from dsfforza.build import fm4_dlc
+
+    packs = fm4_dlc.packages()
+    if packs:
+        print(f"FM4 DLC packs: {len(packs)} ({', '.join(p.name for p in packs)})")
+    elif not fm4_dlc.enabled():
+        print("FM4 DLC packs: left out (--no-fm4-dlc)")
     from dsfforza.game import game_data
 
     game_data.prepare(game_from_dsf(args.dsf), isos, log=lambda t: print(f"prepare: {t}"))
@@ -2204,6 +2236,16 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--cache", type=Path, default=REPO / "out" / "cache", help="extraction cache")
         p.add_argument("--car", action="append", metavar="NAME[@fh1|@fm4]")
         p.add_argument("--list", type=Path, action="append", help="file with one car per line")
+        p.add_argument(
+            "--fm4-dlc-cars",
+            action="store_true",
+            help="also every car of tools/batches/fm4-dlc.txt that the FM4 DLC packs found have",
+        )
+        p.add_argument(
+            "--no-fm4-dlc",
+            action="store_true",
+            help="leave the FM4 DLC packs under assets/ out (roster, gamedb; src/dsfforza/build/fm4_dlc.py)",
+        )
         p.add_argument("--game", choices=("fh1", "fm4", "FH1", "FM4"))
         p.add_argument("--make", help="comma-separated make codes or names")
         p.add_argument("--body", help="comma-separated body classes")

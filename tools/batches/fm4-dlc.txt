@@ -1,0 +1,182 @@
+# The FM4 DLC packs' cars that no disc has (148 on the 16 packs of research/forza-sources.md,
+# "FM4 DLC packs"); the 28 the packs share with FH1 keep FH1 and are in all.txt. Pack by pack,
+# in release order. dsff install adds the ones of the packs found under assets/ after its list
+# (port_batch --fm4-dlc-cars), so they take IDs after the disc cars'.
+
+# Limited Collector's Edition Pack
+ALF_Giulietta_11
+BMW_M1Design_81
+BMW_M3Design_08
+BMW_M5Design_12
+BMW_M6Design_10
+BMW_Z4Design_08
+BUI_GSX_70
+CHE_NovaSS_66
+CHR_GTX_71
+DOD_Coronet_67
+DOD_Dart_68
+DOD_SuperBee_70
+FER_458Challenge_11
+FOR_Fairlane_64
+FOR_Mustang_65
+HON_CRZ_11
+LEX_SC300_97
+MIN_Clubman_11
+PON_Firebird_68
+PON_GTO_65
+SHE_GT500428CJ_69
+TES_RoadsterS_11
+
+# November Speed Pack
+AUD_2_R15_11
+AUD_RS3_11
+CHE_BelAir_57
+FER_62_F458_11
+GMC_Typhoon_93
+
+# December IGN Pack
+ALF_Spider_86
+CHE_Chevelle396_67
+FOR_EscortRS1800_77
+MAS_300S_57
+MAS_GranTurismoMC_10
+MAZ_RX8R3_11
+PON_FieroGT_88
+SUZ_1_SX4_11
+VW_SciroccoS_81
+
+# January Jalopnik Pack
+ALF_Montreal_70
+AUD_RS5_11
+CHE_ImpalaSS_96
+DOD_ShelbyOmniGLHS_86
+FIA_Coupe_00
+FOR_Pinto_71
+HON_33_Lola_11
+HON_CivicSi_12
+LAM_008_Gallardo_11
+
+# Hyundai Veloster Bonus Pack
+HYU_Veloster_12
+HYU_VelosterRMR_11
+
+# February American Le Mans Series Pack
+ALF_155_92
+AUD_2_SportQuattro_86
+AUD_3_R18TDI_11
+BEN_PMContinental_11
+DOD_RampageChallenger_11
+FOR_Mustang_95
+HOL_HSVGTS_11
+MAZ_55_787B_91
+PAN_050_Abruzzi_11
+VW_PoloGTI_11
+
+# March Pirelli Car Pack
+ALF_GTV6_86
+BMW_850CSi_96
+CHE_Corvair_69
+CHE_NovaSS_69
+FER_2_312PB_72
+FOR_CountrySquire_66
+REN_Clio200Cup_10
+WIE_GTMF5_11
+
+# April Alpinestars Car Pack
+AST_009_AMROne_11
+BMW_M5_95
+CAD_Eldorado_59
+MAS_Quattroporte_12
+MAZ_RX7_85
+MER_300SEL_72
+MER_35_SLSAMG_11
+SCI_tC_12
+VOL_850_97
+
+# May TopGear Car Pack
+AH_3000_65
+AMC_Pacer_77
+CHR_300_12
+FOR_TransitSSV_11
+JEE_Wrangler_12
+LOT_Cortina_66
+MIT_GalantVR4_92
+SMA_ForTwo_12
+SUB_LegacyRS_90
+
+# Porsche Expansion Pack
+POR_045_GT3RSR_11
+POR_16_RSSpyder_08
+POR_17_911GT3RSR_11
+POR_17_962C_87
+POR_23_911GT3Cup_11
+POR_26_GT1_98
+POR_2_911GT3Cup_08
+POR_31_911GT3RSR_05
+POR_54_911GT3Cup_11
+POR_550ASpyder_56
+POR_66_911GT3Cup_05
+POR_7_RSSpyder_08
+POR_80_GT3RSR_07
+POR_911GT2_12
+POR_911GT2_95
+POR_911SportClassic_10
+POR_911Turbo_82
+POR_914_70
+POR_944Turbo_89
+POR_959_87
+POR_996GT3_04
+POR_997GT3_07
+POR_997GT3RS_07
+POR_997Turbo_07
+POR_BoxsterS_10
+POR_CarreraGT_03
+POR_CarreraRS_73
+POR_Cayenne_12
+POR_CaymanR_12
+POR_Panamera_10
+
+# Meguiar's Car Pack
+AST_Cygnet_11
+BMW_507_59
+CHE_4_CorvetteZR1_11
+FOR_Coupe_40
+MAS_Ghibli_97
+MG_MGA_58
+TOY_CelicaST185_90
+VW_Beetle_66
+
+# 2013 SRT Viper Pack
+DOD_Challenger392_12
+
+# July Car Pack
+AMC_Gremlin_73
+AST_VantageV600_98
+HUD_Hornet_52
+JAG_XK120_54
+LOT_Eleven_56
+MCL_59_MP412C_11
+MER_SLK55AMG_12
+RUF_CTR2_95
+SPY_Aileron_12
+
+# August Playseat Car Pack
+AST_DB7Zagato_03
+FOR_MustangBoss302_13
+LEX_GS350_13
+LIN_Continental_62
+MER_63_SauberC9_89
+TRI_TR3_62
+
+# September Pennzoil Car Pack
+AH_Sprite_58
+ALF_33Stradale_68
+AST_DB4GT_60
+CHE_Corvette_53
+CIT_DS4_11
+GMC_Vandura_83
+MER_300SLR_55
+MG_MGB_65
+VIP_91_Viper_13
+VIP_93_Viper_13
+VW_KarmannGhia_67

@@ -304,7 +304,7 @@ def tune(args) -> None:
             if not m:
                 continue
             car = cars[sid]
-            specs = D.specs_from_forza(car["media"], H.load_forza(car["media"], D.DBS))
+            specs = D.specs_from_forza(car["media"], H.load_forza(car["media"], D.default_dbs()))
             ref = vanilla_db.get(str(vanilla_map[sid])) if sid in vanilla_map else None
             t60 = ref["0-60"] if ref and ref.get("0-60") else targets.zero_sixty(specs)
             thb = ref["hb_yaw"] if ref and ref.get("hb_yaw") else targets.rotation(car["media"])[0]

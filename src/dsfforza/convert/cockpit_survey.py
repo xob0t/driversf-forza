@@ -127,7 +127,9 @@ def main(argv: list[str] | None = None) -> None:
 
     isos = default_images()
     cars, _ = roster(isos)
-    dbs = {g: port_car.extract_gamedb(isos, g, args.cache) for g in ("FH1", "FM4")}
+    from dsfforza.build import fm4_dlc
+
+    dbs = {g: fm4_dlc.gamedb(isos, g, args.cache) for g in ("FH1", "FM4")}
     names = sorted(m for m, c in cars.items() if c.kind == "car")
     if args.car:
         names = [n.lower() for n in args.car]

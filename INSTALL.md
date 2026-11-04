@@ -31,6 +31,7 @@ built. Everything the tools print goes to `out\logs\install-<date-time>.log`.
 | Option | |
 | --- | --- |
 | `--list FILE`, `--car NAME` | other cars (one Forza name per line; [research/forza-roster.tsv](research/forza-roster.tsv) lists them all) |
+| `--no-fm4-dlc` | leave out the FM4 DLC packs under `assets` ([below](#forza-motorsport-4-dlc-packages)) |
 | `--jobs N` | cars built at a time (default: half the CPU threads, at most 8) |
 | `--build-only`, `--install-only` | only build, or only install the last build |
 | `--no-write-profile` | don't mark the new garage cars owned in the save (below) |
@@ -38,18 +39,22 @@ built. Everything the tools print goes to `out\logs\install-<date-time>.log`.
 | `--report` | a zip for a bug report ([below](#reporting-a-bug)) |
 | `--force` | replace another mod's `bootstrap.lua` (it is backed up, put back on uninstall, and ours runs it first) |
 
-### Forza Motorsport 4 DLC packages (not built yet)
+### Forza Motorsport 4 DLC packages
 
-The installer also looks for your downloaded FM4 car packs: Xbox 360 LIVE packages
-(the hash-named files without an extension, such as
+The installer also builds the cars of your downloaded FM4 car packs: Xbox 360 LIVE
+packages (the hash-named files without an extension, such as
 `E3470A83732B9093D220BF7D6506FB30517900064D`). Put them anywhere under `assets`, in any
 folders and under any names. A package is recognised by its header (Forza Motorsport 4,
 title ID 4D530910, marketplace content), not by its name. The check in step 1 lists the
-packs it found and skips other games' packages, saves and second copies of a pack.
+packs it found and skips other games' packages, saves and second copies of a pack. The
+packs need FM4 disc 1 too (its game database holds the rows the packs add to).
 
-Their cars aren't built or installed yet
-([#162](https://github.com/xob0t/driversf-forza/issues/162)). Until then the installer
-builds the cars from your discs only, with or without the packs.
+The packs' cars are built after the disc cars ([tools/batches/fm4-dlc.txt](tools/batches/fm4-dlc.txt)
+lists them pack by pack; a pack you don't have adds nothing), with the names, makers and
+years of the pack. They get new IDs, so the disc cars installed before keep theirs. The 28
+cars a pack shares with Forza Horizon are built from the FH1 disc, as before.
+`--no-fm4-dlc` builds the disc cars only. With `--list` or `--car` only the cars named
+are built (a pack car can be named like a disc car).
 
 ### Downloads
 

@@ -286,25 +286,28 @@ LOGO_ALIASES = {
 class ForzaUI:
     """FH1's media/ui/Textures.zip on the disc image; maker logos FH1 lacks
     (Renault) come from FM4's (DVD 1, Media/UI/Textures.zip, same layout),
-    opened on first need. Without the FH1 image FM4's alone (no thumbnails),
+    opened on first need, then from the FM4 DLC `packs` (the build's: `of`). Without the FH1 image FM4's alone (no thumbnails),
     without either nothing: logo() is None, and makers get text badges. `of`
     finds the images by their content (forza_roster.game_discs)."""
 
-    def __init__(self, iso: Path | None = None, fallback: Path | None = None):
+    def __init__(self, iso: Path | None = None, fallback: Path | None = None, packs: list | None = None):
         self.image = self.zip = None
         self.names = {}
         if iso and Path(iso).exists():
             self.image, self.zip, self.names = self._open(iso, "media/ui/Textures.zip")
         self.fallback_path, self.fallback = fallback, None
+        # The FM4 DLC packs' UI textures (fm4_dlc.PackUI), indexed on first need; none when not given
+        self.pack_list, self.packs = list(packs or []), None
 
     @classmethod
     def of(cls, isos: list[Path] | None) -> ForzaUI:
         """From the build's disc images (port_batch --iso; None: assets/*.iso), found by
         their title whatever they are called."""
+        from dsfforza.build import fm4_dlc
         from dsfforza.build.forza_roster import game_discs
 
         discs = game_discs(isos)
-        return cls(discs.get("FH1"), discs.get("FM4"))
+        return cls(discs.get("FH1"), discs.get("FM4"), fm4_dlc.packages())
 
     @staticmethod
     def _open(iso: Path, name: str):
@@ -331,12 +334,30 @@ class ForzaUI:
     def thumbnail(self, car_id: int):
         return self.read(f"Thumbnails/Thumbnail_{car_id}.xds")
 
+    def _read_pack(self, name: str):
+        if self.packs is None:
+            from dsfforza.build import fm4_dlc
+
+            self.packs = fm4_dlc.PackUI(self.pack_list) if self.pack_list else False
+        data = self.packs.read(name) if self.packs else None
+        return read_xds_rgba(data) if data else None
+
     def logo(self, make: str):
         key = LOGO_ALIASES.get(make.lower(), make).replace(" ", "").replace("-", "")
         names = [f"UI4/Logos/{f}/L_MAN_{key}_Logo.xds" for f in LOGO_FOLDERS]
         for read in (self.read, self._read_fallback):
             for name in names:
                 found = read(name)
+                if found:
+                    return found
+        # A maker only the FM4 DLC packs have: its logo in the packs' UI textures, under its
+        # name or under its List_CarMake.IconPathBase there (Austin-Healey's is L_MAN_AUS_Logo).
+        self._read_pack("")  # opens the packs' index
+        if self.packs:
+            icon = self.packs.keys.get(make.lower())
+            keys = [key] + ([icon] if icon and icon != key else [])
+            for name in (f"UI4/Logos/{f}/L_MAN_{k}_Logo.xds" for k in keys for f in LOGO_FOLDERS):
+                found = self._read_pack(name)
                 if found:
                     return found
         return None
@@ -1657,8 +1678,9 @@ def dsf_make(make: str, model: str = "") -> str:
 def car_texts(cars: list[dict], isos: list[Path] | None = None) -> dict[str, dict]:
     """{media: {make, model, family, year}}: Forza's own names (Data_Car
     DisplayName, List_CarMake, List_FamilyModel via src/dsfforza/formats/forza_strings.py,
-    from `isos`, else assets/*.iso, found by title whatever the files are called),
-    upper-cased; media-name guesses where a game has no entry (its disc is missing)."""
+    from `isos`, else assets/*.iso, found by title whatever the files are called; an FM4 DLC
+    car's from its pack, fm4_dlc.car_names), upper-cased; media-name guesses where a game has
+    no entry (its disc or pack is missing)."""
     from dsfforza.build.port_car import make_model
 
     out = {}
@@ -1682,6 +1704,14 @@ def car_texts(cars: list[dict], isos: list[Path] | None = None) -> dict[str, dic
                 except Exception as error:  # noqa: BLE001 - printed; names then come from the media names
                     print(f"warning: {other.upper()} car names: {type(error).__name__}: {error}")
                     continue
+        missing = [car["media"] for car in cars if car["media"] not in found]
+        if missing:  # FM4 DLC cars: their packs' own names (no disc has their rows)
+            from dsfforza.build import fm4_dlc
+
+            try:
+                found.update({k: v for k, v in fm4_dlc.car_names(missing, isos).items() if v.get("display")})
+            except Exception as error:  # noqa: BLE001 - printed; names then come from the media names
+                print(f"warning: FM4 DLC car names: {type(error).__name__}: {error}")
     except ImportError:
         pass
     for car in cars:

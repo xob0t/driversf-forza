@@ -205,8 +205,10 @@ GAMEDB = "gamedb.slt"  # port_car.extract_gamedb's copy, beside the game's car f
 
 def cached_gamedb(folder: Path) -> Path | None:
     """The car's game's gamedb.slt in the cache (<cache>/<game>/gamedb.slt next to
-    <cache>/<game>/<car>), or None."""
-    path = Path(folder).parent / GAMEDB
+    <cache>/<game>/<car>; FM4's with the DLC packs' rows when written, fm4_dlc.beside), or None."""
+    from dsfforza.build import fm4_dlc
+
+    path = fm4_dlc.beside(folder)
     return path if path.exists() else None
 
 

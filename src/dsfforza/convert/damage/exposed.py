@@ -111,7 +111,9 @@ def engine_placement(name: str, gamedbs=(), folder=None) -> str | None:
 
     dbs = [Path(g) for g in gamedbs or () if g]
     if folder is not None:
-        dbs.append(Path(folder).parent / "gamedb.slt")
+        from dsfforza.build import fm4_dlc
+
+        dbs.append(fm4_dlc.beside(folder))
     for db in dbs:
         if not db.exists():
             continue

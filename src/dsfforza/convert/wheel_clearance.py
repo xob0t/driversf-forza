@@ -441,15 +441,14 @@ def _manifest(path: Path | None) -> dict[int, dict]:
 
 def forza_steer_angles(folder: Path | None = None) -> dict[tuple[str, str], float]:
     """(game, media lower case) -> Data_Car.SteerMaxAngle from out/db/<game>_gamedb.slt
-    (``dsff game_data prepare``)."""
+    (``dsff game_data prepare``; FM4's with the DLC packs' rows when written, fm4_dlc.gamedb_path)."""
     import sqlite3
 
-    from dsfforza import REPO
+    from dsfforza.build import fm4_dlc
 
-    folder = Path(folder) if folder else REPO / "out" / "db"
     out = {}
     for game in ("fh1", "fm4"):
-        path = folder / f"{game}_gamedb.slt"
+        path = fm4_dlc.gamedb_path(game, folder) if folder is None else Path(folder) / f"{game}_gamedb.slt"
         if not path.exists():
             continue
         db = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
