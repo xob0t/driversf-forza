@@ -313,7 +313,8 @@ uint32_t entry_span(const Entry* e)
 //   1. the root table of the vehicle archive gets three entries per package
 //      after its own (h_poll, once the open completes);
 //   2. read entry(i) and name(i) of those entries read from the package file
-//      (synchronously, with the plugin's own handle) instead of the archive;
+//      (with the plugin's own handle; for the slot's load on a thread-pool
+//      thread, the poll busy until it is done) instead of the archive;
 //   3. the SSLP the spool object uses gets three records per package (a copy
 //      with the records appended; FUN_005A0B50 sets the two pointers);
 //   4. the VSCT table gets the package's three records (FUN_0086C630 loads it
