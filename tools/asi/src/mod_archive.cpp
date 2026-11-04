@@ -313,7 +313,8 @@ uint32_t entry_span(const Entry* e)
 //   1. the root table of the vehicle archive gets three entries per package
 //      after its own (h_poll, once the open completes);
 //   2. read entry(i) and name(i) of those entries read from the package file
-//      (synchronously, with the plugin's own handle) instead of the archive;
+//      (with the plugin's own handle; for the slot's load on a thread-pool
+//      thread, the poll busy until it is done) instead of the archive;
 //   3. the SSLP the spool object uses gets three records per package (a copy
 //      with the records appended; FUN_005A0B50 sets the two pointers);
 //   4. the VSCT table gets the package's three records (FUN_0086C630 loads it
@@ -327,6 +328,7 @@ uint32_t entry_span(const Entry* e)
 // with a file name ending in dngvehicles.sp.
 struct Pkg {
     HANDLE file;
+    HANDLE raw;       // [archive] read_uncached: the same file without the system cache (0: none)
     uint16_t id;
     bool listed;      // its SSLP records are in (no ID clash, NONR fits)
     bool ids_logged;  // pkg_set_ids has logged this package's fields once
@@ -343,6 +345,30 @@ uint8_t* g_sslp = nullptr;       // the extended SSLP (header + records)
 uint8_t* g_vsct = nullptr;       // the extended VSCT
 volatile LONG g_pkg_reads = 0;
 uint32_t g_pkg_read_max_us = 0;  // slowest package read so far
+
+// ---- read timing ([archive] read_log, read_uncached; off by default) --------
+// read_log logs every package read with its thread, and the main loop's frame
+// times (h_pump, below), so a read's cost on the frame can be seen.
+// read_uncached reads package entries through a second handle opened with
+// FILE_FLAG_NO_BUFFERING: every read then comes from the disk, as a first read
+// after a reboot does, whatever the system cache holds (a test run copies the
+// packages into its folder just before the game starts, so they are cached).
+bool g_read_log = false;
+bool g_read_uncached = false;
+LARGE_INTEGER g_qpf = {};
+LARGE_INTEGER g_qpc0 = {};
+volatile DWORD g_main_tid = 0;    // the thread of the game window's message pump (h_pump)
+volatile LONG g_frame_reads = 0;  // package reads since the last pump call
+volatile LONG g_frame_read_us = 0;
+volatile LONG g_frame_main_us = 0;  // of those, on the main thread
+SRWLOCK g_bounce_lock = SRWLOCK_INIT;
+uint8_t* g_bounce = nullptr;  // page-aligned buffer for the unbuffered reads
+uint32_t g_bounce_size = 0;
+
+uint32_t qpc_us(const LARGE_INTEGER& a, const LARGE_INTEGER& b)
+{
+    return g_qpf.QuadPart ? (uint32_t)((b.QuadPart - a.QuadPart) * 1000000 / g_qpf.QuadPart) : 0;
+}
 
 void* __fastcall h_ptr(Reader* r, void*, uint32_t i);
 
@@ -443,6 +469,14 @@ bool pkg_open(Pkg* p)
             return false;
         }
     }
+    if (g_read_uncached) {
+        p->raw = CreateFileA(p->path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                             FILE_ATTRIBUTE_NORMAL | FILE_FLAG_NO_BUFFERING, nullptr);
+        if (p->raw == INVALID_HANDLE_VALUE) {
+            dsf_log("packages: %s: no unbuffered handle (error %lu); its reads are cached", p->path, GetLastError());
+            p->raw = nullptr;
+        }
+    }
     return true;
 }
 
@@ -493,6 +527,7 @@ uint32_t pkg_load_list(const char* base, const char* list)
         _snprintf_s(p->path, sizeof p->path, _TRUNCATE, "%s%s", base, end);
         if (!pkg_open(p)) {
             if (p->file && p->file != INVALID_HANDLE_VALUE) CloseHandle(p->file);
+            if (p->raw) CloseHandle(p->raw);
             memset(p, 0, sizeof *p);
             continue;
         }
@@ -519,27 +554,61 @@ void pkg_load_config()
     pkg_load_list(base, list);
 }
 
+// An unbuffered read (read_uncached) of n bytes at pos into buf: the 4 KiB
+// pages around it go through the page-aligned bounce buffer, as
+// FILE_FLAG_NO_BUFFERING needs aligned offsets, sizes and buffers (4 KiB is a
+// multiple of every sector size Windows supports). Returns the bytes of
+// [pos, pos + n) the file holds.
+bool pread_raw(HANDLE h, uint32_t pos, void* buf, uint32_t n, uint32_t* got)
+{
+    const uint32_t kPage = 0x1000;
+    uint32_t start = pos & ~(kPage - 1);
+    uint32_t span = (pos - start + n + kPage - 1) & ~(kPage - 1);
+    AcquireSRWLockExclusive(&g_bounce_lock);
+    if (g_bounce_size < span) {
+        if (g_bounce) VirtualFree(g_bounce, 0, MEM_RELEASE);
+        g_bounce = (uint8_t*)VirtualAlloc(nullptr, span, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        g_bounce_size = g_bounce ? span : 0;
+    }
+    uint32_t read = 0;
+    bool ok = g_bounce && pread(h, start, g_bounce, span, &read);
+    uint32_t have = read > pos - start ? read - (pos - start) : 0;
+    if (have > n) have = n;
+    if (ok) memcpy(buf, g_bounce + (pos - start), have);
+    ReleaseSRWLockExclusive(&g_bounce_lock);
+    if (got) *got = have;
+    return ok;
+}
+
 // Reads package entry e of p (offset relative to the package file) into buf:
 // size bytes, the caller's sector-aligned read size; what the file doesn't
-// hold is zeroed. Synchronous, on the plugin's own handle; timed for the log
-// (the read runs on the thread that polls the spooler). Returns bytes read.
+// hold is zeroed. Synchronous, on the plugin's own handle; timed for the log,
+// with the thread it runs on (read_log: every read). Returns bytes read.
 uint32_t pkg_read(Pkg* p, const Entry* e, void* buf, uint32_t size)
 {
-    LARGE_INTEGER t0, t1, freq;
+    LARGE_INTEGER t0, t1;
     QueryPerformanceCounter(&t0);
     uint32_t got = 0;
-    bool ok = pread(p->file, e->offset, buf, size, &got);
+    bool ok = p->raw ? pread_raw(p->raw, e->offset, buf, size, &got) : pread(p->file, e->offset, buf, size, &got);
     DWORD err = ok ? 0 : GetLastError();
     if (!ok || got < entry_span(e))
         dsf_log("packages: %u: read at %#x came short: %u of %u bytes, entry %u (error %lu)", p->id, e->offset, got,
                 size, entry_span(e), err);
     if (got < size) memset((uint8_t*)buf + got, 0, size - got);
     QueryPerformanceCounter(&t1);
-    QueryPerformanceFrequency(&freq);
-    uint32_t us = (uint32_t)((t1.QuadPart - t0.QuadPart) * 1000000 / freq.QuadPart);
+    uint32_t us = qpc_us(t0, t1);
     if (us > g_pkg_read_max_us) g_pkg_read_max_us = us;
     LONG n = InterlockedIncrement(&g_pkg_reads);
-    if (n <= 64 || us > 50000)
+    DWORD tid = GetCurrentThreadId();
+    bool main = tid == g_main_tid;
+    InterlockedIncrement(&g_frame_reads);
+    InterlockedExchangeAdd(&g_frame_read_us, (LONG)us);
+    if (main) InterlockedExchangeAdd(&g_frame_main_us, (LONG)us);
+    if (g_read_log)
+        dsf_log("pkg_read: id %u, %u bytes at %#x, %u.%03u ms, thread %lu (%s), at %u ms%s (read %ld)", p->id, got,
+                e->offset, us / 1000, us % 1000, tid, main ? "main" : "not main", qpc_us(g_qpc0, t0) / 1000,
+                p->raw ? ", unbuffered" : "", n);
+    else if (n <= 64 || us > 50000)
         dsf_log("packages: %u: %u bytes at %#x read from its package in %u.%03u ms (read %ld, slowest %u.%03u ms)",
                 p->id, got, e->offset, us / 1000, us % 1000, n, g_pkg_read_max_us / 1000, g_pkg_read_max_us % 1000);
     return got;
@@ -860,9 +929,123 @@ void __fastcall h_seek(Reader* r, void*, int pos)
     }
 }
 
+// ---- asynchronous package reads ([archive] async_reads) -------------------
+// The game reads a car's VEHC asynchronously: the slot (SceneModelType2) calls
+// read entry from FUN_00858870 (the call at 0x008588B7), sets its state to 2,
+// and from then on calls the root reader's poll (h_poll, 0x008FC0A0, from
+// SceneModelType2_Poll at 0x008590CC) each time it is updated, until the poll
+// answers 0; only then (state 3) does it parse the buffer. h_poll's state 0
+// asks FUN_008FB2D0 whether the reader's file read is still running; nothing
+// else calls FUN_008FB2D0 (its three calls are inside the vanilla poll, which
+// h_poll replaces), and nothing outside the reader's own functions touches the
+// reader's file (`xref disp 0x5600`, `xref call 0x8fb2a0`). So a package read
+// for that caller runs on a thread-pool thread, and h_poll answers busy for its
+// reader until it is done, as the game's own archive does. The data, the
+// listed ID included (pkg_set_ids), are in the buffer before the poll says 0.
+// Reads of package entries from any other caller stay synchronous.
+// One read is pending at most: every package entry is read through the
+// vehicle archive's root reader, into the shared spool buffer (one load at a
+// time, owner word 0x016DA7D0). A read entry, a close of that reader, or a
+// second read, waits for the pending one first, so it can't write into a
+// buffer the game has moved on with.
+const uint32_t kSlotReadReturn = 0x008588BC;  // after `call 0x8fbe90` in FUN_00858870
+bool g_async_reads = true;
+struct PendingRead {
+    Reader* volatile reader;  // nullptr: none
+    Pkg* pkg;
+    Entry entry;
+    uint8_t* buf;
+    uint32_t size;
+    uint32_t kind;
+    uint32_t polls;  // busy answers given so far
+    LARGE_INTEGER started;
+    HANDLE event;  // manual reset; set when the read is done (the only completion signal)
+};
+PendingRead g_pending = {};
+SRWLOCK g_pending_lock = SRWLOCK_INIT;
+volatile LONG g_async_count = 0;
+
+void CALLBACK pkg_read_work(PTP_CALLBACK_INSTANCE, void* ctx)
+{
+    PendingRead* q = (PendingRead*)ctx;
+    pkg_read(q->pkg, &q->entry, q->buf, q->size);
+    pkg_set_ids(q->pkg, q->kind, q->buf, q->entry.size);
+    // The last touch of q: once the event is seen set, pkg_settle clears it and
+    // pkg_read_async may reuse it for the next read.
+    SetEvent(q->event);
+}
+
+// Clears the pending read of r, if any, once it is done (wait: blocks until it
+// is). Returns false when r still has one running and wait is false.
+bool pkg_settle(Reader* r, bool wait, const char* why)
+{
+    if (!g_pending.reader) return true;  // fast path; set and cleared under the lock
+    AcquireSRWLockExclusive(&g_pending_lock);
+    if (g_pending.reader != r) {
+        ReleaseSRWLockExclusive(&g_pending_lock);
+        return true;
+    }
+    if (WaitForSingleObject(g_pending.event, 0) != WAIT_OBJECT_0) {
+        if (!wait) {
+            g_pending.polls++;
+            ReleaseSRWLockExclusive(&g_pending_lock);
+            return false;
+        }
+        WaitForSingleObject(g_pending.event, INFINITE);
+        if (g_read_log) dsf_log("pkg_read: %u waited for in %s", g_pending.pkg->id, why);
+    }
+    if (g_read_log) {
+        LARGE_INTEGER now;
+        QueryPerformanceCounter(&now);
+        dsf_log("pkg_read: %u done, %u ms after it started, %u busy polls (%s)", g_pending.pkg->id,
+                qpc_us(g_pending.started, now) / 1000, g_pending.polls, why);
+    }
+    g_pending.reader = nullptr;
+    ReleaseSRWLockExclusive(&g_pending_lock);
+    return true;
+}
+
+// Starts the read of package entry e into buf on a thread-pool thread; false
+// when it can't (the caller then reads synchronously).
+bool pkg_read_async(Reader* r, Pkg* p, uint32_t kind, const Entry* e, void* buf, uint32_t size)
+{
+    AcquireSRWLockExclusive(&g_pending_lock);
+    if (g_pending.reader) {  // another reader's (none is known to exist): don't queue behind it
+        ReleaseSRWLockExclusive(&g_pending_lock);
+        return false;
+    }
+    if (!g_pending.event) g_pending.event = CreateEventA(nullptr, TRUE, FALSE, nullptr);
+    bool ok = g_pending.event != nullptr;
+    if (ok) {
+        g_pending.pkg = p;
+        g_pending.entry = *e;
+        g_pending.buf = (uint8_t*)buf;
+        g_pending.size = size;
+        g_pending.kind = kind;
+        g_pending.polls = 0;
+        ResetEvent(g_pending.event);
+        QueryPerformanceCounter(&g_pending.started);
+        g_pending.reader = r;
+        ok = TrySubmitThreadpoolCallback(pkg_read_work, &g_pending, nullptr) != FALSE;
+        if (!ok) g_pending.reader = nullptr;
+    }
+    DWORD err = ok ? 0 : GetLastError();
+    ReleaseSRWLockExclusive(&g_pending_lock);
+    if (!ok) {
+        static volatile LONG warned = 0;
+        if (InterlockedExchange(&warned, 1) == 0)
+            dsf_log("packages: no thread-pool work item (error %lu); reads are synchronous", err);
+        return false;
+    }
+    if (InterlockedIncrement(&g_async_count) == 1)
+        dsf_log("packages: entries are read on a thread-pool thread; the slot's poll waits for them");
+    return true;
+}
+
 // 0x008FB620 (and its thunks 0x008FB9D0, destructor 0x008FBE80): close
 void __fastcall h_close(Reader* r, void*)
 {
+    pkg_settle(r, true, "close");
     switch ((uint32_t)r->mode) {
     case 0:
         for (uint32_t i = 0; i < r->count; i++)
@@ -948,19 +1131,25 @@ void __fastcall h_set_data(Reader* r, void*, uint32_t i, void* data, uint32_t si
 // 0x008FBE90: read entry i into buf; store == 1 keeps buf as its pointer
 void* __fastcall h_read_entry(Reader* r, void*, uint32_t i, void* buf, int store)
 {
+    pkg_settle(r, true, "read entry");
     uint32_t sector = sector_size();
     Entry* e = E(r, i);
     uint32_t size = align_up(entry_span(e), sector);
     uint32_t kind = 0;
     if (Pkg* p = pkg_of(r, i, &kind)) {
-        // Synchronous: the caller then polls the archive's own handle
-        // (h_poll state 0 -> 0x008FB2D0), which this read doesn't use, so the
-        // data must be in buf when this returns. Whole: this is the only path
-        // to an entry's bytes (seek and chain read are called only from the
-        // reader's own functions, which this module replaces), so the ID
-        // written here is the one the slot parses.
-        pkg_read(p, e, buf, size);
-        pkg_set_ids(p, kind, (uint8_t*)buf, e->size);
+        // Whole: this is the only path to an entry's bytes (seek and chain
+        // read are called only from the reader's own functions, which this
+        // module replaces), so the ID written here is the one the slot parses.
+        // For the slot's load (async_reads) the read runs on a thread-pool
+        // thread and h_poll reports busy until it is done; for every other
+        // caller, and if no work item can be queued, it is synchronous, so the
+        // data is in buf when this returns.
+        bool async = g_async_reads && _ReturnAddress() == (void*)(uintptr_t)kSlotReadReturn &&
+                     pkg_read_async(r, p, kind, e, buf, size);
+        if (!async) {
+            pkg_read(p, e, buf, size);
+            pkg_set_ids(p, kind, (uint8_t*)buf, e->size);
+        }
         if (store == 1) *P(r, i) = buf;
         return buf;
     }
@@ -982,6 +1171,7 @@ uint32_t __fastcall h_poll(Reader* r, void*)
     uint8_t result = 1;
     switch (r->state) {
     case 0:
+        if (!pkg_settle(r, false, "poll")) return 1;  // a package read still running (async_reads)
         return chain_busy(r, nullptr);
     case 1: {
         if (*g_busy) {
@@ -1352,8 +1542,10 @@ static bool patch_package_sites()
 // Drops every package (handles closed): no list, or the sites didn't patch.
 static void pkg_drop_all()
 {
-    for (uint32_t j = 0; j < g_pkg_count; j++)
+    for (uint32_t j = 0; j < g_pkg_count; j++) {
         if (g_pkgs[j].file && g_pkgs[j].file != INVALID_HANDLE_VALUE) CloseHandle(g_pkgs[j].file);
+        if (g_pkgs[j].raw) CloseHandle(g_pkgs[j].raw);
+    }
     g_pkg_count = 0;
     g_pkg_first = 0;
     g_veh_reader = nullptr;
@@ -1407,6 +1599,117 @@ static void patch_open_log()
     g_file_open = (FileOpen)(void*)t;
     if (patch_jmp(0x00857370, (void*)h_file_open, 5, expect))
         dsf_log("archive: 00857370 file open -> %p (open_log: every name is logged, up to 4000)", (void*)h_file_open);
+}
+
+// ---- main loop frame times ([archive] read_log, off by default) -----------
+// FUN_0085DAD0 is the game window's message pump: PeekMessageA, GetMessageA,
+// TranslateMessage and DispatchMessageA until the queue is empty (thiscall,
+// two stack arguments, `ret 8`). Nothing calls it directly; it is slot 9 of the
+// vtable at 0x00E37218 (0x00E3723C holds 0x0085DAD0). Windows hands a window's
+// messages only to the thread that created it, so the thread that runs this
+// pump is the window's thread, the game's main thread. The interval between
+// two calls is one turn of the main loop, so a read on the main thread that
+// stalls it lengthens that interval by the read's time.
+// h_pump records the thread, a histogram of the intervals (0.1 ms bins), a
+// summary every 10 s, every interval with a package read in it (with the one
+// before, for comparison) and the first 200 intervals of 50 ms or more.
+typedef uint32_t(__fastcall* Pump)(void* self, void*, void* a, void* b);
+const uint32_t kPumpSlot = 0x00E3723C;
+const uint32_t kPumpFn = 0x0085DAD0;
+const uint32_t kBins = 2000;  // 0.1 ms each, up to 200 ms; longer ones in the last
+uint32_t g_frame_bins[kBins];
+uint32_t g_frame_count = 0;
+uint32_t g_frame_max_us = 0;
+LARGE_INTEGER g_frame_last = {};
+LARGE_INTEGER g_frame_period = {};
+uint32_t g_frame_prev_us = 0;
+LONG g_frame_spikes = 0;
+bool g_pump_other_logged = false;
+
+uint32_t frame_quantile(uint32_t q_permille)
+{
+    uint64_t want = ((uint64_t)g_frame_count * q_permille + 999) / 1000, seen = 0;
+    for (uint32_t b = 0; b < kBins; b++) {
+        seen += g_frame_bins[b];
+        if (seen >= want && want) return b * 100 + 50;  // the bin's centre, in us
+    }
+    return 0;
+}
+
+void frame_summary(const LARGE_INTEGER& now)
+{
+    uint32_t over25 = 0, over33 = 0, over50 = 0;
+    for (uint32_t b = 250; b < kBins; b++) {
+        over25 += g_frame_bins[b];
+        if (b >= 333) over33 += g_frame_bins[b];
+        if (b >= 500) over50 += g_frame_bins[b];
+    }
+    uint32_t p50 = frame_quantile(500), p95 = frame_quantile(950), p99 = frame_quantile(990);
+    dsf_log("frames: %u in %u ms (at %u ms): median %u.%u ms, p95 %u.%u, p99 %u.%u, max %u.%03u; "
+            "%u of 25 ms or more, %u of 33.3, %u of 50; %ld package reads so far",
+            g_frame_count, qpc_us(g_frame_period, now) / 1000, qpc_us(g_qpc0, now) / 1000, p50 / 1000,
+            p50 % 1000 / 100, p95 / 1000, p95 % 1000 / 100, p99 / 1000, p99 % 1000 / 100, g_frame_max_us / 1000,
+            g_frame_max_us % 1000, over25, over33, over50, g_pkg_reads);
+    memset(g_frame_bins, 0, sizeof g_frame_bins);
+    g_frame_count = 0;
+    g_frame_max_us = 0;
+    g_frame_period = now;
+}
+
+uint32_t __fastcall h_pump(void* self, void* edx, void* a, void* b)
+{
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    DWORD tid = GetCurrentThreadId();
+    if (!g_main_tid) {
+        g_main_tid = tid;
+        dsf_log("frames: main thread %lu (the window message pump, FUN_0085DAD0)", tid);
+    } else if (tid != g_main_tid && !g_pump_other_logged) {
+        g_pump_other_logged = true;
+        dsf_log("frames: the pump also runs on thread %lu (main %lu)", tid, g_main_tid);
+    }
+    if (tid == g_main_tid) {
+        if (g_frame_last.QuadPart) {
+            uint32_t us = qpc_us(g_frame_last, now);
+            uint32_t bin = us / 100;
+            g_frame_bins[bin < kBins ? bin : kBins - 1]++;
+            g_frame_count++;
+            if (us > g_frame_max_us) g_frame_max_us = us;
+            LONG reads = InterlockedExchange(&g_frame_reads, 0);
+            LONG read_us = InterlockedExchange(&g_frame_read_us, 0);
+            LONG main_us = InterlockedExchange(&g_frame_main_us, 0);
+            if (reads)
+                dsf_log("frame: %u.%03u ms with %ld package reads (%ld.%03ld ms, %ld.%03ld ms of them on the main "
+                        "thread); the frame before %u.%03u ms",
+                        us / 1000, us % 1000, reads, read_us / 1000, read_us % 1000, main_us / 1000, main_us % 1000,
+                        g_frame_prev_us / 1000, g_frame_prev_us % 1000);
+            else if (us >= 50000 && g_frame_spikes++ < 200)
+                dsf_log("frame: %u.%03u ms, no package read (at %u ms)", us / 1000, us % 1000,
+                        qpc_us(g_qpc0, now) / 1000);
+            g_frame_prev_us = us;
+        } else {
+            g_frame_period = now;
+        }
+        if (qpc_us(g_frame_period, now) >= 10000000) frame_summary(now);
+        g_frame_last = now;
+    }
+    uint32_t r = ((Pump)(uintptr_t)kPumpFn)(self, edx, a, b);
+    // The pump's own time (messages) belongs to the frame too; the next
+    // interval starts at the call, so nothing is lost.
+    return r;
+}
+
+void patch_frame_log()
+{
+    uint32_t want = kPumpFn;
+    if (!check_bytes(kPumpSlot, &want, 4)) {
+        dsf_log("archive: 00E3723C is not the message pump's vtable slot; no frame times");
+        return;
+    }
+    void* target = (void*)h_pump;
+    if (patch_bytes(kPumpSlot, &target, 4, &want))
+        dsf_log("archive: 00E3723C message pump (FUN_0085DAD0) -> %p: frame times and the main thread are logged",
+                target);
 }
 
 // ---- file redirection ([archive] packages: the manager's generated files) --
@@ -1546,6 +1849,11 @@ void mod_archive_init()
     if (max_entries < (int)kInline) max_entries = kInline;
     if (max_entries > 1 << 20) max_entries = 1 << 20;
     g_max_entries = (uint32_t)max_entries;
+    QueryPerformanceFrequency(&g_qpf);
+    QueryPerformanceCounter(&g_qpc0);
+    g_read_log = cfg_bool("archive", "read_log", false);
+    g_read_uncached = cfg_bool("archive", "read_uncached", false);
+    g_async_reads = cfg_bool("archive", "async_reads", true);
     bool readers = patch_readers();
     if (cfg_bool("archive", "spool_lists", true)) patch_spool_lists();
     if (cfg_bool("archive", "packages", false)) {
@@ -1556,6 +1864,7 @@ void mod_archive_init()
         patch_redirects();
     }
     if (cfg_bool("archive", "open_log", false)) patch_open_log();
+    if (g_read_log) patch_frame_log();
 
     // Files past 2 GiB. The file layer's seek (0x0085A970) clamps a position
     // with the sign bit set to 0 (`CMP [ECX+0x30],0; JGE`), so every entry of
@@ -1803,6 +2112,33 @@ void st_archive(uint32_t base)
     memset(buf, 0xAA, sizeof buf);
     got = pkg_read(p, &far_e, buf, 0x800);
     ST_CHECK(got == 0x80 && buf[0x80] == 0 && buf[0x7FF] == 0);
+    // The same read without the system cache (read_uncached): through the bounce buffer.
+    p->raw = CreateFileA(p->path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                         FILE_ATTRIBUTE_NORMAL | FILE_FLAG_NO_BUFFERING, nullptr);
+    ST_CHECK(p->raw != INVALID_HANDLE_VALUE);
+    if (p->raw == INVALID_HANDLE_VALUE) p->raw = nullptr;
+    memset(buf, 0xAA, sizeof buf);
+    got = pkg_read(p, e, buf, 0x800);
+    ST_CHECK(got == 0x300 && buf[0x7FF] == 0 && *(uint32_t*)(buf + 0x20) == (0xC0DE0000u | (1 * 4 + 1)));
+    if (p->raw) CloseHandle(p->raw);
+    p->raw = nullptr;
+    // An asynchronous read: pending until the work item is done, then settled once.
+    memset(buf, 0xAA, sizeof buf);
+    ST_CHECK(pkg_read_async(r, p, 1, e, buf, 0x800));
+    ST_CHECK(g_pending.reader == r);
+    ST_CHECK(!pkg_read_async(&other, p, 1, e, buf, 0x800));  // one pending read at most
+    bool settled = false;
+    for (int t = 0; t < 2000 && !settled; t++) {
+        settled = pkg_settle(r, false, "test");
+        if (!settled) Sleep(1);
+    }
+    ST_CHECK(settled && g_pending.reader == nullptr);
+    ST_CHECK(*(uint32_t*)buf == kCHNK && *(uint32_t*)(buf + 0x20) == (0xC0DE0000u | (1 * 4 + 1)) && buf[0x7FF] == 0);
+    ST_CHECK(pkg_settle(r, false, "test"));  // nothing pending: done at once
+    // A read entry (or a close) waits for the pending read first.
+    memset(buf, 0xAA, sizeof buf);
+    ST_CHECK(pkg_read_async(r, p, 1, e, buf, 0x800));
+    ST_CHECK(pkg_settle(r, true, "test") && g_pending.reader == nullptr && buf[0x80] == 'P');
 
     // SSLP: 266 is in the archive (base, +1000, +2000); slot buffers 0x50/0x50/0x50.
     static uint8_t sslp[0x1C + 6 * 4];

@@ -73,13 +73,13 @@ small sites. Notes on the risks the brief named:
 
 - **Async I/O.** The slot polls the archive's own handle after `read entry`
   (FUN_008FB2D0). A package read on another handle would look complete
-  before it is, so the plugin reads synchronously (ReadFile with an offset,
-  plugin-owned handle) before returning; the data is in the buffer when
-  the poll runs. Cost: one 1 to 2 MiB read per VEHC load on the thread that
-  polls the spooler (likely the main thread): a hitch of a few ms from an SSD
-  or the cache. Phase 1 measures it. Should it matter, hook FUN_008FB2D0
-  (5 bytes `8B 41 04 85 C0`): keep the redirected read pending per reader and
-  report busy until it completes.
+  before it is, so the plugin first read synchronously (ReadFile with an
+  offset, plugin-owned handle) before returning, which put the data in the
+  buffer before the poll ran. That cost one 1 to 2 MiB read per VEHC load,
+  measured on the main thread (one took 80 ms in a VM). The read is now
+  asynchronous: it runs on a thread-pool thread and the poll, which the
+  plugin already replaces, reports busy until it is done ("Asynchronous
+  reads" below).
 - **Streaming.** VEHCs are read whole into the shared buffer (one at a time:
   the owner word 0x016DA7D0). SSIC's MDXN streams through nested readers
   (`spool-limits.md`), but SSIC stays in the vanilla archive, so nothing
@@ -158,11 +158,12 @@ change is not measured.
 | --- | --- | --- | --- |
 | 0x005A13C4 (in FUN_005A11E0) | `E8 67 B1 35 00` (call 0x008FC530) | `call h_spool_open` | calls the original; remembers the reader whose file name ends in `dngvehicles.sp` |
 | `h_poll` state 3 (0x008FC0A0, already replaced) | – | `pkg_inject` | appends 3 entries per package to that reader's root table (side table past 1100) |
-| `h_read_entry` (0x008FBE90) and `h_name` (0x008FB770), already replaced | – | branch | for package entries, a synchronous read from the package file; for a full VEHC, the listed ID written into its four ID fields (`pkg_set_ids`) |
+| `h_read_entry` (0x008FBE90) and `h_name` (0x008FB770), already replaced | – | branch | for package entries, a read from the package file (for the slot's load on a thread-pool thread, `h_poll` busy until done; "Asynchronous reads"); for a full VEHC, the listed ID written into its four ID fields (`pkg_set_ids`) |
 | `h_seek` (0x008FB5E0), already replaced | – | log | a nested reader over a package entry (not supported) |
 | 0x005A0B50 | `8B 44 24 08 56` | `jmp h_sslp_load` | an SSLP copy with 3 records per package (clash and NONR checks) |
 | 0x0086C630 | `8B 44 24 08 56` | `jmp h_vsct_load` | a VSCT copy with the packages' records; sets `[Engine+0x780]+0x2C` as the original does |
 | 0x00857370 | `A1 C4 D1 43 01` | `jmp h_file_open` (trampoline back to 0x00857375) | `[archive] open_log` logs every name (phase 1); phase 3 adds the redirection for generated gui.sp / Fonts.fchunk / global.fchunk |
+| 0x00E3723C (vtable slot) | `0x0085DAD0` | `h_pump` | `[archive] read_log` only: the main thread and the main loop's frame times ("Asynchronous reads") |
 
 All sites are checked byte for byte before writing, and are all-or-nothing,
 as for the other modules. Without the reader patches there are no packages.
@@ -272,9 +273,9 @@ three sites: a changed byte at 0x0086C630 leaves all three vanilla.
 around ReadFile): 1.5 to 2.4 MB a read. Run A, 14 reads: 0.37 to 7.9 ms,
 median 3.3 ms. Run B, 8 reads of the same files: 0.31 to 0.49 ms (in the
 cache by then). A first read from a hard disk would take longer (2 MB at
-100 MB/s is 20 ms, more than a frame). Not made async here: the runs
-showed no hitch, and the hook it needs (FUN_008FB2D0, `8B 41 04 85 C0`)
-waits for a measurement on a real disk.
+100 MB/s is 20 ms, more than a frame). Not made async here; since made
+async ("Asynchronous reads" below), after a run showed the reads on the
+main thread and one of 80 ms.
 
 **File names through FUN_00857370** (`[archive] open_log=1`): 47 opens in
 the run, among them `install\gui.sp` (early) and `Install\GUI.sp` (the
@@ -762,6 +763,99 @@ encryption checked, no ZIP64 (one car is far below 4 GiB). The manager
 would still unpack the images (car_gui reads them) and would check the
 member's checksum in place of the file's.
 
+## Asynchronous reads (confirmed-runtime, 2026-11-04, #489)
+
+**Which thread read the packages.** The main thread, every time. The
+main thread is the one that runs the game window's message pump,
+FUN_0085DAD0: PeekMessageA, GetMessageA, TranslateMessage and
+DispatchMessageA until the queue is empty. It is `thiscall` with two stack
+arguments (`ret 8`) and has no direct caller. It is slot 9 of the vtable at
+0x00E37218 (0x00E3723C holds 0x0085DAD0). Windows delivers a window's
+messages only to the thread that created the window, so that thread is the
+window's thread. With `[archive] read_log=1` the plugin points the slot at
+`h_pump`, takes the thread ID from its first call, and logs the interval
+between calls as the main loop's frame time. The pump is called once per
+frame: 566 to 600 calls per 10 s at the 60 Hz the VMs run at, median
+16.6 ms while the world is quiet. Each package read logs its thread, time
+and size.
+
+**Runs** (`run-series.ps1 -Vm`, vanilla archive, `-Asi` with `read_log=1`
+and `read_uncached=1`, 24 packages from `out/build-pkg` laid over the run
+by `-Overlay`, `-ProbeIds '1,6,13,22,1' -Traffic`). `read_uncached`
+reads through a second handle opened with FILE_FLAG_NO_BUFFERING. A test
+run copies the packages into its folder just before the game starts, so
+they are in the guest's cache and a VM reboot would not make them cold.
+The unbuffered handle goes to the disk on every read, as a first read
+after a reboot would. The disk is the VM's virtual disk; the host may
+still cache it.
+
+| Run | Reads | Thread | Read time: median, p95, max | On the main thread |
+| --- | --- | --- | --- | --- |
+| `vm1-20261104-184809` (sync, `-TrafficIds`) | 17 | all main | 3.24, 4.30, 4.49 ms | 55.3 ms in all |
+| `vm1-20261104-185259` (sync, `async_reads=0`) | 14 | all main | 3.60, 5.32, **80.3** ms | 128.7 ms in all |
+| `vm2-20261104-185415` (async) | 16 | all one pool thread | 3.99, 7.26, 15.0 ms | 0 |
+
+Reads are 1.5 to 2.2 MB, one per VEHC (full, interior, exterior), and come
+one at a time: at most 2 within 100 ms, the three entries of a car 0.1 to
+1 s apart. In the sync run, the 80.3 ms read (ID 22's exterior VEHC) fell in
+a 94.5 ms frame, after a 26.4 ms frame: the game stopped for about five
+frames. The VM's frame times are noisy (p95 30 to 45 ms while traffic
+runs, from the VM itself; spikes of 50 to 1300 ms happen without any
+package read, mostly during the world load). So most single reads of 3 to
+5 ms don't stand out from that noise, but a slow one does. The read time
+depends on the disk: the same 2 MB took 0.3 to 0.5 ms from the cache
+(phase 1, run B) and 80 ms here once. A hard disk takes about 20 ms or
+more by its transfer rate alone. The `-TrafficIds` run ended with the
+traffic spooler's known INT3 (`in-game-tests.md`, "Don't put a probe ID in
+`-TrafficIds`"): `register.lua` had already put ID 22, the probe's mission
+car, into traffic, so the harness's request listed it. The reads above all
+came before that.
+
+**The change** (`[archive] async_reads`, on by default). The game reads its
+own archive asynchronously, so the plugin now reads packages the same way.
+A package read for the slot's load runs on a thread-pool thread
+(`TrySubmitThreadpoolCallback`). The slot's load is the call at 0x008588B7
+in FUN_00858870, recognised by its return address 0x008588BC. The slot sets
+its state to 2 and calls the root reader's poll (`h_poll`, from
+SceneModelType2_Poll at 0x008590CC) on each update until it answers 0, and
+parses the buffer only then (state 3). `h_poll` state 0 answers busy while
+the read runs. Once the read is done, it asks FUN_008FB2D0 as before.
+FUN_008FB2D0 needs no hook of its own: its three calls are all inside the
+vanilla poll, which `h_poll` replaces. Nothing outside the reader's own
+functions touches the reader's file (`xref disp 0x5600`, `xref call
+0x8fb2a0`, `0x8fb080`). The work item runs `pkg_read` and `pkg_set_ids`,
+so the buffer holds the data and the listed ID before the poll says done.
+At most one read is pending: every package entry goes through the vehicle
+root reader into the shared spool buffer. A read entry or a close of that
+reader, or a second read, first waits for the pending one, so a load the
+game dropped can't write into a buffer it has moved on with. A read from
+any other caller, and any read when no work item can be queued, stays
+synchronous.
+
+**Checked** in `vm2-20261104-185415`: all 16 reads on pool thread 2484, 0 ms
+on the main thread (6660). Each load finished 8 to 38 ms after it started:
+the poll answered busy 0 to 4 times, so the car arrives a frame or two
+later. That is the wait the vanilla archive has too. Every probe car
+spawned and was driven, chase and cockpit (`observe-03.png`, the One-77's
+cockpit; `observe-06.png`, the Reventón). ID 1 was respawned after its
+release (its full and exterior VEHC read again). Traffic loaded IDs 16 and
+9 from packages while the player drove. The model ID was written as before
+(`packages: 1: VEHC 0 read whole ... model ID 65 -> 1 in 4 fields`).
+Offline (`build.ps1 -Test`): an async read is pending until its work item
+is done, a second one for another reader is refused, a read entry or a
+close waits for it, and the unbuffered read matches the buffered one.
+**Garage** (`vm1-20261104-185829`, async, the garage test's Lua with IDs
+1, 3, 6, 12 and 13 marked owned, garage 1 opened by menu keys): the game
+picked ID 14 (Fiat 131 Abarth, a package) from the garage's car list and the
+player drove it (`[dsfforza.garage] player drives model 14`; `menu-09.png`
+the confirm screen with its picture, `menu-12.png` the car on the street with
+its badge and name). Its three VEHC were read on a pool thread in 4.7 to
+7.3 ms, each done 10 to 13 ms after it started.
+
+Not covered: a Shift preload (it goes through the same request path,
+FUN_005A7860, and the same slot load, so it takes the same async read), and
+a real hard disk.
+
 ## Phased plan (PRs)
 
 1. **Plugin loader** (the spike's code, proven for one car): build and offline test
@@ -788,7 +882,5 @@ member's checksum in place of the file's.
 
 ## Open
 
-- The sync read on a slow disk (a first read from a hard disk); async
-  through FUN_008FB2D0 if it shows.
 - A runtime string source for `"ID:n"` (FUN_00835250/FUN_008352B0) and
   runtime glyph pages, which would remove the generated GUI files.
