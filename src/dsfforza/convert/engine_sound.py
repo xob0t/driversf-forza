@@ -526,12 +526,17 @@ def nearest_tuning(car: str, names: list[str]) -> str | None:
     return best[1] if best else None
 
 
-def _engine_tuning(car: str, game: str, isos: list[Path]):
+def _engine_tuning(car: str, game: str, isos: list[Path], package: Path | None = None):
     """(game, sources, Tuning, EngineTuning, substitute note) for a car: its own ET
     file on its game's discs, else on the other game's (CHE_Corvette_60 is an FM4
     car whose ET is on the FH1 disc), else the nearest_tuning of the same make and
     model on its game's, then the other game's discs. The sources of the chosen
-    game stay open (the caller closes them). Raises LookupError."""
+    game stay open (the caller closes them). Raises LookupError.
+
+    package: a DLC car's own pack file. Its game's sources are then the pack and the
+    discs, the pack first, so the pack's ET, HT and banks win over files of the same
+    name on the discs, and the HT files and banks the pack doesn't carry are the
+    discs' (research/engine-sound.md, "FM4 DLC cars")."""
     from dsfforza.formats import forza_audio as fa
 
     order = [game] + [g for g in ("fh1", "fm4") if g != game]
@@ -541,6 +546,8 @@ def _engine_tuning(car: str, game: str, isos: list[Path]):
         if g not in loaded:
             discs = isos_for(g, isos)
             sources = [fa.Source(str(p)) for p in discs]
+            if package is not None and g == game and sources:
+                sources.insert(0, fa.Source(str(package)))
             loaded[g] = (sources, fa.Tuning(sources) if sources else None)
         return loaded[g]
 
@@ -575,19 +582,38 @@ def _engine_tuning(car: str, game: str, isos: list[Path]):
                     s.close()
 
 
+def package_content_id(package: Path) -> str:
+    """A pack's STFS content ID: the header's SHA-1 at 0x32C, in hex. It changes with the
+    pack's content, and the Xbox names the pack file by it (all 16 of the user's FM4 DLC
+    packs are named <content ID>4D), so it tells two packs apart whatever their file names."""
+    with package.open("rb") as stream:
+        stream.seek(0x32C)
+        return stream.read(20).hex().upper()
+
+
 def forza_engine(
-    car: str, game: str, isos: list[Path], cache: Path, emissions: list[str] | None = None, vgmstream: str | None = None
+    car: str,
+    game: str,
+    isos: list[Path],
+    cache: Path,
+    emissions: list[str] | None = None,
+    vgmstream: str | None = None,
+    package: Path | str | None = None,
 ) -> dict:
     """Idle, redline and the decoded L0 loops of a Forza car's emissions (default:
-    every emission its ET file names). Raises LookupError when the car's audio
-    can't be resolved."""
+    every emission its ET file names). package: a DLC car's own pack file (its
+    forza_roster.Source.package), read before the discs; the banks taken from it are
+    cached apart, under <cache>/<game>/dlc/<pack content ID>/. Raises LookupError when
+    the car's audio can't be resolved."""
     from dsfforza.formats import forza_audio as fa
 
     game = game.lower()
     isos = [Path(p) for p in isos]
+    package = Path(package) if package else None
     if not isos_for(game, isos):
         raise LookupError(f"no {game.upper()} disc images")
-    game, sources, tuning, et, substitute = _engine_tuning(car, game, isos)
+    game, sources, tuning, et, substitute = _engine_tuning(car, game, isos, package)
+    pack = sources[0] if package is not None and sources and sources[0].spec == str(package) else None
     try:
         out = {
             "idle": float(et.settings.get("audio_rpm_idle", 0)),
@@ -612,15 +638,17 @@ def forza_engine(
             except KeyError as error:
                 out["missing"][emission] = str(error).strip("'\"")
                 continue
-            hits = [f for s in sources for f in s.find_name(ht.bank) if fa.BANK_DIR in f.path.lower()]
+            hits = [(s, f) for s in sources for f in s.find_name(ht.bank) if fa.BANK_DIR in f.path.lower()]
             if not hits:
-                out["missing"][emission] = f"bank {ht.bank} not on the {game.upper()} discs"
+                where = "in its pack or " if pack is not None else ""
+                out["missing"][emission] = f"bank {ht.bank} not {where}on the {game.upper()} discs"
                 continue
-            fsb_path = cache / game / ht.bank
+            folder = cache / game / "dlc" / package_content_id(package) if hits[0][0] is pack else cache / game
+            fsb_path = folder / ht.bank
             if not fsb_path.is_file():
-                write_atomic(fsb_path, hits[0].read())
+                write_atomic(fsb_path, hits[0][1].read())
             fsb = fa.parse_fsb(fsb_path.read_bytes())
-            wavs = _decoded(fsb_path, fsb, cache / game / Path(ht.bank).stem, vgm)
+            wavs = _decoded(fsb_path, fsb, folder / Path(ht.bank).stem, vgm)
             by_index = {int(w.name.split("_", 1)[0]): w for w in wavs}
             group = EMISSION_GROUP[emission]
             loops = []
@@ -1555,6 +1583,7 @@ def main(argv: list[str] | None = None) -> None:
     c.add_argument(
         "--iso", type=Path, action="append", help="Forza disc images, any file names (default: assets/*.iso)"
     )
+    c.add_argument("--package", type=Path, help="a DLC car's own pack file (FM4 DLC), read before the discs")
     c.add_argument("--cache", type=Path, default=CACHE)
     c.add_argument(
         "--set-a",
@@ -1589,7 +1618,7 @@ def main(argv: list[str] | None = None) -> None:
 
         sbak, vsvh = vanilla_sound(args.dsf, args.host)
         isos = args.iso or default_images()
-        forza = forza_engine(args.car, args.game, isos, args.cache)
+        forza = forza_engine(args.car, args.game, isos, args.cache, package=args.package)
         reserved = vanilla_index(args.dsf)["reserved"]
         sound = build_sound(
             sbak,
