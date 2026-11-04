@@ -46,7 +46,9 @@ save flags of IDs 304+ in a side file, so every car can be in the garage. Cars
 get every free ID in order: 1..61, the 92 IDs in 62..303 the vanilla archive
 leaves unused, then --first-id up; cars that won't fit a maker group get a note.
 
-Outputs in --out DIR: dngvehicles.sp, dngvehicles.json (port_car's manifest
+Outputs in --out DIR: dngvehicles.sp (only when it fits in one CHNK, below 4 GiB,
+and without --no-archive; else dngvehicles.plan.json, the merge that lint reads in
+memory: research/batch.md, "Builds past 4 GiB"), dngvehicles.json (port_car's manifest
 format, plus "batch": failures and timings), dngvehicles.lua (the
 dsfforza\\ported.lua for register.lua), batch-report.json (per car its
 engine sound: Forza source banks, loops used, pitch ranges, SBAK size, or why
@@ -1043,15 +1045,24 @@ class MultiStream:
 
 
 def merge(
-    dsf: Path, out: Path, results: list[dict], work: Path, log=print, root_limit: int = ENTRY_LIMIT
+    dsf: Path,
+    out: Path,
+    results: list[dict],
+    work: Path,
+    log=print,
+    root_limit: int = ENTRY_LIMIT,
+    *,
+    write: bool = True,
+    info: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Register every built car into a copy of the vanilla archive. Returns (entries
     of the manifest's "cars", failures found here). Cars that define a resource or
     MODL part UID another vehicle defines too are left out (cause "UID clash") and
-    the rest are registered again, so one clash doesn't fail the whole batch."""
+    the rest are registered again, so one clash doesn't fail the whole batch. `write`
+    and `info`: as register_cars (the archive is written only when it fits in a CHNK)."""
     failed: list[dict] = []
     while True:
-        cars, found, clashing = register_cars(dsf, out, results, work, log, root_limit)
+        cars, found, clashing = register_cars(dsf, out, results, work, log, root_limit, write=write, info=info)
         failed += found
         if not clashing:
             return cars, failed
@@ -1073,15 +1084,28 @@ def merge(
 
 
 def register_cars(
-    dsf: Path, out: Path, results: list[dict], work: Path, log=print, root_limit: int = ENTRY_LIMIT
+    dsf: Path,
+    out: Path,
+    results: list[dict],
+    work: Path,
+    log=print,
+    root_limit: int = ENTRY_LIMIT,
+    *,
+    write: bool = True,
+    info: dict | None = None,
 ) -> tuple[list[dict], list[dict], dict[str, list[str]]]:
     """One merge pass: (manifest "cars", failures, {media: clashing UIDs}). The
-    archive is written only when no car clashes."""
+    archive is written only when no car clashes, `write` is set and it fits in one CHNK
+    (chnk.SIZE_LIMIT: its sizes and offsets are u32); otherwise `out` is removed (an
+    earlier build's would not match). `info` (a dict) gets "written" (whether it was),
+    "total" (the archive's size as laid out) and "plan" (merged_view's cars: what the
+    registered cars were merged from, in order)."""
     from dsfforza.build import clone_vehicle, port_car
-    from dsfforza.formats.chnk import read_chunk, write_chunk
+    from dsfforza.formats.chnk import read_chunk
 
     stream = MultiStream(dsf)
     failed = []
+    plan = []
     try:
         root = read_chunk(stream, 0)
         entries = root.entries
@@ -1101,6 +1125,7 @@ def register_cars(
                 failed.append({**r, "ok": False, "cause": "merge", "error": "car chunk is not three VEHC entries"})
                 continue
             new_id = r.get("new_id", r["spool_id"])
+            chunk_id = r["spool_id"]  # the ID the car's chunk holds
             if new_id != r["spool_id"]:
                 # The ID lives only in VSVH, VO3D, SPID and UPVH of the full entry (clone_vehicle).
                 clone_vehicle.patch_ids(stream, clones[0], r["spool_id"], new_id)
@@ -1126,6 +1151,7 @@ def register_cars(
                 continue
             clone_vehicle.register_clones(stream, entries, clones, r["host"], r["spool_id"])
             cars.append(r["entry"])
+            plan.append({"chunk": str(chunk_path), "chunk_id": chunk_id, "spool_id": r["spool_id"], "host": r["host"]})
         records = {s: i for s, i, _ in clone_vehicle.sslp_records(stream, entries)}
         for c in cars:
             c["vehc"] = [records[c["spool_id"] + k] for k in clone_vehicle.KIND_OFFSETS]
@@ -1140,24 +1166,160 @@ def register_cars(
                     if any(i in clashes for i in c["vehc"])
                 },
             )
-        out.parent.mkdir(parents=True, exist_ok=True)
-        temp = out.with_name(out.name + ".tmp")
-        try:
-            with temp.open("wb") as handle:
-                write_chunk(handle, stream, entries, root.version)
-            Path(temp).replace(out)
-        finally:
-            temp.unlink(missing_ok=True)  # a failed write leaves no 1-2 GB partial copy behind
-        size = out.stat().st_size
-        if size >= 1 << 31:
-            # The vanilla file layer clamps seek positions of 2 GiB and up to 0 (spool-limits.md).
-            log(
-                f"note: {out.name} is {size / 2**30:.2f} GiB; past 2 GiB it needs dsfforza.asi "
-                f"[archive] large_files=1 (the default)"
-            )
+        write_merged(out, stream, entries, root.version, len(cars), log, write=write, info=info, plan=plan)
     finally:
         stream.close()
     return cars, failed, {}
+
+
+def write_merged(
+    out: Path, stream, entries: list, version: int, count: int, log=print, *, write: bool, info, plan: list
+) -> None:
+    """register_cars' last step: write the merged archive when `write` is set and it fits in one
+    CHNK, else remove `out` and say why (see register_cars)."""
+    from dsfforza.formats.chnk import SIZE_LIMIT, layout, write_chunk
+
+    memo: dict = {}
+    total = layout(entries, memo)[0]
+    if info is not None:
+        info.update(written=False, total=total, plan=plan)
+    if not write or total > SIZE_LIMIT:
+        out.unlink(missing_ok=True)  # an earlier build's archive doesn't hold these cars
+        why = (
+            "--no-archive"
+            if total <= SIZE_LIMIT
+            else f"{count} cars make it {total / 2**30:.2f} GiB, and a CHNK's sizes and offsets are u32 (at most 4 GiB)"
+        )
+        log(
+            f"note: {out.name} not written ({why}). The car packages don't need it: lint reads the cars "
+            f"merged in memory ({MERGE_PLAN}), the garage pictures render from smaller archives ({SHARDS}/)"
+        )
+        return
+    out.parent.mkdir(parents=True, exist_ok=True)
+    temp = out.with_name(out.name + ".tmp")
+    try:
+        with temp.open("wb") as handle:
+            write_chunk(handle, stream, entries, version, memo)
+        Path(temp).replace(out)
+    finally:
+        temp.unlink(missing_ok=True)  # a failed write leaves no 1-2 GB partial copy behind
+    if info is not None:
+        info["written"] = True
+    size = out.stat().st_size
+    if size >= 1 << 31:
+        # The vanilla file layer clamps seek positions of 2 GiB and up to 0 (spool-limits.md).
+        log(
+            f"note: {out.name} is {size / 2**30:.2f} GiB; past 2 GiB it needs dsfforza.asi "
+            f"[archive] large_files=1 (the default)"
+        )
+
+
+MERGE_PLAN = "dngvehicles.plan.json"  # <build>/: what lint merges in memory when the archive isn't written
+SHARDS = "shards"  # <build>/shards/: the garage renders' archives then (removed after the GUI step)
+
+
+def merged_view(dsf: Path, plan: list[dict]) -> tuple[MultiStream, list]:
+    """(stream, root entries) of the merged archive as register_cars lays it out, in
+    memory: the vanilla archive and each car of `plan` (register_cars' info["plan"]:
+    its chunk file, the ID the chunk holds, its spool ID and host) registered in that
+    order, as register_cars registers them. Readers that go through
+    clone_vehicle.read_leaf or vehicle_mesh.payload (upvh lint) see what the archive
+    would hold; nothing is written, so there is no size limit. The caller closes the
+    stream."""
+    from dsfforza.build import clone_vehicle
+    from dsfforza.formats.chnk import read_chunk
+
+    stream = MultiStream(dsf)
+    try:
+        entries = read_chunk(stream, 0).entries
+        for car in plan:
+            base = stream.add(Path(car["chunk"]))
+            clones = read_chunk(stream, base).entries
+            if car["chunk_id"] != car["spool_id"]:
+                clone_vehicle.patch_ids(stream, clones[0], car["chunk_id"], car["spool_id"])
+            clone_vehicle.register_clones(stream, entries, clones, car["host"], car["spool_id"])
+    except BaseException:
+        stream.close()
+        raise
+    return stream, entries
+
+
+def write_plan(path: Path, dsf: Path, plan: list[dict]) -> Path:
+    """The merge plan `upvh lint-many --plan` reads (merged_view's arguments)."""
+    path.write_text(json.dumps({"vanilla": str(dsf), "cars": plan}, indent=1) + "\n", encoding="utf-8")
+    return path
+
+
+def read_plan(path: Path) -> tuple[Path, list[dict]]:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    return Path(data["vanilla"]), data["cars"]
+
+
+class Shards:
+    """Archives of the vanilla one plus some of the cars, each within one CHNK
+    (chnk.SIZE_LIMIT), for the garage renders when the merged archive isn't written:
+    called with the cars gui_assets.build renders, it writes archives holding them into
+    `folder` and returns {spool ID: its archive}. A render reads the car's own three
+    VEHC entries and the SSIC's shared materials and textures (car_render._load_scene);
+    register_clones changes only SSIC's SSLP and VSCT, so a car draws the same from a
+    shard as from the merged archive. close() removes the folder."""
+
+    def __init__(self, dsf: Path, plan: list[dict], folder: Path, log=print, limit: int | None = None):
+        from dsfforza.formats.chnk import SIZE_LIMIT
+
+        self.dsf, self.plan, self.folder, self.log = Path(dsf), plan, Path(folder), log
+        self.limit = SIZE_LIMIT if limit is None else limit
+        self.paths: dict[int, Path] = {}
+        self.written = 0
+
+    def __call__(self, cars: list[dict]) -> dict[int, Path]:
+        wanted = {c["spool_id"] for c in cars}
+        todo = [p for p in self.plan if p["spool_id"] in wanted and p["spool_id"] not in self.paths]
+        # Runs of cars (in merge order) whose chunks fit beside the vanilla archive; _write
+        # checks each as laid out.
+        room = self.limit - self.dsf.stat().st_size
+        group, size = [], 0
+        for car in todo:
+            n = Path(car["chunk"]).stat().st_size
+            if group and size + n > room:
+                self._write(group)
+                group, size = [], 0
+            group.append(car)
+            size += n
+        if group:
+            self._write(group)
+        return {sid: self.paths[sid] for sid in wanted if sid in self.paths}
+
+    def _write(self, group: list[dict]) -> None:
+        from dsfforza.formats.chnk import layout, read_chunk, write_chunk
+
+        stream, entries = merged_view(self.dsf, group)
+        try:
+            memo: dict = {}
+            total = layout(entries, memo)[0]
+            if total <= self.limit:
+                self.folder.mkdir(parents=True, exist_ok=True)
+                path = self.folder / f"dngvehicles-{self.written + 1}.sp"
+                with path.open("wb") as handle:
+                    write_chunk(handle, stream, entries, read_chunk(stream, 0, depth=0).version, memo)
+                self.written += 1
+        finally:
+            stream.close()
+        if total > self.limit:  # the alignment between entries: split the run
+            if len(group) == 1:
+                raise ValueError(f"{group[0]['chunk']} and the vanilla archive pass {self.limit} bytes")
+            half = len(group) // 2
+            self._write(group[:half])
+            self._write(group[half:])
+            return
+        self.log(f"garage renders: {path.name}, {len(group)} cars, {total / 2**30:.2f} GiB")
+        for car in group:
+            self.paths[car["spool_id"]] = path
+
+    def close(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.folder, ignore_errors=True)
 
 
 def plain_glass(car: dict) -> bool:
@@ -1190,7 +1352,8 @@ def lint_all(
     prints for the car. With `facts`: returns {media: upvh.lint_vehicle's facts} (with
     the defined UIDs of the `defined` spool IDs); with `records` (a list) and
     `record_dir`: each process records what it read and ran (lint-many --record) and
-    the records are appended (src/dsfforza/build/pack_reuse.py)."""
+    the records are appended (src/dsfforza/build/pack_reuse.py). `out`: the merged archive,
+    or its merge plan (MERGE_PLAN, a .json: lint-many --plan merges the cars in memory)."""
     import json
 
     flags = gentle.creation_flags(BELOW_NORMAL if os.name == "nt" else 0)
@@ -1199,7 +1362,8 @@ def lint_all(
     groups = [cars[k : k + size] for k in range(0, len(cars), size)]
     procs = []
     for n, group in enumerate(groups):
-        command = [sys.executable, "-m", "dsfforza.formats.upvh", "lint-many", str(out), "--vanilla", str(dsf)]
+        source = ["--plan", str(out)] if Path(out).suffix == ".json" else [str(out)]
+        command = [sys.executable, "-m", "dsfforza.formats.upvh", "lint-many", *source, "--vanilla", str(dsf)]
         for c in group:
             command += ["--car", f"{c['spool_id']}:{c['host']}"]
             if plain_glass(c):
@@ -1837,7 +2001,16 @@ def finish(
         t = time.time()
         print(f"merging {len(ok)} cars into {archive}")
         emit(progress, "merge", cars=len(ok))
-        cars_out, merge_failed = merge(dsf, archive, ok, work, root_limit=root_limit_of(args))
+        merged: dict = {}
+        cars_out, merge_failed = merge(
+            dsf,
+            archive,
+            ok,
+            work,
+            root_limit=root_limit_of(args),
+            write=not getattr(args, "no_archive", False),
+            info=merged,
+        )
         failed += merge_failed
         timings["merge"] = round(time.time() - t, 1)
         for f in merge_failed:
@@ -1847,18 +2020,24 @@ def finish(
                 pack.forget()
             write_report(out_dir, archive, [], failed, timings, started, args, results)
             raise SystemExit("no car could be merged")
+        plan = out_dir / MERGE_PLAN
+        if merged.get("written", True):
+            plan.unlink(missing_ok=True)  # an earlier build's
+            lint_source = archive
+        else:  # too large for one CHNK (or --no-archive): lint merges the cars in memory
+            lint_source = write_plan(plan, dsf, merged["plan"])
         t = time.time()
         parallel = lint_jobs(args.jobs)
         if pack is None:
             emit(progress, "lint", cars=len(cars_out), total=len(cars_out))
-            lint_all(archive, dsf, cars_out, parallel)
+            lint_all(lint_source, dsf, cars_out, parallel)
         else:
 
             def run(cars: list[dict], defined: set[int]) -> dict:
                 print(f"lint: {len(cars)} of {len(cars_out)} cars")
                 emit(progress, "lint", cars=len(cars), total=len(cars_out))
                 return lint_all(
-                    archive,
+                    lint_source,
                     dsf,
                     cars,
                     parallel,
@@ -1909,12 +2088,14 @@ def finish(
             print(text)
             emit(progress, "gui_log", text=str(text))
 
+        # Without the merged archive the renders read archives of some cars each (Shards).
+        shards = None if archive.is_file() else Shards(dsf, merged["plan"], out_dir / SHARDS, log=gui_log)
         try:
             gui_assets.build(
                 manifest_path,
                 out_dir / "gui",
                 log=gui_log,
-                archive=archive,
+                archive=archive if shards is None else shards,
                 wide_glyphs=getattr(args, "wide_glyphs", False),
                 # The same CHNK reader limit: with dsfforza.asi [archive] gui.sp gets one
                 # SPOI per picture too, not shared SPOIs past 177 (research/gui-assets.md).
@@ -1940,6 +2121,9 @@ def finish(
                     timings["gui_stale"] = str(stale)
                 except OSError as move_error:
                     print(f"warning: {gui} doesn't match this archive and could not be moved: {move_error}")
+        finally:
+            if shards is not None:
+                shards.close()
         timings["gui"] = round(time.time() - t, 1)
     if pack is not None:
         t = time.time()
@@ -2068,6 +2252,8 @@ def compare_packs(mine: Path, full: Path, gui: bool) -> list[str]:
     diffs = []
 
     def same(a: Path, b: Path) -> bool:
+        if not a.exists() and not b.exists():  # neither wrote it (dngvehicles.sp past 4 GiB)
+            return True
         if not a.is_file() or not b.is_file() or a.stat().st_size != b.stat().st_size:
             return False
         return pack_reuse.sha256_file(a) == pack_reuse.sha256_file(b)
@@ -2289,6 +2475,13 @@ def build_parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help="also write one car package per car to <out>/packages (<key>.dsfcar; with --gui for "
                 "their garage pictures; what install.ps1 installs; research/car-packages.md)",
+            )
+            p.add_argument(
+                "--no-archive",
+                action="store_true",
+                help="don't write the merged dngvehicles.sp (the car packages don't need it; it is never "
+                "written past 4 GiB, a CHNK's limit): lint merges the cars in memory and the garage "
+                "pictures render from smaller archives",
             )
             p.add_argument(
                 "--wide-glyphs",

@@ -15,6 +15,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
+from typing import ClassVar
 
 from dsfforza.build import fingerprint, pack_reuse, port_batch
 from dsfforza.game import gui_assets
@@ -37,19 +38,32 @@ class Stand:
         self.rendered: list[str] = []
         self.plates: list[str] = []
 
-    def merge(self, dsf, out, results, work, log=print, root_limit=0):
+    def merge(self, dsf, out, results, work, log=print, root_limit=0, *, write=True, info=None):
+        """As port_batch.merge; with `write` False (an archive past 4 GiB, --no-archive) it
+        writes nothing and info["plan"] names the chunks."""
         self.merged += 1
         data = bytearray(Path(dsf).read_bytes() + b"\n")
-        cars = []
+        cars, plan = [], []
         for n, r in enumerate(sorted(results, key=lambda r: r.get("new_id", r["spool_id"]))):
-            data += (Path(work) / f"{r['media']}.chnk").read_bytes().strip() + b"\n"
+            chunk = Path(work) / f"{r['media']}.chnk"
+            data += chunk.read_bytes().strip() + b"\n"
+            plan.append({"chunk": str(chunk), "chunk_id": r["spool_id"], "spool_id": r["spool_id"], "host": 205})
             c = r["entry"]
             c["vehc"] = [3 * n, 3 * n + 1, 3 * n + 2]
             cars.append(c)
-        out.write_bytes(bytes(data))
+        if info is not None:
+            info.update(written=write, plan=plan)
+        if write:
+            out.write_bytes(bytes(data))
+        else:
+            out.unlink(missing_ok=True)
         return cars, []
 
     def archive_cars(self, archive: Path) -> dict[str, dict]:
+        """The cars of a stand-in archive or shard, or of a merge plan (port_batch.MERGE_PLAN)."""
+        if archive.suffix == ".json":
+            chunks = [Path(c["chunk"]) for c in port_batch.read_plan(archive)[1]]
+            return {d["media"]: d for d in (json.loads(c.read_bytes()) for c in chunks)}
         lines = archive.read_bytes().split(b"\n")[1:]
         return {d["media"]: d for d in (json.loads(line) for line in lines if line.strip())}
 
@@ -78,7 +92,11 @@ class Stand:
 
     def gui(self, manifest, out_dir, log=print, archive=None, cache=None, record=None, **_):
         data = json.loads(Path(manifest).read_text())
-        everyone = self.archive_cars(Path(archive))
+        if callable(archive):  # port_batch.Shards: the archives of the cars it renders
+            where = archive(data["cars"])
+            everyone = {m: d for path in set(where.values()) for m, d in self.archive_cars(path).items()}
+        else:
+            everyone = self.archive_cars(Path(archive))
         out_dir.mkdir(parents=True, exist_ok=True)
         # Nameplates: one image per model name, drawn unless an earlier build has it.
         plates = dict(cache.images()) if cache is not None else {}
@@ -148,11 +166,12 @@ def args_for(iso: Path) -> argparse.Namespace:
 PORT_ARGS = argparse.Namespace(host=None, sound_host=None, textures="dsf", share_host_uids=False, no_cockpit=False)
 
 
-def pack(root: Path, name: str, results: dict, sources=(), reuse=True, stand=None):
+def pack(root: Path, name: str, results: dict, sources=(), reuse=True, stand=None, *, no_archive=False):
     """port_batch.finish of `results` into root/name (the cars' chunks in root/work)."""
     out = root / name
     out.mkdir(parents=True, exist_ok=True)
     args = args_for(root / "game.iso")
+    args.no_archive = no_archive
     dsf = root / "vanilla.sp"
     p = None
     if reuse:
@@ -178,17 +197,45 @@ def files_of(folder: Path) -> dict[str, bytes]:
     return out
 
 
+class StandShards:
+    """port_batch.Shards over the stand-in archives: two cars per shard."""
+
+    made: ClassVar[list[list[int]]] = []
+
+    def __init__(self, dsf, plan, folder, **_):
+        self.dsf, self.plan, self.folder = Path(dsf), plan, Path(folder)
+
+    def __call__(self, cars):
+        wanted = [p for p in self.plan if p["spool_id"] in {c["spool_id"] for c in cars}]
+        out = {}
+        for k in range(0, len(wanted), 2):
+            group = wanted[k : k + 2]
+            self.folder.mkdir(parents=True, exist_ok=True)
+            path = self.folder / f"dngvehicles-{k // 2 + 1}.sp"
+            body = b"".join(Path(p["chunk"]).read_bytes().strip() + b"\n" for p in group)
+            path.write_bytes(self.dsf.read_bytes() + b"\n" + body)
+            StandShards.made.append([p["spool_id"] for p in group])
+            out.update({p["spool_id"]: path for p in group})
+        return out
+
+    def close(self):
+        import shutil
+
+        shutil.rmtree(self.folder, ignore_errors=True)
+
+
 class Patched:
     def __init__(self, stand: Stand):
         self.stand = stand
 
     def __enter__(self):
-        self.saved = (port_batch.merge, port_batch.lint_all, gui_assets.build)
+        self.saved = (port_batch.merge, port_batch.lint_all, gui_assets.build, port_batch.Shards)
         port_batch.merge, port_batch.lint_all, gui_assets.build = self.stand.merge, self.stand.lint, self.stand.gui
+        port_batch.Shards = StandShards
         return self.stand
 
     def __exit__(self, *exc):
-        port_batch.merge, port_batch.lint_all, gui_assets.build = self.saved
+        port_batch.merge, port_batch.lint_all, gui_assets.build, port_batch.Shards = self.saved
 
 
 def setup(root: Path) -> dict[str, dict]:
@@ -356,6 +403,35 @@ def test_game_files_read_from_the_backup_after_an_install_are_the_same_inputs():
         fp = {"format": fingerprint.FORMAT, "complete": True, "env": fingerprint.environment(), **fp}
         assert checker.check(fp, None).startswith("input ")
         assert checker.check(fp, None, moved=moved) is None
+
+
+def test_without_the_archive_the_pack_lints_and_draws_the_same():
+    """Past 4 GiB (here --no-archive) the merged archive isn't written: lint reads the merge
+    plan, the renders the shards, and every other file is what a pack with the archive gives.
+    The shards are gone afterwards; the pack is reused whole as before."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        results = setup(root)
+        with Patched(Stand(root / "work")) as stand:
+            pack(root, "with", results)
+            StandShards.made.clear()
+            pack(root, "a", results, no_archive=True)
+            assert stand.merged == 2 and stand.linted[-1] == sorted(CARS) and len(stand.rendered) == 8
+            assert StandShards.made == [[1, 2], [3, 4]]
+            assert not (root / "a" / "dngvehicles.sp").exists() and not (root / "a" / port_batch.SHARDS).exists()
+            plan = port_batch.read_plan(root / "a" / port_batch.MERGE_PLAN)[1]
+            assert [c["spool_id"] for c in plan] == [1, 2, 3, 4]
+            p = pack(root, "b", results, sources=["a"], no_archive=True)
+            assert stand.merged == 2 and p.stats["whole"] == str(root / "a")
+            pack(root, "full", results, reuse=False, no_archive=True)
+        mine = files_of(root / "a")
+        assert mine.pop(port_batch.MERGE_PLAN)
+        full = files_of(root / "with")
+        assert full.pop("dngvehicles.sp")
+        assert mine == full
+        assert port_batch.compare_packs(root / "b", root / "full", True) == []
+        # A pack with the archive against one without isn't the same.
+        assert port_batch.compare_packs(root / "with", root / "full", True) == ["dngvehicles.sp"]
 
 
 def test_compare_packs_names_what_differs():

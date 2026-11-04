@@ -95,8 +95,9 @@ def car_key(result: dict, chunk_sha256: str) -> str:
 
 
 def settings_of(args, dsf: Path, root_limit: int, isos: list[Path]) -> dict:
-    """The options that shape a pack besides its cars (port_batch build's arguments)."""
-    return {
+    """The options that shape a pack besides its cars (port_batch build's arguments).
+    --no-archive is named only when given, so the records of builds without it still hold."""
+    out = {
         "format": FORMAT,
         "id_policy": getattr(args, "id_policy", None),
         "root_limit": root_limit,
@@ -105,6 +106,9 @@ def settings_of(args, dsf: Path, root_limit: int, isos: list[Path]) -> dict:
         "isos": [fingerprint.norm(p) for p in isos],
         "vanilla": fingerprint.file_digest(fingerprint.norm(dsf)),
     }
+    if getattr(args, "no_archive", False):
+        out["archive"] = False
+    return out
 
 
 def link_or_copy(src: Path, dst: Path) -> None:

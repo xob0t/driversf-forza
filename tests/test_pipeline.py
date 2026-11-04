@@ -121,7 +121,7 @@ def test_merge_leaves_out_cars_with_uid_clashes():
     """A UID clash fails the clashing cars, not the batch: the rest are merged again."""
     calls = []
 
-    def register(dsf, out, results, work, log, root_limit):
+    def register(dsf, out, results, work, log, root_limit, **_):
         media = [r["media"] for r in results]
         calls.append(media)
         if "B" in media:

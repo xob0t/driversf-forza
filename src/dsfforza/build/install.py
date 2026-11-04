@@ -909,6 +909,15 @@ def size_text(n: int | None) -> str:
     return f"{n / GIB:.2f} GiB" if n >= GIB else f"{n / MIB:.0f} MiB"
 
 
+def archive_text(s) -> str:
+    """The build's merged archive: its path and size, or that it wasn't written (past a
+    CHNK's 4 GiB, or --no-archive: port_batch.register_cars; the packages don't need it)."""
+    archive = s.build_dir / "dngvehicles.sp"
+    if s.archive_bytes is None and not archive.is_file():
+        return "not written (the packages don't need it; port_batch writes it below 4 GiB)"
+    return f"{archive} ({size_text(s.archive_bytes)})"
+
+
 # --- the display ------------------------------------------------------------------------------------
 
 
@@ -1053,7 +1062,7 @@ def summary_lines(s: Summary) -> list[str]:
         lines.append(
             f"  Cars:      {s.in_archive} in the archive ({s.built} built, {s.reused} reused), {len(s.failed)} failed"
         )
-        lines.append(f"  Archive:   {s.build_dir / 'dngvehicles.sp'} ({size_text(s.archive_bytes)})")
+        lines.append(f"  Archive:   {archive_text(s)}")
     for f in s.failed:
         lines.append(f"    {f.media}: {f.cause}" + (f" - {f.error[:100]}" if f.error else ""))
         if f.log:
@@ -1180,7 +1189,7 @@ class LiveReporter(Reporter):
         if s.build_dir is not None:
             failed = f", [red]{len(s.failed)} failed[/]" if s.failed else ", 0 failed"
             grid.add_row("Cars", f"{s.in_archive} in the archive ({s.built} built, {s.reused} reused){failed}")
-            grid.add_row("Archive", f"{s.build_dir / 'dngvehicles.sp'} ({size_text(s.archive_bytes)})")
+            grid.add_row("Archive", archive_text(s))
         if s.installed:
             grid.add_row(
                 "Installed",
