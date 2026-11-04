@@ -585,6 +585,21 @@ The pack record is unchanged (`--no-archive` is in its settings only when
 given), so whole-pack reuse and `--verify-pack` work as before;
 `compare_packs` counts an archive neither pack wrote as the same.
 
+Measured 2026-11-04 (16 cores, `--gui --packages --wide-glyphs --id-policy
+asi --root-limit 3003`):
+
+- 721 cars (573 disc + 148 FM4 DLC): merge 18 s laid it out at 4.16 GiB
+  and wrote nothing; lint over the plan 81 s, all 721 ok; the renders read
+  two shards (690 cars, 4.00 GiB; 31 cars, 0.61 GiB), GUI 300 s; 721
+  packages.
+- The 573 disc cars with the archive (3.37 GiB) and with `--no-archive`
+  (one shard): every package member (car.sp, picture.dds, badge.png,
+  plate.png, car.json) byte-identical, and so are `gui/`, the Lua and the
+  manifest (spool IDs, VEHC records, lint). Both again against the 721-car
+  build (two shards): every member of the 573 shared packages identical.
+  The zip files differ only in their entries' timestamps.
+- A rerun of the `--no-archive` build in its folder took the pack whole.
+
 A batch archive is byte-identical to a `port_car.py` archive with the same
 cars and IDs: tested with `FOR_FocusRS500_10` at 304, SHA-256 equal.
 
