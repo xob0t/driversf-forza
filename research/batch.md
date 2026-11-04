@@ -547,6 +547,44 @@ machine). The full packs of
 both versions are byte-identical (`compare_packs`), and so are the
 whole-pack copy and the 50-car pack with `--verify-pack`.
 
+### Builds past 4 GiB
+
+A CHNK's `total_size` and every entry offset are u32 (`chnk.HEADER`,
+`chnk.ENTRY`), so one archive holds at most 4 GiB - 1 bytes
+(`chnk.SIZE_LIMIT`). The 573 disc cars plus the 148 FM4 DLC cars (#499)
+lay out to more than that (vanilla 0.45 GiB plus 3.71 GiB of car chunks),
+and the merge failed in `write_chunk` (`struct.error`). Players install
+car packages (#485), which hold each car's own chunk and never read the
+merged archive; only the in-game tests (`run-series.ps1 -Archives`) do.
+
+`register_cars` now lays the archive out before writing it. When it is
+over the limit, or with `--no-archive`, it writes nothing (and removes an
+earlier build's `dngvehicles.sp`), and the steps that read it work
+without it:
+
+- **lint**: `<build>/dngvehicles.plan.json` lists what the merge
+  registered (each car's chunk, the ID it holds, its spool ID and host, in
+  merge order). `upvh lint-many --plan` rebuilds the merged root in memory
+  (`port_batch.merged_view`: the same `MultiStream` and `register_clones`
+  calls as the merge, nothing written), so lint sees the same entries,
+  SSLP and VSCT records, and its cross-vehicle checks (UIDs another
+  vehicle defines, sound bank IDs) cover every car as before. Readers go
+  through `read_leaf`/`payload`, which take the merge's edited SSLP and
+  VSCT payloads.
+- **garage pictures**: a render reads the car's three VEHC entries and the
+  SSIC's shared materials and textures (`car_render._load_scene`);
+  `register_clones` changes only SSIC's SSLP and VSCT. So
+  `port_batch.Shards` writes archives of the vanilla one plus runs of the
+  cars `gui_assets.build` will render (not those it takes from an earlier
+  pack), each laid out below the limit, into `<build>/shards/`, and
+  removes them after the GUI step.
+- **packages**: `dsfcar.pack` reads `work/<media>.chnk`, the manifest and
+  the pack's pictures and images, never the archive.
+
+The pack record is unchanged (`--no-archive` is in its settings only when
+given), so whole-pack reuse and `--verify-pack` work as before;
+`compare_packs` counts an archive neither pack wrote as the same.
+
 A batch archive is byte-identical to a `port_car.py` archive with the same
 cars and IDs: tested with `FOR_FocusRS500_10` at 304, SHA-256 equal.
 

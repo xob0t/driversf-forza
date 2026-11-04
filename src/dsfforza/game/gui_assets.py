@@ -1966,7 +1966,7 @@ class _Renders:
 
     def __init__(
         self,
-        archive: Path,
+        archive_of,
         cars: list[dict],
         ui: ForzaUI,
         jobs: int,
@@ -1976,7 +1976,7 @@ class _Renders:
         backdrop: Image | None = None,
         template: bytes | None = None,
     ):
-        self.archive, self.futures, self.pool, self.record = archive, {}, None, record
+        self.archive_of, self.futures, self.pool, self.record = archive_of, {}, None, record
         self.order = []  # the cars (manifest entries) that will need a render
         if jobs > 1:
             for car in cars:
@@ -2015,7 +2015,7 @@ class _Renders:
         for car in self.order:
             logo, plate = parts(car)
             self.futures[car["spool_id"]] = self.pool.submit(
-                _picture_task, self.archive, car["spool_id"], logo, plate, png(car)
+                _picture_task, self.archive_of(car["spool_id"]), car["spool_id"], logo, plate, png(car)
             )
 
     def picture(self, sid: int) -> bytes | None:
@@ -2048,7 +2048,7 @@ def _build(
     manifest: Path,
     out_dir: Path,
     names: dict[str, str] | None = None,
-    archive: Path | None = None,
+    archive=None,
     gui: Path | None = None,
     fonts: Path | None = None,
     log=print,
@@ -2075,6 +2075,9 @@ def _build(
     `jobs` > 1 renders in that many processes (render_car is the slow step; each
     render is the same either way). `isos`: the build's Forza disc images (logos,
     names; found by title), default assets/'s; FH1's missing is not an error.
+    `archive`: the ported archive the renders read (default: the manifest's name with .sp),
+    or a function of the cars it will render that returns {spool ID: archive}
+    (port_batch.Shards, when the cars don't fit in one archive).
     `cache` (src/dsfforza/build/pack_reuse.py's PictureCache): a car's picture and
     preview from an earlier build when its inputs are the same (get), else made and
     handed to it (put). `record` (a list): the render processes' share of the pack
@@ -2082,7 +2085,8 @@ def _build(
     import json
 
     data = json.loads(Path(manifest).read_text())
-    archive = archive or Path(manifest).with_suffix(".sp")
+    if not callable(archive):
+        archive = Path(archive or Path(manifest).with_suffix(".sp"))
     names = names or {}
     strings = read_strings()
     makes, models = vanilla_codes(strings)
@@ -2136,7 +2140,12 @@ def _build(
     def preview_path(car: dict) -> Path:
         return out_dir / f"dsfforza_{car['media'].lower()}.png"
 
-    renders = _Renders(Path(archive), data["cars"], ui, jobs, thumbnails, set(cached), record, backdrop, template)
+    if callable(archive):  # {spool ID: archive} of the cars it will render (port_batch.Shards)
+        where = archive([c for c in data["cars"] if c["spool_id"] not in cached])
+        archive_of = where.__getitem__
+    else:
+        archive_of = lambda _sid: archive  # noqa: E731 - the one archive of every car
+    renders = _Renders(archive_of, data["cars"], ui, jobs, thumbnails, set(cached), record, backdrop, template)
     # The pictures' nameplates and the logos, drawn in the render processes first.
     wanted = [k for t in texts.values() for k in picture_plate_keys(t["model"]) if k not in _TEXT_PLATES]
     logo_makes = [m for t in texts.values() for m in (t["dsf_make"], t["make"]) if m not in logo_cache]
@@ -2192,7 +2201,7 @@ def _build(
             image = forza_car_image(ui, car_id) if car_id else None
             source = "FH1 thumbnail"
             if image is None:
-                image, source = render_car(Path(archive), sid), "render"
+                image, source = render_car(archive_of(sid), sid), "render"
             dds = finish_picture(image, *parts(car), backdrop, template, preview_path(car))
         pictures[name] = dds
         entry["Picture1"] = name

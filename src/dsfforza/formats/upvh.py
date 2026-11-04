@@ -652,13 +652,22 @@ def cmd_lint(args: argparse.Namespace) -> None:
 def cmd_lint_many(args: argparse.Namespace) -> None:
     """lint for several vehicles of one archive (--car ID:SOURCE ...), walking the
     archive once: one JSON line per car, {"id", "ok", "text"}, where text is what
-    `lint --id ID --source SOURCE` prints. Exit code 1 if any car has problems."""
+    `lint --id ID --source SOURCE` prints. Exit code 1 if any car has problems. With
+    --plan, the archive is port_batch's merge of the plan's cars in memory."""
+    import contextlib
     import json
     import traceback
 
     failed = 0
-    with args.archive.open("rb") as stream:
-        ctx = LintContext(stream, read_chunk(stream, 0).entries, args.vanilla)
+    if args.plan is not None:  # the merged archive in memory (port_batch.merged_view)
+        from dsfforza.build import port_batch
+
+        stream, entries = port_batch.merged_view(*port_batch.read_plan(args.plan))
+    else:
+        stream = args.archive.open("rb")
+        entries = read_chunk(stream, 0).entries
+    with contextlib.closing(stream):
+        ctx = LintContext(stream, entries, args.vanilla)
         try:
             for car in args.car:
                 spool_id, _, source = car.partition(":")
@@ -729,7 +738,13 @@ def main(argv: list[str] | None = None) -> None:
                 "covers and small panes), so interior glass without crack lines is fine",
             )
     many = sub.add_parser("lint-many", help="lint several vehicles of one archive (one JSON line each)")
-    many.add_argument("archive", type=Path)
+    many.add_argument("archive", type=Path, nargs="?")
+    many.add_argument(
+        "--plan",
+        type=Path,
+        help="in place of the archive: port_batch's merge plan (dngvehicles.plan.json), the cars merged in "
+        "memory as the archive would hold them (a build too large for one archive)",
+    )
     many.add_argument("--car", action="append", required=True, metavar="ID:SOURCE", help="spool ID and vanilla host")
     many.add_argument("--vanilla", type=Path, help="vanilla archive (as lint --vanilla)")
     many.add_argument("--verbose", "-v", action="store_true")
@@ -751,6 +766,8 @@ def main(argv: list[str] | None = None) -> None:
         "src/dsfforza/build/pack_reuse.py)",
     )
     args = parser.parse_args(argv)
+    if args.command == "lint-many" and (args.archive is None) == (args.plan is None):
+        parser.error("lint-many: give the archive or --plan")
     if args.command == "lint-many":
         if args.record is None:
             cmd_lint_many(args)
