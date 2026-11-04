@@ -18,6 +18,13 @@ Where things are (both games, paths case-insensitive):
   FM4 disc 2 car packs (PIRS under content/) add banks under
         Media/DLCZips/000N_pri_65/Media/audio/cars/Engines/Soundbanks/LOD1/;
         their cars' _ET.xml files are in disc 1's enginetuning.zip.
+  FM4 DLC packs (LIVE package files) add banks the same way, and keep their
+        cars' _ET.xml and their _HT.xml as loose files in the pack's inner zip
+        Media/DLCZips/<N>_pri_65.zip, under media/audio/cars/Engines/
+        EngineTuning/ and HarmonicTuning/: the folders FM4 disc 1 creates next
+        to its zips with a "dummy for folder structure" file. A DLC car's HT
+        files and banks can be the disc's (research/engine-sound.md, "FM4 DLC
+        cars").
 
 So car -> engine sound is: <car>_ET.xml -> <x>_HT.xml (per emission) -> bank +
 rpm table. The zips use method 21 (LZX), read with ForzaZip.
@@ -30,7 +37,8 @@ f32 min_dist, f32 max_dist, ... (size - 0x50 extra bytes: XMA seek table).
 Sample data follows the headers back to back.
 
 Sources are disc images (packages under content/ are scanned too), single
-packages ("image.iso::content/.../4d53091000000001"), or plain .fsb files.
+packages ("image.iso::content/.../4d53091000000001"), package files (an FM4
+DLC pack, any file name), or plain .fsb files.
 
     uv run dsff forza_audio banks   <iso> [pattern]
     uv run dsff forza_audio info    <fsb | iso::path>
@@ -47,6 +55,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import io
 import re
 import struct
 import subprocess
@@ -60,13 +69,14 @@ from typing import BinaryIO
 
 from dsfforza import REPO
 from dsfforza.formats.forzazip import ForzaZip
-from dsfforza.formats.stfs import StfsError, in_image
+from dsfforza.formats.stfs import Stfs, StfsError, in_image
 from dsfforza.formats.xiso import XIso
 
 ROOT = REPO
 DEFAULT_VGMSTREAM = ROOT / "out" / "tools-dl" / "vgmstream" / "vgmstream-cli.exe"
 BANK_DIR = "audio/cars/engines/soundbanks/"
 EMISSIONS = {"EngineAmbient": "EngAmb", "EngineIntake": "Int", "Exhaust": "Exh"}
+PACKAGE_MAGICS = (b"CON ", b"LIVE", b"PIRS")  # STFS package header magics
 
 # FSOUND_* sample mode bits (FMOD 3 / FSB3-4)
 MODE_BITS = {
@@ -224,15 +234,22 @@ class AudioFile:
 
 
 class Source:
-    """Audio files of one disc image (plus its STFS packages) or one package."""
+    """Audio files of one disc image (plus its STFS packages), one package on a disc image
+    ("image.iso::content/..."), or one package file (an FM4 DLC pack). A package file's
+    files include the audio inside its Media/DLCZips/*.zip (the pack's _ET.xml and _HT.xml);
+    disc 2's packs keep none there (all four inner zips surveyed), so a disc image's
+    packages aren't opened that deep."""
 
     def __init__(self, spec: str):
         self.spec, self.files, self._images = spec, [], []
+        self._streams: list[BinaryIO] = []
         if "::" in spec:
             image_path, inner = spec.split("::", 1)
             image = self._image(image_path)
             entry = image.find(inner)
             self._add_package(image, entry, Path(image_path).name)
+        elif is_package_file(spec):
+            self._add_package_file(Path(spec))
         else:
             image = self._image(spec)
             label = Path(spec).name
@@ -242,11 +259,7 @@ class Source:
                     continue
                 if "/audio/" in f"/{low}":
                     self.files.append(AudioFile(label, entry.path, entry.size, lambda e=entry, im=image: im.open(e)))
-                elif (
-                    low.startswith("content/")
-                    and entry.size >= 0x1000
-                    and image.read(entry, 0, 4) in (b"CON ", b"LIVE", b"PIRS")
-                ):
+                elif low.startswith("content/") and entry.size >= 0x1000 and image.read(entry, 0, 4) in PACKAGE_MAGICS:
                     self._add_package(image, entry, label)
 
     def _image(self, path: str) -> XIso:
@@ -260,10 +273,28 @@ class Source:
         except StfsError as error:
             print(f"warning: {entry.path}: {error}", file=sys.stderr)
             return
-        where = f"{label}::{entry.path}"
+        self._add_files(package, f"{label}::{entry.path}")
+
+    def _add_files(self, package: Stfs, where: str) -> None:
         for inner in package.files():
             if not inner.is_dir and "/audio/" in f"/{inner.path.lower()}":
                 self.files.append(AudioFile(where, inner.path, inner.size, lambda e=inner, p=package: p.open(e)))
+
+    def _add_package_file(self, path: Path) -> None:
+        stream = path.open("rb")  # closed by close()
+        self._streams.append(stream)
+        package = Stfs(stream)
+        self._add_files(package, path.name)
+        for inner in package.files():
+            if inner.is_dir or not fnmatch.fnmatch(inner.path.lower(), "media/dlczips/*.zip"):
+                continue
+            archive = ForzaZip(package.open(inner))
+            where = f"{path.name}::{inner.path}"
+            for info in archive.entries():
+                if not info.is_dir() and "/audio/" in f"/{info.filename.lower()}":
+                    self.files.append(
+                        AudioFile(where, info.filename, info.file_size, lambda a=archive, i=info: io.BytesIO(a.read(i)))
+                    )
 
     def find_name(self, name: str) -> list[AudioFile]:
         low = name.lower()
@@ -272,6 +303,17 @@ class Source:
     def close(self) -> None:
         for image in self._images:
             image.close()
+        for stream in self._streams:
+            stream.close()
+
+
+def is_package_file(spec: str | Path) -> bool:
+    """A file of its own (not "image.iso::path") that starts with an STFS package magic."""
+    try:
+        with Path(spec).open("rb") as stream:
+            return stream.read(4) in PACKAGE_MAGICS
+    except OSError:
+        return False
 
 
 def open_file(spec: str) -> bytes:
@@ -322,31 +364,47 @@ class EngineTuning:
 
 
 class Tuning:
-    """The EngineTuning and HarmonicTuning zips of the given sources (first one found wins)."""
+    """The EngineTuning and HarmonicTuning files of the given sources, first one found wins:
+    the entries of each enginetuning.zip / harmonictuning.zip, and the loose _ET.xml /
+    _HT.xml files in folders of those names (an FM4 DLC pack's). FM4 disc 1 has both folders
+    next to its zips, empty but for a "dummy for folder structure" file."""
 
     def __init__(self, sources: list[Source]):
-        self.et: dict[str, tuple[ForzaZip, object]] = {}
-        self.ht: dict[str, tuple[ForzaZip, object]] = {}
+        # file name (lower case) -> (its path in its zip or source, reader of its bytes)
+        self.et: dict[str, tuple[str, Callable[[], bytes]]] = {}
+        self.ht: dict[str, tuple[str, Callable[[], bytes]]] = {}
         self.zips: list[AudioFile] = []
         for source in sources:
             for f in source.files:
                 low = f.path.lower()
-                if not low.endswith(".zip") or "/engines/" not in low:
+                if "/engines/" not in low:
                     continue
-                kind = {"enginetuning.zip": self.et, "harmonictuning.zip": self.ht}.get(f.name.lower())
-                if kind is None:
-                    continue
-                self.zips.append(f)
-                archive = ForzaZip(f.opener())
-                for info in archive.entries():
-                    kind.setdefault(info.filename.rsplit("/", 1)[-1].lower(), (archive, info))
+                if low.endswith(".zip"):
+                    kind = self._kind(f.name.lower().removesuffix(".zip"))
+                    if kind is None:
+                        continue
+                    self.zips.append(f)
+                    archive = ForzaZip(f.opener())
+                    for info in archive.entries():
+                        kind.setdefault(
+                            info.filename.rsplit("/", 1)[-1].lower(),
+                            (info.filename, lambda a=archive, i=info: a.read(i)),
+                        )
+                elif low.endswith(".xml"):
+                    kind = self._kind(low.rsplit("/", 2)[-2])
+                    if kind is not None:
+                        kind.setdefault(f.name.lower(), (f.path, f.read))
+
+    def _kind(self, name: str) -> dict | None:
+        """The index a zip or folder of this name (lower case) feeds, or None."""
+        return {"enginetuning": self.et, "harmonictuning": self.ht}.get(name)
 
     def engine(self, car: str) -> EngineTuning:
         key = f"{car}_et.xml".lower()
         if key not in self.et:
             raise KeyError(f"no {car}_ET.xml in any EngineTuning zip")
-        archive, info = self.et[key]
-        raw = archive.read(info)
+        filename, read = self.et[key]
+        raw = read()
         root = ET.fromstring(raw)
         upgrades = {}
         for tag in EMISSIONS:
@@ -357,7 +415,7 @@ class Tuning:
         volumes = root.find("VolumeAdjustments")
         return EngineTuning(
             car,
-            info.filename,
+            filename,
             dict(settings.attrib) if settings is not None else {},
             dict(volumes.attrib) if volumes is not None else {},
             upgrades,
@@ -368,8 +426,8 @@ class Tuning:
         key = name.lower()
         if key not in self.ht:
             raise KeyError(f"no {name} in any HarmonicTuning zip")
-        archive, info = self.ht[key]
-        raw = archive.read(info)
+        filename, read = self.ht[key]
+        raw = read()
         root = ET.fromstring(raw.lstrip())
         loops = []
         for group in root:
@@ -385,7 +443,7 @@ class Tuning:
                         float(a.get("volume", 1)),
                     )
                 )
-        return Harmonic(info.filename, root.get("name", ""), loops, root), raw
+        return Harmonic(filename, root.get("name", ""), loops, root), raw
 
 
 # --------------------------------------------------------------------------- decoding
@@ -631,7 +689,11 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("car", help="resolve a car's engine sound: ET -> HT -> banks and rpm tables")
     p.add_argument("car")
     p.add_argument(
-        "--iso", action="append", required=True, help="disc image or package; give FM4 disc 1 and disc 2 for pack cars"
+        "--iso",
+        action="append",
+        required=True,
+        help="disc image or package (an FM4 DLC pack file); give FM4 disc 1 and disc 2 for pack cars, "
+        "and a DLC car's own pack before them",
     )
     p.add_argument("--out", help="write the ET, HT xml and banks here")
     p.add_argument("--wav", help="decode the banks to <wav>/<bank>/ (needs --out)")

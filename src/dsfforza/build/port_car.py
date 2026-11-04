@@ -758,12 +758,14 @@ def forza_sound_plan(
     sound: int | None,
     spool_id: int,
     log,
+    package: str = "",
 ):
     """(engine_sound.Plan or None, report) for the car's own Forza engine sound
     (src/dsfforza/convert/engine_sound.py, research/engine-sound.md): its Forza loops, its engine
     type and the vanilla template banks to try, best engine match first (an explicit
     --sound-host before them). None, with the reason, when it is disabled or the
-    car's Forza audio can't be resolved; the car then keeps the host's sound."""
+    car's Forza audio can't be resolved; the car then keeps the host's sound. package: a
+    DLC car's own pack file, whose ET, HT and banks come before the discs'."""
     if getattr(args, "no_forza_sound", False):
         return None, {"ok": False, "reason": "disabled (--no-forza-sound)"}
     from dsfforza.build import host_select
@@ -777,7 +779,7 @@ def forza_sound_plan(
         templates = engine_sound.template_order(
             index, [r.id for r in ranking], [sound] if isinstance(sound, int) else []
         )
-        forza = engine_sound.forza_engine(media, game, isos, args.cache / "sound")
+        forza = engine_sound.forza_engine(media, game, isos, args.cache / "sound", package=package or None)
         engine_sound.pick_emissions(forza)
     except (LookupError, ValueError, OSError, RuntimeError, sqlite3.Error, SystemExit) as error:
         reason = (
@@ -1239,6 +1241,7 @@ def convert_car(
         args.sound_host if isinstance(args.sound_host, int) else None,
         spool_id,
         log,
+        package=prep.source.package if prep.source.dlc else "",
     )
     clones, report = build_car(
         stream,

@@ -86,8 +86,10 @@ sources" below.
 default roster, the car lists and the installer's build stay the discs'
 until the car manager can install cars beside the one vehicle archive
 (#170). The preflight lists the packs it finds. Building a DLC car also
-needs the pack's merge rows in the gamedb the converter reads, and the pack's
-ET, HT and banks in the engine-sound lookup (#457).
+needs the pack's merge rows in the gamedb the converter reads (#457). Its
+engine sound comes from its own pack, then the discs (`port_car` passes the
+car's package to `engine_sound.forza_engine`; `research/engine-sound.md`,
+"FM4 DLC cars").
 
 ## Where the cars are
 

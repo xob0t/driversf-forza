@@ -1,6 +1,6 @@
 # Engine sound: giving ports their own Forza engine
 
-Updated: 2026-10-29
+Updated: 2026-11-04 (FM4 DLC cars)
 
 Can a ported car sound like its Forza self instead of borrowing a vanilla
 DSF car's engine? Yes. Forza's engine loops can be swapped into a vanilla
@@ -159,6 +159,64 @@ Layout (`FUN_00547800`):
 1. `EngineTuning.zip/<car>_ET.xml` gives idle, redline and, per emission and upgrade level, an HT file.
 2. `HarmonicTuning.zip/<x>_HT.xml` gives the bank and one `<Loop rpm_min rpm_sample rpm_max volume>` per subsong.
 3. The mapping resolves for 146/175 FH1 cars, 277/312 FM4 disc 1 cars and 179/188 pack cars. The misses are mostly race cars with `NA.xml` at L0. (Counted 2026-10-23, not rechecked. The build takes another emission when one is `NA.xml`, and since #37 the other game's ET file or the same model's, so 571 of 573 cars get a Forza sound.)
+
+### FM4 DLC cars (confirmed-static; offline-checked 2026-11-04)
+
+The 176 cars of the user's 15 FM4 DLC car packs (`research/forza-sources.md`, "FM4 DLC
+packs"). The survey scripts were in the #457 PR's scratch folder and are not kept.
+
+**Where their files are.**
+- ET: all 176 `<car>_ET.xml` are loose in the car's own pack, in its inner zip
+  `Media/DLCZips/<N>_pri_65.zip` under `media/audio/cars/Engines/EngineTuning/`. None is in
+  disc 1's `enginetuning.zip`. The packs also re-ship 7 disc cars' ETs (MAS_GranSport_06,
+  FOR_FocusSVT_03, ...), byte-identical to the disc's.
+- HT: loose in the same inner zip under `HarmonicTuning/` (354 files over the 15 packs).
+- Banks: loose package files `Media/DLCZips/<N>_pri_65/Media/audio/cars/Engines/Soundbanks/LOD1/*.fsb`
+  (186 over the packs). The 29 that share a name with a disc bank are byte-identical to it,
+  and no bank name has two contents across the packs.
+- The inner zips use method 21 (LZX), like the disc zips. Disc 2's four packs hold no audio
+  in their inner zips.
+- FM4 disc 1 has the folders `Media/audio/cars/Engines/enginetuning/`, `harmonictuning/` and
+  `Media/audio/cars/CarModelTuning/` next to its zips, each with a `dummy.txt` ("dummy for
+  folder structure"). Those are the paths the pack's loose files sit under. Read statically,
+  the game reads one tuning folder that the disc zip and the packs' loose files both go into.
+
+**The packs rely on the disc.** At L0, 374 of the DLC cars' HT references resolve in their
+own pack and 152 only on the disc. Of the banks, 220 come from the own pack and 303 from the
+disc only. 59 cars take every bank from the disc and 80 mix both. No car names an HT or bank
+that is only in another pack. So FM4 must load those from the disc, and the converter
+does the same: a DLC car's sources are its pack, then the FM4 discs.
+
+**Same name, different bytes.** The converter takes the car's own pack's copy (the pack
+comes first), and a disc car never reads a pack. Four cars are affected, and each one's pack
+carries the copy it names:
+- `12T1_Bently_{Exh,Int}_HT.xml`: the ALMS pack's differs from disc 1's in its loops (Int
+  volumes 0/0.4 instead of 0.8). BEN_PMContinental_11 uses them; no disc car's ET names them.
+- `4N1_944_EngAmb_HT.xml`: the September Pennzoil pack's differs from the December IGN and
+  Meguiar's packs' (two rpm_sample values and a DSP curve). Used by AH_Sprite_58,
+  ALF_Spider_86 and MG_MGA_58.
+- `4N3_Miata_MG_Int_HT.xml`: Meguiar's and Pennzoil differ in their DSP curves only, which
+  the converter doesn't read. Used by MG_MGA_58 and AH_Sprite_58.
+
+Which copy FM4 itself plays when every pack is installed (the `_pri_65` suffix looks like a
+mount priority) is not confirmed. It would need the xex's file lookup.
+
+**Built offline** (`engine_sound.forza_engine(..., package=)` and `build_sound` on the 370Z
+template, as `engine_sound convert --package` does): 174 of 176 cars get 8+8 loops, and
+their banks pass the rebuild's validate, same_structure and lint checks. 173 have
+EngineAmbient + Exhaust. BUG_VeyronSS_11 has `NA.xml` for Int and Exh at L0, so it gets
+EngineAmbient on both sets. The two misses keep their host's sound, as the disc's Volt and
+Leaf do:
+- TES_RoadsterS_11 has `NA_*_HT.xml` (bank `NA.fsb`) for every emission;
+- HON_CRZ_11 (a hybrid) has `audio_rpm_idle="0"`, like the disc's CHE_Volt_11 and NIS_Leaf_11.
+
+Spot checks against the raw files agree on the ET's idle and redline, the HT's loops
+(rpm_sample order, subsong) and the FSB sample counts of the decoded loops. Checked on
+MAZ_55_787B_91 (all from its pack), BEN_PMContinental_11 (the pack's Bentley HTs),
+ALF_Giulietta_11 (disc banks only), AH_3000_65 (mixed) and POR_959_87.
+
+**Cache.** A bank read from a pack is cached under `out/cache/sound/fm4/dlc/<pack file
+name>/`, so no pack's copy can stand in for a disc bank of the same name.
 
 **Format.** FSB4 with XMA, mostly 36 kHz mono; some loops are 48 kHz stereo.
 - Every subsong is one whole seamless loop of 0.6–3.4 s, and a sample's pitch is 1 at its `rpm_sample` (HT pitch is always 1).
