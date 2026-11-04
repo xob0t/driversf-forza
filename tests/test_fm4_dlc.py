@@ -186,3 +186,29 @@ def test_preflight_says_how_the_packs_are_used():
         assert "--list/--car" in install.dlc_preflight(found, "named")[0]
         assert any("other title" in line and "skipped" in line for line in lines[1:])
         assert install.dlc_preflight([]) == []
+
+
+def test_pack_ui_finds_a_makers_logo_by_its_icon_key():
+    from tests.test_dlc import _live, _lsb2, _zip
+
+    make_strings, refs = _lsb2("List_CarMake", {"IDS_Make_97": "Austin-Healey"})
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE List_CarMake (ID, DisplayName, IconPathBase)")
+    db.execute("INSERT INTO List_CarMake VALUES (97, ?, 'AUS')", (refs["IDS_Make_97"],))
+    patch = db.serialize()
+    db.close()
+    logo = "media/UI/Textures/UI4/Logos/Manufacturer_Logos/L_MAN_AUS_Logo.xds"
+    pack = _live(
+        {
+            "Media/DLCZips/32_pri_65.zip": _zip({"media/db/patch/32000_merge.slt": patch, logo: b"logo bytes"}),
+            "Media/DLCZips/StringTables_pri_1.zip": _zip({"EN/List_CarMake.str": make_strings}),
+        },
+        "Logo Pack",
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "pack"
+        path.write_bytes(pack)
+        ui = fm4_dlc.PackUI(forza_roster.unique_packages(forza_roster.dlc_packages(path)))
+        assert ui.keys == {"austin-healey": "AUS"}
+        assert ui.read("UI4/Logos/Manufacturer_Logos/L_MAN_AUS_Logo.xds") == b"logo bytes"
+        assert ui.read("UI4/Logos/Manufacturer_Logos/L_MAN_MG_Logo.xds") is None

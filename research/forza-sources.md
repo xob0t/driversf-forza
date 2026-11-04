@@ -88,9 +88,13 @@ leaves them out). The 148 cars no disc has are `tools/batches/fm4-dlc.txt`,
 pack by pack; `dsff install` and install.ps1 add the ones of the packs found
 after their list (`port_batch --fm4-dlc-cars`), so they take IDs after the
 disc cars'. Their garage and HUD names are the packs' (`fm4_dlc.car_names`,
-through `pack_info`). Engine sound comes from the car's own pack, then the
-discs (`port_car` passes the car's package to `engine_sound.forza_engine`;
-`research/engine-sound.md`, "FM4 DLC cars").
+through `pack_info`). A maker the discs' UI has no logo for takes it from the
+packs' `media/UI/Textures/UI4/Logos/Manufacturer_Logos*/` (`fm4_dlc.PackUI`,
+`gui_assets.ForzaUI.logo`), under the maker's name or its pack `List_CarMake`
+row's `IconPathBase`: Austin-Healey `L_MAN_AUS_Logo`, Smart `L_MAN_SMA_Logo`,
+MG `L_MAN_MG_Logo`, Triumph `L_MAN_TRI_Logo` (#498). Engine sound comes from
+the car's own pack, then the discs (`port_car` passes the car's package to
+`engine_sound.forza_engine`; `research/engine-sound.md`, "FM4 DLC cars").
 
 ### The DLC gamedb
 
