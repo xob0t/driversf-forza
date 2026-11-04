@@ -296,6 +296,7 @@ class ForzaUI:
         if iso and Path(iso).exists():
             self.image, self.zip, self.names = self._open(iso, "media/ui/Textures.zip")
         self.fallback_path, self.fallback = fallback, None
+        self.packs = None  # fm4_dlc.PackUI, opened on first need (False: no packs)
 
     @classmethod
     def of(cls, isos: list[Path] | None) -> ForzaUI:
@@ -331,12 +332,30 @@ class ForzaUI:
     def thumbnail(self, car_id: int):
         return self.read(f"Thumbnails/Thumbnail_{car_id}.xds")
 
+    def _read_pack(self, name: str):
+        if self.packs is None:
+            from dsfforza.build import fm4_dlc
+
+            self.packs = fm4_dlc.PackUI.found() or False
+        data = self.packs.read(name) if self.packs else None
+        return read_xds_rgba(data) if data else None
+
     def logo(self, make: str):
         key = LOGO_ALIASES.get(make.lower(), make).replace(" ", "").replace("-", "")
         names = [f"UI4/Logos/{f}/L_MAN_{key}_Logo.xds" for f in LOGO_FOLDERS]
         for read in (self.read, self._read_fallback):
             for name in names:
                 found = read(name)
+                if found:
+                    return found
+        # A maker only the FM4 DLC packs have: its logo in the packs' UI textures, under its
+        # name or under its List_CarMake.IconPathBase there (Austin-Healey's is L_MAN_AUS_Logo).
+        self._read_pack("")  # opens the packs' index
+        if self.packs:
+            icon = self.packs.keys.get(make.lower())
+            keys = [key] + ([icon] if icon and icon != key else [])
+            for name in (f"UI4/Logos/{f}/L_MAN_{k}_Logo.xds" for k in keys for f in LOGO_FOLDERS):
+                found = self._read_pack(name)
                 if found:
                     return found
         return None

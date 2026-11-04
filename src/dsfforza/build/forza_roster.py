@@ -388,14 +388,14 @@ def _has_table(db: sqlite3.Connection, name: str) -> bool:
 PACK_STRINGS = ("Data_Car.str", "List_CarMake.str", "List_FamilyModel.str")
 
 
-def pack_info(package: Package, disc_db: Path | None = None, disc_strings=None) -> dict[str, dict]:
-    """{media lower: {display, model_short, year, make, family}} of a pack's cars, from the pack
-    itself: Data_Car of its media/db/patch/*_merge.slt (SQLite, the rows the pack adds to
-    gamedb.slt, in a Media/DLCZips/*.zip) and the EN/ tables of its StringTables_pri_*.zip.
-    A maker or family whose row the pack doesn't carry (Porsche's is in the Porsche pack,
-    Alfa Romeo's only on the disc) comes from `disc_db` (FM4's gamedb.slt) and its text from
-    `disc_strings` (forza_strings.Strings of FM4's disc), when given."""
-    dbs, strings = [], []
+UI_TEXTURES = "media/ui/textures/"  # a pack's UI textures (maker logos), as the disc's Media/UI/Textures.zip
+
+
+def pack_contents(package: Package) -> tuple[list, list, dict[str, tuple[str, str]]]:
+    """(the pack's media/db/patch/*_merge.slt databases (sqlite3, in memory; the caller closes
+    them), its EN/ string tables (forza_strings.Strings), {UI texture name under
+    media/UI/Textures/, lower case: (inner zip, member)}) from its Media/DLCZips/*.zip."""
+    dbs, strings, ui = [], [], {}
     try:
         with package.path.open("rb") as stream:
             pkg = Stfs(stream)
@@ -419,6 +419,24 @@ def pack_info(package: Package, disc_db: Path | None = None, disc_strings=None) 
                         db = sqlite3.connect(":memory:")
                         db.deserialize(archive.read(entry))
                         dbs.append(db)
+                    elif name.startswith(UI_TEXTURES) and not name.endswith("/"):
+                        ui[name[len(UI_TEXTURES) :]] = (inner.path, entry.filename)
+    except BaseException:
+        for db in dbs:
+            db.close()
+        raise
+    return dbs, strings, ui
+
+
+def pack_info(package: Package, disc_db: Path | None = None, disc_strings=None) -> dict[str, dict]:
+    """{media lower: {display, model_short, year, make, family}} of a pack's cars, from the pack
+    itself: Data_Car of its media/db/patch/*_merge.slt (SQLite, the rows the pack adds to
+    gamedb.slt, in a Media/DLCZips/*.zip) and the EN/ tables of its StringTables_pri_*.zip.
+    A maker or family whose row the pack doesn't carry (Porsche's is in the Porsche pack,
+    Alfa Romeo's only on the disc) comes from `disc_db` (FM4's gamedb.slt) and its text from
+    `disc_strings` (forza_strings.Strings of FM4's disc), when given."""
+    dbs, strings, _ = pack_contents(package)
+    try:
         media = [
             m for db in dbs if _has_table(db, "Data_Car") for (m,) in db.execute("SELECT MediaName FROM Data_Car") if m
         ]

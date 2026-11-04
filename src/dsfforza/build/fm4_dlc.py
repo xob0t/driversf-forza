@@ -244,6 +244,58 @@ def car_names(media: list[str], isos: list[Path] | None = None, cache: Path | No
     return out
 
 
+class PackUI:
+    """The packs' UI textures (media/UI/Textures/ in each pack's Media/DLCZips/*.zip, laid out
+    as the disc's Media/UI/Textures.zip) and their makers' logo keys: List_CarMake.IconPathBase
+    of each maker row in a pack's gamedb patch ("AUS" for Austin-Healey, whose logo is
+    UI4/Logos/Manufacturer_Logos/L_MAN_AUS_Logo.xds), by the maker's name (the pack's EN
+    List_CarMake text, lower case). For gui_assets.ForzaUI.logo: the makers only the packs have."""
+
+    def __init__(self, packs: list):
+        from dsfforza.build import forza_roster
+
+        self.files: dict[str, tuple[Path, str, str]] = {}  # name lower -> (package, inner zip, member)
+        self.keys: dict[str, str] = {}
+        for pack in packs:
+            dbs, strings, ui = forza_roster.pack_contents(pack)
+            try:
+                for name, (inner, member) in ui.items():
+                    self.files.setdefault(name, (pack.path, inner, member))
+                for db in dbs:
+                    try:
+                        rows = db.execute("SELECT DisplayName, IconPathBase FROM List_CarMake").fetchall()
+                    except sqlite3.OperationalError:  # a patch without maker rows
+                        continue
+                    for ref, key in rows:
+                        text = next((t for table in strings if (t := table.get(ref)) is not None), None)
+                        if text and key:
+                            self.keys.setdefault(text.lower(), key)
+            finally:
+                for db in dbs:
+                    db.close()
+
+    @classmethod
+    def found(cls) -> PackUI | None:
+        """For the packs the build uses (packages()); None without any."""
+        packs = packages()
+        return cls(packs) if packs else None
+
+    def read(self, name: str) -> bytes | None:
+        """A texture's bytes by its name under Textures/ (any case), or None."""
+        from dsfforza.formats.forzazip import ForzaZip
+        from dsfforza.formats.stfs import Stfs
+
+        hit = self.files.get(name.lower())
+        if hit is None:
+            return None
+        path, inner, member = hit
+        with Path(path).open("rb") as stream:
+            pkg = Stfs(stream)
+            entry = next(f for f in pkg.files() if f.path == inner)
+            archive = ForzaZip(pkg.open(entry))
+            return archive.read(next(i for i in archive.entries() if i.filename == member))
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--cache", type=Path, default=REPO / "out" / "cache")
