@@ -289,6 +289,63 @@ In game (`in-game-tests.md`, "Gauges"): both needles move on all three
 cars and read within about a minor mark of the HUD speed
 (`img/gauges-ingame-clusters.png`).
 
+### Needles past the dial's end: DSF Enhanced's FOV scalar (2026-11-05, issue #547; confirmed-static)
+
+The owner's v0.2.1 game showed needles running past their dial's end
+and pointing down into the gap below it. On the RX-7 '90 (523), both
+needles sat at about 6 o'clock at 97 and 103 mph; the vanilla Sport
+Quattro's (142) tachometer wrapped round too. The cause is not the car
+data:
+
+- **Which constant.** `FUN_008A2610` turns a needle by
+  `sweep x DAT_00DD9A80 x input`, and `DAT_00DD9A80` is the game's
+  degrees-to-radians constant (0.017453).
+- **What the mod does.** DSF Enhanced's `[Ultrawide] FOVScaling=1`
+  rewrites that global as its "FOV scalar":
+  `patched global FOV scalar RVA 0x009D9A80 0.017453 -> 0.023453` in the
+  owner's `dsf_enhanced.log` at 3440x1440. RVA 0x9D9A80 + base 0x400000
+  = 0xDD9A80.
+- **The result.** Every needle, vanilla or port, turns 1.344x as far as
+  the gauge table and its clamps say.
+
+Prediction against the owner's shots, from the installed `car.sp`
+(speedometer 195 deg / 80 mph, p605 113; tachometer 169 deg / 5000 rpm,
+p42 7000):
+
+| Reading | Engine maths | x 1.344 | Shot |
+| --- | ---: | ---: | --- |
+| speed 97 mph | 236 deg | 318 deg | ~310 deg |
+| speed 103 mph | 251 deg | 337 deg | ~330 deg |
+| tach at p42 | 237 deg | 318 deg | ~310 deg |
+
+The fix belongs in DSF Enhanced: patch the FOV code's own reference
+instead of the shared constant. `FOVScaling=0` gives correct needles
+meanwhile. The in-game A/B (`TargetAspect=2.388889` with `FOVScaling`
+1 and 0 in a VM) is still to run.
+
+**What the data does without the patch.** The tach stops at p42 (DSF has
+no other tach clamp, `FUN_00891670`), and the speedometer at p605.
+
+- **Vanilla, 150 cars.** Rendered at their p42, the vanilla tachs stop
+  before or on their last mark: 370Z (227) 190 deg against "9" at
+  229 deg; Murcielago (216) in the red before "9"; Fiat 500 Abarth (183)
+  at "60". The Sport Quattro is the exception in its own data: p42 8600
+  at 150 deg / 5000 rpm is 258 deg, 18 deg past its "9" (240 deg; its
+  needle reads about 1000 rpm high). 46 vanilla cars set p605 to their
+  speedometer's last mark.
+- **Ports, Oct 31 roster build (469 cars with needles).**
+  - Speedometers: p605 is the last mark on all 446.
+  - Tachs: on 26 of the 459 clockwise ones, p42 lies past the dial's end
+    (Forza's max needle pose). 19 use the no-tick-table fallback
+    (#504). On the other 7, p42 is above the rpm the tick table puts at
+    the max pose: Q7 +42 deg, p42 being the vanilla Q7's 7000 on a dial
+    that ends near 6000; Bora VR6 +36; DB5 Vantage +33; Top Secret
+    Supra +21; CRX del Sol, Integra Mugen and LFA 0.6 to 6.
+
+  None comes near 360 deg. The tach clamp is p42, the engine's limit
+  too, so a port can only stop such a needle at the dial's end by
+  changing p42 or by hooking `FUN_00891670`.
+
 ### Static needles in the 40-car build (2026-10-23)
 
 User report on `out/testdrive7`: no converted car's needles move. Cause
