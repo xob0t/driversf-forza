@@ -517,7 +517,7 @@ def test_a_lamp_on_a_day_lit_head_lamps_entry_glows_by_day():
 
 def test_centre_piece_of_a_side_subsection_is_a_centre_lamp():
     # The Viper GTS-R's rear emblem is drawn with the `body` section's tail_light, the subsection
-    # of the side tails too (#405): as a piece within CENTRE_X of the centre line it is a centre
+    # of the side tails too (#405): as a piece on the centre line (#430) it is a centre
     # lamp, the high stop lamp above the side tails, not a left and a right tail cluster.
     pts, indices = [], []
     for x0, y0, size in ((0.5, 0.4, 0.2), (-0.7, 0.4, 0.2), (-0.03, 0.62, 0.06)):
@@ -531,6 +531,68 @@ def test_centre_piece_of_a_side_subsection_is_a_centre_lamp():
     got = [plan.tri_lamp.get((id(sub), k)) for k in range(6)]
     assert got[0][:2] == (lights.TAIL, "L") and got[2][:2] == (lights.TAIL, "R"), got
     assert got[4][:2] == got[5][:2] == (lights.BRAKE, "C"), got
+
+
+def _box(name: str, material: str, x0: float, x1: float, y0: float, y1: float, z: float) -> carbin.Section:
+    pts = [(x0, y0, z), (x1, y0, z), (x0, y1, z), (x1, y1, z)]
+    verts = [carbin.Vertex(p, (0, 0), (0, 0), (0.0, 0.0, -1.0)) for p in pts]
+    sub = carbin.SubSection(material, 1, 4, (0.0, 1.0, 0.0, 1.0) * 2, [0, 1, 2, 2, 1, 3])
+    return carbin.Section(name, (0, 0, 0), (0, 0, 0), (0, 0, 0), lod_vertices=verts, subsections=[sub])
+
+
+def _lamp_of(plan, section):
+    return plan.tri_lamp.get((id(section.subsections[0]), 0))
+
+
+def test_lamps_near_the_centre_line_but_off_it_are_a_pair():
+    # #430: a piece is a centre lamp when it straddles x = 0, as vanilla's centre lamps do. The
+    # Acura ARX-01b's two tail lamps sit at |x| 0.06 to 0.12 m; with the old 0.3 m threshold
+    # they were one centre lamp.
+    left = _box("body", "tail_light", 0.064, 0.116, 0.21, 0.33, -2.0)
+    right = _box("body2", "tail_light", -0.116, -0.064, 0.21, 0.33, -2.0)
+    plan = lights.LampPlan.build([left, right], _Place(), 0.0)
+    assert _lamp_of(plan, left)[:2] == (lights.TAIL, "L"), _lamp_of(plan, left)
+    assert _lamp_of(plan, right)[:2] == (lights.TAIL, "R"), _lamp_of(plan, right)
+
+
+def test_a_bar_joining_the_side_tails_is_a_left_and_a_right_tail():
+    # #430: a piece across the centre line that reaches out to the side lamps of its colour (the
+    # Charger 12's tail ring) is those lamps joined, drawn by vanilla as a left and a right lamp:
+    # its triangles take their side.
+    bar = _box("body", "tail_light", -0.65, 0.65, 0.42, 0.62, -2.0)
+    plan = lights.LampPlan.build([bar] + TAILS, _Place(), 0.0)
+    sides = {plan.tri_lamp[(id(bar.subsections[0]), k)][:2] for k in range(2)}
+    assert sides == {(lights.TAIL, "L"), (lights.TAIL, "R")}, sides
+
+
+def test_a_clear_lens_bar_joining_the_head_lamps_is_split_without_a_head_technique():
+    # #430 (CodeRabbit on #539): a car with no head lamp technique takes its front clear lenses as
+    # head lamps; a lens bar across the car that reaches the side lenses is those lamps joined, as
+    # for the planned lamps, so its triangles take their side.
+    lenses = [_quad("glassLHL", "detail_glass_clear", 0.6, 2.0), _quad("glassRHL", "detail_glass_clear", -0.6, 2.0)]
+    bar = _box("bumperFa", "detail_glass_clear", -0.65, 0.65, 0.42, 0.62, 2.0)
+    plan = lights.LampPlan.build(lenses + [bar] + TAILS, _Place(), 0.0)
+    sides = {plan.tri_lamp[(id(bar.subsections[0]), k)][:2] for k in range(2)}
+    assert sides == {(lights.HEAD, "L"), (lights.HEAD, "R")}, sides
+
+
+def test_centre_entries_are_those_on_the_centre_line():
+    # #430: a host entry is a centre one when no other entry is nearer its mirror image than it
+    # is. Vanilla 172's reverse lamps at x +-0.123 are a left and a right entry (the old 0.15 m
+    # threshold made them centre ones); its high stop lamp's entry at x 0.0001 is a centre one,
+    # and so is a lone entry off the centre line (vanilla 123's at -0.111).
+    import struct
+
+    places = [(0.123, -0.1, -2.35), (-0.123, -0.1, -2.35), (0.0001, 0.6, -2.0), (0.6, 0.2, -2.3), (-0.111, 0.7, 2.4)]
+    data = b"".join(struct.pack("<3f", *p) + b"\0" * 52 for p in places)
+    got = lights.entry_places(data, [0x40 * i for i in range(len(places))])
+    assert [got[0x40 * i] for i in range(len(places))] == [
+        (False, "L"),
+        (False, "R"),
+        (False, "C"),
+        (False, "L"),
+        (True, "C"),
+    ], got
 
 
 def test_head_lamp_glows_in_the_colour_its_lens_passes():

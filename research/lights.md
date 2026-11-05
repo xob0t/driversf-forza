@@ -53,10 +53,11 @@ later PR replaced a rule, the earlier section says so in one line.
   Pop-up lamps are planned in their lowered state, the only one drawn
   ([#88](#pop-up-head-lamps-drawn-raised-and-lowered-at-once-issue-88)).
 - Side from the technique or x (a piece of a subsection, its triangles joined
-  by their corners, within 0.3 m of the centre line is a centre lamp,
-  [#405](#centre-lamp-pieces-in-side-subsections-issue-405)); each (function, side, end) group splits into lamps
-  0.2 m apart; a centre tail lamp more than 8 cm above the side tails is the
-  high stop lamp (0x02). A head lamp technique behind the wheelbase
+  by their corners, that straddles the centre line within its colour's side lamps is a centre lamp,
+  [#405](#centre-lamp-pieces-in-side-subsections-issue-405),
+  [#430](#centre-lamps-and-the-high-stop-lamp-issue-430)); each (function, side, end) group splits into lamps
+  0.2 m apart; centre tail lamps more than 8 cm above the side tails are the
+  high stop lamp (0x02; `HIGH_BRAKE_RISE`, unknown: #430). A head lamp technique behind the wheelbase
   midpoint is placed like a clear lens, not as a head lamp, and a lamp the
   red-drawn move empties takes no entry
   ([#264](#head-lamp-techniques-at-the-rear-issue-264)).
@@ -67,7 +68,8 @@ later PR replaced a rule, the earlier section says so in one line.
   priority order (head, tail, stop, indicator, reverse, brake + indicator,
   position, fog; second clusters after every first one), each an entry the
   host ships at the lamp's own end, on its side if one is free (else a
-  centre one, else any) ([#132](#lamps-broke-with-the-wrong-end-issue-132)).
+  centre one, else any) ([#132](#lamps-broke-with-the-wrong-end-issue-132)). A centre
+  entry is one with no other entry nearer its mirror image than itself (#430).
 - A lamp with no entry left at its end shares one there: same function and
   side, else the other side's for types with no side, else its fallback's
   (brake + indicator: the tail lamp; position: head or tail lamp). A rear
@@ -292,10 +294,11 @@ on a shorter or longer car).
    race cars CHE_3_CorvetteC5R_04, MCL_41_McLarenF1GTR_98, MER_CLKGTR_98,
    MIT_HKS_06 and PEU_3_905EVO_93. The NASCARs CHE_2_MonteCarloSS_11 and
    FOR_1_Fusion_11 have decal headlights (`badge`) and stay dark.
-2. Side from the technique (`_left/_right`) or the triangle's x; a
-   subsection whose |x| stays under 0.3 m is a centre lamp. A centre tail
-   lamp more than 8 cm above the side tails becomes a stop-only lamp (type
-   0x02).
+2. Side from the technique (`_left/_right`) or the triangle's x; a piece
+   (triangles joined by their corners) that straddles x = 0 within the side
+   lamps of its colour is a centre lamp (#430; until then a subsection whose
+   |x| stayed under 0.3 m). A centre tail lamp more than 8 cm above the side
+   tails becomes a stop-only lamp (type 0x02; `HIGH_BRAKE_RISE`, unknown).
 3. Triangles are grouped by (function, side, end) and each group is split
    into lamps 0.2 m apart on its finest LOD, so a side repeater is not the
    headlamp indicator and a bumper driving lamp is not the headlamp
@@ -2771,7 +2774,8 @@ Cause (offline-checked; `out/b/an_plan.py` in this PR's worktree, the lamp plan 
   section 2): the emblem lights when braking, never as a running tail.
 
 Change (`LampPlan.build`): the centre test is per piece (`_pieces`, triangles joined by their
-corners). A piece within `CENTRE_X` is a centre lamp, so the emblem is the Viper's centre tail and,
+corners). A piece within `CENTRE_X` is a centre lamp (replaced in #430: a piece that straddles
+the centre line; the emblem does), so the emblem is the Viper's centre tail and,
 16 cm above the side tails, its high stop lamp (0x02, Brakes): dark rolling, lit braking, as in
 Forza.
 
@@ -2912,6 +2916,77 @@ map) doesn't touch.
   their own. That fits 3 of the 272 lens pieces with texels twice those behind them or more (82 cars; the
   Viper's lexan meets 20% Lights, 80% housing). The general fix is a lens region baked finer than Forza's
   lens texture, an atlas copy of its own, like #418's.
+
+### Centre lamps and the high stop lamp (issue #430)
+
+Four lamp-plan constants had no source (AGENTS.md, "Rules come from data, never from fitting"):
+`CENTRE_X` 0.3 m (a piece within it is a centre lamp), `HIGH_BRAKE_RISE` 8 cm (a centre tail that far
+above the side tails is the high stop lamp), `ENTRY_CENTRE_X` 0.15 m (a host entry that close to the
+centre line is a centre entry) and `CLUSTER_GAP` 0.2 m (triangle centres of one lamp). `CENTRE_X` and
+`ENTRY_CENTRE_X` are replaced by definitions read off DSF's own structure (vanilla's lamps and
+light tables). `HIGH_BRAKE_RISE` stays: whether a lamp lights only when braking is a fact about the
+Forza car, to be read from Forza's data (below). `CLUSTER_GAP` stays, unknown.
+
+Data (offline, this PR's worktree, not committed):
+- `out/s430/vanilla.jsonl`: every lamp piece (`_pieces`) of the exterior entries of the 150 vanilla
+  vehicles (`car_render.load_scene(physical=True)`, light byte per triangle): 2,921 pieces, with type,
+  colour, x, y and z extents. The vanilla light tables: 2,179 entries.
+- `out/s430/pieces*.jsonl`: every lamp piece of 80 Forza cars (the shape of the near-centre cases).
+- `out/s430/pr1`: the lamp plan of all 573 roster cars on their host-picks host, master's
+  `lights.py` against this one, from the same car and texel sampler (`plans2.py`: `LampPlan.build`
+  with the Forza texel sampler, without the lens subsections and the baked atlas the build adds).
+
+**Centre lamp (confirmed-static, vanilla data).** A lamp piece (`_pieces`) that straddles x = 0 is a
+centre lamp, unless it reaches out to the side lamps of its colour at its end (its |x| at least the
+innermost |x| of theirs, same LOD): then it is those lamps joined across the car and its triangles
+take the side they are on. Evidence:
+- Of vanilla's lamps, the ones that straddle x = 0 are centre entries: 75 red 0x02, one red fog lamp
+  (the Gallardo LP560's), centre reverse lamps (0x08, 10) and sirens. No 0x18 or 0x03 tail lamp
+  straddles x = 0 (126 and 289 lamps).
+- All 81 non-siren straddling lamps at the rear stay inside the same-colour side lamps' inner edge
+  (the only exceptions are beacon bars, 0x12 and 0x0E). Vanilla draws a bar across the car as a left
+  and a right lamp: its 2009 Challenger's boot-wide panel is two 0x18 tails beside a 0x02 roof lamp.
+- Lamps near the centre line but not across it are left and right pairs: Buggy_Boxy's head lamps at
+  |x| 0.09 to 0.21, the 1968 Camaro's 0x03 at 0.15 to 0.29. `CENTRE_X` 0.3 made such Forza pairs
+  centre lamps (the ARX-01b's tails at |x| 0.06 to 0.12, the Integra Type R's and NSX's reverse
+  lamps in their tail units).
+
+**High stop lamp (unknown, kept).** Master's rule stays: the centre tail lamps whose mean height is
+`HIGH_BRAKE_RISE` (8 cm) above the side tails' brake only (0x02). Four geometric replacements were
+tried in #430's worktree (lowest corner above every other tail; mean height above the others',
+with and without joining touching pieces into one lamp; every centre red lamp, as on vanilla); each
+was chosen after the roster survey showed the last one's failures, which is fitting, and none came
+out right on every car (the Charger 12's tail ring went dark while running under most). Vanilla says
+only how DSF draws a stop-only lamp (a centre 0x02 entry); whether a Forza piece is one comes from
+its technique and lamp states:
+- FH1: `tail_light` glows by `BrakeColor x brake`, `taillightst` by `TailLightColor x lamps on`,
+  `taillight2S` with both (`forza-lenses-re.md` section 2), and a lens glows with the lamp behind it.
+  On the FH1 cars checked, the centre stop lamp is `tail_light` and the side tails include a running
+  technique (`taillight2S`, `taillightst` or `l/rindtailside`): the Charger 12 (centre `tail_light` 78 cm2; its ring
+  `taillightst` under a red lens), the RUF Yellowbird (its bar a red lens over `taillight2S`), the
+  CTS-V coupe 11 (centre `tail_light` under a red lens; side `l/rindtailside`), the 370Z, the
+  California, the Viper 13.
+- FM4: every tail lamp technique is `tail_light`, `BrakeColor x brakeReverseAmount.x x L`: FM4 lights
+  no tail lamp while running, centre or side, so its data can't tell a high stop lamp from a tail
+  (the GTO 97, both 908s, the M6, the Jeep Grand Cherokee SRT8 09, the Agila, the DS3s, the Civic
+  Type R 07, the Silvia K's, the Viper GTS-Rs, the Charger 06).
+
+**Centre entry (confirmed-static, vanilla data).** A host entry is a centre one when no other entry
+stands nearer its mirror image (x -> -x) than itself. The vanilla centre lamps' entries are at
+|x| <= 0.002 m (the centroid of a lamp symmetric about x = 0); every entry from 0.05 m out has a mirror
+partner within 5 mm except three lone siren and roof lamps (118 and 277 at +0.131, 123 at -0.111).
+`ENTRY_CENTRE_X` 0.15 took the mirrored pairs at 0.05 to 0.15 m for centre entries: the reverse lamps of
+62, 172 and 288 at +-0.123, the sirens at +-0.075, Buggy_Boxy's 0x03 at +-0.05.
+
+**`CLUSTER_GAP` (unknown, kept; #515).** Neither game gives a lamp distance:
+- vanilla: the pieces of one entry lie up to metres apart (829 piece gaps in one lamp, 163 of them
+  over 0.3 m: side markers and roof lamps on one entry), and two lamps of one type and side touch
+  (39 of 247 pairs closer than 1 mm);
+- Forza (the roster's single-link merge distances of each (function, side, end) group, 3,637 edges
+  over 5 cm, master's plans): 62 to 70 edges in each 2.5 cm bin from 0.15 to 0.25 m and each 5 cm bin to
+  0.35 m, no gap.
+
+Roster: see the PR (#430's); the plan changes on the cars listed there.
 
 ### Open
 
