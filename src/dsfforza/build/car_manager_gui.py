@@ -242,6 +242,8 @@ class App:
         if name is None:
             s = dict(traffic.DEFAULT_SET) | (amb.get("default") or {})
         self.pending = {k: s.get(k, traffic.DEFAULT_SET[k]) for k in traffic.DEFAULT_SET}
+        # ports chosen by key stay chosen unless the count is changed here
+        self.port_keys = list(s["ports"]) if isinstance(s["ports"], list) else None
         self.ports.set(s["ports"] if isinstance(s["ports"], int) else len(s["ports"]))
         self.share.set(float(s.get("share") or 0.0))
         self.mode.set(s.get("weights") or "vanilla")
@@ -250,7 +252,8 @@ class App:
 
     def gather(self) -> dict:
         out = dict(self.pending)
-        out["ports"] = int(self.ports.get())
+        count = int(self.ports.get())
+        out["ports"] = self.port_keys if self.port_keys and count == len(self.port_keys) else count
         out["share"] = round(float(self.share.get()), 3)
         out["weights"] = self.mode.get()
         out["blend"] = round(float(self.blend.get()), 3)
