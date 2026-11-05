@@ -87,7 +87,8 @@ def _portable(value, repo: str):
     """`value` (a fingerprint or part) with the checkout's folder written as REPO_MARK."""
     text = json.dumps(value, sort_keys=True)
     folder = json.dumps(repo + os.sep)[1:-1]
-    return text.replace(folder, REPO_MARK + json.dumps(os.sep)[1:-1])
+    text = text.replace(folder, REPO_MARK + json.dumps(os.sep)[1:-1])
+    return text.replace(json.dumps(repo), json.dumps(REPO_MARK))  # its "repo" field
 
 
 def entry_id(fp: dict, first: dict | None, repo: str) -> str:
@@ -448,6 +449,62 @@ def _write(path: Path, data: bytes) -> None:
     temp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     temp.write_bytes(data)
     temp.replace(path)
+
+
+def merge_base(rev: str = "origin/master") -> str:
+    """The commit this checkout's branch left `rev` at (git merge-base HEAD rev)."""
+    import subprocess
+
+    out = subprocess.run(
+        ["git", "merge-base", "HEAD", rev], cwd=dsfforza.REPO, capture_output=True, text=True, check=False
+    )
+    if out.returncode != 0:
+        raise SystemExit(f"git merge-base HEAD {rev}: {out.stderr.strip() or out.stdout.strip()}")
+    return out.stdout.strip()
+
+
+def made_by(e: Entry, checker: fingerprint.Checker) -> tuple[dict, dict | None] | None:
+    """The entry's fingerprints when its code is the code `checker` compares with (a
+    revision's: fingerprint.GitUnits), else None."""
+    fp, first = e.fingerprints()
+    if not fp or not fp.get("complete") or checker.code_changed(fp) is not None:
+        return None
+    if first is not None and checker.code_changed(first) is not None:
+        return None
+    return fp, first
+
+
+def affected(store: Store, cars: list[tuple[str, int | None]], base: str, base_units=None) -> dict[str, dict]:
+    """Which of `cars` ((media, spool ID)) a change since revision `base` affects, from the
+    store's fingerprints and without building: {media: {"status", "why", "entry"}}.
+
+    A car's base entry is one the store has that `base`'s code made (its recorded code
+    units are base's; an entry with the car's spool ID first). The car is "affected" when
+    a unit it recorded differs in this checkout or an input it read changed since, with
+    every such unit and the first input listed in "why"; "same" when none did (this
+    checkout would make the same car); "unknown" when the store has no base entry (build
+    base's code for it once: a build of the base commit anywhere on the PC puts it in).
+    `base_units`: base's code units (default fingerprint.GitUnits(base))."""
+    base_check = fingerprint.Checker(units=base_units or fingerprint.GitUnits(base))
+    now = fingerprint.Checker()
+    out = {}
+    for media, sid in cars:
+        entries = sorted(store.entries(media), key=lambda e: e.meta.get("spool_id") != sid)
+        found = None
+        for e in entries:
+            fps = made_by(e, base_check)
+            if fps is not None:
+                found = e, fps
+                break
+        if found is None:
+            out[media] = {"status": "unknown", "why": [f"no car in the store made by {base[:10]}'s code"]}
+            continue
+        e, (fp, first) = found
+        why = now.code_changed(fp, every=True) + (now.code_changed(first, every=True) if first else [])
+        changed = now.inputs_changed(fp) or (now.inputs_changed(first) if first else None)
+        why = sorted(set(why)) + ([changed] if changed else [])
+        out[media] = {"status": "affected" if why else "same", "why": why, "entry": str(e.folder)}
+    return out
 
 
 def seed(store: Store, build: Path) -> int:

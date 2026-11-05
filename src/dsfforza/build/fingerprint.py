@@ -625,6 +625,11 @@ class Checker:
                 old["dsf"] = moved[old["dsf"]]
             if old != new:
                 return "job: " + ", ".join(k for k in sorted(set(old) | set(new)) if old.get(k) != new.get(k))
+        return self.inputs_changed(fp, moved) or (self.code_changed(fp) if code else None)
+
+    def inputs_changed(self, fp: dict, moved: dict | None = None) -> str | None:
+        """The first recorded input (Python and numpy, a file, a folder) that changed, or None."""
+        moved = moved or {}
         if fp.get("env") != self.env:
             return "Python or numpy version"
         for path, digest in fp.get("files", {}).items():
@@ -633,17 +638,25 @@ class Checker:
         for path, digest in fp.get("dirs", {}).items():
             if self.dir(path) != digest:
                 return f"folder {path}"
-        if code:
-            for module, units in fp.get("code", {}).items():
-                table = self.units.get(module)
-                if table is None:
-                    return f"code {module} (gone)"
-                for unit, digest in units.items():
-                    if table.get(unit) != digest:
-                        return (
-                            f"code {module}.{unit.lstrip('=')}" if unit != MODULE_UNIT else f"code {module} (top level)"
-                        )
         return None
+
+    def code_changed(self, fp: dict, *, every: bool = False):
+        """The first recorded code unit that differs from self.units, or None; with `every`,
+        the list of all of them."""
+        out = []
+        for module, units in fp.get("code", {}).items():
+            table = self.units.get(module)
+            if table is None:
+                out.append(f"code {module} (gone)")
+            else:
+                out += [
+                    f"code {module}.{unit.lstrip('=')}" if unit != MODULE_UNIT else f"code {module} (top level)"
+                    for unit, digest in units.items()
+                    if table.get(unit) != digest
+                ]
+            if out and not every:
+                return out[0]
+        return out if every else None
 
 
 def digest_of(value) -> str:

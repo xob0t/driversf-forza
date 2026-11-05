@@ -1552,6 +1552,68 @@ def cmd_plan(args) -> None:
         print(f"wrote {args.tsv}")
 
 
+def base_rev(args) -> str:
+    """--base REV as a commit, default the merge base of HEAD and origin/master."""
+    from dsfforza.build import carstore
+
+    rev = getattr(args, "base", None)
+    if not rev:
+        return carstore.merge_base("origin/master")
+    out = subprocess.run(
+        ["git", "rev-parse", "--verify", f"{rev}^{{commit}}"], cwd=REPO, capture_output=True, text=True, check=False
+    )
+    if out.returncode != 0:
+        raise SystemExit(f"--base {rev}: not a commit here")
+    return out.stdout.strip()
+
+
+def affected_cars(args, picks: list[Pick], log=print) -> dict[str, dict]:
+    """carstore.affected for the picks, from the car store, against --base; printed."""
+    from dsfforza.build import carstore
+
+    store = carstore.Store.default()
+    if store is None:
+        raise SystemExit("--affected needs the car store (carstore.py; DSFFORZA_STORE is off)")
+    base = base_rev(args)
+    found = carstore.affected(store, [(p.media, p.spool_id) for p in picks], base)
+    by = {k: [m for m, f in found.items() if f["status"] == k] for k in ("affected", "same", "unknown")}
+    log(
+        f"since {base[:10]}: {len(by['affected'])} cars affected, {len(by['same'])} the same, "
+        f"{len(by['unknown'])} unknown (no car in the store made by {base[:10]}'s code)"
+    )
+    reasons: dict[str, list[str]] = {}
+    for media in by["affected"]:
+        for why in found[media]["why"]:
+            reasons.setdefault(why, []).append(media)
+    for why, cars in sorted(reasons.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        log(f"  {why}: {len(cars)} ({', '.join(cars[:6])}{', ...' if len(cars) > 6 else ''})")
+    if by["unknown"]:
+        log(f"  unknown: {', '.join(by['unknown'][:12])}{', ...' if len(by['unknown']) > 12 else ''}")
+    return found
+
+
+def cmd_affected(args) -> None:
+    """Which of the selected cars a change since --base affects, from the car store's
+    fingerprints (carstore.affected), without building anything."""
+    dsf, isos, cars, dbs = common(args)
+    picks = [p for p in select(args, cars, dsf, dbs) if not p.notes]
+    from dsfforza.build import clone_vehicle
+    from dsfforza.formats.chnk import read_chunk
+
+    with dsf.open("rb") as stream:
+        taken = clone_vehicle.taken_ids(stream, read_chunk(stream, 0).entries)
+    assign_ids(picks, taken, args.id_policy, args.first_id, isos)
+    found = affected_cars(args, picks)
+    if args.write_list:
+        todo = [p for p in picks if found[p.media]["status"] != "same"]
+        args.write_list.write_text(
+            "".join(f"{p.media}@{p.game.lower()}\n" for p in todo), encoding="utf-8", newline="\n"
+        )
+        print(f"wrote {args.write_list}: {len(todo)} cars (affected and unknown)")
+    if args.json:
+        args.json.write_text(json.dumps(found, indent=1), encoding="utf-8")
+
+
 WORK_FILES = ("chnk", "json", "job.json", "log", "fp.json", "first-try.json", "first-try.log", "first-try.fp.json")
 STORE = "car store"  # Reuse.taken_from for a car taken from the car store
 
@@ -1874,6 +1936,13 @@ def cmd_build(args) -> None:
         raise SystemExit(
             f"{len(picks)} cars: the archive root holds at most {room} new ones (--root-limit {root_limit})"
         )
+    if getattr(args, "affected", False):
+        # Only the cars a change since --base affects (and those the store can't tell),
+        # with the IDs of the whole selection.
+        found = affected_cars(args, picks)
+        picks = [p for p in picks if found[p.media]["status"] != "same"]
+        if not picks:
+            raise SystemExit("no car of the selection is affected")
     print_plan(picks + skipped)
     progress = getattr(args, "progress", None)
     emit(
@@ -1921,7 +1990,18 @@ def cmd_build(args) -> None:
     # The car store every worktree on the PC shares (carstore.py): cars converted anywhere
     # from the same job, inputs and code are taken, not converted again.
     store = None if getattr(args, "no_store", False) else carstore.Store.default()
+    before = getattr(args, "before", False)
+    if before and (store is None or getattr(args, "reuse", None)):
+        raise SystemExit("--before takes the cars from the car store only (no --reuse, no --no-store)")
     reuse = Reuse(args, work, store) if getattr(args, "reuse", None) or store is not None else None
+    if before:
+        # The cars as --base's code made them: the store's entries checked against that
+        # revision's code units; none is converted (this checkout's code isn't that).
+        from dsfforza.build import fingerprint
+
+        base = base_rev(args)
+        reuse.checker = fingerprint.Checker(units=fingerprint.GitUnits(base))
+        print(f"--before: every car from the car store as {base[:10]}'s code made it")
     t = time.time()
     for job in jobs:  # results of an earlier run: reuse (--resume, --reuse) or drop
         old_job, old_report = work / f"{job['media']}.job.json", Path(job["report"])
@@ -1951,6 +2031,10 @@ def cmd_build(args) -> None:
         job["requested_options"] = list(job["port_options"])
     t = time.time()
     todo = [j for j in jobs if j["media"] not in reused]
+    missing = {}
+    if before:
+        missing = {j["media"]: reuse.rebuilt.get(j["media"], "not in the store") for j in todo}
+        todo = []
     args.jobs = gentle.jobs(args.jobs)
     print(
         f"building {len(todo)} cars, {args.jobs} at a time ("
@@ -1981,6 +2065,8 @@ def cmd_build(args) -> None:
     for job in todo:
         job["probe_attempts"] = remembered_attempts(job)
     converted = run_workers(longest_first(todo), work, args.jobs, progress=progress)
+    for media, why in missing.items():  # --before: no car in the store made by --base's code
+        converted[media] = {"media": media, "ok": False, "cause": "not in the car store", "error": why}
     remember_seconds(converted.values())
     remember_attempts(converted.values())
     results = {**reused, **converted}
@@ -2487,6 +2573,54 @@ def write_report(
         print(f"archive {archive} ({archive.stat().st_size / 2**20:.0f} MiB), report {out_dir / 'batch-report.json'}")
 
 
+ROSTER = REPO / "tools" / "batches" / "all.txt"
+ROSTER_ROOT_LIMIT = 3003  # install.ASI_ROOT_LIMIT: every base ID below 1000 plus SSIC, DMWK, BINF
+
+
+def roster_selection(args) -> None:
+    """--roster: the cars and IDs of dsff install's build (tools/batches/all.txt, then the FM4
+    DLC packs' cars; --id-policy asi, --root-limit 3003), so a subset (--affected) gets the
+    IDs a full build gave its cars, and the car store's full builds match it."""
+    if getattr(args, "roster", False):
+        args.list = [*(args.list or []), ROSTER]
+        args.fm4_dlc_cars = True
+        args.id_policy = "asi"
+        args.root_limit = ROSTER_ROOT_LIMIT
+
+
+def _change_arguments(p: argparse.ArgumentParser, name: str) -> None:
+    """affected's and build's options for a change since --base (car store)."""
+    p.add_argument(
+        "--roster",
+        action="store_true",
+        help="the cars and IDs of dsff install's build: --list tools/batches/all.txt --fm4-dlc-cars "
+        "--id-policy asi --root-limit 3003",
+    )
+    if name not in ("affected", "build"):
+        return
+    p.add_argument(
+        "--base",
+        metavar="REV",
+        help="the revision a change is measured from (default: the merge base of HEAD and origin/master)",
+    )
+    if name == "affected":
+        p.add_argument("--write-list", type=Path, help="write the affected and unknown cars as a --list file")
+        p.add_argument("--json", type=Path, help="write {media: status, why, entry}")
+        return
+    p.add_argument(
+        "--affected",
+        action="store_true",
+        help="build only the cars a change since --base affects (port_batch affected), with the "
+        "IDs of the whole selection",
+    )
+    p.add_argument(
+        "--before",
+        action="store_true",
+        help="every car from the car store as --base's code made it, none converted (the 'before' "
+        "of a change; with --affected, of the cars it affects)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The plan / build / remerge command line (src/dsfforza/build/install.py builds its
     port_batch arguments with it too)."""
@@ -2494,7 +2628,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=__doc__.splitlines()[0], formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
-    for name in ("plan", "build"):
+    for name in ("plan", "affected", "build"):
         p = sub.add_parser(name)
         p.add_argument(
             "--dsf",
@@ -2544,16 +2678,18 @@ def build_parser() -> argparse.ArgumentParser:
             help=f"root entries allowed (default {ENTRY_LIMIT}, the vanilla reader); "
             "more needs dsfforza.asi [archive], e.g. 3003 for every base ID below 1000",
         )
+        _change_arguments(p, name)
         if name == "plan":
             p.add_argument("--tsv", type=Path)
-        else:
+        elif name == "build":
             p.add_argument("--out", type=Path, required=True, help="output folder")
             p.add_argument(
                 "--jobs",
                 type=int,
                 default=default_jobs(),
-                help="worker processes (default: one per logical CPU, as many as 1.9 GB each fits in the RAM: "
-                f"{default_jobs()} here; out/gentle caps it at 2)",
+                help="worker processes of this build at most (default: one per logical CPU, as many as 1.9 GB "
+                f"each fits in the RAM: {default_jobs()} here; out/gentle caps it at 2). Every build and "
+                "survey on the PC takes its slots from one job pool of that size (jobpool.py)",
             )
             p.add_argument("--port", help=f"port_car options for every car (default: {DEFAULT_PORT_OPTIONS!r})")
             p.add_argument("--gui", action="store_true", help="also build gui.sp, Fonts.fchunk and hud.lua")
@@ -2667,8 +2803,9 @@ def main(argv: list[str] | None = None) -> None:
     if argv[:1] == ["_worker"]:
         sys.exit(worker(Path(argv[1])))
     args = build_parser().parse_args(argv)
+    roster_selection(args)
     args.dsf = game_paths.vanilla(args.dsf)  # the original when a dsfforza install replaced it
-    {"plan": cmd_plan, "build": cmd_build, "remerge": cmd_remerge}[args.cmd](args)
+    {"plan": cmd_plan, "affected": cmd_affected, "build": cmd_build, "remerge": cmd_remerge}[args.cmd](args)
 
 
 if __name__ == "__main__":
