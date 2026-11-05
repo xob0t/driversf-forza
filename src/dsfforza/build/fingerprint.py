@@ -44,9 +44,9 @@ UNITS_CACHE = dsfforza.REPO / "out" / "cache" / "code-units"
 MODULE_UNIT = "<module>"
 TOOL_NAME = "dsfforza-fingerprint"  # the sys.monitoring tool a Recorder registers
 # Modules whose code shapes no output: this one, the job pool's (when a process may start
-# work, not what it makes) and the car store's (where outputs are kept). Their code is not
-# recorded, nor the pool's and the store's files.
-UNRECORDED = frozenset({__name__, "dsfforza.build.jobpool", "dsfforza.build.carstore"})
+# work, not what it makes), the car store's (where outputs are kept) and gentle's (the
+# priority a process runs at). Their code is not recorded, nor the pool's and the store's files.
+UNRECORDED = frozenset({__name__, "dsfforza.build.jobpool", "dsfforza.build.carstore", "dsfforza.build.gentle"})
 
 
 # --- digests ------------------------------------------------------------------------

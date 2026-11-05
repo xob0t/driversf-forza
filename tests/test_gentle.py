@@ -78,7 +78,7 @@ def test_gentle_caps_the_jobs():
             gentle.IDLE if os.name == "nt" else 0x4000
         )
         os.environ["DSFFORZA_GENTLE"] = "0"
-        if not gentle.FLAG.exists():
+        if not gentle.FLAG.exists() and not (gentle.main_checkout() / "out" / "gentle").exists():
             assert gentle.jobs(12) == 12 and gentle.creation_flags(0x4000) == 0x4000
     finally:
         if saved is None:

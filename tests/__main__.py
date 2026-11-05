@@ -106,6 +106,14 @@ def main(argv: list[str]) -> int:
     os.environ.setdefault("DSFFORZA_POOL", tempfile.mkdtemp(prefix="dsfforza-test-pool-"))
     # Nor the PC's car store (carstore.py): the tests' stand-in cars would land in it.
     os.environ.setdefault("DSFFORZA_STORE", "off")
+    # out/gentle (src/dsfforza/build/gentle.py): the test run and the processes it starts at
+    # Idle, as builds are, while the PC is in use (Windows children inherit Idle).
+    from dsfforza.build import gentle
+
+    # Not gentle.apply(): its Idle job object would also hold the tests' own job objects
+    # (jobpool.die_with_me) and children. Elsewhere nice 19, which children inherit.
+    if gentle.enabled() and not gentle.set_priority(gentle.IDLE) and hasattr(os, "nice"):
+        os.nice(19)
     verbose = "-v" in argv
     words = [a for a in argv if not a.startswith("-")]
     linted = lint() if "--no-lint" not in argv else True
