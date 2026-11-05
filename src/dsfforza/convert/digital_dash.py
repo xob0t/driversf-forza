@@ -216,10 +216,7 @@ DISPLAY_MEAN_LUMINANCE = 48.0
 DISPLAY_PEAK_LUMINANCE = 160.0
 SPEED_SLOTS = 3  # digits laid out for the speed readout (units, tens, hundreds)
 GEAR_CHARS = "R123456"  # g_fDigiData gear: 0 = reverse, then 1..6 (no neutral in DSF)
-# Readouts DSF has no value for (g_fDigiData holds rpm, speed and gear: FUN_00891670):
-# their text is drawn empty, and their meters (fuel, temperatures, oil pressure) stay
-# as the scene authors them (dash_scene.apply_state doesn't write them).
-BLANK_TEXT = (
+BLANK_TEXT = (  # readouts DSF has no value for: drawn empty
     "TEXT_TACH",
     "TEXT_CURRENT_LAP",
     "TEXT_MAX_LAPS",
@@ -228,15 +225,6 @@ BLANK_TEXT = (
     "TEXT_CURRENT_LAP_TIME",
     "TEXT_LAST_LAP_TIME",
     "TEXT_BEST_LAP_TIME",
-    "TEXT_FUEL",
-    "TEXT_WATER_TEMP",
-    "TEXT_OIL_PRESSURE",
-    "TEXT_OIL_TEMP",
-    "TEXT_EXT_TEMP",
-    "TEXT_BOOST",
-    "TEXT_ODOMETER",
-    "TRIP",
-    "TEXT_CLOCK",
 )
 RPM_METERS = ("METER_TACH", "METER_TACH_MEMORY", "METER_SHIFT_LIGHTS")
 
