@@ -1,6 +1,6 @@
 # Garage pictures, HUD badge and model name
 
-Updated: 2026-11-05
+Updated: 2026-11-05 (fitted-rule audit)
 
 How DSF shows a car's picture, maker badge and model name, and how ported
 cars get their own. Code: `src/dsfforza/game/gui_assets.py`. Evidence tags as elsewhere;
@@ -72,6 +72,8 @@ colour across all 142; the right part, which cars cover in most pictures, is
 the photo's fog gradient), the logo is FH1's
 `UI4/Logos/Manufacturer_Logos_LG/L_MAN_<Make>_Logo.xds` (format 50, the
 32-bit `_AS_16_16_16_16` alias), the name a generated chrome nameplate.
+Since the fitted-rule audit the logo and name are the car's HUD badge and
+plate glyphs at 1:1, placed as vanilla's are ("Picture layout" below).
 
 ### Camera and render (offline-checked)
 
@@ -147,7 +149,8 @@ from `VANILLA_CAMERA` = yaw 36.5, pitch 13, distance 1.3
   and a soft floor shadow under the car's footprint.
 - Framing: rendered at 1000 x 560, cropped; the car's box without its shadow
   is fitted into `CAR_BOX` by its right and bottom edges, as vanilla (median
-  right edge 496, bottom 242 in the 142 vanilla pictures).
+  right edge 496, bottom 242 in the 142 vanilla pictures; the left and top
+  edges are chosen, `TODO(fit, #551)`, "Fitted-rule audit" below).
 
 **Tone (calibrated, 2026-10-25).** User report on out/final-gui2: "garage
 vehicle previews look right, but are too glossy". Measured on the car of
@@ -1035,13 +1038,152 @@ top (y offset = 25 - h / 2; median 97 x 21, up to 47 high). The first
 ported glyphs were all bottom-aligned, so new nameplates sat about 60 units
 low, over the boost bar (`img/r8-m5-hud-badge.png` shows it too). Now
 plates are centred on y = 25 and at most 98 x 34 (two lines below 18 px),
-badges 58 wide and bottom-aligned (`glyph_y`, `BADGE_SIZE`). The font atlas
+badges 58 wide and bottom-aligned (`glyph_y`, `BADGE_SIZE`; since the
+fitted-rule audit `BADGE_BOX`, 98 x 56, "Badge glyphs" below). The font atlas
 still grows below row 500 (to 652 for this set); vanilla glyph records are
 unchanged.
 
 Vanilla sources: with `tools/install.ps1` having replaced the game's gui.sp
 and Fonts.fchunk, `gui_assets` now reads the originals from
 `<game>/dsfforza-backup/` (`vanilla_file`).
+
+## Fitted-rule audit (2026-11-05)
+
+Every rule, constant and threshold of the garage picture, badge, plate and name
+code (`game/gui_assets.py`, the picture path of `game/car_render.py`,
+`build/car_gui.py`), classed as AGENTS.md asks: **derived** (a vanilla picture
+or glyph measured, the game's code or data, Forza's own assets), **choice**
+(among Forza's evidence by a property measured over the roster), **fitted**
+(by eye, matched to vanilla's distribution, a per-car exception), **unknown**,
+**tooling**. The measurements below: `uv run dsff gui_assets layout`.
+
+### Picture layout (confirmed-static)
+
+Every vanilla garage picture shows its car's own `vehicles_font` badge and
+plate glyphs (vehicleStats `Manufacturer` and `Model` of the car whose
+`Picture1` it is) at 1:1, each placed in its 99 x 99 cell as the font places
+it (the glyph record's x and y offsets). Found by matching each glyph's opaque
+pixels (alpha over 200) against the picture at every position of the left strip
+(RMS of the RGB difference, 0 to 255):
+
+| | Matched (RMS < 30) | Cell top-left, median | 10th to 90th percentile |
+| --- | ---: | --- | --- |
+| badge | 121 of 142 | (20, 51) | x 18 to 22, y 43 to 53 |
+| plate | 118 of 142 | (20, 147) | x 18 to 23, y 139 to 151 |
+
+The error at the best position is 3 to 25 (both sides are DXT5). Tried at
+scales 0.8 to 1.3, the best is 1.0 on every picture, the misses included: those
+show other art of the same size at the same place (every Cadillac badge, RMS
+48; every Dodge badge, 37; the Lamborghini badges, 30 to 32; a few plates such
+as the Chevelle SS, Hudson Hornet and Murciélago LP670-4 SV). The cells' centre
+is x 69.5; the glyphs' centres measured alone agree (badge 70.0, plate 70.5).
+
+So `compose_picture` draws the car's badge and plate glyphs, the images the HUD
+shows with dsfforza.asi, at 1:1 in cells at `BADGE_CELL` (20, 51) and
+`PLATE_CELL` (20, 147): the vanilla badge of a maker DSF has (its glyph from the
+game's Fonts.fchunk), else `badge_glyph` of the Forza logo (or the text badge);
+the vanilla plate of a model DSF has, else `nameplate`. Before, the Forza logo
+was fitted into `LOGO_BOX` (112 x 62) and a separate 124 x 38 nameplate into
+`PLATE_BOX`, both chosen, and a ported Audi or Nissan showed the Forza logo where
+vanilla's pictures show the game's badge.
+
+### Badge glyphs (confirmed-static)
+
+The 36 vanilla badges (the vehicles_font codes vehicleStats `Manufacturer` uses):
+
+- 19 are 95 to 100 wide (Bentley 98 x 49, Aston Martin 98 x 45, Dodge 98 x 13,
+  McLaren 99 x 14): wide logos fill the cell's width;
+- the 15 narrower than 90 are 35 to 72 high, median 56 (Alfa Romeo 58 x 58,
+  Nissan 58 x 52, VW 56 x 56, Abarth 53 x 56, Lancia 55 x 56; Pontiac 80 x 72 and
+  Lincoln 24 x 71 are the tallest);
+- all are centred across the cell (glyph centre x 48.5 to 51); 20 sit exactly on
+  its bottom, the rest 1 to 9 px above it.
+
+A box of the cell's width less one (98, `add_glyphs`' limit) by 56 puts 26 of
+the 36 within 3 px of their size (median error 1 px). The old 58 x 58 square put
+8 (median 37 px: every wide badge drawn 58 wide). `BADGE_BOX` = (98, 56).
+Packages made before it carry 58 x 58 badges, which `dsfcar.image_limits` still
+accepts (`LEGACY_BADGE_H`).
+
+The 141 vanilla plates are centred on y 25 (the median of their centres; 17.5 to
+33.5) and across the cell (49 to 53.5): `PLATE_CENTRE_Y`, `glyph_y`. Their sizes
+are art, not a rule: 80 are 97 to 100 wide, and short names fill the width too
+("SLR" 98 x 8, "370Z" 98 x 18, "GT-R" 44 x 32); heights run 8 to 47; 106 have
+one line and 35 two. So `nameplate`'s 34 px cap and 18 px two-line threshold
+stay fits (`TODO(fit, #139)`).
+
+### Framing (measured; the rule stays a fit, #551)
+
+The vanilla pictures' cars (`vanilla_car_mask`; the left edge is behind the
+logo, so each width is the car's height times the aspect of its vanilla
+silhouette rendered from `VANILLA_CAMERA`) against the 721 pictures of the
+release build (8200cfa):
+
+| | vanilla (142) | ported (721) |
+| --- | --- | --- |
+| height, median (10th to 90th percentile) | 232 (211 to 244) | 225 (201 to 230) |
+| width | 400 (336 to 459) | at most 398 |
+| right edge | 497 (487 to 503) | 498 (497 to 498) |
+| bottom edge | 242 (235 to 249) | 244 (244 to 245) |
+| top edge | 9.5 (1 to 28) | 20 (14 to 43) |
+
+The vanilla height varies least (coefficient of variation 0.058; width 0.128,
+pixels per metre of length 0.22). `CAR_BOX` predicts 30 of the 142 heights
+within 5 px, and no box predicts most of them. Vanilla's cars look framed one by
+one; the ported ones come out about 3% smaller. `CAR_BOX` stays, marked.
+
+### The table
+
+| Rule | Where | Class | Source, or what it needs |
+| --- | --- | --- | --- |
+| 512 x 256 DXT5, no mips, the header of nissan_370z's | `PICTURE_SIZE`, `picture_dds` | derived | the vanilla pictures |
+| name hash, SPOI/SSIC/SSLP layout, one SPOI a picture | `name_hash`, `add_pictures` | derived | confirmed-static; #540 (pool 19's slots) |
+| 16384 root entries in the car manager's gui.sp | `car_gui.GUI_ROOT_LIMIT` | derived | dsfforza.asi `[archive] max_entries` |
+| texture UID shape (byte 1 0x12, byte 7 below 0x80); the other bytes, `uid_seed` | `_new_uid`, `_font_uid` | derived; tooling | upvh.md; any unused value |
+| backdrop panel (0, 0, 471, 198) | `PANEL` | derived | the vanilla pictures' opaque panel |
+| backdrop: per pixel the most common colour (5-bit bins, 27 neighbours, at least max(8, n / 5) pictures) | `vanilla_backdrop` | tooling | an estimator of vanilla's shared photo |
+| backdrop fog right of x 140, blended over 40 px | `FOG_FROM`, `FOG_BLEND` | fitted | #552: masks from the vanilla silhouettes and glyph boxes |
+| backdrop text area, a vertical blend | `BACKDROP_TEXT_AREA` | fitted | #552 |
+| car framing: fitted into (100, 14, 498, 244) by its right and bottom edges | `CAR_BOX` | fitted (right and bottom near vanilla's medians) | #551 |
+| badge and plate glyphs at 1:1 in cells at (20, 51) and (20, 147) | `BADGE_CELL`, `PLATE_CELL`, `compose_picture` | **derived (this audit)** | "Picture layout"; replaced `LOGO_BOX` and `PLATE_BOX` (fitted) |
+| logo badge box 98 x 56 | `BADGE_BOX`, `badge_glyph` | **derived (this audit)** | "Badge glyphs"; replaced the 58 square (fitted) |
+| badge on the cell's bottom, plate centred on y 25, both centred across | `glyph_y`, `add_glyphs` | derived | the vanilla glyph records |
+| cell 99; free, spare and slot codes; blank 32; wide codes from 0x100 to below 0xD800 | `CELL`, `FREE_CODES`, `SPARE_CODES`, `UNTESTED_CODES`, `HUD_SLOT_CODES`, `BLANK_CODE`, `WIDE_FIRST` | derived | the font; confirmed-static and -runtime above |
+| control codes 1..31 | `CONTROL_CODES` | unknown | untested; behind `--control-codes` |
+| the one-byte code budget: family plates, by car count, blanks | `plan_glyphs` | tooling | an allocation for a game without the plugin; no value to derive |
+| plate width 98 | `nameplate` | derived | the cell; vanilla's plates fill it |
+| plate height cap 34, two lines under 18 | `nameplate` | fitted | #139 |
+| text badge height 30 | `TEXT_BADGE_H` | fitted | #139 |
+| stroke font, marks, punctuation advances | `STROKES`, `MARKS_*`, `NARROW`, `MARK_STACK` | fitted | #139: the car's own model script, or Forza's UI font |
+| chrome look: stroke 0.95, outline 0.55, italic 0.22, gradient 235 / 150 / 40, outline grey 20, blue x 1.03 | `_text_plate` | fitted | #139 |
+| folds: typographic quotes and dashes, ligatures | `CHAR_FOLD`, `TEXT_FOLD` | derived | Unicode (the characters they stand for) |
+| supersampling 3, a 76 px render height, 8 x 24 tiles | `_text_plate`, `PLATE_RENDER_H`, `PLATE_TILE` | tooling | |
+| maker logos: FH1, then FM4, then the FM4 DLC packs; folder order, aliases | `ForzaUI.logo`, `LOGO_FOLDERS`, `LOGO_ALIASES` | derived | Forza's UI textures and List_CarMake |
+| logo trimmed at alpha 12 | `logo_image` | tooling | |
+| maker keys (SRT and Viper to DODGE, SLR to MCLAREN, Range Rover) | `MAKE_ALIASES`, `dsf_make` | derived | DSF's vehicleStats names and Forza's List_CarMake |
+| names | `car_texts` | derived | Forza's string tables |
+| new string IDs from 700000; badge strings at 900000 + code | `FIRST_STRING_ID`, `GLYPH_STRING_BASE` | tooling | free IDs above vanilla's 249144; 900000 = mod_hud.cpp's |
+| card emblem: Forza's forza_logo3 in the SF disc's rect (242, 2, 345, 75) of a 512 x 256 texture | `forza_emblem_image`, `CARD_SF_BOX` | derived | confirmed-runtime ("Garage card emblem") |
+| the emblem's 2 px margin | `forza_emblem_image` | fitted | #139 |
+| one emblem: the one most enabled packages carry | `car_gui.generate` | tooling | the plugin binds one texture |
+| picture paint: palette entry 0 | `paint_colour` | derived | #402 (Sequence 1) |
+| camera yaw 36.5, pitch 13, distance 1.3 car lengths | `VANILLA_CAMERA` | derived | fitted to 24 vanilla pictures (IoU 0.75 to 0.94) |
+| field of view (the bounding sphere fills the width) | `_View` | tooling | the picture is scaled by `CAR_BOX`; only the distance sets the perspective |
+| camera fit: grid, steps, masks (`FIT_LEFT` 135, alpha 200, difference 40), scores | `fit_camera`, `vanilla_car_mask`, `_vanilla_score` | tooling | measurement |
+| render 1000 x 560; the car's own box at alpha 250 (the shadow peaks at 0.75 x 255) | `RENDER_SIZE`, `render_car` | tooling | |
+| geometry: clean exterior, wheels on the rest hubs, interior, no blur discs | `load_scene` | derived | vehicle-model.md, wheel_clearance, #221 |
+| AO: the converter's sky term undone | `_shade` | derived | vehicle-model.md |
+| light, materials, environment, exposure, glass | `SHADING`, `ENV_*`, `SOFTBOX*`, `KEY_*`, `*_AMBIENT`, `EXPOSURE`, `GLASS_*` | fitted (vanilla's tone percentiles, "Tone") | #550 |
+| occlusion floor 0.15 and gain 1.6 | `_shade` | fitted | #550 |
+| floor shadow: alpha 0.75, footprint 0.92 / 0.95, 0.28 m | `SHADOW_ALPHA`, `_shadow` | fitted | #550 |
+| untextured colours (trim, tyre, chrome, others), the no-palette red | `_load_scene`, `DEFAULT_PAINT_SRGB` | fitted | #550 |
+| low fresnel powers raised to 2, the bias lowered to 0.05 | `picture_paint` | fitted | #550 |
+| depth biases: back faces, the cockpit's shell, behind lenses | `BACK_FACE_BIAS`, `INTERIOR_BIAS`, `INTERIOR_LENS_BIAS` | fitted | #550 |
+| the GUI copies need the vanilla vehicleStats | `require_vanilla_stats` | derived | #544 |
+
+The compare renders' terms in `car_render.py` (`dsf_shading`, `DSF_SPECULAR`,
+`PAINT_*`, `SUN_*`, `DAY_LIT`, `DARK`, the grade and tone map) belong to
+`render_compare` (research/render-compare.md) and are not part of this audit.
 
 ## Open
 

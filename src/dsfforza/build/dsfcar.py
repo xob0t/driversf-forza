@@ -99,10 +99,14 @@ def _gui():
 
 def image_limits() -> dict[str, tuple[int, int]]:
     """Largest width x height of each glyph image: what gui_assets fits them to. The
-    vehicles_font cell is CELL wide; a badge is a logo fitted to BADGE_SIZE square or a text
-    badge of CELL - 1 x TEXT_BADGE_H (badge_glyph); a plate is nameplate()'s 98 x 34."""
+    vehicles_font cell is CELL wide; a badge is a logo fitted to BADGE_BOX or a text badge of
+    CELL - 1 x TEXT_BADGE_H (badge_glyph); a plate is nameplate()'s 98 x 34. Packages made
+    before BADGE_BOX carry logos fitted to a 58 square (LEGACY_BADGE_H), which stay valid."""
     g = _gui()
-    return {BADGE: (g.CELL - 1, max(g.BADGE_SIZE, g.TEXT_BADGE_H)), PLATE: (98, 34)}
+    return {BADGE: (g.CELL - 1, max(g.BADGE_BOX[1], g.TEXT_BADGE_H, LEGACY_BADGE_H)), PLATE: (98, 34)}
+
+
+LEGACY_BADGE_H = 58  # the badge glyphs' square before gui_assets.BADGE_BOX (v0.2.0 packages)
 
 
 def sha256(data: bytes) -> str:

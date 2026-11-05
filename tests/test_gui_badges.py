@@ -49,8 +49,8 @@ def test_maker_without_a_logo_gets_a_text_badge():
     bus = entries["BUS_TOUR_12"]["ManufacturerGlyph"]
     zed = entries["ZZZ_A_01"]["ManufacturerGlyph"]
     assert entries["ZZZ_B_01"]["ManufacturerGlyph"] == zed != bus
-    assert glyphs[bus].kind == "badge" and glyphs[bus].w > g.BADGE_SIZE >= glyphs[bus].h
-    assert (glyphs[zed].w, glyphs[zed].h) == (g.BADGE_SIZE, g.BADGE_SIZE)
+    assert glyphs[bus].kind == "badge" and glyphs[bus].w > g.TEXT_BADGE_H >= glyphs[bus].h
+    assert (glyphs[zed].w, glyphs[zed].h) == (g.BADGE_BOX[1], g.BADGE_BOX[1])  # a square logo: the box's height
 
     # The one-byte plan too: no car keeps the host's badge.
     one, _, notes1 = g.plan_glyphs(cars, texts, {}, {}, [212, 213, 245, 252, 244], logos)
