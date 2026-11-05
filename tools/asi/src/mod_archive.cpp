@@ -746,6 +746,388 @@ void pkg_inject(Reader* r)
     dsf_log("packages: reader %p: root entries %u..%u are the %u car packages", r, base, count - 1, g_pkg_count);
 }
 
+// ---- vehicle spool slots ([archive] vehicle_slots) ---------------------------
+// research/traffic.md, "The spool slot limit". Every vehicle model the game holds
+// at once (the traffic set's 15 to 18, the interesting vehicles, the mission pots,
+// the player's car) takes one kind-0 slot of the vehicle spool object. The count
+// is data: SSLP header byte +0x18 + kind (35, 2, 2, 0 in the vanilla archive).
+// FUN_005A1420 makes one slot handler per slot at package init, and
+// TrafficSpooler.GetMaxSpooledVehicles (0x005A0AD0) returns the byte, which caps
+// mission and interesting-vehicle requests (0x005A6FD0: refused at traffic +
+// mission + pending + 1 >= max; the Lua loader then waits forever for the refused
+// model, spoolingsystem.lua requestToSpoolVehicle). The traffic set's list is
+// loaded without that check (0x005A7490), so a set that leaves no room hangs the
+// chapter load. What else is sized by the slot count:
+//   - the slot handler arrays: 64 pointers for all kinds (+0x5630, count +0x5730)
+//     and 64 per kind (+0x5734 + 0x104 k, count at +0x100), written without a
+//     bound; so kind 0 can have at most 64 - (the other kinds' slots) = 60;
+//   - seven ID-list node pools, inline in the spool object, 64, 64, 48, 48, 48,
+//     48 and 48 nodes of 16 bytes ({next free, free count, used} at +0x5B44,
+//     +0x5F5C, +0x6374, +0x668C, +0x69A4, +0x6CBC, +0x6FD4, storage from +0x0C);
+//     their allocator 0x007D7270 bumps the next-free pointer with no end check, so
+//     a pool that runs out writes into the next one. They hold requested and
+//     resident IDs of every kind. They are pointed at buffers of this module's
+//     while they are still unused (each pool checked);
+//   - graphics pool 9 "Vehicle Spooled" (GraphicsManager_Construct 0x00BAD960 from
+//     the .data tables 0x00FD25D0 / 0x00FD2678, read once after DllMain): 35 slots
+//     of 8 MiB / 35 SYS, 0x10000 / 35 range nodes and 35 KiB / 35 GPU, split
+//     evenly; FUN_00BB5690 clamps a slot index to count - 1, so more spool slots
+//     than graphics slots would share the last one (research/spool-limits.md,
+//     "Graphics pool slots"). The table is scaled so each slot keeps its vanilla
+//     size (patch_vehicle_pool, from init);
+//   - one NONR buffer per slot (SSLP +0x08, 0x6D000 = 436 KiB, CRT heap,
+//     allocated at package init by the slot's SceneModelType2) and the model's
+//     data when it is resident: per slot, nothing shared to grow.
+// The traffic spooler's own lists hold 50 traffic and 50 mission models
+// (0x005A6D20) and the set selector copies at most 40 IDs (0x0076FDF0's stack
+// buffer), so 60 slots leave room for a 40-model set, the largest mission pot
+// request (18, spoolingsystem.lua numberOfVehicleAllowed) and the player's car:
+// 40 + 17 + 1 pending + 1 < 60, no refusal.
+const uint32_t kSlotHandlers = 64;          // +0x5630: slot handlers for all kinds
+const uint32_t kVanillaVehicleSlots = 35;   // SSLP +0x18 in the vanilla archive
+const uint32_t kPoolBytes = 0x4000;         // per relocated ID pool: 1024 nodes of 16 bytes
+const uint32_t kIdPools[] = {0x5B44, 0x5F5C, 0x6374, 0x668C, 0x69A4, 0x6CBC, 0x6FD4};
+uint32_t g_vehicle_slots = 0;               // [archive] vehicle_slots; 0 = vanilla, no patch
+bool g_slots_done = false;
+bool g_sslp_hooked = false;               // the slot raise hooked 0x005A0B50 itself (no packages)
+
+// Graphics pool 9's rows: {name, slots} at 0x00FD2618; {flag, SYS KiB, SYS nodes,
+// GPU KiB, GPU nodes} at 0x00FD272C. Vanilla: 35; 0, 0x2000, 0x10000, 0x23, 0x400.
+const uint32_t kPoolSlotsVa = 0x00FD261C;
+const uint32_t kPoolSizesVa = 0x00FD2730;
+const uint32_t kPoolSizesVanilla[4] = {0x2000, 0x10000, 0x23, 0x400};
+
+uint32_t scale_up(uint32_t vanilla, uint32_t slots)
+{
+    return (uint32_t)(((uint64_t)vanilla * slots + kVanillaVehicleSlots - 1) / kVanillaVehicleSlots);
+}
+
+// From init (DllMain), before the game builds its graphics pools: graphics pool 9
+// gets `slots` slots, each at least the vanilla size (GPU KiB stays a multiple of
+// the slot count, which GraphicsManager_Construct asserts).
+bool patch_vehicle_pool(uint32_t slots)
+{
+    const uint32_t vanilla_slots = kVanillaVehicleSlots;
+    if (!bytes_equal(kPoolSlotsVa, &vanilla_slots, 4) || !bytes_equal(kPoolSizesVa, kPoolSizesVanilla, 16)) {
+        check_bytes(kPoolSlotsVa, &vanilla_slots, 4);
+        check_bytes(kPoolSizesVa, kPoolSizesVanilla, 16);
+        dsf_log("slots: graphics pool 9 (00FD261C/00FD2730) is not the vanilla table; vehicle slots stay %u",
+                kVanillaVehicleSlots);
+        return false;
+    }
+    uint32_t sizes[4] = {scale_up(kPoolSizesVanilla[0], slots), scale_up(kPoolSizesVanilla[1], slots), slots,
+                         scale_up(kPoolSizesVanilla[3], slots)};
+    if (!patch_bytes(kPoolSizesVa, sizes, 16, kPoolSizesVanilla)) return false;
+    if (!patch_bytes(kPoolSlotsVa, &slots, 4, &vanilla_slots)) {
+        patch_bytes(kPoolSizesVa, kPoolSizesVanilla, 16);
+        return false;
+    }
+    dsf_log("slots: graphics pool 9 Vehicle Spooled: %u slots, %u KiB SYS, %u nodes, %u KiB GPU, %u GPU nodes "
+            "(vanilla 35, 8192 KiB, 65536, 35, 1024)", slots, sizes[0], sizes[1], sizes[2], sizes[3]);
+    return true;
+}
+
+// ---- a scene-model provider's wrapper list (45 inline) ----------------------
+// Every slot handler's scene model takes one wrapper from each resource provider
+// at package init (SceneModelType2_InitializeResourceProviders 0x00858CD0 calls
+// each provider's vtable +4). The provider class with vtable 0x00E18184
+// (constructor 0x006AE790) keeps them in an inline array of 45 pointers at +0x04
+// with the count at +0xB8 and no bound: acquire 0x006AE160 appends, release
+// 0x006AE1B0 removes (count read through +0x04 as +0xB4), lookup 0x006ADF90 walks
+// them (0x006AF970 on each), 0x006AE140 clears. The vanilla 35 + 2 + 2 vehicle
+// slots take 39; with 45 the 46th append lands on the count (run
+// vm1-20261105-222408: fault reading at 0x006AE19B, ECX 0x2D, from 0x00858E09 <-
+// 0x0059FA87 <- 0x005A1496, the 46th slot). These four are replaced by versions
+// that keep the list in this module (any length); the inline array keeps the first
+// 45 and its count says how many of those there are, for any other reader.
+const uint32_t kWrapInline = 45;
+struct WrapList {
+    uint8_t* owner;
+    void** items;
+    uint32_t count, cap;
+};
+WrapList g_wraps[8];  // one per provider object of the class (one in practice)
+SRWLOCK g_wrap_lock = SRWLOCK_INIT;
+
+WrapList* wraps_of(uint8_t* self)
+{
+    for (WrapList& w : g_wraps)
+        if (w.owner == self) return &w;
+    for (WrapList& w : g_wraps)
+        if (!w.owner) {
+            w.owner = self;
+            return &w;
+        }
+    return nullptr;
+}
+
+void wraps_mirror(uint8_t* self, const WrapList* w)
+{
+    uint32_t n = w->count < kWrapInline ? w->count : kWrapInline;
+    for (uint32_t i = 0; i < n; i++) ((void**)(self + 4))[i] = w->items[i];
+    *(uint32_t*)(self + 0xB8) = n;
+}
+
+typedef void*(__cdecl* MakeObject)(void** out, uint32_t class_id);   // 0x0086A360
+typedef void*(__cdecl* ClassInfo)(uint32_t class_id);                // 0x0086A400
+typedef uint32_t(__cdecl* ClassOf)(void* obj);                       // 0x00869E30
+typedef void(__cdecl* FreeObject)(uint32_t class_id, void* obj);     // 0x00869DA0
+typedef void*(__fastcall* WrapMatch)(void* wrap, void*, uint32_t a, uint32_t b);  // 0x006AF970
+typedef void(__fastcall* WrapRelease)(void* wrap, void*, int flag);              // vtable +0x14
+
+void** __fastcall h_wrap_acquire(uint8_t* self, void*, void** out)
+{
+    void* obj = nullptr;
+    ((MakeObject)0x0086A360)(&obj, 0x7C);
+    ((ClassInfo)0x0086A400)(0x7C);
+    AcquireSRWLockExclusive(&g_wrap_lock);
+    WrapList* w = wraps_of(self);
+    if (w && w->count == w->cap) {
+        uint32_t cap = w->cap ? w->cap * 2 : 64;
+        void** items = (void**)HeapAlloc(GetProcessHeap(), 0, cap * sizeof(void*));
+        if (items) {
+            if (w->items) {
+                memcpy(items, w->items, w->count * sizeof(void*));
+                HeapFree(GetProcessHeap(), 0, w->items);
+            }
+            w->items = items;
+            w->cap = cap;
+        }
+    }
+    if (w && w->count < w->cap) {
+        w->items[w->count++] = obj;
+        wraps_mirror(self, w);
+        if (w->count == kWrapInline + 1) dsf_log("slots: provider %p holds more than %u wrappers", self, kWrapInline);
+    } else {
+        dsf_log("slots: provider %p: no room for wrapper %u (out of memory)", self, w ? w->count : 0);
+    }
+    ReleaseSRWLockExclusive(&g_wrap_lock);
+    *out = obj;
+    return out;
+}
+
+void __fastcall h_wrap_release(uint8_t* self, void*, void** wrap)
+{
+    void* obj = *wrap;
+    AcquireSRWLockExclusive(&g_wrap_lock);
+    WrapList* w = wraps_of(self);
+    if (w) {
+        for (uint32_t i = 0; i < w->count; i++)
+            if (w->items[i] == obj) {
+                memmove(w->items + i, w->items + i + 1, (w->count - i - 1) * sizeof(void*));
+                w->count--;
+                break;
+            }
+        wraps_mirror(self, w);
+    }
+    ReleaseSRWLockExclusive(&g_wrap_lock);
+    uint32_t class_id = ((ClassOf)0x00869E30)(obj);
+    WrapRelease release = *(WrapRelease*)(*(uint8_t**)obj + 0x14);
+    if (class_id == 0x5B) {
+        release(obj, nullptr, 1);
+        return;
+    }
+    release(obj, nullptr, 0);
+    ((FreeObject)0x00869DA0)(class_id, obj);
+}
+
+void** __fastcall h_wrap_lookup(uint8_t* self, void*, void** out, uint32_t a, uint32_t b)
+{
+    *out = nullptr;
+    AcquireSRWLockShared(&g_wrap_lock);
+    WrapList* w = nullptr;
+    for (WrapList& x : g_wraps)
+        if (x.owner == self) w = &x;
+    uint32_t n = w ? w->count : 0;
+    ReleaseSRWLockShared(&g_wrap_lock);
+    for (uint32_t i = 0; i < n; i++) {
+        void* found = ((WrapMatch)0x006AF970)(w->items[i], nullptr, a, b);
+        if (found) {
+            *out = found;
+            break;
+        }
+    }
+    return out;
+}
+
+void __fastcall h_wrap_clear(uint8_t* self)
+{
+    AcquireSRWLockExclusive(&g_wrap_lock);
+    for (WrapList& w : g_wraps)
+        if (w.owner == self) w.count = 0;
+    ReleaseSRWLockExclusive(&g_wrap_lock);
+    *(uint32_t*)(self + 0xB8) = 0;
+    *(void**)(self + 0xC480) = (void*)0x01010101;
+    *(void**)(self + 0xC484) = (void*)0x01010101;
+}
+
+// The four functions' first bytes (dsff xref dis).
+const uint8_t kWrapAcquireExpect[] = {0x51, 0x56, 0x57, 0x8D, 0x44};             // 0x006AE160
+const uint8_t kWrapReleaseExpect[] = {0x8B, 0x81, 0xB8, 0x00, 0x00, 0x00};       // 0x006AE1B0
+const uint8_t kWrapLookupExpect[] = {0x8B, 0x81, 0xB8, 0x00, 0x00, 0x00};        // 0x006ADF90
+const uint8_t kWrapClearExpect[] = {0xB8, 0x01, 0x01, 0x01, 0x01, 0xC7};         // 0x006AE140: mov eax, 0x01010101
+
+bool patch_wrap_lists()
+{
+    if (!check_bytes(0x006AE160, kWrapAcquireExpect, 5) || !check_bytes(0x006AE1B0, kWrapReleaseExpect, 6) ||
+        !check_bytes(0x006ADF90, kWrapLookupExpect, 6) || !check_bytes(0x006AE140, kWrapClearExpect, 6)) {
+        dsf_log("slots: provider 00E18184's functions are not the vanilla code; vehicle slots stay 35");
+        return false;
+    }
+    bool ok = patch_jmp(0x006AE160, (void*)h_wrap_acquire, 5, kWrapAcquireExpect) &&
+              patch_jmp(0x006AE1B0, (void*)h_wrap_release, 6, kWrapReleaseExpect) &&
+              patch_jmp(0x006ADF90, (void*)h_wrap_lookup, 6, kWrapLookupExpect) &&
+              patch_jmp(0x006AE140, (void*)h_wrap_clear, 6, kWrapClearExpect);
+    if (!ok) {
+        patch_bytes(0x006AE160, kWrapAcquireExpect, 5);
+        patch_bytes(0x006AE1B0, kWrapReleaseExpect, 6);
+        patch_bytes(0x006ADF90, kWrapLookupExpect, 6);
+        patch_bytes(0x006AE140, kWrapClearExpect, 6);
+        dsf_log("slots: patching provider 00E18184's functions failed; undone");
+        return false;
+    }
+    dsf_log("slots: provider 00E18184 wrapper list (45 inline) kept in the plugin: 006AE160, 006AE1B0, 006ADF90, "
+            "006AE140");
+    return true;
+}
+
+// ---- the generic providers' wrapper pools (45 nodes) --------------------------
+// Two more provider classes (acquire 0x0086BEE0, vtable 0x00E395D4, pool at +0x18,
+// class ID at +0x248; acquire 0x0086B710, pool at +0x04, class ID at +0x234) list
+// their wrappers through 0x0086B6B0, the only appender of that pool layout: {u32
+// next, u32 free count, u32 used} then 45 nodes of 12 bytes {next, prev, item} and
+// the list head at +0x228. The next pointer is a bump pointer while the free count
+// is 0 and the free list's head otherwise, with no end check; the 46th node lands
+// on the list head and the class ID (run vm1-20261105-223116: fault reading at
+// 0x0086A2AD with class ID 0x292E8970, from 0x0086BEF7 <- 0x00858E09). The
+// replacement appends the same way, but before a bump that would reach the list
+// head it moves the bump pointer to a heap chunk of this module's; freed nodes go
+// back on the free list wherever they live, as before.
+const uint32_t kNode45 = 12;
+const uint32_t kChunkNodes = 256;
+struct PoolChunk {
+    int* pool;
+    uint8_t* end;
+};
+PoolChunk g_pool_chunks[32];
+SRWLOCK g_pool_lock = SRWLOCK_INIT;
+
+// Moves a full node pool's bump pointer to a chunk of this module's. pool = {next,
+// free count, used}; storage..head is its inline storage (head = the list head);
+// what = the log name. Before the bump that would reach `end`. False when the pool is
+// full and no chunk could be had: the caller must not append (the node would land on
+// the list head, or past the chunk).
+bool pool_room(int* pool, uint8_t* storage, uint8_t* head, const char* what)
+{
+    if (pool[1] != 0) return true;  // next is the free list's head: no bump
+    uint8_t* cur = (uint8_t*)(uintptr_t)pool[0];
+    bool inline_storage = cur >= storage && cur <= head;
+    AcquireSRWLockExclusive(&g_pool_lock);
+    PoolChunk* c = nullptr;
+    for (PoolChunk& x : g_pool_chunks)
+        if (x.pool == pool) c = &x;
+    uint8_t* end = inline_storage ? head : (c ? c->end : nullptr);
+    if (end && cur + kNode45 > end) {
+        uint8_t* chunk = (uint8_t*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, kChunkNodes * kNode45);
+        if (!c)
+            for (PoolChunk& x : g_pool_chunks)
+                if (!x.pool) {
+                    c = &x;
+                    c->pool = pool;
+                    break;
+                }
+        if (chunk && c) {
+            pool[0] = (int)(uintptr_t)chunk;
+            c->end = chunk + kChunkNodes * kNode45;
+            if (inline_storage)
+                dsf_log("slots: %s %p passes its %u inline nodes; it goes on in the plugin's chunks", what, pool,
+                        (uint32_t)((head - storage) / kNode45));
+        } else {
+            dsf_log("slots: %s %p: no chunk for node %d; the node is not added", what, pool, pool[2] + 1);
+            ReleaseSRWLockExclusive(&g_pool_lock);
+            return false;
+        }
+    }
+    ReleaseSRWLockExclusive(&g_pool_lock);
+    return true;
+}
+
+// The append of both pools: {next, prev, value} at the front of the list at head.
+void pool_append(int* pool, int* head, int value)
+{
+    int* node = (int*)(uintptr_t)pool[0];
+    if (pool[1] == 0) {
+        node[2] = value;
+        pool[0] += kNode45;
+    } else {
+        int next = node[0];
+        node[2] = value;
+        pool[1]--;
+        pool[0] = next;
+    }
+    pool[2]++;
+    node[0] = *head;
+    node[1] = (int)(uintptr_t)head;
+    ((int*)(uintptr_t)*head)[1] = (int)(uintptr_t)node;
+    *head = (int)(uintptr_t)node;
+}
+
+void __fastcall h_pool45_append(int* pool, void*, int* item)
+{
+    if (!pool_room(pool, (uint8_t*)(pool + 3), (uint8_t*)(pool + 0x8A), "provider pool")) return;
+    pool_append(pool, pool + 0x8A, *item);
+}
+
+
+const uint8_t kPool45AppendExpect[] = {0x83, 0x79, 0x04, 0x00, 0x8B, 0x01};  // 0x0086B6B0: cmp [ecx+4], 0; mov eax, [ecx]
+
+bool patch_pool45()
+{
+    if (!check_bytes(0x0086B6B0, kPool45AppendExpect, 6)) {
+        dsf_log("slots: 0086B6B0 is not the vanilla pool append; vehicle slots stay 35");
+        return false;
+    }
+    if (!patch_jmp(0x0086B6B0, (void*)h_pool45_append, 6, kPool45AppendExpect)) return false;
+    dsf_log("slots: 0086B6B0 provider pools (45 nodes) go on in the plugin's chunks when full");
+    return true;
+}
+
+// The vehicle spool object's SSLP header has just been set: raise its kind-0 slot
+// byte and move its ID pools out of the object. obj = the spool object (the SSLP
+// load's `self` - 4); its package type is at +0x7300 (vehicles: 0, FUN_005A1520).
+void apply_vehicle_slots(uint8_t* obj)
+{
+    if (!g_vehicle_slots || g_slots_done || *(uint32_t*)(obj + 0x7300) != 0) return;
+    g_slots_done = true;
+    uint8_t* header = *(uint8_t**)(obj + 0x72F8);
+    uint32_t others = header[0x19] + header[0x1A] + header[0x1B];
+    uint32_t slots = g_vehicle_slots;
+    if (slots + others > kSlotHandlers) slots = kSlotHandlers - others;
+    if (header[0x18] != kVanillaVehicleSlots) {
+        dsf_log("slots: the vehicle SSLP has %u kind-0 slots, not 35 (another mod's archive); left as it is",
+                header[0x18]);
+        return;
+    }
+    for (uint32_t off : kIdPools) {
+        uint32_t* pool = (uint32_t*)(obj + off);
+        if (pool[0] != (uint32_t)(uintptr_t)(obj + off + 0x0C) || pool[1] || pool[2]) {
+            dsf_log("slots: spool ID pool +%#x is already in use; vehicle slots stay 35", off);
+            return;
+        }
+    }
+    for (uint32_t off : kIdPools) {
+        void* buffer = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, kPoolBytes);
+        if (!buffer) {
+            dsf_log("slots: out of memory for the spool ID pools; vehicle slots stay 35");
+            return;  // the pools moved so far keep working: they only have more room
+        }
+        *(uint32_t*)(obj + off) = (uint32_t)(uintptr_t)buffer;
+    }
+    header[0x18] = (uint8_t)slots;
+    dsf_log("slots: vehicle spool object %p: %u kind-0 slots (vanilla 35; %u of %u handlers), ID pools of %u nodes",
+            obj, slots, slots + others, kSlotHandlers, kPoolBytes / 16);
+}
+
 // FUN_005A0B50 (thiscall: self = spool object + 4; reader, entry index): SSLP
 // loaded. The vanilla function points self+0x72F4 at the SSLP header and
 // self+0x72F8 at its records. self is the spool object's second base (vtable
@@ -756,7 +1138,7 @@ void pkg_inject(Reader* r)
 // instead; a package whose ID (or +1000/+2000) the archive already has, or
 // whose NONR is larger than the slot buffer the SSLP header gives (+0x08 +
 // 4 * kind), is left out. Its root entries stay (nothing names them).
-void __fastcall h_sslp_load(uint8_t* self, void*, Reader* reader, uint32_t index)
+static void sslp_load_packages(uint8_t* self, Reader* reader, uint32_t index)
 {
     uint8_t* p = (uint8_t*)h_ptr(reader, nullptr, index);
     *(uint8_t**)(self + 0x72F4) = p;
@@ -818,6 +1200,14 @@ void __fastcall h_sslp_load(uint8_t* self, void*, Reader* reader, uint32_t index
     *(uint8_t**)(self + 0x72F4) = sslp;
     *(uint8_t**)(self + 0x72F8) = sslp + 0x1C;
     dsf_log("packages: SSLP at %p: %u records + %u for %u car packages", self, count, 3 * add, add);
+}
+
+// The hook: the packages' SSLP copy (when there are packages), then the vehicle
+// slot count ([archive] vehicle_slots) on whichever header the object now uses.
+void __fastcall h_sslp_load(uint8_t* self, void*, Reader* reader, uint32_t index)
+{
+    sslp_load_packages(self, reader, index);
+    apply_vehicle_slots(self - 4);
 }
 
 // The engine singleton, as FUN_0086C630 gets it (0x0086C644..0x0086C652): the
@@ -1885,6 +2275,30 @@ void mod_archive_init()
     if (cfg_bool("archive", "open_log", false)) patch_open_log();
     if (g_read_log) patch_frame_log();
 
+    // Vehicle spool slots (see "vehicle spool slots"): 35 = vanilla, no patch.
+    // 41: the most shown to load and run in game (run vm1-20261105-224648). 45, 50 and 60 crash at package
+    // init in a structure not yet found (research/traffic.md, "The spool slot limit"; issue #566).
+    int slots = cfg_int("archive", "vehicle_slots", 41);
+    if (slots > (int)kVanillaVehicleSlots) {
+        if (slots > (int)kSlotHandlers - 4) slots = (int)kSlotHandlers - 4;  // the other kinds' 2 + 2 slots
+        bool hooked = g_pkg_sites;  // the packages' SSLP hook calls apply_vehicle_slots too
+        if (!hooked && check_bytes(0x005A0B50, kSslpExpect, 5))
+            hooked = g_sslp_hooked = patch_jmp(0x005A0B50, (void*)h_sslp_load, 5, kSslpExpect);
+        if (!hooked)
+            dsf_log("slots: 005A0B50 is not the vanilla SSLP load; vehicle slots stay 35");
+        else if (!(patch_wrap_lists() && patch_pool45())) {  // they only act past their inline room
+            if (g_sslp_hooked) {
+                patch_bytes(0x005A0B50, kSslpExpect, 5);
+                g_sslp_hooked = false;
+            }
+        } else if (patch_vehicle_pool((uint32_t)slots))
+            g_vehicle_slots = (uint32_t)slots;
+        else if (g_sslp_hooked) {
+            patch_bytes(0x005A0B50, kSslpExpect, 5);
+            g_sslp_hooked = false;
+        }
+    }
+
     // Files past 2 GiB. The file layer's seek (0x0085A970) clamps a position
     // with the sign bit set to 0 (`CMP [ECX+0x30],0; JGE`), so every entry of
     // an archive that starts at 2 GiB or later is read from the start of the
@@ -2284,8 +2698,66 @@ void st_archive(uint32_t base)
 
 }  // namespace
 
+// apply_vehicle_slots on fake spool objects: the vehicle object gets 60 kind-0 slots
+// and its seven ID pools move out; another package type, a used pool or a header that
+// isn't the vanilla 35 is left alone.
+static int slots_selftest()
+{
+    int failures = 0;
+#define SL_CHECK(x) do { if (!(x)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #x); failures++; } } while (0)
+    const size_t kObj = 0x7400;
+    uint8_t* obj = (uint8_t*)calloc(1, kObj);
+    uint8_t header[0x1C] = {};
+    auto reset = [&](uint32_t type, uint8_t kind0) {
+        memset(obj, 0, kObj);
+        for (uint32_t off : kIdPools) *(uint32_t*)(obj + off) = (uint32_t)(uintptr_t)(obj + off + 0x0C);
+        *(uint32_t*)(obj + 0x7300) = type;
+        memset(header, 0, sizeof header);
+        header[0x18] = kind0;
+        header[0x19] = 2;
+        header[0x1A] = 2;
+        *(uint8_t**)(obj + 0x72F8) = header;
+        g_slots_done = false;
+    };
+    uint32_t saved = g_vehicle_slots;
+    g_vehicle_slots = 60;
+    reset(0, 35);
+    apply_vehicle_slots(obj);
+    SL_CHECK(header[0x18] == 60);
+    bool moved = true;
+    for (uint32_t off : kIdPools) moved &= *(uint32_t*)(obj + off) != (uint32_t)(uintptr_t)(obj + off + 0x0C);
+    SL_CHECK(moved);
+    reset(3, 35);  // another package type (not vehicles)
+    apply_vehicle_slots(obj);
+    SL_CHECK(header[0x18] == 35 && *(uint32_t*)(obj + kIdPools[0]) == (uint32_t)(uintptr_t)(obj + kIdPools[0] + 0x0C));
+    reset(0, 40);  // another mod's archive
+    apply_vehicle_slots(obj);
+    SL_CHECK(header[0x18] == 40);
+    reset(0, 35);
+    *(uint32_t*)(obj + kIdPools[4] + 8) = 1;  // a pool already holds a node
+    apply_vehicle_slots(obj);
+    SL_CHECK(header[0x18] == 35 && *(uint32_t*)(obj + kIdPools[0]) == (uint32_t)(uintptr_t)(obj + kIdPools[0] + 0x0C));
+    g_vehicle_slots = 70;  // capped by the 64 handlers
+    reset(0, 35);
+    apply_vehicle_slots(obj);
+    SL_CHECK(header[0x18] == 60);
+#undef SL_CHECK
+    free(obj);
+    g_vehicle_slots = saved;
+    g_slots_done = false;
+    printf("archive slots selftest: %d failures\n", failures);
+    return failures;
+}
+
 int mod_archive_pkg_selftest(const char* dir)
 {
+    // init's slot raise hooks the SSLP load when there are no packages; this test
+    // installs the package sites itself, so it starts from the vanilla bytes.
+    if (g_sslp_hooked) {
+        patch_bytes(0x005A0B50, kSslpExpect, 5);
+        g_sslp_hooked = false;
+    }
+    int slot_failures = slots_selftest();
     g_st_fail = 0;
     char d[MAX_PATH], path[MAX_PATH], list[MAX_PATH];
     _snprintf_s(d, sizeof d, _TRUNCATE, "%s\\pkgtest\\", dir);
@@ -2393,5 +2865,5 @@ int mod_archive_pkg_selftest(const char* dir)
     ST_CHECK(!patch_redirect_site());  // patched already: not the vanilla bytes
     g_redirect_count = 0;
     printf("archive packages selftest: %d failures\n", g_st_fail);
-    return g_st_fail;
+    return g_st_fail + slot_failures;
 }
