@@ -31,7 +31,7 @@ from dsfforza.convert.cockpit.geometry import (
     _sub,
     section_points,
 )
-from dsfforza.convert.cockpit.hierarchy import HAND_GRIP_DEG, GaugeSight, camera_eye
+from dsfforza.convert.cockpit.hierarchy import ARMS_GRIPS, GaugeSight, camera_eye
 from dsfforza.convert.cockpit.visibility import _raster, _screen_parts
 from dsfforza.formats import carbin
 
@@ -472,7 +472,7 @@ POD_STEP = 3  # pixels between candidate centres
 HUD_DOWN_DEG = 13.5
 HUD_LEFT_DEG = 7.0
 HUD_RIGHT_DEG = 23.0
-# The hand rig holds the rim HAND_GRIP_DEG either side of its top; a display behind a
+# The hands hold the rim at rim_grips; a display behind a
 # hand and wrist is as hidden as one under the HUD (the GT-R's and Skyline 2003's small
 # moved displays in runs vm2-20261029-201910, vm1-20261029-202300). pod_display(hands=True)
 # keeps this far from each grip, in the wheel's plane.
@@ -483,15 +483,15 @@ COWL_SECTIONS = re.compile(r"^(hood|a_pillar)", re.I)
 
 
 def rim_grips(wheel: Wheel) -> list[tuple]:
-    """Where the hands hold the rim (Forza space): HAND_GRIP_DEG either side of its
-    top, the top being the rim point highest along y."""
-    up = _norm(_sub((0.0, 1.0, 0.0), _scale(wheel.axis, wheel.axis[1])))
-    right = _norm(_cross(wheel.axis, up))
-    t = math.radians(HAND_GRIP_DEG)
-    return [
-        _add(wheel.centre, _add(_scale(right, s * wheel.radius * math.sin(t)), _scale(up, wheel.radius * math.cos(t))))
-        for s in (1, -1)
-    ]
+    """Where the hands hold the rim (Forza space): dsfforza.asi [hands] moves each of
+    the arms' fists (hierarchy.ARMS_GRIPS, about the hub's column) onto the rim at its
+    angle about the column."""
+    out = []
+    for g in ARMS_GRIPS:
+        d = (-g[0], g[1], -g[2])  # DSF model axes -> Forza's
+        d = _sub(d, _scale(wheel.axis, _dot(d, wheel.axis)))
+        out.append(_add(wheel.centre, _scale(_norm(d), wheel.radius)))
+    return out
 
 
 def _disc_mask(rays, eye, centre, normal, radius):

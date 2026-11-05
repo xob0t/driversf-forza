@@ -226,15 +226,23 @@ def add_gauge_records(upvh_data: bytes, ids) -> tuple[bytes, list[int]]:
 # marker's column (FUN_005756E0 -> FUN_00514150). So the marker and p538/p559
 # move the wheel and the hands together. Only the hinge, the point of the wheel
 # mesh drawn at A, moves the hands against the wheel. The marker's quaternion
-# leaves both alone at rest. The rig fits the vanilla wheel: in every vanilla car the
-# hinge is the centre of the same wheel mesh, rim radius 0.176 m (fleet median of
-# the fit_wheel measure; quartiles 0.174 to 0.180), column 24 deg up. The hands
-# grip it about 45 deg either side of the top.
+# leaves both alone at rest.
+#
+# The cockpit arms grip at ARMS_GRIPS: each fist (the mean of its hand's 16 joints) in
+# the pose frame (origin A, the car's axes: DSF model space), as dsfforza.asi [hands]
+# debug=1 logs it before its move (research/cockpit.md, "Hands on Forza's rim"; run
+# vm1-20261028-174107, the same on both ported cars of the run, rims 0.141 and 0.166 m):
+# 0.177 m from the column, the right fist 49 and the left 52 degrees from the top.
+ARMS_GRIPS = ((0.140, 0.099, 0.044), (-0.133, 0.105, 0.050))  # left (+x), right
 HAND_PARAMS = (538, 559)
+# PR #90's model of the rig (a circle of the vanilla wheels' median rim, 0.176 m, at the
+# vanilla column's 24 degrees, gripped 45 degrees either side of the top, read off a
+# screenshot), with its caps. Only seat_anchor uses it, to keep the seats where PR #90
+# put them; the hinge and the hands use ARMS_GRIPS.
 VANILLA_RIM_RADIUS = 0.176
 VANILLA_COLUMN = (0.0, 0.410, -0.912)  # DSF model space, towards the driver
 HAND_GRIP_DEG = 45.0
-MAX_HAND_ALONG = 0.12  # m, along the column (no orbit; the driver model moves with it)
+MAX_HAND_ALONG = 0.12  # m, along the column
 MAX_SEAT_SHIFT = 0.06  # m, in the wheel plane: grip_shift for the seat (the chase view's driver)
 
 
@@ -245,8 +253,14 @@ def _rim_nearest(p, centre, axis, radius):
 
 
 def hand_grips(pivot) -> list[tuple]:
-    """Where the vanilla hand rig grips when the steering pivot (hinge = marker,
-    p538/p559 zero) is at `pivot` (DSF model space)."""
+    """Where the cockpit arms grip (ARMS_GRIPS, left then right) when the steering
+    pivot (hinge = marker, p538/p559 zero) is at `pivot` (DSF model space)."""
+    return [_add(pivot, g) for g in ARMS_GRIPS]
+
+
+def pr90_grips(pivot) -> list[tuple]:
+    """PR #90's model of the grips about `pivot` (VANILLA_RIM_RADIUS, VANILLA_COLUMN,
+    HAND_GRIP_DEG): seat_anchor's, so the seats stay where PR #90 put them."""
     a = _norm(VANILLA_COLUMN)
     up = _norm(_sub((0.0, 1.0, 0.0), _scale(a, a[1])))
     t = math.radians(HAND_GRIP_DEG)
@@ -265,8 +279,7 @@ def hand_grips(pivot) -> list[tuple]:
 def hand_shift(centre, axis, radius) -> tuple[float, float, float]:
     """Offset from the Forza wheel centre for the steering hinge and marker,
     along the column only: the least-squares move along the axis that brings the
-    vanilla hand grips to the rim's plane, capped at MAX_HAND_ALONG (it moves the
-    driver model with the seat, patch_seats). The engine turns the wheel about
+    arms' grips (hand_grips) to the rim's plane. The engine turns the wheel about
     the marker's direction through the hinge, so any part of the shift in the
     wheel plane makes the hub circle by 2 |shift| sin(angle / 2) while steering
     (research/cockpit.md, "The steering wheel turns about its hub"); the grips
@@ -278,12 +291,11 @@ def hand_shift(centre, axis, radius) -> tuple[float, float, float]:
         shift = _scale(axis, t)
         moves = [_sub(_rim_nearest(_add(g, shift), centre, axis, radius), _add(g, shift)) for g in grips]
         t += _dot(_mean(moves), axis)
-    t = max(-MAX_HAND_ALONG, min(MAX_HAND_ALONG, t))
     return _scale(axis, t)
 
 
 def grip_shift(centre, axis, radius) -> tuple[float, float, float]:
-    """Translation (y and z) from the wheel centre that puts the vanilla grips on
+    """Translation (y and z) from the wheel centre that puts PR #90's grips (pr90_grips) on
     the rim (least squares), with the in-plane part capped at MAX_SEAT_SHIFT and
     the part along the column at MAX_HAND_ALONG. Not for the hinge (the wheel
     would turn about an off-hub point): it places the driver's seat, whose
@@ -291,7 +303,7 @@ def grip_shift(centre, axis, radius) -> tuple[float, float, float]:
     the chase views (seat_anchor, patch_seats). The same translation placed the
     hinge and marker before 2026-10-26."""
     axis = _norm(axis)
-    grips = hand_grips(centre)
+    grips = pr90_grips(centre)
     shift = (0.0, 0.0, 0.0)
     for _ in range(8):
         moves = [_sub(_rim_nearest(_add(g, shift), centre, axis, radius), _add(g, shift)) for g in grips]
@@ -326,10 +338,10 @@ def seat_anchor(centre, axis, forza_radius) -> tuple[float, float, float]:
     k = 1.0
     for _ in range(6):
         pivot = _add(centre, grip_shift(centre, axis, forza_radius * k))
-        if hand_grip_error(pivot, centre, axis, forza_radius * k) <= SEAT_FIT_TOLERANCE:
+        if _pr90_grip_error(pivot, centre, axis, forza_radius * k) <= SEAT_FIT_TOLERANCE:
             break
         reach = []
-        for g in hand_grips(pivot):
+        for g in pr90_grips(pivot):
             d = _sub(g, centre)
             d = _sub(d, _scale(axis, _dot(d, axis)))
             reach.append(math.sqrt(_dot(d, d)))
@@ -341,8 +353,12 @@ def seat_anchor(centre, axis, forza_radius) -> tuple[float, float, float]:
 
 
 def hand_grip_error(pivot, centre, axis, radius) -> float:
-    """Largest distance (m) from a vanilla grip to the Forza rim."""
+    """Largest distance (m) from an arms grip (hand_grips) to the Forza rim."""
     return max(math.dist(g, _rim_nearest(g, centre, _norm(axis), radius)) for g in hand_grips(pivot))
+
+
+def _pr90_grip_error(pivot, centre, axis, radius) -> float:
+    return max(math.dist(g, _rim_nearest(g, centre, _norm(axis), radius)) for g in pr90_grips(pivot))
 
 
 def hand_params(steering: dict | None = None) -> dict[int, float]:

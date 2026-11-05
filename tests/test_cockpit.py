@@ -12,6 +12,7 @@ import types
 from dsfforza.convert import cockpit, damage
 from dsfforza.convert import forza_materials as fm
 from dsfforza.convert.cockpit import displays
+from dsfforza.convert.cockpit.hierarchy import _rim_nearest
 from dsfforza.formats import carbin, chnk, upvh
 
 
@@ -458,18 +459,34 @@ def test_chase_driver_hands_keep_their_angle_on_forza_rim():
         assert err["grip_asi"] < 1e-6 and err["asi_rim"] < 1e-9, (radius, err)
         for g in cockpit.hand_grips(anchor):
             t = steering_axle.asi_target(g, rim, anchor)
-            u, v = cockpit._norm(cockpit._sub(g, anchor)), cockpit._norm(cockpit._sub(t, side))
+            u = cockpit._sub(g, anchor)
+            u = cockpit._norm(cockpit._sub(u, cockpit._scale(axis, cockpit._dot(u, axis))))
+            v = cockpit._norm(cockpit._sub(t, side))
             assert cockpit._dot(u, v) > 0.9999, radius  # the same angle, about the hub
 
 
 def test_seat_anchor_puts_the_grips_on_the_rim():
     # The chase view's driver holds the wheel at the vanilla point of the seat's frame;
-    # the seat goes where those grips land on the drawn rim (in-plane shift allowed).
+    # the seat goes where PR #90's grips land on the drawn rim (in-plane shift allowed).
     side = (0.0, 0.0, 0.0)
     axis = cockpit._norm(cockpit.VANILLA_COLUMN)
     for radius in (0.150, 0.200):
         anchor = cockpit.grip_shift(side, axis, radius)
-        assert cockpit.hand_grip_error(anchor, side, axis, radius) < 0.003, radius
+        grips = cockpit.pr90_grips(anchor)
+        assert max(math.dist(g, _rim_nearest(g, side, axis, radius)) for g in grips) < 0.003
+
+
+def test_arms_grips_are_the_probed_fists():
+    # dsfforza.asi [hands] debug=1 (vm1-20261028-174107): 0.177 m from the arms' column
+    # (the circle's normal 26.6 degrees up), 49 and 52 degrees either side of the top.
+    t = math.radians(26.6)
+    axis = (0.0, math.sin(t), -math.cos(t))
+    up = (0.0, math.cos(t), math.sin(t))
+    for g, deg in zip(cockpit.hand_grips((0.0, 0.0, 0.0)), (52.4, -48.9), strict=True):
+        along = cockpit._dot(g, axis)
+        assert abs(along) < 0.006  # the fists sit on the circle to 0.5 cm
+        assert abs(math.hypot(g[0], cockpit._dot(g, up)) - 0.177) < 0.001
+        assert abs(math.degrees(math.atan2(g[0], cockpit._dot(g, up))) - deg) < 0.5
 
 
 def test_hand_shift_keeps_the_hinge_on_the_column():

@@ -25,10 +25,10 @@ LOD for the chase views; cockpit.fit_wheel_points) and reports:
   marker for A and the head camera hangs from the first (research/cockpit.md, "Hosts
   with two steering markers"); `eye_off` is the head camera's sideways distance from
   the hub the cockpit view draws;
-- grip: where the driver's hands hold it in the cockpit view. DSF's hand rig grips
-  0.176 m from the column, 45 degrees either side of the top, centred on A
-  (cockpit.hand_grips; an in-game probe of the arms' fists agrees,
-  research/cockpit.md "Hands on Forza's rim"). `grip_vanilla` is the largest
+- grip: where the driver's hands hold it in the cockpit view: the arms' fists as
+  dsfforza.asi's probe logged them about A (cockpit.hand_grips, ARMS_GRIPS: 0.177 m
+  from the column, 49 and 52 degrees from the top; research/cockpit.md "Hands on
+  Forza's rim"). `grip_vanilla` is the largest
   distance from those grips to the drawn rim; `grip_asi` the same after
   dsfforza.asi [hands] moves each grip onto the rim the car's VO3D gives it
   (p95 radius, p87 centre along the column; by ASI_MAX_MOVE at most, the
