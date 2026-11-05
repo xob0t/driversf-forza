@@ -73,7 +73,9 @@ SUFFIX = ".dsfcar"
 # car.sp holds its builder's ID ("Model ID in memory"). Packages from this pipeline need both.
 # "archive.redirect_chain": the plugin's file redirect passes other files on to DSF Enhanced's
 # (worldlod's map); no package needs it.
-CAPABILITIES = {"archive.packages", "archive.ids", "archive.redirect_chain"}
+# "lua.packages": the plugin tells register.lua which packages it loaded (research/asi.md,
+# "Telling Lua the plugin is there"); register.lua registers no package car without it.
+CAPABILITIES = {"archive.packages", "archive.ids", "archive.redirect_chain", "lua.packages"}
 PIPELINE_REQUIRES = ["archive.packages", "archive.ids"]
 
 KEY = re.compile(r"^[a-z0-9]+\.[a-z0-9]+\.[A-Za-z0-9_\-]+$")

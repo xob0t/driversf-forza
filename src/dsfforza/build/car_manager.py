@@ -58,8 +58,10 @@ PLUGIN = Path("plugins") / "dsfforza.asi"
 # space-separated names up to a NUL. A plugin from before it has none.
 CAPABILITIES_MARKER = b"DSFFORZA-CAPABILITIES: "
 # What every car this manager lists needs of the plugin, whatever its package says: car.sp
-# is installed as it is, so the plugin must write the listed ID into its data.
-MANAGER_NEEDS = {"archive.packages", "archive.ids"}
+# is installed as it is, so the plugin must write the listed ID into its data; and the
+# register.lua installed with this checkout registers a package car only when the plugin
+# says it loaded it (lua.packages, #511).
+MANAGER_NEEDS = {"archive.packages", "archive.ids", "lua.packages"}
 
 
 def plugin_capabilities(plugin: Path) -> set[str] | None:

@@ -67,6 +67,10 @@ void* alloc_exec(size_t n);
 //   archive.redirect_chain  the redirect at 0x0085AC1E passes the names it doesn't list on
 //                     through Driver.exe's CreateFileA import, where DSF Enhanced's [Files]
 //                     Redirect hooks (worldlod reads it to know its map reaches the game)
+//   lua.packages      ProfileSettings.GetVehicleUnlocked(8000000 + 2) and (8000000 + 0x4000 + id)
+//                     tell register.lua whether the car packages, and each car's, are loaded
+//                     (mod_garage.cpp magic_query); register.lua registers no package car
+//                     without that answer (#511)
 #define DSF_CAPABILITIES_MARKER "DSFFORZA-CAPABILITIES: "
-#define DSF_CAPABILITIES "archive.packages archive.ids archive.redirect_chain"
+#define DSF_CAPABILITIES "archive.packages archive.ids archive.redirect_chain lua.packages"
 extern const char dsf_capabilities[];

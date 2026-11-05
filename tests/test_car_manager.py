@@ -23,7 +23,7 @@ def archive(path: Path, ids: list[int]) -> None:
         write_chunk(f, None, [node("SSIC", [node("NONR", [leaf("SSLP", head + records)], align=4)])])
 
 
-def plugin(game: Path, capabilities: str | None = "archive.packages archive.ids") -> None:
+def plugin(game: Path, capabilities: str | None = "archive.packages archive.ids lua.packages") -> None:
     """A stand-in plugins/dsfforza.asi: some DLL-like bytes with the capability marker
     (tools/asi/src/patch.h); None: a plugin from before the marker."""
     path = game / car_manager.PLUGIN
