@@ -339,18 +339,11 @@ class Dash:
             self.text_override[e] = s
             self.log.append(f"{key} -> {self.ename(e)} = {s!r}")
 
-    def apply_state(
-        self,
-        mph=0.0,
-        rpm=0.0,
-        gear="N",
-        fuel=0.75,
-        water=190.0,
-        lights=False,
-        kmh=False,
-        tach_max_default=10000.0,
-        extra_text: dict | None = None,
-    ):
+    def apply_state(self, mph=0.0, rpm=0.0, gear="N", lights=False, kmh=False, tach_max_default=10000.0):
+        """Write the values DSF has into the scene: speed, rpm and gear. The other
+        readouts (fuel, temperatures, oil, odometer, clock, boost...) have no value in
+        DSF (g_fDigiData, FUN_00891670), so they are left as the scene authors them;
+        digital_dash blanks their text (BLANK_TEXT)."""
         speed = mph * 1.609344 if kmh else mph
         self.text("TEXT_SPEED", f"{speed:.0f}")
         tmax = self.number("TACH_MAX") or tach_max_default
@@ -376,51 +369,15 @@ class Dash:
             elif not self.set_slide(g, str(gear)):
                 gi = int(gear) if str(gear).isdigit() else 1
                 self.set_slide(g, "PROGRESS", frac=(gi - 1) / max(1.0, n - 1))
-        self.progress("METER_FUEL", fuel)
-        self.text("TEXT_FUEL", f"{fuel * 100:.0f}")
-        lo, hi = self.number("WATER_TEMP_MIN"), self.number("WATER_TEMP_MAX")
-        if hi <= lo:
-            lo, hi = 100.0, 260.0
-        self.progress("METER_WATER_TEMP", (water - lo) / (hi - lo))
-        self.text("TEXT_WATER_TEMP", f"{water:.0f}")
-        lo, hi = self.number("OIL_TEMP_MIN"), self.number("OIL_TEMP_MAX")
-        if hi <= lo:
-            lo, hi = 100.0, 300.0
-        self.progress("METER_OIL_TEMP", (water + 10 - lo) / (hi - lo))
-        self.progress("METER_OIL_PRESSURE", 0.5)
-        defaults = {
-            "TEXT_ODOMETER": "1234",
-            "TRIP": "56.7",
-            "TEXT_CLOCK": "12:00",
-            "TEXT_CURRENT_LAP": "1",
-            "TEXT_MAX_LAPS": "3",
-            "PLACE": "1",
-            "PLACE_OF": "8",
-            "TEXT_CURRENT_LAP_TIME": "0:00.000",
-            "TEXT_LAST_LAP_TIME": "0:00.000",
-            "TEXT_BEST_LAP_TIME": "0:00.000",
-            "TEXT_OIL_PRESSURE": "50",
-            "TEXT_OIL_TEMP": "200",
-            "TEXT_EXT_TEMP": "72",
-            "TEXT_BOOST": "0.0",
-        }
-        defaults.update(extra_text or {})
-        for k, v in defaults.items():
-            self.text(k, v)
         for c, kind in self.behaviours.items():
             if kind == "COCKPIT_LIGHT":
                 self.set_slide(c, "ON" if lights else "OFF")
+        # The shift lights are driven like the tachometer, as digital_dash's rpm sweep
+        # drives them (RPM_METERS). How the SHIFT_LIGHTS behaviour maps rpm onto them is
+        # undecoded (its props are unread).
         sl = self.bound("METER_SHIFT_LIGHTS")
         if sl is not None and self.behaviours.get(sl) == "SHIFT_LIGHTS":
-            # Guess: the lights cover the top 35 % of the tach range, then flash (FLASH slide).
-            frac = (rpm / tmax - 0.60) / 0.35
-            if frac >= 1.0 and self.set_slide(sl, "FLASH", t=150.0):
-                self.log.append(f"METER_SHIFT_LIGHTS -> {self.ename(sl)} FLASH")
-            else:
-                self.set_slide(sl, "PROGRESS", frac=frac)
-                self.log.append(
-                    f"METER_SHIFT_LIGHTS -> {self.ename(sl)} PROGRESS fraction {max(0, min(1, frac)):.2f} (guessed mapping)"
-                )
+            self.progress("METER_SHIFT_LIGHTS", rpm / tmax)
 
     # -- property evaluation
     def owner(self, i: int) -> int | None:
