@@ -304,7 +304,7 @@ Its idle equals the gamedb `StallRPM` on 322 of 571 cars (otherwise up to 1.2× 
 redline over `RedlineRPM` has quantiles 0.92 (5%), 1.0 (median), 1.14 (95%). If Forza played
 the loops at physics rpm instead, ports would be that much off at the redline. Every audio idle
 and every stall rpm is covered by a loop, so the data doesn't tell the two apart. Deciding it
-needs the xex (the code reading `audio_rpm_redline`).
+needs the xex (the code reading `audio_rpm_redline`; #548).
 
 **In game (confirmed-runtime).** `dsfforza.asi` with `[soundlog] log=1` (`mod_soundlog.cpp`)
 logs, per engine sound, the engine rpm, the shaped rpm, the `vehicle_rpm` sent, VSVH+94/+98,
