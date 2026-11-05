@@ -878,7 +878,7 @@ def convert(
             "lods": {sub.lod: "always" if sub.always else "fade" for sub in blur_disc.subsections},
             "picture": tint is not None,
         }
-    if tint is not None and not opts.skip_full:
+    if tint is not None and blur_disc is not None and not opts.skip_full:  # no disc (--no-wheel-blur): nothing to tint
         from dsfforza.convert import paint
 
         report["wheel_blur"]["colour"] = [round(c, 3) for c in tint]
