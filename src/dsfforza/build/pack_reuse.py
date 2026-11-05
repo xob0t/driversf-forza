@@ -539,7 +539,7 @@ class PictureCache:
         for key, (path, fp) in (store.images(self.pack.checker, self.pack.moved_in) if store else {}).items():
             if key in out:
                 continue
-            name = path.stem + ".bin"
+            name = path.stem.rsplit("-", 1)[0] + ".bin"  # <name>-<pack> in the store
             rel = f"{FOLDER}/{IMAGES}/{name}"
             try:
                 out[key] = unpack_image(Image, path.read_bytes())

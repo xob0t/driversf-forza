@@ -302,38 +302,45 @@ class Store:
 
     def picture(self, key: str, checker, moved=None) -> tuple[Path, Path, str, dict] | None:
         """(DDS, preview PNG, its source, the pack fingerprint it was made under) of a
-        stored garage picture whose pack fingerprint holds, or None."""
-        base = self.root / "pictures" / key
-        info = fingerprint.read(base.with_suffix(".json"))
-        if not info:
+        stored garage picture whose pack fingerprint holds, or None. A picture is kept once
+        per pack fingerprint (pictures/<key>-<pack>.*): the same picture made by other code
+        is another copy."""
+        try:
+            infos = sorted((self.root / "pictures").glob(f"{key}-*.json"), key=_mtime, reverse=True)
+        except OSError:
             return None
-        fp = self.pack_holds(info.get("pack", ""), checker, moved)
-        dds, png = base.with_suffix(".dds"), base.with_suffix(".png")
-        if fp is None or not dds.exists() or not png.exists():
-            return None
-        with contextlib.suppress(OSError):
-            base.with_suffix(".json").touch()
-        self.stats["pictures_hit"] += 1
-        return dds, png, info.get("source", "render"), fp
+        for path in infos:
+            info = fingerprint.read(path)
+            if not info:
+                continue
+            fp = self.pack_holds(info.get("pack", ""), checker, moved)
+            dds, png = path.with_suffix(".dds"), path.with_suffix(".png")
+            if fp is None or not dds.exists() or not png.exists():
+                continue
+            with contextlib.suppress(OSError):
+                path.touch()
+            self.stats["pictures_hit"] += 1
+            return dds, png, info.get("source", "render"), fp
+        return None
 
     def put_picture(self, key: str, dds: Path, png: Path, source: str, pack: str) -> None:
-        base = self.root / "pictures" / key
+        base = self.root / "pictures" / f"{key}-{pack}"
         if base.with_suffix(".json").exists():
             return
         try:
             link_or_copy(dds, base.with_suffix(".dds"))
             link_or_copy(png, base.with_suffix(".png"))
-            _write(base.with_suffix(".json"), json.dumps({"source": source, "pack": pack}).encode())
+            _write(base.with_suffix(".json"), json.dumps({"key": key, "source": source, "pack": pack}).encode())
             self.stats["pictures_put"] += 1
         except OSError as error:
             self.log(f"car store: picture {key} not kept: {error}")
 
     def images(self, checker, moved=None) -> dict[str, tuple[Path, dict]]:
         """{image key: (its file, the pack fingerprint)} of the stored images whose pack
-        fingerprint holds."""
+        fingerprint holds (images/<name>-<pack>.*, as pictures)."""
         out = {}
         try:
-            infos = sorted((self.root / "images").glob("*.json"))
+            infos = sorted((self.root / "images").glob("*.json"), key=_mtime, reverse=True)
         except OSError:
             return {}
         for path in infos:
@@ -343,11 +350,12 @@ class Store:
             fp = self.pack_holds(info.get("pack", ""), checker, moved)
             if fp is not None and path.with_suffix(".bin").exists():
                 out[info["key"]] = (path.with_suffix(".bin"), fp)
+                with contextlib.suppress(OSError):
+                    path.touch()
         return out
 
     def put_image(self, key: str, file: Path, pack: str) -> None:
-        name = hashlib.sha256(key.encode()).hexdigest()[:32]
-        base = self.root / "images" / name
+        base = self.root / "images" / f"{image_name(key)}-{pack}"
         if base.with_suffix(".json").exists():
             return
         try:
@@ -360,17 +368,18 @@ class Store:
     # --- size ------------------------------------------------------------------------------------
 
     def items(self) -> list[tuple[float, int, Path]]:
-        """(last used, bytes, folder or file stem) of every car entry and picture."""
+        """(last used, bytes, folder or file stem) of every car entry, picture and image."""
         out = []
         for media in _dirs(self.root / "cars"):
             for sub in _dirs(media):
                 meta = fingerprint.read(sub / "meta.json") or {}
                 size = meta.get("size") if isinstance(meta.get("size"), int) else _tree_size(sub)
                 out.append((Entry(sub, meta).used(), size, sub))
-        with contextlib.suppress(OSError):
-            for info in (self.root / "pictures").glob("*.json"):
-                size = sum(_size(info.with_suffix(s)) for s in (".dds", ".png", ".json"))
-                out.append((info.stat().st_mtime, size, info.with_suffix("")))
+        for folder, suffixes in (("pictures", (".dds", ".png", ".json")), ("images", (".bin", ".json"))):
+            with contextlib.suppress(OSError):
+                for info in (self.root / folder).glob("*.json"):
+                    size = sum(_size(info.with_suffix(x)) for x in suffixes)
+                    out.append((_mtime(info), size, info.with_suffix("")))
         return out
 
     def evict(self, cap: int | None = None) -> tuple[int, int]:
@@ -393,14 +402,31 @@ class Store:
                     continue
                 shutil.rmtree(trash, ignore_errors=True)
             else:
-                for suffix in (".json", ".dds", ".png"):
+                for suffix in (".json", ".dds", ".png", ".bin"):
                     path.with_suffix(suffix).unlink(missing_ok=True)
             removed += 1
             freed += size
+        # The pack fingerprints no picture or image names any more.
+        used = {p.stem.rsplit("-", 1)[-1] for f in ("pictures", "images") for p in (self.root / f).glob("*.json")}
+        for pack in (self.root / "packs").glob("*.json"):
+            if pack.stem not in used:
+                pack.unlink(missing_ok=True)
         self.log(
             f"car store: {removed} entries removed ({freed / (1 << 30):.1f} GiB), over the cap of {cap / (1 << 30):.0f} GiB"
         )
         return removed, freed
+
+
+def image_name(key: str) -> str:
+    """An image's file name in a pack (pack_reuse.PictureCache.keep_images), without .bin."""
+    return hashlib.sha256(key.encode()).hexdigest()[:32]
+
+
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def _dirs(folder: Path) -> list[Path]:
