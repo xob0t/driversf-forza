@@ -445,12 +445,40 @@ are pool 0x13, memtype 0, size 0x40, and the slot's state is captured, with
 | `Driver_20261105_063058.dmp`, `-063529` | 721 packages, DSF Enhanced | 5 | 8 | entering the garage |
 | `Driver_20261105_065554.dmp`, `-065844` | the same, DSF Enhanced removed | 5 | 8 | entering the garage |
 | `Driver_20261105_070706.dmp` | 360 packages (IDs 511 to 873 disabled) | 3 | 1 | after picking a car, back into free roam |
+| `Driver_20261105_072055.dmp` | 721 packages again, `register = { writeProfile = true, interesting = false }` | 5 | 8 | free-roam start (FREEDRIVE, `updateIcon( 7, true )`) |
+
+Two things load the pictures: the garage's card list, and the start of free
+roam after `register.lua` (`writeProfile`) has marked cars unlocked that the
+save didn't have (`ProfileSettings.SetVehicleUnlocked` also marks a car new;
+the 072055 session's `Driver.log` has `id 511 .. 873 profile unlocked/owned:
+false/false -> true/true` before the load). Traffic is not one: the 072055
+session had `interesting = false` and no `SetInterestingVehicleRegions` line,
+so no ported car was in traffic. Which code requests the pictures at free-roam
+start is not decoded (the gui.sp request functions 0x0059B0B0 and 0x0059B0F0
+have about 40 direct callers, most in 0x0083xxxx).
 
 In the 360-car dump slot 7 holds one such item (3 textures, 9 nodes) and slot
 1 4 1/2 textures, though no item holds more than 3: a slot can take more than
 one load of a shared item. How the spooler gets there (one load per spool ID
 that names the item, all landing in one slot?) is not decoded, so no number of
 pictures to a SPOI is known to be safe, and none is written.
+
+In the headless VM (the release build's 721 packages, the plugin with
+`packages=1`, the vanilla archive, the garage opened by `garagetest_on.lua`,
+then `-MenuKeys` into ABARTH and along its cards):
+
+| Run | Overlay | Result |
+| --- | --- | --- |
+| `vm1-20261105-100225` | none | no crash |
+| `vm1-20261105-100844` | v0.2.0's gui.sp (5 to a SPOI) | the ported 595 Esseesse card shows the lock, then the crash at 0x00BB47EC: pool 0x13, slot 9, 12 of 12 nodes, 0x1F0 bytes |
+| `vm1-20261105-101257` | gui.sp regenerated with one SPOI per picture | all menu steps, the card shows its picture, no crash |
+
+The free-roam trigger did not reproduce in the VM: with `writeProfile` on
+(a test copy of register.lua) 148 ported cars went from locked to unlocked in
+`vm1-20261105-102405` (v0.2.0's gui.sp) and `-102728` (the fix), and neither
+crashed, but neither logged `updateIcon( 7, true )`, which the owner's session
+logs right before its crash and no VM run has ever logged (the harness zaps
+into a probe car; the owner was in Shift with no car).
 
 The car manager's gui.sp (`car_gui.generate`) was written with the vanilla
 reader's 1100 root entries: 177 free rows, so 721 pictures went 5 to a SPOI
