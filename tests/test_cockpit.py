@@ -126,8 +126,16 @@ def test_virtual_dials_on_a_blank_display():
             assert cockpit.FORCE_FLAT.match(sub.material)
             assert fm.classify_cockpit(sub.material, "interior") == (fm.TRIM, None)
     tach, speed = (cal for _, _, _, cal in dials)
-    assert tach.dial_max == 8000 and speed.dial_max == 160  # 250 rpm over the redline at least; 5% over the top speed
+    assert tach.dial_max == 7000 and speed.dial_max == 160  # the first major mark at or past the redline, the top speed
     assert dials[0][2].pivot[0] < dials[1][2].pivot[0]  # tachometer on the left
+
+
+def test_virtual_dial_marks_take_the_colour_that_contrasts_more():
+    # WCAG 2 contrast against the two mark colours: (226, 226, 222) and (22, 22, 22) cross at grey 114.
+    assert cockpit.mark_technique((12, 14, 16)) == "dsf_dial_mark"
+    assert cockpit.mark_technique((110, 110, 110)) == "dsf_dial_mark"
+    assert cockpit.mark_technique((118, 118, 118)) == "dsf_dial_mark_dark"
+    assert cockpit.mark_technique((200, 196, 170)) == "dsf_dial_mark_dark"
 
 
 def test_needles_the_host_cannot_turn_are_dropped():
@@ -318,7 +326,7 @@ def test_virtual_display_past_the_steering_wheel():
         v.position = cockpit._add(tach.pivot, cockpit._sub(v.position, (0.3, 0.7, -0.7)))
     dials2, _, _ = cockpit.virtual_gauges(static, {"tach": tach}, eye, _Car(), 2, wheel=wheel)
     assert [g.family for _, _, g, _ in dials2] == ["speed"]
-    reach = max(math.dist(p, tach.pivot) for p in cockpit.section_points(needle)) * cockpit.POD_GAUGE_CLEAR
+    reach = max(math.dist(p, tach.pivot) for p in cockpit.section_points(needle))
     for p in cockpit.section_points(dials2[0][1]):
         crossing = cockpit._scale(cockpit._norm(p), tach.pivot[2] / cockpit._norm(p)[2])
         assert math.dist(crossing, tach.pivot) > reach
