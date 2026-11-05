@@ -1,6 +1,6 @@
 """Low-impact mode for builds while the PC is in use (e.g. the user is gaming).
 
-On while the file out/gentle exists (or DSFFORZA_GENTLE=1): the calling process and
+On while the file out/gentle exists, here or in the main checkout (or DSFFORZA_GENTLE=1): the calling process and
 every process it starts run at Idle priority, and port_batch runs at most CORES
 workers (jobs). The machine-wide job pool (jobpool.py) hands out at most CORES slots
 while out/gentle exists here or in the main checkout (anywhere()). No CPU affinity: Windows spreads the Idle processes over whatever
@@ -32,7 +32,9 @@ _JOB: list = []  # the job object's handle, kept open for the life of the proces
 
 
 def enabled() -> bool:
-    return FLAG.exists() or os.environ.get("DSFFORZA_GENTLE") == "1"
+    """out/gentle in this checkout or in the main one (one switch for every worktree on the
+    PC: Idle priority as well as the job pool's cap), or DSFFORZA_GENTLE=1."""
+    return FLAG.exists() or os.environ.get("DSFFORZA_GENTLE") == "1" or (main_checkout() / "out" / "gentle").exists()
 
 
 def main_checkout(repo=REPO):
@@ -56,9 +58,9 @@ def main_checkout(repo=REPO):
 
 
 def anywhere() -> bool:
-    """enabled(), or out/gentle in the main checkout: the machine-wide job pool
+    """enabled() (which includes the main checkout's out/gentle): the machine-wide job pool
     (src/dsfforza/build/jobpool.py) is capped for every worktree's builds then."""
-    return enabled() or (main_checkout() / "out" / "gentle").exists()
+    return enabled()
 
 
 def apply() -> bool:
