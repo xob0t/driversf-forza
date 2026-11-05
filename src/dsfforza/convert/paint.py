@@ -55,7 +55,7 @@ from dsfforza import REPO
 from dsfforza.formats.chnk import Entry, entry_size
 from dsfforza.formats.vehicle_mesh import child, payload
 
-MAX_COLOURS = 14  # the largest vanilla palette
+MAX_COLOURS = 14  # the largest vanilla palette; TODO(fit, #528): no engine limit cited
 
 
 @dataclass
@@ -141,6 +141,7 @@ def pick_colours(colours: list[ForzaColour], limit: int = MAX_COLOURS) -> list[F
     most distinct ones (farthest-point in sRGB from the first colour on), so a
     long list like the Charger Daytona's 20 keeps its white, grey and black
     rather than its first 14."""
+    # TODO(fit, #528): squared sRGB plus 400 for a different metallic flag is a chosen metric.
     if len(colours) <= limit:
         return list(colours)
     chosen = [0]
@@ -326,6 +327,8 @@ def knee(a) -> float:
     brighter on screen and the shading across the body flattens (a panel facing the sun shows
     what the median one does). A neutral grey stops gaining near 0.5, a saturated colour (one
     strong channel) near 0.3 (paint-re.md, "Why bright reds look flat")."""
+    # TODO(fit, #528): a line through two values read off the screen model; the knee per hue
+    # follows from the chain itself (where the grade saturates at LIGHT_SUN).
     a = np.asarray(a, np.float64)
     return 0.5 - 0.2 * (1 - a.min() / max(a.max(), 1e-6))
 
@@ -387,6 +390,8 @@ REFLECTION = 1.0
 # Metallic.xml lobes (7 x lobe^6 + 6 x lobe^4 over a diffuse halved by PaintScale 0.5) take
 # vanilla's p75, 0.3, scaled by the lobes' amount and PaintScale, at their powers weighted
 # by amount (5.1).
+# TODO(fit, #528): vanilla's common value and its 75th percentile ("a starting point to tune",
+# paint-re.md section 6); the literal match needs Forza's light units.
 SOLID_SHEEN = (0.1, 5.0)
 LOBE_SHEEN = 0.3
 LOBE_AMOUNT = FORZA_METALLIC_BODY["SpecularAmount2"] + FORZA_METALLIC_BODY["SpecularAmount3"]

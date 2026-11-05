@@ -28,6 +28,7 @@ from dsfforza.formats import carbin
 # grey, bright chrome (research/wheels.md); every rim came out plain silver that way.
 # The brake rotor (brake_rotor_section) always takes swatches: the disc the uniform mid grey
 # square (red 106, gloss 58: duller than the rims' 131 / 190), the hub the inner-rim dark.
+# TODO(fit, #524): the rotor's two swatches are chosen; Forza's rotor0..4.xds aren't read.
 ROTOR_DISC = "dsf_rotor_disc"  # Forza's rotor / brake / drum subsections: the friction faces
 ROTOR_HUB = "dsf_rotor_hub"  # hub hats, studs and whatever else the rotor carbin holds
 WHEEL_UV = {
@@ -243,6 +244,9 @@ WHEEL_BLUR_LIFT = 0.003  # m in front of the rim face
 # Baked sky of the disc's vertices, as on vanilla discs (0.9 to 1.0; their rims 0.64). With the
 # converted rim's 0.56 the faded-in disc came out darker than the rim it covers (370Z in game:
 # mean grey of the wheel face 90 at rest, 70 at 60 mph; the vanilla 370Z's 103 and 146).
+# TODO(fit, #407): vanilla's convention and a 370Z shot; the derived rule (forza-lamps-blur-re.md
+# 2.4) gives each ring the rim's mean AO there, together with the disc texels from the rim's own
+# rotational mean, which are made in dsf_materials (wheel_blur_texels).
 WHEEL_BLUR_SKY = 0.9
 # Barycentric samples of each triangle for the rim face's envelope: corners, edge midpoints,
 # centroid.
@@ -327,6 +331,9 @@ def wheel_blur_section(sections, lods, centre=(0.0, 0.0, 0.0)) -> carbin.Section
 
     from dsfforza.convert import forza_materials as fm
 
+    # TODO(fit, #407, #419): UV0 samples Forza's wheel2.xds picture, laid out unlike the
+    # converted rim on some cars; the derived disc is a radial ramp of the rim's own rotational
+    # mean (forza-lamps-blur-re.md 2.4).
     picture = blur_picture_map(sections)
     _, cy, cz = centre  # the face's x is the model's own
     weights = np.array(_FACE_SAMPLES)
@@ -434,7 +441,10 @@ def wheel_blur_section(sections, lods, centre=(0.0, 0.0, 0.0)) -> carbin.Section
 # don't turn, are left out.
 ROTOR_CARBINS = {"front": "rotorLF_LOD0.carbin", "rear": "rotorLR_LOD0.carbin"}  # port_car.extract_brakes
 BRAKE_ROTOR_SECTION = "dsf_brake_rotor"
-BRAKE_ROTOR_MAX_TRIANGLES = 2000
+BRAKE_ROTOR_MAX_TRIANGLES = 2000  # TODO(fit, #524): a budget (the 90th percentile), no engine limit
+# TODO(fit, #524): the rotor's triangle centroids by radius have no gap here (0.55 to 0.65 of the
+# radius is the densest band over the roster); Forza's rotor pictures or its caliper's sweep
+# would say where the friction ring starts.
 ROTOR_RING = 0.6  # share of the rotor's radius where the friction ring starts
 PLAIN_ROTOR_SEGMENTS = 32
 
@@ -469,7 +479,7 @@ def plain_rotor(triangles) -> list:
     hx = (min(p[0] for p in hat), max(p[0] for p in hat))
     hub_face = hx[0] if hx[0] < rx[0] else hx[1]  # the hat stands out of the ring towards the hub face
     ring_face = rx[0] if hub_face < rx[0] else rx[1]
-    rh = 0.85 * r0
+    rh = 0.85 * r0  # TODO(fit, #524): the hat's radius has no source
     n = PLAIN_ROTOR_SEGMENTS
     ang = [2 * math.pi * k / n for k in range(n + 1)]
     out = []
@@ -592,6 +602,8 @@ def is_rotor(sub) -> bool:
 # in the DSF wheel frame) end on the car, and rays leaving past the tyre's radius
 # count WHEEL_SKY_SIDE (the arch above, the road below): the tread comes out at
 # about 0.3 like vanilla instead of 0.45.
+# TODO(fit, #525): both levels are vanilla's (the outward faces' median of medians; a side
+# share that puts the tread near vanilla's 0.29), not the engine's lighting.
 WHEEL_SKY_OPEN = 0.64
 WHEEL_SKY_SIDE = 0.5
 WHEEL_AO_RAYS = 24

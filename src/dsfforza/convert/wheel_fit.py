@@ -70,7 +70,10 @@ ARCH_SIDE_HEIGHTS = (0.3, 0.91, 0.05)  # fore/aft: the arch's sides at these hei
 # The 5th and 95th percentiles of the vanilla cars and SUVs (120 of the 140 four-wheeled
 # vehicles: no trucks, buses, vans, pickups or the trailer), per axle, from `wheel_fit survey`
 # on the vanilla archive (research/wheels.md, "Wheel fit"): the range a wheel's reading is
-# compared with (in_band).
+# compared with (in_band). A yardstick for surveys; car.arch_fit also uses it to choose between
+# MAXData's and the gamedb's track and ride height.
+# TODO(fit, #526): as a choice criterion it is vanilla's distribution, not a physical fit of the
+# tyre to its own arch.
 VANILLA_BAND = {
     ("fore_aft_mm", "front"): (-12.5, 16.6),
     ("fore_aft_mm", "rear"): (-17.5, 12.5),

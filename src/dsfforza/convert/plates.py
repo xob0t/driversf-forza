@@ -90,9 +90,14 @@ SHARED_ATLAS_MATERIALS = {
         "a012f01306d57a2a",  # GLOBAL_LOD_Chrome
     )
 }
-DEFAULT_SIZE = (0.26, 0.122)  # vanilla median quad
+DEFAULT_SIZE = (0.26, 0.122)  # vanilla median quad; TODO(fit, #527): a fleet median used per car
 FORZA_PLATE_TECHNIQUES = ("numberplate",)
 PX = 0.01  # depth-map cell (m)
+# TODO(fit, #527): the search's thresholds, bands and costs below (FLAT_RMS to LOD_PUSH_LIMIT,
+# the POCKET_* bounds but VANILLA_MIN_PLATE and POCKET_DEEP, the window search's score and walks,
+# the 0.15..1.45 m height band, face_cells' 0.3 m) were set on named cars as each report came in.
+# FACE_DOWN, MAX_TILT, MIN_WIDTH, PROUD and PLATE_AO are vanilla's plates (research/plates.md,
+# "Fitted-rule audit").
 FLAT_RMS = 0.003  # plane-fit RMS of a usable mounting face
 COPLANAR = 0.004  # recess region: within this of the plane
 PROUD = 0.003  # plate in front of the face
@@ -1107,6 +1112,8 @@ def plan(car_body, place, ground: float, host: HostPlates, lods, log=print) -> P
         if hp is None:
             report[end] = {"source": "none", "note": "the host has no plate here"}
             continue
+        # TODO(fit, #527): the host plate's height share of its body box, a vanilla prior for
+        # where the Forza car carries its plate.
         t = (hp.centre[1] - hy0) / max(1e-6, hy1 - hy0)
         prior_y = min(ys) + t * (max(ys) - min(ys))
         mesh = _forza_mesh(car_body, end, place, z_mid)
