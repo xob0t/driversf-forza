@@ -376,6 +376,9 @@ class Dash:
             elif not self.set_slide(g, str(gear)):
                 gi = int(gear) if str(gear).isdigit() else 1
                 self.set_slide(g, "PROGRESS", frac=(gi - 1) / max(1.0, n - 1))
+        # TODO(fit, #506): DSF has no fuel, temperature, oil, odometer, clock or boost value
+        # (g_fDigiData holds rpm, speed and gear: FUN_00891670). These placeholders stay until
+        # a derived rule replaces them; blanking them looked worse (#513).
         self.progress("METER_FUEL", fuel)
         self.text("TEXT_FUEL", f"{fuel * 100:.0f}")
         lo, hi = self.number("WATER_TEMP_MIN"), self.number("WATER_TEMP_MAX")
@@ -412,7 +415,8 @@ class Dash:
                 self.set_slide(c, "ON" if lights else "OFF")
         sl = self.bound("METER_SHIFT_LIGHTS")
         if sl is not None and self.behaviours.get(sl) == "SHIFT_LIGHTS":
-            # Guess: the lights cover the top 35 % of the tach range, then flash (FLASH slide).
+            # TODO(fit, #506): the lights cover the top 35 % of the tach range, then flash (FLASH
+            # slide). The SHIFT_LIGHTS behaviour's props are undecoded.
             frac = (rpm / tmax - 0.60) / 0.35
             if frac >= 1.0 and self.set_slide(sl, "FLASH", t=150.0):
                 self.log.append(f"METER_SHIFT_LIGHTS -> {self.ename(sl)} FLASH")
