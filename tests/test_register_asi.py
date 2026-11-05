@@ -9,6 +9,9 @@ detection, how many cars become Selectable, the group caps, and which
 ProfileSettings setter calls guardProfile lets through. A plugin with the car
 list window answers the cars-per-group query (k = 0x3000 + n), so a make keeps
 all its cars in one group; one without it (cars=None) keeps groups at 20.
+
+The cars of packages.lua are registered only when the plugin says its car
+packages are loaded (k = 2, and k = 0x4000 + id per car; #511).
 """
 
 from __future__ import annotations
@@ -49,7 +52,10 @@ def run(
     per_group: int | None = 1000,
     stats_extra: str = "",
     files: dict | None = None,
+    packages: set[int] | None = None,
 ):
+    """packages: the IDs whose car packages the plugin has loaded ([archive] packages on);
+    None: the plugin's packages are off (or, with asi=False, there is no plugin)."""
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
     g = lua.globals()
     out: list[str] = []
@@ -70,10 +76,14 @@ def run(
     def unlocked(i):
         i = int(i)
         k = i - MAGIC
-        if not asi or not 0 <= k < 0x4000:
+        if not asi or not 0 <= k < 0x5000:
             return False
         if k in (0, 1):
             return True
+        if k == 2:
+            return packages is not None
+        if 0x4000 <= k < 0x5000:
+            return packages is not None and k - 0x4000 in packages
         if 0x1000 <= k < 0x2000:
             return k - 0x1000 <= groups
         if 0x2000 <= k < 0x3000:
@@ -207,6 +217,93 @@ def test_registers_gc_wrapper_restarts_the_collector_when_a_file_raises():
     g = lua.globals()
     assert g.raised_ok is False and "script error in raise.lua" in str(g.raised), g.raised
     assert list(g.gc_calls.values()) == ["stop", "restart"], list(g.gc_calls.values())
+
+
+# An install's packages.lua and packages_hud.lua (dsff car_manager): free vanilla IDs and one past 303.
+PACKAGE_IDS = (1, 2, 3, 400)
+PACKAGES_LUA = (
+    "return { cars = {\n"
+    + "\n".join(
+        f'[{i}] = {{ host = 266, media = "P{i}", make = "Pmake{i}", model = "P{i}", year = "2010" }},'
+        for i in PACKAGE_IDS
+    )
+    + "\n} }"
+)
+PACKAGES_HUD = "return {\n" + "\n".join(f'[{i}] = {{ Picture1 = "dsfforza_p{i}" }},' for i in PACKAGE_IDS) + "\n}"
+REGIONS = """
+regions = {}
+for i = 1, 17 do regions[i] = { vehicleList = { 62 } } end
+InterestingVehicleManager.SetInterestingVehicleRegions(regions)
+added = {}
+for _, region in ipairs(regions) do
+  for _, id in ipairs(region.vehicleList) do if id ~= 62 then added[id] = true end end
+end
+"""
+
+
+def run_packages(*, asi: bool, packages: set[int] | None, ported_lua: str | None = None):
+    """register.lua over an install's packages.lua; returns (registered IDs, IDs in traffic,
+    log lines, the Lua state)."""
+    files = {
+        f"dsfforza{BS}packages.lua": PACKAGES_LUA,
+        f"dsfforza{BS}packages_hud.lua": PACKAGES_HUD,
+        f"dsfforza{BS}ported.lua": ported_lua,
+    }
+    lua, out = run(asi, files=files, packages=packages)
+    lua.execute(REGIONS)
+    g = lua.globals()
+    stats = g.vehicleStats
+    registered = {i for i in (*PACKAGE_IDS, 5) if stats[i] is not None}
+    traffic = set(g.added.keys())
+    return registered, traffic, out, lua
+
+
+def test_package_cars_need_the_plugins_packages():
+    """Plugin with [archive] packages loaded: every car is registered (vehicleStats, the
+    garage, traffic, its packages_hud.lua entry)."""
+    registered, traffic, out, lua = run_packages(asi=True, packages=set(PACKAGE_IDS))
+    assert registered == set(PACKAGE_IDS), registered
+    assert traffic == set(PACKAGE_IDS), traffic
+    stats = lua.globals().vehicleStats
+    assert all(stats[i].Selectable for i in PACKAGE_IDS)
+    assert stats[1].Picture1 == "dsfforza_p1"
+    assert not [line for line in out if "installed cars" in line], out
+
+
+def test_no_package_car_without_the_plugin():
+    """No plugin (no ASI loader, blocked, no patches on this exe): no vehicleStats entry, garage
+    card, traffic slot or HUD entry for any package car, and one line that says why."""
+    registered, traffic, out, lua = run_packages(asi=False, packages=None)
+    assert registered == set(), registered
+    assert traffic == set(), traffic
+    assert len(lua.globals().dsfforzaRegister.cars) == 0
+    lines = [line for line in out if "installed cars" in line]
+    assert len(lines) == 1 and "dsfforza.asi is not active: the 4 installed cars are not loaded" in lines[0], out
+    assert not [line for line in out if "hud.lua" in line or "vanilla match" in line], out
+
+
+def test_no_package_car_with_the_plugins_packages_off():
+    """Plugin there ([garage] active) but [archive] packages off or not patched: nothing either."""
+    registered, traffic, out, _ = run_packages(asi=True, packages=None)
+    assert registered == set() and traffic == set(), (registered, traffic)
+    lines = [line for line in out if "installed cars" in line]
+    assert len(lines) == 1 and "has not loaded the car packages: the 4 installed cars" in lines[0], out
+
+
+def test_package_cars_the_plugin_left_out_are_not_registered():
+    """A package the plugin left out (bad file, ID clash, NONR too big): only that car is missing."""
+    registered, traffic, out, _ = run_packages(asi=True, packages={1, 3, 400})
+    assert registered == {1, 3, 400} and traffic == {1, 3, 400}, (registered, traffic)
+    lines = [line for line in out if "installed cars" in line]
+    assert len(lines) == 1 and "has not loaded 1 of the 4 installed cars (IDs 2)" in lines[0], out
+
+
+def test_ported_lua_cars_need_no_plugin():
+    """The in-game tests' merged archive (ported.lua) carries its own models: its cars stay
+    registered without the plugin, where package cars aren't."""
+    ported_lua = 'return { cars = { [5] = { host = 266, media = "M5", make = "Mmake", model = "M5", year = "2010" } } }'
+    registered, traffic, _, _ = run_packages(asi=False, packages=None, ported_lua=ported_lua)
+    assert registered == {5} and traffic == {5}, (registered, traffic)
 
 
 if __name__ == "__main__":

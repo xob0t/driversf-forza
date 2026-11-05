@@ -395,11 +395,32 @@ range sits just below that:
 | 0x1000 + n | n ≤ the maker group limit |
 | 0x2000 + id | the garage lists that ID |
 | 0x3000 + n | n ≤ the cars per maker group (`[garage] max_cars`; 20 without the card window) |
+| 2 | the car packages are active: `[archive] packages=1`, its three sites hooked, at least one package kept, and no root-table injection or SSLP copy failed (`archive_packages_active`, mod_archive) |
+| 0x4000 + id | the package listed for `id` is loaded: kept at start and, once the vehicle SSLP is loaded, given its records there (no ID clash, NONR fits; `archive_package_loaded`) |
 
 An unpatched game looks the number up in the flag list and returns false.
 `register.lua` binary-searches the limits at start (`asiQuery`,
 `asiLimit`: groups, highest listed ID, cars per group) and uses them for
 `garage`, `garageGroup` and `guardProfile`.
+
+The query hook (FUN_00507D30) is one of the save hooks; with `[garage]
+save=0`, or save hooks that didn't apply, the garage module puts it in
+alone (`install_query`: the magic queries, else the vanilla 304-slot
+search). With the garage module off (`[garage] enabled=0`) nothing answers,
+so `register.lua` sees no plugin at all.
+
+**Package cars only when they are loaded (#511).** `register.lua` takes
+the cars of `packages.lua` (and reads `packages_hud.lua`) only when k = 2
+is true, and of those only the IDs whose k = 0x4000 + id is true. Without
+the plugin (no ASI loader, blocked, `[dsfforza] enabled=0`, an exe it
+doesn't patch) or with its packages off, it registers no package car: no
+`vehicleStats` entry, garage card, traffic region entry or HUD entry, and
+logs one line ("dsfforza.asi is not active: the N installed cars are not
+loaded ...", or "has not loaded the car packages" when the garage module
+answers). `ported.lua` cars (the in-game tests' merged archive) carry their
+own models and are registered as before. The plugin logs the first k = 2
+query ("packages: Lua asks whether the car packages are loaded: ..."),
+with whether the vehicle SSLP was extended by then.
 
 ### In game
 

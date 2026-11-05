@@ -33,6 +33,7 @@
 #include <string.h>
 
 #include "patch.h"
+#include "shared.h"
 
 namespace {
 
@@ -343,6 +344,12 @@ Reader* g_veh_reader = nullptr;  // the vehicle archive's root reader
 uint32_t g_pkg_first = 0;        // root index of the first package entry (0: none injected)
 uint8_t* g_sslp = nullptr;       // the extended SSLP (header + records)
 uint8_t* g_vsct = nullptr;       // the extended VSCT
+// What register.lua asks through mod_garage's magic query (archive_packages_active,
+// archive_package_loaded): the package sites are hooked, an injection or SSLP copy
+// failed (no package reaches the game then), the vehicle SSLP has been extended.
+bool g_pkg_sites = false;
+bool g_pkg_failed = false;
+bool g_sslp_done = false;
 volatile LONG g_pkg_reads = 0;
 uint32_t g_pkg_read_max_us = 0;  // slowest package read so far
 
@@ -724,6 +731,7 @@ void pkg_inject(Reader* r)
     uint32_t count = base + 3 * g_pkg_count;
     if (count > g_max_entries || (count > kInline && !ext_ensure(r, count, r->ptr_count))) {
         dsf_log("packages: %u root entries would pass max_entries %u; no car packages", count, g_max_entries);
+        g_pkg_failed = true;
         return;
     }
     for (uint32_t j = r->ptr_count; j < kInline && j < count; j++) r->ptrs[j] = nullptr;
@@ -786,9 +794,11 @@ void __fastcall h_sslp_load(uint8_t* self, void*, Reader* reader, uint32_t index
         dsf_log("packages: %u SSLP records would pass 65535; no car packages", count + 3 * add);
     else if (!(sslp = (uint8_t*)HeapAlloc(GetProcessHeap(), 0, 0x1C + (count + 3 * add) * 6)))
         dsf_log("packages: out of memory for the SSLP copy; no car packages");
+    g_sslp_done = true;
     if (!sslp) {
         // None listed, so the VSCT hook adds none either.
         for (uint32_t j = 0; j < g_pkg_count; j++) g_pkgs[j].listed = false;
+        g_pkg_failed = true;
         return;
     }
     memcpy(sslp, p, 0x1C + count * 6);
@@ -1536,6 +1546,7 @@ static bool patch_package_sites()
     }
     dsf_log("packages: 005A13C4 spool open, 005A0B50 SSLP load, 0086C630 VSCT load hooked; %u car packages",
             g_pkg_count);
+    g_pkg_sites = true;
     return true;
 }
 
@@ -1549,6 +1560,7 @@ static void pkg_drop_all()
     g_pkg_count = 0;
     g_pkg_first = 0;
     g_veh_reader = nullptr;
+    g_pkg_sites = false;
 }
 
 static void patch_packages()
@@ -1891,6 +1903,33 @@ void mod_archive_init()
     }
 }
 
+// ---- what Lua is told (shared.h; mod_garage's magic query) ------------------
+// True when [archive] packages is on, its sites are hooked and at least one
+// package was kept, and no injection or SSLP copy has failed since. register.lua
+// registers the cars of packages.lua only then (#511).
+bool archive_packages_active()
+{
+    bool active = g_pkg_sites && g_pkg_count && !g_pkg_failed;
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        dsf_log("packages: Lua asks whether the car packages are loaded: %s (%u kept, hooked %d, failed %d, "
+                "vehicle SSLP extended %d)", active ? "yes" : "no", g_pkg_count, g_pkg_sites, g_pkg_failed,
+                g_sslp_done);
+    }
+    return active;
+}
+
+// True when the package listed for model `id` was kept at start and, once the
+// vehicle SSLP is loaded, got its records there (no ID clash, NONR fits).
+bool archive_package_loaded(int id)
+{
+    if (!(g_pkg_sites && g_pkg_count && !g_pkg_failed)) return false;
+    for (uint32_t j = 0; j < g_pkg_count; j++)
+        if (g_pkgs[j].id == id) return !g_sslp_done || g_pkgs[j].listed;
+    return false;
+}
+
 // ---- offline selftest of the car packages (tools/asi/test/offline.cpp) ------
 // Writes small packages into dir, loads a list of good and bad lines, injects
 // them into fake vehicle readers (one below 1100 entries, one crossing it into
@@ -2099,6 +2138,9 @@ void st_archive(uint32_t base)
     r->ptr_count = base;
     g_veh_reader = r;
     g_pkg_first = 0;
+    g_pkg_failed = false;
+    g_sslp_done = false;
+    g_pkg_sites = true;  // as patch_package_sites leaves it
     pkg_inject(r);
     ST_CHECK(g_pkg_first == base && r->count == base + 3 * g_pkg_count && r->ptr_count == r->count);
     // Packages in list order: 700, 701, 706 (NONR too big), 266 (clash), 707.
@@ -2169,6 +2211,9 @@ void st_archive(uint32_t base)
     ssic->count = 2;
     ssic->ptr_count = 2;
     ssic->ptrs[1] = sslp;
+    // Before the SSLP load every kept package counts as loaded; IDs not kept never do.
+    ST_CHECK(archive_packages_active() && archive_package_loaded(706) && archive_package_loaded(266));
+    ST_CHECK(!archive_package_loaded(702) && !archive_package_loaded(703) && !archive_package_loaded(5));
     h_sslp_load(sp.self, nullptr, ssic, 1);
     uint8_t* out = *(uint8_t**)(sp.self + 0x72F4);
     ST_CHECK(out && out != sslp && *(uint8_t**)(sp.self + 0x72F8) == out + 0x1C);
@@ -2183,6 +2228,10 @@ void st_archive(uint32_t base)
         ST_CHECK(o[30] == 707 && o[31] == base + 12 && o[36] == 2707 && o[37] == base + 14 && o[38] == 2);
     }
     ST_CHECK(g_pkgs[0].listed && g_pkgs[1].listed && !g_pkgs[2].listed && !g_pkgs[3].listed && g_pkgs[4].listed);
+    // After it, only the listed ones (706: NONR too big, 266: in the archive).
+    ST_CHECK(archive_packages_active() && archive_package_loaded(700) && archive_package_loaded(701) &&
+             archive_package_loaded(707));
+    ST_CHECK(!archive_package_loaded(706) && !archive_package_loaded(266));
     // Another spool object (gui.sp's): its SSLP is left alone.
     StSpool gui = st_spool();
     h_sslp_load(gui.self, nullptr, ssic, 1);
@@ -2221,6 +2270,16 @@ void st_archive(uint32_t base)
     r->mode = 5;  // no file or payloads to free (the game's close and free need its heap)
     h_close(r, nullptr);
     ST_CHECK(g_pkg_first == 0 && r->count == 0);
+    // A root table the packages would take past max_entries: none reaches the game.
+    StSpool full = st_spool();
+    full.root->count = g_max_entries - 1;
+    g_pkg_first = 0;
+    pkg_inject(full.root);
+    ST_CHECK(g_pkg_first == 0 && full.root->count == g_max_entries - 1);
+    ST_CHECK(!archive_packages_active() && !archive_package_loaded(700));
+    g_pkg_failed = false;
+    g_sslp_done = false;
+    g_pkg_sites = false;
 }
 
 }  // namespace
@@ -2276,8 +2335,9 @@ int mod_archive_pkg_selftest(const char* dir)
     ST_CHECK(patch_package_sites());
     ST_CHECK(*(uint8_t*)0x005A13C4 == 0xE8 && !bytes_equal(0x005A13C4, kOpenExpect, 5));
     ST_CHECK(*(uint8_t*)0x005A0B50 == 0xE9 && *(uint8_t*)0x0086C630 == 0xE9);
+    ST_CHECK(g_pkg_sites);
     pkg_drop_all();
-    ST_CHECK(g_pkg_count == 0);
+    ST_CHECK(g_pkg_count == 0 && !g_pkg_sites && !archive_packages_active());
     // An empty or missing list: nothing loaded.
     st_write_list(list, "# nothing\n");
     ST_CHECK(pkg_load_list(d, list) == 0);

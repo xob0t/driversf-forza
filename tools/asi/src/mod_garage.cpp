@@ -15,7 +15,9 @@
 //          has 20 cards, shows a group of 20 or more through a window of 19
 //          cards that moves when Right/Left reach its edges.
 //   lua    ProfileSettings.GetVehicleUnlocked(8000000 + k) answers
-//          capability queries, so register.lua can tell the patch is active.
+//          capability queries, so register.lua can tell the patches are active
+//          (this module's, and mod_archive's car packages). The query hook goes in
+//          with the save hooks, or alone when they are off.
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdio.h>
@@ -36,6 +38,7 @@ const int kExtFirst = 304;       // first ID kept outside the vanilla block
 const int kWords = (kExtMax + 31) / 32;
 const uint32_t kMagic = 8000000;  // GetVehicleUnlocked(kMagic + k) queries; the game's Lua numbers are
                                      // floats, so the value must stay below 2^23
+const uint32_t kMagicSpan = 0x5000;  // k = 0 .. 0x4FFF (magic_query)
 const int kVanillaGroups = 40;
 const int kGroupSize = 0x6C;     // one maker group: 20 IDs, count, name[16], badge, manufacturer
 const int kGroupCars = 20;
@@ -276,16 +279,18 @@ int magic_query(uint32_t q)
     uint32_t k = q - kMagic;
     if (k == 0) return g_save_active ? 1 : 0;                  // save hooks
     if (k == 1) return g_garage_active ? 1 : 0;                // garage walks IDs beyond 303
+    if (k == 2) return archive_packages_active() ? 1 : 0;      // [archive] packages: the cars are loaded
     if (k >= 0x1000 && k < 0x2000) return (int)(k - 0x1000) <= g_max_groups;   // n <= max groups
     if (k >= 0x2000 && k < 0x3000) return (int)(k - 0x2000) < (g_garage_active ? g_max_id : kVanillaIds);  // id listable
     if (k >= 0x3000 && k < 0x4000) return (int)(k - 0x3000) <= g_max_cars;    // n <= cars per maker group
+    if (k >= 0x4000 && k < 0x5000) return archive_package_loaded((int)(k - 0x4000)) ? 1 : 0;  // id's package
     return 0;
 }
 
 // thiscall(list object, id, bit) -> al = flag bit set.
 uint32_t __fastcall h_flag_test(char* list, void*, int id, uint32_t bit)
 {
-    if ((uint32_t)id - kMagic < 0x4000) return magic_query((uint32_t)id);
+    if ((uint32_t)id - kMagic < kMagicSpan) return magic_query((uint32_t)id);
     int32_t* base = (int32_t*)(list + 0x38);
     for (int i = 0; i < kVanillaIds; i++)
         if (base[2 * i] == id) return (base[2 * i + 1] >> (bit & 31)) & 1;
@@ -294,6 +299,17 @@ uint32_t __fastcall h_flag_test(char* list, void*, int id, uint32_t bit)
         const Slot& s = g_ext.slots[id];
         return s.id == id ? (s.flags >> (bit & 31)) & 1 : 0;
     }
+    return 0;
+}
+
+// The same site without the save hooks ([garage] save=0, or they didn't apply):
+// the magic queries, and otherwise FUN_00507D30's own search of the 304-slot list.
+uint32_t __fastcall h_flag_test_query(char* list, void*, int id, uint32_t bit)
+{
+    if ((uint32_t)id - kMagic < kMagicSpan) return magic_query((uint32_t)id);
+    int32_t* base = (int32_t*)(list + 0x38);
+    for (int i = 0; i < kVanillaIds; i++)
+        if (base[2 * i] == id) return (base[2 * i + 1] >> (bit & 31)) & 1;
     return 0;
 }
 
@@ -1458,6 +1474,16 @@ bool install_save()
     return true;
 }
 
+// Without the save hooks, the query hook alone: register.lua still learns
+// whether the car packages are loaded.
+bool install_query()
+{
+    Hook hook = {0x00507D30, (void*)h_flag_test_query, 5, {0x8D, 0x51, 0x38, 0x8B, 0x4C}};
+    if (!hooks_match("query hook", &hook, 1) || !apply_hooks("query hook", &hook, 1)) return false;
+    dsf_log("garage: 00507D30 answers register.lua's queries (no save hooks)");
+    return true;
+}
+
 bool install_list()
 {
     // Walk IDs 0..max_id-1, sort keys in g_sortkey, caps on cars per group and groups.
@@ -1610,6 +1636,7 @@ void mod_garage_init()
 
     if (cfg_bool("garage", "save", true)) g_save_active = install_save();
     else dsf_log("garage: [garage] save=0, save hooks off");
+    if (!g_save_active) install_query();
 
     int max_id = cfg_int("garage", "max_id", kExtMax);
     if (max_id < kVanillaIds) max_id = kVanillaIds;

@@ -278,6 +278,9 @@ int main(int argc, char** argv)
     CHECK(test(list, nullptr, 8000000 + 0x1000 + 41, 0) == 1);
     CHECK(test(list, nullptr, 8000000 + 0x2000 + 999, 0) == 1);
     CHECK(test(list, nullptr, 8000000 + 0x2000 + 1000, 0) == 0);
+    CHECK(test(list, nullptr, 8000000 + 2, 0) == 0);           // [archive] packages=0: no car packages
+    CHECK(test(list, nullptr, 8000000 + 0x4000 + 1, 0) == 0);  // nor a package of ID 1
+    CHECK(test(list, nullptr, 8000000 + 0x5000, 0) == 0);      // past the magic range: the flag list's answer
     // Full vanilla list: a scratch slot instead of a NULL write.
     for (int i = 0; i < 0x130; i++) list[0x38 / 4 + 2 * i] = 1000 + i;
     int* d = slot(list, nullptr, 50);

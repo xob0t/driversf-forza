@@ -56,9 +56,10 @@ class InstallPackagesTest(unittest.TestCase):
         self.build = self.make_build(["CAR_A_10", "CAR_B_10", "CAR_C_10"])
         plugin = self.tmp / "plugin"
         plugin.mkdir()
-        # A plugin that writes the model ID in memory (its capability marker, tools/asi/src/patch.h).
+        # A plugin that writes the model ID in memory and tells register.lua what it loaded
+        # (its capability marker, tools/asi/src/patch.h).
         (plugin / "dsfforza.asi").write_bytes(
-            b"plugin\0" + car_manager.CAPABILITIES_MARKER + b"archive.packages archive.ids\0"
+            b"plugin\0" + car_manager.CAPABILITIES_MARKER + b"archive.packages archive.ids lua.packages\0"
         )
         (plugin / "dsfforza.ini").write_text("[archive]\npackages=0\n", encoding="utf-8")
         self.asi = plugin / "dsfforza.asi"

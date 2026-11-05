@@ -95,7 +95,7 @@ def test_car_packages_alone_register_their_cars():
         "dsfforza\\packages.lua": _ported({i: CARS[i] for i in (404, 500)}),
         "dsfforza\\packages_hud.lua": hud,
     }
-    lua, _ = _harness.run(True, cars="return {}", files=files)
+    lua, _ = _harness.run(True, cars="return {}", files=files, packages={404, 500})  # the plugin loaded both
     stats = lua.globals().vehicleStats
     assert (stats[404].Manufacturer, stats[404].Model, stats[404].Picture1) == (FORD, 158, "dsfforza_for_ka_11")
     assert (stats[500].Manufacturer, stats[500].Model) == (145, 150)

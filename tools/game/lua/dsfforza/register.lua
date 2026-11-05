@@ -22,6 +22,11 @@
 --           save can't hold (research/batch.md); with dsfforza.asi it lets
 --           them through (the plugin keeps them in dsfforza-garage.dat).
 --
+-- The cars of dsfforza\packages.lua load only through dsfforza.asi's [archive] packages, so
+-- they are registered only when the plugin says it has loaded them (ASI.packages and the
+-- per-ID query below): with the ASI loader missing or blocked, the plugin off, or no patches
+-- on this exe, none of them gets a vehicleStats entry, a garage card or a traffic slot (#511).
+--
 -- Player defaults: no probes, no save writes.
 -- The test harness (a config.lua with `ids`) turns the probe on.
 --
@@ -114,7 +119,9 @@ local function asiLimit(base, lo, hi)
 	end
 	return lo
 end
-local ASI = { save = asiQuery(0), garage = asiQuery(1) }
+-- k = 2: [archive] packages is on and its patches applied (mod_archive archive_packages_active);
+-- k = 0x4000 + id: the package of that ID is loaded (archive_package_loaded).
+local ASI = { save = asiQuery(0), garage = asiQuery(1), packages = asiQuery(2) }
 if ASI.garage then
 	ASI.groups = asiLimit(0x1000, 40, 4000)   -- k = 0x1000 + n: n <= max groups
 	ASI.maxId = asiLimit(0x2000, 303, 4000)   -- k = 0x2000 + id: id is listed
@@ -188,7 +195,9 @@ local function addHud(name)
 		end
 	end
 end
-addHud("dsfforza\\packages_hud.lua")
+if ASI.packages then
+	addHud("dsfforza\\packages_hud.lua")   -- the packages' cars only; their pictures and glyphs come through the plugin too
+end
 addHud("dsfforza\\hud.lua")
 
 -- The cars: dsfforza\packages.lua (the enabled car packages, written by dsff car_manager;
@@ -205,21 +214,36 @@ local function portedCar(car)
 		traffic = true,
 	}
 end
-local function addCars(name)
+-- loaded(id), when given, says whether the game has that car's model; a car it hasn't is left
+-- out. Returns the number of cars the file lists and the IDs left out.
+local function addCars(name, loaded)
 	local found, list = user_open(name)
-	if found and type(list) == "table" and type(list.cars) == "table" and next(list.cars) then
-		if not PORTED then
-			PORTED = list
-			CARS = {}
-		end
-		for id, car in pairs(list.cars) do
+	local listed, missing = 0, {}
+	if not (found and type(list) == "table" and type(list.cars) == "table") then
+		return listed, missing
+	end
+	for id, car in pairs(list.cars) do
+		listed = listed + 1
+		if loaded and not loaded(id) then
+			table.insert(missing, id)
+		else
+			if not PORTED then
+				PORTED = list
+				CARS = {}
+			end
 			if CARS[id] == nil then
 				CARS[id] = portedCar(car)
 			end
 		end
 	end
+	table.sort(missing)
+	return listed, missing
 end
-addCars("dsfforza\\packages.lua")
+-- packages.lua: only the cars dsfforza.asi has loaded (none without ASI.packages).
+local PACKAGES = {}
+PACKAGES.listed, PACKAGES.missing = addCars("dsfforza\\packages.lua", function(id)
+	return ASI.packages and type(id) == "number" and asiQuery(0x4000 + id)
+end)
 addCars("dsfforza\\ported.lua")
 
 do
@@ -688,6 +712,21 @@ function M.apply()
 	else
 		log("dsfforza.asi garage module not active: garage IDs 0..303, 40 maker groups, save flags up to 303")
 	end
+	if PACKAGES.listed > 0 and not ASI.packages then
+		if ASI.save or ASI.garage then
+			log(string.format("dsfforza.asi has not loaded the car packages: the %d installed cars are not "
+				.. "registered (no garage, traffic or HUD entry); see plugins\\dsfforza.log", PACKAGES.listed))
+		else
+			log(string.format("dsfforza.asi is not active: the %d installed cars are not loaded and not registered "
+				.. "(no garage, traffic or HUD entry); see plugins\\dsfforza.log (none there: the ASI loader "
+				.. "didn't load the plugin)", PACKAGES.listed))
+		end
+	elseif #PACKAGES.missing > 0 then
+		local ids = {}
+		for _, id in ipairs(PACKAGES.missing) do table.insert(ids, tostring(id)) end
+		log(string.format("dsfforza.asi has not loaded %d of the %d installed cars (IDs %s): not registered; "
+			.. "see plugins\\dsfforza.log", #PACKAGES.missing, PACKAGES.listed, table.concat(ids, ", ")))
+	end
 	M.registerStats()
 	if OPTIONS.guardProfile then
 		guardProfile()
@@ -711,6 +750,7 @@ end
 M.cars = CARS
 M.options = OPTIONS
 M.asi = ASI
+M.packages = PACKAGES
 M.injectRegions = injectRegions
 
 M.apply()
