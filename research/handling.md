@@ -1,6 +1,6 @@
 # Handling (VO3D) and generating it from Forza data
 
-Updated: 2026-10-29
+Updated: 2026-11-05
 
 Static analysis of `Driver.exe` 1.04 and the vanilla `dngvehicles.sp`, plus
 the FH1 and FM4 `gamedb.slt` databases, and in-game measurements with the
@@ -218,6 +218,172 @@ Vanilla turbos and other parts rescale the torque curve. Rather than model
 each part, the tool scales the curve so its peak equals `SimPeakTorque`.
 `physicsdefinition.bin` and `MAXData.xml` aren't needed.
 
+## Top speed, gearing, engine and drag (2026-11-05, #462)
+
+Issue #462: fast ports are slow (the Veyron "can't pass 200 mph") and the rules for
+top speed, torque and drag were fits. What DSF does with them, and what the ports take.
+
+### What the engine does (confirmed-static)
+
+- **p160 is a governor**, not a figure. `FUN_008BC4D0` (called every physics step from
+  `FUN_008C0DF0`) takes the speed along the body over p160 x 0.447 (m/s): above 0.9 it
+  scales the throttle down (`FUN_00562CD0`, exponent 4, constants at `0x00F3F318` = 0.9,
+  `0x00DD6878` = 4), above 1 it cuts it and pushes back. The other readers use the speed
+  fraction too: the assists (`FUN_008BD9B0`, `sqrt(1 - k x v / p160)`), the engine sound
+  (`FUN_00553AF0` sends v / p160 to Wwise, `0x6114A57A`), and two getters
+  (`FUN_008700F0`, `FUN_008CFAD0`, m/s) for Lua and the AI. No code limits p160 to 160:
+  160 is only the default `FUN_0088AC20` writes. The old rule capped every port at 160
+  (`TOP_SPEED_CAP`, no source), which is the Veyron's limit in #462.
+- **Gearbox** (`FUN_008C2420` copies the block into the engine struct E; `FUN_008C3CF0`
+  steps it every 0.04 s): E[3] = (int)p282 forward gears in p276..p281, reverse p275,
+  speed in gear `rel x p361 x p360 x rpm x pi/30` (`FUN_008C28A0`). Auto upshift when
+  rpm > p183 x p42, downshift below p40. Six forward slots: a 7- or 8-speed box can't be
+  held whole.
+- **Engine torque** (`FUN_008C3CF0`): `0.25 x p18 x curve x throttle x k` minus friction
+  `((p359 |rpm| + p358) rpm + p357) x k` (k is the engine tweak product the caller
+  `FUN_008BEE70` passes, `+0x90`, `*param_3`, `param_3[0x31]`, 0.8 in one state), the
+  curve piecewise linear over `x = (rpm - p40) / (p42 - p40)`: p522 at 0, 1 at p524,
+  p523 at 1, falling on past the redline; a rev band fades the torque to 0 between p42
+  and p42 x (1 + p364). The engine rpm integrates `0.04 / p355 x` that torque (rpm/s per
+  game unit), the driveline `0.04 / p356`, joined by the clutch (p569 stiffness, limit
+  `p570 x p18 x 0.25`).
+- **The driveline conserves power.** The load torque on the driveline is `p361 x` the
+  wheels' summed reaction (`FUN_008BEE70` passes `+0xD30`, the sum, as the engine step's
+  load), and the clutch torque reaches the driveline divided by the gear: the wheel
+  torque is the engine's x 1 / (rel x p361), the overall reduction. The driven wheels'
+  speed is the driveline's (`FUN_008B9830` sets the wheel speed `+0x128` from
+  `FUN_008C2880`, `E[0x27] x p361 x p360 x pi/30`); the tyre force comes from the slip
+  between it and the ground (`FUN_008B9900`). So in steady drive the force at the tyres
+  is `U x engine torque / (rel x p361 x p360)`, with U one unit (game torque to newton
+  metres) the code doesn't show directly (measured below).
+- **Inertia has no hidden factor.** `FUN_008B14F0` (the tweak setter) passes p15..p17
+  (`+0x2CAC..`) to the body as they are (case 2 scales p16 by sqrt of the tweak); the
+  lane keeper's impulses turn the cars as SI impulses on p16 predict (`in-game-tests.md`,
+  "Dyno"). p15..p17 are kg m^2.
+
+### Speed shown and world speed (confirmed-static, checked on Reflections' data)
+
+`FUN_008994F0` maps a world speed v (m/s) to the speed the player is shown: v up to 22
+m/s (`0x00DD9630`), above that `v x (1 + ((v - 22) x 0.00995) ^ 1.7)` (`0x00E39F38`,
+`0x00E2E110`), at most `v x 1.3` (`0x00DD6A28`), reached at 71.5 m/s (160 mph). Its
+callers: the HUD readout `FUN_006C5A80` (`x 2.23694` mph or `x 3.6` km/h, `0x00E18804`,
+`0x00E18800`), the cockpit speedometer `FUN_00891670` (through `FUN_008D6A70`, the body
+speed `FUN_008D5030`) and Lua's `displayedTopSpeed` (`FUN_00654130`, applied to p160 in
+mph although it takes m/s, so the dyno logs exactly 1.3 x p160 on every car from 72 mph on). So a vanilla car
+at its p160 of 160 world mph shows 208: the "~200 mph" limit of #462 is master's 160-mph
+cap on p160 seen through the display.
+
+Reflections built their data in world speed. Their gearboxes are Forza's (and the real
+cars') with each gear's speed at the redline put at the world speed that shows as the real
+one: `dsf_rel x p361 x p360 x redline` over the Forza gear's redline speed equals
+`world_speed(v) / v` gear by gear on the 8C (1.00 0.98 0.92 0.87 0.82 0.77 against 1.00 0.98 0.92 0.87 0.82
+0.77), the CTS-V, the Viper ACR, the Taurus SHO, the Miura and the GT-R (1.00 0.98 0.95 0.90
+0.86 0.79 against 1.00 0.99 0.94 0.90 0.85 0.79), within 0.02 but for the Viper's sixth (0.73
+against 0.77;
+`uv run dsff handling_dsf gears` lists all pairs). The low gears stay
+exact and the upper ones look "compressed": that is the display function, not a fit. Other
+cars (LP670-4 SV, MP4-12C, R8) scale every gear by one factor, and their p160 shows as the
+real top speed (LP670-4 SV 208 shown, 212 real; GT-R 198 shown, 196 real).
+
+Rules from it (#462):
+
+- **p160** = `world_speed(TopSpeed-mph)` (`handling.dsf_top_speed`): the HUD shows Forza's
+  top speed at the governor. Veyron 16.4 Super Sport 160 -> 206 world mph (268 shown).
+- **Gearbox** (rule GF, `handling.dsf_gearbox`): Forza's gear count (at most six), ratios,
+  reverse and final drive; p361 = 1 / (final drive x the gear nearest 1:1); each gear's rel
+  scaled by `world_speed(v_i) / v_i`, v_i its Forza speed at the redline. Gear counts are
+  Forza's (the Sagaris 5, the LFA 6, the Liana 5, the player's report on #462).
+- **p516** = `GearShiftTime` (s).
+
+### In game: before and after (confirmed-runtime)
+
+Master 8200cfa (`out/h462/before`) against this branch (`out/h462/after`), the same six cars
+at IDs 1 to 6, vanilla 214 as the reference in both sessions; one `run-series.ps1 -Vm
+-Dyno` call, keys `Up:30,Down:6` twice (runs vm1-20261105-073500 and -074705). Figures in
+world mph (the HUD shows `displayed_speed` of them); Lua's `topSpeed` reads back p160.
+
+| Car (host) | p160 before / after (shown) | 0-60 s | 0-100 s | top in 30 s, mph | accel at the end, m/s^2 (after) |
+| --- | --- | --- | --- | --- | --- |
+| 1 Veyron 16.4 SS (214) | 160 (208) / 206.2 (268) | 2.45 / 2.55 | 5.25 / 5.47 | 160.0 / 185.7 | 0.14 |
+| 2 Venom GT (225) | 160 (208) / 210.0 (273) | 2.12 / 2.20 | 4.76 / 4.02 | 160.0 / 194.8 | 0.11 |
+| 3 LFA (182) | 147.7 (184) / 157.5 (203) | 2.60 / 2.58 | 6.40 / 6.22 | 147.7 / 157.2 | at p160 |
+| 4 M5 2012 (147) | 148.5 (186) / 158.4 (205) | 3.43 / 3.22 | 7.78 / 7.59 | 146.8 / 153.0 | 0.31 |
+| 5 Sagaris (227) | 142.4 (174) / 151.9 (192) | 2.78 / 2.82 | 6.78 / 6.54 | 142.4 / 150.1 | at p160 |
+| 6 Liana (179) | 102.0 (111) / 99.5 (107) | 9.19 / 9.50 | - | 98.1 / 97.4 | at p160 |
+| vanilla 214 LP670-4 SV | 160 (208) | 2.44 / 2.51 | 6.03 / 6.11 | 160.1 / 160.1 | |
+
+Before, every fast port stopped at exactly 160 world mph (208 shown): the cap. After, the
+LFA, Sagaris and Liana settle at their p160, which the HUD shows as Forza's top speed (203,
+192, 107 mph; the governor fades from 0.9 x p160, so they sit just under it), the Veyron and
+the Venom pass 185 and 195 within the 2 km straight and still gain 0.1 m/s^2. Whether they
+reach p160 depends on the drag and torque, both still fitted (#516). Launches stay within
+4% of master (the shift time is now Forza's: the Veyron's 0.11 s against 0.03).
+
+### Drive force, resistances: what the runs show (confirmed-runtime, not yet a rule)
+
+Two dyno sessions: the vanilla archive (`out/h462/vanA.sp`, run vm2-20261105-063431) and the
+same with 214 at p13 = p509 = 0, 227 at p13 = p509 = 0 and p160 = 300, 228 at p509 = 0, 257
+at p13 = 0 (`out/h462/expB.sp`, run vm1-20261105-071510); keys `Up:25,Down:6;
+Up:12,None:14,Down:6; Up:25,Down:6`. a(v) from the 125 Hz speed samples (0.4 s local fit),
+the gear and rpm from the model above.
+
+- The drive unit U (force = U x net game torque / (rel x p361 x p360)) in gears 3 to 5 (73
+  to 147 mph): 214 without resistances 2.46 / 2.72 / 2.72; 227 without resistances or
+  governor 3.39 / 3.75 / 3.99. Not one engine constant: something per car is still missing
+  (rotating inertia, AWD losses, the clutch, the tweak product).
+- p13 = 0 made 214's launch slower (0-60 2.45 -> 3.65 s): p13 acts in traction too.
+- p509 = 0 on 228 gained 718 / 1329 / 2135 N at 100 / 120 / 140 mph: 10 to 16 x p509 v^2, not
+  the spec printer's 25.
+- Lifting off slows 214 at 6.7 m/s^2 from 122 mph, far more than these terms.
+
+So p18, the torque curve, p355, p358 and p509 stay fitted (#516): a Forza-derived torque and
+drag need U first.
+
+### Audit: where every handling rule comes from
+
+Every rule, constant, curve, clamp, scale and ranking in `handling.py`, `handling_dsf.py`,
+`handling_tune.py` and the stat bars, as on master before #462 (8200cfa). Class:
+**derived** (a Forza or DSF field, engine code, a vanilla measurement, a physical
+definition), **fitted** (chosen so the output looks right, matched to vanilla's
+distribution, or a per-car exception), **unknown**. A fit stays until a derived rule,
+verified in game against vanilla behaviour, replaces it; it carries `TODO(fit, #N)` in the
+code, the issue saying what its derivation needs.
+
+| # | Rule (code) | Params | Source | Class | Now |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | VO3D layout, `EXE_DEFAULTS` | all | `FUN_0088BD60`, `FUN_0088AC20` | derived | kept |
+| 2 | start from the host's VO3D (rule H) | all not below | DSF's own tuning of a similar car (vanilla is the target for behaviour) | derived | kept |
+| 3 | mass | 0 | `List_UpgradeCarBodyWeight.Mass` | derived | kept |
+| 4 | inertia = 2.30 / 2.36 / 2.70 x box inertia of `BlockDim` | 15..17 | median ratio over the 48 pairs | fitted | kept, #518 |
+| 5 | top speed = 50.83 + 0.477 x `TopSpeed-mph`, capped at 160 | 160 | fit over the pairs; the cap has no source | fitted | **derived**: the world speed DSF shows as `TopSpeed-mph` (`FUN_008994F0`) |
+| 6 | redline | 42 | `RedlineRPM` | derived | kept |
+| 7 | tyre radius (AWD: split-weighted) | 360 | `Data_Car` tyre sizes | derived | kept |
+| 8 | steering lock | 298 | `SteerMaxAngle` | derived | kept |
+| 9 | peak torque TP = exp(3.235) Nm^0.121 kW^0.450 | 18 | fit over 45 pairs | fitted | kept, #516 |
+| 10 | torque curve shape | 522..524 | the host's (H), not the car's | derived from the host | kept, #516 (Forza's curve needs the drive unit) |
+| 11 | gearing GX: host's gear count and spacing, top gear at the host's multiple of p160 clamped to 1.00..1.07, first gear Forza's | 275..282, 361 | fleet IQR; the host's count | fitted | **derived** (GF): Forza's gearbox, each gear's redline speed the world speed DSF shows as Forza's |
+| 12 | six forward gears at most | 282 | `FUN_008C2420` copies p276..p281 | derived | kept; a 7- or 8-speed box keeps gears 1..5 and its top gear |
+| 13 | shift time A: fleet regression | 516 | ridge fit on vehicleStats specs | fitted | **derived**: `GearShiftTime` (s; p516 x 25 steps of 0.04 s) |
+| 14 | rolling resistance F, lateral stiffness F (fleet regression, +-22%) | 13, 369 | ridge fit | fitted | kept, #517 |
+| 15 | p366, longitudinal stiffness A | 366, 367 | ridge fit prediction | fitted | kept, #517 |
+| 16 | aerodynamic drag M: host x mass ratio | 509 | chosen so light cars on heavy hosts reach their top speed | fitted | kept, #516 |
+| 17 | springs, dampers, grip M | 1, 2, 368 | host x mass ratio keeps the host's ride frequency and grip in g | derived | kept |
+| 18 | CoG height CY = hub + `CMHeight` - tyre radius + 0.052 | 30, 599 | the 0.052 m offset fitted on the pairs | fitted (offset) | kept, #520 |
+| 19 | CoG fore/aft CZ from `CMBackFront` | 32 | static moments | derived | kept (its clamp is row 20) |
+| 20 | front weight clamped to 0.42..0.58 | 32, 345, 505 | vanilla range | fitted | kept, #519 |
+| 21 | axle balance W = 0.9448 - 0.8298 fw; spring scale 3.035 - 3.812 fw | 345, 505 | regressions over the fleet | fitted | kept, #519 |
+| 22 | engine inertia R = fleet median p355/p18 x new p18 | 355 | fleet median | fitted | kept, #516 |
+| 23 | engine friction = drivetrain donor's x new p18 / donor p18 | 358 | scaling chosen for launches | fitted | kept, #516 |
+| 24 | AWD split: donor's, else 0.3 | 371 | 0.3 fleet-typical | fitted | kept, #522 |
+| 25 | feel sets from the medoid of the host and two more hosts of the car's drivetrain within 10 years | steering, assists, tyre falloff, suspension geometry, engine dynamics | whole DSF sets (derived); the counts chosen by the LOO score | fitted (counts) | kept, #522 |
+| 26 | drivetrain set from the best-ranked host with the car's drivetrain | 371, 497, 517, 519..521, 525, 526, 529..531, launch block | fleet survey: these differ by drivetrain | derived | kept |
+| 27 | same-model / family host keeps the host's sets | all | Reflections' own version of the car | derived | kept |
+| 28 | rule choice by LOO (beat the host by 0.05 and 10%) | the `RULES` table | agreement with vanilla's values | fitted (selection) | kept, #522 |
+| 29 | drift dial, `DRIFT_FIT` (off by default) | 369 | regression of handbrake rotation | fitted | kept, #517 |
+| 30 | `handling_tune`: per-car p18 and p345 toward vanilla 0-60 and rotation targets; the Huayra's steering set | 18, 345, steering | closed-loop calibration | fitted (per car) | kept, #516 |
+| 31 | HUD stat bars: Speed, Strength, Drift regressions, clamped 0.05..1 | vehicleStats | fits over 137 vanilla cars | fitted | kept, #521 |
+| 32 | `--handling forza`: `TOP_SPEED_FIT`, `TORQUE_FIT`, `CURVE_SCALE`, `CLAMP`, gear compression, `MASS_SCALED` | many | pair fits, vanilla ranges | fitted | kept (not the default; rule Z takes only its mass, inertia, redline, radius, lock and CoG) |
+
 ## DSF-first mapping (default, src/dsfforza/build/handling_dsf.py)
 
 Start from the host's complete VO3D (the vanilla car `host_select.py` picks:
@@ -230,11 +396,12 @@ change as little as possible. Every parameter gets one of these rules:
 | M | host x (new mass / host mass) |
 | F | host moved by the fleet model: a least-squares fit over the vanilla fleet (4-wheel cars with vehicleStats specs) of the parameter, in log when always positive, against log weight, log power, log torque, model year, FWD, AWD; new = host x exp(f(new specs) - f(host specs)), the change limited to +-22% (`F_LIMIT`; unclamped, the year term cut a 1969 Charger's tyre stiffness by 40%) |
 | A | the fleet model's own prediction for the car's specs |
-| Z | fits to DSF's values or real specs: Forza mass, 2.30/2.36/2.70 x box inertia, Forza redline, 50.8 + 0.477 x Forza top speed, Forza tyre radius |
+| Z | the Forza car's values: mass, redline, tyre radius, lock, shift time; p160 the world speed shown as Forza's top speed (#462; was 50.8 + 0.477 x Forza top speed, capped at 160); inertia 2.30/2.36/2.70 x box inertia (fitted, #518) |
 | TP | peak torque p18 = exp(3.235) x Nm^0.121 x kW^0.450 (Forza curve peak torque and power, fitted on the 45 pairs without the Volt, F-350 and Q7) |
 | CY | CoG height p30 = hub height + Forza CMHeight - drive tyre radius + 0.052 m |
 | CZ | CoG fore/aft p32 from Forza's front weight |
-| GX | gearing: the host's gear count and spacing; top gear at redline at the host's multiple of p160, kept inside the fleet's 1.00..1.07; first gear where Forza's first gear and final drive put it, the gears between on the host's log spacing |
+| GF | gearing (#462): Forza's gearbox, each gear's redline speed the world speed DSF shows as Forza's ("Speed shown and world speed") |
+| GX | (before #462, the LOO check only) gearing: the host's gear count and spacing; top gear at redline at the host's multiple of p160, kept inside the fleet's 1.00..1.07; first gear where Forza's first gear and final drive put it, the gears between on the host's log spacing |
 
 Whole sets instead of single values (never blended parameter by parameter):
 
@@ -279,8 +446,9 @@ where the in-game runs showed the host's value hurting:
 | 509 aerodynamic drag | M (drag deceleration is 25 x p509 v^2 / p0: a light car on a heavy host otherwise stalls below its top speed; LOO 0.81 against 0.76 for H) |
 | 368 grip | M (grip in g stays the host's) |
 | 13 rolling resistance; 369 lateral stiffness | F |
-| 366; 367 longitudinal stiffness; 516 shift time | A |
-| 275..282, 361 gearing | GX |
+| 366; 367 longitudinal stiffness | A |
+| 516 shift time | Z: `GearShiftTime` (#462) |
+| 275..282, 361 gearing | GF (#462) |
 | everything else | H, or the set donors above |
 
 Mass, inertia, torque, redline, top speed and tyre radius replace the host's

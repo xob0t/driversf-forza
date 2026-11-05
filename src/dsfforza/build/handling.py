@@ -524,18 +524,82 @@ def _read_car(con, car: sqlite3.Row, db: Path) -> ForzaCar:
 #   inertia ~ k * box inertia from Forza's BlockDim (k = 2.30, 2.36, 2.70)
 #   torque at idle / redline ~ 0.92 / 0.87 x Forza's value
 # and the fleet's 5-95% ranges, used as clamps.
-TOP_SPEED_FIT = (50.83, 0.477)
+TOP_SPEED_FIT = (50.83, 0.477)  # forza mode only; the DSF-first p160 is dsf_top_speed (#462)
 TOP_SPEED_CAP = 160.0
-TORQUE_FIT = (14.735, 0.621)
-INERTIA_K = (2.30, 2.36, 2.70)
+TORQUE_FIT = (14.735, 0.621)  # TODO(fit, #516)
+INERTIA_K = (2.30, 2.36, 2.70)  # TODO(fit, #518)
 CURVE_SCALE = (0.92, 0.87)
 CLAMP = {522: (0.5, 0.87), 523: (0.53, 0.78), 524: (0.38, 0.75), 371: (0.15, 0.3)}
-FRONT_WEIGHT_CLAMP = (0.42, 0.58)
+FRONT_WEIGHT_CLAMP = (0.42, 0.58)  # TODO(fit, #519)
 # Scaled by the mass ratio (new / host): the vanilla fleet keeps these roughly
 # proportional to mass (p368 = 0.65 x mass, IQR 11%), so scaling keeps the host's
 # ride frequency, grip in g, and drivetrain-to-body inertia ratio.
 MASS_SCALED = (1, 2, 13, 355, 356, 357, 358, 359, 367, 368, 369)
 MAX_GEARS = 6
+
+
+MPH = 2.23694  # m/s -> mph (FUN_006C5A80: 0x00E18804 = 2.23694)
+
+# FUN_008994F0: the speed the player is shown for a world speed v (m/s). The HUD readout
+# (FUN_006C5A80: x 2.237 mph or x 3.6 km/h), the cockpit speedometer (FUN_00891670) and
+# Lua's displayedTopSpeed go through it: v up to 22 m/s as it is, above that
+# v x (1 + ((v - 22) x 0.00995) ^ 1.7), at most v x 1.3 (from 71.5 m/s, 160 mph, on).
+DISPLAY_KNEE = 22.0  # 0x00DD9630
+DISPLAY_RATE = 0.00995  # 0x00E39F38
+DISPLAY_POWER = 1.7  # 0x00E2E110
+DISPLAY_MAX = 1.3  # 0x00DD6A28
+
+
+def displayed_speed(v: float) -> float:
+    """FUN_008994F0: the shown speed for world speed v (m/s), both m/s."""
+    if v <= DISPLAY_KNEE:
+        return v
+    return v * min(1 + ((v - DISPLAY_KNEE) * DISPLAY_RATE) ** DISPLAY_POWER, DISPLAY_MAX)
+
+
+def world_speed(shown: float) -> float:
+    """The world speed (m/s) DSF shows as `shown` (m/s): the inverse of displayed_speed,
+    which rises monotonically."""
+    if shown <= DISPLAY_KNEE:
+        return shown
+    if shown >= displayed_speed(DISPLAY_KNEE + (DISPLAY_MAX - 1) ** (1 / DISPLAY_POWER) / DISPLAY_RATE):
+        return shown / DISPLAY_MAX
+    lo, hi = DISPLAY_KNEE, shown
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if displayed_speed(mid) < shown else (lo, mid)
+    return (lo + hi) / 2
+
+
+def dsf_top_speed(car: ForzaCar) -> float:
+    """p160 (mph of world speed; FUN_008BC4D0 governs at p160 x 0.447 m/s): the world
+    speed DSF shows as Forza's top speed, Data_Car TopSpeed-mph."""
+    return world_speed(car.top_speed_mph / MPH) * MPH
+
+
+def dsf_gearbox(car: ForzaCar) -> tuple[list[float], float, float]:
+    """Forza's gearbox in DSF's form: (relative forward ratios, reverse, p361).
+
+    DSF's speed in gear i is rel_i x p361 x p360 x rpm x pi/30 (FUN_008C28A0); p361 = 1 /
+    (final drive x ref), ref the Forza gear nearest 1:1 (Reflections' convention). A world
+    speed is shown as displayed_speed() of it, so a gear whose speed at the redline is v_i
+    in Forza runs to world_speed(v_i) in DSF: rel_i = ref / gear_i x world_speed(v_i) / v_i.
+    Reflections' gearboxes are built this way: the 8C, CTS-V, Viper ACR, Taurus SHO, Miura
+    and GT-R match it gear by gear within 0.02 but for the Viper's sixth (research/handling.md, "Speed shown and world
+    speed"). FUN_008C2420 copies six forward gears (p276..p281, p282 the count): a car with
+    more keeps its first five and its top gear, so the launch gearing and the top speed are
+    Forza's and only intermediate ratios are dropped (27 roster cars, the 7- and 8-speed
+    boxes)."""
+    gears = car.gears if len(car.gears) <= MAX_GEARS else car.gears[: MAX_GEARS - 1] + car.gears[-1:]
+    reference = min(car.gears, key=lambda g: abs(g - 1.0))
+
+    def scale(gear: float) -> float:
+        v = car.redline * math.pi / 30 * car.drive_radius / (abs(gear) * car.final_drive)
+        return world_speed(v) / v
+
+    rels = [reference / g * scale(g) for g in gears]
+    # Reverse: DSF forces p275 negative (a positive value becomes -0.25 x).
+    return rels, -reference / abs(car.reverse) * scale(car.reverse), 1 / (car.final_drive * reference)
 
 
 @dataclass
