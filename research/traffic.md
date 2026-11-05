@@ -776,3 +776,52 @@ Every region stops at 128 IDs (#562).
   - DSF Enhanced's `PreloadAllTrafficVehiclePools` loads every set's models
     (0x0064E2D0). With our bigger lists that is more models than the slot
     budget assumes. Keep it off, as the VM ini does.
+
+## 7. The car manager's settings in game (confirmed-runtime)
+
+Three runs on VM 2:
+
+- the 24-package overlay, configured with `dsff car_manager traffic ...`
+  (the CLI, end to end: manager.json, the AI copy and its redirect line,
+  traffic.lua);
+- dsfcars.asi `vehicle_slots=41`;
+- the master `register.lua` with the census of 3b and interesting vehicles
+  on;
+- Chapter 7, the probe at the dyno start (region 9).
+
+**`equal`** (`vm2-20261105-232744`; `traffic ambient --set "Chapter 7"
+--weights equal`). The 18 models' share of the cars within 250 m:
+
+| | Lowest | Highest | Std. dev. (uniform 0.056) |
+| --- | ---: | ---: | ---: |
+| vanilla weights (`vm1-20261105-210733`) | 0.003 (185) | 0.102 (136) | 0.030 |
+| equal weights | 0.029 (185) | 0.072 (206) | 0.010 |
+
+`AiTraffic.share` predicts each model's share from the copy's tables:
+
+- vanilla: 0.012 to 0.105;
+- equal: 0.041 to 0.058, lower for 185, 286 and 291, which some roads leave
+  out.
+
+The measured values follow both predictions, within the census's noise
+(about 40 samples of 70 to 90 cars).
+
+**Ports, off, budget** (`vm2-20261105-233109`):
+
+- settings: car 1 `traffic off`, car 2 pinned to region 9, `traffic iv off`,
+  and Chapter 7 `--ports` 3, 4, 5, 6 `--share 0.2`;
+- ports 3 to 6 were **19.7 %** of all cars (target 20 %);
+- car 1 and the 18 other ports were never seen;
+- car 2 wasn't seen either: it was the first of 30 entries in region 9 (about
+  12 % of picks) with a few picks in the run.
+
+**Pin** (`vm2-20261105-233606`). The same settings plus
+`traffic iv off --vanilla off`, so region 9 holds car 2 alone:
+
+- car 2 was seen 28 times from t161, up to 2 at once, through the region
+  only (it was dealt to no set);
+- car 1 was never seen;
+- ports 3 to 6 were 19.6 %.
+
+No run crashed. The mission start with a patched set is in section 5
+(`vm1-20261105-230536`).

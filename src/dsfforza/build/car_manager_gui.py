@@ -366,12 +366,16 @@ class App:
     def build_iv(self) -> None:
         iv = self.tc.t["iv"]
         self.iv_ports = tk.BooleanVar(value=iv.get("ports") is not False)
+        self.iv_vanilla = tk.BooleanVar(value=iv.get("vanilla") is not False)
         self.per_region = tk.IntVar(value=int(iv.get("per_region", 24)))
         self.regions = tk.StringVar()
         frame = ttk.Frame(self.iv_tab, padding=8)
         frame.pack(fill="both", expand=True)
         ttk.Checkbutton(frame, text="Cars in traffic also come as interesting vehicles", variable=self.iv_ports).grid(
             row=0, column=0, columnspan=3, sticky="w"
+        )
+        ttk.Checkbutton(frame, text="The game's own interesting vehicles", variable=self.iv_vanilla).grid(
+            row=5, column=0, columnspan=3, sticky="w", pady=(16, 0)
         )
         ttk.Label(frame, text="Cars per region (at most 128 IDs with the game's)").grid(row=1, column=0, sticky="w")
         ttk.Spinbox(frame, from_=0, to=128, textvariable=self.per_region, width=5).grid(row=1, column=1, sticky="w")
@@ -386,6 +390,7 @@ class App:
     def apply_iv(self) -> None:
         self.tc.t["iv"]["ports"] = bool(self.iv_ports.get())
         self.tc.t["iv"]["per_region"] = int(self.per_region.get())
+        self.tc.t["iv"]["vanilla"] = bool(self.iv_vanilla.get())
         self.run("interesting vehicles", self.save_traffic)
 
     def pin(self, *, unpin: bool) -> None:

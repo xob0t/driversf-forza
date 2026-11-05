@@ -263,7 +263,8 @@ end
 
 -- The car manager's interesting-vehicle settings, dsfcars\traffic.lua (src/dsfforza/build/traffic.py),
 -- by model ID: cars[id].traffic = false keeps a car out of every region, cars[id].regions pins it
--- to those regions; ports = false gives the other cars no region; per_region is regionCars. Read
+-- to those regions; ports = false gives the other cars no region; vanilla = false takes the game's
+-- own interesting vehicles out of every region; per_region is regionCars. Read
 -- only with the car packages loaded, as packages.lua is (#511).
 local TRAFFIC = {}
 if ASI.packages then
@@ -566,6 +567,17 @@ local function injectRegions(regions)
 		return 0
 	end
 	local added, full = 0, 0
+	if TRAFFIC.vanilla == false then
+		for _, region in ipairs(regions) do
+			if type(region) == "table" and type(region.vehicleList) == "table" then
+				local kept = {}
+				for _, model in ipairs(region.vehicleList) do
+					if CARS[model] then table.insert(kept, model) end
+				end
+				region.vehicleList = kept
+			end
+		end
+	end
 	-- A pinned car goes at the front of its regions: the engine's pick favours the front of a list
 	-- (idx = round(n * (1 - cos(pi * r / 2))), 0x007EB970; research/traffic.md 2); the others go last.
 	local front = {}
