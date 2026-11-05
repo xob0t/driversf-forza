@@ -926,6 +926,7 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print, progress
             log_file.close()
         for slot in slots.values():
             slot.release()
+        jobpool.leave_queue()
     return results
 
 

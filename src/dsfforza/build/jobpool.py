@@ -19,6 +19,10 @@ How many slots are handed out (capacity()):
 - at most gentle.CORES while out/gentle exists, in this worktree or the main checkout;
 - minus the CPUs a test run reserves while its game loads (holds, below).
 
+Processes that find no free slot wait in line (queue/): a slot that comes free goes to
+the one that has waited longest, so two builds share the pool rather than the first
+keeping every slot it frees.
+
 A new slot is taken only while the RAM its job needs is free (the per-job figures of
 port_batch: WORKER_RAM, RENDER_RAM, LINT_RAM), unless the process holds none yet: every
 build gets at least one slot as the pool frees, as it got one worker before.
@@ -263,12 +267,79 @@ def held() -> int:
     return len(_HELD)
 
 
+# The queue: a process that found no free slot waits in line (queue/<pid>.lock, locked while it
+# waits, its text the time it joined). A free slot goes to the earliest waiter, so a build
+# that just freed a slot doesn't take it again before a build that has been waiting.
+_TICKET: list = []  # [fd, path, since] while this process waits
+
+
+def _join_queue(folder: Path) -> None:
+    if _TICKET:
+        return
+    queue = folder / "queue"
+    queue.mkdir(exist_ok=True)
+    path = queue / f"{os.getpid()}.lock"
+    fd = _open(path)
+    if not _try_lock(fd):
+        os.close(fd)
+        return
+    since = time.time()
+    with contextlib.suppress(OSError):
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.ftruncate(fd, 0)
+        os.write(fd, json.dumps({"pid": os.getpid(), "since": since}).encode())
+    _TICKET.extend((fd, path, since))
+
+
+def leave_queue() -> None:
+    """Stop waiting in line (try_acquire does when it gets a slot)."""
+    if not _TICKET:
+        return
+    fd, path, _ = _TICKET
+    _TICKET.clear()
+    _unlock(fd)
+    with contextlib.suppress(OSError):
+        os.close(fd)
+    with contextlib.suppress(OSError):
+        path.unlink()
+
+
+def _ahead(folder: Path) -> int:
+    """Waiters of other processes that joined the queue before this one (before now, when
+    this one doesn't wait)."""
+    mine = _TICKET[2] if _TICKET else time.time()
+    own = _TICKET[1] if _TICKET else None
+    n = 0
+    try:
+        tickets = list((folder / "queue").glob("*.lock"))
+    except OSError:
+        return 0
+    for path in tickets:
+        if path == own or not _slot_busy(path):  # not waiting any more (its process ended)
+            continue
+        try:
+            since = float(json.loads(path.read_text(encoding="utf-8") or "{}").get("since", 0))
+        except (OSError, ValueError, AttributeError):
+            continue
+        if since < mine:
+            n += 1
+    return n
+
+
 def try_acquire(
-    label: str, ram: int = 0, free=None, folder: Path | None = None, total: int | None = None
+    label: str,
+    ram: int = 0,
+    free=None,
+    folder: Path | None = None,
+    total: int | None = None,
+    *,
+    queue: bool = True,
 ) -> Slot | None:
-    """A slot now, or None: the pool is at capacity (or holds reserve it), or this process
-    holds a slot already and `ram` bytes aren't free (free(): bytes free now; default
-    port_batch.free_ram). With the pool off, always a slot (that holds nothing)."""
+    """A slot now, or None: the pool is at capacity (or holds reserve it), the free slots
+    go to processes that have waited longer, or this process holds a slot already and `ram`
+    bytes aren't free (free(): bytes free now; default port_batch.free_ram). Without a slot
+    the process joins the queue (unless `queue` is False: it will not ask again soon). With
+    the pool off, always a slot (that holds nothing)."""
     folder = folder if folder is not None else root()
     if folder is None:
         return Slot(None, None, label)
@@ -285,7 +356,9 @@ def try_acquire(
             cap = capacity(folder, total)
             paths = [folder / f"slot-{i:02d}.lock" for i in range(total)]
             busy = [p for p in paths if _slot_busy(p)]
-            if len(busy) >= cap:
+            if cap - len(busy) <= _ahead(folder):
+                if queue:
+                    _join_queue(folder)
                 return None
             for path in paths:
                 if path in busy:
@@ -308,6 +381,7 @@ def try_acquire(
                     os.write(fd, json.dumps(info).encode())
                 slot = Slot(path, fd, label)
                 _HELD.append(slot)
+                leave_queue()
                 return slot
     except OSError as error:  # an unusable pool folder: run as before rather than not at all
         print(f"job pool: {folder}: {error}; going on without it", file=sys.stderr)
@@ -334,7 +408,7 @@ def lease(label: str, want: int, ram: int = 0, log=None) -> list[Slot]:
     first = acquire(label, ram, log=log)
     out = [first]
     while len(out) < want:
-        slot = try_acquire(label, ram)
+        slot = try_acquire(label, ram, queue=False)
         if slot is None:
             break
         out.append(slot)

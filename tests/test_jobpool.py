@@ -42,7 +42,7 @@ def test_slots_are_shared_and_freed_when_the_holder_dies():
         try:
             mine = jobpool.try_acquire("me", folder=folder, total=4)
             assert mine is not None
-            assert jobpool.try_acquire("me", folder=folder, total=4) is None  # all 4 busy
+            assert jobpool.try_acquire("me", folder=folder, total=4, queue=False) is None  # all 4 busy
             assert {s["label"] for s in jobpool.status(folder, 4)["busy"]} == {"child", "me"}
             mine.release()
             again = jobpool.try_acquire("me", folder=folder, total=4)
@@ -65,12 +65,45 @@ def test_slots_are_shared_and_freed_when_the_holder_dies():
         assert jobpool.held() == 0
 
 
+WAITER = """
+import sys
+from pathlib import Path
+from dsfforza.build import jobpool
+print("waiting", flush=True)
+slot = jobpool.acquire("waiter", folder=Path(sys.argv[1]), total=1, poll=0.05)
+print("got it", flush=True)
+sys.stdin.readline()
+"""
+
+
+def test_a_freed_slot_goes_to_who_waited_longest():
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        mine = jobpool.try_acquire("me", folder=folder, total=1)
+        waiter = subprocess.Popen(
+            [sys.executable, "-c", WAITER, str(folder)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+        )
+        try:
+            assert waiter.stdout.readline().strip() == "waiting"
+            deadline = time.monotonic() + 30
+            while not list((folder / "queue").glob("*.lock")) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            mine.release()
+            assert jobpool.try_acquire("me", folder=folder, total=1) is None  # the waiter is first
+            assert waiter.stdout.readline().strip() == "got it"
+            assert jobpool.try_acquire("me", folder=folder, total=1) is None  # it holds the slot
+        finally:
+            waiter.stdin.close()
+            waiter.wait()
+        jobpool.leave_queue()
+
+
 def test_a_second_slot_waits_for_ram():
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
         first = jobpool.try_acquire("a", ram=1 << 40, free=lambda: 1 << 20, folder=folder, total=4)
         assert first is not None  # a process holding none gets one whatever the RAM
-        assert jobpool.try_acquire("b", ram=1 << 40, free=lambda: 1 << 20, folder=folder, total=4) is None
+        assert jobpool.try_acquire("b", ram=1 << 40, free=lambda: 1 << 20, folder=folder, total=4, queue=False) is None
         second = jobpool.try_acquire("b", ram=1 << 20, free=lambda: 1 << 30, folder=folder, total=4)
         assert second is not None
         first.release()
@@ -94,7 +127,7 @@ def test_a_hold_reserves_cpus_until_the_world_loads():
         hold = _hold(folder, runs=str(runs), prefix="vm2-")
         assert jobpool.capacity(folder, 4) == 1
         slot = jobpool.try_acquire("a", folder=folder, total=4)
-        assert slot is not None and jobpool.try_acquire("b", folder=folder, total=4) is None
+        assert slot is not None and jobpool.try_acquire("b", folder=folder, total=4, queue=False) is None
         # Another VM's run folder, or an older one of this VM, doesn't end it.
         (runs / "vm1-x").mkdir()
         (runs / "vm1-x" / "events.json").write_text('[{"message": "story world ready after 3 presses"}]')
