@@ -834,14 +834,15 @@ HEAD_UNIT_DEPTH = 0.3  # m behind a headlight section's cover (dsf_materials.COV
 HEAD_UNIT_PAD = 0.02  # m round its outline
 
 
-def _headlight_reflectors(sections, place, mid_z: float) -> list[Tri]:
+def _headlight_reflectors(sections, place, mid_z: float, reach: dict | None = None) -> list[Tri]:
     """Head-lamp triangles for a car without head-lamp techniques or clear front
     lenses: the reflectors of its headlight sections (headlightL/R, glassLHL/RHL)
     ahead of the wheelbase midpoint, else their lamp-cover glass (MIT_HKS_06,
-    PEU_3_905EVO_93). Race cars whose headlights are decals (badge) get none."""
+    PEU_3_905EVO_93). Race cars whose headlights are decals (badge) get none. reach: as
+    _front_tris."""
     lamp_sections = [s for s in sections if re.match(r"headlight|glass[lr]hl", s.name.lower())]
     for materials in (REFLECTORS, LAMP_COVERS):
-        out = _front_tris(lamp_sections, materials, place, mid_z)
+        out = _front_tris(lamp_sections, materials, place, mid_z, reach)
         if out:
             return out
     return []
@@ -889,7 +890,10 @@ def _bare_head_units(sections, place, mid_z: float, records) -> list[Tri]:
     return out
 
 
-def _front_tris(sections, materials, place, mid_z: float) -> list[Tri]:
+def _front_tris(sections, materials, place, mid_z: float, reach: dict | None = None) -> list[Tri]:
+    """Head lamp triangles from the front triangles of these sections' subsections of these
+    materials, side by their piece (_on_centre_line). reach: id(Tri) -> the |x| a centre piece
+    reaches is added here (_joined_centre)."""
     out = []
     for section in sections:
         for sub in section.subsections:
@@ -907,6 +911,8 @@ def _front_tris(sections, materials, place, mid_z: float) -> list[Tri]:
                     continue
                 side = "C" if on_centre[k] is not None else ("L" if centre[0] > 0 else "R")
                 out.append(Tri(sub, k, HEAD, side, True, WHITE, area, centre, normal, sub.lod, tuple(pts)))
+                if reach is not None and on_centre[k] is not None:
+                    reach[id(out[-1])] = on_centre[k]
     return out
 
 
@@ -1041,6 +1047,8 @@ class LampPlan:
                             clear.append(
                                 Tri(sub, k, LENS, side, front, c, area, centre, normal, sub.lod, tuple(pts), shown)
                             )
+                            if side == "C" and on_centre[k] is not None:
+                                reach[id(clear[-1])] = on_centre[k]  # front clear lenses may become head lamps
                             continue
                         from_lens.add(len(records))
                     records.append(Tri(sub, k, f, side, front, c, area, centre, normal, sub.lod, tuple(pts), shown))
@@ -1054,12 +1062,12 @@ class LampPlan:
             front_clear = [r for r in clear if r.front]
             if front_clear:
                 clear = [r for r in clear if not r.front]
-                records += [
-                    Tri(r.sub, r.k, HEAD, r.side, True, WHITE, r.area, r.centre, r.normal, r.lod, r.pts)
-                    for r in front_clear
-                ]
+                for r in front_clear:
+                    records.append(Tri(r.sub, r.k, HEAD, r.side, True, WHITE, r.area, r.centre, r.normal, r.lod, r.pts))
+                    if id(r) in reach:
+                        reach[id(records[-1])] = reach[id(r)]
             else:
-                records += _headlight_reflectors(sections, place, mid_z)
+                records += _headlight_reflectors(sections, place, mid_z, reach)
         else:
             records += _bare_head_units(sections, place, mid_z, records)
         _yellow_head_covers(records, yellow_front, from_lens)

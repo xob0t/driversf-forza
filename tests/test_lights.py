@@ -565,6 +565,17 @@ def test_a_bar_joining_the_side_tails_is_a_left_and_a_right_tail():
     assert sides == {(lights.TAIL, "L"), (lights.TAIL, "R")}, sides
 
 
+def test_a_clear_lens_bar_joining_the_head_lamps_is_split_without_a_head_technique():
+    # #430 (CodeRabbit on #539): a car with no head lamp technique takes its front clear lenses as
+    # head lamps; a lens bar across the car that reaches the side lenses is those lamps joined, as
+    # for the planned lamps, so its triangles take their side.
+    lenses = [_quad("glassLHL", "detail_glass_clear", 0.6, 2.0), _quad("glassRHL", "detail_glass_clear", -0.6, 2.0)]
+    bar = _box("bumperFa", "detail_glass_clear", -0.65, 0.65, 0.42, 0.62, 2.0)
+    plan = lights.LampPlan.build(lenses + [bar] + TAILS, _Place(), 0.0)
+    sides = {plan.tri_lamp[(id(bar.subsections[0]), k)][:2] for k in range(2)}
+    assert sides == {(lights.HEAD, "L"), (lights.HEAD, "R")}, sides
+
+
 def test_centre_entries_are_those_on_the_centre_line():
     # #430: a host entry is a centre one when no other entry is nearer its mirror image than it
     # is. Vanilla 172's reverse lamps at x +-0.123 are a left and a right entry (the old 0.15 m

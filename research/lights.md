@@ -294,10 +294,11 @@ on a shorter or longer car).
    race cars CHE_3_CorvetteC5R_04, MCL_41_McLarenF1GTR_98, MER_CLKGTR_98,
    MIT_HKS_06 and PEU_3_905EVO_93. The NASCARs CHE_2_MonteCarloSS_11 and
    FOR_1_Fusion_11 have decal headlights (`badge`) and stay dark.
-2. Side from the technique (`_left/_right`) or the triangle's x; a
-   subsection whose |x| stays under 0.3 m is a centre lamp. A centre tail
-   lamp more than 8 cm above the side tails becomes a stop-only lamp (type
-   0x02).
+2. Side from the technique (`_left/_right`) or the triangle's x; a piece
+   (triangles joined by their corners) that straddles x = 0 within the side
+   lamps of its colour is a centre lamp (#430; until then a subsection whose
+   |x| stayed under 0.3 m). A centre tail lamp more than 8 cm above the side
+   tails becomes a stop-only lamp (type 0x02; `HIGH_BRAKE_RISE`, unknown).
 3. Triangles are grouped by (function, side, end) and each group is split
    into lamps 0.2 m apart on its finest LOD, so a side repeater is not the
    headlamp indicator and a bumper driving lamp is not the headlamp
