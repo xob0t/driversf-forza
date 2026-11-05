@@ -43,6 +43,12 @@ HUD_LUA = Path("Common") / "UserLuaScripts" / "dsfforza" / "packages_hud.lua"
 GUI = Path("Install") / "gui.sp"
 FONTS = Path("media") / "Fonts.fchunk"
 LOCALE = Path("Locale")
+# The generated gui.sp is only ever read through dsfforza.asi ([archive] redirect_list), whose CHNK
+# reader takes up to [archive] max_entries root entries (tools/asi/dsfforza.ini; mod_archive.cpp
+# g_max_entries), so there is room for a SPOI per picture, as in the vanilla gui.sp. With the
+# vanilla reader's 1100, 721 pictures went 5 to a SPOI and 360 went 3 to a SPOI, and both crashed
+# the garage (gui_assets.add_pictures, issue #540).
+GUI_ROOT_LIMIT = 16384
 
 
 def _gui():
@@ -241,7 +247,7 @@ def generate(game: Path, cars: list[dict], base: Path | None = None, log=print) 
     report = {"cars": len(cars), "glyphs": len(glyphs), "strings": len(new_strings), "emblem": bool(textures)}
     try:
         if pictures:
-            report["gui"] = g.add_pictures(base / GUI, staged / "gui.sp", pictures)
+            report["gui"] = g.add_pictures(base / GUI, staged / "gui.sp", pictures, root_limit=GUI_ROOT_LIMIT)
             redirects.append((GUI, GENERATED / "gui.sp"))
         if glyphs or textures:
             report["fonts"] = g.add_glyphs(base / FONTS, staged / "Fonts.fchunk", glyphs, textures)
