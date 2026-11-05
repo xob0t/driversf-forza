@@ -558,13 +558,19 @@ def bootstrap_lua_state(game: Path, created: set, repo: Path) -> str:
             state = "dsfforza's (another version)"
         else:
             state = "another mod's"
-    if (game / "Common" / "UserLuaScripts" / "dsfcars" / "chained-bootstrap.lua").is_file():  # install.ps1 kept it
-        # Only a bootstrap of ours that loads it runs it; one another installer put there since doesn't.
-        runs_it = bootstrap.is_file() and b"chained-bootstrap.lua" in bootstrap.read_bytes()
+    # install.ps1 kept another mod's bootstrap there: under dsfcars, or dsfforza in an install from
+    # before the rename. Only a bootstrap of ours that names that path runs it (its Lua string,
+    # "dsfcars\\chained-bootstrap.lua"); one another installer put there since doesn't, nor an
+    # older bootstrap of ours that names the other folder.
+    text = bootstrap.read_bytes().lower() if bootstrap.is_file() else b""
+    for folder in ("dsfcars", "dsfforza"):
+        if not (game / "Common" / "UserLuaScripts" / folder / "chained-bootstrap.lua").is_file():
+            continue
+        runs_it = f"{folder}\\\\chained-bootstrap.lua".encode() in text
         if runs_it and state.startswith("dsfforza's"):
             state += ", chaining another mod's"
         else:
-            state += ", stale dsfcars\\chained-bootstrap.lua (not run)"
+            state += f", stale {folder}\\chained-bootstrap.lua (not run)"
     return state
 
 

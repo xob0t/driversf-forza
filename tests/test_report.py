@@ -16,6 +16,7 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
+from dsfforza import REPO
 from dsfforza.build import install, report
 
 PROFILE = r"C:\Users\Jane Doe"
@@ -214,12 +215,26 @@ def test_other_mods_notes_a_chained_bootstrap():
     with tempfile.TemporaryDirectory() as tmp:
         repo, game, _ = _fake_setup(Path(tmp))
         assert report.other_mods(game, None, repo)["bootstrap_lua"] == "dsfforza's"
-        ours = b'-- ours\nlocal CHAINED = "dsfforza\\\\chained-bootstrap.lua"\n'
+        ours = b'-- ours\nlocal CHAINED = "dsfcars\\\\chained-bootstrap.lua"\n'
         _touch(repo / "tools" / "game" / "lua" / "player" / "bootstrap.lua", ours)
         _touch(game / "Common" / "UserLuaScripts" / "bootstrap.lua", ours)
         _touch(game / "Common" / "UserLuaScripts" / "dsfcars" / "chained-bootstrap.lua", b"-- Felony Rework")
         state = report.other_mods(game, None, repo)["bootstrap_lua"]
         assert state == "dsfforza's, chaining another mod's", state
+        # A bootstrap of ours from before the rename names dsfforza\chained-bootstrap.lua: it doesn't
+        # run the copy under dsfcars.
+        entry = {"path": "Common\\UserLuaScripts\\bootstrap.lua", "action": "created"}
+        record = {"state": "installed", "entries": [entry]}
+        older = b'-- ours, older\nlocal CHAINED = "dsfforza\\\\chained-bootstrap.lua"\n'
+        _touch(game / "Common" / "UserLuaScripts" / "bootstrap.lua", older)
+        state = report.other_mods(game, record, repo)
+        assert (
+            state["bootstrap_lua"] == "dsfforza's (another version), stale dsfcars\\chained-bootstrap.lua (not run)"
+        ), state
+        # The shipped bootstrap names the path this check looks for.
+        shipped = (REPO / "tools" / "game" / "lua" / "player" / "bootstrap.lua").read_bytes().lower()
+        assert b"dsfcars\\\\chained-bootstrap.lua" in shipped
+        _touch(game / "Common" / "UserLuaScripts" / "bootstrap.lua", ours)
         # Another installer put its bootstrap back over ours: the chained copy no longer runs.
         _touch(game / "Common" / "UserLuaScripts" / "bootstrap.lua", b'user_open("felonyrework.lua")')
         state = report.other_mods(game, None, repo)["bootstrap_lua"]
