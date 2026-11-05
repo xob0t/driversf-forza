@@ -283,9 +283,9 @@ don't touch them.
 Command (one series, both runs):
 
 ```powershell
-.	ools\wsbun-series.ps1 -Vm -Archives outanilla\Install\dngvehicles.sp,outanilla\Install\dngvehicles.sp `
-  -Labels pinned,replace -Overlay out	raffic-vm\ovl-pinned,out	raffic-vm\ovl-replace `
-  -Asi out	raffic-vmsi\dsfforza.asi -LuaFiles 'dsfforzaegister.lua=out	raffic-vmegister-research.lua' `
+.\tools\wsb\run-series.ps1 -Vm -Archives out\vanilla\Install\dngvehicles.sp,out\vanilla\Install\dngvehicles.sp `
+  -Labels pinned,replace -Overlay out\traffic-vm\ovl-pinned,out\traffic-vm\ovl-replace `
+  -Asi out\traffic-vm\asi\dsfforza.asi -LuaFiles 'dsfforza\register.lua=out\traffic-vm\register-research.lua' `
   -ProbeIds '170,201,291,286,185,173' -Traffic -ShotSeconds 3 -WaitSeconds 600
 ```
 
