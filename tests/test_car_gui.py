@@ -163,7 +163,7 @@ class EmblemTest(unittest.TestCase):
             manifest = {"names": names, "source": {"media": name}}
             self.cars.append({"id": i, "key": f"forza.fh1.{name}", "manifest": manifest, "folder": folder})
         self.emblem_file = dsfcar.EMBLEM
-        for name, value in (("vanilla_codes", ({}, {})), ("read_strings", {})):
+        for name, value in (("vanilla_codes", ({}, {})), ("read_strings", {}), ("require_vanilla_stats", None)):
             patcher = mock.patch.object(gui_assets, name, return_value=value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -269,10 +269,31 @@ class PictureRootLimitTest(unittest.TestCase):
             mock.patch.object(car_gui, "font_state", return_value=(set(), False)),
             mock.patch.object(car_gui, "plan", return_value=({}, {}, {}, {"dsfforza_x": b"DDS"})),
             mock.patch.object(gui_assets, "read_strings", return_value={}),
+            mock.patch.object(gui_assets, "require_vanilla_stats"),
             mock.patch.object(gui_assets, "add_pictures", side_effect=add_pictures) as add,
         ):
             car_gui.generate(game, [{"id": 1, "key": "k", "manifest": {}, "folder": tmp}], log=lambda _: None)
         self.assertEqual(add.call_args.kwargs["root_limit"], car_gui.GUI_ROOT_LIMIT)
+
+
+class MissingVehicleStatsTest(unittest.TestCase):
+    """Without the decompiled vanilla vehicleStats, generate stops before it writes anything
+    (issue #544: every vanilla maker and model was taken for a new one)."""
+
+    def test_generate_refuses(self):
+        tmp = Path(tempfile.mkdtemp())
+        game = tmp / "game"
+        (game / "media").mkdir(parents=True)
+        with (
+            mock.patch.object(gui_assets, "VEHICLE_STATS_LUA", tmp / "missing" / "vehiclestats.lua"),
+            mock.patch.object(car_gui, "plan") as plan,
+            self.assertRaises(SystemExit) as refused,
+        ):
+            car_gui.generate(game, [{"id": 1, "key": "k", "manifest": {}, "folder": tmp}], log=lambda _: None)
+        self.assertIn("game_data prepare", str(refused.exception))
+        plan.assert_not_called()
+        self.assertFalse((game / car_gui.GENERATED).exists())
+        self.assertFalse((game / car_gui.HUD_LUA).exists())
 
 
 VANILLA_GUI = Path(__file__).resolve().parents[1] / "out" / "vanilla" / "Install" / "gui.sp"

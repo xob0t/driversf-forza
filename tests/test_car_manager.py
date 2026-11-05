@@ -483,6 +483,29 @@ class ManagerTest(unittest.TestCase):
         car_manager.main(["--game", str(self.game), "remove", a])
         self.assertEqual(self.listed(), {})
 
+    def test_missing_vehiclestats_is_refused_before_anything_is_written(self):
+        """With the game's GUI files there but no decompiled vanilla vehicleStats (issue #544),
+        install and enable refuse and write nothing; without GUI files there is nothing to make."""
+        from unittest import mock
+
+        from dsfforza.game import gui_assets
+
+        pkg = self.package("CAR_A_10")
+        cars = self.game / car_manager.CARS_DIR
+        a = self.manager().install(pkg)  # no GUI files in the fake game: no check
+        self.manager().set_enabled(a, enabled=False)
+        before = {p.name: p.read_bytes() for p in cars.iterdir() if p.is_file()}
+        for rel in ("Install/gui.sp", "media/Fonts.fchunk"):
+            (self.game / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.game / rel).write_bytes(b"x")
+        with mock.patch.object(gui_assets, "VEHICLE_STATS_LUA", self.tmp / "missing.lua"):
+            for argv in (["install", str(self.package("CAR_B_11"))], ["enable", a]):
+                with self.subTest(argv=argv[0]), self.assertRaises(SystemExit) as refused:
+                    car_manager.main(["--game", str(self.game), *argv])
+                self.assertIn("game_data prepare", str(refused.exception))
+        self.assertEqual({p.name: p.read_bytes() for p in cars.iterdir() if p.is_file()}, before)
+        self.assertFalse((self.game / "dsfforza" / "generated").exists())
+
     def test_check_plugin_command(self):
         """install.ps1's preflight: a plugin file is checked against a build's packages without
         reading or writing the manager's state."""

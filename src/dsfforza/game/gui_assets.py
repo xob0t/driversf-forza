@@ -1619,12 +1619,25 @@ def add_strings(source: Path, out: Path, texts: dict[int, str]) -> dict:
 
 
 def vanilla_stats() -> dict[int, dict]:
-    """vehicleStats.lua (decompiled vanilla copy) as {id: {field: value}} (game_data.read_vehiclestats)."""
+    """vehicleStats.lua (decompiled vanilla copy) as {id: {field: value}} (game_data.read_vehiclestats);
+    {} when the copy is missing (require_vanilla_stats says so instead)."""
     if not VEHICLE_STATS_LUA.exists():
         return {}
     from dsfforza.game import game_data
 
     return game_data.read_vehiclestats(VEHICLE_STATS_LUA)
+
+
+def require_vanilla_stats() -> None:
+    """Stop when the decompiled vanilla vehicleStats is missing: without it vanilla_codes finds no
+    vanilla maker or model, so every car would get a new badge glyph and name string in place of
+    the vanilla badge and plate of a maker DSF has (issue #544). game_data prepare writes it."""
+    if not VEHICLE_STATS_LUA.exists():
+        raise SystemExit(
+            f"{VEHICLE_STATS_LUA} is missing, so the vanilla makers and models can't be told apart from"
+            " new ones. Make it with `uv run dsff game_data prepare` (or run install.cmd once), then"
+            " run this again."
+        )
 
 
 def vanilla_codes(strings: dict[int, str]) -> tuple[dict, dict]:
