@@ -121,6 +121,16 @@ EMISSION_GROUP = {"Exhaust": "ExhaustL", "EngineAmbient": "EngineAmbient", "Engi
 # Emission per set, first one the car has (race cars often lack one).
 SET_EMISSIONS = {"A": ("EngineAmbient", "EngineIntake", "Exhaust"), "B": ("Exhaust", "EngineAmbient", "EngineIntake")}
 VANILLA_INDEX_VERSION = 2
+PITCH_LIMIT = 4800.0  # cents; every vanilla pitch curve is clamped to +-4800
+PITCH_END = 12000.0  # the last x of every vanilla pitch curve (1986 of 1986)
+# The vehicle_rpm the game sends (research/engine-sound.md, "rpm path"): FUN_008B2370 multiplies
+# the shaped rpm by 1 + 0.1 x noise (DAT_00F3F27C; FUN_008BB7C0 is one octave of gradient noise
+# over a table filled at run time, taken here as at most 1 in size); FUN_00552920 multiplies
+# vehicle_rpm by 1 + (1 - rec+0xB0) x (2 rand - 1) x 0.05 (DAT_00DD6974), where rec+0xB0 is
+# FUN_008BBDE0's 1.0, or 0.8 (DAT_00DD6870) while +0xD84 is above 0.9.
+RPM_NOISE = 0.1
+RPM_JITTER = 0.05 * (1 - 0.8)
+VO3D_AUDIO_SHAPE = 596  # p596: FUN_008B2370's rpm + p596 x (rpm^2 / p42 - rpm), read nowhere else
 
 
 def fnv1(text: str) -> int:
@@ -147,8 +157,21 @@ def write_atomic(path: Path, data: bytes) -> None:
 @dataclass
 class Slot:
     media: int
-    rpm: float
+    rpm: float  # where the pitch curve crosses 0 cents (wb.sound_rpm)
     sounds: list = field(default_factory=list)
+    recording: float = 0.0  # the rpm the pitch curve was sampled for (recording_rpm)
+
+
+def recording_rpm(points) -> float | None:
+    """The recording rpm R a pitch curve was made for. Vanilla pitch curves are
+    1200 * log2(x / R) sampled at fixed x and joined linearly, so each point inside the
+    +-4800 cent clamp gives R = x / 2^(cents / 1200) (the median of them; all agree to 0.3%
+    on 1986 of the 1986 vanilla loop curves). Their 0-cent crossing (wb.sound_rpm) lies a
+    little above R, where the straight segment crosses 0 (921 for R = 902 on the 370Z 227).
+    Each loop's crossfade peaks at R on 1962 of those curves (research/engine-sound.md,
+    "Crossfades and pitch curves")."""
+    rs = sorted(x / 2 ** (y / 1200) for x, y, *_ in points if x > 0 and -PITCH_LIMIT < y < PITCH_LIMIT)
+    return rs[len(rs) // 2] if rs else None
 
 
 def vanilla_sound(dsf: Path, spool: int) -> tuple[bytes, bytes]:
@@ -200,7 +223,11 @@ def loop_sets(bank: wb.Bank, vsvh: bytes) -> dict[str, list[Slot]]:
             if o.type == 2 and o.info["source"] in media and wb.sound_rpm(o):
                 if o.info["source"] in taken:
                     raise ValueError(f"media {o.info['source']:08x} is in both loop sets")
-                slot = slots.setdefault(o.info["source"], Slot(o.info["source"], wb.sound_rpm(o)))
+                rpm = wb.sound_rpm(o)
+                pitch = next(rt["points"] for rt in o.info["rtpcs"] if rt["rtpc"] == RPM and rt["param"] == 2)
+                slot = slots.setdefault(
+                    o.info["source"], Slot(o.info["source"], rpm, recording=recording_rpm(pitch) or rpm)
+                )
                 slot.sounds.append(o.id)
         taken |= set(slots)
         sets[name] = sorted(slots.values(), key=lambda s: s.rpm)
@@ -822,6 +849,116 @@ def warp_map(old: list[float], new: list[float], top: float = 12000.0) -> list[t
     return out
 
 
+def cents(x: float, rpm: float) -> float:
+    """The pitch a loop recorded at `rpm` needs at vehicle_rpm x, in the curves' clamp."""
+    return -PITCH_LIMIT if x <= 0 else max(-PITCH_LIMIT, min(PITCH_LIMIT, 1200 * math.log2(x / rpm)))
+
+
+def vehicle_rpm_span(lo: float, hi: float, engine_rpm: tuple[float, float, float] | None = None) -> tuple[float, float]:
+    """The vehicle_rpm range the game sends a bank whose VSVH+94/+98 are lo/hi, with p596 0
+    (research/engine-sound.md, "rpm path"). FUN_00552920 sends lo + (hi - lo) * n, at least lo,
+    n = (rpm - p40) / (p42 - p40). engine_rpm = (p40, p42, p364): the engine's torque reaches 0
+    at p42 * (1 + p364) (FUN_008C3CF0, research/handling.md), the top of what it drives itself
+    to. Without it, the top is the redline (n = 1). Both ends widened by the noise and jitter."""
+    n_top = 1.0
+    if engine_rpm is not None:
+        p40, p42, p364 = engine_rpm
+        if p42 > p40:
+            n_top = max(1.0, (p42 * (1 + p364) * (1 + RPM_NOISE) - p40) / (p42 - p40))
+    return lo * (1 - RPM_JITTER), (lo + (hi - lo) * n_top) * (1 + RPM_JITTER)
+
+
+def support(points) -> tuple[float, float]:
+    """(a, b): a crossfade curve's gain is above 0 for a < x < b (the gain holds its first and
+    last values beyond the ends)."""
+    live = [k for k, p in enumerate(points) if p[1] > 0]
+    if not live:
+        return (0.0, 0.0)
+    a = points[live[0] - 1][0] if live[0] > 0 else -math.inf
+    b = points[live[-1] + 1][0] if live[-1] < len(points) - 1 else math.inf
+    return (a, b)
+
+
+def shared_grid(
+    members: dict[int, tuple[tuple[float, float], int]], span: tuple[float, float]
+) -> dict[int, list[float]] | None:
+    """x points for the pitch curves of loops crossfaded in one layer. members: Sound ->
+    ((a, b) where its crossfade is above 0, its curve's point count, fixed by the template).
+
+    Wwise joins a curve's points linearly, so between two points a curve is off
+    1200 * log2(x / R) by an amount that depends only on the two x values, not on R. Loops that
+    play together therefore stay in tune with each other wherever their curves share the same x
+    points, as every vanilla set's curves do (one x grid per set). Here they share the knots
+    (span ends, crossfade ends, which are the loops' recording rpms) and the points added
+    between knots, so they agree everywhere both are heard, and each is exact at its own and
+    its neighbours' recording rpm. Points are added where the largest log step remains, as long
+    as every loop heard there has a point to spare. Leftover points go below the loop's range
+    (x the game never sends while it is heard). None if a loop's knots don't fit its count."""
+    v_min, v_top = span
+    end = max(PITCH_END, v_top)
+    heard = {}
+    for sid, ((a, b), _n) in members.items():
+        a, b = max(a, v_min), min(b, v_top)
+        if a < b:
+            heard[sid] = (a, b)
+    raw = sorted({v_min, v_top} | {x for ab in heard.values() for x in ab})
+    knots = [x for k, x in enumerate(raw) if k == 0 or x - raw[k - 1] > 0.5]
+    segments = list(itertools.pairwise(knots))
+    on = [[sid for sid, (a, b) in heard.items() if a < x1 and b > x0] for x0, x1 in segments]
+    own = {sid: [k for k in knots if a - 0.5 <= k <= b + 0.5] for sid, (a, b) in heard.items()}
+    tail = {sid: b >= v_top - 0.5 and end > v_top + 0.5 for sid, (a, b) in heard.items()}
+    spare = {sid: members[sid][1] - 1 - len(own[sid]) - tail[sid] for sid in heard}
+    if any(v < 0 for v in spare.values()):
+        return None
+    added = [0] * len(segments)
+    while True:
+        open_ = [k for k, sids in enumerate(on) if sids and all(spare[s] > 0 for s in sids)]
+        if not open_:
+            break
+        k = max(open_, key=lambda j: math.log(segments[j][1] / segments[j][0]) / (added[j] + 1))
+        added[k] += 1
+        for s in on[k]:
+            spare[s] -= 1
+    out = {}
+    for sid in heard:
+        xs = list(own[sid])
+        for k, (x0, x1) in enumerate(segments):
+            if sid in on[k]:
+                xs += [x0 * (x1 / x0) ** (j / (added[k] + 1)) for j in range(1, added[k] + 1)]
+        xs = sorted(xs) + ([end] if tail[sid] else [])
+        pad = members[sid][1] - 1 - len(xs)
+        out[sid] = [0.0] + [xs[0] * j / (pad + 1) for j in range(1, pad + 1)] + xs
+    return out
+
+
+def _template_x(points, r: float) -> list[float]:
+    """The template curve's x with the point nearest the recording rpm moved onto it."""
+    xs = [p[0] for p in points]
+    inner = range(1, len(xs) - 1)
+    if inner:
+        k = min(inner, key=lambda j: abs(math.log(max(xs[j], 1) / r)))
+        if xs[k - 1] < r < xs[k + 1]:
+            xs[k] = r
+    return xs
+
+
+def _pitch_groups(groups: list[dict], pitch: list, owner: dict[int, str]) -> list[dict]:
+    """The rpm layers' {Sound: (a, b)} with every loop Sound in one: a loop Sound in no rpm
+    layer is heard over the whole span, with its set's other such Sounds; a Sound in two layers
+    joins them."""
+    loose = {}
+    for o, _rt in pitch:
+        if not any(o.id in g for g in groups):
+            loose.setdefault(owner.get(o.id), {})[o.id] = (-math.inf, math.inf)
+    merged = []
+    for g in groups + list(loose.values()):
+        for h in [h for h in merged if h.keys() & g.keys()]:
+            merged.remove(h)
+            g = {**h, **{sid: (min(ab[0], h.get(sid, ab)[0]), max(ab[1], h.get(sid, ab)[1])) for sid, ab in g.items()}}
+        merged.append(g)
+    return merged
+
+
 def retune(
     bank: wb.Bank,
     vsvh: bytes,
@@ -829,57 +966,103 @@ def retune(
     new_rpm: dict[int, float],
     lo_hi_old: tuple[float, float],
     lo_hi_new: tuple[float, float],
+    span: tuple[float, float] | None = None,
 ) -> dict:
-    """Pitch curves from the new recording rpms; every other vehicle_rpm curve
-    and layer crossfade warped from the old rpm points to the new ones."""
+    """Every vehicle_rpm curve and layer crossfade but the loops' pitch warped from the
+    template's rpm points to the new ones (a loop set's from its loops' recording rpms, the
+    rest from VSVH+94/+98), so each crossfade peaks at its loop's Forza recording rpm as
+    vanilla's peak at theirs. Then the pitch curves, 1200 * log2(x / R) for the new R on x
+    points shared by the loops of each crossfade layer (shared_grid) over `span`, the
+    vehicle_rpm range the game sends (vehicle_rpm_span; default VSVH+94..+98)."""
     maps = {
-        name: warp_map([s.rpm for s in slots], [new_rpm[s.media] for s in slots])
+        name: warp_map([s.recording for s in slots], [new_rpm[s.media] for s in slots])
         for name, slots in sets.items()
         if slots
     }
     other = warp_map(list(lo_hi_old), list(lo_hi_new))
+    span = span or (float(lo_hi_new[0]), float(lo_hi_new[1]))
     owner = set_of_objects(bank, vsvh)
-    sound_media = {}
-    for slots in sets.values():
-        for s in slots:
-            for sid in s.sounds:
-                sound_media[sid] = s.media
-    counts = {"pitch": 0, "warped": 0, "xfade": 0}
+    sound_media = {sid: s.media for slots in sets.values() for s in slots for sid in s.sounds}
+    counts = {"pitch": 0, "warped": 0, "xfade": 0, "shared_grid": 0}
+    pitch = []  # (Sound, its pitch curve)
+    groups = []  # per rpm crossfade layer: {Sound: (a, b)}
+
+    def warped(m, points):
+        return [(warp(m, x), y, i) for x, y, i in points]
+
     for o in bank.objects:
         m = maps.get(owner.get(o.id), other)
         for rt in o.info.get("rtpcs", []):
-            if rt["rtpc"] != RPM:
-                continue
-            if rt["param"] == 2 and o.id in sound_media:
-                r = new_rpm[sound_media[o.id]]
-                xs = [p[0] for p in rt["points"]]
-                # Wwise interpolates linearly between points: put one on the recording rpm
-                inner = range(1, len(xs) - 1)
-                if inner:
-                    k = min(inner, key=lambda j: abs(math.log(max(xs[j], 1) / r)))
-                    if xs[k - 1] < r < xs[k + 1]:
-                        xs[k] = r
-                pts = [
-                    (x, -4800.0 if x <= 0 else max(-4800.0, min(4800.0, 1200 * math.log2(x / r))), p[2])
-                    for x, p in zip(xs, rt["points"])
-                ]
-                counts["pitch"] += 1
-            else:
-                pts = [(warp(m, x), y, i) for x, y, i in rt["points"]]
+            if rt["rtpc"] == RPM and rt["param"] == 2 and o.id in sound_media:
+                pitch.append((o, rt))
+            elif rt["rtpc"] == RPM:
+                bank.set_points(o, rt["at"], warped(m, rt["points"]))
                 counts["warped"] += 1
-            bank.set_points(o, rt["at"], pts)
+        for layer in (lay for lay in o.info.get("layers", []) if lay["xfade_rtpc"] == RPM):
+            group = {}
+            for child, points, at in layer["assoc"]:
+                bank.set_points(o, at, warped(m, points))
+                counts["xfade"] += 1
+                if child in sound_media:
+                    group[child] = support(warped(m, points))
+            groups.append(group)
+            for rt in (rt for rt in layer["rtpcs"] if rt["rtpc"] == RPM):
+                bank.set_points(o, rt["at"], warped(m, rt["points"]))
+                counts["warped"] += 1
+    sizes = {o.id: len(rt["points"]) for o, rt in pitch}
+    grid = {}
+    for g in _pitch_groups(groups, pitch, owner):
+        members = {sid: (ab, sizes[sid]) for sid, ab in g.items() if sid in sizes}
+        xs = shared_grid(members, span) if members else None
+        grid |= {sid: xs.get(sid) if xs else None for sid in members}
+    for o, rt in pitch:
+        r = new_rpm[sound_media[o.id]]
+        xs = grid.get(o.id)  # None: never heard over the span, or more knots than points
+        counts["shared_grid"] += xs is not None
+        xs = xs or _template_x(rt["points"], r)
+        bank.set_points(o, rt["at"], [(x, cents(x, r), 4) for x in xs])  # 4: linear
+        counts["pitch"] += 1
+    bank.reparse()
+    return counts
+
+
+def pitch_error(bank: wb.Bank, vsvh: bytes, span: tuple[float, float] | None = None, step: float = 10.0) -> dict:
+    """How far the loops' pitch curves are from 1200 * log2(x / R) over the vehicle_rpm span
+    (default VSVH+94..+98), R each curve's recording_rpm, where the loop's crossfade is above 0:
+    "error", the largest error of any loop (cents), and "detune", the largest difference
+    between two loops of one crossfade layer heard at the same x."""
+    lo, hi = struct.unpack_from("<II", vsvh, 0x94)
+    v_min, v_top = span or (lo, hi)
+    xs = np.arange(v_min, v_top + step, step)
+    objs = bank.by_id()
+    loops = {sid for slots in loop_sets(bank, vsvh).values() for s in slots for sid in s.sounds}
+
+    def curve(sid):
+        pts = next(rt["points"] for rt in objs[sid].info["rtpcs"] if rt["rtpc"] == RPM and rt["param"] == 2)
+        r = recording_rpm(pts)
+        exact = np.array([cents(x, r) for x in xs])
+        return curve_at_many(pts, xs) - exact
+
+    worst, detune = 0.0, 0.0
+    for o in bank.objects:
         for layer in o.info.get("layers", []):
             if layer["xfade_rtpc"] != RPM:
                 continue
-            for _child, points, at in layer["assoc"]:
-                bank.set_points(o, at, [(warp(m, x), y, i) for x, y, i in points])
-                counts["xfade"] += 1
-            for rt in layer["rtpcs"]:
-                if rt["rtpc"] == RPM:
-                    bank.set_points(o, rt["at"], [(warp(m, x), y, i) for x, y, i in rt["points"]])
-                    counts["warped"] += 1
-    bank.reparse()
-    return counts
+            rows = []
+            for child, points, _ in layer["assoc"]:
+                if child not in loops:
+                    continue
+                a, b = support(points)
+                heard = (xs > a) & (xs < b)
+                err = curve(child)
+                if heard.any():
+                    worst = max(worst, float(np.abs(err[heard]).max()))
+                rows.append((heard, err))
+            for (h0, e0), (h1, e1) in itertools.combinations(rows, 2):
+                both = h0 & h1
+                if both.any():
+                    detune = max(detune, float(np.abs(e0[both] - e1[both]).max()))
+    return {"error": round(worst, 1), "detune": round(detune, 1)}
 
 
 # --------------------------------------------------------------------------- preview
@@ -1065,8 +1248,11 @@ def build_sound(
     max_seconds: float = MAX_SECONDS[0],
     engine: int | None = None,
     bank_name: str | None = None,
+    engine_rpm: tuple[float, float, float] | None = None,
 ) -> Sound:
-    """The template bank (sbak, vsvh) with the Forza loops of `forza` (forza_engine)."""
+    """The template bank (sbak, vsvh) with the Forza loops of `forza` (forza_engine).
+    engine_rpm: the car's (p40, p42, p364), for the top of the vehicle_rpm range
+    (vehicle_rpm_span); the car's p596 must be 0 (port_car.fit_forza_sound sets it)."""
     bank = wb.Bank.parse(sbak)
     template_vsvh = bytes(vsvh)
     vsvh = bytearray(vsvh)
@@ -1146,8 +1332,11 @@ def build_sound(
         }
 
     bank.replace_media(new_media)
-    report["curves"] = retune(bank, bytes(vsvh), sets, new_rpm, (lo_old, hi_old), (idle, redline))
-    struct.pack_into("<II", vsvh, 0x94, int(round(idle)), int(round(redline)))
+    lo_new, hi_new = int(round(idle)), int(round(redline))
+    span = vehicle_rpm_span(lo_new, hi_new, engine_rpm)
+    report["vehicle_rpm_span"] = [round(span[0]), round(span[1])]
+    report["curves"] = retune(bank, bytes(vsvh), sets, new_rpm, (lo_old, hi_old), (lo_new, hi_new), span)
+    struct.pack_into("<II", vsvh, 0x94, lo_new, hi_new)
     old_type = struct.unpack_from("<I", vsvh, ENGINE_TYPE_FIELD)[0]
     if engine is not None:
         struct.pack_into("<I", vsvh, ENGINE_TYPE_FIELD, engine)
@@ -1182,8 +1371,9 @@ def build_sound(
         vsvh_fields_remapped=patched,
         sbak_bytes=len(raw),
         template_sbak_bytes=len(sbak),
-        vsvh_rpm_range=[int(round(idle)), int(round(redline))],
+        vsvh_rpm_range=[lo_new, hi_new],
         pitch=pitch_ranges(new, bytes(vsvh)),
+        pitch_error=pitch_error(new, bytes(vsvh), span),
     )
     return Sound(raw, bytes(vsvh), report, sbak, template_vsvh, decoded)
 
@@ -1229,10 +1419,18 @@ class Plan:
         self.media, self.game, self.spool_id = media, game.lower(), spool_id
         self.forza, self.templates, self.reserved = forza, templates, reserved
         self.engine, self.engine_text, self.log = engine, engine_text, log
+        self.engine_rpm: tuple[float, float, float] | None = None  # (p40, p42, p364), see build_sound
         self.built: list[Sound] = []
         self.failures: list[str] = []
         self._order = [(t, s) for t in templates for s in MAX_SECONDS]
         self._next = 0
+
+    def set_engine_rpm(self, engine_rpm: tuple[float, float, float] | None) -> None:
+        """The car's (p40, p42, p364); the candidates built for other values are dropped."""
+        if engine_rpm != self.engine_rpm:
+            self.engine_rpm = engine_rpm
+            self.built, self.failures, self._next = [], [], 0
+            self._order = [(t, s) for t in self.templates for s in MAX_SECONDS]
 
     def candidates(self):
         k = 0
@@ -1257,6 +1455,7 @@ class Plan:
                     max_seconds=seconds,
                     engine=self.engine,
                     bank_name=f"dsfforza_{self.game}_{self.media}",
+                    engine_rpm=self.engine_rpm,
                 )
             except (ValueError, RuntimeError, LookupError, KeyError) as error:
                 self.failures.append(f"template {template}: {error}")
@@ -1310,6 +1509,9 @@ def summary(report: dict) -> dict:
         "sbak_bytes": report["sbak_bytes"],
         "max_seconds": report["max_seconds"],
         "idle_redline": report["vsvh_rpm_range"],
+        "vehicle_rpm_span": report.get("vehicle_rpm_span"),
+        "pitch_error": report.get("pitch_error"),
+        "p596": report.get("p596"),
         "engine_type": report["engine_type"]["state"],
         **{
             f"set_{k}": {

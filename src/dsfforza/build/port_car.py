@@ -805,23 +805,39 @@ def forza_sound_plan(
 
 def fit_forza_sound(stream, full, plan, nonr_limit, mdxn_max, log) -> dict:
     """Install the plan's first candidate (template, loop length) under which the
-    full entry's NONR fits its SSLP buffer; keep the clone's own VSRT when none does."""
+    full entry's NONR fits its SSLP buffer; keep the clone's own VSRT when none does.
+
+    With the Forza bank the VO3D's p596 becomes 0. FUN_008B2370 sends the sound
+    rpm + p596 * (rpm^2 / p42 - rpm) and p596 is read nowhere else; the host's value was set
+    for the host's own bank, and Forza's loops play at audio rpm / rpm_sample, linear in the
+    engine rpm (research/engine-sound.md). p40, p42 and p364 bound the vehicle_rpm the bank
+    is built for (engine_sound.vehicle_rpm_span)."""
+    from dsfforza.build import handling
     from dsfforza.convert import engine_sound
 
     nonr = child(full, "NONR")
     at = next(n for n, c in enumerate(nonr.children) if c.tag == "VSRT")
     original = nonr.children[at]
+    vo3d_entry = child(nonr, "VO3D")
+    host_vo3d = payload(stream, vo3d_entry)
+    vo3d = handling.VO3D.parse(host_vo3d)
+    plan.set_engine_rpm((vo3d.get(40), vo3d.get(42), vo3d.get(364)))
+    shape = vo3d.get(engine_sound.VO3D_AUDIO_SHAPE)
+    vo3d.params[engine_sound.VO3D_AUDIO_SHAPE] = 0.0
+    vo3d_entry.payload = vo3d.build()  # before the size check: a VO3D without p596 grows a record
     over = []
     for candidate in plan.candidates():
         dropped = engine_sound.install(full, candidate.sbak, candidate.vsvh, stream)
         _, problems = check_entry(full, 0, nonr_limit, mdxn_max)
         nonr_over = [p for p in problems if p.startswith("NONR")]
         if not nonr_over:
-            return {"ok": True, **dropped, **candidate.report, "_sound": candidate}
+            log(f"  forza sound: p596 {shape:g} -> 0 (the rpm sent to the bank is linear in the engine rpm)")
+            return {"ok": True, **dropped, **candidate.report, "p596": [shape, 0.0], "_sound": candidate}
         over.append(f"template {candidate.report['template']} at {candidate.report['max_seconds']} s: {nonr_over[0]}")
         log(f"  forza sound: {over[-1]}")
         nonr.children[at] = original
     nonr.children[at] = original
+    vo3d_entry.payload = host_vo3d  # the host's sound keeps the host's p596
     reason = "; ".join(plan.failures + over) or "no usable template"
     log(f"  forza sound: none fits ({reason}); keeping the host's sound")
     return {"ok": False, "reason": reason}
