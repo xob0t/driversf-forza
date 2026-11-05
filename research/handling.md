@@ -136,7 +136,7 @@ of 45 cars.
 | 361 | overall ratio | 1 / ratio | Data: `1 / (final drive * reference gear)`, where the reference is the Forza gear nearest 1:1 |
 | 160 | top speed limit | mph | Printer "limit topSpeed". Data: vanilla top gear at redline equals p160 (ratio median 1.01, min 0.99) |
 | 187 | reverse speed limit | | `FUN_008B2DF0` multiplies by 0.6705 |
-| 355, 356 | engine and driveline inertia | game | Integrated as `dt / p355`, `dt / p356` |
+| 355, 356 | engine and driveline inertia | game | Integrated as `dt / p355`, `dt / p356`; at the wheels a reflected mass `25 (p355 / g^2 + p356) / (p361^2 p360 pi/30)` kg ("Drive force, drag and coasting") |
 | 357, 358, 359 | engine friction | game | `((p359 * \|w\| + p358) * w + p357) * dt` |
 | 364 | rev limit band | x | gearbox E[0x15] |
 | 516 | shift time | s | Stored as `p516 * 25` frames |
@@ -147,8 +147,8 @@ of 45 cars.
 
 | ID | Meaning | Evidence |
 | ---: | --- | --- |
-| 13 | linear rolling resistance | Printer: `-0.25 * p13 * \|v\|`; also `FUN_008BA760`, `FUN_008BEE70` |
-| 509 | aerodynamic drag | Printer: `-p509 * v²`. No relation to Forza's drag figures (designer values 0 to 0.06) |
+| 13 | linear rolling resistance | `FUN_008BA760`: `0.25 x p13 x v` per car (shared over the wheels), x 25 N (impulse units, "Drive force, drag and coasting"); also in the shift logic's predicted acceleration (`FUN_008BEE70`) |
+| 509 | aerodynamic drag | `FUN_008BE410`: `p509 x v^2` x the governor factor, x 25 N. DSF's values are 0.8 to 2 times what Forza's drag would give (#516) |
 
 ### Suspension (`FUN_008BA900`, `FUN_0088D620`)
 
@@ -166,10 +166,10 @@ Data: p1 and p2 run a median 1.4 and 1.7 per kg of mass. Their interquartile ran
 
 | ID | Meaning | Evidence |
 | ---: | --- | --- |
-| 367, 369 | longitudinal and lateral slip stiffness | p369 is multiplied by 4 everywhere |
+| 367, 369 | lateral and longitudinal slip stiffness | `FUN_008B8110`: the slip angle's force takes p367 (x p517 on the rear), the slip ratio's `4 x p369` ("Drive force, drag and coasting"; `handling.py` still names them the other way round, #517) |
 | 368 | grip, the force limit scaled by load | Data: 0.65 x mass, interquartile range 0.60 to 0.67. The designers set grip from mass |
 | 376, 377, 378 | friction falloff | `mu = p376 * p378 / (p376 + slip speed) + p377` |
-| 517 | longitudinal stiffness scale on one axle | |
+| 517 | lateral stiffness scale on the rear axle | `FUN_008B8110`: multiplies p367 on the wheels with `+0x15C` = 0 |
 | 529, 530, 531 | same falloff when the handbrake is on | |
 | 525 | surface grip sensitivity | `FUN_008B8110`: the force limit is scaled by `1 + (mu_surface - 1) * p525` (clamped 0..2), mu from the surface table (below). Default 1; 1.2 to 1.5 on five supercars (they lose more off road) |
 | 526 | drive feedback on soft ground | on a soft surface (table +0x10 = 1) the wheel's drive-reaction term (wheel +0x148, summed over the wheels by `FUN_008BD170`) is scaled by `soft * p526 + (1 - soft)`. Default 1; 1.2 on the off-road, SUV and pickup cars. 0 leaves the driven wheels spinning without traction (section "Off road") |
@@ -253,9 +253,9 @@ top speed, torque and drag were fits. What DSF does with them, and what the port
   torque is the engine's x 1 / (rel x p361), the overall reduction. The driven wheels'
   speed is the driveline's (`FUN_008B9830` sets the wheel speed `+0x128` from
   `FUN_008C2880`, `E[0x27] x p361 x p360 x pi/30`); the tyre force comes from the slip
-  between it and the ground (`FUN_008B9900`). So in steady drive the force at the tyres
-  is `U x engine torque / (rel x p361 x p360)`, with U one unit (game torque to newton
-  metres) the code doesn't show directly (measured below).
+  between it and the ground (`FUN_008B9900`). The force at the tyres is
+  `25 x engine torque / (rel x p361)` N less friction, rotating inertia and a lag of the
+  load by one step; no radius enters ("Drive force, drag and coasting" below).
 - **Inertia has no hidden factor.** `FUN_008B14F0` (the tweak setter) passes p15..p17
   (`+0x2CAC..`) to the body as they are (case 2 scales p16 by sqrt of the tweak); the
   lane keeper's impulses turn the cars as SI impulses on p16 predict (`in-game-tests.md`,
@@ -319,25 +319,187 @@ the Venom pass 185 and 195 within the 2 km straight and still gain 0.1 m/s^2. Wh
 reach p160 depends on the drag and torque, both still fitted (#516). Launches stay within
 4% of master (the shift time is now Forza's: the Veyron's 0.11 s against 0.03).
 
-### Drive force, resistances: what the runs show (confirmed-runtime, not yet a rule)
+### Drive force, drag and coasting (decoded, #516)
 
-Two dyno sessions: the vanilla archive (`out/h462/vanA.sp`, run vm2-20261105-063431) and the
-same with 214 at p13 = p509 = 0, 227 at p13 = p509 = 0 and p160 = 300, 228 at p509 = 0, 257
-at p13 = 0 (`out/h462/expB.sp`, run vm1-20261105-071510); keys `Up:25,Down:6;
-Up:12,None:14,Down:6; Up:25,Down:6`. a(v) from the 125 Hz speed samples (0.4 s local fit),
-the gear and rpm from the model above.
+Earlier measurements (the two sessions below) gave a "drive unit" U of 2.5 to 4 that
+differed per car and per gear, drag at 10 to 16 x p509 v^2, and a coasting deceleration no
+term explained. All three come from one step of the vehicle physics, now decoded whole and
+checked against those runs. `src/dsfforza/build/handling_sim.py` is the model
+(`uv run dsff handling_sim check|predict|pairs|archive`); the Ghidra output is in
+`out/ghidra/e516a..e` and the constants in `out/ghidra/e516-consts.txt` (untracked).
 
-- The drive unit U (force = U x net game torque / (rel x p361 x p360)) in gears 3 to 5 (73
-  to 147 mph): 214 without resistances 2.46 / 2.72 / 2.72; 227 without resistances or
-  governor 3.39 / 3.75 / 3.99. Not one engine constant: something per car is still missing
-  (rotating inertia, AWD losses, the clutch, the tweak product).
-- p13 = 0 made 214's launch slower (0-60 2.45 -> 3.65 s): p13 acts in traction too.
-- p509 = 0 on 228 gained 718 / 1329 / 2135 N at 100 / 120 / 140 mph: 10 to 16 x p509 v^2, not
-  the spec printer's 25.
-- Lifting off slows 214 at 6.7 m/s^2 from 122 mph, far more than these terms.
+**The step (confirmed-static).** `FUN_008C0DF0` runs once per vehicle physics step:
 
-So p18, the torque curve, p355, p358 and p509 stay fitted (#516): a Forza-derived torque and
-drag need U first.
+1. Every wheel's ground speed along its heading goes to wheel `+0x128`.
+2. `FUN_008BBE30` sets controls `[0x31]` (`+0xC4`): 1, or `1 + boost` while DSF's Boost
+   ability runs. `FUN_008BC4D0` (governor) sets controls `[0]`: 1 below 0.9 x p160, then
+   `1 - ((x - 0.9) / 0.1)^4 x throttle`. `FUN_008BD9B0` (assists) sets the per-axle and
+   per-side tyre force scales, controls `+0xB4..+0xC0` (below).
+3. `FUN_008BEE70` calls the engine step `FUN_008C3CF0` with the driven wheels' mean ground
+   speed, the throttle (controls `[0x36]`), the tweak product
+   `k = (0.8 if +0xD84 > 0.9 else 1) x engineTweak (+0x90) x controls[0] x controls[0x31]`,
+   which is 1 on the dyno (`engineTweak=1`, no boost, below the governor), and the load:
+   `+0xD30`, the previous step's summed longitudinal tyre force of the driven wheels.
+4. The driven wheels' speed (`+0x134`) is set to their ground speed plus their share of the
+   driveline's lead over the ground: `p371` front, `1 - p371` rear (times a left/right
+   factor from p497, 1 straight ahead). The other wheels take their ground speed.
+5. `FUN_008BD170` runs the tyres (`FUN_008B8110`), rolling resistance (`FUN_008BA760`) and
+   the suspension, sums the forces into the body's accumulator (`FUN_008C18F0`) and stores
+   the new `+0xD30`. `FUN_008C0C50` adds drag (`FUN_008BE410`).
+
+**Engine and driveline.** `FUN_008C3CF0` solves this pair implicitly (the decompiled
+expression equals the solution of these two equations, checked symbolically):
+
+    Ie dw/dt = Te - g tc
+    Id dd/dt = tc - Kt (d - s) - 0.002 k d
+
+w is the engine rpm, d the driveline speed (rpm x gear: the speed is
+`d x p361 x p360 x pi/30`, `FUN_008C2880`), g the gear's relative ratio, s the ground speed
+in driveline units, Ie = p355, Id = p356 and 0.002 = `E[0x19]` (`0x00DE5850`). The engine
+torque is `Te = 0.25 x p18 x curve x band x k - ((p359 |w| + p358) w + p357) x k`; the throttle
+enters through the rev band, whose target rpm runs from `(1 - p364) x p40` (closed) to p42
+(open). The clutch torque tc is `p569 x (w - d/g)`, at most `p570 x p18 x 0.25 x engagement`.
+The load is linearised on the last step: `Kt = p361 x load / (d - s)`, the tyre force over
+the slip of the previous step (a negative Kt flips the sign of both). Power is conserved
+through the clutch (the engine sees `g x tc`, the driveline `tc`).
+
+**Tyre force (`FUN_008B8110`).** The slip ratio `(wheel speed - ground) / max(|v|, 1.5)` is
+filtered into `+0x13C` (`state += f (0.1 x slip - state)`, `f = min((50 |slip| + 1) x
+max(0.04 |v|, 0.1), 1)`) and the longitudinal force is `+0x13C x 4 p369 x 10 x local_1c x mu`,
+mu the friction falloff `p378 p376 / (p376 + slip speed) + p377`. The lateral force takes
+the slip angle (`+0x130`) times p367 (x p517 on the rear). So **p369 is the longitudinal
+stiffness and p367 the lateral one**; the parameter table had them the other way round (now
+corrected; the names in `handling.py` still say otherwise, #517). `local_1c` is
+`((lr - 0.25) x 4 + 1) x ((fb - 0.25) x 4 + 1) x 0.25` from the assist's scales: straight
+ahead `lr = level / 4`, `fb = balance x level / 2` (rear) or `(1 - balance) x level / 2`
+(front), with `balance = p345 + p511 (v / 1000)^2` and `level = 1 + p510 (v / 1000)^2`
+(`0x00DD6EA8` = 0.001). p510 acts as downforce (60 on 214, -10 on 257), p345 sets the
+front/rear split of tyre force (0.5 neutral).
+
+**Resistances.** Rolling: each wheel gets `-0.25 x p13 x v x min(|v|, 1) x controls[0] x
+surface / wheels`, the surface factor 1 on every surface of the table at `0x00E3755C`, so
+`0.25 p13 v` in all. Drag: `(p509 + 0.6 x extra) x controls[0] x v^2`, extra a 0..1
+accumulator for wheels on surface type 0x38. p13 also enters the gearbox's predicted
+acceleration (`FUN_008BEE70` passes `25 x (0.25 x gravity term + 0.25 p13 |v|) / m` to the
+shift logic `FUN_008C2F00`); that is the "p13 acts in traction" effect seen at the launch.
+
+**The unit (confirmed-static, confirmed-runtime).** The accumulated forces are impulses per
+0.04 s step: `FUN_008BCAF0` adds gravity as `m x p140 x 0.04` and the spec printer
+`FUN_0088D9A0` integrates `dv = 25 x (2F - 0.25 p13 |v| - p509 v^2) / m x 0.04`. A force
+of 1 in the accumulator is 25 N. The body integrator itself isn't read (it is reached
+through a callback table; `FUN_008C4840` is the thunk). The run check below is the
+evidence that 25 holds.
+
+So in steady drive the force at the tyres is `25 x (Te / g - 0.002 d) / p361` N less the
+rotating-inertia term `25 (Ie / g^2 + Id) dd/dt / p361`, and less the lag: the load the
+driveline solves against is the previous step's, whose slip the ground speed has since
+closed by `a x dt`. Stiff tyres, little slip and high acceleration lose the most. That
+shortfall, with the axle scales, is what made the measured "U" differ per car (LP670 2.5,
+370Z 4) and rise with the gear. There is no per-car drive unit.
+
+**Check against the runs (confirmed-runtime).** The vanilla archive (`out/h462/vanA.sp`,
+run vm2-20261105-063431) and the same with 214 at p13 = p509 = 0, 227 at p13 = p509 = 0 and
+p160 = 300, 228 at p509 = 0, 257 at p13 = 0 (`out/h462/expB.sp`, run vm1-20261105-071510);
+keys `Up:25,Down:6; Up:12,None:14,Down:6; Up:25,Down:6`. Measured / predicted acceleration
+at full throttle, gears 3 up, away from shifts and the governor
+(`uv run dsff handling_sim check <Driver.log> --set ...`):
+
+| Car | Vanilla, gear 3 / 4 / 5 / 6 | p13, p509 zeroed |
+| --- | --- | --- |
+| 214 LP670-4 SV (AWD) | 0.99 / 0.97 / 0.96 | 0.99 / 0.95 / 0.94 |
+| 227 370Z (RWD) | 0.99 / 0.97 / 0.96 | 0.99 / 0.96 / 0.95 / 0.95 |
+| 228 GT-R (AWD, p509 only) | 1.03 / 0.99 / 0.98 / 0.97 | 1.03 / 0.99 / 0.98 / 0.98 |
+| 251 F-150 (AWD, unchanged) | 0.99 | 0.99 / 1.02 |
+| 257 Beetle (RWD, p13 only) | 1.15 | 1.18 / 1.04 |
+
+The same model without the axle scales gives 0.68 to 0.85 on 214 and 0.71 to 0.79 on 257,
+and without the lag it doesn't settle. The Beetle's third gear (1.2 m/s^2 at 20 m/s) stays
+15% over: its 0.98 x p42 shift point sits in the rev band and the shift logic's torque test
+(not modelled) may shift it early. Coasting (`None` after 12 s): with p13 = p509 = 0 the
+model's engine braking matches 214 and 227 within 5% (214 at 58 m/s 1.47 m/s^2 measured,
+1.57 predicted). With them, the step-to-step ringing of the lagged load (period two
+steps) adds to it; over 2.4 s from 60 to 45 m/s 214 slows at 5.9 m/s^2 measured and 6.4
+predicted. The 6.7 m/s^2 of the earlier note is engine braking plus rolling and drag at 25 N
+per unit (`25 x (0.025 v^2 + 2.5 v) / 1600` is 3.3 m/s^2 at 54 m/s).
+
+Not modelled yet: the tyre limit (`p368 x load x 0.1`, the combined-slip blend `local_2c`)
+and the launch assist (`FUN_008BCBB0`), so launches and 0-60 come from the dyno only; the
+shift test of `FUN_008C2F00`; lateral terms.
+
+### Forza-derived parameters against DSF's own cars (#516)
+
+The question for each Forza value a port could take: does it bring the port closer to
+DSF's own version of the same car (Reflections' tuning), or further away? The 48
+vanilla/Forza pairs (`handling_dsf.PAIRS`) are the check, not a fit: each Forza car is
+converted as if DSF didn't have it (best host other than its own model, as the leave-one-out
+check does), in three ways, and compared with DSF's car:
+
+- (a) today's rules (`handling_dsf.build`, feel medoid, no `handling_tune`);
+- (b) (a) plus one Forza-derived value at a time, each through the decoded units:
+  - torque: p18 and the knots p522..p524 so that DSF's steady wheel force equals Forza's
+    torque x overall ratio / tyre radius at every rpm,
+    `p18 x curve(rpm) = 4 x (T(rpm) / (25 r) + friction(rpm))`;
+  - inertia: `p355 = (Data_Engine.MomentInertia + flywheel) x pi / (750 r)` (the reflected
+    inertia `25 Ie / (g^2 p361^2 r pi/30)` equal to the real `I / (g^2 p361^2 r^2)`);
+  - drag: `p509 = drag x GameDragScale x 0.002226 / 25`. The 0.002226 reads Forza's column
+    as 1e-4 lbf per mph^2 (in N per (m/s)^2). That is a hypothesis, not decoded from Forza:
+    it gives the LP670 a CdA of 0.69 m^2, and aero power at Forza's own `SimTopSpeed` is 76%
+    of `SimPeakPower` (median of 678 cars, IQR 68..84%);
+  - split: `p371 = 1 - RearToqueSplit` (AWD);
+  - cog: p30 without the 0.052 m offset of rule CY;
+  - box: p15..p17 the box inertia of `BlockDim`, without the 2.30 / 2.36 / 2.70;
+- (c) all of them together.
+
+Behaviour is the model's prediction from a rolling 60 mph start: time to 100 and 150 mph,
+speed after 20 and 60 s. Run with `uv run dsff handling_sim pairs --csv out/h516/pairs.csv`.
+Median error against DSF's car over the pairs (parameters: |log ratio| for p18, p355, p509,
+p15..17, |difference| for the rest; times |log ratio|; speeds mph), and on how many pairs
+the variant beats (a) / loses to it by more than 1%:
+
+| Variant | p18 | p522 / 523 / 524 | p355 | p509 | p371 (AWD) | p30 m | p15 / 16 / 17 | 60-100 | 60-150 | v after 20 s |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| (a) today | 0.057 | 0.05 / 0.05 / 0.10 | 0.21 | 0.56 | 0 | 0.025 | 0.065 / 0.048 / 0.094 | 0.135 | 0.159 | 4.8 |
+| torque | 0.60 (0 / 48) | 0.16 / 0.29 / 0.28 (10, 1, 2 better) | | | | | | 0.80 (2 / 40) | 1.03 | 28.3 (3 / 45) |
+| inertia | | | 0.74 (8 / 40) | | | | | 0.148 (23 / 23) | 0.161 | 4.8 (18 / 10) |
+| drag | | | | 0.59 (21 / 15) | | | | 0.140 (17 / 21) | 0.229 (3 / 8) | 6.3 (17 / 28) |
+| split | | | | | 0 (3 / 11 of 14) | | | 0.135 (5 / 4) | | 4.8 |
+| cog | | | | | | 0.050 (11 / 37) | | | | |
+| box | | | | | | | 0.83 / 0.86 / 0.99 (1 / 47) | | | |
+| (c) all | 0.60 | 0.16 / 0.29 / 0.28 | 0.74 | 0.59 | 0 | 0.050 | 0.83 / 0.86 / 0.99 | 0.71 (2 / 37) | 1.11 | 25.9 (3 / 45) |
+
+(a)'s p18, p30 and p15..p17 errors are in-sample: rules TP, CY's offset and the inertia
+multipliers were fitted on these pairs (TP's leave-one-out error is 0.060, "Leave-one-out
+check" below). The derived values miss DSF's by much more than that.
+
+What DSF's values are to the Forza-derived ones (DSF / derived, median and IQR over the pairs):
+
+| Parameter | Median | IQR | IQR / median |
+| --- | --- | --- | --- |
+| p18 | 1.82 | 1.57..2.02 | 0.25 |
+| p355 | 2.10 | 1.53..2.85 | 0.62 |
+| p509 | 1.48 | 0.83..2.00 | 0.79 (39 pairs with drag) |
+| p15 / p16 / p17 | 2.30 / 2.35 / 2.70 | ±6 to ±13% | 0.12 / 0.10 / 0.19 |
+
+DSF's cars are not Forza's physics in DSF's units. Their engines are about 1.8 times
+stronger, and they push against resistances far above real ones: `p13 = 10` is
+`25 x 2.5 x 40` = 2500 N of rolling resistance at 40 m/s, where a real car has about 200. In
+60 to 100 mph a vanilla car accelerates much like Forza's (the model's 60-100 time over
+Forza's `SimTimeTo100MPH - SimTimeTo60MPH`: median 1.06, IQR 0.93..1.29, 46 pairs). Grip
+is about twice Forza's (cornering in the stock dyno 2.13 x Forza's `SimLatGees60MPH`, 6
+cars; braking 1.8 to 2.1 g against Forza's 0.83 to 0.97 from `SimBrakeDistance60MPH`).
+DSF's gravity is 17 m/s^2 (p140), 1.73 x real, but the engines don't follow it: the torque
+ratio spreads 25% per car, and the cars' straight-line pace is Forza's, not 1.73 x.
+
+So taking DSF-unit values from Forza moves every port away from DSF's car: torque by a
+factor of about 1.8 on all 48 pairs (2.2 x slower 60 to 100 mph), engine inertia and box
+inertia on 40 and 47, drag mixed on the value and worse in behaviour, the AWD split on 11
+of 14, the CoG offset on 37. The fits stay. What is derived and holds is the maths: the
+model predicts a port's straight-line behaviour from its VO3D.
+
+One Forza-derived rule that does target DSF's behaviour: "pace", p18 set so DSF's model runs
+60 to 100 mph in Forza's own time (Forza's figure through DSF's maths, as p160 takes
+Forza's top speed). It matches DSF's car as well as vanilla matches Forza (the 1.06 ratio
+above), which is no better than TP's in-sample fit. The in-game check is below.
 
 ### Audit: where every handling rule comes from
 
@@ -1177,6 +1339,10 @@ them by hand: the Volt has one gear and p18 = 2500.
 3. The loose `Vehicles\Configs\vehicNNN.VO3` fallback could be a way to ship
    handling without touching the archive.
 4. Name the steering, assist and unread groups, if converted cars need them.
+5. The straight-line model (`handling_sim.py`) lacks the tyre limit, the launch assist
+   and the shift test; with them it would predict 0-60 and the launch, and could check a
+   build's every port offline. The body integrator behind the 25 N unit isn't read
+   (callback table behind `FUN_008C4840`).
 
 ## Appendix: every parameter seen in vanilla VO3D or named here
 
