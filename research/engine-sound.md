@@ -306,9 +306,29 @@ the loops at physics rpm instead, ports would be that much off at the redline. E
 and every stall rpm is covered by a loop, so the data doesn't tell the two apart. Deciding it
 needs the xex (the code reading `audio_rpm_redline`).
 
-**In game:** `dsfforza.asi` with `[soundlog] log=1` (`mod_soundlog.cpp`) logs, per engine sound,
-the engine rpm, the shaped rpm, the `vehicle_rpm` sent, VSVH+94/+98, p40, p42 and p596
-("Verifying in game").
+**In game (confirmed-runtime).** `dsfforza.asi` with `[soundlog] log=1` (`mod_soundlog.cpp`)
+logs, per engine sound, the engine rpm, the shaped rpm, the `vehicle_rpm` sent, VSVH+94/+98,
+p40, p42 and p596. Setup: headless VM 1, `run-series.ps1 -Vm -Dyno -DynoKeys 'Up:25,Down:6'`.
+"Before" is a master build (7fe208d) of the same three cars and "after" this branch,
+`out/b461/{before,after}`. Runs vm1-20261105-122059 and -122358 (IDs 1, 2), -122756 and
+-123124 (ID 3, vanilla 227). Each line below is the median of the logged updates near that
+engine rpm, with "linear" the value p596 = 0 gives:
+
+| Car (p596 before) | engine rpm | sent before | sent after | linear |
+| --- | --- | --- | --- | --- |
+| LFA (0, host 182) | idle 614 / redline 8633 | 800 / 8823 | 800 / 8889 | 800 / 8795 |
+| F50 GT (0.5, host 232) | mid ~6000 | 5312 at 6203 | 6318 at 5772 | 6809 / 6343 |
+| 2002 Turbo (1.0, host 126) | mid ~3500 | 2256 at 3528 | 4069 at 3612 | 4104 / 4199 |
+| vanilla 227 (0) | idle 632 / mid 4260 | 902 / 3600 | | 902 / 3611 |
+
+- The sent value equals max(VSVH+94, VSVH+94 + n·range) of the logged shaped rpm on every line
+  (ratio 1.0000, 0.9999..1.0001). The jitter didn't act: rec+0xB0 stayed 1.
+- Shaped rpm over the p596 shaping of the engine rpm: 0.94..1.04, the 0.1 noise at about half
+  its bound.
+- The F50 GT was 430 cents low at mid range before and the 2002 Turbo 1036 cents; after, both
+  are within the noise of the linear value, as vanilla 227 is.
+- This checks the rpm the bank gets, not what Wwise plays: the VMs' audio is muted, and nobody
+  has listened.
 
 ## Routes, ranked
 
