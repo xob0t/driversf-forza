@@ -143,9 +143,13 @@ its data correctly, never to copy it.
 
 - Tools read the game folder from `DSF_GAME_DIR` (set for the user on this PC);
   never hard-code a machine path in code or docs.
-- The user uses this PC. Builds: if `out\gentle` exists, `port_batch` runs at
-  Idle priority with at most two workers (no CPU pinning: Windows spreads Idle
-  processes over the free cores); keep `--jobs` low then.
+- The user uses this PC. Every conversion worker, lint, garage render and
+  survey process of every worktree takes a slot of one job pool
+  (`src/dsfforza/build/jobpool.py`; `uv run dsff jobpool status`): a slot per
+  logical CPU as the RAM allows, two while `out\gentle` exists in the main
+  checkout or your worktree (Idle priority then; no CPU pinning). `--jobs` is a
+  per-build maximum; the pool shares the slots between builds, first come,
+  first served (`research/batch.md`, "Job pool").
 - In-game tests go through `tools\wsb\run-series.ps1` (read it and
   `tools\wsb\guest\run-test.ps1`). Runs are serialised by a mutex; never kill
   `Driver.exe` or another run's processes. Prefer `-Vm` (headless VMware
@@ -167,9 +171,12 @@ its data correctly, never to copy it.
     not your change. `run-series.ps1` waits for spare host CPU before each
     launch and retries such a run once by itself; if it still fails, look at
     the host's load before looking for a cause in your build.
-- Host CPU starves the VMs' game loads (issue #70). Run heavy offline jobs
-  (surveys, renders, builds) at Idle priority with at most 2 processes
-  (`--jobs 2`), and none while your own VM series loads the game.
+- Host CPU starves the VMs' game loads (issue #70). Before each launch
+  `run-series.ps1` holds the job pool: the pool hands out the VM's CPUs fewer
+  slots until the world is loaded, and the launch waits until they are free.
+  Run heavy offline jobs (surveys, renders, builds) through the pool (the `dsff`
+  builds, renders and surveys do) at Idle priority; a heavy job of your own
+  outside it takes CPU the pool can't see.
 - Full-roster builds take over an hour and slow everyone's VM runs. Survey
   offline where you can and build only the cars your change affects for the
   in-game check.

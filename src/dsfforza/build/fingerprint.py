@@ -42,6 +42,9 @@ PACKAGE = Path(dsfforza.__file__).resolve().parent
 UNITS_CACHE = dsfforza.REPO / "out" / "cache" / "code-units"
 MODULE_UNIT = "<module>"
 TOOL_NAME = "dsfforza-fingerprint"  # the sys.monitoring tool a Recorder registers
+# Modules whose code shapes no output: this one, and the job pool's (when a process may
+# start work, not what it makes). Their code is not recorded, nor the pool's files.
+UNRECORDED = frozenset({__name__, "dsfforza.build.jobpool"})
 
 
 # --- digests ------------------------------------------------------------------------
@@ -269,6 +272,14 @@ _SKIP_PREFIXES = tuple(
 )
 
 
+def _unrecorded_folders() -> tuple[str, ...]:
+    """The job pool's folder (jobpool.root()): its slot and hold files are no input."""
+    from dsfforza.build import jobpool
+
+    folder = jobpool.root()
+    return (norm(folder) + os.sep,) if folder is not None else ()
+
+
 class Recorder:
     """Records a worker's reads and executed code from start() on."""
 
@@ -276,7 +287,7 @@ class Recorder:
         self.opened: list = []  # (path, mode, flags) as the audit hook saw them
         self.listed: list = []
         self.codes: set = set()
-        self.outputs = tuple(norm(p) for p in (outputs or []))
+        self.outputs = tuple(norm(p) for p in (outputs or [])) + _unrecorded_folders()
         self.tool = None
         self.tree = None
         self.active = False
@@ -366,13 +377,13 @@ class Recorder:
         for key, m in list(sys.modules.items()):
             if (key.startswith("dsfforza") or key == "__main__") and getattr(m, "__file__", None):
                 name = module_name(m.__file__)
-                if name is not None and name != __name__:
+                if name is not None and name not in UNRECORDED:
                     live_of.setdefault(name, m)
         names: set[str] = set()
         executed: dict[str, set[str]] = {}
         for code in self.codes if codes is None else codes:
             module = module_name(code.co_filename)
-            if module is None or module == __name__:  # the recorder itself shapes no output
+            if module is None or module in UNRECORDED:  # the recorder itself shapes no output
                 continue
             executed.setdefault(module, set()).add(unit_of(code.co_qualname))
             names.update(code.co_names)
@@ -698,10 +709,11 @@ class Memo:
         todo = [(key, func, args) for key, func, args in tasks if not self.valid(key)]
         if not todo or self.recorder is not None or any(sys.monitoring.get_tool(t) == TOOL_NAME for t in range(6)):
             return
-        from concurrent.futures import ProcessPoolExecutor
+        from dsfforza.build import jobpool
 
         self.tree = self.tree or package_hashes()
-        with ProcessPoolExecutor(max_workers=max(1, min(jobs, len(todo)))) as pool:
+        # Each process on a slot of the machine's job pool (jobpool.py).
+        with jobpool.executor(max(1, min(jobs, len(todo))), "memo") as pool:
             results = pool.map(_memo_task, [f for _, f, _ in todo], [a for _, _, a in todo], chunksize=4)
             for (key, _, _), (value, files, dirs, wanted, complete) in zip(todo, results, strict=True):
                 for module, names in wanted.items():

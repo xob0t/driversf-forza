@@ -23,7 +23,9 @@ How to work:
    (AGENTS.md, "Rules come from data, never from fitting"). If the maths is unknown, decode
    it or stop and say so in your report; don't tune a constant until the output looks right.
 3. Measure the roster (the 573 cars of `tools/batches/all.txt`) before and after: how many
-   cars change, and the numbers that show it. Survey offline where you can.
+   cars change, and the numbers that show it. Survey offline where you can. Every build and
+   survey on the PC shares one job pool, so `--jobs` only caps your own (AGENTS.md, Machine
+   rules).
 4. Verify in game with `tools\wsb\run-series.ps1 -Vm` (never `-OnHost`), before and after,
    same views. For visual changes, put before/after images in the PR (AGENTS.md says how).
 5. Run `uv run ruff check --fix`, `uv run ruff format`, `uv run python -m tests` (and

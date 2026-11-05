@@ -98,6 +98,12 @@ def lint() -> bool:
 
 
 def main(argv: list[str]) -> int:
+    import os
+    import tempfile
+
+    # The tests' builds and renders take slots of a job pool of their own, not the PC's
+    # (src/dsfforza/build/jobpool.py): a full pool would make them wait.
+    os.environ.setdefault("DSFFORZA_POOL", tempfile.mkdtemp(prefix="dsfforza-test-pool-"))
     verbose = "-v" in argv
     words = [a for a in argv if not a.startswith("-")]
     linted = lint() if "--no-lint" not in argv else True
