@@ -376,6 +376,33 @@ geometry). Error left:
 Against vanilla: this matches the level (vanilla's per-vehicle grey) and also the profile,
 which vanilla doesn't.
 
+**Implemented (#407, #419): the texels.** `dsf_materials.Texturing._wheel_blur_ramp` replaces the
+picture conversion (`wheel_blur_texels`: Forza's picture over `WHEEL_BLUR_BACKDROP`, a chosen grey 60,
+scaled by the rim's PaintScale) in the picture's atlas slot:
+- `rim_rotational_mean`: on 64 rings x 180 angles from the tyre's centre out to the disc's edge, the
+  front-most (smallest x) triangle of the finest LOD's wheel subsections that sample the wheel atlas
+  (not the tyre, not the disc), its texel decoded from sRGB. The wheel atlas holds the converted rim's
+  texels (Forza's texel x the wheel's PaintScale, `_wheel_paint_scale`). Behind the spokes' gaps
+  the front brake rotor (`brake_rotor_section`, as the build draws it) counts with the texels it is
+  drawn with: GLOBAL_Tyre at its two `WHEEL_UV` swatches, red 106 (disc) and 65 (hub), read from the
+  vanilla archive (`ROTOR_RED`). A sample neither covers counts as 0 ("or nothing").
+- `wheel_blur_ramp`: `C` the ring-area-weighted mean of M, its largest channel 1 (the car's
+  `g_vec4WheelBlurColour`); red `encode_sRGB(lum(M(r)) / lum(C))`, clipped at 1; blue and alpha 255.
+- The texel's radius comes from the disc's own UV0 map, inverted by a least-squares fit of its vertices
+  (u, v, 1) -> (y, z) (the vertices clamped at the picture's edge left out).
+
+Kept, marked `TODO(fit, #407)`:
+- green: red x `WHEEL_BLUR_GLOSS` (0.44, the vanilla disc's ratio of means), not the rim's own gloss;
+- the disc's vertex AO (`forza2dsf.wheels.WHEEL_BLUR_SKY`, 0.9), not the rim's mean AO per ring.
+Not covered: chrome rims' reflection (their albedo is the texel, as for every rim); cars without
+Forza's blur picture keep the shared vanilla disc.
+
+Checked on section 2.3's cars (`dsf_blur.py vanilla`, one car per run: a run of several cars mixes
+cars whose atlases carry the host's texture UID), disc / spinning rim, master -> this rule:
+Focus RS500 2.93 -> 0.99, 370Z 0.64 -> 0.94 (rings 0.72 to 1.31), Beetle 68 1.01 -> 0.90 (rings 0 to
+416 -> 0.15 to 1.34), LP700-4 0.51 -> 0.73, Carlton 0.83 -> 1.00 (rings 0.91 to 1.23). The AO term
+(`WHEEL_BLUR_SKY`) still differs.
+
 ### 2.5 Which ShaderSettings a Forza wheel reads (confirmed-static, both games)
 
 FH1 `0x82543558` (FM4 `0x82407848`) builds the settings path list for a model of type 4 (called
