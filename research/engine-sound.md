@@ -1,6 +1,6 @@
 # Engine sound: giving ports their own Forza engine
 
-Updated: 2026-11-04 (FM4 DLC cars)
+Updated: 2026-11-05 (pitch and crossfades, #461)
 
 Can a ported car sound like its Forza self instead of borrowing a vanilla
 DSF car's engine? Yes. Forza's engine loops can be swapped into a vanilla
@@ -64,8 +64,8 @@ Run `wwise_bank.py tree out/sound/vanilla/227/SBAK.bin --curves`. The bank holds
 - **Set A**, event at VSVH+04 → switch `audio_mode` (player/challenger) → state `cameratype` → layer containers: 8 loops at 921, 1728, 2085, 2729, 3526, 4429, 5274 and 6051 rpm.
 - **Set B**, VSVH+0C: 8 different loops at 921, 1509, 2097, 2715, 3333, 4278, 5123 and 6051.
 - Per Sound in a set:
-  - a pitch RTPC on `vehicle_rpm` (0x9C4D0121) = 1200·log2(rpm / recording rpm), stored as 13 linearly interpolated points over 0..12000;
-  - a layer crossfade on `vehicle_rpm`: triangles between neighbours, the first slot full below idle, the last full above the top.
+  - a pitch RTPC on `vehicle_rpm` (0x9C4D0121) = 1200·log2(rpm / R), sampled at 13 fixed x (0, 94, 188, 375, 750, 1125, 1500, 2250, 3000, 4500, 6000, 9000, 12000) and joined linearly (Wwise curve shape 4). R is 902, 1696, 2058, 2704, 3458, 4414, 5220, 6042 for set A; the rpms listed above (921, 1728, ...) are where the straight segments cross 0 cents;
+  - a layer crossfade on `vehicle_rpm`: Sine up from the previous loop's R, SineRecip down to the next one's, peaking at the loop's own R; the first slot full below its R, the last full above it. VSVH+94/+98 (902/6042) are the first and last R.
 - AI (mode 1) uses a 4-loop subset with wide crossfades.
 - Both sets carry identical `vehicle_engineload` curves (params 6 and 11, -90 to 0 dB; names unresolved). So **there is no on-load/off-load pair**; the two sets are two microphone positions.
 - The 17th media is a 0.2 s backfire pop (VSVH+70/74).
@@ -122,10 +122,21 @@ low rumble tone matched to the cylinder count. The granular engine has its
 own copy of the table at `0x547B00` (index 0..9 = v8, h4, h6, il4, il5, il6,
 v10, v12, v6, vr6). Effect in game not heard yet.
 
-**rpm path:**
-1. The game shapes the rpm: rpm + p596·(rpm²/p42 − rpm), with ±10% noise.
-2. It normalises n = (rpm − p40)/(p42 − p40).
-3. It sends `vehicle_rpm` = VSVH+94 + n·(VSVH+98 − VSVH+94), with ±5% jitter. This mapping is used only when +94 < 5000 and +98 < 15000.
+**rpm path** (confirmed-static; decompiles in `out/ghidra/snd10`, `snd3`, `snd-noise`):
+1. `FUN_008B2370` (called once, at `0x0087324E`) fills the 200-byte sound record. +0x20 is
+   `(rpm + p596·(rpm²/p42 − rpm)) · (1 + 0.1·noise)`. rpm is the engine's (`FUN_008C27D0` on
+   vehicle+0xE0, i.e. vehicle+0x174); 0.1 is `DAT_00F3F27C`; the noise is `FUN_008BB7C0`, one
+   octave of gradient noise over a table filled at run time. Driven wheels in contact then divide
+   it by the mean of 1 + p597·(wheel speed − speed). p596 is read nowhere else (`handling.md`).
+2. `FUN_00552920` (called once, at `0x00553B8B`) normalises n = (+0x20 − p40)/(p42 − p40) and
+   sends `vehicle_rpm` = max(VSVH+94, VSVH+94 + n·(VSVH+98 − VSVH+94)) to both emitters
+   (`FUN_0053DDC0` on +0xC4 and +0xFC). The value is multiplied by
+   1 + (1 − rec+0xB0)·(2·rand − 1)·0.05 (`DAT_00DD6974`), where rec+0xB0 is `FUN_008BBDE0`'s 1.0, or 0.8
+   (`DAT_00DD6870`) while vehicle+0xD84 is above 0.9: ±1% at most. The mapping is used only when
+   +94 < 5000 and +98 < 15000 (integers here, floats `0x00DE2574`/`0x00DE37A8` in the state-3
+   path `FUN_00554230`, which uses the same mapping without the floor).
+3. The engine drives itself up to p42·(1 + p364), where its torque reaches 0 (`FUN_008C3CF0`,
+   `research/handling.md`).
 
 So a port's p40/p42 never have to match its sound host. VO3D p596 and p597 (slip scaling of throttle) are audio parameters; p605/p606 are not (they are the speedometer range, `research/cockpit.md`).
 
@@ -231,12 +242,80 @@ name>/`, so no pack's copy can stand in for a disc bank of the same name.
 - The RX-7 FD uses the genuine 13B `2RT2_RX7` Exh (14 loops) with the RX-8 for EngAmb and a turbo five for Int.
 - FM4's RX-7 is all RX-8.
 
+## Pitch and crossfades (#461)
+
+Ports sounded too low (the F50 GT, the LFA in v0.1.8) or off in the blend between loops.
+There were two causes, both from the data.
+
+**1. p596 (confirmed-static).** The bank gets rpm + p596·(rpm²/p42 − rpm) (above). The quadratic
+leaves idle and the redline where they are and lowers everything between. With p596 = 0.5 the
+middle of the range plays 0.75× (−5 semitones). Near idle the shaped rpm falls below p40,
+and the floor at VSVH+94 holds the sound at the bank's idle up to about 2× idle.
+- Vanilla: 0.5 on 75 cars (the exe default), 0 on 42, 0.25 on 27, 0.15 on 3, 0.75 on 2, 1.0 on
+  1. Cars that share a bank (same media) have different p596 (0 and 1.0 on the bank of
+  126/129/184). So p596 is Reflections' per-car tuning of how a vanilla bank follows that car's
+  engine, not a property of the recordings.
+- Ports copied the host's VO3D: p596 0.5 on 309 of the 717 Forza-sound cars of the v0.2.1 build,
+  0.25 on 226, 0.75 or 1.0 on 16, 0 on 163.
+- Forza's loops play at audio rpm / `rpm_sample`. The HT gives each loop the rpm at which its pitch
+  is 1, and the HT pitch is always 1, so the pitch is linear in the rpm. With p596 = 0 the shaping is
+  the identity, so a port's bank gets an rpm linear in its engine rpm:
+  VSVH+94..+98 over p40..p42, and the ET's audio idle at idle and its audio redline at the redline.
+- **Rule:** with the Forza bank, `port_car.fit_forza_sound` sets p596 = 0. A car that keeps its
+  host's sound keeps the host's p596. Measured on the v0.2.1 roster (`vehicle_rpm` with the
+  host's p596 against p596 0, idle..redline): 554 cars were 100 cents or more low somewhere,
+  median 376, p95 875, worst 1980 (p596 1.0). The F50 GT (p596 0.5 from host 232) got 4917 rpm
+  where 6400 was due at mid range; the LFA (host 182) had p596 0 in v0.2.1.
+
+**2. Pitch curves of loops heard together (confirmed-static, offline-checked).**
+- Vanilla: across the 122 template banks (1986 loop curves), every pitch curve is
+  1200·log2(x/R) sampled on its set's one x grid and ends at x = 12000. Every crossfade peaks at its
+  loop's R (1962 of 1986; the rest within 2%), and VSVH+94/+98 are the first and last R on most sets
+  (201 and 160 of 254). Joined linearly, a curve is off 1200·log2(x/R) by an amount that depends only
+  on the two x around it, not on R. So the two loops of a crossfade are off by the same amount and
+  stay in tune with each other: on all 122 banks the largest difference between two loops heard
+  at once is ≤ 1 cent (`engine_sound.pitch_error`, "detune"). The absolute error is a median 35 cents.
+- Ports before: each loop's curve kept the template's x with the one point nearest its Forza R
+  moved onto R. Neighbours then had different x, so in every crossfade they were out of tune
+  with each other: detune median 53 cents, all 717 cars at least 28, max 112. That makes the
+  chorus or phasing a player heard in the blend. The crossfades were warped from the 0-cent
+  crossings (921, ...) instead of R (902, ...), so they peaked 1–2% off the Forza R.
+- **Rule** (`engine_sound.retune`, `shared_grid`):
+  - The crossfades are warped from the template loops' R (`recording_rpm`: each point gives
+    R = x/2^(cents/1200); all of a vanilla curve's agree to 0.3%) to the Forza R, so they peak there.
+  - Each layer's loop curves are built on shared x points over the `vehicle_rpm` range the game
+    sends (`vehicle_rpm_span`: VSVH+94·0.99 up to the value at p42·(1 + p364)·1.1, times 1.01).
+    The knots are the span's ends and the crossfade ends (the loops' R); more points go into the
+    largest log steps while every loop heard there has one to spare. Leftover points sit below
+    the range where the loop is heard. Each curve keeps its template's point count and ends at
+    max(12000, the span's top). Before, a car whose span passes 12000 (35 cars) had its pitch
+    held there: the F50 GT, 12000 at the redline, revs to about 16000.
+  - Roster (v0.2.1's templates and loops, curves rebuilt; `pitch_error` over each car's span):
+    detune median 53 → 0 cents (max 112 → 0), largest pitch error median 60 → 5.5 cents
+    (max 636 → 12.6). In 4 cars (AUD_2_R8_06, SUZ_1_SX4_11, AUD_3_R18TDI_11,
+    FOR_TransitSSV_11) a loop recorded below the car's idle is never heard; it keeps the template
+    x with one point on R.
+
+**VSVH+94/+98 = the ET's `audio_rpm_idle`/`audio_rpm_redline` (kept; inferred).** DSF maps the
+engine's idle..redline onto a per-bank range, and the ET fields are named for that. How Forza
+itself maps physics rpm onto audio rpm is not decoded. The ET range is per car, not per bank:
+on 78 of 88 banks shared by cars with different redlines, the cars have different ET ranges.
+Its idle equals the gamedb `StallRPM` on 322 of 571 cars (otherwise up to 1.2× higher). Its
+redline over `RedlineRPM` has quantiles 0.92 (5%), 1.0 (median), 1.14 (95%). If Forza played
+the loops at physics rpm instead, ports would be that much off at the redline. Every audio idle
+and every stall rpm is covered by a loop, so the data doesn't tell the two apart. Deciding it
+needs the xex (the code reading `audio_rpm_redline`).
+
+**In game:** `dsfforza.asi` with `[soundlog] log=1` (`mod_soundlog.cpp`) logs, per engine sound,
+the engine rpm, the shaped rpm, the `vehicle_rpm` sent, VSVH+94/+98, p40, p42 and p596
+("Verifying in game").
+
 ## Routes, ranked
 
 1. **(a) Media swap into a host bank, with curve retune.** Done, offline, and in the build (below).
    - Keep a vanilla sample bank's HIRC. Put Forza EngAmb loops into set A and Exh loops into set B: 8 loops each, chosen to minimise the largest rpm step (at most about 1.4×).
    - Re-encode to IMA ADPCM with our own encoder (38 dB SNR re-encoding vanilla media; 0.25 s per loop).
-   - Recompute the pitch curves for the Forza rpms, with one curve point placed on the recording rpm. Warp the crossfades and the other `vehicle_rpm` curves onto the new points.
+   - Recompute the pitch curves for the Forza rpms on x points shared by the loops of each crossfade layer; warp the crossfades and the other `vehicle_rpm` curves from the template's recording rpms onto the new ones ("Pitch and crossfades").
    - Set VSVH+94/98 to the Forza idle/redline, so bank rpm equals Forza rpm.
    - Give the bank, all 177 objects, the layers and the media fresh FNV IDs, and patch the VSVH event IDs to match.
    - Size: SBAK changes by -0x3700..+0x2F5C against its host (RX7 and 370Z +0x1C4B / +0x2F5C on 227, the FM4 RX7 -0x36E4 on 147), with a 1.1 s loop cap (`--max-seconds` trades size against seam crossfades).
@@ -285,11 +364,13 @@ name>/`, so no pack's copy can stand in for a disc bank of the same name.
    with fewer usable loops (the Durango: 5 Exh loops) gets the largest rpm
    gap split by a copy of its lower loop resampled to the gap's geometric
    middle, instead of duplicate loops at one rpm.
-4. **Engine type.** VSVH+4C from the Forza cylinder count and layout
+4. **Pitch.** Curves and crossfades as in "Pitch and crossfades"; the VO3D's p596 becomes 0
+   with the Forza bank, and the bank is built for the car's p40, p42 and p364.
+5. **Engine type.** VSVH+4C from the Forza cylinder count and layout
    (`engine_type`: 4 cylinders and 2-rotor rotaries il4, flat-4 h4, 5 il5,
    6 v6 (vr6 for the VR6, h6 flat), 8 v8, 10 v10, 12 v12, W16 v8; electric
    keeps the template's).
-5. **Fresh IDs** (`fresh_ids`). New ID = (spool ID << 22) | 22 bits of
+6. **Fresh IDs** (`fresh_ids`). New ID = (spool ID << 22) | 22 bits of
    FNV-1(`dsfforza:<template>:<old id>:<salt>`), the salt counting up while
    the value is 0, one of the template's IDs, already given, or in the
    reserved set: every ID the 150 vanilla vehicle banks define or reference
@@ -299,12 +380,12 @@ name>/`, so no pack's copy can stand in for a disc bank of the same name.
    can't collide. The bank gets the name `dsfforza_<game>_<media>` in STID.
    (`remerge` rewrites spool IDs but not bank IDs; the old spool IDs were
    unique, so the IDs stay unique.)
-6. **Budget.** Each candidate (template × loop cap 1.1, 0.8, 0.6 s) is
+7. **Budget.** Each candidate (template × loop cap 1.1, 0.8, 0.6 s) is
    installed and the full entry checked against its NONR buffer (0x6D000);
    the first that fits stays. If none fits, or the car's Forza audio can't be
    resolved, the clone keeps its host's (or `--sound-host`'s) VSRT and the
    reason goes to the log and the report.
-7. **Outputs.** `batch-report.json` has per car `sound`: Forza or not (and
+8. **Outputs.** `batch-report.json` has per car `sound`: Forza or not (and
    why not), template, bank ID, SBAK size, loop cap, idle/redline, engine
    type, and per set the emission, FSB bank, loops used of available, their
    rpms, and two pitch ranges: `pitch` (every loop while its crossfade is
@@ -438,7 +519,10 @@ with the same 40 cars at the same IDs (checked on `out/build`). Tracked in
 
 ## Open
 
-- Everything in game (above; #202).
+- Everything in game (above; #202). Nobody has listened to the #461 change; the plugin log
+  checks the rpm the bank gets, not what Wwise plays.
+- How Forza maps physics rpm onto audio rpm (`audio_rpm_idle`/`audio_rpm_redline`, "Pitch and
+  crossfades"): not decoded.
 - What ParamIDs 6 and 11 control, and whether `vehicle_gear_direction` is ever set (no setter was found).
 - VSVH+4C is now set from the Forza engine; what the tone adds is not heard yet.
 - Intake mixing (option above) and the right exhaust channel (ExhaustR, the right half of stereo subsongs) are not used.

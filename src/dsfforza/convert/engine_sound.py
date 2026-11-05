@@ -18,10 +18,15 @@ layers, load and speed RTPCs) and replaces the loops of both sets:
 2. Each loop is cut to at most --max-seconds with a crossfaded seam, resampled
    (periodic FFT resample) to 32 kHz and a whole number of 64-sample ADPCM
    blocks, scaled to the template set's loudness and encoded to Wwise IMA ADPCM.
-3. The pitch curves are recomputed for the Forza recording rpms, crossfade and
-   other vehicle_rpm curves are warped from the template's rpm points to the
-   Forza ones, and VSVH+94/+98 become the Forza idle/redline, so bank rpm is
-   Forza rpm. VSVH+4C (engine type) follows the Forza cylinder count.
+3. Crossfade and other vehicle_rpm curves are warped from the template's rpm
+   points (its loops' recording rpms) to the Forza ones, so each crossfade peaks
+   at its loop's Forza recording rpm, as vanilla's do. The pitch curves are
+   1200*log2(rpm / Forza recording rpm) on x points the loops of a crossfade layer
+   share (shared_grid), so loops heard together stay in tune with each other, as
+   in every vanilla set. VSVH+94/+98 become the ET's audio idle/redline, and
+   port_car sets the VO3D's p596 to 0, so the rpm the bank gets is linear in the
+   engine rpm (research/engine-sound.md, "Pitch"). VSVH+4C (engine type) follows
+   the Forza cylinder count.
 4. Bank ID, every HIRC object, layer and media ID get fresh IDs (Wwise
    indexes them globally: a copy with the template's IDs would play the
    template's media whenever that car is loaded first), and the VSVH event
