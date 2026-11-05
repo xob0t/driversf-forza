@@ -387,6 +387,11 @@ WHEEL_BLUR_LAYOUT = (20, 7)  # stride, MODL flag (alpha-blended)
 # mean over a dozen spokes.
 WHEEL_BLUR_RINGS = 64
 WHEEL_BLUR_ANGLES = 180
+# What the port's brake rotor (forza2dsf.brake_rotor_section) is drawn with, seen through the gaps
+# between the spokes: the shared tyre texture GLOBAL_Tyre (SSIC 00122b7bf7fa1227, red the grey level)
+# at the rotor's swatches forza2dsf.WHEEL_UV[ROTOR_DISC] (0.07, 0.57) and [ROTOR_HUB] (0.4375,
+# 0.0547), read from the vanilla archive: red 106 and 65. (Which swatches the rotor takes is #524.)
+ROTOR_RED = {"dsf_rotor_disc": 106, "dsf_rotor_hub": 65}
 _LUMA = np.array([0.2126, 0.7152, 0.0722])
 
 
@@ -1676,7 +1681,8 @@ class Texturing:
         wheel subsections that sample the wheel atlas (its texels already scaled by the rim's
         PaintScale, _wheel_paint_scale), drawn texel decoded from sRGB. A texel's radius comes
         from the disc's own map (its UV0 -> wheel y, z, fitted to the disc's vertices that
-        aren't clamped at the picture's edge). None without a disc or a rim."""
+        aren't clamped at the picture's edge). Where the spokes leave a gap, the front brake rotor is
+        what is drawn there (_front_rotor, ROTOR_RED). None without a disc or a rim."""
         from dsfforza.convert.forza2dsf.car import tyre_centre
 
         disc = [(s, sub) for s in sections for sub in s.subsections if sub.material == fm.WHEEL_BLUR_TECHNIQUE]
@@ -1716,11 +1722,23 @@ class Texturing:
                     sources.append([m.uv(pool[i].uv0) for i in t])
         if not tris:
             return None
+        rim = len(tris)
+        flat = []  # the brake rotor behind the spokes: (linear grey,) per triangle, as it is drawn
+        rotor = self._front_rotor(finest)
+        if rotor is not None:
+            pool = rotor.lod_vertices
+            for sub in rotor.subsections:
+                grey = float(_srgb_decode(np.array(ROTOR_RED.get(sub.material, 0) / 255.0)))
+                for t in sub.triangles():
+                    tris.append([pool[i].position for i in t])
+                    flat.append(grey)
         tris = np.array(tris, dtype=np.float64)
         sources = np.array(sources, dtype=np.float64)
         linear = _srgb_decode(px[..., :3] / 255.0)
 
         def colours(t, wts):
+            if t >= rim:
+                return np.full((len(wts), 3), flat[t - rim])
             uv = wts @ sources[t]
             x = np.clip(((uv[:, 0] % 1.0) * tw).astype(int), 0, tw - 1)
             y = np.clip(((uv[:, 1] % 1.0) * th).astype(int), 0, th - 1)
@@ -1734,6 +1752,19 @@ class Texturing:
         texel_r = np.hypot(yz[..., 0] - cy, yz[..., 1] - cz)
         texel_r[texel_r > radius] = radius
         return wheel_blur_ramp(texel_r, rr, mean)
+
+    def _front_rotor(self, lod: int):
+        """The front brake rotor section as the build draws it (forza2dsf.brake_rotor_section of
+        the car's rotor carbin, in the wheel model's frame), or None without one."""
+        from dsfforza.convert.forza2dsf.car import load_rotors
+        from dsfforza.convert.forza2dsf.wheels import brake_rotor_section
+
+        try:
+            rotors = load_rotors(self.car_dir)
+        except (OSError, ValueError):
+            return None
+        rotor = rotors.get("front") or rotors.get("rear")
+        return brake_rotor_section(rotor, lod, (1.0, 1.0)) if rotor else None
 
     def _wheel_paint_scale(self, sections, lods) -> dict[str, float]:
         """Scale, in place, the RGB of the wheel texture's texels by the PaintScale
