@@ -92,7 +92,9 @@ class PlanTest(unittest.TestCase):
             self.car(4, "XYZ_Car_10", "XYZ", "CAR", images=False),
         ]
         used_codes = {65, 256, 300}  # the font's: new 16-bit codes go past 300
-        hud, glyphs, strings, pictures = car_gui.plan(cars, self.strings, used_codes, set(self.strings), emblem=True)
+        hud, glyphs, strings, pictures = car_gui.plan(
+            cars, self.strings, used_codes, set(self.strings), emblem={c["id"] for c in cars}
+        )
         # A vanilla maker and model: the game's badge and plate, no glyphs or strings.
         self.assertEqual(hud[3]["Manufacturer"], 54)
         self.assertEqual(hud[3]["ModelName"], "ID:240000")
@@ -117,14 +119,14 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(sorted(pictures), ["dsfforza_bmw_m3_91", "dsfforza_bmw_m5_95", "dsfforza_nis_370z_10"])
         self.assertEqual(hud[1]["Picture1"], "dsfforza_bmw_m3_91")
         self.assertTrue(all(e[gui_assets.EMBLEM_FIELD] == 1 for e in hud.values()))
-        hud, *_ = car_gui.plan(cars[:1], self.strings, used_codes, set(self.strings), emblem=False)
+        hud, *_ = car_gui.plan(cars[:1], self.strings, used_codes, set(self.strings), emblem=set())
         self.assertNotIn(gui_assets.EMBLEM_FIELD, hud[3])
 
     def test_family_plate(self):
         self.models[("NISSAN", "SKYLINE")] = (11, "ID:240001")
         car = self.car(5, "NIS_SkylineX_99", "NISSAN", "SKYLINE GT-R X")
         car["manifest"]["names"]["family"] = "Skyline"
-        hud, *_ = car_gui.plan([car], self.strings, set(), set(self.strings), emblem=False)
+        hud, *_ = car_gui.plan([car], self.strings, set(), set(self.strings), emblem=set())
         self.assertEqual((hud[5]["Model"], hud[5]["ModelName"]), (11, "ID:240001"))
 
     def test_hud_lua_and_clear(self):
@@ -143,23 +145,33 @@ if __name__ == "__main__":
 
 
 class EmblemTest(unittest.TestCase):
-    """The manager's emblem texture goes into the Fonts.fchunk copy, and with it GarageEmblem."""
+    """Each package's emblem: the most common one goes into the Fonts.fchunk copy, and the cars
+    that carry it get GarageEmblem."""
 
     def setUp(self):
+        from dsfforza.build import dsfcar
+
         self.tmp = Path(tempfile.mkdtemp())
         self.game = self.tmp / "game"
         (self.game / "media").mkdir(parents=True)
         (self.game / car_gui.FONTS).write_bytes(b"fonts")
-        folder = self.tmp / "XYZ_Car_10"
-        folder.mkdir()
-        manifest = {"names": {"maker_group": "XYZ", "model": "CAR", "family": None}, "source": {"media": "XYZ_Car_10"}}
-        self.cars = [{"id": 7, "key": "forza.fh1.XYZ_Car_10", "manifest": manifest, "folder": folder}]
+        self.cars = []
+        for i, name in enumerate(("XYZ_Car_10", "XYZ_Van_11", "XYZ_Bus_12"), start=7):
+            folder = self.tmp / name
+            folder.mkdir()
+            names = {"maker_group": "XYZ", "model": name.split("_")[1].upper(), "family": None}
+            manifest = {"names": names, "source": {"media": name}}
+            self.cars.append({"id": i, "key": f"forza.fh1.{name}", "manifest": manifest, "folder": folder})
+        self.emblem_file = dsfcar.EMBLEM
         for name, value in (("vanilla_codes", ({}, {})), ("read_strings", {})):
             patcher = mock.patch.object(gui_assets, name, return_value=value)
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def generate(self, *, font_has_it: bool, emblem: bytes | None):
+    def carry(self, index: int, data: bytes) -> None:
+        (Path(self.cars[index]["folder"]) / self.emblem_file).write_bytes(data)
+
+    def generate(self, *, font_has_it: bool):
         def add_glyphs(*args):
             args[1].write_bytes(b"copy")  # (fonts, out, glyphs, textures)
             return {}
@@ -167,29 +179,56 @@ class EmblemTest(unittest.TestCase):
         with (
             mock.patch.object(car_gui, "font_state", return_value=(set(), font_has_it)),
             mock.patch.object(gui_assets, "add_glyphs", side_effect=add_glyphs) as add,
+            mock.patch(
+                "dsfforza.build.dsfcar.emblem_problems", side_effect=lambda d: [] if d.startswith(b"DDS") else ["bad"]
+            ),
         ):
-            report = car_gui.generate(self.game, self.cars, emblem=emblem, log=lambda _: None)
+            report = car_gui.generate(self.game, self.cars, log=lambda _: None)
         hud = (self.game / car_gui.HUD_LUA).read_text()
-        return report, add, hud
+        shown = [c["id"] for c in self.cars if f"[{c['id']}] = {{" in hud and self._has(hud, c["id"])]
+        return report, add, shown
 
-    def test_emblem_goes_into_the_font(self):
-        report, add, hud = self.generate(font_has_it=False, emblem=b"DDS emblem")
+    @staticmethod
+    def _has(hud: str, i: int) -> bool:
+        line = next(line for line in hud.splitlines() if line.strip().startswith(f"[{i}] = "))
+        return "GarageEmblem = 1" in line
+
+    def test_each_package_carries_it(self):
+        for i in range(3):
+            self.carry(i, b"DDS emblem")
+        report, add, shown = self.generate(font_has_it=False)
         self.assertEqual(add.call_args.args[2:], ({}, {gui_assets.FORZA_LOGO_UID: b"DDS emblem"}))  # no glyphs
         self.assertTrue(report["emblem"])
-        self.assertIn("GarageEmblem = 1", hud)
+        self.assertEqual(shown, [7, 8, 9])
         redirect = (self.game / car_gui.GENERATED / car_gui.REDIRECT).read_text()
         self.assertIn(r"media\Fonts.fchunk|dsfforza\generated\Fonts.fchunk", redirect)
 
+    def test_a_package_without_one_keeps_the_disc(self):
+        self.carry(0, b"DDS emblem")
+        self.carry(2, b"not a dds")  # a bad one counts as none
+        _, add, shown = self.generate(font_has_it=False)
+        self.assertEqual(add.call_args.args[3], {gui_assets.FORZA_LOGO_UID: b"DDS emblem"})
+        self.assertEqual(shown, [7])
+
+    def test_the_most_common_emblem_goes_in(self):
+        self.carry(0, b"DDS other")
+        self.carry(1, b"DDS emblem")
+        self.carry(2, b"DDS emblem")
+        _, add, shown = self.generate(font_has_it=False)
+        self.assertEqual(add.call_args.args[3], {gui_assets.FORZA_LOGO_UID: b"DDS emblem"})
+        self.assertEqual(shown, [8, 9])
+
     def test_a_font_that_has_it_gets_no_second_copy(self):
-        report, add, hud = self.generate(font_has_it=True, emblem=b"DDS emblem")
+        self.carry(1, b"DDS emblem")
+        report, add, shown = self.generate(font_has_it=True)
         add.assert_not_called()  # no glyphs, nothing to add: the game's font as it is
         self.assertFalse(report["emblem"])
-        self.assertIn("GarageEmblem = 1", hud)
+        self.assertEqual(shown, [8])
 
     def test_no_emblem_no_field(self):
-        _, add, hud = self.generate(font_has_it=False, emblem=None)
+        _, add, shown = self.generate(font_has_it=False)
         add.assert_not_called()
-        self.assertNotIn("GarageEmblem", hud)
+        self.assertEqual(shown, [])
 
 
 VANILLA_FONTS = Path(__file__).resolve().parents[1] / "out" / "vanilla" / "media" / "Fonts.fchunk"

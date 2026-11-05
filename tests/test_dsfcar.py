@@ -214,8 +214,18 @@ class DsfcarTest(unittest.TestCase):
             with self.subTest(images=list(images)):
                 self.assertTrue(dsfcar.validate(self.write(images=images)))
 
-    def test_shared_emblem_checked(self):
-        """The shared emblem is the card atlas's size, one level of DXT5."""
+    def test_emblem_member(self):
+        """A package carries its garage card emblem as an image; a bad one fails validation."""
+        path = self.write(images={**self.images, dsfcar.EMBLEM: dds()})
+        self.assertEqual(dsfcar.validate(path), [])
+        manifest, _, images = dsfcar.read(path)
+        self.assertEqual(manifest["images"]["emblem"], dsfcar.EMBLEM)
+        self.assertEqual(images[dsfcar.EMBLEM], dds())
+        self.rewrite(path, dsfcar.EMBLEM, dds(256, 256))
+        self.assertTrue(any(dsfcar.EMBLEM in p for p in dsfcar.validate(path)))
+
+    def test_emblem_checked(self):
+        """The emblem is the card atlas's size, one level of DXT5."""
         self.assertEqual(dsfcar.emblem_problems(dds()), [])
         mipped = bytearray(dds() + b"\0" * 4096)
         struct.pack_into("<I", mipped, 28, 2)
