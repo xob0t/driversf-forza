@@ -466,6 +466,7 @@ the variant beats (a) / loses to it by more than 1%:
 | cog | | | | | | 0.050 (11 / 37) | | | | |
 | box | | | | | | | 0.83 / 0.86 / 0.99 (1 / 47) | | | |
 | (c) all | 0.60 | 0.16 / 0.29 / 0.28 | 0.74 | 0.59 | 0 | 0.050 | 0.83 / 0.86 / 0.99 | 0.71 (2 / 37) | 1.11 | 25.9 (3 / 45) |
+| pace (below) | 0.109 (10 / 35) | | | | | | | 0.150 (21 / 23) | 0.30 (2 / 9) | 5.9 (18 / 26) |
 
 (a)'s p18, p30 and p15..p17 errors are in-sample: rules TP, CY's offset and the inertia
 multipliers were fitted on these pairs (TP's leave-one-out error is 0.060, "Leave-one-out
@@ -498,8 +499,35 @@ model predicts a port's straight-line behaviour from its VO3D.
 
 One Forza-derived rule that does target DSF's behaviour: "pace", p18 set so DSF's model runs
 60 to 100 mph in Forza's own time (Forza's figure through DSF's maths, as p160 takes
-Forza's top speed). It matches DSF's car as well as vanilla matches Forza (the 1.06 ratio
-above), which is no better than TP's in-sample fit. The in-game check is below.
+Forza's top speed). It can only match DSF's car as closely as vanilla matches Forza (the
+1.06 ratio above, IQR 0.93..1.29), and over the pairs it doesn't beat TP: p18 error 0.109
+against 0.057 (10 pairs better, 35 worse; TP's leave-one-out error is 0.060), 60-100 error
+0.150 against 0.135 (21 better, 23 worse), 60-150 0.30 against 0.16.
+
+**In game (confirmed-runtime).** Seven pairs, each as the vanilla car and on the variants'
+handling over the vanilla body (`uv run dsff handling_sim archive out/h516/var-<v>.sp --ids
+... --variant <v>`: the variant's handling values over the car's own VO3D, cameras kept).
+One `run-series.ps1 -Vm -Dyno` call, keys `Up:25,Down:6; Up:12,None:14,Down:6`; runs
+vm1-20261105-231123 (vanilla), -232244 (a), -233342 (c), -234411 (pace). The model's
+60-100 mph times were written down before the run (`handling_sim predict`,
+`out/h516/predict.txt`):
+
+| Car | 0-60 s: vanilla / a / c / pace | 60-100 s measured: vanilla / a / c / pace | measured / predicted |
+| --- | --- | --- | --- |
+| 214 LP670-4 SV (AWD) | 2.42 / 3.36 / 7.94 / 5.08 | 3.60 / 3.40 / 6.95 / 4.08 | 1.03 / 1.10 / 1.09 / 1.11 |
+| 228 GT-R (AWD) | 4.21 / 3.40 / 8.63 / 3.31 | 4.44 / 4.44 / 9.72 / 4.32 | 1.07 / 1.06 / 1.11 / 1.05 |
+| 227 370Z (RWD) | 3.30 / 3.38 / 11.48 / 3.54 | 5.68 / 6.28 / - / 7.04 | 1.08 / 1.08 / - / 1.09 |
+| 182 Viper ACR (RWD) | 2.62 / 2.94 / 8.42 / 2.86 | 4.99 / 5.48 / 9.24 / 4.16 | 1.00 / 0.96 / 1.05 / 0.92 |
+| 147 CTS-V (RWD) | 3.58 / 4.15 / 8.64 / 3.46 | 6.37 / 8.15 / 12.32 / 5.76 | 0.95 / 1.08 / 1.10 / 1.09 |
+| 128 MiTo (FWD) | 4.51 / 5.55 / 21.73 / 5.82 | 9.29 / 13.24 / - / 14.28 | 1.04 / 1.11 / - / 1.12 |
+| 275 Scirocco R (FWD) | 3.66 / 5.50 / 9.59 / 4.86 | 5.51 / 10.72 / - / 7.81 | 1.01 / 1.04 / - / 1.07 |
+
+("-": 100 mph not reached in 25 s.) The model holds on ports' handling too: 0.92 to 1.12,
+leaning 6% optimistic. (c) puts every car 2 to 5 times slower to 60 than DSF's own. The
+FWD pairs are slow on today's rules as well: on the Scirocco the engine friction rule (p358
+= the drivetrain donor's x the p18 ratio, 0.0100 against vanilla's 0.006) alone takes the
+model's 60-100 from 6.4 to 10.3 s; the MiTo's gap is spread over its redline, p361, drag and
+p13.
 
 ### Audit: where every handling rule comes from
 
