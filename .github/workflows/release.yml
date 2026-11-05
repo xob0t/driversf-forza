@@ -1,4 +1,4 @@
-# Release: build dsfforza.asi, run the tests that need no game or Forza files, and package
+# Release: build dsfcars.asi, run the tests that need no game or Forza files, and package
 # the player zip (src/dsfforza/build/package.py).
 #   tag v*            -> a GitHub Release with the zip attached
 #   workflow_dispatch -> the zip as a workflow artifact (no release):
@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Build dsfforza.asi
+      - name: Build dsfcars.asi
         shell: powershell
         # MSVC from the runner's Visual Studio (build.ps1 finds vcvars32.bat through vswhere).
         # -Test -NoRun compiles the offline patch test too; running it needs Driver.exe 1.04,
@@ -39,7 +39,7 @@ jobs:
         shell: powershell
         run: |
           $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
-          uv run --frozen dsff package --asi out\asi\dsfforza.asi --version $version --out dist
+          uv run --frozen dsff package --asi out\asi\dsfcars.asi --version $version --out dist
           "ZIP=$((Get-ChildItem dist\*.zip).FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding ascii
 
       - name: Upload the zip (not a tag)

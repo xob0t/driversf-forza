@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-Builds out\asi\dsfforza.asi (x86, MSVC 2022) and copies dsfforza.ini next to it.
+Builds out\asi\dsfcars.asi (x86, MSVC 2022) and copies dsfcars.ini next to it.
 
 .DESCRIPTION
-Compiles every tools\asi\src\*.cpp into one DLL named dsfforza.asi. Static CRT
+Compiles every tools\asi\src\*.cpp into one DLL named dsfcars.asi. Static CRT
 (/MT), so the guest needs no VC++ redistributable. /Brepro and sorted inputs
 make the output byte-identical for identical sources and compiler version.
 Runs the compiler at Idle priority (out\gentle policy).
@@ -46,7 +46,7 @@ $sources = Get-ChildItem -LiteralPath $src -Filter *.cpp | Sort-Object Name | Fo
 $opt = if ($DebugBuild) { '/Od /Zi' } else { '/O2 /Oy-' }
 $cl = "cl /nologo /c /std:c++17 /EHsc- /GR- /GS- /MT /W3 /Brepro $opt /DWIN32 /D_WINDOWS /DNDEBUG /Fo`"$obj\\`" " + ($sources -join ' ')
 $objs = Get-ChildItem -LiteralPath $src -Filter *.cpp | Sort-Object Name | ForEach-Object { '"' + (Join-Path $obj ($_.BaseName + '.obj')) + '"' }
-$link = "link /nologo /DLL /Brepro /MACHINE:X86 /SAFESEH:NO /DYNAMICBASE:NO /INCREMENTAL:NO /OUT:`"$out\dsfforza.asi`" /DEBUG:NONE " + ($objs -join ' ') + ' kernel32.lib user32.lib'
+$link = "link /nologo /DLL /Brepro /MACHINE:X86 /SAFESEH:NO /DYNAMICBASE:NO /INCREMENTAL:NO /OUT:`"$out\dsfcars.asi`" /DEBUG:NONE " + ($objs -join ' ') + ' kernel32.lib user32.lib'
 $cmd = "`"$VcVars`" >nul 2>nul && $cl && $link"
 
 $self = [Diagnostics.Process]::GetCurrentProcess()
@@ -69,8 +69,8 @@ if ($Test) {
     cmd /c "`"$VcVars`" >nul 2>nul && $tcl && $tlink"
     if ($LASTEXITCODE -ne 0) { throw "test build failed ($LASTEXITCODE)" }
 }
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'dsfforza.ini') -Destination (Join-Path $out 'dsfforza.ini') -Force
-$asi = Get-Item -LiteralPath (Join-Path $out 'dsfforza.asi')
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'dsfcars.ini') -Destination (Join-Path $out 'dsfcars.ini') -Force
+$asi = Get-Item -LiteralPath (Join-Path $out 'dsfcars.asi')
 $hash = (Get-FileHash -LiteralPath $asi.FullName -Algorithm SHA256).Hash
 Write-Host ("built {0} ({1} bytes, SHA-256 {2})" -f $asi.FullName, $asi.Length, $hash)
 if ($Test -and -not $NoRun) {

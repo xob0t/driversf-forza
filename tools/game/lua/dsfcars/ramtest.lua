@@ -1,7 +1,7 @@
 -- dsfforza ramtest: where a car's contacts register (its collision hull; research/damage.md,
 -- "Collision hull", #210). Stands in for dyno.lua, same interface:
 --   run-series.ps1 -Vm -Dyno -DynoRuns 1 -DynoKeys 'Up:6,Down:5' -LuaFiles
---     'dsfforza\dyno.lua=tools\game\lua\dsfforza\ramtest.lua;dsfforza\dynoreal.lua=tools\game\lua\dsfforza\dyno.lua'
+--     'dsfcars\dyno.lua=tools\game\lua\dsfcars\ramtest.lua;dsfcars\dynoreal.lua=tools\game\lua\dsfcars\dyno.lua'
 -- Per car, on dyno.lua's straight: a parked copy of the same model stands side-on GAP m
 -- ahead; the car is pushed into it at SPEED (velocity set every update until the copy
 -- moves, i.e. the first contact), first nose first, then (placed beyond the copy) tail
@@ -9,7 +9,7 @@
 --   "ram <id> <run> <n> <speed along> <gap> <lateral>"   gap = centre distance along the car
 -- and at the first contact "ram <id> <run> contact gap <g> (previous <g0>) ...". The gap at
 -- contact = the car's hull extent ahead (or behind) + the copy's half width. Rest heights of
--- both cars are logged before each run ("ram <id> rest ..."). Then, if dsfforza\dynoreal.lua
+-- both cars are logged before each run ("ram <id> rest ..."). Then, if dsfcars\dynoreal.lua
 -- is there, the car's ordinary dyno runs follow (keys from -DynoKeys).
 
 local M = {}
@@ -32,12 +32,12 @@ local function log(message)
 	print("[dsfforza] " .. message)
 end
 
--- After the two pushes the car's ordinary dyno runs follow (tools\game\lua\dsfforza\dyno.lua,
--- copied in as dsfforza\dynoreal.lua): launch, brake, steer pulse with run-series -DynoKeys.
+-- After the two pushes the car's ordinary dyno runs follow (tools\game\lua\dsfcars\dyno.lua,
+-- copied in as dsfcars\dynoreal.lua): launch, brake, steer pulse with run-series -DynoKeys.
 local REAL = nil
 
 function M.configure(config)
-	local loaded, module = user_open("dsfforza\\dynoreal.lua")
+	local loaded, module = user_open("dsfcars\\dynoreal.lua")
 	if loaded and type(module) == "table" then
 		REAL = module
 		REAL.configure(config)

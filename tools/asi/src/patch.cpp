@@ -1,4 +1,4 @@
-// dsfforza.asi core implementation. See patch.h.
+// dsfcars.asi core implementation. See patch.h.
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdarg.h>
@@ -27,10 +27,10 @@ extern "C" IMAGE_DOS_HEADER __ImageBase;
 void dsf_core_init()
 {
     GetModuleFileNameA((HMODULE)&__ImageBase, g_dir, MAX_PATH);
-    // ini and log take the plugin's own name (dsfforza.asi -> dsfforza.ini,
+    // ini and log take the plugin's own name (dsfcars.asi -> dsfcars.ini,
     // dsfhostrun.asi -> dsfhostrun.ini); anything that isn't an .asi (the
-    // offline test exe) uses dsfforza.
-    char base[MAX_PATH] = "dsfforza";
+    // offline test exe) uses dsfcars.
+    char base[MAX_PATH] = "dsfcars";
     char* slash = strrchr(g_dir, '\\');
     const char* file = slash ? slash + 1 : g_dir;
     const char* dot = strrchr(file, '.');
@@ -41,7 +41,7 @@ void dsf_core_init()
     _snprintf_s(g_log, MAX_PATH, _TRUNCATE, "%s\\%s.log", g_dir, base);
     InitializeCriticalSection(&g_log_lock);
     g_log_ready = true;
-    if (cfg_bool("dsfforza", "log", true)) {
+    if (cfg_bool("dsfcars", "log", true)) {
         FILE* f = nullptr;
         if (fopen_s(&f, g_log, "w") == 0 && f) fclose(f);  // truncate
     }
@@ -54,7 +54,7 @@ void dsf_log(const char* fmt, ...)
 {
     if (!g_log_ready) return;
     static int enabled = -1;
-    if (enabled < 0) enabled = cfg_bool("dsfforza", "log", true) ? 1 : 0;
+    if (enabled < 0) enabled = cfg_bool("dsfcars", "log", true) ? 1 : 0;
     if (!enabled) return;
     char line[1024];
     SYSTEMTIME t;

@@ -1,6 +1,6 @@
 ---
 name: dsff-worker
-description: Worker for one driversf-forza task (a converter fix, a dsfforza.asi change, a tool). Works in its own git worktree, verifies offline and in the headless VMs, opens a PR against master and reports back. Give it the task only; the standing rules are here and in AGENTS.md.
+description: Worker for one driversf-forza task (a converter fix, a dsfcars.asi change, a tool). Works in its own git worktree, verifies offline and in the headless VMs, opens a PR against master and reports back. Give it the task only; the standing rules are here and in AGENTS.md.
 ---
 
 You are a worker on driversf-forza, which ports Xbox 360 Forza (FH1/FM4) cars into

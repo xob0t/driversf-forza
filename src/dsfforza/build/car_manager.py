@@ -1,5 +1,5 @@
 """Car manager: installs, enables, disables and removes car packages (.dsfcar,
-src/dsfforza/build/dsfcar.py) in the game folder, for dsfforza.asi [archive] packages
+src/dsfforza/build/dsfcar.py) in the game folder, for dsfcars.asi [archive] packages
 (research/car-packages.md, "Manager").
 
     uv run dsff car_manager install out/packages/*.dsfcar [--game <game>]
@@ -11,19 +11,19 @@ src/dsfforza/build/dsfcar.py) in the game folder, for dsfforza.asi [archive] pac
 
 What it owns, all under the game folder (no game file is written):
 
-    dsfforza\\cars\\manager.json       its state: the key -> model ID map and the installed cars
+    dsfcars\\cars\\manager.json       its state: the key -> model ID map and the installed cars
                                      (what the manager owns of each: ID, version, enabled, the
                                      installed car.sp's SHA-256; the rest is the car's car.json)
-    dsfforza\\cars\\cars.txt           the plugin's list, "id path" per enabled car
-    dsfforza\\cars\\<key>\\            one car: the package's car.sp, manifest and images as they
+    dsfcars\\cars\\cars.txt           the plugin's list, "id path" per enabled car
+    dsfcars\\cars\\<key>\\            one car: the package's car.sp, manifest and images as they
                                      are (car.sp, car.json, *.png, *.dds). car.sp holds its
-                                     builder's model ID; dsfforza.asi writes the listed one into
+                                     builder's model ID; dsfcars.asi writes the listed one into
                                      the data it serves (research/car-packages.md)
-    Common\\UserLuaScripts\\dsfforza\\packages.lua   vehicleStats entries of the enabled cars
+    Common\\UserLuaScripts\\dsfcars\\packages.lua   vehicleStats entries of the enabled cars
 
 IDs. A key keeps its model ID for good: across upgrades, disable and enable, and after a
 remove (the ID stays reserved, so a new car doesn't inherit the old one's save flags,
-which the game and dsfforza.asi keep per model ID). A new key takes the lowest ID the
+which the game and dsfcars.asi keep per model ID). A new key takes the lowest ID the
 installed vehicle archive's SSLP doesn't use (its own cars, a merged install's or another
 mod's), that isn't RESERVED (other mods' vehicleStats entries) and that no key holds, in
 port_batch's "asi" order (1..303, then 304 up; base IDs stay below 1000: the LOD requests
@@ -46,17 +46,29 @@ from dsfforza.build import dsfcar
 
 STATE_FORMAT = 2  # 2: a car's manifest is its car.json only, no longer copied into the state
 CAR_FIELDS = ("id", "version", "enabled", "sha256")  # what the state keeps of an installed car
-CARS_DIR = Path("dsfforza") / "cars"
+CARS_DIR = Path("dsfcars") / "cars"
 STATE = "manager.json"
 LIST = "cars.txt"
-LUA = Path("Common") / "UserLuaScripts" / "dsfforza" / "packages.lua"
-PORTED = Path("Common") / "UserLuaScripts" / "dsfforza" / "ported.lua"
+LUA = Path("Common") / "UserLuaScripts" / "dsfcars" / "packages.lua"
+PORTED = Path("Common") / "UserLuaScripts" / "dsfcars" / "ported.lua"
 ARCHIVE = Path("Install") / "dngvehicles.sp"
 MAX_BASE_ID = dsfcar.MAX_BASE_ID
-PLUGIN = Path("plugins") / "dsfforza.asi"
+PLUGIN = Path("plugins") / "dsfcars.asi"
 # The plugin's capability marker (tools/asi/src/patch.h DSF_CAPABILITIES_MARKER): then
 # space-separated names up to a NUL. A plugin from before it has none.
-CAPABILITIES_MARKER = b"DSFFORZA-CAPABILITIES: "
+CAPABILITIES_MARKER = b"DSFCARS-CAPABILITIES: "
+# The game-side names before the runtime was renamed to dsfcars. An install of an older
+# release has them; tools\install.ps1 moves such an install to the new names (-Migrate, and
+# before an install or uninstall), with every car on its ID. This manager doesn't work on
+# them: it refuses (old_layout) and names the installer.
+LEGACY_CAPABILITIES_MARKER = b"DSFFORZA-CAPABILITIES: "  # a plugin that reads dsfforza\cars\cars.txt
+LEGACY_PARTS = (
+    Path("dsfforza"),  # cars\ (manager.json, the packages, cars.txt) and generated\
+    Path("Common") / "UserLuaScripts" / "dsfforza",
+    Path("plugins") / "dsfforza.asi",
+    Path("plugins") / "dsfforza.ini",
+    Path("dsfforza-backup"),  # install.ps1's record and backups
+)
 # What every car this manager lists needs of the plugin, whatever its package says: car.sp
 # is installed as it is, so the plugin must write the listed ID into its data; and the
 # register.lua installed with this checkout registers a package car only when the plugin
@@ -65,7 +77,7 @@ MANAGER_NEEDS = {"archive.packages", "archive.ids", "lua.packages"}
 
 
 def plugin_capabilities(plugin: Path) -> set[str] | None:
-    """The capabilities an installed dsfforza.asi names in its file; None when there is no
+    """The capabilities an installed dsfcars.asi names in its file; None when there is no
     plugin, an empty set for one from before the marker."""
     try:
         data = plugin.read_bytes()
@@ -85,11 +97,29 @@ def check_plugin(plugin: Path, requires, what: str) -> None:
     if not missing:
         return
     state = "isn't there" if caps is None else f"is older (it has {sorted(caps) or 'no capability list'})"
+    if caps == set() and LEGACY_CAPABILITIES_MARKER in plugin.read_bytes():
+        state = r"is from before the rename to dsfcars (it reads dsfforza\cars\)"
     raise SystemExit(
-        f"{what}: {plugin} {state}; these cars need {sorted(missing)}. Update dsfforza.asi with"
+        f"{what}: {plugin} {state}; these cars need {sorted(missing)}. Update dsfcars.asi with"
         r" tools\install.ps1 (it installs the plugin and the packages of one checkout), then run this again."
         " Nothing was changed."
     )
+
+
+def old_layout(game: Path) -> list[Path]:
+    """The parts of an install from before the rename to dsfcars that `game` has (LEGACY_PARTS)."""
+    return [part for part in LEGACY_PARTS if (Path(game) / part).exists()]
+
+
+def refuse_old_layout(game: Path) -> None:
+    """SystemExit when the game folder has an install of the old names: the plugin and the Lua
+    of that install read dsfforza\\, so this manager's files (dsfcars\\) would reach neither."""
+    parts = old_layout(game)
+    if parts:
+        raise SystemExit(
+            f"{game} has an install from before the rename to dsfcars ({', '.join(map(str, parts))}). Move it"
+            rf" first: tools\install.ps1 -GamePath '{game}' -Migrate (every car keeps its ID). Nothing was changed."
+        )
 
 
 def reserved_ids() -> set[int]:
@@ -322,7 +352,7 @@ class Manager:
     # --- the plugin ---
 
     def require_plugin(self, requires, what: str) -> None:
-        """Refuse (before anything is written) unless the installed dsfforza.asi has what the
+        """Refuse (before anything is written) unless the installed dsfcars.asi has what the
         cars need: MANAGER_NEEDS for every car, and what their packages' `requires` list. A
         plugin from before "archive.ids" would serve car.sp's builder ID under the listed one."""
         check_plugin(self.game / PLUGIN, requires, what)
@@ -454,7 +484,7 @@ class Manager:
         """Every file the manager wrote goes: the cars' folders, the plugin's
         list, the generated GUI copies, packages.lua and packages_hud.lua. The key -> ID map
         stays in manager.json (unless `forget_ids`): the save keeps its flags per model ID
-        (autosave.dat below 304, dsfforza-garage.dat above), so a later install gives every
+        (autosave.dat below 304, dsfcars-garage.dat above), so a later install gives every
         car the ID those flags are for."""
         from dsfforza.build import car_gui
 
@@ -479,7 +509,7 @@ class Manager:
         else:
             _write_text(state, json.dumps(self.state, indent=1, sort_keys=True) + "\n")
             self.log(f"car packages uninstalled; {len(self.state['ids'])} IDs kept in {state} for a later install")
-        for folder in (self.cars_dir, self.cars_dir.parent):  # dsfforza\cars, dsfforza: when empty
+        for folder in (self.cars_dir, self.cars_dir.parent):  # dsfcars\cars, dsfcars: when empty
             with contextlib.suppress(OSError):
                 folder.rmdir()
 
@@ -603,9 +633,9 @@ def build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser(
         "check-plugin",
         parents=[common],
-        help="check a dsfforza.asi against what the packages need (install.ps1, before the game folder changes)",
+        help="check a dsfcars.asi against what the packages need (install.ps1, before the game folder changes)",
     )
-    c.add_argument("--plugin", type=Path, help="the plugin file (default the game's plugins\\dsfforza.asi)")
+    c.add_argument("--plugin", type=Path, help="the plugin file (default the game's plugins\\dsfcars.asi)")
     c.add_argument("packages", type=Path, nargs="*", help=".dsfcar files or folders whose requires count too")
     return parser
 
@@ -662,6 +692,7 @@ def main(argv: list[str] | None = None) -> None:
         check_plugin(plugin, {r for p in paths for r in dsfcar.requires_of(p)}, "check-plugin")
         print(f"{plugin}: {' '.join(sorted(plugin_capabilities(plugin)))}")
         return
+    refuse_old_layout(args.game)
     if args.cmd not in ("status", "verify"):
         from dsfforza.build.install import game_running
 

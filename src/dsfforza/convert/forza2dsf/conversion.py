@@ -409,7 +409,7 @@ def convert(
                     skin = {"steering_wheel": host_cp.wheel_skin}
                     # The hands grip the cockpit's wheel in every view; the chase views draw
                     # the main carbin's, which Forza models elsewhere (up to 17 cm away): it
-                    # goes onto the cockpit wheel, at its size (dsfforza.asi [hands] moves the
+                    # goes onto the cockpit wheel, at its size (dsfcars.asi [hands] moves the
                     # chase views' driver onto that rim too).
                     align_steering_wheel(cf.wheel, "cockpit's")
 
@@ -752,7 +752,7 @@ def convert(
         # The speedometer stops at the Forza dial's last mark (p605).
         gauge_vo3d = cockpit.gauge_params(cf)
         # The hand rig's offset from the steering marker would move the wheel off its Forza place;
-        # dsfforza.asi [hands] puts the hands on the rim the steering report describes.
+        # dsfcars.asi [hands] puts the hands on the rim the steering report describes.
         vo3d.payload = cockpit.patch_vo3d(
             payload(stream, vo3d), {**camera, **gauge_vo3d, **cockpit.hand_params(hier["steering"])}
         )

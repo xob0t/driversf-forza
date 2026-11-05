@@ -14,7 +14,7 @@ code), `confirmed-runtime`, `hypothesis`.
 | Per district? | 17 "interesting vehicle" regions (centre, radius, model list), one list per chapter. The engine spools these and mixes them into traffic. | `ScriptsChapterN.fchunk` `traffic\trafficSpoolingData.lua` |
 | Why didn't `RequestTrafficVehicles` add 304? | It only loads models. Traffic spawns from the active set's list plus the interesting-vehicle regions. | (hypothesis, consistent with run `20261021-230611`) |
 | HUD name and badge | `vehicleStats[id]`, read by the engine through the Lua global `getVehicleStats(id)` | `vehiclestats\vehicleStats.lua`, `VehicleStatFunctions.lua` |
-| Garage list | Engine menu code reads `getVehicleStats(id)` fields `Selectable`, `Tier`, `Price`, `Picture1..3` for IDs 0..303 (0..999 with dsfforza.asi), plus the save's unlocked/owned flags. Felony Rework adds cars to the garage by editing only `vehicleStats`. | strings in `Driver.exe`, Felony Rework diff, `asi.md` |
+| Garage list | Engine menu code reads `getVehicleStats(id)` fields `Selectable`, `Tier`, `Price`, `Picture1..3` for IDs 0..303 (0..999 with dsfcars.asi), plus the save's unlocked/owned flags. Felony Rework adds cars to the garage by editing only `vehicleStats`. | strings in `Driver.exe`, Felony Rework diff, `asi.md` |
 | Unlocks | `vehicleManager.updateVehicleUnlocks` walks `vehicleStats` for `UnlockedInChapter`, `UnlockedInGarage`, `UnlockByActivity` and calls `ProfileSettings.SetVehicleUnlocked`. | `gamelogic\vehiclemanager\data\vehicleData.lua` |
 | Shift (zap) | No model list. Any vehicle `zapcontroller.IsVehicleZappable` accepts. | `gamelogic\zap\system\zapModes.lua` |
 
@@ -239,7 +239,7 @@ changelog credits this to "Klancnik's garage mod". So a `vehicleStats`
 entry with `Selectable = true` and an unlock is enough for a vanilla model to
 show up in the garage. The engine walks a fixed ID range, not the table:
 FUN_006C57D0 loops IDs 0..303 (`gui-assets.md`, `asi.md`), so the dummies
-622 and 623 are never listed (dsfforza.asi's garage walks 0..999, so
+622 and 623 are never listed (dsfcars.asi's garage walks 0..999, so
 `register.lua` hides them there). Running Felony Rework together with the
 Forza cars: `felony-rework.md`.
 
@@ -284,22 +284,22 @@ the file exists, which is how Felony Rework replaces whole scripts. A
 runtime patch from `UserLuaScripts` is smaller and doesn't fight other
 mods.
 
-## The mod: `tools/game/lua/dsfforza/register.lua`
+## The mod: `tools/game/lua/dsfcars/register.lua`
 
 Loaded by both bootstraps (the test one in `tools/game/lua/` and the player one `tools/install.ps1` installs). The bootstrap does:
 
 ```lua
 function Bootstrapper.Launch()
-	user_open("dsfforza\\register.lua")
+	user_open("dsfcars\\register.lua")
 end
 ```
 
-It reads optional overrides from `dsfforza\config.lua` (`register = { ... }`,
+It reads optional overrides from `dsfcars\config.lua` (`register = { ... }`,
 including `cars`). The core of each part:
 
 (3) HUD name and badge (`buildStats`): copy the car's `source` entry (its
 host), drop the unlock fields, apply the car's overrides, then
-`dsfforza\hud.lua`'s fields when it has an entry for the car (badge and
+`dsfcars\hud.lua`'s fields when it has an entry for the car (badge and
 plate glyph codes, `ManufacturerGlyph`/`ModelGlyph`, pictures,
 `GarageEmblem`; `gui_assets.py`). Without one, a vanilla entry of the same
 make and model is copied, or the host's entry gets that make's badge and no
@@ -345,9 +345,9 @@ bootstrap, skips IDs already in a list, and re-sends
 | --- | --- | --- |
 | `interesting` | true | the wrapper above |
 | `missionPot` | false | add the IDs to `missionSpecificVehiclePots["All chapters"]` |
-| `garage` | true | `Selectable = true` for IDs below 304 (below 1000 with dsfforza.asi) while the garage maker list has room (`research/batch.md`) |
+| `garage` | true | `Selectable = true` for IDs below 304 (below 1000 with dsfcars.asi) while the garage maker list has room (`research/batch.md`) |
 | `writeProfile` | false | set unlocked and owned in the save, `UnlockedInChapter = 1` (garage-listed IDs only) |
-| `guardProfile` | true | drop Lua `SetVehicleUnlocked`/`Owned` calls for added IDs above 303; with dsfforza.asi's save hooks only for IDs above 999 (`research/batch.md`) |
+| `guardProfile` | true | drop Lua `SetVehicleUnlocked`/`Owned` calls for added IDs above 303; with dsfcars.asi's save hooks only for IDs above 999 (`research/batch.md`) |
 | `regionCars` | 24 | at most about this many added cars per region; more are spread over the 17 regions |
 | `probe` | false (true with a test `config.lua` that has `ids`) | log `vehiclesAvailable`, `Vehicles`, profile flags, `civilianTraffic` functions, then nearby traffic counts every 20 updates (about 10 s) |
 | `probeTicks` | 360 | probe updates (every 30 frames) before it stops, about 3 minutes |

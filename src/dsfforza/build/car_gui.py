@@ -1,5 +1,5 @@
 """The car packages' garage pictures, HUD badges and plates, and names in game: generated
-copies of gui.sp, Fonts.fchunk and each language's global.fchunk, which dsfforza.asi opens
+copies of gui.sp, Fonts.fchunk and each language's global.fchunk, which dsfcars.asi opens
 in place of the game's ([archive] redirect_list; research/car-packages.md, "Manager, part 2").
 
 The car manager (car_manager.py) calls generate() with the enabled packages. Each copy is
@@ -18,10 +18,10 @@ never written. What a car gets is what gui_assets.build gives a ported car with
 - GarageEmblem = 1 when the car's package carries the garage card emblem (emblem.dds,
   dsfcar.EMBLEM) and the generated Fonts.fchunk holds that texture (gui_assets.FORZA_LOGO_UID):
   the game's font already has it (a merged install's), or the packages' emblem goes into the
-  copy as gui_assets.build puts it there. dsfforza.asi [hud] card_emblem binds one texture for
+  copy as gui_assets.build puts it there. dsfcars.asi [hud] card_emblem binds one texture for
   that UID, so one emblem goes in: the one most enabled packages carry (every package of this
   pipeline carries the same, the Forza logo from the discs); a car whose package carries another keeps
-  the SF disc. dsfforza.asi then shows the emblem on the car's garage card instead of the SF disc
+  the SF disc. dsfcars.asi then shows the emblem on the car's garage card instead of the SF disc
   (research/gui-assets.md, "Garage card emblem").
 
 Codes and string IDs are taken where the game's current files have none: 16-bit codes from
@@ -37,14 +37,14 @@ from pathlib import Path
 
 from dsfforza.formats import chnk
 
-GENERATED = Path("dsfforza") / "generated"
+GENERATED = Path("dsfcars") / "generated"
 REDIRECT = "redirect.txt"
-HUD_LUA = Path("Common") / "UserLuaScripts" / "dsfforza" / "packages_hud.lua"
+HUD_LUA = Path("Common") / "UserLuaScripts" / "dsfcars" / "packages_hud.lua"
 GUI = Path("Install") / "gui.sp"
 FONTS = Path("media") / "Fonts.fchunk"
 LOCALE = Path("Locale")
-# The generated gui.sp is only ever read through dsfforza.asi ([archive] redirect_list), whose CHNK
-# reader takes up to [archive] max_entries root entries (tools/asi/dsfforza.ini; mod_archive.cpp
+# The generated gui.sp is only ever read through dsfcars.asi ([archive] redirect_list), whose CHNK
+# reader takes up to [archive] max_entries root entries (tools/asi/dsfcars.ini; mod_archive.cpp
 # g_max_entries), so there is room for a SPOI per picture, as in the vanilla gui.sp. With the
 # vanilla reader's 1100, 721 pictures went 5 to a SPOI and 360 went 3 to a SPOI, and both crashed
 # the garage (gui_assets.add_pictures, issue #540).
@@ -66,7 +66,7 @@ def languages(game: Path) -> list[str]:
 
 def font_state(fonts: Path) -> tuple[set[int], bool]:
     """(the vehicles_font's glyph codes, whether the font holds an emblem texture: the
-    texture UID dsfforza.asi [hud] card_emblem binds, gui_assets.FORZA_LOGO_UID)."""
+    texture UID dsfcars.asi [hud] card_emblem binds, gui_assets.FORZA_LOGO_UID)."""
     g = _gui()
     from dsfforza.formats.vehicle_mesh import child, payload
 
@@ -166,7 +166,7 @@ def write_hud_lua(path: Path, hud: dict[int, dict]) -> None:
     lines = [
         "-- Written by dsff car_manager (src/dsfforza/build/car_gui.py); do not edit.",
         "-- vehicleStats overrides of the enabled car packages, as hud.lua's: pictures, badges and",
-        "-- plates from dsfforza\\generated\\ (opened in place of the game's by dsfforza.asi).",
+        "-- plates from dsfcars\\generated\\ (opened in place of the game's by dsfcars.asi).",
         "return {",
     ]
     for i, entry in sorted(hud.items()):
@@ -205,7 +205,7 @@ def emblems(cars: list[dict]) -> dict[int, bytes]:
 
 def generate(game: Path, cars: list[dict], base: Path | None = None, log=print) -> dict:
     """Write the generated files for `cars` ([{id, key, manifest, folder}], the enabled
-    packages) under <game>\\dsfforza\\generated, the redirect list and packages_hud.lua.
+    packages) under <game>\\dsfcars\\generated, the redirect list and packages_hud.lua.
     Returns a report. Built in a new folder and swapped in, so a failure leaves the last
     generation in place. `base` holds the files they are made from (default the game folder:
     its gui.sp, Fonts.fchunk and Locale; another folder when the game folder is an overlay

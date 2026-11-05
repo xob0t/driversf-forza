@@ -1,4 +1,4 @@
-// Digital dashboards: km/h digits for converted Forza displays.
+// Digital dashboards: km/h digits for converted digital displays.
 // See research/cockpit.md ("Digital displays") and research/asi.md ("Digital dashboards").
 //
 // Vanilla (Driver.exe 1.04, confirmed-static): the vehicle manager's frame update

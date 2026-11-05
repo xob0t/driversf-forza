@@ -1,4 +1,4 @@
--- Test bootstrap for dsfforza.asi garage/save runs (tools/asi/test): the
+-- Test bootstrap for dsfcars.asi garage/save runs (tools/asi/test): the
 -- repo's test bootstrap plus savetest.lua. run-series -LuaFiles puts it over
 -- UserLuaScripts\bootstrap.lua.
 local Bootstrapper = {}
@@ -8,10 +8,10 @@ function Bootstrapper.Init()
 end
 
 function Bootstrapper.Launch()
-	user_open("dsfforza\\savetest.lua")   -- before register.lua: fill entries count for its group caps
-	user_open("dsfforza\\register.lua")
-	user_open("dsfforza\\garagetest.lua")
-	user_open("dsfforza\\clonetest.lua")
+	user_open("dsfcars\\savetest.lua")   -- before register.lua: fill entries count for its group caps
+	user_open("dsfcars\\register.lua")
+	user_open("dsfcars\\garagetest.lua")
+	user_open("dsfcars\\clonetest.lua")
 end
 
 function Bootstrapper.Shutdown()

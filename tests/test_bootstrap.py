@@ -1,12 +1,13 @@
 """The player bootstrap (tools/game/lua/player/bootstrap.lua) against stubbed DriverNGHook
 globals (lupa, Lua 5.1): it runs another mod's bootstrap that tools/install.ps1 kept as
-dsfforza/chained-bootstrap.lua before its own register.lua, and survives that file failing.
+dsfcars/chained-bootstrap.lua before its own register.lua, and survives that file failing.
 
     uv run python tests/test_bootstrap.py     # or every test: uv run python -m tests
 """
 
 from __future__ import annotations
 
+import itertools
 from pathlib import Path
 
 from lupa import lua51
@@ -15,7 +16,7 @@ REPO = Path(__file__).resolve().parents[1]
 BOOTSTRAP = REPO / "tools" / "game" / "lua" / "player" / "bootstrap.lua"
 TEST_BOOTSTRAP = REPO / "tools" / "game" / "lua" / "bootstrap.lua"  # run-test.ps1 -Probe
 BS = chr(92)
-CHAINED = f"dsfforza{BS}chained-bootstrap.lua"
+CHAINED = f"dsfcars{BS}chained-bootstrap.lua"
 
 # The shape of Felony Rework 2.3's Common/UserLuaScripts/bootstrap.lua (research/felony-rework.md).
 FELONY = """
@@ -79,15 +80,15 @@ def run(files: dict[str, str], bootstrap: Path = BOOTSTRAP, raising: str = "") -
 
 def test_a_chained_bootstrap_runs_first():
     events, printed = run(
-        {CHAINED: FELONY, "felonyrework.lua": "", f"dsfforza{BS}register.lua": "table.insert(events, 'register')"}
+        {CHAINED: FELONY, "felonyrework.lua": "", f"dsfcars{BS}register.lua": "table.insert(events, 'register')"}
     )
     assert events == [
-        "open dsfforza/chained-bootstrap.lua",
+        "open dsfcars/chained-bootstrap.lua",
         "felony Init",
         "felony Launch",
         "open mo.lua",  # not shipped with Felony Rework; its own bootstrap opens it anyway
         "open felonyrework.lua",
-        "open dsfforza/register.lua",
+        "open dsfcars/register.lua",
         "register",
         "felony Shutdown",
     ], events
@@ -95,52 +96,54 @@ def test_a_chained_bootstrap_runs_first():
 
 
 def test_without_a_chained_bootstrap_only_register_loads():
-    events, _ = run({f"dsfforza{BS}register.lua": ""})
-    assert events == ["open dsfforza/register.lua"], events
+    events, _ = run({f"dsfcars{BS}register.lua": ""})
+    assert events == ["open dsfcars/register.lua"], events
 
 
 def test_a_failing_chained_bootstrap_does_not_stop_register():
     broken = "local B = {} function B.Launch() error('boom') end return B"
-    events, printed = run({CHAINED: broken, f"dsfforza{BS}register.lua": "table.insert(events, 'register')"})
+    events, printed = run({CHAINED: broken, f"dsfcars{BS}register.lua": "table.insert(events, 'register')"})
     assert events[-1] == "register", events
     assert any("chained-bootstrap.lua Launch failed" in line and "boom" in line for line in printed), printed
-    events, printed = run({CHAINED: "return nil", f"dsfforza{BS}register.lua": ""})
-    assert events == ["open dsfforza/chained-bootstrap.lua", "open dsfforza/register.lua"], events
+    events, printed = run({CHAINED: "return nil", f"dsfcars{BS}register.lua": ""})
+    assert events == ["open dsfcars/chained-bootstrap.lua", "open dsfcars/register.lua"], events
     assert any("returned no bootstrapper" in line for line in printed), printed
 
 
 def test_the_test_bootstrap_chains_too():
     events, _ = run({CHAINED: FELONY, "felonyrework.lua": ""}, TEST_BOOTSTRAP)
     assert events[:5] == [
-        "open dsfforza/chained-bootstrap.lua",
+        "open dsfcars/chained-bootstrap.lua",
         "felony Init",
         "felony Launch",
         "open mo.lua",
         "open felonyrework.lua",
     ], events
-    assert "open dsfforza/register.lua" in events and events[-1] == "felony Shutdown", events
+    assert "open dsfcars/register.lua" in events and events[-1] == "felony Shutdown", events
 
 
 def test_a_chained_bootstrap_that_opens_register_lua_registers_once():
-    """A player who added user_open("dsfforza\\\\register.lua") to the other mod's bootstrap
+    """A player who added user_open("dsfcars\\\\register.lua") to the other mod's bootstrap
     (INSTALL.md): install.ps1 chains that file, and ours skips its call of register.lua."""
-    extra = 'user_open("felonyrework.lua")\n  user_open("dsfforza' + BS * 2 + 'register.lua")'
-    chained = FELONY.replace('user_open("felonyrework.lua")', extra)
-    for bootstrap in (BOOTSTRAP, TEST_BOOTSTRAP):
+    # dsfforza: the folder's name before the rename to dsfcars, which such a line of an older
+    # install names (that folder is gone once install.ps1 has moved it).
+    for folder, bootstrap in itertools.product(("dsfcars", "dsfforza"), (BOOTSTRAP, TEST_BOOTSTRAP)):
+        extra = 'user_open("felonyrework.lua")\n  user_open("' + folder + BS * 2 + 'register.lua")'
+        chained = FELONY.replace('user_open("felonyrework.lua")', extra)
         files = {
             CHAINED: chained,
             "felonyrework.lua": "",
-            f"dsfforza{BS}register.lua": "table.insert(events, 'register')",
+            f"dsfcars{BS}register.lua": "table.insert(events, 'register')",
         }
         events, printed = run(files, bootstrap)
-        assert events.count("register") == 1, (bootstrap.name, events)
+        assert events.count("register") == 1, (folder, bootstrap.name, events)
         assert any("opens register.lua; skipped" in line for line in printed), printed
 
 
 def test_the_collector_restarts_when_a_user_file_raises():
     """The GC wrapper around user_open restarts the collector and passes the error on."""
     for bootstrap in (BOOTSTRAP, TEST_BOOTSTRAP):
-        events, _ = run({f"dsfforza{BS}register.lua": ""}, bootstrap, raising="bad.lua")
+        events, _ = run({f"dsfcars{BS}register.lua": ""}, bootstrap, raising="bad.lua")
         assert events[-3:] == ["raised False script error in bad.lua", "gc stop", "gc restart"], (
             bootstrap.name,
             events,

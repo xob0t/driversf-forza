@@ -1,7 +1,7 @@
 r"""clonetest.lua against stubbed game APIs (lupa, Lua 5.1): the probe hides the game's UI from
 the first spawn on (config.hide_ui) and logs what each shot shows ("shot <n>: ..." lines for the
 harness's captions), and with config.wait_go spawns the first car only once the harness has written
-dsfforza\go.lua (issue #305). The game's Lua is 5.1 too: a function with more than 60 upvalues doesn't
+dsfcars\go.lua (issue #305). The game's Lua is 5.1 too: a function with more than 60 upvalues doesn't
 load. Offline, under a second.
 
     uv run python -m tests probe_clonetest
@@ -52,15 +52,15 @@ def _probe(config: str, go: list[bool] | None = None):
 
     def user_open(name):
         name = str(name)
-        if name == f"dsfforza{BS}config.lua":
+        if name == f"dsfcars{BS}config.lua":
             return loader(config, name)
         path = LUA_DIR / name.replace(BS, "/")
         return loader(path.read_text(encoding="utf-8"), name) if path.exists() else (False, "missing")
 
     g.user_open = user_open
-    g.user_fileExists = lambda name: str(name) == f"dsfforza{BS}go.lua" and bool(go and go[0])
+    g.user_fileExists = lambda name: str(name) == f"dsfcars{BS}go.lua" and bool(go and go[0])
     lua.execute(STUBS)
-    loaded = user_open(f"dsfforza{BS}clonetest.lua")  # pcall's true, or false and the error
+    loaded = user_open(f"dsfcars{BS}clonetest.lua")  # pcall's true, or false and the error
     assert loaded is True, loaded
     return lua, out
 
@@ -114,7 +114,7 @@ def _go_probe(config: str, go: list[bool]):
 
 
 def test_first_car_waits_for_the_harness_go():
-    # Issue #305: at street level, the first car is spawned only once the harness writes dsfforza\go.lua.
+    # Issue #305: at street level, the first car is spawned only once the harness writes dsfcars\go.lua.
     go = [False]
     lua, out = _go_probe("return { ids = { 266 }, wait_go = true }", go)
     _ticks(lua, 40)

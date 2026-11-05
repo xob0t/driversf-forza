@@ -347,7 +347,7 @@ passed through `0x0049E160`, about x^2.2; read back in game):
 **The tint is the mood's `vehColourBoost`** (confirmed-runtime). The probe logged
 `tint = 5, 5, 5` by day and `1, 1, 1` in the harness's dark mood, blending between the two in
 0.5 s at each mood switch (1.02, 1.65, 2.57, 3.02 ... 5). ClearDay's `vehColourBoost` is 5 and
-the harness mood (`tools/game/lua/dsfforza/lightstest.lua` `darkLighting`) sets 1. It is not
+the harness mood (`tools/game/lua/dsfcars/lightstest.lua` `darkLighting`) sets 1. It is not
 `emissiveColMod` (1.5 in both) and not `bloomEmissivenessScale`, which only the old lighting
 Lua getters and setters touch (`0x01236280`; no renderer reference).
 

@@ -192,7 +192,7 @@ def load_fleet(dsf: Path | None = None, lua: Path = HS.DEFAULT_LUA, refresh: boo
     hosts = HS.survey(dsf, lua)
     stat = dsf.stat()
     # Not the path: dsff install reads the vanilla archive from the game folder the first time and
-    # from its backup (dsfforza-backup) after, and a rewritten cache is a changed input of every car.
+    # from its backup (dsfcars-backup) after, and a rewritten cache is a changed input of every car.
     key = f"{FLEET_VERSION}:{stat.st_size}:{int(stat.st_mtime)}"
     if FLEET_CACHE.exists() and not refresh:
         try:

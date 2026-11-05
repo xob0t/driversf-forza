@@ -60,8 +60,11 @@ def vanilla_file(relative: str) -> Path:
     """A vanilla game file: tools/install.ps1's backup copy when the game folder
     holds an installed (patched) one, else the game's own."""
     game = game_paths.game_dir()  # $DSF_GAME_DIR (src/dsfforza/build/port_batch.py, tools/install.ps1 set it)
-    backup = game / "dsfforza-backup" / relative
-    return backup if backup.exists() else game / relative
+    for folder in game_paths.BACKUPS:
+        backup = game / folder / relative
+        if backup.exists():
+            return backup
+    return game / relative
 
 
 PICTURE_SIZE = (512, 256)
@@ -180,7 +183,7 @@ def add_pictures(
     already exist get their image replaced in the copy instead (a new SPOI,
     the name pointed at it). One SPOI per picture, so the root must have room
     for them under `root_limit` entries (gui.sp: 923, so 177 pictures with the
-    vanilla reader; dsfforza.asi [archive] reads more); more raise ValueError.
+    vanilla reader; dsfcars.asi [archive] reads more); more raise ValueError.
     Returns a report."""
     with source.open("rb") as stream:
         root = chnk.read_chunk(stream, 0)
@@ -195,7 +198,7 @@ def add_pictures(
     if len(pictures) > room:
         raise ValueError(
             f"{len(pictures)} pictures, room for {room} under {root_limit} root entries (one SPOI each); "
-            "raise root_limit (dsfforza.asi [archive] reads more entries)"
+            "raise root_limit (dsfcars.asi [archive] reads more entries)"
         )
     for n, (name, dds) in enumerate(pictures.items()):
         spoi = copy.deepcopy(template)
@@ -1421,7 +1424,7 @@ def glyph_y(img: Image, h: int) -> int:
 # 16-bit glyph codes (confirmed-static, research/gui-assets.md "Unlimited badges
 # and plates"): the font takes any u16 code and several texture pages (record
 # +0x12 = page index), but the vanilla HUD passes Manufacturer/Model as one byte.
-# dsfforza.asi [hud] gives each HUD text element a slot code (HUD_SLOT_CODES),
+# dsfcars.asi [hud] gives each HUD text element a slot code (HUD_SLOT_CODES),
 # copies the 16-bit glyph's record (position, size, offsets, page) over the
 # slot's record in the loaded font and sets the element's text to that one
 # byte, for cars with vehicleStats ManufacturerGlyph/ModelGlyph. Wide codes start here and live on extra
@@ -1586,7 +1589,7 @@ def add_glyphs(fonts: Path, out: Path, glyphs: dict[int, Image], textures: dict[
         for code in HUD_SLOT_CODES:
             if code in records:
                 raise ValueError(
-                    f"glyph code {code} is a dsfforza.asi HUD slot; don't use --control-codes with 16-bit glyphs"
+                    f"glyph code {code} is a dsfcars.asi HUD slot; don't use --control-codes with 16-bit glyphs"
                 )
             records[code] = [code, 0, 0, 0, 0, 0, 0, CELL, CELL, 0]
         mdid = child(drsp, "MDID")
@@ -1623,9 +1626,9 @@ def add_glyphs(fonts: Path, out: Path, glyphs: dict[int, Image], textures: dict[
 # Spr3D.unlocked<N> of card N (GUI_FrontEnd.fchunk). All 20 share one sprite
 # resource: UVs CARD_SF_BOX into the card icon atlas (texture
 # 20125a7f761d9d2c, 512 x 256 BGRA). For a car with vehicleStats
-# GarageEmblem = 1, dsfforza.asi [hud] (card_emblem) points that object at the
+# GarageEmblem = 1, dsfcars.asi [hud] (card_emblem) points that object at the
 # card picture resource Header_Sprite_20 (free while the maker group has fewer
-# than 20 cars; dsfforza.asi [garage] shows a larger one 19 cards at a time), copies the SF resource's UVs into it and binds texture
+# than 20 cars; dsfcars.asi [garage] shows a larger one 19 cards at a time), copies the SF resource's UVs into it and binds texture
 # FORZA_LOGO_UID, which rides in the vehicles_font package of Fonts.fchunk so
 # it is always loaded. The sprite sizes itself from the bound texture, so the
 # emblem texture is laid out like the atlas: 512 x 256, the Forza logo in the
@@ -1715,7 +1718,7 @@ def read_strings(path: Path | None = None) -> dict[int, str]:
 # 36190 to 249144 in global.fchunk and loc.sp), "ID:<n>" in vehicleStats.
 FIRST_STRING_ID = 700000
 # One-character strings of the 16-bit badge glyphs, GLYPH_STRING_BASE + code
-# (= mod_hud.cpp kGlyphStringBase): dsfforza.asi writes "ID:<n>" into the garage
+# (= mod_hud.cpp kGlyphStringBase): dsfcars.asi writes "ID:<n>" into the garage
 # maker list for a maker with a ManufacturerGlyph, and the renderer draws the
 # localised (UTF-16) string, which can hold a code past 0xFF (gui-assets.md,
 # "Maker list logos").
@@ -2018,7 +2021,7 @@ def plan_glyphs(
 def plan_wide_glyphs(
     cars: list[dict], texts: dict[str, dict], makes: dict, models: dict, logos, first: int = WIDE_FIRST
 ) -> tuple[dict, dict, dict]:
-    """16-bit codes for dsfforza.asi [hud]: {media: {ManufacturerGlyph,
+    """16-bit codes for dsfcars.asi [hud]: {media: {ManufacturerGlyph,
     ModelGlyph}}, {code: Image}, notes. Run after plan_glyphs (which sets
     texts[media]["dsf_make"]). A car whose maker DSF has keeps the vanilla badge
     (no ManufacturerGlyph), else one new badge per maker from the Forza logo;
@@ -2247,14 +2250,14 @@ def _build(
     cache=None,
     record: list | None = None,
 ) -> dict:
-    """Garage pictures, HUD glyphs and dsfforza\\hud.lua for the cars of a
+    """Garage pictures, HUD glyphs and dsfcars\\hud.lua for the cars of a
     src/dsfforza/build/port_car.py manifest. Writes out_dir/gui.sp, out_dir/Fonts.fchunk,
     out_dir/hud.lua and a PNG preview per picture. `wide_glyphs` also gives
     every car without a vanilla badge/plate its own 16-bit glyph
-    (ManufacturerGlyph/ModelGlyph, drawn by dsfforza.asi [hud]; the one-byte
+    (ManufacturerGlyph/ModelGlyph, drawn by dsfcars.asi [hud]; the one-byte
     Manufacturer/Model plan stays as the fallback). Every car also gets
     GarageEmblem = 1 and Fonts.fchunk the Forza emblem texture: with
-    dsfforza.asi the garage card shows the Forza logo instead of the SF disc.
+    dsfcars.asi the garage card shows the Forza logo instead of the SF disc.
     Every picture is a render of the converted car from the vanilla pictures'
     camera (render_car); `thumbnails` takes FH1's own thumbnail where there is one
     instead (sharper, but at eye level and mirrored: gui-assets.md, "Camera").
@@ -2321,7 +2324,7 @@ def _build(
     font_sheet, font_records = glyph_images(fonts)
 
     def parts(car: dict):
-        """The picture's badge and plate: the glyphs the HUD shows with dsfforza.asi
+        """The picture's badge and plate: the glyphs the HUD shows with dsfcars.asi
         (compose_picture), the vanilla badge of a maker DSF has, else badge_glyph of the Forza
         logo (plan_wide_glyphs); the vanilla plate of a model DSF has, else nameplate()."""
         t = texts[car["media"]]
@@ -2404,7 +2407,7 @@ def _build(
             dds = finish_picture(image, *parts(car), backdrop, template, preview_path(car))
         pictures[name] = dds
         entry["Picture1"] = name
-        entry[EMBLEM_FIELD] = 1  # Forza logo instead of the SF disc on the garage card (dsfforza.asi)
+        entry[EMBLEM_FIELD] = 1  # Forza logo instead of the SF disc on the garage card (dsfcars.asi)
         hud[sid] = entry
         if cache is not None:
             preview = (out_dir / f"{name}.png").read_bytes()
@@ -2442,7 +2445,7 @@ def _build(
             if e.get(k) in string_ids:
                 e[k] = f"ID:{string_ids[e[k]]}"
     new_strings = {sid: text for text, sid in string_ids.items()}
-    if wide_glyphs:  # the maker list's badges (dsfforza.asi): one string per 16-bit badge
+    if wide_glyphs:  # the maker list's badges (dsfcars.asi): one string per 16-bit badge
         new_strings.update(glyph_strings(report["_wide_codes"]["badges"].values()))
     report["_strings"] = write_locales(out_dir, new_strings)
     write_hud_lua(out_dir / "hud.lua", hud)
@@ -2473,7 +2476,7 @@ def write_hud_lua(path: Path, hud: dict[int, dict]) -> None:
     lines = [
         "-- Generated by tools/gui_assets.py; vehicleStats overrides per ported car.",
         "-- Picture1 needs the gui.sp copy, new Manufacturer/Model codes the Fonts.fchunk copy;",
-        "-- ManufacturerGlyph/ModelGlyph (16-bit codes) also need dsfforza.asi [hud];",
+        "-- ManufacturerGlyph/ModelGlyph (16-bit codes) also need dsfcars.asi [hud];",
         "-- GarageEmblem = 1 (Forza logo on the garage card) needs it and the Fonts.fchunk copy.",
         "return {",
     ]
@@ -2539,7 +2542,7 @@ def main(argv: list[str] | None = None) -> None:
     b.add_argument(
         "--install-lua",
         action="store_true",
-        help="also write hud.lua to tools/game/lua/dsfforza/hud.lua (register.lua applies it; "
+        help="also write hud.lua to tools/game/lua/dsfcars/hud.lua (register.lua applies it; "
         "only with the matching gui.sp and Fonts.fchunk copies installed)",
     )
     b.add_argument(
@@ -2558,14 +2561,14 @@ def main(argv: list[str] | None = None) -> None:
         "--wide-glyphs",
         action="store_true",
         help="every car its own badge/plate as 16-bit glyphs on extra font pages "
-        "(ManufacturerGlyph/ModelGlyph; needs dsfforza.asi [hud], else the one-byte codes show)",
+        "(ManufacturerGlyph/ModelGlyph; needs dsfcars.asi [hud], else the one-byte codes show)",
     )
     b.add_argument(
         "--root-limit",
         type=int,
         default=chnk.ENTRY_LIMIT,
         help=f"gui.sp root entries before pictures share a SPOI (default {chnk.ENTRY_LIMIT}, the vanilla "
-        "CHNK reader; dsfforza.asi [archive] lifts it, e.g. 16384: one SPOI per picture)",
+        "CHNK reader; dsfcars.asi [archive] lifts it, e.g. 16384: one SPOI per picture)",
     )
     b.add_argument("--jobs", type=int, default=1, help="processes for the car renders (default 1)")
     b.add_argument(
@@ -2616,7 +2619,7 @@ def main(argv: list[str] | None = None) -> None:
             isos=args.iso,
         )
         if args.install_lua:
-            target = REPO / "tools" / "game" / "lua" / "dsfforza" / "hud.lua"
+            target = REPO / "tools" / "game" / "lua" / "dsfcars" / "hud.lua"
             target.write_text((args.out / "hud.lua").read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
             print(f"installed {target}")
     elif args.cmd == "camera":

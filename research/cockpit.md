@@ -80,7 +80,7 @@ and so are their materials.
   Every steering marker of the host moves: the head camera hangs from the
   first, the wheel and the hands from the last (host 132 has two; "Hosts with
   two steering markers", #318).
-  p538/p559 are 0. VO3D p95 and p87 carry the rim to dsfforza.asi `[hands]`,
+  p538/p559 are 0. VO3D p95 and p87 carry the rim to dsfcars.asi `[hands]`,
   which moves the cockpit arms' and the chase-view and AI drivers' hands onto
   it ("Hands on Forza's rim", "Hands in the chase views"). The driver seat
   stays at `seat_anchor` (PR #90's placement). The main carbin's wheel, which
@@ -525,7 +525,7 @@ no camera.
 5. Patches the full entry's UPVH: the steering hinge pivot and axis, the
    role-47 marker (position and quaternion; hinge and marker at the wheel
    centre plus the hand shift along the column, VO3D p538/p559 zeroed and
-   p95/p87 set to the rim for dsfforza.asi: "Driver's hands", "The steering
+   p95/p87 set to the rim for dsfcars.asi: "Driver's hands", "The steering
    wheel turns about its hub", "Hands on Forza's rim"), the speed and tach
    gauge entries (pivot, dial quaternion, sweep from the tick table; missing
    records added, "One-gauge hosts"), the gauge cluster hinge pivot (mean
@@ -1763,7 +1763,7 @@ Offline at 0/0, 40/3000 and 90/6000 (mph/rpm), same view before and after
 (`img/gauges-one-gauge-hosts-offline.jpg`): the F40's speedometer, the 442's
 and the C1's tachometers now turn; before they stayed at rest.
 
-In game (VM, confirmed-runtime; `run-series.ps1 -Vm -Asi out\asi\dsfforza.asi
+In game (VM, confirmed-runtime; `run-series.ps1 -Vm -Asi out\asi\dsfcars.asi
 -HoldMph '40,90' -ShotSeconds 3`, before `out/final3`, after `out/g62/final`,
 same IDs): runs `vm2-20261026-164751` and `vm1-20261026-171004` (before),
 `vm1-20261026-165841` and `vm2-20261026-171113` (after). Before, the F40's
@@ -1955,7 +1955,7 @@ format.
 | 2, 0..3 | mph digits, units to thousands: (digit + 1) x 23/256, 0 for a leading blank (the speed clamped to [p606, p605]) |
 | 6, 0 | gear / 7 (0 = reverse; there is no neutral) |
 | 7, 0 | 0.5 when the gear isn't reverse |
-| 3..5 | never written (0); dsfforza.asi `[dash]` writes km/h digits on 3 |
+| 3..5 | never written (0); dsfcars.asi `[dash]` writes km/h digits on 3 |
 
 **What the shaders don't do** (in game, runs below):
 
@@ -2133,7 +2133,7 @@ dim LCD, the S2000's bar outline, the LFA's dial with its needle on 0). After:
 - the rpm bars light with the engine;
 - the LFA's needle turns over its ring, which turns orange near the redline.
 
-**C63 AMG.** Its centre display shows the km/h digits from dsfforza.asi
+**C63 AMG.** Its centre display shows the km/h digits from dsfcars.asi
 `[dash]` next to Forza's needles. They are too small to read at 1600 x 900;
 On larger km/h displays the digits read 48 at 30 mph and 153 at 90 mph (Virage `vm2-20261027-173156`, RCZ `vm2-20261027-173346`, `out/dd/test3.sp`; `img/digital-displays-kmh-ingame.jpg`).
 
@@ -2343,7 +2343,7 @@ Ruled out:
   high-contrast lights and segments, whose outlines alias like any polygon. The 599XX at
   90%: 48.3 -> 33.8.
 
-**In game (VM, confirmed-runtime).** `run-series.ps1 -Vm -Asi out\asi\dsfforza.asi -ProbeIds
+**In game (VM, confirmed-runtime).** `run-series.ps1 -Vm -Asi out\asi\dsfcars.asi -ProbeIds
 '232,1,2,3,4,5' -HoldMph '40,100' -ShotSeconds 3 -WaitSeconds 900 -ZoomPresses 0
 -BurstShots 4 -Resolution 1600x900`. The cars are the vanilla Zonda Cinque (232), then
 the S2000, Viper 2013, R8 LMS, Devon GTX and Corvette C6.R, built from master (`before3`)
@@ -2462,7 +2462,7 @@ metre further away). `img/hands-cl65-vs-host279.jpg`. At rest the CL65's driver
 holds the wheel as the vanilla host's does. What the user saw is not reproduced;
 the open question is whether it was while steering (the hand-over-hand pose at
 full lock) or another view. Issue #68, closed as not reproduced; since PR #126
-dsfforza.asi moves the chase-view driver's hands onto the rim at any angle.
+dsfcars.asi moves the chase-view driver's hands onto the rim at any angle.
 
 ## The steering wheel turns about its hub (2026-10-26, confirmed-runtime)
 
@@ -2538,7 +2538,7 @@ hash in the graph's parameter table at +0x8C/+0x90, typed float, vec2 or
 vec4). No parameter carries a wheel size; the grips are in the graph's
 animations. The matrix is the only per-car geometric input, and the wheel
 uses it too (p538/p559, which feed it, move the wheel with the hands), so a
-per-car scale of it in dsfforza.asi would scale wheel and hands together.
+per-car scale of it in dsfcars.asi would scale wheel and hands together.
 Moving the hands alone would mean editing the driver's hand bones after the
 graph has posed them (a new hook, not attempted: issue #99).
 
@@ -2551,7 +2551,7 @@ graph has posed them (a new hook, not attempted: issue #99).
   about what vanilla trucks leave); then it is scaled just enough to bring them
   to 2 cm, within 0.85 to 1.3 (`WHEEL_SCALE_RANGE`). The chase-view wheel
   follows through `align_main_wheel`. (Since 2026-10-27 only the chase-view
-  wheel is scaled; the cockpit wheel keeps Forza's size and dsfforza.asi moves
+  wheel is scaled; the cockpit wheel keeps Forza's size and dsfcars.asi moves
   the hands: "Hands on Forza's rim". Since PR #126 neither wheel is scaled:
   "Hands in the chase views".)
 - The seat doesn't move: `seat_anchor` reproduces the old placement (the
@@ -2604,7 +2604,7 @@ hubs sit 3 to 8 cm off the turn line.
 
 PR #90 left the vanilla hands gripping a fixed circle 0.177 m from the column and
 scaled 153 Forza wheels (0.85 to 1.3) where they missed it by more than 2 cm.
-Now `dsfforza.asi [hands]` (`tools/asi/src/mod_hands.cpp`) moves the hands
+Now `dsfcars.asi [hands]` (`tools/asi/src/mod_hands.cpp`) moves the hands
 onto each car's own rim after the animation has posed them, and the wheel
 always keeps Forza's size.
 
@@ -2653,7 +2653,7 @@ steering matrix turns it. Only the hand-over-hand frames leave the circle (12.6 
 `cockpit.hand_grips` (0.176 m, 45 degrees either side of the top, vanilla column)
 is the same circle to within 0.3 cm and 2.4 degrees.
 
-**Fix, cockpit view** (`dsfforza.asi [hands]`, research/asi.md "Hands on the rim"):
+**Fix, cockpit view** (`dsfcars.asi [hands]`, research/asi.md "Hands on the rim"):
 
 - **Per-car value.** The converter writes the rim into the car's VO3D
   (`cockpit.grip_params`): p95 is the drawn radius and p87 the centre from the
@@ -2732,7 +2732,7 @@ DriverTruck), drawn by FUN_00568590.
 ## Hands in the chase views (2026-10-27, issue #117)
 
 The driver in the chase and side views, and every AI driver, is a full-body
-vehicle occupant, not the cockpit arms. Since this change `dsfforza.asi [hands]`
+vehicle occupant, not the cockpit arms. Since this change `dsfcars.asi [hands]`
 moves his hands onto each ported car's rim too. The chase-view wheel keeps Forza's
 size, the same as the cockpit wheel. The seat doesn't move.
 
@@ -2830,7 +2830,7 @@ both builds.
 -Views left,front -WaitSeconds 900`, with `-DriveKey Left -DriveSeconds 10` for
 full lock):
 
-- Before: master's converter and master's dsfforza.asi.
+- Before: master's converter and master's dsfcars.asi.
 - After: this branch's converter and plugin.
 - Runs: before at lock `vm2-20261027-165034`, at rest `vm2-20261027-170129`;
   after at lock `vm1-20261027-170826`, at rest `vm2-20261027-171042` (both with
@@ -2976,7 +2976,7 @@ binding. Two other routes were looked at and not taken:
   steering record has a LOD link, and `FUN_008A5C90` draws the interior as
   the one part of the chassis record's link, with `g_ObjectToWorld` set once
   for the object (hypothesis from the decompile; untested in game).
-- *dsfforza.asi.* It could compose the wheel's turn into `M[k]` (static
+- *dsfcars.asi.* It could compose the wheel's turn into `M[k]` (static
   geometry on a free needle id turns exactly; a needle only when its dial is
   square to the column), but the live digits and rpm bar are drawn by the
   digital program with the object's `g_ObjectToWorld`, which can't be changed
@@ -3228,7 +3228,7 @@ up; `out/t318/scripts/dup_markers.py`). The engine reads them differently:
 - the UPVH parser (`FUN_0088E310`, `out/ghidra/steer4`) walks every record and
   writes spec+0x37E0 and +0x37F0 at each role-0x2F marker, so the last one wins.
   That is A, the point the wheel is drawn at (A + R(v - hinge)) and the cockpit arms
-  and the chase views' driver turn about, and the marker dsfforza.asi `[hands]`
+  and the chase views' driver turn about, and the marker dsfcars.asi `[hands]`
   reads the rim from.
 
 `host_cockpit` kept the first marker and `patch_hierarchy` moved only it. On host
@@ -3272,7 +3272,7 @@ forward and up of their Forza place, the hands with it. The E36 M3 and M Coupe s
 have their chase-view main-carbin wheel 3 to 4 cm off the turn line (#86, a separate
 fit problem).
 
-**In game** (VM 1, confirmed-runtime; `run-series.ps1 -Vm -Asi out\asi\dsfforza.asi
+**In game** (VM 1, confirmed-runtime; `run-series.ps1 -Vm -Asi out\asi\dsfcars.asi
 -Views right,left -ShotSeconds 3`):
 
 - Reproduced on master (`out/t318/before`, Speedster, FG Falcon, Opel Speedster): run
@@ -3454,7 +3454,7 @@ cockpit, the 18 placeholder cockpits keep the LOD-1 cabin):
   don't come into play. The rear half keeps 95 to 97% of the ring's triangles on the
   survey's first three cars and would save little anyway.
 - **Archive:** +0.83 MB a car, +0.46 GB over the roster. From 3.156 GB (`out/build`,
-  2026-10-31) to about 3.62 GB, against dsfforza.asi's 4 GiB `large_files` limit
+  2026-10-31) to about 3.62 GB, against dsfcars.asi's 4 GiB `large_files` limit
   (4.295 GB). That leaves about 0.68 GB: about 107 more cars at the roster's mean with
   the cabin (3.62 GB / 573 = 6.3 MB a car).
 
@@ -3487,7 +3487,7 @@ distribution, a fleet median used as a per-car value, a per-car exception), **un
 | Forza needles kept clear by a virtual display (`pod_display`) | 1.2 x the needle's length | the needle's length (its sweep); the gauge face is already kept clear as a gauge material | the needle's geometry |
 | Outside parts' texels in the cockpit atlas (`CockpitOptions`) | nodamage_LOD0 lifted to 40, brightness 0.85, saturation 0.55, alpha < 16 filled with (10, 10, 12), plain (40, 40, 42) | converted as the exterior converts the same texels (Texturing's defaults) | the same Forza texels through the exterior's conversion; the lift and tone were tuned when cabin trims were wrongly read from nodamage_LOD0 (Risks 8, "Cabin trims sample interior_LOD0") |
 | Rest turn of a needle (`convert_interior`) | skipped under 0.25 degrees | always applied | the calibration's rest angle |
-| The arms' grips (`hierarchy.hand_grips`, `ARMS_GRIPS`; `displays.rim_grips`) | a circle of the vanilla wheels' median rim (0.176 m) on the vanilla column (24 degrees), 45 degrees either side of the top, read off a screenshot | the fists as dsfforza.asi [hands] debug=1 logged them before its move: left (0.140, 0.099, 0.044), right (-0.133, 0.105, 0.050) about A; 0.177 m from the column, 52 and 49 degrees from the top | confirmed-runtime, run `vm1-20261028-174107` (both ported cars of the run, rims 0.141 and 0.166 m; one of the two arms sets FUN_00559F50 loads) |
+| The arms' grips (`hierarchy.hand_grips`, `ARMS_GRIPS`; `displays.rim_grips`) | a circle of the vanilla wheels' median rim (0.176 m) on the vanilla column (24 degrees), 45 degrees either side of the top, read off a screenshot | the fists as dsfcars.asi [hands] debug=1 logged them before its move: left (0.140, 0.099, 0.044), right (-0.133, 0.105, 0.050) about A; 0.177 m from the column, 52 and 49 degrees from the top | confirmed-runtime, run `vm1-20261028-174107` (both ported cars of the run, rims 0.141 and 0.166 m; one of the two arms sets FUN_00559F50 loads) |
 | Hinge shift along the column (`hand_shift`) | capped at 12 cm | not capped | the cap bound 0 of 570 cars (largest 8.9 cm, the tour bus); no engine limit |
 
 ### Left fitted or unknown, with their issues

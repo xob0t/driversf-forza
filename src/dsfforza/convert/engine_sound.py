@@ -273,7 +273,7 @@ def game_dir(dsf: Path | None = None) -> Path:
 
         found = game_paths.game_dir_of(dsf)
         if found is not None and found.resolve() != game_paths.REPO_VANILLA.resolve():
-            return found.parent if found.name == game_paths.BACKUP else found
+            return found.parent if found.name in game_paths.BACKUPS else found
     from dsfforza.game import game_paths
 
     return game_paths.game_dir()
@@ -358,7 +358,7 @@ def vanilla_index(
     granular flag and whether it can be a template."""
     pck = find_pck(game or game_dir(dsf))
     stat = dsf.stat()
-    # Not the archive's path: it is read from the game folder or its dsfforza-backup copy
+    # Not the archive's path: it is read from the game folder or its dsfcars-backup copy
     # (handling_dsf.load_fleet).
     key = f"{VANILLA_INDEX_VERSION}:{stat.st_size}:{int(stat.st_mtime)}"
     if pck:

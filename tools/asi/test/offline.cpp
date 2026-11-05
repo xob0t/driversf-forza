@@ -1,4 +1,4 @@
-// Offline check of dsfforza.asi patches: maps Driver.exe's image at 0x00400000
+// Offline check of dsfcars.asi patches: maps Driver.exe's image at 0x00400000
 // in this process (built at another base), runs every module's init against
 // it, and exercises the garage hooks that need no game state. Nothing of the
 // game runs, so this only proves that every expected byte matches, the
@@ -438,6 +438,6 @@ int main(int argc, char** argv)
         CHECK(q.count == 2 && entries[0] == 10 && entries[8] == 11 && entries[15] == 8 && entries[16] == 0);
         CHECK(mod_render_dropped() == before + 1);
     }
-    printf("%s (%d failures); log: %s\\dsfforza.log\n", failures ? "FAILED" : "ok", failures, dsf_plugin_dir());
+    printf("%s (%d failures); log: %s\\dsfcars.log\n", failures ? "FAILED" : "ok", failures, dsf_plugin_dir());
     return failures ? 1 : 0;
 }

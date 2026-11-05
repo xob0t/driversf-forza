@@ -1,19 +1,19 @@
-"""Garage card emblems: check every card browser shot of a run against what dsfforza.asi gave each card.
+"""Garage card emblems: check every card browser shot of a run against what dsfcars.asi gave each card.
 
 Each card of the garage's card browser has its disc (`Spr3D.unlocked<N>`) at
 its own top right corner, where it overlaps the picture of the next card
-behind it. dsfforza.asi `[hud] card_emblem` shows the Forza logo there for a
+behind it. dsfcars.asi `[hud] card_emblem` shows the Forza logo there for a
 car with `GarageEmblem = 1` and the vanilla SF disc otherwise
 (research/gui-assets.md, "Garage card emblem").
 
 The run needs `[garage] menu_debug=1` and `[hud] emblem_debug=1` in the
 plugin's ini and `-MenuKeys` with Right/Left taps in the card browser. For
-every Right/Left shot (menu-NN.png) the tool finds, in dsfforza.log, the
+every Right/Left shot (menu-NN.png) the tool finds, in dsfcars.log, the
 highlighted card (`itemBrowserIndex`) and the emblem of each card of the last
 car list fill, then classifies the discs on screen at the highlighted card and
 its neighbours (-1, +1, +2) as Forza (red) or SF (silver) and compares.
 Shots are matched to log lines by time: events.json's `wall` (the guest clock,
-as in dsfforza.log). Runs from before run-test.ps1 wrote it get the clock offset
+as in dsfcars.log). Runs from before run-test.ps1 wrote it get the clock offset
 from votes (key presses and car list runs follow their shots), which taps at an
 even pace leave nearly tied with one tap off; check such an offset by hand.
 
@@ -66,7 +66,7 @@ def shot_discs(path: Path) -> dict[int, str]:
 
 
 def parse_log(lines) -> dict:
-    """Timed records of dsfforza.log: emblem fills, itemBrowserIndex, car list runs, key presses."""
+    """Timed records of dsfcars.log: emblem fills, itemBrowserIndex, car list runs, key presses."""
     out = {"fills": [], "indexes": [], "lists": [], "presses": [], "decisions": {}}
     fill_no = None
     for line in lines:
@@ -78,7 +78,7 @@ def parse_log(lines) -> dict:
             if int(m[1]) != fill_no:
                 fill_no = int(m[1])
                 out["fills"].append((t, {}))
-            emblem = "F" if m[4] == "F" else "S"
+            emblem = "S" if m[4] == "S" else "F"  # "emblem" (before the rename: "Forza logo") or "SF"
             out["fills"][-1][1][int(m[2]) - 1] = (int(m[3]), emblem)
             cars = out["lists"][-1][1]["cars"] if out["lists"] else 0
             out["decisions"][int(m[3])] = (emblem, cars)
@@ -124,9 +124,9 @@ def last_before(records: list, t: float):
 
 def check(run: Path, hud: Path | None = None) -> int:
     events = json.loads((run / "events.json").read_text(encoding="utf-8-sig"))
-    log = parse_log((run / "dsfforza.log").read_text(errors="replace").splitlines())
+    log = parse_log((run / "dsfcars.log").read_text(errors="replace").splitlines())
     if not log["fills"] or not log["presses"]:
-        print("no emblem_debug fills or menu_debug key presses in dsfforza.log", file=sys.stderr)
+        print("no emblem_debug fills or menu_debug key presses in dsfcars.log", file=sys.stderr)
         return 2
     walls = all("wall" in e for e in events)
     menu = []

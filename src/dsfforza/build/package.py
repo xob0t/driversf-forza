@@ -1,18 +1,18 @@
-"""The release zip: the code, the prebuilt dsfforza.asi and the install.cmd launcher.
+"""The release zip: the code, the prebuilt dsfcars.asi and the install.cmd launcher.
 
-    uv run dsff package --asi out/asi/dsfforza.asi --version v1.2.0 --out dist
+    uv run dsff package --asi out/asi/dsfcars.asi --version v1.2.0 --out dist
 
 .github/workflows/release.yml runs this after building the plugin. The zip holds the
 git-tracked files a player's install needs (the Python package, pyproject.toml and
 uv.lock, tools/install.ps1, the registration Lua, the car lists, the launcher) plus:
 
-    plugin/dsfforza.asi, plugin/dsfforza.ini, plugin/dsfforza.build.json
+    plugin/dsfcars.asi, plugin/dsfcars.ini, plugin/dsfcars.build.json
     assets/PUT-YOUR-FORZA-ISOS-HERE.txt
 
 Nothing from the game or Forza, and no third-party binaries: DriverNGHook, the ASI
 loader and vgmstream are downloaded at install time, pinned by version and SHA-256
 (src/dsfforza/build/thirdparty.py). `uv run dsff install` in the unzipped folder uses
-plugin/dsfforza.asi (src/dsfforza/build/install.py).
+plugin/dsfcars.asi (src/dsfforza/build/install.py).
 """
 
 from __future__ import annotations
@@ -36,9 +36,9 @@ FILES = (
     "uv.lock",
     ".python-version",
     "tools/install.ps1",
-    "tools/asi/dsfforza.ini",
+    "tools/asi/dsfcars.ini",
     "tools/game/lua/player/bootstrap.lua",
-    "tools/game/lua/dsfforza/register.lua",
+    "tools/game/lua/dsfcars/register.lua",
     "research/forza-roster.tsv",
 )
 FOLDERS = ("src/dsfforza/", "tools/batches/", "tools/release/")
@@ -100,9 +100,9 @@ def build_zip(asi: Path, version: str, out_dir: Path, repo: Path = REPO, files: 
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for f in files:
             z.write(repo / f, f"{name}/{f}")
-        z.write(asi, f"{name}/plugin/dsfforza.asi")
-        z.write(repo / "tools" / "asi" / "dsfforza.ini", f"{name}/plugin/dsfforza.ini")
-        z.writestr(f"{name}/plugin/dsfforza.build.json", json.dumps(stamp, indent=1) + "\n")
+        z.write(asi, f"{name}/plugin/dsfcars.asi")
+        z.write(repo / "tools" / "asi" / "dsfcars.ini", f"{name}/plugin/dsfcars.ini")
+        z.writestr(f"{name}/plugin/dsfcars.build.json", json.dumps(stamp, indent=1) + "\n")
         z.writestr(f"{name}/assets/PUT-YOUR-FORZA-ISOS-HERE.txt", ASSETS_NOTE.replace("\n", "\r\n"))
         z.writestr(f"{name}/VERSION", f"{version} {stamp['commit']}\n")
     return target
@@ -112,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__.splitlines()[0], formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__
     )
-    parser.add_argument("--asi", type=Path, default=REPO / "out" / "asi" / "dsfforza.asi", help="the built plugin")
+    parser.add_argument("--asi", type=Path, default=REPO / "out" / "asi" / "dsfcars.asi", help="the built plugin")
     parser.add_argument("--version", required=True, help="e.g. v1.2.0 (the tag) or a dev label")
     parser.add_argument("--out", type=Path, default=REPO / "dist", help="output folder (default: dist)")
     parser.add_argument("--list", action="store_true", help="print the files that would go in, and stop")

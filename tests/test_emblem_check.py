@@ -1,4 +1,4 @@
-"""dsff emblem_check: dsfforza.log parsing, shot-to-log clock offset, disc colour classes.
+"""dsff emblem_check: dsfcars.log parsing, shot-to-log clock offset, disc colour classes.
 
 uv run python tests/test_emblem_check.py     # or every test: uv run python -m tests
 """

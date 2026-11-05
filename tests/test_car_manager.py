@@ -24,12 +24,12 @@ def archive(path: Path, ids: list[int]) -> None:
 
 
 def plugin(game: Path, capabilities: str | None = "archive.packages archive.ids lua.packages") -> None:
-    """A stand-in plugins/dsfforza.asi: some DLL-like bytes with the capability marker
+    """A stand-in plugins/dsfcars.asi: some DLL-like bytes with the capability marker
     (tools/asi/src/patch.h); None: a plugin from before the marker."""
     path = game / car_manager.PLUGIN
     path.parent.mkdir(parents=True, exist_ok=True)
     marker = b"" if capabilities is None else car_manager.CAPABILITIES_MARKER + capabilities.encode() + b"\0"
-    path.write_bytes(b"MZ" + b"\0" * 200 + b"dsfforza.asi %s, ini %s\0" + marker + b"\0" * 64)
+    path.write_bytes(b"MZ" + b"\0" * 200 + b"dsfcars.asi %s, ini %s\0" + marker + b"\0" * 64)
 
 
 class ManagerTest(unittest.TestCase):
@@ -62,7 +62,7 @@ class ManagerTest(unittest.TestCase):
         self.assertEqual((m.state["cars"][a]["id"], m.state["cars"][b]["id"]), (3, 5))  # 1, 2, 4 are the archive's
         self.assertEqual(
             self.listed(),
-            {3: r"dsfforza\cars\forza.fh1.CAR_A_10\car.sp", 5: r"dsfforza\cars\forza.fh1.CAR_B_10\car.sp"},
+            {3: r"dsfcars\cars\forza.fh1.CAR_A_10\car.sp", 5: r"dsfcars\cars\forza.fh1.CAR_B_10\car.sp"},
         )
         # car.sp is the package's, byte for byte: both hold their builder's ID 1, and the
         # plugin writes 3 and 5 into the data it serves.
@@ -309,7 +309,7 @@ class ManagerTest(unittest.TestCase):
         good = path.read_text()
         path.write_text(good.replace("CAR_A_10", "OTHER"))
         self.assertTrue(any("ID 3 lists" in p for p in m.verify()))
-        path.write_text(good + "9 dsfforza\\cars\\stray.sp\n")
+        path.write_text(good + "9 dsfcars\\cars\\stray.sp\n")
         self.assertTrue(any("ID 9 lists" in p for p in m.verify()))
         path.write_text(good)
         self.assertEqual(m.verify(), [])
@@ -337,12 +337,12 @@ class ManagerTest(unittest.TestCase):
         m = self.manager()
         a = m.install(self.package("CAR_A_10"))
         b = m.install(self.package("CAR_B_10"))
-        (self.game / "dsfforza" / "generated").mkdir(parents=True)
-        (self.game / "dsfforza" / "generated" / "gui.sp").write_bytes(b"x")
+        (self.game / "dsfcars" / "generated").mkdir(parents=True)
+        (self.game / "dsfcars" / "generated" / "gui.sp").write_bytes(b"x")
         car_manager.main(["--game", str(self.game), "uninstall"])
         cars = self.game / car_manager.CARS_DIR
         self.assertEqual(sorted(p.name for p in cars.iterdir()), [car_manager.STATE])
-        self.assertFalse((self.game / "dsfforza" / "generated").exists())
+        self.assertFalse((self.game / "dsfcars" / "generated").exists())
         self.assertFalse((self.game / car_manager.LUA).exists())
         # A later install: the same IDs, so the save's flags are still each car's.
         m = self.manager()
@@ -351,7 +351,7 @@ class ManagerTest(unittest.TestCase):
         m.install(self.package("CAR_A_10"))
         self.assertEqual((m.state["cars"][a]["id"], m.state["cars"][b]["id"]), (3, 5))
         car_manager.main(["--game", str(self.game), "uninstall", "--forget-ids"])
-        self.assertFalse((self.game / "dsfforza").exists())  # nothing of ours left
+        self.assertFalse((self.game / "dsfcars").exists())  # nothing of ours left
 
     def write_ported(self, cars: dict[int, str]) -> Path:
         """A merged install's ported.lua (port_car.lua_snippet's rows)."""
@@ -401,7 +401,7 @@ class ManagerTest(unittest.TestCase):
         self.assertEqual(m.state["cars"][a]["id"], 5)
         self.assertEqual(m.verify(), [])
         self.assertEqual(sp.read_bytes(), before)  # only the list changes; the plugin writes 5 in memory
-        self.assertEqual(self.listed(), {5: rf"dsfforza\cars\{a}\car.sp"})
+        self.assertEqual(self.listed(), {5: rf"dsfcars\cars\{a}\car.sp"})
 
     def test_two_packages_with_one_builder_id(self):
         """Packages from different builds can hold the same model ID: each is installed as it
@@ -433,7 +433,7 @@ class ManagerTest(unittest.TestCase):
         self.assertEqual(car_manager.plugin_capabilities(self.game / car_manager.PLUGIN), car_manager.MANAGER_NEEDS)
         plugin(self.game, None)
         self.assertEqual(car_manager.plugin_capabilities(self.game / car_manager.PLUGIN), set())
-        self.assertIsNone(car_manager.plugin_capabilities(self.tmp / "none" / "dsfforza.asi"))
+        self.assertIsNone(car_manager.plugin_capabilities(self.tmp / "none" / "dsfcars.asi"))
 
     def test_marker_matches_the_plugin_source(self):
         """The marker and names the manager reads are the ones patch.h defines, and the plugin
@@ -504,7 +504,7 @@ class ManagerTest(unittest.TestCase):
                     car_manager.main(["--game", str(self.game), *argv])
                 self.assertIn("game_data prepare", str(refused.exception))
         self.assertEqual({p.name: p.read_bytes() for p in cars.iterdir() if p.is_file()}, before)
-        self.assertFalse((self.game / "dsfforza" / "generated").exists())
+        self.assertFalse((self.game / "dsfcars" / "generated").exists())
 
     def test_check_plugin_command(self):
         """install.ps1's preflight: a plugin file is checked against a build's packages without
@@ -520,6 +520,40 @@ class ManagerTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 car_manager.main(["--game", str(self.game), "check-plugin", "--plugin", str(plugin_file), str(folder)])
         self.assertFalse((self.game / car_manager.CARS_DIR).exists())
+
+    def test_a_plugin_from_before_the_rename_is_named_as_such(self):
+        """A dsfforza.asi (its marker is DSFFORZA-CAPABILITIES) reads dsfforza\\cars\\: refused
+        with that reason, whatever it lists."""
+        old = self.tmp / "dsfforza.asi"
+        old.write_bytes(
+            b"MZ\0" + car_manager.LEGACY_CAPABILITIES_MARKER + b"archive.packages archive.ids lua.packages\0"
+        )
+        with self.assertRaises(SystemExit) as refused:
+            car_manager.check_plugin(old, [], "check-plugin")
+        self.assertIn("before the rename to dsfcars", str(refused.exception))
+
+    def test_an_install_of_the_old_names_is_refused(self):
+        """Pointed at an install from before the rename (any of its parts), every command but
+        check-plugin stops, names install.ps1 -Migrate and writes nothing."""
+        for part in car_manager.LEGACY_PARTS:
+            with self.subTest(part=str(part)):
+                path = self.game / part
+                if part.suffix:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b"old")
+                else:
+                    path.mkdir(parents=True)
+                before = sorted(p for p in self.game.rglob("*"))
+                for command in (["status"], ["verify"], ["install", str(self.package("CAR_A_10"))], ["seed"]):
+                    with self.assertRaises(SystemExit) as refused:
+                        car_manager.main(["--game", str(self.game), *command])
+                    self.assertIn("-Migrate", str(refused.exception))
+                self.assertEqual(sorted(p for p in self.game.rglob("*")), before)
+                self.assertEqual(car_manager.old_layout(self.game), [part])
+                if part.suffix:
+                    path.unlink()
+                else:
+                    path.rmdir()
 
     def test_a_package_asks_for_what_the_plugin_lacks(self):
         """A package's own `requires` is checked too (here a plugin that lists only
@@ -552,7 +586,7 @@ class ManagerTest(unittest.TestCase):
         self.assertTrue(any("car.json is missing" in p for p in m.verify()))
         self.assertIn("(no car.json)", m.status()[0])
         m.install(self.package("CAR_A_10", version=2))  # installing it again puts it back
-        self.assertEqual(self.listed(), {3: rf"dsfforza\cars\{a}\car.sp"})
+        self.assertEqual(self.listed(), {3: rf"dsfcars\cars\{a}\car.sp"})
         self.assertEqual(m.verify(), [])
 
     def test_format_1_state_is_upgraded_in_place(self):

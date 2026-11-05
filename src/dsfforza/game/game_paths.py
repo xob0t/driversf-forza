@@ -2,7 +2,7 @@
 
 tools/install.ps1 replaces Install/dngvehicles.sp, Install/gui.sp,
 media/Fonts.fchunk and Locale/<language>/global.fchunk and keeps the originals
-in <game>/dsfforza-backup/<same path>. Builds must read the originals, so every
+in <game>/dsfcars-backup/<same path>. Builds must read the originals, so every
 tool that takes a game file goes through vanilla() instead of opening it
 directly.
 
@@ -20,7 +20,11 @@ from pathlib import Path
 
 from dsfforza import REPO
 
-BACKUP = "dsfforza-backup"
+BACKUP = "dsfcars-backup"
+# The folder's name in an install from before the runtime was renamed to dsfcars (tools/install.ps1
+# -Migrate moves it to BACKUP); a build reads the originals from either.
+LEGACY_BACKUP = "dsfforza-backup"
+BACKUPS = (BACKUP, LEGACY_BACKUP)
 # Resolved: in a git worktree out/vanilla is a junction to the main checkout's
 # (tools/worktree-setup.ps1), and the paths compared with it are resolved too.
 _legacy = REPO / "out" / "stock"  # the folder's name before v0.1.3
@@ -60,20 +64,19 @@ def game_dir_of(path: Path) -> Path | None:
 
 
 def vanilla(path: Path | None, quiet: bool = False) -> Path:
-    """`path` (default: the game's dngvehicles.sp), or its original when a dsfforza
-    install replaced it: the repo's out/vanilla copy if it has one, else the install's backup."""
+    """`path` (default: the game's dngvehicles.sp), or its original when an install replaced
+    it: the repo's out/vanilla copy if it has one, else the install's backup (BACKUPS)."""
     path = Path(path) if path is not None else game_archive()
     game = game_dir_of(path)
-    if game is None or game.name == BACKUP or game == REPO_VANILLA:
+    if game is None or game.name in BACKUPS or game == REPO_VANILLA:
         return path
-    if not (game / BACKUP).is_dir():
-        return path  # no dsfforza install: the game's own file is vanilla
+    backups = [game / name for name in BACKUPS if (game / name).is_dir()]
+    if not backups:
+        return path  # no install: the game's own file is vanilla
     relative = path.resolve().relative_to(game)
-    for original in (REPO_VANILLA / relative, game / BACKUP / relative):
+    for original in (REPO_VANILLA / relative, *(backup / relative for backup in backups)):
         if original.is_file():
             if not quiet:
-                print(
-                    f"note: {path} is replaced by a dsfforza install; reading the original {original}", file=sys.stderr
-                )
+                print(f"note: {path} is replaced by an install; reading the original {original}", file=sys.stderr)
             return original
     return path

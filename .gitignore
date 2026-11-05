@@ -2,8 +2,8 @@ _ref/
 out/
 __pycache__/
 assets/
-tools/game/lua/dsfforza/ported.lua
-tools/game/lua/dsfforza/hud.lua
+tools/game/lua/dsfcars/ported.lua
+tools/game/lua/dsfcars/hud.lua
 .claude/worktrees/
 .venv/
 dist/

@@ -1,4 +1,4 @@
-"""car_package: a per-car package for dsfforza.asi [archive] packages (synthetic files, no game data)."""
+"""car_package: a per-car package for dsfcars.asi [archive] packages (synthetic files, no game data)."""
 
 import struct
 import tempfile
@@ -42,7 +42,7 @@ class CarPackageTest(unittest.TestCase):
             write_chunk(f, None, [node("SSIC", [node("NONR", [leaf("VSCT", table)], align=4)])])
 
     def test_make(self):
-        out = self.tmp / "game" / "dsfforza" / "cars" / "car.sp"
+        out = self.tmp / "game" / "dsfcars" / "cars" / "car.sp"
         self.assertEqual(car_package.make(self.chnk, 700, 205, self.dsf, out), 1)
         with out.open("rb") as f:
             root = read_chunk(f, 0)
@@ -55,13 +55,13 @@ class CarPackageTest(unittest.TestCase):
         self.assertEqual({struct.unpack_from("<H", vsct, i * VSCT_RECORD.size)[0] for i in range(3)}, {205})
 
     def test_list(self):
-        cars = self.tmp / "game" / "dsfforza" / "cars"
+        cars = self.tmp / "game" / "dsfcars" / "cars"
         cars.mkdir(parents=True)
         lst = cars / "cars.txt"
         car_package.add_to_list(lst, 700, cars / "a.sp")
         car_package.add_to_list(lst, 701, cars / "b.sp")
         car_package.add_to_list(lst, 700, cars / "c.sp")
-        self.assertEqual(lst.read_text().splitlines(), ["701 dsfforza\\cars\\b.sp", "700 dsfforza\\cars\\c.sp"])
+        self.assertEqual(lst.read_text().splitlines(), ["701 dsfcars\\cars\\b.sp", "700 dsfcars\\cars\\c.sp"])
 
     def test_bad_id(self):
         with self.assertRaises(ValueError):

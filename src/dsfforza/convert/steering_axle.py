@@ -26,18 +26,18 @@ LOD for the chase views; cockpit.fit_wheel_points) and reports:
   with two steering markers"); `eye_off` is the head camera's sideways distance from
   the hub the cockpit view draws;
 - grip: where the driver's hands hold it in the cockpit view: the arms' fists as
-  dsfforza.asi's probe logged them about A (cockpit.hand_grips, ARMS_GRIPS: 0.177 m
+  dsfcars.asi's probe logged them about A (cockpit.hand_grips, ARMS_GRIPS: 0.177 m
   from the column, 49 and 52 degrees from the top; research/cockpit.md "Hands on
   Forza's rim"). `grip_vanilla` is the largest
   distance from those grips to the drawn rim; `grip_asi` the same after
-  dsfforza.asi [hands] moves each grip onto the rim the car's VO3D gives it
+  dsfcars.asi [hands] moves each grip onto the rim the car's VO3D gives it
   (p95 radius, p87 centre along the column; by ASI_MAX_MOVE at most, the
   plugin's default), and `asi_rim` how far that rim is from the drawn one
   (centre distance plus radius difference).
 - the chase views' grips: the driver there is a full-body occupant posed in the
   driver seat marker's frame, his grips the same circle about the vanilla
   steering marker's place in that frame (rig_grips). The same `grip_vanilla` and
-  `grip_asi` (dsfforza.asi [hands] moves him too), and
+  `grip_asi` (dsfcars.asi [hands] moves him too), and
   `turn_off`, how far from the rim's column the animations turn his hands
   (the plugin keeps each hand's angle about that centre, so they turn with the
   wheel, and moves them by up to `asi_move` over a full turn).
@@ -59,7 +59,7 @@ from pathlib import Path
 from dsfforza.convert import cockpit
 
 NEAR = 0.3  # m from the hinge: the largest rim (0.24 m) plus the largest hand shift (6 cm)
-# dsfforza.asi [hands] (tools/asi/src/mod_hands.cpp) moves a hand that holds the wheel
+# dsfcars.asi [hands] (tools/asi/src/mod_hands.cpp) moves a hand that holds the wheel
 # by at most this (max_move_mm); the grips modelled here always hold it.
 ASI_MAX_MOVE = 0.12
 # DSF's full lock: the steering matrix turns the cockpit arms by up to 1.7456 rad (100 deg)
@@ -162,7 +162,7 @@ def turn_error(pts: list[tuple], pivot, direction, hinge_axis) -> dict:
 
 
 def asi_target(grip, rim, about) -> tuple:
-    """Where dsfforza.asi [hands] puts a grip of the vanilla rig, which the animations turn
+    """Where dsfcars.asi [hands] puts a grip of the vanilla rig, which the animations turn
     on a circle about `about`: on `rim` (centre, unit axis, radius) at the grip's angle
     about `about` (for the cockpit arms `about` is on the column: the nearest point)."""
     centre, axis, radius = rim
@@ -198,7 +198,7 @@ def rig_grips(anchor, column, seat=None) -> tuple[list[tuple], tuple]:
 
 def grip_error(anchor, drawn: dict, asi_rim, seat=None) -> dict:
     """The hand rig's grips about `anchor` against the drawn rim, without and with
-    dsfforza.asi (asi_rim: the rim from the car's VO3D, or None for a car without it).
+    dsfcars.asi (asi_rim: the rim from the car's VO3D, or None for a car without it).
     `turn_off`: how far from the drawn rim's column the animations turn the grips
     (about `anchor`), in the rim's plane. `asi_move`: the largest move the plugin makes
     to a grip, at rest or turned up to TURN_DEG either way (15 degree steps)."""
@@ -245,7 +245,7 @@ def survey_vehicle(archive: Path, stream, root, spool_id: int) -> dict:
     q = struct.unpack_from("<4f", marker_raw, 0x10)
     direction = cockpit.quat_rotate(q, (0.0, 0.0, -1.0))
     row: dict = {"pivot": pivot, "direction": direction}
-    # The hand rig's anchor A and the rim dsfforza.asi reads (cockpit.GRIP_PARAMS).
+    # The hand rig's anchor A and the rim dsfcars.asi reads (cockpit.GRIP_PARAMS).
     from dsfforza.build import handling
 
     vo3d_data = vm.payload(stream, vm.child(vm.child(kinds[0], "NONR"), "VO3D"))
@@ -343,10 +343,10 @@ def summary(rows: list[dict], view: str) -> None:
     for key, label in (
         ("eye_off", "head camera sideways off the drawn hub"),
         ("grip_vanilla", "grips off the rim, vanilla hands"),
-        ("grip_asi", "grips off the rim, with dsfforza.asi [hands]"),
-        ("asi_rim", "dsfforza.asi's rim vs the drawn rim"),
+        ("grip_asi", "grips off the rim, with dsfcars.asi [hands]"),
+        ("asi_rim", "dsfcars.asi's rim vs the drawn rim"),
         ("turn_off", "the hands' turn centre off the drawn rim's column"),
-        ("asi_move", "dsfforza.asi's largest move of a hand, up to full lock"),
+        ("asi_move", "dsfcars.asi's largest move of a hand, up to full lock"),
     ):
         have = [r for r in ok if key in r[view]]
         if not have:

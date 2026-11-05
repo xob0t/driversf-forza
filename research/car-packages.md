@@ -3,7 +3,7 @@
 Updated: 2026-11-02
 
 Feasibility spike for the car mod manager (#170, #149, #162). The question is
-whether `dsfforza.asi` can make `Driver.exe` 1.04 load cars from a file per
+whether `dsfcars.asi` can make `Driver.exe` 1.04 load cars from a file per
 car, leaving `Install\dngvehicles.sp` as the vanilla game (or another mod)
 has it. Evidence tags as in `dngvehicles.md`. Static outputs:
 `out/ghidra/cp1`, `cp2` (ExploreAddresses) and `dsff xref`.
@@ -12,7 +12,7 @@ has it. Evidence tags as in `dngvehicles.md`. Static outputs:
 
 Yes, and with little new code. A car request goes from model ID to SSLP
 record to root entry index, and then to one `read entry(i)` on the vehicle
-archive's root reader (confirmed-static, below). `dsfforza.asi`'s `[archive]`
+archive's root reader (confirmed-static, below). `dsfcars.asi`'s `[archive]`
 module already replaces every function of that reader. So the plugin can
 add three root entries per car to the vehicle archive's table and serve
 their reads from the car's own file. With SSLP and VSCT records added for
@@ -113,17 +113,17 @@ small sites. Notes on the risks the brief named:
 | --- | --- | --- |
 | SSLP records | merged into SSIC | **yes**: hook FUN_005A0B50 (proven, 2026-11-01) |
 | VSCT records | merged into SSIC (host's three records) | **yes**: hook FUN_0086C630 (proven); the package carries them as a 4th entry |
-| `vehicleStats` entry | `UserLuaScripts\dsfforza\ported.lua`, read by `register.lua` | yes. These are loose Lua files, so the manager writes them from the enabled packages' metadata (no archive). `register.lua` drops IDs the plugin left out, and every package car when the plugin's packages aren't active (#511; `asi.md` "Telling Lua the plugin is there") |
+| `vehicleStats` entry | `UserLuaScripts\dsfcars\ported.lua`, read by `register.lua` | yes. These are loose Lua files, so the manager writes them from the enabled packages' metadata (no archive). `register.lua` drops IDs the plugin left out, and every package car when the plugin's packages aren't active (#511; `asi.md` "Telling Lua the plugin is there") |
 | HUD badge and plate (`ManufacturerGlyph`/`ModelGlyph`, `hud.lua`) | glyphs merged into `media\Fonts.fchunk` (vehicles_font atlas) | not yet. A font's glyphs are records into page textures of one FNTD, and all pages are sized like page 0 (`gui-assets.md`). Runtime glyph pages would need new texture resources; recommended instead: a **generated** Fonts.fchunk in the manager's folder, opened in place of the vanilla one (below) |
 | garage picture | SPOIs merged into `Install\gui.sp` (UIDL, SPOL, SSLP) | possible with the same root-entry injection (gui.sp also loads through FUN_005A11E0 and has an SSLP), plus UIDL and SPOL records. Simpler first: a generated gui.sp, opened in place of the vanilla one |
 | maker and model names | `Locale\<lang>\global.fchunk` strings 700000+ and 900000+ (`"ID:n"`) | plausible at run time: the renderer turns `"ID:n"` into a string through FUN_00835250/FUN_008352B0 (`gui-assets.md`). A hook there could serve IDs 700000+ from the packages' names (hypothesis, needs RE). Until then: generated copies |
 | garage groups | `[garage]` from `vehicleStats` (`ManufacturerName`, 120 groups) | yes, nothing per car |
-| save flags | IDs below 304 in `autosave.dat`, 304..999 in `dsfforza-garage.dat`, keyed by ID | yes, if IDs are stable (the manager's key → ID map). A removed car's ID stays reserved (tombstone) so a new car doesn't inherit its owned/unlocked flags |
+| save flags | IDs below 304 in `autosave.dat`, 304..999 in `dsfcars-garage.dat`, keyed by ID | yes, if IDs are stable (the manager's key → ID map). A removed car's ID stays reserved (tombstone) so a new car doesn't inherit its owned/unlocked flags |
 
 **Generated files instead of rewritten ones.** The manager writes merged
 copies of gui.sp, Fonts.fchunk and global.fchunk from the vanilla files plus
 the enabled packages, into its own folder. The plugin opens those in place of
-the game's (`Install\gui.sp` → `dsfforza\generated\gui.sp`), so no game file
+the game's (`Install\gui.sp` → `dsfcars\generated\gui.sp`), so no game file
 is written. The opens go through the file layer's FUN_00857370(name, flags),
 18 call sites. Hooking that function (first instruction `A1 C4 D1 43 01`,
 the slot table's singleton) rewrites a name from a table. Whether *every*
@@ -136,7 +136,7 @@ change is not measured.
 
 ## Design
 
-- **Package (installed form):** `<game>\dsfforza\cars\<key>\car.sp`, a CHNK of 4
+- **Package (installed form):** `<game>\dsfcars\cars\<key>\car.sp`, a CHNK of 4
   root entries: the car's three VEHC entries (port_batch's `work/<media>.chnk`)
   and `VSCT` (3 × 28 bytes). It is the package's car.sp byte for byte,
   with its builder's model ID in the full VEHC (VSVH, VO3D, SPID, UPVH;
@@ -147,7 +147,7 @@ change is not measured.
   `.sp` (any ID), the garage picture, badge and plate images, metadata
   (names, year, stats, maker group) and requirements ("Package format 1"
   below). The manager unpacks it as it is and writes the list.
-- **List:** `<game>\dsfforza\cars\cars.txt`, one `id path` per enabled car,
+- **List:** `<game>\dsfcars\cars\cars.txt`, one `id path` per enabled car,
   written by the manager. Disable = drop the line (the file stays); remove
   = drop the line and the file (the ID stays reserved in the map).
 - **Plugin (`[archive] packages=1`):** at start, open every listed package,
@@ -172,18 +172,18 @@ as for the other modules. Without the reader patches there are no packages.
 
 ```sh
 uv run dsff car_package make --chnk <main>/out/build/work/BMW_M3E30_91.chnk --id 700 --host 205 \
-    --out out/cp/game/dsfforza/cars/BMW_M3E30_91.sp --list out/cp/game/dsfforza/cars/cars.txt
+    --out out/cp/game/dsfcars/cars/BMW_M3E30_91.sp --list out/cp/game/dsfcars/cars/cars.txt
 # 0: VEHC 0x1000 size 0x17D000 (ID 1 -> 700); 1: VEHC 0x17F000; 2: VEHC 0x317000; 3: VSCT 0x54
 ```
 
 ```powershell
 $env:PATH = "C:\Program Files (x86)\Microsoft Visual Studio\Installer;$env:PATH"
 .\tools\asi\build.ps1 -Test
-# a copy of out\asi\dsfforza.asi + dsfforza.ini with [archive] packages=1 in out\cp\asi\
-.\tools\wsb\run-series.ps1 -Vm -Asi out\cp\asi\dsfforza.asi -ArchiveOnly `
+# a copy of out\asi\dsfcars.asi + dsfcars.ini with [archive] packages=1 in out\cp\asi\
+.\tools\wsb\run-series.ps1 -Vm -Asi out\cp\asi\dsfcars.asi -ArchiveOnly `
     -Archives out\vanilla\Install\dngvehicles.sp,out\vanilla\Install\dngvehicles.sp `
     -Overlay '',out\cp\game -Labels without-package,with-package -ProbeIds '266,700' `
-    -LuaFiles 'dsfforza\ported.lua=out\cp\lua\ported.lua' -WaitSeconds 240
+    -LuaFiles 'dsfcars\ported.lua=out\cp\lua\ported.lua' -WaitSeconds 240
 ```
 
 `out\cp\lua\ported.lua` is the main build's `dngvehicles.lua` cut to one
@@ -192,10 +192,10 @@ entry, `[700]` (host 205), so the car has a `vehicleStats` entry.
 - **Without the package** (`runs\vm1-20261101-120510`): the log says `no list
   ...; no car packages` and no package site is hooked. 266 spawns; the 700
   request finds no SSLP record and the player stays in Tanner's car (62).
-- **With it** (`runs\vm1-20261101-120730`), `dsfforza.log`:
+- **With it** (`runs\vm1-20261101-120730`), `dsfcars.log`:
 
   ```
-  packages: 700 dsfforza\cars\BMW_M3E30_91.sp: VEHC 1560576/1667072/2097152 bytes, NONR 0x59060/0x360/0x410
+  packages: 700 dsfcars\cars\BMW_M3E30_91.sp: VEHC 1560576/1667072/2097152 bytes, NONR 0x59060/0x360/0x410
   packages: 005A13C4 spool open, 005A0B50 SSLP load, 0086C630 VSCT load hooked; 1 car packages
   packages: vehicle archive 'Install\dngvehicles.sp' opens in reader 11D7BDC4 (ok)
   packages: reader 11D7BDC4: root entries 453..455 are the 1 car packages
@@ -296,7 +296,7 @@ textures, the picture is DXT5), members at its root and nothing else:
 | Member | What | Where the rule comes from |
 | --- | --- | --- |
 | `car.json` | the manifest (below) | |
-| `car.sp` | the installed form: CHNK v3, not compressed, entries VEHC, VEHC, VEHC, VSCT (84 bytes, three records, all for `car.host`); each VEHC's entries inside it; NONR at most 0x6D000 / 0x1000 / 0x1000 | dsfforza.asi `pkg_open` and `h_sslp_load`; the slot buffers are the vanilla SSLP header's (+0x08 + 4 × kind) |
+| `car.sp` | the installed form: CHNK v3, not compressed, entries VEHC, VEHC, VEHC, VSCT (84 bytes, three records, all for `car.host`); each VEHC's entries inside it; NONR at most 0x6D000 / 0x1000 / 0x1000 | dsfcars.asi `pkg_open` and `h_sslp_load`; the slot buffers are the vanilla SSLP header's (+0x08 + 4 × kind) |
 | `picture.dds` (optional) | the garage picture, 512 × 256 DXT5, no mips | gui.sp's car pictures (`gui-assets.md`; `gui_assets.picture_dds`) |
 | `badge.png` (optional) | the maker badge as the HUD and the maker list draw it: 8-bit RGBA, at most 98 × 58 | `gui_assets.badge_glyph`: a logo fitted to BADGE_SIZE (58) square, a text badge to CELL − 1 (98) × TEXT_BADGE_H (30) |
 | `plate.png` (optional) | the model nameplate: 8-bit RGBA, at most 98 × 34 | `gui_assets.nameplate` defaults |
@@ -338,7 +338,7 @@ textures, the picture is DXT5), members at its root and nothing else:
   ID (`"ID:7000xx"`), picture name (`Picture1`) or garage group number:
   the manager allocates those against what is installed. Unknown fields
   are refused, at every level.
-- `requires`: capabilities of dsfforza.asi: `archive.packages` (the loader;
+- `requires`: capabilities of dsfcars.asi: `archive.packages` (the loader;
   always required) and `archive.ids` (the plugin writes the listed ID into
   the data, "Model ID in memory"; port_batch's packages list both). The
   manager checks them against the installed plugin ("The plugin's
@@ -383,7 +383,7 @@ TEXC `f012ef7ef05a2e2d` of the 721-car build's `gui\Fonts.fchunk` (master
   `car_gui.generate` adds the emblem the most enabled packages carry to the
   Fonts.fchunk copy (unless the game's font already has one), and writes
   `GarageEmblem = 1` for the cars whose package carries that emblem.
-  dsfforza.asi [hud] card_emblem binds one texture for
+  dsfcars.asi [hud] card_emblem binds one texture for
   `gui_assets.FORZA_LOGO_UID`, so one emblem goes in; a car whose package
   carries another (a future source's) keeps the SF disc until the plugin
   binds one per car.
@@ -396,20 +396,20 @@ TEXC `f012ef7ef05a2e2d` of the 721-car build's `gui\Fonts.fchunk` (master
 `src/dsfforza/build/car_manager.py`, `dsff car_manager install | enable |
 disable | remove | status | verify [--game G] [--archive A]`. It refuses
 to change anything while Driver.exe runs from that folder, and writes only
-under the game folder's `dsfforza\cars\` and
-`Common\UserLuaScripts\dsfforza\packages.lua`:
+under the game folder's `dsfcars\cars\` and
+`Common\UserLuaScripts\dsfcars\packages.lua`:
 
 | File | What |
 | --- | --- |
-| `dsfforza\cars\manager.json` | the state (format 2): `ids` (key → model ID, for good), `cars` (installed: what the manager owns of each, ID, version, enabled, SHA-256 of the installed `.sp`); until "Packages only" also `merged` (a merged install's cars), dropped on load since. The rest of a car is its folder's `car.json`, read where it is needed (packages.lua, the GUI files, status, verify); a car without a readable one is left out of the outputs and `verify` says so. Format 1 kept a copy of each manifest in `cars`; the manager upgrades such a state in place on load (car.json written from the copy where a folder lacks it). On the 573-car format-1 install: 0.16 s, 609 to 117 KB, `packages.lua` and `cars.txt` byte for byte as before |
-| `dsfforza\cars\cars.txt` | the plugin's list: `id path` per enabled car |
-| `dsfforza\cars\<key>\` | one car: the package's `car.sp`, `car.json` and images as they are (car.sp keeps its builder's ID; the plugin writes the car's ID in memory) |
-| `Common\UserLuaScripts\dsfforza\packages.lua` | `ported.lua`'s fields per enabled car; `register.lua` adds them to its cars for the IDs `ported.lua` doesn't have |
+| `dsfcars\cars\manager.json` | the state (format 2): `ids` (key → model ID, for good), `cars` (installed: what the manager owns of each, ID, version, enabled, SHA-256 of the installed `.sp`); until "Packages only" also `merged` (a merged install's cars), dropped on load since. The rest of a car is its folder's `car.json`, read where it is needed (packages.lua, the GUI files, status, verify); a car without a readable one is left out of the outputs and `verify` says so. Format 1 kept a copy of each manifest in `cars`; the manager upgrades such a state in place on load (car.json written from the copy where a folder lacks it). On the 573-car format-1 install: 0.16 s, 609 to 117 KB, `packages.lua` and `cars.txt` byte for byte as before |
+| `dsfcars\cars\cars.txt` | the plugin's list: `id path` per enabled car |
+| `dsfcars\cars\<key>\` | one car: the package's `car.sp`, `car.json` and images as they are (car.sp keeps its builder's ID; the plugin writes the car's ID in memory) |
+| `Common\UserLuaScripts\dsfcars\packages.lua` | `ported.lua`'s fields per enabled car; `register.lua` adds them to its cars for the IDs `ported.lua` doesn't have |
 
 **IDs.** A key keeps its ID across upgrades (a higher version replaces the
 package in place; a lower one needs `--force`), disable and enable, and
 after a remove: the ID stays reserved, so no new car inherits the old one's
-save flags (the game and dsfforza.asi keep them per model ID). A new key
+save flags (the game and dsfcars.asi keep them per model ID). A new key
 takes the first ID in port_batch's "asi" order (1..303, then 304 up; base
 IDs below 1000) that the installed `Install\dngvehicles.sp`'s SSLP doesn't
 use (kind 0 records: 150 in the vanilla archive, 62..303; 723 in the
@@ -442,8 +442,8 @@ them on every change). Copies of the game's current `Install\gui.sp`,
 `media\Fonts.fchunk` and each language's `Locale\<lang>\global.fchunk`
 (vanilla, or a merged install's) with the enabled packages' parts appended
 by gui_assets' own writers (`add_pictures`, `add_glyphs`, `add_strings`),
-under `dsfforza\generated\`, plus `redirect.txt` and
-`Common\UserLuaScripts\dsfforza\packages_hud.lua` (`hud.lua`'s fields per
+under `dsfcars\generated\`, plus `redirect.txt` and
+`Common\UserLuaScripts\dsfcars\packages_hud.lua` (`hud.lua`'s fields per
 car; `register.lua` adds them for the IDs `hud.lua` doesn't have). What a
 car gets is what `gui_assets.build --wide-glyphs` gives a ported car, from
 the package's images: a maker or model DSF has keeps its vanilla badge or
@@ -531,16 +531,16 @@ fixed by the emblem in each package, #510).
   shows each car's badge and plate (`hud: model 3 ManufacturerGlyph 260
   ModelGlyph 261`). `install.ps1 -Status` names the packages; `-Force`
   reinstalls keep every car's ID; `-Uninstall` restores the game and
-  leaves `dsfforza\cars`, `dsfforza\generated` and the two Lua files.
+  leaves `dsfcars\cars`, `dsfcars\generated` and the two Lua files.
 
 ## Uninstall, migration and save safety (phase 5, #455; the switches as they were then)
 
 **Uninstall.** `car_manager uninstall` removes every file the manager
 wrote: the cars' `.sp` files and folders, `cars.txt`,
-`dsfforza\generated\`, `packages.lua` and `packages_hud.lua`. It keeps
-`dsfforza\cars\manager.json` with the key → ID map (no cars in it), because
+`dsfcars\generated\`, `packages.lua` and `packages_hud.lua`. It keeps
+`dsfcars\cars\manager.json` with the key → ID map (no cars in it), because
 the save keeps its flags per model ID (`autosave.dat` below 304,
-`dsfforza-garage.dat` above): a later install gives every car the ID its
+`dsfcars-garage.dat` above): a later install gives every car the ID its
 flags are for. `--forget-ids` removes the map too. `install.ps1
 -Uninstall` of a `-Packages` install runs it first (without uv it removes
 the same files itself and leaves the map), then removes what install.ps1
@@ -567,7 +567,7 @@ list change; no file is rewritten.
 
 **A save that names cars that aren't there** (confirmed-runtime). Every
 package run used the VM's save, which carries flags for the 573-car
-roster: `garage: loaded 420 added-car entries` from `dsfforza-garage.dat`,
+roster: `garage: loaded 420 added-car entries` from `dsfcars-garage.dat`,
 and IDs below 304 owned in `autosave.dat`, with only 3 or 4 cars
 installed. `runs\vm1-20261101-151827`: four packages installed and one
 removed with the manager (the RX-7, ID 3; its ID reserved, its flags in
@@ -594,13 +594,13 @@ copies of `Install\dngvehicles.sp`, `gui.sp`, `Fonts.fchunk` and
 `tools\install.ps1` and `dsff install`.
 
 - **install.ps1** has no `-Packages`, `-Asi` or `-IdPolicy`. The plugin is
-  required (`-AsiPath`, default `out\asi\dsfforza.asi`, else a release's
-  `plugin\dsfforza.asi`) and always gets `[archive] packages=1`. A build made
+  required (`-AsiPath`, default `out\asi\dsfcars.asi`, else a release's
+  `plugin\dsfcars.asi`) and always gets `[archive] packages=1`. A build made
   here is `port_batch build --gui --wide-glyphs --id-policy asi
   --root-limit 3003 --packages`, as `dsff install`'s; it still needs the
   vanilla archive, which it reads. No game file is replaced, so another
   mod's archive and GUI files are no reason to stop an install;
-  `dsfforza-backup\` holds only `install.json` and, with `-Force`, another
+  `dsfcars-backup\` holds only `install.json` and, with `-Force`, another
   mod's `bootstrap.lua`. Everything that can stop an install (the build's
   packages, uv, the plugin and its ini, a foreign bootstrap without
   `-Force`, the VC++ runtime, the ASI loader and DriverNGHook as they will
@@ -656,8 +656,8 @@ restored (SHA-256 of `out\vanilla`'s), `ported.lua`, `hud.lua` and
 generation, `packages=1` in the installed ini.
 
 **In game** (`runsm2-20261102-165110`): the vanilla archive with that install's plugin
-and ini (`-Asi out\scratch-game\plugins\dsfforza.asi`) and its car
-manager files laid over the run (`-Overlay`: `dsfforza\` and
+and ini (`-Asi out\scratch-game\plugins\dsfcars.asi`) and its car
+manager files laid over the run (`-Overlay`: `dsfcars\` and
 `packages.lua`, `packages_hud.lua`), `-ProbeIds '1,2,3'`. The plugin loaded the three packages from
 `cars.txt` (IDs 1 to 3, root entries 453..461, SSLP and VSCT 450 + 9) and
 served the generated gui.sp, Fonts.fchunk and global.fchunk; `register.lua`
@@ -668,7 +668,7 @@ IDs are the merged install's.
 
 ## Model ID in memory (confirmed-runtime, 2026-11-02)
 
-The installed car.sp is the package's own file; dsfforza.asi writes the
+The installed car.sp is the package's own file; dsfcars.asi writes the
 listed ID (`cars.txt`) into the full VEHC as it serves the read, whatever
 ID the file holds. Before, the manager wrote it into a copy of the file at
 install (`install_sp`, removed).
@@ -766,24 +766,24 @@ disk.
 car.sp's builder ID, so the VEHC would say one ID and the SSLP record
 another. The manager reads what the installed plugin can do from the DLL
 file, without running the game: `tools/asi/src/patch.h` defines the marker
-`DSFFORZA-CAPABILITIES: ` and the names (`archive.packages archive.ids`),
+`DSFCARS-CAPABILITIES: ` and the names (`archive.packages archive.ids`),
 `main.cpp` keeps the string in the DLL by logging it at start, and
-`car_manager.plugin_capabilities` reads it from `<game>\plugins\dsfforza.asi`
+`car_manager.plugin_capabilities` reads it from `<game>\plugins\dsfcars.asi`
 (no plugin: none; no marker: an older plugin). `install`, `enable` and
 `reassign` refuse before writing anything unless the plugin has
 `archive.packages` and `archive.ids` (what every car the manager lists
 needs, as it installs car.sp unchanged) and everything the packages'
-`requires` list; the message says to update dsfforza.asi with
+`requires` list; the message says to update dsfcars.asi with
 `tools\install.ps1`. `disable`, `remove`, `uninstall` and `seed` list no
 new car and aren't checked. install.ps1 checks the plugin it will install
 (`-AsiPath`) with `car_manager check-plugin --plugin <file> <build>\packages`
 among its other checks, before the game folder changes, and writes
-`plugins\dsfforza.asi` before it hands the packages to the manager, so the
+`plugins\dsfcars.asi` before it hands the packages to the manager, so the
 manager's own check then sees the new plugin. `tests/test_install_packages.py`
 runs install.ps1 with a plugin file without the marker: refused, the game
 folder unchanged. Before #485, on a scratch game folder with a three-car
 build, install.ps1 with the main checkout's older plugin stopped at the
-manager's refusal and wrote no `dsfforza\cars`; with this branch's plugin
+manager's refusal and wrote no `dsfcars\cars`; with this branch's plugin
 it installed, and a `-Force` reinstall worked. The game's installed plugin
 and the main checkout's build read as having no capability list.
 

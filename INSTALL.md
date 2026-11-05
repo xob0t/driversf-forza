@@ -36,8 +36,33 @@ built. Everything the tools print goes to `out\logs\install-<date-time>.log`.
 | `--build-only`, `--install-only` | only build, or only install the last build |
 | `--no-write-profile` | don't mark the new garage cars owned in the save (below) |
 | `--status` | what is installed |
+| `--migrate` | move an install from before the rename to dsfcars to the new names ([above](#installs-from-before-the-rename-to-dsfcars)) |
 | `--report` | a zip for a bug report ([below](#reporting-a-bug)) |
 | `--force` | replace another mod's `bootstrap.lua` (it is backed up, put back on uninstall, and ours runs it first) |
+
+### Installs from before the rename to dsfcars
+
+Releases before the rename called the game-side files `dsfforza`:
+`plugins\dsfforza.asi` and `dsfforza.ini`, the `dsfforza\` folder,
+`Common\UserLuaScripts\dsfforza\` and `dsfforza-backup\`. This version calls
+them `dsfcars`, as nothing in them is Forza's any more. An install, an
+uninstall or `.\install.cmd --migrate` moves an old-named install to the new
+names first, without building or reinstalling a car:
+
+- every folder is renamed as it is, `manager.json` with it, so every car
+  keeps its ID and your save its flags;
+- `plugins\dsfforza.asi`, `dsfforza.ini` and `dsfforza.log` are deleted, so
+  only one plugin patches the game. Settings you changed in `dsfforza.ini`
+  are not carried over: the new `plugins\dsfcars.ini` has the defaults;
+- this version's plugin, `register.lua` and `bootstrap.lua` replace the old
+  ones. A `bootstrap.lua` of another mod is left alone; if you added
+  `user_open("dsfforza\\register.lua")` to it, change that to `dsfcars`.
+
+Running it again, also after it was interrupted, finishes the move.
+`dsfforza-garage.dat` next to your save stays: the plugin reads it until the
+game has saved once and written `dsfcars-garage.dat`. `--status` shows an
+install of the old names. The car manager (`uv run dsff car_manager`) refuses
+to work on one and tells you to migrate it first.
 
 ### Forza Motorsport 4 DLC packages
 
@@ -66,60 +91,60 @@ checked against its SHA-256 (they are not in the zip):
 | [uv](https://docs.astral.sh/uv/) | 0.13.5 | runs the installer with its own Python (only if uv is missing) |
 | [vgmstream](https://github.com/vgmstream/vgmstream) | r2117 | decoding Forza's engine sound |
 | [DriverNGHook](https://github.com/ReHamster/DriverNGToolkit) | 0.7.2 | runs the Lua that registers the cars (only if not installed) |
-| [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader) | v9.7.4 | loads DriverNGHook and the dsfforza plugin (only if the game has no ASI loader) |
+| [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader) | v9.7.4 | loads DriverNGHook and the dsfcars plugin (only if the game has no ASI loader) |
 
 ### What the installer adds
 
 | File | What |
 | --- | --- |
-| `dsfforza\cars\<car>\` | one folder per car: its model file (`car.sp`), garage picture, badge and nameplate |
-| `dsfforza\cars\cars.txt`, `manager.json` | the list of installed cars and the ID each car keeps for good |
-| `dsfforza\generated\` | copies of the game's `Install\gui.sp`, `media\Fonts.fchunk` and `Locale\<language>\global.fchunk` with the cars' pictures, badges, nameplates, names and the garage card emblem added; the plugin opens them in place of the game's files |
+| `dsfcars\cars\<car>\` | one folder per car: its model file (`car.sp`), garage picture, badge and nameplate |
+| `dsfcars\cars\cars.txt`, `manager.json` | the list of installed cars and the ID each car keeps for good |
+| `dsfcars\generated\` | copies of the game's `Install\gui.sp`, `media\Fonts.fchunk` and `Locale\<language>\global.fchunk` with the cars' pictures, badges, nameplates, names and the garage card emblem added; the plugin opens them in place of the game's files |
 | `dinput8.dll` | Ultimate ASI Loader, only if no ASI loader is installed |
 | `plugins\DriverNGHook.asi`, `plugins\DriverNGHook\` | DriverNGHook, only if not installed |
-| `plugins\dsfforza.asi`, `plugins\dsfforza.ini` | the dsfforza plugin (below) |
-| `Common\UserLuaScripts\bootstrap.lua` | loads `dsfforza\register.lua` (no test or debug scripts), after another mod's bootstrap it replaced (`dsfforza\chained-bootstrap.lua`) |
-| `Common\UserLuaScripts\dsfforza\` | `register.lua`, `packages.lua` (the car list), `packages_hud.lua` (names, badges, pictures), `config.lua` |
+| `plugins\dsfcars.asi`, `plugins\dsfcars.ini` | the dsfcars plugin (below) |
+| `Common\UserLuaScripts\bootstrap.lua` | loads `dsfcars\register.lua` (no test or debug scripts), after another mod's bootstrap it replaced (`dsfcars\chained-bootstrap.lua`) |
+| `Common\UserLuaScripts\dsfcars\` | `register.lua`, `packages.lua` (the car list), `packages_hud.lua` (names, badges, pictures), `config.lua` |
 
 The game's own files (`Install\dngvehicles.sp`, `gui.sp`, `Fonts.fchunk`,
-`global.fchunk`) are not changed. `dsfforza-backup\` holds the record of the
+`global.fchunk`) are not changed. `dsfcars-backup\` holds the record of the
 install (`install.json`) and, if one was replaced, another mod's
 `bootstrap.lua`.
 
-**The dsfforza plugin** (`dsfforza.asi`, in the zip) patches `Driver.exe` 1.04
+**The dsfcars plugin** (`dsfcars.asi`, in the zip) patches `Driver.exe` 1.04
 in memory while the game runs; the exe file itself is never changed. It loads
 each car from its own file beside the game's vehicle archive, opens the
 generated copies of the GUI files in place of the game's, and lifts the limits
 a full roster needs: a garage that lists every added car (IDs up to 999, up to
 120 makers), and save flags for them. The cars don't load without it. Its
-settings are in `plugins\dsfforza.ini` (each part can be switched off), and it
-writes what it did to `plugins\dsfforza.log`. If the exe isn't 1.04, or
+settings are in `plugins\dsfcars.ini` (each part can be switched off), and it
+writes what it did to `plugins\dsfcars.log`. If the exe isn't 1.04, or
 another mod changed the same code, it patches nothing and says so in the log.
 Details: [research/asi.md](research/asi.md) and
 [research/car-packages.md](research/car-packages.md).
 
 Some mods also use `Common\UserLuaScripts\bootstrap.lua`. If another mod's
 file is already there, the installer stops. With `--force` it backs that file
-up, keeps a copy as `dsfforza\chained-bootstrap.lua` and installs its own,
+up, keeps a copy as `dsfcars\chained-bootstrap.lua` and installs its own,
 which runs the other mod's bootstrap first, so both mods load. Uninstalling
 puts the other mod's file back. If another mod's installer replaces the
 bootstrap later, run `.\install.cmd --install-only` again. Instead, you can add
-`user_open("dsfforza\\register.lua")` to the other mod's
+`user_open("dsfcars\\register.lua")` to the other mod's
 `Bootstrapper.Launch()` yourself.
 
 ## Uninstall
 
-`.\install.cmd --uninstall` removes the cars (`dsfforza\cars\`,
-`dsfforza\generated\` and the car lists) and every file it created, but only
+`.\install.cmd --uninstall` removes the cars (`dsfcars\cars\`,
+`dsfcars\generated\` and the car lists) and every file it created, but only
 if the file is still the one it installed; a file you changed afterwards is
 left in place and reported. Another mod's `bootstrap.lua` it replaced is put
 back from the backup, checked by its SHA-256. Then it removes
-`dsfforza-backup\` (`--keep-backup` keeps it). If a file can't be restored,
+`dsfcars-backup\` (`--keep-backup` keeps it). If a file can't be restored,
 the backup is kept and the message says which file it was. Running it again
 finishes an interrupted uninstall. It removes an install of version 0.1.8 or
 earlier the same way, putting back every game file that install replaced.
 
-One file stays: `dsfforza\cars\manager.json`, the ID of each car. Your save
+One file stays: `dsfcars\cars\manager.json`, the ID of each car. Your save
 keeps a car's flags under its ID, so a later install gives every car the ID
 it had.
 
@@ -143,7 +168,7 @@ The zip holds:
   dump;
 - the names and sizes of your disc images and what each one is;
 - the last build: the cars, the ones that failed and why;
-- the last install logs, `plugins\dsfforza.log`, DriverNGHook's `Driver.log`
+- the last install logs, `plugins\dsfcars.log`, DriverNGHook's `Driver.log`
   and the game's `graphics.ini` (long logs are cut down to their start and end).
 
 No save files, disc images or game files go in, only their names and sizes.
@@ -155,15 +180,15 @@ command only reads; it changes nothing but writing the zip.
 The installer copies your save folder first (step 3). Then:
 
 - The plugin keeps the flags of the added cars (unlocked, owned, new, driven)
-  in a second file next to the save, `dsfforza-garage.dat`, written whenever
+  in a second file next to the save, `dsfcars-garage.dat`, written whenever
   the game saves. `autosave.dat` keeps exactly the vanilla layout: the game
   without the plugin (or after an uninstall) loads it as before, and the added
   cars are simply gone.
-- `dsfforza-garage.dat` stays when you uninstall. It does nothing without the
+- `dsfcars-garage.dat` stays when you uninstall. It does nothing without the
   plugin, and if you install again the cars you bought are still yours. Back
   up both files together.
 - By default the mod marks each new garage car unlocked and owned on every
-  game start (`dsfforza\config.lua`, `writeProfile`); the game shows a "new
+  game start (`dsfcars\config.lua`, `writeProfile`); the game shows a "new
   vehicle" notice once per car. `--no-write-profile` leaves that out: then
   you buy the new cars in the garage like vanilla cars.
 
@@ -187,8 +212,8 @@ The installer copies your save folder first (step 3). Then:
   - The cockpit view uses the Forza cockpit.
   - A few cars have no usable steering wheel model. They keep the host's
     cockpit, and the build report says so.
-- **Size:** every car is a file of about 5 to 6 MB in `dsfforza\cars\`, and
-  `dsfforza\generated\` holds about 170 MB of GUI copies with the full roster.
+- **Size:** every car is a file of about 5 to 6 MB in `dsfcars\cars\`, and
+  `dsfcars\generated\` holds about 170 MB of GUI copies with the full roster.
 - **Online:** don't take the new cars online. Other players don't have them.
 - **Other mods:**
   - A mod that replaces `Install\dngvehicles.sp`, `Install\gui.sp`,
@@ -210,7 +235,7 @@ The installer copies your save folder first (step 3). Then:
     Felony Rework: its files replace our bootstrap.lua, and ours then runs it.
     Felony Rework's own DriverNGHook build and its second ASI loader
     (`version.dll`) stay. Leave the plugin's `[lua]` section switched on in
-    `plugins\dsfforza.ini`: with both mods the game needs more Lua memory
+    `plugins\dsfcars.ini`: with both mods the game needs more Lua memory
     than it has without the plugin. Its garage changes use some of the
     maker-group room; `register.lua` counts what is actually there at game
     start. A felony chase in one of the added cars hasn't been tried yet.

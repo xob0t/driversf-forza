@@ -1229,7 +1229,7 @@ AUD_2_R10_08 (prototype, 232). Builds `out/hull/before` (`--damage
 panels`), `out/hull/after` (the hull with untrimmed boxes) and
 `out/hull/final` (this change).
 
-Where contacts register: `tools/game/lua/dsfforza/ramtest.lua` (run with
+Where contacts register: `tools/game/lua/dsfcars/ramtest.lua` (run with
 `-Dyno`, put in place of `dyno.lua` through `-LuaFiles` as its header
 says; the ordinary dyno runs follow) parks a copy of the car side-on 12 m
 ahead on the dyno straight, pushes the car into it at 4 m/s (velocity set

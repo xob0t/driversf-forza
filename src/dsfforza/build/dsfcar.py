@@ -3,7 +3,7 @@
 
     <key>.dsfcar (zip, members at its root, nothing else)
       car.json      the manifest (below)
-      car.sp        the installed form dsfforza.asi [archive] packages reads: a CHNK v3, not
+      car.sp        the installed form dsfcars.asi [archive] packages reads: a CHNK v3, not
                     compressed, of four root entries, the car's three VEHC (kinds 0, 1, 2: full
                     car, interior, clean exterior) and a VSCT of its three 28-byte records
       picture.dds   the garage picture: 512 x 256 DXT5, no mips (as gui.sp's car pictures)
@@ -16,7 +16,7 @@
 The manifest says what the car is and nothing the manager allocates: no model ID the game
 will use, no glyph code, string ID, picture name or garage group. The model ID inside
 car.sp is whatever the builder had (`car.model_id` says which); the manager installs car.sp
-as it is and dsfforza.asi writes the listed ID into the data it serves. Images are optional: without one the manager leaves
+as it is and dsfcars.asi writes the listed ID into the data it serves. Images are optional: without one the manager leaves
 that part as the host's (picture) or the game's own for the maker or model.
 
     {
@@ -66,7 +66,7 @@ MEMBERS = {MANIFEST, CAR, PICTURE, BADGE, PLATE, EMBLEM}
 IMAGE_MEMBERS = {"picture": PICTURE, "badge": BADGE, "plate": PLATE, "emblem": EMBLEM}
 SUFFIX = ".dsfcar"
 
-# Capabilities a package can ask of dsfforza.asi; the plugin lists its own in its DLL
+# Capabilities a package can ask of dsfcars.asi; the plugin lists its own in its DLL
 # (tools/asi/src/patch.h DSF_CAPABILITIES; car_manager.plugin_capabilities reads them).
 # "archive.packages": [archive] packages, the loader of car.sp (research/car-packages.md).
 # "archive.ids": the plugin writes the listed model ID into car.sp's data as it serves it, so
@@ -85,10 +85,10 @@ NAME_KEYS = {"display", "make", "model", "family", "year", "maker_group"}
 GARAGE_KEYS = {"speed", "strength", "drift"}  # vehicleStats Speed/Strength/Drift: the garage stat bars, 0..1
 
 # Limits from the game's data and the plugin:
-VANILLA_IDS = 304  # vehicleStats IDs 0..303 are the game's (dsfforza.asi [garage]: added cars start at 304)
+VANILLA_IDS = 304  # vehicleStats IDs 0..303 are the game's (dsfcars.asi [garage]: added cars start at 304)
 MAX_BASE_ID = 999  # FUN_005A7FC0 requests the interior and exterior as id + 1000 and id + 2000 (short)
 # The slot buffer each kind's NONR is copied into: the vanilla dngvehicles.sp SSLP header
-# (+0x08 + 4 * kind); dsfforza.asi leaves out a package whose NONR is larger (h_sslp_load).
+# (+0x08 + 4 * kind); dsfcars.asi leaves out a package whose NONR is larger (h_sslp_load).
 NONR_LIMITS = (0x6D000, 0x1000, 0x1000)
 VSCT_SIZE = 3 * VSCT_RECORD.size  # three 28-byte records
 
@@ -159,7 +159,7 @@ def _vehc_problems(k: int, e) -> list[str]:
 
 def _model_id_problems(stream, vehc, model_id: int | None) -> list[str]:
     """The full VEHC holds model_id once in each of clone_vehicle.ID_FIELDS (VSVH, VO3D, SPID,
-    UPVH), as a vanilla car's kind 0 entry does: dsfforza.asi writes the listed ID into
+    UPVH), as a vanilla car's kind 0 entry does: dsfcars.asi writes the listed ID into
     exactly these fields."""
     from dsfforza.build.car_package import id_fields
     from dsfforza.build.clone_vehicle import ID_FIELDS
@@ -176,7 +176,7 @@ def _model_id_problems(stream, vehc, model_id: int | None) -> list[str]:
 
 
 def car_sp_problems(data: bytes, model_id: int | None = None, host: int | None = None) -> list[str]:
-    """What is wrong with car.sp for dsfforza.asi's loader (pkg_open's checks, plus the
+    """What is wrong with car.sp for dsfcars.asi's loader (pkg_open's checks, plus the
     model ID and the VSCT records' host)."""
     stream = io.BytesIO(data)
     try:
@@ -338,7 +338,7 @@ def _picture_problems(data: bytes) -> list[str]:
 
 
 def emblem_problems(data: bytes) -> list[str]:
-    """A package's emblem texture: what dsfforza.asi [hud] card_emblem binds in place of the card
+    """A package's emblem texture: what dsfcars.asi [hud] card_emblem binds in place of the card
     icon atlas, so its size (gui_assets.CARD_ATLAS_SIZE): 512 x 256 DXT5, one level."""
     try:
         w, h, fourcc, mips = dds_info(data)

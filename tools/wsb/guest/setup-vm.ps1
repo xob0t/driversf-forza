@@ -6,7 +6,7 @@ Runs inside the dsfforza test VM as its user (admin, no UAC), in the desktop ses
              runs Game, Profile and Session (tools\wsb\vm-build.ps1 Provision).
   Game       C:\Game <- the host's game folder (share "Game", read-only), mirrored, then
              put back to vanilla: files a dsfforza install replaced come from its
-             dsfforza-backup, files it created are dropped (run-test.ps1 rebuilds plugins
+             dsfcars-backup, files it created are dropped (run-test.ps1 rebuilds plugins
              and UserLuaScripts anyway). Re-run to pick up changes to the host install.
   Profile    Documents\Ubisoft\Driver San Francisco <- C:\Profile, switched to a
              -Resolution window (run-series.ps1 -Vm, once per series).
@@ -115,10 +115,12 @@ function Invoke-Links {
 function Invoke-Game {
     $source = Join-Path $shares 'Game'
     if (-not (Test-Path -LiteralPath (Join-Path $source 'Driver.exe'))) { throw "no Driver.exe in $source" }
-    & robocopy.exe $source C:\Game /MIR /XD dsfforza-backup /XF *.log *.dmp /R:2 /W:2 /NP /NFL /NDL /NJH | Out-Null
+    # dsfforza-backup: the install's backup folder before the rename to dsfcars (install.ps1 -Migrate).
+    & robocopy.exe $source C:\Game /MIR /XD dsfcars-backup dsfforza-backup /XF *.log *.dmp /R:2 /W:2 /NP /NFL /NDL /NJH | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "robocopy of the game failed (exit $LASTEXITCODE)" }
     Say "game mirrored to C:\Game (robocopy exit $LASTEXITCODE)"
-    $backup = Join-Path $source 'dsfforza-backup'
+    $backup = Join-Path $source 'dsfcars-backup'
+    if (-not (Test-Path -LiteralPath (Join-Path $backup 'install.json'))) { $backup = Join-Path $source 'dsfforza-backup' }
     $manifest = Join-Path $backup 'install.json'
     if (Test-Path -LiteralPath $manifest) {
         $install = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json

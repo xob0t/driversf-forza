@@ -1,12 +1,12 @@
-# dsfforza.asi: runtime patches of Driver.exe 1.04
+# dsfcars.asi: runtime patches of Driver.exe 1.04
 
 Updated: 2026-10-29
 
-One native plugin, `plugins\dsfforza.asi`, patches the running
+One native plugin, `plugins\dsfcars.asi`, patches the running
 `Driver.exe` 1.04 in memory to lift limits that block large car batches.
 Nothing on disk changes, and removing the file restores vanilla behaviour.
 Build and module interface: `tools/asi/README.md`. Install: `tools/install.ps1`
-copies `out\asi\dsfforza.asi` and `dsfforza.ini` into `<game>\plugins\`
+copies `out\asi\dsfcars.asi` and `dsfcars.ini` into `<game>\plugins\`
 when `-Asi` is given. Evidence tags as in `dngvehicles.md`.
 
 | Module | Lifts | Section |
@@ -22,8 +22,8 @@ when `-Asi` is given. Evidence tags as in `dngvehicles.md`.
 Every module checks the original bytes of each site before patching and
 patches nothing of a feature when one site differs (another mod, another exe
 build); should a write still fail, the part already written is undone.
-`plugins\dsfforza.log` lists what was applied. `[<module>]
-enabled=0` in `dsfforza.ini` switches a module off.
+`plugins\dsfcars.log` lists what was applied. `[<module>]
+enabled=0` in `dsfcars.ini` switches a module off.
 
 Crash hunts: `[dsfforza] crash_log=1` (default 0) adds a vectored exception
 handler that logs each of the first 12 faults (first chance: also ones the
@@ -356,7 +356,7 @@ In game: below, "In game", "Maker groups past 20 cars".
 ### Save compatibility: the side file
 
 Flags of IDs 304..999 never go into the vanilla block. The plugin keeps them
-in memory and in `dsfforza-garage.dat` in the same folder as `autosave.dat`:
+in memory and in `dsfcars-garage.dat` in the same folder as `autosave.dat`:
 `DSFG`, version 1, entry count, FNV-1a of the entries, then per ID `u16 id,
 u16 what` (bits 0..3: the four bit arrays, bit 4: flag-list slot, bit 5:
 owned list) and `u32 flags`. It is written (to `.tmp`, then moved over) when
@@ -415,7 +415,7 @@ is true, and of those only the IDs whose k = 0x4000 + id is true. Without
 the plugin (no ASI loader, blocked, `[dsfforza] enabled=0`, an exe it
 doesn't patch) or with its packages off, it registers no package car: no
 `vehicleStats` entry, garage card, traffic region entry or HUD entry, and
-logs one line ("dsfforza.asi is not active: the N installed cars are not
+logs one line ("dsfcars.asi is not active: the N installed cars are not
 loaded ...", or "has not loaded the car packages" when the garage module
 answers). `ported.lua` cars (the in-game tests' merged archive) carry their
 own models and are registered as before. The plugin logs the first k = 2
@@ -432,8 +432,8 @@ matched, hooks behave).
 
 **Run `20261022-230004` (vanilla archive, plugin; confirmed-runtime):**
 
-- `dsfforza.log`: save hooks, list (IDs 0..999) and 120 groups applied;
-  "no dsfforza-garage.dat (no added-car flags yet)", then "profile loaded, 0
+- `dsfcars.log`: save hooks, list (IDs 0..999) and 120 groups applied;
+  "no dsfcars-garage.dat (no added-car flags yet)", then "profile loaded, 0
   added cars with flags" when the game loaded `autosave.dat`.
 - Lua detection: `savetest` and `register.lua` both read "save true, garage
   true, groups 120, max listed id 999"; `guardProfile` let IDs up to 999
@@ -441,7 +441,7 @@ matched, hooks behave).
 - In a car, `SetVehicleUnlocked/Owned/Driven/DrivenInTakeARide` for 305, 320,
   500, 650 and 999: every flag read back true (unlocked, owned, new, driven),
   `GetNumVehiclesDrivenTakeARide` went 0 → 5. `TriggerAutoSave` → "saved 5
-  added-car entries to ...\savegames\dsfforza-garage.dat".
+  added-car entries to ...\savegames\dsfcars-garage.dat".
 - `savecheck.py`: `autosave.dat` 19704 bytes, guard words and version OK; the
   flag list and owned list hold no ID ≥ 304 (140 of 304 slots, as before);
   the side file holds all five IDs with flags, bits and owned-list entries.
@@ -485,7 +485,7 @@ shipped ini (`max_groups=120`) plus `crash_log=1`:**
   "480/780 OWNED"; the menu scrolls to the 109th group (TOYOTA), its car
   browser opens with Forza emblems, leaving and re-entering VEHICLES refills
   the menu (`img/garage-109-makers-run-104805.png`, `img/garage-run-105532.png`).
-  Save: "saved 303 added-car entries to ...\savegames\dsfforza-garage.dat";
+  Save: "saved 303 added-car entries to ...\savegames\dsfcars-garage.dat";
   the second session logs "loaded 303 added-car entries", and every flag of
   305..999 reads back true (take-a-ride count 5). `savecheck.py` on
   `-105532\save`: `autosave.dat` 19704 bytes, version OK, no ID ≥ 304 in the
@@ -698,7 +698,7 @@ Module `lua` (`tools/asi/src/mod_lua.cpp`). Issue #56; runs and symptoms in
   memory), so 22 MB more doesn't matter. Vanilla 1.04 is not large-address
   aware (PE characteristics 0x0103), so that is 1.2 of 2 GB; the copy on the
   test PC has the flag set by a 4 GB patch (`exe-vehicles.md`).
-- `push <dsfforza lua_Alloc>` at 0x005E7DB7 (`68 B0 4A 5E 00`). It calls
+- `push <dsfcars lua_Alloc>` at 0x005E7DB7 (`68 B0 4A 5E 00`). It calls
   FUN_005E4AB0 first. With `overflow=1` (default) a request the block refuses
   gets memory from a private `HeapCreate` heap instead; a pointer outside the
   block's address range is such a block and is freed and reallocated there,
@@ -847,7 +847,7 @@ queues (65,536 entries by default, capacity at header +4), points the inlined ap
 at 0x006C21F9 at the new capacity and grows the two 4 MB per-frame draw-data areas. It creates
 the named event `Local\DSFEnhanced.DrawQueue.<pid>` in DllMain once its guard is in. `[render]`
 opens that event first and, when it exists, patches nothing (log: "DSF Enhanced's draw queue
-guard is active"). When dsfforza.asi loads first (from the game root), DSF Enhanced finds the
+guard is active"). When dsfcars.asi loads first (from the game root), DSF Enhanced finds the
 three call sites patched, leaves them, and still enlarges the queues; the bounded append reads
 the capacity from the queue header, so it follows ("reached 11264 of 65536" in DSF Enhanced's
 tests).

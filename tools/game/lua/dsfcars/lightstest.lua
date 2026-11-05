@@ -1,13 +1,13 @@
 -- dsfforza: lamp test for converted cars (research/lights.md), driven by the
 -- harness (run-test.ps1 -Lights, run-series.ps1 -Lights).
 --
--- clonetest.lua loads this module when dsfforza\config.lua has `lights = {...}`
+-- clonetest.lua loads this module when dsfcars\config.lua has `lights = {...}`
 -- and hands it each car once the player drives it (instead of the chase and
 -- cockpit views). For each car:
 --   1. a second copy is spawned 12 m ahead, facing the player's car, so the
 --      chase camera sees the player's rear lamps and the copy's front lamps;
 --   2. it logs "[dsfforza.lights] ready <n> phases" and then applies the phase
---      the harness asks for in dsfforza\lightsync.lua ("return k"; 0 = wait,
+--      the harness asks for in dsfcars\lightsync.lua ("return k"; 0 = wait,
 --      -1 = finish), re-reading that file every update, to both cars with
 --      GameVehicleResource.setLights{gameVehicle, LightType, State};
 --      phases 1..#PHASES in daylight, then the same again under the story's dark mood;
@@ -155,11 +155,11 @@ local function brightnessReport()
 	end
 end
 
--- The harness writes dsfforza\lightsync.lua ("return { phase = k }"). Read it
+-- The harness writes dsfcars\lightsync.lua ("return { phase = k }"). Read it
 -- with io.open (DriverNGHook's own user_fileExists does), else, when its
 -- modify time changes, with user_open (which only returns tables and logs
 -- every load).
-local SYNC = "dsfforza\\lightsync.lua"
+local SYNC = "dsfcars\\lightsync.lua"
 local syncMethod, syncStamp, syncCached
 local function syncValue()
 	local base = rawget(_G, "UserLuaMediaPath") or ""

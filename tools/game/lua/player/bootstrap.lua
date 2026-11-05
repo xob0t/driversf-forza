@@ -1,9 +1,9 @@
--- dsfforza player bootstrap: registers the added Forza cars with the game.
+-- dsfcars player bootstrap: registers the added cars with the game.
 -- Installed to <game>\Common\UserLuaScripts\bootstrap.lua by tools\install.ps1,
--- together with dsfforza\register.lua; the car manager writes the cars' dsfforza\packages.lua
--- and dsfforza\packages_hud.lua.
+-- together with dsfcars\register.lua; the car manager writes the cars' dsfcars\packages.lua
+-- and dsfcars\packages_hud.lua.
 -- No test probes run from here (the test bootstrap is tools\game\lua\bootstrap.lua).
--- Options: dsfforza\config.lua, e.g. return { register = { writeProfile = true } }
+-- Options: dsfcars\config.lua, e.g. return { register = { writeProfile = true } }
 
 local Bootstrapper = {}
 
@@ -14,9 +14,9 @@ local Bootstrapper = {}
 -- during the load (fault in the VM at 0x005F078A, research/in-game-tests.md,
 -- "Lua crashes loading big user files"); with the collector held off, none did.
 -- user_open is read-only in DriverNGHook's _G metatable, hence rawset.
-if not rawget(_G, "dsfforzaUserOpen") then
+if not rawget(_G, "dsfcarsUserOpen") then
 	local original = user_open
-	rawset(_G, "dsfforzaUserOpen", original)
+	rawset(_G, "dsfcarsUserOpen", original)
 	rawset(_G, "user_open", function(name, ...)
 		collectgarbage("stop")
 		local called, ok, value = pcall(original, name, ...)
@@ -29,10 +29,10 @@ if not rawget(_G, "dsfforzaUserOpen") then
 end
 
 -- Another mod's bootstrap.lua that tools\install.ps1 replaced (Felony Rework's, for one) is
--- kept as dsfforza\chained-bootstrap.lua. Its Init, Launch and Shutdown run before ours, so
+-- kept as dsfcars\chained-bootstrap.lua. Its Init, Launch and Shutdown run before ours, so
 -- that mod still loads (research/felony-rework.md). An error in it is logged and doesn't stop
 -- ours, nor the game's launchScripts() that DriverNGHook calls after Launch.
-local CHAINED = "dsfforza\\chained-bootstrap.lua"
+local CHAINED = "dsfcars\\chained-bootstrap.lua"
 local chained = nil
 
 local function callChained(name)
@@ -40,7 +40,7 @@ local function callChained(name)
 	if type(fn) == "function" then
 		local ok, err = pcall(fn)
 		if not ok then
-			print("[dsfforza] " .. CHAINED .. " " .. name .. " failed: " .. tostring(err))
+			print("[dsfcars] " .. CHAINED .. " " .. name .. " failed: " .. tostring(err))
 		end
 	end
 end
@@ -52,7 +52,7 @@ function Bootstrapper.Init()
 		if ok and type(other) == "table" then
 			chained = other
 		else
-			print("[dsfforza] " .. CHAINED .. " returned no bootstrapper: " .. tostring(other))
+			print("[dsfcars] " .. CHAINED .. " returned no bootstrapper: " .. tostring(other))
 		end
 	end
 	callChained("Init")
@@ -60,12 +60,14 @@ end
 
 -- The chained bootstrap's Launch, without its own user_open of register.lua: a player who
 -- added that line to the other mod's bootstrap (INSTALL.md) would otherwise register twice.
-local REGISTER = "dsfforza\\register.lua"
+-- The name before the rename to dsfcars too: a line added to another mod's bootstrap for an
+-- older install opens dsfforza\register.lua, which is gone (install.ps1 moved the folder).
+local REGISTER = { ["dsfcars\\register.lua"] = true, ["dsfforza\\register.lua"] = true }
 local function launchChained()
 	local open = rawget(_G, "user_open")
 	rawset(_G, "user_open", function(name, ...)
-		if type(name) == "string" and string.lower((string.gsub(name, "/", "\\"))) == REGISTER then
-			print("[dsfforza] " .. CHAINED .. " opens register.lua; skipped, this bootstrap loads it next")
+		if type(name) == "string" and REGISTER[string.lower((string.gsub(name, "/", "\\")))] then
+			print("[dsfcars] " .. CHAINED .. " opens register.lua; skipped, this bootstrap loads it next")
 			return true, nil
 		end
 		return open(name, ...)
@@ -77,9 +79,9 @@ end
 -- called when the game runs launchScripts()
 function Bootstrapper.Launch()
 	launchChained()
-	local ok, err = user_open("dsfforza\\register.lua")  -- "\\": "\r" would be a carriage return
+	local ok, err = user_open("dsfcars\\register.lua")  -- "\\": "\r" would be a carriage return
 	if not ok then
-		print("[dsfforza] register.lua failed: " .. tostring(err))
+		print("[dsfcars] register.lua failed: " .. tostring(err))
 	end
 end
 

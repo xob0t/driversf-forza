@@ -84,7 +84,7 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
   `C:\Output` (`%LOCALAPPDATA%\Temp\dsfforza-wsb`, read-write), `C:\Profile`
   (Documents\Ubisoft\Driver San Francisco, read-only). `C:\Game` is a local
   copy of the game folder (share `Game`, read-only), put back to vanilla from
-  `dsfforza-backup\install.json`: replaced files restored and hash-checked,
+  `dsfcars-backup\install.json`: replaced files restored and hash-checked,
   created ones dropped. Re-run `setup-vm.ps1 -Phase Game` (through `vm.ps1
   Exec`) after changing the host install. `dsf_enhanced.asi` and `.ini` don't
   need it: each `-Vm` run takes the host game folder's current ones ("Game
@@ -205,7 +205,7 @@ the missing MAC don't matter; the clone gets new UUIDs at its first power-on.
   page faults per second, GPU adapter memory, and Driver.exe's private bytes,
   working set and address space) and the peaks to `result.json` `memory`.
 
-**Memory measured** (full roster `out\final-gui2` with dsfforza.asi, IDs
+**Memory measured** (full roster `out\final-gui2` with dsfcars.asi, IDs
 147,705,26,1,400,600, VM 2, host sampled every 5 s):
 
 | setting (guest / graphics) | runs | guest peak used | Driver.exe peak private / WS / virtual | vmware-vmx WS after boot | peak in game | run |
@@ -324,7 +324,7 @@ that VM 2 session was running at half speed.
   three power-ons, about 75 s each). `vm.ps1 Status` flags such a session.
   The probe's "NOT spooled" line now says whether the spooler was still busy.
 - **Checked** (both VMs in healthy sessions, series started together, with
-  the fix): full roster `out\final3`, dsfforza.asi with #79, IDs 537, 397, 73,
+  the fix): full roster `out\final3`, dsfcars.asi with #79, IDs 537, 397, 73,
   53, 28, 372: `vm1-20261026-154434` and `vm2-20261026-154434` each spooled
   and drove all six (the first after 2 ticks, the rest after 1) with
   textured cockpits; vanilla archive, IDs 147 and 266: `vm1-20261026-160105`,
@@ -335,7 +335,7 @@ that VM 2 session was running at half speed.
   Before and after: `img/vm-cockpit-147-before-after.jpg`,
   `img/vm-cockpit-397-before-after.jpg`, `img/vm1-cockpit-537-147-after.jpg`.
 - Finding such sessions in old runs: the `spooler busy` field of the
-  `[dsfforza.register] t<n> traffic` lines in Driver.log.
+  `[dsfcars.register] t<n> traffic` lines in Driver.log.
 
 ### Loads on a busy host (2026-10-29, issue #70)
 
@@ -458,7 +458,7 @@ About half of the VM runs ended at the DriverNGHook fatal-error dialog 20 to
   and resolves or drops each one.
 - The fault: a slot pointer in that list points at freed memory (reads of 2,
   3 or 0xE9xxxxxx).
-- It happens with the **vanilla archive, without dsfforza.asi and without any
+- It happens with the **vanilla archive, without dsfcars.asi and without any
   ported car**: 2 of 4 runs (`vm-20261024-203720` to `-204228`); with the
   plugin, 1 of 3.
 - So it isn't caused by the ported cars or the plugin.
@@ -474,7 +474,7 @@ About half of the VM runs ended at the DriverNGHook fatal-error dialog 20 to
   - Fix in dsf_enhanced (branch `fix/world-load-crash`): the legal screen's
     call keeps the pending list; every other loading screen empties it as
     vanilla. 0 of 10 runs crashed on the vanilla archive, 0 of 4 with the full
-    roster and dsfforza.asi. Merged: dsf_enhanced main `e9c3ba0`, on the
+    roster and dsfcars.asi. Merged: dsf_enhanced main `e9c3ba0`, on the
     host since 2026-10-26; VM runs use the host's copy ("Game files in VM
     runs" above), and 0 of 12 vanilla runs crashed with it.
   - On a real PC it is the same race between startup loading and the first
@@ -487,7 +487,7 @@ About half of the VM runs ended at the DriverNGHook fatal-error dialog 20 to
 - Where: luaV_execute reads an upvalue through a bad pointer. It runs inside
   `user_open` (ScriptLoader.ri_dofilefromdisk → luaL_loadfile + lua_call,
   FUN_0065A7D0 → FUN_00607800), right after a log line "loading user file
-  'dsfforza\ported.lua'". The test bootstrap loads ported.lua three times
+  'dsfcars\ported.lua'". The test bootstrap loads ported.lua three times
   (register, garagetest, clonetest).
 - When: only with the full roster's generated files (`ported.lua` 117 KB,
   `hud.lua` 108 KB, about 2,600 and 1,900 constants in one chunk). It never
@@ -530,7 +530,7 @@ About half of the VM runs ended at the DriverNGHook fatal-error dialog 20 to
   same time, no fault this time. The concat error comes only with refused
   requests: no run with the fix has it, and its probes see 82 to 85 traffic
   cars.
-- Fix: dsfforza.asi's `[lua]` module makes the block 32 MB and serves
+- Fix: dsfcars.asi's `[lua]` module makes the block 32 MB and serves
   anything the block still refuses from a private heap. Runs (full roster
   unless noted; dsf_enhanced from `out\updown-off` as in the issue, menu keys
   rebuilt from `vm-20261025-094432`'s events.json):
@@ -546,12 +546,12 @@ About half of the VM runs ended at the DriverNGHook fatal-error dialog 20 to
 - Key pace: on a busy VM an Enter that comes before the maker list is ready
   is dropped and the next Esc leaves the garage, so a run browses less than
   its keys say (`vm1-20261026-133949`, `-141004`: back at the garage menu
-  after maker 11 and 13). Check the makers in dsfforza.log (`menu_debug=1`,
+  after maker 11 and 13). Check the makers in dsfcars.log (`menu_debug=1`,
   `savedCategorySelected`) before trusting a run.
 - The stopped collector around `user_open` (above) is a separate fix; the
   loads peak at about 5 MB, well inside the block.
 
-**A full-roster archive without dsfforza.asi (issue #224, 2026-10-29).**
+**A full-roster archive without dsfcars.asi (issue #224, 2026-10-29).**
 
 - Symptom: the fatal-error dialog about 40 s after the window is up, before
   any Lua line; Driver.exe peaks near 300 MB private (a load climbs past
@@ -629,11 +629,11 @@ They changed from shot to shot, and players don't see them.
 
 **Cause: the same as above, in the harness.** `run-series.ps1 -Archives
 <build>\dngvehicles.sp` installed the archive only. Without the build's
-`dngvehicles.lua` as `dsfforza\ported.lua`, register.lua registers no car,
+`dngvehicles.lua` as `dsfcars\ported.lua`, register.lua registers no car,
 so the ported probe cars have no vehicleStats entry and the HUD draws what
 is left in the record. A vanilla car in the same run (225) is clean
 (run `vm1-20261028-131725`). The 2026-10-21 run above shows the same stack
-before dsfforza.asi existed, so the plugin's `[hud]` slots don't cause it.
+before dsfcars.asi existed, so the plugin's `[hud]` slots don't cause it.
 A player install always has ported.lua and hud.lua: `tools/install.ps1`
 and `dsff install` refuse a build without them (`install.gui_problem`).
 
@@ -641,7 +641,7 @@ and `dsff install` refuse a build without them (`install.gui_problem`).
 
 - `run-test.ps1`: an archive named `dngvehicles.sp` now brings its build's
   files with it, as `install.ps1` installs them: `dngvehicles.lua` as
-  `dsfforza\ported.lua`, and, when `gui\` has `gui.sp`, `Fonts.fchunk` and
+  `dsfcars\ported.lua`, and, when `gui\` has `gui.sp`, `Fonts.fchunk` and
   `hud.lua`, those three plus `gui\Locale\<language>\global.fchunk`.
   `-Override` and `-LuaFiles` still win, and `-ArchiveOnly` (also on
   `run-series.ps1`) leaves the build's files out. result.json
@@ -655,14 +655,14 @@ and `dsff install` refuse a build without them (`install.gui_problem`).
   plate (register.lua's blank glyph).
 
 In game (confirmed-runtime): out/hudtest (Panoz 51 Esperante GTLM at ID 1,
-Audi A4 Avant at ID 2, `--gui --wide-glyphs`, dsfforza.asi), IDs 225, 1
+Audi A4 Avant at ID 2, `--gui --wide-glyphs`, dsfcars.asi), IDs 225, 1
 and 2, `-HoldMph 60`.
 
 - Before: master's harness, run `vm1-20261028-211915`. Stray rows in the
   chase and cockpit views of both cars.
 - After: run `vm1-20261028-212621`. No stray glyphs, and each car shows
   its own HUD badge and plate: the Panoz its Forza logo and plate (page 1
-  glyphs, slots 1 and 2 in dsfforza.log), the Audi the vanilla rings over
+  glyphs, slots 1 and 2 in dsfcars.log), the Audi the vanilla rings over
   "A4 AVANT". See `img/vm-stray-hud-glyphs-before-after.jpg`.
 - The same archive as `bare.sp` (no build files), run
   `vm1-20261028-213136`: `vehicleStats[1]: none; blank badge and plate`,
@@ -760,7 +760,7 @@ place. The source folder is only read.
 - ours win: the archive and its build files, `-Override`, `-GameRootFrom`,
   and what the run put in `plugins` and `Common\UserLuaScripts`;
 - with `-Probe`, the mod's `Common\UserLuaScripts\bootstrap.lua` goes in as
-  `dsfforza\chained-bootstrap.lua`; the test bootstrap runs it first, as the
+  `dsfcars\chained-bootstrap.lua`; the test bootstrap runs it first, as the
   player bootstrap does;
 - a mod that brings `plugins\DriverNGHook.asi` keeps it, and `-Hook`'s 0.7.2
   stays out (`install.ps1` leaves a hook it finds alone).
@@ -780,7 +780,7 @@ Rework 2.3 (`felony-rework.md`, "In-game check").
   The level is only logged every 4 ticks and the last logged value was 3, so
   which condition fired isn't recorded; either way the spawn and zap worked.
   Since 2026-10-30 (issue #305) the first car also waits for the harness's
-  go: `run-test.ps1` writes `dsfforza\go.lua` after its last Up press, and
+  go: `run-test.ps1` writes `dsfcars\go.lua` after its last Up press, and
   `clonetest.lua` (config `wait_go`) spawns only then, or after 240 ticks
   without it. Before, the probe reached level 1 during the Up presses, so
   the first car's chase view and `-Views` were over before the first
@@ -842,7 +842,7 @@ Rework 2.3 (`felony-rework.md`, "In-game check").
 ## Lua API reference
 
 `research/lua-api.tsv` is the game's own Lua documentation, collected at
-runtime by `tools/game/lua/dsfforza/docdump.lua` through
+runtime by `tools/game/lua/dsfcars/docdump.lua` through
 `Documentation.collectLuaDocumentation()`: 1,447 functions and 248
 properties in 99 libraries, with help text. Libraries most relevant here:
 `TrafficSpooler`, `GameVehicleResource` (`create`, `swapWithModel`),
@@ -1168,7 +1168,7 @@ R32 (229 R33), 307 Mustang Boss 429 (193), 308 Raptor (251); auto hosts,
 
 ## Dyno: how cars drive (runs 20261022-041951 to -055824)
 
-`run-series.ps1 -Dyno` with `tools/game/lua/dsfforza/dyno.lua` (loaded by
+`run-series.ps1 -Dyno` with `tools/game/lua/dsfcars/dyno.lua` (loaded by
 `clonetest.lua` when `config.dyno` is set) and `src/dsfforza/harness/dyno.py` for the
 figures. Handling results and what they mean for the mapping:
 `handling.md`, "In-game validation".
@@ -1270,7 +1270,7 @@ Handling results: `handling.md`, "Round 2". Harness notes:
 ### Drive-test archive (run 20261022-140456)
 
 `out/play/play.sp` (+ `out/play/play.lua`, installed as
-`tools/game/lua/dsfforza/ported.lua`), built with `out/dyno/build_chain.sh
+`tools/game/lua/dsfcars/ported.lua`), built with `out/dyno/build_chain.sh
 out/play/list.txt` and the current defaults: DSF-first handling (round-3
 rules), hosts auto, cockpit, gauges, lights, paint, `--damage panels`,
 `--mdxn-limit 0x2C0000`; two cars on a forced host with `DSF_HANDLING_LOO=1`
@@ -1316,7 +1316,7 @@ CTS-V (106 vs 84 deg in the handbrake flick).
 ### User drive test on the real install (out/testdrive, 40 cars, IDs 1-40)
 
 Installed with `tools/install.ps1 -Build out\testdrive -WriteProfile`. A
-typo in the player bootstrap (`"dsfforza\register.lua"`: `\r` is a Lua
+typo in the player bootstrap (`"dsfcars\register.lua"`: `\r` is a Lua
 escape) stopped registration on the first attempt; fixed in
 `tools/game/lua/player/bootstrap.lua` and reinstalled. User feedback:
 
@@ -1360,7 +1360,7 @@ escape) stopped registration on the first attempt; fixed in
   and slip_area): see research/handling.md, "Driving feedback: Pagani
   Huayra".
 - **Play archive** (`out/play/play.sp` + `play.lua`, now also
-  `tools/game/lua/dsfforza/ported.lua`): IDs 304 to 314, the p4 set plus the
+  `tools/game/lua/dsfcars/ported.lua`): IDs 304 to 314, the p4 set plus the
   Huayra, built from the vanilla archive with the 10-year donor rule and the
   tuned cache (`out/play/list5.txt`; round-3 build kept as `play-r3.sp`).
   Smoke run 20261022-201655: every car loads and drives. Huayra 314 comes
@@ -1368,7 +1368,7 @@ escape) stopped registration on the first attempt; fixed in
   CTS-V, GT-R, Mito and 370Z take 2.0 to 3.6 s. The Huayra's launch run
   started with the car rolling back, and dyno.py misreads its 0-60.
 - **Vanilla files**: builds and fleet/host caches read the vanilla archive (out/vanilla or
-  dsfforza-backup) through `game_paths.vanilla()`. The installed test-drive
+  dsfcars-backup) through `game_paths.vanilla()`. The installed test-drive
   archive at D:\...\Install put the 40 ports into `dsf-fleet.json` for a
   while; they had no vehicleStats, so the fleet fits and the donor choice
   ignored them.
@@ -1418,4 +1418,4 @@ Results: `handling.md`, "Off road". Harness notes:
    far not needed: in the full roster (`out/build`, 2026-10-28) 572 of 573
    cars keep the full entry's Forza LODs 3/4/5; KOE_CCXR_09 drops to 4/5/5.
 5. Garage and vehicle-select screens with a new ID: done for IDs 1-40 and,
-   with dsfforza.asi, 304+ (`asi.md`, "In game").
+   with dsfcars.asi, 304+ (`asi.md`, "In game").
