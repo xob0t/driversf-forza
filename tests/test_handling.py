@@ -6,6 +6,9 @@ uv run python tests/test_handling.py     # or: uv run python -m tests handling
 
 from __future__ import annotations
 
+import math
+from types import SimpleNamespace
+
 from dsfforza.build import handling as H
 from dsfforza.build import handling_dsf as D
 
@@ -74,6 +77,42 @@ def test_steering_lock_is_forzas():
     assert D.RULES[298] == "Z" and D.SAME_MODEL_RULES[298] == "Z"
     # so the steering-set donor's p298 is not copied (only rule-H parameters are)
     assert 298 in D.FEEL_GROUPS["steering"]
+
+
+def test_top_speed_and_shift_time_are_the_cars():
+    # Issue #462: p160 is the world speed DSF shows as Forza's top speed (FUN_008994F0,
+    # x 1.3 from 160 mph on), with no cap at 160; p516 is Forza's shift time.
+    car = _forza_car(42.0)
+    car.top_speed_mph = 268.0
+    ctx = SimpleNamespace(car=car, base={0: 1300.0}, host={"id": 200, "track": 1.5, "hub_y": -0.35, "axle_mid": 0.0})
+    z = D.forza_values(ctx)
+    assert abs(z[160] - 268.0 / 1.3) < 1e-6
+    assert abs(H.displayed_speed(z[160] / H.MPH) * H.MPH - 268.0) < 1e-6
+    assert z[516] == car.shift_time
+    # below 22 m/s (49 mph) the shown speed is the world speed
+    assert H.world_speed(20.0) == 20.0 and abs(H.displayed_speed(H.world_speed(50.0)) - 50.0) < 1e-9
+
+
+def test_gearbox_is_forzas():
+    # Issue #462: the port's gear count and ratios are Forza's (the host's count gave the
+    # Sagaris 6 gears instead of 5, the LFA 5 instead of 6).
+    car = _forza_car(42.0)
+    rels, reverse, p361 = H.dsf_gearbox(car)
+    assert len(rels) == len(car.gears) == 6
+    # each gear's speed at the redline is the world speed DSF shows as Forza's
+    for rel, gear in zip(rels, car.gears):
+        forza = car.redline * math.pi / 30 * car.drive_radius / (gear * car.final_drive)
+        dsf = rel * p361 * car.drive_radius * car.redline * math.pi / 30
+        assert abs(H.displayed_speed(dsf) - forza) < 1e-6
+        if forza <= H.DISPLAY_KNEE:  # below 22 m/s the reduction is Forza's
+            assert abs(1 / (rel * p361) - gear * car.final_drive) < 1e-9
+    assert reverse < 0 and abs(1 / (reverse * p361) + abs(car.reverse) * car.final_drive) < 1e-9
+    # A 7-speed keeps gears 1..5 and its top gear (DSF holds six).
+    car.gears = [3.2, 2.2, 1.7, 1.3, 1.06, 0.88, 0.78]
+    rels, _, p361 = H.dsf_gearbox(car)
+    assert len(rels) == 6
+    top = rels[-1] * p361 * car.drive_radius * car.redline * math.pi / 30
+    assert abs(H.displayed_speed(top) - car.redline * math.pi / 30 * car.drive_radius / (0.78 * car.final_drive)) < 1e-6
 
 
 if __name__ == "__main__":

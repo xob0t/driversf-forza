@@ -1,5 +1,7 @@
 """Closed-loop in-game calibration of ported cars (optional; needs the sandbox).
 
+TODO(fit, #516): it calibrates p18 and p345 onto vanilla targets, per car.
+
 The DSF-first mapping (src/dsfforza/build/handling_dsf.py) gets a port close to how Reflections
 tuned similar cars, but launch and handbrake rotation depend on many values at once
 (research/handling.md, rounds 2 and 3). This tool measures the ported cars on the

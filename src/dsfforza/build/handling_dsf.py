@@ -294,11 +294,12 @@ def ridge_fit(xs: list[list[float]], ys: list[float], ridge: float) -> list[floa
 
 # Largest log change rule F may make (the fleet fit's year term moved a 1969 Charger's
 # tyre stiffness 30% below its host).
-F_LIMIT = 0.22
+F_LIMIT = 0.22  # TODO(fit, #517)
 
 
 class FleetModel:
-    """Per-parameter least-squares fit over the fleet (ridge 1e-2 on the slopes)."""
+    """Per-parameter least-squares fit over the fleet (ridge 1e-2 on the slopes).
+    TODO(fit, #517): rules F (p13, p369) and A (p366, p367) regress onto the fleet."""
 
     def __init__(self, rows: list[dict], exclude: set[int] = frozenset()):
         self.rows = [r for r in rows if r["id"] not in exclude]
@@ -359,9 +360,9 @@ RULES: dict[int, str] = {
     367: "A",
     368: "M",
     369: "F",
-    516: "A",
-    509: "M",
-    361: "GX",
+    516: "Z",
+    509: "M",  # TODO(fit, #516): drag scaled by mass, not from the car
+    361: "GF",
     32: "CZ",
     30: "CY",
     345: "W",
@@ -379,7 +380,7 @@ RULES: dict[int, str] = {
 # CoG height (rule CY): p30 = hub height + Forza CMHeight - drive tyre radius + 0.052 m;
 # on the 48 pairs |error| 0.030 m against 0.054 for the fleet median offset. The CoG is
 # the strongest predictor of handbrake rotation in game (with p32 and the yaw inertia).
-COG_HEIGHT_OFFSET = 0.052
+COG_HEIGHT_OFFSET = 0.052  # TODO(fit, #520)
 # On a host of the car's own model the vanilla VO3D is Reflections' version of the car:
 # keep it, only follow the hubs (wheelbase, CoG offset scaled with it) and Forza's lock.
 SAME_MODEL_RULES: dict[int, str] = {361: "GH", 32: "CH", 298: "Z"}
@@ -388,7 +389,7 @@ SAME_MODEL_RULES: dict[int, str] = {361: "GH", 32: "CH", 298: "Z"}
 # p18 from peak torque AND power (Forza curve, Nm and kW): fitted on the 45 pairs (the
 # Volt, F-350 and Q7 left out). Leave-one-out |log error|: median 0.060, 75th
 # percentile 0.102, against 0.075 / 0.175 for the torque-only rule 14.7 x Nm^0.621.
-TORQUE_POWER_FIT = (3.2354, 0.1211, 0.4497)
+TORQUE_POWER_FIT = (3.2354, 0.1211, 0.4497)  # TODO(fit, #516)
 
 
 def torque_power_rule(car: H.ForzaCar) -> float:
@@ -399,7 +400,7 @@ def torque_power_rule(car: H.ForzaCar) -> float:
 # vehicleStats stat bars (the HUD's Speed / Strength / Drift, Reflections' summary of a
 # car), fitted over the 137 vanilla cars that have them. Leave-one-out mean absolute
 # error 0.042, 0.041 and 0.127 (bar spread 0.24, 0.18, 0.28). P/W in kW per kg.
-BAR_FITS = {
+BAR_FITS = {  # TODO(fit, #521)
     "Speed": (-0.6525, 0.0101, 0.0587),  # + p160 (mph), + ln(P/W)
     "Strength": (-2.1427, 0.3429),  # + ln(p0)
     "Drift": (1.2138, 0.2739, -0.3692, -0.1497),  # + ln(P/W), FWD, AWD
@@ -424,7 +425,7 @@ def stat_bars(params: dict[int, float], specs: Specs) -> dict[str, float]:
 # 25.3 - 11.56 x p16/p0 + 5.64 x p369/p0 - 41.4 x p368/p0 + 1.68 x mph, R^2 0.63,
 # rms 11 deg. Yaw inertia per kg, lateral stiffness per kg and grip per kg are the dials
 # Reflections' cars differ by. drift_index() is the speed-free part.
-DRIFT_FIT = (-11.564, 5.639, -41.438)
+DRIFT_FIT = (-11.564, 5.639, -41.438)  # TODO(fit, #517): drift dial, off by default
 
 
 def drift_index(params: dict[int, float]) -> float:
@@ -433,7 +434,7 @@ def drift_index(params: dict[int, float]) -> float:
     return a * value(params, 16) / m + b * value(params, 369) / m + c * value(params, 368) / m
 
 
-TOP_RATIO = (1.0, 1.07)
+TOP_RATIO = (1.0, 1.07)  # gearing rule GX (the leave-one-out check only; ports use GF)
 
 
 def _mph_at_redline(rel: float, p361: float, p360: float, p42: float) -> float:
@@ -461,7 +462,7 @@ TORQUE_SCALED = (355, 358)
 # p345 is the base of the axle balance in FUN_008BD9B0 (r = -0.93 with fw, residual sd
 # 0.015 over 136 cars): swapping a GT-R port's 0.58 for the vanilla 0.51 brought its
 # handbrake rotation from 41 to 90 deg (vanilla 72 to 82).
-WEIGHT_BALANCE = {345: (0.9448, -0.8298), 505: (3.035, -3.812)}
+WEIGHT_BALANCE = {345: (0.9448, -0.8298), 505: (3.035, -3.812)}  # TODO(fit, #519)
 
 
 def candidates(ctx: Context, pid: int, new: dict[int, float]) -> dict[str, float]:
@@ -504,7 +505,16 @@ def forza_values(ctx: Context) -> dict[int, float]:
         ctx.host["axle_mid"],
     )
     vo3d, changes = H.build_vo3d(host, ctx.car)
-    return {c.pid: vo3d.params[c.pid] for c in changes}
+    out = {c.pid: vo3d.params[c.pid] for c in changes}
+    # p160 is the car's top speed in world mph: FUN_008BC4D0 fades the throttle from 0.9 x
+    # p160 and cuts it at p160 (x 0.447 m/s). The world speed the HUD and speedometer show
+    # (FUN_008994F0) as Data_Car "TopSpeed-mph" (#462; the forza mapping's fit and its
+    # 160 mph cap, which held every port under 160 world mph, 208 shown, are not used).
+    out[160] = H.dsf_top_speed(ctx.car)
+    # p516 is the shift time in s (FUN_008C2420 stores p516 x 25 physics steps of 0.04 s);
+    # List_UpgradeDrivetrainTransmission.GearShiftTime, s.
+    out[516] = ctx.car.shift_time
+    return out
 
 
 def gear_rule(ctx: Context, rule: str, p160: float, p42: float, p360: float, z: dict[int, float]) -> dict[int, float]:
@@ -512,6 +522,14 @@ def gear_rule(ctx: Context, rule: str, p160: float, p42: float, p360: float, z: 
     gear at redline sits at the same multiple of p160 as on the host. GZ: Forza's."""
     if rule == "GZ":
         return {pid: z[pid] for pid in GEAR_PIDS if pid in z}
+    if rule == "GF":
+        # Forza's gearbox: its gear count (at most DSF's six), ratios, reverse and final
+        # drive, each gear's speed at the redline the world speed DSF shows as Forza's
+        # (handling.dsf_gearbox).
+        rels, reverse, p361 = H.dsf_gearbox(ctx.car)
+        out = {361: p361, 275: reverse, 282: float(len(rels))}
+        out.update({276 + i: r for i, r in enumerate(rels)})
+        return out
     b = ctx.base
     if rule == "GX":
         # The host's gear count, spacing and top gear (at the host's multiple of p160);
@@ -649,6 +667,7 @@ def build(
     # vanilla cars' values (GT-R 0.0103 vs 0.009, Mito 0.0052 vs 0.005).
     if engine_scale and not ctx.same_model:
         # Engine inertia (launch): the fleet's median ratio to p18 x new p18 (rule R).
+        # TODO(fit, #516): R and the friction scaling below follow p18's fit.
         c = candidates(ctx, 355, new)
         if "R" in c:
             put(355, c["R"], "R: fleet median ratio to p18 x new p18")
@@ -684,6 +703,7 @@ def build(
     elif ctx.specs.drive == "RWD":
         put(371, 0.0, "D")
     else:
+        # TODO(fit, #522): 0.3 is a fleet-typical split; Forza states its own.
         put(371, value(b, 371) if host_drive == "AWD" and value(b, 371) > 0 else 0.3, "D")
     put(392, ctx.car.wheelbase, "Forza wheelbase (hub patch)")
     # CoG fore/aft: the host's offset from its axle midpoint, scaled to the new wheelbase
@@ -738,6 +758,7 @@ def context(
     host_specs = specs_from_stats(host["stats"]) or specs
     model = FleetModel(fit_set(fleet), exclude)
 
+    # TODO(fit, #522): the counts (two more hosts, 10 years) were picked by the LOO score.
     # Set donors: the host and the next best-ranked hosts of the car's drivetrain and era
     # (within 10 years); the Mito's second-best host, a 1971 Fiat 500, gave it a launch
     # 3 s slower than its host's, and the Huayra (2012) took the 1997
@@ -803,6 +824,7 @@ def apply(
     out = dict(base)
     out.update(new)
     # In-game calibration results (src/dsfforza/build/handling_tune.py), per car and host.
+    # TODO(fit, #516): calibrated onto vanilla 0-60 and rotation targets.
     tuned = {}
     tune_cache = REPO / "out" / "cache" / "handling-tune.json"
     if tune_cache.exists() and os.environ.get("DSF_HANDLING_NOTUNE") != "1":
@@ -1087,6 +1109,27 @@ def loo(
         csv_path.write_text("\n".join(lines))
 
 
+def gear_check() -> None:
+    """Reflections' gearing against DSF's display function, over the vanilla/Forza pairs:
+    per gear, the vanilla car's speed at the redline over the Forza gear's (same tyre and
+    redline), and world_speed(v) / v for that Forza speed (research/handling.md, "Speed
+    shown and world speed")."""
+    fleet = load_fleet()
+    for sid, media in PAIRS.items():
+        try:
+            car = H.load_forza(media, default_dbs())
+        except (SystemExit, ValueError, LookupError):
+            continue
+        p = fleet[sid]["params"]
+        red, radius = value(p, 42), value(p, 360)
+        cells = []
+        for i in range(min(int(value(p, 282)), len(car.gears))):
+            dsf = value(p, 276 + i) * value(p, 361) * radius * red * math.pi / 30
+            forza = red * math.pi / 30 * radius / (car.gears[i] * car.final_drive)
+            cells.append(f"{dsf / forza:.2f}/{H.world_speed(forza) / forza:.2f}")
+        print(f"{sid}	{media}	" + " ".join(cells))
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -1099,9 +1142,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--exclude-self", action="store_true", help="skip hosts of the car's own vanilla model")
     p.add_argument("--feel", choices=("medoid", "host"), default="medoid")
     sub.add_parser("refresh", help="rebuild the fleet cache")
+    sub.add_parser("gears", help="vanilla gearing vs DSF's display function over the pairs")
     args = parser.parse_args(argv)
     if args.cmd == "loo":
         loo(csv_path=args.csv, verbose=args.verbose)
+    elif args.cmd == "gears":
+        gear_check()
     elif args.cmd == "refresh":
         print(len(load_fleet(refresh=True)), "vehicles")
     else:
