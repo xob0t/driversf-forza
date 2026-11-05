@@ -156,6 +156,18 @@ def run_constant_chunk(data: bytes, env: dict | None = None) -> dict:
             if name not in out and name not in env:
                 raise ValueError(f"reads global {name}")
             regs[a] = out.get(name, env.get(name))
+        elif op == 6 and isinstance(regs[b], dict):  # GETTABLE on a table the caller gave in env
+            regs[a] = regs[b].get(key(rk(c)))
+        elif 12 <= op <= 15:  # ADD, SUB, MUL, DIV of constants (missionprogression.lua: math.pi / 2)
+            x, y = rk(b), rk(c)
+            regs[a] = x + y if op == 12 else x - y if op == 13 else x * y if op == 14 else x / y
+        elif op == 18:  # UNM
+            regs[a] = -regs[b]
+        elif op == 28 and callable(regs[a]):  # CALL of a function the caller gave in env
+            nargs = b - 1 if b else 0
+            result = regs[a](*regs[a + 1 : a + 1 + nargs])
+            if c != 1:  # results wanted (c - 1 of them, or all when c == 0): the first one
+                regs[a] = result
         elif op == 7:
             out[k[bx]] = regs[a]
         elif op == 9:
