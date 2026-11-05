@@ -14,7 +14,9 @@ traffic settings (design at the end). Evidence tags as elsewhere:
 | Question | Answer | Evidence |
 | --- | --- | --- |
 | How many kinds of traffic? | Two. **Ambient traffic** comes from the chapter's traffic set: 15 to 18 models, all kept loaded, about 85 cars within 250 m. **Interesting vehicles (IVs)** are at most 10 other models at once, up to 3 cars of each, spawned 128 to 256 m ahead of the camera. | static (sections 1, 2); runtime census (`draw-distance.md`) |
-| Can Lua change the ambient set? | **No.** The sets are AIEX data in `media/san_franciscoAI.fchunk`. Lua only picks one by name. A data patch can only swap an ID in place (`traffic_sets --replace`). | static (`game-lua.md`) |
+| Can Lua change the ambient set? | **No.** The sets are AIEX data in `media/san_franciscoAI.fchunk`. Lua picks one by name; `RequestTrafficVehicles` replaces what is loaded but not what spawns. | static (section 1b) |
+| Can a port be ambient traffic? | **Yes**, through a patched copy of the AI file that dsfforza.asi's redirect list serves. Weights per road (208 weight tables over 191 model columns) decide each car's model. A port in a vanilla model's column takes its place; a new column takes the share its weights give it. | static (1b); runtime (3b): 9.8 % and 20.9 % as set |
+| What limits ambient ports? | The 35 kind-0 spool slots. The set loads unchecked; past the budget the chapter's mission pot is refused and **the load hangs** (no crash). Added ports per story chapter: 1 to 4 (Exposition 11, Epilogue 14); replacing costs nothing. | static; runtime (3b) |
 | Can Lua change the IVs? | **Yes.** The engine takes the 17 region lists from Lua (`SetInterestingVehicleRegions`) on every chapter load. Adding, removing or reordering IDs there decides which models it picks. | static (section 2) |
 | Which cars can be IVs? | Any model the spooler can load that isn't already loaded: not in the active traffic set, not the player's car, not already an IV, not excluded, and not of vehicle type 6. Package cars qualify. | static (0x007EB970) |
 | Do the two kinds share models? | No, by design. The vanilla IV lists and the story traffic sets are disjoint in every chapter but the Epilogue, where 4 models (173, 179, 258, 274) are in both. A pick of one of those is rejected while the set is loaded. | static (data) |
@@ -52,11 +54,142 @@ The story sets (frequency 0, `traffic-sets.tsv`):
 | 1 to 7 | Chapter N | 18 each |
 | Epilogue | Epilogue | 15 |
 
-**So a port can't be ambient traffic through Lua.** The only route is a
-patched AIEX that swaps a vanilla ID for a ported one in place. All the
-set's models are then loaded together in the spool's kind-0 slots
-(`spool-limits.md`). That is a separate feature, not part of this
-design (issue to file).
+**So Lua alone can't make a port ambient traffic.** The weights that pick each car's model are in the AI file too. Section 1b decodes them and the way in (a patched copy served by dsfforza.asi's redirect list); section 3b shows it in game.
+
+## 1b. Ambient traffic in Driver.exe (confirmed-static)
+
+Section 1 has the summary; this is the decode.
+
+**Selecting a set.** `civilianTraffic.setTrafficSettingsName` (0x0064D390,
+registered by 0x0064DC40) hashes the name (0x00BA6DE0) and calls 0x0076FDF0
+on the traffic manager `[Engine + 0x758]`:
+
+1. It finds the progression record by hash (0x0040A780: a 61-bucket hash
+   table that the AI loader builds from section 0x118).
+2. It stores the hash and frequency at `+0x5CA840` and `+0x5CA844`.
+3. It copies the frequency's u16 IDs from section 0x120 (`[AI + 0x124]`) into
+   a **40-entry stack buffer, with no bound**.
+4. It passes the list to **0x005A79F0, the spooler's traffic list**.
+
+0x005A79F0 copies the list to spooler `+0x000`. Room is 50 u32 with the
+count at `+0xC8`, and there is no bound here either. It then runs 0x005A7490:
+
+- every listed model not yet loaded is requested (0x0059DB40, 0x0059DB60);
+- every model of the old list that isn't in the new one is released;
+- the resident traffic models are kept in the list at `+0x330`.
+
+`TrafficSpooler.RequestTrafficVehicles(t)` (0x0066E560) calls the same
+0x005A79F0, so from Lua it **replaces** the traffic spool list. It changes
+what is loaded, not what spawns (below).
+
+**Picking a car's model.** The traffic system spawns a car (0x0077ADA0) with
+the model from 0x00916870:
+
+```c
+if (manager->model_override != -1) return manager->model_override;   // +0x5CA9F0
+rng.seed(vehicle_seed);                    // per carrier: the same car in the same place
+x = rng() * range->total;                  // range = {u32 start, u32 count, f32 total}
+for (i = range->start; i < range->start + range->count; i++)
+    if ((x -= pairs[i].weight) < 0) return pairs[i].model;   // pairs: {u32 model, f32 weight}
+return 0;
+```
+
+`SetVehicleModelOverride(id)` (0x0064D920) sets that override, so it turns
+**every** traffic car into one model, and `ResetVehicleModelOverride` puts it
+back. It is no use for a mix.
+
+**Which weights a road uses** (0x0077DA40, 0x00916510): a road segment's
+record for the active set is section 0x128 entry `(set.index & 0xFF) +
+road.u16[+8]`, 0x14 bytes. Byte `+0x0D + frequency` of it is the range index
+(section 0x158). The ranges point into section 0x160's `{model, weight}` pairs
+(`[0x016DA940]`, set by the AI loader 0x0040A7C0 from `AI + 0x164`).
+
+**The data** (`media/san_franciscoAI.fchunk`, `AIRT` → `NONR` → `AIEX`,
+`AIRF`; AIRF is route-finding data, floats; scratch script `aipatch.py`):
+
+| Section | Count | Record | Meaning |
+| --- | ---: | --- | --- |
+| 0x118 | 59 | 28 B: hash, start[5], count[5], index | progressions (sets) |
+| 0x120 | 1369 | u16 | each set's spool list per frequency |
+| 0x128 | 18821 = 59 × 319 | 0x14 B | per (road, set): byte `0x0D + f` = range |
+| 0x158 | 208 | {start, count, f32 total} | weight ranges |
+| 0x160 | 39728 = 208 × 191 | {u32 model, f32 weight} | 191 model columns, the same in every range |
+
+- **The non-zero models of a set's roads are exactly its spool list.** This
+  holds for every set and frequency checked (Exposition, Chapters 1 and 7,
+  Epilogue, Challenge traffic f0 to f3; `aipatch.py` checks all of them).
+  So the spool list says what is loaded, and the weights say what spawns
+  on which road, by district.
+- Chapter 7's roads use 16 different ranges, the Epilogue's one. 62 of the
+  191 columns have zero weight everywhere: IDs 1, 5, 9, 12, 21, ... 303, a
+  model list from development.
+- **Ranges are shared.** 82 of the 149 ranges in use belong to more than one
+  set. A story set mostly shares with its own mission and chase variants:
+  Chapter 7 with 9CB17769, Chapter 3 with Challenge traffic heavy, Chapter 4
+  f1, Chase traffic 3 and two unnamed sets, Chapters 6 and Epilogue with none.
+  A weight change in a range affects every set that uses it, so a model given
+  weight there must join each of those sets' spool lists.
+- Range indices are bytes: 208 of 256 are used, so at most 48 ranges can be
+  cloned to make a change apply to one set only.
+
+**The budget: kind-0 spool slots.**
+
+- `TrafficSpooler.GetMaxSpooledVehicles()` (0x0066E480 → 0x0059C5C0 →
+  0x005A0AD0) is the SSLP header byte `+0x18 + kind`: 35 for kind 0 in the
+  vanilla archive.
+- A mission or IV request (0x005A6FD0) is refused when `traffic + mission +
+  pending + 1 ≥ max`.
+- **The traffic list is not checked.** 0x005A7490 requests every model of
+  the set. 0x0059D740 takes a free request handler from the pool at
+  `+0x6FDA0` and calls through it without a NULL check (`(*piVar13 + 0x44)`
+  with `piVar13 = 0`), so a request with no free handler would read address
+  0 (hypothesis until a run shows it).
+- Every resident model is one kind-0 slot: the traffic set's 15 to 18, the
+  IVs (`min(10, active + free)`), the mission pots and the player's car. A
+  port that **replaces** a set model keeps the count. A port **added** to a
+  set takes one slot, first from the IVs, whose desired count follows the
+  free slots.
+- Per model, ports fit the slot. A kind-0 entry's NONR has to fit 0x6D000
+  (ports: 0x58D10). Ports' kind-0 VEHC are 1.59 MB median and 2.11 MB at the
+  most, against 1.31 to 1.57 MB for the Chapter 7 set's models (25.6 MB for
+  all 18). All are below the 2.5 MB static spool buffer. Graphics pool slots
+  hold about 1800 render objects (`spool-limits.md`), and the ports are
+  within vanilla's range.
+
+**Ways in, compared.**
+
+- **Patched copy, served by dsfforza.asi's redirect list (chosen).** The car
+  manager writes `dsfforza\generated\san_franciscoAI.fchunk` from the game's
+  current file, as it writes gui.sp, and lists it in `redirect.txt`. The
+  plugin's redirect is generic for any file opened through the file layer
+  (FUN_00857370 → CreateFileA at 0x0085AC1E; `mod_archive.cpp`), so no
+  plugin code changes. With the plugin off the game reads its own file,
+  which matches #511 (no packages, no ports). The patch is plain data, with
+  everything checked offline and a self-check that no set weights a model it
+  doesn't load. It takes effect at the next game start.
+- **Runtime patch of the loaded tables.** The plugin would hook 0x0040A7C0
+  or 0x0076FDF0, rebuild the pairs and spool lists in memory, and repoint
+  `[0x016DA940]` and `[AI + 0x124]`. Same data work, plus hooks, plus the
+  plugin parsing the settings. Its one gain is rotating ports per session
+  without rewriting the file, and that can come later.
+- **Lua.** `RequestTrafficVehicles` replaces the spool list, but the
+  weights stay as they are, so the added models would load and never spawn.
+  `SetVehicleModelOverride` makes all traffic one model. Neither does it.
+
+**Writing the copy.** The grown tables (spool IDs, pairs) go past the old end
+of AIEX, and only their directory entries change, so no other byte inside
+AIEX moves. AIEX grows by a multiple of 0x800. The fields after it shift by
+that much:
+
+- the AIEX size;
+- the AIRF offset;
+- the NONR CHNK total and its entry size in AIRT;
+- the AIRT total and its entry size in the file;
+- the file total.
+
+The repo's generic CHNK writer is not byte-exact on this file: it aligns the
+NONR total to 0x431300 and moves NONR's name. So the copy edits the fields in
+place instead.
 
 ## 2. Interesting vehicles (confirmed-static)
 
@@ -299,122 +432,175 @@ driving IDs 1 to 3 then. So they aren't evidence that IVs spawn ports. The
 only earlier evidence is run `20261022-025601` (`in-game-tests.md`, "Fix4":
 a 306 counted while the probe had only spawned 266).
 
-## 4. Design: traffic settings in the car manager
+## 3b. Ambient traffic in game (confirmed-runtime)
 
-Everything below is about the IV lists, the one part Lua can change. The
-engine's behaviour is unchanged: the same 10 slots, the same 60 s cooldown,
-the same pick. The settings decide only what the 17 lists hold.
+One series, three runs (`vm1-20261105-214006`, `-214317`, `-214635`).
+Setup:
 
-### Settings (in `manager.json`, keyed by package key)
+- the vanilla archive and the 24-package overlay of run
+  `vm1-20261104-184809` (ports at IDs 1 to 24);
+- dsfforza.asi with `packages=1`;
+- a patched `san_franciscoAI.fchunk` written by `aipatch.py` and listed in
+  the overlay's `redirect.txt` as
+  `media\san_franciscoAI.fchunk|dsfforza\generated\san_franciscoAI.fchunk`.
+
+The prototype `traffic.lua` keeps every port out of the IV regions, so any
+port seen comes from ambient traffic. The probe is the same as in section 3
+(Chapter 7, region 9). Each run took 40 census samples.
+
+| Run | Patch | Result |
+| --- | --- | --- |
+| replace136 | model 136 → port 10 in every spool list and weight column (in place) | Port 10 was **9.8 %** of all cars seen within 250 m, up to 12 at once. 136 never appeared. In the vanilla-set run `vm1-20261105-210733`, 136 was 9.9 % |
+| add2 | ports 3 and 18 as new columns, 20 % of the weight of Chapter 7's 16 ranges; added to the spool lists of Chapter 7 and 9CB17769 (20 models each) | Port 3 **11.6 %**, port 18 **9.3 %**: 20.9 % together, against the 20 % set. Desired IV slots 10 → 9 |
+| exhaust14 | 14 ports added the same way (32 models) | **The chapter load never finished**, with no crash: `waitingForTrafficSettings`, `g_NetworkTime` 0, no traffic, IVs never enabled, and the probe couldn't take a car |
+
+Also seen in every run:
+
+- the plugin logs `'media\san_franciscoai.fchunk' opened as
+  ...\dsfforza\generated\san_franciscoAI.fchunk`: the AI file goes through the
+  redirected file layer;
+- `GetMaxSpooledVehicles()` returns 35;
+- the game's Lua has **no `os` table** (`os: nil`), so register.lua can't
+  rotate anything per session by the clock;
+- about 80 cars within 250 m (median 79 to 80, max 99 to 100), as in vanilla;
+- the Lua log's two "Script file not found" lines, which every vanilla run has
+  too.
+
+What this confirms:
+
+- A port can be ambient traffic. A port in a vanilla model's column takes
+  exactly that model's place.
+- A new column gets the share its weights give it, as the pick in section
+  1b predicts.
+- **Running out is a hang, not a crash.** 0x005A7490 loads the whole set
+  unchecked. Then the chapter's mission pot is requested through
+  `RequestMissionVehicle`, which refuses at `traffic + mission + pending + 1
+  ≥ 35` (0x005A6FD0). `spooling.isMissionVehiclesSpooled` waits for those
+  models forever (the hang is confirmed; this cause is read from the code).
+
+**Budget per story chapter** (hypothesis from the code; bracketed by +2
+working and +14 hanging in Chapter 7). The traffic list may hold at most
+`35 - 1 - pot` models, where `pot` is "All chapters" (5) plus the chapter's
+own pot (`spooling.missionSpecificVehiclePots`) and the 1 is the player's
+car. Models that can be added on top of the vanilla set:
+
+| Exposition | Ch. 1 | Ch. 2 | Ch. 3 | Ch. 4 | Ch. 5 | Ch. 6 | Ch. 7 | Epilogue |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 11 | 4 | 1 | 2 | 2 | 4 | 1 | 3 | 14 |
+
+Removing a vanilla model from a set frees one. Phase 2 checks the boundary:
+Chapter 7 with +3 should load, with +4 it should hang. Every IV model the
+IVs lose is a slot the added models take, which is the 10 → 9 above.
+
+## 4. Design: traffic settings in the car manager (revised for the whole pool)
+
+The car manager controls both kinds of traffic. **Ambient traffic** is the
+main part: about 80 cars from the chapter's set, with a patched AI file
+served by the plugin's redirect list (section 1b). **IVs** are secondary:
+on or off per car, pinning, and the #562 cap. After the rename (#565) the
+paths are `dsfcars\`, `plugins\dsfcars.asi` and
+`Common\UserLuaScripts\dsfcars\`. The work stays in Python; the GUI is
+tkinter.
+
+### Settings (`dsfcars\cars\manager.json`, `"traffic"`, keyed by package key)
 
 ```json
 "traffic": {
-  "cars": {
-    "forza.fh1.ALF_8C_08": {"traffic": false},
-    "forza.fm4.AUD_TT_07": {"regions": [6, 7, 9]}
+  "cars": {"forza.fh1.ALF_8C_08": {"traffic": false},
+           "forza.fm4.AUD_TT_07": {"regions": [6, 7, 9]}},
+  "ambient": {
+    "default": {"ports": 2, "share": 0.2},
+    "sets": {"Chapter 7": {"ports": ["forza.fm4.AUD_TT_07"], "share": 0.3,
+                           "replace": {"136": "forza.fm4.MAZ_RX7_90"},
+                           "vanilla_off": [201]}}
   },
-  "mix": {"share": 0.25},
-  "vanilla": {"off": [226, 233]}
+  "iv": {"ports": true, "per_region": 24}
 }
 ```
 
-- `cars.<key>.traffic`: false keeps the car out of every list. The car stays
-  in the garage. Missing means true.
-- `cars.<key>.regions`: the regions the car always goes in (1 to 17).
-  Missing means automatic.
-- `mix`: how many automatic entries go into each region. Either `share` (the
-  ports' fraction of the list, 0 to 1; 1 means only ports), or `per_region`
-  (a count, the old `regionCars`). No `mix` means `per_region` 24, the old
-  default, so an install that doesn't touch the setting keeps its share.
-- `vanilla.off`: vanilla model IDs taken out of every list. Only IV models
-  can be listed; the manager refuses a traffic-set model, because Lua can't
-  remove it (section 1).
+- `cars.<key>.traffic: false` keeps a car out of both kinds, without
+  touching the garage. Bulk: by make, by source (FH1, FM4, DLC), all, none.
+- `ambient.default` applies to every story set (Exposition, Chapters 1 to 7,
+  Epilogue), and `ambient.sets.<name>` overrides it for one set:
+  - `ports`: how many ports join (the manager deals them from the in-traffic
+    cars, so different sets get different ports), or a list of keys;
+  - `share`: the ports' share of the weight on every road of the set, split
+    evenly between them (`w = share * T / (k * (1 - share))`, from the
+    engine's pick);
+  - `replace`: a vanilla model whose column and spool slot a port takes over.
+    It inherits that model's weight on every road, costs no slot, and can be
+    used without limit;
+  - `vanilla_off`: vanilla models with their weight set to 0 and taken out
+    of the spool list. Each frees a slot.
+- **Budget**: added ports ≤ the chapter's room (table in 3b) + the vanilla
+  models taken out. The manager refuses more and says which set and why.
+  The room comes from the pot data, not from a constant.
+- **Shared ranges**: a change to a set's ranges also reaches the sets that
+  share them, mostly its mission and chase variants. Those sets get the same
+  ports in their spool lists, so no set weights a model it doesn't load, and
+  their budgets are checked too. `status` names them.
+- **Rotation**: the game's Lua has no clock, and a set's ports live in the
+  file. So the manager deals the ports when it writes the file (on every
+  change, and on `traffic shuffle`). Rotating per session would need the
+  plugin to rewrite the columns at load, which can come later.
+- `iv`: ports in the IV regions on or off, plus the per-car pins, through
+  `traffic.lua`. It fixes #562 (no list over 128). It doesn't change the
+  IVs' placement weights.
 
-Settings stay when a car is disabled, upgraded or removed, like its ID, so
-a reinstall gets them back. They live in manager.json because install.ps1
-and uninstall keep that file (`INSTALL.md`).
+### Files the manager writes
 
-### What the game reads: `Common\UserLuaScripts\dsfforza\traffic.lua`
-
-The manager writes `traffic.lua` with every change, from the state and the
-enabled cars. It is keyed by model ID, as `packages.lua` is:
-
-```lua
--- Written by dsff car_manager; do not edit.
-return {
-	cars = { [1] = { traffic = false }, [7] = { regions = { 6, 7, 9 } } },
-	mix = { share = 0.25 },
-	vanilla = { off = { 226, 233 } },
-}
-```
-
-It is a file of its own, so a traffic change doesn't regenerate the GUI
-copies (gui.sp alone is 80 to 160 MB) or `packages.lua`. It takes effect at
-the next game start: register.lua reads it once and applies it on every
-chapter load.
-
-### register.lua
-
-- It reads `traffic.lua` only when `ASI.packages` is true, together with
-  `packages.lua`. With the plugin off the game stays vanilla, with no car
-  added and no vanilla car removed (#511).
-- `injectRegions(regions)` rebuilds each region's list. It starts from the
-  vanilla list minus `vanilla.off`, keeping the vanilla order, and keeps
-  that unchanged list for the next chapter load, since the wrapper edits
-  `spooling.interestingVehicles` in place. Then it works out how many ports
-  the region takes:
-  - `quota = per_region`, or `ceil(share / (1 - share) * n)` for
-    `n` vanilla entries; with `share = 1`, the vanilla entries are dropped
-    and the quota is `128`;
-  - capped at `128 - n` (#562) and at the number of traffic cars.
-- Pinned cars go first, into their own regions, and count against the
-  quota. The automatic cars fill what is left, dealt round-robin over the
-  regions. Each car goes into the regions with free quota, in a stable order,
-  wrapping round. So with room enough (17 quotas summed ≥ cars), every car
-  is in at least one region. When there is less room, the deal starts at an
-  offset that changes each game start (from `os.time` if the game's Lua has
-  it; to be checked), so every car comes up in some session.
-- Placement: the ports are spread evenly through the vanilla entries
-  (entry `i` of `k` at position `round((i + 0.5) * (n + k) / k)`). Each port
-  then gets about the list's average weight under the engine's pick
-  (section 2). Appending them at the end, as now, gives them the lowest
-  weights, which nothing in the data asks for.
-- A list is never more than 128 entries. Missing or bad settings fall back
-  to the defaults and log a line.
+- `dsfcars\generated\san_franciscoAI.fchunk`: made from the game's current
+  file (vanilla, or another mod's) on every traffic change, in about a
+  second. It adds one line to `redirect.txt`. A self-check runs before it is
+  written:
+  - every set's weighted models must equal its spool list;
+  - every list must be at most 40 entries (0x0076FDF0);
+  - every chapter must stay in budget.
+  With no ambient setting, the copy and the line aren't written.
+- `Common\UserLuaScripts\dsfcars\traffic.lua`: the per-car IV settings,
+  read by register.lua only when the plugin has loaded the packages (#511).
+- A traffic change doesn't regenerate gui.sp, Fonts.fchunk or packages.lua.
+- The AI patcher goes in `src/dsfforza/game/traffic_sets.py` (with
+  `aipatch.py`'s logic and tests): read, the operations, the container edit,
+  the self-check.
 
 ### CLI (`dsff car_manager traffic ...`)
 
 ```text
-traffic status                             per car: in traffic or not, pinned regions; mix; vanilla off
-traffic off|on <selector>...               selector: a key, make:<MAKE>, game:FH1|FM4, dlc, all
-traffic pin <selector>... --regions 6,7,9
-traffic unpin <selector>...
-traffic mix --share 0.25 | --per-region 24 | --default
-traffic vanilla [--chapter N]              which vanilla models a chapter uses: its traffic set and
-                                           its IV lists, per region
-traffic vanilla off|on <id>...             IV models only
-traffic regions [--chapter N]              the 17 regions: centre, radius, vanilla count, room (128 - n)
+traffic status [--set NAME]          per set: models and their weights, ports, room left, sets sharing its roads
+traffic on|off <selector>...         a key, make:<MAKE>, game:FH1|FM4, dlc, all
+traffic ambient [--set NAME] --ports N | --ports KEY,... --share S
+traffic ambient [--set NAME] --replace ID=KEY | --vanilla-off ID,... | --vanilla-on ID,...
+traffic ambient --off                no patched AI file
+traffic shuffle                      deal the ports to the sets again
+traffic iv on|off; traffic pin <selector> --regions 6,9; traffic unpin <selector>
 ```
 
-`dlc` matches the FM4 cars in `tools/batches/fm4-dlc.txt`, since the
-packages don't record their pack. `status` also shows the chapter's lists as
-`register.lua` would build them, by running the same rule in Python (tested
-against the Lua with lupa), so a player can check a setting without starting
-the game.
+### GUI (`dsff car_manager gui`, and `cars.cmd` in the release)
 
-The vanilla tables (traffic sets and IV lists per chapter) are facts about
-the game's data: model IDs only, no assets. They go in the repo as
-`research/iv-regions.tsv`, next to `traffic-sets.tsv`, written by a
-`dsff traffic_sets --regions` from the decompiled chapter scripts.
+The GUI is tkinter with ttk, which ships with uv's Python 3.13 (Tk 8.6;
+checked). It calls the same Manager functions as the CLI, in a worker thread,
+with the log in a pane.
 
-There is no interactive manager GUI (`car_gui.py` writes the garage
-pictures, badges and plates). So the surface is the CLI, and
-`install.cmd`'s menu if it gets one.
+- **Cars tab.** A table: enabled, in traffic, make, model, year, source
+  (FH1 / FM4 / DLC), ID. A filter box and make and source filters
+  (multi-select). Buttons for Enable / Disable and Traffic on / off, plus
+  "select all / none / this make / this source".
+- **Traffic tab.** One row per story set: its vanilla models (names from
+  `research/vehicles.tsv`) with a check each, plus replace-with. Then ports
+  and share, a budget bar (used of room), and which variant sets it also
+  changes. An "all sets" row holds the default. Apply writes the files.
+- **IV tab.** Ports in IV regions on or off, pinning.
 
-### Not in this design
+`cars.cmd` runs `tools\release\launcher.ps1`, which gets uv and finds the
+game folder, then runs `uv run dsff car_manager gui`.
 
-- **Ports in ambient traffic.** That needs a patched AIEX served by
-  dsfforza.asi, and a check of the spool budget for 15 to 18 loaded models
-  (section 1). It would be an enhancement issue of its own.
-- **More IVs or a shorter cooldown.** That would mean patching the engine's
-  10 and 3600. Vanilla behaviour is the target, so they stay.
+### Phase 2 checks (one VM series)
+
+- a car with `traffic: false` never appears, in either kind;
+- a port pinned to region 9 appears there;
+- a set with ports added at a share gets about that share;
+- Chapter 7 at the budget (+3) loads, and one more (+4) hangs as predicted.
+  The manager must refuse that setting, so the test writes the file
+  directly;
+- with the plugin off, register.lua registers nothing (#511).
