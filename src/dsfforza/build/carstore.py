@@ -507,11 +507,10 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "evict":
         store.evict(int(args.cap_gb * (1 << 30)) if args.cap_gb is not None else None)
     items = store.items()
-    cars = sum(1 for _, _, p in items if p.is_dir())
+    kinds = [p.parent.name if not p.is_dir() else "cars" for _, _, p in items]
     total = sum(s for _, s, _ in items)
-    print(
-        f"{store.root}: {cars} cars, {len(items) - cars} pictures, {total / (1 << 30):.2f} GiB of {store.cap / (1 << 30):.0f}"
-    )
+    counts = ", ".join(f"{kinds.count(k)} {k}" for k in ("cars", "pictures", "images"))
+    print(f"{store.root}: {counts}, {total / (1 << 30):.2f} GiB of {store.cap / (1 << 30):.0f}")
 
 
 if __name__ == "__main__":
