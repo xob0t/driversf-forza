@@ -194,6 +194,7 @@ class PlanTest(unittest.TestCase):
         self.assertTrue(reports[CH1].notes)
         self.assertEqual(traffic.budget(CH1, 41, POTS), 24)
         self.assertEqual(traffic.budget(None, 41, POTS), ta.MAX_SET_MODELS)
+        self.assertEqual(traffic.budget("Chapter 1 Kidnapped", 41, POTS), 41 - 1 - traffic.POT_CAP)
 
     def test_ports_by_key(self):
         a, reports = self.plan({"sets": {CH7: {"ports": ["k.one"]}}})

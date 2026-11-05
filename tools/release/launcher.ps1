@@ -93,5 +93,11 @@ if (-not ($Forward -contains '--game') -and -not $help -and -not ($Forward -cont
 # uv reports progress on stderr; Windows PowerShell must not treat that as an error.
 $env:DSFF_LAUNCHER = 'install.cmd'   # the summary names install.cmd --uninstall
 $ErrorActionPreference = 'Continue'
+# cars.cmd sets DSFF_LAUNCH=car_manager: the car manager window, or its commands when given any.
+if ($env:DSFF_LAUNCH -eq 'car_manager') {
+    $command = if ($Forward.Count) { $Forward } else { @('gui') }
+    & $uv run --project $Root --frozen --no-dev dsff car_manager @command
+    exit $LASTEXITCODE
+}
 & $uv run --project $Root --frozen --no-dev dsff install @Forward
 exit $LASTEXITCODE

@@ -29,6 +29,7 @@ from dsfforza import REPO
 
 FILES = (
     "install.cmd",
+    "cars.cmd",
     "README.md",
     "INSTALL.md",
     "LICENSE",
@@ -40,6 +41,7 @@ FILES = (
     "tools/game/lua/player/bootstrap.lua",
     "tools/game/lua/dsfcars/register.lua",
     "research/forza-roster.tsv",
+    "research/vehicles.tsv",
 )
 FOLDERS = ("src/dsfforza/", "tools/batches/", "tools/release/")
 # Never in a release, whatever is tracked: game and Forza data, captures, binaries.
