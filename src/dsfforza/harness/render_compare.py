@@ -120,13 +120,19 @@ def merge_plan(build: Path) -> tuple[Path, list[dict]] | None:
     """(the vanilla archive, the merge plan) of a build that wrote no dngvehicles.sp
     (port_batch: past 4 GiB, or --no-archive; research/batch.md, "Builds past 4 GiB"), or
     None. A car's chunk is taken from the build's own work/ when the plan's path is gone:
-    dsff install builds in a staging folder (build.new) and renames it."""
+    dsff install builds in a staging folder (build.new) and renames it. A build without the
+    plan file (its pack taken whole from an earlier build before the plan was a pack
+    output) gets it from its manifest: plan_from_manifest."""
     path = Path(build) / MERGE_PLAN
-    if not path.is_file():
-        return None
-    from dsfforza.build import port_batch
+    if path.is_file():
+        from dsfforza.build import port_batch
 
-    dsf, plan = port_batch.read_plan(path)
+        dsf, plan = port_batch.read_plan(path)
+    else:
+        found = plan_from_manifest(build)
+        if found is None:
+            return None
+        dsf, plan = found
     cars = []
     for car in plan:
         chunk = Path(car["chunk"])
@@ -134,6 +140,31 @@ def merge_plan(build: Path) -> tuple[Path, list[dict]] | None:
             chunk = Path(build) / "work" / chunk.name
         cars.append({**car, "chunk": str(chunk)})
     return dsf, cars
+
+
+def plan_from_manifest(build: Path) -> tuple[Path, list[dict]] | None:
+    """(the vanilla archive, the merge plan) as register_cars lays it out, from a build's
+    manifest (dngvehicles.json: "vanilla", each car's spool ID and host) and work/: each
+    car's chunk work/<media>.chnk with the ID its report gives it (the ID the chunk holds;
+    a remerge moves the car to the manifest's), in the merge's order (by spool ID). None
+    without a manifest."""
+    path = Path(build) / "dngvehicles.json"
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    plan = []
+    for car in sorted(manifest.get("cars", []), key=lambda c: c["spool_id"]):
+        report = car_report(build, car["media"]) or {}
+        plan.append(
+            {
+                "chunk": str(Path(build) / "work" / f"{car['media']}.chnk"),
+                "chunk_id": report.get("spool_id", car["spool_id"]),
+                "spool_id": car["spool_id"],
+                "host": car["host"],
+            }
+        )
+    return Path(manifest["vanilla"]), plan
 
 
 class BuildArchives:

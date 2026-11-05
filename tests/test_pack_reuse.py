@@ -423,6 +423,10 @@ def test_without_the_archive_the_pack_lints_and_draws_the_same():
             assert [c["spool_id"] for c in plan] == [1, 2, 3, 4]
             p = pack(root, "b", results, sources=["a"], no_archive=True)
             assert stand.merged == 2 and p.stats["whole"] == str(root / "a")
+            # The whole pack brings its merge plan, naming this build's chunks (the same keys).
+            taken = port_batch.read_plan(root / "b" / port_batch.MERGE_PLAN)[1]
+            assert [c["spool_id"] for c in taken] == [1, 2, 3, 4]
+            assert all(Path(c["chunk"]).parent == root / "work" for c in taken)
             pack(root, "full", results, reuse=False, no_archive=True)
         mine = files_of(root / "a")
         assert mine.pop(port_batch.MERGE_PLAN)

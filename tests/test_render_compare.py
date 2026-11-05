@@ -501,6 +501,7 @@ def test_paint_reflection_is_off_facing_and_scales_with_the_amount():
 def test_a_build_without_its_archive_is_read_from_its_merge_plan():
     """A packages build past 4 GiB writes dngvehicles.plan.json, no dngvehicles.sp (#501): its
     cars are drawn from the plan; a chunk path of the staging folder is found in work/."""
+    import json
     import tempfile
     from pathlib import Path
 
@@ -524,6 +525,18 @@ def test_a_build_without_its_archive_is_read_from_its_merge_plan():
         assert rc.BuildArchives(build, Path(tmp) / "shards").of([5, 6]) == dict.fromkeys(
             [5, 6], build / "dngvehicles.sp"
         )
+        # A build whose pack was taken whole before the plan was a pack output: from its
+        # manifest and reports (the ID the chunk holds is the report's).
+        old = Path(tmp) / "old"
+        (old / "work").mkdir(parents=True)
+        manifest = {"vanilla": str(Path(tmp) / "vanilla.sp"), "cars": [{"media": "CAR_B_10", "spool_id": 9, "host": 2}]}
+        manifest["cars"].insert(0, {"media": "CAR_A_10", "spool_id": 5, "host": 1})
+        (old / "dngvehicles.json").write_text(json.dumps(manifest))
+        (old / "work" / "CAR_B_10.json").write_text(json.dumps({"media": "CAR_B_10", "spool_id": 309, "ok": True}))
+        dsf, plan = rc.merge_plan(old)
+        assert dsf == Path(tmp) / "vanilla.sp"
+        assert [(c["spool_id"], c["chunk_id"], c["host"]) for c in plan] == [(5, 5, 1), (9, 309, 2)]
+        assert plan[1]["chunk"] == str(old / "work" / "CAR_B_10.chnk")
         try:
             rc.BuildArchives(Path(tmp) / "empty", Path(tmp) / "shards")
         except SystemExit:
