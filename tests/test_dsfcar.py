@@ -214,6 +214,15 @@ class DsfcarTest(unittest.TestCase):
             with self.subTest(images=list(images)):
                 self.assertTrue(dsfcar.validate(self.write(images=images)))
 
+    def test_shared_emblem_checked(self):
+        """The shared emblem is the card atlas's size, one level of DXT5."""
+        self.assertEqual(dsfcar.emblem_problems(dds()), [])
+        mipped = bytearray(dds() + b"\0" * 4096)
+        struct.pack_into("<I", mipped, 28, 2)
+        for data in (dds(256, 256), dds(fourcc=b"DXT1"), bytes(mipped), dds()[:-1], b"not a DDS"):
+            with self.subTest(size=len(data)):
+                self.assertTrue(dsfcar.emblem_problems(data))
+
     def test_model_id_fields(self):
         """car.sp's full VEHC holds car.model_id once in each of VSVH, VO3D, SPID and UPVH:
         the fields dsfforza.asi writes the listed ID into."""
