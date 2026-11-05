@@ -1014,10 +1014,12 @@ SRWLOCK g_pool_lock = SRWLOCK_INIT;
 
 // Moves a full node pool's bump pointer to a chunk of this module's. pool = {next,
 // free count, used}; storage..head is its inline storage (head = the list head);
-// what = the log name. Before the bump that would reach `end`.
-void pool_room(int* pool, uint8_t* storage, uint8_t* head, const char* what)
+// what = the log name. Before the bump that would reach `end`. False when the pool is
+// full and no chunk could be had: the caller must not append (the node would land on
+// the list head, or past the chunk).
+bool pool_room(int* pool, uint8_t* storage, uint8_t* head, const char* what)
 {
-    if (pool[1] != 0) return;  // next is the free list's head: no bump
+    if (pool[1] != 0) return true;  // next is the free list's head: no bump
     uint8_t* cur = (uint8_t*)(uintptr_t)pool[0];
     bool inline_storage = cur >= storage && cur <= head;
     AcquireSRWLockExclusive(&g_pool_lock);
@@ -1041,10 +1043,13 @@ void pool_room(int* pool, uint8_t* storage, uint8_t* head, const char* what)
                 dsf_log("slots: %s %p passes its %u inline nodes; it goes on in the plugin's chunks", what, pool,
                         (uint32_t)((head - storage) / kNode45));
         } else {
-            dsf_log("slots: %s %p: no chunk for node %d", what, pool, pool[2] + 1);
+            dsf_log("slots: %s %p: no chunk for node %d; the node is not added", what, pool, pool[2] + 1);
+            ReleaseSRWLockExclusive(&g_pool_lock);
+            return false;
         }
     }
     ReleaseSRWLockExclusive(&g_pool_lock);
+    return true;
 }
 
 // The append of both pools: {next, prev, value} at the front of the list at head.
@@ -1069,7 +1074,7 @@ void pool_append(int* pool, int* head, int value)
 
 void __fastcall h_pool45_append(int* pool, void*, int* item)
 {
-    pool_room(pool, (uint8_t*)(pool + 3), (uint8_t*)(pool + 0x8A), "provider pool");
+    if (!pool_room(pool, (uint8_t*)(pool + 3), (uint8_t*)(pool + 0x8A), "provider pool")) return;
     pool_append(pool, pool + 0x8A, *item);
 }
 
