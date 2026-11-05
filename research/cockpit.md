@@ -1,6 +1,6 @@
 # Cockpit view: interior entry, steering wheel, gauges, head camera
 
-Updated: 2026-10-31
+Updated: 2026-11-05
 
 How DSF draws the cockpit view, where Forza keeps the same data, and what
 `src/dsfforza/convert/cockpit/` (`--cockpit` in `forza2dsf.py`, on by default in
@@ -10,7 +10,7 @@ per car (`hosts.md`). Evidence levels follow `dngvehicles.md`. The sections
 after "Current rules" are in the order the work was done, and later sections
 replace rules in earlier ones; each replaced rule says where it went.
 
-## Current rules (2026-10-30)
+## Current rules (2026-11-05)
 
 **What the cockpit view draws.** The interior entry (N+1000) alone
 (confirmed-runtime 2026-10-29, "What DSF draws"). The bonnet, wipers, mirrors
@@ -74,8 +74,9 @@ and so are their materials.
   `GAUGE_SIGHT_LOSS`).
 - Steering wheel and hands: the wheel is skinned to the host's steering record
   and keeps Forza's size in both views. The hinge and the steering marker sit
-  on the Forza wheel's hub, shifted along the column only (at most 12 cm), so
-  the wheel turns about its hub ("The steering wheel turns about its hub").
+  on the Forza wheel's hub, shifted along the column only, so the arms' grips
+  (`ARMS_GRIPS`, probed in game) lie in the rim's plane and the wheel turns
+  about its hub ("The steering wheel turns about its hub", "Fitted-rule audit").
   Every steering marker of the host moves: the head camera hangs from the
   first, the wheel and the hands from the last (host 132 has two; "Hosts with
   two steering markers", #318).
@@ -3406,6 +3407,91 @@ entries are unloaded and loaded again, and every cabin draws (runs above). The g
 leaving the garage spawns it, and it drives out drawn (`vm1-20261031-113304`). No fault
 in any run. Replays: not checked, the harness can't drive one.
 
+## Fitted-rule audit (2026-11-05)
+
+Every rule, constant, threshold, offset, scale, clamp and placement heuristic of
+`convert/cockpit/`, `digital_dash.py`, `dash_scene.py`, `steering_axle.py` and
+`trim_art.py`, against AGENTS.md "Rules come from data, never from fitting". Classes:
+**derived** (a Forza field or model, DSF engine code, a measured vanilla part or runtime
+value, a physical definition), **choice** (among Forza's own evidence by a physical
+property measured over the roster), **fitted** (chosen to look right, matched to vanilla's
+distribution, a fleet median used as a per-car value, a per-car exception), **unknown**
+(no source), **numeric** (sampling, iteration or tolerance that doesn't decide the look),
+**tooling** (surveys and previews only). Roster counts are from the 2026-11-01 build's
+570 cockpit reports (`out/build-pkg/work`).
+
+### Changed by this audit
+
+| Rule | Was | Now | Source |
+| --- | --- | --- | --- |
+| Dash-scene readouts DSF has no value for (`dash_scene.apply_state`, `digital_dash.BLANK_TEXT`) | fuel 75%, water 190, temperature ranges 100-260 and 100-300, oil = water + 10, oil pressure 0.5; texts "1234", "56.7", "12:00", "50", "200", "72", "0.0" in the artwork of every scene that binds them | text blank (as laps, place and rpm digits already were); fuel, temperature and oil meters left as the scene authors them (no PROGRESS written) | `g_fDigiData` holds rpm, speed and gear only (FUN_00891670, "Digital displays"). 308 of 415 scenes bind at least one of these readouts (fuel meter 81, odometer 232, trip 160, clock 125, outside temperature 134) |
+| Shift lights at rest (`dash_scene`) | a mapping marked "Guess" (top 35% of the tach range, FLASH at 150 ms) | driven like the tachometer, as the rpm sweep already drove them; draws the same at rest | the sweep's `RPM_METERS`; the behaviour's own props are undecoded (#506) |
+| Virtual dial scale (`displays.virtual_scale`) | speed: top speed x 1.05, at least 120 mph; tach: redline + 250 rpm, at least 6000 | the first major mark at or past the top speed or the redline | p605 stops the speedometer at the dial's end (`fit.gauge_params`); DSF's rpm stops at the redline (p42) |
+| Virtual dial marks (`displays.mark_technique`) | dark marks above Rec. 601 luma 100 | the mark colour with the higher WCAG 2 contrast ratio against the display (crossover at grey 114) | the definition of contrast (relative luminance of linearised sRGB) |
+| 180-degree dial (`displays.virtual_dial`) | chosen over 240 only when 15% larger; 0.12 r under the pivot | chosen when larger; 0.08 r under the pivot | the dial's own drawing: under the pivot lie the hub (0.08 r) and the resting needle (0.035 r half-width) |
+| Forza needles kept clear by a virtual display (`pod_display`) | 1.2 x the needle's length | the needle's length (its sweep); the gauge face is already kept clear as a gauge material | the needle's geometry |
+| Outside parts' texels in the cockpit atlas (`CockpitOptions`) | nodamage_LOD0 lifted to 40, brightness 0.85, saturation 0.55, alpha < 16 filled with (10, 10, 12), plain (40, 40, 42) | converted as the exterior converts the same texels (Texturing's defaults) | the same Forza texels through the exterior's conversion; the lift and tone were tuned when cabin trims were wrongly read from nodamage_LOD0 (Risks 8, "Cabin trims sample interior_LOD0") |
+| Rest turn of a needle (`convert_interior`) | skipped under 0.25 degrees | always applied | the calibration's rest angle |
+| The arms' grips (`hierarchy.hand_grips`, `ARMS_GRIPS`; `displays.rim_grips`) | a circle of the vanilla wheels' median rim (0.176 m) on the vanilla column (24 degrees), 45 degrees either side of the top, read off a screenshot | the fists as dsfforza.asi [hands] debug=1 logged them before its move: left (0.140, 0.099, 0.044), right (-0.133, 0.105, 0.050) about A; 0.177 m from the column, 52 and 49 degrees from the top | confirmed-runtime, run `vm1-20261028-174107` (both ported cars of the run, rims 0.141 and 0.166 m; one of the two arms sets FUN_00559F50 loads) |
+| Hinge shift along the column (`hand_shift`) | capped at 12 cm | not capped | the cap bound 0 of 570 cars (largest 8.9 cm, the tour bus); no engine limit |
+
+### Left fitted or unknown, with their issues
+
+| Rule | Value | Class | Why it stays | Issue |
+| --- | --- | --- | --- | --- |
+| `geometry.DEFAULT_EYE_OFFSET` | (0, 0.21, -0.46), the median of the non-zero `CamCockpitOffset` rows | fitted | the eye of 197 cars; (0, 0, 0) would put the eye on the hub. Forza's default for a zero row is undecoded | #503 |
+| `eye_point`: wheel centre + (x, y, -z) | | unknown | the anchor is undecoded ("lands just as plausibly") | #503 |
+| `hierarchy.RIM_DROP_DEG` and `camera_eye`'s raise; `GAUGE_SIGHT_LOSS`, `CAMERA_RISE_STEP`, `GAUGE_SIGHT_CLEARANCE`, the 0.6 inner sample | 7.9 degrees (vanilla median), 5%, 5 mm, 6 mm | fitted | raises 535 of 570 cars (median 3.5 cm); the derived rule needs both games' cockpit FOV and pitch | #503 |
+| `CameraOverrides.CockpitWheelPosition/RotationOffset` | unread | unknown | non-zero on 218 rows | #503 |
+| `geometry.FALLBACK_DIAL_MAX` | 0..160 mph, 0..8000 rpm | fitted | 129 tachometers and 100 speedometers have `NumTicks="0"`; without it they would not move | #504 |
+| `calibrate_gauge` linear min to max; `PARK_MID`; needle colour (200, 200, 200); the dash-scene needle fit over 25% of full scale and up; `SPEED_MAX` 200 | | unknown / fitted | Forza's needle code is undecoded | #504 |
+| `HUD_DOWN_DEG` 13.5, `HUD_LEFT_DEG` 7, `HUD_RIGHT_DEG` 23 | | runtime, approximate | read off 1280 x 720 shots with an unlogged FOV; needs the HUD layout and the head camera's FOV | #505, #287 |
+| `POD_SIZES`, `WHEEL_DISPLAY_SCALES`, `WHEEL_DISPLAY_SMALL_SCALES`, `POD_BEZEL`, `POD_DEPTH`, `POD_RANGE`, the `/ 0.8` in `far`, `POD_SIDE_DEG`, `POD_MAX_DEG`, `POD_BELOW_EYE`, `POD_COWL_SUPPORT`, `POD_WHEEL_CLEAR`, `POD_HAND_CLEAR` | | fitted / design | sizes and bounds of a stand-in; the hand keep-out needs DSF's arms mesh | #505, #287 |
+| `VIRTUAL_MIN_AREA`, `VIRTUAL_MAX_TILT_DEG`, `VIRTUAL_MIN_SIGHT`, `FACE_FRONT_DEPTH`, `_touching_groups`' 1 cm, `VIRTUAL_INSET`, the dial's proportions, the virtual dial colours | | fitted / design | as above | #505, #507 |
+| `place_pod` from `camera_eye` without the gauge-sight limit | | unknown | goes with #503 | #505 |
+| `digital_dash.DISPLAY_MEAN_LUMINANCE` 48, `DISPLAY_PEAK_LUMINANCE` 160 | | fitted (vanilla's brightest background) | removing it brings back #161's glare; the #161 measurements point at a missing sRGB decode, to be confirmed in the shaders | #506 |
+| `LIT_DIFFERENCE`, `SEGMENT_*`, `STATIC_DETAIL`, `STATIC_SHARE`, `CELL_BLUR`, `CELL_SHOWN`, `EDGE_SHOWN`, `PIECE_SIZE`, `NEEDLE_ASPECT`, the morphology radii; text centring, the curve fill, `Dash.number()`; `BAR_MAX` 0.49 | | fitted / unknown | the scene graph (tracks, key times, draw order) can replace most | #506 |
+| `FLAT_COCKPIT` mirror, wood and chrome colours, `FLAT_DEFAULT`, `DISPLAY_COLOUR`, `cutout_colour` (34, 34, 36) | | fitted | Forza's own texels (as `chase_flats` does) or the shared chrome | #507 |
+| `visibility.CULL_OFFSETS`, `near_keep` 0.25 m, `tiny_slack` 3%, the chase cull's 0.5%, `chase.CHASE_DISTANCE` and `CHASE_HEIGHT` for every car | | fitted | DSF's head motion was never measured; the chase camera is per car (p300..302) | #507 |
+| `shell_lod` 5, the DXT1 atlas, interior weight 4, `COCKPIT_GLOSS_MATERIALS` 6, headlights left out | | budget / unknown | no engine limit cited | #507 |
+| `MAIN_WHEEL_RADIUS`, `MAIN_WHEEL_MAX_MOVE`, 1.3 r + 5 cm, the rim at 75% of the largest radius, `WHEEL_DEPTH`, the main wheel's `blur*` drawn `black` | | fitted / unknown | the pick by `rim_scatter` is the physical criterion | #507 |
+| `seat_anchor` (with `pr90_grips`, `MAX_SEAT_SHIFT`, `MAX_HAND_ALONG`, `SEAT_FIT_TOLERANCE`, `SEAT_SCALE_RANGE`) | PR #90's placement | fitted | DSF's seat relation (`seat_for_marker`) raises 415 seats; needs a chase-view check | #509 |
+| `steering_axle`'s chase grips (the arms' for the occupant), `FLEET_EYE_ABOVE_SEAT`, `NEAR` 0.3, `TURN_DEG` 105 | | tooling | survey only | #509 |
+| `trim_art` ART, GREY, DETAIL and METAL thresholds, `METAL_WORDS`, `ART_MIN_OPAQUE`, `KEEP_TRIM`, `KEEP_TRIM_PREFIX`, the seen test's views | | fitted / unknown | exterior-wide; depends on `dsf_materials` and shader RE | #508 |
+
+### Derived or choice (kept)
+
+- **DSF engine:** gauge ids 1 and 2 and units 5000 rpm and 80 mph (FUN_00891670),
+  `MPH_PER_MS` (DAT_00DE2EB4), p605/p606, the gauge records (`GAUGE_RECORD_TYPE` 18,
+  `CLUSTER_ROLE` 185, `MAX_GAUGES` 7; FUN_0088E310), the steering marker role 0x2F and the
+  first and last marker (FUN_0088D3B0, FUN_0088E310), p538/p559 (FUN_005743E0), p95/p87
+  (unused slots, the plugin's interface), `camera_params` (FUN_0088DF80), the
+  `g_fDigiData` slots, `DIGIT_PITCH` 23/256, `GEAR_PITCH` 1/7, `BAR_LIT_FROM`,
+  `SPEED_SLOTS` 3 (the 255 mph clamp), `GEAR_CHARS`; why virtual dials exist (DSF draws no
+  changing digits) and why wheel displays move (the digital program has no skin input).
+- **Vanilla parts:** `INTERIOR_MASK` 64, `INTERIOR_MDXN_LIMIT` (Sports Coupe 10),
+  `INTERIOR_PAINT` (6 hosts checked; #507), the glass, trim and chrome materials, the
+  needle buffer layouts (stride 20 and 16), `DASHBOARD_INSTRUMENT`, the Volt's digital
+  material and stride 16, `VANILLA_MARKER_FROM_SEAT` (138 of 147 cars), the passenger
+  seat mirrored (133 of 146), the hinge within 5 cm of the marker (at most 5.4 mm).
+- **Forza data:** needle sections and poses, tick tables, `SKIP_SECTIONS` (`cagerace`),
+  the upgrade bonnets, the mirror techniques, the dash scene's own fields (`RT_W`, the
+  UIContract hashes, pivots from poses), `speed_units` from the scene's labels, Forza's
+  needle swatch (252, 45, 8), Forza's wheel size in both views.
+- **Choices among Forza's evidence with a roster survey:** the steering wheel by best
+  circle (`rim_scatter`; `COLUMN_DEPTH` only adds a candidate), the main wheel without
+  alpha-tested decals (#86), `is_stub` (`STUB_EXTENT`, `STUB_TRIANGLES`: two orders of
+  magnitude apart), the shell's windscreen and lid ray tests (`LID_RAYS`: 0 against 6 or
+  more), `FACE_MAX_ANISOTROPY` and `FACE_MIN_DENSITY` (wide gaps, measured on 22 cars and
+  checked on 40, not the whole roster), the largest readable display (`pick_display`),
+  `COWL_SECTIONS` (the 7 cars of #147 reviewed in game).
+- **Numeric:** iteration counts and tolerances (`CIRCLE_REFITS`, `CIRCLE_SETTLED`,
+  `RIM_REFITS`, the Jacobi sweeps), rasteriser and search resolutions (`POD_RESOLUTION`,
+  `POD_STEP`, `cull_resolution`, `RASTER_TILE`, `RPM_STEPS`, `SCALE`), `DECIMATE_LADDER`
+  (a size fallback), the z-offsets of drawn layers (`VIRTUAL_*_LIFT`, `PIECE_LIFT`,
+  `DIGIT_LIFT`, `NEEDLE_LIFT`, `WHEEL_DISPLAY_LIFT`, `POD_LIFT`; #505 and #506 ask for a
+  depth-precision bound), `previews.py` and `cli.py` (tooling).
+
 ## Risks and open questions
 
 
@@ -3444,5 +3530,5 @@ in any run. Replays: not checked, the harness can't drive one.
    vertices are skinned to the door records; the converter leaves them on the
    chassis). The full entry's door cards go with doors that are Forza parts
    (`damage.md`).
-8. The trim lift (40) and the label cut-out colour are by eye from renders,
-   not from in-game lighting.
+8. The label cut-out colour is by eye from renders, not from in-game lighting
+   (#507). The trim lift (40) is gone ("Fitted-rule audit").
