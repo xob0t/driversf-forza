@@ -614,7 +614,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         nargs="+",
         help=".dsfcar files, or folders: every .dsfcar in them (a roster's 573"
-        " paths don't fit on one Windows command line)",
+        " paths don't fit on one Windows command line) and the shared garage card emblem beside them",
     )
     i.add_argument("--force", action="store_true", help="install over a newer version")
     for name, text in KEY_COMMANDS.items():

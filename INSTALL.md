@@ -74,7 +74,8 @@ checked against its SHA-256 (they are not in the zip):
 | --- | --- |
 | `dsfforza\cars\<car>\` | one folder per car: its model file (`car.sp`), garage picture, badge and nameplate |
 | `dsfforza\cars\cars.txt`, `manager.json` | the list of installed cars and the ID each car keeps for good |
-| `dsfforza\generated\` | copies of the game's `Install\gui.sp`, `media\Fonts.fchunk` and `Locale\<language>\global.fchunk` with the cars' pictures, badges, nameplates and names added; the plugin opens them in place of the game's files |
+| `dsfforza\cars\shared\` | what all the cars share: the Forza emblem their garage cards show in place of the game's SF disc |
+| `dsfforza\generated\` | copies of the game's `Install\gui.sp`, `media\Fonts.fchunk` and `Locale\<language>\global.fchunk` with the cars' pictures, badges, nameplates, names and the Forza emblem added; the plugin opens them in place of the game's files |
 | `dinput8.dll` | Ultimate ASI Loader, only if no ASI loader is installed |
 | `plugins\DriverNGHook.asi`, `plugins\DriverNGHook\` | DriverNGHook, only if not installed |
 | `plugins\dsfforza.asi`, `plugins\dsfforza.ini` | the dsfforza plugin (below) |

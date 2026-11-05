@@ -924,7 +924,10 @@ into `CARD_SF_BOX` (242, 2, 345, 75), transparent elsewhere
 (`forza_emblem_image`, preview `garage_emblem.png`). `add_textures` (since removed) added it to
 an existing Fonts.fchunk copy (how `out/emblem/td3/Fonts.fchunk` was made from
 out/testdrive3's). The font package is always loaded, so the texture is
-resident before the garage opens.
+resident before the garage opens. Car packages (#510): the build writes the
+same texture beside the packages (`forza_emblem.dds`, `emblem_texture`), the
+car manager keeps it and `car_gui` adds it to its Fonts.fchunk copy the same
+way (car-packages.md, "Shared assets").
 
 **In game (out/testdrive3, IDs 1 to 40, plugin with [garage] off; with it on: Open 9).**
 Final build, run `host-20261023-100401` (confirmed-runtime; crops in

@@ -160,8 +160,8 @@ class EmblemTest(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def generate(self, *, font_has_it: bool, emblem: bytes | None):
-        def add_glyphs(fonts, out, glyphs, textures=None):
-            out.write_bytes(b"copy")
+        def add_glyphs(*args):
+            args[1].write_bytes(b"copy")  # (fonts, out, glyphs, textures)
             return {}
 
         with (
