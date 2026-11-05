@@ -471,7 +471,13 @@ case, a leading `.\` or the game folder) opens its replacement, and one
 that won't open falls back to the game's file. So `TEXT:global.fchunk`
 needs nothing of its own: it reaches CreateFileA as
 `locale\english\global.fchunk` (`runs\vm1-20261101-141311`). The
-game's files are never written.
+game's files are never written. A name the table doesn't list goes on
+through Driver.exe's own import slot (`[0x00DC9260]`, read at each call),
+not to KERNEL32 directly: DSF Enhanced's `[Files] Redirect` hooks that
+slot for its tables (worldlod's `san_francisco.dngc`, which opens at this
+site too), so both plugins redirect whichever loads first
+(`archive.redirect_chain` among the plugin's capabilities; offline-checked,
+`tools\asi\build.ps1 -Test`).
 
 **Verified in game** (`runs\vm1-20261101-141311`, vanilla archive and
 GUI files, the four packages installed by the manager with `--gui-base`

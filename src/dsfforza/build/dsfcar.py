@@ -71,7 +71,9 @@ SUFFIX = ".dsfcar"
 # "archive.packages": [archive] packages, the loader of car.sp (research/car-packages.md).
 # "archive.ids": the plugin writes the listed model ID into car.sp's data as it serves it, so
 # car.sp holds its builder's ID ("Model ID in memory"). Packages from this pipeline need both.
-CAPABILITIES = {"archive.packages", "archive.ids"}
+# "archive.redirect_chain": the plugin's file redirect passes other files on to DSF Enhanced's
+# (worldlod's map); no package needs it.
+CAPABILITIES = {"archive.packages", "archive.ids", "archive.redirect_chain"}
 PIPELINE_REQUIRES = ["archive.packages", "archive.ids"]
 
 KEY = re.compile(r"^[a-z0-9]+\.[a-z0-9]+\.[A-Za-z0-9_\-]+$")
