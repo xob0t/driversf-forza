@@ -75,7 +75,9 @@ SUFFIX = ".dsfcar"
 # (worldlod's map); no package needs it.
 # "lua.packages": the plugin tells register.lua which packages it loaded (research/asi.md,
 # "Telling Lua the plugin is there"); register.lua registers no package car without it.
-CAPABILITIES = {"archive.packages", "archive.ids", "archive.redirect_chain", "lua.packages"}
+# "archive.slots": [archive] vehicle_slots, more vehicle models at once than the vanilla 35
+# (research/traffic.md, "The spool slot limit"); the car manager's traffic budget needs it.
+CAPABILITIES = {"archive.packages", "archive.ids", "archive.redirect_chain", "lua.packages", "archive.slots"}
 PIPELINE_REQUIRES = ["archive.packages", "archive.ids"]
 
 KEY = re.compile(r"^[a-z0-9]+\.[a-z0-9]+\.[A-Za-z0-9_\-]+$")

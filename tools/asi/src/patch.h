@@ -71,6 +71,8 @@ void* alloc_exec(size_t n);
 //                     tell register.lua whether the car packages, and each car's, are loaded
 //                     (mod_garage.cpp magic_query); register.lua registers no package car
 //                     without that answer (#511)
+//   archive.slots     [archive] vehicle_slots: more kind-0 spool slots (vehicle models held at once)
+//                     than the vanilla 35, so traffic sets can take more models (mod_archive.cpp)
 #define DSF_CAPABILITIES_MARKER "DSFCARS-CAPABILITIES: "
-#define DSF_CAPABILITIES "archive.packages archive.ids archive.redirect_chain lua.packages"
+#define DSF_CAPABILITIES "archive.packages archive.ids archive.redirect_chain lua.packages archive.slots"
 extern const char dsf_capabilities[];

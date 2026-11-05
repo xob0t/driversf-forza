@@ -492,7 +492,86 @@ Removing a vanilla model from a set frees one. Phase 2 checks the boundary:
 Chapter 7 with +3 should load, with +4 it should hang. Every IV model the
 IVs lose is a slot the added models take, which is the 10 → 9 above.
 
-## 4. Design: traffic settings in the car manager (revised for the whole pool)
+## 4. The spool slot limit (confirmed-static; runtime in 5)
+
+What the 35 is, what is sized by it, and how dsfcars.asi raises it
+(`[archive] vehicle_slots`, `mod_archive.cpp`, "vehicle spool slots"). Ini comments and code point here as "The spool slot limit".
+
+**The 35 is data.** It is the vehicle archive's SSLP header, bytes
+`+0x18 + kind`: 35, 2, 2, 0 for kinds 0 to 3 (`dsff vehicle_limits`).
+
+- At package init, FUN_005A1420 makes one slot handler per slot. Each is a
+  SceneModelType2 from FUN_0059F9C0, with its NONR buffer
+  (`_aligned_malloc(SSLP +0x08, 0x80)`, 0x6D000 = 436 KiB, CRT heap;
+  `spool-limits.md`).
+- `TrafficSpooler.GetMaxSpooledVehicles()` (0x0066E480 → 0x0059C5C0 →
+  0x005A0AD0) returns the byte. Every resident model takes one kind-0 slot,
+  whatever loaded it.
+- A mission or IV request is refused at `traffic + mission + pending + 1 ≥
+  max` (0x005A6FD0).
+- The traffic list is loaded without that check (0x005A7490).
+- `spooling.requestToSpoolVehicle` ignores the refusal: it adds the model to
+  `vehiclesRequestedForSpool` anyway, and `isMissionVehiclesSpooled`'s
+  stepper waits until every listed model is loaded. Its warning ("ran out of
+  spool slots") is only for its own cap of 18 (`numberOfVehicleAllowed`).
+  That is the exhaust14 hang of 3b: no warning in the log, a load that never
+  ends.
+
+**What is sized by the slot count:**
+
+| What | Size | Bound checked? | Effect of more slots |
+| --- | --- | --- | --- |
+| Slot handler arrays in the spool object: `+0x5630` (all kinds, count `+0x5730`) and `+0x5734 + 0x104 k` (per kind, count at `+0x100`) | 64 pointers each | **no** (FUN_005A1420, FUN_005A2230) | Kind 0 can have at most 64 − (2 + 2) = **60**. That is the ceiling short of code patches |
+| ID-list node pools in the spool object, `{next free, free count, used}` at `+0x5B44`, `+0x5F5C` (64 nodes), `+0x6374`, `+0x668C`, `+0x69A4`, `+0x6CBC`, `+0x6FD4` (48 nodes), 16-byte nodes, storage from `+0x0C` (constructor 0x005A1B40) | 64 / 48 | **no**: 0x007D7270 bumps the next-free pointer by 0x10 and never checks the end | They hold requested and resident IDs of every kind. 60 + 4 slots would pass 48, so the plugin points them at buffers of 1024 nodes (16 KiB each) while they are still unused |
+| Graphics pool 9 "Vehicle Spooled" (rows 0x00FD2618, 0x00FD272C; GraphicsManager_Construct 0x00BAD960 reads them once) | 35 slots: 8192 KiB SYS, 65536 nodes, 35 KiB GPU, 1024 GPU nodes, split evenly | FUN_00BB5690 clamps a slot index to `count − 1` | More spool slots than graphics slots would share the last one (render-object exhaustion, the #540 crash path). The plugin scales the row so each slot keeps its vanilla size: 239,664 B and 1872 nodes |
+| NONR buffer per slot | 436 KiB, at package init | n/a | 25 more slots: 10.9 MB of heap at start |
+| Model data (VB, IB, textures; D3D9 managed pool) | per resident model | n/a | Only while a slot is in use: ports 1.59 MB median kind-0 entry, vanilla traffic 1.41 MB |
+| Wwise bank | in place in the slot's NONR buffer (`engine-sound.md`) | n/a | One per resident model, as now. Not measured: Wwise's own pools |
+| Traffic spooler lists (0x005A6D20): traffic request list (`+0x000`, 50, count `+0xC8`), resident traffic (`+0x330`, 50 nodes of 12 B), mission (`+0x998`, 50 nodes of 20 B) | 50 each | **no** | Not reached: a set has at most 40 models (next row), the mission list at most 18 + 10 IVs |
+| The set selector's copy (0x0076FDF0) | 40 IDs on the stack | **no** | **A set may hold at most 40 models**; the car manager enforces it |
+
+**Not sized by it:**
+
+- Vehicle instances: the traffic vehicle store holds 500 cars
+  (`draw-distance.md`), and the number of cars on the road depends on the
+  road set, not on how many models exist.
+- The draw queue (16384 draws a frame, #185, `[render]`): the same number of
+  cars draws about the same, since ports are within vanilla's per-car draw
+  range.
+- Physics and AI per instance.
+- The slot index (`model + 0x564`, set at 0x00858864, read at 0x00859162):
+  only the scene model reads it, and only for the graphics pool.
+
+**The patch** (`[archive] vehicle_slots`, default 60, 35 = vanilla):
+
+1. From DllMain, before the game builds its pools: graphics pool 9 gets N
+   slots at `ceil(vanilla × N / 35)` SYS KiB, nodes and GPU nodes, and N KiB
+   GPU (GraphicsManager_Construct asserts `GPU KiB % slots == 0`). The bytes
+   are checked against vanilla first.
+2. The SSLP load (0x005A0B50; the packages' hook, or the plugin's own when
+   there are no packages): for the vehicle spool object (package type 0 at
+   `+0x7300`) whose header still says 35, it moves the seven ID pools
+   (each checked unused) and sets the kind-0 byte to N. N is capped at
+   `64 − (kind 1 + 2 + 3 slots)`.
+3. Every other reader of the byte follows by itself:
+   `GetMaxSpooledVehicles`, the mission and IV budget, and
+   `ChooseDesiredSlotCount` (IVs go back to 10).
+
+**Why 60 is the default, and why no hang is left.** 60 is the ceiling the
+handler arrays allow. It costs about 25 × 670 KiB = 16 MB at start, against
+about 1.2 of 2 GB of address space in use (`asi.md`). With 60:
+
+- a set is at most 40 models (0x0076FDF0);
+- a pot request at most 18 (Lua);
+- the player's car and one pending request.
+
+The pot's last request then sees `40 + 17 + 1 + 1 = 59 < 60`, so no request
+is refused and `isMissionVehiclesSpooled` can't wait forever. The car
+manager's budget check is `set ≤ 40` per set, and with fewer than 60 slots
+(an older plugin, `vehicle_slots` lowered) also
+`set ≤ slots − 1 − pot − 1`.
+
+## 6. Design: traffic settings in the car manager (revised for the whole pool)
 
 The car manager controls both kinds of traffic. **Ambient traffic** is the
 main part: about 80 cars from the chapter's set, with a patched AI file
