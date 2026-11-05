@@ -34,6 +34,11 @@ and code (work/<media>.fp.json, src/dsfforza/build/fingerprint.py) and converts
 only the rest (repeat it for several builds; the first match wins); --verify-reuse N (default 2) converts N of the reused cars again and
 stops the build if any differs; --rebuild-where EXPR and --trust-code let a fix
 name the cars it affects (research/batch.md, "Selective rebuild").
+Every build also takes cars from the car store all worktrees share and puts its own in
+(src/dsfforza/build/carstore.py; --no-store: neither). `port_batch affected` lists the
+cars a change since --base touches, from the store's fingerprints; build --affected builds
+only those, build --before takes them from the store as --base made them, and --roster is
+dsff install's selection and IDs (research/batch.md, "Which cars a change affects").
 
 ID policy (research/batch.md): the garage lists model IDs 0..303 only
 (research/gui-assets.md) and vanilla cars use 62..303, so the first cars of a
@@ -1552,7 +1557,70 @@ def cmd_plan(args) -> None:
         print(f"wrote {args.tsv}")
 
 
+def base_rev(args) -> str:
+    """--base REV as a commit, default the merge base of HEAD and origin/master."""
+    from dsfforza.build import carstore
+
+    rev = getattr(args, "base", None)
+    if not rev:
+        return carstore.merge_base("origin/master")
+    out = subprocess.run(
+        ["git", "rev-parse", "--verify", f"{rev}^{{commit}}"], cwd=REPO, capture_output=True, text=True, check=False
+    )
+    if out.returncode != 0:
+        raise SystemExit(f"--base {rev}: not a commit here")
+    return out.stdout.strip()
+
+
+def affected_cars(args, picks: list[Pick], log=print) -> dict[str, dict]:
+    """carstore.affected for the picks, from the car store, against --base; printed."""
+    from dsfforza.build import carstore
+
+    store = carstore.Store.default()
+    if store is None:
+        raise SystemExit("--affected needs the car store (carstore.py; DSFFORZA_STORE is off)")
+    base = base_rev(args)
+    found = carstore.affected(store, [(p.media, p.spool_id) for p in picks], base)
+    by = {k: [m for m, f in found.items() if f["status"] == k] for k in ("affected", "same", "unknown")}
+    log(
+        f"since {base[:10]}: {len(by['affected'])} cars affected, {len(by['same'])} the same, "
+        f"{len(by['unknown'])} unknown (no car in the store made by {base[:10]}'s code)"
+    )
+    reasons: dict[str, list[str]] = {}
+    for media in by["affected"]:
+        for why in found[media]["why"]:
+            reasons.setdefault(why, []).append(media)
+    for why, cars in sorted(reasons.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        log(f"  {why}: {len(cars)} ({', '.join(cars[:6])}{', ...' if len(cars) > 6 else ''})")
+    if by["unknown"]:
+        log(f"  unknown: {', '.join(by['unknown'][:12])}{', ...' if len(by['unknown']) > 12 else ''}")
+    return found
+
+
+def cmd_affected(args) -> None:
+    """Which of the selected cars a change since --base affects, from the car store's
+    fingerprints (carstore.affected), without building anything."""
+    dsf, isos, cars, dbs = common(args)
+    picks = [p for p in select(args, cars, dsf, dbs) if not p.notes]
+    from dsfforza.build import clone_vehicle
+    from dsfforza.formats.chnk import read_chunk
+
+    with dsf.open("rb") as stream:
+        taken = clone_vehicle.taken_ids(stream, read_chunk(stream, 0).entries)
+    assign_ids(picks, taken, args.id_policy, args.first_id, isos)
+    found = affected_cars(args, picks)
+    if args.write_list:
+        todo = [p for p in picks if found[p.media]["status"] != "same"]
+        args.write_list.write_text(
+            "".join(f"{p.media}@{p.game.lower()}\n" for p in todo), encoding="utf-8", newline="\n"
+        )
+        print(f"wrote {args.write_list}: {len(todo)} cars (affected and unknown)")
+    if args.json:
+        args.json.write_text(json.dumps(found, indent=1), encoding="utf-8")
+
+
 WORK_FILES = ("chnk", "json", "job.json", "log", "fp.json", "first-try.json", "first-try.log", "first-try.fp.json")
+STORE = "car store"  # Reuse.taken_from for a car taken from the car store
 
 
 class Reuse:
@@ -1564,24 +1632,28 @@ class Reuse:
     of the reused cars again and stops the build if any comes out different.
     --reuse may be given more than once: each car is taken from the first build that
     has a matching copy of it (src/dsfforza/build/install.py passes the last finished
-    build and an interrupted one)."""
+    build and an interrupted one). After them, the car store every worktree shares
+    (`store`, src/dsfforza/build/carstore.py), checked the same way."""
 
-    def __init__(self, args, work: Path):
+    def __init__(self, args, work: Path, store=None):
         from dsfforza.build import fingerprint
 
-        given = args.reuse if isinstance(args.reuse, list | tuple) else [args.reuse]
+        given = args.reuse if isinstance(args.reuse, list | tuple) else [args.reuse] if args.reuse else []
         self.sources = [Path(s) for s in given]
+        self.store = store
         for source in self.sources:
             if not (source / "work").is_dir():
                 raise SystemExit(f"--reuse {source}: no work/ folder there")
             if (source / "work").resolve() == work.resolve():
                 raise SystemExit("--reuse names this build's own --out (use --resume for that)")
-        self.source = self.sources[0]
-        self.old = self.source / "work"
+        self.source = self.sources[0] if self.sources else None
         self.work = work
         self.where = getattr(args, "rebuild_where", None)
         self.trust_code = getattr(args, "trust_code", False)
-        self.verify_count = getattr(args, "verify_reuse", 2)
+        # --verify-reuse: default 2 with --reuse, none for store hits alone (a store hit is
+        # an earlier build of the same commit, on this PC; --verify-reuse N asks for N).
+        count = getattr(args, "verify_reuse", None)
+        self.verify_count = count if count is not None else (2 if self.sources else 0)
         self.seed = getattr(args, "verify_seed", None)
         self.checker = fingerprint.Checker()
         self.taken: dict[str, dict] = {}
@@ -1629,6 +1701,15 @@ class Reuse:
             if report is not None:
                 return report, source, ""
             first_why = first_why or why
+        if self.store is not None:
+            entry, why = self.store.find(job, self.checker, code=not self.trust_code)
+            if entry is not None and self.where:
+                report = entry.report() or {}
+                if self._predicate(report, job):
+                    entry, why = None, "--rebuild-where"
+            if entry is not None:
+                return None, entry, ""
+            first_why = first_why or why
         return None, None, first_why or "not built there"
 
     def _decide_in(self, old: Path, job: dict) -> tuple[dict | None, str]:
@@ -1659,6 +1740,14 @@ class Reuse:
 
         report, source, why = self.decide_from(job)
         media = job["media"]
+        if source is not None and not isinstance(source, Path):  # a car store entry
+            report = self.store.take(source, self.work, Path(job["sound_dir"]))
+            if report is None:
+                self.rebuilt[media] = "store: the entry went meanwhile"
+                return None
+            self.taken[media] = report
+            self.taken_from[media] = STORE
+            return {**report, "reused_from": STORE}
         if report is None:
             self.rebuilt[media] = why
             return None
@@ -1677,8 +1766,13 @@ class Reuse:
         return {**report, "reused_from": str(source)}
 
     def summary(self) -> None:
-        names = ", ".join(str(s) for s in self.sources)
-        print(f"--reuse {names}: {len(self.taken)} cars reused, {len(self.rebuilt)} to build")
+        names = ", ".join([str(s) for s in self.sources] + ([f"the car store {self.store.root}"] if self.store else []))
+        stored = sum(1 for m in self.taken if self.taken_from.get(m) == STORE)
+        print(
+            f"reuse from {names}: {len(self.taken)} cars reused"
+            + (f" ({stored} from the store)" if self.store else "")
+            + f", {len(self.rebuilt)} to build"
+        )
         reasons: dict[str, list[str]] = {}
         for media, why in self.rebuilt.items():
             reasons.setdefault(why, []).append(media)
@@ -1786,7 +1880,15 @@ class Reuse:
     def record(self) -> dict:
         """For batch-report.json (timings_s.reuse)."""
         return {
-            "from": str(self.source),
+            "from": str(self.source) if self.sources else STORE,
+            **(
+                {
+                    "store": str(self.store.root),
+                    "from_store": sorted(m for m, s in self.taken_from.items() if s == STORE),
+                }
+                if self.store
+                else {}
+            ),
             **({"sources": [str(s) for s in self.sources]} if len(self.sources) > 1 else {}),
             "reused": sorted(self.taken),
             "rebuilt": self.rebuilt,
@@ -1839,6 +1941,13 @@ def cmd_build(args) -> None:
         raise SystemExit(
             f"{len(picks)} cars: the archive root holds at most {room} new ones (--root-limit {root_limit})"
         )
+    if getattr(args, "affected", False):
+        # Only the cars a change since --base affects (and those the store can't tell),
+        # with the IDs of the whole selection.
+        found = affected_cars(args, picks)
+        picks = [p for p in picks if found[p.media]["status"] != "same"]
+        if not picks:
+            raise SystemExit("no car of the selection is affected")
     print_plan(picks + skipped)
     progress = getattr(args, "progress", None)
     emit(
@@ -1881,7 +1990,23 @@ def cmd_build(args) -> None:
         for p in picks
     ]
     reused = {}
-    reuse = Reuse(args, work) if getattr(args, "reuse", None) else None
+    from dsfforza.build import carstore
+
+    # The car store every worktree on the PC shares (carstore.py): cars converted anywhere
+    # from the same job, inputs and code are taken, not converted again.
+    store = None if getattr(args, "no_store", False) else carstore.Store.default()
+    before = getattr(args, "before", False)
+    if before and (store is None or getattr(args, "reuse", None)):
+        raise SystemExit("--before takes the cars from the car store only (no --reuse, no --no-store)")
+    reuse = Reuse(args, work, store) if getattr(args, "reuse", None) or store is not None else None
+    if before:
+        # The cars as --base's code made them: the store's entries checked against that
+        # revision's code units; none is converted (this checkout's code isn't that).
+        from dsfforza.build import fingerprint
+
+        base = base_rev(args)
+        reuse.checker = fingerprint.Checker(units=fingerprint.GitUnits(base))
+        print(f"--before: every car from the car store as {base[:10]}'s code made it")
     t = time.time()
     for job in jobs:  # results of an earlier run: reuse (--resume, --reuse) or drop
         old_job, old_report = work / f"{job['media']}.job.json", Path(job["report"])
@@ -1911,6 +2036,10 @@ def cmd_build(args) -> None:
         job["requested_options"] = list(job["port_options"])
     t = time.time()
     todo = [j for j in jobs if j["media"] not in reused]
+    missing = {}
+    if before:
+        missing = {j["media"]: reuse.rebuilt.get(j["media"], "not in the store") for j in todo}
+        todo = []
     args.jobs = gentle.jobs(args.jobs)
     print(
         f"building {len(todo)} cars, {args.jobs} at a time ("
@@ -1918,7 +2047,11 @@ def cmd_build(args) -> None:
         + ")"
         + (
             f"; {len(reused)} reused"
-            + (f" from {', '.join(map(str, reuse.sources))}" if reuse is not None else " from the last run")
+            + (
+                f" from {', '.join([*map(str, reuse.sources), *([STORE] if reuse.store else [])])}"
+                if reuse is not None and reuse.taken
+                else " from the last run"
+            )
             if reused
             else ""
         )
@@ -1937,6 +2070,8 @@ def cmd_build(args) -> None:
     for job in todo:
         job["probe_attempts"] = remembered_attempts(job)
     converted = run_workers(longest_first(todo), work, args.jobs, progress=progress)
+    for media, why in missing.items():  # --before: no car in the store made by --base's code
+        converted[media] = {"media": media, "ok": False, "cause": "not in the car store", "error": why}
     remember_seconds(converted.values())
     remember_attempts(converted.values())
     results = {**reused, **converted}
@@ -1966,6 +2101,17 @@ def cmd_build(args) -> None:
                 results[media] = json.loads(fresh.read_text(encoding="utf-8"))
         args.reuse_record = reuse.record()
 
+    if store is not None:
+        # The cars this build converted, and those it took from elsewhere (--reuse, --resume),
+        # go into the store for every other build (the same car is kept once).
+        t = time.time()
+        for job in jobs:
+            if results.get(job["media"], {}).get("ok") and (
+                reuse is None or reuse.taken_from.get(job["media"]) != STORE
+            ):
+                store.put(work, job["media"], Path(job["sound_dir"]))
+        store.evict()
+        timings["store"] = round(time.time() - t, 1)
     ok = [results[p.media] for p in picks if results.get(p.media, {}).get("ok")]
     failed = [results[p.media] for p in picks if not results.get(p.media, {}).get("ok")]
     failed += [{"media": p.media, "ok": False, "cause": "not selected", "error": "; ".join(p.notes)} for p in skipped]
@@ -1976,7 +2122,7 @@ def cmd_build(args) -> None:
         # This folder's own earlier pack (--resume, a rerun) and the --reuse builds'.
         settings = pack_reuse.settings_of(args, dsf, root_limit, gui_isos(args))
         pack = pack_reuse.PackReuse(
-            out_dir, reuse.sources if reuse is not None else [], settings, game_dir=game_from_dsf(dsf)
+            out_dir, reuse.sources if reuse is not None else [], settings, game_dir=game_from_dsf(dsf), store=store
         )
     try:
         finish(args, dsf, out_dir, work, ok, failed, port_args, port_options, timings, started, results, pack)
@@ -2432,6 +2578,54 @@ def write_report(
         print(f"archive {archive} ({archive.stat().st_size / 2**20:.0f} MiB), report {out_dir / 'batch-report.json'}")
 
 
+ROSTER = REPO / "tools" / "batches" / "all.txt"
+ROSTER_ROOT_LIMIT = 3003  # install.ASI_ROOT_LIMIT: every base ID below 1000 plus SSIC, DMWK, BINF
+
+
+def roster_selection(args) -> None:
+    """--roster: the cars and IDs of dsff install's build (tools/batches/all.txt, then the FM4
+    DLC packs' cars; --id-policy asi, --root-limit 3003), so a subset (--affected) gets the
+    IDs a full build gave its cars, and the car store's full builds match it."""
+    if getattr(args, "roster", False):
+        args.list = [*(args.list or []), ROSTER]
+        args.fm4_dlc_cars = True
+        args.id_policy = "asi"
+        args.root_limit = ROSTER_ROOT_LIMIT
+
+
+def _change_arguments(p: argparse.ArgumentParser, name: str) -> None:
+    """affected's and build's options for a change since --base (car store)."""
+    p.add_argument(
+        "--roster",
+        action="store_true",
+        help="the cars and IDs of dsff install's build: --list tools/batches/all.txt --fm4-dlc-cars "
+        "--id-policy asi --root-limit 3003",
+    )
+    if name not in ("affected", "build"):
+        return
+    p.add_argument(
+        "--base",
+        metavar="REV",
+        help="the revision a change is measured from (default: the merge base of HEAD and origin/master)",
+    )
+    if name == "affected":
+        p.add_argument("--write-list", type=Path, help="write the affected and unknown cars as a --list file")
+        p.add_argument("--json", type=Path, help="write {media: status, why, entry}")
+        return
+    p.add_argument(
+        "--affected",
+        action="store_true",
+        help="build only the cars a change since --base affects (port_batch affected), with the "
+        "IDs of the whole selection",
+    )
+    p.add_argument(
+        "--before",
+        action="store_true",
+        help="every car from the car store as --base's code made it, none converted (the 'before' "
+        "of a change; with --affected, of the cars it affects)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The plan / build / remerge command line (src/dsfforza/build/install.py builds its
     port_batch arguments with it too)."""
@@ -2439,7 +2633,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=__doc__.splitlines()[0], formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
-    for name in ("plan", "build"):
+    for name in ("plan", "affected", "build"):
         p = sub.add_parser(name)
         p.add_argument(
             "--dsf",
@@ -2489,16 +2683,18 @@ def build_parser() -> argparse.ArgumentParser:
             help=f"root entries allowed (default {ENTRY_LIMIT}, the vanilla reader); "
             "more needs dsfforza.asi [archive], e.g. 3003 for every base ID below 1000",
         )
+        _change_arguments(p, name)
         if name == "plan":
             p.add_argument("--tsv", type=Path)
-        else:
+        elif name == "build":
             p.add_argument("--out", type=Path, required=True, help="output folder")
             p.add_argument(
                 "--jobs",
                 type=int,
                 default=default_jobs(),
-                help="worker processes (default: one per logical CPU, as many as 1.9 GB each fits in the RAM: "
-                f"{default_jobs()} here; out/gentle caps it at 2)",
+                help="worker processes of this build at most (default: one per logical CPU, as many as 1.9 GB "
+                f"each fits in the RAM: {default_jobs()} here; out/gentle caps it at 2). Every build and "
+                "survey on the PC takes its slots from one job pool of that size (jobpool.py)",
             )
             p.add_argument("--port", help=f"port_car options for every car (default: {DEFAULT_PORT_OPTIONS!r})")
             p.add_argument("--gui", action="store_true", help="also build gui.sp, Fonts.fchunk and hud.lua")
@@ -2551,9 +2747,10 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument(
                 "--verify-reuse",
                 type=int,
-                default=2,
+                default=None,
                 metavar="N",
-                help="with --reuse: build N random reused cars again and stop if any differs (default 2; 0: off)",
+                help="build N random reused cars again and stop if any differs (default 2 with --reuse, "
+                "0 for cars from the car store alone; 0: off)",
             )
             p.add_argument("--verify-seed", type=int, help="the random seed of --verify-reuse (default: random)")
             p.add_argument(
@@ -2562,6 +2759,12 @@ def build_parser() -> argparse.ArgumentParser:
                 default="stop",
                 help="when --verify-reuse finds a car that differs: stop the build (default), or use the fresh "
                 "copy and convert the other cars reused from the same build again (dsff install)",
+            )
+            p.add_argument(
+                "--no-store",
+                action="store_true",
+                help="neither take cars from the car store all worktrees share nor put this build's in "
+                "(src/dsfforza/build/carstore.py; DSFFORZA_STORE=off does the same)",
             )
             p.add_argument(
                 "--no-pack-reuse",
@@ -2605,8 +2808,9 @@ def main(argv: list[str] | None = None) -> None:
     if argv[:1] == ["_worker"]:
         sys.exit(worker(Path(argv[1])))
     args = build_parser().parse_args(argv)
+    roster_selection(args)
     args.dsf = game_paths.vanilla(args.dsf)  # the original when a dsfforza install replaced it
-    {"plan": cmd_plan, "build": cmd_build, "remerge": cmd_remerge}[args.cmd](args)
+    {"plan": cmd_plan, "affected": cmd_affected, "build": cmd_build, "remerge": cmd_remerge}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ reusable only when every recorded input and unit is unchanged.
 from __future__ import annotations
 
 import ast
+import contextlib
 import functools
 import hashlib
 import json
@@ -42,9 +43,10 @@ PACKAGE = Path(dsfforza.__file__).resolve().parent
 UNITS_CACHE = dsfforza.REPO / "out" / "cache" / "code-units"
 MODULE_UNIT = "<module>"
 TOOL_NAME = "dsfforza-fingerprint"  # the sys.monitoring tool a Recorder registers
-# Modules whose code shapes no output: this one, and the job pool's (when a process may
-# start work, not what it makes). Their code is not recorded, nor the pool's files.
-UNRECORDED = frozenset({__name__, "dsfforza.build.jobpool"})
+# Modules whose code shapes no output: this one, the job pool's (when a process may start
+# work, not what it makes) and the car store's (where outputs are kept). Their code is not
+# recorded, nor the pool's and the store's files.
+UNRECORDED = frozenset({__name__, "dsfforza.build.jobpool", "dsfforza.build.carstore"})
 
 
 # --- digests ------------------------------------------------------------------------
@@ -212,6 +214,32 @@ class CodeUnits:
         return self._units[module]
 
 
+class GitUnits(CodeUnits):
+    """The units of every package module at a git revision (git show), as CodeUnits reads
+    them from the checkout: what a car's fingerprint is compared with to find out whether it
+    was made by that revision's code (port_batch affected)."""
+
+    def __init__(self, rev: str, repo: Path | None = None):
+        super().__init__()
+        self.rev, self.repo = rev, Path(repo or dsfforza.REPO)
+
+    def get(self, module: str) -> dict[str, str] | None:
+        if module not in self._units:
+            import subprocess
+
+            rel = "/".join(PACKAGE.relative_to(self.repo).parts + tuple(module.split(".")[1:]))
+            self._units[module] = None
+            for path in (f"{rel}.py", f"{rel}/__init__.py"):
+                out = subprocess.run(
+                    ["git", "show", f"{self.rev}:{path}"], cwd=self.repo, capture_output=True, check=False
+                )
+                if out.returncode == 0:
+                    with contextlib.suppress(SyntaxError, UnicodeDecodeError, ValueError):
+                        self._units[module] = cached_module_units(out.stdout.decode("utf-8"))
+                    break
+        return self._units[module]
+
+
 def cached_module_units(source: str) -> dict[str, str]:
     """module_units, kept in UNITS_CACHE by the source text's SHA-256 (and the Python
     version, whose ast.dump the digests come from)."""
@@ -273,11 +301,11 @@ _SKIP_PREFIXES = tuple(
 
 
 def _unrecorded_folders() -> tuple[str, ...]:
-    """The job pool's folder (jobpool.root()): its slot and hold files are no input."""
-    from dsfforza.build import jobpool
+    """The job pool's and the car store's folders: their slot and hold files, and the copies
+    of outputs, are no input."""
+    from dsfforza.build import carstore, jobpool
 
-    folder = jobpool.root()
-    return (norm(folder) + os.sep,) if folder is not None else ()
+    return tuple(norm(f) + os.sep for f in (jobpool.root(), carstore.default_root()) if f is not None)
 
 
 class Recorder:
@@ -456,6 +484,7 @@ class Recorder:
         return {
             "format": FORMAT,
             "complete": complete,
+            "repo": norm(dsfforza.REPO),  # the checkout: its own files are relocated (relocate)
             "job": job_key(job),
             "env": environment(),
             "files": {p: file_digest(p) for p in sorted(files)},
@@ -477,11 +506,52 @@ def job_key(job: dict) -> dict:
     for k in JOB_PATHS:
         out[k] = norm(job[k]) if job.get(k) else None
     out["isos"] = [norm(p) for p in job.get("isos", [])]
-    source = dict(out["source"] or {})
-    if source.get("iso"):
-        source["iso"] = norm(source["iso"])
-    out["source"] = source
+    out["source"] = _source_key(out["source"])
     return out
+
+
+def _source_key(source: dict | None) -> dict:
+    """A job's car source with its disc image and DLC pack paths as recorded (norm): a pack
+    under the worktree's assets junction is the main checkout's file in every worktree.
+    A pack inside a disc image (content/...) is a path in the image and stays."""
+    source = dict(source or {})
+    for key in ("iso", "package"):
+        value = source.get(key)
+        if value and Path(value).is_absolute():
+            source[key] = norm(value)
+    return source
+
+
+def relocate(fp: dict, old: str | None, new: str | None = None) -> dict:
+    """The fingerprint `fp` made in checkout `old` (norm), as it reads in checkout `new`
+    (default this one): the paths of its job, files and folders under `old` (out/db, a
+    worktree's own copy of each game's gamedb, ...) are the same paths under `new`. The
+    rest (out/cache, assets and out/vanilla are junctions to the main checkout, resolved
+    when recorded) stays."""
+    new = norm(dsfforza.REPO) if new is None else new
+    if not old or old == new:
+        return fp
+    head = old + os.sep
+
+    def move(path):
+        return new + os.sep + path[len(head) :] if isinstance(path, str) and path.startswith(head) else path
+
+    job = dict(fp.get("job") or {})
+    for k in JOB_PATHS:
+        job[k] = move(job.get(k))
+    job["isos"] = [move(p) for p in job.get("isos", [])]
+    source = _source_key(job.get("source"))
+    for k in ("iso", "package"):
+        if source.get(k):
+            source[k] = move(source[k])
+    job["source"] = source
+    return {
+        **fp,
+        "repo": new,
+        "job": job,
+        "files": {move(p): d for p, d in fp.get("files", {}).items()},
+        "dirs": {move(p): d for p, d in fp.get("dirs", {}).items()},
+    }
 
 
 # The environment port_batch starts its workers with (run_workers). numpy's OpenBLAS
@@ -506,8 +576,10 @@ class Checker:
     """Compares stored fingerprints with the current files and sources (digests and
     module units computed once per build)."""
 
-    def __init__(self):
-        self.units = CodeUnits()
+    def __init__(self, units=None):
+        """`units`: the code to compare with (CodeUnits: this checkout's; GitUnits: a
+        revision's)."""
+        self.units = units if units is not None else CodeUnits()
         self._files: dict[str, str] = {}
         self._dirs: dict[str, str] = {}
         self.env = environment()
@@ -548,10 +620,16 @@ class Checker:
             moved = self.moved(fp, job) if job is not None else {}
         if job is not None:
             old, new = dict(fp.get("job") or {}), job_key(job)
+            old["source"] = _source_key(old.get("source"))  # recorded before packs were (norm)
             if old.get("dsf") in moved:
                 old["dsf"] = moved[old["dsf"]]
             if old != new:
                 return "job: " + ", ".join(k for k in sorted(set(old) | set(new)) if old.get(k) != new.get(k))
+        return self.inputs_changed(fp, moved) or (self.code_changed(fp) if code else None)
+
+    def inputs_changed(self, fp: dict, moved: dict | None = None) -> str | None:
+        """The first recorded input (Python and numpy, a file, a folder) that changed, or None."""
+        moved = moved or {}
         if fp.get("env") != self.env:
             return "Python or numpy version"
         for path, digest in fp.get("files", {}).items():
@@ -560,17 +638,30 @@ class Checker:
         for path, digest in fp.get("dirs", {}).items():
             if self.dir(path) != digest:
                 return f"folder {path}"
-        if code:
-            for module, units in fp.get("code", {}).items():
-                table = self.units.get(module)
-                if table is None:
-                    return f"code {module} (gone)"
-                for unit, digest in units.items():
-                    if table.get(unit) != digest:
-                        return (
-                            f"code {module}.{unit.lstrip('=')}" if unit != MODULE_UNIT else f"code {module} (top level)"
-                        )
         return None
+
+    def code_changed(self, fp: dict, *, every: bool = False):
+        """The first recorded code unit that differs from self.units, or None; with `every`,
+        the list of all of them."""
+        out = []
+        for module, units in fp.get("code", {}).items():
+            table = self.units.get(module)
+            if table is None:
+                out.append(f"code {module} (gone)")
+            else:
+                out += [
+                    f"code {module}.{unit.lstrip('=')}" if unit != MODULE_UNIT else f"code {module} (top level)"
+                    for unit, digest in units.items()
+                    if table.get(unit) != digest
+                ]
+            if out and not every:
+                return out[0]
+        return out if every else None
+
+
+def digest_of(value) -> str:
+    """A digest of a JSON-able value (a fingerprint)."""
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()[:24]
 
 
 def read(path: Path) -> dict | None:
