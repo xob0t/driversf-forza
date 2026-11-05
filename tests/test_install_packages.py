@@ -8,7 +8,9 @@ does; a few seconds per install.ps1 call. Skipped without powershell.exe or uv.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
 import json
 import shutil
 import subprocess
@@ -42,6 +44,18 @@ def tree(root: Path) -> dict[str, str]:
     return {str(p.relative_to(root)): sha(p) for p in sorted(root.rglob("*")) if p.is_file()}
 
 
+def short_path(path: Path) -> str:
+    """The 8.3 form of a path (C:\\Users\\RUNNER~1\\... on a CI runner, whose %TEMP% has it), or
+    the path as it is where the volume makes no short names."""
+    import ctypes
+
+    size = ctypes.windll.kernel32.GetShortPathNameW(str(path), None, 0)
+    buffer = ctypes.create_unicode_buffer(size)
+    if not size or not ctypes.windll.kernel32.GetShortPathNameW(str(path), buffer, size):
+        return str(path)
+    return buffer.value
+
+
 def tools_missing() -> str | None:
     for tool in ("powershell", "uv"):
         if not shutil.which(tool):
@@ -55,6 +69,7 @@ class InstallPackagesTest(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="dsff-install-"))
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.game = self.tmp / "game"
+        self.game_arg = str(self.game)  # -GamePath as install.ps1 gets it
         (self.game / "Driver.exe").parent.mkdir(parents=True)
         (self.game / "Driver.exe").write_bytes(b"MZ")
         archive(self.game / "Install" / "dngvehicles.sp", [1, 2, 4, 62])  # "vanilla": IDs 1, 2, 4, 62
@@ -149,7 +164,7 @@ class InstallPackagesTest(unittest.TestCase):
 
     def run_ps1(self, *args: str, ok: bool = True) -> str:
         command = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(INSTALL_PS1)]
-        command += ["-GamePath", str(self.game), *args]
+        command += ["-GamePath", self.game_arg, *args]
         result = subprocess.run(command, capture_output=True, text=True, check=False, cwd=REPO)
         text = result.stdout + result.stderr
         self.assertEqual(result.returncode == 0, ok, text)
@@ -273,20 +288,27 @@ class InstallPackagesTest(unittest.TestCase):
             record[field] = [p.replace("dsfcars", "dsfforza") for p in record[field]]
         path.write_text(json.dumps(record, indent=1), encoding="utf-8")
         self.assertEqual(len(car_manager.old_layout(g)), 5)
+        # From here on install.ps1 gets the game folder in its 8.3 form where the volume has one, as
+        # on a CI runner (C:\Users\RUNNER~1\...): Get-ChildItem gives long names under a short root.
+        self.game_arg = short_path(self.game)
 
     def manager(self, *args: str) -> tuple[int, str]:
-        """dsff car_manager in this process: (exit code, its message)."""
+        """dsff car_manager in this process: (exit code, what it printed and its message)."""
+        out = io.StringIO()
         try:
-            car_manager.main(["--game", str(self.game), *args])
+            with contextlib.redirect_stdout(out):
+                car_manager.main(["--game", str(self.game), *args])
         except SystemExit as stop:
-            return (stop.code if isinstance(stop.code, int) else 1), str(stop.code)
-        return 0, ""
+            code = stop.code if isinstance(stop.code, int) else 1
+            return code, (out.getvalue() + ("" if isinstance(stop.code, int) else str(stop.code))).strip()
+        return 0, out.getvalue().strip()
 
     def assert_migrated(self, ids: dict[str, int]) -> None:
         g = self.game
         self.assertEqual(car_manager.old_layout(g), [])
         self.assertEqual(self.ids(), ids)
-        self.assertEqual(self.manager("verify"), (0, "0"))
+        code, problems = self.manager("verify")
+        self.assertEqual(code, 0, problems)  # verify's problems, one per line
         self.assertEqual((g / car_manager.PLUGIN).read_bytes(), self.asi.read_bytes())
         self.assertIn("packages=1", (g / "plugins" / "dsfcars.ini").read_text(encoding="utf-8"))
         self.assertEqual(

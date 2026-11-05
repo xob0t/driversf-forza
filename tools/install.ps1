@@ -181,7 +181,10 @@ function Read-BuildManifest([string]$Path) {
 }
 
 if (-not (Test-Path -LiteralPath $GamePath -PathType Container)) { Fail "Game folder not found: $GamePath" }
-$Game = (Resolve-Path -LiteralPath $GamePath).Path
+# The long form of the path: Resolve-Path keeps an 8.3 name (C:\Users\RUNNER~1\...) as given, while
+# Get-ChildItem returns long names, so a file's path relative to the game (FullName.Substring) needs
+# the same form for both.
+$Game = (Get-Item -LiteralPath (Resolve-Path -LiteralPath $GamePath).Path).FullName
 if (-not (Test-Path -LiteralPath (Join-Path $Game 'Driver.exe'))) { Fail "Driver.exe not found in $Game; -GamePath must be the Driver: San Francisco folder." }
 $BackupDir = Join-Path $Game 'dsfcars-backup'
 $ManifestPath = Join-Path $BackupDir 'install.json'
@@ -451,6 +454,7 @@ function Move-LegacyFolder([string]$Old, [string]$New) {
         Say "  moved    $Old\ -> $New\"
         return
     }
+    $from = (Get-Item -LiteralPath $from).FullName   # the long form, as Get-ChildItem's FullName has it
     $files = @(Get-ChildItem -LiteralPath $from -Recurse -File -Force)
     foreach ($file in $files) {
         $relative = $file.FullName.Substring($from.Length + 1)
@@ -1135,8 +1139,10 @@ function Invoke-Install {
                 Install-File (Get-AsiLoaderDll) 'dinput8.dll'
             } else { Say "  ASI loader already present ($loader)" }
             if (-not $hookInstalled) {
-                foreach ($file in Get-ChildItem -LiteralPath (Join-Path $hookDir 'plugins') -Recurse -File) {
-                    $relative = 'plugins\' + $file.FullName.Substring((Join-Path $hookDir 'plugins').Length).TrimStart('\')
+                # (the long form, as Get-ChildItem gives: $hookDir may be under an 8.3 %TEMP%)
+                $hookPlugins = (Get-Item -LiteralPath (Join-Path $hookDir 'plugins')).FullName
+                foreach ($file in Get-ChildItem -LiteralPath $hookPlugins -Recurse -File) {
+                    $relative = 'plugins\' + $file.FullName.Substring($hookPlugins.Length).TrimStart('\')
                     Install-File $file.FullName $relative
                 }
             } else { Say '  DriverNGHook already present (left as is)' }
