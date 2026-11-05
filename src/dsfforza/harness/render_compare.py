@@ -1055,9 +1055,9 @@ def rescore(run_dir: Path, jobs: int = 1) -> list[dict]:
     if jobs == 1:
         results = _rescore_worker((paths, stamp))
     else:
-        from concurrent.futures import ProcessPoolExecutor
+        from dsfforza.build import jobpool
 
-        with ProcessPoolExecutor(jobs) as pool:
+        with jobpool.executor(jobs, "render_compare rescore") as pool:
             parts = pool.map(_rescore_worker, [(paths[i::jobs], stamp) for i in range(jobs)])
             results = [r for part in parts for r in part]
     roster_path = run_dir / "roster.json"
@@ -1106,10 +1106,11 @@ def run(
     if jobs == 1:
         results = _worker((str(archive), cars, str(out), views, size, entries, keep))
     else:
-        from concurrent.futures import ProcessPoolExecutor
+        from dsfforza.build import jobpool
+        from dsfforza.build.port_batch import RENDER_RAM
 
         os.environ.setdefault("OMP_NUM_THREADS", "1")
-        with ProcessPoolExecutor(jobs) as pool:
+        with jobpool.executor(jobs, "render_compare", RENDER_RAM) as pool:
             results = [
                 r
                 for part in pool.map(_worker, [(str(archive), c, str(out), views, size, entries, keep) for c in chunks])

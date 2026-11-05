@@ -2,7 +2,8 @@
 
 On while the file out/gentle exists (or DSFFORZA_GENTLE=1): the calling process and
 every process it starts run at Idle priority, and port_batch runs at most CORES
-workers (jobs). No CPU affinity: Windows spreads the Idle processes over whatever
+workers (jobs). The machine-wide job pool (jobpool.py) hands out at most CORES slots
+while out/gentle exists here or in the main checkout (anywhere()). No CPU affinity: Windows spreads the Idle processes over whatever
 cores are free, and Idle threads only get CPU time no thread of a higher priority
 wants.
 
@@ -32,6 +33,32 @@ _JOB: list = []  # the job object's handle, kept open for the life of the proces
 
 def enabled() -> bool:
     return FLAG.exists() or os.environ.get("DSFFORZA_GENTLE") == "1"
+
+
+def main_checkout(repo=REPO):
+    """The main checkout of the git repository `repo` is a worktree of (its .git file names
+    <main>/.git/worktrees/<name>), else `repo` itself."""
+    from pathlib import Path
+
+    git = Path(repo) / ".git"
+    try:
+        if git.is_file():
+            line = git.read_text(encoding="utf-8").strip()
+            if line.startswith("gitdir:"):
+                gitdir = Path(line[len("gitdir:") :].strip())
+                if not gitdir.is_absolute():
+                    gitdir = (Path(repo) / gitdir).resolve()
+                if gitdir.parent.name == "worktrees":
+                    return gitdir.parent.parent.parent
+    except OSError:
+        pass
+    return Path(repo)
+
+
+def anywhere() -> bool:
+    """enabled(), or out/gentle in the main checkout: the machine-wide job pool
+    (src/dsfforza/build/jobpool.py) is capped for every worktree's builds then."""
+    return enabled() or (main_checkout() / "out" / "gentle").exists()
 
 
 def apply() -> bool:

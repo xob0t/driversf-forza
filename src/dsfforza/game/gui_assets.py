@@ -2011,10 +2011,14 @@ class _Renders:
                 if not thumbnails or not car_id or f"thumbnails/thumbnail_{car_id}.xds" not in ui.names:
                     self.order.append(car)
         if len(self.order) > 1:
-            from concurrent.futures import ProcessPoolExecutor
+            from dsfforza.build import jobpool
+            from dsfforza.build.port_batch import RENDER_RAM
 
-            self.pool = ProcessPoolExecutor(
-                max_workers=min(jobs, len(self.order)),
+            # Each process on a slot of the machine's job pool (src/dsfforza/build/jobpool.py).
+            self.pool = jobpool.executor(
+                min(jobs, len(self.order)),
+                "garage pictures",
+                RENDER_RAM,
                 initializer=_start_render_process,
                 initargs=(record is not None, backdrop, template),
             )

@@ -327,19 +327,64 @@ function Get-HostCpu([double]$Seconds = 5) {
     [pscustomobject]@{ Total = [math]::Round($total * $scale); Competing = [math]::Round($competing * $scale) }
 }
 
+function Enter-PoolHold {
+    # The job pool every build and survey on this PC shares (src\dsfforza\build\jobpool.py):
+    # while this run's game loads, the pool hands out the VM's vCPUs ($VmSettings numvcpus)
+    # fewer slots, all of them for a host run. The pool ends the hold when the run's
+    # events.json says the Story world is ready, it has a result.json, at "until", or when
+    # this process is gone. Returns the hold's CPUs (0: no pool).
+    $folder = if ($env:DSFFORZA_POOL) { $env:DSFFORZA_POOL } else { Join-Path $env:LOCALAPPDATA 'dsfforza\pool' }
+    if ($folder -match '^(off|0)$') { return 0 }
+    $holds = Join-Path $folder 'holds'
+    New-Item -ItemType Directory -Force -Path $holds | Out-Null
+    Get-ChildItem -LiteralPath $holds -Filter "series-$PID-*.json" -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue
+    $cpus = if ($Vm) { [int]$VmSettings['numvcpus'] } else { [Environment]::ProcessorCount }
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    $hold = [ordered]@{ pid = $PID; since = $now; until = $now + $CpuGateSeconds + $StorySeconds + 600; cpus = $cpus
+        runs = (Join-Path $outputHost 'runs'); prefix = $(if ($Vm) { "vm$($vmTarget.Id)-" } else { 'host-' }) }
+    $hold | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $holds "series-$PID-$now.json") -Encoding ASCII
+    $script:poolFolder = $folder
+    $cpus
+}
+
+function Get-PoolSlots {
+    # [busy slots, CPUs the live holds reserve] of the job pool: a slot is busy while a process
+    # holds a lock on its file at byte 1 GiB (jobpool.LOCK_AT).
+    $busy = 0; $reserved = 0
+    foreach ($f in Get-ChildItem -LiteralPath $script:poolFolder -Filter 'slot-*.lock' -ErrorAction SilentlyContinue) {
+        try {
+            $fs = [IO.File]::Open($f.FullName, 'Open', 'ReadWrite', 'ReadWrite')
+            try { $fs.Lock(1GB, 1); $fs.Unlock(1GB, 1) } catch { $busy++ } finally { $fs.Dispose() }
+        } catch { }
+    }
+    foreach ($h in Get-ChildItem -LiteralPath (Join-Path $script:poolFolder 'holds') -Filter '*.json' -ErrorAction SilentlyContinue) {
+        try { $j = Get-Content -LiteralPath $h.FullName -Raw | ConvertFrom-Json
+            if ((Get-Process -Id $j.pid -ErrorAction SilentlyContinue) -and $j.until -gt [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) { $reserved += [int]$j.cpus } } catch { }
+    }
+    @($busy, $reserved)
+}
+
 function Wait-CpuGate {
     # On a busy host the game's load slows to a crawl in the VM (the guest gets little
-    # CPU). Wait until three 5 s samples in a row have the competing CPU under -CpuGate, at most
-    # -CpuGateSeconds. Returns the line to log.
+    # CPU). Hold the job pool (Enter-PoolHold), then wait until three 5 s samples in a row have
+    # the competing CPU under -CpuGate and the pool's busy slots leave the holds' CPUs free, at
+    # most -CpuGateSeconds. Returns the line to log.
     if ($CpuGate -le 0) { return $null }
-    $start = Get-Date; $calm = 0; $last = $null
+    $held = Enter-PoolHold
+    $start = Get-Date; $calm = 0; $last = $null; $pool = ''
     while ($true) {
         $last = Get-HostCpu 5
-        $calm = if ($last.Competing -lt $CpuGate) { $calm + 1 } else { 0 }
+        $slotsFree = $true
+        if ($held) {
+            $busy, $reserved = Get-PoolSlots
+            $slotsFree = $busy -le [math]::Max(0, [Environment]::ProcessorCount - $reserved)
+            $pool = ", job pool $busy busy, $reserved CPUs held"
+        }
+        $calm = if ($last.Competing -lt $CpuGate -and $slotsFree) { $calm + 1 } else { 0 }
         $waited = [math]::Round(((Get-Date) - $start).TotalSeconds)
-        if ($calm -ge 3) { return "CPU gate: passed after $waited s (competing $($last.Competing) %, total $($last.Total) %)" }
-        if ($waited -ge $CpuGateSeconds) { return "CPU gate: competing CPU still $($last.Competing) % (total $($last.Total) %) after $waited s; starting anyway" }
-        if ($calm -eq 0 -and ($waited -lt 10 -or $waited % 60 -lt 5)) { "  CPU gate: competing $($last.Competing) %, total $($last.Total) %; waiting" | Write-Host }
+        if ($calm -ge 3) { return "CPU gate: passed after $waited s (competing $($last.Competing) %, total $($last.Total) %$pool)" }
+        if ($waited -ge $CpuGateSeconds) { return "CPU gate: competing CPU still $($last.Competing) % (total $($last.Total) %$pool) after $waited s; starting anyway" }
+        if ($calm -eq 0 -and ($waited -lt 10 -or $waited % 60 -lt 5)) { "  CPU gate: competing $($last.Competing) %, total $($last.Total) %$pool; waiting" | Write-Host }
     }
 }
 

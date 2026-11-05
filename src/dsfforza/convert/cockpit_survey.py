@@ -3,7 +3,10 @@ list the failures by cause. Reads only <car>_cockpit.carbin, the main carbin
 (for the fallback) and CarAttribs.xml from each car's zip, in memory; the tick
 tables go to <work>/<game>/<media>/carattribs.xml so fit() can read them.
 
-    uv run dsff cockpit_survey [--work out/cockpit-survey] [--limit N] [--car NAME ...]
+    uv run dsff cockpit_survey [--work out/cockpit-survey] [--limit N] [--car NAME ...] [--jobs N]
+
+Each process (one, or --jobs) holds a slot of the machine's job pool
+(src/dsfforza/build/jobpool.py) while it surveys.
 
 Writes <work>/survey.tsv (one row per car) and prints a summary by cause.
 """
@@ -113,12 +116,46 @@ def survey_one(source, media: str, work: Path, dbs: list[Path]) -> dict:
     return row
 
 
+def _below_normal() -> None:
+    from dsfforza.build import gentle
+
+    gentle.set_priority(gentle.BELOW_NORMAL)
+
+
+def _survey_task(task) -> dict:
+    """One car's row (in this process or a survey process). task: (source, media, work
+    folder, gamedbs, why the car has no source)."""
+    source, media, work, dbs, no_source = task
+    if no_source is not None:
+        return {"media": media, "game": "", "status": "fail", "cause": f"source: {no_source}"}
+    try:
+        return survey_one(source, media, work, [p for p in (dbs.get(source.game),) if p])
+    except Exception as error:  # noqa: BLE001 - one car's failure is a row of the survey
+        traceback.print_exc()
+        return {
+            "media": media,
+            "game": "",
+            "status": "fail",
+            "cause": f"{type(error).__name__}: {error}".splitlines()[0][:160],
+        }
+
+
+def _task(cars: dict, key: str, work: Path, dbs: dict) -> tuple:
+    media = cars[key].name
+    try:
+        _, source = port_car.pick_source(cars, port_car.CarRequest(media, None))
+    except SystemExit as error:
+        return None, media, work, dbs, str(error)
+    return source, media, work, dbs, None
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--work", type=Path, default=REPO / "out" / "cockpit-survey")
     parser.add_argument("--cache", type=Path, default=REPO / "out" / "cache")
     parser.add_argument("--car", action="append", default=[])
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--jobs", type=int, default=1, help="survey processes (each on a job pool slot)")
     args = parser.parse_args(argv)
     from dsfforza.build import gentle
 
@@ -136,27 +173,23 @@ def main(argv: list[str] | None = None) -> None:
     if args.limit:
         names = names[: args.limit]
     args.work.mkdir(parents=True, exist_ok=True)
+    from dsfforza.build import jobpool
+
+    tasks = [_task(cars, key, args.work, dbs) for key in names]
+    if args.jobs > 1 and len(tasks) > 1:
+        pool = jobpool.executor(min(args.jobs, len(tasks)), "cockpit_survey", initializer=_below_normal)
+        results = pool.map(_survey_task, tasks)
+    else:
+        pool = jobpool.acquire("cockpit_survey", log=print)  # this process's slot
+        results = map(_survey_task, tasks)
     rows = []
-    for n, key in enumerate(names):
-        car = cars[key]
-        try:
-            _, source = port_car.pick_source(cars, port_car.CarRequest(car.name, None))
-            row = survey_one(source, car.name, args.work, [p for p in (dbs.get(source.game),) if p])
-        except SystemExit as error:
-            row = {"media": car.name, "game": "", "status": "fail", "cause": f"source: {error}"}
-        except Exception as error:  # noqa: BLE001 - one car's failure is a row of the survey
-            row = {
-                "media": car.name,
-                "game": "",
-                "status": "fail",
-                "cause": f"{type(error).__name__}: {error}".splitlines()[0][:160],
-            }
-            traceback.print_exc()
-        rows.append(row)
-        print(
-            f"{n + 1}/{len(names)} {row['media']} {row['status']} {row.get('cause', '')} {row.get('warnings', '')}",
-            flush=True,
-        )
+    with pool:
+        for n, row in enumerate(results):
+            rows.append(row)
+            print(
+                f"{n + 1}/{len(names)} {row['media']} {row['status']} {row.get('cause', '')} {row.get('warnings', '')}",
+                flush=True,
+            )
     cols = [
         "media",
         "game",

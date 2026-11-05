@@ -33,7 +33,6 @@ import subprocess
 import sys
 import traceback
 from collections import Counter
-from multiprocessing import Pool
 from pathlib import Path
 
 import numpy as np
@@ -408,7 +407,13 @@ def main(argv: list[str] | None = None) -> None:
     jobs = [(m, f, h, versions, args.work / "cache") for m, f, h in cars if m not in done]
     print(f"{len(jobs)} cars, versions {', '.join(n for n, _ in versions)}", flush=True)
     out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("a" if args.resume else "w", encoding="utf-8") as f, Pool(args.jobs) as pool:
+    from dsfforza.build import jobpool
+
+    # Each process on a slot of the machine's job pool (src/dsfforza/build/jobpool.py).
+    with (
+        out.open("a" if args.resume else "w", encoding="utf-8") as f,
+        jobpool.mp_pool(args.jobs, "plates_survey") as pool,
+    ):
         for n, row in enumerate(pool.imap_unordered(survey_one, jobs), 1):
             f.write(json.dumps(row) + "\n")
             f.flush()

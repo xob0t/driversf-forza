@@ -802,21 +802,32 @@ def _fingerprint_worker_env() -> dict[str, str]:
 
 
 def run_workers(jobs: list[dict], work: Path, parallel: int, log=print, progress=None) -> dict[str, dict]:
-    """Run one worker process per job, at most `parallel` at once, Below Normal priority.
-    A worker that can't start, times out or dies is a failed car, not a failed batch;
+    """Run one worker process per job, at most `parallel` at once, Below Normal priority,
+    each on a slot of the machine's job pool (src/dsfforza/build/jobpool.py: every build and
+    survey on the PC shares it). A worker that can't start, times out or dies is a failed car, not a failed batch;
     workers still running when this exits early (an error, Ctrl+C) are stopped.
     `progress` gets car_start, car_retry and car_done events (emit)."""
+    from dsfforza.build import jobpool
+
     pending = list(jobs)
     jobs_by_media = {j["media"]: j for j in jobs}
     running: dict[str, tuple[subprocess.Popen, float, object]] = {}
+    slots: dict[str, jobpool.Slot] = {}  # each running worker's slot of the machine's job pool
     results: dict[str, dict] = {}
     flags = gentle.creation_flags(BELOW_NORMAL if os.name == "nt" else 0)
+    waiting = False
     try:
         while pending or running:
             while pending and len(running) < parallel:
-                ram = free_ram()
-                if running and ram is not None and ram < FREE_RAM_FOR_WORKER:
+                # A slot of the job pool all builds and surveys share (jobpool.py): it waits for
+                # FREE_RAM_FOR_WORKER unless this process holds none yet.
+                slot = jobpool.try_acquire(pending[0]["media"], FREE_RAM_FOR_WORKER)
+                if slot is None:
+                    if not running and not waiting:
+                        log("  job pool: every slot is busy; waiting (uv run dsff jobpool status)")
+                    waiting = True
                     break
+                waiting = False
                 job = pending.pop(0)
                 job_path = work / f"{job['media']}.job.json"
                 job_path.write_text(json.dumps(job, indent=1), encoding="utf-8")
@@ -832,6 +843,7 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print, progress
                     )
                 except OSError as error:
                     log_file.close()
+                    slot.release()
                     results[job["media"]] = {
                         "media": job["media"],
                         "spool_id": job["spool_id"],
@@ -842,7 +854,9 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print, progress
                     log(f"  FAILED to start {job['media']}: {error}")
                     emit(progress, "car_done", media=job["media"], report=results[job["media"]], log=None)
                     continue
+                jobpool.die_with_me(proc)  # its slot is this process's: it ends with it
                 running[job["media"]] = (proc, time.time(), log_file)
+                slots[job["media"]] = slot
                 log(f"  start {job['media']} (ID {job['spool_id']}); {len(running)} running, {len(pending)} queued")
                 emit(
                     progress,
@@ -862,6 +876,7 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print, progress
                     proc.wait()
                 log_file.close()
                 del running[media]
+                slots.pop(media).release()
                 report = worker_report(work, media, code)
                 report.setdefault("spool_id", jobs_by_media[media]["spool_id"])
                 report["seconds"] = round(time.time() - started, 1) + jobs_by_media[media].get("seconds_before", 0)
@@ -909,6 +924,8 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print, progress
             proc.kill()
             proc.wait()
             log_file.close()
+        for slot in slots.values():
+            slot.release()
     return results
 
 
@@ -1354,39 +1371,53 @@ def lint_all(
     `record_dir`: each process records what it read and ran (lint-many --record) and
     the records are appended (src/dsfforza/build/pack_reuse.py). `out`: the merged archive,
     or its merge plan (MERGE_PLAN, a .json: lint-many --plan merges the cars in memory)."""
-    import json
+
+    from dsfforza.build import jobpool
 
     flags = gentle.creation_flags(BELOW_NORMAL if os.name == "nt" else 0)
     processes = max(1, min(parallel, -(-len(cars) // LINT_GROUP)))
+    # Slots of the machine's job pool (jobpool.py): one waited for, the rest as free now.
+    slots = jobpool.lease("lint", processes, LINT_RAM, log=log)
+    processes = len(slots)
     size = -(-len(cars) // processes) if cars else 1
     groups = [cars[k : k + size] for k in range(0, len(cars), size)]
     procs = []
-    for n, group in enumerate(groups):
-        source = ["--plan", str(out)] if Path(out).suffix == ".json" else [str(out)]
-        command = [sys.executable, "-m", "dsfforza.formats.upvh", "lint-many", *source, "--vanilla", str(dsf)]
-        for c in group:
-            command += ["--car", f"{c['spool_id']}:{c['host']}"]
-            if plain_glass(c):
-                command += ["--plain-glass", str(c["spool_id"])]
-            if facts and c["spool_id"] in defined:
-                command += ["--defined", str(c["spool_id"])]
-        if facts:
-            command += ["--facts"]
-        record = None
-        if records is not None and record_dir is not None:
-            record_dir.mkdir(parents=True, exist_ok=True)
-            record = record_dir / f"lint-record-{n}.json"
-            record.unlink(missing_ok=True)
-            command += ["--record", str(record)]
-        procs.append(
-            (
-                group,
-                record,
-                subprocess.Popen(
-                    command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=flags
-                ),
+    try:
+        for n, group in enumerate(groups):
+            source = ["--plan", str(out)] if Path(out).suffix == ".json" else [str(out)]
+            command = [sys.executable, "-m", "dsfforza.formats.upvh", "lint-many", *source, "--vanilla", str(dsf)]
+            for c in group:
+                command += ["--car", f"{c['spool_id']}:{c['host']}"]
+                if plain_glass(c):
+                    command += ["--plain-glass", str(c["spool_id"])]
+                if facts and c["spool_id"] in defined:
+                    command += ["--defined", str(c["spool_id"])]
+            if facts:
+                command += ["--facts"]
+            record = None
+            if records is not None and record_dir is not None:
+                record_dir.mkdir(parents=True, exist_ok=True)
+                record = record_dir / f"lint-record-{n}.json"
+                record.unlink(missing_ok=True)
+                command += ["--record", str(record)]
+            procs.append(
+                (
+                    group,
+                    record,
+                    subprocess.Popen(
+                        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=flags
+                    ),
+                )
             )
-        )
+            jobpool.die_with_me(procs[-1][2])
+        return _lint_results(procs, records, log)
+    finally:
+        for slot in slots:
+            slot.release()
+
+
+def _lint_results(procs: list, records: list | None, log) -> dict[str, dict]:
+    """lint_all's results: c["lint"] for each car of each process, and the facts."""
     found: dict[str, dict] = {}
     for group, record, proc in procs:
         text, _ = proc.communicate()
