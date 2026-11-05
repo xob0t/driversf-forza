@@ -1,6 +1,6 @@
 # Licence plates
 
-Updated: 2026-10-31
+Updated: 2026-11-05
 
 How vanilla DSF cars draw their plates, what the Forza cars have, and what
 `src/dsfforza/convert/plates.py` adds to converted cars (`ConvertOptions.plates`, on by
@@ -581,6 +581,54 @@ rows, wins over the panel between its lamps, 7 rows, where the real car carries 
 plate), the Z4 GT3 and Corvette ZR1 70 (over an emblem in the pocket), the NASCAR Monte
 Carlo SS 11 (a 0.25 x 0.10 m pocket on its rear deck) and the Cobra 427 (the lower of two
 pockets, between its bumperettes).
+
+## Fitted-rule audit (2026-11-05)
+
+Every rule, constant, threshold and placement heuristic of `convert/plates.py` (and
+`plates_survey.py`), against AGENTS.md "Rules come from data, never from fitting". Classes as
+in `wheels.md`'s audit (derived, choice, fitted, unknown, numeric, budget, tooling).
+
+Forza draws no plate on most cars (Forza plates, above), so the plate's place on the Forza
+body is a choice among Forza's own evidence: its `numberplate` quads, its plate lamps, the
+recesses and faces of its body. The rules allow that, with criteria measured over the roster
+and every changed car reviewed. The search's criteria and costs were set on named cars, one
+report at a time (#159, #179, #213, #241, #251, #259, #408), so they are fitted. Nothing is
+changed here: retuning any one weight moves other cars' plates, and taking them out leaves no
+rule. They stay, marked `TODO(fit, #527)`.
+
+### Left fitted or unknown, with their issues
+
+| Rule | Value | Class | Why it stays | Issue |
+| --- | --- | --- | --- | --- |
+| Fallback costs (`fallback_height`): `GAP_COST`, `HIDE_COST`, `HIDE_STEP` / `HIDE_NONE`, `MIX_COST`, `SHRINK_COST`, 0.1 x the distance from the prior, `FALLBACK_SCALES` | 2, 1, 0.02 / 0.005, 0.1, 0.05, 0.1, (1, 0.9, 0.8) | fitted | weights of a sum set on named cars (Delta S4, Cougar Eliminator, Evora) | #527 |
+| `LAMP_MARGIN`, `LAMP_DROP`, `EMBLEM_AREA`, `BADGE_BAND`, `OPENING`, `face_cells`' 0.3 m | 2 cm, 10%, 15%, 0.4 m, 0.1 m | fitted | the Viper GTS-R, ARX-01b, Evora, BMW M1 | #527 |
+| `rest`: `BRACKET_TILT`, `BEND_MAX` | 0.25, 0.2 | fitted | vanilla bends up to 24 degrees (above); the cap is not vanilla's | #527 |
+| Window search: `FLAT_RMS`, `COPLANAR`, `RECESS_STEP`, the 97% cover, the 30% recess border, the ±4-cell offsets, the score `proud - 0.5 abs(dy) - 2 abs(s)`, `PRIOR_BAND`, `WIDE_BAND`, `FLAT_BAND`, the walks (45 / 25 cells, 2 / 1.5 cm margins), the 0.75 / 0.6 seam tests, `MIN_FIT`, the forza-mesh 1.3 up-scale | | fitted | set on the 40 test-drive cars and the Skyline R32, RS2, Mazda 2 | #527 |
+| Pockets: `POCKET_RISE`, `POCKET_GAP`, `POCKET_WALL`, the upper bounds of `POCKET_WIDTH` and `POCKET_HEIGHT`, `POCKET_OFF_CENTRE`, `POCKET_ROOM`, `LAMP_REACH`; `choose_pocket`'s most-rows rule | 3, 2 cm, 8, 0.80 / 0.32 m, 8 cm, (2, 1.5) cm, (2, 6) cm | fitted | set on the E46 M3, Focus RS500, Joss JT1 (#408); the CC8 picks the wrong pocket of two | #527, #446 |
+| The height band of pockets and windows | 0.15..1.45 m over the ground | fitted | | #527 |
+| The height prior (`plan`) | the host plate's share of the host's body box, mapped onto the Forza body's | fitted | vanilla's geometry as a prior for where the Forza car carries its plate (Forza's plate lamp replaces it at the rear when there is one) | #527 |
+| `DEFAULT_SIZE` for hosts whose plate is under 0.15 or over 0.45 m wide | 0.26 x 0.122 m, vanilla's median | fitted | a fleet median used per car (Super Car 01's 0.99 m front) | #527 |
+| `LOD_PUSH_LIMIT` | 8 cm | unknown | | #527 |
+
+### Derived or choice (kept)
+
+- **Vanilla parts:** `PLATE_UV` (the plate in the shared atlas), `SHARED_ATLAS_MATERIALS`, the
+  host's plate per end (which ends carry one, its size), the plate's orientation, winding,
+  material, panel and crush (`plate_section`, `damage.section_rule`), `VANILLA_MIN_PLATE`
+  (vanilla's smallest rear plate, 0.226 x 0.101 m) and `MIN_WIDTH` (0.23 m), `PROUD`
+  (vanilla plates stand a few millimetres proud), `PLATE_AO` (vanilla plates' sky term
+  about 0.5), `FACE_DOWN` and `MAX_TILT` (vanilla's tilts: no plate faces down by more than
+  0.36 but the Stratos's front; the host's own tilt where it faces down further).
+- **Forza data:** `numberplate` quads (`FORZA_PLATE_TECHNIQUES`; their place, tilt and size),
+  the plate lamps (`numplate`, `plate_lamps`, `lamp_height`: just under a strip across,
+  level with upright strips), the technique classes (`CLASS`, `feature`).
+- **Choices among Forza's evidence with a roster survey:** `POCKET_DEEP` 0.2 m (side walls
+  measured over the roster in #445: bumper pockets to about 0.1, diffuser channels from
+  0.21); `POCKET_ENDS` rear only (front openings are texture-meshed intakes, which depth
+  can't tell from a pocket; #408); a lamp-lit pocket first.
+- **Numeric:** `PX` 1 cm, `DEPTH_CHUNK`, `POCKET_REACH`, `POCKET_MERGE`, the depth map's
+  range, `half_width`'s 0.9 m.
+- **Tooling:** `plates_survey` (`NEAR` 5 cm, its flags).
 
 ## Open
 

@@ -79,6 +79,8 @@ MAX_MARKERS = 4  # slots at spec+0x39A0, 0x2C each, up to the role-0x57 array at
 MARKER_TYPE = 3
 SECTION = re.compile(r"exhaus", re.IGNORECASE)  # exhaustLa, exhaustRa, exhausta; `exhausb` on five FM4 cars
 WELD = 1e-3  # m: vertices this close are one (pieces are found by shared vertices)
+# TODO(fit, #529): the opening and pipe thresholds below (DEPTH to TWIN_ASPECT, PIPE_*) were set
+# between the named cars that broke, not in the gaps of a roster-wide distribution.
 DEPTH = 0.04  # m: the rear end of a piece that counts as its opening
 REACH = 0.15  # m: openings this much deeper inside the body than the outermost one are not tailpipes (silencers)
 REAR_REACH = 0.15  # m: rear openings this far ahead of the rearmost one are not tailpipes

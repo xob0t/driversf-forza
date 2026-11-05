@@ -1,6 +1,6 @@
 # Forza materials and textures, and their DSF counterparts
 
-Updated: 2026-10-30
+Updated: 2026-11-05
 
 Code: `src/dsfforza/convert/forza_materials.py` (Forza side), `src/dsfforza/convert/dsf_materials.py`
 (DSF side, atlas, preview), `--textures` in `src/dsfforza/convert/forza2dsf/`. Checked on NIS_370Z_10 (FH1) and the Desanne host.
@@ -289,6 +289,23 @@ well under the 0x2C0000 limit. All 40 testdrive cars (`out/fx/td`, `--mdxn-limit
 0x2C0000 --damage`): built, 39 lint ok; the Express fails lint as in
 `out/testdrive11`. Full-entry MDXN grows by 45 KB on average, 170 KB at most;
 the largest is 0x1e0000.
+
+### Badge plates: fitted-rule audit (2026-11-05)
+
+`convert/cutout.py` against AGENTS.md "Rules come from data, never from fitting" (classes as in
+`wheels.md`'s audit). Nothing is changed here.
+
+| Rule | Value | Class | Note | Issue |
+| --- | --- | --- | --- | --- |
+| `ALPHA_PASS` | 128 | derived | Forza's alpha test drops texels under half alpha (above) | |
+| The cut itself: marching squares at the half-way line, ear clipping, barycentric vertices | | derived | the texels that pass, on the source triangle's surface | |
+| `CUT_MIN_HIDDEN` | 0.2 | fitted | a gap on the 40 test-drive cars (emblems 0 to 15% hidden, badge quads 35 to 90%), not the roster; below it the hidden texels still draw | #530 |
+| `CUT_MIN_TEXELS` | 8 | fitted | | #530 |
+| `CUT_TOLERANCE` and its x (LOD - 1) past LOD 2 | 0.75 texels | budget | triangles against no cited engine limit | #530 |
+| `MASK_MARGIN` | 2 texels | numeric | pieces of neighbouring triangles meet on their edge | |
+
+`chassis_variants.py` has no fitted rule: the chassis record type 5 and the copy of part 0
+into each variant part are vanilla's (host 172 draws its role-257 copy).
 
 ## Chrome trim and the Boss 429's black parts (2026-10-24)
 

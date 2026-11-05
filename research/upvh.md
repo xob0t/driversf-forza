@@ -1,6 +1,6 @@
 # UPVH vehicle hierarchy, and why converted cars crashed
 
-Updated: 2026-10-30
+Updated: 2026-11-05
 
 Static analysis of build 1.04. File offsets are relative to the UPVH payload
 (Saloon 15, VEHC 3, spool 266, 0x42B0 bytes, unless stated). Code addresses
@@ -389,6 +389,21 @@ writes (0, 0, 0) on a leaf before the last. `insert_marker` and
 as `damage.move_subtree` does). AUD_R8_08 (host 139): `upvh lint` failed on
 record 71 in master's build, passes now; inserting and then removing a copy
 gives back the host's bytes (hosts 139, 214, 127, 225).
+
+**Fitted-rule audit (2026-11-05).** Every rule and constant of `convert/exhaust.py`, against
+AGENTS.md "Rules come from data, never from fitting" (classes as in `wheels.md`'s audit). Nothing
+is changed here.
+
+| Rule | Class | Note | Issue |
+| --- | --- | --- | --- |
+| `ROLE` 0x4D, `MAX_MARKERS` 4, `MARKER_TYPE` 3, the flow along the marker's -z, `quaternion` | derived | FUN_0088E310, FUN_00881DD0; vanilla markers | |
+| `SECTION` (`exhaus*`) | derived | Forza's section names | |
+| The flow straight back, or out of the side (`BACK`, `_outward`) | choice | vanilla markers are identity on rear pipes; the low-poly tips' wall normals gave no stable axis | |
+| Openings: `DEPTH` 4 cm, `BOX_DEPTH` 12 cm, `REACH` 15 cm, `REAR_REACH` 15 cm, `MAX_GAP` 1 m, `BODY_WINDOW` 20 cm, `SIDE_MIN_X` 10 cm, `SIDE_GAP` 8 cm, `MIN_SIZE` / `MAX_SIZE` 2 / 45 cm, `MIN_THICK` 1 cm, `TWIN_ASPECT` 1.8, `_outward`'s 0.1 m windows | fitted | set between named cars (M5, Camaro SS, Legacy, Leaf, GT1, V8 Supercar, DTM), not in the gaps of a roster distribution | #529 |
+| Pipes outside the exhaust sections (`find_pipes`, `_is_pipe`): `PIPE_WALL`, `PIPE_WALL_SHARE`, `PIPE_SECTORS` / `PIPE_SECTOR_SHARE` / `PIPE_SECTORS_MISSED`, `PIPE_MAX_SIZE`, `PIPE_MAX_HEIGHT`, `PIPE_MAX_SIDE_HEIGHT`, `PIPE_MIN_LENGTH`, `PIPE_REAR`, `PIPE_LAMP_DEPTH`, `PIPE_SKIP_*` | fitted | set on the F40, 360, Corvette 60, Cerbera, C5-R, Esperante GTLM, R390 (#65) | #529 |
+| Markers per tip, the twin split at the quarter widths, neighbour merging, outside-in doubling (`targets`, `set_count`) | choice | geometric definitions over Forza's tips and the host's records | |
+| No tip: the damage plan's body box map | choice | | |
+| `WELD` 1 mm | numeric | | |
 
 ### PDL (collision)
 

@@ -35,12 +35,14 @@ from dsfforza.formats import carbin
 # the texel centres inside it (and it covers at least CUT_MIN_TEXELS). Below it
 # only soft emblem edges are hidden (the 40 testdrive cars' modelled emblems: 0
 # to 15% at LOD 1), badges drawn as plain quads hide 35 to 90%.
+# TODO(fit, #530): a gap on 40 cars, and a triangle budget; Forza's test hides every texel
+# under ALPHA_PASS, so the derived cut is all of them, within the engine's limits.
 CUT_MIN_HIDDEN = 0.2
 CUT_MIN_TEXELS = 8
 CUT_TOLERANCE = 0.75  # texels (source atlas): outline simplification at LOD 0 to 2,
 # x (LOD - 1) beyond (LOD 3: 1.5, LOD 5: 3; the full entry's far LODs)
 MASK_MARGIN = 2.0  # texels of the mask kept beyond a triangle's edges before clipping
-ALPHA_PASS = 128
+ALPHA_PASS = 128  # Forza's alpha test drops texels under half alpha (forza-materials.md)
 
 
 # --- mask -> polygons ----------------------------------------------------------------
