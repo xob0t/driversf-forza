@@ -9,6 +9,8 @@
       picture.dds   the garage picture: 512 x 256 DXT5, no mips (as gui.sp's car pictures)
       badge.png     the maker badge as the HUD and the maker list draw it (RGBA)
       plate.png     the model nameplate as the HUD draws it (RGBA)
+      forza_emblem.dds  the garage card emblem of the car's source: 512 x 256 DXT5, no mips,
+                    laid out like the card icon atlas (gui_assets.emblem_texture)
 
 The manifest says what the car is and nothing the manager allocates: no model ID the game
 will use, no glyph code, string ID, picture name or garage group. The model ID inside
@@ -24,16 +26,11 @@ that part as the host's (picture) or the game's own for the maker or model.
       "names": {"display": "BMW M3E30 (1991)", "make": "BMW", "model": "M3",
                 "family": null, "year": 1991, "maker_group": "BMW"},
       "garage": {"speed": 0.48, "strength": 0.3, "drift": 0.65},
-      "images": {"picture": "picture.dds", "badge": "badge.png", "plate": "plate.png"},
+      "images": {"picture": "picture.dds", "badge": "badge.png", "plate": "plate.png",
+                 "emblem": "forza_emblem.dds"},
       "requires": ["archive.packages", "archive.ids"],
       "source": {"pipeline": "dsfforza", "game": "FH1", "media": "BMW_M3E30_91"}
     }
-
-Beside the packages, `pack` writes the shared assets: what the manager keeps once for all
-its cars rather than in every package (research/car-packages.md, "Shared assets").
-
-    forza_emblem.dds  the garage card emblem texture: 512 x 256 DXT5, no mips, the Forza logo
-                      laid out like the card icon atlas (gui_assets.emblem_texture)
 
     uv run dsff car_package pack --build out/build --media BMW_M3E30_91 --out out/packages
     uv run dsff car_package validate out/packages/forza.fh1.BMW_M3E30_91.dsfcar
@@ -59,12 +56,13 @@ CAR = "car.sp"
 PICTURE = "picture.dds"
 BADGE = "badge.png"
 PLATE = "plate.png"
-MEMBERS = {MANIFEST, CAR, PICTURE, BADGE, PLATE}
-SUFFIX = ".dsfcar"
-# Shared assets, beside the packages: the garage card emblem texture, as gui_assets.build puts
-# it in Fonts.fchunk (research/gui-assets.md, "Garage card emblem"). One for every package:
-# it is the same picture whatever the build (the discs' UI4/Common/forza_logo3).
+# The garage card emblem texture, as gui_assets.build puts it in Fonts.fchunk
+# (research/gui-assets.md, "Garage card emblem"): each package carries its source's emblem, so
+# a package is self-contained (the discs' UI4/Common/forza_logo3 for every car of this pipeline).
 EMBLEM = "forza_emblem.dds"
+MEMBERS = {MANIFEST, CAR, PICTURE, BADGE, PLATE, EMBLEM}
+IMAGE_MEMBERS = {"picture": PICTURE, "badge": BADGE, "plate": PLATE, "emblem": EMBLEM}
+SUFFIX = ".dsfcar"
 
 # Capabilities a package can ask of dsfforza.asi; the plugin lists its own in its DLL
 # (tools/asi/src/patch.h DSF_CAPABILITIES; car_manager.plugin_capabilities reads them).
@@ -265,9 +263,9 @@ def _garage_images_problems(m: dict) -> list[str]:
         ]
         out += [f"garage.{k} must be a number from 0 to 1" for k in bad]
     images = m.get("images", {})
-    want = {"picture": PICTURE, "badge": BADGE, "plate": PLATE}
+    want = IMAGE_MEMBERS
     if not isinstance(images, dict) or any(images.get(k) != want.get(k) for k in images):
-        out.append(f"images maps picture/badge/plate to {sorted(want.values())}")
+        out.append(f"images maps picture/badge/plate/emblem to {sorted(want.values())}")
     return out
 
 
@@ -290,7 +288,7 @@ def write(out: Path, manifest: dict, car_sp: bytes, images: dict[str, bytes]) ->
     manifest = json.loads(json.dumps(manifest))
     manifest["car"]["file"] = CAR
     manifest["car"]["sha256"] = sha256(car_sp)
-    manifest["images"] = {k: v for k, v in {"picture": PICTURE, "badge": BADGE, "plate": PLATE}.items() if v in images}
+    manifest["images"] = {k: v for k, v in IMAGE_MEMBERS.items() if v in images}
     problems = manifest_problems(manifest)
     if problems:
         raise ValueError("; ".join(problems))
@@ -330,7 +328,7 @@ def _picture_problems(data: bytes) -> list[str]:
 
 
 def emblem_problems(data: bytes) -> list[str]:
-    """The shared emblem texture: what dsfforza.asi [hud] card_emblem binds in place of the card
+    """A package's emblem texture: what dsfforza.asi [hud] card_emblem binds in place of the card
     icon atlas, so its size (gui_assets.CARD_ATLAS_SIZE): 512 x 256 DXT5, one level."""
     try:
         w, h, fourcc, mips = dds_info(data)
@@ -340,17 +338,6 @@ def emblem_problems(data: bytes) -> list[str]:
     if (w, h) != size or fourcc != b"DXT5" or mips > 1 or len(data) != 128 + w * h:
         return [f"{EMBLEM}: {w} x {h} {fourcc!r}, {len(data)} bytes, not one level of 512 x 256 DXT5 (the card atlas)"]
     return []
-
-
-def write_emblem(out_dir: Path, isos=None) -> Path:
-    """The shared emblem texture, from the discs (gui_assets.emblem_texture), into out_dir."""
-    data = _gui().emblem_texture(isos)
-    problems = emblem_problems(data)
-    if problems:
-        raise ValueError("; ".join(problems))
-    path = out_dir / EMBLEM
-    path.write_bytes(data)
-    return path
 
 
 def _member_problems(z: zipfile.ZipFile, names: list[str], manifest: dict) -> list[str]:
@@ -367,12 +354,14 @@ def _member_problems(z: zipfile.ZipFile, names: list[str], manifest: dict) -> li
     images = manifest.get("images", {})
     listed = set(images.values()) if isinstance(images, dict) else set()
     out += [f"images names {m}, which the zip doesn't hold" for m in sorted(listed) if m not in names]
-    out += [f"{m} is in the zip but not in images" for m in (BADGE, PLATE, PICTURE) if m in names and m not in listed]
+    out += [f"{m} is in the zip but not in images" for m in IMAGE_MEMBERS.values() if m in names and m not in listed]
     for member in (BADGE, PLATE):
         if member in names:
             out += _glyph_problems(member, z.read(member))
     if PICTURE in names:
         out += _picture_problems(z.read(PICTURE))
+    if EMBLEM in names:
+        out += emblem_problems(z.read(EMBLEM))
     return out
 
 
@@ -456,7 +445,8 @@ def _build_images(build: Path) -> dict:
 def pack(build: Path, media: list[str], out_dir: Path, version: int = 1, isos=None, log=print) -> list[Path]:
     """One package per car of a port_batch build (its manifest dngvehicles.json, work/<media>.chnk,
     pack/pictures and pack/images): car.sp with the build's model ID, the garage picture,
-    the badge (the Forza logo, else a text badge, as gui_assets draws them) and the plate."""
+    the badge (the Forza logo, else a text badge, as gui_assets draws them), the plate and the
+    garage card emblem (from the discs, the same for every car of this pipeline)."""
     from dsfforza.build import car_package
 
     gui = _gui()
@@ -484,6 +474,10 @@ def pack(build: Path, media: list[str], out_dir: Path, version: int = 1, isos=No
         return gui.logo_image(ui, make.title()) or gui.logo_image(ui, make)
 
     vanilla = Path(data.get("vanilla") or "out/vanilla/Install/dngvehicles.sp")
+    emblem = gui.emblem_texture(isos)
+    problems = emblem_problems(emblem)
+    if problems:
+        raise ValueError("; ".join(problems))
     written = []
     for car in chosen:
         t = texts[car["media"]]
@@ -493,6 +487,7 @@ def pack(build: Path, media: list[str], out_dir: Path, version: int = 1, isos=No
         picture = build / "pack" / "pictures" / f"dsfforza_{car['media'].lower()}.dds"
         if picture.exists():
             images[PICTURE] = picture.read_bytes()
+        images[EMBLEM] = emblem
         temp = out_dir / f".{car['media']}.sp"
         model_id = car["spool_id"]
         car_package.make(build / "work" / f"{car['media']}.chnk", None, car["host"], vanilla, temp)
@@ -523,5 +518,4 @@ def pack(build: Path, media: list[str], out_dir: Path, version: int = 1, isos=No
         path = write(out_dir / f"{manifest['key']}{SUFFIX}", manifest, car_sp, images)
         log(f"{path}: {len(car_sp) >> 10} KiB car.sp, {', '.join(sorted(images))}")
         written.append(path)
-    log(f"{write_emblem(out_dir, isos)}: the garage card emblem (shared by the packages)")
     return written

@@ -15,11 +15,14 @@ never written. What a car gets is what gui_assets.build gives a ported car with
   plate glyph from plate.png (ModelGlyph, one per text) and a ModelName string;
 - the garage picture from picture.dds (Picture1 "dsfforza_<media>", the name register.lua
   checks a hud entry against);
-- GarageEmblem = 1 when the generated Fonts.fchunk holds the Forza emblem texture
-  (gui_assets.FORZA_LOGO_UID): the game's already has it (a merged install's), or the
-  manager has the build's shared copy (dsfcar.EMBLEM), which goes into the font as
-  gui_assets.build puts it there. dsfforza.asi [hud] card_emblem then shows the Forza logo on
-  the car's garage card instead of the SF disc (research/gui-assets.md, "Garage card emblem").
+- GarageEmblem = 1 when the car's package carries the garage card emblem (forza_emblem.dds,
+  dsfcar.EMBLEM) and the generated Fonts.fchunk holds that texture (gui_assets.FORZA_LOGO_UID):
+  the game's font already has it (a merged install's), or the packages' emblem goes into the
+  copy as gui_assets.build puts it there. dsfforza.asi [hud] card_emblem binds one texture for
+  that UID, so one emblem goes in: the one most enabled packages carry (every package of this
+  pipeline carries the same, the discs' Forza logo); a car whose package carries another keeps
+  the SF disc. dsfforza.asi then shows the emblem on the car's garage card instead of the SF disc
+  (research/gui-assets.md, "Garage card emblem").
 
 Codes and string IDs are taken where the game's current files have none: 16-bit codes from
 WIDE_FIRST (256) up past every code the vehicles_font has; strings from FIRST_STRING_ID
@@ -103,8 +106,9 @@ def _image(data: bytes, kind: str):
     return image
 
 
-def plan(cars: list[dict], strings: dict[int, str], used_codes: set[int], used_strings: set[int], *, emblem: bool):
-    """({id: hud.lua entry}, {code: glyph Image}, {string ID: text}, {picture name: DDS})."""
+def plan(cars: list[dict], strings: dict[int, str], used_codes: set[int], used_strings: set[int], *, emblem: set[int]):
+    """({id: hud.lua entry}, {code: glyph Image}, {string ID: text}, {picture name: DDS}).
+    `emblem`: the IDs whose garage card shows the emblem (GarageEmblem)."""
     g = _gui()
     makes, models = g.vanilla_codes(strings)
     names = Strings(strings, used_strings)
@@ -141,7 +145,7 @@ def plan(cars: list[dict], strings: dict[int, str], used_codes: set[int], used_s
             name = f"dsfforza_{media.lower()}"
             pictures[name] = (folder / "picture.dds").read_bytes()
             entry["Picture1"] = name
-        if emblem:
+        if car["id"] in emblem:
             entry[g.EMBLEM_FIELD] = 1
         hud[car["id"]] = entry
     if code > 0xD800:
@@ -176,15 +180,30 @@ def clear(game: Path) -> None:
     (game / HUD_LUA).unlink(missing_ok=True)
 
 
-def generate(game: Path, cars: list[dict], base: Path | None = None, log=print, emblem: bytes | None = None) -> dict:
+def emblems(cars: list[dict]) -> dict[int, bytes]:
+    """{car ID: its package's garage card emblem texture}, for the cars whose package carries a
+    good one (dsfcar.EMBLEM in the car's folder, as the manager installed it)."""
+    from dsfforza.build import dsfcar
+
+    out = {}
+    for car in cars:
+        try:
+            data = (Path(car["folder"]) / dsfcar.EMBLEM).read_bytes()
+        except OSError:
+            continue
+        if not dsfcar.emblem_problems(data):
+            out[car["id"]] = data
+    return out
+
+
+def generate(game: Path, cars: list[dict], base: Path | None = None, log=print) -> dict:
     """Write the generated files for `cars` ([{id, key, manifest, folder}], the enabled
     packages) under <game>\\dsfforza\\generated, the redirect list and packages_hud.lua.
     Returns a report. Built in a new folder and swapped in, so a failure leaves the last
     generation in place. `base` holds the files they are made from (default the game folder:
     its gui.sp, Fonts.fchunk and Locale; another folder when the game folder is an overlay
-    laid over a game, as in the VM tests). `emblem`: the garage card emblem texture (the
-    manager's shared copy, dsfcar.EMBLEM), added to the Fonts.fchunk copy unless the game's
-    already has it; with either, every car gets GarageEmblem = 1."""
+    laid over a game, as in the VM tests). The packages' garage card emblem (module docstring)
+    goes into the Fonts.fchunk copy unless the game's already has one."""
     import shutil
 
     g = _gui()
@@ -200,8 +219,19 @@ def generate(game: Path, cars: list[dict], base: Path | None = None, log=print, 
     for lang in langs:
         used_strings |= set(g.read_strings(base / LOCALE / lang / "global.fchunk"))
     codes, has_emblem = font_state(base / FONTS)
-    textures = {} if has_emblem or emblem is None else {g.FORZA_LOGO_UID: emblem}
-    hud, glyphs, new_strings, pictures = plan(cars, strings, codes, used_strings, emblem=has_emblem or bool(textures))
+    own = emblems(cars)
+    textures = {}
+    if has_emblem:
+        shown = set(own)
+    elif own:
+        common = max(set(own.values()), key=list(own.values()).count)
+        textures = {g.FORZA_LOGO_UID: common}
+        shown = {i for i, data in own.items() if data == common}
+        if len(shown) < len(own):
+            log(f"{len(own) - len(shown)} cars carry another garage card emblem: they keep the SF disc")
+    else:
+        shown = set()
+    hud, glyphs, new_strings, pictures = plan(cars, strings, codes, used_strings, emblem=shown)
     out = game / GENERATED
     staged = out.with_name(out.name + ".new")
     shutil.rmtree(staged, ignore_errors=True)

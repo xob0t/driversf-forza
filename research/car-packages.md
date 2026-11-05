@@ -360,36 +360,35 @@ byte the `.sp` files that ran in `runs\vm1-20261101-122452`. Run from the packag
 entries written from their manifests (`runs\vm2-20261101-124716`): all
 four spawn as 700 to 703, in the chase and cockpit views.
 
-**Open (phase 3):** shared assets stay with the manager, not in a package:
-the Forza emblem texture does since #510 ("Shared assets" below); engine
-sound templates are open. A pack (several cars) is a folder of `.dsfcar`
-files for now, without a manifest of its own.
+**Open (phase 3):** engine sound templates stay with the manager, not in a
+package. A pack (several cars) is a folder of `.dsfcar` files for now,
+without a manifest of its own.
 
-### Shared assets (#510)
+### The garage card emblem is in each package (#510)
 
-What every package of a pipeline would carry the same copy of goes beside
-the packages once, and the manager keeps one copy for all its cars, in
-`dsfforza\cars\shared\` (no package key can name it: `dsfcar.KEY` has two
-dots). A package stays complete without them: it installs and drives the
-same, and only loses what the asset is for.
+A package is self-contained: it carries its source's garage card emblem as
+the image `forza_emblem.dds` (`images.emblem`), 512 × 256 DXT5, one level,
+the Forza logo laid out like the card icon atlas (`gui-assets.md`, "Garage
+card emblem"). `dsfcar.pack` (port_batch `--packages`) writes it into every
+package with `gui_assets.emblem_texture`: FH1's `UI4/Common/forza_logo3.xds`
+(FM4's, else), the header of vanilla gui.sp's `nissan_370z` picture, the same
+call `gui_assets.build` makes for the merged Fonts.fchunk; byte for byte the
+TEXC `f012ef7ef05a2e2d` of the 721-car build's `gui\Fonts.fchunk` (master
+8200cfa). About 128 KiB per package. `validate` checks it
+(`dsfcar.emblem_problems`).
 
-| File | What | Where it comes from |
-| --- | --- | --- |
-| `forza_emblem.dds` | the garage card emblem texture: 512 × 256 DXT5, one level, the Forza logo laid out like the card icon atlas (`gui-assets.md`, "Garage card emblem") | `dsfcar.pack` (port_batch `--packages`) writes it with `gui_assets.emblem_texture`: FH1's `UI4/Common/forza_logo3.xds` (FM4's, else), the header of vanilla gui.sp's `nissan_370z` picture, the same call `gui_assets.build` makes for the merged Fonts.fchunk. Checked: byte for byte the TEXC `f012ef7ef05a2e2d` of the 721-car build's `gui\Fonts.fchunk` (master 8200cfa) and of a 4-car build's |
-
-- `car_manager install <folder>` keeps the folder's `forza_emblem.dds`
-  (checked by `dsfcar.emblem_problems` before anything is written: the card
-  atlas's 512 × 256, DXT5, one level). A port_batch build's packages folder
-  from before it (v0.2.0) has none; the manager then takes the same texture
-  from that build's `gui\Fonts.fchunk`, so `install.cmd --install-only` of a
-  v0.2.0 build gets the emblem without a rebuild. Packages without one
-  (another builder's) leave the kept copy as it is. It is the same picture
-  from any build, so packages from different builds share one.
-- Every GUI generation (install, enable, disable, remove, reassign) hands
-  it to `car_gui.generate`, which adds it to the Fonts.fchunk copy (unless
-  the game's font already has it) and writes `GarageEmblem = 1` for every
-  car. `uninstall` removes the folder; `verify` reports a file that isn't a
-  good texture (the generation then leaves it out).
+- The manager installs it with the car's other images, in the car's folder.
+- Every GUI generation (install, enable, disable, remove, reassign):
+  `car_gui.generate` adds the emblem the most enabled packages carry to the
+  Fonts.fchunk copy (unless the game's font already has one), and writes
+  `GarageEmblem = 1` for the cars whose package carries that emblem.
+  dsfforza.asi [hud] card_emblem binds one texture for
+  `gui_assets.FORZA_LOGO_UID`, so one emblem goes in; a car whose package
+  carries another (a future source's) keeps the SF disc until the plugin
+  binds one per car.
+- A package without one (v0.2.0's) keeps the SF disc on its card. #510 was
+  first fixed with one shared copy kept by the manager (#523); it moved into
+  the packages so each one is complete on its own.
 
 ## Manager, part 1 (phase 3, #453)
 
@@ -449,10 +448,10 @@ car gets is what `gui_assets.build --wide-glyphs` gives a ported car, from
 the package's images: a maker or model DSF has keeps its vanilla badge or
 plate (`vanilla_codes`), others get a 16-bit badge (one per maker group)
 or plate (one per text) from `badge.png` / `plate.png` and a name string;
-the picture is `dsfforza_<media>`; `GarageEmblem = 1` for every car when
-the Fonts.fchunk copy holds the emblem texture: the manager's shared copy
-("Shared assets", #510), or the game's font when it already has it (a
-merged install's). Until #510 (v0.2.0) only the latter, so a packages
+the picture is `dsfforza_<media>`; `GarageEmblem = 1` for a car whose
+package carries the emblem the Fonts.fchunk copy holds ("The garage card
+emblem is in each package", #510), or the game's font when it already has
+it (a merged install's). Until #510 (v0.2.0) only the latter, so a packages
 install over vanilla files showed the SF disc. Codes and strings are taken where the
 current files have none: 16-bit codes past every vehicles_font code from
 256 up, strings from 700000 up, reusing an ID that already has the same
@@ -487,7 +486,7 @@ MAZDA and TOYOTA (added groups come after the vanilla ones), each with its
 name from the generated global.fchunk and its 16-bit badge, and the Supra
 RZ's card shows its package's picture. The card has the SF disc, not the
 Forza emblem: the vanilla Fonts.fchunk has no emblem texture (see above;
-fixed by the shared emblem, #510).
+fixed by the emblem in each package, #510).
 
 ## Pipeline (phase 4, #454; opt-in until "Packages only" below)
 
