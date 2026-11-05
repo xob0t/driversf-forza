@@ -178,6 +178,8 @@ How a build runs:
   last two logical CPUs, so every agent's queued on the same two while the rest
   idled (the same 10-car build at 2 jobs: 447 s pinned, 287 s not, the same output;
   issue #325). Delete the file to build at full speed.
+- Each worker takes a slot of the PC's job pool first ("Job pool" below): every build and
+  survey of every worktree shares it, and `out/gentle` caps the pool at 2.
 - A new worker starts only while 1.9 GB of RAM is free (`FREE_RAM_FOR_WORKER`). A
   worker peaks under 1.8 GB, the slowest supercars at about 3.1 GB (32- and 30-car
   builds, 2026-10-30; the job object's peak per process), the garage-picture
@@ -348,6 +350,51 @@ Batch-level costs at full-roster scale:
   build 7.0, 10.0 and 12.9 GB at its peak). So `--jobs` (and `dsff install`) default
   to one worker per logical CPU, as many as 1.9 GB each fits in the RAM
   (`port_batch.default_jobs`: 16 on this PC; `out/gentle` caps it at 2).
+
+### Job pool
+
+Several agents build and survey at once, each in its own worktree, and each build
+started a worker per logical CPU: three of them ran 48 heavy processes on 16 CPUs, and
+the test VMs' game loads starved (issue #70). Every heavy process now takes a slot of one
+pool for the whole PC (`src/dsfforza/build/jobpool.py`): the conversion workers and the
+`upvh lint-many` processes (the build process holds their slots), the garage-picture
+render processes, `render_compare` (run, diff, rescore), `cockpit_survey`,
+`plates_survey` and the door-count memo of the plan (each process holds its own slot,
+taken in its initializer before it takes work).
+
+- **Slots.** `%LOCALAPPDATA%\dsfforza\pool\slot-NN.lock` (`DSFFORZA_POOL` names another
+  folder; `off` turns the pool off). A process holds a slot while it holds a lock on a
+  byte of the file at 1 GiB (past its end, so the file's text, the holder's pid, label and
+  worktree, stays readable). The OS drops the lock when the process dies, so a killed
+  build frees its slots; its workers are in a job object that ends them with it
+  (`jobpool.die_with_me`), so none runs on without a slot. Slots are counted and taken
+  under `pool.lock`.
+- **Size.** `port_batch.default_jobs` (one per logical CPU, as many as `WORKER_RAM`
+  each fits in the RAM: 16 here), at most `gentle.CORES` (2) while `out/gentle` exists in
+  this worktree or in the main checkout (`gentle.anywhere`). A further slot is taken only
+  while the RAM its job needs is free (`WORKER_RAM`, `RENDER_RAM`, `LINT_RAM`, the same
+  figures as before), unless the process holds none: each build gets at least one slot
+  as they free, as it got one worker before.
+- **`--jobs`** is a per-build maximum; the pool decides how many run.
+- **Fair share.** A process that finds no free slot waits in line (`queue/<pid>.lock`,
+  locked while it waits, with the time it joined); a slot that frees goes to the one that
+  has waited longest. Without the queue, a build that freed a slot took it again before
+  the other build's next try (1 s): two 4-car builds at 2 slots ran one after the other.
+- **VM loads.** `tools\wsb\run-series.ps1` holds the pool at its CPU gate, before it
+  launches the game: `holds\series-<pid>-<time>.json` with the VM's vCPUs (`$VmSettings`
+  numvcpus, 4; every CPU for a host run). While the hold lasts, the pool hands out that
+  many fewer slots, and the gate waits (within `-CpuGateSeconds`) until the busy slots
+  leave them free. The pool ends the hold when the run's `events.json` says the Story world
+  is ready (run-test.ps1's "story world ready" note), when the run has a `result.json`,
+  at its time limit (gate + `-StorySeconds` + 600 s), or when the series' process is gone.
+- `uv run dsff jobpool status` lists the slots, their holders and the holds.
+
+Measured 2026-11-05, two worktrees on the same commit, each `port_batch build --jobs 4`
+of 6 cars with `DSFFORZA_GENTLE=1` (pool of 2), the second started 25 s after the first
+(`jobpool status` and the worker processes sampled every 3 s): 2 slots busy throughout,
+never more than 2 workers; with the queue the two builds ran one worker each, side by
+side (before it, the first build's 4 cars all ran before the second's started). The first
+build's lint waited for a slot while the second converted.
 
 ### Selective rebuild
 
