@@ -28,7 +28,9 @@ Rules (research/traffic.md 1b, the owner's):
   slots - 1 - pot, where pot is the largest mission pot request any use of the set makes
   (spooling.isMissionVehiclesSpooled: "All chapters" + the named pot, or the given list; capped
   at 18 by spooling.requestToSpoolVehicle) and slots dsfcars.asi's [archive] vehicle_slots
-  (35 without it). Over the budget the chapter load waits forever for a refused pot model
+  (35 without it); a set that scripts name but no progression entry lists (a mission switches
+  to it mid-way) counts the pot cap, 18; a set no script names is never selected and has only
+  the 40. Over the budget the chapter load waits forever for a refused pot model
   (research/traffic.md 3b). Ports past a set's budget are not dealt to it (reported).
 """
 
@@ -134,8 +136,10 @@ def set_settings(ambient: dict, name: str) -> dict:
 def budget(set_name: str | None, slots: int, pots: dict[str, int]) -> int:
     """The most models the set may hold (module docstring)."""
     limit = traffic_ai.MAX_SET_MODELS
-    if set_name in pots:
-        limit = min(limit, slots - 1 - pots[set_name])
+    if set_name is not None:
+        # a set some script names but no mission, challenge or activity entry lists: a mission
+        # switches to it mid-way (Chapter 1 Kidnapped) with a pot we don't know, so the cap
+        limit = min(limit, slots - 1 - pots.get(set_name, POT_CAP))
     return limit
 
 
@@ -186,6 +190,13 @@ def plan(
 ) -> list[SetReport]:
     """Apply the ambient settings to `ai` (edited in place). `ports`: the IDs of the cars in
     traffic, in key order; `key_ids`: package key -> ID for settings that name keys."""
+    from dsfforza.game import traffic_sets
+
+    # every set a mission, challenge or activity names (the pots' keys) gets its name, so its pot counts
+    named = {traffic_sets.name_hash(n): n for n in pots}
+    for ts in ai.sets:
+        if ts.name is None and ts.hash in named:
+            ts.name = named[ts.hash]
     rng = random.Random(seed)
     deck = list(ports)
     rng.shuffle(deck)
