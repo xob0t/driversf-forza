@@ -618,6 +618,15 @@ def test_fh1_wide_lens_over_a_small_stop_strip_is_a_stop_lamp():
     assert got == {lights.BRAKE}, got
 
 
+def test_fh1_red_lens_over_a_white_brake_bulb_is_a_stop_lamp():
+    # CodeRabbit on #559: `white_brake` is a stop lamp already (BRAKE); a red lens over it takes its
+    # state, brake only, like a lens over `tail_light`.
+    bulb = _box("trunk", "white_brake", -0.10, 0.10, 0.90, 0.96, -2.2)
+    lens = _box("trunk2", "detail_glass_red", -0.10, 0.10, 0.90, 0.96, -2.21)
+    plan = lights.LampPlan.build([bulb, lens] + TAILS, _Place(), 0.0, fh1=True)
+    assert {plan.tri_lamp[(id(lens.subsections[0]), k)][0] for k in range(2)} == {lights.BRAKE}
+
+
 def test_centre_entries_are_those_on_the_centre_line():
     # #430: a host entry is a centre one when no other entry is nearer its mirror image than it
     # is. Vanilla 172's reverse lamps at x +-0.123 are a left and a right entry (the old 0.15 m

@@ -726,10 +726,12 @@ def _brake_only(records, from_lens: set) -> None:
     tail lamp. Replaces the height rule (HIGH_BRAKE_RISE) on FH1 cars."""
     import numpy as np
 
-    bulbs: dict = {}  # lod -> [(corners, centre, brake only)] of rear tail lamp triangles that are not lenses
+    bulbs: dict = {}  # lod -> [(corners, centre, brake only)] of rear tail and stop lamp triangles, not lenses
     for n, r in enumerate(records):
-        if n not in from_lens and not r.front and r.pts and r.function == TAIL:
-            bulbs.setdefault(r.lod, []).append((r.pts, r.centre, r.sub.material in FH1_BRAKE_ONLY))
+        if n not in from_lens and not r.front and r.pts and r.function in (TAIL, BRAKE):
+            # a stop lamp already (white_brake) brakes only
+            only = r.function == BRAKE or r.sub.material in FH1_BRAKE_ONLY
+            bulbs.setdefault(r.lod, []).append((r.pts, r.centre, only))
     arrays = {
         lod: (np.array([b[0] for b in bs], dtype=float), np.array([b[1] for b in bs], dtype=float), [b[2] for b in bs])
         for lod, bs in bulbs.items()
@@ -1705,11 +1707,10 @@ def main(argv: list[str] | None = None) -> None:
     # Desanne's hub height and axle midpoint whatever --host was).
     hw = forza2dsf.host_wheels(upvh, modl)
     place = forza2dsf.Placement(dy=hw.hub_y - dims.radius + dims.ride_height, dz=hw.axle_mid + dims.mid_z)
-    from dsfforza.convert import dsf_materials as dm
     from dsfforza.convert import forza_materials as fm
 
     texel = texel_sampler(fm.AtlasCache(car.folder))
-    plan = LampPlan.build(car.body, place, hw.axle_mid, texel=texel, fh1=not dm.fm4_car(car.folder)).assign(upvh)
+    plan = LampPlan.build(car.body, place, hw.axle_mid, texel=texel, fh1=car.game == "FH1").assign(upvh)
     import json
 
     print(json.dumps(plan.report(), indent=1))
