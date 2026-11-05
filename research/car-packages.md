@@ -367,8 +367,9 @@ without a manifest of its own.
 ### The garage card emblem is in each package (#510)
 
 A package is self-contained: it carries its source's garage card emblem as
-the image `forza_emblem.dds` (`images.emblem`), 512 × 256 DXT5, one level,
-the Forza logo laid out like the card icon atlas (`gui-assets.md`, "Garage
+the image `emblem.dds` (`images.emblem`), 512 × 256 DXT5, one level, laid
+out like the card icon atlas. The format names no game: this pipeline writes
+the Forza logo (`gui-assets.md`, "Garage
 card emblem"). `dsfcar.pack` (port_batch `--packages`) writes it into every
 package with `gui_assets.emblem_texture`: FH1's `UI4/Common/forza_logo3.xds`
 (FM4's, else), the header of vanilla gui.sp's `nissan_370z` picture, the same

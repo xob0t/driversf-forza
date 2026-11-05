@@ -9,8 +9,9 @@
       picture.dds   the garage picture: 512 x 256 DXT5, no mips (as gui.sp's car pictures)
       badge.png     the maker badge as the HUD and the maker list draw it (RGBA)
       plate.png     the model nameplate as the HUD draws it (RGBA)
-      forza_emblem.dds  the garage card emblem of the car's source: 512 x 256 DXT5, no mips,
-                    laid out like the card icon atlas (gui_assets.emblem_texture)
+      emblem.dds    the garage card emblem of the car's source (whatever the source is: the
+                    format names no game): 512 x 256 DXT5, no mips, laid out like the card
+                    icon atlas (this pipeline writes the Forza logo, gui_assets.emblem_texture)
 
 The manifest says what the car is and nothing the manager allocates: no model ID the game
 will use, no glyph code, string ID, picture name or garage group. The model ID inside
@@ -27,7 +28,7 @@ that part as the host's (picture) or the game's own for the maker or model.
                 "family": null, "year": 1991, "maker_group": "BMW"},
       "garage": {"speed": 0.48, "strength": 0.3, "drift": 0.65},
       "images": {"picture": "picture.dds", "badge": "badge.png", "plate": "plate.png",
-                 "emblem": "forza_emblem.dds"},
+                 "emblem": "emblem.dds"},
       "requires": ["archive.packages", "archive.ids"],
       "source": {"pipeline": "dsfforza", "game": "FH1", "media": "BMW_M3E30_91"}
     }
@@ -58,8 +59,9 @@ BADGE = "badge.png"
 PLATE = "plate.png"
 # The garage card emblem texture, as gui_assets.build puts it in Fonts.fchunk
 # (research/gui-assets.md, "Garage card emblem"): each package carries its source's emblem, so
-# a package is self-contained (the discs' UI4/Common/forza_logo3 for every car of this pipeline).
-EMBLEM = "forza_emblem.dds"
+# a package is self-contained. The format is source-neutral; this pipeline writes the discs'
+# UI4/Common/forza_logo3 for every car.
+EMBLEM = "emblem.dds"
 MEMBERS = {MANIFEST, CAR, PICTURE, BADGE, PLATE, EMBLEM}
 IMAGE_MEMBERS = {"picture": PICTURE, "badge": BADGE, "plate": PLATE, "emblem": EMBLEM}
 SUFFIX = ".dsfcar"

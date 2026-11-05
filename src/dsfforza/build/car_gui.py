@@ -15,12 +15,12 @@ never written. What a car gets is what gui_assets.build gives a ported car with
   plate glyph from plate.png (ModelGlyph, one per text) and a ModelName string;
 - the garage picture from picture.dds (Picture1 "dsfforza_<media>", the name register.lua
   checks a hud entry against);
-- GarageEmblem = 1 when the car's package carries the garage card emblem (forza_emblem.dds,
+- GarageEmblem = 1 when the car's package carries the garage card emblem (emblem.dds,
   dsfcar.EMBLEM) and the generated Fonts.fchunk holds that texture (gui_assets.FORZA_LOGO_UID):
   the game's font already has it (a merged install's), or the packages' emblem goes into the
   copy as gui_assets.build puts it there. dsfforza.asi [hud] card_emblem binds one texture for
   that UID, so one emblem goes in: the one most enabled packages carry (every package of this
-  pipeline carries the same, the discs' Forza logo); a car whose package carries another keeps
+  pipeline carries the same, the Forza logo from the discs); a car whose package carries another keeps
   the SF disc. dsfforza.asi then shows the emblem on the car's garage card instead of the SF disc
   (research/gui-assets.md, "Garage card emblem").
 
@@ -59,7 +59,8 @@ def languages(game: Path) -> list[str]:
 
 
 def font_state(fonts: Path) -> tuple[set[int], bool]:
-    """(the vehicles_font's glyph codes, whether the font holds the Forza emblem texture)."""
+    """(the vehicles_font's glyph codes, whether the font holds an emblem texture: the
+    texture UID dsfforza.asi [hud] card_emblem binds, gui_assets.FORZA_LOGO_UID)."""
     g = _gui()
     from dsfforza.formats.vehicle_mesh import child, payload
 
