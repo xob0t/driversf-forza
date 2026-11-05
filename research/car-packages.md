@@ -939,7 +939,7 @@ bytes, `car_manager status` 1, 3 and 2 reserved, `verify` ok, the lists' paths u
 open the move stopped at step 4 (record `started`); the next run finished it. `-Uninstall`
 straight from the old names left the vanilla files and `dsfcars\cars\manager.json`; an install
 over the old names migrated, refused without `-Force`, and with it gave the RX-7 its ID 2 back.
-In game: RUN_PLACEHOLDER
+In game: run `vm1-20261105-211838` (`run-series.ps1 -Vm -Asi out\mig-game\plugins\dsfcars.asi -ArchiveOnly -Overlay` of that install's `dsfcars\` and `packages*.lua`, vanilla archive, `-ProbeIds '1,3'`): `dsfcars.log` "2 car packages from C:\Run\dsfcars\cars\cars.txt", the three GUI files redirected to `dsfcars\generated\`, side file `dsfcars-garage.dat`; with only the profile's old `dsfforza-garage.dat` there, "reading ...dsfforza-garage.dat ... loaded 568 added-car entries"; the test bootstrap opened `dsfcars\register.lua`, which took IDs 1 and 3 from `dsfcars\packages.lua` ("dsfcars.asi: save hooks true, garage IDs 0..999"); the BMW and the Supra spooled, spawned and drove, chase and cockpit, no crash.
 
 ## Phased plan (PRs)
 
