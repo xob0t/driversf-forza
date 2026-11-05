@@ -376,6 +376,25 @@ geometry). Error left:
 Against vanilla: this matches the level (vanilla's per-vehicle grey) and also the profile,
 which vanilla doesn't.
 
+**Implemented (#407, #419): the texels.** `dsf_materials.Texturing._wheel_blur_ramp` replaces the
+picture conversion (`wheel_blur_texels`: Forza's picture over `WHEEL_BLUR_BACKDROP`, a chosen grey 60,
+scaled by the rim's PaintScale) in the picture's atlas slot:
+- `rim_rotational_mean`: on 64 rings x 180 angles from the tyre's centre out to the disc's edge, the
+  front-most (smallest x) triangle of the finest LOD's wheel subsections that sample the wheel atlas
+  (not the tyre, not the disc), its texel decoded from sRGB. The wheel atlas holds the converted rim's
+  texels (Forza's texel x the wheel's PaintScale, `_wheel_paint_scale`). A sample no rim triangle
+  covers counts as 0 ("or nothing").
+- `wheel_blur_ramp`: `C` the ring-area-weighted mean of M, its largest channel 1 (the car's
+  `g_vec4WheelBlurColour`); red `encode_sRGB(lum(M(r)) / lum(C))`, clipped at 1; blue and alpha 255.
+- The texel's radius comes from the disc's own UV0 map, inverted by a least-squares fit of its vertices
+  (u, v, 1) -> (y, z) (the vertices clamped at the picture's edge left out).
+
+Kept, marked `TODO(fit, #407)`:
+- green: red x `WHEEL_BLUR_GLOSS` (0.44, the vanilla disc's ratio of means), not the rim's own gloss;
+- the disc's vertex AO (`forza2dsf.wheels.WHEEL_BLUR_SKY`, 0.9), not the rim's mean AO per ring.
+Not covered: chrome rims' reflection (their albedo is the texel, as for every rim); the rotor behind the
+spokes (counted as nothing); cars without Forza's blur picture keep the shared vanilla disc.
+
 ### 2.5 Which ShaderSettings a Forza wheel reads (confirmed-static, both games)
 
 FH1 `0x82543558` (FM4 `0x82407848`) builds the settings path list for a model of type 4 (called
