@@ -458,7 +458,8 @@ def convert(
             texel = lights.texel_sampler(fm.AtlasCache(car.folder))
             # What the car is drawn with (lenses baked): red rear texels light with red lamps.
             seen = lights.seen_sampler(tex_full.texturing.atlases)
-        lamps = lights.LampPlan.build(car.body, place, axle_mid, lenses, texel, seen).assign(
+        fh1 = car.game == "FH1"  # the carbin's section version; FH1's lamp states say which tail lamps brake only
+        lamps = lights.LampPlan.build(car.body, place, axle_mid, lenses, texel, seen, fh1=fh1).assign(
             payload(stream, child(child(full, "NONR"), "UPVH"))
         )
         report["lights"] = lamps.report()

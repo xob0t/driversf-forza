@@ -237,10 +237,10 @@ TECHNIQUE_COLOUR = {
 # 0.21, the 1968 Camaro's 0x03 at 0.15 to 0.29). The 0.3 m threshold this replaces made such
 # Forza pairs centre lamps (the ARX-01b's tails at |x| 0.06 to 0.12, the Integra Type R's reverse
 # lamps).
-# TODO(fit, #430): a centre tail lamp whose mean height is this far above the side tails' is the
-# high stop lamp (_high_brake). The 8 cm has no source. Whether a lamp lights only when braking is a
-# fact about the Forza car (its technique and lamp states, research/lights.md, "Centre lamps and the
-# high stop lamp"), not its height; it stays until that is read from Forza's data.
+# TODO(fit, #512): FM4 cars only. A centre tail lamp whose mean height is this far above the side
+# tails' is the high stop lamp (_high_brake). The 8 cm has no source. FM4 lights every tail lamp only
+# when braking (`tail_light`, its only tail technique), so its data can't tell a high stop lamp from
+# a tail; on FH1 cars the lamp states decide (FH1_BRAKE_ONLY).
 HIGH_BRAKE_RISE = 0.08
 
 # Group priority when the host has fewer light entries than the car has lamps;
@@ -690,8 +690,8 @@ def _single_link(points, gap: float) -> list[list[int]]:
 
 def _high_brake(records) -> None:
     """A centre tail lamp above the side tail lamps (or the only tail lamp in
-    the middle) is the high-mounted stop lamp: brakes only. HIGH_BRAKE_RISE is a fit (TODO(fit, #430)); it
-    stays until whether a centre lamp lights only when braking is read from Forza's data."""
+    the middle) is the high-mounted stop lamp: brakes only. FM4 cars only: HIGH_BRAKE_RISE is a fit
+    (TODO(fit, #512)); on FH1 cars _brake_only decides from the lamp states."""
 
     def mean_y(rs):
         finest = min(r.lod for r in rs)
@@ -702,6 +702,79 @@ def _high_brake(records) -> None:
     sides = [r for r in records if r.function == TAIL and r.side != "C" and not r.front]
     if centre and sides and mean_y(centre) > mean_y(sides) + HIGH_BRAKE_RISE:
         for r in centre:
+            r.function = BRAKE
+
+
+# FH1's tail techniques that glow only when braking: `BrakeColor x dynamicLightsAmount.x`
+# (research/forza-lenses-re.md section 2, decoded from FH1's shaders and checked against the emulator),
+# `lights_gls_tail_light` as the lamp of the same name. The others glow while running: `taillightst`
+# (`TailLightColor x dynamicLights2.x`, lamps on), `taillight2S` (lerp of both, lamps on or braking),
+# `l/rindtailside`, and their `lights_gls_*` glass. `white_brake` is a stop lamp already (BRAKE).
+FH1_BRAKE_ONLY = ("tail_light", "tail_light_lod0", "tail_light_on", "tail_light2", "lights_gls_tail_light")
+
+
+def _brake_only(records, from_lens: set) -> None:
+    """FH1 cars (#422 item 3, #430): a rear tail lamp triangle Forza lights only when braking is a
+    stop lamp, DSF type 0x02 (Brakes), whatever its side; one Forza lights while running stays a
+    tail lamp (0x18). A triangle's own technique says which (FH1_BRAKE_ONLY). A lens has no glow of
+    its own: Forza multiplies what lies behind it by the lens (forza-lenses-re.md section 2), so a
+    red lens triangle takes the state of the lamp triangle behind it, the nearest at the same LOD,
+    not a lens, within CLEAR_LENS_REACH along z, whose outline seen from behind holds the lens
+    triangle's centre (as _red_lens_indicators finds the bulb). A lens piece (_pieces) whose lamps
+    behind are all brake only is a stop lamp, its triangles over no lamp included; in a piece over
+    a running lamp too, only the triangles over a brake-only one; a lens over no lamp keeps its
+    tail lamp. Replaces the height rule (HIGH_BRAKE_RISE) on FH1 cars."""
+    import numpy as np
+
+    bulbs: dict = {}  # lod -> [(corners, centre, brake only)] of rear tail and stop lamp triangles, not lenses
+    for n, r in enumerate(records):
+        if n not in from_lens and not r.front and r.pts and r.function in (TAIL, BRAKE):
+            # a stop lamp already (white_brake) brakes only
+            only = r.function == BRAKE or r.sub.material in FH1_BRAKE_ONLY
+            bulbs.setdefault(r.lod, []).append((r.pts, r.centre, only))
+    arrays = {
+        lod: (np.array([b[0] for b in bs], dtype=float), np.array([b[1] for b in bs], dtype=float), [b[2] for b in bs])
+        for lod, bs in bulbs.items()
+    }
+
+    def behind(r) -> bool | None:
+        """Whether the tail lamp behind lens triangle r brakes only; None without one."""
+        if r.lod not in arrays:
+            return None
+        corners, centres, states = arrays[r.lod]
+        x, y, z = r.centre
+        dz = np.abs(centres[:, 2] - z)
+        a, b, c = corners[:, 0], corners[:, 1], corners[:, 2]
+
+        def side(p, q):
+            return (q[:, 0] - p[:, 0]) * (y - p[:, 1]) - (q[:, 1] - p[:, 1]) * (x - p[:, 0])
+
+        d1, d2, d3 = side(a, b), side(b, c), side(c, a)
+        inside = (dz < CLEAR_LENS_REACH) & (((d1 >= 0) & (d2 >= 0) & (d3 >= 0)) | ((d1 <= 0) & (d2 <= 0) & (d3 <= 0)))
+        if not inside.any():
+            return None
+        return states[int(np.where(inside, dz, np.inf).argmin())]
+
+    lenses = [n for n in from_lens if records[n].function == TAIL and not records[n].front]
+    states = {n: behind(records[n]) for n in lenses}
+    # A lens piece (its triangles joined by their corners) is one lens over one lamp unit: the
+    # triangles that lie over no lamp triangle (a wide lens over a small bulb strip, the CTS-V coupe
+    # 11's stop bar) take the state of the lamps behind the rest of the piece.
+    by_sub: dict = {}
+    for n in lenses:
+        by_sub.setdefault(id(records[n].sub), []).append(n)
+    brake = set()
+    for ns in by_sub.values():
+        for piece in _pieces([records[n].pts for n in ns]):
+            known = [states[ns[k]] for k in piece if states[ns[k]] is not None]
+            if known and all(known):
+                brake |= {ns[k] for k in piece}
+            else:
+                brake |= {ns[k] for k in piece if states[ns[k]]}
+    for n, r in enumerate(records):
+        if r.front or r.function != TAIL:
+            continue
+        if n in brake or (n not in from_lens and r.sub.material in FH1_BRAKE_ONLY):
             r.function = BRAKE
 
 
@@ -930,7 +1003,9 @@ class LampPlan:
     slots: list = field(default_factory=list)  # per host light entry: (offset, id, Lamp | None)
 
     @classmethod
-    def build(cls, sections, place, mid_z: float, lenses=frozenset(), texel=None, seen=None) -> LampPlan:
+    def build(
+        cls, sections, place, mid_z: float, lenses=frozenset(), texel=None, seen=None, *, fh1: bool = False
+    ) -> LampPlan:
         """sections: Forza body sections (all LODs). place: forza2dsf.Placement.
         mid_z: DSF z of the wheelbase midpoint (front lamps are ahead of it).
         lenses: id(sub) of lamp-cover glass subsections drawn as lamp texels
@@ -942,7 +1017,9 @@ class LampPlan:
         whatever their technique says (_lens_classes).
         seen: (section, sub, triangle) -> the class of the texels the car draws it with
         (seen_sampler over the lens bake's atlas, dsf_materials.Texturing.atlases): rear lamp
-        triangles on red ones light only with a red lamp (_place_clear)."""
+        triangles on red ones light only with a red lamp (_place_clear).
+        fh1: the car is FH1's, whose tail techniques' lamp states say which rear lamps brake only
+        (_brake_only); FM4 cars keep the height rule (_high_brake, #512)."""
         plan = cls()
         records, clear = [], []  # clear lenses are placed after the lamps
         front_reflectors = []  # unlit, but a lamp a lens in front of them shows (_place_clear)
@@ -1073,7 +1150,10 @@ class LampPlan:
         _yellow_head_covers(records, yellow_front, from_lens)
         _red_lens_indicators(records, from_lens, red_indicators, red_by_texel)
         _joined_centre(records, reach)
-        _high_brake(records)
+        if fh1:
+            _brake_only(records, from_lens)
+        else:
+            _high_brake(records)
         plan._cluster(records)
         plan._place_clear(
             clear, records, red_by_texel, {id(sub): s.name for s in sections for sub in s.subsections}, front_reflectors
@@ -1629,7 +1709,8 @@ def main(argv: list[str] | None = None) -> None:
     place = forza2dsf.Placement(dy=hw.hub_y - dims.radius + dims.ride_height, dz=hw.axle_mid + dims.mid_z)
     from dsfforza.convert import forza_materials as fm
 
-    plan = LampPlan.build(car.body, place, hw.axle_mid, texel=texel_sampler(fm.AtlasCache(car.folder))).assign(upvh)
+    texel = texel_sampler(fm.AtlasCache(car.folder))
+    plan = LampPlan.build(car.body, place, hw.axle_mid, texel=texel, fh1=car.game == "FH1").assign(upvh)
     import json
 
     print(json.dumps(plan.report(), indent=1))

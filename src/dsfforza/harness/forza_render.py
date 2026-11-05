@@ -411,6 +411,7 @@ def body_scene(
         place,
         float(placement.get("host_axle_mid", 0.0)),
         texel=lights.texel_sampler(fm.AtlasCache(Path(folder))),
+        fh1=car.game == "FH1",  # as the converter plans it (forza2dsf.conversion)
     )
     names = [s.name for s in car.body]
     parts, origins, origin_index = [], [], {}
