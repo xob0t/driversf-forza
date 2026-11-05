@@ -1,6 +1,6 @@
 # Wheels: the Forza wheel model in DSF
 
-Updated: 2026-10-31
+Updated: 2026-11-05
 
 User report from driving the testdrive build (`out/testdrive`, 40 cars): the
 wheels look broken on every car, the Veyron worst. The first sections are
@@ -1416,6 +1416,74 @@ wheels into range keep MAXData.xml: AST_DB5Vantage_64, BUS_TOUR_12, EAE_Speedste
 JAG_Etype_61, PEU_205T16_84 (and its ShowCase copy), and the others of #436's list whose
 sources agree.
 
+## Fitted-rule audit (2026-11-05)
+
+Every rule, constant, threshold, offset, scale, clamp and placement heuristic of
+`forza2dsf/wheels.py`, `wheel_fit.py` and `wheel_clearance.py` (and the wheel placement in
+`forza2dsf/car.py` that uses them), against AGENTS.md "Rules come from data, never from
+fitting". Classes as in `cockpit.md`'s audit:
+
+- **derived:** a Forza field or model, DSF engine code, a measured vanilla part or runtime value, a physical definition;
+- **choice:** among Forza's own evidence, by a physical property measured over the roster;
+- **fitted:** chosen to look right, matched to vanilla's distribution, a fleet median used per car, a per-car exception;
+- **unknown:** no source;
+- **numeric:** sampling, tessellation or tolerance that doesn't decide the look;
+- **budget:** a cost limit with no engine limit cited;
+- **tooling:** surveys and checks only.
+
+Roster counts are offline surveys of all 573 cars of `tools/batches/all.txt` from `out/cache`
+(`axle_survey.py`, `wheel_thresholds.py` in the PR's scratch folder, not in the repo).
+
+### Changed by this audit
+
+| Rule | Was | Now | Source |
+| --- | --- | --- | --- |
+| `axle_fits`: the wheel model scaled to each axle's Data_Car tyre | clamped to 0.6..1.6 across, 0.77..1.3 radially | not clamped | Forza draws its one wheel model at each axle's Data_Car size ("How a port's wheels are placed": thumbnails). The clamp had no source. Over the roster the radial ratio runs 0.865..1.202 (never clamped); the axial 0.637..1.654, clamped only on the rear of AST_007_AMRLola_09, AST_6_AMRLola_11 and AUD_2_R15TDI_09 (1.654, 1.654, 1.648). Built before and after (`out/axle/before`, `out/axle/after`, with NIS_370Z_10 as a control): their rear tyres are drawn 12.2, 12.2 and 10.8 mm wider, the rear hubs 6.1, 6.1 and 5.4 mm inboard so the outer wall stays at Forza's rear track outer; nothing else in the placement moved (the track and ride height source included), and the 370Z is unchanged |
+
+### Left fitted or unknown, with their issues
+
+| Rule | Value | Class | Why it stays | Issue |
+| --- | --- | --- | --- | --- |
+| Blur disc texels (`wheel_blur_section` UV0 into Forza's `wheel2.xds` via `blur_picture_map`; `dsf_materials.wheel_blur_texels`: rim PaintScale, backdrop 60, gloss 0.44; the tint the picture's mean) | | fitted | the derived rule is written (forza-lamps-blur-re.md 2.4: a radial ramp of the converted rim's rotational mean, the tint its chroma); the texels are made in `dsf_materials`, another worker's area | #407, #419 |
+| `WHEEL_BLUR_SKY` | 0.9 | fitted | vanilla discs' 0.9..1.0, after 0.56 looked dark on the 370Z. 2.4 gives each ring the rim's mean AO, which holds only with 2.4's texels | #407 |
+| `WHEEL_SKY_OPEN`, `WHEEL_SKY_SIDE` | 0.64, 0.5 | fitted | vanilla's outward-face median of medians; a side share that puts the tread near vanilla's 0.29. The occlusion itself (the ray march) is derived | #525 |
+| `ROTOR_RING` | 0.6 of the rotor's radius | fitted | triangle centroids by r / outer have no gap there (0.5 to 0.55: 125k, 0.55 to 0.6: 160k, 0.6 to 0.65: 128k triangles over the roster) | #524 |
+| Rotor swatches (`WHEEL_UV[ROTOR_DISC]`, `[ROTOR_HUB]`) | mid grey (106, gloss 58), the inner-rim dark | fitted | Forza's `rotor0..4.xds` aren't read; which one a rotor samples isn't traced | #524 |
+| `plain_rotor`'s hat radius | 0.85 x the ring's inner radius | unknown | | #524 |
+| `BRAKE_ROTOR_MAX_TRIANGLES` | 2000 | budget | the rotors' 90th percentile, no engine limit cited (145 of 1146 rotors replaced) | #524 |
+| `wheel_fit.VANILLA_BAND` as `car.arch_fit`'s criterion | vanilla's 5th..95th percentiles | fitted (the criterion of a choice) | choosing MAXData's or the gamedb's track is a choice among Forza's evidence, but its criterion is vanilla's spread, not the tyre's fit to its own arch | #526 |
+
+### Derived or choice (kept)
+
+- **Vanilla parts:**
+  - the tyre texture's tread strip and sidewall ring (`TYRE_TREAD_UV`, `TYRE_RING_UV`, 180 degrees of tyre per half-ring; 30 hosts, "Vanilla tyres");
+  - the swatch texels of `WHEEL_UV` (`tyre`, `rim`, `inner`, `chrome`: GLOBAL_Tyre's, used only without the wheel texture);
+  - the shared SpokeDisc materials and their map;
+  - the disc as a dish over the rim face: normals +x, stride 20, MODL flag 7.
+- **DSF engine:**
+  - s9 byte 3 (`WHEEL_BLUR_FADE_IN` 2, `WHEEL_BLUR_ALWAYS` 1; the blur vertex shader);
+  - `g_vec4WheelBlurColour` (`paint.set_wheel_blur_colour`);
+  - the wheel table's 180-degree turn for the -x wheels (`wheel_point`);
+  - the rest offset that `settle_wheels` uses (`wheel_clearance.rest_offsets`; `SAG_PER_KG` from FUN_0088D750, `DEAD_ZONE_RAMP` from FUN_008BA900 at 0x00F3F2E8, the 5x past travel).
+- **Forza data:**
+  - the wheel model, its tyre's size and centre (`tyre_size`, `tyre_centre`);
+  - Data_Car's tyre sizes (`axle_tyres`: rim inches x 25.4 + 2 x width x aspect);
+  - Data_CarBody's wheelbase and midpoint;
+  - the rotor carbins (the left ones stand for the right, their mirror images);
+  - Forza's LOD 5 wheel being its `blur_rim` alone (the disc is drawn always there);
+  - the wheel technique names (`wheel_role`, `fm.classify_wheel`).
+- **Choices among Forza's evidence with a roster survey:**
+  - `wheel_lod`: the nearest LOD that has a tyre.
+  - `wheel_has_rim`'s half radius. The sharp-rim reach over the whole reach, per wheel LOD (2783 LODs), is 0 on 1067 and 0.95..1.0 on 1645. One LOD lies between 0.3 and 0.7: LOT_ElanSprint_72's LOD 4 at 0.42, a cap, no rim.
+  - `TyreMap`'s sidewall test, |n.x| > 0.55 (about 55 degrees). By area, 56% of the roster's tyre faces lie under |n.x| 0.05 and 36% above 0.95; 1.7% fall between 0.45 and 0.65, at most 8% on one car (LOT_Esprit_02, the shoulders). Any value in that band moves only shoulder triangles.
+  - The tread tile: one tile of the strip at the texture's own scale (v span x tyre width / u span).
+- **Numeric:**
+  - the disc's tessellation: `WHEEL_BLUR_RINGS` 6, `WHEEL_BLUR_SEGMENTS` 24, `WHEEL_BLUR_FLAT` 1 mm, `WHEEL_BLUR_LIFT` 3 mm (a depth offset over the face), the face samples, the tyre's inner radius (cells over half the largest), the 5 cm skip;
+  - `blur_picture_map`'s planar test (rms 0.01, determinant > 1);
+  - the sky ray march: `WHEEL_AO_RAYS`, `WHEEL_AO_VOXEL`, `WHEEL_AO_SKIP`, `WHEEL_AO_BLOCK`;
+  - `PLAIN_ROTOR_SEGMENTS`, `tyre_centre`'s 1 mm, `rest_offsets`' guard on the CoG share (0.05..0.95).
+- **Tooling:** `wheel_fit`'s geometry (`ARCH_*`), `wheel_clearance`'s `TYRE_CORE`, `SAMPLE_STEP`, `tyre_dims`' 0.85, `as_fixed`.
+
 ## Open
 
 1. Brake calipers (Forza `_caliper*` carbins) are not converted: they must not
@@ -1423,10 +1491,11 @@ sources agree.
    to carry them ("Brake rotors", "Calipers").
 2. Blur disc brightness (#407): the disc takes Forza's picture times the rim's
    PaintScale over a fixed mid-grey backdrop, so FOR_FocusRS500_10's disc is near
-   white on black rims and dark rims' discs are grey. A rule waits on how Forza draws
-   `blur_rim` and how DSF draws its disc (RE in progress; branch `fix/wheel-blur-disc`
-   holds a fitted rule, not merged). VW_BEETLE_68's disc lays out its brightness
-   unlike its rim (#419).
+   white on black rims and dark rims' discs are grey. VW_BEETLE_68's disc lays out its
+   brightness unlike its rim (#419). The derived rule is written (#423,
+   forza-lamps-blur-re.md 2.4; branch `fix/wheel-blur-disc` holds an older fitted one,
+   not to merge). It needs the disc texels made from the converted rim in `dsf_materials`
+   ("Fitted-rule audit").
 3. A positive `BottomCenterWheelbasePos.y` is unexplained ("Body height and wheelbase");
    track and ride height are chosen per car since #417 ("Track and ride height per car").
 

@@ -780,10 +780,13 @@ def axle_tyres(name: str, gamedbs) -> dict | None:
 
 def axle_fits(radius: float, width: float, tyres: dict | None) -> dict[str, tuple[float, float]]:
     """{"front"|"rear": (axial scale, radial scale)} that bring the wheel model (radius,
-    width) to each axle's Data_Car tyre (axle_tyres), as Forza draws it; (1, 1) without
-    tyre sizes. Clamped to 0.6..1.6 across and 0.77..1.3 radially."""
+    width) to each axle's Data_Car tyre (axle_tyres), as Forza draws it (research/wheels.md,
+    "How a port's wheels are placed"); (1, 1) without tyre sizes. Not clamped: Forza draws
+    the model at the tyre's size whatever the ratio. The clamp this had (0.6..1.6 across,
+    0.77..1.3 radially) had no source and bound only the rear width of AST_007_AMRLola_09,
+    AST_6_AMRLola_11 and AUD_2_R15TDI_09 (1.65; research/wheels.md, "Fitted-rule audit")."""
     fits = {"front": (1.0, 1.0), "rear": (1.0, 1.0)}
     for axle in ("front", "rear") if tyres else ():
         diameter, tyre_width = tyres[axle]
-        fits[axle] = (min(1.6, max(0.6, tyre_width / width)), min(1.3, max(0.77, diameter / 2 / radius)))
+        fits[axle] = (tyre_width / width, diameter / 2 / radius)
     return fits

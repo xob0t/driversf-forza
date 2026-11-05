@@ -1,6 +1,6 @@
 # How DSF draws car paint, and what Forza's paint data means (reverse engineering, round 2)
 
-Updated: 2026-10-30
+Updated: 2026-11-05
 
 How Driver: San Francisco PC 1.04 turns a palette entry into paint on screen by day: the
 paint shaders' maths, the runtime constants they get, the post chain after them, and what
@@ -530,6 +530,47 @@ settings instead of a vanilla neighbour's. `HEADROOM` (#358): no longer needed w
 entry. The stainless preset (DMC-12): Forza paints that car flat `#999999`, which
 `albedo_for` turns into A 0.14 to 0.16, a mid grey (153 on screen); the preset's darker,
 less reflective look is DSF's DeLorean, a choice rather than a mapping.
+
+## Fitted-rule audit (2026-11-05)
+
+Every rule and constant of `convert/paint.py`, against AGENTS.md "Rules come from data,
+never from fitting". Classes as in `wheels.md`'s audit (derived, choice, fitted, unknown,
+numeric, budget, tooling). Nothing is changed here.
+
+### Left fitted or unknown, with their issues
+
+| Rule | Value | Class | Why it stays | Issue |
+| --- | --- | --- | --- | --- |
+| `knee` | `0.5 - 0.2 x (1 - min / max)` | fitted | a line through two values read off the screen model (grey 0.5, a saturated colour 0.3). The knee per hue follows from the chain itself, but that needs where the grade saturates at `LIGHT_SUN` worked out per hue | #528 |
+| `SOLID_SHEEN`, `LOBE_SHEEN` | (0.1, 5), 0.3 | fitted | vanilla's common value and its 75th percentile, scaled by Forza's lobes; section 6 calls it "a starting point to tune". The literal match needs Forza's light units (section 5, "Open") | #528 |
+| The sheen's power, the lobes' powers weighted by their amounts | 5.1 for Metallic.xml | unknown | two lobes drawn as one; inferred | #528 |
+| `g_hCustomFresnelPower` | 1.0 | unknown | inferred (0.5 overshoots the middle, section 6) | #528 |
+| `pick_colours` past 14 colours | farthest point in squared sRGB, +400 for a different metallic flag | fitted | a chosen metric | #528 |
+| `MAX_COLOURS` | 14 | unknown | vanilla's largest palette; no engine limit cited (`install` already drops what doesn't fit the NONR buffer) | #528 |
+| The grade without the game (`GRADE_FIT`, `tools/re/paint_grade.json`) | | fitted (fallback) | used only when `DSF_GAME_DIR` has no `SfxMisc.fchunk`; the game's own LUT is read otherwise | none |
+
+### Derived or choice (kept)
+
+- **DSF engine and runtime:** the SPSR layout and `g_vec4TintColour1_Alpha` (read by no
+  shader); the fresnel mix (`apparent`, section 1); the post chain (`REC709`,
+  `TONEMAP_OFFSET`, `LUMINANCE_W`, `MIDDLE_GREY`, `WHITE`, `exposure`, `tonemap`; section 2);
+  the ClearDay grade LUT (`GRADE_UID`, `grade_lut`, section 4); the sRGB encode;
+  `REFLECTION` 1.0 (DSF's reflection 0.042 and 0.85 x the amount, facing and grazing; Forza's
+  Schlick at n 1.55 x `FresnelScalar` 0.9 gives 0.042 and 0.9: both ends match, with
+  `reflectionScaler` assumed 1, section 6).
+- **Measured runtime values:** `LIGHT_REF` 2.13 (the median sunlit panel's light over its
+  albedo in 33 dumped frames), `LIGHT_SUN` 3.0, `LIGHT_AWAY` 0.8, `LA_REF` 0.2. Taking the
+  median panel as the reference is a choice (section 6, "the reference panel a choice").
+- **Forza data:** `Combo_Colors` (swatch, metallic flag, order; repeats per livery dropped),
+  the colour's `ColorShaderSettings<n>.xml`, `FORZA_BODY` and `FORZA_METALLIC_BODY` (Shared.zip's
+  Normal.xml and Metallic.xml), the sRGB decode of their colours (#379), Forza's factory
+  paint being one colour at every angle (colour 3 = colour 2), the two-tone curve
+  (`two_tone_power`: the DSF power whose curve best follows Forza's decoded
+  `1 - sat(N.E + bias)^power` over the projected area, a fit to Forza's own function).
+- **Numeric:** `_AREA_STEPS`, `_solve`'s exponent and iterations, `albedo_for`'s 14
+  halvings, the 10 / 0.01 fresnel of a flat entry (no effect when colour 3 = colour 2), the
+  1.0 cap on `TwoToneScale`.
+- **Tooling:** `colour_group`, `survey_entry`, `survey`, `build_palettes`.
 
 ## The probe
 
