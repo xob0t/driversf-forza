@@ -2227,12 +2227,12 @@ def gui_isos(args) -> list[Path]:
 
 def pack_outputs(out_dir: Path, cars: list[dict], gui: bool) -> list[str]:
     """The files a pack of `cars` wrote, relative to out_dir (dngvehicles.json and .lua are
-    written every time): the archive, gui/ (not the previews of cars no longer in it)
-    and pack/pictures/."""
+    written every time): the archive, or its merge plan when it wasn't written, gui/ (not
+    the previews of cars no longer in it) and pack/pictures/."""
     from dsfforza.build import pack_reuse
 
     names = {f"dsfforza_{c['media'].lower()}" for c in cars}
-    out = ["dngvehicles.sp", "dngvehicles.json"]
+    out = ["dngvehicles.sp", "dngvehicles.json", MERGE_PLAN]
     folder = out_dir / "gui"
     if gui and folder.is_dir():
         for path in sorted(folder.rglob("*")):

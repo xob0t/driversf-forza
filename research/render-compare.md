@@ -24,6 +24,17 @@ A build folder is what `port_batch build` writes: `dngvehicles.sp`, `batch-repor
 placement, the LODs drawn, the cockpit eye). Nothing else of the build is needed, and
 nothing is written outside `--out`. Evidence tags as elsewhere (`dngvehicles.md`).
 
+A build that wrote no `dngvehicles.sp` (a packages build past 4 GiB, or `--no-archive`;
+`batch.md`, "Builds past 4 GiB") is read from its merge plan, `dngvehicles.plan.json`, and
+`work/<media>.chnk` (a chunk path of the staging folder `dsff install` renamed is looked up
+in `work/`). `diff` digests every car from the plan in memory (`port_batch.merged_view`: the
+entries the archive would hold), and both commands draw the cars they render from archives
+of the vanilla one plus those cars (`port_batch.Shards`, as the pack step's garage renders),
+written to `--out` (`shards*/`) and removed afterwards (`render_compare.BuildArchives`).
+Checked on the 8200cfa release build (721 cars, no archive) against `out/storetest` (the
+same first 4 cars and IDs, with an archive): `diff` 0 changed, 4 unchanged; `run` on
+BMW_M3E30_91 and MAZ_RX7_97 gives the same metrics from either.
+
 ## What is rendered
 
 Per car, the entries the game draws (`car_render.load_scene(..., entry=, physical=True)`):

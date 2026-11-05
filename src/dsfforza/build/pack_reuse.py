@@ -55,6 +55,7 @@ RECORD = "pack.json"
 PICTURES = "pictures"
 IMAGES = "images"
 MANIFEST = "dngvehicles.json"
+MERGE_PLAN = "dngvehicles.plan.json"  # port_batch.MERGE_PLAN: the merge when the archive isn't written
 
 
 def sha256_file(path: Path) -> str:
@@ -278,6 +279,12 @@ class PackReuse:
             for rel in e.record["outputs"]:
                 src, dst = e.folder / rel, self.out_dir / rel
                 if rel == MANIFEST:
+                    continue
+                if rel == MERGE_PLAN:  # its cars' chunks are this build's (the same keys)
+                    plan = json.loads(src.read_text(encoding="utf-8"))
+                    for car in plan["cars"]:
+                        car["chunk"] = str((self.work or self.out_dir / "work") / Path(car["chunk"]).name)
+                    dst.write_text(json.dumps(plan, indent=1) + "\n", encoding="utf-8")
                     continue
                 if rel.startswith("gui/"):
                     copy_fresh(src, dst)

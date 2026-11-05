@@ -113,6 +113,102 @@ def car_report(build: Path, media: str) -> dict | None:
         return None
 
 
+MERGE_PLAN = "dngvehicles.plan.json"  # port_batch.MERGE_PLAN
+
+
+def merge_plan(build: Path) -> tuple[Path, list[dict]] | None:
+    """(the vanilla archive, the merge plan) of a build that wrote no dngvehicles.sp
+    (port_batch: past 4 GiB, or --no-archive; research/batch.md, "Builds past 4 GiB"), or
+    None. A car's chunk is taken from the build's own work/ when the plan's path is gone:
+    dsff install builds in a staging folder (build.new) and renames it. A build without the
+    plan file (its pack taken whole from an earlier build before the plan was a pack
+    output) gets it from its manifest: plan_from_manifest."""
+    path = Path(build) / MERGE_PLAN
+    if path.is_file():
+        from dsfforza.build import port_batch
+
+        dsf, plan = port_batch.read_plan(path)
+    else:
+        found = plan_from_manifest(build)
+        if found is None:
+            return None
+        dsf, plan = found
+    cars = []
+    for car in plan:
+        chunk = Path(car["chunk"])
+        if not chunk.is_file():
+            chunk = Path(build) / "work" / chunk.name
+        cars.append({**car, "chunk": str(chunk)})
+    return dsf, cars
+
+
+def plan_from_manifest(build: Path) -> tuple[Path, list[dict]] | None:
+    """(the vanilla archive, the merge plan) as register_cars lays it out, from a build's
+    manifest (dngvehicles.json: "vanilla", each car's spool ID and host) and work/: each
+    car's chunk work/<media>.chnk with the ID its report gives it (the ID the chunk holds;
+    a remerge moves the car to the manifest's), in the merge's order (by spool ID). None
+    without a manifest."""
+    path = Path(build) / "dngvehicles.json"
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    plan = []
+    for car in sorted(manifest.get("cars", []), key=lambda c: c["spool_id"]):
+        report = car_report(build, car["media"]) or {}
+        plan.append(
+            {
+                "chunk": str(Path(build) / "work" / f"{car['media']}.chnk"),
+                "chunk_id": report.get("spool_id", car["spool_id"]),
+                "spool_id": car["spool_id"],
+                "host": car["host"],
+            }
+        )
+    return Path(manifest["vanilla"]), plan
+
+
+class BuildArchives:
+    """The archive each car of a build is drawn from: the build's dngvehicles.sp, or, for a
+    build that wrote none, archives of the vanilla one plus the cars asked for, made from
+    its merge plan into `folder` (port_batch.Shards, which the pack step's garage renders
+    read: a car draws the same from them as from the merged archive). close() removes
+    them."""
+
+    def __init__(self, build: Path, folder: Path, log=print):
+        self.archive = Path(build) / "dngvehicles.sp"
+        self.shards = None
+        if not self.archive.is_file():
+            found = merge_plan(build)
+            if found is None:
+                raise SystemExit(f"{build}: neither dngvehicles.sp nor {MERGE_PLAN}")
+            from dsfforza.build import port_batch
+
+            self.shards = port_batch.Shards(found[0], found[1], Path(folder), log=log)
+
+    def of(self, spool_ids) -> dict[int, Path]:
+        """{spool ID: the archive that holds it} (written now for a build without one)."""
+        if self.shards is None:
+            return dict.fromkeys(spool_ids, self.archive)
+        return self.shards([{"spool_id": sid} for sid in spool_ids])
+
+    def close(self) -> None:
+        if self.shards is not None:
+            self.shards.close()
+
+
+_ROOTS: dict = {}  # a process's root entries by archive (gui_assets._root_entries keeps one)
+
+
+def roots_of(archive: Path) -> list:
+    from dsfforza.formats import chnk
+
+    key = str(Path(archive).resolve())
+    if key not in _ROOTS:
+        with Path(archive).open("rb") as stream:
+            _ROOTS[key] = chnk.read_chunk(stream, 0).entries
+    return _ROOTS[key]
+
+
 def roster(build: Path) -> list[dict]:
     """[{media, spool_id, game}] of a build's cars: batch-report.json, else (a build whose
     batch report is gone) its per-car reports, work/<media>.json."""
@@ -858,7 +954,6 @@ def forza_thumbnail(media: str, game: str | None) -> np.ndarray | None:
 def thumbnail_check(build: Path, media: str, out: Path, size=(640, 300)) -> Path | None:
     """Forza's picture | the reference | ours, at a camera like the picture's and in the
     picture's paint (the median of its saturated car pixels): out/thumb-<media>.jpg."""
-    from dsfforza.game.gui_assets import _root_entries
 
     report = car_report(build, media)
     if report is None:
@@ -870,10 +965,13 @@ def thumbnail_check(build: Path, media: str, out: Path, size=(640, 300)) -> Path
     sat = rgb.max(axis=-1) - rgb.min(axis=-1)
     car = (thumb[..., 3] > 128) & (rgb.max(axis=-1) > 20)
     colour = np.median(rgb[car & (sat > 40)], axis=0) if (car & (sat > 40)).sum() > 200 else np.array([40, 40, 40])
-    archive = Path(build) / "dngvehicles.sp"
-    with archive.open("rb") as stream:
-        roots = _root_entries(archive, stream)
-    pair = build_pair(archive, roots, report["entry"]["spool_id"], media, report)
+    sid = report["entry"]["spool_id"]
+    archives = BuildArchives(build, Path(out) / "shards")
+    try:
+        archive = archives.of([sid])[sid]
+        pair = build_pair(archive, roots_of(archive), sid, media, report)
+    finally:
+        archives.close()
     flat = cr.Paint.flat(tuple(int(c) for c in colour))
     for scene in (pair.ours, pair.ref):
         for m in scene.materials:
@@ -957,7 +1055,7 @@ def compare_car(
     each view's renders too: out/cars/<media>/<view>.npz, for rescore)."""
     media, sid = car["media"], car["spool_id"]
     t0 = time.time()
-    report = car_report(archive.parent, media)
+    report = car_report(Path(car.get("build") or archive.parent), media)  # a shard is not in the build
     result: dict = {"media": media, "spool_id": sid, "game": car.get("game")}
     if report is None or "placement" not in report.get("entry", {}):
         result["error"] = "no converter report (work/<media>.json) in the build"
@@ -1072,15 +1170,11 @@ def rescore(run_dir: Path, jobs: int = 1) -> list[dict]:
 
 
 def _worker(args):
-    archive, cars, out, views, size, entries, keep = args
-    from dsfforza.game.gui_assets import _root_entries
-
-    archive = Path(archive)
-    with archive.open("rb") as stream:
-        roots = _root_entries(archive, stream)
+    cars, out, views, size, entries, keep = args
     results = []
     for car in cars:
-        r = compare_car(archive, roots, car, Path(out), views, size, entries, keep)
+        archive = Path(car["archive"])  # the build's, or a shard of it (BuildArchives)
+        r = compare_car(archive, roots_of(archive), car, Path(out), views, size, entries, keep)
         print(f"{car['media']}: score {r.get('score')} {r.get('error', '')} ({r.get('seconds')} s)", flush=True)
         results.append(
             {k: r.get(k) for k in ("media", "spool_id", "game", "score", "flags", "error", "seconds", "match")}
@@ -1098,13 +1192,24 @@ def run(
     entries=("exterior",),
     keep: bool = False,
 ) -> list[dict]:
-    archive = Path(build) / "dngvehicles.sp"
     out.mkdir(parents=True, exist_ok=True)
-    jobs = max(1, min(jobs, len(cars)))
+    archives = BuildArchives(build, out / "shards")
+    try:
+        where = archives.of([c["spool_id"] for c in cars])
+        cars = [
+            {**c, "archive": str(where[c["spool_id"]]), "build": str(build)} for c in cars if c["spool_id"] in where
+        ]
+        return _run(build, out, cars, jobs, views, size, entries, keep)
+    finally:
+        archives.close()
+
+
+def _run(build, out, cars, jobs, views, size, entries, keep) -> list[dict]:
+    jobs = max(1, min(jobs, len(cars) or 1))
     chunks = [cars[i::jobs] for i in range(jobs)]
     t0 = time.time()
     if jobs == 1:
-        results = _worker((str(archive), cars, str(out), views, size, entries, keep))
+        results = _worker((cars, str(out), views, size, entries, keep))
     else:
         from dsfforza.build import jobpool
         from dsfforza.build.port_batch import RENDER_RAM
@@ -1113,7 +1218,7 @@ def run(
         with jobpool.executor(jobs, "render_compare", RENDER_RAM) as pool:
             results = [
                 r
-                for part in pool.map(_worker, [(str(archive), c, str(out), views, size, entries, keep) for c in chunks])
+                for part in pool.map(_worker, [(c, str(out), views, size, entries, keep) for c in chunks])
                 for r in part
             ]
     # Every car --out has (a --resume run's earlier ones too).
@@ -1222,7 +1327,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         for r in ranking[:20]:
             print(
-                f"{r.get('score', 0):7.2f}  {r['media']:32} " + "; ".join(f["text"] for f in (r.get("flags") or [])[:3])
+                f"{r.get('score') or 0:7.2f}  {r['media']:32} "
+                + "; ".join(f["text"] for f in (r.get("flags") or [])[:3])
             )
         if not args.no_sheet:
             from dsfforza.harness import render_sheet
