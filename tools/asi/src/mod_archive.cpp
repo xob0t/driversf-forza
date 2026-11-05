@@ -827,6 +827,266 @@ bool patch_vehicle_pool(uint32_t slots)
     return true;
 }
 
+// ---- a scene-model provider's wrapper list (45 inline) ----------------------
+// Every slot handler's scene model takes one wrapper from each resource provider
+// at package init (SceneModelType2_InitializeResourceProviders 0x00858CD0 calls
+// each provider's vtable +4). The provider class with vtable 0x00E18184
+// (constructor 0x006AE790) keeps them in an inline array of 45 pointers at +0x04
+// with the count at +0xB8 and no bound: acquire 0x006AE160 appends, release
+// 0x006AE1B0 removes (count read through +0x04 as +0xB4), lookup 0x006ADF90 walks
+// them (0x006AF970 on each), 0x006AE140 clears. The vanilla 35 + 2 + 2 vehicle
+// slots take 39; with 45 the 46th append lands on the count (run
+// vm1-20261105-222408: fault reading at 0x006AE19B, ECX 0x2D, from 0x00858E09 <-
+// 0x0059FA87 <- 0x005A1496, the 46th slot). These four are replaced by versions
+// that keep the list in this module (any length); the inline array keeps the first
+// 45 and its count says how many of those there are, for any other reader.
+const uint32_t kWrapInline = 45;
+struct WrapList {
+    uint8_t* owner;
+    void** items;
+    uint32_t count, cap;
+};
+WrapList g_wraps[8];  // one per provider object of the class (one in practice)
+SRWLOCK g_wrap_lock = SRWLOCK_INIT;
+
+WrapList* wraps_of(uint8_t* self)
+{
+    for (WrapList& w : g_wraps)
+        if (w.owner == self) return &w;
+    for (WrapList& w : g_wraps)
+        if (!w.owner) {
+            w.owner = self;
+            return &w;
+        }
+    return nullptr;
+}
+
+void wraps_mirror(uint8_t* self, const WrapList* w)
+{
+    uint32_t n = w->count < kWrapInline ? w->count : kWrapInline;
+    for (uint32_t i = 0; i < n; i++) ((void**)(self + 4))[i] = w->items[i];
+    *(uint32_t*)(self + 0xB8) = n;
+}
+
+typedef void*(__cdecl* MakeObject)(void** out, uint32_t class_id);   // 0x0086A360
+typedef void*(__cdecl* ClassInfo)(uint32_t class_id);                // 0x0086A400
+typedef uint32_t(__cdecl* ClassOf)(void* obj);                       // 0x00869E30
+typedef void(__cdecl* FreeObject)(uint32_t class_id, void* obj);     // 0x00869DA0
+typedef void*(__fastcall* WrapMatch)(void* wrap, void*, uint32_t a, uint32_t b);  // 0x006AF970
+typedef void(__fastcall* WrapRelease)(void* wrap, void*, int flag);              // vtable +0x14
+
+void** __fastcall h_wrap_acquire(uint8_t* self, void*, void** out)
+{
+    void* obj = nullptr;
+    ((MakeObject)0x0086A360)(&obj, 0x7C);
+    ((ClassInfo)0x0086A400)(0x7C);
+    AcquireSRWLockExclusive(&g_wrap_lock);
+    WrapList* w = wraps_of(self);
+    if (w && w->count == w->cap) {
+        uint32_t cap = w->cap ? w->cap * 2 : 64;
+        void** items = (void**)HeapAlloc(GetProcessHeap(), 0, cap * sizeof(void*));
+        if (items) {
+            if (w->items) {
+                memcpy(items, w->items, w->count * sizeof(void*));
+                HeapFree(GetProcessHeap(), 0, w->items);
+            }
+            w->items = items;
+            w->cap = cap;
+        }
+    }
+    if (w && w->count < w->cap) {
+        w->items[w->count++] = obj;
+        wraps_mirror(self, w);
+        if (w->count == kWrapInline + 1) dsf_log("slots: provider %p holds more than %u wrappers", self, kWrapInline);
+    } else {
+        dsf_log("slots: provider %p: no room for wrapper %u (out of memory)", self, w ? w->count : 0);
+    }
+    ReleaseSRWLockExclusive(&g_wrap_lock);
+    *out = obj;
+    return out;
+}
+
+void __fastcall h_wrap_release(uint8_t* self, void*, void** wrap)
+{
+    void* obj = *wrap;
+    AcquireSRWLockExclusive(&g_wrap_lock);
+    WrapList* w = wraps_of(self);
+    if (w) {
+        for (uint32_t i = 0; i < w->count; i++)
+            if (w->items[i] == obj) {
+                memmove(w->items + i, w->items + i + 1, (w->count - i - 1) * sizeof(void*));
+                w->count--;
+                break;
+            }
+        wraps_mirror(self, w);
+    }
+    ReleaseSRWLockExclusive(&g_wrap_lock);
+    uint32_t class_id = ((ClassOf)0x00869E30)(obj);
+    WrapRelease release = *(WrapRelease*)(*(uint8_t**)obj + 0x14);
+    if (class_id == 0x5B) {
+        release(obj, nullptr, 1);
+        return;
+    }
+    release(obj, nullptr, 0);
+    ((FreeObject)0x00869DA0)(class_id, obj);
+}
+
+void** __fastcall h_wrap_lookup(uint8_t* self, void*, void** out, uint32_t a, uint32_t b)
+{
+    *out = nullptr;
+    AcquireSRWLockShared(&g_wrap_lock);
+    WrapList* w = nullptr;
+    for (WrapList& x : g_wraps)
+        if (x.owner == self) w = &x;
+    uint32_t n = w ? w->count : 0;
+    ReleaseSRWLockShared(&g_wrap_lock);
+    for (uint32_t i = 0; i < n; i++) {
+        void* found = ((WrapMatch)0x006AF970)(w->items[i], nullptr, a, b);
+        if (found) {
+            *out = found;
+            break;
+        }
+    }
+    return out;
+}
+
+void __fastcall h_wrap_clear(uint8_t* self)
+{
+    AcquireSRWLockExclusive(&g_wrap_lock);
+    for (WrapList& w : g_wraps)
+        if (w.owner == self) w.count = 0;
+    ReleaseSRWLockExclusive(&g_wrap_lock);
+    *(uint32_t*)(self + 0xB8) = 0;
+    *(void**)(self + 0xC480) = (void*)0x01010101;
+    *(void**)(self + 0xC484) = (void*)0x01010101;
+}
+
+// The four functions' first bytes (dsff xref dis).
+const uint8_t kWrapAcquireExpect[] = {0x51, 0x56, 0x57, 0x8D, 0x44};             // 0x006AE160
+const uint8_t kWrapReleaseExpect[] = {0x8B, 0x81, 0xB8, 0x00, 0x00, 0x00};       // 0x006AE1B0
+const uint8_t kWrapLookupExpect[] = {0x8B, 0x81, 0xB8, 0x00, 0x00, 0x00};        // 0x006ADF90
+const uint8_t kWrapClearExpect[] = {0xB8, 0x01, 0x01, 0x01, 0x01, 0xC7};         // 0x006AE140: mov eax, 0x01010101
+
+bool patch_wrap_lists()
+{
+    if (!check_bytes(0x006AE160, kWrapAcquireExpect, 5) || !check_bytes(0x006AE1B0, kWrapReleaseExpect, 6) ||
+        !check_bytes(0x006ADF90, kWrapLookupExpect, 6) || !check_bytes(0x006AE140, kWrapClearExpect, 6)) {
+        dsf_log("slots: provider 00E18184's functions are not the vanilla code; vehicle slots stay 35");
+        return false;
+    }
+    bool ok = patch_jmp(0x006AE160, (void*)h_wrap_acquire, 5, kWrapAcquireExpect) &&
+              patch_jmp(0x006AE1B0, (void*)h_wrap_release, 6, kWrapReleaseExpect) &&
+              patch_jmp(0x006ADF90, (void*)h_wrap_lookup, 6, kWrapLookupExpect) &&
+              patch_jmp(0x006AE140, (void*)h_wrap_clear, 6, kWrapClearExpect);
+    if (!ok) {
+        patch_bytes(0x006AE160, kWrapAcquireExpect, 5);
+        patch_bytes(0x006AE1B0, kWrapReleaseExpect, 6);
+        patch_bytes(0x006ADF90, kWrapLookupExpect, 6);
+        patch_bytes(0x006AE140, kWrapClearExpect, 6);
+        dsf_log("slots: patching provider 00E18184's functions failed; undone");
+        return false;
+    }
+    dsf_log("slots: provider 00E18184 wrapper list (45 inline) kept in the plugin: 006AE160, 006AE1B0, 006ADF90, "
+            "006AE140");
+    return true;
+}
+
+// ---- the generic providers' wrapper pools (45 nodes) --------------------------
+// Two more provider classes (acquire 0x0086BEE0, vtable 0x00E395D4, pool at +0x18,
+// class ID at +0x248; acquire 0x0086B710, pool at +0x04, class ID at +0x234) list
+// their wrappers through 0x0086B6B0, the only appender of that pool layout: {u32
+// next, u32 free count, u32 used} then 45 nodes of 12 bytes {next, prev, item} and
+// the list head at +0x228. The next pointer is a bump pointer while the free count
+// is 0 and the free list's head otherwise, with no end check; the 46th node lands
+// on the list head and the class ID (run vm1-20261105-223116: fault reading at
+// 0x0086A2AD with class ID 0x292E8970, from 0x0086BEF7 <- 0x00858E09). The
+// replacement appends the same way, but before a bump that would reach the list
+// head it moves the bump pointer to a heap chunk of this module's; freed nodes go
+// back on the free list wherever they live, as before.
+const uint32_t kNode45 = 12;
+const uint32_t kChunkNodes = 256;
+struct PoolChunk {
+    int* pool;
+    uint8_t* end;
+};
+PoolChunk g_pool_chunks[32];
+SRWLOCK g_pool_lock = SRWLOCK_INIT;
+
+// Moves a full node pool's bump pointer to a chunk of this module's. pool = {next,
+// free count, used}; storage..head is its inline storage (head = the list head);
+// what = the log name. Before the bump that would reach `end`.
+void pool_room(int* pool, uint8_t* storage, uint8_t* head, const char* what)
+{
+    if (pool[1] != 0) return;  // next is the free list's head: no bump
+    uint8_t* cur = (uint8_t*)(uintptr_t)pool[0];
+    bool inline_storage = cur >= storage && cur <= head;
+    AcquireSRWLockExclusive(&g_pool_lock);
+    PoolChunk* c = nullptr;
+    for (PoolChunk& x : g_pool_chunks)
+        if (x.pool == pool) c = &x;
+    uint8_t* end = inline_storage ? head : (c ? c->end : nullptr);
+    if (end && cur + kNode45 > end) {
+        uint8_t* chunk = (uint8_t*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, kChunkNodes * kNode45);
+        if (!c)
+            for (PoolChunk& x : g_pool_chunks)
+                if (!x.pool) {
+                    c = &x;
+                    c->pool = pool;
+                    break;
+                }
+        if (chunk && c) {
+            pool[0] = (int)(uintptr_t)chunk;
+            c->end = chunk + kChunkNodes * kNode45;
+            if (inline_storage)
+                dsf_log("slots: %s %p passes its %u inline nodes; it goes on in the plugin's chunks", what, pool,
+                        (uint32_t)((head - storage) / kNode45));
+        } else {
+            dsf_log("slots: %s %p: no chunk for node %d", what, pool, pool[2] + 1);
+        }
+    }
+    ReleaseSRWLockExclusive(&g_pool_lock);
+}
+
+// The append of both pools: {next, prev, value} at the front of the list at head.
+void pool_append(int* pool, int* head, int value)
+{
+    int* node = (int*)(uintptr_t)pool[0];
+    if (pool[1] == 0) {
+        node[2] = value;
+        pool[0] += kNode45;
+    } else {
+        int next = node[0];
+        node[2] = value;
+        pool[1]--;
+        pool[0] = next;
+    }
+    pool[2]++;
+    node[0] = *head;
+    node[1] = (int)(uintptr_t)head;
+    ((int*)(uintptr_t)*head)[1] = (int)(uintptr_t)node;
+    *head = (int)(uintptr_t)node;
+}
+
+void __fastcall h_pool45_append(int* pool, void*, int* item)
+{
+    pool_room(pool, (uint8_t*)(pool + 3), (uint8_t*)(pool + 0x8A), "provider pool");
+    pool_append(pool, pool + 0x8A, *item);
+}
+
+
+const uint8_t kPool45AppendExpect[] = {0x83, 0x79, 0x04, 0x00, 0x8B, 0x01};  // 0x0086B6B0: cmp [ecx+4], 0; mov eax, [ecx]
+
+bool patch_pool45()
+{
+    if (!check_bytes(0x0086B6B0, kPool45AppendExpect, 6)) {
+        dsf_log("slots: 0086B6B0 is not the vanilla pool append; vehicle slots stay 35");
+        return false;
+    }
+    if (!patch_jmp(0x0086B6B0, (void*)h_pool45_append, 6, kPool45AppendExpect)) return false;
+    dsf_log("slots: 0086B6B0 provider pools (45 nodes) go on in the plugin's chunks when full");
+    return true;
+}
+
 // The vehicle spool object's SSLP header has just been set: raise its kind-0 slot
 // byte and move its ID pools out of the object. obj = the spool object (the SSLP
 // load's `self` - 4); its package type is at +0x7300 (vehicles: 0, FUN_005A1520).
@@ -2011,7 +2271,9 @@ void mod_archive_init()
     if (g_read_log) patch_frame_log();
 
     // Vehicle spool slots (see "vehicle spool slots"): 35 = vanilla, no patch.
-    int slots = cfg_int("archive", "vehicle_slots", 60);
+    // 41: the most shown to load and run in game (run vm1-20261105-224648). 45, 50 and 60 crash at package
+    // init in a structure not yet found (research/traffic.md, "The spool slot limit"; issue #566).
+    int slots = cfg_int("archive", "vehicle_slots", 41);
     if (slots > (int)kVanillaVehicleSlots) {
         if (slots > (int)kSlotHandlers - 4) slots = (int)kSlotHandlers - 4;  // the other kinds' 2 + 2 slots
         bool hooked = g_pkg_sites;  // the packages' SSLP hook calls apply_vehicle_slots too
@@ -2019,7 +2281,12 @@ void mod_archive_init()
             hooked = g_sslp_hooked = patch_jmp(0x005A0B50, (void*)h_sslp_load, 5, kSslpExpect);
         if (!hooked)
             dsf_log("slots: 005A0B50 is not the vanilla SSLP load; vehicle slots stay 35");
-        else if (patch_vehicle_pool((uint32_t)slots))
+        else if (!(patch_wrap_lists() && patch_pool45())) {  // they only act past their inline room
+            if (g_sslp_hooked) {
+                patch_bytes(0x005A0B50, kSslpExpect, 5);
+                g_sslp_hooked = false;
+            }
+        } else if (patch_vehicle_pool((uint32_t)slots))
             g_vehicle_slots = (uint32_t)slots;
         else if (g_sslp_hooked) {
             patch_bytes(0x005A0B50, kSslpExpect, 5);

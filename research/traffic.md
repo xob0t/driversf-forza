@@ -542,34 +542,95 @@ What the 35 is, what is sized by it, and how dsfcars.asi raises it
 - The slot index (`model + 0x564`, set at 0x00858864, read at 0x00859162):
   only the scene model reads it, and only for the graphics pool.
 
-**The patch** (`[archive] vehicle_slots`, default 60, 35 = vanilla):
+**The patch** (`[archive] vehicle_slots`, default 41, 35 = vanilla, at most
+`64 − (kind 1 + 2 + 3 slots)` = 60):
 
 1. From DllMain, before the game builds its pools: graphics pool 9 gets N
    slots at `ceil(vanilla × N / 35)` SYS KiB, nodes and GPU nodes, and N KiB
    GPU (GraphicsManager_Construct asserts `GPU KiB % slots == 0`). The bytes
    are checked against vanilla first.
-2. The SSLP load (0x005A0B50; the packages' hook, or the plugin's own when
+2. Also from DllMain: the scene-model provider structures that section 5
+   found sized for about 45 handlers in all get unbounded storage in the
+   plugin. These are provider 0x00E18184's wrapper array, and the 45-node
+   pools appended by 0x0086B6B0.
+3. The SSLP load (0x005A0B50; the packages' hook, or the plugin's own when
    there are no packages): for the vehicle spool object (package type 0 at
    `+0x7300`) whose header still says 35, it moves the seven ID pools
-   (each checked unused) and sets the kind-0 byte to N. N is capped at
-   `64 − (kind 1 + 2 + 3 slots)`.
-3. Every other reader of the byte follows by itself:
+   (each checked unused) and sets the kind-0 byte to N.
+4. Every other reader of the byte follows by itself:
    `GetMaxSpooledVehicles`, the mission and IV budget, and
-   `ChooseDesiredSlotCount` (IVs go back to 10).
+   `ChooseDesiredSlotCount`.
 
-**Why 60 is the default, and why no hang is left.** 60 is the ceiling the
-handler arrays allow. It costs about 25 × 670 KiB = 16 MB at start, against
-about 1.2 of 2 GB of address space in use (`asi.md`). With 60:
+**Why 41, and the hang.** 41 is the most that has loaded and run in game;
+45, 50 and 60 crash at package init in a structure not yet found (section
+5). With 41 slots, each story chapter's set can take 6 more models than with
+35. The chapter load can still hang if a set leaves the mission pot no room,
+so the car manager writes no set past the budget of 3b. That budget is
+`set ≤ slots − 1 − pot`, and at most 40 from 0x0076FDF0.
 
-- a set is at most 40 models (0x0076FDF0);
-- a pot request at most 18 (Lua);
-- the player's car and one pending request.
+The bound is conservative. In run `vm1-20261105-230205`, Chapter 7 with
++10 at 41 slots (28 models; the formula allows 27) loaded and drove. A pot
+model that is already resident (the player's car, 62 in "All chapters")
+probably costs no request. The plugin doesn't check the AI file itself.
 
-The pot's last request then sees `40 + 17 + 1 + 1 = 59 < 60`, so no request
-is refused and `isMissionVehiclesSpooled` can't wait forever. The car
-manager's budget check is `set ≤ 40` per set, and with fewer than 60 slots
-(an older plugin, `vehicle_slots` lowered) also
-`set ≤ slots − 1 − pot − 1`.
+## 5. Raising the slots in game (confirmed-runtime)
+
+All runs on VM 1:
+
+- the vanilla archive and the 24-package overlay (renamed to `dsfcars\`);
+- dsfcars.asi with `packages=1`, `read_log=1`, `crash_log=1`;
+- a research copy of `register.lua` with no port in the IV regions and the
+  census of 3b;
+- Chapter 7, the probe at the dyno start.
+
+**First attempts crashed at package init, and each crash named one more
+fixed-size structure.** All are sized for the vanilla 35 + 2 + 2 = 39 slot
+handlers, with a little to spare, and none checks its bound. Every handler's
+scene model takes one wrapper from each resource provider
+(SceneModelType2_InitializeResourceProviders 0x00858CD0, the call at
+0x00858E07):
+
+| Run | `vehicle_slots` | What failed | Fixed by |
+| --- | --- | --- | --- |
+| `vm1-20261105-222408` | 60 | Fault reading at 0x006AE19B, ECX 0x2D, from 0x00858E09 ← 0x0059FA87 ← 0x005A1496. Provider class with vtable 0x00E18184 keeps its wrappers in a **45-pointer inline array** (`+0x04`, count `+0xB8`): acquire 0x006AE160, release 0x006AE1B0, lookup 0x006ADF90, clear 0x006AE140 | the four replaced; the list kept in the plugin, the first 45 mirrored inline |
+| `vm1-20261105-223116` | 60 | Fault in the class factory 0x0086A2AD, class ID 0x292E8970, from 0x0086BEF7. Two generic provider classes (acquire 0x0086BEE0, pool at `+0x18`, class ID `+0x248`; acquire 0x0086B710, pool at `+0x04`, class ID `+0x234`) list wrappers in **45-node pools** of 12 bytes appended by 0x0086B6B0 (no end check; node 46 overwrites the list head and the class ID) | 0x0086B6B0 replaced: the bump pointer moves to a heap chunk before it reaches the list head |
+| `vm1-20261105-223748`, `-224316`, `-225305` (50), `-225627` (45) | 60, 60, 50, 45 | Fault reading `NONR size + 4` at 0x0084BF49: the provider loop calls `+4` on an object with vtable 0x00E36D38, a vehicle's sound bank wrapper (0x18 bytes, FUN_0084C0A0), so an entry of the vehicles' provider list has been overwritten. At 45 slots the read is 0x1004, during the kind-1/2 slots that come after kind 0; at 60, 0x6D004 | **not found**. The sound manager's bank list (50 nodes at `+0x92DC`, FUN_00849870) was checked with a hook and never filled, so it isn't that |
+
+**41 works** (`vm1-20261105-224648`, `vehicle_slots=41`): 45 handlers of 64,
+with the wrapper list and pool fixes in place. Both are needed even here: the
+log shows the 0x00E18184 list and three 45-node pools passing 45. It ran
+Chapter 7 with **9 ports added** (27 models; 30 % of the road weight):
+
+- it loaded, and the probe drove six cars in turn, 20 s of throttle each,
+  for about 140 s of game time, with no crash;
+- ports 1 to 9 were 30.1 % of all cars within 250 m (2.5 to 4.2 % each),
+  against the 30 % set;
+- median 100 cars within 250 m (driving);
+- frame time 17.5 ms median, 24.3 ms p95, 33.2 ms p99 over 10 s windows
+  (60 Hz VM; `[archive] read_log`);
+- peak private memory 1148 MB, virtual 1351 MB. The 35-slot runs of 3b were
+  1108 to 1121 MB and 1332 to 1334 MB;
+- desired IV slots 8 (fewer free slots, as expected).
+
+So 41 is the default: the most that has loaded and run, not a derived
+limit. What breaks between 46 and 49 handlers is open (#566). With 41 slots the budget formula (3b) gives each story chapter 6
+more models:
+
+| Exposition | Ch. 1 | Ch. 2 | Ch. 3 | Ch. 4 | Ch. 5 | Ch. 6 | Ch. 7 | Epilogue |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 17 | 10 | 7 | 8 | 8 | 10 | 7 | 9 | 20 |
+
+(added models = `slots − 1 − pot − set`, at most `40 − set` from the set
+selector's buffer.)
+
+**Mission start with a patched set** (`vm1-20261105-230536`, 41 slots,
+Chapter 7 +9). The research Lua called `launchMission(56)` (GetawayActivity4:
+traffic set Chapter 7, ChaseActivities pot) at 40 s of game time. The game
+loaded and started it ("Create mission GetawayActivity4", `forceStartMission`,
+instance 7). The census went on to 108 s with ports among the cars; no crash.
+
+**+10 at 41** (`vm1-20261105-230205`): loaded and drove, one model past the
+budget formula (above).
 
 ## 6. Design: traffic settings in the car manager (revised for the whole pool)
 
