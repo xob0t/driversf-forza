@@ -45,6 +45,15 @@ def test_uv_signature_ignores_order():
     assert glass._uv_signature(a) != glass._uv_signature(a[:1])
 
 
+def test_lexan_windows_take_their_named_slots():
+    # Race cars' lexan<suffix> windows are glass<suffix> (#439): the windscreen and door glass
+    # go on their slots whatever a triangle faces; groups keep the section's own name.
+    assert glass.slot_for("lexanF", (0.0, 1.0, 0.5), (0.0, 1.0, 0.1)) == ("windscreen", "lexanf/windscreen")
+    assert glass.slot_for("lexanLF", (0.8, 1.0, 0.2), (0.3, 1.0, 0.0)) == ("side_front", "lexanlf/side_front")
+    assert glass.slot_for("lexanR", (0.0, 1.0, -1.0), (0.0, 1.0, -0.1), "glass") == ("rear", "lexanr/rear")
+    assert glass.slot_for("lexanLHL", (0.7, 0.4, 1.9), (0.0, 0.0, 1.0)) == ("side_front", "lexanlhl/lamp/l")
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

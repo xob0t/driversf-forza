@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 
 from dsfforza.convert.damage.core import BODY, DOORS, PAINT_MATERIALS, Box, Grid, _cross, _norm, _sub, load_mesh
 from dsfforza.convert.damage.uv import Uv1Field, s9_pair
+from dsfforza.convert.forza_materials import glass_name
 from dsfforza.formats import upvh as upvh_mod
 from dsfforza.formats import vehicle_mesh as vm
 
@@ -121,16 +122,6 @@ def host_panels(upvh_data: bytes, modl_data: bytes) -> dict[tuple, Panel]:
 
 
 # --- section rules ----------------------------------------------------------------
-
-
-def glass_name(name: str) -> str:
-    """A Forza section name, lower case, with `lexan` read as `glass`. Forza's
-    race cars name their polycarbonate glazing lexan<suffix> with the suffixes
-    of glass<suffix> (master build of 2026-10-31: lexanF on 76 cars, lexanR 44,
-    lexanLF/RF 69/70, lexanLR/RR 42/41, lexanLM/RM 13, lexanLHL/RHL 65,
-    lexanLTL/RTL 39, lexanT 1), on glass materials."""
-    n = name.lower()
-    return "glass" + n[5:] if n.startswith("lexan") else n
 
 
 def section_rule(name: str) -> tuple[str, tuple]:

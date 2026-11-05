@@ -103,6 +103,7 @@ class ForzaScene:
 
 def lamp_function(technique: str, section: str, family: str | None) -> str | None:
     """The lamp part a technique is (None: not a lamp part)."""
+    from dsfforza.convert import forza_materials as fm
     from dsfforza.convert import lights
 
     t = technique
@@ -114,7 +115,7 @@ def lamp_function(technique: str, section: str, family: str | None) -> str | Non
     if t in lights.LAMP_COVERS or t.startswith(LAMP_GLASS_PREFIX):
         return "cover"
     if family == "lights":
-        return "lamp" if LAMP_SECTION.match(section) or t.startswith("lights_") else "lamp_trim"
+        return "lamp" if LAMP_SECTION.match(fm.glass_name(section)) or t.startswith("lights_") else "lamp_trim"
     return None
 
 
@@ -149,8 +150,9 @@ def is_window(section: str, technique: str) -> bool:
     """A window drawn with the lamp-cover technique `glass` (FH1 cars' windscreens and side
     windows): the converter keeps those as window glass (dsf_materials.WINDOW_SECTIONS)."""
     from dsfforza.convert import dsf_materials as dm
+    from dsfforza.convert import forza_materials as fm
 
-    return technique.lower() == "glass" and section.lower() in dm.WINDOW_SECTIONS
+    return technique.lower() == "glass" and fm.glass_name(section) in dm.WINDOW_SECTIONS
 
 
 class _Atlases:

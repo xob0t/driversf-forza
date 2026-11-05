@@ -312,6 +312,13 @@ def test_head_lamp_unit_without_a_lamp_technique():
     assert [lit(s) for s in bowls] == [None, None]
 
 
+def test_lexan_head_covers_are_glass_covers():
+    # Race cars name their head lamp covers lexanLHL/RHL, Forza's glassLHL/RHL (#439): a car
+    # with only cover glass there lights it as the head lamps, as MIT_HKS_06 does its covers.
+    covers = [_quad("lexanLHL", "glass", 0.6, 2.0), _quad("lexanRHL", "glass", -0.6, 2.0)]
+    assert _heads(covers + TAILS) == [("L", True), ("R", True)]
+
+
 def test_rear_lamps_short_of_rear_entries_stay_at_the_rear():
     # Issue #146: a host with fewer rear entries than the car has rear lamps. The right reverse
     # lamp shares the left one's entry rather than take a front entry (it would break with the
