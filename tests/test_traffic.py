@@ -322,5 +322,10 @@ class GuiSmokeTest(unittest.TestCase):
             self.assertIn(CH7, app.budget.cget("text"))
             self.assertEqual(len(app.tree.get_children()), 1)
             self.assertIn("101", app.pool.get_children())
+            app.tc.set_ambient(CH7, ports=["forza.fh1.CAR_A_10"])
+            app.load_set()
+            self.assertEqual(app.gather()["ports"], ["forza.fh1.CAR_A_10"])  # keys kept
+            app.ports.set(2)
+            self.assertEqual(app.gather()["ports"], 2)
         finally:
             root.destroy()

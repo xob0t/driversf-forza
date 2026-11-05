@@ -329,7 +329,7 @@ class TrafficControl:
         """{key: {id, enabled, name, make, game, media, dlc, traffic, regions}} of the installed cars."""
         dlc = dlc_media()
         out = {}
-        for key, c in sorted(self.m.state["cars"].items()):
+        for key, c in sorted(self.m.state["cars"].items(), key=lambda kv: kv[0].casefold()):
             man = self.m.manifest(key) or {}
             src, names = man.get("source") or {}, man.get("names") or {}
             game = (src.get("game") or "").upper()
