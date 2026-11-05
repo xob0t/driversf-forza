@@ -266,6 +266,10 @@ class Manager:
             if c["enabled"] and self.manifest(k) is not None
         }
 
+    def save_state(self) -> None:
+        """manager.json alone (the traffic settings' changes need no other file of save's)."""
+        _write_text(self.cars_dir / STATE, json.dumps(self.state, indent=1, sort_keys=True) + "\n")
+
     def save(self) -> None:
         """The state, the plugin's list and packages.lua."""
         for key in self.state["cars"]:
@@ -280,6 +284,16 @@ class Manager:
         _write_text(self.game / LUA, self.lua([(i, by_id[i]) for i in sorted(listed)]))
         if not self.defer_gui:
             self.generate_gui([(i, by_id[i]) for i in sorted(listed)])
+            self.write_traffic()
+
+    def write_traffic(self) -> None:
+        """The traffic settings' files (build/traffic.py): the AI copy and its redirect line,
+        and traffic.lua. Cars enabled, disabled or removed change which ports are dealt."""
+        from dsfforza.build import traffic
+
+        for r in traffic.TrafficControl(self).write():
+            for note in r.notes:
+                self.log(f"traffic: {r.name}: {note}")
 
     @contextlib.contextmanager
     def batch(self):
@@ -501,6 +515,9 @@ class Manager:
                 shutil.rmtree(gone)
         (self.cars_dir / LIST).unlink(missing_ok=True)
         (self.game / LUA).unlink(missing_ok=True)
+        from dsfforza.build import traffic
+
+        traffic.TrafficControl(self).clear()
         car_gui.clear(self.game)
         state = self.cars_dir / STATE
         if forget_ids:
@@ -637,7 +654,96 @@ def build_parser() -> argparse.ArgumentParser:
     )
     c.add_argument("--plugin", type=Path, help="the plugin file (default the game's plugins\\dsfcars.asi)")
     c.add_argument("packages", type=Path, nargs="*", help=".dsfcar files or folders whose requires count too")
+    add_traffic_parser(sub, common)
+    sub.add_parser("gui", parents=[common], help="the car manager window (tkinter)")
     return parser
+
+
+def _ints(text: str) -> list[int]:
+    return [int(x) for x in text.replace(";", ",").split(",") if x.strip()]
+
+
+def add_traffic_parser(sub, common) -> None:
+    t = sub.add_parser(
+        "traffic",
+        parents=[common],
+        help="who drives in traffic: cars on or off, the traffic sets, interesting vehicles",
+    )
+    ts = t.add_subparsers(dest="action", required=True)
+    ts.add_parser("status", help="the settings and what they do per traffic set")
+    for name, text in (("on", "these cars in traffic"), ("off", "these cars out of traffic (both kinds)")):
+        ts.add_parser(name, help=text).add_argument(
+            "selectors", nargs="+", help="a key, make:<MAKE>, game:FH1|FM4, dlc, all"
+        )
+    pin = ts.add_parser("pin", help="these cars always in these interesting-vehicle regions (1 to 17)")
+    pin.add_argument("selectors", nargs="+")
+    pin.add_argument("--regions", required=True, type=_ints)
+    ts.add_parser("unpin", help="these cars back to automatic regions").add_argument("selectors", nargs="+")
+    a = ts.add_parser("ambient", help="the traffic sets: ports, share, weights, the pool")
+    a.add_argument("--set", dest="set_name", help="one set (e.g. 'Chapter 7'); default: every story set's default")
+    a.add_argument("--ports", help="how many ports join, or keys separated by commas")
+    a.add_argument("--share", type=float, help="the added models' share of every road (0..1)")
+    a.add_argument("--weights", choices=["vanilla", "equal", "custom"])
+    a.add_argument("--blend", type=float, help="0 = the game's weights .. 1 = equal")
+    a.add_argument("--custom", help="ID_or_key=factor, separated by commas")
+    a.add_argument("--vanilla-off", type=_ints, help="vanilla model IDs out of the set")
+    a.add_argument("--extra", type=_ints, help="vanilla model IDs of other sets added in")
+    a.add_argument("--reset", nargs="+", help="these fields back to the default's (or the game's)")
+    a.add_argument("--off", action="store_true", help="no traffic set changes at all")
+    ts.add_parser("shuffle", help="deal the ports to the sets again")
+    iv = ts.add_parser("iv", help="interesting vehicles: ports in their regions or not")
+    iv.add_argument("state", choices=["on", "off"])
+    iv.add_argument("--per-region", type=int)
+    iv.add_argument("--vanilla", choices=["on", "off"], help="the game's own interesting vehicles")
+
+
+def run_traffic(m: Manager, args) -> None:
+    from dsfforza.build import traffic
+
+    tc = traffic.TrafficControl(m)
+    act = args.action
+    if act == "status":
+        print("\n".join(tc.status()))
+        return
+    if act in ("on", "off"):
+        tc.set_traffic(tc.select(args.selectors), on=act == "on")
+    elif act == "pin":
+        tc.pin(tc.select(args.selectors), args.regions)
+    elif act == "unpin":
+        tc.pin(tc.select(args.selectors), None)
+    elif act == "shuffle":
+        tc.shuffle()
+    elif act == "iv":
+        tc.t["iv"]["ports"] = args.state == "on"
+        if args.vanilla is not None:
+            tc.t["iv"]["vanilla"] = args.vanilla == "on"
+        if args.per_region is not None:
+            tc.t["iv"]["per_region"] = args.per_region
+    elif act == "ambient":
+        if args.off:
+            tc.ambient_off()
+        else:
+            tc.set_ambient(args.set_name, **ambient_fields(tc, args))
+    m.save_state()
+    for r in tc.write():
+        for note in r.notes:
+            m.log(f"traffic: {r.name}: {note}")
+    print("\n".join(tc.status()))
+
+
+def ambient_fields(tc, args) -> dict:
+    fields = {}
+    if args.ports is not None:
+        fields["ports"] = int(args.ports) if args.ports.isdigit() else tc.select(args.ports.split(","))
+    for name in ("share", "weights", "blend", "vanilla_off", "extra"):
+        if getattr(args, name) is not None:
+            fields[name] = getattr(args, name)
+    if args.custom:
+        pairs = (x.split("=", 1) for x in args.custom.split(",") if x.strip())
+        fields["custom"] = {k.strip(): float(v) for k, v in pairs}
+    for name in args.reset or []:
+        fields[name.replace("-", "_")] = None
+    return fields
 
 
 KEY_COMMANDS = {
@@ -693,7 +799,8 @@ def main(argv: list[str] | None = None) -> None:
         print(f"{plugin}: {' '.join(sorted(plugin_capabilities(plugin)))}")
         return
     refuse_old_layout(args.game)
-    if args.cmd not in ("status", "verify"):
+    reading = args.cmd in ("status", "verify", "gui") or (args.cmd == "traffic" and args.action == "status")
+    if not reading:
         from dsfforza.build.install import game_running
 
         if game_running(args.game):
@@ -714,6 +821,12 @@ def main(argv: list[str] | None = None) -> None:
         m.uninstall(forget_ids=args.forget_ids)
     elif args.cmd == "seed":
         m.seed()
+    elif args.cmd == "traffic":
+        run_traffic(m, args)
+    elif args.cmd == "gui":
+        from dsfforza.build import car_manager_gui
+
+        car_manager_gui.run(m)
     elif args.cmd == "status":
         print("\n".join(m.status()) or "no car packages installed")
     else:

@@ -179,12 +179,42 @@ def write_hud_lua(path: Path, hud: dict[int, dict]) -> None:
     temp.replace(path)
 
 
+REDIRECT_HEADER = "# written by dsff car_manager: game file|replacement (game folder relative)"
+
+
+def _traffic_redirects(game: Path) -> list[tuple[Path, Path]]:
+    """The traffic settings' copy of the AI file (build/traffic.py), when there is one: it lives
+    outside GENERATED, so a GUI generation keeps it, and goes in the same redirect list."""
+    from dsfforza.build import traffic
+
+    return [(traffic.AI_FILE, traffic.AI_COPY)] if (Path(game) / traffic.AI_COPY).exists() else []
+
+
+def set_redirect(game: Path, game_file: Path, replacement: Path | None) -> None:
+    """One line of the redirect list: `game_file` opened as `replacement` (None: the line goes).
+    The list is removed when nothing is left in it and no GUI copy needs it."""
+    path = Path(game) / GENERATED / REDIRECT
+    key = str(game_file).replace("/", "\\").lower()
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else [REDIRECT_HEADER]
+    kept = [line for line in lines if line.split("|", 1)[0].strip().lower() != key]
+    if replacement is not None:
+        kept.append(f"{game_file}|{replacement}".replace("/", "\\"))
+    if not [line for line in kept if line.strip() and not line.startswith("#")]:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(kept) + "\n", encoding="utf-8", newline="\n")
+
+
 def clear(game: Path) -> None:
-    """No generated files: the redirect list, the copies and packages_hud.lua go."""
+    """No generated files: the redirect list, the copies and packages_hud.lua go (the traffic
+    copy's line stays, when there is one)."""
     import shutil
 
     shutil.rmtree(game / GENERATED, ignore_errors=True)
     (game / HUD_LUA).unlink(missing_ok=True)
+    for a, b in _traffic_redirects(game):
+        set_redirect(game, a, b)
 
 
 def emblems(cars: list[dict]) -> dict[int, bytes]:
@@ -259,8 +289,8 @@ def generate(game: Path, cars: list[dict], base: Path | None = None, log=print) 
                 (staged / rel).parent.mkdir(parents=True, exist_ok=True)
                 g.add_strings(base / rel, staged / rel, new_strings)
                 redirects.append((rel, GENERATED / rel))
-        lines = ["# written by dsff car_manager: game file|replacement (game folder relative)"]
-        lines += [f"{a}|{b}".replace("/", "\\") for a, b in redirects]
+        lines = [REDIRECT_HEADER]
+        lines += [f"{a}|{b}".replace("/", "\\") for a, b in redirects + _traffic_redirects(game)]
         (staged / REDIRECT).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     except BaseException:
         shutil.rmtree(staged, ignore_errors=True)

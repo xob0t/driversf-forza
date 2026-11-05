@@ -261,6 +261,28 @@ do
 	end
 end
 
+-- The car manager's interesting-vehicle settings, dsfcars\traffic.lua (src/dsfforza/build/traffic.py),
+-- by model ID: cars[id].traffic = false keeps a car out of every region, cars[id].regions pins it
+-- to those regions; ports = false gives the other cars no region; vanilla = false takes the game's
+-- own interesting vehicles out of every region; per_region is regionCars. Read
+-- only with the car packages loaded, as packages.lua is (#511).
+local TRAFFIC = {}
+if ASI.packages then
+	local found, t = user_open("dsfcars\\traffic.lua")
+	if found and type(t) == "table" then TRAFFIC = t end
+end
+local function applyTraffic()
+	if type(TRAFFIC.cars) == "table" then
+		for id, s in pairs(TRAFFIC.cars) do
+			if CARS[id] and type(s) == "table" then
+				if s.traffic == false then CARS[id].traffic = false end
+				if type(s.regions) == "table" then CARS[id].regions = s.regions end
+			end
+		end
+	end
+	if type(TRAFFIC.per_region) == "number" then OPTIONS.regionCars = TRAFFIC.per_region end
+end
+
 local function sortedIds()
 	local ids = {}
 	for id in pairs(CARS) do table.insert(ids, id) end
@@ -535,16 +557,38 @@ end
 -- and loadingSystem.requestInterestingVehicleSettings passes it to
 -- InterestingVehicleManager.SetInterestingVehicleRegions. Adding the IDs to
 -- the table on the way in covers every chapter load.
+-- SetInterestingVehicleRegions (0x0067D040) copies each list into a 128-entry stack buffer and
+-- doesn't check the length: the 129th ID lands on the count (#562; research/traffic.md 2). The
+-- vanilla lists hold up to 110 (Epilogue, region 1), so added cars stop at 128.
+local REGION_MAX = 128
+
 local function injectRegions(regions)
 	if type(regions) ~= "table" then
 		return 0
 	end
-	local added = 0
+	local added, full = 0, 0
+	if TRAFFIC.vanilla == false then
+		for _, region in ipairs(regions) do
+			if type(region) == "table" and type(region.vehicleList) == "table" then
+				local kept = {}
+				for _, model in ipairs(region.vehicleList) do
+					if CARS[model] then table.insert(kept, model) end
+				end
+				region.vehicleList = kept
+			end
+		end
+	end
+	-- A pinned car goes at the front of its regions: the engine's pick favours the front of a list
+	-- (idx = round(n * (1 - cos(pi * r / 2))), 0x007EB970; research/traffic.md 2); the others go last.
+	local front = {}
 	-- With more than regionCars cars, car k (in ID order) goes to every m-th
 	-- region, offset by k, so each region gets about regionCars of them.
 	local traffic = {}
 	for _, id in ipairs(sortedIds()) do
-		if CARS[id].traffic ~= false then table.insert(traffic, id) end
+		local car = CARS[id]
+		if car.traffic ~= false and (TRAFFIC.ports ~= false or type(car.regions) == "table") then
+			table.insert(traffic, id)
+		end
 	end
 	local m = math.max(1, math.ceil(#traffic / math.max(1, OPTIONS.regionCars or #traffic)))
 	for k, id in ipairs(traffic) do
@@ -567,13 +611,26 @@ local function injectRegions(regions)
 					for _, model in ipairs(region.vehicleList) do
 						if model == id then present = true break end
 					end
-					if not present then
-						table.insert(region.vehicleList, id)
+					if present then
+						-- already listed
+					elseif #region.vehicleList >= REGION_MAX then
+						full = full + 1
+					else
+						if type(car.regions) == "table" then
+							front[index] = (front[index] or 0) + 1
+							table.insert(region.vehicleList, front[index], id)
+						else
+							table.insert(region.vehicleList, id)
+						end
 						added = added + 1
 					end
 				end
 			end
 		end
+	end
+	if full > 0 then
+		log(string.format("SetInterestingVehicleRegions: %d entries left out, their regions hold %d IDs (#562)", full,
+			REGION_MAX))
 	end
 	return added
 end
@@ -704,6 +761,7 @@ end
 ---------------------------------------------------------------------------
 
 function M.apply()
+	applyTraffic()
 	state.cars = CARS
 	state.saveMaxId = SAVE_MAX_ID
 	if ASI.save or ASI.garage then
