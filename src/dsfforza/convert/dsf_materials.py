@@ -359,44 +359,108 @@ def is_atlas_kind(kind) -> bool:
 # --- the wheel's speed-blur disc (forza2dsf.wheel_blur_section) ------------------------
 #
 # The disc draws with a copy of DSF's shared GLOBAL_Wheel_Blur_SpokeDisc (_LOD1 in the
-# exterior), its texture swapped for the car's atlas, where Forza's spinning-wheel picture
-# (fm.WHEEL_BLUR) goes, converted to what that material reads (wheel_blur_texels): red the
-# grey level, times the vehicle's g_vec4WheelBlurColour (its tint, Texturing.wheel_blur_tint;
-# paint.set_wheel_blur_colour), green the gloss (WHEEL_BLUR_GLOSS x grey, the vanilla
-# disc's ratio: means 136 red, 60 green), blue the coverage. The picture is laid over
-# WHEEL_BLUR_BACKDROP (a mid grey for what shows between the spokes: with the port's dark
-# barrel, 20, open wheels came out darker at speed than at rest, vanilla's brighter), so the
-# disc is opaque once faded in and hides the port's sharp rim, which cannot fade (research/wheels.md, "Speed blur"). It is
-# blurred, so WHEEL_BLUR_TEXELS across are enough (a 256-texel picture weighted 0.5, which
-# the atlas's uniform scale takes down to 50 to 120 texels).
+# exterior), its texture swapped for the car's atlas: the slot of Forza's spinning-wheel picture
+# (fm.WHEEL_BLUR), whose texels are replaced by the converted rim spinning (wheel_blur_ramp,
+# research/forza-lamps-blur-re.md section 2.4). The disc's program (GPCH 114/120) draws
+# `light x tex.r x g_vec4WheelBlurColour` at opacity `tex.b x opacity`; a port's rim keeps drawing
+# under it (its Chassis and gloss programs don't read the fade byte), so the disc is opaque (blue
+# 255) and carries the whole spinning look. A wheel spinning shows, at each radius, the mean of
+# what is drawn round that circle, so per ring:
+#     M(r)  = the rotational mean of the linear albedo the converted rim is drawn with (the front-
+#             most non-disc, non-tyre surface of the wheel model along the axle; nothing, albedo 0,
+#             where the spokes leave a gap)
+#     C     = one RGB per car, g_vec4WheelBlurColour: M's area-weighted mean, its largest channel 1
+#     tex.r = encode_sRGB(lum(M(r)) / lum(C)), clipped at 1
+# The disc is blurred, so WHEEL_BLUR_TEXELS across are enough (the picture's slot weighted down to
+# it, which the atlas's uniform scale takes down to 50 to 120 texels).
 WHEEL_BLUR_MAT = "wheel_blur"
 SPOKE_DISC_MATERIALS = (bytes.fromhex("001262258aa7c428"), bytes.fromhex("10122b9e53b14e2a"))  # full, exterior
 SPOKE_DISC_TEXTURE = bytes.fromhex("0012622354a4c428")  # the vanilla disc picture they sample
 WHEEL_BLUR_TEXELS = 128
-WHEEL_BLUR_BACKDROP = 60
+# TODO(fit, #407): green (the disc's specular and reflection mask) is red times the vanilla disc's
+# ratio of means (136 red, 60 green). Section 2.4 makes it the gloss the rim has there; that needs
+# the rim's own mask as its programs read it (texel alpha on Chassis, green on the gloss copies).
 WHEEL_BLUR_GLOSS = 0.44
 WHEEL_BLUR_LAYOUT = (20, 7)  # stride, MODL flag (alpha-blended)
+# Rings and angles the rim is sampled on (wheel_blur_ramp): finer than the disc's texels (the slot
+# holds at most WHEEL_BLUR_TEXELS across, so a ring per texel of its radius), angles enough for a
+# mean over a dozen spokes.
+WHEEL_BLUR_RINGS = 64
+WHEEL_BLUR_ANGLES = 180
+_LUMA = np.array([0.2126, 0.7152, 0.0722])
 
 
-def wheel_blur_texels(rgba: bytearray, paint_scale: float = 1.0) -> tuple[bytearray, tuple[float, float, float]]:
-    """Forza's spinning-wheel picture (RGBA, alpha the coverage) -> the SpokeDisc material's
-    texels (red grey, green gloss, blue coverage 255) and the tint g_vec4WheelBlurColour
-    takes: the coverage-weighted mean colour of the picture over the backdrop, its largest
-    channel 1. The colour is scaled by the rim's PaintScale first, as the rim's own texels
-    are (Texturing._wheel_paint_scale), so the faded-in disc matches the rim it covers."""
-    px = np.frombuffer(bytes(rgba), dtype=np.uint8).reshape(-1, 4).astype(np.float64)
-    a = px[:, 3:4] / 255.0
-    colour = np.clip(px[:, :3] * paint_scale, 0, 255) * a + WHEEL_BLUR_BACKDROP * (1 - a)
-    weight = a[:, 0] + 1e-6
-    mean = (colour * weight[:, None]).sum(0) / weight.sum()
-    tint = mean / max(mean.max(), 1e-6)
-    luma = np.array([0.2126, 0.7152, 0.0722])
-    grey = colour @ luma
-    out = np.empty((len(px), 4), dtype=np.uint8)
-    out[:, 0] = np.clip(np.rint(grey / max(float(tint @ luma), 1e-6)), 0, 255)
-    out[:, 1] = np.clip(np.rint(grey * WHEEL_BLUR_GLOSS), 0, 255)
-    out[:, 2] = 255
-    out[:, 3] = 255
+def _srgb_decode(c: np.ndarray) -> np.ndarray:
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+
+
+def _srgb_encode(c: np.ndarray) -> np.ndarray:
+    c = np.clip(c, 0.0, 1.0)
+    return np.where(c <= 0.0031308, c * 12.92, 1.055 * c ** (1 / 2.4) - 0.055)
+
+
+def rim_rotational_mean(tris, colours, centre, radius: float, rings=WHEEL_BLUR_RINGS, angles=WHEEL_BLUR_ANGLES):
+    """The rotational mean M(r) of the converted rim (research/forza-lamps-blur-re.md 2.4).
+    tris: (n, 3, 3) positions of the rim's triangles in the Forza wheel frame (axle along x, the
+    face toward -x); colours: (triangle index, barycentric weights (k, 3)) -> the linear RGB the
+    rim is drawn with there (k, 3). On `rings` rings
+    from the centre (y, z) to `radius`, `angles` samples each, the front-most triangle along the
+    axle (smallest x) gives the colour; a sample no triangle covers counts as 0 (nothing drawn
+    there). Returns (ring radii (rings,), M (rings, 3))."""
+    tris = np.asarray(tris, dtype=np.float64)
+    rr = (np.arange(rings) + 0.5) / rings * radius
+    th = (np.arange(angles) + 0.5) / angles * 2 * np.pi
+    R, T = np.meshgrid(rr, th, indexing="ij")
+    py = centre[0] + (R * np.cos(T)).ravel()
+    pz = centre[1] + (R * np.sin(T)).ravel()
+    depth = np.full(len(py), np.inf)
+    rgb = np.zeros((len(py), 3))
+    if len(tris):
+        a, b, c = tris[:, 0], tris[:, 1], tris[:, 2]
+        d = (b[:, 2] - c[:, 2]) * (a[:, 1] - c[:, 1]) + (c[:, 1] - b[:, 1]) * (a[:, 2] - c[:, 2])
+        lo, hi = tris[..., 1:].min(1), tris[..., 1:].max(1)
+        for t in np.nonzero(np.abs(d) > 1e-12)[0]:
+            sel = np.nonzero((py >= lo[t, 0]) & (py <= hi[t, 0]) & (pz >= lo[t, 1]) & (pz <= hi[t, 1]))[0]
+            if not len(sel):
+                continue
+            qy, qz = py[sel], pz[sel]
+            l1 = ((b[t, 2] - c[t, 2]) * (qy - c[t, 1]) + (c[t, 1] - b[t, 1]) * (qz - c[t, 2])) / d[t]
+            l2 = ((c[t, 2] - a[t, 2]) * (qy - c[t, 1]) + (a[t, 1] - c[t, 1]) * (qz - c[t, 2])) / d[t]
+            w = np.stack([l1, l2, 1 - l1 - l2], 1)
+            inside = (w >= 0).all(1)
+            if not inside.any():
+                continue
+            sel, w = sel[inside], w[inside]
+            x = w @ tris[t, :, 0]
+            nearer = x < depth[sel]
+            if not nearer.any():
+                continue
+            sel, w = sel[nearer], w[nearer]
+            depth[sel] = x[nearer]
+            rgb[sel] = colours(t, w)
+    return rr, rgb.reshape(rings, angles, 3).mean(1)
+
+
+def wheel_blur_ramp(
+    radius_of_texel: np.ndarray, rr: np.ndarray, mean: np.ndarray
+) -> tuple[bytearray, tuple[float, float, float]]:
+    """The disc's texels from the rim's rotational mean (rim_rotational_mean): per texel, its
+    radius on the wheel (radius_of_texel, (h, w) in metres; NaN off the disc) -> red
+    encode_sRGB(lum(M(r)) / lum(C)) with C the area-weighted mean of M, its largest channel 1
+    (g_vec4WheelBlurColour); green red x WHEEL_BLUR_GLOSS; blue and alpha 255 (opaque).
+    Returns (RGBA bytes, C)."""
+    area = rr * (rr[1] - rr[0] if len(rr) > 1 else 1.0)  # a ring's area is 2 pi r dr
+    mean_rgb = (mean * area[:, None]).sum(0) / max(float(area.sum()), 1e-12)
+    tint = mean_rgb / mean_rgb.max() if mean_rgb.max() > 0 else np.ones(3)
+    level = (mean @ _LUMA) / max(float(tint @ _LUMA), 1e-12)
+    r = np.nan_to_num(radius_of_texel, nan=float(rr[-1]))
+    red = _srgb_encode(np.interp(r, rr, level))
+    h, w = radius_of_texel.shape
+    out = np.empty((h, w, 4), dtype=np.uint8)
+    out[..., 0] = np.rint(red * 255)
+    out[..., 1] = np.clip(np.rint(out[..., 0] * WHEEL_BLUR_GLOSS), 0, 255)
+    out[..., 2] = 255
+    out[..., 3] = 255
     return bytearray(out.tobytes()), (float(tint[0]), float(tint[1]), float(tint[2]))
 
 
@@ -1356,7 +1420,7 @@ class Texturing:
     use_floors: bool = True  # plan() lays out without the floors while it judges the artwork budget
     wheel_paint: dict = field(default_factory=dict)  # rim technique -> PaintScale applied (_wheel_paint_scale)
     # The wheel's blur disc (WHEEL_BLUR_MAT): plan(wheel_blur=True) puts the picture in the atlas.
-    wheel_blur_tint: tuple | None = None  # g_vec4WheelBlurColour RGB (wheel_blur_texels)
+    wheel_blur_tint: tuple | None = None  # g_vec4WheelBlurColour RGB (wheel_blur_ramp)
     # Exterior only: lamp lenses baked over what lies behind them (src/dsfforza/convert/lenses.py).
     bake_lenses: bool = True
     lens_report: dict = field(default_factory=dict)  # lenses.bake's report
@@ -1412,11 +1476,9 @@ class Texturing:
                 self.families = tuple(self.families) + (fm.WHEEL_BLUR,)
             w, h, rgba = self.atlases.get(fm.WHEEL_BLUR)
             self.weights.setdefault(fm.WHEEL_BLUR, min(1.0, WHEEL_BLUR_TEXELS / max(w, h)))
-            try:
-                scale = fm.wheel_paint_scale("rim", fm.wheel_shader_settings(self.car_dir))
-            except OSError:
-                scale = fm.WHEEL_PAINT_SCALE["rim"]
-            rgba[:], self.wheel_blur_tint = wheel_blur_texels(rgba, scale)
+            ramp = self._wheel_blur_ramp(wheels[0], set(wheels[1]), w, h)
+            if ramp is not None:
+                rgba[:], self.wheel_blur_tint = ramp
             if not self.wheel_ids:
                 self.wheel_ids |= {id(section) for section in wheels[0]}
                 work += [(section, set(wheels[1])) for section in wheels[0]]
@@ -1607,6 +1669,71 @@ class Texturing:
             self.gloss[sid] = k
             per = self.gloss_report.setdefault(technique, {})
             per[k] = per.get(k, 0) + n
+
+    def _wheel_blur_ramp(self, sections, lods, w: int, h: int):
+        """The blur disc's texels for the picture slot (w x h) from the converted rim spinning
+        (rim_rotational_mean, wheel_blur_ramp): the rim is the finest LOD's non-disc, non-tyre
+        wheel subsections that sample the wheel atlas (its texels already scaled by the rim's
+        PaintScale, _wheel_paint_scale), drawn texel decoded from sRGB. A texel's radius comes
+        from the disc's own map (its UV0 -> wheel y, z, fitted to the disc's vertices that
+        aren't clamped at the picture's edge). None without a disc or a rim."""
+        from dsfforza.convert.forza2dsf.car import tyre_centre
+
+        disc = [(s, sub) for s in sections for sub in s.subsections if sub.material == fm.WHEEL_BLUR_TECHNIQUE]
+        if not disc:
+            return None
+        rows, uvs = [], []
+        for s, sub in disc:
+            m = fm.resolve(s, sub, fm.classify_wheel)
+            pool = s.vertices_for(sub)
+            for i in {i for t in sub.triangles() for i in t}:
+                u, v = m.uv(pool[i].uv0)
+                if 0.0 < u < 1.0 and 0.0 < v < 1.0:
+                    rows.append((u, v, 1.0))
+                    uvs.append(pool[i].position[1:])
+        if len(rows) < 3:
+            return None
+        to_yz = np.linalg.lstsq(np.array(rows), np.array(uvs), rcond=None)[0]  # (u, v, 1) -> (y, z)
+        rims = [s for s in sections if not any(sub.material == fm.WHEEL_BLUR_TECHNIQUE for sub in s.subsections)]
+        try:
+            cy, cz = tyre_centre(rims)[1:]
+        except ValueError:
+            cy, cz = 0.0, 0.0
+        finest = min(lods)
+        tris, sources = [], []
+        tw, th, texels = self.atlases.get(fm.WHEEL)
+        px = np.frombuffer(bytes(texels), dtype=np.uint8).reshape(th, tw, 4)
+        for s in rims:
+            for sub in s.subsections:
+                if sub.lod != finest:
+                    continue
+                m = fm.resolve(s, sub, fm.classify_wheel)
+                if m.family != fm.WHEEL or m.kind not in ("textured", "swatch"):
+                    continue
+                pool = s.vertices_for(sub)
+                for t in sub.triangles():
+                    tris.append([pool[i].position for i in t])
+                    sources.append([m.uv(pool[i].uv0) for i in t])
+        if not tris:
+            return None
+        tris = np.array(tris, dtype=np.float64)
+        sources = np.array(sources, dtype=np.float64)
+        linear = _srgb_decode(px[..., :3] / 255.0)
+
+        def colours(t, wts):
+            uv = wts @ sources[t]
+            x = np.clip(((uv[:, 0] % 1.0) * tw).astype(int), 0, tw - 1)
+            y = np.clip(((uv[:, 1] % 1.0) * th).astype(int), 0, th - 1)
+            return linear[y, x]
+
+        disc_r = np.hypot(np.array(uvs)[:, 0] - cy, np.array(uvs)[:, 1] - cz).max()
+        radius = float(max(disc_r, 1e-3))
+        rr, mean = rim_rotational_mean(tris, colours, (cy, cz), radius)
+        gu, gv = np.meshgrid((np.arange(w) + 0.5) / w, (np.arange(h) + 0.5) / h)
+        yz = np.stack([gu, gv, np.ones_like(gu)], -1) @ to_yz
+        texel_r = np.hypot(yz[..., 0] - cy, yz[..., 1] - cz)
+        texel_r[texel_r > radius] = radius
+        return wheel_blur_ramp(texel_r, rr, mean)
 
     def _wheel_paint_scale(self, sections, lods) -> dict[str, float]:
         """Scale, in place, the RGB of the wheel texture's texels by the PaintScale
@@ -2410,7 +2537,7 @@ class Texturing:
     def _convert_texel(self, family: str, r: int, g: int, b: int, a: int) -> tuple[int, int, int, int]:
         """Forza texel -> DSF conventions (alpha = specular / glow mask)."""
         if family == fm.WHEEL_BLUR:
-            return r, g, b, a  # converted in plan() (wheel_blur_texels)
+            return r, g, b, a  # made in plan() (_wheel_blur_ramp)
         floor = self.lift.get(fm.base_family(family))
         if floor:
             r, g, b = (int(floor + c * (255 - floor) / 255) for c in (r, g, b))

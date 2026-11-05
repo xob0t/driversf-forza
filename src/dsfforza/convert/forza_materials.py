@@ -66,9 +66,10 @@ INTERIOR = "interior"
 WHEEL = "wheel"
 # The wheel's speed-blur disc (forza2dsf.wheel_blur_section, research/wheels.md, "Speed
 # blur"): one of Forza's spinning-wheel pictures from the wheel archive, the whole
-# wheel face blurred round its axle. Drawn through a copy of DSF's shared
-# GLOBAL_Wheel_Blur_SpokeDisc material, which reads the texel as grey (red), gloss
-# (green) and coverage (blue); dsf_materials.Texturing converts it (wheel_blur_texels).
+# wheel face blurred round its axle. Its atlas slot is where the disc's texels go: drawn
+# through a copy of DSF's shared GLOBAL_Wheel_Blur_SpokeDisc material, which reads the texel
+# as grey (red), gloss (green) and coverage (blue), they are made from the converted rim
+# spinning, not from the picture (dsf_materials.Texturing._wheel_blur_ramp).
 WHEEL_BLUR = "wheel_blur"
 # The synthetic subsection that carries the disc; its UV0 is in the blur picture.
 WHEEL_BLUR_TECHNIQUE = "dsf_wheel_blur"

@@ -1,6 +1,6 @@
 """Regression tests for the wheel speed blur (research/wheels.md, "Speed blur"): the disc
 forza2dsf.wheel_blur_section puts over the rim face, its vertex semantic 9 and material,
-the blur picture's texels and tint (dsf_materials.wheel_blur_texels) and the wheel blur
+the blur disc's texels and tint (dsf_materials.rim_rotational_mean, wheel_blur_ramp) and the wheel blur
 colour (paint.set_wheel_blur_colour), on synthetic data (no game or Forza files).
 
     uv run python tests/test_wheel_blur.py     # or every test: uv run python -m tests
@@ -205,30 +205,53 @@ class Picture(unittest.TestCase):
         self.assertEqual(fm.classify_wheel("blur_rim")[0], fm.SKIP)  # Forza's own discs stay out
         self.assertTrue(dm.is_atlas_kind(dm.WHEEL_BLUR_MAT))
 
-    def test_texels(self):
-        """Grey in red (over the tint), gloss in green at the vanilla disc's ratio, opaque blue:
-        the picture laid over the dark backdrop so the rim under the disc is hidden."""
-        px = bytearray()
-        px += bytes((200, 200, 200, 255))  # a spoke, opaque
-        px += bytes((200, 200, 200, 0))  # between the spokes: the backdrop
-        px += bytes((200, 200, 200, 128))  # blurred spoke: half each
-        out, tint = dm.wheel_blur_texels(px, paint_scale=1.0)
-        self.assertEqual([round(c, 3) for c in tint], [1.0, 1.0, 1.0])
-        back = dm.WHEEL_BLUR_BACKDROP
-        half = 200 * 128 / 255 + back * (1 - 128 / 255)
-        self.assertEqual(list(out[0:4]), [200, round(200 * dm.WHEEL_BLUR_GLOSS), 255, 255])
-        self.assertEqual(list(out[4:8]), [back, round(back * dm.WHEEL_BLUR_GLOSS), 255, 255])
-        self.assertEqual(out[8], round(half))
+    def test_rotational_mean(self):
+        """M(r) (forza-lamps-blur-re.md 2.4): a ring wholly covered by one colour has that colour;
+        one covered on half its angles, half of it (the gaps draw nothing); the front-most surface
+        (smallest x) is the one seen."""
+        import numpy as np
 
-    def test_paint_scale_and_tint(self):
-        """An orange picture (the Veyron's): the tint carries the hue, red the brightness, so
-        red x tint gives the colour back; the rim's PaintScale scales it first."""
-        px = bytearray(bytes((240, 80, 0, 255)) * 4)
-        out, tint = dm.wheel_blur_texels(px, paint_scale=0.75)
+        def annulus(r0, r1, x, a0=0.0, a1=2 * np.pi, n=72):
+            tris = []
+            for k in range(n):
+                t0, t1 = a0 + (a1 - a0) * k / n, a0 + (a1 - a0) * (k + 1) / n
+                p = [(x, r * np.cos(t), r * np.sin(t)) for r in (r0, r1) for t in (t0, t1)]
+                tris += [[p[0], p[1], p[2]], [p[1], p[3], p[2]]]
+            return tris
+
+        grey = np.array([0.5, 0.5, 0.5])
+        front = annulus(0.0, 0.1, -0.10)  # a full disc to r 0.1, in front
+        half = annulus(0.1, 0.2, -0.10, 0.0, np.pi)  # half the angles from 0.1 to 0.2
+        behind = annulus(0.0, 0.2, -0.05)  # hidden behind both, except where half leaves gaps
+        tris = front + half + behind
+        cols = [grey] * len(front) + [grey] * len(half) + [np.array([1.0, 0.0, 0.0])] * len(behind)
+        rr, mean = dm.rim_rotational_mean(tris, lambda t, w: np.tile(cols[t], (len(w), 1)), (0.0, 0.0), 0.2, 20, 360)
+        inner, outer = mean[rr < 0.095], mean[rr > 0.105]
+        np.testing.assert_allclose(inner, np.tile(grey, (len(inner), 1)), atol=1e-6)
+        np.testing.assert_allclose(outer, np.tile([0.75, 0.25, 0.25], (len(outer), 1)), atol=0.02)
+        rr, mean = dm.rim_rotational_mean(
+            front + half, lambda t, w: np.tile(grey, (len(w), 1)), (0.0, 0.0), 0.2, 20, 360
+        )
+        np.testing.assert_allclose(mean[rr > 0.105], np.tile(grey / 2, (len(mean[rr > 0.105]), 1)), atol=0.02)
+
+    def test_ramp(self):
+        """The disc's texels: red encode_sRGB(lum(M(r)) / lum(C)), C the area-weighted mean of M
+        with its largest channel 1, so red x C gives each ring's colour back; opaque."""
+        import numpy as np
+
+        rr = np.array([0.05, 0.15])
+        orange = np.array([0.8, 0.2, 0.0])
+        mean = np.stack([orange * 0.5, orange])
+        radius = np.array([[0.05, 0.15, np.nan]])
+        out, tint = dm.wheel_blur_ramp(radius, rr, mean)
         self.assertAlmostEqual(tint[0], 1.0)
-        self.assertAlmostEqual(tint[1], 60 / 180, places=2)
-        self.assertAlmostEqual(out[0] * tint[0], 180, delta=1)
-        self.assertAlmostEqual(out[0] * tint[1], 60, delta=1)
+        self.assertAlmostEqual(tint[1], 0.25, places=6)
+        lum_c = 0.2126 * tint[0] + 0.7152 * tint[1] + 0.0722 * tint[2]
+        lum = mean @ np.array([0.2126, 0.7152, 0.0722])
+        red = [round(255 * float(dm._srgb_encode(np.array(v / lum_c)))) for v in lum]
+        self.assertEqual([out[0], out[4]], red)
+        self.assertEqual(out[8], red[1])  # off the disc: the outermost ring
+        self.assertEqual(list(out[1:4]), [round(red[0] * dm.WHEEL_BLUR_GLOSS), 255, 255])
 
 
 class Atlas(unittest.TestCase):
@@ -283,8 +306,12 @@ class Atlas(unittest.TestCase):
         rgba = t.render()
         x, y = (int(c * n) for c, n in zip(uvs[0], t.size))
         o = (y * t.size[0] + x) * 4
-        grey = 120 * fm.WHEEL_PAINT_SCALE["rim"]  # the rim's PaintScale, as the rim's texels
-        self.assertEqual(tuple(rgba[o : o + 4]), (round(grey), round(grey * dm.WHEEL_BLUR_GLOSS), 255, 255))
+        # The disc is the converted rim spinning: the rim texels (200 x the rim's PaintScale) over
+        # the spokes and nothing between them, so a ring is darker than the rim texel and not black.
+        rim = round(200 * fm.WHEEL_PAINT_SCALE["rim"])
+        red, green, blue, alpha = rgba[o : o + 4]
+        self.assertTrue(0 < red < rim, (red, rim))
+        self.assertEqual((green, blue, alpha), (round(red * dm.WHEEL_BLUR_GLOSS), 255, 255))
 
     def test_without_the_picture(self):
         t = self.plan({fm.WHEEL})

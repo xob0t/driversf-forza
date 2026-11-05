@@ -245,8 +245,8 @@ WHEEL_BLUR_LIFT = 0.003  # m in front of the rim face
 # converted rim's 0.56 the faded-in disc came out darker than the rim it covers (370Z in game:
 # mean grey of the wheel face 90 at rest, 70 at 60 mph; the vanilla 370Z's 103 and 146).
 # TODO(fit, #407): vanilla's convention and a 370Z shot; the derived rule (forza-lamps-blur-re.md
-# 2.4) gives each ring the rim's mean AO there, together with the disc texels from the rim's own
-# rotational mean, which are made in dsf_materials (wheel_blur_texels).
+# 2.4) gives each ring the rim's mean AO there, as the disc texels take the rim's own rotational
+# mean (dsf_materials.Texturing._wheel_blur_ramp).
 WHEEL_BLUR_SKY = 0.9
 # Barycentric samples of each triangle for the rim face's envelope: corners, edge midpoints,
 # centroid.
@@ -331,9 +331,9 @@ def wheel_blur_section(sections, lods, centre=(0.0, 0.0, 0.0)) -> carbin.Section
 
     from dsfforza.convert import forza_materials as fm
 
-    # TODO(fit, #407, #419): UV0 samples Forza's wheel2.xds picture, laid out unlike the
-    # converted rim on some cars; the derived disc is a radial ramp of the rim's own rotational
-    # mean (forza-lamps-blur-re.md 2.4).
+    # UV0 maps the disc onto the slot of Forza's blur picture, where dsf_materials writes the
+    # radial ramp of the converted rim's rotational mean (Texturing._wheel_blur_ramp,
+    # forza-lamps-blur-re.md 2.4); the map only places the disc in that slot.
     picture = blur_picture_map(sections)
     _, cy, cz = centre  # the face's x is the model's own
     weights = np.array(_FACE_SAMPLES)
