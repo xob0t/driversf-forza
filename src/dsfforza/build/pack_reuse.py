@@ -186,9 +186,21 @@ class Earlier:
 class PackReuse:
     """The pack's reuse of earlier builds' packs (see the module docstring)."""
 
-    def __init__(self, out_dir: Path, sources: list[Path], settings: dict, log=print, game_dir: Path | None = None):
-        """`game_dir`: the game folder the build reads its vanilla files from (moved_inputs)."""
+    def __init__(
+        self,
+        out_dir: Path,
+        sources: list[Path],
+        settings: dict,
+        log=print,
+        game_dir: Path | None = None,
+        store=None,
+    ):
+        """`game_dir`: the game folder the build reads its vanilla files from (moved_inputs).
+        `store`: the car store (carstore.Store), whose garage pictures and images are taken
+        after the earlier builds' and which gets this pack's."""
         self.out_dir = Path(out_dir)
+        self.store = store
+        self.store_fps: dict[str, dict] = {}  # the store's pack fingerprints of what was taken from it
         self.game_dir = Path(game_dir) if game_dir is not None else None
         self.settings = settings
         self.log = log
@@ -388,6 +400,8 @@ class PackReuse:
         for e in self.used:
             old = rename_inputs(e.record.get("fingerprint") or {}, e.moved)
             fp = old if fp is None else fingerprint.combine(fp, old)
+        for old in self.store_fps.values():
+            fp = old if fp is None else fingerprint.combine(fp, old)
         record = {
             "format": FORMAT,
             "settings": self.settings,
@@ -409,6 +423,24 @@ class PackReuse:
         temp = path.with_name(RECORD + ".tmp")
         temp.write_text(json.dumps(record, default=str) + "\n", encoding="utf-8")
         temp.replace(path)
+        if self.store is not None and fp and fp.get("complete") and not gui_error:
+            self.keep_in_store(fp)
+
+    def moved_in(self, fp: dict) -> dict[str, str]:
+        return moved_inputs(fp, self.checker, self.game_dir)
+
+    def keep_in_store(self, fp: dict) -> None:
+        """This pack's garage pictures and images into the car store, under its fingerprint."""
+        digest = self.store.put_pack(fp)
+        for media, entry in self.pictures.items():
+            name = f"dsfforza_{media.lower()}"
+            dds, png = self.out_dir / FOLDER / PICTURES / f"{name}.dds", self.out_dir / "gui" / f"{name}.png"
+            if entry.get("key") and dds.is_file() and png.is_file():
+                self.store.put_picture(entry["key"], dds, png, entry.get("source", "render"), digest)
+        for key, name in self.images.items():
+            path = self.out_dir / FOLDER / IMAGES / name
+            if path.is_file():
+                self.store.put_image(key, path, digest)
 
     def forget(self) -> None:
         """No record (the pack failed or is not reusable): a later build makes a full pack."""
@@ -452,7 +484,20 @@ class PictureCache:
             self.pack.pictures[car["media"]] = entry
             self.pack.stats["pictures_reused"] += 1
             return dds, png, entry.get("source", "render")
-        return None
+        store = self.pack.store
+        hit = store.picture(key, self.pack.checker, self.pack.moved_in) if store is not None else None
+        if hit is None:
+            return None
+        dds_path, png_path, source, fp = hit
+        try:
+            dds, png = dds_path.read_bytes(), png_path.read_bytes()
+            link_or_copy(dds_path, self.pack.out_dir / dds_rel)
+        except OSError:  # evicted meanwhile
+            return None
+        self.pack.store_fps.setdefault(fingerprint.digest_of(fp), fp)
+        self.pack.pictures[car["media"]] = {"key": key, "source": source}
+        self.pack.stats["pictures_reused"] += 1
+        return dds, png, source
 
     def put(self, car: dict, extra: dict, dds: bytes, png: bytes, source: str) -> None:
         key = self.key(car, extra)
@@ -490,6 +535,21 @@ class PictureCache:
                 self.pack.images[key] = name
                 if e not in self.pack.used:
                     self.pack.used.append(e)
+        store = self.pack.store
+        for key, (path, fp) in (store.images(self.pack.checker, self.pack.moved_in) if store else {}).items():
+            if key in out:
+                continue
+            name = path.stem + ".bin"
+            rel = f"{FOLDER}/{IMAGES}/{name}"
+            try:
+                out[key] = unpack_image(Image, path.read_bytes())
+                link_or_copy(path, self.pack.out_dir / rel)
+            except (OSError, ValueError, zlib.error):
+                out.pop(key, None)
+                continue
+            self.pack.images[key] = name
+            self.pack.store_fps.setdefault(fingerprint.digest_of(fp), fp)
+            store.stats["images_hit"] += 1
         self.pack.stats["images_reused"] = len(out)
         return out
 

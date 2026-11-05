@@ -104,6 +104,8 @@ def main(argv: list[str]) -> int:
     # The tests' builds and renders take slots of a job pool of their own, not the PC's
     # (src/dsfforza/build/jobpool.py): a full pool would make them wait.
     os.environ.setdefault("DSFFORZA_POOL", tempfile.mkdtemp(prefix="dsfforza-test-pool-"))
+    # Nor the PC's car store (carstore.py): the tests' stand-in cars would land in it.
+    os.environ.setdefault("DSFFORZA_STORE", "off")
     verbose = "-v" in argv
     words = [a for a in argv if not a.startswith("-")]
     linted = lint() if "--no-lint" not in argv else True

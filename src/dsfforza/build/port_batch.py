@@ -1553,6 +1553,7 @@ def cmd_plan(args) -> None:
 
 
 WORK_FILES = ("chnk", "json", "job.json", "log", "fp.json", "first-try.json", "first-try.log", "first-try.fp.json")
+STORE = "car store"  # Reuse.taken_from for a car taken from the car store
 
 
 class Reuse:
@@ -1564,24 +1565,28 @@ class Reuse:
     of the reused cars again and stops the build if any comes out different.
     --reuse may be given more than once: each car is taken from the first build that
     has a matching copy of it (src/dsfforza/build/install.py passes the last finished
-    build and an interrupted one)."""
+    build and an interrupted one). After them, the car store every worktree shares
+    (`store`, src/dsfforza/build/carstore.py), checked the same way."""
 
-    def __init__(self, args, work: Path):
+    def __init__(self, args, work: Path, store=None):
         from dsfforza.build import fingerprint
 
-        given = args.reuse if isinstance(args.reuse, list | tuple) else [args.reuse]
+        given = args.reuse if isinstance(args.reuse, list | tuple) else [args.reuse] if args.reuse else []
         self.sources = [Path(s) for s in given]
+        self.store = store
         for source in self.sources:
             if not (source / "work").is_dir():
                 raise SystemExit(f"--reuse {source}: no work/ folder there")
             if (source / "work").resolve() == work.resolve():
                 raise SystemExit("--reuse names this build's own --out (use --resume for that)")
-        self.source = self.sources[0]
-        self.old = self.source / "work"
+        self.source = self.sources[0] if self.sources else None
         self.work = work
         self.where = getattr(args, "rebuild_where", None)
         self.trust_code = getattr(args, "trust_code", False)
-        self.verify_count = getattr(args, "verify_reuse", 2)
+        # --verify-reuse: default 2 with --reuse, none for store hits alone (a store hit is
+        # an earlier build of the same commit, on this PC; --verify-reuse N asks for N).
+        count = getattr(args, "verify_reuse", None)
+        self.verify_count = count if count is not None else (2 if self.sources else 0)
         self.seed = getattr(args, "verify_seed", None)
         self.checker = fingerprint.Checker()
         self.taken: dict[str, dict] = {}
@@ -1629,6 +1634,15 @@ class Reuse:
             if report is not None:
                 return report, source, ""
             first_why = first_why or why
+        if self.store is not None:
+            entry, why = self.store.find(job, self.checker, code=not self.trust_code)
+            if entry is not None and self.where:
+                report = entry.report() or {}
+                if self._predicate(report, job):
+                    entry, why = None, "--rebuild-where"
+            if entry is not None:
+                return None, entry, ""
+            first_why = first_why or why
         return None, None, first_why or "not built there"
 
     def _decide_in(self, old: Path, job: dict) -> tuple[dict | None, str]:
@@ -1659,6 +1673,14 @@ class Reuse:
 
         report, source, why = self.decide_from(job)
         media = job["media"]
+        if source is not None and not isinstance(source, Path):  # a car store entry
+            report = self.store.take(source, self.work, Path(job["sound_dir"]))
+            if report is None:
+                self.rebuilt[media] = "store: the entry went meanwhile"
+                return None
+            self.taken[media] = report
+            self.taken_from[media] = STORE
+            return {**report, "reused_from": STORE}
         if report is None:
             self.rebuilt[media] = why
             return None
@@ -1677,8 +1699,13 @@ class Reuse:
         return {**report, "reused_from": str(source)}
 
     def summary(self) -> None:
-        names = ", ".join(str(s) for s in self.sources)
-        print(f"--reuse {names}: {len(self.taken)} cars reused, {len(self.rebuilt)} to build")
+        names = ", ".join([str(s) for s in self.sources] + ([f"the car store {self.store.root}"] if self.store else []))
+        stored = sum(1 for m in self.taken if self.taken_from.get(m) == STORE)
+        print(
+            f"reuse from {names}: {len(self.taken)} cars reused"
+            + (f" ({stored} from the store)" if self.store else "")
+            + f", {len(self.rebuilt)} to build"
+        )
         reasons: dict[str, list[str]] = {}
         for media, why in self.rebuilt.items():
             reasons.setdefault(why, []).append(media)
@@ -1786,7 +1813,15 @@ class Reuse:
     def record(self) -> dict:
         """For batch-report.json (timings_s.reuse)."""
         return {
-            "from": str(self.source),
+            "from": str(self.source) if self.sources else STORE,
+            **(
+                {
+                    "store": str(self.store.root),
+                    "from_store": sorted(m for m, s in self.taken_from.items() if s == STORE),
+                }
+                if self.store
+                else {}
+            ),
             **({"sources": [str(s) for s in self.sources]} if len(self.sources) > 1 else {}),
             "reused": sorted(self.taken),
             "rebuilt": self.rebuilt,
@@ -1881,7 +1916,12 @@ def cmd_build(args) -> None:
         for p in picks
     ]
     reused = {}
-    reuse = Reuse(args, work) if getattr(args, "reuse", None) else None
+    from dsfforza.build import carstore
+
+    # The car store every worktree on the PC shares (carstore.py): cars converted anywhere
+    # from the same job, inputs and code are taken, not converted again.
+    store = None if getattr(args, "no_store", False) else carstore.Store.default()
+    reuse = Reuse(args, work, store) if getattr(args, "reuse", None) or store is not None else None
     t = time.time()
     for job in jobs:  # results of an earlier run: reuse (--resume, --reuse) or drop
         old_job, old_report = work / f"{job['media']}.job.json", Path(job["report"])
@@ -1918,7 +1958,11 @@ def cmd_build(args) -> None:
         + ")"
         + (
             f"; {len(reused)} reused"
-            + (f" from {', '.join(map(str, reuse.sources))}" if reuse is not None else " from the last run")
+            + (
+                f" from {', '.join([*map(str, reuse.sources), *([STORE] if reuse.store else [])])}"
+                if reuse is not None and reuse.taken
+                else " from the last run"
+            )
             if reused
             else ""
         )
@@ -1966,6 +2010,17 @@ def cmd_build(args) -> None:
                 results[media] = json.loads(fresh.read_text(encoding="utf-8"))
         args.reuse_record = reuse.record()
 
+    if store is not None:
+        # The cars this build converted, and those it took from elsewhere (--reuse, --resume),
+        # go into the store for every other build (the same car is kept once).
+        t = time.time()
+        for job in jobs:
+            if results.get(job["media"], {}).get("ok") and (
+                reuse is None or reuse.taken_from.get(job["media"]) != STORE
+            ):
+                store.put(work, job["media"], Path(job["sound_dir"]))
+        store.evict()
+        timings["store"] = round(time.time() - t, 1)
     ok = [results[p.media] for p in picks if results.get(p.media, {}).get("ok")]
     failed = [results[p.media] for p in picks if not results.get(p.media, {}).get("ok")]
     failed += [{"media": p.media, "ok": False, "cause": "not selected", "error": "; ".join(p.notes)} for p in skipped]
@@ -1976,7 +2031,7 @@ def cmd_build(args) -> None:
         # This folder's own earlier pack (--resume, a rerun) and the --reuse builds'.
         settings = pack_reuse.settings_of(args, dsf, root_limit, gui_isos(args))
         pack = pack_reuse.PackReuse(
-            out_dir, reuse.sources if reuse is not None else [], settings, game_dir=game_from_dsf(dsf)
+            out_dir, reuse.sources if reuse is not None else [], settings, game_dir=game_from_dsf(dsf), store=store
         )
     try:
         finish(args, dsf, out_dir, work, ok, failed, port_args, port_options, timings, started, results, pack)
@@ -2551,9 +2606,10 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument(
                 "--verify-reuse",
                 type=int,
-                default=2,
+                default=None,
                 metavar="N",
-                help="with --reuse: build N random reused cars again and stop if any differs (default 2; 0: off)",
+                help="build N random reused cars again and stop if any differs (default 2 with --reuse, "
+                "0 for cars from the car store alone; 0: off)",
             )
             p.add_argument("--verify-seed", type=int, help="the random seed of --verify-reuse (default: random)")
             p.add_argument(
@@ -2562,6 +2618,12 @@ def build_parser() -> argparse.ArgumentParser:
                 default="stop",
                 help="when --verify-reuse finds a car that differs: stop the build (default), or use the fresh "
                 "copy and convert the other cars reused from the same build again (dsff install)",
+            )
+            p.add_argument(
+                "--no-store",
+                action="store_true",
+                help="neither take cars from the car store all worktrees share nor put this build's in "
+                "(src/dsfforza/build/carstore.py; DSFFORZA_STORE=off does the same)",
             )
             p.add_argument(
                 "--no-pack-reuse",
