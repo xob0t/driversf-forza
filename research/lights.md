@@ -38,7 +38,9 @@ later PR replaced a rule, the earlier section says so in one line.
   behind them (for a reflector, inside its outline), else with a lamp of
   their own Forza section, else (lenses and covers) with a lamp whose
   outline overlaps theirs, else stay unlit. Front reflectors never light
-  ([#174](#clear-covers-over-reflectors-with-no-lamp-issue-174)).
+  ([#174](#clear-covers-over-reflectors-with-no-lamp-issue-174)). On FH1 cars
+  this is decided before the stop lamps split off their tails, and a part
+  keeps that lamp ([#558](#centre-lamps-and-the-high-stop-lamp-issue-430)).
 - Last, what each rear triangle is drawn with (the mean of the baked
   atlas's texels under it, `lights.seen_sampler`): an indicator lamp drawn
   90% red brakes and indicates (0x19/0x1A), and any other triangle drawn red
@@ -2958,8 +2960,14 @@ rear tail lamp triangle Forza lights only when braking is a stop lamp (0x02), at
 sides alike, and a red lens takes the state of the tail lamps behind it, per lens piece: a piece
 whose lamps behind are all brake only is a stop lamp, its triangles over no lamp included (the CTS-V
 coupe 11's wide lens over a narrow `tail_light` strip) (`_brake_only`, `FH1_BRAKE_ONLY`; #422 item 3).
-Side effect, open: clear lenses and reflectors take the nearest lamp centre (`_place_clear`), so on 23
-FH1 cars some move from a reverse or indicator lamp onto a tail cluster the stop lamps split off (#558). On FM4 cars master's rule stays, `TODO(fit, #512)`: the centre tail
+Clear lenses, covers and reflectors are placed on the plan as it was before that split
+(`_placed_before_split`, #558): which lamp a clear part belongs to is where it is, and braking only is a
+lamp state, not a place. A part whose lamp did not split takes the lamp that lamp's triangles are in
+now; a part of a lamp that split into a stop and a tail lamp keeps the nearest-centre choice of
+`_place_clear`. Before, the nearest lamp centre moved with the split: a red lens over no lamp kept its
+tail type, split off as a small tail cluster, and the clear parts beside it went from the reverse or
+indicator lamp they surround onto it, glowing while rolling (23 FH1 cars: MC12 Corsa 521 triangles,
+C63 AMG 12 378, California 116). On FM4 cars master's rule stays, `TODO(fit, #512)`: the centre tail
 lamps whose mean height is `HIGH_BRAKE_RISE` (8 cm) above the side tails' brake only. Four geometric
 replacements were
 tried in #430's worktree (lowest corner above every other tail; mean height above the others',
