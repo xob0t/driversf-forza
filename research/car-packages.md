@@ -892,6 +892,55 @@ Not covered: a Shift preload (it goes through the same request path,
 FUN_005A7860, and the same slot load, so it takes the same async read), and
 a real hard disk.
 
+## The rename to dsfcars (#564)
+
+The game-side runtime took a generic name; the repo, the `dsfforza` package, the converter,
+the `.dsfcar` format and the package keys (`forza.<game>.<media>`) kept theirs.
+
+| Before | Now |
+| --- | --- |
+| `plugins\dsfforza.asi`, `.ini`, `.log` (the plugin names its ini and log after itself, `patch.cpp`) | `plugins\dsfcars.asi`, `.ini`, `.log`; ini section `[dsfcars]` |
+| `<game>\dsfforza\cars\`, `dsfforza\generated\` (`[archive] packages_list`, `redirect_list`) | `<game>\dsfcars\cars\`, `dsfcars\generated\` |
+| `Common\UserLuaScripts\dsfforza\` (register.lua, config.lua, packages*.lua, chained-bootstrap.lua) | `Common\UserLuaScripts\dsfcars\` |
+| `<game>\dsfforza-backup\install.json` | `<game>\dsfcars-backup\install.json` |
+| `<savegames>\dsfforza-garage.dat` (`[garage] side_file`) | `dsfcars-garage.dat`; the plugin reads the old file while the new one is missing (`side_read`), and the next save writes the new one |
+| `DSFFORZA-CAPABILITIES:` (patch.h) | `DSFCARS-CAPABILITIES:`; `car_manager` names a plugin with the old marker as one from before the rename |
+| register.lua's overflow maker group `FORZA`, `FORZA 2` ... | `ADDED CARS`, `ADDED CARS 2` ... |
+
+**The overflow group's name is free (confirmed-static).** The garage files cars by the first
+15 characters of `ManufacturerName` and builds its groups from `vehicleStats` at each start
+(FUN_006C57D0, asi.md "Garage list"); plain names don't render (the badge comes from the
+group's first car); the save keeps unlocked and owned flags per model ID (the profile bit
+arrays and the side file), never per group.
+
+**The migration** (`tools\install.ps1 -Migrate`, `dsff install --migrate`, and first in every
+Install and -Uninstall over an old-named install; INSTALL.md "Installs from before the rename to
+dsfcars"): `dsfforza-backup\` → `dsfcars-backup\` and the record's paths renamed (the old
+plugin's entries marked `done: migrated`); `plugins\dsfforza.asi`, `.ini` and `.log` deleted;
+`dsfforza\` → `dsfcars\` and the paths in `cars.txt` and `generated\redirect.txt`;
+`Common\UserLuaScripts\dsfforza\` → `...\dsfcars\`; then this checkout's plugin, ini,
+register.lua and (when it is ours) bootstrap.lua, updating the record's entries in place so
+an uninstall still restores what the first install replaced. A folder moves in one rename;
+when both names exist (a move that stopped) it moves file by file, dropping identical copies
+and stopping on a file that differs. The record says `"migration": "started"` until the end,
+so a run that stopped after the last folder moved is still found. `-Uninstall` does the same
+without the last step. `car_manager` refuses an old-named install (`old_layout`) and names
+`-Migrate`; the player bootstrap skips a chained bootstrap's `user_open` of
+`dsfforza\register.lua` as it does `dsfcars\register.lua`.
+
+**Checked** (2026-11-05): `tests/test_install_packages.py` (an old-named package install made
+from a fresh one, migrated, migrated again, interrupted in two places, uninstalled, installed
+over; a v0.1.8 merged install of the old names moved to packages); a real old-named install in
+`out\mig-game` (copies of `out\vanilla`'s files): master 0318c631's install.ps1 and
+dsfforza.asi installed three packages of `out\build-pkg` (BMW M3 E30 1, RX-7 2, Supra 3), then
+master's car manager removed the RX-7 (ID 2 reserved). `-Migrate`: `manager.json` the same
+bytes, `car_manager status` 1, 3 and 2 reserved, `verify` ok, the lists' paths under
+`dsfcars\`, a second `-Migrate` "Nothing to migrate". With a file in the old Lua folder held
+open the move stopped at step 4 (record `started`); the next run finished it. `-Uninstall`
+straight from the old names left the vanilla files and `dsfcars\cars\manager.json`; an install
+over the old names migrated, refused without `-Force`, and with it gave the RX-7 its ID 2 back.
+In game: RUN_PLACEHOLDER
+
 ## Phased plan (PRs)
 
 1. **Plugin loader** (the spike's code, proven for one car): build and offline test

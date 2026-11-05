@@ -4,7 +4,7 @@
 local Bootstrapper = {}
 
 function Bootstrapper.Init()
-	print("[dsfforza] bootstrap init (asi test)")
+	print("[dsfcars] bootstrap init (asi test)")
 end
 
 function Bootstrapper.Launch()
@@ -15,7 +15,7 @@ function Bootstrapper.Launch()
 end
 
 function Bootstrapper.Shutdown()
-	print("[dsfforza] bootstrap shutdown")
+	print("[dsfcars] bootstrap shutdown")
 end
 
 return Bootstrapper

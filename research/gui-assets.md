@@ -1247,7 +1247,7 @@ The compare renders' terms in `car_render.py` (`dsf_shading`, `DSF_SPECULAR`,
    (`ManufacturerDataList` and three more) that hold 40 entries. With the
    plugin, register.lua gave the new makers their own groups (49), and the
    41st maker's string set read through NULL at 0x00ACE11F (caught with
-   `[dsfforza] crash_log=1`, run `-101840`). dsfcars.asi now grows those
+   `[dsfcars] crash_log=1`, run `-101840`). dsfcars.asi now grows those
    lists to `max_groups` when the menu is filled and skips a missing element
    (asi.md, "Garage and save"). In game with the shipped ini (`max_groups=120`)
    and this set's emblem data: 49 makers listed and the last one opened with

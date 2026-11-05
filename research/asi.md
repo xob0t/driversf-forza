@@ -25,7 +25,7 @@ build); should a write still fail, the part already written is undone.
 `plugins\dsfcars.log` lists what was applied. `[<module>]
 enabled=0` in `dsfcars.ini` switches a module off.
 
-Crash hunts: `[dsfforza] crash_log=1` (default 0) adds a vectored exception
+Crash hunts: `[dsfcars] crash_log=1` (default 0) adds a vectored exception
 handler that logs each of the first 12 faults (first chance: also ones the
 game handles itself) with registers and the Driver.exe return addresses on
 the stack. DriverNGHook's fatal-error dialog often leaves no minidump.
@@ -412,7 +412,7 @@ so `register.lua` sees no plugin at all.
 **Package cars only when they are loaded (#511).** `register.lua` takes
 the cars of `packages.lua` (and reads `packages_hud.lua`) only when k = 2
 is true, and of those only the IDs whose k = 0x4000 + id is true. Without
-the plugin (no ASI loader, blocked, `[dsfforza] enabled=0`, an exe it
+the plugin (no ASI loader, blocked, `[dsfcars] enabled=0`, an exe it
 doesn't patch) or with its packages off, it registers no package car: no
 `vehicleStats` entry, garage card, traffic region entry or HUD entry, and
 logs one line ("dsfcars.asi is not active: the N installed cars are not
@@ -458,7 +458,7 @@ found that the game's Lua numbers are single floats ("number out of range
 **The garage crash with 40 added cars (fixed; confirmed-runtime).** With
 out/testdrive3 (IDs 1 to 40, many new makers) and `[garage]` on, opening the
 garage ended in DriverNGHook's fatal-error dialog without a minidump (runs
-`host-20261023-080433`, `-080858`, `-081321`). `[dsfforza] crash_log=1`
+`host-20261023-080433`, `-080858`, `-081321`). `[dsfcars] crash_log=1`
 (a vectored handler in `main.cpp` that logs faults, registers and the
 Driver.exe return addresses on the stack) caught it in run `-101840`:
 `C0000005 at 00ACE11F (read 00000000)`, called from 0x006C6ACD with edi =
