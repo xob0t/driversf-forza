@@ -634,6 +634,8 @@ budget formula (above).
 
 ## 6. Design: traffic settings in the car manager (revised for the whole pool)
 
+(Written before 2a. Changed since by the owner: ports are added, never put in place of vanilla models; the set's weights get a mode, vanilla, equal or custom; the budget uses the raised slot count of sections 4 and 5. The car manager PR updates this section.)
+
 The car manager controls both kinds of traffic. **Ambient traffic** is the
 main part: about 80 cars from the chapter's set, with a patched AI file
 served by the plugin's redirect list (section 1b). **IVs** are secondary:
