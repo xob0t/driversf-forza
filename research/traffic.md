@@ -755,7 +755,9 @@ reads it only when the plugin has loaded the packages (#511):
 - `ports = false`: no automatic regions for the other cars;
 - `per_region` is `regionCars`.
 
-Every region stops at 128 IDs (#562).
+Every region stops at 128 IDs (#562). With `vanilla = false`, a region that holds no car is
+left empty. 0x007EC880 doesn't store a region with no IDs, so a player inside it gets the next
+stored region whose circle holds them (0x007EC170 takes the first one in order).
 
 **Other mods that change traffic.**
 
