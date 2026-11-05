@@ -576,6 +576,23 @@ def test_a_clear_lens_bar_joining_the_head_lamps_is_split_without_a_head_techniq
     assert sides == {(lights.HEAD, "L"), (lights.HEAD, "R")}, sides
 
 
+def test_fh1_reflector_keeps_the_lamp_of_its_unit_after_the_stop_split():
+    # #558: a rear reflector lights with the nearest lamp inside its outline, by lamp unit. The
+    # MC12 Corsa's reflector surrounds an indicator bulb; the tail lamp beside it is a large
+    # `tail_light` (now a stop lamp) and a small `taillight2S` near the reflector. Before #559 the
+    # tail lamp's centre lay far off and the reflector lit with the indicator; with the stop split,
+    # the small running part's own centre came nearer and the reflector glowed while rolling. By
+    # unit it keeps the indicator.
+    reflector = _box("taillightR", "textured_reflector", -0.80, -0.50, 0.50, 0.70, -2.05)
+    bulb = _box("taillightR2", "indicator_right", -0.70, -0.66, 0.55, 0.59, -2.02)
+    running = _box("taillightR3", "taillight2S", -0.56, -0.52, 0.66, 0.68, -2.02)
+    stop = _box("taillightR4", "tail_light", -0.95, -0.55, 0.30, 0.68, -2.02)
+    left = _box("taillightL", "tail_light", 0.55, 0.95, 0.30, 0.68, -2.02)
+    plan = lights.LampPlan.build([reflector, bulb, running, stop, left], _Place(), 0.0, fh1=True)
+    got = {plan.tri_lamp[(id(reflector.subsections[0]), k)][0] for k in range(2)}
+    assert got == {lights.INDICATOR}, got
+
+
 def test_fh1_brake_only_tail_lamps_are_stop_lamps():
     # #422 item 3, #430: on FH1 cars, Forza's lamp states decide. `tail_light` glows only when
     # braking (BrakeColor x brake), so its pieces are stop lamps (0x02) at the centre and the sides

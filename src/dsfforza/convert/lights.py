@@ -1150,14 +1150,17 @@ class LampPlan:
         _yellow_head_covers(records, yellow_front, from_lens)
         _red_lens_indicators(records, from_lens, red_indicators, red_by_texel)
         _joined_centre(records, reach)
+        names = {id(sub): s.name for s in sections for sub in s.subsections}
+        before = [r.function for r in records]
         if fh1:
             _brake_only(records, from_lens)
         else:
             _high_brake(records)
         plan._cluster(records)
-        plan._place_clear(
-            clear, records, red_by_texel, {id(sub): s.name for s in sections for sub in s.subsections}, front_reflectors
-        )
+        placed = None
+        if fh1 and any(r.function != f for r, f in zip(records, before)):
+            placed = plan._placed_before_split(records, before, clear, red_by_texel, names, front_reflectors)
+        plan._place_clear(clear, records, red_by_texel, names, front_reflectors, placed=placed)
         return plan
 
     def _cluster(self, records) -> None:
@@ -1190,7 +1193,38 @@ class LampPlan:
                     lamp.measure(r.lod, r.area, r.centre, r.normal)
                 self.tri_lamp[(id(r.sub), r.k)] = lamp.key
 
-    def _place_clear(self, clear, records, skip=frozenset(), sections=None, front_reflectors=()) -> None:
+    def _placed_before_split(self, records, before, clear, skip, sections, front_reflectors) -> dict:
+        """Where the clear lenses, covers and reflectors go when _brake_only has split FH1 tail lamps
+        into stop and tail lamps (#558). Which lamp a clear part belongs to is where it is, and the
+        split is a lamp state: the parts are placed (_place_clear) on the plan as it was before the
+        split (`before`: the records' functions); a part whose lamp didn't split takes the lamp its
+        lamp's triangles are in now. A part of a lamp that split into a stop and a tail lamp is left
+        to _place_clear (its nearest part, by their centres). {id(Tri): lamp key, or None for a part
+        the plan before the split left unlit}. Without it the nearest lamp
+        centre moved with the split: the Maserati MC12 Corsa's and Mercedes C63 AMG 12's rear
+        reflectors went from the indicator and reverse lamps they surround to the tail lamp left
+        beside them and glowed while rolling."""
+        import dataclasses
+
+        copies = [dataclasses.replace(r, function=f) for r, f in zip(records, before)]
+        pre = LampPlan()
+        pre._cluster(copies)
+        pre._place_clear(clear, copies, skip, sections, front_reflectors)
+        parts: dict = {}  # lamp key before the split -> [(triangle centre, lamp key now)]
+        for r in records:
+            old, new = pre.tri_lamp.get((id(r.sub), r.k)), self.tri_lamp.get((id(r.sub), r.k))
+            if old is not None and new is not None:
+                parts.setdefault(old, []).append((r.centre, new))
+        out = {}
+        for r in (*clear, *front_reflectors):
+            old = pre.tri_lamp.get((id(r.sub), r.k))
+            if old is None:
+                out[id(r)] = None
+            elif old in parts and len({k for _, k in parts[old]}) == 1:
+                out[id(r)] = parts[old][0][1]
+        return out
+
+    def _place_clear(self, clear, records, skip=frozenset(), sections=None, front_reflectors=(), placed=None) -> None:
         """What clear lenses, lamp covers baked as lenses and rear reflectors light with: a lamp
         that lies behind them, seen along the car's axis. They used to light with the nearest
         lamp within CLEAR_LENS_REACH, so a cover over a reflector with no lamp of its own lit
@@ -1213,6 +1247,9 @@ class LampPlan:
           bulbs); a lens or cover piece, else with one whose outline along z overlaps its own
           within CLEAR_LENS_REACH (the Dodge SRT-4's head lamp lens, wrapped round its bulb);
           else it stays unlit.
+
+        placed: {id(Tri): lamp key or None} decided on the plan before the FH1 stop split
+        (_placed_before_split), used in place of the choices here.
 
         Lamp centres for "nearest" leave out the lens triangles that are red by their texels
         (`skip`, record indices): with them a tail lamp's centre moved onto its red lens and
@@ -1361,6 +1398,10 @@ class LampPlan:
             if inside:
                 for r in rs:
                     key = nearest(inside, r)
+                    if placed is not None and id(r) in placed:  # placed before the stop split
+                        key = placed[id(r)]
+                        if key is None:
+                            continue
                     if not r.front:
                         self.tri_lamp[(id(r.sub), r.k)] = key
                         options[id(r)] = (inside, rs)
@@ -1384,6 +1425,8 @@ class LampPlan:
             behind = set(got.values()) or same_section(rs) or overlapping(rs, corners, keys)
             for r in rs:
                 key = got.get(id(r)) or (nearest(behind, r) if behind else None)
+                if placed is not None and id(r) in placed:  # placed before the stop split
+                    key = placed[id(r)]
                 if key is not None:
                     self.tri_lamp[(id(r.sub), r.k)] = key
                     options[id(r)] = (behind | set(got.values()), rs)
