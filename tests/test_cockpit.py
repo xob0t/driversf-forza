@@ -1003,3 +1003,13 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
             print("ok", name)
+
+
+def test_virtual_tach_ends_on_a_major_mark():
+    def tach(redline):
+        return displays.virtual_scale("tach", types.SimpleNamespace(redline=redline))[:2]
+
+    assert tach(7200) == (8000.0, 1000.0)
+    assert tach(10000) == (10000.0, 1000.0)
+    assert tach(11000) == (12000.0, 2000.0)  # past 10,000 rpm the marks are 2,000 apart
+    assert tach(10500) == (12000.0, 2000.0)

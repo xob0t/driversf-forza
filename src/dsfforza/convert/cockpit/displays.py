@@ -303,8 +303,8 @@ def virtual_scale(family: str, forza) -> tuple[float, float, float, float | None
         dial = step * math.ceil(top / step)
         return dial, step, step / 2, None
     redline = getattr(forza, "redline", 0.0) or FALLBACK_DIAL_MAX["tach"]
-    dial = 1000.0 * math.ceil(redline / 1000)
-    major = 1000.0 if dial <= 10000 else 2000.0
+    major = 1000.0 if redline <= 10000 else 2000.0
+    dial = major * math.ceil(redline / major)  # the first major mark at or past the redline
     return dial, major, major / 2, redline
 
 
