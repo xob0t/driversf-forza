@@ -15,6 +15,7 @@ from dsfforza.convert.cockpit.geometry import (
     DISPLAY_COLOUR,
     DISPLAY_FACE,
     FALLBACK_DIAL_MAX,
+    FLAT_COCKPIT,
     GAUGE_IDS,
     GAUGE_UNITS,
     CockpitFit,
@@ -30,7 +31,7 @@ from dsfforza.convert.cockpit.geometry import (
     _sub,
     section_points,
 )
-from dsfforza.convert.cockpit.hierarchy import HAND_GRIP_DEG, GaugeSight, camera_eye
+from dsfforza.convert.cockpit.hierarchy import ARMS_GRIPS, GaugeSight, camera_eye
 from dsfforza.convert.cockpit.visibility import _raster, _screen_parts
 from dsfforza.formats import carbin
 
@@ -57,10 +58,7 @@ VIRTUAL_NEEDLE_COLOURS = {
     "dsf_needle": (252, 45, 8, 255),  # Forza's needle swatch (interior_LOD0)
     "dsf_needle_hub": (40, 40, 42, 255),
 }
-VIRTUAL_SPEED_MIN = 120.0  # mph: smallest virtual speedometer scale
-VIRTUAL_TACH_MIN = 6000.0  # rpm
 VIRTUAL_SOURCE = "virtual dial"  # GaugeCalibration.source of a virtual dial
-VIRTUAL_DARK_MARKS = 100.0  # display luminance (0..255) above which the marks are dark
 FACE_FRONT_DEPTH = 0.02  # m: digital patches this near a face's plane may stand in front of it
 _SEGMENTS = {  # seven-segment digits: a top, b upper right, c lower right, d bottom, e lower left, f upper left, g middle
     "0": "abcdef",
@@ -186,6 +184,33 @@ def luminance(colour) -> float:
     return 0.299 * colour[0] + 0.587 * colour[1] + 0.114 * colour[2]
 
 
+def relative_luminance(colour) -> float:
+    """WCAG 2 relative luminance of an sRGB colour (0..255): Rec. 709 weights on the
+    linearised channels."""
+
+    def linear(c):
+        c = c / 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (linear(c) for c in colour[:3])
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast(a, b) -> float:
+    """WCAG 2 contrast ratio of two sRGB colours: (L1 + 0.05) / (L2 + 0.05), L1 the lighter."""
+    la, lb = relative_luminance(a), relative_luminance(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+def mark_technique(face) -> str:
+    """The dial marks' colour on a display of colour `face`: whichever of the two mark
+    colours (FLAT_COCKPIT dsf_dial_mark, dsf_dial_mark_dark) contrasts more with it."""
+    light, dark = (
+        next(c for p, c in FLAT_COCKPIT if p.pattern == f"^{t}$") for t in ("dsf_dial_mark", "dsf_dial_mark_dark")
+    )
+    return "dsf_dial_mark_dark" if contrast(face, dark) > contrast(face, light) else "dsf_dial_mark"
+
+
 def blank_displays(static: dict, eye, faces: bool = False, atlas=None) -> list[Display]:
     """digital_gauge patches (triangles sharing a vertex position within 1 cm)
     in the cabin sections, not on the steering wheel (needles don't turn with
@@ -268,15 +293,18 @@ def pick_display(displays: list[Display], sight: GaugeSight | None, eye) -> tupl
 
 def virtual_scale(family: str, forza) -> tuple[float, float, float, float | None]:
     """(dial max, major step, minor step, red zone start) for a virtual dial,
-    from the Forza car (handling.ForzaCar: top speed, redline) or None."""
+    from the Forza car (handling.ForzaCar: top speed, redline) or None. The scale
+    ends at the first major mark at or past the car's top speed, or its redline:
+    VO3D p605 stops the speedometer there (fit.gauge_params), and DSF's rpm stops at
+    the redline (p42). Without Forza's figures, FALLBACK_DIAL_MAX."""
     if family == "speed":
         top = getattr(forza, "top_speed_mph", 0.0) or FALLBACK_DIAL_MAX["speed"]
-        step = 20.0 if top * 1.05 <= 160 else 40.0
-        dial = max(VIRTUAL_SPEED_MIN, step * math.ceil(top * 1.05 / step))
+        step = 20.0 if top <= 160 else 40.0
+        dial = step * math.ceil(top / step)
         return dial, step, step / 2, None
-    redline = getattr(forza, "redline", 0.0) or FALLBACK_DIAL_MAX["tach"] - 1000
-    dial = max(VIRTUAL_TACH_MIN, 1000.0 * math.ceil((redline + 250) / 1000))
-    major = 1000.0 if dial <= 10000 else 2000.0
+    redline = getattr(forza, "redline", 0.0) or FALLBACK_DIAL_MAX["tach"]
+    major = 1000.0 if redline <= 10000 else 2000.0
+    dial = major * math.ceil(redline / major)  # the first major mark at or past the redline
     return dial, major, major / 2, redline
 
 
@@ -311,9 +339,12 @@ def virtual_dial(d: Display, cell: tuple, family: str, forza, version: int):
     drawn at the sweep the gauge table can hold (whole degrees per unit)."""
     u0, u1, v0, v1 = cell
     w, h = (u1 - u0) * (1 - 2 * VIRTUAL_INSET), (v1 - v0) * (1 - 2 * VIRTUAL_INSET)
-    r240, r180 = min(w / 2, h / 1.5), min(w / 2, h / 1.12)
-    span, r = (180.0, r180) if r180 > r240 * 1.15 else (240.0, r240)
-    below = 0.5 * r if span == 240.0 else 0.12 * r  # extent under the pivot (arc ends, hub)
+    # Extent under the pivot: a 240-degree dial's arc ends reach r cos 60 = 0.5 r below
+    # it; a 180-degree dial's lowest part is its hub (0.08 r; the needle at rest lies
+    # along the pivot's line, 0.035 r wide).
+    r240, r180 = min(w / 2, h / 1.5), min(w / 2, h / 1.08)
+    span, r = (180.0, r180) if r180 > r240 else (240.0, r240)
+    below = 0.5 * r if span == 240.0 else 0.08 * r
     pu = (u0 + u1) / 2
     pv = (v0 + v1) / 2 - (r + below) / 2 + below
     dial_max, major, minor, red = virtual_scale(family, forza)
@@ -387,7 +418,7 @@ def virtual_dial(d: Display, cell: tuple, family: str, forza, version: int):
                 corners = [(bx0, by0), (bx1, by0), (bx1, by1), (bx0, by1)]
                 marks.append(([d.point(x0 + x, y0 + y, VIRTUAL_MARK_LIFT) for x, y in corners], nrm))
         k += 1
-    mark = "dsf_dial_mark_dark" if luminance(d.colour) > VIRTUAL_DARK_MARKS else "dsf_dial_mark"
+    mark = mark_technique(d.colour)
     face = _dial_section(f"dsf_dial_{family}", version, {mark: marks, "dsf_dial_red": reds})
     # The needle at rest (0 mph / 0 rpm) and its hub; the engine turns both about the pivot.
     outline = ((-0.16 * r, -0.035 * r), (0.9 * r, -0.008 * r), (0.9 * r, 0.008 * r), (-0.16 * r, 0.035 * r))
@@ -425,7 +456,6 @@ POD_LIFT = 0.004  # m: the housing's front in front of the nearest dash point be
 POD_DEPTH = 0.15  # m: the most the dashboard may fall away behind the housing (a box on the dash top)
 POD_RANGE = (0.3, 1.1)  # m from the eye along the line of sight
 POD_WHEEL_CLEAR = 0.04  # m beyond the rim: kept clear, the wheel turns and the hands hold it
-POD_GAUGE_CLEAR = 1.2  # x a Forza needle's length: its dial is kept clear
 POD_MAX_DEG = 40.0  # from the top of the rim (seen from the eye), at most
 POD_SIDE_DEG = 35.0  # to either side of the wheel's centre, at most
 POD_BELOW_EYE = -0.05  # the line of sight's y: at least 3 degrees down (the dashboard, not the roof)
@@ -442,7 +472,7 @@ POD_STEP = 3  # pixels between candidate centres
 HUD_DOWN_DEG = 13.5
 HUD_LEFT_DEG = 7.0
 HUD_RIGHT_DEG = 23.0
-# The hand rig holds the rim HAND_GRIP_DEG either side of its top; a display behind a
+# The hands hold the rim at rim_grips; a display behind a
 # hand and wrist is as hidden as one under the HUD (the GT-R's and Skyline 2003's small
 # moved displays in runs vm2-20261029-201910, vm1-20261029-202300). pod_display(hands=True)
 # keeps this far from each grip, in the wheel's plane.
@@ -453,15 +483,15 @@ COWL_SECTIONS = re.compile(r"^(hood|a_pillar)", re.I)
 
 
 def rim_grips(wheel: Wheel) -> list[tuple]:
-    """Where the hands hold the rim (Forza space): HAND_GRIP_DEG either side of its
-    top, the top being the rim point highest along y."""
-    up = _norm(_sub((0.0, 1.0, 0.0), _scale(wheel.axis, wheel.axis[1])))
-    right = _norm(_cross(wheel.axis, up))
-    t = math.radians(HAND_GRIP_DEG)
-    return [
-        _add(wheel.centre, _add(_scale(right, s * wheel.radius * math.sin(t)), _scale(up, wheel.radius * math.cos(t))))
-        for s in (1, -1)
-    ]
+    """Where the hands hold the rim (Forza space): dsfforza.asi [hands] moves each of
+    the arms' fists (hierarchy.ARMS_GRIPS, about the hub's column) onto the rim at its
+    angle about the column."""
+    out = []
+    for g in ARMS_GRIPS:
+        d = (-g[0], g[1], -g[2])  # DSF model axes -> Forza's
+        d = _sub(d, _scale(wheel.axis, _dot(d, wheel.axis)))
+        out.append(_add(wheel.centre, _scale(_norm(d), wheel.radius)))
+    return out
 
 
 def _disc_mask(rays, eye, centre, normal, radius):
@@ -498,7 +528,7 @@ def pod_display(
     above the steering wheel's rim, in front of the dashboard and facing the eye.
     Every line of sight to it must reach the cabin within POD_DEPTH behind it (not
     the windscreen, the bonnet or an A-pillar), pass outside the rim (and
-    POD_WHEEL_CLEAR) and clear of Forza's own dials, digital displays and gauge
+    POD_WHEEL_CLEAR) and clear of Forza's own needles' sweeps, digital displays and gauge
     faces, and with `hud` out from under DSF's HUD (HUD_DOWN_DEG...). Found on a
     depth image from the eye.
 
@@ -569,7 +599,7 @@ def pod_display(
             bad |= _disc_mask(rays, eye, grip, wheel.axis, POD_HAND_CLEAR)
     for g in gauges.values():
         reach = max((math.dist(p, g.pivot) for p in section_points(g.rest)), default=0.0)
-        bad |= _disc_mask(rays, eye, g.pivot, g.normal, reach * POD_GAUGE_CLEAR)
+        bad |= _disc_mask(rays, eye, g.pivot, g.normal, reach)  # the needle's sweep (its face is a gauge material)
     bad = bad.reshape(res, res)
     hit = hit.reshape(res, res)
     hits = hits.reshape(res, res, 3)
@@ -1018,7 +1048,7 @@ def digital_displays(
         return None, {"skipped": "no display off the steering wheel", **moved}, {}
     try:
         dash = dash_scene.Dash(own[0].with_suffix(""), media)
-        redline = getattr(forza, "redline", 0.0) or 7000.0
+        redline = getattr(forza, "redline", 0.0) or FALLBACK_DIAL_MAX["tach"]
         plan = digital_dash.build_plan(dash, patches, redline)
     except Exception as error:  # noqa: BLE001 - a scene this decoder can't draw: logged (convert_interior), the display stays
         return None, {"skipped": f"{type(error).__name__}: {error}"[:200]}, {}

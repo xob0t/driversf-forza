@@ -174,21 +174,12 @@ class CockpitOptions:
     # only the outside parts seen through the windows (A-pillars, mirrors,
     # bonnet), so the cabin gets four times the texel density.
     atlas_weights: dict = field(default_factory=lambda: {fm.NODAMAGE: 1.0, fm.LIGHTS: 1.0, fm.INTERIOR: 4.0})
-    # Lift, tone and filler apply to nodamage_LOD0 only, which in the cockpit
-    # atlas holds just the outside parts seen through the windows (A-pillars,
-    # mirrors, bonnet; fm.COCKPIT_EXTERIOR_SECTIONS). Cabin trims come from
-    # interior_LOD0 in their own colours, unchanged: dark cabins come out at
-    # luminance 25 to 60, the Desanne's interior texels have median 44. The
-    # three were tuned when cabin trims were wrongly read from nodamage_LOD0
-    # (research/cockpit.md, "Cabin trims sample interior_LOD0").
-    # Floor for nodamage_LOD0 trim texels (near-black swatches).
-    trim_lift: int = 40
-    # nodamage_LOD0 (brightness, saturation) after the lift.
-    trim_tone: tuple = (0.85, 0.55)
-    # Source RGB for nodamage_LOD0 texels with alpha < 16, before lift and
-    # tone: paint-through filler (white on most cars, a badge plate's grey on
-    # the Jeep GC SRT8), not trim colour; near black like Forza's swatches.
-    filler: tuple | None = (10, 10, 12)
+    # nodamage_LOD0 holds, in the cockpit atlas, just the outside parts seen through
+    # the windows (A-pillars, mirrors, bonnet; fm.COCKPIT_EXTERIOR_SECTIONS), the
+    # same texels the exterior draws them with: they are converted as the exterior
+    # converts them (dsf_materials.Texturing's defaults: no lift, tone or filler, the
+    # exterior's plain texel for paint-through). Cabin trims come from interior_LOD0
+    # in their own colours (research/cockpit.md, "Cabin trims sample interior_LOD0").
     decimate: float = 0.0  # fixed vertex-cluster cell (m); 0 = step through DECIMATE_LADDER
     cull: bool = True  # drop triangles never seen from the head
     cull_resolution: int = 256  # cube-map face size for the visibility pass
@@ -443,15 +434,11 @@ def convert_interior(
                 car.folder,
                 size=opts.atlas_size or (width, height),
                 mips=mips,
-                plain=(40, 40, 42, 0),
                 lod0=cf.lod0_atlases,
                 classifier=classifier,
                 families=families,
                 weights=dict(opts.atlas_weights),
                 fourcc=opts.atlas_format.encode(),
-                lift={fm.NODAMAGE: opts.trim_lift} if opts.trim_lift else {},
-                tone={fm.NODAMAGE: opts.trim_tone} if opts.trim_tone else {},
-                filler={fm.NODAMAGE: opts.filler} if opts.filler else {},
                 cutout_colour=(34, 34, 36, 0),
                 gloss_enabled=lights_template is not None,
                 gloss_filter=gloss_filter,
@@ -515,7 +502,7 @@ def convert_interior(
             pool = g.rest.lod0_vertices
             cal = cf.calibration.get(family)
             # The engine draws the rest pose at 0 rpm / 0 mph: turn the min pose there.
-            turn = cal.rest_deg if cal is not None and abs(cal.rest_deg) >= 0.25 else 0.0
+            turn = cal.rest_deg if cal is not None else 0.0
             for sub in g.rest.subsections:
                 uv = t.solid_uv(("needle",) + _needle_colour(atlases, g.rest, sub))
                 for tri in sub.triangles():

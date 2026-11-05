@@ -54,7 +54,6 @@ from dsfforza.convert.cockpit.displays import (
     HUD_DOWN_DEG,
     HUD_LEFT_DEG,
     HUD_RIGHT_DEG,
-    POD_GAUGE_CLEAR,
     POD_HAND_CLEAR,
     POD_HUD_PASSES,
     POD_PASSES,
@@ -65,6 +64,7 @@ from dsfforza.convert.cockpit.displays import (
     display_patches,
     drop_unturned,
     flatten_face,
+    mark_technique,
     place_pod,
     pod_display,
     rim_grips,
@@ -114,6 +114,7 @@ from dsfforza.convert.cockpit.geometry import (
     with_display_faces,
 )
 from dsfforza.convert.cockpit.hierarchy import (
+    ARMS_GRIPS,
     CLUSTER_ROLE,
     DRIVER_SEAT_ROLE,
     FLEET_EYE_ABOVE_SEAT,
@@ -145,6 +146,7 @@ from dsfforza.convert.cockpit.hierarchy import (
     patch_hierarchy,
     patch_seats,
     patch_vo3d,
+    pr90_grips,
     seat_anchor,
     seat_for_marker,
     seat_markers,
@@ -179,6 +181,7 @@ from dsfforza.convert.cockpit.visibility import (
 )
 
 __all__ = [
+    "ARMS_GRIPS",
     "CLUSTER_ROLE",
     "CUBE_FACES",
     "DASHBOARD_INSTRUMENT",
@@ -203,7 +206,6 @@ __all__ = [
     "NEAR_PLANE",
     "NEEDLE",
     "PARK_MID",
-    "POD_GAUGE_CLEAR",
     "POD_HAND_CLEAR",
     "POD_HUD_PASSES",
     "POD_PASSES",
@@ -270,6 +272,7 @@ __all__ = [
     "host_wheel",
     "load_cockpit",
     "main",
+    "mark_technique",
     "needle_check",
     "needle_gauge_ids",
     "patch_hierarchy",
@@ -277,6 +280,7 @@ __all__ = [
     "patch_vo3d",
     "place_pod",
     "pod_display",
+    "pr90_grips",
     "promote_lod",
     "quat_from_to",
     "quat_rotate",

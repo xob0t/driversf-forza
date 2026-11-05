@@ -12,6 +12,7 @@ import types
 from dsfforza.convert import cockpit, damage
 from dsfforza.convert import forza_materials as fm
 from dsfforza.convert.cockpit import displays
+from dsfforza.convert.cockpit.hierarchy import _rim_nearest
 from dsfforza.formats import carbin, chnk, upvh
 
 
@@ -126,8 +127,16 @@ def test_virtual_dials_on_a_blank_display():
             assert cockpit.FORCE_FLAT.match(sub.material)
             assert fm.classify_cockpit(sub.material, "interior") == (fm.TRIM, None)
     tach, speed = (cal for _, _, _, cal in dials)
-    assert tach.dial_max == 8000 and speed.dial_max == 160  # 250 rpm over the redline at least; 5% over the top speed
+    assert tach.dial_max == 7000 and speed.dial_max == 160  # the first major mark at or past the redline, the top speed
     assert dials[0][2].pivot[0] < dials[1][2].pivot[0]  # tachometer on the left
+
+
+def test_virtual_dial_marks_take_the_colour_that_contrasts_more():
+    # WCAG 2 contrast against the two mark colours: (226, 226, 222) and (22, 22, 22) cross at grey 114.
+    assert cockpit.mark_technique((12, 14, 16)) == "dsf_dial_mark"
+    assert cockpit.mark_technique((110, 110, 110)) == "dsf_dial_mark"
+    assert cockpit.mark_technique((118, 118, 118)) == "dsf_dial_mark_dark"
+    assert cockpit.mark_technique((200, 196, 170)) == "dsf_dial_mark_dark"
 
 
 def test_needles_the_host_cannot_turn_are_dropped():
@@ -318,7 +327,7 @@ def test_virtual_display_past_the_steering_wheel():
         v.position = cockpit._add(tach.pivot, cockpit._sub(v.position, (0.3, 0.7, -0.7)))
     dials2, _, _ = cockpit.virtual_gauges(static, {"tach": tach}, eye, _Car(), 2, wheel=wheel)
     assert [g.family for _, _, g, _ in dials2] == ["speed"]
-    reach = max(math.dist(p, tach.pivot) for p in cockpit.section_points(needle)) * cockpit.POD_GAUGE_CLEAR
+    reach = max(math.dist(p, tach.pivot) for p in cockpit.section_points(needle))
     for p in cockpit.section_points(dials2[0][1]):
         crossing = cockpit._scale(cockpit._norm(p), tach.pivot[2] / cockpit._norm(p)[2])
         assert math.dist(crossing, tach.pivot) > reach
@@ -450,18 +459,34 @@ def test_chase_driver_hands_keep_their_angle_on_forza_rim():
         assert err["grip_asi"] < 1e-6 and err["asi_rim"] < 1e-9, (radius, err)
         for g in cockpit.hand_grips(anchor):
             t = steering_axle.asi_target(g, rim, anchor)
-            u, v = cockpit._norm(cockpit._sub(g, anchor)), cockpit._norm(cockpit._sub(t, side))
+            u = cockpit._sub(g, anchor)
+            u = cockpit._norm(cockpit._sub(u, cockpit._scale(axis, cockpit._dot(u, axis))))
+            v = cockpit._norm(cockpit._sub(t, side))
             assert cockpit._dot(u, v) > 0.9999, radius  # the same angle, about the hub
 
 
 def test_seat_anchor_puts_the_grips_on_the_rim():
     # The chase view's driver holds the wheel at the vanilla point of the seat's frame;
-    # the seat goes where those grips land on the drawn rim (in-plane shift allowed).
+    # the seat goes where PR #90's grips land on the drawn rim (in-plane shift allowed).
     side = (0.0, 0.0, 0.0)
     axis = cockpit._norm(cockpit.VANILLA_COLUMN)
     for radius in (0.150, 0.200):
         anchor = cockpit.grip_shift(side, axis, radius)
-        assert cockpit.hand_grip_error(anchor, side, axis, radius) < 0.003, radius
+        grips = cockpit.pr90_grips(anchor)
+        assert max(math.dist(g, _rim_nearest(g, side, axis, radius)) for g in grips) < 0.003
+
+
+def test_arms_grips_are_the_probed_fists():
+    # dsfforza.asi [hands] debug=1 (vm1-20261028-174107): 0.177 m from the arms' column
+    # (the circle's normal 26.6 degrees up), 49 and 52 degrees either side of the top.
+    t = math.radians(26.6)
+    axis = (0.0, math.sin(t), -math.cos(t))
+    up = (0.0, math.cos(t), math.sin(t))
+    for g, deg in zip(cockpit.hand_grips((0.0, 0.0, 0.0)), (52.4, -48.9), strict=True):
+        along = cockpit._dot(g, axis)
+        assert abs(along) < 0.006  # the fists sit on the circle to 0.5 cm
+        assert abs(math.hypot(g[0], cockpit._dot(g, up)) - 0.177) < 0.001
+        assert abs(math.degrees(math.atan2(g[0], cockpit._dot(g, up))) - deg) < 0.5
 
 
 def test_hand_shift_keeps_the_hinge_on_the_column():
@@ -978,3 +1003,13 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
             print("ok", name)
+
+
+def test_virtual_tach_ends_on_a_major_mark():
+    def tach(redline):
+        return displays.virtual_scale("tach", types.SimpleNamespace(redline=redline))[:2]
+
+    assert tach(7200) == (8000.0, 1000.0)
+    assert tach(10000) == (10000.0, 1000.0)
+    assert tach(11000) == (12000.0, 2000.0)  # past 10,000 rpm the marks are 2,000 apart
+    assert tach(10500) == (12000.0, 2000.0)
