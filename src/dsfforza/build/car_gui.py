@@ -219,6 +219,7 @@ def generate(game: Path, cars: list[dict], base: Path | None = None, log=print) 
     if not cars:
         clear(game)
         return {"cars": 0}
+    g.require_vanilla_stats()  # before anything is written (issue #544)
     langs = languages(base)
     base_strings = base / LOCALE / ("English" if "English" in langs else langs[0]) / "global.fchunk" if langs else None
     strings = g.read_strings(base_strings) if base_strings else {}

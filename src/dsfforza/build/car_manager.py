@@ -261,12 +261,26 @@ class Manager:
             self.defer_gui = False
             self.save()
 
+    def has_gui_files(self) -> bool:
+        """Whether the game's GUI files are there for car_gui to start from."""
+        from dsfforza.build import car_gui
+
+        return (self.gui_base / car_gui.GUI).exists() and (self.gui_base / car_gui.FONTS).exists()
+
+    def require_gui_data(self) -> None:
+        """Stop before a change when the GUI copies would be made without the vanilla vehicleStats
+        (gui_assets.require_vanilla_stats, issue #544), so a refusal writes nothing."""
+        if self.has_gui_files():
+            from dsfforza.game import gui_assets
+
+            gui_assets.require_vanilla_stats()
+
     def generate_gui(self, enabled: list[tuple[int, str]]) -> None:
         """The enabled cars' pictures, badges, plates and names (car_gui), when the game's GUI
         files are there to start from."""
         from dsfforza.build import car_gui
 
-        if not ((self.gui_base / car_gui.GUI).exists() and (self.gui_base / car_gui.FONTS).exists()):
+        if not self.has_gui_files():
             self.log(f"no {car_gui.GUI} and {car_gui.FONTS} in {self.gui_base}: no garage pictures, badges or plates")
             return
         cars = [{"id": i, "key": k, "manifest": self.manifest(k), "folder": self.cars_dir / k} for i, k in enabled]
@@ -652,6 +666,8 @@ def main(argv: list[str] | None = None) -> None:
         if game_running(args.game):
             raise SystemExit("Driver.exe is running from this folder; close the game first")
     m = Manager(args.game, args.archive, gui_base=args.gui_base)
+    if args.cmd in ("install", "seed", *KEY_COMMANDS):  # the commands that make the GUI copies
+        m.require_gui_data()
     if args.cmd == "install":
         paths = package_paths(args.packages)
         # The plugin first, for every package: a refusal then writes nothing.
