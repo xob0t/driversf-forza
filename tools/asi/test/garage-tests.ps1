@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-In-game tests of dsfforza.asi's garage module, in the persistent sandbox
+In-game tests of dsfcars.asi's garage module, in the persistent sandbox
 (each run-series call queues on its mutex; the runs share the guest's save).
 -Vm runs them in the headless VM instead. The VM copies the host's profile into
 the guest at the start of every series, so there set, vanilla and check don't see
@@ -8,10 +8,10 @@ each other's save; garage works.
 
 .DESCRIPTION
   set     vanilla archive, plugin: set unlocked/owned/driven/take-a-ride for IDs
-      305, 320, 500, 650, 999, TriggerAutoSave (writes dsfforza-garage.dat)
+      305, 320, 500, 650, 999, TriggerAutoSave (writes dsfcars-garage.dat)
   vanilla   same save, NO plugin: the game loads it and reaches Story; flags of
       the added IDs read false
-  check   plugin again: the flags are back from dsfforza-garage.dat
+  check   plugin again: the flags are back from dsfcars-garage.dat
   garage  out\batch\second-high (31 ported cars at 304..334) plus 600 fake
       vehicleStats entries 360..959 in 60 makers; opens garage 1 and walks
       the maker list with menu keys (screenshots menu-NN.png)
@@ -34,40 +34,40 @@ $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $series = Join-Path $repo 'tools\wsb\run-series.ps1'
 $lua = 'tools\asi\test\lua'
-$boot = "bootstrap.lua=$lua\bootstrap.lua;dsfforza\savetest.lua=$lua\savetest.lua"
+$boot = "bootstrap.lua=$lua\bootstrap.lua;dsfcars\savetest.lua=$lua\savetest.lua"
 $mode = @{}
 if ($Vm) { $mode.Vm = $true }
 
 # run-series.ps1 queues on a named mutex and starts or replaces the sandbox itself.
 $vanilla = 'out\vanilla\Install\dngvehicles.sp'
 if ($Only -contains 'set') {
-    & $series @mode -Archives $vanilla -ProbeIds 266 -WaitSeconds 240 -ShotSeconds 15 -Asi out\asi\dsfforza.asi `
-        -LuaFiles "$boot;dsfforza\savetest_cfg.lua=$lua\cfg_set.lua"
+    & $series @mode -Archives $vanilla -ProbeIds 266 -WaitSeconds 240 -ShotSeconds 15 -Asi out\asi\dsfcars.asi `
+        -LuaFiles "$boot;dsfcars\savetest_cfg.lua=$lua\cfg_set.lua"
 }
 if ($Only -contains 'vanilla') {
     & $series @mode -Archives $vanilla -ProbeIds 266 -WaitSeconds 240 -ShotSeconds 15 `
-        -LuaFiles "$boot;dsfforza\savetest_cfg.lua=$lua\cfg_check.lua"
+        -LuaFiles "$boot;dsfcars\savetest_cfg.lua=$lua\cfg_check.lua"
 }
 if ($Only -contains 'check') {
-    & $series @mode -Archives $vanilla -ProbeIds 266 -WaitSeconds 240 -ShotSeconds 15 -Asi out\asi\dsfforza.asi `
-        -LuaFiles "$boot;dsfforza\savetest_cfg.lua=$lua\cfg_check.lua"
+    & $series @mode -Archives $vanilla -ProbeIds 266 -WaitSeconds 240 -ShotSeconds 15 -Asi out\asi\dsfcars.asi `
+        -LuaFiles "$boot;dsfcars\savetest_cfg.lua=$lua\cfg_check.lua"
 }
 if ($Only -contains 'biggroup') {
     # Vanilla archive, Ford and Dodge filed under Chevrolet (39 cars): open it, scroll
     # through the window to the end and back, pick car 24 and leave the garage.
     $keys = @('Enter:3') + @(1..9 | ForEach-Object { 'Down:1' }) + @('Enter:3') + @(1..40 | ForEach-Object { 'Right:0.8' }) +
         @(1..15 | ForEach-Object { 'Left:0.8' }) + @('Enter:5', 'Enter:8', 'Esc:5', 'Enter:15')
-    & $series @mode -Archives $vanilla -ProbeIds 266 -ZoomPresses 0 -WaitSeconds 360 -ShotSeconds 15 -Asi out\asi\dsfforza.asi `
-        -LuaFiles ("$boot;dsfforza\savetest_cfg.lua=$lua\cfg_biggroup.lua;dsfforza\garagetest_on.lua=$lua\garagetest_on.lua") `
+    & $series @mode -Archives $vanilla -ProbeIds 266 -ZoomPresses 0 -WaitSeconds 360 -ShotSeconds 15 -Asi out\asi\dsfcars.asi `
+        -LuaFiles ("$boot;dsfcars\savetest_cfg.lua=$lua\cfg_biggroup.lua;dsfcars\garagetest_on.lua=$lua\garagetest_on.lua") `
         -MenuKeys ($keys -join ',')
 }
 if ($Only -contains 'garage') {
     $b = 'out\batch\second-high'
     $keys = @('Enter:3', 'Up:2', 'Up:1.5', 'Up:1.5', 'Enter:3', 'Right:1.5', 'Esc:2') + @(1..60 | ForEach-Object { 'Down:0.35' }) +
         @('Enter:3', 'Right:1.5', 'Esc:2', 'Esc:2')
-    & $series @mode -Archives "$b\dngvehicles.sp" -ProbeIds 305 -WaitSeconds 480 -ShotSeconds 15 -Asi out\asi\dsfforza.asi `
+    & $series @mode -Archives "$b\dngvehicles.sp" -ProbeIds 305 -WaitSeconds 480 -ShotSeconds 15 -Asi out\asi\dsfcars.asi `
         -Override "Install\gui.sp=$b\gui\gui.sp;media\Fonts.fchunk=$b\gui\Fonts.fchunk" `
-        -LuaFiles ("$boot;dsfforza\savetest_cfg.lua=$lua\cfg_garage.lua;dsfforza\garagetest_on.lua=$lua\garagetest_on.lua;" +
-                   "dsfforza\ported.lua=$b\dngvehicles.lua;dsfforza\hud.lua=$b\gui\hud.lua") `
+        -LuaFiles ("$boot;dsfcars\savetest_cfg.lua=$lua\cfg_garage.lua;dsfcars\garagetest_on.lua=$lua\garagetest_on.lua;" +
+                   "dsfcars\ported.lua=$b\dngvehicles.lua;dsfcars\hud.lua=$b\gui\hud.lua") `
         -MenuKeys ($keys -join ',')
 }

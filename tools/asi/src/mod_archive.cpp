@@ -556,7 +556,7 @@ void pkg_load_config()
     char* slash = strrchr(base, '\\');
     if (slash) slash[1] = 0;
     char rel[MAX_PATH], list[MAX_PATH];
-    cfg_str("archive", "packages_list", "dsfforza\\cars\\cars.txt", rel, sizeof rel);
+    cfg_str("archive", "packages_list", "dsfcars\\cars\\cars.txt", rel, sizeof rel);
     _snprintf_s(list, sizeof list, _TRUNCATE, "%s%s", base, rel);
     pkg_load_list(base, list);
 }
@@ -1857,7 +1857,7 @@ static void patch_redirects()
     char* slash = strrchr(base, '\\');
     if (slash) slash[1] = 0;
     char rel[MAX_PATH], list[MAX_PATH];
-    cfg_str("archive", "redirect_list", "dsfforza\\generated\\redirect.txt", rel, sizeof rel);
+    cfg_str("archive", "redirect_list", "dsfcars\\generated\\redirect.txt", rel, sizeof rel);
     _snprintf_s(list, sizeof list, _TRUNCATE, "%s%s", base, rel);
     if (pkg_load_redirects(base, list)) patch_redirect_site();
 }

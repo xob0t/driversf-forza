@@ -1,4 +1,4 @@
--- dsfforza: register added vehicles with the game's Lua systems.
+-- dsfcars: register added vehicles with the game's Lua systems.
 --
 -- Loaded from bootstrap.lua's Bootstrapper.Launch() (the test bootstrap in
 -- tools/game/lua and the player one tools/install.ps1 installs).
@@ -14,15 +14,15 @@
 --           (spooling.interestingVehicles), which the engine spools and
 --           spawns into traffic.
 --   garage  Selectable/Tier/Price in vehicleStats, for IDs below 304 (below
---           1000 with dsfforza.asi) while the garage's maker list has room
+--           1000 with dsfcars.asi) while the garage's maker list has room
 --           (garageGroup); with writeProfile it also marks the car unlocked
 --           and owned in the save.
 --   save    guardProfile keeps the game's own Lua (cheat "unlock all", unlock
 --           panels) from writing save flags for IDs 304 and up, which the
---           save can't hold (research/batch.md); with dsfforza.asi it lets
---           them through (the plugin keeps them in dsfforza-garage.dat).
+--           save can't hold (research/batch.md); with dsfcars.asi it lets
+--           them through (the plugin keeps them in dsfcars-garage.dat).
 --
--- The cars of dsfforza\packages.lua load only through dsfforza.asi's [archive] packages, so
+-- The cars of dsfcars\packages.lua load only through dsfcars.asi's [archive] packages, so
 -- they are registered only when the plugin says it has loaded them (ASI.packages and the
 -- per-ID query below): with the ASI loader missing or blocked, the plugin off, or no patches
 -- on this exe, none of them gets a vehicleStats entry, a garage card or a traffic slot (#511).
@@ -30,18 +30,18 @@
 -- Player defaults: no probes, no save writes.
 -- The test harness (a config.lua with `ids`) turns the probe on.
 --
--- Output goes to Driver.log as "[dsfforza.register] ...".
+-- Output goes to Driver.log as "[dsfcars.register] ...".
 
 local M = {}
 
 -- Keep the Lua garbage collector stopped while a user file is compiled and run, as the
 -- player bootstrap does (research/in-game-tests.md, "Lua crashes loading big user files"):
--- here too, so another mod's bootstrap that only adds user_open("dsfforza\\register.lua")
+-- here too, so another mod's bootstrap that only adds user_open("dsfcars\\register.lua")
 -- loads the car lists (packages.lua, packages_hud.lua) the safe way. user_open is read-only
 -- in DriverNGHook's _G metatable, hence rawset; the rawget guard keeps it to one wrapper.
-if not rawget(_G, "dsfforzaUserOpen") then
+if not rawget(_G, "dsfcarsUserOpen") then
 	local original = user_open
-	rawset(_G, "dsfforzaUserOpen", original)
+	rawset(_G, "dsfcarsUserOpen", original)
 	rawset(_G, "user_open", function(name, ...)
 		collectgarbage("stop")
 		local called, ok, value = pcall(original, name, ...)
@@ -53,8 +53,8 @@ if not rawget(_G, "dsfforzaUserOpen") then
 	end)
 end
 
--- Per-car settings, from dsfforza\packages.lua (the installed car packages: dsff
--- car_manager), dsfforza\ported.lua (in the in-game tests: the merged archive of a build,
+-- Per-car settings, from dsfcars\packages.lua (the installed car packages: dsff
+-- car_manager), dsfcars\ported.lua (in the in-game tests: the merged archive of a build,
 -- src/dsfforza/build/port_car.py or port_batch.py) or config.lua's register.cars. Empty
 -- without any, so nothing is registered for cars the game can't load.
 -- `source` is the vanilla model whose vehicleStats entry is copied; every other
@@ -79,12 +79,12 @@ local OPTIONS = {
 	                      -- (what Felony Rework does for cop car 267; uses one of 18 mission spool slots)
 	regionCars = 24,      -- (1) at most about this many added cars per region; more cars are spread
 	                      --     over the 17 regions so vanilla interesting vehicles keep their share
-	garage = true,        -- (2) Selectable = true in vehicleStats (IDs below 304, below 1000 with dsfforza.asi,
+	garage = true,        -- (2) Selectable = true in vehicleStats (IDs below 304, below 1000 with dsfcars.asi,
 	                      --     while the maker list has room)
 	writeProfile = false, -- (2) ProfileSettings.SetVehicleUnlocked/Owned for garage cars: WRITES THE SAVE
 	                      --     (unlocked + owned flags, a "new vehicle" notice); back the save up first
 	guardProfile = true,  -- (2) ignore Lua SetVehicleUnlocked/Owned for added IDs 304 and up (save can't hold them;
-	                      --     with dsfforza.asi's save hooks only IDs above 999)
+	                      --     with dsfcars.asi's save hooks only IDs above 999)
 	probe = false,        -- log what the game sees (vehiclesAvailable, profile flags, traffic counts);
 	                      -- on by default in test sessions (config.lua with `ids`)
 	probeTicks = 360,     -- probe updates (every 30 frames), about 3 minutes
@@ -94,10 +94,10 @@ local OPTIONS = {
 -- groups and 20 cars per group, no capacity check; only IDs 0..303 are listed.
 -- The save holds flags for IDs up to 303 only.
 --
--- dsfforza.asi's garage module (tools/asi, research/asi.md) lifts both: the
+-- dsfcars.asi's garage module (tools/asi, research/asi.md) lifts both: the
 -- garage walks IDs up to 999, holds more maker groups of any number of cars
 -- (and drops what doesn't fit instead of overrunning memory), and flags of IDs 304..999 go to
--- <savegames>\dsfforza-garage.dat instead of the vanilla save block. Lua can't
+-- <savegames>\dsfcars-garage.dat instead of the vanilla save block. Lua can't
 -- call native code, so the plugin answers ProfileSettings.GetVehicleUnlocked
 -- for magic IDs 8000000 + k (the game's Lua numbers are single floats, exact
 -- below 2^24; literals must stay below 2^23); an unpatched game looks the number up in
@@ -133,7 +133,7 @@ local GARAGE_MAX_PER_GROUP = ASI.garage and ASI.cars or 20
 local VANILLA_MAX_ID = 303   -- the vanilla garage lists IDs 0..303
 local GARAGE_MAX_ID = ASI.garage and ASI.maxId or VANILLA_MAX_ID
 local SAVE_MAX_ID = ASI.save and 999 or 303   -- highest ID whose save flags are safe to set
-local OVERFLOW_GROUP = "FORZA"   -- makes without a group of their own share FORZA, FORZA 2, ...
+local OVERFLOW_GROUP = "ADDED CARS"   -- makes without a group of their own share ADDED CARS, ADDED CARS 2, ...
 
 -- The cars of packages.lua or ported.lua (below) replace the sample list above. The HUD
 -- badge and name come from the numeric Manufacturer and Model fields (vehicles_font glyph
@@ -177,10 +177,10 @@ local function vanillaMatch(car)
 end
 
 -- Per-ID vehicleStats overrides: Picture1, Manufacturer, Model (vehicles_font codes),
--- ManufacturerName, ModelName. The installed car packages' are in dsfforza\packages_hud.lua
+-- ManufacturerName, ModelName. The installed car packages' are in dsfcars\packages_hud.lua
 -- (dsff car_manager, src/dsfforza/build/car_gui.py; their pictures, glyphs and strings are in
--- dsfforza\generated\, which dsfforza.asi opens in place of the game's files). In the
--- in-game tests a build's merged archive brings its gui\hud.lua as dsfforza\hud.lua (dsff
+-- dsfcars\generated\, which dsfcars.asi opens in place of the game's files). In the
+-- in-game tests a build's merged archive brings its gui\hud.lua as dsfcars\hud.lua (dsff
 -- gui_assets build), the same fields. Picture1 is "dsfforza_<media>": an entry made for
 -- another car (a hud.lua of another build) is not used (hudEntry).
 local HUD
@@ -196,12 +196,12 @@ local function addHud(name)
 	end
 end
 if ASI.packages then
-	addHud("dsfforza\\packages_hud.lua")   -- the packages' cars only; their pictures and glyphs come through the plugin too
+	addHud("dsfcars\\packages_hud.lua")   -- the packages' cars only; their pictures and glyphs come through the plugin too
 end
-addHud("dsfforza\\hud.lua")
+addHud("dsfcars\\hud.lua")
 
--- The cars: dsfforza\packages.lua (the enabled car packages, written by dsff car_manager;
--- dsfforza.asi [archive] packages loads them) and, in the in-game tests, dsfforza\ported.lua
+-- The cars: dsfcars\packages.lua (the enabled car packages, written by dsff car_manager;
+-- dsfcars.asi [archive] packages loads them) and, in the in-game tests, dsfcars\ported.lua
 -- (a build's dngvehicles.lua beside its merged archive, tools/wsb/guest/run-test.ps1). The
 -- same fields per car; either replaces the sample list above.
 local PORTED
@@ -239,15 +239,15 @@ local function addCars(name, loaded)
 	table.sort(missing)
 	return listed, missing
 end
--- packages.lua: only the cars dsfforza.asi has loaded (none without ASI.packages).
+-- packages.lua: only the cars dsfcars.asi has loaded (none without ASI.packages).
 local PACKAGES = {}
-PACKAGES.listed, PACKAGES.missing = addCars("dsfforza\\packages.lua", function(id)
+PACKAGES.listed, PACKAGES.missing = addCars("dsfcars\\packages.lua", function(id)
 	return ASI.packages and type(id) == "number" and asiQuery(0x4000 + id)
 end)
-addCars("dsfforza\\ported.lua")
+addCars("dsfcars\\ported.lua")
 
 do
-	local found, config = user_open("dsfforza\\config.lua")
+	local found, config = user_open("dsfcars\\config.lua")
 	if found and type(config) == "table" and type(config.ids) == "table" then
 		OPTIONS.probe = true   -- test session (run-test.ps1 writes ids); register.probe still wins
 	end
@@ -269,7 +269,7 @@ local function sortedIds()
 end
 
 local function log(message)
-	print("[dsfforza.register] " .. message)
+	print("[dsfcars.register] " .. message)
 end
 
 local function try(fn, ...)
@@ -288,8 +288,8 @@ end
 
 -- Survives DriverNGHook re-running bootstrap.lua when the file changes, so
 -- functions are wrapped only once.
-_G.dsfforzaRegister = _G.dsfforzaRegister or { wrapped = {} }
-local state = _G.dsfforzaRegister
+_G.dsfcarsRegister = _G.dsfcarsRegister or { wrapped = {} }
+local state = _G.dsfcarsRegister
 
 ---------------------------------------------------------------------------
 -- (3) HUD name, badge and stat bars: vehicleStats[id]
@@ -336,7 +336,7 @@ local function hudEntry(id, car)
 	if not HUD then
 		if PORTED and not warnedHud then
 			warnedHud = true
-			log("no dsfforza\\hud.lua: ported cars get their maker's vanilla badge (or none) and no nameplate")
+			log("no dsfcars\\hud.lua: ported cars get their maker's vanilla badge (or none) and no nameplate")
 		end
 		return nil
 	end
@@ -379,7 +379,7 @@ local function buildStats(id, car)
 	if car.tier then entry.Tier = car.tier end
 	if car.price then entry.Price = car.price end
 	-- Garage picture, HUD badge and model glyph made by src/dsfforza/game/gui_assets.py
-	-- (dsfforza\hud.lua; needs its gui.sp and Fonts.fchunk copies installed).
+	-- (dsfcars\hud.lua; needs its gui.sp and Fonts.fchunk copies installed).
 	local hud = hudEntry(id, car)
 	if hud then
 		for key, value in pairs(hud) do entry[key] = value end
@@ -393,16 +393,16 @@ end
 -- The garage groups selectable cars of IDs 0..303 by the first 15 characters
 -- of ManufacturerName, upper-cased, into a fixed table of 40 groups of 20
 -- (FUN_006c57d0 and its inserts, no capacity check: more overruns memory).
--- With dsfforza.asi: IDs 0..GARAGE_MAX_ID, GARAGE_MAX_GROUPS groups of
+-- With dsfcars.asi: IDs 0..GARAGE_MAX_ID, GARAGE_MAX_GROUPS groups of
 -- GARAGE_MAX_PER_GROUP cars (the plugin's [garage] max_cars, 1000: a maker keeps
 -- all its cars in one group), and a car that doesn't fit is left out by the plugin.
 local function groupKey(name)
 	return string.sub(string.upper(tostring(name or "")), 1, 15)
 end
 
--- Returns the ManufacturerName to use (the car's own, or a shared FORZA group
+-- Returns the ManufacturerName to use (the car's own, or a shared ADDED CARS group
 -- when its make has no room), or nil when the car can't be listed. Same rule
--- as src/dsfforza/build/port_batch.py garage_group; one group slot is kept for FORZA.
+-- as src/dsfforza/build/port_batch.py garage_group; one group slot is kept for ADDED CARS.
 local function garageGroup(name, counts)
 	local key = groupKey(name)
 	local groups = 0
@@ -429,7 +429,7 @@ function M.registerStats()
 		return false
 	end
 	resolvePorted()
-	-- Only dsfforza.asi's garage walks past ID 303, and every model there is one of ours, so
+	-- Only dsfcars.asi's garage walks past ID 303, and every model there is one of ours, so
 	-- another mod's Selectable entry above 303 is a placeholder, not a car: Felony Rework's
 	-- 622 and 623 (activity rewards, ManufacturerName "", research/felony-rework.md) would
 	-- list as an empty maker group of "NOTHING" cards that spool a model the archive
@@ -489,7 +489,7 @@ end
 -- full list crashes. The game's Lua sets these for every vehicleStats key in
 -- the cheat "unlock all" (unlockAllVehicles) and from unlock fields, so calls
 -- for our IDs 304 and up are dropped; only Lua callers pass through here.
--- With dsfforza.asi's save hooks (ASI.save) the limit is 999 instead.
+-- With dsfcars.asi's save hooks (ASI.save) the limit is 999 instead.
 local function guardProfile()
 	if type(ProfileSettings) ~= "table" or state.wrapped.profile then
 		return
@@ -498,8 +498,8 @@ local function guardProfile()
 		local original = ProfileSettings[name]
 		if type(original) == "function" then
 			ProfileSettings[name] = function(id, ...)
-				local cars = _G.dsfforzaRegister.cars
-				if type(id) == "number" and id > _G.dsfforzaRegister.saveMaxId and cars and cars[id] ~= nil then
+				local cars = _G.dsfcarsRegister.cars
+				if type(id) == "number" and id > _G.dsfcarsRegister.saveMaxId and cars and cars[id] ~= nil then
 					return nil
 				end
 				return original(id, ...)
@@ -696,7 +696,7 @@ local function update()
 			try(InterestingVehicleManager.GetDesiredSlotCount), try(TrafficSpooler.Busy)))
 	end
 	if probe.ticks >= OPTIONS.probeTicks then
-		removeUserUpdateFunction("dsfforza_register")
+		removeUserUpdateFunction("dsfcars_register")
 		log("probe done")
 	end
 end
@@ -707,25 +707,25 @@ function M.apply()
 	state.cars = CARS
 	state.saveMaxId = SAVE_MAX_ID
 	if ASI.save or ASI.garage then
-		log(string.format("dsfforza.asi: save hooks %s, garage IDs 0..%d, %d maker groups of %d",
+		log(string.format("dsfcars.asi: save hooks %s, garage IDs 0..%d, %d maker groups of %d",
 			tostring(ASI.save), GARAGE_MAX_ID, GARAGE_MAX_GROUPS, GARAGE_MAX_PER_GROUP))
 	else
-		log("dsfforza.asi garage module not active: garage IDs 0..303, 40 maker groups, save flags up to 303")
+		log("dsfcars.asi garage module not active: garage IDs 0..303, 40 maker groups, save flags up to 303")
 	end
 	if PACKAGES.listed > 0 and not ASI.packages then
 		if ASI.save or ASI.garage then
-			log(string.format("dsfforza.asi has not loaded the car packages: the %d installed cars are not "
-				.. "registered (no garage, traffic or HUD entry); see plugins\\dsfforza.log", PACKAGES.listed))
+			log(string.format("dsfcars.asi has not loaded the car packages: the %d installed cars are not "
+				.. "registered (no garage, traffic or HUD entry); see plugins\\dsfcars.log", PACKAGES.listed))
 		else
-			log(string.format("dsfforza.asi is not active: the %d installed cars are not loaded and not registered "
-				.. "(no garage, traffic or HUD entry); see plugins\\dsfforza.log (none there: the ASI loader "
+			log(string.format("dsfcars.asi is not active: the %d installed cars are not loaded and not registered "
+				.. "(no garage, traffic or HUD entry); see plugins\\dsfcars.log (none there: the ASI loader "
 				.. "didn't load the plugin)", PACKAGES.listed))
 		end
 	elseif #PACKAGES.missing > 0 then
 		local ids = {}
 		for _, id in ipairs(PACKAGES.missing) do table.insert(ids, tostring(id)) end
-		log(string.format("dsfforza.asi has not loaded %d of the %d installed cars (IDs %s): not registered; "
-			.. "see plugins\\dsfforza.log", #PACKAGES.missing, PACKAGES.listed, table.concat(ids, ", ")))
+		log(string.format("dsfcars.asi has not loaded %d of the %d installed cars (IDs %s): not registered; "
+			.. "see plugins\\dsfcars.log", #PACKAGES.missing, PACKAGES.listed, table.concat(ids, ", ")))
 	end
 	M.registerStats()
 	if OPTIONS.guardProfile then
@@ -743,7 +743,7 @@ function M.apply()
 	M.unlockInProfile()
 	if OPTIONS.probe then
 		probe.ticks = 0
-		addUserUpdateFunction("dsfforza_register", update, 30)
+		addUserUpdateFunction("dsfcars_register", update, 30)
 	end
 end
 

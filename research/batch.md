@@ -23,7 +23,7 @@ The Ghidra outputs are in `out/ghidra/profile-*`; the scripts used are
 | Save file | fixed 0x4CF8-byte block with ten 0x278A106F guard words and a version field. `autosave.dat` is written raw, without a checksum. | confirmed-static |
 | Mission spool slots | about 10 `RequestMissionVehicle` cars per session (the 11th to 16th were "NOT spooled") | confirmed-runtime, `in-game-tests.md` |
 
-**With `dsfforza.asi`** (`research/asi.md`), these rows change:
+**With `dsfcars.asi`** (`research/asi.md`), these rows change:
 
 | Limit | With the plugin |
 | --- | --- |
@@ -31,7 +31,7 @@ The Ghidra outputs are in `out/ghidra/profile-*`; the scripts used are
 | `dngvehicles.sp` file size | `archive` module (`large_files`): below 4 GiB. The 573 cars take 3.06 GB. At their 4.5 MB a car, all 849 IDs would need about 4.3 GB, a little over 4 GiB; the 177 cars of #162 would bring the archive to about 3.85 GB |
 | Garage list | model IDs 0 to 999 (`[garage] max_id`) |
 | Garage maker groups | 120 groups (`[garage] max_groups`) of any number of cars (`[garage] max_cars`, 1000); the vehicles screen shows a group of 20 cars or more 19 cards at a time and scrolls on at the edges (`asi.md`, "Maker groups past 20 cars"); a group that doesn't fit is left out instead of overrunning memory |
-| Save flags (list, bit arrays, owned list) | IDs 304 to 999 are kept outside the vanilla block, in `dsfforza-garage.dat` next to `autosave.dat`; IDs of 1000 and up are dropped by the bit setters; a full vanilla list no longer crashes |
+| Save flags (list, bit arrays, owned list) | IDs 304 to 999 are kept outside the vanilla block, in `dsfcars-garage.dat` next to `autosave.dat`; IDs of 1000 and up are dropped by the bit setters; a full vanilla list no longer crashes |
 | Save file | unchanged (vanilla-range data only), so an unmodded game still loads it |
 
 The Lua bindings are `ProfileSettings.GetVehicleUnlocked` 0x678D40,
@@ -69,7 +69,7 @@ hold about 8 resident models (5 in "All chapters" plus the chapter's own), so
    - 62 is Tanner's car.
 2. **IDs 304 and up for the rest.**
    - They load, drive and spawn in traffic (304 to 314 are confirmed in game).
-   - They never appear in the vanilla garage (with dsfforza.asi they do: below).
+   - They never appear in the vanilla garage (with dsfcars.asi they do: below).
    - The save can't hold them safely, so nothing may call
      `SetVehicleUnlocked` or `SetVehicleOwned` for them: at 320 and up it
      corrupts other bits, and many such IDs would overflow the 304-slot
@@ -85,11 +85,14 @@ hold about 8 resident models (5 in "All chapters" plus the chapter's own), so
      DSF has the make (from `hud.lua`, `src/dsfforza/game/gui_assets.py`), else a plain
      name such as "BMW".
    - A new make opens a group while fewer than 39 exist (one is kept back).
-   - With `dsfforza.asi` a make's group takes all its cars (Ford in the full
+   - With `dsfcars.asi` a make's group takes all its cars (Ford in the full
      roster: 35 ported + 13 vanilla); `register.lua` reads the plugin's
      cars-per-group limit. Without the plugin (or with `[garage] max_cars=20`)
-     a group holds 20, and a car past that joins a shared "FORZA" group (then
-     "FORZA 2" ...). The "<maker> 2" continuation groups of PR #39 are gone.
+     a group holds 20, and a car past that joins a shared "ADDED CARS" group (then
+     "ADDED CARS 2" ...; "FORZA" before the rename to dsfcars). The name is only a key: the
+     garage groups by `ManufacturerName` at each game start (asi.md, "Garage list"), plain
+     names don't render, and the save keeps flags per model ID. The "<maker> 2"
+     continuation groups of PR #39 are gone.
    - `port_batch.py` (`garage_group`, with a margin of one per cap) and
      `register.lua` (`garageGroup`, exact caps, run against the real
      `vehicleStats` at game start, so mods that make more vanilla cars
@@ -101,7 +104,7 @@ hold about 8 resident models (5 in "All chapters" plus the chapter's own), so
 `port_batch.py --id-policy high` puts every car at 304 and up, the range
 confirmed in game.
 
-`--id-policy asi` (for installs with `dsfforza.asi`) gives the cars every
+`--id-policy asi` (for installs with `dsfcars.asi`) gives the cars every
 free ID in list order: 1 to 61, then the 92 IDs in 62..303 that the vanilla
 archive leaves unused (no traffic set, `vehicleStats` key or model-ID field
 of the game's Lua names them; Felony Rework's dummies 622 and 623 are
@@ -132,16 +135,16 @@ The defaults are player-safe:
 | --- | --- | --- |
 | `probe` | false; true when `config.lua` has `ids` (the test harness) | logs traffic counts and profile flags for 3 minutes |
 | `writeProfile` | false (`tools/install.ps1 -WriteProfile` turns it on; `dsff install` passes that unless `--no-write-profile`) | on each start, marks every garage-listed added car unlocked and owned, so the game shows a "new vehicle" notice once per car. It uses one slot of the 304-slot list per car, and the flags stay in the save after an uninstall (harmless: no car, no garage entry). |
-| `guardProfile` | true | drops Lua `SetVehicleUnlocked`/`Owned` calls for added IDs above 303 (above 999 with `dsfforza.asi`'s save hooks) |
-| `garage` | true | `Selectable` for IDs below 304 (below 1000 with `dsfforza.asi`), subject to the group caps |
+| `guardProfile` | true | drops Lua `SetVehicleUnlocked`/`Owned` calls for added IDs above 303 (above 999 with `dsfcars.asi`'s save hooks) |
+| `garage` | true | `Selectable` for IDs below 304 (below 1000 with `dsfcars.asi`), subject to the group caps |
 | `regionCars` | 24 | With more added cars than this, car k (in ID order) goes to every m-th region, offset by k (m = ceil(cars / 24)), so each region gets about 24 of them. Vanilla region lists hold 9 to 110 IDs. |
 | `interesting` | true | the interesting-vehicle wrapper (traffic) |
 | `missionPot` | false | experimental: keep the cars resident in the "All chapters" mission pot |
 
-At start `register.lua` asks whether `dsfforza.asi`'s garage module is
+At start `register.lua` asks whether `dsfcars.asi`'s garage module is
 active (`ProfileSettings.GetVehicleUnlocked(8000000 + k)`, research/asi.md)
 and takes its limits: listed IDs, maker groups, the highest ID whose save
-flags are safe. It logs them as `dsfforza.asi: save hooks ..., garage IDs
+flags are safe. It logs them as `dsfcars.asi: save hooks ..., garage IDs
 0..999, 120 maker groups of 1000`. `tests/test_register_asi.py` runs
 it against stubs with and without the plugin (600 fake cars: none selectable
 at 304+ without it, all 600 with it; 55 cars of one make stay in one group, or
@@ -189,7 +192,7 @@ How a build runs:
 - Each worker writes the car's three VEHC entries to `work/<media>.chnk`.
 - The merge reads the vanilla archive and every car file as one address space,
   so nothing is copied twice. It registers the clones (SSLP, VSCT), checks
-  the root entry limit (`--root-limit`, default 1100; more needs dsfforza.asi's
+  the root entry limit (`--root-limit`, default 1100; more needs dsfcars.asi's
   `archive` module) and UID clashes, and writes the archive.
 - Every car is linted, in `upvh lint-many` processes that each read the
   archive once for their share of the cars (64 or more each): up to `--jobs`
@@ -536,7 +539,7 @@ the build folder's own (a rerun, `--resume`) and the `--reuse` builds'
 
 A record is used only when its settings are this build's and its
 fingerprint holds. A game file read from the game folder before an
-install and from `dsfforza-backup\` after it (`gui_assets.vanilla_file`)
+install and from `dsfcars-backup\` after it (`gui_assets.vanilla_file`)
 counts as the same input when the digest is the same.
 
 **Whole pack.** When an earlier record has the same cars with the same
@@ -920,7 +923,7 @@ Not tested:
 ### Resumable uninstall (after a failure on the real install)
 
 **The failure.** A `-Force` reinstall on the real install restored all three
-files. Then deleting `dsfforza-backup\` failed on `Install\gui.sp`, because
+files. Then deleting `dsfcars-backup\` failed on `Install\gui.sp`, because
 another process (a test run) held it. `Remove-Item -Recurse` had already
 deleted the `dngvehicles.sp` backup. `install.json` still listed every file,
 so the next run stopped with "MISSING backup".
@@ -1041,8 +1044,8 @@ What the harness provides:
 
 - `run-test.ps1` copies `tools\game\lua\*` into the guest; `-LuaFiles`
   puts the build's `ported.lua` and `hud.lua` over the copies for one run
-  (the commands below predate it and copy them into `tools\game\lua\dsfforza\`,
-  backing up the shared files first; `-LuaFiles 'dsfforza\ported.lua=<build>\dngvehicles.lua;dsfforza\hud.lua=<build>\gui\hud.lua'`
+  (the commands below predate it and copy them into `tools\game\lua\dsfcars\`,
+  backing up the shared files first; `-LuaFiles 'dsfcars\ported.lua=<build>\dngvehicles.lua;dsfcars\hud.lua=<build>\gui\hud.lua'`
   does the same without touching them).
 - `-Override` links (under `-Vm`: copies) the build's `gui.sp` and
   `Fonts.fchunk` over the game's.
@@ -1059,20 +1062,20 @@ Pass criteria per run:
 
 ```powershell
 # Shared Lua files: keep the current ones
-Copy-Item tools\game\lua\dsfforza\ported.lua out\scratch\ported.lua.bak -ErrorAction SilentlyContinue
-Copy-Item tools\game\lua\dsfforza\hud.lua out\scratch\hud.lua.bak -ErrorAction SilentlyContinue
+Copy-Item tools\game\lua\dsfcars\ported.lua out\scratch\ported.lua.bak -ErrorAction SilentlyContinue
+Copy-Item tools\game\lua\dsfcars\hud.lua out\scratch\hud.lua.bak -ErrorAction SilentlyContinue
 
 # Runs 1-3: IDs below 62 (garage range), 10 per session
-Copy-Item out\batch\second\dngvehicles.lua tools\game\lua\dsfforza\ported.lua
-Copy-Item out\batch\second\gui\hud.lua tools\game\lua\dsfforza\hud.lua
+Copy-Item out\batch\second\dngvehicles.lua tools\game\lua\dsfcars\ported.lua
+Copy-Item out\batch\second\gui\hud.lua tools\game\lua\dsfcars\hud.lua
 $ov = 'Install\gui.sp=out\batch\second\gui\gui.sp;media\Fonts.fchunk=out\batch\second\gui\Fonts.fchunk'
 .\tools\wsb\run-series.ps1 -Archives out\batch\second\dngvehicles.sp -Override $ov -ProbeIds '1,2,3,4,5,6,7,8,9,10' -WaitSeconds 1200 -ShotSeconds 4 -DriveSeconds 8
 .\tools\wsb\run-series.ps1 -Archives out\batch\second\dngvehicles.sp -Override $ov -ProbeIds '11,12,13,14,15,16,17,18,19,20' -WaitSeconds 1200 -ShotSeconds 4 -DriveSeconds 8
 .\tools\wsb\run-series.ps1 -Archives out\batch\second\dngvehicles.sp -Override $ov -ProbeIds '21,22,23,24,25,26,27,28,29,30' -WaitSeconds 1200 -ShotSeconds 4 -DriveSeconds 8
 
 # Run 4: the 304+ range (same cars), across the 304-319 / 320+ save boundary
-Copy-Item out\batch\second-high\dngvehicles.lua tools\game\lua\dsfforza\ported.lua
-Copy-Item out\batch\second-high\gui\hud.lua tools\game\lua\dsfforza\hud.lua
+Copy-Item out\batch\second-high\dngvehicles.lua tools\game\lua\dsfcars\ported.lua
+Copy-Item out\batch\second-high\gui\hud.lua tools\game\lua\dsfcars\hud.lua
 $ovh = 'Install\gui.sp=out\batch\second-high\gui\gui.sp;media\Fonts.fchunk=out\batch\second-high\gui\Fonts.fchunk'
 .\tools\wsb\run-series.ps1 -Archives out\batch\second-high\dngvehicles.sp -Override $ovh -ProbeIds '304,310,318,319,320,326,333,334' -WaitSeconds 1000 -ShotSeconds 4 -DriveSeconds 8
 
@@ -1080,15 +1083,15 @@ $ovh = 'Install\gui.sp=out\batch\second-high\gui\gui.sp;media\Fonts.fchunk=out\b
 # after about 20 s in the car, first marking IDs 1..31 unlocked and owned in the
 # sandbox's save copy (the host save is mapped read-only; the copy keeps the flags
 # until the sandbox restarts; the VM's copy is refreshed from the host every series).
-Copy-Item out\batch\second\dngvehicles.lua tools\game\lua\dsfforza\ported.lua
-Copy-Item out\batch\second\gui\hud.lua tools\game\lua\dsfforza\hud.lua
-Set-Content tools\game\lua\dsfforza\garagetest_on.lua 'return { garage = 1, delay = 40, unlock = true }' -Encoding ASCII
+Copy-Item out\batch\second\dngvehicles.lua tools\game\lua\dsfcars\ported.lua
+Copy-Item out\batch\second\gui\hud.lua tools\game\lua\dsfcars\hud.lua
+Set-Content tools\game\lua\dsfcars\garagetest_on.lua 'return { garage = 1, delay = 40, unlock = true }' -Encoding ASCII
 .\tools\wsb\run-series.ps1 -Archives out\batch\second\dngvehicles.sp -Override $ov -ProbeIds '31' -WaitSeconds 420 -ShotSeconds 5
-Remove-Item tools\game\lua\dsfforza\garagetest_on.lua
+Remove-Item tools\game\lua\dsfcars\garagetest_on.lua
 
 # Put the shared files back
-Copy-Item out\scratch\ported.lua.bak tools\game\lua\dsfforza\ported.lua -ErrorAction SilentlyContinue
-Copy-Item out\scratch\hud.lua.bak tools\game\lua\dsfforza\hud.lua -ErrorAction SilentlyContinue
+Copy-Item out\scratch\ported.lua.bak tools\game\lua\dsfcars\ported.lua -ErrorAction SilentlyContinue
+Copy-Item out\scratch\hud.lua.bak tools\game\lua\dsfcars\hud.lua -ErrorAction SilentlyContinue
 ```
 
 Reading the garage run (`Driver.log`, `[dsfforza.garage]` lines, screenshots):
@@ -1284,13 +1287,13 @@ and #42's groups.
   - The Lua VM fault with the big generated files: fixed by #44, 0 in 15
     runs after the fix.
   - The engine fault in the deferred UID list: it follows **dsf_enhanced**.
-    - Vanilla archive, no dsfforza.asi, no added cars:
+    - Vanilla archive, no dsfcars.asi, no added cars:
       - with the user's dsf_enhanced.ini: 2 of 4 runs crashed;
       - with a neutral ini (traffic radius 350, no AF, no full-detail
         traffic, `vm-20261025-005639` to `-010158`): 4 of 4 crashed;
       - with dsf_enhanced.asi replaced by an empty stub DLL
         (`vm-20261025-011001` to `-011514`): 0 of 4 crashed.
-    - So it isn't the roster or dsfforza.asi. The trigger is dsf_enhanced's
+    - So it isn't the roster or dsfcars.asi. The trigger is dsf_enhanced's
       legal-screen skip, which lets the loading screen empty the pending
       list while startup files still load (`in-game-tests.md`, "Crashes
       while the world loads"). Fixed in dsf_enhanced (`fix/world-load-crash`):
@@ -1304,7 +1307,7 @@ BUICK..., garage pictures too glossy. Causes and fixes in gui-assets.md
 ("Why the 16-bit glyphs drew nothing", "Maker list logos", "Tone"): every
 16-bit glyph (533 plates, 303 badges) drew nothing, 36 of the 92 maker
 groups had no logo or the host's, and the renderer washed the paint out.
-The archive doesn't change; only the GUI step and dsfforza.asi do. The GUI
+The archive doesn't change; only the GUI step and dsfcars.asi do. The GUI
 step alone, on the installed build's manifest and archive (11 minutes with
 4 jobs):
 
@@ -1320,7 +1323,7 @@ both, the maker list logos need the new `global.fchunk` too.
 
 Today `uv run dsff install --install-only --build <folder>` does this, with
 `-WriteProfile` unless `--no-write-profile` (`docs/DEVELOPMENT.md`). As
-written then, from the worktree that holds the build, with dsfforza.asi built from master
+written then, from the worktree that holds the build, with dsfcars.asi built from master
 (`.\tools\asi\build.ps1`):
 
 ```powershell
@@ -1338,7 +1341,7 @@ written then, from the worktree that holds the build, with dsfforza.asi built fr
     sets the entry's `UnlockedInChapter = 1`;
   - IDs up to 303 (153 cars) go into `autosave.dat`'s 304-slot flag and
     owned lists, about 146 + 153 of 304 slots;
-  - IDs 304 to 999 (420 cars) go into `dsfforza-garage.dat` next to it;
+  - IDs 304 to 999 (420 cars) go into `dsfcars-garage.dat` next to it;
   - the game shows its "new vehicle" notice once per car;
   - the flags stay in the save after an uninstall: no car, no garage entry.
 - Without `-WriteProfile` the cars show in the garage with their pictures

@@ -201,7 +201,7 @@ class EmblemTest(unittest.TestCase):
         self.assertTrue(report["emblem"])
         self.assertEqual(shown, [7, 8, 9])
         redirect = (self.game / car_gui.GENERATED / car_gui.REDIRECT).read_text()
-        self.assertIn(r"media\Fonts.fchunk|dsfforza\generated\Fonts.fchunk", redirect)
+        self.assertIn(r"media\Fonts.fchunk|dsfcars\generated\Fonts.fchunk", redirect)
 
     def test_a_package_without_one_keeps_the_disc(self):
         self.carry(0, b"DDS emblem")

@@ -9,11 +9,11 @@ the checkout) and prints a summary. The zip holds:
 
     summary.txt   the summary the console shows
     report.json   everything below, as data
-    logs/         the last install logs (out/logs/install-*.log), plugins/dsfforza.log,
+    logs/         the last install logs (out/logs/install-*.log), plugins/dsfcars.log,
                   the DriverNGHook log (Driver.log in the game folder), the failed cars'
                   build logs, each cut to its first and last part when long
-    files/        small settings: plugins/dsfforza.ini, the install record
-                  (dsfforza-backup/install.json), the game's graphics.ini
+    files/        small settings: plugins/dsfcars.ini, the install record
+                  (dsfcars-backup/install.json), the game's graphics.ini
 
 report.json: this copy's version (the release's VERSION, or the git commit and its
 changes), how the cars were installed (install.cmd, dsff install, or tools/install.ps1 by
@@ -57,9 +57,15 @@ HASH_LIMIT = 600 * install.MIB  # bigger files (a ported archive) are compared b
 VANILLA_ARCHIVE_SIZE = 483_110_912  # Install\dngvehicles.sp 1.04
 DUMP_LIMIT = 64 * install.MIB
 DSF_LOGS = ("Driver.log",)  # DriverNGHook's log (with the game's Lua output), in the game folder
-SETTINGS = ("plugins/dsfforza.ini", "dsfforza-backup/install.json")
+# (and their names in an install from before the rename to dsfcars, which install.ps1 -Migrate moves)
+SETTINGS = (
+    "plugins/dsfcars.ini",
+    "dsfcars-backup/install.json",
+    "plugins/dsfforza.ini",
+    "dsfforza-backup/install.json",
+)
 ASI_FOLDERS = ("", "plugins", "scripts")  # where the Ultimate ASI Loader looks for .asi files
-OURS_ASI = {"dsfforza.asi", "drivernghook.asi"}
+OURS_ASI = {"dsfcars.asi", "dsfforza.asi", "drivernghook.asi"}
 
 
 # --- privacy --------------------------------------------------------------------------------------
@@ -171,7 +177,7 @@ def version_info(repo: Path) -> dict:
             "kind": "release",
             "version": words[0] if words else "?",
             "commit": words[1] if len(words) > 1 else None,
-            "plugin": read_json(repo / "plugin" / "dsfforza.build.json"),
+            "plugin": read_json(repo / "plugin" / "dsfcars.build.json"),
         }
     if (repo / ".git").exists():
         git = shutil.which("git")
@@ -448,7 +454,7 @@ def exe_info(game: Path) -> dict:
         "image_size": f"{build[1]:#x}" if build else None,
         "is_1_04": build == (install.EXE_TIMESTAMP, install.EXE_IMAGE_SIZE),
         "first_section": install.exe_text(exe),
-        "problem": install.exe_problem(exe),  # why dsfforza.asi would not patch it
+        "problem": install.exe_problem(exe),  # why dsfcars.asi would not patch it
     }
 
 
@@ -460,17 +466,17 @@ def build_source(relative: str, build: Path | None, repo: Path) -> Path | None:
         "install\\dngvehicles.sp": build / "dngvehicles.sp" if build else None,
         "install\\gui.sp": gui / "gui.sp" if gui else None,
         "media\\fonts.fchunk": gui / "Fonts.fchunk" if gui else None,
-        "common\\userluascripts\\dsfforza\\ported.lua": build / "dngvehicles.lua" if build else None,
-        "common\\userluascripts\\dsfforza\\hud.lua": gui / "hud.lua" if gui else None,
+        "common\\userluascripts\\dsfcars\\ported.lua": build / "dngvehicles.lua" if build else None,
+        "common\\userluascripts\\dsfcars\\hud.lua": gui / "hud.lua" if gui else None,
         "common\\userluascripts\\bootstrap.lua": repo / "tools" / "game" / "lua" / "player" / "bootstrap.lua",
-        "common\\userluascripts\\dsfforza\\register.lua": repo / "tools" / "game" / "lua" / "dsfforza" / "register.lua",
+        "common\\userluascripts\\dsfcars\\register.lua": repo / "tools" / "game" / "lua" / "dsfcars" / "register.lua",
     }
     if rel in table:
         return table[rel]
     if rel.startswith("locale\\") and rel.endswith("\\global.fchunk") and gui:
         return gui / Path(*relative.replace("\\", "/").split("/"))
-    if rel == "plugins\\dsfforza.asi":
-        for path in (repo / "plugin" / "dsfforza.asi", repo / "out" / "asi" / "dsfforza.asi"):
+    if rel == "plugins\\dsfcars.asi":
+        for path in (repo / "plugin" / "dsfcars.asi", repo / "out" / "asi" / "dsfcars.asi"):
             if path.is_file():
                 return path
     return None
@@ -552,13 +558,19 @@ def bootstrap_lua_state(game: Path, created: set, repo: Path) -> str:
             state = "dsfforza's (another version)"
         else:
             state = "another mod's"
-    if (game / "Common" / "UserLuaScripts" / "dsfforza" / "chained-bootstrap.lua").is_file():  # install.ps1 kept it
-        # Only a bootstrap of ours that loads it runs it; one another installer put there since doesn't.
-        runs_it = bootstrap.is_file() and b"chained-bootstrap.lua" in bootstrap.read_bytes()
+    # install.ps1 kept another mod's bootstrap there: under dsfcars, or dsfforza in an install from
+    # before the rename. Only a bootstrap of ours that names that path runs it (its Lua string,
+    # "dsfcars\\chained-bootstrap.lua"); one another installer put there since doesn't, nor an
+    # older bootstrap of ours that names the other folder.
+    text = bootstrap.read_bytes().lower() if bootstrap.is_file() else b""
+    for folder in ("dsfcars", "dsfforza"):
+        if not (game / "Common" / "UserLuaScripts" / folder / "chained-bootstrap.lua").is_file():
+            continue
+        runs_it = f"{folder}\\\\chained-bootstrap.lua".encode() in text
         if runs_it and state.startswith("dsfforza's"):
             state += ", chaining another mod's"
         else:
-            state += ", stale dsfforza\\chained-bootstrap.lua (not run)"
+            state += f", stale {folder}\\chained-bootstrap.lua (not run)"
     return state
 
 
@@ -616,7 +628,7 @@ def other_mods(game: Path, record: dict | None, repo: Path) -> dict:
         "user_lua_scripts": sorted(
             str(p.relative_to(user_lua))
             for p in user_lua.rglob("*")
-            if p.is_file() and "dsfforza" not in p.relative_to(user_lua).parts
+            if p.is_file() and not {"dsfcars", "dsfforza"} & set(p.relative_to(user_lua).parts)
         )
         if user_lua.is_dir()
         else [],
@@ -670,10 +682,15 @@ def game_info(game: Path | None, how: str, repo: Path, build: Path | None, files
             "under_program_files": "program files" in str(Path(game).resolve()).lower(),
         }
     )
-    asi_log = Path(game) / "plugins" / "dsfforza.log"
+    asi_log = Path(game) / "plugins" / "dsfcars.log"
+    if not asi_log.is_file() and (Path(game) / "plugins" / "dsfforza.log").is_file():
+        asi_log = Path(game) / "plugins" / "dsfforza.log"  # an install from before the rename to dsfcars
     out["dsfforza_log"] = file_entry(asi_log) if asi_log.is_file() else None
     if asi_log.is_file():
-        files["logs/dsfforza.log"] = trimmed(asi_log)
+        files[f"logs/{asi_log.name}"] = trimmed(asi_log)
+    from dsfforza.build import car_manager
+
+    out["old_names"] = [str(p) for p in car_manager.old_layout(game)]
     out["logs"] = []
     for name in DSF_LOGS:
         path = Path(game) / name
@@ -791,7 +808,7 @@ def build_info(build: Path, files: dict[str, str]) -> dict:
 
 def plugin_info(repo: Path) -> dict:
     out = {}
-    for path in (Path(repo) / "plugin" / "dsfforza.asi", Path(repo) / "out" / "asi" / "dsfforza.asi"):
+    for path in (Path(repo) / "plugin" / "dsfcars.asi", Path(repo) / "out" / "asi" / "dsfcars.asi"):
         if path.is_file():
             out[str(path.relative_to(repo))] = {
                 "sha256": install.sha256(path),
@@ -911,6 +928,10 @@ def summary_lines(r: dict) -> list[str]:
             lines.append(f"dsfforza:   {text}")
         else:
             lines.append(f"dsfforza:   {d.get('state', 'not installed')}")
+        if g.get("old_names"):
+            lines.append(
+                f"Old names:  {', '.join(g['old_names'])} (from before the rename to dsfcars; install.ps1 -Migrate)"
+            )
         m = g.get("mods") or {}
         if m:
             parts = [f"ASI loader {m.get('asi_loader') or 'none'}"]
@@ -924,7 +945,7 @@ def summary_lines(r: dict) -> list[str]:
             if changed and not rows:
                 parts.append("not vanilla: " + ", ".join(changed))
             lines.append(f"Mods:       {'; '.join(parts)}")
-        logs = [f"dsfforza.log {stamp_text(g.get('dsfforza_log'))}" if g.get("dsfforza_log") else "no dsfforza.log"]
+        logs = [f"dsfcars.log {stamp_text(g.get('dsfforza_log'))}" if g.get("dsfforza_log") else "no dsfcars.log"]
         logs += [f"{x['name']} {stamp_text(x)}" for x in g.get("logs") or []]
         dumps = g.get("crash_dumps") or []
         if dumps:

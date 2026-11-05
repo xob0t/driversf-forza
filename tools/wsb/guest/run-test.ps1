@@ -32,7 +32,7 @@ param(
                          # a root file ('dsf_enhanced.asi=...', 'dsf_enhanced.ini=...') is copied over the run copy
     [switch]$Hook,
     [string]$Asi,        # guest path of a plugin .asi copied into plugins with the .ini beside it; plugins\*.log is collected
-    [string]$LuaFiles,   # 'dsfforza\hud.lua=C:\Repo\out\x\hud.lua;...': UserLuaScripts files replaced after the repo copy (-Probe)
+    [string]$LuaFiles,   # 'dsfcars\hud.lua=C:\Repo\out\x\hud.lua;...': UserLuaScripts files replaced after the repo copy (-Probe)
     [switch]$ArchiveOnly, # only the archive, not its build's dngvehicles.lua and gui\ (below: "The build's files")
     [string]$Overlay,    # a mod's folder (its game-folder tree) laid over the run folder, then ours over it as
                          # tools\install.ps1 -Force lays them (below, "-Overlay"); result.json "overlay"
@@ -64,9 +64,9 @@ param(
                          # from the first spawn on (-MenuKeys keeps it too: the garage menus are UI)
     [string]$ShotLabel,  # probe: the archive's name in each shot's caption (run-series.ps1 -Labels); default its path
     [switch]$LightsDriveOnly, # with -Lights: only the day and dark drives, no setLights phases
-    [switch]$Lights,     # probe: lamp phases per car (dsfforza\lightstest.lua, research/lights.md); the harness
-                         # picks each phase through dsfforza\lightsync.lua and saves lights-<id>-<k>a/b.png
-    [switch]$Dyno,       # probe: standing-start runs on a straight (dsfforza\dyno.lua); per run the harness holds
+    [switch]$Lights,     # probe: lamp phases per car (dsfcars\lightstest.lua, research/lights.md); the harness
+                         # picks each phase through dsfcars\lightsync.lua and saves lights-<id>-<k>a/b.png
+    [switch]$Dyno,       # probe: standing-start runs on a straight (dsfcars\dyno.lua); per run the harness holds
                          # the throttle DriveSeconds, then the brake (Down) BrakeSeconds
     [int]$BrakeSeconds = 6,
     [int]$DynoRuns = 2,
@@ -123,7 +123,7 @@ New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
 $started = Get-Date
 $events = [System.Collections.Generic.List[object]]::new()
 function Note([string]$message) {
-    $now = Get-Date   # wall: the guest clock, as in dsfforza.log (src/dsfforza/harness/emblem_check.py)
+    $now = Get-Date   # wall: the guest clock, as in dsfcars.log (src/dsfforza/harness/emblem_check.py)
     $events.Add([pscustomobject]@{ t = [math]::Round(($now - $started).TotalSeconds, 1); wall = $now.ToString('HH:mm:ss.fff'); message = $message })
     $events | ConvertTo-Json | Set-Content (Join-Path $RunDir 'events.json')
 }
@@ -538,7 +538,7 @@ try {
         ini = & $hashOf $iniSource; iniFrom = $iniSource; iniRewritten = -not $overrides['dsf_enhanced.ini'] }
     $overrides['install\dngvehicles.sp'] = $Archive
     # The build's files: an archive named dngvehicles.sp in a port_batch build folder goes with
-    # the files tools\install.ps1 installs beside it: dngvehicles.lua as dsfforza\ported.lua
+    # the files tools\install.ps1 installs beside it: dngvehicles.lua as dsfcars\ported.lua
     # (register.lua makes each car's vehicleStats entry from it) and gui\ (gui.sp, Fonts.fchunk,
     # hud.lua and Locale\<language>\global.fchunk: the car's own badge, plate and pictures).
     # Without an entry the HUD draws a row of other cars' badges and plates over the screen
@@ -549,10 +549,10 @@ try {
     $buildFolder = Split-Path $Archive
     if (-not $ArchiveOnly -and (Split-Path $Archive -Leaf) -eq 'dngvehicles.sp' -and
         (Test-Path -LiteralPath (Join-Path $buildFolder 'dngvehicles.lua'))) {
-        $buildLua['dsfforza\ported.lua'] = Join-Path $buildFolder 'dngvehicles.lua'
+        $buildLua['dsfcars\ported.lua'] = Join-Path $buildFolder 'dngvehicles.lua'
         $gui = Join-Path $buildFolder 'gui'
         if (@('gui.sp', 'Fonts.fchunk', 'hud.lua' | Where-Object { Test-Path -LiteralPath (Join-Path $gui $_) }).Count -eq 3) {
-            $buildLua['dsfforza\hud.lua'] = Join-Path $gui 'hud.lua'
+            $buildLua['dsfcars\hud.lua'] = Join-Path $gui 'hud.lua'
             $guiFiles = @{ 'install\gui.sp' = Join-Path $gui 'gui.sp'; 'media\fonts.fchunk' = Join-Path $gui 'Fonts.fchunk' }
             foreach ($file in Get-ChildItem -LiteralPath (Join-Path $gui 'Locale') -Recurse -File -Filter 'global.fchunk' -ErrorAction SilentlyContinue) {
                 $guiFiles["locale\$($file.Directory.Name.ToLower())\global.fchunk"] = $file.FullName
@@ -571,15 +571,16 @@ try {
     $portedLua = Join-Path $buildFolder 'dngvehicles.lua'
     foreach ($pair in ($LuaFiles -split ';' | Where-Object { $_ })) {
         $name, $path = $pair -split '=', 2
-        if ($name.Trim() -eq 'dsfforza\ported.lua') { $portedLua = $path.Trim() }
+        if ($name.Trim() -eq 'dsfcars\ported.lua') { $portedLua = $path.Trim() }
     }
     if ($Probe) { Set-CarNames $(if ((Split-Path $Archive -Leaf) -eq 'dngvehicles.sp' -or $LuaFiles -match 'ported\.lua') { $portedLua }) }
     # A dsfforza install on the host (tools\install.ps1) replaces some game files. Tests use
     # the repo's copy of the originals (out\vanilla, see src\dsfforza\game\game_paths.py) unless -Override
-    # names a file. Never link the install's own dsfforza-backup: a running test would hold
+    # names a file. Never link the install's own dsfcars-backup: a running test would hold
     # those files open and block install.ps1.
     $backup = Join-Path $RepoDir 'out\vanilla'
-    if ((Test-Path (Join-Path $GameDir 'dsfforza-backup')) -and (Test-Path $backup)) {
+    $installed = (Test-Path (Join-Path $GameDir 'dsfcars-backup')) -or (Test-Path (Join-Path $GameDir 'dsfforza-backup'))   # (its name before the rename)
+    if ($installed -and (Test-Path $backup)) {
         foreach ($file in Get-ChildItem $backup -Recurse -File | Where-Object { $_.Name -ne 'install.json' }) {
             $key = $file.FullName.Substring($backup.Length + 1).ToLower()
             if ($key -like 'common\*') { continue }   # UserLuaScripts come from the repo
@@ -657,14 +658,14 @@ try {
                     if ($GlassLadder) { $fields += "glass_ladder = true" }
                     if ($Palette -ge 0) { $fields += "palette = $Palette" }
                     if (-not $Ui -and -not $MenuKeys) { $fields += "hide_ui = true" }
-                    $fields += "wait_go = true"   # the first car waits for dsfforza\go.lua (below, after the Up presses)
-                    if ($buildLua.Contains('dsfforza\ported.lua')) { $fields += "register = { interesting = false }" }
+                    $fields += "wait_go = true"   # the first car waits for dsfcars\go.lua (below, after the Up presses)
+                    if ($buildLua.Contains('dsfcars\ported.lua')) { $fields += "register = { interesting = false }" }
                     if ($Views) { $fields += "views = { " + (($Views -split ',' | Where-Object { $_ } | ForEach-Object { "`"$($_.Trim())`"" }) -join ', ') + " }" }
                     if ($Lights) {
                         $fields += $(if ($LightsDriveOnly) { "lights = { dark = true, phases = false }" } else { "lights = { dark = true }" })
                         # Reset every run: a lightsync.lua left at an old phase (-1) would end the
                         # Lua's first car at once.
-                        [IO.File]::WriteAllText((Join-Path $userLua.FullName 'dsfforza\lightsync.lua'), "return { phase = 0 }`r`n")
+                        [IO.File]::WriteAllText((Join-Path $userLua.FullName 'dsfcars\lightsync.lua'), "return { phase = 0 }`r`n")
                     }
                     if ($Dyno) {
                         $dynoFields = "runs = $DynoRuns"
@@ -675,7 +676,7 @@ try {
                     }
                     if ($fields) {
                         "return { $($fields -join ', ') }" |
-                            Set-Content (Join-Path $userLua.FullName 'dsfforza\config.lua') -Encoding ASCII
+                            Set-Content (Join-Path $userLua.FullName 'dsfcars\config.lua') -Encoding ASCII
                     }
                 }
             }
@@ -690,7 +691,8 @@ try {
                     if (Test-Path $asiIni) { Copy-Item $asiIni $target }
                 }
             }
-            'dsfforza-backup' { }
+            'dsfcars-backup' { }
+            'dsfforza-backup' { }   # (its name before the rename)
             default { Add-LinkTree $dir.FullName $target $dir.Name.ToLower() }
         }
     }
@@ -699,9 +701,9 @@ try {
     # with install.ps1 -Force (research/felony-rework.md):
     #   - the mod's files replace the game's (root files, media, Common\LuaScripts, fmv, ...);
     #   - ours win: the archive and build files, -Override, -GameRootFrom, and whatever this script
-    #     put in plugins (dsfforza.asi) and Common\UserLuaScripts (the bootstrap, register.lua, ...);
+    #     put in plugins (dsfcars.asi) and Common\UserLuaScripts (the bootstrap, register.lua, ...);
     #   - with -Probe, the mod's Common\UserLuaScripts\bootstrap.lua becomes
-    #     dsfforza\chained-bootstrap.lua, which the test bootstrap runs first like the player one;
+    #     dsfcars\chained-bootstrap.lua, which the test bootstrap runs first like the player one;
     #   - its plugins\DriverNGHook.asi replaces 0.7.2 (above), as install.ps1 keeps a hook it finds.
     # Every file is a copy. A junction on the way into the game folder is split into a real folder
     # of links first, and a linked file is unlinked before the copy, so nothing reaches C:\Game.
@@ -730,7 +732,7 @@ try {
         foreach ($file in Get-ChildItem -LiteralPath $overlayRoot -Recurse -File -Force) {
             $relative = $file.FullName.Substring($overlayRoot.Length + 1)
             if ($Probe -and $relative -eq 'Common\UserLuaScripts\bootstrap.lua') {
-                $relative = 'Common\UserLuaScripts\dsfforza\chained-bootstrap.lua'
+                $relative = 'Common\UserLuaScripts\dsfcars\chained-bootstrap.lua'
                 $chained = $file.FullName
             }
             $key = $relative.ToLower()
@@ -864,7 +866,7 @@ try {
     # as soon as the camera was at street level, so the first car's chase view and -Views were over
     # before the first shot below, and the last Up presses drove it.
     if ($Probe) {
-        [IO.File]::WriteAllText((Join-Path $RunPath 'Common\UserLuaScripts\dsfforza\go.lua'), "return { go = 1 }`r`n")
+        [IO.File]::WriteAllText((Join-Path $RunPath 'Common\UserLuaScripts\dsfcars\go.lua'), "return { go = 1 }`r`n")
         Note 'probe go'
     }
 
@@ -960,9 +962,9 @@ try {
         finally { $stream.Dispose() }
     }
     # -Lights: for each "[dsfforza.lights] id N: ready K phases" line, ask lightstest.lua for
-    # phases 1..K in turn (dsfforza\lightsync.lua, re-read by the Lua every update) and take two
+    # phases 1..K in turn (dsfcars\lightsync.lua, re-read by the Lua every update) and take two
     # shots per phase 0.7 s apart (indicators blink), then tell it to finish (-1).
-    $lightSync = Join-Path $RunPath 'Common\UserLuaScripts\dsfforza\lightsync.lua'
+    $lightSync = Join-Path $RunPath 'Common\UserLuaScripts\dsfcars\lightsync.lua'
     # The game reads lightsync.lua every update (io.open), so a write can hit a sharing
     # violation (a run died on one at vanilla 171 phase 10). Retry for up
     # to 5 s, then note the miss and go on: the Lua advances by itself after its timeout.
@@ -1191,7 +1193,7 @@ finally {
     }
     if ($Asi) { Get-ChildItem (Join-Path $RunPath 'plugins') -Filter *.log -ErrorAction SilentlyContinue | Copy-Item -Destination $RunDir }
     # The guest's save folder (the host profile's copy, kept until the sandbox restarts): autosave.dat
-    # and dsfforza.asi's side file dsfforza-garage.dat (research/asi.md).
+    # and dsfcars.asi's side file dsfcars-garage.dat (research/asi.md).
     $saves = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Ubisoft\Driver San Francisco\reloaded\savegames'
     if ($Asi -and (Test-Path $saves)) {
         $saveOut = New-Item -ItemType Directory -Force -Path (Join-Path $RunDir 'save')

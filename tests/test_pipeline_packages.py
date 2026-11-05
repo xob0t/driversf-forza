@@ -92,7 +92,7 @@ class InstallFlagsTest(unittest.TestCase):
         """Packages are the only install: install.ps1 has no -Packages, -Asi or -IdPolicy."""
         run = install.Run.__new__(install.Run)
         run.args = argparse.Namespace(skip_hook=False, no_write_profile=False, force=False)
-        run.plugin = Path("out/asi/dsfforza.asi")
+        run.plugin = Path("out/asi/dsfcars.asi")
         run.record = None
         flags = run.install_flags(None, None)
         self.assertEqual(flags[:2], ["-AsiPath", str(run.plugin)])

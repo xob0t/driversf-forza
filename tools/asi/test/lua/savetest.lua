@@ -1,6 +1,6 @@
--- dsfforza.asi garage/save test (tools/asi/test; not installed for players).
+-- dsfcars.asi garage/save test (tools/asi/test; not installed for players).
 -- Loaded by tools/asi/test/lua/bootstrap.lua, which run-series -LuaFiles puts
--- over the test bootstrap. Settings: dsfforza\\savetest_cfg.lua, e.g.
+-- over the test bootstrap. Settings: dsfcars\\savetest_cfg.lua, e.g.
 --   return { fill = { first = 400, count = 600, perMaker = 10, own = 2 },
 --            set = { 305, 320, 500, 650, 999 }, check = { 305, 320, 500, 650, 999 }, delay = 20 }
 --   fill   at load: vehicleStats entries for IDs first..first+count-1, copies of
@@ -20,7 +20,7 @@ end
 
 local cfg = {}
 do
-	local found, c = user_open("dsfforza\\savetest_cfg.lua")
+	local found, c = user_open("dsfcars\\savetest_cfg.lua")
 	if found and type(c) == "table" then cfg = c end
 end
 

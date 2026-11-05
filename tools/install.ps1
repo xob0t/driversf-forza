@@ -15,23 +15,23 @@ Install:
      it is already there, and the Ultimate ASI Loader (dinput8.dll) if no ASI
      loader is present. DriverNGHook needs the Microsoft Visual C++ 2015-2022
      runtime, x86 (32-bit); the script checks for it.
-  3. Installs the dsfforza.asi plugin (plugins\dsfforza.asi, and dsfforza.ini with
+  3. Installs the dsfcars.asi plugin (plugins\dsfcars.asi, and dsfcars.ini with
      [archive] packages=1; -AsiPath, default out\asi, built by tools\asi\build.ps1, or a
      release's plugin\): runtime patches of Driver.exe 1.04 (no file is changed) that load
      the car packages and raise the garage and save limits (research/asi.md). The ASI
      loader (step 2) loads it, so -SkipHook needs a loader of your own.
   4. Installs the Lua that registers the cars with the game (names, badges, stat
      bars, garage, traffic): Common\UserLuaScripts\bootstrap.lua plus
-     dsfforza\register.lua. No test probes. Another mod's bootstrap.lua (replaced
-     only with -Force, backed up to <game>\dsfforza-backup\) is kept as
-     dsfforza\chained-bootstrap.lua, which ours runs first.
+     dsfcars\register.lua. No test probes. Another mod's bootstrap.lua (replaced
+     only with -Force, backed up to <game>\dsfcars-backup\) is kept as
+     dsfcars\chained-bootstrap.lua, which ours runs first.
   5. Hands the packages to the car manager (dsff car_manager), which writes
-     dsfforza\cars\ (the cars' own files, stable IDs), dsfforza\generated\ (copies
+     dsfcars\cars\ (the cars' own files, stable IDs), dsfcars\generated\ (copies
      of gui.sp, Fonts.fchunk and global.fchunk the plugin opens in place of the
-     game's) and dsfforza\packages.lua / packages_hud.lua.
-  Everything it did is recorded in <game>\dsfforza-backup\install.json.
-  dsfforza.asi writes plugins\dsfforza.log (removed by -Uninstall) and keeps
-  the save flags of added cars in <savegames>\dsfforza-garage.dat next to
+     game's) and dsfcars\packages.lua / packages_hud.lua.
+  Everything it did is recorded in <game>\dsfcars-backup\install.json.
+  dsfcars.asi writes plugins\dsfcars.log (removed by -Uninstall) and keeps
+  the save flags of added cars in <savegames>\dsfcars-garage.dat next to
   autosave.dat; that file is save data and stays after -Uninstall (the game
   ignores it).
 
@@ -45,13 +45,32 @@ removes it (every replaced game file restored from its backup), deletes ported.l
 hud.lua, and installs the packages, which take the same IDs.
 
 -Uninstall has the car manager remove its files but its key -> ID map
-(dsfforza\cars\manager.json), so a later install gives every car the ID the save's
+(dsfcars\cars\manager.json), so a later install gives every car the ID the save's
 flags are for. Then it puts every replaced file back from the backup, checks that its
 SHA-256 matches the original, and deletes every file it created (only if it is still
 the file it installed). It removes a merged install the same way. -Status shows what
 is installed.
 
-The game folder is only changed by Install and Uninstall; the build reads it.
+An install from before the runtime was renamed to dsfcars has the old names: plugins\dsfforza.asi
+and dsfforza.ini, the dsfforza\ folder (cars\, generated\), Common\UserLuaScripts\dsfforza\ and
+dsfforza-backup\ (install.json). -Migrate moves it to the new names, and every Install and
+-Uninstall does so first:
+  1. dsfforza-backup\ becomes dsfcars-backup\, and the paths install.json records take the new
+     names (the old plugin's entries are marked done: they go in step 2);
+  2. plugins\dsfforza.asi, dsfforza.ini and dsfforza.log are deleted (both plugins loading would
+     patch Driver.exe twice);
+  3. dsfforza\ becomes dsfcars\: manager.json (the key -> ID map, so every car keeps its ID), the
+     packages, cars.txt and generated\; the paths in cars.txt and generated\redirect.txt follow;
+  4. Common\UserLuaScripts\dsfforza\ becomes ...\dsfcars\ (register.lua, config.lua,
+     packages.lua, packages_hud.lua, chained-bootstrap.lua);
+  5. this checkout's plugin (plugins\dsfcars.asi and .ini), register.lua and, when it is ours,
+     bootstrap.lua are installed in place of the old ones (an -Uninstall skips this step).
+A folder is renamed in one move. Each step is safe to run again, so -Migrate after an
+interrupted migration finishes it (install.json says "migration": "started" until step 5 is
+done). The save's flags stay: the game keeps them per model ID, and dsfcars.asi reads
+dsfforza-garage.dat until it has written dsfcars-garage.dat.
+
+The game folder is only changed by Install, Migrate and Uninstall; the build reads it.
 
 .EXAMPLE
 .\tools\install.ps1 -GamePath '<game folder>' -Iso '<FH1.iso>','<FM4 disc 1.iso>','<FM4 disc 2.iso>'
@@ -61,6 +80,9 @@ The game folder is only changed by Install and Uninstall; the build reads it.
 
 .EXAMPLE
 .\tools\install.ps1 -GamePath '<game folder>' -Uninstall
+
+.EXAMPLE
+.\tools\install.ps1 -GamePath '<game folder>' -Migrate
 #>
 [CmdletBinding(DefaultParameterSetName = 'Install')]
 param(
@@ -90,7 +112,8 @@ param(
     [Parameter(ParameterSetName = 'Install')]
     [switch]$SkipHook,                    # don't install DriverNGHook or an ASI loader (you manage them)
     [Parameter(ParameterSetName = 'Install')]
-    [string]$AsiPath,                     # the dsfforza.asi plugin (default out\asi\dsfforza.asi, else a release's plugin\dsfforza.asi)
+    [Parameter(ParameterSetName = 'Migrate')]
+    [string]$AsiPath,                     # the dsfcars.asi plugin (default out\asi\dsfcars.asi, else a release's plugin\dsfcars.asi)
     [Parameter(ParameterSetName = 'Install')]
     [switch]$WriteProfile,                # let register.lua mark the garage cars unlocked/owned in the save
     [Parameter(ParameterSetName = 'Install')]
@@ -102,7 +125,10 @@ param(
     [switch]$KeepBackup,
 
     [Parameter(ParameterSetName = 'Status', Mandatory = $true)]
-    [switch]$Status
+    [switch]$Status,
+
+    [Parameter(ParameterSetName = 'Migrate', Mandatory = $true)]
+    [switch]$Migrate                      # move an install from before the rename to dsfcars; nothing else changes
 )
 
 $ErrorActionPreference = 'Stop'
@@ -155,9 +181,12 @@ function Read-BuildManifest([string]$Path) {
 }
 
 if (-not (Test-Path -LiteralPath $GamePath -PathType Container)) { Fail "Game folder not found: $GamePath" }
-$Game = (Resolve-Path -LiteralPath $GamePath).Path
+# The long form of the path: Resolve-Path keeps an 8.3 name (C:\Users\RUNNER~1\...) as given, while
+# Get-ChildItem returns long names, so a file's path relative to the game (FullName.Substring) needs
+# the same form for both.
+$Game = (Get-Item -LiteralPath (Resolve-Path -LiteralPath $GamePath).Path).FullName
 if (-not (Test-Path -LiteralPath (Join-Path $Game 'Driver.exe'))) { Fail "Driver.exe not found in $Game; -GamePath must be the Driver: San Francisco folder." }
-$BackupDir = Join-Path $Game 'dsfforza-backup'
+$BackupDir = Join-Path $Game 'dsfcars-backup'
 $ManifestPath = Join-Path $BackupDir 'install.json'
 
 function Test-GameRunning {
@@ -259,12 +288,15 @@ function Test-VcRuntimeX86 {
 
 # One of our own bootstraps, any version: every player bootstrap install.ps1 has installed
 # (tools\game\lua\player\bootstrap.lua, from its first commit) and the test ones start with
-# one of these lines. A mention of dsfforza doesn't count: another mod's bootstrap may
-# load register.lua itself (INSTALL.md).
+# one of these lines (the first three from before the rename to dsfcars). A mention of
+# dsfcars doesn't count: another mod's bootstrap may load register.lua itself (INSTALL.md).
 $OurBootstrapHeaders = @(
     '-- dsfforza player bootstrap: registers the added Forza cars with the game.',
     '-- DriverNGHook user bootstrapper for dsfforza tests.',
-    '-- Test bootstrap for dsfforza.asi garage/save runs (tools/asi/test): the')
+    '-- Test bootstrap for dsfforza.asi garage/save runs (tools/asi/test): the',
+    '-- dsfcars player bootstrap: registers the added cars with the game.',
+    '-- DriverNGHook user bootstrapper for dsfcars tests.',
+    '-- Test bootstrap for dsfcars.asi garage/save runs (tools/asi/test): the')
 function Test-OurBootstrap([string]$Path) {
     $first = @([IO.File]::ReadAllLines($Path) | Where-Object { $_.Trim() } | Select-Object -First 1)
     if (-not $first) { return $false }
@@ -351,12 +383,215 @@ function Install-Text([string]$Text, [string]$Relative) {
     } finally { Remove-Item -LiteralPath $temp -ErrorAction SilentlyContinue }
 }
 
+# Copy Source over <game>\Relative when the record already has it (an entry not done): the entry
+# keeps its action, original and backup, and takes the new file's hash, so an uninstall still
+# puts back what was there before the first install. Otherwise as Install-File.
+function Update-InstalledFile([string]$Source, [string]$Relative) {
+    $entry = @($script:Entries | Where-Object { (Get-Field $_ 'path') -eq $Relative -and -not (Get-Field $_ 'done') }) | Select-Object -Last 1
+    if (-not $entry) { Install-File $Source $Relative; return }
+    $target = Join-Path $Game $Relative
+    New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
+    Copy-Item -LiteralPath $Source -Destination $target -Force
+    $hash = Get-Sha256 $target
+    if ($hash -ne (Get-Sha256 $Source)) { Fail "copy of $Relative failed (hash mismatch)" }
+    Set-Field $entry 'installed_sha256' $hash
+    if ($script:Manifest) { Write-Manifest $script:Manifest }
+    Say "  updated  $Relative"
+}
+
+function Update-InstalledText([string]$Text, [string]$Relative) {
+    $temp = [IO.Path]::GetTempFileName()
+    try {
+        [IO.File]::WriteAllText($temp, $Text, (New-Object Text.UTF8Encoding($false)))
+        Update-InstalledFile $temp $Relative
+    } finally { Remove-Item -LiteralPath $temp -ErrorAction SilentlyContinue }
+}
+
+# --- the rename to dsfcars ---------------------------------------------------------------------
+
+# The game-side names before the runtime was renamed to dsfcars (the .DESCRIPTION above, "-Migrate"):
+# folders that move as they are, to these names, and the old plugin's files, which go.
+$LegacyFolders = [ordered]@{
+    'dsfforza-backup'                = 'dsfcars-backup'                  # install.json, the backups
+    'dsfforza'                       = 'dsfcars'                         # cars\ (manager.json, the packages, cars.txt), generated\
+    'Common\UserLuaScripts\dsfforza' = 'Common\UserLuaScripts\dsfcars'   # register.lua, config.lua, packages*.lua, chained-bootstrap.lua
+}
+$LegacyPlugin = @('plugins\dsfforza.asi', 'plugins\dsfforza.ini')
+$LegacyLog = 'plugins\dsfforza.log'
+
+# An install (or part of one) under the old names, or a migration that stopped before its end.
+function Test-LegacyInstall {
+    foreach ($relative in @($LegacyFolders.Keys) + $LegacyPlugin) {
+        if (Test-Path -LiteralPath (Join-Path $Game $relative)) { return $true }
+    }
+    $manifest = Read-Manifest
+    return [bool]($manifest -and (Get-Field $manifest 'migration') -eq 'started')
+}
+
+# A path the record of an older release names, under its new name.
+function Convert-LegacyPath([string]$Relative) {
+    if (-not $Relative) { return $Relative }
+    if ($Relative -ieq $LegacyLog) { return 'plugins\dsfcars.log' }
+    foreach ($old in $LegacyFolders.Keys) {
+        if ($Relative -ieq $old) { return $LegacyFolders[$old] }
+        if ($Relative.StartsWith("$old\", [StringComparison]::OrdinalIgnoreCase)) {
+            return $LegacyFolders[$old] + $Relative.Substring($old.Length)
+        }
+    }
+    return $Relative
+}
+
+# <game>\Old to <game>\New: one rename when New isn't there. Otherwise (a migration that stopped
+# half-way) file by file into it: a file both have with the same bytes is dropped from Old, and
+# different bytes stop the move, as neither copy is known to be the right one.
+function Move-LegacyFolder([string]$Old, [string]$New) {
+    $from = Join-Path $Game $Old
+    $to = Join-Path $Game $New
+    if (-not (Test-Path -LiteralPath $from -PathType Container)) { return }
+    if (-not (Test-Path -LiteralPath $to)) {
+        New-Item -ItemType Directory -Force -Path (Split-Path $to) | Out-Null
+        [IO.Directory]::Move($from, $to)
+        Say "  moved    $Old\ -> $New\"
+        return
+    }
+    $from = (Get-Item -LiteralPath $from).FullName   # the long form, as Get-ChildItem's FullName has it
+    $files = @(Get-ChildItem -LiteralPath $from -Recurse -File -Force)
+    foreach ($file in $files) {
+        $relative = $file.FullName.Substring($from.Length + 1)
+        $target = Join-Path $to $relative
+        if (-not (Test-Path -LiteralPath $target)) {
+            New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
+            Move-Item -LiteralPath $file.FullName -Destination $target
+        } elseif ((Get-Sha256 $target) -eq (Get-Sha256 $file.FullName)) {
+            Remove-Item -LiteralPath $file.FullName -Force
+        } else {
+            Fail ("$Old\$relative and $New\$relative both exist and differ, so the migration stopped there. " +
+                  "Keep the right one in $New\, delete the other, and run -Migrate again.")
+        }
+    }
+    foreach ($dir in @(Get-ChildItem -LiteralPath $from -Recurse -Directory -Force | Sort-Object { $_.FullName.Length } -Descending)) {
+        Remove-Item -LiteralPath $dir.FullName -Force
+    }
+    Remove-Item -LiteralPath $from -Force
+    Say "  moved    $Old\ into $New\ ($($files.Count) files)"
+}
+
+# The record's paths under the new names: each entry's path and backup (the backup file moves
+# with it), the runtime files and the created folders. The old plugin's entries are marked done
+# ("migrated"): its files are deleted next, and the new plugin gets entries of its own.
+function Update-LegacyRecord($Manifest) {
+    foreach ($e in @($Manifest.entries)) {
+        $path = [string](Get-Field $e 'path')
+        if ($LegacyPlugin -contains $path) {
+            if (-not (Get-Field $e 'done')) { Set-Field $e 'done' 'migrated' }
+            continue
+        }
+        $new = Convert-LegacyPath $path
+        if ($new -ceq $path) { continue }
+        $backup = [string](Get-Field $e 'backup')
+        if ($backup) {
+            $newBackup = Convert-LegacyPath $backup
+            $from = Join-Path $BackupDir $backup
+            $to = Join-Path $BackupDir $newBackup
+            if ((Test-Path -LiteralPath $from) -and -not (Test-Path -LiteralPath $to)) {
+                New-Item -ItemType Directory -Force -Path (Split-Path $to) | Out-Null
+                Move-Item -LiteralPath $from -Destination $to
+            }
+            Set-Field $e 'backup' $newBackup
+        }
+        Set-Field $e 'path' $new
+    }
+    $runtime = @(@(Get-Field $Manifest 'runtime_files') | Where-Object { $_ } | ForEach-Object { Convert-LegacyPath $_ } | Select-Object -Unique)
+    Set-Field $Manifest 'runtime_files' $runtime
+    $dirs = @(@(Get-Field $Manifest 'created_dirs') | Where-Object { $_ } | ForEach-Object { Convert-LegacyPath $_ } | Select-Object -Unique)
+    Set-Field $Manifest 'created_dirs' $dirs
+    Write-Manifest $Manifest
+}
+
+# The plugin's lists name game-relative paths: cars.txt "<id> dsfcars\cars\<key>\car.sp",
+# generated\redirect.txt "<game file>|dsfcars\generated\<copy>".
+function Update-LegacyLists {
+    foreach ($list in 'dsfcars\cars\cars.txt', 'dsfcars\generated\redirect.txt') {
+        $path = Join-Path $Game $list
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $text = [IO.File]::ReadAllText($path)
+        $new = [regex]::Replace($text, '(?im)(^\d+[ \t]+|\|)dsfforza\\', '${1}dsfcars\')
+        if ($new -ceq $text) { continue }
+        $temp = "$path.tmp"
+        [IO.File]::WriteAllText($temp, $new, (New-Object Text.UTF8Encoding($false)))
+        Move-Item -LiteralPath $temp -Destination $path -Force
+        Say "  updated  $list (paths under dsfcars\)"
+    }
+}
+
+# Move an install of the old names to the new ones (the .DESCRIPTION above, "-Migrate"). -DataOnly
+# (before an uninstall) leaves out step 5, the new plugin and Lua. Every car keeps its ID: the key
+# -> ID map (manager.json) moves as it is.
+function Invoke-Migrate([switch]$DataOnly) {
+    Say "Moving the install from before the rename (dsfforza) to dsfcars; every car keeps its ID:"
+    # 1. The record, under the new names; "started" until the end, so a run that stops keeps
+    #    Test-LegacyInstall true even once every old folder is gone.
+    Move-LegacyFolder 'dsfforza-backup' 'dsfcars-backup'
+    $manifest = Read-Manifest
+    if ($manifest) {
+        Set-Field $manifest 'migration' 'started'
+        Update-LegacyRecord $manifest
+    }
+    # 2. The old plugin, before the new one is in place.
+    foreach ($relative in $LegacyPlugin + $LegacyLog) {
+        $path = Join-Path $Game $relative
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        if (-not (Remove-FileRetry $path)) { Fail "could not delete $relative (in use?); close the game and run this again" }
+        Say "  removed  $relative"
+    }
+    # 3, 4. The car manager's files and the Lua folder.
+    Move-LegacyFolder 'dsfforza' 'dsfcars'
+    Update-LegacyLists
+    Move-LegacyFolder 'Common\UserLuaScripts\dsfforza' 'Common\UserLuaScripts\dsfcars'
+    if (-not $manifest) {
+        Say '  no install record (dsfcars-backup\install.json): the old plugin is removed and the files are moved;'
+        Say '  run an install (-Force) to put in the plugin and the Lua.'
+        return
+    }
+    if ($DataOnly -or -not (Test-Installed $manifest)) {   # (an uninstalled record: nothing to put in)
+        Set-Field $manifest 'migration' 'data'
+        Write-Manifest $manifest
+        return
+    }
+    # 5. This checkout's plugin and Lua in place of the old ones, in the same record.
+    $script:Entries = New-Object System.Collections.ArrayList
+    foreach ($e in @($manifest.entries)) { if ($e) { [void]$script:Entries.Add($e) } }
+    Set-Field $manifest 'entries' $script:Entries
+    $script:Manifest = $manifest
+    try {
+        Update-InstalledFile $script:AsiFile 'plugins\dsfcars.asi'
+        Update-InstalledText $script:IniText 'plugins\dsfcars.ini'
+        $lua = Join-Path $Repo 'tools\game\lua'
+        $bootstrap = Join-Path $Game 'Common\UserLuaScripts\bootstrap.lua'
+        if (-not (Test-Path -LiteralPath $bootstrap) -or (Test-OurBootstrap $bootstrap)) {
+            Update-InstalledFile (Join-Path $lua 'player\bootstrap.lua') 'Common\UserLuaScripts\bootstrap.lua'
+        } else {
+            Say ("  WARNING: Common\UserLuaScripts\bootstrap.lua is another mod's now, left as it is. If it opens " +
+                 "dsfforza\register.lua, change that to dsfcars\register.lua (INSTALL.md), or install again with -Force.")
+        }
+        Update-InstalledFile (Join-Path $lua 'dsfcars\register.lua') 'Common\UserLuaScripts\dsfcars\register.lua'
+        Set-Field $manifest 'migration' 'done'
+    } finally {
+        Set-Field $manifest 'entries' $script:Entries
+        Write-Manifest $manifest
+        $script:Manifest = $null
+        $script:Entries = New-Object System.Collections.ArrayList
+    }
+    Say '  migrated: the plugin, the Lua and the car manager''s files have their dsfcars names'
+}
+
 # --- uninstall ------------------------------------------------------------------------------
 
 # Resumable: each entry is marked done in install.json as soon as it is handled, a
 # replaced file that already has its original bytes counts as restored (backup or
 # not), and the manifest is marked "uninstalled" before the backup folder goes.
 function Invoke-Uninstall([switch]$Keep) {
+    if (Test-LegacyInstall) { Invoke-Migrate -DataOnly }   # the record and the files under the names this uninstall knows
     $manifest = Read-Manifest
     if (-not (Test-Installed $manifest)) {
         Say "Nothing to uninstall (no install recorded in $ManifestPath)."
@@ -470,13 +705,16 @@ function Resolve-LeftoverBackup {
 
 function Show-Status {
     $manifest = Read-Manifest
+    $legacy = Test-LegacyInstall
+    $legacyRecord = Join-Path (Join-Path $Game 'dsfforza-backup') 'install.json'
+    if (-not $manifest -and (Test-Path -LiteralPath $legacyRecord)) { $manifest = Get-Content -LiteralPath $legacyRecord -Raw | ConvertFrom-Json }
     $archive = Join-Path $Game 'Install\dngvehicles.sp'
     $hash = Get-Sha256 $archive
     $state = 'unknown (not the 1.04 vanilla archive)'
     if ($hash -eq $VanillaArchiveHash) { $state = 'vanilla 1.04' }
     elseif ($manifest) {
         foreach ($e in @($manifest.entries)) {
-            if ($e.path -eq 'Install\dngvehicles.sp' -and $e.installed_sha256 -eq $hash) { $state = 'a merged dsfforza build (as installed)' }
+            if ($e.path -eq 'Install\dngvehicles.sp' -and $e.installed_sha256 -eq $hash) { $state = 'a merged build (as installed)' }
         }
     }
     Say "Game:      $Game"
@@ -484,17 +722,23 @@ function Show-Status {
     if (-not (Test-Installed $manifest)) {
         $note = ''
         if (Test-Path -LiteralPath $BackupDir) { $note = " (a leftover $BackupDir is there; the next install or -Uninstall clears it)" }
-        Say "dsfforza:  not installed$note"
+        Say "dsfcars:   not installed$note"
+        if ($legacy) { Say "Old names: parts of an install from before the rename (dsfforza); -Migrate moves them" }
         return
     }
     $state = Get-Field $manifest 'state'
     if (-not $state) { $state = 'installed' }
     if (Get-Field $manifest 'packages') {   # (merged installs, before car packages, have no such field)
-        Say "dsfforza:  $state $($manifest.installed) ($(@($manifest.cars).Count) car packages; IDs: uv run dsff car_manager --game '$Game' status)"
+        Say "dsfcars:   $state $($manifest.installed) ($(@($manifest.cars).Count) car packages; IDs: uv run dsff car_manager --game '$Game' status)"
     } else {
-        Say "dsfforza:  $state $($manifest.installed), merged ($(@($manifest.cars).Count) cars, IDs $($manifest.ids)); the next install moves them to car packages on the same IDs"
+        Say "dsfcars:   $state $($manifest.installed), merged ($(@($manifest.cars).Count) cars, IDs $($manifest.ids)); the next install moves them to car packages on the same IDs"
+    }
+    if ($legacy) {
+        Say ("Old names: an install from before the rename to dsfcars (dsfforza\, plugins\dsfforza.asi, dsfforza-backup\). " +
+             "-Migrate moves it, as the next install or -Uninstall does first; every car keeps its ID.")
     }
     foreach ($e in @($manifest.entries)) {
+        if ((Get-Field $e 'done') -eq 'migrated') { continue }   # the old plugin's: deleted by the migration
         $target = Join-Path $Game $e.path
         $now = 'missing'
         if (Test-Path -LiteralPath $target) {
@@ -505,11 +749,14 @@ function Show-Status {
     $loader = Find-AsiLoader
     if (-not $loader) { $loader = 'none found' }
     Say "ASI loader: $loader"
-    if (Test-Path -LiteralPath (Join-Path $Game 'plugins\dsfforza.asi')) {
-        $asiLog = Join-Path $Game 'plugins\dsfforza.log'
-        $last = '; no plugins\dsfforza.log yet (game not started since)'
-        if (Test-Path -LiteralPath $asiLog) { $last = '; plugins\dsfforza.log from ' + (Get-Item -LiteralPath $asiLog).LastWriteTime.ToString('s') }
-        Say "dsfforza.asi: present$last"
+    if (Test-Path -LiteralPath (Join-Path $Game 'plugins\dsfcars.asi')) {
+        $asiLog = Join-Path $Game 'plugins\dsfcars.log'
+        $last = '; no plugins\dsfcars.log yet (game not started since)'
+        if (Test-Path -LiteralPath $asiLog) { $last = '; plugins\dsfcars.log from ' + (Get-Item -LiteralPath $asiLog).LastWriteTime.ToString('s') }
+        Say "dsfcars.asi: present$last"
+    }
+    foreach ($relative in $LegacyPlugin) {
+        if (Test-Path -LiteralPath (Join-Path $Game $relative)) { Say "$($relative): present (the old name; -Migrate removes it)" }
     }
     $vc = 'missing'
     if (Test-VcRuntimeX86) { $vc = 'present' }
@@ -631,8 +878,8 @@ function Invoke-Build {
 }
 
 # The car manager (src/dsfforza/build/car_manager.py) owns everything of an install besides
-# what install.json records: dsfforza\cars\ (the cars' files, the plugin's list and its
-# key -> ID map), the generated GUI copies in dsfforza\generated\ and packages.lua /
+# what install.json records: dsfcars\cars\ (the cars' files, the plugin's list and its
+# key -> ID map), the generated GUI copies in dsfcars\generated\ and packages.lua /
 # packages_hud.lua. It writes no game file.
 function Invoke-CarManager([string[]]$Arguments, [switch]$Optional) {
     $uv = Find-Uv
@@ -659,16 +906,16 @@ function Install-CarPackages([string[]]$Files) {
 }
 
 # Uninstalling a package install: the manager removes its files and keeps its key -> ID map
-# (dsfforza\cars\manager.json), so a later install gives each car the ID the save's flags are
+# (dsfcars\cars\manager.json), so a later install gives each car the ID the save's flags are
 # for. Without uv (the repo gone), its files are removed here and the map is left as it is.
 function Uninstall-CarPackages {
     if (Invoke-CarManager @('uninstall') -Optional) { return }
     Say '  uv not found: removing the car manager''s files directly (its ID map stays)'
-    $cars = Join-Path $Game 'dsfforza\cars'
+    $cars = Join-Path $Game 'dsfcars\cars'
     if (Test-Path -LiteralPath $cars) {
         Get-ChildItem -LiteralPath $cars | Where-Object { $_.Name -ne 'manager.json' } | Remove-Item -Recurse -Force
     }
-    foreach ($relative in 'dsfforza\generated', 'Common\UserLuaScripts\dsfforza\packages.lua', 'Common\UserLuaScripts\dsfforza\packages_hud.lua') {
+    foreach ($relative in 'dsfcars\generated', 'Common\UserLuaScripts\dsfcars\packages.lua', 'Common\UserLuaScripts\dsfcars\packages_hud.lua') {
         $path = Join-Path $Game $relative
         if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force; Say "  removed  $relative" }
     }
@@ -677,7 +924,7 @@ function Uninstall-CarPackages {
 # A merged install (what install.ps1 did up to v0.1.8, before car packages: the cars merged into
 # copies of the game's dngvehicles.sp, gui.sp, Fonts.fchunk and global.fchunk) left these two:
 # ported.lua (each car's ID and vehicleStats fields) and hud.lua (its badge, plate and picture).
-$MergedLua = @('Common\UserLuaScripts\dsfforza\ported.lua', 'Common\UserLuaScripts\dsfforza\hud.lua')
+$MergedLua = @('Common\UserLuaScripts\dsfcars\ported.lua', 'Common\UserLuaScripts\dsfcars\hud.lua')
 
 # Before a merged install is removed: its cars' IDs go into the manager's map (car_manager seed
 # reads its ported.lua), so the same cars come back as packages on the same IDs and the save's
@@ -731,29 +978,26 @@ function Get-BuildPackages([string]$Folder) {
     return ,$packageFiles
 }
 
-function Invoke-Install {
-    $existing = Read-Manifest
-    $lua = Join-Path $Repo 'tools\game\lua'
-
-    # Everything that can stop the install is checked before the game folder changes.
-    if ($Build) { [void](Get-BuildPackages (Resolve-Path -LiteralPath $Build).Path) }
+# The plugin to install ($script:AsiFile) and its ini ($script:IniText), checked: it is there,
+# has the [archive] packages switch, and has what the car manager and the build's packages need.
+function Resolve-Plugin {
     if (-not (Find-Uv)) {
         Fail 'uv is needed for the car manager: install it from https://docs.astral.sh/uv/getting-started/installation/ (winget install astral-sh.uv), open a new PowerShell window and run this again.'
     }
-    # dsfforza.asi's [archive] packages loads the cars: no install without it.
+    # dsfcars.asi's [archive] packages loads the cars: no install without it.
     $asiFile = $AsiPath
     if (-not $asiFile) {
-        $asiFile = Join-Path $Repo 'out\asi\dsfforza.asi'
-        $bundled = Join-Path $Repo 'plugin\dsfforza.asi'   # a release zip's (src/dsfforza/build/package.py)
+        $asiFile = Join-Path $Repo 'out\asi\dsfcars.asi'
+        $bundled = Join-Path $Repo 'plugin\dsfcars.asi'   # a release zip's (src/dsfforza/build/package.py)
         if (-not (Test-Path -LiteralPath $asiFile) -and (Test-Path -LiteralPath $bundled)) { $asiFile = $bundled }
     }
     if (-not (Test-Path -LiteralPath $asiFile)) {
-        Fail "dsfforza.asi not found: $asiFile (build it with tools\asi\build.ps1, or pass -AsiPath). It loads the cars."
+        Fail "dsfcars.asi not found: $asiFile (build it with tools\asi\build.ps1, or pass -AsiPath). It loads the cars."
     }
     $asiFile = (Resolve-Path -LiteralPath $asiFile).Path
     $asiIni = [IO.Path]::ChangeExtension($asiFile, '.ini')
-    if (-not (Test-Path -LiteralPath $asiIni)) { $asiIni = Join-Path $Repo 'tools\asi\dsfforza.ini' }
-    # [archive] packages=1: the cars from dsfforza\cars, the GUI copies from dsfforza\generated.
+    if (-not (Test-Path -LiteralPath $asiIni)) { $asiIni = Join-Path $Repo 'tools\asi\dsfcars.ini' }
+    # [archive] packages=1: the cars from dsfcars\cars, the GUI copies from dsfcars\generated.
     $iniText = [IO.File]::ReadAllText($asiIni) -replace '(?m)^packages=0', 'packages=1'
     if ($iniText -notmatch '(?m)^packages=1') { Fail "$asiIni has no [archive] packages switch: an older plugin?" }
     # car.sp is installed as the package has it: the plugin writes each car's model ID into its data
@@ -763,13 +1007,32 @@ function Invoke-Install {
     $checkArgs = @('check-plugin', '--plugin', $asiFile)
     if ($Build) { $checkArgs += Join-Path (Resolve-Path -LiteralPath $Build).Path 'packages' }
     [void](Invoke-CarManager $checkArgs)
+    $script:AsiFile = $asiFile
+    $script:IniText = $iniText
+}
+
+function Invoke-Install {
+    $existing = Read-Manifest
+    $lua = Join-Path $Repo 'tools\game\lua'
+
+    # Everything that can stop the install is checked before the game folder changes.
+    if ($Build) { [void](Get-BuildPackages (Resolve-Path -LiteralPath $Build).Path) }
+    Resolve-Plugin
+    $asiFile = $script:AsiFile
+    $iniText = $script:IniText
+    if (-not $existing -and (Test-LegacyInstall)) {
+        # An install from before the rename: its record is still in dsfforza-backup (the checks
+        # below read it; Invoke-Migrate moves it, before anything else changes).
+        $legacyRecord = Join-Path (Join-Path $Game 'dsfforza-backup') 'install.json'
+        if (Test-Path -LiteralPath $legacyRecord) { $existing = Get-Content -LiteralPath $legacyRecord -Raw | ConvertFrom-Json }
+    }
 
     $bootstrapTarget = Join-Path $Game 'Common\UserLuaScripts\bootstrap.lua'
     $ourBootstrap = Get-Sha256 (Join-Path $lua 'player\bootstrap.lua')
     # Another mod's bootstrap (Felony Rework's, ...) is replaced only with -Force. It is backed up,
-    # and kept as dsfforza\chained-bootstrap.lua, which ours runs first (player\bootstrap.lua),
+    # and kept as dsfcars\chained-bootstrap.lua, which ours runs first (player\bootstrap.lua),
     # unless it is one of our own bootstraps, an older version (Test-OurBootstrap). One that only
-    # calls user_open("dsfforza\\register.lua") (INSTALL.md) is chained too: ours skips that call.
+    # calls user_open("dsfcars\\register.lua") (INSTALL.md) is chained too: ours skips that call.
     # Over an earlier install, the bootstrap that counts is the one its uninstall puts back.
     $foreignBootstrap = $false
     $ours = @()   # files the earlier install created, which its uninstall removes
@@ -802,6 +1065,15 @@ function Invoke-Install {
         if (-not $hookStays) { $hookDir = Get-HookFiles }
     }
 
+    # An install of the old names moves to dsfcars first (the plugin and the Lua included), so
+    # what follows is the same as over an install of this release.
+    $migrated = $false
+    if (Test-LegacyInstall) {
+        Invoke-Migrate
+        $migrated = $true
+        $existing = Read-Manifest
+    }
+
     if (Test-Installed $existing) {
         $earlier = @($existing.cars | Where-Object { $_ })
         if (-not (Get-Field $existing 'packages')) {
@@ -809,7 +1081,8 @@ function Invoke-Install {
             Say "Moving the merged install of $($earlier.Count) cars to car packages: its IDs are kept (the save's flags are per ID), then it is removed."
             Save-MergedIds
         } elseif (-not $Force) {
-            Fail "dsfforza is already installed ($ManifestPath). Run -Uninstall first, or add -Force to reinstall."
+            $note = if ($migrated) { ' It was moved to the dsfcars names above (the same cars, on their IDs).' } else { '' }
+            Fail "dsfcars is already installed ($ManifestPath).$note Run -Uninstall first, or add -Force to reinstall."
         } else {
             Say "Removing the earlier install first (-Force): its $($earlier.Count) cars ($((@($earlier | Select-Object -First 6) -join ', '))$(if ($earlier.Count -gt 6) { ', ...' })) are replaced by this build's, not added to."
             Say '  To have several cars, install them in one build: -Car A,B,... (or uv run dsff install --car A --car B).'
@@ -848,14 +1121,14 @@ function Invoke-Install {
 
     New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
     $createdDirs = New-Object System.Collections.ArrayList
-    foreach ($d in @('plugins', 'plugins\DriverNGHook', 'Common\UserLuaScripts', 'Common\UserLuaScripts\dsfforza')) {
+    foreach ($d in @('plugins', 'plugins\DriverNGHook', 'Common\UserLuaScripts', 'Common\UserLuaScripts\dsfcars')) {
         if (-not (Test-Path -LiteralPath (Join-Path $Game $d))) { [void]$createdDirs.Insert(0, $d) }
     }
     # packages: true tells this install from a merged one (an earlier release's record has no such field).
     $manifest = [ordered]@{
         state = 'installing'; installed = (Get-Date -Format 's'); build = $buildFolder; ids = ''
         cars = @($packageFiles | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_) })
-        entries = $script:Entries; created_dirs = $createdDirs; runtime_files = @('plugins\dsfforza.log')
+        entries = $script:Entries; created_dirs = $createdDirs; runtime_files = @('plugins\dsfcars.log')
         packages = $true
     }
     $script:Manifest = $manifest
@@ -866,24 +1139,26 @@ function Invoke-Install {
                 Install-File (Get-AsiLoaderDll) 'dinput8.dll'
             } else { Say "  ASI loader already present ($loader)" }
             if (-not $hookInstalled) {
-                foreach ($file in Get-ChildItem -LiteralPath (Join-Path $hookDir 'plugins') -Recurse -File) {
-                    $relative = 'plugins\' + $file.FullName.Substring((Join-Path $hookDir 'plugins').Length).TrimStart('\')
+                # (the long form, as Get-ChildItem gives: $hookDir may be under an 8.3 %TEMP%)
+                $hookPlugins = (Get-Item -LiteralPath (Join-Path $hookDir 'plugins')).FullName
+                foreach ($file in Get-ChildItem -LiteralPath $hookPlugins -Recurse -File) {
+                    $relative = 'plugins\' + $file.FullName.Substring($hookPlugins.Length).TrimStart('\')
                     Install-File $file.FullName $relative
                 }
             } else { Say '  DriverNGHook already present (left as is)' }
         }
 
-        Install-File $asiFile 'plugins\dsfforza.asi'
-        Install-Text $iniText 'plugins\dsfforza.ini'
+        Install-File $asiFile 'plugins\dsfcars.asi'
+        Install-Text $iniText 'plugins\dsfcars.ini'
 
         if ($chainBootstrap) {
-            Install-File $bootstrapTarget 'Common\UserLuaScripts\dsfforza\chained-bootstrap.lua'
-            Say "  another mod's bootstrap.lua kept as dsfforza\chained-bootstrap.lua; ours runs it first"
+            Install-File $bootstrapTarget 'Common\UserLuaScripts\dsfcars\chained-bootstrap.lua'
+            Say "  another mod's bootstrap.lua kept as dsfcars\chained-bootstrap.lua; ours runs it first"
         }
         Install-File (Join-Path $lua 'player\bootstrap.lua') 'Common\UserLuaScripts\bootstrap.lua'
-        Install-File (Join-Path $lua 'dsfforza\register.lua') 'Common\UserLuaScripts\dsfforza\register.lua'
+        Install-File (Join-Path $lua 'dsfcars\register.lua') 'Common\UserLuaScripts\dsfcars\register.lua'
         if ($WriteProfile) {
-            Install-Text "-- written by tools\install.ps1 -WriteProfile`nreturn { register = { writeProfile = true } }`n" 'Common\UserLuaScripts\dsfforza\config.lua'
+            Install-Text "-- written by tools\install.ps1 -WriteProfile`nreturn { register = { writeProfile = true } }`n" 'Common\UserLuaScripts\dsfcars\config.lua'
         }
         Install-CarPackages $packageFiles
         $manifest.state = 'installed'
@@ -895,9 +1170,26 @@ function Invoke-Install {
     Say "Done. Start the game as usual. Uninstall: .\tools\install.ps1 -GamePath '$Game' -Uninstall"
 }
 
+# -Migrate: only the rename, nothing else of the install changes (no build, no packages).
+function Invoke-MigrateCommand {
+    if (-not (Test-LegacyInstall)) {
+        Say "Nothing to migrate: $Game has no install of the old names (dsfforza)."
+        return
+    }
+    Resolve-Plugin
+    Invoke-Migrate
+    if (Test-Path -LiteralPath (Join-Path $Game 'dsfcars\cars\manager.json')) {
+        $uv = Find-Uv
+        & $uv run --project $Repo --frozen --no-dev dsff car_manager --game $Game verify | Out-Host
+        if ($LASTEXITCODE -ne 0) { Say '  WARNING: car_manager verify found the problems above (they are not the migration''s: it moves files as they are)' }
+    }
+    Say "Done. Start the game as usual. Uninstall: .\tools\install.ps1 -GamePath '$Game' -Uninstall"
+}
+
 if (Test-GameRunning) { Fail 'Driver.exe is running from this folder; close the game first.' }
 switch ($PSCmdlet.ParameterSetName) {
     'Status' { Show-Status }
+    'Migrate' { Invoke-MigrateCommand }
     'Uninstall' { Invoke-Uninstall -Keep:$KeepBackup }
     default { Invoke-Install }
 }

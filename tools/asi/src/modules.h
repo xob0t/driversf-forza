@@ -1,5 +1,5 @@
 // Module list. main.cpp runs each module's init in this order, once, from
-// DllMain (after the exe check), unless dsfforza.ini has
+// DllMain (after the exe check), unless dsfcars.ini has
 // [<name>] enabled=0. A module is src/mod_<name>.cpp exporting
 // `void mod_<name>_init()`.
 //

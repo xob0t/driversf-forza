@@ -17,7 +17,7 @@ Stages, each skipped when there is nothing to do:
    downloaded, and another mod's bootstrap.lua is replaced only with --force.
 2. prepare: src/dsfforza/game/game_data.py prepare, when its files under out/ are
    missing or older than the game's scripts.
-3. plugin: out/asi/dsfforza.asi (tools/asi). Kept when out/asi/dsfforza.build.json
+3. plugin: out/asi/dsfcars.asi (tools/asi). Kept when out/asi/dsfcars.build.json
    says it was built from the current tools/asi sources, else built with
    tools/asi/build.ps1 -Test when Visual Studio Build Tools are installed, else a
    prebuilt one is used as it is. Every install needs it: its [archive] packages loads
@@ -96,8 +96,8 @@ ASI_LOADER_NAMES = (  # tools/install.ps1 $LoaderNames
 )
 INSTALL_PS1 = REPO / "tools" / "install.ps1"
 ASI_SOURCE = REPO / "tools" / "asi"
-ASI_OUT = REPO / "out" / "asi" / "dsfforza.asi"
-BUNDLED_ASI = REPO / "plugin" / "dsfforza.asi"  # in a release zip (src/dsfforza/build/package.py)
+ASI_OUT = REPO / "out" / "asi" / "dsfcars.asi"
+BUNDLED_ASI = REPO / "plugin" / "dsfcars.asi"  # in a release zip (src/dsfforza/build/package.py)
 DEFAULT_LIST = REPO / "tools" / "batches" / "all.txt"
 DEFAULT_OUT = REPO / "out" / "build"
 LOG_DIR = REPO / "out" / "logs"
@@ -130,22 +130,21 @@ RELEASES_URL = "https://github.com/xob0t/driversf-forza/releases"
 
 
 def missing_plugin_error(repo: Path) -> StageError:
-    """No plugin\\dsfforza.asi and no git checkout. A release zip has a VERSION file
+    """No plugin\\dsfcars.asi and no git checkout. A release zip has a VERSION file
     (src/dsfforza/build/package.py), so without one this is GitHub's source zip
     ("Code > Download ZIP"), which has no plugin. With one, the release's plugin is
     missing from the unzipped folder."""
     asi = BUNDLED_ASI.relative_to(REPO)
     if not (repo / "VERSION").is_file():
         return StageError(
-            "This folder is GitHub's source code download (Code > Download ZIP), not a release: "
-            "it has no dsfforza.asi.",
+            "This folder is GitHub's source code download (Code > Download ZIP), not a release: it has no dsfcars.asi.",
             f"Download driversf-forza-<version>.zip from the Assets list on {RELEASES_URL}, unzip it, "
             "and run install.cmd there.",
         )
     return StageError(
-        f"This release copy has no dsfforza.asi ({asi}), though the release zip holds it.",
+        f"This release copy has no dsfcars.asi ({asi}), though the release zip holds it.",
         "Unzip the whole release zip again. If the file is still missing, check your antivirus's "
-        "quarantine for dsfforza.asi. Or pass --asi FILE.",
+        "quarantine for dsfcars.asi. Or pass --asi FILE.",
     )
 
 
@@ -192,7 +191,7 @@ def exe_text(path: Path) -> tuple[str, int, int] | None:
 
 
 def exe_problem(path: Path) -> str | None:
-    """Why dsfforza.asi would leave this Driver.exe unpatched, or None: the same checks as
+    """Why dsfcars.asi would leave this Driver.exe unpatched, or None: the same checks as
     tools/asi/src/patch.cpp's dsf_exe_ok (PE timestamp, image size, the first section)."""
     build = exe_build(path)
     if build is None:
@@ -526,10 +525,10 @@ def prepare_status(game: Path, out_root: Path, games: set[str] | None = None) ->
 
 
 def asi_sources_digest(source: Path = ASI_SOURCE) -> str:
-    """The plugin's sources (tools/asi/src, build.ps1, dsfforza.ini), line ends ignored."""
+    """The plugin's sources (tools/asi/src, build.ps1, dsfcars.ini), line ends ignored."""
     digest = hashlib.sha256()
     files = sorted(p for p in (Path(source) / "src").rglob("*") if p.is_file())
-    files += [Path(source) / "build.ps1", Path(source) / "dsfforza.ini"]
+    files += [Path(source) / "build.ps1", Path(source) / "dsfcars.ini"]
     for path in files:
         if not path.is_file():
             continue
@@ -539,7 +538,7 @@ def asi_sources_digest(source: Path = ASI_SOURCE) -> str:
 
 
 def stamp_path(asi: Path) -> Path:
-    return Path(asi).with_name("dsfforza.build.json")
+    return Path(asi).with_name("dsfcars.build.json")
 
 
 def plugin_state(asi: Path, digest: str) -> str:
@@ -591,12 +590,20 @@ def find_vcvars() -> Path | None:
     return None
 
 
+# Where tools/install.ps1 keeps its record: dsfcars-backup, and in an install from before the
+# runtime was renamed to dsfcars, dsfforza-backup (install.ps1 moves it when it migrates).
+RECORD_FOLDERS = ("dsfcars-backup", "dsfforza-backup")
+
+
 def read_install_record(game: Path) -> dict | None:
-    """<game>/dsfforza-backup/install.json (written by tools/install.ps1), or None."""
-    try:
-        return json.loads((Path(game) / "dsfforza-backup" / "install.json").read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError):
-        return None
+    """<game>/dsfcars-backup/install.json (written by tools/install.ps1), else an older
+    install's dsfforza-backup/install.json, or None."""
+    for folder in RECORD_FOLDERS:
+        try:
+            return json.loads((Path(game) / folder / "install.json").read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            continue
+    return None
 
 
 def hook_source(path: Path) -> bool:
@@ -1069,7 +1076,7 @@ def summary_lines(s: Summary) -> list[str]:
             lines.append(f"      log {f.log}")
     if s.installed:
         lines.append(
-            f"  Installed: into {s.game}: {len(s.replaced)} files replaced (originals in dsfforza-backup), "
+            f"  Installed: into {s.game}: {len(s.replaced)} files replaced (originals in dsfcars-backup), "
             f"{len(s.created)} added"
         )
         if s.save_backup:
@@ -1193,7 +1200,7 @@ class LiveReporter(Reporter):
         if s.installed:
             grid.add_row(
                 "Installed",
-                f"into {s.game}: {len(s.replaced)} files replaced (originals in dsfforza-backup), "
+                f"into {s.game}: {len(s.replaced)} files replaced (originals in dsfcars-backup), "
                 f"{len(s.created)} added",
             )
             if s.save_backup:
@@ -1323,7 +1330,7 @@ class Run:
         self.game = game
         if problem := exe_problem(game / "Driver.exe"):
             problems.append(
-                f"{game / 'Driver.exe'} is {problem}. dsfforza.asi patches only the 1.04 release's "
+                f"{game / 'Driver.exe'} is {problem}. dsfcars.asi patches only the 1.04 release's "
                 "Driver.exe and leaves any other unpatched, and the game then crashes while loading "
                 "the cars. Install the game's 1.04 update, or restore the Driver.exe it installed."
             )
@@ -1535,11 +1542,11 @@ class Run:
             return "done", f"{rel(ASI_OUT)} (prebuilt, {state}: no Visual Studio to rebuild it)"
         if action == "missing":
             raise StageError(
-                "dsfforza.asi is needed (its [archive] packages loads the cars), and it can't be built here: "
+                "dsfcars.asi is needed (its [archive] packages loads the cars), and it can't be built here: "
                 "Visual Studio 2022 Build Tools with the C++ workload were not found.",
                 "Install them (winget install Microsoft.VisualStudio.2022.BuildTools --override "
                 '"--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"), or copy a '
-                f"built dsfforza.asi to {ASI_OUT.parent}, or pass --asi FILE.",
+                f"built dsfcars.asi to {ASI_OUT.parent}, or pass --asi FILE.",
             )
         self.build_plugin(vcvars)
         self.plugin = ASI_OUT
@@ -1918,6 +1925,11 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--status", action="store_true", help="show what is installed (install.ps1 -Status)")
     mode.add_argument("--uninstall", action="store_true", help="restore the game's files (install.ps1 -Uninstall)")
     mode.add_argument(
+        "--migrate",
+        action="store_true",
+        help="move an install from before the rename to dsfcars to the new names, every car on its ID (install.ps1 -Migrate)",
+    )
+    mode.add_argument(
         "--report",
         action="store_true",
         help="write driversf-forza-report-<time>.zip for a bug report (setup, install state, logs) and print a summary",
@@ -1957,9 +1969,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="after a pack that reused the last build's, make a full pack too and stop if they differ",
     )
-    build.add_argument("--asi", type=Path, help="install this dsfforza.asi instead of out/asi's")
+    build.add_argument("--asi", type=Path, help="install this dsfcars.asi instead of out/asi's")
     build.add_argument(
-        "--rebuild-plugin", action="store_true", help="build dsfforza.asi here (needs Visual Studio Build Tools)"
+        "--rebuild-plugin", action="store_true", help="build dsfcars.asi here (needs Visual Studio Build Tools)"
     )
     inst = parser.add_argument_group("install")
     inst.add_argument("--build", type=Path, help="with --install-only: the build folder to install")
@@ -1977,14 +1989,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     inst.add_argument("--asi-loader", type=Path, help="the Ultimate ASI Loader's dinput8.dll or its zip")
     inst.add_argument("--skip-hook", action="store_true", help="don't install DriverNGHook or an ASI loader")
-    inst.add_argument("--keep-backup", action="store_true", help="with --uninstall: keep dsfforza-backup")
+    inst.add_argument("--keep-backup", action="store_true", help="with --uninstall: keep dsfcars-backup")
     parser.add_argument("--plain", action="store_true", help="plain text progress (the default when not a terminal)")
     parser.add_argument("--log", type=Path, help="the log file (default: out/logs/install-<time>.log)")
     return parser
 
 
 def passthrough(args) -> int:
-    """--status and --uninstall: tools/install.ps1 with its own output."""
+    """--status, --uninstall and --migrate: tools/install.ps1 with its own output."""
     game = args.game or os.environ.get("DSF_GAME_DIR")
     if not game:
         print("Set DSF_GAME_DIR to the game folder, or pass --game.", file=sys.stderr)
@@ -2005,15 +2017,20 @@ def passthrough(args) -> int:
         if game_running(Path(game)):
             print("Driver.exe is running from the game folder: close the game first.", file=sys.stderr)
             return 1
-        command.append("-Uninstall")
-        if args.keep_backup:
-            command.append("-KeepBackup")
+        if args.migrate:
+            command.append("-Migrate")
+            if args.asi:
+                command += ["-AsiPath", str(args.asi)]
+        else:
+            command.append("-Uninstall")
+            if args.keep_backup:
+                command.append("-KeepBackup")
     return subprocess.run(command, check=False).returncode
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
-    if args.status or args.uninstall:
+    if args.status or args.uninstall or args.migrate:
         return passthrough(args)
     if args.report:
         from dsfforza.build import report

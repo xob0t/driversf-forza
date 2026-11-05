@@ -136,23 +136,27 @@ def same_folder(a: Path, b: Path) -> bool:
 def moved_inputs(fp: dict, checker: fingerprint.Checker, game_dir: Path | None) -> dict[str, str]:
     r"""{recorded path: where the same file is now} for the files a pack read in the game
     folder `game_dir`: the game's own <game>\X before a dsfforza install, its backup
-    <game>\dsfforza-backup\X after (gui_assets.vanilla_file reads the backup while an
+    <game>\dsfcars-backup\X after (gui_assets.vanilla_file reads the backup while an
     install is in place), and back after an uninstall. Without a game folder: none."""
     from dsfforza.game import game_paths
 
     if game_dir is None:
         return {}
     game = fingerprint.norm(game_dir) + os.sep
-    backup = game + os.path.normcase(game_paths.BACKUP) + os.sep
+    # The backup's name since the rename to dsfcars, and before it (an install that -Migrate moved).
+    backups = [game + os.path.normcase(name) + os.sep for name in game_paths.BACKUPS]
     out = {}
     for path, digest in fp.get("files", {}).items():
-        if path.startswith(backup):
-            other = game + path[len(backup) :]
-        elif path.startswith(game):
-            other = backup + path[len(game) :]
-        else:
+        relative = next((path[len(b) :] for b in backups if path.startswith(b)), None)
+        if relative is None:
+            if not path.startswith(game):
+                continue
+            relative = path[len(game) :]
+        if checker.file(path) == digest:
             continue
-        if checker.file(path) != digest and checker.file(other) == digest:
+        others = [p for p in (game + relative, *(b + relative for b in backups)) if p != path]
+        other = next((p for p in others if checker.file(p) == digest), None)
+        if other:
             out[path] = other
     return out
 

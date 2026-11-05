@@ -306,7 +306,7 @@ the loops at physics rpm instead, ports would be that much off at the redline. E
 and every stall rpm is covered by a loop, so the data doesn't tell the two apart. Deciding it
 needs the xex (the code reading `audio_rpm_redline`; #548).
 
-**In game (confirmed-runtime).** `dsfforza.asi` with `[soundlog] log=1` (`mod_soundlog.cpp`)
+**In game (confirmed-runtime).** `dsfcars.asi` with `[soundlog] log=1` (`mod_soundlog.cpp`)
 logs, per engine sound, the engine rpm, the shaped rpm, the `vehicle_rpm` sent, VSVH+94/+98,
 p40, p42 and p596. Setup: headless VM 1, `run-series.ps1 -Vm -Dyno -DynoKeys 'Up:25,Down:6'`.
 "Before" is a master build (7fe208d) of the same three cars and "after" this branch,

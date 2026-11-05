@@ -235,7 +235,7 @@ class DsfcarTest(unittest.TestCase):
 
     def test_model_id_fields(self):
         """car.sp's full VEHC holds car.model_id once in each of VSVH, VO3D, SPID and UPVH:
-        the fields dsfforza.asi writes the listed ID into."""
+        the fields dsfcars.asi writes the listed ID into."""
         import io
 
         from dsfforza.formats.chnk import read_chunk

@@ -54,7 +54,7 @@ static const int kSlots = (int)sizeof kSlotCodes;
 static const int kMaxId = 4096;
 static uint16_t g_badge[kMaxId];
 static uint16_t g_plate[kMaxId];
-static uint8_t g_emblem[kMaxId];      // vehicleStats GarageEmblem (1 = Forza logo on the garage card)
+static uint8_t g_emblem[kMaxId];      // vehicleStats GarageEmblem (1 = the package's emblem on the garage card)
 static uint32_t g_ctor = kInfoCtor;   // jumped through by ctor_stub
 static int g_wide_hits = 0;           // first few uses are logged
 
@@ -422,8 +422,8 @@ static bool patch_site(const Site& s)
 // For a car with vehicleStats GarageEmblem = 1 the card's sprite is pointed at
 // a spare sprite resource made to look like the SF one: Header_Sprite_20, card
 // 20's picture slot (free while the maker group has fewer than 20 cars, or
-// while dsfforza's garage module shows it 19 cards at a time), gets
-// the SF resource's UVs and the texture kLogo (512 x 256, the Forza logo in
+// while the garage module shows it 19 cards at a time), gets
+// the SF resource's UVs and the texture kLogo (512 x 256, the package emblem in
 // the SF rect; gui_assets.py puts it in Fonts.fchunk so it is always loaded).
 // The sprite sizes itself from the bound texture (FUN_00B42100), so texture
 // size and UVs both have to match the SF resource's. Other cars get their
@@ -481,7 +481,7 @@ struct Card {
     int discs;
 };
 static Card g_cards[kCards];
-static void* g_spare = nullptr;        // spare's registry entry while it is dressed as the Forza emblem
+static void* g_spare = nullptr;        // spare's registry entry while it is dressed as the package emblem
 static uint8_t* g_spare_res = nullptr; // its resource object
 static uint8_t g_spare_uv[kUvBytes];   // its own UVs, put back by spare_release
 static int g_fill = 0, g_spare_fill = -1;
@@ -531,7 +531,7 @@ static void spare_release(const char* why)
     g_spare_fill = -1;
 }
 
-// Dresses the spare as the Forza emblem (once per fill), or returns null (logged).
+// Dresses the spare as the package emblem (once per fill), or returns null (logged).
 static void* spare_entry(void* reg, void* sf_entry)
 {
     void** vt = *(void***)reg;
@@ -581,7 +581,7 @@ static void card_emblem_body(uint8_t* screen, int id, int index, int cars)
     if (index < 0 || index >= kCards || !screen) return;
     if (index == 0) g_fill++;
     // The spare is card 20's picture: a group of 20 cars shown on 20 cards needs
-    // it for that. dsfforza's garage module shows a group of 20 or more 19 cards
+    // it for that. the garage module shows a group of 20 or more 19 cards
     // at a time, which leaves card 20 free (`cars` then counts the cars from the
     // window's first on); only with [garage] max_cars=20 (no window) does a
     // group of 20 still get card 20.
@@ -589,7 +589,7 @@ static void card_emblem_body(uint8_t* screen, int id, int index, int cars)
     if (card20 && g_spare) spare_release("a group of 20 cars");
     bool want = id >= 0 && id < kMaxId && g_emblem[id] && !card20;
     if (g_emblem_debug)
-        dsf_log("hud: emblem: fill %d card %d model %d -> %s", g_fill, index + 1, id, want ? "Forza logo" : "SF");
+        dsf_log("hud: emblem: fill %d card %d model %d -> %s", g_fill, index + 1, id, want ? "emblem" : "SF");
     Card& card = g_cards[index];
     if (!want && !card.discs && g_emblem_logs >= 8) return;   // nothing swapped on this card yet
     uint8_t* menu = *(uint8_t**)(screen + 4) ? *(uint8_t**)(*(uint8_t**)(screen + 4) + 8) : nullptr;
@@ -652,7 +652,7 @@ static void card_emblem_body(uint8_t* screen, int id, int index, int cars)
         g_step = 7;
         if (g_emblem_logs < 40) {
             g_emblem_logs++;
-            dsf_log("hud: emblem: card %d (%p) model %d -> %s", index + 1, obj, id, want ? "Forza logo" : "vanilla");
+            dsf_log("hud: emblem: card %d (%p) model %d -> %s", index + 1, obj, id, want ? "emblem" : "vanilla");
         }
     }
 }

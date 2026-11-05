@@ -240,7 +240,7 @@ def test_a_moved_vanilla_archive_with_the_same_digest_is_the_same_input():
             fp = recorder.finish(job)
         assert fingerprint.norm(vanilla) in fp["files"]
         # The install backs the archive up (time stamp kept, as Copy-Item does) and replaces it.
-        backup = game / "dsfforza-backup" / "Install" / "dngvehicles.sp"
+        backup = game / "dsfcars-backup" / "Install" / "dngvehicles.sp"
         backup.parent.mkdir(parents=True)
         shutil.copy2(vanilla, backup)
         vanilla.write_bytes(b"the installed build")

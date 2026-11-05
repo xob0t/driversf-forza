@@ -38,9 +38,9 @@ param(
     [Parameter(Mandatory)] [string[]]$Archives,
     [string]$Override,            # game files to replace, repo-relative: 'Install\gui.sp=out\gui\gui.sp;media\Fonts.fchunk=out\gui\Fonts.fchunk';
                                   # root files too ('dsf_enhanced.asi=out\x\dsf_enhanced.asi;dsf_enhanced.ini=out\x\test.ini')
-    [string]$Asi,                 # repo-relative plugin, e.g. out\asi\dsfforza.asi (its .ini is copied too)
+    [string]$Asi,                 # repo-relative plugin, e.g. out\asi\dsfcars.asi (its .ini is copied too)
     [switch]$NoAsi,               # run an archive past the vanilla reader without -Asi anyway (it crashes; see below)
-    [string]$LuaFiles,            # UserLuaScripts files replaced after the repo copy: 'dsfforza\hud.lua=out\x\hud.lua;dsfforza\ported.lua=out\x\dngvehicles.lua'
+    [string]$LuaFiles,            # UserLuaScripts files replaced after the repo copy: 'dsfcars\hud.lua=out\x\hud.lua;dsfcars\ported.lua=out\x\dngvehicles.lua'
     [switch]$ArchiveOnly,         # an archive named dngvehicles.sp goes with its build's dngvehicles.lua and gui\ (each car's
                                   # vehicleStats entry, badge and plate) unless this is set (run-test.ps1)
     [string]$ProbeIds = '304',
@@ -67,8 +67,8 @@ param(
                                   # one folder alone goes with every archive), e.g. "$env:DSF_GAME_DIR\Felony_Rework_2.3_Hotfix_1",'';
                                   # read in place, copied into each -Vm run folder (run-test.ps1 -Overlay)
     [switch]$LightsDriveOnly,     # with -Lights: only the day and dark drives (no setLights phases)
-    [switch]$Lights,              # lamp phases per car, two shots each (dsfforza\lightstest.lua); allow ~120 s per car
-    [switch]$Dyno,                # standing-start runs (dsfforza\dyno.lua); analyse with src/dsfforza/harness/dyno.py
+    [switch]$Lights,              # lamp phases per car, two shots each (dsfcars\lightstest.lua); allow ~120 s per car
+    [switch]$Dyno,                # standing-start runs (dsfcars\dyno.lua); analyse with src/dsfforza/harness/dyno.py
     [int]$BrakeSeconds = 6,
     [int]$DynoRuns = 2,
     [string]$DynoStart,           # 'x,y,z,heading'
@@ -113,7 +113,7 @@ if (-not $GamePath) { throw 'Set DSF_GAME_DIR (or pass -GamePath) to your Driver
 if (-not $HostRunPath) { $HostRunPath = Join-Path ([IO.Path]::GetPathRoot($GamePath)) 'dsfforza-run' }
 
 # The vanilla reader holds 1100 root entries and seeks below 2 GiB (research/spool-limits.md); a
-# larger archive needs dsfforza.asi's [archive] module, which a run loads only with -Asi. Without it
+# larger archive needs dsfcars.asi's [archive] module, which a run loads only with -Asi. Without it
 # the game shows DriverNGHook's fatal-error dialog ~40 s into the load, so stop here,
 # before waiting for a VM. tools\install.ps1 refuses such an install the same way.
 if (-not $Asi -and -not $NoAsi) {
@@ -129,7 +129,7 @@ if (-not $Asi -and -not $NoAsi) {
         } finally { $stream.Dispose() }
         if ($entries -gt 1100 -or $bytes -ge 2GB) {
             throw ("$archive has $entries root entries and $([math]::Round($bytes / 1MB)) MB; the vanilla game reads at most 1100 " +
-                   'entries and 2 GiB. Add -Asi out\asi\dsfforza.asi (tools\asi\build.ps1), or -NoAsi to run it without the plugin anyway.')
+                   'entries and 2 GiB. Add -Asi out\asi\dsfcars.asi (tools\asi\build.ps1), or -NoAsi to run it without the plugin anyway.')
         }
     }
 }

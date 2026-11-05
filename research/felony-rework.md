@@ -2,7 +2,7 @@
 
 Updated: 2026-10-31
 
-Whether our install (`dsff install` / `tools/install.ps1`, `dsfforza.asi`,
+Whether our install (`dsff install` / `tools/install.ps1`, `dsfcars.asi`,
 `register.lua` and the player bootstrap) and Felony Rework 2.3 Hotfix 1 can
 run in one game folder, and what breaks. Read from the mod's unpacked files
 (83 files, its `readme.txt` and `changelog.txt`), its decompiled script
@@ -14,7 +14,7 @@ Tags as elsewhere: `confirmed-static` (read in data, code or binaries),
 check" below). Install Felony Rework as its readme says, then run our
 installer with `--force`. If our cars were installed first, run
 `install.cmd --install-only` again after Felony Rework. Our bootstrap then
-runs Felony's first (below). No ID collides. With dsfforza.asi, two of
+runs Felony's first (below). No ID collides. With dsfcars.asi, two of
 Felony's placeholder entries would have shown up in our extended garage;
 `register.lua` hides them. Keep the plugin's `[lua]` module on: with Felony
 and the full roster the game's Lua passes the vanilla 10 MB.
@@ -70,7 +70,7 @@ functions. None of our Lua uses those (grep of `tools/game`, `tools/asi`).
 The player `register.lua` adds no update function (only with `probe`), so the
 missing `xpcall` doesn't matter to it.
 
-**dsfforza.asi against Felony's DriverNGHook** (confirmed-static). Both
+**dsfcars.asi against Felony's DriverNGHook** (confirmed-static). Both
 builds have the same patch classes, and Felony's binary holds the same
 call-site constants as `DriverNGHook/Patches/All/LuaPatches.cpp` and
 `OnlinePatches.cpp`: 0x005E7E04 (OpenScriptLoader), 0x0078E975
@@ -78,9 +78,9 @@ call-site constants as `DriverNGHook/Patches/All/LuaPatches.cpp` and
 0.7.2's GetProfileName patch at 0x008534C2, which only feeds
 `driverNGProfileSettings.lua`. No address in `tools/asi/src/*.cpp` lies within
 16 bytes of any of them. The nearest is `mod_lua.cpp`'s `push` at 0x005E7DB7,
-0x4D bytes before OpenScriptLoader's call. dsfforza.asi also checks every
+0x4D bytes before OpenScriptLoader's call. dsfcars.asi also checks every
 site's original bytes before patching, so a clash would show in
-`plugins\dsfforza.log` as a skipped module, not as a crash.
+`plugins\dsfcars.log` as a skipped module, not as a crash.
 
 ## 2. bootstrap.lua
 
@@ -88,18 +88,18 @@ Both mods want `Common\UserLuaScripts\bootstrap.lua`. Until this change,
 `install.ps1` stopped on a foreign bootstrap, and with `-Force` replaced it,
 so `felonyrework.lua` no longer loaded. The other way round, extracting
 Felony over our install replaced ours, and our cars lost their HUD names,
-garage entries and traffic (the archive and dsfforza.asi stay, so no crash;
+garage entries and traffic (the archive and dsfcars.asi stay, so no crash;
 hypothesis).
 
 Now (this PR):
 
 - `install.ps1 -Force` keeps the foreign file as
-  `Common\UserLuaScripts\dsfforza\chained-bootstrap.lua` (a created file;
+  `Common\UserLuaScripts\dsfcars\chained-bootstrap.lua` (a created file;
   `-Uninstall` deletes it and restores the original `bootstrap.lua` from the
   backup). It doesn't chain one of our own bootstraps of an older version,
   which it recognises by the first line every player and test bootstrap has
   had (`Test-OurBootstrap`). A mention of dsfforza doesn't count: a foreign
-  bootstrap with the INSTALL.md line `user_open("dsfforza\\register.lua")`
+  bootstrap with the INSTALL.md line `user_open("dsfcars\\register.lua")`
   added is chained like any other.
 - The player bootstrap (and the test one) calls the chained bootstrap's
   `Init`, `Launch` and `Shutdown` before its own work, each in `pcall`. An
@@ -111,7 +111,7 @@ Now (this PR):
   itself (the same `rawget` guard as the bootstrap). The guard calls the
   original in `pcall`, restarts the collector, then raises the same error, so
   a script that raises no longer leaves the collector stopped. So the manual route, one
-  `user_open("dsfforza\\register.lua")` line in Felony's `Launch()`, also
+  `user_open("dsfcars\\register.lua")` line in Felony's `Launch()`, also
   loads `ported.lua` and `hud.lua` the safe way
   (`in-game-tests.md`, "Lua crashes loading big user files").
 
@@ -170,7 +170,7 @@ the other.
 
 **Felony's placeholders in our garage** (confirmed-static; fixed in this
 PR). 622 and 623 have `Selectable = true` and `ManufacturerName = ""`. The
-vanilla garage walks IDs 0..303 and never sees them. dsfforza.asi's garage
+vanilla garage walks IDs 0..303 and never sees them. dsfcars.asi's garage
 walks 0..999, so it would have filed them as a maker group with an empty
 name holding two "NOTHING" cards (picture `default_ability`, price 1), and
 `register.lua` would have counted that group against the 120. When Felony's
@@ -208,7 +208,7 @@ Nothing in the code points to a crash.
 against Felony: 35 groups and 140 cars become 37 and 149. Dodge (`ID:242755`)
 goes from 10 to 13 cars, the unlicensed group gets 277, and two groups are
 new: ASYM (`ID:242747`, 266-268) and the empty name (622 and 623, only
-walked with dsfforza.asi and now hidden). `register.lua` counts groups from
+walked with dsfcars.asi and now hidden). `register.lua` counts groups from
 the real table at game start, so:
 
 - without the plugin (40 groups of 20, IDs up to 303): 36 groups. Build time
@@ -236,7 +236,7 @@ the real table at game start, so:
   prints an error line in `Driver.log`, harmless.
 - **Report and status**: `install.cmd --report` now says
   `bootstrap.lua dsfforza's, chaining another mod's` when the active bootstrap
-  is ours and loads the chained copy, and `stale dsfforza\chained-bootstrap.lua
+  is ours and loads the chained copy, and `stale dsfcars\chained-bootstrap.lua
   (not run)` when another installer has replaced ours since. It already lists every loader DLL and the UserLuaScripts files.
 
 ## In-game check (2026-10-31, confirmed-runtime)
@@ -247,13 +247,13 @@ game"). The run folder then looks like a player's after installing Felony
 Rework and then our cars with `install.ps1 -Force`: Felony's files over
 the game; its `DriverNGHook.asi` (and `scripts\`) instead of 0.7.2, and its
 `version.dll` next to the guest's loader; our plugin, build files and Lua on
-top; Felony's `bootstrap.lua` as `dsfforza\chained-bootstrap.lua`. The
+top; Felony's `bootstrap.lua` as `dsfcars\chained-bootstrap.lua`. The
 one difference from a player's install is the bootstrap: a run has the test
 bootstrap (probe, `garagetest.lua`), which chains the same way as the
 player one.
 
 Runs: master's full roster (v0.1.5's 573 cars, `out\build\dngvehicles.sp`,
-1496 archive entries), the shipped `dsfforza.asi`, probe IDs 1 (BMW M3 E30,
+1496 archive entries), the shipped `dsfcars.asi`, probe IDs 1 (BMW M3 E30,
 FH1), 450 (Hyundai ix20, a make DSF lacks, ID 304+) and 267 (vanilla
 Desanne cop), traffic on (`-Traffic`, `-LuaFiles` with the build's
 `ported.lua` so `register.lua` adds the cars to traffic), 8 s of throttle in
@@ -261,8 +261,8 @@ each cockpit view:
 
 ```powershell
 .\tools\wsb\run-series.ps1 -Vm -Archives "$b\dngvehicles.sp", "$b\dngvehicles.sp" -Labels felony, plain `
-  -Overlay "$env:DSF_GAME_DIR\Felony_Rework_2.3_Hotfix_1", '' -Asi out\asi\dsfforza.asi -ProbeIds '1,450,267' `
-  -LuaFiles "dsfforza\ported.lua=$b\dngvehicles.lua" -Traffic -DriveSeconds 8 -ShotSeconds 3 -WaitSeconds 600
+  -Overlay "$env:DSF_GAME_DIR\Felony_Rework_2.3_Hotfix_1", '' -Asi out\asi\dsfcars.asi -ProbeIds '1,450,267' `
+  -LuaFiles "dsfcars\ported.lua=$b\dngvehicles.lua" -Traffic -DriveSeconds 8 -ShotSeconds 3 -WaitSeconds 600
 ```
 
 | | `vm1-20261031-034636` (felony) | `vm1-20261031-035011` (plain) |
@@ -274,7 +274,7 @@ each cockpit view:
 | Traffic | `SetInterestingVehicleRegions: 17 regions, 406 entries added` | the same |
 | Probe cars | all three spool, spawn, take the player and drive; top 97.5 mph | the same; top 75 mph |
 | 267 when requested | already loaded (Felony's "All chapters" pot) | spooled on request |
-| `dsfforza.log` | every module patched; nothing skipped | the same, apart from addresses |
+| `dsfcars.log` | every module patched; nothing skipped | the same, apart from addresses |
 | Lua heap | passed 10 MB (the plugin's arena is 32 MB) | passed 9 MB |
 | Crash | none | none |
 

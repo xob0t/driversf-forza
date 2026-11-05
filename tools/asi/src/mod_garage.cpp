@@ -3,7 +3,7 @@
 // Design and evidence: research/asi.md, "Garage and save". In short:
 //   save   Per-vehicle profile data for IDs 304..999 lives in this module
 //          (g_ext), never in the vanilla 0x4CF8 save block, and is persisted to
-//          <savegames>\dsfforza-garage.dat next to autosave.dat. The vanilla
+//          <savegames>\dsfcars-garage.dat next to autosave.dat. The vanilla
 //          block keeps its layout, so the save still loads in an unmodded game.
 //   garage The maker-list builder walks IDs 0..999 instead of 0..303, with a
 //          relocated sort-key table; the group-count cap is enforced instead
@@ -81,7 +81,12 @@ Ext g_ext, g_saved, g_loaded, g_backup;
 bool g_saved_valid = false, g_loaded_valid = false;
 Slot g_dummy_slot = {-1, 0};
 int32_t g_dummy_owned = -1;
-char g_side_name[64] = "dsfforza-garage.dat";
+const char kSideDefault[] = "dsfcars-garage.dat";
+// The side file's name before the runtime was renamed to dsfcars: read when there is no file
+// of the default name yet, so an install migrated from dsfforza keeps its added cars' flags.
+// The next save writes the default name; the old file stays as it was.
+const char kSideLegacy[] = "dsfforza-garage.dat";
+char g_side_name[64] = "dsfcars-garage.dat";
 
 // Garage list.
 int32_t g_sortkey[kExtMax];
@@ -152,16 +157,22 @@ uint32_t fnv(const void* p, size_t n)
     return h;
 }
 
-bool side_path(const char* save_path, char* out, size_t size)
+// The file `name` in the save's folder.
+bool side_path_named(const char* save_path, const char* name, char* out, size_t size)
 {
     const char* slash = strrchr(save_path, '\\');
     const char* slash2 = strrchr(save_path, '/');
     if (slash2 > slash) slash = slash2;
     size_t dir = slash ? (size_t)(slash - save_path + 1) : 0;
-    if (dir + strlen(g_side_name) + 1 > size) return false;
+    if (dir + strlen(name) + 1 > size) return false;
     memcpy(out, save_path, dir);
-    strcpy_s(out + dir, size - dir, g_side_name);
+    strcpy_s(out + dir, size - dir, name);
     return true;
+}
+
+bool side_path(const char* save_path, char* out, size_t size)
+{
+    return side_path_named(save_path, g_side_name, out, size);
 }
 
 void side_write(const char* save_path, const Ext& e)
@@ -206,8 +217,16 @@ bool side_read(const char* save_path, Ext& e)
     if (!side_path(save_path, path, sizeof path)) return false;
     FILE* f = nullptr;
     if (fopen_s(&f, path, "rb") != 0 || !f) {
-        dsf_log("garage: no %s (no added-car flags yet)", path);
-        return false;
+        char legacy[MAX_PATH];
+        f = nullptr;
+        if (strcmp(g_side_name, kSideDefault) != 0 || !side_path_named(save_path, kSideLegacy, legacy, sizeof legacy) ||
+            fopen_s(&f, legacy, "rb") != 0 || !f) {
+            dsf_log("garage: no %s (no added-car flags yet)", path);
+            return false;
+        }
+        dsf_log("garage: no %s; reading %s (its name before the rename), the next save writes %s", path, legacy,
+                g_side_name);
+        strcpy_s(path, legacy);
     }
     static SideEntry entries[kExtMax];
     SideHeader h;
@@ -1631,7 +1650,7 @@ bool install_groups(int groups)
 void mod_garage_init()
 {
     char name[64];
-    cfg_str("garage", "side_file", "dsfforza-garage.dat", name, sizeof name);
+    cfg_str("garage", "side_file", kSideDefault, name, sizeof name);
     if (name[0] && !strpbrk(name, "\\/:")) strcpy_s(g_side_name, name);
 
     if (cfg_bool("garage", "save", true)) g_save_active = install_save();

@@ -483,7 +483,7 @@ COWL_SECTIONS = re.compile(r"^(hood|a_pillar)", re.I)
 
 
 def rim_grips(wheel: Wheel) -> list[tuple]:
-    """Where the hands hold the rim (Forza space): dsfforza.asi [hands] moves each of
+    """Where the hands hold the rim (Forza space): dsfcars.asi [hands] moves each of
     the arms' fists (hierarchy.ARMS_GRIPS, about the hub's column) onto the rim at its
     angle about the column."""
     out = []

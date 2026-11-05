@@ -1,4 +1,4 @@
-// dsfforza.asi entry point: core init, exe check, then every module's init.
+// dsfcars.asi entry point: core init, exe check, then every module's init.
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdio.h>
@@ -24,7 +24,7 @@ static const Module kModules[] = {
 #undef DSF_MODULE
 };
 
-// [dsfforza] crash_log=1: a vectored handler logs the first few faults
+// [dsfcars] crash_log=1: a vectored handler logs the first few faults
 // (first chance: also ones the game handles itself) with registers and the
 // Driver.exe return addresses found on the stack. DriverNGHook's fatal-error
 // dialog writes no dump when the process can't, so this is the only trace.
@@ -76,13 +76,13 @@ extern const char dsf_capabilities[] = DSF_CAPABILITIES_MARKER DSF_CAPABILITIES;
 static void run_modules()
 {
     dsf_core_init();
-    dsf_log("dsfforza.asi %s, ini %s; %s", DSF_VERSION, dsf_ini_path(), dsf_capabilities);
-    if (!cfg_bool("dsfforza", "enabled", true)) {
-        dsf_log("[dsfforza] enabled=0: no patches");
+    dsf_log("dsfcars.asi %s, ini %s; %s", DSF_VERSION, dsf_ini_path(), dsf_capabilities);
+    if (!cfg_bool("dsfcars", "enabled", true)) {
+        dsf_log("[dsfcars] enabled=0: no patches");
         return;
     }
     if (!dsf_exe_ok()) return;
-    if (cfg_bool("dsfforza", "crash_log", false)) {
+    if (cfg_bool("dsfcars", "crash_log", false)) {
         AddVectoredExceptionHandler(1, crash_handler);
         dsf_log("crash_log: faults are logged here (asi base %p)", &__ImageBase);
     }

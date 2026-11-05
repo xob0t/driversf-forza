@@ -22,7 +22,7 @@ the Lua C API:
 online lobby (`onlineGetVehicleLargeImage/SmallImage`); their images are not
 in gui.sp. **A car whose ID is 304 or higher never appears in the vanilla
 garage list**, whatever `vehicleStats` says (the loop bound is in the code;
-dsfforza.asi `[garage]` lists IDs up to 999, `asi.md`). Free IDs below 304:
+dsfcars.asi `[garage]` lists IDs up to 999, `asi.md`). Free IDs below 304:
 0 to 61 (vanilla base IDs run 62 to 303) and the 92 IDs in 62..303 the vanilla
 archive doesn't use (123, 131, 277 and 289 are in the archive but have no
 `vehicleStats` entry; `port_batch.py`, `ASI_LOW_IDS`).
@@ -195,7 +195,7 @@ Checked on the vanilla cars against their own pictures (370Z, R8, Charger,
 and on the 40 cars of out/testdrive11 (`img/garage-pictures-render.jpg`:
 old and new renders of the FM4 cars). In game (confirmed-runtime, headless
 VM, out/testdrive11 with the new gui.sp, Fonts.fchunk and hud.lua,
-dsfforza.asi): runs `vm-20261024-161110` (the maker list scrolled through
+dsfcars.asi): runs `vm-20261024-161110` (the maker list scrolled through
 every maker, the TOYOTA browser) and `vm-20261024-162337` (the NISSAN
 browser, ported and vanilla cards side by side) show the new pictures on the
 cards, no crash (`img/garage-pictures-ingame.jpg`).
@@ -388,9 +388,9 @@ vanilla nameplate when DSF has the same model (370Z → 219), else a new
 nameplate glyph. Writes `out/gui/gui.sp`, `out/gui/Fonts.fchunk`,
 `out/gui/hud.lua` (per ID: `Picture1`, `Manufacturer`, `Model`,
 `ManufacturerName`, `ModelName`), previews and `gui-assets.json`.
-`register.lua` loads `dsfforza\hud.lua` and applies it over the copied
+`register.lua` loads `dsfcars\hud.lua` and applies it over the copied
 entry. Every entry also gets `GarageEmblem = 1` and Fonts.fchunk the
-Forza emblem texture (garage card emblem, below; needs dsfforza.asi). Model
+Forza emblem texture (garage card emblem, below; needs dsfcars.asi). Model
 names are Forza's own (`car_texts`: DisplayName, List_CarMake and
 List_FamilyModel through `forza_strings.py`, "Names from Forza's string
 tables" below), else the media name (`SkylineGTR` → `SKYLINE GTR`);
@@ -414,7 +414,7 @@ root table when its 100 free rows run out, by moving every root payload down
 a multiple of 0x1000 (vanilla bytes and nested chunks unchanged; checked with
 150 pictures: the vanilla and the new pictures read back).
 
-With dsfforza.asi [archive] (another module: the CHNK reader keeps entries
+With dsfcars.asi [archive] (another module: the CHNK reader keeps entries
 past 1100 in a side table, `spool-limits.md`) the root holds one SPOI per
 picture for any roster: `gui_assets.py build --root-limit 16384` (default
 1100, the vanilla reader), and the car manager's copy always (below). SSLP
@@ -489,7 +489,7 @@ reader's 1100 root entries: 177 free rows, so 721 pictures went 5 to a SPOI
 to a SPOI (1,043 root entries). The full roster of 562 had 4 to a SPOI in
 `vm-20261025-000547`, which showed the pictures without a crash; that run
 only browsed a few makers. The generated gui.sp is read only through
-dsfforza.asi's redirect (`[archive] redirect_list`), so `car_gui` passes the
+dsfcars.asi's redirect (`[archive] redirect_list`), so `car_gui` passes the
 plugin reader's `max_entries` (16384): 1,644 root entries for the same 721
 cars.
 
@@ -500,7 +500,7 @@ at 1100 items: a longer list isn't loaded at all.
   each picture has its own SPOL UID.
 - Past 177 added pictures, every garage card, vanilla ones included, shows the
   lock icon instead of its picture.
-- dsfforza.asi's `[archive] spool_lists` lifts the cap (`asi.md`, "Spool
+- dsfcars.asi's `[archive] spool_lists` lifts the cap (`asi.md`, "Spool
   item lists").
 - In game, the full roster's 562 pictures show with it (run
   `vm-20261025-000547`).
@@ -545,7 +545,7 @@ order; badges/plates are cars covered):
 garage picture and `ModelName` text; only the HUD plate is shared or blank.
 Without the plugin this stays the plan; with it, see the next section.
 
-### Unlimited badges and plates: dsfforza.asi [hud] (confirmed-static; in game: below)
+### Unlimited badges and plates: dsfcars.asi [hud] (confirmed-static; in game: below)
 
 **How the HUD gets a badge (confirmed-static).** Every screen that shows
 a car's badge and plate goes through vtable slot 0x134 of the vehicle-data
@@ -706,7 +706,7 @@ under the vanilla rings, `img/hud-audi-a4-before-after.jpg`), the text badges
 of the tour bus (222) and the Kenworth (463), and late IDs 725 (Wiesmann)
 and 382 (Fiat 595, page 1 badge) (`img/hud-text-badges-late-ids.jpg`).
 
-### Maker list logos (dsfforza.asi [garage] + [hud])
+### Maker list logos (dsfcars.asi [garage] + [hud])
 
 User report on out/final-gui2: "some make garage badges are missing";
 BERTONE, BUGATTI and BUICK had no logo in the maker list, BMW and BUS did.
@@ -732,7 +732,7 @@ groups had no logo or a wrong one.
   --wide-glyphs` adds one string per 16-bit badge to every
   `Locale/<lang>/global.fchunk` copy: ID `GLYPH_STRING_BASE` (900000) + code,
   the one character `chr(code)`.
-- dsfforza.asi [garage]: the badge string set at 0x006C6AE2 (FUN_00ACE110 on
+- dsfcars.asi [garage]: the badge string set at 0x006C6AE2 (FUN_00ACE110 on
   the logo list element) goes through `menu_set_badge`. For a group whose
   first car has a `ManufacturerGlyph` (all cars of a maker share it), the
   element gets `"ID:<900000 + code>"` instead (mod_hud's
@@ -880,7 +880,7 @@ FH1 and 400 FM4 `Data_Car.DisplayName` values resolve: "370Z", "M5",
 List_CarMake and List_FamilyModel, from the car's game, else the other game,
 else the media-name guess; `--name MEDIA=TEXT` still overrides.
 
-## Garage card emblem: Forza logo for added cars (dsfforza.asi [hud] card_emblem)
+## Garage card emblem: Forza logo for added cars (dsfcars.asi [hud] card_emblem)
 
 **What the "SF" disc is (confirmed-runtime).** The garage vehicles screen
 (GUI_FrontEnd.fchunk, MmDk menu engine; screen object vtable 0x00E27394, car
@@ -1045,7 +1045,7 @@ unchanged.
 
 Vanilla sources: with `tools/install.ps1` having replaced the game's gui.sp
 and Fonts.fchunk, `gui_assets` now reads the originals from
-`<game>/dsfforza-backup/` (`vanilla_file`).
+`<game>/dsfcars-backup/` (`vanilla_file`).
 
 ## Fitted-rule audit (2026-11-05)
 
@@ -1079,7 +1079,7 @@ as the Chevelle SS, Hudson Hornet and Murciélago LP670-4 SV). The cells' centre
 is x 69.5; the glyphs' centres measured alone agree (badge 70.0, plate 70.5).
 
 So `compose_picture` draws the car's badge and plate glyphs, the images the HUD
-shows with dsfforza.asi, at 1:1 in cells at `BADGE_CELL` (20, 51) and
+shows with dsfcars.asi, at 1:1 in cells at `BADGE_CELL` (20, 51) and
 `PLATE_CELL` (20, 147): the vanilla badge of a maker DSF has (its glyph from the
 game's Fonts.fchunk), else `badge_glyph` of the Forza logo (or the text badge);
 the vanilla plate of a model DSF has, else `nameplate`. Before, the Forza logo
@@ -1138,7 +1138,7 @@ one; the ported ones come out about 3% smaller. `CAR_BOX` stays, marked.
 | --- | --- | --- | --- |
 | 512 x 256 DXT5, no mips, the header of nissan_370z's | `PICTURE_SIZE`, `picture_dds` | derived | the vanilla pictures |
 | name hash, SPOI/SSIC/SSLP layout, one SPOI a picture | `name_hash`, `add_pictures` | derived | confirmed-static; #540 (pool 19's slots) |
-| 16384 root entries in the car manager's gui.sp | `car_gui.GUI_ROOT_LIMIT` | derived | dsfforza.asi `[archive] max_entries` |
+| 16384 root entries in the car manager's gui.sp | `car_gui.GUI_ROOT_LIMIT` | derived | dsfcars.asi `[archive] max_entries` |
 | texture UID shape (byte 1 0x12, byte 7 below 0x80); the other bytes, `uid_seed` | `_new_uid`, `_font_uid` | derived; tooling | upvh.md; any unused value |
 | backdrop panel (0, 0, 471, 198) | `PANEL` | derived | the vanilla pictures' opaque panel |
 | backdrop: per pixel the most common colour (5-bit bins, 27 neighbours, at least max(8, n / 5) pictures) | `vanilla_backdrop` | tooling | an estimator of vanilla's shared photo |
@@ -1214,7 +1214,7 @@ The compare renders' terms in `car_render.py` (`dsf_shading`, `DSF_SPECULAR`,
    is the sprite object `Spr3D.unlocked<N>` of each card, one shared sprite
    resource (UVs 242..345 x 2..75 into atlas `20125a7f761d9d2c`) shown or
    hidden by the menu script per `itemState_<N>`; nothing per car picks it.
-   dsfforza.asi [hud] re-points it for cars with `GarageEmblem = 1` (in game:
+   dsfcars.asi [hud] re-points it for cars with `GarageEmblem = 1` (in game:
    run `host-20261023-100401`). A maker group of exactly 20 cars kept the SF
    disc on all its cards (card 20 needed the spare; ASTON MARTIN, run
    `vm-20261026-120559`, issue #66); since #66 it is shown through the
@@ -1247,7 +1247,7 @@ The compare renders' terms in `car_render.py` (`dsf_shading`, `DSF_SPECULAR`,
    (`ManufacturerDataList` and three more) that hold 40 entries. With the
    plugin, register.lua gave the new makers their own groups (49), and the
    41st maker's string set read through NULL at 0x00ACE11F (caught with
-   `[dsfforza] crash_log=1`, run `-101840`). dsfforza.asi now grows those
+   `[dsfcars] crash_log=1`, run `-101840`). dsfcars.asi now grows those
    lists to `max_groups` when the menu is filled and skips a missing element
    (asi.md, "Garage and save"). In game with the shipped ini (`max_groups=120`)
    and this set's emblem data: 49 makers listed and the last one opened with

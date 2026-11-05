@@ -105,7 +105,7 @@ def test_prepare_runs_only_when_its_files_are_missing_or_stale():
 
 def test_plugin_state_from_its_stamp():
     with _tmp() as tmp:
-        asi = Path(tmp) / "dsfforza.asi"
+        asi = Path(tmp) / "dsfcars.asi"
         assert install.plugin_state(asi, "abc") == "missing"
         _touch(asi, b"MZ plugin")
         assert install.plugin_state(asi, "abc") == "unverified"
@@ -530,7 +530,7 @@ def test_summary_lines_name_failures_logs_and_uninstall():
         archive_bytes=3 * install.GIB,
         game=Path("D:/game"),
         replaced=["Install\\dngvehicles.sp"],
-        created=["plugins\\dsfforza.asi"],
+        created=["plugins\\dsfcars.asi"],
         save_backup=Path("out/save-backups/1/savegames"),
         log=Path("out/logs/x.log"),
         installed=True,
@@ -646,13 +646,13 @@ def test_package_takes_the_player_files_and_refuses_game_data():
         "tools/wsb/run-series.ps1",
         "research/batch.md",
         "tests/test_install.py",
-        "tools/game/lua/dsfforza/garagetest.lua",
+        "tools/game/lua/dsfcars/garagetest.lua",
     ]
     files = package.select(tracked)
     assert "tools/install.ps1" in files and "src/dsfforza/build/install.py" in files and "install.cmd" in files
     assert not any(f.startswith(("tests/", "tools/wsb/")) for f in files)
     assert "research/batch.md" not in files and "research/forza-roster.tsv" in files
-    assert "tools/game/lua/dsfforza/garagetest.lua" not in files
+    assert "tools/game/lua/dsfcars/garagetest.lua" not in files
     for bad in ("src/dsfforza/x.iso", "tools/batches/dngvehicles.sp"):
         try:
             package.select([*tracked, bad])

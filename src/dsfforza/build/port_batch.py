@@ -19,7 +19,7 @@ Normal priority, at most --jobs at a time, a new one only while 1.9 GB of RAM
 is free), which writes the car's three VEHC entries to work/<media>.chnk and
 a report. The merge then registers them into one copy of the vanilla archive
 (SSLP/VSCT records), checks the root entry limit (--root-limit, default 1100:
-150 vanilla cars plus at most 215 new ones; dsfforza.asi's archive module lifts
+150 vanilla cars plus at most 215 new ones; dsfcars.asi's archive module lifts
 it, research/spool-limits.md) and UID clashes (a car that clashes is left out
 and the rest merged again), writes the archive, and lints every car.
 A car that fails in src/dsfforza/convert/damage/ is retried once without --damage, one
@@ -45,7 +45,7 @@ ID policy (research/batch.md): the garage lists model IDs 0..303 only
 batch get IDs 1..61 (garage-visible), the rest 304 upwards (traffic, Shift and
 scripts, but never the garage). --id-policy high puts every car at 304+
 (the range confirmed in game); --first-id moves the high range.
---id-policy asi is for installs with dsfforza.asi (tools/asi, research/asi.md):
+--id-policy asi is for installs with dsfcars.asi (tools/asi, research/asi.md):
 its garage module lists IDs up to 999 in up to 120 maker groups and keeps the
 save flags of IDs 304+ in a side file, so every car can be in the garage. Cars
 get every free ID in order: 1..61, the 92 IDs in 62..303 the vanilla archive
@@ -55,7 +55,7 @@ Outputs in --out DIR: dngvehicles.sp (only when it fits in one CHNK, below 4 GiB
 and without --no-archive; else dngvehicles.plan.json, the merge that lint reads in
 memory: research/batch.md, "Builds past 4 GiB"), dngvehicles.json (port_car's manifest
 format, plus "batch": failures and timings), dngvehicles.lua (the
-dsfforza\\ported.lua for register.lua), batch-report.json (per car its
+dsfcars\\ported.lua for register.lua), batch-report.json (per car its
 engine sound: Forza source banks, loops used, pitch ranges, SBAK size, or why
 it kept the host's), sound/<media>/ (sweep_new.wav and sweep_template.wav
 previews, wav/ loops, report.json; src/dsfforza/convert/engine_sound.py) and, with --gui,
@@ -115,10 +115,10 @@ DEFAULT_PORT_OPTIONS = "--mdxn-limit 0x2C0000 --damage"
 
 def game_from_dsf(dsf: Path) -> Path:
     game = dsf.resolve().parent.parent
-    # <game>/dsfforza-backup/Install/dngvehicles.sp (src/dsfforza/game/game_paths.py): the game is one up.
+    # <game>/dsfcars-backup/Install/dngvehicles.sp (src/dsfforza/game/game_paths.py): the game is one up.
     if game == game_paths.REPO_VANILLA.resolve():  # the repo's vanilla copy (a junction in a worktree): the real game
         return game_paths.game_dir()
-    return game.parent if game.name == game_paths.BACKUP else game
+    return game.parent if game.name in game_paths.BACKUPS else game
 
 
 def set_game_env(dsf: Path) -> None:
@@ -475,8 +475,8 @@ def diverse(picks: list[Pick], count: int) -> list[Pick]:
 # register.lua checks the real table again at runtime.
 GARAGE_GROUP_CAP = 20 - 1
 GARAGE_GROUPS_CAP = 40 - 1
-ASI_GROUPS_CAP = 120 - 1  # dsfforza.asi [garage] max_groups (default 120)
-ASI_GROUP_CAP = 1000  # dsfforza.asi [garage] max_cars: a maker group holds all its cars
+ASI_GROUPS_CAP = 120 - 1  # dsfcars.asi [garage] max_groups (default 120)
+ASI_GROUP_CAP = 1000  # dsfcars.asi [garage] max_cars: a maker group holds all its cars
 # --id-policy asi: the low IDs first. 62..303 holds 150 vanilla cars (and spool IDs without
 # a vehicleStats entry: 123, 131, 277, 289); the 92 others appear in no traffic set,
 # vehicleStats key or model-ID field of the game's Lua (research/asi.md), and the
@@ -519,17 +519,20 @@ def car_groups(picks: list[Pick], group_of: dict[str, str], isos: list[Path] | N
     return out
 
 
-OVERFLOW_GROUP = "FORZA"  # register.lua: makes without a garage group of their own share these
+# register.lua: makes without a garage group of their own share these. A plain name: the garage
+# files cars by ManufacturerName and builds its groups at each game start (FUN_006C57D0); the save
+# keeps flags per model ID, not per group (research/asi.md, "Garage list").
+OVERFLOW_GROUP = "ADDED CARS"
 
 
 def garage_group(make: str, group: str, counts: dict[str, int], cap: int, groups_cap: int) -> str | None:
     """The garage maker group a car joins, or None: its own group while it has room (a new
-    make opens one while fewer than groups_cap exist), else a shared FORZA, FORZA 2 ...
-    group (the same rule as register.lua's garageGroup). One group slot is kept for FORZA."""
+    make opens one while fewer than groups_cap exist), else a shared ADDED CARS, ADDED
+    CARS 2 ... group (the same rule as register.lua's garageGroup). One group slot is kept for it."""
     if group in counts:
         if counts[group] < cap:
             return group
-    elif len(counts) + (0 if OVERFLOW_GROUP in counts else 1) < groups_cap:  # keep room for FORZA
+    elif len(counts) + (0 if OVERFLOW_GROUP in counts else 1) < groups_cap:  # keep room for the shared group
         return group
     n = 1
     while True:
@@ -542,11 +545,11 @@ def garage_group(make: str, group: str, counts: dict[str, int], cap: int, groups
 
 
 def root_limit_of(args) -> int:
-    """--root-limit: 1100 (vanilla) unless the install uses dsfforza.asi's archive module."""
+    """--root-limit: 1100 (vanilla) unless the install uses dsfcars.asi's archive module."""
     limit = getattr(args, "root_limit", None) or ENTRY_LIMIT
     if limit > ENTRY_LIMIT:
         print(
-            f"note: root limit {limit}: the archive needs dsfforza.asi with [archive] enabled "
+            f"note: root limit {limit}: the archive needs dsfcars.asi with [archive] enabled "
             f"(the vanilla game reads {ENTRY_LIMIT} entries)",
             file=sys.stderr,
         )
@@ -558,7 +561,7 @@ def assign_ids(
 ) -> None:
     """policy "garage": IDs 1..61 (listed in the garage) while a maker group has room
     for the car, else first_high and up; "high": first_high and up only; "asi"
-    (installs with dsfforza.asi): every free ID below 1000 in order, 1..61, the 92
+    (installs with dsfcars.asi): every free ID below 1000 in order, 1..61, the 92
     IDs in 62..303 the vanilla archive doesn't use, then first_high up, each car
     garage-listed by the plugin while the maker list (ASI_GROUPS_CAP groups) has
     room; the plugin's groups take any number of cars. List order decides which cars get the garage IDs (garage) or the group
@@ -582,7 +585,7 @@ def assign_ids(
         if policy == "asi" and own is not None:
             group = garage_group(own, own, counts, ASI_GROUP_CAP, ASI_GROUPS_CAP)
             if group is None:
-                p.notes_soft = "no garage group left (dsfforza.asi)"
+                p.notes_soft = "no garage group left (dsfcars.asi)"
             else:
                 counts[group] = counts.get(group, 0) + 1
                 if group != own:
@@ -1232,7 +1235,7 @@ def write_merged(
     if size >= 1 << 31:
         # The vanilla file layer clamps seek positions of 2 GiB and up to 0 (spool-limits.md).
         log(
-            f"note: {out.name} is {size / 2**30:.2f} GiB; past 2 GiB it needs dsfforza.asi "
+            f"note: {out.name} is {size / 2**30:.2f} GiB; past 2 GiB it needs dsfcars.asi "
             f"[archive] large_files=1 (the default)"
         )
 
@@ -2275,7 +2278,7 @@ def finish(
                 log=gui_log,
                 archive=archive if shards is None else shards,
                 wide_glyphs=getattr(args, "wide_glyphs", False),
-                # The same CHNK reader limit: with dsfforza.asi [archive] gui.sp gets one
+                # The same CHNK reader limit: with dsfcars.asi [archive] gui.sp gets one
                 # SPOI per picture too, not shared SPOIs past 177 (research/gui-assets.md).
                 root_limit=getattr(args, "root_limit", None) or ENTRY_LIMIT,
                 jobs=render_jobs(args.jobs),
@@ -2673,7 +2676,7 @@ def build_parser() -> argparse.ArgumentParser:
             default="garage",
             help="garage (default): IDs 1..61 first, then --first-id up; high: --first-id up only; "
             "asi: every free ID from 1 (vanilla gaps in 62..303 too), then --first-id up, garage-listed "
-            "through dsfforza.asi (research/asi.md)",
+            "through dsfcars.asi (research/asi.md)",
         )
         p.add_argument("--first-id", type=int, default=HIGH_FIRST_ID)
         p.add_argument(
@@ -2681,7 +2684,7 @@ def build_parser() -> argparse.ArgumentParser:
             type=int,
             default=ENTRY_LIMIT,
             help=f"root entries allowed (default {ENTRY_LIMIT}, the vanilla reader); "
-            "more needs dsfforza.asi [archive], e.g. 3003 for every base ID below 1000",
+            "more needs dsfcars.asi [archive], e.g. 3003 for every base ID below 1000",
         )
         _change_arguments(p, name)
         if name == "plan":
@@ -2715,7 +2718,7 @@ def build_parser() -> argparse.ArgumentParser:
                 "--wide-glyphs",
                 action="store_true",
                 help="with --gui: every car its own HUD badge/plate as 16-bit glyphs "
-                "(needs dsfforza.asi [hud]; gui_assets.py --wide-glyphs)",
+                "(needs dsfcars.asi [hud]; gui_assets.py --wide-glyphs)",
             )
             p.add_argument(
                 "--resume",
@@ -2792,11 +2795,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--root-limit",
         type=int,
         default=ENTRY_LIMIT,
-        help=f"root entries allowed (default {ENTRY_LIMIT}; more needs dsfforza.asi [archive])",
+        help=f"root entries allowed (default {ENTRY_LIMIT}; more needs dsfcars.asi [archive])",
     )
     r.add_argument("--jobs", type=int, default=4)
     r.add_argument("--gui", action="store_true")
-    r.add_argument("--wide-glyphs", action="store_true", help="with --gui: 16-bit HUD glyphs (dsfforza.asi [hud])")
+    r.add_argument("--wide-glyphs", action="store_true", help="with --gui: 16-bit HUD glyphs (dsfcars.asi [hud])")
     return parser
 
 

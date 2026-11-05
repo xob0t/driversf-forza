@@ -12,7 +12,7 @@ game fills, every frame (FUN_00891670):
                      0 for a leading blank
     id 6, comp 0: gear / 7 (0 = reverse)
     id 7, comp 0: 0.5 when the gear isn't reverse
-    ids 3..5: never written (0); dsfforza.asi's dash module writes km/h digits
+    ids 3..5: never written (0); dsfcars.asi's dash module writes km/h digits
               on id 3 like the mph digits on id 2 (tools/asi/src/mod_dash.cpp)
 
 So a digit is a quad over the blank cell of a strip of 11 cells (blank, 0..9,
@@ -41,7 +41,7 @@ MODL_FLAG = 1
 RPM = (1, 0)  # (id, comp): rpm / redline x 0.5
 SPEED_DIGITS = [(2, k) for k in range(4)]  # units, tens, hundreds, thousands
 GEAR = (6, 0)  # gear / 7, 0 = reverse
-KMH_DIGITS = [(3, k) for k in range(4)]  # km/h digits: dsfforza.asi [dash] writes them (mod_dash.cpp)
+KMH_DIGITS = [(3, k) for k in range(4)]  # km/h digits: dsfcars.asi [dash] writes them (mod_dash.cpp)
 STATIC = (5, 0)  # never written: no offset
 DIGIT_PITCH = 23 / 256  # v between digit cells (blank, 0..9)
 GEAR_PITCH = 1 / 7  # v between gear cells (R, 1..6)
@@ -1283,7 +1283,7 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
 def digi_data(mph: float, rpm: float, gear: int, redline: float) -> dict:
     """g_fDigiData as FUN_00891670 fills it: (id, comp) -> v offset."""
     out = {RPM: 0.5 * min(rpm, redline) / max(1.0, redline), GEAR: gear / 7.0, (7, 0): 0.5 if gear else 0.0}
-    for slots, value in ((SPEED_DIGITS, mph), (KMH_DIGITS, mph * 1.609344)):  # km/h: dsfforza.asi
+    for slots, value in ((SPEED_DIGITS, mph), (KMH_DIGITS, mph * 1.609344)):  # km/h: dsfcars.asi
         digits = str(int(round(abs(value))))
         for k, slot in enumerate(slots):
             out[slot] = (int(digits[-1 - k]) + 1) * DIGIT_PITCH if k < len(digits) else 0.0

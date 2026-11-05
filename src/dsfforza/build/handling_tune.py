@@ -212,7 +212,7 @@ def patch_archive(src: Path, dst: Path, overrides: dict[int, dict[int, float]]) 
 
 
 def run_session(archive: Path, lua: Path, ids: list[int], wait: int = 3600, keys: str = KEYS, keep: str = KEEP) -> Path:
-    shutil.copy(lua, REPO / "tools" / "game" / "lua" / "dsfforza" / "ported.lua")
+    shutil.copy(lua, REPO / "tools" / "game" / "lua" / "dsfcars" / "ported.lua")
     rel = archive.resolve().relative_to(REPO)
     cmd = [
         "powershell",

@@ -154,7 +154,7 @@ it. The planned check (its `-LuaFiles` is no longer needed: an archive named
 `dngvehicles.sp` brings its Lua since #184):
 
 ```powershell
-.\tools\wsb\run-series.ps1 -Archives out\wheels2\build\dngvehicles.sp -LuaFiles 'dsfforza\ported.lua=out\wheels2\build\dngvehicles.lua' -ProbeIds '1,2,3,4' -WaitSeconds 900 -ShotSeconds 3
+.\tools\wsb\run-series.ps1 -Archives out\wheels2\build\dngvehicles.sp -LuaFiles 'dsfcars\ported.lua=out\wheels2\build\dngvehicles.lua' -ProbeIds '1,2,3,4' -WaitSeconds 900 -ShotSeconds 3
 ```
 
 ## Rim textures (2026-10-24)
@@ -553,7 +553,7 @@ offset clamped by its travel, not the wheel size.
 | REN_5Turbo_80 (184) | 74 / 26 (26) | 0.270 / 0.183 -> 0.299 / 0.212 |
 | BUG_Veyron_09 (279) | 76 / 50 (50) | 0.333 / 0.249 -> 0.358 / 0.343 |
 
-### In game (headless VM, dsfforza.asi `A2DBAE5D...`)
+### In game (headless VM, dsfcars.asi `A2DBAE5D...`)
 
 The six cars above built both ways (`out/rw/vm-before` with
 `--no-rear-wheel-part`, `out/rw/vm-after`), IDs 1 to 6, probe views

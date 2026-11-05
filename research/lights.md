@@ -347,14 +347,14 @@ prints a vehicle's light table with the Lua names.
 ### In-game test: the harness mode
 
 `run-test.ps1 -Lights` / `run-series.ps1 -Lights` writes
-`lights = { dark = true }` to `dsfforza\config.lua`, and `clonetest.lua` hands
-each car, once the player drives it, to `dsfforza\lightstest.lua` (a module)
+`lights = { dark = true }` to `dsfcars\config.lua`, and `clonetest.lua` hands
+each car, once the player drives it, to `dsfcars\lightstest.lua` (a module)
 instead of the chase/cockpit cycle. The module spawns a second copy 12 m ahead
 facing the player's car (`GameVehicleResource.create` at
 `position + matrix[2] * 12`, `Heading = -matrix[2]`; `Spawn.Spawn` "against"
 as fallback), meant to let the chase camera see the player's rear lamps
 and the copy's front lamps (the copy never faced the camera: Open 1), logs `[dsfforza.lights] id N: ready 18 phases`, and then
-applies whatever phase the harness writes to `dsfforza\lightsync.lua`
+applies whatever phase the harness writes to `dsfcars\lightsync.lua`
 (`return { phase = k }`, read with `io.open`, falling back to `user_open` on
 a modify-time change). Phases 1 to 9: off, Headlights, DaytimeRunning,
 Brakes, DaytimeRunning + Brakes, Reverse, Left, Right, All, in daylight;

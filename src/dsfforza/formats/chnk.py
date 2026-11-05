@@ -42,7 +42,7 @@ ENTRY = struct.Struct("<4sIBBBBI")
 FILL = b">"
 COPY_BLOCK = 1 << 20
 # Entries per CHNK the game's vanilla reader holds: root entries of an archive, children
-# of a DRSP (research/spool-limits.md). dsfforza.asi [archive] lifts it for the root.
+# of a DRSP (research/spool-limits.md). dsfcars.asi [archive] lifts it for the root.
 ENTRY_LIMIT = 1100
 # The largest CHNK: total_size and every entry offset are u32 (HEADER, ENTRY), so one
 # file holds at most 4 GiB - 1 bytes.

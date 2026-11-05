@@ -1,6 +1,6 @@
 -- dsfforza drawdist probe (research/draw-distance.md). A drop-in for lightstest.lua:
--- run-series.ps1 -Lights -LuaFiles 'dsfforza\lightstest.lua=tools\game\lua\dsfforza\drawdist.lua;
---   dsfforza\ddconfig.lua=<file returning { mode = "lineup" | "traffic", ... }>'
+-- run-series.ps1 -Lights -LuaFiles 'dsfcars\lightstest.lua=tools\game\lua\dsfcars\drawdist.lua;
+--   dsfcars\ddconfig.lua=<file returning { mode = "lineup" | "traffic", ... }>'
 -- clonetest.lua hands it the player's car (M.start), then calls M.step() every clonetest tick.
 -- Driven by out/drawdist/probe/run-dd.ps1 (run-series.ps1 -OnHost -Lights). Its ready line ends in
 -- "(no drive)", so run-test.ps1 skips the lamp tests' drive steps and only sets phases.
@@ -11,7 +11,7 @@
 -- mode "lineup": traffic off; the player's car is pinned at the start of the 2 km Marin straight
 -- (dyno.lua START); copies of the same model are pinned ahead at fixed distances, rear to the
 -- camera, brake lamps on. Then "ready K phases"; the harness sets phase k through
--- dsfforza\lightsync.lua and screenshots it. Phases switch the DRL/emergency flare curves
+-- dsfcars\lightsync.lua and screenshots it. Phases switch the DRL/emergency flare curves
 -- (Sfx.*Flare*) and the vehicle LOD thresholds (performance.SetLODThreshold, category 2).
 --
 -- mode "traffic": traffic on; the player's car is moved along the straight at SPEED m/s
@@ -400,7 +400,7 @@ end
 -- ---------------------------------------------------------------- interface
 
 function M.configure(config)
-	local found, cfg = user_open("dsfforza\\ddconfig.lua")
+	local found, cfg = user_open("dsfcars\\ddconfig.lua")
 	if found and type(cfg) == "table" then
 		for key, value in pairs(cfg) do OPTIONS[key] = value end
 	end
@@ -430,7 +430,7 @@ function M.start(id, car)
 	log(string.format("id %d: start mode %s", id, OPTIONS.mode))
 end
 
-local SYNC = "dsfforza\\lightsync.lua"
+local SYNC = "dsfcars\\lightsync.lua"
 local function syncValue()
 	local base = rawget(_G, "UserLuaMediaPath") or ""
 	if type(io) == "table" and type(io.open) == "function" then

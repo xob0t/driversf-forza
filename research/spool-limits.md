@@ -19,15 +19,15 @@ modes) against the `-b` project copy. Outputs are in `out/ghidra/spool-*`,
 | --- | --- | --- | --- |
 | NONR buffer per slot | SSLP +0x08/+0x0C/+0x10: 0x6D000, 0x1000, 0x1000 | yes, heap overflow if NONR is larger | data: SSLP header |
 | Shared spool read buffer | 0x280000 static, heap above that | VEHC > 0x27F000 takes a path no shipped file uses | not needed: the pad test passed ("Test results") |
-| Entries per CHNK | 1100 | DRSP children (submodels + buffers + materials), root entries | code: `dsfforza.asi` `[archive]` (below); without it the root caps the archive at 365 vehicles |
-| File positions | below 2 GiB (signed clamp in the seek) | archives past about 480 ported cars | code: `dsfforza.asi` `[archive] large_files`, up to 4 GiB |
+| Entries per CHNK | 1100 | DRSP children (submodels + buffers + materials), root entries | code: `dsfcars.asi` `[archive]` (below); without it the root caps the archive at 365 vehicles |
+| File positions | below 2 GiB (signed clamp in the seek) | archives past about 480 ported cars | code: `dsfcars.asi` `[archive] large_files`, up to 4 GiB |
 | Graphics pool slot, kind 0 | 239,664 bytes, 1872 range nodes | only with far more render objects (about 1800) | code: `.data` table |
 | Graphics pool slot, kind 1/2 | 4 MiB, 32768 nodes | no | not needed |
 | Vertex and index buffers | exact size, D3D9 managed pool | no fixed cap; indices are always 16-bit | not needed |
 | Global UID list | 16384 entries, write-only | fills faster with more submodels | code: NOP the counter (hypothesis that it matters) |
 | Resource hash arena | 45,000 nodes, global | more buffers/textures per car use more | not needed: nodes are recycled through a free list when a resource is released, so only what is resident counts ("Global lists") |
 | Slots per kind | SSLP +0x18: 35, 2, 2 | no | data plus pool table; not needed for detail |
-| Draw queue | 16384 draws per frame, all objects together (not per car) | no: no ported car comes near the vanilla per-car maximum; dsf_enhanced's worldlod world fills it, and an unchecked replay then overruns the queue (an `INT3` or a write to address 0) | code: `dsfforza.asi` `[render]` drops the extra draws; DSF Enhanced's `DrawQueueEntries` raises it ("Draw queue" below) |
+| Draw queue | 16384 draws per frame, all objects together (not per car) | no: no ported car comes near the vanilla per-car maximum; dsf_enhanced's worldlod world fills it, and an unchecked replay then overruns the queue (an `INT3` or a write to address 0) | code: `dsfcars.asi` `[render]` drops the extra draws; DSF Enhanced's `DrawQueueEntries` raises it ("Draw queue" below) |
 
 The MDXN size itself has no separate limit. The 0x29B000 MDXN crash was
 first blamed on the 0x280000 read buffer path; the pad tests ("Test
@@ -163,12 +163,12 @@ What it limits:
   Cross-DRSP UID references are resolved through the global hash tables,
   so that should work, but it is untested.
 
-`dsfforza.asi`'s `archive` module lifts the limit for every reader; see the
+`dsfcars.asi`'s `archive` module lifts the limit for every reader; see the
 next section.
 
 ## Raising the root entry limit
 
-`dsfforza.asi` module `archive` (`tools/asi/src/mod_archive.cpp`) lets a
+`dsfcars.asi` module `archive` (`tools/asi/src/mod_archive.cpp`) lets a
 CHNK hold up to `[archive] max_entries` entries (default 16384) and lets
 archives grow past 2 GiB. With it, `dngvehicles.sp` holds a car for every
 free base model ID: 849 added cars (IDs 1..999 minus the 150 vanilla ones;
@@ -293,7 +293,7 @@ tops out at about 480 added cars. With it, all 849 free IDs fit (about
 | SSIC size | measured at load (FUN_005A0DE0), so bigger SSLP and VSCT tables are fine (2,724 records: +76 KB) | no | confirmed-runtime |
 | Spool object ID lists (+0x5B44, +0x5F50, +0x6368, +0x668C, +0x6998, +0x69A4, +0x6CB0, +0x6CBC, +0x6FC8, +0x6FD4) | inline node pools of 48 or 64 nodes, sorted by u16 ID (FUN_005A1660, FUN_005A17A0, FUN_005A1D00, FUN_005A2230) | no: they hold requested and resident IDs, bounded by the 35 + 2 + 2 slots, not by the archive | confirmed-static |
 | Global UID list (16384), resource hash arena (45,000 nodes), MODL part index (85,000) | grow with resident resources | no | "Global lists" below |
-| Garage list, maker groups, save flags | IDs 0..303, 40 groups, 304 slots (dsfforza.asi `[garage]`: 0..999, 120 groups, flags of 304+ in a side file) | for the garage and save only | `batch.md`, `asi.md` (module `garage`) |
+| Garage list, maker groups, save flags | IDs 0..303, 40 groups, 304 slots (dsfcars.asi `[garage]`: 0..999, 120 groups, flags of 304+ in a side file) | for the garage and save only | `batch.md`, `asi.md` (module `garage`) |
 | Lua `vehicleStats` | a Lua table | no | |
 
 A scan for 2000 (0x7D0) and 3000 (0xBB8) found no other code that derives a
@@ -516,7 +516,7 @@ in a frame; worldlod's queued 11,264 as soon as the world was up, before any
 probe car spawned (runs below). The user's 21:9 view and terrain LOD x0.25
 draw more again.
 
-**Patch:** `dsfforza.asi` `[render]` (`asi.md`, "Draw queue") makes the
+**Patch:** `dsfcars.asi` `[render]` (`asi.md`, "Draw queue") makes the
 three unchecked or trapping appends bounded and removes the trap, so a frame
 past 16384 draws loses its last draws instead of ending the game. It does
 nothing for the draw-data arenas. DSF Enhanced's `[Limits] DrawQueueEntries`
@@ -537,7 +537,7 @@ street, not out of the Hunters Point garage, and the VM's window is 16:9.
 | `vm2-20261028-234914` | with `render` (all three call sites), worldlod's world | finished, no crash; a frame reached 11,264 queued draws at world load; the Venom spawned and was driven |
 
 With the vanilla world a VM frame stays under half the queue; with
-worldlod's it passes two thirds at 16:9. With the plugin, `dsfforza.log`
+worldlod's it passes two thirds at 16:9. With the plugin, `dsfcars.log`
 says when a frame gets past 8192 and when draws are dropped.
 
 ## Vertex and index buffers (confirmed-static)

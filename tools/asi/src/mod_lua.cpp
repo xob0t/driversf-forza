@@ -13,7 +13,7 @@
 // nothing is logged and the state is left half-updated.
 //
 // The vanilla game stays well under 10 MB. With the full roster (573 cars: their
-// vehicleStats entries, dsfforza\ported.lua, hud.lua) the arena refuses
+// vehicleStats entries, dsfcars\ported.lua, hud.lua) the arena refuses
 // requests once Lua holds about 8.5 MB, which a drive through traffic or a few
 // minutes in the garage reach; the game then dies in the Lua VM a minute or
 // so later (issue #56: run vm2-20261026-122308 logged the first failures at

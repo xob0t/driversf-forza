@@ -60,7 +60,7 @@ def test_no_hud_lua_gives_no_other_cars_plate():
     assert stats[404][:2] == (FORD, BLANK), stats[404]  # was (43, 186) in game, "SHELBY GT500"
     assert stats[412][:2] == (FORD, BLANK)
     assert stats[500][:2] == (BLANK, BLANK)  # was the host's badge and plate
-    assert any("no dsfforza\\hud.lua" in line for line in out)
+    assert any("no dsfcars\\hud.lua" in line for line in out)
 
 
 def test_another_builds_hud_lua_is_not_used():
@@ -90,10 +90,10 @@ def test_car_packages_alone_register_their_cars():
     hud.lua (a merged install's, removed when it moved to packages)."""
     hud = _hud({404: ("FOR_Ka_11", FORD, 158), 500: ("KOE_Agera_11", 145, 150)})
     files = {
-        "dsfforza\\ported.lua": None,
-        "dsfforza\\hud.lua": None,
-        "dsfforza\\packages.lua": _ported({i: CARS[i] for i in (404, 500)}),
-        "dsfforza\\packages_hud.lua": hud,
+        "dsfcars\\ported.lua": None,
+        "dsfcars\\hud.lua": None,
+        "dsfcars\\packages.lua": _ported({i: CARS[i] for i in (404, 500)}),
+        "dsfcars\\packages_hud.lua": hud,
     }
     lua, _ = _harness.run(True, cars="return {}", files=files, packages={404, 500})  # the plugin loaded both
     stats = lua.globals().vehicleStats

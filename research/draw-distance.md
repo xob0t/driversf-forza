@@ -19,7 +19,7 @@ Tools and outputs: `out/drawdist/re.py` (capstone helpers: dump, xref, calls,
 dis), Ghidra decompiles in `out/ghidra/dd-*` (from a local copy of the
 Ghidra project, not in the repo), MODL survey
 `out/drawdist/modl/`, lamp shader and flare asset survey
-`out/drawdist/lamps/`, in-game probe `tools/game/lua/dsfforza/drawdist.lua`
+`out/drawdist/lamps/`, in-game probe `tools/game/lua/dsfcars/drawdist.lua`
 (runs with `out/drawdist/probe/run-dd.ps1 -Modes <ddconfig name>`), run parsers
 `out/drawdist/analyze.py` (traffic events), `traffic2.py` (drive-window
 summary), `lineup.py` / `sweep.py` (lineup crops; the sweep was finally read by
@@ -598,7 +598,7 @@ Notes on these values:
 - **Risks:**
   - more triangles and draw calls (batches of 32). Each frame's draw queue
     holds 16384 draws (`spool-limits.md`, "Draw queue"); with DSF Enhanced's
-    worldlod world it reached 11,264 at world load, and dsfforza.asi's
+    worldlod world it reached 11,264 at world load, and dsfcars.asi's
     `[render]` drops what doesn't fit (#185, #186, #194);
   - category 2 is shared by the Shift-view renderer (`0x8F12D0`) and
     per-view managers, and DSF Enhanced only patches view 0.

@@ -420,7 +420,7 @@ def test_wheel_fit_ignores_a_modelled_column():
 
 
 def test_grip_params_give_dsfforza_asi_the_drawn_rim():
-    # Forza's wheel keeps its size; dsfforza.asi [hands] moves the hands onto the rim
+    # Forza's wheel keeps its size; dsfcars.asi [hands] moves the hands onto the rim
     # it reads from VO3D: the radius, and the centre from the steering marker along
     # the engine's column direction (the marker quaternion's +z, away from the driver).
     t = math.radians(24.0)
@@ -445,7 +445,7 @@ def test_grip_params_give_dsfforza_asi_the_drawn_rim():
 def test_chase_driver_hands_keep_their_angle_on_forza_rim():
     # The chase views' driver grips the vanilla circle about the seat's anchor
     # (seat_anchor, off the wheel's column on small or large rims); the chase-view wheel
-    # keeps Forza's size, and dsfforza.asi [hands] puts each hand on its rim at the angle
+    # keeps Forza's size, and dsfcars.asi [hands] puts each hand on its rim at the angle
     # the animations give it about that anchor, so the hands turn with the wheel.
     from dsfforza.convert import steering_axle
 
@@ -477,7 +477,7 @@ def test_seat_anchor_puts_the_grips_on_the_rim():
 
 
 def test_arms_grips_are_the_probed_fists():
-    # dsfforza.asi [hands] debug=1 (vm1-20261028-174107): 0.177 m from the arms' column
+    # dsfcars.asi [hands] debug=1 (vm1-20261028-174107): 0.177 m from the arms' column
     # (the circle's normal 26.6 degrees up), 49 and 52 degrees either side of the top.
     t = math.radians(26.6)
     axis = (0.0, math.sin(t), -math.cos(t))

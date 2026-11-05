@@ -1,4 +1,4 @@
-"""register.lua with and without dsfforza.asi's garage module, against stubbed
+"""register.lua with and without dsfcars.asi's garage module, against stubbed
 game APIs (lupa, Lua 5.1). Needs out/lua-src (src/dsfforza/game/game_data.py prepare, which
 tools/worktree-setup.ps1 and port_batch run).
 
@@ -61,7 +61,7 @@ def run(
     out: list[str] = []
     g.print = lambda *a: out.append(" ".join(str(x) for x in a))
     loader = lua.execute(LOADER)
-    over = {f"dsfforza{BS}ported.lua": cars or ported(), f"dsfforza{BS}hud.lua": hud, f"dsfforza{BS}config.lua": None}
+    over = {f"dsfcars{BS}ported.lua": cars or ported(), f"dsfcars{BS}hud.lua": hud, f"dsfcars{BS}config.lua": None}
     over.update(files or {})  # other user files ({name: text, or None for missing})
 
     def user_open(name):
@@ -112,7 +112,7 @@ def run(
     removeUserUpdateFunction = function() end
     TrafficSpooler = { Busy = function() return false end }
     """)
-    ok, mod = user_open(f"dsfforza{BS}register.lua")
+    ok, mod = user_open(f"dsfcars{BS}register.lua")
     if not ok:
         raise SystemExit(f"register.lua failed: {mod}")
     return lua, out
@@ -137,7 +137,7 @@ def check(asi: bool, per_group: int | None = 1000) -> list[str]:
     cap = per_group if asi and per_group else 20
     if max(groups.values()) > cap:
         errors.append(f"a group has {max(groups.values())} cars (cap {cap})")
-    if "FORZA" in groups and asi and per_group and per_group > 20:
+    if "ADDED CARS" in groups and asi and per_group and per_group > 20:
         errors.append("a FORZA group although the plugin's groups have no 20-car cap")
     if asi and selectable_added < 500:
         errors.append(f"only {selectable_added} added cars selectable")
@@ -149,7 +149,7 @@ def check(asi: bool, per_group: int | None = 1000) -> list[str]:
         f"asi={asi} per_group={per_group}: {selectable_added} of 600 added cars selectable, {len(groups)} groups "
         f"(largest {max(groups.values())}), setter calls {calls}"
     )
-    print("  " + "\n  ".join(line for line in out if "dsfforza.asi" in line))
+    print("  " + "\n  ".join(line for line in out if "dsfcars.asi" in line))
     return errors
 
 
@@ -176,7 +176,7 @@ def big_group(per_group: int | None) -> Counter:
 def test_big_group():
     assert big_group(1000) == Counter({"ID:900001": 55})
     old = big_group(None)
-    assert old == Counter({"ID:900001": 20, "FORZA": 20, "FORZA 2": 15}), old
+    assert old == Counter({"ID:900001": 20, "ADDED CARS": 20, "ADDED CARS 2": 15}), old
 
 
 # Felony Rework's vehicleStats dummies (its whole-file vehiclestats.lua, research/felony-rework.md):
@@ -245,9 +245,9 @@ def run_packages(*, asi: bool, packages: set[int] | None, ported_lua: str | None
     """register.lua over an install's packages.lua; returns (registered IDs, IDs in traffic,
     log lines, the Lua state)."""
     files = {
-        f"dsfforza{BS}packages.lua": PACKAGES_LUA,
-        f"dsfforza{BS}packages_hud.lua": PACKAGES_HUD,
-        f"dsfforza{BS}ported.lua": ported_lua,
+        f"dsfcars{BS}packages.lua": PACKAGES_LUA,
+        f"dsfcars{BS}packages_hud.lua": PACKAGES_HUD,
+        f"dsfcars{BS}ported.lua": ported_lua,
     }
     lua, out = run(asi, files=files, packages=packages)
     lua.execute(REGIONS)
@@ -276,9 +276,9 @@ def test_no_package_car_without_the_plugin():
     registered, traffic, out, lua = run_packages(asi=False, packages=None)
     assert registered == set(), registered
     assert traffic == set(), traffic
-    assert len(lua.globals().dsfforzaRegister.cars) == 0
+    assert len(lua.globals().dsfcarsRegister.cars) == 0
     lines = [line for line in out if "installed cars" in line]
-    assert len(lines) == 1 and "dsfforza.asi is not active: the 4 installed cars are not loaded" in lines[0], out
+    assert len(lines) == 1 and "dsfcars.asi is not active: the 4 installed cars are not loaded" in lines[0], out
     assert not [line for line in out if "hud.lua" in line or "vanilla match" in line], out
 
 

@@ -300,12 +300,12 @@ def register_clones(stream, entries: list[Entry], clones: list[Entry], source_id
 
 
 def check_root(entries: list[Entry], root_limit: int = ENTRY_LIMIT) -> None:
-    """The game reads at most root_limit root entries (1100 unless dsfforza.asi's
+    """The game reads at most root_limit root entries (1100 unless dsfcars.asi's
     archive module is installed); more corrupts the reader."""
     if len(entries) > root_limit:
         raise SystemExit(
             f"{len(entries)} root entries (> {root_limit}); pass --root-limit N "
-            f"for an install with dsfforza.asi [archive]"
+            f"for an install with dsfcars.asi [archive]"
         )
 
 
@@ -388,7 +388,7 @@ def main(argv: list[str] | None = None) -> None:
         "--root-limit",
         type=int,
         default=ENTRY_LIMIT,
-        help=f"root entries allowed (default {ENTRY_LIMIT}; more needs dsfforza.asi [archive])",
+        help=f"root entries allowed (default {ENTRY_LIMIT}; more needs dsfcars.asi [archive])",
     )
     args = parser.parse_args(argv)
     if args.out.resolve() == args.archive.resolve():

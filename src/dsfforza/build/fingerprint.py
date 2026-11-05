@@ -598,7 +598,7 @@ class Checker:
         r"""{the recorded vanilla archive path: the job's} when the job reads the vanilla archive
         from another place but it has the same digest. dsff install builds from the game's
         Install\dngvehicles.sp the first time and from the install's backup of it
-        (dsfforza-backup\Install\dngvehicles.sp; tools/install.ps1 copies it with its
+        (dsfcars-backup\Install\dngvehicles.sp; tools/install.ps1 copies it with its
         time stamp) every time after, and the archive is the same file."""
         old, new = (fp.get("job") or {}).get("dsf"), job_key(job).get("dsf")
         recorded = fp.get("files", {}).get(old) if old else None

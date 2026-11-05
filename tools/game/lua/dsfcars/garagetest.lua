@@ -6,7 +6,7 @@
 --    calls for model ID 0: no car uses 0, only the garage maker-list loop
 --    (FUN_006c57d0, IDs 0..303) asks for it, so each ID-0 call is one build
 --    of the garage list.
--- 2. Only when dsfforza\garagetest_on.lua exists (return { garage = 1, delay = 40, unlock = true }):
+-- 2. Only when dsfcars\garagetest_on.lua exists (return { garage = 1, delay = 40, unlock = true }):
 --    with `unlock`, first marks ported IDs below 304 unlocked and owned (writes
 --    the save: use it only on a test save, e.g. the sandbox's copy);
 --    once the player has been in a car for `delay` updates (about 0.5 s
@@ -26,7 +26,7 @@ state.others = state.others or {}   -- non-ported IDs above 303 already logged
 
 -- The ported cars: a merged install's (ported.lua) and the car manager's packages (packages.lua).
 local ids = {}
-for _, name in ipairs({ "dsfforza\\ported.lua", "dsfforza\\packages.lua" }) do
+for _, name in ipairs({ "dsfcars\\ported.lua", "dsfcars\\packages.lua" }) do
 	local exists = type(user_fileExists) ~= "function" or user_fileExists(name)
 	local found, list
 	if exists then found, list = user_open(name) end
@@ -69,9 +69,9 @@ end
 
 local options
 do
-	local exists = type(user_fileExists) == "function" and user_fileExists("dsfforza\\garagetest_on.lua")
+	local exists = type(user_fileExists) == "function" and user_fileExists("dsfcars\\garagetest_on.lua")
 	if exists then
-		local found, cfg = user_open("dsfforza\\garagetest_on.lua")
+		local found, cfg = user_open("dsfcars\\garagetest_on.lua")
 		options = (found and type(cfg) == "table") and cfg or {}
 	end
 end

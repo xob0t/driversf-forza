@@ -1,10 +1,10 @@
-"""Read a DSF save (autosave.dat) and dsfforza.asi's side file (dsfforza-garage.dat).
+"""Read a DSF save (autosave.dat) and dsfcars.asi's side file (dsfcars-garage.dat).
 
     uv run dsff savecheck <savegames folder or autosave.dat> [--ids 305,500]
 
 Checks the vanilla block (size, ten guard words, version) and lists what it
 holds for vehicles: the 304-slot {id, flags} list, the four 320-bit arrays and
-the 304-slot owned list, flagging any ID of 304 and up (dsfforza.asi never
+the 304-slot owned list, flagging any ID of 304 and up (dsfcars.asi never
 writes those into the block; older test saves may have some). Then lists the
 side file's entries. Offsets: research/asi.md ("Save layout").
 """
@@ -103,7 +103,9 @@ def main() -> None:
     print(
         f"  owned list: {len(block['owned'])} of 304; IDs >= 304: {[v for v in block['owned'] if v >= 304] or 'none'}"
     )
-    side_path = folder / "dsfforza-garage.dat"
+    side_path = folder / "dsfcars-garage.dat"
+    if not side_path.exists():  # its name before the rename (dsfcars.asi reads it until it has written its own)
+        side_path = folder / "dsfforza-garage.dat"
     side = read_side(side_path) if side_path.exists() else None
     if side is None:
         print(f"{side_path}: none")

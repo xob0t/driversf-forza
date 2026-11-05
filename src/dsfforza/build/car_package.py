@@ -1,8 +1,8 @@
-"""Per-car packages for dsfforza.asi's [archive] packages (experimental; research/car-packages.md).
+"""Per-car packages for dsfcars.asi's [archive] packages (experimental; research/car-packages.md).
 
     uv run dsff car_package make --chnk out/build/work/BMW_M3E30_91.chnk --id 700 \\
-        --host 205 --out out/cp/game/dsfforza/cars/BMW_M3E30_91.sp --list out/cp/game/dsfforza/cars/cars.txt
-    uv run dsff car_package show out/cp/game/dsfforza/cars/BMW_M3E30_91.sp
+        --host 205 --out out/cp/game/dsfcars/cars/BMW_M3E30_91.sp --list out/cp/game/dsfcars/cars/cars.txt
+    uv run dsff car_package show out/cp/game/dsfcars/cars/BMW_M3E30_91.sp
     uv run dsff car_package pack --build out/build --media BMW_M3E30_91 --out out/packages
     uv run dsff car_package validate out/packages/forza.fh1.BMW_M3E30_91.dsfcar
 
@@ -14,7 +14,7 @@ the full car, the interior, the clean exterior; port_batch's work/<media>.chnk) 
 entry with the car's three VSCT records (the host's, as clone_vehicle.register_clones
 makes them). The full VEHC holds a model ID in four fields (VSVH, VO3D, SPID, UPVH:
 clone_vehicle.ID_FIELDS): the builder's in a distributed package, which the car manager
-installs as it is. dsfforza.asi writes the listed ID (the list file's "id path" line) into
+installs as it is. dsfcars.asi writes the listed ID (the list file's "id path" line) into
 those fields of the data it serves, and into the SSLP and VSCT records it adds
 (research/car-packages.md, "Model ID in memory").
 """
@@ -45,7 +45,7 @@ def car_id(stream, vehc: Entry) -> int:
 
 def id_fields(stream, vehc: Entry) -> list[tuple[str, int]]:
     """(tag, value) of every model-ID field in a VEHC (clone_vehicle.ID_FIELDS), in tree
-    order: what dsfforza.asi's pkg_set_ids writes the listed ID into."""
+    order: what dsfcars.asi's pkg_set_ids writes the listed ID into."""
     out = []
     for _, entry in walk(vehc.children or []):
         at = ID_FIELDS.get(entry.tag)
@@ -71,7 +71,7 @@ def host_vsct(archive: Path, host: int) -> bytes:
 
 def make(chnk: Path, new_id: int | None, host: int, archive: Path, out: Path) -> int:
     """Write the package; returns the ID the car had in chnk. new_id None keeps that ID
-    (a distributed package: dsfforza.asi writes the listed ID in memory)."""
+    (a distributed package: dsfcars.asi writes the listed ID in memory)."""
     if new_id is not None and not 1 <= new_id <= 999:
         raise ValueError("a base model ID is 1..999 (the LOD request adds 1000 and 2000)")
     vsct = host_vsct(archive, host)
@@ -94,7 +94,7 @@ def make(chnk: Path, new_id: int | None, host: int, archive: Path, out: Path) ->
 
 def add_to_list(list_file: Path, new_id: int, package: Path) -> None:
     """Put "id path" in the list (path relative to the game folder, the list's grandparent's
-    parent: <game>/dsfforza/cars/cars.txt); a line with the same ID is replaced."""
+    parent: <game>/dsfcars/cars/cars.txt); a line with the same ID is replaced."""
     game = list_file.resolve().parent.parent.parent
     rel = package.resolve().relative_to(game)
     lines = list_file.read_text(encoding="ascii").splitlines() if list_file.exists() else []
@@ -128,7 +128,7 @@ def main(argv: list[str] | None = None) -> None:
     m.add_argument("--host", type=int, required=True, help="vanilla host ID (its VSCT records are copied)")
     m.add_argument("--dsf", type=Path, default=Path("out/vanilla/Install/dngvehicles.sp"), help="vanilla archive")
     m.add_argument("--out", type=Path, required=True)
-    m.add_argument("--list", type=Path, help="list file to add the package to (<game>/dsfforza/cars/cars.txt)")
+    m.add_argument("--list", type=Path, help="list file to add the package to (<game>/dsfcars/cars/cars.txt)")
     s = sub.add_parser("show", help="list a package's entries (.sp) or its manifest and members (.dsfcar)")
     s.add_argument("package", type=Path)
     p = sub.add_parser("pack", help="distributed packages (.dsfcar) from a port_batch build")

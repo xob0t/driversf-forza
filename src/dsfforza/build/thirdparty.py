@@ -8,7 +8,7 @@ Nothing of these is in the repo or the release zip.
 - vgmstream (decodes Forza's XMA engine sound; src/dsfforza/formats/forza_audio.py looks
   for out/tools-dl/vgmstream/vgmstream-cli.exe): unpacked there.
 - DriverNGHook 0.7.2 (runs the Lua that registers the cars) and the Ultimate ASI Loader
-  (loads DriverNGHook and dsfforza.asi): tools/install.ps1 copies them into the game
+  (loads DriverNGHook and dsfcars.asi): tools/install.ps1 copies them into the game
   folder (src/dsfforza/build/install.py passes them as -HookArchive and -AsiLoader).
   DriverNGHook's .7z is unpacked here (src/dsfforza/formats/sevenzip.py), not by
   install.ps1's tar.exe: Windows builds whose tar has no liblzma stopped the install with

@@ -100,7 +100,7 @@ def fit(
             source = "cockpit; steering wheel from the main carbin"
     else:
         wheel_source = "cockpit" if lod0 else "main carbin"
-    # Forza's wheel keeps its size in every view: dsfforza.asi [hands] moves the driver's
+    # Forza's wheel keeps its size in every view: dsfcars.asi [hands] moves the driver's
     # hands onto its rim (grip_params), the cockpit arms and the chase views' driver alike.
     wheel = fit_wheel(static["steering_wheel"])
     gauges = {}

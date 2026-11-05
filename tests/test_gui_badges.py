@@ -69,7 +69,7 @@ def test_every_car_gets_a_badge_and_plate_code_even_without_free_codes():
         assert {notes["blank_badge_code"], notes["blank_plate_code"]} == {g.BLANK_CODE, *free}
         assert g.BLANK_CODE not in glyphs
     assert g.BLANK_CODE == 32 and g.BLANK_CODE not in g.FREE_CODES + g.SPARE_CODES + g.UNTESTED_CODES
-    lua = (REPO / "tools" / "game" / "lua" / "dsfforza" / "register.lua").read_text(encoding="utf-8")
+    lua = (REPO / "tools" / "game" / "lua" / "dsfcars" / "register.lua").read_text(encoding="utf-8")
     assert int(re.search(r"local BLANK_GLYPH = (\d+)", lua).group(1)) == g.BLANK_CODE
 
 

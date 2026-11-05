@@ -1,4 +1,4 @@
-# dsfforza.asi
+# dsfcars.asi
 
 One native plugin for the runtime code patches this project needs in
 `Driver.exe` 1.04. An ASI loader (one already in the game folder, or the
@@ -9,7 +9,7 @@ when the plugin loads.
 Build (MSVC 2022 x86, static CRT, reproducible with `/Brepro`):
 
 ```powershell
-.\tools\asi\build.ps1          # -> out\asi\dsfforza.asi + out\asi\dsfforza.ini
+.\tools\asi\build.ps1          # -> out\asi\dsfcars.asi + out\asi\dsfcars.ini
 .\tools\asi\build.ps1 -Test    # plus out\asi\offline.exe, run against Driver.exe (below)
 ```
 
@@ -17,7 +17,7 @@ Build (MSVC 2022 x86, static CRT, reproducible with `/Brepro`):
 it: it maps `Driver.exe`'s image at 0x00400000 in a child process (the range
 is reserved before the child starts), runs each module's init against it and
 exercises the hooks that need no game state. A changed byte at any patch site
-shows up there, and in `out\asi\dsfforza.log`, without starting the game.
+shows up there, and in `out\asi\dsfcars.log`, without starting the game.
 Another child first changes one byte in three all-or-nothing patch sets
 (archive readers, maker groups, card emblem) and checks that nothing of each
 set is written.
@@ -33,17 +33,17 @@ set is written.
 | `src/main.cpp` | `DllMain`: core init, exe check, runs the modules in order |
 | `src/modules.h` | The module list, one `DSF_MODULE(name)` line per module |
 | `src/mod_<name>.cpp` | One module; exports `void mod_<name>_init()` |
-| `dsfforza.ini` | Default settings, copied next to the asi |
+| `dsfcars.ini` | Default settings, copied next to the asi |
 | `test/` | `offline.cpp` (above), in-game test Lua for the sandbox harness, installer and `register.lua` tests |
 | `xref.py` | capstone linear sweep of `.text`: instructions with a given displacement/immediate, callers, disassembly |
-| `savecheck.py` | dumps `autosave.dat` and the garage module's `dsfforza-garage.dat` |
+| `savecheck.py` | dumps `autosave.dat` and the garage module's `dsfcars-garage.dat` |
 
 ## Adding a module
 
 1. Create `src/mod_<name>.cpp` with `#include "patch.h"` and
    `void mod_<name>_init() { ... }`.
 2. Add `DSF_MODULE(<name>)` on its own line in `src/modules.h`.
-3. Add a `[<name>]` section with `enabled=1` to `dsfforza.ini`.
+3. Add a `[<name>]` section with `enabled=1` to `dsfcars.ini`.
 
 `build.ps1` compiles every `src/*.cpp`; no project file to edit.
 
@@ -53,8 +53,8 @@ All addresses are VAs of `Driver.exe` 1.04 (image base 0x00400000, no ASLR).
 
 | Function | Does |
 | --- | --- |
-| `dsf_log(fmt, ...)` | One printf-style line to `plugins\dsfforza.log` (truncated at start; `[dsfforza] log=0` turns it off) |
-| `cfg_int / cfg_bool / cfg_str(section, key, def, ...)` | Read `plugins\dsfforza.ini` |
+| `dsf_log(fmt, ...)` | One printf-style line to `plugins\dsfcars.log` (truncated at start; `[dsfcars] log=0` turns it off) |
+| `cfg_int / cfg_bool / cfg_str(section, key, def, ...)` | Read `plugins\dsfcars.ini` |
 | `patch_bytes(va, bytes, n, expect = nullptr)` | Write `n` bytes. With `expect`, the current bytes must match or nothing is written (logged, returns false) |
 | `patch_jmp(va, target, len = 5, expect = nullptr)` | `E9 rel32` to `target`, NOP-padded to `len` |
 | `patch_call(va, target, expect = nullptr)` | `E8 rel32` to `target` |
@@ -88,7 +88,7 @@ each patch's `expect` bytes guard its own site.
 ## Config
 
 ```ini
-[dsfforza]
+[dsfcars]
 enabled=1   ; 0: load but patch nothing
 log=1
 crash_log=0 ; 1: log the first faults (eip, registers, stack return addresses)

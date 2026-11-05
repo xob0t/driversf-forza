@@ -1,4 +1,4 @@
-// dsfforza.asi core: exe check, logging, config, memory patching.
+// dsfcars.asi core: exe check, logging, config, memory patching.
 //
 // Every module includes this header and nothing else from the core.
 // Addresses are Driver.exe 1.04 VAs (image base 0x00400000, no ASLR).
@@ -16,11 +16,11 @@
 bool dsf_exe_ok();
 
 // ---- logging -------------------------------------------------------------
-// Appends one line to <game>\plugins\dsfforza.log (truncated on start).
+// Appends one line to <game>\plugins\dsfcars.log (truncated on start).
 // printf-style; a trailing newline is added. Thread-safe.
 void dsf_log(const char* fmt, ...);
 
-// ---- config: <game>\plugins\dsfforza.ini ---------------------------------
+// ---- config: <game>\plugins\dsfcars.ini ---------------------------------
 // (The ini and the log are named after the plugin file: a copy loaded as
 // plugins\dsfhostrun.asi reads dsfhostrun.ini and writes dsfhostrun.log.)
 // [<module>] enabled=0 switches a whole module off (main.cpp checks it).
@@ -71,6 +71,6 @@ void* alloc_exec(size_t n);
 //                     tell register.lua whether the car packages, and each car's, are loaded
 //                     (mod_garage.cpp magic_query); register.lua registers no package car
 //                     without that answer (#511)
-#define DSF_CAPABILITIES_MARKER "DSFFORZA-CAPABILITIES: "
+#define DSF_CAPABILITIES_MARKER "DSFCARS-CAPABILITIES: "
 #define DSF_CAPABILITIES "archive.packages archive.ids archive.redirect_chain lua.packages"
 extern const char dsf_capabilities[];

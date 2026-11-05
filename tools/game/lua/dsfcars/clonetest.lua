@@ -19,7 +19,7 @@
 -- Traffic, parked cars and interesting vehicles are off for the whole probe unless
 -- config.traffic_on (run-test -Traffic) or config.traffic is set (quietRoad below).
 
-local TEST_IDS = { 304 }      -- the clone; overridden by dsfforza\config.lua (run-test -ProbeIds)
+local TEST_IDS = { 304 }      -- the clone; overridden by dsfcars\config.lua (run-test -ProbeIds)
 local TRAFFIC_IDS = {}        -- overridden by config.traffic (run-test -TrafficIds); keeps traffic on
 local TRAFFIC_ON = false      -- config.traffic_on (run-test -Traffic): leave traffic on, as before 2026-10-29
 local AHEAD_IDS = {}          -- spawned in front without zapping, to see the full (traffic) model
@@ -51,11 +51,11 @@ local PALETTE = nil           -- config.palette (run-test -Palette): paint palet
                               -- GameVehicleResource.create's ShaderParams, as its vehicle manager does); nil: the game's pick
 local DYNO = nil              -- config.dyno (run-test -Dyno): the dyno.lua module, acceleration and braking runs
 local LIGHTS = nil            -- config.lights (run-test -Lights): the lightstest.lua module, lamp phases per car
-local WAIT_GO = false         -- config.wait_go (run-test): spawn the first car only once the harness writes dsfforza\go.lua
+local WAIT_GO = false         -- config.wait_go (run-test): spawn the first car only once the harness writes dsfcars\go.lua
 local HIDE_UI = false         -- config.hide_ui (run-test without -Ui): no HUD, prompts or minimap from the first spawn on
 
 do
-	local found, config = user_open("dsfforza\\config.lua")
+	local found, config = user_open("dsfcars\\config.lua")
 	if found and type(config) == "table" then
 		if type(config.ids) == "table" then TEST_IDS, CONFIG_IDS = config.ids, true end
 		if type(config.traffic) == "table" then TRAFFIC_IDS, TRAFFIC_ON = config.traffic, true end
@@ -72,7 +72,7 @@ do
 		if config.hide_ui then HIDE_UI = true end
 		if config.wait_go then WAIT_GO = true end
 		if config.dyno then
-			local loaded, module = user_open("dsfforza\\dyno.lua")
+			local loaded, module = user_open("dsfcars\\dyno.lua")
 			if loaded and type(module) == "table" then
 				DYNO = module
 				DYNO.configure(config.dyno)
@@ -81,7 +81,7 @@ do
 			end
 		end
 		if config.lights then
-			local loaded, module = user_open("dsfforza\\lightstest.lua")
+			local loaded, module = user_open("dsfcars\\lightstest.lua")
 			if loaded and type(module) == "table" then
 				LIGHTS = module
 				LIGHTS.configure(config.lights)
@@ -120,11 +120,11 @@ local STATS_SOURCES = { [304] = 266 }
 local BLANK_SOURCE = 266
 local BLANK_GLYPH = 32
 
--- Cars built by src/dsfforza/build/port_car.py: dsfforza\ported.lua (written with
+-- Cars built by src/dsfforza/build/port_car.py: dsfcars\ported.lua (written with
 -- --install-lua) lists each ported ID with its host. Its IDs become the test
 -- IDs unless config.lua sets them.
 do
-	local found, ported = user_open("dsfforza\\ported.lua")
+	local found, ported = user_open("dsfcars\\ported.lua")
 	if found and type(ported) == "table" and type(ported.cars) == "table" then
 		for id, car in pairs(ported.cars) do
 			STATS_SOURCES[id] = car.host
@@ -478,12 +478,12 @@ local function cockpitTicks()
 end
 
 -- config.wait_go: the first car is spawned only once the harness has done pressing Up (which
--- drove a car already spawned) and starts its shots: it writes dsfforza\go.lua. Before, the first
+-- drove a car already spawned) and starts its shots: it writes dsfcars\go.lua. Before, the first
 -- car's chase view and -Views were over before the first screenshot (issue #305). After GO_TIMEOUT
 -- ticks in wait_level the probe goes on without it.
 local function harnessGo()
 	if not WAIT_GO or state.go then return true end
-	local ok, found = pcall(user_fileExists, "dsfforza\\go.lua")
+	local ok, found = pcall(user_fileExists, "dsfcars\\go.lua")
 	if ok and found then
 		log(string.format("harness go after %d ticks (zap level %s)", state.ticks, tostring(zapLevel())))
 	elseif state.ticks >= GO_TIMEOUT then
@@ -754,7 +754,7 @@ local function setViewLamps(id, car, mode)
 	if lampModule == nil then
 		lampModule = LIGHTS
 		if lampModule == nil then
-			local loaded, module = user_open("dsfforza\\lightstest.lua")
+			local loaded, module = user_open("dsfcars\\lightstest.lua")
 			lampModule = (loaded and type(module) == "table") and module or false
 		end
 	end

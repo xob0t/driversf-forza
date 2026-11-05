@@ -2,7 +2,7 @@
 
 Reads a run folder of `run-test.ps1 -Lights` (screenshots
 lights-<id>-<k>a.png / b.png, one pair per phase, phases as logged by
-dsfforza\\lightstest.lua in Driver.log) and writes, per car, a sheet with each
+dsfcars\\lightstest.lua in Driver.log) and writes, per car, a sheet with each
 phase's screenshot (the brighter of the a/b pair, so a blinking indicator
 counts) next to its brightening against the "off" phase of the same lighting
 (day or dark), amplified. A lamp that works shows as a bright patch where it

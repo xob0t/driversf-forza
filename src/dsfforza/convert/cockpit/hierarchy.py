@@ -229,7 +229,7 @@ def add_gauge_records(upvh_data: bytes, ids) -> tuple[bytes, list[int]]:
 # leaves both alone at rest.
 #
 # The cockpit arms grip at ARMS_GRIPS: each fist (the mean of its hand's 16 joints) in
-# the pose frame (origin A, the car's axes: DSF model space), as dsfforza.asi [hands]
+# the pose frame (origin A, the car's axes: DSF model space), as dsfcars.asi [hands]
 # debug=1 logs it before its move (research/cockpit.md, "Hands on Forza's rim"; run
 # vm1-20261028-174107, the same on both ported cars of the run, rims 0.141 and 0.166 m):
 # 0.177 m from the column, the right fist 49 and the left 52 degrees from the top.
@@ -283,7 +283,7 @@ def hand_shift(centre, axis, radius) -> tuple[float, float, float]:
     the marker's direction through the hinge, so any part of the shift in the
     wheel plane makes the hub circle by 2 |shift| sin(angle / 2) while steering
     (research/cockpit.md, "The steering wheel turns about its hub"); the grips
-    reach the rim through dsfforza.asi [hands] instead (grip_params)."""
+    reach the rim through dsfcars.asi [hands] instead (grip_params)."""
     axis = _norm(axis)
     grips = hand_grips(centre)
     t = 0.0
@@ -331,7 +331,7 @@ def seat_anchor(centre, axis, forza_radius) -> tuple[float, float, float]:
     2026-10-26 (grip_shift on the rim scaled the way it was then: by 0.8 to 1.3
     where that shift left the grips over 5 mm off). Kept so fixing the hinge
     doesn't move the driver model: the head room stays. The chase views' wheel
-    keeps Forza's size; dsfforza.asi [hands] puts the hands on its rim at the
+    keeps Forza's size; dsfcars.asi [hands] puts the hands on its rim at the
     angle the animations give them about this point, so they turn with the
     wheel about its hub (research/cockpit.md, "Hands in the chase views")."""
     axis = _norm(axis)
@@ -365,14 +365,14 @@ def hand_params(steering: dict | None = None) -> dict[int, float]:
     """VO3D p538/p559 (the hand rig's offset from the marker) to zero: they move
     the wheel with the hands, away from where Forza puts it (Cuda host:
     -4 cm y, +7.5 cm z). With patch_hierarchy's steering report, also the rim
-    dsfforza.asi [hands] puts the driver's hands on (GRIP_PARAMS)."""
+    dsfcars.asi [hands] puts the driver's hands on (GRIP_PARAMS)."""
     params = dict.fromkeys(HAND_PARAMS, 0.0)
     if steering:
         params.update(grip_params(steering))
     return params
 
 
-# dsfforza.asi [hands] (tools/asi/src/mod_hands.cpp) moves the driver's hands onto each
+# dsfcars.asi [hands] (tools/asi/src/mod_hands.cpp) moves the driver's hands onto each
 # car's rim (research/cockpit.md, "Hands on Forza's rim"). It reads the rim from VO3D
 # parameters that nothing in the game uses: type 3 ("unused") in the parameter type table
 # at 0x00F3E450, no displacement or immediate reference in Driver.exe at either base
@@ -384,7 +384,7 @@ GRIP_PARAMS = (GRIP_RADIUS_PARAM, GRIP_ALONG_PARAM)
 
 
 def grip_params(steering: dict) -> dict[int, float]:
-    """VO3D values for dsfforza.asi [hands] from patch_hierarchy's steering report:
+    """VO3D values for dsfcars.asi [hands] from patch_hierarchy's steering report:
     the rim's radius and its centre's offset from the marker along the column (the
     marker sits on the hub's column, hand_shift). The engine's column direction
     (spec + 0x37F0) is the marker quaternion's +z: away from the driver, the
@@ -398,7 +398,7 @@ def patch_hierarchy(upvh_data: bytes, host: HostCockpit, place, cf: CockpitFit) 
     """Move the steering hinge and marker, the gauges and the mirrors to the
     Forza cockpit (all in DSF model space through `place`). The hinge and
     marker sit at the wheel centre plus hand_shift (along the column, so the
-    wheel turns about its own hub); dsfforza.asi [hands] moves the vanilla hands
+    wheel turns about its own hub); dsfcars.asi [hands] moves the vanilla hands
     onto the Forza rim (hand_params in VO3D)."""
     from dsfforza.formats import upvh
 

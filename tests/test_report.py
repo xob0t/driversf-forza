@@ -16,6 +16,7 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
+from dsfforza import REPO
 from dsfforza.build import install, report
 
 PROFILE = r"C:\Users\Jane Doe"
@@ -138,7 +139,7 @@ def _fake_setup(root: Path) -> tuple[Path, Path, Path]:
     repo, game, docs = root / "release", root / "game", root / "docs"
     _touch(repo / "VERSION", b"v0.2.0 abc123\n")
     _touch(repo / "tools" / "game" / "lua" / "player" / "bootstrap.lua", b"-- ours\n")
-    _touch(repo / "tools" / "game" / "lua" / "dsfforza" / "register.lua", b"-- register\n")
+    _touch(repo / "tools" / "game" / "lua" / "dsfcars" / "register.lua", b"-- register\n")
     build = repo / "out" / "build"
     _touch(build / "dngvehicles.sp", b"ARCHIVE")
     _touch(build / "dngvehicles.lua", b"-- ported\n")
@@ -171,7 +172,7 @@ def _fake_setup(root: Path) -> tuple[Path, Path, Path]:
         "Install/gui.sp": b"GUI",
         "media/Fonts.fchunk": b"OTHER FONTS",  # not the build's
         "Common/UserLuaScripts/bootstrap.lua": b"-- ours\n",
-        "Common/UserLuaScripts/dsfforza/hud.lua": b"changed after install",
+        "Common/UserLuaScripts/dsfcars/hud.lua": b"changed after install",
     }
     entries = []
     for relative, data in installed.items():
@@ -183,7 +184,7 @@ def _fake_setup(root: Path) -> tuple[Path, Path, Path]:
                 "installed_sha256": _sha(b"[1] = {}\n" if relative.endswith("hud.lua") else data),
             }
         )
-    entries.append({"path": "plugins\\dsfforza.asi", "action": "created", "installed_sha256": "00"})  # missing
+    entries.append({"path": "plugins\\dsfcars.asi", "action": "created", "installed_sha256": "00"})  # missing
     record = {
         "state": "installed",
         "installed": "2026-10-24T10:00:30",
@@ -191,10 +192,10 @@ def _fake_setup(root: Path) -> tuple[Path, Path, Path]:
         "cars": ["BMW_M3E30_91"],
         "entries": entries,
     }
-    _touch(game / "dsfforza-backup" / "install.json", json.dumps(record).encode())
-    _touch(game / "dsfforza-backup" / "Install" / "dngvehicles.sp", b"VANILLA BACKUP")
-    _touch(game / "plugins" / "dsfforza.log", b"dsfforza: patched 12 sites\n")
-    _touch(game / "plugins" / "dsfforza.ini", b"[hands]\nenabled=1\n")
+    _touch(game / "dsfcars-backup" / "install.json", json.dumps(record).encode())
+    _touch(game / "dsfcars-backup" / "Install" / "dngvehicles.sp", b"VANILLA BACKUP")
+    _touch(game / "plugins" / "dsfcars.log", b"dsfforza: patched 12 sites\n")
+    _touch(game / "plugins" / "dsfcars.ini", b"[hands]\nenabled=1\n")
     _touch(game / "plugins" / "DriverNGHook.asi", b"hook")
     _touch(game / "plugins" / "other_mod.asi", b"other")
     _touch(game / "scripts" / "widescreen.asi", b"ws")
@@ -209,21 +210,35 @@ def _fake_setup(root: Path) -> tuple[Path, Path, Path]:
 
 
 def test_other_mods_notes_a_chained_bootstrap():
-    """install.ps1 -Force keeps another mod's bootstrap.lua as dsfforza/chained-bootstrap.lua; it
+    """install.ps1 -Force keeps another mod's bootstrap.lua as dsfcars/chained-bootstrap.lua; it
     counts as chained only while the active bootstrap is ours and loads it."""
     with tempfile.TemporaryDirectory() as tmp:
         repo, game, _ = _fake_setup(Path(tmp))
         assert report.other_mods(game, None, repo)["bootstrap_lua"] == "dsfforza's"
-        ours = b'-- ours\nlocal CHAINED = "dsfforza\\\\chained-bootstrap.lua"\n'
+        ours = b'-- ours\nlocal CHAINED = "dsfcars\\\\chained-bootstrap.lua"\n'
         _touch(repo / "tools" / "game" / "lua" / "player" / "bootstrap.lua", ours)
         _touch(game / "Common" / "UserLuaScripts" / "bootstrap.lua", ours)
-        _touch(game / "Common" / "UserLuaScripts" / "dsfforza" / "chained-bootstrap.lua", b"-- Felony Rework")
+        _touch(game / "Common" / "UserLuaScripts" / "dsfcars" / "chained-bootstrap.lua", b"-- Felony Rework")
         state = report.other_mods(game, None, repo)["bootstrap_lua"]
         assert state == "dsfforza's, chaining another mod's", state
+        # A bootstrap of ours from before the rename names dsfforza\chained-bootstrap.lua: it doesn't
+        # run the copy under dsfcars.
+        entry = {"path": "Common\\UserLuaScripts\\bootstrap.lua", "action": "created"}
+        record = {"state": "installed", "entries": [entry]}
+        older = b'-- ours, older\nlocal CHAINED = "dsfforza\\\\chained-bootstrap.lua"\n'
+        _touch(game / "Common" / "UserLuaScripts" / "bootstrap.lua", older)
+        state = report.other_mods(game, record, repo)
+        assert (
+            state["bootstrap_lua"] == "dsfforza's (another version), stale dsfcars\\chained-bootstrap.lua (not run)"
+        ), state
+        # The shipped bootstrap names the path this check looks for.
+        shipped = (REPO / "tools" / "game" / "lua" / "player" / "bootstrap.lua").read_bytes().lower()
+        assert b"dsfcars\\\\chained-bootstrap.lua" in shipped
+        _touch(game / "Common" / "UserLuaScripts" / "bootstrap.lua", ours)
         # Another installer put its bootstrap back over ours: the chained copy no longer runs.
         _touch(game / "Common" / "UserLuaScripts" / "bootstrap.lua", b'user_open("felonyrework.lua")')
         state = report.other_mods(game, None, repo)["bootstrap_lua"]
-        assert state == "another mod's, stale dsfforza\\chained-bootstrap.lua (not run)", state
+        assert state == "another mod's, stale dsfcars\\chained-bootstrap.lua (not run)", state
 
 
 def test_collect_and_zip_a_fake_setup():
@@ -244,8 +259,8 @@ def test_collect_and_zip_a_fake_setup():
         assert rows["Install\\dngvehicles.sp"]["now"] == "as installed"
         assert rows["Install\\dngvehicles.sp"]["matches_build"] is True
         assert rows["media\\Fonts.fchunk"]["matches_build"] is False
-        assert rows["Common\\UserLuaScripts\\dsfforza\\hud.lua"]["now"] == "CHANGED since install"
-        assert rows["plugins\\dsfforza.asi"]["now"] == "missing"
+        assert rows["Common\\UserLuaScripts\\dsfcars\\hud.lua"]["now"] == "CHANGED since install"
+        assert rows["plugins\\dsfcars.asi"]["now"] == "missing"
         assert g["archive"].startswith("the dsfforza build")
         mods = g["mods"]
         assert mods["asi_loader"] == "dinput8.dll"
@@ -266,12 +281,12 @@ def test_collect_and_zip_a_fake_setup():
             f"logs/install-2026102{i}-100000.log" for i in (2, 3, 4)
         ]
         for name in (
-            "logs/dsfforza.log",
+            "logs/dsfcars.log",
             "logs/Driver.log",
             "logs/cars/FER_F40_87.log",
             "logs/Driver_20261023_145430.txt",
-            "files/plugins/dsfforza.ini",
-            "files/dsfforza-backup/install.json",
+            "files/plugins/dsfcars.ini",
+            "files/dsfcars-backup/install.json",
             "files/graphics.ini",
         ):
             assert name in files, name
@@ -282,7 +297,7 @@ def test_collect_and_zip_a_fake_setup():
         text = "\n".join(lines)
         assert "v0.2.0 (release zip" in text
         assert "Driver.exe 1.04" in text
-        assert "changed or missing: Common\\UserLuaScripts\\dsfforza\\hud.lua, plugins\\dsfforza.asi" in text
+        assert "changed or missing: Common\\UserLuaScripts\\dsfcars\\hud.lua, plugins\\dsfcars.asi" in text
         assert "not the files of the build it came from: media\\Fonts.fchunk" in text
         assert "FER_F40_87: convert" in text
         assert "ASI loader dinput8.dll" in text

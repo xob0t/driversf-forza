@@ -1,6 +1,6 @@
 """Acceleration and braking figures from the in-game dyno (run-test.ps1 -Dyno).
 
-The probe (tools/game/lua/dsfforza/dyno.lua) logs one line per Lua update while a
+The probe (tools/game/lua/dsfcars/dyno.lua) logs one line per Lua update while a
 car runs on the straight:
 
     [dsfforza] dy <id> <run> <n> <speed m/s> <x> <y> <z>
