@@ -30,6 +30,11 @@ its data correctly, never to copy it.
   in-game shot, an audio capture, a measured runtime value). If you can't,
   leave the code as it is and file an issue with what you know, or ask the
   coordinator for an RE round. A guess doesn't ship as a fix.
+- A fitted rule stays until a derived rule replaces it. Taking a fit out
+  with nothing derived in its place (blanking a readout, dropping a
+  correction, using the raw value, swapping one guess for another) isn't a
+  fix: the output usually gets worse. Leave the fit and mark it in its
+  comment, `TODO(fit, #N)`, where the issue says what its derivation needs.
 - A constant in the code is a fact with its source in a comment: a value the
   game or Forza uses, a field, a measured size of a vanilla part, an engine
   limit.
