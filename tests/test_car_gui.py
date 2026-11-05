@@ -261,8 +261,8 @@ class PictureRootLimitTest(unittest.TestCase):
         game = tmp / "game"
         (game / "media").mkdir(parents=True)
 
-        def add_pictures(source, out, pictures, **kwargs):
-            out.write_bytes(b"gui")
+        def add_pictures(*args, **_kwargs):
+            args[1].write_bytes(b"gui")  # (source, out, pictures)
             return {}
 
         with (
