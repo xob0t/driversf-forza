@@ -925,7 +925,7 @@ into `CARD_SF_BOX` (242, 2, 345, 75), transparent elsewhere
 an existing Fonts.fchunk copy (how `out/emblem/td3/Fonts.fchunk` was made from
 out/testdrive3's). The font package is always loaded, so the texture is
 resident before the garage opens. Car packages (#510): every package carries
-the same texture (`forza_emblem.dds`, `emblem_texture`), and `car_gui` adds it
+the same texture (`emblem.dds`, `emblem_texture`), and `car_gui` adds it
 to its Fonts.fchunk copy the same way (car-packages.md, "The garage card
 emblem is in each package").
 
