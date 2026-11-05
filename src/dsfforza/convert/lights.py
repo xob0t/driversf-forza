@@ -228,8 +228,20 @@ TECHNIQUE_COLOUR = {
     "drlinrwhite": WHITE,
 }
 
-CENTRE_X = 0.3  # a lamp piece (_pieces) whose |x| stays below this is a centre lamp
-HIGH_BRAKE_RISE = 0.08  # a centre tail lamp this far above the side tails is the high brake lamp
+# Centre lamps (#430). A lamp piece (_pieces) that straddles the centre line, its corners on both
+# sides of x = 0, is a centre lamp, side "C" (_on_centre_line); any other piece is the side its
+# triangles are on. That is vanilla's convention (research/lights.md, "Centre lamps and the high
+# stop lamp"): of the lamp pieces of the 150 vanilla vehicles' exterior entries, every red lamp
+# that straddles x = 0 is one centre entry (0x02, one 0x0C fog), no tail lamp (0x18, 0x03) does,
+# and lamps on one side near it are left and right pairs (Buggy_Boxy's head lamps at |x| 0.09 to
+# 0.21, the 1968 Camaro's 0x03 at 0.15 to 0.29). The 0.3 m threshold this replaces made such
+# Forza pairs centre lamps (the ARX-01b's tails at |x| 0.06 to 0.12, the Integra Type R's reverse
+# lamps).
+# TODO(fit, #430): a centre tail lamp whose mean height is this far above the side tails' is the
+# high stop lamp (_high_brake). The 8 cm has no source. Whether a lamp lights only when braking is a
+# fact about the Forza car (its technique and lamp states, research/lights.md, "Centre lamps and the
+# high stop lamp"), not its height; it stays until that is read from Forza's data.
+HIGH_BRAKE_RISE = 0.08
 
 # Group priority when the host has fewer light entries than the car has lamps;
 # lower first. Groups that miss out share an entry of the same function and
@@ -258,16 +270,26 @@ def fallback(function: str, front: bool) -> str | None:
     return None
 
 
-ENTRY_CENTRE_X = 0.15  # m: a host light entry this close to the centre line is a centre one
+def entry_places(upvh: bytes, offsets) -> dict:
+    """Where each host light entry (its offset in `upvh`) sits as shipped: {offset: (front,
+    side)}, front by its position's z (+z forward), side "L" (+x), "R" or "C". The entry's record
+    hangs under the part at that place (headlamp parts and the front bumper at the front; tails
+    under the body, boot or rear bumper).
 
-
-def entry_place(upvh: bytes, offset: int) -> tuple[bool, str]:
-    """Where a host light entry sits as shipped: (front, side), front by its
-    position's z (+z forward), side "L" (+x), "R" or "C" (|x| < ENTRY_CENTRE_X).
-    The entry's record hangs under the part at that place (headlamp parts and
-    the front bumper at the front; tails under the body, boot or rear bumper)."""
-    x, _y, z = struct.unpack_from("<3f", upvh, offset)
-    return z > 0, "C" if abs(x) < ENTRY_CENTRE_X else ("L" if x > 0 else "R")
+    A centre entry is one that no other entry stands nearer to its mirror image (x -> -x) than
+    itself (#430): vanilla's side entries come in mirrored pairs, its centre ones sit on the
+    centre line. Of the 2,179 entries of the 150 vanilla vehicles, the centre lamps' entries are
+    at |x| 0.002 m or less (the centroid of a lamp symmetric about x = 0), and every entry from
+    0.05 m out has its mirror partner within 5 mm (the reverse lamps of 62, 172 and 288 at
+    +-0.123, the sirens at +-0.075) except three lone siren and roof lamps (118 and 277 at +0.131,
+    123 at -0.111). The 0.15 m threshold this replaces took those pairs for centre entries."""
+    pos = {o: struct.unpack_from("<3f", upvh, o) for o in offsets}
+    out = {}
+    for o, (x, y, z) in pos.items():
+        mirror, own = (-x, y, z), abs(2 * x)
+        centre = all(math.dist(mirror, q) >= own for p, q in pos.items() if p != o)
+        out[o] = (z > 0, "C" if centre else ("L" if x > 0 else "R"))
+    return out
 
 
 def _best_entry(lamp, candidates, place):
@@ -387,7 +409,9 @@ def _tri_geometry(pts, normals):
 
 
 LENS_COLOUR = {"detail_glass_red": RED, "detail_glass_amber": AMBER, "linred": RED, "rinred": RED}
-CLUSTER_GAP = 0.2  # metres between triangle centres that still belong to one lamp
+# TODO(fit, #515): metres between triangle centres that still belong to one lamp. No source: neither
+# vanilla's lamps nor Forza's merge distances show a lamp distance (research/lights.md, #430).
+CLUSTER_GAP = 0.2
 CLEAR_LENS_REACH = 0.35  # m: how deep a lamp may lie behind a clear lens (_place_clear)
 CLEAR_PIECE_SNAP = 0.001  # m: clear lens, cover or reflector triangles with corners this close are one piece
 CLEAR_SAME_PLANE = 0.01  # m: a lamp surface this far in front of a lens triangle still lies behind it
@@ -605,6 +629,38 @@ def _pieces(triangles) -> list[list[int]]:
     return list(groups.values())
 
 
+def _on_centre_line(pts_all) -> list[float | None]:
+    """Per triangle (its corner points, DSF space): the |x| its piece (_pieces) reaches when the
+    piece straddles the centre line, corners on both sides of x = 0, else None (centre lamps,
+    #430)."""
+    out: list[float | None] = [None] * len(pts_all)
+    for piece in _pieces(pts_all):
+        xs = [p[0] for k in piece for p in pts_all[k]]
+        if min(xs) < 0 < max(xs):
+            for k in piece:
+                out[k] = max(-min(xs), *xs)
+    return out
+
+
+def _joined_centre(records, reach: dict) -> None:
+    """A piece across the centre line that reaches out to the side lamps of its colour at its
+    end (its |x| at least the innermost |x| of theirs, same LOD) is those lamps joined across
+    the car, not a centre lamp: its triangles take the side they are on, as before #430 (the
+    Charger 12's tail ring, which touches its tail lamps' pieces). Vanilla's centre lamps never
+    do: all 81 non-siren lamps that straddle x = 0 at the rear of the 150 vanilla vehicles (high
+    stops, centre reverse and fog lamps) stay inside the same-colour side lamps' inner edge, and
+    vanilla draws a bar across the car as a left and a right lamp (no tail lamp straddles x = 0).
+    reach: id(record) -> the |x| its piece reaches (_on_centre_line)."""
+    inner: dict[tuple, float] = {}
+    for r in records:
+        if r.side in ("L", "R") and r.pts:
+            key = (r.colour, r.front, r.lod)
+            inner[key] = min(inner.get(key, math.inf), *(abs(q[0]) for q in r.pts))
+    for r in records:
+        if r.side == "C" and id(r) in reach and reach[id(r)] >= inner.get((r.colour, r.front, r.lod), math.inf):
+            r.side = "L" if r.centre[0] > 0 else "R"
+
+
 def _single_link(points, gap: float) -> list[list[int]]:
     """Indices of `points` grouped so that points closer than `gap` share a group."""
     cells: dict[tuple, list[int]] = {}
@@ -634,7 +690,8 @@ def _single_link(points, gap: float) -> list[list[int]]:
 
 def _high_brake(records) -> None:
     """A centre tail lamp above the side tail lamps (or the only tail lamp in
-    the middle) is the high-mounted stop lamp: brakes only."""
+    the middle) is the high-mounted stop lamp: brakes only. HIGH_BRAKE_RISE is a fit (TODO(fit, #430)); it
+    stays until whether a centre lamp lights only when braking is read from Forza's data."""
 
     def mean_y(rs):
         finest = min(r.lod for r in rs)
@@ -843,12 +900,12 @@ def _front_tris(sections, materials, place, mid_z: float) -> list[Tri]:
             if not tris:
                 continue
             pts_all = [[place.point(pool[i].position) for i in t] for t in tris]
-            max_x = max(abs(p[0]) for pts in pts_all for p in pts)
+            on_centre = _on_centre_line(pts_all)
             for k, (t, pts) in enumerate(zip(tris, pts_all)):
                 area, centre, normal = _tri_geometry(pts, [place.normal(pool[i].normal) for i in t])
                 if centre[2] <= mid_z:
                     continue
-                side = "C" if max_x < CENTRE_X else ("L" if centre[0] > 0 else "R")
+                side = "C" if on_centre[k] is not None else ("L" if centre[0] > 0 else "R")
                 out.append(Tri(sub, k, HEAD, side, True, WHITE, area, centre, normal, sub.lod, tuple(pts)))
     return out
 
@@ -887,6 +944,7 @@ class LampPlan:
         red_by_texel = set()  # records of lens triangles red by their texels, not their technique
         from_lens = set()  # records of lens triangles
         yellow_front = []  # records of front selective-yellow lens triangles (yellow_lens)
+        reach = {}  # id(record) -> |x| its centre piece reaches (_joined_centre)
         for section in sections:
             for sub in section.subsections:
                 entry = TECHNIQUE_FUNCTION.get(sub.material)
@@ -903,15 +961,11 @@ class LampPlan:
                 if not tris:
                     continue
                 pts_all = [[place.point(pool[i].position) for i in t] for t in tris]
-                # A centre lamp is a piece that stays within CENTRE_X of the centre line, not only a
-                # whole subsection: Forza draws the Viper GTS-R's rear emblem with the `body`
-                # section's tail_light, beside the side tails, and per subsection its halves were
-                # left and right tail lamps rather than the high stop lamp (_high_brake, #405).
-                max_x = [0.0] * len(tris)
-                for piece in _pieces(pts_all):
-                    reach = max(abs(p[0]) for k in piece for p in pts_all[k])
-                    for k in piece:
-                        max_x[k] = reach
+                # A centre lamp is a piece on the centre line (_on_centre_line), not a whole
+                # subsection: Forza draws the Viper GTS-R's rear emblem with the `body` section's
+                # tail_light, beside the side tails, and per subsection its halves were left and
+                # right tail lamps rather than the high stop lamp (_high_brake, #405).
+                on_centre = _on_centre_line(pts_all)
                 colour = TECHNIQUE_COLOUR.get(sub.material, FUNCTION_COLOUR.get(function, WHITE))
                 classes, red_lens = None, False
                 yellow = False
@@ -939,7 +993,7 @@ class LampPlan:
                         continue
                     if named_side:
                         side = named_side
-                    elif max_x[k] < CENTRE_X:
+                    elif on_centre[k] is not None:
                         side = "C"
                     else:
                         side = "L" if centre[0] > 0 else "R"
@@ -990,6 +1044,8 @@ class LampPlan:
                             continue
                         from_lens.add(len(records))
                     records.append(Tri(sub, k, f, side, front, c, area, centre, normal, sub.lod, tuple(pts), shown))
+                    if side == "C" and on_centre[k] is not None:
+                        reach[id(records[-1])] = on_centre[k]
         if not any(r.function == HEAD and r.front for r in records):
             # No head-lamp technique (CHE_CorvetteGS_10, DOD_RamSRT10_06,
             # FOR_MustangSVTCobraR_93 and several race cars draw the lamp as a
@@ -1008,6 +1064,7 @@ class LampPlan:
             records += _bare_head_units(sections, place, mid_z, records)
         _yellow_head_covers(records, yellow_front, from_lens)
         _red_lens_indicators(records, from_lens, red_indicators, red_by_texel)
+        _joined_centre(records, reach)
         _high_brake(records)
         plan._cluster(records)
         plan._place_clear(
@@ -1278,7 +1335,7 @@ class LampPlan:
     # -- host light entries --
     def assign(self, upvh: bytes) -> LampPlan:
         """Give lamps the host's light entries, most important first, each an
-        entry at its own end of the host and on its own side (entry_place). A
+        entry at its own end of the host and on its own side (entry_places). A
         lamp breaks with its entry's panel: the game breaks a light when the part
         its record hangs under is damaged, so a head lamp on an entry the host
         used for a tail lamp broke in rear collisions and not in front ones
@@ -1294,7 +1351,8 @@ class LampPlan:
         for i in range(h.counts["lights"]):
             o = base + i * 0x40
             entries.append((o, struct.unpack_from("<I", h.data, o + 40)[0]))
-        place = {e: entry_place(h.data, e[0]) for e in entries}
+        at = entry_places(h.data, [e[0] for e in entries])
+        place = {e: at[e[0]] for e in entries}
         # Lamps the red-drawn texel move emptied (_place_clear: the BMW M3 E30's, Audi RS6's and
         # Peugeot 207s' reverse lamps, all their triangles red) take no entry (#264).
         drawn = set(self.tri_lamp.values())
