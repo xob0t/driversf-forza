@@ -309,3 +309,50 @@ def test_garage_picture_shows_sequence_1():
         assert np.allclose(got, want)
     many = colours(*[(k * 12, 255 - k * 12, (k * 37) % 256) for k in range(20)])
     assert paint.pick_colours(many)[0].sequence == 1
+
+
+# --- the picture's badge and plate (gui-assets.md, "Picture layout") ----------------------
+
+
+def test_picture_places_badge_and_plate_glyphs_in_their_cells():
+    """compose_picture draws the badge and plate glyphs at 1:1, each where its cell
+    (BADGE_CELL, PLATE_CELL) and the cell offsets put it: a new glyph as add_glyphs places
+    it, a vanilla one by its record's offsets."""
+    w, h = g.PICTURE_SIZE
+    backdrop = g.Image(w, h, fill=(0, 0, 0, 255))
+    car = g.Image(40, 20, fill=(0, 0, 255, 255))
+    badge = g.Image(60, 40, fill=(255, 0, 0, 255))
+    badge.kind = "badge"
+    plate = g.Image(90, 20, fill=(0, 255, 0, 255))
+    plate.kind = "plate"
+    pic = g.compose_picture(car, badge, plate, backdrop)
+    red = pic.array()[..., 0] == 255
+    green = (pic.array()[..., 1] == 255) & ~red
+    bx, by = g.BADGE_CELL
+    ys, xs = np.nonzero(red)
+    assert (xs.min(), ys.min(), xs.max() + 1, ys.max() + 1) == (
+        bx + (g.CELL - 60) // 2,
+        by + g.CELL - 40,
+        bx + (g.CELL - 60) // 2 + 60,
+        by + g.CELL,
+    )
+    ys, xs = np.nonzero(green)
+    px, py = g.PLATE_CELL
+    assert (xs.min(), ys.min()) == (px + (g.CELL - 90) // 2, py + g.PLATE_CENTRE_Y - 10)
+    # A vanilla glyph keeps its own offsets.
+    sheet = g.Image(100, 50, fill=(255, 0, 0, 255))
+    vg = g.vanilla_glyph(sheet, {7: [7, 10, 5, 30, 20, 3, 70, 99, 99, 0]}, 7, "badge")
+    assert (vg.w, vg.h, vg.cell, vg.kind) == (30, 20, (3, 70), "badge")
+    assert g.vanilla_glyph(sheet, {}, 7, "badge") is None
+    pic = g.compose_picture(car, vg, None, backdrop)
+    ys, xs = np.nonzero(pic.array()[..., 0] == 255)
+    assert (xs.min(), ys.min()) == (bx + 3, by + 70)
+
+
+def test_badge_box_fills_the_cell_width():
+    """A wide logo fills the cell's width (as vanilla's wide badges do), a square one
+    BADGE_BOX's height."""
+    wide = g.badge_glyph(g.Image(300, 100, fill=(9, 9, 9, 255)))
+    assert (wide.w, wide.h) == (g.CELL - 1, round(100 * (g.CELL - 1) / 300))
+    square = g.badge_glyph(g.Image(100, 100, fill=(9, 9, 9, 255)))
+    assert (square.w, square.h) == (g.BADGE_BOX[1], g.BADGE_BOX[1])

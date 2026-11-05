@@ -95,6 +95,9 @@ class Shading:
     paint: bool = False  # DSF's paint program instead (_shade_paint), its terms from Material.paint
 
 
+# TODO(fit, #550): the garage picture's light, materials and tone below (SHADING through
+# SHADOW_ALPHA, the shadow's footprint, the base colours, picture_paint's low-power floor, the
+# occlusion gain and the rasteriser's interior biases) are fitted, not derived.
 # Tone calibrated against the vanilla garage pictures (research/gui-assets.md, "Tone"):
 # renders of 10 vanilla cars with saturated paint, from the vanilla archive with the
 # palette entry of the picture's hue, matched to their pictures by the brightness
@@ -431,7 +434,7 @@ class Paint:
         return c2[None] + f[:, None] * (c3 - c2)[None]
 
 
-DEFAULT_PAINT_SRGB = (150, 20, 20)  # a car without a palette
+DEFAULT_PAINT_SRGB = (150, 20, 20)  # a car without a palette; TODO(fit, #550): chosen
 
 
 def picture_paint(c2, c3, power: float, bias: float, metallic: bool) -> Paint:
@@ -449,7 +452,7 @@ def picture_paint(c2, c3, power: float, bias: float, metallic: bool) -> Paint:
     return Paint(tuple(c2), tuple(c3), power, bias, metallic)
 
 
-LOW_POWER_FLOOR, LOW_POWER_BIAS = 2.0, 0.05
+LOW_POWER_FLOOR, LOW_POWER_BIAS = 2.0, 0.05  # TODO(fit, #550)
 
 
 def paint_colour(stream, full, index: int | None = None) -> Paint:
@@ -706,7 +709,7 @@ def _load_scene(
             kind = "textured"
         key = (uid, kind)
         if key not in mat_index:
-            base = {
+            base = {  # TODO(fit, #550): the untextured classes' colours are chosen
                 "paint": paint_lin,
                 "metallic": paint_lin,
                 "trim": np.array([0.02, 0.02, 0.022]),
@@ -849,6 +852,8 @@ def _linear_to_srgb(c):
 # --- rasteriser ----------------------------------------------------------------------
 
 TILE = 16  # largest tile side, pixels
+# TODO(fit, #550): the three depth biases are chosen to hide the cockpit's copy of the shell and
+# panel undersides; how the game keeps the interior entry behind the exterior isn't decoded.
 BACK_FACE_BIAS = 4e-4  # relative depth: about 2 mm at the camera's distance
 INTERIOR_BIAS = (2e-3, 3e-2)  # behind glass, elsewhere: about 1.3 cm and 20 cm
 INTERIOR_LENS_BIAS = 0.5  # behind lamp glass (kind "lens"): the interior loses to any exterior surface
@@ -1261,6 +1266,7 @@ def _shade(
     out = np.zeros((len(n), 3), np.float32)
     fres = np.zeros(len(n), np.float32)
     # The baked term is Forza's AO times 0.25 + 0.55 (1 + n_y) / 2 (vehicle-model.md): undo the second factor.
+    # TODO(fit, #550): the 0.15 floor here and the x 1.6 occlusion gain below are chosen.
     occlusion = np.clip(ao / (0.25 + 0.55 * (1 + n[:, 1]) / 2), 0.15, 1.0)
     for m in np.unique(mats):
         sel = np.flatnonzero(mats == m)
@@ -1468,7 +1474,7 @@ def _shadow(view: _View, k: np.ndarray) -> np.ndarray:
     dx = np.abs(hit[:, 0] - cx) - half[0] * 0.92
     dz = np.abs(hit[:, 2] - cz) - half[2] * 0.95
     outside = np.hypot(np.clip(dx, 0, None), np.clip(dz, 0, None)) + np.minimum(np.maximum(dx, dz), 0)
-    soft = 0.28  # m
+    soft = 0.28  # m; TODO(fit, #550): the footprint (0.92, 0.95) and softness are chosen
     a = np.clip(0.5 - outside / soft, 0, 1)
     a = a * a * (3 - 2 * a)
     return np.where(t > 0, a * SHADOW_ALPHA, 0.0)

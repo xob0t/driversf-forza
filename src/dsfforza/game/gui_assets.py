@@ -33,6 +33,7 @@ FH1's thumbnails (eye level, mirrored) only with --fh1-thumbnails.
     uv run dsff gui_assets camera [--cars nissan_370z,...] [--thumbnails out/ported.json]
     uv run dsff gui_assets extract <name> out/pic.png [--gui gui.sp]
     uv run dsff gui_assets glyphtest --ids 1,2,3 [--out out/hud/glyphtest]
+    uv run dsff gui_assets layout [--cars nissan_370z,...]
     uv run dsff gui_assets strings <regex>
 """
 
@@ -459,6 +460,8 @@ def _area_weights(size: int, out: int):
 
 # --- nameplates: a small stroke font ----------------------------------------------------
 # Strokes on a 4 x 6 grid (x right, y down); each glyph is a list of polylines.
+# TODO(fit, #139): the letterforms and the chrome look of _text_plate are drawn by eye "in the
+# style of" vanilla's plates, which are each car's own logotype (no typeset font to measure).
 
 STROKES = {
     "A": [[(0, 6), (0, 2), (2, 0), (4, 2), (4, 6)], [(0, 3.5), (4, 3.5)]],
@@ -731,6 +734,7 @@ def _text_plate(text: str, height: int, italic: float) -> Image:
     """`height` is the plate's height for letters without marks (the grid's 6
     units plus the outline); a text with marks above or below the letters
     (glyph_strokes) gets that much more room above or below."""
+    # TODO(fit, #139): stroke, outline, advance, italic and the chrome gradient below are by eye.
     cell = height / 9.0  # grid unit in pixels
     stroke = cell * 0.95  # half-width of a stroke
     outline = cell * 0.55
@@ -773,13 +777,17 @@ def _text_plate(text: str, height: int, italic: float) -> Image:
     return img
 
 
-PLATE_RENDER_H = 76  # = 2 x the garage picture's plate height (build: nameplate(text, 124, 38))
+# One render height for every nameplate, which nameplate() then fits down (the text_plate cache
+# keys on it): twice the plates' 38 px of the earlier picture layout. Tooling: a supersampling size.
+PLATE_RENDER_H = 76
 
 
 def nameplate(text: str, max_w: int = 98, max_h: int = 34, min_h: int = 18) -> Image:
     """A model nameplate fitted to max_w x max_h; a long name that would come
     out lower than min_h is set on two lines (split at the middle space), as
-    vanilla plates such as BEETLE / CONVERTIBLE are."""
+    vanilla plates such as BEETLE / CONVERTIBLE are. max_w: the cell's width less one, as
+    vanilla's plates fill it (80 of 141 are 97 to 100 wide). TODO(fit, #139): max_h and min_h
+    are chosen; vanilla's plates are logotypes 8 to 47 high with no typeset rule."""
     render_h = max(2 * max_h, PLATE_RENDER_H)  # one render size for picture and HUD plates (cache)
     plate = text_plate(text, render_h)
     one = plate.fit(max_w, max_h)
@@ -795,7 +803,9 @@ def nameplate(text: str, max_w: int = 98, max_h: int = 34, min_h: int = 18) -> I
     return stacked.fit(max_w, max_h)
 
 
-TEXT_BADGE_H = 30  # a text badge's height in the glyph cell (logo badges are BADGE_SIZE square)
+# A text badge's height in the glyph cell (logo badges fill BADGE_BOX). TODO(fit, #139): chosen by
+# eye; vanilla's lettered badges (DODGE, SHELBY, MCLAREN, GMC, ...) are 10 to 35 high at the cell's width.
+TEXT_BADGE_H = 30
 
 
 def maker_badge(name: str) -> Image:
@@ -809,12 +819,12 @@ def maker_badge(name: str) -> Image:
 
 
 def badge_glyph(logo: Image) -> Image:
-    """The HUD / maker-list glyph of a badge: a logo fitted to BADGE_SIZE, a text
-    badge to the cell's width."""
+    """The HUD / maker-list glyph of a badge (and the garage picture's): a logo fitted to
+    BADGE_BOX, a text badge to the cell's width and TEXT_BADGE_H."""
     if getattr(logo, "text_badge", False):
         glyph = logo.fit(CELL - 1, TEXT_BADGE_H)
     else:
-        glyph = logo.fit(BADGE_SIZE, BADGE_SIZE)
+        glyph = logo.fit(*BADGE_BOX)
     glyph.kind = "badge"
     return glyph
 
@@ -822,11 +832,28 @@ def badge_glyph(logo: Image) -> Image:
 # --- the garage picture -----------------------------------------------------------------
 
 PANEL = (0, 0, 471, 198)  # opaque backdrop rectangle of vanilla pictures (x0, y0, x1, y1)
-CAR_BOX = (100, 14, 498, 244)  # where vanilla pictures put the car
-LOGO_BOX = (14, 78, 126, 140)
-PLATE_BOX = (8, 144, 132, 182)
+# Where the car goes: its box without the shadow fitted in, by the right and bottom edges.
+# TODO(fit, #551): the right and bottom edges are near vanilla's medians (the car of the 142
+# vanilla pictures: right 497, bottom 242), the left and top chosen; vanilla's cars are drawn
+# larger (median height 232 against 225 for the 721 ported pictures) and by no box rule found.
+CAR_BOX = (100, 14, 498, 244)
+# The badge and the plate (research/gui-assets.md, "Picture layout"): every vanilla picture
+# shows its car's own vehicles_font badge and plate glyphs at 1:1, each placed in its 99 x 99
+# cell as the font places it (the record's x and y offsets). Matched pixel for pixel in the
+# 142 vanilla pictures (121 badges and 118 plates at RMS under 30/255; the rest are other art,
+# all the Cadillac and Dodge badges among them), the cells' top-left corners are, as medians,
+# (20, 51) for the badge (10th to 90th percentile x 18 to 22, y 43 to 53) and (20, 147) for
+# the plate (x 18 to 23, y 139 to 151).
+BADGE_CELL = (20, 51)
+PLATE_CELL = (20, 147)
+# The area of the backdrop rebuilt from the rows above and below it (vanilla_backdrop): what
+# the earlier text boxes covered, kept so the cached backdrop stays the same. TODO(fit, #552):
+# a synthetic fill where the vanilla pictures' badges and plates hide the photo.
+BACKDROP_TEXT_AREA = (0, 68, 138, 190)
 CACHE = REPO / "out" / "cache" / "gui"
-FOG_FROM, FOG_BLEND = 140, 40  # backdrop columns right of FOG_FROM are synthetic fog
+# Backdrop columns right of FOG_FROM are synthetic fog, blended in over FOG_BLEND. TODO(fit, #552):
+# chosen; the photo there is hidden by the cars in most vanilla pictures.
+FOG_FROM, FOG_BLEND = 140, 40
 VEHICLE_STATS_LUA = REPO / "out" / "lua-src" / "LuaScripts.copy" / "vehiclestats" / "vehiclestats.lua"
 
 
@@ -904,7 +931,7 @@ def vanilla_backdrop(gui: Path | None = None) -> Image:
             img.px[o : o + 4] = bytes([sum(m[c] for m in members) // len(members) for c in range(3)] + [255])
             known[y * w + x] = 1
     # The logo and name area differs per car: rebuild it from the rows around it.
-    lx0, ly0, lx1, ly1 = 0, LOGO_BOX[1] - 10, PLATE_BOX[2] + 6, PLATE_BOX[3] + 8
+    lx0, ly0, lx1, ly1 = BACKDROP_TEXT_AREA
     for x in range(lx0, lx1):
         top, bottom = (ly0 * w + x) * 4, ((ly1 - 1) * w + x) * 4
         for y in range(ly0, ly1):
@@ -957,7 +984,17 @@ def logo_image(ui: ForzaUI, make: str) -> Image | None:
     return img.crop(*box) if box else None
 
 
-def compose_picture(car: Image, logo: Image | None, plate: Image | None, backdrop: Image) -> Image:
+def glyph_offset(img: Image) -> tuple[int, int]:
+    """Where a glyph sits in its 99 x 99 cell: a vanilla glyph's record offsets (`cell`, from
+    vanilla_glyph), else as add_glyphs places a new one (centred across, glyph_y down)."""
+    cell = getattr(img, "cell", None)
+    return cell if cell is not None else ((CELL - img.w) // 2, glyph_y(img, img.h))
+
+
+def compose_picture(car: Image, badge: Image | None, plate: Image | None, backdrop: Image) -> Image:
+    """The garage picture: the car over the backdrop, its badge and plate glyphs (as the HUD
+    shows them: badge_glyph or a vanilla badge, nameplate or a vanilla plate) at 1:1 in their
+    cells at BADGE_CELL and PLATE_CELL."""
     w, h = PICTURE_SIZE
     out = Image(w, h, backdrop.px)
     # The car's own box (render_car: without its floor shadow) fits CAR_BOX's
@@ -967,11 +1004,25 @@ def compose_picture(car: Image, logo: Image | None, plate: Image | None, backdro
     scale = min((bx1 - bx0) / (sx1 - sx0), (by1 - by0) / (sy1 - sy0))
     fitted = car.resize(max(1, round(car.w * scale)), max(1, round(car.h * scale)))
     out.paste(fitted, bx1 - round(sx1 * scale), by1 - round(sy1 * scale))
-    for img, (x0, y0, x1, y1) in ((logo, LOGO_BOX), (plate, PLATE_BOX)):
+    for img, (cx, cy) in ((badge, BADGE_CELL), (plate, PLATE_CELL)):
         if img is not None:
-            f = img.fit(x1 - x0, y1 - y0)
-            out.paste(f, x0 + (x1 - x0 - f.w) // 2, y0 + (y1 - y0 - f.h) // 2)
+            if img.w > CELL - 1 or img.h > CELL - 1:  # as add_glyphs fits it
+                img = img.fit(CELL - 1, CELL - 1)
+            xo, yo = glyph_offset(img)
+            out.paste(img, cx + xo, cy + yo)
     return out
+
+
+def vanilla_glyph(sheet: Image, records: dict, code: int, kind: str) -> Image | None:
+    """A vanilla vehicles_font glyph (glyph_images' sheet and records) as an Image that keeps
+    its cell offsets (`cell`), or None when the font has no such glyph on page 0 (where every
+    vanilla glyph is)."""
+    r = records.get(code)
+    if r is None or r[3] <= 0 or r[4] <= 0 or r[9] != 0:
+        return None
+    img = sheet.crop(r[1], r[2], r[1] + r[3], r[2] + r[4])
+    img.cell, img.kind = (r[5], r[6]), kind
+    return img
 
 
 def preview_rgba(picture: Image) -> bytearray:
@@ -1185,6 +1236,87 @@ def fit_cameras(manifest: Path | None = None, names: list[str] | None = None, lo
     return out
 
 
+# --- the vanilla pictures' badge and plate cells, the badge box (`gui_assets layout`) ------------
+
+LAYOUT_MATCH = 30.0  # RMS (0..255) under which a glyph counts as found in a picture (DXT5 on both sides)
+
+
+def match_glyph(picture, glyph, region: tuple[int, int, int, int]) -> tuple[float, int, int]:
+    """(RMS of the RGB difference, x, y): where `glyph` ((h, w, 4) array) fits best at 1:1 in
+    `region` of `picture` ((H, W, 4) array), over its pixels of alpha above 200."""
+    from numpy.lib.stride_tricks import sliding_window_view
+
+    x0, y0, x1, y1 = region
+    area = picture[y0:y1, x0:x1, :3].astype(np.float32)
+    h, w = glyph.shape[:2]
+    on = glyph[..., 3] > 200
+    windows = np.moveaxis(sliding_window_view(area, (h, w), axis=(0, 1)), 2, -1)[..., on, :]
+    err = np.sqrt(((windows - glyph[..., :3][on].astype(np.float32)) ** 2).mean(axis=(2, 3)))
+    i = np.unravel_index(np.argmin(err), err.shape)
+    return float(err[i]), x0 + int(i[1]), y0 + int(i[0])
+
+
+def measure_layout(names: list[str] | None = None, log=print) -> dict:
+    """Where the vanilla pictures put their car's badge and plate glyphs (research/gui-assets.md,
+    "Picture layout"): per picture the best 1:1 match of each glyph in the left strip and the
+    cell corner it implies (the match less the record's offsets); the medians of the matches
+    under LAYOUT_MATCH. And how well a badge box predicts the vanilla badges' sizes."""
+    from dsfforza.convert import dsf_materials as dm
+
+    sheet, records = glyph_images()
+    px = sheet.array()
+    by_picture: dict[str, tuple[int, int]] = {}
+    for _, f in sorted(vanilla_stats().items()):
+        name = str(f.get("Picture1", "")).strip('"')
+        if name and f.get("Manufacturer", "").isdigit() and f.get("Model", "").isdigit():
+            by_picture.setdefault(name, (int(f["Manufacturer"]), int(f["Model"])))
+    found: dict[str, list] = {"badge": [], "plate": []}
+    with vanilla_file("Install/gui.sp").open("rb") as stream:
+        root = chnk.read_chunk(stream, 0)
+        for name in names or sorted(by_picture):
+            dds = find_picture(stream, root, name) if name in by_picture else None
+            if dds is None:
+                continue
+            w, h, data = dm.decode_dds(dds)
+            picture = np.frombuffer(bytes(data), np.uint8).reshape(h, w, 4)
+            for kind, code, region in zip(
+                ("badge", "plate"), by_picture[name], ((0, 20, 150, 200), (0, 100, 150, 220))
+            ):
+                r = records.get(code)
+                if r is None:
+                    continue
+                err, x, y = match_glyph(picture, px[r[2] : r[2] + r[4], r[1] : r[1] + r[3]], region)
+                found[kind].append({"picture": name, "rms": err, "cell": (x - r[5], y - r[6])})
+            log(
+                f"{name}: "
+                + ", ".join(f"{k} rms {v[-1]['rms']:.1f} cell {v[-1]['cell']}" for k, v in found.items() if v)
+            )
+    out: dict = {}
+    for kind, rows in found.items():
+        good = np.array([r["cell"] for r in rows if r["rms"] < LAYOUT_MATCH]).reshape(-1, 2)
+        out[kind] = {"pictures": len(rows), "matched": len(good)}
+        if len(good):
+            out[kind]["cell"] = [float(v) for v in np.median(good, axis=0)]
+            out[kind]["p10"] = [float(v) for v in np.percentile(good, 10, axis=0)]
+            out[kind]["p90"] = [float(v) for v in np.percentile(good, 90, axis=0)]
+    makers = sorted({c for c, _ in by_picture.values()} & set(records))
+    wh = np.array([records[c][3:5] for c in makers], float)
+
+    def predicts(bw: int, bh: int) -> int:
+        s = np.minimum(bw / wh[:, 0], bh / wh[:, 1])
+        return int((np.abs(wh * s[:, None] - wh).max(axis=1) <= 3).sum())
+
+    narrow = wh[wh[:, 0] < 90]
+    out["badges"] = {
+        "count": len(wh),
+        "wide (95 or more)": int((wh[:, 0] >= 95).sum()),
+        "height of those under 90 wide, median": float(np.median(narrow[:, 1])) if len(narrow) else None,
+        "BADGE_BOX within 3 px": predicts(*BADGE_BOX),
+        "58 square within 3 px": predicts(58, 58),
+    }
+    return out
+
+
 # --- HUD badge and model name: media/Fonts.fchunk "vehicles_font" -----------------------
 #
 # The HUD and garage print vehicleStats Manufacturer and Model as one character
@@ -1264,12 +1396,19 @@ def glyph_images(fonts: Path | None = None) -> tuple[Image, dict]:
     return sheet, read_glyphs(fntd)
 
 
-# Vanilla glyph metrics (vehicles_font, 186 glyphs): maker badges sit on the
-# cell's bottom (y offset + h = 99, about 56 x 56), model nameplates are
-# centred on y = 25 (y offset = 25 - h / 2, median 97 x 21, up to 47 high);
-# both are centred across the 99-wide cell (bottom-aligned, a nameplate sits about 60
-# units low, over the HUD's boost bar).
-BADGE_SIZE = 58
+# Vanilla glyph metrics (vehicles_font, 186 glyphs; research/gui-assets.md, "Badge glyphs"):
+# maker badges sit on the cell's bottom (y offset + h = 99 for 20 of the 36, 90 to 100 for the
+# rest), model nameplates are centred on y = 25 (median of the 141 plates' centres, 17.5 to
+# 33.5; median 97 x 21, up to 47 high); both are centred across the 99-wide cell (glyph
+# centre x 48.5 to 53.5; bottom-aligned, a nameplate sits about 60 units low, over the HUD's
+# boost bar).
+#
+# The box a logo badge fills: the cell's width (19 of the 36 vanilla badges are 95 to 100 wide:
+# Bentley, Aston Martin, Ruf, Dodge, ...) and 56 high, the median height of the 15 vanilla
+# badges narrower than 90 (the ones the width doesn't bound: Alfa Romeo 58, Nissan 52, VW 56,
+# Abarth 56, ...). It puts 26 of the 36 vanilla badges' sizes within 3 px (median 1 px); a
+# 58 square put 8 (median 37 px: every wide badge drawn 58 wide).
+BADGE_BOX = (CELL - 1, 56)
 PLATE_CENTRE_Y = 25
 
 
@@ -1509,7 +1648,7 @@ def forza_emblem_logo(ui: ForzaUI) -> Image:
     return img.crop(*img.bbox(12))
 
 
-def forza_emblem_image(logo: Image, margin: int = 2) -> Image:
+def forza_emblem_image(logo: Image, margin: int = 2) -> Image:  # margin: TODO(fit, #139), chosen
     """The emblem texture: the card icon atlas's layout with `logo` fitted
     (aspect kept, centred) in the SF disc's rect, transparent elsewhere."""
     x0, y0, x1, y1 = CARD_SF_BOX
@@ -1979,9 +2118,9 @@ def _logo_task(isos: list[Path] | None, make: str):
 
 
 def picture_plate_keys(text: str) -> list[tuple]:
-    """The text_plate keys nameplate(text, 124, 38) may draw: the text on one line and,
+    """The text_plate keys nameplate(text) may draw: the text on one line and,
     for more than one word, the two lines it would split it into."""
-    render_h = max(2 * 38, PLATE_RENDER_H)
+    render_h = max(2 * 34, PLATE_RENDER_H)  # nameplate()'s default max_h
     lines = [text]
     words = text.split()
     if len(words) > 1:
@@ -2179,10 +2318,23 @@ def _build(
             if hit is not None:
                 cached[car["spool_id"]] = hit
 
+    font_sheet, font_records = glyph_images(fonts)
+
     def parts(car: dict):
-        """The picture's logo and nameplate."""
+        """The picture's badge and plate: the glyphs the HUD shows with dsfforza.asi
+        (compose_picture), the vanilla badge of a maker DSF has, else badge_glyph of the Forza
+        logo (plan_wide_glyphs); the vanilla plate of a model DSF has, else nameplate()."""
         t = texts[car["media"]]
-        return logos(t["dsf_make"]) or logos(t["make"]) or maker_badge(t["dsf_make"]), nameplate(t["model"], 124, 38)
+        key = t["dsf_make"]
+        badge = vanilla_glyph(font_sheet, font_records, makes[key][0], "badge") if key in makes else None
+        if badge is None:
+            badge = badge_glyph(logos(key) or logos(t["make"]) or maker_badge(key))
+        exact = models.get((key, t["model"]))
+        plate = vanilla_glyph(font_sheet, font_records, exact[0], "plate") if exact else None
+        if plate is None:
+            plate = nameplate(t["model"])
+            plate.kind = "plate"
+        return badge, plate
 
     def preview_path(car: dict) -> Path:
         return out_dir / f"dsfforza_{car['media'].lower()}.png"
@@ -2351,7 +2503,7 @@ def glyph_test(out_dir: Path, ids: list[int], plates: int = 400, badges: int = 4
 
     glyphs: dict[int, Image] = {}
     for n in range(badges):
-        g = label(f"B{n + 1}", 40).fit(BADGE_SIZE, BADGE_SIZE)
+        g = label(f"B{n + 1}", 40).fit(*BADGE_BOX)
         g.kind = "badge"
         glyphs[WIDE_FIRST + n] = g
     for n in range(plates):
@@ -2444,6 +2596,8 @@ def main(argv: list[str] | None = None) -> None:
         help="vanilla picture name = picture name in --gui, e.g. chevrolet_volt=dsfforza_che_volt_11",
     )
     tn.add_argument("--gui", type=Path, required=True, help="a built gui.sp")
+    ly = sub.add_parser("layout", help="measure the vanilla pictures' badge and plate cells and the badge box")
+    ly.add_argument("--cars", default="", help="comma-separated vanilla picture names (default: all, about 10 min)")
     s = sub.add_parser("strings", help="search Locale global.fchunk strings")
     s.add_argument("pattern")
     args = parser.parse_args(argv)
@@ -2480,6 +2634,15 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(f"{args.name}: not in {args.gui}")
         w, h, px = dm.decode_dds(dds)
         write_png(args.png, w, h, px)
+    elif args.cmd == "layout":
+        import json
+
+        from dsfforza.build import gentle, jobpool
+
+        gentle.apply()
+        with jobpool.acquire("gui_assets layout"):
+            result = measure_layout([n for n in args.cars.split(",") if n] or None)
+        print(json.dumps(result, indent=1))
     elif args.cmd == "tone":
         vanilla_gui = vanilla_file("Install/gui.sp")
         backdrop = vanilla_backdrop(vanilla_gui)
