@@ -446,6 +446,27 @@ def rim_rotational_mean(tris, colours, centre, radius: float, rings=WHEEL_BLUR_R
     return rr, rgb.reshape(rings, angles, 3).mean(1)
 
 
+def _disc_map(sections):
+    """The blur disc's map from its UV0 to the wheel's (y, z): a least-squares fit of (u, v, 1)
+    -> (y, z) over the disc's vertices (forza2dsf.wheel_blur_section) that aren't clamped at the
+    picture's edge; returns (map (3, 2), those vertices' (y, z) (n, 2)), or None without a disc."""
+    rows, yz = [], []
+    for s in sections:
+        for sub in s.subsections:
+            if sub.material != fm.WHEEL_BLUR_TECHNIQUE:
+                continue
+            m = fm.resolve(s, sub, fm.classify_wheel)
+            pool = s.vertices_for(sub)
+            for i in {i for t in sub.triangles() for i in t}:
+                u, v = m.uv(pool[i].uv0)
+                if 0.0 < u < 1.0 and 0.0 < v < 1.0:
+                    rows.append((u, v, 1.0))
+                    yz.append(pool[i].position[1:])
+    if len(rows) < 3:
+        return None
+    return np.linalg.lstsq(np.array(rows), np.array(yz), rcond=None)[0], np.array(yz)
+
+
 def wheel_blur_ramp(
     radius_of_texel: np.ndarray, rr: np.ndarray, mean: np.ndarray
 ) -> tuple[bytearray, tuple[float, float, float]]:
@@ -1680,60 +1701,58 @@ class Texturing:
         (rim_rotational_mean, wheel_blur_ramp): the rim is the finest LOD's non-disc, non-tyre
         wheel subsections that sample the wheel atlas (its texels already scaled by the rim's
         PaintScale, _wheel_paint_scale), drawn texel decoded from sRGB. A texel's radius comes
-        from the disc's own map (its UV0 -> wheel y, z, fitted to the disc's vertices that
-        aren't clamped at the picture's edge). Where the spokes leave a gap, the front brake rotor is
+        from the disc's own map (_disc_map). Where the spokes leave a gap, the front brake rotor is
         what is drawn there (_front_rotor, ROTOR_RED). None without a disc or a rim."""
         from dsfforza.convert.forza2dsf.car import tyre_centre
 
-        disc = [(s, sub) for s in sections for sub in s.subsections if sub.material == fm.WHEEL_BLUR_TECHNIQUE]
-        if not disc:
+        disc_map = _disc_map(sections)
+        if disc_map is None:
             return None
-        rows, uvs = [], []
-        for s, sub in disc:
-            m = fm.resolve(s, sub, fm.classify_wheel)
-            pool = s.vertices_for(sub)
-            for i in {i for t in sub.triangles() for i in t}:
-                u, v = m.uv(pool[i].uv0)
-                if 0.0 < u < 1.0 and 0.0 < v < 1.0:
-                    rows.append((u, v, 1.0))
-                    uvs.append(pool[i].position[1:])
-        if len(rows) < 3:
-            return None
-        to_yz = np.linalg.lstsq(np.array(rows), np.array(uvs), rcond=None)[0]  # (u, v, 1) -> (y, z)
+        to_yz, disc_yz = disc_map
         rims = [s for s in sections if not any(sub.material == fm.WHEEL_BLUR_TECHNIQUE for sub in s.subsections)]
         try:
             cy, cz = tyre_centre(rims)[1:]
         except ValueError:
             cy, cz = 0.0, 0.0
         finest = min(lods)
+        tris, colours = self._drawn_wheel(rims, finest)
+        if tris is None:
+            return None
+        radius = float(max(np.hypot(disc_yz[:, 0] - cy, disc_yz[:, 1] - cz).max(), 1e-3))
+        rr, mean = rim_rotational_mean(tris, colours, (cy, cz), radius)
+        gu, gv = np.meshgrid((np.arange(w) + 0.5) / w, (np.arange(h) + 0.5) / h)
+        yz = np.stack([gu, gv, np.ones_like(gu)], -1) @ to_yz
+        texel_r = np.minimum(np.hypot(yz[..., 0] - cy, yz[..., 1] - cz), radius)
+        return wheel_blur_ramp(texel_r, rr, mean)
+
+    def _drawn_wheel(self, rims, lod: int):
+        """(triangles (n, 3, 3), colours) of the wheel as the build draws it at `lod`: the rim
+        subsections on the wheel atlas, their texels decoded from sRGB, and the front brake rotor
+        at its GLOBAL_Tyre swatches (ROTOR_RED); colours as rim_rotational_mean takes them.
+        (None, None) without a rim."""
         tris, sources = [], []
         tw, th, texels = self.atlases.get(fm.WHEEL)
-        px = np.frombuffer(bytes(texels), dtype=np.uint8).reshape(th, tw, 4)
         for s in rims:
             for sub in s.subsections:
-                if sub.lod != finest:
-                    continue
                 m = fm.resolve(s, sub, fm.classify_wheel)
-                if m.family != fm.WHEEL or m.kind not in ("textured", "swatch"):
+                if sub.lod != lod or m.family != fm.WHEEL or m.kind not in ("textured", "swatch"):
                     continue
                 pool = s.vertices_for(sub)
                 for t in sub.triangles():
                     tris.append([pool[i].position for i in t])
                     sources.append([m.uv(pool[i].uv0) for i in t])
         if not tris:
-            return None
+            return None, None
         rim = len(tris)
-        flat = []  # the brake rotor behind the spokes: (linear grey,) per triangle, as it is drawn
-        rotor = self._front_rotor(finest)
-        if rotor is not None:
-            pool = rotor.lod_vertices
-            for sub in rotor.subsections:
-                grey = float(_srgb_decode(np.array(ROTOR_RED.get(sub.material, 0) / 255.0)))
-                for t in sub.triangles():
-                    tris.append([pool[i].position for i in t])
-                    flat.append(grey)
-        tris = np.array(tris, dtype=np.float64)
+        flat = []  # the brake rotor behind the spokes: linear grey per triangle, as it is drawn
+        rotor = self._front_rotor(lod)
+        for sub in rotor.subsections if rotor is not None else ():
+            grey = float(_srgb_decode(np.array(ROTOR_RED.get(sub.material, 0) / 255.0)))
+            for t in sub.triangles():
+                tris.append([rotor.lod_vertices[i].position for i in t])
+                flat.append(grey)
         sources = np.array(sources, dtype=np.float64)
+        px = np.frombuffer(bytes(texels), dtype=np.uint8).reshape(th, tw, 4)
         linear = _srgb_decode(px[..., :3] / 255.0)
 
         def colours(t, wts):
@@ -1744,14 +1763,7 @@ class Texturing:
             y = np.clip(((uv[:, 1] % 1.0) * th).astype(int), 0, th - 1)
             return linear[y, x]
 
-        disc_r = np.hypot(np.array(uvs)[:, 0] - cy, np.array(uvs)[:, 1] - cz).max()
-        radius = float(max(disc_r, 1e-3))
-        rr, mean = rim_rotational_mean(tris, colours, (cy, cz), radius)
-        gu, gv = np.meshgrid((np.arange(w) + 0.5) / w, (np.arange(h) + 0.5) / h)
-        yz = np.stack([gu, gv, np.ones_like(gu)], -1) @ to_yz
-        texel_r = np.hypot(yz[..., 0] - cy, yz[..., 1] - cz)
-        texel_r[texel_r > radius] = radius
-        return wheel_blur_ramp(texel_r, rr, mean)
+        return np.array(tris, dtype=np.float64), colours
 
     def _front_rotor(self, lod: int):
         """The front brake rotor section as the build draws it (forza2dsf.brake_rotor_section of

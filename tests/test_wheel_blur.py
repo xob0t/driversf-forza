@@ -230,7 +230,7 @@ class Picture(unittest.TestCase):
         np.testing.assert_allclose(inner, np.tile(grey, (len(inner), 1)), atol=1e-6)
         np.testing.assert_allclose(outer, np.tile([0.75, 0.25, 0.25], (len(outer), 1)), atol=0.02)
         rr, mean = dm.rim_rotational_mean(
-            front + half, lambda t, w: np.tile(grey, (len(w), 1)), (0.0, 0.0), 0.2, 20, 360
+            front + half, lambda _t, w: np.tile(grey, (len(w), 1)), (0.0, 0.0), 0.2, 20, 360
         )
         np.testing.assert_allclose(mean[rr > 0.105], np.tile(grey / 2, (len(mean[rr > 0.105]), 1)), atol=0.02)
 
