@@ -1727,6 +1727,13 @@ void patch_frame_log()
 // need nothing of their own. A replacement that won't open falls back to the
 // game's file (logged). Phase 1's open log showed gui.sp (twice), fonts.fchunk
 // and TEXT:global.fchunk all going through FUN_00857370.
+// Every other name goes on through Driver.exe's import (the slot the vanilla
+// call reads, at the time of the call), not to KERNEL32 directly: DSF Enhanced's
+// [Files] Redirect hooks that import for its own tables (worldlod's world
+// archive, san_francisco.dngc, opens here too), so both plugins redirect in
+// either load order. "archive.redirect_chain" in DSF_CAPABILITIES says so.
+typedef HANDLE(WINAPI* CreateFileAFn)(LPCSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE);
+static CreateFileAFn* const kCreateFileImport = (CreateFileAFn*)0x00DC9260;
 struct Redirect {
     char from[MAX_PATH];  // normalised game-relative path
     char to[MAX_PATH];    // full path of the replacement
@@ -1811,7 +1818,7 @@ static HANDLE WINAPI h_create_file(LPCSTR name, DWORD access, DWORD share, LPSEC
         }
         dsf_log("redirect: %s won't open (error %lu); '%s' as it is", to, GetLastError(), name);
     }
-    return CreateFileA(name, access, share, sa, disposition, flags, templ);
+    return (*kCreateFileImport)(name, access, share, sa, disposition, flags, templ);
 }
 
 static const uint8_t kCreateFileExpect[] = {0xFF, 0x15, 0x60, 0x92, 0xDC, 0x00};  // call [0x00DC9260]
@@ -1900,6 +1907,16 @@ int g_st_fail = 0;
             g_st_fail++;                                               \
         }                                                              \
     } while (0)
+
+// Stands in for another plugin's hook in Driver.exe's CreateFileA import (DSF
+// Enhanced's [Files] Redirect): remembers the name it was given.
+char g_st_next_name[MAX_PATH];
+HANDLE WINAPI st_next_create_file(LPCSTR name, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE)
+{
+    strncpy_s(g_st_next_name, sizeof g_st_next_name, name, _TRUNCATE);
+    SetLastError(ERROR_FILE_NOT_FOUND);
+    return INVALID_HANDLE_VALUE;
+}
 
 enum StFlaw { kGood, kNotChnk, kNoVsct, kCut, kBadKid };
 
@@ -2288,6 +2305,10 @@ int mod_archive_pkg_selftest(const char* dir)
     _snprintf_s(full, sizeof full, _TRUNCATE, "%sInstall\\gui.sp", d);
     ST_CHECK(redirect_of(full) == to);
     ST_CHECK(!redirect_of("Install\\gui.sp2") && !redirect_of("Media\\fonts.fchunk") && !redirect_of(nullptr));
+    // offline.exe maps Driver.exe without binding its imports: bind the one the
+    // names not listed go through, as the loader does.
+    const CreateFileAFn bound = *kCreateFileImport;
+    *kCreateFileImport = CreateFileA;
     HANDLE h = h_create_file("Install\\gui.sp", GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     char got3[4] = {};
     DWORD n3 = 0;
@@ -2295,6 +2316,17 @@ int mod_archive_pkg_selftest(const char* dir)
     if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
     ST_CHECK(h_create_file("Media\\none.fchunk", GENERIC_READ, 0, nullptr, OPEN_EXISTING, 0, nullptr) ==
              INVALID_HANDLE_VALUE);  // not listed: as it is
+    // Another plugin hooked the import: a name not listed reaches its hook, a listed one doesn't.
+    *kCreateFileImport = st_next_create_file;
+    g_st_next_name[0] = 0;
+    ST_CHECK(h_create_file("Install\\san_francisco.dngc", GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0,
+                           nullptr) == INVALID_HANDLE_VALUE);
+    ST_CHECK(strcmp(g_st_next_name, "Install\\san_francisco.dngc") == 0);
+    g_st_next_name[0] = 0;
+    h = h_create_file("Install\\gui.sp", GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    ST_CHECK(h != INVALID_HANDLE_VALUE && g_st_next_name[0] == 0);
+    if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+    *kCreateFileImport = bound;
     ST_CHECK(patch_redirect_site());
     ST_CHECK(*(uint8_t*)0x0085AC1E == 0xE8 && *(uint8_t*)0x0085AC23 == 0x90 &&
              *(int32_t*)0x0085AC1F == (int32_t)((uint32_t)(uintptr_t)h_create_file - 0x0085AC23));

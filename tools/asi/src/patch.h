@@ -64,6 +64,9 @@ void* alloc_exec(size_t n);
 //   archive.packages  [archive] packages: cars from their own files beside dngvehicles.sp
 //   archive.ids       the listed model ID is written into a package's data as it is read
 //                     (mod_archive.cpp, pkg_set_ids), so car.sp is installed as it is
+//   archive.redirect_chain  the redirect at 0x0085AC1E passes the names it doesn't list on
+//                     through Driver.exe's CreateFileA import, where DSF Enhanced's [Files]
+//                     Redirect hooks (worldlod reads it to know its map reaches the game)
 #define DSF_CAPABILITIES_MARKER "DSFFORZA-CAPABILITIES: "
-#define DSF_CAPABILITIES "archive.packages archive.ids"
+#define DSF_CAPABILITIES "archive.packages archive.ids archive.redirect_chain"
 extern const char dsf_capabilities[];
