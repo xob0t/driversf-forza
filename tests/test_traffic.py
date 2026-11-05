@@ -255,6 +255,7 @@ class TrafficControlTest(unittest.TestCase):
         self.assertFalse(self.control(m2).cars()[a]["traffic"])
 
 
+@unittest.skipUnless(reg.STATS.exists(), "needs out/lua-src (uv run dsff game_data prepare); CI has no game")
 class RegisterTrafficTest(unittest.TestCase):
     PACKAGES = (
         "return { cars = { "
