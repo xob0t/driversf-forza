@@ -22,8 +22,11 @@ How to work:
    Every conversion rule you write comes from Forza's or DSF's data and maths, never from fitting
    (AGENTS.md, "Rules come from data, never from fitting"). If the maths is unknown, decode
    it or stop and say so in your report; don't tune a constant until the output looks right.
-3. Measure the roster (the 573 cars of `tools/batches/all.txt`) before and after: how many
-   cars change, and the numbers that show it. Survey offline where you can. Every build and
+3. Measure the roster (`--roster`: `tools/batches/all.txt` and the FM4 DLC cars) before and
+   after: how many cars change, and the numbers that show it. Survey offline where you can.
+   `uv run dsff port_batch affected --roster` lists the cars your change touches without
+   building; build those with `--affected`, and take the before from the car store with
+   `--affected --before` rather than building master. Every build and
    survey on the PC shares one job pool, so `--jobs` only caps your own (AGENTS.md, Machine
    rules).
 4. Verify in game with `tools\wsb\run-series.ps1 -Vm` (never `-OnHost`), before and after,

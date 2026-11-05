@@ -594,6 +594,114 @@ machine). The full packs of
 both versions are byte-identical (`compare_packs`), and so are the
 whole-pack copy and the 50-car pack with `--verify-pack`.
 
+### Car store
+
+Every worktree's "before" build of master converted the cars another worktree had
+already built from the same commit. Now every build keeps its converted cars in one store
+on the PC (`src/dsfforza/build/carstore.py`, `%LOCALAPPDATA%\dsfforza\store`;
+`DSFFORZA_STORE` names another folder, `off` turns it off, as does `port_batch build
+--no-store`) and takes a matching car from it without `--reuse`. It is on in a git
+checkout and off in a player's copy (no `.git`) unless `DSFFORZA_STORE` names a folder.
+
+- **What it holds.** `cars/<media>/<id>/`: the car's work files (chunk, report, job,
+  log, fingerprint, the first try's of a fallback build) and its `sound/<media>/`, with
+  `meta.json` (spool ID, options, the checkout it was built in). Files from 1 MiB are hard
+  links (the build's own files are never written in place), the small ones copies. The id
+  is the digest of the fingerprints with the checkout's folder written `<repo>`, so the
+  same car built in two worktrees is one entry. `pictures/<key>-<pack>.*`,
+  `images/<name>-<pack>.*` and `packs/<pack>.json`: the pack step's garage pictures
+  (by `PictureCache` key), nameplates and logos, under the fingerprint of the pack that
+  made them, kept once per pack fingerprint; one is used only while that fingerprint
+  holds (as an earlier build's pack record).
+- **Matching** is `--reuse`'s (`fingerprint.Checker`), after the store, for the cars no
+  `--reuse` build has: the same job (spool ID included), environment, inputs and code.
+  Two things made a car of another worktree not match:
+  - files of the worktree itself: each has its own `out\db\<game>_gamedb.slt` (and
+    `out\lua-src`). A fingerprint now records its checkout (`"repo"`; for older ones the
+    store takes the checkout its build folder is in), and `fingerprint.relocate` moves the
+    paths under it to this checkout before the check. `out\cache`, `out\vanilla` and
+    `assets\` are junctions to the main checkout, resolved when recorded, so they match
+    as they are.
+  - a DLC car's pack file: the job recorded `source.package` as given, under the
+    worktree's `assets\` junction, so DLC cars never matched across worktrees (#501's
+    worker). `job_key` now records it resolved (`norm`), and the check resolves the
+    recorded one too, so earlier fingerprints still match. A pack inside a disc image
+    (`content/...`) is a path in the image and stays.
+- **Verification.** `--verify-reuse` defaults to 2 with `--reuse` and to 0 for store
+  hits alone; `--verify-reuse N` asks for N.
+- **Putting.** After the conversion (and `--verify-reuse`), every car of the build with
+  a complete fingerprint goes in, the ones taken from `--reuse` or `--resume` too (kept
+  once); after the pack, its pictures and images.
+- **Size.** At most `DSFFORZA_STORE_GB` (default 25 GiB: a full build's cars are about
+  6 GiB counted file by file, so a few builds' worth). Past it, the entries (cars, pictures, images) used
+  longest ago go first, down to 90% (`Store.evict`, after each build). A hit marks its
+  entry used. Hard-linked files count in full, though they cost nothing while a build
+  folder holds the same file.
+- `uv run dsff carstore status | seed <build> ... | evict [--cap-gb N]`. `seed` puts an
+  earlier build's cars and its pack's pictures and images in.
+
+Measured 2026-11-05:
+
+- `carstore seed` of the 8200cfa release build (`driversf-forza-release\out\build`,
+  721 cars, read only): 36 s, 721 cars (hard links).
+- `--list tools/batches/all.txt --max 4 --id-policy asi --root-limit 3003 --gui
+  --wide-glyphs --packages`, with the IDs the release build gave the cars: 4 of 4 from the
+  store, 47 s; the 4 packages' members byte-identical to the release build's.
+- 3 cars (`--car DEL_DMC12_82@fm4 --car SAL_S5SRaptor_10 --car BMW_M1Design_81`, the
+  last an FM4 DLC car), `--gui --packages`: converted in worktree a (104 s); then the same
+  command in worktree b: 3 of 3 cars, 3 of 3 pictures and 10 of 10 images from the store,
+  27 s. `dngvehicles.sp`, `gui/gui.sp`, `Fonts.fchunk`, `hud.lua`, `dngvehicles.lua` and
+  every package member byte-identical to worktree a's fresh build.
+
+### Which cars a change affects
+
+```sh
+uv run dsff port_batch affected --roster                     # against the merge base with origin/master
+uv run dsff port_batch build --out out/after --roster --affected --gui --packages
+uv run dsff port_batch build --out out/before --roster --affected --before --gui --packages
+uv run dsff render_compare diff --before out/before --after out/after --out out/rc/<topic>
+```
+
+A stored fingerprint names the code units the car ran and the files it read, so the
+store answers offline which cars a change touches (`carstore.affected`). For each car of
+the selection it looks for a base entry: one whose recorded units are those of the
+revision `--base` (default the merge base of HEAD and origin/master), read from git
+(`fingerprint.GitUnits`), preferring the car's own spool ID. The car is
+
+- **affected** when a unit it recorded differs in this checkout, or an input it read
+  changed (every such unit is listed, and the first input);
+- **the same** when none did: this checkout makes the same car;
+- **unknown** when the store has no base entry: a build of the base commit anywhere on the
+  PC puts one in.
+
+`build --affected` builds the affected and unknown cars only, with the IDs of the whole
+selection. `--roster` is dsff install's selection and IDs (`tools/batches/all.txt`, then
+the FM4 DLC packs' cars, `--id-policy asi --root-limit 3003`), so a subset gets the IDs a
+full build gave its cars and the store's full builds match it. `build --before` takes
+every car from the store as `--base`'s code made it (the store's entries checked against
+that revision's units) and converts none; a car with no such entry is listed as failed,
+"not in the car store". The pack step of a `--before` build runs this checkout's pack
+code.
+
+Checked 2026-11-05 against the seeded release build (base 8200cfa):
+
+- No converter change: `affected --roster` 0 affected, 721 the same, 0 unknown, 68 s.
+- `lights._headlight_reflectors` rewritten as an equivalent expression (a test edit,
+  not kept): 12 affected, exactly the 12 cars whose stored fingerprints record that
+  unit (AUD_3_R18TDI_11, CHE_2_MonteCarloSS_11, DOD_Challenger392_12, DOD_RamSRT10_06,
+  FOR_1_Fusion_11, HYU_VelosterRMR_11, MCL_41_McLarenF1GTR_98, MCL_43_McLarenF1GTR_97,
+  MIT_HKS_06, PEU_3_905EVO_93, POR_7_RSSpyder_08, SUZ_1_SX4_11), 709 the same. `build
+  --affected` converted those 12 (411 s at 2 slots), and each new fingerprint carries the
+  changed unit; their chunks are byte-identical to the release build's (the rewrite
+  changes no output). `build --affected --before` took the 12 from the store (127 s). The
+  first 4 roster cars, "the same", converted fresh with the change in place (`--no-store`):
+  no changed unit recorded, chunks identical.
+- A fingerprint records the code a car ran, which can depend on a cache: a car whose
+  sound banks or damage host were cached in one build and computed in the other records
+  the decoding units only in the second. A car that read the cache depends on the cache
+  file (an input), not on the code that wrote it, as for `--reuse`; `affected` answers the
+  same way.
+
 ### Builds past 4 GiB
 
 A CHNK's `total_size` and every entry offset are u32 (`chnk.HEADER`,

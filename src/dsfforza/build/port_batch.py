@@ -34,6 +34,11 @@ and code (work/<media>.fp.json, src/dsfforza/build/fingerprint.py) and converts
 only the rest (repeat it for several builds; the first match wins); --verify-reuse N (default 2) converts N of the reused cars again and
 stops the build if any differs; --rebuild-where EXPR and --trust-code let a fix
 name the cars it affects (research/batch.md, "Selective rebuild").
+Every build also takes cars from the car store all worktrees share and puts its own in
+(src/dsfforza/build/carstore.py; --no-store: neither). `port_batch affected` lists the
+cars a change since --base touches, from the store's fingerprints; build --affected builds
+only those, build --before takes them from the store as --base made them, and --roster is
+dsff install's selection and IDs (research/batch.md, "Which cars a change affects").
 
 ID policy (research/batch.md): the garage lists model IDs 0..303 only
 (research/gui-assets.md) and vanilla cars use 62..303, so the first cars of a
