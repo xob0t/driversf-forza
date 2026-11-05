@@ -403,51 +403,64 @@ Test set (`out/gui/build2`, from `out/lights/build2/ported-lp.sp`):
 
 ## Scaling to a few hundred cars
 
-### Pictures: gui.sp has room for 177, then shared SPOIs
+### Pictures: one SPOI each; gui.sp has room for 177 without the plugin
 
 The game's CHNK reader holds 1100 entries (`spool-limits.md`), and gui.sp
-has 923, so 177 more pictures can each get a SPOI. `append_patch` now grows
-the root table when its 100 free rows run out, by moving every root payload
-down a multiple of 0x1000 (vanilla bytes and nested chunks unchanged; checked
-with 150 pictures: the vanilla and the new pictures read back). Past 177,
-`add_pictures` packs several pictures into one SPOI (a TEXC each in its
-DRSP, MDID listing all), each with its own SPOL UID and SSLP spool ID
-pointing at the shared root entry (checked offline with 260). At most 4 fit
-one picture slot; 5 crash the garage (below).
+has 923, so 177 more pictures can each get a SPOI. `append_patch` grows the
+root table when its 100 free rows run out, by moving every root payload down
+a multiple of 0x1000 (vanilla bytes and nested chunks unchanged; checked with
+150 pictures: the vanilla and the new pictures read back).
 
 With dsfforza.asi [archive] (another module: the CHNK reader keeps entries
-past 1100 in a side table, `spool-limits.md`) the root can hold one SPOI per
-picture: `gui_assets.py build --root-limit 16384` (default 1100, the vanilla
-reader). SSLP spool ids and root indices are u16, so 800 more pictures fit.
+past 1100 in a side table, `spool-limits.md`) the root holds one SPOI per
+picture for any roster: `gui_assets.py build --root-limit 16384` (default
+1100, the vanilla reader), and the car manager's copy always (below). SSLP
+spool ids and root indices are u16, so 800 more pictures fit. Every vanilla
+SPOI is `MDXN/DRSP {TEXC, MDID}`, one picture (all 921), and so is every
+added one. More pictures than the root has room for are refused
+(`ValueError`).
 
-**A shared SPOI holds at most 4 pictures (confirmed-runtime, issue #540).**
-The game loads one gui.sp item, with all its TEXCs, into one slot of
-graphics pool 19, "GUI Image large" (gui.sp SSLP slots 10, 16, 2 for kinds
-0, 1, 2 match pools 19, 17 and 18). That pool has 0x80 SYS range nodes over
-10 slots (`.data` tables 0x00FD25D0 and 0x00FD2678), so 12 nodes and 1,632
-bytes per slot, and 3 nodes go to the slot's setup. Each texture takes two
-render objects from it (FUN_00BBA890, the TEXC parser:
-ResourceObjectPool_Allocate of 0x28 and 0x40 bytes, align 0x10), one range
-node each (the trailing split; nothing is misaligned, so no leading split).
-So a slot holds (12 - 3) // 2 = 4 textures. On the 10th object
-ResourceIndexPool_Acquire (0x00BB47D0) pops an empty free-node list and
-reads address 0 at 0x00BB47EC. Every crash dump of #540 shows this: the
-allocator's arguments on the stack are pool 0x13, slot 8, memtype 0, size
-0x40 (`Driver_20261105_063058.dmp`, `-063529`, `-065844`; the last one with
-DSF Enhanced removed). The slot's state is captured: 12 of 12 nodes used, 496
-of 1,632 bytes, objects of 0x30, 0x40, 0x30, 0x40, ... (4 1/2 textures).
-Slot 9 held one picture and slots 6 and 7 were empty.
+**Shared SPOIs crash the garage (confirmed-runtime, issue #540).** Until
+#540, past the root's room `add_pictures` packed several pictures into one
+SPOI (a TEXC each in its DRSP, MDID listing all), each with its own SPOL UID
+and SSLP spool ID pointing at the shared root entry. The game loads a gui.sp
+item, with all its TEXCs, into one slot of graphics pool 19, "GUI Image
+large" (gui.sp SSLP slots 10, 16, 2 for kinds 0, 1, 2 match pools 19, 17 and
+18). That pool has 0x80 SYS range nodes over 10 slots (`.data` tables
+0x00FD25D0 and 0x00FD2678), so 12 nodes and 1,632 bytes per slot, and 3
+nodes go to the slot's setup. Each texture takes two render objects from it
+(FUN_00BBA890, the TEXC parser: ResourceObjectPool_Allocate of 0x28 and 0x40
+bytes, align 0x10), one range node each (the trailing split; nothing is
+misaligned, so no leading split). So a slot holds (12 - 3) // 2 = 4
+textures. On the 10th object ResourceIndexPool_Acquire (0x00BB47D0) pops an
+empty free-node list and reads address 0 at 0x00BB47EC.
+
+Every crash dump of #540 shows this: the allocator's arguments on the stack
+are pool 0x13, memtype 0, size 0x40, and the slot's state is captured, with
+12 of 12 nodes used, 496 of 1,632 bytes, and objects of 0x30, 0x40, 0x30,
+0x40, ... (4 1/2 textures):
+
+| Dump | Install | Pictures to a shared SPOI | Slot | When |
+| --- | --- | ---: | ---: | --- |
+| `Driver_20261105_063058.dmp`, `-063529` | 721 packages, DSF Enhanced | 5 | 8 | entering the garage |
+| `Driver_20261105_065554.dmp`, `-065844` | the same, DSF Enhanced removed | 5 | 8 | entering the garage |
+| `Driver_20261105_070706.dmp` | 360 packages (IDs 511 to 873 disabled) | 3 | 1 | after picking a car, back into free roam |
+
+In the 360-car dump slot 7 holds one such item (3 textures, 9 nodes) and slot
+1 4 1/2 textures, though no item holds more than 3: a slot can take more than
+one load of a shared item. How the spooler gets there (one load per spool ID
+that names the item, all landing in one slot?) is not decoded, so no number of
+pictures to a SPOI is known to be safe, and none is written.
 
 The car manager's gui.sp (`car_gui.generate`) was written with the vanilla
 reader's 1100 root entries: 177 free rows, so 721 pictures went 5 to a SPOI
-(the v0.2.0 install: 1,068 root entries for 1,642 SPOL items). Any garage
-page that shows a ported card loads such an item and crashes. The full
-roster of 562 had 4 to a SPOI, which is why `vm-20261025-000547` worked. The
-generated gui.sp is read only through dsfforza.asi's redirect
-(`[archive] redirect_list`), so `car_gui` now passes the plugin reader's
-`max_entries` (16384) and every picture gets its own SPOI, as in the vanilla
-gui.sp (1,644 root entries for the same 721 cars). `add_pictures` refuses
-to pack more than `PICTURES_PER_SPOI` (4) to a SPOI.
+(the v0.2.0 install: 1,068 root entries for 1,642 SPOL items) and 360 went 3
+to a SPOI (1,043 root entries). The full roster of 562 had 4 to a SPOI in
+`vm-20261025-000547`, which showed the pictures without a crash; that run
+only browsed a few makers. The generated gui.sp is read only through
+dsfforza.asi's redirect (`[archive] redirect_list`), so `car_gui` passes the
+plugin reader's `max_entries` (16384): 1,644 root entries for the same 721
+cars.
 
 **The SPOL cap (confirmed-runtime).** The game also caps the SSIC SPOL list
 at 1100 items: a longer list isn't loaded at all.

@@ -401,8 +401,8 @@ The other pools of the same tables, for reference (slots, SYS KiB, SYS
 nodes): 17 "GUI Image small" 16, 0x10, 0x80; 18 "GUI Image medium" 2, 0x10,
 0x80; 19 "GUI Image large" 10, 0x10, 0x80; 13 "Character Spooled" 4, 0x100,
 0x80. Pool 19 holds gui.sp's kind-0 items (the garage pictures): 12 nodes a
-slot, so at most 4 textures (`gui-assets.md`, "A shared SPOI holds at most 4
-pictures"; issue #540, the garage crash of the v0.2.0 install).
+slot, so at most 4 textures (`gui-assets.md`, "Shared SPOIs crash the
+garage"; issue #540, the garage crash of the v0.2.0 install).
 
 From those sizes the Desanne uses about 31 KB and 300 nodes of its slot,
 and e5-big about 50 KB and 450 nodes (estimates). The node count runs out

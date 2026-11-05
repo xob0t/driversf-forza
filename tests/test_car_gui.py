@@ -253,13 +253,8 @@ class VanillaFontEmblemTest(unittest.TestCase):
 
 
 class PictureRootLimitTest(unittest.TestCase):
-    """The packages' gui.sp gets one SPOI per picture (issue #540: 721 pictures 5 to a SPOI crashed
-    the garage), and a shared SPOI never holds more than a garage picture slot does."""
-
-    def test_slot_capacity(self):
-        # 12 range nodes per "GUI Image large" slot, 3 for its setup, 2 per texture (gui_assets).
-        self.assertEqual(gui_assets.PICTURE_SLOT_NODES, 12)
-        self.assertEqual(gui_assets.PICTURES_PER_SPOI, 4)
+    """The packages' gui.sp gets room for one SPOI per picture (issue #540: pictures sharing a
+    SPOI crashed the garage)."""
 
     def test_generate_passes_the_plugin_limit(self):
         tmp = Path(tempfile.mkdtemp())
@@ -284,7 +279,9 @@ VANILLA_GUI = Path(__file__).resolve().parents[1] / "out" / "vanilla" / "Install
 
 
 @unittest.skipUnless(VANILLA_GUI.exists(), "needs out/vanilla/Install/gui.sp (tools/worktree-setup.ps1)")
-class SharedPictureSpoiTest(unittest.TestCase):
+class PictureSpoiTest(unittest.TestCase):
+    """add_pictures: one SPOI per picture, DRSP {TEXC, MDID} like each vanilla one; no sharing."""
+
     def setUp(self):
         from dsfforza.formats import chnk
 
@@ -296,23 +293,25 @@ class SharedPictureSpoiTest(unittest.TestCase):
     def pictures(self, n):
         return {f"dsfforza_test_{i}": b"DDS " + bytes([i]) * 16 for i in range(n)}
 
-    def test_at_most_a_slot_to_a_spoi(self):
+    def test_one_spoi_per_picture(self):
         from dsfforza.formats import chnk
+        from dsfforza.formats.vehicle_mesh import child
 
-        # Two free root entries: 8 pictures go 4 to a SPOI, each readable by name.
-        report = gui_assets.add_pictures(VANILLA_GUI, self.out, self.pictures(8), root_limit=self.vanilla + 2)
-        self.assertEqual(report["pictures_per_item"], 4)
+        pictures = self.pictures(8)
+        gui_assets.add_pictures(VANILLA_GUI, self.out, pictures, root_limit=self.vanilla + 8)
         with self.out.open("rb") as stream:
             root = chnk.read_chunk(stream, 0)
             records = gui_assets.read_tables(stream, root)["records"]
-            per_root = {}
-            for _, index, _ in records:
-                per_root[index] = per_root.get(index, 0) + 1
-            self.assertEqual(max(per_root.values()), 4)
-            for name, dds in self.pictures(8).items():
+            new = [index for _, index, _ in records if index >= self.vanilla]  # appended after the vanilla root
+            self.assertEqual(len(new), 8)
+            self.assertEqual(len(set(new)), 8)
+            for index in new:
+                drsp = child(child(root.entries[index], "MDXN"), "DRSP")
+                self.assertEqual([c.tag for c in drsp.children], ["TEXC", "MDID"])
+            for name, dds in pictures.items():
                 self.assertEqual(gui_assets.find_picture(stream, root, name), dds)
 
-    def test_more_than_a_slot_holds_is_refused(self):
+    def test_more_than_the_root_holds_is_refused(self):
         with self.assertRaises(ValueError):
-            gui_assets.add_pictures(VANILLA_GUI, self.out, self.pictures(9), root_limit=self.vanilla + 2)
+            gui_assets.add_pictures(VANILLA_GUI, self.out, self.pictures(9), root_limit=self.vanilla + 8)
         self.assertFalse(self.out.exists())

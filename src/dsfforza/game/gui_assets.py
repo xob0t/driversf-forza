@@ -161,17 +161,15 @@ def append_patch(source: Path, data: bytearray, root, replace: dict, add: list) 
     return data
 
 
-# How many pictures one SPOI can hold. The game loads a gui.sp item (kind 0, the car pictures)
-# into one slot of graphics pool 19, "GUI Image large": 0x80 SYS range nodes over its 10 slots
-# (pool tables 0x00FD25D0 and 0x00FD2678), so 12 per slot, 3 of them taken when the slot is set
-# up. Each texture takes two render objects from the slot (FUN_00BBA890: 0x28 and 0x40 bytes),
-# one range node each. So a slot holds (12 - 3) // 2 = 4 textures; the 10th object finds no free
-# node and the game reads address 0 at 0x00BB47EC (both crash dumps of issue #540, whose slot
-# held 4 1/2 textures; research/spool-limits.md, "Graphics pool slots").
-PICTURE_SLOT_NODES = 0x80 // 10
-PICTURE_SLOT_SETUP_NODES = 3
-PICTURE_NODES_PER_TEXTURE = 2
-PICTURES_PER_SPOI = (PICTURE_SLOT_NODES - PICTURE_SLOT_SETUP_NODES) // PICTURE_NODES_PER_TEXTURE
+# One picture per SPOI, as every SPOI of the vanilla gui.sp holds one TEXC. The game loads a
+# gui.sp item (kind 0, the car pictures) into one slot of graphics pool 19, "GUI Image large":
+# 0x80 SYS range nodes over its 10 slots (pool tables 0x00FD25D0 and 0x00FD2678), 12 per slot, 3
+# taken when the slot is set up, and each texture takes two render objects (FUN_00BBA890: 0x28
+# and 0x40 bytes), one node each: room for 4 textures. Items that held several pictures (shared
+# SPOIs, written here until issue #540) ran a slot out of nodes, and the game read address 0 at
+# 0x00BB47EC: 5 pictures to an item on the garage page, and 3 to an item when leaving it, where
+# one slot held 4 1/2 textures, more than one load of such an item (research/gui-assets.md,
+# "Shared SPOIs crash the garage").
 
 
 def add_pictures(
@@ -179,12 +177,10 @@ def add_pictures(
 ) -> dict:
     """Write a copy of gui.sp with `pictures` (name -> DDS) added. Names that
     already exist get their image replaced in the copy instead (a new SPOI,
-    the name pointed at it). One SPOI per picture while the root stays under
-    `root_limit` entries (gui.sp: 923, so 177 pictures); beyond that several
-    pictures share a SPOI (one TEXC each in its DRSP), each with its own SPOL
-    UID and SSLP spool ID pointing at the shared root entry, at most
-    PICTURES_PER_SPOI to a SPOI (a fuller one crashes the garage). More
-    pictures than that fits raise ValueError. Returns a report."""
+    the name pointed at it). One SPOI per picture, so the root must have room
+    for them under `root_limit` entries (gui.sp: 923, so 177 pictures with the
+    vanilla reader; dsfforza.asi [archive] reads more); more raise ValueError.
+    Returns a report."""
     with source.open("rb") as stream:
         root = chnk.read_chunk(stream, 0)
         t = read_tables(stream, root)
@@ -194,38 +190,27 @@ def add_pictures(
     used_uids = set(t["order"]) | set(t["names"].values())
     names, order, records = dict(t["names"]), list(t["order"]), list(t["records"])
     new_entries, report = [], {"added": [], "replaced": []}
-    room = max(1, root_limit - len(root.entries))
-    per_item = max(1, -(-len(pictures) // room))
-    if per_item > PICTURES_PER_SPOI:
+    room = max(0, root_limit - len(root.entries))
+    if len(pictures) > room:
         raise ValueError(
-            f"{len(pictures)} pictures in {room} free root entries need {per_item} to a SPOI; "
-            f"a garage picture slot holds {PICTURES_PER_SPOI}. Raise root_limit (dsfforza.asi [archive] "
-            "reads more entries)"
+            f"{len(pictures)} pictures, room for {room} under {root_limit} root entries (one SPOI each); "
+            "raise root_limit (dsfforza.asi [archive] reads more entries)"
         )
-    items = list(pictures.items())
-    for start in range(0, len(items), per_item):
+    for n, (name, dds) in enumerate(pictures.items()):
         spoi = copy.deepcopy(template)
         drsp = child(child(spoi, "MDXN"), "DRSP")
-        texc_template = _texc(spoi)
-        mdid = child(drsp, "MDID")
-        texcs, uids = [], []
-        for n, (name, dds) in enumerate(items[start : start + per_item], start):
-            uid = _new_uid(uid_seed + n, used_uids)
-            used_uids.add(uid)
-            texc = copy.deepcopy(texc_template)
-            child(texc, "UIDC").payload = uid
-            child(texc, "DXTC").payload = dds
-            texcs.append(texc)
-            uids.append(uid)
-            h = name_hash(name)
-            (report["replaced"] if h in names else report["added"]).append(name)
-            names[h] = uid
-            records.append((len(order), len(root.entries) + len(new_entries), 0))
-            order.append(uid)
-        drsp.children = texcs + [mdid]
-        mdid.payload = b"".join(uids)
+        texc = _texc(spoi)
+        uid = _new_uid(uid_seed + n, used_uids)
+        used_uids.add(uid)
+        child(texc, "UIDC").payload = uid
+        child(texc, "DXTC").payload = dds
+        child(drsp, "MDID").payload = uid
+        h = name_hash(name)
+        (report["replaced"] if h in names else report["added"]).append(name)
+        names[h] = uid
+        records.append((len(order), len(root.entries) + len(new_entries), 0))
+        order.append(uid)
         new_entries.append(spoi)
-    report["pictures_per_item"] = per_item
 
     # The new SSIC: same chunk layout, tables rebuilt.
     ssic = copy.deepcopy(t["ssic"])

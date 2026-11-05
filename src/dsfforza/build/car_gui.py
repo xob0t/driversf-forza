@@ -45,9 +45,9 @@ FONTS = Path("media") / "Fonts.fchunk"
 LOCALE = Path("Locale")
 # The generated gui.sp is only ever read through dsfforza.asi ([archive] redirect_list), whose CHNK
 # reader takes up to [archive] max_entries root entries (tools/asi/dsfforza.ini; mod_archive.cpp
-# g_max_entries), so every picture gets its own SPOI, as in the vanilla gui.sp. With the vanilla
-# reader's 1100, 721 pictures went 5 to a SPOI and crashed the garage (gui_assets.PICTURES_PER_SPOI,
-# issue #540).
+# g_max_entries), so there is room for a SPOI per picture, as in the vanilla gui.sp. With the
+# vanilla reader's 1100, 721 pictures went 5 to a SPOI and 360 went 3 to a SPOI, and both crashed
+# the garage (gui_assets.add_pictures, issue #540).
 GUI_ROOT_LIMIT = 16384
 
 
