@@ -250,3 +250,69 @@ class VanillaFontEmblemTest(unittest.TestCase):
         codes, has = car_gui.font_state(out)
         self.assertTrue(has)
         self.assertEqual(codes, car_gui.font_state(VANILLA_FONTS)[0])
+
+
+class PictureRootLimitTest(unittest.TestCase):
+    """The packages' gui.sp gets one SPOI per picture (issue #540: 721 pictures 5 to a SPOI crashed
+    the garage), and a shared SPOI never holds more than a garage picture slot does."""
+
+    def test_slot_capacity(self):
+        # 12 range nodes per "GUI Image large" slot, 3 for its setup, 2 per texture (gui_assets).
+        self.assertEqual(gui_assets.PICTURE_SLOT_NODES, 12)
+        self.assertEqual(gui_assets.PICTURES_PER_SPOI, 4)
+
+    def test_generate_passes_the_plugin_limit(self):
+        tmp = Path(tempfile.mkdtemp())
+        game = tmp / "game"
+        (game / "media").mkdir(parents=True)
+
+        def add_pictures(source, out, pictures, **kwargs):
+            out.write_bytes(b"gui")
+            return {}
+
+        with (
+            mock.patch.object(car_gui, "font_state", return_value=(set(), False)),
+            mock.patch.object(car_gui, "plan", return_value=({}, {}, {}, {"dsfforza_x": b"DDS"})),
+            mock.patch.object(gui_assets, "read_strings", return_value={}),
+            mock.patch.object(gui_assets, "add_pictures", side_effect=add_pictures) as add,
+        ):
+            car_gui.generate(game, [{"id": 1, "key": "k", "manifest": {}, "folder": tmp}], log=lambda _: None)
+        self.assertEqual(add.call_args.kwargs["root_limit"], car_gui.GUI_ROOT_LIMIT)
+
+
+VANILLA_GUI = Path(__file__).resolve().parents[1] / "out" / "vanilla" / "Install" / "gui.sp"
+
+
+@unittest.skipUnless(VANILLA_GUI.exists(), "needs out/vanilla/Install/gui.sp (tools/worktree-setup.ps1)")
+class SharedPictureSpoiTest(unittest.TestCase):
+    def setUp(self):
+        from dsfforza.formats import chnk
+
+        with VANILLA_GUI.open("rb") as stream:
+            self.vanilla = len(chnk.read_chunk(stream, 0).entries)
+        self.out = Path(tempfile.mkdtemp()) / "gui.sp"
+        self.addCleanup(lambda: self.out.unlink(missing_ok=True))
+
+    def pictures(self, n):
+        return {f"dsfforza_test_{i}": b"DDS " + bytes([i]) * 16 for i in range(n)}
+
+    def test_at_most_a_slot_to_a_spoi(self):
+        from dsfforza.formats import chnk
+
+        # Two free root entries: 8 pictures go 4 to a SPOI, each readable by name.
+        report = gui_assets.add_pictures(VANILLA_GUI, self.out, self.pictures(8), root_limit=self.vanilla + 2)
+        self.assertEqual(report["pictures_per_item"], 4)
+        with self.out.open("rb") as stream:
+            root = chnk.read_chunk(stream, 0)
+            records = gui_assets.read_tables(stream, root)["records"]
+            per_root = {}
+            for _, index, _ in records:
+                per_root[index] = per_root.get(index, 0) + 1
+            self.assertEqual(max(per_root.values()), 4)
+            for name, dds in self.pictures(8).items():
+                self.assertEqual(gui_assets.find_picture(stream, root, name), dds)
+
+    def test_more_than_a_slot_holds_is_refused(self):
+        with self.assertRaises(ValueError):
+            gui_assets.add_pictures(VANILLA_GUI, self.out, self.pictures(9), root_limit=self.vanilla + 2)
+        self.assertFalse(self.out.exists())

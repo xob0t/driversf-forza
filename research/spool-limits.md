@@ -1,6 +1,6 @@
 # Vehicle spool size limits
 
-Updated: 2026-10-29
+Updated: 2026-11-05
 
 Where `Driver.exe` 1.04 sizes the memory a spooled vehicle uses, which of
 those sizes a bigger VEHC can hit, and how to raise each one. Addresses are
@@ -381,6 +381,28 @@ blocks per render method, and the MDID list (8 bytes per UID). Nothing calls
 it with memtype 1, so the GPU part is unused on PC. Each allocation also
 takes about one range node (a trailing split). Vertex, index and texture
 data don't go here (see the next section).
+
+The calls, from the disassembly (confirmed-static; the slot state in the
+#540 dumps confirms it at runtime). ResourceObjectPool_Allocate's `this` is
+the pool owner `{u32 pool, u32 slot, u32 memtype, ...}`; the slot's range
+allocator is `[owner + 0xC + pool * 0x5C] + slot * 0x60 + memtype * 0x2C`, and
+ResourceIndexAllocator_Allocate (0x00BB5290) gets `(size, align, pool, slot,
+memtype)` on the stack (it reuses the second slot for the range end).
+Allocator fields: +0x04/+0x08 node capacity, +0x0C free-node head, +0x10
+offsets, +0x14 nodes used, +0x18 bytes, +0x1C bytes used, +0x28 nodes (16
+bytes each). FUN_00BB4750 finds a free range big enough; ResourceIndexPool_Acquire
+(0x00BB47D0) then pops a node for the split with no check, so a slot that
+still has bytes but no free node reads address 0 at 0x00BB47EC. There `EBX`
+is the free range's node index and `ESI`/`EDI` its neighbours' indices, not
+a pool or kind: read the pool and slot from the allocator's arguments at
+`[ESP+0x38]` and `[ESP+0x3C]` (the frame below the return address 0x00BB54EB).
+
+The other pools of the same tables, for reference (slots, SYS KiB, SYS
+nodes): 17 "GUI Image small" 16, 0x10, 0x80; 18 "GUI Image medium" 2, 0x10,
+0x80; 19 "GUI Image large" 10, 0x10, 0x80; 13 "Character Spooled" 4, 0x100,
+0x80. Pool 19 holds gui.sp's kind-0 items (the garage pictures): 12 nodes a
+slot, so at most 4 textures (`gui-assets.md`, "A shared SPOI holds at most 4
+pictures"; issue #540, the garage crash of the v0.2.0 install).
 
 From those sizes the Desanne uses about 31 KB and 300 nodes of its slot,
 and e5-big about 50 KB and 450 nodes (estimates). The node count runs out

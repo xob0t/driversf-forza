@@ -161,6 +161,19 @@ def append_patch(source: Path, data: bytearray, root, replace: dict, add: list) 
     return data
 
 
+# How many pictures one SPOI can hold. The game loads a gui.sp item (kind 0, the car pictures)
+# into one slot of graphics pool 19, "GUI Image large": 0x80 SYS range nodes over its 10 slots
+# (pool tables 0x00FD25D0 and 0x00FD2678), so 12 per slot, 3 of them taken when the slot is set
+# up. Each texture takes two render objects from the slot (FUN_00BBA890: 0x28 and 0x40 bytes),
+# one range node each. So a slot holds (12 - 3) // 2 = 4 textures; the 10th object finds no free
+# node and the game reads address 0 at 0x00BB47EC (both crash dumps of issue #540, whose slot
+# held 4 1/2 textures; research/spool-limits.md, "Graphics pool slots").
+PICTURE_SLOT_NODES = 0x80 // 10
+PICTURE_SLOT_SETUP_NODES = 3
+PICTURE_NODES_PER_TEXTURE = 2
+PICTURES_PER_SPOI = (PICTURE_SLOT_NODES - PICTURE_SLOT_SETUP_NODES) // PICTURE_NODES_PER_TEXTURE
+
+
 def add_pictures(
     source: Path, out: Path, pictures: dict[str, bytes], uid_seed: int = 0x2E5A00, root_limit: int = chnk.ENTRY_LIMIT
 ) -> dict:
@@ -169,8 +182,9 @@ def add_pictures(
     the name pointed at it). One SPOI per picture while the root stays under
     `root_limit` entries (gui.sp: 923, so 177 pictures); beyond that several
     pictures share a SPOI (one TEXC each in its DRSP), each with its own SPOL
-    UID and SSLP spool ID pointing at the shared root entry (untested in
-    game). Returns a report."""
+    UID and SSLP spool ID pointing at the shared root entry, at most
+    PICTURES_PER_SPOI to a SPOI (a fuller one crashes the garage). More
+    pictures than that fits raise ValueError. Returns a report."""
     with source.open("rb") as stream:
         root = chnk.read_chunk(stream, 0)
         t = read_tables(stream, root)
@@ -182,6 +196,12 @@ def add_pictures(
     new_entries, report = [], {"added": [], "replaced": []}
     room = max(1, root_limit - len(root.entries))
     per_item = max(1, -(-len(pictures) // room))
+    if per_item > PICTURES_PER_SPOI:
+        raise ValueError(
+            f"{len(pictures)} pictures in {room} free root entries need {per_item} to a SPOI; "
+            f"a garage picture slot holds {PICTURES_PER_SPOI}. Raise root_limit (dsfforza.asi [archive] "
+            "reads more entries)"
+        )
     items = list(pictures.items())
     for start in range(0, len(items), per_item):
         spoi = copy.deepcopy(template)
