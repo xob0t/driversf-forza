@@ -29,6 +29,12 @@ that part as the host's (picture) or the game's own for the maker or model.
       "source": {"pipeline": "dsfforza", "game": "FH1", "media": "BMW_M3E30_91"}
     }
 
+Beside the packages, `pack` writes the shared assets: what the manager keeps once for all
+its cars rather than in every package (research/car-packages.md, "Shared assets").
+
+    forza_emblem.dds  the garage card emblem texture: 512 x 256 DXT5, no mips, the Forza logo
+                      laid out like the card icon atlas (gui_assets.emblem_texture)
+
     uv run dsff car_package pack --build out/build --media BMW_M3E30_91 --out out/packages
     uv run dsff car_package validate out/packages/forza.fh1.BMW_M3E30_91.dsfcar
 """
@@ -55,6 +61,10 @@ BADGE = "badge.png"
 PLATE = "plate.png"
 MEMBERS = {MANIFEST, CAR, PICTURE, BADGE, PLATE}
 SUFFIX = ".dsfcar"
+# Shared assets, beside the packages: the garage card emblem texture, as gui_assets.build puts
+# it in Fonts.fchunk (research/gui-assets.md, "Garage card emblem"). One for every package:
+# it is the same picture whatever the build (the discs' UI4/Common/forza_logo3).
+EMBLEM = "forza_emblem.dds"
 
 # Capabilities a package can ask of dsfforza.asi; the plugin lists its own in its DLL
 # (tools/asi/src/patch.h DSF_CAPABILITIES; car_manager.plugin_capabilities reads them).
@@ -319,6 +329,30 @@ def _picture_problems(data: bytes) -> list[str]:
     return []
 
 
+def emblem_problems(data: bytes) -> list[str]:
+    """The shared emblem texture: what dsfforza.asi [hud] card_emblem binds in place of the card
+    icon atlas, so its size (gui_assets.CARD_ATLAS_SIZE): 512 x 256 DXT5, one level."""
+    try:
+        w, h, fourcc, mips = dds_info(data)
+    except (ValueError, struct.error) as error:
+        return [f"{EMBLEM}: {error}"]
+    size = _gui().CARD_ATLAS_SIZE
+    if (w, h) != size or fourcc != b"DXT5" or mips > 1 or len(data) != 128 + w * h:
+        return [f"{EMBLEM}: {w} x {h} {fourcc!r}, {len(data)} bytes, not one level of 512 x 256 DXT5 (the card atlas)"]
+    return []
+
+
+def write_emblem(out_dir: Path, isos=None) -> Path:
+    """The shared emblem texture, from the discs (gui_assets.emblem_texture), into out_dir."""
+    data = _gui().emblem_texture(isos)
+    problems = emblem_problems(data)
+    if problems:
+        raise ValueError("; ".join(problems))
+    path = out_dir / EMBLEM
+    path.write_bytes(data)
+    return path
+
+
 def _member_problems(z: zipfile.ZipFile, names: list[str], manifest: dict) -> list[str]:
     """car.sp against the manifest, and each image the manifest names."""
     out = []
@@ -489,4 +523,5 @@ def pack(build: Path, media: list[str], out_dir: Path, version: int = 1, isos=No
         path = write(out_dir / f"{manifest['key']}{SUFFIX}", manifest, car_sp, images)
         log(f"{path}: {len(car_sp) >> 10} KiB car.sp, {', '.join(sorted(images))}")
         written.append(path)
+    log(f"{write_emblem(out_dir, isos)}: the garage card emblem (shared by the packages)")
     return written

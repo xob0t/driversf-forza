@@ -15,6 +15,10 @@ What it owns, all under the game folder (no game file is written):
                                      (what the manager owns of each: ID, version, enabled, the
                                      installed car.sp's SHA-256; the rest is the car's car.json)
     dsfforza\\cars\\cars.txt           the plugin's list, "id path" per enabled car
+    dsfforza\\cars\\shared\\           the shared assets of the packages, kept for all of them:
+                                     forza_emblem.dds, the garage card emblem texture (from a
+                                     packages folder, dsfcar.EMBLEM), which goes into the
+                                     generated Fonts.fchunk (car_gui)
     dsfforza\\cars\\<key>\\            one car: the package's car.sp, manifest and images as they
                                      are (car.sp, car.json, *.png, *.dds). car.sp holds its
                                      builder's model ID; dsfforza.asi writes the listed one into
@@ -49,6 +53,10 @@ CAR_FIELDS = ("id", "version", "enabled", "sha256")  # what the state keeps of a
 CARS_DIR = Path("dsfforza") / "cars"
 STATE = "manager.json"
 LIST = "cars.txt"
+SHARED = "shared"  # dsfforza\cars\shared: no package key (dsfcar.KEY has two dots) can name it
+# A port_batch build from before the shared emblem (v0.2.0): its gui\Fonts.fchunk (the merged
+# install's font) holds the same texture, made by gui_assets.build from the discs.
+BUILD_FONTS = Path("gui") / "Fonts.fchunk"
 LUA = Path("Common") / "UserLuaScripts" / "dsfforza" / "packages.lua"
 PORTED = Path("Common") / "UserLuaScripts" / "dsfforza" / "ported.lua"
 ARCHIVE = Path("Install") / "dngvehicles.sp"
@@ -134,6 +142,13 @@ def _write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(path.name + ".tmp")
     temp.write_text(text, encoding="utf-8", newline="\n")
+    temp.replace(path)
+
+
+def _write_bytes(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(path.name + ".tmp")
+    temp.write_bytes(data)
     temp.replace(path)
 
 
@@ -270,7 +285,33 @@ class Manager:
             self.log(f"no {car_gui.GUI} and {car_gui.FONTS} in {self.gui_base}: no garage pictures, badges or plates")
             return
         cars = [{"id": i, "key": k, "manifest": self.manifest(k), "folder": self.cars_dir / k} for i, k in enabled]
-        car_gui.generate(self.game, cars, base=self.gui_base, log=self.log)
+        car_gui.generate(self.game, cars, base=self.gui_base, log=self.log, emblem=self.emblem())
+
+    # --- shared assets ---
+
+    @property
+    def emblem_path(self) -> Path:
+        return self.cars_dir / SHARED / dsfcar.EMBLEM
+
+    def emblem(self) -> bytes | None:
+        """The kept garage card emblem texture, or None (none installed, or not a good one:
+        verify says so)."""
+        try:
+            data = self.emblem_path.read_bytes()
+        except OSError:
+            return None
+        return None if dsfcar.emblem_problems(data) else data
+
+    def install_emblem(self, data: bytes) -> None:
+        """Keep the emblem texture for every car (the next GUI generation puts it in the font).
+        Packages from different builds share it: it is the same picture from any build."""
+        problems = dsfcar.emblem_problems(data)
+        if problems:
+            raise SystemExit("; ".join(problems))
+        if self.emblem() == data:
+            return
+        _write_bytes(self.emblem_path, data)
+        self.log(f"{self.emblem_path}: the garage card emblem")
 
     def lua(self, enabled: list[tuple[int, str]]) -> str:
         """packages.lua: what ported.lua gives register.lua per car, for the enabled packages."""
@@ -455,6 +496,7 @@ class Manager:
                 shutil.rmtree(gone)
         (self.cars_dir / LIST).unlink(missing_ok=True)
         (self.game / LUA).unlink(missing_ok=True)
+        shutil.rmtree(self.cars_dir / SHARED, ignore_errors=True)
         car_gui.clear(self.game)
         state = self.cars_dir / STATE
         if forget_ids:
@@ -540,6 +582,8 @@ class Manager:
                 out.append(f"{key}: {self.cars_dir / key / dsfcar.MANIFEST} is missing or not JSON (left out)")
             if car["id"] in in_archive:
                 out.append(f"{key}: ID {car['id']} is in {self.archive} now (the plugin leaves the package out)")
+        if self.emblem_path.exists() and self.emblem() is None:
+            out.append(f"{self.emblem_path} is not a garage card emblem texture (left out); install the packages again")
         expected = self.listed()
         for i in sorted(set(expected) | set(listed)):
             if expected.get(i) != listed.get(i):
@@ -570,7 +614,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         nargs="+",
         help=".dsfcar files, or folders: every .dsfcar in them (a roster's 573"
-        " paths don't fit on one Windows command line)",
+        " paths don't fit on one Windows command line) and the shared garage card emblem beside them",
     )
     i.add_argument("--force", action="store_true", help="install over a newer version")
     for name, text in KEY_COMMANDS.items():
@@ -618,6 +662,22 @@ def package_paths(paths: list[Path]) -> list[Path]:
     return out
 
 
+def shared_emblem(paths: list[Path]) -> bytes | None:
+    """The garage card emblem texture beside the packages given: a folder's forza_emblem.dds
+    (dsfcar.EMBLEM, port_batch --packages writes it), else, for a port_batch build's packages
+    folder from before it (v0.2.0), the same texture in that build's gui\\Fonts.fchunk. The last
+    folder that has one wins (they are the same picture). None: keep what the manager has."""
+    from dsfforza.game import gui_assets
+
+    found = None
+    for folder in (p if p.is_dir() else p.parent for p in paths):
+        if (folder / dsfcar.EMBLEM).is_file():
+            found = (folder / dsfcar.EMBLEM).read_bytes()
+        elif (folder.parent / "dngvehicles.json").is_file() and (folder.parent / BUILD_FONTS).is_file():
+            found = gui_assets.font_texture(folder.parent / BUILD_FONTS, gui_assets.FORZA_LOGO_UID) or found
+    return found
+
+
 def run_key_command(m: Manager, cmd: str, keys: list[str]) -> None:
     """enable, disable, remove or reassign each key; one GUI generation for all of them.
     enable and reassign check the plugin for all of them first, so a refusal writes nothing."""
@@ -656,7 +716,12 @@ def main(argv: list[str] | None = None) -> None:
         paths = package_paths(args.packages)
         # The plugin first, for every package: a refusal then writes nothing.
         m.require_plugin({r for p in paths for r in dsfcar.requires_of(p)}, "install")
+        emblem = shared_emblem(args.packages)
+        if emblem is not None and dsfcar.emblem_problems(emblem):
+            raise SystemExit("; ".join(dsfcar.emblem_problems(emblem)))  # before anything changes
         with m.batch():
+            if emblem is not None:
+                m.install_emblem(emblem)
             for path in paths:
                 m.install(path, force=args.force)
     elif args.cmd in KEY_COMMANDS:

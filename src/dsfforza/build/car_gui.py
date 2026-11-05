@@ -15,8 +15,11 @@ never written. What a car gets is what gui_assets.build gives a ported car with
   plate glyph from plate.png (ModelGlyph, one per text) and a ModelName string;
 - the garage picture from picture.dds (Picture1 "dsfforza_<media>", the name register.lua
   checks a hud entry against);
-- GarageEmblem = 1 when the game's Fonts.fchunk already holds the Forza emblem texture
-  (a merged install's: the manager has no disc to make it from).
+- GarageEmblem = 1 when the generated Fonts.fchunk holds the Forza emblem texture
+  (gui_assets.FORZA_LOGO_UID): the game's already has it (a merged install's), or the
+  manager has the build's shared copy (dsfcar.EMBLEM), which goes into the font as
+  gui_assets.build puts it there. dsfforza.asi [hud] card_emblem then shows the Forza logo on
+  the car's garage card instead of the SF disc (research/gui-assets.md, "Garage card emblem").
 
 Codes and string IDs are taken where the game's current files have none: 16-bit codes from
 WIDE_FIRST (256) up past every code the vehicles_font has; strings from FIRST_STRING_ID
@@ -173,13 +176,15 @@ def clear(game: Path) -> None:
     (game / HUD_LUA).unlink(missing_ok=True)
 
 
-def generate(game: Path, cars: list[dict], base: Path | None = None, log=print) -> dict:
+def generate(game: Path, cars: list[dict], base: Path | None = None, log=print, emblem: bytes | None = None) -> dict:
     """Write the generated files for `cars` ([{id, key, manifest, folder}], the enabled
     packages) under <game>\\dsfforza\\generated, the redirect list and packages_hud.lua.
     Returns a report. Built in a new folder and swapped in, so a failure leaves the last
     generation in place. `base` holds the files they are made from (default the game folder:
     its gui.sp, Fonts.fchunk and Locale; another folder when the game folder is an overlay
-    laid over a game, as in the VM tests)."""
+    laid over a game, as in the VM tests). `emblem`: the garage card emblem texture (the
+    manager's shared copy, dsfcar.EMBLEM), added to the Fonts.fchunk copy unless the game's
+    already has it; with either, every car gets GarageEmblem = 1."""
     import shutil
 
     g = _gui()
@@ -194,19 +199,21 @@ def generate(game: Path, cars: list[dict], base: Path | None = None, log=print) 
     used_strings = set()
     for lang in langs:
         used_strings |= set(g.read_strings(base / LOCALE / lang / "global.fchunk"))
-    codes, emblem = font_state(base / FONTS)
-    hud, glyphs, new_strings, pictures = plan(cars, strings, codes, used_strings, emblem=emblem)
+    codes, has_emblem = font_state(base / FONTS)
+    textures = {} if has_emblem or emblem is None else {g.FORZA_LOGO_UID: emblem}
+    hud, glyphs, new_strings, pictures = plan(cars, strings, codes, used_strings, emblem=has_emblem or bool(textures))
     out = game / GENERATED
     staged = out.with_name(out.name + ".new")
     shutil.rmtree(staged, ignore_errors=True)
     staged.mkdir(parents=True)
-    redirects, report = [], {"cars": len(cars), "glyphs": len(glyphs), "strings": len(new_strings)}
+    redirects = []
+    report = {"cars": len(cars), "glyphs": len(glyphs), "strings": len(new_strings), "emblem": bool(textures)}
     try:
         if pictures:
             report["gui"] = g.add_pictures(base / GUI, staged / "gui.sp", pictures)
             redirects.append((GUI, GENERATED / "gui.sp"))
-        if glyphs:
-            report["fonts"] = g.add_glyphs(base / FONTS, staged / "Fonts.fchunk", glyphs)
+        if glyphs or textures:
+            report["fonts"] = g.add_glyphs(base / FONTS, staged / "Fonts.fchunk", glyphs, textures)
             redirects.append((FONTS, GENERATED / "Fonts.fchunk"))
         if new_strings:
             for lang in langs:
@@ -230,6 +237,6 @@ def generate(game: Path, cars: list[dict], base: Path | None = None, log=print) 
     report["redirects"] = [str(a) for a, _ in redirects]
     log(
         f"generated: {len(pictures)} pictures, {len(glyphs)} glyphs, {len(new_strings)} strings "
-        f"({len(langs)} languages) for {len(cars)} cars"
+        f"({len(langs)} languages){', the garage card emblem' if textures else ''} for {len(cars)} cars"
     )
     return report

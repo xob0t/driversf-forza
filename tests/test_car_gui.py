@@ -140,3 +140,74 @@ class PlanTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EmblemTest(unittest.TestCase):
+    """The manager's emblem texture goes into the Fonts.fchunk copy, and with it GarageEmblem."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.game = self.tmp / "game"
+        (self.game / "media").mkdir(parents=True)
+        (self.game / car_gui.FONTS).write_bytes(b"fonts")
+        folder = self.tmp / "XYZ_Car_10"
+        folder.mkdir()
+        manifest = {"names": {"maker_group": "XYZ", "model": "CAR", "family": None}, "source": {"media": "XYZ_Car_10"}}
+        self.cars = [{"id": 7, "key": "forza.fh1.XYZ_Car_10", "manifest": manifest, "folder": folder}]
+        for name, value in (("vanilla_codes", ({}, {})), ("read_strings", {})):
+            patcher = mock.patch.object(gui_assets, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def generate(self, *, font_has_it: bool, emblem: bytes | None):
+        def add_glyphs(*args):
+            args[1].write_bytes(b"copy")  # (fonts, out, glyphs, textures)
+            return {}
+
+        with (
+            mock.patch.object(car_gui, "font_state", return_value=(set(), font_has_it)),
+            mock.patch.object(gui_assets, "add_glyphs", side_effect=add_glyphs) as add,
+        ):
+            report = car_gui.generate(self.game, self.cars, emblem=emblem, log=lambda _: None)
+        hud = (self.game / car_gui.HUD_LUA).read_text()
+        return report, add, hud
+
+    def test_emblem_goes_into_the_font(self):
+        report, add, hud = self.generate(font_has_it=False, emblem=b"DDS emblem")
+        self.assertEqual(add.call_args.args[2:], ({}, {gui_assets.FORZA_LOGO_UID: b"DDS emblem"}))  # no glyphs
+        self.assertTrue(report["emblem"])
+        self.assertIn("GarageEmblem = 1", hud)
+        redirect = (self.game / car_gui.GENERATED / car_gui.REDIRECT).read_text()
+        self.assertIn(r"media\Fonts.fchunk|dsfforza\generated\Fonts.fchunk", redirect)
+
+    def test_a_font_that_has_it_gets_no_second_copy(self):
+        report, add, hud = self.generate(font_has_it=True, emblem=b"DDS emblem")
+        add.assert_not_called()  # no glyphs, nothing to add: the game's font as it is
+        self.assertFalse(report["emblem"])
+        self.assertIn("GarageEmblem = 1", hud)
+
+    def test_no_emblem_no_field(self):
+        _, add, hud = self.generate(font_has_it=False, emblem=None)
+        add.assert_not_called()
+        self.assertNotIn("GarageEmblem", hud)
+
+
+VANILLA_FONTS = Path(__file__).resolve().parents[1] / "out" / "vanilla" / "media" / "Fonts.fchunk"
+
+
+@unittest.skipUnless(VANILLA_FONTS.exists(), "needs out/vanilla/media/Fonts.fchunk (tools/worktree-setup.ps1)")
+class VanillaFontEmblemTest(unittest.TestCase):
+    def test_emblem_round_trip(self):
+        """add_glyphs with the emblem alone: the copy has it (font_texture reads it back, font_state
+        sees it) and the vanilla glyphs are the same; the vanilla font has none."""
+        from dsfforza.build import dsfcar
+
+        emblem = gui_assets.picture_dds(gui_assets.forza_emblem_image(gui_assets.maker_badge("FORZA")))
+        self.assertEqual(dsfcar.emblem_problems(emblem), [])
+        self.assertIsNone(gui_assets.font_texture(VANILLA_FONTS, gui_assets.FORZA_LOGO_UID))
+        out = Path(tempfile.mkdtemp()) / "Fonts.fchunk"
+        gui_assets.add_glyphs(VANILLA_FONTS, out, {}, {gui_assets.FORZA_LOGO_UID: emblem})
+        self.assertEqual(gui_assets.font_texture(out, gui_assets.FORZA_LOGO_UID), emblem)
+        codes, has = car_gui.font_state(out)
+        self.assertTrue(has)
+        self.assertEqual(codes, car_gui.font_state(VANILLA_FONTS)[0])

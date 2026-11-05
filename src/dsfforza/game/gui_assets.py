@@ -1519,6 +1519,31 @@ def emblem_dds(ui: ForzaUI, template: bytes | None = None) -> tuple[bytes, Image
     return picture_dds(img, template), img
 
 
+def emblem_texture(isos: list[Path] | None = None, gui: Path | None = None) -> bytes:
+    """The emblem texture as build puts it in Fonts.fchunk: from the discs' Forza logo, with
+    the header of `gui` (default the vanilla gui.sp)'s nissan_370z picture, as build's."""
+    gui = gui or vanilla_file("Install/gui.sp")
+    with gui.open("rb") as stream:
+        template = find_picture(stream, chnk.read_chunk(stream, 0), "nissan_370z")
+    ui = ForzaUI.of(isos)
+    try:
+        return emblem_dds(ui, template)[0]
+    finally:
+        ui.close()
+
+
+def font_texture(fonts: Path, uid: bytes) -> bytes | None:
+    """The DDS of texture `uid` in the vehicles_font package of a Fonts.fchunk, or None (the
+    vanilla one has no emblem texture; build's and a merged install's have FORZA_LOGO_UID)."""
+    with fonts.open("rb") as stream:
+        root = chnk.read_chunk(stream, 0)
+        _, pk = font_package(stream, root)
+        for texc in child(child(pk, "MDXN"), "DRSP").children:
+            if texc.tag == "TEXC" and payload(stream, child(texc, "UIDC"))[:8] == uid:
+                return payload(stream, child(texc, "DXTC"))
+    return None
+
+
 # --- names: Locale/<language>/global.fchunk and vehicleStats ------------------------------
 #
 # global.fchunk SPOO/NONR/SLRR: SLRH {u32 count, ...}, SLRC count x {u32 byte
