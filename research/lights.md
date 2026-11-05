@@ -56,8 +56,10 @@ later PR replaced a rule, the earlier section says so in one line.
   by their corners, that straddles the centre line within its colour's side lamps is a centre lamp,
   [#405](#centre-lamp-pieces-in-side-subsections-issue-405),
   [#430](#centre-lamps-and-the-high-stop-lamp-issue-430)); each (function, side, end) group splits into lamps
-  0.2 m apart; centre tail lamps more than 8 cm above the side tails are the
-  high stop lamp (0x02; `HIGH_BRAKE_RISE`, unknown: #430). A head lamp technique behind the wheelbase
+  0.2 m apart. On FH1 cars, rear tail lamps Forza lights only when braking
+  (`tail_light`, `lights_gls_tail_light`, and red lenses over them) are stop
+  lamps (0x02); on FM4 cars centre tail lamps more than 8 cm above the side
+  tails are the high stop lamp (0x02; `HIGH_BRAKE_RISE`, unknown: #512). A head lamp technique behind the wheelbase
   midpoint is placed like a clear lens, not as a head lamp, and a lamp the
   red-drawn move empties takes no entry
   ([#264](#head-lamp-techniques-at-the-rear-issue-264)).
@@ -2951,8 +2953,15 @@ take the side they are on. Evidence:
   centre lamps (the ARX-01b's tails at |x| 0.06 to 0.12, the Integra Type R's and NSX's reverse
   lamps in their tail units).
 
-**High stop lamp (unknown, kept).** Master's rule stays: the centre tail lamps whose mean height is
-`HIGH_BRAKE_RISE` (8 cm) above the side tails' brake only (0x02). Four geometric replacements were
+**High stop lamp: FH1 from the lamp states (confirmed-static), FM4 unknown (#512).** On FH1 cars a
+rear tail lamp triangle Forza lights only when braking is a stop lamp (0x02), at the centre and the
+sides alike, and a red lens takes the state of the tail lamps behind it, per lens piece: a piece
+whose lamps behind are all brake only is a stop lamp, its triangles over no lamp included (the CTS-V
+coupe 11's wide lens over a narrow `tail_light` strip) (`_brake_only`, `FH1_BRAKE_ONLY`; #422 item 3).
+Side effect, open: clear lenses and reflectors take the nearest lamp centre (`_place_clear`), so on 23
+FH1 cars some move from a reverse or indicator lamp onto a tail cluster the stop lamps split off (#558). On FM4 cars master's rule stays, `TODO(fit, #512)`: the centre tail
+lamps whose mean height is `HIGH_BRAKE_RISE` (8 cm) above the side tails' brake only. Four geometric
+replacements were
 tried in #430's worktree (lowest corner above every other tail; mean height above the others',
 with and without joining touching pieces into one lamp; every centre red lamp, as on vanilla); each
 was chosen after the roster survey showed the last one's failures, which is fitting, and none came

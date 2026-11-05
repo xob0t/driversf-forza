@@ -576,6 +576,48 @@ def test_a_clear_lens_bar_joining_the_head_lamps_is_split_without_a_head_techniq
     assert sides == {(lights.HEAD, "L"), (lights.HEAD, "R")}, sides
 
 
+def test_fh1_brake_only_tail_lamps_are_stop_lamps():
+    # #422 item 3, #430: on FH1 cars, Forza's lamp states decide. `tail_light` glows only when
+    # braking (BrakeColor x brake), so its pieces are stop lamps (0x02) at the centre and the sides
+    # alike; `taillightst` and `taillight2S` glow while running and stay tail lamps (0x18). A red
+    # lens takes the state of the lamp behind it (the Charger SRT8 12: a ring of `taillightst`
+    # under a red lens, the high stop `tail_light`; the RUF Yellowbird: a red lens bar over
+    # `taillight2S`).
+    stop = _box("trunk", "tail_light", -0.12, 0.12, 0.88, 0.91, -2.2)
+    side = _box("taillightL", "tail_light", 0.57, 0.76, 0.69, 0.78, -2.2)
+    running = _box("taillightR", "taillight2S", -0.78, -0.57, 0.67, 0.80, -2.2)
+    over_stop = _box("glassLTL", "detail_glass_red", 0.56, 0.79, 0.66, 0.81, -2.21)
+    over_running = _box("glassRTL", "detail_glass_red", -0.79, -0.56, 0.66, 0.81, -2.21)
+    car = [stop, side, running, over_stop, over_running]
+    plan = lights.LampPlan.build(car, _Place(), 0.0, fh1=True)
+    got = {s.name: _lamp_of(plan, s)[:2] for s in car}
+    assert got == {
+        "trunk": (lights.BRAKE, "C"),
+        "taillightL": (lights.BRAKE, "L"),
+        "taillightR": (lights.TAIL, "R"),
+        "glassLTL": (lights.BRAKE, "L"),
+        "glassRTL": (lights.TAIL, "R"),
+    }, got
+    types = {plan.lamps[_lamp_of(plan, s)].type for s in (stop, side)}
+    assert types == {0x02}, types
+    # FM4 cars (and FH1 cars planned as before) keep the height rule: the side tail_light pieces stay
+    # tail lamps, the centre one 0.1 m above them is the high stop lamp (#512).
+    plan = lights.LampPlan.build(car, _Place(), 0.0)
+    got = {s.name: _lamp_of(plan, s)[0] for s in car}
+    assert got["taillightL"] == got["glassLTL"] == lights.TAIL and got["trunk"] == lights.BRAKE, got
+
+
+def test_fh1_wide_lens_over_a_small_stop_strip_is_a_stop_lamp():
+    # The CTS-V coupe 11's stop bar: a wide red lens over a narrow `tail_light` strip. A Forza lens
+    # has no glow of its own, so the whole lens piece takes the state of the lamp behind it, the
+    # triangles over no lamp included.
+    strip = _box("trunk", "tail_light", -0.15, 0.05, 0.94, 0.96, -2.2)  # under one lens triangle
+    lens = _box("trunk2", "detail_glass_red", -0.30, 0.30, 0.93, 0.99, -2.21)
+    plan = lights.LampPlan.build([strip, lens] + TAILS, _Place(), 0.0, fh1=True)
+    got = {plan.tri_lamp[(id(lens.subsections[0]), k)][0] for k in range(2)}
+    assert got == {lights.BRAKE}, got
+
+
 def test_centre_entries_are_those_on_the_centre_line():
     # #430: a host entry is a centre one when no other entry is nearer its mirror image than it
     # is. Vanilla 172's reverse lamps at x +-0.123 are a left and a right entry (the old 0.15 m

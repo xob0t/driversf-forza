@@ -400,7 +400,7 @@ def body_scene(
     no wheels). Lamps light as the converter's lamp plan types them (lights.LampPlan:
     function, side, colour), head lamps as 0x1D with `daytime_heads` (the built car has
     such lamps), else 0x01; how much each texel glows is Forza's alpha."""
-    from dsfforza.convert import forza2dsf, lights
+    from dsfforza.convert import dsf_materials, forza2dsf, lights
     from dsfforza.convert import forza_materials as fm
 
     car = load_car(Path(folder), media)
@@ -411,6 +411,7 @@ def body_scene(
         place,
         float(placement.get("host_axle_mid", 0.0)),
         texel=lights.texel_sampler(fm.AtlasCache(Path(folder))),
+        fh1=not dsf_materials.fm4_car(folder),  # as the converter plans it (forza2dsf.conversion)
     )
     names = [s.name for s in car.body]
     parts, origins, origin_index = [], [], {}
