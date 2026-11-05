@@ -279,6 +279,12 @@ class RegisterTrafficTest(unittest.TestCase):
         out = self.regions("return { ports = false, cars = { [2] = { regions = { 1 } } } }", [[100], [100]])
         self.assertEqual(out, [[2, 100], [100]])
 
+    def test_vanilla_off_leaves_only_the_cars(self):
+        out = self.regions(
+            "return { ports = false, vanilla = false, cars = { [2] = { regions = { 1 } } } }", [[100, 101], [100]]
+        )
+        self.assertEqual(out, [[2], []])
+
     def test_regions_stop_at_128(self):
         out = self.regions("return { ports = true }", [list(range(200, 327)), [100]])
         self.assertEqual(len(out[0]), 128)  # 127 vanilla IDs, room for one (#562)

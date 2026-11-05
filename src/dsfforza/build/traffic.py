@@ -190,79 +190,94 @@ def plan(
 ) -> list[SetReport]:
     """Apply the ambient settings to `ai` (edited in place). `ports`: the IDs of the cars in
     traffic, in key order; `key_ids`: package key -> ID for settings that name keys."""
-    from dsfforza.game import traffic_sets
-
-    # every set a mission, challenge or activity names (the pots' keys) gets its name, so its pot counts
-    named = {traffic_sets.name_hash(n): n for n in pots}
-    for ts in ai.sets:
-        if ts.name is None and ts.hash in named:
-            ts.name = named[ts.hash]
-    rng = random.Random(seed)
-    deck = list(ports)
-    rng.shuffle(deck)
-    reports: list[SetReport] = []
+    planner = _Planner(ai, ambient, ports, key_ids, slots=slots, pots=pots, seed=seed)
     configured = list(STORY_SETS) + [n for n in (ambient.get("sets") or {}) if n not in STORY_SETS]
-    touched: dict[int, str] = {}  # range -> the set whose settings changed it
-    for name in configured:
-        try:
-            ts = ai.by_name(name)
-        except KeyError:
-            continue
-        s = set_settings(ambient, name)
-        rep = SetReport(name=name, weights=s["weights"] if s["weights"] != "vanilla" or not s["blend"] else "blend")
-        vanilla_list = list(ts.lists.get(0, []))
-        off = {int(x) for x in s.get("vanilla_off") or []}
-        extra = [int(x) for x in s.get("extra") or [] if int(x) not in vanilla_list]
-        factors = {}
-        for k, v in (s.get("custom") or {}).items():
-            mid = key_ids.get(k) if not str(k).lstrip("-").isdigit() else int(k)
-            if mid is not None:
-                factors[mid] = float(v)
-        want = s.get("ports") or 0
-        if isinstance(want, list):
-            chosen = [key_ids[k] for k in want if k in key_ids and key_ids[k] in ports]
-        else:
-            chosen = []
-            for _ in range(min(int(want), len(deck))):
-                chosen.append(deck[0])
-                deck.append(deck.pop(0))
-        ranges = {r for r in ai.road_ranges(ts, 0) if sum(ai.weights[r]) > 0}  # roads that spawn
-        reached = [(u, fr) for u, fr in ai.users(ranges) if not (u.index == ts.index and fr == 0)]
-
-        # the budget: this set and every set its ranges reach
-        rooms = [budget(name, slots, pots) - len([m for m in vanilla_list if m not in off])]
-        rooms += [budget(u.name, slots, pots) - len(u.lists.get(fr, [])) for u, fr in reached]
-        free = min(rooms)
-        added = extra + chosen
-        if len(added) > max(free, 0):
-            dropped = added[max(free, 0) :]
-            added = added[: max(free, 0)]
-            rep.notes.append(f"{len(dropped)} of the added models left out: over the slot budget")
-        if not added and not off and s["weights"] == "vanilla" and not s["blend"]:
-            continue
-        clash = [touched[r] for r in ranges if r in touched and touched[r] != name]
-        if clash:
-            rep.notes.append(f"shares road tables with {sorted(set(clash))}, already changed; left as they are")
-            reports.append(rep)
-            continue
-        for r in ranges:
-            new = road_weights(ai.weighted(r), off, added, s, factors)
-            if new:
-                ai.set_range(r, new)
-                touched[r] = name
-        new_list = [m for m in vanilla_list if m not in off] + added
-        ai.set_list(ts, 0, new_list)
-        for u, fr in reached:
-            lst = u.lists.get(fr, [])
-            ai.set_list(u, fr, lst + [m for m in added if m not in lst])
-        rep.models, rep.budget = len(new_list), budget(name, slots, pots)
-        rep.ports, rep.extra, rep.off = chosen[: len(added)], [m for m in extra if m in added], sorted(off)
-        rep.reaches = sorted({u.name or f"{u.hash:08X}" for u, _ in reached})
-        reports.append(rep)
+    reports = [r for r in (planner.apply_set(name) for name in configured) if r is not None]
     problems = ai.check()
     if problems:
         raise ValueError("; ".join(problems))
     return reports
+
+
+class _Planner:
+    def __init__(self, ai, ambient, ports, key_ids, *, slots, pots, seed):
+        from dsfforza.game import traffic_sets
+
+        self.ai, self.ambient, self.ports, self.key_ids = ai, ambient, ports, key_ids
+        self.slots, self.pots = slots, pots
+        # every set a mission, challenge or activity names (the pots' keys) gets its name, so its pot counts
+        named = {traffic_sets.name_hash(n): n for n in pots}
+        for ts in ai.sets:
+            if ts.name is None and ts.hash in named:
+                ts.name = named[ts.hash]
+        self.deck = list(ports)
+        random.Random(seed).shuffle(self.deck)
+        self.touched: dict[int, str] = {}  # range -> the set whose settings changed it
+
+    def factors(self, s: dict) -> dict[int, float]:
+        out = {}
+        for k, v in (s.get("custom") or {}).items():
+            mid = int(k) if str(k).lstrip("-").isdigit() else self.key_ids.get(k)
+            if mid is not None:
+                out[mid] = float(v)
+        return out
+
+    def deal(self, want) -> list[int]:
+        """The ports for one set: the keys asked for, or the next `want` of the shuffled deck."""
+        if isinstance(want, list):
+            return [self.key_ids[k] for k in want if self.key_ids.get(k) in self.ports]
+        chosen = []
+        for _ in range(min(int(want or 0), len(self.deck))):
+            chosen.append(self.deck[0])
+            self.deck.append(self.deck.pop(0))
+        return chosen
+
+    def room(self, name, kept: int, reached) -> int:
+        """How many models may be added: this set's budget and every reached set's."""
+        rooms = [budget(name, self.slots, self.pots) - kept]
+        rooms += [budget(u.name, self.slots, self.pots) - len(u.lists.get(fr, [])) for u, fr in reached]
+        return max(min(rooms), 0)
+
+    def apply_set(self, name: str) -> SetReport | None:
+        ai = self.ai
+        try:
+            ts = ai.by_name(name)
+        except KeyError:
+            return None
+        s = set_settings(self.ambient, name)
+        rep = SetReport(name=name, weights=s["weights"] if s["weights"] != "vanilla" or not s["blend"] else "blend")
+        vanilla_list = list(ts.lists.get(0, []))
+        off = {int(x) for x in s.get("vanilla_off") or []}
+        extra = [int(x) for x in s.get("extra") or [] if int(x) not in vanilla_list]
+        chosen = self.deal(s.get("ports"))
+        ranges = {r for r in ai.road_ranges(ts, 0) if sum(ai.weights[r]) > 0}  # roads that spawn
+        reached = [(u, fr) for u, fr in ai.users(ranges) if not (u.index == ts.index and fr == 0)]
+        kept = [m for m in vanilla_list if m not in off]
+        free = self.room(name, len(kept), reached)
+        added = (extra + chosen)[:free]
+        if len(extra) + len(chosen) > free:
+            rep.notes.append(f"{len(extra) + len(chosen) - free} of the added models left out: over the slot budget")
+        if not added and not off and not s["blend"] and s["weights"] == "vanilla":
+            return None
+        clash = sorted({self.touched[r] for r in ranges if self.touched.get(r, name) != name})
+        if clash:
+            rep.notes.append(f"shares road tables with {clash}, already changed; left as they are")
+            return rep
+        factors = self.factors(s)
+        for r in ranges:
+            new = road_weights(ai.weighted(r), off, added, s, factors)
+            if new:
+                ai.set_range(r, new)
+                self.touched[r] = name
+        ai.set_list(ts, 0, kept + added)
+        for u, fr in reached:
+            lst = u.lists.get(fr, [])
+            ai.set_list(u, fr, lst + [m for m in added if m not in lst])
+        rep.models, rep.budget = len(kept) + len(added), budget(name, self.slots, self.pots)
+        rep.ports = [m for m in chosen if m in added]
+        rep.extra, rep.off = [m for m in extra if m in added], sorted(off)
+        rep.reaches = sorted({u.name or f"{u.hash:08X}" for u, _ in reached})
+        return rep
 
 
 # --- the car manager's side ---------------------------------------------------------------
@@ -488,6 +503,7 @@ class TrafficControl:
                 "-- Interesting-vehicle settings of the installed cars, read by register.lua.",
                 "return {",
                 f"\tports = {ports},",
+                f"\tvanilla = {'false' if iv.get('vanilla') is False else 'true'},",
                 f"\tper_region = {int(iv.get('per_region', 24))},",
                 "\tcars = {",
                 *rows,
@@ -519,6 +535,7 @@ class TrafficControl:
         iv = self.t["iv"]
         out.append(
             f"interesting vehicles: ports {'off' if iv.get('ports') is False else 'on'}, "
+            f"the game's {'off' if iv.get('vanilla') is False else 'on'}, "
             f"{int(iv.get('per_region', 24))} per region (at most 128 in a region with the vanilla IDs)"
         )
         ai_path = self.game_ai()

@@ -694,6 +694,7 @@ def add_traffic_parser(sub, common) -> None:
     iv = ts.add_parser("iv", help="interesting vehicles: ports in their regions or not")
     iv.add_argument("state", choices=["on", "off"])
     iv.add_argument("--per-region", type=int)
+    iv.add_argument("--vanilla", choices=["on", "off"], help="the game's own interesting vehicles")
 
 
 def run_traffic(m: Manager, args) -> None:
@@ -714,6 +715,8 @@ def run_traffic(m: Manager, args) -> None:
         tc.shuffle()
     elif act == "iv":
         tc.t["iv"]["ports"] = args.state == "on"
+        if args.vanilla is not None:
+            tc.t["iv"]["vanilla"] = args.vanilla == "on"
         if args.per_region is not None:
             tc.t["iv"]["per_region"] = args.per_region
     elif act == "ambient":
