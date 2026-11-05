@@ -496,3 +496,37 @@ def test_paint_reflection_is_off_facing_and_scales_with_the_amount():
     c2, _ = _paint_terms(dataclasses.replace(p, reflection=1.0), 0.1)
     c0, _ = _paint_terms(dataclasses.replace(p, reflection=0.0), 0.1)
     assert np.allclose(c2 - c0, 2 * (c1 - c0), atol=1e-5) and (c1 - c0).min() > 0
+
+
+def test_a_build_without_its_archive_is_read_from_its_merge_plan():
+    """A packages build past 4 GiB writes dngvehicles.plan.json, no dngvehicles.sp (#501): its
+    cars are drawn from the plan; a chunk path of the staging folder is found in work/."""
+    import tempfile
+    from pathlib import Path
+
+    from dsfforza.build import port_batch
+
+    with tempfile.TemporaryDirectory() as tmp:
+        build = Path(tmp) / "build"
+        (build / "work").mkdir(parents=True)
+        (build / "work" / "CAR_A_10.chnk").write_bytes(b"chunk")
+        staged = Path(tmp) / "build.new" / "work" / "CAR_A_10.chnk"  # renamed since
+        port_batch.write_plan(
+            build / rc.MERGE_PLAN,
+            Path(tmp) / "vanilla.sp",
+            [{"chunk": str(staged), "chunk_id": 5, "spool_id": 5, "host": 1}],
+        )
+        dsf, plan = rc.merge_plan(build)
+        assert dsf == Path(tmp) / "vanilla.sp" and plan[0]["chunk"] == str(build / "work" / "CAR_A_10.chnk")
+        archives = rc.BuildArchives(build, Path(tmp) / "shards")
+        assert archives.shards is not None
+        (build / "dngvehicles.sp").write_bytes(b"archive")
+        assert rc.BuildArchives(build, Path(tmp) / "shards").of([5, 6]) == dict.fromkeys(
+            [5, 6], build / "dngvehicles.sp"
+        )
+        try:
+            rc.BuildArchives(Path(tmp) / "empty", Path(tmp) / "shards")
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError("a build with neither the archive nor a plan")

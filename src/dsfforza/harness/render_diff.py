@@ -36,21 +36,33 @@ def _digest_entry(stream, entry, h) -> None:
     h.update(stream.read(entry.size))
 
 
-def visual_digests(archive: Path, cars: list[dict]) -> dict[str, str]:
-    """{media: digest of what the game draws of the car} for a build's archive."""
+def visual_digests(build: Path, cars: list[dict]) -> dict[str, str]:
+    """{media: digest of what the game draws of the car} for a build: from its archive, or
+    for a build that wrote none, from the archive its merge plan lays out, in memory
+    (port_batch.merged_view: the same entries, nothing written)."""
     from dsfforza.formats import upvh as uv
-    from dsfforza.game.gui_assets import _root_entries
 
+    archive = Path(build) / "dngvehicles.sp"
+    if archive.is_file():
+        stream = archive.open("rb")
+        roots = rc.roots_of(archive)
+    else:
+        found = rc.merge_plan(build)
+        if found is None:
+            raise SystemExit(f"{build}: neither dngvehicles.sp nor {rc.MERGE_PLAN}")
+        from dsfforza.build import port_batch
+
+        stream, roots = port_batch.merged_view(*found)
     out = {}
-    archive = Path(archive)
-    with archive.open("rb") as stream:
-        roots = _root_entries(archive, stream)
+    try:
         for car in cars:
             try:
                 kinds = uv.entries_for(stream, roots, car["spool_id"], None)
             except (KeyError, StopIteration):
                 continue
             out[car["media"]] = vehc_digest(stream, kinds)
+    finally:
+        stream.close()
     return out
 
 
@@ -72,8 +84,8 @@ def changed_cars(before: Path, after: Path) -> tuple[list[dict], dict]:
     """(cars of the after build whose drawn data differ from the before build's, counts)."""
     a = {c["media"]: c for c in rc.roster(before)}
     b = rc.roster(after)
-    da = visual_digests(Path(before) / "dngvehicles.sp", list(a.values()))
-    db = visual_digests(Path(after) / "dngvehicles.sp", b)
+    da = visual_digests(Path(before), list(a.values()))
+    db = visual_digests(Path(after), b)
     changed, same, new = [], [], []
     for car in b:
         m = car["media"]
@@ -126,11 +138,10 @@ def region_changes(ga: np.ndarray, gb: np.ndarray, d: np.ndarray, names=LISTED) 
     return out
 
 
-def compare_builds(
-    before: Path, after: Path, car: dict, roots_a, roots_b, out: Path, views, size, cockpit: bool = True
-) -> dict:
+def compare_builds(before: Path, after: Path, car: dict, out: Path, views, size, cockpit: bool = True) -> dict:
     """One changed car: both builds' renders and scores, and what changed per region (the
-    exterior views, and the cockpit view when both builds have a cockpit)."""
+    exterior views, and the cockpit view when both builds have a cockpit). car["archive_before"]
+    and car["archive_after"]: the archives it is drawn from (rc.BuildArchives)."""
     media = car["media"]
     t0 = time.time()
     res: dict = {"media": media, "spool_id": car["spool_id"]}
@@ -139,16 +150,18 @@ def compare_builds(
         res["error"] = "no converter report in one of the builds"
         return res
     try:
-        pa = rc.build_pair(Path(before) / "dngvehicles.sp", roots_a, car["before_spool_id"], media, rep_a)
-        pb = rc.build_pair(Path(after) / "dngvehicles.sp", roots_b, car["spool_id"], media, rep_b)
+        arch_a, arch_b = Path(car["archive_before"]), Path(car["archive_after"])
+        roots_a, roots_b = rc.roots_of(arch_a), rc.roots_of(arch_b)
+        pa = rc.build_pair(arch_a, roots_a, car["before_spool_id"], media, rep_a)
+        pb = rc.build_pair(arch_b, roots_b, car["spool_id"], media, rep_b)
         metrics_a, metrics_b, changes = {}, {}, []
         folder = out / "cars" / media
         jobs = [(vname, rc.VIEWS[vname], pa, pb) for vname in views]
         # The cockpit view from the after build's eye (one camera for both: the pixels compare).
         camera = rc.cockpit_camera(rep_b) if rc.cockpit_camera(rep_a) else None
         if cockpit and camera is not None:
-            ca = rc.build_cockpit_pair(Path(before) / "dngvehicles.sp", roots_a, car["before_spool_id"], media, rep_a)
-            cb = rc.build_cockpit_pair(Path(after) / "dngvehicles.sp", roots_b, car["spool_id"], media, rep_b)
+            ca = rc.build_cockpit_pair(arch_a, roots_a, car["before_spool_id"], media, rep_a)
+            cb = rc.build_cockpit_pair(arch_b, roots_b, car["spool_id"], media, rep_b)
             jobs.append(("cockpit", rc.View("cockpit", camera, modes=("day", "dark")), ca, cb))
         for vname, view, qa, qb in jobs:
             # One frame for both builds: their own extents differ when a part moves.
@@ -217,18 +230,9 @@ def _grow(mask: np.ndarray, r: int) -> np.ndarray:
 
 def _worker(args):
     before, after, cars, out, views, size = args
-    # gui_assets._root_entries keeps one archive's roots: read both here.
-    from dsfforza.formats import chnk
-
-    archive_b = Path(after) / "dngvehicles.sp"
-    with archive_b.open("rb") as stream:
-        roots_b = chnk.read_chunk(stream, 0).entries
-    archive_a = Path(before) / "dngvehicles.sp"
-    with archive_a.open("rb") as stream:
-        roots_a = chnk.read_chunk(stream, 0).entries
     results = []
     for car in cars:
-        r = compare_builds(Path(before), Path(after), car, roots_a, roots_b, Path(out), views, size)
+        r = compare_builds(Path(before), Path(after), car, Path(out), views, size)
         print(f"{car['media']}: {r.get('score_before')} -> {r.get('score_after')} {r.get('error', '')}", flush=True)
         results.append(
             {
@@ -247,19 +251,36 @@ def run(
     changed, counts = changed_cars(before, after)
     t_digest = time.time() - t0
     todo = changed[:limit] if limit else changed
-    jobs = max(1, min(jobs, len(todo) or 1))
-    chunks = [todo[i::jobs] for i in range(jobs)]
     results: list = []
     if todo:
-        if jobs == 1:
-            results = _worker((str(before), str(after), todo, str(out), views, size))
-        else:
-            from dsfforza.build import jobpool
-            from dsfforza.build.port_batch import RENDER_RAM
+        # The archives the cars are drawn from: each build's, or archives of the changed cars
+        # for a build that wrote none (a packages build past 4 GiB: rc.BuildArchives).
+        archives = [rc.BuildArchives(before, out / "shards-before"), rc.BuildArchives(after, out / "shards-after")]
+        try:
+            where_a = archives[0].of([c["before_spool_id"] for c in todo])
+            where_b = archives[1].of([c["spool_id"] for c in todo])
+            todo = [
+                {
+                    **c,
+                    "archive_before": str(where_a[c["before_spool_id"]]),
+                    "archive_after": str(where_b[c["spool_id"]]),
+                }
+                for c in todo
+            ]
+            jobs = max(1, min(jobs, len(todo)))
+            chunks = [todo[i::jobs] for i in range(jobs)]
+            if jobs == 1:
+                results = _worker((str(before), str(after), todo, str(out), views, size))
+            else:
+                from dsfforza.build import jobpool
+                from dsfforza.build.port_batch import RENDER_RAM
 
-            with jobpool.executor(jobs, "render_compare diff", RENDER_RAM) as pool:
-                args = [(str(before), str(after), c, str(out), views, size) for c in chunks]
-                results = [r for part in pool.map(_worker, args) for r in part]
+                with jobpool.executor(jobs, "render_compare diff", RENDER_RAM) as pool:
+                    args = [(str(before), str(after), c, str(out), views, size) for c in chunks]
+                    results = [r for part in pool.map(_worker, args) for r in part]
+        finally:
+            for a in archives:
+                a.close()
     results.sort(key=lambda r: -max((c["changed"] for c in r.get("changes") or []), default=0))
     visible = [r["media"] for r in results if r.get("changes")]
     summary = {
