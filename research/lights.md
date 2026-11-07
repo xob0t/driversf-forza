@@ -317,8 +317,10 @@ on a shorter or longer car).
    no side (`SIDELESS`, #219), else its fallback's. Only then does it take a
    free entry at the other end; a fog lamp never does (#219) and stays
    unlit, as the 370Z's rear fog lamp does. The table keeps its size and
-   ids, so the hierarchy is untouched. Head lamps become 0x1D where the front
-   has no position lamp of its own ("Head lamps dark by day"; per car, #573).
+   ids, so the hierarchy is untouched. Head lamps become 0x1D where the front's
+   own position and DRL-indicator lamps (with an entry) cover less than a
+   quarter of its head lamps' area (`DAYTIME_SHARE`; "Head lamps dark by
+   day"; per car, both sides alike, #573).
 5. `patch_upvh` writes each used entry's position (area-weighted centroid),
    direction (headlamps (0, 0, 1), else the area-weighted lens normal) and
    flags (type, colour 8/9/4/6, variant 2 on indicators and the combined
