@@ -143,6 +143,7 @@ colours below are as written in the shared ShaderSettings; the shader gets them 
 | `hidhead` / `oldhead` / `xenonhead` | `HidHeadlightColor` (1, 0.8, 0.8) / `OldHeadlightColor` (1.4, 0.9, 0.6) / `XenonHeadlightColor` (1, 1, 1.1) | `dynamicLights2.x` |
 | `drlwhite` | `DRLWhiteColor` (1, 1, 1) | `dynamicLights2.z` (DRL) |
 | `drlwhiteswitch` | `DRLWhiteColor` x DRL x (1 - lamps on) | both |
+| `drlinlwhite` / `drlinrwhite` | probed, closed form not read out (#573): with texel alpha 1 the glow is 0.5 x `DRLWhiteColor`'s with the DRL state (`dynamicLights2.z`) alone and 1 x with the DRL and the left (`dynamicLightsAmount.z`) / right (`.w`) indicator; the indicator alone gives none | DRL and one indicator |
 | `fogred` | `FogRedColor` (1, 0, 0) | `dynamicLights2.w` |
 | `slorange` | `SideLightsOrangeColor` (1, 0.66, 0) | `dynamicLights3.z` |
 | `brinl` / `brinr` | `BrakeColor x lerp(brake, indicator, indicator mode)` | `dynamicLights3.x` / `.y` the mode |

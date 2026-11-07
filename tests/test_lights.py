@@ -259,11 +259,21 @@ def test_head_lamps_light_by_day():
     heads = [_quad("headlightL", "head_light", 0.6, 2.0), _quad("headlightR", "head_light", -0.6, 2.0)]
     got = _assigned(heads + TAILS, 8)
     assert got[(lights.HEAD, "L", True)] == got[(lights.HEAD, "R", True)] == 0x1D, got
-    # with a position lamp of its own on that side, the head lamp stays 0x01 (vanilla 229)
+    # with position lamps of its own, the car's head lamps stay 0x01 (vanilla 229), both sides
+    # alike: 136 of the 137 vanilla vehicles with a head lamp entry on each side give both the same
+    # type. Per side, a DRL on one side lit only the other head lamp by day (#573: the Bugatti
+    # EB110 SS's right-only LOD 5 `drlwhite`).
     drl = [_quad("drlL", "drlwhite", 0.8, 2.0)]
     got = _assigned(heads + drl + TAILS, 8)
-    assert got[(lights.HEAD, "L", True)] == 0x01 and got[(lights.HEAD, "R", True)] == 0x1D, got
+    assert got[(lights.HEAD, "L", True)] == got[(lights.HEAD, "R", True)] == 0x01, got
     assert got[(lights.POSITION, "L", True)] == 0x03, got
+    # A DRL + indicator lamp's side is the indicator its technique follows, not where it is: the
+    # BMW M3 E92 08 draws both its DRL rings with `drlinrwhite` (#573), and its left head lamp
+    # alone lit by day.
+    rings = [_quad("headlightL", "drlinrwhite", 0.8, 2.0), _quad("headlightR", "drlinrwhite", -0.8, 2.0)]
+    plan = _plan(heads + rings + TAILS, 8)
+    types = {l.type for l in plan.lamps.values() if l.function == lights.HEAD}
+    assert types == {0x01}, types
 
 
 def test_pop_up_lamps_keep_the_lowered_state():

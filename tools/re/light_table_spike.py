@@ -72,14 +72,14 @@ def assign_own_entries(plan, upvh: bytes):
     plan.unlit = [l.key for l in order[MAX_LAMPS:]]
     plan.slots = [(None, l.light_id, l) for l in order[:MAX_LAMPS]]
 
-    def area(functions, side):
-        return sum(l.area for l in order if l.front and l.side == side and l.function in functions)
+    def area(functions):
+        return sum(l.area for l in order if l.front and l.function in functions)
 
+    # per car, as LampPlan.assign decides it (#573)
+    daytime = area((lights.POSITION, lights.DRL_IND)) < lights.DAYTIME_SHARE * area((lights.HEAD,))
     for lamp in order:
         if lamp.function == lights.HEAD and lamp.front:
-            lamp.daytime = area((lights.POSITION, lights.DRL_IND), lamp.side) < lights.DAYTIME_SHARE * area(
-                (lights.HEAD,), lamp.side
-            )
+            lamp.daytime = daytime
     STATE["plan"] = plan
     return plan
 

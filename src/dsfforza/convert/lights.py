@@ -303,7 +303,7 @@ def _best_entry(lamp, candidates, place):
 
 
 HEAD_DAYTIME = 0x1D  # Headlights + DaytimeRunning
-DAYTIME_SHARE = 0.25  # a side's own position lamps at least this share of its head lamps' area keep them 0x01
+DAYTIME_SHARE = 0.25  # a front's own position lamps at least this share of its head lamps' area keep them 0x01
 
 
 def type_byte(function: str, side: str) -> int:
@@ -1565,8 +1565,8 @@ class LampPlan:
                 else:
                     self.unlit.append(lamp.key)
         self.slots = [(o, lid, taken.get((o, lid))) for o, lid in entries]
-        # Day-time running: a front side without a lamp of its own that lights
-        # with DaytimeRunning gets head lamps that do (0x1D, Headlights +
+        # Day-time running: a front without lamps of its own that light with
+        # DaytimeRunning gets head lamps that do (0x1D, Headlights +
         # DaytimeRunning), as 31 vanilla vehicles draw theirs; the other vanilla
         # cars but 10 have white position lamps (0x03) in their head-lamp
         # clusters. Forza's lamps mostly have no position-lamp technique, so
@@ -1574,22 +1574,22 @@ class LampPlan:
         # (player report; 66 of 573 ported cars had a front DRL lamp).
         # A position lamp a fraction the head lamp's size doesn't count
         # (CHR_Cuda426_71: 10 triangles beside 109).
+        # The choice is the car's, not each side's: 136 of the 137 vanilla
+        # vehicles with a head lamp entry on each side give both the same type
+        # (104 0x01, 31 0x1D, one both on each side; the RUF CTR3 alone mixes 0x01
+        # and 0x1D, with a DRL entry on each side). Per side, the BMW M3 E92 08's
+        # left `drlinrwhite` (a side named by the indicator it follows: right, in
+        # Forza's shader) and the Bugatti EB110 SS's right-only LOD 5 `drlwhite`
+        # lit one head lamp by day and not the other (#573).
         entered = {id(l) for _, _, l in self.slots if l is not None}
 
-        def area(functions, side, own=False):
-            return sum(
-                l.area
-                for l in order
-                if l.front and l.side == side and l.function in functions and (not own or id(l) in entered)
-            )
+        def area(functions, own=False):
+            return sum(l.area for l in order if l.front and l.function in functions and (not own or id(l) in entered))
 
+        daytime = area((POSITION, DRL_IND), own=True) < DAYTIME_SHARE * area((HEAD,))
         for lamp in order:
-            if (
-                lamp.function == HEAD
-                and lamp.front
-                and area((POSITION, DRL_IND), lamp.side, own=True) < DAYTIME_SHARE * area((HEAD,), lamp.side)
-            ):
-                lamp.daytime = True
+            if lamp.function == HEAD and lamp.front:
+                lamp.daytime = daytime
         return self
 
     def rear_tail_lamp(self, sub, k) -> int | None:
