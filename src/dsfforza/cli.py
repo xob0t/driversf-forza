@@ -23,7 +23,7 @@ TOOLS = {
         "vehicles wwise_bank xds xiso",
         "convert": "chassis_variants cockpit cockpit_survey damage driver_survey dsf_materials engine_sound exhaust "
         "forza2dsf forza_materials glass lights paint plates plates_survey steering_axle wheel_clearance wheel_fit",
-        "build": "car_manager car_package carstore clone_vehicle fm4_dlc forza_roster handling handling_dsf handling_tune host_select install jobpool package port_batch port_car report thirdparty",
+        "build": "car_manager car_package carstore clone_vehicle fm4_dlc forza_roster handling handling_dsf handling_sim handling_tune host_select install jobpool package port_batch port_car report thirdparty",
         "game": "game_data gui_assets savecheck spool_variants traffic_sets vehicle_limits xref",
         "harness": "dyno emblem_check lights_diff render_compare vnckeys vncshot",
     }.items()
