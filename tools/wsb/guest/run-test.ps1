@@ -81,6 +81,8 @@ param(
     [int]$MenuRounds = 1, # -MenuKeys runs this many times, each on a new -MenuTrigger line. Key 'Reload' in it (after
                          # the taps that quit to the main menu) waits for the world to go, then presses Enter until
                          # the Story world is back, as at the start (menu round trips, issue #574)
+    [string]$QuitKeys,   # with Reload in -MenuKeys: keys from driving to the main menu ('Esc:5,Down:1.5,...'), tapped while
+                         # the world is still up 20 s into Reload, and again every 30 s (six tries at most)
     [double]$TrafficRadius = 0, # metres: once the world is up, the traffic road radius (350 m vanilla, 256 m in the
                          # [[engine+0x754]] case scaled alike) is read from a new float instead (research/draw-distance.md, plan A).
                          # Operands only: above 360 m 0x7723A0's 21-cell list overflows; use DSF Enhanced's TrafficSpawnRadius.
@@ -909,7 +911,7 @@ try {
         Enter = @(0x0D, 0x1C, $false); Esc = @(0x1B, 0x01, $false); Tab = @(0x09, 0x0F, $false)
         Q = @(0x51, 0x10, $false); E = @(0x45, 0x12, $false) }
     # A name missing here would be sent as key code 0, i.e. nothing, for the whole run.
-    $keyNames = @($MenuKeys -split ',' | ForEach-Object { ($_ -split ':')[0] }) +
+    $keyNames = @("$MenuKeys,$QuitKeys" -split ',' | ForEach-Object { ($_ -split ':')[0] }) +
         @($DynoKeys -split '[;,]' | ForEach-Object { ($_ -split ':')[0] -split '\+' })
     foreach ($name in ($keyNames | Where-Object { $_ -and $_ -ne 'None' -and $_ -ne 'Reload' })) {
         if (-not $keyCodes.ContainsKey($name)) { throw "unknown key '$name' in -MenuKeys/-DynoKeys (known: $(($keyCodes.Keys | Sort-Object) -join ' '))" }
@@ -1109,10 +1111,29 @@ try {
                 foreach ($step in ($MenuKeys -split ',')) {
                     $name, $wait = $step -split ':'
                     if ($name -eq 'Reload') {
-                        # The keys before it quit to the main menu: wait for the world to go, then load Story again.
-                        $gone = (Get-Date).AddSeconds(120)
-                        while ((& $worldReady) -and (Get-Date) -lt $gone) { Start-Sleep -Milliseconds 500 }
-                        if (& $worldReady) { throw 'Reload: the world is still up 120 s after the keys before it (no quit to the main menu?)' }
+                        # Quit to the main menu: wait for the world to go (the keys before may have quit
+                        # already), tap -QuitKeys while it is still up (a key the game drops on a busy host, or
+                        # a load screen after leaving the garage, leaves it up), then load Story again.
+                        $tries = 0
+                        $until = (Get-Date).AddSeconds($(if ($QuitKeys) { 20 } else { 120 }))
+                        while (& $worldReady) {
+                            if ((Get-Date) -ge $until) {
+                                if (-not $QuitKeys -or $tries -ge 6) { throw "Reload: the world is still up ($tries tries of -QuitKeys)" }
+                                $tries++
+                                $quitShot = 0
+                                foreach ($quitStep in ($QuitKeys -split ',')) {
+                                    $quitName, $quitWait = $quitStep -split ':'
+                                    $spec = $keyCodes[$quitName]
+                                    [DsfGuest]::Tap((Get-GameWindow), $spec[0], $spec[1], $spec[2])
+                                    Start-Sleep -Milliseconds ([int](1000 * [double]$(if ($quitWait) { $quitWait } else { 1.5 })))
+                                    if (-not (& $worldReady)) { break }
+                                    Save-Shot ("quit{0}-{1}-{2:D2}.png" -f $script:menuRound, $tries, (++$quitShot))
+                                }
+                                Note "menu: quit keys, try $tries (round $($script:menuRound))"
+                                $until = (Get-Date).AddSeconds(30)
+                            }
+                            Start-Sleep -Milliseconds 500
+                        }
                         Note "menu: world gone (round $($script:menuRound))"
                         $again = Enter-StoryWorld "reload$($script:menuRound)-frontend" -Again
                         Note "menu: story world ready again after $again presses (round $($script:menuRound))"

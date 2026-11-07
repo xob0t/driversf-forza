@@ -242,9 +242,15 @@ is `{char* text, u8 external, u8 set, i16 capacity}`; with external = 0
 FUN_00ACE180 copies the text into the buffer. `fill_makers` gives a list
 that is shorter than the group table a new data array of `max_groups`
 entries (copies of the old pointers or values, new string elements with
-element 0's flags and their own 64-byte buffers) and remembers it, so later
-fills only restore the length; a list it can't grow (no element 0) keeps
-its length and the groups past it are not listed (logged).
+element 0's flags and their own 64-byte buffers) and remembers it; a list it
+can't grow (no element 0) keeps its length and the groups past it are not
+listed (logged). The menu script sets each list up afresh, with a new
+40-entry array, on every visit to the maker menu (confirmed-runtime: issue
+#574's player log grows the same four list objects on each of seven visits in
+each of two worlds, the second's at another address), so a later fill puts the script's elements into the array it grew
+before instead of growing again; until #574 every visit allocated a new one.
+Each world load has new list objects; a record whose list no longer holds its
+array is reused for them.
 
 ### Maker groups past 20 cars
 
@@ -350,6 +356,31 @@ edge (after 20 frames down; a tap lasts about 6) and its release is passed on.
 Select match the highlighted card. The window starts at car 0 whenever the
 car list runs for the maker list (`CategorySelect_Vehicles`) or the garage hub
 (`InGarage`); popups over the browser (the drive or buy question) keep it.
+
+**Each world has its own menu (issue #574, fixed).** The MmDk menu
+`[[screen+4]+8]`, with its key table and script variables, belongs to the
+world: quitting to the main menu frees it and the next Story load makes a new
+one at another address. The plugin kept the wrapped keys in a table of four
+slots, filled by the first world's four keys (Right and Left of players 0 and
+1); for the next world's menu there was no slot left, so its keys stayed the
+script's own, and every maker of 20 or more cars showed its first 19 cards
+with nothing past them, vanilla makers included (CHEVROLET's Camaros, DODGE's
+Vipers). Evidence (confirmed-runtime):
+
+- The player's `dsfforza.log` (v0.2.1, issue #574's report): 72 "key ...
+  wrapped" lines for menu `31AFC728` in the first world; after the quit to the
+  main menu (a new `dngvehicles.sp` reader at 06:52:31) none, although the
+  maker menu was filled seven more times (its lists now at `319B5270`, not
+  `31A3D270`).
+- Same in the VM: RUNS_PLACEHOLDER
+
+The fix gives the table 16 slots and takes, for a key it doesn't hold, a slot
+whose key no longer has the plugin's handler (its menu gone or reused). The
+card browser's `startPageSelected` is looked up on each press instead of
+cached per menu address, and `[garage] menu_debug`'s variable watch follows
+the menu too: it read the freed variables after the quit and faulted at
+asi+0x6A40 (`vm1-20261107-203958`; debug builds only, `menu_debug=0` by
+default). The maker lists (above) are the world's too.
 
 In game: below, "In game", "Maker groups past 20 cars".
 
