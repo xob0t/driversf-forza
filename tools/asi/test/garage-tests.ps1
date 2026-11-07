@@ -18,7 +18,8 @@ each other's save; garage works.
   biggroup  vanilla archive, 39 vanilla cars in one maker group (cfg_biggroup.lua): scrolls
       the card window to the end and back, picks car 24 and leaves the garage
       (Driver.log "[dsfforza.garage] player drives model 192"); not in the default set
-  roundtrip  vanilla archive, 41 vanilla cars in the first maker group (cfg_biggroup_first.lua):
+  roundtrip  vanilla archive, 41 vanilla cars in the first maker group and 20 fake one-car makers
+      past the 40 the menu script declares (cfg_biggroup_makers.lua):
       three worlds, each scrolling the card window to the end, then leaving the garage and
       quitting to the main menu (run-test.ps1 -MenuRounds, Reload, -QuitKeys; issue #574);
       dsfcars.log has the key wraps of each world's menu; not in the default set
@@ -66,13 +67,13 @@ if ($Only -contains 'biggroup') {
         -MenuKeys ($keys -join ',')
 }
 if ($Only -contains 'roundtrip') {
-    # Vanilla archive, 41 vanilla cars in the first maker group (cfg_biggroup_first.lua): three
+    # Vanilla archive, 41 vanilla cars in the first maker group, 20 fake makers more (cfg_biggroup_makers.lua): three
     # visits, each scrolling the card window to the end, leaving the garage and quitting to the
     # main menu (issue #574: the window must keep moving in every world).
     $keys = @('Enter:5', 'Enter:5') + @(1..45 | ForEach-Object { 'Right:1' }) + @('Esc:4', 'Esc:4', 'Esc:4', 'Enter:5', 'Reload')
     $quit = @('Esc:5') + @(1..5 | ForEach-Object { 'Down:1.5' }) + @('Enter:4', 'Up:2', 'Enter:8')
     & $series @mode -Archives $vanilla -ProbeIds 266 -ZoomPresses 0 -WaitSeconds 900 -ShotSeconds 30 -Asi out\asi\dsfcars.asi `
-        -LuaFiles ("$boot;dsfcars\savetest_cfg.lua=$lua\cfg_biggroup_first.lua;dsfcars\garagetest_on.lua=$lua\garagetest_on.lua") `
+        -LuaFiles ("$boot;dsfcars\savetest_cfg.lua=$lua\cfg_biggroup_makers.lua;dsfcars\garagetest_on.lua=$lua\garagetest_on.lua") `
         -MenuKeys ($keys -join ',') -MenuRounds 3 -TapMs 250 -QuitKeys ($quit -join ',')
 }
 if ($Only -contains 'garage') {
