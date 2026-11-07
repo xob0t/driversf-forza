@@ -73,7 +73,7 @@ if ($Only -contains 'roundtrip') {
     $quit = @('Esc:5') + @(1..5 | ForEach-Object { 'Down:1.5' }) + @('Enter:4', 'Up:2', 'Enter:8')
     & $series @mode -Archives $vanilla -ProbeIds 266 -ZoomPresses 0 -WaitSeconds 2400 -ShotSeconds 30 -Asi out\asi\dsfcars.asi `
         -LuaFiles ("$boot;dsfcars\savetest_cfg.lua=$lua\cfg_biggroup_first.lua;dsfcars\garagetest_on.lua=$lua\garagetest_on.lua") `
-        -MenuKeys ($keys -join ',') -MenuRounds 3 -QuitKeys ($quit -join ',')
+        -MenuKeys ($keys -join ',') -MenuRounds 3 -TapMs 250 -QuitKeys ($quit -join ',')
 }
 if ($Only -contains 'garage') {
     $b = 'out\batch\second-high'

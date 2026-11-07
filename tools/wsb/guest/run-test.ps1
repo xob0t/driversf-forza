@@ -81,6 +81,7 @@ param(
     [int]$MenuRounds = 1, # -MenuKeys runs this many times, each on a new -MenuTrigger line. Key 'Reload' in it (after
                          # the taps that quit to the main menu) waits for the world to go, then presses Enter until
                          # the Story world is back, as at the start (menu round trips, issue #574)
+    [int]$TapMs = 120,   # how long a menu or Enter tap holds its key; a game at a few frames a second (a busy host) misses a short one
     [string]$QuitKeys,   # with Reload in -MenuKeys: keys from driving to the main menu ('Esc:5,Down:1.5,...'), tapped while
                          # the world is still up 20 s into Reload, and again every 30 s (six tries at most)
     [double]$TrafficRadius = 0, # metres: once the world is up, the traffic road radius (350 m vanilla, 256 m in the
@@ -233,6 +234,7 @@ public static class DsfGuest {
     // On the host: when an elevated window (which no API call can take the foreground from)
     // is in front, click the game window's corner to activate it, if the game is what's there.
     public static bool ClickToActivate;
+    public static int TapMs = 120;
     public static string LastClick = "";
     [StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
     [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(Point p);
@@ -291,7 +293,7 @@ public static class DsfGuest {
             }
             if ((what & 1) != 0 && (window == IntPtr.Zero || fgPid != gamePid)) { Skipped++; return; }
             if ((what & 1) != 0) keybd_event(vk, scan, ext, UIntPtr.Zero);
-            if (what == 3) System.Threading.Thread.Sleep(120);
+            if (what == 3) System.Threading.Thread.Sleep(TapMs);
             if ((what & 2) != 0) keybd_event(vk, scan, ext | 2u, UIntPtr.Zero);
         } finally {
             if (target != 0 && target != fg) AttachThreadInput(self, target, false);
@@ -483,6 +485,7 @@ function Save-Shot([string]$Name) {
 
 [DsfGuest]::SetProcessDPIAware() | Out-Null   # screen coordinates in real pixels
 [DsfGuest]::ClickToActivate = [bool]$OnHost
+[DsfGuest]::TapMs = $TapMs
 # On the host: keep the display on (screenshots) while this run lasts.
 if ($OnHost) { [DsfGuest]::SetThreadExecutionState([uint32]2147483651) | Out-Null }
 
