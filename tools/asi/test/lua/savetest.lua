@@ -7,6 +7,8 @@
 --          the source entry (266) with ManufacturerName "DSFT nn" (perMaker cars
 --          per maker), Selectable; once in a car, every own-th of them is marked
 --          unlocked and owned.
+--          prefix = "ZDSFT": the makers' name instead of "DSFT" (the maker list sorts by the raw
+--          name; vanilla names are string IDs, "ID:nnn", so DSFT comes first, ZDSFT last).
 --          garage = n: sold at garage n (UnlockedInGarage), like the vanilla cars
 --          the player buys there.
 --   set    once in a car: SetVehicleUnlocked/Owned/Driven/DrivenInTakeARide for
@@ -64,7 +66,7 @@ if type(cfg.fill) == "table" and type(vehicleStats) == "table" then
 		local e = {}
 		for k, v in pairs(source) do e[k] = v end
 		e.UnlockedInChapter, e.UnlockedInGarage, e.UnlockByActivity = nil, f.garage, nil
-		e.ManufacturerName = string.format("DSFT %02d", math.floor(i / per))
+		e.ManufacturerName = string.format("%s %02d", f.prefix or "DSFT", math.floor(i / per))
 		e.Selectable = true
 		e.Price = 1000 + id
 		vehicleStats[id] = e

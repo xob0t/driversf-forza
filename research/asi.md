@@ -242,9 +242,16 @@ is `{char* text, u8 external, u8 set, i16 capacity}`; with external = 0
 FUN_00ACE180 copies the text into the buffer. `fill_makers` gives a list
 that is shorter than the group table a new data array of `max_groups`
 entries (copies of the old pointers or values, new string elements with
-element 0's flags and their own 64-byte buffers) and remembers it, so later
-fills only restore the length; a list it can't grow (no element 0) keeps
-its length and the groups past it are not listed (logged).
+element 0's flags and their own 64-byte buffers) and remembers it; a list it
+can't grow (no element 0) keeps its length and the groups past it are not
+listed (logged). The menu script sets each list up afresh, with a new
+40-entry array, on every visit to the maker menu (confirmed-runtime: issue
+#574's player log grows the same four list objects on each of seven visits in
+each of two worlds, the second world's lists at another address), so a later
+fill puts the script's elements into the array it grew before instead of
+growing again; until #574 every visit allocated a new one. Each world load
+has new list objects; a record whose list no longer holds its array is reused
+for them.
 
 ### Maker groups past 20 cars
 
@@ -350,6 +357,63 @@ edge (after 20 frames down; a tap lasts about 6) and its release is passed on.
 Select match the highlighted card. The window starts at car 0 whenever the
 car list runs for the maker list (`CategorySelect_Vehicles`) or the garage hub
 (`InGarage`); popups over the browser (the drive or buy question) keep it.
+
+**Each world has its own menu (issue #574, fixed).** The MmDk menu
+`[[screen+4]+8]`, with its key table and script variables, belongs to the
+world: quitting to the main menu frees it and the next Story load makes a new
+one at another address. The plugin kept the wrapped keys in a table of four
+slots, filled by the first world's four keys (Right and Left of players 0 and
+1); for the next world's menu there was no slot left, so its keys stayed the
+script's own, and every maker of 20 or more cars showed its first 19 cards
+with nothing past them, vanilla makers included (CHEVROLET's Camaros, DODGE's
+Vipers). Evidence (confirmed-runtime):
+
+- The player's `dsfforza.log` (v0.2.1, issue #574's report): 72 "key ...
+  wrapped" lines for menu `31AFC728` in the first world; after the quit to the
+  main menu (a new `dngvehicles.sp` reader at 06:52:31) none, although the
+  maker menu was filled seven more times (its lists now at `319B5270`, not
+  `31A3D270`).
+- The same in the VM (`garage-tests.ps1 -Only roundtrip`'s keys, vanilla
+  archive, 41 vanilla cars filed under ABARTH, three worlds with a quit to the
+  main menu between them, Right × 45 in each). Master's plugin (run
+  `vm1-20261107-225347`): the four keys wrapped for world 1's menu `29BC4728`
+  only; world 1's row reaches the 41st car (Ford RS200), worlds 2 and 3 stop
+  at the 19th card (Ford F-350 Super Duty) under "41/41 OWNED". The fix (run
+  `vm1-20261107-230641`, `menu_debug=1`): a new menu in each world (`29BD5728`,
+  `281B4728`, `280DD728`), its four keys wrapped, the window moved 22 times
+  to "window from car 22" and the row reaches the RS200 in all three. Both
+  runs: `register.lua` reads the plugin's limits in every world (120 groups of
+  1000), so the Lua side is not involved.
+- With 52 maker groups (the same plus 20 fake one-car makers, `cfg_biggroup_makers.lua`;
+  the fix, run `vm1-20261107-234513`, two worlds): the four maker lists grow
+  once per world, each world's at a new address, and each world's second visit
+  to the maker menu grows nothing (the player's v0.2.1 log grows them on every
+  visit). In both worlds the window reaches the 41st car, which picked and
+  driven out of the garage is model 195, the RS200.
+- The maker list sorts its groups by the raw `ManufacturerName` (observed:
+  test makers named "DSFT nn" came before every vanilla maker, whose names are
+  string IDs "ID:nnn", run `vm1-20261107-233350`; with "ZDSFT nn" ABARTH was first again).
+
+The fix gives the table 16 slots and takes, for a key it doesn't hold, a slot
+whose key no longer has the plugin's handler (its menu gone or reused). The
+card browser's `startPageSelected` is looked up on each press instead of
+cached per menu address, and `[garage] menu_debug`'s variable watch follows
+the menu too: it read the freed variables after the quit and faulted at
+asi+0x6A40 (`vm1-20261107-203958`; only with `menu_debug=1`, 0 by
+default). The maker lists (above) are the world's too.
+
+A gone world's memory may be decommitted, so the plugin checks it with
+`VirtualQuery` (`readable()`) before reading, not with `__try`: DriverNGHook
+adds a vectored exception handler (`AddVectoredExceptionHandler(0, ...)`,
+DriverNGToolkit `CrashHandlerReporter.cpp`, `ExceptionFilterWin32`) that shows
+its fatal-error dialog for any exception code of 0x80000000 or more on the
+first chance, before any `__try` of the plugin or the game sees it
+(confirmed-static; in game, run `vm2-20261107-223453`: a guarded read of a
+freed variable at 29DD2B2C stopped the game at the dialog). The dialog is
+modal and the handler then returns `EXCEPTION_EXECUTE_HANDLER`, which a
+vectored handler's caller takes as "continue the search", so a `__try` would
+run only after the player clicks OK: in a game with DriverNGHook, an access
+violation the code expects still stops the game.
 
 In game: below, "In game", "Maker groups past 20 cars".
 

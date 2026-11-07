@@ -748,6 +748,27 @@ __declspec(naked) void s_group_insert()
     }
 }
 
+// Whether n bytes at p can be read without a fault: committed, readable pages. Memory of a
+// world that is gone (its menu, lists and variables after a quit to the main menu) may be
+// decommitted. A __try is no guard in the game: DriverNGHook's vectored handler shows its
+// fatal-error dialog on the first chance of any access violation, before a __try sees it
+// (DriverNGToolkit CrashHandlerReporter.cpp, ExceptionFilterWin32; run vm2-20261107-223453).
+bool readable(const void* p, size_t n)
+{
+    const DWORD kRead = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ |
+                        PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    const char* at = (const char*)p;
+    const char* end = at + n;
+    while (at < end) {
+        MEMORY_BASIC_INFORMATION m;
+        if (!VirtualQuery(at, &m, sizeof m) || m.State != MEM_COMMIT || !(m.Protect & kRead) ||
+            (m.Protect & (PAGE_GUARD | PAGE_NOACCESS)))
+            return false;
+        at = (const char*)m.BaseAddress + m.RegionSize;
+    }
+    return true;
+}
+
 // ---- maker menu lists -----------------------------------------------------------
 // The garage's vfunc 0x124 (FUN_006C6940, called by the vehicles screen at
 // 0x006DD08F) copies every maker group that has a listed car into four MmDk
@@ -773,12 +794,29 @@ struct GrownList {
     void* list;   // list object
     void** data;  // our element array (capacity entries)
     int capacity;
+    bool objects;  // string elements (List_IsObjects), else values
 };
 GrownList g_grown[16];
 int g_grown_n = 0;
 
 int16_t& list_len(void* l) { return *(int16_t*)((char*)l + 0x0C); }
 void**& list_data(void* l) { return *(void***)((char*)l + 0x10); }
+
+// The lists belong to the world's menu script: each world load (the first, and every one after
+// quitting to the main menu) makes new ones (issue #574). A record whose list no longer holds
+// its grown array is taken for a new list (four lists a load: the table held four loads).
+bool grown_live(const GrownList& g)
+{
+    return readable((char*)g.list + 0x10, sizeof(void*)) && list_data(g.list) == g.data;
+}
+
+GrownList* grown_slot()
+{
+    for (int i = 0; i < g_grown_n; i++)
+        if (!grown_live(g_grown[i])) return &g_grown[i];
+    if (g_grown_n < (int)(sizeof g_grown / sizeof g_grown[0])) return &g_grown[g_grown_n++];
+    return nullptr;
+}
 
 // Grows list to `need` entries (at least); returns the capacity it then has.
 int list_grow(void* list, int need, const char* name)
@@ -794,8 +832,16 @@ int list_grow(void* list, int need, const char* name)
         return g->capacity;
     }
     if (!data || len <= 0 || need > 0x7FFF) return len;
-    int cap = need > g_max_groups ? need : g_max_groups;
     bool objects = List_IsObjects(list, nullptr) != 0;
+    if (g && g->capacity >= need && len <= g->capacity && g->objects == objects) {
+        // The script set the list up afresh (every visit to the maker menu does): its own
+        // elements go into the array grown before, whose added elements are still ours.
+        memcpy(g->data, data, len * sizeof(void*));
+        list_data(list) = g->data;
+        list_len(list) = (int16_t)g->capacity;
+        return g->capacity;
+    }
+    int cap = need > g_max_groups ? need : g_max_groups;
     void** grown = (void**)VirtualAlloc(nullptr, cap * sizeof(void*), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!grown) return len;
     memcpy(grown, data, len * sizeof(void*));
@@ -825,11 +871,12 @@ int list_grow(void* list, int need, const char* name)
     }
     list_data(list) = grown;
     list_len(list) = (int16_t)cap;
-    if (!g && g_grown_n < (int)(sizeof g_grown / sizeof g_grown[0])) g = &g_grown[g_grown_n++];
+    if (!g) g = grown_slot();
     if (g) {
         g->list = list;
         g->data = grown;
         g->capacity = cap;
+        g->objects = objects;
     }
     dsf_log("garage: menu list %s %p grown from %d to %d entries (%s)", name, list, len, cap,
             objects ? "strings" : "values");
@@ -1045,12 +1092,9 @@ bool browser_open()
 {
     uint8_t* menu = g_screen ? screen_menu(g_screen) : nullptr;
     if (!menu || strcmp(top_page(menu), kBrowserPage) != 0) return false;
-    static uint8_t* var_menu = nullptr;
-    static int* page_var = nullptr;
-    if (var_menu != menu) {
-        var_menu = menu;
-        page_var = find_var(menu + 0x50, nullptr, "startPageSelected", nullptr);
-    }
+    // Looked up on each key press: a world loaded after quitting to the main menu has a new
+    // menu, which may sit where the last one was (issue #574).
+    int* page_var = find_var(menu + 0x50, nullptr, "startPageSelected", nullptr);
     return page_var && (*page_var == 2 || *page_var == 3);
 }
 
@@ -1090,7 +1134,11 @@ struct KeyWrap {
     int held;
     int down;     // frames down since the press
 };
-KeyWrap g_keys[4];
+// Four keys per menu (Right/Left of players 0 and 1). The menu is the world's: quitting to
+// the main menu frees it and the next world load makes a new one at another address
+// (issue #574), so a key wrapped once outlives its menu. A slot whose key no longer holds
+// key_hook belongs to a menu that is gone and is taken for a new one.
+KeyWrap g_keys[16];
 int g_keys_n = 0;
 
 bool key_take(KeyWrap& w)
@@ -1153,6 +1201,23 @@ void __cdecl key_hook(int32_t* key, void* ctx)
     }
 }
 
+// The key still has key_hook as its handler (false once its menu is freed or reused).
+bool key_wrapped(const int32_t* key)
+{
+    return readable(key + 5, sizeof key[5]) && (uint32_t)key[5] == (uint32_t)key_hook;
+}
+
+// A slot for `key`: its own, else one whose menu is gone, else a new one (nullptr when full).
+KeyWrap* key_slot(int32_t* key)
+{
+    for (int i = 0; i < g_keys_n; i++)
+        if (g_keys[i].key == key) return &g_keys[i];
+    for (int i = 0; i < g_keys_n; i++)
+        if (!key_wrapped(g_keys[i].key)) return &g_keys[i];
+    if (g_keys_n < (int)(sizeof g_keys / sizeof g_keys[0])) return &g_keys[g_keys_n++];
+    return nullptr;
+}
+
 // Points the menu's Right/Left handlers (keys 2 and 3, players 0 and 1) at key_hook.
 void keys_wrap(uint8_t* menu)
 {
@@ -1162,15 +1227,16 @@ void keys_wrap(uint8_t* menu)
             uint32_t cb = (uint32_t)key[5];
             if (cb == (uint32_t)key_hook) continue;
             if (cb < 0x00401000 || cb >= 0x00DC9000) continue;
-            KeyWrap* w = nullptr;
-            for (int i = 0; i < g_keys_n; i++)
-                if (g_keys[i].key == key) w = &g_keys[i];
-            if (!w && g_keys_n < 4) w = &g_keys[g_keys_n++];
-            if (!w) continue;
+            KeyWrap* w = key_slot(key);
+            if (!w) {
+                static int noted = 0;
+                if (noted++ < 3) dsf_log("garage: menu %p key %d player %d: no free key slot, not wrapped", menu, k, player);
+                continue;
+            }
+            *w = KeyWrap{};
             w->key = key;
             w->orig = (KeyFn)cb;
             w->right = k == 2;
-            w->taken = false;
             key[5] = (int32_t)key_hook;
             dsf_log("garage: menu %p key %d player %d: handler %08X wrapped", menu, k, player, cb);
         }
@@ -1293,7 +1359,14 @@ const char* const kDebugVars[] = {"itemBrowserIndex", "categorySelected", "curre
                                   "itemBrowserExitLock", "prevPageMenuIndexLevel2", "prevPageMenuIndexLevel3"};
 const int kDebugN = sizeof kDebugVars / sizeof kDebugVars[0];
 int* volatile g_debug_ptr[kDebugN];
-uint8_t* volatile g_debug_screen = nullptr;
+uint8_t* volatile g_debug_menu = nullptr;   // the menu whose variables g_debug_ptr points at
+
+bool read_int(const int* p, int* out)
+{
+    if (!readable(p, sizeof *p)) return false;
+    *out = *p;
+    return true;
+}
 
 DWORD WINAPI debug_thread(void*)
 {
@@ -1304,7 +1377,13 @@ DWORD WINAPI debug_thread(void*)
         for (int i = 0; i < kDebugN; i++) {
             int* p = g_debug_ptr[i];
             if (!p) continue;
-            int v = *p;
+            int v;
+            if (!read_int(p, &v)) {
+                // The variables are the world's menu's: quitting to the main menu frees them
+                // (issue #574); the next car list resolves the new ones.
+                g_debug_ptr[i] = nullptr;
+                continue;
+            }
             if (v != last[i]) {
                 dsf_log("garage: var %s = %d (%08X)", kDebugVars[i], v, v);
                 last[i] = v;
@@ -1315,14 +1394,14 @@ DWORD WINAPI debug_thread(void*)
 
 void debug_resolve(uint8_t* screen)
 {
-    if (!g_menu_debug || g_debug_screen == screen) return;
-    uint8_t* page = *(uint8_t**)(screen + 4) ? *(uint8_t**)(*(uint8_t**)(screen + 4) + 8) : nullptr;
-    if (!page) return;
+    if (!g_menu_debug) return;
+    uint8_t* page = screen_menu(screen);   // each world load makes a new one (issue #574)
+    if (!page || page == g_debug_menu) return;
     for (int i = 0; i < kDebugN; i++) {
         g_debug_ptr[i] = find_var(page + 0x50, nullptr, kDebugVars[i], nullptr);
         dsf_log("garage: debug var %s at %p", kDebugVars[i], g_debug_ptr[i]);
     }
-    g_debug_screen = screen;
+    g_debug_menu = page;
 }
 
 // ---- patch helpers ------------------------------------------------------------
@@ -1697,3 +1776,66 @@ void mod_garage_init()
 }
 
 int garage_card_limit() { return g_window_on ? garage_card_limit_impl() : 20; }
+
+// Offline check (tools/asi/test/offline.cpp): the card browser's key wraps across menus, as
+// each world load makes a new one (issue #574). Returns the number of failed checks.
+int mod_garage_keys_selftest()
+{
+    const uint32_t kHandler = 0x00B21850;   // the vehicles menu's Right handler, never called here
+    const int kMenu = 0x2A8 + 4 * 0x140;    // past key 3 of player 1
+    static uint8_t menus[6][kMenu];
+    auto key = [](uint8_t* m, int k, int player) { return (int32_t*)(m + 0x2A8 + k * 0x140 + player * 0x28); };
+    auto setup = [&](uint8_t* m) {
+        memset(m, 0, kMenu);
+        for (int player = 0; player < 2; player++)
+            for (int k = 2; k <= 3; k++) key(m, k, player)[5] = (int32_t)kHandler;
+    };
+    auto wrapped = [&](uint8_t* m) {
+        int n = 0;
+        for (int player = 0; player < 2; player++)
+            for (int k = 2; k <= 3; k++) n += key(m, k, player)[5] == (int32_t)key_hook;
+        return n;
+    };
+    int fails = 0;
+    int keys_n = g_keys_n;
+    KeyWrap keys[sizeof g_keys / sizeof g_keys[0]];
+    memcpy(keys, g_keys, sizeof keys);
+    g_keys_n = 0;
+    // A world's menu, wrapped on every visit to a long maker (the script sets the handlers back).
+    setup(menus[0]);
+    keys_wrap(menus[0]);
+    setup(menus[0]);
+    keys_wrap(menus[0]);
+    fails += wrapped(menus[0]) != 4 || g_keys_n != 4;
+    // Quit to the main menu and back, many times: the old menu is gone, a new one comes.
+    for (int round = 1; round < 6; round++) {
+        memset(menus[round - 1], 0, kMenu);
+        setup(menus[round]);
+        keys_wrap(menus[round]);
+        fails += wrapped(menus[round]) != 4;
+    }
+    fails += g_keys_n != 4;
+    // A menu whose pages are given back (decommitted) after the quit: its slots are taken
+    // without reading it (a fault would end the game: readable()).
+    uint8_t* gone = (uint8_t*)VirtualAlloc(nullptr, kMenu, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (gone) {
+        memset(menus[5], 0, kMenu);
+        setup(gone);
+        keys_wrap(gone);
+        fails += wrapped(gone) != 4;
+        VirtualFree(gone, 0, MEM_RELEASE);
+        setup(menus[5]);
+        keys_wrap(menus[5]);
+        fails += wrapped(menus[5]) != 4 || g_keys_n != 4;
+    }
+    // Menus that are all still there take a slot each until the table is full.
+    for (int i = 0; i < 6; i++) setup(menus[i]);
+    for (int i = 0; i < 6; i++) keys_wrap(menus[i]);
+    int all = 0;
+    for (int i = 0; i < 6; i++) all += wrapped(menus[i]);
+    fails += all != (int)(sizeof g_keys / sizeof g_keys[0]);
+    memcpy(g_keys, keys, sizeof keys);
+    g_keys_n = keys_n;
+    if (fails) printf("garage keys selftest: %d failures\n", fails);
+    return fails;
+}

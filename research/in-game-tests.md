@@ -551,6 +551,29 @@ About half of the VM runs ended at the DriverNGHook fatal-error dialog 20 to
 - The stopped collector around `user_open` (above) is a separate fix; the
   loads peak at about 5 MB, well inside the block.
 
+**Menu round trips: quit to the main menu and load again (issue #574).**
+
+- `-MenuRounds N` (`run-series.ps1`, `run-test.ps1`) runs `-MenuKeys` N
+  times, each on a new `-MenuTrigger` line: the test bootstrap runs again on
+  every Story load, so `garagetest.lua` opens the garage again in each world.
+  Round *k*'s shots are `menu<k>-NN.png`.
+- A `Reload` step in `-MenuKeys` waits for the world to go (the Story check's
+  world-sector list empties), then presses Enter until the Story world is
+  back, as at the start. `-QuitKeys` are the keys from driving to the main
+  menu; Reload taps them when the world is still up 20 s in, and again every
+  30 s, six times at most (`quit<k>-<try>-NN.png`). The pause menu opens on
+  MAP: Down × 5 is QUIT TO MAIN MENU, whose question starts on NO (Up, Enter).
+- Each world gets `-WaitSeconds`, and the probe's "done" ends the run only
+  after the last round.
+- On a busy host the game misses taps: Down presses that never arrived
+  opened the wrong maker, and an Esc while leaving the garage (a load screen
+  that lasted over a minute, then a drive-out scene that Esc skips) never opened
+  the pause menu (runs `vm1-20261107-205224`, `-213354`, `vm2-20261107-220923`).
+  `-TapMs 250` holds each tap longer (default 120 ms), the long group goes
+  first in the maker list so no Down is needed (`cfg_biggroup_makers.lua`),
+  and the quit retries cover the rest. `garage-tests.ps1 -Only roundtrip`
+  has the keys.
+
 **A full-roster archive without dsfcars.asi (issue #224, 2026-10-29).**
 
 - Symptom: the fatal-error dialog about 40 s after the window is up, before

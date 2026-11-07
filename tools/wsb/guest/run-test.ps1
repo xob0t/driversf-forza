@@ -78,6 +78,12 @@ param(
                          # (runs separated by ';', cycling; keys Up Down Left Right Space Shift W A S D)
     [string]$MenuKeys,   # menu taps after -MenuTrigger shows in Driver.log: 'Enter:2,Right:1.5,...' (key:wait s)
     [string]$MenuTrigger = 'garage\.enterGarage: true',
+    [int]$MenuRounds = 1, # -MenuKeys runs this many times, each on a new -MenuTrigger line. Key 'Reload' in it (after
+                         # the taps that quit to the main menu) waits for the world to go, then presses Enter until
+                         # the Story world is back, as at the start (menu round trips, issue #574)
+    [int]$TapMs = 120,   # how long a menu or Enter tap holds its key; a game at a few frames a second (a busy host) misses a short one
+    [string]$QuitKeys,   # with Reload in -MenuKeys: keys from driving to the main menu ('Esc:5,Down:1.5,...'), tapped while
+                         # the world is still up 20 s into Reload, and again every 30 s (six tries at most)
     [double]$TrafficRadius = 0, # metres: once the world is up, the traffic road radius (350 m vanilla, 256 m in the
                          # [[engine+0x754]] case scaled alike) is read from a new float instead (research/draw-distance.md, plan A).
                          # Operands only: above 360 m 0x7723A0's 21-cell list overflows; use DSF Enhanced's TrafficSpawnRadius.
@@ -228,6 +234,7 @@ public static class DsfGuest {
     // On the host: when an elevated window (which no API call can take the foreground from)
     // is in front, click the game window's corner to activate it, if the game is what's there.
     public static bool ClickToActivate;
+    public static int TapMs = 120;
     public static string LastClick = "";
     [StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
     [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(Point p);
@@ -286,7 +293,7 @@ public static class DsfGuest {
             }
             if ((what & 1) != 0 && (window == IntPtr.Zero || fgPid != gamePid)) { Skipped++; return; }
             if ((what & 1) != 0) keybd_event(vk, scan, ext, UIntPtr.Zero);
-            if (what == 3) System.Threading.Thread.Sleep(120);
+            if (what == 3) System.Threading.Thread.Sleep(TapMs);
             if ((what & 2) != 0) keybd_event(vk, scan, ext | 2u, UIntPtr.Zero);
         } finally {
             if (target != 0 && target != fg) AttachThreadInput(self, target, false);
@@ -478,6 +485,7 @@ function Save-Shot([string]$Name) {
 
 [DsfGuest]::SetProcessDPIAware() | Out-Null   # screen coordinates in real pixels
 [DsfGuest]::ClickToActivate = [bool]$OnHost
+[DsfGuest]::TapMs = $TapMs
 # On the host: keep the display on (screenshots) while this run lasts.
 if ($OnHost) { [DsfGuest]::SetThreadExecutionState([uint32]2147483651) | Out-Null }
 
@@ -800,33 +808,46 @@ try {
         return $first -ge 0x10000 -and $first -ne ($manager + 0x347EC)
     }
     Start-Sleep -Seconds 5
-    $pulses = 0
-    # No fixed deadline (it was 150 s): on a busy host a healthy load took up to 156 s and the
-    # 150 s cut killed loads that were still growing. A load counts as progressing
-    # while Driver.exe's private bytes make a new high (+4 MB); in 361 VM loads that loaded
-    # (2026-10-26 to -29) the longest gap between highs was 49 s, while hung loads sat flat
-    # for 87 s and more. -StorySeconds caps the stage in any case.
-    $storyStart = Get-Date
-    $deadline = $storyStart.AddSeconds($StorySeconds)
-    $privateHigh = 0; $lastHigh = $storyStart
-    while (-not (& $worldReady)) {
-        $driver.Refresh()
-        if ($driver.HasExited) { throw "Driver exited in the frontend (code $($driver.ExitCode))" }
-        if (Test-CrashDialog) { $result.crashed = $true; throw "game crashed while loading (DriverNGHook fatal error dialog)" }
-        $privateMB = [math]::Round($driver.PrivateMemorySize64 / 1MB)
-        if ($privateMB -gt $privateHigh + 4) { $privateHigh = $privateMB; $lastHigh = Get-Date }
-        $result.storySeconds = [math]::Round(((Get-Date) - $storyStart).TotalSeconds)
-        $result.storyPrivateMB = $privateHigh
-        if (((Get-Date) - $lastHigh).TotalSeconds -gt $StallSeconds) {
-            $result.storyStalled = $true
-            throw "Story world not ready: load stalled (Driver.exe private bytes no new high above $privateHigh MB for $StallSeconds s, $($result.storySeconds) s in, $pulses Enter presses)"
+    # Presses Enter until the Story world is up; returns the presses. No fixed deadline (it was
+    # 150 s): on a busy host a healthy load took up to 156 s and the 150 s cut killed loads that
+    # were still growing. A load counts as progressing while Driver.exe's private bytes make a
+    # new high (+4 MB); in 361 VM loads that loaded (2026-10-26 to -29) the longest gap between
+    # highs was 49 s, while hung loads sat flat for 87 s and more. -StorySeconds caps the stage
+    # in any case. A load after quitting to the main menu (-MenuKeys Reload) starts from the
+    # last world's memory, which it frees first: there any move of 4 MB counts.
+    function Enter-StoryWorld([string]$shotPrefix = 'frontend', [switch]$Again) {
+        $pulses = 0
+        $storyStart = Get-Date
+        $deadline = $storyStart.AddSeconds($StorySeconds)
+        $privateHigh = 0; $mark = -1; $lastHigh = $storyStart
+        while (-not (& $worldReady)) {
+            $driver.Refresh()
+            if ($driver.HasExited) { throw "Driver exited in the frontend (code $($driver.ExitCode))" }
+            if (Test-CrashDialog) { $result.crashed = $true; throw "game crashed while loading (DriverNGHook fatal error dialog)" }
+            $privateMB = [math]::Round($driver.PrivateMemorySize64 / 1MB)
+            if ($Again) {
+                if ($mark -lt 0 -or [math]::Abs($privateMB - $mark) -gt 4) { $mark = $privateMB; $lastHigh = Get-Date }
+                if ($privateMB -gt $privateHigh) { $privateHigh = $privateMB }
+            }
+            else {
+                if ($privateMB -gt $privateHigh + 4) { $privateHigh = $privateMB; $lastHigh = Get-Date }
+                $result.storySeconds = [math]::Round(((Get-Date) - $storyStart).TotalSeconds)
+                $result.storyPrivateMB = $privateHigh
+            }
+            $seconds = [math]::Round(((Get-Date) - $storyStart).TotalSeconds)
+            if (((Get-Date) - $lastHigh).TotalSeconds -gt $StallSeconds) {
+                $result.storyStalled = $true
+                throw "Story world not ready: load stalled (Driver.exe private bytes no new high above $privateHigh MB for $StallSeconds s, $seconds s in, $pulses Enter presses)"
+            }
+            if ((Get-Date) -gt $deadline) { throw "Story world not ready after $StorySeconds s ($pulses Enter presses; still loading, $privateHigh MB)" }
+            [DsfGuest]::Tap((Get-GameWindow), 0x0D, 0x1C)
+            $pulses++
+            if ($pulses % 5 -eq 0) { Save-Shot ("{0}-{1:D2}.png" -f $shotPrefix, $pulses) }
+            for ($i = 0; $i -lt 20 -and -not (& $worldReady); $i++) { Start-Sleep -Milliseconds 250 }
         }
-        if ((Get-Date) -gt $deadline) { throw "Story world not ready after $StorySeconds s ($pulses Enter presses; still loading, $privateHigh MB)" }
-        [DsfGuest]::Tap((Get-GameWindow), 0x0D, 0x1C)
-        $pulses++
-        if ($pulses % 5 -eq 0) { Save-Shot ("frontend-{0:D2}.png" -f $pulses) }
-        for ($i = 0; $i -lt 20 -and -not (& $worldReady); $i++) { Start-Sleep -Milliseconds 250 }
+        return $pulses
     }
+    $pulses = Enter-StoryWorld
     $result.enterPresses = $pulses
     Note "story world ready after $pulses presses"
     if ($TrafficRadius -gt 0) {
@@ -893,9 +914,9 @@ try {
         Enter = @(0x0D, 0x1C, $false); Esc = @(0x1B, 0x01, $false); Tab = @(0x09, 0x0F, $false)
         Q = @(0x51, 0x10, $false); E = @(0x45, 0x12, $false) }
     # A name missing here would be sent as key code 0, i.e. nothing, for the whole run.
-    $keyNames = @($MenuKeys -split ',' | ForEach-Object { ($_ -split ':')[0] }) +
+    $keyNames = @("$MenuKeys,$QuitKeys" -split ',' | ForEach-Object { ($_ -split ':')[0] }) +
         @($DynoKeys -split '[;,]' | ForEach-Object { ($_ -split ':')[0] -split '\+' })
-    foreach ($name in ($keyNames | Where-Object { $_ -and $_ -ne 'None' })) {
+    foreach ($name in ($keyNames | Where-Object { $_ -and $_ -ne 'None' -and $_ -ne 'Reload' })) {
         if (-not $keyCodes.ContainsKey($name)) { throw "unknown key '$name' in -MenuKeys/-DynoKeys (known: $(($keyCodes.Keys | Sort-Object) -join ' '))" }
     }
     # -DynoKeys: one schedule per run, steps 'Key+Key:seconds'. A key is pressed when a
@@ -1083,17 +1104,51 @@ try {
             # -MenuKeys: once a log line matches -MenuTrigger, tap each key ('Enter:2,Right:1.5,...';
             # key:seconds to wait after it) and screenshot after every tap (menu-NN.png).
             if (@(Read-LogTail | Where-Object { $_ -match $MenuTrigger }).Count) {
-                $script:menuDone = $true
+                $script:menuRound++
+                $script:menuDone = $script:menuRound -ge $MenuRounds
                 Start-Sleep -Seconds 3
+                # Round 1's shots are menu-NN.png, round k's menu<k>-NN.png.
+                $menuName = if ($script:menuRound -gt 1) { "menu$($script:menuRound)" } else { 'menu' }
                 $menuShot = 0
-                Save-Shot ("menu-{0:D2}.png" -f $menuShot)
+                Save-Shot ("{0}-{1:D2}.png" -f $menuName, $menuShot)
                 foreach ($step in ($MenuKeys -split ',')) {
                     $name, $wait = $step -split ':'
+                    if ($name -eq 'Reload') {
+                        # Quit to the main menu: wait for the world to go (the keys before may have quit
+                        # already), tap -QuitKeys while it is still up (a key the game drops on a busy host, or
+                        # a load screen after leaving the garage, leaves it up), then load Story again.
+                        $tries = 0
+                        $until = (Get-Date).AddSeconds($(if ($QuitKeys) { 20 } else { 120 }))
+                        while (& $worldReady) {
+                            if ((Get-Date) -ge $until) {
+                                if (-not $QuitKeys -or $tries -ge 6) { throw "Reload: the world is still up ($tries tries of -QuitKeys)" }
+                                $tries++
+                                $quitShot = 0
+                                foreach ($quitStep in ($QuitKeys -split ',')) {
+                                    $quitName, $quitWait = $quitStep -split ':'
+                                    $spec = $keyCodes[$quitName]
+                                    [DsfGuest]::Tap((Get-GameWindow), $spec[0], $spec[1], $spec[2])
+                                    Start-Sleep -Milliseconds ([int](1000 * [double]$(if ($quitWait) { $quitWait } else { 1.5 })))
+                                    if (-not (& $worldReady)) { break }
+                                    Save-Shot ("quit{0}-{1}-{2:D2}.png" -f $script:menuRound, $tries, (++$quitShot))
+                                }
+                                Note "menu: quit keys, try $tries (round $($script:menuRound))"
+                                $until = (Get-Date).AddSeconds(30)
+                            }
+                            Start-Sleep -Milliseconds 500
+                        }
+                        Note "menu: world gone (round $($script:menuRound))"
+                        $again = Enter-StoryWorld "reload$($script:menuRound)-frontend" -Again
+                        Note "menu: story world ready again after $again presses (round $($script:menuRound))"
+                        $result.reloads = 1 + [int]$result.reloads
+                        $deadline = (Get-Date).AddSeconds($WaitSeconds)   # each world gets -WaitSeconds
+                        continue
+                    }
                     $spec = $keyCodes[$name]
                     [DsfGuest]::Tap((Get-GameWindow), $spec[0], $spec[1], $spec[2])
                     Start-Sleep -Milliseconds ([int](1000 * [double]$(if ($wait) { $wait } else { 1.5 })))
-                    Save-Shot ("menu-{0:D2}.png" -f (++$menuShot))
-                    Note "menu: $name -> menu-$('{0:D2}' -f $menuShot).png"
+                    Save-Shot ("{0}-{1:D2}.png" -f $menuName, (++$menuShot))
+                    Note "menu: $name -> $menuName-$('{0:D2}' -f $menuShot).png"
                 }
             }
             Save-Shot ("observe-{0:D2}.png" -f (++$shot))
@@ -1171,7 +1226,9 @@ try {
             }
             Note "$name $probeLine"
         }
-        if ($Probe -and (Test-Path $log) -and (Select-String -LiteralPath $log -Pattern '\[dsfforza\] (done|error)' -Quiet)) {
+        # Not while -MenuKeys rounds remain: the first world's probe is done long before them.
+        if ($Probe -and -not ($MenuKeys -and -not $script:menuDone) -and (Test-Path $log) -and
+            (Select-String -LiteralPath $log -Pattern '\[dsfforza\] (done|error)' -Quiet)) {
             Start-Sleep -Seconds 5
             Save-Shot 'probe-finished.png'
             break

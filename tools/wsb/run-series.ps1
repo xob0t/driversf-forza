@@ -77,6 +77,10 @@ param(
     [string]$DynoKeys,            # key steps per run, e.g. 'Up:25,Down:6;Up:5,Up+Right:0.5,Down:5'
     [string]$MenuKeys,            # menu taps after -MenuTrigger appears in Driver.log, e.g. 'Enter:2,Right:1.5'
     [string]$MenuTrigger,
+    [int]$MenuRounds,             # -MenuKeys this many times, each on a new -MenuTrigger line; key 'Reload' in it waits for the
+                                  # world to go after a quit to the main menu and loads Story again (run-test.ps1)
+    [int]$TapMs,                  # how long a tap holds its key (run-test.ps1; default 120 ms)
+    [string]$QuitKeys,            # with Reload: keys from driving to the main menu, tapped (again) while the world is up
     [double]$TrafficRadius = 0,   # traffic road radius in metres, patched in memory once the world is up (350 vanilla)
     [int]$StallSeconds = 120,     # Story stage: a load whose Driver.exe private bytes make no new high this long is hung
     [int]$StorySeconds = 900,     # Story stage: the cap for a slow but progressing load
