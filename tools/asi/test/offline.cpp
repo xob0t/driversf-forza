@@ -18,6 +18,7 @@ void dsf_core_init();
 #include "../src/modules.h"
 #undef DSF_MODULE
 int mod_hands_selftest();
+int mod_garage_keys_selftest();
 int mod_archive_pkg_selftest(const char* dir);
 long mod_render_dropped();
 
@@ -411,6 +412,8 @@ int main(int argc, char** argv)
         unsigned name_set = 0x006C6AC8 + 5 + *(int*)0x006C6AC9, badge_set = 0x006C6AE2 + 5 + *(int*)0x006C6AE3;
         CHECK(name_set != 0x00ACE110 && badge_set != 0x00ACE110 && name_set != badge_set);
     }
+    // Card browser keys: every world's menu gets its Right/Left wrapped (issue #574).
+    CHECK(mod_garage_keys_selftest() == 0);
     lua_heap_test();
     // Hands: the arms' pose call goes through the plugin; the IK on a synthetic arm.
     CHECK(*(BYTE*)0x005676FF == 0xE8 && *(int*)0x00567700 != (int)(0x008609C0 - 0x00567704));
