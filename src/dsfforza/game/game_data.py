@@ -124,9 +124,16 @@ def load(data: bytes) -> dict:
 def run_constant_chunk(data: bytes, env: dict | None = None) -> dict:
     """Run a main chunk that only builds tables of constants and assigns globals
     (MOVE, LOADK, LOADBOOL, LOADNIL, GETGLOBAL, SETGLOBAL, NEWTABLE, SETTABLE,
-    SETLIST, RETURN). Returns the globals it set; tables are dicts in
-    construction order. Anything else raises ValueError."""
-    f = load(data)
+    SETLIST, RETURN; GETTABLE and CALL on what env gives, arithmetic). Returns the
+    globals it set; tables are dicts in construction order. Anything else raises
+    ValueError."""
+    try:
+        return _run_constant_chunk(load(data), env)
+    except (TypeError, ZeroDivisionError, IndexError) as e:  # arithmetic on a nil, a bad call
+        raise ValueError(f"not a constant chunk: {e}") from e
+
+
+def _run_constant_chunk(f: dict, env: dict | None) -> dict:
     env = {} if env is None else env
     k, regs, out = f["consts"], [None] * max(f["stack"], 2), {}
 
@@ -164,8 +171,9 @@ def run_constant_chunk(data: bytes, env: dict | None = None) -> dict:
         elif op == 18:  # UNM
             regs[a] = -regs[b]
         elif op == 28 and callable(regs[a]):  # CALL of a function the caller gave in env
-            nargs = b - 1 if b else 0
-            result = regs[a](*regs[a + 1 : a + 1 + nargs])
+            if b == 0:
+                raise ValueError("CALL with arguments to the top of stack")
+            result = regs[a](*regs[a + 1 : a + b])
             if c != 1:  # results wanted (c - 1 of them, or all when c == 0): the first one
                 regs[a] = result
         elif op == 7:

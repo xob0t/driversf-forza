@@ -47,6 +47,7 @@ import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dsfforza import REPO
 from dsfforza.game import traffic_ai
 
 AI_FILE = Path("media") / "san_franciscoAI.fchunk"
@@ -98,6 +99,8 @@ def lua_traffic_uses(scripts_package: Path) -> dict[str, int]:
         elif path.endswith(("missionprogression.lua", "challengeprogression.lua", "activitiesprogression.lua")):
             _walk_uses(game_data.run_constant_chunk(script["data"], dict(env)), uses)
     out: dict[str, int] = {}
+    if not pots:  # without it every budget would be the selector's 40: sets too large to load
+        raise ValueError("no missionSpecificVehiclePots (spoolingsystem\\data\\trafficspoolingdata.lua)")
     for traffic, pot in uses:
         if isinstance(pot, dict):  # a list of models: requested as it is
             wanted = {int(x) for x in pot.values()}
@@ -298,7 +301,7 @@ class _Planner:
 
 # --- the car manager's side ---------------------------------------------------------------
 
-DLC_LIST = Path(__file__).resolve().parents[3] / "tools" / "batches" / "fm4-dlc.txt"
+DLC_LIST = REPO / "tools" / "batches" / "fm4-dlc.txt"
 PLUGIN_INI = Path("plugins") / "dsfcars.ini"
 SCRIPTS = Path("media") / "ScriptsLuaScripts.fchunk"
 

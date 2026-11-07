@@ -3,6 +3,7 @@ manager's files, and register.lua's interesting-vehicle settings. A synthetic
 san_franciscoAI.fchunk with the game's container and sections (research/traffic.md 1b); no
 game data."""
 
+import json
 import struct
 import unittest
 
@@ -314,8 +315,15 @@ class RegisterTrafficTest(unittest.TestCase):
         self.assertEqual(out[1], [100, 1, 2, 3])
 
 
-if __name__ == "__main__":
-    unittest.main()
+class PotsTest(unittest.TestCase):
+    def test_no_pot_table_writes_no_sets(self):
+        from unittest import mock
+
+        from dsfforza.formats import lua_scripts
+
+        # without the mission pots every budget would be 40: sets the chapter can't load
+        with mock.patch.object(lua_scripts, "read_package", return_value=[]), self.assertRaises(ValueError):
+            traffic.lua_traffic_uses(None)
 
 
 class GuiSmokeTest(unittest.TestCase):
@@ -353,5 +361,20 @@ class GuiSmokeTest(unittest.TestCase):
             app.fill.set(False)
             app.ports.set(2)
             self.assertEqual(app.gather()["ports"], 2)
+            # a change while the last one is written is refused before any setting changes
+            from unittest import mock
+
+            app.busy = True
+            before = json.dumps(app.tc.t, sort_keys=True)
+            with mock.patch.object(car_manager_gui.messagebox, "showinfo") as shown:
+                app.shuffle()
+                app.apply_set()
+                app.apply_iv()
+            self.assertEqual(shown.call_count, 3)
+            self.assertEqual(json.dumps(app.tc.t, sort_keys=True), before)
         finally:
             root.destroy()
+
+
+if __name__ == "__main__":
+    unittest.main()

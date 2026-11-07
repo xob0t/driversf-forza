@@ -11,14 +11,14 @@ from __future__ import annotations
 import queue
 import threading
 import tkinter as tk
-from pathlib import Path
 from tkinter import messagebox, simpledialog, ttk
 
+from dsfforza import REPO
 from dsfforza.build import traffic
 
 DEFAULT = "Default (every story set)"
 SOURCES = ("All sources", "FH1", "FM4", "DLC")
-VEHICLES_TSV = Path(__file__).resolve().parents[3] / "research" / "vehicles.tsv"
+VEHICLES_TSV = REPO / "research" / "vehicles.tsv"
 
 
 def vanilla_names() -> dict[int, str]:
@@ -82,11 +82,22 @@ class App:
                 self.load_set()
         self.root.after(100, self.poll)
 
-    def run(self, what: str, work) -> None:
-        """Run `work` (writes files) on a worker thread, one at a time."""
+    def ready(self) -> bool:
+        """Whether a change may be made now: none is being written and the game is closed
+        (as the CLI refuses). The handlers ask before they change any setting, so a refused
+        change leaves the settings as they were."""
+        from dsfforza.build.install import game_running
+
         if self.busy:
             messagebox.showinfo("Busy", "The last change is still being written.")
-            return
+            return False
+        if game_running(self.m.game):
+            messagebox.showerror("Game running", "Driver.exe is running from this folder; close the game first.")
+            return False
+        return True
+
+    def run(self, what: str, work) -> None:
+        """Run `work` (writes files) on a worker thread, one at a time; the caller asked ready()."""
         self.busy = True
         self.root.configure(cursor="watch")
         self.log(f"{what}...")
@@ -178,12 +189,12 @@ class App:
         from dsfforza.build import car_manager
 
         keys = self.selected_keys()
-        if keys:
+        if keys and self.ready():
             self.run(f"{cmd} {len(keys)} cars", lambda: car_manager.run_key_command(self.m, cmd, keys))
 
     def traffic_cars(self, *, on: bool) -> None:
         keys = self.selected_keys()
-        if keys:
+        if keys and self.ready():
             self.tc.set_traffic(keys, on=on)
             self.run(f"traffic {'on' if on else 'off'} for {len(keys)} cars", self.save_traffic)
 
@@ -351,11 +362,15 @@ class App:
         self.preview()
 
     def apply_set(self) -> None:
+        if not self.ready():
+            return
         fields = self.gather()
         self.tc.set_ambient(self.current_set(), **fields)
         self.run(f"traffic set {self.set_name.get()}", self.save_traffic)
 
     def reset_set(self) -> None:
+        if not self.ready():
+            return
         name = self.current_set()
         amb = self.tc.t["ambient"]
         if name is None:
@@ -365,11 +380,13 @@ class App:
         self.run(f"reset {self.set_name.get()}", self.save_traffic)
 
     def shuffle(self) -> None:
+        if not self.ready():
+            return
         self.tc.shuffle()
         self.run("shuffle the ports", self.save_traffic)
 
     def ambient_off(self) -> None:
-        if messagebox.askyesno("No set changes", "Put every traffic set back as the game has it?"):
+        if self.ready() and messagebox.askyesno("No set changes", "Put every traffic set back as the game has it?"):
             self.tc.ambient_off()
             self.run("traffic sets as the game has them", self.save_traffic)
 
@@ -400,6 +417,8 @@ class App:
         ttk.Button(frame, text="Unpin", command=lambda: self.pin(unpin=True)).grid(row=4, column=1, sticky="w")
 
     def apply_iv(self) -> None:
+        if not self.ready():
+            return
         self.tc.t["iv"]["ports"] = bool(self.iv_ports.get())
         self.tc.t["iv"]["per_region"] = int(self.per_region.get())
         self.tc.t["iv"]["vanilla"] = bool(self.iv_vanilla.get())
@@ -407,7 +426,7 @@ class App:
 
     def pin(self, *, unpin: bool) -> None:
         keys = self.selected_keys()
-        if not keys:
+        if not keys or not self.ready():
             return
         regions = None
         if not unpin:
