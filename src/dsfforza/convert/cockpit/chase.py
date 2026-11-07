@@ -7,12 +7,18 @@ carbin"). The main carbin's LOD 1 cabin is the far stand-in: about a thousand tr
 no steering column, its wheel on the dash, its UVs on `nodamage.xds` artwork a livery can
 paint over. The chase views see the player's car from 5.8 m, where Forza draws LOD 0.
 
-With `ChaseCabin`, convert_interior also culls the cockpit's cabin sections (not the
-outside parts, the glass or the needles: the exterior has its own) to what the chase
-camera sees through the windows from any side (`chase_eyes`), plans the interior atlas
-for them too, and hands them over with its binding. The exterior entry then draws them
-with the interior entry's own materials and atlas, in place of the LOD-1 cabin; its
-steering wheel is the cockpit's, skinned to the steering record, on the hinge.
+With `ChaseCabin`, convert_interior also takes the cockpit's cabin sections (not the
+outside parts, the glass or the needles: the exterior has its own), plans the interior
+atlas for them too, and hands them over with its binding. The exterior entry then draws
+them whole, with the interior entry's own materials and atlas, in place of the LOD-1
+cabin: the free, thrill and cinematic cameras and Film Director look into the cabin from
+anywhere (#572). Its steering wheel is the cockpit's, skinned to the steering record, on
+the hinge.
+
+Only where the whole cabin puts the exterior over the build's size checks (port_car's
+check_entry for kind 2) does the cabin give way, before the body's LOD does: to what the
+chase camera sees through the windows from any side (`chase_eyes`), then from the ring's
+rear half, then to the LOD-1 cabin (forza2dsf.conversion.build_exterior_with_cabin).
 """
 
 from __future__ import annotations
@@ -53,15 +59,18 @@ def chase_eyes(place, *, rear: bool = False) -> list[tuple]:
 
 @dataclass
 class ChaseCabin:
-    """In: the conversion's placement and the main carbin's body (the occluder) at the
-    exterior's LOD. Out (convert_interior): the culled cabin sections, the interior's
-    binding and shared materials, and a report."""
+    """In: the conversion's placement and the main carbin's body (the occluder of the
+    fallback cullings) at the exterior's LOD. Out (convert_interior): the cabin sections,
+    whole and culled, the interior's binding and shared materials, and a report."""
 
     place: object
     body: list
     lod: int
-    sections: list = field(default_factory=list)  # culled to the whole ring
-    rear_sections: list = field(default_factory=list)  # culled to its rear half (an exterior over its cap)
+    sections: list = field(default_factory=list)  # the whole cabin
+    # For an exterior the whole cabin puts over the size checks: culled to the chase ring,
+    # then to its rear half.
+    ring_sections: list = field(default_factory=list)
+    rear_sections: list = field(default_factory=list)
     binding: object = None
     shared: dict | None = None
     layout: dict | None = None  # material UID -> (stride, MODL flag), the interior's included
@@ -96,11 +105,12 @@ def cabin_sections(static: dict) -> list:
     return out
 
 
-def cull_for_chase(chase: ChaseCabin, static: dict, resolution: int = 512) -> tuple[list, list]:
-    """cabin_sections culled to what chase_eyes see through the main body's windows (the
-    body at the exterior's LOD occludes, its glass doesn't), from the whole ring and from
-    its rear half. Small triangles count as seen within 0.5% of the depth a pixel shows
-    (3 cm at the chase distance; the head view's 3% would be 17 cm)."""
+def cull_for_chase(chase: ChaseCabin, static: dict, resolution: int = 512) -> tuple[list, list, list]:
+    """(cabin_sections whole, culled to what chase_eyes see through the main body's windows
+    from the whole ring, and from its rear half). The cullings are the fallbacks for an
+    exterior the whole cabin puts over the size checks. The body at the exterior's LOD
+    occludes, its glass doesn't. Small triangles count as seen within 0.5% of the depth a
+    pixel shows (3 cm at the chase distance; the head view's 3% would be 17 cm)."""
     cabin = cabin_sections(static)
     occluders = []
     for s in chase.body:
@@ -133,7 +143,7 @@ def cull_for_chase(chase: ChaseCabin, static: dict, resolution: int = 512) -> tu
         "seen_from_its_rear_half": count(out[1]),
         "lod1_cabin_triangles": lod1,
     }
-    return out[0], out[1]
+    return cabin, out[0], out[1]
 
 
 # --- the interior atlas, planned for the head view alone ---------------------------------
