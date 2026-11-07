@@ -82,10 +82,11 @@ later PR replaced a rule, the earlier section says so in one line.
   does it take a free entry at the other end; fog lamps never do and stay
   unlit ([#146](#rear-lamps-short-of-a-rear-entry-issue-146),
   [pairs](#a-rear-entry-freed-by-a-left-and-right-pair-issue-146)).
-- Head lamps on a front side whose own position or DRL-indicator lamps
-  (with an entry) are under a quarter of their area are 0x1D, Headlights +
+- Head lamps at a front whose own position or DRL-indicator lamps (with an
+  entry) are under a quarter of the head lamps' area are 0x1D, Headlights +
   DaytimeRunning, so they light by day as on 33 vanilla vehicles
-  ([day](#head-lamps-dark-by-day-player-report)).
+  ([day](#head-lamps-dark-by-day-player-report)). The choice is the car's,
+  both sides alike (#573).
 - A front head lamp's colour (b2) is the colour table entry nearest in hue to
   its colour times the lens filter its glow passes: white behind a
   selective-yellow lens is b2 11, yellow
@@ -316,8 +317,8 @@ on a shorter or longer car).
    no side (`SIDELESS`, #219), else its fallback's. Only then does it take a
    free entry at the other end; a fog lamp never does (#219) and stays
    unlit, as the 370Z's rear fog lamp does. The table keeps its size and
-   ids, so the hierarchy is untouched. Head lamps become 0x1D where the side
-   has no position lamp of its own ("Head lamps dark by day").
+   ids, so the hierarchy is untouched. Head lamps become 0x1D where the front
+   has no position lamp of its own ("Head lamps dark by day"; per car, #573).
 5. `patch_upvh` writes each used entry's position (area-weighted centroid),
    direction (headlamps (0, 0, 1), else the area-weighted lens normal) and
    flags (type, colour 8/9/4/6, variant 2 on indicators and the combined
@@ -817,7 +818,23 @@ built LOD 3: 64 -> 549. In game (confirmed-runtime, `vm1-20261027-051849` master
 `vm1-20261027-052118` branch, `-Views fq`; `research/img/headlamps-day.jpg`):
 the Carlton's head lamps are dark by day on master and lit on the branch,
 like vanilla 198's 0x1D lamps in the same run. So the game lights DaytimeRunning
-on the player's car in daylight. The 19 cars without one (LOD 1):
+on the player's car in daylight.
+
+Per car, not per side (#573, confirmed-static). The fix above decided each front side
+alone, so three cars lit one head lamp by day and not the other: the BMW M3 E92 08 (its
+left DRL ring's `drlinrwhite` names the right indicator, which `forza_lens.py`'s emulator
+shows it brightens with: `dynamicLights2.z` (DRL) lights it, `dynamicLightsAmount.w`
+(right indicator) adds to it, `.z` (left) doesn't; so the left side had no DRL of its own),
+the Bugatti EB110 SS (a 2-triangle `drlwhite` on the right only, in LOD 5) and the FH1 tour
+bus (`BUS_TOUR_12`, only the right side's `slorange` lamps got entries). Vanilla gives both
+sides the same type: of the 137 vehicles with a front head lamp entry on each side
+(the archive's light tables, front = z > 0, side = sign of x), 104 are 0x01 on both, 31
+0x1D on both, one both types on both; the RUF CTR3 2010 (240) alone has 0x01 on the left
+and 0x1D on the right, with a DRL entry (0x12) on each side. So the test is the whole
+front's: its own position and DRL-indicator lamps against a quarter of all its head lamps'
+area (`DAYTIME_SHARE`, unchanged; a car whose sides agreed can't change: both pass, the
+sums pass). Roster survey (573 cars, master against the branch, `out/s573` in its
+worktree): those 3 change, no other; none is left with two head lamp types. The 19 cars without one (LOD 1):
 pop-up or covered head lamps (MAZ_Miata_94, TOY_Sprinter_85,
 JAG_XJ220_93, CHE_CorvetteStingray_67, race cars), decal lamps (the
 NASCARs), and cars whose own position lamps sit outside the frontal view.
