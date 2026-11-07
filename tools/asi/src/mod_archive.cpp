@@ -1092,6 +1092,236 @@ bool patch_pool45()
     return true;
 }
 
+// A third provider class (acquire 0x0048F7D0, class 0x7A) has the same pool at +0x04
+// but 46 nodes (storage from +0x10, the list head at +0x238) and appends inline rather
+// than through 0x0086B6B0. One node is taken before the vehicle slots, so the 46th
+// wrapper of the vehicle slots lands on the list head: with 45 slots the first kind-1
+// slot (run vm1-20261107-211718, slots_trace: its bump pointer reaches +0x238 at the 45th
+// kind-0 slot; then the fault at 0x0084BF49 of #566). The replacement is the function
+// with the append through pool_room.
+void** __fastcall h_acquire_7a(uint8_t* self, void*, void** out)
+{
+    void* obj = nullptr;
+    ((MakeObject)0x0086A360)(&obj, 0x7A);
+    ((ClassInfo)0x0086A400)(0x7A);
+    *out = obj;
+    int* pool = (int*)(self + 4);
+    if (pool_room(pool, self + 0x10, self + 0x238, "provider pool (class 7A)"))
+        pool_append(pool, (int*)(self + 0x238), (int)(uintptr_t)obj);
+    return out;
+}
+
+// 0x0048F7D0: push ecx; push esi; push edi; lea eax, [esp+8]; push 0x7A
+const uint8_t kAcquire7aExpect[] = {0x51, 0x56, 0x57, 0x8D, 0x44, 0x24, 0x08, 0x6A, 0x7A};
+
+bool patch_acquire_7a()
+{
+    if (!check_bytes(0x0048F7D0, kAcquire7aExpect, 9)) {
+        dsf_log("slots: 0048F7D0 is not the vanilla class-7A acquire; vehicle slots stay 35");
+        return false;
+    }
+    if (!patch_jmp(0x0048F7D0, (void*)h_acquire_7a, 5, kAcquire7aExpect)) return false;
+    dsf_log("slots: 0048F7D0 provider pool (class 7A, 46 nodes) goes on in the plugin's chunks when full");
+    return true;
+}
+
+// ---- the class factory's object pools -------------------------------------------
+// MakeObject (0x0086A360) calls a class's creator from the table at [0x01449050]. Many
+// creators take their object from one of 91 fixed object pools: the table at
+// [0x01448BF8] (built by 0x00869990, 0x18 bytes each: {base, next, free count, object
+// size, capacity, used}), made by 0x0086A070(id, capacity), allocated by 0x00869D50(id):
+// the free list's head, or else `next` bumped by the size, with no end check. ClassOf
+// (0x00869E30) and the free (0x00869DA0) find an object's pool from base and capacity,
+// so a pool can't continue elsewhere: the room has to be there from its creation.
+// The class-7A wrappers (creator 0x0048FB40: pool 0x16, 0x30 bytes, a sound bank wrapper
+// of vtable 0x00E36D38 at +0x0C) come from pool 0x16, which their provider's constructor
+// makes with 46 (0x0048F85D: push 0x2E; push 0x16; call 0x0086A070), one per node of
+// its list. The 47th lands on the next object, the provider at table+0x68 (run
+// vm1-20261107-215725: the fault of #566 with ESI = that provider). Its capacity gets
+// the slots added over the vanilla 35, so it keeps vanilla's spare objects.
+const uint32_t kPool16CapVa = 0x0048F85E;
+const uint8_t kPool16Cap = 0x2E;
+const uint32_t kObjPoolTable = 0x01448BF8;
+const uint32_t kObjPools = 0x5B;
+
+bool patch_pool16(uint32_t slots)
+{
+    const uint8_t expect[] = {0x6A, kPool16Cap, 0x6A, 0x16};
+    if (!check_bytes(kPool16CapVa - 1, expect, 4)) {
+        dsf_log("slots: 0048F85D is not the vanilla pool 0x16 creation; vehicle slots stay 35");
+        return false;
+    }
+    uint32_t cap = kPool16Cap + (slots - kVanillaVehicleSlots);
+    if (cap > 0x7F) cap = 0x7F;  // push imm8
+    uint8_t b = (uint8_t)cap;
+    if (!patch_bytes(kPool16CapVa, &b, 1, &kPool16Cap)) return false;
+    dsf_log("slots: object pool 0x16 (class-7A wrappers): %u objects (vanilla 46)", cap);
+    return true;
+}
+
+// The allocator as it is, plus a log line the first time a pool runs past its end (the
+// object then overwrites whatever follows; vanilla does the same, silently).
+typedef uint8_t*(__cdecl* PoolTableMake)();
+bool g_obj_full_logged[kObjPools];
+
+void* __cdecl h_obj_alloc(uint32_t id)
+{
+    uint8_t* t = *(uint8_t**)kObjPoolTable;
+    if (!t) {
+        t = ((PoolTableMake)0x00869990)();
+        *(uint8_t**)kObjPoolTable = t;
+    }
+    uint32_t* e = (uint32_t*)(t + id * 0x18);
+    uint8_t* obj = (uint8_t*)(uintptr_t)e[1];
+    e[5]++;
+    if (e[2]) {
+        e[1] = *(uint32_t*)obj;
+        e[2]--;
+        return obj;
+    }
+    if (e[0] && (uint32_t)(uintptr_t)obj + e[3] > e[0] + e[4] * e[3] && id < kObjPools && !g_obj_full_logged[id]) {
+        g_obj_full_logged[id] = true;
+        dsf_log("slots: object pool %#x is full (%u objects of %u bytes): object %u goes past its end", id, e[4],
+                e[3], e[5]);
+    }
+    e[1] = (uint32_t)(uintptr_t)obj + e[3];
+    return obj;
+}
+
+const uint8_t kObjAllocExpect[] = {0xA1, 0xF8, 0x8B, 0x44, 0x01};  // 0x00869D50: mov eax, [0x01448BF8]
+
+bool patch_obj_alloc()
+{
+    if (!check_bytes(0x00869D50, kObjAllocExpect, 5)) return false;
+    return patch_jmp(0x00869D50, (void*)h_obj_alloc, 5, kObjAllocExpect);
+}
+
+// With slots_trace: the object pools within 2 of their capacity (each once).
+bool g_obj_near_logged[kObjPools];
+
+void trace_obj_pools(uint32_t slot)
+{
+    uint8_t* t = *(uint8_t**)kObjPoolTable;
+    if (!t) return;
+    for (uint32_t id = 0; id < kObjPools; id++) {
+        uint32_t* e = (uint32_t*)(t + id * 0x18);
+        uint32_t live = e[5];
+        if (e[4] && live + 2 >= e[4] && !g_obj_near_logged[id]) {
+            g_obj_near_logged[id] = true;
+            dsf_log("slots_trace: after slot %u: object pool %#x has %u of %u (%u bytes each)", slot, id, live,
+                    e[4], e[3]);
+        }
+    }
+}
+
+// ---- the sound manager's bank list (50 nodes) ---------------------------------
+// FUN_00849870 (thiscall, one value; ret 4) appends a vehicle sound bank wrapper
+// (vtable 0x00E36D38, class 9, FUN_0084C0A0) to the sound manager's list when the
+// wrapper starts loading (FUN_0084BF30, the wrapper's vtable[0]): the 45-node pools'
+// layout with 50 nodes, {next, free count, used} at +0x92DC, nodes from +0x92E8, the
+// list head at +0x9540, and no end check. Its other users only unlink nodes and put
+// them on the free list (0x008497D0 remove, 0x0084A16B the update's sweep of state-4
+// wrappers), so nodes may live anywhere. The 51st lands on the list head.
+uint32_t g_bank_peak = 0;
+
+void __fastcall h_bank_append(uint8_t* self, void*, int item)
+{
+    int* pool = (int*)(self + 0x92DC);
+    if (!pool_room(pool, self + 0x92E8, self + 0x9540, "sound bank list")) return;
+    pool_append(pool, (int*)(self + 0x9540), item);
+    if ((uint32_t)pool[2] > g_bank_peak) {
+        g_bank_peak = (uint32_t)pool[2];
+        if (g_bank_peak >= 20) dsf_log("slots: sound bank list %p holds %u (peak)", pool, g_bank_peak);
+    }
+}
+
+const uint8_t kBankAppendExpect[] = {0x83, 0xB9, 0xE0, 0x92, 0x00, 0x00, 0x00};  // 0x00849870: cmp [ecx+0x92E0], 0
+
+bool patch_bank_list()
+{
+    if (!check_bytes(0x00849870, kBankAppendExpect, 7)) {
+        dsf_log("slots: 00849870 is not the vanilla sound bank append; vehicle slots stay 35");
+        return false;
+    }
+    if (!patch_jmp(0x00849870, (void*)h_bank_append, 7, kBankAppendExpect)) return false;
+    dsf_log("slots: 00849870 sound bank list (50 nodes) goes on in the plugin's chunks when full");
+    return true;
+}
+
+// ---- slot creation trace ([archive] slots_trace; research, off by default) ---
+// FUN_005A1420 makes each slot handler through FUN_0059F9C0 (thiscall: self = the
+// provider table, Engine+0x15C; out, package type, extra provider, NONR size, index;
+// callee cleans 0x14), whose type-0 range is self[0x17..0x1D] (#566). The range is
+// filled during the first call. After it, the trace logs each provider's vtable and
+// vtable[1] (its acquire); after every slot, the dwords of each provider's first 0x400
+// bytes that changed (at most 8 per provider and slot).
+bool g_slots_trace = false;
+uint32_t g_trace_calls = 0;
+bool g_trace_listed = false;
+const uint32_t kTraceDwords = 0x100;
+uint32_t g_trace_entry[7];
+uint32_t g_trace_obj[7][kTraceDwords];
+
+bool readable(const void* p, size_t n)
+{
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!p || !VirtualQuery(p, &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT) return false;
+    if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) return false;
+    return (const uint8_t*)p + n <= (const uint8_t*)mbi.BaseAddress + mbi.RegionSize;
+}
+
+void trace_snapshot(uint32_t* table, bool log, uint32_t slot)
+{
+    for (int i = 0; i < 7; i++) {
+        uint32_t e = table[0x17 + i];
+        static uint32_t obj[kTraceDwords];
+        memset(obj, 0, sizeof(obj));
+        if (readable((void*)(uintptr_t)e, sizeof(obj))) memcpy(obj, (void*)(uintptr_t)e, sizeof(obj));
+        if (log) {
+            uint32_t vt1 = readable((void*)(uintptr_t)(obj[0] + 4), 4) ? *(uint32_t*)(uintptr_t)(obj[0] + 4) : 0;
+            dsf_log("slots_trace: provider %d at table+%#x: %08X vtable %08X acquire %08X", i, (0x17 + i) * 4, e,
+                    obj[0], vt1);
+        } else if (e != g_trace_entry[i]) {
+            dsf_log("slots_trace: after slot %u: table entry %d %08X -> %08X", slot, i, g_trace_entry[i], e);
+        } else {
+            int shown = 0;
+            for (uint32_t k = 0; k < kTraceDwords && shown < 8; k++)
+                if (obj[k] != g_trace_obj[i][k]) {
+                    dsf_log("slots_trace: after slot %u: provider %d +%#x %08X -> %08X", slot, i, k * 4,
+                            g_trace_obj[i][k], obj[k]);
+                    shown++;
+                }
+        }
+        g_trace_entry[i] = e;
+        memcpy(g_trace_obj[i], obj, sizeof(obj));
+    }
+}
+
+typedef void*(__fastcall* MakeSlot)(void* self, void*, void* out, uint32_t type, uint32_t extra, uint32_t nonr,
+                                    uint32_t index);
+void* __fastcall h_trace_make_slot(void* self, void*, void* out, uint32_t type, uint32_t extra, uint32_t nonr,
+                                   uint32_t index)
+{
+    uint32_t* table = (uint32_t*)self;
+    void* r = ((MakeSlot)0x0059F9C0)(self, nullptr, out, type, extra, nonr, index);
+    g_trace_calls++;
+    if (type == 0) {
+        dsf_log("slots_trace: slot %u (nonr %#x, index %u): scene model %p", g_trace_calls, nonr, index,
+                *(void**)out);
+        if (!g_trace_listed) {
+            g_trace_listed = true;
+            dsf_log("slots_trace: provider table %p", self);
+            trace_snapshot(table, true, g_trace_calls);
+        } else {
+            trace_snapshot(table, false, g_trace_calls);
+            trace_obj_pools(g_trace_calls);
+        }
+    }
+    return r;
+}
+
+const uint8_t kMakeSlotCallExpect[] = {0xE8, 0x2A, 0xE5, 0xFF, 0xFF};  // 0x005A1491: call 0x0059F9C0
+
 // The vehicle spool object's SSLP header has just been set: raise its kind-0 slot
 // byte and move its ID pools out of the object. obj = the spool object (the SSLP
 // load's `self` - 4); its package type is at +0x7300 (vehicles: 0, FUN_005A1520).
@@ -2038,6 +2268,43 @@ uint32_t frame_quantile(uint32_t q_permille)
     return 0;
 }
 
+// Wwise's memory pools, sampled every frame and logged with each 10 s summary. AK::MemoryMgr is
+// linked in: the pool table at *0x01D72390, 0x4C bytes per pool ({blocks, block size, ...} at +0,
+// used bytes at +0x44, kept by Malloc 0x00C99A40 and Free 0x00C99BA0; the size it manages at
+// +0x48, as GetPoolMemoryUsed 0x00C99B60 reads them), the pool count at 0x01D7238C. Release
+// builds name no pool (GetPoolName returns null), so the summary gives each its size.
+const uint32_t kAkPoolTable = 0x01D72390;
+const uint32_t kAkPoolCount = 0x01D7238C;
+const uint32_t kAkPoolsLogged = 16;
+uint32_t g_ak_peak[kAkPoolsLogged];
+
+void wwise_sample()
+{
+    uint8_t* table = *(uint8_t**)kAkPoolTable;
+    int n = *(int*)kAkPoolCount;
+    if (!table) return;
+    for (int i = 0; i < n && i < (int)kAkPoolsLogged; i++) {
+        uint32_t used = *(uint32_t*)(table + i * 0x4C + 0x44);
+        if (used > g_ak_peak[i]) g_ak_peak[i] = used;
+    }
+}
+
+void wwise_summary()
+{
+    uint8_t* table = *(uint8_t**)kAkPoolTable;
+    int n = *(int*)kAkPoolCount;
+    if (!table) return;
+    char line[1024];
+    int len = 0;
+    for (int i = 0; i < n && i < (int)kAkPoolsLogged && len < (int)sizeof(line) - 64; i++) {
+        uint8_t* e = table + i * 0x4C;
+        if (!*(uint32_t*)e) continue;  // a free entry
+        len += _snprintf_s(line + len, sizeof(line) - len, _TRUNCATE, "%s%d: %u/%u/%u", len ? ", " : "", i,
+                           *(uint32_t*)(e + 0x44) / 1024, g_ak_peak[i] / 1024, *(uint32_t*)(e + 0x48) / 1024);
+    }
+    dsf_log("wwise: pools (used/peak/size KiB) %s", line);
+}
+
 void frame_summary(const LARGE_INTEGER& now)
 {
     uint32_t over25 = 0, over33 = 0, over50 = 0;
@@ -2052,6 +2319,7 @@ void frame_summary(const LARGE_INTEGER& now)
             g_frame_count, qpc_us(g_frame_period, now) / 1000, qpc_us(g_qpc0, now) / 1000, p50 / 1000,
             p50 % 1000 / 100, p95 / 1000, p95 % 1000 / 100, p99 / 1000, p99 % 1000 / 100, g_frame_max_us / 1000,
             g_frame_max_us % 1000, over25, over33, over50, g_pkg_reads);
+    wwise_summary();
     memset(g_frame_bins, 0, sizeof g_frame_bins);
     g_frame_count = 0;
     g_frame_max_us = 0;
@@ -2071,6 +2339,7 @@ uint32_t __fastcall h_pump(void* self, void* edx, void* a, void* b)
         dsf_log("frames: the pump also runs on thread %lu (main %lu)", tid, g_main_tid);
     }
     if (tid == g_main_tid) {
+        wwise_sample();
         if (g_frame_last.QuadPart) {
             uint32_t us = qpc_us(g_frame_last, now);
             uint32_t bin = us / 100;
@@ -2278,6 +2547,11 @@ void mod_archive_init()
     // Vehicle spool slots (see "vehicle spool slots"): 35 = vanilla, no patch.
     // 41: the most shown to load and run in game (run vm1-20261105-224648). 45, 50 and 60 crash at package
     // init in a structure not yet found (research/traffic.md, "The spool slot limit"; issue #566).
+    g_slots_trace = cfg_bool("archive", "slots_trace", false);
+    if (cfg_int("archive", "vehicle_slots", 41) > (int)kVanillaVehicleSlots && !patch_obj_alloc())
+        dsf_log("slots: 00869D50 is not the vanilla object pool allocator; no overflow log");
+    if (g_slots_trace && patch_call(0x005A1491, (void*)h_trace_make_slot, kMakeSlotCallExpect))
+        dsf_log("slots_trace: 005A1491 traced");
     int slots = cfg_int("archive", "vehicle_slots", 41);
     if (slots > (int)kVanillaVehicleSlots) {
         if (slots > (int)kSlotHandlers - 4) slots = (int)kSlotHandlers - 4;  // the other kinds' 2 + 2 slots
@@ -2286,12 +2560,12 @@ void mod_archive_init()
             hooked = g_sslp_hooked = patch_jmp(0x005A0B50, (void*)h_sslp_load, 5, kSslpExpect);
         if (!hooked)
             dsf_log("slots: 005A0B50 is not the vanilla SSLP load; vehicle slots stay 35");
-        else if (!(patch_wrap_lists() && patch_pool45())) {  // they only act past their inline room
+        else if (!(patch_wrap_lists() && patch_pool45() && patch_acquire_7a() && patch_bank_list())) {  // they only act past their inline room
             if (g_sslp_hooked) {
                 patch_bytes(0x005A0B50, kSslpExpect, 5);
                 g_sslp_hooked = false;
             }
-        } else if (patch_vehicle_pool((uint32_t)slots))
+        } else if (patch_pool16((uint32_t)slots) && patch_vehicle_pool((uint32_t)slots))
             g_vehicle_slots = (uint32_t)slots;
         else if (g_sslp_hooked) {
             patch_bytes(0x005A0B50, kSslpExpect, 5);
