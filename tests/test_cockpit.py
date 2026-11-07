@@ -973,9 +973,11 @@ def test_chase_eyes_ring_the_car_at_the_chase_camera():
     assert len(rear) == 7 and all(place.point(e)[2] <= 1e-9 for e in rear)
 
 
-def test_cull_for_chase_keeps_what_the_ring_sees():
-    # A seat in a box open only at the front is seen from the ring's front eyes but from
-    # none of its rear half (beside and behind the car). Forza space: the front is -z.
+def test_cull_for_chase_keeps_the_whole_cabin():
+    # The exterior draws the whole cabin (#572); the ring's cullings are only the fallbacks
+    # for an exterior over its size checks. A seat in a box open only at the front is seen
+    # from the ring's front eyes but from none of its rear half (beside and behind the car).
+    # Forza space: the front is -z.
     from dsfforza.convert.cockpit import chase
     from dsfforza.convert.forza2dsf.vertices import Placement
 
@@ -993,8 +995,10 @@ def test_cull_for_chase_keeps_what_the_ring_sees():
         quad("roof", "body", [(-1, 3, -2), (1, 3, -2), (1, 3, 0), (-1, 3, 0)], 1),
     ]
     c = chase.ChaseCabin(Placement(dy=-0.6, dz=0.0), box, 1)
-    ring, rear = chase.cull_for_chase(c, {"seatL": seat}, resolution=64)
+    whole, ring, rear = chase.cull_for_chase(c, {"seatL": seat}, resolution=64)
+    assert [s.name for s in whole] == ["seatL"] and len(whole[0].subsections[0].triangles()) == 2
     assert [s.name for s in ring] == ["seatL"] and rear == []
+    assert c.report["cockpit_cabin_triangles"] == 2
     assert c.report["seen_from_the_ring"] == 2 and c.report["seen_from_its_rear_half"] == 0
 
 

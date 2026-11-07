@@ -37,7 +37,8 @@ local VIEWS = {}              -- config.views (run-test -Views): extra views bet
                               -- "front": the driver's seat seen through the side windows or the windscreen;
                               -- "rear": the tailgate; "exhaust": the tailpipes, low; "wheels": the left side at hub height; "fq": the
                               -- front left wheel from the front three-quarter; "lock": that wheel
-                              -- from ahead, for steering in place with run-test -DriveKey Left; "nose": the headlamps; "grille": grille and bonnet).
+                              -- from ahead, for steering in place with run-test -DriveKey Left; "nose": the headlamps; "grille": grille and bonnet;
+                              -- "top": the cabin from above the front left).
                               -- A "+lit" suffix ("nose+lit") switches the head lamps on (Headlights, DaytimeRunning) for
                               -- that view, which free roam never does; "+night" puts the scene in the story's dark
                               -- mood (lightstest.lua) with the running lights the game keeps on; views without one
@@ -606,6 +607,9 @@ local FIXED_VIEWS = {
 	-- The rear deck from above and behind, as the high chase camera sees it: a mid-engined
 	-- car's engine through its cover window (the F50's, issue #299).
 	deck = { { 0.0, 2.9, -3.4 }, { 0.0, 0.8, -0.9 } },
+	-- The cabin from above the front left, steeply down through the windscreen and side window,
+	-- as a free or cinematic camera sees it: the console and floors the exterior entry draws (#572).
+	top = { { 1.6, 3.6, 2.0 }, { 0.0, 0.5, 0.0 } },
 }
 local fixedCamera = nil
 local followView = nil        -- "+mph<N>" views: { car, view } the camera follows every frame

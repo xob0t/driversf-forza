@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import struct
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -82,7 +83,10 @@ class ConvertOptions:
     # The clean exterior draws the cockpit carbin's cabin (Forza's LOD 0) with the interior
     # entry's materials instead of the main carbin's LOD-1 cabin (cockpit.chase, #429).
     chase_cabin: bool = True
-    exterior_mdxn_limit: int | None = None  # the clean exterior's MDXN cap (port_car: the batch's --mdxn-limit)
+    # The size checks of the clean exterior: VEHC entry -> problems ([] when it fits);
+    # port_car's check_entry for kind 2, the checks that would otherwise step the whole
+    # exterior to a coarser LOD. None: no check, the whole cabin.
+    exterior_check: Callable | None = None
     # Why the host is the same vehicle as the Forza car (host_select.same_vehicle),
     # or None. When Forza's cockpit carbin is a placeholder (cockpit.is_stub), such a
     # host keeps its own vanilla interior (cockpit, gauges, wheel, hands, head camera)
@@ -669,21 +673,27 @@ def convert(
         report["exterior"] = {"submodels": len(ext_builder.subs)}
 
     def build_exterior_with_cabin(chase) -> None:
-        """build_exterior with the cockpit's cabin culled to the chase ring; where that puts
-        the entry over `opts.exterior_mdxn_limit`, culled to the ring's rear half (the eyes
-        the chase camera looks from); over it still, the LOD-1 cabin (cockpit.chase)."""
+        """build_exterior with the cockpit's whole cabin; where that puts the entry over
+        `opts.exterior_check`, the cabin gives way before the body's LOD does: culled to the
+        chase ring, then to the ring's rear half (the eyes the chase camera looks from), then
+        the LOD-1 cabin (cockpit.chase)."""
         from dsfforza.formats.chnk import entry_size
 
         drsp = child(child(exterior, "MDXN"), "DRSP")
         original = list(drsp.children)
-        tries = [("chase ring", chase.sections), ("rear half of the chase ring", chase.rear_sections), ("LOD 1", None)]
+        tries = [
+            ("whole cockpit cabin", chase.sections),
+            ("chase ring", chase.ring_sections),
+            ("rear half of the chase ring", chase.rear_sections),
+            ("LOD 1", None),
+        ]
         for name, sections in tries:
             drsp.children = list(original)
             chase.binding.atlas_triangles = chase.binding.flat_triangles = 0
             build_exterior(chase, sections)
             size = entry_size(child(exterior, "MDXN"))
-            limit = opts.exterior_mdxn_limit
-            if sections is None or limit is None or size <= limit:
+            problems = [] if sections is None or opts.exterior_check is None else opts.exterior_check(exterior)
+            if not problems:
                 flat = {
                     "atlas_triangles": chase.binding.atlas_triangles,
                     "flat_triangles": chase.binding.flat_triangles,
@@ -698,7 +708,7 @@ def convert(
                     )
                 )
                 return
-            log(f"exterior entry: the cockpit's cabin culled to the {name} puts the MDXN at {size:#x} > {limit:#x}")
+            log(f"exterior entry: the cabin from {name}: MDXN {size:#x}, over: {'; '.join(problems)}")
 
     chase = None
     exterior_first = not (opts.chase_cabin and cf is not None and cf.lod0_atlases and not opts.full_only)

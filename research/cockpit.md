@@ -3395,7 +3395,9 @@ cabin instead of the LOD-1 cabin. That is the cockpit carbin's static sections
 without the outside parts, the upgrades, the lamps, the glass (`glass*`, `lexan*`)
 and the converter's own `dsf_*` sections, its virtual displays and panels
 (`cockpit/chase.py`). One of those panels stood up through the ARX-02a's bodywork
-from outside. The cabin is culled
+from outside. (Since #572 the exterior draws this cabin whole; the culling below is
+only the fallback for an exterior over its size checks: "The whole cabin in the
+exterior views".) The cabin is culled
 to what a ring of 12 eyes sees through the LOD-1 body's windows. The ring sits at
 the chase camera's distance and height (5.8 m out, 1.7 m up, from the probe's
 logs), all round the car, since Shift and replays show every side. It is drawn on
@@ -3463,6 +3465,87 @@ entries are unloaded and loaded again, and every cabin draws (runs above). The g
 (`garagetest_on.lua`, `-MenuKeys`) lists the ported cars. Selecting the BMW E36 M3 and
 leaving the garage spawns it, and it drives out drawn (`vm1-20261031-113304`). No fault
 in any run. Replays: not checked, the harness can't drive one.
+
+## The whole cabin in the exterior views (2026-11-07, #572)
+
+A player report (#572, the 360 Modena): free, thrill and cinematic cameras and Film
+Director look into the cabin from where the chase ring has no eye (above, low, close),
+and saw the centre console, the floors and the passenger seat missing. The ring cull
+dropped a quarter of the cabin (median 75% kept, 37% on the Lotus Eleven).
+
+**What the cull protected: size only.** Nothing in its history (#429) or the code
+gives it a correctness role: it dropped the faces the LOD-1 body hides from the ring's
+eyes, the measure was triangles kept, and the fallbacks were chosen by MDXN size. Forza
+draws this cabin whole at LOD 0. The limits, against the
+exterior entry (kind 2) with the whole cabin, all 703 cars with a cockpit cabin
+(`out/after`, branch build of all 721):
+
+| Limit | Kind | With the whole cabin |
+| --- | --- | --- |
+| NONR buffer (SSLP kind 2) | hard: heap overflow (`spool-limits.md`) | at most 0x6f0 of 0x1000 |
+| 16-bit indices | hard, per submodel from its base vertex | `add_geometry` splits a submodel at 65,533 vertices (merge) |
+| DRSP children (1100) | hard without `[archive]` | submodels at most 29; the cabin adds none (merged per material). Against the release build's logs 701 cars are unchanged; the Jeep's +2 are its brake rotors back, the R18 TDI's +5 come from master's lamp changes (ring cabin both times) |
+| Draw queue (16384 a frame) | per frame, all objects | the same submodels, so the same draws |
+| Graphics pool 11, 4 MiB / 32768 nodes a slot | render objects only, not vertex data | unchanged (objects per submodel) |
+| MDXN 0x2C0000 (`--mdxn-limit`) | the build's cap, not the engine's | 5 cars over (whole-cabin MDXN at most 0x2fa800) |
+| VEHC read 0x280000 (`STATIC_READ_BUFFER`) | the build's check; the engine reads larger VEHCs into a heap buffer (`spool-limits.md`, "Shared spool read buffer"; the pad test loaded 0x30A000) | 63 cars over |
+
+**The rule** (`cockpit/chase.py`, `forza2dsf.conversion.build_exterior_with_cabin`). The
+exterior draws the cockpit's cabin whole. Where that puts the entry over the build's
+own checks for kind 2 (`port_car.check_entry`, passed in as
+`ConvertOptions.exterior_check`), the cabin gives way before the body does: the ring
+culling, then its rear half, then Forza's own LOD-1 cabin. Before, only the MDXN cap
+was checked there, so the read check stepped the whole exterior body to LOD 2 instead
+and dropped the brake rotors first (`port_car`'s ladder). The interior atlas is
+still planned for the head view alone; whole-cabin triangles no planned region holds
+draw flat (`chase_flats`), as the ring's did.
+
+**Roster** (branch build against the release build's logs, same 703 cars):
+
+- cabin drawn: 640 whole, 60 ring, 1 rear half (Jeep Grand Cherokee SRT8 09), 2 LOD 1
+  (Sport quattro 86, Country Squire 66); all 63 for the read check alone, 5 of them
+  also over the MDXN cap;
+- triangles: +9,364 a car (median), +23,196 at most; cabin drawn median 30,157 → 39,908;
+- exterior VEHC: median 0x1f4000 → 0x23c000 (+276 KiB, at most +736 KiB); +194 MB over
+  the roster (the full-roster archive is past 4 GiB either way: packages);
+- exterior LOD: the Sport quattro and Country Squire back from LOD 2 to LOD 1; brake
+  rotors back on them and the Jeep;
+- flat chase triangles: 62 cars, 7,177 → 86 cars, 10,186 (largest: Impreza 22B 4,225 →
+  4,316); flat subsections at most 7 → 11;
+- interior atlas (23-car sample built at master, `t3-8a704962-base/out/sample-before`):
+  the same scale on every car; the SX4 gains one solid cell.
+
+**render_compare** (`out/rc/chase-cabin-ids`: the 23-car sample at master,
+`t3-8a704962-base/out/sample-before`, against the same list and IDs at the branch,
+`out/sample-after`): 15 changed (11 drawn differently, 4 alike), 8 unchanged; the 8
+are the sample's cars that still take the ring cabin. Every change is in the exterior
+views, in the `cabin` and `added` regions through the glass (360 Modena rear 30%, Ram
+SRT-10 rear 36%, 9-3 Aero rear 25%, Golf R rear 24%), no cockpit view changes and no
+score moves but the Sport quattro's (9.13 → 7.09: its body back at LOD 1) and the
+SX4's and Lotus Eleven's (3.085 → 3.078, 7.68 → 7.62). A first diff against the roster
+build (`out/rc/chase-cabin`) also showed cockpit-view changes of dE 1 on every car:
+those came from the different spool IDs (the UIDs and the glass seeds), not from the
+cabin.
+
+**In game** (VM 2, before and after archives of six cars, traffic on with three ports
+in it, the probe in the 360 Modena, M3 E30 and Sport quattro: chase, left, right, front,
+`top` (new: above the front left, down into the cabin) and cockpit views; dsfcars.asi
+`read_log` frame times over the probe's 10 s windows):
+
+| Run | Frames | Mean frame | Median of window medians | Median of window p95 | Peak private |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `vm2-20261107-203406` (before) | 7,748 | 22.0 ms | 22.7 ms | 52.7 ms | 1,142 MB |
+| `vm2-20261107-203850` (after) | 7,701 | 22.1 ms | 22.9 ms | 58.9 ms | 1,140 MB |
+| `vm2-20261107-225233` (before, palette 0, host idle) | 7,585 | 17.2 ms | 21.7 ms | 31.2 ms | 1,144 MB |
+| `vm2-20261107-225615` (after, palette 0, host idle) | 7,602 | 17.1 ms | 22.3 ms | 32.4 ms | 1,142 MB |
+
+The differences are inside the VM's noise (window p95 20 to 105 ms in the first pair,
+which shared the host with two 2-slot builds). A pair in between (`vm2-20261107-204459`,
+`-205731`) ran while the job pool went from 2 to 16 slots and starved the VM (130 to
+200 ms frames): not used. The cabin draws in every view, no fault. In the `top` view
+the 360 Modena and the M3 E30 now show the centre console, the gear gate and the
+passenger seat. The Sport quattro shows Forza's LOD-1 cabin where it had the ring's
+LOD-0 cabin over an LOD-2 body: coarser inside, finer outside.
 
 ## Fitted-rule audit (2026-11-05)
 

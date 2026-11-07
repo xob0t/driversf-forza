@@ -903,7 +903,7 @@ def build_car(
             uid_seed=uid_prefix("geometry", car.name, spool_id),
             cockpit=use_cockpit,
             chase_cabin=not args.no_chase_cabin and use_cockpit,
-            exterior_mdxn_limit=mdxn_max[2],
+            exterior_check=lambda vehc: check_entry(vehc, 2, nonr_limit, mdxn_max)[1],
             gamedbs=[gamedb] if gamedb else [],
             glass_links=args.glass_links,
             same_vehicle_host=same_vehicle,
