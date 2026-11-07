@@ -606,8 +606,12 @@ Chapter 7 with **9 ports added** (27 models; 30 % of the road weight):
 - ports 1 to 9 were 30.1 % of all cars within 250 m (2.5 to 4.2 % each),
   against the 30 % set;
 - median 100 cars within 250 m (driving);
-- frame time 17.5 ms median, 24.3 ms p95, 33.2 ms p99 over 10 s windows
-  (60 Hz VM; `[archive] read_log`);
+- frame times (`[archive] read_log`, every 10 s window of the probe pooled):
+  56.6 fps, mean 17.7 ms, 9.5 % of frames 33.3 ms or more, 1.1 % 50 ms or
+  more. (A single window, 17.5 ms median and 24.3 ms p95, was quoted here
+  before.) The probe's route had about 100 cars within 250 m, twice the
+  later runs', and it ran on the other VM, so these numbers don't compare
+  with the default's below;
 - peak private memory 1148 MB, virtual 1351 MB. The 35-slot runs of 3b were
   1108 to 1121 MB and 1332 to 1334 MB;
 - desired IV slots 8 (fewer free slots, as expected).
@@ -858,8 +862,31 @@ traffic settings; the car manager wrote the default (Chapter 7: 9 ports,
   which dilutes the share a little. One interesting-vehicle port (16) was
   also seen.
 - Peak private memory was 1163 MB.
-- Frame times (`[archive] read_log`): median of the 10 s windows 24.1 ms,
-  against 24.3 ms in #568's +9 run. p95 was 76 ms against 35 ms. The host had
-  61 % competing CPU at launch (`cpu-gate.txt`) and the traffic load is the
-  same as #568's +9 run, so the p95 is put down to the host; not measured on
-  a quiet host.
+- Its frame times aren't a measure of the default: the host had 61 %
+  competing CPU at launch (`cpu-gate.txt`). Pooled over the probe it ran at
+  30.6 fps, 25 % of frames 50 ms or more. The paired runs below measure it.
+
+**Frame cost of the default.** One series on one VM (vm2), the same six
+probe cars in Chapter 7: the default (overlay written by the car manager),
+then vanilla traffic (`traffic ambient --off`: no AI copy, no redirect).
+`run-series -CpuGate 15`: both launched at 11 to 13 % competing host CPU,
+and the host's total CPU (the VM included) averaged 42.5 and 45.0 % during
+the probes. Every 10 s `[archive] read_log` window of the probe pooled
+(150 s each):
+
+| run | traffic | fps | mean frame | frames of 25 ms or more | of 33.3 ms | of 50 ms | cars within 250 m (mean) | peak private |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `vm2-20261107-201411` | the default (9 ports) | 48.7 | 20.5 ms | 37.8 % | 22.0 % | 6.9 % | 50.1 | 1158 MB |
+| `vm2-20261107-201846` | vanilla (`traffic ambient --off`) | 48.1 | 20.8 ms | 38.1 % | 23.2 % | 7.3 % | 53.6 | 1131 MB |
+
+- The default costs no measurable frame time: 0.6 fps and every threshold
+  count are within the spread of the windows. Within each run the windows'
+  medians range from 16 to 29 ms with the place.
+- The 9 ports were 33.5 % of sightings against the predicted 34 %, and 0.3 %
+  in the vanilla run (interesting-vehicle ports only).
+- Cars nearby were 7 % fewer with the default. That is one pair of runs, and
+  each run's count swings about threefold between places (about 75 in the
+  first half, 28 in the second), so it isn't resolved.
+- Memory: 27 MB more peak private memory with the default.
+- Scaling with the port count: at 9 ports (34 %) there is no cost to scale.
+  The Epilogue's 12 ports (44 %) weren't run.
