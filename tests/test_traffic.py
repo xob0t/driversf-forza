@@ -134,14 +134,36 @@ class AiTablesTest(unittest.TestCase):
 
 class PlanTest(unittest.TestCase):
     def plan(self, ambient, ports=(1, 2, 3), slots=41):
+        # the sets the test doesn't set: no ports (the default would fill them)
+        ambient = {"default": {"ports": 0, "share": 0.2}} | ambient
         a = ai()
         reports = traffic.plan(a, ambient, list(ports), {"k.one": 1}, slots=slots, pots=POTS)
         return a, {r.name: r for r in reports}
 
     def test_vanilla_settings_change_nothing(self):
-        a, reports = self.plan({})
+        a, reports = self.plan({"default": {"ports": 0}})
         self.assertEqual(reports, {})
         self.assertEqual(a.weights, ai().weights)
+
+    def test_default_fills_each_set_at_the_mean_weight(self):
+        a = ai()
+        reports = {r.name: r for r in traffic.plan(a, {}, [1, 2, 3], {}, slots=41, pots=POTS)}
+        self.assertEqual(len(reports[CH7].ports), 3)  # room for 24, three cars in traffic
+        for r, allowed in ((1, 3), (2, 2)):
+            w = a.weighted(r)
+            ports = sum(w[m] for m in reports[CH7].ports) / sum(w.values())
+            self.assertAlmostEqual(ports, 3 / (allowed + 3))  # each port as likely as an average vanilla car
+            # the vanilla models keep their relative weights
+            vanilla = {m: x for m, x in w.items() if m not in reports[CH7].ports}
+            for m, x in vanilla.items():
+                self.assertAlmostEqual(x / sum(vanilla.values()), RANGES[r][m] / sum(RANGES[r].values()))
+
+    def test_default_fill_stops_at_the_budget(self):
+        a = ai()
+        # Chapter 7: 18 slots - 1 - pot 13 = 4 models, 3 vanilla: room for one port
+        reports = {r.name: r for r in traffic.plan(a, {}, [1, 2, 3], {}, slots=18, pots=POTS)}
+        self.assertEqual(len(reports[CH7].ports), 1)
+        self.assertEqual(len(a.by_name(CH7).lists[0]), 4)
 
     def test_ports_at_a_share_spread_over_the_roads_that_spawn(self):
         a, reports = self.plan({"sets": {CH7: {"ports": 2, "share": 0.25}}})
@@ -318,6 +340,8 @@ class GuiSmokeTest(unittest.TestCase):
             app = car_manager_gui.App(root, m)
             app.tc.facts = lambda: (41, POTS)
             app.set_name.set(CH7)
+            self.assertEqual((app.gather()["ports"], app.gather()["share"]), ("fill", "mean"))  # the default
+            app.fill.set(False)
             app.ports.set(1)
             app.preview()
             self.assertIn(CH7, app.budget.cget("text"))
@@ -326,6 +350,7 @@ class GuiSmokeTest(unittest.TestCase):
             app.tc.set_ambient(CH7, ports=["forza.fh1.CAR_A_10"])
             app.load_set()
             self.assertEqual(app.gather()["ports"], ["forza.fh1.CAR_A_10"])  # keys kept
+            app.fill.set(False)
             app.ports.set(2)
             self.assertEqual(app.gather()["ports"], 2)
         finally:

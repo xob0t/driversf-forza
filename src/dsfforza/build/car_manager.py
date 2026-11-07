@@ -681,8 +681,8 @@ def add_traffic_parser(sub, common) -> None:
     ts.add_parser("unpin", help="these cars back to automatic regions").add_argument("selectors", nargs="+")
     a = ts.add_parser("ambient", help="the traffic sets: ports, share, weights, the pool")
     a.add_argument("--set", dest="set_name", help="one set (e.g. 'Chapter 7'); default: every story set's default")
-    a.add_argument("--ports", help="how many ports join, or keys separated by commas")
-    a.add_argument("--share", type=float, help="the added models' share of every road (0..1)")
+    a.add_argument("--ports", help="fill (up to the slot budget), how many, or keys separated by commas")
+    a.add_argument("--share", help="mean (each as likely as an average vanilla car) or the added models' share (0..1)")
     a.add_argument("--weights", choices=["vanilla", "equal", "custom"])
     a.add_argument("--blend", type=float, help="0 = the game's weights .. 1 = equal")
     a.add_argument("--custom", help="ID_or_key=factor, separated by commas")
@@ -734,8 +734,13 @@ def run_traffic(m: Manager, args) -> None:
 def ambient_fields(tc, args) -> dict:
     fields = {}
     if args.ports is not None:
-        fields["ports"] = int(args.ports) if args.ports.isdigit() else tc.select(args.ports.split(","))
-    for name in ("share", "weights", "blend", "vanilla_off", "extra"):
+        if args.ports == "fill" or args.ports.isdigit():
+            fields["ports"] = "fill" if args.ports == "fill" else int(args.ports)
+        else:
+            fields["ports"] = tc.select(args.ports.split(","))
+    if args.share is not None:
+        fields["share"] = "mean" if args.share == "mean" else float(args.share)
+    for name in ("weights", "blend", "vanilla_off", "extra"):
         if getattr(args, name) is not None:
             fields[name] = getattr(args, name)
     if args.custom:

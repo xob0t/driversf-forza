@@ -115,10 +115,18 @@ car_manager gui` does the same from a checkout. Its tabs:
 - **Interesting vehicles**: the few special cars the game adds near you. Your
   cars can come as those too, and a car can be pinned to regions of the map.
 
+**By default** (until you change it) every story chapter's traffic is filled
+with your cars up to what it can hold: 8 in the Exposition, 2 in Chapter 1, 4
+in Chapters 2 to 5, 7 in Chapter 6, 9 in Chapter 7 and 12 in the Epilogue
+(with `vehicle_slots=41`). Each of your cars is as likely as an average car of
+the game's on every road, so about a tenth (Chapter 1) to two fifths
+(Epilogue) of the traffic is your cars. The game's own cars keep their mix.
+`cars.cmd traffic ambient --off` puts the traffic back as the game has it.
+
 The settings are kept in `dsfcars\cars\manager.json` (they survive a
 reinstall) and take effect at the next game start. The same from the command
 line: `cars.cmd traffic status`, `cars.cmd traffic off make:FERRARI`,
-`cars.cmd traffic ambient --set "Chapter 7" --ports 4 --share 0.2`,
+`cars.cmd traffic ambient --set "Chapter 7" --ports 4 --share 0.2` (or `--ports fill --share mean`),
 `cars.cmd traffic ambient --weights equal`, `cars.cmd traffic --help`.
 How the game picks traffic: [research/traffic.md](research/traffic.md).
 

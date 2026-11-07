@@ -662,8 +662,8 @@ key):
 
 | Set setting | Meaning |
 | --- | --- |
-| `ports` | how many ports join (dealt from the enabled cars in traffic, a shuffled deck the seed orders, so different sets get different ports), or a list of keys |
-| `share` | the added models' (ports and `extra`) share of every road's weight, split evenly |
+| `ports` | `fill` (default): as many as the budget below leaves room for; or how many (dealt from the enabled cars in traffic, a shuffled deck the seed orders, so different sets get different ports); or a list of keys |
+| `share` | `mean` (default): each added model weighs as much on a road as the mean of the vanilla models that road allows, so the added models' share of a road is k / (allowed + k); or a fixed share of every road's weight, split evenly |
 | `weights` | `vanilla`: the game's weights; `equal`: every model a road allows equally likely, and the added models like them; `custom`: per-model factors |
 | `blend` | 0 to 1 between the game's weights and equal (the same code; `equal` is 1) |
 | `custom` | `{model ID or key: factor}` |
@@ -672,6 +672,25 @@ key):
 
 `ambient.default` applies to every story set (Exposition, Chapters 1 to 7,
 Epilogue), and `ambient.sets.<name>` is laid over it for one set.
+
+**The default** (the owner's choice, 2026-11-07) is `ports: fill`,
+`share: mean`, `weights: vanilla`. It applies to any install without traffic
+settings; `traffic ambient --off` stores `{"off": true}`.
+
+- A set gets as many ports as its budget allows (below; conservative by one
+  model, `vm1-20261105-230205`).
+- Each port is as likely as an average vanilla car of each road, so a set's
+  port share is about ports / (ports + vanilla models). It is slightly more
+  on roads that leave vanilla models out.
+- `traffic status` prints each set's share from `AiTraffic.share` on the
+  planned tables.
+
+At 41 slots with 24 cars in traffic:
+
+| | Exposition | Ch. 1 | Ch. 2 | Ch. 3 | Ch. 4 | Ch. 5 | Ch. 6 | Ch. 7 | Epilogue |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| ports | 8 | 2 | 4 | 4 | 4 | 4 | 7 | 9 | 12 |
+| predicted share | 36 % | 10 % | 18 % | 18 % | 19 % | 19 % | 28 % | 34 % | 44 % |
 
 **Per road** (`traffic.road_weights`), for each weight range a set's roads
 use:

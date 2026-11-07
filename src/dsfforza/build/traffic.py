@@ -10,13 +10,19 @@ Settings (manager.json "traffic"; keys are package keys, so they survive reinsta
 
 Set settings (ambient.default for every story set, ambient.sets.<name> over it for one):
 
-    ports        how many ports join the set (dealt from the cars in traffic), or a list of keys
-    share        the added models' share of every road's weight (0..1) when weights isn't equal
+    ports        "fill" (default: up to the set's slot budget), how many ports join the set (dealt
+                 from the cars in traffic), or a list of keys
+    share        "mean" (default: each added model as likely on a road as the road's average
+                 vanilla model, so the added models' share is k / (vanilla + k)), or their share of
+                 every road's weight (0..1)
     weights      "vanilla", "equal" or "custom"
     blend        0..1 between vanilla (0) and equal (1); "equal" is 1, "vanilla" 0
     custom       {model ID or key: factor}: a model's weight times this (weights "custom")
     vanilla_off  vanilla model IDs taken out of the set
     extra        vanilla model IDs from other sets added in (like ports, at the share)
+
+With no settings (a fresh install) every story set gets DEFAULT_SET: filled to its budget,
+"mean" weights; `traffic ambient --off` stores {"off": true} for no changes at all.
 
 Rules (research/traffic.md 1b, the owner's):
 - The per-road structure stays: a road whose range has no weight still has none, and only the
@@ -51,9 +57,12 @@ VANILLA_SLOTS = 35  # SSLP +0x18 of the vanilla vehicle archive (research/traffi
 POT_CAP = 18  # spoolingsystem.lua: local numberOfVehicleAllowed = 18
 ALL_CHAPTERS = "All chapters"
 WEIGHT_MODES = ("vanilla", "equal", "custom")
+# The default, the owner's (2026-11-07): every story set filled with ports up to its slot
+# budget, each port as likely on a road as an average vanilla car of that road ("mean"), the
+# vanilla models' weights as the game has them.
 DEFAULT_SET = {
-    "ports": 0,
-    "share": 0.2,
+    "ports": "fill",
+    "share": "mean",
     "weights": "vanilla",
     "blend": 0.0,
     "custom": {},
@@ -164,7 +173,12 @@ def road_weights(
         for m, w in allowed.items():
             out[m] = (1 - b) * w / t_allowed + b / len(allowed)
     if added:
-        share = len(added) / n if b >= 1 else min(max(float(s.get("share") or 0.0), 0.0), 0.95)
+        # each added model as likely as the road's average allowed model ("mean", and equal
+        # weights): their share is k / (allowed + k); else the share asked for
+        if b >= 1 or s.get("share") == "mean":
+            share = len(added) / n
+        else:
+            share = min(max(float(s.get("share") or 0.0), 0.0), 0.95)
         if not allowed:
             share = 1.0
         for m in out:
@@ -222,12 +236,14 @@ class _Planner:
                 out[mid] = float(v)
         return out
 
-    def deal(self, want) -> list[int]:
-        """The ports for one set: the keys asked for, or the next `want` of the shuffled deck."""
+    def deal(self, want, room: int) -> list[int]:
+        """The ports for one set: the keys asked for, the next `want` of the shuffled deck, or
+        with "fill" as many as the set has room for."""
         if isinstance(want, list):
             return [self.key_ids[k] for k in want if self.key_ids.get(k) in self.ports]
+        count = room if want == "fill" else int(want or 0)
         chosen = []
-        for _ in range(min(int(want or 0), len(self.deck))):
+        for _ in range(min(count, len(self.deck))):
             chosen.append(self.deck[0])
             self.deck.append(self.deck.pop(0))
         return chosen
@@ -249,11 +265,11 @@ class _Planner:
         vanilla_list = list(ts.lists.get(0, []))
         off = {int(x) for x in s.get("vanilla_off") or []}
         extra = [int(x) for x in s.get("extra") or [] if int(x) not in vanilla_list]
-        chosen = self.deal(s.get("ports"))
         ranges = {r for r in ai.road_ranges(ts, 0) if sum(ai.weights[r]) > 0}  # roads that spawn
         reached = [(u, fr) for u, fr in ai.users(ranges) if not (u.index == ts.index and fr == 0)]
         kept = [m for m in vanilla_list if m not in off]
         free = self.room(name, len(kept), reached)
+        chosen = self.deal(s.get("ports"), max(free - len(extra), 0))
         added = (extra + chosen)[:free]
         if len(extra) + len(chosen) > free:
             rep.notes.append(f"{len(extra) + len(chosen) - free} of the added models left out: over the slot budget")
@@ -402,6 +418,7 @@ class TrafficControl:
         """Change the default (set_name None) or one set's settings; a field set to None goes
         back to the default's."""
         amb = self.t["ambient"]
+        amb.pop("off", None)
         if set_name is None:
             target = amb.setdefault("default", {})
         else:
@@ -421,7 +438,8 @@ class TrafficControl:
         self.t["ambient"]["seed"] = int(self.t["ambient"].get("seed", 0)) + 1
 
     def ambient_off(self) -> None:
-        self.t["ambient"] = {"seed": self.t["ambient"].get("seed", 0)}
+        """No set changes at all, none from the default either, until a set setting is made again."""
+        self.t["ambient"] = {"off": True, "seed": self.t["ambient"].get("seed", 0)}
 
     # --- the files ---
 
@@ -455,8 +473,8 @@ class TrafficControl:
         return ai, reports
 
     def ambient_changes(self) -> bool:
-        amb = self.t["ambient"]
-        return bool(amb.get("default") or amb.get("sets"))
+        """Whether the sets are changed: unless switched off, the default (DEFAULT_SET) does."""
+        return not self.t["ambient"].get("off")
 
     def write(self) -> list[SetReport]:
         """The AI copy and its redirect line (neither when no set changes), and traffic.lua."""
@@ -466,14 +484,19 @@ class TrafficControl:
         copy = game / AI_COPY
         reports: list[SetReport] = []
         changed = False
+        ai = None
         if self.ambient_changes() and self.game_ai().exists():
-            ai, reports = self.plan()
-            if ai.edits.ranges or ai.edits.lists:
-                copy.parent.mkdir(parents=True, exist_ok=True)
-                temp = copy.with_name(copy.name + ".tmp")
-                temp.write_bytes(ai.to_bytes())
-                temp.replace(copy)
-                changed = True
+            try:
+                ai, reports = self.plan()
+            except (SystemExit, ValueError, OSError) as e:
+                # the game's scripts or AI file can't be read: no copy; the command that saved goes on
+                self.m.log(f"traffic sets left as the game has them: {e}")
+        if ai is not None and (ai.edits.ranges or ai.edits.lists):
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            temp = copy.with_name(copy.name + ".tmp")
+            temp.write_bytes(ai.to_bytes())
+            temp.replace(copy)
+            changed = True
         if not changed:
             copy.unlink(missing_ok=True)
             if copy.parent.exists() and not any(copy.parent.iterdir()):
@@ -546,13 +569,14 @@ class TrafficControl:
         if not self.ambient_changes():
             out.append("ambient traffic: as the game has it (no settings)")
             return out
-        _ai, reports = self.plan()
+        ai, reports = self.plan()
         slots, _ = self.facts()
         out.append(f"ambient traffic ({slots} vehicle spool slots):")
         for r in reports:
             line = f"  {r.name}: {r.models} models of {r.budget}, weights {r.weights}"
             if r.ports:
-                line += f", ports {r.ports}"
+                share = ai.share(ai.by_name(r.name))
+                line += f", ports {r.ports} ({sum(share.get(m, 0.0) for m in r.ports):.0%} of its roads)"
             if r.extra:
                 line += f", added vanilla {r.extra}"
             if r.off:

@@ -198,12 +198,16 @@ class App:
         box.bind("<<ComboboxSelected>>", lambda _e: self.load_set())
         self.ports = tk.IntVar(value=0)
         self.share = tk.DoubleVar(value=0.2)
+        self.fill = tk.BooleanVar(value=True)  # traffic.DEFAULT_SET: ports "fill", share "mean"
+        self.mean = tk.BooleanVar(value=True)
         self.mode = tk.StringVar(value="vanilla")
         self.blend = tk.DoubleVar(value=0.0)
         ttk.Label(top, text="Ports").pack(side="left")
         ttk.Spinbox(top, from_=0, to=40, textvariable=self.ports, width=4).pack(side="left")
+        ttk.Checkbutton(top, text="Fill to the budget", variable=self.fill).pack(side="left", padx=(4, 0))
         ttk.Label(top, text="Share").pack(side="left", padx=(8, 0))
         ttk.Scale(top, from_=0.0, to=0.9, variable=self.share, length=120).pack(side="left")
+        ttk.Checkbutton(top, text="As an average vanilla car", variable=self.mean).pack(side="left", padx=(4, 0))
         for mode in traffic.WEIGHT_MODES:
             ttk.Radiobutton(top, text=mode, value=mode, variable=self.mode).pack(side="left", padx=2)
         ttk.Label(top, text="Blend").pack(side="left", padx=(8, 0))
@@ -244,8 +248,10 @@ class App:
         self.pending = {k: s.get(k, traffic.DEFAULT_SET[k]) for k in traffic.DEFAULT_SET}
         # ports chosen by key stay chosen unless the count is changed here
         self.port_keys = list(s["ports"]) if isinstance(s["ports"], list) else None
-        self.ports.set(s["ports"] if isinstance(s["ports"], int) else len(s["ports"]))
-        self.share.set(float(s.get("share") or 0.0))
+        self.fill.set(s["ports"] == "fill")
+        self.ports.set(0 if s["ports"] == "fill" else s["ports"] if isinstance(s["ports"], int) else len(s["ports"]))
+        self.mean.set(s.get("share") == "mean")
+        self.share.set(0.2 if s.get("share") == "mean" else float(s.get("share") or 0.0))
         self.mode.set(s.get("weights") or "vanilla")
         self.blend.set(float(s.get("blend") or 0.0))
         self.preview()
@@ -253,8 +259,11 @@ class App:
     def gather(self) -> dict:
         out = dict(self.pending)
         count = int(self.ports.get())
-        out["ports"] = self.port_keys if self.port_keys and count == len(self.port_keys) else count
-        out["share"] = round(float(self.share.get()), 3)
+        if self.fill.get():
+            out["ports"] = "fill"
+        else:
+            out["ports"] = self.port_keys if self.port_keys and count == len(self.port_keys) else count
+        out["share"] = "mean" if self.mean.get() else round(float(self.share.get()), 3)
         out["weights"] = self.mode.get()
         out["blend"] = round(float(self.blend.get()), 3)
         return out
