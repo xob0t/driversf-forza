@@ -846,3 +846,20 @@ The measured values follow both predictions, within the census's noise
 
 No run crashed. The mission start with a patched set is in section 5
 (`vm1-20261105-230536`).
+
+**The default** (`vm2-20261107-194144`). The 24-package overlay with no
+traffic settings; the car manager wrote the default (Chapter 7: 9 ports,
+`share: mean`, predicted 34 % of its roads).
+
+- The game loaded and drove six cars, 20 s of throttle each, about 135 s of
+  game time, with no crash.
+- The 9 ports were **32.2 %** of all cars within 250 m. The census also
+  counts cars outside the set (interesting vehicles, mission-pot models),
+  which dilutes the share a little. One interesting-vehicle port (16) was
+  also seen.
+- Peak private memory was 1163 MB.
+- Frame times (`[archive] read_log`): median of the 10 s windows 24.1 ms,
+  against 24.3 ms in #568's +9 run. p95 was 76 ms against 35 ms. The host had
+  61 % competing CPU at launch (`cpu-gate.txt`) and the traffic load is the
+  same as #568's +9 run, so the p95 is put down to the host; not measured on
+  a quiet host.
