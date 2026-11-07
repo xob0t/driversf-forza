@@ -392,7 +392,7 @@ Vipers). Evidence (confirmed-runtime):
   driven out of the garage is model 195, the RS200.
 - The maker list sorts its groups by the raw `ManufacturerName` (observed:
   test makers named "DSFT nn" came before every vanilla maker, whose names are
-  string IDs "ID:nnn", run `vm1-20261107-233350`; "ZDSFT nn" came after them).
+  string IDs "ID:nnn", run `vm1-20261107-233350`; with "ZDSFT nn" ABARTH was first again).
 
 The fix gives the table 16 slots and takes, for a key it doesn't hold, a slot
 whose key no longer has the plugin's handler (its menu gone or reused). The
