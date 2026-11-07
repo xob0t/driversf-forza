@@ -71,7 +71,7 @@ if ($Only -contains 'roundtrip') {
     # main menu (issue #574: the window must keep moving in every world).
     $keys = @('Enter:5', 'Enter:5') + @(1..45 | ForEach-Object { 'Right:1' }) + @('Esc:4', 'Esc:4', 'Esc:4', 'Enter:5', 'Reload')
     $quit = @('Esc:5') + @(1..5 | ForEach-Object { 'Down:1.5' }) + @('Enter:4', 'Up:2', 'Enter:8')
-    & $series @mode -Archives $vanilla -ProbeIds 266 -ZoomPresses 0 -WaitSeconds 2400 -ShotSeconds 30 -Asi out\asi\dsfcars.asi `
+    & $series @mode -Archives $vanilla -ProbeIds 266 -ZoomPresses 0 -WaitSeconds 900 -ShotSeconds 30 -Asi out\asi\dsfcars.asi `
         -LuaFiles ("$boot;dsfcars\savetest_cfg.lua=$lua\cfg_biggroup_first.lua;dsfcars\garagetest_on.lua=$lua\garagetest_on.lua") `
         -MenuKeys ($keys -join ',') -MenuRounds 3 -TapMs 250 -QuitKeys ($quit -join ',')
 }

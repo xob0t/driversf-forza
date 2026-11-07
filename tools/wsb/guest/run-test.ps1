@@ -1141,6 +1141,7 @@ try {
                         $again = Enter-StoryWorld "reload$($script:menuRound)-frontend" -Again
                         Note "menu: story world ready again after $again presses (round $($script:menuRound))"
                         $result.reloads = 1 + [int]$result.reloads
+                        $deadline = (Get-Date).AddSeconds($WaitSeconds)   # each world gets -WaitSeconds
                         continue
                     }
                     $spec = $keyCodes[$name]
@@ -1225,7 +1226,9 @@ try {
             }
             Note "$name $probeLine"
         }
-        if ($Probe -and (Test-Path $log) -and (Select-String -LiteralPath $log -Pattern '\[dsfforza\] (done|error)' -Quiet)) {
+        # Not while -MenuKeys rounds remain: the first world's probe is done long before them.
+        if ($Probe -and -not ($MenuKeys -and -not $script:menuDone) -and (Test-Path $log) -and
+            (Select-String -LiteralPath $log -Pattern '\[dsfforza\] (done|error)' -Quiet)) {
             Start-Sleep -Seconds 5
             Save-Shot 'probe-finished.png'
             break
