@@ -802,9 +802,11 @@ Counting the sets each one reaches, a story set can hold:
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 26 | 20 | 22 | 22 | 22 | 22 | 25 | 27 | 27 |
 
-That is 2 (Chapter 1) to 12 (Epilogue) models over the game's 15 to 18. Counting the
-sets it reaches, at 50 slots a story set can hold 33 (Chapter 1) to 36 (Chapter 7,
-Epilogue), at 60 every one 40. The variants' real pots
+At 41 slots that is 2 (Chapter 1) to 12 (Epilogue) models over the game's 15
+to 18. Counting the sets it reaches, at 50 slots a story set can hold 35, 29, 31,
+31, 31, 31, 34, 36 and 36 models (29 for Chapter 1 to 36 for Chapter 7 and the
+Epilogue), and at 60 slots 38 (Chapter 1) or 40 (`traffic status`: "N models of
+M" is what the set can hold of its own budget M). The variants' real pots
 (from the chapter packages' mission scripts) would loosen it; open. Added
 models past the budget are left out, and the report says how many.
 

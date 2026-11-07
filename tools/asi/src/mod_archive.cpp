@@ -2457,7 +2457,7 @@ void wwise_summary()
     uint8_t* table = *(uint8_t**)kAkPoolTable;
     int n = *(int*)kAkPoolCount;
     if (!table) return;
-    char line[1024];
+    char line[1024] = "";
     int len = 0;
     for (int i = 0; i < n && i < (int)kAkPoolsLogged && len < (int)sizeof(line) - 64; i++) {
         uint8_t* e = table + i * 0x4C;

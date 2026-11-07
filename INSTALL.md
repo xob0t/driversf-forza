@@ -109,7 +109,7 @@ car_manager gui` does the same from a checkout. Its tabs:
   share now and with your settings, and how many models the chapter can hold.
   A set holds at most what the game can load beside the chapter's mission
   cars (with `[archive] vehicle_slots=50` in `dsfcars.ini`, a story chapter
-  holds 33 to 36 models, counting the mission sets that share its roads); past
+  holds 29 to 36 models, counting the mission sets that share its roads); past
   that the chapter would never finish loading, so
   the car manager leaves the extra cars out and says so.
 - **Interesting vehicles**: the few special cars the game adds near you. Your
