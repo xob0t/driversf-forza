@@ -93,6 +93,43 @@ checked against its SHA-256 (they are not in the zip):
 | [DriverNGHook](https://github.com/ReHamster/DriverNGToolkit) | 0.7.2 | runs the Lua that registers the cars (only if not installed) |
 | [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader) | v9.7.4 | loads DriverNGHook and the dsfcars plugin (only if the game has no ASI loader) |
 
+### The car manager: cars and traffic
+
+`cars.cmd` (in the release folder) opens the car manager window; `uv run dsff
+car_manager gui` does the same from a checkout. Its tabs:
+
+- **Cars**: every installed car, filtered by name, make or source (FH1, FM4,
+  DLC). Enable or disable cars (the garage and traffic), or switch them in or
+  out of traffic only.
+- **Traffic sets**: the cars around you come from the chapter's traffic set.
+  For every story chapter, or one at a time: how many of your cars join it and
+  their share of the traffic, the weights (as the game has them, all models
+  equally likely, or your own factor per model), vanilla models on or off,
+  and vanilla models from other chapters added in. The list shows each model's
+  share now and with your settings, and how many models the chapter can hold.
+  A set holds at most what the game can load beside the chapter's mission
+  cars (with `[archive] vehicle_slots=41` in `dsfcars.ini`, 20 to 27 models
+  in a story chapter, counting the mission sets that share its roads); past that
+  the chapter would never finish loading, so
+  the car manager leaves the extra cars out and says so.
+- **Interesting vehicles**: the few special cars the game adds near you. Your
+  cars can come as those too, and a car can be pinned to regions of the map.
+
+**By default** (until you change it) every story chapter's traffic is filled
+with your cars up to what it can hold: 8 in the Exposition, 2 in Chapter 1, 4
+in Chapters 2 to 5, 7 in Chapter 6, 9 in Chapter 7 and 12 in the Epilogue
+(with `vehicle_slots=41`). Each of your cars is as likely as an average car of
+the game's on every road, so about a tenth (Chapter 1) to two fifths
+(Epilogue) of the traffic is your cars. The game's own cars keep their mix.
+`cars.cmd traffic ambient --off` puts the traffic back as the game has it.
+
+The settings are kept in `dsfcars\cars\manager.json` (they survive a
+reinstall) and take effect at the next game start. The same from the command
+line: `cars.cmd traffic status`, `cars.cmd traffic off make:FERRARI`,
+`cars.cmd traffic ambient --set "Chapter 7" --ports 4 --share 0.2` (or `--ports fill --share mean`),
+`cars.cmd traffic ambient --weights equal`, `cars.cmd traffic --help`.
+How the game picks traffic: [research/traffic.md](research/traffic.md).
+
 ### What the installer adds
 
 | File | What |
@@ -104,10 +141,11 @@ checked against its SHA-256 (they are not in the zip):
 | `plugins\DriverNGHook.asi`, `plugins\DriverNGHook\` | DriverNGHook, only if not installed |
 | `plugins\dsfcars.asi`, `plugins\dsfcars.ini` | the dsfcars plugin (below) |
 | `Common\UserLuaScripts\bootstrap.lua` | loads `dsfcars\register.lua` (no test or debug scripts), after another mod's bootstrap it replaced (`dsfcars\chained-bootstrap.lua`) |
-| `Common\UserLuaScripts\dsfcars\` | `register.lua`, `packages.lua` (the car list), `packages_hud.lua` (names, badges, pictures), `config.lua` |
+| `Common\UserLuaScripts\dsfcars\` | `register.lua`, `packages.lua` (the car list), `packages_hud.lua` (names, badges, pictures), `config.lua`, `traffic.lua` (who comes as an interesting vehicle; the car manager writes it) |
+| `dsfcars\traffic\san_franciscoAI.fchunk` | only with traffic settings: a copy of the game's traffic sets with the cars added to them; the plugin opens it in place of the game's `media\san_franciscoAI.fchunk` |
 
 The game's own files (`Install\dngvehicles.sp`, `gui.sp`, `Fonts.fchunk`,
-`global.fchunk`) are not changed. `dsfcars-backup\` holds the record of the
+`global.fchunk`, `san_franciscoAI.fchunk`) are not changed. `dsfcars-backup\` holds the record of the
 install (`install.json`) and, if one was replaced, another mod's
 `bootstrap.lua`.
 

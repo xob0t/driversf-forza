@@ -606,8 +606,12 @@ Chapter 7 with **9 ports added** (27 models; 30 % of the road weight):
 - ports 1 to 9 were 30.1 % of all cars within 250 m (2.5 to 4.2 % each),
   against the 30 % set;
 - median 100 cars within 250 m (driving);
-- frame time 17.5 ms median, 24.3 ms p95, 33.2 ms p99 over 10 s windows
-  (60 Hz VM; `[archive] read_log`);
+- frame times (`[archive] read_log`, every 10 s window of the probe pooled):
+  56.6 fps, mean 17.7 ms, 9.5 % of frames 33.3 ms or more, 1.1 % 50 ms or
+  more. (A single window, 17.5 ms median and 24.3 ms p95, was quoted here
+  before.) The probe's route had about 100 cars within 250 m, twice the
+  later runs', and it ran on the other VM, so these numbers don't compare
+  with the default's below;
 - peak private memory 1148 MB, virtual 1351 MB. The 35-slot runs of 3b were
   1108 to 1121 MB and 1332 to 1334 MB;
 - desired IV slots 8 (fewer free slots, as expected).
@@ -632,117 +636,257 @@ instance 7). The census went on to 108 s with ports among the cars; no crash.
 **+10 at 41** (`vm1-20261105-230205`): loaded and drove, one model past the
 budget formula (above).
 
-## 6. Design: traffic settings in the car manager (revised for the whole pool)
+## 6. The car manager's traffic settings (as built)
 
-(Written before 2a. Changed since by the owner: ports are added, never put in place of vanilla models; the set's weights get a mode, vanilla, equal or custom; the budget uses the raised slot count of sections 4 and 5. The car manager PR updates this section.)
+The code: `src/dsfforza/game/traffic_ai.py` (the AI tables, the edits, the
+copy), `src/dsfforza/build/traffic.py` (the settings, the plan, the budget,
+the files), `car_manager.py` (`traffic` commands), `car_manager_gui.py` (the
+window, `cars.cmd`) and `register.lua` (interesting vehicles). The owner
+decided:
 
-The car manager controls both kinds of traffic. **Ambient traffic** is the
-main part: about 80 cars from the chapter's set, with a patched AI file
-served by the plugin's redirect list (section 1b). **IVs** are secondary:
-on or off per car, pinning, and the #562 cap. After the rename (#565) the
-paths are `dsfcars\`, `plugins\dsfcars.asi` and
-`Common\UserLuaScripts\dsfcars\`. The work stays in Python; the GUI is
-tkinter.
+- ports are only added, never put in place of vanilla models;
+- the weights get a mode;
+- changes reach the mission and chase variants that share a set's tables;
+- ports are re-dealt when the file is written and on Shuffle, not per
+  session.
 
-### Settings (`dsfcars\cars\manager.json`, `"traffic"`, keyed by package key)
+**Settings** (`dsfcars\cars\manager.json` → `"traffic"`, keyed by package
+key):
 
 ```json
 "traffic": {
-  "cars": {"forza.fh1.ALF_8C_08": {"traffic": false},
-           "forza.fm4.AUD_TT_07": {"regions": [6, 7, 9]}},
-  "ambient": {
-    "default": {"ports": 2, "share": 0.2},
-    "sets": {"Chapter 7": {"ports": ["forza.fm4.AUD_TT_07"], "share": 0.3,
-                           "replace": {"136": "forza.fm4.MAZ_RX7_90"},
-                           "vanilla_off": [201]}}
-  },
+  "cars": {"forza.fh1.AST_One77_10": {"traffic": false},
+           "forza.fh1.cad_ctsvcoupe_11": {"regions": [9]}},
+  "ambient": {"default": {"ports": 2, "share": 0.2},
+              "sets": {"Chapter 7": {"weights": "equal", "vanilla_off": [201], "extra": [136]}},
+              "seed": 0},
   "iv": {"ports": true, "per_region": 24}
 }
 ```
 
-- `cars.<key>.traffic: false` keeps a car out of both kinds, without
-  touching the garage. Bulk: by make, by source (FH1, FM4, DLC), all, none.
-- `ambient.default` applies to every story set (Exposition, Chapters 1 to 7,
-  Epilogue), and `ambient.sets.<name>` overrides it for one set:
-  - `ports`: how many ports join (the manager deals them from the in-traffic
-    cars, so different sets get different ports), or a list of keys;
-  - `share`: the ports' share of the weight on every road of the set, split
-    evenly between them (`w = share * T / (k * (1 - share))`, from the
-    engine's pick);
-  - `replace`: a vanilla model whose column and spool slot a port takes over.
-    It inherits that model's weight on every road, costs no slot, and can be
-    used without limit;
-  - `vanilla_off`: vanilla models with their weight set to 0 and taken out
-    of the spool list. Each frees a slot.
-- **Budget**: added ports ≤ the chapter's room (table in 3b) + the vanilla
-  models taken out. The manager refuses more and says which set and why.
-  The room comes from the pot data, not from a constant.
-- **Shared ranges**: a change to a set's ranges also reaches the sets that
-  share them, mostly its mission and chase variants. Those sets get the same
-  ports in their spool lists, so no set weights a model it doesn't load, and
-  their budgets are checked too. `status` names them.
-- **Rotation**: the game's Lua has no clock, and a set's ports live in the
-  file. So the manager deals the ports when it writes the file (on every
-  change, and on `traffic shuffle`). Rotating per session would need the
-  plugin to rewrite the columns at load, which can come later.
-- `iv`: ports in the IV regions on or off, plus the per-car pins, through
-  `traffic.lua`. It fixes #562 (no list over 128). It doesn't change the
-  IVs' placement weights.
+| Set setting | Meaning |
+| --- | --- |
+| `ports` | `fill` (default): as many as the budget below leaves room for; or how many (dealt from the enabled cars in traffic, a shuffled deck the seed orders, so different sets get different ports); or a list of keys |
+| `share` | `mean` (default): each added model weighs as much on a road as the mean of the vanilla models that road allows, so the added models' share of a road is k / (allowed + k); or a fixed share of every road's weight, split evenly |
+| `weights` | `vanilla`: the game's weights; `equal`: every model a road allows equally likely, and the added models like them; `custom`: per-model factors |
+| `blend` | 0 to 1 between the game's weights and equal (the same code; `equal` is 1) |
+| `custom` | `{model ID or key: factor}` |
+| `vanilla_off` | vanilla models out of the set: weight 0, and out of its spool list |
+| `extra` | vanilla models from other sets added in, like ports |
 
-### Files the manager writes
+`ambient.default` applies to every story set (Exposition, Chapters 1 to 7,
+Epilogue), and `ambient.sets.<name>` is laid over it for one set.
 
-- `dsfcars\generated\san_franciscoAI.fchunk`: made from the game's current
-  file (vanilla, or another mod's) on every traffic change, in about a
-  second. It adds one line to `redirect.txt`. A self-check runs before it is
-  written:
-  - every set's weighted models must equal its spool list;
-  - every list must be at most 40 entries (0x0076FDF0);
-  - every chapter must stay in budget.
-  With no ambient setting, the copy and the line aren't written.
-- `Common\UserLuaScripts\dsfcars\traffic.lua`: the per-car IV settings,
-  read by register.lua only when the plugin has loaded the packages (#511).
-- A traffic change doesn't regenerate gui.sp, Fonts.fchunk or packages.lua.
-- The AI patcher goes in `src/dsfforza/game/traffic_sets.py` (with
-  `aipatch.py`'s logic and tests): read, the operations, the container edit,
-  the self-check.
+**The default** (the owner's choice, 2026-11-07) is `ports: fill`,
+`share: mean`, `weights: vanilla`. It applies to any install without traffic
+settings; `traffic ambient --off` stores `{"off": true}`.
 
-### CLI (`dsff car_manager traffic ...`)
+- A set gets as many ports as its budget allows (below; conservative by one
+  model, `vm1-20261105-230205`).
+- Each port is as likely as an average vanilla car of each road, so a set's
+  port share is about ports / (ports + vanilla models). It is slightly more
+  on roads that leave vanilla models out.
+- `traffic status` prints each set's share from `AiTraffic.share` on the
+  planned tables.
 
-```text
-traffic status [--set NAME]          per set: models and their weights, ports, room left, sets sharing its roads
-traffic on|off <selector>...         a key, make:<MAKE>, game:FH1|FM4, dlc, all
-traffic ambient [--set NAME] --ports N | --ports KEY,... --share S
-traffic ambient [--set NAME] --replace ID=KEY | --vanilla-off ID,... | --vanilla-on ID,...
-traffic ambient --off                no patched AI file
-traffic shuffle                      deal the ports to the sets again
-traffic iv on|off; traffic pin <selector> --regions 6,9; traffic unpin <selector>
-```
+At 41 slots with 24 cars in traffic:
 
-### GUI (`dsff car_manager gui`, and `cars.cmd` in the release)
+| | Exposition | Ch. 1 | Ch. 2 | Ch. 3 | Ch. 4 | Ch. 5 | Ch. 6 | Ch. 7 | Epilogue |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| ports | 8 | 2 | 4 | 4 | 4 | 4 | 7 | 9 | 12 |
+| predicted share | 36 % | 10 % | 18 % | 18 % | 19 % | 19 % | 28 % | 34 % | 44 % |
 
-The GUI is tkinter with ttk, which ships with uv's Python 3.13 (Tk 8.6;
-checked). It calls the same Manager functions as the CLI, in a worker thread,
-with the log in a pane.
+**Per road** (`traffic.road_weights`), for each weight range a set's roads
+use:
 
-- **Cars tab.** A table: enabled, in traffic, make, model, year, source
-  (FH1 / FM4 / DLC), ID. A filter box and make and source filters
-  (multi-select). Buttons for Enable / Disable and Traffic on / off, plus
-  "select all / none / this make / this source".
-- **Traffic tab.** One row per story set: its vanilla models (names from
-  `research/vehicles.tsv`) with a check each, plus replace-with. Then ports
-  and share, a budget bar (used of room), and which variant sets it also
-  changes. An "all sets" row holds the default. Apply writes the files.
-- **IV tab.** Ports in IV regions on or off, pinning.
+1. A range with no weight stays empty: a road that spawns nothing still
+   doesn't.
+2. The models the range already allows, less `vanilla_off`, keep their
+   vanilla shares, blended toward equal.
+3. The added models take `share` of the range together. In `equal` mode
+   each takes the same as a vanilla model.
+4. Custom factors are applied.
+5. The range keeps its total.
 
-`cars.cmd` runs `tools\release\launcher.ps1`, which gets uv and finds the
-game folder, then runs `uv run dsff car_manager gui`.
+So `equal` is equal **among what each road allows**, plus the added models.
+Some Chapter 7 roads leave out up to 4 of its 18 models (14 of 18 in ranges
+56, 123 and 131), and they still do. A mod that makes every model of a set
+equally likely on every road would also put those 4 on those roads. That
+breaks the per-road rule, so it isn't an option here.
 
-### Phase 2 checks (one VM series)
+**Shared ranges.** The plan follows the ranges that carry weight. Every
+other set and frequency whose roads use one of them (Chapter 7 reaches
+9CB17769; Chapter 1 reaches Challenge traffic, Chase traffic 1 and two
+unnamed sets) loads the added models too, and its budget counts. A range
+that two configured sets would change differently keeps the first one's
+change, and the report says so. `traffic status` and the GUI's budget line
+name the sets a change reaches.
 
-- a car with `traffic: false` never appears, in either kind;
-- a port pinned to region 9 appears there;
-- a set with ports added at a share gets about that share;
-- Chapter 7 at the budget (+3) loads, and one more (+4) hangs as predicted.
-  The manager must refuse that setting, so the test writes the file
-  directly;
-- with the plugin off, register.lua registers nothing (#511).
+**Budget** (`traffic.budget`): at most 40 models in a set (0x0076FDF0), and
+at most `slots − 1 − pot`, where:
+
+- `slots` is the plugin's `[archive] vehicle_slots` when it has the
+  capability `archive.slots`, else 35;
+- `pot` is the largest mission-pot request any use of the set makes. The
+  manager reads it from the game's own scripts
+  (`media\ScriptsLuaScripts.fchunk`): `spooling.missionSpecificVehiclePots`
+  and every mission's, challenge's and activity's `trafficSettings` and
+  `missionVehiclePot` in `gamelogic\progression\data`, through
+  `game_data.run_constant_chunk`. "All chapters" is added to a named pot,
+  and the total is capped at 18.
+
+A set some script names but no progression entry lists (a mission switches to
+it mid-way, such as Chapter 1 Kidnapped) counts the cap of 18 as its pot. A
+set no script names (9CB17769 and four more) is never selected and has only
+the 40.
+
+The reached sets bind several chapters. With 41 slots each story set's own
+budget is:
+
+| Exposition | Ch. 1 | Ch. 2 | Ch. 3 | Ch. 4 | Ch. 5 | Ch. 6 | Ch. 7 | Epilogue |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 26 | 24 | 25 | 26 | 26 | 25 | 25 | 27 | 27 |
+
+Counting the sets each one reaches, a story set can hold:
+
+| Exposition | Ch. 1 | Ch. 2 | Ch. 3 | Ch. 4 | Ch. 5 | Ch. 6 | Ch. 7 | Epilogue |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 26 | 20 | 22 | 22 | 22 | 22 | 25 | 27 | 27 |
+
+That is 2 (Chapter 1) to 12 (Epilogue) models over the game's 15 to 18. The variants' real pots
+(from the chapter packages' mission scripts) would loosen it; open. Added
+models past the budget are left out, and the report says how many.
+
+**The copy.** It is made from the game's current `media\san_franciscoAI.fchunk`
+(vanilla or another mod's) on every traffic change. It goes to
+`dsfcars\traffic\san_franciscoAI.fchunk`, outside `dsfcars\generated\`, which
+a GUI generation replaces. One line in `dsfcars\generated\redirect.txt` points
+the game at it (`car_gui.set_redirect`, kept by `car_gui.generate` and
+`clear`).
+
+Before writing, `AiTraffic.check` makes sure every set's weighted models are
+in its spool list and no list passes 40. With no ambient settings, the copy
+and the line go. `traffic status` says whether the game's file is vanilla
+(`VANILLA_SHA256`).
+
+**traffic.lua** (`Common\UserLuaScripts\dsfcars\traffic.lua`). register.lua
+reads it only when the plugin has loaded the packages (#511):
+
+- `cars[id].traffic = false`: in no region;
+- `cars[id].regions`: pinned, inserted at the **front** of those regions,
+  where the engine's pick is most likely (section 2);
+- `ports = false`: no automatic regions for the other cars;
+- `per_region` is `regionCars`.
+
+Every region stops at 128 IDs (#562). With `vanilla = false`, a region that holds no car is
+left empty. 0x007EC880 doesn't store a region with no IDs, so a player inside it gets the next
+stored region whose circle holds them (0x007EC170 takes the first one in order).
+
+**Other mods that change traffic.**
+
+- **A mod that edits `san_franciscoAI.fchunk` on disk** stacks under ours:
+  the copy is built from it, and `status` says it isn't vanilla.
+- **A mod that serves its own copy through DSF Enhanced's `[Files]
+  Redirect`:** the plugin's redirect passes names it doesn't list on to the
+  import that DSF Enhanced hooks (`archive.redirect_chain`). With our line
+  present, ours wins. Without it, theirs does.
+- **A Lua mod that changes traffic at runtime:**
+  - `civilianTraffic.setTrafficSettingsName` to another set works on our
+    tables, since that set's ranges are in the copy too.
+  - `TrafficSpooler.RequestTrafficVehicles` replaces the loaded list without
+    the weights (0x005A79F0). Models it leaves out that a road weights would
+    be picked while not loaded. What 0x0077ADA0 does with such a pick (no
+    car, or a crash) is **not known**.
+  - `SetVehicleModelOverride` makes all traffic one model, ours included.
+  - DSF Enhanced's `PreloadAllTrafficVehiclePools` loads every set's models
+    (0x0064E2D0). With our bigger lists that is more models than the slot
+    budget assumes. Keep it off, as the VM ini does.
+
+## 7. The car manager's settings in game (confirmed-runtime)
+
+Three runs on VM 2:
+
+- the 24-package overlay, configured with `dsff car_manager traffic ...`
+  (the CLI, end to end: manager.json, the AI copy and its redirect line,
+  traffic.lua);
+- dsfcars.asi `vehicle_slots=41`;
+- the master `register.lua` with the census of 3b and interesting vehicles
+  on;
+- Chapter 7, the probe at the dyno start (region 9).
+
+**`equal`** (`vm2-20261105-232744`; `traffic ambient --set "Chapter 7"
+--weights equal`). The 18 models' share of the cars within 250 m:
+
+| | Lowest | Highest | Std. dev. (uniform 0.056) |
+| --- | ---: | ---: | ---: |
+| vanilla weights (`vm1-20261105-210733`) | 0.003 (185) | 0.102 (136) | 0.030 |
+| equal weights | 0.029 (185) | 0.072 (206) | 0.010 |
+
+`AiTraffic.share` predicts each model's share from the copy's tables:
+
+- vanilla: 0.012 to 0.105;
+- equal: 0.041 to 0.058, lower for 185, 286 and 291, which some roads leave
+  out.
+
+The measured values follow both predictions, within the census's noise
+(about 40 samples of 70 to 90 cars).
+
+**Ports, off, budget** (`vm2-20261105-233109`):
+
+- settings: car 1 `traffic off`, car 2 pinned to region 9, `traffic iv off`,
+  and Chapter 7 `--ports` 3, 4, 5, 6 `--share 0.2`;
+- ports 3 to 6 were **19.7 %** of all cars (target 20 %);
+- car 1 and the 18 other ports were never seen;
+- car 2 wasn't seen either: it was the first of 30 entries in region 9 (about
+  12 % of picks) with a few picks in the run.
+
+**Pin** (`vm2-20261105-233606`). The same settings plus
+`traffic iv off --vanilla off`, so region 9 holds car 2 alone:
+
+- car 2 was seen 28 times from t161, up to 2 at once, through the region
+  only (it was dealt to no set);
+- car 1 was never seen;
+- ports 3 to 6 were 19.6 %.
+
+No run crashed. The mission start with a patched set is in section 5
+(`vm1-20261105-230536`).
+
+**The default** (`vm2-20261107-194144`). The 24-package overlay with no
+traffic settings; the car manager wrote the default (Chapter 7: 9 ports,
+`share: mean`, predicted 34 % of its roads).
+
+- The game loaded and drove six cars, 20 s of throttle each, about 135 s of
+  game time, with no crash.
+- The 9 ports were **32.2 %** of all cars within 250 m. The census also
+  counts cars outside the set (interesting vehicles, mission-pot models),
+  which dilutes the share a little. One interesting-vehicle port (16) was
+  also seen.
+- Peak private memory was 1163 MB.
+- Its frame times aren't a measure of the default: the host had 61 %
+  competing CPU at launch (`cpu-gate.txt`). Pooled over the probe it ran at
+  30.6 fps, 25 % of frames 50 ms or more. The paired runs below measure it.
+
+**Frame cost of the default.** One series on one VM (vm2), the same six
+probe cars in Chapter 7: the default (overlay written by the car manager),
+then vanilla traffic (`traffic ambient --off`: no AI copy, no redirect).
+`run-series -CpuGate 15`: both launched at 11 to 13 % competing host CPU,
+and the host's total CPU (the VM included) averaged 42.5 and 45.0 % during
+the probes. Every 10 s `[archive] read_log` window of the probe pooled
+(150 s each):
+
+| run | traffic | fps | mean frame | frames of 25 ms or more | of 33.3 ms | of 50 ms | cars within 250 m (mean) | peak private |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `vm2-20261107-201411` | the default (9 ports) | 48.7 | 20.5 ms | 37.8 % | 22.0 % | 6.9 % | 50.1 | 1158 MB |
+| `vm2-20261107-201846` | vanilla (`traffic ambient --off`) | 48.1 | 20.8 ms | 38.1 % | 23.2 % | 7.3 % | 53.6 | 1131 MB |
+
+- The default costs no measurable frame time: 0.6 fps and every threshold
+  count are within the spread of the windows. Within each run the windows'
+  medians range from 16 to 29 ms with the place.
+- The 9 ports were 33.5 % of sightings against the predicted 34 %, and 0.3 %
+  in the vanilla run (interesting-vehicle ports only).
+- Cars nearby were 7 % fewer with the default. That is one pair of runs, and
+  each run's count swings about threefold between places (about 75 in the
+  first half, 28 in the second), so it isn't resolved.
+- Memory: 27 MB more peak private memory with the default.
+- Scaling with the port count: at 9 ports (34 %) there is no cost to scale.
+  The Epilogue's 12 ports (44 %) weren't run.

@@ -79,6 +79,28 @@ KNOWN = [
     "Online Traffic Sprint GP",
     "Online Traffic Takedown",
     "Online Traffic Survival",
+    # recovered from string constants in the chapter packages' mission scripts (research/traffic-sets.tsv)
+    "Chapter 5 Raceaway",
+    "Chapter 2 Streetrace",
+    "Chapter 6 - Its for charity",
+    "SM5 Something Weird ",
+    "Chapter 5 - Test Drive",
+    "Free Drive",
+    "Chapter 1 Kidnapped",
+    "SM2 Heat From Above ",
+    "Chapter 7 Tickingclock",
+    "Chapter 6 - The target",
+    "Chapter 2 LFK",
+    "Chapter 6 - Special Edition",
+    "Chapter 3 Shakedown",
+    "Chapter 1 College Fund",
+    "Chapter 1 Breaking News",
+    "Chapter 7 s",
+    "Chapter 6 Best Defence",
+    "SM4 Collateral Damage",
+    "Chapter 7 Alone",
+    "SM3 Peroxide Convoy",
+    "Chapter 3 Team Colours ",
 ]
 
 
