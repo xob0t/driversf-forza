@@ -748,6 +748,27 @@ __declspec(naked) void s_group_insert()
     }
 }
 
+// Whether n bytes at p can be read without a fault: committed, readable pages. Memory of a
+// world that is gone (its menu, lists and variables after a quit to the main menu) may be
+// decommitted. A __try is no guard in the game: DriverNGHook's vectored handler shows its
+// fatal-error dialog on the first chance of any access violation, before a __try sees it
+// (DriverNGToolkit CrashHandlerReporter.cpp, ExceptionFilterWin32; run vm2-20261107-223453).
+bool readable(const void* p, size_t n)
+{
+    const DWORD kRead = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ |
+                        PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    const char* at = (const char*)p;
+    const char* end = at + n;
+    while (at < end) {
+        MEMORY_BASIC_INFORMATION m;
+        if (!VirtualQuery(at, &m, sizeof m) || m.State != MEM_COMMIT || !(m.Protect & kRead) ||
+            (m.Protect & (PAGE_GUARD | PAGE_NOACCESS)))
+            return false;
+        at = (const char*)m.BaseAddress + m.RegionSize;
+    }
+    return true;
+}
+
 // ---- maker menu lists -----------------------------------------------------------
 // The garage's vfunc 0x124 (FUN_006C6940, called by the vehicles screen at
 // 0x006DD08F) copies every maker group that has a listed car into four MmDk
@@ -786,11 +807,7 @@ void**& list_data(void* l) { return *(void***)((char*)l + 0x10); }
 // its grown array is taken for a new list (four lists a load: the table held four loads).
 bool grown_live(const GrownList& g)
 {
-    __try {
-        return list_data(g.list) == g.data;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    return readable((char*)g.list + 0x10, sizeof(void*)) && list_data(g.list) == g.data;
 }
 
 GrownList* grown_slot()
@@ -1187,11 +1204,7 @@ void __cdecl key_hook(int32_t* key, void* ctx)
 // The key still has key_hook as its handler (false once its menu is freed or reused).
 bool key_wrapped(const int32_t* key)
 {
-    __try {
-        return (uint32_t)key[5] == (uint32_t)key_hook;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    return readable(key + 5, sizeof key[5]) && (uint32_t)key[5] == (uint32_t)key_hook;
 }
 
 // A slot for `key`: its own, else one whose menu is gone, else a new one (nullptr when full).
@@ -1350,12 +1363,9 @@ uint8_t* volatile g_debug_menu = nullptr;   // the menu whose variables g_debug_
 
 bool read_int(const int* p, int* out)
 {
-    __try {
-        *out = *p;
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    if (!readable(p, sizeof *p)) return false;
+    *out = *p;
+    return true;
 }
 
 DWORD WINAPI debug_thread(void*)
@@ -1805,6 +1815,19 @@ int mod_garage_keys_selftest()
         fails += wrapped(menus[round]) != 4;
     }
     fails += g_keys_n != 4;
+    // A menu whose pages are given back (decommitted) after the quit: its slots are taken
+    // without reading it (a fault would end the game: readable()).
+    uint8_t* gone = (uint8_t*)VirtualAlloc(nullptr, kMenu, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (gone) {
+        memset(menus[5], 0, kMenu);
+        setup(gone);
+        keys_wrap(gone);
+        fails += wrapped(gone) != 4;
+        VirtualFree(gone, 0, MEM_RELEASE);
+        setup(menus[5]);
+        keys_wrap(menus[5]);
+        fails += wrapped(menus[5]) != 4 || g_keys_n != 4;
+    }
     // Menus that are all still there take a slot each until the table is full.
     for (int i = 0; i < 6; i++) setup(menus[i]);
     for (int i = 0; i < 6; i++) keys_wrap(menus[i]);
