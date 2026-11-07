@@ -3515,6 +3515,18 @@ draw flat (`chase_flats`), as the ring's did.
 - interior atlas (23-car sample built at master, `t3-8a704962-base/out/sample-before`):
   the same scale on every car; the SX4 gains one solid cell.
 
+**render_compare** (`out/rc/chase-cabin-ids`: the 23-car sample at master,
+`t3-8a704962-base/out/sample-before`, against the same list and IDs at the branch,
+`out/sample-after`): 15 changed (11 drawn differently, 4 alike), 8 unchanged; the 8
+are the sample's cars that still take the ring cabin. Every change is in the exterior
+views, in the `cabin` and `added` regions through the glass (360 Modena rear 30%, Ram
+SRT-10 rear 36%, 9-3 Aero rear 25%, Golf R rear 24%), no cockpit view changes and no
+score moves but the Sport quattro's (9.13 → 7.09: its body back at LOD 1) and the
+SX4's and Lotus Eleven's (3.085 → 3.078, 7.68 → 7.62). A first diff against the roster
+build (`out/rc/chase-cabin`) also showed cockpit-view changes of dE 1 on every car:
+those came from the different spool IDs (the UIDs and the glass seeds), not from the
+cabin.
+
 **In game** (VM 2, before and after archives of six cars, traffic on with three ports
 in it, the probe in the 360 Modena, M3 E30 and Sport quattro: chase, left, right, front,
 `top` (new: above the front left, down into the cabin) and cockpit views; dsfcars.asi
@@ -3524,11 +3536,16 @@ in it, the probe in the 360 Modena, M3 E30 and Sport quattro: chase, left, right
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `vm2-20261107-203406` (before) | 7,748 | 22.0 ms | 22.7 ms | 52.7 ms | 1,142 MB |
 | `vm2-20261107-203850` (after) | 7,701 | 22.1 ms | 22.9 ms | 58.9 ms | 1,140 MB |
+| `vm2-20261107-225233` (before, palette 0, host idle) | 7,585 | 17.2 ms | 21.7 ms | 31.2 ms | 1,144 MB |
+| `vm2-20261107-225615` (after, palette 0, host idle) | 7,602 | 17.1 ms | 22.3 ms | 32.4 ms | 1,142 MB |
 
-The difference is inside the VM's noise (window p95 20 to 105 ms in both). A second
-pair (`vm2-20261107-204459`, `-205731`) ran while the job pool went from 2 to 16 slots
-and starved the VM (130 to 200 ms frames): not used. The cabin draws in every view, no
-fault.
+The differences are inside the VM's noise (window p95 20 to 105 ms in the first pair,
+which shared the host with two 2-slot builds). A pair in between (`vm2-20261107-204459`,
+`-205731`) ran while the job pool went from 2 to 16 slots and starved the VM (130 to
+200 ms frames): not used. The cabin draws in every view, no fault. In the `top` view
+the 360 Modena and the M3 E30 now show the centre console, the gear gate and the
+passenger seat. The Sport quattro shows Forza's LOD-1 cabin where it had the ring's
+LOD-0 cabin over an LOD-2 body: coarser inside, finer outside.
 
 ## Fitted-rule audit (2026-11-05)
 
