@@ -1135,27 +1135,56 @@ bool patch_acquire_7a()
 // so a pool can't continue elsewhere: the room has to be there from its creation.
 // The class-7A wrappers (creator 0x0048FB40: pool 0x16, 0x30 bytes, a sound bank wrapper
 // of vtable 0x00E36D38 at +0x0C) come from pool 0x16, which their provider's constructor
-// makes with 46 (0x0048F85D: push 0x2E; push 0x16; call 0x0086A070), one per node of
-// its list. The 47th lands on the next object, the provider at table+0x68 (run
+// makes with 46 (push 0x2E; push 0x16; call 0x0086A070, in its constructor 0x0048F840
+// and in its class creator 0x0048FB90, the one the provider table's provider comes from),
+// one per node of its list. The 47th lands on the next object, the provider at table+0x68 (run
 // vm1-20261107-215725: the fault of #566 with ESI = that provider). Its capacity gets
 // the slots added over the vanilla 35, so it keeps vanilla's spare objects.
-const uint32_t kPool16CapVa = 0x0048F85E;
+const uint32_t kPool16CapVa[] = {0x0048F85E, 0x0048FBB9};  // the push 0x2E immediates
 const uint8_t kPool16Cap = 0x2E;
 const uint32_t kObjPoolTable = 0x01448BF8;
 const uint32_t kObjPools = 0x5B;
 
+typedef void(__cdecl* PoolDestroy)(uint32_t id);              // 0x00869DF0: frees the storage, clears the entry
+typedef void(__cdecl* PoolCreate)(uint32_t id, uint32_t cap);  // 0x0086A070
+
+// Both creations get the raised capacity. Should the pool already exist when this module
+// loads, it is made again with the game's own functions while nothing has taken an
+// object yet (the provider's first wrapper comes with the first scene model, at package
+// init).
 bool patch_pool16(uint32_t slots)
 {
     const uint8_t expect[] = {0x6A, kPool16Cap, 0x6A, 0x16};
-    if (!check_bytes(kPool16CapVa - 1, expect, 4)) {
-        dsf_log("slots: 0048F85D is not the vanilla pool 0x16 creation; vehicle slots stay 35");
-        return false;
-    }
+    for (uint32_t va : kPool16CapVa)
+        if (!check_bytes(va - 1, expect, 4)) {
+            dsf_log("slots: %08X is not the vanilla pool 0x16 creation; vehicle slots stay 35", va - 1);
+            return false;
+        }
     uint32_t cap = kPool16Cap + (slots - kVanillaVehicleSlots);
     if (cap > 0x7F) cap = 0x7F;  // push imm8
+    uint8_t* t = *(uint8_t**)kObjPoolTable;
+    uint32_t* e = t ? (uint32_t*)(t + 0x16 * 0x18) : nullptr;
+    if (e && e[4]) {
+        if (e[4] != kPool16Cap || e[5] || e[2]) {
+            dsf_log("slots: object pool 0x16 has %u objects, %u taken; vehicle slots stay 35", e[4], e[5]);
+            return false;
+        }
+        ((PoolDestroy)0x00869DF0)(0x16);
+        ((PoolCreate)0x0086A070)(0x16, cap);
+        if (e[4] != cap || !e[0]) {
+            ((PoolCreate)0x0086A070)(0x16, kPool16Cap);  // the vanilla pool back
+            dsf_log("slots: making object pool 0x16 again failed; vehicle slots stay 35");
+            return false;
+        }
+    }
     uint8_t b = (uint8_t)cap;
-    if (!patch_bytes(kPool16CapVa, &b, 1, &kPool16Cap)) return false;
-    dsf_log("slots: object pool 0x16 (class-7A wrappers): %u objects (vanilla 46)", cap);
+    if (!patch_bytes(kPool16CapVa[0], &b, 1, &kPool16Cap)) return false;
+    if (!patch_bytes(kPool16CapVa[1], &b, 1, &kPool16Cap)) {
+        patch_bytes(kPool16CapVa[0], &kPool16Cap, 1);
+        return false;
+    }
+    dsf_log("slots: object pool 0x16 (class-7A wrappers): %u objects (vanilla 46)%s", cap,
+            e && e[4] ? ", made again" : "");
     return true;
 }
 
@@ -1212,6 +1241,115 @@ void trace_obj_pools(uint32_t slot)
                     e[4], e[3]);
         }
     }
+}
+
+// ---- the MODL provider's records (157) ----------------------------------------------
+// The provider at table+0x74 (vtable 0x00DDA2C8, class creator 0x00494240: 0x774 bytes)
+// hands each scene model a MODL record (8 bytes: vtable 0x00DDA2B0, the resource at +4;
+// its methods use nothing but that). Its fill (0x00494150) makes 157 records in place
+// from +0x10 (push 0x9D; the count at +0x4F8) and stacks pointers to them at +0x4FC with
+// the count at +0x770. Acquire (0x00493FD0) pops with no empty check and release
+// (0x00494090) pushes with no full check. The records serve every spool object that uses
+// the provider: at 60 slots they run out at the 63rd vehicle handler, and the pop reads
+// the record count as a record (run vm1-20261108-015739: fault reading 0x9D at
+// 0x00858E0B). The replacements hand out extra records once the stack is empty (made as
+// the fill makes them, from the game's operator new 0x00C28780, since the record's
+// deleting destructor frees with the game's operator delete) and keep them in this
+// module when the stack is full, which is when every inline record is home.
+const uint32_t kModlRecords = 0x9D;
+const uint32_t kModlRecordVtable = 0x00DDA2B0;
+typedef void*(__cdecl* GameNew)(size_t n);  // 0x00C28780
+struct ModlExtra {
+    uint8_t* owner;
+    void** items;
+    uint32_t count, cap;
+};
+ModlExtra g_modl_extra[4];
+SRWLOCK g_modl_lock = SRWLOCK_INIT;
+LONG g_modl_made = 0;
+
+ModlExtra* modl_extra_of(uint8_t* self)
+{
+    for (ModlExtra& x : g_modl_extra)
+        if (x.owner == self) return &x;
+    for (ModlExtra& x : g_modl_extra)
+        if (!x.owner) {
+            x.owner = self;
+            return &x;
+        }
+    return nullptr;
+}
+
+void** __fastcall h_modl_acquire(uint8_t* self, void*, void** out)
+{
+    int32_t* n = (int32_t*)(self + 0x770);
+    if (*n > 0) {
+        *out = ((void**)(self + 0x4FC))[*n - 1];
+        (*n)--;
+        return out;
+    }
+    void* rec = nullptr;
+    AcquireSRWLockExclusive(&g_modl_lock);
+    ModlExtra* x = modl_extra_of(self);
+    if (x && x->count) rec = x->items[--x->count];
+    ReleaseSRWLockExclusive(&g_modl_lock);
+    if (!rec) {
+        uint32_t* r = (uint32_t*)((GameNew)0x00C28780)(8);
+        if (r) {
+            r[0] = kModlRecordVtable;
+            r[1] = 0;
+            if (InterlockedIncrement(&g_modl_made) == 1)
+                dsf_log("slots: MODL provider %p passes its %u records; more come from the heap", self, kModlRecords);
+        }
+        rec = r;
+    }
+    *out = rec;
+    return out;
+}
+
+void __fastcall h_modl_release(uint8_t* self, void*, void** rec)
+{
+    int32_t* n = (int32_t*)(self + 0x770);
+    if ((uint32_t)*n < kModlRecords) {
+        ((void**)(self + 0x4FC))[*n] = *rec;
+        (*n)++;
+        return;
+    }
+    AcquireSRWLockExclusive(&g_modl_lock);
+    ModlExtra* x = modl_extra_of(self);
+    if (x && x->count == x->cap) {
+        uint32_t cap = x->cap ? x->cap * 2 : 64;
+        void** items = (void**)HeapAlloc(GetProcessHeap(), 0, cap * sizeof(void*));
+        if (items) {
+            if (x->items) {
+                memcpy(items, x->items, x->count * sizeof(void*));
+                HeapFree(GetProcessHeap(), 0, x->items);
+            }
+            x->items = items;
+            x->cap = cap;
+        }
+    }
+    if (x && x->count < x->cap) x->items[x->count++] = *rec;  // else the record is leaked, not lost
+    ReleaseSRWLockExclusive(&g_modl_lock);
+}
+
+const uint8_t kModlStackExpect[] = {0x8B, 0x81, 0x70, 0x07, 0x00, 0x00};  // mov eax, [ecx+0x770]
+const uint8_t kModlFillExpect[] = {0x68, 0x9D, 0x00, 0x00, 0x00};         // 0x0049415F: push 0x9D
+
+bool patch_modl_records()
+{
+    if (!check_bytes(0x00493FD0, kModlStackExpect, 6) || !check_bytes(0x00494090, kModlStackExpect, 6) ||
+        !check_bytes(0x0049415F, kModlFillExpect, 5)) {
+        dsf_log("slots: the MODL provider's functions are not the vanilla code; vehicle slots stay 35");
+        return false;
+    }
+    if (!patch_jmp(0x00493FD0, (void*)h_modl_acquire, 6, kModlStackExpect)) return false;
+    if (!patch_jmp(0x00494090, (void*)h_modl_release, 6, kModlStackExpect)) {
+        patch_bytes(0x00493FD0, kModlStackExpect, 6);
+        return false;
+    }
+    dsf_log("slots: MODL provider records (157 inline): 00493FD0, 00494090 go on in the heap when used up");
+    return true;
 }
 
 // ---- the sound manager's bank list (50 nodes) ---------------------------------
@@ -2544,15 +2682,15 @@ void mod_archive_init()
     if (cfg_bool("archive", "open_log", false)) patch_open_log();
     if (g_read_log) patch_frame_log();
 
-    // Vehicle spool slots (see "vehicle spool slots"): 35 = vanilla, no patch.
-    // 41: the most shown to load and run in game (run vm1-20261105-224648). 45, 50 and 60 crash at package
-    // init in a structure not yet found (research/traffic.md, "The spool slot limit"; issue #566).
+    // Vehicle spool slots (see "vehicle spool slots"): 35 = vanilla, no patch. The default is the most
+    // the slot handler arrays hold, 64 - the other kinds' 2 + 2 (research/traffic.md, "The spool slot
+    // limit"; #566).
     g_slots_trace = cfg_bool("archive", "slots_trace", false);
-    if (cfg_int("archive", "vehicle_slots", 41) > (int)kVanillaVehicleSlots && !patch_obj_alloc())
+    int slots = cfg_int("archive", "vehicle_slots", (int)(kSlotHandlers - 4));
+    if (slots > (int)kVanillaVehicleSlots && !patch_obj_alloc())
         dsf_log("slots: 00869D50 is not the vanilla object pool allocator; no overflow log");
     if (g_slots_trace && patch_call(0x005A1491, (void*)h_trace_make_slot, kMakeSlotCallExpect))
         dsf_log("slots_trace: 005A1491 traced");
-    int slots = cfg_int("archive", "vehicle_slots", 41);
     if (slots > (int)kVanillaVehicleSlots) {
         if (slots > (int)kSlotHandlers - 4) slots = (int)kSlotHandlers - 4;  // the other kinds' 2 + 2 slots
         bool hooked = g_pkg_sites;  // the packages' SSLP hook calls apply_vehicle_slots too
@@ -2560,7 +2698,7 @@ void mod_archive_init()
             hooked = g_sslp_hooked = patch_jmp(0x005A0B50, (void*)h_sslp_load, 5, kSslpExpect);
         if (!hooked)
             dsf_log("slots: 005A0B50 is not the vanilla SSLP load; vehicle slots stay 35");
-        else if (!(patch_wrap_lists() && patch_pool45() && patch_acquire_7a() && patch_bank_list())) {  // they only act past their inline room
+        else if (!(patch_wrap_lists() && patch_pool45() && patch_acquire_7a() && patch_modl_records() && patch_bank_list())) {  // they only act past their inline room
             if (g_sslp_hooked) {
                 patch_bytes(0x005A0B50, kSslpExpect, 5);
                 g_sslp_hooked = false;
@@ -3015,6 +3153,40 @@ static int slots_selftest()
     reset(0, 35);
     apply_vehicle_slots(obj);
     SL_CHECK(header[0x18] == 60);
+
+    // The MODL provider's stack: 157 records pop, a release onto the full stack goes to
+    // this module's list and comes back once the stack is empty again.
+    uint8_t* modl = (uint8_t*)calloc(1, 0x774);
+    void* recs[kModlRecords + 1];
+    for (uint32_t i = 0; i < kModlRecords; i++) ((void**)(modl + 0x4FC))[i] = (void*)(uintptr_t)(0x1000 + i * 8);
+    *(int32_t*)(modl + 0x770) = (int32_t)kModlRecords;
+    for (uint32_t i = 0; i < kModlRecords; i++) h_modl_acquire(modl, nullptr, &recs[i]);
+    SL_CHECK(*(int32_t*)(modl + 0x770) == 0 && recs[0] == (void*)(uintptr_t)(0x1000 + (kModlRecords - 1) * 8));
+    for (uint32_t i = 0; i < kModlRecords; i++) h_modl_release(modl, nullptr, &recs[i]);
+    SL_CHECK(*(int32_t*)(modl + 0x770) == (int32_t)kModlRecords);
+    void* extra = (void*)(uintptr_t)0x9000;
+    h_modl_release(modl, nullptr, &extra);  // the stack is full: kept in this module
+    SL_CHECK(*(int32_t*)(modl + 0x770) == (int32_t)kModlRecords);
+    for (uint32_t i = 0; i < kModlRecords; i++) h_modl_acquire(modl, nullptr, &recs[i]);
+    h_modl_acquire(modl, nullptr, &recs[kModlRecords]);
+    SL_CHECK(recs[kModlRecords] == extra && *(int32_t*)(modl + 0x770) == 0);
+    for (ModlExtra& x : g_modl_extra)
+        if (x.owner == modl) x = ModlExtra{};
+    free(modl);
+
+    // The sound bank list: 60 appends to its 50 nodes keep the list head and link all 60.
+    uint8_t* mgr = (uint8_t*)calloc(1, 0x9548);
+    int* pool = (int*)(mgr + 0x92DC);
+    int* head = (int*)(mgr + 0x9540);
+    pool[0] = (int)(uintptr_t)(mgr + 0x92E8);
+    head[0] = head[1] = (int)(uintptr_t)head;
+    for (int i = 0; i < 60; i++) h_bank_append(mgr, nullptr, 0x100 + i);
+    int linked = 0;
+    for (int* n = (int*)(uintptr_t)head[0]; n != head && linked < 100; n = (int*)(uintptr_t)n[0]) linked++;
+    SL_CHECK(pool[2] == 60 && linked == 60 && ((int*)(uintptr_t)head[0])[2] == 0x100 + 59);
+    for (PoolChunk& c : g_pool_chunks)
+        if (c.pool == pool) c = PoolChunk{};
+    free(mgr);
 #undef SL_CHECK
     free(obj);
     g_vehicle_slots = saved;

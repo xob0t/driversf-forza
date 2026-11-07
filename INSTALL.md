@@ -108,18 +108,19 @@ car_manager gui` does the same from a checkout. Its tabs:
   and vanilla models from other chapters added in. The list shows each model's
   share now and with your settings, and how many models the chapter can hold.
   A set holds at most what the game can load beside the chapter's mission
-  cars (with `[archive] vehicle_slots=41` in `dsfcars.ini`, 20 to 27 models
-  in a story chapter, counting the mission sets that share its roads); past that
+  cars (with `[archive] vehicle_slots=60` in `dsfcars.ini`, the most the game
+  takes, a story chapter holds 38 to 40 models, counting the mission sets that
+  share its roads; 40 is the most a set can have); past that
   the chapter would never finish loading, so
   the car manager leaves the extra cars out and says so.
 - **Interesting vehicles**: the few special cars the game adds near you. Your
   cars can come as those too, and a car can be pinned to regions of the map.
 
 **By default** (until you change it) every story chapter's traffic is filled
-with your cars up to what it can hold: 8 in the Exposition, 2 in Chapter 1, 4
-in Chapters 2 to 5, 7 in Chapter 6, 9 in Chapter 7 and 12 in the Epilogue
-(with `vehicle_slots=41`). Each of your cars is as likely as an average car of
-the game's on every road, so about a tenth (Chapter 1) to two fifths
+with your cars up to what it can hold: with 24 cars in traffic, 20 in
+Chapter 1, 22 in the Exposition and Chapters 2 to 7 and all 24 in the Epilogue
+(with `vehicle_slots=60`). Each of your cars is as likely as an average car of
+the game's on every road, so about half (Chapter 1) to three fifths
 (Epilogue) of the traffic is your cars. The game's own cars keep their mix.
 `cars.cmd traffic ambient --off` puts the traffic back as the game has it.
 

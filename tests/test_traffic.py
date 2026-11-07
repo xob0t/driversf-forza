@@ -315,6 +315,25 @@ class RegisterTrafficTest(unittest.TestCase):
         self.assertEqual(out[1], [100, 1, 2, 3])
 
 
+class SlotsTest(unittest.TestCase):
+    def test_slots_from_the_plugin_ini(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as d:
+            ini = Path(d) / traffic.PLUGIN_INI
+            ini.parent.mkdir(parents=True)
+            for text, want in (
+                ("[archive]\n", traffic.MAX_SLOTS),  # the plugin's default
+                ("[archive]\nvehicle_slots=48\n", 48),
+                ("[archive]\nvehicle_slots=70\n", traffic.MAX_SLOTS),  # the plugin clamps it to 60
+                ("[archive]\nvehicle_slots=20\n", traffic.VANILLA_SLOTS),
+            ):
+                ini.write_text(text, encoding="utf-8")
+                self.assertEqual(traffic.plugin_slots(Path(d), {"archive.slots"}), want, text)
+            self.assertEqual(traffic.plugin_slots(Path(d), {"archive.packages"}), traffic.VANILLA_SLOTS)
+
+
 class PotsTest(unittest.TestCase):
     def test_no_pot_table_writes_no_sets(self):
         from unittest import mock
