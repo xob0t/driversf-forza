@@ -55,9 +55,10 @@ AI_COPY = Path("dsfcars") / "traffic" / "san_franciscoAI.fchunk"
 TRAFFIC_LUA = Path("Common") / "UserLuaScripts" / "dsfcars" / "traffic.lua"
 STORY_SETS = ["Exposition"] + [f"Chapter {i}" for i in range(1, 8)] + ["Epilogue"]
 VANILLA_SLOTS = 35  # SSLP +0x18 of the vanilla vehicle archive (research/traffic.md 4)
-# dsfcars.asi's [archive] vehicle_slots default and most: the 64 slot handlers less the other kinds'
-# 2 + 2 slots (mod_archive.cpp kSlotHandlers; research/traffic.md 4)
+# dsfcars.asi's [archive] vehicle_slots: at most the 64 slot handlers less the other kinds' 2 + 2 slots
+# (mod_archive.cpp kSlotHandlers), 50 by default (kDefaultVehicleSlots; research/traffic.md 4 and 5)
 MAX_SLOTS = 60
+DEFAULT_SLOTS = 50
 POT_CAP = 18  # spoolingsystem.lua: local numberOfVehicleAllowed = 18
 ALL_CHAPTERS = "All chapters"
 WEIGHT_MODES = ("vanilla", "equal", "custom")
@@ -329,7 +330,7 @@ def plugin_slots(game: Path, capabilities: set[str] | None) -> int:
     ini = configparser.ConfigParser(inline_comment_prefixes=(";",), strict=False)
     try:
         ini.read(Path(game) / PLUGIN_INI, encoding="utf-8")
-        return max(VANILLA_SLOTS, min(MAX_SLOTS, ini.getint("archive", "vehicle_slots", fallback=MAX_SLOTS)))
+        return max(VANILLA_SLOTS, min(MAX_SLOTS, ini.getint("archive", "vehicle_slots", fallback=DEFAULT_SLOTS)))
     except (OSError, ValueError, configparser.Error):
         return VANILLA_SLOTS
 

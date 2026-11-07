@@ -533,7 +533,8 @@ What the 35 is, what is sized by it, and how dsfcars.asi raises it
 | ↳ provider 0 (acquire 0x00BACD70 → 0x00BABEB0, vtable 0x00E982B8) | a new 0x98 B wrapper each (game operator new), noted in the first empty entry of 128 at `+0x210` (limit at `+0x410`) | **yes**: a full array just doesn't note it | About 40 entries are taken before the vehicle slots (`slots_trace`: the first vehicle slot's lands at `+0x2B0`), 64 handlers bring it to about 104 |
 | NONR buffer per slot | 436 KiB, at package init | n/a | 25 more slots: 10.9 MB of heap at start |
 | Model data (VB, IB, textures; D3D9 managed pool) | per resident model | n/a | Only while a slot is in use: ports 1.59 MB median kind-0 entry, vanilla traffic 1.41 MB |
-| Wwise bank | in place in the slot's NONR buffer (`engine-sound.md`) | n/a | One per resident model, as now. Not measured: Wwise's own pools |
+| Wwise bank | in place in the slot's NONR buffer (`engine-sound.md`); its structures in Wwise's default pool (`AkInitSettings.uDefaultPoolSize` 0x599999 at 0x0084A64D, created by AK init; the pool table at `[0x01D72390]`, 0x4C B each, used bytes at `+0x44`) | AK's allocator fails when full | 41 slots, 27-model set: peak 4971 of 5731 KiB. 60 slots, 40-model set: **full** (5990 to 6048 KiB counted, block headers included, from 30 s on). The plugin gives the pool each slot's vanilla share, `ceil(0x599999 × slots / 35)` |
+| The sound manager's bank list (FUN_00849870, `+0x92DC`) | 50 nodes (the 45-node pools' layout) | **no** | Banks join it when they load, not at package init. Under 20 seen at 60 slots; the plugin moves it to heap chunks when full |
 | Traffic spooler lists (0x005A6D20): traffic request list (`+0x000`, 50, count `+0xC8`), resident traffic (`+0x330`, 50 nodes of 12 B), mission (`+0x998`, 50 nodes of 20 B) | 50 each | **no** | Not reached: a set has at most 40 models (next row), the mission list at most 18 + 10 IVs |
 | The set selector's copy (0x0076FDF0) | 40 IDs on the stack | **no** | **A set may hold at most 40 models**; the car manager enforces it |
 
@@ -549,7 +550,7 @@ What the 35 is, what is sized by it, and how dsfcars.asi raises it
 - The slot index (`model + 0x564`, set at 0x00858864, read at 0x00859162):
   only the scene model reads it, and only for the graphics pool.
 
-**The patch** (`[archive] vehicle_slots`, default 41, 35 = vanilla, at most
+**The patch** (`[archive] vehicle_slots`, default 50, 35 = vanilla, at most
 `64 − (kind 1 + 2 + 3 slots)` = 60):
 
 1. From DllMain, before the game builds its pools: graphics pool 9 gets N
@@ -558,8 +559,11 @@ What the 35 is, what is sized by it, and how dsfcars.asi raises it
    are checked against vanilla first.
 2. Also from DllMain: the scene-model provider structures that section 5
    found sized for about 45 handlers in all get unbounded storage in the
-   plugin. These are provider 0x00E18184's wrapper array, and the 45-node
-   pools appended by 0x0086B6B0.
+   plugin: provider 0x00E18184's wrapper array, the 45-node pools appended by
+   0x0086B6B0, the class-0x7A provider's 46-node pool (0x0048F7D0), the MODL
+   provider's 157 records (0x00493FD0, 0x00494090), and the sound manager's
+   bank list (0x00849870). Object pool 0x16 is made with `46 + (slots − 35)`
+   and Wwise's default pool with each slot's vanilla share (the table above).
 3. The SSLP load (0x005A0B50; the packages' hook, or the plugin's own when
    there are no packages): for the vehicle spool object (package type 0 at
    `+0x7300`) whose header still says 35, it moves the seven ID pools
@@ -568,11 +572,17 @@ What the 35 is, what is sized by it, and how dsfcars.asi raises it
    `GetMaxSpooledVehicles`, the mission and IV budget, and
    `ChooseDesiredSlotCount`.
 
-**Why 41, and the hang.** 41 is the most that has loaded and run in game;
-45, 50 and 60 crash at package init in a structure not yet found (section
-5). With 41 slots, each story chapter's set can take 6 more models than with
-35. The chapter load can still hang if a set leaves the mission pot no room,
-so the car manager writes no set past the budget of 3b. That budget is
+**Why 50, and the hang.** 60 is the most the slot handler arrays hold, and
+every structure section 5 found sized for fewer is handled up to it. 60 loads
+and drives; but with a 40-model set (what 60 gives every story chapter) the
+game crashed in 2 of 4 Chapter 7 runs as the player entered the world (section
+5, open in #566). 50 (Chapter 7: 36 models) passed every run, so it is the
+default: the most tested, not a derived limit. Past 60 the
+arrays (about 90 instructions address them in place) and the set selector's
+40-ID buffer would both have to move, and no set gains from it: the budget
+below reaches the selector's 40 at 59 slots for the largest pot (18). The
+chapter load can still hang if a set leaves the mission pot no room, so the
+car manager writes no set past the budget of 3b. That budget is
 `set ≤ slots − 1 − pot`, and at most 40 from 0x0076FDF0.
 
 The bound is conservative. In run `vm1-20261105-230205`, Chapter 7 with
@@ -601,7 +611,33 @@ scene model takes one wrapper from each resource provider
 | --- | --- | --- | --- |
 | `vm1-20261105-222408` | 60 | Fault reading at 0x006AE19B, ECX 0x2D, from 0x00858E09 ← 0x0059FA87 ← 0x005A1496. Provider class with vtable 0x00E18184 keeps its wrappers in a **45-pointer inline array** (`+0x04`, count `+0xB8`): acquire 0x006AE160, release 0x006AE1B0, lookup 0x006ADF90, clear 0x006AE140 | the four replaced; the list kept in the plugin, the first 45 mirrored inline |
 | `vm1-20261105-223116` | 60 | Fault in the class factory 0x0086A2AD, class ID 0x292E8970, from 0x0086BEF7. Two generic provider classes (acquire 0x0086BEE0, pool at `+0x18`, class ID `+0x248`; acquire 0x0086B710, pool at `+0x04`, class ID `+0x234`) list wrappers in **45-node pools** of 12 bytes appended by 0x0086B6B0 (no end check; node 46 overwrites the list head and the class ID) | 0x0086B6B0 replaced: the bump pointer moves to a heap chunk before it reaches the list head |
-| `vm1-20261105-223748`, `-224316`, `-225305` (50), `-225627` (45) | 60, 60, 50, 45 | Fault reading `NONR size + 4` at 0x0084BF49: the provider loop calls `+4` on an object with vtable 0x00E36D38, a vehicle's sound bank wrapper (0x18 bytes, FUN_0084C0A0), so an entry of the vehicles' provider list has been overwritten. At 45 slots the read is 0x1004, during the kind-1/2 slots that come after kind 0; at 60, 0x6D004 | **not found**. The sound manager's bank list (50 nodes at `+0x92DC`, FUN_00849870) was checked with a hook and never filled, so it isn't that |
+| `vm1-20261105-223748`, `-224316`, `-225305` (50), `-225627` (45) | 60, 60, 50, 45 | Fault reading `NONR size + 4` at 0x0084BF49: the provider loop calls `+4` on an object with vtable 0x00E36D38, a vehicle's sound bank wrapper (0x18 bytes, FUN_0084C0A0), so an entry of the vehicles' provider list has been overwritten. At 45 slots the read is 0x1004, during the kind-1/2 slots that come after kind 0; at 60, 0x6D004 | found in the rows below (#566). The sound manager's bank list (FUN_00849870) wasn't it: banks join it when they load, not at package init |
+| `vm1-20261107-211718` | 45 | `[archive] slots_trace` (the call at 0x005A1491 to FUN_0059F9C0 traced; the vehicles' range is the provider table's entries `0x17..0x1D`, 7 providers, filled during the first vehicle slot). Provider 2 (acquire 0x0048F7D0, class-0x7A wrappers) keeps its wrappers in a **46-node pool** at `+0x04` (storage `+0x10`, list head `+0x238`) and appends inline, not through 0x0086B6B0. One node is taken before the vehicle slots, so at the 45th kind-0 slot its bump pointer reaches the list head, and the next wrapper (the first kind-1 slot: NONR 0x1000, the 0x1004 read of #566) is written over it | 0x0048F7D0 replaced: the same function with the append through `pool_room` |
+| `vm1-20261107-215725` | 60 | The same fault with ESI = provider 3. The class-0x7A objects (creator 0x0048FB40: 0x30 bytes, a sound bank wrapper of vtable 0x00E36D38 at `+0x0C`) come from **object pool 0x16** of the class factory, made with **46** objects (push 0x2E; push 0x16; call 0x0086A070). The object pools (table at `[0x01448BF8]`, 0x18 bytes each: base, next, free count, size, capacity, used; allocator 0x00869D50) bump with no end check, so the 47th object is made over provider 3, the next heap block, and the init loop calls provider 3's vtable +4 as a sound wrapper's | pool 0x16 made with `46 + (slots − 35)`, at both of its creations: the provider's constructor 0x0048F840 and its class creator 0x0048FB90 (the one the table's provider comes from); the plugin also logs any object pool that runs past its end (0x00869D50 replaced by the same code plus the check) |
+| `vm2-20261107-231034`, `vm1-20261108-000458` | 60 | The detector: pool 0x16 still had 46 objects (only the constructor's call site was patched; the class creator's is the one that runs) | the second site |
+| `vm1-20261108-015739` | 60 | All 64 handlers' slots made up to the 63rd; fault reading 0x9D at 0x00858E0B. Provider 6 (MODL, vtable 0x00DDA2C8, creator 0x00494240, 0x774 bytes) makes **157 records** in place (fill 0x00494150: push 0x9D) and stacks pointers to them (`+0x4FC`, count `+0x770`); acquire 0x00493FD0 pops with no empty check, so the empty stack pops its record count | acquire and release replaced: past the 157, records made as the fill makes them (game operator new; vtable 0x00DDA2B0) and kept in the plugin when the stack is full |
+| `vm1-20261108-020144` | 60 | Loads and drives (vanilla traffic, no packages): all 64 handlers, the MODL provider past its 157 records, no object pool past its end | |
+| `vm1-20261108-021206` | 60 | Chapter 7, 40-model set: loads, drives, starts the mission. Wwise's default pool (5731 KiB) is **full** from 30 s on (5990 to 6048 KiB counted, block headers included); 41 slots peaked at 4971 | the pool gets each slot's vanilla share, `ceil(0x599999 × slots / 35)` (0x0084A64D) |
+| `vm1-20261108-020511`, `-021803` | 60 | Chapter 7, 40-model set (the second with the Wwise pool raised): fault reading 0x17B / 0x13B at 0x00AB607F, at the zap into the world (game time 0.04 s). FUN_00AB5EB0, the "[2D Zone]" page pass, walks 17 entity lists (`[this+0x280]` vtable +0x24) and calls +0x98 on an entity whose vtable is 0xE3 / 0xA3. Not reproduced in `-021206` and `-022007` (same set), nor at 41 or 50 | **open** (#566) |
+
+**41, 50 and 60 in Chapter 7** (VM 1, 2 to 8 % competing host CPU at
+launch; the 24-package overlay with the car manager's default for that slot
+count; the probe driving six cars, 130 to 140 s of game time;
+`launchMission(56)`, GetawayActivity4, at 100 s, which started each time;
+every 10 s `[archive] read_log` window of the probe pooled):
+
+| Run | Slots | Chapter 7 set | fps | mean frame | ≥ 33.3 ms | ≥ 50 ms | peak private | Wwise default pool peak |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `vm1-20261108-020730` | 41 | 27 (9 ports) | 56.8 | 17.6 ms | 10.0 % | 1.0 % | 1155 MB | 4971 of 5731 KiB |
+| `vm1-20261108-022429` | 50 | 36 (18 ports) | 58.6 | 17.1 ms | 5.8 % | 0.3 % | 1195 MB | 5827 of 8188 KiB |
+| `vm1-20261108-022818` | 50 | 36 (18 ports) | 58.3 | 17.1 ms | 5.9 % | 0.4 % | 1194 MB | 5839 of 8188 KiB |
+| `vm1-20261108-022007` | 60 | 40 (22 ports) | 58.2 | 17.2 ms | 5.8 % | 0.5 % | 1212 MB | 6164 of 9827 KiB |
+
+- More slots cost no frame time; the set's models are drawn as before.
+- Memory: about 40 MB more at 50 slots, 57 MB at 60.
+- Wwise's default pool grows with the set: at 50 it reaches 5839 KiB, past the
+  vanilla 5731, so the pool raise is needed at 50 too.
+- The sound manager's bank list stayed under 20 entries in every run.
 
 **41 works** (`vm1-20261105-224648`, `vehicle_slots=41`): 45 handlers of 64,
 with the wrapper list and pool fixes in place. Both are needed even here: the
@@ -623,9 +659,10 @@ Chapter 7 with **9 ports added** (27 models; 30 % of the road weight):
   1108 to 1121 MB and 1332 to 1334 MB;
 - desired IV slots 8 (fewer free slots, as expected).
 
-So 41 is the default: the most that has loaded and run, not a derived
-limit. What breaks between 46 and 49 handlers is open (#566). With 41 slots the budget formula (3b) gives each story chapter 6
-more models:
+41 was the default until #566: the most that had loaded and run, before
+what breaks between 46 and 49 handlers was found (the class-0x7A provider's
+pool, above). With 41 slots the budget formula (3b) gives each story chapter
+6 more models:
 
 | Exposition | Ch. 1 | Ch. 2 | Ch. 3 | Ch. 4 | Ch. 5 | Ch. 6 | Ch. 7 | Epilogue |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -696,12 +733,16 @@ settings; `traffic ambient --off` stores `{"off": true}`.
 - `traffic status` prints each set's share from `AiTraffic.share` on the
   planned tables.
 
-At 41 slots with 24 cars in traffic:
+With 24 cars in traffic (`traffic status`):
 
 | | Exposition | Ch. 1 | Ch. 2 | Ch. 3 | Ch. 4 | Ch. 5 | Ch. 6 | Ch. 7 | Epilogue |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| ports | 8 | 2 | 4 | 4 | 4 | 4 | 7 | 9 | 12 |
+| ports at 41 slots | 8 | 2 | 4 | 4 | 4 | 4 | 7 | 9 | 12 |
 | predicted share | 36 % | 10 % | 18 % | 18 % | 19 % | 19 % | 28 % | 34 % | 44 % |
+| ports at 50 slots (the default since #566) | 17 | 11 | 13 | 13 | 13 | 13 | 16 | 18 | 21 |
+| predicted share | 55 % | 38 % | 42 % | 42 % | 43 % | 43 % | 48 % | 51 % | 58 % |
+| ports at 60 slots | 22 | 20 | 22 | 22 | 22 | 22 | 22 | 22 | 24 |
+| predicted share | 61 % | 53 % | 55 % | 55 % | 56 % | 56 % | 56 % | 56 % | 62 % |
 
 **Per road** (`traffic.road_weights`), for each weight range a set's roads
 use:
@@ -748,7 +789,8 @@ set no script names (9CB17769 and four more) is never selected and has only
 the 40.
 
 The reached sets bind several chapters. With 41 slots each story set's own
-budget is:
+budget is (at 50: 35, 33, 34, 35, 35, 34, 34, 36, 36; at 60 every one is the
+selector's 40):
 
 | Exposition | Ch. 1 | Ch. 2 | Ch. 3 | Ch. 4 | Ch. 5 | Ch. 6 | Ch. 7 | Epilogue |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -760,7 +802,9 @@ Counting the sets each one reaches, a story set can hold:
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 26 | 20 | 22 | 22 | 22 | 22 | 25 | 27 | 27 |
 
-That is 2 (Chapter 1) to 12 (Epilogue) models over the game's 15 to 18. The variants' real pots
+That is 2 (Chapter 1) to 12 (Epilogue) models over the game's 15 to 18. Counting the
+sets it reaches, at 50 slots a story set can hold 33 (Chapter 1) to 36 (Chapter 7,
+Epilogue), at 60 every one 40. The variants' real pots
 (from the chapter packages' mission scripts) would loosen it; open. Added
 models past the budget are left out, and the report says how many.
 

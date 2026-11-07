@@ -324,7 +324,7 @@ class SlotsTest(unittest.TestCase):
             ini = Path(d) / traffic.PLUGIN_INI
             ini.parent.mkdir(parents=True)
             for text, want in (
-                ("[archive]\n", traffic.MAX_SLOTS),  # the plugin's default
+                ("[archive]\n", traffic.DEFAULT_SLOTS),  # the plugin's default
                 ("[archive]\nvehicle_slots=48\n", 48),
                 ("[archive]\nvehicle_slots=70\n", traffic.MAX_SLOTS),  # the plugin clamps it to 60
                 ("[archive]\nvehicle_slots=20\n", traffic.VANILLA_SLOTS),

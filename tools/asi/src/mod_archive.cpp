@@ -785,6 +785,7 @@ void pkg_inject(Reader* r)
 // 40 + 17 + 1 pending + 1 < 60, no refusal.
 const uint32_t kSlotHandlers = 64;          // +0x5630: slot handlers for all kinds
 const uint32_t kVanillaVehicleSlots = 35;   // SSLP +0x18 in the vanilla archive
+const uint32_t kDefaultVehicleSlots = 50;   // [archive] vehicle_slots default (see init)
 const uint32_t kPoolBytes = 0x4000;         // per relocated ID pool: 1024 nodes of 16 bytes
 const uint32_t kIdPools[] = {0x5B44, 0x5F5C, 0x6374, 0x668C, 0x69A4, 0x6CBC, 0x6FD4};
 uint32_t g_vehicle_slots = 0;               // [archive] vehicle_slots; 0 = vanilla, no patch
@@ -1122,6 +1123,30 @@ bool patch_acquire_7a()
     }
     if (!patch_jmp(0x0048F7D0, (void*)h_acquire_7a, 5, kAcquire7aExpect)) return false;
     dsf_log("slots: 0048F7D0 provider pool (class 7A, 46 nodes) goes on in the plugin's chunks when full");
+    return true;
+}
+
+// ---- Wwise's default pool (AkInitSettings.uDefaultPoolSize) ---------------------------
+// Each loaded bank's structures and the sound objects live in Wwise's default pool. The
+// game sizes it at its sound init (FUN_0084A3B0: `mov [ebp+0x40], 0x599999` at 0x0084A64D,
+// AkInitSettings +0x0C; the lower engine's 0x300000 is AkPlatformInitSettings +0x1C).
+// With 60 slots and a 40-model set it fills: run vm1-20261108-021206, the pool at
+// 5990 to 6048 KiB used (its blocks' 8-byte headers included) of 5731 from 30 s on,
+// where 41 slots peaked at 4971 (vm1-20261108-020730). Like graphics pool 9 it gets each
+// slot's vanilla share: ceil(0x599999 x slots / 35).
+const uint32_t kAkDefaultPoolVa = 0x0084A650;
+const uint32_t kAkDefaultPool = 0x599999;
+
+bool patch_ak_default_pool(uint32_t slots)
+{
+    const uint8_t expect[] = {0xC7, 0x45, 0x40, 0x99, 0x99, 0x59, 0x00};
+    if (!check_bytes(kAkDefaultPoolVa - 3, expect, 7)) {
+        dsf_log("slots: 0084A64D is not the vanilla Wwise default pool size; vehicle slots stay 35");
+        return false;
+    }
+    uint32_t size = scale_up(kAkDefaultPool, slots);
+    if (!patch_bytes(kAkDefaultPoolVa, &size, 4, &kAkDefaultPool)) return false;
+    dsf_log("slots: Wwise default pool %u KiB (vanilla %u)", size / 1024, kAkDefaultPool / 1024);
     return true;
 }
 
@@ -2682,11 +2707,12 @@ void mod_archive_init()
     if (cfg_bool("archive", "open_log", false)) patch_open_log();
     if (g_read_log) patch_frame_log();
 
-    // Vehicle spool slots (see "vehicle spool slots"): 35 = vanilla, no patch. The default is the most
-    // the slot handler arrays hold, 64 - the other kinds' 2 + 2 (research/traffic.md, "The spool slot
-    // limit"; #566).
+    // Vehicle spool slots (see "vehicle spool slots"): 35 = vanilla, no patch; at most 60, what the slot
+    // handler arrays hold (64 - the other kinds' 2 + 2). 50 (Chapter 7's set 36 models) is the most that
+    // passed Chapter 7 and a mission start every time (runs vm1-20261108-022429, -022818); with 60 the
+    // slots load, but a 40-model set crashed in 2 of 4 runs in the 2D zone pass at 0x00AB607F (#566).
     g_slots_trace = cfg_bool("archive", "slots_trace", false);
-    int slots = cfg_int("archive", "vehicle_slots", (int)(kSlotHandlers - 4));
+    int slots = cfg_int("archive", "vehicle_slots", (int)kDefaultVehicleSlots);
     if (slots > (int)kVanillaVehicleSlots && !patch_obj_alloc())
         dsf_log("slots: 00869D50 is not the vanilla object pool allocator; no overflow log");
     if (g_slots_trace && patch_call(0x005A1491, (void*)h_trace_make_slot, kMakeSlotCallExpect))
@@ -2703,7 +2729,8 @@ void mod_archive_init()
                 patch_bytes(0x005A0B50, kSslpExpect, 5);
                 g_sslp_hooked = false;
             }
-        } else if (patch_pool16((uint32_t)slots) && patch_vehicle_pool((uint32_t)slots))
+        } else if (patch_pool16((uint32_t)slots) && patch_ak_default_pool((uint32_t)slots) &&
+                   patch_vehicle_pool((uint32_t)slots))
             g_vehicle_slots = (uint32_t)slots;
         else if (g_sslp_hooked) {
             patch_bytes(0x005A0B50, kSslpExpect, 5);
