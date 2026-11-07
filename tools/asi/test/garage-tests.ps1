@@ -67,7 +67,7 @@ if ($Only -contains 'biggroup') {
         -MenuKeys ($keys -join ',')
 }
 if ($Only -contains 'roundtrip') {
-    # Vanilla archive, 41 vanilla cars in the first maker group, 20 fake makers more (cfg_biggroup_makers.lua): three
+    # Vanilla archive, 41 vanilla cars in the first maker group, 20 fake one-car makers after it (cfg_biggroup_makers.lua): three
     # visits, each scrolling the card window to the end, leaving the garage and quitting to the
     # main menu (issue #574: the window must keep moving in every world).
     $keys = @('Enter:5', 'Enter:5') + @(1..45 | ForEach-Object { 'Right:1' }) + @('Esc:4', 'Esc:4', 'Esc:4', 'Enter:5', 'Reload')
