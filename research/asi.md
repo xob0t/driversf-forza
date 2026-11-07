@@ -384,6 +384,15 @@ Vipers). Evidence (confirmed-runtime):
   to "window from car 22" and the row reaches the RS200 in all three. Both
   runs: `register.lua` reads the plugin's limits in every world (120 groups of
   1000), so the Lua side is not involved.
+- With 52 maker groups (the same plus 20 fake one-car makers, `cfg_biggroup_makers.lua`;
+  the fix, run `vm1-20261107-234513`, two worlds): the four maker lists grow
+  once per world, each world's at a new address, and each world's second visit
+  to the maker menu grows nothing (the player's v0.2.1 log grows them on every
+  visit). In both worlds the window reaches the 41st car, which picked and
+  driven out of the garage is model 195, the RS200.
+- The maker list sorts its groups by the raw `ManufacturerName` (observed:
+  test makers named "DSFT nn" came before every vanilla maker, whose names are
+  string IDs "ID:nnn", run `vm1-20261107-233350`; "ZDSFT nn" came after them).
 
 The fix gives the table 16 slots and takes, for a key it doesn't hold, a slot
 whose key no longer has the plugin's handler (its menu gone or reused). The
