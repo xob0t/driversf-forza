@@ -571,6 +571,22 @@ What the 35 is, what is sized by it, and how dsfcars.asi raises it
 4. Every other reader of the byte follows by itself:
    `GetMaxSpooledVehicles`, the mission and IV budget, and
    `ChooseDesiredSlotCount`.
+5. The car manager's AI copy is used only while the game will have the slots
+   it was planned for (#583). The manager records the count beside the copy
+   (`dsfcars\traffic\san_franciscoAI.fchunk.slots`). The game opens the AI
+   file before the SSLP is loaded (`vm1-20261108-025033`: 0.6 s before), so the
+   plugin predicts the outcome: its own count when every init patch of the
+   raise landed and the vehicle archive's SSLP (read from
+   `Install\dngvehicles.sp` at the first open) has the vanilla 35, else 35. A
+   copy whose record asks for more, or the copy with no record while the slots
+   aren't raised, isn't served; the game reads its own file and the plugin
+   logs `redirect: ... not used: written for N vehicle slots, the game has M`.
+   The ID pool check can't fail before a vehicle has loaded; should the SSLP
+   load still refuse after the copy was served, the plugin logs it as an error.
+   `[archive] slots_fail=1` makes the raise fail for tests:
+   `vm1-20261108-032357` (copy written for 50) loaded the vanilla sets
+   (`max 35`, only vanilla models in the census) and drove 200 s;
+   `vm1-20261108-032859` (the same, raise working) served the copy at 50.
 
 **Why 50, and the hang.** 60 is the most the slot handler arrays hold, and
 every structure section 5 found sized for fewer is handled up to it. 60 loads
