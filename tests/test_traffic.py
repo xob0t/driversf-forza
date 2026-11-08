@@ -259,10 +259,13 @@ class TrafficControlTest(unittest.TestCase):
         self.assertEqual(copy.by_name(CH7).lists[0], [101, 102, 103, 5])  # only B is in traffic
         redirect = (self.game / car_gui.GENERATED / car_gui.REDIRECT).read_text()
         self.assertIn(r"media\san_franciscoAI.fchunk|dsfcars\traffic\san_franciscoAI.fchunk", redirect)
+        # the slot count it was planned for, which dsfcars.asi checks before it serves the copy (#583)
+        self.assertEqual((self.game / traffic.AI_SLOTS).read_text(), "41\n")
         self.assertTrue(any("NOT vanilla" in line or "vanilla" in line for line in tc.status()))
         tc.ambient_off()
         tc.write()
         self.assertFalse((self.game / traffic.AI_COPY).exists())
+        self.assertFalse((self.game / traffic.AI_SLOTS).exists())
         self.assertFalse((self.game / car_gui.GENERATED / car_gui.REDIRECT).exists())
 
     def test_settings_survive_reinstall(self):
@@ -313,6 +316,25 @@ class RegisterTrafficTest(unittest.TestCase):
         out = self.regions("return { ports = true }", [list(range(200, 327)), [100]])
         self.assertEqual(len(out[0]), 128)  # 127 vanilla IDs, room for one (#562)
         self.assertEqual(out[1], [100, 1, 2, 3])
+
+
+class SlotsTest(unittest.TestCase):
+    def test_slots_from_the_plugin_ini(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as d:
+            ini = Path(d) / traffic.PLUGIN_INI
+            ini.parent.mkdir(parents=True)
+            for text, want in (
+                ("[archive]\n", traffic.DEFAULT_SLOTS),  # the plugin's default
+                ("[archive]\nvehicle_slots=48\n", 48),
+                ("[archive]\nvehicle_slots=70\n", traffic.MAX_SLOTS),  # the plugin clamps it to 60
+                ("[archive]\nvehicle_slots=20\n", traffic.VANILLA_SLOTS),
+            ):
+                ini.write_text(text, encoding="utf-8")
+                self.assertEqual(traffic.plugin_slots(Path(d), {"archive.slots"}), want, text)
+            self.assertEqual(traffic.plugin_slots(Path(d), {"archive.packages"}), traffic.VANILLA_SLOTS)
 
 
 class PotsTest(unittest.TestCase):
