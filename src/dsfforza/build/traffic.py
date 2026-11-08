@@ -494,7 +494,8 @@ class TrafficControl:
         amb = self.t["ambient"]
         if amb.get("off"):
             return False
-        return bool(amb.get("on") or amb.get("default") or amb.get("sets"))
+        # "default" present, even empty: `traffic ambient` without fields before "on" was stored
+        return bool(amb.get("on") or "default" in amb or amb.get("sets"))
 
     def write(self) -> list[SetReport]:
         """The AI copy and its redirect line (neither when no set changes), and traffic.lua."""

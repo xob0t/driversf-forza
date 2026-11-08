@@ -287,6 +287,8 @@ class TrafficControlTest(unittest.TestCase):
         # settings made before the default changed still count as on
         tc.t["ambient"] = {"default": {"ports": 2}}
         self.assertTrue(tc.ambient_changes())
+        tc.t["ambient"] = {"default": {}}  # `traffic ambient` with no fields
+        self.assertTrue(tc.ambient_changes())
 
     def test_settings_survive_reinstall(self):
         m = self.manager()
